@@ -1,0 +1,171 @@
+[gd_scene load_steps=8 format=3 uid="uid://gpaa31rvtxtn"]
+
+[ext_resource type="Script" uid="uid://chm4fys86y5bh" path="res://scripts/Other/game_manager.gd" id="1_hu83v"]
+[ext_resource type="Script" uid="uid://b5f252qlg5ipp" path="res://scripts/Other/MainMenu.gd" id="1_l61jj"]
+[ext_resource type="PackedScene" uid="uid://clg2cgm1pgncs" path="res://scenes/card_slot.tscn" id="1_olwsv"]
+[ext_resource type="PackedScene" uid="uid://bqnce5iuwrog2" path="res://scenes/deck.tscn" id="2_hu83v"]
+[ext_resource type="Script" uid="uid://bevg5y6uq335i" path="res://scripts/Other/CombatMockGame.gd" id="2_jvnui"]
+[ext_resource type="PackedScene" uid="uid://bwkpffulj58xv" path="res://scenes/player.tscn" id="4_hu83v"]
+[ext_resource type="Script" uid="uid://ckxvs20vacmiu" path="res://scripts/Other/Zone.gd" id="5_jvnui"]
+
+[node name="Main" type="Node2D"]
+
+[node name="Control" type="Control" parent="."]
+layout_mode = 3
+anchors_preset = 0
+offset_right = 40.0
+script = ExtResource("1_l61jj")
+
+[node name="MenuContainer" type="VBoxContainer" parent="Control"]
+layout_mode = 0
+offset_right = 40.0
+offset_bottom = 40.0
+
+[node name="TitleLabel" type="Label" parent="Control/MenuContainer"]
+layout_mode = 2
+text = "card game"
+
+[node name="DeckBuilderButton" type="Button" parent="Control/MenuContainer"]
+layout_mode = 2
+text = "Deck Builder"
+
+[node name="MockGameButton" type="Button" parent="Control/MenuContainer"]
+layout_mode = 2
+text = "Mock Game"
+
+[node name="GameContainer" type="Control" parent="Control"]
+anchors_preset = 0
+offset_top = 27.0
+offset_right = 40.0
+offset_bottom = 67.0
+
+[node name="MockGame" type="Control" parent="Control/GameContainer"]
+anchors_preset = 0
+offset_right = 40.0
+offset_bottom = 40.0
+script = ExtResource("2_jvnui")
+
+[node name="ScrollContainer" type="ScrollContainer" parent="Control/GameContainer/MockGame"]
+layout_mode = 0
+offset_top = 21.0
+offset_right = 559.0
+offset_bottom = 534.0
+
+[node name="VBoxContainer" type="VBoxContainer" parent="Control/GameContainer/MockGame/ScrollContainer"]
+layout_mode = 2
+
+[node name="TurnLabel" type="Label" parent="Control/GameContainer/MockGame/ScrollContainer/VBoxContainer"]
+layout_mode = 2
+
+[node name="StatsContainer" type="HBoxContainer" parent="Control/GameContainer/MockGame/ScrollContainer/VBoxContainer"]
+layout_mode = 2
+
+[node name="ManaLabel" type="Label" parent="Control/GameContainer/MockGame/ScrollContainer/VBoxContainer/StatsContainer"]
+layout_mode = 2
+
+[node name="FollowersLabel" type="Label" parent="Control/GameContainer/MockGame/ScrollContainer/VBoxContainer/StatsContainer"]
+layout_mode = 2
+
+[node name="EnemyFollowersLabel" type="Label" parent="Control/GameContainer/MockGame/ScrollContainer/VBoxContainer/StatsContainer"]
+layout_mode = 2
+
+[node name="ChoiceContainer" type="HBoxContainer" parent="Control/GameContainer/MockGame/ScrollContainer/VBoxContainer"]
+layout_mode = 2
+
+[node name="DrawButton" type="Button" parent="Control/GameContainer/MockGame/ScrollContainer/VBoxContainer/ChoiceContainer"]
+layout_mode = 2
+text = "Draw Card and gain 1 mana"
+
+[node name="ManaButton" type="Button" parent="Control/GameContainer/MockGame/ScrollContainer/VBoxContainer/ChoiceContainer"]
+layout_mode = 2
+text = "Gain 5 Mana"
+
+[node name="PlacementContainer" type="HBoxContainer" parent="Control/GameContainer/MockGame/ScrollContainer/VBoxContainer"]
+layout_mode = 2
+
+[node name="AttackModeBtn" type="Button" parent="Control/GameContainer/MockGame/ScrollContainer/VBoxContainer/PlacementContainer"]
+layout_mode = 2
+text = "Attack Mode"
+
+[node name="DefenseModeBtn" type="Button" parent="Control/GameContainer/MockGame/ScrollContainer/VBoxContainer/PlacementContainer"]
+layout_mode = 2
+text = "Defense Mode"
+
+[node name="StealthModeBtn" type="Button" parent="Control/GameContainer/MockGame/ScrollContainer/VBoxContainer/PlacementContainer"]
+layout_mode = 2
+text = "Stealth Mode"
+
+[node name="ToggleModeButton" type="Button" parent="Control/GameContainer/MockGame/ScrollContainer/VBoxContainer/PlacementContainer"]
+layout_mode = 2
+text = "Toggle ATK/DEF"
+
+[node name="ActionLabel" type="Label" parent="Control/GameContainer/MockGame/ScrollContainer/VBoxContainer"]
+layout_mode = 2
+
+[node name="HandContainer" type="VBoxContainer" parent="Control/GameContainer/MockGame/ScrollContainer/VBoxContainer"]
+layout_mode = 2
+
+[node name="BoardContainer" type="VBoxContainer" parent="Control/GameContainer/MockGame/ScrollContainer/VBoxContainer"]
+layout_mode = 2
+
+[node name="ReserveContainer" type="VBoxContainer" parent="Control/GameContainer/MockGame/ScrollContainer/VBoxContainer"]
+layout_mode = 2
+
+[node name="EnemyBoardContainer" type="VBoxContainer" parent="Control/GameContainer/MockGame/ScrollContainer/VBoxContainer"]
+layout_mode = 2
+
+[node name="EnemyReserveContainer" type="VBoxContainer" parent="Control/GameContainer/MockGame/ScrollContainer/VBoxContainer"]
+layout_mode = 2
+
+[node name="EndTurnButton" type="Button" parent="Control/GameContainer/MockGame/ScrollContainer/VBoxContainer"]
+layout_mode = 2
+text = "End Turn"
+
+[node name="GameManager" type="Node2D" parent="."]
+script = ExtResource("1_hu83v")
+
+[node name="PlayerHand" type="Node2D" parent="."]
+position = Vector2(579, 611)
+
+[node name="FrontLine1" parent="." groups=["card_slots"] instance=ExtResource("1_olwsv")]
+position = Vector2(84, 117)
+script = ExtResource("5_jvnui")
+
+[node name="FrontLine2" parent="." groups=["card_slots"] instance=ExtResource("1_olwsv")]
+position = Vector2(235, 115)
+script = ExtResource("5_jvnui")
+
+[node name="FrontLine3" parent="." groups=["card_slots"] instance=ExtResource("1_olwsv")]
+position = Vector2(392, 115)
+script = ExtResource("5_jvnui")
+
+[node name="FrontLine4" parent="." groups=["card_slots"] instance=ExtResource("1_olwsv")]
+position = Vector2(552, 117)
+script = ExtResource("5_jvnui")
+
+[node name="FrontLine5" parent="." groups=["card_slots"] instance=ExtResource("1_olwsv")]
+position = Vector2(724, 115)
+script = ExtResource("5_jvnui")
+
+[node name="FrontLine6" parent="." groups=["card_slots"] instance=ExtResource("1_olwsv")]
+position = Vector2(901, 122)
+script = ExtResource("5_jvnui")
+
+[node name="FrontLine7" parent="." groups=["card_slots"] instance=ExtResource("1_olwsv")]
+position = Vector2(1073, 115)
+script = ExtResource("5_jvnui")
+
+[node name="Deck" parent="." instance=ExtResource("2_hu83v")]
+position = Vector2(1060, 525)
+
+[node name="Player" parent="." instance=ExtResource("4_hu83v")]
+
+[connection signal="pressed" from="Control/MenuContainer/DeckBuilderButton" to="Control" method="_on_deck_builder_button_pressed"]
+[connection signal="pressed" from="Control/MenuContainer/MockGameButton" to="Control" method="_on_mock_game_button_pressed"]
+[connection signal="pressed" from="Control/GameContainer/MockGame/ScrollContainer/VBoxContainer/ChoiceContainer/DrawButton" to="Control" method="_on_draw_button_pressed"]
+[connection signal="pressed" from="Control/GameContainer/MockGame/ScrollContainer/VBoxContainer/ChoiceContainer/ManaButton" to="Control" method="_on_mana_button_pressed"]
+[connection signal="pressed" from="Control/GameContainer/MockGame/ScrollContainer/VBoxContainer/PlacementContainer/AttackModeBtn" to="Control" method="_on_attack_mode_btn_pressed"]
+[connection signal="pressed" from="Control/GameContainer/MockGame/ScrollContainer/VBoxContainer/PlacementContainer/DefenseModeBtn" to="Control" method="_on_defense_mode_btn_pressed"]
+[connection signal="pressed" from="Control/GameContainer/MockGame/ScrollContainer/VBoxContainer/PlacementContainer/StealthModeBtn" to="Control" method="_on_stealth_mode_btn_pressed"]
+[connection signal="pressed" from="Control/GameContainer/MockGame/ScrollContainer/VBoxContainer/PlacementContainer/ToggleModeButton" to="Control" method="_on_toggle_mode_button_pressed"]
+[connection signal="pressed" from="Control/GameContainer/MockGame/ScrollContainer/VBoxContainer/EndTurnButton" to="Control" method="_on_end_turn_button_pressed"]

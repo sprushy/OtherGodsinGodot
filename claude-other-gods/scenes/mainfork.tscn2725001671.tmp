@@ -1,0 +1,40 @@
+[gd_scene load_steps=5 format=3 uid="uid://gpaa31rvtxtn"]
+
+[ext_resource type="Script" uid="uid://chm4fys86y5bh" path="res://scenes/game_manager.gd" id="1_hu83v"]
+[ext_resource type="PackedScene" uid="uid://bk7hs0d4f4h1g" path="res://scenes/card_slot.tscn" id="1_olwsv"]
+[ext_resource type="PackedScene" uid="uid://bqnce5iuwrog2" path="res://scenes/deck.tscn" id="2_hu83v"]
+[ext_resource type="PackedScene" uid="uid://bwkpffulj58xv" path="res://scenes/player.tscn" id="4_hu83v"]
+
+[node name="Main" type="Node2D"]
+
+[node name="GameManager" type="Node2D" parent="."]
+script = ExtResource("1_hu83v")
+
+[node name="PlayerHand" type="Node2D" parent="."]
+position = Vector2(579, 611)
+
+[node name="FrontLine1" parent="." groups=["card_slots"] instance=ExtResource("1_olwsv")]
+position = Vector2(84, 117)
+
+[node name="FrontLine2" parent="." groups=["card_slots"] instance=ExtResource("1_olwsv")]
+position = Vector2(235, 115)
+
+[node name="FrontLine3" parent="." groups=["card_slots"] instance=ExtResource("1_olwsv")]
+position = Vector2(392, 115)
+
+[node name="FrontLine4" parent="." groups=["card_slots"] instance=ExtResource("1_olwsv")]
+position = Vector2(552, 117)
+
+[node name="FrontLine5" parent="." groups=["card_slots"] instance=ExtResource("1_olwsv")]
+position = Vector2(724, 115)
+
+[node name="FrontLine6" parent="." groups=["card_slots"] instance=ExtResource("1_olwsv")]
+position = Vector2(901, 122)
+
+[node name="FrontLine7" parent="." groups=["card_slots"] instance=ExtResource("1_olwsv")]
+position = Vector2(1073, 115)
+
+[node name="Deck" parent="." instance=ExtResource("2_hu83v")]
+position = Vector2(1060, 525)
+
+[node name="Player" parent="." instance=ExtResource("4_hu83v")]
