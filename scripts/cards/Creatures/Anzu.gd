@@ -1,0 +1,16 @@
+extends CreatureCard
+class_name Anzu
+
+func _init() -> void:
+	super._init()  # ← MUST call this first to initialize Card properties
+	
+	card_name = "Anzû"
+	card_types = ["Divine Manifestation", "Demon", "Animal", "Avian", "Aerial", "Ancient Creature"]
+	level = 4
+	mana_cost = 2
+	sacrifice_cost = 0
+	speed = 3
+	resilience = 13
+	strength = 24
+	flavor_text = "The Divine Bird Anzû is master of thunderstorms and the southern wind; he breathes both fire and water."
+	culture = "Ancient"
