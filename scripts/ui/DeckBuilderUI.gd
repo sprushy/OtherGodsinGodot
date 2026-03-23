@@ -41,12 +41,13 @@ func _ready() -> void:
 
 func _make_all_cards() -> Array:
 	return [
-		Thor.new(), Mummu.new(),
-		BrownBear.new(), Anzu.new(), AnTheBowbender.new(),
+		Thor.new(), Mummu.new(), AphroditeAreia.new(),
+		AcceleratedFate.new(), ACostToWalkTheWorlds.new(), AdvancedBuildingTechniques.new(), AllfathersSacrifice.new(), AltarOfDreams.new(), AnankesBinding.new(), AncientWisdom.new(),
+		BrownBear.new(), AnkouServantToTheReaper.new(), Anzu.new(), AnTheBowbender.new(),
 		AsagTheDestroyer.new(), Asakku.new(), Asaruludu.new(),
-		AgainWalker.new(), Alu.new(), Askelladen.new(), Aurboda.new(),
-		BitMeseri.new(), CircleOfRebirth.new(), FallOfTheMighty.new(),
-		WardingStone.new(), AncientPyre.new(),
+		AgainWalker.new(), Alu.new(), Askelladen.new(), Aurboda.new(), EnkiLordOfEridu.new(),
+		BitMeseri.new(), CircleOfRebirth.new(), FallOfTheMighty.new(), ApollyonsDemiurge.new(), Absence.new(),
+		WardingStone.new(), AncientPyre.new(), AnointingStatue.new(),
 		VoidShield.new(),
 	]
 
@@ -103,7 +104,7 @@ func _build_top_bar(parent: Control) -> void:
 	inner.add_child(spacer)
 
 	var btn_group := ButtonGroup.new()
-	for label in ["All", "Gods", "Creatures", "Spells", "Structures", "Hexes"]:
+	for label in ["All", "Gods", "Powers", "Creatures", "Spells", "Structures", "Hexes"]:
 		var btn := Button.new()
 		btn.text = label
 		btn.toggle_mode = true
@@ -346,6 +347,7 @@ func _matches_filter(card: Card) -> bool:
 	match _filter:
 		"All":       return true
 		"Gods":      return card.is_god
+		"Powers":    return card.is_power
 		"Creatures": return card.card_type == Card.CardType.CREATURE and not card.is_god
 		"Spells":    return card.card_type == Card.CardType.SPELL
 		"Structures":return card.card_type == Card.CardType.STRUCTURE
@@ -715,6 +717,7 @@ func _find_template(card_name: String) -> Card:
 
 func _get_type_color(card: Card) -> Color:
 	if card.is_god: return Color(0.9, 0.75, 0.2)
+	if card.is_power: return Color(0.85, 0.55, 0.18)
 	match card.card_type:
 		Card.CardType.CREATURE:  return Color(0.3, 0.55, 0.95)
 		Card.CardType.SPELL:     return Color(0.7, 0.35, 0.95)
@@ -724,6 +727,7 @@ func _get_type_color(card: Card) -> Color:
 
 func _get_type_label(card: Card) -> String:
 	if card.is_god: return "God"
+	if card.is_power: return "Power"
 	match card.card_type:
 		Card.CardType.CREATURE:  return "Creature"
 		Card.CardType.SPELL:     return "Spell"

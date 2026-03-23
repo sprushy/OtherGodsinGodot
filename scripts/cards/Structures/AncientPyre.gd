@@ -40,7 +40,7 @@ func activate(game_manager: GameManager, target: Card = null) -> void:
 		print("Ancient Pyre: No target selected.")
 		card_owner.gain_mana(2)
 		return
-	target.add_buff("Ancient Pyre", 0, -5, 0)
+	target.add_buff("Ancient Pyre", 0, -5, 0, self, card_owner, "structure_debuff")
 	print("Ancient Pyre: " + target.card_name + " Res reduced by 5 (now " + str(target.get_effective_resilience()) + ").")
 	if target.get_effective_resilience() <= 0:
 		print(target.card_name + " is destroyed by Ancient Pyre!")

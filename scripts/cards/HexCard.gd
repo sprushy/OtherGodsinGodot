@@ -10,6 +10,15 @@ func _init() -> void:
 func can_activate(attacker: Card, defender: Card) -> bool:
 	return false
 
+func get_affected_cards(attacker: Card, defender: Card) -> Array[Card]:
+	var affected: Array[Card] = []
+	if defender != null:
+		affected.append(defender)
+	return affected
+
+func on_immune_activate(game_manager: GameManager, _attacker: Card, _defender: Card) -> void:
+	card_owner.move_card(self, card_owner.graveyard_zone)
+
 # Override to define what happens when this hex activates.
 # The hex is responsible for sending itself to the graveyard.
 func on_activate(game_manager: GameManager, attacker: Card, defender: Card) -> void:

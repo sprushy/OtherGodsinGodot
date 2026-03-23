@@ -72,6 +72,19 @@ var is_used: bool = false          # for single-use activatable abilities on pow
 
 # Runtime stat buffs: Array of {source: String, str: int, res: int, spd: int}
 var active_buffs: Array[Dictionary] = []
+var active_statuses: Array[Dictionary] = []
+
+func get_controller() -> Player:
+	if current_zone != null and current_zone.is_board_zone() and current_zone.zone_owner != null:
+		return current_zone.zone_owner
+	return card_owner
+
+func is_enslaved() -> bool:
+	var controller := get_controller()
+	return controller != null and card_owner != null and controller != card_owner
+
+func abilities_suppressed() -> bool:
+	return is_enslaved()
 
 func get_effective_speed() -> int:
 	var base_speed = speed
@@ -108,11 +121,126 @@ func get_buff_tooltip(stat: String) -> String:
 			lines.append(("+%d" % v if v > 0 else "%d" % v) + " from " + buff.get("source", "?"))
 	return "\n".join(lines)
 
+func get_effect_summary_lines() -> Array[String]:
+	var lines: Array[String] = []
+	for buff in active_buffs:
+		var parts: Array[String] = []
+		var str_change: int = buff.get("str", 0)
+		var res_change: int = buff.get("res", 0)
+		var spd_change: int = buff.get("spd", 0)
+		if str_change != 0:
+			parts.append(("STR %+d" % str_change))
+		if res_change != 0:
+			parts.append(("RES %+d" % res_change))
+		if spd_change != 0:
+			parts.append(("SPD %+d" % spd_change))
+		if parts.size() == 0:
+			continue
+		lines.append(", ".join(parts) + " from " + str(buff.get("source", "?")))
+
+	for status in active_statuses:
+		var status_name := str(status.get("name", "Status")).capitalize()
+		lines.append(status_name + " from " + str(status.get("source", "?")))
+
+	return lines
+
 func clear_buffs_from(source: String) -> void:
 	active_buffs = active_buffs.filter(func(b): return b.get("source", "") != source)
 
-func add_buff(source: String, str_bonus: int, res_bonus: int, spd_bonus: int) -> void:
-	active_buffs.append({"source": source, "str": str_bonus, "res": res_bonus, "spd": spd_bonus})
+func remove_buffs_from_source_card(source_card: Card, effect_type: String = "") -> void:
+	active_buffs = active_buffs.filter(func(b):
+		var same_source: bool = b.get("source_card", null) == source_card
+		var same_effect_type: bool = effect_type == "" or b.get("effect_type", "") == effect_type
+		return not (same_source and same_effect_type)
+	)
+
+func add_buff(
+	source: String,
+	str_bonus: int,
+	res_bonus: int,
+	spd_bonus: int,
+	source_card: Card = null,
+	source_owner: Player = null,
+	effect_type: String = "buff",
+	extra_metadata: Dictionary = {}
+) -> void:
+	var buff := {
+		"source": source,
+		"str": str_bonus,
+		"res": res_bonus,
+		"spd": spd_bonus,
+		"source_card": source_card,
+		"source_owner": source_owner,
+		"effect_type": effect_type,
+	}
+	for key in extra_metadata.keys():
+		buff[key] = extra_metadata[key]
+	active_buffs.append(buff)
+
+func add_status_effect(
+	status_name: String,
+	source: String,
+	source_card: Card = null,
+	source_owner: Player = null,
+	extra_metadata: Dictionary = {}
+) -> void:
+	var status := {
+		"name": status_name,
+		"source": source,
+		"source_card": source_card,
+		"source_owner": source_owner,
+	}
+	for key in extra_metadata.keys():
+		status[key] = extra_metadata[key]
+	active_statuses.append(status)
+	_sync_status_flags()
+
+func remove_status_effects_by_name(status_name: String) -> void:
+	active_statuses = active_statuses.filter(func(s): return s.get("name", "") != status_name)
+	_sync_status_flags()
+
+func remove_status_effects_from_source_card(source_card: Card, status_name: String = "") -> void:
+	active_statuses = active_statuses.filter(func(s):
+		var same_source: bool = s.get("source_card", null) == source_card
+		var same_status: bool = status_name == "" or s.get("name", "") == status_name
+		return not (same_source and same_status)
+	)
+	_sync_status_flags()
+
+func has_effects_from_player(player: Player) -> bool:
+	for buff in active_buffs:
+		if buff.get("source_owner", null) == player:
+			return true
+	for status in active_statuses:
+		if status.get("source_owner", null) == player:
+			return true
+	return false
+
+func remove_effects_from_player(player: Player) -> void:
+	active_buffs = active_buffs.filter(func(b): return b.get("source_owner", null) != player)
+	active_statuses = active_statuses.filter(func(s): return s.get("source_owner", null) != player)
+	_sync_status_flags()
+
+func apply_sleep(source_card: Card) -> void:
+	remove_status_effects_by_name("sleep")
+	add_status_effect("sleep", source_card.card_name if source_card != null else "Sleep", source_card, source_card.card_owner if source_card != null else null)
+
+func wake_up() -> void:
+	remove_status_effects_by_name("sleep")
+
+func clear_all_effects() -> void:
+	active_buffs.clear()
+	active_statuses.clear()
+	_sync_status_flags()
+
+func _sync_status_flags() -> void:
+	var sleep_status: Dictionary = {}
+	for status in active_statuses:
+		if status.get("name", "") == "sleep":
+			sleep_status = status
+			break
+	is_sleeping = not sleep_status.is_empty()
+	sleeping_from = sleep_status.get("source_card", null) if is_sleeping else null
 
 func can_respond_to(other_card: Card) -> bool:
 	return get_effective_speed() >= 2 and get_effective_speed() >= other_card.get_effective_speed()

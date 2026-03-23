@@ -37,7 +37,7 @@ func apply_passive_to_board() -> void:
 		for card in zone.cards:
 			if applies_to(card):
 				card.clear_buffs_from(PASSIVE_SOURCE)
-				card.add_buff(PASSIVE_SOURCE, 3, 3, 0)
+				card.add_buff(PASSIVE_SOURCE, 3, 3, 0, self, card_owner, "passive")
 
 func remove_passive_from_board() -> void:
 	if card_owner == null:

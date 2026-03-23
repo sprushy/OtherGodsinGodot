@@ -26,6 +26,12 @@ func can_activate(attacker: Card, defender: Card) -> bool:
 		return false
 	return attacker.get_effective_speed() <= get_effective_speed()
 
+func get_affected_cards(attacker: Card, _defender: Card) -> Array[Card]:
+	var affected: Array[Card] = []
+	if attacker != null:
+		affected.append(attacker)
+	return affected
+
 func on_activate(game_manager: GameManager, attacker: Card, defender: Card) -> void:
 	print("Void Shield activates! Voiding " + attacker.card_name + "!")
 	game_manager.banish_card_with_hook(attacker)

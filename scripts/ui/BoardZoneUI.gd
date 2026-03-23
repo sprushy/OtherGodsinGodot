@@ -27,6 +27,46 @@ const ZONE_HEIGHT := 110
 
 var _row_label: String = ""
 
+func _add_sleep_affordance(overlay: Control, card: Card) -> void:
+	if card == null or not card.is_sleeping:
+		return
+
+	var badge := PanelContainer.new()
+	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	badge.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	badge.offset_left = 6
+	badge.offset_top = 6
+	badge.offset_right = 78
+	badge.offset_bottom = 28
+
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.04, 0.08, 0.18, 0.9)
+	style.border_color = Color(0.62, 0.8, 1.0, 0.95)
+	style.corner_radius_top_left = 6
+	style.corner_radius_top_right = 6
+	style.corner_radius_bottom_left = 6
+	style.corner_radius_bottom_right = 6
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		style.set_border_width(side, 1)
+	badge.add_theme_stylebox_override("panel", style)
+
+	var label := Label.new()
+	label.text = "SLEEP"
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	label.add_theme_font_size_override("font_size", 11)
+	label.add_theme_color_override("font_color", Color(0.88, 0.95, 1.0))
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	badge.add_child(label)
+
+	overlay.add_child(badge)
+
+	var haze := ColorRect.new()
+	haze.color = Color(0.2, 0.28, 0.45, 0.18)
+	haze.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	haze.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	overlay.add_child(haze)
+
 func setup(p_zone: Zone, p_gm: GameManager, p_player: Player, idx: int,
 		drop_cb: Callable, is_enemy: bool = false, row_label: String = "") -> void:
 	zone         = p_zone
@@ -58,14 +98,18 @@ func _refresh_display() -> void:
 	if zone.cards.size() > 0:
 		var card := zone.cards[0]
 
-		# Face-down cards: own stealth shows hazed art; others show cardback
+		# Face-down cards: own stealth / locked powers / prepared cards show hazed art; others show cardback
 		if card.is_face_down:
 			add_theme_stylebox_override("panel", StyleBoxEmpty.new())
 			var fd_overlay := Control.new()
 			fd_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			add_child(fd_overlay)
-			var is_own_stealth := card.is_stealth and card.card_owner == game_manager.current_player
-			var tex_path := card.art_path if is_own_stealth and card.art_path != "" else "res://images/cardbackAI.png"
+			var is_own_hidden_card := card.get_controller() == game_manager.current_player and (
+				card.is_stealth
+				or card.is_power
+				or card.is_prepared
+			)
+			var tex_path := card.art_path if is_own_hidden_card and card.art_path != "" else "res://images/cardbackAI.png"
 			var tex: Texture2D = load(tex_path)
 			if tex:
 				var art := TextureRect.new()
@@ -75,7 +119,7 @@ func _refresh_display() -> void:
 				art.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 				art.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				fd_overlay.add_child(art)
-			if is_own_stealth:
+			if is_own_hidden_card:
 				var haze := ColorRect.new()
 				haze.color = Color(0.05, 0.05, 0.2, 0.6)
 				haze.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -138,6 +182,18 @@ func _refresh_display() -> void:
 					spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
 					spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 					name_vbox.add_child(spacer)
+
+				var deck_lbl := Label.new()
+				deck_lbl.text = "Deck: %d" % owning_player.deck_zone.cards.size()
+				deck_lbl.add_theme_font_size_override("font_size", 10)
+				deck_lbl.add_theme_color_override("font_color", Color(0.9, 0.95, 1.0))
+				deck_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+				deck_lbl.vertical_alignment = VERTICAL_ALIGNMENT_TOP
+				deck_lbl.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
+				deck_lbl.offset_left = 6
+				deck_lbl.offset_top = 4
+				deck_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+				overlay.add_child(deck_lbl)
 			return
 
 		var is_def_creature := card.card_type == Card.CardType.CREATURE and card.creature_mode == Card.CreatureMode.DEFENSE
@@ -165,7 +221,7 @@ func _refresh_display() -> void:
 
 		# Art background; stealth shows hazed art (own) or cardback (opponent)
 		if card.is_stealth:
-			var is_own := card.card_owner == game_manager.current_player
+			var is_own := card.get_controller() == game_manager.current_player
 			var tex_path := card.art_path if is_own and card.art_path != "" else "res://images/cardbackAI.png"
 			var tex: Texture2D = load(tex_path)
 			if tex:
@@ -193,6 +249,8 @@ func _refresh_display() -> void:
 				art.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				overlay.add_child(art)
 
+		_add_sleep_affordance(overlay, card)
+
 		# VBox fills the zone; spacer pushes the stat label to the bottom
 		var vbox := VBoxContainer.new()
 		vbox.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -204,7 +262,7 @@ func _refresh_display() -> void:
 		spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		vbox.add_child(spacer)
 
-		var is_own_stealth_faceup := card.is_stealth and card.card_owner == game_manager.current_player
+		var is_own_stealth_faceup := card.is_stealth and card.get_controller() == game_manager.current_player
 		if card.card_type == Card.CardType.CREATURE and not card.is_god and (not card.is_stealth or is_own_stealth_faceup):
 			var eff_str := card.get_effective_strength()
 			var eff_res := card.get_effective_resilience()
@@ -248,10 +306,17 @@ func _refresh_display() -> void:
 			res_lbl.text = "RES:%d" % eff_res_s
 			res_lbl.add_theme_font_size_override("font_size", 13)
 			res_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			var breakdown := card.get_buff_tooltip("res")
 			if eff_res_s < card.resilience:
 				res_lbl.modulate = Color(1.0, 0.35, 0.35)
+				if breakdown != "":
+					res_lbl.tooltip_text = "RES:\n" + breakdown
+					res_lbl.mouse_filter = Control.MOUSE_FILTER_STOP
 			elif eff_res_s > card.resilience:
 				res_lbl.modulate = Color(0.4, 1.0, 0.4)
+				if breakdown != "":
+					res_lbl.tooltip_text = "RES:\n" + breakdown
+					res_lbl.mouse_filter = Control.MOUSE_FILTER_STOP
 			vbox.add_child(res_lbl)
 
 		_defense_overlay = overlay if is_def_creature else null
@@ -289,7 +354,7 @@ func _is_draggable_creature() -> bool:
 		return false
 	if card.is_god:
 		return false
-	if card.card_owner != game_manager.current_player:
+	if card.get_controller() != game_manager.current_player:
 		return false
 	if card.has_moved_this_turn and card.has_acted_this_turn:
 		return false
@@ -309,10 +374,10 @@ func _gui_input(event: InputEvent) -> void:
 	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_RIGHT and event.pressed:
 		if zone.cards.size() > 0:
 			var card := zone.cards[0]
-			if card.card_type == Card.CardType.CREATURE and card.card_owner == game_manager.current_player:
+			if card.card_type == Card.CardType.CREATURE and card.get_controller() == game_manager.current_player:
 				creature_right_clicked.emit(card)
 			# Pin the info popup on right-click for any visible card
-			if not card.is_face_down or card.card_owner == game_manager.current_player:
+			if not card.is_face_down or card.get_controller() == game_manager.current_player:
 				_pinned = true
 				_hide_ability_popup()
 				_show_ability_popup()
@@ -320,6 +385,11 @@ func _gui_input(event: InputEvent) -> void:
 
 func _notification(what: int) -> void:
 	match what:
+		NOTIFICATION_EXIT_TREE:
+			_pinned = false
+			_hovered = false
+			_hide_pending = false
+			_hide_ability_popup()
 		NOTIFICATION_SORT_CHILDREN:
 			# Fires after PanelContainer has sized its children. Re-apply defense
 			# rotation here so the pivot uses the overlay's actual post-layout size.
@@ -331,7 +401,7 @@ func _notification(what: int) -> void:
 			_hovered = true
 			z_index = 10
 			var _c := zone.cards[0] if zone != null and zone.cards.size() > 0 else null
-			if _c != null and (not _c.is_face_down or _c.card_owner == game_manager.current_player):
+			if _c != null and (not _c.is_face_down or _c.get_controller() == game_manager.current_player):
 				var _delay := 1.0 if (_c.is_god) else 1.5
 				get_tree().create_timer(_delay).timeout.connect(
 					func() -> void: _try_show_popup()
@@ -404,6 +474,10 @@ func _show_ability_popup() -> void:
 	popup.add_theme_stylebox_override("panel", pstyle)
 	popup.mouse_filter = Control.MOUSE_FILTER_STOP
 	popup.z_index = 200
+	popup.mouse_exited.connect(func() -> void:
+		if not _pinned:
+			_schedule_hide()
+	)
 
 	var vbox := VBoxContainer.new()
 	vbox.custom_minimum_size = Vector2(210, 0)
@@ -411,7 +485,7 @@ func _show_ability_popup() -> void:
 	popup.add_child(vbox)
 
 	# Hidden = opponent's stealth card; own stealth cards show full info
-	var hidden := card.is_stealth and card.card_owner != game_manager.current_player
+	var hidden := card.is_stealth and card.get_controller() != game_manager.current_player
 
 	# Name
 	var name_lbl := Label.new()
@@ -440,8 +514,15 @@ func _show_ability_popup() -> void:
 		vbox.add_child(level_lbl)
 
 	if card.card_type == Card.CardType.CREATURE and not card.is_god:
-		# Mode
 		if not hidden:
+			if card.is_sleeping:
+				var sleep_lbl := Label.new()
+				sleep_lbl.text = "Sleeping"
+				sleep_lbl.add_theme_font_size_override("font_size", 11)
+				sleep_lbl.modulate = Color(0.7, 0.86, 1.0)
+				sleep_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+				vbox.add_child(sleep_lbl)
+
 			var mode_lbl := Label.new()
 			mode_lbl.text = "DEF" if card.creature_mode == Card.CreatureMode.DEFENSE else "ATK"
 			mode_lbl.add_theme_font_size_override("font_size", 11)
@@ -463,14 +544,12 @@ func _show_ability_popup() -> void:
 			var tooltip_lines: Array[String] = []
 			for s_info in [["STR", eff_str, card.strength, "str"], ["RES", eff_res, card.resilience, "res"], ["SPD", eff_spd, card.speed, "spd"]]:
 				var lbl_text: String = s_info[0] + ":" + str(s_info[1])
-				if s_info[1] > s_info[2]:
-					stat_parts.append("[color=#66ff66]" + lbl_text + "[/color]")
+				if s_info[1] != s_info[2]:
 					var breakdown := card.get_buff_tooltip(s_info[3])
-					if breakdown != "":
-						tooltip_lines.append(s_info[0] + ":\n" + breakdown)
-				elif s_info[1] < s_info[2]:
-					stat_parts.append("[color=#ff5555]" + lbl_text + "[/color]")
-					var breakdown := card.get_buff_tooltip(s_info[3])
+					if s_info[1] > s_info[2]:
+						stat_parts.append("[color=#66ff66]" + lbl_text + "[/color]")
+					else:
+						stat_parts.append("[color=#ff5555]" + lbl_text + "[/color]")
 					if breakdown != "":
 						tooltip_lines.append(s_info[0] + ":\n" + breakdown)
 				else:
@@ -480,6 +559,16 @@ func _show_ability_popup() -> void:
 				stats_rtl.tooltip_text = "\n\n".join(tooltip_lines)
 				stats_rtl.mouse_filter = Control.MOUSE_FILTER_STOP
 			vbox.add_child(stats_rtl)
+
+			var effect_lines := card.get_effect_summary_lines()
+			if effect_lines.size() > 0:
+				var effects_lbl := Label.new()
+				effects_lbl.text = "\n".join(effect_lines)
+				effects_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+				effects_lbl.add_theme_font_size_override("font_size", 10)
+				effects_lbl.add_theme_color_override("font_color", Color(0.78, 0.9, 1.0))
+				effects_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+				vbox.add_child(effects_lbl)
 
 		# Acted / moved
 		if card.has_acted_this_turn:
@@ -503,14 +592,17 @@ func _show_ability_popup() -> void:
 		res_lbl.text = "RES:%d" % eff_res_s
 		res_lbl.add_theme_font_size_override("font_size", 11)
 		res_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var breakdown := card.get_buff_tooltip("res")
 		if eff_res_s < card.resilience:
 			res_lbl.modulate = Color(1.0, 0.35, 0.35)
-			var breakdown := card.get_buff_tooltip("res")
 			if breakdown != "":
 				res_lbl.tooltip_text = "RES:\n" + breakdown
 				res_lbl.mouse_filter = Control.MOUSE_FILTER_STOP
 		elif eff_res_s > card.resilience:
 			res_lbl.modulate = Color(0.4, 1.0, 0.4)
+			if breakdown != "":
+				res_lbl.tooltip_text = "RES:\n" + breakdown
+				res_lbl.mouse_filter = Control.MOUSE_FILTER_STOP
 		vbox.add_child(res_lbl)
 
 	# Ability text
@@ -563,6 +655,13 @@ func can_accept_card(card: Card) -> bool:
 			return false
 		var target := zone.cards[0]
 		if target.card_type != Card.CardType.CREATURE and target.card_type != Card.CardType.STRUCTURE and target.card_type != Card.CardType.EQUIPMENT:
+			return false
+		return game_manager.can_play_card(game_manager.current_player, card, null)
+	if card is Absence:
+		if zone.cards.size() == 0:
+			return false
+		var target := zone.cards[0]
+		if target is not PowerCard:
 			return false
 		return game_manager.can_play_card(game_manager.current_player, card, null)
 	if _is_enemy:

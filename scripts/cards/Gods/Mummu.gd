@@ -30,8 +30,11 @@ func can_activate(game_manager: GameManager) -> bool:
 				return true
 	return false
 
+func is_valid_activation_target(target: Card) -> bool:
+	return target != null and not target.is_face_down and target.get_controller() == card_owner
+
 func activate(game_manager: GameManager, target: Card) -> void:
-	if target == null or target.is_face_down or target.card_owner != card_owner:
+	if not is_valid_activation_target(target):
 		print("Entropic Force: invalid target!")
 		return
 	var mana_gained: int = max(0, target.level - 1)

@@ -131,16 +131,17 @@ func game_over() -> void:
 
 func move_card(card: Card, to_zone: Zone) -> void:
 	var from_zone = card.current_zone
+	var destination_zone := _resolve_destination_zone(card, from_zone, to_zone)
 	
 	if card.card_type == Card.CardType.CREATURE and from_zone and from_zone.is_board_zone():
-		if card.equipment.size() > 0 and to_zone and not to_zone.is_board_zone():
+		if card.equipment.size() > 0 and destination_zone and not destination_zone.is_board_zone():
 			for equip in card.equipment.duplicate():
 				equip.unequip()
 	
 	if from_zone:
 		from_zone.remove_card(card)
-	to_zone.add_card(card)
-	card_moved.emit(card, from_zone, to_zone)
+	destination_zone.add_card(card)
+	card_moved.emit(card, from_zone, destination_zone)
 
 func draw_card() -> Card:
 	if deck_zone.get_card_count() > 0:
@@ -160,6 +161,32 @@ func shelve_card(card: Card) -> void:
 		hand_zone.remove_card(card)
 		deck_zone.cards.append(card)
 		card.current_zone = deck_zone
+
+func _resolve_destination_zone(card: Card, from_zone: Zone, to_zone: Zone) -> Zone:
+	if card == null or to_zone == null:
+		return to_zone
+	if card.card_type != Card.CardType.CREATURE:
+		return to_zone
+	if from_zone == null or not from_zone.is_board_zone():
+		return to_zone
+	if to_zone.is_board_zone():
+		return to_zone
+	if not card.is_enslaved():
+		return to_zone
+	var owner := card.card_owner
+	if owner == null:
+		return to_zone
+	match to_zone.zone_type:
+		Zone.ZoneType.HAND:
+			return owner.hand_zone
+		Zone.ZoneType.DECK:
+			return owner.deck_zone
+		Zone.ZoneType.GRAVEYARD:
+			return owner.graveyard_zone
+		Zone.ZoneType.ABYSS:
+			return owner.abyss_zone
+		_:
+			return to_zone
 
 func sacrifice_followers(amount: int) -> bool:
 	if followers >= amount:
