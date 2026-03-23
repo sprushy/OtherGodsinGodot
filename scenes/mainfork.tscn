@@ -5,6 +5,7 @@
 [ext_resource type="PackedScene" uid="uid://clg2cgm1pgncs" path="res://scenes/card_slot.tscn" id="1_olwsv"]
 [ext_resource type="PackedScene" uid="uid://bqnce5iuwrog2" path="res://scenes/deck.tscn" id="2_hu83v"]
 [ext_resource type="Script" uid="uid://bevg5y6uq335i" path="res://scripts/Other/CombatMockGame.gd" id="2_jvnui"]
+[ext_resource type="Script" uid="uid://djmg62uqlhyam" path="res://scripts/Other/CardTestGame.gd" id="3_cardtest"]
 [ext_resource type="PackedScene" uid="uid://bwkpffulj58xv" path="res://scenes/player.tscn" id="4_hu83v"]
 [ext_resource type="Script" uid="uid://ckxvs20vacmiu" path="res://scripts/Other/Zone.gd" id="5_jvnui"]
 
@@ -32,6 +33,10 @@ text = "Deck Builder"
 layout_mode = 2
 text = "Mock Game"
 
+[node name="CardTestButton" type="Button" parent="Control/MenuContainer" unique_id=-1294967295]
+layout_mode = 2
+text = "Card Test"
+
 [node name="GameContainer" type="Control" parent="Control" unique_id=1297052031]
 layout_mode = 1
 anchors_preset = 15
@@ -49,7 +54,7 @@ grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("2_jvnui")
 
-[node name="VBoxContainer" type="VBoxContainer" parent="Control/GameContainer/MockGame" unique_id=306818408]
+[node name="MainHBox" type="HBoxContainer" parent="Control/GameContainer/MockGame" unique_id=306818408]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -57,74 +62,181 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 
-[node name="TurnLabel" type="Label" parent="Control/GameContainer/MockGame/VBoxContainer" unique_id=915604517]
+[node name="LeftPanel" type="VBoxContainer" parent="Control/GameContainer/MockGame/MainHBox" unique_id=323739006]
+custom_minimum_size = Vector2(180, 0)
 layout_mode = 2
 
-[node name="StatsContainer" type="HBoxContainer" parent="Control/GameContainer/MockGame/VBoxContainer" unique_id=323739006]
+[node name="ActionLabel" type="Label" parent="Control/GameContainer/MockGame/MainHBox/LeftPanel" unique_id=1244399908]
+layout_mode = 2
+autowrap_mode = 3
+
+[node name="ChoiceContainer" type="VBoxContainer" parent="Control/GameContainer/MockGame/MainHBox/LeftPanel" unique_id=1118823496]
 layout_mode = 2
 
-[node name="ManaLabel" type="Label" parent="Control/GameContainer/MockGame/VBoxContainer/StatsContainer" unique_id=1107902538]
+[node name="DrawButton" type="Button" parent="Control/GameContainer/MockGame/MainHBox/LeftPanel/ChoiceContainer" unique_id=1499906774]
 layout_mode = 2
+text = "Draw Card (+1 mana)"
 
-[node name="FollowersLabel" type="Label" parent="Control/GameContainer/MockGame/VBoxContainer/StatsContainer" unique_id=772394468]
-layout_mode = 2
-
-[node name="EnemyFollowersLabel" type="Label" parent="Control/GameContainer/MockGame/VBoxContainer/StatsContainer" unique_id=1273943628]
-layout_mode = 2
-
-[node name="EndTurnButton" type="Button" parent="Control/GameContainer/MockGame/VBoxContainer" unique_id=1323380484]
-layout_mode = 2
-text = "End Turn"
-
-[node name="ChoiceContainer" type="HBoxContainer" parent="Control/GameContainer/MockGame/VBoxContainer" unique_id=1118823496]
-layout_mode = 2
-
-[node name="DrawButton" type="Button" parent="Control/GameContainer/MockGame/VBoxContainer/ChoiceContainer" unique_id=1499906774]
-layout_mode = 2
-text = "Draw Card and gain 1 mana"
-
-[node name="ManaButton" type="Button" parent="Control/GameContainer/MockGame/VBoxContainer/ChoiceContainer" unique_id=607444317]
+[node name="ManaButton" type="Button" parent="Control/GameContainer/MockGame/MainHBox/LeftPanel/ChoiceContainer" unique_id=607444317]
 layout_mode = 2
 text = "Gain 5 Mana"
 
-[node name="PlacementContainer" type="HBoxContainer" parent="Control/GameContainer/MockGame/VBoxContainer" unique_id=1080566400]
+[node name="PlacementContainer" type="VBoxContainer" parent="Control/GameContainer/MockGame/MainHBox/LeftPanel" unique_id=1080566400]
 layout_mode = 2
 
-[node name="AttackModeBtn" type="Button" parent="Control/GameContainer/MockGame/VBoxContainer/PlacementContainer" unique_id=705862987]
+[node name="AttackModeBtn" type="Button" parent="Control/GameContainer/MockGame/MainHBox/LeftPanel/PlacementContainer" unique_id=705862987]
 layout_mode = 2
 text = "Attack Mode"
 
-[node name="DefenseModeBtn" type="Button" parent="Control/GameContainer/MockGame/VBoxContainer/PlacementContainer" unique_id=928421330]
+[node name="DefenseModeBtn" type="Button" parent="Control/GameContainer/MockGame/MainHBox/LeftPanel/PlacementContainer" unique_id=928421330]
 layout_mode = 2
 text = "Defense Mode"
 
-[node name="StealthModeBtn" type="Button" parent="Control/GameContainer/MockGame/VBoxContainer/PlacementContainer" unique_id=1524962667]
+[node name="StealthModeBtn" type="Button" parent="Control/GameContainer/MockGame/MainHBox/LeftPanel/PlacementContainer" unique_id=1524962667]
 layout_mode = 2
 text = "Stealth Mode"
 
-[node name="ToggleModeButton" type="Button" parent="Control/GameContainer/MockGame/VBoxContainer/PlacementContainer" unique_id=1621889845]
+[node name="ToggleModeButton" type="Button" parent="Control/GameContainer/MockGame/MainHBox/LeftPanel/PlacementContainer" unique_id=1621889845]
 layout_mode = 2
 text = "Toggle ATK/DEF"
 
-[node name="ActionLabel" type="Label" parent="Control/GameContainer/MockGame/VBoxContainer" unique_id=1244399908]
+[node name="CenterPanel" type="VBoxContainer" parent="Control/GameContainer/MockGame/MainHBox" unique_id=1088778014]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="TopSpacer" type="Control" parent="Control/GameContainer/MockGame/MainHBox/CenterPanel" unique_id=1940853136]
+custom_minimum_size = Vector2(0, 2)
 layout_mode = 2
 
-[node name="HandContainer" type="VBoxContainer" parent="Control/GameContainer/MockGame/VBoxContainer" unique_id=821462615]
-layout_mode = 2
-size_flags_vertical = 3
-
-[node name="EnemyBoardContainer" type="VBoxContainer" parent="Control/GameContainer/MockGame/VBoxContainer" unique_id=337383253]
-layout_mode = 2
-size_flags_vertical = 3
-
-[node name="EnemyReserveContainer" type="VBoxContainer" parent="Control/GameContainer/MockGame/VBoxContainer" unique_id=1594921776]
-layout_mode = 2
-
-[node name="BoardContainer" type="VBoxContainer" parent="Control/GameContainer/MockGame/VBoxContainer" unique_id=1088778014]
+[node name="EnemyBoardContainer" type="VBoxContainer" parent="Control/GameContainer/MockGame/MainHBox/CenterPanel" unique_id=337383253]
 layout_mode = 2
 size_flags_vertical = 3
 
-[node name="ReserveContainer" type="VBoxContainer" parent="Control/GameContainer/MockGame/VBoxContainer" unique_id=1749190554]
+[node name="BoardSeparator" type="Panel" parent="Control/GameContainer/MockGame/MainHBox/CenterPanel" unique_id=1940853135]
+custom_minimum_size = Vector2(0, 6)
+layout_mode = 2
+
+[node name="BoardContainer" type="VBoxContainer" parent="Control/GameContainer/MockGame/MainHBox/CenterPanel" unique_id=821462615]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="HandContainer" type="VBoxContainer" parent="Control/GameContainer/MockGame/MainHBox/CenterPanel" unique_id=1749190554]
+layout_mode = 2
+
+[node name="RightPanel" type="VBoxContainer" parent="Control/GameContainer/MockGame/MainHBox" unique_id=915604517]
+custom_minimum_size = Vector2(180, 0)
+layout_mode = 2
+
+[node name="TurnLabel" type="Label" parent="Control/GameContainer/MockGame/MainHBox/RightPanel" unique_id=1594921776]
+layout_mode = 2
+autowrap_mode = 3
+
+[node name="EndTurnButton" type="Button" parent="Control/GameContainer/MockGame/MainHBox/RightPanel" unique_id=1297052032]
+layout_mode = 2
+text = "End Turn"
+
+[node name="AllAttackBtn" type="Button" parent="Control/GameContainer/MockGame/MainHBox/RightPanel" unique_id=1297052033]
+layout_mode = 2
+text = "All Attack Followers"
+
+[node name="StatsContainer" type="VBoxContainer" parent="Control/GameContainer/MockGame/MainHBox/RightPanel" unique_id=1323380484]
+layout_mode = 2
+
+[node name="CardTest" type="Control" parent="Control/GameContainer" unique_id=-1294967294]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("3_cardtest")
+
+[node name="MainHBox" type="HBoxContainer" parent="Control/GameContainer/CardTest" unique_id=-1294967293]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="LeftPanel" type="VBoxContainer" parent="Control/GameContainer/CardTest/MainHBox" unique_id=-1294967292]
+custom_minimum_size = Vector2(180, 0)
+layout_mode = 2
+
+[node name="ActionLabel" type="Label" parent="Control/GameContainer/CardTest/MainHBox/LeftPanel" unique_id=-1294967291]
+layout_mode = 2
+autowrap_mode = 3
+
+[node name="ChoiceContainer" type="VBoxContainer" parent="Control/GameContainer/CardTest/MainHBox/LeftPanel" unique_id=-1294967290]
+layout_mode = 2
+
+[node name="DrawButton" type="Button" parent="Control/GameContainer/CardTest/MainHBox/LeftPanel/ChoiceContainer" unique_id=-1294967289]
+layout_mode = 2
+text = "Draw Card (+1 mana)"
+
+[node name="ManaButton" type="Button" parent="Control/GameContainer/CardTest/MainHBox/LeftPanel/ChoiceContainer" unique_id=-1294967288]
+layout_mode = 2
+text = "Gain 5 Mana"
+
+[node name="PlacementContainer" type="VBoxContainer" parent="Control/GameContainer/CardTest/MainHBox/LeftPanel" unique_id=-1294967287]
+layout_mode = 2
+
+[node name="AttackModeBtn" type="Button" parent="Control/GameContainer/CardTest/MainHBox/LeftPanel/PlacementContainer" unique_id=-1294967286]
+layout_mode = 2
+text = "Attack Mode"
+
+[node name="DefenseModeBtn" type="Button" parent="Control/GameContainer/CardTest/MainHBox/LeftPanel/PlacementContainer" unique_id=-1294967285]
+layout_mode = 2
+text = "Defense Mode"
+
+[node name="StealthModeBtn" type="Button" parent="Control/GameContainer/CardTest/MainHBox/LeftPanel/PlacementContainer" unique_id=-1294967284]
+layout_mode = 2
+text = "Stealth Mode"
+
+[node name="ToggleModeButton" type="Button" parent="Control/GameContainer/CardTest/MainHBox/LeftPanel/PlacementContainer" unique_id=-1294967283]
+layout_mode = 2
+text = "Toggle ATK/DEF"
+
+[node name="CenterPanel" type="VBoxContainer" parent="Control/GameContainer/CardTest/MainHBox" unique_id=-1294967282]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="TopSpacer" type="Control" parent="Control/GameContainer/CardTest/MainHBox/CenterPanel" unique_id=-1294967281]
+custom_minimum_size = Vector2(0, 2)
+layout_mode = 2
+
+[node name="EnemyBoardContainer" type="VBoxContainer" parent="Control/GameContainer/CardTest/MainHBox/CenterPanel" unique_id=-1294967280]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="BoardSeparator" type="Panel" parent="Control/GameContainer/CardTest/MainHBox/CenterPanel" unique_id=-1294967279]
+custom_minimum_size = Vector2(0, 6)
+layout_mode = 2
+
+[node name="BoardContainer" type="VBoxContainer" parent="Control/GameContainer/CardTest/MainHBox/CenterPanel" unique_id=-1294967278]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="HandContainer" type="VBoxContainer" parent="Control/GameContainer/CardTest/MainHBox/CenterPanel" unique_id=-1294967277]
+layout_mode = 2
+
+[node name="RightPanel" type="VBoxContainer" parent="Control/GameContainer/CardTest/MainHBox" unique_id=-1294967276]
+custom_minimum_size = Vector2(180, 0)
+layout_mode = 2
+
+[node name="TurnLabel" type="Label" parent="Control/GameContainer/CardTest/MainHBox/RightPanel" unique_id=-1294967275]
+layout_mode = 2
+autowrap_mode = 3
+
+[node name="EndTurnButton" type="Button" parent="Control/GameContainer/CardTest/MainHBox/RightPanel" unique_id=-1294967274]
+layout_mode = 2
+text = "End Turn"
+
+[node name="AllAttackBtn" type="Button" parent="Control/GameContainer/CardTest/MainHBox/RightPanel" unique_id=-1294967273]
+layout_mode = 2
+text = "All Attack Followers"
+
+[node name="StatsContainer" type="VBoxContainer" parent="Control/GameContainer/CardTest/MainHBox/RightPanel" unique_id=-1294967272]
 layout_mode = 2
 
 [node name="GameManager" type="Node2D" parent="." unique_id=1459975089]
@@ -168,8 +280,3 @@ script = ExtResource("5_jvnui")
 position = Vector2(1060, 525)
 
 [node name="Player" parent="_QuarantinedAssets" unique_id=1805954181 instance=ExtResource("4_hu83v")]
-
-[connection signal="pressed" from="Control/GameContainer/MockGame/VBoxContainer/PlacementContainer/AttackModeBtn" to="Control" method="_on_attack_mode_btn_pressed"]
-[connection signal="pressed" from="Control/GameContainer/MockGame/VBoxContainer/PlacementContainer/DefenseModeBtn" to="Control" method="_on_defense_mode_btn_pressed"]
-[connection signal="pressed" from="Control/GameContainer/MockGame/VBoxContainer/PlacementContainer/StealthModeBtn" to="Control" method="_on_stealth_mode_btn_pressed"]
-[connection signal="pressed" from="Control/GameContainer/MockGame/VBoxContainer/PlacementContainer/ToggleModeButton" to="Control" method="_on_toggle_mode_button_pressed"]

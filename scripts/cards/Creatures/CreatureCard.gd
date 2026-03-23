@@ -41,3 +41,11 @@ func on_turn_start(game_manager: GameManager) -> void:
 func on_turn_end(game_manager: GameManager) -> void:
 	# Called at the end of the owner's turn
 	pass
+
+func on_kill(game_manager: GameManager, victim: Card) -> void:
+	# Called when this creature destroys another in combat
+	pass
+
+func on_ally_kill(game_manager: GameManager, killer: Card, victim: Card) -> void:
+	# Called on every friendly board creature when any ally destroys an enemy in combat
+	pass

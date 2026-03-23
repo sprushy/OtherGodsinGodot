@@ -12,6 +12,8 @@ func _init() -> void:
 	card_name = "Warding Stone"
 	card_type = Card.CardType.STRUCTURE
 	card_types = ["Runic", "Monument"]
+	art_path = "res://images/card_art/warding stone ai edit.png"
+	exhausted_art_path = "res://images/card_art/wardstone.jpeg"
 	level = 2
 	mana_cost = 0
 	is_legendary = false
@@ -32,7 +34,7 @@ func on_summon(game_manager: GameManager) -> void:
 	var restricted_player: Player = _get_restricted_player(game_manager)
 
 	# Apply the restriction for 2 full turns
-	game_manager.apply_attack_restriction(restricted_player, 3)
+	game_manager.apply_attack_restriction(restricted_player, 3, self)
 	print("Warding Stone summoned by " + card_owner.player_name + "! " + restricted_player.player_name + "'s attacks restricted for 2 turns.")
 
 # Ability: Triggers when the structure is removed from the board (called by _send_to_graveyard_with_hook)
@@ -42,4 +44,5 @@ func on_removed(game_manager: GameManager) -> void:
 	
 	# Immediately clear the restriction counter for that player.
 	game_manager.remove_attack_restriction(restricted_player)
+	switch_to_exhausted_art()
 	print("Warding Stone removed! " + restricted_player.player_name + "'s attack restriction lifted.")

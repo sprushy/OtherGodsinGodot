@@ -2,7 +2,7 @@
 extends Resource
 class_name Card
 
-enum CardType { CREATURE, SPELL, AURA, EQUIPMENT, STRUCTURE, HEX }
+enum CardType { CREATURE, SPELL, AURA, EQUIPMENT, STRUCTURE, HEX, POWER }
 enum CreatureMode { ATTACK, DEFENSE }
 
 @export var card_name: String
@@ -19,7 +19,20 @@ enum CreatureMode { ATTACK, DEFENSE }
 # Lore and background
 @export_multiline var flavor_text: String = ""
 @export_multiline var ability_text: String = ""
+@export var targets: bool = false  # True if this card's effect targets a specific card
 @export var culture: String = ""  # e.g., "Sumerian", "Norse", "Egyptian"
+@export var art_path: String = ""  # e.g., "res://images/card_art/VoidShield.jpg"
+@export var artist: String = ""
+@export var paragon_of_champions: String = ""  # Name of the champion type this god is patron of; empty if not a paragon
+@export var name_at_bottom: bool = false  # If true, card name is rendered at the bottom instead of the top
+@export var exhausted_art_path: String = ""  # Art to switch to when the card's effect is exhausted
+
+signal art_updated(new_path: String)
+
+func switch_to_exhausted_art() -> void:
+	if exhausted_art_path != "":
+		art_path = exhausted_art_path
+		art_updated.emit(art_path)
 
 # Costs
 @export var mana_cost: int = 0
@@ -43,12 +56,22 @@ enum CreatureMode { ATTACK, DEFENSE }
 var card_owner: Player
 var current_zone: Zone
 var is_prepared: bool = false
+# Tracks the last board position so Circle of Rebirth can auto-resurrect.
+var last_board_zone_type: int = -1   # Zone.ZoneType value; -1 = never placed
+var last_board_zone_index: int = 3   # default centre column
 var is_face_down: bool = false
 var is_stealth: bool = false
 var has_acted_this_turn: bool = false
+var has_moved_this_turn: bool = false
+var is_sleeping: bool = false
+var sleeping_from: Card = null
 var equipped_on: Card = null
 var equipment: Array[Card] = []
 var summoned_this_turn: bool = false
+var is_used: bool = false          # for single-use activatable abilities on powers
+
+# Runtime stat buffs: Array of {source: String, str: int, res: int, spd: int}
+var active_buffs: Array[Dictionary] = []
 
 func get_effective_speed() -> int:
 	var base_speed = speed
@@ -56,25 +79,46 @@ func get_effective_speed() -> int:
 		base_speed -= 1
 	for equip in equipment:
 		base_speed += equip.speed_modifier
+	for buff in active_buffs:
+		base_speed += buff.get("spd", 0)
 	return max(1, base_speed)
 
 func get_effective_strength() -> int:
 	var total = strength
 	for equip in equipment:
 		total += equip.strength_modifier
+	for buff in active_buffs:
+		total += buff.get("str", 0)
 	return total
 
 func get_effective_resilience() -> int:
 	var total = resilience
 	for equip in equipment:
 		total += equip.resilience_modifier
+	for buff in active_buffs:
+		total += buff.get("res", 0)
 	return total
+
+# Returns a human-readable breakdown of all active buffs for a stat ("str", "res", "spd")
+func get_buff_tooltip(stat: String) -> String:
+	var lines: Array[String] = []
+	for buff in active_buffs:
+		var v: int = buff.get(stat, 0)
+		if v != 0:
+			lines.append(("+%d" % v if v > 0 else "%d" % v) + " from " + buff.get("source", "?"))
+	return "\n".join(lines)
+
+func clear_buffs_from(source: String) -> void:
+	active_buffs = active_buffs.filter(func(b): return b.get("source", "") != source)
+
+func add_buff(source: String, str_bonus: int, res_bonus: int, spd_bonus: int) -> void:
+	active_buffs.append({"source": source, "str": str_bonus, "res": res_bonus, "spd": spd_bonus})
 
 func can_respond_to(other_card: Card) -> bool:
 	return get_effective_speed() >= 2 and get_effective_speed() >= other_card.get_effective_speed()
 
 func is_permanent() -> bool:
-	return card_type in [CardType.CREATURE, CardType.AURA, CardType.EQUIPMENT, CardType.STRUCTURE]
+	return card_type in [CardType.CREATURE, CardType.AURA, CardType.EQUIPMENT, CardType.STRUCTURE, CardType.POWER]
 
 func goes_to_graveyard_after_use() -> bool:
 	return card_type in [CardType.SPELL, CardType.HEX]

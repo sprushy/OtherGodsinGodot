@@ -6,9 +6,12 @@ func _init() -> void:
 	card_name = "Void Shield"
 	speed = 3
 	mana_cost = 0
-	ability_text = "When an opponent's creature attacks one of your creatures, void the attacker. Only activates against creatures of equal or lower speed."
+	ability_text = "When an opponent's creature attacks one of yours, [b]Void[/b] it."
 	flavor_text = "What reaches for the living may be swallowed by the void."
 	culture = "Ancient"
+	art_path = "res://images/card_art/VoidShield.jpg"
+	artist = "Ricarrdo Zoppello"
+	targets = true
 
 # Activates when an enemy creature attacks one of the hex owner's creatures,
 # and the attacker's speed is no greater than this card's speed (3).

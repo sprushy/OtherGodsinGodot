@@ -1,6 +1,6 @@
 # Godot editor/cache files
 .godot/
-*.uid
+*.tmp
 
-# Claude Code local settings
-.claude/settings.local.json
+# Claude Code
+.claude/

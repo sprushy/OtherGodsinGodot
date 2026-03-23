@@ -8,13 +8,19 @@ func _ready() -> void:
 	_fit_to_viewport()
 	get_viewport().size_changed.connect(_fit_to_viewport)
 
+	get_node("GameContainer/MockGame").visible = false
+	get_node("GameContainer/CardTest").visible = false
+
 	var mock_btn = $MenuContainer/MockGameButton
 	var deck_btn = $MenuContainer/DeckBuilderButton
+	var card_test_btn = $MenuContainer/CardTestButton
 
 	if mock_btn:
 		mock_btn.pressed.connect(_on_mock_game_pressed)
 	if deck_btn:
 		deck_btn.pressed.connect(_on_deck_builder_pressed)
+	if card_test_btn:
+		card_test_btn.pressed.connect(_on_card_test_pressed)
 
 	show_menu()
 
@@ -31,17 +37,43 @@ func show_game() -> void:
 	game_container.visible = true
 
 func _on_deck_builder_pressed() -> void:
-	print("Deck Builder - Not yet implemented")
+	# Clean up any previous deck builder instance
+	var existing := game_container.get_node_or_null("DeckBuilder")
+	if existing:
+		existing.queue_free()
+
+	var db := DeckBuilderUI.new()
+	db.name = "DeckBuilder"
+	db.back_pressed.connect(func() -> void:
+		db.queue_free()
+		show_menu()
+	)
+	get_node("GameContainer/MockGame").visible = false
+	get_node("GameContainer/CardTest").visible = false
+	game_container.add_child(db)
+	show_game()
 
 func _on_mock_game_pressed() -> void:
+	get_node("GameContainer/MockGame").visible = true
+	get_node("GameContainer/CardTest").visible = false
 	show_game()
 	get_node("GameContainer/MockGame").start_game()
 
+func _on_card_test_pressed() -> void:
+	get_node("GameContainer/CardTest").visible = true
+	get_node("GameContainer/MockGame").visible = false
+	show_game()
+	get_node("GameContainer/CardTest").start_game()
+
 func _on_back_to_menu_pressed() -> void:
 	show_menu()
-	var mock_game = get_node("GameContainer/MockGame")
-	if mock_game and mock_game.has_method("cleanup"):
-		mock_game.cleanup()
+	for node_name in ["MockGame", "CardTest"]:
+		var game = get_node_or_null("GameContainer/" + node_name)
+		if game and game.has_method("cleanup"):
+			game.cleanup()
+	var db := game_container.get_node_or_null("DeckBuilder")
+	if db:
+		db.queue_free()
 
 
 func _on_attack_mode_btn_pressed() -> void:

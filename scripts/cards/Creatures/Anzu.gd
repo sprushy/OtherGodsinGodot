@@ -14,3 +14,5 @@ func _init() -> void:
 	strength = 24
 	flavor_text = "The Divine Bird Anzû is master of thunderstorms and the southern wind; he breathes both fire and water."
 	culture = "Ancient"
+	art_path = "res://images/card_art/anzu ai.png"
+	artist = "Lorinda Tomko"

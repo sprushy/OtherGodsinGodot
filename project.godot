@@ -19,13 +19,13 @@ run/main_scene="uid://gpaa31rvtxtn"
 config/features=PackedStringArray("4.6", "Forward Plus")
 config/icon="res://images/icon (2).svg"
 
-[dotnet]
-
-project/assembly_name="ClaudeOtherGods"
-
 [display]
 
 window/size/mode=2
+
+[dotnet]
+
+project/assembly_name="ClaudeOtherGods"
 
 [editor_plugins]
 

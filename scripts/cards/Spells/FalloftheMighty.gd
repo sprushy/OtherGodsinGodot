@@ -5,7 +5,7 @@ class_name FallOfTheMighty
 func _init() -> void:
 	super._init()
 	card_name = "Fall of the Mighty"
-	
+	culture = "Neutral"
 	var types: Array[String] = ["Destruction"]
 	card_types = types
 	
@@ -19,6 +19,8 @@ func _init() -> void:
 	
 	flavor_text = "Destroy the strongest creature(s) on the field."
 	culture = "Neutral"
+	art_path = "res://images/card_art/fall_of_the_mighty.jpg"
+	ability_text = "Destroy all creatures on the field with the highest strength."
 
 func resolve(game_manager: GameManager, target = null) -> void:
 	print("Fall of the Mighty - The strong shall fall!")
@@ -50,7 +52,7 @@ func resolve(game_manager: GameManager, target = null) -> void:
 	for creature in all_creatures:
 		if creature.get_effective_strength() == max_strength:
 			print("Destroying " + creature.card_name + " (STR: " + str(max_strength) + ")")
-			creature.card_owner.move_card(creature, creature.card_owner.graveyard_zone)
+			game_manager._send_to_graveyard_with_hook(creature)
 			destroyed_count += 1
 	
 	print("Fall of the Mighty destroyed " + str(destroyed_count) + " mighty creature(s)!")

@@ -175,15 +175,23 @@ func get_adjacent_zones(zone: Zone) -> Array[Zone]:
 			adjacent.append(frontline_zones[idx - 1])
 		if idx < 6:
 			adjacent.append(frontline_zones[idx + 1])
-		adjacent.append(reserve_zones[idx])
+		# Same column and diagonals in reserve row
+		for di in [-1, 0, 1]:
+			var ri = idx + di
+			if ri >= 0 and ri <= 6:
+				adjacent.append(reserve_zones[ri])
 	elif zone.zone_type == Zone.ZoneType.RESERVE:
 		var idx = zone.zone_index
 		if idx > 0:
 			adjacent.append(reserve_zones[idx - 1])
 		if idx < 6:
 			adjacent.append(reserve_zones[idx + 1])
-		adjacent.append(frontline_zones[idx])
-	
+		# Same column and diagonals in frontline row
+		for di in [-1, 0, 1]:
+			var fi = idx + di
+			if fi >= 0 and fi <= 6:
+				adjacent.append(frontline_zones[fi])
+
 	return adjacent
 
 func reset_creature_actions() -> void:
@@ -192,3 +200,4 @@ func reset_creature_actions() -> void:
 		for card in zone.cards:
 			if card.card_type == Card.CardType.CREATURE:
 				card.has_acted_this_turn = false
+			card.has_moved_this_turn = false
