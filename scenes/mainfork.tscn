@@ -88,13 +88,13 @@ text = "Gain 5 Mana"
 [node name="PlacementContainer" type="VBoxContainer" parent="Control/GameContainer/MockGame/MainHBox/LeftPanel" unique_id=1080566400]
 layout_mode = 2
 
-[node name="AttackModeBtn" type="Button" parent="Control/GameContainer/MockGame/MainHBox/LeftPanel/PlacementContainer" unique_id=705862987]
+[node name="AggressiveStanceBtn" type="Button" parent="Control/GameContainer/MockGame/MainHBox/LeftPanel/PlacementContainer" unique_id=705862987]
 layout_mode = 2
-text = "Attack Mode"
+text = "Aggressive Stance"
 
-[node name="DefenseModeBtn" type="Button" parent="Control/GameContainer/MockGame/MainHBox/LeftPanel/PlacementContainer" unique_id=928421330]
+[node name="DefensiveStanceBtn" type="Button" parent="Control/GameContainer/MockGame/MainHBox/LeftPanel/PlacementContainer" unique_id=928421330]
 layout_mode = 2
-text = "Defense Mode"
+text = "Defensive Stance"
 
 [node name="StealthModeBtn" type="Button" parent="Control/GameContainer/MockGame/MainHBox/LeftPanel/PlacementContainer" unique_id=1524962667]
 layout_mode = 2
@@ -102,7 +102,7 @@ text = "Stealth Mode"
 
 [node name="ToggleModeButton" type="Button" parent="Control/GameContainer/MockGame/MainHBox/LeftPanel/PlacementContainer" unique_id=1621889845]
 layout_mode = 2
-text = "Toggle ATK/DEF"
+text = "Toggle Stance"
 
 [node name="LeftBottomSpacer" type="Control" parent="Control/GameContainer/MockGame/MainHBox/LeftPanel" unique_id=251279590]
 layout_mode = 2
@@ -146,6 +146,10 @@ autowrap_mode = 3
 [node name="EndTurnButton" type="Button" parent="Control/GameContainer/MockGame/MainHBox/RightPanel" unique_id=1297052032]
 layout_mode = 2
 text = "End Turn"
+
+[node name="ForfeitButton" type="Button" parent="Control/GameContainer/MockGame/MainHBox/RightPanel" unique_id=104210337]
+layout_mode = 2
+text = "Forfeit"
 
 [node name="AllAttackBtn" type="Button" parent="Control/GameContainer/MockGame/MainHBox/RightPanel" unique_id=1297052033]
 layout_mode = 2
@@ -201,13 +205,13 @@ text = "Gain 5 Mana"
 [node name="PlacementContainer" type="VBoxContainer" parent="Control/GameContainer/CardTest/MainHBox/LeftPanel" unique_id=-1294967287]
 layout_mode = 2
 
-[node name="AttackModeBtn" type="Button" parent="Control/GameContainer/CardTest/MainHBox/LeftPanel/PlacementContainer" unique_id=-1294967286]
+[node name="AggressiveStanceBtn" type="Button" parent="Control/GameContainer/CardTest/MainHBox/LeftPanel/PlacementContainer" unique_id=-1294967286]
 layout_mode = 2
-text = "Attack Mode"
+text = "Aggressive Stance"
 
-[node name="DefenseModeBtn" type="Button" parent="Control/GameContainer/CardTest/MainHBox/LeftPanel/PlacementContainer" unique_id=-1294967285]
+[node name="DefensiveStanceBtn" type="Button" parent="Control/GameContainer/CardTest/MainHBox/LeftPanel/PlacementContainer" unique_id=-1294967285]
 layout_mode = 2
-text = "Defense Mode"
+text = "Defensive Stance"
 
 [node name="StealthModeBtn" type="Button" parent="Control/GameContainer/CardTest/MainHBox/LeftPanel/PlacementContainer" unique_id=-1294967284]
 layout_mode = 2
@@ -215,7 +219,7 @@ text = "Stealth Mode"
 
 [node name="ToggleModeButton" type="Button" parent="Control/GameContainer/CardTest/MainHBox/LeftPanel/PlacementContainer" unique_id=-1294967283]
 layout_mode = 2
-text = "Toggle ATK/DEF"
+text = "Toggle Stance"
 
 [node name="LeftBottomSpacer" type="Control" parent="Control/GameContainer/CardTest/MainHBox/LeftPanel" unique_id=1727551263]
 layout_mode = 2
@@ -259,6 +263,10 @@ autowrap_mode = 3
 [node name="EndTurnButton" type="Button" parent="Control/GameContainer/CardTest/MainHBox/RightPanel" unique_id=-1294967274]
 layout_mode = 2
 text = "End Turn"
+
+[node name="ForfeitButton" type="Button" parent="Control/GameContainer/CardTest/MainHBox/RightPanel" unique_id=-104210337]
+layout_mode = 2
+text = "Forfeit"
 
 [node name="AllAttackBtn" type="Button" parent="Control/GameContainer/CardTest/MainHBox/RightPanel" unique_id=-1294967273]
 layout_mode = 2

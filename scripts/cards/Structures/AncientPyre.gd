@@ -12,7 +12,7 @@ func _init() -> void:
 	strength = 0
 	sacrifice_cost = 0
 	creature_sacrifice_cost = 0
-	ability_text = "Ritual Flame (Activate, Cost 2): [b]Convert[/b] 5. Frontlined: May reduce a creature's Res by 5 instead; reducing to 0 destroys it."
+	ability_text = "Ritual Flame ([b]Activate[/b], Cost 2): [b]Convert[/b] 5. [b]Frontlined[/b]: You may instead reduce a creature's Res by 5; if it reaches 0, destroy it."
 	culture = "Ancient"
 	art_path = "res://images/card_art/structures/ancient_pyre.jpg"
 

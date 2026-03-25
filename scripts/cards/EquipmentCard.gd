@@ -8,7 +8,7 @@ func _init() -> void:
 func on_equip(_creature: Card) -> void:
 	pass
 
-# Return extra STR when the equipped creature attacks a DEFENSE-mode defender.
+# Return extra STR when the equipped creature attacks a defensive-stance defender.
 # Override in specific equipment cards for conditional bonuses.
 func get_bonus_strength_vs_defense(_attacker: Card) -> int:
 	return 0

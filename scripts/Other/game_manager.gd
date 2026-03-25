@@ -2,12 +2,17 @@
 extends Node
 class_name GameManager
 
+signal game_ended(winner: Player, loser: Player)
+
 enum GamePhase { MULLIGAN, MAIN, COMBAT, END }
 
 var players: Array[Player] = []
 var current_player: Player
 var other_player: Player
 var current_phase: GamePhase = GamePhase.MULLIGAN
+var is_game_over: bool = false
+var winning_player: Player = null
+var losing_player: Player = null
 var turn_number: int = 0
 var action_stack: Array[CardAction] = []
 var prepared_hexes: Dictionary = {}
@@ -17,6 +22,7 @@ var died_this_turn: Array[Card] = []
 var pending_resurrections: Array[Card] = []
 var combat_destroy_events_this_turn: Array[Dictionary] = []
 var last_hex_resolution_text: String = ""
+var last_player_feedback_text: String = ""
 var _upkeep_resolved_turn: int = -1
 
 # Priority system
@@ -24,17 +30,32 @@ var priority_player: Player = null
 var consecutive_passes: int = 0
 
 func push_to_stack(action: CardAction) -> void:
+	if is_game_over:
+		return
 	action_stack.push_back(action)
 	consecutive_passes = 0
 	priority_player = get_opponent(action.source_player)
 
 func pass_priority() -> void:
+	if is_game_over:
+		return
 	consecutive_passes += 1
 	if consecutive_passes < 2:
 		priority_player = get_opponent(priority_player)
 
 func both_passed() -> bool:
 	return consecutive_passes >= 2
+
+func note_player_feedback(text: String) -> void:
+	if text.strip_edges() == "":
+		return
+	last_player_feedback_text = text
+	print(text)
+
+func consume_player_feedback() -> String:
+	var text := last_player_feedback_text
+	last_player_feedback_text = ""
+	return text
 
 # Returns eligible speed-2+ responses the given player can play against the top stack action.
 func get_priority_responses(player: Player) -> Array:
@@ -48,6 +69,8 @@ func get_priority_responses(player: Player) -> Array:
 		if hex.card_owner != player:
 			continue
 		if prepared_hexes[hex] >= turn_number:
+			continue
+		if hex.is_activation_locked(self):
 			continue
 		if _has_pending_stack_action_for_card(hex):
 			continue
@@ -108,12 +131,18 @@ func is_prepared_charm_ready(charm: CharmCard, triggering_action: CardAction = n
 
 func setup_game() -> void:
 	players = []
+	is_game_over = false
+	winning_player = null
+	losing_player = null
 	for child in get_children():
 		if child is Player:
 			players.append(child)
 			var player := child as Player
 			if not player.card_moved.is_connected(_on_player_card_moved):
 				player.card_moved.connect(_on_player_card_moved)
+			var defeat_callback := Callable(self, "_on_player_defeated")
+			if not player.defeated.is_connected(defeat_callback):
+				player.defeated.connect(defeat_callback)
 	
 	if players.size() == 2:
 		current_player = players[0]
@@ -144,6 +173,8 @@ func offer_mulligan(player: Player, card_count: int, bonus_mana: int) -> void:
 	pass
 
 func start_turn() -> void:
+	if is_game_over:
+		return
 	turn_number += 1
 	current_phase = GamePhase.MAIN
 	died_this_turn.clear()
@@ -201,6 +232,8 @@ func find_triggerable_hex(attacker: Card, defender: Card) -> HexCard:
 		if hex.card_owner != defending_player:
 			continue
 		if prepared_hexes[hex] >= turn_number:
+			continue
+		if hex.is_activation_locked(self):
 			continue
 		if not (hex is HexCard):
 			continue
@@ -265,15 +298,21 @@ func check_and_trigger_hexes(attacker: Card, defender: Card) -> bool:
 	return false
 
 func player_chooses_draw() -> void:
+	if is_game_over:
+		return
 	_resolve_turn_upkeep()
 	current_player.draw_card()
 	current_player.gain_mana(1)
 
 func player_chooses_mana() -> void:
+	if is_game_over:
+		return
 	_resolve_turn_upkeep()
 	current_player.gain_mana(5)
 
 func can_play_card(player: Player, card: Card, target_zone: Zone) -> bool:
+	if is_game_over:
+		return false
 	# Check if player can pay costs
 	if not card.can_pay_costs(player):
 		print("Cannot afford card costs")
@@ -322,6 +361,8 @@ func can_play_card(player: Player, card: Card, target_zone: Zone) -> bool:
 	return true
 
 func play_card(player: Player, card: Card, target_zone: Zone, prepared: bool = false) -> void:
+	if is_game_over:
+		return
 	if can_play_card(player, card, target_zone):
 		var from_zone := card.current_zone
 		var entered_field_face_up_from_hand := (
@@ -381,7 +422,7 @@ func play_creature_stealth(player: Player, card: Card, target_zone: Zone) -> voi
 	if card.card_type == Card.CardType.CREATURE:
 		card.is_stealth = true
 		card.is_face_down = true
-		card.creature_mode = Card.CreatureMode.DEFENSE
+		card.creature_mode = Card.CreatureMode.DEFENSIVE
 		play_card(player, card, target_zone)
 
 func prepare_card(player: Player, card: Card, target_zone: Zone) -> void:
@@ -400,6 +441,8 @@ func resolve_card_effect(card: Card) -> void:
 		_send_to_graveyard_with_hook(card)
 
 func creature_move(creature: Card, target_zone: Zone) -> bool:
+	if is_game_over:
+		return false
 	if creature.card_type != Card.CardType.CREATURE:
 		return false
 	
@@ -427,6 +470,8 @@ func creature_move(creature: Card, target_zone: Zone) -> bool:
 	return false
 
 func creature_change_mode(creature: Card, target_mode: int = -1) -> bool:
+	if is_game_over:
+		return false
 	if creature.card_type != Card.CardType.CREATURE:
 		return false
 	
@@ -438,17 +483,19 @@ func creature_change_mode(creature: Card, target_mode: int = -1) -> bool:
 	
 	var requested_mode: int = target_mode
 	creature.reveal_from_stealth(self)
-	if requested_mode == Card.CreatureMode.ATTACK or requested_mode == Card.CreatureMode.DEFENSE:
+	if requested_mode == Card.CreatureMode.AGGRESSIVE or requested_mode == Card.CreatureMode.DEFENSIVE:
 		creature.creature_mode = requested_mode
-	elif creature.creature_mode == Card.CreatureMode.ATTACK:
-		creature.creature_mode = Card.CreatureMode.DEFENSE
+	elif creature.creature_mode == Card.CreatureMode.AGGRESSIVE:
+		creature.creature_mode = Card.CreatureMode.DEFENSIVE
 	else:
-		creature.creature_mode = Card.CreatureMode.ATTACK
+		creature.creature_mode = Card.CreatureMode.AGGRESSIVE
 
 	creature.spend_minor_creature_action()
 	return true
 
 func equip_card(equipment: Card, creature: Card) -> bool:
+	if is_game_over:
+		return false
 	if equipment.card_type != Card.CardType.EQUIPMENT:
 		return false
 	
@@ -483,7 +530,7 @@ func get_reachable_board_zones(creature: Card) -> Array[Zone]:
 			var ci := creature_zone.zone_index
 			for di in [-1, 0, 1]:
 				var ti: int = ci + di
-				if ti >= 0 and ti <= 6:
+				if ti >= 0 and ti < opponent.frontline_zones.size():
 					reachable.append(opponent.frontline_zones[ti])
 	return reachable
 
@@ -491,6 +538,8 @@ func get_reachable_board_zones(creature: Card) -> Array[Zone]:
 # Own equipment: no intercept. Enemy equipment: subject to intercept.
 # Returns false if the action is blocked or invalid.
 func creature_pick_up_equipment(creature: Card, equipment: Card) -> bool:
+	if is_game_over:
+		return false
 	if creature.card_type != Card.CardType.CREATURE:
 		return false
 	if equipment.card_type != Card.CardType.EQUIPMENT or equipment.equipped_on != null:
@@ -527,6 +576,8 @@ func creature_pick_up_equipment(creature: Card, equipment: Card) -> bool:
 # Own or in-range enemy equipment: interceptable only if enemy.
 # Out-of-range enemy equipment: interceptable.
 func creature_destroy_equipment(creature: Card, equipment: Card) -> bool:
+	if is_game_over:
+		return false
 	if creature.card_type != Card.CardType.CREATURE:
 		return false
 	if not creature.can_take_major_creature_action():
@@ -550,6 +601,8 @@ func creature_destroy_equipment(creature: Card, equipment: Card) -> bool:
 	return true
 
 func creature_attack(attacker: Card, target) -> void:
+	if is_game_over:
+		return
 	# This function is now mostly for AI use or direct attacks
 	# Player attacks go through the UI intercept system
 	if attacker.card_type != Card.CardType.CREATURE:
@@ -569,8 +622,8 @@ func creature_attack(attacker: Card, target) -> void:
 		print("Only frontline creatures can attack")
 		return
 
-	if attacker.creature_mode == Card.CreatureMode.DEFENSE:
-		print(attacker.card_name + " is in defense mode and cannot attack")
+	if attacker.creature_mode == Card.CreatureMode.DEFENSIVE:
+		print(attacker.card_name + " is in defensive stance and cannot attack")
 		return
 
 	if attacker.is_stealth:
@@ -585,27 +638,40 @@ func creature_attack(attacker: Card, target) -> void:
 		target.lose_followers(attacker.get_effective_strength())
 		_notify_after_combat(attacker, null)
 
+func _can_intercept_followers(defender: Card, attacker: Card) -> bool:
+	if defender == null or attacker == null:
+		return false
+	if defender.card_type != Card.CardType.CREATURE:
+		return false
+	if defender.is_sleeping:
+		return false
+	if defender.get_effective_speed() < attacker.get_effective_speed():
+		return false
+	if defender.current_zone == null:
+		return false
+	var row_distance := -1
+	match defender.current_zone.zone_type:
+		Zone.ZoneType.FRONTLINE:
+			row_distance = 2
+		Zone.ZoneType.RESERVE:
+			row_distance = 1
+		_:
+			return false
+	var minimum_distance := 1
+	if defender.creature_mode == Card.CreatureMode.AGGRESSIVE:
+		if not defender.can_take_major_creature_action():
+			return false
+		minimum_distance = 2
+	minimum_distance = max(0, minimum_distance - defender.get_intercept_reach_bonus())
+	return row_distance >= minimum_distance
+
 func check_for_intercept(attacker: Card, defending_player: Player) -> Card:
 	print("	Checking for intercepts...")
-	
-	# Check frontline for interceptors
-	for zone in defending_player.frontline_zones:
+	for zone in defending_player.frontline_zones + defending_player.reserve_zones:
 		for card in zone.cards:
-			if card.card_type == Card.CardType.CREATURE:
-				if card.creature_mode == Card.CreatureMode.DEFENSE:
-					print("	-> " + card.card_name + " (DEF) intercepts!")
-					return card
-				elif card.creature_mode == Card.CreatureMode.ATTACK and card.get_effective_speed() > attacker.get_effective_speed():
-					print("	-> " + card.card_name + " (ATK, faster) intercepts!")
-					return card
-
-	# Check reserves for defensive interceptors
-	for zone in defending_player.reserve_zones:
-		for card in zone.cards:
-			if card.card_type == Card.CardType.CREATURE and card.creature_mode == Card.CreatureMode.DEFENSE:
-				print("	-> " + card.card_name + " (DEF, reserve) intercepts!")
+			if _can_intercept_followers(card, attacker):
+				print("	-> " + card.card_name + " intercepts!")
 				return card
-	
 	print("	-> No intercepts, attacking followers directly")
 	return null
 
@@ -634,7 +700,7 @@ func resolve_combat(attacker: Card, defender: Card) -> void:
 		return
 
 	if defender.card_type == Card.CardType.CREATURE:
-		if defender.creature_mode == Card.CreatureMode.ATTACK:
+		if defender.creature_mode == Card.CreatureMode.AGGRESSIVE:
 			# Strength vs Strength
 			var defender_str = defender.get_effective_strength()
 			print("	STR vs STR: " + str(attacker_str) + " vs " + str(defender_str))
@@ -655,7 +721,7 @@ func resolve_combat(attacker: Card, defender: Card) -> void:
 				var void_defender := _should_class_rend(attacker, defender)
 				_combat_kill_routed(defender, attacker, void_attacker)
 				_combat_kill_routed(attacker, defender, void_defender)
-		else:	# DEFENSE mode
+		else:	# Defensive stance
 			var vs_defense_bonus := 0
 			for equip in attacker.equipment:
 				if equip is EquipmentCard:
@@ -715,6 +781,8 @@ func remove_attack_restriction(player: Player) -> void:
 		print(player.player_name + " attack restriction removed!")
 
 func end_turn() -> void:
+	if is_game_over:
+		return
 	# Trigger structures' on_turn_end
 	for zone in current_player.frontline_zones + current_player.reserve_zones:
 		for card in zone.cards:
@@ -822,12 +890,37 @@ func player_destroyed_creature_by_combat_this_turn(player: Player) -> bool:
 			return true
 	return false
 
-func enslave_creature(creature: Card, new_controller: Player) -> bool:
+func _is_protected_from_enslavement(creature: Card) -> bool:
+	if creature == null:
+		return false
+	for player in players:
+		for god in player.god_zone.cards:
+			if god != null and god.has_method("prevents_enslave") and god.prevents_enslave(creature):
+				return true
+	return false
+
+func get_enslave_failure_reason(creature: Card, new_controller: Player) -> String:
 	if creature == null or new_controller == null:
-		return false
+		return "No creature was selected."
 	if creature.card_type != Card.CardType.CREATURE or creature.is_god:
-		return false
+		return creature.card_name + " cannot be enslaved."
 	if creature.current_zone == null or not creature.current_zone.is_board_zone():
+		return creature.card_name + " is not on the field."
+	if _is_protected_from_enslavement(creature):
+		return creature.card_name + " is protected from enslavement."
+	var destination := _find_enslave_destination(new_controller, creature.current_zone.zone_type, creature.current_zone.zone_index)
+	if destination == null:
+		return "There is no open zone to place " + creature.card_name + "."
+	return ""
+
+func can_enslave_creature(creature: Card, new_controller: Player) -> bool:
+	return get_enslave_failure_reason(creature, new_controller) == ""
+
+func enslave_creature(creature: Card, new_controller: Player) -> bool:
+	if not can_enslave_creature(creature, new_controller):
+		var reason := get_enslave_failure_reason(creature, new_controller)
+		if reason != "":
+			print(reason)
 		return false
 	var destination := _find_enslave_destination(new_controller, creature.current_zone.zone_type, creature.current_zone.zone_index)
 	if destination == null:
@@ -900,6 +993,14 @@ func _on_player_card_moved(card: Card, from_zone: Zone, to_zone: Zone) -> void:
 			_notify_creature_returned_from_void(card)
 		elif to_zone.zone_type == Zone.ZoneType.ABYSS:
 			_notify_creature_sent_to_void(card)
+	_notify_board_cards_of_movement(card, from_zone, to_zone)
+
+func _notify_board_cards_of_movement(moved_card: Card, from_zone: Zone, to_zone: Zone) -> void:
+	for player in players:
+		for zone in [player.god_zone] + player.power_zones + player.frontline_zones + player.reserve_zones:
+			for board_card in zone.cards.duplicate():
+				if board_card != null and board_card.has_method("on_any_card_moved"):
+					board_card.on_any_card_moved(self, moved_card, from_zone, to_zone)
 
 func _notify_creature_sent_to_void(creature: Card) -> void:
 	for power in _get_active_powers():
@@ -938,3 +1039,16 @@ func _apply_god_passives_to_card(player: Player, card: Card) -> void:
 	if god is Thor and (god as Thor).applies_to(card):
 		card.clear_buffs_from(Thor.PASSIVE_SOURCE)
 		card.add_buff(Thor.PASSIVE_SOURCE, 3, 3, 0, god, player, "passive")
+
+func _on_player_defeated(defeated_player: Player) -> void:
+	if is_game_over or defeated_player == null:
+		return
+	losing_player = defeated_player
+	winning_player = get_opponent(defeated_player)
+	is_game_over = true
+	current_phase = GamePhase.END
+	if winning_player != null:
+		print(winning_player.player_name + " wins the game! " + defeated_player.player_name + " reached 0 followers.")
+	else:
+		print("Game over! " + defeated_player.player_name + " reached 0 followers.")
+	game_ended.emit(winning_player, losing_player)

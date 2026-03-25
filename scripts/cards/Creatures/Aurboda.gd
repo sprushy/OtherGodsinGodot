@@ -3,7 +3,7 @@ class_name Aurboda
 
 func _init() -> void:
 	super._init()
-	card_name = "AurboÃ°a"
+	card_name = "Aurbo" + char(240) + "a"
 	card_types = ["Giant", "Warrior", "Norse Creature"]
 	level = 3
 	mana_cost = 1
@@ -11,7 +11,7 @@ func _init() -> void:
 	speed = 1
 	resilience = 3
 	strength = 21
-	ability_text = "Pierce: Every time this card destroys a creature in battle, [b]Convert[/b] 7 of your opponent's followers."
+	ability_text = "Pierce: [b]Slay[/b]: [b]Convert[/b] 7 followers."
 	flavor_text = ""
 	culture = "Norse"
 	art_path = "res://images/card_art/creatures/AurbodaAI.jpg"
@@ -19,4 +19,4 @@ func _init() -> void:
 func on_kill(game_manager: GameManager, victim: Card) -> void:
 	var opponent := game_manager.get_opponent(card_owner)
 	game_manager.convert_followers(opponent, card_owner, 7)
-	print("Pierce! " + card_name + " destroyed " + victim.card_name + " â€” 7 followers converted.")
+	print("Pierce! " + get_display_name() + " destroyed " + victim.get_display_name() + " - 7 followers converted.")

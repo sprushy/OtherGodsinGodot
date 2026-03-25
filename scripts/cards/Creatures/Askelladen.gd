@@ -11,7 +11,7 @@ func _init() -> void:
 	speed = 2
 	resilience = 10
 	strength = 12
-	ability_text = "Tactful Retreat: When this face-up card attacks or is attacked by a card of equal or lesser speed, you may [b]Shelve[/b] both cards."
+	ability_text = "Tactful Retreat: When this face-up card attacks or is attacked by a card with equal or lower speed, you may [b]Shelve[/b] both."
 	flavor_text = ""
 	culture = "Norse"
 	art_path = "res://images/card_art/creatures/AskelledanAI1.png"

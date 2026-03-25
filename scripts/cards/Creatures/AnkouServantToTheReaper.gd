@@ -14,7 +14,7 @@ func _init() -> void:
 	resilience = 17
 	strength = 24
 	flavor_text = "Where Ankou walks, the dead are counted."
-	ability_text = "Reap (passive): When this card destroys another in combat, draw a card."
+	ability_text = "Reap: [b]Slay[/b]: Draw a card."
 	culture = "Triskelion"
 	art_path = ART_PATH
 

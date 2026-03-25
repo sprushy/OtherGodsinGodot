@@ -10,12 +10,13 @@ func _init() -> void:
 	card_name = "Accelerated Fate"
 	culture = "Neutral"
 	mana_cost = 1
-	ability_text = "Unlock (1): Active - Pay 5 mana to draw 1 card."
+	ability_text = "[b]Unlock[/b] (1): [b]Activate[/b] - Pay 5 mana to draw a card."
 	art_path = DEFAULT_ART
 	exhausted_art_path = USED_ART
 
 func can_activate(game_manager: GameManager) -> bool:
 	return not is_face_down \
+		and not is_activation_locked(game_manager) \
 		and card_owner == game_manager.current_player \
 		and card_owner.mana >= DRAW_COST \
 		and not is_used

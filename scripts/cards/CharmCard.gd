@@ -23,6 +23,8 @@ func can_activate_from_hand(game_manager: GameManager, triggering_action: CardAc
 		return false
 	if game_manager == null or card_owner == null:
 		return false
+	if is_activation_locked(game_manager):
+		return false
 	if current_zone != card_owner.hand_zone:
 		return false
 	if card_owner != game_manager.current_player:
@@ -39,6 +41,8 @@ func can_activate_prepared(game_manager: GameManager, triggering_action: CardAct
 	if current_zone == null or not current_zone.is_board_zone():
 		return false
 	if is_muted:
+		return false
+	if is_activation_locked(game_manager):
 		return false
 	if not game_manager.is_prepared_charm_ready(self, triggering_action):
 		return false

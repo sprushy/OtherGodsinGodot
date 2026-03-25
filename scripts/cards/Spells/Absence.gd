@@ -18,7 +18,7 @@ func _init() -> void:
 	targets = true
 	flavor_text = "Silence the divine, if only for a while."
 	art_path = ART_PATH
-	ability_text = "Relock a power or reveal a face-down power and [b]Mute[/b] it for 3 of its owner's turns."
+	ability_text = "[b]Relock[/b] a power, or [b]Mute[/b] a power for 3 of its owner's turns. Face-down powers are revealed first."
 
 func resolve(game_manager: GameManager, target = null) -> void:
 	if not _is_valid_power_target(target):

@@ -55,7 +55,7 @@ func summon_milled_demon(demon_card: Card) -> bool:
 		print("Apollyon's Demiurge: no open zone to summon into.")
 		return false
 	card_owner.move_card(demon_card, summon_zone)
-	demon_card.creature_mode = Card.CreatureMode.ATTACK
+	demon_card.creature_mode = Card.CreatureMode.AGGRESSIVE
 	demon_card.has_acted_this_turn = false
 	demon_card.has_moved_this_turn = false
 	demon_card.summoned_this_turn = true

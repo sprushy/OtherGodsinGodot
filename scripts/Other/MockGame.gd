@@ -4,9 +4,11 @@ extends Control
 var game_manager: GameManager
 var player1: Player
 var player2: Player
+var _game_finished: bool = false
 
 @onready var mana_label = $VBoxContainer/StatsContainer/ManaLabel
 @onready var followers_label = $VBoxContainer/StatsContainer/FollowersLabel
+@onready var action_label = $VBoxContainer/ActionLabel
 @onready var choice_container = $VBoxContainer/ChoiceContainer
 @onready var draw_button = $VBoxContainer/ChoiceContainer/DrawButton
 @onready var mana_button = $VBoxContainer/ChoiceContainer/ManaButton
@@ -16,11 +18,13 @@ var player2: Player
 func _ready() -> void:
 	choice_container.visible = false
 	end_turn_button.visible = false
+	action_label.text = ""
 
 func start_game() -> void:
 	# Create game manager
 	game_manager = GameManager.new()
 	add_child(game_manager)
+	_game_finished = false
 	
 	# Create players
 	player1 = Player.new()
@@ -44,6 +48,7 @@ func start_game() -> void:
 	# Connect signals
 	player1.mana_changed.connect(_on_player1_mana_changed)
 	player1.followers_changed.connect(_on_player1_followers_changed)
+	game_manager.game_ended.connect(_on_game_ended)
 	
 	# Start first turn
 	game_manager.turn_number = 0
@@ -84,12 +89,16 @@ func create_mock_deck(player: Player) -> void:
 	builder.build_deck(player, deck)
 
 func show_turn_choice() -> void:
+	if _game_finished:
+		return
 	choice_container.visible = true
 	end_turn_button.visible = false
 	draw_button.disabled = false
 	mana_button.disabled = false
 
 func hide_turn_choice() -> void:
+	if _game_finished:
+		return
 	choice_container.visible = false
 	end_turn_button.visible = true
 
@@ -100,18 +109,24 @@ func update_ui() -> void:
 	turn_label.text = "Turn " + str(game_manager.turn_number) + " - " + current.player_name
 
 func _on_draw_button_pressed() -> void:
+	if _game_finished:
+		return
 	game_manager.player_chooses_draw()
 	update_ui()
 	hide_turn_choice()
 	print(game_manager.current_player.player_name + " drew a card")
 
 func _on_mana_button_pressed() -> void:
+	if _game_finished:
+		return
 	game_manager.player_chooses_mana()
 	update_ui()
 	hide_turn_choice()
 	print(game_manager.current_player.player_name + " gained 4 mana")
 
 func _on_end_turn_button_pressed() -> void:
+	if _game_finished:
+		return
 	print("Ending turn for " + game_manager.current_player.player_name)
 	game_manager.end_turn()
 	update_ui()
@@ -124,6 +139,17 @@ func _on_player1_mana_changed(new_mana: int) -> void:
 func _on_player1_followers_changed(new_followers: int) -> void:
 	if game_manager.current_player == player1:
 		update_ui()
+
+func _on_game_ended(winner: Player, loser: Player) -> void:
+	_game_finished = true
+	choice_container.visible = false
+	end_turn_button.visible = false
+	draw_button.disabled = true
+	mana_button.disabled = true
+	end_turn_button.disabled = true
+	turn_label.text = winner.player_name + " wins the game!" if winner != null else "Game over!"
+	followers_label.text = loser.player_name + " has 0 followers" if loser != null else followers_label.text
+	action_label.text = winner.player_name + " wins the game! " + loser.player_name + " reached 0 followers." if winner != null and loser != null else "Game over!"
 
 func cleanup() -> void:
 	if game_manager:

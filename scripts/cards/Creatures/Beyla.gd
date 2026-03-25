@@ -12,7 +12,7 @@ func _init() -> void:
 	strength = 1
 	sacrifice_cost = 0
 	creature_sacrifice_cost = 0
-	ability_text = "Revive (impact): Wake up all Norse creatures.\nRevive: Wake up all friendly creatures."
+	ability_text = "Revive ([b]Impact[/b]): [b]Wake[/b] all Norse creatures.\nRevive: [b]Wake[/b] all friendly creatures."
 	flavor_text = ""
 	culture = "Norse"
 	artist = "Elliot Chan"

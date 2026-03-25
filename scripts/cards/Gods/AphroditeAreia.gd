@@ -13,7 +13,7 @@ func _init() -> void:
 	mana_cost = 0
 	culture = "Olympic"
 	flavor_text = "Love and slaughter walk hand in hand."
-	ability_text = "Violent Delights (5 mana): During a turn where you have destroyed an opponent's creature by combat, [b]Enslave[/b] a creature."
+	ability_text = "Violent Delights (5 mana): If you destroyed an opponent's creature in combat this turn, [b]Enslave[/b] a creature."
 	art_path = ART_PATH
 	artist = "Ricarrdo Zoppello"
 	name_at_bottom = true
@@ -31,6 +31,30 @@ func can_activate(game_manager: GameManager) -> bool:
 		return false
 	return not get_valid_enslave_targets(game_manager).is_empty()
 
+func get_activation_failure_reason(game_manager: GameManager) -> String:
+	if game_manager == null:
+		return card_name + " cannot activate right now."
+	if is_muted:
+		return card_name + " is muted."
+	if card_owner != game_manager.current_player:
+		return "It is not " + card_name + "'s turn to act."
+	if card_owner.mana < ACTIVATION_COST:
+		return card_name + " needs " + str(ACTIVATION_COST) + " mana."
+	if not _has_destroyed_enemy_by_combat_this_turn(game_manager):
+		return "Violent Delights needs an enemy creature destroyed in combat this turn."
+	if not get_valid_enslave_targets(game_manager).is_empty():
+		return ""
+	var opponent := game_manager.get_opponent(card_owner)
+	if opponent != null:
+		for zone in opponent.frontline_zones + opponent.reserve_zones:
+			for card in zone.cards:
+				if not is_valid_activation_target(card):
+					continue
+				var failure_reason := game_manager.get_enslave_failure_reason(card, card_owner)
+				if failure_reason != "":
+					return "Violent Delights has no valid targets: " + failure_reason
+	return "Violent Delights has no valid targets right now."
+
 func is_valid_activation_target(target: Card) -> bool:
 	if target == null:
 		return false
@@ -42,20 +66,23 @@ func is_valid_activation_target(target: Card) -> bool:
 
 func activate(game_manager: GameManager, target: Card = null) -> void:
 	if not can_activate(game_manager):
-		print("Violent Delights: conditions not met.")
+		game_manager.note_player_feedback(get_activation_failure_reason(game_manager))
 		return
 	if not is_valid_activation_target(target):
-		print("Violent Delights: invalid target.")
+		game_manager.note_player_feedback("Violent Delights fizzles: invalid target.")
 		return
 	if game_manager != null and game_manager.is_immune_to_source(target, self):
-		print("Violent Delights fizzles - " + target.card_name + " is immune to powers.")
+		game_manager.note_player_feedback("Violent Delights fizzles: " + target.card_name + " is immune to powers.")
+		return
+	if game_manager != null and not game_manager.can_enslave_creature(target, card_owner):
+		game_manager.note_player_feedback("Violent Delights fizzles: " + game_manager.get_enslave_failure_reason(target, card_owner))
 		return
 	card_owner.spend_mana(ACTIVATION_COST)
 	if game_manager.enslave_creature(target, card_owner):
-		print("Violent Delights: " + target.card_name + " is enslaved by " + card_owner.player_name + ".")
+		game_manager.note_player_feedback("Violent Delights enslaved " + target.card_name + ".")
 	else:
 		card_owner.gain_mana(ACTIVATION_COST)
-		print("Violent Delights: no room to enslave " + target.card_name + ".")
+		game_manager.note_player_feedback("Violent Delights fizzles: " + game_manager.get_enslave_failure_reason(target, card_owner))
 
 func get_valid_enslave_targets(game_manager: GameManager) -> Array[Card]:
 	var targets: Array[Card] = []
@@ -66,7 +93,7 @@ func get_valid_enslave_targets(game_manager: GameManager) -> Array[Card]:
 		return targets
 	for zone in opponent.frontline_zones + opponent.reserve_zones:
 		for card in zone.cards:
-			if is_valid_activation_target(card):
+			if is_valid_activation_target(card) and game_manager.can_enslave_creature(card, card_owner):
 				targets.append(card)
 	return targets
 

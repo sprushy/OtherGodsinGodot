@@ -15,7 +15,7 @@ func _init() -> void:
 	mana_cost = UNLOCK_COST
 	culture = "Ancient"
 	card_types = ["Power", "Class Buff", "Mage"]
-	ability_text = "Any turn you play a spell, your friendly Mages gain 5 Str until the end of your next turn."
+	ability_text = "When you play a spell, friendly Mages gain 5 Str until the end of your next turn."
 	art_path = ART_PATH
 
 func on_unlock(_game_manager: GameManager) -> void:

@@ -14,13 +14,14 @@ func _init() -> void:
 	level = 2
 	culture = "Norse"
 	card_types = ["Buff", "Creature", "Mead"]
-	ability_text = "Unlock (3): Choose a Norse creature under level 5; this turn it cannot be destroyed by your opponent's effects or creatures and it gains 7 Str. After any combat this turn, including attacks against followers, it falls asleep until the end of your next turn."
+	ability_text = "[b]Unlock[/b] (3): Choose a Norse creature under level 5. This turn it gains 7 Str and [b]Immortal[/b] against your opponent's effects and creatures. After any combat this turn, it falls asleep until the end of your next turn."
 	artist = "Lorinda Tomko"
 	art_path = "res://images/card_art/powers/poetmead.jpg"
 
 func can_activate(game_manager: GameManager) -> bool:
 	return not is_face_down \
 		and not is_muted \
+		and not is_activation_locked(game_manager) \
 		and card_owner == game_manager.current_player \
 		and not get_valid_targets(game_manager).is_empty()
 

@@ -12,7 +12,7 @@ func _init() -> void:
 	speed = 1
 	resilience = 21
 	strength = 33
-	ability_text = "Class Rend (passive): [b]Void[/b] a creature and everything equipped to it when it is destroyed by a friendly Demon."
+	ability_text = "Class Rend ([b]Passive[/b]): When a friendly Demon destroys a creature, [b]Void[/b] it and its equipment."
 	flavor_text = ""
 	culture = "Ancient"
 	art_path = "res://images/card_art/creatures/asag.jpg"

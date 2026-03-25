@@ -3,7 +3,7 @@ extends Resource
 class_name Card
 
 enum CardType { CREATURE, SPELL, AURA, EQUIPMENT, STRUCTURE, HEX, POWER, CHARM }
-enum CreatureMode { ATTACK, DEFENSE }
+enum CreatureMode { AGGRESSIVE, DEFENSIVE }
 
 @export var card_name: String
 @export var card_type: CardType
@@ -12,6 +12,7 @@ enum CreatureMode { ATTACK, DEFENSE }
 @export var is_legendary: bool = false
 @export var is_god: bool = false
 @export var is_power: bool = false
+@export var is_token: bool = false
 
 # Card types (warrior, mage, etc.) - can have multiple
 @export var card_types: Array[String] = []
@@ -30,6 +31,27 @@ enum CreatureMode { ATTACK, DEFENSE }
 
 signal art_updated(new_path: String)
 
+const CARD_NAME_MOJIBAKE_FIXES := {
+	"AurboÃƒÂ°a": "Aurboða",
+	"AurboÃ°a": "Aurboða"
+}
+
+const CARD_NAME_ASCII_FALLBACKS := {
+	"À": "A", "Á": "A", "Â": "A", "Ã": "A", "Ä": "A", "Å": "A",
+	"Æ": "Ae", "Ç": "C", "È": "E", "É": "E", "Ê": "E", "Ë": "E",
+	"Ì": "I", "Í": "I", "Î": "I", "Ï": "I", "Ð": "D", "Ñ": "N",
+	"Ò": "O", "Ó": "O", "Ô": "O", "Õ": "O", "Ö": "O", "Ø": "O",
+	"Ù": "U", "Ú": "U", "Û": "U", "Ü": "U", "Ý": "Y", "Þ": "Th",
+	"ß": "ss",
+	"à": "a", "á": "a", "â": "a", "ã": "a", "ä": "a", "å": "a",
+	"æ": "ae", "ç": "c", "è": "e", "é": "e", "ê": "e", "ë": "e",
+	"ì": "i", "í": "i", "î": "i", "ï": "i", "ð": "d", "ñ": "n",
+	"ò": "o", "ó": "o", "ô": "o", "õ": "o", "ö": "o", "ø": "o",
+	"ù": "u", "ú": "u", "û": "u", "ü": "u", "ý": "y", "þ": "th",
+	"ÿ": "y", "Œ": "Oe", "œ": "oe", "Š": "S", "š": "s", "Ž": "Z",
+	"ž": "z", "Ł": "L", "ł": "l"
+}
+
 func switch_to_exhausted_art() -> void:
 	if exhausted_art_path != "":
 		art_path = exhausted_art_path
@@ -46,7 +68,7 @@ func switch_to_exhausted_art() -> void:
 # Creature stats
 @export var strength: int = 0
 @export var resilience: int = 0
-@export var creature_mode: CreatureMode = CreatureMode.DEFENSE
+@export var creature_mode: CreatureMode = CreatureMode.DEFENSIVE
 
 # Equipment modifiers
 @export var strength_modifier: int = 0
@@ -59,7 +81,7 @@ var current_zone: Zone
 var is_prepared: bool = false
 # Tracks the last board position so Circle of Rebirth can auto-resurrect.
 var last_board_zone_type: int = -1   # Zone.ZoneType value; -1 = never placed
-var last_board_zone_index: int = 3   # default centre column
+var last_board_zone_index: int = Player.BOARD_LANE_COUNT / 2   # default centre column
 var is_face_down: bool = false
 var is_stealth: bool = false
 var has_acted_this_turn: bool = false
@@ -87,6 +109,102 @@ func get_controller() -> Player:
 		return current_zone.zone_owner
 	return card_owner
 
+func get_normalized_card_name() -> String:
+	return card_name
+
+func get_ascii_card_name() -> String:
+	var normalized := get_normalized_card_name()
+	var fallback := ""
+	for i in normalized.length():
+		var codepoint := normalized.unicode_at(i)
+		if codepoint >= 32 and codepoint <= 126:
+			fallback += normalized[i]
+		else:
+			fallback += _get_ascii_fallback_for_codepoint(codepoint)
+	return fallback
+
+func _get_ascii_fallback_for_codepoint(codepoint: int) -> String:
+	match codepoint:
+		192, 193, 194, 195, 196, 197:
+			return "A"
+		198:
+			return "Ae"
+		199:
+			return "C"
+		200, 201, 202, 203:
+			return "E"
+		204, 205, 206, 207:
+			return "I"
+		208:
+			return "D"
+		209:
+			return "N"
+		210, 211, 212, 213, 214, 216:
+			return "O"
+		217, 218, 219, 220:
+			return "U"
+		221:
+			return "Y"
+		222:
+			return "Th"
+		223:
+			return "ss"
+		224, 225, 226, 227, 228, 229:
+			return "a"
+		230:
+			return "ae"
+		231:
+			return "c"
+		232, 233, 234, 235:
+			return "e"
+		236, 237, 238, 239:
+			return "i"
+		240:
+			return "d"
+		241:
+			return "n"
+		242, 243, 244, 245, 246, 248:
+			return "o"
+		249, 250, 251, 252:
+			return "u"
+		253, 255:
+			return "y"
+		254:
+			return "th"
+		338:
+			return "Oe"
+		339:
+			return "oe"
+		352:
+			return "S"
+		353:
+			return "s"
+		381:
+			return "Z"
+		382:
+			return "z"
+		321:
+			return "L"
+		322:
+			return "l"
+		_:
+			return "?"
+
+func get_display_name(prefer_ascii: bool = false, font: Font = null) -> String:
+	var normalized := get_normalized_card_name()
+	if prefer_ascii:
+		return get_ascii_card_name()
+	if font != null:
+		for i in normalized.length():
+			if not font.has_char(normalized.unicode_at(i)):
+				return get_ascii_card_name()
+	return normalized
+
+func get_display_name_for_control(control: Control = null, prefer_ascii: bool = false) -> String:
+	if control == null:
+		return get_display_name(prefer_ascii)
+	return get_display_name(prefer_ascii, control.get_theme_font("font"))
+
 func is_enslaved() -> bool:
 	var controller := get_controller()
 	return controller != null and card_owner != null and controller != card_owner
@@ -99,6 +217,53 @@ func has_status_effect(status_name: String) -> bool:
 
 func is_petrified() -> bool:
 	return has_status_effect("petrified")
+
+func is_temporarily_revealed() -> bool:
+	return has_status_effect("temporarily_revealed")
+
+func temporarily_reveal_until_end_of_turn(
+	current_turn: int,
+	source: String,
+	source_card: Card = null,
+	source_owner: Player = null
+) -> void:
+	remove_status_effects_by_name("temporarily_revealed")
+	add_status_effect(
+		"temporarily_revealed",
+		source,
+		source_card,
+		source_owner,
+		{"expires_turn": current_turn}
+	)
+
+func is_activation_locked(game_manager: GameManager = null) -> bool:
+	if not has_status_effect("activation_locked"):
+		return false
+	if game_manager == null:
+		return true
+	for status in active_statuses:
+		if status.get("name", "") != "activation_locked":
+			continue
+		var expires_turn = status.get("expires_turn", null)
+		if expires_turn == null:
+			return true
+		return int(expires_turn) >= game_manager.turn_number
+	return false
+
+func lock_activation_until_end_of_turn(
+	current_turn: int,
+	source: String,
+	source_card: Card = null,
+	source_owner: Player = null
+) -> void:
+	remove_status_effects_by_name("activation_locked")
+	add_status_effect(
+		"activation_locked",
+		source,
+		source_card,
+		source_owner,
+		{"expires_turn": current_turn}
+	)
 
 func is_silenced() -> bool:
 	return is_muted and mute_turns_remaining < 0
@@ -190,6 +355,12 @@ func get_effect_summary_lines() -> Array[String]:
 		if raw_status_name == "blessed_ward":
 			var ward_kind := str(status.get("ward_kind", "")).replace("_", " ")
 			lines.append("Blessed Ward vs " + ward_kind.capitalize() + " from " + str(status.get("source", "?")))
+			continue
+		if raw_status_name == "temporarily_revealed":
+			lines.append("Revealed until end of turn by " + str(status.get("source", "?")))
+			continue
+		if raw_status_name == "activation_locked":
+			lines.append("Cannot activate this turn from " + str(status.get("source", "?")))
 			continue
 		var status_name := raw_status_name.capitalize()
 		lines.append(status_name + " from " + str(status.get("source", "?")))
@@ -389,11 +560,23 @@ func has_type(type_name: String) -> bool:
 		return is_magical_card()
 	return type_name in card_types
 
+func get_intercept_reach_bonus() -> int:
+	if card_type != CardType.CREATURE or ability_text == "":
+		return 0
+	var normalized := " " + ability_text.to_lower() + " "
+	for token in ["[b]", "[/b]", "\n", "\t", ",", ".", ":", ";", "!", "?", "(", ")", "[", "]"]:
+		normalized = normalized.replace(token, " ")
+	if normalized.contains(" reach +1 "):
+		return 1
+	if normalized.contains(" reach "):
+		return 1
+	return 0
+
 func is_physical_card() -> bool:
 	return card_type in [CardType.CREATURE, CardType.STRUCTURE, CardType.EQUIPMENT]
 
 func is_magical_card() -> bool:
-	return card_type in [CardType.SPELL, CardType.HEX, CardType.CHARM] or "Charm" in card_types
+	return card_type in [CardType.SPELL, CardType.HEX, CardType.CHARM]
 
 func equip_to(creature: Card) -> bool:
 	if card_type != CardType.EQUIPMENT or creature.card_type != CardType.CREATURE:
@@ -506,6 +689,8 @@ func pay_costs(player: Player, game_manager: GameManager = null) -> bool:
 							game_manager._send_to_graveyard_with_hook(card, false, false)
 						else:
 							player.move_card(card, player.graveyard_zone)
+						if card.has_method("on_sacrificed_for_summon") and not card.abilities_suppressed():
+							card.on_sacrificed_for_summon(game_manager, self)
 						creature_found = true
 						break
 

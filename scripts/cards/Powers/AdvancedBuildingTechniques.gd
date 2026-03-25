@@ -11,7 +11,7 @@ func _init() -> void:
 	mana_cost = UNLOCK_COST
 	card_types = ["Ward", "Followers"]
 	culture = "Neutral"
-	ability_text = "Unlock (4): Ward - Followers - When you add a structure to the field, you may pay mana to increase its Res by 6 for each mana paid."
+	ability_text = "[b]Unlock[/b] (4): Ward - Followers - When you play a structure, you may pay mana to give it +6 Res per mana."
 	art_path = ART_PATH
 
 func on_unlock(_game_manager: GameManager) -> void:

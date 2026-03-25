@@ -14,7 +14,7 @@ func _init() -> void:
 	speed = 1
 	is_legendary = false
 	flavor_text = ""
-	ability_text = "Dwarves and face-up creatures under level 3 lose all abilities and are treated as structures with the classification Stone."
+	ability_text = "Dwarves and face-up creatures under level 3 lose all abilities and become Stone structures."
 	artist = "Jessica Kings via TcgMaker"
 	art_path = "res://images/card_art/spells/BaneofSvart.png"
 	targets = false

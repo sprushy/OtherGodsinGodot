@@ -22,6 +22,8 @@ func can_unlock(game_manager: GameManager) -> bool:
 		return false
 	if is_muted:
 		return false
+	if is_activation_locked(game_manager):
+		return false
 	if card_owner != game_manager.current_player:
 		return false
 	return card_owner.mana >= mana_cost
@@ -47,6 +49,8 @@ func can_activate(game_manager: GameManager) -> bool:
 	if is_face_down:
 		return false
 	if is_muted:
+		return false
+	if is_activation_locked(game_manager):
 		return false
 	if card_owner != game_manager.current_player:
 		return false

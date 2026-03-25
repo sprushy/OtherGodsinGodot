@@ -6,6 +6,7 @@ const RETURN_MANA_COST := 1
 const FOLLOWERS_PER_LEVEL := 3
 
 var stored_priests: Array[Card] = []
+var stored_priest_origins: Dictionary = {}
 var return_window_open: bool = false
 
 func _init() -> void:
@@ -15,12 +16,12 @@ func _init() -> void:
 	mana_cost = UNLOCK_COST
 	level = 3
 	card_types = ["Power", "Runic Worship"]
-	ability_text = "Peaceful Runes: You may put a friendly Priest which has not attacked from the field under this card. At the end of your turn gain followers equal to the total level of Priests under this card x3. At the start of your turn you may pay 1 mana to return a Priest to the field. If this card is flipped over return all cards under it to the field."
+	ability_text = "Peaceful Runes: You may place a friendly Priest that attacked this turn under this card. End of turn: gain followers equal to 3 times the total level of Priests under it. [b]Upkeep[/b]: You may pay 1 mana to return a Priest to the field. If this card is flipped, return all cards under it to the field."
 	artist = "Lorinda Tomko"
 	art_path = "res://images/card_art/powers/breidablik.jpg"
 
 func can_activate(game_manager: GameManager) -> bool:
-	if is_face_down or is_muted or card_owner != game_manager.current_player:
+	if is_face_down or is_muted or is_activation_locked(game_manager) or card_owner != game_manager.current_player:
 		return false
 	return not get_valid_field_priests(game_manager).is_empty() or can_return_priest(game_manager)
 
@@ -58,13 +59,13 @@ func return_priest(game_manager: GameManager, priest: Card) -> bool:
 		return false
 	if priest == null or priest not in stored_priests:
 		return false
-	var open_zones: Array[Zone] = _get_open_field_zones()
-	if open_zones.is_empty():
+	var zone: Zone = _get_best_return_zone(priest)
+	if zone == null:
 		return false
 	if not card_owner.spend_mana(RETURN_MANA_COST):
 		return false
 	stored_priests.erase(priest)
-	var zone: Zone = open_zones[0]
+	stored_priest_origins.erase(priest)
 	zone.add_card(priest)
 	priest.is_face_down = false
 	priest.is_stealth = false
@@ -109,6 +110,10 @@ func _can_store_priest(card: Card) -> bool:
 func _store_priest(priest: Card) -> void:
 	if priest == null or priest.current_zone == null:
 		return
+	stored_priest_origins[priest] = {
+		"zone_type": priest.current_zone.zone_type,
+		"zone_index": priest.current_zone.zone_index,
+	}
 	for equipment_card in priest.equipment.duplicate():
 		equipment_card.unequip()
 	priest.current_zone.remove_card(priest)
@@ -124,11 +129,12 @@ func _return_all_stored_priests() -> void:
 	for priest in remaining:
 		if priest == null:
 			continue
-		var open_zones: Array[Zone] = _get_open_field_zones()
-		if open_zones.is_empty():
+		var zone: Zone = _get_best_return_zone(priest)
+		if zone == null:
+			stored_priest_origins.erase(priest)
 			card_owner.hand_zone.add_card(priest)
 			continue
-		var zone: Zone = open_zones[0]
+		stored_priest_origins.erase(priest)
 		zone.add_card(priest)
 		priest.is_face_down = false
 		priest.is_stealth = false
@@ -146,3 +152,48 @@ func _get_open_field_zones() -> Array[Zone]:
 		if zone.cards.is_empty():
 			open_zones.append(zone)
 	return open_zones
+
+func _get_best_return_zone(priest: Card) -> Zone:
+	for zone in _get_return_zone_preferences(priest):
+		if zone != null and zone.cards.is_empty():
+			return zone
+	return null
+
+func _get_return_zone_preferences(priest: Card) -> Array[Zone]:
+	var preferred: Array[Zone] = []
+	var origin: Dictionary = stored_priest_origins.get(priest, {})
+	var origin_type: int = int(origin.get("zone_type", -1))
+
+	if origin_type == Zone.ZoneType.FRONTLINE:
+		_append_power_ordered_zones(preferred, card_owner.frontline_zones)
+		_append_power_ordered_zones(preferred, card_owner.reserve_zones)
+	elif origin_type == Zone.ZoneType.RESERVE:
+		_append_power_ordered_zones(preferred, card_owner.reserve_zones)
+		_append_power_ordered_zones(preferred, card_owner.frontline_zones)
+	else:
+		_append_power_ordered_zones(preferred, card_owner.frontline_zones)
+		_append_power_ordered_zones(preferred, card_owner.reserve_zones)
+
+	return preferred
+
+func _append_power_ordered_zones(target: Array[Zone], source: Array[Zone]) -> void:
+	for zone_index in _get_indices_nearest_power(source.size()):
+		if zone_index < 0 or zone_index >= source.size():
+			continue
+		var zone: Zone = source[zone_index]
+		if zone not in target:
+			target.append(zone)
+
+func _get_indices_nearest_power(count: int) -> Array[int]:
+	var indices: Array[int] = []
+	for index in range(count):
+		indices.append(index)
+	# Power slots render to the left of the board lanes, so lower indexes are closest.
+	indices.sort_custom(func(a: int, b: int) -> bool:
+		var distance_a := a + 1
+		var distance_b := b + 1
+		if distance_a == distance_b:
+			return a < b
+		return distance_a < distance_b
+	)
+	return indices

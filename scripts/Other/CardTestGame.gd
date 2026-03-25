@@ -18,6 +18,10 @@ func _add_test_deck_card(player: Player, card: Card) -> void:
 	card.card_owner = player
 	player.deck_zone.add_card(card)
 
+func _add_test_graveyard_card(player: Player, card: Card) -> void:
+	card.card_owner = player
+	player.graveyard_zone.add_card(card)
+
 func _clear_zone(zone: Zone) -> void:
 	if zone == null:
 		return
@@ -31,6 +35,7 @@ func _reset_player_test_state(player: Player) -> void:
 	_clear_zone(player.deck_zone)
 	_clear_zone(player.graveyard_zone)
 	_clear_zone(player.abyss_zone)
+	_clear_zone(player.god_zone)
 	for zone in player.power_zones:
 		_clear_zone(zone)
 	for zone in player.frontline_zones:
@@ -43,78 +48,68 @@ func _setup_test_board() -> void:
 	_reset_player_test_state(player2)
 	game_manager.prepared_hexes.clear()
 	game_manager.prepared_charms.clear()
+	game_manager.died_this_turn.clear()
+	game_manager.pending_resurrections.clear()
+	game_manager.combat_destroy_events_this_turn.clear()
+	game_manager.action_stack.clear()
 
-	var p1_askelladen := Askelladen.new()
-	p1_askelladen.card_owner = player1
-	p1_askelladen.creature_mode = Card.CreatureMode.ATTACK
-	player1.frontline_zones[3].add_card(p1_askelladen)
+	var p1_cernunnos := Cernunnos.new()
+	p1_cernunnos.card_owner = player1
+	player1.god_zone.add_card(p1_cernunnos)
 
-	var p2_askelladen := Askelladen.new()
-	p2_askelladen.card_owner = player2
-	p2_askelladen.creature_mode = Card.CreatureMode.ATTACK
-	player2.frontline_zones[3].add_card(p2_askelladen)
+	var p2_dellingr := DellingrTheDayspring.new()
+	p2_dellingr.card_owner = player2
+	player2.god_zone.add_card(p2_dellingr)
 
-	var p1_mead := BerserkerMead.new()
-	p1_mead.card_owner = player1
-	player1.power_zones[0].add_card(p1_mead)
+	var p1_clay_eaters := ClayEaters.new()
+	_add_test_hand_card(player1, p1_clay_eaters)
 
-	var p1_breidablik := Breidablik.new()
-	p1_breidablik.card_owner = player1
-	player1.power_zones[1].add_card(p1_breidablik)
+	var p1_deucalions_infants := DeucalionsInfants.new()
+	_add_test_hand_card(player1, p1_deucalions_infants)
 
-	var p1_banishment := Banishment.new()
-	p1_banishment.card_owner = player1
-	p1_banishment.is_prepared = true
-	p1_banishment.is_face_down = true
-	player1.reserve_zones[0].add_card(p1_banishment)
-	game_manager.prepared_hexes[p1_banishment] = 0
-
-	var p2_banishment := Banishment.new()
-	p2_banishment.card_owner = player2
-	p2_banishment.is_prepared = true
-	p2_banishment.is_face_down = true
-	player2.reserve_zones[0].add_card(p2_banishment)
-	game_manager.prepared_hexes[p2_banishment] = 0
-
-	var p2_demiurge := ApollyonsDemiurge.new()
-	_add_test_hand_card(player2, p2_demiurge)
-
-	var p1_bit_meseri := BitMeseri.new()
-	_add_test_hand_card(player1, p1_bit_meseri)
-
-	var p1_warding_stone := WardingStone.new()
-	_add_test_hand_card(player1, p1_warding_stone)
+	var p1_warding_stone_hand := WardingStone.new()
+	_add_test_hand_card(player1, p1_warding_stone_hand)
 
 	var p1_blot_sacrifice := BlotSacrifice.new()
 	_add_test_hand_card(player1, p1_blot_sacrifice)
 
-	var p1_enki := EnkiLordOfEridu.new()
-	_add_test_hand_card(player1, p1_enki)
-
-	var p1_hand_askelladen := Askelladen.new()
-	_add_test_hand_card(player1, p1_hand_askelladen)
-
-	var p1_byggvir := Byggvir.new()
-	_add_test_hand_card(player1, p1_byggvir)
-
-	var p1_mead_of_poetry := MeadOfPoetry.new()
-	_add_test_hand_card(player1, p1_mead_of_poetry)
-
-	for i in range(2):
-		var p2_absence := Absence.new()
-		_add_test_hand_card(player2, p2_absence)
-
-	var p2_bit_meseri := BitMeseri.new()
-	_add_test_hand_card(player2, p2_bit_meseri)
-
-	var p2_warding_stone := WardingStone.new()
-	_add_test_hand_card(player2, p2_warding_stone)
-
-	var p2_asag_hand := AsagTheDestroyer.new()
-	_add_test_hand_card(player2, p2_asag_hand)
-
 	var p2_blessed_knights := BlessedKnights.new()
 	_add_test_hand_card(player2, p2_blessed_knights)
+
+	var p2_absence := Absence.new()
+	_add_test_hand_card(player2, p2_absence)
+
+	var p1_stone_infant := StoneInfant.new()
+	p1_stone_infant.card_owner = player1
+	p1_stone_infant.creature_mode = Card.CreatureMode.DEFENSIVE
+	player1.frontline_zones[0].add_card(p1_stone_infant)
+
+	var p1_warding_stone_board := WardingStone.new()
+	p1_warding_stone_board.card_owner = player1
+	player1.reserve_zones[0].add_card(p1_warding_stone_board)
+
+	var p1_askelladen := Askelladen.new()
+	p1_askelladen.card_owner = player1
+	p1_askelladen.creature_mode = Card.CreatureMode.AGGRESSIVE
+	player1.frontline_zones[2].add_card(p1_askelladen)
+
+	var p2_anointing_statue := AnointingStatue.new()
+	p2_anointing_statue.card_owner = player2
+	player2.reserve_zones[0].add_card(p2_anointing_statue)
+
+	var p2_stone_infant := StoneInfant.new()
+	p2_stone_infant.card_owner = player2
+	p2_stone_infant.creature_mode = Card.CreatureMode.DEFENSIVE
+	player2.reserve_zones[1].add_card(p2_stone_infant)
+
+	var p2_askelladen := Askelladen.new()
+	p2_askelladen.card_owner = player2
+	p2_askelladen.creature_mode = Card.CreatureMode.AGGRESSIVE
+	player2.frontline_zones[2].add_card(p2_askelladen)
+
+	_add_test_graveyard_card(player1, Askelladen.new())
+	_add_test_graveyard_card(player1, AgainWalker.new())
+	_add_test_graveyard_card(player1, Aurboda.new())
 
 	for player in [player1, player2]:
 		for i in range(3):

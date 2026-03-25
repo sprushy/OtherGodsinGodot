@@ -10,7 +10,7 @@ func _init() -> void:
 	mana_cost = UNLOCK_COST
 	culture = "Ancient"
 	card_types = ["Power", "Cost Modification", "Creature"]
-	ability_text = "Demon and Spirit summoning costs which require creature sacrifice can be paid instead by voiding sleeping creatures from either side of the field."
+	ability_text = "Demon and Spirit sacrifice summon costs may be paid by [b]Void[/b]ing sleeping creatures from either side of the field."
 	art_path = ART_PATH
 
 func on_unlock(_game_manager: GameManager) -> void:

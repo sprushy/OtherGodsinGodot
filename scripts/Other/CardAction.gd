@@ -19,6 +19,7 @@ var resolve_callback: Callable = Callable()
 var event_name: String = ""
 var event_speed: int = 0
 var event_data: Dictionary = {}
+var resolution_text: String = ""
 
 func get_timing_speed() -> int:
 	match type:

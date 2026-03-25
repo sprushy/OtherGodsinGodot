@@ -17,7 +17,7 @@ func _init() -> void:
 	strength = 17
 	sacrifice_cost = 0
 	creature_sacrifice_cost = 0
-	ability_text = "Berserker Rage (Once per turn): Gains 10 Str and cannot be destroyed this turn. After any combat this turn, including attacks against followers, it falls asleep until the start of your next turn."
+	ability_text = "[b]Berserker Rage[/b] (Once per turn): This turn gain 10 Str and [b]Immortal[/b]. After any attack, sleep in defensive stance until the start of your next turn."
 	culture = "Norse"
 	artist = "Ricardo Zoppello"
 	art_path = "res://images/card_art/creatures/Berserker's Steele(web).jpg"
@@ -67,4 +67,5 @@ func on_after_combat(_game_manager: GameManager, _opposing_card: Card) -> void:
 	clear_buffs_from(RAGE_SOURCE)
 	remove_status_effects_by_name("berserker_rage_guard")
 	if current_zone != null and current_zone.is_board_zone():
+		creature_mode = Card.CreatureMode.DEFENSIVE
 		apply_sleep(self)

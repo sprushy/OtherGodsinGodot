@@ -10,6 +10,7 @@ func _ready() -> void:
 
 	get_node("GameContainer/MockGame").visible = false
 	get_node("GameContainer/CardTest").visible = false
+	_bind_game_signals()
 
 	var mock_btn = $MenuContainer/MockGameButton
 	var deck_btn = $MenuContainer/DeckBuilderButton
@@ -23,6 +24,14 @@ func _ready() -> void:
 		card_test_btn.pressed.connect(_on_card_test_pressed)
 
 	show_menu()
+
+func _bind_game_signals() -> void:
+	for node_name in ["MockGame", "CardTest"]:
+		var game = get_node_or_null("GameContainer/" + node_name)
+		if game != null and game.has_signal("forfeit_requested"):
+			var callback := Callable(self, "_on_game_forfeit_requested")
+			if not game.forfeit_requested.is_connected(callback):
+				game.forfeit_requested.connect(callback)
 
 func _fit_to_viewport() -> void:
 	position = Vector2.ZERO
@@ -66,6 +75,12 @@ func _on_card_test_pressed() -> void:
 	get_node("GameContainer/CardTest").start_game()
 
 func _on_back_to_menu_pressed() -> void:
+	_return_to_menu()
+
+func _on_game_forfeit_requested() -> void:
+	_return_to_menu()
+
+func _return_to_menu() -> void:
 	show_menu()
 	for node_name in ["MockGame", "CardTest"]:
 		var game = get_node_or_null("GameContainer/" + node_name)
@@ -76,11 +91,11 @@ func _on_back_to_menu_pressed() -> void:
 		db.queue_free()
 
 
-func _on_attack_mode_btn_pressed() -> void:
+func _on_aggressive_stance_btn_pressed() -> void:
 	pass # Replace with function body.
 
 
-func _on_defense_mode_btn_pressed() -> void:
+func _on_defensive_stance_btn_pressed() -> void:
 	pass # Replace with function body.
 
 

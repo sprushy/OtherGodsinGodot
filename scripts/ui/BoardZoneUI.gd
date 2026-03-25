@@ -28,7 +28,7 @@ const ZONE_HEIGHT := 110
 var _row_label: String = ""
 
 func _is_public_power(card: Card) -> bool:
-	return card is PowerCard and ((card as PowerCard).is_publicly_revealed or not card.is_face_down)
+	return card is PowerCard and ((card as PowerCard).is_publicly_revealed or card.is_temporarily_revealed() or not card.is_face_down)
 
 func _get_card_type_label(card: Card) -> String:
 	if card == null:
@@ -174,7 +174,7 @@ func _refresh_display() -> void:
 			var fd_overlay := Control.new()
 			fd_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			add_child(fd_overlay)
-			var revealed_face_down_power := card is PowerCard and (card as PowerCard).is_publicly_revealed
+			var revealed_face_down_power := (card is PowerCard and (card as PowerCard).is_publicly_revealed) or card.is_temporarily_revealed()
 			var is_own_hidden_card := card.get_controller() == game_manager.current_player and (
 				card.is_stealth
 				or card.is_power
@@ -234,7 +234,7 @@ func _refresh_display() -> void:
 				fd_overlay.add_child(haze)
 			if card.get_controller() == game_manager.current_player and card.is_prepared and card.is_magical_card():
 				_add_speed_badge(fd_overlay, card)
-			var _fd_is_def := card.card_type == Card.CardType.CREATURE and card.creature_mode == Card.CreatureMode.DEFENSE
+			var _fd_is_def := card.card_type == Card.CardType.CREATURE and card.creature_mode == Card.CreatureMode.DEFENSIVE
 			_defense_overlay = fd_overlay if _fd_is_def else null
 			_raised_overlay  = fd_overlay if (_fd_is_def or card.is_stealth) else null
 			z_index = 2 if _raised_overlay != null else 0
@@ -277,13 +277,13 @@ func _refresh_display() -> void:
 					name_vbox.add_child(spacer)
 
 				var name_lbl := Label.new()
-				name_lbl.text = card.card_name
 				name_lbl.add_theme_font_size_override("font_size", 11)
 				name_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 				name_lbl.add_theme_color_override("font_color", Color(1.0, 0.95, 0.6))
 				name_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 				name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 				name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+				name_lbl.text = card.get_display_name_for_control(name_lbl)
 				name_vbox.add_child(name_lbl)
 
 				if not card.name_at_bottom:
@@ -333,7 +333,7 @@ func _refresh_display() -> void:
 					overlay.add_child(muted_badge)
 			return
 
-		var is_def_creature := card.card_type == Card.CardType.CREATURE and card.creature_mode == Card.CreatureMode.DEFENSE
+		var is_def_creature := card.card_type == Card.CardType.CREATURE and card.creature_mode == Card.CreatureMode.DEFENSIVE
 		match card.card_type:
 			Card.CardType.CREATURE:
 				if is_def_creature:
@@ -357,9 +357,10 @@ func _refresh_display() -> void:
 		add_child(overlay)
 
 		# Art background; stealth shows hazed art (own) or cardback (opponent)
+		var show_public_stealth := card.is_stealth and card.is_temporarily_revealed()
 		if card.is_stealth:
 			var is_own := card.get_controller() == game_manager.current_player
-			var tex_path := card.art_path if is_own and card.art_path != "" else "res://images/cardbackAI.png"
+			var tex_path := card.art_path if (is_own or show_public_stealth) and card.art_path != "" else "res://images/cardbackAI.png"
 			var tex: Texture2D = load(tex_path)
 			if tex:
 				var art := TextureRect.new()
@@ -369,9 +370,9 @@ func _refresh_display() -> void:
 				art.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 				art.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				overlay.add_child(art)
-			if is_own:
+			if is_own or show_public_stealth:
 				var haze := ColorRect.new()
-				haze.color = Color(0.05, 0.05, 0.2, 0.6)
+				haze.color = Color(0.05, 0.05, 0.2, 0.6) if is_own else Color(0.85, 0.22, 0.45, 0.28)
 				haze.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 				haze.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				overlay.add_child(haze)
@@ -399,12 +400,12 @@ func _refresh_display() -> void:
 		spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		vbox.add_child(spacer)
 
-		var is_own_stealth_faceup := card.is_stealth and card.get_controller() == game_manager.current_player
+		var is_own_stealth_faceup := card.is_stealth and (card.get_controller() == game_manager.current_player or card.is_temporarily_revealed())
 		if card.card_type == Card.CardType.CREATURE and not card.is_god and (not card.is_stealth or is_own_stealth_faceup):
 			var eff_str := card.get_effective_strength()
 			var eff_res := card.get_effective_resilience()
 			var eff_spd := card.get_effective_speed()
-			var is_def := card.creature_mode == Card.CreatureMode.DEFENSE
+			var is_def := card.creature_mode == Card.CreatureMode.DEFENSIVE
 			var stat_row := HBoxContainer.new()
 			stat_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
@@ -553,7 +554,7 @@ func _gui_input(event: InputEvent) -> void:
 			if card.card_type == Card.CardType.CREATURE and card.get_controller() == game_manager.current_player:
 				creature_right_clicked.emit(card)
 			# Pin the info popup on right-click for any visible card
-			if not card.is_face_down or card.get_controller() == game_manager.current_player or _is_public_power(card):
+			if not card.is_face_down or card.get_controller() == game_manager.current_player or _is_public_power(card) or card.is_temporarily_revealed():
 				_pinned = true
 				_hide_ability_popup()
 				_show_ability_popup()
@@ -577,7 +578,7 @@ func _notification(what: int) -> void:
 			_hovered = true
 			z_index = 10
 			var _c := zone.cards[0] if zone != null and zone.cards.size() > 0 else null
-			if _c != null and (not _c.is_face_down or _c.get_controller() == game_manager.current_player or _is_public_power(_c)):
+			if _c != null and (not _c.is_face_down or _c.get_controller() == game_manager.current_player or _is_public_power(_c) or _c.is_temporarily_revealed()):
 				var _delay := 1.0 if (_c.is_god) else 1.5
 				get_tree().create_timer(_delay).timeout.connect(
 					func() -> void: _try_show_popup()
@@ -661,13 +662,13 @@ func _show_ability_popup() -> void:
 	popup.add_child(vbox)
 
 	# Hidden = opponent's stealth card; own stealth cards show full info
-	var hidden := card.is_stealth and card.get_controller() != game_manager.current_player
+	var hidden := (card.is_stealth or (card.is_face_down and not _is_public_power(card))) and card.get_controller() != game_manager.current_player and not card.is_temporarily_revealed()
 
 	# Name
 	var name_lbl := Label.new()
-	name_lbl.text = card.card_name if not hidden else "???"
 	name_lbl.add_theme_font_size_override("font_size", 13)
 	name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	name_lbl.text = card.get_display_name_for_control(name_lbl) if not hidden else "???"
 	vbox.add_child(name_lbl)
 
 	# Types
@@ -722,7 +723,7 @@ func _show_ability_popup() -> void:
 				vbox.add_child(sleep_lbl)
 
 			var mode_lbl := Label.new()
-			mode_lbl.text = "DEF" if card.creature_mode == Card.CreatureMode.DEFENSE else "ATK"
+			mode_lbl.text = "DEF" if card.creature_mode == Card.CreatureMode.DEFENSIVE else "AGG"
 			mode_lbl.add_theme_font_size_override("font_size", 11)
 			mode_lbl.modulate = Color(0.7, 0.7, 0.7)
 			mode_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE

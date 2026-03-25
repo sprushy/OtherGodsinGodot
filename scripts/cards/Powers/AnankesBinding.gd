@@ -15,7 +15,7 @@ func _init() -> void:
 	mana_cost = UNLOCK_COST
 	culture = "Olympic"
 	card_types = ["Power", "Fate Manipulation"]
-	ability_text = "Pay 3 mana: Search a card from your deck and put it under this card; at the end of your second turn after activation, place it on top of your deck."
+	ability_text = "Pay 3 mana: [b]Search[/b] a card and place it under this card. At the end of your second turn after activation, [b]Prime[/b] it."
 	art_path = ART_PATH
 
 func on_unlock(_game_manager: GameManager) -> void:
@@ -23,6 +23,7 @@ func on_unlock(_game_manager: GameManager) -> void:
 
 func can_activate(game_manager: GameManager) -> bool:
 	return not is_face_down \
+		and not is_activation_locked(game_manager) \
 		and card_owner == game_manager.current_player \
 		and card_owner.mana >= ACTIVATION_COST \
 		and not card_owner.deck_zone.cards.is_empty()

@@ -17,7 +17,7 @@ func _init() -> void:
 	strength = 0
 	sacrifice_cost = 0
 	creature_sacrifice_cost = 0
-	ability_text = "Once per turn you may remove all status changes on a creature."
+	ability_text = "Once per turn, remove all status changes from a creature."
 	culture = "Triskelion"
 	art_path = ART_PATH
 

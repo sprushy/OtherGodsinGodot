@@ -62,7 +62,7 @@ func summon_selected_creatures(game_manager: GameManager, creatures: Array) -> A
 			continue
 		var zone: Zone = open_zones.pop_front() as Zone
 		card_owner.move_card(creature, zone)
-		creature.creature_mode = Card.CreatureMode.ATTACK
+		creature.creature_mode = Card.CreatureMode.AGGRESSIVE
 		creature.reset_creature_action_state()
 		creature.summoned_this_turn = true
 		creature.is_face_down = false

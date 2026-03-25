@@ -9,15 +9,24 @@ signal back_pressed
 const CARD_W    := 140
 const CARD_H    := 192
 const MIN_DECK  := 20
+const COLLECTION_ROWS := 3
+const COLLECTION_GAP  := 8.0
 
 # ── state ──────────────────────────────────────────────────────────
 var _all_cards: Array  = []        # template Card instances (read-only)
 var _deck: Dictionary  = {}        # card_name (String) -> count (int)
 var _filter: String         = "All"
 var _faction_filter: String = "All"
+var _current_page: int      = 0
+var _grid_columns: int      = 1
+var _card_size: Vector2     = Vector2(CARD_W, CARD_H)
 
 # ── major UI refs ──────────────────────────────────────────────────
 var _grid:             HFlowContainer
+var _collection_host:  Control
+var _page_label:       Label
+var _prev_page_btn:    Button
+var _next_page_btn:    Button
 var _deck_list:        VBoxContainer
 var _deck_count_lbl:   Label
 var _validation_lbl:   Label
@@ -37,16 +46,17 @@ func _ready() -> void:
 	_all_cards = _make_all_cards()
 	_build_ui()
 	_refresh_grid()
+	_queue_collection_layout_refresh()
 	_refresh_deck_panel()
 
 func _make_all_cards() -> Array:
 	return [
-		Thor.new(), Mummu.new(), AphroditeAreia.new(), Baldr.new(),
+		Thor.new(), Mummu.new(), AphroditeAreia.new(), Baldr.new(), DellingrTheDayspring.new(),
 		AcceleratedFate.new(), ACostToWalkTheWorlds.new(), AdvancedBuildingTechniques.new(), AllfathersSacrifice.new(), AltarOfDreams.new(), AnankesBinding.new(), AncientWisdom.new(), BerserkerMead.new(), Breidablik.new(),
 		Berserker.new(), Beyla.new(), BlessedKnights.new(), BrownBear.new(), Byggvir.new(), AnkouServantToTheReaper.new(), Anzu.new(), AnTheBowbender.new(),
 		AsagTheDestroyer.new(), Asakku.new(), Asaruludu.new(),
 		AgainWalker.new(), Alu.new(), Askelladen.new(), Aurboda.new(), EnkiLordOfEridu.new(),
-		BitMeseri.new(), CircleOfRebirth.new(), FallOfTheMighty.new(), ApollyonsDemiurge.new(), Absence.new(), BaneOfTheSvartalfar.new(), BlotSacrifice.new(), BookOfLife.new(), MeadOfPoetry.new(),
+		BitMeseri.new(), CircleOfRebirth.new(), FallOfTheMighty.new(), ApollyonsDemiurge.new(), Absence.new(), BaneOfTheSvartalfar.new(), BlotSacrifice.new(), BookOfLife.new(), DeucalionsInfants.new(), MeadOfPoetry.new(),
 		BeardedAxe.new(),
 		WardingStone.new(), AncientPyre.new(), AnointingStatue.new(),
 		VoidShield.new(), Banishment.new(),
@@ -186,28 +196,63 @@ func _build_collection_panel(parent: Control) -> void:
 	panel.add_theme_stylebox_override("panel", ps)
 	parent.add_child(panel)
 
-	var scroll := ScrollContainer.new()
-	scroll.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	scroll.size_flags_vertical   = Control.SIZE_EXPAND_FILL
-	panel.add_child(scroll)
+	var content := VBoxContainer.new()
+	content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	content.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	content.add_theme_constant_override("separation", 10)
+	panel.add_child(content)
+
+	_collection_host = Control.new()
+	_collection_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_collection_host.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_collection_host.clip_contents = true
+	_collection_host.resized.connect(_queue_collection_layout_refresh)
+	content.add_child(_collection_host)
 
 	_grid = HFlowContainer.new()
-	_grid.add_theme_constant_override("h_separation", 8)
-	_grid.add_theme_constant_override("v_separation", 8)
+	_grid.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_grid.add_theme_constant_override("h_separation", int(COLLECTION_GAP))
+	_grid.add_theme_constant_override("v_separation", int(COLLECTION_GAP))
 	_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	scroll.add_child(_grid)
+	_grid.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_collection_host.add_child(_grid)
+
+	var page_bar := HBoxContainer.new()
+	page_bar.add_theme_constant_override("separation", 8)
+	content.add_child(page_bar)
+
+	_prev_page_btn = Button.new()
+	_prev_page_btn.text = "Previous Page"
+	_prev_page_btn.custom_minimum_size = Vector2(120, 32)
+	_prev_page_btn.pressed.connect(_show_previous_page)
+	page_bar.add_child(_prev_page_btn)
+
+	_page_label = Label.new()
+	_page_label.text = "Page 1 / 1"
+	_page_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_page_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_page_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_page_label.add_theme_font_size_override("font_size", 12)
+	page_bar.add_child(_page_label)
+
+	_next_page_btn = Button.new()
+	_next_page_btn.text = "Next Page"
+	_next_page_btn.custom_minimum_size = Vector2(120, 32)
+	_next_page_btn.pressed.connect(_show_next_page)
+	page_bar.add_child(_next_page_btn)
 
 func _build_deck_panel(parent: Control) -> void:
 	var panel := VBoxContainer.new()
-	panel.custom_minimum_size.x = 295
+	panel.custom_minimum_size.x = 380
+	panel.size_flags_horizontal = Control.SIZE_FILL
 	panel.size_flags_vertical   = Control.SIZE_EXPAND_FILL
-	panel.add_theme_constant_override("separation", 5)
+	panel.add_theme_constant_override("separation", 8)
 	parent.add_child(panel)
 
 	# ── preview ──────────────────────────────────────────
 	var prev_outer := PanelContainer.new()
-	prev_outer.custom_minimum_size = Vector2(295, 190)
+	prev_outer.custom_minimum_size = Vector2(380, 300)
+	prev_outer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var prev_style := StyleBoxFlat.new()
 	prev_style.bg_color = Color(0.10, 0.10, 0.16)
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
@@ -221,54 +266,55 @@ func _build_deck_panel(parent: Control) -> void:
 	prev_outer.add_child(prev_hbox)
 
 	_prev_art = TextureRect.new()
-	_prev_art.custom_minimum_size = Vector2(100, 133)
+	_prev_art.custom_minimum_size = Vector2(132, 176)
 	_prev_art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 	_prev_art.expand_mode  = TextureRect.EXPAND_IGNORE_SIZE
 	_prev_art.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	prev_hbox.add_child(_prev_art)
 
 	var prev_text := VBoxContainer.new()
+	prev_text.custom_minimum_size.x = 220
 	prev_text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	prev_text.size_flags_vertical   = Control.SIZE_EXPAND_FILL
-	prev_text.add_theme_constant_override("separation", 3)
+	prev_text.add_theme_constant_override("separation", 5)
 	prev_hbox.add_child(prev_text)
 
 	_prev_name = Label.new()
 	_prev_name.text = "Hover a card to preview"
-	_prev_name.add_theme_font_size_override("font_size", 12)
+	_prev_name.add_theme_font_size_override("font_size", 20)
 	_prev_name.add_theme_color_override("font_color", Color(1.0, 0.95, 0.7))
 	_prev_name.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	prev_text.add_child(_prev_name)
 
 	_prev_type = Label.new()
 	_prev_type.text = ""
-	_prev_type.add_theme_font_size_override("font_size", 10)
+	_prev_type.add_theme_font_size_override("font_size", 16)
 	_prev_type.modulate = Color(0.7, 0.85, 1.0)
 	_prev_type.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	prev_text.add_child(_prev_type)
 
 	_prev_stats = Label.new()
 	_prev_stats.text = ""
-	_prev_stats.add_theme_font_size_override("font_size", 10)
+	_prev_stats.add_theme_font_size_override("font_size", 16)
 	prev_text.add_child(_prev_stats)
 
 	_prev_ability = RichTextLabel.new()
 	_prev_ability.bbcode_enabled  = true
 	_prev_ability.text            = ""
 	_prev_ability.autowrap_mode   = TextServer.AUTOWRAP_WORD_SMART
-	_prev_ability.add_theme_font_size_override("normal_font_size", 9)
-	_prev_ability.add_theme_font_size_override("bold_font_size", 9)
+	_prev_ability.add_theme_font_size_override("normal_font_size", 15)
+	_prev_ability.add_theme_font_size_override("bold_font_size", 15)
 	_prev_ability.add_theme_color_override("default_color", Color(0.85, 0.8, 1.0))
 	_prev_ability.scroll_active   = false
 	_prev_ability.fit_content     = true
 	_prev_ability.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_prev_ability.custom_minimum_size.y = 28
+	_prev_ability.custom_minimum_size.y = 96
 	_prev_ability.mouse_filter    = Control.MOUSE_FILTER_STOP
 	prev_text.add_child(_prev_ability)
 
 	_prev_flavor = Label.new()
 	_prev_flavor.text = ""
-	_prev_flavor.add_theme_font_size_override("font_size", 9)
+	_prev_flavor.add_theme_font_size_override("font_size", 14)
 	_prev_flavor.add_theme_color_override("font_color", Color(0.5, 0.5, 0.55))
 	_prev_flavor.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	prev_text.add_child(_prev_flavor)
@@ -279,14 +325,14 @@ func _build_deck_panel(parent: Control) -> void:
 
 	var deck_title := Label.new()
 	deck_title.text = "MY DECK"
-	deck_title.add_theme_font_size_override("font_size", 13)
+	deck_title.add_theme_font_size_override("font_size", 16)
 	deck_title.add_theme_color_override("font_color", Color(0.9, 0.8, 0.4))
 	deck_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	hdr.add_child(deck_title)
 
 	_deck_count_lbl = Label.new()
 	_deck_count_lbl.text = "0 cards"
-	_deck_count_lbl.add_theme_font_size_override("font_size", 11)
+	_deck_count_lbl.add_theme_font_size_override("font_size", 12)
 	_deck_count_lbl.modulate = Color(0.7, 0.7, 0.7)
 	hdr.add_child(_deck_count_lbl)
 
@@ -294,6 +340,7 @@ func _build_deck_panel(parent: Control) -> void:
 	var deck_scroll := ScrollContainer.new()
 	deck_scroll.size_flags_vertical   = Control.SIZE_EXPAND_FILL
 	deck_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	deck_scroll.custom_minimum_size.y = 280
 	panel.add_child(deck_scroll)
 
 	_deck_list = VBoxContainer.new()
@@ -307,7 +354,7 @@ func _build_deck_panel(parent: Control) -> void:
 	# ── validation status ────────────────────────────────
 	_validation_lbl = Label.new()
 	_validation_lbl.text = ""
-	_validation_lbl.add_theme_font_size_override("font_size", 10)
+	_validation_lbl.add_theme_font_size_override("font_size", 11)
 	_validation_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	panel.add_child(_validation_lbl)
 
@@ -337,10 +384,18 @@ func _refresh_grid() -> void:
 	for child in _grid.get_children():
 		child.queue_free()
 
-	for card in _all_cards:
-		if not _matches_filter(card):
-			continue
+	var filtered_cards := _filtered_cards()
+	var total_pages := _page_count(filtered_cards.size())
+	_current_page = clampi(_current_page, 0, total_pages - 1)
+
+	var start_index := _current_page * _page_size()
+	var end_index := mini(start_index + _page_size(), filtered_cards.size())
+	for idx in range(start_index, end_index):
+		var card: Card = filtered_cards[idx]
 		_grid.add_child(_make_card_item(card))
+
+	_update_pagination_controls(filtered_cards.size())
+	_update_count_badges()
 
 func _matches_filter(card: Card) -> bool:
 	if _faction_filter != "All" and card.culture != _faction_filter:
@@ -359,7 +414,7 @@ func _matches_filter(card: Card) -> bool:
 
 func _make_card_item(card: Card) -> Control:
 	var root := Control.new()
-	root.custom_minimum_size = Vector2(CARD_W, CARD_H)
+	root.custom_minimum_size = _card_size
 	root.mouse_filter = Control.MOUSE_FILTER_STOP
 
 	# Border / background
@@ -399,8 +454,7 @@ func _make_card_item(card: Card) -> Control:
 	root.add_child(name_bg)
 
 	var name_lbl := Label.new()
-	name_lbl.text = card.card_name
-	name_lbl.add_theme_font_size_override("font_size", 9)
+	name_lbl.add_theme_font_size_override("font_size", 13)
 	name_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	name_lbl.vertical_alignment   = VERTICAL_ALIGNMENT_CENTER
 	name_lbl.autowrap_mode        = TextServer.AUTOWRAP_WORD_SMART
@@ -408,12 +462,13 @@ func _make_card_item(card: Card) -> Control:
 	name_lbl.anchor_top   = 1; name_lbl.anchor_bottom = 1
 	name_lbl.offset_top   = -42; name_lbl.offset_bottom = 0
 	name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	name_lbl.text = card.get_display_name_for_control(name_lbl)
 	root.add_child(name_lbl)
 
 	# Type badge (top-left)
 	var type_lbl := Label.new()
 	type_lbl.text = _get_type_label(card)
-	type_lbl.add_theme_font_size_override("font_size", 8)
+	type_lbl.add_theme_font_size_override("font_size", 10)
 	type_lbl.add_theme_color_override("font_color", tc)
 	type_lbl.anchor_left  = 0; type_lbl.anchor_top  = 0
 	type_lbl.offset_left  = 4; type_lbl.offset_top  = 4
@@ -526,10 +581,10 @@ func _make_deck_row(card: Card) -> Control:
 	row.add_child(dot)
 
 	var name_lbl := Label.new()
-	name_lbl.text = card.card_name
 	name_lbl.add_theme_font_size_override("font_size", 10)
 	name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	name_lbl.clip_text = true
+	name_lbl.text = card.get_display_name_for_control(name_lbl)
 	row.add_child(name_lbl)
 
 	var cnt_lbl := Label.new()
@@ -673,7 +728,7 @@ func _show_preview(card: Card) -> void:
 	else:
 		_prev_art.texture = null
 
-	_prev_name.text = card.card_name
+	_prev_name.text = card.get_display_name_for_control(_prev_name)
 
 	var type_parts: PackedStringArray = [_get_type_label(card)]
 	if card.culture != "":
@@ -709,15 +764,97 @@ func _show_preview(card: Card) -> void:
 # ── filter ─────────────────────────────────────────────────────────
 func _set_filter(new_filter: String) -> void:
 	_filter = new_filter
+	_current_page = 0
 	_refresh_grid()
 	_update_count_badges()
 
 func _set_faction_filter(new_faction: String) -> void:
 	_faction_filter = new_faction
+	_current_page = 0
 	_refresh_grid()
 	_update_count_badges()
 
 # ── helpers ────────────────────────────────────────────────────────
+func _show_previous_page() -> void:
+	if _current_page <= 0:
+		return
+	_current_page -= 1
+	_refresh_grid()
+
+func _show_next_page() -> void:
+	var total_pages := _page_count(_filtered_cards().size())
+	if _current_page >= total_pages - 1:
+		return
+	_current_page += 1
+	_refresh_grid()
+
+func _queue_collection_layout_refresh() -> void:
+	call_deferred("_update_collection_layout")
+
+func _update_collection_layout() -> void:
+	if not is_instance_valid(_collection_host) or not is_instance_valid(_grid):
+		return
+
+	var available: Vector2 = _collection_host.size
+	if available.x <= 0.0 or available.y <= 0.0:
+		return
+
+	var max_card_height: float = floor((available.y - COLLECTION_GAP * float(COLLECTION_ROWS - 1)) / float(COLLECTION_ROWS))
+	max_card_height = max(max_card_height, 1.0)
+
+	var aspect: float = CARD_W / float(CARD_H)
+	var estimated_width: float = floor(max_card_height * aspect)
+	var columns: int = max(1, int(floor((available.x + COLLECTION_GAP) / max(1.0, estimated_width + COLLECTION_GAP))))
+	var width_limited: float = floor((available.x - COLLECTION_GAP * float(columns - 1)) / float(columns))
+	var height_from_width: float = floor(width_limited / aspect)
+
+	if height_from_width < max_card_height:
+		max_card_height = height_from_width
+		estimated_width = width_limited
+	else:
+		estimated_width = floor(max_card_height * aspect)
+
+	var next_size: Vector2 = Vector2(max(1.0, estimated_width), max(1.0, max_card_height))
+	_grid.custom_minimum_size.y = COLLECTION_ROWS * next_size.y + COLLECTION_GAP * float(COLLECTION_ROWS - 1)
+
+	if columns != _grid_columns or next_size != _card_size:
+		_grid_columns = columns
+		_card_size = next_size
+		_refresh_grid()
+		return
+
+	_update_pagination_controls(_filtered_cards().size())
+
+func _filtered_cards() -> Array:
+	var filtered: Array = []
+	for card in _all_cards:
+		if _matches_filter(card):
+			filtered.append(card)
+	return filtered
+
+func _page_size() -> int:
+	return max(1, _grid_columns * COLLECTION_ROWS)
+
+func _page_count(total_cards: int) -> int:
+	if total_cards <= 0:
+		return 1
+	return max(1, int(ceil(total_cards / float(_page_size()))))
+
+func _update_pagination_controls(total_cards: int) -> void:
+	if not is_instance_valid(_page_label):
+		return
+
+	var total_pages := _page_count(total_cards)
+	var shown_start := 0
+	var shown_end := 0
+	if total_cards > 0:
+		shown_start = _current_page * _page_size() + 1
+		shown_end = mini((_current_page + 1) * _page_size(), total_cards)
+
+	_page_label.text = "Page %d / %d    %d-%d of %d cards" % [_current_page + 1, total_pages, shown_start, shown_end, total_cards]
+	_prev_page_btn.disabled = (_current_page <= 0)
+	_next_page_btn.disabled = (_current_page >= total_pages - 1)
+
 func _max_copies(card: Card) -> int:
 	if card.is_god:       return 1
 	if card.is_legendary: return 1

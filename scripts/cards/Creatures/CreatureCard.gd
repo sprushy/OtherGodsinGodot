@@ -27,7 +27,7 @@ func on_reveal(game_manager: GameManager) -> void:
 	pass
 
 func on_death(game_manager: GameManager) -> void:
-	# Called when creature is destroyed/sent to graveyard
+	# Called when creature is destroyed by combat during kill resolution.
 	pass
 
 func on_equip(equipment: Card) -> void:
@@ -35,7 +35,7 @@ func on_equip(equipment: Card) -> void:
 	pass
 
 func on_mode_change(game_manager: GameManager, old_mode: CreatureMode) -> void:
-	# Called when switching between attack and defense mode
+	# Called when switching between aggressive and defensive stances
 	pass
 
 func on_move(game_manager: GameManager, from_zone: Zone, to_zone: Zone) -> void:
@@ -60,4 +60,8 @@ func on_ally_kill(game_manager: GameManager, killer: Card, victim: Card) -> void
 
 func on_after_combat(game_manager: GameManager, opposing_card: Card) -> void:
 	# Called after this creature is involved in combat and survives long enough to receive hooks.
+	pass
+
+func on_sacrificed_for_summon(game_manager: GameManager, summoned_card: Card) -> void:
+	# Called when this creature is sacrificed to pay another creature's summon cost.
 	pass

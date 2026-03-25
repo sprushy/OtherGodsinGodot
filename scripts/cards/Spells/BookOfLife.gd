@@ -13,7 +13,7 @@ func _init() -> void:
 	speed = 1
 	is_legendary = true
 	flavor_text = ""
-	ability_text = "Gain 10 followers; summon a non-machine creature from your hand and silence its effects."
+	ability_text = "Gain 10 followers. Summon a non-machine creature from your hand and [b]Silence[/b] it."
 	artist = ""
 	art_path = "res://images/card_art/spells/BoofofLifeAIedit.png"
 
@@ -60,7 +60,7 @@ func summon_silenced_creature(game_manager: GameManager, creature: Card) -> Card
 		return null
 
 	card_owner.move_card(creature, open_zone)
-	creature.creature_mode = Card.CreatureMode.ATTACK
+	creature.creature_mode = Card.CreatureMode.AGGRESSIVE
 	creature.reset_creature_action_state()
 	creature.summoned_this_turn = true
 	creature.is_face_down = false

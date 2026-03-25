@@ -3,14 +3,17 @@ extends Node
 class_name Player
 
 const MAX_HAND_SIZE := 7
+const BOARD_LANE_COUNT := 5
 
 signal mana_changed(new_mana: int)
 signal followers_changed(new_followers: int)
 signal card_moved(card: Card, from_zone: Zone, to_zone: Zone)
+signal defeated(player: Player)
 
 @export var player_name: String
 var mana: int = 0
 var followers: int = 100
+var is_defeated: bool = false
 var is_turn_player: bool = false
 var has_summoned_this_turn: bool = false
 var attack_restriction_turns: int = 0
@@ -64,7 +67,7 @@ func _initialize_zones() -> void:
 		power_zones.append(power_zone)
 		add_child(power_zone)
 	
-	for i in range(7):
+	for i in range(BOARD_LANE_COUNT):
 		var frontline = Zone.new()
 		frontline.zone_type = Zone.ZoneType.FRONTLINE
 		frontline.zone_index = i
@@ -72,7 +75,7 @@ func _initialize_zones() -> void:
 		frontline_zones.append(frontline)
 		add_child(frontline)
 	
-	for i in range(7):
+	for i in range(BOARD_LANE_COUNT):
 		var reserve = Zone.new()
 		reserve.zone_type = Zone.ZoneType.RESERVE
 		reserve.zone_index = i
@@ -119,17 +122,23 @@ func spend_mana(amount: int) -> bool:
 	return false
 
 func gain_followers(amount: int) -> void:
+	if is_defeated:
+		return
 	followers += amount
 	followers_changed.emit(followers)
 
 func lose_followers(amount: int) -> void:
+	if is_defeated:
+		return
 	followers = max(0, followers - amount)
 	followers_changed.emit(followers)
-	if followers <= 0:
+	if followers <= 0 and not is_defeated:
+		is_defeated = true
 		game_over()
 
 func game_over() -> void:
 	print(player_name + " has lost!")
+	defeated.emit(self)
 
 func move_card(card: Card, to_zone: Zone) -> void:
 	var from_zone = card.current_zone
@@ -139,6 +148,12 @@ func move_card(card: Card, to_zone: Zone) -> void:
 		if card.equipment.size() > 0 and destination_zone and not destination_zone.is_board_zone():
 			for equip in card.equipment.duplicate():
 				equip.unequip()
+
+	if card.is_token and (destination_zone == null or not destination_zone.is_board_zone()):
+		if from_zone:
+			from_zone.remove_card(card)
+		card_moved.emit(card, from_zone, null)
+		return
 	
 	if from_zone:
 		from_zone.remove_card(card)
@@ -200,23 +215,23 @@ func get_adjacent_zones(zone: Zone) -> Array[Zone]:
 		var idx = zone.zone_index
 		if idx > 0:
 			adjacent.append(frontline_zones[idx - 1])
-		if idx < 6:
+		if idx + 1 < frontline_zones.size():
 			adjacent.append(frontline_zones[idx + 1])
 		# Same column and diagonals in reserve row
 		for di in [-1, 0, 1]:
 			var ri = idx + di
-			if ri >= 0 and ri <= 6:
+			if ri >= 0 and ri < reserve_zones.size():
 				adjacent.append(reserve_zones[ri])
 	elif zone.zone_type == Zone.ZoneType.RESERVE:
 		var idx = zone.zone_index
 		if idx > 0:
 			adjacent.append(reserve_zones[idx - 1])
-		if idx < 6:
+		if idx + 1 < reserve_zones.size():
 			adjacent.append(reserve_zones[idx + 1])
 		# Same column and diagonals in frontline row
 		for di in [-1, 0, 1]:
 			var fi = idx + di
-			if fi >= 0 and fi <= 6:
+			if fi >= 0 and fi < frontline_zones.size():
 				adjacent.append(frontline_zones[fi])
 
 	return adjacent

@@ -90,11 +90,11 @@ func _on_art_updated(new_path: String) -> void:
 
 func _make_name_label() -> Label:
 	var name_lbl := Label.new()
-	name_lbl.text = card_data.card_name
 	name_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	name_lbl.add_theme_font_size_override("font_size", 15)
 	name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	name_lbl.custom_minimum_size = Vector2(_card_width - 8, 0)
+	name_lbl.text = card_data.get_display_name_for_control(name_lbl)
 	return name_lbl
 
 func _populate_vbox(vbox: VBoxContainer) -> void:
@@ -483,10 +483,10 @@ func _show_hover_panel() -> void:
 
 	# Name
 	var name_lbl := Label.new()
-	name_lbl.text = card_data.card_name
 	name_lbl.add_theme_font_size_override("font_size", 15)
 	name_lbl.add_theme_color_override("font_color", Color(1.0, 0.95, 0.7))
 	name_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	name_lbl.text = card_data.get_display_name_for_control(name_lbl)
 	vbox.add_child(name_lbl)
 
 	# Types

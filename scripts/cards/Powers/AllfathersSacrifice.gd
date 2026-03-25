@@ -11,11 +11,12 @@ func _init() -> void:
 	mana_cost = UNLOCK_COST
 	card_types = ["Searching", "Spells"]
 	culture = "Norse"
-	ability_text = "Unlock (5): Searching - Spells - Lose 12 followers. Move one spell from your deck to the top of your deck."
+	ability_text = "[b]Unlock[/b] (5): Searching - Spells - Lose 12 followers. [b]Search[/b] a spell. [b]Prime[/b] it."
 	art_path = ART_PATH
 
 func can_activate(game_manager: GameManager) -> bool:
 	return not is_face_down \
+		and not is_activation_locked(game_manager) \
 		and card_owner == game_manager.current_player \
 		and card_owner.followers >= FOLLOWER_COST \
 		and not get_spell_cards_in_deck().is_empty()

@@ -12,7 +12,7 @@ func _init() -> void:
 	mana_cost = 0
 	culture = "Norse"
 	flavor_text = "Radiance and virtue gather the faithful to his side."
-	ability_text = "Blessed One (Passive): Gain 5 followers at the start of each of your turns."
+	ability_text = "Blessed One ([b]Passive[/b]): [b]Upkeep[/b]: Gain 5 followers."
 	art_path = "res://images/card_art/gods/BaldrAIEdit.png"
 	name_at_bottom = true
 	artist = "Ricardo Zoppello"
