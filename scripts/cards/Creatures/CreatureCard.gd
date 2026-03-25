@@ -18,6 +18,14 @@ func on_summon(game_manager: GameManager) -> void:
 	# Called when creature enters the board from hand
 	pass
 
+func on_impact(game_manager: GameManager) -> void:
+	# Called when this card enters the field from hand face-up.
+	on_summon(game_manager)
+
+func on_reveal(game_manager: GameManager) -> void:
+	# Called when this face-down creature is revealed on the field.
+	pass
+
 func on_death(game_manager: GameManager) -> void:
 	# Called when creature is destroyed/sent to graveyard
 	pass
@@ -48,4 +56,8 @@ func on_kill(game_manager: GameManager, victim: Card) -> void:
 
 func on_ally_kill(game_manager: GameManager, killer: Card, victim: Card) -> void:
 	# Called on every friendly board creature when any ally destroys an enemy in combat
+	pass
+
+func on_after_combat(game_manager: GameManager, opposing_card: Card) -> void:
+	# Called after this creature is involved in combat and survives long enough to receive hooks.
 	pass

@@ -4,7 +4,7 @@ class_name AnankesBinding
 const UNLOCK_COST := 2
 const ACTIVATION_COST := 3
 const RETURN_DELAY_TURNS := 2
-const ART_PATH := "res://images/card_art/anankes_binding.jpg"
+const ART_PATH := "res://images/card_art/powers/anankes_binding.jpg"
 
 var stored_cards: Array[Card] = []
 var turns_until_return: int = -1
@@ -42,11 +42,13 @@ func activate(game_manager: GameManager, chosen_card: Card = null) -> void:
 
 	card_owner.spend_mana(ACTIVATION_COST)
 	card_owner.deck_zone.cards.erase(chosen_card)
+	card_owner.deck_zone.cards.shuffle()
 	stored_cards.append(chosen_card)
 	turns_until_return = RETURN_DELAY_TURNS
-	print(card_name + ": " + chosen_card.card_name + " was placed under this card.")
+	print(card_name + ": " + chosen_card.card_name + " was placed under this card. Deck shuffled.")
 
 func on_turn_end(_game_manager: GameManager) -> void:
+	super.on_turn_end(_game_manager)
 	if stored_cards.is_empty():
 		turns_until_return = -1
 		return

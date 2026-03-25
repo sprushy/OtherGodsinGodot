@@ -2,6 +2,8 @@
 extends Node
 class_name Player
 
+const MAX_HAND_SIZE := 7
+
 signal mana_changed(new_mana: int)
 signal followers_changed(new_followers: int)
 signal card_moved(card: Card, from_zone: Zone, to_zone: Zone)
@@ -158,9 +160,7 @@ func banish_card(card: Card) -> void:
 
 func shelve_card(card: Card) -> void:
 	if card.current_zone == hand_zone:
-		hand_zone.remove_card(card)
-		deck_zone.cards.append(card)
-		card.current_zone = deck_zone
+		move_card(card, deck_zone)
 
 func _resolve_destination_zone(card: Card, from_zone: Zone, to_zone: Zone) -> Zone:
 	if card == null or to_zone == null:
@@ -226,5 +226,4 @@ func reset_creature_actions() -> void:
 	for zone in frontline_zones + reserve_zones:
 		for card in zone.cards:
 			if card.card_type == Card.CardType.CREATURE:
-				card.has_acted_this_turn = false
-			card.has_moved_this_turn = false
+				card.reset_creature_action_state()

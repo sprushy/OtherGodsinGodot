@@ -17,7 +17,7 @@ func _init() -> void:
 	is_legendary = false
 	flavor_text = "Cast into the depths of the abyss, never to return."
 	culture = "Ancient"
-	art_path = "res://images/card_art/BitMeseriFireflyAI.png"
+	art_path = "res://images/card_art/spells/BitMeseriFireflyAI.png"
 	artist = "Lorinda Tomko"
 	ability_text = "[b]Void[/b] a physical card."
 	targets = true

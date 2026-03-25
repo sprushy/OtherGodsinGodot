@@ -2,7 +2,7 @@ extends PowerCard
 class_name AltarOfDreams
 
 const UNLOCK_COST := 7
-const ART_PATH := "res://images/card_art/altar_of_dreams.jpg"
+const ART_PATH := "res://images/card_art/powers/altar_of_dreams.jpg"
 
 func _init() -> void:
 	super._init()

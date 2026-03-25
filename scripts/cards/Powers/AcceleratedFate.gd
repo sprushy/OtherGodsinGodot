@@ -2,8 +2,8 @@ extends PowerCard
 class_name AcceleratedFate
 
 const DRAW_COST := 5
-const DEFAULT_ART := "res://images/card_art/accelerated_fate.png"
-const USED_ART := "res://images/card_art/accelerated_fate_used.png"
+const DEFAULT_ART := "res://images/card_art/powers/accelerated_fate.png"
+const USED_ART := "res://images/card_art/powers/accelerated_fate_used.png"
 
 func _init() -> void:
 	super._init()
@@ -28,6 +28,7 @@ func activate(game_manager: GameManager, _target: Card = null) -> void:
 	print("Accelerated Fate: Drew 1 card for " + str(DRAW_COST) + " mana.")
 
 func on_turn_end(_game_manager: GameManager) -> void:
+	super.on_turn_end(_game_manager)
 	if not is_used:
 		return
 	is_used = false

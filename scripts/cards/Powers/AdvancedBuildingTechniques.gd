@@ -3,7 +3,7 @@ class_name AdvancedBuildingTechniques
 
 const UNLOCK_COST := 4
 const RESILIENCE_PER_MANA := 6
-const ART_PATH := "res://images/card_art/advanced_building_techniques.png"
+const ART_PATH := "res://images/card_art/powers/lighting_toned.png"
 
 func _init() -> void:
 	super._init()

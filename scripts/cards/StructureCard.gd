@@ -10,6 +10,10 @@ func on_summon(game_manager: GameManager) -> void:
 	# Override in specific structures
 	pass
 
+func on_impact(game_manager: GameManager) -> void:
+	# Called when this card enters the field from hand face-up.
+	on_summon(game_manager)
+
 func on_removed(game_manager: GameManager) -> void:
 	# Override when structure leaves the board
 	pass

@@ -2,7 +2,7 @@ extends StructureCard
 class_name AnointingStatue
 
 const CLEANSE_USES_PER_TURN := 1
-const ART_PATH := "res://images/card_art/anointing_statue.png"
+const ART_PATH := "res://images/card_art/structures/anointing_statue.png"
 
 var cleanse_uses_this_turn := 0
 

@@ -19,7 +19,7 @@ func _init() -> void:
 	
 	flavor_text = "Destroy the strongest creature(s) on the field."
 	culture = "Neutral"
-	art_path = "res://images/card_art/fall_of_the_mighty.jpg"
+	art_path = "res://images/card_art/spells/fall_of_the_mighty.jpg"
 	ability_text = "Destroy all creatures on the field with the highest strength."
 
 func resolve(game_manager: GameManager, target = null) -> void:

@@ -1,7 +1,7 @@
 extends SpellCard
 class_name ApollyonsDemiurge
 
-const ART_PATH := "res://images/card_art/apollyons_demiurge.png"
+const ART_PATH := "res://images/card_art/spells/apollyons_demiurge.png"
 
 func _init() -> void:
 	super._init()
@@ -76,7 +76,7 @@ func _mill_cards(amount: int) -> Array[Card]:
 	return milled
 
 func _is_demon(card: Card) -> bool:
-	return card != null and card.has_type("Demon")
+	return card != null and card.card_type == Card.CardType.CREATURE and card.has_type("Demon")
 
 func _find_summon_zone() -> Zone:
 	for zone in card_owner.frontline_zones:

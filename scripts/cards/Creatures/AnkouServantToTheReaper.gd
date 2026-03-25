@@ -1,7 +1,7 @@
 extends CreatureCard
 class_name AnkouServantToTheReaper
 
-const ART_PATH := "res://images/card_art/ankou_servant_to_the_reaper.png"
+const ART_PATH := "res://images/card_art/creatures/ankou_servant_to_the_reaper.png"
 
 func _init() -> void:
 	super._init()

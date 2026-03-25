@@ -27,6 +27,35 @@ const ZONE_HEIGHT := 110
 
 var _row_label: String = ""
 
+func _is_public_power(card: Card) -> bool:
+	return card is PowerCard and ((card as PowerCard).is_publicly_revealed or not card.is_face_down)
+
+func _get_card_type_label(card: Card) -> String:
+	if card == null:
+		return "Card"
+	if card.is_god:
+		return "God"
+	if card.is_power:
+		return "Power"
+	if card.has_type("Charm"):
+		return "Charm"
+	match card.card_type:
+		Card.CardType.CREATURE:
+			return "Creature"
+		Card.CardType.CHARM:
+			return "Charm"
+		Card.CardType.SPELL:
+			return "Spell"
+		Card.CardType.STRUCTURE:
+			return "Structure"
+		Card.CardType.HEX:
+			return "Hex"
+		Card.CardType.EQUIPMENT:
+			return "Equipment"
+		Card.CardType.AURA:
+			return "Aura"
+	return "Card"
+
 func _add_sleep_affordance(overlay: Control, card: Card) -> void:
 	if card == null or not card.is_sleeping:
 		return
@@ -67,6 +96,47 @@ func _add_sleep_affordance(overlay: Control, card: Card) -> void:
 	haze.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	overlay.add_child(haze)
 
+func _add_speed_badge(overlay: Control, card: Card) -> void:
+	if overlay == null or card == null:
+		return
+	if card.speed <= 0:
+		return
+
+	var eff_spd := card.get_effective_speed()
+	var badge := PanelContainer.new()
+	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	badge.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
+	badge.offset_left = -62
+	badge.offset_top = -30
+	badge.offset_right = -6
+	badge.offset_bottom = -6
+
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.08, 0.12, 0.24, 0.9)
+	style.border_color = Color(0.62, 0.8, 1.0, 0.95)
+	style.corner_radius_top_left = 6
+	style.corner_radius_top_right = 6
+	style.corner_radius_bottom_left = 6
+	style.corner_radius_bottom_right = 6
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		style.set_border_width(side, 1)
+	badge.add_theme_stylebox_override("panel", style)
+
+	var label := Label.new()
+	label.text = "SPD:%d" % eff_spd
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	label.add_theme_font_size_override("font_size", 11)
+	label.add_theme_color_override("font_color", Color(0.92, 0.97, 1.0))
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	if eff_spd > card.speed:
+		label.modulate = Color(0.4, 1.0, 0.4)
+	elif eff_spd < card.speed:
+		label.modulate = Color(1.0, 0.35, 0.35)
+	badge.add_child(label)
+
+	overlay.add_child(badge)
+
 func setup(p_zone: Zone, p_gm: GameManager, p_player: Player, idx: int,
 		drop_cb: Callable, is_enemy: bool = false, row_label: String = "") -> void:
 	zone         = p_zone
@@ -104,12 +174,14 @@ func _refresh_display() -> void:
 			var fd_overlay := Control.new()
 			fd_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			add_child(fd_overlay)
+			var revealed_face_down_power := card is PowerCard and (card as PowerCard).is_publicly_revealed
 			var is_own_hidden_card := card.get_controller() == game_manager.current_player and (
 				card.is_stealth
 				or card.is_power
 				or card.is_prepared
 			)
-			var tex_path := card.art_path if is_own_hidden_card and card.art_path != "" else "res://images/cardbackAI.png"
+			var show_revealed_power_art := revealed_face_down_power and card.art_path != ""
+			var tex_path := card.art_path if (show_revealed_power_art or (is_own_hidden_card and card.art_path != "")) else "res://images/cardbackAI.png"
 			var tex: Texture2D = load(tex_path)
 			if tex:
 				var art := TextureRect.new()
@@ -119,12 +191,49 @@ func _refresh_display() -> void:
 				art.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 				art.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				fd_overlay.add_child(art)
-			if is_own_hidden_card:
+			if show_revealed_power_art:
+				var revealed_haze := ColorRect.new()
+				var is_own_revealed_power := card.get_controller() == game_manager.current_player
+				revealed_haze.color = Color(0.22, 0.45, 0.85, 0.42) if is_own_revealed_power else Color(0.85, 0.22, 0.45, 0.45)
+				revealed_haze.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+				revealed_haze.mouse_filter = Control.MOUSE_FILTER_IGNORE
+				fd_overlay.add_child(revealed_haze)
+				var public_power := card as PowerCard
+				if public_power != null and public_power.is_muted and public_power.mute_turns_remaining > 0:
+					var mute_badge := PanelContainer.new()
+					mute_badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+					mute_badge.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+					mute_badge.offset_left = 6
+					mute_badge.offset_right = -6
+					mute_badge.offset_top = -26
+					mute_badge.offset_bottom = -6
+					var badge_style := StyleBoxFlat.new()
+					badge_style.bg_color = Color(0.56, 0.18, 0.28, 0.9)
+					badge_style.border_color = Color(1.0, 0.76, 0.84, 0.95)
+					badge_style.corner_radius_top_left = 6
+					badge_style.corner_radius_top_right = 6
+					badge_style.corner_radius_bottom_left = 6
+					badge_style.corner_radius_bottom_right = 6
+					for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+						badge_style.set_border_width(side, 1)
+					mute_badge.add_theme_stylebox_override("panel", badge_style)
+					var mute_lbl := Label.new()
+					mute_lbl.text = "Muted %d" % public_power.mute_turns_remaining
+					mute_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+					mute_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+					mute_lbl.add_theme_font_size_override("font_size", 11)
+					mute_lbl.add_theme_color_override("font_color", Color(1.0, 0.95, 0.98))
+					mute_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+					mute_badge.add_child(mute_lbl)
+					fd_overlay.add_child(mute_badge)
+			elif is_own_hidden_card:
 				var haze := ColorRect.new()
 				haze.color = Color(0.05, 0.05, 0.2, 0.6)
 				haze.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 				haze.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				fd_overlay.add_child(haze)
+			if card.get_controller() == game_manager.current_player and card.is_prepared and card.is_magical_card():
+				_add_speed_badge(fd_overlay, card)
 			var _fd_is_def := card.card_type == Card.CardType.CREATURE and card.creature_mode == Card.CreatureMode.DEFENSE
 			_defense_overlay = fd_overlay if _fd_is_def else null
 			_raised_overlay  = fd_overlay if (_fd_is_def or card.is_stealth) else null
@@ -194,6 +303,34 @@ func _refresh_display() -> void:
 				deck_lbl.offset_top = 4
 				deck_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				overlay.add_child(deck_lbl)
+
+				if card.is_power and card.is_muted and card.mute_turns_remaining > 0:
+					var muted_badge := PanelContainer.new()
+					muted_badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+					muted_badge.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+					muted_badge.offset_left = 6
+					muted_badge.offset_right = -6
+					muted_badge.offset_top = -26
+					muted_badge.offset_bottom = -6
+					var muted_style := StyleBoxFlat.new()
+					muted_style.bg_color = Color(0.22, 0.14, 0.34, 0.9) if card.get_controller() == game_manager.current_player else Color(0.56, 0.18, 0.28, 0.9)
+					muted_style.border_color = Color(0.82, 0.9, 1.0, 0.95) if card.get_controller() == game_manager.current_player else Color(1.0, 0.76, 0.84, 0.95)
+					muted_style.corner_radius_top_left = 6
+					muted_style.corner_radius_top_right = 6
+					muted_style.corner_radius_bottom_left = 6
+					muted_style.corner_radius_bottom_right = 6
+					for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+						muted_style.set_border_width(side, 1)
+					muted_badge.add_theme_stylebox_override("panel", muted_style)
+					var muted_lbl := Label.new()
+					muted_lbl.text = "Muted %d" % card.mute_turns_remaining
+					muted_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+					muted_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+					muted_lbl.add_theme_font_size_override("font_size", 11)
+					muted_lbl.add_theme_color_override("font_color", Color(0.95, 0.98, 1.0))
+					muted_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+					muted_badge.add_child(muted_lbl)
+					overlay.add_child(muted_badge)
 			return
 
 		var is_def_creature := card.card_type == Card.CardType.CREATURE and card.creature_mode == Card.CreatureMode.DEFENSE
@@ -274,13 +411,19 @@ func _refresh_display() -> void:
 			var left_lbl := Label.new()
 			left_lbl.text = "RES:%d" % eff_res if is_def else "STR:%d" % eff_str
 			left_lbl.add_theme_font_size_override("font_size", 13)
-			left_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			var left_base := card.resilience if is_def else card.strength
 			var left_eff  := eff_res if is_def else eff_str
+			var left_stat := "res" if is_def else "str"
 			if left_eff > left_base:
 				left_lbl.modulate = Color(0.4, 1.0, 0.4)
 			elif left_eff < left_base:
 				left_lbl.modulate = Color(1.0, 0.35, 0.35)
+			var left_breakdown := card.get_full_stat_breakdown(left_stat)
+			if left_breakdown != "":
+				left_lbl.tooltip_text = left_breakdown
+				left_lbl.mouse_filter = Control.MOUSE_FILTER_STOP
+			else:
+				left_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			stat_row.add_child(left_lbl)
 
 			var mid_spacer := Control.new()
@@ -291,11 +434,16 @@ func _refresh_display() -> void:
 			var right_lbl := Label.new()
 			right_lbl.text = "SPD:%d" % eff_spd
 			right_lbl.add_theme_font_size_override("font_size", 13)
-			right_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			if eff_spd > card.speed:
 				right_lbl.modulate = Color(0.4, 1.0, 0.4)
 			elif eff_spd < card.speed:
 				right_lbl.modulate = Color(1.0, 0.35, 0.35)
+			var spd_breakdown := card.get_full_stat_breakdown("spd")
+			if spd_breakdown != "":
+				right_lbl.tooltip_text = spd_breakdown
+				right_lbl.mouse_filter = Control.MOUSE_FILTER_STOP
+			else:
+				right_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			stat_row.add_child(right_lbl)
 
 			vbox.add_child(stat_row)
@@ -318,6 +466,34 @@ func _refresh_display() -> void:
 					res_lbl.tooltip_text = "RES:\n" + breakdown
 					res_lbl.mouse_filter = Control.MOUSE_FILTER_STOP
 			vbox.add_child(res_lbl)
+
+		if card.is_power and card.is_muted and card.mute_turns_remaining > 0:
+			var muted_badge := PanelContainer.new()
+			muted_badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			muted_badge.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+			muted_badge.offset_left = 6
+			muted_badge.offset_right = -6
+			muted_badge.offset_top = -26
+			muted_badge.offset_bottom = -6
+			var muted_style := StyleBoxFlat.new()
+			muted_style.bg_color = Color(0.22, 0.14, 0.34, 0.9) if card.get_controller() == game_manager.current_player else Color(0.56, 0.18, 0.28, 0.9)
+			muted_style.border_color = Color(0.82, 0.9, 1.0, 0.95) if card.get_controller() == game_manager.current_player else Color(1.0, 0.76, 0.84, 0.95)
+			muted_style.corner_radius_top_left = 6
+			muted_style.corner_radius_top_right = 6
+			muted_style.corner_radius_bottom_left = 6
+			muted_style.corner_radius_bottom_right = 6
+			for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+				muted_style.set_border_width(side, 1)
+			muted_badge.add_theme_stylebox_override("panel", muted_style)
+			var muted_lbl := Label.new()
+			muted_lbl.text = "Muted %d" % card.mute_turns_remaining
+			muted_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			muted_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+			muted_lbl.add_theme_font_size_override("font_size", 11)
+			muted_lbl.add_theme_color_override("font_color", Color(0.95, 0.98, 1.0))
+			muted_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			muted_badge.add_child(muted_lbl)
+			overlay.add_child(muted_badge)
 
 		_defense_overlay = overlay if is_def_creature else null
 		_raised_overlay  = overlay if (is_def_creature or card.is_stealth) else null
@@ -356,7 +532,7 @@ func _is_draggable_creature() -> bool:
 		return false
 	if card.get_controller() != game_manager.current_player:
 		return false
-	if card.has_moved_this_turn and card.has_acted_this_turn:
+	if card.creature_major_action_used or card.creature_minor_actions_used >= 2:
 		return false
 	return true
 
@@ -377,7 +553,7 @@ func _gui_input(event: InputEvent) -> void:
 			if card.card_type == Card.CardType.CREATURE and card.get_controller() == game_manager.current_player:
 				creature_right_clicked.emit(card)
 			# Pin the info popup on right-click for any visible card
-			if not card.is_face_down or card.get_controller() == game_manager.current_player:
+			if not card.is_face_down or card.get_controller() == game_manager.current_player or _is_public_power(card):
 				_pinned = true
 				_hide_ability_popup()
 				_show_ability_popup()
@@ -401,7 +577,7 @@ func _notification(what: int) -> void:
 			_hovered = true
 			z_index = 10
 			var _c := zone.cards[0] if zone != null and zone.cards.size() > 0 else null
-			if _c != null and (not _c.is_face_down or _c.get_controller() == game_manager.current_player):
+			if _c != null and (not _c.is_face_down or _c.get_controller() == game_manager.current_player or _is_public_power(_c)):
 				var _delay := 1.0 if (_c.is_god) else 1.5
 				get_tree().create_timer(_delay).timeout.connect(
 					func() -> void: _try_show_popup()
@@ -495,14 +671,36 @@ func _show_ability_popup() -> void:
 	vbox.add_child(name_lbl)
 
 	# Types
-	if not hidden and card.card_types.size() > 0:
+	if not hidden:
 		var type_lbl := Label.new()
-		type_lbl.text = " • ".join(card.card_types)
+		var type_parts: Array[String] = [_get_card_type_label(card)]
+		for card_type_name in card.card_types:
+			if card_type_name not in type_parts:
+				type_parts.append(card_type_name)
+		type_lbl.text = " • ".join(type_parts)
 		type_lbl.add_theme_font_size_override("font_size", 11)
-		type_lbl.add_theme_color_override("font_color", Color(0.7, 0.85, 1.0))
+		type_lbl.add_theme_color_override("font_color", Color(1.0, 0.55, 0.55) if card.is_petrified() else Color(0.7, 0.85, 1.0))
 		type_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		type_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		vbox.add_child(type_lbl)
+
+		if card.is_petrified():
+			var petrified_lbl := Label.new()
+			petrified_lbl.text = "Status: Petrified Creature"
+			petrified_lbl.add_theme_font_size_override("font_size", 11)
+			petrified_lbl.add_theme_color_override("font_color", Color(1.0, 0.35, 0.35))
+			petrified_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			vbox.add_child(petrified_lbl)
+		if card.is_muted and card.mute_turns_remaining > 0:
+			var muted_status_lbl := Label.new()
+			muted_status_lbl.text = "Status: Muted (%d turn%s)" % [
+				card.mute_turns_remaining,
+				"" if card.mute_turns_remaining == 1 else "s"
+			]
+			muted_status_lbl.add_theme_font_size_override("font_size", 11)
+			muted_status_lbl.add_theme_color_override("font_color", Color(1.0, 0.78, 0.86))
+			muted_status_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			vbox.add_child(muted_status_lbl)
 
 	# Level (gods have no level)
 	if not hidden and not card.is_god:
@@ -570,17 +768,17 @@ func _show_ability_popup() -> void:
 				effects_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				vbox.add_child(effects_lbl)
 
-		# Acted / moved
-		if card.has_acted_this_turn:
+		# Action usage
+		if card.creature_major_action_used:
 			var acted_lbl := Label.new()
-			acted_lbl.text = "✓ acted"
+			acted_lbl.text = "Major action used"
 			acted_lbl.add_theme_font_size_override("font_size", 9)
 			acted_lbl.modulate = Color(0.8, 0.8, 0.4)
 			acted_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			vbox.add_child(acted_lbl)
-		elif card.has_moved_this_turn:
+		elif card.creature_minor_actions_used > 0:
 			var moved_lbl := Label.new()
-			moved_lbl.text = "✓ moved"
+			moved_lbl.text = "Minor actions: %d/2" % card.creature_minor_actions_used
 			moved_lbl.add_theme_font_size_override("font_size", 9)
 			moved_lbl.modulate = Color(0.6, 0.9, 0.6)
 			moved_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -604,6 +802,34 @@ func _show_ability_popup() -> void:
 				res_lbl.tooltip_text = "RES:\n" + breakdown
 				res_lbl.mouse_filter = Control.MOUSE_FILTER_STOP
 		vbox.add_child(res_lbl)
+
+		var effect_lines := card.get_effect_summary_lines()
+		if effect_lines.size() > 0:
+			var effects_lbl := Label.new()
+			effects_lbl.text = "\n".join(effect_lines)
+			effects_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			effects_lbl.add_theme_font_size_override("font_size", 10)
+			effects_lbl.add_theme_color_override("font_color", Color(1.0, 0.45, 0.45) if card.is_petrified() else Color(0.78, 0.9, 1.0))
+			effects_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			vbox.add_child(effects_lbl)
+	elif not hidden and card.speed > 0:
+		var eff_spd := card.get_effective_speed()
+		var spd_lbl := Label.new()
+		spd_lbl.text = "SPD:%d" % eff_spd
+		spd_lbl.add_theme_font_size_override("font_size", 11)
+		spd_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var spd_breakdown := card.get_full_stat_breakdown("spd")
+		if eff_spd < card.speed:
+			spd_lbl.modulate = Color(1.0, 0.35, 0.35)
+			if spd_breakdown != "":
+				spd_lbl.tooltip_text = "SPD:\n" + spd_breakdown
+				spd_lbl.mouse_filter = Control.MOUSE_FILTER_STOP
+		elif eff_spd > card.speed:
+			spd_lbl.modulate = Color(0.4, 1.0, 0.4)
+			if spd_breakdown != "":
+				spd_lbl.tooltip_text = "SPD:\n" + spd_breakdown
+				spd_lbl.mouse_filter = Control.MOUSE_FILTER_STOP
+		vbox.add_child(spd_lbl)
 
 	# Ability text
 	if card.ability_text != "" and not hidden:
@@ -661,13 +887,16 @@ func can_accept_card(card: Card) -> bool:
 		if zone.cards.size() == 0:
 			return false
 		var target := zone.cards[0]
-		if target is not PowerCard:
+		if target is not PowerCard and not target.is_god:
 			return false
 		return game_manager.can_play_card(game_manager.current_player, card, null)
 	if _is_enemy:
 		return false
-	if zone.cards.size() > 0:
-		return false
 	if owning_player != game_manager.current_player:
+		return false
+	# Equipment from hand can be dropped onto a creature's zone (auto-equip)
+	if card.card_type == Card.CardType.EQUIPMENT and card.current_zone == owning_player.hand_zone:
+		return game_manager.can_play_card(owning_player, card, zone)
+	if zone.cards.size() > 0:
 		return false
 	return game_manager.can_play_card(owning_player, card, zone)

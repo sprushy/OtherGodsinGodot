@@ -3,7 +3,7 @@ class_name AllfathersSacrifice
 
 const UNLOCK_COST := 5
 const FOLLOWER_COST := 12
-const ART_PATH := "res://images/card_art/allfathers_sacrifice.jpg"
+const ART_PATH := "res://images/card_art/powers/allfathers_sacrifice.jpg"
 
 func _init() -> void:
 	super._init()
@@ -38,5 +38,6 @@ func activate(_game_manager: GameManager, target: Card = null) -> void:
 
 	player.lose_followers(FOLLOWER_COST)
 	player.deck_zone.cards.erase(target)
+	player.deck_zone.cards.shuffle()
 	player.deck_zone.cards.insert(0, target)
-	print(card_name + ": Moved " + target.card_name + " to the top of the deck.")
+	print(card_name + ": Shuffled deck, moved " + target.card_name + " to the top.")

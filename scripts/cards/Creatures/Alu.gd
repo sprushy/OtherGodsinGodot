@@ -14,12 +14,12 @@ func _init() -> void:
 	ability_text = "Stupefy: May use its action to put a creature of equal or lower level to [b]Sleep[/b] for as long as Alu remains on the field."
 	flavor_text = ""
 	culture = "Ancient"
-	art_path = "res://images/card_art/alu.jpg"
+	art_path = "res://images/card_art/creatures/alu.jpg"
 	targets = true
 
 func stupefy(target: Card) -> void:
 	target.apply_sleep(self)
-	has_acted_this_turn = true
+	spend_major_creature_action()
 	print(card_name + " stupefies " + target.card_name + "! It falls asleep.")
 
 func on_removed(game_manager: GameManager) -> void:

@@ -41,14 +41,15 @@ func _ready() -> void:
 
 func _make_all_cards() -> Array:
 	return [
-		Thor.new(), Mummu.new(), AphroditeAreia.new(),
-		AcceleratedFate.new(), ACostToWalkTheWorlds.new(), AdvancedBuildingTechniques.new(), AllfathersSacrifice.new(), AltarOfDreams.new(), AnankesBinding.new(), AncientWisdom.new(),
-		BrownBear.new(), AnkouServantToTheReaper.new(), Anzu.new(), AnTheBowbender.new(),
+		Thor.new(), Mummu.new(), AphroditeAreia.new(), Baldr.new(),
+		AcceleratedFate.new(), ACostToWalkTheWorlds.new(), AdvancedBuildingTechniques.new(), AllfathersSacrifice.new(), AltarOfDreams.new(), AnankesBinding.new(), AncientWisdom.new(), BerserkerMead.new(), Breidablik.new(),
+		Berserker.new(), Beyla.new(), BlessedKnights.new(), BrownBear.new(), Byggvir.new(), AnkouServantToTheReaper.new(), Anzu.new(), AnTheBowbender.new(),
 		AsagTheDestroyer.new(), Asakku.new(), Asaruludu.new(),
 		AgainWalker.new(), Alu.new(), Askelladen.new(), Aurboda.new(), EnkiLordOfEridu.new(),
-		BitMeseri.new(), CircleOfRebirth.new(), FallOfTheMighty.new(), ApollyonsDemiurge.new(), Absence.new(),
+		BitMeseri.new(), CircleOfRebirth.new(), FallOfTheMighty.new(), ApollyonsDemiurge.new(), Absence.new(), BaneOfTheSvartalfar.new(), BlotSacrifice.new(), BookOfLife.new(), MeadOfPoetry.new(),
+		BeardedAxe.new(),
 		WardingStone.new(), AncientPyre.new(), AnointingStatue.new(),
-		VoidShield.new(),
+		VoidShield.new(), Banishment.new(),
 	]
 
 # ── UI construction ────────────────────────────────────────────────
@@ -104,13 +105,13 @@ func _build_top_bar(parent: Control) -> void:
 	inner.add_child(spacer)
 
 	var btn_group := ButtonGroup.new()
-	for label in ["All", "Gods", "Powers", "Creatures", "Spells", "Structures", "Hexes"]:
+	for label in ["All", "Gods", "Powers", "Creatures", "Equipment", "Charms", "Spells", "Structures", "Hexes"]:
 		var btn := Button.new()
 		btn.text = label
 		btn.toggle_mode = true
 		btn.button_group = btn_group
 		btn.button_pressed = (label == _filter)
-		btn.custom_minimum_size = Vector2(82, 32)
+		btn.custom_minimum_size = Vector2(72, 32)
 		var captured_label: String = label
 		btn.pressed.connect(func() -> void: _set_filter(captured_label))
 		inner.add_child(btn)
@@ -347,8 +348,10 @@ func _matches_filter(card: Card) -> bool:
 	match _filter:
 		"All":       return true
 		"Gods":      return card.is_god
-		"Powers":    return card.is_power
+		"Powers":    return card.is_power and not card.is_god
 		"Creatures": return card.card_type == Card.CardType.CREATURE and not card.is_god
+		"Equipment": return card.card_type == Card.CardType.EQUIPMENT
+		"Charms":    return card.card_type == Card.CardType.CHARM
 		"Spells":    return card.card_type == Card.CardType.SPELL
 		"Structures":return card.card_type == Card.CardType.STRUCTURE
 		"Hexes":     return card.card_type == Card.CardType.HEX
@@ -609,7 +612,7 @@ func _update_validation() -> void:
 		total += cnt
 		if card.is_god:
 			god_count += cnt
-		elif card.is_power:
+		elif card.is_power and not card.is_god:
 			power_count += cnt
 		else:
 			regular_count += cnt
@@ -681,10 +684,21 @@ func _show_preview(card: Card) -> void:
 	_prev_type.add_theme_color_override("font_color", _get_type_color(card))
 
 	var stat_parts: PackedStringArray = []
-	if card.card_type == Card.CardType.CREATURE:
+	if card.card_type == Card.CardType.CREATURE and not card.is_god:
 		stat_parts.append("STR:%d  RES:%d  SPD:%d" % [card.strength, card.resilience, card.speed])
 	elif card.card_type == Card.CardType.STRUCTURE:
 		stat_parts.append("RES:%d" % card.resilience)
+	elif card.card_type == Card.CardType.EQUIPMENT:
+		var equip_parts: PackedStringArray = []
+		if card.strength_modifier != 0:
+			equip_parts.append("STR %+d" % card.strength_modifier)
+		if card.resilience_modifier != 0:
+			equip_parts.append("RES %+d" % card.resilience_modifier)
+		if card.speed_modifier != 0:
+			equip_parts.append("SPD %+d" % card.speed_modifier)
+		stat_parts.append("  ".join(equip_parts))
+	elif card.card_type in [Card.CardType.SPELL, Card.CardType.HEX, Card.CardType.CHARM]:
+		stat_parts.append("SPD:%d" % card.speed)
 	if card.mana_cost > 0:
 		stat_parts.append("Mana: %d" % card.mana_cost)
 	_prev_stats.text = "  ".join(stat_parts)
@@ -720,6 +734,8 @@ func _get_type_color(card: Card) -> Color:
 	if card.is_power: return Color(0.85, 0.55, 0.18)
 	match card.card_type:
 		Card.CardType.CREATURE:  return Color(0.3, 0.55, 0.95)
+		Card.CardType.EQUIPMENT: return Color(0.78, 0.78, 0.82)
+		Card.CardType.CHARM:     return Color(0.95, 0.6, 0.3)
 		Card.CardType.SPELL:     return Color(0.7, 0.35, 0.95)
 		Card.CardType.STRUCTURE: return Color(0.7, 0.5, 0.2)
 		Card.CardType.HEX:       return Color(0.2, 0.82, 0.72)
@@ -730,6 +746,8 @@ func _get_type_label(card: Card) -> String:
 	if card.is_power: return "Power"
 	match card.card_type:
 		Card.CardType.CREATURE:  return "Creature"
+		Card.CardType.EQUIPMENT: return "Equipment"
+		Card.CardType.CHARM:     return "Charm"
 		Card.CardType.SPELL:     return "Spell"
 		Card.CardType.STRUCTURE: return "Structure"
 		Card.CardType.HEX:       return "Hex"
@@ -740,16 +758,20 @@ func _type_order(card: Card) -> int:
 	if card.is_power: return 1
 	match card.card_type:
 		Card.CardType.CREATURE:  return 2
-		Card.CardType.SPELL:     return 3
-		Card.CardType.STRUCTURE: return 4
-		Card.CardType.HEX:       return 5
-	return 6
+		Card.CardType.EQUIPMENT: return 3
+		Card.CardType.CHARM:     return 4
+		Card.CardType.SPELL:     return 5
+		Card.CardType.STRUCTURE: return 6
+		Card.CardType.HEX:       return 7
+	return 8
 
 func _section_name(card: Card) -> String:
 	if card.is_god: return "— Gods —"
 	if card.is_power: return "— Powers —"
 	match card.card_type:
 		Card.CardType.CREATURE:  return "— Creatures —"
+		Card.CardType.EQUIPMENT: return "— Equipment —"
+		Card.CardType.CHARM:     return "— Charms —"
 		Card.CardType.SPELL:     return "— Spells —"
 		Card.CardType.STRUCTURE: return "— Structures —"
 		Card.CardType.HEX:       return "— Hexes —"

@@ -12,8 +12,8 @@ func _init() -> void:
 	card_name = "Warding Stone"
 	card_type = Card.CardType.STRUCTURE
 	card_types = ["Runic", "Monument"]
-	art_path = "res://images/card_art/warding stone ai edit.png"
-	exhausted_art_path = "res://images/card_art/wardstone.jpeg"
+	art_path = "res://images/card_art/structures/warding stone ai edit.png"
+	exhausted_art_path = "res://images/card_art/structures/wardstone.jpeg"
 	level = 2
 	mana_cost = 0
 	is_legendary = false

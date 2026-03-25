@@ -9,7 +9,7 @@ func _init() -> void:
 	ability_text = "When an opponent's creature attacks one of yours, [b]Void[/b] it."
 	flavor_text = "What reaches for the living may be swallowed by the void."
 	culture = "Ancient"
-	art_path = "res://images/card_art/VoidShield.jpg"
+	art_path = "res://images/card_art/hexes/VoidShield.jpg"
 	artist = "Ricarrdo Zoppello"
 	targets = true
 
@@ -20,9 +20,9 @@ func can_activate(attacker: Card, defender: Card) -> bool:
 		return false
 	if defender.card_type != Card.CardType.CREATURE:
 		return false
-	if attacker.card_owner == card_owner:
+	if attacker.get_controller() == card_owner:
 		return false
-	if defender.card_owner != card_owner:
+	if defender.get_controller() != card_owner:
 		return false
 	return attacker.get_effective_speed() <= get_effective_speed()
 

@@ -14,7 +14,7 @@ func _init() -> void:
 	ability_text = "Class Immunity (Passive): Friendly Mages are immune to hexes."
 	flavor_text = ""
 	culture = "Ancient"
-	art_path = "res://images/card_art/enki_lord_of_eridu.jpg"
+	art_path = "res://images/card_art/creatures/enki_lord_of_eridu.jpg"
 	artist = "Ricarrdo Zoppello"
 
 func protects_from_hex(target: Card) -> bool:

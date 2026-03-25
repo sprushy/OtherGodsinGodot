@@ -57,7 +57,8 @@ func _compute_natural_height() -> float:
 		var tex: Texture2D = load(card_data.art_path)
 		if tex:
 			h += _card_width * float(tex.get_height()) / float(tex.get_width())
-	h += 18.0  # stats / speed / resilience row
+	if not (card_data.card_type == Card.CardType.CREATURE and card_data.is_god):
+		h += 18.0  # stats / speed / resilience row
 	if card_data.ability_text != "":
 		var raw := card_data.ability_text.replace("[b]", "").replace("[/b]", "")
 		var est_lines: int = max(2, ceili(float(raw.length()) / 28.0))
@@ -126,7 +127,7 @@ func _populate_vbox(vbox: VBoxContainer) -> void:
 			res_lbl.text = "RES:%d" % card_data.resilience
 			res_lbl.add_theme_font_size_override("font_size", 10)
 			vbox.add_child(res_lbl)
-		Card.CardType.SPELL, Card.CardType.HEX:
+		Card.CardType.SPELL, Card.CardType.HEX, Card.CardType.CHARM:
 			var spd_lbl := Label.new()
 			spd_lbl.text = "SPD:%d" % card_data.speed
 			spd_lbl.add_theme_font_size_override("font_size", 10)
@@ -189,6 +190,9 @@ func _apply_card_style() -> void:
 		Card.CardType.SPELL:
 			style.bg_color = Color(0.32, 0.08, 0.42)
 			style.border_color = Color(0.75, 0.3, 1.0)
+		Card.CardType.CHARM:
+			style.bg_color = Color(0.30, 0.12, 0.22)
+			style.border_color = Color(0.95, 0.65, 0.35)
 		Card.CardType.STRUCTURE:
 			style.bg_color = Color(0.28, 0.18, 0.08)
 			style.border_color = Color(0.75, 0.55, 0.3)
@@ -202,6 +206,7 @@ func _type_abbrev() -> String:
 	match card_data.card_type:
 		Card.CardType.CREATURE: return "C"
 		Card.CardType.SPELL:    return "S"
+		Card.CardType.CHARM:    return "CH"
 		Card.CardType.STRUCTURE:return "ST"
 		Card.CardType.EQUIPMENT:return "EQ"
 		Card.CardType.HEX:      return "H"
@@ -510,17 +515,27 @@ func _show_hover_panel() -> void:
 	match card_data.card_type:
 		Card.CardType.CREATURE:
 			if not card_data.is_god:
+				var eff_str := card_data.get_effective_strength()
+				var eff_res := card_data.get_effective_resilience()
+				var eff_spd := card_data.get_effective_speed()
 				var stats_lbl := Label.new()
-				stats_lbl.text = "STR: %d   RES: %d   SPD: %d" % [
-					card_data.strength, card_data.resilience, card_data.speed]
+				stats_lbl.text = "STR: %d   RES: %d   SPD: %d" % [eff_str, eff_res, eff_spd]
 				stats_lbl.add_theme_font_size_override("font_size", 12)
+				var tip_parts: Array[String] = []
+				for entry in [["STR", "str"], ["RES", "res"], ["SPD", "spd"]]:
+					var bd := card_data.get_full_stat_breakdown(entry[1])
+					if bd != "":
+						tip_parts.append(entry[0] + ": " + bd)
+				if tip_parts.size() > 0:
+					stats_lbl.tooltip_text = "\n".join(tip_parts)
+					stats_lbl.mouse_filter = Control.MOUSE_FILTER_STOP
 				vbox.add_child(stats_lbl)
 		Card.CardType.STRUCTURE:
 			var res_lbl := Label.new()
 			res_lbl.text = "RES: %d" % card_data.resilience
 			res_lbl.add_theme_font_size_override("font_size", 12)
 			vbox.add_child(res_lbl)
-		Card.CardType.SPELL, Card.CardType.HEX:
+		Card.CardType.SPELL, Card.CardType.HEX, Card.CardType.CHARM:
 			var spd_lbl := Label.new()
 			spd_lbl.text = "Speed: %d" % card_data.speed
 			spd_lbl.add_theme_font_size_override("font_size", 12)

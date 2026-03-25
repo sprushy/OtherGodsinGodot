@@ -24,6 +24,8 @@ func add_card(card: Card) -> void:
 
 func remove_card(card: Card) -> void:
 	cards.erase(card)
+	if card.current_zone == self:
+		card.current_zone = null
 
 func get_card_count() -> int:
 	return cards.size()

@@ -1,21 +1,17 @@
-extends BaseCard
+extends GodCard
 class_name Thor
 
 const PASSIVE_SOURCE := "Thor's Patron of Midguard"
 
 func _init() -> void:
+	super._init()
 	card_name = "Thor"
-	card_type = Card.CardType.CREATURE
-	is_god = true
 	card_types = ["God", "Divine Manifestation", "Human", "Warrior"]
 	mana_cost = 0
-	strength = 40
-	resilience = 40
-	speed = 3
 	culture = "Norse"
 	flavor_text = "Thunder echoes across Midgard wherever he walks."
 	ability_text = "Patron of Midguard (Passive): Friendly Human Warriors gain +3 STR and +3 RES."
-	art_path = "res://images/card_art/Thor.jpg"
+	art_path = "res://images/card_art/gods/ThorAIedit.png"
 	name_at_bottom = true
 	artist = "Ricarrdo Zoppello"
 	var paragon: String = "Paragon of Champions"
@@ -23,6 +19,8 @@ func _init() -> void:
 
 func applies_to(card: Card) -> bool:
 	return (
+		not is_muted
+		and
 		card.card_type == Card.CardType.CREATURE
 		and card != self
 		and card.card_owner == card_owner
@@ -47,4 +45,10 @@ func remove_passive_from_board() -> void:
 			card.clear_buffs_from(PASSIVE_SOURCE)
 
 func on_summon(game_manager: GameManager) -> void:
+	apply_passive_to_board()
+
+func on_muted(_game_manager: GameManager) -> void:
+	remove_passive_from_board()
+
+func on_unmuted(_game_manager: GameManager) -> void:
 	apply_passive_to_board()

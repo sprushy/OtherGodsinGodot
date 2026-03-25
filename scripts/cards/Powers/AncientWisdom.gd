@@ -4,7 +4,7 @@ class_name AncientWisdom
 const UNLOCK_COST := 4
 const MAGE_STR_BONUS := 5
 const BUFF_DURATION_TURNS := 2
-const ART_PATH := "res://images/card_art/ancient_wisdom.png"
+const ART_PATH := "res://images/card_art/powers/book_glow_reduced.png"
 const BUFF_SOURCE := "Ancient Wisdom"
 
 var tracked_mage_buffs: Array[Dictionary] = []
@@ -49,6 +49,7 @@ func on_spell_played(player: Player, _spell_card: Card, game_manager: GameManage
 		print("%s: %s gains %d Str until the end of your next turn." % [card_name, mage.card_name, MAGE_STR_BONUS])
 
 func on_turn_end(_game_manager: GameManager) -> void:
+	super.on_turn_end(_game_manager)
 	if tracked_mage_buffs.is_empty():
 		return
 

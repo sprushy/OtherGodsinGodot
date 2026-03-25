@@ -14,7 +14,7 @@ func _init() -> void:
 	creature_sacrifice_cost = 0
 	ability_text = "Ritual Flame (Activate, Cost 2): [b]Convert[/b] 5. Frontlined: May reduce a creature's Res by 5 instead; reducing to 0 destroys it."
 	culture = "Ancient"
-	art_path = "res://images/card_art/ancient_pyre.jpg"
+	art_path = "res://images/card_art/structures/ancient_pyre.jpg"
 
 func is_frontline() -> bool:
 	return current_zone != null and current_zone.zone_type == Zone.ZoneType.FRONTLINE
@@ -44,4 +44,4 @@ func activate(game_manager: GameManager, target: Card = null) -> void:
 	print("Ancient Pyre: " + target.card_name + " Res reduced by 5 (now " + str(target.get_effective_resilience()) + ").")
 	if target.get_effective_resilience() <= 0:
 		print(target.card_name + " is destroyed by Ancient Pyre!")
-		game_manager._send_to_graveyard_with_hook(target)
+		game_manager._send_to_graveyard_with_hook(target, false, true)

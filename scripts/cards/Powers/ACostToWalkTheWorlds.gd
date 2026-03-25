@@ -12,7 +12,7 @@ func _init() -> void:
 	culture = "Ancient"
 	card_types = ["Worship", "Blasphemy"]
 	ability_text = "Unlock (4): Whenever a creature is [b]Void[/b]ed, its owner loses 7 followers. Whenever a creature returns to the field from the Abyss, its owner gains 4 followers."
-	art_path = "res://images/card_art/a_cost_to_walk_the_worlds.png"
+	art_path = "res://images/card_art/powers/ACosttoWalktheWorldsAI1.png"
 
 func on_unlock(_game_manager: GameManager) -> void:
 	print(card_name + " unlocked.")

@@ -15,7 +15,7 @@ func _init() -> void:
 	speed = 1
 	flavor_text = "Resurrect all animals and plants which were destroyed this turn."
 	culture = "Triskelion"
-	art_path = "res://images/card_art/Circle of Rebirth cut.png"
+	art_path = "res://images/card_art/spells/Circle of Rebirth cut.png"
 	ability_text = "Resurrect all Animal and Plant creatures destroyed this turn."
 
 func resolve(game_manager: GameManager, target = null) -> void:

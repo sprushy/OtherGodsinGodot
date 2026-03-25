@@ -7,12 +7,12 @@
 extends BaseCard
 class_name PowerCard
 
-var is_muted: bool = false
-var mute_turns_remaining: int = 0
+var is_publicly_revealed: bool = false
 
 func _init() -> void:
 	card_type = CardType.POWER
 	is_power = true
+	ability_immunity_tag = "powers"
 	is_face_down = true   # locked until the player pays mana_cost to unlock
 
 # ── Unlock (flip) ─────────────────────────────────────────────────────────────
@@ -29,8 +29,10 @@ func can_unlock(game_manager: GameManager) -> bool:
 func unlock(game_manager: GameManager) -> void:
 	card_owner.spend_mana(mana_cost)
 	is_face_down = false
+	is_publicly_revealed = false
 	is_muted = false
 	mute_turns_remaining = 0
+	_mute_applied_owner_turn_number = -1
 	on_unlock(game_manager)
 
 # Called immediately when the power is flipped face-up.
@@ -56,20 +58,15 @@ func activate(game_manager: GameManager, target: Card = null) -> void:
 
 func relock() -> void:
 	is_face_down = true
+	is_publicly_revealed = false
 	is_used = false
+	_mute_applied_owner_turn_number = -1
 
 func is_effectively_active() -> bool:
 	return not is_face_down and not is_muted
 
-func mute_for_turns(turns: int) -> void:
-	is_muted = turns > 0
-	mute_turns_remaining = max(0, turns)
+func reveal_while_face_down() -> void:
+	is_publicly_revealed = true
 
-func on_turn_end(_game_manager: GameManager) -> void:
-	if not is_muted:
-		return
-	if mute_turns_remaining > 0:
-		mute_turns_remaining -= 1
-	if mute_turns_remaining <= 0:
-		is_muted = false
-		mute_turns_remaining = 0
+func on_turn_end(game_manager: GameManager) -> void:
+	super.on_turn_end(game_manager)
