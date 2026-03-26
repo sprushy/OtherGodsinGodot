@@ -9,8 +9,15 @@ signal back_pressed
 const CARD_W    := 140
 const CARD_H    := 192
 const MIN_DECK  := 20
-const COLLECTION_ROWS := 3
+const DEFAULT_COLLECTION_ROWS := 3
 const COLLECTION_GAP  := 8.0
+const CARD_VIEW_PRESETS := [
+	{"label": "Tiny", "rows": 5},
+	{"label": "Small", "rows": 4},
+	{"label": "Medium", "rows": 3},
+	{"label": "Large", "rows": 2},
+	{"label": "XL", "rows": 1},
+]
 
 # ── state ──────────────────────────────────────────────────────────
 var _all_cards: Array  = []        # template Card instances (read-only)
@@ -20,6 +27,7 @@ var _faction_filter: String = "All"
 var _current_page: int      = 0
 var _grid_columns: int      = 1
 var _card_size: Vector2     = Vector2(CARD_W, CARD_H)
+var _collection_rows: int   = DEFAULT_COLLECTION_ROWS
 
 # ── major UI refs ──────────────────────────────────────────────────
 var _grid:             HFlowContainer
@@ -51,14 +59,14 @@ func _ready() -> void:
 
 func _make_all_cards() -> Array:
 	return [
-		Thor.new(), Mummu.new(), AphroditeAreia.new(), Baldr.new(), DellingrTheDayspring.new(),
-		AcceleratedFate.new(), ACostToWalkTheWorlds.new(), AdvancedBuildingTechniques.new(), AllfathersSacrifice.new(), AltarOfDreams.new(), AnankesBinding.new(), AncientWisdom.new(), BerserkerMead.new(), Breidablik.new(),
+		Thor.new(), Mummu.new(), AphroditeAreia.new(), Baldr.new(), Cernunnos.new(), DellingrTheDayspring.new(),
+		AcceleratedFate.new(), ACostToWalkTheWorlds.new(), AdvancedBuildingTechniques.new(), AllfathersSacrifice.new(), AltarOfDreams.new(), AnankesBinding.new(), AncientWisdom.new(), BerserkerMead.new(), Breidablik.new(), CallOfTheValkyrie.new(), DivineCaprice.new(), MechFactory.new(),
 		Berserker.new(), Beyla.new(), BlessedKnights.new(), BrownBear.new(), Byggvir.new(), AnkouServantToTheReaper.new(), Anzu.new(), AnTheBowbender.new(),
-		AsagTheDestroyer.new(), Asakku.new(), Asaruludu.new(),
-		AgainWalker.new(), Alu.new(), Askelladen.new(), Aurboda.new(), EnkiLordOfEridu.new(),
-		BitMeseri.new(), CircleOfRebirth.new(), FallOfTheMighty.new(), ApollyonsDemiurge.new(), Absence.new(), BaneOfTheSvartalfar.new(), BlotSacrifice.new(), BookOfLife.new(), DeucalionsInfants.new(), MeadOfPoetry.new(),
+		AsagTheDestroyer.new(), Asakku.new(), Asaruludu.new(), Caleuche.new(), Capricorn.new(), ClayEaters.new(),
+		AgainWalker.new(), Alu.new(), Askelladen.new(), Aurboda.new(), DevastatorMech.new(), EnkiLordOfEridu.new(), RoboticFootsoldier.new(), SoldierOfTheBlackEmperor.new(), TitanicMech.new(),
+		BitMeseri.new(), CircleOfRebirth.new(), FallOfTheMighty.new(), ApollyonsDemiurge.new(), Absence.new(), BaneOfTheSvartalfar.new(), BlotSacrifice.new(), BookOfLife.new(), DeucalionsInfants.new(), MeadOfPoetry.new(), DivineLightning.new(),
 		BeardedAxe.new(),
-		WardingStone.new(), AncientPyre.new(), AnointingStatue.new(),
+		WardingStone.new(), AncientPyre.new(), AnointingStatue.new(), DoorwayToTheVoid.new(),
 		VoidShield.new(), Banishment.new(),
 	]
 
@@ -201,6 +209,33 @@ func _build_collection_panel(parent: Control) -> void:
 	content.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	content.add_theme_constant_override("separation", 10)
 	panel.add_child(content)
+
+	var view_bar := HBoxContainer.new()
+	view_bar.add_theme_constant_override("separation", 6)
+	content.add_child(view_bar)
+
+	var view_lbl := Label.new()
+	view_lbl.text = "Card View:"
+	view_lbl.add_theme_font_size_override("font_size", 11)
+	view_lbl.modulate = Color(0.7, 0.7, 0.7)
+	view_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	view_bar.add_child(view_lbl)
+
+	var view_group := ButtonGroup.new()
+	for preset: Dictionary in CARD_VIEW_PRESETS:
+		var btn := Button.new()
+		btn.text = str(preset["label"])
+		btn.toggle_mode = true
+		btn.button_group = view_group
+		btn.button_pressed = int(preset["rows"]) == _collection_rows
+		btn.custom_minimum_size = Vector2(64, 28)
+		var captured_rows: int = int(preset["rows"])
+		btn.pressed.connect(func() -> void: _set_collection_rows(captured_rows))
+		view_bar.add_child(btn)
+
+	var view_spacer := Control.new()
+	view_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	view_bar.add_child(view_spacer)
 
 	_collection_host = Control.new()
 	_collection_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -774,6 +809,14 @@ func _set_faction_filter(new_faction: String) -> void:
 	_refresh_grid()
 	_update_count_badges()
 
+func _set_collection_rows(rows: int) -> void:
+	if rows == _collection_rows:
+		return
+	_collection_rows = max(1, rows)
+	_current_page = 0
+	_refresh_grid()
+	_queue_collection_layout_refresh()
+
 # ── helpers ────────────────────────────────────────────────────────
 func _show_previous_page() -> void:
 	if _current_page <= 0:
@@ -799,7 +842,7 @@ func _update_collection_layout() -> void:
 	if available.x <= 0.0 or available.y <= 0.0:
 		return
 
-	var max_card_height: float = floor((available.y - COLLECTION_GAP * float(COLLECTION_ROWS - 1)) / float(COLLECTION_ROWS))
+	var max_card_height: float = floor((available.y - COLLECTION_GAP * float(_collection_rows - 1)) / float(_collection_rows))
 	max_card_height = max(max_card_height, 1.0)
 
 	var aspect: float = CARD_W / float(CARD_H)
@@ -815,7 +858,7 @@ func _update_collection_layout() -> void:
 		estimated_width = floor(max_card_height * aspect)
 
 	var next_size: Vector2 = Vector2(max(1.0, estimated_width), max(1.0, max_card_height))
-	_grid.custom_minimum_size.y = COLLECTION_ROWS * next_size.y + COLLECTION_GAP * float(COLLECTION_ROWS - 1)
+	_grid.custom_minimum_size.y = _collection_rows * next_size.y + COLLECTION_GAP * float(_collection_rows - 1)
 
 	if columns != _grid_columns or next_size != _card_size:
 		_grid_columns = columns
@@ -833,7 +876,7 @@ func _filtered_cards() -> Array:
 	return filtered
 
 func _page_size() -> int:
-	return max(1, _grid_columns * COLLECTION_ROWS)
+	return max(1, _grid_columns * _collection_rows)
 
 func _page_count(total_cards: int) -> int:
 	if total_cards <= 0:

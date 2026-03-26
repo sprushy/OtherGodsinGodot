@@ -85,7 +85,7 @@ func activate(game_manager: GameManager, target: Card = null) -> void:
 		game_manager.note_player_feedback(card_name + " needs " + str(ACTIVATION_COST) + " mana.")
 		return
 
-	target.temporarily_reveal_until_end_of_turn(game_manager.turn_number, REVEAL_SOURCE, self, card_owner)
+	target.temporarily_reveal_until_end_of_turn(game_manager.turn_number, REVEAL_SOURCE, self, card_owner, game_manager)
 	var locked := _is_magical_target(target)
 	if locked:
 		target.lock_activation_until_end_of_turn(game_manager.turn_number, REVEAL_SOURCE, self, card_owner)

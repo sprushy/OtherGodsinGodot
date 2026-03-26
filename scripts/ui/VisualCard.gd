@@ -20,9 +20,14 @@ var _drag_rot_tween: Tween = null
 var _drag_ghost_pivot: Vector2 = Vector2.ZERO
 var _drag_target_rotation: float = 0.0
 var _drag_stealth: bool = false
+const _DRAG_PREPARE_OVERLAY_NAME := "DragPrepareOverlay"
 const _DRAG_ROT_SPEED: float = 600.0  # degrees per second (90° in 0.15 s)
 var _base_z_index: int = 0
 var _hover_panel: Control = null
+var _waiting_on_priority: bool = false
+var _priority_response_available: bool = false
+var _blot_summonable: bool = false
+var _blot_selected: bool = false
 
 func set_base_z_index(idx: int) -> void:
 	_base_z_index = idx
@@ -200,6 +205,24 @@ func _apply_card_style() -> void:
 			style.bg_color = Color(0.15, 0.15, 0.15)
 			style.border_color = Color(0.5, 0.5, 0.5)
 
+	if _waiting_on_priority:
+		style.border_color = Color(1.0, 0.88, 0.38, 0.98)
+		style.shadow_color = Color(1.0, 0.82, 0.2, 0.7)
+		style.shadow_size = 12
+	if _priority_response_available:
+		style.shadow_color = Color(0.34, 0.95, 0.42, 0.58)
+		style.shadow_size = max(style.shadow_size, 7)
+		if not _waiting_on_priority:
+			style.border_color = Color(0.55, 1.0, 0.62, 0.96)
+	if _blot_summonable:
+		style.border_color = Color(0.45, 1.0, 0.52, 0.98)
+		style.shadow_color = Color(0.25, 0.95, 0.4, 0.72)
+		style.shadow_size = 16
+	if _blot_selected:
+		style.border_color = Color(0.82, 1.0, 0.55, 1.0)
+		style.shadow_color = Color(0.52, 1.0, 0.4, 0.85)
+		style.shadow_size = 20
+
 	_inner.add_theme_stylebox_override("panel", style)
 
 func _type_abbrev() -> String:
@@ -226,6 +249,19 @@ func set_highlighted(value: bool) -> void:
 	_picked_up = false
 	var tw := create_tween()
 	tw.tween_property(self, "scale", Vector2(1.0, 1.0), 0.1)
+
+func set_waiting_on_priority(value: bool) -> void:
+	_waiting_on_priority = value
+	_apply_card_style()
+
+func set_priority_response_available(value: bool) -> void:
+	_priority_response_available = value
+	_apply_card_style()
+
+func set_blot_summon_state(is_summonable: bool, is_selected: bool = false) -> void:
+	_blot_summonable = is_summonable
+	_blot_selected = is_selected
+	_apply_card_style()
 
 func _cancel_drag() -> void:
 	if _dragging:
@@ -257,6 +293,65 @@ func _cancel_rot_ghost() -> void:
 	_rot_ghost = null
 	if _inner:
 		_inner.modulate.a = 1.0
+
+func _can_toggle_drag_prepare() -> bool:
+	return card_data != null and (card_data.card_type == Card.CardType.SPELL or card_data.card_type == Card.CardType.CHARM)
+
+func _set_drag_prepare_preview(enabled: bool) -> void:
+	if not (_drag_ghost and is_instance_valid(_drag_ghost)):
+		return
+	var ghost_inner := _drag_ghost.get_child(0) as Control
+	if ghost_inner == null:
+		return
+	var existing := ghost_inner.get_node_or_null(_DRAG_PREPARE_OVERLAY_NAME)
+	if existing != null:
+		existing.queue_free()
+	if not enabled:
+		return
+
+	var overlay := Control.new()
+	overlay.name = _DRAG_PREPARE_OVERLAY_NAME
+	overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+	var haze := ColorRect.new()
+	haze.color = Color(0.05, 0.05, 0.2, 0.34)
+	haze.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	haze.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	overlay.add_child(haze)
+
+	var ring := PanelContainer.new()
+	ring.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ring.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	ring.offset_left = 3
+	ring.offset_top = 3
+	ring.offset_right = -3
+	ring.offset_bottom = -3
+	var ring_style := StyleBoxFlat.new()
+	ring_style.bg_color = Color(0, 0, 0, 0)
+	ring_style.border_color = Color(0.62, 0.8, 1.0, 0.72)
+	ring_style.corner_radius_top_left = 8
+	ring_style.corner_radius_top_right = 8
+	ring_style.corner_radius_bottom_left = 8
+	ring_style.corner_radius_bottom_right = 8
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		ring_style.set_border_width(side, 2)
+	ring.add_theme_stylebox_override("panel", ring_style)
+	overlay.add_child(ring)
+
+	var label := Label.new()
+	label.text = "PREPARE"
+	label.add_theme_font_size_override("font_size", 12)
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	label.modulate = Color(0.88, 0.94, 1.0, 0.82)
+	label.set_anchors_preset(Control.PRESET_TOP_WIDE)
+	label.offset_top = 6
+	label.offset_bottom = 24
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	overlay.add_child(label)
+
+	ghost_inner.add_child(overlay)
 
 func _toggle_rotation() -> void:
 	is_rotated = not is_rotated
@@ -328,7 +423,6 @@ func _gui_input(event: InputEvent) -> void:
 		if event.button_index == MOUSE_BUTTON_LEFT:
 			_drag_offset = get_global_mouse_position() - global_position
 			_picked_up = true
-			card_clicked.emit(card_data)
 			accept_event()
 		elif event.button_index == MOUSE_BUTTON_RIGHT:
 			card_right_clicked.emit(card_data)
@@ -346,13 +440,22 @@ func _input(event: InputEvent) -> void:
 		if event.button_index == MOUSE_BUTTON_LEFT and not event.pressed:
 			if _dragging:
 				_finish_drag()
+			else:
+				card_clicked.emit(card_data)
 			_picked_up = false
 		elif event.button_index == MOUSE_BUTTON_RIGHT and event.pressed and _dragging:
-			if card_data.card_type == Card.CardType.CREATURE:
+			if _can_toggle_drag_prepare():
+				_drag_stealth = not _drag_stealth
+				_set_drag_prepare_preview(_drag_stealth)
+			elif card_data.card_type == Card.CardType.CREATURE:
 				_toggle_rotation()
 			get_viewport().set_input_as_handled()
-	elif event is InputEventKey and event.pressed and card_data.card_type == Card.CardType.CREATURE:
-		if event.keycode == KEY_S:
+	elif event is InputEventKey and event.pressed and _dragging:
+		if event.keycode == KEY_S and _can_toggle_drag_prepare():
+			_drag_stealth = not _drag_stealth
+			_set_drag_prepare_preview(_drag_stealth)
+			get_viewport().set_input_as_handled()
+		elif event.keycode == KEY_S and card_data.card_type == Card.CardType.CREATURE:
 			_drag_stealth = not _drag_stealth
 			if _drag_stealth and not is_rotated:
 				_toggle_rotation()
@@ -434,6 +537,9 @@ func _build_drag_ghost() -> Control:
 		if ghost_inner:
 			ghost_inner.rotation_degrees = 0.0
 			ghost_inner.pivot_offset = Vector2.ZERO
+	_drag_ghost = ghost
+	_set_drag_prepare_preview(_drag_stealth and _can_toggle_drag_prepare())
+	_drag_ghost = null
 	return ghost
 
 func _finish_drag() -> void:

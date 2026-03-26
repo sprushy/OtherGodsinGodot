@@ -28,9 +28,13 @@ func resolve(game_manager: GameManager, target = null) -> void:
 	var all_creatures: Array[Card] = []
 	
 	# Collect all creatures from both players
-	for player in [game_manager.current_player, game_manager.other_player]:
-		for zone in player.frontline_zones + player.reserve_zones:
-			for card in zone.cards:
+	for player: Player in game_manager.players:
+		for zone: Zone in player.frontline_zones:
+			for card: Card in zone.cards:
+				if card.card_type == Card.CardType.CREATURE:
+					all_creatures.append(card)
+		for zone: Zone in player.reserve_zones:
+			for card: Card in zone.cards:
 				if card.card_type == Card.CardType.CREATURE:
 					all_creatures.append(card)
 	
@@ -39,20 +43,22 @@ func resolve(game_manager: GameManager, target = null) -> void:
 		return
 	
 	# Find the highest strength
-	var max_strength = 0
-	for creature in all_creatures:
-		var str_val = creature.get_effective_strength()
+	var max_strength: int = 0
+	for creature: Card in all_creatures:
+		var str_val: int = creature.get_effective_strength()
 		if str_val > max_strength:
 			max_strength = str_val
 	
 	print("Maximum strength found: " + str(max_strength))
 	
-	# Destroy all creatures with that strength
-	var destroyed_count = 0
-	for creature in all_creatures:
+	var doomed_creatures: Array[Card] = []
+	for creature: Card in all_creatures:
 		if creature.get_effective_strength() == max_strength:
-			print("Destroying " + creature.card_name + " (STR: " + str(max_strength) + ")")
-			game_manager._send_to_graveyard_with_hook(creature)
+			doomed_creatures.append(creature)
+
+	var destroyed_count: int = 0
+	for creature: Card in doomed_creatures:
+		print("Destroying " + creature.card_name + " (STR: " + str(max_strength) + ")")
+		if game_manager.request_send_to_graveyard(creature, Callable(), false, true):
 			destroyed_count += 1
-	
 	print("Fall of the Mighty destroyed " + str(destroyed_count) + " mighty creature(s)!")

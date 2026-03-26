@@ -16,6 +16,7 @@ var zone_index: int
 var _drop_callback: Callable
 var _is_enemy: bool = false
 var _popup: Control = null
+var _preview_card: Card = null
 var _hovered: bool = false
 var _pinned: bool = false
 var _hide_pending: bool = false
@@ -91,7 +92,7 @@ func _add_sleep_affordance(overlay: Control, card: Card) -> void:
 	overlay.add_child(badge)
 
 	var haze := ColorRect.new()
-	haze.color = Color(0.2, 0.28, 0.45, 0.18)
+	haze.color = Color(0.2, 0.28, 0.45, 0.12)
 	haze.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	haze.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	overlay.add_child(haze)
@@ -137,6 +138,93 @@ func _add_speed_badge(overlay: Control, card: Card) -> void:
 
 	overlay.add_child(badge)
 
+func _add_playing_aura(overlay: Control) -> void:
+	if overlay == null:
+		return
+
+	var glow := ColorRect.new()
+	glow.color = Color(0.98, 0.84, 0.22, 0.18)
+	glow.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	glow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	overlay.add_child(glow)
+
+	var ring := PanelContainer.new()
+	ring.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ring.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	ring.offset_left = 3
+	ring.offset_top = 3
+	ring.offset_right = -3
+	ring.offset_bottom = -3
+
+	var ring_style := StyleBoxFlat.new()
+	ring_style.bg_color = Color(0, 0, 0, 0)
+	ring_style.border_color = Color(1.0, 0.88, 0.38, 0.98)
+	ring_style.shadow_color = Color(1.0, 0.82, 0.2, 0.7)
+	ring_style.shadow_size = 12
+	ring_style.corner_radius_top_left = 8
+	ring_style.corner_radius_top_right = 8
+	ring_style.corner_radius_bottom_left = 8
+	ring_style.corner_radius_bottom_right = 8
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		ring_style.set_border_width(side, 2)
+	ring.add_theme_stylebox_override("panel", ring_style)
+	overlay.add_child(ring)
+
+func _add_priority_response_aura(overlay: Control) -> void:
+	if overlay == null:
+		return
+
+	var ring := PanelContainer.new()
+	ring.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ring.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	ring.offset_left = 9
+	ring.offset_top = 9
+	ring.offset_right = -9
+	ring.offset_bottom = -9
+
+	var ring_style := StyleBoxFlat.new()
+	ring_style.bg_color = Color(0, 0, 0, 0)
+	ring_style.border_color = Color(0.5, 1.0, 0.58, 0.92)
+	ring_style.shadow_color = Color(0.28, 0.95, 0.38, 0.55)
+	ring_style.shadow_size = 8
+	ring_style.corner_radius_top_left = 8
+	ring_style.corner_radius_top_right = 8
+	ring_style.corner_radius_bottom_left = 8
+	ring_style.corner_radius_bottom_right = 8
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		ring_style.set_border_width(side, 2)
+	ring.add_theme_stylebox_override("panel", ring_style)
+	overlay.add_child(ring)
+
+func _is_card_waiting_on_priority(card: Card) -> bool:
+	if card == null or game_manager == null:
+		return false
+	for action in game_manager.action_stack:
+		if action != null and action.card == card:
+			return true
+	return false
+
+func _is_card_usable_for_priority(card: Card) -> bool:
+	if card == null or game_manager == null:
+		return false
+	return game_manager.can_card_respond_to_priority(card, game_manager.priority_player)
+
+func _should_show_playing_aura(card: Card) -> bool:
+	return _preview_card != null or _is_card_waiting_on_priority(card)
+
+func set_preview_card(card: Card) -> void:
+	_preview_card = card
+	_refresh_display()
+
+func get_visual_anchor_global() -> Vector2:
+	var anchor_control: Control = _raised_overlay
+	if anchor_control == null or not is_instance_valid(anchor_control):
+		anchor_control = _defense_overlay
+	if anchor_control == null or not is_instance_valid(anchor_control):
+		anchor_control = self
+	var rect: Rect2 = anchor_control.get_global_rect()
+	return rect.position + rect.size * 0.5
+
 func setup(p_zone: Zone, p_gm: GameManager, p_player: Player, idx: int,
 		drop_cb: Callable, is_enemy: bool = false, row_label: String = "") -> void:
 	zone         = p_zone
@@ -156,6 +244,7 @@ func _refresh_display() -> void:
 	_raised_overlay = null
 	for child in get_children():
 		child.queue_free()
+	var card: Card = _preview_card if _preview_card != null else (zone.cards[0] if zone.cards.size() > 0 else null)
 
 	var style := StyleBoxFlat.new()
 	style.corner_radius_top_left    = 4
@@ -165,8 +254,7 @@ func _refresh_display() -> void:
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
 		style.set_border_width(side, 2)
 
-	if zone.cards.size() > 0:
-		var card := zone.cards[0]
+	if card != null:
 
 		# Face-down cards: own stealth / locked powers / prepared cards show hazed art; others show cardback
 		if card.is_face_down:
@@ -194,7 +282,7 @@ func _refresh_display() -> void:
 			if show_revealed_power_art:
 				var revealed_haze := ColorRect.new()
 				var is_own_revealed_power := card.get_controller() == game_manager.current_player
-				revealed_haze.color = Color(0.22, 0.45, 0.85, 0.42) if is_own_revealed_power else Color(0.85, 0.22, 0.45, 0.45)
+				revealed_haze.color = Color(0.22, 0.45, 0.85, 0.26) if is_own_revealed_power else Color(0.85, 0.22, 0.45, 0.28)
 				revealed_haze.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 				revealed_haze.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				fd_overlay.add_child(revealed_haze)
@@ -228,7 +316,7 @@ func _refresh_display() -> void:
 					fd_overlay.add_child(mute_badge)
 			elif is_own_hidden_card:
 				var haze := ColorRect.new()
-				haze.color = Color(0.05, 0.05, 0.2, 0.6)
+				haze.color = Color(0.05, 0.05, 0.2, 0.38)
 				haze.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 				haze.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				fd_overlay.add_child(haze)
@@ -255,6 +343,10 @@ func _refresh_display() -> void:
 				var overlay := Control.new()
 				overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				add_child(overlay)
+				if _should_show_playing_aura(card):
+					_add_playing_aura(overlay)
+				if _is_card_usable_for_priority(card):
+					_add_priority_response_aura(overlay)
 
 				var art := TextureRect.new()
 				art.texture = tex
@@ -355,6 +447,10 @@ func _refresh_display() -> void:
 		var overlay := Control.new()
 		overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		add_child(overlay)
+		if _should_show_playing_aura(card):
+			_add_playing_aura(overlay)
+		if _is_card_usable_for_priority(card):
+			_add_priority_response_aura(overlay)
 
 		# Art background; stealth shows hazed art (own) or cardback (opponent)
 		var show_public_stealth := card.is_stealth and card.is_temporarily_revealed()
@@ -372,7 +468,7 @@ func _refresh_display() -> void:
 				overlay.add_child(art)
 			if is_own or show_public_stealth:
 				var haze := ColorRect.new()
-				haze.color = Color(0.05, 0.05, 0.2, 0.6) if is_own else Color(0.85, 0.22, 0.45, 0.28)
+				haze.color = Color(0.05, 0.05, 0.2, 0.34) if is_own else Color(0.85, 0.22, 0.45, 0.18)
 				haze.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 				haze.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				overlay.add_child(haze)
@@ -879,18 +975,30 @@ func _hide_ability_popup() -> void:
 func can_accept_card(card: Card) -> bool:
 	if card is BitMeseri:
 		if zone.cards.size() == 0:
-			return false
+			return game_manager.can_play_card(game_manager.current_player, card, null)
 		var target := zone.cards[0]
 		if target.card_type != Card.CardType.CREATURE and target.card_type != Card.CardType.STRUCTURE and target.card_type != Card.CardType.EQUIPMENT:
 			return false
 		return game_manager.can_play_card(game_manager.current_player, card, null)
 	if card is Absence:
 		if zone.cards.size() == 0:
-			return false
+			return game_manager.can_play_card(game_manager.current_player, card, null)
 		var target := zone.cards[0]
 		if target is not PowerCard and not target.is_god:
 			return false
 		return game_manager.can_play_card(game_manager.current_player, card, null)
+	if card is CharmCard and (card as CharmCard).targets:
+		if zone.cards.size() == 0:
+			if card.current_zone == card.card_owner.hand_zone:
+				return (card as CharmCard).can_activate_from_hand(game_manager)
+			return (card as CharmCard).can_activate_prepared(game_manager)
+		var charm := card as CharmCard
+		var target := zone.cards[0]
+		if not charm.is_valid_target(target):
+			return false
+		if card.current_zone == card.card_owner.hand_zone:
+			return charm.can_activate_from_hand(game_manager)
+		return charm.can_activate_prepared(game_manager)
 	if _is_enemy:
 		return false
 	if owning_player != game_manager.current_player:

@@ -2,6 +2,7 @@ extends BaseCard
 class_name HexCard
 
 func _init() -> void:
+	super._init()
 	card_type = Card.CardType.HEX
 
 # Override to define when this hex can activate.

@@ -3,12 +3,15 @@ extends Node
 class_name GameManager
 
 signal game_ended(winner: Player, loser: Player)
+signal doorway_choice_requested(structure: StructureCard, card: Card, combat_death: bool, destruction: bool)
 
 enum GamePhase { MULLIGAN, MAIN, COMBAT, END }
 
 var players: Array[Player] = []
 var current_player: Player
 var other_player: Player
+var turn_player: Player
+var feedback_viewer: Player
 var current_phase: GamePhase = GamePhase.MULLIGAN
 var is_game_over: bool = false
 var winning_player: Player = null
@@ -24,6 +27,11 @@ var combat_destroy_events_this_turn: Array[Dictionary] = []
 var last_hex_resolution_text: String = ""
 var last_player_feedback_text: String = ""
 var _upkeep_resolved_turn: int = -1
+var _pending_doorway_structure: StructureCard = null
+var _pending_doorway_card: Card = null
+var _pending_doorway_combat_death: bool = false
+var _pending_doorway_destruction: bool = false
+var _pending_doorway_continue: Callable = Callable()
 
 # Priority system
 var priority_player: Player = null
@@ -34,7 +42,10 @@ func push_to_stack(action: CardAction) -> void:
 		return
 	action_stack.push_back(action)
 	consecutive_passes = 0
-	priority_player = get_opponent(action.source_player)
+	if action.initial_priority_player != null:
+		priority_player = action.initial_priority_player
+	else:
+		priority_player = get_opponent(action.source_player)
 
 func pass_priority() -> void:
 	if is_game_over:
@@ -52,6 +63,13 @@ func note_player_feedback(text: String) -> void:
 	last_player_feedback_text = text
 	print(text)
 
+func get_feedback_viewer() -> Player:
+	if feedback_viewer != null:
+		return feedback_viewer
+	if turn_player != null:
+		return turn_player
+	return current_player
+
 func consume_player_feedback() -> String:
 	var text := last_player_feedback_text
 	last_player_feedback_text = ""
@@ -62,58 +80,73 @@ func get_priority_responses(player: Player) -> Array:
 	var responses: Array = []
 	if action_stack.is_empty():
 		return responses
+	for hex in prepared_hexes.keys().duplicate():
+		if can_card_respond_to_priority(hex, player):
+			responses.append(hex)
+	for charm in prepared_charms.keys().duplicate():
+		if can_card_respond_to_priority(charm, player):
+			responses.append(charm)
+	for c in player.hand_zone.cards:
+		if can_card_respond_to_priority(c, player):
+			responses.append(c)
+	return responses
+
+func can_card_respond_to_priority(card: Card, player: Player = null) -> bool:
+	if card == null or action_stack.is_empty():
+		return false
+	var responding_player := player if player != null else priority_player
+	if responding_player == null or card.card_owner != responding_player:
+		return false
 	var top: CardAction = action_stack.back()
 	var top_speed := top.get_timing_speed()
-	# Prepared hexes that can trigger against the pending stack action
-	for hex in prepared_hexes.keys().duplicate():
-		if hex.card_owner != player:
-			continue
-		if prepared_hexes[hex] >= turn_number:
-			continue
-		if hex.is_activation_locked(self):
-			continue
-		if _has_pending_stack_action_for_card(hex):
-			continue
-		if not (hex is HexCard):
-			continue
-		var typed_hex := hex as HexCard
+	if card is HexCard:
+		if prepared_hexes.get(card, turn_number) >= turn_number:
+			return false
+		if card.is_activation_locked(self):
+			return false
+		if _has_pending_stack_action_for_card(card):
+			return false
+		var typed_hex := card as HexCard
 		if typed_hex.has_method("can_respond_to_action") and typed_hex.can_respond_to_action(top):
-			responses.append(typed_hex)
+			return true
+		return top.type == CardAction.Type.ATTACK and top.attacker != null and not get_attack_hex_targets(top, typed_hex).is_empty()
+	if card is CharmCard:
+		var typed_charm := card as CharmCard
+		if card.current_zone == card.card_owner.hand_zone:
+			return typed_charm.can_activate_from_hand(self, top)
+		return typed_charm.can_activate_prepared(self, top)
+	if card.current_zone != responding_player.hand_zone:
+		return false
+	if _has_pending_stack_action_for_card(card):
+		return false
+	if card.card_type != Card.CardType.SPELL:
+		return false
+	if card.get_effective_speed() < 2:
+		return false
+	if top_speed > 0 and card.get_effective_speed() < top_speed:
+		return false
+	return true
+
+func get_attack_hex_targets(action: CardAction, hex: HexCard) -> Array[Card]:
+	var valid_targets: Array[Card] = []
+	if action == null or hex == null or action.type != CardAction.Type.ATTACK:
+		return valid_targets
+	var defender: Card = action.interceptor if action.interceptor != null else (action.target if action.target is Card else null)
+	if defender == null:
+		return valid_targets
+	var candidates: Array[Card] = [action.attacker]
+	if action.united_front_partner != null:
+		candidates.append(action.united_front_partner)
+	for candidate in candidates:
+		if candidate == null or candidate in valid_targets:
 			continue
-		if top.type == CardAction.Type.ATTACK and top.attacker != null:
-			var def_card: Card = top.interceptor if top.interceptor != null else (top.target if top.target is Card else null)
-			if def_card != null and typed_hex.can_activate(top.attacker, def_card):
-				responses.append(typed_hex)
-	for charm in prepared_charms.keys().duplicate():
-		if charm == null:
+		if candidate.current_zone == null or not candidate.current_zone.is_board_zone():
 			continue
-		if charm.card_owner != player:
+		if candidate.get_controller() != action.source_player:
 			continue
-		if _has_pending_stack_action_for_card(charm):
-			continue
-		if not (charm is CharmCard):
-			continue
-		var typed_charm := charm as CharmCard
-		if typed_charm.can_activate_prepared(self, top):
-			responses.append(typed_charm)
-	for c in player.hand_zone.cards:
-		if c is CharmCard:
-			var hand_charm := c as CharmCard
-			if hand_charm.can_activate_from_hand(self, top):
-				responses.append(hand_charm)
-			continue
-	# Speed 2+ spells in hand
-	for c in player.hand_zone.cards:
-		if c is CharmCard:
-			continue
-		if c.card_type != Card.CardType.SPELL:
-			continue
-		if c.get_effective_speed() < 2:
-			continue
-		if top_speed > 0 and c.get_effective_speed() < top_speed:
-			continue
-		responses.append(c)
-	return responses
+		if hex.can_activate(candidate, defender):
+			valid_targets.append(candidate)
+	return valid_targets
 
 func _has_pending_stack_action_for_card(card: Card) -> bool:
 	for action in action_stack:
@@ -147,6 +180,7 @@ func setup_game() -> void:
 	if players.size() == 2:
 		current_player = players[0]
 		other_player = players[1]
+		turn_player = current_player
 		current_player.is_turn_player = true
 
 # --- NEW ROBUST HELPER FUNCTION ---
@@ -175,6 +209,7 @@ func offer_mulligan(player: Player, card_count: int, bonus_mana: int) -> void:
 func start_turn() -> void:
 	if is_game_over:
 		return
+	turn_player = current_player
 	turn_number += 1
 	current_phase = GamePhase.MAIN
 	died_this_turn.clear()
@@ -628,15 +663,31 @@ func creature_attack(attacker: Card, target) -> void:
 
 	if attacker.is_stealth:
 		attacker.reveal_from_stealth(self)
+	var united_front_partner: Card = null
+	if attacker.has_method("get_united_front_partner_for_attack"):
+		united_front_partner = attacker.get_united_front_partner_for_attack(self)
 	
 	attacker.spend_major_creature_action()
 	attacker.mark_attacked_this_turn()
+	if united_front_partner != null:
+		united_front_partner.reveal_from_stealth(self)
+		united_front_partner.spend_major_creature_action()
+		united_front_partner.mark_attacked_this_turn()
 	
 	if target is Card:
-		resolve_combat(attacker, target)
+		if united_front_partner != null:
+			resolve_united_front_combat(attacker, united_front_partner, target)
+		else:
+			resolve_combat(attacker, target)
 	elif target is Player:
-		target.lose_followers(attacker.get_effective_strength())
-		_notify_after_combat(attacker, null)
+		var attackers: Array[Card] = _get_active_united_front_attackers(attacker, united_front_partner)
+		var total_strength := 0
+		for combatant in attackers:
+			total_strength += combatant.get_effective_strength()
+		if total_strength <= 0:
+			total_strength = attacker.get_effective_strength()
+		target.lose_followers(total_strength)
+		_notify_after_united_front_combat(attacker, united_front_partner, null)
 
 func _can_intercept_followers(defender: Card, attacker: Card) -> bool:
 	if defender == null or attacker == null:
@@ -675,17 +726,21 @@ func check_for_intercept(attacker: Card, defending_player: Player) -> Card:
 	print("	-> No intercepts, attacking followers directly")
 	return null
 
-func resolve_combat(attacker: Card, defender: Card) -> void:
+func resolve_combat(attacker: Card, defender: Card, continue_callback: Callable = Callable()) -> bool:
 	attacker.reveal_from_stealth(self)
 	defender.reveal_from_stealth(self)
 	var attacker_controller := attacker.get_controller()
 	var defender_controller := defender.get_controller()
+	var finish := func() -> void:
+		_notify_after_combat(attacker, defender)
+		if continue_callback.is_valid():
+			continue_callback.call()
 	if defender.is_god:
 		# Gods cannot be targeted in combat — redirect to follower damage
 		defender_controller.lose_followers(attacker.get_effective_strength())
 		print(attacker.card_name + " attacks " + defender_controller.player_name + "'s followers for " + str(attacker.get_effective_strength()) + " (via god)!")
-		_notify_after_combat(attacker, defender)
-		return
+		finish.call()
+		return true
 	var attacker_str = attacker.get_effective_strength()
 
 	print("=== COMBAT: " + attacker.card_name + " (STR:" + str(attacker_str) + ") vs " + defender.card_name + " ===")
@@ -696,8 +751,8 @@ func resolve_combat(attacker: Card, defender: Card) -> void:
 		if attacker_str > defender_res:
 			print("	Structure destroyed!")
 			_combat_kill(attacker, defender)
-		_notify_after_combat(attacker, defender)
-		return
+		finish.call()
+		return true
 
 	if defender.card_type == Card.CardType.CREATURE:
 		if defender.creature_mode == Card.CreatureMode.AGGRESSIVE:
@@ -727,7 +782,7 @@ func resolve_combat(attacker: Card, defender: Card) -> void:
 				if equip is EquipmentCard:
 					vs_defense_bonus += equip.get_bonus_strength_vs_defense(attacker)
 			var attacker_str_vs_res: int = attacker_str + vs_defense_bonus
-			var defender_res = defender.get_effective_resilience()
+			var defender_res: int = defender.get_effective_resilience()
 			print("	STR vs RES: " + str(attacker_str_vs_res) + " vs " + str(defender_res))
 
 			if attacker_str_vs_res > defender_res:
@@ -735,7 +790,7 @@ func resolve_combat(attacker: Card, defender: Card) -> void:
 				_combat_kill(attacker, defender)
 			elif attacker_str_vs_res < defender_res:
 				# Followers convert to defender's side
-				var diff = defender_res - attacker_str_vs_res
+				var diff: int = defender_res - attacker_str_vs_res
 				print("	" + str(diff) + " followers convert to " + defender_controller.player_name)
 				attacker_controller.lose_followers(diff)
 				defender_controller.gain_followers(diff)
@@ -744,7 +799,208 @@ func resolve_combat(attacker: Card, defender: Card) -> void:
 	elif defender.card_type == Card.CardType.EQUIPMENT and defender.equipped_on == null:
 		print("	Equipment destroyed!")
 		_combat_kill(attacker, defender)
-	_notify_after_combat(attacker, defender)
+	finish.call()
+	return true
+
+func resolve_united_front_combat(attacker: Card, partner: Card, defender: Card) -> void:
+	var active_attackers: Array[Card] = _get_active_united_front_attackers(attacker, partner)
+	if active_attackers.is_empty():
+		return
+	if active_attackers.size() == 1:
+		resolve_combat(active_attackers[0], defender)
+		return
+	var primary: Card = active_attackers[0]
+	var support: Card = active_attackers[1]
+	primary.reveal_from_stealth(self)
+	support.reveal_from_stealth(self)
+	defender.reveal_from_stealth(self)
+	var attacker_controller := primary.get_controller()
+	var defender_controller := defender.get_controller()
+	var combined_strength := primary.get_effective_strength() + support.get_effective_strength()
+
+	if defender.is_god:
+		defender_controller.lose_followers(combined_strength)
+		print("%s and %s attack %s's followers for %d!" % [primary.card_name, support.card_name, defender_controller.player_name, combined_strength])
+		_notify_after_united_front_combat(attacker, partner, defender)
+		return
+
+	print("=== UNITED FRONT COMBAT: %s + %s (STR:%d) vs %s ===" % [primary.card_name, support.card_name, combined_strength, defender.card_name])
+
+	if defender.is_petrified() or defender.card_type == Card.CardType.STRUCTURE:
+		var defender_res := defender.get_effective_resilience()
+		print("	STR vs Structure RES: %d vs %d" % [combined_strength, defender_res])
+		if combined_strength > defender_res:
+			print("	Structure destroyed!")
+			_combat_kill(primary, defender)
+		_notify_after_united_front_combat(attacker, partner, defender)
+		return
+
+	if defender.card_type == Card.CardType.CREATURE:
+		if defender.creature_mode == Card.CreatureMode.AGGRESSIVE:
+			var defender_str := defender.get_effective_strength()
+			print("	Combined STR vs STR: %d vs %d" % [combined_strength, defender_str])
+			if combined_strength > defender_str:
+				var diff := combined_strength - defender_str
+				print("	%s destroyed! %s loses %d followers" % [defender.card_name, defender_controller.player_name, diff])
+				defender_controller.lose_followers(diff)
+				_combat_kill(primary, defender)
+			elif defender_str > combined_strength:
+				var diff := defender_str - combined_strength
+				print("	United Front loses! %s loses %d followers" % [attacker_controller.player_name, diff])
+				attacker_controller.lose_followers(diff)
+				_combat_kill(defender, primary)
+				_combat_kill(defender, support)
+			else:
+				print("	Tie! Both united attackers and the defender are destroyed")
+				var void_primary := _should_class_rend(defender, primary)
+				var void_support := _should_class_rend(defender, support)
+				var void_defender := _should_class_rend(primary, defender)
+				_combat_kill_routed(defender, primary, void_primary)
+				_combat_kill_routed(defender, support, void_support)
+				_combat_kill_routed(primary, defender, void_defender)
+		else:
+			var vs_defense_bonus := 0
+			for combatant in active_attackers:
+				for equip in combatant.equipment:
+					if equip is EquipmentCard:
+						vs_defense_bonus += equip.get_bonus_strength_vs_defense(combatant)
+			var attacker_str_vs_res: int = combined_strength + vs_defense_bonus
+			var defender_res := defender.get_effective_resilience()
+			print("	Combined STR vs RES: %d vs %d" % [attacker_str_vs_res, defender_res])
+			if attacker_str_vs_res > defender_res:
+				print("	%s destroyed!" % defender.card_name)
+				_combat_kill(primary, defender)
+			elif attacker_str_vs_res < defender_res:
+				var diff := defender_res - attacker_str_vs_res
+				print("	%d followers convert to %s" % [diff, defender_controller.player_name])
+				attacker_controller.lose_followers(diff)
+				defender_controller.gain_followers(diff)
+			else:
+				print("	Exact match - no effect")
+	elif defender.card_type == Card.CardType.EQUIPMENT and defender.equipped_on == null:
+		print("	Equipment destroyed!")
+		_combat_kill(primary, defender)
+	_notify_after_united_front_combat(attacker, partner, defender)
+
+func resolve_combat_with_continuation(attacker: Card, defender: Card, continue_callback: Callable = Callable()) -> bool:
+	attacker.reveal_from_stealth(self)
+	defender.reveal_from_stealth(self)
+	var attacker_controller := attacker.get_controller()
+	var defender_controller := defender.get_controller()
+	var finish := func() -> void:
+		_notify_after_combat(attacker, defender)
+		if continue_callback.is_valid():
+			continue_callback.call()
+	if defender.is_god:
+		defender_controller.lose_followers(attacker.get_effective_strength())
+		print(attacker.card_name + " attacks " + defender_controller.player_name + "'s followers for " + str(attacker.get_effective_strength()) + " (via god)!")
+		finish.call()
+		return true
+	var attacker_str := attacker.get_effective_strength()
+	print("=== COMBAT: " + attacker.card_name + " (STR:" + str(attacker_str) + ") vs " + defender.card_name + " ===")
+	if defender.is_petrified() or defender.card_type == Card.CardType.STRUCTURE:
+		var defender_res := defender.get_effective_resilience()
+		print("	STR vs Structure RES: " + str(attacker_str) + " vs " + str(defender_res))
+		if attacker_str > defender_res:
+			print("	Structure destroyed!")
+			return _combat_kill_deferred(attacker, defender, finish)
+		finish.call()
+		return true
+	if defender.card_type == Card.CardType.CREATURE:
+		if defender.creature_mode == Card.CreatureMode.AGGRESSIVE:
+			var defender_str := defender.get_effective_strength()
+			print("	STR vs STR: " + str(attacker_str) + " vs " + str(defender_str))
+			if attacker_str > defender_str:
+				var diff := attacker_str - defender_str
+				print("	" + defender.card_name + " destroyed! " + defender_controller.player_name + " loses " + str(diff) + " followers")
+				defender_controller.lose_followers(diff)
+				return _combat_kill_deferred(attacker, defender, finish)
+			if defender_str > attacker_str:
+				var diff := defender_str - attacker_str
+				print("	" + attacker.card_name + " destroyed! " + attacker_controller.player_name + " loses " + str(diff) + " followers")
+				attacker_controller.lose_followers(diff)
+				return _combat_kill_deferred(defender, attacker, finish)
+			print("	Tie! Both creatures destroyed")
+			return _combat_kill_sequence_deferred([
+				{"killer": defender, "victim": attacker, "do_void": _should_class_rend(defender, attacker)},
+				{"killer": attacker, "victim": defender, "do_void": _should_class_rend(attacker, defender)},
+			], finish)
+		var vs_defense_bonus := 0
+		for equip in attacker.equipment:
+			if equip is EquipmentCard:
+				vs_defense_bonus += equip.get_bonus_strength_vs_defense(attacker)
+		var attacker_str_vs_res: int = attacker_str + vs_defense_bonus
+		var defender_res: int = defender.get_effective_resilience()
+		print("	STR vs RES: " + str(attacker_str_vs_res) + " vs " + str(defender_res))
+		if attacker_str_vs_res > defender_res:
+			print("	" + defender.card_name + " destroyed!")
+			return _combat_kill_deferred(attacker, defender, finish)
+		if attacker_str_vs_res < defender_res:
+			var diff: int = defender_res - attacker_str_vs_res
+			print("	" + str(diff) + " followers convert to " + defender_controller.player_name)
+			attacker_controller.lose_followers(diff)
+			defender_controller.gain_followers(diff)
+	elif defender.card_type == Card.CardType.EQUIPMENT and defender.equipped_on == null:
+		print("	Equipment destroyed!")
+		return _combat_kill_deferred(attacker, defender, finish)
+	finish.call()
+	return true
+
+func _combat_kill_deferred(killer: Card, victim: Card, continue_callback: Callable = Callable()) -> bool:
+	return _combat_kill_routed_deferred(killer, victim, _should_class_rend(killer, victim), continue_callback)
+
+func _combat_kill_routed_deferred(killer: Card, victim: Card, do_void: bool, continue_callback: Callable = Callable()) -> bool:
+	var killer_controller := killer.get_controller() if killer != null else null
+	var victim_controller := victim.get_controller()
+	var finish := func() -> void:
+		var victim_counts_as_creature_kill := victim != null and victim.card_type == Card.CardType.CREATURE and not victim.is_petrified()
+		if killer != null and killer.has_method("on_kill") and not killer.abilities_suppressed() and victim_counts_as_creature_kill:
+			killer.on_kill(self, victim)
+		if killer_controller != null and victim_counts_as_creature_kill:
+			combat_destroy_events_this_turn.append({
+				"killer_owner": killer_controller,
+				"victim_owner": victim_controller,
+				"killer": killer,
+				"victim": victim,
+			})
+		if killer != null and killer_controller != null and victim_controller != killer_controller and victim_counts_as_creature_kill:
+			for zone in killer_controller.frontline_zones + killer_controller.reserve_zones:
+				for card in zone.cards:
+					if card.has_method("on_ally_kill") and not card.abilities_suppressed():
+						card.on_ally_kill(self, killer, victim)
+		if continue_callback.is_valid():
+			continue_callback.call()
+	if do_void:
+		print("Class Rend! " + killer.card_name + " voids " + victim.card_name + "!")
+		if victim.current_zone and victim.current_zone.is_board_zone():
+			victim.last_board_zone_type  = victim.current_zone.zone_type
+			victim.last_board_zone_index = victim.current_zone.zone_index
+		if victim.has_method("on_removed") and not victim.abilities_suppressed():
+			victim.on_removed(self)
+		if victim.has_method("on_death") and not victim.abilities_suppressed():
+			victim.on_death(self)
+		died_this_turn.append(victim)
+		for equip in victim.equipment.duplicate():
+			_send_to_abyss_with_hook(equip)
+		victim.card_owner.move_card(victim, victim.card_owner.abyss_zone)
+		finish.call()
+		return true
+	return request_send_to_graveyard(victim, finish, true, true)
+
+func _combat_kill_sequence_deferred(kills: Array[Dictionary], continue_callback: Callable = Callable()) -> bool:
+	if kills.is_empty():
+		if continue_callback.is_valid():
+			continue_callback.call()
+		return true
+	var next_kills: Array[Dictionary] = kills.duplicate()
+	var kill: Dictionary = next_kills.pop_front()
+	return _combat_kill_routed_deferred(
+		kill.get("killer", null),
+		kill.get("victim", null),
+		bool(kill.get("do_void", false)),
+		func() -> void:
+			_combat_kill_sequence_deferred(next_kills, continue_callback)
+	)
 
 func _notify_after_combat(attacker: Card, defender: Card) -> void:
 	if attacker != null and attacker.has_method("on_after_combat"):
@@ -756,6 +1012,26 @@ func _notify_after_combat(attacker: Card, defender: Card) -> void:
 			for card in zone.cards:
 				if card.has_method("on_creature_after_combat"):
 					card.on_creature_after_combat(self, attacker, defender)
+
+func _notify_after_united_front_combat(attacker: Card, partner: Card, defender: Card) -> void:
+	_notify_after_combat(attacker, defender)
+	if partner != null and partner != attacker and partner.has_method("on_after_combat"):
+		partner.on_after_combat(self, defender)
+
+func _get_active_united_front_attackers(attacker: Card, partner: Card) -> Array[Card]:
+	var active_attackers: Array[Card] = []
+	var controller := attacker.get_controller() if attacker != null else null
+	for candidate in [attacker, partner]:
+		if candidate == null:
+			continue
+		if candidate.current_zone == null or not candidate.current_zone.is_board_zone():
+			continue
+		if controller != null and candidate.get_controller() != controller:
+			continue
+		if candidate.card_type != Card.CardType.CREATURE:
+			continue
+		active_attackers.append(candidate)
+	return active_attackers
 
 func add_to_stack(action: CardAction) -> void:
 	action_stack.append(action)
@@ -804,6 +1080,7 @@ func end_turn() -> void:
 	var temp = current_player
 	current_player = other_player
 	other_player = temp
+	turn_player = current_player
 	current_player.is_turn_player = true
 	other_player.is_turn_player = false
 	start_turn()
@@ -852,6 +1129,22 @@ func _should_class_rend(killer: Card, victim: Card) -> bool:
 func _combat_kill_routed(killer: Card, victim: Card, do_void: bool) -> void:
 	var killer_controller := killer.get_controller() if killer != null else null
 	var victim_controller := victim.get_controller()
+	var finish := func() -> void:
+		var victim_counts_as_creature_kill := victim != null and victim.card_type == Card.CardType.CREATURE and not victim.is_petrified()
+		if killer != null and killer.has_method("on_kill") and not killer.abilities_suppressed() and victim_counts_as_creature_kill:
+			killer.on_kill(self, victim)
+		if killer_controller != null and victim_counts_as_creature_kill:
+			combat_destroy_events_this_turn.append({
+				"killer_owner": killer_controller,
+				"victim_owner": victim_controller,
+				"killer": killer,
+				"victim": victim,
+			})
+		if killer != null and killer_controller != null and victim_controller != killer_controller and victim_counts_as_creature_kill:
+			for zone in killer_controller.frontline_zones + killer_controller.reserve_zones:
+				for card in zone.cards:
+					if card.has_method("on_ally_kill") and not card.abilities_suppressed():
+						card.on_ally_kill(self, killer, victim)
 	if do_void:
 		print("Class Rend! " + killer.card_name + " voids " + victim.card_name + "!")
 		if victim.current_zone and victim.current_zone.is_board_zone():
@@ -865,24 +1158,9 @@ func _combat_kill_routed(killer: Card, victim: Card, do_void: bool) -> void:
 		for equip in victim.equipment.duplicate():
 			_send_to_abyss_with_hook(equip)
 		victim.card_owner.move_card(victim, victim.card_owner.abyss_zone)
-	else:
-		if not _send_to_graveyard_with_hook(victim, true, true):
-			return
-	var victim_counts_as_creature_kill := victim != null and victim.card_type == Card.CardType.CREATURE and not victim.is_petrified()
-	if killer != null and killer.has_method("on_kill") and not killer.abilities_suppressed() and victim_counts_as_creature_kill:
-		killer.on_kill(self, victim)
-	if killer_controller != null and victim_counts_as_creature_kill:
-		combat_destroy_events_this_turn.append({
-			"killer_owner": killer_controller,
-			"victim_owner": victim_controller,
-			"killer": killer,
-			"victim": victim,
-		})
-	if killer != null and killer_controller != null and victim_controller != killer_controller and victim_counts_as_creature_kill:
-		for zone in killer_controller.frontline_zones + killer_controller.reserve_zones:
-			for card in zone.cards:
-				if card.has_method("on_ally_kill") and not card.abilities_suppressed():
-					card.on_ally_kill(self, killer, victim)
+		finish.call()
+		return
+	request_send_to_graveyard(victim, finish, true, true)
 
 func player_destroyed_creature_by_combat_this_turn(player: Player) -> bool:
 	for event in combat_destroy_events_this_turn:
@@ -950,6 +1228,28 @@ func _combat_kill(killer: Card, victim: Card) -> void:
 	_combat_kill_routed(killer, victim, _should_class_rend(killer, victim))
 
 func _send_to_graveyard_with_hook(card: Card, combat_death: bool = false, destruction: bool = false) -> bool:
+	return _send_to_graveyard_with_hook_resolved(card, false, combat_death, destruction)
+
+func request_send_to_graveyard(card: Card, continue_callback: Callable = Callable(), combat_death: bool = false, destruction: bool = false) -> bool:
+	if card == null:
+		if continue_callback.is_valid():
+			continue_callback.call()
+		return true
+	var graveyard_replacement := _get_graveyard_replacement_source(card)
+	if graveyard_replacement != null:
+		_pending_doorway_structure = graveyard_replacement
+		_pending_doorway_card = card
+		_pending_doorway_combat_death = combat_death
+		_pending_doorway_destruction = destruction
+		_pending_doorway_continue = continue_callback
+		doorway_choice_requested.emit(graveyard_replacement, card, combat_death, destruction)
+		return false
+	var success := _send_to_graveyard_with_hook_resolved(card, false, combat_death, destruction)
+	if continue_callback.is_valid():
+		continue_callback.call()
+	return success
+
+func _send_to_graveyard_with_hook_resolved(card: Card, send_to_abyss: bool, combat_death: bool = false, destruction: bool = false) -> bool:
 	if destruction and (card.has_status_effect("berserker_rage_guard") or card.has_status_effect("berserker_mead_guard")):
 		print(card.card_name + " resists destruction this turn.")
 		return false
@@ -965,8 +1265,31 @@ func _send_to_graveyard_with_hook(card: Card, combat_death: bool = false, destru
 		card.on_death(self)
 
 	died_this_turn.append(card)
-	card.card_owner.move_card(card, card.card_owner.graveyard_zone)
+	if send_to_abyss:
+		card.card_owner.move_card(card, card.card_owner.abyss_zone)
+	else:
+		card.card_owner.move_card(card, card.card_owner.graveyard_zone)
 	return true
+
+func has_pending_doorway_choice() -> bool:
+	return _pending_doorway_structure != null and _pending_doorway_card != null
+
+func resolve_pending_doorway_choice(send_to_abyss: bool) -> bool:
+	if not has_pending_doorway_choice():
+		return false
+	var card := _pending_doorway_card
+	var combat_death := _pending_doorway_combat_death
+	var destruction := _pending_doorway_destruction
+	var continue_callback := _pending_doorway_continue
+	_pending_doorway_structure = null
+	_pending_doorway_card = null
+	_pending_doorway_combat_death = false
+	_pending_doorway_destruction = false
+	_pending_doorway_continue = Callable()
+	var success := _send_to_graveyard_with_hook_resolved(card, send_to_abyss, combat_death, destruction)
+	if continue_callback.is_valid():
+		continue_callback.call()
+	return success
 func banish_card_with_hook(card: Card) -> void:
 	_send_to_abyss_with_hook(card)
 
@@ -1031,6 +1354,26 @@ func _get_active_powers() -> Array[PowerCard]:
 			if power != null and power.is_effectively_active():
 				active_powers.append(power)
 	return active_powers
+
+func _get_active_structures() -> Array[StructureCard]:
+	var active_structures: Array[StructureCard] = []
+	for player in players:
+		for zone in player.frontline_zones + player.reserve_zones:
+			for card in zone.cards:
+				var structure := card as StructureCard
+				if structure != null and not structure.abilities_suppressed():
+					active_structures.append(structure)
+	return active_structures
+
+func _get_graveyard_replacement_source(card: Card) -> StructureCard:
+	if card == null or card.card_type != Card.CardType.CREATURE:
+		return null
+	if card.current_zone == null or not card.current_zone.is_board_zone():
+		return null
+	for structure in _get_active_structures():
+		if structure.replaces_graveyard_send(card, self):
+			return structure
+	return null
 
 func _apply_god_passives_to_card(player: Player, card: Card) -> void:
 	if player.god_zone.cards.size() == 0:

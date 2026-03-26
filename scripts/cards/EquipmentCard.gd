@@ -2,6 +2,7 @@ extends BaseCard
 class_name EquipmentCard
 
 func _init() -> void:
+	super._init()
 	card_type = CardType.EQUIPMENT
 
 # Called when this equipment is attached to a creature

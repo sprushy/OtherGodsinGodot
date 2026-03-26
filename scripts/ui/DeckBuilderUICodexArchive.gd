@@ -42,13 +42,13 @@ func _ready() -> void:
 func _make_all_cards() -> Array:
 	return [
 		Thor.new(), Mummu.new(), AphroditeAreia.new(), Baldr.new(), DellingrTheDayspring.new(),
-		AcceleratedFate.new(), ACostToWalkTheWorlds.new(), AdvancedBuildingTechniques.new(), AllfathersSacrifice.new(), AltarOfDreams.new(), AnankesBinding.new(), AncientWisdom.new(), BerserkerMead.new(), Breidablik.new(),
+		AcceleratedFate.new(), ACostToWalkTheWorlds.new(), AdvancedBuildingTechniques.new(), AllfathersSacrifice.new(), AltarOfDreams.new(), AnankesBinding.new(), AncientWisdom.new(), BerserkerMead.new(), Breidablik.new(), CallOfTheValkyrie.new(),
 		Berserker.new(), Beyla.new(), BlessedKnights.new(), BrownBear.new(), Byggvir.new(), AnkouServantToTheReaper.new(), Anzu.new(), AnTheBowbender.new(),
 		AsagTheDestroyer.new(), Asakku.new(), Asaruludu.new(),
 		AgainWalker.new(), Alu.new(), Askelladen.new(), Aurboda.new(), EnkiLordOfEridu.new(),
-		BitMeseri.new(), CircleOfRebirth.new(), FallOfTheMighty.new(), ApollyonsDemiurge.new(), Absence.new(), BaneOfTheSvartalfar.new(), BlotSacrifice.new(), BookOfLife.new(), DeucalionsInfants.new(), MeadOfPoetry.new(),
+		BitMeseri.new(), CircleOfRebirth.new(), FallOfTheMighty.new(), ApollyonsDemiurge.new(), Absence.new(), BaneOfTheSvartalfar.new(), BlotSacrifice.new(), BookOfLife.new(), DeucalionsInfants.new(), MeadOfPoetry.new(), DivineLightning.new(),
 		BeardedAxe.new(),
-		WardingStone.new(), AncientPyre.new(), AnointingStatue.new(),
+		WardingStone.new(), AncientPyre.new(), AnointingStatue.new(), DoorwayToTheVoid.new(),
 		VoidShield.new(), Banishment.new(),
 	]
 

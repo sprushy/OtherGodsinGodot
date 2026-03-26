@@ -20,7 +20,8 @@ func _init() -> void:
 func resolve(game_manager: GameManager, target = null) -> void:
 	if target is Dictionary:
 		var friendly_targets: Array[Card] = []
-		for card in target.get("friendly_targets", []):
+		var raw_friendly_targets: Array = target.get("friendly_targets", [])
+		for card in raw_friendly_targets:
 			if card is Card:
 				friendly_targets.append(card as Card)
 		resolve_with_choices(
@@ -52,7 +53,7 @@ func get_destroyable_enemy_cards(game_manager: GameManager) -> Array[Card]:
 	var cards: Array[Card] = []
 	if game_manager == null or card_owner == null:
 		return cards
-	var opponent := game_manager.get_opponent(card_owner)
+	var opponent: Player = game_manager.get_opponent(card_owner)
 	if opponent == null:
 		return cards
 	for zone in opponent.frontline_zones + opponent.reserve_zones:
@@ -61,49 +62,66 @@ func get_destroyable_enemy_cards(game_manager: GameManager) -> Array[Card]:
 				cards.append(card)
 	return cards
 
-func resolve_with_choices(game_manager: GameManager, friendly_targets: Array[Card], enemy_target: Card = null) -> Array[Card]:
+func resolve_with_choices(game_manager: GameManager, friendly_targets: Array[Card], enemy_target: Card = null, continue_callback: Callable = Callable()) -> Array[Card]:
 	var summoned_tokens: Array[Card] = []
 	if game_manager == null or card_owner == null:
 		return summoned_tokens
 
-	var destroyed_count_before := get_destroyed_structure_or_golem_count_this_turn(game_manager)
-	var valid_friendly_targets := get_destroyable_friendly_cards(game_manager)
-	var valid_enemy_targets := get_destroyable_enemy_cards(game_manager)
+	var destroyed_count_before: int = get_destroyed_structure_or_golem_count_this_turn(game_manager)
+	var valid_friendly_targets: Array[Card] = get_destroyable_friendly_cards(game_manager)
+	var valid_enemy_targets: Array[Card] = get_destroyable_enemy_cards(game_manager)
 	var sanitized_friendly_targets: Array[Card] = []
-	for card in friendly_targets:
+	for card: Card in friendly_targets:
 		if card != null and card in valid_friendly_targets and card not in sanitized_friendly_targets:
 			sanitized_friendly_targets.append(card)
 
 	var sanitized_enemy_target: Card = enemy_target if enemy_target != null and enemy_target in valid_enemy_targets else null
 	if sanitized_enemy_target == null and not valid_enemy_targets.is_empty():
 		game_manager.note_player_feedback("Children of the Earth fizzles: an enemy structure or golem must be chosen.")
+		if continue_callback.is_valid():
+			continue_callback.call()
 		return summoned_tokens
 
-	var destroyed_now := 0
-	for target in sanitized_friendly_targets:
-		if game_manager._send_to_graveyard_with_hook(target, false, true):
-			destroyed_now += 1
-	if sanitized_enemy_target != null and game_manager._send_to_graveyard_with_hook(sanitized_enemy_target, false, true):
-		destroyed_now += 1
-
-	var destroyed_count := maxi(
-		get_destroyed_structure_or_golem_count_this_turn(game_manager),
-		destroyed_count_before + destroyed_now
-	)
-	summoned_tokens = summon_stone_infants(game_manager, destroyed_count)
-	game_manager.note_player_feedback(
-		"Children of the Earth destroyed %d card(s) and summoned %d Stone Infant token(s)." % [
-			destroyed_now,
-			summoned_tokens.size()
-		]
-	)
+	var destruction_queue: Array[Card] = sanitized_friendly_targets.duplicate()
+	if sanitized_enemy_target != null:
+		destruction_queue.append(sanitized_enemy_target)
+	_resolve_destruction_queue(game_manager, destruction_queue, destroyed_count_before, 0, continue_callback)
 	return summoned_tokens
+
+func _resolve_destruction_queue(game_manager: GameManager, destruction_queue: Array[Card], destroyed_count_before: int, destroyed_now: int = 0, continue_callback: Callable = Callable()) -> void:
+	if game_manager == null:
+		if continue_callback.is_valid():
+			continue_callback.call()
+		return
+	if destruction_queue.is_empty():
+		var destroyed_count: int = maxi(
+			get_destroyed_structure_or_golem_count_this_turn(game_manager),
+			destroyed_count_before + destroyed_now
+		)
+		var summoned_tokens: Array[Card] = summon_stone_infants(game_manager, destroyed_count)
+		game_manager.note_player_feedback(
+			"Children of the Earth destroyed %d card(s) and summoned %d Stone Infant token(s)." % [
+				destroyed_now,
+				summoned_tokens.size()
+			]
+		)
+		if continue_callback.is_valid():
+			continue_callback.call()
+		return
+	var next_queue: Array[Card] = destruction_queue.duplicate()
+	var target: Card = next_queue.pop_front()
+	game_manager.request_send_to_graveyard(target, func() -> void:
+		var next_destroyed_now: int = destroyed_now
+		if target.current_zone == target.card_owner.graveyard_zone or target.current_zone == target.card_owner.abyss_zone:
+			next_destroyed_now += 1
+		_resolve_destruction_queue(game_manager, next_queue, destroyed_count_before, next_destroyed_now, continue_callback)
+	, false, true)
 
 func get_destroyed_structure_or_golem_count_this_turn(game_manager: GameManager) -> int:
 	if game_manager == null:
 		return 0
-	var count := 0
-	for card in game_manager.died_this_turn:
+	var count: int = 0
+	for card: Card in game_manager.died_this_turn:
 		if _counts_as_structure_or_golem(card):
 			count += 1
 	return count
@@ -112,13 +130,13 @@ func summon_stone_infants(game_manager: GameManager, amount: int) -> Array[Card]
 	var summoned_tokens: Array[Card] = []
 	if game_manager == null or card_owner == null or amount <= 0:
 		return summoned_tokens
-	var rng := RandomNumberGenerator.new()
+	var rng: RandomNumberGenerator = RandomNumberGenerator.new()
 	rng.randomize()
 	for i in range(amount):
-		var summon_zone := _find_open_summon_zone()
+		var summon_zone: Zone = _find_open_summon_zone()
 		if summon_zone == null:
 			break
-		var token := StoneInfant.new()
+		var token: Card = StoneInfant.new()
 		token.card_owner = card_owner
 		token.creature_mode = Card.CreatureMode.AGGRESSIVE
 		token.reset_creature_action_state()
@@ -136,7 +154,7 @@ func summon_stone_infants(game_manager: GameManager, amount: int) -> Array[Card]
 func _choose_stone_infant_art_path(game_manager: GameManager, rng: RandomNumberGenerator) -> String:
 	var usage: Dictionary = game_manager.get_meta(STONE_INFANT_ART_USAGE_META_KEY, {})
 	var unused_paths: Array[String] = []
-	for art_path in StoneInfant.TOKEN_ART_PATHS:
+	for art_path: String in StoneInfant.TOKEN_ART_PATHS:
 		if int(usage.get(art_path, 0)) <= 0:
 			unused_paths.append(art_path)
 
@@ -144,7 +162,7 @@ func _choose_stone_infant_art_path(game_manager: GameManager, rng: RandomNumberG
 	if not unused_paths.is_empty():
 		candidate_paths = unused_paths
 	else:
-		for art_path in StoneInfant.TOKEN_ART_PATHS:
+		for art_path: String in StoneInfant.TOKEN_ART_PATHS:
 			candidate_paths.append(art_path)
 
 	if candidate_paths.is_empty():

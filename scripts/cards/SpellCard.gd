@@ -3,7 +3,7 @@ extends BaseCard
 class_name SpellCard
 
 func _init() -> void:
-	
+	super._init()
 	card_type = Card.CardType.SPELL
 	speed = 1  # All spells are speed 1 by default
 

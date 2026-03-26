@@ -44,4 +44,4 @@ func activate(game_manager: GameManager, target: Card = null) -> void:
 	print("Ancient Pyre: " + target.card_name + " Res reduced by 5 (now " + str(target.get_effective_resilience()) + ").")
 	if target.get_effective_resilience() <= 0:
 		print(target.card_name + " is destroyed by Ancient Pyre!")
-		game_manager._send_to_graveyard_with_hook(target, false, true)
+		game_manager.request_send_to_graveyard(target, Callable(), false, true)

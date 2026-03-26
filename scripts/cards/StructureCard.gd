@@ -3,6 +3,7 @@ extends BaseCard
 class_name StructureCard
 
 func _init() -> void:
+	super._init()
 	card_type = CardType.STRUCTURE
 
 # Structure-specific hooks
@@ -29,3 +30,6 @@ func on_turn_start(game_manager: GameManager) -> void:
 func on_turn_end(game_manager: GameManager) -> void:
 	# Called at end of owner's turn
 	pass
+
+func replaces_graveyard_send(_card: Card, _game_manager: GameManager) -> bool:
+	return false

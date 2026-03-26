@@ -13,6 +13,7 @@ enum CreatureMode { AGGRESSIVE, DEFENSIVE }
 @export var is_god: bool = false
 @export var is_power: bool = false
 @export var is_token: bool = false
+@export var can_be_used_for_creature_sacrifice: bool = true
 
 # Card types (warrior, mage, etc.) - can have multiple
 @export var card_types: Array[String] = []
@@ -205,6 +206,27 @@ func get_display_name_for_control(control: Control = null, prefer_ascii: bool = 
 		return get_display_name(prefer_ascii)
 	return get_display_name(prefer_ascii, control.get_theme_font("font"))
 
+func is_hidden_from_viewer(viewer: Player = null) -> bool:
+	if viewer == null:
+		return false
+	var controller := get_controller()
+	var publicly_revealed_power := self is PowerCard and (self as PowerCard).is_publicly_revealed
+	var hidden_face_down := (is_face_down or is_prepared) and not publicly_revealed_power
+	return (is_stealth or hidden_face_down) \
+		and controller != null \
+		and controller != viewer \
+		and not is_temporarily_revealed()
+
+func get_log_display_name(
+	viewer: Player = null,
+	hidden_fallback: String = "Hidden card",
+	prefer_ascii: bool = false,
+	font: Font = null
+) -> String:
+	if is_hidden_from_viewer(viewer):
+		return hidden_fallback
+	return get_display_name(prefer_ascii, font)
+
 func is_enslaved() -> bool:
 	var controller := get_controller()
 	return controller != null and card_owner != null and controller != card_owner
@@ -225,8 +247,13 @@ func temporarily_reveal_until_end_of_turn(
 	current_turn: int,
 	source: String,
 	source_card: Card = null,
-	source_owner: Player = null
+	source_owner: Player = null,
+	game_manager: GameManager = null
 ) -> void:
+	var was_visible: bool = is_temporarily_revealed()
+	if self is PowerCard and (self as PowerCard).is_publicly_revealed:
+		was_visible = true
+	var was_hidden: bool = (is_face_down or is_stealth) and not was_visible
 	remove_status_effects_by_name("temporarily_revealed")
 	add_status_effect(
 		"temporarily_revealed",
@@ -235,6 +262,8 @@ func temporarily_reveal_until_end_of_turn(
 		source_owner,
 		{"expires_turn": current_turn}
 	)
+	if was_hidden and game_manager != null:
+		on_reveal(game_manager)
 
 func is_activation_locked(game_manager: GameManager = null) -> bool:
 	if not has_status_effect("activation_locked"):
@@ -640,7 +669,7 @@ func can_pay_costs(player: Player) -> bool:
 	var creature_count = 0
 	for zone in player.frontline_zones + player.reserve_zones:
 		for card in zone.cards:
-			if card.card_type == CardType.CREATURE:
+			if card.card_type == CardType.CREATURE and card.can_be_used_for_creature_sacrifice:
 				creature_count += 1
 	if creature_count < creature_sacrifice_cost:
 		return false
@@ -684,7 +713,7 @@ func pay_costs(player: Player, game_manager: GameManager = null) -> bool:
 		for zone in player.frontline_zones + player.reserve_zones:
 			if not creature_found:
 				for card in zone.cards:
-					if card.card_type == CardType.CREATURE:
+					if card.card_type == CardType.CREATURE and card.can_be_used_for_creature_sacrifice:
 						if game_manager != null:
 							game_manager._send_to_graveyard_with_hook(card, false, false)
 						else:

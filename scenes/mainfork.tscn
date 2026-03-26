@@ -147,10 +147,6 @@ autowrap_mode = 3
 layout_mode = 2
 text = "End Turn"
 
-[node name="ForfeitButton" type="Button" parent="Control/GameContainer/MockGame/MainHBox/RightPanel" unique_id=104210337]
-layout_mode = 2
-text = "Forfeit"
-
 [node name="AllAttackBtn" type="Button" parent="Control/GameContainer/MockGame/MainHBox/RightPanel" unique_id=1297052033]
 layout_mode = 2
 text = "All Attack Followers"
@@ -161,6 +157,18 @@ size_flags_vertical = 3
 
 [node name="StatsContainer" type="VBoxContainer" parent="Control/GameContainer/MockGame/MainHBox/RightPanel" unique_id=1323380484]
 layout_mode = 2
+
+[node name="ForfeitButton" type="Button" parent="Control/GameContainer/MockGame" unique_id=104210337]
+layout_mode = 0
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -128.0
+offset_top = -60.0
+offset_right = -16.0
+offset_bottom = -32.0
+text = "Forfeit"
 
 [node name="CardTest" type="Control" parent="Control/GameContainer" unique_id=-1294967294]
 layout_mode = 1
@@ -264,10 +272,6 @@ autowrap_mode = 3
 layout_mode = 2
 text = "End Turn"
 
-[node name="ForfeitButton" type="Button" parent="Control/GameContainer/CardTest/MainHBox/RightPanel" unique_id=-104210337]
-layout_mode = 2
-text = "Forfeit"
-
 [node name="AllAttackBtn" type="Button" parent="Control/GameContainer/CardTest/MainHBox/RightPanel" unique_id=-1294967273]
 layout_mode = 2
 text = "All Attack Followers"
@@ -278,6 +282,18 @@ size_flags_vertical = 3
 
 [node name="StatsContainer" type="VBoxContainer" parent="Control/GameContainer/CardTest/MainHBox/RightPanel" unique_id=-1294967272]
 layout_mode = 2
+
+[node name="ForfeitButton" type="Button" parent="Control/GameContainer/CardTest" unique_id=-104210337]
+layout_mode = 0
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -128.0
+offset_top = -60.0
+offset_right = -16.0
+offset_bottom = -32.0
+text = "Forfeit"
 
 [node name="GameManager" type="Node2D" parent="." unique_id=1459975089]
 script = ExtResource("1_hu83v")

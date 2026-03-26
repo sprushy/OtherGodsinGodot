@@ -3,6 +3,7 @@ extends BaseCard
 class_name CreatureCard
 
 func _init() -> void:
+	super._init()
 	card_type = CardType.CREATURE
 
 # Creature-specific hooks

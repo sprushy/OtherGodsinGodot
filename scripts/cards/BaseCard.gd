@@ -2,6 +2,9 @@
 extends Card
 class_name BaseCard
 
+func _init() -> void:
+	pass
+
 # Keyword definitions - displayed as hover tooltips in ability text.
 const KEYWORD_HINTS = {
 	"Void": "Send this card to the Abyss - removed from the game.",

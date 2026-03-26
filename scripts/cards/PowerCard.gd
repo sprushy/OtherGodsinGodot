@@ -10,6 +10,7 @@ class_name PowerCard
 var is_publicly_revealed: bool = false
 
 func _init() -> void:
+	super._init()
 	card_type = CardType.POWER
 	is_power = true
 	ability_immunity_tag = "powers"

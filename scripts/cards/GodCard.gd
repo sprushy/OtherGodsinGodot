@@ -2,6 +2,7 @@ extends BaseCard
 class_name GodCard
 
 func _init() -> void:
+	super._init()
 	card_type = Card.CardType.CREATURE
 	is_god = true
 	is_power = true

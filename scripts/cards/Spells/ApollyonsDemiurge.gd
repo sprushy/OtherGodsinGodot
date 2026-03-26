@@ -32,13 +32,23 @@ func get_max_x_value() -> int:
 		return 0
 	return mini(card_owner.mana, card_owner.deck_zone.cards.size())
 
-func resolve_with_x(game_manager: GameManager, x_value: int) -> Array[Card]:
-	var demon_choices: Array[Card] = []
+func pay_x_cost(game_manager: GameManager, x_value: int) -> bool:
 	if not can_cast_with_x(game_manager, x_value):
+		return false
+	return card_owner.spend_mana(x_value)
+
+func resolve_with_x(game_manager: GameManager, x_value: int, x_cost_already_paid: bool = false) -> Array[Card]:
+	var demon_choices: Array[Card] = []
+	if game_manager == null or card_owner == null or x_value <= 0:
 		print("Apollyon's Demiurge: invalid X cost.")
 		return demon_choices
-
-	card_owner.spend_mana(x_value)
+	if card_owner.deck_zone.cards.size() < x_value:
+		print("Apollyon's Demiurge: invalid X cost.")
+		return demon_choices
+	if not x_cost_already_paid:
+		if not pay_x_cost(game_manager, x_value):
+			print("Apollyon's Demiurge: invalid X cost.")
+			return demon_choices
 	var milled_cards := _mill_cards(x_value)
 	for card in milled_cards:
 		if _is_demon(card):
