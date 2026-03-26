@@ -7,8 +7,11 @@ func _init() -> void:
 	super._init()
 	card_name = "Mummu, The One Who Has Awoken"
 	card_types = ["Artisan", "Wisdom", "Chaos", "Entropy"]
+	if "Targeting" not in card_types:
+		card_types.append("Targeting")
 	mana_cost = 0
 	culture = "Ancient"
+	targets = true
 	flavor_text = "Before the world was shaped, he stirred in the depths."
 	ability_text = "Entropic Force (Speed 1, [b]Activate[/b]): [b]Shelve[/b] a face-up card you control. Gain mana equal to its level - 1."
 	art_path = "res://images/card_art/gods/Mummu.png"

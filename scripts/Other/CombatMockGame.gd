@@ -1,18 +1,6 @@
 extends Control
 class_name CombatMockGame
 
-class TargetLineOverlay extends Control:
-	var game_view = null
-
-	func _ready() -> void:
-		mouse_filter = Control.MOUSE_FILTER_IGNORE
-		set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-
-	func _draw() -> void:
-		if game_view == null or not is_instance_valid(game_view):
-			return
-		game_view._draw_target_lines(self)
-
 signal forfeit_requested
 
 var player1: Player
@@ -41,19 +29,28 @@ var _fan_container: Control = null
 const FAN_ROT_MAX     := 12.0   # degrees at the outermost card
 const FAN_ARC_HEIGHT  := 22.0   # px the arc dips at centre
 const FAN_CARD_SPACING := 130   # px between card pivot centres
-const STACK_LINGER_SECONDS := 0.6
+const STACK_LINGER_SECONDS := 0.8
 
 @onready var choice_container = $MainHBox/LeftPanel/ChoiceContainer
 @onready var draw_button = $MainHBox/LeftPanel/ChoiceContainer/DrawButton
 @onready var mana_button = $MainHBox/LeftPanel/ChoiceContainer/ManaButton
+@onready var left_panel = $MainHBox/LeftPanel
+@onready var left_top_spacer = $MainHBox/LeftPanel/LeftTopSpacer
+@onready var left_bottom_spacer = $MainHBox/LeftPanel/LeftBottomSpacer
 @onready var end_turn_button = $MainHBox/RightPanel/EndTurnButton
 @onready var forfeit_button = $ForfeitButton
 @onready var all_attack_btn = $MainHBox/RightPanel/AllAttackBtn
 @onready var turn_label = $MainHBox/RightPanel/TurnLabel
 @onready var stats_container = $MainHBox/RightPanel/StatsContainer
+@onready var right_panel = $MainHBox/RightPanel
+@onready var right_top_spacer = $MainHBox/RightPanel/RightTopSpacer
+@onready var right_bottom_spacer = $MainHBox/RightPanel/RightBottomSpacer
 @onready var hand_container = $MainHBox/CenterPanel/HandContainer
 @onready var board_container = $MainHBox/CenterPanel/BoardContainer
 @onready var enemy_board_container = $MainHBox/CenterPanel/EnemyBoardContainer
+@onready var center_panel = $MainHBox/CenterPanel
+@onready var top_spacer = $MainHBox/CenterPanel/TopSpacer
+@onready var board_separator = $MainHBox/CenterPanel/BoardSeparator
 @onready var action_label = $MainHBox/LeftPanel/ActionLabel
 @onready var placement_container = $MainHBox/LeftPanel/PlacementContainer
 @onready var aggressive_stance_btn = $MainHBox/LeftPanel/PlacementContainer/AggressiveStanceBtn
@@ -150,9 +147,47 @@ var _no_intercept_btn: Button = null
 var _ui_refresh_queued: bool = false
 var _power_hover_popup: Control = null
 var _game_finished: bool = false
-var _target_line_overlay: TargetLineOverlay = null
+var _action_log_view: RichTextLabel = null
+var _action_log_history_button: Button = null
+var _action_log_messages: Array[String] = []
+var _last_logged_action_text: String = ""
+var _action_log_popup: PanelContainer = null
+var _action_log_popup_view: RichTextLabel = null
+var _center_action_panel: VBoxContainer = null
+var _board_separator_line: ColorRect = null
 
 const TRANSIENT_UI_Z_INDEX := 1000
+const ACTION_LOG_MAX_MESSAGES := 250
+const ACTION_LOG_PREVIEW_COUNT := 2
+const BOARD_ZONE_COLUMN_GAP := 2.0
+const BOARD_MAIN_COLUMN_COUNT := 7.0
+const BOARD_ROW_COUNT := 4.0
+const CENTER_PANEL_SECTION_GAP := 2
+const BOARD_SEPARATOR_HEIGHT := 4
+const BOARD_SIZE_TRIM := 8.0
+const HAND_DOCK_HEIGHT := 118.0
+const HAND_CARD_PEEK_OVERLAP := 14.0
+const HAND_CARD_EXPOSED_HEIGHT := 100.0
+const HAND_LAYOUT_RESERVED := 0.0
+const HAND_OVERLAY_SIDE_PADDING := 18.0
+const HAND_OVERLAY_BOTTOM_PADDING := 4.0
+const LEFT_PANEL_MIN_WIDTH := 140.0
+const BOARD_RIGHT_NUDGE := 12.0
+const ACTION_LOG_MIN_WIDTH := 126.0
+const ACTION_LOG_PREVIEW_HEIGHT := 92.0
+const ACTION_LOG_FONT_SIZE := 11
+const ACTION_LOG_LINE_SEPARATION := 4
+const ACTION_LOG_POPUP_WIDTH := 420.0
+const ACTION_LOG_POPUP_HEIGHT := 320.0
+const ACTION_LOG_LEFT_INSET := 6
+const TURN_CHOICE_TOP_GAP := 10.0
+const ZONE_INFO_ICON_SIZE := 74.0
+const CENTER_ACTION_PANEL_WIDTH := 138.0
+const CENTER_ACTION_PANEL_HEIGHT := 114.0
+const CENTER_ACTION_BUTTON_HEIGHT := 28.0
+const RIGHT_PANEL_MIN_WIDTH := 136.0
+const RIGHT_PANEL_CONTROL_GAP := 6
+const RIGHT_PANEL_TEXT_FONT_SIZE := 10
 
 func _is_turn_choice_pending() -> bool:
 	return choice_container.visible
@@ -290,6 +325,25 @@ func _ready() -> void:
 	choice_container.visible = false
 	end_turn_button.visible = false
 	placement_container.visible = false
+	board_container.size_flags_vertical = Control.SIZE_FILL
+	enemy_board_container.size_flags_vertical = Control.SIZE_FILL
+	top_spacer.size_flags_vertical = 0
+	hand_container.size_flags_vertical = 0
+	hand_container.visible = false
+	center_panel.add_theme_constant_override("separation", CENTER_PANEL_SECTION_GAP)
+	top_spacer.custom_minimum_size.y = 0
+	board_separator.custom_minimum_size.y = BOARD_SEPARATOR_HEIGHT
+	board_separator.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	board_separator.clip_contents = false
+	board_separator.mouse_filter = Control.MOUSE_FILTER_PASS
+	board_separator.add_theme_stylebox_override("panel", StyleBoxEmpty.new())
+	left_panel.custom_minimum_size.x = LEFT_PANEL_MIN_WIDTH + BOARD_RIGHT_NUDGE
+	left_top_spacer.visible = true
+	left_bottom_spacer.visible = true
+	right_panel.custom_minimum_size.x = RIGHT_PANEL_MIN_WIDTH
+	right_panel.add_theme_constant_override("separation", RIGHT_PANEL_CONTROL_GAP)
+	forfeit_button.offset_left = -112.0
+	forfeit_button.offset_right = -2.0
 
 	draw_button.pressed.connect(_on_draw_button_pressed)
 	mana_button.pressed.connect(_on_mana_button_pressed)
@@ -303,19 +357,307 @@ func _ready() -> void:
 	var priority_toggle := CheckButton.new()
 	priority_toggle.text = "Auto Priority"
 	priority_toggle.button_pressed = auto_priority
+	priority_toggle.custom_minimum_size = Vector2(RIGHT_PANEL_MIN_WIDTH - 20.0, 24.0)
+	priority_toggle.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	priority_toggle.add_theme_font_size_override("font_size", RIGHT_PANEL_TEXT_FONT_SIZE)
 	priority_toggle.toggled.connect(func(on: bool) -> void: auto_priority = on)
 
-	var spacer := Control.new()
-	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	$MainHBox/RightPanel.add_child(spacer)
 	$MainHBox/RightPanel.add_child(priority_toggle)
-	$MainHBox/RightPanel.move_child(spacer, $MainHBox/RightPanel.get_child_count() - 2)
+	_setup_center_action_panel()
+	if not board_container.resized.is_connected(_on_board_layout_resized):
+		board_container.resized.connect(_on_board_layout_resized)
+	if not enemy_board_container.resized.is_connected(_on_board_layout_resized):
+		enemy_board_container.resized.connect(_on_board_layout_resized)
+	if not center_panel.resized.is_connected(_on_board_layout_resized):
+		center_panel.resized.connect(_on_board_layout_resized)
+	_setup_action_log()
+	_capture_action_log_message(true)
 
-	_target_line_overlay = TargetLineOverlay.new()
-	_target_line_overlay.game_view = self
-	add_child(_target_line_overlay)
-	_target_line_overlay.z_index = TRANSIENT_UI_Z_INDEX + 50
-	_target_line_overlay.move_to_front()
+func _setup_center_action_panel() -> void:
+	if right_panel == null:
+		return
+	if _center_action_panel != null and is_instance_valid(_center_action_panel):
+		_center_action_panel.queue_free()
+	_center_action_panel = null
+	if _board_separator_line != null and is_instance_valid(_board_separator_line):
+		_board_separator_line.queue_free()
+	_board_separator_line = null
+	_reparent_control(turn_label, right_panel)
+	_reparent_control(end_turn_button, right_panel)
+	_reparent_control(all_attack_btn, right_panel)
+	var insert_index := right_panel.get_children().find(right_bottom_spacer)
+	if insert_index < 0:
+		insert_index = right_panel.get_child_count()
+	right_panel.move_child(turn_label, insert_index)
+	right_panel.move_child(end_turn_button, insert_index + 1)
+	right_panel.move_child(all_attack_btn, insert_index + 2)
+	turn_label.custom_minimum_size = Vector2(RIGHT_PANEL_MIN_WIDTH - 4.0, 24.0)
+	turn_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	turn_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	turn_label.add_theme_font_size_override("font_size", RIGHT_PANEL_TEXT_FONT_SIZE)
+	end_turn_button.custom_minimum_size = Vector2(RIGHT_PANEL_MIN_WIDTH - 4.0, CENTER_ACTION_BUTTON_HEIGHT)
+	end_turn_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	end_turn_button.add_theme_font_size_override("font_size", RIGHT_PANEL_TEXT_FONT_SIZE)
+	all_attack_btn.custom_minimum_size = Vector2(RIGHT_PANEL_MIN_WIDTH - 4.0, CENTER_ACTION_BUTTON_HEIGHT)
+	all_attack_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	all_attack_btn.add_theme_font_size_override("font_size", RIGHT_PANEL_TEXT_FONT_SIZE)
+	right_top_spacer.visible = true
+	right_bottom_spacer.visible = true
+
+func _reparent_control(node: Control, new_parent: Control) -> void:
+	if node == null or new_parent == null:
+		return
+	var old_parent := node.get_parent()
+	if old_parent != null:
+		old_parent.remove_child(node)
+	new_parent.add_child(node)
+
+func _update_center_action_panel_layout() -> void:
+	if board_separator == null or _center_action_panel == null:
+		return
+	_center_action_panel.size = _center_action_panel.custom_minimum_size
+	if _board_separator_line != null and is_instance_valid(_board_separator_line):
+		_board_separator_line.position = Vector2.ZERO
+		_board_separator_line.size = Vector2(_get_separator_line_width(), BOARD_SEPARATOR_HEIGHT)
+	_center_action_panel.position = Vector2(
+		maxf(0.0, (_get_separator_line_width() - _center_action_panel.size.x) * 0.5),
+		BOARD_SEPARATOR_HEIGHT * 0.5 - _center_action_panel.size.y * 0.5
+	)
+
+func _process(_delta: float) -> void:
+	_capture_action_log_message()
+
+func _setup_action_log() -> void:
+	if action_label == null:
+		return
+	var action_parent := action_label.get_parent()
+	if action_parent == null:
+		return
+	action_label.visible = false
+
+	var log_box := VBoxContainer.new()
+	log_box.name = "ActionLogBox"
+	log_box.add_theme_constant_override("separation", 4)
+	log_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	log_box.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+
+	var header := HBoxContainer.new()
+	header.add_theme_constant_override("separation", 4)
+	log_box.add_child(header)
+
+	var log_title := Label.new()
+	log_title.text = "Recent Log"
+	log_title.add_theme_font_size_override("font_size", 10)
+	header.add_child(log_title)
+
+	var header_spacer := Control.new()
+	header_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	header.add_child(header_spacer)
+
+	var history_button := Button.new()
+	history_button.text = "..."
+	history_button.flat = true
+	history_button.tooltip_text = "Open older log entries"
+	history_button.custom_minimum_size = Vector2(24.0, 24.0)
+	history_button.add_theme_font_size_override("font_size", 14)
+	history_button.pressed.connect(_toggle_action_log_popup)
+	header.add_child(history_button)
+
+	var log_text := RichTextLabel.new()
+	log_text.name = "ActionLogText"
+	log_text.bbcode_enabled = false
+	log_text.fit_content = false
+	log_text.scroll_active = false
+	log_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	log_text.custom_minimum_size = Vector2(ACTION_LOG_MIN_WIDTH, ACTION_LOG_PREVIEW_HEIGHT)
+	log_text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	log_text.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	log_text.add_theme_font_size_override("normal_font_size", ACTION_LOG_FONT_SIZE)
+	log_text.add_theme_constant_override("line_separation", ACTION_LOG_LINE_SEPARATION)
+	log_text.selection_enabled = true
+
+	log_box.add_child(log_text)
+	var log_shell := MarginContainer.new()
+	log_shell.name = "ActionLogShell"
+	log_shell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	log_shell.add_theme_constant_override("margin_left", ACTION_LOG_LEFT_INSET)
+	log_shell.add_child(log_box)
+	action_parent.add_child(log_shell)
+	action_parent.move_child(log_shell, action_parent.get_children().find(action_label) + 1)
+
+	var choice_gap := Control.new()
+	choice_gap.name = "TurnChoiceGap"
+	choice_gap.custom_minimum_size = Vector2(0.0, TURN_CHOICE_TOP_GAP)
+	action_parent.add_child(choice_gap)
+	action_parent.move_child(choice_gap, action_parent.get_children().find(log_shell) + 1)
+
+	_action_log_view = log_text
+	_action_log_history_button = history_button
+	_refresh_action_log()
+
+func _get_right_action_stack_height() -> float:
+	if turn_label == null or end_turn_button == null or all_attack_btn == null or right_panel == null:
+		return 0.0
+	var separation: float = float(right_panel.get_theme_constant("separation"))
+	return turn_label.get_combined_minimum_size().y \
+		+ end_turn_button.get_combined_minimum_size().y \
+		+ all_attack_btn.get_combined_minimum_size().y \
+		+ separation * 2.0
+
+func _update_side_panel_layout() -> void:
+	var stats_height: float = BoardZoneUI.get_zone_extent()
+	left_top_spacer.custom_minimum_size.y = stats_height
+	left_bottom_spacer.custom_minimum_size.y = stats_height
+	left_top_spacer.size_flags_vertical = 0
+	left_bottom_spacer.size_flags_vertical = 0
+	var action_stack_height: float = _get_right_action_stack_height()
+	var board_midpoint: float = stats_height * 2.0 + BOARD_SEPARATOR_HEIGHT * 0.5
+	right_top_spacer.custom_minimum_size.y = maxf(0.0, board_midpoint - action_stack_height * 0.5)
+	right_top_spacer.size_flags_vertical = 0
+	right_bottom_spacer.custom_minimum_size.y = 0.0
+	right_bottom_spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
+
+func _capture_action_log_message(force: bool = false) -> void:
+	if action_label == null:
+		return
+	var message = action_label.text.strip_edges()
+	if message == "":
+		return
+	if not force and message == _last_logged_action_text:
+		return
+	_last_logged_action_text = message
+	_action_log_messages.append(message)
+	if _action_log_messages.size() > ACTION_LOG_MAX_MESSAGES:
+		_action_log_messages.pop_front()
+	_refresh_action_log()
+
+func _refresh_action_log() -> void:
+	if _action_log_view == null or not is_instance_valid(_action_log_view):
+		return
+	var preview_messages := _get_action_log_preview_messages()
+	_action_log_view.text = "\n".join(preview_messages) if not preview_messages.is_empty() else "No actions yet."
+	_refresh_action_log_history_button()
+	_refresh_action_log_popup()
+
+func _get_action_log_preview_messages() -> Array[String]:
+	var preview_messages: Array[String] = []
+	var start_index := maxi(0, _action_log_messages.size() - ACTION_LOG_PREVIEW_COUNT)
+	for i in range(start_index, _action_log_messages.size()):
+		preview_messages.append(_action_log_messages[i])
+	return preview_messages
+
+func _get_action_log_history_messages() -> Array[String]:
+	var history_messages: Array[String] = []
+	var cutoff := maxi(0, _action_log_messages.size() - ACTION_LOG_PREVIEW_COUNT)
+	for i in range(cutoff):
+		history_messages.append(_action_log_messages[i])
+	return history_messages
+
+func _refresh_action_log_history_button() -> void:
+	if _action_log_history_button == null or not is_instance_valid(_action_log_history_button):
+		return
+	var has_history := _action_log_messages.size() > ACTION_LOG_PREVIEW_COUNT
+	_action_log_history_button.disabled = not has_history
+	_action_log_history_button.tooltip_text = "Open older log entries" if has_history else "No older log entries yet"
+	_action_log_history_button.modulate = Color(1, 1, 1, 1) if has_history else Color(1, 1, 1, 0.45)
+
+func _toggle_action_log_popup() -> void:
+	if _action_log_popup != null and is_instance_valid(_action_log_popup):
+		_close_action_log_popup()
+		return
+	_open_action_log_popup()
+
+func _open_action_log_popup() -> void:
+	if _action_log_messages.size() <= ACTION_LOG_PREVIEW_COUNT:
+		return
+	_close_action_log_popup()
+
+	var panel := PanelContainer.new()
+	panel.name = "ActionLogPopupPanel"
+	panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	panel.custom_minimum_size = Vector2(ACTION_LOG_POPUP_WIDTH, ACTION_LOG_POPUP_HEIGHT)
+
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.08, 0.09, 0.14, 0.97)
+	style.border_color = Color(0.78, 0.66, 0.34, 0.95)
+	style.corner_radius_top_left = 8
+	style.corner_radius_top_right = 8
+	style.corner_radius_bottom_left = 8
+	style.corner_radius_bottom_right = 8
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		style.set_border_width(side, 2)
+	panel.add_theme_stylebox_override("panel", style)
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 8)
+	panel.add_child(vbox)
+
+	var header := HBoxContainer.new()
+	header.add_theme_constant_override("separation", 8)
+	vbox.add_child(header)
+
+	var title := Label.new()
+	title.text = "Log History"
+	title.add_theme_font_size_override("font_size", 13)
+	header.add_child(title)
+
+	var spacer := Control.new()
+	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	header.add_child(spacer)
+
+	var close_button := Button.new()
+	close_button.text = "Close"
+	close_button.pressed.connect(_close_action_log_popup)
+	header.add_child(close_button)
+
+	var history_view := RichTextLabel.new()
+	history_view.name = "ActionLogPopupText"
+	history_view.bbcode_enabled = false
+	history_view.fit_content = false
+	history_view.scroll_active = true
+	history_view.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	history_view.selection_enabled = true
+	history_view.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	history_view.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	history_view.custom_minimum_size = Vector2(ACTION_LOG_POPUP_WIDTH - 24.0, ACTION_LOG_POPUP_HEIGHT - 60.0)
+	history_view.add_theme_font_size_override("normal_font_size", ACTION_LOG_FONT_SIZE)
+	history_view.add_theme_constant_override("line_separation", ACTION_LOG_LINE_SEPARATION)
+	vbox.add_child(history_view)
+
+	add_child(panel)
+	_promote_transient_ui(panel)
+	panel.anchor_left = 0.5
+	panel.anchor_right = 0.5
+	panel.anchor_top = 0.5
+	panel.anchor_bottom = 0.5
+	panel.offset_left = -ACTION_LOG_POPUP_WIDTH * 0.5
+	panel.offset_right = ACTION_LOG_POPUP_WIDTH * 0.5
+	panel.offset_top = -ACTION_LOG_POPUP_HEIGHT * 0.5
+	panel.offset_bottom = ACTION_LOG_POPUP_HEIGHT * 0.5
+
+	_action_log_popup = panel
+	_action_log_popup_view = history_view
+	_refresh_action_log_popup()
+
+func _refresh_action_log_popup() -> void:
+	if _action_log_popup_view == null or not is_instance_valid(_action_log_popup_view):
+		return
+	var history_messages := _get_action_log_history_messages()
+	_action_log_popup_view.text = "\n".join(history_messages) if not history_messages.is_empty() else "No earlier log entries yet."
+	call_deferred("_scroll_action_log_popup_to_bottom")
+
+func _scroll_action_log_popup_to_bottom() -> void:
+	if _action_log_popup_view == null or not is_instance_valid(_action_log_popup_view):
+		return
+	var bar := _action_log_popup_view.get_v_scroll_bar()
+	if bar != null:
+		_action_log_popup_view.scroll_to_line(maxi(0, _action_log_popup_view.get_line_count() - 1))
+
+func _close_action_log_popup() -> void:
+	if _action_log_popup != null and is_instance_valid(_action_log_popup):
+		_action_log_popup.queue_free()
+	_action_log_popup = null
+	_action_log_popup_view = null
 
 func start_game() -> void:
 	print("=== STARTING COMBAT MOCK GAME ===")
@@ -458,9 +800,17 @@ func hide_turn_choice() -> void:
 		vc.set_disabled(false)
 
 func update_ui() -> void:
+	if game_manager == null:
+		return
 	_hide_power_hover_popup()
 	_sync_blot_sacrifice_prompt_state()
+	_capture_action_log_message()
+	_update_board_zone_extent()
 	var current = game_manager.turn_player if game_manager.turn_player != null else game_manager.current_player
+	if current == null or game_manager.current_player == null or game_manager.other_player == null:
+		if turn_label != null:
+			turn_label.text = "Turn " + str(game_manager.turn_number)
+		return
 
 	turn_label.text = "Turn " + str(game_manager.turn_number) + " - " + current.player_name + "'s Turn"
 	
@@ -468,8 +818,51 @@ func update_ui() -> void:
 	draw_board()
 	draw_enemy_board()
 	_sync_stack_zone_previews()
-	if _target_line_overlay != null and is_instance_valid(_target_line_overlay):
-		_target_line_overlay.queue_redraw()
+
+func _get_board_zone_extent_target() -> float:
+	var base_extent := BoardZoneUI.get_base_zone_extent()
+	if center_panel == null:
+		return base_extent
+
+	var available_width: float = center_panel.size.x - ZONE_INFO_ICON_SIZE - BOARD_ZONE_COLUMN_GAP * BOARD_MAIN_COLUMN_COUNT
+	if available_width <= 0.0:
+		return base_extent
+
+	var section_gap_count := 3.0
+	if hand_container != null and hand_container.visible:
+		section_gap_count += 1.0
+	var available_height: float = center_panel.size.y \
+		- HAND_LAYOUT_RESERVED \
+		- BOARD_SEPARATOR_HEIGHT \
+		- (CENTER_PANEL_SECTION_GAP * section_gap_count)
+	if available_height <= 0.0:
+		return base_extent
+
+	var horizontal_extent: float = floor(available_width / BOARD_MAIN_COLUMN_COUNT)
+	var vertical_extent: float = floor(available_height / BOARD_ROW_COUNT) - BOARD_SIZE_TRIM
+	return maxf(base_extent, minf(horizontal_extent, vertical_extent))
+
+func _update_board_zone_extent() -> void:
+	BoardZoneUI.set_zone_extent(_get_board_zone_extent_target())
+	var board_half_height: float = BoardZoneUI.get_zone_extent() * 2.0
+	_update_side_panel_layout()
+	if enemy_board_container != null:
+		enemy_board_container.custom_minimum_size.y = board_half_height
+	if board_container != null:
+		board_container.custom_minimum_size.y = board_half_height
+	if hand_container != null:
+		hand_container.custom_minimum_size.y = HAND_LAYOUT_RESERVED
+	if board_separator != null:
+		board_separator.custom_minimum_size = Vector2(_get_board_row_width(), BOARD_SEPARATOR_HEIGHT)
+	call_deferred("_update_center_action_panel_layout")
+
+func _on_board_layout_resized() -> void:
+	if _fan_container != null and is_instance_valid(_fan_container):
+		call_deferred("_layout_fan")
+	if game_manager == null:
+		return
+	if not is_equal_approx(_get_board_zone_extent_target(), BoardZoneUI.get_zone_extent()):
+		_request_ui_refresh()
 
 func _get_zone_ui_for_zone(zone: Zone) -> BoardZoneUI:
 	if zone == null:
@@ -485,43 +878,6 @@ func _get_zone_ui_for_zone(zone: Zone) -> BoardZoneUI:
 		if zone_ui != null and is_instance_valid(zone_ui) and zone_ui.zone == zone:
 			return zone_ui
 	return null
-
-func _get_zone_ui_center(zone_ui: BoardZoneUI) -> Vector2:
-	if zone_ui == null or not is_instance_valid(zone_ui):
-		return Vector2.ZERO
-	return _to_overlay_point(zone_ui.get_visual_anchor_global())
-
-func _to_overlay_point(global_point: Vector2) -> Vector2:
-	if _target_line_overlay == null or not is_instance_valid(_target_line_overlay):
-		return global_point - global_position
-	return _target_line_overlay.get_global_transform().affine_inverse() * global_point
-
-func _get_target_line_end(action: CardAction) -> Vector2:
-	if action == null:
-		return Vector2.ZERO
-	if action.target is Card:
-		var target_card := action.target as Card
-		if target_card != null and target_card.current_zone != null:
-			var target_zone_ui := _get_zone_ui_for_zone(target_card.current_zone)
-			if target_zone_ui != null and is_instance_valid(target_zone_ui):
-				return _get_zone_ui_center(target_zone_ui)
-	return Vector2.ZERO
-
-func _draw_target_lines(overlay: Control) -> void:
-	if game_manager == null:
-		return
-	for action in game_manager.action_stack:
-		if action == null or action.display_zone == null or not (action.target is Card):
-			continue
-		var source_zone_ui := _get_zone_ui_for_zone(action.display_zone)
-		if source_zone_ui == null or not is_instance_valid(source_zone_ui):
-			continue
-		var from_point := _get_zone_ui_center(source_zone_ui)
-		var to_point := _get_target_line_end(action)
-		if to_point == Vector2.ZERO:
-			continue
-		overlay.draw_line(from_point, to_point, Color(1.0, 0.92, 0.3, 0.98), 5.0, true)
-		overlay.draw_circle(to_point, 7.0, Color(1.0, 0.92, 0.3, 0.98))
 
 func _sync_stack_zone_previews() -> void:
 	for zone_ui in _board_zone_uis:
@@ -777,11 +1133,35 @@ func _is_card_usable_for_priority(card: Card) -> bool:
 	return game_manager.can_card_respond_to_priority(card, game_manager.priority_player)
 
 func _get_visible_hand_player() -> Player:
+	return _get_display_player()
+
+func _get_display_player() -> Player:
 	if game_manager == null:
 		return null
-	if not game_manager.action_stack.is_empty() and game_manager.priority_player != null:
-		return game_manager.priority_player
+	var viewer := game_manager.get_feedback_viewer()
+	if viewer != null:
+		return viewer
 	return game_manager.current_player
+
+func _get_display_opponent() -> Player:
+	if game_manager == null:
+		return null
+	var display_player := _get_display_player()
+	if display_player != null:
+		var opponent := game_manager.get_opponent(display_player)
+		if opponent != null:
+			return opponent
+	return game_manager.other_player
+
+func _get_hand_overlay_rect() -> Rect2:
+	if center_panel == null:
+		return Rect2(Vector2.ZERO, Vector2(180.0, HAND_DOCK_HEIGHT))
+	var center_rect: Rect2 = center_panel.get_global_rect()
+	var local_top_left: Vector2 = get_global_transform().affine_inverse() * center_rect.position
+	var overlay_width: float = maxf(180.0, center_rect.size.x - HAND_OVERLAY_SIDE_PADDING * 2.0)
+	var overlay_x: float = local_top_left.x + HAND_OVERLAY_SIDE_PADDING
+	var overlay_y: float = local_top_left.y + center_rect.size.y - HAND_DOCK_HEIGHT - HAND_OVERLAY_BOTTOM_PADDING
+	return Rect2(Vector2(overlay_x, overlay_y), Vector2(overlay_width, HAND_DOCK_HEIGHT))
 
 func _should_hide_hand_card(card: Card) -> bool:
 	var hand_player := _get_visible_hand_player()
@@ -801,8 +1181,10 @@ func _should_hide_hand_card(card: Card) -> bool:
 	return false
 
 func draw_hand() -> void:
-	for child in hand_container.get_children():
-		child.queue_free()
+	if _fan_container != null and is_instance_valid(_fan_container):
+		remove_child(_fan_container)
+		_fan_container.queue_free()
+	_fan_container = null
 	_hand_visual_cards.clear()
 	var hand_player := _get_visible_hand_player()
 	if hand_player == null:
@@ -811,27 +1193,12 @@ func draw_hand() -> void:
 	if _is_blot_selection_active():
 		blot_valid_choices = _get_blot_valid_choices(_pending_blot_spell)
 
-	# Small gap between board and hand
-	var top_gap := Control.new()
-	top_gap.custom_minimum_size = Vector2(0, 6)
-	hand_container.add_child(top_gap)
-
-	var hbox := HBoxContainer.new()
-	hbox.add_theme_constant_override("separation", 8)
-	hand_container.add_child(hbox)
-
-	var label := Label.new()
-	label.text = hand_player.player_name + "\nHand:"
-	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	label.add_theme_font_size_override("font_size", 13)
-	label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	hbox.add_child(label)
-
 	_fan_container = Control.new()
-	_fan_container.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_fan_container.custom_minimum_size = Vector2(0, 130)
+	_fan_container.name = "HandOverlay"
+	_fan_container.mouse_filter = Control.MOUSE_FILTER_PASS
 	_fan_container.clip_contents = false
-	hbox.add_child(_fan_container)
+	_fan_container.z_index = TRANSIENT_UI_Z_INDEX - 10
+	add_child(_fan_container)
 
 	for card in hand_player.hand_zone.cards:
 		if _should_hide_hand_card(card):
@@ -847,18 +1214,27 @@ func draw_hand() -> void:
 		vc.card_drag_released.connect(_on_card_drag_released)
 		_hand_visual_cards.append(vc)
 
+	if _hand_visual_cards.is_empty():
+		remove_child(_fan_container)
+		_fan_container.queue_free()
+		_fan_container = null
+		return
+
 	call_deferred("_layout_fan")
 
 func _layout_fan() -> void:
 	if not _fan_container or not is_instance_valid(_fan_container):
 		return
+	var overlay_rect: Rect2 = _get_hand_overlay_rect()
+	_fan_container.position = overlay_rect.position
+	_fan_container.size = overlay_rect.size
 	var cards := _hand_visual_cards
 	var n := cards.size()
 	if n == 0:
 		return
 	# Total span of card pivots; clamp so they fit in the container width
-	var container_w: float = _fan_container.size.x
-	var spacing: float = FAN_CARD_SPACING if n == 1 else min(float(FAN_CARD_SPACING), (container_w - 180.0) / float(max(n - 1, 1)))
+	var container_w: float = max(overlay_rect.size.x, 180.0)
+	var spacing: float = FAN_CARD_SPACING if n == 1 else max(36.0, min(float(FAN_CARD_SPACING), (container_w - 180.0) / float(max(n - 1, 1))))
 	var total_span: float = spacing * float(n - 1)
 	var start_x: float = (container_w - total_span) * 0.5
 
@@ -942,15 +1318,15 @@ func _make_deck_panel(zone: Zone) -> Control:
 	outer.tooltip_text = "Deck: " + str(zone.cards.size()) + " cards"
 	return outer
 
-func _make_zone_info_panel(label_text: String, zone: Zone, clickable: bool, color: Color) -> PanelContainer:
+func _make_zone_info_icon(label_text: String, short_label: String, zone: Zone, color: Color) -> PanelContainer:
 	var panel := PanelContainer.new()
-	panel.custom_minimum_size = Vector2(165, 110)
-	panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	panel.custom_minimum_size = Vector2(ZONE_INFO_ICON_SIZE, ZONE_INFO_ICON_SIZE)
+	panel.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	var style := StyleBoxFlat.new()
-	style.corner_radius_top_left = 4
-	style.corner_radius_top_right = 4
-	style.corner_radius_bottom_left = 4
-	style.corner_radius_bottom_right = 4
+	style.corner_radius_top_left = 8
+	style.corner_radius_top_right = 8
+	style.corner_radius_bottom_left = 8
+	style.corner_radius_bottom_right = 8
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
 		style.set_border_width(side, 2)
 	style.bg_color = color.darkened(0.4)
@@ -959,33 +1335,39 @@ func _make_zone_info_panel(label_text: String, zone: Zone, clickable: bool, colo
 	panel.tooltip_text = label_text + ": " + str(zone.cards.size()) + " cards"
 
 	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 2)
 	panel.add_child(vbox)
 	var name_lbl := Label.new()
-	name_lbl.text = label_text
-	name_lbl.add_theme_font_size_override("font_size", 13)
+	name_lbl.text = short_label
+	name_lbl.add_theme_font_size_override("font_size", 12)
 	name_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	vbox.add_child(name_lbl)
 	var count_lbl := Label.new()
 	count_lbl.text = str(zone.cards.size())
-	count_lbl.add_theme_font_size_override("font_size", 20)
+	count_lbl.add_theme_font_size_override("font_size", 18)
 	count_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	count_lbl.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	vbox.add_child(count_lbl)
 
-	if clickable:
-		panel.mouse_filter = Control.MOUSE_FILTER_STOP
-		panel.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-		panel.gui_input.connect(func(event: InputEvent):
-			if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
-				_show_zone_contents(label_text, zone)
-		)
+	panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	panel.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	panel.gui_input.connect(func(event: InputEvent):
+		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+			_show_zone_contents(label_text, zone)
+	)
 
 	return panel
+
+func _get_board_row_width() -> float:
+	return BoardZoneUI.get_zone_extent() * BOARD_MAIN_COLUMN_COUNT + ZONE_INFO_ICON_SIZE + BOARD_ZONE_COLUMN_GAP * BOARD_MAIN_COLUMN_COUNT
+
+func _get_separator_line_width() -> float:
+	return BoardZoneUI.get_zone_extent() * BOARD_MAIN_COLUMN_COUNT + BOARD_ZONE_COLUMN_GAP * (BOARD_MAIN_COLUMN_COUNT - 1.0)
 
 func _make_stats_panel(player: Player, show_mana: bool = true) -> PanelContainer:
 	var panel := PanelContainer.new()
 	panel.custom_minimum_size = Vector2(110, 128)
-	panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	panel.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color(0.1, 0.1, 0.1, 0.7)
 	style.border_color = Color(0.4, 0.4, 0.4)
@@ -1015,18 +1397,23 @@ func _make_stats_panel(player: Player, show_mana: bool = true) -> PanelContainer
 	fol_lbl.text = "Followers:\n" + str(player.followers)
 	fol_lbl.add_theme_font_size_override("font_size", 13)
 	vbox.add_child(fol_lbl)
+	var deck_lbl := Label.new()
+	deck_lbl.text = "Deck: " + str(player.deck_zone.get_card_count())
+	deck_lbl.add_theme_font_size_override("font_size", 13)
+	vbox.add_child(deck_lbl)
 	return panel
 
 func _make_god_cluster(zone: Zone, player: Player, is_enemy: bool) -> Control:
+	var zone_size := BoardZoneUI.get_zone_size()
 	var cluster := Control.new()
-	cluster.custom_minimum_size = Vector2(BoardZoneUI.ZONE_WIDTH, BoardZoneUI.ZONE_HEIGHT)
-	cluster.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	cluster.custom_minimum_size = zone_size
+	cluster.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	cluster.clip_contents = false
 
 	var god_wrapper := Control.new()
-	god_wrapper.custom_minimum_size = Vector2(BoardZoneUI.ZONE_WIDTH, BoardZoneUI.ZONE_HEIGHT)
+	god_wrapper.custom_minimum_size = zone_size
 	god_wrapper.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	god_wrapper.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	god_wrapper.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	cluster.add_child(god_wrapper)
 
 	var god_zone_ui := BoardZoneUI.new()
@@ -1035,7 +1422,7 @@ func _make_god_cluster(zone: Zone, player: Player, is_enemy: bool) -> Control:
 	god_zone_ui.setup(zone, game_manager, player, -1, _on_card_dropped_to_zone, is_enemy, "God")
 
 	var stats_panel := _make_stats_panel(player, true)
-	stats_panel.custom_minimum_size = Vector2(102, BoardZoneUI.ZONE_HEIGHT)
+	stats_panel.custom_minimum_size = Vector2(102, BoardZoneUI.get_zone_extent())
 	stats_panel.position = Vector2(-106, 0)
 	cluster.add_child(stats_panel)
 
@@ -1284,22 +1671,7 @@ func _make_power_icon(card: Card, is_enemy: bool, player: Player) -> Control:
 		)
 	return panel
 func _on_power_pressed(power: PowerCard) -> void:
-	if awaiting_god_ability_target and god_ability_source != null:
-		if god_ability_source.has_method("is_valid_activation_target") and god_ability_source.is_valid_activation_target(power):
-			var source_god := god_ability_source
-			var was_immune := game_manager.is_immune_to_source(power, source_god)
-			god_ability_source.activate(game_manager, power)
-			awaiting_god_ability_target = false
-			god_ability_source = null
-			action_label.text = _consume_resolution_feedback(power.card_name + " is immune to " + source_god.card_name + "." if was_immune else "God ability resolved.")
-			update_ui()
-		else:
-			_cancel_pending_target_selection(
-				_get_pending_target_selection_name()
-				+ " cancelled: invalid target "
-				+ _get_card_name_safe(power, "selected")
-				+ "."
-			)
+	if _try_queue_god_targeted_ability(power):
 		return
 	if _is_turn_choice_pending() and not _can_activate_before_turn_choice(power):
 		_reject_pre_turn_action()
@@ -1329,7 +1701,7 @@ func _on_power_pressed(power: PowerCard) -> void:
 						CardAction.Type.ABILITY,
 						allfather,
 						chosen,
-						allfather.card_name + " activated! Chose " + chosen.card_name + ".",
+						_get_attack_card_label(allfather, allfather.card_name) + " is targeting " + _get_target_label(chosen, game_manager.get_feedback_viewer(), chosen.card_name) + ".",
 						func() -> void:
 							allfather.activate(game_manager, chosen)
 					)
@@ -1344,7 +1716,7 @@ func _on_power_pressed(power: PowerCard) -> void:
 						CardAction.Type.ABILITY,
 						ananke,
 						chosen,
-						ananke.card_name + " bound " + chosen.card_name + ".",
+						_get_attack_card_label(ananke, ananke.card_name) + " is targeting " + _get_target_label(chosen, game_manager.get_feedback_viewer(), chosen.card_name) + ".",
 						func() -> void:
 							ananke.activate(game_manager, chosen)
 					)
@@ -1359,7 +1731,7 @@ func _on_power_pressed(power: PowerCard) -> void:
 						CardAction.Type.ABILITY,
 						mead,
 						chosen,
-						mead.card_name + " empowers " + chosen.card_name + ".",
+						_get_attack_card_label(mead, mead.card_name) + " is targeting " + _get_target_label(chosen, game_manager.get_feedback_viewer(), chosen.card_name) + ".",
 						func() -> void:
 							mead.activate(game_manager, chosen)
 					)
@@ -1378,7 +1750,7 @@ func _on_power_pressed(power: PowerCard) -> void:
 						CardAction.Type.ABILITY,
 						power,
 						chosen,
-						power.card_name + " targeted " + chosen.card_name + ".",
+						_get_attack_card_label(power, power.card_name) + " is targeting " + _get_target_label(chosen, game_manager.get_feedback_viewer(), chosen.card_name) + ".",
 						func() -> void:
 							power.activate(game_manager, chosen)
 					)
@@ -1586,8 +1958,8 @@ func _show_divine_caprice_prompt(power: DivineCaprice) -> void:
 	panel.anchor_right = 0.5
 	panel.anchor_top = 0.5
 	panel.anchor_bottom = 0.5
-	panel.offset_left = -270
-	panel.offset_right = 270
+	panel.offset_left = -330
+	panel.offset_right = 330
 	panel.offset_top = -190
 	panel.offset_bottom = 190
 
@@ -1617,7 +1989,7 @@ func _show_divine_caprice_prompt(power: DivineCaprice) -> void:
 	vbox.add_child(info)
 
 	var grid := GridContainer.new()
-	grid.columns = 4
+	grid.columns = 5
 	grid.add_theme_constant_override("h_separation", 8)
 	grid.add_theme_constant_override("v_separation", 8)
 	vbox.add_child(grid)
@@ -1991,6 +2363,33 @@ func _get_card_name_safe(
 		resolved_viewer = game_manager.get_feedback_viewer()
 	return card.get_log_display_name(resolved_viewer, hidden_fallback)
 
+func _get_zone_position_label(zone: Zone) -> String:
+	if zone == null:
+		return "unknown position"
+	match zone.zone_type:
+		Zone.ZoneType.FRONTLINE:
+			return "Front Line position " + str(zone.zone_index + 1)
+		Zone.ZoneType.RESERVE:
+			return "Reserve Line position " + str(zone.zone_index + 1)
+		Zone.ZoneType.POWER_SLOT:
+			return "Power slot " + str(zone.zone_index + 1)
+		Zone.ZoneType.GOD_SLOT:
+			return "God slot"
+	return "position " + str(zone.zone_index + 1)
+
+func _get_hidden_target_label(card: Card, viewer: Player = null) -> String:
+	if card == null:
+		return "a hidden target"
+	return card.get_hidden_log_position_label()
+
+func _get_target_label(card: Card, viewer: Player = null, fallback: String = "target") -> String:
+	if card == null:
+		return fallback
+	var resolved_viewer := viewer
+	if resolved_viewer == null and game_manager != null:
+		resolved_viewer = game_manager.get_feedback_viewer()
+	return card.get_target_log_display_name(resolved_viewer)
+
 func _get_attack_card_label(card: Card, fallback: String = "Card") -> String:
 	if card == null:
 		return fallback
@@ -2110,6 +2509,88 @@ func _try_handle_pending_click_selection(clicked_card: Card) -> bool:
 	confirm_callback.call(clicked_card)
 	return true
 
+func _resolve_hand_permanent_hex_target(hex: PermanentHexCard, target: Card) -> void:
+	if hex == null or target == null or game_manager == null:
+		return
+	if not hex.play_to_target(game_manager, target):
+		action_label.text = hex.card_name + " fizzles: choose a valid creature."
+		update_ui()
+		return
+	selected_card = null
+	placement_mode = ""
+	placement_container.visible = false
+	var target_label := _get_target_label(target, game_manager.get_feedback_viewer(), "target")
+	action_label.text = _consume_resolution_feedback(hex.card_name + " attaches to " + target_label + ".")
+	update_ui()
+
+func _begin_hand_permanent_hex_target_selection(hex: PermanentHexCard) -> void:
+	if hex == null:
+		return
+	selected_card = hex
+	for vc in _hand_visual_cards:
+		vc.set_highlighted(vc.card_data == hex)
+	var targets := hex.get_valid_targets(game_manager)
+	if targets.is_empty():
+		action_label.text = hex.card_name + " has no valid creature targets right now."
+		update_ui()
+		return
+	_begin_pending_click_selection(
+		hex.card_name,
+		hex,
+		func(clicked_card: Card) -> bool:
+			return clicked_card != null and hex.can_play_to_target(game_manager, clicked_card),
+		func(clicked_card: Card) -> void:
+			_resolve_hand_permanent_hex_target(hex, clicked_card)
+	)
+	action_label.text = hex.card_name + ": click a creature to target."
+	update_ui()
+
+func _queue_priority_hex_response_with_target(
+	hex: HexCard,
+	source_action: CardAction,
+	chosen_target: Card,
+	target_is_attacker: bool
+) -> void:
+	if hex == null or source_action == null:
+		return
+	game_manager.prepared_hexes.erase(hex)
+	hex.is_prepared = false
+	hex.reveal(game_manager)
+	_queue_hex_response_action(hex, source_action, chosen_target, target_is_attacker)
+
+func _begin_priority_hex_target_selection(
+	hex: HexCard,
+	source_action: CardAction,
+	target_is_attacker: bool
+) -> void:
+	if hex == null or source_action == null:
+		return
+	var current_targets := game_manager.get_priority_hex_targets(hex, source_action)
+	if current_targets.is_empty():
+		action_label.text = hex.card_name + " has no valid targets."
+		update_ui()
+		return
+	if current_targets.size() == 1:
+		_queue_priority_hex_response_with_target(hex, source_action, current_targets[0], target_is_attacker)
+		return
+	var validator := func(clicked_card: Card) -> bool:
+		return clicked_card != null and clicked_card in game_manager.get_priority_hex_targets(hex, source_action)
+	var confirm_selection := func(clicked_card: Card) -> void:
+		_queue_priority_hex_response_with_target(hex, source_action, clicked_card, target_is_attacker)
+	var cancel_selection := func() -> void:
+		action_label.text = "Cancelled " + hex.card_name + " target selection."
+		update_ui()
+		_offer_priority()
+	_begin_pending_click_selection(
+		hex.card_name,
+		hex,
+		validator,
+		confirm_selection,
+		cancel_selection
+	)
+	action_label.text = hex.card_name + ": click a valid target."
+	update_ui()
+
 func _queue_magical_action(action_type: int, source_card: Card, target, resolution_text: String, resolve_callback: Callable, display_zone: Zone = null) -> void:
 	var action := CardAction.new()
 	action.type = action_type
@@ -2132,6 +2613,66 @@ func _queue_magical_action(action_type: int, source_card: Card, target, resoluti
 	var _card_type_label: String = _get_stack_card_type_label(source_card)
 	action_label.text = source_card.card_name + " [" + _card_type_label + "] goes on the stack."
 	_offer_priority()
+
+func _queue_targeted_ability_action(source_card: Card, target: Card, resolve_callback: Callable, resolution_text: String = "") -> void:
+	if source_card == null or target == null:
+		return
+	var target_name := _get_target_label(target, game_manager.get_feedback_viewer(), "target")
+	var queued_text := resolution_text if resolution_text != "" else _get_attack_card_label(source_card, source_card.card_name) + " is targeting " + target_name + "."
+	_queue_magical_action(
+		CardAction.Type.ABILITY,
+		source_card,
+		target,
+		queued_text,
+		resolve_callback
+	)
+
+func _queue_hex_response_action(
+	hex: HexCard,
+	source_action: CardAction,
+	chosen_target: Card = null,
+	chosen_target_is_attacker: bool = false
+) -> void:
+	if hex == null or source_action == null:
+		return
+	var ability := CardAction.new()
+	ability.type = CardAction.Type.ABILITY
+	ability.source_player = hex.card_owner
+	ability.card = hex
+	ability.response_to = source_action
+	ability.attacker = chosen_target if chosen_target_is_attacker and chosen_target != null else source_action.attacker
+	ability.interceptor = source_action.interceptor
+	ability.target = chosen_target if not chosen_target_is_attacker and chosen_target != null else source_action.target
+	_assign_stack_display_zone(ability)
+	game_manager.push_to_stack(ability)
+	var displayed_target := chosen_target if chosen_target != null else ability.attacker
+	if displayed_target != null and hex.targets:
+		action_label.text = _get_attack_card_label(hex, hex.card_name) + " is targeting " + _get_target_label(displayed_target, game_manager.get_feedback_viewer(), "target") + "."
+	else:
+		action_label.text = hex.card_name + " responds!"
+	_offer_priority()
+
+func _try_queue_god_targeted_ability(target: Card) -> bool:
+	if not awaiting_god_ability_target or god_ability_source == null:
+		return false
+	if not god_ability_source.has_method("is_valid_activation_target") or not god_ability_source.is_valid_activation_target(target):
+		_cancel_pending_target_selection(
+			_get_pending_target_selection_name()
+			+ " cancelled: invalid target "
+			+ _get_card_name_safe(target, "selected")
+			+ "."
+		)
+		return true
+	var source_god := god_ability_source
+	awaiting_god_ability_target = false
+	god_ability_source = null
+	_queue_targeted_ability_action(
+		source_god,
+		target,
+		func() -> void:
+			source_god.activate(game_manager, target)
+	)
+	return true
 
 func _can_cast_hand_spell(spell: Card) -> bool:
 	return spell != null \
@@ -2353,8 +2894,8 @@ func _queue_charm_action(charm: CharmCard, triggering_action: CardAction = null,
 	action.target = target
 	action.response_to = source_action
 	if target != null:
-		var target_name := _get_card_name_safe(target, "target", game_manager.current_player, "a hidden card")
-		action.resolution_text = charm.card_name + " targeted " + target_name + "."
+		var target_name := _get_target_label(target, game_manager.get_feedback_viewer(), "target")
+		action.resolution_text = _get_attack_card_label(charm, charm.card_name) + " is targeting " + target_name + "."
 	else:
 		action.resolution_text = charm.card_name + " resolved."
 	action.resolve_callback = func() -> void:
@@ -2372,8 +2913,8 @@ func _queue_charm_action(charm: CharmCard, triggering_action: CardAction = null,
 	spell_waiting_for_display_zone = null
 	update_ui()
 	if target != null:
-		var stack_target_name := _get_card_name_safe(target, "target", game_manager.get_feedback_viewer(), "a hidden card")
-		action_label.text = charm.card_name + " targets " + stack_target_name + " and goes on the stack."
+		var stack_target_name := _get_target_label(target, game_manager.get_feedback_viewer(), "target")
+		action_label.text = _get_attack_card_label(charm, charm.card_name) + " is targeting " + stack_target_name + "."
 	else:
 		action_label.text = charm.card_name + " [" + _get_stack_card_type_label(charm) + "] goes on the stack."
 	_offer_priority()
@@ -2429,66 +2970,69 @@ func draw_board() -> void:
 		child.queue_free()
 	_board_zone_uis.clear()
 	board_container.add_theme_constant_override("separation", 0)
+	var display_player := _get_display_player()
+	if display_player == null:
+		return
 
 	var board_row := HBoxContainer.new()
-	board_row.add_theme_constant_override("separation", 4)
+	board_row.add_theme_constant_override("separation", int(BOARD_ZONE_COLUMN_GAP))
 	board_row.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	board_row.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	board_row.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	board_container.add_child(board_row)
 
 	for i in range(2):
-		var power_zone := game_manager.current_player.power_zones[i]
+		var power_zone := display_player.power_zones[i]
 		var pzu := BoardZoneUI.new()
 		board_row.add_child(pzu)
-		pzu.setup(power_zone, game_manager, game_manager.current_player, i, _on_card_dropped_to_zone, false, "power")
+		pzu.setup(power_zone, game_manager, display_player, i, _on_card_dropped_to_zone, false, "power")
 		pzu.card_clicked.connect(func(card: Card) -> void:
 			if card is PowerCard:
 				_on_power_pressed(card as PowerCard)
 		)
 		_board_zone_uis.append(pzu)
 
-	for i in range(game_manager.current_player.frontline_zones.size()):
-		var zone = game_manager.current_player.frontline_zones[i]
+	for i in range(display_player.frontline_zones.size()):
+		var zone = display_player.frontline_zones[i]
 		var zu := BoardZoneUI.new()
 		board_row.add_child(zu)
-		zu.setup(zone, game_manager, game_manager.current_player, i, _on_card_dropped_to_zone, false, "front line")
+		zu.setup(zone, game_manager, display_player, i, _on_card_dropped_to_zone, false, "front line")
 		zu.zone_clicked.connect(_on_empty_zone_pressed)
 		zu.card_clicked.connect(_on_board_card_pressed)
 		zu.creature_drag_started.connect(_on_creature_drag_started)
 		zu.creature_right_clicked.connect(_on_creature_right_clicked)
 		_board_zone_uis.append(zu)
 
-	board_row.add_child(_make_zone_info_panel("Grave", game_manager.current_player.graveyard_zone, true, Color(0.3, 0.5, 0.3)))
+	board_row.add_child(_make_zone_info_icon("Grave", "GY", display_player.graveyard_zone, Color(0.3, 0.5, 0.3)))
 
 	var reserve_row := HBoxContainer.new()
-	reserve_row.add_theme_constant_override("separation", 4)
+	reserve_row.add_theme_constant_override("separation", int(BOARD_ZONE_COLUMN_GAP))
 	reserve_row.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	reserve_row.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	reserve_row.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	board_container.add_child(reserve_row)
-	reserve_row.add_child(_make_god_cluster(game_manager.current_player.god_zone, game_manager.current_player, false))
+	reserve_row.add_child(_make_god_cluster(display_player.god_zone, display_player, false))
 
-	var reserve_power_zone := game_manager.current_player.power_zones[2]
+	var reserve_power_zone := display_player.power_zones[2]
 	var rpzu := BoardZoneUI.new()
 	reserve_row.add_child(rpzu)
-	rpzu.setup(reserve_power_zone, game_manager, game_manager.current_player, 2, _on_card_dropped_to_zone, false, "power")
+	rpzu.setup(reserve_power_zone, game_manager, display_player, 2, _on_card_dropped_to_zone, false, "power")
 	rpzu.card_clicked.connect(func(card: Card) -> void:
 		if card is PowerCard:
 			_on_power_pressed(card as PowerCard)
 	)
 	_board_zone_uis.append(rpzu)
 
-	for i in range(game_manager.current_player.reserve_zones.size()):
-		var zone = game_manager.current_player.reserve_zones[i]
+	for i in range(display_player.reserve_zones.size()):
+		var zone = display_player.reserve_zones[i]
 		var zu := BoardZoneUI.new()
 		reserve_row.add_child(zu)
-		zu.setup(zone, game_manager, game_manager.current_player, i, _on_card_dropped_to_zone, false, "back line")
+		zu.setup(zone, game_manager, display_player, i, _on_card_dropped_to_zone, false, "reserve line")
 		zu.zone_clicked.connect(_on_empty_zone_pressed)
 		zu.card_clicked.connect(_on_board_card_pressed)
 		zu.creature_drag_started.connect(_on_creature_drag_started)
 		zu.creature_right_clicked.connect(_on_creature_right_clicked)
 		_board_zone_uis.append(zu)
 
-	reserve_row.add_child(_make_zone_info_panel("Abyss", game_manager.current_player.abyss_zone, true, Color(0.6, 0.1, 0.6)))
+	reserve_row.add_child(_make_zone_info_icon("Abyss", "AB", display_player.abyss_zone, Color(0.6, 0.1, 0.6)))
 
 func draw_enemy_board() -> void:
 	_no_intercept_btn = null  # enemy_board_container children are about to be freed
@@ -2497,54 +3041,57 @@ func draw_enemy_board() -> void:
 	_enemy_zone_uis.clear()
 	_enemy_god_zone_ui = null
 	enemy_board_container.add_theme_constant_override("separation", 0)
+	var enemy_player := _get_display_opponent()
+	if enemy_player == null:
+		return
 
 	var enemy_reserve_row := HBoxContainer.new()
-	enemy_reserve_row.add_theme_constant_override("separation", 4)
+	enemy_reserve_row.add_theme_constant_override("separation", int(BOARD_ZONE_COLUMN_GAP))
 	enemy_reserve_row.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	enemy_reserve_row.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	enemy_reserve_row.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	enemy_board_container.add_child(enemy_reserve_row)
-	enemy_reserve_row.add_child(_make_god_cluster(game_manager.other_player.god_zone, game_manager.other_player, true))
+	enemy_reserve_row.add_child(_make_god_cluster(enemy_player.god_zone, enemy_player, true))
 
-	var enemy_reserve_power_zone := game_manager.other_player.power_zones[2]
+	var enemy_reserve_power_zone := enemy_player.power_zones[2]
 	var erpzu := BoardZoneUI.new()
 	enemy_reserve_row.add_child(erpzu)
-	erpzu.setup(enemy_reserve_power_zone, game_manager, game_manager.other_player, 2, _on_card_dropped_to_zone, true, "power")
+	erpzu.setup(enemy_reserve_power_zone, game_manager, enemy_player, 2, _on_card_dropped_to_zone, true, "power")
 	erpzu.card_clicked.connect(_on_enemy_card_pressed)
 	_enemy_zone_uis.append(erpzu)
 
-	for i in range(game_manager.other_player.reserve_zones.size()):
-		var zone = game_manager.other_player.reserve_zones[i]
+	for i in range(enemy_player.reserve_zones.size()):
+		var zone = enemy_player.reserve_zones[i]
 		var zu := BoardZoneUI.new()
 		enemy_reserve_row.add_child(zu)
-		zu.setup(zone, game_manager, game_manager.other_player, i, _on_card_dropped_to_zone, true, "back line")
+		zu.setup(zone, game_manager, enemy_player, i, _on_card_dropped_to_zone, true, "reserve line")
 		zu.card_clicked.connect(_on_enemy_card_pressed)
 		_enemy_zone_uis.append(zu)
 
-	enemy_reserve_row.add_child(_make_zone_info_panel("Abyss", game_manager.other_player.abyss_zone, true, Color(0.6, 0.1, 0.6)))
+	enemy_reserve_row.add_child(_make_zone_info_icon("Abyss", "AB", enemy_player.abyss_zone, Color(0.6, 0.1, 0.6)))
 
 	var enemy_row := HBoxContainer.new()
-	enemy_row.add_theme_constant_override("separation", 4)
+	enemy_row.add_theme_constant_override("separation", int(BOARD_ZONE_COLUMN_GAP))
 	enemy_row.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	enemy_row.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	enemy_row.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	enemy_board_container.add_child(enemy_row)
 
 	for i in range(2):
-		var enemy_power_zone := game_manager.other_player.power_zones[i]
+		var enemy_power_zone := enemy_player.power_zones[i]
 		var epzu := BoardZoneUI.new()
 		enemy_row.add_child(epzu)
-		epzu.setup(enemy_power_zone, game_manager, game_manager.other_player, i, _on_card_dropped_to_zone, true, "power")
+		epzu.setup(enemy_power_zone, game_manager, enemy_player, i, _on_card_dropped_to_zone, true, "power")
 		epzu.card_clicked.connect(_on_enemy_card_pressed)
 		_enemy_zone_uis.append(epzu)
 
-	for i in range(game_manager.other_player.frontline_zones.size()):
-		var zone = game_manager.other_player.frontline_zones[i]
+	for i in range(enemy_player.frontline_zones.size()):
+		var zone = enemy_player.frontline_zones[i]
 		var zu := BoardZoneUI.new()
 		enemy_row.add_child(zu)
-		zu.setup(zone, game_manager, game_manager.other_player, i, _on_card_dropped_to_zone, true, "front line")
+		zu.setup(zone, game_manager, enemy_player, i, _on_card_dropped_to_zone, true, "front line")
 		zu.card_clicked.connect(_on_enemy_card_pressed)
 		_enemy_zone_uis.append(zu)
 
-	enemy_row.add_child(_make_zone_info_panel("Grave", game_manager.other_player.graveyard_zone, true, Color(0.3, 0.5, 0.3)))
+	enemy_row.add_child(_make_zone_info_icon("Grave", "GY", enemy_player.graveyard_zone, Color(0.3, 0.5, 0.3)))
 
 func _on_hand_card_pressed(card: Card) -> void:
 	if _game_finished:
@@ -2570,6 +3117,13 @@ func _on_hand_card_pressed(card: Card) -> void:
 		return
 	if _is_turn_choice_pending():
 		_reject_pre_turn_action()
+		return
+	if game_manager != null and game_manager.current_player != null and card.current_zone != game_manager.current_player.hand_zone:
+		action_label.text = card.card_name + " is not playable from this hand right now."
+		update_ui()
+		return
+	if card is PermanentHexCard:
+		_begin_hand_permanent_hex_target_selection(card as PermanentHexCard)
 		return
 	selected_card = card
 	for vc in _hand_visual_cards:
@@ -2950,22 +3504,7 @@ func _on_god_card_pressed(card: Card) -> void:
 	if selected_card is Absence and card.is_god:
 		_cast_targeted_spell(selected_card, card)
 		return
-	if awaiting_god_ability_target and god_ability_source != null:
-		if god_ability_source.has_method("is_valid_activation_target") and god_ability_source.is_valid_activation_target(card):
-			var source_god := god_ability_source
-			var was_immune := game_manager.is_immune_to_source(card, source_god)
-			god_ability_source.activate(game_manager, card)
-			awaiting_god_ability_target = false
-			god_ability_source = null
-			action_label.text = _consume_resolution_feedback(card.card_name + " is immune to " + source_god.card_name + "." if was_immune else "God ability resolved.")
-			update_ui()
-		else:
-			_cancel_pending_target_selection(
-				_get_pending_target_selection_name()
-				+ " cancelled: invalid target "
-				+ _get_card_name_safe(card, "selected")
-				+ "."
-			)
+	if _try_queue_god_targeted_ability(card):
 		return
 	if not card.is_god:
 		return
@@ -3032,6 +3571,50 @@ func _queue_blessed_knights_impact_prompt(card: BlessedKnights) -> void:
 	action.resolve_callback = func() -> void:
 		_pause_stack_resolution(card.card_owner)
 		_show_blessed_knights_prompt(card)
+	game_manager.push_to_stack(action)
+	update_ui()
+	action_label.text = card.card_name + " impact waits on priority."
+	_offer_priority()
+
+func _queue_durinn_secondborn_impact_prompt(card: DurinnSecondborn) -> void:
+	if card == null or game_manager == null:
+		return
+	var targets := card.get_valid_targets(game_manager)
+	if targets.is_empty():
+		return
+	var action := CardAction.new()
+	action.type = CardAction.Type.EVENT
+	action.source_player = card.card_owner
+	action.card = card
+	action.event_name = "durinn_secondborn_impact"
+	action.event_speed = 0
+	action.resolve_callback = func() -> void:
+		var current_targets := card.get_valid_targets(game_manager)
+		if current_targets.is_empty():
+			var no_target_text := card.card_name + " found no weapons to reforge."
+			if _stack_resolution_paused:
+				_resume_after_deferred_resolution(no_target_text)
+			else:
+				action_label.text = no_target_text
+				update_ui()
+			return
+		if current_targets.size() == 1:
+			var auto_text := card.resolve_reforge_impact(game_manager, current_targets[0])
+			if _stack_resolution_paused:
+				_resume_after_deferred_resolution(auto_text)
+			else:
+				action_label.text = auto_text
+				update_ui()
+			return
+		_pause_stack_resolution(card.card_owner)
+		_show_card_selection_overlay(
+			"Choose a weapon for " + card.card_name,
+			current_targets,
+			func(chosen: Card) -> void:
+				_resume_after_deferred_resolution(card.resolve_reforge_impact(game_manager, chosen)),
+			func() -> void:
+				_resume_after_deferred_resolution(card.card_name + " impact fizzles.")
+		)
 	game_manager.push_to_stack(action)
 	update_ui()
 	action_label.text = card.card_name + " impact waits on priority."
@@ -3268,22 +3851,7 @@ func _on_board_card_pressed(card: Card) -> void:
 		return
 
 	# Check if we're selecting a target for a god ability
-	if awaiting_god_ability_target and god_ability_source != null:
-		if god_ability_source.has_method("is_valid_activation_target") and god_ability_source.is_valid_activation_target(card):
-			var source_god := god_ability_source
-			var was_immune := game_manager.is_immune_to_source(card, source_god)
-			god_ability_source.activate(game_manager, card)
-			awaiting_god_ability_target = false
-			god_ability_source = null
-			update_ui()
-			action_label.text = _consume_resolution_feedback(card.card_name + " is immune to " + source_god.card_name + "." if was_immune else "God ability resolved.")
-		else:
-			_cancel_pending_target_selection(
-				_get_pending_target_selection_name()
-				+ " cancelled: invalid target "
-				+ _get_card_name_safe(card, "selected")
-				+ "."
-			)
+	if _try_queue_god_targeted_ability(card):
 		return
 
 	# Non-targeted spell selected Ã¢â‚¬â€ clicking any zone (occupied or not) casts it
@@ -3333,7 +3901,6 @@ func _on_board_card_pressed(card: Card) -> void:
 	if selected_card is Absence and (card is PowerCard or card.is_god):
 		_cast_targeted_spell(selected_card, card)
 		return
-	
 	if _pending_equip_action != "":
 		if card.get_controller() == game_manager.other_player and can_intercept(card, _pending_equip_actor, _pending_equip_target):
 			_remove_no_intercept_button()
@@ -3385,6 +3952,10 @@ func _on_board_card_pressed(card: Card) -> void:
 	if not _creature_can_attack(card):
 		if card.is_sleeping:
 			action_label.text = card.card_name + " is Sleeping and cannot act."
+		elif card.has_status_effect("cannot_attack"):
+			var cannot_attack_status := card.get_status_effect("cannot_attack")
+			var source_name := str(cannot_attack_status.get("source", "an effect"))
+			action_label.text = card.card_name + " cannot attack because of " + source_name + "."
 		elif card.creature_major_action_used:
 			action_label.text = card.card_name + " has already used its major action this turn."
 		elif card.creature_minor_actions_used >= 2:
@@ -3456,28 +4027,12 @@ func _on_enemy_card_pressed(target_card: Card) -> void:
 			)
 		return
 
-	if awaiting_god_ability_target and god_ability_source != null:
-		if god_ability_source.has_method("is_valid_activation_target") and god_ability_source.is_valid_activation_target(target_card):
-			var source_god := god_ability_source
-			var was_immune := game_manager.is_immune_to_source(target_card, source_god)
-			god_ability_source.activate(game_manager, target_card)
-			awaiting_god_ability_target = false
-			god_ability_source = null
-			action_label.text = _consume_resolution_feedback(target_card.card_name + " is immune to " + source_god.card_name + "." if was_immune else "God ability resolved.")
-			update_ui()
-		else:
-			_cancel_pending_target_selection(
-				_get_pending_target_selection_name()
-				+ " cancelled: invalid target "
-				+ _get_card_name_safe(target_card, "selected")
-				+ "."
-			)
+	if _try_queue_god_targeted_ability(target_card):
 		return
 
 	if selected_card is Absence and (target_card is PowerCard or target_card.is_god):
 		_cast_targeted_spell(selected_card, target_card)
 		return
-
 	if awaiting_pyre_target and pyre_source != null:
 		pyre_source.activate(game_manager, target_card)
 		awaiting_pyre_target = false
@@ -3671,7 +4226,7 @@ func _on_creature_right_clicked(card: Card) -> void:
 	var can_attack  := _creature_can_attack(card)
 	var can_stance  := _creature_can_change_stance(card)
 	var can_move    := _creature_can_move(card)
-	var can_stupefy := (card is Alu and card.get_controller() == game_manager.current_player and _creature_can_attack(card) and not card.abilities_suppressed())
+	var can_stupefy := false
 	var can_activate_creature: bool = (
 		card.get_controller() == game_manager.current_player
 		and card.has_method("can_activate")
@@ -3682,7 +4237,7 @@ func _on_creature_right_clicked(card: Card) -> void:
 	if _creature_can_use_equipment_action(card):
 		equip_entries = _get_reachable_equipment(card)
 
-	if not can_attack and not can_stance and not can_move and not can_stupefy and not can_activate_creature and equip_entries.is_empty():
+	if not can_attack and not can_stance and not can_move and not can_activate_creature and equip_entries.is_empty():
 		action_label.text = card.card_name + " has no available actions this turn."
 		return
 
@@ -3744,14 +4299,22 @@ func _on_creature_right_clicked(card: Card) -> void:
 					"Choose a target for " + card.card_name,
 					targets,
 					func(chosen: Card) -> void:
-						card.activate(game_manager, chosen)
-						action_label.text = _consume_resolution_feedback(card.card_name + " targeted " + chosen.card_name + ".")
-						update_ui()
+						_queue_targeted_ability_action(
+							card,
+							chosen,
+							func() -> void:
+								card.activate(game_manager, chosen)
+						)
 				)
 			else:
-				card.activate(game_manager)
-				action_label.text = _consume_resolution_feedback(card.card_name + " used " + (card.get_activation_label() if card.has_method("get_activation_label") else "its ability") + ".")
-				update_ui()
+				_queue_magical_action(
+					CardAction.Type.ABILITY,
+					card,
+					null,
+					card.card_name + " activated!",
+					func() -> void:
+						card.activate(game_manager)
+				)
 		)
 		vbox.add_child(btn)
 
@@ -3899,7 +4462,7 @@ func _input(event: InputEvent) -> void:
 		if _bdrag_ghost == null:
 			_bdrag_start_ghost()
 		else:
-			_bdrag_ghost.global_position = get_global_mouse_position() - Vector2(BoardZoneUI.ZONE_WIDTH, BoardZoneUI.ZONE_HEIGHT) / 2.0
+			_bdrag_ghost.global_position = get_global_mouse_position() - BoardZoneUI.get_zone_size() / 2.0
 		get_viewport().set_input_as_handled()
 	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and not event.pressed:
 		if _bdrag_ghost != null:
@@ -3947,9 +4510,10 @@ func _unhandled_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 
 func _bdrag_start_ghost() -> void:
+	var zone_size := BoardZoneUI.get_zone_size()
 	var panel := PanelContainer.new()
-	panel.custom_minimum_size = Vector2(BoardZoneUI.ZONE_WIDTH, BoardZoneUI.ZONE_HEIGHT)
-	panel.size = Vector2(BoardZoneUI.ZONE_WIDTH, BoardZoneUI.ZONE_HEIGHT)
+	panel.custom_minimum_size = zone_size
+	panel.size = zone_size
 	panel.z_index = 100
 	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var style := StyleBoxFlat.new()
@@ -3969,7 +4533,7 @@ func _bdrag_start_ghost() -> void:
 		var sl := Label.new(); sl.text = "STR:%d RES:%d SPD:%d" % [_bdrag_card.get_effective_strength(), _bdrag_card.get_effective_resilience(), _bdrag_card.get_effective_speed()]; sl.add_theme_font_size_override("font_size", 12); vbox.add_child(sl)
 	_bdrag_ghost = panel
 	get_tree().current_scene.add_child(_bdrag_ghost)
-	_bdrag_ghost.global_position = get_global_mouse_position() - Vector2(BoardZoneUI.ZONE_WIDTH, BoardZoneUI.ZONE_HEIGHT) / 2.0
+	_bdrag_ghost.global_position = get_global_mouse_position() - zone_size / 2.0
 
 func _bdrag_finish(drop_pos: Vector2) -> void:
 	var card := _bdrag_card
@@ -4134,6 +4698,7 @@ func _creature_can_attack(card: Card) -> bool:
 		card.card_type == Card.CardType.CREATURE
 		and card.can_take_major_creature_action()
 		and not card.is_sleeping
+		and not card.has_status_effect("cannot_attack")
 		and game_manager.turn_number > 0
 		and card.creature_mode == Card.CreatureMode.AGGRESSIVE
 		and card.current_zone != null
@@ -4202,6 +4767,18 @@ func _get_minimum_intercept_row_distance(defender: Card) -> int:
 	minimum_depth = max(0, minimum_depth - defender.get_intercept_reach_bonus())
 	return minimum_depth
 
+func _get_declared_attack_partner(attacker: Card) -> Card:
+	if attacker == null or not attacker.has_method("get_united_front_partner_for_attack"):
+		return null
+	return attacker.get_united_front_partner_for_attack(game_manager)
+
+func _get_declared_attack_speed(attacker: Card) -> int:
+	if attacker == null:
+		return 0
+	if attacker.has_method("get_united_front_attack_speed"):
+		return attacker.get_united_front_attack_speed(game_manager)
+	return attacker.get_effective_speed()
+
 func can_intercept(defender: Card, attacker: Card, protected_target) -> bool:
 	if attacker == null:
 		return false
@@ -4211,7 +4788,7 @@ func can_intercept(defender: Card, attacker: Card, protected_target) -> bool:
 		return false
 	if defender.is_sleeping:
 		return false
-	if defender.get_effective_speed() < attacker.get_effective_speed():
+	if defender.get_effective_speed() < _get_declared_attack_speed(attacker):
 		return false
 	# Aggressive-stance creatures can intercept once per turn at equal or greater speed
 	if defender.creature_mode == Card.CreatureMode.AGGRESSIVE and defender.can_take_major_creature_action():
@@ -4264,8 +4841,11 @@ func resolve_pending_attack() -> void:
 		update_ui()
 		return
 
+	var united_front_partner := _get_declared_attack_partner(selected_attacker)
 	var declared_defender: Card = selected_interceptor if selected_interceptor != null else (pending_attack_target if pending_attack_target is Card else null)
 	selected_attacker.reveal(game_manager)
+	if united_front_partner != null:
+		united_front_partner.reveal(game_manager)
 	if declared_defender != null:
 		declared_defender.reveal(game_manager)
 
@@ -4274,6 +4854,8 @@ func resolve_pending_attack() -> void:
 	action.type = CardAction.Type.ATTACK
 	action.source_player = game_manager.current_player
 	action.attacker = selected_attacker
+	action.united_front_partner = united_front_partner
+	action.attack_speed_override = _get_declared_attack_speed(selected_attacker)
 	action.interceptor = selected_interceptor
 	action.target = pending_attack_target
 	game_manager.push_to_stack(action)
@@ -4421,22 +5003,30 @@ func _on_priority_response_chosen(card: Card) -> void:
 
 	if card is HexCard:
 		var top: CardAction = game_manager.action_stack.back()
-		var def_card: Card = top.interceptor if top.interceptor != null else (top.target if top.target is Card else null)
+		var hex := card as HexCard
+		var has_manual_targets := hex.has_method("get_priority_targets") or top.type == CardAction.Type.ATTACK
+		var hex_targets: Array[Card] = game_manager.get_priority_hex_targets(hex, top) if has_manual_targets else []
+		var target_is_attacker := not hex.has_method("get_priority_targets") and top.type == CardAction.Type.ATTACK
+		if hex is PermanentHexCard and hex.targets and has_manual_targets:
+			_begin_priority_hex_target_selection(hex, top, target_is_attacker)
+			return
 		game_manager.prepared_hexes.erase(card)
 		card.is_prepared = false
 		card.reveal(game_manager)
-		var ability := CardAction.new()
-		ability.type = CardAction.Type.ABILITY
-		ability.source_player = card.card_owner
-		ability.card = card
-		ability.response_to = top
-		ability.attacker = top.attacker
-		ability.interceptor = top.interceptor
-		ability.target = top.target
-		_assign_stack_display_zone(ability)
-		game_manager.push_to_stack(ability)
-		action_label.text = card.card_name + " responds!"
-		_offer_priority()
+		if hex.targets and hex_targets.size() > 1:
+			_show_card_selection_overlay(
+				"Choose a target for " + hex.card_name,
+				hex_targets,
+				func(chosen: Card) -> void:
+					_queue_hex_response_action(hex, top, chosen, target_is_attacker)
+			)
+			return
+		if has_manual_targets and hex.targets and hex_targets.is_empty():
+			action_label.text = hex.card_name + " has no valid targets."
+			update_ui()
+			return
+		var chosen_target := hex_targets[0] if not hex_targets.is_empty() else null
+		_queue_hex_response_action(hex, top, chosen_target, target_is_attacker)
 	elif card is CharmCard:
 		var charm := card as CharmCard
 		if charm.targets:
@@ -4605,7 +5195,13 @@ func _show_retreat_prompt(ask_card: Askelladen) -> void:
 	panel.add_child(vbox)
 
 	var lbl := Label.new()
-	lbl.text = ask_card.get_controller().player_name + "'s Askelladen may use Tactful Retreat.\nReturn both creatures to the bottom of their decks?"
+	var ask_controller := ask_card.get_controller()
+	if ask_controller == null:
+		ask_controller = ask_card.card_owner
+	var ask_owner_prefix := ""
+	if ask_controller != null and ask_controller.player_name != "":
+		ask_owner_prefix = ask_controller.player_name + "'s "
+	lbl.text = ask_owner_prefix + "Askelladen may use Tactful Retreat.\nReturn both creatures to the bottom of their decks?"
 	lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	lbl.add_theme_font_size_override("font_size", 13)
 	vbox.add_child(lbl)
@@ -4942,7 +5538,7 @@ func _show_absence_mode_prompt(spell: Absence, target: Card) -> void:
 	vbox.add_child(title)
 
 	var info := Label.new()
-	info.text = "Choose how to affect " + target.card_name + "."
+	info.text = "Choose how to affect " + _get_target_label(target, game_manager.get_feedback_viewer(), "target") + "."
 	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	vbox.add_child(info)
 
@@ -5143,13 +5739,12 @@ func _resolve_absence_with_mode(mode: String) -> void:
 	if spell == null or target == null:
 		update_ui()
 		return
-	var target_label := target.card_name
-	if target is PowerCard and (target as PowerCard).is_face_down and not (target as PowerCard).is_publicly_revealed:
-		target_label = "a face-down power"
+	var target_label := _get_target_label(target, game_manager.get_feedback_viewer(), "target")
+	var source_label := _get_attack_card_label(spell, spell.card_name)
 	_queue_hand_spell_cast(
 		spell,
 		target,
-		"Cast Absence on " + target_label + " (" + ("flip down" if mode == "relock" else "mute") + ").",
+		source_label + " is targeting " + target_label + ".",
 		func() -> void:
 			spell.apply_to_power(target, mode, game_manager)
 	)
@@ -5878,13 +6473,26 @@ func _execute_top_of_stack() -> void:
 	_executing_stack_action = true
 	var action: CardAction = game_manager.action_stack.pop_back()
 
+	var get_active_attackers := func() -> Array[Card]:
+		if action.united_front_partner != null and game_manager != null and game_manager.has_method("_get_active_united_front_attackers"):
+			return game_manager._get_active_united_front_attackers(action.attacker, action.united_front_partner)
+		var active_attackers: Array[Card] = []
+		if action.attacker != null and action.attacker.current_zone != null and action.attacker.current_zone.is_board_zone():
+			active_attackers.append(action.attacker)
+		return active_attackers
+
+	var spend_attack_actions := func() -> void:
+		for combatant in get_active_attackers.call():
+			combatant.spend_major_creature_action()
+			combatant.mark_attacked_this_turn()
+
 	match action.type:
 		CardAction.Type.ABILITY:
 			if action.card is HexCard:
 				var hex := action.card as HexCard
 				if hex.has_method("on_activate_action"):
 					hex.on_activate_action(game_manager, action)
-					action_label.text = hex.card_name + " negated " + (action.response_to.card.card_name if action.response_to != null and action.response_to.card != null else "the effect") + "!"
+					action_label.text = _consume_resolution_feedback(action.resolution_text if action.resolution_text != "" else hex.card_name + " resolved!")
 				else:
 					var def_card: Card = action.interceptor if action.interceptor != null else (action.target if action.target is Card else null)
 					game_manager.activate_hex(hex, action.attacker, def_card)
@@ -5904,6 +6512,10 @@ func _execute_top_of_stack() -> void:
 		CardAction.Type.EVENT:
 			if action.resolve_callback.is_valid():
 				action.resolve_callback.call()
+				action_label.text = _consume_resolution_feedback(
+					action.event_name.replace("_", " ").capitalize() + " passed."
+				)
+				_capture_action_log_message()
 			else:
 				action_label.text = action.event_name.replace("_", " ").capitalize() + " passed."
 
@@ -5916,6 +6528,8 @@ func _execute_top_of_stack() -> void:
 			game_manager.current_phase = GameManager.GamePhase.COMBAT
 			var actual_target = action.interceptor if action.interceptor != null else action.target
 			action.attacker.reveal(game_manager)
+			if action.united_front_partner != null:
+				action.united_front_partner.reveal(game_manager)
 			if actual_target is Card:
 				actual_target.reveal(game_manager)
 			action.attacker.mark_attacked_this_turn()
@@ -5933,24 +6547,46 @@ func _execute_top_of_stack() -> void:
 				if not blocked_retreats.is_empty():
 					blocked_ask = blocked_retreats[0]
 				var finish_attack := func() -> void:
+					var active_attackers: Array[Card] = get_active_attackers.call()
 					if blocked_ask != null:
 						action_label.text = "Asaruludu's Guardian prevented " + _get_card_name_safe(blocked_ask) + "'s Tactful Retreat!"
 					else:
-						action_label.text = _get_attack_card_label(action.attacker, "The attacker") + " fought " + _get_card_name_safe(actual_target) + "!"
-					action.attacker.spend_major_creature_action()
+						if active_attackers.size() >= 2:
+							action_label.text = _get_attack_card_label(active_attackers[0], "The attacker") + " and " + _get_card_name_safe(active_attackers[1]) + " fought " + _get_card_name_safe(actual_target) + "!"
+						else:
+							var acting_attacker := active_attackers[0] if not active_attackers.is_empty() else action.attacker
+							action_label.text = _get_attack_card_label(acting_attacker, "The attacker") + " fought " + _get_card_name_safe(actual_target) + "!"
+					spend_attack_actions.call()
 					update_ui()
 					if _stack_resolution_paused:
 						_resume_after_deferred_resolution(action_label.text)
 					else:
 						_finish_post_execute(action.source_player)
 				_executing_stack_action = false
-				game_manager.resolve_combat_with_continuation(action.attacker, actual_target, finish_attack)
+				if action.united_front_partner != null:
+					game_manager.resolve_united_front_combat(action.attacker, action.united_front_partner, actual_target)
+					finish_attack.call()
+				else:
+					game_manager.resolve_combat_with_continuation(action.attacker, actual_target, finish_attack)
 				return
 			elif actual_target is Player:
-				actual_target.lose_followers(action.attacker.get_effective_strength())
-				game_manager._notify_after_combat(action.attacker, null)
-				action_label.text = _get_attack_card_label(action.attacker, "The attacker") + " dealt " + str(action.attacker.get_effective_strength()) + " damage to followers!"
-			action.attacker.spend_major_creature_action()
+				var active_attackers: Array[Card] = get_active_attackers.call()
+				if active_attackers.is_empty():
+					_executing_stack_action = false
+					action_label.text = "The attack was cancelled before damage resolution."
+					_finish_post_execute(action.source_player)
+					return
+				var follower_damage := 0
+				for combatant in active_attackers:
+					follower_damage += combatant.get_effective_strength()
+				if active_attackers.size() >= 2:
+					game_manager._notify_after_united_front_combat(active_attackers[0], active_attackers[1], null)
+					action_label.text = _get_attack_card_label(active_attackers[0], "The attacker") + " and " + _get_card_name_safe(active_attackers[1]) + " dealt " + str(follower_damage) + " damage to followers!"
+				else:
+					game_manager._notify_after_combat(active_attackers[0], null)
+					action_label.text = _get_attack_card_label(active_attackers[0], "The attacker") + " dealt " + str(follower_damage) + " damage to followers!"
+				actual_target.lose_followers(follower_damage)
+			spend_attack_actions.call()
 
 	_executing_stack_action = false
 	if _stack_resolution_paused:
@@ -6175,7 +6811,7 @@ func _next_resurrection_prompt() -> void:
 	vbox.add_child(title)
 
 	var body := Label.new()
-	body.text = card.card_owner.player_name + ": pay 1 mana to resurrect in your back line?"
+	body.text = card.card_owner.player_name + ": pay 1 mana to resurrect in your reserve line?"
 	body.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	vbox.add_child(body)
@@ -6384,11 +7020,13 @@ func _on_card_drag_released(card: Card, drop_pos: Vector2, card_rotated: bool, c
 	update_ui()
 
 func _cast_targeted_spell(spell: Card, target: Card) -> void:
+	var target_label := _get_target_label(target, game_manager.get_feedback_viewer(), target.card_name if target != null else "target")
+	var source_label := _get_attack_card_label(spell, spell.card_name if spell != null else "Spell")
 	if spell is Absence and target != null and target.is_god:
 		_queue_hand_spell_cast(
 			spell,
 			target,
-			"Cast Absence on " + target.card_name + " (mute).",
+			source_label + " is targeting " + target_label + ".",
 			func() -> void:
 				(spell as Absence).apply_to_power(target, "mute", game_manager)
 		)
@@ -6396,13 +7034,10 @@ func _cast_targeted_spell(spell: Card, target: Card) -> void:
 	if spell is Absence and target is PowerCard and not (target as PowerCard).is_face_down:
 		_show_absence_mode_prompt(spell as Absence, target)
 		return
-	var target_label := target.card_name
-	if target is PowerCard and (target as PowerCard).is_face_down and not (target as PowerCard).is_publicly_revealed:
-		target_label = "a face-down power"
 	_queue_hand_spell_cast(
 		spell,
 		target,
-		"Cast " + spell.card_name + " on " + target_label + "!",
+		source_label + " is targeting " + target_label + ".",
 		func() -> void:
 			(spell as SpellCard).resolve(game_manager, target)
 	)
@@ -6439,6 +7074,17 @@ func _on_card_dropped_to_zone(card: Card, zone: Zone, is_rotated: bool = false, 
 	if card is BitMeseri:
 		if zone.cards.size() > 0:
 			_cast_targeted_spell(card, zone.cards[0])
+		return
+	if card is PermanentHexCard and zone.cards.size() > 0:
+		var permanent_hex := card as PermanentHexCard
+		var dropped_target := zone.get_creature()
+		if dropped_target != null and permanent_hex.can_play_to_target(game_manager, dropped_target):
+			_pending_drop_zone = null
+			_resolve_hand_permanent_hex_target(permanent_hex, dropped_target)
+		else:
+			selected_card = permanent_hex
+			action_label.text = permanent_hex.card_name + " must target a creature."
+			update_ui()
 		return
 	if card is Absence:
 		if zone.cards.size() > 0 and (zone.cards[0] is PowerCard or zone.cards[0].is_god):

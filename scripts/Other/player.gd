@@ -88,10 +88,12 @@ func validate_deck(deck: Array[Card]) -> bool:
 	var god_count = 0
 	var power_count = 0
 	var regular_card_count = 0
+	var god_culture := ""
 	
 	for card in deck:
 		if card.is_god:
 			god_count += 1
+			god_culture = card.culture
 		elif card.is_power:
 			power_count += 1
 		else:
@@ -103,6 +105,10 @@ func validate_deck(deck: Array[Card]) -> bool:
 		return false
 	if power_count > 3:
 		return false
+	for card in deck:
+		if card.is_power and not card.is_god:
+			if card.culture != "Neutral" and card.culture != god_culture:
+				return false
 	
 	var max_legendaries = int(regular_card_count / 10.0)
 	if legendary_count > max_legendaries:
@@ -143,11 +149,27 @@ func game_over() -> void:
 func move_card(card: Card, to_zone: Zone) -> void:
 	var from_zone = card.current_zone
 	var destination_zone := _resolve_destination_zone(card, from_zone, to_zone)
+	var creature_left_board := (
+		card.card_type == Card.CardType.CREATURE
+		and from_zone != null
+		and from_zone.is_board_zone()
+		and destination_zone != null
+		and not destination_zone.is_board_zone()
+	)
 	
-	if card.card_type == Card.CardType.CREATURE and from_zone and from_zone.is_board_zone():
-		if card.equipment.size() > 0 and destination_zone and not destination_zone.is_board_zone():
-			for equip in card.equipment.duplicate():
-				equip.unequip()
+	if creature_left_board:
+		for equip in card.equipment.duplicate():
+			if equip == null:
+				continue
+			equip.unequip()
+	if card.card_type == Card.CardType.EQUIPMENT and card.equipped_on != null:
+		var equipped_creature := card.equipped_on
+		var same_zone_move := destination_zone != null and equipped_creature != null and destination_zone == equipped_creature.current_zone
+		if not same_zone_move:
+			card.unequip()
+	if from_zone and from_zone.is_board_zone() and destination_zone and not destination_zone.is_board_zone():
+		if card.has_method("reset_activation_counter"):
+			card.reset_activation_counter()
 
 	if card.is_token and (destination_zone == null or not destination_zone.is_board_zone()):
 		if from_zone:
@@ -159,6 +181,15 @@ func move_card(card: Card, to_zone: Zone) -> void:
 		from_zone.remove_card(card)
 	destination_zone.add_card(card)
 	card_moved.emit(card, from_zone, destination_zone)
+	
+	if card.card_type == Card.CardType.CREATURE and destination_zone != null and destination_zone.is_board_zone():
+		for equip in card.equipment.duplicate():
+			if equip == null:
+				continue
+			var equip_zone: Zone = equip.current_zone
+			if equip_zone == destination_zone:
+				continue
+			equip.card_owner.move_card(equip, destination_zone)
 
 func draw_card() -> Card:
 	if deck_zone.get_card_count() > 0:

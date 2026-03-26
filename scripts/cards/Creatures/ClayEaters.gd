@@ -9,6 +9,8 @@ func _init() -> void:
 	super._init()
 	card_name = "Clay-Eaters"
 	card_types = ["Undead", "Horde", "Ancient Creature"]
+	if "Targeting" not in card_types:
+		card_types.append("Targeting")
 	level = 2
 	mana_cost = 0
 	sacrifice_cost = 0
@@ -20,7 +22,7 @@ func _init() -> void:
 	flavor_text = ""
 	culture = "Ancient"
 	artist = "Ricardo Zoppello"
-	art_path = "res://images/card_art/Clay-eaters(web).jpg"
+	art_path = "res://images/card_art/creatures/Clay-eaters(web).jpg"
 	targets = true
 
 func get_activation_label() -> String:

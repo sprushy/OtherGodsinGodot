@@ -9,6 +9,8 @@ func _init() -> void:
 	speed = 7
 	culture = "Ancient"
 	card_types = ["Magic Negation"]
+	if "Targeting" not in card_types:
+		card_types.append("Targeting")
 	ability_text = "Negate the activation of a magical card and send it to the [b]Void[/b]."
 	flavor_text = ""
 	artist = "Ricarrdo Zoppello"
@@ -30,6 +32,8 @@ func on_activate_action(game_manager: GameManager, action: CardAction) -> void:
 		card_owner.move_card(self, card_owner.graveyard_zone)
 		return
 	print(card_name + " negates " + negated_action.card.card_name + " and sends it to the abyss!")
+	if game_manager != null:
+		game_manager.note_player_feedback(card_name + " negated " + negated_action.card.card_name + " and sent it to the abyss.")
 	if negated_action in game_manager.action_stack:
 		game_manager.action_stack.erase(negated_action)
 	game_manager.banish_card_with_hook(negated_action.card)

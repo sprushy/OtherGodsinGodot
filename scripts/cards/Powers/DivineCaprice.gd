@@ -14,7 +14,7 @@ func _init() -> void:
 	card_types = ["Repositioning"]
 	ability_text = "[b]Unlock[/b] (1): [b]Activate[/b] - Pay 2 mana to move your cards to different legal slots. If multiple are hidden, you may make it unclear whether they switched."
 	artist = "Riccardo Zoppello"
-	art_path = "res://images/card_art/unused card cart/DivineCapriceAIEdit.png"
+	art_path = "res://images/card_art/powers/DivineCapriceAIEdit.png"
 
 func on_unlock(_game_manager: GameManager) -> void:
 	print(card_name + " unlocked.")

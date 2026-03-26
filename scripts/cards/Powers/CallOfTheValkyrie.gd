@@ -3,7 +3,7 @@ class_name CallOfTheValkyrie
 
 const UNLOCK_COST := 3
 const ACTIVATION_COST := 1
-const ART_PATH := "res://images/card_art/CalloftheValkyrieAIEdit.png"
+const ART_PATH := "res://images/card_art/powers/CalloftheValkyrieAIEdit.png"
 
 func _init() -> void:
 	super._init()
@@ -12,6 +12,9 @@ func _init() -> void:
 	level = 3
 	mana_cost = UNLOCK_COST
 	card_types = ["Power", "Return", "Creature"]
+	if "Targeting" not in card_types:
+		card_types.append("Targeting")
+	targets = true
 	ability_text = "[b]Unlock[/b] (3): [b]Activate[/b] - Pay 1 mana to [b]Prime[/b] a Norse Warrior from your graveyard."
 	artist = "Riccardo Zoppello"
 	art_path = ART_PATH

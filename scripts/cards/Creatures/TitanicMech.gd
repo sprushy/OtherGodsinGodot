@@ -16,4 +16,4 @@ func _init() -> void:
 	flavor_text = "Titan class mechs are heavily armoured moving fortresses, capable of sustaining a garrison for years at a time if necessary."
 	culture = "Atlanitan"
 	artist = "Stanley Vay"
-	art_path = "res://images/card_art/unused card cart/Titanic_Mech.jpg"
+	art_path = "res://images/card_art/creatures/Titanic_Mech.jpg"

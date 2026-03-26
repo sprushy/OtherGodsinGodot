@@ -16,4 +16,4 @@ func _init() -> void:
 	flavor_text = "In the falling days of Shang, the Black Emperor and his kin were called upon to lead the twelve heavenly legions into battle against the demon king."
 	culture = "Tian"
 	artist = "Riccardo Zoppello"
-	art_path = "res://images/card_art/Heidi, the black dragon(print).jpg"
+	art_path = "res://images/card_art/creatures/Heidi, the black dragon(print).jpg"

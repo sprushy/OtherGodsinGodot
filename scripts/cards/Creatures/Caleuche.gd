@@ -16,7 +16,7 @@ func _init() -> void:
 	ability_text = "Spirit Crew ([b]Passive[/b]): Gains 10 STR and 1 SPD for each other friendly Spirit on the field."
 	flavor_text = ""
 	culture = "Nahuatl"
-	art_path = "res://images/card_art/caleuche_art_fixed.png"
+	art_path = "res://images/card_art/creatures/caleuche_art_fixed.png"
 
 func on_summon(game_manager: GameManager) -> void:
 	_update_spirit_crew_bonus(game_manager)

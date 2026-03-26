@@ -28,6 +28,7 @@ var last_hex_resolution_text: String = ""
 var last_player_feedback_text: String = ""
 var _upkeep_resolved_turn: int = -1
 var _pending_doorway_structure: StructureCard = null
+var _pending_doorway_structures: Array[StructureCard] = []
 var _pending_doorway_card: Card = null
 var _pending_doorway_combat_death: bool = false
 var _pending_doorway_destruction: bool = false
@@ -108,6 +109,8 @@ func can_card_respond_to_priority(card: Card, player: Player = null) -> bool:
 			return false
 		var typed_hex := card as HexCard
 		if typed_hex.has_method("can_respond_to_action") and typed_hex.can_respond_to_action(top):
+			if typed_hex.has_method("get_priority_targets"):
+				return not get_priority_hex_targets(typed_hex, top).is_empty()
 			return true
 		return top.type == CardAction.Type.ATTACK and top.attacker != null and not get_attack_hex_targets(top, typed_hex).is_empty()
 	if card is CharmCard:
@@ -126,6 +129,16 @@ func can_card_respond_to_priority(card: Card, player: Player = null) -> bool:
 	if top_speed > 0 and card.get_effective_speed() < top_speed:
 		return false
 	return true
+
+func get_priority_hex_targets(hex: HexCard, action: CardAction) -> Array[Card]:
+	var valid_targets: Array[Card] = []
+	if hex == null or action == null:
+		return valid_targets
+	if hex.has_method("get_priority_targets"):
+		return hex.get_priority_targets(self, action)
+	if action.type == CardAction.Type.ATTACK:
+		return get_attack_hex_targets(action, hex)
+	return valid_targets
 
 func get_attack_hex_targets(action: CardAction, hex: HexCard) -> Array[Card]:
 	var valid_targets: Array[Card] = []
@@ -648,6 +661,11 @@ func creature_attack(attacker: Card, target) -> void:
 	if attack_restrictions.has(attacker_controller):
 		print(attacker_controller.player_name + " cannot attack! Restricted for " + str(attack_restrictions[attacker_controller].turns) + " more turns")
 		return
+	var cannot_attack_status := attacker.get_status_effect("cannot_attack")
+	if not cannot_attack_status.is_empty():
+		var source_name := str(cannot_attack_status.get("source", "an effect"))
+		print(attacker.card_name + " cannot attack because of " + source_name + ".")
+		return
 	
 	if not attacker.can_take_major_creature_action():
 		print("Creature has already acted this turn")
@@ -847,6 +865,7 @@ func resolve_united_front_combat(attacker: Card, partner: Card, defender: Card) 
 			elif defender_str > combined_strength:
 				var diff := defender_str - combined_strength
 				print("	United Front loses! %s loses %d followers" % [attacker_controller.player_name, diff])
+				note_player_feedback("United Front loses! Both attackers are destroyed.")
 				attacker_controller.lose_followers(diff)
 				_combat_kill(defender, primary)
 				_combat_kill(defender, support)
@@ -1235,14 +1254,15 @@ func request_send_to_graveyard(card: Card, continue_callback: Callable = Callabl
 		if continue_callback.is_valid():
 			continue_callback.call()
 		return true
-	var graveyard_replacement := _get_graveyard_replacement_source(card)
-	if graveyard_replacement != null:
-		_pending_doorway_structure = graveyard_replacement
+	var graveyard_replacements := _get_graveyard_replacement_sources(card)
+	if not graveyard_replacements.is_empty():
+		_pending_doorway_structures = graveyard_replacements
+		_pending_doorway_structure = _pending_doorway_structures.pop_front()
 		_pending_doorway_card = card
 		_pending_doorway_combat_death = combat_death
 		_pending_doorway_destruction = destruction
 		_pending_doorway_continue = continue_callback
-		doorway_choice_requested.emit(graveyard_replacement, card, combat_death, destruction)
+		doorway_choice_requested.emit(_pending_doorway_structure, card, combat_death, destruction)
 		return false
 	var success := _send_to_graveyard_with_hook_resolved(card, false, combat_death, destruction)
 	if continue_callback.is_valid():
@@ -1259,12 +1279,21 @@ func _send_to_graveyard_with_hook_resolved(card: Card, send_to_abyss: bool, comb
 		card.last_board_zone_type  = card.current_zone.zone_type
 		card.last_board_zone_index = card.current_zone.zone_index
 
+	var replacement_zone: Zone = null
+	if card.has_method("get_self_graveyard_replacement_zone") and not card.abilities_suppressed():
+		replacement_zone = card.get_self_graveyard_replacement_zone(self, combat_death, destruction, send_to_abyss)
+
 	if card.has_method("on_removed") and not card.abilities_suppressed():
 		card.on_removed(self)
 	if combat_death and card.has_method("on_death") and not card.abilities_suppressed():
 		card.on_death(self)
 
 	died_this_turn.append(card)
+	if replacement_zone != null:
+		card.card_owner.move_card(card, replacement_zone)
+		if replacement_zone == card.card_owner.hand_zone:
+			print("%s returns to %s's hand instead." % [card.card_name, card.card_owner.player_name])
+		return true
 	if send_to_abyss:
 		card.card_owner.move_card(card, card.card_owner.abyss_zone)
 	else:
@@ -1281,15 +1310,48 @@ func resolve_pending_doorway_choice(send_to_abyss: bool) -> bool:
 	var combat_death := _pending_doorway_combat_death
 	var destruction := _pending_doorway_destruction
 	var continue_callback := _pending_doorway_continue
+	if send_to_abyss:
+		_clear_pending_doorway_choice()
+		var abyss_success := _send_to_graveyard_with_hook_resolved(card, true, combat_death, destruction)
+		if continue_callback.is_valid():
+			continue_callback.call()
+		return abyss_success
+	if _advance_pending_doorway_choice():
+		return false
+	_clear_pending_doorway_choice()
+	var graveyard_success := _send_to_graveyard_with_hook_resolved(card, false, combat_death, destruction)
+	if continue_callback.is_valid():
+		continue_callback.call()
+	return graveyard_success
+
+func _advance_pending_doorway_choice() -> bool:
+	if _pending_doorway_card == null:
+		return false
+	while not _pending_doorway_structures.is_empty():
+		var next_structure = _pending_doorway_structures.pop_front()
+		if next_structure == null:
+			continue
+		if not is_instance_valid(next_structure):
+			continue
+		if not next_structure.replaces_graveyard_send(_pending_doorway_card, self):
+			continue
+		_pending_doorway_structure = next_structure
+		doorway_choice_requested.emit(
+			next_structure,
+			_pending_doorway_card,
+			_pending_doorway_combat_death,
+			_pending_doorway_destruction
+		)
+		return true
+	return false
+
+func _clear_pending_doorway_choice() -> void:
 	_pending_doorway_structure = null
+	_pending_doorway_structures.clear()
 	_pending_doorway_card = null
 	_pending_doorway_combat_death = false
 	_pending_doorway_destruction = false
 	_pending_doorway_continue = Callable()
-	var success := _send_to_graveyard_with_hook_resolved(card, send_to_abyss, combat_death, destruction)
-	if continue_callback.is_valid():
-		continue_callback.call()
-	return success
 func banish_card_with_hook(card: Card) -> void:
 	_send_to_abyss_with_hook(card)
 
@@ -1365,15 +1427,16 @@ func _get_active_structures() -> Array[StructureCard]:
 					active_structures.append(structure)
 	return active_structures
 
-func _get_graveyard_replacement_source(card: Card) -> StructureCard:
+func _get_graveyard_replacement_sources(card: Card) -> Array[StructureCard]:
+	var structures: Array[StructureCard] = []
 	if card == null or card.card_type != Card.CardType.CREATURE:
-		return null
+		return structures
 	if card.current_zone == null or not card.current_zone.is_board_zone():
-		return null
+		return structures
 	for structure in _get_active_structures():
 		if structure.replaces_graveyard_send(card, self):
-			return structure
-	return null
+			structures.append(structure)
+	return structures
 
 func _apply_god_passives_to_card(player: Player, card: Card) -> void:
 	if player.god_zone.cards.size() == 0:

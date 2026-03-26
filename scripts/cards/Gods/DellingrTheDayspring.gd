@@ -10,13 +10,15 @@ func _init() -> void:
 	super._init()
 	card_name = "Dellingr, the Dayspring"
 	card_types = ["Sun"]
+	if "Targeting" not in card_types:
+		card_types.append("Targeting")
 	mana_cost = 0
 	culture = "Norse"
 	targets = true
 	flavor_text = ""
 	ability_text = "Revealing Light (%d mana, [b]Activate[/b]): Reveal an opponent's card until the end of the turn; if it is magical, it cannot be activated this turn." % ACTIVATION_COST
 	artist = "Ricardo Zoppello"
-	art_path = "res://images/card_art/Dellingr(web).jpg"
+	art_path = "res://images/card_art/gods/Dellingr(web).jpg"
 
 func can_activate(game_manager: GameManager) -> bool:
 	if game_manager == null:

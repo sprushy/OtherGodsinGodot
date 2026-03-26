@@ -10,6 +10,8 @@ func _init() -> void:
 	
 	var types: Array[String] = ["Void", "Physical"]
 	card_types = types
+	if "Targeting" not in card_types:
+		card_types.append("Targeting")
 	
 	level = 2
 	mana_cost = 3
@@ -24,10 +26,14 @@ func _init() -> void:
 
 func resolve(game_manager: GameManager, target = null) -> void:
 	if target == null:
+		if game_manager != null:
+			game_manager.note_player_feedback("BitMeseri fizzles: it requires a target.")
 		print("BitMeseri requires a target!")
 		return
 	
 	if not (target is Card):
+		if game_manager != null:
+			game_manager.note_player_feedback("BitMeseri fizzles: it can only target cards.")
 		print("BitMeseri can only target cards!")
 		return
 	
@@ -35,6 +41,8 @@ func resolve(game_manager: GameManager, target = null) -> void:
 	
 	# Check if target is a creature, structure, or equipment
 	if target_card_typed.card_type != Card.CardType.CREATURE and target_card_typed.card_type != Card.CardType.STRUCTURE and target_card_typed.card_type != Card.CardType.EQUIPMENT:
+		if game_manager != null:
+			game_manager.note_player_feedback("BitMeseri fizzles: it can only target a physical card.")
 		print("BitMeseri can only target creatures, structures, or equipment!")
 		return
 	
@@ -42,7 +50,10 @@ func resolve(game_manager: GameManager, target = null) -> void:
 	
 	# --- FIX: Use the GameManager's hook function for banishment ---
 	# This ensures WardingStone.on_removed() is executed before removal.
+	var target_name := target_card_typed.get_target_log_display_name(game_manager.get_feedback_viewer()) if game_manager != null else target_card_typed.card_name
 	game_manager.banish_card_with_hook(target_card_typed)
+	if game_manager != null:
+		game_manager.note_player_feedback("BitMeseri sent " + target_name + " to the Abyss.")
 	
 	print(target_card_typed.card_name + " has been cast into the abyss!")
 

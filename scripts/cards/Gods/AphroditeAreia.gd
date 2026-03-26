@@ -10,8 +10,11 @@ func _init() -> void:
 	super._init()
 	card_name = "Aphrodite Areia"
 	card_types = ["Love", "Sex", "War"]
+	if "Targeting" not in card_types:
+		card_types.append("Targeting")
 	mana_cost = 0
 	culture = "Olympic"
+	targets = true
 	flavor_text = "Love and slaughter walk hand in hand."
 	ability_text = "Violent Delights (5 mana): If you destroyed an opponent's creature in combat this turn, [b]Enslave[/b] a creature."
 	art_path = ART_PATH

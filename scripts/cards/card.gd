@@ -2,7 +2,7 @@
 extends Resource
 class_name Card
 
-enum CardType { CREATURE, SPELL, AURA, EQUIPMENT, STRUCTURE, HEX, POWER, CHARM }
+enum CardType { CREATURE, SPELL, EQUIPMENT, STRUCTURE, HEX, POWER, CHARM }
 enum CreatureMode { AGGRESSIVE, DEFENSIVE }
 
 @export var card_name: String
@@ -227,6 +227,32 @@ func get_log_display_name(
 		return hidden_fallback
 	return get_display_name(prefer_ascii, font)
 
+func get_hidden_log_position_label() -> String:
+	var zone := current_zone
+	if zone == null:
+		return "a hidden card"
+	var controller := get_controller()
+	if controller == null:
+		controller = card_owner
+	var owner_prefix := controller.player_name + "'s " if controller != null and controller.player_name != "" else ""
+	match zone.zone_type:
+		Zone.ZoneType.FRONTLINE:
+			return owner_prefix + "Front Line position " + str(zone.zone_index + 1)
+		Zone.ZoneType.RESERVE:
+			return owner_prefix + "Reserve Line position " + str(zone.zone_index + 1)
+		Zone.ZoneType.POWER_SLOT:
+			return owner_prefix + "Power slot " + str(zone.zone_index + 1)
+		Zone.ZoneType.GOD_SLOT:
+			return owner_prefix + "God slot"
+	return owner_prefix + "position " + str(zone.zone_index + 1)
+
+func get_target_log_display_name(viewer: Player = null) -> String:
+	if current_zone != null and current_zone.zone_type in [Zone.ZoneType.GRAVEYARD, Zone.ZoneType.ABYSS]:
+		return get_display_name()
+	if is_hidden_from_viewer(viewer):
+		return get_hidden_log_position_label()
+	return get_display_name()
+
 func is_enslaved() -> bool:
 	var controller := get_controller()
 	return controller != null and card_owner != null and controller != card_owner
@@ -236,6 +262,12 @@ func has_status_effect(status_name: String) -> bool:
 		if status.get("name", "") == status_name:
 			return true
 	return false
+
+func get_status_effect(status_name: String) -> Dictionary:
+	for status in active_statuses:
+		if status.get("name", "") == status_name:
+			return status
+	return {}
 
 func is_petrified() -> bool:
 	return has_status_effect("petrified")
@@ -385,6 +417,9 @@ func get_effect_summary_lines() -> Array[String]:
 			var ward_kind := str(status.get("ward_kind", "")).replace("_", " ")
 			lines.append("Blessed Ward vs " + ward_kind.capitalize() + " from " + str(status.get("source", "?")))
 			continue
+		if raw_status_name == "cannot_attack":
+			lines.append("Cannot attack from " + str(status.get("source", "?")))
+			continue
 		if raw_status_name == "temporarily_revealed":
 			lines.append("Revealed until end of turn by " + str(status.get("source", "?")))
 			continue
@@ -394,6 +429,45 @@ func get_effect_summary_lines() -> Array[String]:
 		var status_name := raw_status_name.capitalize()
 		lines.append(status_name + " from " + str(status.get("source", "?")))
 
+	return lines
+
+func get_equipment_modifier_summary_parts() -> Array[String]:
+	var parts: Array[String] = []
+	if strength_modifier != 0:
+		parts.append("STR %+d" % strength_modifier)
+	if resilience_modifier != 0:
+		parts.append("RES %+d" % resilience_modifier)
+	if speed_modifier != 0:
+		parts.append("SPD %+d" % speed_modifier)
+	return parts
+
+func get_equipment_summary_label() -> String:
+	var parts := get_equipment_modifier_summary_parts()
+	if parts.is_empty():
+		return card_name
+	return "%s (%s)" % [card_name, ", ".join(parts)]
+
+func get_inline_ability_summary() -> String:
+	var summary := ability_text.strip_edges().replace("\n", " ")
+	while summary.contains("  "):
+		summary = summary.replace("  ", " ")
+	return summary
+
+func get_equipment_summary_lines() -> Array[String]:
+	var lines: Array[String] = []
+	for equip in equipment:
+		if equip == null:
+			continue
+		var line := equip.get_equipment_summary_label()
+		var effect_lines := equip.get_effect_summary_lines()
+		if effect_lines.is_empty():
+			var ability_summary := equip.get_inline_ability_summary()
+			if ability_summary != "":
+				effect_lines.append(ability_summary)
+		if effect_lines.is_empty():
+			lines.append(line)
+		else:
+			lines.append(line + ": " + " | ".join(effect_lines))
 	return lines
 
 func clear_buffs_from(source: String) -> void:
@@ -504,10 +578,10 @@ func can_respond_to(other_card: Card) -> bool:
 	return get_effective_speed() >= 2 and get_effective_speed() >= other_card.get_effective_speed()
 
 func is_permanent() -> bool:
-	return card_type in [CardType.CREATURE, CardType.AURA, CardType.EQUIPMENT, CardType.STRUCTURE, CardType.POWER]
+	return has_type("Permanent") or card_type in [CardType.CREATURE, CardType.EQUIPMENT, CardType.STRUCTURE, CardType.POWER]
 
 func goes_to_graveyard_after_use() -> bool:
-	return card_type in [CardType.SPELL, CardType.HEX, CardType.CHARM]
+	return not is_permanent() and card_type in [CardType.SPELL, CardType.HEX, CardType.CHARM]
 
 func get_ability_immunity_tag() -> String:
 	if ability_immunity_tag != "":

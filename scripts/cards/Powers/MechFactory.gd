@@ -4,7 +4,7 @@ class_name MechFactory
 const UNLOCK_COST := 3
 const ACTIVATION_COST := 3
 const MAX_ACTIVATIONS_PER_TURN := 2
-const ART_PATH := "res://images/card_art/unused card cart/Mech_Factory.jpg"
+const ART_PATH := "res://images/card_art/powers/Mech_Factory.jpg"
 
 var activations_this_turn: int = 0
 

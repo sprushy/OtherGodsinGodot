@@ -32,6 +32,7 @@ const KEYWORD_HINTS = {
 	"Upkeep": "This effect happens at the start of your turn.",
 	"Slay": "This effect triggers when this card destroys another creature in combat.",
 	"Slain": "This card was destroyed in combat.",
+	"Trollskap": "If this card is destroyed by an effect, return it to your hand instead.",
 	"Stone Infant": "Token creature with 17 STR, 17 RES, 1 SPD, and the types Token, Human, Stone, and Golem.",
 }
 
@@ -59,3 +60,11 @@ func on_enter_zone(zone: Zone) -> void:
 
 func on_leave_zone(zone: Zone) -> void:
 	pass
+
+func get_self_graveyard_replacement_zone(
+	_game_manager: GameManager,
+	_combat_death: bool,
+	_destruction: bool,
+	_send_to_abyss: bool
+) -> Zone:
+	return null

@@ -198,6 +198,9 @@ func _apply_card_style() -> void:
 		Card.CardType.CHARM:
 			style.bg_color = Color(0.30, 0.12, 0.22)
 			style.border_color = Color(0.95, 0.65, 0.35)
+		Card.CardType.HEX:
+			style.bg_color = Color(0.10, 0.24, 0.22)
+			style.border_color = Color(0.2, 0.82, 0.72)
 		Card.CardType.STRUCTURE:
 			style.bg_color = Color(0.28, 0.18, 0.08)
 			style.border_color = Color(0.75, 0.55, 0.3)

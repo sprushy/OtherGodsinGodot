@@ -16,6 +16,9 @@ func _init() -> void:
 	mana_cost = UNLOCK_COST
 	level = 3
 	card_types = ["Power", "Runic Worship"]
+	if "Targeting" not in card_types:
+		card_types.append("Targeting")
+	targets = true
 	ability_text = "Peaceful Runes: You may place a friendly Priest that attacked this turn under this card. End of turn: gain followers equal to 3 times the total level of Priests under it. [b]Upkeep[/b]: You may pay 1 mana to return a Priest to the field. If this card is flipped, return all cards under it to the field."
 	artist = "Lorinda Tomko"
 	art_path = "res://images/card_art/powers/breidablik.jpg"

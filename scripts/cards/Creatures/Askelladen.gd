@@ -5,6 +5,8 @@ func _init() -> void:
 	super._init()
 	card_name = "Askelladen"
 	card_types = ["Human", "Warrior", "Norse Creature"]
+	if "Targeting" not in card_types:
+		card_types.append("Targeting")
 	level = 1
 	mana_cost = 0
 	sacrifice_cost = 0

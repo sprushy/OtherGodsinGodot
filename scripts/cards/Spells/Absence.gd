@@ -9,6 +9,8 @@ func _init() -> void:
 	card_name = "Absence"
 	culture = "Neutral"
 	card_types = ["Silence", "God"]
+	if "Targeting" not in card_types:
+		card_types.append("Targeting")
 	level = 1
 	mana_cost = 1
 	speed = 1

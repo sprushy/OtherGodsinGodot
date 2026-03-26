@@ -1,6 +1,166 @@
 class_name BoardZoneUI
 extends PanelContainer
 
+class StackTargetIndicator extends Control:
+	func _ready() -> void:
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		custom_minimum_size = Vector2(22, 22)
+
+	func _draw() -> void:
+		var center := size * 0.5
+		var radius = min(size.x, size.y) * 0.34
+		draw_arc(center, radius + 2.0, 0.0, TAU, 36, Color(0.66, 0.44, 0.05, 0.92), 6.0, true)
+		draw_arc(center, radius, 0.0, TAU, 36, Color(1.0, 0.87, 0.36, 0.98), 4.0, true)
+		draw_arc(center + Vector2(-1.0, -1.0), radius - 1.5, 0.0, PI * 1.35, 24, Color(1.0, 0.97, 0.72, 0.82), 1.4, true)
+
+class DraupnirEquipIndicator extends Control:
+	func _ready() -> void:
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		custom_minimum_size = Vector2(18, 18)
+
+	func _draw() -> void:
+		var center := size * 0.5
+		var radius = min(size.x, size.y) * 0.26
+		draw_circle(center, radius + 3.4, Color(0.42, 0.27, 0.05, 0.95))
+		draw_circle(center, radius + 1.6, Color(0.98, 0.82, 0.24, 0.98))
+		draw_circle(center, radius - 0.8, Color(0.79, 0.60, 0.13, 0.95))
+		draw_circle(center + Vector2(0.0, -radius - 4.0), 1.8, Color(1.0, 0.93, 0.56, 0.95))
+		draw_circle(center + Vector2(radius + 3.4, 1.6), 1.8, Color(1.0, 0.93, 0.56, 0.95))
+		draw_circle(center + Vector2(-radius - 3.4, 1.6), 1.8, Color(1.0, 0.93, 0.56, 0.95))
+		draw_arc(center + Vector2(-0.5, -1.0), radius + 0.8, PI * 0.2, PI * 0.8, 12, Color(1.0, 0.96, 0.72, 0.8), 1.2, true)
+
+class AxeEquipIndicator extends Control:
+	func _ready() -> void:
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		custom_minimum_size = Vector2(18, 18)
+
+	func _draw() -> void:
+		var handle_from := Vector2(5.0, 13.5)
+		var handle_to := Vector2(12.8, 5.4)
+		draw_line(handle_from, handle_to, Color(0.34, 0.19, 0.07, 0.98), 3.2, true)
+		draw_line(handle_from + Vector2(0.7, -0.6), handle_to + Vector2(0.7, -0.6), Color(0.67, 0.46, 0.18, 0.65), 1.0, true)
+		draw_circle(handle_from, 1.5, Color(0.94, 0.82, 0.58, 0.95))
+		var blade := PackedVector2Array([
+			Vector2(10.8, 5.4),
+			Vector2(13.9, 2.9),
+			Vector2(15.8, 4.8),
+			Vector2(13.7, 8.2),
+			Vector2(11.7, 7.4),
+		])
+		draw_colored_polygon(blade, Color(0.82, 0.88, 0.93, 0.98))
+		var edge := PackedVector2Array([
+			Vector2(10.4, 7.8),
+			Vector2(8.1, 5.5),
+			Vector2(9.9, 3.8),
+			Vector2(11.8, 5.8),
+		])
+		draw_colored_polygon(edge, Color(0.62, 0.72, 0.78, 0.94))
+
+class BindingHexIndicator extends Control:
+	func _ready() -> void:
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		custom_minimum_size = Vector2(18, 18)
+
+	func _draw() -> void:
+		var ring_color := Color(0.48, 0.92, 0.88, 0.98)
+		var accent_color := Color(0.15, 0.42, 0.44, 0.95)
+		draw_arc(Vector2(6.2, 9.0), 3.8, PI * 0.15, PI * 1.85, 18, ring_color, 2.2, true)
+		draw_arc(Vector2(11.8, 9.0), 3.8, PI * 1.15, PI * 2.85, 18, ring_color, 2.2, true)
+		draw_line(Vector2(7.8, 6.0), Vector2(10.2, 12.0), accent_color, 1.8, true)
+		draw_line(Vector2(10.2, 6.0), Vector2(7.8, 12.0), accent_color, 1.8, true)
+		draw_circle(Vector2(9.0, 9.0), 1.2, Color(0.85, 1.0, 0.98, 0.95))
+
+class DromiChainIndicator extends Control:
+	func _ready() -> void:
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		custom_minimum_size = Vector2(18, 18)
+
+	func _draw() -> void:
+		var chain_color := Color(0.95, 0.18, 0.15, 0.98)
+		var glow_color := Color(1.0, 0.55, 0.44, 0.72)
+		var shadow_color := Color(0.26, 0.03, 0.03, 0.92)
+		draw_arc(Vector2(6.0, 7.6), 3.7, PI * 0.15, PI * 1.87, 20, glow_color, 4.2, true)
+		draw_arc(Vector2(11.9, 10.3), 3.7, -PI * 0.83, PI * 0.88, 20, glow_color, 4.2, true)
+		draw_arc(Vector2(6.0, 7.6), 3.3, PI * 0.15, PI * 1.87, 20, chain_color, 2.4, true)
+		draw_arc(Vector2(11.9, 10.3), 3.3, -PI * 0.83, PI * 0.88, 20, chain_color, 2.4, true)
+		draw_line(Vector2(8.2, 8.8), Vector2(9.8, 9.4), shadow_color, 2.2, true)
+		draw_line(Vector2(8.4, 7.7), Vector2(10.6, 10.5), chain_color, 2.2, true)
+		draw_line(Vector2(10.5, 7.2), Vector2(7.7, 10.8), chain_color, 2.2, true)
+		draw_circle(Vector2(9.2, 9.1), 1.1, Color(1.0, 0.83, 0.76, 0.92))
+
+class AttackAura extends Control:
+	const _ARC_STEPS := 8
+
+	func _ready() -> void:
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		queue_redraw()
+
+	func _draw() -> void:
+		var outer_rect := Rect2(Vector2(5.0, 5.0), size - Vector2(10.0, 10.0))
+		if outer_rect.size.x <= 0.0 or outer_rect.size.y <= 0.0:
+			return
+
+		_draw_rounded_outline(outer_rect, 11.0, Color(1.0, 0.10, 0.08, 0.10), 12.0)
+		_draw_rounded_outline(outer_rect, 11.0, Color(1.0, 0.12, 0.10, 0.18), 8.0)
+		_draw_rounded_outline(outer_rect, 11.0, Color(1.0, 0.16, 0.12, 0.30), 4.0)
+		_draw_rounded_outline(outer_rect, 11.0, Color(0.98, 0.20, 0.14, 0.95), 2.2)
+
+		var inner_rect := outer_rect.grow(-5.0)
+		if inner_rect.size.x > 0.0 and inner_rect.size.y > 0.0:
+			_draw_rounded_outline(inner_rect, 7.0, Color(1.0, 0.58, 0.34, 0.78), 1.2)
+
+	func _draw_rounded_outline(rect: Rect2, radius: float, color: Color, width: float) -> void:
+		var points := _build_rounded_rect_points(rect, radius)
+		if points.size() >= 2:
+			draw_polyline(points, color, width, true)
+
+	func _build_rounded_rect_points(rect: Rect2, radius: float) -> PackedVector2Array:
+		var clamped_radius := minf(radius, minf(rect.size.x * 0.5, rect.size.y * 0.5))
+		var points := PackedVector2Array()
+		points.append(rect.position + Vector2(clamped_radius, 0.0))
+		_append_arc(
+			points,
+			rect.position + Vector2(rect.size.x - clamped_radius, clamped_radius),
+			-PI * 0.5,
+			0.0,
+			clamped_radius
+		)
+		_append_arc(
+			points,
+			rect.position + Vector2(rect.size.x - clamped_radius, rect.size.y - clamped_radius),
+			0.0,
+			PI * 0.5,
+			clamped_radius
+		)
+		_append_arc(
+			points,
+			rect.position + Vector2(clamped_radius, rect.size.y - clamped_radius),
+			PI * 0.5,
+			PI,
+			clamped_radius
+		)
+		_append_arc(
+			points,
+			rect.position + Vector2(clamped_radius, clamped_radius),
+			PI,
+			PI * 1.5,
+			clamped_radius
+		)
+		points.append(points[0])
+		return points
+
+	func _append_arc(
+		points: PackedVector2Array,
+		center: Vector2,
+		from_angle: float,
+		to_angle: float,
+		radius: float
+	) -> void:
+		for step in range(1, _ARC_STEPS + 1):
+			var t := float(step) / float(_ARC_STEPS)
+			var angle := lerpf(from_angle, to_angle, t)
+			points.append(center + Vector2(cos(angle), sin(angle)) * radius)
+
 signal zone_clicked(zone: Zone)
 signal card_clicked(card: Card)
 signal creature_attack_requested(attacker: Card, target: Card)
@@ -23,10 +183,31 @@ var _hide_pending: bool = false
 var _defense_overlay: Control = null
 var _raised_overlay: Control = null  # non-null for DEF or stealth — floats above the zone row
 
-const ZONE_WIDTH  := 165
-const ZONE_HEIGHT := 110
+const BASE_ZONE_EXTENT := 165.0
+const DRAUPNIR_EQUIPMENT_NAME := "Draupnir the Multiplying"
+const BEARDED_AXE_EQUIPMENT_NAME := "Bearded Axe"
+const DROMI_BINDING_NAME := "Dromi"
+const DROMI_BINDING_HOVER_TEXT := "Cannot attack. Losing 7 followers on opponent's turn start - Dromi"
+static var _zone_extent: float = BASE_ZONE_EXTENT
 
 var _row_label: String = ""
+
+static func get_base_zone_extent() -> float:
+	return BASE_ZONE_EXTENT
+
+static func get_zone_extent() -> float:
+	return _zone_extent
+
+static func get_zone_size() -> Vector2:
+	return Vector2(_zone_extent, _zone_extent)
+
+static func set_zone_extent(extent: float) -> void:
+	_zone_extent = max(BASE_ZONE_EXTENT, floor(extent))
+
+func _get_viewer_player() -> Player:
+	if game_manager == null:
+		return null
+	return game_manager.get_feedback_viewer()
 
 func _is_public_power(card: Card) -> bool:
 	return card is PowerCard and ((card as PowerCard).is_publicly_revealed or card.is_temporarily_revealed() or not card.is_face_down)
@@ -53,8 +234,6 @@ func _get_card_type_label(card: Card) -> String:
 			return "Hex"
 		Card.CardType.EQUIPMENT:
 			return "Equipment"
-		Card.CardType.AURA:
-			return "Aura"
 	return "Card"
 
 func _add_sleep_affordance(overlay: Control, card: Card) -> void:
@@ -196,11 +375,194 @@ func _add_priority_response_aura(overlay: Control) -> void:
 	ring.add_theme_stylebox_override("panel", ring_style)
 	overlay.add_child(ring)
 
+func _add_attack_aura(overlay: Control) -> void:
+	if overlay == null:
+		return
+
+	var aura := AttackAura.new()
+	aura.z_index = 1
+	aura.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	overlay.add_child(aura)
+
+func _add_stack_target_indicator(overlay: Control) -> void:
+	if overlay == null:
+		return
+
+	var marker := StackTargetIndicator.new()
+	marker.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	marker.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	marker.offset_left = -28
+	marker.offset_top = 6
+	marker.offset_right = -6
+	marker.offset_bottom = 28
+	overlay.add_child(marker)
+
+func _card_has_equipment_named(card: Card, equipment_name: String) -> bool:
+	if card == null:
+		return false
+	for equip in card.equipment:
+		if equip != null and equip.card_name == equipment_name:
+			return true
+	return false
+
+func _add_equipment_indicator_badge(
+	overlay: Control,
+	icon: Control,
+	offset_left: float,
+	offset_top: float,
+	fill_color: Color,
+	border_color: Color
+) -> void:
+	if overlay == null or icon == null:
+		return
+	var badge := PanelContainer.new()
+	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	badge.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	badge.offset_left = offset_left
+	badge.offset_top = offset_top
+	badge.offset_right = offset_left + 22.0
+	badge.offset_bottom = offset_top + 22.0
+
+	var badge_style := StyleBoxFlat.new()
+	badge_style.bg_color = fill_color
+	badge_style.border_color = border_color
+	badge_style.shadow_color = Color(0.04, 0.03, 0.01, 0.4)
+	badge_style.shadow_size = 4
+	badge_style.corner_radius_top_left = 11
+	badge_style.corner_radius_top_right = 11
+	badge_style.corner_radius_bottom_left = 11
+	badge_style.corner_radius_bottom_right = 11
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		badge_style.set_border_width(side, 1)
+	badge.add_theme_stylebox_override("panel", badge_style)
+	overlay.add_child(badge)
+
+	icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	icon.offset_left = 2
+	icon.offset_top = 2
+	icon.offset_right = -2
+	icon.offset_bottom = -2
+	badge.add_child(icon)
+
+func _add_equipment_affordances(overlay: Control, card: Card) -> void:
+	if overlay == null or card == null or card.card_type != Card.CardType.CREATURE:
+		return
+	var has_draupnir := _card_has_equipment_named(card, DRAUPNIR_EQUIPMENT_NAME)
+	var has_bearded_axe := _card_has_equipment_named(card, BEARDED_AXE_EQUIPMENT_NAME)
+	if not has_draupnir and not has_bearded_axe:
+		return
+
+	var badge_top := 32.0 if card.is_sleeping else 6.0
+	var badge_left := 6.0
+	if has_draupnir:
+		_add_equipment_indicator_badge(
+			overlay,
+			DraupnirEquipIndicator.new(),
+			badge_left,
+			badge_top,
+			Color(0.28, 0.17, 0.03, 0.9),
+			Color(1.0, 0.87, 0.4, 0.95)
+		)
+		badge_left += 24.0
+	if has_bearded_axe:
+		_add_equipment_indicator_badge(
+			overlay,
+			AxeEquipIndicator.new(),
+			badge_left,
+			badge_top,
+			Color(0.18, 0.12, 0.08, 0.9),
+			Color(0.88, 0.76, 0.56, 0.92)
+		)
+
+func _get_attached_permanent_hexes(card: Card) -> Array[Card]:
+	var bindings: Array[Card] = []
+	if card == null or card.current_zone == null:
+		return bindings
+	for zone_card in card.current_zone.cards:
+		if zone_card == null or zone_card == card:
+			continue
+		if zone_card is PermanentHexCard and (zone_card as PermanentHexCard).attached_target == card:
+			bindings.append(zone_card)
+	return bindings
+
+func _get_dromi_binding_source(card: Card) -> Card:
+	if card == null:
+		return null
+	for binding in _get_attached_permanent_hexes(card):
+		if binding != null and binding.card_name == DROMI_BINDING_NAME:
+			return binding
+	var cannot_attack_status := card.get_status_effect("cannot_attack")
+	if cannot_attack_status.is_empty():
+		return null
+	var source_name := str(cannot_attack_status.get("source", ""))
+	var source_card = cannot_attack_status.get("source_card", null)
+	if source_card is Card and (source_card as Card).card_name == DROMI_BINDING_NAME:
+		return source_card as Card
+	if source_name == DROMI_BINDING_NAME:
+		if source_card is Card:
+			return source_card as Card
+		return card
+	return null
+
+func _has_dromi_binding(card: Card) -> bool:
+	return _get_dromi_binding_source(card) != null
+
+func _add_binding_affordances(overlay: Control, card: Card) -> void:
+	if overlay == null or card == null or card.card_type != Card.CardType.CREATURE:
+		return
+	if not _has_dromi_binding(card):
+		return
+	var badge_top := 32.0 if card.is_sleeping else 6.0
+	_add_equipment_indicator_badge(
+		overlay,
+		DromiChainIndicator.new(),
+		6.0,
+		badge_top + 24.0,
+		Color(0.28, 0.05, 0.05, 0.94),
+		Color(1.0, 0.35, 0.28, 0.96)
+	)
+
+func _get_binding_hover_lines(binding: Card) -> Array[String]:
+	var details: Array[String] = []
+	if binding == null:
+		return details
+	if binding.card_name == DROMI_BINDING_NAME:
+		details.append(DROMI_BINDING_HOVER_TEXT)
+		return details
+	var ability_summary := binding.get_inline_ability_summary()
+	if ability_summary != "":
+		details.append(ability_summary)
+	for effect_line in binding.get_effect_summary_lines():
+		if effect_line == "" or effect_line in details:
+			continue
+		details.append(effect_line)
+	return details
+
+func _is_card_targeted_on_stack(card: Card) -> bool:
+	if card == null or game_manager == null:
+		return false
+	for action in game_manager.action_stack:
+		if action == null:
+			continue
+		if action.target is Card and action.target == card:
+			return true
+	return false
+
 func _is_card_waiting_on_priority(card: Card) -> bool:
 	if card == null or game_manager == null:
 		return false
 	for action in game_manager.action_stack:
 		if action != null and action.card == card:
+			return true
+	return false
+
+func _is_card_attacking_on_stack(card: Card) -> bool:
+	if card == null or game_manager == null:
+		return false
+	for action in game_manager.action_stack:
+		if action == null or action.type != CardAction.Type.ATTACK:
+			continue
+		if action.attacker == card or action.united_front_partner == card:
 			return true
 	return false
 
@@ -225,6 +587,9 @@ func get_visual_anchor_global() -> Vector2:
 	var rect: Rect2 = anchor_control.get_global_rect()
 	return rect.position + rect.size * 0.5
 
+func _get_minimum_size() -> Vector2:
+	return get_zone_size()
+
 func setup(p_zone: Zone, p_gm: GameManager, p_player: Player, idx: int,
 		drop_cb: Callable, is_enemy: bool = false, row_label: String = "") -> void:
 	zone         = p_zone
@@ -234,8 +599,8 @@ func setup(p_zone: Zone, p_gm: GameManager, p_player: Player, idx: int,
 	_drop_callback = drop_cb
 	_is_enemy    = is_enemy
 	_row_label   = row_label
-	custom_minimum_size = Vector2(ZONE_WIDTH, ZONE_HEIGHT)
-	size_flags_vertical = Control.SIZE_EXPAND_FILL
+	custom_minimum_size = get_zone_size()
+	size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	_refresh_display()
 
@@ -262,8 +627,9 @@ func _refresh_display() -> void:
 			var fd_overlay := Control.new()
 			fd_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			add_child(fd_overlay)
+			var viewer := _get_viewer_player()
 			var revealed_face_down_power := (card is PowerCard and (card as PowerCard).is_publicly_revealed) or card.is_temporarily_revealed()
-			var is_own_hidden_card := card.get_controller() == game_manager.current_player and (
+			var is_own_hidden_card := card.get_controller() == viewer and (
 				card.is_stealth
 				or card.is_power
 				or card.is_prepared
@@ -281,7 +647,7 @@ func _refresh_display() -> void:
 				fd_overlay.add_child(art)
 			if show_revealed_power_art:
 				var revealed_haze := ColorRect.new()
-				var is_own_revealed_power := card.get_controller() == game_manager.current_player
+				var is_own_revealed_power := card.get_controller() == viewer
 				revealed_haze.color = Color(0.22, 0.45, 0.85, 0.26) if is_own_revealed_power else Color(0.85, 0.22, 0.45, 0.28)
 				revealed_haze.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 				revealed_haze.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -320,8 +686,12 @@ func _refresh_display() -> void:
 				haze.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 				haze.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				fd_overlay.add_child(haze)
-			if card.get_controller() == game_manager.current_player and card.is_prepared and card.is_magical_card():
+			if card.get_controller() == viewer and card.is_prepared and card.is_magical_card():
 				_add_speed_badge(fd_overlay, card)
+			if _is_card_attacking_on_stack(card):
+				_add_attack_aura(fd_overlay)
+			if _is_card_targeted_on_stack(card):
+				_add_stack_target_indicator(fd_overlay)
 			var _fd_is_def := card.card_type == Card.CardType.CREATURE and card.creature_mode == Card.CreatureMode.DEFENSIVE
 			_defense_overlay = fd_overlay if _fd_is_def else null
 			_raised_overlay  = fd_overlay if (_fd_is_def or card.is_stealth) else null
@@ -342,11 +712,16 @@ func _refresh_display() -> void:
 				# PanelContainer's child-fill behaviour entirely.
 				var overlay := Control.new()
 				overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+				overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 				add_child(overlay)
+				if _is_card_attacking_on_stack(card):
+					_add_attack_aura(overlay)
 				if _should_show_playing_aura(card):
 					_add_playing_aura(overlay)
 				if _is_card_usable_for_priority(card):
 					_add_priority_response_aura(overlay)
+				if _is_card_targeted_on_stack(card):
+					_add_stack_target_indicator(overlay)
 
 				var art := TextureRect.new()
 				art.texture = tex
@@ -405,8 +780,9 @@ func _refresh_display() -> void:
 					muted_badge.offset_top = -26
 					muted_badge.offset_bottom = -6
 					var muted_style := StyleBoxFlat.new()
-					muted_style.bg_color = Color(0.22, 0.14, 0.34, 0.9) if card.get_controller() == game_manager.current_player else Color(0.56, 0.18, 0.28, 0.9)
-					muted_style.border_color = Color(0.82, 0.9, 1.0, 0.95) if card.get_controller() == game_manager.current_player else Color(1.0, 0.76, 0.84, 0.95)
+					var viewer := _get_viewer_player()
+					muted_style.bg_color = Color(0.22, 0.14, 0.34, 0.9) if card.get_controller() == viewer else Color(0.56, 0.18, 0.28, 0.9)
+					muted_style.border_color = Color(0.82, 0.9, 1.0, 0.95) if card.get_controller() == viewer else Color(1.0, 0.76, 0.84, 0.95)
 					muted_style.corner_radius_top_left = 6
 					muted_style.corner_radius_top_right = 6
 					muted_style.corner_radius_bottom_left = 6
@@ -446,16 +822,22 @@ func _refresh_display() -> void:
 
 		var overlay := Control.new()
 		overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		add_child(overlay)
+		if _is_card_attacking_on_stack(card):
+			_add_attack_aura(overlay)
 		if _should_show_playing_aura(card):
 			_add_playing_aura(overlay)
 		if _is_card_usable_for_priority(card):
 			_add_priority_response_aura(overlay)
+		if _is_card_targeted_on_stack(card):
+			_add_stack_target_indicator(overlay)
 
 		# Art background; stealth shows hazed art (own) or cardback (opponent)
 		var show_public_stealth := card.is_stealth and card.is_temporarily_revealed()
 		if card.is_stealth:
-			var is_own := card.get_controller() == game_manager.current_player
+			var viewer := _get_viewer_player()
+			var is_own := card.get_controller() == viewer
 			var tex_path := card.art_path if (is_own or show_public_stealth) and card.art_path != "" else "res://images/cardbackAI.png"
 			var tex: Texture2D = load(tex_path)
 			if tex:
@@ -484,6 +866,10 @@ func _refresh_display() -> void:
 				overlay.add_child(art)
 
 		_add_sleep_affordance(overlay, card)
+		var viewer := _get_viewer_player()
+		if not card.is_stealth or card.get_controller() == viewer or card.is_temporarily_revealed():
+			_add_equipment_affordances(overlay, card)
+			_add_binding_affordances(overlay, card)
 
 		# VBox fills the zone; spacer pushes the stat label to the bottom
 		var vbox := VBoxContainer.new()
@@ -496,7 +882,7 @@ func _refresh_display() -> void:
 		spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		vbox.add_child(spacer)
 
-		var is_own_stealth_faceup := card.is_stealth and (card.get_controller() == game_manager.current_player or card.is_temporarily_revealed())
+		var is_own_stealth_faceup := card.is_stealth and (card.get_controller() == viewer or card.is_temporarily_revealed())
 		if card.card_type == Card.CardType.CREATURE and not card.is_god and (not card.is_stealth or is_own_stealth_faceup):
 			var eff_str := card.get_effective_strength()
 			var eff_res := card.get_effective_resilience()
@@ -573,8 +959,8 @@ func _refresh_display() -> void:
 			muted_badge.offset_top = -26
 			muted_badge.offset_bottom = -6
 			var muted_style := StyleBoxFlat.new()
-			muted_style.bg_color = Color(0.22, 0.14, 0.34, 0.9) if card.get_controller() == game_manager.current_player else Color(0.56, 0.18, 0.28, 0.9)
-			muted_style.border_color = Color(0.82, 0.9, 1.0, 0.95) if card.get_controller() == game_manager.current_player else Color(1.0, 0.76, 0.84, 0.95)
+			muted_style.bg_color = Color(0.22, 0.14, 0.34, 0.9) if card.get_controller() == viewer else Color(0.56, 0.18, 0.28, 0.9)
+			muted_style.border_color = Color(0.82, 0.9, 1.0, 0.95) if card.get_controller() == viewer else Color(1.0, 0.76, 0.84, 0.95)
 			muted_style.corner_radius_top_left = 6
 			muted_style.corner_radius_top_right = 6
 			muted_style.corner_radius_bottom_left = 6
@@ -622,6 +1008,8 @@ func _refresh_display() -> void:
 func _is_draggable_creature() -> bool:
 	if zone.cards.size() == 0:
 		return false
+	if _is_enemy:
+		return false
 	var card := zone.cards[0]
 	if card.card_type != Card.CardType.CREATURE:
 		return false
@@ -647,10 +1035,11 @@ func _gui_input(event: InputEvent) -> void:
 	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_RIGHT and event.pressed:
 		if zone.cards.size() > 0:
 			var card := zone.cards[0]
-			if card.card_type == Card.CardType.CREATURE and card.get_controller() == game_manager.current_player:
+			if not _is_enemy and card.card_type == Card.CardType.CREATURE and card.get_controller() == game_manager.current_player:
 				creature_right_clicked.emit(card)
 			# Pin the info popup on right-click for any visible card
-			if not card.is_face_down or card.get_controller() == game_manager.current_player or _is_public_power(card) or card.is_temporarily_revealed():
+			var viewer := _get_viewer_player()
+			if not card.is_face_down or card.get_controller() == viewer or _is_public_power(card) or card.is_temporarily_revealed():
 				_pinned = true
 				_hide_ability_popup()
 				_show_ability_popup()
@@ -674,7 +1063,8 @@ func _notification(what: int) -> void:
 			_hovered = true
 			z_index = 10
 			var _c := zone.cards[0] if zone != null and zone.cards.size() > 0 else null
-			if _c != null and (not _c.is_face_down or _c.get_controller() == game_manager.current_player or _is_public_power(_c) or _c.is_temporarily_revealed()):
+			var viewer := _get_viewer_player()
+			if _c != null and (not _c.is_face_down or _c.get_controller() == viewer or _is_public_power(_c) or _c.is_temporarily_revealed()):
 				var _delay := 1.0 if (_c.is_god) else 1.5
 				get_tree().create_timer(_delay).timeout.connect(
 					func() -> void: _try_show_popup()
@@ -758,14 +1148,30 @@ func _show_ability_popup() -> void:
 	popup.add_child(vbox)
 
 	# Hidden = opponent's stealth card; own stealth cards show full info
-	var hidden := (card.is_stealth or (card.is_face_down and not _is_public_power(card))) and card.get_controller() != game_manager.current_player and not card.is_temporarily_revealed()
+	var viewer := _get_viewer_player()
+	var hidden := (card.is_stealth or (card.is_face_down and not _is_public_power(card))) and card.get_controller() != viewer and not card.is_temporarily_revealed()
 
-	# Name
+	# Header row
+	var header_row := HBoxContainer.new()
+	header_row.add_theme_constant_override("separation", 8)
+	header_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vbox.add_child(header_row)
+
 	var name_lbl := Label.new()
 	name_lbl.add_theme_font_size_override("font_size", 13)
 	name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	name_lbl.text = card.get_display_name_for_control(name_lbl) if not hidden else "???"
-	vbox.add_child(name_lbl)
+	name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	header_row.add_child(name_lbl)
+
+	if not hidden and card.culture != "":
+		var culture_lbl := Label.new()
+		culture_lbl.text = card.culture
+		culture_lbl.add_theme_font_size_override("font_size", 11)
+		culture_lbl.add_theme_color_override("font_color", Color(0.96, 0.88, 0.62))
+		culture_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		culture_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		header_row.add_child(culture_lbl)
 
 	# Types
 	if not hidden:
@@ -864,6 +1270,48 @@ func _show_ability_popup() -> void:
 				effects_lbl.add_theme_color_override("font_color", Color(0.78, 0.9, 1.0))
 				effects_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				vbox.add_child(effects_lbl)
+
+			var equipment_lines := card.get_equipment_summary_lines()
+			if equipment_lines.size() > 0:
+				var equipment_lbl := Label.new()
+				equipment_lbl.text = "Equipment:\n" + "\n".join(equipment_lines)
+				equipment_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+				equipment_lbl.add_theme_font_size_override("font_size", 10)
+				equipment_lbl.add_theme_color_override("font_color", Color(1.0, 0.87, 0.62))
+				equipment_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+				vbox.add_child(equipment_lbl)
+
+			var binding_lines: Array[String] = []
+			for binding in _get_attached_permanent_hexes(card):
+				var line := binding.card_name
+				var binding_effect_lines := _get_binding_hover_lines(binding)
+				if binding_effect_lines.is_empty():
+					binding_lines.append(line)
+				else:
+					binding_lines.append(line + ": " + " | ".join(binding_effect_lines))
+			var has_dromi_line := false
+			for line in binding_lines:
+				if line.begins_with(DROMI_BINDING_NAME):
+					has_dromi_line = true
+					break
+			if not has_dromi_line and _has_dromi_binding(card):
+				var dromi_source := _get_dromi_binding_source(card)
+				if dromi_source != null and dromi_source != card:
+					var dromi_effect_lines := _get_binding_hover_lines(dromi_source)
+					if dromi_effect_lines.is_empty():
+						binding_lines.append(DROMI_BINDING_NAME + ": " + DROMI_BINDING_HOVER_TEXT)
+					else:
+						binding_lines.append(DROMI_BINDING_NAME + ": " + " | ".join(dromi_effect_lines))
+				else:
+					binding_lines.append(DROMI_BINDING_NAME + ": " + DROMI_BINDING_HOVER_TEXT)
+			if binding_lines.size() > 0:
+				var binding_lbl := Label.new()
+				binding_lbl.text = "Bindings:\n" + "\n".join(binding_lines)
+				binding_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+				binding_lbl.add_theme_font_size_override("font_size", 10)
+				binding_lbl.add_theme_color_override("font_color", Color(0.66, 0.97, 0.93))
+				binding_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+				vbox.add_child(binding_lbl)
 
 		# Action usage
 		if card.creature_major_action_used:

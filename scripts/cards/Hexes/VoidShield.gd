@@ -9,6 +9,7 @@ func _init() -> void:
 	ability_text = "When an opponent's creature attacks one of yours, [b]Void[/b] it."
 	flavor_text = "What reaches for the living may be swallowed by the void."
 	culture = "Ancient"
+	card_types = ["Targeting"]
 	art_path = "res://images/card_art/hexes/VoidShield.jpg"
 	artist = "Ricarrdo Zoppello"
 	targets = true

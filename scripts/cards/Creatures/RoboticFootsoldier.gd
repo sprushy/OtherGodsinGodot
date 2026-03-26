@@ -7,6 +7,8 @@ func _init() -> void:
 	super._init()
 	card_name = "Robotic Footsoldier"
 	card_types = ["Machine", "Robot", "Atlanitan Creature"]
+	if "Targeting" not in card_types:
+		card_types.append("Targeting")
 	level = 1
 	mana_cost = 0
 	sacrifice_cost = 0
@@ -18,7 +20,7 @@ func _init() -> void:
 	flavor_text = ""
 	culture = "Atlanitan"
 	artist = "Stanley Vay"
-	art_path = "res://images/card_art/unused card cart/Robot_Soldier_V2.jpg"
+	art_path = "res://images/card_art/creatures/Robot_Soldier_V2.jpg"
 	targets = true
 
 func get_activation_label() -> String:

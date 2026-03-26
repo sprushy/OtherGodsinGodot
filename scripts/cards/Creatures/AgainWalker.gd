@@ -12,7 +12,7 @@ func _init() -> void:
 	resilience = 10
 	strength = 15
 	flavor_text = "Death is never the end for those who walk again."
-	ability_text = "[b]Again[/b] (end of turn): If [b]Slain[/b] this turn, you may pay 1 mana to resurrect this card to your back line face-up in aggressive stance."
+	ability_text = "[b]Again[/b] (end of turn): If [b]Slain[/b] this turn, you may pay 1 mana to resurrect this card to your reserve line face-up in aggressive stance."
 	culture = "Norse"
 	art_path = "res://images/card_art/creatures/Again-Walker(web).jpg"
 

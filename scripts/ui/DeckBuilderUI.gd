@@ -61,13 +61,13 @@ func _make_all_cards() -> Array:
 	return [
 		Thor.new(), Mummu.new(), AphroditeAreia.new(), Baldr.new(), Cernunnos.new(), DellingrTheDayspring.new(),
 		AcceleratedFate.new(), ACostToWalkTheWorlds.new(), AdvancedBuildingTechniques.new(), AllfathersSacrifice.new(), AltarOfDreams.new(), AnankesBinding.new(), AncientWisdom.new(), BerserkerMead.new(), Breidablik.new(), CallOfTheValkyrie.new(), DivineCaprice.new(), MechFactory.new(),
-		Berserker.new(), Beyla.new(), BlessedKnights.new(), BrownBear.new(), Byggvir.new(), AnkouServantToTheReaper.new(), Anzu.new(), AnTheBowbender.new(),
+		Berserker.new(), Beyla.new(), BlessedKnights.new(), BrownBear.new(), Byggvir.new(), DurinnSecondborn.new(), AnkouServantToTheReaper.new(), Anzu.new(), AnTheBowbender.new(),
 		AsagTheDestroyer.new(), Asakku.new(), Asaruludu.new(), Caleuche.new(), Capricorn.new(), ClayEaters.new(),
-		AgainWalker.new(), Alu.new(), Askelladen.new(), Aurboda.new(), DevastatorMech.new(), EnkiLordOfEridu.new(), RoboticFootsoldier.new(), SoldierOfTheBlackEmperor.new(), TitanicMech.new(),
+		AgainWalker.new(), Alu.new(), Askelladen.new(), Aurboda.new(), DraugRevenant.new(), DevastatorMech.new(), EnkiLordOfEridu.new(), RoboticFootsoldier.new(), SoldierOfTheBlackEmperor.new(), TitanicMech.new(),
 		BitMeseri.new(), CircleOfRebirth.new(), FallOfTheMighty.new(), ApollyonsDemiurge.new(), Absence.new(), BaneOfTheSvartalfar.new(), BlotSacrifice.new(), BookOfLife.new(), DeucalionsInfants.new(), MeadOfPoetry.new(), DivineLightning.new(),
-		BeardedAxe.new(),
+		BeardedAxe.new(), DraupnirTheMultiplying.new(),
 		WardingStone.new(), AncientPyre.new(), AnointingStatue.new(), DoorwayToTheVoid.new(),
-		VoidShield.new(), Banishment.new(),
+		VoidShield.new(), Banishment.new(), Dromi.new(),
 	]
 
 # ── UI construction ────────────────────────────────────────────────
@@ -650,10 +650,14 @@ func _add_to_deck(card: Card) -> void:
 		return
 	# Only one god allowed total
 	if card.is_god:
+		if not _can_add_god_to_current_deck(card):
+			return
 		for name in _deck:
 			var tmpl := _find_template(name)
 			if tmpl and tmpl.is_god and _deck[name] > 0:
 				return
+	elif card.is_power and not _can_add_power_to_current_deck(card):
+		return
 	_deck[card.card_name] = current + 1
 	_refresh_deck_panel()
 
@@ -693,6 +697,9 @@ func _update_validation() -> void:
 	var power_count := 0
 	var regular_count := 0
 	var legendary_count := 0
+	var invalid_powers: PackedStringArray = []
+	var god_culture := ""
+	var god_name := ""
 
 	for card_name: String in _deck:
 		var cnt: int = _deck[card_name]
@@ -702,12 +709,23 @@ func _update_validation() -> void:
 		total += cnt
 		if card.is_god:
 			god_count += cnt
+			if god_name == "":
+				god_name = card.card_name
+				god_culture = card.culture
 		elif card.is_power and not card.is_god:
 			power_count += cnt
 		else:
 			regular_count += cnt
 			if card.is_legendary:
 				legendary_count += cnt
+
+	if god_culture != "":
+		for card_name: String in _deck:
+			var card := _find_template(card_name)
+			if card == null or not card.is_power or card.is_god:
+				continue
+			if not _is_power_compatible_with_culture(card, god_culture):
+				invalid_powers.append(card.card_name)
 
 	var max_legends := int(regular_count / 10.0)
 	var lines: PackedStringArray = []
@@ -724,6 +742,12 @@ func _update_validation() -> void:
 		lines.append("✓ Powers: %d / 3" % power_count)
 	else:
 		lines.append("✗ Powers: %d / 3" % power_count); ok = false
+
+	if invalid_powers.is_empty():
+		if god_culture != "":
+			lines.append("✓ Power culture: Neutral or %s" % god_culture)
+	elif god_name != "":
+		lines.append("✗ Power culture: %s" % ", ".join(invalid_powers)); ok = false
 
 	if legendary_count <= max_legends:
 		lines.append("✓ Legendaries: %d / %d" % [legendary_count, max_legends])
@@ -797,6 +821,21 @@ func _show_preview(card: Card) -> void:
 	_prev_flavor.text  = card.flavor_text  if card.flavor_text  != "" else ""
 
 # ── filter ─────────────────────────────────────────────────────────
+func _unhandled_input(event: InputEvent) -> void:
+	if not visible:
+		return
+	if event is not InputEventKey:
+		return
+	var key_event := event as InputEventKey
+	if not key_event.pressed or key_event.echo:
+		return
+	if key_event.keycode == KEY_LEFT:
+		_show_previous_page()
+		get_viewport().set_input_as_handled()
+	elif key_event.keycode == KEY_RIGHT:
+		_show_next_page()
+		get_viewport().set_input_as_handled()
+
 func _set_filter(new_filter: String) -> void:
 	_filter = new_filter
 	_current_page = 0
@@ -908,6 +947,35 @@ func _find_template(card_name: String) -> Card:
 		if card.card_name == card_name:
 			return card
 	return null
+
+func _get_selected_god_template() -> Card:
+	for card_name: String in _deck:
+		var card := _find_template(card_name)
+		if card != null and card.is_god and _deck.get(card_name, 0) > 0:
+			return card
+	return null
+
+func _is_power_compatible_with_culture(power: Card, culture: String) -> bool:
+	if power == null or not power.is_power or power.is_god:
+		return true
+	return power.culture == "Neutral" or culture == "" or power.culture == culture
+
+func _can_add_power_to_current_deck(power: Card) -> bool:
+	var god := _get_selected_god_template()
+	if god == null:
+		return true
+	return _is_power_compatible_with_culture(power, god.culture)
+
+func _can_add_god_to_current_deck(god: Card) -> bool:
+	if god == null or not god.is_god:
+		return false
+	for card_name: String in _deck:
+		var card := _find_template(card_name)
+		if card == null or not card.is_power or card.is_god or _deck.get(card_name, 0) <= 0:
+			continue
+		if not _is_power_compatible_with_culture(card, god.culture):
+			return false
+	return true
 
 func _get_type_color(card: Card) -> Color:
 	if card.is_god: return Color(0.9, 0.75, 0.2)

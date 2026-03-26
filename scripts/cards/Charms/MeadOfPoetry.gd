@@ -16,7 +16,7 @@ func _init() -> void:
 	flavor_text = ""
 	ability_text = "Must be prepared. Gain 4 mana."
 	artist = "Ricardo Zoppello"
-	art_path = "res://images/card_art/charms/meadofpoetry.jpg"
+	art_path = "res://images/card_art/MeadofPoetryAIEdit.png"
 
 func resolve(game_manager: GameManager, _target = null) -> void:
 	if card_owner == null:

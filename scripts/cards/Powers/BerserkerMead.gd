@@ -14,6 +14,9 @@ func _init() -> void:
 	level = 2
 	culture = "Norse"
 	card_types = ["Buff", "Creature", "Mead"]
+	if "Targeting" not in card_types:
+		card_types.append("Targeting")
+	targets = true
 	ability_text = "[b]Unlock[/b] (3): Choose a Norse creature under level 5. This turn it gains 7 Str and [b]Immortal[/b] against your opponent's effects and creatures. After any combat this turn, it falls asleep until the end of your next turn."
 	artist = "Lorinda Tomko"
 	art_path = "res://images/card_art/powers/poetmead.jpg"

@@ -16,4 +16,4 @@ func _init() -> void:
 	flavor_text = "Devastators can punch holes in even the thickest armour."
 	culture = "Atlanitan"
 	artist = "Stanley Vay"
-	art_path = "res://images/card_art/unused card cart/Glasscannon_Mech.jpg"
+	art_path = "res://images/card_art/creatures/Glasscannon_Mech.jpg"
