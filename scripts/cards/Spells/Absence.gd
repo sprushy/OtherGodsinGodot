@@ -16,7 +16,6 @@ func _init() -> void:
 	speed = 1
 	is_legendary = false
 	sacrifice_cost = 0
-	creature_sacrifice_cost = 0
 	targets = true
 	flavor_text = "Silence the divine, if only for a while."
 	art_path = ART_PATH

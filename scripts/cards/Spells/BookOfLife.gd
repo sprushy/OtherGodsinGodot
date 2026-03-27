@@ -59,14 +59,18 @@ func summon_silenced_creature(game_manager: GameManager, creature: Card) -> Card
 	if open_zone == null:
 		return null
 
-	card_owner.move_card(creature, open_zone)
-	creature.creature_mode = Card.CreatureMode.AGGRESSIVE
-	creature.reset_creature_action_state()
-	creature.summoned_this_turn = true
-	creature.is_face_down = false
-	creature.is_stealth = false
-	creature.wake_up()
+	if game_manager == null or not game_manager.summon_creature_by_effect(
+		card_owner,
+		creature,
+		open_zone,
+		Card.CreatureMode.AGGRESSIVE,
+		false,
+		false,
+		self,
+		false,
+		false,
+		false
+	):
+		return null
 	creature.mute_permanently(game_manager)
-	if game_manager != null and game_manager.has_method("_apply_god_passives_to_card"):
-		game_manager._apply_god_passives_to_card(card_owner, creature)
 	return creature

@@ -11,7 +11,6 @@ func _init() -> void:
 	resilience = 5
 	strength = 11
 	sacrifice_cost = 0
-	creature_sacrifice_cost = 0
 	ability_text = "Incorporeal ([b]Passive[/b]): Can only be Engaged by Spirits or faster Mages. Can only Engage Spirits or slower Mages."
 	flavor_text = ""
 	culture = "Ancient"

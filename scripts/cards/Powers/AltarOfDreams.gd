@@ -23,7 +23,7 @@ func can_replace_sacrifice_cost(creature_to_summon: Card, game_manager: GameMana
 		return false
 	if creature_to_summon.card_owner != card_owner:
 		return false
-	if creature_to_summon.creature_sacrifice_cost <= 0:
+	if creature_to_summon.sacrifice_cost <= 0:
 		return false
 	return _is_demon_or_spirit(creature_to_summon)
 
@@ -39,13 +39,13 @@ func get_valid_void_targets(game_manager: GameManager) -> Array[Card]:
 func has_enough_valid_void_targets(creature_to_summon: Card, game_manager: GameManager) -> bool:
 	if not can_replace_sacrifice_cost(creature_to_summon, game_manager):
 		return false
-	return get_valid_void_targets(game_manager).size() >= creature_to_summon.creature_sacrifice_cost
+	return get_valid_void_targets(game_manager).size() >= creature_to_summon.sacrifice_cost
 
 func pay_replacement_cost(creature_to_summon: Card, targets: Array[Card], game_manager: GameManager) -> bool:
 	if not can_replace_sacrifice_cost(creature_to_summon, game_manager):
 		return false
 
-	var required := creature_to_summon.creature_sacrifice_cost
+	var required := creature_to_summon.sacrifice_cost
 	if targets.size() < required:
 		return false
 
@@ -57,7 +57,7 @@ func pay_replacement_cost(creature_to_summon: Card, targets: Array[Card], game_m
 	for i in range(required):
 		var target := targets[i]
 		game_manager.banish_card_with_hook(target)
-		print("%s: Voided sleeping creature %s instead of paying a creature sacrifice cost." % [card_name, target.card_name])
+		print("%s: Voided sleeping creature %s instead of paying a sacrifice cost." % [card_name, target.card_name])
 
 	return true
 

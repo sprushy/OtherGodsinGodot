@@ -53,12 +53,15 @@ func _add_test_power(player: Player, slot_index: int, power: PowerCard, unlocked
 	if slot_index < 0 or slot_index >= player.power_zones.size():
 		return
 	power.card_owner = player
-	power.is_face_down = not unlocked
 	power.is_publicly_revealed = false
+	power.is_muted = false
+	power.mute_turns_remaining = 0
+	if unlocked:
+		power.is_face_down = false
+	else:
+		power.relock()
 	player.power_zones[slot_index].add_card(power)
 	if unlocked:
-		power.is_muted = false
-		power.mute_turns_remaining = 0
 		power.on_unlock(game_manager)
 
 func _add_test_god(player: Player, god: GodCard) -> void:
@@ -89,6 +92,19 @@ func _place_test_board_card(player: Player, zone: Zone, card: Card, mode: Card.C
 	zone.add_card(card)
 	if game_manager != null and game_manager.has_method("_apply_god_passives_to_card"):
 		game_manager._apply_god_passives_to_card(player, card)
+
+func _place_test_hidden_creature(player: Player, zone: Zone, card: Card) -> void:
+	_place_test_board_card(player, zone, card, Card.CreatureMode.DEFENSIVE)
+	card.is_face_down = true
+	card.is_stealth = true
+
+func _place_test_board_permanent(player: Player, zone: Zone, card: Card) -> void:
+	if player == null or zone == null or card == null:
+		return
+	card.card_owner = player
+	card.is_face_down = false
+	card.is_stealth = false
+	zone.add_card(card)
 
 func _equip_test_card(player: Player, zone: Zone, equipment: Card, creature: Card) -> void:
 	if player == null or zone == null or equipment == null or creature == null:
@@ -141,66 +157,105 @@ func _setup_test_board() -> void:
 	_reset_player_test_state(player2)
 	game_manager.prepared_hexes.clear()
 	game_manager.prepared_charms.clear()
+	game_manager.attack_restrictions.clear()
 	game_manager.died_this_turn.clear()
 	game_manager.pending_resurrections.clear()
 	game_manager.combat_destroy_events_this_turn.clear()
 	game_manager.action_stack.clear()
 	game_manager.consecutive_passes = 0
 	game_manager.priority_player = null
+	game_manager._temporary_summon_cost_modifiers.clear()
 
-	_add_test_hand_card(player1, Earthquake.new())
-	_add_test_hand_card(player1, Edimmu.new())
-	_add_test_hand_card(player1, EnkiLordOfEridu.new())
-	_add_test_hand_card(player1, EriduCityOfSages.new())
-	_add_test_hand_card(player1, ErlqueensNightingale.new())
-	_add_test_hand_card(player1, Exorcism.new())
-	_add_test_hand_card(player1, Dromi.new())
-	_add_test_hand_card(player1, AncientPyre.new())
-
-	_add_test_hand_card(player2, Earthquake.new())
-	_add_test_hand_card(player2, Edimmu.new())
-	_add_test_hand_card(player2, Enkidu.new())
-	_add_test_hand_card(player2, EnkiLordOfEridu.new())
-	_add_test_hand_card(player2, EriduCityOfSages.new())
-	_add_test_hand_card(player2, Exorcism.new())
-	_add_test_hand_card(player2, Dromi.new())
-	_add_test_hand_card(player2, AncientPyre.new())
-
-	_add_test_god(player1, DellingrTheDayspring.new())
+	_add_test_god(player1, Freyja.new())
 	_add_test_god(player2, Baldr.new())
 
-	_add_test_power(player1, 0, AncientWisdom.new(), true)
-	_add_test_power(player1, 1, ACostToWalkTheWorlds.new(), true)
-	_add_test_power(player2, 0, DivineCaprice.new(), false)
-	_add_test_power(player2, 1, AncientWisdom.new(), false)
+	var tian_dragon := GenericCreature.new({
+		"name": "Test Tian Dragon",
+		"types": ["Dragon"],
+		"level": 6,
+		"speed": 2,
+		"strength": 9,
+		"resilience": 16,
+		"culture": "Tian",
+		"flavor": "Frontline Tian Dragon for Fire and Gold and Foolish Optimism."
+	})
+	var sage_guard := GenericCreature.new({
+		"name": "Sage Guard",
+		"types": ["Warrior"],
+		"level": 4,
+		"speed": 2,
+		"strength": 5,
+		"resilience": 9,
+		"culture": "Ancient"
+	})
+	var doomed_scout := GenericCreature.new({
+		"name": "Doomed Scout",
+		"types": ["Warrior"],
+		"level": 1,
+		"speed": 2,
+		"strength": 3,
+		"resilience": 4,
+		"culture": "Neutral",
+		"flavor": "Opponent's unique lowest-level frontline creature for Foolish Optimism."
+	})
+	var axe_guard := GenericCreature.new({
+		"name": "Axe Guard",
+		"types": ["Warrior"],
+		"level": 4,
+		"speed": 1,
+		"strength": 5,
+		"resilience": 10,
+		"culture": "Neutral",
+		"flavor": "Carries equipment so Fires of Judgment can destroy both."
+	})
+	var fallen_einherjar := GenericCreature.new({
+		"name": "Fallen Einherjar",
+		"types": ["Warrior", "Norse Creature"],
+		"level": 3,
+		"speed": 2,
+		"strength": 7,
+		"resilience": 8,
+		"culture": "Norse",
+		"flavor": "A Norse Warrior in your graveyard for Freyja's Receiver of the Slain."
+	})
+	var fourth_sage_script = load("res://scripts/cards/Creatures/FourthSageEnmegalamma.gd")
 
-	_place_test_board_card(player1, player1.frontline_zones[0], Edimmu.new(), Card.CreatureMode.DEFENSIVE)
-	_place_test_board_card(player1, player1.frontline_zones[1], Enkidu.new(), Card.CreatureMode.AGGRESSIVE)
-	_place_test_board_card(player1, player1.reserve_zones[1], EnHeduAnna.new(), Card.CreatureMode.DEFENSIVE)
-	_place_test_board_card(player1, player1.reserve_zones[2], ErlqueensNightingale.new(), Card.CreatureMode.DEFENSIVE)
+	_add_test_hand_card(player1, FiresOfJudgment.new())
+	_add_test_hand_card(player1, FoolishOptimism.new())
+	_add_test_hand_card(player1, FirstSageAdapa.new())
+	if fourth_sage_script != null:
+		_add_test_hand_card(player1, fourth_sage_script.new())
+	_add_test_hand_card(player1, Earthquake.new())
+	_add_test_hand_card(player1, FallOfTheMighty.new())
 
-	_place_test_board_card(player2, player2.frontline_zones[0], Edimmu.new(), Card.CreatureMode.DEFENSIVE)
-	_place_test_board_card(player2, player2.frontline_zones[1], Enkidu.new(), Card.CreatureMode.AGGRESSIVE)
-	_place_test_board_card(player2, player2.reserve_zones[1], EnHeduAnna.new(), Card.CreatureMode.DEFENSIVE)
-	_place_test_board_card(player2, player2.reserve_zones[2], EnkiLordOfEridu.new(), Card.CreatureMode.DEFENSIVE)
+	_add_test_power(player1, 0, FireAndGold.new(), false)
+	_add_test_power(player1, 1, CallOfTheValkyrie.new(), true)
+	_add_test_power(player2, 0, AncientWisdom.new(), true)
 
-	_add_test_graveyard_card(player1, Earthquake.new())
-	_add_test_graveyard_card(player1, EriduCityOfSages.new())
-	_add_test_graveyard_card(player2, ErlqueensNightingale.new())
+	_place_test_board_card(player1, player1.frontline_zones[0], tian_dragon, Card.CreatureMode.AGGRESSIVE)
+	_place_test_board_card(player1, player1.frontline_zones[1], sage_guard, Card.CreatureMode.AGGRESSIVE)
+
+	_place_test_board_card(player2, player2.frontline_zones[0], doomed_scout, Card.CreatureMode.AGGRESSIVE)
+	_place_test_board_card(player2, player2.frontline_zones[1], axe_guard, Card.CreatureMode.DEFENSIVE)
+	_place_test_board_permanent(player2, player2.reserve_zones[3], EriduCityOfSages.new())
+	_equip_test_card(player2, player2.frontline_zones[1], BeardedAxe.new(), axe_guard)
+	_add_test_graveyard_card(player1, fallen_einherjar)
 
 	_add_test_deck_card(player1, EnkiLordOfEridu.new())
-	_add_test_deck_card(player1, EriduCityOfSages.new())
-	_add_test_deck_card(player2, Earthquake.new())
-	_add_test_deck_card(player2, Edimmu.new())
+	_add_test_deck_card(player1, FirstSageAdapa.new())
+	if fourth_sage_script != null:
+		_add_test_deck_card(player1, fourth_sage_script.new())
 
 	player1.spend_mana(player1.mana)
-	player1.gain_mana(8)
+	player1.gain_mana(10)
 	player2.spend_mana(player2.mana)
-	player2.gain_mana(8)
+	player2.gain_mana(10)
 	player1.followers = 100
 	player2.followers = 100
 	player1.followers_changed.emit(player1.followers)
 	player2.followers_changed.emit(player2.followers)
+	player1.has_summoned_this_turn = false
+	player2.has_summoned_this_turn = false
 
 	game_manager.current_player = player1
 	game_manager.other_player = player2
@@ -210,8 +265,11 @@ func _setup_test_board() -> void:
 	player2.is_turn_player = false
 	game_manager.current_phase = GameManager.GamePhase.MAIN
 	game_manager.turn_number = 1
+	selected_card = null
+	selected_attacker = null
+	selected_interceptor = null
 	_test_turn_owner = player1
 	_test_turn_opponent = player2
 	hide_turn_choice()
-	action_label.text = "Card test ready. Player 1 begins with Earthquake, Edimmu, Enki Lord of Eridu, Eridu City of Sages, Erlqueen's Nightingale, Exorcism, Dromi, and Ancient Pyre in hand, plus Edimmu, Enkidu, En-hedu-anna, and Erlqueen's Nightingale on the field. Player 2 mirrors the sandbox with matching Exorcism, Dromi, and Ancient Pyre access for response and targeting checks."
+	action_label.text = "Card test ready. Freyja: activate Receiver of the Slain to summon Fallen Einherjar from your graveyard with Call of the Valkyrie already in play reducing the cost. Fire and Gold: unlock your power in slot 1, discard a spare hand card, and destroy the enemy Eridu while Test Tian Dragon is on your frontline. Fires of Judgment: cast from hand to wipe the enemy's face-up scout, axe guard, structure, and axe. Foolish Optimism: cast it to force Doomed Scout, the opponent's only level-1 creature, to attack your highest-level creature, Test Tian Dragon. First Sage Adapa: summon it to mute the enemy Ancient Wisdom power. Fourth Sage Enmegalamma: summon it on a later turn to search your deck for another Mer Sage such as First Sage Adapa or Enki, Lord of Eridu."
 	update_ui()

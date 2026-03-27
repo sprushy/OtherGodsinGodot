@@ -12,8 +12,7 @@ func _init() -> void:
 	mana_cost = 1
 	speed = 1
 	is_legendary = false
-	sacrifice_cost = 0
-	creature_sacrifice_cost = 1
+	sacrifice_cost = 1
 	flavor_text = ""
 	art_path = "res://images/card_art/spells/Blot Sacrifice(web).jpg"
 	artist = "Ricardo Zoppello"
@@ -61,16 +60,16 @@ func summon_selected_creatures(game_manager: GameManager, creatures: Array) -> A
 		if creature == null or (creature.current_zone != card_owner.hand_zone and creature not in card_owner.hand_zone.cards):
 			continue
 		var zone: Zone = open_zones.pop_front() as Zone
-		card_owner.move_card(creature, zone)
-		creature.creature_mode = Card.CreatureMode.AGGRESSIVE
-		creature.reset_creature_action_state()
-		creature.summoned_this_turn = true
-		creature.is_face_down = false
-		creature.is_stealth = false
-		creature.wake_up()
-		if game_manager != null and game_manager.has_method("_apply_god_passives_to_card"):
-			game_manager._apply_god_passives_to_card(card_owner, creature)
-		if creature.has_method("on_impact"):
-			creature.on_impact(game_manager)
-		summoned.append(creature)
+		if game_manager != null and game_manager.summon_creature_by_effect(
+			card_owner,
+			creature,
+			zone,
+			Card.CreatureMode.AGGRESSIVE,
+			false,
+			false,
+			self,
+			false,
+			false
+		):
+			summoned.append(creature)
 	return summoned

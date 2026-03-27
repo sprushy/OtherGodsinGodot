@@ -13,7 +13,6 @@ func _init() -> void:
 	resilience = 10
 	strength = 10
 	sacrifice_cost = 0
-	creature_sacrifice_cost = 0
 	ability_text = "Brewing (reveal): Flip over a Mead power, activate a Mead power, or return a Mead card from your graveyard to your hand."
 	flavor_text = ""
 	culture = "Norse"
@@ -31,7 +30,7 @@ func on_reveal(game_manager: GameManager) -> void:
 	if options.is_empty():
 		return
 	brewing_reveal_pending = true
-	var prompt_host: Node = _get_brewing_prompt_host()
+	var prompt_host: Node = _get_brewing_prompt_host(game_manager)
 	if prompt_host != null and prompt_host.has_method("_show_byggvir_reveal_prompt"):
 		prompt_host.call_deferred("_show_byggvir_reveal_prompt", self)
 
@@ -197,7 +196,12 @@ func consume_brewing_reveal_pending() -> bool:
 	brewing_reveal_pending = false
 	return was_pending
 
-func _get_brewing_prompt_host() -> Node:
+func _get_brewing_prompt_host(game_manager: GameManager = null) -> Node:
+	if game_manager != null:
+		var direct_host := game_manager.get_interaction_host()
+		var direct_node := direct_host as Node
+		if direct_node != null and is_instance_valid(direct_node):
+			return direct_node
 	var tree: SceneTree = Engine.get_main_loop() as SceneTree
 	if tree == null:
 		return null

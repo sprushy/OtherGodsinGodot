@@ -1,16 +1,20 @@
 # DeckBuilder.gd
-extends Node
+extends RefCounted
 class_name DeckBuilder
 
 func build_deck(player: Player, selected_cards: Array[Card]) -> bool:
 	if player.validate_deck(selected_cards):
-		player.current_deck = selected_cards.duplicate()
+		var unique_cards: Array[Card] = []
+		for card in selected_cards:
+			unique_cards.append(card.duplicate(true))
+			
+		player.current_deck = unique_cards.duplicate()
 		
 		var god_card: Card = null
 		var power_cards: Array[Card] = []
 		var regular_cards: Array[Card] = []
 		
-		for card in selected_cards:
+		for card in unique_cards:
 			card.card_owner = player
 			if card.is_god:
 				god_card = card

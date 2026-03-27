@@ -8,7 +8,6 @@ func _init() -> void:
 	level = 1
 	mana_cost = 0
 	sacrifice_cost = 0
-	creature_sacrifice_cost = 0
 	speed = 1
 	resilience = 3
 	strength = 5

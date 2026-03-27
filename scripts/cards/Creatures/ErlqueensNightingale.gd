@@ -13,7 +13,6 @@ func _init() -> void:
 	resilience = 10
 	strength = 13
 	sacrifice_cost = 0
-	creature_sacrifice_cost = 0
 	ability_text = "[b]Shift[/b] ([b]Activate[/b]): Switch this card between Human, Servant, Mage, Witch and Animal, Avian, Aerial. When this card shifts, you may return it to your hand."
 	flavor_text = ""
 	culture = "Norse"

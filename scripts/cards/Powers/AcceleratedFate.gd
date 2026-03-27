@@ -16,17 +16,20 @@ func _init() -> void:
 
 func can_activate(game_manager: GameManager) -> bool:
 	return not is_face_down \
+		and not is_muted \
 		and not is_activation_locked(game_manager) \
 		and card_owner == game_manager.current_player \
-		and card_owner.mana >= DRAW_COST \
+		and card_owner.mana >= get_activation_mana_cost(DRAW_COST, game_manager) \
 		and not is_used
 
 func activate(game_manager: GameManager, _target: Card = null) -> void:
-	card_owner.spend_mana(DRAW_COST)
+	var spent_cost := get_activation_mana_cost(DRAW_COST, game_manager)
+	if not spend_activation_mana(DRAW_COST, game_manager):
+		return
 	card_owner.draw_card()
 	is_used = true
 	switch_to_exhausted_art()
-	print("Accelerated Fate: Drew 1 card for " + str(DRAW_COST) + " mana.")
+	print("Accelerated Fate: Drew 1 card for " + str(spent_cost) + " mana.")
 
 func on_turn_end(_game_manager: GameManager) -> void:
 	super.on_turn_end(_game_manager)

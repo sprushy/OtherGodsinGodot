@@ -16,7 +16,6 @@ func _init() -> void:
 	resilience = 12
 	strength = 12
 	sacrifice_cost = 0
-	creature_sacrifice_cost = 0
 	culture = "Ancient"
 	artist = "Ricardo Zoppello"
 	art_path = "res://images/card_art/creatures/EnHeduAnnaAIEdit.png"

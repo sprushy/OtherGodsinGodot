@@ -16,7 +16,6 @@ func _init() -> void:
 	resilience = 10
 	strength = 17
 	sacrifice_cost = 0
-	creature_sacrifice_cost = 0
 	ability_text = "[b]Berserker Rage[/b] (Once per turn): This turn gain 10 Str and [b]Immortal[/b]. After any attack, sleep in defensive stance until the start of your next turn."
 	culture = "Norse"
 	artist = "Ricardo Zoppello"

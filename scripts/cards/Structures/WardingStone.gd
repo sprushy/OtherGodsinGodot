@@ -23,7 +23,6 @@ func _init() -> void:
 	strength = 0
 	
 	sacrifice_cost = 0
-	creature_sacrifice_cost = 0
 	
 	ability_text = "Your opponent cannot attack for two of their turns. Restriction ends if Warding Stone is removed from the field."
 	culture = "Norse"

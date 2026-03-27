@@ -15,7 +15,6 @@ func _init() -> void:
 	is_legendary = false
 	
 	sacrifice_cost = 0
-	creature_sacrifice_cost = 0
 	
 	flavor_text = "Destroy the strongest creature(s) on the field."
 	culture = "Neutral"

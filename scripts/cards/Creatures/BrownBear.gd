@@ -12,7 +12,6 @@ func _init() -> void:
 	resilience = 23
 	strength = 18
 	sacrifice_cost = 0
-	creature_sacrifice_cost = 0
 	flavor_text = "\"Growl\""
 	culture = "Norse"
 	art_path = "res://images/card_art/creatures/brownbearai.jpg"

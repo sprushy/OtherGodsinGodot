@@ -24,7 +24,7 @@ func can_activate(game_manager: GameManager) -> bool:
 		and not is_muted \
 		and not is_activation_locked(game_manager) \
 		and card_owner == game_manager.current_player \
-		and card_owner.mana >= ACTIVATION_COST \
+		and card_owner.mana >= get_activation_mana_cost(ACTIVATION_COST, game_manager) \
 		and not get_valid_targets(game_manager).is_empty()
 
 func get_valid_targets(_game_manager: GameManager) -> Array[Card]:
@@ -41,7 +41,7 @@ func activate(game_manager: GameManager, target: Card = null) -> void:
 		print(card_name + ": Invalid graveyard target.")
 		return
 
-	if not card_owner.spend_mana(ACTIVATION_COST):
+	if not spend_activation_mana(ACTIVATION_COST, game_manager):
 		return
 
 	card_owner.move_card(target, card_owner.deck_zone)

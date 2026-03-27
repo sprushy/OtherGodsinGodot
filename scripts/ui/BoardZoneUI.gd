@@ -13,49 +13,6 @@ class StackTargetIndicator extends Control:
 		draw_arc(center, radius, 0.0, TAU, 36, Color(1.0, 0.87, 0.36, 0.98), 4.0, true)
 		draw_arc(center + Vector2(-1.0, -1.0), radius - 1.5, 0.0, PI * 1.35, 24, Color(1.0, 0.97, 0.72, 0.82), 1.4, true)
 
-class DraupnirEquipIndicator extends Control:
-	func _ready() -> void:
-		mouse_filter = Control.MOUSE_FILTER_IGNORE
-		custom_minimum_size = Vector2(18, 18)
-
-	func _draw() -> void:
-		var center := size * 0.5
-		var radius = min(size.x, size.y) * 0.26
-		draw_circle(center, radius + 3.4, Color(0.42, 0.27, 0.05, 0.95))
-		draw_circle(center, radius + 1.6, Color(0.98, 0.82, 0.24, 0.98))
-		draw_circle(center, radius - 0.8, Color(0.79, 0.60, 0.13, 0.95))
-		draw_circle(center + Vector2(0.0, -radius - 4.0), 1.8, Color(1.0, 0.93, 0.56, 0.95))
-		draw_circle(center + Vector2(radius + 3.4, 1.6), 1.8, Color(1.0, 0.93, 0.56, 0.95))
-		draw_circle(center + Vector2(-radius - 3.4, 1.6), 1.8, Color(1.0, 0.93, 0.56, 0.95))
-		draw_arc(center + Vector2(-0.5, -1.0), radius + 0.8, PI * 0.2, PI * 0.8, 12, Color(1.0, 0.96, 0.72, 0.8), 1.2, true)
-
-class AxeEquipIndicator extends Control:
-	func _ready() -> void:
-		mouse_filter = Control.MOUSE_FILTER_IGNORE
-		custom_minimum_size = Vector2(18, 18)
-
-	func _draw() -> void:
-		var handle_from := Vector2(5.0, 13.5)
-		var handle_to := Vector2(12.8, 5.4)
-		draw_line(handle_from, handle_to, Color(0.34, 0.19, 0.07, 0.98), 3.2, true)
-		draw_line(handle_from + Vector2(0.7, -0.6), handle_to + Vector2(0.7, -0.6), Color(0.67, 0.46, 0.18, 0.65), 1.0, true)
-		draw_circle(handle_from, 1.5, Color(0.94, 0.82, 0.58, 0.95))
-		var blade := PackedVector2Array([
-			Vector2(10.8, 5.4),
-			Vector2(13.9, 2.9),
-			Vector2(15.8, 4.8),
-			Vector2(13.7, 8.2),
-			Vector2(11.7, 7.4),
-		])
-		draw_colored_polygon(blade, Color(0.82, 0.88, 0.93, 0.98))
-		var edge := PackedVector2Array([
-			Vector2(10.4, 7.8),
-			Vector2(8.1, 5.5),
-			Vector2(9.9, 3.8),
-			Vector2(11.8, 5.8),
-		])
-		draw_colored_polygon(edge, Color(0.62, 0.72, 0.78, 0.94))
-
 class BindingHexIndicator extends Control:
 	func _ready() -> void:
 		mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -184,10 +141,9 @@ var _defense_overlay: Control = null
 var _raised_overlay: Control = null  # non-null for DEF or stealth — floats above the zone row
 
 const BASE_ZONE_EXTENT := 165.0
-const DRAUPNIR_EQUIPMENT_NAME := "Draupnir the Multiplying"
-const BEARDED_AXE_EQUIPMENT_NAME := "Bearded Axe"
 const DROMI_BINDING_NAME := "Dromi"
 const DROMI_BINDING_HOVER_TEXT := "Cannot attack. Losing 7 followers on opponent's turn start - Dromi"
+const EQUIPMENT_AFFORDANCE_GAP := 4.0
 static var _zone_extent: float = BASE_ZONE_EXTENT
 
 var _row_label: String = ""
@@ -235,6 +191,38 @@ func _get_card_type_label(card: Card) -> String:
 		Card.CardType.EQUIPMENT:
 			return "Equipment"
 	return "Card"
+
+func _get_power_hover_cost_lines(power: PowerCard) -> Array[String]:
+	var lines: Array[String] = []
+	if power == null or game_manager == null:
+		return lines
+
+	if power.is_face_down:
+		var unlock_cost := power.get_unlock_mana_cost(game_manager)
+		lines.append("Unlock Cost: %d" % unlock_cost)
+		if power.discard_cost > 0:
+			lines.append("Discard: %d" % power.discard_cost)
+		for breakdown_line in power.get_cost_adjustment_lines(power.mana_cost, Card.COST_KIND_POWER_UNLOCK, game_manager):
+			lines.append(breakdown_line)
+		return lines
+
+	var hover_data: Dictionary = power.get_activation_cost_hover_data(game_manager)
+	if hover_data.is_empty():
+		return lines
+
+	var base_cost: int = int(hover_data.get("base_cost", 0))
+	var cost_kind: String = str(hover_data.get("cost_kind", Card.COST_KIND_POWER_ACTIVATION))
+	var metadata: Dictionary = hover_data.get("metadata", {})
+	var label: String = str(hover_data.get("label", "Activation Cost"))
+	var current_cost := power.get_adjusted_mana_cost(base_cost, cost_kind, game_manager, metadata)
+	lines.append("%s: %d" % [label, current_cost])
+	for breakdown_line in power.get_cost_adjustment_lines(base_cost, cost_kind, game_manager, metadata):
+		lines.append(breakdown_line)
+	for extra_line in hover_data.get("extra_lines", []):
+		var text := str(extra_line).strip_edges()
+		if text != "":
+			lines.append(text)
+	return lines
 
 func _add_sleep_affordance(overlay: Control, card: Card) -> void:
 	if card == null or not card.is_sleeping:
@@ -397,14 +385,6 @@ func _add_stack_target_indicator(overlay: Control) -> void:
 	marker.offset_bottom = 28
 	overlay.add_child(marker)
 
-func _card_has_equipment_named(card: Card, equipment_name: String) -> bool:
-	if card == null:
-		return false
-	for equip in card.equipment:
-		if equip != null and equip.card_name == equipment_name:
-			return true
-	return false
-
 func _add_equipment_indicator_badge(
 	overlay: Control,
 	icon: Control,
@@ -447,32 +427,30 @@ func _add_equipment_indicator_badge(
 func _add_equipment_affordances(overlay: Control, card: Card) -> void:
 	if overlay == null or card == null or card.card_type != Card.CardType.CREATURE:
 		return
-	var has_draupnir := _card_has_equipment_named(card, DRAUPNIR_EQUIPMENT_NAME)
-	var has_bearded_axe := _card_has_equipment_named(card, BEARDED_AXE_EQUIPMENT_NAME)
-	if not has_draupnir and not has_bearded_axe:
+	if card.equipment.is_empty():
 		return
 
 	var badge_top := 32.0 if card.is_sleeping else 6.0
 	var badge_left := 6.0
-	if has_draupnir:
-		_add_equipment_indicator_badge(
-			overlay,
-			DraupnirEquipIndicator.new(),
-			badge_left,
-			badge_top,
-			Color(0.28, 0.17, 0.03, 0.9),
-			Color(1.0, 0.87, 0.4, 0.95)
-		)
-		badge_left += 24.0
-	if has_bearded_axe:
-		_add_equipment_indicator_badge(
-			overlay,
-			AxeEquipIndicator.new(),
-			badge_left,
-			badge_top,
-			Color(0.18, 0.12, 0.08, 0.9),
-			Color(0.88, 0.76, 0.56, 0.92)
-		)
+	for equip in card.equipment:
+		if equip == null:
+			continue
+		var affordance: Control = null
+		if equip is EquipmentCard:
+			affordance = (equip as EquipmentCard).create_equipped_affordance()
+		if affordance == null:
+			continue
+		var affordance_size := affordance.custom_minimum_size
+		if affordance_size == Vector2.ZERO:
+			affordance_size = EquipmentCard.EQUIPPED_AFFORDANCE_SIZE
+		affordance.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		affordance.set_anchors_preset(Control.PRESET_TOP_LEFT)
+		affordance.offset_left = badge_left
+		affordance.offset_top = badge_top
+		affordance.offset_right = badge_left + affordance_size.x
+		affordance.offset_bottom = badge_top + affordance_size.y
+		overlay.add_child(affordance)
+		badge_left += affordance_size.x + EQUIPMENT_AFFORDANCE_GAP
 
 func _get_attached_permanent_hexes(card: Card) -> Array[Card]:
 	var bindings: Array[Card] = []
@@ -513,11 +491,13 @@ func _add_binding_affordances(overlay: Control, card: Card) -> void:
 	if not _has_dromi_binding(card):
 		return
 	var badge_top := 32.0 if card.is_sleeping else 6.0
+	if not card.equipment.is_empty():
+		badge_top += EquipmentCard.EQUIPPED_AFFORDANCE_SIZE.y + EQUIPMENT_AFFORDANCE_GAP
 	_add_equipment_indicator_badge(
 		overlay,
 		DromiChainIndicator.new(),
 		6.0,
-		badge_top + 24.0,
+		badge_top,
 		Color(0.28, 0.05, 0.05, 0.94),
 		Color(1.0, 0.35, 0.28, 0.96)
 	)
@@ -590,6 +570,17 @@ func _is_card_pending_target(card: Card) -> bool:
 
 	return false
 
+func _is_card_pending_selection_source(card: Card) -> bool:
+	if card == null:
+		return false
+	var tree := get_tree()
+	if tree == null:
+		return false
+	var scene_root := tree.current_scene
+	if scene_root == null:
+		return false
+	return scene_root.get("_pending_click_selection_source") == card
+
 func _is_card_waiting_on_priority(card: Card) -> bool:
 	if card == null or game_manager == null:
 		return false
@@ -614,7 +605,7 @@ func _is_card_usable_for_priority(card: Card) -> bool:
 	return game_manager.can_card_respond_to_priority(card, game_manager.priority_player)
 
 func _should_show_playing_aura(card: Card) -> bool:
-	return _preview_card != null or _is_card_waiting_on_priority(card)
+	return _preview_card != null or _is_card_waiting_on_priority(card) or _is_card_pending_selection_source(card)
 
 func set_preview_card(card: Card) -> void:
 	_preview_card = card
@@ -1423,9 +1414,10 @@ func _show_ability_popup() -> void:
 
 	# Ability text
 	if card.ability_text != "" and not hidden:
+		var display_ability_text := (card as PowerCard).get_display_ability_bbcode_text(game_manager) if card is PowerCard else card.ability_text
 		var rtl := RichTextLabel.new()
 		rtl.bbcode_enabled = true
-		rtl.text = BaseCard.apply_keyword_hints(card.ability_text)
+		rtl.text = BaseCard.apply_keyword_hints(display_ability_text)
 		rtl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		rtl.add_theme_font_size_override("normal_font_size", 11)
 		rtl.add_theme_font_size_override("bold_font_size", 11)
@@ -1434,6 +1426,27 @@ func _show_ability_popup() -> void:
 		rtl.fit_content = true
 		rtl.mouse_filter = Control.MOUSE_FILTER_STOP
 		vbox.add_child(rtl)
+
+	if card is PowerCard and not hidden:
+		var power_cost_lines := _get_power_hover_cost_lines(card as PowerCard)
+		if power_cost_lines.size() > 0:
+			var cost_lbl := Label.new()
+			cost_lbl.text = "\n".join(power_cost_lines)
+			cost_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			cost_lbl.add_theme_font_size_override("font_size", 10)
+			cost_lbl.add_theme_color_override("font_color", Color(1.0, 0.84, 0.62))
+			cost_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			vbox.add_child(cost_lbl)
+
+	var hover_detail_lines := card.get_hover_detail_lines(viewer)
+	if hover_detail_lines.size() > 0 and not hidden:
+		var hover_details_lbl := Label.new()
+		hover_details_lbl.text = "\n".join(hover_detail_lines)
+		hover_details_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		hover_details_lbl.add_theme_font_size_override("font_size", 10)
+		hover_details_lbl.add_theme_color_override("font_color", Color(0.66, 0.97, 0.93))
+		hover_details_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		vbox.add_child(hover_details_lbl)
 
 	# Flavor text
 	if card.flavor_text != "" and not hidden:
@@ -1483,7 +1496,8 @@ func can_accept_card(card: Card) -> bool:
 	if card is CharmCard and (card as CharmCard).targets:
 		if zone.cards.size() == 0:
 			if card.current_zone == card.card_owner.hand_zone:
-				return (card as CharmCard).can_activate_from_hand(game_manager)
+				return (card as CharmCard).can_activate_from_hand(game_manager) \
+					or game_manager.can_prepare_card(game_manager.current_player, card, zone)
 			return (card as CharmCard).can_activate_prepared(game_manager)
 		var charm := card as CharmCard
 		var target := zone.cards[0]
@@ -1492,6 +1506,10 @@ func can_accept_card(card: Card) -> bool:
 		if card.current_zone == card.card_owner.hand_zone:
 			return charm.can_activate_from_hand(game_manager)
 		return charm.can_activate_prepared(game_manager)
+	if card.card_type == Card.CardType.HEX:
+		if zone.cards.size() > 0:
+			return false
+		return game_manager.can_prepare_card(owning_player, card, zone)
 	if _is_enemy:
 		return false
 	if owning_player != game_manager.current_player:

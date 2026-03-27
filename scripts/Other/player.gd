@@ -1,5 +1,5 @@
 # Player.gd
-extends Node
+extends RefCounted
 class_name Player
 
 const MAX_HAND_SIZE := 7
@@ -10,7 +10,7 @@ signal followers_changed(new_followers: int)
 signal card_moved(card: Card, from_zone: Zone, to_zone: Zone)
 signal defeated(player: Player)
 
-@export var player_name: String
+var player_name: String
 var mana: int = 0
 var followers: int = 100
 var is_defeated: bool = false
@@ -30,34 +30,29 @@ var power_zones: Array[Zone] = []
 var frontline_zones: Array[Zone] = []
 var reserve_zones: Array[Zone] = []
 
-func _ready() -> void:
+func _init() -> void:
 	_initialize_zones()
 
 func _initialize_zones() -> void:
 	hand_zone = Zone.new()
 	hand_zone.zone_type = Zone.ZoneType.HAND
 	hand_zone.zone_owner = self
-	add_child(hand_zone)
 	
 	deck_zone = Zone.new()
 	deck_zone.zone_type = Zone.ZoneType.DECK
 	deck_zone.zone_owner = self
-	add_child(deck_zone)
 	
 	graveyard_zone = Zone.new()
 	graveyard_zone.zone_type = Zone.ZoneType.GRAVEYARD
 	graveyard_zone.zone_owner = self
-	add_child(graveyard_zone)
 	
 	abyss_zone = Zone.new()
 	abyss_zone.zone_type = Zone.ZoneType.ABYSS
 	abyss_zone.zone_owner = self
-	add_child(abyss_zone)
 	
 	god_zone = Zone.new()
 	god_zone.zone_type = Zone.ZoneType.GOD_SLOT
 	god_zone.zone_owner = self
-	add_child(god_zone)
 	
 	for i in range(3):
 		var power_zone = Zone.new()
@@ -65,7 +60,6 @@ func _initialize_zones() -> void:
 		power_zone.zone_index = i
 		power_zone.zone_owner = self
 		power_zones.append(power_zone)
-		add_child(power_zone)
 	
 	for i in range(BOARD_LANE_COUNT):
 		var frontline = Zone.new()
@@ -73,7 +67,6 @@ func _initialize_zones() -> void:
 		frontline.zone_index = i
 		frontline.zone_owner = self
 		frontline_zones.append(frontline)
-		add_child(frontline)
 	
 	for i in range(BOARD_LANE_COUNT):
 		var reserve = Zone.new()
@@ -81,7 +74,6 @@ func _initialize_zones() -> void:
 		reserve.zone_index = i
 		reserve.zone_owner = self
 		reserve_zones.append(reserve)
-		add_child(reserve)
 
 func validate_deck(deck: Array[Card]) -> bool:
 	var legendary_count = 0
@@ -170,8 +162,10 @@ func move_card(card: Card, to_zone: Zone) -> void:
 	if from_zone and from_zone.is_board_zone() and destination_zone and not destination_zone.is_board_zone():
 		if card.has_method("reset_activation_counter"):
 			card.reset_activation_counter()
+		card.remove_effects_expiring_after_combat()
 
 	if card.is_token and (destination_zone == null or not destination_zone.is_board_zone()):
+		card.remove_effects_expiring_after_combat()
 		if from_zone:
 			from_zone.remove_card(card)
 		card_moved.emit(card, from_zone, null)
@@ -208,6 +202,13 @@ func shelve_card(card: Card) -> void:
 	if card.current_zone == hand_zone:
 		move_card(card, deck_zone)
 
+func shuffle_card_into_deck(card: Card) -> bool:
+	if card == null:
+		return false
+	move_card(card, deck_zone)
+	deck_zone.cards.shuffle()
+	return card.current_zone == deck_zone
+
 func _resolve_destination_zone(card: Card, from_zone: Zone, to_zone: Zone) -> Zone:
 	if card == null or to_zone == null:
 		return to_zone
@@ -233,12 +234,6 @@ func _resolve_destination_zone(card: Card, from_zone: Zone, to_zone: Zone) -> Zo
 			return owner.abyss_zone
 		_:
 			return to_zone
-
-func sacrifice_followers(amount: int) -> bool:
-	if followers >= amount:
-		lose_followers(amount)
-		return true
-	return false
 
 func get_adjacent_zones(zone: Zone) -> Array[Zone]:
 	var adjacent: Array[Zone] = []

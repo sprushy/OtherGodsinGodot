@@ -23,6 +23,8 @@ func _run_probe() -> void:
 	var player1: Player = card_test.player1
 	var player2: Player = card_test.player2
 
+	card_test._add_test_hand_card(player2, Exorcism.new())
+
 	var dromi: Dromi = null
 	for card in player1.hand_zone.cards:
 		if card is Dromi:

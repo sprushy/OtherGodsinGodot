@@ -61,9 +61,8 @@ func switch_to_exhausted_art() -> void:
 # Costs
 @export var mana_cost: int = 0
 @export var discard_cost: int = 0  # Number of cards to discard
-@export var sacrifice_cost: int = 0  # Number of followers to sacrifice
+@export var sacrifice_cost: int = 0  # Number of creatures to sacrifice from board
 @export var banish_cost: int = 0  # Number of cards to banish
-@export var creature_sacrifice_cost: int = 0  # Number of creatures to sacrifice from board
 @export var shelve_cost: int = 0  # Number of cards to shelve (return to bottom of deck)
 
 # Creature stats
@@ -107,6 +106,9 @@ var _was_muted_last_check: bool = false
 var _pending_chosen_discards: Array[Card] = []
 
 const EXTERNAL_EFFECT_NEGATION_STATUS := "external_effect_negation"
+const COST_KIND_POWER_UNLOCK := "power_unlock"
+const COST_KIND_POWER_ACTIVATION := "power_activation"
+const COST_KIND_CREATURE_SUMMON := "creature_summon"
 
 func get_controller() -> Player:
 	if current_zone != null and current_zone.is_board_zone() and current_zone.zone_owner != null:
@@ -456,6 +458,53 @@ func get_inline_ability_summary() -> String:
 		summary = summary.replace("  ", " ")
 	return summary
 
+func get_adjusted_mana_cost(
+	base_cost: int,
+	cost_kind: String,
+	game_manager: GameManager = null,
+	metadata: Dictionary = {}
+) -> int:
+	if game_manager == null:
+		return maxi(0, base_cost)
+	return maxi(0, base_cost + game_manager.get_total_cost_adjustment(self, base_cost, cost_kind, metadata))
+
+func get_cost_adjustment_lines(
+	base_cost: int,
+	cost_kind: String,
+	game_manager: GameManager = null,
+	metadata: Dictionary = {}
+) -> Array[String]:
+	var lines: Array[String] = []
+	if game_manager == null:
+		return lines
+	for entry in game_manager.get_cost_adjustment_entries(self, base_cost, cost_kind, metadata):
+		var delta := int(entry.get("delta", 0))
+		if delta == 0:
+			continue
+		lines.append(("%+d" % delta) + " from " + str(entry.get("source", "?")))
+	return lines
+
+func get_cost_adjustment_entries(
+	_target_card: Card,
+	_base_cost: int,
+	_cost_kind: String,
+	_game_manager: GameManager,
+	_metadata: Dictionary = {}
+) -> Array[Dictionary]:
+	return []
+
+func claim_cost_adjustment(
+	_target_card: Card,
+	_base_cost: int,
+	_cost_kind: String,
+	_game_manager: GameManager,
+	_metadata: Dictionary = {}
+) -> bool:
+	return false
+
+func get_hover_detail_lines(_viewer: Player = null) -> Array[String]:
+	return []
+
 func get_equipment_summary_lines() -> Array[String]:
 	var lines: Array[String] = []
 	for equip in equipment:
@@ -551,6 +600,11 @@ func remove_expired_statuses(current_turn: int) -> void:
 			return true
 		return int(expires_turn) > current_turn
 	)
+	_sync_status_flags()
+
+func remove_effects_expiring_after_combat() -> void:
+	active_buffs = active_buffs.filter(func(b): return b.get("expires_after_combat", false) != true)
+	active_statuses = active_statuses.filter(func(s): return s.get("expires_after_combat", false) != true)
 	_sync_status_flags()
 
 func has_effects_from_player(player: Player) -> bool:
@@ -784,24 +838,36 @@ func spend_minor_creature_action(marked_as_move: bool = false) -> void:
 func mark_attacked_this_turn() -> void:
 	has_attacked_this_turn = true
 
+func can_prepare(game_manager: GameManager, player: Player) -> bool:
+	if game_manager == null or player == null:
+		return false
+	if card_owner != null and card_owner != player:
+		return false
+	if player != game_manager.current_player:
+		return false
+	if player.hand_zone == null or current_zone != player.hand_zone:
+		return false
+	return can_pay_costs(player)
+
 func can_pay_costs(player: Player) -> bool:
+	return can_pay_costs_with_mana_cost(player, mana_cost)
+
+func can_pay_costs_with_mana_cost(player: Player, mana_required: int) -> bool:
 	# Check if player can afford all costs
-	if player.mana < mana_cost:
+	if player.mana < mana_required:
 		return false
 	if player.hand_zone.get_card_count() < discard_cost:
-		return false
-	if player.followers < sacrifice_cost:
 		return false
 	if player.hand_zone.get_card_count() < shelve_cost:
 		return false
 	
-	# Count creatures on board for creature sacrifice
+	# Count creatures on board for sacrifice costs.
 	var creature_count = 0
 	for zone in player.frontline_zones + player.reserve_zones:
 		for card in zone.cards:
 			if card.card_type == CardType.CREATURE and card.can_be_used_for_creature_sacrifice:
 				creature_count += 1
-	if creature_count < creature_sacrifice_cost:
+	if creature_count < sacrifice_cost:
 		return false
 	
 	# Check cards available to banish (hand + board)
@@ -843,12 +909,15 @@ func has_pending_chosen_discards_for_cost() -> bool:
 	return true
 
 func pay_costs(player: Player, game_manager: GameManager = null) -> bool:
-	if not can_pay_costs(player):
+	return pay_costs_with_mana_cost(player, mana_cost, game_manager)
+
+func pay_costs_with_mana_cost(player: Player, mana_required: int, game_manager: GameManager = null) -> bool:
+	if not can_pay_costs_with_mana_cost(player, mana_required):
 		return false
 	
 	# Pay mana cost
-	if mana_cost > 0:
-		player.spend_mana(mana_cost)
+	if mana_required > 0:
+		player.spend_mana(mana_required)
 	
 	# Pay discard cost
 	for i in range(discard_cost):
@@ -866,21 +935,13 @@ func pay_costs(player: Player, game_manager: GameManager = null) -> bool:
 
 	clear_pending_chosen_discards()
 	
-	# Pay sacrifice cost (followers)
+	# Pay sacrifice cost.
 	if sacrifice_cost > 0:
-		player.sacrifice_followers(sacrifice_cost)
-	
-	# Pay shelve cost
-	for i in range(shelve_cost):
-		if player.hand_zone.get_card_count() > 0:
-			var card_to_shelve = player.hand_zone.cards[0]
-			player.shelve_card(card_to_shelve)
-	
-	# Pay creature sacrifice cost
-	for i in range(creature_sacrifice_cost):
-		var creature_found = false
-		for zone in player.frontline_zones + player.reserve_zones:
-			if not creature_found:
+		for i in range(sacrifice_cost):
+			var creature_found = false
+			for zone in player.frontline_zones + player.reserve_zones:
+				if creature_found:
+					break
 				for card in zone.cards:
 					if card.card_type == CardType.CREATURE and card.can_be_used_for_creature_sacrifice:
 						if game_manager != null:
@@ -891,7 +952,13 @@ func pay_costs(player: Player, game_manager: GameManager = null) -> bool:
 							card.on_sacrificed_for_summon(game_manager, self)
 						creature_found = true
 						break
-
+	
+	# Pay shelve cost
+	for i in range(shelve_cost):
+		if player.hand_zone.get_card_count() > 0:
+			var card_to_shelve = player.hand_zone.cards[0]
+			player.shelve_card(card_to_shelve)
+	
 	# Pay banish cost
 	for i in range(banish_cost):
 		var card_found = false

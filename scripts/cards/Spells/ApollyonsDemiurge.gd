@@ -13,7 +13,6 @@ func _init() -> void:
 	speed = 1
 	is_legendary = false
 	sacrifice_cost = 0
-	creature_sacrifice_cost = 0
 	flavor_text = "From ruin and flame, the demon rises."
 	art_path = ART_PATH
 	ability_text = "Pay X mana and [b]Mill[/b] X cards; summon one Demon milled this way."
@@ -55,8 +54,8 @@ func resolve_with_x(game_manager: GameManager, x_value: int, x_cost_already_paid
 			demon_choices.append(card)
 	return demon_choices
 
-func summon_milled_demon(demon_card: Card) -> bool:
-	if demon_card == null or card_owner == null:
+func summon_milled_demon(game_manager: GameManager, demon_card: Card) -> bool:
+	if demon_card == null or card_owner == null or game_manager == null:
 		return false
 	if demon_card.current_zone != card_owner.graveyard_zone:
 		return false
@@ -64,13 +63,20 @@ func summon_milled_demon(demon_card: Card) -> bool:
 	if summon_zone == null:
 		print("Apollyon's Demiurge: no open zone to summon into.")
 		return false
-	card_owner.move_card(demon_card, summon_zone)
-	demon_card.creature_mode = Card.CreatureMode.AGGRESSIVE
-	demon_card.has_acted_this_turn = false
-	demon_card.has_moved_this_turn = false
-	demon_card.summoned_this_turn = true
-	demon_card.is_face_down = false
-	demon_card.is_stealth = false
+	if not game_manager.summon_creature_by_effect(
+		card_owner,
+		demon_card,
+		summon_zone,
+		Card.CreatureMode.AGGRESSIVE,
+		false,
+		false,
+		self,
+		false,
+		false,
+		false
+	):
+		print("Apollyon's Demiurge: could not pay summon costs for " + demon_card.card_name + ".")
+		return false
 	print("Apollyon's Demiurge summons " + demon_card.card_name + ".")
 	return true
 

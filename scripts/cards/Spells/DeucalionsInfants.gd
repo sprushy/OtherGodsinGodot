@@ -138,17 +138,20 @@ func summon_stone_infants(game_manager: GameManager, amount: int) -> Array[Card]
 			break
 		var token: Card = StoneInfant.new()
 		token.card_owner = card_owner
-		token.creature_mode = Card.CreatureMode.AGGRESSIVE
-		token.reset_creature_action_state()
-		token.summoned_this_turn = true
-		token.is_face_down = false
-		token.is_stealth = false
 		token.art_path = _choose_stone_infant_art_path(game_manager, rng)
-		token.wake_up()
-		summon_zone.add_card(token)
-		if game_manager.has_method("_apply_god_passives_to_card"):
-			game_manager._apply_god_passives_to_card(card_owner, token)
-		summoned_tokens.append(token)
+		if game_manager.summon_creature_by_effect(
+			card_owner,
+			token,
+			summon_zone,
+			Card.CreatureMode.AGGRESSIVE,
+			false,
+			false,
+			self,
+			false,
+			false,
+			false
+		):
+			summoned_tokens.append(token)
 	return summoned_tokens
 
 func _choose_stone_infant_art_path(game_manager: GameManager, rng: RandomNumberGenerator) -> String:

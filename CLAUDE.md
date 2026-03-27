@@ -33,7 +33,7 @@ Card (Resource)           # Stats, costs, state flags
         └── [specific structures: WardingStone.gd, ...]
 ```
 
-- `scripts/cards/card.gd` — base Resource with all shared fields (mana_cost, discard_cost, sacrifice_cost, creature_sacrifice_cost, shelve_cost, banish_cost, strength, resilience, speed, card_type enum, state flags)
+- `scripts/cards/card.gd` — base Resource with all shared fields (mana_cost, discard_cost, sacrifice_cost, shelve_cost, banish_cost, strength, resilience, speed, card_type enum, state flags)
 - `scripts/cards/BaseCard.gd` — defines the hook interface overridden by specific cards
 - Equipment cards attach to creatures and modify their effective stats via `get_effective_strength/resilience/speed()`
 

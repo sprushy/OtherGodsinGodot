@@ -22,7 +22,6 @@ func _init() -> void:
 	resilience = 17
 	strength = 17
 	sacrifice_cost = 0
-	creature_sacrifice_cost = 0
 	ability_text = ""
 	flavor_text = ""
 	art_path = _get_next_token_art_path()

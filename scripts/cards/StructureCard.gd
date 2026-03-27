@@ -8,12 +8,12 @@ func _init() -> void:
 
 # Structure-specific hooks
 func on_summon(game_manager: GameManager) -> void:
-	# Override in specific structures
+	# Called whenever this structure is summoned onto the board.
 	pass
 
 func on_impact(game_manager: GameManager) -> void:
-	# Called when this card enters the field from hand face-up.
-	on_summon(game_manager)
+	# Called when this structure is summoned face-up and its impact should resolve.
+	pass
 
 func on_removed(game_manager: GameManager) -> void:
 	# Override when structure leaves the board

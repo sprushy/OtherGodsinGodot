@@ -19,7 +19,6 @@ func _init() -> void:
 	speed = 0
 	strength = 0
 	sacrifice_cost = 0
-	creature_sacrifice_cost = 0
 	culture = "Ancient"
 	artist = "Ricardo Zoppello"
 	name_at_bottom = true

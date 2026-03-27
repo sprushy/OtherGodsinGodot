@@ -14,7 +14,6 @@ func _init() -> void:
 	speed = 0
 	strength = 0
 	sacrifice_cost = 0
-	creature_sacrifice_cost = 0
 	ability_text = "As an additional cost to play this card, choose and discard a card from your hand.\n[b]Upkeep[/b]: Gain 2 mana for each Mage you have on the field."
 	culture = "Ancient"
 	artist = "Ricarrdo Zoppello"

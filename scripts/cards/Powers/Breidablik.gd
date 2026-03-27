@@ -46,7 +46,7 @@ func can_return_priest(game_manager: GameManager) -> bool:
 	return return_window_open \
 		and game_manager != null \
 		and game_manager.current_player == card_owner \
-		and card_owner.mana >= RETURN_MANA_COST \
+		and card_owner.mana >= get_activation_mana_cost(RETURN_MANA_COST, game_manager) \
 		and not stored_priests.is_empty() \
 		and not _get_open_field_zones().is_empty()
 
@@ -65,7 +65,7 @@ func return_priest(game_manager: GameManager, priest: Card) -> bool:
 	var zone: Zone = _get_best_return_zone(priest)
 	if zone == null:
 		return false
-	if not card_owner.spend_mana(RETURN_MANA_COST):
+	if not spend_activation_mana(RETURN_MANA_COST, game_manager):
 		return false
 	stored_priests.erase(priest)
 	stored_priest_origins.erase(priest)

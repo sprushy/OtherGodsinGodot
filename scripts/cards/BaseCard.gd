@@ -26,6 +26,7 @@ const KEYWORD_HINTS = {
 	"Wake": "Remove Sleep from a creature.",
 	"Returns": "This card enters the field from the Abyss.",
 	"Search": "Look through your deck for a card, then shuffle.",
+	"Shuffle": "Return this card to its owner's deck, then shuffle that deck.",
 	"Prime": "Put a card on top of your deck.",
 	"Silence": "Remove this card's abilities.",
 	"Frontlined": "This effect applies while this card is in the frontline.",

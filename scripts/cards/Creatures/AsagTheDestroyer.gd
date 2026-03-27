@@ -7,8 +7,7 @@ func _init() -> void:
 	card_types = ["Demon", "Ancient Creature"]
 	level = 5
 	mana_cost = 0
-	sacrifice_cost = 0
-	creature_sacrifice_cost = 1
+	sacrifice_cost = 1
 	speed = 1
 	resilience = 21
 	strength = 33

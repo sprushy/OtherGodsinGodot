@@ -27,11 +27,16 @@ const _HOVER_PANEL_Z_INDEX := 2000
 const _HOVER_PANEL_WIDTH := 280.0
 const _HOVER_PANEL_MAX_HEIGHT := 360.0
 var _hover_panel: Control = null
+var _hover_viewer: Player = null
 var _waiting_on_priority: bool = false
 var _priority_response_available: bool = false
 var _blot_summonable: bool = false
 var _blot_selected: bool = false
 var _hover_preview_when_disabled: bool = false
+var _display_mana_cost: int = -1
+var _display_cost_adjustment_lines: Array[String] = []
+var _ghostly_hand_proxy: bool = false
+var _click_only: bool = false
 
 func set_base_z_index(idx: int) -> void:
 	_base_z_index = idx
@@ -45,10 +50,18 @@ var _card_height: int = CARD_HEIGHT
 var _inner: PanelContainer = null
 var _art_rect: TextureRect = null
 
-func setup(p_card: Card, width: int = CARD_WIDTH, height: int = CARD_HEIGHT) -> void:
+func setup(
+	p_card: Card,
+	width: int = CARD_WIDTH,
+	height: int = CARD_HEIGHT,
+	display_mana_cost: int = -1,
+	display_cost_adjustment_lines: Array[String] = []
+) -> void:
 	card_data = p_card
 	_card_width = width
 	_card_height = height
+	_display_mana_cost = display_mana_cost
+	_display_cost_adjustment_lines = display_cost_adjustment_lines.duplicate()
 	# Pre-compute natural height so get_combined_minimum_size() is reliable
 	# before any layout pass runs (avoids RichTextLabel width=0 sizing explosion).
 	var natural_h: float = _card_height if _card_height > 0 else _compute_natural_height()
@@ -59,6 +72,9 @@ func setup(p_card: Card, width: int = CARD_WIDTH, height: int = CARD_HEIGHT) -> 
 	_build_content()
 	if card_data.exhausted_art_path != "":
 		card_data.art_updated.connect(_on_art_updated)
+
+func _get_display_mana_cost() -> int:
+	return _display_mana_cost if _display_mana_cost >= 0 else card_data.mana_cost
 
 func _compute_natural_height() -> float:
 	var h := 22.0  # name + mana row
@@ -114,8 +130,13 @@ func _populate_vbox(vbox: VBoxContainer) -> void:
 		top_row.add_child(_make_name_label())
 
 	var mana_lbl := Label.new()
-	mana_lbl.text = str(card_data.mana_cost) + "M"
+	var display_mana_cost := _get_display_mana_cost()
+	mana_lbl.text = str(display_mana_cost) + "M"
 	mana_lbl.add_theme_font_size_override("font_size", 14)
+	if display_mana_cost > card_data.mana_cost:
+		mana_lbl.add_theme_color_override("font_color", Color(1.0, 0.65, 0.65))
+	elif display_mana_cost < card_data.mana_cost:
+		mana_lbl.add_theme_color_override("font_color", Color(0.65, 1.0, 0.7))
 	top_row.add_child(mana_lbl)
 
 	var art := _build_art_node()
@@ -229,8 +250,14 @@ func _apply_card_style() -> void:
 		style.border_color = Color(0.82, 1.0, 0.55, 1.0)
 		style.shadow_color = Color(0.52, 1.0, 0.4, 0.85)
 		style.shadow_size = 20
+	if _ghostly_hand_proxy:
+		style.bg_color = Color(0.16, 0.24, 0.34, 0.48)
+		style.border_color = Color(0.82, 0.96, 1.0, 0.92)
+		style.shadow_color = Color(0.62, 0.88, 1.0, 0.32)
+		style.shadow_size = max(style.shadow_size, 12)
 
 	_inner.add_theme_stylebox_override("panel", style)
+	_inner.self_modulate = Color(0.92, 0.98, 1.0, 0.82) if _ghostly_hand_proxy else Color.WHITE
 
 func _type_abbrev() -> String:
 	match card_data.card_type:
@@ -254,6 +281,14 @@ func set_disabled(value: bool) -> void:
 func set_hover_preview_when_disabled(value: bool) -> void:
 	_hover_preview_when_disabled = value
 	_refresh_mouse_filter()
+
+func set_hand_proxy_visual(enabled: bool, click_only: bool = true) -> void:
+	_ghostly_hand_proxy = enabled
+	_click_only = click_only
+	_apply_card_style()
+
+func set_hover_viewer(viewer: Player) -> void:
+	_hover_viewer = viewer
 
 func _refresh_mouse_filter() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP if (not _disabled or _hover_preview_when_disabled) else Control.MOUSE_FILTER_IGNORE
@@ -449,6 +484,8 @@ func _input(event: InputEvent) -> void:
 	if not _picked_up:
 		return
 	if event is InputEventMouseMotion:
+		if _click_only:
+			return
 		if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
 			if not _dragging:
 				_start_drag()
@@ -640,7 +677,7 @@ func _show_hover_panel() -> void:
 	var meta_parts: Array[String] = []
 	if card_data.level > 0:
 		meta_parts.append("Level " + str(card_data.level))
-	meta_parts.append("Mana: " + str(card_data.mana_cost))
+	meta_parts.append("Mana: " + str(_get_display_mana_cost()))
 	if card_data.culture != "":
 		meta_parts.append(card_data.culture)
 	var meta_lbl := Label.new()
@@ -683,8 +720,6 @@ func _show_hover_panel() -> void:
 	var cost_parts: Array[String] = []
 	if card_data.sacrifice_cost > 0:
 		cost_parts.append("Sacrifice: " + str(card_data.sacrifice_cost))
-	if card_data.creature_sacrifice_cost > 0:
-		cost_parts.append("Creature sacrifice: " + str(card_data.creature_sacrifice_cost))
 	if card_data.discard_cost > 0:
 		cost_parts.append("Discard: " + str(card_data.discard_cost))
 	if cost_parts.size() > 0:
@@ -693,6 +728,15 @@ func _show_hover_panel() -> void:
 		cost_lbl.add_theme_font_size_override("font_size", 11)
 		cost_lbl.add_theme_color_override("font_color", Color(1.0, 0.6, 0.4))
 		vbox.add_child(cost_lbl)
+
+	if not _display_cost_adjustment_lines.is_empty():
+		var summon_cost_lbl := Label.new()
+		summon_cost_lbl.text = "\n".join(_display_cost_adjustment_lines)
+		summon_cost_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		summon_cost_lbl.add_theme_font_size_override("font_size", 11)
+		summon_cost_lbl.add_theme_color_override("font_color", Color(1.0, 0.72, 0.72))
+		summon_cost_lbl.custom_minimum_size = Vector2(210, 0)
+		vbox.add_child(summon_cost_lbl)
 
 	# Separator
 	if card_data.ability_text != "" or card_data.flavor_text != "":
@@ -718,6 +762,20 @@ func _show_hover_panel() -> void:
 		flavor_lbl.add_theme_font_size_override("font_size", 11)
 		flavor_lbl.add_theme_color_override("font_color", Color(0.6, 0.6, 0.6))
 		vbox.add_child(flavor_lbl)
+
+	var hover_details := card_data.get_hover_detail_lines(_hover_viewer)
+	if hover_details.size() > 0:
+		var detail_sep := HSeparator.new()
+		detail_sep.add_theme_color_override("color", Color(0.22, 0.45, 0.4))
+		vbox.add_child(detail_sep)
+
+		var detail_lbl := Label.new()
+		detail_lbl.text = "\n".join(hover_details)
+		detail_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		detail_lbl.add_theme_font_size_override("font_size", 11)
+		detail_lbl.add_theme_color_override("font_color", Color(0.72, 0.96, 0.86))
+		detail_lbl.custom_minimum_size = Vector2(210, 0)
+		vbox.add_child(detail_lbl)
 
 	scene_root.add_child(panel)
 	panel.move_to_front()

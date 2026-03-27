@@ -8,7 +8,6 @@ func _init() -> void:
 	level = 2
 	mana_cost = 2
 	sacrifice_cost = 0
-	creature_sacrifice_cost = 0
 	speed = 1
 	resilience = 5
 	strength = 14
@@ -25,15 +24,10 @@ func on_impact(game_manager: GameManager) -> void:
 		if game_manager != null:
 			game_manager.note_player_feedback("%s found no weapons to reforge." % card_name)
 		return
-	if valid_targets.size() == 1:
-		var resolution_text := resolve_reforge_impact(game_manager, valid_targets[0])
-		if game_manager != null:
-			game_manager.note_player_feedback(resolution_text)
-		return
 
-	var prompt_host := _get_prompt_host()
+	var prompt_host := _get_prompt_host(game_manager)
 	if prompt_host != null and prompt_host.has_method("_queue_durinn_secondborn_impact_prompt"):
-		prompt_host.call_deferred("_queue_durinn_secondborn_impact_prompt", self)
+		prompt_host.call("_queue_durinn_secondborn_impact_prompt", self)
 		return
 
 	var fallback_text := resolve_reforge_impact(game_manager, valid_targets[0])
@@ -83,7 +77,12 @@ func _is_valid_reforge_target(card: Card) -> bool:
 		and card.card_type == Card.CardType.EQUIPMENT \
 		and card.has_type("Weapon")
 
-func _get_prompt_host() -> Node:
+func _get_prompt_host(game_manager: GameManager = null) -> Node:
+	if game_manager != null:
+		var direct_host := game_manager.get_interaction_host()
+		var direct_node := direct_host as Node
+		if direct_node != null and is_instance_valid(direct_node):
+			return direct_node
 	var tree: SceneTree = Engine.get_main_loop() as SceneTree
 	if tree == null:
 		return null

@@ -20,11 +20,15 @@ func _init() -> void:
 	art_path = ART_PATH
 
 func can_activate(game_manager: GameManager) -> bool:
+	var summon_tax := 0
+	if game_manager != null:
+		var preview_token := CombatMech.new()
+		summon_tax = game_manager.get_creature_summon_mana_cost(card_owner, preview_token, self, true)
 	return not is_face_down \
 		and not is_muted \
 		and not is_activation_locked(game_manager) \
 		and card_owner == game_manager.current_player \
-		and card_owner.mana >= ACTIVATION_COST \
+		and card_owner.mana >= get_activation_mana_cost(ACTIVATION_COST, game_manager) + summon_tax \
 		and activations_this_turn < MAX_ACTIVATIONS_PER_TURN \
 		and _find_open_summon_zone() != null
 
@@ -34,20 +38,24 @@ func activate(game_manager: GameManager, _target: Card = null) -> void:
 	var summon_zone := _find_open_summon_zone()
 	if summon_zone == null:
 		return
-	if not card_owner.spend_mana(ACTIVATION_COST):
+	if not spend_activation_mana(ACTIVATION_COST, game_manager):
 		return
 
 	var token := CombatMech.new()
 	token.card_owner = card_owner
-	token.creature_mode = Card.CreatureMode.AGGRESSIVE
-	token.reset_creature_action_state()
-	token.summoned_this_turn = true
-	token.is_face_down = false
-	token.is_stealth = false
-	token.wake_up()
-	summon_zone.add_card(token)
-	if game_manager != null and game_manager.has_method("_apply_god_passives_to_card"):
-		game_manager._apply_god_passives_to_card(card_owner, token)
+	if game_manager == null or not game_manager.summon_creature_by_effect(
+		card_owner,
+		token,
+		summon_zone,
+		Card.CreatureMode.AGGRESSIVE,
+		false,
+		false,
+		self,
+		false,
+		false,
+		false
+	):
+		return
 
 	activations_this_turn += 1
 	if game_manager != null:

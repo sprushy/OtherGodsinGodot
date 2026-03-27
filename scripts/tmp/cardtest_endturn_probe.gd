@@ -15,44 +15,76 @@ func _run_probe() -> void:
 	var scene: Node = MAIN_SCENE.instantiate()
 	root.add_child(scene)
 
-	var menu: Control = scene.get_node("Control")
 	var card_test: CardTestGame = scene.get_node("Control/GameContainer/CardTest")
 	await card_test.start_game()
 	await process_frame
 	await process_frame
 
 	var player1: Player = card_test.player1
-	var player2: Player = card_test.player2
+	_assert_state(player1 != null, "Expected player 1 test state.")
 
-	var dromi: Dromi = null
+	card_test._clear_zone(player1.frontline_zones[0])
+	card_test._clear_zone(player1.reserve_zones[0])
+	card_test._clear_zone(player1.reserve_zones[1])
+
+	var skoll: Skoll = null
+	var fenrir: Fenrir = null
 	for card in player1.hand_zone.cards:
-		if card is Dromi:
-			dromi = card
-			break
-	_assert_state(dromi != null, "Expected Dromi in player 1 hand.")
+		if card is Skoll and skoll == null:
+			skoll = card
+		elif card is Fenrir and fenrir == null:
+			fenrir = card
+	_assert_state(skoll != null, "Expected Skoll in player 1 hand.")
+	_assert_state(fenrir != null, "Expected Fenrir in player 1 hand.")
 
-	var target: Card = player2.frontline_zones[1].get_creature()
-	_assert_state(target != null, "Expected a creature target in player 2 frontline lane 2.")
+	var warding_stone := WardingStone.new()
+	card_test._add_test_hand_card(player1, warding_stone)
+	player1.spend_mana(player1.mana)
+	player1.gain_mana(10)
+	card_test.update_ui()
+	await process_frame
 
-	card_test._begin_hand_permanent_hex_target_selection(dromi)
-	_assert_state(card_test._has_pending_click_selection(), "Dromi should enter click-to-select targeting mode.")
-	_assert_state(card_test.selected_card == dromi, "Dromi should remain the selected hand card during targeting.")
+	card_test._resolve_skoll_upkeep_creature_play(skoll, player1.reserve_zones[0], "aggressive")
+	await process_frame
 
-	var handled: bool = card_test._try_handle_pending_click_selection(target)
-	_assert_state(handled, "Click-selection handler should accept Dromi's chosen target.")
-	_assert_state(dromi.current_zone == target.current_zone, "Dromi should attach into the target's board zone.")
-	_assert_state(dromi.attached_target == target, "Dromi should record its attached target.")
-	_assert_state(target.has_status_effect("cannot_attack"), "Dromi should apply the cannot_attack status to its target.")
-	_assert_state(not card_test._creature_can_attack(target), "Combat UI should block attacks from a Dromi-bound creature.")
+	_assert_state(skoll.current_zone == player1.reserve_zones[0], "Sun Hunt should summon Skoll into the chosen zone.")
+	_assert_state(card_test.game_manager.get_card_summon_mana_cost(player1, fenrir) == fenrir.mana_cost + 2, "Fenrir should cost 2 extra mana after Sun Hunt.")
+	_assert_state(card_test.game_manager.get_card_summon_mana_cost(player1, warding_stone) == warding_stone.mana_cost + 2, "Structures should also pick up Skoll's summon tax.")
 
-	var followers_before: int = player2.followers
-	card_test.game_manager.current_player = player2
-	card_test.game_manager.other_player = player1
-	card_test.game_manager.turn_player = player2
-	card_test.game_manager.start_turn()
-	_assert_state(player2.followers == followers_before - 7, "Dromi should drain 7 followers at the start of the bound creature controller's turn.")
+	player1.spend_mana(player1.mana)
+	player1.gain_mana(1)
+	_assert_state(not card_test.game_manager.can_play_card(player1, warding_stone, player1.reserve_zones[1]), "A taxed structure should be unaffordable with only 1 mana.")
 
-	menu.queue_free()
+	player1.spend_mana(player1.mana)
+	player1.gain_mana(10)
+	card_test.update_ui()
+	await process_frame
+
+	_assert_state(_get_hand_mana_label(card_test, "Fenrir") == "2M", "Fenrir's hand label should show the taxed mana cost.")
+	_assert_state(_get_hand_mana_label(card_test, "Warding Stone") == "2M", "Warding Stone's hand label should show the taxed mana cost.")
+
+	var mana_before_structure := player1.mana
+	card_test.game_manager.play_card(player1, warding_stone, player1.reserve_zones[1])
+	_assert_state(warding_stone.current_zone == player1.reserve_zones[1], "Warding Stone should be played to the board.")
+	_assert_state(player1.mana == mana_before_structure - 2, "Playing a taxed structure should spend the additional 2 mana.")
+
+	var mana_before_fenrir := player1.mana
+	card_test.game_manager.play_card(player1, fenrir, player1.frontline_zones[0])
+	_assert_state(fenrir.current_zone == player1.frontline_zones[0], "Fenrir should still be summonable after Sun Hunt.")
+	_assert_state(player1.mana == mana_before_fenrir - 2, "A normal creature summon after Sun Hunt should spend the additional 2 mana.")
+
 	scene.queue_free()
 	print("cardtest_endturn_probe: PASS")
 	quit()
+
+func _get_hand_mana_label(card_test: CardTestGame, card_name: String) -> String:
+	for vc in card_test._hand_visual_cards:
+		if vc == null or vc.card_data == null or vc.card_data.card_name != card_name:
+			continue
+		var inner: Control = vc.get_child(0) as Control
+		var vbox: VBoxContainer = inner.get_child(0) as VBoxContainer
+		var top_row := vbox.get_child(0) as HBoxContainer
+		var mana_label := top_row.get_child(top_row.get_child_count() - 1) as Label
+		if mana_label != null:
+			return mana_label.text
+	return ""

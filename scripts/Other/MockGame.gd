@@ -10,6 +10,7 @@ var _game_finished: bool = false
 @onready var followers_label = $VBoxContainer/StatsContainer/FollowersLabel
 @onready var action_label = $VBoxContainer/ActionLabel
 @onready var choice_container = $VBoxContainer/ChoiceContainer
+@onready var choice_intro_label = $VBoxContainer/ChoiceContainer/ChoiceIntroLabel
 @onready var draw_button = $VBoxContainer/ChoiceContainer/DrawButton
 @onready var mana_button = $VBoxContainer/ChoiceContainer/ManaButton
 @onready var end_turn_button = $VBoxContainer/EndTurnButton
@@ -23,17 +24,16 @@ func _ready() -> void:
 func start_game() -> void:
 	# Create game manager
 	game_manager = GameManager.new()
-	add_child(game_manager)
 	_game_finished = false
 	
 	# Create players
 	player1 = Player.new()
 	player1.player_name = "Player 1"
-	game_manager.add_child(player1)
+	game_manager.players.append(player1)
 	
 	player2 = Player.new()
 	player2.player_name = "Player 2"
-	game_manager.add_child(player2)
+	game_manager.players.append(player2)
 	
 	# Wait for zones to initialize
 	await get_tree().process_frame
@@ -51,7 +51,7 @@ func start_game() -> void:
 	game_manager.game_ended.connect(_on_game_ended)
 	
 	# Start first turn
-	game_manager.turn_number = 0
+	game_manager.start_turn()
 	update_ui()
 	show_turn_choice()
 
@@ -92,6 +92,9 @@ func show_turn_choice() -> void:
 	if _game_finished:
 		return
 	choice_container.visible = true
+	choice_intro_label.text = "+1 mana and:"
+	draw_button.text = "Draw Card"
+	mana_button.text = "Gain 4 Mana"
 	end_turn_button.visible = false
 	draw_button.disabled = false
 	mana_button.disabled = false
@@ -122,7 +125,7 @@ func _on_mana_button_pressed() -> void:
 	game_manager.player_chooses_mana()
 	update_ui()
 	hide_turn_choice()
-	print(game_manager.current_player.player_name + " gained 4 mana")
+	print(game_manager.current_player.player_name + " gained 4 additional mana")
 
 func _on_end_turn_button_pressed() -> void:
 	if _game_finished:

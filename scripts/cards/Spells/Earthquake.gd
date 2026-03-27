@@ -10,7 +10,6 @@ func _init() -> void:
 	speed = 1
 	is_legendary = true
 	sacrifice_cost = 0
-	creature_sacrifice_cost = 0
 	flavor_text = ""
 	culture = "Neutral"
 	artist = "Lorinda Tomko"

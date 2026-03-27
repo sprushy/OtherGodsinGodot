@@ -1,5 +1,5 @@
 # Zone.gd
-extends Node
+extends RefCounted
 class_name Zone
 
 enum ZoneType {

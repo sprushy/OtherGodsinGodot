@@ -1,5 +1,5 @@
 # GameManager.gd - Complete Version with Robust Player Identification
-extends Node
+extends RefCounted
 class_name GameManager
 
 signal game_ended(winner: Player, loser: Player)
@@ -14,6 +14,7 @@ signal turn_upkeep_started(turn_number: int, player: Player)
 signal turn_upkeep_resolved(turn_number: int, player: Player)
 signal phase_changed(old_phase: int, new_phase: int, turn_number: int, player: Player)
 signal god_power_activated(turn_number: int, player: Player, god: Card, target: Card)
+signal card_summoned(player: Player, card: Card, from_zone: Zone, to_zone: Zone, summon_source: Card, face_down: bool, stealth: bool)
 
 enum GamePhase { MULLIGAN, MAIN, COMBAT, END }
 
@@ -22,6 +23,7 @@ var current_player: Player
 var other_player: Player
 var turn_player: Player
 var feedback_viewer: Player
+var interaction_host: Object = null
 var current_phase: GamePhase = GamePhase.MULLIGAN
 var is_game_over: bool = false
 var winning_player: Player = null
@@ -37,6 +39,7 @@ var combat_destroy_events_this_turn: Array[Dictionary] = []
 var last_hex_resolution_text: String = ""
 var last_player_feedback_text: String = ""
 var _upkeep_resolved_turn: int = -1
+var _temporary_summon_cost_modifiers: Array[Dictionary] = []
 var _pending_doorway_structure: StructureCard = null
 var _pending_doorway_structures: Array[StructureCard] = []
 var _pending_doorway_card: Card = null
@@ -54,6 +57,10 @@ func get_phase_name(phase: int = -1) -> String:
 	if resolved_phase < 0 or resolved_phase >= phase_names.size():
 		return "UNKNOWN"
 	return phase_names[resolved_phase]
+
+func has_resolved_turn_upkeep(turn: int = -1) -> bool:
+	var resolved_turn := turn_number if turn < 0 else turn
+	return _upkeep_resolved_turn == resolved_turn
 
 func _set_phase(new_phase: int) -> void:
 	if current_phase == new_phase:
@@ -99,6 +106,12 @@ func consume_player_feedback() -> String:
 	var text := last_player_feedback_text
 	last_player_feedback_text = ""
 	return text
+
+func set_interaction_host(host: Object) -> void:
+	interaction_host = host
+
+func get_interaction_host() -> Object:
+	return interaction_host
 
 # Returns eligible speed-2+ responses the given player can play against the top stack action.
 func get_priority_responses(player: Player) -> Array:
@@ -218,19 +231,15 @@ func is_prepared_charm_ready(charm: CharmCard, triggering_action: CardAction = n
 	return prepared_turn < turn_number
 
 func setup_game() -> void:
-	players = []
 	is_game_over = false
 	winning_player = null
 	losing_player = null
-	for child in get_children():
-		if child is Player:
-			players.append(child)
-			var player := child as Player
-			if not player.card_moved.is_connected(_on_player_card_moved):
-				player.card_moved.connect(_on_player_card_moved)
-			var defeat_callback := Callable(self, "_on_player_defeated")
-			if not player.defeated.is_connected(defeat_callback):
-				player.defeated.connect(defeat_callback)
+	for player in players:
+		if not player.card_moved.is_connected(_on_player_card_moved):
+			player.card_moved.connect(_on_player_card_moved)
+		var defeat_callback := Callable(self, "_on_player_defeated")
+		if not player.defeated.is_connected(defeat_callback):
+			player.defeated.connect(defeat_callback)
 	
 	if players.size() == 2:
 		current_player = players[0]
@@ -267,7 +276,8 @@ func offer_mulligan(player: Player, card_count: int, bonus_mana: int) -> void:
 # 3. Fire controller turn-start hooks for the active player's non-god permanents.
 # 4. Fire global turn-start hooks for all permanents.
 # 5. Emit turn_started.
-# 6. Later, when the player chooses draw/mana, resolve upkeep exactly once.
+# 6. Later, when the player chooses Draw Card or Gain 4 Mana, resolve upkeep exactly once.
+# 7. Upkeep grants the active player's automatic +1 mana, then resolves god upkeep hooks.
 func start_turn() -> void:
 	if is_game_over:
 		return
@@ -277,6 +287,7 @@ func start_turn() -> void:
 	died_this_turn.clear()
 	pending_resurrections.clear()
 	combat_destroy_events_this_turn.clear()
+	_temporary_summon_cost_modifiers.clear()
 
 	current_player.reset_creature_actions()
 	
@@ -312,6 +323,7 @@ func _resolve_turn_upkeep() -> void:
 		return
 	_upkeep_resolved_turn = turn_number
 	turn_upkeep_started.emit(turn_number, current_player)
+	current_player.gain_mana(1)
 	for card in current_player.god_zone.cards:
 		if card.has_method("on_turn_upkeep"):
 			card.on_turn_upkeep(self)
@@ -397,19 +409,108 @@ func player_chooses_draw() -> void:
 		return
 	_resolve_turn_upkeep()
 	current_player.draw_card()
-	current_player.gain_mana(1)
 
 func player_chooses_mana() -> void:
 	if is_game_over:
 		return
 	_resolve_turn_upkeep()
-	current_player.gain_mana(5)
+	current_player.gain_mana(4)
+
+func player_chooses_upkeep_only() -> void:
+	if is_game_over:
+		return
+	_resolve_turn_upkeep()
+
+func add_temporary_summon_cost_modifier(
+	player: Player,
+	amount: int,
+	source: Card = null,
+	excluded_card: Card = null
+) -> void:
+	if player == null or amount == 0:
+		return
+	var excluded_cards: Array[Card] = []
+	if excluded_card != null:
+		excluded_cards.append(excluded_card)
+	_temporary_summon_cost_modifiers.append({
+		"player": player,
+		"amount": amount,
+		"source": source,
+		"excluded_cards": excluded_cards,
+		"turn_number": turn_number,
+	})
+
+func card_uses_summon_cost_rules(card: Card) -> bool:
+	if card == null:
+		return false
+	if card.card_type == Card.CardType.CREATURE:
+		return not card.is_god
+	return card.card_type == Card.CardType.STRUCTURE
+
+func get_card_summon_mana_cost(
+	player: Player,
+	card: Card,
+	summon_source: Card = null,
+	ignore_base_cost: bool = false
+) -> int:
+	if card == null:
+		return 0
+	var total_cost := 0 if ignore_base_cost else card.mana_cost
+	return card.get_adjusted_mana_cost(
+		total_cost,
+		Card.COST_KIND_CREATURE_SUMMON,
+		self,
+		{"player": player, "summon_source": summon_source}
+	)
+
+func get_additional_summon_mana_cost(player: Player, creature: Card, summon_source: Card = null) -> int:
+	if player == null or creature == null:
+		return 0
+	return maxi(0, get_total_cost_adjustment(
+		creature,
+		creature.mana_cost,
+		Card.COST_KIND_CREATURE_SUMMON,
+		{"player": player, "summon_source": summon_source}
+	))
+
+func get_creature_summon_mana_cost(
+	player: Player,
+	creature: Card,
+	summon_source: Card = null,
+	ignore_base_cost: bool = false
+) -> int:
+	if creature == null:
+		return 0
+	return get_card_summon_mana_cost(player, creature, summon_source, ignore_base_cost)
+
+func can_pay_creature_summon_cost(
+	player: Player,
+	creature: Card,
+	summon_source: Card = null,
+	pay_normal_summon_costs: bool = true
+) -> bool:
+	if player == null or creature == null:
+		return false
+	var mana_required := get_creature_summon_mana_cost(
+		player,
+		creature,
+		summon_source,
+		not pay_normal_summon_costs
+	)
+	if pay_normal_summon_costs:
+		return creature.can_pay_costs_with_mana_cost(player, mana_required)
+	return player.mana >= mana_required
 
 func can_play_card(player: Player, card: Card, target_zone: Zone) -> bool:
 	if is_game_over:
 		return false
+	if card == null or not card.can_be_played(self, player):
+		return false
 	# Check if player can pay costs
-	if not card.can_pay_costs(player):
+	var mana_required := card.mana_cost
+	if card_uses_summon_cost_rules(card):
+		mana_required = get_card_summon_mana_cost(player, card)
+	if not card.can_pay_costs_with_mana_cost(player, mana_required):
 		print("Cannot afford card costs")
 		return false
 
@@ -455,10 +556,33 @@ func can_play_card(player: Player, card: Card, target_zone: Zone) -> bool:
 
 	return true
 
+func can_prepare_card(player: Player, card: Card, target_zone: Zone) -> bool:
+	if is_game_over:
+		return false
+	if player == null or card == null:
+		return false
+	if card.card_type not in [Card.CardType.SPELL, Card.CardType.HEX, Card.CardType.CHARM]:
+		return false
+	if not card.can_prepare(self, player):
+		return false
+	if target_zone == null or not target_zone.is_board_zone():
+		return false
+	if target_zone.zone_owner != player:
+		return false
+	if target_zone not in player.frontline_zones and target_zone not in player.reserve_zones:
+		return false
+	if target_zone.cards.size() > 0:
+		return false
+	if target_zone.get_equipment().size() > 0:
+		print("Cannot prepare card: zone contains unequipped equipment")
+		return false
+	return true
+
 func play_card(player: Player, card: Card, target_zone: Zone, prepared: bool = false) -> void:
 	if is_game_over:
 		return
-	if can_play_card(player, card, target_zone):
+	var can_place := can_prepare_card(player, card, target_zone) if prepared else can_play_card(player, card, target_zone)
+	if can_place:
 		var from_zone := card.current_zone
 		var entered_field_face_up_from_hand := (
 			from_zone == player.hand_zone
@@ -468,7 +592,10 @@ func play_card(player: Player, card: Card, target_zone: Zone, prepared: bool = f
 		)
 
 		# Pay costs before playing
-		if not card.pay_costs(player, self):
+		var mana_required := card.mana_cost
+		if card_uses_summon_cost_rules(card):
+			mana_required = get_card_summon_mana_cost(player, card)
+		if not card.pay_costs_with_mana_cost(player, mana_required, self):
 			print("Failed to pay costs")
 			return
 		
@@ -490,8 +617,8 @@ func play_card(player: Player, card: Card, target_zone: Zone, prepared: bool = f
 			# Apply any active god passives to the newly placed creature
 			_apply_god_passives_to_card(player, card)
 
-		if entered_field_face_up_from_hand and card.has_method("on_impact"):
-			card.on_impact(self)
+		if target_zone != null and target_zone.is_board_zone() and card.card_type in [Card.CardType.CREATURE, Card.CardType.STRUCTURE]:
+			_trigger_board_summon(card, player, from_zone, target_zone, null, card.is_face_down, card.is_stealth, entered_field_face_up_from_hand)
 		
 		# Hexes must be prepared
 		if card.card_type == Card.CardType.HEX:
@@ -515,10 +642,115 @@ func play_card(player: Player, card: Card, target_zone: Zone, prepared: bool = f
 
 func play_creature_stealth(player: Player, card: Card, target_zone: Zone) -> void:
 	if card.card_type == Card.CardType.CREATURE:
-		card.is_stealth = true
-		card.is_face_down = true
-		card.creature_mode = Card.CreatureMode.DEFENSIVE
-		play_card(player, card, target_zone)
+		summon_creature_by_effect(
+			player,
+			card,
+			target_zone,
+			Card.CreatureMode.DEFENSIVE,
+			true,
+			true,
+			null,
+			true,
+			true,
+			true
+		)
+
+func summon_creature_without_cost(
+	player: Player,
+	card: Card,
+	target_zone: Zone,
+	mode: int = Card.CreatureMode.AGGRESSIVE,
+	face_down: bool = false,
+	stealth: bool = false
+) -> bool:
+	return summon_creature_by_effect(
+		player,
+		card,
+		target_zone,
+		mode,
+		face_down,
+		stealth,
+		null,
+		false,
+		true,
+		true
+	)
+
+func summon_creature_by_effect(
+	player: Player,
+	card: Card,
+	target_zone: Zone,
+	mode: int = Card.CreatureMode.AGGRESSIVE,
+	face_down: bool = false,
+	stealth: bool = false,
+	summon_source: Card = null,
+	pay_normal_summon_costs: bool = false,
+	consume_turn_summon: bool = false,
+	trigger_impact: bool = true
+) -> bool:
+	if is_game_over or player == null or card == null:
+		return false
+	if card.card_type != Card.CardType.CREATURE:
+		return false
+	if target_zone == null:
+		return false
+	if target_zone not in player.frontline_zones and target_zone not in player.reserve_zones:
+		return false
+	if not target_zone.cards.is_empty():
+		return false
+	if player == current_player and consume_turn_summon and player.has_summoned_this_turn:
+		return false
+	if not can_pay_creature_summon_cost(player, card, summon_source, pay_normal_summon_costs):
+		return false
+
+	var mana_required := get_creature_summon_mana_cost(
+		player,
+		card,
+		summon_source,
+		not pay_normal_summon_costs
+	)
+	if pay_normal_summon_costs:
+		if not card.pay_costs_with_mana_cost(player, mana_required, self):
+			return false
+	elif mana_required > 0 and not player.spend_mana(mana_required):
+		return false
+
+	var from_zone := card.current_zone
+	player.move_card(card, target_zone)
+	card.is_prepared = false
+	card.is_face_down = face_down
+	card.is_stealth = stealth
+	card.creature_mode = Card.CreatureMode.DEFENSIVE if face_down else mode
+	card.reset_creature_action_state()
+	card.summoned_this_turn = true
+	if consume_turn_summon:
+		player.has_summoned_this_turn = true
+
+	if not face_down:
+		card.wake_up()
+
+	_apply_god_passives_to_card(player, card)
+
+	_trigger_board_summon(card, player, from_zone, target_zone, summon_source, face_down, stealth, trigger_impact)
+	return true
+
+func _trigger_board_summon(
+	card: Card,
+	player: Player,
+	from_zone: Zone,
+	target_zone: Zone,
+	summon_source: Card = null,
+	face_down: bool = false,
+	stealth: bool = false,
+	trigger_impact: bool = true
+) -> void:
+	if card == null or player == null or target_zone == null:
+		return
+	if card.has_method("on_summon"):
+		card.on_summon(self)
+	if not face_down and trigger_impact and card.has_method("on_impact"):
+		card.on_impact(self)
+	card_summoned.emit(player, card, from_zone, target_zone, summon_source, face_down, stealth)
 
 func prepare_card(player: Player, card: Card, target_zone: Zone) -> void:
 	play_card(player, card, target_zone, true)
@@ -877,11 +1109,15 @@ func resolve_combat(attacker: Card, defender: Card, continue_callback: Callable 
 				print("	" + defender.card_name + " destroyed!")
 				_combat_kill(attacker, defender)
 			elif attacker_str_vs_res < defender_res:
-				# Followers convert to defender's side
-				var diff: int = defender_res - attacker_str_vs_res
-				print("	" + str(diff) + " followers convert to " + defender_controller.player_name)
-				attacker_controller.lose_followers(diff)
-				defender_controller.gain_followers(diff)
+				if _ferocious_defence_triggers(defender, attacker_str_vs_res):
+					print("	Ferocious Defence! " + attacker.card_name + " destroyed!")
+					_combat_kill(defender, attacker)
+				else:
+					# Followers convert to defender's side
+					var diff: int = defender_res - attacker_str_vs_res
+					print("	" + str(diff) + " followers convert to " + defender_controller.player_name)
+					attacker_controller.lose_followers(diff)
+					defender_controller.gain_followers(diff)
 			else:
 				print("	Exact match - no effect")
 	elif defender.card_type == Card.CardType.EQUIPMENT and defender.equipped_on == null:
@@ -960,10 +1196,15 @@ func resolve_united_front_combat(attacker: Card, partner: Card, defender: Card) 
 				print("	%s destroyed!" % defender.card_name)
 				_combat_kill(primary, defender)
 			elif attacker_str_vs_res < defender_res:
-				var diff := defender_res - attacker_str_vs_res
-				print("	%d followers convert to %s" % [diff, defender_controller.player_name])
-				attacker_controller.lose_followers(diff)
-				defender_controller.gain_followers(diff)
+				if _ferocious_defence_triggers(defender, attacker_str_vs_res):
+					print("	Ferocious Defence! United Front attackers destroyed!")
+					_combat_kill(defender, primary)
+					_combat_kill(defender, support)
+				else:
+					var diff := defender_res - attacker_str_vs_res
+					print("	%d followers convert to %s" % [diff, defender_controller.player_name])
+					attacker_controller.lose_followers(diff)
+					defender_controller.gain_followers(diff)
 			else:
 				print("	Exact match - no effect")
 	elif defender.card_type == Card.CardType.EQUIPMENT and defender.equipped_on == null:
@@ -1054,6 +1295,9 @@ func resolve_combat_with_continuation(
 			print("	" + defender.card_name + " destroyed!")
 			return _combat_kill_deferred(attacker, defender, finish)
 		if attacker_str_vs_res < defender_res:
+			if _ferocious_defence_triggers(defender, attacker_str_vs_res):
+				print("	Ferocious Defence! " + attacker.card_name + " destroyed!")
+				return _combat_kill_deferred(defender, attacker, finish)
 			var diff: int = defender_res - attacker_str_vs_res
 			print("	" + str(diff) + " followers convert to " + defender_controller.player_name)
 			attacker_controller.lose_followers(diff)
@@ -1072,9 +1316,13 @@ func _combat_kill_routed_deferred(killer: Card, victim: Card, do_void: bool, con
 	var victim_controller := victim.get_controller()
 	var finish := func() -> void:
 		var victim_counts_as_creature_kill := victim != null and victim.card_type == Card.CardType.CREATURE and not victim.is_petrified()
+		var victim_counts_as_attack_target_destroy := victim != null \
+			and killer_controller != null \
+			and victim_controller != null \
+			and victim_controller != killer_controller
 		if killer != null and killer.has_method("on_kill") and not killer.abilities_suppressed() and victim_counts_as_creature_kill:
 			killer.on_kill(self, victim)
-		if killer_controller != null and victim_counts_as_creature_kill:
+		if victim_counts_as_attack_target_destroy:
 			combat_destroy_events_this_turn.append({
 				"killer_owner": killer_controller,
 				"victim_owner": victim_controller,
@@ -1130,11 +1378,19 @@ func _notify_after_combat(attacker: Card, defender: Card) -> void:
 			for card in zone.cards:
 				if card.has_method("on_creature_after_combat"):
 					card.on_creature_after_combat(self, attacker, defender)
+	_expire_after_combat_effects(attacker)
+	_expire_after_combat_effects(defender)
 
 func _notify_after_united_front_combat(attacker: Card, partner: Card, defender: Card) -> void:
 	_notify_after_combat(attacker, defender)
 	if partner != null and partner != attacker and partner.has_method("on_after_combat"):
 		partner.on_after_combat(self, defender)
+	_expire_after_combat_effects(partner)
+
+func _expire_after_combat_effects(card: Card) -> void:
+	if card == null:
+		return
+	card.remove_effects_expiring_after_combat()
 
 func _get_active_united_front_attackers(attacker: Card, partner: Card) -> Array[Card]:
 	var active_attackers: Array[Card] = []
@@ -1305,9 +1561,13 @@ func _combat_kill_routed(killer: Card, victim: Card, do_void: bool) -> void:
 	var victim_controller := victim.get_controller()
 	var finish := func() -> void:
 		var victim_counts_as_creature_kill := victim != null and victim.card_type == Card.CardType.CREATURE and not victim.is_petrified()
+		var victim_counts_as_attack_target_destroy := victim != null \
+			and killer_controller != null \
+			and victim_controller != null \
+			and victim_controller != killer_controller
 		if killer != null and killer.has_method("on_kill") and not killer.abilities_suppressed() and victim_counts_as_creature_kill:
 			killer.on_kill(self, victim)
-		if killer_controller != null and victim_counts_as_creature_kill:
+		if victim_counts_as_attack_target_destroy:
 			combat_destroy_events_this_turn.append({
 				"killer_owner": killer_controller,
 				"victim_owner": victim_controller,
@@ -1338,7 +1598,38 @@ func _combat_kill_routed(killer: Card, victim: Card, do_void: bool) -> void:
 
 func player_destroyed_creature_by_combat_this_turn(player: Player) -> bool:
 	for event in combat_destroy_events_this_turn:
-		if event.get("killer_owner", null) == player and event.get("victim_owner", null) != player:
+		var victim := event.get("victim", null) as Card
+		if event.get("killer_owner", null) == player \
+			and event.get("victim_owner", null) != player \
+			and victim != null \
+			and victim.card_type == Card.CardType.CREATURE \
+			and not victim.is_petrified():
+			return true
+	return false
+
+func card_destroyed_attack_target_this_turn(card: Card) -> bool:
+	if card == null:
+		return false
+	for event: Dictionary in combat_destroy_events_this_turn:
+		if event.get("killer", null) != card:
+			continue
+		var killer_owner: Player = event.get("killer_owner", null)
+		var victim_owner: Player = event.get("victim_owner", null)
+		if killer_owner != null and victim_owner != killer_owner:
+			return true
+	return false
+
+func card_destroyed_attack_target_since(card: Card, from_event_index: int = 0) -> bool:
+	if card == null:
+		return false
+	var start_index := maxi(0, from_event_index)
+	for i in range(start_index, combat_destroy_events_this_turn.size()):
+		var event: Dictionary = combat_destroy_events_this_turn[i]
+		if event.get("killer", null) != card:
+			continue
+		var killer_owner: Player = event.get("killer_owner", null)
+		var victim_owner: Player = event.get("victim_owner", null)
+		if killer_owner != null and victim_owner != killer_owner:
 			return true
 	return false
 
@@ -1564,6 +1855,147 @@ func _notify_spell_played(player: Player, spell_card: Card) -> void:
 		if power.has_method("on_spell_played"):
 			power.on_spell_played(player, spell_card, self)
 
+func get_total_cost_adjustment(
+	target_card: Card,
+	base_cost: int,
+	cost_kind: String,
+	metadata: Dictionary = {}
+) -> int:
+	var total_adjustment := 0
+	for entry in get_cost_adjustment_entries(target_card, base_cost, cost_kind, metadata):
+		total_adjustment += int(entry.get("delta", 0))
+	return total_adjustment
+
+func get_cost_adjustment_entries(
+	target_card: Card,
+	base_cost: int,
+	cost_kind: String,
+	metadata: Dictionary = {}
+) -> Array[Dictionary]:
+	var entries: Array[Dictionary] = []
+	if target_card == null or base_cost < 0:
+		return entries
+	entries.append_array(_get_state_cost_adjustment_entries(target_card, base_cost, cost_kind, metadata))
+	for source_card in _get_cost_adjustment_source_cards():
+		if source_card == null:
+			continue
+		for raw_entry in source_card.get_cost_adjustment_entries(target_card, base_cost, cost_kind, self, metadata):
+			var entry := _normalize_cost_adjustment_entry(raw_entry, source_card)
+			if entry.is_empty():
+				continue
+			entries.append(entry)
+	return entries
+
+func claim_cost_adjustments(
+	target_card: Card,
+	base_cost: int,
+	cost_kind: String,
+	metadata: Dictionary = {}
+) -> bool:
+	if target_card == null or base_cost <= 0:
+		return false
+	var claimed := false
+	for source_card in _get_cost_adjustment_source_cards():
+		if source_card != null and source_card.claim_cost_adjustment(target_card, base_cost, cost_kind, self, metadata):
+			claimed = true
+	return claimed
+
+func get_power_cost_reduction_amount(target_power: PowerCard, base_cost: int, is_unlock: bool) -> int:
+	if target_power == null or base_cost <= 0:
+		return 0
+	var cost_kind := Card.COST_KIND_POWER_UNLOCK if is_unlock else Card.COST_KIND_POWER_ACTIVATION
+	return mini(base_cost, -mini(0, get_total_cost_adjustment(target_power, base_cost, cost_kind)))
+
+func get_power_cost_adjustment_entries(target_power: PowerCard, base_cost: int, is_unlock: bool) -> Array[Dictionary]:
+	if target_power == null:
+		return []
+	var cost_kind := Card.COST_KIND_POWER_UNLOCK if is_unlock else Card.COST_KIND_POWER_ACTIVATION
+	return get_cost_adjustment_entries(target_power, base_cost, cost_kind)
+
+func claim_power_cost_reduction(target_power: PowerCard, base_cost: int, is_unlock: bool) -> bool:
+	if target_power == null:
+		return false
+	var cost_kind := Card.COST_KIND_POWER_UNLOCK if is_unlock else Card.COST_KIND_POWER_ACTIVATION
+	return claim_cost_adjustments(target_power, base_cost, cost_kind)
+
+func _get_state_cost_adjustment_entries(
+	target_card: Card,
+	_base_cost: int,
+	cost_kind: String,
+	metadata: Dictionary = {}
+) -> Array[Dictionary]:
+	var entries: Array[Dictionary] = []
+	if cost_kind == Card.COST_KIND_CREATURE_SUMMON:
+		var player: Player = metadata.get("player", null)
+		var summon_source: Card = metadata.get("summon_source", null)
+		if player == null:
+			player = target_card.card_owner
+		for modifier in _temporary_summon_cost_modifiers:
+			if modifier.get("player", null) != player:
+				continue
+			if int(modifier.get("turn_number", -1)) != turn_number:
+				continue
+			var excluded_cards: Array = modifier.get("excluded_cards", [])
+			if target_card in excluded_cards:
+				continue
+			var amount := int(modifier.get("amount", 0))
+			if amount == 0:
+				continue
+			var source_card = modifier.get("source", null)
+			var source_name = source_card.card_name if source_card is Card else "Summon cost modifier"
+			entries.append({
+				"source": source_name,
+				"source_card": source_card,
+				"delta": amount,
+			})
+	return entries
+
+func _get_cost_adjustment_source_cards() -> Array[Card]:
+	var sources: Array[Card] = []
+	for player in players:
+		for card in player.god_zone.cards:
+			if _can_source_adjust_costs(card):
+				sources.append(card)
+		for zone in player.power_zones + player.frontline_zones + player.reserve_zones:
+			for card in zone.cards:
+				if _can_source_adjust_costs(card):
+					sources.append(card)
+	return sources
+
+func _can_source_adjust_costs(card: Card) -> bool:
+	if card == null or card.current_zone == null or card.card_owner == null:
+		return false
+	if card is PowerCard:
+		return (card as PowerCard).is_effectively_active()
+	if card.current_zone == card.card_owner.god_zone:
+		return not card.is_face_down and not card.abilities_suppressed()
+	if not card.current_zone.is_board_zone():
+		return false
+	return not card.is_face_down and not card.abilities_suppressed()
+
+func _normalize_cost_adjustment_entry(raw_entry, source_card: Card) -> Dictionary:
+	if raw_entry == null:
+		return {}
+	if raw_entry is Dictionary:
+		var entry := (raw_entry as Dictionary).duplicate()
+		if not entry.has("delta"):
+			return {}
+		if not entry.has("source"):
+			entry["source"] = source_card.card_name if source_card != null else "Cost modifier"
+		if not entry.has("source_card"):
+			entry["source_card"] = source_card
+		return entry
+	if raw_entry is int:
+		var delta := int(raw_entry)
+		if delta == 0:
+			return {}
+		return {
+			"source": source_card.card_name if source_card != null else "Cost modifier",
+			"source_card": source_card,
+			"delta": delta,
+		}
+	return {}
+
 
 func _get_active_powers() -> Array[PowerCard]:
 	var active_powers: Array[PowerCard] = []
@@ -1575,6 +2007,26 @@ func _get_active_powers() -> Array[PowerCard]:
 			if power != null and power.is_effectively_active():
 				active_powers.append(power)
 	return active_powers
+
+func _player_has_active_power_of_type(player: Player, script_type) -> bool:
+	if player == null:
+		return false
+	for power in _get_active_powers():
+		if power.card_owner == player and is_instance_of(power, script_type):
+			return true
+	return false
+
+func _has_ferocious_defence(player: Player) -> bool:
+	return _player_has_active_power_of_type(player, FerociousDefence)
+
+func _ferocious_defence_triggers(defender: Card, opposing_strength: int) -> bool:
+	if defender == null:
+		return false
+	if defender.card_type != Card.CardType.CREATURE:
+		return false
+	if defender.creature_mode != Card.CreatureMode.DEFENSIVE:
+		return false
+	return _has_ferocious_defence(defender.get_controller()) and defender.get_effective_resilience() > opposing_strength
 
 func _get_active_structures() -> Array[StructureCard]:
 	var active_structures: Array[StructureCard] = []

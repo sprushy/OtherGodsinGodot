@@ -22,7 +22,7 @@ func on_unlock(_game_manager: GameManager) -> void:
 func can_activate(game_manager: GameManager) -> bool:
 	if not super.can_activate(game_manager):
 		return false
-	if card_owner == null or card_owner.mana < ACTIVATION_COST:
+	if card_owner == null or card_owner.mana < get_activation_mana_cost(ACTIVATION_COST, game_manager):
 		return false
 	return has_reposition_targets()
 
@@ -37,14 +37,15 @@ func get_activation_failure_reason(game_manager: GameManager) -> String:
 		return card_name + " cannot be activated this turn."
 	if card_owner != game_manager.current_player:
 		return "It is not " + card_name + "'s turn to act."
-	if card_owner == null or card_owner.mana < ACTIVATION_COST:
-		return card_name + " needs " + str(ACTIVATION_COST) + " mana."
+	var activation_cost := get_activation_mana_cost(ACTIVATION_COST, game_manager)
+	if card_owner == null or card_owner.mana < activation_cost:
+		return card_name + " needs " + str(activation_cost) + " mana."
 	if not has_reposition_targets():
 		return card_name + " has no legal friendly slots to rearrange."
 	return ""
 
-func pay_activation_cost() -> bool:
-	return card_owner != null and card_owner.spend_mana(ACTIVATION_COST)
+func pay_activation_cost(game_manager: GameManager) -> bool:
+	return spend_activation_mana(ACTIVATION_COST, game_manager)
 
 func activate(game_manager: GameManager, target = null) -> void:
 	if not can_activate(game_manager):
@@ -54,7 +55,7 @@ func activate(game_manager: GameManager, target = null) -> void:
 	var plan: Array = target as Array
 	if plan.is_empty():
 		return
-	if not pay_activation_cost():
+	if not pay_activation_cost(game_manager):
 		return
 	var moved_steps := apply_reposition_plan(plan)
 	if game_manager == null:
