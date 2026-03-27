@@ -1,0 +1,78 @@
+extends CreatureCard
+class_name ErlqueensNightingale
+
+var in_bird_form: bool = false
+
+func _init() -> void:
+	super._init()
+	card_name = "Erlqueen's Nightingale"
+	card_types = _get_human_form_types()
+	level = 1
+	mana_cost = 1
+	speed = 3
+	resilience = 10
+	strength = 13
+	sacrifice_cost = 0
+	creature_sacrifice_cost = 0
+	ability_text = "[b]Shift[/b] ([b]Activate[/b]): Switch this card between Human, Servant, Mage, Witch and Animal, Avian, Aerial. When this card shifts, you may return it to your hand."
+	flavor_text = ""
+	culture = "Norse"
+	artist = "Jessica Kings Via Tcg-Maker"
+	art_path = "res://images/card_art/creatures/ErlQueenNightengaleAIEdit.png"
+
+func get_activation_label() -> String:
+	return "Shift"
+
+func can_activate(game_manager: GameManager) -> bool:
+	if game_manager == null:
+		return false
+	if get_controller() != game_manager.current_player:
+		return false
+	if current_zone == null or not current_zone.is_board_zone():
+		return false
+	if abilities_suppressed():
+		return false
+	if is_sleeping:
+		return false
+	return not creature_major_action_used
+
+func activate(game_manager: GameManager, target = null) -> void:
+	var return_to_hand_after_shift := false
+	if target is Dictionary:
+		return_to_hand_after_shift = (target as Dictionary).get("return_to_hand", false) == true
+	if not can_activate(game_manager):
+		return
+	shift_forms()
+	spend_major_creature_action()
+	if return_to_hand_after_shift and card_owner != null:
+		card_owner.move_card(self, card_owner.hand_zone)
+	if game_manager != null:
+		var form_label := "Animal, Avian, Aerial" if in_bird_form else "Human, Servant, Mage, Witch"
+		var feedback := "%s shifts into %s." % [card_name, form_label]
+		if return_to_hand_after_shift:
+			feedback += " It returns to hand."
+		game_manager.note_player_feedback(feedback)
+
+func shift_forms() -> void:
+	in_bird_form = not in_bird_form
+	card_types = _get_bird_form_types() if in_bird_form else _get_human_form_types()
+
+func can_return_to_hand_after_shift() -> bool:
+	return card_owner != null and current_zone != null and current_zone.is_board_zone()
+
+func _get_human_form_types() -> Array[String]:
+	var types: Array[String] = []
+	types.append("Human")
+	types.append("Servant")
+	types.append("Mage")
+	types.append("Witch")
+	types.append("Norse Creature")
+	return types
+
+func _get_bird_form_types() -> Array[String]:
+	var types: Array[String] = []
+	types.append("Animal")
+	types.append("Avian")
+	types.append("Aerial")
+	types.append("Norse Creature")
+	return types

@@ -4,7 +4,7 @@ class_name Banishment
 func _init() -> void:
 	super._init()
 	card_name = "Banishment"
-	level = 7
+	level = 3
 	mana_cost = 5
 	speed = 7
 	culture = "Ancient"
@@ -19,6 +19,8 @@ func _init() -> void:
 
 func can_respond_to_action(action: CardAction) -> bool:
 	if action == null or action.card == null:
+		return false
+	if action.card.has_method("can_be_negated") and not action.card.can_be_negated(action):
 		return false
 	if action.type != CardAction.Type.SPELL and action.type != CardAction.Type.ABILITY:
 		return false

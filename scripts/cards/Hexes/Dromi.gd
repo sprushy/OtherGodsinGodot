@@ -13,7 +13,7 @@ func _init() -> void:
 	speed = 3
 	culture = "Norse"
 	card_types = ["Hex", "Permanent", "Binding", "Targeting"]
-	ability_text = "Choose a creature: it cannot attack and at the beginning of each turn of its controller they lose 7 followers. This card remains on the field for as long as its target does."
+	ability_text = "Choose a creature. It can't attack, and its controller loses 7 followers at the start of their turns. This remains on the field as long as its target does."
 	art_path = "res://images/card_art/hexes/Dromi(web).jpg"
 	artist = "Ricardo Zoppello"
 

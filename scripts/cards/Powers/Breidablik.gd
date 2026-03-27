@@ -14,7 +14,7 @@ func _init() -> void:
 	card_name = "Breidablik"
 	culture = "Norse"
 	mana_cost = UNLOCK_COST
-	level = 3
+	level = 0
 	card_types = ["Power", "Runic Worship"]
 	if "Targeting" not in card_types:
 		card_types.append("Targeting")

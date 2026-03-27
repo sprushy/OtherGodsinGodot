@@ -9,7 +9,7 @@ func _init() -> void:
 	super._init()
 	card_name = "Call of the Valkyrie"
 	culture = "Norse"
-	level = 3
+	level = 0
 	mana_cost = UNLOCK_COST
 	card_types = ["Power", "Return", "Creature"]
 	if "Targeting" not in card_types:

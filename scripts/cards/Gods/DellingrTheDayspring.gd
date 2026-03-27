@@ -66,11 +66,15 @@ func get_activation_failure_reason(game_manager: GameManager) -> String:
 	return ""
 
 func is_valid_activation_target(target: Card) -> bool:
-	return target != null \
-		and target.get_controller() != null \
-		and target.get_controller() != card_owner \
-		and target.current_zone != null \
-		and target.current_zone.is_board_zone()
+	if target == null:
+		return false
+	if target.get_controller() == null or target.get_controller() == card_owner:
+		return false
+	if target.current_zone == null or not target.current_zone.is_board_zone():
+		return false
+	var publicly_revealed_power := target is PowerCard and (target as PowerCard).is_publicly_revealed
+	var hidden_face_down := (target.is_face_down or target.is_prepared) and not publicly_revealed_power
+	return not target.is_temporarily_revealed() and (target.is_stealth or hidden_face_down)
 
 func activate(game_manager: GameManager, target: Card = null) -> void:
 	if not can_activate(game_manager):
@@ -96,6 +100,7 @@ func activate(game_manager: GameManager, target: Card = null) -> void:
 	if locked:
 		feedback += " It cannot be activated this turn."
 	game_manager.note_player_feedback(feedback)
+	notify_power_activated(game_manager, target)
 
 func _is_magical_target(target: Card) -> bool:
 	if target == null:

@@ -48,7 +48,7 @@ func _make_all_cards() -> Array:
 		AgainWalker.new(), Alu.new(), Askelladen.new(), Aurboda.new(), EnkiLordOfEridu.new(),
 		BitMeseri.new(), CircleOfRebirth.new(), FallOfTheMighty.new(), ApollyonsDemiurge.new(), Absence.new(), BaneOfTheSvartalfar.new(), BlotSacrifice.new(), BookOfLife.new(), DeucalionsInfants.new(), MeadOfPoetry.new(), DivineLightning.new(),
 		BeardedAxe.new(),
-		WardingStone.new(), AncientPyre.new(), AnointingStatue.new(), DoorwayToTheVoid.new(),
+		WardingStone.new(), AncientPyre.new(), AnointingStatue.new(), DoorwayToTheVoid.new(), E2Abzu.new(),
 		VoidShield.new(), Banishment.new(), Dromi.new(),
 	]
 
@@ -337,7 +337,9 @@ func _refresh_grid() -> void:
 	for child in _grid.get_children():
 		child.queue_free()
 
-	for card in _all_cards:
+	var visible_cards: Array = _all_cards.filter(func(card: Card) -> bool: return _matches_filter(card))
+	visible_cards.sort_custom(_alphabetical_card_less)
+	for card in visible_cards:
 		if not _matches_filter(card):
 			continue
 		_grid.add_child(_make_card_item(card))
@@ -496,7 +498,7 @@ func _refresh_deck_panel() -> void:
 	in_deck.sort_custom(func(a: Card, b: Card) -> bool:
 		var oa := _type_order(a); var ob := _type_order(b)
 		if oa != ob: return oa < ob
-		return a.card_name < b.card_name
+		return _alphabetical_card_less(a, b)
 	)
 
 	var last_section := ""
@@ -728,6 +730,13 @@ func _find_template(card_name: String) -> Card:
 		if card.card_name == card_name:
 			return card
 	return null
+
+func _alphabetical_card_less(a: Card, b: Card) -> bool:
+	var a_name := a.get_normalized_card_name().to_lower()
+	var b_name := b.get_normalized_card_name().to_lower()
+	if a_name == b_name:
+		return a.card_name < b.card_name
+	return a_name < b_name
 
 func _get_type_color(card: Card) -> Color:
 	if card.is_god: return Color(0.9, 0.75, 0.2)

@@ -83,6 +83,7 @@ func activate(game_manager: GameManager, target: Card = null) -> void:
 	card_owner.spend_mana(ACTIVATION_COST)
 	if game_manager.enslave_creature(target, card_owner):
 		game_manager.note_player_feedback("Violent Delights enslaved " + target.card_name + ".")
+		notify_power_activated(game_manager, target)
 	else:
 		card_owner.gain_mana(ACTIVATION_COST)
 		game_manager.note_player_feedback("Violent Delights fizzles: " + game_manager.get_enslave_failure_reason(target, card_owner))

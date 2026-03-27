@@ -17,8 +17,9 @@ func _init() -> void:
 	name_at_bottom = true
 	artist = "Ricardo Zoppello"
 
-func on_turn_start(game_manager: GameManager) -> void:
+func on_turn_upkeep(game_manager: GameManager) -> void:
 	if card_owner == null or is_muted:
 		return
 	card_owner.gain_followers(FOLLOWERS_GAINED_PER_TURN)
+	notify_power_activated(game_manager)
 	print("Blessed One: " + card_owner.player_name + " gains " + str(FOLLOWERS_GAINED_PER_TURN) + " followers from Baldr.")

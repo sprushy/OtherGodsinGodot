@@ -5,7 +5,7 @@ func _init() -> void:
 	super._init()
 	card_name = "Soldier of the Black Emperor"
 	card_types = ["Dragon", "Long", "Aerial", "Tian Creature"]
-	level = 6
+	level = 5
 	mana_cost = 6
 	sacrifice_cost = 0
 	creature_sacrifice_cost = 0

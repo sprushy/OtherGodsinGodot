@@ -15,7 +15,7 @@ func _init() -> void:
 	flavor_text = ""
 	artist = ""
 	art_path = "res://images/card_art/spells/DeucalionsInfants.png"
-	ability_text = "Children of the Earth: You may destroy your structures and golems and your opponent must destroy 1 of theirs. For every structure or golem destroyed this turn, summon 1 [b]Stone Infant[/b] token."
+	ability_text = "Children of the Earth: You may destroy your structures and Golems, then your opponent destroys 1 of theirs. For each structure or Golem destroyed this turn, summon a [b]Stone Infant[/b] token."
 
 func resolve(game_manager: GameManager, target = null) -> void:
 	if target is Dictionary:

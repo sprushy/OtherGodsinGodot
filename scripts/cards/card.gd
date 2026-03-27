@@ -104,6 +104,9 @@ var _mute_applied_owner_turn_number: int = -1
 var active_buffs: Array[Dictionary] = []
 var active_statuses: Array[Dictionary] = []
 var _was_muted_last_check: bool = false
+var _pending_chosen_discards: Array[Card] = []
+
+const EXTERNAL_EFFECT_NEGATION_STATUS := "external_effect_negation"
 
 func get_controller() -> Player:
 	if current_zone != null and current_zone.is_board_zone() and current_zone.zone_owner != null:
@@ -258,13 +261,13 @@ func is_enslaved() -> bool:
 	return controller != null and card_owner != null and controller != card_owner
 
 func has_status_effect(status_name: String) -> bool:
-	for status in active_statuses:
+	for status in _get_effective_statuses():
 		if status.get("name", "") == status_name:
 			return true
 	return false
 
 func get_status_effect(status_name: String) -> Dictionary:
-	for status in active_statuses:
+	for status in _get_effective_statuses():
 		if status.get("name", "") == status_name:
 			return status
 	return {}
@@ -302,7 +305,7 @@ func is_activation_locked(game_manager: GameManager = null) -> bool:
 		return false
 	if game_manager == null:
 		return true
-	for status in active_statuses:
+	for status in _get_effective_statuses():
 		if status.get("name", "") != "activation_locked":
 			continue
 		var expires_turn = status.get("expires_turn", null)
@@ -338,7 +341,7 @@ func get_effective_speed() -> int:
 		base_speed -= 1
 	for equip in equipment:
 		base_speed += equip.speed_modifier
-	for buff in active_buffs:
+	for buff in _get_effective_buffs():
 		base_speed += buff.get("spd", 0)
 	return max(1, base_speed)
 
@@ -346,7 +349,7 @@ func get_effective_strength() -> int:
 	var total = strength
 	for equip in equipment:
 		total += equip.strength_modifier
-	for buff in active_buffs:
+	for buff in _get_effective_buffs():
 		total += buff.get("str", 0)
 	return total
 
@@ -354,14 +357,14 @@ func get_effective_resilience() -> int:
 	var total = resilience
 	for equip in equipment:
 		total += equip.resilience_modifier
-	for buff in active_buffs:
+	for buff in _get_effective_buffs():
 		total += buff.get("res", 0)
 	return total
 
 # Returns a human-readable breakdown of all active buffs for a stat ("str", "res", "spd")
 func get_buff_tooltip(stat: String) -> String:
 	var lines: Array[String] = []
-	for buff in active_buffs:
+	for buff in _get_effective_buffs():
 		var v: int = buff.get(stat, 0)
 		if v != 0:
 			lines.append(("+%d" % v if v > 0 else "%d" % v) + " from " + buff.get("source", "?"))
@@ -386,7 +389,7 @@ func get_full_stat_breakdown(stat: String) -> String:
 			_: v = 0
 		if v != 0:
 			lines.append(("+%d" % v if v > 0 else "%d" % v) + " " + equip.card_name)
-	for buff in active_buffs:
+	for buff in _get_effective_buffs():
 		var v: int = buff.get(stat, 0)
 		if v != 0:
 			lines.append(("+%d" % v if v > 0 else "%d" % v) + " from " + buff.get("source", "?"))
@@ -396,7 +399,7 @@ func get_full_stat_breakdown(stat: String) -> String:
 
 func get_effect_summary_lines() -> Array[String]:
 	var lines: Array[String] = []
-	for buff in active_buffs:
+	for buff in _get_effective_buffs():
 		var parts: Array[String] = []
 		var str_change: int = buff.get("str", 0)
 		var res_change: int = buff.get("res", 0)
@@ -411,7 +414,7 @@ func get_effect_summary_lines() -> Array[String]:
 			continue
 		lines.append(", ".join(parts) + " from " + str(buff.get("source", "?")))
 
-	for status in active_statuses:
+	for status in _get_effective_statuses():
 		var raw_status_name := str(status.get("name", "Status"))
 		if raw_status_name == "blessed_ward":
 			var ward_kind := str(status.get("ward_kind", "")).replace("_", " ")
@@ -533,9 +536,20 @@ func remove_status_effects_from_source_card(source_card: Card, status_name: Stri
 	)
 	_sync_status_flags()
 
+func remove_expired_buffs(current_turn: int) -> void:
+	active_buffs = active_buffs.filter(func(b):
+		var expires_turn = b.get("expires_turn", null)
+		if expires_turn == null:
+			return true
+		return int(expires_turn) > current_turn
+	)
+
 func remove_expired_statuses(current_turn: int) -> void:
 	active_statuses = active_statuses.filter(func(s):
-		return s.get("expires_turn", null) != current_turn
+		var expires_turn = s.get("expires_turn", null)
+		if expires_turn == null:
+			return true
+		return int(expires_turn) > current_turn
 	)
 	_sync_status_flags()
 
@@ -567,7 +581,7 @@ func clear_all_effects() -> void:
 
 func _sync_status_flags() -> void:
 	var sleep_status: Dictionary = {}
-	for status in active_statuses:
+	for status in _get_effective_statuses():
 		if status.get("name", "") == "sleep":
 			sleep_status = status
 			break
@@ -596,6 +610,38 @@ func get_ability_immunity_tag() -> String:
 		CardType.HEX:
 			return "hexes"
 	return ""
+
+func can_be_negated(_action: CardAction = null) -> bool:
+	return true
+
+func negates_external_effects() -> bool:
+	for status in active_statuses:
+		if status.get("name", "") == EXTERNAL_EFFECT_NEGATION_STATUS:
+			return true
+	return false
+
+func _get_effective_buffs() -> Array[Dictionary]:
+	if not negates_external_effects():
+		return active_buffs
+	var filtered: Array[Dictionary] = []
+	for buff in active_buffs:
+		if not _is_external_effect_entry(buff):
+			filtered.append(buff)
+	return filtered
+
+func _get_effective_statuses() -> Array[Dictionary]:
+	if not negates_external_effects():
+		return active_statuses
+	var filtered: Array[Dictionary] = []
+	for status in active_statuses:
+		if not _is_external_effect_entry(status):
+			filtered.append(status)
+	return filtered
+
+func _is_external_effect_entry(entry: Dictionary) -> bool:
+	if entry.get("allow_while_negated", false) == true:
+		return false
+	return entry.get("source_card", null) != self
 
 func mute_for_turns(turns: int, game_manager: GameManager = null) -> void:
 	var was_muted := is_muted
@@ -628,6 +674,16 @@ func on_turn_end(game_manager: GameManager) -> void:
 		mute_turns_remaining = 0
 		_mute_applied_owner_turn_number = -1
 	_process_mute_state_change(game_manager, was_muted)
+
+# Called for all board/god/power permanents whenever any player's turn begins.
+# Use this for effects keyed to "a turn started", not specifically "your turn started".
+func on_global_turn_start(_game_manager: GameManager, _starting_player: Player) -> void:
+	pass
+
+# Called for all board/god/power permanents whenever any player's turn ends.
+# Use this for effects keyed to "end of turn" regardless of controller.
+func on_global_turn_end(_game_manager: GameManager, _ending_player: Player) -> void:
+	pass
 
 func _process_mute_state_change(game_manager: GameManager, was_muted: bool) -> void:
 	if was_muted == is_muted:
@@ -757,6 +813,35 @@ func can_pay_costs(player: Player) -> bool:
 	
 	return true
 
+func requires_chosen_hand_discards() -> bool:
+	return discard_cost > 0
+
+func get_valid_play_discards(player: Player) -> Array[Card]:
+	var choices: Array[Card] = []
+	if player == null or player.hand_zone == null:
+		return choices
+	for card in player.hand_zone.cards:
+		if card != null and card != self:
+			choices.append(card)
+	return choices
+
+func set_pending_chosen_discards(cards: Array[Card]) -> void:
+	_pending_chosen_discards = cards.duplicate()
+
+func clear_pending_chosen_discards() -> void:
+	_pending_chosen_discards.clear()
+
+func has_pending_chosen_discards_for_cost() -> bool:
+	if discard_cost <= 0:
+		return true
+	if _pending_chosen_discards.size() < discard_cost:
+		return false
+	for i in range(discard_cost):
+		var card := _pending_chosen_discards[i]
+		if card == null or card == self or card.current_zone != card_owner.hand_zone:
+			return false
+	return true
+
 func pay_costs(player: Player, game_manager: GameManager = null) -> bool:
 	if not can_pay_costs(player):
 		return false
@@ -767,9 +852,19 @@ func pay_costs(player: Player, game_manager: GameManager = null) -> bool:
 	
 	# Pay discard cost
 	for i in range(discard_cost):
+		if _pending_chosen_discards.size() > i:
+			var chosen_discard := _pending_chosen_discards[i]
+			if chosen_discard != null and chosen_discard.current_zone == player.hand_zone and chosen_discard != self:
+				player.discard_card(chosen_discard)
+				continue
 		if player.hand_zone.get_card_count() > 0:
 			var card_to_discard = player.hand_zone.cards[0]
-			player.discard_card(card_to_discard)
+			if card_to_discard == self and player.hand_zone.get_card_count() > 1:
+				card_to_discard = player.hand_zone.cards[1]
+			if card_to_discard != self:
+				player.discard_card(card_to_discard)
+
+	clear_pending_chosen_discards()
 	
 	# Pay sacrifice cost (followers)
 	if sacrifice_cost > 0:

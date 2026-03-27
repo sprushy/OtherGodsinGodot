@@ -66,3 +66,7 @@ func on_after_combat(game_manager: GameManager, opposing_card: Card) -> void:
 func on_sacrificed_for_summon(game_manager: GameManager, summoned_card: Card) -> void:
 	# Called when this creature is sacrificed to pay another creature's summon cost.
 	pass
+
+func on_friendly_god_power_activated(game_manager: GameManager, god: Card, target: Card = null) -> void:
+	# Called after this creature's controller successfully activates their god's power.
+	pass

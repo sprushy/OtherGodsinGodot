@@ -548,6 +548,48 @@ func _is_card_targeted_on_stack(card: Card) -> bool:
 			return true
 	return false
 
+func _is_card_pending_target(card: Card) -> bool:
+	if card == null:
+		return false
+	var tree := get_tree()
+	if tree == null:
+		return false
+	var scene_root := tree.current_scene
+	if scene_root == null:
+		return false
+
+	var pending_validator = scene_root.get("_pending_click_selection_validator")
+	if pending_validator is Callable and (pending_validator as Callable).is_valid():
+		return (pending_validator as Callable).call(card) == true
+
+	if scene_root.get("awaiting_pyre_target") == true:
+		return true
+
+	if scene_root.get("awaiting_anointing_target") == true:
+		var anointing_source = scene_root.get("anointing_source")
+		return anointing_source != null and anointing_source.can_activate(game_manager, card)
+
+	if scene_root.get("awaiting_stupefy_target") == true:
+		var stupefy_source = scene_root.get("stupefy_source")
+		return stupefy_source != null \
+			and stupefy_source.has_method("get_valid_targets") \
+			and card in stupefy_source.get_valid_targets(game_manager)
+
+	if scene_root.get("awaiting_god_ability_target") == true:
+		var god_source = scene_root.get("god_ability_source")
+		return god_source != null \
+			and god_source.has_method("is_valid_activation_target") \
+			and god_source.is_valid_activation_target(card)
+
+	if scene_root.get("awaiting_spell_target") == true:
+		var spell_source = scene_root.get("spell_waiting_for_target")
+		if spell_source is CharmCard:
+			return (spell_source as CharmCard).is_valid_target(card)
+		if spell_source != null and spell_source.has_method("is_valid_target"):
+			return spell_source.is_valid_target(card)
+
+	return false
+
 func _is_card_waiting_on_priority(card: Card) -> bool:
 	if card == null or game_manager == null:
 		return false
@@ -690,7 +732,7 @@ func _refresh_display() -> void:
 				_add_speed_badge(fd_overlay, card)
 			if _is_card_attacking_on_stack(card):
 				_add_attack_aura(fd_overlay)
-			if _is_card_targeted_on_stack(card):
+			if _is_card_targeted_on_stack(card) or _is_card_pending_target(card):
 				_add_stack_target_indicator(fd_overlay)
 			var _fd_is_def := card.card_type == Card.CardType.CREATURE and card.creature_mode == Card.CreatureMode.DEFENSIVE
 			_defense_overlay = fd_overlay if _fd_is_def else null
@@ -720,7 +762,7 @@ func _refresh_display() -> void:
 					_add_playing_aura(overlay)
 				if _is_card_usable_for_priority(card):
 					_add_priority_response_aura(overlay)
-				if _is_card_targeted_on_stack(card):
+				if _is_card_targeted_on_stack(card) or _is_card_pending_target(card):
 					_add_stack_target_indicator(overlay)
 
 				var art := TextureRect.new()
@@ -830,7 +872,7 @@ func _refresh_display() -> void:
 			_add_playing_aura(overlay)
 		if _is_card_usable_for_priority(card):
 			_add_priority_response_aura(overlay)
-		if _is_card_targeted_on_stack(card):
+		if _is_card_targeted_on_stack(card) or _is_card_pending_target(card):
 			_add_stack_target_indicator(overlay)
 
 		# Art background; stealth shows hazed art (own) or cardback (opponent)
@@ -1120,7 +1162,10 @@ func _show_ability_popup() -> void:
 	if zone == null or zone.cards.size() == 0:
 		return
 	var card := zone.cards[0]
-	var scene_root := get_tree().current_scene
+	var tree := get_tree()
+	if tree == null:
+		return
+	var scene_root := tree.current_scene
 	if scene_root == null:
 		return
 

@@ -4,6 +4,16 @@ class_name GameManager
 
 signal game_ended(winner: Player, loser: Player)
 signal doorway_choice_requested(structure: StructureCard, card: Card, combat_death: bool, destruction: bool)
+signal turn_started(turn_number: int, player: Player)
+signal turn_ended(turn_number: int, player: Player)
+signal controller_turn_started(turn_number: int, player: Player)
+signal controller_turn_ended(turn_number: int, player: Player)
+signal global_turn_started(turn_number: int, player: Player)
+signal global_turn_ended(turn_number: int, player: Player)
+signal turn_upkeep_started(turn_number: int, player: Player)
+signal turn_upkeep_resolved(turn_number: int, player: Player)
+signal phase_changed(old_phase: int, new_phase: int, turn_number: int, player: Player)
+signal god_power_activated(turn_number: int, player: Player, god: Card, target: Card)
 
 enum GamePhase { MULLIGAN, MAIN, COMBAT, END }
 
@@ -37,6 +47,20 @@ var _pending_doorway_continue: Callable = Callable()
 # Priority system
 var priority_player: Player = null
 var consecutive_passes: int = 0
+
+func get_phase_name(phase: int = -1) -> String:
+	var resolved_phase := current_phase if phase < 0 else phase
+	var phase_names := GamePhase.keys()
+	if resolved_phase < 0 or resolved_phase >= phase_names.size():
+		return "UNKNOWN"
+	return phase_names[resolved_phase]
+
+func _set_phase(new_phase: int) -> void:
+	if current_phase == new_phase:
+		return
+	var old_phase := current_phase
+	current_phase = new_phase
+	phase_changed.emit(old_phase, new_phase, turn_number, current_player)
 
 func push_to_stack(action: CardAction) -> void:
 	if is_game_over:
@@ -81,6 +105,13 @@ func get_priority_responses(player: Player) -> Array:
 	var responses: Array = []
 	if action_stack.is_empty():
 		return responses
+	for card in player.god_zone.cards:
+		if can_card_respond_to_priority(card, player):
+			responses.append(card)
+	for zone in player.power_zones + player.frontline_zones + player.reserve_zones:
+		for card in zone.cards:
+			if can_card_respond_to_priority(card, player):
+				responses.append(card)
 	for hex in prepared_hexes.keys().duplicate():
 		if can_card_respond_to_priority(hex, player):
 			responses.append(hex)
@@ -118,6 +149,17 @@ func can_card_respond_to_priority(card: Card, player: Player = null) -> bool:
 		if card.current_zone == card.card_owner.hand_zone:
 			return typed_charm.can_activate_from_hand(self, top)
 		return typed_charm.can_activate_prepared(self, top)
+	if card.has_method("can_respond_to_priority_action"):
+		if _has_pending_stack_action_for_card(card):
+			return false
+		var response_speed := card.get_effective_speed()
+		if card.has_method("get_priority_response_speed"):
+			response_speed = int(card.get_priority_response_speed())
+		if response_speed < 2:
+			return false
+		if top_speed > 0 and response_speed < top_speed:
+			return false
+		return card.can_respond_to_priority_action(top, self)
 	if card.current_zone != responding_player.hand_zone:
 		return false
 	if _has_pending_stack_action_for_card(card):
@@ -209,7 +251,7 @@ func get_opponent(player: Player) -> Player:
 # -----------------------------------
 
 func start_mulligan() -> void:
-	current_phase = GamePhase.MULLIGAN
+	_set_phase(GamePhase.MULLIGAN)
 	offer_mulligan(current_player, 5, 0)
 	offer_mulligan(other_player, 5, 2)
 
@@ -219,12 +261,19 @@ func offer_mulligan(player: Player, card_count: int, bonus_mana: int) -> void:
 	# Add bonus_mana
 	pass
 
+# Turn lifecycle order is intentionally explicit:
+# 1. Officially begin the new turn and increment turn_number.
+# 2. Reset once-per-turn state for the active player.
+# 3. Fire controller turn-start hooks for the active player's non-god permanents.
+# 4. Fire global turn-start hooks for all permanents.
+# 5. Emit turn_started.
+# 6. Later, when the player chooses draw/mana, resolve upkeep exactly once.
 func start_turn() -> void:
 	if is_game_over:
 		return
 	turn_player = current_player
 	turn_number += 1
-	current_phase = GamePhase.MAIN
+	_set_phase(GamePhase.MAIN)
 	died_this_turn.clear()
 	pending_resurrections.clear()
 	combat_destroy_events_this_turn.clear()
@@ -249,15 +298,9 @@ func start_turn() -> void:
 			if card.card_type == Card.CardType.CREATURE:
 				card.summoned_this_turn = false
 	
-	# Trigger board permanents' on_turn_start
-	for zone in current_player.frontline_zones + current_player.reserve_zones:
-		for card in zone.cards:
-			if card.has_method("on_turn_start"):
-				card.on_turn_start(self)
-	for zone in current_player.power_zones:
-		for card in zone.cards:
-			if card.has_method("on_turn_start"):
-				card.on_turn_start(self)
+	_notify_controller_turn_start(current_player)
+	_notify_global_turn_start(current_player)
+	turn_started.emit(turn_number, current_player)
 
 func activate_prepared_hexes(defending_player: Player) -> void:
 	for hex in prepared_hexes.keys():
@@ -268,9 +311,13 @@ func _resolve_turn_upkeep() -> void:
 	if _upkeep_resolved_turn == turn_number:
 		return
 	_upkeep_resolved_turn = turn_number
+	turn_upkeep_started.emit(turn_number, current_player)
 	for card in current_player.god_zone.cards:
-		if card.has_method("on_turn_start"):
+		if card.has_method("on_turn_upkeep"):
+			card.on_turn_upkeep(self)
+		elif card.has_method("on_turn_start"):
 			card.on_turn_start(self)
+	turn_upkeep_resolved.emit(turn_number, current_player)
 
 # Checks all prepared hexes belonging to the defender's owner.
 # If one can activate, it fires and returns true (combat should be cancelled).
@@ -716,6 +763,8 @@ func _can_intercept_followers(defender: Card, attacker: Card) -> bool:
 		return false
 	if defender.get_effective_speed() < attacker.get_effective_speed():
 		return false
+	if not _can_interceptor_engage_attacker(defender, attacker):
+		return false
 	if defender.current_zone == null:
 		return false
 	var row_distance := -1
@@ -734,6 +783,15 @@ func _can_intercept_followers(defender: Card, attacker: Card) -> bool:
 	minimum_distance = max(0, minimum_distance - defender.get_intercept_reach_bonus())
 	return row_distance >= minimum_distance
 
+func _can_interceptor_engage_attacker(interceptor: Card, attacker: Card) -> bool:
+	if interceptor == null or attacker == null:
+		return false
+	if interceptor.has_method("can_engage") and not interceptor.can_engage(attacker):
+		return false
+	if attacker.has_method("can_be_engaged_by") and not attacker.can_be_engaged_by(interceptor):
+		return false
+	return true
+
 func check_for_intercept(attacker: Card, defending_player: Player) -> Card:
 	print("	Checking for intercepts...")
 	for zone in defending_player.frontline_zones + defending_player.reserve_zones:
@@ -745,6 +803,18 @@ func check_for_intercept(attacker: Card, defending_player: Player) -> Card:
 	return null
 
 func resolve_combat(attacker: Card, defender: Card, continue_callback: Callable = Callable()) -> bool:
+	if attacker == null or defender == null:
+		return false
+	if attacker.has_method("can_engage") and not attacker.can_engage(defender):
+		print(attacker.card_name + " cannot engage " + defender.card_name + ".")
+		if continue_callback.is_valid():
+			continue_callback.call()
+		return false
+	if defender.has_method("can_be_engaged_by") and not defender.can_be_engaged_by(attacker):
+		print(defender.card_name + " cannot be engaged by " + attacker.card_name + ".")
+		if continue_callback.is_valid():
+			continue_callback.call()
+		return false
 	attacker.reveal_from_stealth(self)
 	defender.reveal_from_stealth(self)
 	var attacker_controller := attacker.get_controller()
@@ -901,7 +971,36 @@ func resolve_united_front_combat(attacker: Card, partner: Card, defender: Card) 
 		_combat_kill(primary, defender)
 	_notify_after_united_front_combat(attacker, partner, defender)
 
-func resolve_combat_with_continuation(attacker: Card, defender: Card, continue_callback: Callable = Callable()) -> bool:
+func resolve_combat_with_continuation(
+	attacker: Card,
+	defender: Card,
+	continue_callback: Callable = Callable(),
+	interceptor_initiates: bool = false
+) -> bool:
+	if attacker == null or defender == null:
+		return false
+	if interceptor_initiates:
+		if defender.has_method("can_engage") and not defender.can_engage(attacker):
+			print(defender.card_name + " cannot intercept " + attacker.card_name + ".")
+			if continue_callback.is_valid():
+				continue_callback.call()
+			return false
+		if attacker.has_method("can_be_engaged_by") and not attacker.can_be_engaged_by(defender):
+			print(attacker.card_name + " cannot be intercepted by " + defender.card_name + ".")
+			if continue_callback.is_valid():
+				continue_callback.call()
+			return false
+	else:
+		if attacker.has_method("can_engage") and not attacker.can_engage(defender):
+			print(attacker.card_name + " cannot engage " + defender.card_name + ".")
+			if continue_callback.is_valid():
+				continue_callback.call()
+			return false
+		if defender.has_method("can_be_engaged_by") and not defender.can_be_engaged_by(attacker):
+			print(defender.card_name + " cannot be engaged by " + attacker.card_name + ".")
+			if continue_callback.is_valid():
+				continue_callback.call()
+			return false
 	attacker.reveal_from_stealth(self)
 	defender.reveal_from_stealth(self)
 	var attacker_controller := attacker.get_controller()
@@ -1016,7 +1115,7 @@ func _combat_kill_sequence_deferred(kills: Array[Dictionary], continue_callback:
 	return _combat_kill_routed_deferred(
 		kill.get("killer", null),
 		kill.get("victim", null),
-		bool(kill.get("do_void", false)),
+		kill.get("do_void", false) == true,
 		func() -> void:
 			_combat_kill_sequence_deferred(next_kills, continue_callback)
 	)
@@ -1075,25 +1174,22 @@ func remove_attack_restriction(player: Player) -> void:
 		attack_restrictions.erase(player)
 		print(player.player_name + " attack restriction removed!")
 
+# Turn lifecycle order is intentionally explicit:
+# 1. Fire controller turn-end hooks for the ending player's permanents.
+# 2. Fire global turn-end hooks for all permanents.
+# 3. Emit turn_ended and clear end-of-turn expiring statuses.
+# 4. Swap active/other players.
+# 5. Begin the next turn immediately.
 func end_turn() -> void:
 	if is_game_over:
 		return
-	# Trigger structures' on_turn_end
-	for zone in current_player.frontline_zones + current_player.reserve_zones:
-		for card in zone.cards:
-			if card.has_method("on_turn_end"):
-				card.on_turn_end(self)
-	for card in current_player.god_zone.cards:
-		if card.has_method("on_turn_end"):
-			card.on_turn_end(self)
-	for zone in current_player.power_zones:
-		for card in zone.cards:
-			if card.has_method("on_turn_end"):
-				card.on_turn_end(self)
-	for player in players:
-		for zone in [player.god_zone] + player.power_zones + player.frontline_zones + player.reserve_zones:
-			for card in zone.cards:
-				card.remove_expired_statuses(turn_number)
+	var ending_player := current_player
+	_notify_controller_turn_end(ending_player)
+	_notify_global_turn_end(ending_player)
+	turn_ended.emit(turn_number, ending_player)
+	for card in _get_all_turn_event_cards():
+		card.remove_expired_buffs(turn_number)
+		card.remove_expired_statuses(turn_number)
 	
 	# Swap players for the next turn
 	var temp = current_player
@@ -1103,6 +1199,63 @@ func end_turn() -> void:
 	current_player.is_turn_player = true
 	other_player.is_turn_player = false
 	start_turn()
+
+func _get_player_turn_event_cards(player: Player, include_god: bool = true) -> Array[Card]:
+	var cards: Array[Card] = []
+	if player == null:
+		return cards
+	var zones: Array[Zone] = []
+	if include_god:
+		zones.append(player.god_zone)
+	zones.append_array(player.power_zones)
+	zones.append_array(player.frontline_zones)
+	zones.append_array(player.reserve_zones)
+	for zone in zones:
+		for card in zone.cards.duplicate():
+			if card != null:
+				cards.append(card)
+	return cards
+
+func _get_all_turn_event_cards() -> Array[Card]:
+	var cards: Array[Card] = []
+	for player in players:
+		for card in _get_player_turn_event_cards(player):
+			if card not in cards:
+				cards.append(card)
+	return cards
+
+func _notify_controller_turn_start(player: Player) -> void:
+	controller_turn_started.emit(turn_number, player)
+	for card in _get_player_turn_event_cards(player, false):
+		if card.has_method("on_turn_start"):
+			card.on_turn_start(self)
+
+func _notify_global_turn_start(starting_player: Player) -> void:
+	global_turn_started.emit(turn_number, starting_player)
+	for card in _get_all_turn_event_cards():
+		if card.has_method("on_global_turn_start"):
+			card.on_global_turn_start(self, starting_player)
+
+func _notify_controller_turn_end(player: Player) -> void:
+	controller_turn_ended.emit(turn_number, player)
+	for card in _get_player_turn_event_cards(player):
+		if card.has_method("on_turn_end"):
+			card.on_turn_end(self)
+
+func _notify_global_turn_end(ending_player: Player) -> void:
+	global_turn_ended.emit(turn_number, ending_player)
+	for card in _get_all_turn_event_cards():
+		if card.has_method("on_global_turn_end"):
+			card.on_global_turn_end(self, ending_player)
+
+func notify_god_power_activated(player: Player, god: Card, target: Card = null) -> void:
+	if player == null or god == null:
+		return
+	for zone in player.frontline_zones + player.reserve_zones:
+		for card in zone.cards.duplicate():
+			if card != null and card.has_method("on_friendly_god_power_activated"):
+				card.on_friendly_god_power_activated(self, god, target)
+	god_power_activated.emit(turn_number, player, god, target)
 
 
 # --- New Helper Function for Card Removal ---
@@ -1119,6 +1272,8 @@ func _class_rend_active(player: Player) -> bool:
 func is_guardian_protected(target: Card, source: Card = null) -> bool:
 	if source != null and not source.targets:
 		return false
+	if target != null and target.has_status_effect("en_hedu_anna_exaltation_guard"):
+		return true
 	var target_controller := target.get_controller()
 	if target_controller == null:
 		return false
@@ -1270,7 +1425,11 @@ func request_send_to_graveyard(card: Card, continue_callback: Callable = Callabl
 	return success
 
 func _send_to_graveyard_with_hook_resolved(card: Card, send_to_abyss: bool, combat_death: bool = false, destruction: bool = false) -> bool:
-	if destruction and (card.has_status_effect("berserker_rage_guard") or card.has_status_effect("berserker_mead_guard")):
+	if destruction and (
+		card.has_status_effect("berserker_rage_guard")
+		or card.has_status_effect("berserker_mead_guard")
+		or card.has_status_effect("en_hedu_anna_exaltation_guard")
+	):
 		print(card.card_name + " resists destruction this turn.")
 		return false
 	# Record board position before the zone changes so Circle of Rebirth can
@@ -1452,7 +1611,7 @@ func _on_player_defeated(defeated_player: Player) -> void:
 	losing_player = defeated_player
 	winning_player = get_opponent(defeated_player)
 	is_game_over = true
-	current_phase = GamePhase.END
+	_set_phase(GamePhase.END)
 	if winning_player != null:
 		print(winning_player.player_name + " wins the game! " + defeated_player.player_name + " reached 0 followers.")
 	else:

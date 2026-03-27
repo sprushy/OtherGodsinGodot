@@ -9,10 +9,10 @@ func _init() -> void:
 	super._init()
 	card_name = "Divine Caprice"
 	culture = "Neutral"
-	level = 1
+	level = 0
 	mana_cost = UNLOCK_COST
 	card_types = ["Repositioning"]
-	ability_text = "[b]Unlock[/b] (1): [b]Activate[/b] - Pay 2 mana to move your cards to different legal slots. If multiple are hidden, you may make it unclear whether they switched."
+	ability_text = "[b]Unlock[/b] (1): [b]Activate[/b] - Move your cards to different legal slots."
 	artist = "Riccardo Zoppello"
 	art_path = "res://images/card_art/powers/DivineCapriceAIEdit.png"
 

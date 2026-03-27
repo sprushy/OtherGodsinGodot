@@ -47,6 +47,7 @@ func activate(game_manager: GameManager, target: Card) -> void:
 		game_manager.note_player_feedback("Entropic Force returned " + target.card_name + " and gained " + str(mana_gained) + " mana.")
 	game_manager.send_to_deck_bottom_with_hook(target)
 	card_owner.gain_mana(mana_gained)
+	notify_power_activated(game_manager, target)
 
 func on_turn_end(game_manager: GameManager) -> void:
 	super.on_turn_end(game_manager)

@@ -1,6 +1,9 @@
 extends Control
 class_name CombatMockGame
 
+const EnHeduAnnaScript = preload("res://scripts/cards/Creatures/EnHeduAnna.gd")
+const ErlqueensNightingaleScript = preload("res://scripts/cards/Creatures/ErlqueensNightingale.gd")
+
 signal forfeit_requested
 
 var player1: Player
@@ -112,13 +115,16 @@ var _pending_absence_target: Card = null
 var _pending_blessed_knights: BlessedKnights = null
 var _pending_byggvir: Byggvir = null
 var _pending_byggvir_options: Array[Dictionary] = []
+var _pending_en_hedu_anna: Card = null
+var _pending_erlqueens_nightingale: ErlqueensNightingaleScript = null
 var _breidablik_panel: Control = null
+var _e2_abzu_panel: Control = null
 var _divine_caprice_panel: Control = null
 var _pending_divine_caprice_power: DivineCaprice = null
 var _pending_divine_caprice_selected_zone: Zone = null
 var _pending_divine_caprice_plan: Array[Dictionary] = []
 var _pending_divine_caprice_virtual_slots: Dictionary = {}
-var _pending_hand_summon_events: Array[Card] = []
+var _pending_hand_play_events: Array[Card] = []
 var _stack_resolution_paused: bool = false
 var _pending_post_execute_source_player: Player = null
 var _overlay_card_dismissed: Callable = Callable()
@@ -157,6 +163,7 @@ var _center_action_panel: VBoxContainer = null
 var _board_separator_line: ColorRect = null
 
 const TRANSIENT_UI_Z_INDEX := 1000
+const HOVER_PREVIEW_Z_INDEX := TRANSIENT_UI_Z_INDEX + 50
 const ACTION_LOG_MAX_MESSAGES := 250
 const ACTION_LOG_PREVIEW_COUNT := 2
 const BOARD_ZONE_COLUMN_GAP := 2.0
@@ -692,6 +699,8 @@ func start_game() -> void:
 	game_manager.setup_game()
 	if not game_manager.doorway_choice_requested.is_connected(_on_doorway_choice_requested):
 		game_manager.doorway_choice_requested.connect(_on_doorway_choice_requested)
+	if not game_manager.god_power_activated.is_connected(_on_god_power_activated):
+		game_manager.god_power_activated.connect(_on_god_power_activated)
 
 	# Place Ananke's Binding in player 1's first power slot
 	var ananke := AnankesBinding.new()
@@ -1505,7 +1514,7 @@ func _show_power_hover_popup(source: Control, text: String) -> void:
 		pstyle.set_border_width(side, 2)
 	popup.add_theme_stylebox_override("panel", pstyle)
 	popup.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	popup.z_index = 250
+	popup.z_index = HOVER_PREVIEW_Z_INDEX
 
 	var label := Label.new()
 	label.text = text
@@ -1516,9 +1525,12 @@ func _show_power_hover_popup(source: Control, text: String) -> void:
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	popup.add_child(label)
 
+	var tree := get_tree()
+	if tree == null or tree.current_scene == null:
+		return
 	popup.top_level = true
-	get_tree().current_scene.add_child(popup)
-	_promote_transient_ui(popup)
+	tree.current_scene.add_child(popup)
+	_promote_transient_ui(popup, HOVER_PREVIEW_Z_INDEX)
 	_power_hover_popup = popup
 	call_deferred("_position_power_hover_popup", popup, source)
 
@@ -2093,6 +2105,105 @@ func _hide_breidablik_prompt() -> void:
 		_breidablik_panel.queue_free()
 	_breidablik_panel = null
 
+func _show_e2_abzu_prompt(structure: E2Abzu) -> void:
+	_hide_e2_abzu_prompt()
+	if structure == null:
+		update_ui()
+		return
+	var void_targets := structure.get_valid_void_targets(game_manager)
+	var field_targets := structure.get_valid_field_targets(game_manager)
+	var can_return := not void_targets.is_empty()
+	var can_void := not field_targets.is_empty()
+	if not can_return and not can_void:
+		action_label.text = structure.card_name + " has no valid ability targets right now."
+		update_ui()
+		return
+
+	var panel := PanelContainer.new()
+	panel.name = "E2AbzuPromptPanel"
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.05, 0.11, 0.18, 0.97)
+	style.border_color = Color(0.38, 0.78, 0.92, 0.95)
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		style.set_border_width(side, 2)
+	panel.add_theme_stylebox_override("panel", style)
+	panel.z_index = 220
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 6)
+	panel.add_child(vbox)
+
+	var title := Label.new()
+	title.text = structure.card_name
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 15)
+	vbox.add_child(title)
+
+	var info := Label.new()
+	info.text = "Choose which ability to use."
+	info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	vbox.add_child(info)
+
+	var return_btn := Button.new()
+	return_btn.text = "Return from Void (3 mana)"
+	return_btn.disabled = not can_return
+	return_btn.pressed.connect(func() -> void:
+		_hide_e2_abzu_prompt()
+		_show_card_selection_overlay(
+			"Choose a Mer Mage in your Void",
+			void_targets,
+			func(chosen: Card) -> void:
+				_queue_targeted_ability_action(
+					structure,
+					chosen,
+					func() -> void:
+						structure.activate(game_manager, chosen)
+				)
+		)
+	)
+	vbox.add_child(return_btn)
+
+	var void_btn := Button.new()
+	void_btn.text = "Void from Field (2 mana)"
+	void_btn.disabled = not can_void
+	void_btn.pressed.connect(func() -> void:
+		_hide_e2_abzu_prompt()
+		_show_card_selection_overlay(
+			"Choose a friendly Mer Mage on the field",
+			field_targets,
+			func(chosen: Card) -> void:
+				_queue_targeted_ability_action(
+					structure,
+					chosen,
+					func() -> void:
+						structure.activate(game_manager, chosen)
+				)
+		)
+	)
+	vbox.add_child(void_btn)
+
+	var cancel_btn := Button.new()
+	cancel_btn.text = "Cancel"
+	cancel_btn.pressed.connect(_hide_e2_abzu_prompt)
+	vbox.add_child(cancel_btn)
+
+	add_child(panel)
+	_promote_transient_ui(panel)
+	panel.anchor_left = 0.5
+	panel.anchor_right = 0.5
+	panel.anchor_top = 0.5
+	panel.anchor_bottom = 0.5
+	panel.offset_left = -160
+	panel.offset_right = 160
+	panel.offset_top = -95
+	panel.offset_bottom = 95
+	_e2_abzu_panel = panel
+
+func _hide_e2_abzu_prompt() -> void:
+	if _e2_abzu_panel != null and is_instance_valid(_e2_abzu_panel):
+		_e2_abzu_panel.queue_free()
+	_e2_abzu_panel = null
+
 func _maybe_prompt_breidablik_on_turn_start() -> void:
 	if game_manager == null or game_manager.current_player == null:
 		return
@@ -2131,16 +2242,10 @@ func _prompt_absence_target_selection() -> void:
 		action_label.text = "Absence has no valid targets."
 		update_ui()
 		return
-	if _get_paid_hand_card_display_zone(spell) == null:
-		if not _can_cast_hand_spell(spell):
-			action_label.text = "Cannot cast " + spell.card_name + "!"
-			update_ui()
-			return
-		if not spell.pay_costs(spell.card_owner, game_manager):
-			action_label.text = "Cannot afford " + spell.card_name + "!"
-			update_ui()
-			return
-		_begin_paid_hand_card_preview(spell)
+	if not _can_cast_hand_spell(spell):
+		action_label.text = "Cannot cast " + spell.card_name + "!"
+		update_ui()
+		return
 	_show_card_selection_overlay(
 		"Choose a Power or God Ability for Absence",
 		targets,
@@ -2235,6 +2340,7 @@ func _show_zone_contents(zone_name: String, zone: Zone) -> void:
 	for card in zone.cards:
 		var vc := VisualCard.new()
 		vc.setup(card)
+		vc.set_hover_preview_when_disabled(true)
 		vc.set_disabled(true)
 		vc.modulate.a = 1.0
 		hbox.add_child(vc)
@@ -2452,7 +2558,6 @@ func _cancel_pending_target_selection(reason: String) -> bool:
 		click_cancel_callback.call()
 	if should_fizzle_paid_preview and paid_preview_card != null:
 		_clear_paid_hand_card_preview(paid_preview_card)
-		_send_used_hand_card_to_graveyard(paid_preview_card)
 	print(reason)
 	action_label.text = reason
 	update_ui()
@@ -2502,7 +2607,7 @@ func _try_handle_pending_click_selection(clicked_card: Card) -> bool:
 		return false
 	if clicked_card == null:
 		return true
-	if _pending_click_selection_validator.is_valid() and not bool(_pending_click_selection_validator.call(clicked_card)):
+	if _pending_click_selection_validator.is_valid() and _pending_click_selection_validator.call(clicked_card) != true:
 		return false
 	var confirm_callback := _pending_click_selection_confirm
 	_clear_pending_click_selection()
@@ -2684,8 +2789,41 @@ func _pay_hand_card_costs(card: Card, custom_pay_callback: Callable = Callable()
 	if card == null or game_manager == null or card.card_owner == null:
 		return false
 	if custom_pay_callback.is_valid():
-		return bool(custom_pay_callback.call())
+		return custom_pay_callback.call() == true
 	return card.pay_costs(card.card_owner, game_manager)
+
+func _prompt_chosen_hand_discards(card: Card, on_complete: Callable, on_cancel: Callable = Callable(), chosen: Array[Card] = []) -> bool:
+	if card == null or card.card_owner == null or card.discard_cost <= 0:
+		return false
+	var chosen_discards: Array[Card] = chosen.duplicate()
+	if chosen_discards.size() >= card.discard_cost:
+		card.set_pending_chosen_discards(chosen_discards)
+		if on_complete.is_valid():
+			on_complete.call()
+		return true
+	var discard_choices: Array[Card] = card.get_valid_play_discards(card.card_owner)
+	for already_chosen in chosen_discards:
+		discard_choices.erase(already_chosen)
+	if discard_choices.is_empty():
+		card.clear_pending_chosen_discards()
+		action_label.text = "Cannot play " + card.card_name + ": choose another card in hand to discard."
+		update_ui()
+		return true
+	var on_choose_discard := func(chosen: Card) -> void:
+		var next_chosen: Array[Card] = chosen_discards.duplicate()
+		next_chosen.append(chosen)
+		_prompt_chosen_hand_discards(card, on_complete, on_cancel, next_chosen)
+	var on_cancel_discard := func() -> void:
+		card.clear_pending_chosen_discards()
+		if on_cancel.is_valid():
+			on_cancel.call()
+	_show_card_selection_overlay(
+		"Choose discard %d of %d for %s" % [chosen_discards.size() + 1, card.discard_cost, card.card_name],
+		discard_choices,
+		on_choose_discard,
+		on_cancel_discard
+	)
+	return true
 
 func _send_used_hand_card_to_graveyard(card: Card) -> void:
 	if card == null or game_manager == null or card.card_owner == null:
@@ -2711,6 +2849,18 @@ func _queue_hand_spell_cast(
 		display_zone = _resolve_pending_display_zone(spell, _pending_spell_display_zone)
 	var costs_already_paid := display_zone != null
 	if not costs_already_paid:
+		if not custom_pay_callback.is_valid() and spell.requires_chosen_hand_discards() and not spell.has_pending_chosen_discards_for_cost():
+			var on_choose_spell_cost := func() -> void:
+				_queue_hand_spell_cast(spell, target, resolution_text, resolve_callback, custom_pay_callback, after_payment_callback)
+			var on_cancel_spell_cost := func() -> void:
+				action_label.text = "Cancelled " + spell.card_name + "."
+				update_ui()
+			_prompt_chosen_hand_discards(
+				spell,
+				on_choose_spell_cost,
+				on_cancel_spell_cost
+			)
+			return true
 		if not _can_cast_hand_spell(spell):
 			action_label.text = "Cannot cast " + spell.card_name + "!"
 			update_ui()
@@ -2792,6 +2942,18 @@ func _queue_hand_spell_with_deferred_resolution(
 		display_zone = _resolve_pending_display_zone(spell, _pending_spell_display_zone)
 	var costs_already_paid := display_zone != null
 	if not costs_already_paid:
+		if not custom_pay_callback.is_valid() and spell.requires_chosen_hand_discards() and not spell.has_pending_chosen_discards_for_cost():
+			var on_choose_deferred_spell_cost := func() -> void:
+				_queue_hand_spell_with_deferred_resolution(spell, target, resolution_text, resolve_callback, custom_pay_callback, after_payment_callback)
+			var on_cancel_deferred_spell_cost := func() -> void:
+				action_label.text = "Cancelled " + spell.card_name + "."
+				update_ui()
+			_prompt_chosen_hand_discards(
+				spell,
+				on_choose_deferred_spell_cost,
+				on_cancel_deferred_spell_cost
+			)
+			return true
 		if not _can_cast_hand_spell(spell):
 			action_label.text = "Cannot cast " + spell.card_name + "!"
 			update_ui()
@@ -2827,16 +2989,10 @@ func _prompt_charm_target_selection(charm: CharmCard, triggering_action: CardAct
 	selected_card = charm
 	var resolved_display_zone := _resolve_pending_display_zone(charm, display_zone)
 	var from_hand: bool = charm.current_zone == charm.card_owner.hand_zone
-	if from_hand and _get_paid_hand_card_display_zone(charm) == null:
-		if not charm.can_activate_from_hand(game_manager, triggering_action):
-			action_label.text = charm.card_name + " cannot be played right now."
-			update_ui()
-			return
-		if not charm.pay_costs(charm.card_owner, game_manager):
-			action_label.text = "Cannot afford " + charm.card_name + "!"
-			update_ui()
-			return
-		resolved_display_zone = _begin_paid_hand_card_preview(charm, resolved_display_zone)
+	if from_hand and not charm.can_activate_from_hand(game_manager, triggering_action):
+		action_label.text = charm.card_name + " cannot be played right now."
+		update_ui()
+		return
 	_begin_pending_click_selection(
 		charm.card_name,
 		charm,
@@ -2931,39 +3087,46 @@ func _resolve_charm_action(charm: CharmCard, target: Card = null) -> void:
 func _on_local_player_card_moved(card: Card, from_zone: Zone, to_zone: Zone) -> void:
 	if card == null or from_zone == null or to_zone == null:
 		return
-	if card.card_type != Card.CardType.CREATURE or card.is_god:
-		return
 	if from_zone.zone_type != Zone.ZoneType.HAND:
 		return
-	if not to_zone.is_board_zone():
+	if not _is_in_play_zone(to_zone):
 		return
-	if card.is_face_down:
+	if card.current_zone != to_zone:
 		return
-	if card in _pending_hand_summon_events:
+	if card.goes_to_graveyard_after_use():
 		return
-	_pending_hand_summon_events.append(card)
-	call_deferred("_flush_hand_summon_priority_events")
+	if card in _pending_hand_play_events:
+		return
+	_pending_hand_play_events.append(card)
+	call_deferred("_flush_hand_play_priority_events")
 
-func _flush_hand_summon_priority_events() -> void:
-	if _pending_hand_summon_events.is_empty():
+func _flush_hand_play_priority_events() -> void:
+	if _pending_hand_play_events.is_empty():
 		return
 	if game_manager == null or not game_manager.action_stack.is_empty():
-		call_deferred("_flush_hand_summon_priority_events")
+		call_deferred("_flush_hand_play_priority_events")
 		return
-	var summoned_card: Card = _pending_hand_summon_events.pop_front()
-	if summoned_card == null or summoned_card.current_zone == null or not summoned_card.current_zone.is_board_zone():
-		call_deferred("_flush_hand_summon_priority_events")
+	var played_card: Card = _pending_hand_play_events.pop_front()
+	if played_card == null or played_card.current_zone == null or not _is_in_play_zone(played_card.current_zone):
+		call_deferred("_flush_hand_play_priority_events")
 		return
 	_queue_priority_event(
-		"hand_summon",
-		summoned_card,
-		summoned_card.get_effective_speed(),
+		"hand_play",
+		played_card,
+		played_card.get_effective_speed(),
 		func() -> void:
 			update_ui()
-			action_label.text = summoned_card.card_name + " was summoned from hand."
-			if not _pending_hand_summon_events.is_empty():
-				call_deferred("_flush_hand_summon_priority_events")
+			action_label.text = played_card.card_name + " was played from hand."
+			if not _pending_hand_play_events.is_empty():
+				call_deferred("_flush_hand_play_priority_events")
 	)
+
+func _is_in_play_zone(zone: Zone) -> bool:
+	if zone == null:
+		return false
+	if zone.is_board_zone():
+		return true
+	return zone.zone_type == Zone.ZoneType.GOD_SLOT or zone.zone_type == Zone.ZoneType.POWER_SLOT
 
 func draw_board() -> void:
 	for child in board_container.get_children():
@@ -3135,6 +3298,7 @@ func _on_hand_card_pressed(card: Card) -> void:
 		else:
 			action_label.text = "Selected charm: " + card.card_name + " - click a zone to play it, right-click for menu, or drag with S/right-click to prepare it."
 	elif card.card_type == Card.CardType.SPELL:
+		placement_mode = ""
 		if card is BitMeseri:
 			action_label.text = "BitMeseri - Drag onto a creature or structure to void it"
 		elif card is Absence:
@@ -3165,31 +3329,34 @@ func _on_hand_card_right_clicked(card: Card) -> void:
 	if _is_turn_choice_pending():
 		_reject_pre_turn_action()
 		return
+	if card == selected_card and card.card_type == Card.CardType.SPELL:
+		_toggle_selected_spell_prepare_mode()
+		return
 	if card is CharmCard:
 		_close_context_menu()
-		var panel := PanelContainer.new()
-		panel.name = "HandCardContextMenu"
-		var style := StyleBoxFlat.new()
-		style.bg_color = Color(0.1, 0.1, 0.18, 0.97)
-		style.border_color = Color(0.45, 0.82, 0.95)
+		var charm_panel := PanelContainer.new()
+		charm_panel.name = "HandCardContextMenu"
+		var charm_style := StyleBoxFlat.new()
+		charm_style.bg_color = Color(0.1, 0.1, 0.18, 0.97)
+		charm_style.border_color = Color(0.45, 0.82, 0.95)
 		for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-			style.set_border_width(side, 2)
-		style.corner_radius_top_left = 4
-		style.corner_radius_top_right = 4
-		style.corner_radius_bottom_left = 4
-		style.corner_radius_bottom_right = 4
-		panel.add_theme_stylebox_override("panel", style)
-		panel.z_index = 200
+			charm_style.set_border_width(side, 2)
+		charm_style.corner_radius_top_left = 4
+		charm_style.corner_radius_top_right = 4
+		charm_style.corner_radius_bottom_left = 4
+		charm_style.corner_radius_bottom_right = 4
+		charm_panel.add_theme_stylebox_override("panel", charm_style)
+		charm_panel.z_index = 200
 
-		var vbox := VBoxContainer.new()
-		vbox.add_theme_constant_override("separation", 4)
-		panel.add_child(vbox)
+		var charm_vbox := VBoxContainer.new()
+		charm_vbox.add_theme_constant_override("separation", 4)
+		charm_panel.add_child(charm_vbox)
 
-		var title := Label.new()
-		title.text = card.card_name
-		title.add_theme_font_size_override("font_size", 13)
-		title.modulate = Color(0.85, 0.95, 1.0)
-		vbox.add_child(title)
+		var charm_title := Label.new()
+		charm_title.text = card.card_name
+		charm_title.add_theme_font_size_override("font_size", 13)
+		charm_title.modulate = Color(0.85, 0.95, 1.0)
+		charm_vbox.add_child(charm_title)
 
 		if not (card as CharmCard).must_be_prepared_to_activate:
 			var play_btn := Button.new()
@@ -3200,7 +3367,7 @@ func _on_hand_card_right_clicked(card: Card) -> void:
 				placement_mode = ""
 				action_label.text = card.card_name + " selected - click a zone to play it."
 			)
-			vbox.add_child(play_btn)
+			charm_vbox.add_child(play_btn)
 
 		var prepare_btn := Button.new()
 		prepare_btn.text = "Prepare Charm"
@@ -3210,28 +3377,29 @@ func _on_hand_card_right_clicked(card: Card) -> void:
 			placement_mode = "prepare_charm"
 			action_label.text = card.card_name + " selected - click an empty friendly zone to prepare it."
 		)
-		vbox.add_child(prepare_btn)
+		charm_vbox.add_child(prepare_btn)
 
-		var cancel_btn := Button.new()
-		cancel_btn.text = "Cancel"
-		cancel_btn.pressed.connect(_close_context_menu)
-		vbox.add_child(cancel_btn)
+		var charm_cancel_btn := Button.new()
+		charm_cancel_btn.text = "Cancel"
+		charm_cancel_btn.pressed.connect(_close_context_menu)
+		charm_vbox.add_child(charm_cancel_btn)
 
-		_context_menu = panel
-		add_child(panel)
-		_promote_transient_ui(panel)
-		panel.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
-		var mouse_pos := get_global_mouse_position()
-		panel.global_position = mouse_pos
+		_context_menu = charm_panel
+		add_child(charm_panel)
+		_promote_transient_ui(charm_panel)
+		charm_panel.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
+		var charm_mouse_pos := get_global_mouse_position()
+		charm_panel.global_position = charm_mouse_pos
 		await get_tree().process_frame
-		if not is_instance_valid(panel):
+		if not is_instance_valid(charm_panel):
 			return
-		var viewport_size := get_viewport_rect().size
-		panel.global_position = Vector2(
-			clamp(mouse_pos.x, 4.0, viewport_size.x - panel.size.x - 4.0),
-			clamp(mouse_pos.y, 4.0, viewport_size.y - panel.size.y - 4.0)
+		var charm_viewport_size := get_viewport_rect().size
+		charm_panel.global_position = Vector2(
+			clamp(charm_mouse_pos.x, 4.0, charm_viewport_size.x - charm_panel.size.x - 4.0),
+			clamp(charm_mouse_pos.y, 4.0, charm_viewport_size.y - charm_panel.size.y - 4.0)
 		)
 		return
+
 	if card.card_type != Card.CardType.CREATURE or card.is_god:
 		return
 	_close_context_menu()
@@ -3289,6 +3457,17 @@ func _on_hand_card_right_clicked(card: Card) -> void:
 		clamp(_mp.x, 4.0, _vp.x - panel.size.x - 4.0),
 		clamp(_mp.y, 4.0, _vp.y - panel.size.y - 4.0)
 	)
+
+func _toggle_selected_spell_prepare_mode() -> void:
+	if selected_card == null or selected_card.card_type != Card.CardType.SPELL:
+		return
+	if placement_mode == "prepare_spell":
+		placement_mode = ""
+		action_label.text = "Selected spell: " + selected_card.card_name + " - click a zone to cast it, or drag with S/right-click to prepare it."
+	else:
+		placement_mode = "prepare_spell"
+		action_label.text = "Selected spell: " + selected_card.card_name + " - preparation mode on. Click or drag to an empty friendly zone to prepare it face-down."
+	update_ui()
 
 func _on_aggressive_stance_pressed() -> void:
 	if _is_turn_choice_pending():
@@ -3378,7 +3557,14 @@ func _on_empty_zone_pressed(zone: Zone) -> void:
 			return
 		if selected_card.card_type == Card.CardType.SPELL:
 			if game_manager.can_play_card(game_manager.current_player, selected_card, zone):
-				if selected_card is ApollyonsDemiurge or selected_card.card_name == "Apollyon's Demiurge":
+				if placement_mode == "prepare_spell":
+					game_manager.prepare_card(game_manager.current_player, selected_card, zone)
+					action_label.text = "Prepared Spell: " + selected_card.card_name + " (face-down)!"
+					selected_card = null
+					placement_mode = ""
+					placement_container.visible = false
+					update_ui()
+				elif selected_card is ApollyonsDemiurge or selected_card.card_name == "Apollyon's Demiurge":
 					_show_demiurge_prompt(selected_card)
 				elif selected_card is BookOfLife:
 					_show_book_of_life_prompt(selected_card as BookOfLife)
@@ -3409,6 +3595,18 @@ func _on_empty_zone_pressed(zone: Zone) -> void:
 					)
 			else:
 				action_label.text = "Cannot cast spell! Not enough resources"
+		elif selected_card.current_zone == game_manager.current_player.hand_zone \
+				and selected_card.requires_chosen_hand_discards() \
+				and not selected_card.has_pending_chosen_discards_for_cost():
+			_prompt_chosen_hand_discards(
+				selected_card,
+				func() -> void:
+					_on_empty_zone_pressed(zone),
+				func() -> void:
+					action_label.text = "Cancelled " + selected_card.card_name + "."
+					update_ui()
+			)
+			return
 		elif selected_card.card_type == Card.CardType.CREATURE and placement_mode != "":
 			if game_manager.can_play_card(game_manager.current_player, selected_card, zone):
 				if selected_card.creature_sacrifice_cost > 0 and not _drag_sacrifice_done:
@@ -3527,6 +3725,9 @@ func _on_god_card_pressed(card: Card) -> void:
 		god_ability_source = card
 		action_label.text = card.card_name + " - click a valid target."
 		update_ui()
+
+func _on_god_power_activated(_turn_number: int, player: Player, _god: Card, _target: Card) -> void:
+	pass
 
 func _execute_drag_sacrifice(zone: Zone) -> void:
 	var card := _drag_sacrifice_card
@@ -3701,17 +3902,23 @@ func _try_resolve_stupefy_target(card: Card) -> bool:
 	if not awaiting_stupefy_target or stupefy_source == null:
 		return false
 	if card.card_type == Card.CardType.CREATURE and card.level <= stupefy_source.level:
-		if game_manager.is_guardian_protected(card, stupefy_source):
+		var source_stupefy := stupefy_source
+		if game_manager.is_guardian_protected(card, source_stupefy):
 			action_label.text = card.card_name + " is protected by Guardian!"
 			return true
-		if game_manager.is_immune_to_source(card, stupefy_source):
-			action_label.text = card.card_name + " is immune to " + stupefy_source.card_name + "'s creature abilities this turn."
+		if game_manager.is_immune_to_source(card, source_stupefy):
+			action_label.text = card.card_name + " is immune to " + source_stupefy.card_name + "'s creature abilities this turn."
 			return true
-		stupefy_source.stupefy(card)
+		_queue_targeted_ability_action(
+			source_stupefy,
+			card,
+			func() -> void:
+				source_stupefy.activate(game_manager, card),
+			source_stupefy.card_name + " is targeting " + _get_target_label(card, game_manager.get_feedback_viewer(), card.card_name) + "."
+		)
 		awaiting_stupefy_target = false
 		stupefy_source = null
 		update_ui()
-		action_label.text = card.card_name + " is now Sleeping!"
 	else:
 		action_label.text = "Invalid target Ã¢â‚¬â€ choose a creature of level " + str(stupefy_source.level) + " or lower."
 	return true
@@ -3738,19 +3945,31 @@ func _on_board_card_pressed(card: Card) -> void:
 		return
 
 	if awaiting_pyre_target and pyre_source != null:
-		pyre_source.activate(game_manager, card)
+		var source_pyre := pyre_source
+		_queue_targeted_ability_action(
+			source_pyre,
+			card,
+			func() -> void:
+				source_pyre.activate(game_manager, card),
+			source_pyre.card_name + " is targeting " + _get_target_label(card, game_manager.get_feedback_viewer(), card.card_name) + "."
+		)
 		awaiting_pyre_target = false
 		pyre_source = null
-		action_label.text = "Ancient Pyre: Ritual Flame resolved."
 		update_ui()
 		return
 
 	if awaiting_anointing_target and anointing_source != null:
-		if anointing_source.can_activate(game_manager, card):
-			anointing_source.activate(game_manager, card)
+		var source_anointing := anointing_source
+		if source_anointing.can_activate(game_manager, card):
+			_queue_targeted_ability_action(
+				source_anointing,
+				card,
+				func() -> void:
+					source_anointing.activate(game_manager, card),
+				source_anointing.card_name + " is targeting " + _get_target_label(card, game_manager.get_feedback_viewer(), card.card_name) + "."
+			)
 			awaiting_anointing_target = false
 			anointing_source = null
-			action_label.text = "Anointing Statue resolved."
 			update_ui()
 		else:
 			_cancel_pending_target_selection(
@@ -3925,6 +4144,13 @@ func _on_board_card_pressed(card: Card) -> void:
 		return
 	
 	if card.card_type == Card.CardType.STRUCTURE:
+		if card is E2Abzu and card.get_controller() == game_manager.current_player:
+			if (card as E2Abzu).can_activate(game_manager):
+				_show_e2_abzu_prompt(card as E2Abzu)
+			else:
+				action_label.text = card.card_name + " has no usable mode right now."
+				update_ui()
+			return
 		if card is AncientPyre and card.get_controller() == game_manager.current_player:
 			if (card as AncientPyre).can_activate(game_manager):
 				if (card as AncientPyre).is_frontline():
@@ -3932,7 +4158,14 @@ func _on_board_card_pressed(card: Card) -> void:
 					pyre_source = card as AncientPyre
 					action_label.text = "Ancient Pyre: Select a card to reduce Res by 5, or click the enemy god to Convert 5 followers."
 				else:
-					(card as AncientPyre).activate(game_manager)
+					_queue_magical_action(
+						CardAction.Type.ABILITY,
+						card,
+						null,
+						card.card_name + " activated!",
+						func() -> void:
+							(card as AncientPyre).activate(game_manager)
+					)
 					action_label.text = "Ancient Pyre: Ritual Flame Ã¢â‚¬â€ 5 followers converted!"
 					update_ui()
 			else:
@@ -3947,6 +4180,10 @@ func _on_board_card_pressed(card: Card) -> void:
 	
 	if card.card_type != Card.CardType.CREATURE:
 		action_label.text = "That card cannot perform an action."
+		return
+
+	if card is EnHeduAnnaScript and card.can_activate(game_manager):
+		_show_en_hedu_anna_prompt(card as EnHeduAnnaScript)
 		return
 
 	if not _creature_can_attack(card):
@@ -4012,11 +4249,17 @@ func _on_enemy_card_pressed(target_card: Card) -> void:
 		return
 
 	if awaiting_anointing_target and anointing_source != null:
-		if anointing_source.can_activate(game_manager, target_card):
-			anointing_source.activate(game_manager, target_card)
+		var source_anointing := anointing_source
+		if source_anointing.can_activate(game_manager, target_card):
+			_queue_targeted_ability_action(
+				source_anointing,
+				target_card,
+				func() -> void:
+					source_anointing.activate(game_manager, target_card),
+				source_anointing.card_name + " is targeting " + _get_target_label(target_card, game_manager.get_feedback_viewer(), target_card.card_name) + "."
+			)
 			awaiting_anointing_target = false
 			anointing_source = null
-			action_label.text = "Anointing Statue resolved."
 			update_ui()
 		else:
 			_cancel_pending_target_selection(
@@ -4034,10 +4277,16 @@ func _on_enemy_card_pressed(target_card: Card) -> void:
 		_cast_targeted_spell(selected_card, target_card)
 		return
 	if awaiting_pyre_target and pyre_source != null:
-		pyre_source.activate(game_manager, target_card)
+		var source_pyre := pyre_source
+		_queue_targeted_ability_action(
+			source_pyre,
+			target_card,
+			func() -> void:
+				source_pyre.activate(game_manager, target_card),
+			source_pyre.card_name + " is targeting " + _get_target_label(target_card, game_manager.get_feedback_viewer(), target_card.card_name) + "."
+		)
 		awaiting_pyre_target = false
 		pyre_source = null
-		action_label.text = "Ancient Pyre: Ritual Flame resolved."
 		update_ui()
 		return
 
@@ -4163,6 +4412,9 @@ func _on_enemy_card_pressed(target_card: Card) -> void:
 			action_label.text = _get_attack_card_label(selected_attacker, "A creature") + " attacks " + target_card.card_owner.player_name + "'s followers!"
 			check_for_possible_intercepts()
 		elif target_card.card_type == Card.CardType.CREATURE or target_card.card_type == Card.CardType.STRUCTURE:
+			if not _can_cards_engage_each_other(selected_attacker, target_card):
+				action_label.text = _get_card_name_safe(selected_attacker, "That card") + " cannot engage " + _get_card_name_safe(target_card, "that target") + "."
+				return
 			pending_attack_target = target_card
 			action_label.text = _get_attack_card_label(selected_attacker, "A creature") + " attacking " + _get_card_name_safe(target_card, "an enemy card") + " - opponent may intercept"
 			check_for_possible_intercepts()
@@ -4289,6 +4541,12 @@ func _on_creature_right_clicked(card: Card) -> void:
 		btn.text = card.get_activation_label() if card.has_method("get_activation_label") else "Activate Ability"
 		btn.pressed.connect(func():
 			_close_context_menu()
+			if card is EnHeduAnnaScript:
+				_show_en_hedu_anna_prompt(card as EnHeduAnnaScript)
+				return
+			if card is ErlqueensNightingaleScript:
+				_show_erlqueens_nightingale_prompt(card as ErlqueensNightingaleScript)
+				return
 			if card.has_method("get_valid_targets"):
 				var targets: Array = card.get_valid_targets(game_manager)
 				if targets.is_empty():
@@ -4494,6 +4752,10 @@ func _unhandled_input(event: InputEvent) -> void:
 			_on_priority_pass_pressed()
 			get_viewport().set_input_as_handled()
 			return
+		if key_event.pressed and not key_event.echo and key_event.keycode == KEY_S and selected_card != null and selected_card.card_type == Card.CardType.SPELL:
+			_toggle_selected_spell_prepare_mode()
+			get_viewport().set_input_as_handled()
+			return
 
 	if _game_finished or not _has_pending_target_selection():
 		return
@@ -4531,8 +4793,11 @@ func _bdrag_start_ghost() -> void:
 	if not _bdrag_card.is_god:
 		var ml := Label.new(); ml.text = "DEF" if _bdrag_card.creature_mode == Card.CreatureMode.DEFENSIVE else "AGG"; ml.add_theme_font_size_override("font_size", 13); vbox.add_child(ml)
 		var sl := Label.new(); sl.text = "STR:%d RES:%d SPD:%d" % [_bdrag_card.get_effective_strength(), _bdrag_card.get_effective_resilience(), _bdrag_card.get_effective_speed()]; sl.add_theme_font_size_override("font_size", 12); vbox.add_child(sl)
+	var tree := get_tree()
+	if tree == null or tree.current_scene == null:
+		return
 	_bdrag_ghost = panel
-	get_tree().current_scene.add_child(_bdrag_ghost)
+	tree.current_scene.add_child(_bdrag_ghost)
 	_bdrag_ghost.global_position = get_global_mouse_position() - zone_size / 2.0
 
 func _bdrag_finish(drop_pos: Vector2) -> void:
@@ -4609,6 +4874,9 @@ func _bdrag_finish(drop_pos: Vector2) -> void:
 		var target_card := target_zone.cards[0]
 		if target_card.card_type == Card.CardType.CREATURE or target_card.card_type == Card.CardType.STRUCTURE:
 			selected_attacker = card
+			if not _can_cards_engage_each_other(card, target_card):
+				action_label.text = _get_card_name_safe(card, "That card") + " cannot engage " + _get_card_name_safe(target_card, "that target") + "."
+				return
 			pending_attack_target = target_card
 			action_label.text = _get_attack_card_label(card, "A creature") + " attacking " + _get_card_name_safe(target_card, "an enemy card") + " - opponent may intercept"
 			check_for_possible_intercepts()
@@ -4779,6 +5047,24 @@ func _get_declared_attack_speed(attacker: Card) -> int:
 		return attacker.get_united_front_attack_speed(game_manager)
 	return attacker.get_effective_speed()
 
+func _can_cards_engage_each_other(attacker: Card, defender: Card) -> bool:
+	if attacker == null or defender == null:
+		return false
+	if attacker.has_method("can_engage") and not attacker.can_engage(defender):
+		return false
+	if defender.has_method("can_be_engaged_by") and not defender.can_be_engaged_by(attacker):
+		return false
+	return true
+
+func _can_interceptor_engage_attacker(interceptor: Card, attacker: Card) -> bool:
+	if interceptor == null or attacker == null:
+		return false
+	if interceptor.has_method("can_engage") and not interceptor.can_engage(attacker):
+		return false
+	if attacker.has_method("can_be_engaged_by") and not attacker.can_be_engaged_by(interceptor):
+		return false
+	return true
+
 func can_intercept(defender: Card, attacker: Card, protected_target) -> bool:
 	if attacker == null:
 		return false
@@ -4789,6 +5075,8 @@ func can_intercept(defender: Card, attacker: Card, protected_target) -> bool:
 	if defender.is_sleeping:
 		return false
 	if defender.get_effective_speed() < _get_declared_attack_speed(attacker):
+		return false
+	if not _can_interceptor_engage_attacker(defender, attacker):
 		return false
 	# Aggressive-stance creatures can intercept once per turn at equal or greater speed
 	if defender.creature_mode == Card.CreatureMode.AGGRESSIVE and defender.can_take_major_creature_action():
@@ -4925,20 +5213,19 @@ func _offer_priority() -> void:
 	var responses := game_manager.get_priority_responses(player)
 	update_ui()
 
-	if auto_priority:
-		if responses.is_empty():
-			_hide_priority_prompt()
-			game_manager.pass_priority()
-			if game_manager.both_passed():
+	if responses.is_empty():
+		_hide_priority_prompt()
+		game_manager.pass_priority()
+		if game_manager.both_passed():
+			update_ui()
+			await get_tree().create_timer(STACK_LINGER_SECONDS).timeout
+			if game_manager.action_stack.is_empty():
 				update_ui()
-				await get_tree().create_timer(STACK_LINGER_SECONDS).timeout
-				if game_manager.action_stack.is_empty():
-					update_ui()
-					return
-				_execute_top_of_stack()
-			else:
-				_offer_priority()
-			return
+				return
+			_execute_top_of_stack()
+		else:
+			_offer_priority()
+		return
 
 	_show_priority_prompt(player)
 
@@ -5033,6 +5320,26 @@ func _on_priority_response_chosen(card: Card) -> void:
 			_prompt_charm_target_selection(charm, game_manager.action_stack.back())
 		else:
 			_queue_charm_action(charm, game_manager.action_stack.back())
+	elif card is E2Abzu:
+		var structure := card as E2Abzu
+		var top: CardAction = game_manager.action_stack.back() as CardAction
+		var targets: Array[Card] = structure.get_priority_field_targets(game_manager, top)
+		if targets.is_empty():
+			action_label.text = structure.card_name + " has no valid fast targets."
+			update_ui()
+			return
+		_show_card_selection_overlay(
+			"Choose a friendly Mer Mage to Void with " + structure.card_name,
+			targets,
+			func(chosen: Card) -> void:
+				_queue_targeted_ability_action(
+					structure,
+					chosen,
+					func() -> void:
+						structure.activate(game_manager, chosen),
+					structure.card_name + " fast-voids " + _get_target_label(chosen, game_manager.get_feedback_viewer(), chosen.card_name) + "."
+				)
+		)
 	elif card is SpellCard:
 		selected_card = card
 		for vc in _hand_visual_cards:
@@ -5702,6 +6009,179 @@ func _handle_post_reveal_prompt(card: Card, was_stealth: bool) -> void:
 	if card is Byggvir and (card as Byggvir).has_pending_brewing_reveal():
 		_show_byggvir_reveal_prompt(card as Byggvir)
 
+func _show_erlqueens_nightingale_prompt(card: ErlqueensNightingaleScript) -> void:
+	_hide_erlqueens_nightingale_prompt()
+	if game_manager == null or card == null:
+		return
+	if not card.can_activate(game_manager):
+		update_ui()
+		return
+
+	_pending_erlqueens_nightingale = card
+
+	var panel := PanelContainer.new()
+	panel.name = "ErlqueensNightingalePromptPanel"
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.15, 0.11, 0.07, 0.97)
+	style.border_color = Color(0.72, 0.92, 0.62, 0.95)
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		style.set_border_width(side, 2)
+	panel.add_theme_stylebox_override("panel", style)
+	panel.custom_minimum_size = Vector2(430, 0)
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 8)
+	panel.add_child(vbox)
+
+	var title := Label.new()
+	title.text = card.card_name
+	title.add_theme_font_size_override("font_size", 14)
+	vbox.add_child(title)
+
+	var info := Label.new()
+	info.text = "Shift this card, then choose whether it returns to your hand."
+	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	vbox.add_child(info)
+
+	var shift_only_btn := Button.new()
+	shift_only_btn.text = "Shift Only"
+	shift_only_btn.pressed.connect(func() -> void:
+		_resolve_erlqueens_nightingale_shift(false)
+	)
+	vbox.add_child(shift_only_btn)
+
+	var shift_return_btn := Button.new()
+	shift_return_btn.text = "Shift and Return to Hand"
+	shift_return_btn.disabled = not card.can_return_to_hand_after_shift()
+	shift_return_btn.pressed.connect(func() -> void:
+		_resolve_erlqueens_nightingale_shift(true)
+	)
+	vbox.add_child(shift_return_btn)
+
+	var cancel_btn := Button.new()
+	cancel_btn.text = "Cancel"
+	cancel_btn.pressed.connect(_hide_erlqueens_nightingale_prompt)
+	vbox.add_child(cancel_btn)
+
+	add_child(panel)
+	_promote_transient_ui(panel)
+	panel.anchor_left = 0.5
+	panel.anchor_right = 0.5
+	panel.anchor_top = 0.5
+	panel.anchor_bottom = 0.5
+	panel.offset_left = -215
+	panel.offset_right = 215
+	panel.offset_top = -90
+	panel.offset_bottom = 90
+
+func _hide_erlqueens_nightingale_prompt() -> void:
+	var panel := get_node_or_null("ErlqueensNightingalePromptPanel")
+	if panel:
+		panel.queue_free()
+	_pending_erlqueens_nightingale = null
+
+func _resolve_erlqueens_nightingale_shift(return_to_hand_after_shift: bool) -> void:
+	var card := _pending_erlqueens_nightingale
+	_hide_erlqueens_nightingale_prompt()
+	if card == null:
+		update_ui()
+		return
+	_queue_magical_action(
+		CardAction.Type.ABILITY,
+		card,
+		{"return_to_hand": return_to_hand_after_shift},
+		card.card_name + " activated!",
+		func() -> void:
+			card.activate(game_manager, {"return_to_hand": return_to_hand_after_shift})
+	)
+	update_ui()
+
+func _show_en_hedu_anna_prompt(card: EnHeduAnnaScript) -> void:
+	_hide_en_hedu_anna_prompt()
+	if game_manager == null or card == null:
+		return
+	if not card.can_activate(game_manager):
+		update_ui()
+		return
+
+	_pending_en_hedu_anna = card
+	var options: Array[Dictionary] = card.get_exaltation_options()
+
+	var panel := PanelContainer.new()
+	panel.name = "EnHeduAnnaPromptPanel"
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.15, 0.11, 0.07, 0.97)
+	style.border_color = Color(0.92, 0.80, 0.56, 0.95)
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		style.set_border_width(side, 2)
+	panel.add_theme_stylebox_override("panel", style)
+	panel.custom_minimum_size = Vector2(470, 0)
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 8)
+	panel.add_child(vbox)
+
+	var title := Label.new()
+	title.text = card.card_name
+	title.add_theme_font_size_override("font_size", 14)
+	vbox.add_child(title)
+
+	var info := Label.new()
+	info.text = "Choose an Exaltation bonus. %s cannot attack, be destroyed, or be targeted until the end of the next turn." % card.card_name
+	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	vbox.add_child(info)
+
+	for option in options:
+		var btn := Button.new()
+		btn.text = card.get_exaltation_option_label(option)
+		btn.pressed.connect(_resolve_en_hedu_anna_exaltation.bind(option))
+		vbox.add_child(btn)
+
+	var decline_btn := Button.new()
+	decline_btn.text = "Decline"
+	decline_btn.pressed.connect(_decline_en_hedu_anna_exaltation)
+	vbox.add_child(decline_btn)
+
+	add_child(panel)
+	_promote_transient_ui(panel)
+	panel.anchor_left = 0.5
+	panel.anchor_right = 0.5
+	panel.anchor_top = 0.5
+	panel.anchor_bottom = 0.5
+	panel.offset_left = -235
+	panel.offset_right = 235
+	panel.offset_top = -110
+	panel.offset_bottom = 120
+
+func _hide_en_hedu_anna_prompt() -> void:
+	var panel := get_node_or_null("EnHeduAnnaPromptPanel")
+	if panel:
+		panel.visible = false
+		panel.queue_free()
+	_pending_en_hedu_anna = null
+
+func _resolve_en_hedu_anna_exaltation(option: Dictionary) -> void:
+	var card := _pending_en_hedu_anna
+	_hide_en_hedu_anna_prompt()
+	if card == null:
+		update_ui()
+		return
+	_queue_magical_action(
+		CardAction.Type.ABILITY,
+		card,
+		option,
+		card.card_name + " activated!",
+		func() -> void:
+			card.resolve_exaltation_choice(game_manager, option)
+	)
+	update_ui()
+
+func _decline_en_hedu_anna_exaltation() -> void:
+	var card := _pending_en_hedu_anna
+	_hide_en_hedu_anna_prompt()
+	action_label.text = (card.card_name if card != null else "En-hedu-anna") + " cancelled Exaltation."
+	update_ui()
+
 func _hide_blessed_knights_prompt() -> void:
 	var panel := get_node_or_null("BlessedKnightsPromptPanel")
 	if panel:
@@ -5756,14 +6236,9 @@ func _on_absence_mute_pressed() -> void:
 	_resolve_absence_with_mode("mute")
 
 func _on_absence_cancel_pressed() -> void:
-	var spell := _pending_absence_spell
 	_hide_absence_mode_prompt()
-	if spell != null and _get_paid_hand_card_display_zone(spell) != null:
-		_clear_paid_hand_card_preview(spell)
-		_send_used_hand_card_to_graveyard(spell)
-		action_label.text = "Absence fizzles."
-	else:
-		action_label.text = "Cancelled Absence."
+	selected_card = null
+	action_label.text = "Cancelled Absence."
 	update_ui()
 
 func _hide_aphrodite_prompt() -> void:
@@ -6321,7 +6796,9 @@ func _dismiss_transient_prompts() -> void:
 	_hide_absence_mode_prompt()
 	_hide_blessed_knights_prompt()
 	_hide_byggvir_reveal_prompt()
+	_hide_erlqueens_nightingale_prompt()
 	_hide_breidablik_prompt()
+	_hide_e2_abzu_prompt()
 	_hide_divine_caprice_prompt()
 	_hide_aphrodite_prompt()
 	_hide_blot_sacrifice_prompt()
@@ -6567,7 +7044,12 @@ func _execute_top_of_stack() -> void:
 					game_manager.resolve_united_front_combat(action.attacker, action.united_front_partner, actual_target)
 					finish_attack.call()
 				else:
-					game_manager.resolve_combat_with_continuation(action.attacker, actual_target, finish_attack)
+					game_manager.resolve_combat_with_continuation(
+						action.attacker,
+						actual_target,
+						finish_attack,
+						action.interceptor != null
+					)
 				return
 			elif actual_target is Player:
 				var active_attackers: Array[Card] = get_active_attackers.call()
@@ -7053,7 +7535,8 @@ func _on_card_dropped_to_zone(card: Card, zone: Zone, is_rotated: bool = false, 
 	if not priority_drop_allowed and _reject_priority_locked_action():
 		return
 	_pending_spell_display_zone = zone
-	var prepare_on_drop := is_stealth and (card.card_type == Card.CardType.SPELL or card is CharmCard)
+	var prepare_from_selected_mode := card == selected_card and placement_mode == "prepare_spell"
+	var prepare_on_drop := prepare_from_selected_mode or (is_stealth and (card.card_type == Card.CardType.SPELL or card is CharmCard))
 	if prepare_on_drop:
 		if zone == null or not zone.is_board_zone() or zone.zone_owner != game_manager.current_player or zone.cards.size() > 0:
 			action_label.text = "Choose an empty friendly zone to prepare " + card.card_name + "."

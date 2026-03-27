@@ -23,11 +23,15 @@ var _drag_stealth: bool = false
 const _DRAG_PREPARE_OVERLAY_NAME := "DragPrepareOverlay"
 const _DRAG_ROT_SPEED: float = 600.0  # degrees per second (90° in 0.15 s)
 var _base_z_index: int = 0
+const _HOVER_PANEL_Z_INDEX := 2000
+const _HOVER_PANEL_WIDTH := 280.0
+const _HOVER_PANEL_MAX_HEIGHT := 360.0
 var _hover_panel: Control = null
 var _waiting_on_priority: bool = false
 var _priority_response_available: bool = false
 var _blot_summonable: bool = false
 var _blot_selected: bool = false
+var _hover_preview_when_disabled: bool = false
 
 func set_base_z_index(idx: int) -> void:
 	_base_z_index = idx
@@ -240,12 +244,19 @@ func _type_abbrev() -> String:
 
 func set_disabled(value: bool) -> void:
 	_disabled = value
-	mouse_filter = Control.MOUSE_FILTER_IGNORE if value else Control.MOUSE_FILTER_STOP
+	_refresh_mouse_filter()
 	modulate.a = 0.45 if value else 1.0
 	if value:
 		_cancel_drag()
 		_picked_up = false
 		scale = Vector2(1.0, 1.0)
+
+func set_hover_preview_when_disabled(value: bool) -> void:
+	_hover_preview_when_disabled = value
+	_refresh_mouse_filter()
+
+func _refresh_mouse_filter() -> void:
+	mouse_filter = Control.MOUSE_FILTER_STOP if (not _disabled or _hover_preview_when_disabled) else Control.MOUSE_FILTER_IGNORE
 
 func set_highlighted(value: bool) -> void:
 	modulate = Color(1.2, 1.2, 0.65) if value else Color.WHITE
@@ -392,7 +403,10 @@ func _toggle_rotation() -> void:
 		)
 
 func _build_rotation_ghost(from_angle: float) -> Control:
-	var scene_root := get_tree().current_scene
+	var tree := get_tree()
+	if tree == null:
+		return null
+	var scene_root := tree.current_scene
 	if scene_root == null:
 		return null
 	var ghost := duplicate(0) as Control
@@ -507,12 +521,15 @@ func _start_drag() -> void:
 		_cancel_rot_ghost()
 		_inner.rotation_degrees = 90.0 if is_rotated else 0.0
 		_inner.pivot_offset = size / 2.0
+	var tree := get_tree()
+	if tree == null or tree.current_scene == null:
+		return
 	_dragging = true
 	_drag_ghost = _build_drag_ghost()
 	_drag_target_rotation = _drag_ghost.rotation_degrees  # already at correct angle
 	# Reparent to scene root so the hand HBox collapses the gap,
 	# but the node stays in the tree so _input() keeps firing.
-	var scene_root := get_tree().current_scene
+	var scene_root := tree.current_scene
 	_drag_parent = get_parent()
 	_drag_index = get_index()
 	_drag_parent.remove_child(self)
@@ -563,13 +580,17 @@ func _finish_drag() -> void:
 	card_drag_released.emit(card_data, drop_pos, is_rotated, was_stealth)
 
 func _show_hover_panel() -> void:
-	var scene_root := get_tree().current_scene
+	var tree := get_tree()
+	if tree == null:
+		return
+	var scene_root := tree.current_scene
 	if scene_root == null:
 		return
 
 	var panel := PanelContainer.new()
 	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	panel.z_index = 200
+	panel.top_level = true
+	panel.z_index = _HOVER_PANEL_Z_INDEX
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color(0.05, 0.05, 0.12, 0.97)
 	style.border_color = Color(0.5, 0.7, 1.0)
@@ -585,10 +606,18 @@ func _show_hover_panel() -> void:
 	style.content_margin_bottom = 8
 	panel.add_theme_stylebox_override("panel", style)
 
+	var scroll := ScrollContainer.new()
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	scroll.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	scroll.custom_minimum_size = Vector2(_HOVER_PANEL_WIDTH - 20.0, 0.0)
+	panel.add_child(scroll)
+
 	var vbox := VBoxContainer.new()
 	vbox.add_theme_constant_override("separation", 4)
-	vbox.custom_minimum_size.x = 220
-	panel.add_child(vbox)
+	vbox.custom_minimum_size.x = _HOVER_PANEL_WIDTH - 20.0
+	vbox.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	scroll.add_child(vbox)
 
 	# Name
 	var name_lbl := Label.new()
@@ -673,16 +702,12 @@ func _show_hover_panel() -> void:
 
 	# Ability text
 	if card_data.ability_text != "":
-		var ability_lbl := RichTextLabel.new()
-		ability_lbl.bbcode_enabled = true
-		ability_lbl.text = BaseCard.apply_keyword_hints(card_data.ability_text)
+		var ability_lbl := Label.new()
+		ability_lbl.text = card_data.ability_text.replace("[b]", "").replace("[/b]", "")
 		ability_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		ability_lbl.fit_content = true
-		ability_lbl.scroll_active = false
-		ability_lbl.add_theme_font_size_override("normal_font_size", 12)
-		ability_lbl.add_theme_font_size_override("bold_font_size", 12)
-		ability_lbl.add_theme_color_override("default_color", Color(0.9, 0.85, 1.0))
-		ability_lbl.custom_minimum_size.x = 210
+		ability_lbl.add_theme_font_size_override("font_size", 12)
+		ability_lbl.add_theme_color_override("font_color", Color(0.9, 0.85, 1.0))
+		ability_lbl.custom_minimum_size = Vector2(210, 0)
 		vbox.add_child(ability_lbl)
 
 	# Flavor text
@@ -695,13 +720,16 @@ func _show_hover_panel() -> void:
 		vbox.add_child(flavor_lbl)
 
 	scene_root.add_child(panel)
+	panel.move_to_front()
+	var vp_size := get_viewport().get_visible_rect().size
+	panel.size = Vector2(_HOVER_PANEL_WIDTH, minf(_HOVER_PANEL_MAX_HEIGHT, vp_size.y - 8.0))
 
 	# Position: prefer right of card, flip left if off-screen
-	var vp_size := get_viewport().get_visible_rect().size
+	var panel_size := panel.size
 	var card_right := global_position.x + size.x + 8
-	var panel_w := 240.0
-	var px := card_right if card_right + panel_w < vp_size.x else global_position.x - panel_w - 8
-	var py := clampf(global_position.y, 4, vp_size.y - 20)
+	var px := card_right if card_right + panel_size.x < vp_size.x else global_position.x - panel_size.x - 8
+	px = clampf(px, 4.0, max(4.0, vp_size.x - panel_size.x - 4.0))
+	var py := clampf(global_position.y, 4.0, max(4.0, vp_size.y - panel_size.y - 4.0))
 	panel.global_position = Vector2(px, py)
 
 	_hover_panel = panel
@@ -719,7 +747,7 @@ func _notification(what: int) -> void:
 			if _inner:
 				_inner.pivot_offset = size / 2.0
 		NOTIFICATION_MOUSE_ENTER:
-			if not _disabled and not _picked_up:
+			if (not _disabled or _hover_preview_when_disabled) and not _picked_up:
 				pivot_offset = size / 2.0
 				z_index = _base_z_index + 50
 				var tw := create_tween()

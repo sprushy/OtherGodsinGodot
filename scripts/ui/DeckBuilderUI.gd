@@ -11,6 +11,7 @@ const CARD_H    := 192
 const MIN_DECK  := 20
 const DEFAULT_COLLECTION_ROWS := 3
 const COLLECTION_GAP  := 8.0
+const PAGE_REPEAT_INTERVAL_MS := 90
 const CARD_VIEW_PRESETS := [
 	{"label": "Tiny", "rows": 5},
 	{"label": "Small", "rows": 4},
@@ -24,10 +25,14 @@ var _all_cards: Array  = []        # template Card instances (read-only)
 var _deck: Dictionary  = {}        # card_name (String) -> count (int)
 var _filter: String         = "All"
 var _faction_filter: String = "All"
+var _collection_sort: String = "Default"
+var _filtered_cards_cache: Array = []
 var _current_page: int      = 0
 var _grid_columns: int      = 1
 var _card_size: Vector2     = Vector2(CARD_W, CARD_H)
 var _collection_rows: int   = DEFAULT_COLLECTION_ROWS
+var _last_page_turn_ms: int = -PAGE_REPEAT_INTERVAL_MS
+var _art_cache: Dictionary = {}
 
 # ── major UI refs ──────────────────────────────────────────────────
 var _grid:             HFlowContainer
@@ -52,6 +57,7 @@ var _count_badges: Dictionary = {}
 func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_all_cards = _make_all_cards()
+	_rebuild_filtered_cards_cache()
 	_build_ui()
 	_refresh_grid()
 	_queue_collection_layout_refresh()
@@ -63,10 +69,10 @@ func _make_all_cards() -> Array:
 		AcceleratedFate.new(), ACostToWalkTheWorlds.new(), AdvancedBuildingTechniques.new(), AllfathersSacrifice.new(), AltarOfDreams.new(), AnankesBinding.new(), AncientWisdom.new(), BerserkerMead.new(), Breidablik.new(), CallOfTheValkyrie.new(), DivineCaprice.new(), MechFactory.new(),
 		Berserker.new(), Beyla.new(), BlessedKnights.new(), BrownBear.new(), Byggvir.new(), DurinnSecondborn.new(), AnkouServantToTheReaper.new(), Anzu.new(), AnTheBowbender.new(),
 		AsagTheDestroyer.new(), Asakku.new(), Asaruludu.new(), Caleuche.new(), Capricorn.new(), ClayEaters.new(),
-		AgainWalker.new(), Alu.new(), Askelladen.new(), Aurboda.new(), DraugRevenant.new(), DevastatorMech.new(), EnkiLordOfEridu.new(), RoboticFootsoldier.new(), SoldierOfTheBlackEmperor.new(), TitanicMech.new(),
-		BitMeseri.new(), CircleOfRebirth.new(), FallOfTheMighty.new(), ApollyonsDemiurge.new(), Absence.new(), BaneOfTheSvartalfar.new(), BlotSacrifice.new(), BookOfLife.new(), DeucalionsInfants.new(), MeadOfPoetry.new(), DivineLightning.new(),
+		AgainWalker.new(), Alu.new(), Askelladen.new(), Aurboda.new(), DraugRevenant.new(), DevastatorMech.new(), Edimmu.new(), EnHeduAnna.new(), Enkidu.new(), EnkiLordOfEridu.new(), ErlqueensNightingale.new(), RoboticFootsoldier.new(), SoldierOfTheBlackEmperor.new(), TitanicMech.new(),
+		BitMeseri.new(), CircleOfRebirth.new(), Earthquake.new(), FallOfTheMighty.new(), ApollyonsDemiurge.new(), Absence.new(), BaneOfTheSvartalfar.new(), BlotSacrifice.new(), BookOfLife.new(), DeucalionsInfants.new(), Exorcism.new(), MeadOfPoetry.new(), DivineLightning.new(),
 		BeardedAxe.new(), DraupnirTheMultiplying.new(),
-		WardingStone.new(), AncientPyre.new(), AnointingStatue.new(), DoorwayToTheVoid.new(),
+		WardingStone.new(), AncientPyre.new(), AnointingStatue.new(), DoorwayToTheVoid.new(), E2Abzu.new(), EriduCityOfSages.new(),
 		VoidShield.new(), Banishment.new(), Dromi.new(),
 	]
 
@@ -236,6 +242,25 @@ func _build_collection_panel(parent: Control) -> void:
 	var view_spacer := Control.new()
 	view_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	view_bar.add_child(view_spacer)
+
+	var sort_lbl := Label.new()
+	sort_lbl.text = "Sort:"
+	sort_lbl.add_theme_font_size_override("font_size", 11)
+	sort_lbl.modulate = Color(0.7, 0.7, 0.7)
+	sort_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	view_bar.add_child(sort_lbl)
+
+	var sort_group := ButtonGroup.new()
+	for label in ["Default", "Alphabetical"]:
+		var sort_btn := Button.new()
+		sort_btn.text = label
+		sort_btn.toggle_mode = true
+		sort_btn.button_group = sort_group
+		sort_btn.button_pressed = (label == _collection_sort)
+		sort_btn.custom_minimum_size = Vector2(108, 28)
+		var captured_sort: String = label
+		sort_btn.pressed.connect(func() -> void: _set_collection_sort(captured_sort))
+		view_bar.add_child(sort_btn)
 
 	_collection_host = Control.new()
 	_collection_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -419,17 +444,16 @@ func _refresh_grid() -> void:
 	for child in _grid.get_children():
 		child.queue_free()
 
-	var filtered_cards := _filtered_cards()
-	var total_pages := _page_count(filtered_cards.size())
+	var total_pages := _page_count(_filtered_cards_cache.size())
 	_current_page = clampi(_current_page, 0, total_pages - 1)
 
 	var start_index := _current_page * _page_size()
-	var end_index := mini(start_index + _page_size(), filtered_cards.size())
+	var end_index := mini(start_index + _page_size(), _filtered_cards_cache.size())
 	for idx in range(start_index, end_index):
-		var card: Card = filtered_cards[idx]
+		var card: Card = _filtered_cards_cache[idx]
 		_grid.add_child(_make_card_item(card))
 
-	_update_pagination_controls(filtered_cards.size())
+	_update_pagination_controls(_filtered_cards_cache.size())
 	_update_count_badges()
 
 func _matches_filter(card: Card) -> bool:
@@ -469,7 +493,7 @@ func _make_card_item(card: Card) -> Control:
 
 	# Art
 	if card.art_path != "":
-		var tex: Texture2D = load(card.art_path)
+		var tex := _get_card_art_texture(card.art_path)
 		if tex:
 			var art := TextureRect.new()
 			art.texture      = tex
@@ -586,7 +610,7 @@ func _refresh_deck_panel() -> void:
 	in_deck.sort_custom(func(a: Card, b: Card) -> bool:
 		var oa := _type_order(a); var ob := _type_order(b)
 		if oa != ob: return oa < ob
-		return a.card_name < b.card_name
+		return _alphabetical_card_less(a, b)
 	)
 
 	var last_section := ""
@@ -783,7 +807,7 @@ func _update_count_badges() -> void:
 # ── preview ────────────────────────────────────────────────────────
 func _show_preview(card: Card) -> void:
 	if card.art_path != "":
-		_prev_art.texture = load(card.art_path) as Texture2D
+		_prev_art.texture = _get_card_art_texture(card.art_path)
 	else:
 		_prev_art.texture = null
 
@@ -821,30 +845,39 @@ func _show_preview(card: Card) -> void:
 	_prev_flavor.text  = card.flavor_text  if card.flavor_text  != "" else ""
 
 # ── filter ─────────────────────────────────────────────────────────
+func _input(event: InputEvent) -> void:
+	if not visible:
+		return
+	if event is not InputEventKey:
+		return
+	var key_event := event as InputEventKey
+	if not key_event.pressed:
+		return
+	if _try_handle_page_key(key_event.keycode, key_event.echo):
+		get_viewport().set_input_as_handled()
+
 func _unhandled_input(event: InputEvent) -> void:
 	if not visible:
 		return
 	if event is not InputEventKey:
 		return
 	var key_event := event as InputEventKey
-	if not key_event.pressed or key_event.echo:
+	if not key_event.pressed:
 		return
-	if key_event.keycode == KEY_LEFT:
-		_show_previous_page()
-		get_viewport().set_input_as_handled()
-	elif key_event.keycode == KEY_RIGHT:
-		_show_next_page()
+	if _try_handle_page_key(key_event.keycode, key_event.echo):
 		get_viewport().set_input_as_handled()
 
 func _set_filter(new_filter: String) -> void:
 	_filter = new_filter
 	_current_page = 0
+	_rebuild_filtered_cards_cache()
 	_refresh_grid()
 	_update_count_badges()
 
 func _set_faction_filter(new_faction: String) -> void:
 	_faction_filter = new_faction
 	_current_page = 0
+	_rebuild_filtered_cards_cache()
 	_refresh_grid()
 	_update_count_badges()
 
@@ -856,6 +889,15 @@ func _set_collection_rows(rows: int) -> void:
 	_refresh_grid()
 	_queue_collection_layout_refresh()
 
+func _set_collection_sort(new_sort: String) -> void:
+	if new_sort == _collection_sort:
+		return
+	_collection_sort = new_sort
+	_current_page = 0
+	_rebuild_filtered_cards_cache()
+	_refresh_grid()
+	_update_count_badges()
+
 # ── helpers ────────────────────────────────────────────────────────
 func _show_previous_page() -> void:
 	if _current_page <= 0:
@@ -864,11 +906,29 @@ func _show_previous_page() -> void:
 	_refresh_grid()
 
 func _show_next_page() -> void:
-	var total_pages := _page_count(_filtered_cards().size())
+	var total_pages := _page_count(_filtered_cards_cache.size())
 	if _current_page >= total_pages - 1:
 		return
 	_current_page += 1
 	_refresh_grid()
+
+func _try_handle_page_key(keycode: Key, is_echo: bool) -> bool:
+	if keycode != KEY_LEFT and keycode != KEY_RIGHT:
+		return false
+
+	if is_echo:
+		var now := Time.get_ticks_msec()
+		if now - _last_page_turn_ms < PAGE_REPEAT_INTERVAL_MS:
+			return true
+		_last_page_turn_ms = now
+	else:
+		_last_page_turn_ms = Time.get_ticks_msec()
+
+	if keycode == KEY_LEFT:
+		_show_previous_page()
+	else:
+		_show_next_page()
+	return true
 
 func _queue_collection_layout_refresh() -> void:
 	call_deferred("_update_collection_layout")
@@ -905,14 +965,34 @@ func _update_collection_layout() -> void:
 		_refresh_grid()
 		return
 
-	_update_pagination_controls(_filtered_cards().size())
+	_update_pagination_controls(_filtered_cards_cache.size())
 
 func _filtered_cards() -> Array:
-	var filtered: Array = []
+	return _filtered_cards_cache
+
+func _rebuild_filtered_cards_cache() -> void:
+	_filtered_cards_cache.clear()
 	for card in _all_cards:
 		if _matches_filter(card):
-			filtered.append(card)
-	return filtered
+			_filtered_cards_cache.append(card)
+	if _collection_sort == "Alphabetical":
+		_filtered_cards_cache.sort_custom(_alphabetical_card_less)
+
+func _alphabetical_card_less(a: Card, b: Card) -> bool:
+	var a_name := a.get_normalized_card_name().to_lower()
+	var b_name := b.get_normalized_card_name().to_lower()
+	if a_name == b_name:
+		return a.card_name < b.card_name
+	return a_name < b_name
+
+func _get_card_art_texture(art_path: String) -> Texture2D:
+	if art_path == "":
+		return null
+	if _art_cache.has(art_path):
+		return _art_cache[art_path] as Texture2D
+	var tex := load(art_path) as Texture2D
+	_art_cache[art_path] = tex
+	return tex
 
 func _page_size() -> int:
 	return max(1, _grid_columns * _collection_rows)

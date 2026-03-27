@@ -16,7 +16,7 @@ func _init() -> void:
 	speed = 1
 	resilience = 1
 	strength = 6
-	ability_text = "United Front: Can attack as one with another machine with combined Str at whichever Spd is slower."
+	ability_text = "United Front: Can attack with another Machine, using their combined STR at the lower SPD."
 	flavor_text = ""
 	culture = "Atlanitan"
 	artist = "Stanley Vay"

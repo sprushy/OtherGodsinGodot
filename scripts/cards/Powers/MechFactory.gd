@@ -12,7 +12,7 @@ func _init() -> void:
 	super._init()
 	card_name = "Mech Factory"
 	culture = "Atlanitan"
-	level = 1
+	level = 0
 	mana_cost = UNLOCK_COST
 	card_types = ["Constructs", "Summon Creature", "Factory"]
 	ability_text = "[b]Unlock[/b] (3): [b]Activate[/b] - Pay 3 mana to summon an unsacrificable [b]Combat Mech[/b] token with LV2, SPD 1, RES 18, and STR 18. Activate only twice per turn."
