@@ -78,7 +78,7 @@ func return_priest(game_manager: GameManager, priest: Card) -> bool:
 	return_window_open = false
 	return true
 
-func on_turn_start(_game_manager: GameManager) -> void:
+func on_turn_upkeep(_game_manager: GameManager) -> void:
 	return_window_open = not stored_priests.is_empty()
 
 func on_turn_end(_game_manager: GameManager) -> void:

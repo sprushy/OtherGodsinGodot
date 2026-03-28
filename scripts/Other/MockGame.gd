@@ -92,7 +92,7 @@ func show_turn_choice() -> void:
 	if _game_finished:
 		return
 	choice_container.visible = true
-	choice_intro_label.text = "+1 mana and:"
+	choice_intro_label.text = "Choose one:"
 	draw_button.text = "Draw Card"
 	mana_button.text = "Gain 4 Mana"
 	end_turn_button.visible = false

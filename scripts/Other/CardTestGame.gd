@@ -169,60 +169,17 @@ func _setup_test_board() -> void:
 	_add_test_god(player1, Freyja.new())
 	_add_test_god(player2, Baldr.new())
 
-	var tian_dragon := GenericCreature.new({
-		"name": "Test Tian Dragon",
-		"types": ["Dragon"],
-		"level": 6,
-		"speed": 2,
-		"strength": 9,
-		"resilience": 16,
-		"culture": "Tian",
-		"flavor": "Frontline Tian Dragon for Fire and Gold and Foolish Optimism."
-	})
-	var sage_guard := GenericCreature.new({
-		"name": "Sage Guard",
-		"types": ["Warrior"],
-		"level": 4,
-		"speed": 2,
-		"strength": 5,
-		"resilience": 9,
-		"culture": "Ancient"
-	})
-	var doomed_scout := GenericCreature.new({
-		"name": "Doomed Scout",
-		"types": ["Warrior"],
-		"level": 1,
-		"speed": 2,
-		"strength": 3,
-		"resilience": 4,
-		"culture": "Neutral",
-		"flavor": "Opponent's unique lowest-level frontline creature for Foolish Optimism."
-	})
-	var axe_guard := GenericCreature.new({
-		"name": "Axe Guard",
-		"types": ["Warrior"],
-		"level": 4,
-		"speed": 1,
-		"strength": 5,
-		"resilience": 10,
-		"culture": "Neutral",
-		"flavor": "Carries equipment so Fires of Judgment can destroy both."
-	})
-	var fallen_einherjar := GenericCreature.new({
-		"name": "Fallen Einherjar",
-		"types": ["Warrior", "Norse Creature"],
-		"level": 3,
-		"speed": 2,
-		"strength": 7,
-		"resilience": 8,
-		"culture": "Norse",
-		"flavor": "A Norse Warrior in your graveyard for Freyja's Receiver of the Slain."
-	})
+	var tian_dragon := SoldierOfTheBlackEmperor.new()
+	var friendly_guard := Enkidu.new()
+	var doomed_scout := BlessedKnights.new()
+	var axe_guard := Berserker.new()
+	var fallen_einherjar := AgainWalker.new()
 	var fourth_sage_script = load("res://scripts/cards/Creatures/FourthSageEnmegalamma.gd")
 
 	_add_test_hand_card(player1, FiresOfJudgment.new())
 	_add_test_hand_card(player1, FoolishOptimism.new())
 	_add_test_hand_card(player1, FirstSageAdapa.new())
+	_add_test_hand_card(player1, Fenrir.new())
 	if fourth_sage_script != null:
 		_add_test_hand_card(player1, fourth_sage_script.new())
 	_add_test_hand_card(player1, Earthquake.new())
@@ -233,7 +190,7 @@ func _setup_test_board() -> void:
 	_add_test_power(player2, 0, AncientWisdom.new(), true)
 
 	_place_test_board_card(player1, player1.frontline_zones[0], tian_dragon, Card.CreatureMode.AGGRESSIVE)
-	_place_test_board_card(player1, player1.frontline_zones[1], sage_guard, Card.CreatureMode.AGGRESSIVE)
+	_place_test_board_card(player1, player1.frontline_zones[1], friendly_guard, Card.CreatureMode.AGGRESSIVE)
 
 	_place_test_board_card(player2, player2.frontline_zones[0], doomed_scout, Card.CreatureMode.AGGRESSIVE)
 	_place_test_board_card(player2, player2.frontline_zones[1], axe_guard, Card.CreatureMode.DEFENSIVE)
@@ -271,5 +228,5 @@ func _setup_test_board() -> void:
 	_test_turn_owner = player1
 	_test_turn_opponent = player2
 	hide_turn_choice()
-	action_label.text = "Card test ready. Freyja: activate Receiver of the Slain to summon Fallen Einherjar from your graveyard with Call of the Valkyrie already in play reducing the cost. Fire and Gold: unlock your power in slot 1, discard a spare hand card, and destroy the enemy Eridu while Test Tian Dragon is on your frontline. Fires of Judgment: cast from hand to wipe the enemy's face-up scout, axe guard, structure, and axe. Foolish Optimism: cast it to force Doomed Scout, the opponent's only level-1 creature, to attack your highest-level creature, Test Tian Dragon. First Sage Adapa: summon it to mute the enemy Ancient Wisdom power. Fourth Sage Enmegalamma: summon it on a later turn to search your deck for another Mer Sage such as First Sage Adapa or Enki, Lord of Eridu."
+	action_label.text = "Card test ready. Freyja: activate Receiver of the Slain to summon Again-Walker from your graveyard with Call of the Valkyrie already in play reducing the cost. Fire and Gold: unlock your power in slot 1, discard a spare hand card, and destroy the enemy Eridu while Soldier of the Black Emperor is on your frontline. Fires of Judgment: cast from hand to wipe the enemy's face-up Blessed Knights, Berserker, structure, and axe. Foolish Optimism: cast it to force Blessed Knights, the opponent's only level-1 creature, to attack your highest-level creature, Soldier of the Black Emperor. First Sage Adapa: summon it to mute the enemy Ancient Wisdom power. Fenrir: play or use Wolf Master/Devour from Player 1's hand. Fourth Sage Enmegalamma: summon it on a later turn to search your deck for another Mer Sage such as First Sage Adapa or Enki, Lord of Eridu."
 	update_ui()

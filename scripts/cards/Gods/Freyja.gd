@@ -113,8 +113,8 @@ func activate(game_manager: GameManager, target: Card = null) -> void:
 	)
 	notify_power_activated(game_manager, target)
 
-func on_global_turn_start(game_manager: GameManager, starting_player: Player) -> void:
-	if game_manager == null or starting_player == null or starting_player != card_owner:
+func on_turn_upkeep(game_manager: GameManager) -> void:
+	if game_manager == null or game_manager.current_player != card_owner:
 		return
 	var due_cards := _get_due_returned_cards(game_manager)
 	for card in due_cards:

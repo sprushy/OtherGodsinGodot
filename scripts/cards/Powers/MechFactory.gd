@@ -67,7 +67,7 @@ func activate(game_manager: GameManager, _target: Card = null) -> void:
 			]
 		)
 
-func on_turn_start(_game_manager: GameManager) -> void:
+func on_turn_upkeep(_game_manager: GameManager) -> void:
 	activations_this_turn = 0
 
 func _find_open_summon_zone() -> Zone:

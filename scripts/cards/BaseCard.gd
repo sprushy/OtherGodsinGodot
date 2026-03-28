@@ -30,7 +30,7 @@ const KEYWORD_HINTS = {
 	"Prime": "Put a card on top of your deck.",
 	"Silence": "Remove this card's abilities.",
 	"Frontlined": "This effect applies while this card is in the frontline.",
-	"Upkeep": "This effect happens at the start of your turn.",
+	"Upkeep": "This effect happens during upkeep at the beginning of your turn.",
 	"Slay": "This effect triggers when this card destroys another creature in combat.",
 	"Slain": "This card was destroyed in combat.",
 	"Trollskap": "If this card is destroyed by an effect, return it to your hand instead.",

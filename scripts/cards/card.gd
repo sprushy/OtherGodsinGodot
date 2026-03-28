@@ -94,6 +94,7 @@ var sleeping_from: Card = null
 var equipped_on: Card = null
 var equipment: Array[Card] = []
 var summoned_this_turn: bool = false
+var board_entry_order: int = -1
 var is_used: bool = false          # for single-use activatable abilities on powers
 var is_muted: bool = false
 var mute_turns_remaining: int = 0

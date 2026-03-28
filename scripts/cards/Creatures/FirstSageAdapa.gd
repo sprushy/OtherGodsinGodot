@@ -14,7 +14,7 @@ func _init() -> void:
 	resilience = 23
 	strength = 15
 	targets = true
-	ability_text = "Silence Divine ([b]Impact[/b]): Choose an opposing power. [b]Mute[/b] it for 2 of its owner's turns."
+	ability_text = "Silence Divine ([b]Impact[/b]): Choose an opposing power or God ability. [b]Mute[/b] it for 2 of its owner's turns."
 	flavor_text = ""
 	culture = "Ancient"
 	artist = "Ricardo Zoppello"
@@ -24,7 +24,7 @@ func on_impact(game_manager: GameManager) -> void:
 	var valid_targets := get_valid_targets(game_manager)
 	if valid_targets.is_empty():
 		if game_manager != null:
-			game_manager.note_player_feedback("%s found no opposing powers to silence." % card_name)
+			game_manager.note_player_feedback("%s found no opposing powers or God abilities to silence." % card_name)
 		return
 
 	var prompt_host := _get_prompt_host(game_manager)
@@ -46,18 +46,21 @@ func get_valid_targets(game_manager: GameManager) -> Array[Card]:
 	var opponent := game_manager.get_opponent(controller)
 	if opponent == null:
 		return valid_targets
+	for god in opponent.god_zone.cards:
+		if _is_valid_silence_target(god):
+			valid_targets.append(god)
 	for zone in opponent.power_zones:
 		if zone == null or zone.cards.is_empty():
 			continue
 		var power := zone.cards[0]
-		if power is PowerCard:
+		if _is_valid_silence_target(power):
 			valid_targets.append(power)
 	return valid_targets
 
 func resolve_silence_divine_impact(game_manager: GameManager, target: Card) -> String:
 	var valid_targets := get_valid_targets(game_manager)
 	if target == null or target not in valid_targets:
-		return card_name + " found no valid opposing power to silence."
+		return card_name + " found no valid opposing power or God ability to silence."
 	if game_manager != null and game_manager.is_immune_to_source(target, self):
 		return target.get_target_log_display_name(game_manager.get_feedback_viewer()) + " is immune to " + card_name + "'s creature abilities this turn."
 
@@ -67,6 +70,9 @@ func resolve_silence_divine_impact(game_manager: GameManager, target: Card) -> S
 		target.get_target_log_display_name(game_manager.get_feedback_viewer()),
 		MUTE_DURATION
 	]
+
+func _is_valid_silence_target(card: Card) -> bool:
+	return card is PowerCard or (card != null and card.is_god)
 
 func _get_prompt_host(game_manager: GameManager = null) -> Node:
 	if game_manager != null:

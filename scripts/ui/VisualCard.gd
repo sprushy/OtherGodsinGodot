@@ -37,6 +37,7 @@ var _display_mana_cost: int = -1
 var _display_cost_adjustment_lines: Array[String] = []
 var _ghostly_hand_proxy: bool = false
 var _click_only: bool = false
+var _dim_when_disabled: bool = true
 
 func set_base_z_index(idx: int) -> void:
 	_base_z_index = idx
@@ -49,6 +50,9 @@ var _card_width: int = CARD_WIDTH
 var _card_height: int = CARD_HEIGHT
 var _inner: PanelContainer = null
 var _art_rect: TextureRect = null
+var _disabled_overlay: ColorRect = null
+var _power_lock_overlay: TextureRect = null
+const _POWER_LOCK_TEXTURE := preload("res://images/Norse Power Lock.png")
 
 func setup(
 	p_card: Card,
@@ -90,6 +94,23 @@ func _compute_natural_height() -> float:
 		h += float(est_lines) * 14.0
 	return h
 
+func _should_show_power_lock_overlay() -> bool:
+	return card_data != null \
+		and card_data.card_type == Card.CardType.POWER \
+		and card_data.is_face_down
+
+func _make_power_lock_overlay() -> TextureRect:
+	if _POWER_LOCK_TEXTURE == null:
+		return null
+	var overlay := TextureRect.new()
+	overlay.texture = _POWER_LOCK_TEXTURE
+	overlay.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	overlay.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	overlay.modulate = Color(1.0, 1.0, 1.0, 1.0)
+	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	return overlay
+
 func _build_art_node() -> TextureRect:
 	if card_data.art_path == "":
 		return null
@@ -112,6 +133,7 @@ func _on_art_updated(new_path: String) -> void:
 	var tex: Texture2D = load(new_path)
 	if tex:
 		_art_rect.texture = tex
+		call_deferred("_layout_power_lock_overlay")
 
 func _make_name_label() -> Label:
 	var name_lbl := Label.new()
@@ -202,6 +224,17 @@ func _build_content() -> void:
 	_inner.add_child(vbox)
 	_populate_vbox(vbox)
 
+	_disabled_overlay = ColorRect.new()
+	_disabled_overlay.color = Color(0.0, 0.0, 0.0, 0.55)
+	_disabled_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_disabled_overlay.visible = false
+	_disabled_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_inner.add_child(_disabled_overlay)
+
+	_refresh_power_lock_overlay()
+	_refresh_disabled_visual_state()
+	call_deferred("_layout_power_lock_overlay")
+
 func _apply_card_style() -> void:
 	if _inner == null:
 		return
@@ -269,10 +302,39 @@ func _type_abbrev() -> String:
 		Card.CardType.HEX:      return "H"
 		_:                      return "?"
 
-func set_disabled(value: bool) -> void:
+func _refresh_disabled_visual_state() -> void:
+	if _disabled_overlay != null and is_instance_valid(_disabled_overlay):
+		_disabled_overlay.visible = _disabled and _dim_when_disabled
+
+func _refresh_power_lock_overlay() -> void:
+	var should_show := _should_show_power_lock_overlay()
+	if not should_show:
+		if _power_lock_overlay != null and is_instance_valid(_power_lock_overlay):
+			_power_lock_overlay.queue_free()
+		_power_lock_overlay = null
+		return
+	if _power_lock_overlay == null or not is_instance_valid(_power_lock_overlay):
+		_power_lock_overlay = _make_power_lock_overlay()
+		if _power_lock_overlay == null:
+			return
+		add_child(_power_lock_overlay)
+	_layout_power_lock_overlay()
+
+func _layout_power_lock_overlay() -> void:
+	if _power_lock_overlay == null or not is_instance_valid(_power_lock_overlay):
+		return
+	if _art_rect != null and is_instance_valid(_art_rect):
+		_power_lock_overlay.position = _art_rect.global_position - global_position
+		_power_lock_overlay.size = _art_rect.size
+	elif _inner != null and is_instance_valid(_inner):
+		_power_lock_overlay.position = _inner.global_position - global_position
+		_power_lock_overlay.size = _inner.size
+
+func set_disabled(value: bool, dim_visuals: bool = true) -> void:
 	_disabled = value
+	_dim_when_disabled = dim_visuals
 	_refresh_mouse_filter()
-	modulate.a = 0.45 if value else 1.0
+	_refresh_disabled_visual_state()
 	if value:
 		_cancel_drag()
 		_picked_up = false
@@ -804,6 +866,7 @@ func _notification(what: int) -> void:
 			# not the HBoxContainer, so no re-sort cascade.
 			if _inner:
 				_inner.pivot_offset = size / 2.0
+			_layout_power_lock_overlay()
 		NOTIFICATION_MOUSE_ENTER:
 			if (not _disabled or _hover_preview_when_disabled) and not _picked_up:
 				pivot_offset = size / 2.0

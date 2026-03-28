@@ -93,6 +93,25 @@ func get_valid_devour_targets(game_manager: GameManager) -> Array[Card]:
 					valid_targets.append(card)
 	return valid_targets
 
+func get_devour_target_failure_reason(target: Card) -> String:
+	if target == null:
+		return card_name + ": click a creature to devour."
+	if target == self:
+		return card_name + " cannot devour itself."
+	if target.card_type != Card.CardType.CREATURE:
+		return card_name + " can only devour creatures."
+	if target.current_zone == null or not target.current_zone.is_board_zone():
+		return target.card_name + " must be on the field to be devoured."
+	var max_target_level := level - 2
+	if target.level > max_target_level:
+		return "%s is level %d. %s can only devour level %d or lower." % [
+			target.card_name,
+			target.level,
+			card_name,
+			max_target_level
+		]
+	return card_name + " cannot devour " + target.card_name + "."
+
 func resolve_devour_impact(game_manager: GameManager, target: Card, continue_callback: Callable = Callable()) -> void:
 	if game_manager == null:
 		_emit_devour_result(continue_callback, card_name + " cannot devour right now.")

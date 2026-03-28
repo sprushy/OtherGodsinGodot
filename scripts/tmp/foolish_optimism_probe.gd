@@ -5,6 +5,7 @@ const BrownBearScript := preload("res://scripts/cards/Creatures/BrownBear.gd")
 const CombatMechScript := preload("res://scripts/cards/Creatures/CombatMech.gd")
 const EnkiduScript := preload("res://scripts/cards/Creatures/Enkidu.gd")
 const StoneInfantScript := preload("res://scripts/cards/Creatures/StoneInfant.gd")
+const MAIN_SCENE := preload("res://scenes/mainfork.tscn")
 
 func _assert_state(condition: bool, message: String) -> void:
 	if condition:
@@ -72,6 +73,30 @@ func _run_probe() -> void:
 	_assert_state(spell.get_forced_attacker(game_manager) == compelled_attacker, "Foolish Optimism should choose the opponent's lowest-level creature.")
 	_assert_state(spell.get_forced_defender(game_manager) == strongest_friendly, "Foolish Optimism should choose your highest-level creature.")
 
+	prepare_zone.add_card(spell)
+	spell.is_prepared = true
+	spell.is_face_down = true
+	game_manager.prepared_hexes[spell] = game_manager.turn_number - 1
+
+	var response_action := CardAction.new()
+	response_action.type = CardAction.Type.ATTACK
+	response_action.source_player = player2
+	response_action.attacker = compelled_attacker
+	response_action.target = strongest_friendly
+	game_manager.push_to_stack(response_action)
+
+	_assert_state(not game_manager.can_card_respond_to_priority(spell, player1), "Prepared Foolish Optimism should not be a legal priority response before upkeep resolves.")
+
+	game_manager._resolve_turn_upkeep()
+	_assert_state(game_manager.has_resolved_turn_upkeep(), "The probe should mark upkeep as resolved for the current turn.")
+	_assert_state(game_manager.can_card_respond_to_priority(spell, player1), "Prepared Foolish Optimism should become a legal priority response after upkeep resolves.")
+
+	game_manager.action_stack.clear()
+	prepare_zone.remove_card(spell)
+	game_manager.prepared_hexes.erase(spell)
+	spell.is_prepared = false
+	spell.is_face_down = false
+
 	spell.resolve(game_manager)
 
 	_assert_state(compelled_attacker.creature_major_action_used, "The compelled attacker should spend its major action.")
@@ -93,6 +118,45 @@ func _run_probe() -> void:
 	player1 = null
 	player2 = null
 	game_manager = null
+
+	var scene: Node = MAIN_SCENE.instantiate()
+	root.add_child(scene)
+
+	var card_test: CardTestGame = scene.get_node("Control/GameContainer/CardTest")
+	await card_test.start_game()
+	await process_frame
+	await process_frame
+
+	var ui_player: Player = card_test.player1
+	_assert_state(ui_player != null, "Expected CardTestGame player 1.")
+
+	var ui_spell: FoolishOptimism = null
+	for card in ui_player.hand_zone.cards:
+		if card is FoolishOptimism:
+			ui_spell = card
+			break
+	_assert_state(ui_spell != null, "Expected Foolish Optimism in the CardTestGame hand.")
+
+	var expected_zone := card_test._find_empty_player_zone()
+	_assert_state(expected_zone != null, "Expected an empty friendly zone for drag-to-prepare.")
+
+	var occupied_zone_ui: BoardZoneUI = null
+	for zone_ui in card_test._board_zone_uis:
+		if zone_ui != null and zone_ui.zone == ui_player.frontline_zones[0]:
+			occupied_zone_ui = zone_ui
+			break
+	_assert_state(occupied_zone_ui != null, "Expected an occupied friendly zone UI to drag onto.")
+
+	var drop_pos := occupied_zone_ui.get_global_rect().get_center()
+	card_test._on_card_drag_released(ui_spell, drop_pos, false, false)
+	await process_frame
+	await process_frame
+
+	_assert_state(ui_spell.current_zone == expected_zone, "Dragging Foolish Optimism onto your side of the board should prepare it in the next empty friendly zone.")
+	_assert_state(ui_spell.is_prepared and ui_spell.is_face_down, "Dragged Foolish Optimism should enter play prepared and face-down.")
+	_assert_state(card_test.game_manager.prepared_hexes.has(ui_spell), "Dragged Foolish Optimism should be tracked as a prepared hex.")
+	await process_frame
+	await process_frame
 
 	print("foolish_optimism_probe: PASS")
 	quit()

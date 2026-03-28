@@ -31,10 +31,12 @@ func applies_to(card: Card) -> bool:
 func apply_passive_to_board() -> void:
 	if card_owner == null:
 		return
+	remove_passive_from_board()
+	if is_muted:
+		return
 	for zone in card_owner.frontline_zones + card_owner.reserve_zones:
 		for card in zone.cards:
 			if applies_to(card):
-				card.clear_buffs_from(PASSIVE_SOURCE)
 				card.add_buff(PASSIVE_SOURCE, 3, 3, 0, self, card_owner, "passive")
 
 func remove_passive_from_board() -> void:
@@ -47,8 +49,17 @@ func remove_passive_from_board() -> void:
 func on_summon(game_manager: GameManager) -> void:
 	apply_passive_to_board()
 
+func on_turn_start(_game_manager: GameManager) -> void:
+	apply_passive_to_board()
+
+func on_removed(_game_manager: GameManager) -> void:
+	remove_passive_from_board()
+
 func on_muted(_game_manager: GameManager) -> void:
 	remove_passive_from_board()
 
 func on_unmuted(_game_manager: GameManager) -> void:
+	apply_passive_to_board()
+
+func on_any_card_moved(_game_manager: GameManager, _moved_card: Card, _from_zone: Zone, _to_zone: Zone) -> void:
 	apply_passive_to_board()

@@ -41,7 +41,7 @@ func activate(game_manager: GameManager, target: Card = null) -> void:
 	_remove_all_effects(target)
 	print("Anointing Statue: Removed all status changes from " + target.card_name + ".")
 
-func on_turn_start(_game_manager: GameManager) -> void:
+func on_turn_upkeep(_game_manager: GameManager) -> void:
 	cleanse_uses_this_turn = 0
 
 func _has_any_effects(target: Card) -> bool:

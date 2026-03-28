@@ -144,6 +144,7 @@ const BASE_ZONE_EXTENT := 165.0
 const DROMI_BINDING_NAME := "Dromi"
 const DROMI_BINDING_HOVER_TEXT := "Cannot attack. Losing 7 followers on opponent's turn start - Dromi"
 const EQUIPMENT_AFFORDANCE_GAP := 4.0
+const POWER_LOCK_TEXTURE := preload("res://images/Norse Power Lock.png")
 static var _zone_extent: float = BASE_ZONE_EXTENT
 
 var _row_label: String = ""
@@ -304,6 +305,23 @@ func _add_speed_badge(overlay: Control, card: Card) -> void:
 	badge.add_child(label)
 
 	overlay.add_child(badge)
+
+func _add_power_lock_overlay(overlay: Control, card: Card) -> void:
+	if overlay == null or card == null:
+		return
+	if card.card_type != Card.CardType.POWER or not card.is_face_down:
+		return
+	if POWER_LOCK_TEXTURE == null:
+		return
+
+	var lock_overlay := TextureRect.new()
+	lock_overlay.texture = POWER_LOCK_TEXTURE
+	lock_overlay.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	lock_overlay.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	lock_overlay.modulate = Color(1.0, 1.0, 1.0, 1.0)
+	lock_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	lock_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	overlay.add_child(lock_overlay)
 
 func _add_playing_aura(overlay: Control) -> void:
 	if overlay == null:
@@ -719,6 +737,7 @@ func _refresh_display() -> void:
 				haze.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 				haze.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				fd_overlay.add_child(haze)
+			_add_power_lock_overlay(fd_overlay, card)
 			if card.get_controller() == viewer and card.is_prepared and card.is_magical_card():
 				_add_speed_badge(fd_overlay, card)
 			if _is_card_attacking_on_stack(card):

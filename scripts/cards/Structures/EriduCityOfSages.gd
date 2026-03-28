@@ -19,7 +19,7 @@ func _init() -> void:
 	artist = "Ricarrdo Zoppello"
 	art_path = "res://images/card_art/structures/City of Sages(print).jpg"
 
-func on_turn_start(game_manager: GameManager) -> void:
+func on_turn_upkeep(game_manager: GameManager) -> void:
 	if game_manager == null or card_owner == null:
 		return
 	var controller := get_controller()

@@ -39,7 +39,9 @@ var combat_destroy_events_this_turn: Array[Dictionary] = []
 var last_hex_resolution_text: String = ""
 var last_player_feedback_text: String = ""
 var _upkeep_resolved_turn: int = -1
+var _upkeep_started_turn: int = -1
 var _temporary_summon_cost_modifiers: Array[Dictionary] = []
+var _next_board_entry_order: int = 0
 var _pending_doorway_structure: StructureCard = null
 var _pending_doorway_structures: Array[StructureCard] = []
 var _pending_doorway_card: Card = null
@@ -152,6 +154,8 @@ func can_card_respond_to_priority(card: Card, player: Player = null) -> bool:
 		if _has_pending_stack_action_for_card(card):
 			return false
 		var typed_hex := card as HexCard
+		if typed_hex.has_method("can_respond_after_upkeep") and not typed_hex.can_respond_after_upkeep(self):
+			return false
 		if typed_hex.has_method("can_respond_to_action") and typed_hex.can_respond_to_action(top):
 			if typed_hex.has_method("get_priority_targets"):
 				return not get_priority_hex_targets(typed_hex, top).is_empty()
@@ -273,11 +277,9 @@ func offer_mulligan(player: Player, card_count: int, bonus_mana: int) -> void:
 # Turn lifecycle order is intentionally explicit:
 # 1. Officially begin the new turn and increment turn_number.
 # 2. Reset once-per-turn state for the active player.
-# 3. Fire controller turn-start hooks for the active player's non-god permanents.
-# 4. Fire global turn-start hooks for all permanents.
-# 5. Emit turn_started.
-# 6. Later, when the player chooses Draw Card or Gain 4 Mana, resolve upkeep exactly once.
-# 7. Upkeep grants the active player's automatic +1 mana, then resolves god upkeep hooks.
+# 3. Resolve automatic upkeep with no priority window.
+# 4. Later, when the player chooses Draw Card, Gain 4 Mana, or another upkeep option,
+#    mark upkeep complete and then fire turn-start hooks/effects.
 func start_turn() -> void:
 	if is_game_over:
 		return
@@ -308,28 +310,36 @@ func start_turn() -> void:
 		for card in zone.cards:
 			if card.card_type == Card.CardType.CREATURE:
 				card.summoned_this_turn = false
-	
-	_notify_controller_turn_start(current_player)
-	_notify_global_turn_start(current_player)
-	turn_started.emit(turn_number, current_player)
+
+	_begin_turn_upkeep()
 
 func activate_prepared_hexes(defending_player: Player) -> void:
 	for hex in prepared_hexes.keys():
 		if hex.card_owner == defending_player and prepared_hexes[hex] < turn_number:
 			hex.is_prepared = false
 
+func _begin_turn_upkeep() -> void:
+	if _upkeep_started_turn == turn_number:
+		return
+	_upkeep_started_turn = turn_number
+	turn_upkeep_started.emit(turn_number, current_player)
+	current_player.gain_mana(1)
+	for card in _get_sorted_upkeep_cards_for_player(current_player, "on_turn_upkeep"):
+		card.on_turn_upkeep(self)
+	var opponent := get_opponent(current_player)
+	if opponent != null:
+		for card in _get_sorted_upkeep_cards_for_player(opponent, "on_opponent_turn_upkeep"):
+			card.on_opponent_turn_upkeep(self, current_player)
+
 func _resolve_turn_upkeep() -> void:
 	if _upkeep_resolved_turn == turn_number:
 		return
+	_begin_turn_upkeep()
 	_upkeep_resolved_turn = turn_number
-	turn_upkeep_started.emit(turn_number, current_player)
-	current_player.gain_mana(1)
-	for card in current_player.god_zone.cards:
-		if card.has_method("on_turn_upkeep"):
-			card.on_turn_upkeep(self)
-		elif card.has_method("on_turn_start"):
-			card.on_turn_start(self)
 	turn_upkeep_resolved.emit(turn_number, current_player)
+	_notify_controller_turn_start(current_player)
+	_notify_global_turn_start(current_player)
+	turn_started.emit(turn_number, current_player)
 
 # Checks all prepared hexes belonging to the defender's owner.
 # If one can activate, it fires and returns true (combat should be cancelled).
@@ -407,14 +417,16 @@ func check_and_trigger_hexes(attacker: Card, defender: Card) -> bool:
 func player_chooses_draw() -> void:
 	if is_game_over:
 		return
-	_resolve_turn_upkeep()
+	_begin_turn_upkeep()
 	current_player.draw_card()
+	_resolve_turn_upkeep()
 
 func player_chooses_mana() -> void:
 	if is_game_over:
 		return
-	_resolve_turn_upkeep()
+	_begin_turn_upkeep()
 	current_player.gain_mana(4)
+	_resolve_turn_upkeep()
 
 func player_chooses_upkeep_only() -> void:
 	if is_game_over:
@@ -1482,9 +1494,34 @@ func _get_all_turn_event_cards() -> Array[Card]:
 
 func _notify_controller_turn_start(player: Player) -> void:
 	controller_turn_started.emit(turn_number, player)
-	for card in _get_player_turn_event_cards(player, false):
+	for card in _get_player_turn_event_cards(player):
 		if card.has_method("on_turn_start"):
 			card.on_turn_start(self)
+
+func _get_sorted_upkeep_cards_for_player(player: Player, method_name: String) -> Array[Card]:
+	var cards: Array[Card] = []
+	if player == null:
+		return cards
+	for card in _get_player_turn_event_cards(player):
+		if card != null and card.has_method(method_name):
+			_ensure_board_entry_order(card)
+			cards.append(card)
+	cards.sort_custom(func(a: Card, b: Card) -> bool:
+		var a_speed := a.get_effective_speed()
+		var b_speed := b.get_effective_speed()
+		if a_speed != b_speed:
+			return a_speed > b_speed
+		return a.board_entry_order < b.board_entry_order
+	)
+	return cards
+
+func _ensure_board_entry_order(card: Card) -> void:
+	if card == null or card.current_zone == null or not card.current_zone.is_board_zone():
+		return
+	if card.board_entry_order >= 0:
+		return
+	card.board_entry_order = _next_board_entry_order
+	_next_board_entry_order += 1
 
 func _notify_global_turn_start(starting_player: Player) -> void:
 	global_turn_started.emit(turn_number, starting_player)
@@ -1819,6 +1856,10 @@ func send_to_deck_bottom_with_hook(card: Card) -> void:
 func _on_player_card_moved(card: Card, from_zone: Zone, to_zone: Zone) -> void:
 	if card == null or from_zone == null or to_zone == null:
 		return
+	if from_zone.is_board_zone() and not to_zone.is_board_zone():
+		card.board_entry_order = -1
+	elif not from_zone.is_board_zone() and to_zone.is_board_zone():
+		_ensure_board_entry_order(card)
 	if prepared_hexes.has(card) and (to_zone == null or not to_zone.is_board_zone() or not card.is_prepared):
 		prepared_hexes.erase(card)
 	if prepared_charms.has(card) and (to_zone == null or not to_zone.is_board_zone() or not card.is_prepared):
@@ -2050,12 +2091,9 @@ func _get_graveyard_replacement_sources(card: Card) -> Array[StructureCard]:
 	return structures
 
 func _apply_god_passives_to_card(player: Player, card: Card) -> void:
-	if player.god_zone.cards.size() == 0:
-		return
-	var god := player.god_zone.cards[0]
-	if god is Thor and (god as Thor).applies_to(card):
-		card.clear_buffs_from(Thor.PASSIVE_SOURCE)
-		card.add_buff(Thor.PASSIVE_SOURCE, 3, 3, 0, god, player, "passive")
+	# God aura cards now refresh themselves through their own summon/move/turn hooks.
+	# Keep this helper as a no-op for existing call sites and local probes.
+	return
 
 func _on_player_defeated(defeated_player: Player) -> void:
 	if is_game_over or defeated_player == null:
