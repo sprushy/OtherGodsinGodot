@@ -826,6 +826,39 @@ func _refresh_display() -> void:
 				deck_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				god_overlay.add_child(deck_lbl)
 
+				var _effect_lines: Array[String] = []
+				if card.has_method("get_effect_summary_lines"):
+					_effect_lines = card.get_effect_summary_lines()
+				if not _effect_lines.is_empty():
+					var counter_badge := PanelContainer.new()
+					counter_badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+					counter_badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+					counter_badge.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+					counter_badge.grow_vertical = Control.GROW_DIRECTION_END
+					counter_badge.offset_left = -6
+					counter_badge.offset_right = -4
+					counter_badge.offset_top = 4
+					counter_badge.offset_bottom = 26
+					var counter_style := StyleBoxFlat.new()
+					counter_style.bg_color = Color(0.55, 0.38, 0.04, 0.92)
+					counter_style.border_color = Color(1.0, 0.88, 0.35, 0.95)
+					counter_style.corner_radius_top_left = 5
+					counter_style.corner_radius_top_right = 5
+					counter_style.corner_radius_bottom_left = 5
+					counter_style.corner_radius_bottom_right = 5
+					for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+						counter_style.set_border_width(side, 1)
+					counter_badge.add_theme_stylebox_override("panel", counter_style)
+					var counter_lbl := Label.new()
+					counter_lbl.text = "\n".join(_effect_lines)
+					counter_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+					counter_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+					counter_lbl.add_theme_font_size_override("font_size", 10)
+					counter_lbl.add_theme_color_override("font_color", Color(1.0, 0.95, 0.6))
+					counter_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+					counter_badge.add_child(counter_lbl)
+					god_overlay.add_child(counter_badge)
+
 				if card.is_power and card.is_muted and card.mute_turns_remaining > 0:
 					var muted_badge := PanelContainer.new()
 					muted_badge.mouse_filter = Control.MOUSE_FILTER_IGNORE

@@ -49,7 +49,7 @@ func activate(game_manager: GameManager, target: Card = null) -> void:
 		return
 	if not _is_valid_ward_target(target):
 		if game_manager != null:
-			game_manager.note_player_feedback("Faction Ward Creature fizzles: choose an Ancient creature.")
+			game_manager.note_player_feedback("Faction Ward Creature fizzles: invalid target.")
 		return
 
 	target.remove_status_effects_from_source_card(self, WARD_STATUS)

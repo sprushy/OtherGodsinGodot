@@ -57,3 +57,44 @@ jobs:
             .exports/server/ClaudeOtherGodsServer.exe
             dist/ClaudeOtherGods-windows.zip
             dist/ClaudeOtherGodsServer-windows.zip
+
+  export-macos:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Godot
+        uses: chickensoft-games/setup-godot@v2
+        with:
+          version: 4.6.1
+          use-dotnet: false
+          include-templates: true
+
+      - name: Export macOS build
+        run: |
+          mkdir -p .exports/macos .exports/macos-server dist
+          godot --headless --path . --export-release "macOS" .exports/macos/ClaudeOtherGods.app
+          godot --headless --path . --export-release "macOS Dedicated Server" .exports/macos-server/ClaudeOtherGodsServer.app
+
+      - name: Package release zips
+        run: |
+          ditto -c -k --sequesterRsrc --keepParent .exports/macos/ClaudeOtherGods.app dist/ClaudeOtherGods-macos.zip
+          ditto -c -k --sequesterRsrc --keepParent .exports/macos-server/ClaudeOtherGodsServer.app dist/ClaudeOtherGodsServer-macos.zip
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ClaudeOtherGods-macos
+          path: |
+            dist/ClaudeOtherGods-macos.zip
+            dist/ClaudeOtherGodsServer-macos.zip
+
+      - name: Publish GitHub release assets
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/ClaudeOtherGods-macos.zip
+            dist/ClaudeOtherGodsServer-macos.zip
