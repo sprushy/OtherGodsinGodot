@@ -24,12 +24,18 @@ func _connect_signals() -> void:
 	match_manager.action_resolved.connect(_on_action_resolved)
 	game_manager.turn_started.connect(_on_turn_started)
 	game_manager.game_ended.connect(_on_game_ended)
+	match_manager.request_ui_interaction.connect(_on_ui_interaction_requested)
+	game_manager.doorway_choice_requested.connect(_on_doorway_choice_requested)
 
 # ---------------------------------------------------------------------------
 # Signal handlers — each triggers a full broadcast
 # ---------------------------------------------------------------------------
 
 func _on_move_validated(move: Dictionary) -> void:
+	# "end_turn" already triggers _on_turn_started which broadcasts full_state;
+	# broadcasting again here would send it twice per turn change.
+	if move.get("type", "") == "end_turn":
+		return
 	var label := _label_for_move(move)
 	_broadcast_full_state(label)
 
@@ -44,6 +50,13 @@ func _on_turn_started(turn_number: int, player: Player) -> void:
 		turn_number = turn_number,
 		current_player_index = player_idx,
 	})
+	# If the turn player is a remote client, notify them specifically about upkeep
+	if network_manager != null:
+		var peer_id: int = network_manager.player_peer_ids.get(player_idx, -1)
+		if peer_id != 1 and peer_id != -1:
+			network_manager.broadcast_event_to_peer(peer_id, "upkeep_needed", {
+				current_player_index = player_idx
+			})
 
 func _on_game_ended(winner: Player, _loser: Player) -> void:
 	var winner_idx := game_manager.players.find(winner)
@@ -52,6 +65,47 @@ func _on_game_ended(winner: Player, _loser: Player) -> void:
 		winner_index = winner_idx,
 		winner_name  = winner.player_name,
 	})
+
+func _on_ui_interaction_requested(player_index: int, type: String, data: Dictionary) -> void:
+	# Serialize data if it contains CardActions or Cards
+	var serialized_data := data.duplicate()
+	
+	# Generic serialization for known keys
+	for key in serialized_data.keys():
+		var val = serialized_data[key]
+		if val is Card:
+			serialized_data[key + "_uid"] = val.uid
+			serialized_data.erase(key)
+		elif val is Player:
+			serialized_data[key + "_player_index"] = game_manager.players.find(val)
+			serialized_data.erase(key)
+		elif val is CardAction:
+			serialized_data[key] = val.to_dict(game_manager)
+	
+	_broadcast_ui_interaction(player_index, type, serialized_data)
+
+func _on_doorway_choice_requested(structure: Card, card: Card, combat_death: bool, destruction: bool) -> void:
+	var player := structure.card_owner if structure != null else game_manager.current_player
+	var player_idx := game_manager.players.find(player)
+	var data := {
+		"structure_uid": structure.uid if structure != null else "",
+		"card_uid": card.uid if card != null else "",
+		"combat_death": combat_death,
+		"destruction": destruction
+	}
+	_broadcast_ui_interaction(player_idx, "doorway_choice", data)
+
+func _broadcast_ui_interaction(player_index: int, type: String, data: Dictionary) -> void:
+	if network_manager == null:
+		return
+	var peer_id: int = network_manager.player_peer_ids.get(player_index, -1)
+	# Include player_index so the receiver can pause the stack for the right player.
+	var envelope := { "type": type, "data": data, "player_index": player_index }
+	if peer_id == 1:
+		# Server's own "peer" — emit locally so the host UI updates too
+		network_manager.game_event_received.emit("ui_interaction", envelope)
+	elif peer_id != -1:
+		network_manager.broadcast_event_to_peer(peer_id, "ui_interaction", envelope)
 
 # ---------------------------------------------------------------------------
 # Core broadcast logic

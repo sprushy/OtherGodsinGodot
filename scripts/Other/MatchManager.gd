@@ -139,7 +139,7 @@ func get_targeting_name() -> String:
 	return "Target selection"
 
 signal action_resolved(action: CardAction)
-signal request_ui_interaction(type: String, data: Dictionary)
+signal request_ui_interaction(player_index: int, type: String, data: Dictionary)
 
 var last_resolution_text: String = ""
 
@@ -205,7 +205,9 @@ func _resolve_attack(action: CardAction) -> void:
 		# Otherwise, resolve headlessly so the server can handle networked combat.
 		var retreat_prompts := _get_retreat_candidates(action.attacker, actual_target, action.source_player)
 		if not retreat_prompts.is_empty():
-			request_ui_interaction.emit("combat_retreat", {"action": action, "target": actual_target})
+			var target_player: Player = retreat_prompts[0].card_owner
+			var player_idx := game_manager.players.find(target_player)
+			request_ui_interaction.emit(player_idx, "combat_retreat", {"action": action, "target": actual_target})
 			return
 		# No retreat possible - resolve directly.
 		_finish_creature_combat(action, actual_target)
@@ -247,7 +249,7 @@ func _finish_creature_combat(action: CardAction, target: Card) -> void:
 			last_resolution_text = active[0].card_name + " and " + active[1].card_name + " fought " + target.card_name + "!"
 		elif not active.is_empty():
 			last_resolution_text = active[0].card_name + " fought " + target.card_name + "!"
-
+		
 	if partner != null:
 		game_manager.resolve_united_front_combat(attacker, partner, target)
 		finish.call()
@@ -546,7 +548,8 @@ func process_command(command: Dictionary) -> bool:
 			if not game_manager.can_play_card(player, spell, null):
 				move_failed.emit("Cannot cast " + spell.card_name + "!")
 				return false
-			# Set chosen discards so pay_costs_with_mana_cost uses them
+			
+			# Set chosen discards
 			var discard_uids: Array = command.get("discard_uids", [])
 			if discard_uids.size() > 0:
 				var discard_cards: Array[Card] = []
@@ -555,6 +558,14 @@ func process_command(command: Dictionary) -> bool:
 					if c != null:
 						discard_cards.append(c)
 				spell.set_pending_chosen_discards(discard_cards)
+			
+			# Set chosen sacrifices
+			var sacrifice_uid: String = command.get("sacrifice_uid", "")
+			if sacrifice_uid != "":
+				var sac_card := game_manager.get_card_by_uid(sacrifice_uid)
+				if sac_card != null:
+					spell.set_meta("pending_sacrifice_choice", sac_card)
+			
 			if not spell.pay_costs_with_mana_cost(player, spell.mana_cost, game_manager):
 				move_failed.emit("Cannot afford " + spell.card_name + "!")
 				return false
@@ -715,6 +726,29 @@ func process_command(command: Dictionary) -> bool:
 			(eha_card as EnHeduAnna).resolve_exaltation_choice(game_manager, eha_option)
 			move_validated.emit(command)
 			return true
+		"aphrodite_enslave_choice":
+			var source_uid: String = command.get("source_uid", "")
+			var god := game_manager.get_card_by_uid(source_uid) as AphroditeAreia
+			if god == null:
+				move_failed.emit("aphrodite_enslave_choice: god not found")
+				return false
+			var confirmed: bool = command.get("confirm", false)
+			if not confirmed:
+				move_validated.emit(command)
+				return true
+			# "Choose Target" part is handled by a subsequent god_ability command from the client
+			move_validated.emit(command)
+			return true
+		"blessed_knights_choice":
+			var source_uid: String = command.get("source_uid", "")
+			var ward_kind: String = command.get("ward_kind", "")
+			var card := game_manager.get_card_by_uid(source_uid) as BlessedKnights
+			if card == null:
+				move_failed.emit("blessed_knights_choice: card not found")
+				return false
+			card.apply_blessed_ward(game_manager, ward_kind)
+			move_validated.emit(command)
+			return true
 		"wolf_master_summon":
 			var wm_fenrir_uid: String = command.get("fenrir_uid", "")
 			var wm_fenrir_card := game_manager.get_card_by_uid(wm_fenrir_uid)
@@ -825,6 +859,51 @@ func process_command(command: Dictionary) -> bool:
 			# Remote player explicitly passes priority; CombatMockGame continues the loop.
 			move_validated.emit(command)
 			return true
+		"resurrection_choice":
+			var card_uid: String = command.get("card_uid", "")
+			var confirmed: bool = command.get("confirm", false)
+			var card := game_manager.get_card_by_uid(card_uid)
+			if card == null:
+				move_failed.emit("resurrection_choice: card not found")
+				return false
+			
+			if confirmed:
+				var player := card.card_owner
+				if player.mana < 1:
+					move_failed.emit("resurrection_choice: not enough mana")
+					return false
+				
+				player.spend_mana(1)
+				# Find an empty reserve zone, preferring the same column the card died in
+				var preferred_idx: int = card.last_board_zone_index
+				var zones_to_try: Array[Zone] = []
+				if preferred_idx >= 0 and preferred_idx < player.reserve_zones.size():
+					zones_to_try.append(player.reserve_zones[preferred_idx])
+				for zone in player.reserve_zones:
+					if zone not in zones_to_try:
+						zones_to_try.append(zone)
+				
+				var placed := false
+				for zone in zones_to_try:
+					if zone.cards.is_empty():
+						placed = game_manager.summon_creature_by_effect(
+							player, card, zone,
+							Card.CreatureMode.AGGRESSIVE,
+							false, false, null,
+							false, false, false
+						)
+						if placed: break
+				
+				if not placed:
+					move_failed.emit("resurrection_choice: no empty reserve zone")
+					return false
+			
+			# Remove from pending list regardless of choice (or if failed)
+			game_manager.pending_resurrections.erase(card)
+			move_validated.emit(command)
+			# CombatMockGame's _on_match_move_validated("resurrection_choice") drives
+			# the next step via _continue_end_turn_sequence(); no need to call it here.
+			return true
 		"play_hex_response":
 			var phr_hex_uid: String = command.get("hex_uid", "")
 			var phr_hex_card := game_manager.get_card_by_uid(phr_hex_uid)
@@ -858,3 +937,19 @@ func process_command(command: Dictionary) -> bool:
 			return true
 	move_failed.emit("Unknown command type: " + str(command.get("type")))
 	return false
+
+func _check_for_next_resurrection() -> void:
+	# Only relevant if we have pending resurrections
+	if game_manager.pending_resurrections.is_empty():
+		return
+		
+	var candidates: Array[Card] = []
+	for card in game_manager.pending_resurrections:
+		if card.card_owner.mana >= 1 \
+				and card.current_zone == card.card_owner.graveyard_zone:
+			candidates.append(card)
+			
+	if not candidates.is_empty():
+		var next_card := candidates[0]
+		var player_idx := game_manager.players.find(next_card.card_owner)
+		request_ui_interaction.emit(player_idx, "resurrection", {"card_uid": next_card.uid})

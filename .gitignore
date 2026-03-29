@@ -1,5 +1,6 @@
 # Godot editor/cache files
 .godot/
+.exports/
 *.tmp
 
 # Claude Code

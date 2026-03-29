@@ -306,19 +306,6 @@ func get_opponent(player: Player) -> Player:
 	# Should not happen in a 2-player game
 	return null
 
-# -----------------------------------
-
-func start_mulligan() -> void:
-	_set_phase(GamePhase.MULLIGAN)
-	offer_mulligan(current_player, 5, 0)
-	offer_mulligan(other_player, 5, 2)
-
-func offer_mulligan(_player: Player, _card_count: int, _bonus_mana: int) -> void:
-	# UI driven - draw card_count cards
-	# For each card not kept, give player 4 mana
-	# Add bonus_mana
-	pass
-
 # Turn lifecycle order is intentionally explicit:
 # 1. Officially begin the new turn and increment turn_number.
 # 2. Reset once-per-turn state for the active player.

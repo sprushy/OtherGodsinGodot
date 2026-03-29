@@ -440,9 +440,14 @@ func _hide_doorway_choice_prompt() -> void:
 	_pending_doorway_continue = Callable()
 
 func _on_doorway_choice_requested(structure: DoorwayToTheVoid, card: Card, combat_death: bool, destruction: bool) -> void:
-	if _executing_stack_action and not _stack_resolution_paused:
-		_pause_stack_resolution(structure.card_owner if structure != null else game_manager.current_player)
-	_show_doorway_choice_prompt(structure, card, combat_death, destruction)
+	var target_player := structure.card_owner if structure != null else game_manager.current_player
+	
+	if network_manager != null and network_manager.is_server:
+		if _executing_stack_action and not _stack_resolution_paused:
+			_pause_stack_resolution(target_player)
+			
+	if _is_player_local(target_player):
+		_show_doorway_choice_prompt(structure, card, combat_death, destruction)
 
 func _ready() -> void:
 	add_to_group("combat_mock_game")
@@ -1067,14 +1072,21 @@ func start_game(is_host: bool = false, is_client: bool = false, server_ip: Strin
 		match_manager.network_manager = network_manager
 		network_manager.command_received.connect(match_manager.process_command)
 		
-		if is_client:
-			_is_networked_client = true
-			game_input = NetworkedGameInput.new(network_manager)
+		if is_client or is_host:
 			network_manager.game_event_received.connect(_apply_network_event)
+			if is_client:
+				_is_networked_client = true
+				game_input = NetworkedGameInput.new(network_manager)
+				network_manager.peer_disconnected.connect(_on_peer_disconnected)
 	
 	print("MatchManager initialized: ", match_manager)
 	match_manager.action_resolved.connect(_on_match_action_resolved)
-	match_manager.request_ui_interaction.connect(_on_match_ui_interaction)
+	
+	# If we have a broadcaster, ui_interaction will come via network event instead
+	var use_broadcaster := network_manager != null and is_host
+	if not use_broadcaster:
+		match_manager.request_ui_interaction.connect(_on_match_ui_interaction)
+	
 	match_manager.move_validated.connect(_on_match_move_validated)
 	match_manager.move_failed.connect(_on_match_move_failed)
 	match_manager.targeting_started.connect(func(_source: Card, _target_type: String) -> void:
@@ -1147,6 +1159,7 @@ func start_game(is_host: bool = false, is_client: bool = false, server_ip: Strin
 				state = state, action_message = "Connected! Syncing game state."
 			})
 		)
+		network_manager.peer_disconnected.connect(_on_peer_disconnected)
 
 	if not player1.card_moved.is_connected(_on_local_player_card_moved):
 		player1.card_moved.connect(_on_local_player_card_moved)
@@ -3141,7 +3154,8 @@ func _resolve_skoll_upkeep_creature_play(card: Card, zone: Zone, mode: String) -
 	_close_turn_start_windows()
 	update_ui()
 	hide_turn_choice()
-	_queue_skoll_turn_start_priority()
+	if not _is_networked_client:
+		_queue_skoll_turn_start_priority()
 
 func _remove_skoll_from_prompt_queue(skoll: Skoll) -> void:
 	if skoll == null:
@@ -5287,8 +5301,14 @@ func _queue_blessed_knights_impact_prompt(card: BlessedKnights) -> void:
 	action.event_name = "blessed_knights_impact"
 	action.event_speed = 0
 	action.resolve_callback = func() -> void:
-		_pause_stack_resolution(card.card_owner)
-		_show_blessed_knights_prompt(card)
+		if network_manager != null and network_manager.is_server:
+			if _executing_stack_action and not _stack_resolution_paused:
+				_pause_stack_resolution(card.card_owner)
+			var player_idx := game_manager.players.find(card.card_owner)
+			match_manager.request_ui_interaction.emit(player_idx, "blessed_knights_ward", {"source_uid": card.uid})
+		else:
+			_pause_stack_resolution(card.card_owner)
+			_show_blessed_knights_prompt(card)
 	game_manager.push_to_stack(action)
 	update_ui()
 	action_label.text = card.card_name + " impact waits on priority."
@@ -7294,11 +7314,17 @@ func _maybe_prompt_aphrodite_after_combat() -> bool:
 	if god_zone == null or god_zone.cards.is_empty():
 		return false
 	var god := god_zone.cards[0]
-	if god is AphroditeAreia and (god as AphroditeAreia).can_activate(game_manager):
-		_show_aphrodite_prompt(god as AphroditeAreia)
-		action_label.text = god.card_name + " can enslave a creature."
+	if not (god is AphroditeAreia and (god as AphroditeAreia).can_activate(game_manager)):
+		return false
+	if network_manager != null and network_manager.is_server:
+		# Route through request_ui_interaction so GameEventBroadcaster sends it to the right client
+		var player_idx := game_manager.players.find(game_manager.current_player)
+		match_manager.request_ui_interaction.emit(player_idx, "aphrodite_enslave", {"source_uid": god.uid})
 		return true
-	return false
+	# Local game: show prompt directly
+	_show_aphrodite_prompt(god as AphroditeAreia)
+	action_label.text = god.card_name + " can enslave a creature."
+	return true
 
 func _get_retreat_opponent(ask_card: Askelladen, attacker: Card, defender: Card) -> Card:
 	return defender if ask_card == attacker else attacker
@@ -8080,18 +8106,20 @@ func _resolve_blessed_knights_impact(ward_kind: String) -> void:
 	var card := _pending_blessed_knights
 	_hide_blessed_knights_prompt()
 	if card == null:
-		if _stack_resolution_paused:
-			_resume_after_deferred_resolution()
-		else:
-			update_ui()
+		if _stack_resolution_paused: _resume_after_deferred_resolution()
+		else: update_ui()
 		return
-	card.apply_blessed_ward(game_manager, ward_kind)
-	var resolution_text := card.card_name + " grants Blessed Ward against " + card.get_blessed_ward_label(ward_kind) + " this turn."
-	if _stack_resolution_paused:
-		_resume_after_deferred_resolution(resolution_text)
+	
+	if _is_networked_client:
+		game_input.submit_action({"type": "blessed_knights_choice", "source_uid": card.uid, "ward_kind": ward_kind})
 	else:
-		action_label.text = resolution_text
-		update_ui()
+		card.apply_blessed_ward(game_manager, ward_kind)
+		var resolution_text := card.card_name + " grants Blessed Ward against " + card.get_blessed_ward_label(ward_kind) + " this turn."
+		if _stack_resolution_paused:
+			_resume_after_deferred_resolution(resolution_text)
+		else:
+			action_label.text = resolution_text
+			update_ui()
 
 func _hide_absence_mode_prompt() -> void:
 	var panel := get_node_or_null("AbsenceModePromptPanel")
@@ -8141,17 +8169,28 @@ func _hide_aphrodite_prompt() -> void:
 
 func _on_aphrodite_confirm_pressed(god: AphroditeAreia) -> void:
 	_hide_aphrodite_prompt()
-	awaiting_god_ability_target = true
-	god_ability_source = god
-	action_label.text = god.card_name + " - Violent Delights: click an enemy creature to enslave."
-	update_ui()
+	if _is_networked_client:
+		game_input.submit_action({"type": "aphrodite_enslave_choice", "source_uid": god.uid, "confirm": true})
+	else:
+		awaiting_god_ability_target = true
+		god_ability_source = god
+		action_label.text = god.card_name + " - Violent Delights: click an enemy creature to enslave."
+		update_ui()
 
 func _on_aphrodite_decline_pressed() -> void:
 	_hide_aphrodite_prompt()
-	awaiting_god_ability_target = false
-	god_ability_source = null
-	action_label.text = "Declined Aphrodite Areia."
-	update_ui()
+	if _is_networked_client:
+		var god_uid := ""
+		if game_manager.current_player != null:
+			var god_zone := game_manager.current_player.god_zone
+			if not god_zone.cards.is_empty():
+				god_uid = god_zone.cards[0].uid
+		game_input.submit_action({"type": "aphrodite_enslave_choice", "source_uid": god_uid, "confirm": false})
+	else:
+		awaiting_god_ability_target = false
+		god_ability_source = null
+		action_label.text = "Declined Aphrodite Areia."
+		update_ui()
 
 func _hide_demiurge_prompt() -> void:
 	var panel := get_node_or_null("DemiurgePromptPanel")
@@ -8905,6 +8944,15 @@ func _on_match_action_resolved(action: CardAction) -> void:
 
 func _on_match_move_validated(move: Dictionary) -> void:
 	match move.get("type", ""):
+		"upkeep_choice":
+			# Client resolved upkeep; server must open the turn-start priority window
+			# so both players can respond to upkeep effects (hexes, charms, etc.).
+			var choice: String = move.get("choice", "")
+			var feedback := "Drew a card." if choice == "draw" else "Gained 4 additional mana."
+			_queue_standard_turn_start_priority(feedback)
+		"skoll_upkeep_summon":
+			# Skoll already summoned by MatchManager; open standard turn-start priority.
+			_queue_standard_turn_start_priority("Skoll summoned via Sun Hunt.")
 		"attack":
 			var attacker: Card = move.get("attacker")
 			var target = move.get("target")
@@ -8924,6 +8972,8 @@ func _on_match_move_validated(move: Dictionary) -> void:
 				_execute_top_of_stack()
 			else:
 				_offer_priority()
+		"resurrection_choice":
+			_continue_end_turn_sequence()
 		"play_hex_response":
 			# Remote player activated a hex; the ABILITY was already pushed by MatchManager.
 			var phr_hex := game_manager.get_card_by_uid(move.get("hex_uid", ""))
@@ -8942,11 +8992,28 @@ func _on_match_move_failed(reason: String) -> void:
 	action_label.text = reason
 	update_ui()
 
-func _on_match_ui_interaction(type: String, data: Dictionary) -> void:
+func _on_match_ui_interaction(player_index: int, type: String, data: Dictionary) -> void:
+	var target_player := game_manager.players[player_index]
+	
+	if network_manager != null and network_manager.is_server:
+		if _executing_stack_action and not _stack_resolution_paused:
+			_pause_stack_resolution(target_player)
+			
+	if not _is_player_local(target_player):
+		return
+		
 	match type:
 		"combat_retreat":
 			var action: CardAction = data["action"]
-			var target: Card = data["target"]
+			var target = data.get("target")
+			if target == null:
+				var target_uid: String = data.get("target_uid", "")
+				target = game_manager.get_card_by_uid(target_uid)
+				if target == null:
+					var p_idx: int = data.get("target_player_index", -1)
+					if p_idx >= 0 and p_idx < game_manager.players.size():
+						target = game_manager.players[p_idx]
+						
 			var retreat_prompts := _get_retreating_askelladens(action.attacker, target, action.source_player)
 			if not retreat_prompts.is_empty():
 				_pending_retreat_action = action
@@ -8996,6 +9063,18 @@ func _on_match_ui_interaction(type: String, data: Dictionary) -> void:
 						finish_attack,
 						action.interceptor != null
 					)
+		"aphrodite_enslave":
+			var god := game_manager.get_card_by_uid(data.get("source_uid", "")) as AphroditeAreia
+			if god != null:
+				_show_aphrodite_prompt(god)
+		"blessed_knights_ward":
+			var card := game_manager.get_card_by_uid(data.get("source_uid", "")) as BlessedKnights
+			if card != null:
+				_show_blessed_knights_prompt(card)
+		"en_hedu_anna_exaltation":
+			var card := game_manager.get_card_by_uid(data.get("source_uid", "")) as EnHeduAnna
+			if card != null:
+				_show_en_hedu_anna_prompt(card)
 
 func _find_empty_player_zone() -> Zone:
 	for zone in game_manager.current_player.frontline_zones + game_manager.current_player.reserve_zones:
@@ -9036,7 +9115,8 @@ func _on_draw_button_pressed() -> void:
 	_close_turn_start_windows()
 	update_ui()
 	hide_turn_choice()
-	_queue_standard_turn_start_priority("Drew a card." if _deck_had_cards else "No cards left to draw.")
+	if not _is_networked_client:
+		_queue_standard_turn_start_priority("Drew a card." if _deck_had_cards else "No cards left to draw.")
 
 func _on_mana_button_pressed() -> void:
 	if _game_finished:
@@ -9048,7 +9128,8 @@ func _on_mana_button_pressed() -> void:
 	_close_turn_start_windows()
 	update_ui()
 	hide_turn_choice()
-	_queue_standard_turn_start_priority("Gained 4 additional mana.")
+	if not _is_networked_client:
+		_queue_standard_turn_start_priority("Gained 4 additional mana.")
 
 func _close_turn_start_windows() -> void:
 	_hide_skoll_prompt()
@@ -9104,10 +9185,20 @@ func _continue_end_turn_sequence() -> void:
 		if card.card_owner.mana >= 1 \
 				and card.current_zone == card.card_owner.graveyard_zone:
 			candidates.append(card)
+			
 	if candidates.is_empty():
 		_do_end_turn()
-	else:
-		_show_resurrection_prompt(candidates)
+		return
+
+	# If server, we might need to ask a remote player
+	if network_manager != null and network_manager.is_server:
+		var card := candidates[0]
+		if not _is_player_local(card.card_owner):
+			var player_idx := game_manager.players.find(card.card_owner)
+			match_manager.request_ui_interaction.emit(player_idx, "resurrection", {"card_uid": card.uid})
+			return
+			
+	_show_resurrection_prompt(candidates)
 
 func _on_end_turn_button_pressed() -> void:
 	if _game_finished:
@@ -9144,10 +9235,31 @@ func _on_end_turn_button_pressed() -> void:
 # Network event handling (client side)
 # ---------------------------------------------------------------------------
 
+func _is_player_local(player: Player) -> bool:
+	if network_manager == null:
+		return true # Local mode
+	if network_manager.local_player_index < 0:
+		return true # Not yet assigned, assume local for now
+	var idx := game_manager.players.find(player)
+	return idx == network_manager.local_player_index
+
+func _on_peer_disconnected(_peer_id: int) -> void:
+	if _game_finished:
+		return
+	_game_finished = true
+	action_label.text = "Opponent disconnected. Game over."
+	_dismiss_transient_prompts()
+	_hide_priority_prompt()
+	_hide_intercept_prompt()
+	_update_waiting_status(false)
+	update_ui()
+
 func _apply_network_event(event_type: String, data: Dictionary) -> void:
 	match event_type:
 		"full_state":
 			_apply_full_state(data)
+		"ui_interaction":
+			_apply_ui_interaction(data)
 		"upkeep_needed":
 			# Server tells this client it's their turn and they need to choose upkeep
 			if network_manager != null:
@@ -9167,21 +9279,136 @@ func _apply_network_event(event_type: String, data: Dictionary) -> void:
 			_game_finished = true
 			update_ui()
 
+func _apply_ui_interaction(event_data: Dictionary) -> void:
+	var type: String = event_data.get("type", "")
+	var payload: Dictionary = event_data.get("data", {})
+	var local_idx: int = network_manager.local_player_index if network_manager != null else 0
+
+	# Pause stack resolution on the host if a UI interaction arrives mid-action.
+	# (On clients this is a no-op since _executing_stack_action is always false.)
+	if _executing_stack_action and not _stack_resolution_paused:
+		var p_idx: int = event_data.get("player_index", local_idx)
+		var pause_player: Player = game_manager.players[p_idx] \
+			if p_idx >= 0 and p_idx < game_manager.players.size() \
+			else game_manager.current_player
+		_pause_stack_resolution(pause_player)
+	
+	match type:
+		"combat_retreat":
+			var action_dict: Dictionary = payload.get("action", {})
+			var action := CardAction.from_dict(action_dict, game_manager)
+			var target_uid: String = payload.get("target_uid", "")
+			var target = game_manager.get_card_by_uid(target_uid)
+			if target == null:
+				var p_idx: int = payload.get("target_player_index", -1)
+				if p_idx >= 0 and p_idx < game_manager.players.size():
+					target = game_manager.players[p_idx]
+			_on_match_ui_interaction(local_idx, type, {"action": action, "target": target})
+		"doorway_choice":
+			var structure_uid: String = payload.get("structure_uid", "")
+			var card_uid: String = payload.get("card_uid", "")
+			var structure := game_manager.get_card_by_uid(structure_uid)
+			var card := game_manager.get_card_by_uid(card_uid)
+			_show_doorway_choice_prompt(
+				structure, card, 
+				payload.get("combat_death", false), 
+				payload.get("destruction", false)
+			)
+		"resurrection":
+			var card_uid: String = payload.get("card_uid", "")
+			var card := game_manager.get_card_by_uid(card_uid)
+			if card != null:
+				_show_resurrection_prompt([card])
+		"aphrodite_enslave":
+			var god := game_manager.get_card_by_uid(payload.get("source_uid", "")) as AphroditeAreia
+			if god != null:
+				_show_aphrodite_prompt(god)
+		"blessed_knights_ward":
+			var card := game_manager.get_card_by_uid(payload.get("source_uid", "")) as BlessedKnights
+			if card != null:
+				_show_blessed_knights_prompt(card)
+		"en_hedu_anna_exaltation":
+			var card := game_manager.get_card_by_uid(payload.get("source_uid", "")) as EnHeduAnna
+			if card != null:
+				_show_en_hedu_anna_prompt(card)
+
 func _apply_full_state(data: Dictionary) -> void:
-	# Clear stale card references before zone cards are replaced
-	_clear_network_selection_state()
-	# Rebuild ghost GameManager from server state
-	GameState.apply_to_manager(data.get("state", {}), game_manager)
-	# Set feedback_viewer so client sees their own perspective
-	if network_manager != null and network_manager.local_player_index >= 0:
-		var local_idx: int = network_manager.local_player_index
-		if local_idx < game_manager.players.size():
-			game_manager.feedback_viewer = game_manager.players[local_idx]
+	if _is_networked_client:
+		# Client: clear stale card refs and rebuild ghost game_manager from server state
+		_clear_network_selection_state()
+		GameState.apply_to_manager(data.get("state", {}), game_manager)
+		# Set feedback_viewer so client sees their own perspective
+		if network_manager != null and network_manager.local_player_index >= 0:
+			var local_idx: int = network_manager.local_player_index
+			if local_idx < game_manager.players.size():
+				game_manager.feedback_viewer = game_manager.players[local_idx]
+	# Host has the live authoritative game_manager — no zone rebuild needed.
 	# Show server's action message if any
 	var msg: String = data.get("action_message", "")
 	if msg != "":
 		action_label.text = msg
+		_capture_action_log_message(true)
+
 	update_ui()
+	_update_waiting_overlay()
+
+func _update_waiting_status(is_waiting: bool, message: String = "Waiting for Opponent...") -> void:
+	var panel = get_node_or_null("WaitingOverlay")
+	if not is_waiting:
+		if panel: panel.queue_free()
+		return
+	
+	if panel == null:
+		panel = ColorRect.new()
+		panel.name = "WaitingOverlay"
+		panel.color = Color(0, 0, 0, 0.3)
+		panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		panel.z_index = 200
+		panel.mouse_filter = Control.MOUSE_FILTER_STOP
+		add_child(panel)
+		_promote_transient_ui(panel)
+		
+		var label := Label.new()
+		label.name = "WaitingLabel"
+		label.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+		label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		label.add_theme_font_size_override("font_size", 18)
+		var style := StyleBoxFlat.new()
+		style.bg_color = Color(0.1, 0.1, 0.1, 0.8)
+		style.content_margin_left = 20
+		style.content_margin_right = 20
+		style.content_margin_top = 10
+		style.content_margin_bottom = 10
+		label.add_theme_stylebox_override("normal", style)
+		panel.add_child(label)
+	
+	var lbl = panel.get_node("WaitingLabel")
+	lbl.text = message
+
+func _update_waiting_overlay() -> void:
+	if not _is_networked_client:
+		_update_waiting_status(false)
+		return
+		
+	var local_idx = network_manager.local_player_index
+	var current_priority_player := game_manager.priority_player
+	var priority_idx := game_manager.players.find(current_priority_player)
+	
+	# If someone else has priority, we are waiting
+	if priority_idx != -1 and priority_idx != local_idx:
+		_update_waiting_status(true, "Opponent has priority...")
+		return
+		
+	# If we are in combat and waiting for intercept
+	if game_manager.current_phase == GameManager.GamePhase.COMBAT:
+		# Check if we are the attacker and waiting for defender to intercept
+		if selected_attacker != null and pending_attack_target != null:
+			var defender: Player = pending_attack_target if pending_attack_target is Player else (pending_attack_target as Card).get_controller()
+			if defender != null and game_manager.players.find(defender) != local_idx:
+				_update_waiting_status(true, "Opponent is choosing interceptor...")
+				return
+
+	_update_waiting_status(false)
 
 func _apply_priority_offered(data: Dictionary) -> void:
 	var msg: String = data.get("action_message", "")
@@ -9437,18 +9664,13 @@ func _do_end_turn() -> void:
 		update_ui()
 		if _is_networked_client:
 			return  # Client waits for server to send upkeep_needed
+		# GameEventBroadcaster sends upkeep_needed to the remote client via _on_turn_started.
+		# Only open the window locally when it's still the host's (player 0) turn.
 		var new_cp_idx: int = game_manager.players.find(game_manager.current_player)
 		var is_remote_new_turn: bool = network_manager != null \
 			and network_manager.get("is_server") == true \
 			and new_cp_idx != 0
-		if is_remote_new_turn:
-			var peer_id: int = network_manager.player_peer_ids.get(new_cp_idx, -1)
-			var event_data := {current_player_index = new_cp_idx}
-			if peer_id == 1:
-				network_manager.game_event_received.emit("upkeep_needed", event_data)
-			elif peer_id > 0:
-				network_manager.broadcast_event_to_peer(peer_id, "upkeep_needed", event_data)
-		else:
+		if not is_remote_new_turn:
 			call_deferred("_open_upkeep_choice_window")
 	_queue_priority_event(
 		"end_turn",
@@ -9471,11 +9693,14 @@ func _show_resurrection_prompt(candidates: Array[Card]) -> void:
 	_resurrection_queue = candidates.duplicate()
 	_next_resurrection_prompt()
 
+var _pending_resurrection_card: Card = null
+
 func _next_resurrection_prompt() -> void:
 	if _resurrection_queue.is_empty():
 		_do_end_turn()
 		return
 	var card: Card = _resurrection_queue.pop_front()
+	_pending_resurrection_card = card
 	# Build modal panel
 	if _resurrection_panel and is_instance_valid(_resurrection_panel):
 		_resurrection_panel.queue_free()
@@ -9534,47 +9759,19 @@ func _on_resurrection_yes(card: Card) -> void:
 	if _resurrection_panel and is_instance_valid(_resurrection_panel):
 		_resurrection_panel.queue_free()
 	_resurrection_panel = null
-	var player: Player = card.card_owner
-	if not player.spend_mana(1):
-		update_ui()
-		_next_resurrection_prompt()
-		return
-	# Find an empty reserve zone, preferring the same column the card died in
-	var preferred_idx: int = card.last_board_zone_index
-	var zones_to_try: Array[Zone] = []
-	if preferred_idx >= 0 and preferred_idx < player.reserve_zones.size():
-		zones_to_try.append(player.reserve_zones[preferred_idx])
-	for zone in player.reserve_zones:
-		if zone not in zones_to_try:
-			zones_to_try.append(zone)
-	var placed := false
-	for zone in zones_to_try:
-		if zone.cards.is_empty():
-			placed = game_manager.summon_creature_by_effect(
-				player,
-				card,
-				zone,
-				Card.CreatureMode.AGGRESSIVE,
-				false,
-				false,
-				null,
-				false,
-				false,
-				false
-			)
-			if placed:
-				print("Again-Walker resurrected to reserve zone %d" % zone.zone_index)
-				break
-	if not placed:
-		print("No empty reserve zone Ã¢â‚¬â€ Again-Walker stays in graveyard")
-	update_ui()
-	_next_resurrection_prompt()
+	_pending_resurrection_card = null
+	
+	game_input.submit_action({"type": "resurrection_choice", "card_uid": card.uid, "confirm": true})
 
 func _on_resurrection_no() -> void:
+	var card := _pending_resurrection_card
 	if _resurrection_panel and is_instance_valid(_resurrection_panel):
 		_resurrection_panel.queue_free()
 	_resurrection_panel = null
-	_next_resurrection_prompt()
+	_pending_resurrection_card = null
+	
+	if card != null:
+		game_input.submit_action({"type": "resurrection_choice", "card_uid": card.uid, "confirm": false})
 
 func _on_allow_ai_attack() -> void:
 	pass

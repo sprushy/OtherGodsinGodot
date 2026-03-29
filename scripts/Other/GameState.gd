@@ -21,6 +21,9 @@ static func serialize(gm: GameManager, viewer_player_index: int = -1) -> Diction
 		is_game_over = gm.is_game_over,
 		upkeep_resolved_turn = gm._upkeep_resolved_turn,
 		upkeep_started_turn = gm._upkeep_started_turn,
+		priority_player_index = gm.players.find(gm.priority_player),
+		consecutive_passes = gm.consecutive_passes,
+		attack_restrictions = _serialize_attack_restrictions(gm),
 		players = [],
 	}
 	if gm.winning_player != null:
@@ -103,7 +106,35 @@ static func _serialize_card(card: Card, hidden: bool) -> Dictionary:
 		card_types                = card.card_types.duplicate(),
 		culture                   = card.culture,
 		equipped_on_uid           = equipped_on_uid,
+		active_statuses           = _serialize_card_statuses(card),
 	}
+
+static func _serialize_card_statuses(card: Card) -> Array:
+	var result := []
+	for status in card.active_statuses:
+		var s := {}
+		for key in status.keys():
+			var val = status[key]
+			if val is Card:
+				s[key + "_uid"] = (val as Card).uid if "uid" in val else ""
+			elif val is Object:
+				pass  # Skip Player and other node refs — name/metadata sufficient on client
+			else:
+				s[key] = val
+		result.append(s)
+	return result
+
+static func _serialize_attack_restrictions(gm: GameManager) -> Array:
+	var result := []
+	for player in gm.attack_restrictions:
+		var val: Dictionary = gm.attack_restrictions[player]
+		var source: Card = val.get("source", null)
+		result.append({
+			player_index = gm.players.find(player),
+			turns = val.get("turns", 0),
+			source_uid = source.uid if source != null and "uid" in source else "",
+		})
+	return result
 
 # -------------------------------------------------------------------------
 # Deserialization (dict → ghost GameManager)
@@ -123,6 +154,19 @@ static func apply_to_manager(data: Dictionary, gm: GameManager) -> void:
 	gm.is_game_over = data.get("is_game_over", false)
 	gm._upkeep_resolved_turn = data.get("upkeep_resolved_turn", -1)
 	gm._upkeep_started_turn = data.get("upkeep_started_turn", -1)
+	gm.consecutive_passes = data.get("consecutive_passes", 0)
+
+	var pp_idx: int = data.get("priority_player_index", -1)
+	gm.priority_player = gm.players[pp_idx] if pp_idx >= 0 and pp_idx < gm.players.size() else null
+
+	gm.attack_restrictions.clear()
+	for entry in data.get("attack_restrictions", []):
+		var p_idx: int = entry.get("player_index", -1)
+		if p_idx >= 0 and p_idx < gm.players.size():
+			gm.attack_restrictions[gm.players[p_idx]] = {
+				turns = entry.get("turns", 0),
+				source = null,
+			}
 
 	var players_data: Array = data.get("players", [])
 	for i in mini(players_data.size(), gm.players.size()):
@@ -242,5 +286,11 @@ static func _deserialize_card(cdata: Dictionary) -> Card:
 	var equipped_uid: String = cdata.get("equipped_on_uid", "")
 	if equipped_uid != "":
 		card.set_meta("_equipped_on_uid", equipped_uid)
+
+	# Restore status effects (Card/Player refs will be absent on client; name+metadata is enough)
+	card.active_statuses.clear()
+	for sdata in cdata.get("active_statuses", []):
+		card.active_statuses.append((sdata as Dictionary).duplicate())
+	card._sync_status_flags()
 
 	return card
