@@ -6,8 +6,13 @@ var _test_turn_opponent: Player = null
 
 # Override start_game to set up a focused test board while preserving
 # the CombatMockGame interface.
-func start_game(is_host: bool = false, is_client: bool = false, server_ip: String = "127.0.0.1") -> void:
-	await super.start_game(is_host, is_client, server_ip)
+func start_game(
+	is_host: bool = false,
+	is_client: bool = false,
+	server_ip: String = "127.0.0.1",
+	server_port: int = 12345
+) -> void:
+	await super.start_game(is_host, is_client, server_ip, server_port)
 	_setup_test_board()
 
 func update_ui() -> void:

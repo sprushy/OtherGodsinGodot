@@ -9,14 +9,18 @@ class_name GameEventBroadcaster
 ## This is bandwidth-heavy but simple and correct. Event-by-event deltas can
 ## replace this later without touching the client or GameInput abstraction.
 
+const PromptRouterScript = preload("res://scripts/server/PromptRouter.gd")
+
 var game_manager: GameManager
 var match_manager: MatchManager
 var network_manager: Node  # NetworkManager
+var prompt_router = null
 
-func _init(gm: GameManager, mm: MatchManager, nm: Node) -> void:
+func _init(gm: GameManager, mm: MatchManager, nm: Node, p_prompt_router = null) -> void:
 	game_manager = gm
 	match_manager = mm
 	network_manager = nm
+	prompt_router = p_prompt_router if p_prompt_router != null else PromptRouterScript.new(game_manager)
 	_connect_signals()
 
 func _connect_signals() -> void:
@@ -67,21 +71,7 @@ func _on_game_ended(winner: Player, _loser: Player) -> void:
 	})
 
 func _on_ui_interaction_requested(player_index: int, type: String, data: Dictionary) -> void:
-	# Serialize data if it contains CardActions or Cards
-	var serialized_data := data.duplicate()
-	
-	# Generic serialization for known keys
-	for key in serialized_data.keys():
-		var val = serialized_data[key]
-		if val is Card:
-			serialized_data[key + "_uid"] = val.uid
-			serialized_data.erase(key)
-		elif val is Player:
-			serialized_data[key + "_player_index"] = game_manager.players.find(val)
-			serialized_data.erase(key)
-		elif val is CardAction:
-			serialized_data[key] = val.to_dict(game_manager)
-	
+	var serialized_data: Dictionary = prompt_router.serialize_prompt_data(data)
 	_broadcast_ui_interaction(player_index, type, serialized_data)
 
 func _on_doorway_choice_requested(structure: Card, card: Card, combat_death: bool, destruction: bool) -> void:
@@ -99,8 +89,7 @@ func _broadcast_ui_interaction(player_index: int, type: String, data: Dictionary
 	if network_manager == null:
 		return
 	var peer_id: int = network_manager.player_peer_ids.get(player_index, -1)
-	# Include player_index so the receiver can pause the stack for the right player.
-	var envelope := { "type": type, "data": data, "player_index": player_index }
+	var envelope: Dictionary = prompt_router.build_prompt_envelope(player_index, type, data)
 	if peer_id == 1:
 		# Server's own "peer" — emit locally so the host UI updates too
 		network_manager.game_event_received.emit("ui_interaction", envelope)

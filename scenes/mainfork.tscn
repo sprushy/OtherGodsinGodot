@@ -50,11 +50,30 @@ layout_mode = 2
 [node name="IPLineEdit" type="LineEdit" parent="Control/MenuContainer/MultiplayerContainer" unique_id=157483094]
 layout_mode = 2
 text = "127.0.0.1"
-placeholder_text = "Server IP"
+placeholder_text = "Lobby / Host IP"
+
+[node name="PlayerNameLineEdit" type="LineEdit" parent="Control/MenuContainer/MultiplayerContainer" unique_id=157483096]
+layout_mode = 2
+text = "Host"
+placeholder_text = "Player name"
+
+[node name="RoomCodeLineEdit" type="LineEdit" parent="Control/MenuContainer/MultiplayerContainer" unique_id=157483097]
+layout_mode = 2
+placeholder_text = "Room code"
 
 [node name="ConnectButton" type="Button" parent="Control/MenuContainer/MultiplayerContainer" unique_id=157483095]
 layout_mode = 2
-text = "Connect"
+text = "Join Room"
+
+[node name="ReadyButton" type="Button" parent="Control/MenuContainer/MultiplayerContainer" unique_id=157483098]
+visible = false
+layout_mode = 2
+text = "Ready"
+
+[node name="StatusLabel" type="Label" parent="Control/MenuContainer/MultiplayerContainer" unique_id=157483099]
+layout_mode = 2
+autowrap_mode = 3
+text = "Host a room on this machine, or join one by IP and room code."
 
 [node name="GameContainer" type="Control" parent="Control" unique_id=1297052031]
 layout_mode = 1

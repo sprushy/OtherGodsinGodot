@@ -2,6 +2,7 @@
 .godot/
 .exports/
 *.tmp
+scripts/tmp/smoke_*.txt
 
 # Claude Code
 .claude/

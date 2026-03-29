@@ -6,6 +6,9 @@ const ErlqueensNightingaleScript = preload("res://scripts/cards/Creatures/Erlque
 const SacrificeCursorSource = preload("res://images/card_art/BloodySacrificeCursor.png")
 const DevourCursorSource = preload("res://images/card_art/BloodyWolfJawsPGN.png")
 const SilenceCursorSource = preload("res://images/SilenceCursorPGN.png")
+const PromptRouterScript = preload("res://scripts/server/PromptRouter.gd")
+const HeadlessMatchHostScript = preload("res://scripts/server/HeadlessMatchHost.gd")
+const MatchClientScript = preload("res://scripts/client/MatchClient.gd")
 
 signal forfeit_requested
 
@@ -14,6 +17,9 @@ var player2: Player
 var network_manager: Node = null
 var game_input: GameInput = null
 var game_event_broadcaster: GameEventBroadcaster = null
+var headless_match_host = null
+var prompt_router = null
+var match_client = null
 var _is_networked_client: bool = false
 var selected_card: Card = null
 var selected_attacker: Card:
@@ -1046,44 +1052,40 @@ func _close_action_log_popup() -> void:
 	_action_log_popup = null
 	_action_log_popup_view = null
 
-func start_game(is_host: bool = false, is_client: bool = false, server_ip: String = "127.0.0.1") -> void:
+func start_game(
+	is_host: bool = false,
+	is_client: bool = false,
+	server_ip: String = "127.0.0.1",
+	server_port: int = 12345
+) -> void:
 	print("=== STARTING COMBAT MOCK GAME ===")
 	_game_finished = false
 	
 	game_manager = GameManager.new()
 	game_manager.set_interaction_host(self)
 	match_manager = MatchManager.new(game_manager)
-	game_input = LocalGameInput.new(match_manager)
+	prompt_router = PromptRouterScript.new(game_manager)
+	headless_match_host = HeadlessMatchHostScript.new()
+	headless_match_host.attach(game_manager, match_manager, prompt_router)
+	network_manager = headless_match_host.setup_transport(self, is_host, is_client, server_ip, server_port)
+	match_client = MatchClientScript.new(
+		match_manager,
+		network_manager,
+		headless_match_host.should_receive_network_events(),
+		headless_match_host.is_networked_client()
+	)
+	game_input = match_client.get_game_input()
+	_is_networked_client = match_client.is_networked_client()
 	
-	# Multiplayer setup
-	var nm_script = load("res://scripts/Other/NetworkManager.gd")
-	if nm_script:
-		network_manager = Node.new()
-		network_manager.set_script(nm_script)
-		add_child(network_manager)
-		
-		if is_host:
-			network_manager.create_server()
-		elif is_client:
-			network_manager.create_client(server_ip)
-		else:
-			network_manager.is_server = true # Default to local host mode
-			
-		match_manager.network_manager = network_manager
-		network_manager.command_received.connect(match_manager.process_command)
-		
-		if is_client or is_host:
-			network_manager.game_event_received.connect(_apply_network_event)
-			if is_client:
-				_is_networked_client = true
-				game_input = NetworkedGameInput.new(network_manager)
-				network_manager.peer_disconnected.connect(_on_peer_disconnected)
+	if match_client.receives_network_events():
+		match_client.game_event_received.connect(_apply_network_event)
+		match_client.peer_disconnected.connect(_on_peer_disconnected)
 	
 	print("MatchManager initialized: ", match_manager)
 	match_manager.action_resolved.connect(_on_match_action_resolved)
 	
 	# If we have a broadcaster, ui_interaction will come via network event instead
-	var use_broadcaster := network_manager != null and is_host
+	var use_broadcaster: bool = headless_match_host != null and headless_match_host.should_route_prompts_via_network()
 	if not use_broadcaster:
 		match_manager.request_ui_interaction.connect(_on_match_ui_interaction)
 	
@@ -1150,16 +1152,9 @@ func start_game(is_host: bool = false, is_client: bool = false, server_ip: Strin
 	game_manager.game_ended.connect(_on_game_ended)
 
 	# Broadcaster: server-side only, sends full state to clients after each action
-	if network_manager != null and is_host:
-		game_event_broadcaster = GameEventBroadcaster.new(game_manager, match_manager, network_manager)
-		network_manager.peer_connected.connect(func(peer_id: int) -> void:
-			network_manager.assign_peer_to_player(peer_id, 1)
-			var state := GameState.serialize(game_manager, 1)
-			network_manager.broadcast_event_to_peer(peer_id, "full_state", {
-				state = state, action_message = "Connected! Syncing game state."
-			})
-		)
-		network_manager.peer_disconnected.connect(_on_peer_disconnected)
+	if headless_match_host != null and is_host:
+		headless_match_host.enable_authoritative_broadcasts()
+		game_event_broadcaster = headless_match_host.game_event_broadcaster
 
 	if not player1.card_moved.is_connected(_on_local_player_card_moved):
 		player1.card_moved.connect(_on_local_player_card_moved)
