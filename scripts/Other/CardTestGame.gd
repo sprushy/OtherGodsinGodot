@@ -207,7 +207,7 @@ func _setup_test_board() -> void:
 	_place_test_board_card(player1, player1.reserve_zones[1], gidim_ensi, Card.CreatureMode.DEFENSIVE)
 	gidim_ensi.on_summon(game_manager)  # Apply permanent cannot_attack to itself
 	_place_test_board_card(player1, player1.reserve_zones[2], gallu_board, Card.CreatureMode.AGGRESSIVE)
-	_place_test_board_permanent(player1, player1.reserve_zones[6], GlitnirThePeaceful.new())
+	_place_test_board_permanent(player1, player1.reserve_zones[4], GlitnirThePeaceful.new())
 
 	# Give Berserker a removable status so Gawain's Healing Hands has something to cure.
 	berserker.add_status_effect(
