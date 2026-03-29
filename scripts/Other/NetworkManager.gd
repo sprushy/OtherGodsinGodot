@@ -3,7 +3,7 @@ extends Node
 
 ## Handles low-level networking and command routing.
 
-signal command_received(command: Dictionary)
+signal command_received(command: Dictionary, sender_info: Dictionary)
 signal game_event_received(event_type: String, data: Dictionary)
 signal peer_connected(peer_id: int)
 signal peer_disconnected(peer_id: int)
@@ -53,13 +53,14 @@ func create_client(address: String = "127.0.0.1", port: int = 12345) -> Error:
 @rpc("any_peer", "call_remote", "reliable")
 func send_command(command: Dictionary) -> void:
 	if is_server:
-		command_received.emit(command)
+		var peer_id := multiplayer.get_remote_sender_id()
+		command_received.emit(command, _build_sender_info(peer_id))
 
 ## Call from client to send an action to the server.
 ## If already the server (local host), processes directly.
 func request_action(command: Dictionary) -> void:
 	if is_server:
-		command_received.emit(command)
+		command_received.emit(command, _build_sender_info(1))
 	else:
 		rpc_id(1, "send_command", command)
 
@@ -98,3 +99,16 @@ func assign_peer_to_player(target_peer_id: int, player_index: int) -> void:
 		return
 	player_peer_ids[player_index] = target_peer_id
 	rpc_id(target_peer_id, "set_local_player_index", player_index)
+
+func get_player_index_for_peer(peer_id: int) -> int:
+	for player_index in player_peer_ids.keys():
+		if int(player_peer_ids[player_index]) == peer_id:
+			return int(player_index)
+	return -1
+
+func _build_sender_info(peer_id: int) -> Dictionary:
+	return {
+		"peer_id": peer_id,
+		"player_index": get_player_index_for_peer(peer_id),
+		"is_host_peer": peer_id == 1,
+	}

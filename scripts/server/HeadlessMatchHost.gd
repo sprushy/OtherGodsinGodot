@@ -50,7 +50,9 @@ func setup_transport(
 
 	if match_manager != null:
 		match_manager.network_manager = network_manager
-		network_manager.command_received.connect(match_manager.process_command)
+		network_manager.command_received.connect(func(command: Dictionary, sender_info: Dictionary) -> void:
+			match_manager.process_command(command, sender_info)
+		)
 
 	if is_host or is_client:
 		network_manager.game_event_received.connect(_on_game_event_received)

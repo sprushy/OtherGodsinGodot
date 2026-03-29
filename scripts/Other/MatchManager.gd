@@ -61,9 +61,11 @@ var pending_divine_caprice_selected_zone: Zone = null
 
 var pending_retreat_action: CardAction = null
 var pending_retreat_target: Card = null
+var _active_command_sender_info: Dictionary = {}
 
 func _init(p_game_manager: GameManager) -> void:
 	game_manager = p_game_manager
+	move_failed.connect(_on_move_failed)
 
 # --- Targeting Control ---
 
@@ -142,6 +144,7 @@ signal action_resolved(action: CardAction)
 signal request_ui_interaction(player_index: int, type: String, data: Dictionary)
 
 var last_resolution_text: String = ""
+var last_move_failed_reason: String = ""
 
 func resolve_action(action: CardAction) -> void:
 	last_resolution_text = ""
@@ -421,12 +424,120 @@ func resolve_zone(zone_dict: Dictionary) -> Zone:
 				return player.reserve_zones[zone_idx]
 	return null
 
+func _resolve_sender_player(sender_info: Dictionary) -> Player:
+	if sender_info.is_empty():
+		return null
+	var player_idx := int(sender_info.get("player_index", -1))
+	if player_idx < 0 or player_idx >= game_manager.players.size():
+		return null
+	return game_manager.players[player_idx]
+
+func _get_card_controller(card: Card) -> Player:
+	if card == null:
+		return null
+	return card.get_controller() if card.has_method("get_controller") else card.card_owner
+
+func _get_current_targeting_player() -> Player:
+	if pending_click_selection_source != null:
+		return _get_card_controller(pending_click_selection_source)
+	if awaiting_spell_target and spell_waiting_for_target != null:
+		return _get_card_controller(spell_waiting_for_target)
+	if awaiting_god_ability_target and god_ability_source != null:
+		return _get_card_controller(god_ability_source)
+	if awaiting_stupefy_target and stupefy_source != null:
+		return _get_card_controller(stupefy_source)
+	if awaiting_pyre_target and pyre_source != null:
+		return _get_card_controller(pyre_source)
+	if awaiting_anointing_target and anointing_source != null:
+		return _get_card_controller(anointing_source)
+	return null
+
+func _get_required_player_for_command(command: Dictionary) -> Player:
+	match str(command.get("type", "")):
+		"select_attacker":
+			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("card_uid", ""))))
+		"request_attack":
+			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("attacker_uid", ""))))
+		"cancel_targeting", "confirm_click_selection":
+			return _get_current_targeting_player()
+		"play_card", "prepare_card", "play_creature", "creature_move", "change_mode":
+			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("card_uid", ""))))
+		"cast_spell":
+			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("spell_uid", ""))))
+		"god_ability":
+			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("god_uid", ""))))
+		"activate_power", "unlock_power", "activate_divine_caprice":
+			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("power_uid", ""))))
+		"cast_charm", "play_charm_response":
+			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("charm_uid", ""))))
+		"play_hex_response":
+			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("hex_uid", ""))))
+		"skoll_upkeep_summon":
+			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("skoll_uid", ""))))
+		"activate_card_ability", "en_hedu_anna_exaltation", "aphrodite_enslave_choice", "blessed_knights_choice":
+			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("source_uid", ""))))
+		"wolf_master_summon":
+			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("fenrir_uid", ""))))
+		"intercept_decision":
+			var interceptor_uid := str(command.get("interceptor_uid", ""))
+			if not interceptor_uid.is_empty():
+				return _get_card_controller(game_manager.get_card_by_uid(interceptor_uid))
+			if pending_attack_target is Card:
+				return _get_card_controller(pending_attack_target)
+			if pending_attack_target is Player:
+				return pending_attack_target
+			return game_manager.other_player
+		"resurrection_choice":
+			var resurrect_card := game_manager.get_card_by_uid(str(command.get("card_uid", "")))
+			return resurrect_card.card_owner if resurrect_card != null else null
+		"priority_pass":
+			return game_manager.priority_player if game_manager.priority_player != null else game_manager.current_player
+		"upkeep_choice", "end_turn":
+			return game_manager.current_player
+	return null
+
+func _send_rejection_to_sender(sender_info: Dictionary, reason: String) -> void:
+	if sender_info.is_empty() or network_manager == null or not network_manager.is_server:
+		return
+	var peer_id := int(sender_info.get("peer_id", -1))
+	if peer_id <= 1:
+		return
+	network_manager.broadcast_event_to_peer(peer_id, "command_rejected", {"reason": reason})
+
+func _validate_sender_authority(command: Dictionary, sender_info: Dictionary) -> String:
+	if sender_info.is_empty():
+		return ""
+	var sender_player := _resolve_sender_player(sender_info)
+	if sender_player == null:
+		return "Unauthorized command: unknown player."
+	var required_player := _get_required_player_for_command(command)
+	if required_player == null:
+		return ""
+	if sender_player != required_player:
+		return "Unauthorized command: that action belongs to %s." % required_player.player_name
+	return ""
+
+func _on_move_failed(reason: String) -> void:
+	last_move_failed_reason = reason
+	_send_rejection_to_sender(_active_command_sender_info, reason)
+
 # --- Network Command Support ---
 
 ## Entry point for commands from the network.
 ## Commands are Dictionaries containing "type" and relevant IDs.
 ## Returns true on success, false on failure (failure also emits move_failed).
-func process_command(command: Dictionary) -> bool:
+func process_command(command: Dictionary, sender_info: Dictionary = {}) -> bool:
+	_active_command_sender_info = sender_info.duplicate(true)
+	var authority_error := _validate_sender_authority(command, sender_info)
+	if not authority_error.is_empty():
+		move_failed.emit(authority_error)
+		_active_command_sender_info.clear()
+		return false
+	var result := _process_command_impl(command)
+	_active_command_sender_info.clear()
+	return result
+
+func _process_command_impl(command: Dictionary) -> bool:
 	match command.get("type", ""):
 		"select_attacker":
 			var uid = command.get("card_uid", "")

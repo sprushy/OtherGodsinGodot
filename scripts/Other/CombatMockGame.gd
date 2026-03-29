@@ -9268,6 +9268,9 @@ func _apply_network_event(event_type: String, data: Dictionary) -> void:
 			_apply_priority_offered(data)
 		"intercept_offered":
 			_apply_intercept_offered(data)
+		"command_rejected":
+			action_label.text = str(data.get("reason", "That move was rejected by the server."))
+			update_ui()
 		"game_ended":
 			var winner_name: String = data.get("winner_name", "Unknown")
 			action_label.text = winner_name + " wins!"
