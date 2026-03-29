@@ -45,9 +45,9 @@ func _make_all_cards() -> Array:
 		AcceleratedFate.new(), ACostToWalkTheWorlds.new(), AdvancedBuildingTechniques.new(), AllfathersSacrifice.new(), AltarOfDreams.new(), AnankesBinding.new(), AncientWisdom.new(), BerserkerMead.new(), Breidablik.new(), CallOfTheValkyrie.new(), FeastOfAmbrosiaAndNectar.new(), FerociousDefence.new(), FireAndGold.new(),
 		Berserker.new(), Beyla.new(), BlessedKnights.new(), BrownBear.new(), Byggvir.new(), DurinnSecondborn.new(), Fenrir.new(), FirstSageAdapa.new(), load("res://scripts/cards/Creatures/FourthSageEnmegalamma.gd").new(), Skoll.new(), AnkouServantToTheReaper.new(), Anzu.new(), AnTheBowbender.new(),
 		AsagTheDestroyer.new(), Asakku.new(), Asaruludu.new(),
-		AgainWalker.new(), Alu.new(), Askelladen.new(), Aurboda.new(), EnkiLordOfEridu.new(),
+		AgainWalker.new(), Alu.new(), Askelladen.new(), Aurboda.new(), EnkiLordOfEridu.new(), Gallu.new(),
 		BitMeseri.new(), CircleOfRebirth.new(), FallOfTheMighty.new(), Famine.new(), FoolishOptimism.new(), preload("res://scripts/cards/Spells/FiresOfJudgment.gd").new(), ApollyonsDemiurge.new(), Absence.new(), BaneOfTheSvartalfar.new(), BlotSacrifice.new(), BookOfLife.new(), DeucalionsInfants.new(), MeadOfPoetry.new(), DivineLightning.new(), FifaTheMagicalArrow.new(),
-		BeardedAxe.new(),
+		BeardedAxe.new(), Gambanteinn.new(),
 		WardingStone.new(), AncientPyre.new(), AnointingStatue.new(), DoorwayToTheVoid.new(), E2Abzu.new(),
 		VoidShield.new(), Banishment.new(), Dromi.new(),
 	]

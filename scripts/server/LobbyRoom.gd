@@ -63,6 +63,13 @@ func set_ready(session_id: String, is_ready: bool) -> bool:
 	refresh_status()
 	return true
 
+func reset_after_match() -> void:
+	assigned_match_id = ""
+	status = STATUS_WAITING
+	for session_id in ready_by_session_id.keys():
+		ready_by_session_id[session_id] = false
+	refresh_status()
+
 func get_ready(session_id: String) -> bool:
 	return bool(ready_by_session_id.get(session_id, false))
 

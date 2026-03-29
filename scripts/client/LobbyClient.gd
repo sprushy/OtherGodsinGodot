@@ -2,6 +2,8 @@ extends Node
 class_name LobbyClient
 
 const LobbyProtocolScript = preload("res://scripts/network/LobbyProtocol.gd")
+const NetworkManagerScript = preload("res://scripts/Other/NetworkManager.gd")
+const LOBBY_EVENT_TYPE := "__lobby_event__"
 
 signal connected_to_lobby()
 signal login_succeeded(session_id: String, reconnect_token: String, player_name: String)
@@ -13,25 +15,21 @@ signal match_assigned(match_info: Dictionary)
 signal connection_failed(message: String)
 signal disconnected_from_lobby()
 
-var peer: ENetMultiplayerPeer = ENetMultiplayerPeer.new()
 var current_session_id: String = ""
 var current_reconnect_token: String = ""
 var current_player_name: String = "Guest"
+var trace_network: bool = false
+var trace_file_path: String = ""
+var multiplayer_mount_path: NodePath = NodePath("")
+var use_default_multiplayer: bool = false
+var network_manager: Node = null
 
 var _pending_player_name: String = "Guest"
 var _pending_session_id: String = ""
 var _pending_reconnect_token: String = ""
 
 func _ready() -> void:
-	var api: MultiplayerAPI = _ensure_multiplayer_api()
-	if api == null:
-		return
-	if not api.connected_to_server.is_connected(_on_connected_to_server):
-		api.connected_to_server.connect(_on_connected_to_server)
-	if not api.connection_failed.is_connected(_on_connection_failed):
-		api.connection_failed.connect(_on_connection_failed)
-	if not api.server_disconnected.is_connected(_on_server_disconnected):
-		api.server_disconnected.connect(_on_server_disconnected)
+	_ensure_network_manager()
 
 func connect_to_server(
 	address: String,
@@ -50,25 +48,15 @@ func connect_to_server(
 	if connect_address.is_empty():
 		connect_address = "127.0.0.1"
 
-	var err: Error = peer.create_client(connect_address, port)
-	if err != OK:
-		connection_failed.emit("Could not connect to %s:%d" % [connect_address, port])
-		return err
-
-	var api: MultiplayerAPI = _ensure_multiplayer_api()
-	if api == null:
-		connection_failed.emit("Could not initialize lobby multiplayer API.")
+	_ensure_network_manager()
+	if network_manager == null:
+		connection_failed.emit("Could not initialize lobby network transport.")
 		return ERR_UNAVAILABLE
-	api.multiplayer_peer = peer
-	return OK
+	return network_manager.create_client(connect_address, port)
 
 func disconnect_from_server() -> void:
-	var api: MultiplayerAPI = _ensure_multiplayer_api()
-	if api != null and api.multiplayer_peer != null:
-		api.multiplayer_peer = null
-	if peer != null:
-		peer.close()
-	peer = ENetMultiplayerPeer.new()
+	if network_manager != null:
+		network_manager.disconnect_client()
 
 func create_room() -> void:
 	_send_request(LobbyProtocolScript.CREATE_ROOM)
@@ -85,15 +73,10 @@ func leave_room() -> void:
 func set_ready(is_ready: bool) -> void:
 	_send_request(LobbyProtocolScript.SET_READY, {"is_ready": is_ready})
 
-@rpc("any_peer", "call_remote", "reliable")
-func lobby_request(_message: Dictionary) -> void:
-	# Clients only send lobby_request; the server consumes it.
-	pass
-
-@rpc("authority", "call_remote", "reliable")
 func lobby_event(message: Dictionary) -> void:
 	var message_type: String = LobbyProtocolScript.get_type(message)
 	var payload: Dictionary = LobbyProtocolScript.get_payload(message)
+	_trace("received %s" % message_type)
 
 	match message_type:
 		LobbyProtocolScript.HELLO_OK:
@@ -121,6 +104,7 @@ func lobby_event(message: Dictionary) -> void:
 			match_assigned.emit(payload)
 
 func _on_connected_to_server() -> void:
+	_trace("connected to server")
 	connected_to_lobby.emit()
 	if not _pending_session_id.is_empty() and not _pending_reconnect_token.is_empty():
 		_send_request(LobbyProtocolScript.REQUEST_RECONNECT_LOBBY, {
@@ -134,22 +118,71 @@ func _on_connected_to_server() -> void:
 	})
 
 func _on_connection_failed() -> void:
+	_trace("connection failed")
 	connection_failed.emit("The lobby connection failed.")
 
 func _on_server_disconnected() -> void:
+	_trace("server disconnected")
 	disconnected_from_lobby.emit()
 
 func _send_request(message_type: String, payload: Dictionary = {}) -> void:
-	var api: MultiplayerAPI = _ensure_multiplayer_api()
-	if api == null or api.multiplayer_peer == null:
+	if network_manager == null:
 		return
-	rpc_id(1, "lobby_request", LobbyProtocolScript.make_message(message_type, payload))
+	_trace("sending %s" % message_type)
+	network_manager.request_action(LobbyProtocolScript.make_message(message_type, payload))
 
 func _ensure_multiplayer_api() -> MultiplayerAPI:
+	if use_default_multiplayer:
+		if get_tree() == null:
+			return null
+		return get_tree().get_multiplayer()
 	if multiplayer != null:
 		return multiplayer
 	if get_tree() == null:
 		return null
 	var fallback_api := MultiplayerAPI.create_default_interface()
-	get_tree().set_multiplayer(fallback_api, get_path())
+	var target_path: NodePath = get_path()
+	if multiplayer_mount_path != NodePath(""):
+		target_path = multiplayer_mount_path
+	get_tree().set_multiplayer(fallback_api, target_path)
 	return multiplayer
+
+func _ensure_network_manager() -> void:
+	if network_manager != null:
+		return
+	network_manager = NetworkManagerScript.new()
+	network_manager.name = "LobbyTransport"
+	network_manager.trace_file_path = trace_file_path
+	network_manager.use_current_scene_relative_path = true
+	add_child(network_manager)
+	if not network_manager.connected_to_server.is_connected(_on_connected_to_server):
+		network_manager.connected_to_server.connect(_on_connected_to_server)
+	if not network_manager.connection_failed.is_connected(_on_connection_failed):
+		network_manager.connection_failed.connect(_on_connection_failed)
+	if not network_manager.server_disconnected.is_connected(_on_server_disconnected):
+		network_manager.server_disconnected.connect(_on_server_disconnected)
+	if not network_manager.game_event_received.is_connected(_on_network_game_event_received):
+		network_manager.game_event_received.connect(_on_network_game_event_received)
+
+func _on_network_game_event_received(event_type: String, data: Dictionary) -> void:
+	if event_type != LOBBY_EVENT_TYPE:
+		return
+	lobby_event(data)
+
+func _trace(message: String) -> void:
+	if not trace_network and trace_file_path.is_empty():
+		return
+	var line := "LobbyClient[%s]: %s" % [name, message]
+	if trace_network:
+		print(line)
+	if trace_file_path.is_empty():
+		return
+	var file := FileAccess.open(trace_file_path, FileAccess.READ_WRITE)
+	if file == null:
+		file = FileAccess.open(trace_file_path, FileAccess.WRITE)
+	if file == null:
+		return
+	file.seek_end()
+	file.store_line(line)
+	file.flush()
+	file.close()

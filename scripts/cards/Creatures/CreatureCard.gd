@@ -67,6 +67,11 @@ func on_sacrificed_for_summon(_game_manager: GameManager, _summoned_card: Card) 
 	# Called when this creature is sacrificed to pay another creature's summon cost.
 	pass
 
+func on_opponent_attacks_followers(_game_manager: GameManager, _attacker: Card) -> void:
+	# Called on every friendly board creature when an opponent's creature attacks
+	# this card's controller's followers directly (no intercept).
+	pass
+
 func on_friendly_god_power_activated(_game_manager: GameManager, _god: Card, _target: Card = null) -> void:
 	# Called after this creature's controller successfully activates their god's power.
 	pass

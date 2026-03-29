@@ -1,0 +1,11 @@
+Godot Engine v4.6.1.stable.official.14d19694e - https://godotengine.org
+
+Server started on port 22445
+ServerRuntimeBootstrap[lobby]: Lobby server listening on 127.0.0.1:22445
+ServerRuntimeBootstrap: dedicated lobby ready on 127.0.0.1:22445
+ERROR: Unable to send packet on channel 0, max channels: 0
+   at: send (modules/enet/enet_packet_peer.cpp:62)
+ERROR: Unable to send packet on channel 0, max channels: 0
+   at: send (modules/enet/enet_packet_peer.cpp:62)
+ERROR: Unable to send packet on channel 0, max channels: 0
+   at: send (modules/enet/enet_packet_peer.cpp:62)

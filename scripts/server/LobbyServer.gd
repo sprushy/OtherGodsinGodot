@@ -4,17 +4,24 @@ class_name LobbyServer
 const LobbyProtocolScript = preload("res://scripts/network/LobbyProtocol.gd")
 const LobbyRoomScript = preload("res://scripts/server/LobbyRoom.gd")
 const MatchSupervisorScript = preload("res://scripts/server/MatchSupervisor.gd")
+const NetworkManagerScript = preload("res://scripts/Other/NetworkManager.gd")
+const LOBBY_EVENT_TYPE := "__lobby_event__"
 
 signal local_room_snapshot_updated(snapshot: Dictionary)
 signal room_list_updated(rooms: Array)
 signal local_match_assigned(match_info: Dictionary)
 signal status_changed(message: String)
 
-var peer: ENetMultiplayerPeer = ENetMultiplayerPeer.new()
 var advertised_host: String = "127.0.0.1"
 var lobby_port: int = LobbyProtocolScript.PORT
 var match_port: int = LobbyProtocolScript.MATCH_PORT
 var is_listening: bool = false
+var use_dedicated_match_processes: bool = true
+var allow_in_process_match_fallback: bool = true
+var trace_network: bool = false
+var trace_file_path: String = ""
+var multiplayer_mount_path: NodePath = NodePath("")
+var use_default_multiplayer: bool = false
 
 var sessions_by_id: Dictionary = {}
 var session_id_by_peer: Dictionary = {}
@@ -22,15 +29,14 @@ var rooms_by_id: Dictionary = {}
 var room_id_by_session: Dictionary = {}
 var local_session_id: String = ""
 var match_supervisor = null
+var network_manager: Node = null
 
 var _rng := RandomNumberGenerator.new()
 
 func _ready() -> void:
 	_rng.randomize()
 	_ensure_match_supervisor()
-	var api: MultiplayerAPI = _ensure_multiplayer_api()
-	if api != null and not api.peer_disconnected.is_connected(_on_peer_disconnected):
-		api.peer_disconnected.connect(_on_peer_disconnected)
+	_ensure_network_manager()
 
 func start_server(p_advertised_host: String = "127.0.0.1", port: int = LobbyProtocolScript.PORT, p_match_port: int = LobbyProtocolScript.MATCH_PORT) -> Error:
 	if is_listening:
@@ -44,29 +50,33 @@ func start_server(p_advertised_host: String = "127.0.0.1", port: int = LobbyProt
 	match_port = p_match_port
 	_ensure_match_supervisor()
 	if match_supervisor != null:
-		match_supervisor.configure(advertised_host, match_port)
+		match_supervisor.configure(
+			advertised_host,
+			match_port,
+			use_dedicated_match_processes,
+			"",
+			"",
+			allow_in_process_match_fallback
+		)
 
-	var err := peer.create_server(lobby_port)
+	_ensure_network_manager()
+	if network_manager == null:
+		status_changed.emit("Failed to initialize lobby network transport.")
+		return ERR_UNAVAILABLE
+
+	var err: Error = network_manager.create_server(lobby_port, false)
 	if err != OK:
 		status_changed.emit("Failed to start lobby server on port %d." % lobby_port)
 		return err
 
-	var api: MultiplayerAPI = _ensure_multiplayer_api()
-	if api == null:
-		status_changed.emit("Failed to initialize lobby multiplayer API.")
-		return ERR_UNAVAILABLE
-	api.multiplayer_peer = peer
 	is_listening = true
+	_trace("listening on %s:%d" % [advertised_host, lobby_port])
 	status_changed.emit("Lobby server listening on %s:%d" % [advertised_host, lobby_port])
 	return OK
 
 func stop_server() -> void:
-	var api: MultiplayerAPI = _ensure_multiplayer_api()
-	if api != null and api.multiplayer_peer != null:
-		api.multiplayer_peer = null
-	if peer != null:
-		peer.close()
-	peer = ENetMultiplayerPeer.new()
+	if network_manager != null:
+		network_manager.disconnect_client()
 	is_listening = false
 	advertised_host = "127.0.0.1"
 	lobby_port = LobbyProtocolScript.PORT
@@ -106,18 +116,10 @@ func get_local_room_snapshot() -> Dictionary:
 	var room: LobbyRoom = rooms_by_id[room_id]
 	return room.to_snapshot(sessions_by_id)
 
-@rpc("any_peer", "call_remote", "reliable")
-func lobby_request(message: Dictionary) -> void:
-	var api: MultiplayerAPI = _ensure_multiplayer_api()
-	if api == null:
-		return
-	var peer_id: int = api.get_remote_sender_id()
-	_handle_request(peer_id, message)
-
-@rpc("authority", "call_remote", "reliable")
-func lobby_event(_message: Dictionary) -> void:
-	# Server only sends lobby_event; clients consume it.
-	pass
+func get_match_session(match_id: String):
+	if match_supervisor == null:
+		return null
+	return match_supervisor.get_match(match_id)
 
 func _handle_request(peer_id: int, message: Dictionary) -> void:
 	var validation_error: String = LobbyProtocolScript.validate_request(message)
@@ -164,6 +166,7 @@ func _handle_login_guest(peer_id: int, payload: Dictionary) -> void:
 	var existing: Dictionary = _get_session_for_peer(peer_id)
 	if existing.is_empty():
 		existing = _create_session(str(payload.get("player_name", "Guest")), peer_id, false)
+	_trace("login accepted for peer %d as session %s" % [peer_id, str(existing.get("session_id", ""))])
 
 	_send_to_peer(peer_id, LobbyProtocolScript.HELLO_OK, {
 		"session_id": str(existing.get("session_id", "")),
@@ -317,6 +320,12 @@ func _assign_match(room: LobbyRoom) -> void:
 		return
 
 	var match_session = match_supervisor.create_match(room.room_id, room.members)
+	if match_session == null:
+		var error_message := str(match_supervisor.last_create_match_error).strip_edges()
+		if error_message.is_empty():
+			error_message = "Failed to launch the match server."
+		_send_error_to_session(room.host_session_id, error_message)
+		return
 	room.status = LobbyRoomScript.STATUS_IN_MATCH
 	room.assigned_match_id = match_session.match_id
 	var local_match_info: Dictionary = {}
@@ -368,10 +377,10 @@ func _send_to_session(session_id: String, message_type: String, payload: Diction
 	_send_to_peer(target_peer_id, message_type, payload)
 
 func _send_to_peer(peer_id: int, message_type: String, payload: Dictionary) -> void:
-	var api: MultiplayerAPI = _ensure_multiplayer_api()
-	if peer_id <= 0 or api == null or api.multiplayer_peer == null:
+	if peer_id <= 0 or network_manager == null or not network_manager.is_server:
 		return
-	rpc_id(peer_id, "lobby_event", LobbyProtocolScript.make_message(message_type, payload))
+	_trace("sending %s to peer %d" % [message_type, peer_id])
+	network_manager.broadcast_event_to_peer(peer_id, LOBBY_EVENT_TYPE, LobbyProtocolScript.make_message(message_type, payload))
 
 func _send_error_to_session(session_id: String, message: String) -> void:
 	var session: Dictionary = sessions_by_id.get(session_id, {})
@@ -413,6 +422,8 @@ func _on_peer_disconnected(peer_id: int) -> void:
 	var room_id: String = str(room_id_by_session.get(session_id, ""))
 	if not room_id.is_empty() and rooms_by_id.has(room_id):
 		var room: LobbyRoom = rooms_by_id[room_id]
+		if room.status == LobbyRoomScript.STATUS_IN_MATCH:
+			return
 		_broadcast_room_snapshot(room)
 	_broadcast_room_lists()
 
@@ -435,13 +446,76 @@ func _ensure_match_supervisor() -> void:
 	match_supervisor = MatchSupervisorScript.new()
 	match_supervisor.name = "MatchSupervisor"
 	add_child(match_supervisor)
-	match_supervisor.configure(advertised_host, match_port)
+	match_supervisor.configure(
+		advertised_host,
+		match_port,
+		use_dedicated_match_processes,
+		"",
+		"",
+		allow_in_process_match_fallback
+	)
+	if not match_supervisor.match_closed.is_connected(_on_match_closed):
+		match_supervisor.match_closed.connect(_on_match_closed)
 
 func _ensure_multiplayer_api() -> MultiplayerAPI:
+	if use_default_multiplayer:
+		if get_tree() == null:
+			return null
+		return get_tree().get_multiplayer()
 	if multiplayer != null:
 		return multiplayer
 	if get_tree() == null:
 		return null
 	var fallback_api := MultiplayerAPI.create_default_interface()
-	get_tree().set_multiplayer(fallback_api, get_path())
+	var target_path: NodePath = get_path()
+	if multiplayer_mount_path != NodePath(""):
+		target_path = multiplayer_mount_path
+	get_tree().set_multiplayer(fallback_api, target_path)
 	return multiplayer
+
+func _ensure_network_manager() -> void:
+	if network_manager != null:
+		return
+	network_manager = NetworkManagerScript.new()
+	network_manager.name = "LobbyTransport"
+	network_manager.trace_file_path = trace_file_path
+	network_manager.use_current_scene_relative_path = true
+	add_child(network_manager)
+	if not network_manager.command_received.is_connected(_on_network_command_received):
+		network_manager.command_received.connect(_on_network_command_received)
+	if not network_manager.peer_disconnected.is_connected(_on_peer_disconnected):
+		network_manager.peer_disconnected.connect(_on_peer_disconnected)
+
+func _on_network_command_received(command: Dictionary, sender_info: Dictionary) -> void:
+	var peer_id := int(sender_info.get("peer_id", 0))
+	if peer_id <= 0:
+		return
+	_trace("received request %s from peer %d" % [LobbyProtocolScript.get_type(command), peer_id])
+	_handle_request(peer_id, command)
+
+func _on_match_closed(match_id: String, room_id: String, _final_status: String) -> void:
+	if room_id.is_empty() or not rooms_by_id.has(room_id):
+		return
+	var room: LobbyRoom = rooms_by_id[room_id]
+	if room.assigned_match_id != match_id:
+		return
+	room.reset_after_match()
+	_emit_room_updates(room)
+
+func _trace(message: String) -> void:
+	if not trace_network and trace_file_path.is_empty():
+		return
+	var line := "LobbyServer[%s]: %s" % [name, message]
+	if trace_network:
+		print(line)
+	if trace_file_path.is_empty():
+		return
+	var file := FileAccess.open(trace_file_path, FileAccess.READ_WRITE)
+	if file == null:
+		file = FileAccess.open(trace_file_path, FileAccess.WRITE)
+	if file == null:
+		return
+	file.seek_end()
+	file.store_line(line)
+	file.flush()
+	file.close()

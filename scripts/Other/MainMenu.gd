@@ -3,6 +3,9 @@ extends Control
 const LobbyProtocolScript = preload("res://scripts/network/LobbyProtocol.gd")
 const LobbyServerScript = preload("res://scripts/server/LobbyServer.gd")
 const LobbyClientScript = preload("res://scripts/client/LobbyClient.gd")
+const MatchSessionScript = preload("res://scripts/server/MatchSession.gd")
+const DEDICATED_LOBBY_ENTRY_SCRIPT_PATH := "res://scripts/server/DedicatedLobbyServerMain.gd"
+const DEDICATED_SERVER_EXPORT_RELATIVE_PATH := "res://.exports/server/ClaudeOtherGodsServer.exe"
 
 @onready var menu_container = $MenuContainer
 @onready var game_container = $GameContainer
@@ -24,6 +27,9 @@ var _pending_join_room_code: String = ""
 var _current_lobby_ip: String = "127.0.0.1"
 var _is_local_lobby_host: bool = false
 var _match_launch_queued: bool = false
+var _pending_host_room_creation: bool = false
+var _spawned_lobby_process_id: int = 0
+var _dedicated_lobby_connect_attempts_remaining: int = 0
 
 func _ready() -> void:
 	_fit_to_viewport()
@@ -117,43 +123,34 @@ func _on_host_game_pressed() -> void:
 	_match_launch_queued = false
 	_cleanup_lobby(false)
 	_is_local_lobby_host = true
+	_pending_host_room_creation = true
 	_current_lobby_ip = _get_lobby_ip()
+	_write_smoke_trace("host_pressed")
 	multiplayer_container.visible = true
 	ready_button.visible = true
 	ready_button.text = "Ready"
-	status_label.text = "Starting lobby server..."
-
-	lobby_server = LobbyServerScript.new()
-	lobby_server.name = "LobbyPeer"
-	add_child(lobby_server)
-	_bind_lobby_server_signals()
-
-	var start_err: Error = lobby_server.start_server(
-		_current_lobby_ip,
-		_get_configured_lobby_port(),
-		_get_configured_match_port()
-	)
-	if start_err != OK:
-		status_label.text = "Could not start lobby server on port %d." % _get_configured_lobby_port()
-		return
-
-	var session: Dictionary = lobby_server.create_local_guest_session(_get_player_name("Host"))
-	_lobby_session_id = str(session.get("session_id", ""))
-	_lobby_reconnect_token = str(session.get("reconnect_token", ""))
-	var snapshot: Dictionary = lobby_server.create_room_for_local_session()
-	_apply_room_snapshot(snapshot)
+	status_label.text = "Starting dedicated lobby server..."
+	_dedicated_lobby_connect_attempts_remaining = 20
+	_spawned_lobby_process_id = _launch_dedicated_lobby_server()
+	if _spawned_lobby_process_id > 0:
+		_write_smoke_trace("host_spawned_lobby_pid=%d" % _spawned_lobby_process_id)
+		_write_smoke_lobby_pid(_spawned_lobby_process_id)
+	call_deferred("_connect_local_host_to_dedicated_lobby")
 
 func _on_join_game_pressed() -> void:
 	_match_launch_queued = false
 	_cleanup_lobby(false)
 	_is_local_lobby_host = false
+	_pending_host_room_creation = false
 	multiplayer_container.visible = true
 	ready_button.visible = false
 	status_label.text = "Enter the host IP and room code, then join the lobby."
 
 func _on_connect_pressed() -> void:
 	_match_launch_queued = false
+	_pending_host_room_creation = false
 	_pending_join_room_code = room_code_line_edit.text.strip_edges().to_upper()
+	_write_smoke_trace("join_connect_pressed room=%s" % _pending_join_room_code)
 	if _pending_join_room_code.is_empty():
 		status_label.text = "Enter a room code before joining."
 		return
@@ -165,7 +162,9 @@ func _on_connect_pressed() -> void:
 
 	lobby_client = LobbyClientScript.new()
 	lobby_client.name = "LobbyPeer"
-	add_child(lobby_client)
+	lobby_client.use_default_multiplayer = true
+	_configure_lobby_client_trace(lobby_client)
+	_attach_lobby_client(lobby_client)
 	_bind_lobby_client_signals()
 
 	var connect_err: Error = lobby_client.connect_to_server(
@@ -178,12 +177,48 @@ func _on_connect_pressed() -> void:
 	if connect_err != OK:
 		status_label.text = "Could not connect to lobby at %s." % _current_lobby_ip
 
+func _connect_local_host_to_dedicated_lobby() -> void:
+	_write_smoke_trace("host_connect_attempt remaining=%d" % _dedicated_lobby_connect_attempts_remaining)
+	if _dedicated_lobby_connect_attempts_remaining <= 0:
+		status_label.text = "Dedicated lobby server did not become available."
+		_fail_smoke_if_enabled("LOBBY_HOST_CONNECT_TIMEOUT")
+		return
+	_dedicated_lobby_connect_attempts_remaining -= 1
+	if _smoke_config.has("lobby_ready_file"):
+		var ready_file := str(_smoke_config.get("lobby_ready_file", "")).strip_edges()
+		if not ready_file.is_empty() and not FileAccess.file_exists(ready_file):
+			var ready_wait_timer := get_tree().create_timer(0.5)
+			ready_wait_timer.timeout.connect(func() -> void:
+				_connect_local_host_to_dedicated_lobby()
+			)
+			return
+	var wait_seconds := 0.8 if _spawned_lobby_process_id > 0 else 0.25
+	await get_tree().create_timer(wait_seconds).timeout
+	_cleanup_lobby_client()
+	status_label.text = "Connecting to dedicated lobby at %s..." % _current_lobby_ip
+	_write_smoke_trace("host_connecting_to_lobby ip=%s port=%d" % [_current_lobby_ip, _get_configured_lobby_port()])
+	lobby_client = LobbyClientScript.new()
+	lobby_client.name = "LobbyPeer"
+	lobby_client.use_default_multiplayer = true
+	_configure_lobby_client_trace(lobby_client)
+	_attach_lobby_client(lobby_client)
+	_bind_lobby_client_signals()
+	var connect_err: Error = lobby_client.connect_to_server(
+		_current_lobby_ip,
+		_get_player_name("Host"),
+		_lobby_session_id,
+		_lobby_reconnect_token,
+		_get_configured_lobby_port()
+	)
+	if connect_err != OK:
+		_queue_host_lobby_retry("Could not connect to dedicated lobby at %s." % _current_lobby_ip)
+
 func _on_ready_button_pressed() -> void:
 	var next_ready := not _is_local_player_ready()
-	if _is_local_lobby_host and lobby_server != null:
-		lobby_server.set_local_ready(next_ready)
-	elif lobby_client != null:
+	if lobby_client != null:
 		lobby_client.set_ready(next_ready)
+	elif _is_local_lobby_host and lobby_server != null:
+		lobby_server.set_local_ready(next_ready)
 
 func _bind_lobby_server_signals() -> void:
 	if lobby_server == null:
@@ -216,20 +251,36 @@ func _bind_lobby_client_signals() -> void:
 		lobby_client.disconnected_from_lobby.connect(_on_lobby_disconnected)
 
 func _on_lobby_connected() -> void:
+	_write_smoke_trace("lobby_connected")
 	status_label.text = "Connected to lobby. Signing in..."
 
 func _on_lobby_login_succeeded(session_id: String, reconnect_token: String, player_name: String) -> void:
+	_write_smoke_trace("lobby_login_succeeded session=%s player=%s host=%s" % [session_id, player_name, str(_is_local_lobby_host)])
 	_lobby_session_id = session_id
 	_lobby_reconnect_token = reconnect_token
 	player_name_line_edit.text = player_name
+	if _is_local_lobby_host and _pending_host_room_creation:
+		_pending_host_room_creation = false
+		status_label.text = "Signed in as %s. Creating room..." % player_name
+		if lobby_client != null:
+			lobby_client.create_room()
+		return
 	status_label.text = "Signed in as %s. Joining room %s..." % [player_name, _pending_join_room_code]
 	if lobby_client != null and not _pending_join_room_code.is_empty():
 		lobby_client.join_room(_pending_join_room_code)
 
 func _on_lobby_reconnect_succeeded(session_id: String, reconnect_token: String, player_name: String, room: Dictionary) -> void:
+	_write_smoke_trace("lobby_reconnect_succeeded session=%s player=%s" % [session_id, player_name])
 	_lobby_session_id = session_id
 	_lobby_reconnect_token = reconnect_token
 	player_name_line_edit.text = player_name
+	if _is_local_lobby_host and _pending_host_room_creation:
+		if room.is_empty():
+			_pending_host_room_creation = false
+			status_label.text = "Lobby session restored. Creating room..."
+			if lobby_client != null:
+				lobby_client.create_room()
+			return
 	if room.is_empty():
 		status_label.text = "Lobby session restored. Joining room %s..." % _pending_join_room_code
 		if lobby_client != null and not _pending_join_room_code.is_empty():
@@ -249,6 +300,7 @@ func _apply_room_snapshot(snapshot: Dictionary) -> void:
 	var room_id := str(snapshot.get("room_id", "")).strip_edges()
 	if room_id.is_empty():
 		return
+	_write_smoke_trace("room_snapshot room=%s members=%d" % [room_id, snapshot.get("members", []).size()])
 	room_code_line_edit.text = room_id
 	_write_smoke_room_code(room_id)
 	ready_button.visible = true
@@ -270,7 +322,8 @@ func _on_local_match_assigned(match_info: Dictionary) -> void:
 	if _match_launch_queued:
 		return
 	_match_launch_queued = true
-	status_label.text = "Both players are ready. Launching the match host..."
+	_write_smoke_trace("local_match_assigned match=%s" % str(match_info.get("match_id", "")))
+	status_label.text = "Both players are ready. Preparing the match server..."
 	_write_smoke_result("MATCH_ASSIGNED_HOST:%s" % str(match_info))
 	call_deferred("_launch_host_match_after_lobby_handoff", match_info)
 
@@ -278,46 +331,83 @@ func _on_remote_match_assigned(match_info: Dictionary) -> void:
 	if _match_launch_queued:
 		return
 	_match_launch_queued = true
+	_write_smoke_trace("remote_match_assigned match=%s" % str(match_info.get("match_id", "")))
 	var match_ip := str(match_info.get("server_ip", _current_lobby_ip))
 	var match_port := int(match_info.get("match_port", _get_configured_match_port()))
 	status_label.text = "Match found. Connecting to %s..." % match_ip
 	_write_smoke_result("MATCH_ASSIGNED_CLIENT:%s" % str(match_info))
 	_cleanup_lobby(false)
-	call_deferred("_launch_assigned_match", false, match_ip, match_port)
+	call_deferred("_launch_assigned_match", false, match_ip, match_port, match_info)
 
-func _launch_assigned_match(is_host: bool, server_ip: String, match_port: int = LobbyProtocolScript.MATCH_PORT) -> void:
+func _launch_assigned_match(
+	is_host: bool,
+	server_ip: String,
+	match_port: int = LobbyProtocolScript.MATCH_PORT,
+	match_info: Dictionary = {},
+	server_match_session = null
+) -> void:
 	get_node("GameContainer/MockGame").visible = true
 	get_node("GameContainer/CardTest").visible = false
 	show_game()
 	if is_host:
-		get_node("GameContainer/MockGame").start_game(true, false, server_ip, match_port)
+		get_node("GameContainer/MockGame").start_game(true, false, server_ip, match_port, match_info, server_match_session)
 		_finish_smoke_if_enabled("PASS:host_launched_match")
 		return
-	await get_tree().create_timer(0.4).timeout
-	get_node("GameContainer/MockGame").start_game(false, true, server_ip, match_port)
+	var connect_delay_seconds := 0.4
+	if _uses_dedicated_match_server(match_info):
+		connect_delay_seconds = 1.1
+	await get_tree().create_timer(connect_delay_seconds).timeout
+	get_node("GameContainer/MockGame").start_game(false, true, server_ip, match_port, match_info)
 	_finish_smoke_if_enabled("PASS:client_launched_match")
 
 func _launch_host_match_after_lobby_handoff(match_info: Dictionary) -> void:
+	if _uses_dedicated_match_server(match_info):
+		await get_tree().create_timer(1.1).timeout
+		_launch_assigned_match(
+			false,
+			str(match_info.get("server_ip", _current_lobby_ip)),
+			int(match_info.get("match_port", _get_configured_match_port())),
+			match_info
+		)
+		return
+	var match_session = null
+	if lobby_server != null:
+		match_session = lobby_server.get_match_session(str(match_info.get("match_id", "")))
 	await get_tree().create_timer(0.75).timeout
 	_cleanup_lobby(false)
 	_launch_assigned_match(
 		true,
 		str(match_info.get("server_ip", _current_lobby_ip)),
-		int(match_info.get("match_port", _get_configured_match_port()))
+		int(match_info.get("match_port", _get_configured_match_port())),
+		match_info,
+		match_session
 	)
 
+func _uses_dedicated_match_server(match_info: Dictionary) -> bool:
+	return str(match_info.get("server_mode", "")) == MatchSessionScript.SERVER_MODE_DEDICATED_HEADLESS
+
 func _on_lobby_room_error(message: String) -> void:
+	_write_smoke_trace("lobby_room_error %s" % message)
 	status_label.text = message
 	_fail_smoke_if_enabled("ROOM_ERROR:%s" % message)
 
 func _on_lobby_status_changed(message: String) -> void:
+	_write_smoke_trace("lobby_status %s" % message)
 	status_label.text = message
 
 func _on_lobby_connection_failed(message: String) -> void:
+	_write_smoke_trace("lobby_connection_failed %s" % message)
+	if _should_retry_host_lobby_connect():
+		_queue_host_lobby_retry(message)
+		return
 	status_label.text = message
 	_fail_smoke_if_enabled("CONNECTION_FAILED:%s" % message)
 
 func _on_lobby_disconnected() -> void:
+	_write_smoke_trace("lobby_disconnected")
+	if _should_retry_host_lobby_connect():
+		_queue_host_lobby_retry("Dedicated lobby disconnected before room setup completed.")
+		return
 	status_label.text = "Lobby connection lost. Press Join Game to reconnect."
 	_fail_smoke_if_enabled("DISCONNECTED_FROM_LOBBY")
 
@@ -347,6 +437,8 @@ func _cleanup_lobby(clear_session: bool) -> void:
 	ready_button.visible = false
 	if clear_session:
 		_match_launch_queued = false
+		_pending_host_room_creation = false
+		_dedicated_lobby_connect_attempts_remaining = 0
 		_lobby_session_id = ""
 		_lobby_reconnect_token = ""
 		_pending_join_room_code = ""
@@ -361,6 +453,7 @@ func _cleanup_lobby_client() -> void:
 	lobby_client.disconnect_from_server()
 	lobby_client.queue_free()
 	lobby_client = null
+	_cleanup_dedicated_lobby_mount_if_unused()
 
 func _cleanup_lobby_server() -> void:
 	if lobby_server == null:
@@ -368,6 +461,26 @@ func _cleanup_lobby_server() -> void:
 	lobby_server.stop_server()
 	lobby_server.queue_free()
 	lobby_server = null
+
+func _attach_lobby_client(client: Node) -> void:
+	var active_scene := get_tree().current_scene
+	if active_scene == null:
+		add_child(client)
+		return
+	active_scene.add_child(client)
+	if client is LobbyClient:
+		client.multiplayer_mount_path = active_scene.get_path()
+
+func _cleanup_dedicated_lobby_mount_if_unused() -> void:
+	pass
+
+func _configure_lobby_client_trace(client: LobbyClient) -> void:
+	if client == null or _smoke_config.is_empty():
+		return
+	var trace_file := str(_smoke_config.get("trace_file", "")).strip_edges()
+	if trace_file.is_empty():
+		return
+	client.trace_file_path = trace_file
 
 func _is_local_player_ready() -> bool:
 	for member in _current_room_snapshot.get("members", []):
@@ -473,6 +586,11 @@ func _parse_smoke_config(args: Array) -> Dictionary:
 		"player_name": str(config.get("smoke_name", "")),
 		"room_file": str(config.get("smoke_room_file", "")),
 		"result_file": str(config.get("smoke_result_file", "")),
+		"trace_file": str(config.get("smoke_trace_file", "")),
+		"lobby_server_trace_file": str(config.get("smoke_lobby_server_trace_file", "")),
+		"lobby_server_log_file": str(config.get("smoke_lobby_server_log_file", "")),
+		"lobby_pid_file": str(config.get("smoke_lobby_pid_file", "")),
+		"lobby_ready_file": str(config.get("smoke_lobby_ready_file", "")),
 		"timeout": float(str(config.get("smoke_timeout", "25")).to_float()),
 		"lobby_port": int(str(config.get("smoke_lobby_port", str(LobbyProtocolScript.PORT))).to_int()),
 		"match_port": int(str(config.get("smoke_match_port", str(LobbyProtocolScript.MATCH_PORT))).to_int()),
@@ -517,6 +635,35 @@ func _write_smoke_result(message: String) -> void:
 	file.flush()
 	file.close()
 
+func _write_smoke_trace(message: String) -> void:
+	if _smoke_config.is_empty():
+		return
+	var trace_file := str(_smoke_config.get("trace_file", "")).strip_edges()
+	if trace_file.is_empty():
+		return
+	var file := FileAccess.open(trace_file, FileAccess.READ_WRITE)
+	if file == null:
+		file = FileAccess.open(trace_file, FileAccess.WRITE)
+	if file == null:
+		return
+	file.seek_end()
+	file.store_line(message)
+	file.flush()
+	file.close()
+
+func _write_smoke_lobby_pid(pid: int) -> void:
+	if _smoke_config.is_empty():
+		return
+	var pid_file := str(_smoke_config.get("lobby_pid_file", "")).strip_edges()
+	if pid_file.is_empty():
+		return
+	var file := FileAccess.open(pid_file, FileAccess.WRITE)
+	if file == null:
+		return
+	file.store_string(str(pid))
+	file.flush()
+	file.close()
+
 func _finish_smoke_if_enabled(message: String) -> void:
 	if _smoke_config.is_empty():
 		return
@@ -526,6 +673,96 @@ func _fail_smoke_if_enabled(message: String) -> void:
 	if _smoke_config.is_empty():
 		return
 	_write_smoke_result("FAIL:%s" % message)
+
+func _launch_dedicated_lobby_server() -> int:
+	var project_path := ProjectSettings.globalize_path("res://")
+	var exported_server_path := _resolve_dedicated_server_runtime_path()
+	if not exported_server_path.is_empty():
+		return _launch_exported_dedicated_lobby_server(exported_server_path)
+
+	var executable_path := _resolve_headless_executable_path(OS.get_executable_path())
+	if project_path.is_empty() or executable_path.is_empty():
+		return 0
+	var args := PackedStringArray(["--headless"])
+	var lobby_server_log_file := str(_smoke_config.get("lobby_server_log_file", "")).strip_edges()
+	if not lobby_server_log_file.is_empty():
+		args.append_array(["--log-file", lobby_server_log_file])
+	if not OS.has_feature("template"):
+		args.append("--editor")
+	args.append_array([
+		"--path",
+		project_path,
+		"--script",
+		DEDICATED_LOBBY_ENTRY_SCRIPT_PATH,
+		"--",
+		"lobby_host=%s" % _current_lobby_ip,
+		"lobby_port=%d" % _get_configured_lobby_port(),
+		"match_port=%d" % _get_configured_match_port(),
+	])
+	var ready_file := str(_smoke_config.get("lobby_ready_file", "")).strip_edges()
+	if not ready_file.is_empty():
+		args.append("ready_file=%s" % ready_file)
+	var lobby_server_trace_file := str(_smoke_config.get("lobby_server_trace_file", "")).strip_edges()
+	if not lobby_server_trace_file.is_empty():
+		args.append("trace_file=%s" % lobby_server_trace_file)
+	return OS.create_process(executable_path, args, false)
+
+func _launch_exported_dedicated_lobby_server(executable_path: String) -> int:
+	var args := PackedStringArray(["--headless"])
+	var lobby_server_log_file := str(_smoke_config.get("lobby_server_log_file", "")).strip_edges()
+	if not lobby_server_log_file.is_empty():
+		args.append_array(["--log-file", lobby_server_log_file])
+	args.append_array([
+		"--",
+		"server_mode=lobby",
+		"lobby_host=%s" % _current_lobby_ip,
+		"lobby_port=%d" % _get_configured_lobby_port(),
+		"match_port=%d" % _get_configured_match_port(),
+	])
+	var ready_file := str(_smoke_config.get("lobby_ready_file", "")).strip_edges()
+	if not ready_file.is_empty():
+		args.append("ready_file=%s" % ready_file)
+	var lobby_server_trace_file := str(_smoke_config.get("lobby_server_trace_file", "")).strip_edges()
+	if not lobby_server_trace_file.is_empty():
+		args.append("trace_file=%s" % lobby_server_trace_file)
+	return OS.create_process(executable_path, args, false)
+
+func _resolve_headless_executable_path(executable_path: String) -> String:
+	var normalized_path := executable_path.strip_edges()
+	if normalized_path.is_empty():
+		return normalized_path
+	if normalized_path.ends_with(".exe"):
+		var console_candidate := normalized_path.substr(0, normalized_path.length() - 4) + "_console.exe"
+		if FileAccess.file_exists(console_candidate):
+			return console_candidate
+	return normalized_path
+
+func _resolve_dedicated_server_runtime_path() -> String:
+	var candidates := PackedStringArray([
+		ProjectSettings.globalize_path(DEDICATED_SERVER_EXPORT_RELATIVE_PATH),
+		OS.get_executable_path().get_base_dir().path_join("ClaudeOtherGodsServer.exe"),
+		OS.get_executable_path().get_base_dir().path_join("ClaudeOtherGodsServer_console.exe"),
+	])
+	for candidate in candidates:
+		if candidate.is_empty():
+			continue
+		if FileAccess.file_exists(candidate):
+			return candidate
+	return ""
+
+func _should_retry_host_lobby_connect() -> bool:
+	return _is_local_lobby_host and not _match_launch_queued and _current_room_snapshot.is_empty()
+
+func _queue_host_lobby_retry(message: String) -> void:
+	if _dedicated_lobby_connect_attempts_remaining <= 0:
+		status_label.text = message
+		_fail_smoke_if_enabled("CONNECTION_FAILED:%s" % message)
+		return
+	status_label.text = "%s Retrying..." % message
+	var timer := get_tree().create_timer(0.75)
+	timer.timeout.connect(func() -> void:
+		_connect_local_host_to_dedicated_lobby()
+	)
 
 func _on_aggressive_stance_btn_pressed() -> void:
 	pass

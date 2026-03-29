@@ -1,0 +1,43 @@
+host_pressed
+host_spawned_lobby_pid=28260
+host_connect_attempt remaining=20
+host_connect_attempt remaining=19
+host_connect_attempt remaining=18
+host_connect_attempt remaining=17
+host_connect_attempt remaining=16
+host_connect_attempt remaining=15
+host_connecting_to_lobby ip=127.0.0.1 port=22445
+NetworkManager[LobbyTransport]: client connecting to 127.0.0.1:22445 path=/root/Main/LobbyPeer/LobbyTransport
+NetworkManager[LobbyTransport]: connected_to_server
+LobbyClient[LobbyPeer]: connected to server
+lobby_connected
+LobbyClient[LobbyPeer]: sending login_guest
+NetworkManager[LobbyTransport]: sending request_action login_guest
+LobbyClient[LobbyPeer]: received hello_ok
+lobby_login_succeeded session=NS89VUXT565C player=SmokeHost host=true
+LobbyClient[LobbyPeer]: sending create_room
+NetworkManager[LobbyTransport]: sending request_action create_room
+LobbyClient[LobbyPeer]: received room_list
+LobbyClient[LobbyPeer]: received room_snapshot
+room_snapshot room=CZ5HPZ members=1
+LobbyClient[LobbyPeer]: sending set_ready
+NetworkManager[LobbyTransport]: sending request_action set_ready
+LobbyClient[LobbyPeer]: received room_list
+LobbyClient[LobbyPeer]: received room_snapshot
+room_snapshot room=CZ5HPZ members=1
+LobbyClient[LobbyPeer]: sending set_ready
+NetworkManager[LobbyTransport]: sending request_action set_ready
+LobbyClient[LobbyPeer]: received room_snapshot
+room_snapshot room=CZ5HPZ members=1
+LobbyClient[LobbyPeer]: received room_list
+LobbyClient[LobbyPeer]: received room_snapshot
+room_snapshot room=CZ5HPZ members=1
+LobbyClient[LobbyPeer]: received room_list
+LobbyClient[LobbyPeer]: received room_snapshot
+room_snapshot room=CZ5HPZ members=2
+LobbyClient[LobbyPeer]: received room_list
+LobbyClient[LobbyPeer]: received room_snapshot
+room_snapshot room=CZ5HPZ members=2
+LobbyClient[LobbyPeer]: received room_list
+LobbyClient[LobbyPeer]: received match_assigned
+remote_match_assigned match=match_YTYX2LXE

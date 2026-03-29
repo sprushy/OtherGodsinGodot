@@ -1,4 +1,4 @@
-[gd_scene format=3 uid="uid://gpaa31rvtxtn"]
+[gd_scene format=3 uid="uid://gpaa31rvtxtn" load_steps=7]
 
 [ext_resource type="Script" uid="uid://b5f252qlg5ipp" path="res://scripts/Other/MainMenu.gd" id="1_l61jj"]
 [ext_resource type="PackedScene" uid="uid://clg2cgm1pgncs" path="res://scenes/card_slot.tscn" id="1_olwsv"]
@@ -6,8 +6,10 @@
 [ext_resource type="Script" uid="uid://bevg5y6uq335i" path="res://scripts/Other/CombatMockGame.gd" id="2_jvnui"]
 [ext_resource type="Script" uid="uid://djmg62uqlhyam" path="res://scripts/Other/CardTestGame.gd" id="3_cardtest"]
 [ext_resource type="PackedScene" uid="uid://bwkpffulj58xv" path="res://scenes/player.tscn" id="4_hu83v"]
+[ext_resource type="Script" path="res://scripts/server/ServerRuntimeBootstrap.gd" id="7_server_bootstrap"]
 
 [node name="Main" type="Node2D" unique_id=1256036665]
+script = ExtResource("7_server_bootstrap")
 
 [node name="Control" type="Control" parent="." unique_id=2074368771]
 layout_mode = 3

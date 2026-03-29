@@ -96,6 +96,7 @@ var equipment: Array[Card] = []
 var summoned_this_turn: bool = false
 var board_entry_order: int = -1
 var is_used: bool = false          # for single-use activatable abilities on powers
+var incorporeal: bool = false      # Incorporeal keyword: restricted engagement rules
 var is_muted: bool = false
 var mute_turns_remaining: int = 0
 var _mute_applied_owner_turn_number: int = -1
@@ -805,8 +806,11 @@ func can_receive_equipment() -> bool:
 		and not is_face_down \
 		and not is_stealth
 
+func can_equip_to(creature: Card) -> bool:
+	return creature != null and creature.can_receive_equipment()
+
 func equip_to(creature: Card) -> bool:
-	if card_type != CardType.EQUIPMENT or creature == null or not creature.can_receive_equipment():
+	if card_type != CardType.EQUIPMENT or not can_equip_to(creature):
 		return false
 	
 	if equipped_on:
@@ -820,6 +824,27 @@ func unequip() -> void:
 	if equipped_on:
 		equipped_on.equipment.erase(self)
 		equipped_on = null
+
+# Incorporeal keyword — shared engagement logic.
+# Returns false when this card is incorporeal and `source` is not a permitted engager.
+func can_be_engaged_by(source: Card) -> bool:
+	if not incorporeal:
+		return true
+	if source == null or source.card_type != Card.CardType.CREATURE:
+		return false
+	if source.has_type("Spirit"):
+		return true
+	return source.has_type("Mage") and source.get_effective_speed() > get_effective_speed()
+
+# Returns false when this card is incorporeal and `target` is not a permitted engage target.
+func can_engage(target: Card) -> bool:
+	if not incorporeal:
+		return true
+	if target == null or target.card_type != Card.CardType.CREATURE:
+		return false
+	if target.has_type("Spirit"):
+		return true
+	return target.has_type("Mage") and target.get_effective_speed() < get_effective_speed()
 
 func reveal_from_stealth(game_manager: GameManager = null) -> void:
 	if is_stealth:

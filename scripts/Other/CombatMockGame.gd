@@ -6,9 +6,11 @@ const ErlqueensNightingaleScript = preload("res://scripts/cards/Creatures/Erlque
 const SacrificeCursorSource = preload("res://images/card_art/BloodySacrificeCursor.png")
 const DevourCursorSource = preload("res://images/card_art/BloodyWolfJawsPGN.png")
 const SilenceCursorSource = preload("res://images/SilenceCursorPGN.png")
+const GiantMasterArchitectCursorSource = preload("res://images/card_art/GiantMasterArchitectHammerCursor.png")
 const PromptRouterScript = preload("res://scripts/server/PromptRouter.gd")
 const HeadlessMatchHostScript = preload("res://scripts/server/HeadlessMatchHost.gd")
 const MatchClientScript = preload("res://scripts/client/MatchClient.gd")
+const DefaultMatchSetupScript = preload("res://scripts/server/DefaultMatchSetup.gd")
 
 signal forfeit_requested
 
@@ -227,6 +229,9 @@ var _pending_creature_play_resolver: Callable = Callable()
 var _pending_en_hedu_anna: Card = null
 var _pending_erlqueens_nightingale: ErlqueensNightingaleScript = null
 var _skoll_prompt_panel: Control = null
+var _gala_tura_prompt_panel: Control = null
+var _pending_gala_tura: Card = null
+var _pending_gala_tura_selected: Array[Card] = []
 var _breidablik_panel: Control = null
 var _e2_abzu_panel: Control = null
 var _divine_caprice_panel: Control = null
@@ -274,11 +279,15 @@ var _board_separator_line: ColorRect = null
 var _sacrifice_cursor_texture: Texture2D = null
 var _devour_cursor_texture: Texture2D = null
 var _silence_cursor_texture: Texture2D = null
+var _giant_master_architect_cursor_texture: Texture2D = null
 var _active_selection_cursor_mode: String = ""
+var _overlay_selection_cursor_mode: String = ""
 var _devour_cancel_prompt: Control = null
 var _suppress_next_devour_cancel_prompt: bool = false
 var _pending_end_turn_discard_uids: Array = []
 var _ui_update_pending: bool = false
+var _match_reconnect_waiting: bool = false
+var _match_reconnect_wait_message: String = "Waiting for opponent to reconnect..."
 
 const TRANSIENT_UI_Z_INDEX := 1000
 const HOVER_PREVIEW_Z_INDEX := TRANSIENT_UI_Z_INDEX + 50
@@ -304,6 +313,8 @@ const DEVOUR_CURSOR_TARGET_HEIGHT := 96
 const DEVOUR_CURSOR_HOTSPOT_RATIO := Vector2(0.50, 0.52)
 const SILENCE_CURSOR_TARGET_HEIGHT := 96
 const SILENCE_CURSOR_HOTSPOT_RATIO := Vector2(0.49, 0.22)
+const GIANT_MASTER_ARCHITECT_CURSOR_TARGET_HEIGHT := 96
+const GIANT_MASTER_ARCHITECT_CURSOR_HOTSPOT_RATIO := Vector2(0.50, 0.18)
 const SACRIFICE_CURSOR_SHAPES := [
 	Input.CURSOR_ARROW,
 	Input.CURSOR_POINTING_HAND,
@@ -532,6 +543,9 @@ func _is_silence_cursor_mode_active() -> bool:
 			and _is_live_silence_targeting_source(spell_waiting_for_target)
 	return false
 
+func _is_giant_master_architect_cursor_mode_active() -> bool:
+	return _overlay_selection_cursor_mode == "giant_master_architect_structure"
+
 func _is_silence_or_mute_targeting_source(card: Card) -> bool:
 	if card == null:
 		return false
@@ -653,6 +667,8 @@ func _position_devour_cancel_prompt() -> void:
 	_devour_cancel_prompt.global_position = (viewport_size - prompt_size) * 0.5
 
 func _get_selection_cursor_mode() -> String:
+	if _is_giant_master_architect_cursor_mode_active():
+		return "giant_master_architect"
 	if _is_sacrifice_cursor_mode_active():
 		return "sacrifice"
 	if _is_devour_cursor_mode_active():
@@ -732,10 +748,27 @@ func _apply_silence_cursor() -> bool:
 		Input.set_custom_mouse_cursor(_silence_cursor_texture, cursor_shape, hotspot)
 	return true
 
+func _apply_giant_master_architect_cursor() -> bool:
+	if _giant_master_architect_cursor_texture == null:
+		_giant_master_architect_cursor_texture = _build_cursor_texture(
+			GiantMasterArchitectCursorSource,
+			GIANT_MASTER_ARCHITECT_CURSOR_TARGET_HEIGHT
+		)
+	if _giant_master_architect_cursor_texture == null:
+		return false
+
+	var hotspot := _get_cursor_hotspot(
+		_giant_master_architect_cursor_texture,
+		GIANT_MASTER_ARCHITECT_CURSOR_HOTSPOT_RATIO
+	)
+	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
+		Input.set_custom_mouse_cursor(_giant_master_architect_cursor_texture, cursor_shape, hotspot)
+	return true
+
 func _restore_default_selection_cursor() -> void:
 	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
 		Input.set_custom_mouse_cursor(null, cursor_shape)
-	_active_selection_cursor_mode = ""
+		_active_selection_cursor_mode = ""
 
 func _sync_sacrifice_cursor() -> void:
 	var cursor_mode := _get_selection_cursor_mode()
@@ -759,6 +792,13 @@ func _sync_sacrifice_cursor() -> void:
 	if cursor_mode == "silence":
 		if _apply_silence_cursor():
 			_active_selection_cursor_mode = "silence"
+		else:
+			_restore_default_selection_cursor()
+		return
+
+	if cursor_mode == "giant_master_architect":
+		if _apply_giant_master_architect_cursor():
+			_active_selection_cursor_mode = "giant_master_architect"
 		else:
 			_restore_default_selection_cursor()
 		return
@@ -1056,7 +1096,9 @@ func start_game(
 	is_host: bool = false,
 	is_client: bool = false,
 	server_ip: String = "127.0.0.1",
-	server_port: int = 12345
+	server_port: int = 12345,
+	match_info: Dictionary = {},
+	server_match_session = null
 ) -> void:
 	print("=== STARTING COMBAT MOCK GAME ===")
 	_game_finished = false
@@ -1067,12 +1109,17 @@ func start_game(
 	prompt_router = PromptRouterScript.new(game_manager)
 	headless_match_host = HeadlessMatchHostScript.new()
 	headless_match_host.attach(game_manager, match_manager, prompt_router)
+	if server_match_session != null:
+		headless_match_host.configure_match_session(server_match_session)
 	network_manager = headless_match_host.setup_transport(self, is_host, is_client, server_ip, server_port)
 	match_client = MatchClientScript.new(
 		match_manager,
 		network_manager,
 		headless_match_host.should_receive_network_events(),
-		headless_match_host.is_networked_client()
+		headless_match_host.is_networked_client(),
+		match_info,
+		server_ip,
+		server_port
 	)
 	game_input = match_client.get_game_input()
 	_is_networked_client = match_client.is_networked_client()
@@ -1099,52 +1146,18 @@ func start_game(
 		_hide_devour_cancel_prompt()
 		_sync_sacrifice_cursor()
 	)
-	
-	player1 = Player.new()
-	player1.player_name = "Player 1"
-	game_manager.players.append(player1)
-	
-	player2 = Player.new()
-	player2.player_name = "Player 2"
-	game_manager.players.append(player2)
-	
+
 	await get_tree().process_frame
-	
-	create_deck(player1)
-	create_deck(player2)
-
-	# Place Baldr as Player 1's god
-	var baldr := Baldr.new()
-	baldr.card_owner = player1
-	player1.god_zone.add_card(baldr)
-
-	# Place Mummu as Player 2's god
-	var mummu := Mummu.new()
-	mummu.card_owner = player2
-	player2.god_zone.add_card(mummu)
-
-	game_manager.setup_game()
+	var default_match_setup = DefaultMatchSetupScript.new()
+	var match_players: Dictionary = default_match_setup.build_default_match(game_manager)
+	player1 = match_players.get("player1", null)
+	player2 = match_players.get("player2", null)
 	if not game_manager.doorway_choice_requested.is_connected(_on_doorway_choice_requested):
 		game_manager.doorway_choice_requested.connect(_on_doorway_choice_requested)
 	if not game_manager.god_power_activated.is_connected(_on_god_power_activated):
 		game_manager.god_power_activated.connect(_on_god_power_activated)
 	if not game_manager.card_summoned.is_connected(_on_card_summoned):
 		game_manager.card_summoned.connect(_on_card_summoned)
-
-	# Place Ananke's Binding in player 1's first power slot
-	var ananke := AnankesBinding.new()
-	ananke.card_owner = player1
-	ananke.is_face_down = false
-	player1.power_zones[0].add_card(ananke)
-
-	# Place a BeardedAxe in empty reserve zones to test equipment mechanics
-	var axe1 := BeardedAxe.new()
-	axe1.card_owner = player1
-	player1.reserve_zones[3].add_card(axe1)
-
-	var axe2 := BeardedAxe.new()
-	axe2.card_owner = player2
-	player2.reserve_zones[3].add_card(axe2)
 
 	player1.mana_changed.connect(_on_player_mana_changed)
 	player1.followers_changed.connect(_on_player_followers_changed)
@@ -1161,11 +1174,7 @@ func start_game(
 	if not player2.card_moved.is_connected(_on_local_player_card_moved):
 		player2.card_moved.connect(_on_local_player_card_moved)
 	
-	player1.gain_mana(20)
-	player2.gain_mana(20)
-	
-	print("Drawing initial hands...")
-	for i in range(5):
+	for i in range(0):
 		print("Ã‚Â  Drawing card ", i, " for P1")
 		player1.draw_card()
 		print("Ã‚Â  P1 hand size now: ", player1.hand_zone.cards.size())
@@ -3413,7 +3422,13 @@ func _show_zone_contents(zone_name: String, zone: Zone) -> void:
 			_dismiss_zone_overlay()
 	)
 
-func _show_card_selection_overlay(title_text: String, cards: Array, on_selected: Callable, on_cancel: Callable = Callable()) -> void:
+func _show_card_selection_overlay(
+	title_text: String,
+	cards: Array,
+	on_selected: Callable,
+	on_cancel: Callable = Callable(),
+	cursor_mode: String = ""
+) -> void:
 	if cards.is_empty():
 		action_label.text = title_text + ": no valid cards."
 		return
@@ -3421,6 +3436,8 @@ func _show_card_selection_overlay(title_text: String, cards: Array, on_selected:
 	_dismiss_zone_overlay()
 	_overlay_card_selected = on_selected
 	_overlay_card_dismissed = on_cancel
+	_overlay_selection_cursor_mode = cursor_mode
+	_sync_sacrifice_cursor()
 
 	var overlay := Control.new()
 	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -3506,6 +3523,8 @@ func _dismiss_zone_overlay() -> void:
 	_zone_overlay = null
 	_overlay_card_selected = Callable()
 	_overlay_card_dismissed = Callable()
+	_overlay_selection_cursor_mode = ""
+	_sync_sacrifice_cursor()
 
 func _get_stack_card_type_label(card: Card) -> String:
 	if card == null:
@@ -5449,6 +5468,211 @@ func _queue_fourth_sage_enmegalamma_impact_prompt(card) -> void:
 	action_label.text = card.card_name + " impact waits on priority."
 	_offer_priority()
 
+func _queue_giant_master_architect_impact_prompt(card) -> void:
+	if card == null or game_manager == null:
+		return
+	var targets: Array[Card] = card.get_valid_targets(game_manager)
+	if targets.is_empty():
+		return
+	var action := CardAction.new()
+	action.type = CardAction.Type.EVENT
+	action.source_player = card.card_owner
+	action.card = card
+	action.event_name = "giant_master_architect_impact"
+	action.event_speed = 0
+	action.resolve_callback = func() -> void:
+		var current_targets: Array[Card] = card.get_valid_targets(game_manager)
+		if current_targets.is_empty():
+			var no_target_text: String = card.resolve_no_structure_targets()
+			if _stack_resolution_paused:
+				_resume_after_deferred_resolution(no_target_text)
+			else:
+				action_label.text = no_target_text
+				update_ui()
+			return
+		if current_targets.size() == 1:
+			var auto_text: String = card.resolve_master_plan_impact(game_manager, current_targets[0])
+			if _stack_resolution_paused:
+				_resume_after_deferred_resolution(auto_text)
+			else:
+				action_label.text = auto_text
+				update_ui()
+			return
+		_pause_stack_resolution(card.card_owner)
+		var on_choose_structure := func(chosen_card: Card) -> void:
+			_resume_after_deferred_resolution(card.resolve_master_plan_impact(game_manager, chosen_card))
+		var on_cancel_structure := func() -> void:
+			_resume_after_deferred_resolution(card.resolve_master_plan_cancel(game_manager))
+		_show_card_selection_overlay(
+			"Choose a structure for " + card.card_name,
+			current_targets,
+			on_choose_structure,
+			on_cancel_structure,
+			"giant_master_architect_structure"
+		)
+	game_manager.push_to_stack(action)
+	update_ui()
+	action_label.text = card.card_name + " impact waits on priority."
+	_offer_priority()
+
+func _queue_gala_tura_destroyed_prompt(card) -> void:
+	if card == null or game_manager == null:
+		return
+	var targets: Array[Card] = card.get_destroyed_trigger_targets(game_manager)
+	if targets.is_empty():
+		var no_target_text: String = card.card_name + " found no creatures to return."
+		if _stack_resolution_paused:
+			_resume_after_deferred_resolution(no_target_text)
+		else:
+			action_label.text = no_target_text
+			update_ui()
+		return
+	if _executing_stack_action and not _stack_resolution_paused:
+		_pause_stack_resolution(card.card_owner)
+	_pending_gala_tura = card
+	_pending_gala_tura_selected.clear()
+	_show_gala_tura_prompt()
+
+func _show_gala_tura_prompt() -> void:
+	var card := _pending_gala_tura
+	if card == null or game_manager == null:
+		_hide_gala_tura_prompt()
+		update_ui()
+		return
+	_sanitize_gala_tura_selection()
+	var valid_targets: Array[Card] = card.get_destroyed_trigger_targets(game_manager)
+	var remaining_targets: Array[Card] = []
+	for target in valid_targets:
+		if target not in _pending_gala_tura_selected:
+			remaining_targets.append(target)
+
+	if _gala_tura_prompt_panel != null and is_instance_valid(_gala_tura_prompt_panel):
+		_gala_tura_prompt_panel.queue_free()
+	_gala_tura_prompt_panel = null
+
+	var panel := PanelContainer.new()
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.10, 0.08, 0.12, 0.97)
+	style.border_color = Color(0.48, 0.82, 0.95, 0.95)
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		style.set_border_width(side, 2)
+	panel.add_theme_stylebox_override("panel", style)
+	panel.custom_minimum_size = Vector2(420, 0)
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 8)
+	panel.add_child(vbox)
+
+	var title := Label.new()
+	title.text = card.card_name
+	title.add_theme_font_size_override("font_size", 14)
+	vbox.add_child(title)
+
+	var info := Label.new()
+	info.text = "Choose up to 3 creatures from your graveyard to return to the bottom of your deck."
+	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	vbox.add_child(info)
+
+	var selected_label := Label.new()
+	if _pending_gala_tura_selected.is_empty():
+		selected_label.text = "Selected: none"
+	else:
+		var selected_names: Array[String] = []
+		for selected_card in _pending_gala_tura_selected:
+			selected_names.append(selected_card.card_name)
+		selected_label.text = "Selected: " + ", ".join(selected_names)
+	selected_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	vbox.add_child(selected_label)
+
+	var choices_box := VBoxContainer.new()
+	choices_box.add_theme_constant_override("separation", 4)
+	vbox.add_child(choices_box)
+
+	if _pending_gala_tura_selected.size() < 3:
+		for target in remaining_targets:
+			var add_btn := Button.new()
+			add_btn.text = "Return " + target.card_name
+			add_btn.pressed.connect(func() -> void:
+				if target in _pending_gala_tura_selected:
+					return
+				_pending_gala_tura_selected.append(target)
+				_show_gala_tura_prompt()
+			)
+			choices_box.add_child(add_btn)
+
+	if remaining_targets.is_empty() or _pending_gala_tura_selected.size() >= 3:
+		var done_label := Label.new()
+		done_label.text = "No more selections available."
+		choices_box.add_child(done_label)
+
+	var buttons := HBoxContainer.new()
+	vbox.add_child(buttons)
+
+	var done_btn := Button.new()
+	done_btn.text = "Done"
+	done_btn.pressed.connect(func() -> void:
+		_resolve_gala_tura_prompt(true)
+	)
+	buttons.add_child(done_btn)
+
+	var skip_btn := Button.new()
+	skip_btn.text = "Skip"
+	skip_btn.pressed.connect(func() -> void:
+		_resolve_gala_tura_prompt(false)
+	)
+	buttons.add_child(skip_btn)
+
+	add_child(panel)
+	_promote_transient_ui(panel)
+	_gala_tura_prompt_panel = panel
+	panel.anchor_left = 0.5
+	panel.anchor_right = 0.5
+	panel.anchor_top = 0.5
+	panel.anchor_bottom = 0.5
+	panel.offset_left = -220
+	panel.offset_right = 220
+	panel.offset_top = -160
+	panel.offset_bottom = 160
+
+	action_label.text = "%s: choose up to 3 graveyard creatures to return." % card.card_name
+	update_ui()
+
+func _sanitize_gala_tura_selection() -> void:
+	if _pending_gala_tura == null or game_manager == null:
+		_pending_gala_tura_selected.clear()
+		return
+	var valid_targets: Array[Card] = _pending_gala_tura.get_destroyed_trigger_targets(game_manager)
+	var cleaned: Array[Card] = []
+	for card in _pending_gala_tura_selected:
+		if card == null or card not in valid_targets or card in cleaned:
+			continue
+		cleaned.append(card)
+		if cleaned.size() >= 3:
+			break
+	_pending_gala_tura_selected = cleaned
+
+func _resolve_gala_tura_prompt(use_selection: bool) -> void:
+	var card := _pending_gala_tura
+	_sanitize_gala_tura_selection()
+	var chosen_targets: Array[Card] = _pending_gala_tura_selected.duplicate() if use_selection else []
+	_hide_gala_tura_prompt()
+	if card == null or game_manager == null:
+		update_ui()
+		return
+	var feedback: String = card.resolve_destroyed_trigger(game_manager, chosen_targets)
+	if _stack_resolution_paused:
+		_resume_after_deferred_resolution(feedback)
+	else:
+		action_label.text = feedback
+		update_ui()
+
+func _hide_gala_tura_prompt() -> void:
+	if _gala_tura_prompt_panel != null and is_instance_valid(_gala_tura_prompt_panel):
+		_gala_tura_prompt_panel.queue_free()
+	_gala_tura_prompt_panel = null
+	_pending_gala_tura = null
+	_pending_gala_tura_selected.clear()
+
 func _resolve_foolish_optimism_prompt(
 	card: FoolishOptimism,
 	_attacker_choices: Array,
@@ -6252,11 +6476,22 @@ func _on_creature_right_clicked(card: Card) -> void:
 		and card.has_method("activate")
 		and card.can_activate(game_manager)
 	)
+	var equipped_ability_cards: Array[Card] = []
+	for equip in card.equipment:
+		if equip == null:
+			continue
+		if equip.get_controller() != game_manager.current_player:
+			continue
+		if not equip.has_method("can_activate") or not equip.has_method("activate"):
+			continue
+		if not equip.can_activate(game_manager):
+			continue
+		equipped_ability_cards.append(equip)
 	var equip_entries: Array[Dictionary] = []
 	if _creature_can_use_equipment_action(card):
 		equip_entries = _get_reachable_equipment(card)
 
-	if not can_attack and not can_stance and not can_move and not can_activate_creature and equip_entries.is_empty():
+	if not can_attack and not can_stance and not can_move and not can_activate_creature and equipped_ability_cards.is_empty() and equip_entries.is_empty():
 		action_label.text = card.card_name + " has no available actions this turn."
 		return
 
@@ -6305,7 +6540,8 @@ func _on_creature_right_clicked(card: Card) -> void:
 
 	if can_activate_creature:
 		var btn := Button.new()
-		btn.text = card.get_activation_label() if card.has_method("get_activation_label") else "Activate Ability"
+		var card_activation_label: String = card.get_activation_label() if card.has_method("get_activation_label") else "Activate Ability"
+		btn.text = card_activation_label
 		btn.pressed.connect(func():
 			_close_context_menu()
 			if card is EnHeduAnnaScript:
@@ -6342,6 +6578,45 @@ func _on_creature_right_clicked(card: Card) -> void:
 						card.card_name + " activated!",
 						func() -> void:
 							card.activate(game_manager)
+					)
+		)
+		vbox.add_child(btn)
+
+	for equip in equipped_ability_cards:
+		var equipped_card := equip
+		var btn := Button.new()
+		var activation_label: String = equipped_card.get_activation_label() if equipped_card.has_method("get_activation_label") else "Activate Ability"
+		btn.text = "%s: %s" % [equipped_card.card_name, activation_label]
+		btn.pressed.connect(func():
+			_close_context_menu()
+			if equipped_card.has_method("get_valid_targets"):
+				var targets: Array = equipped_card.get_valid_targets(game_manager)
+				if targets.is_empty():
+					action_label.text = equipped_card.card_name + " has no valid targets right now."
+					update_ui()
+					return
+				_show_card_selection_overlay(
+					"Choose a target for " + equipped_card.card_name,
+					targets,
+					func(chosen_card: Card) -> void:
+						_queue_targeted_ability_action(
+							equipped_card,
+							chosen_card,
+							func() -> void:
+								equipped_card.activate(game_manager, chosen_card)
+						)
+				)
+			else:
+				if _is_networked_client:
+					game_input.submit_action({type = "activate_card_ability", source_uid = equipped_card.uid})
+				else:
+					_queue_magical_action(
+						CardAction.Type.ABILITY,
+						equipped_card,
+						null,
+						equipped_card.card_name + " activated!",
+						func() -> void:
+							equipped_card.activate(game_manager)
 					)
 		)
 		vbox.add_child(btn)
@@ -9241,6 +9516,14 @@ func _is_player_local(player: Player) -> bool:
 func _on_peer_disconnected(_peer_id: int) -> void:
 	if _game_finished:
 		return
+	if headless_match_host != null and headless_match_host.match_session != null:
+		_set_match_reconnect_wait(true, "Opponent disconnected. Waiting for reconnect...")
+		action_label.text = _match_reconnect_wait_message
+		_dismiss_transient_prompts()
+		_hide_priority_prompt()
+		_hide_intercept_prompt()
+		update_ui()
+		return
 	_game_finished = true
 	action_label.text = "Opponent disconnected. Game over."
 	_dismiss_transient_prompts()
@@ -9255,6 +9538,51 @@ func _apply_network_event(event_type: String, data: Dictionary) -> void:
 			_apply_full_state(data)
 		"ui_interaction":
 			_apply_ui_interaction(data)
+		"match_join_ok":
+			action_label.text = "Match authenticated. Waiting for state sync..."
+			update_ui()
+		"match_join_denied":
+			action_label.text = str(data.get("reason", "Match authentication failed."))
+			update_ui()
+		"peer_left":
+			var player_idx := int(data.get("player_index", -1))
+			var player_name := "Opponent"
+			if player_idx >= 0 and player_idx < game_manager.players.size():
+				player_name = game_manager.players[player_idx].player_name
+			var reconnect_deadline := int(data.get("reconnect_deadline_unix", 0))
+			var seconds_remaining := maxi(0, reconnect_deadline - int(Time.get_unix_time_from_system()))
+			var wait_message := "%s disconnected. Waiting up to %ds for reconnect..." % [player_name, seconds_remaining]
+			_set_match_reconnect_wait(true, wait_message)
+			action_label.text = wait_message
+			update_ui()
+		"peer_rejoined":
+			var rejoined_idx := int(data.get("player_index", -1))
+			var rejoined_name := "Opponent"
+			if rejoined_idx >= 0 and rejoined_idx < game_manager.players.size():
+				rejoined_name = game_manager.players[rejoined_idx].player_name
+			_set_match_reconnect_wait(false)
+			action_label.text = "%s rejoined the match." % rejoined_name
+			update_ui()
+		"match_reconnect_started":
+			var attempts_remaining := int(data.get("attempts_remaining", 0))
+			_set_match_reconnect_wait(true, "Connection lost. Reconnecting to match server...")
+			action_label.text = "Connection lost. Reconnecting to match server... (%d retries left)" % attempts_remaining
+			update_ui()
+		"match_reconnect_ok":
+			_set_match_reconnect_wait(false)
+			action_label.text = "Reconnected to the match server."
+			update_ui()
+		"match_reconnect_failed":
+			_set_match_reconnect_wait(true, "Reconnect failed. You may need to rejoin the match.")
+			action_label.text = str(data.get("reason", "Reconnect failed."))
+			update_ui()
+		"server_disconnected":
+			_set_match_reconnect_wait(true, "Disconnected from match server. Reconnect may still be available.")
+			action_label.text = _match_reconnect_wait_message
+			_dismiss_transient_prompts()
+			_hide_priority_prompt()
+			_hide_intercept_prompt()
+			update_ui()
 		"upkeep_needed":
 			# Server tells this client it's their turn and they need to choose upkeep
 			if network_manager != null:
@@ -9384,6 +9712,9 @@ func _update_waiting_status(is_waiting: bool, message: String = "Waiting for Opp
 	lbl.text = message
 
 func _update_waiting_overlay() -> void:
+	if _match_reconnect_waiting:
+		_update_waiting_status(true, _match_reconnect_wait_message)
+		return
 	if not _is_networked_client:
 		_update_waiting_status(false)
 		return
@@ -9406,6 +9737,15 @@ func _update_waiting_overlay() -> void:
 				_update_waiting_status(true, "Opponent is choosing interceptor...")
 				return
 
+	_update_waiting_status(false)
+
+func _set_match_reconnect_wait(is_waiting: bool, message: String = "Waiting for opponent to reconnect...") -> void:
+	_match_reconnect_waiting = is_waiting
+	if is_waiting:
+		_match_reconnect_wait_message = message
+		_update_waiting_status(true, message)
+		return
+	_match_reconnect_wait_message = "Waiting for opponent to reconnect..."
 	_update_waiting_status(false)
 
 func _apply_priority_offered(data: Dictionary) -> void:
@@ -9628,6 +9968,7 @@ func _clear_network_selection_state() -> void:
 func _on_forfeit_button_pressed() -> void:
 	if _game_finished:
 		return
+	_set_match_reconnect_wait(false)
 	if _is_blot_selection_active():
 		_hide_blot_sacrifice_prompt()
 	_dismiss_transient_prompts()
@@ -9786,6 +10127,7 @@ func _on_enemy_followers_changed(_new_followers: int) -> void:
 
 func _on_game_ended(winner: Player, loser: Player) -> void:
 	_game_finished = true
+	_set_match_reconnect_wait(false)
 	choice_container.visible = false
 	end_turn_button.visible = false
 	placement_container.visible = false
@@ -10055,6 +10397,7 @@ func _on_card_dropped_to_zone(card: Card, zone: Zone, is_rotated: bool = false, 
 
 
 func cleanup() -> void:
+	_set_match_reconnect_wait(false)
 	_hide_skoll_prompt()
 	_pending_skoll_prompts.clear()
 	_clear_skoll_upkeep_summon()

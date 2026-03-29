@@ -1,0 +1,45 @@
+NetworkManager[LobbyTransport]: server started on port 22445 path=/root/Main/LobbyPeer/LobbyTransport
+LobbyServer[LobbyPeer]: listening on 127.0.0.1:22445
+NetworkManager[LobbyTransport]: received send_command from peer 1106800733
+LobbyServer[LobbyPeer]: received request login_guest from peer 1106800733
+LobbyServer[LobbyPeer]: login accepted for peer 1106800733 as session NS89VUXT565C
+LobbyServer[LobbyPeer]: sending hello_ok to peer 1106800733
+LobbyServer[LobbyPeer]: sending room_list to peer 1106800733
+NetworkManager[LobbyTransport]: received send_command from peer 1106800733
+LobbyServer[LobbyPeer]: received request create_room from peer 1106800733
+LobbyServer[LobbyPeer]: sending room_snapshot to peer 1106800733
+LobbyServer[LobbyPeer]: sending room_list to peer 1106800733
+LobbyServer[LobbyPeer]: sending room_snapshot to peer 1106800733
+NetworkManager[LobbyTransport]: received send_command from peer 1106800733
+LobbyServer[LobbyPeer]: received request set_ready from peer 1106800733
+LobbyServer[LobbyPeer]: sending room_snapshot to peer 1106800733
+LobbyServer[LobbyPeer]: sending room_list to peer 1106800733
+NetworkManager[LobbyTransport]: received send_command from peer 1106800733
+LobbyServer[LobbyPeer]: received request set_ready from peer 1106800733
+LobbyServer[LobbyPeer]: sending room_snapshot to peer 1106800733
+LobbyServer[LobbyPeer]: sending room_list to peer 1106800733
+NetworkManager[LobbyTransport]: received send_command from peer 2044895293
+LobbyServer[LobbyPeer]: received request login_guest from peer 2044895293
+LobbyServer[LobbyPeer]: login accepted for peer 2044895293 as session RSV9WSGE6DUS
+LobbyServer[LobbyPeer]: sending hello_ok to peer 2044895293
+LobbyServer[LobbyPeer]: sending room_list to peer 2044895293
+NetworkManager[LobbyTransport]: received send_command from peer 2044895293
+LobbyServer[LobbyPeer]: received request join_room from peer 2044895293
+LobbyServer[LobbyPeer]: sending room_snapshot to peer 1106800733
+LobbyServer[LobbyPeer]: sending room_snapshot to peer 2044895293
+LobbyServer[LobbyPeer]: sending room_list to peer 1106800733
+LobbyServer[LobbyPeer]: sending room_list to peer 2044895293
+NetworkManager[LobbyTransport]: received send_command from peer 2044895293
+LobbyServer[LobbyPeer]: received request set_ready from peer 2044895293
+LobbyServer[LobbyPeer]: sending room_snapshot to peer 1106800733
+LobbyServer[LobbyPeer]: sending room_snapshot to peer 2044895293
+LobbyServer[LobbyPeer]: sending room_list to peer 1106800733
+LobbyServer[LobbyPeer]: sending room_list to peer 2044895293
+LobbyServer[LobbyPeer]: sending match_assigned to peer 1106800733
+LobbyServer[LobbyPeer]: sending match_assigned to peer 2044895293
+LobbyServer[LobbyPeer]: sending room_snapshot to peer 1106800733
+LobbyServer[LobbyPeer]: sending room_snapshot to peer 2044895293
+LobbyServer[LobbyPeer]: sending room_list to peer 1106800733
+LobbyServer[LobbyPeer]: sending room_list to peer 2044895293
+LobbyServer[LobbyPeer]: sending room_snapshot to peer 1106800733
+LobbyServer[LobbyPeer]: sending room_list to peer 1106800733

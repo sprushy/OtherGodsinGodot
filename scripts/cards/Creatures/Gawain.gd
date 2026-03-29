@@ -1,0 +1,220 @@
+extends CreatureCard
+class_name Gawain
+
+const ART_PATH := "res://images/card_art/creatures/gawain.png"
+const SUN_BLESSING_SOURCE := "Gawain Sun Blessing"
+
+# Status names that are internal/friendly buffs and should not be removable.
+const _NON_REMOVABLE_STATUSES: Array[String] = [
+	"temporarily_revealed",
+	"berserker_rage_guard",
+	"berserker_mead_guard",
+	"en_hedu_anna_exaltation_guard",
+	"gala_tura_graveward",
+]
+
+func _init() -> void:
+	super._init()
+	card_name = "Gawain"
+	card_types = ["Human", "Warrior", "Knight", "Triskelion Creature"]
+	level = 4
+	mana_cost = 3
+	sacrifice_cost = 0
+	speed = 2
+	resilience = 7
+	strength = 10
+	targets = true
+	ability_text = "[b]Sun Blessing[/b] ([b]Passive[/b]): During your turn, this creature's base Str and Res triple until the first of your attacks resolves or the end of your turn.\n[b]Healing Hands[/b] (2 mana): Remove a negative effect from a friendly creature."
+	flavor_text = ""
+	culture = "Triskelion"
+	artist = "Riccardo Zoppello"
+	art_path = ART_PATH
+
+# ── Sun Blessing ─────────────────────────────────────────────────────────────
+
+func on_summon(game_manager: GameManager) -> void:
+	if get_controller() == game_manager.current_player:
+		_apply_sun_blessing()
+
+func on_reveal(game_manager: GameManager) -> void:
+	if get_controller() == game_manager.current_player:
+		_apply_sun_blessing()
+
+func on_turn_start(_game_manager: GameManager) -> void:
+	_apply_sun_blessing()
+
+func on_after_combat(_game_manager: GameManager, _opposing_card: Card) -> void:
+	_remove_sun_blessing()
+
+func on_turn_end(_game_manager: GameManager) -> void:
+	_remove_sun_blessing()
+
+func on_removed(_game_manager: GameManager) -> void:
+	_remove_sun_blessing()
+
+func on_muted(_game_manager: GameManager) -> void:
+	_remove_sun_blessing()
+
+func on_unmuted(game_manager: GameManager) -> void:
+	if get_controller() == game_manager.current_player:
+		_apply_sun_blessing()
+
+func _apply_sun_blessing() -> void:
+	_remove_sun_blessing()
+	if abilities_suppressed():
+		return
+	if current_zone == null or not current_zone.is_board_zone():
+		return
+	add_buff(
+		SUN_BLESSING_SOURCE,
+		strength * 2,
+		resilience * 2,
+		0,
+		self,
+		card_owner,
+		"sun_blessing",
+		{"expires_after_combat": true}
+	)
+
+func _remove_sun_blessing() -> void:
+	clear_buffs_from(SUN_BLESSING_SOURCE)
+
+# ── Healing Hands ─────────────────────────────────────────────────────────────
+
+func get_activation_label() -> String:
+	return "Healing Hands"
+
+func can_activate(game_manager: GameManager) -> bool:
+	if game_manager == null:
+		return false
+	if get_controller() != game_manager.current_player:
+		return false
+	if current_zone == null or not current_zone.is_board_zone():
+		return false
+	if abilities_suppressed() or is_activation_locked(game_manager):
+		return false
+	if is_sleeping:
+		return false
+	if not can_take_minor_creature_action():
+		return false
+	var controller := get_controller()
+	if controller == null or controller.mana < 2:
+		return false
+	return not get_valid_targets(game_manager).is_empty()
+
+func get_valid_targets(game_manager: GameManager) -> Array[Card]:
+	var valid_targets: Array[Card] = []
+	if game_manager == null:
+		return valid_targets
+	var controller := get_controller()
+	if controller == null:
+		return valid_targets
+	for zone in controller.frontline_zones + controller.reserve_zones:
+		for card in zone.cards:
+			if card == null or card.card_type != Card.CardType.CREATURE:
+				continue
+			if get_removable_statuses(card).is_empty():
+				continue
+			valid_targets.append(card)
+	return valid_targets
+
+# Returns statuses on `target` that Healing Hands can remove.
+func get_removable_statuses(target: Card) -> Array[Dictionary]:
+	var result: Array[Dictionary] = []
+	if target == null:
+		return result
+	for status in target.active_statuses:
+		var name: String = status.get("name", "")
+		if name in _NON_REMOVABLE_STATUSES:
+			continue
+		if status.get("source_card", null) == null:
+			continue
+		result.append(status)
+	return result
+
+func activate(game_manager: GameManager, target: Card = null) -> void:
+	if not can_activate(game_manager):
+		return
+	if target == null or target not in get_valid_targets(game_manager):
+		if game_manager != null:
+			game_manager.note_player_feedback(
+				"%s: choose a friendly creature with a negative effect." % card_name
+			)
+		return
+	var removable := get_removable_statuses(target)
+	if removable.is_empty():
+		if game_manager != null:
+			game_manager.note_player_feedback("%s: %s has no removable effects." % [card_name, target.card_name])
+		return
+
+	var controller := get_controller()
+	if controller == null or not controller.spend_mana(2):
+		if game_manager != null:
+			game_manager.note_player_feedback("%s: not enough mana for Healing Hands." % card_name)
+		return
+
+	if removable.size() == 1:
+		_resolve_healing_hands(game_manager, target, removable[0])
+		return
+
+	# Multiple effects — ask the UI to let the player choose.
+	var prompt_host := _get_prompt_host(game_manager)
+	if prompt_host != null and prompt_host.has_method("_queue_gawain_healing_hands_prompt"):
+		prompt_host.call("_queue_gawain_healing_hands_prompt", self, target)
+		return
+
+	# Fallback: remove the first removable effect.
+	_resolve_healing_hands(game_manager, target, removable[0])
+
+func resolve_healing_hands(game_manager: GameManager, target: Card, status: Dictionary) -> String:
+	if game_manager == null or target == null or status.is_empty():
+		return card_name + " cannot remove an effect right now."
+	_resolve_healing_hands(game_manager, target, status)
+	return "%s removed %s from %s." % [
+		card_name,
+		status.get("source", status.get("name", "effect")),
+		target.card_name
+	]
+
+func _resolve_healing_hands(game_manager: GameManager, target: Card, status: Dictionary) -> void:
+	var source_card: Card = status.get("source_card", null) as Card
+	var status_name: String = status.get("name", "")
+	if source_card != null:
+		target.remove_status_effects_from_source_card(source_card, status_name)
+	else:
+		target.remove_status_effects_by_name(status_name)
+
+	spend_minor_creature_action()
+
+	if game_manager != null:
+		var viewer := game_manager.get_feedback_viewer()
+		game_manager.note_player_feedback(
+			"%s removed %s from %s via Healing Hands." % [
+				card_name,
+				status.get("source", status_name),
+				target.get_target_log_display_name(viewer)
+			]
+		)
+
+func _get_prompt_host(game_manager: GameManager = null) -> Node:
+	if game_manager != null:
+		var direct_host := game_manager.get_interaction_host()
+		var direct_node := direct_host as Node
+		if direct_node != null and is_instance_valid(direct_node):
+			return direct_node
+	var tree: SceneTree = Engine.get_main_loop() as SceneTree
+	if tree == null:
+		return null
+	var hosts: Array = tree.get_nodes_in_group("combat_mock_game")
+	if tree.current_scene != null:
+		for host in hosts:
+			var node: Node = host as Node
+			if node != null and node.is_inside_tree() and (node == tree.current_scene or tree.current_scene.is_ancestor_of(node)):
+				return node
+	for host in hosts:
+		var node: Node = host as Node
+		if node != null and node.is_inside_tree() and node.get("game_manager") != null:
+			return node
+	if tree.current_scene != null:
+		return tree.current_scene
+	return null

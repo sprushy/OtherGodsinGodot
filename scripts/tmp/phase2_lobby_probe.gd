@@ -68,6 +68,11 @@ func _initialize() -> void:
 		push_error("phase2_lobby_probe: match session player indexing was incorrect")
 		quit(1)
 		return
+	var match_info: Dictionary = match_session.to_match_info("CLIENT")
+	if str(match_info.get("match_token", "")).is_empty():
+		push_error("phase2_lobby_probe: match session did not issue a client auth token")
+		quit(1)
+		return
 
 	print("phase2_lobby_probe: PASS")
 	quit()

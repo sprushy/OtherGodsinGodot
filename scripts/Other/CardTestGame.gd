@@ -10,9 +10,11 @@ func start_game(
 	is_host: bool = false,
 	is_client: bool = false,
 	server_ip: String = "127.0.0.1",
-	server_port: int = 12345
+	server_port: int = 12345,
+	match_info: Dictionary = {},
+	server_match_session = null
 ) -> void:
-	await super.start_game(is_host, is_client, server_ip, server_port)
+	await super.start_game(is_host, is_client, server_ip, server_port, match_info, server_match_session)
 	_setup_test_board()
 
 func update_ui() -> void:
