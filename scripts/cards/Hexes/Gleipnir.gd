@@ -1,7 +1,7 @@
 extends PermanentHexCard
 class_name Gleipnir
 
-const ART_PATH := "res://images/card_art/hexes/gleipnir.jpg"
+const ART_PATH := "res://images/card_art/GleipnirEdit.png"
 const ATTACK_LOCK_STATUS := "cannot_attack"
 const INTERCEPT_LOCK_STATUS := "cannot_intercept"
 const STATUS_SOURCE := "Gleipnir"

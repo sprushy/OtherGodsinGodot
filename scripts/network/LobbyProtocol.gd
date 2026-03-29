@@ -5,11 +5,18 @@ const PORT: int = 22345
 const MATCH_PORT: int = 12345
 
 const LOGIN_GUEST := "login_guest"
+const LOGIN_ACCOUNT := "login_account"
+const REGISTER_ACCOUNT := "register_account"
 const CREATE_ROOM := "create_room"
 const LIST_ROOMS := "list_rooms"
 const JOIN_ROOM := "join_room"
 const LEAVE_ROOM := "leave_room"
 const SET_READY := "set_ready"
+const SELECT_DECK := "select_deck"
+const REQUEST_ACCOUNT_DECKS := "request_account_decks"
+const SAVE_ACCOUNT_DECK := "save_account_deck"
+const DELETE_ACCOUNT_DECK := "delete_account_deck"
+const REQUEST_PROFILE_SUMMARY := "request_profile_summary"
 const REQUEST_RECONNECT_LOBBY := "request_reconnect_lobby"
 
 const HELLO_OK := "hello_ok"
@@ -18,6 +25,10 @@ const ROOM_SNAPSHOT := "room_snapshot"
 const ROOM_ERROR := "room_error"
 const MATCH_ASSIGNED := "match_assigned"
 const LOBBY_RECONNECT_OK := "lobby_reconnect_ok"
+const ACCOUNT_DECK_LIST := "account_deck_list"
+const ACCOUNT_DECK_SAVED := "account_deck_saved"
+const ACCOUNT_DECK_DELETED := "account_deck_deleted"
+const PROFILE_SUMMARY := "profile_summary"
 
 static func make_message(message_type: String, payload: Dictionary = {}) -> Dictionary:
 	return {
@@ -45,9 +56,27 @@ static func validate_request(message: Dictionary) -> String:
 		LOGIN_GUEST:
 			if str(payload.get("player_name", "")).strip_edges().is_empty():
 				return "Missing player name."
+		LOGIN_ACCOUNT, REGISTER_ACCOUNT:
+			if str(payload.get("username", "")).strip_edges().is_empty():
+				return "Missing username."
+			if str(payload.get("password", "")).strip_edges().is_empty():
+				return "Missing password."
 		JOIN_ROOM:
 			if str(payload.get("room_id", "")).strip_edges().is_empty():
 				return "Missing room code."
+		SELECT_DECK:
+			if str(payload.get("deck_name", "")).strip_edges().is_empty():
+				return "Missing deck name."
+			if not payload.has("cards") or not (payload.get("cards") is Dictionary):
+				return "Missing deck cards."
+		SAVE_ACCOUNT_DECK:
+			if str(payload.get("deck_name", "")).strip_edges().is_empty():
+				return "Missing deck name."
+			if not payload.has("cards") or not (payload.get("cards") is Dictionary):
+				return "Missing deck cards."
+		DELETE_ACCOUNT_DECK:
+			if str(payload.get("deck_id", "")).strip_edges().is_empty():
+				return "Missing deck id."
 		SET_READY:
 			if not payload.has("is_ready"):
 				return "Missing ready state."
@@ -56,7 +85,7 @@ static func validate_request(message: Dictionary) -> String:
 				return "Missing session id."
 			if str(payload.get("reconnect_token", "")).strip_edges().is_empty():
 				return "Missing reconnect token."
-		CREATE_ROOM, LIST_ROOMS, LEAVE_ROOM:
+		CREATE_ROOM, LIST_ROOMS, LEAVE_ROOM, REQUEST_ACCOUNT_DECKS, REQUEST_PROFILE_SUMMARY:
 			pass
 		_:
 			return "Unknown lobby message type: %s" % message_type

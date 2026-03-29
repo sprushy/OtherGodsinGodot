@@ -21,6 +21,8 @@ var process_launch_error: String = ""
 var reconnect_deadline_unix: int = 0
 var reconnect_window_seconds: int = 30
 var player_match_tokens: Dictionary = {}
+var player_decks_by_session: Dictionary = {}
+var player_identity_by_session: Dictionary = {}
 var session_id_by_peer: Dictionary = {}
 var peer_id_by_session: Dictionary = {}
 var disconnected_sessions: Dictionary = {}
@@ -32,7 +34,9 @@ func _init(
 	p_room_id: String = "",
 	p_server_ip: String = "127.0.0.1",
 	p_match_port: int = 12345,
-	p_player_session_ids: Array[String] = []
+	p_player_session_ids: Array[String] = [],
+	p_player_decks_by_session: Dictionary = {},
+	p_player_identity_by_session: Dictionary = {}
 ) -> void:
 	_rng.randomize()
 	match_id = p_match_id
@@ -40,6 +44,8 @@ func _init(
 	server_ip = p_server_ip
 	match_port = p_match_port
 	player_session_ids = p_player_session_ids.duplicate()
+	player_decks_by_session = p_player_decks_by_session.duplicate(true)
+	player_identity_by_session = p_player_identity_by_session.duplicate(true)
 	_ensure_player_match_tokens()
 
 func mark_active() -> void:
@@ -56,6 +62,12 @@ func get_player_index(session_id: String) -> int:
 
 func get_match_token(session_id: String) -> String:
 	return str(player_match_tokens.get(session_id, ""))
+
+func get_player_identity(session_id: String) -> Dictionary:
+	var identity = player_identity_by_session.get(session_id, {})
+	if identity is Dictionary:
+		return (identity as Dictionary).duplicate(true)
+	return {}
 
 func authenticate_join(session_id: String, match_token: String, peer_id: int) -> int:
 	if get_match_token(session_id) != match_token:
@@ -142,6 +154,7 @@ func to_match_info(session_id: String = "") -> Dictionary:
 		match_info["session_id"] = session_id
 		match_info["match_token"] = get_match_token(session_id)
 		match_info["reconnect_deadline_unix"] = get_reconnect_deadline_for_session(session_id)
+		match_info["selected_deck_name"] = str(_get_player_deck(session_id).get("deck_name", ""))
 	match_info["reconnect_window_seconds"] = reconnect_window_seconds
 	match_info["waiting_for_reconnect"] = is_waiting_for_reconnect()
 	return match_info
@@ -157,6 +170,8 @@ func to_launch_config() -> Dictionary:
 		"server_mode": server_mode,
 		"reconnect_window_seconds": reconnect_window_seconds,
 		"player_match_tokens": player_match_tokens.duplicate(true),
+		"player_decks_by_session": player_decks_by_session.duplicate(true),
+		"player_identity_by_session": player_identity_by_session.duplicate(true),
 	}
 
 func mark_process_launched(p_process_id: int, p_launch_config_path: String) -> void:
@@ -176,7 +191,9 @@ static func from_launch_config(config: Dictionary) -> MatchSession:
 		str(config.get("room_id", "")),
 		str(config.get("server_ip", "127.0.0.1")),
 		int(config.get("match_port", 12345)),
-		_to_string_array(config.get("player_session_ids", []))
+		_to_string_array(config.get("player_session_ids", [])),
+		_to_dictionary(config.get("player_decks_by_session", {})),
+		_to_dictionary(config.get("player_identity_by_session", {}))
 	)
 	session.status = str(config.get("status", STATUS_STARTING))
 	session.server_mode = str(config.get("server_mode", SERVER_MODE_IN_PROCESS_HOST))
@@ -194,6 +211,17 @@ static func _to_string_array(value) -> Array[String]:
 	for entry in value:
 		output.append(str(entry))
 	return output
+
+static func _to_dictionary(value) -> Dictionary:
+	if value is Dictionary:
+		return (value as Dictionary).duplicate(true)
+	return {}
+
+func _get_player_deck(session_id: String) -> Dictionary:
+	var deck = player_decks_by_session.get(session_id, {})
+	if deck is Dictionary:
+		return (deck as Dictionary).duplicate(true)
+	return {}
 
 func _ensure_player_match_tokens() -> void:
 	for session_id in player_session_ids:

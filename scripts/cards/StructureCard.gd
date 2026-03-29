@@ -33,3 +33,7 @@ func on_turn_end(_game_manager: GameManager) -> void:
 
 func replaces_graveyard_send(_card: Card, _game_manager: GameManager) -> bool:
 	return false
+
+# Override to return true if this structure forces all creatures to enter in defensive stance.
+func forces_defensive_summon() -> bool:
+	return false

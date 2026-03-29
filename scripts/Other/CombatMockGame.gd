@@ -7,12 +7,15 @@ const SacrificeCursorSource = preload("res://images/card_art/BloodySacrificeCurs
 const DevourCursorSource = preload("res://images/card_art/BloodyWolfJawsPGN.png")
 const SilenceCursorSource = preload("res://images/SilenceCursorPGN.png")
 const GiantMasterArchitectCursorSource = preload("res://images/card_art/GiantMasterArchitectHammerCursor.png")
+const GugalannaCursorSource = preload("res://images/card_art/JeweledHornsCursor.png")
+const GuanYuCursorSource = preload("res://images/card_art/GuanYuCursor.png")
 const PromptRouterScript = preload("res://scripts/server/PromptRouter.gd")
 const HeadlessMatchHostScript = preload("res://scripts/server/HeadlessMatchHost.gd")
 const MatchClientScript = preload("res://scripts/client/MatchClient.gd")
 const DefaultMatchSetupScript = preload("res://scripts/server/DefaultMatchSetup.gd")
 
 signal forfeit_requested
+signal match_session_cleared
 
 var player1: Player
 var player2: Player
@@ -280,6 +283,8 @@ var _sacrifice_cursor_texture: Texture2D = null
 var _devour_cursor_texture: Texture2D = null
 var _silence_cursor_texture: Texture2D = null
 var _giant_master_architect_cursor_texture: Texture2D = null
+var _gugalanna_cursor_texture: Texture2D = null
+var _guan_yu_cursor_texture: Texture2D = null
 var _active_selection_cursor_mode: String = ""
 var _overlay_selection_cursor_mode: String = ""
 var _devour_cancel_prompt: Control = null
@@ -288,6 +293,7 @@ var _pending_end_turn_discard_uids: Array = []
 var _ui_update_pending: bool = false
 var _match_reconnect_waiting: bool = false
 var _match_reconnect_wait_message: String = "Waiting for opponent to reconnect..."
+var _current_match_info: Dictionary = {}
 
 const TRANSIENT_UI_Z_INDEX := 1000
 const HOVER_PREVIEW_Z_INDEX := TRANSIENT_UI_Z_INDEX + 50
@@ -315,6 +321,10 @@ const SILENCE_CURSOR_TARGET_HEIGHT := 96
 const SILENCE_CURSOR_HOTSPOT_RATIO := Vector2(0.49, 0.22)
 const GIANT_MASTER_ARCHITECT_CURSOR_TARGET_HEIGHT := 96
 const GIANT_MASTER_ARCHITECT_CURSOR_HOTSPOT_RATIO := Vector2(0.50, 0.18)
+const GUGALANNA_CURSOR_TARGET_HEIGHT := 96
+const GUGALANNA_CURSOR_HOTSPOT_RATIO := Vector2(0.50, 0.85)
+const GUAN_YU_CURSOR_TARGET_HEIGHT := 96
+const GUAN_YU_CURSOR_HOTSPOT_RATIO := Vector2(0.95, 0.94)
 const SACRIFICE_CURSOR_SHAPES := [
 	Input.CURSOR_ARROW,
 	Input.CURSOR_POINTING_HAND,
@@ -546,6 +556,12 @@ func _is_silence_cursor_mode_active() -> bool:
 func _is_giant_master_architect_cursor_mode_active() -> bool:
 	return _overlay_selection_cursor_mode == "giant_master_architect_structure"
 
+func _is_gugalanna_cursor_mode_active() -> bool:
+	return _overlay_selection_cursor_mode == "gugalanna_celestial_charge"
+
+func _is_guan_yu_cursor_mode_active() -> bool:
+	return awaiting_god_ability_target and god_ability_source is GuanYu
+
 func _is_silence_or_mute_targeting_source(card: Card) -> bool:
 	if card == null:
 		return false
@@ -667,8 +683,12 @@ func _position_devour_cancel_prompt() -> void:
 	_devour_cancel_prompt.global_position = (viewport_size - prompt_size) * 0.5
 
 func _get_selection_cursor_mode() -> String:
+	if _is_gugalanna_cursor_mode_active():
+		return "gugalanna"
 	if _is_giant_master_architect_cursor_mode_active():
 		return "giant_master_architect"
+	if _is_guan_yu_cursor_mode_active():
+		return "guan_yu"
 	if _is_sacrifice_cursor_mode_active():
 		return "sacrifice"
 	if _is_devour_cursor_mode_active():
@@ -748,6 +768,16 @@ func _apply_silence_cursor() -> bool:
 		Input.set_custom_mouse_cursor(_silence_cursor_texture, cursor_shape, hotspot)
 	return true
 
+func _apply_gugalanna_cursor() -> bool:
+	if _gugalanna_cursor_texture == null:
+		_gugalanna_cursor_texture = _build_cursor_texture(GugalannaCursorSource, GUGALANNA_CURSOR_TARGET_HEIGHT)
+	if _gugalanna_cursor_texture == null:
+		return false
+	var hotspot := _get_cursor_hotspot(_gugalanna_cursor_texture, GUGALANNA_CURSOR_HOTSPOT_RATIO)
+	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
+		Input.set_custom_mouse_cursor(_gugalanna_cursor_texture, cursor_shape, hotspot)
+	return true
+
 func _apply_giant_master_architect_cursor() -> bool:
 	if _giant_master_architect_cursor_texture == null:
 		_giant_master_architect_cursor_texture = _build_cursor_texture(
@@ -765,6 +795,20 @@ func _apply_giant_master_architect_cursor() -> bool:
 		Input.set_custom_mouse_cursor(_giant_master_architect_cursor_texture, cursor_shape, hotspot)
 	return true
 
+func _apply_guan_yu_cursor() -> bool:
+	if _guan_yu_cursor_texture == null:
+		_guan_yu_cursor_texture = _build_cursor_texture(
+			GuanYuCursorSource,
+			GUAN_YU_CURSOR_TARGET_HEIGHT
+		)
+	if _guan_yu_cursor_texture == null:
+		return false
+
+	var hotspot := _get_cursor_hotspot(_guan_yu_cursor_texture, GUAN_YU_CURSOR_HOTSPOT_RATIO)
+	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
+		Input.set_custom_mouse_cursor(_guan_yu_cursor_texture, cursor_shape, hotspot)
+	return true
+
 func _restore_default_selection_cursor() -> void:
 	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
 		Input.set_custom_mouse_cursor(null, cursor_shape)
@@ -773,6 +817,20 @@ func _restore_default_selection_cursor() -> void:
 func _sync_sacrifice_cursor() -> void:
 	var cursor_mode := _get_selection_cursor_mode()
 	if cursor_mode == _active_selection_cursor_mode:
+		return
+
+	if cursor_mode == "gugalanna":
+		if _apply_gugalanna_cursor():
+			_active_selection_cursor_mode = "gugalanna"
+		else:
+			_restore_default_selection_cursor()
+		return
+
+	if cursor_mode == "guan_yu":
+		if _apply_guan_yu_cursor():
+			_active_selection_cursor_mode = "guan_yu"
+		else:
+			_restore_default_selection_cursor()
 		return
 
 	if cursor_mode == "sacrifice":
@@ -1102,6 +1160,7 @@ func start_game(
 ) -> void:
 	print("=== STARTING COMBAT MOCK GAME ===")
 	_game_finished = false
+	_current_match_info = match_info.duplicate(true)
 	
 	game_manager = GameManager.new()
 	game_manager.set_interaction_host(self)
@@ -1149,7 +1208,11 @@ func start_game(
 
 	await get_tree().process_frame
 	var default_match_setup = DefaultMatchSetupScript.new()
-	var match_players: Dictionary = default_match_setup.build_default_match(game_manager)
+	var match_players: Dictionary = {}
+	if server_match_session != null and not server_match_session.player_decks_by_session.is_empty():
+		match_players = default_match_setup.build_match_from_session_decks(game_manager, server_match_session)
+	if match_players.is_empty():
+		match_players = default_match_setup.build_default_match(game_manager)
 	player1 = match_players.get("player1", null)
 	player2 = match_players.get("player2", null)
 	if not game_manager.doorway_choice_requested.is_connected(_on_doorway_choice_requested):
@@ -5468,6 +5531,50 @@ func _queue_fourth_sage_enmegalamma_impact_prompt(card) -> void:
 	action_label.text = card.card_name + " impact waits on priority."
 	_offer_priority()
 
+func _queue_gugalanna_impact_prompt(card) -> void:
+	if card == null or game_manager == null:
+		return
+	var action := CardAction.new()
+	action.type = CardAction.Type.EVENT
+	action.source_player = card.card_owner
+	action.card = card
+	action.event_name = "gugalanna_celestial_charge"
+	action.event_speed = 0
+	action.resolve_callback = func() -> void:
+		var valid_targets: Array[Card] = card.get_valid_impact_targets(game_manager)
+		if valid_targets.is_empty():
+			# No valid targets — still return to hand.
+			card.apply_celestial_charge(game_manager, null)
+			var text: String = card.card_name + ": no valid targets. " + card.card_name + " returns to hand."
+			if _stack_resolution_paused:
+				_resume_after_deferred_resolution(text)
+			else:
+				action_label.text = text
+				update_ui()
+			return
+		_pause_stack_resolution(card.card_owner)
+		var on_choose := func(chosen: Card) -> void:
+			card.apply_celestial_charge(game_manager, chosen)
+			_resume_after_deferred_resolution(
+				"Celestial Charge: %s destroys %s. %s returns to hand." % [
+					card.card_name, chosen.card_name, card.card_name
+				]
+			)
+		var on_cancel := func() -> void:
+			card.apply_celestial_charge(game_manager, null)
+			_resume_after_deferred_resolution(card.card_name + " skips Celestial Charge and returns to hand.")
+		_show_card_selection_overlay(
+			"Celestial Charge: choose a target (Res 30+, slower Spd) — or cancel to skip",
+			valid_targets,
+			on_choose,
+			on_cancel,
+			"gugalanna_celestial_charge"
+		)
+	game_manager.push_to_stack(action)
+	update_ui()
+	action_label.text = card.card_name + " Celestial Charge waits on priority."
+	_offer_priority()
+
 func _queue_giant_master_architect_impact_prompt(card) -> void:
 	if card == null or game_manager == null:
 		return
@@ -9543,6 +9650,7 @@ func _apply_network_event(event_type: String, data: Dictionary) -> void:
 			update_ui()
 		"match_join_denied":
 			action_label.text = str(data.get("reason", "Match authentication failed."))
+			match_session_cleared.emit()
 			update_ui()
 		"peer_left":
 			var player_idx := int(data.get("player_index", -1))
@@ -9603,6 +9711,7 @@ func _apply_network_event(event_type: String, data: Dictionary) -> void:
 			var winner_name: String = data.get("winner_name", "Unknown")
 			action_label.text = winner_name + " wins!"
 			_game_finished = true
+			match_session_cleared.emit()
 			update_ui()
 
 func _apply_ui_interaction(event_data: Dictionary) -> void:
@@ -9986,6 +10095,7 @@ func _on_forfeit_button_pressed() -> void:
 	placement_container.visible = false
 	_clear_wolf_master_summon()
 	action_label.text = "Game forfeited."
+	match_session_cleared.emit()
 	forfeit_requested.emit()
 
 func _do_end_turn() -> void:
@@ -10142,6 +10252,7 @@ func _on_game_ended(winner: Player, loser: Player) -> void:
 	pending_attack_target = null
 	placement_mode = ""
 	action_label.text = winner.player_name + " wins the game! " + loser.player_name + " reached 0 followers." if winner != null and loser != null else "Game over!"
+	match_session_cleared.emit()
 	update_ui()
 
 func _request_ui_refresh() -> void:
@@ -10398,6 +10509,7 @@ func _on_card_dropped_to_zone(card: Card, zone: Zone, is_rotated: bool = false, 
 
 func cleanup() -> void:
 	_set_match_reconnect_wait(false)
+	_current_match_info.clear()
 	_hide_skoll_prompt()
 	_pending_skoll_prompts.clear()
 	_clear_skoll_upkeep_summon()

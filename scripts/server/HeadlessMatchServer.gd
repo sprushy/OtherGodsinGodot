@@ -5,6 +5,7 @@ const PromptRouterScript = preload("res://scripts/server/PromptRouter.gd")
 const HeadlessMatchHostScript = preload("res://scripts/server/HeadlessMatchHost.gd")
 const MatchSessionScript = preload("res://scripts/server/MatchSession.gd")
 const DefaultMatchSetupScript = preload("res://scripts/server/DefaultMatchSetup.gd")
+const MatchHistoryStoreScript = preload("res://scripts/server/MatchHistoryStore.gd")
 
 signal startup_succeeded(match_id: String, port: int)
 signal startup_failed(message: String)
@@ -18,6 +19,7 @@ var game_event_broadcaster: GameEventBroadcaster = null
 var match_session = null
 
 var _default_match_setup = DefaultMatchSetupScript.new()
+var _match_history_store = MatchHistoryStoreScript.new()
 var _match_started: bool = false
 
 func start_from_config(config: Dictionary) -> Error:
@@ -57,7 +59,14 @@ func start_from_config(config: Dictionary) -> Error:
 		startup_failed.emit("Dedicated match transport failed to bind port %d." % match_session.match_port)
 		return transport_err
 
-	var match_players: Dictionary = _default_match_setup.build_default_match(game_manager)
+	var match_players: Dictionary = {}
+	if match_session != null and not match_session.player_decks_by_session.is_empty():
+		match_players = _default_match_setup.build_match_from_session_decks(game_manager, match_session)
+		if match_players.is_empty():
+			startup_failed.emit("Dedicated match bootstrap failed to build the submitted player decks.")
+			return ERR_INVALID_DATA
+	else:
+		match_players = _default_match_setup.build_default_match(game_manager)
 	headless_match_host.enable_authoritative_broadcasts()
 	game_event_broadcaster = headless_match_host.game_event_broadcaster
 	if not game_manager.game_ended.is_connected(_on_game_ended):
@@ -104,6 +113,7 @@ func _validate_config(config: Dictionary) -> String:
 	return ""
 
 func _on_game_ended(_winner: Player, _loser: Player) -> void:
+	_record_match_result(_winner, _loser)
 	var tree := get_tree()
 	if tree == null:
 		return
@@ -112,3 +122,26 @@ func _on_game_ended(_winner: Player, _loser: Player) -> void:
 		if get_tree() != null:
 			get_tree().quit()
 	)
+
+func _record_match_result(winner: Player, loser: Player) -> void:
+	if match_session == null or game_manager == null or winner == null or loser == null:
+		return
+	var winner_index: int = game_manager.players.find(winner)
+	var loser_index: int = game_manager.players.find(loser)
+	if winner_index < 0 or loser_index < 0:
+		return
+	_match_history_store.record_completed_match(
+		match_session,
+		winner_index,
+		loser_index,
+		_get_player_god_name(winner),
+		_get_player_god_name(loser)
+	)
+
+func _get_player_god_name(player: Player) -> String:
+	if player == null or player.god_zone == null or player.god_zone.cards.is_empty():
+		return ""
+	var god_card = player.god_zone.cards[0]
+	if god_card == null:
+		return ""
+	return str(god_card.card_name).strip_edges()

@@ -814,6 +814,8 @@ func summon_creature_by_effect(
 	var resolved_mode: Card.CreatureMode = mode
 	if face_down:
 		resolved_mode = Card.CreatureMode.DEFENSIVE
+	if resolved_mode == Card.CreatureMode.AGGRESSIVE and _any_active_structure_forces_defensive_summon():
+		resolved_mode = Card.CreatureMode.DEFENSIVE
 	card.creature_mode = resolved_mode
 	card.reset_creature_action_state()
 	card.summoned_this_turn = true
@@ -2224,6 +2226,12 @@ func _get_active_structures() -> Array[StructureCard]:
 				if structure != null and not structure.abilities_suppressed():
 					active_structures.append(structure)
 	return active_structures
+
+func _any_active_structure_forces_defensive_summon() -> bool:
+	for structure in _get_active_structures():
+		if structure.has_method("forces_defensive_summon") and structure.forces_defensive_summon():
+			return true
+	return false
 
 func _get_graveyard_replacement_sources(card: Card) -> Array[StructureCard]:
 	var structures: Array[StructureCard] = []

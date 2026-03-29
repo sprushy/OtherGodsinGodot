@@ -102,6 +102,8 @@ func validate_deck(deck: Array[Card]) -> bool:
 		return false
 	if power_count > 3:
 		return false
+	if regular_card_count < 35:
+		return false
 	for card in deck:
 		if card.is_power and not card.is_god:
 			if card.culture != "Neutral" and card.culture != god_culture:

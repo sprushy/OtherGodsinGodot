@@ -3,9 +3,13 @@ extends Control
 const LobbyProtocolScript = preload("res://scripts/network/LobbyProtocol.gd")
 const LobbyServerScript = preload("res://scripts/server/LobbyServer.gd")
 const LobbyClientScript = preload("res://scripts/client/LobbyClient.gd")
+const LocalProfileStoreScript = preload("res://scripts/client/LocalProfileStore.gd")
 const MatchSessionScript = preload("res://scripts/server/MatchSession.gd")
 const DEDICATED_LOBBY_ENTRY_SCRIPT_PATH := "res://scripts/server/DedicatedLobbyServerMain.gd"
 const DEDICATED_SERVER_EXPORT_RELATIVE_PATH := "res://.exports/server/ClaudeOtherGodsServer.exe"
+const AUTH_MODE_GUEST := "guest"
+const AUTH_MODE_LOGIN := "login"
+const AUTH_MODE_REGISTER := "register"
 
 @onready var menu_container = $MenuContainer
 @onready var game_container = $GameContainer
@@ -30,6 +34,15 @@ var _match_launch_queued: bool = false
 var _pending_host_room_creation: bool = false
 var _spawned_lobby_process_id: int = 0
 var _dedicated_lobby_connect_attempts_remaining: int = 0
+var _local_profile_store = null
+var _local_profile_id: String = ""
+var _last_submitted_lobby_room_id: String = ""
+var _last_submitted_lobby_deck_id: String = ""
+var _auth_mode_option: OptionButton = null
+var _password_line_edit: LineEdit = null
+var _resume_match_button: Button = null
+var _profile_summary_label: Label = null
+var _current_profile_summary: Dictionary = {}
 
 func _ready() -> void:
 	_fit_to_viewport()
@@ -60,6 +73,12 @@ func _ready() -> void:
 	if ready_button:
 		ready_button.pressed.connect(_on_ready_button_pressed)
 
+	_build_auth_controls()
+	_ensure_local_profile_store()
+	_restore_auth_preferences()
+	_build_profile_summary_controls()
+	_build_resume_controls()
+	_restore_saved_resume_state()
 	show_menu()
 	_smoke_config = _parse_smoke_config(OS.get_cmdline_user_args())
 	if not _smoke_config.is_empty():
@@ -72,6 +91,10 @@ func _bind_game_signals() -> void:
 			var callback := Callable(self, "_on_game_forfeit_requested")
 			if not game.forfeit_requested.is_connected(callback):
 				game.forfeit_requested.connect(callback)
+		if game != null and game.has_signal("match_session_cleared"):
+			var clear_callback := Callable(self, "_on_match_session_cleared")
+			if not game.match_session_cleared.is_connected(clear_callback):
+				game.match_session_cleared.connect(clear_callback)
 
 func _fit_to_viewport() -> void:
 	position = Vector2.ZERO
@@ -94,6 +117,9 @@ func _on_deck_builder_pressed() -> void:
 
 	var db := DeckBuilderUI.new()
 	db.name = "DeckBuilder"
+	db.configure_profile_store(_local_profile_store, _local_profile_id, _get_player_name("Player"))
+	if db.has_method("configure_online_sync"):
+		db.configure_online_sync(lobby_client)
 	db.back_pressed.connect(func() -> void:
 		db.queue_free()
 		show_menu()
@@ -120,6 +146,10 @@ func _on_card_test_pressed() -> void:
 	get_node("GameContainer/CardTest").start_game()
 
 func _on_host_game_pressed() -> void:
+	var auth_error := _validate_auth_inputs()
+	if not auth_error.is_empty():
+		status_label.text = auth_error
+		return
 	_match_launch_queued = false
 	_cleanup_lobby(false)
 	_is_local_lobby_host = true
@@ -169,15 +199,23 @@ func _on_connect_pressed() -> void:
 
 	var connect_err: Error = lobby_client.connect_to_server(
 		_current_lobby_ip,
-		_get_player_name("Guest"),
+		_get_lobby_login_name("Guest"),
 		_lobby_session_id,
 		_lobby_reconnect_token,
-		_get_configured_lobby_port()
+		_get_configured_lobby_port(),
+		_local_profile_id,
+		_get_selected_auth_mode(),
+		_get_auth_password()
 	)
 	if connect_err != OK:
 		status_label.text = "Could not connect to lobby at %s." % _current_lobby_ip
 
 func _connect_local_host_to_dedicated_lobby() -> void:
+	var auth_error := _validate_auth_inputs()
+	if not auth_error.is_empty():
+		status_label.text = auth_error
+		_fail_smoke_if_enabled("AUTH_ERROR:%s" % auth_error)
+		return
 	_write_smoke_trace("host_connect_attempt remaining=%d" % _dedicated_lobby_connect_attempts_remaining)
 	if _dedicated_lobby_connect_attempts_remaining <= 0:
 		status_label.text = "Dedicated lobby server did not become available."
@@ -205,10 +243,13 @@ func _connect_local_host_to_dedicated_lobby() -> void:
 	_bind_lobby_client_signals()
 	var connect_err: Error = lobby_client.connect_to_server(
 		_current_lobby_ip,
-		_get_player_name("Host"),
+		_get_lobby_login_name("Host"),
 		_lobby_session_id,
 		_lobby_reconnect_token,
-		_get_configured_lobby_port()
+		_get_configured_lobby_port(),
+		_local_profile_id,
+		_get_selected_auth_mode(),
+		_get_auth_password()
 	)
 	if connect_err != OK:
 		_queue_host_lobby_retry("Could not connect to dedicated lobby at %s." % _current_lobby_ip)
@@ -245,6 +286,14 @@ func _bind_lobby_client_signals() -> void:
 		lobby_client.room_error.connect(_on_lobby_room_error)
 	if not lobby_client.match_assigned.is_connected(_on_remote_match_assigned):
 		lobby_client.match_assigned.connect(_on_remote_match_assigned)
+	if not lobby_client.account_deck_list_received.is_connected(_on_account_deck_list_received):
+		lobby_client.account_deck_list_received.connect(_on_account_deck_list_received)
+	if not lobby_client.account_deck_saved.is_connected(_on_account_deck_saved):
+		lobby_client.account_deck_saved.connect(_on_account_deck_saved)
+	if not lobby_client.account_deck_deleted.is_connected(_on_account_deck_deleted):
+		lobby_client.account_deck_deleted.connect(_on_account_deck_deleted)
+	if not lobby_client.profile_summary_received.is_connected(_on_profile_summary_received):
+		lobby_client.profile_summary_received.connect(_on_profile_summary_received)
 	if not lobby_client.connection_failed.is_connected(_on_lobby_connection_failed):
 		lobby_client.connection_failed.connect(_on_lobby_connection_failed)
 	if not lobby_client.disconnected_from_lobby.is_connected(_on_lobby_disconnected):
@@ -258,7 +307,14 @@ func _on_lobby_login_succeeded(session_id: String, reconnect_token: String, play
 	_write_smoke_trace("lobby_login_succeeded session=%s player=%s host=%s" % [session_id, player_name, str(_is_local_lobby_host)])
 	_lobby_session_id = session_id
 	_lobby_reconnect_token = reconnect_token
+	_capture_logged_in_profile(player_name)
+	_save_lobby_resume()
+	_current_profile_summary.clear()
+	_refresh_profile_summary_label()
+	_maybe_request_account_decks()
+	_maybe_request_profile_summary()
 	player_name_line_edit.text = player_name
+	_update_resume_controls()
 	if _is_local_lobby_host and _pending_host_room_creation:
 		_pending_host_room_creation = false
 		status_label.text = "Signed in as %s. Creating room..." % player_name
@@ -269,11 +325,31 @@ func _on_lobby_login_succeeded(session_id: String, reconnect_token: String, play
 	if lobby_client != null and not _pending_join_room_code.is_empty():
 		lobby_client.join_room(_pending_join_room_code)
 
-func _on_lobby_reconnect_succeeded(session_id: String, reconnect_token: String, player_name: String, room: Dictionary) -> void:
+func _on_lobby_reconnect_succeeded(
+	session_id: String,
+	reconnect_token: String,
+	player_name: String,
+	room: Dictionary,
+	active_match_info: Dictionary
+) -> void:
 	_write_smoke_trace("lobby_reconnect_succeeded session=%s player=%s" % [session_id, player_name])
 	_lobby_session_id = session_id
 	_lobby_reconnect_token = reconnect_token
+	_capture_logged_in_profile(player_name)
+	_save_lobby_resume()
+	_current_profile_summary.clear()
+	_refresh_profile_summary_label()
+	_maybe_request_account_decks()
+	_maybe_request_profile_summary()
 	player_name_line_edit.text = player_name
+	_update_resume_controls()
+	if not active_match_info.is_empty():
+		_save_active_match_resume(active_match_info)
+		status_label.text = "Lobby session restored. Rejoining your active match..."
+		call_deferred("_resume_active_match_from_lobby", active_match_info)
+		return
+	if not _get_saved_active_match().is_empty():
+		_clear_saved_match_resume()
 	if _is_local_lobby_host and _pending_host_room_creation:
 		if room.is_empty():
 			_pending_host_room_creation = false
@@ -303,6 +379,7 @@ func _apply_room_snapshot(snapshot: Dictionary) -> void:
 	_write_smoke_trace("room_snapshot room=%s members=%d" % [room_id, snapshot.get("members", []).size()])
 	room_code_line_edit.text = room_id
 	_write_smoke_room_code(room_id)
+	_maybe_submit_current_profile_deck(room_id, snapshot)
 	ready_button.visible = true
 	ready_button.text = "Unready" if _is_local_player_ready() else "Ready"
 
@@ -312,7 +389,11 @@ func _apply_room_snapshot(snapshot: Dictionary) -> void:
 		var ready_text := "ready" if bool(member.get("is_ready", false)) else "waiting"
 		var connect_text := "online" if bool(member.get("is_connected", false)) else "offline"
 		var host_text := " (host)" if bool(member.get("is_host", false)) else ""
-		member_lines.append("%s%s - %s, %s" % [player_name, host_text, ready_text, connect_text])
+		var deck_text := "deck ok" if bool(member.get("has_valid_deck", false)) else "deck missing"
+		var selected_deck_name := str(member.get("selected_deck_name", "")).strip_edges()
+		if not selected_deck_name.is_empty():
+			deck_text = selected_deck_name
+		member_lines.append("%s%s - %s, %s, %s" % [player_name, host_text, ready_text, connect_text, deck_text])
 
 	var share_text := "Share IP %s and room code %s." % [_current_lobby_ip, room_id]
 	status_label.text = "Room %s\n%s\n%s" % [room_id, "\n".join(member_lines), share_text]
@@ -322,6 +403,7 @@ func _on_local_match_assigned(match_info: Dictionary) -> void:
 	if _match_launch_queued:
 		return
 	_match_launch_queued = true
+	_save_active_match_resume(match_info)
 	_write_smoke_trace("local_match_assigned match=%s" % str(match_info.get("match_id", "")))
 	status_label.text = "Both players are ready. Preparing the match server..."
 	_write_smoke_result("MATCH_ASSIGNED_HOST:%s" % str(match_info))
@@ -331,6 +413,7 @@ func _on_remote_match_assigned(match_info: Dictionary) -> void:
 	if _match_launch_queued:
 		return
 	_match_launch_queued = true
+	_save_active_match_resume(match_info)
 	_write_smoke_trace("remote_match_assigned match=%s" % str(match_info.get("match_id", "")))
 	var match_ip := str(match_info.get("server_ip", _current_lobby_ip))
 	var match_port := int(match_info.get("match_port", _get_configured_match_port()))
@@ -439,13 +522,20 @@ func _cleanup_lobby(clear_session: bool) -> void:
 		_match_launch_queued = false
 		_pending_host_room_creation = false
 		_dedicated_lobby_connect_attempts_remaining = 0
+		_last_submitted_lobby_room_id = ""
+		_last_submitted_lobby_deck_id = ""
 		_lobby_session_id = ""
 		_lobby_reconnect_token = ""
 		_pending_join_room_code = ""
 		_current_lobby_ip = "127.0.0.1"
 		_is_local_lobby_host = false
 		room_code_line_edit.text = ""
+		_clear_saved_lobby_resume()
+		_clear_saved_match_resume()
+		_current_profile_summary.clear()
+		_refresh_profile_summary_label()
 		status_label.text = "Host a room on this machine, or join one by IP and room code."
+	_update_resume_controls()
 
 func _cleanup_lobby_client() -> void:
 	if lobby_client == null:
@@ -500,6 +590,365 @@ func _get_player_name(default_name: String) -> String:
 		return default_name
 	return player_name
 
+func _ensure_local_profile_store() -> void:
+	if _local_profile_store != null:
+		return
+	_local_profile_store = LocalProfileStoreScript.new()
+	var profile: Dictionary = _local_profile_store.restore_last_profile("Player")
+	_local_profile_id = str(profile.get("profile_id", "")).strip_edges()
+	var display_name := str(profile.get("display_name", "Player")).strip_edges()
+	if not display_name.is_empty():
+		player_name_line_edit.text = display_name
+
+func _remember_local_profile(player_name: String) -> String:
+	_ensure_local_profile_store()
+	if _local_profile_store == null:
+		return player_name
+	var profile: Dictionary = _local_profile_store.remember_profile(_local_profile_id, player_name)
+	_local_profile_id = str(profile.get("profile_id", _local_profile_id)).strip_edges()
+	return str(profile.get("display_name", player_name))
+
+func _capture_logged_in_profile(player_name: String) -> void:
+	_ensure_local_profile_store()
+	if _local_profile_store == null:
+		return
+	if lobby_client != null:
+		_local_profile_id = str(lobby_client.current_profile_id).strip_edges()
+		if not str(lobby_client.current_username).strip_edges().is_empty():
+			_local_profile_store.remember_account_username(str(lobby_client.current_username))
+			_local_profile_store.set_preferred_auth_mode(AUTH_MODE_LOGIN)
+		else:
+			_local_profile_store.set_preferred_auth_mode(AUTH_MODE_GUEST)
+	var profile: Dictionary = _local_profile_store.remember_profile(_local_profile_id, player_name)
+	_local_profile_id = str(profile.get("profile_id", _local_profile_id)).strip_edges()
+	if _password_line_edit != null and str(lobby_client.current_account_id).strip_edges() != "":
+		_password_line_edit.text = ""
+	_update_resume_controls()
+
+func _maybe_request_account_decks() -> void:
+	if lobby_client == null:
+		return
+	if str(lobby_client.current_account_id).strip_edges().is_empty():
+		return
+	lobby_client.request_account_decks()
+
+func _maybe_request_profile_summary() -> void:
+	if lobby_client == null:
+		return
+	if str(lobby_client.current_profile_id).strip_edges().is_empty():
+		return
+	lobby_client.request_profile_summary()
+
+func _on_account_deck_list_received(decks) -> void:
+	_ensure_local_profile_store()
+	if _local_profile_store == null or _local_profile_id.is_empty():
+		return
+	var remote_decks: Array[Dictionary] = []
+	if decks is Array:
+		for entry in decks:
+			if entry is Dictionary:
+				remote_decks.append((entry as Dictionary).duplicate(true))
+	if remote_decks.is_empty():
+		for local_deck in _local_profile_store.list_decks(_local_profile_id):
+			if lobby_client == null:
+				break
+			lobby_client.save_account_deck(
+				str(local_deck.get("name", "")),
+				local_deck.get("cards", {}),
+				str(local_deck.get("deck_id", ""))
+			)
+		_refresh_open_deck_builder_saved_decks()
+		return
+	_local_profile_store.replace_decks(_local_profile_id, remote_decks)
+	_refresh_open_deck_builder_saved_decks()
+
+func _on_account_deck_saved(deck) -> void:
+	_ensure_local_profile_store()
+	if _local_profile_store == null or _local_profile_id.is_empty() or not (deck is Dictionary):
+		return
+	_local_profile_store.upsert_saved_deck(_local_profile_id, deck as Dictionary)
+	_refresh_open_deck_builder_saved_decks()
+
+func _on_account_deck_deleted(deck_id: String) -> void:
+	_ensure_local_profile_store()
+	if _local_profile_store == null or _local_profile_id.is_empty():
+		return
+	_local_profile_store.delete_deck(_local_profile_id, deck_id)
+	_refresh_open_deck_builder_saved_decks()
+
+func _on_profile_summary_received(summary) -> void:
+	if not (summary is Dictionary):
+		return
+	_current_profile_summary = (summary as Dictionary).duplicate(true)
+	_refresh_profile_summary_label()
+
+func _refresh_open_deck_builder_saved_decks() -> void:
+	var deck_builder = game_container.get_node_or_null("DeckBuilder")
+	if deck_builder == null or not deck_builder.has_method("reload_saved_decks_from_store"):
+		return
+	deck_builder.reload_saved_decks_from_store()
+
+func _build_profile_summary_controls() -> void:
+	if multiplayer_container == null or _profile_summary_label != null:
+		return
+	_profile_summary_label = Label.new()
+	_profile_summary_label.name = "ProfileSummaryLabel"
+	_profile_summary_label.visible = false
+	_profile_summary_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_profile_summary_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	_profile_summary_label.vertical_alignment = VERTICAL_ALIGNMENT_TOP
+	multiplayer_container.add_child(_profile_summary_label)
+
+func _refresh_profile_summary_label() -> void:
+	if _profile_summary_label == null:
+		return
+	if _current_profile_summary.is_empty():
+		_profile_summary_label.visible = false
+		_profile_summary_label.text = ""
+		return
+	var total_wins: int = int(_current_profile_summary.get("total_wins", 0))
+	var total_losses: int = int(_current_profile_summary.get("total_losses", 0))
+	var lines: Array[String] = []
+	lines.append("Match Record: %d-%d" % [total_wins, total_losses])
+
+	var god_records = _current_profile_summary.get("god_records", [])
+	if god_records is Array and not (god_records as Array).is_empty():
+		lines.append("By God:")
+		var displayed_god_records: int = 0
+		for raw_record in god_records:
+			if not (raw_record is Dictionary):
+				continue
+			var god_record: Dictionary = raw_record as Dictionary
+			lines.append("%s %d-%d" % [
+				str(god_record.get("god_name", "Unknown God")),
+				int(god_record.get("wins", 0)),
+				int(god_record.get("losses", 0)),
+			])
+			displayed_god_records += 1
+			if displayed_god_records >= 4:
+				break
+
+	var recent_matches = _current_profile_summary.get("recent_matches", [])
+	if recent_matches is Array and not (recent_matches as Array).is_empty():
+		lines.append("Recent:")
+		var displayed_recent_matches: int = 0
+		for raw_match in recent_matches:
+			if not (raw_match is Dictionary):
+				continue
+			var recent_match: Dictionary = raw_match as Dictionary
+			var result_text: String = "W" if str(recent_match.get("result", "")).to_lower() == "win" else "L"
+			lines.append("%s as %s vs %s" % [
+				result_text,
+				str(recent_match.get("god_name", "Unknown God")),
+				str(recent_match.get("opponent_god_name", "Unknown God")),
+			])
+			displayed_recent_matches += 1
+			if displayed_recent_matches >= 3:
+				break
+
+	_profile_summary_label.text = "\n".join(lines)
+	_profile_summary_label.visible = true
+
+func _build_resume_controls() -> void:
+	if multiplayer_container == null or _resume_match_button != null:
+		return
+	_resume_match_button = Button.new()
+	_resume_match_button.name = "ResumeMatchButton"
+	_resume_match_button.text = "Resume Match"
+	_resume_match_button.visible = false
+	_resume_match_button.pressed.connect(_on_resume_match_pressed)
+	multiplayer_container.add_child(_resume_match_button)
+	var insert_index := multiplayer_container.get_children().find(connect_button)
+	if insert_index >= 0:
+		multiplayer_container.move_child(_resume_match_button, insert_index)
+
+func _restore_saved_resume_state() -> void:
+	_update_resume_controls()
+	_refresh_profile_summary_label()
+	var saved_match := _get_saved_active_match()
+	var saved_lobby_resume := _get_saved_lobby_resume()
+	if saved_match.is_empty() or saved_lobby_resume.is_empty():
+		return
+	multiplayer_container.visible = true
+	ready_button.visible = false
+	ip_line_edit.text = str(saved_lobby_resume.get("lobby_ip", "127.0.0.1"))
+	status_label.text = "A live match can be resumed from this device."
+
+func _update_resume_controls() -> void:
+	if _resume_match_button == null or _local_profile_store == null:
+		return
+	var has_resume := not _get_saved_active_match().is_empty() and not _get_saved_lobby_resume().is_empty()
+	_resume_match_button.visible = has_resume
+
+func _get_saved_lobby_resume() -> Dictionary:
+	if _local_profile_store == null:
+		return {}
+	return _local_profile_store.get_lobby_resume(_get_resume_profile_id())
+
+func _get_saved_active_match() -> Dictionary:
+	if _local_profile_store == null:
+		return {}
+	return _local_profile_store.get_active_match(_get_resume_profile_id())
+
+func _get_resume_profile_id() -> String:
+	if _local_profile_store == null:
+		return _local_profile_id
+	if not _local_profile_store.get_active_match(_local_profile_id).is_empty() and not _local_profile_store.get_lobby_resume(_local_profile_id).is_empty():
+		return _local_profile_id
+	var fallback_profile_id: String = str(_local_profile_store.get_latest_resume_profile_id())
+	if not fallback_profile_id.is_empty():
+		return fallback_profile_id
+	return _local_profile_id
+
+func _save_lobby_resume() -> void:
+	if _local_profile_store == null or _local_profile_id.is_empty() or _lobby_session_id.is_empty() or _lobby_reconnect_token.is_empty():
+		return
+	var username := ""
+	var auth_mode := _get_selected_auth_mode()
+	if lobby_client != null:
+		username = str(lobby_client.current_username).strip_edges()
+		auth_mode = str(lobby_client.current_auth_mode).strip_edges().to_lower()
+	_local_profile_store.remember_lobby_resume(
+		_local_profile_id,
+		_lobby_session_id,
+		_lobby_reconnect_token,
+		player_name_line_edit.text.strip_edges(),
+		_current_lobby_ip,
+		_get_configured_lobby_port(),
+		username,
+		auth_mode
+	)
+	_update_resume_controls()
+
+func _clear_saved_lobby_resume() -> void:
+	if _local_profile_store == null:
+		return
+	_local_profile_store.clear_lobby_resume(_get_resume_profile_id())
+	_update_resume_controls()
+
+func _save_active_match_resume(match_info: Dictionary) -> void:
+	if _local_profile_store == null or _local_profile_id.is_empty() or match_info.is_empty():
+		return
+	_local_profile_store.remember_active_match(_local_profile_id, match_info)
+	_update_resume_controls()
+
+func _clear_saved_match_resume() -> void:
+	if _local_profile_store == null:
+		return
+	_local_profile_store.clear_active_match(_get_resume_profile_id())
+	_update_resume_controls()
+
+func _on_resume_match_pressed() -> void:
+	var resume_profile_id := _get_resume_profile_id()
+	var saved_lobby_resume := _get_saved_lobby_resume()
+	var saved_match := _get_saved_active_match()
+	if saved_lobby_resume.is_empty() or saved_match.is_empty():
+		status_label.text = "No saved match resume data was found."
+		_update_resume_controls()
+		return
+	if not resume_profile_id.is_empty():
+		_local_profile_id = resume_profile_id
+	_cleanup_lobby(false)
+	_match_launch_queued = false
+	_pending_host_room_creation = false
+	_pending_join_room_code = ""
+	_is_local_lobby_host = false
+	multiplayer_container.visible = true
+	ready_button.visible = false
+	_current_lobby_ip = str(saved_lobby_resume.get("lobby_ip", "127.0.0.1")).strip_edges()
+	if _current_lobby_ip.is_empty():
+		_current_lobby_ip = "127.0.0.1"
+	ip_line_edit.text = _current_lobby_ip
+	status_label.text = "Restoring your lobby session..."
+	lobby_client = LobbyClientScript.new()
+	lobby_client.name = "LobbyPeer"
+	lobby_client.use_default_multiplayer = true
+	_configure_lobby_client_trace(lobby_client)
+	_attach_lobby_client(lobby_client)
+	_bind_lobby_client_signals()
+	var connect_err: Error = lobby_client.connect_to_server(
+		_current_lobby_ip,
+		str(saved_lobby_resume.get("username", saved_lobby_resume.get("player_name", "Player"))),
+		str(saved_lobby_resume.get("session_id", "")),
+		str(saved_lobby_resume.get("reconnect_token", "")),
+		int(saved_lobby_resume.get("lobby_port", _get_configured_lobby_port())),
+		_local_profile_id,
+		str(saved_lobby_resume.get("auth_mode", AUTH_MODE_GUEST)),
+		""
+	)
+	if connect_err != OK:
+		status_label.text = "Could not restore the saved lobby session."
+
+func _resume_active_match_from_lobby(match_info: Dictionary) -> void:
+	if match_info.is_empty() or _match_launch_queued:
+		return
+	_match_launch_queued = true
+	_cleanup_lobby(false)
+	call_deferred(
+		"_launch_assigned_match",
+		false,
+		str(match_info.get("server_ip", _current_lobby_ip)),
+		int(match_info.get("match_port", _get_configured_match_port())),
+		match_info
+	)
+
+func _on_match_session_cleared() -> void:
+	_clear_saved_match_resume()
+
+func _maybe_submit_current_profile_deck(room_id: String, snapshot: Dictionary) -> void:
+	if lobby_client == null or _local_profile_store == null or _lobby_session_id.is_empty():
+		return
+	var local_member: Dictionary = {}
+	for member in snapshot.get("members", []):
+		if str(member.get("session_id", "")) != _lobby_session_id:
+			continue
+		local_member = member
+		break
+	if local_member.is_empty():
+		return
+	if bool(local_member.get("has_valid_deck", false)):
+		_last_submitted_lobby_room_id = room_id
+		_last_submitted_lobby_deck_id = str(local_member.get("selected_deck_id", "")).strip_edges()
+		return
+
+	var selected_deck_id: String = _local_profile_store.get_last_selected_deck_id(_local_profile_id)
+	var selected_deck: Dictionary = {}
+	if not selected_deck_id.is_empty():
+		selected_deck = _local_profile_store.get_deck(_local_profile_id, selected_deck_id)
+	if selected_deck.is_empty() and not _smoke_config.is_empty():
+		selected_deck = {
+			"deck_id": "smoke_default",
+			"name": "Smoke Default Deck",
+			"cards": {
+				"Baldr": 1,
+				"Blessed Knights": 3,
+				"Brown Bear": 3,
+				"Berserker": 3,
+				"Again-Walker": 3,
+				"Byggvir": 3,
+				"Bit Meseri": 3,
+				"Absence": 3,
+				"Warding Stone": 3,
+				"Void Shield": 3,
+				"Bearded Axe": 3,
+				"Blot Sacrifice": 3,
+				"Fall of the Mighty": 2,
+			},
+		}
+		selected_deck_id = "smoke_default"
+	if selected_deck.is_empty():
+		status_label.text = "Open Deck Builder and save a valid deck before readying up."
+		return
+	if _last_submitted_lobby_room_id == room_id and _last_submitted_lobby_deck_id == selected_deck_id:
+		return
+	lobby_client.submit_deck(
+		str(selected_deck.get("name", "Default Deck")),
+		selected_deck.get("cards", {}),
+		selected_deck_id
+	)
+	_last_submitted_lobby_room_id = room_id
+	_last_submitted_lobby_deck_id = selected_deck_id
+
 func _get_configured_lobby_port() -> int:
 	if _smoke_config.is_empty():
 		return LobbyProtocolScript.PORT
@@ -517,6 +966,12 @@ func _start_smoke_mode() -> void:
 
 	ip_line_edit.text = str(_smoke_config.get("ip", "127.0.0.1"))
 	player_name_line_edit.text = str(_smoke_config.get("player_name", "Smoke%s" % role.capitalize()))
+	var smoke_auth_mode: String = str(_smoke_config.get("auth_mode", AUTH_MODE_GUEST)).strip_edges().to_lower()
+	if smoke_auth_mode not in [AUTH_MODE_GUEST, AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
+		smoke_auth_mode = AUTH_MODE_GUEST
+	_set_auth_mode(smoke_auth_mode)
+	if _password_line_edit != null:
+		_password_line_edit.text = str(_smoke_config.get("password", ""))
 
 	var timeout_seconds := float(_smoke_config.get("timeout", 25.0))
 	var timeout_timer := get_tree().create_timer(timeout_seconds)
@@ -535,6 +990,13 @@ func _start_smoke_mode() -> void:
 			_wait_for_smoke_room_code()
 			return
 		_join_smoke_room(room_code)
+		return
+
+	if role == "resume":
+		var resume_timer := get_tree().create_timer(0.5)
+		resume_timer.timeout.connect(func() -> void:
+			_on_resume_match_pressed()
+		)
 
 func _wait_for_smoke_room_code() -> void:
 	var timer := get_tree().create_timer(0.5)
@@ -584,6 +1046,8 @@ func _parse_smoke_config(args: Array) -> Dictionary:
 		"role": str(config.get("smoke_role", "")),
 		"ip": str(config.get("smoke_ip", "127.0.0.1")),
 		"player_name": str(config.get("smoke_name", "")),
+		"auth_mode": str(config.get("smoke_auth_mode", AUTH_MODE_GUEST)),
+		"password": str(config.get("smoke_password", "")),
 		"room_file": str(config.get("smoke_room_file", "")),
 		"result_file": str(config.get("smoke_result_file", "")),
 		"trace_file": str(config.get("smoke_trace_file", "")),
@@ -775,3 +1239,103 @@ func _on_stealth_mode_btn_pressed() -> void:
 
 func _on_toggle_mode_button_pressed() -> void:
 	pass
+
+func _build_auth_controls() -> void:
+	if multiplayer_container == null:
+		return
+	if _auth_mode_option == null:
+		_auth_mode_option = OptionButton.new()
+		_auth_mode_option.name = "AuthModeOption"
+		_auth_mode_option.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_auth_mode_option.add_item("Guest")
+		_auth_mode_option.set_item_metadata(0, AUTH_MODE_GUEST)
+		_auth_mode_option.add_item("Login")
+		_auth_mode_option.set_item_metadata(1, AUTH_MODE_LOGIN)
+		_auth_mode_option.add_item("Register")
+		_auth_mode_option.set_item_metadata(2, AUTH_MODE_REGISTER)
+		_auth_mode_option.item_selected.connect(_on_auth_mode_selected)
+		multiplayer_container.add_child(_auth_mode_option)
+		var auth_insert_index := multiplayer_container.get_children().find(player_name_line_edit) + 1
+		multiplayer_container.move_child(_auth_mode_option, auth_insert_index)
+	if _password_line_edit == null:
+		_password_line_edit = LineEdit.new()
+		_password_line_edit.name = "PasswordLineEdit"
+		_password_line_edit.secret = true
+		_password_line_edit.placeholder_text = "Account password"
+		_password_line_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		multiplayer_container.add_child(_password_line_edit)
+		var password_insert_index := multiplayer_container.get_children().find(_auth_mode_option) + 1
+		multiplayer_container.move_child(_password_line_edit, password_insert_index)
+	_refresh_auth_controls()
+
+func _restore_auth_preferences() -> void:
+	if _local_profile_store == null:
+		return
+	var auth_mode: String = _local_profile_store.get_preferred_auth_mode()
+	_set_auth_mode(auth_mode)
+	if auth_mode != AUTH_MODE_GUEST:
+		var saved_username: String = _local_profile_store.get_last_account_username()
+		if not saved_username.is_empty():
+			player_name_line_edit.text = saved_username
+	_refresh_auth_controls()
+
+func _on_auth_mode_selected(_index: int) -> void:
+	_refresh_auth_controls()
+	if _local_profile_store == null:
+		return
+	var auth_mode := _get_selected_auth_mode()
+	_local_profile_store.set_preferred_auth_mode(auth_mode)
+	if auth_mode != AUTH_MODE_GUEST:
+		_local_profile_store.remember_account_username(player_name_line_edit.text)
+
+func _set_auth_mode(auth_mode: String) -> void:
+	if _auth_mode_option == null:
+		return
+	for index in range(_auth_mode_option.item_count):
+		if str(_auth_mode_option.get_item_metadata(index)) != auth_mode:
+			continue
+		_auth_mode_option.select(index)
+		break
+	_refresh_auth_controls()
+
+func _get_selected_auth_mode() -> String:
+	if _auth_mode_option == null or _auth_mode_option.item_count <= 0:
+		return AUTH_MODE_GUEST
+	var metadata = _auth_mode_option.get_item_metadata(_auth_mode_option.selected)
+	var auth_mode := str(metadata).strip_edges().to_lower()
+	if auth_mode in [AUTH_MODE_GUEST, AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
+		return auth_mode
+	return AUTH_MODE_GUEST
+
+func _refresh_auth_controls() -> void:
+	var auth_mode := _get_selected_auth_mode()
+	if player_name_line_edit != null:
+		player_name_line_edit.placeholder_text = "Player name" if auth_mode == AUTH_MODE_GUEST else "Account username"
+	if _password_line_edit != null:
+		_password_line_edit.visible = auth_mode != AUTH_MODE_GUEST
+
+func _validate_auth_inputs() -> String:
+	var auth_mode: String = _get_selected_auth_mode()
+	if auth_mode == AUTH_MODE_GUEST:
+		return ""
+	var username: String = player_name_line_edit.text.strip_edges()
+	if username.is_empty():
+		return "Enter an account username first."
+	if _password_line_edit == null or _password_line_edit.text.is_empty():
+		return "Enter your account password first."
+	return ""
+
+func _get_auth_password() -> String:
+	if _password_line_edit == null:
+		return ""
+	return _password_line_edit.text
+
+func _get_lobby_login_name(default_name: String) -> String:
+	var auth_mode := _get_selected_auth_mode()
+	var player_name := _get_player_name(default_name)
+	if auth_mode == AUTH_MODE_GUEST:
+		return _remember_local_profile(player_name)
+	if _local_profile_store != null:
+		_local_profile_store.set_preferred_auth_mode(auth_mode)
+		_local_profile_store.remember_account_username(player_name)
+	return player_name

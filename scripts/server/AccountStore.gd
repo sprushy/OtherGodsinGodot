@@ -1,0 +1,194 @@
+extends RefCounted
+class_name AccountStore
+
+const ServerPathsScript = preload("res://scripts/server/ServerPaths.gd")
+const MIN_USERNAME_LENGTH := 3
+const MAX_USERNAME_LENGTH := 24
+const MIN_PASSWORD_LENGTH := 8
+const PASSWORD_HASH_ROUNDS := 4096
+
+var _accounts_by_id: Dictionary = {}
+var _account_id_by_username: Dictionary = {}
+var _loaded: bool = false
+var _rng := RandomNumberGenerator.new()
+
+func _init() -> void:
+	_rng.randomize()
+
+func register_account(username: String, password: String) -> Dictionary:
+	_ensure_loaded()
+	var normalized_username := _normalize_username(username)
+	var username_error := _validate_username(normalized_username)
+	if not username_error.is_empty():
+		return _result(false, username_error)
+	var password_error := _validate_password(password)
+	if not password_error.is_empty():
+		return _result(false, password_error)
+	var username_key := _username_key(normalized_username)
+	if _account_id_by_username.has(username_key):
+		return _result(false, "That username is already taken.")
+
+	var account_id := _generate_account_id()
+	while _accounts_by_id.has(account_id):
+		account_id = _generate_account_id()
+
+	var now_unix := int(Time.get_unix_time_from_system())
+	var password_salt := _generate_salt(24)
+	var account := {
+		"account_id": account_id,
+		"username": normalized_username,
+		"username_key": username_key,
+		"password_salt": password_salt,
+		"password_hash": _hash_password(password, password_salt),
+		"created_unix": now_unix,
+		"last_seen_unix": now_unix,
+	}
+	_accounts_by_id[account_id] = account
+	_account_id_by_username[username_key] = account_id
+	_save()
+	return _result(true, "", _sanitize_account(account))
+
+func login_account(username: String, password: String) -> Dictionary:
+	_ensure_loaded()
+	var normalized_username := _normalize_username(username)
+	var username_error := _validate_username(normalized_username)
+	if not username_error.is_empty():
+		return _result(false, username_error)
+	var username_key := _username_key(normalized_username)
+	if not _account_id_by_username.has(username_key):
+		return _result(false, "That account was not found.")
+	var account_id := str(_account_id_by_username.get(username_key, "")).strip_edges()
+	if account_id.is_empty() or not _accounts_by_id.has(account_id):
+		return _result(false, "That account was not found.")
+	var account: Dictionary = (_accounts_by_id[account_id] as Dictionary).duplicate(true)
+	var expected_hash := str(account.get("password_hash", ""))
+	var salt := str(account.get("password_salt", ""))
+	if expected_hash.is_empty() or salt.is_empty():
+		return _result(false, "That account is missing password data.")
+	if _hash_password(password, salt) != expected_hash:
+		return _result(false, "Incorrect password.")
+	account["last_seen_unix"] = int(Time.get_unix_time_from_system())
+	_accounts_by_id[account_id] = account
+	_save()
+	return _result(true, "", _sanitize_account(account))
+
+func get_account(account_id: String) -> Dictionary:
+	_ensure_loaded()
+	var existing = _accounts_by_id.get(account_id.strip_edges(), {})
+	if existing is Dictionary:
+		return _sanitize_account(existing as Dictionary)
+	return {}
+
+func _ensure_loaded() -> void:
+	if _loaded:
+		return
+	_loaded = true
+	_accounts_by_id = {}
+	_account_id_by_username = {}
+	var storage_path: String = _get_storage_path()
+	if not FileAccess.file_exists(storage_path):
+		return
+	var file := FileAccess.open(storage_path, FileAccess.READ)
+	if file == null:
+		return
+	var parsed = JSON.parse_string(file.get_as_text())
+	file.close()
+	if not (parsed is Dictionary):
+		return
+	var root := parsed as Dictionary
+	var stored_accounts = root.get("accounts_by_id", {})
+	var stored_index = root.get("account_id_by_username", {})
+	if stored_accounts is Dictionary:
+		_accounts_by_id = (stored_accounts as Dictionary).duplicate(true)
+	if stored_index is Dictionary:
+		_account_id_by_username = (stored_index as Dictionary).duplicate(true)
+	if _account_id_by_username.is_empty():
+		for account_id in _accounts_by_id.keys():
+			var account = _accounts_by_id[account_id]
+			if not (account is Dictionary):
+				continue
+			var username_key := str((account as Dictionary).get("username_key", ""))
+			if username_key.is_empty():
+				username_key = _username_key(str((account as Dictionary).get("username", "")))
+			if not username_key.is_empty():
+				_account_id_by_username[username_key] = str(account_id)
+
+func _save() -> void:
+	var storage_path: String = _get_storage_path()
+	var parent_dir := storage_path.get_base_dir()
+	if not parent_dir.is_empty():
+		DirAccess.make_dir_recursive_absolute(parent_dir)
+	var file := FileAccess.open(storage_path, FileAccess.WRITE)
+	if file == null:
+		return
+	file.store_string(JSON.stringify({
+		"accounts_by_id": _accounts_by_id,
+		"account_id_by_username": _account_id_by_username,
+	}, "\t"))
+	file.flush()
+	file.close()
+
+func _result(success: bool, message: String, account: Dictionary = {}) -> Dictionary:
+	return {
+		"success": success,
+		"message": message,
+		"account": account.duplicate(true),
+	}
+
+func _sanitize_account(account: Dictionary) -> Dictionary:
+	return {
+		"account_id": str(account.get("account_id", "")),
+		"username": str(account.get("username", "")),
+		"created_unix": int(account.get("created_unix", 0)),
+		"last_seen_unix": int(account.get("last_seen_unix", 0)),
+	}
+
+func _normalize_username(username: String) -> String:
+	return username.strip_edges()
+
+func _validate_username(username: String) -> String:
+	if username.is_empty():
+		return "Enter a username."
+	if username.length() < MIN_USERNAME_LENGTH:
+		return "Username must be at least %d characters." % MIN_USERNAME_LENGTH
+	if username.length() > MAX_USERNAME_LENGTH:
+		return "Username must be at most %d characters." % MAX_USERNAME_LENGTH
+	for char_index in range(username.length()):
+		var codepoint := username.unicode_at(char_index)
+		var is_letter := (codepoint >= 48 and codepoint <= 57) or (codepoint >= 65 and codepoint <= 90) or (codepoint >= 97 and codepoint <= 122)
+		var is_allowed_symbol := codepoint == 95
+		if not is_letter and not is_allowed_symbol:
+			return "Username can only use letters, numbers, and underscores."
+	return ""
+
+func _validate_password(password: String) -> String:
+	var clean_password := password.strip_edges()
+	if clean_password.length() < MIN_PASSWORD_LENGTH:
+		return "Password must be at least %d characters." % MIN_PASSWORD_LENGTH
+	return ""
+
+func _username_key(username: String) -> String:
+	return username.to_lower()
+
+func _generate_account_id() -> String:
+	return "account_%s" % _generate_salt(12)
+
+func _generate_salt(length: int) -> String:
+	const CHARS := "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
+	var output := ""
+	for _i in range(length):
+		output += CHARS[_rng.randi_range(0, CHARS.length() - 1)]
+	return output
+
+func _hash_password(password: String, salt: String) -> String:
+	var hash_input := (salt + ":" + password).to_utf8_buffer()
+	for _round in range(PASSWORD_HASH_ROUNDS):
+		var context := HashingContext.new()
+		if context.start(HashingContext.HASH_SHA256) != OK:
+			return ""
+		context.update(hash_input)
+		hash_input = context.finish()
+	return hash_input.hex_encode()
+
+func _get_storage_path() -> String:
+	return ServerPathsScript.get_server_data_file_path("accounts.json")

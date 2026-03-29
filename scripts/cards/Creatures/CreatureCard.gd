@@ -5,6 +5,7 @@ class_name CreatureCard
 func _init() -> void:
 	super._init()
 	card_type = CardType.CREATURE
+	ability_immunity_tag = "creature_abilities"
 
 # Creature-specific hooks
 func on_attack(_game_manager: GameManager, _target) -> void:

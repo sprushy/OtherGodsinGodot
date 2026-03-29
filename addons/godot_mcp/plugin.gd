@@ -10,8 +10,14 @@ var _bufs: Array[PackedByteArray] = []
 var _states: Array[Dictionary] = []
 var _command_handler = null
 var _panel = null
+var _disabled_for_session: bool = false
 
 func _enter_tree() -> void:
+	if _should_disable_plugin():
+		_disabled_for_session = true
+		print("MCP plugin disabled for this session.")
+		return
+
 	_command_handler = preload("res://addons/godot_mcp/command_handler.gd").new()
 	_command_handler.set_editor_plugin(self)
 
@@ -27,6 +33,8 @@ func _enter_tree() -> void:
 	_panel.update_status("Running on port %d" % SERVER_PORT)
 
 func _exit_tree() -> void:
+	if _disabled_for_session:
+		return
 	if _server:
 		_server.stop()
 		_server = null
@@ -41,7 +49,7 @@ func _exit_tree() -> void:
 		_panel = null
 
 func _process(_delta: float) -> void:
-	if not _server:
+	if _disabled_for_session or not _server:
 		return
 
 	while _server.is_connection_available():
@@ -194,3 +202,18 @@ func _http(peer: StreamPeerTCP, status: int, content_type: String, body: String)
 	peer.put_data(head.to_utf8_buffer())
 	if body_bytes.size() > 0:
 		peer.put_data(body_bytes)
+
+func _should_disable_plugin() -> bool:
+	if OS.has_feature("dedicated_server"):
+		return true
+	if DisplayServer.get_name() == "headless":
+		return true
+	if OS.get_environment("GODOT_MCP_DISABLED").strip_edges() == "1":
+		return true
+	for arg in OS.get_cmdline_args():
+		var normalized_arg: String = str(arg).strip_edges().to_lower()
+		if normalized_arg == "--headless":
+			return true
+		if normalized_arg == "mcp_disabled=1":
+			return true
+	return false

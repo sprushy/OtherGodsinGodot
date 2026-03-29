@@ -2,6 +2,7 @@ extends Node
 class_name MatchSupervisor
 
 const MatchSessionScript = preload("res://scripts/server/MatchSession.gd")
+const ServerPathsScript = preload("res://scripts/server/ServerPaths.gd")
 const HEADLESS_ENTRY_SCRIPT_PATH := "res://scripts/server/HeadlessMatchServerMain.gd"
 const DEDICATED_SERVER_EXPORT_RELATIVE_PATH := "res://.exports/server/ClaudeOtherGodsServer.exe"
 
@@ -46,7 +47,12 @@ func configure(
 	project_path = p_project_path if not p_project_path.is_empty() else ProjectSettings.globalize_path("res://")
 	allow_in_process_fallback = p_allow_in_process_fallback
 
-func create_match(room_id: String, player_session_ids: Array[String]):
+func create_match(
+	room_id: String,
+	player_session_ids: Array[String],
+	player_decks_by_session: Dictionary = {},
+	player_identity_by_session: Dictionary = {}
+):
 	last_create_match_error = ""
 	var match_id: String = _generate_match_id()
 	while active_matches.has(match_id):
@@ -59,7 +65,9 @@ func create_match(room_id: String, player_session_ids: Array[String]):
 		room_id,
 		server_ip,
 		match_port,
-		player_session_ids
+		player_session_ids,
+		player_decks_by_session,
+		player_identity_by_session
 	)
 	session.mark_active()
 	if use_dedicated_headless and _launch_dedicated_match(session):
@@ -151,7 +159,7 @@ func _launch_dedicated_match(session) -> bool:
 	return true
 
 func _write_launch_config(session) -> String:
-	var base_dir := ProjectSettings.globalize_path("user://dedicated_matches")
+	var base_dir := ServerPathsScript.get_dedicated_matches_dir()
 	var mkdir_err := DirAccess.make_dir_recursive_absolute(base_dir)
 	if mkdir_err != OK and mkdir_err != ERR_ALREADY_EXISTS:
 		return ""

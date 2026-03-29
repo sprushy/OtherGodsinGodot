@@ -7,17 +7,32 @@ const LOBBY_EVENT_TYPE := "__lobby_event__"
 
 signal connected_to_lobby()
 signal login_succeeded(session_id: String, reconnect_token: String, player_name: String)
-signal reconnect_succeeded(session_id: String, reconnect_token: String, player_name: String, room: Dictionary)
+signal reconnect_succeeded(
+	session_id: String,
+	reconnect_token: String,
+	player_name: String,
+	room: Dictionary,
+	active_match_info: Dictionary
+)
 signal room_list_updated(rooms: Array)
 signal room_snapshot_updated(snapshot: Dictionary)
 signal room_error(message: String)
 signal match_assigned(match_info: Dictionary)
+signal account_deck_list_received(decks: Array)
+signal account_deck_saved(deck: Dictionary)
+signal account_deck_deleted(deck_id: String)
+signal profile_summary_received(summary: Dictionary)
 signal connection_failed(message: String)
 signal disconnected_from_lobby()
 
 var current_session_id: String = ""
 var current_reconnect_token: String = ""
 var current_player_name: String = "Guest"
+var current_profile_id: String = ""
+var current_account_id: String = ""
+var current_username: String = ""
+var current_auth_mode: String = "guest"
+var current_active_match_info: Dictionary = {}
 var trace_network: bool = false
 var trace_file_path: String = ""
 var multiplayer_mount_path: NodePath = NodePath("")
@@ -27,6 +42,9 @@ var network_manager: Node = null
 var _pending_player_name: String = "Guest"
 var _pending_session_id: String = ""
 var _pending_reconnect_token: String = ""
+var _pending_profile_id: String = ""
+var _pending_auth_mode: String = "guest"
+var _pending_password: String = ""
 
 func _ready() -> void:
 	_ensure_network_manager()
@@ -36,13 +54,21 @@ func connect_to_server(
 	player_name: String = "Guest",
 	session_id: String = "",
 	reconnect_token: String = "",
-	port: int = LobbyProtocolScript.PORT
+	port: int = LobbyProtocolScript.PORT,
+	profile_id: String = "",
+	auth_mode: String = "guest",
+	password: String = ""
 ) -> Error:
 	_pending_player_name = player_name.strip_edges()
 	if _pending_player_name.is_empty():
 		_pending_player_name = "Guest"
 	_pending_session_id = session_id.strip_edges()
 	_pending_reconnect_token = reconnect_token.strip_edges()
+	_pending_profile_id = profile_id.strip_edges()
+	_pending_auth_mode = auth_mode.strip_edges().to_lower()
+	if not _pending_auth_mode in ["guest", "login", "register"]:
+		_pending_auth_mode = "guest"
+	_pending_password = password
 
 	var connect_address: String = address.strip_edges()
 	if connect_address.is_empty():
@@ -73,6 +99,31 @@ func leave_room() -> void:
 func set_ready(is_ready: bool) -> void:
 	_send_request(LobbyProtocolScript.SET_READY, {"is_ready": is_ready})
 
+func submit_deck(deck_name: String, cards: Dictionary, deck_id: String = "") -> void:
+	_send_request(LobbyProtocolScript.SELECT_DECK, {
+		"deck_name": deck_name.strip_edges(),
+		"deck_id": deck_id.strip_edges(),
+		"cards": cards.duplicate(true),
+	})
+
+func request_account_decks() -> void:
+	_send_request(LobbyProtocolScript.REQUEST_ACCOUNT_DECKS)
+
+func save_account_deck(deck_name: String, cards: Dictionary, deck_id: String = "") -> void:
+	_send_request(LobbyProtocolScript.SAVE_ACCOUNT_DECK, {
+		"deck_name": deck_name.strip_edges(),
+		"deck_id": deck_id.strip_edges(),
+		"cards": cards.duplicate(true),
+	})
+
+func delete_account_deck(deck_id: String) -> void:
+	_send_request(LobbyProtocolScript.DELETE_ACCOUNT_DECK, {
+		"deck_id": deck_id.strip_edges(),
+	})
+
+func request_profile_summary() -> void:
+	_send_request(LobbyProtocolScript.REQUEST_PROFILE_SUMMARY)
+
 func lobby_event(message: Dictionary) -> void:
 	var message_type: String = LobbyProtocolScript.get_type(message)
 	var payload: Dictionary = LobbyProtocolScript.get_payload(message)
@@ -83,16 +134,28 @@ func lobby_event(message: Dictionary) -> void:
 			current_session_id = str(payload.get("session_id", ""))
 			current_reconnect_token = str(payload.get("reconnect_token", ""))
 			current_player_name = str(payload.get("player_name", _pending_player_name))
+			current_profile_id = str(payload.get("profile_id", _pending_profile_id))
+			current_account_id = str(payload.get("account_id", ""))
+			current_username = str(payload.get("username", current_player_name))
+			current_auth_mode = str(payload.get("auth_mode", _pending_auth_mode))
+			current_active_match_info = {}
 			login_succeeded.emit(current_session_id, current_reconnect_token, current_player_name)
 		LobbyProtocolScript.LOBBY_RECONNECT_OK:
 			current_session_id = str(payload.get("session_id", ""))
 			current_reconnect_token = str(payload.get("reconnect_token", ""))
 			current_player_name = str(payload.get("player_name", _pending_player_name))
+			current_profile_id = str(payload.get("profile_id", _pending_profile_id))
+			current_account_id = str(payload.get("account_id", ""))
+			current_username = str(payload.get("username", current_player_name))
+			current_auth_mode = str(payload.get("auth_mode", _pending_auth_mode))
+			var active_match = payload.get("active_match_info", {})
+			current_active_match_info = active_match.duplicate(true) if active_match is Dictionary else {}
 			reconnect_succeeded.emit(
 				current_session_id,
 				current_reconnect_token,
 				current_player_name,
-				payload.get("room", {})
+				payload.get("room", {}),
+				current_active_match_info
 			)
 		LobbyProtocolScript.ROOM_LIST:
 			room_list_updated.emit(payload.get("rooms", []))
@@ -102,6 +165,14 @@ func lobby_event(message: Dictionary) -> void:
 			room_error.emit(str(payload.get("message", "Unknown lobby error.")))
 		LobbyProtocolScript.MATCH_ASSIGNED:
 			match_assigned.emit(payload)
+		LobbyProtocolScript.ACCOUNT_DECK_LIST:
+			account_deck_list_received.emit(payload.get("decks", []))
+		LobbyProtocolScript.ACCOUNT_DECK_SAVED:
+			account_deck_saved.emit(payload.get("deck", {}))
+		LobbyProtocolScript.ACCOUNT_DECK_DELETED:
+			account_deck_deleted.emit(str(payload.get("deck_id", "")))
+		LobbyProtocolScript.PROFILE_SUMMARY:
+			profile_summary_received.emit(payload)
 
 func _on_connected_to_server() -> void:
 	_trace("connected to server")
@@ -113,8 +184,24 @@ func _on_connected_to_server() -> void:
 		})
 		return
 
+	if _pending_auth_mode == "register":
+		_send_request(LobbyProtocolScript.REGISTER_ACCOUNT, {
+			"username": _pending_player_name,
+			"password": _pending_password,
+			"profile_id": _pending_profile_id,
+		})
+		return
+	if _pending_auth_mode == "login":
+		_send_request(LobbyProtocolScript.LOGIN_ACCOUNT, {
+			"username": _pending_player_name,
+			"password": _pending_password,
+			"profile_id": _pending_profile_id,
+		})
+		return
+
 	_send_request(LobbyProtocolScript.LOGIN_GUEST, {
 		"player_name": _pending_player_name,
+		"profile_id": _pending_profile_id,
 	})
 
 func _on_connection_failed() -> void:

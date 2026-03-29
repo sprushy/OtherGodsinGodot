@@ -3,12 +3,15 @@
 extends Control
 class_name DeckBuilderUI
 
+const LocalProfileStoreScript = preload("res://scripts/client/LocalProfileStore.gd")
+const CardCatalogScript = preload("res://scripts/cards/CardCatalog.gd")
+
 signal back_pressed
 
 # ── constants ──────────────────────────────────────────────────────
 const CARD_W    := 140
 const CARD_H    := 192
-const MIN_DECK  := 20
+const MIN_REGULAR_CARDS := 35
 const DEFAULT_COLLECTION_ROWS := 3
 const COLLECTION_GAP  := 8.0
 const PAGE_REPEAT_INTERVAL_MS := 90
@@ -43,6 +46,9 @@ var _next_page_btn:    Button
 var _deck_list:        VBoxContainer
 var _deck_count_lbl:   Label
 var _validation_lbl:   Label
+var _profile_lbl:      Label
+var _deck_name_edit:   LineEdit
+var _saved_decks_option: OptionButton
 # preview
 var _prev_art:         TextureRect
 var _prev_name:        Label
@@ -52,6 +58,11 @@ var _prev_ability:     RichTextLabel
 var _prev_flavor:      Label
 # per-card count badge in collection (card_name -> Label)
 var _count_badges: Dictionary = {}
+var _local_profile_store = null
+var _active_profile_id: String = ""
+var _active_player_name: String = "Player"
+var _selected_saved_deck_id: String = ""
+var _online_lobby_client = null
 
 # ── init ───────────────────────────────────────────────────────────
 func _ready() -> void:
@@ -59,22 +70,28 @@ func _ready() -> void:
 	_all_cards = _make_all_cards()
 	_rebuild_filtered_cards_cache()
 	_build_ui()
+	_ensure_local_profile_store()
+	_load_profile_decks()
 	_refresh_grid()
 	_queue_collection_layout_refresh()
 	_refresh_deck_panel()
 
+func configure_profile_store(profile_store, profile_id: String, player_name: String) -> void:
+	_local_profile_store = profile_store
+	_active_profile_id = profile_id.strip_edges()
+	_active_player_name = player_name.strip_edges()
+	if _active_player_name.is_empty():
+		_active_player_name = "Player"
+	if is_inside_tree():
+		_ensure_local_profile_store()
+		_load_profile_decks()
+		_refresh_profile_labels()
+
+func configure_online_sync(lobby_client) -> void:
+	_online_lobby_client = lobby_client
+
 func _make_all_cards() -> Array:
-	return [
-		Thor.new(), Mummu.new(), AphroditeAreia.new(), Baldr.new(), Cernunnos.new(), DellingrTheDayspring.new(), Freyja.new(),
-		AcceleratedFate.new(), ACostToWalkTheWorlds.new(), AdvancedBuildingTechniques.new(), AllfathersSacrifice.new(), AltarOfDreams.new(), AnankesBinding.new(), AncientWisdom.new(), BerserkerMead.new(), Breidablik.new(), CallOfTheValkyrie.new(), DivineCaprice.new(), FeastOfAmbrosiaAndNectar.new(), FerociousDefence.new(), FireAndGold.new(), MechFactory.new(),
-		Berserker.new(), Beyla.new(), BlessedKnights.new(), BrownBear.new(), Byggvir.new(), DurinnSecondborn.new(), Fenrir.new(), FirstSageAdapa.new(), load("res://scripts/cards/Creatures/FourthSageEnmegalamma.gd").new(), load("res://scripts/cards/Creatures/GiantMasterArchitect.gd").new(), Skoll.new(), AnkouServantToTheReaper.new(), Anzu.new(), AnTheBowbender.new(),
-		AsagTheDestroyer.new(), Asakku.new(), Asaruludu.new(), Caleuche.new(), Capricorn.new(), ClayEaters.new(),
-		AgainWalker.new(), Alu.new(), Askelladen.new(), Aurboda.new(), DraugRevenant.new(), DevastatorMech.new(), Edimmu.new(), EnHeduAnna.new(), Enkidu.new(), EnkiLordOfEridu.new(), ErlqueensNightingale.new(), Gallu.new(), GalaTura.new(), RoboticFootsoldier.new(), SoldierOfTheBlackEmperor.new(), TitanicMech.new(),
-		BitMeseri.new(), CircleOfRebirth.new(), Earthquake.new(), FallOfTheMighty.new(), Famine.new(), FoolishOptimism.new(), preload("res://scripts/cards/Spells/FiresOfJudgment.gd").new(), ApollyonsDemiurge.new(), Absence.new(), BaneOfTheSvartalfar.new(), BlotSacrifice.new(), BookOfLife.new(), DeucalionsInfants.new(), Exorcism.new(), MeadOfPoetry.new(), DivineLightning.new(), FifaTheMagicalArrow.new(),
-		BeardedAxe.new(), DraupnirTheMultiplying.new(), Gambanteinn.new(),
-		WardingStone.new(), AncientPyre.new(), AnointingStatue.new(), DoorwayToTheVoid.new(), E2Abzu.new(), EriduCityOfSages.new(),
-		VoidShield.new(), Banishment.new(), Dromi.new(),
-	]
+	return CardCatalogScript.make_all_cards()
 
 # ── UI construction ────────────────────────────────────────────────
 func _build_ui() -> void:
@@ -397,6 +414,56 @@ func _build_deck_panel(parent: Control) -> void:
 	hdr.add_child(_deck_count_lbl)
 
 	# ── deck scroll list ─────────────────────────────────
+	var profile_row := HBoxContainer.new()
+	profile_row.add_theme_constant_override("separation", 6)
+	panel.add_child(profile_row)
+
+	var profile_caption := Label.new()
+	profile_caption.text = "Profile:"
+	profile_caption.add_theme_font_size_override("font_size", 11)
+	profile_caption.modulate = Color(0.7, 0.7, 0.7)
+	profile_row.add_child(profile_caption)
+
+	_profile_lbl = Label.new()
+	_profile_lbl.text = "Player"
+	_profile_lbl.add_theme_font_size_override("font_size", 11)
+	_profile_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	profile_row.add_child(_profile_lbl)
+
+	var deck_name_row := HBoxContainer.new()
+	deck_name_row.add_theme_constant_override("separation", 6)
+	panel.add_child(deck_name_row)
+
+	var deck_name_caption := Label.new()
+	deck_name_caption.text = "Deck Name:"
+	deck_name_caption.add_theme_font_size_override("font_size", 11)
+	deck_name_caption.modulate = Color(0.7, 0.7, 0.7)
+	deck_name_row.add_child(deck_name_caption)
+
+	_deck_name_edit = LineEdit.new()
+	_deck_name_edit.placeholder_text = "Default Deck"
+	_deck_name_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	deck_name_row.add_child(_deck_name_edit)
+
+	var saved_row := HBoxContainer.new()
+	saved_row.add_theme_constant_override("separation", 6)
+	panel.add_child(saved_row)
+
+	_saved_decks_option = OptionButton.new()
+	_saved_decks_option.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_saved_decks_option.item_selected.connect(_on_saved_deck_selected)
+	saved_row.add_child(_saved_decks_option)
+
+	var load_btn := Button.new()
+	load_btn.text = "Load"
+	load_btn.pressed.connect(_load_selected_deck)
+	saved_row.add_child(load_btn)
+
+	var delete_btn := Button.new()
+	delete_btn.text = "Delete"
+	delete_btn.pressed.connect(_delete_selected_deck)
+	saved_row.add_child(delete_btn)
+
 	var deck_scroll := ScrollContainer.new()
 	deck_scroll.size_flags_vertical   = Control.SIZE_EXPAND_FILL
 	deck_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -426,7 +493,7 @@ func _build_deck_panel(parent: Control) -> void:
 	var save_btn := Button.new()
 	save_btn.text = "Save Deck"
 	save_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	save_btn.pressed.connect(_save_deck)
+	save_btn.pressed.connect(_save_profile_deck)
 	btns.add_child(save_btn)
 
 	var clear_btn := Button.new()
@@ -717,6 +784,156 @@ func _save_deck() -> void:
 		print("DeckBuilder: save failed.")
 
 # ── validation ─────────────────────────────────────────────────────
+func _save_profile_deck() -> void:
+	_ensure_local_profile_store()
+	if _local_profile_store == null:
+		print("DeckBuilder: local profile store unavailable.")
+		return
+	if _deck.is_empty():
+		_set_status_flash("Nothing to save.")
+		return
+	var profile: Dictionary = _local_profile_store.remember_profile(_active_profile_id, _active_player_name)
+	_active_profile_id = str(profile.get("profile_id", _active_profile_id)).strip_edges()
+	_active_player_name = str(profile.get("display_name", _active_player_name)).strip_edges()
+	var deck_name := _deck_name_edit.text if _deck_name_edit != null else ""
+	var saved_deck: Dictionary = _local_profile_store.save_deck(
+		_active_profile_id,
+		deck_name,
+		_deck,
+		_selected_saved_deck_id
+	)
+	_selected_saved_deck_id = str(saved_deck.get("deck_id", _selected_saved_deck_id)).strip_edges()
+	if _deck_name_edit != null:
+		_deck_name_edit.text = str(saved_deck.get("name", _deck_name_edit.text))
+	_load_profile_decks()
+	if _can_sync_account_decks():
+		_online_lobby_client.save_account_deck(
+			str(saved_deck.get("name", _deck_name_edit.text if _deck_name_edit != null else LocalProfileStoreScript.DEFAULT_DECK_NAME)),
+			saved_deck.get("cards", _deck),
+			_selected_saved_deck_id
+		)
+	_set_status_flash("Deck saved for %s." % _active_player_name)
+
+func _load_selected_deck() -> void:
+	_ensure_local_profile_store()
+	if _local_profile_store == null or _selected_saved_deck_id.is_empty():
+		return
+	var saved_deck: Dictionary = _local_profile_store.get_deck(_active_profile_id, _selected_saved_deck_id)
+	if saved_deck.is_empty():
+		return
+	_apply_saved_deck(saved_deck)
+	_set_status_flash("Loaded %s." % str(saved_deck.get("name", "deck")))
+
+func _delete_selected_deck() -> void:
+	_ensure_local_profile_store()
+	if _local_profile_store == null or _selected_saved_deck_id.is_empty():
+		return
+	var deleted_deck_id: String = _selected_saved_deck_id
+	_local_profile_store.delete_deck(_active_profile_id, _selected_saved_deck_id)
+	_selected_saved_deck_id = ""
+	if _deck_name_edit != null:
+		_deck_name_edit.text = LocalProfileStoreScript.DEFAULT_DECK_NAME
+	_load_profile_decks()
+	if _can_sync_account_decks():
+		_online_lobby_client.delete_account_deck(deleted_deck_id)
+	_set_status_flash("Saved deck deleted.")
+
+func _on_saved_deck_selected(index: int) -> void:
+	if _saved_decks_option == null:
+		return
+	var metadata = _saved_decks_option.get_item_metadata(index)
+	if metadata == null:
+		_selected_saved_deck_id = ""
+		return
+	_selected_saved_deck_id = str(metadata).strip_edges()
+
+func _ensure_local_profile_store() -> void:
+	if _local_profile_store == null:
+		_local_profile_store = LocalProfileStoreScript.new()
+	if _active_player_name.is_empty():
+		_active_player_name = "Player"
+	var profile: Dictionary = _local_profile_store.ensure_profile(_active_profile_id, _active_player_name, true)
+	_active_profile_id = str(profile.get("profile_id", _active_profile_id)).strip_edges()
+	_active_player_name = str(profile.get("display_name", _active_player_name)).strip_edges()
+
+func _load_profile_decks() -> void:
+	_ensure_local_profile_store()
+	_refresh_profile_labels()
+	if _saved_decks_option == null:
+		return
+	_saved_decks_option.clear()
+	_saved_decks_option.add_item("Saved Decks")
+	_saved_decks_option.set_item_metadata(0, "")
+	var decks: Array[Dictionary] = _local_profile_store.list_decks(_active_profile_id)
+	for deck in decks:
+		var deck_name := str(deck.get("name", "Deck"))
+		_saved_decks_option.add_item(deck_name)
+		_saved_decks_option.set_item_metadata(_saved_decks_option.get_item_count() - 1, str(deck.get("deck_id", "")))
+
+	var preferred_deck_id := str(_local_profile_store.get_last_selected_deck_id(_active_profile_id)).strip_edges()
+	if preferred_deck_id.is_empty() and not decks.is_empty():
+		preferred_deck_id = str(decks[0].get("deck_id", "")).strip_edges()
+	_select_saved_deck(preferred_deck_id)
+	if not preferred_deck_id.is_empty() and _deck.is_empty():
+		var saved_deck: Dictionary = _local_profile_store.get_deck(_active_profile_id, preferred_deck_id)
+		if not saved_deck.is_empty():
+			_apply_saved_deck(saved_deck)
+	elif _deck_name_edit != null and _deck_name_edit.text.strip_edges().is_empty():
+		_deck_name_edit.text = LocalProfileStoreScript.DEFAULT_DECK_NAME
+
+func reload_saved_decks_from_store() -> void:
+	_load_profile_decks()
+
+func _refresh_profile_labels() -> void:
+	if _profile_lbl != null:
+		_profile_lbl.text = _active_player_name
+	if _deck_name_edit != null and _deck_name_edit.text.strip_edges().is_empty():
+		_deck_name_edit.text = LocalProfileStoreScript.DEFAULT_DECK_NAME
+
+func _select_saved_deck(deck_id: String) -> void:
+	_selected_saved_deck_id = deck_id.strip_edges()
+	if _saved_decks_option == null:
+		return
+	for index in _saved_decks_option.get_item_count():
+		var metadata = _saved_decks_option.get_item_metadata(index)
+		if str(metadata).strip_edges() != _selected_saved_deck_id:
+			continue
+		_saved_decks_option.select(index)
+		return
+	_saved_decks_option.select(0)
+
+func _apply_saved_deck(saved_deck: Dictionary) -> void:
+	_selected_saved_deck_id = str(saved_deck.get("deck_id", _selected_saved_deck_id)).strip_edges()
+	if _deck_name_edit != null:
+		_deck_name_edit.text = str(saved_deck.get("name", LocalProfileStoreScript.DEFAULT_DECK_NAME))
+	_deck = {}
+	var cards = saved_deck.get("cards", {})
+	if cards is Dictionary:
+		for raw_card_name in (cards as Dictionary).keys():
+			var count := int((cards as Dictionary)[raw_card_name])
+			if count > 0:
+				_deck[str(raw_card_name)] = count
+	_local_profile_store.remember_last_selected_deck(_active_profile_id, _selected_saved_deck_id)
+	_select_saved_deck(_selected_saved_deck_id)
+	_refresh_deck_panel()
+
+func _can_sync_account_decks() -> bool:
+	if _online_lobby_client == null or not is_instance_valid(_online_lobby_client):
+		return false
+	if str(_online_lobby_client.current_account_id).strip_edges().is_empty():
+		return false
+	return not str(_online_lobby_client.current_session_id).strip_edges().is_empty()
+
+func _set_status_flash(message: String) -> void:
+	if _validation_lbl == null:
+		return
+	_validation_lbl.text = "%s\n%s" % [message, _validation_lbl.text]
+	get_tree().create_timer(2.0).timeout.connect(
+		func() -> void:
+			if is_instance_valid(_validation_lbl):
+				_update_validation()
+	)
+
 func _update_validation() -> void:
 	var total := 0
 	var god_count := 0
@@ -780,10 +997,12 @@ func _update_validation() -> void:
 	else:
 		lines.append("✗ Legendaries: %d / %d" % [legendary_count, max_legends]); ok = false
 
-	if total < MIN_DECK:
-		lines.append("✗ Total: %d (min %d)" % [total, MIN_DECK]); ok = false
+	if regular_count < MIN_REGULAR_CARDS:
+		lines.append("✗ Regular Cards: %d (min %d, God/Powers excluded)" % [regular_count, MIN_REGULAR_CARDS]); ok = false
 	else:
-		lines.append("  Total: %d cards" % total)
+		lines.append("✓ Regular Cards: %d / %d" % [regular_count, MIN_REGULAR_CARDS])
+
+	lines.append("  Total Cards: %d" % total)
 
 	_validation_lbl.text = "\n".join(lines)
 	_validation_lbl.modulate = Color(0.5, 1.0, 0.55) if ok else Color(1.0, 0.85, 0.45)

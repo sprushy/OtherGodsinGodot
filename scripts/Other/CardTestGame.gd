@@ -173,43 +173,70 @@ func _setup_test_board() -> void:
 	game_manager.priority_player = null
 	game_manager._temporary_summon_cost_modifiers.clear()
 
-	_add_test_god(player1, Freyja.new())
-	_add_test_god(player2, Baldr.new())
+	# ── Gods ─────────────────────────────────────────────────────────────────
+	var guan_yu := GuanYu.new()
+	guan_yu.tactic_counters = 3  # Champion's Call immediately available (costs 3)
+	_add_test_god(player1, guan_yu)
+	_add_test_god(player2, Thor.new())
 
-	var tian_dragon := SoldierOfTheBlackEmperor.new()
-	var friendly_guard := Enkidu.new()
-	var doomed_scout := BlessedKnights.new()
-	var axe_guard := Berserker.new()
-	var fallen_einherjar := AgainWalker.new()
-	var fourth_sage_script = load("res://scripts/cards/Creatures/FourthSageEnmegalamma.gd")
+	# ── Powers ───────────────────────────────────────────────────────────────
+	_add_test_power(player1, 0, GiantsDisdain.new(), true)
 
-	_add_test_hand_card(player1, FiresOfJudgment.new())
-	_add_test_hand_card(player1, FoolishOptimism.new())
-	_add_test_hand_card(player1, FirstSageAdapa.new())
-	_add_test_hand_card(player1, Fenrir.new())
-	if fourth_sage_script != null:
-		_add_test_hand_card(player1, fourth_sage_script.new())
-	_add_test_hand_card(player1, Earthquake.new())
-	_add_test_hand_card(player1, FallOfTheMighty.new())
+	# ── P1 Board ─────────────────────────────────────────────────────────────
+	var berserker := Berserker.new()
+	var gilgamesh := Gilgamesh.new()
+	var gawain := Gawain.new()
+	var gudu_priest := GududPriest.new()
+	var garm := GarmWatchdogOfHel.new()
+	var gala_tura := GalaTura.new()
+	var gidim_ensi := GidimEnsi.new()
+	var gallu_board := Gallu.new()
 
-	_add_test_power(player1, 0, FireAndGold.new(), false)
-	_add_test_power(player1, 1, CallOfTheValkyrie.new(), true)
-	_add_test_power(player2, 0, AncientWisdom.new(), true)
+	# Graveyard cards must be placed BEFORE GalaTura summon so graveward applies to them.
+	_add_test_graveyard_card(player1, Gallu.new())
+	_add_test_graveyard_card(player1, AgainWalker.new())
 
-	_place_test_board_card(player1, player1.frontline_zones[0], tian_dragon, Card.CreatureMode.AGGRESSIVE)
-	_place_test_board_card(player1, player1.frontline_zones[1], friendly_guard, Card.CreatureMode.AGGRESSIVE)
+	_place_test_board_card(player1, player1.frontline_zones[0], berserker, Card.CreatureMode.AGGRESSIVE)
+	_place_test_board_card(player1, player1.frontline_zones[1], gilgamesh, Card.CreatureMode.AGGRESSIVE)
+	_place_test_board_card(player1, player1.frontline_zones[2], gawain, Card.CreatureMode.AGGRESSIVE)
+	gawain.on_summon(game_manager)  # Apply Sun Blessing for P1's active turn
+	_place_test_board_card(player1, player1.frontline_zones[3], gudu_priest, Card.CreatureMode.AGGRESSIVE)
+	_place_test_board_card(player1, player1.frontline_zones[4], garm, Card.CreatureMode.AGGRESSIVE)
+	_place_test_board_card(player1, player1.reserve_zones[0], gala_tura, Card.CreatureMode.AGGRESSIVE)
+	gala_tura.on_summon(game_manager)  # Apply Water of Life graveward to graveyard cards
+	_place_test_board_card(player1, player1.reserve_zones[1], gidim_ensi, Card.CreatureMode.DEFENSIVE)
+	gidim_ensi.on_summon(game_manager)  # Apply permanent cannot_attack to itself
+	_place_test_board_card(player1, player1.reserve_zones[2], gallu_board, Card.CreatureMode.AGGRESSIVE)
+	_place_test_board_permanent(player1, player1.reserve_zones[6], GlitnirThePeaceful.new())
 
-	_place_test_board_card(player2, player2.frontline_zones[0], doomed_scout, Card.CreatureMode.AGGRESSIVE)
-	_place_test_board_card(player2, player2.frontline_zones[1], axe_guard, Card.CreatureMode.DEFENSIVE)
-	_place_test_board_permanent(player2, player2.reserve_zones[3], EriduCityOfSages.new())
-	_equip_test_card(player2, player2.frontline_zones[1], BeardedAxe.new(), axe_guard)
-	_add_test_graveyard_card(player1, fallen_einherjar)
+	# Give Berserker a removable status so Gawain's Healing Hands has something to cure.
+	berserker.add_status_effect(
+		"cannot_attack",
+		"Bound (test)",
+		gidim_ensi,
+		player1,
+		{"display_name": "Cannot attack — use Gawain Healing Hands (2 mana) to remove"}
+	)
 
-	_add_test_deck_card(player1, EnkiLordOfEridu.new())
-	_add_test_deck_card(player1, FirstSageAdapa.new())
-	if fourth_sage_script != null:
-		_add_test_deck_card(player1, fourth_sage_script.new())
+	# ── P1 Hand ──────────────────────────────────────────────────────────────
+	_add_test_hand_card(player1, GugalannaBullOfHeaven.new())
+	_add_test_hand_card(player1, GiantMasterArchitect.new())
+	_add_test_hand_card(player1, Gleipnir.new())
+	_add_test_hand_card(player1, GungnirTheSpearOfOdin.new())
+	_add_test_hand_card(player1, Gullinbursti.new())
 
+	# ── P1 Deck (for GiantMasterArchitect's Master Plan impact) ──────────────
+	_add_test_deck_card(player1, GlitnirThePeaceful.new())
+	_add_test_deck_card(player1, GlitnirThePeaceful.new())
+
+	# ── P2 Board ─────────────────────────────────────────────────────────────
+	var enki := EnkiLordOfEridu.new()
+	var enkidu := Enkidu.new()
+	_place_test_board_card(player2, player2.frontline_zones[0], enki, Card.CreatureMode.AGGRESSIVE)
+	_place_test_board_card(player2, player2.frontline_zones[1], enkidu, Card.CreatureMode.AGGRESSIVE)
+	_place_test_board_card(player2, player2.frontline_zones[2], BlessedKnights.new(), Card.CreatureMode.AGGRESSIVE)
+
+	# ── Mana / followers ─────────────────────────────────────────────────────
 	player1.spend_mana(player1.mana)
 	player1.gain_mana(10)
 	player2.spend_mana(player2.mana)
@@ -221,6 +248,7 @@ func _setup_test_board() -> void:
 	player1.has_summoned_this_turn = false
 	player2.has_summoned_this_turn = false
 
+	# ── Turn state ───────────────────────────────────────────────────────────
 	game_manager.current_player = player1
 	game_manager.other_player = player2
 	game_manager.turn_player = player1
@@ -235,5 +263,21 @@ func _setup_test_board() -> void:
 	_test_turn_owner = player1
 	_test_turn_opponent = player2
 	hide_turn_choice()
-	action_label.text = "Card test ready. Freyja: activate Receiver of the Slain to summon Again-Walker from your graveyard with Call of the Valkyrie already in play reducing the cost. Fire and Gold: unlock your power in slot 1, discard a spare hand card, and destroy the enemy Eridu while Soldier of the Black Emperor is on your frontline. Fires of Judgment: cast from hand to wipe the enemy's face-up Blessed Knights, Berserker, structure, and axe. Foolish Optimism: cast it to force Blessed Knights, the opponent's only level-1 face-up creature, to attack your highest-level face-up creature, Soldier of the Black Emperor. First Sage Adapa: summon it to mute the enemy Ancient Wisdom power. Fenrir: play or use Wolf Master/Devour from Player 1's hand. Fourth Sage Enmegalamma: summon it on a later turn to search your deck for another Mer Sage such as First Sage Adapa or Enki, Lord of Eridu."
+	action_label.text = (
+		"G-CARD TEST  |  "
+		+ "GuanYu (god): 3 tactic counters ready — activate Champion's Call to destroy any board card. End P1's turn to test upkeep (P1 has 5 frontline vs P2's 3, gains another counter each turn).  |  "
+		+ "GlitnirThePeaceful (P1 reserve[6]): forces all summons this game to defensive — test by summoning any hand card.  |  "
+		+ "Berserker has 'cannot_attack' status — use Gawain Healing Hands (2 mana, minor action) to remove it; then Berserker can attack; play Gungnir from hand in response to destroy the target.  |  "
+		+ "Gawain Sun Blessing: check tripled stats (10 Str → 30, 7 Res → 21) during P1's turn; resets after first attack.  |  "
+		+ "Gilgamesh attacks EnkiLordOfEridu (level 6 vs 3): Inspired Strength grants +21 Str for that combat.  |  "
+		+ "GududPriest (Activate, minor action): target any creature to make it immune to creature abilities this turn.  |  "
+		+ "Garm Watchbeast: graveyard cards (Gallu, AgainWalker) immune to opponent effects while Garm is in play.  |  "
+		+ "GalaTura (reserve): Water of Life graveward active on both graveyard cards — destroy GalaTura to trigger Destroyed and return up to 3 graveyard creatures to deck bottom.  |  "
+		+ "GidimEnsi (reserve, defensive, Incorporeal): any P2 creature that attacks P1's followers falls asleep; can only be engaged by Spirits or faster Mages.  |  "
+		+ "Hand — Gugalanna: summon for Celestial Charge impact (destroys EnkiLordOfEridu RES 36 or Enkidu RES 30, both SPD < 25; opponent may trigger attack hexes; Gugalanna returns to hand). "
+		+ "GiantMasterArchitect: summon for Master Plan impact (finds GlitnirThePeaceful from deck; also tests GiantsDisdain +5 SPD intercept as a Giant). "
+		+ "Gleipnir: play to bind Enkidu (cannot attack/intercept, abilities negated). "
+		+ "Gungnir: respond to a Norse Warrior (Berserker after healing) attacking to destroy its target. "
+		+ "Gullinbursti: vanilla SPD-4 creature."
+	)
 	update_ui()

@@ -5,6 +5,11 @@ const LobbyProtocolScript = preload("res://scripts/network/LobbyProtocol.gd")
 const LobbyRoomScript = preload("res://scripts/server/LobbyRoom.gd")
 const MatchSupervisorScript = preload("res://scripts/server/MatchSupervisor.gd")
 const NetworkManagerScript = preload("res://scripts/Other/NetworkManager.gd")
+const ProfileStoreScript = preload("res://scripts/server/ProfileStore.gd")
+const AccountStoreScript = preload("res://scripts/server/AccountStore.gd")
+const DeckStoreScript = preload("res://scripts/server/DeckStore.gd")
+const DeckValidatorScript = preload("res://scripts/server/DeckValidator.gd")
+const MatchHistoryStoreScript = preload("res://scripts/server/MatchHistoryStore.gd")
 const LOBBY_EVENT_TYPE := "__lobby_event__"
 
 signal local_room_snapshot_updated(snapshot: Dictionary)
@@ -30,11 +35,21 @@ var room_id_by_session: Dictionary = {}
 var local_session_id: String = ""
 var match_supervisor = null
 var network_manager: Node = null
+var profile_store = null
+var account_store = null
+var deck_store = null
+var deck_validator = null
+var match_history_store = null
 
 var _rng := RandomNumberGenerator.new()
 
 func _ready() -> void:
 	_rng.randomize()
+	_ensure_profile_store()
+	_ensure_account_store()
+	_ensure_deck_store()
+	_ensure_deck_validator()
+	_ensure_match_history_store()
 	_ensure_match_supervisor()
 	_ensure_network_manager()
 
@@ -94,7 +109,16 @@ func create_local_guest_session(player_name: String = "Host") -> Dictionary:
 	if not existing.is_empty():
 		return existing.duplicate(true)
 
-	var session: Dictionary = _create_session(player_name, 1, true)
+	_ensure_profile_store()
+	var profile := {}
+	if profile_store != null:
+		profile = profile_store.login_profile("", player_name)
+	var session: Dictionary = _create_session(
+		player_name,
+		1,
+		true,
+		str(profile.get("profile_id", ""))
+	)
 	local_session_id = str(session.get("session_id", ""))
 	return session.duplicate(true)
 
@@ -133,6 +157,10 @@ func _handle_request(peer_id: int, message: Dictionary) -> void:
 	match message_type:
 		LobbyProtocolScript.LOGIN_GUEST:
 			_handle_login_guest(peer_id, payload)
+		LobbyProtocolScript.LOGIN_ACCOUNT:
+			_handle_login_account(peer_id, payload)
+		LobbyProtocolScript.REGISTER_ACCOUNT:
+			_handle_register_account(peer_id, payload)
 		LobbyProtocolScript.CREATE_ROOM:
 			var session: Dictionary = _get_session_for_peer(peer_id)
 			if session.is_empty():
@@ -153,6 +181,25 @@ func _handle_request(peer_id: int, message: Dictionary) -> void:
 			if leave_session.is_empty():
 				return
 			_leave_room_for_session(str(leave_session.get("session_id", "")))
+		LobbyProtocolScript.SELECT_DECK:
+			var deck_session: Dictionary = _get_session_for_peer(peer_id)
+			if deck_session.is_empty():
+				_send_error_to_peer(peer_id, "Join the lobby before selecting a deck.")
+				return
+			_submit_deck_for_session(
+				str(deck_session.get("session_id", "")),
+				str(payload.get("deck_name", "")),
+				str(payload.get("deck_id", "")),
+				payload.get("cards", {})
+			)
+		LobbyProtocolScript.REQUEST_ACCOUNT_DECKS:
+			_handle_request_account_decks(peer_id)
+		LobbyProtocolScript.SAVE_ACCOUNT_DECK:
+			_handle_save_account_deck(peer_id, payload)
+		LobbyProtocolScript.DELETE_ACCOUNT_DECK:
+			_handle_delete_account_deck(peer_id, payload)
+		LobbyProtocolScript.REQUEST_PROFILE_SUMMARY:
+			_handle_request_profile_summary(peer_id)
 		LobbyProtocolScript.SET_READY:
 			var ready_session: Dictionary = _get_session_for_peer(peer_id)
 			if ready_session.is_empty():
@@ -163,15 +210,106 @@ func _handle_request(peer_id: int, message: Dictionary) -> void:
 			_handle_reconnect_request(peer_id, payload)
 
 func _handle_login_guest(peer_id: int, payload: Dictionary) -> void:
+	var requested_player_name := str(payload.get("player_name", "Guest"))
+	var requested_profile_id := str(payload.get("profile_id", "")).strip_edges()
+	_ensure_profile_store()
+	var profile := {}
+	if profile_store != null:
+		profile = profile_store.login_profile(requested_profile_id, requested_player_name)
+	_complete_login_for_peer(
+		peer_id,
+		str(profile.get("display_name", requested_player_name)),
+		str(profile.get("profile_id", requested_profile_id)),
+		"",
+		"",
+		LobbyProtocolScript.LOGIN_GUEST
+	)
+
+func _handle_register_account(peer_id: int, payload: Dictionary) -> void:
+	_ensure_account_store()
+	_ensure_profile_store()
+	if account_store == null or profile_store == null:
+		_send_error_to_peer(peer_id, "Account storage is unavailable.")
+		return
+	var requested_username := str(payload.get("username", ""))
+	var requested_password := str(payload.get("password", ""))
+	var requested_profile_id := str(payload.get("profile_id", "")).strip_edges()
+	var account_result: Dictionary = account_store.register_account(requested_username, requested_password)
+	if not bool(account_result.get("success", false)):
+		_send_error_to_peer(peer_id, str(account_result.get("message", "Could not create account.")))
+		return
+	var account: Dictionary = account_result.get("account", {})
+	var profile: Dictionary = profile_store.login_profile(
+		requested_profile_id,
+		str(account.get("username", requested_username)),
+		str(account.get("account_id", "")),
+		str(account.get("username", requested_username))
+	)
+	_complete_login_for_peer(
+		peer_id,
+		str(profile.get("display_name", requested_username)),
+		str(profile.get("profile_id", "")),
+		str(account.get("account_id", "")),
+		str(account.get("username", requested_username)),
+		LobbyProtocolScript.REGISTER_ACCOUNT
+	)
+
+func _handle_login_account(peer_id: int, payload: Dictionary) -> void:
+	_ensure_account_store()
+	_ensure_profile_store()
+	if account_store == null or profile_store == null:
+		_send_error_to_peer(peer_id, "Account storage is unavailable.")
+		return
+	var requested_username := str(payload.get("username", ""))
+	var requested_password := str(payload.get("password", ""))
+	var requested_profile_id := str(payload.get("profile_id", "")).strip_edges()
+	var account_result: Dictionary = account_store.login_account(requested_username, requested_password)
+	if not bool(account_result.get("success", false)):
+		_send_error_to_peer(peer_id, str(account_result.get("message", "Could not log in.")))
+		return
+	var account: Dictionary = account_result.get("account", {})
+	var profile: Dictionary = profile_store.login_profile(
+		requested_profile_id,
+		str(account.get("username", requested_username)),
+		str(account.get("account_id", "")),
+		str(account.get("username", requested_username))
+	)
+	_complete_login_for_peer(
+		peer_id,
+		str(profile.get("display_name", requested_username)),
+		str(profile.get("profile_id", "")),
+		str(account.get("account_id", "")),
+		str(account.get("username", requested_username)),
+		LobbyProtocolScript.LOGIN_ACCOUNT
+	)
+
+func _complete_login_for_peer(
+	peer_id: int,
+	player_name: String,
+	profile_id: String,
+	account_id: String = "",
+	username: String = "",
+	auth_mode: String = LobbyProtocolScript.LOGIN_GUEST
+) -> void:
 	var existing: Dictionary = _get_session_for_peer(peer_id)
 	if existing.is_empty():
-		existing = _create_session(str(payload.get("player_name", "Guest")), peer_id, false)
+		existing = _create_session(player_name, peer_id, false, profile_id, account_id, username, auth_mode)
+	else:
+		existing["player_name"] = player_name
+		existing["profile_id"] = profile_id
+		existing["account_id"] = account_id
+		existing["username"] = username
+		existing["auth_mode"] = auth_mode
+		sessions_by_id[str(existing.get("session_id", ""))] = existing
 	_trace("login accepted for peer %d as session %s" % [peer_id, str(existing.get("session_id", ""))])
-
 	_send_to_peer(peer_id, LobbyProtocolScript.HELLO_OK, {
 		"session_id": str(existing.get("session_id", "")),
 		"reconnect_token": str(existing.get("reconnect_token", "")),
 		"player_name": str(existing.get("player_name", "Guest")),
+		"profile_id": str(existing.get("profile_id", "")),
+		"account_id": str(existing.get("account_id", "")),
+		"username": str(existing.get("username", "")),
+		"auth_mode": str(existing.get("auth_mode", LobbyProtocolScript.LOGIN_GUEST)),
 	})
 	_send_room_list_to_peer(peer_id)
 
@@ -197,10 +335,12 @@ func _handle_reconnect_request(peer_id: int, payload: Dictionary) -> void:
 	session_id_by_peer[peer_id] = session_id
 
 	var room_snapshot: Dictionary = {}
+	var active_match_info: Dictionary = {}
 	var room_id: String = str(room_id_by_session.get(session_id, ""))
 	if not room_id.is_empty() and rooms_by_id.has(room_id):
 		var room: LobbyRoom = rooms_by_id[room_id]
 		room_snapshot = room.to_snapshot(sessions_by_id)
+		active_match_info = _build_active_match_info_for_session(session_id, room)
 		_broadcast_room_snapshot(room)
 	else:
 		_send_room_list_to_peer(peer_id)
@@ -209,10 +349,102 @@ func _handle_reconnect_request(peer_id: int, payload: Dictionary) -> void:
 		"session_id": session_id,
 		"reconnect_token": reconnect_token,
 		"player_name": str(session.get("player_name", "Guest")),
+		"profile_id": str(session.get("profile_id", "")),
+		"account_id": str(session.get("account_id", "")),
+		"username": str(session.get("username", "")),
+		"auth_mode": str(session.get("auth_mode", LobbyProtocolScript.LOGIN_GUEST)),
 		"room": room_snapshot,
+		"active_match_info": active_match_info,
 	})
 
-func _create_session(player_name: String, peer_id: int, is_local: bool) -> Dictionary:
+func _handle_request_account_decks(peer_id: int) -> void:
+	var session: Dictionary = _get_session_for_peer(peer_id)
+	if session.is_empty():
+		_send_error_to_peer(peer_id, "Join the lobby before requesting account decks.")
+		return
+	var account_id: String = str(session.get("account_id", "")).strip_edges()
+	if account_id.is_empty():
+		_send_error_to_peer(peer_id, "Log into an account before requesting saved decks.")
+		return
+	_ensure_deck_store()
+	if deck_store == null:
+		_send_error_to_peer(peer_id, "Deck storage is unavailable.")
+		return
+	_send_to_peer(peer_id, LobbyProtocolScript.ACCOUNT_DECK_LIST, {
+		"decks": deck_store.list_decks(account_id),
+	})
+
+func _handle_save_account_deck(peer_id: int, payload: Dictionary) -> void:
+	var session: Dictionary = _get_session_for_peer(peer_id)
+	if session.is_empty():
+		_send_error_to_peer(peer_id, "Join the lobby before saving account decks.")
+		return
+	var account_id: String = str(session.get("account_id", "")).strip_edges()
+	if account_id.is_empty():
+		_send_error_to_peer(peer_id, "Log into an account before saving decks.")
+		return
+	_ensure_deck_store()
+	if deck_store == null:
+		_send_error_to_peer(peer_id, "Deck storage is unavailable.")
+		return
+	var save_result: Dictionary = deck_store.save_deck(
+		account_id,
+		str(payload.get("deck_name", "")),
+		payload.get("cards", {}),
+		str(payload.get("deck_id", ""))
+	)
+	if not bool(save_result.get("success", false)):
+		_send_error_to_peer(peer_id, str(save_result.get("message", "Could not save that deck.")))
+		return
+	_send_to_peer(peer_id, LobbyProtocolScript.ACCOUNT_DECK_SAVED, {
+		"deck": save_result.get("deck", {}),
+	})
+
+func _handle_delete_account_deck(peer_id: int, payload: Dictionary) -> void:
+	var session: Dictionary = _get_session_for_peer(peer_id)
+	if session.is_empty():
+		_send_error_to_peer(peer_id, "Join the lobby before deleting account decks.")
+		return
+	var account_id: String = str(session.get("account_id", "")).strip_edges()
+	if account_id.is_empty():
+		_send_error_to_peer(peer_id, "Log into an account before deleting decks.")
+		return
+	_ensure_deck_store()
+	if deck_store == null:
+		_send_error_to_peer(peer_id, "Deck storage is unavailable.")
+		return
+	var delete_result: Dictionary = deck_store.delete_deck(account_id, str(payload.get("deck_id", "")))
+	if not bool(delete_result.get("success", false)):
+		_send_error_to_peer(peer_id, str(delete_result.get("message", "Could not delete that deck.")))
+		return
+	_send_to_peer(peer_id, LobbyProtocolScript.ACCOUNT_DECK_DELETED, {
+		"deck_id": str(delete_result.get("deck_id", "")),
+	})
+
+func _handle_request_profile_summary(peer_id: int) -> void:
+	var session: Dictionary = _get_session_for_peer(peer_id)
+	if session.is_empty():
+		_send_error_to_peer(peer_id, "Join the lobby before requesting your match history.")
+		return
+	var profile_id: String = str(session.get("profile_id", "")).strip_edges()
+	if profile_id.is_empty():
+		_send_error_to_peer(peer_id, "No profile is attached to this session.")
+		return
+	_ensure_match_history_store()
+	if match_history_store == null:
+		_send_error_to_peer(peer_id, "Match history storage is unavailable.")
+		return
+	_send_to_peer(peer_id, LobbyProtocolScript.PROFILE_SUMMARY, match_history_store.get_profile_summary(profile_id))
+
+func _create_session(
+	player_name: String,
+	peer_id: int,
+	is_local: bool,
+	profile_id: String = "",
+	account_id: String = "",
+	username: String = "",
+	auth_mode: String = LobbyProtocolScript.LOGIN_GUEST
+) -> Dictionary:
 	var clean_name: String = player_name.strip_edges()
 	if clean_name.is_empty():
 		clean_name = "Guest"
@@ -224,8 +456,12 @@ func _create_session(player_name: String, peer_id: int, is_local: bool) -> Dicti
 	var reconnect_token: String = _generate_id(18)
 	var session := {
 		"session_id": session_id,
+		"profile_id": profile_id.strip_edges(),
+		"account_id": account_id.strip_edges(),
 		"reconnect_token": reconnect_token,
 		"player_name": clean_name,
+		"username": username.strip_edges(),
+		"auth_mode": auth_mode,
 		"peer_id": peer_id,
 		"connected": true,
 		"is_local": is_local,
@@ -305,6 +541,14 @@ func _set_ready_for_session(session_id: String, is_ready: bool) -> void:
 		return
 
 	var room: LobbyRoom = rooms_by_id[room_id]
+	if is_ready and not room.has_valid_deck(session_id):
+		var deck_submission := room.get_deck_submission(session_id)
+		var validation: Dictionary = deck_submission.get("validation", {})
+		var error_message := str(validation.get("error", "")).strip_edges()
+		if error_message.is_empty():
+			error_message = "Select a valid deck before readying up."
+		_send_error_to_session(session_id, error_message)
+		return
 	if not room.set_ready(session_id, is_ready):
 		_send_error_to_session(session_id, "Unable to update ready state.")
 		return
@@ -319,7 +563,30 @@ func _assign_match(room: LobbyRoom) -> void:
 		_send_error_to_session(room.host_session_id, "Match supervisor is unavailable.")
 		return
 
-	var match_session = match_supervisor.create_match(room.room_id, room.members)
+	var player_decks_by_session: Dictionary = {}
+	for session_id in room.members:
+		var submission := room.get_deck_submission(session_id)
+		if submission.is_empty():
+			_send_error_to_session(session_id, "Select a valid deck before starting the match.")
+			return
+		player_decks_by_session[session_id] = submission.duplicate(true)
+
+	var player_identity_by_session: Dictionary = {}
+	for session_id in room.members:
+		var session: Dictionary = sessions_by_id.get(session_id, {})
+		player_identity_by_session[session_id] = {
+			"profile_id": str(session.get("profile_id", "")),
+			"account_id": str(session.get("account_id", "")),
+			"username": str(session.get("username", "")),
+			"player_name": str(session.get("player_name", "Guest")),
+		}
+
+	var match_session = match_supervisor.create_match(
+		room.room_id,
+		room.members,
+		player_decks_by_session,
+		player_identity_by_session
+	)
 	if match_session == null:
 		var error_message := str(match_supervisor.last_create_match_error).strip_edges()
 		if error_message.is_empty():
@@ -342,6 +609,27 @@ func _assign_match(room: LobbyRoom) -> void:
 func _emit_room_updates(room: LobbyRoom) -> void:
 	_broadcast_room_snapshot(room)
 	_broadcast_room_lists()
+
+func _submit_deck_for_session(session_id: String, deck_name: String, deck_id: String, cards) -> void:
+	var room_id: String = str(room_id_by_session.get(session_id, ""))
+	if room_id.is_empty() or not rooms_by_id.has(room_id):
+		_send_error_to_session(session_id, "Join a room before selecting a deck.")
+		return
+	if not (cards is Dictionary):
+		_send_error_to_session(session_id, "Deck submission was missing cards.")
+		return
+	_ensure_deck_validator()
+	if deck_validator == null:
+		_send_error_to_session(session_id, "Deck validator is unavailable.")
+		return
+	var validation: Dictionary = deck_validator.validate_deck(cards as Dictionary)
+	var room: LobbyRoom = rooms_by_id[room_id]
+	if not room.submit_deck(session_id, deck_name, deck_id, validation.get("cards", {}), validation):
+		_send_error_to_session(session_id, "Unable to store selected deck.")
+		return
+	if not bool(validation.get("is_valid", false)):
+		room.set_ready(session_id, false)
+	_emit_room_updates(room)
 
 func _broadcast_room_snapshot(room: LobbyRoom) -> void:
 	var snapshot: Dictionary = room.to_snapshot(sessions_by_id)
@@ -440,6 +728,27 @@ func _generate_id(length: int) -> String:
 func _emit_local_match_assigned(match_info: Dictionary) -> void:
 	local_match_assigned.emit(match_info)
 
+func _build_active_match_info_for_session(session_id: String, room: LobbyRoom = null) -> Dictionary:
+	if session_id.is_empty():
+		return {}
+	var resolved_room: LobbyRoom = room
+	if resolved_room == null:
+		var room_id: String = str(room_id_by_session.get(session_id, ""))
+		if room_id.is_empty() or not rooms_by_id.has(room_id):
+			return {}
+		resolved_room = rooms_by_id[room_id]
+	if resolved_room == null:
+		return {}
+	if resolved_room.status != LobbyRoomScript.STATUS_IN_MATCH:
+		return {}
+	var match_id: String = str(resolved_room.assigned_match_id).strip_edges()
+	if match_id.is_empty() or match_supervisor == null:
+		return {}
+	var match_session = match_supervisor.get_match(match_id)
+	if match_session == null:
+		return {}
+	return match_session.to_match_info(session_id)
+
 func _ensure_match_supervisor() -> void:
 	if match_supervisor != null:
 		return
@@ -456,6 +765,31 @@ func _ensure_match_supervisor() -> void:
 	)
 	if not match_supervisor.match_closed.is_connected(_on_match_closed):
 		match_supervisor.match_closed.connect(_on_match_closed)
+
+func _ensure_profile_store() -> void:
+	if profile_store != null:
+		return
+	profile_store = ProfileStoreScript.new()
+
+func _ensure_account_store() -> void:
+	if account_store != null:
+		return
+	account_store = AccountStoreScript.new()
+
+func _ensure_deck_store() -> void:
+	if deck_store != null:
+		return
+	deck_store = DeckStoreScript.new()
+
+func _ensure_deck_validator() -> void:
+	if deck_validator != null:
+		return
+	deck_validator = DeckValidatorScript.new()
+
+func _ensure_match_history_store() -> void:
+	if match_history_store != null:
+		return
+	match_history_store = MatchHistoryStoreScript.new()
 
 func _ensure_multiplayer_api() -> MultiplayerAPI:
 	if use_default_multiplayer:
