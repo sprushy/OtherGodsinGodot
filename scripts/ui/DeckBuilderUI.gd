@@ -604,14 +604,16 @@ func _refresh_deck_panel() -> void:
 	_deck_count_lbl.text = "%d cards" % total
 
 	# Sort: gods → creatures → spells → structures → hexes, then alphabetical
-	var in_deck: Array = _all_cards.filter(
-		func(c: Card) -> bool: return _deck.has(c.card_name) and _deck[c.card_name] > 0
-	)
-	in_deck.sort_custom(func(a: Card, b: Card) -> bool:
-		var oa := _type_order(a); var ob := _type_order(b)
-		if oa != ob: return oa < ob
+	var in_deck_filter := func(c: Card) -> bool:
+		return _deck.has(c.card_name) and _deck[c.card_name] > 0
+	var in_deck: Array = _all_cards.filter(in_deck_filter)
+	var in_deck_sort := func(a: Card, b: Card) -> bool:
+		var oa := _type_order(a)
+		var ob := _type_order(b)
+		if oa != ob:
+			return oa < ob
 		return _alphabetical_card_less(a, b)
-	)
+	in_deck.sort_custom(in_deck_sort)
 
 	var last_section := ""
 	for card: Card in in_deck:
@@ -676,9 +678,9 @@ func _add_to_deck(card: Card) -> void:
 	if card.is_god:
 		if not _can_add_god_to_current_deck(card):
 			return
-		for name in _deck:
-			var tmpl := _find_template(name)
-			if tmpl and tmpl.is_god and _deck[name] > 0:
+		for deck_card_name in _deck:
+			var tmpl := _find_template(deck_card_name)
+			if tmpl and tmpl.is_god and _deck[deck_card_name] > 0:
 				return
 	elif card.is_power and not _can_add_power_to_current_deck(card):
 		return

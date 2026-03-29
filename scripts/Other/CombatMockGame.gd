@@ -11,10 +11,35 @@ signal forfeit_requested
 
 var player1: Player
 var player2: Player
+var network_manager: Node = null
+var game_input: GameInput = null
+var game_event_broadcaster: GameEventBroadcaster = null
+var _is_networked_client: bool = false
 var selected_card: Card = null
-var selected_attacker: Card = null
-var selected_interceptor: Card = null
-var pending_attack_target = null
+var selected_attacker: Card:
+	get:
+		if match_manager == null:
+			return null
+		return match_manager.selected_attacker
+	set(val):
+		if match_manager != null:
+			match_manager.selected_attacker = val
+var selected_interceptor: Card:
+	get:
+		if match_manager == null:
+			return null
+		return match_manager.selected_interceptor
+	set(val):
+		if match_manager != null:
+			match_manager.selected_interceptor = val
+var pending_attack_target:
+	get:
+		if match_manager == null:
+			return null
+		return match_manager.pending_attack_target
+	set(val):
+		if match_manager != null:
+			match_manager.pending_attack_target = val
 var placement_mode: String = ""
 var awaiting_spell_target: bool:
 	get:
@@ -80,14 +105,6 @@ var _pending_spell_display_zone: Zone:
 	set(val):
 		if match_manager != null:
 			match_manager.pending_spell_display_zone = val
-var _pending_click_selection_name: String:
-	get:
-		if match_manager == null:
-			return ""
-		return match_manager.pending_click_selection_name
-	set(val):
-		if match_manager != null:
-			match_manager.pending_click_selection_name = val
 var _pending_click_selection_source: Card:
 	get:
 		if match_manager == null:
@@ -96,30 +113,6 @@ var _pending_click_selection_source: Card:
 	set(val):
 		if match_manager != null:
 			match_manager.pending_click_selection_source = val
-var _pending_click_selection_validator: Callable:
-	get:
-		if match_manager == null:
-			return Callable()
-		return match_manager.pending_click_selection_validator
-	set(val):
-		if match_manager != null:
-			match_manager.pending_click_selection_validator = val
-var _pending_click_selection_confirm: Callable:
-	get:
-		if match_manager == null:
-			return Callable()
-		return match_manager.pending_click_selection_confirm
-	set(val):
-		if match_manager != null:
-			match_manager.pending_click_selection_confirm = val
-var _pending_click_selection_cancel: Callable:
-	get:
-		if match_manager == null:
-			return Callable()
-		return match_manager.pending_click_selection_cancel
-	set(val):
-		if match_manager != null:
-			match_manager.pending_click_selection_cancel = val
 var auto_priority: bool = true
 var _fan_container: Control = null
 
@@ -165,6 +158,8 @@ var _board_zone_uis: Array = []      # Array[BoardZoneUI]
 var _enemy_zone_uis: Array = []      # Array[BoardZoneUI]
 var _enemy_god_zone_ui: BoardZoneUI = null
 var _player_god_zone_ui: BoardZoneUI = null
+var _last_board_player: Player = null   # tracks which player the board was built for
+var _last_enemy_player: Player = null   # tracks which player the enemy board was built for
 var _pending_drop_zone: Zone = null  # Zone queued by a drag-drop before mode selection
 
 var awaiting_god_ability_target: bool = false
@@ -276,6 +271,8 @@ var _silence_cursor_texture: Texture2D = null
 var _active_selection_cursor_mode: String = ""
 var _devour_cancel_prompt: Control = null
 var _suppress_next_devour_cancel_prompt: bool = false
+var _pending_end_turn_discard_uids: Array = []
+var _ui_update_pending: bool = false
 
 const TRANSIENT_UI_Z_INDEX := 1000
 const HOVER_PREVIEW_Z_INDEX := TRANSIENT_UI_Z_INDEX + 50
@@ -337,11 +334,11 @@ func _can_activate_before_turn_choice(card: Card) -> bool:
 func _reject_pre_turn_action() -> void:
 	action_label.text = "Finish resolving upkeep before taking other actions."
 
-func _promote_transient_ui(control: Control, z_index: int = TRANSIENT_UI_Z_INDEX) -> void:
+func _promote_transient_ui(control: Control, overlay_z_index: int = TRANSIENT_UI_Z_INDEX) -> void:
 	if control == null:
 		return
 	control.top_level = true
-	control.z_index = z_index
+	control.z_index = overlay_z_index
 	control.move_to_front()
 
 func _get_doorway_replacement_source(card: Card) -> DoorwayToTheVoid:
@@ -669,8 +666,8 @@ func _build_cursor_texture(source_texture: Texture2D, target_height_limit: int) 
 		return null
 
 	var target_height := mini(target_height_limit, cursor_image.get_height())
-	var scale := float(target_height) / float(cursor_image.get_height())
-	var target_width := maxi(1, int(round(cursor_image.get_width() * scale)))
+	var cursor_scale := float(target_height) / float(cursor_image.get_height())
+	var target_width := maxi(1, int(round(cursor_image.get_width() * cursor_scale)))
 	cursor_image.resize(target_width, target_height, Image.INTERPOLATE_LANCZOS)
 	return ImageTexture.create_from_image(cursor_image)
 
@@ -1044,16 +1041,42 @@ func _close_action_log_popup() -> void:
 	_action_log_popup = null
 	_action_log_popup_view = null
 
-func start_game() -> void:
+func start_game(is_host: bool = false, is_client: bool = false, server_ip: String = "127.0.0.1") -> void:
 	print("=== STARTING COMBAT MOCK GAME ===")
 	_game_finished = false
 	
 	game_manager = GameManager.new()
 	game_manager.set_interaction_host(self)
 	match_manager = MatchManager.new(game_manager)
+	game_input = LocalGameInput.new(match_manager)
+	
+	# Multiplayer setup
+	var nm_script = load("res://scripts/Other/NetworkManager.gd")
+	if nm_script:
+		network_manager = Node.new()
+		network_manager.set_script(nm_script)
+		add_child(network_manager)
+		
+		if is_host:
+			network_manager.create_server()
+		elif is_client:
+			network_manager.create_client(server_ip)
+		else:
+			network_manager.is_server = true # Default to local host mode
+			
+		match_manager.network_manager = network_manager
+		network_manager.command_received.connect(match_manager.process_command)
+		
+		if is_client:
+			_is_networked_client = true
+			game_input = NetworkedGameInput.new(network_manager)
+			network_manager.game_event_received.connect(_apply_network_event)
+	
 	print("MatchManager initialized: ", match_manager)
 	match_manager.action_resolved.connect(_on_match_action_resolved)
 	match_manager.request_ui_interaction.connect(_on_match_ui_interaction)
+	match_manager.move_validated.connect(_on_match_move_validated)
+	match_manager.move_failed.connect(_on_match_move_failed)
 	match_manager.targeting_started.connect(func(_source: Card, _target_type: String) -> void:
 		_hide_devour_cancel_prompt()
 		_sync_sacrifice_cursor()
@@ -1113,6 +1136,18 @@ func start_game() -> void:
 	player1.followers_changed.connect(_on_player_followers_changed)
 	player2.followers_changed.connect(_on_enemy_followers_changed)
 	game_manager.game_ended.connect(_on_game_ended)
+
+	# Broadcaster: server-side only, sends full state to clients after each action
+	if network_manager != null and is_host:
+		game_event_broadcaster = GameEventBroadcaster.new(game_manager, match_manager, network_manager)
+		network_manager.peer_connected.connect(func(peer_id: int) -> void:
+			network_manager.assign_peer_to_player(peer_id, 1)
+			var state := GameState.serialize(game_manager, 1)
+			network_manager.broadcast_event_to_peer(peer_id, "full_state", {
+				state = state, action_message = "Connected! Syncing game state."
+			})
+		)
+
 	if not player1.card_moved.is_connected(_on_local_player_card_moved):
 		player1.card_moved.connect(_on_local_player_card_moved)
 	if not player2.card_moved.is_connected(_on_local_player_card_moved):
@@ -1131,6 +1166,9 @@ func start_game() -> void:
 		print("Ã‚Â  P2 hand size now: ", player2.hand_zone.cards.size())
 	
 	
+	# Pin the server's view to Player 1 so the board never flips to P2's perspective
+	if not _is_networked_client and game_manager.players.size() > 0:
+		game_manager.feedback_viewer = game_manager.players[0]
 	game_manager.start_turn()
 	update_ui()
 	_open_upkeep_choice_window()
@@ -1264,6 +1302,18 @@ func _can_interact_with_board_during_turn_choice(card: Card = null) -> bool:
 func update_ui() -> void:
 	if game_manager == null:
 		return
+	if _is_networked_client or (network_manager != null and network_manager.get("is_server") == true):
+		if _ui_update_pending:
+			return
+		_ui_update_pending = true
+		call_deferred("_do_update_ui")
+		return
+	_do_update_ui()
+
+func _do_update_ui() -> void:
+	_ui_update_pending = false
+	if game_manager == null:
+		return
 	_hide_power_hover_popup()
 	_sync_blot_sacrifice_prompt_state()
 	_capture_action_log_message()
@@ -1275,7 +1325,7 @@ func update_ui() -> void:
 		return
 
 	turn_label.text = "Turn " + str(game_manager.turn_number) + " - " + current.player_name + "'s Turn"
-	
+
 	draw_hand()
 	draw_board()
 	draw_enemy_board()
@@ -2255,11 +2305,14 @@ func _get_power_unlock_cost_label(power: PowerCard) -> String:
 func _complete_power_unlock(power: PowerCard) -> void:
 	if power == null:
 		return
+	if _is_networked_client:
+		game_input.submit_action({type = "unlock_power", power_uid = power.uid})
+		return
 	power.unlock(game_manager)
 	action_label.text = power.card_name + " unlocked!"
 	update_ui()
 
-func _make_power_icon(card: Card, is_enemy: bool, player: Player) -> Control:
+func _make_power_icon(card: Card, is_enemy: bool, _player: Player) -> Control:
 	var panel := PanelContainer.new()
 	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	panel.mouse_filter = Control.MOUSE_FILTER_STOP
@@ -2326,11 +2379,11 @@ func _make_power_icon(card: Card, is_enemy: bool, player: Player) -> Control:
 			panel.add_child(haze)
 			label_text = _get_power_unlock_cost_label(enemy_power)
 		else:
-			var unlocked := not card.is_face_down
-			style.bg_color = Color(0.12, 0.08, 0.18, 0.85) if unlocked else Color(0.05, 0.05, 0.10, 0.85)
-			style.border_color = Color(0.55, 0.3, 0.8) if unlocked else Color(0.25, 0.2, 0.35)
+			var enemy_power_unlocked := not card.is_face_down
+			style.bg_color = Color(0.12, 0.08, 0.18, 0.85) if enemy_power_unlocked else Color(0.05, 0.05, 0.10, 0.85)
+			style.border_color = Color(0.55, 0.3, 0.8) if enemy_power_unlocked else Color(0.25, 0.2, 0.35)
 			panel.add_theme_stylebox_override("panel", style)
-			label_text = "?" if not unlocked else "Active"
+			label_text = "?" if not enemy_power_unlocked else "Active"
 			font_size = 9
 		var enemy_lbl := Label.new()
 		enemy_lbl.text = label_text
@@ -2345,14 +2398,14 @@ func _make_power_icon(card: Card, is_enemy: bool, player: Player) -> Control:
 			_add_power_mute_affordance(panel, enemy_power.mute_turns_remaining, true)
 		return panel
 
-	var unlocked := not card.is_face_down
+	var is_unlocked := not card.is_face_down
 	var activatable := power != null and power.can_activate(game_manager)
 	var can_unlock_now := power != null and power.can_unlock(game_manager)
 
-	if unlocked and activatable:
+	if is_unlocked and activatable:
 		style.bg_color = Color(0.18, 0.14, 0.06, 0.92)
 		style.border_color = Color(0.95, 0.78, 0.2)
-	elif unlocked:
+	elif is_unlocked:
 		style.bg_color = Color(0.10, 0.10, 0.14, 0.85)
 		style.border_color = Color(0.45, 0.38, 0.2)
 	elif can_unlock_now:
@@ -2365,7 +2418,7 @@ func _make_power_icon(card: Card, is_enemy: bool, player: Player) -> Control:
 	panel.add_theme_stylebox_override("panel", style)
 
 	var lbl := Label.new()
-	if not unlocked:
+	if not is_unlocked:
 		lbl.text = _get_power_unlock_cost_label(power)
 	else:
 		lbl.text = card.card_name.left(7)
@@ -2431,13 +2484,13 @@ func _on_power_pressed(power: PowerCard) -> void:
 			_show_card_selection_overlay(
 				"Choose a Spell to Move to the Top",
 				allfather.get_spell_cards_in_deck(),
-				func(chosen: Card) -> void:
+				func(chosen_card: Card) -> void:
 					_queue_power_activation_action(
 						allfather,
-						chosen,
-						_get_attack_card_label(allfather, allfather.card_name) + " is targeting " + _get_target_label(chosen, game_manager.get_feedback_viewer(), chosen.card_name) + ".",
+						chosen_card,
+						_get_attack_card_label(allfather, allfather.card_name) + " is targeting " + _get_target_label(chosen_card, game_manager.get_feedback_viewer(), chosen_card.card_name) + ".",
 						func() -> void:
-							allfather.activate(game_manager, chosen)
+							allfather.activate(game_manager, chosen_card)
 					)
 			)
 		elif power is AnankesBinding:
@@ -2445,13 +2498,13 @@ func _on_power_pressed(power: PowerCard) -> void:
 			_show_card_selection_overlay(
 				"Choose a Card to Bind",
 				ananke.get_cards_in_deck(),
-				func(chosen: Card) -> void:
+				func(chosen_card: Card) -> void:
 					_queue_power_activation_action(
 						ananke,
-						chosen,
-						_get_attack_card_label(ananke, ananke.card_name) + " is targeting " + _get_target_label(chosen, game_manager.get_feedback_viewer(), chosen.card_name) + ".",
+						chosen_card,
+						_get_attack_card_label(ananke, ananke.card_name) + " is targeting " + _get_target_label(chosen_card, game_manager.get_feedback_viewer(), chosen_card.card_name) + ".",
 						func() -> void:
-							ananke.activate(game_manager, chosen)
+							ananke.activate(game_manager, chosen_card)
 					)
 			)
 		elif power is BerserkerMead:
@@ -2459,13 +2512,13 @@ func _on_power_pressed(power: PowerCard) -> void:
 			_show_card_selection_overlay(
 				"Choose a Norse Creature for Berserker Mead",
 				mead.get_valid_targets(game_manager),
-				func(chosen: Card) -> void:
+				func(chosen_card: Card) -> void:
 					_queue_power_activation_action(
 						mead,
-						chosen,
-						_get_attack_card_label(mead, mead.card_name) + " is targeting " + _get_target_label(chosen, game_manager.get_feedback_viewer(), chosen.card_name) + ".",
+						chosen_card,
+						_get_attack_card_label(mead, mead.card_name) + " is targeting " + _get_target_label(chosen_card, game_manager.get_feedback_viewer(), chosen_card.card_name) + ".",
 						func() -> void:
-							mead.activate(game_manager, chosen)
+							mead.activate(game_manager, chosen_card)
 					)
 			)
 		elif power.has_method("get_valid_targets"):
@@ -2477,13 +2530,13 @@ func _on_power_pressed(power: PowerCard) -> void:
 			_show_card_selection_overlay(
 				"Choose a target for " + power.card_name,
 				targets,
-				func(chosen: Card) -> void:
+				func(chosen_card: Card) -> void:
 					_queue_power_activation_action(
 						power,
-						chosen,
-						_get_attack_card_label(power, power.card_name) + " is targeting " + _get_target_label(chosen, game_manager.get_feedback_viewer(), chosen.card_name) + ".",
+						chosen_card,
+						_get_attack_card_label(power, power.card_name) + " is targeting " + _get_target_label(chosen_card, game_manager.get_feedback_viewer(), chosen_card.card_name) + ".",
 						func() -> void:
-							power.activate(game_manager, chosen)
+							power.activate(game_manager, chosen_card)
 					)
 			)
 		else:
@@ -2555,15 +2608,18 @@ func _show_breidablik_prompt(power: Breidablik) -> void:
 			_show_card_selection_overlay(
 				"Choose a Priest for Breidablik",
 				power.get_valid_field_priests(game_manager),
-				func(chosen: Card) -> void:
-					_queue_magical_action(
-						CardAction.Type.ABILITY,
-						power,
-						chosen,
-						power.card_name + " shelters " + chosen.card_name + ".",
-						func() -> void:
-							power.activate(game_manager, chosen)
-					)
+				func(selected_priest: Card) -> void:
+					if _is_networked_client:
+						game_input.submit_action({type = "activate_power", power_uid = power.uid, target_uid = selected_priest.uid})
+					else:
+						_queue_magical_action(
+							CardAction.Type.ABILITY,
+							power,
+							selected_priest,
+							power.card_name + " shelters " + selected_priest.card_name + ".",
+							func() -> void:
+								power.activate(game_manager, selected_priest)
+						)
 			)
 		)
 		vbox.add_child(store_btn)
@@ -2576,15 +2632,18 @@ func _show_breidablik_prompt(power: Breidablik) -> void:
 			_show_card_selection_overlay(
 				"Choose a Priest to Return",
 				power.get_stored_priests(),
-				func(chosen: Card) -> void:
-					_queue_magical_action(
-						CardAction.Type.ABILITY,
-						power,
-						chosen,
-						power.card_name + " returns " + chosen.card_name + ".",
-						func() -> void:
-							power.return_priest(game_manager, chosen)
-					)
+				func(selected_priest: Card) -> void:
+					if _is_networked_client:
+						game_input.submit_action({type = "activate_power", power_uid = power.uid, target_uid = selected_priest.uid, mode = "return_priest"})
+					else:
+						_queue_magical_action(
+							CardAction.Type.ABILITY,
+							power,
+							selected_priest,
+							power.card_name + " returns " + selected_priest.card_name + ".",
+							func() -> void:
+								power.return_priest(game_manager, selected_priest)
+						)
 			)
 		)
 		vbox.add_child(return_btn)
@@ -2633,10 +2692,10 @@ func _get_divine_caprice_slot_label(zone: Zone) -> String:
 	if cards.is_empty():
 		return title + "\nEmpty"
 	var main_card := cards[0]
-	var hidden := main_card.is_face_down or main_card.is_prepared or main_card.is_stealth
+	var is_hidden_card := main_card.is_face_down or main_card.is_prepared or main_card.is_stealth
 	if main_card is PowerCard and (main_card as PowerCard).is_face_down and not (main_card as PowerCard).is_publicly_revealed and not main_card.is_temporarily_revealed():
-		hidden = true
-	var name_text := "Hidden card" if hidden else main_card.card_name
+		is_hidden_card = true
+	var name_text := "Hidden card" if is_hidden_card else main_card.card_name
 	if cards.size() > 1:
 		name_text += " +" + str(cards.size() - 1)
 	return title + "\n" + name_text
@@ -2809,6 +2868,15 @@ func _on_divine_caprice_confirm_pressed() -> void:
 	if power == null or plan.is_empty():
 		update_ui()
 		return
+	if _is_networked_client:
+		var serialized_plan: Array = []
+		for step in plan:
+			serialized_plan.append({
+				source_zone = MatchManager.zone_to_dict(step.get("source_zone") as Zone, game_manager),
+				target_zone = MatchManager.zone_to_dict(step.get("target_zone") as Zone, game_manager)
+			})
+		game_input.submit_action({type = "activate_divine_caprice", power_uid = power.uid, plan = serialized_plan})
+		return
 	_queue_magical_action(
 		CardAction.Type.ABILITY,
 		power,
@@ -2876,12 +2944,12 @@ func _show_e2_abzu_prompt(structure: E2Abzu) -> void:
 		_show_card_selection_overlay(
 			"Choose a Mer Mage in your Void",
 			void_targets,
-			func(chosen: Card) -> void:
+			func(chosen_card: Card) -> void:
 				_queue_targeted_ability_action(
 					structure,
-					chosen,
+					chosen_card,
 					func() -> void:
-						structure.activate(game_manager, chosen)
+						structure.activate(game_manager, chosen_card)
 				)
 		)
 	)
@@ -2895,12 +2963,12 @@ func _show_e2_abzu_prompt(structure: E2Abzu) -> void:
 		_show_card_selection_overlay(
 			"Choose a friendly Mer Mage on the field",
 			field_targets,
-			func(chosen: Card) -> void:
+			func(chosen_card: Card) -> void:
 				_queue_targeted_ability_action(
 					structure,
-					chosen,
+					chosen_card,
 					func() -> void:
-						structure.activate(game_manager, chosen)
+						structure.activate(game_manager, chosen_card)
 				)
 		)
 	)
@@ -3039,6 +3107,18 @@ func _resolve_skoll_upkeep_summon(zone: Zone) -> void:
 	selected_card = null
 	placement_mode = ""
 	placement_container.visible = false
+	if _is_networked_client:
+		game_input.submit_action({
+			type = "skoll_upkeep_summon",
+			skoll_uid = skoll.uid,
+			player_index = game_manager.players.find(zone.zone_owner),
+			zone_type = zone.zone_type,
+			zone_index = zone.zone_index,
+			mode = mode
+		})
+		_restore_turn_choice_after_skoll_prompt()
+		update_ui()
+		return
 	_resolve_skoll_upkeep_creature_play(skoll, zone, mode)
 	update_ui()
 
@@ -3129,7 +3209,9 @@ func _resolve_queued_skoll_turn_start_summon() -> void:
 		action_label.text = "Sun Hunt fizzles: the chosen zone is no longer open."
 		update_ui()
 		return
-	var summon_mode := Card.CreatureMode.AGGRESSIVE if mode == "aggressive" else Card.CreatureMode.DEFENSIVE
+	var summon_mode: Card.CreatureMode = Card.CreatureMode.DEFENSIVE
+	if mode == "aggressive":
+		summon_mode = Card.CreatureMode.AGGRESSIVE
 	var stealth := mode == "stealth"
 	var success := game_manager.summon_creature_by_effect(
 		game_manager.current_player,
@@ -3454,7 +3536,7 @@ func _get_zone_position_label(zone: Zone) -> String:
 			return "God slot"
 	return "position " + str(zone.zone_index + 1)
 
-func _get_hidden_target_label(card: Card, viewer: Player = null) -> String:
+func _get_hidden_target_label(card: Card, _viewer: Player = null) -> String:
 	if card == null:
 		return "a hidden target"
 	return card.get_hidden_log_position_label()
@@ -3473,9 +3555,9 @@ func _get_attack_card_label(card: Card, fallback: String = "Card") -> String:
 	var controller := card.get_controller()
 	if controller != null and controller.player_name != "":
 		return controller.player_name + "'s " + card.get_display_name()
-	var owner := card.card_owner
-	if owner != null and owner.player_name != "":
-		return owner.player_name + "'s " + card.get_display_name()
+	var owner_player := card.card_owner
+	if owner_player != null and owner_player.player_name != "":
+		return owner_player.player_name + "'s " + card.get_display_name()
 	return card.get_display_name()
 
 func _has_pending_target_selection() -> bool:
@@ -3524,7 +3606,7 @@ func _get_activation_unavailable_text(card: Card, fallback: String) -> String:
 	return fallback
 
 func _begin_pending_click_selection(
-		name: String,
+		selection_name: String,
 		source_card: Card,
 		validator: Callable,
 		confirm_callback: Callable,
@@ -3532,7 +3614,7 @@ func _begin_pending_click_selection(
 ) -> void:
 	if match_manager == null:
 		return
-	match_manager.start_click_selection(name, source_card, validator, confirm_callback, cancel_callback)
+	match_manager.start_click_selection(selection_name, source_card, validator, confirm_callback, cancel_callback)
 
 func _clear_pending_click_selection() -> void:
 	if match_manager == null:
@@ -3696,6 +3778,9 @@ func _queue_magical_action(action_type: int, source_card: Card, target, resoluti
 func _queue_targeted_ability_action(source_card: Card, target: Card, resolve_callback: Callable, resolution_text: String = "") -> void:
 	if source_card == null or target == null:
 		return
+	if _is_networked_client:
+		game_input.submit_action({type = "activate_card_ability", source_uid = source_card.uid, target_uid = target.uid})
+		return
 	var target_name := _get_target_label(target, game_manager.get_feedback_viewer(), "target")
 	var queued_text := resolution_text if resolution_text != "" else _get_attack_card_label(source_card, source_card.card_name) + " is targeting " + target_name + "."
 	_queue_magical_action(
@@ -3745,12 +3830,17 @@ func _try_queue_god_targeted_ability(target: Card) -> bool:
 	var source_god := god_ability_source
 	awaiting_god_ability_target = false
 	god_ability_source = null
-	_queue_targeted_ability_action(
-		source_god,
-		target,
-		func() -> void:
-			source_god.activate(game_manager, target)
-	)
+	if _is_networked_client:
+		var god_uid: String = source_god.get("uid") if "uid" in source_god else ""
+		var target_uid: String = target.get("uid") if target != null and "uid" in target else ""
+		game_input.submit_action({type = "god_ability", god_uid = god_uid, target_uid = target_uid})
+	else:
+		_queue_targeted_ability_action(
+			source_god,
+			target,
+			func() -> void:
+				source_god.activate(game_manager, target)
+		)
 	return true
 
 func _can_cast_hand_spell(spell: Card) -> bool:
@@ -3775,6 +3865,10 @@ func _queue_power_activation_action(
 	if power == null:
 		update_ui()
 		return false
+	if _is_networked_client:
+		var target_uid: String = target.uid if target is Card else ""
+		game_input.submit_action({type = "activate_power", power_uid = power.uid, target_uid = target_uid})
+		return true
 	if power.requires_activation_hand_discards() and not power.has_pending_activation_discards_for_cost():
 		var on_choose_activation_cost := func() -> void:
 			_queue_power_activation_action(power, target, resolution_text, resolve_callback)
@@ -3812,9 +3906,9 @@ func _prompt_chosen_hand_discards(card: Card, on_complete: Callable, on_cancel: 
 		action_label.text = "Cannot play " + card.card_name + ": choose another card in hand to discard."
 		update_ui()
 		return true
-	var on_choose_discard := func(chosen: Card) -> void:
+	var on_choose_discard := func(selected_discard: Card) -> void:
 		var next_chosen: Array[Card] = chosen_discards.duplicate()
-		next_chosen.append(chosen)
+		next_chosen.append(selected_discard)
 		_prompt_chosen_hand_discards(card, on_complete, on_cancel, next_chosen)
 	var on_cancel_discard := func() -> void:
 		card.clear_pending_chosen_discards()
@@ -4056,6 +4150,15 @@ func _queue_charm_action(charm: CharmCard, triggering_action: CardAction = null,
 		update_ui()
 		return
 	var from_hand: bool = charm.current_zone == charm.card_owner.hand_zone
+	if _is_networked_client:
+		var charm_target_uid: String = target.uid if target is Card else ""
+		game_input.submit_action({type = "cast_charm", charm_uid = charm.uid, target_uid = charm_target_uid, prepared = not from_hand})
+		selected_card = null
+		awaiting_spell_target = false
+		spell_waiting_for_target = null
+		spell_waiting_for_action = null
+		spell_waiting_for_display_zone = null
+		return
 	var preferred_display_zone := _get_paid_hand_card_display_zone(charm)
 	if preferred_display_zone == null and spell_waiting_for_display_zone != null:
 		preferred_display_zone = _resolve_pending_display_zone(charm, spell_waiting_for_display_zone)
@@ -4217,11 +4320,22 @@ func _is_in_play_zone(zone: Zone) -> bool:
 	return zone.zone_type == Zone.ZoneType.GOD_SLOT or zone.zone_type == Zone.ZoneType.POWER_SLOT
 
 func draw_board() -> void:
+	var display_player := _get_display_player()
+	# Fast path: refresh existing zone UIs in-place if the player hasn't changed
+	if display_player != null and display_player == _last_board_player \
+			and not _board_zone_uis.is_empty():
+		for zu in _board_zone_uis:
+			if is_instance_valid(zu):
+				zu._refresh_display()
+		if _player_god_zone_ui != null and is_instance_valid(_player_god_zone_ui):
+			_player_god_zone_ui._refresh_display()
+		return
+	# Full rebuild
 	for child in board_container.get_children():
 		child.queue_free()
 	_board_zone_uis.clear()
+	_last_board_player = display_player
 	board_container.add_theme_constant_override("separation", 0)
-	var display_player := _get_display_player()
 	if display_player == null:
 		return
 
@@ -4286,13 +4400,24 @@ func draw_board() -> void:
 	reserve_row.add_child(_make_zone_info_icon("Abyss", "AB", display_player.abyss_zone, Color(0.6, 0.1, 0.6)))
 
 func draw_enemy_board() -> void:
+	var enemy_player := _get_display_opponent()
+	# Fast path: refresh existing zone UIs in-place if the opponent hasn't changed
+	if enemy_player != null and enemy_player == _last_enemy_player \
+			and not _enemy_zone_uis.is_empty():
+		for zu in _enemy_zone_uis:
+			if is_instance_valid(zu):
+				zu._refresh_display()
+		if _enemy_god_zone_ui != null and is_instance_valid(_enemy_god_zone_ui):
+			_enemy_god_zone_ui._refresh_display()
+		return
+	# Full rebuild
 	_no_intercept_btn = null  # enemy_board_container children are about to be freed
 	for child in enemy_board_container.get_children():
 		child.queue_free()
 	_enemy_zone_uis.clear()
 	_enemy_god_zone_ui = null
+	_last_enemy_player = enemy_player
 	enemy_board_container.add_theme_constant_override("separation", 0)
-	var enemy_player := _get_display_opponent()
 	if enemy_player == null:
 		return
 
@@ -4676,7 +4801,9 @@ func _on_empty_zone_pressed(zone: Zone) -> void:
 		_pending_move_card = null
 		_close_context_menu()
 		if zone.cards.size() == 0 and zone in card.card_owner.get_adjacent_zones(card.current_zone):
-			if game_manager.creature_move(card, zone):
+			if game_input.submit_action({type = "creature_move", card_uid = card.uid,
+					player_index = game_manager.players.find(zone.zone_owner),
+					zone_type = zone.zone_type, zone_index = zone.zone_index}):
 				action_label.text = card.card_name + " moved."
 				update_ui()
 				return
@@ -4690,8 +4817,9 @@ func _on_empty_zone_pressed(zone: Zone) -> void:
 	if selected_card is CharmCard:
 		var charm := selected_card as CharmCard
 		if placement_mode == "prepare_charm" or charm.must_be_prepared_to_activate:
-			if game_manager.can_prepare_card(game_manager.current_player, selected_card, zone):
-				game_manager.prepare_card(game_manager.current_player, selected_card, zone)
+			if game_input.submit_action({type = "prepare_card", card_uid = selected_card.uid,
+					player_index = game_manager.players.find(zone.zone_owner),
+					zone_type = zone.zone_type, zone_index = zone.zone_index}):
 				action_label.text = "Prepared Charm: " + selected_card.card_name + " (face-down)!"
 				selected_card = null
 				placement_mode = ""
@@ -4707,8 +4835,9 @@ func _on_empty_zone_pressed(zone: Zone) -> void:
 		return
 	if selected_card.card_type == Card.CardType.SPELL:
 			if placement_mode == "prepare_spell":
-				if game_manager.can_prepare_card(game_manager.current_player, selected_card, zone):
-					game_manager.prepare_card(game_manager.current_player, selected_card, zone)
+				if game_input.submit_action({type = "prepare_card", card_uid = selected_card.uid,
+						player_index = game_manager.players.find(zone.zone_owner),
+						zone_type = zone.zone_type, zone_index = zone.zone_index}):
 					action_label.text = "Prepared Spell: " + selected_card.card_name + " (face-down)!"
 					selected_card = null
 					placement_mode = ""
@@ -4768,7 +4897,9 @@ func _on_empty_zone_pressed(zone: Zone) -> void:
 		if game_manager.can_play_card(game_manager.current_player, selected_card, zone):
 	# Structure defensive stance is handled internally by StructureCard.gd
 			var played_structure := selected_card
-			game_manager.play_card(game_manager.current_player, selected_card, zone)
+			game_input.submit_action({type = "play_card", card_uid = selected_card.uid,
+					player_index = game_manager.players.find(zone.zone_owner),
+					zone_type = zone.zone_type, zone_index = zone.zone_index})
 			var building_power := _get_active_advanced_building_techniques(game_manager.current_player)
 			if building_power != null and building_power.can_offer_structure_bonus(played_structure, game_manager):
 				action_label.text = "Played Structure: " + played_structure.card_name + "! Choose how much mana to spend on Advanced Building Techniques."
@@ -4786,7 +4917,9 @@ func _on_empty_zone_pressed(zone: Zone) -> void:
 	elif selected_card.card_type == Card.CardType.EQUIPMENT and selected_card.current_zone == game_manager.current_player.hand_zone:
 		if game_manager.can_play_card(game_manager.current_player, selected_card, zone):
 			var equip_name := selected_card.card_name
-			game_manager.play_card(game_manager.current_player, selected_card, zone)
+			game_input.submit_action({type = "play_card", card_uid = selected_card.uid,
+					player_index = game_manager.players.find(zone.zone_owner),
+					zone_type = zone.zone_type, zone_index = zone.zone_index})
 			var creature_there := zone.get_creature()
 			if creature_there != null:
 				action_label.text = equip_name + " equipped to " + creature_there.card_name + "!"
@@ -4799,8 +4932,9 @@ func _on_empty_zone_pressed(zone: Zone) -> void:
 		else:
 			action_label.text = "Cannot play " + selected_card.card_name + "! Not enough resources."
 	elif selected_card.card_type == Card.CardType.HEX:
-		if game_manager.can_prepare_card(game_manager.current_player, selected_card, zone):
-			game_manager.prepare_card(game_manager.current_player, selected_card, zone)
+		if game_input.submit_action({type = "prepare_card", card_uid = selected_card.uid,
+				player_index = game_manager.players.find(zone.zone_owner),
+				zone_type = zone.zone_type, zone_index = zone.zone_index}):
 			action_label.text = "Prepared Hex: " + selected_card.card_name + " (face-down)!"
 			selected_card = null
 			placement_mode = ""
@@ -4856,14 +4990,20 @@ func _on_god_card_pressed(card: Card) -> void:
 		_show_card_selection_overlay(
 			"Choose a target for " + card.card_name,
 			targets,
-			func(chosen: Card) -> void:
-				_queue_targeted_ability_action(
-					card,
-					chosen,
-					func() -> void:
-						card.activate(game_manager, chosen),
-					_get_attack_card_label(card, card.card_name) + " is targeting " + _get_target_label(chosen, game_manager.get_feedback_viewer(), chosen.card_name) + "."
-				)
+			func(selected_target: Card) -> void:
+				if _is_networked_client:
+					var god_uid: String = card.get("uid") if "uid" in card else ""
+					var target_uid: String = selected_target.get("uid") if "uid" in selected_target else ""
+					game_input.submit_action({type = "god_ability", god_uid = god_uid, target_uid = target_uid})
+				else:
+					var resolution_text := _get_attack_card_label(card, card.card_name) + " is targeting " + _get_target_label(selected_target, game_manager.get_feedback_viewer(), selected_target.card_name) + "."
+					_queue_targeted_ability_action(
+						card,
+						selected_target,
+						func() -> void:
+							card.activate(game_manager, selected_target),
+						resolution_text
+					)
 		)
 	else:
 		awaiting_god_ability_target = true
@@ -4885,7 +5025,7 @@ func _god_ability_should_use_selection_overlay(card: Card) -> bool:
 			return true
 	return false
 
-func _on_god_power_activated(_turn_number: int, player: Player, _god: Card, _target: Card) -> void:
+func _on_god_power_activated(_turn_number: int, _player: Player, _god: Card, _target: Card) -> void:
 	pass
 
 func _execute_drag_sacrifice(zone: Zone) -> void:
@@ -4919,24 +5059,25 @@ func _execute_drag_sacrifice(zone: Zone) -> void:
 	)
 
 func _do_place_creature(card: Card, zone: Zone, mode: String) -> void:
-	var summon_mode := Card.CreatureMode.AGGRESSIVE if mode == "aggressive" else Card.CreatureMode.DEFENSIVE
+	var summon_mode: Card.CreatureMode = Card.CreatureMode.DEFENSIVE
+	if mode == "aggressive":
+		summon_mode = Card.CreatureMode.AGGRESSIVE
 	var stealth := mode == "stealth"
-	var success := game_manager.summon_creature_by_effect(
-		game_manager.current_player,
-		card,
-		zone,
-		summon_mode,
-		stealth,
-		stealth,
-		null,
-		true,
-		true,
-		true
-	)
-	if not success:
-		action_label.text = "Cannot summon " + card.card_name + " right now."
-		return
-	action_label.text = "A creature was summoned in STEALTH!" if stealth else "Played " + card.card_name + " in " + ("aggressive stance" if mode == "aggressive" else "defensive stance") + "!"
+	var card_uid: String = card.get("uid") if "uid" in card else ""
+	var success := game_input.submit_action({
+		type = "play_creature",
+		card_uid = card_uid,
+		player_index = game_manager.players.find(zone.zone_owner),
+		zone_type = zone.zone_type,
+		zone_index = zone.zone_index,
+		mode = summon_mode,
+		stealth = stealth,
+	})
+	if not _is_networked_client:
+		if not success:
+			action_label.text = "Cannot summon " + card.card_name + " right now."
+			return
+		action_label.text = "A creature was summoned in STEALTH!" if stealth else "Played " + card.card_name + " in " + ("aggressive stance" if mode == "aggressive" else "defensive stance") + "!"
 
 func _resolve_pending_creature_play(card: Card, zone: Zone, mode: String) -> void:
 	if card == null or zone == null:
@@ -5006,24 +5147,45 @@ func _queue_fenrir_wolf_master(card: Fenrir, mode: String) -> void:
 	selected_card = null
 	placement_mode = ""
 	placement_container.visible = false
+	if _is_networked_client:
+		var network_lupines := card.get_valid_wolf_master_summons(game_manager)
+		if network_lupines.is_empty():
+			action_label.text = "Wolf Master: no payable Lupines in deck."
+			update_ui()
+			return
+		_pending_wolf_master_source = card
+		if network_lupines.size() == 1:
+			_begin_wolf_master_summon(network_lupines[0], mode)
+		else:
+			_show_card_selection_overlay(
+				"Choose a Lupine for Wolf Master",
+				network_lupines,
+				func(network_lupine: Card) -> void:
+					_begin_wolf_master_summon(network_lupine, mode),
+				func() -> void:
+					_pending_wolf_master_source = null
+					action_label.text = "Wolf Master cancelled."
+					update_ui()
+			)
+		return
 	if not card.perform_wolf_master_shuffle():
 		action_label.text = "Wolf Master fizzles: " + card.card_name + " could not be shuffled."
 		update_ui()
 		return
-	var lupines := card.get_valid_wolf_master_summons(game_manager)
-	if lupines.is_empty():
+	var shuffled_lupines := card.get_valid_wolf_master_summons(game_manager)
+	if shuffled_lupines.is_empty():
 		action_label.text = "Wolf Master fizzles: no payable Lupines are available in the deck."
 		update_ui()
 		return
 	_pending_wolf_master_source = card
-	if lupines.size() == 1:
-		_begin_wolf_master_summon(lupines[0], mode)
+	if shuffled_lupines.size() == 1:
+		_begin_wolf_master_summon(shuffled_lupines[0], mode)
 		return
 	_show_card_selection_overlay(
 		"Choose a Lupine for Wolf Master",
-		lupines,
-		func(chosen: Card) -> void:
-			_begin_wolf_master_summon(chosen, mode),
+		shuffled_lupines,
+		func(shuffled_lupine: Card) -> void:
+			_begin_wolf_master_summon(shuffled_lupine, mode),
 		func() -> void:
 			_pending_wolf_master_source = null
 			action_label.text = "Wolf Master cancelled after shuffling " + card.card_name + "."
@@ -5048,6 +5210,20 @@ func _resolve_wolf_master_summon(zone: Zone) -> void:
 		return
 	if zone == null or zone.zone_owner != game_manager.current_player or zone.zone_type not in [Zone.ZoneType.FRONTLINE, Zone.ZoneType.RESERVE] or not zone.cards.is_empty():
 		action_label.text = "Wolf Master: choose an empty friendly zone."
+		update_ui()
+		return
+	if _is_networked_client:
+		var wm_fenrir := _pending_wolf_master_source
+		game_input.submit_action({
+			type = "wolf_master_summon",
+			fenrir_uid = wm_fenrir.uid if wm_fenrir != null else "",
+			lupine_uid = card.uid,
+			player_index = game_manager.players.find(zone.zone_owner),
+			zone_type = zone.zone_type,
+			zone_index = zone.zone_index,
+			mode = mode
+		})
+		_clear_wolf_master_summon()
 		update_ui()
 		return
 	selected_card = card
@@ -5078,7 +5254,9 @@ func _resolve_wolf_master_creature_play(card: Card, zone: Zone, mode: String) ->
 		action_label.text = "Wolf Master fizzles: the summon could not be completed."
 		_clear_wolf_master_summon()
 		return
-	var summon_mode := Card.CreatureMode.AGGRESSIVE if mode == "aggressive" else Card.CreatureMode.DEFENSIVE
+	var summon_mode: Card.CreatureMode = Card.CreatureMode.DEFENSIVE
+	if mode == "aggressive":
+		summon_mode = Card.CreatureMode.AGGRESSIVE
 	var stealth := mode == "stealth"
 	var summon_source := _pending_wolf_master_source
 	var success := game_manager.summon_creature_by_effect(
@@ -5147,13 +5325,15 @@ func _queue_durinn_secondborn_impact_prompt(card: DurinnSecondborn) -> void:
 				update_ui()
 			return
 		_pause_stack_resolution(card.card_owner)
+		var on_choose_weapon := func(chosen_card: Card) -> void:
+			_resume_after_deferred_resolution(card.resolve_reforge_impact(game_manager, chosen_card))
+		var on_cancel_weapon := func() -> void:
+			_resume_after_deferred_resolution(card.card_name + " impact fizzles.")
 		_show_card_selection_overlay(
 			"Choose a weapon for " + card.card_name,
 			current_targets,
-			func(chosen: Card) -> void:
-				_resume_after_deferred_resolution(card.resolve_reforge_impact(game_manager, chosen)),
-			func() -> void:
-				_resume_after_deferred_resolution(card.card_name + " impact fizzles.")
+			on_choose_weapon,
+			on_cancel_weapon
 		)
 	game_manager.push_to_stack(action)
 	update_ui()
@@ -5239,13 +5419,15 @@ func _queue_fourth_sage_enmegalamma_impact_prompt(card) -> void:
 				update_ui()
 			return
 		_pause_stack_resolution(card.card_owner)
+		var on_choose_sage := func(chosen_card: Card) -> void:
+			_resume_after_deferred_resolution(card.resolve_search_sage_impact(game_manager, chosen_card))
+		var on_cancel_sage := func() -> void:
+			_resume_after_deferred_resolution(card.resolve_search_sage_decline(game_manager))
 		_show_card_selection_overlay(
 			"Choose a Mer Sage for " + card.card_name,
 			current_targets,
-			func(chosen: Card) -> void:
-				_resume_after_deferred_resolution(card.resolve_search_sage_impact(game_manager, chosen)),
-			func() -> void:
-				_resume_after_deferred_resolution(card.resolve_search_sage_decline(game_manager))
+			on_choose_sage,
+			on_cancel_sage
 		)
 	game_manager.push_to_stack(action)
 	update_ui()
@@ -5277,14 +5459,16 @@ func _resolve_foolish_optimism_prompt(
 		if current_defender_choices.size() == 1:
 			finish_resolution.call(chosen_attacker, current_defender_choices[0])
 			return
+		var on_choose_defender := func(chosen_defender: Card) -> void:
+			finish_resolution.call(chosen_attacker, chosen_defender)
+		var on_cancel_defender := func() -> void:
+			card.send_to_graveyard_if_needed()
+			_resume_after_deferred_resolution(card.card_name + " fizzles.")
 		_show_card_selection_overlay(
-			"Choose which tied highest-level friendly creature is attacked for " + card.card_name,
+			"Choose which tied highest-level face-up friendly creature is attacked for " + card.card_name,
 			current_defender_choices,
-			func(chosen_defender: Card) -> void:
-				finish_resolution.call(chosen_attacker, chosen_defender),
-			func() -> void:
-				card.send_to_graveyard_if_needed()
-				_resume_after_deferred_resolution(card.card_name + " fizzles.")
+			on_choose_defender,
+			on_cancel_defender
 		)
 
 	var current_attacker_choices := card.get_lowest_level_attacker_choices(game_manager)
@@ -5295,14 +5479,16 @@ func _resolve_foolish_optimism_prompt(
 		prompt_defender_choice.call(current_attacker_choices[0])
 		return
 
+	var on_choose_attacker := func(chosen_attacker: Card) -> void:
+		prompt_defender_choice.call(chosen_attacker)
+	var on_cancel_attacker := func() -> void:
+		card.send_to_graveyard_if_needed()
+		_resume_after_deferred_resolution(card.card_name + " fizzles.")
 	_show_card_selection_overlay(
-		"Choose which tied lowest-level opposing creature attacks for " + card.card_name,
+		"Choose which tied lowest-level face-up opposing creature attacks for " + card.card_name,
 		current_attacker_choices,
-		func(chosen_attacker: Card) -> void:
-			prompt_defender_choice.call(chosen_attacker),
-		func() -> void:
-			card.send_to_graveyard_if_needed()
-			_resume_after_deferred_resolution(card.card_name + " fizzles.")
+		on_choose_attacker,
+		on_cancel_attacker
 	)
 
 func _queue_foolish_optimism_attack(card: FoolishOptimism, attacker: Card, defender: Card) -> String:
@@ -5316,7 +5502,7 @@ func _queue_foolish_optimism_attack(card: FoolishOptimism, attacker: Card, defen
 		return "%s fizzles: the chosen attacker is no longer on the field." % card.card_name
 	if defender.current_zone == null or not defender.current_zone.is_board_zone():
 		return "%s fizzles: the chosen defender is no longer on the field." % card.card_name
-	if not _can_cards_engage_each_other(attacker, defender):
+	if not game_manager.can_cards_engage_each_other(attacker, defender):
 		return "%s fizzles: %s cannot legally attack %s." % [card.card_name, attacker.card_name, defender.card_name]
 
 	var action := CardAction.new()
@@ -5367,8 +5553,8 @@ func _queue_fenrir_devour_prompt(card: Fenrir) -> void:
 			card,
 			func(clicked_card: Card) -> bool:
 				return clicked_card != null and clicked_card in card.get_valid_devour_targets(game_manager),
-			func(chosen: Card) -> void:
-				card.resolve_devour_impact(game_manager, chosen, func(feedback: String) -> void:
+			func(chosen_card: Card) -> void:
+				card.resolve_devour_impact(game_manager, chosen_card, func(feedback: String) -> void:
 					_resume_after_deferred_resolution(feedback)
 				),
 			func() -> void:
@@ -5737,14 +5923,17 @@ func _on_board_card_pressed(card: Card) -> void:
 					pyre_source = card as AncientPyre
 					action_label.text = "Ancient Pyre: Select a card to reduce Res by 5, or click the enemy god to Convert 5 followers."
 				else:
-					_queue_magical_action(
-						CardAction.Type.ABILITY,
-						card,
-						null,
-						card.card_name + " activated!",
-						func() -> void:
-							(card as AncientPyre).activate(game_manager)
-					)
+					if _is_networked_client:
+						game_input.submit_action({type = "activate_card_ability", source_uid = card.uid})
+					else:
+						_queue_magical_action(
+							CardAction.Type.ABILITY,
+							card,
+							null,
+							card.card_name + " activated!",
+							func() -> void:
+								(card as AncientPyre).activate(game_manager)
+						)
 					action_label.text = "Ancient Pyre: Ritual Flame Ã¢â‚¬â€ 5 followers converted!"
 					update_ui()
 			else:
@@ -5765,34 +5954,20 @@ func _on_board_card_pressed(card: Card) -> void:
 		_show_en_hedu_anna_prompt(card as EnHeduAnnaScript)
 		return
 
-	if not _creature_can_attack(card):
-		if card.is_sleeping:
-			action_label.text = card.card_name + " is Sleeping and cannot act."
-		elif card.has_status_effect("cannot_attack"):
-			var cannot_attack_status := card.get_status_effect("cannot_attack")
-			var source_name := str(cannot_attack_status.get("source", "an effect"))
-			action_label.text = card.card_name + " cannot attack because of " + source_name + "."
-		elif card.creature_major_action_used:
-			action_label.text = card.card_name + " has already used its major action this turn."
-		elif card.creature_minor_actions_used >= 2:
-			action_label.text = card.card_name + " has already used two minor actions this turn."
-		elif card.creature_mode == Card.CreatureMode.DEFENSIVE:
-			action_label.text = card.card_name + " is in defensive stance and cannot attack."
-		elif card.current_zone.zone_type == Zone.ZoneType.RESERVE:
-			action_label.text = card.card_name + " cannot attack from the back row."
-		elif game_manager.turn_number == 0:
-			action_label.text = "Cannot attack on the first turn!"
-		else:
-			action_label.text = card.card_name + " cannot attack right now."
-		return
-
-	if selected_attacker == card:
-		selected_attacker = null
-		action_label.text = card.card_name + " deselected"
-		update_ui()
+	if network_manager != null:
+		network_manager.request_action({
+			"type": "select_attacker",
+			"card_uid": card.get("uid")
+		})
 	else:
-		selected_attacker = card
+		match_manager.select_attacker(card)
+	
+	if match_manager.selected_attacker == card:
 		action_label.text = "Selected attacker: " + _get_attack_card_label(card, "A creature") + " - Click enemy target or followers"
+	elif match_manager.selected_attacker == null:
+		action_label.text = card.card_name + " deselected"
+	
+	update_ui()
 
 func _on_enemy_card_pressed(target_card: Card) -> void:
 	if _game_finished:
@@ -5957,11 +6132,6 @@ func _on_enemy_card_pressed(target_card: Card) -> void:
 				)
 		return
 
-	# Attack restriction guard
-	if selected_attacker and game_manager.attack_restrictions.has(selected_attacker.get_controller()):
-		action_label.text = "Cannot attack! Restricted for " + str(game_manager.attack_restrictions[selected_attacker.get_controller()]) + " more turns"
-		return
-
 	# Equipment action intercept selection
 	if _pending_equip_action != "":
 		if target_card.get_controller() == game_manager.other_player and can_intercept(target_card, _pending_equip_actor, _pending_equip_target):
@@ -5985,18 +6155,21 @@ func _on_enemy_card_pressed(target_card: Card) -> void:
 
 	# Direct attack target selection
 	if selected_attacker:
+		var target_id: String = ""
 		if target_card.is_god:
-			# Attacking an enemy god is treated as attacking their followers directly
-			pending_attack_target = target_card.card_owner
-			action_label.text = _get_attack_card_label(selected_attacker, "A creature") + " attacks " + target_card.card_owner.player_name + "'s followers!"
-			check_for_possible_intercepts()
+			target_id = target_card.card_owner.player_name
 		elif target_card.card_type == Card.CardType.CREATURE or target_card.card_type == Card.CardType.STRUCTURE:
-			if not _can_cards_engage_each_other(selected_attacker, target_card):
-				action_label.text = _get_card_name_safe(selected_attacker, "That card") + " cannot engage " + _get_card_name_safe(target_card, "that target") + "."
-				return
-			pending_attack_target = target_card
-			action_label.text = _get_attack_card_label(selected_attacker, "A creature") + " attacking " + _get_card_name_safe(target_card, "an enemy card") + " - opponent may intercept"
-			check_for_possible_intercepts()
+			target_id = target_card.get("uid")
+		
+		if target_id != "":
+			if network_manager != null:
+				network_manager.request_action({
+					"type": "request_attack",
+					"attacker_uid": selected_attacker.get("uid"),
+					"target_id": target_id
+				})
+			else:
+				match_manager.request_attack(selected_attacker, target_id)
 		else:
 			action_label.text = "Can only attack creatures or structures"
 	else:
@@ -6020,7 +6193,7 @@ func _on_all_attack_followers_pressed() -> void:
 		if zone.cards.size() == 0:
 			continue
 		var card: Card = zone.cards[0]
-		if _creature_can_attack(card):
+		if match_manager.can_attack(card):
 			attackers.append(card)
 
 	if attackers.is_empty():
@@ -6034,13 +6207,10 @@ func _advance_attack_queue() -> void:
 	while not _queued_attackers.is_empty():
 		var attacker: Card = _queued_attackers.pop_front()
 		# Skip creatures that can no longer attack (died, acted, slept, etc.)
-		if not _creature_can_attack(attacker):
+		if not match_manager.can_attack(attacker):
 			continue
 		# Set up exactly like a manual attack targeting followers
-		selected_attacker = attacker
-		pending_attack_target = game_manager.other_player
-		action_label.text = _get_attack_card_label(attacker, "A creature") + " attacking followers - opponent may intercept"
-		check_for_possible_intercepts()
+		match_manager.request_attack(attacker, game_manager.other_player)
 		return
 	# Queue exhausted
 	_queued_attackers.clear()
@@ -6057,7 +6227,7 @@ func _on_creature_right_clicked(card: Card) -> void:
 	_pending_move_card = null
 
 	# Build list of legal actions
-	var can_attack  := _creature_can_attack(card)
+	var can_attack  := match_manager.can_attack(card)
 	var can_stance  := _creature_can_change_stance(card)
 	var can_move    := _creature_can_move(card)
 	var can_stupefy := false
@@ -6138,23 +6308,26 @@ func _on_creature_right_clicked(card: Card) -> void:
 				_show_card_selection_overlay(
 					"Choose a target for " + card.card_name,
 					targets,
-					func(chosen: Card) -> void:
+					func(chosen_card: Card) -> void:
 						_queue_targeted_ability_action(
 							card,
-							chosen,
+							chosen_card,
 							func() -> void:
-								card.activate(game_manager, chosen)
+								card.activate(game_manager, chosen_card)
 						)
 				)
 			else:
-				_queue_magical_action(
-					CardAction.Type.ABILITY,
-					card,
-					null,
-					card.card_name + " activated!",
-					func() -> void:
-						card.activate(game_manager)
-				)
+				if _is_networked_client:
+					game_input.submit_action({type = "activate_card_ability", source_uid = card.uid})
+				else:
+					_queue_magical_action(
+						CardAction.Type.ABILITY,
+						card,
+						null,
+						card.card_name + " activated!",
+						func() -> void:
+							card.activate(game_manager)
+					)
 		)
 		vbox.add_child(btn)
 
@@ -6165,7 +6338,7 @@ func _on_creature_right_clicked(card: Card) -> void:
 			reveal_aggressive_btn.pressed.connect(func():
 				_close_context_menu()
 				var was_stealth: bool = card.is_stealth
-				if game_manager.creature_change_mode(card, Card.CreatureMode.AGGRESSIVE):
+				if game_input.submit_action({type = "change_mode", card_uid = card.uid, mode = Card.CreatureMode.AGGRESSIVE}):
 					action_label.text = card.card_name + " revealed in aggressive stance."
 					update_ui()
 					_handle_post_reveal_prompt(card, was_stealth)
@@ -6179,7 +6352,7 @@ func _on_creature_right_clicked(card: Card) -> void:
 			reveal_defensive_btn.pressed.connect(func():
 				_close_context_menu()
 				var was_stealth: bool = card.is_stealth
-				if game_manager.creature_change_mode(card, Card.CreatureMode.DEFENSIVE):
+				if game_input.submit_action({type = "change_mode", card_uid = card.uid, mode = Card.CreatureMode.DEFENSIVE}):
 					action_label.text = card.card_name + " revealed in defensive stance."
 					update_ui()
 					_handle_post_reveal_prompt(card, was_stealth)
@@ -6193,7 +6366,7 @@ func _on_creature_right_clicked(card: Card) -> void:
 			btn.text = mode_name
 			btn.pressed.connect(func():
 				_close_context_menu()
-				game_manager.creature_change_mode(card)
+				game_input.submit_action({type = "change_mode", card_uid = card.uid, mode = -1})
 				action_label.text = card.card_name + " changed stance."
 				update_ui()
 			)
@@ -6445,15 +6618,17 @@ func _bdrag_finish(drop_pos: Vector2) -> void:
 			return
 		var controller := card.get_controller()
 		if controller != null and target_zone in controller.get_adjacent_zones(from_zone):
-			game_manager.creature_move(card, target_zone)
-			action_label.text = card.card_name + " moved."
-			update_ui()
+			if game_input.submit_action({type = "creature_move", card_uid = card.uid,
+					player_index = game_manager.players.find(target_zone.zone_owner),
+					zone_type = target_zone.zone_type, zone_index = target_zone.zone_index}):
+				action_label.text = card.card_name + " moved."
+				update_ui()
 		else:
 			action_label.text = "Can only move to an adjacent or diagonal zone."
 		return
 
 	# Attack guard checks
-	if not _creature_can_attack(card):
+	if not match_manager.can_attack(card):
 		if card.is_sleeping:
 			action_label.text = card.card_name + " is Sleeping and cannot act."
 		elif card.creature_major_action_used:
@@ -6485,11 +6660,15 @@ func _bdrag_finish(drop_pos: Vector2) -> void:
 		var target_card := target_zone.cards[0]
 		if target_card.card_type == Card.CardType.CREATURE or target_card.card_type == Card.CardType.STRUCTURE:
 			selected_attacker = card
-			if not _can_cards_engage_each_other(card, target_card):
+			var attack_block := _get_attack_block_reason(card)
+			if attack_block != "":
+				action_label.text = attack_block
+				return
+			if not game_manager.can_cards_engage_each_other(card, target_card):
 				action_label.text = _get_card_name_safe(card, "That card") + " cannot engage " + _get_card_name_safe(target_card, "that target") + "."
 				return
 			pending_attack_target = target_card
-			action_label.text = _get_attack_card_label(card, "A creature") + " attacking " + _get_card_name_safe(target_card, "an enemy card") + " - opponent may intercept"
+			action_label.text = _get_attack_card_label(card, "A creature") + " attacking " + _get_card_name_safe(target_card, "an enemy card") + "..."
 			check_for_possible_intercepts()
 			return
 
@@ -6506,18 +6685,22 @@ func _bdrag_cleanup() -> void:
 		_bdrag_ghost.queue_free()
 	_bdrag_ghost = null
 
-func _on_attack_followers_pressed() -> void:
+func _get_attack_block_reason(attacker: Card) -> String:
+	if attacker == null or not attacker is Card:
+		return "Invalid attacker selected."
+	if game_manager.turn_number == 0:
+		return "Cannot attack on the first turn!"
+	if not attacker.can_take_major_creature_action():
+		return _get_card_name_safe(attacker, "That creature") + " has already acted this turn."
+	if game_manager.attack_restrictions.has(attacker.get_controller()):
+		return "Cannot attack! Restricted for " + str(game_manager.attack_restrictions[attacker.get_controller()].turns) + " more turns."
+	return ""
 
+func _on_attack_followers_pressed() -> void:
 	if selected_attacker:
-		if not selected_attacker is Card:
-			action_label.text = "Invalid attacker selected"
-			selected_attacker = null
-			return
-		if game_manager.turn_number == 0:
-			action_label.text = "Cannot attack on the first turn!"
-			return
-		if game_manager.attack_restrictions.has(selected_attacker.get_controller()):
-			action_label.text = "Cannot attack! Restricted for " + str(game_manager.attack_restrictions[selected_attacker.get_controller()].turns) + " more turns"
+		var block := _get_attack_block_reason(selected_attacker)
+		if block != "":
+			action_label.text = block
 			return
 		pending_attack_target = game_manager.other_player
 		check_for_possible_intercepts()
@@ -6571,19 +6754,6 @@ func _get_reachable_equipment(creature: Card) -> Array[Dictionary]:
 						"in_range": false
 					})
 	return result
-
-func _creature_can_attack(card: Card) -> bool:
-	return (
-		card.card_type == Card.CardType.CREATURE
-		and card.can_take_major_creature_action()
-		and not card.is_sleeping
-		and not card.has_status_effect("cannot_attack")
-		and game_manager.turn_number > 0
-		and card.creature_mode == Card.CreatureMode.AGGRESSIVE
-		and card.current_zone != null
-		and card.current_zone.zone_type == Zone.ZoneType.FRONTLINE
-		and not game_manager.attack_restrictions.has(card.get_controller())
-	)
 
 func _creature_can_move(card: Card) -> bool:
 	return (
@@ -6658,28 +6828,12 @@ func _get_declared_attack_speed(attacker: Card) -> int:
 		return attacker.get_united_front_attack_speed(game_manager)
 	return attacker.get_effective_speed()
 
-func _can_cards_engage_each_other(attacker: Card, defender: Card) -> bool:
-	if attacker == null or defender == null:
-		return false
-	if attacker.has_method("can_engage") and not attacker.can_engage(defender):
-		return false
-	if defender.has_method("can_be_engaged_by") and not defender.can_be_engaged_by(attacker):
-		return false
-	return true
-
-func _can_interceptor_engage_attacker(interceptor: Card, attacker: Card) -> bool:
-	if interceptor == null or attacker == null:
-		return false
-	if interceptor.has_method("can_engage") and not interceptor.can_engage(attacker):
-		return false
-	if attacker.has_method("can_be_engaged_by") and not attacker.can_be_engaged_by(interceptor):
-		return false
-	return true
-
 func can_intercept(defender: Card, attacker: Card, protected_target) -> bool:
 	if attacker == null:
 		return false
 	if protected_target == null:
+		return false
+	if protected_target is Card and defender == protected_target:
 		return false
 	if defender.card_type != Card.CardType.CREATURE:
 		return false
@@ -6687,7 +6841,7 @@ func can_intercept(defender: Card, attacker: Card, protected_target) -> bool:
 		return false
 	if defender.get_effective_speed() < _get_declared_attack_speed(attacker):
 		return false
-	if not _can_interceptor_engage_attacker(defender, attacker):
+	if not game_manager.can_interceptor_engage_attacker(defender, attacker):
 		return false
 	# Aggressive-stance creatures can intercept once per turn at equal or greater speed
 	if defender.creature_mode == Card.CreatureMode.AGGRESSIVE and defender.can_take_major_creature_action():
@@ -6698,14 +6852,32 @@ func can_intercept(defender: Card, attacker: Card, protected_target) -> bool:
 
 func check_for_possible_intercepts() -> void:
 	var possible_interceptors: Array[Card] = []
-	
+
 	var defender: Player = pending_attack_target if pending_attack_target is Player else pending_attack_target.get_controller()
-	
+
 	for zone in defender.frontline_zones + defender.reserve_zones:
 		for card in zone.cards:
 			if can_intercept(card, selected_attacker, pending_attack_target):
 				possible_interceptors.append(card)
-	
+
+	# In a networked game the defending player may be the remote client.
+	# Send them the intercept decision instead of showing server-side UI.
+	var defender_idx := game_manager.players.find(defender)
+	var defender_peer_id := -1
+	if network_manager != null and defender_idx >= 0:
+		defender_peer_id = int(network_manager.player_peer_ids.get(defender_idx, -1))
+	var is_remote_defender: bool = network_manager != null \
+		and network_manager.get("is_server") == true \
+		and defender_peer_id > 1
+
+	if is_remote_defender:
+		if possible_interceptors.size() > 0:
+			_broadcast_intercept_offered(possible_interceptors)
+		else:
+			action_label.text = _get_attack_card_label(selected_attacker, "A creature") + " attacking directly - no possible interceptors."
+			resolve_pending_attack()
+		return
+
 	if possible_interceptors.size() > 0:
 		var names = []
 		for card in possible_interceptors:
@@ -6715,6 +6887,35 @@ func check_for_possible_intercepts() -> void:
 	else:
 		action_label.text = _get_attack_card_label(selected_attacker, "A creature") + " attacking directly - no possible interceptors."
 		resolve_pending_attack()
+
+func _broadcast_intercept_offered(possible_interceptors: Array[Card]) -> void:
+	if network_manager == null or selected_attacker == null:
+		return
+	var interceptor_uids: Array = []
+	for card in possible_interceptors:
+		interceptor_uids.append(card.uid)
+	var target_uid := ""
+	var target_is_player := false
+	if pending_attack_target is Card:
+		target_uid = (pending_attack_target as Card).uid
+	elif pending_attack_target is Player:
+		target_is_player = true
+		target_uid = str(game_manager.players.find(pending_attack_target as Player))
+	var defender: Player = pending_attack_target if pending_attack_target is Player else (pending_attack_target as Card).get_controller()
+	var defender_idx := game_manager.players.find(defender)
+	var attacker_label := _get_attack_card_label(selected_attacker, "A creature")
+	var event_data := {
+		attacker_uid = selected_attacker.uid,
+		target_uid = target_uid,
+		target_is_player = target_is_player,
+		interceptor_uids = interceptor_uids,
+		action_message = attacker_label + " is attacking — intercept or allow?",
+	}
+	var peer_id: int = network_manager.player_peer_ids.get(defender_idx, -1)
+	if peer_id == 1:
+		network_manager.game_event_received.emit("intercept_offered", event_data)
+	elif peer_id > 0:
+		network_manager.broadcast_event_to_peer(peer_id, "intercept_offered", event_data)
 
 func show_no_intercept_button() -> void:
 	_remove_no_intercept_button()
@@ -6824,6 +7025,11 @@ func _offer_priority() -> void:
 	var responses := game_manager.get_priority_responses(player)
 	update_ui()
 
+	var is_remote_priority: bool = network_manager != null \
+		and network_manager.get("is_server") == true \
+		and not game_manager.players.is_empty() \
+		and player != game_manager.players[0]
+
 	if responses.is_empty():
 		_hide_priority_prompt()
 		game_manager.pass_priority()
@@ -6838,7 +7044,59 @@ func _offer_priority() -> void:
 			_offer_priority()
 		return
 
+	if is_remote_priority:
+		# The remote player has valid responses — ask them over the network.
+		# The priority loop pauses here; it resumes when their command arrives.
+		_broadcast_priority_offered(player, responses)
+		return
+
 	_show_priority_prompt(player)
+
+func _broadcast_priority_offered(player: Player, responses: Array) -> void:
+	if network_manager == null or game_manager.action_stack.is_empty():
+		return
+	var top: CardAction = game_manager.action_stack.back()
+	var response_options: Array = []
+	for card in responses:
+		if card is HexCard:
+			var hex := card as HexCard
+			var targets := game_manager.get_priority_hex_targets(hex, top)
+			var target_is_attacker := not hex.has_method("get_priority_targets") \
+				and top.type == CardAction.Type.ATTACK
+			var target_uids: Array = []
+			for t in targets:
+				target_uids.append(t.uid)
+			response_options.append({
+				response_type = "hex",
+				card_uid = hex.uid,
+				target_uids = target_uids,
+				target_is_attacker = target_is_attacker,
+			})
+		elif card is CharmCard:
+			var charm := card as CharmCard
+			var targets := charm.get_valid_targets(game_manager)
+			var target_uids: Array = []
+			for t in targets:
+				target_uids.append(t.uid)
+			var from_hand := charm.current_zone == charm.card_owner.hand_zone
+			response_options.append({
+				response_type = "charm",
+				card_uid = charm.uid,
+				target_uids = target_uids,
+				from_hand = from_hand,
+			})
+
+	var action_msg := ""
+	if top.type == CardAction.Type.ATTACK and top.attacker != null:
+		action_msg = top.attacker.card_name + " is attacking — you may respond!"
+
+	var event_data := {responses = response_options, action_message = action_msg}
+	var remote_player_idx := game_manager.players.find(player)
+	var peer_id: int = network_manager.player_peer_ids.get(remote_player_idx, -1)
+	if peer_id == 1:
+		network_manager.game_event_received.emit("priority_offered", event_data)
+	elif peer_id > 0:
+		network_manager.broadcast_event_to_peer(peer_id, "priority_offered", event_data)
 
 func _show_priority_prompt(player: Player) -> void:
 	var panel = get_node_or_null("PriorityPromptPanel")
@@ -6890,6 +7148,9 @@ func _hide_priority_prompt() -> void:
 
 func _on_priority_pass_pressed() -> void:
 	_hide_priority_prompt()
+	if _is_networked_client:
+		network_manager.request_action({type = "priority_pass"})
+		return
 	game_manager.pass_priority()
 	if game_manager.both_passed():
 		_execute_top_of_stack()
@@ -6915,8 +7176,8 @@ func _on_priority_response_chosen(card: Card) -> void:
 			_show_card_selection_overlay(
 				"Choose a target for " + hex.card_name,
 				hex_targets,
-				func(chosen: Card) -> void:
-					_queue_hex_response_action(hex, top, chosen, target_is_attacker)
+				func(chosen_card: Card) -> void:
+					_queue_hex_response_action(hex, top, chosen_card, target_is_attacker)
 			)
 			return
 		if has_manual_targets and hex.targets and hex_targets.is_empty():
@@ -6939,17 +7200,19 @@ func _on_priority_response_chosen(card: Card) -> void:
 			action_label.text = structure.card_name + " has no valid fast targets."
 			update_ui()
 			return
+		var on_choose_fast_void_target := func(chosen_card: Card) -> void:
+			var on_fast_void_activate := func() -> void:
+				structure.activate(game_manager, chosen_card)
+			_queue_targeted_ability_action(
+				structure,
+				chosen_card,
+				on_fast_void_activate,
+				structure.card_name + " fast-voids " + _get_target_label(chosen_card, game_manager.get_feedback_viewer(), chosen_card.card_name) + "."
+			)
 		_show_card_selection_overlay(
 			"Choose a friendly Mer Mage to Void with " + structure.card_name,
 			targets,
-			func(chosen: Card) -> void:
-				_queue_targeted_ability_action(
-					structure,
-					chosen,
-					func() -> void:
-						structure.activate(game_manager, chosen),
-					structure.card_name + " fast-voids " + _get_target_label(chosen, game_manager.get_feedback_viewer(), chosen.card_name) + "."
-				)
+			on_choose_fast_void_target
 		)
 	elif card is SpellCard:
 		selected_card = card
@@ -6969,24 +7232,32 @@ func _on_priority_response_chosen(card: Card) -> void:
 		elif card != null and (card is BlotSacrifice or card.card_name == "Blot Sacrifice"):
 			_show_blot_sacrifice_prompt(card)
 		elif card is CircleOfRebirth:
-			var resurrect_count := get_resurrectible_cards().size()
-			var spell := card
-			_queue_hand_spell_cast(
-				spell,
-				null,
-				("Circle of Rebirth resurrected %d creature(s)!" % resurrect_count) if resurrect_count > 0 else "Cast Circle of Rebirth but no creatures to resurrect!",
-				func() -> void:
-					(spell as SpellCard).resolve(game_manager, null)
-			)
+			if _is_networked_client:
+				var spell_uid: String = card.get("uid") if "uid" in card else ""
+				game_input.submit_action({type = "cast_spell", spell_uid = spell_uid})
+			else:
+				var resurrect_count := get_resurrectible_cards().size()
+				var spell := card
+				_queue_hand_spell_cast(
+					spell,
+					null,
+					("Circle of Rebirth resurrected %d creature(s)!" % resurrect_count) if resurrect_count > 0 else "Cast Circle of Rebirth but no creatures to resurrect!",
+					func() -> void:
+						(spell as SpellCard).resolve(game_manager, null)
+				)
 		else:
-			var spell := card
-			_queue_hand_spell_cast(
-				spell,
-				null,
-				"Cast " + spell.card_name + "!",
-				func() -> void:
-					(spell as SpellCard).resolve(game_manager, null)
-			)
+			if _is_networked_client:
+				var spell_uid: String = card.get("uid") if "uid" in card else ""
+				game_input.submit_action({type = "cast_spell", spell_uid = spell_uid})
+			else:
+				var spell := card
+				_queue_hand_spell_cast(
+					spell,
+					null,
+					"Cast " + spell.card_name + "!",
+					func() -> void:
+						(spell as SpellCard).resolve(game_manager, null)
+				)
 
 func _finish_post_execute(source_player: Player) -> void:
 	game_manager.current_phase = GameManager.GamePhase.MAIN
@@ -7697,6 +7968,9 @@ func _resolve_erlqueens_nightingale_shift(return_to_hand_after_shift: bool) -> v
 	if card == null:
 		update_ui()
 		return
+	if _is_networked_client:
+		game_input.submit_action({type = "activate_card_ability", source_uid = card.uid, return_to_hand = return_to_hand_after_shift})
+		return
 	_queue_magical_action(
 		CardAction.Type.ABILITY,
 		card,
@@ -7777,6 +8051,9 @@ func _resolve_en_hedu_anna_exaltation(option: Dictionary) -> void:
 	if card == null:
 		update_ui()
 		return
+	if _is_networked_client:
+		game_input.submit_action({type = "en_hedu_anna_exaltation", source_uid = card.uid, option = option})
+		return
 	_queue_magical_action(
 		CardAction.Type.ABILITY,
 		card,
@@ -7829,6 +8106,11 @@ func _resolve_absence_with_mode(mode: String) -> void:
 	_hide_absence_mode_prompt()
 	if spell == null or target == null:
 		update_ui()
+		return
+	if _is_networked_client:
+		var spell_uid: String = spell.get("uid") if "uid" in spell else ""
+		var target_uid: String = target.get("uid") if "uid" in target else ""
+		game_input.submit_action({type = "cast_spell", spell_uid = spell_uid, target_uid = target_uid, mode = mode})
 		return
 	var target_label := _get_target_label(target, game_manager.get_feedback_viewer(), "target")
 	var source_label := _get_attack_card_label(spell, spell.card_name)
@@ -7899,8 +8181,8 @@ func _begin_book_of_life_resolution(spell: BookOfLife) -> void:
 		_resolve_book_of_life(null)
 		return
 	_pause_stack_resolution(spell.card_owner)
-	var on_choose_creature := func(chosen: Card) -> void:
-		_resolve_book_of_life(chosen)
+	var on_choose_creature := func(selected_creature: Card) -> void:
+		_resolve_book_of_life(selected_creature)
 	var on_cancel_creature := func() -> void:
 		_resolve_book_of_life(null)
 	_show_card_selection_overlay(
@@ -7915,6 +8197,13 @@ func _resolve_book_of_life(chosen: Card) -> void:
 	_pending_book_of_life_spell = null
 	if spell == null:
 		update_ui()
+		return
+	if _is_networked_client:
+		var spell_uid: String = spell.get("uid") if "uid" in spell else ""
+		var target_uid := ""
+		if chosen != null and "uid" in chosen:
+			target_uid = chosen.get("uid")
+		game_input.submit_action({type = "cast_spell", spell_uid = spell_uid, target_uid = target_uid})
 		return
 	var resolution_text := "Book of Life gained 10 followers."
 	if chosen != null:
@@ -7982,11 +8271,12 @@ func _show_deucalion_prompt(spell: DeucalionsInfants) -> void:
 
 		var remove_row := HBoxContainer.new()
 		vbox.add_child(remove_row)
-		for chosen in _pending_deucalion_friendly_targets:
+		for kept_card in _pending_deucalion_friendly_targets:
+			var captured_kept_card := kept_card
 			var remove_btn := Button.new()
-			remove_btn.text = "Keep " + chosen.card_name
+			remove_btn.text = "Keep " + captured_kept_card.card_name
 			remove_btn.pressed.connect(func() -> void:
-				_pending_deucalion_friendly_targets.erase(chosen)
+				_pending_deucalion_friendly_targets.erase(captured_kept_card)
 				_show_deucalion_prompt(spell)
 			)
 			remove_row.add_child(remove_btn)
@@ -8066,17 +8356,28 @@ func _on_deucalion_confirm_pressed() -> void:
 		_show_card_selection_overlay(
 			"Opponent Chooses Which Card Is Destroyed",
 			enemy_choices,
-			func(chosen: Card) -> void:
-				_queue_deucalion_spell(spell, friendly_targets, chosen)
+			func(selected_enemy: Card) -> void:
+				_queue_deucalion_spell(spell, friendly_targets, selected_enemy)
 		)
 		return
 
-	var chosen_enemy: Card = enemy_choices[0] if enemy_choices.size() == 1 else null
+	var chosen_enemy: Card = null
+	if enemy_choices.size() == 1:
+		chosen_enemy = enemy_choices[0]
 	_queue_deucalion_spell(spell, friendly_targets, chosen_enemy)
 
 func _queue_deucalion_spell(spell: DeucalionsInfants, friendly_targets: Array[Card], enemy_target: Card = null) -> void:
 	if spell == null:
 		update_ui()
+		return
+	if _is_networked_client:
+		var spell_uid: String = spell.get("uid") if "uid" in spell else ""
+		var choices: Array = []
+		for c in friendly_targets:
+			if c != null and "uid" in c:
+				choices.append(c.uid)
+		var enemy_uid: String = enemy_target.get("uid") if enemy_target != null and "uid" in enemy_target else ""
+		game_input.submit_action({type = "cast_spell", spell_uid = spell_uid, choices = choices, enemy_target_uid = enemy_uid})
 		return
 	spell.resolve_with_choices(game_manager, friendly_targets, enemy_target, func() -> void:
 		_send_used_hand_card_to_graveyard(spell)
@@ -8121,7 +8422,9 @@ func _on_deucalion_cancel_pressed() -> void:
 		var friendly_targets := _pending_deucalion_friendly_targets.duplicate()
 		_hide_deucalion_prompt()
 		var enemy_choices: Array[Card] = spell.get_destroyable_enemy_cards(game_manager)
-		var chosen_enemy: Card = enemy_choices[0] if enemy_choices.size() == 1 else null
+		var chosen_enemy: Card = null
+		if enemy_choices.size() == 1:
+			chosen_enemy = enemy_choices[0]
 		_queue_deucalion_spell(spell, friendly_targets, chosen_enemy)
 		return
 	_hide_deucalion_prompt()
@@ -8364,6 +8667,16 @@ func _on_blot_sacrifice_confirm_pressed() -> void:
 	var chosen_creatures := _pending_blot_selected_creatures.duplicate()
 	_hide_blot_sacrifice_prompt()
 
+	if _is_networked_client and spell != null and costs_paid:
+		var spell_uid: String = spell.get("uid") if "uid" in spell else ""
+		var choices: Array = []
+		for c in chosen_creatures:
+			if c != null and "uid" in c:
+				choices.append(c.uid)
+		# Include the sacrifice target UID so server knows which creature to sacrifice
+		var sac_uid: String = sacrifice_target.get("uid") if sacrifice_target != null and "uid" in sacrifice_target else ""
+		game_input.submit_action({type = "cast_spell", spell_uid = spell_uid, choices = choices, sacrifice_uid = sac_uid})
+		return
 	if spell == null or sacrifice_target == null:
 		update_ui()
 		return
@@ -8430,6 +8743,13 @@ func _on_demiurge_confirm_pressed(spin: SpinBox) -> void:
 	if spell == null:
 		update_ui()
 		return
+	if _is_networked_client:
+		var spell_uid: String = spell.get("uid") if "uid" in spell else ""
+		game_input.submit_action({type = "cast_spell", spell_uid = spell_uid, x_value = x_value})
+		return
+	if spell == null:
+		update_ui()
+		return
 	if not _can_cast_hand_spell(spell):
 		action_label.text = "Cannot cast " + spell.card_name + "!"
 		update_ui()
@@ -8458,11 +8778,11 @@ func _on_demiurge_confirm_pressed(spin: SpinBox) -> void:
 			)
 			return
 		_pause_stack_resolution(spell.card_owner)
-		var on_choose_demon := func(chosen: Card) -> void:
-			var summoned: bool = spell.summon_milled_demon(game_manager, chosen)
+		var on_choose_demon := func(selected_demon: Card) -> void:
+			var summoned: bool = spell.summon_milled_demon(game_manager, selected_demon)
 			_send_used_hand_card_to_graveyard(spell)
 			_resume_after_deferred_resolution(
-				"Apollyon's Demiurge summoned %s." % chosen.card_name
+				"Apollyon's Demiurge summoned %s." % selected_demon.card_name
 				if summoned
 				else "Apollyon's Demiurge found no open zone to summon into."
 			)
@@ -8583,6 +8903,45 @@ func _on_match_action_resolved(action: CardAction) -> void:
 	_finish_post_execute(action.source_player)
 	update_ui()
 
+func _on_match_move_validated(move: Dictionary) -> void:
+	match move.get("type", ""):
+		"attack":
+			var attacker: Card = move.get("attacker")
+			var target = move.get("target")
+			if target is Player:
+				action_label.text = _get_attack_card_label(attacker, "A creature") + " attacks " + target.player_name + "'s followers!"
+				check_for_possible_intercepts()
+			elif target is Card:
+				action_label.text = _get_attack_card_label(attacker, "A creature") + " attacking " + _get_card_name_safe(target, "an enemy card") + "..."
+				check_for_possible_intercepts()
+		"intercept_decision":
+			# selected_interceptor was set by MatchManager; proceed to resolve the attack.
+			resolve_pending_attack()
+		"priority_pass":
+			# Remote player passed priority; continue the server-side priority loop.
+			game_manager.pass_priority()
+			if game_manager.both_passed():
+				_execute_top_of_stack()
+			else:
+				_offer_priority()
+		"play_hex_response":
+			# Remote player activated a hex; the ABILITY was already pushed by MatchManager.
+			var phr_hex := game_manager.get_card_by_uid(move.get("hex_uid", ""))
+			if phr_hex != null:
+				action_label.text = phr_hex.card_name + " responds!"
+			_offer_priority()
+		"play_charm_response":
+			# Remote player activated a charm; the SPELL was already pushed by MatchManager.
+			var pcr_charm := game_manager.get_card_by_uid(move.get("charm_uid", ""))
+			if pcr_charm != null:
+				action_label.text = pcr_charm.card_name + " responds!"
+			_offer_priority()
+	update_ui()
+
+func _on_match_move_failed(reason: String) -> void:
+	action_label.text = reason
+	update_ui()
+
 func _on_match_ui_interaction(type: String, data: Dictionary) -> void:
 	match type:
 		"combat_retreat":
@@ -8660,8 +9019,8 @@ func _find_nearest_empty_friendly_zone(drop_pos: Vector2) -> Zone:
 			best_zone = zu.zone
 	return best_zone
 
-func _is_attacker_on_board(attacker: Card, owner: Player) -> bool:
-	for z in owner.frontline_zones + owner.reserve_zones:
+func _is_attacker_on_board(attacker: Card, owning_player: Player) -> bool:
+	for z in owning_player.frontline_zones + owning_player.reserve_zones:
 		if attacker in z.cards:
 			return true
 	return false
@@ -8673,7 +9032,7 @@ func _on_draw_button_pressed() -> void:
 		action_label.text = "Finish resolving Sun Hunt or cancel it before choosing another upkeep option."
 		return
 	var _deck_had_cards: bool = game_manager.current_player.deck_zone.get_card_count() > 0
-	game_manager.player_chooses_draw()
+	game_input.submit_action({type = "upkeep_choice", choice = "draw"})
 	_close_turn_start_windows()
 	update_ui()
 	hide_turn_choice()
@@ -8685,7 +9044,7 @@ func _on_mana_button_pressed() -> void:
 	if _skoll_prompt_panel != null or _pending_skoll_summon != null:
 		action_label.text = "Finish resolving Sun Hunt or cancel it before choosing another upkeep option."
 		return
-	game_manager.player_chooses_mana()
+	game_input.submit_action({type = "upkeep_choice", choice = "mana"})
 	_close_turn_start_windows()
 	update_ui()
 	hide_turn_choice()
@@ -8718,13 +9077,20 @@ func _prompt_end_turn_discards() -> void:
 	_show_card_selection_overlay(
 		"Discard %d card(s) to reach %d cards" % [excess, Player.MAX_HAND_SIZE],
 		game_manager.current_player.hand_zone.cards.duplicate(),
-		func(chosen: Card) -> void:
-			_discard_end_turn_card(chosen)
+		func(chosen_card: Card) -> void:
+			_discard_end_turn_card(chosen_card)
 	)
 	action_label.text = "Choose %d card(s) to discard before ending your turn." % excess
 
 func _discard_end_turn_card(card: Card) -> void:
 	if card == null or card.current_zone != game_manager.current_player.hand_zone:
+		_prompt_end_turn_discards()
+		return
+	if _is_networked_client:
+		# Stage discard locally so the count decreases; send all UIDs with "end_turn".
+		game_manager.current_player.hand_zone.cards.erase(card)
+		_pending_end_turn_discard_uids.append(card.uid)
+		update_ui()
 		_prompt_end_turn_discards()
 		return
 	game_manager.current_player.discard_card(card)
@@ -8774,6 +9140,266 @@ func _on_end_turn_button_pressed() -> void:
 	_clear_wolf_master_summon()
 	_prompt_end_turn_discards()
 
+# ---------------------------------------------------------------------------
+# Network event handling (client side)
+# ---------------------------------------------------------------------------
+
+func _apply_network_event(event_type: String, data: Dictionary) -> void:
+	match event_type:
+		"full_state":
+			_apply_full_state(data)
+		"upkeep_needed":
+			# Server tells this client it's their turn and they need to choose upkeep
+			if network_manager != null:
+				var cp_idx: int = data.get("current_player_index", -1)
+				if cp_idx == network_manager.local_player_index:
+					call_deferred("_open_upkeep_choice_window")
+		"turn_started":
+			# Turn hooks resolved; update label only — upkeep_needed already opened the window
+			pass
+		"priority_offered":
+			_apply_priority_offered(data)
+		"intercept_offered":
+			_apply_intercept_offered(data)
+		"game_ended":
+			var winner_name: String = data.get("winner_name", "Unknown")
+			action_label.text = winner_name + " wins!"
+			_game_finished = true
+			update_ui()
+
+func _apply_full_state(data: Dictionary) -> void:
+	# Clear stale card references before zone cards are replaced
+	_clear_network_selection_state()
+	# Rebuild ghost GameManager from server state
+	GameState.apply_to_manager(data.get("state", {}), game_manager)
+	# Set feedback_viewer so client sees their own perspective
+	if network_manager != null and network_manager.local_player_index >= 0:
+		var local_idx: int = network_manager.local_player_index
+		if local_idx < game_manager.players.size():
+			game_manager.feedback_viewer = game_manager.players[local_idx]
+	# Show server's action message if any
+	var msg: String = data.get("action_message", "")
+	if msg != "":
+		action_label.text = msg
+	update_ui()
+
+func _apply_priority_offered(data: Dictionary) -> void:
+	var msg: String = data.get("action_message", "")
+	if msg != "":
+		action_label.text = msg
+	_show_remote_priority_prompt(data.get("responses", []))
+
+func _show_remote_priority_prompt(responses: Array) -> void:
+	var panel = get_node_or_null("PriorityPromptPanel")
+	if panel == null:
+		panel = PanelContainer.new()
+		panel.name = "PriorityPromptPanel"
+		var style := StyleBoxFlat.new()
+		style.bg_color = Color(0.08, 0.08, 0.15, 0.95)
+		style.border_color = Color(0.4, 0.7, 1.0)
+		for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+			style.set_border_width(side, 2)
+		panel.add_theme_stylebox_override("panel", style)
+		panel.custom_minimum_size.x = 220
+		add_child(panel)
+		_promote_transient_ui(panel)
+		panel.anchor_left = 1.0
+		panel.anchor_right = 1.0
+		panel.anchor_top = 0.5
+		panel.anchor_bottom = 0.5
+		panel.offset_left = -230
+		panel.offset_right = -10
+		panel.offset_top = -60
+
+	for child in panel.get_children():
+		child.queue_free()
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 6)
+	panel.add_child(vbox)
+
+	var lbl := Label.new()
+	lbl.text = "You have priority"
+	lbl.add_theme_font_size_override("font_size", 13)
+	vbox.add_child(lbl)
+
+	var pass_btn := Button.new()
+	pass_btn.text = "Pass Priority"
+	pass_btn.pressed.connect(func() -> void:
+		_hide_priority_prompt()
+		network_manager.request_action({type = "priority_pass"})
+	)
+	vbox.add_child(pass_btn)
+
+	for response in responses:
+		var rtype: String = response.get("response_type", "hex")
+		var card_uid: String = response.get("card_uid", "")
+		var target_uids: Array = response.get("target_uids", [])
+		var resp_card := game_manager.get_card_by_uid(card_uid)
+		if resp_card == null:
+			continue
+		var card_name: String = resp_card.card_name
+		var btn := Button.new()
+		btn.text = "Use " + card_name
+		btn.pressed.connect(func() -> void:
+			_hide_priority_prompt()
+			if rtype == "hex":
+				var target_is_attacker: bool = response.get("target_is_attacker", false)
+				if target_uids.size() == 1:
+					network_manager.request_action({
+						type = "play_hex_response",
+						hex_uid = card_uid,
+						target_uid = target_uids[0],
+						target_is_attacker = target_is_attacker,
+					})
+				elif target_uids.is_empty():
+					network_manager.request_action({
+						type = "play_hex_response",
+						hex_uid = card_uid,
+						target_uid = "",
+						target_is_attacker = target_is_attacker,
+					})
+				else:
+					var target_cards: Array[Card] = []
+					for target_uid in target_uids:
+						var c := game_manager.get_card_by_uid(target_uid as String)
+						if c != null:
+							target_cards.append(c)
+					_show_card_selection_overlay(
+						"Choose a target for " + card_name,
+						target_cards,
+						func(chosen_card: Card) -> void:
+							network_manager.request_action({
+								type = "play_hex_response",
+								hex_uid = card_uid,
+								target_uid = chosen_card.uid,
+								target_is_attacker = target_is_attacker,
+							})
+					)
+			elif rtype == "charm":
+				var from_hand: bool = response.get("from_hand", false)
+				if target_uids.size() == 1:
+					network_manager.request_action({
+						type = "play_charm_response",
+						charm_uid = card_uid,
+						target_uid = target_uids[0],
+						from_hand = from_hand,
+					})
+				elif target_uids.is_empty():
+					network_manager.request_action({
+						type = "play_charm_response",
+						charm_uid = card_uid,
+						target_uid = "",
+						from_hand = from_hand,
+					})
+				else:
+					var target_cards: Array[Card] = []
+					for target_uid in target_uids:
+						var c := game_manager.get_card_by_uid(target_uid as String)
+						if c != null:
+							target_cards.append(c)
+					_show_card_selection_overlay(
+						"Choose a target for " + card_name,
+						target_cards,
+						func(chosen_card: Card) -> void:
+							network_manager.request_action({
+								type = "play_charm_response",
+								charm_uid = card_uid,
+								target_uid = chosen_card.uid,
+								from_hand = from_hand,
+							})
+					)
+		)
+		vbox.add_child(btn)
+
+	_promote_transient_ui(panel)
+	panel.show()
+
+func _apply_intercept_offered(data: Dictionary) -> void:
+	var msg: String = data.get("action_message", "")
+	if msg != "":
+		action_label.text = msg
+	_show_intercept_prompt(data.get("interceptor_uids", []))
+
+func _show_intercept_prompt(interceptor_uids: Array) -> void:
+	var panel = get_node_or_null("InterceptPromptPanel")
+	if panel == null:
+		panel = PanelContainer.new()
+		panel.name = "InterceptPromptPanel"
+		var style := StyleBoxFlat.new()
+		style.bg_color = Color(0.08, 0.08, 0.15, 0.95)
+		style.border_color = Color(0.8, 0.4, 0.2)
+		for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+			style.set_border_width(side, 2)
+		panel.add_theme_stylebox_override("panel", style)
+		panel.custom_minimum_size.x = 220
+		add_child(panel)
+		_promote_transient_ui(panel)
+		panel.anchor_left = 1.0
+		panel.anchor_right = 1.0
+		panel.anchor_top = 0.5
+		panel.anchor_bottom = 0.5
+		panel.offset_left = -230
+		panel.offset_right = -10
+		panel.offset_top = -60
+
+	for child in panel.get_children():
+		child.queue_free()
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 6)
+	panel.add_child(vbox)
+
+	var lbl := Label.new()
+	lbl.text = "Intercept?"
+	lbl.add_theme_font_size_override("font_size", 13)
+	vbox.add_child(lbl)
+
+	var no_btn := Button.new()
+	no_btn.text = "No Intercept"
+	no_btn.pressed.connect(func() -> void:
+		_hide_intercept_prompt()
+		network_manager.request_action({type = "intercept_decision", interceptor_uid = ""})
+	)
+	vbox.add_child(no_btn)
+
+	for interceptor_uid in interceptor_uids:
+		var card := game_manager.get_card_by_uid(interceptor_uid as String)
+		if card == null:
+			continue
+		var card_name := card.card_name
+		var captured_interceptor_uid: String = interceptor_uid as String
+		var btn := Button.new()
+		btn.text = "Intercept: " + card_name
+		btn.pressed.connect(func() -> void:
+			_hide_intercept_prompt()
+			network_manager.request_action({type = "intercept_decision", interceptor_uid = captured_interceptor_uid})
+		)
+		vbox.add_child(btn)
+
+	_promote_transient_ui(panel)
+	panel.show()
+
+func _hide_intercept_prompt() -> void:
+	var panel = get_node_or_null("InterceptPromptPanel")
+	if panel:
+		panel.hide()
+
+func _clear_network_selection_state() -> void:
+	selected_card = null
+	if match_manager != null:
+		match_manager.selected_attacker = null
+		match_manager.selected_interceptor = null
+		match_manager.pending_attack_target = null
+		match_manager.awaiting_spell_target = false
+		match_manager.spell_waiting_for_target = null
+		match_manager.spell_waiting_for_action = null
+	placement_mode = ""
+	if placement_container != null:
+		placement_container.visible = false
+
+# ---------------------------------------------------------------------------
+
 func _on_forfeit_button_pressed() -> void:
 	if _game_finished:
 		return
@@ -8803,9 +9429,27 @@ func _do_end_turn() -> void:
 	_dismiss_transient_prompts()
 	var end_turn_priority_owner := game_manager.current_player
 	var resolve_end_turn := func() -> void:
-		game_manager.end_turn()
+		var et_cmd := {type = "end_turn"}
+		if not _pending_end_turn_discard_uids.is_empty():
+			et_cmd["discard_uids"] = _pending_end_turn_discard_uids.duplicate()
+			_pending_end_turn_discard_uids.clear()
+		game_input.submit_action(et_cmd)
 		update_ui()
-		call_deferred("_open_upkeep_choice_window")
+		if _is_networked_client:
+			return  # Client waits for server to send upkeep_needed
+		var new_cp_idx: int = game_manager.players.find(game_manager.current_player)
+		var is_remote_new_turn: bool = network_manager != null \
+			and network_manager.get("is_server") == true \
+			and new_cp_idx != 0
+		if is_remote_new_turn:
+			var peer_id: int = network_manager.player_peer_ids.get(new_cp_idx, -1)
+			var event_data := {current_player_index = new_cp_idx}
+			if peer_id == 1:
+				network_manager.game_event_received.emit("upkeep_needed", event_data)
+			elif peer_id > 0:
+				network_manager.broadcast_event_to_peer(peer_id, "upkeep_needed", event_data)
+		else:
+			call_deferred("_open_upkeep_choice_window")
 	_queue_priority_event(
 		"end_turn",
 		null,
@@ -8935,14 +9579,14 @@ func _on_resurrection_no() -> void:
 func _on_allow_ai_attack() -> void:
 	pass
 
-func _on_player_mana_changed(new_mana: int) -> void:
+func _on_player_mana_changed(_new_mana: int) -> void:
 	if game_manager and game_manager.current_player == player1:
 		update_ui()
 
-func _on_player_followers_changed(new_followers: int) -> void:
+func _on_player_followers_changed(_new_followers: int) -> void:
 	_request_ui_refresh()
 
-func _on_enemy_followers_changed(new_followers: int) -> void:
+func _on_enemy_followers_changed(_new_followers: int) -> void:
 	_request_ui_refresh()
 
 func _on_game_ended(winner: Player, loser: Player) -> void:
@@ -9100,6 +9744,17 @@ func _on_card_drag_released(card: Card, drop_pos: Vector2, card_rotated: bool, c
 	update_ui()
 
 func _cast_targeted_spell(spell: Card, target: Card) -> void:
+	if _is_networked_client:
+		var spell_uid: String = spell.get("uid") if "uid" in spell else ""
+		var target_uid: String = target.get("uid") if target != null and "uid" in target else ""
+		var cmd := {type = "cast_spell", spell_uid = spell_uid, target_uid = target_uid}
+		if spell is Absence and target != null and (target.is_god or not (target is PowerCard) or (target as PowerCard).is_face_down):
+			cmd["mode"] = "mute"
+		# For unlocked powers, _show_absence_mode_prompt will add the mode
+		# before submitting; skip submitting here so the prompt can run first
+		if not (spell is Absence and target is PowerCard and not (target as PowerCard).is_face_down):
+			game_input.submit_action(cmd)
+			return
 	var target_label := _get_target_label(target, game_manager.get_feedback_viewer(), target.card_name if target != null else "target")
 	var source_label := _get_attack_card_label(spell, spell.card_name if spell != null else "Spell")
 	if spell is Absence and target != null and target.is_god:
@@ -9146,7 +9801,9 @@ func _on_card_dropped_to_zone(card: Card, zone: Zone, is_rotated: bool = false, 
 			action_label.text = "Cannot prepare " + card.card_name + "!"
 			update_ui()
 			return
-		game_manager.prepare_card(game_manager.current_player, card, zone)
+		game_input.submit_action({type = "prepare_card", card_uid = card.uid,
+				player_index = game_manager.players.find(zone.zone_owner),
+				zone_type = zone.zone_type, zone_index = zone.zone_index})
 		_pending_spell_display_zone = null
 		action_label.text = "Prepared " + _get_stack_card_type_label(card) + ": " + card.card_name + " (face-down)!"
 		selected_card = null
@@ -9209,4 +9866,4 @@ func cleanup() -> void:
 	_clear_wolf_master_summon()
 	if game_manager:
 		game_manager.set_interaction_host(null)
-		game_manager.queue_free()
+		game_manager = null

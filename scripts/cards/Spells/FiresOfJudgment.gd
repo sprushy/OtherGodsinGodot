@@ -16,7 +16,7 @@ func _init() -> void:
 	art_path = "res://images/card_art/InfernoAIEdit.png"
 	ability_text = "Destroy all of your opponent's face up creatures, structures, and equipment."
 
-func resolve(game_manager: GameManager, target = null) -> void:
+func resolve(game_manager: GameManager, _target = null) -> void:
 	if game_manager == null or card_owner == null:
 		return
 

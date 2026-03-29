@@ -31,6 +31,6 @@ func _init() -> void:
 static func _get_next_token_art_path() -> String:
 	if TOKEN_ART_PATHS.is_empty():
 		return ""
-	var art_path: String = TOKEN_ART_PATHS[_next_art_index % TOKEN_ART_PATHS.size()]
+	var token_art_path: String = TOKEN_ART_PATHS[_next_art_index % TOKEN_ART_PATHS.size()]
 	_next_art_index += 1
-	return art_path
+	return token_art_path

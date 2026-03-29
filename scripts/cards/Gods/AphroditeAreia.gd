@@ -4,8 +4,6 @@ class_name AphroditeAreia
 const ACTIVATION_COST := 5
 const ART_PATH := "res://images/card_art/gods/aphrodite_areia.png"
 
-var paragon: String = "Paragon of Love"
-
 func _init() -> void:
 	super._init()
 	card_name = "Aphrodite Areia"
@@ -89,17 +87,17 @@ func activate(game_manager: GameManager, target: Card = null) -> void:
 		game_manager.note_player_feedback("Violent Delights fizzles: " + game_manager.get_enslave_failure_reason(target, card_owner))
 
 func get_valid_enslave_targets(game_manager: GameManager) -> Array[Card]:
-	var targets: Array[Card] = []
+	var valid_targets: Array[Card] = []
 	if game_manager == null:
-		return targets
+		return valid_targets
 	var opponent := game_manager.get_opponent(card_owner)
 	if opponent == null:
-		return targets
+		return valid_targets
 	for zone in opponent.frontline_zones + opponent.reserve_zones:
 		for card in zone.cards:
 			if is_valid_activation_target(card) and game_manager.can_enslave_creature(card, card_owner):
-				targets.append(card)
-	return targets
+				valid_targets.append(card)
+	return valid_targets
 
 func _has_destroyed_enemy_by_combat_this_turn(game_manager: GameManager) -> bool:
 	if game_manager.has_method("player_destroyed_creature_by_combat_this_turn"):

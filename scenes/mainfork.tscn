@@ -35,6 +35,27 @@ text = "Mock Game"
 layout_mode = 2
 text = "Card Test"
 
+[node name="HostGameButton" type="Button" parent="Control/MenuContainer" unique_id=1094446563]
+layout_mode = 2
+text = "Host Game"
+
+[node name="JoinGameButton" type="Button" parent="Control/MenuContainer" unique_id=1094446564]
+layout_mode = 2
+text = "Join Game"
+
+[node name="MultiplayerContainer" type="VBoxContainer" parent="Control/MenuContainer" unique_id=157483093]
+visible = false
+layout_mode = 2
+
+[node name="IPLineEdit" type="LineEdit" parent="Control/MenuContainer/MultiplayerContainer" unique_id=157483094]
+layout_mode = 2
+text = "127.0.0.1"
+placeholder_text = "Server IP"
+
+[node name="ConnectButton" type="Button" parent="Control/MenuContainer/MultiplayerContainer" unique_id=157483095]
+layout_mode = 2
+text = "Connect"
+
 [node name="GameContainer" type="Control" parent="Control" unique_id=1297052031]
 layout_mode = 1
 anchors_preset = 15

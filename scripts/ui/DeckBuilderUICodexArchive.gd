@@ -337,7 +337,9 @@ func _refresh_grid() -> void:
 	for child in _grid.get_children():
 		child.queue_free()
 
-	var visible_cards: Array = _all_cards.filter(func(card: Card) -> bool: return _matches_filter(card))
+	var visible_card_filter := func(card: Card) -> bool:
+		return _matches_filter(card)
+	var visible_cards: Array = _all_cards.filter(visible_card_filter)
 	visible_cards.sort_custom(_alphabetical_card_less)
 	for card in visible_cards:
 		if not _matches_filter(card):
@@ -492,14 +494,16 @@ func _refresh_deck_panel() -> void:
 	_deck_count_lbl.text = "%d cards" % total
 
 	# Sort: gods → creatures → spells → structures → hexes, then alphabetical
-	var in_deck: Array = _all_cards.filter(
-		func(c: Card) -> bool: return _deck.has(c.card_name) and _deck[c.card_name] > 0
-	)
-	in_deck.sort_custom(func(a: Card, b: Card) -> bool:
-		var oa := _type_order(a); var ob := _type_order(b)
-		if oa != ob: return oa < ob
+	var in_deck_filter := func(c: Card) -> bool:
+		return _deck.has(c.card_name) and _deck[c.card_name] > 0
+	var in_deck: Array = _all_cards.filter(in_deck_filter)
+	var in_deck_sort := func(a: Card, b: Card) -> bool:
+		var oa := _type_order(a)
+		var ob := _type_order(b)
+		if oa != ob:
+			return oa < ob
 		return _alphabetical_card_less(a, b)
-	)
+	in_deck.sort_custom(in_deck_sort)
 
 	var last_section := ""
 	for card: Card in in_deck:
@@ -562,9 +566,9 @@ func _add_to_deck(card: Card) -> void:
 		return
 	# Only one god allowed total
 	if card.is_god:
-		for name in _deck:
-			var tmpl := _find_template(name)
-			if tmpl and tmpl.is_god and _deck[name] > 0:
+		for deck_card_name in _deck:
+			var tmpl := _find_template(deck_card_name)
+			if tmpl and tmpl.is_god and _deck[deck_card_name] > 0:
 				return
 	_deck[card.card_name] = current + 1
 	_refresh_deck_panel()

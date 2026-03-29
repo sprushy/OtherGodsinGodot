@@ -82,5 +82,5 @@ func can_respond_to_action(action: CardAction, _game_manager: GameManager = null
 				return get_effective_speed() >= action_speed
 	return false
 
-func resolve(game_manager: GameManager, target = null) -> void:
+func resolve(_game_manager: GameManager, _target = null) -> void:
 	push_error("CharmCard.resolve() must be overridden in " + card_name + "!")

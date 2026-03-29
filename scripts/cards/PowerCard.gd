@@ -45,7 +45,7 @@ func unlock(game_manager: GameManager) -> void:
 
 # Called immediately when the power is flipped face-up.
 # Override for passive or immediate on-unlock effects.
-func on_unlock(game_manager: GameManager) -> void:
+func on_unlock(_game_manager: GameManager) -> void:
 	pass
 
 # ── Activatable ability ────────────────────────────────────────────────────────
@@ -63,7 +63,7 @@ func can_activate(game_manager: GameManager) -> bool:
 	return true
 
 # Override to implement the ability. target is null for untargeted abilities.
-func activate(game_manager: GameManager, target: Card = null) -> void:
+func activate(_game_manager: GameManager, _target: Card = null) -> void:
 	pass
 
 func get_unlock_mana_cost(game_manager: GameManager = null) -> int:

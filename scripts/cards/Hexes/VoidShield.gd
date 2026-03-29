@@ -33,7 +33,7 @@ func get_affected_cards(attacker: Card, _defender: Card) -> Array[Card]:
 		affected.append(attacker)
 	return affected
 
-func on_activate(game_manager: GameManager, attacker: Card, defender: Card) -> void:
+func on_activate(game_manager: GameManager, attacker: Card, _defender: Card) -> void:
 	print("Void Shield activates! Voiding " + attacker.card_name + "!")
 	game_manager.banish_card_with_hook(attacker)
 	card_owner.move_card(self, card_owner.graveyard_zone)

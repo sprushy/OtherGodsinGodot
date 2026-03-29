@@ -14,9 +14,6 @@ func _init() -> void:
 	art_path = "res://images/card_art/gods/ThorAIedit.png"
 	name_at_bottom = true
 	artist = "Ricarrdo Zoppello"
-	var paragon: String = "Paragon of Champions"
-	var championscall: String = "Champion's Call"
-
 func applies_to(card: Card) -> bool:
 	return (
 		not is_muted
@@ -46,7 +43,7 @@ func remove_passive_from_board() -> void:
 		for card in zone.cards:
 			card.clear_buffs_from(PASSIVE_SOURCE)
 
-func on_summon(game_manager: GameManager) -> void:
+func on_summon(_game_manager: GameManager) -> void:
 	apply_passive_to_board()
 
 func on_turn_start(_game_manager: GameManager) -> void:

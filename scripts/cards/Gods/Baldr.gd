@@ -3,8 +3,6 @@ class_name Baldr
 
 const FOLLOWERS_GAINED_PER_TURN := 5
 
-var paragon: String = "Paragon of Paragons"
-
 func _init() -> void:
 	super._init()
 	card_name = "Baldr"

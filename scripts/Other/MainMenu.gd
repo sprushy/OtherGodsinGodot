@@ -15,6 +15,9 @@ func _ready() -> void:
 	var mock_btn = $MenuContainer/MockGameButton
 	var deck_btn = $MenuContainer/DeckBuilderButton
 	var card_test_btn = $MenuContainer/CardTestButton
+	var host_btn = $MenuContainer/HostGameButton
+	var join_btn = $MenuContainer/JoinGameButton
+	var connect_btn = $MenuContainer/MultiplayerContainer/ConnectButton
 
 	if mock_btn:
 		mock_btn.pressed.connect(_on_mock_game_pressed)
@@ -22,6 +25,12 @@ func _ready() -> void:
 		deck_btn.pressed.connect(_on_deck_builder_pressed)
 	if card_test_btn:
 		card_test_btn.pressed.connect(_on_card_test_pressed)
+	if host_btn:
+		host_btn.pressed.connect(_on_host_game_pressed)
+	if join_btn:
+		join_btn.pressed.connect(_on_join_game_pressed)
+	if connect_btn:
+		connect_btn.pressed.connect(_on_connect_pressed)
 
 	show_menu()
 
@@ -73,6 +82,22 @@ func _on_card_test_pressed() -> void:
 	get_node("GameContainer/MockGame").visible = false
 	show_game()
 	get_node("GameContainer/CardTest").start_game()
+
+func _on_host_game_pressed() -> void:
+	get_node("GameContainer/MockGame").visible = true
+	get_node("GameContainer/CardTest").visible = false
+	show_game()
+	get_node("GameContainer/MockGame").start_game(true, false)
+
+func _on_join_game_pressed() -> void:
+	$MenuContainer/MultiplayerContainer.visible = true
+
+func _on_connect_pressed() -> void:
+	var ip = $MenuContainer/MultiplayerContainer/IPLineEdit.text
+	get_node("GameContainer/MockGame").visible = true
+	get_node("GameContainer/CardTest").visible = false
+	show_game()
+	get_node("GameContainer/MockGame").start_game(false, true, ip)
 
 func _on_back_to_menu_pressed() -> void:
 	_return_to_menu()

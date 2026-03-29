@@ -17,6 +17,17 @@ func _init() -> void:
 	art_path = "res://images/card_art/spells/DeucalionsInfants.png"
 	ability_text = "Children of the Earth: You may destroy your structures and Golems, then your opponent destroys 1 of theirs. For each structure or Golem destroyed this turn, summon a [b]Stone Infant[/b] token."
 
+func resolve_from_command(game_manager: GameManager, command: Dictionary) -> void:
+	var choice_uids: Array = command.get("choices", [])
+	var friendly_targets: Array[Card] = []
+	for choice_uid in choice_uids:
+		var c := game_manager.get_card_by_uid(choice_uid as String)
+		if c != null:
+			friendly_targets.append(c)
+	var enemy_uid: String = command.get("enemy_target_uid", "")
+	var enemy_target: Card = game_manager.get_card_by_uid(enemy_uid) if enemy_uid != "" else null
+	resolve_with_choices(game_manager, friendly_targets, enemy_target)
+
 func resolve(game_manager: GameManager, target = null) -> void:
 	if target is Dictionary:
 		var friendly_targets: Array[Card] = []
@@ -157,16 +168,16 @@ func summon_stone_infants(game_manager: GameManager, amount: int) -> Array[Card]
 func _choose_stone_infant_art_path(game_manager: GameManager, rng: RandomNumberGenerator) -> String:
 	var usage: Dictionary = game_manager.get_meta(STONE_INFANT_ART_USAGE_META_KEY, {})
 	var unused_paths: Array[String] = []
-	for art_path: String in StoneInfant.TOKEN_ART_PATHS:
-		if int(usage.get(art_path, 0)) <= 0:
-			unused_paths.append(art_path)
+	for token_art_path: String in StoneInfant.TOKEN_ART_PATHS:
+		if int(usage.get(token_art_path, 0)) <= 0:
+			unused_paths.append(token_art_path)
 
 	var candidate_paths: Array[String] = []
 	if not unused_paths.is_empty():
 		candidate_paths = unused_paths
 	else:
-		for art_path: String in StoneInfant.TOKEN_ART_PATHS:
-			candidate_paths.append(art_path)
+		for token_art_path: String in StoneInfant.TOKEN_ART_PATHS:
+			candidate_paths.append(token_art_path)
 
 	if candidate_paths.is_empty():
 		return ""

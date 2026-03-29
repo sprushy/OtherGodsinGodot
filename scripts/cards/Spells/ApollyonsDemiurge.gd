@@ -36,6 +36,13 @@ func pay_x_cost(game_manager: GameManager, x_value: int) -> bool:
 		return false
 	return card_owner.spend_mana(x_value)
 
+func resolve_from_command(game_manager: GameManager, command: Dictionary) -> void:
+	var x_value: int = command.get("x_value", 0)
+	# resolve_with_x pays x_cost when x_cost_already_paid=false
+	var demon_choices := resolve_with_x(game_manager, x_value, false)
+	if not demon_choices.is_empty():
+		summon_milled_demon(game_manager, demon_choices[0])
+
 func resolve_with_x(game_manager: GameManager, x_value: int, x_cost_already_paid: bool = false) -> Array[Card]:
 	var demon_choices: Array[Card] = []
 	if game_manager == null or card_owner == null or x_value <= 0:

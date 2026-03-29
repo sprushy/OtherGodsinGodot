@@ -4,10 +4,10 @@ class_name CardTestGame
 var _test_turn_owner: Player = null
 var _test_turn_opponent: Player = null
 
-# Override start_game to set up a focused test board.
-# Update this whenever a new card ability is coded.
-func start_game() -> void:
-	await super.start_game()
+# Override start_game to set up a focused test board while preserving
+# the CombatMockGame interface.
+func start_game(is_host: bool = false, is_client: bool = false, server_ip: String = "127.0.0.1") -> void:
+	await super.start_game(is_host, is_client, server_ip)
 	_setup_test_board()
 
 func update_ui() -> void:
@@ -228,5 +228,5 @@ func _setup_test_board() -> void:
 	_test_turn_owner = player1
 	_test_turn_opponent = player2
 	hide_turn_choice()
-	action_label.text = "Card test ready. Freyja: activate Receiver of the Slain to summon Again-Walker from your graveyard with Call of the Valkyrie already in play reducing the cost. Fire and Gold: unlock your power in slot 1, discard a spare hand card, and destroy the enemy Eridu while Soldier of the Black Emperor is on your frontline. Fires of Judgment: cast from hand to wipe the enemy's face-up Blessed Knights, Berserker, structure, and axe. Foolish Optimism: cast it to force Blessed Knights, the opponent's only level-1 creature, to attack your highest-level creature, Soldier of the Black Emperor. First Sage Adapa: summon it to mute the enemy Ancient Wisdom power. Fenrir: play or use Wolf Master/Devour from Player 1's hand. Fourth Sage Enmegalamma: summon it on a later turn to search your deck for another Mer Sage such as First Sage Adapa or Enki, Lord of Eridu."
+	action_label.text = "Card test ready. Freyja: activate Receiver of the Slain to summon Again-Walker from your graveyard with Call of the Valkyrie already in play reducing the cost. Fire and Gold: unlock your power in slot 1, discard a spare hand card, and destroy the enemy Eridu while Soldier of the Black Emperor is on your frontline. Fires of Judgment: cast from hand to wipe the enemy's face-up Blessed Knights, Berserker, structure, and axe. Foolish Optimism: cast it to force Blessed Knights, the opponent's only level-1 face-up creature, to attack your highest-level face-up creature, Soldier of the Black Emperor. First Sage Adapa: summon it to mute the enemy Ancient Wisdom power. Fenrir: play or use Wolf Master/Devour from Player 1's hand. Fourth Sage Enmegalamma: summon it on a later turn to search your deck for another Mer Sage such as First Sage Adapa or Enki, Lord of Eridu."
 	update_ui()

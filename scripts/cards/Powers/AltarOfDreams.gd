@@ -41,21 +41,21 @@ func has_enough_valid_void_targets(creature_to_summon: Card, game_manager: GameM
 		return false
 	return get_valid_void_targets(game_manager).size() >= creature_to_summon.sacrifice_cost
 
-func pay_replacement_cost(creature_to_summon: Card, targets: Array[Card], game_manager: GameManager) -> bool:
+func pay_replacement_cost(creature_to_summon: Card, chosen_targets: Array[Card], game_manager: GameManager) -> bool:
 	if not can_replace_sacrifice_cost(creature_to_summon, game_manager):
 		return false
 
 	var required := creature_to_summon.sacrifice_cost
-	if targets.size() < required:
+	if chosen_targets.size() < required:
 		return false
 
 	for i in range(required):
-		var target := targets[i]
+		var target := chosen_targets[i]
 		if target == null or target.card_type != Card.CardType.CREATURE or not target.is_sleeping:
 			return false
 
 	for i in range(required):
-		var target := targets[i]
+		var target := chosen_targets[i]
 		game_manager.banish_card_with_hook(target)
 		print("%s: Voided sleeping creature %s instead of paying a sacrifice cost." % [card_name, target.card_name])
 

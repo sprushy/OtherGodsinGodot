@@ -65,7 +65,7 @@ func on_turn_end(_game_manager: GameManager) -> void:
 				print("%s: %s loses %d Str." % [card_name, creature.card_name, MAGE_STR_BONUS])
 			tracked_mage_buffs.remove_at(i)
 
-func _get_friendly_mages(game_manager: GameManager) -> Array[Card]:
+func _get_friendly_mages(_game_manager: GameManager) -> Array[Card]:
 	var result: Array[Card] = []
 	for zone in card_owner.frontline_zones + card_owner.reserve_zones:
 		for creature in zone.cards:

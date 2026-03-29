@@ -21,6 +21,12 @@ func _init() -> void:
 	art_path = ART_PATH
 	ability_text = "[b]Relock[/b] a power, or [b]Mute[/b] a power for 3 of its owner's turns. Face-down powers are revealed first."
 
+func resolve_from_command(game_manager: GameManager, command: Dictionary) -> void:
+	var target_uid: String = command.get("target_uid", "")
+	var target = game_manager.get_card_by_uid(target_uid) if target_uid != "" else null
+	var mode: String = command.get("mode", "mute")
+	apply_to_power(target, mode, game_manager)
+
 func resolve(game_manager: GameManager, target = null) -> void:
 	if not _is_valid_power_target(target):
 		print("Absence can only target a power or god ability.")

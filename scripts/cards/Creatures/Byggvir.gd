@@ -49,15 +49,15 @@ func get_brewing_options(game_manager: GameManager) -> Array[Dictionary]:
 		var power: PowerCard = card as PowerCard
 		if not power.is_face_down and not power.is_muted and power.can_activate(game_manager):
 			if power.has_method("get_valid_targets"):
-				var targets: Array = power.get_valid_targets(game_manager)
-				for target in targets:
+				var valid_targets: Array = power.get_valid_targets(game_manager)
+				for target in valid_targets:
 					if target is Card:
 						options.append({
 							"kind": "activate_targeted",
 							"power": power,
 							"target": target
 						})
-				if not targets.is_empty():
+				if not valid_targets.is_empty():
 					continue
 			options.append({
 				"kind": "activate",
@@ -166,9 +166,9 @@ func _activate_mead_power(game_manager: GameManager) -> bool:
 		if power.is_face_down or power.is_muted or not power.can_activate(game_manager):
 			continue
 		if power.has_method("get_valid_targets"):
-			var targets: Array = power.get_valid_targets(game_manager)
-			if not targets.is_empty():
-				power.activate(game_manager, targets[0] as Card)
+			var valid_targets: Array = power.get_valid_targets(game_manager)
+			if not valid_targets.is_empty():
+				power.activate(game_manager, valid_targets[0] as Card)
 				return true
 		power.activate(game_manager)
 		return true

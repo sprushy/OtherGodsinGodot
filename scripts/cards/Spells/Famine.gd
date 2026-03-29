@@ -18,7 +18,7 @@ func _init() -> void:
 	art_path = ART_PATH
 	ability_text = "Reveal all face-down creatures. Destroy all non-machine, non-spirit creatures on the field."
 
-func resolve(game_manager: GameManager, target = null) -> void:
+func resolve(game_manager: GameManager, _target = null) -> void:
 	if game_manager == null:
 		return
 

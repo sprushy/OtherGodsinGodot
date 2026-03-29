@@ -19,7 +19,7 @@ func _init() -> void:
 	art_path = "res://images/card_art/spells/BaneofSvart.png"
 	targets = false
 
-func resolve(game_manager: GameManager, target = null) -> void:
+func resolve(game_manager: GameManager, _target = null) -> void:
 	var petrified_count := 0
 	for player in game_manager.players:
 		for zone in player.frontline_zones + player.reserve_zones:

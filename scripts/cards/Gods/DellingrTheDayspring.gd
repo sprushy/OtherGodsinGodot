@@ -4,8 +4,6 @@ class_name DellingrTheDayspring
 const ACTIVATION_COST := 2
 const REVEAL_SOURCE := "Dellingr's Revealing Light"
 
-var paragon: String = "Paragon of the Sun"
-
 func _init() -> void:
 	super._init()
 	card_name = "Dellingr, the Dayspring"

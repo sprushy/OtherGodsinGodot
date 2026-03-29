@@ -54,7 +54,9 @@ var priority_player: Player = null
 var consecutive_passes: int = 0
 
 func get_phase_name(phase: int = -1) -> String:
-	var resolved_phase := current_phase if phase < 0 else phase
+	var resolved_phase: GamePhase = current_phase
+	if phase >= 0:
+		resolved_phase = phase as GamePhase
 	var phase_names := GamePhase.keys()
 	if resolved_phase < 0 or resolved_phase >= phase_names.size():
 		return "UNKNOWN"
@@ -64,7 +66,7 @@ func has_resolved_turn_upkeep(turn: int = -1) -> bool:
 	var resolved_turn := turn_number if turn < 0 else turn
 	return _upkeep_resolved_turn == resolved_turn
 
-func _set_phase(new_phase: int) -> void:
+func _set_phase(new_phase: GamePhase) -> void:
 	if current_phase == new_phase:
 		return
 	var old_phase := current_phase
@@ -114,6 +116,49 @@ func set_interaction_host(host: Object) -> void:
 
 func get_interaction_host() -> Object:
 	return interaction_host
+
+func get_card_by_uid(uid: String) -> Card:
+	if uid == "":
+		return null
+		
+	for p in players:
+		# Check hand
+		for c in p.hand_zone.cards:
+			if c.get("uid") == uid: return c
+		# Check deck
+		for c in p.deck_zone.cards:
+			if c.get("uid") == uid: return c
+		# Check graveyard
+		for c in p.graveyard_zone.cards:
+			if c.get("uid") == uid: return c
+		# Check god zone
+		for c in p.god_zone.cards:
+			if c.get("uid") == uid: return c
+		# Check board zones (frontline, reserve, power)
+		for zones in [p.frontline_zones, p.reserve_zones, p.power_zones]:
+			for zone in zones:
+				for c in zone.cards:
+					if c.get("uid") == uid: return c
+					
+	return null
+
+func can_cards_engage_each_other(attacker: Card, defender: Card) -> bool:
+	if attacker == null or defender == null:
+		return false
+	if attacker.has_method("can_engage") and not attacker.can_engage(defender):
+		return false
+	if defender.has_method("can_be_engaged_by") and not defender.can_be_engaged_by(attacker):
+		return false
+	return true
+
+func can_interceptor_engage_attacker(interceptor: Card, attacker: Card) -> bool:
+	if interceptor == null or attacker == null:
+		return false
+	if interceptor.has_method("can_engage") and not interceptor.can_engage(attacker):
+		return false
+	if attacker.has_method("can_be_engaged_by") and not attacker.can_be_engaged_by(interceptor):
+		return false
+	return true
 
 # Returns eligible speed-2+ responses the given player can play against the top stack action.
 func get_priority_responses(player: Player) -> Array:
@@ -226,7 +271,7 @@ func _has_pending_stack_action_for_card(card: Card) -> bool:
 			return true
 	return false
 
-func is_prepared_charm_ready(charm: CharmCard, triggering_action: CardAction = null) -> bool:
+func is_prepared_charm_ready(charm: CharmCard, _triggering_action: CardAction = null) -> bool:
 	if charm == null:
 		return false
 	if not prepared_charms.has(charm):
@@ -268,7 +313,7 @@ func start_mulligan() -> void:
 	offer_mulligan(current_player, 5, 0)
 	offer_mulligan(other_player, 5, 2)
 
-func offer_mulligan(player: Player, card_count: int, bonus_mana: int) -> void:
+func offer_mulligan(_player: Player, _card_count: int, _bonus_mana: int) -> void:
 	# UI driven - draw card_count cards
 	# For each card not kept, give player 4 mana
 	# Add bonus_mana
@@ -560,6 +605,9 @@ func can_play_card(player: Player, card: Card, target_zone: Zone) -> bool:
 			if target_zone.cards.size() > 0 and creature_in_zone == null:
 				print("Cannot play equipment: zone occupied by a non-creature card")
 				return false
+			if creature_in_zone != null and not creature_in_zone.can_receive_equipment():
+				print("Cannot play equipment: target creature must be face-up and not in stealth")
+				return false
 		else:
 			# Non-equipment cards cannot enter a zone containing unequipped equipment
 			if unequipped_in_zone.size() > 0:
@@ -671,7 +719,7 @@ func summon_creature_without_cost(
 	player: Player,
 	card: Card,
 	target_zone: Zone,
-	mode: int = Card.CreatureMode.AGGRESSIVE,
+	mode: Card.CreatureMode = Card.CreatureMode.AGGRESSIVE,
 	face_down: bool = false,
 	stealth: bool = false
 ) -> bool:
@@ -692,7 +740,7 @@ func summon_creature_by_effect(
 	player: Player,
 	card: Card,
 	target_zone: Zone,
-	mode: int = Card.CreatureMode.AGGRESSIVE,
+	mode: Card.CreatureMode = Card.CreatureMode.AGGRESSIVE,
 	face_down: bool = false,
 	stealth: bool = false,
 	summon_source: Card = null,
@@ -732,7 +780,10 @@ func summon_creature_by_effect(
 	card.is_prepared = false
 	card.is_face_down = face_down
 	card.is_stealth = stealth
-	card.creature_mode = Card.CreatureMode.DEFENSIVE if face_down else mode
+	var resolved_mode: Card.CreatureMode = mode
+	if face_down:
+		resolved_mode = Card.CreatureMode.DEFENSIVE
+	card.creature_mode = resolved_mode
 	card.reset_creature_action_state()
 	card.summoned_this_turn = true
 	if consume_turn_summon:
@@ -823,7 +874,7 @@ func creature_change_mode(creature: Card, target_mode: int = -1) -> bool:
 	var requested_mode: int = target_mode
 	creature.reveal_from_stealth(self)
 	if requested_mode == Card.CreatureMode.AGGRESSIVE or requested_mode == Card.CreatureMode.DEFENSIVE:
-		creature.creature_mode = requested_mode
+		creature.creature_mode = requested_mode as Card.CreatureMode
 	elif creature.creature_mode == Card.CreatureMode.AGGRESSIVE:
 		creature.creature_mode = Card.CreatureMode.DEFENSIVE
 	else:
@@ -838,7 +889,7 @@ func equip_card(equipment: Card, creature: Card) -> bool:
 	if equipment.card_type != Card.CardType.EQUIPMENT:
 		return false
 	
-	if creature.card_type != Card.CardType.CREATURE:
+	if creature == null or not creature.can_receive_equipment():
 		return false
 	
 	if not creature.can_take_major_creature_action():
@@ -879,7 +930,7 @@ func get_reachable_board_zones(creature: Card) -> Array[Zone]:
 func creature_pick_up_equipment(creature: Card, equipment: Card) -> bool:
 	if is_game_over:
 		return false
-	if creature.card_type != Card.CardType.CREATURE:
+	if creature == null or not creature.can_receive_equipment():
 		return false
 	if equipment.card_type != Card.CardType.EQUIPMENT or equipment.equipped_on != null:
 		return false
@@ -1506,14 +1557,15 @@ func _get_sorted_upkeep_cards_for_player(player: Player, method_name: String) ->
 		if card != null and card.has_method(method_name):
 			_ensure_board_entry_order(card)
 			cards.append(card)
-	cards.sort_custom(func(a: Card, b: Card) -> bool:
-		var a_speed := a.get_effective_speed()
-		var b_speed := b.get_effective_speed()
-		if a_speed != b_speed:
-			return a_speed > b_speed
-		return a.board_entry_order < b.board_entry_order
-	)
+	cards.sort_custom(_compare_upkeep_cards)
 	return cards
+
+func _compare_upkeep_cards(a: Card, b: Card) -> bool:
+	var a_speed := a.get_effective_speed()
+	var b_speed := b.get_effective_speed()
+	if a_speed == b_speed:
+		return a.board_entry_order < b.board_entry_order
+	return a_speed > b_speed
 
 func _ensure_board_entry_order(card: Card) -> void:
 	if card == null or card.current_zone == null or not card.current_zone.is_board_zone():
@@ -1968,7 +2020,7 @@ func _get_state_cost_adjustment_entries(
 	var entries: Array[Dictionary] = []
 	if cost_kind == Card.COST_KIND_CREATURE_SUMMON:
 		var player: Player = metadata.get("player", null)
-		var summon_source: Card = metadata.get("summon_source", null)
+		var _summon_source: Card = metadata.get("summon_source", null)
 		if player == null:
 			player = target_card.card_owner
 		for modifier in _temporary_summon_cost_modifiers:
@@ -2090,7 +2142,7 @@ func _get_graveyard_replacement_sources(card: Card) -> Array[StructureCard]:
 			structures.append(structure)
 	return structures
 
-func _apply_god_passives_to_card(player: Player, card: Card) -> void:
+func _apply_god_passives_to_card(_player: Player, _card: Card) -> void:
 	# God aura cards now refresh themselves through their own summon/move/turn hooks.
 	# Keep this helper as a no-op for existing call sites and local probes.
 	return

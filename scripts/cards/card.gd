@@ -81,7 +81,7 @@ var current_zone: Zone
 var is_prepared: bool = false
 # Tracks the last board position so Circle of Rebirth can auto-resurrect.
 var last_board_zone_type: int = -1   # Zone.ZoneType value; -1 = never placed
-var last_board_zone_index: int = Player.BOARD_LANE_COUNT / 2   # default centre column
+var last_board_zone_index: int = int(Player.BOARD_LANE_COUNT / 2.0)   # default centre column
 var is_face_down: bool = false
 var is_stealth: bool = false
 var has_acted_this_turn: bool = false
@@ -524,7 +524,9 @@ func get_equipment_summary_lines() -> Array[String]:
 	return lines
 
 func clear_buffs_from(source: String) -> void:
-	active_buffs = active_buffs.filter(func(b): return b.get("source", "") != source)
+	active_buffs = active_buffs.filter(func(b):
+		return b.get("source", "") != source
+	)
 
 func remove_buffs_from_source_card(source_card: Card, effect_type: String = "") -> void:
 	active_buffs = active_buffs.filter(func(b):
@@ -575,7 +577,9 @@ func add_status_effect(
 	_sync_status_flags()
 
 func remove_status_effects_by_name(status_name: String) -> void:
-	active_statuses = active_statuses.filter(func(s): return s.get("name", "") != status_name)
+	active_statuses = active_statuses.filter(func(s):
+		return s.get("name", "") != status_name
+	)
 	_sync_status_flags()
 
 func remove_status_effects_from_source_card(source_card: Card, status_name: String = "") -> void:
@@ -589,23 +593,23 @@ func remove_status_effects_from_source_card(source_card: Card, status_name: Stri
 func remove_expired_buffs(current_turn: int) -> void:
 	active_buffs = active_buffs.filter(func(b):
 		var expires_turn = b.get("expires_turn", null)
-		if expires_turn == null:
-			return true
-		return int(expires_turn) > current_turn
+		return expires_turn == null or int(expires_turn) > current_turn
 	)
 
 func remove_expired_statuses(current_turn: int) -> void:
 	active_statuses = active_statuses.filter(func(s):
 		var expires_turn = s.get("expires_turn", null)
-		if expires_turn == null:
-			return true
-		return int(expires_turn) > current_turn
+		return expires_turn == null or int(expires_turn) > current_turn
 	)
 	_sync_status_flags()
 
 func remove_effects_expiring_after_combat() -> void:
-	active_buffs = active_buffs.filter(func(b): return b.get("expires_after_combat", false) != true)
-	active_statuses = active_statuses.filter(func(s): return s.get("expires_after_combat", false) != true)
+	active_buffs = active_buffs.filter(func(b):
+		return b.get("expires_after_combat", false) != true
+	)
+	active_statuses = active_statuses.filter(func(s):
+		return s.get("expires_after_combat", false) != true
+	)
 	_sync_status_flags()
 
 func has_effects_from_player(player: Player) -> bool:
@@ -618,8 +622,12 @@ func has_effects_from_player(player: Player) -> bool:
 	return false
 
 func remove_effects_from_player(player: Player) -> void:
-	active_buffs = active_buffs.filter(func(b): return b.get("source_owner", null) != player)
-	active_statuses = active_statuses.filter(func(s): return s.get("source_owner", null) != player)
+	active_buffs = active_buffs.filter(func(b):
+		return b.get("source_owner", null) != player
+	)
+	active_statuses = active_statuses.filter(func(s):
+		return s.get("source_owner", null) != player
+	)
 	_sync_status_flags()
 
 func apply_sleep(source_card: Card) -> void:
@@ -792,8 +800,13 @@ func is_physical_card() -> bool:
 func is_magical_card() -> bool:
 	return card_type in [CardType.SPELL, CardType.HEX, CardType.CHARM]
 
+func can_receive_equipment() -> bool:
+	return card_type == CardType.CREATURE \
+		and not is_face_down \
+		and not is_stealth
+
 func equip_to(creature: Card) -> bool:
-	if card_type != CardType.EQUIPMENT or creature.card_type != CardType.CREATURE:
+	if card_type != CardType.EQUIPMENT or creature == null or not creature.can_receive_equipment():
 		return false
 	
 	if equipped_on:

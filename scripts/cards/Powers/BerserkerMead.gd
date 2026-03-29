@@ -29,7 +29,7 @@ func can_activate(game_manager: GameManager) -> bool:
 		and not get_valid_targets(game_manager).is_empty()
 
 func get_valid_targets(_game_manager: GameManager) -> Array[Card]:
-	var targets: Array[Card] = []
+	var valid_targets: Array[Card] = []
 	for zone in card_owner.frontline_zones + card_owner.reserve_zones:
 		for card in zone.cards:
 			if card.card_type != Card.CardType.CREATURE:
@@ -38,8 +38,8 @@ func get_valid_targets(_game_manager: GameManager) -> Array[Card]:
 				continue
 			if card.culture != "Norse":
 				continue
-			targets.append(card)
-	return targets
+			valid_targets.append(card)
+	return valid_targets
 
 func activate(game_manager: GameManager, target: Card = null) -> void:
 	if not can_activate(game_manager):

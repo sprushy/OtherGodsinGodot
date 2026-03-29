@@ -14,9 +14,9 @@ func _init() -> void:
 	flavor_text = ""
 	artist = "David Revoy"
 	art_path = "res://images/card_art/hexes/foolish_optimism_crop.jpg"
-	ability_text = "Force your opponent's lowest lvl creature to attack your highest lvl creature."
+	ability_text = "Force your opponent's lowest lvl face-up creature to attack your highest lvl face-up creature."
 
-func resolve(game_manager: GameManager, target = null) -> void:
+func resolve(game_manager: GameManager, _target = null) -> void:
 	if game_manager == null:
 		return
 	var resolution_text := _begin_resolution(game_manager)
@@ -35,6 +35,10 @@ func resolve_with_choices(game_manager: GameManager, attacker: Card, defender: C
 		return "%s fizzles: the chosen attacker is no longer on the field." % card_name
 	if defender.current_zone == null or not defender.current_zone.is_board_zone():
 		return "%s fizzles: the chosen defender is no longer on the field." % card_name
+	if not _is_face_up_board_creature(attacker):
+		return "%s fizzles: the chosen attacker is no longer a face-up creature on the field." % card_name
+	if not _is_face_up_board_creature(defender):
+		return "%s fizzles: the chosen defender is no longer a face-up creature on the field." % card_name
 	if not _can_force_attack(game_manager, attacker, defender):
 		return "%s fizzles: %s cannot legally attack %s." % [card_name, attacker.card_name, defender.card_name]
 
@@ -98,11 +102,15 @@ func get_highest_level_defender_choices(game_manager: GameManager) -> Array[Card
 
 func get_forced_attacker(game_manager: GameManager) -> Card:
 	var choices := get_lowest_level_attacker_choices(game_manager)
-	return choices[0] if not choices.is_empty() else null
+	if choices.is_empty():
+		return null
+	return choices[0]
 
 func get_forced_defender(game_manager: GameManager) -> Card:
 	var choices := get_highest_level_defender_choices(game_manager)
-	return choices[0] if not choices.is_empty() else null
+	if choices.is_empty():
+		return null
+	return choices[0]
 
 func _get_spell_controller(game_manager: GameManager) -> Player:
 	if card_owner != null:
@@ -117,9 +125,20 @@ func _get_board_creatures(player: Player) -> Array[Card]:
 		return creatures
 	for zone in player.frontline_zones + player.reserve_zones:
 		for card in zone.cards:
-			if card != null and card.card_type == Card.CardType.CREATURE and not card.is_god:
+			if _is_face_up_board_creature(card):
 				creatures.append(card)
 	return creatures
+
+func _is_face_up_board_creature(card: Card) -> bool:
+	if card == null:
+		return false
+	if card.card_type != Card.CardType.CREATURE or card.is_god:
+		return false
+	if card.current_zone == null or not card.current_zone.is_board_zone():
+		return false
+	if card.is_face_down or card.is_prepared or card.is_stealth:
+		return false
+	return true
 
 func _pick_lowest_level_creature(candidates: Array[Card]) -> Card:
 	var chosen: Card = null
@@ -167,8 +186,6 @@ func _can_force_attack(game_manager: GameManager, attacker: Card, defender: Card
 	if not attacker.can_take_major_creature_action():
 		return false
 	if attacker.current_zone == null or attacker.current_zone.zone_type != Zone.ZoneType.FRONTLINE:
-		return false
-	if attacker.creature_mode == Card.CreatureMode.DEFENSIVE:
 		return false
 	if attacker.has_method("can_engage") and not attacker.can_engage(defender):
 		return false

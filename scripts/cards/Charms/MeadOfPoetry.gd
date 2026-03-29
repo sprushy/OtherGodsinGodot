@@ -18,7 +18,7 @@ func _init() -> void:
 	artist = "Ricardo Zoppello"
 	art_path = "res://images/card_art/MeadofPoetryAIEdit.png"
 
-func resolve(game_manager: GameManager, _target = null) -> void:
+func resolve(_game_manager: GameManager, _target = null) -> void:
 	if card_owner == null:
 		return
 	card_owner.gain_mana(MANA_GAIN)

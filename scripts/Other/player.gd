@@ -30,6 +30,11 @@ var power_zones: Array[Zone] = []
 var frontline_zones: Array[Zone] = []
 var reserve_zones: Array[Zone] = []
 
+func get_index(game_manager: GameManager = null) -> int:
+	if game_manager == null:
+		return -1
+	return game_manager.players.find(self)
+
 func _init() -> void:
 	_initialize_zones()
 
@@ -220,18 +225,18 @@ func _resolve_destination_zone(card: Card, from_zone: Zone, to_zone: Zone) -> Zo
 		return to_zone
 	if not card.is_enslaved():
 		return to_zone
-	var owner := card.card_owner
-	if owner == null:
+	var owner_player := card.card_owner
+	if owner_player == null:
 		return to_zone
 	match to_zone.zone_type:
 		Zone.ZoneType.HAND:
-			return owner.hand_zone
+			return owner_player.hand_zone
 		Zone.ZoneType.DECK:
-			return owner.deck_zone
+			return owner_player.deck_zone
 		Zone.ZoneType.GRAVEYARD:
-			return owner.graveyard_zone
+			return owner_player.graveyard_zone
 		Zone.ZoneType.ABYSS:
-			return owner.abyss_zone
+			return owner_player.abyss_zone
 		_:
 			return to_zone
 

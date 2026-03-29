@@ -45,12 +45,12 @@ func _run_probe() -> void:
 	enki.card_owner = player1
 	player1.deck_zone.add_card(enki)
 
-	var valid_targets := enmegalamma.get_valid_targets(game_manager)
+	var valid_targets: Array[Card] = enmegalamma.get_valid_targets(game_manager)
 	_assert_state(duplicate_copy not in valid_targets, "Search Sage should exclude another copy of Fourth Sage Enmegalamma.")
 	_assert_state(adapa in valid_targets, "Search Sage should include First Sage Adapa as a Mer Sage.")
 	_assert_state(enki in valid_targets, "Search Sage should include Enki, Lord of Eridu as a Mer Sage.")
 
-	var result := enmegalamma.resolve_search_sage_impact(game_manager, adapa)
+	var result: String = enmegalamma.resolve_search_sage_impact(game_manager, adapa)
 	_assert_state(adapa.current_zone == player1.hand_zone, "Search Sage should move the chosen Mer Sage from deck to hand.")
 	_assert_state(duplicate_copy.current_zone == player1.deck_zone, "The excluded duplicate copy should remain in the deck.")
 	_assert_state(player1.hand_zone.cards.has(adapa), "The chosen Mer Sage should be present in hand.")

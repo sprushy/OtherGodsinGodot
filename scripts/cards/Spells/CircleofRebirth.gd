@@ -18,7 +18,7 @@ func _init() -> void:
 	art_path = "res://images/card_art/spells/Circle of Rebirth cut.png"
 	ability_text = "Resurrect all Animal and Plant creatures destroyed this turn."
 
-func resolve(game_manager: GameManager, target = null) -> void:
+func resolve(game_manager: GameManager, _target = null) -> void:
 	# Collect Animal/Plant creatures that died this turn (from either player).
 	var to_resurrect: Array[Card] = []
 	for card in game_manager.died_this_turn:
@@ -41,18 +41,18 @@ func resolve(game_manager: GameManager, target = null) -> void:
 # Returns the best available zone for this card, preferring its last position
 # and falling back to adjacent slots in expanding rings, then the other row.
 func _find_resurrection_zone(card: Card) -> Zone:
-	var owner: Player = card.card_owner
+	var owner_player: Player = card.card_owner
 	var last_type: int = card.last_board_zone_type
 	var center: int  = card.last_board_zone_index
 
 	var primary: Array[Zone]
 	var secondary: Array[Zone]
 	if last_type == Zone.ZoneType.RESERVE:
-		primary   = owner.reserve_zones
-		secondary = owner.frontline_zones
+		primary   = owner_player.reserve_zones
+		secondary = owner_player.frontline_zones
 	else:
-		primary   = owner.frontline_zones
-		secondary = owner.reserve_zones
+		primary   = owner_player.frontline_zones
+		secondary = owner_player.reserve_zones
 
 	for zone in _zones_by_distance(primary, center):
 		if zone.cards.size() == 0:

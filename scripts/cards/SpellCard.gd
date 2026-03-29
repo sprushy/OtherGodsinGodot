@@ -8,7 +8,7 @@ func _init() -> void:
 	speed = 1  # All spells are speed 1 by default
 
 # Override this in specific spell cards to define what the spell does
-func resolve(game_manager: GameManager, target = null) -> void:
+func resolve(_game_manager: GameManager, _target = null) -> void:
 	push_error("SpellCard.resolve() must be overridden in " + card_name + "!")
 
 # Called when the spell is played
@@ -24,6 +24,14 @@ func on_play(game_manager: GameManager, target = null) -> void:
 # Override this if your spell should NOT go to graveyard
 func should_go_to_graveyard() -> bool:
 	return true
+
+## Server-side resolution driven by a network command dict.
+## Default: resolves with the card identified by "target_uid" (or null).
+## Override in spells that need additional data (choices, x_value, mode, etc.).
+func resolve_from_command(game_manager: GameManager, command: Dictionary) -> void:
+	var target_uid: String = command.get("target_uid", "")
+	var target = game_manager.get_card_by_uid(target_uid) if target_uid != "" else null
+	resolve(game_manager, target)
 
 # Spells can only be played on your turn (speed 1)
 func can_be_played(game_manager: GameManager, player: Player) -> bool:

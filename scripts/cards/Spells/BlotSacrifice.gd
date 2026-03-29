@@ -18,8 +18,17 @@ func _init() -> void:
 	artist = "Ricardo Zoppello"
 	ability_text = "Summon up to 7 levels of creatures from your hand, disregarding summon cost."
 
-func resolve(game_manager: GameManager, target = null) -> void:
+func resolve(_game_manager: GameManager, _target = null) -> void:
 	pass
+
+func resolve_from_command(game_manager: GameManager, command: Dictionary) -> void:
+	var choice_uids: Array = command.get("choices", [])
+	var creatures: Array[Card] = []
+	for choice_uid in choice_uids:
+		var c := game_manager.get_card_by_uid(choice_uid as String)
+		if c != null:
+			creatures.append(c)
+	summon_selected_creatures(game_manager, creatures)
 
 func get_available_summon_zones() -> Array[Zone]:
 	var zones: Array[Zone] = []

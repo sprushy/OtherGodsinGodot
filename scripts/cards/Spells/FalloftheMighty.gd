@@ -21,7 +21,7 @@ func _init() -> void:
 	art_path = "res://images/card_art/spells/fall_of_the_mighty.jpg"
 	ability_text = "Destroy all creatures on the field with the highest strength."
 
-func resolve(game_manager: GameManager, target = null) -> void:
+func resolve(game_manager: GameManager, _target = null) -> void:
 	print("Fall of the Mighty - The strong shall fall!")
 	
 	var all_creatures: Array[Card] = []

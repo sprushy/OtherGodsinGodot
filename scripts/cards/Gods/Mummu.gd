@@ -1,8 +1,6 @@
 extends GodCard
 class_name Mummu
 
-var paragon: String = "Paragon of Entropy"
-
 func _init() -> void:
 	super._init()
 	card_name = "Mummu, The One Who Has Awoken"

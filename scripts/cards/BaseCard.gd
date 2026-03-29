@@ -2,8 +2,18 @@
 extends Card
 class_name BaseCard
 
+var uid: String = ""
+
+static var _uid_counter: int = 0
+
 func _init() -> void:
-	pass
+	uid = _generate_uid()
+
+func _generate_uid() -> String:
+	_uid_counter += 1
+	# In a real multiplayer game, the server should assign these or use a UUID.
+	# For now, we'll use a prefix to distinguish local IDs.
+	return "card_" + str(Time.get_ticks_msec()) + "_" + str(_uid_counter)
 
 # Keyword definitions - displayed as hover tooltips in ability text.
 const KEYWORD_HINTS = {
@@ -50,16 +60,16 @@ static func apply_keyword_hints(text: String) -> String:
 	return result
 
 # Common hooks all cards can use
-func on_play(game_manager: GameManager, target = null) -> void:
+func on_play(_game_manager: GameManager, _target = null) -> void:
 	pass
 
-func can_be_played(game_manager: GameManager, player: Player) -> bool:
+func can_be_played(_game_manager: GameManager, player: Player) -> bool:
 	return can_pay_costs(player)
 
-func on_enter_zone(zone: Zone) -> void:
+func on_enter_zone(_zone: Zone) -> void:
 	pass
 
-func on_leave_zone(zone: Zone) -> void:
+func on_leave_zone(_zone: Zone) -> void:
 	pass
 
 func get_self_graveyard_replacement_zone(

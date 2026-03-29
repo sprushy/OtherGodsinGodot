@@ -42,8 +42,79 @@ func get_timing_speed() -> int:
 func can_respond_with(response_card: Card) -> bool:
 	return response_card.can_respond_to(card)
 
+func to_dict(game_manager: GameManager) -> Dictionary:
+	var dict := {
+		"type": type,
+		"source_player_index": -1,
+		"initial_priority_player_index": -1,
+		"card_uid": card.get("uid") if card != null else "",
+		"target_uid": "",
+		"target_player_index": -1,
+		"target_is_player": false,
+		"resolution_text": resolution_text,
+		# Attack specific
+		"attacker_uid": attacker.get("uid") if attacker != null else "",
+		"united_front_partner_uid": united_front_partner.get("uid") if united_front_partner != null else "",
+		"attack_speed_override": attack_speed_override,
+		"interceptor_uid": interceptor.get("uid") if interceptor != null else "",
+		# Event specific
+		"event_name": event_name,
+		"event_speed": event_speed,
+		"event_data": event_data
+	}
+	
+	if source_player != null:
+		dict["source_player_index"] = source_player.get_index(game_manager)
+	if initial_priority_player != null:
+		dict["initial_priority_player_index"] = initial_priority_player.get_index(game_manager)
+		
+	if target != null:
+		if target is Card:
+			dict["target_uid"] = target.get("uid")
+		elif target is Player:
+			dict["target_player_index"] = target.get_index(game_manager)
+			dict["target_is_player"] = true
+			
+	return dict
+
+static func from_dict(dict: Dictionary, game_manager: GameManager) -> CardAction:
+	var action = CardAction.new()
+	action.type = int(dict.get("type", Type.EVENT)) as Type
+	
+	var src_idx = dict.get("source_player_index", -1)
+	if src_idx >= 0 and src_idx < game_manager.players.size():
+		action.source_player = game_manager.players[src_idx]
+		
+	var prio_idx = dict.get("initial_priority_player_index", -1)
+	if prio_idx >= 0 and prio_idx < game_manager.players.size():
+		action.initial_priority_player = game_manager.players[prio_idx]
+		
+	action.card = game_manager.get_card_by_uid(dict.get("card_uid", ""))
+	action.resolution_text = dict.get("resolution_text", "")
+	
+	# Resolve target
+	if dict.get("target_is_player", false):
+		var target_idx = dict.get("target_player_index", -1)
+		if target_idx >= 0 and target_idx < game_manager.players.size():
+			action.target = game_manager.players[target_idx]
+	else:
+		action.target = game_manager.get_card_by_uid(dict.get("target_uid", ""))
+		
+	# Attack specific
+	action.attacker = game_manager.get_card_by_uid(dict.get("attacker_uid", ""))
+	action.united_front_partner = game_manager.get_card_by_uid(dict.get("united_front_partner_uid", ""))
+	action.attack_speed_override = dict.get("attack_speed_override", -1)
+	action.interceptor = game_manager.get_card_by_uid(dict.get("interceptor_uid", ""))
+	
+	# Event specific
+	action.event_name = dict.get("event_name", "")
+	action.event_speed = dict.get("event_speed", 0)
+	action.event_data = dict.get("event_data", {})
+	
+	return action
+
 # New virtual method for Phase 2
-func resolve(match_manager: MatchManager) -> void:
+func resolve(_match_manager: MatchManager) -> void:
 	# To be overridden by subclasses
 	if resolve_callback.is_valid():
 		resolve_callback.call()

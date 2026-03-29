@@ -120,9 +120,6 @@ class AttackAura extends Control:
 
 signal zone_clicked(zone: Zone)
 signal card_clicked(card: Card)
-signal creature_attack_requested(attacker: Card, target: Card)
-signal creature_attack_followers_requested(attacker: Card)
-signal board_creature_dropped(card: Card, from_zone: Zone, drop_position: Vector2)
 signal creature_drag_started(card: Card, from_zone: Zone)
 signal creature_right_clicked(card: Card)
 
@@ -406,8 +403,8 @@ func _add_stack_target_indicator(overlay: Control) -> void:
 func _add_equipment_indicator_badge(
 	overlay: Control,
 	icon: Control,
-	offset_left: float,
-	offset_top: float,
+	badge_offset_left: float,
+	badge_offset_top: float,
 	fill_color: Color,
 	border_color: Color
 ) -> void:
@@ -416,8 +413,8 @@ func _add_equipment_indicator_badge(
 	var badge := PanelContainer.new()
 	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	badge.set_anchors_preset(Control.PRESET_TOP_LEFT)
-	badge.offset_left = offset_left
-	badge.offset_top = offset_top
+	badge.offset_left = badge_offset_left
+	badge.offset_top = badge_offset_top
 	badge.offset_right = offset_left + 22.0
 	badge.offset_bottom = offset_top + 22.0
 
@@ -549,6 +546,8 @@ func _is_card_targeted_on_stack(card: Card) -> bool:
 func _is_card_pending_target(card: Card) -> bool:
 	if card == null:
 		return false
+	if not is_inside_tree() or is_queued_for_deletion():
+		return false
 	var tree := get_tree()
 	if tree == null:
 		return false
@@ -590,6 +589,8 @@ func _is_card_pending_target(card: Card) -> bool:
 
 func _is_card_pending_selection_source(card: Card) -> bool:
 	if card == null:
+		return false
+	if not is_inside_tree() or is_queued_for_deletion():
 		return false
 	var tree := get_tree()
 	if tree == null:
@@ -656,6 +657,8 @@ func setup(p_zone: Zone, p_gm: GameManager, p_player: Player, idx: int,
 	_refresh_display()
 
 func _refresh_display() -> void:
+	if not is_inside_tree() or is_queued_for_deletion():
+		return
 	_hide_ability_popup()
 	_raised_overlay = null
 	for child in get_children():
@@ -678,9 +681,9 @@ func _refresh_display() -> void:
 			var fd_overlay := Control.new()
 			fd_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			add_child(fd_overlay)
-			var viewer := _get_viewer_player()
+			var face_down_viewer := _get_viewer_player()
 			var revealed_face_down_power := (card is PowerCard and (card as PowerCard).is_publicly_revealed) or card.is_temporarily_revealed()
-			var is_own_hidden_card := card.get_controller() == viewer and (
+			var is_own_hidden_card := card.get_controller() == face_down_viewer and (
 				card.is_stealth
 				or card.is_power
 				or card.is_prepared
@@ -698,7 +701,7 @@ func _refresh_display() -> void:
 				fd_overlay.add_child(art)
 			if show_revealed_power_art:
 				var revealed_haze := ColorRect.new()
-				var is_own_revealed_power := card.get_controller() == viewer
+				var is_own_revealed_power := card.get_controller() == face_down_viewer
 				revealed_haze.color = Color(0.22, 0.45, 0.85, 0.26) if is_own_revealed_power else Color(0.85, 0.22, 0.45, 0.28)
 				revealed_haze.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 				revealed_haze.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -738,7 +741,7 @@ func _refresh_display() -> void:
 				haze.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				fd_overlay.add_child(haze)
 			_add_power_lock_overlay(fd_overlay, card)
-			if card.get_controller() == viewer and card.is_prepared and card.is_magical_card():
+			if card.get_controller() == face_down_viewer and card.is_prepared and card.is_magical_card():
 				_add_speed_badge(fd_overlay, card)
 			if _is_card_attacking_on_stack(card):
 				_add_attack_aura(fd_overlay)
@@ -762,18 +765,18 @@ func _refresh_display() -> void:
 				# Single Control overlay — PanelContainer fills it to the zone size.
 				# Children inside use anchors relative to the overlay, bypassing
 				# PanelContainer's child-fill behaviour entirely.
-				var overlay := Control.new()
-				overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
-				overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-				add_child(overlay)
+				var god_overlay := Control.new()
+				god_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+				god_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+				add_child(god_overlay)
 				if _is_card_attacking_on_stack(card):
-					_add_attack_aura(overlay)
+					_add_attack_aura(god_overlay)
 				if _should_show_playing_aura(card):
-					_add_playing_aura(overlay)
+					_add_playing_aura(god_overlay)
 				if _is_card_usable_for_priority(card):
-					_add_priority_response_aura(overlay)
+					_add_priority_response_aura(god_overlay)
 				if _is_card_targeted_on_stack(card) or _is_card_pending_target(card):
-					_add_stack_target_indicator(overlay)
+					_add_stack_target_indicator(god_overlay)
 
 				var art := TextureRect.new()
 				art.texture = tex
@@ -781,19 +784,19 @@ func _refresh_display() -> void:
 				art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 				art.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 				art.mouse_filter = Control.MOUSE_FILTER_IGNORE
-				overlay.add_child(art)
+				god_overlay.add_child(art)
 
 				# VBoxContainer fills overlay via anchors; spacer pushes label to correct edge
 				var name_vbox := VBoxContainer.new()
 				name_vbox.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 				name_vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
-				overlay.add_child(name_vbox)
+				god_overlay.add_child(name_vbox)
 
 				if card.name_at_bottom:
-					var spacer := Control.new()
-					spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
-					spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
-					name_vbox.add_child(spacer)
+					var top_name_spacer := Control.new()
+					top_name_spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
+					top_name_spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+					name_vbox.add_child(top_name_spacer)
 
 				var name_lbl := Label.new()
 				name_lbl.add_theme_font_size_override("font_size", 11)
@@ -806,10 +809,10 @@ func _refresh_display() -> void:
 				name_vbox.add_child(name_lbl)
 
 				if not card.name_at_bottom:
-					var spacer := Control.new()
-					spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
-					spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
-					name_vbox.add_child(spacer)
+					var bottom_name_spacer := Control.new()
+					bottom_name_spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
+					bottom_name_spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+					name_vbox.add_child(bottom_name_spacer)
 
 				var deck_lbl := Label.new()
 				deck_lbl.text = "Deck: %d" % owning_player.deck_zone.cards.size()
@@ -821,7 +824,7 @@ func _refresh_display() -> void:
 				deck_lbl.offset_left = 6
 				deck_lbl.offset_top = 4
 				deck_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-				overlay.add_child(deck_lbl)
+				god_overlay.add_child(deck_lbl)
 
 				if card.is_power and card.is_muted and card.mute_turns_remaining > 0:
 					var muted_badge := PanelContainer.new()
@@ -832,9 +835,9 @@ func _refresh_display() -> void:
 					muted_badge.offset_top = -26
 					muted_badge.offset_bottom = -6
 					var muted_style := StyleBoxFlat.new()
-					var viewer := _get_viewer_player()
-					muted_style.bg_color = Color(0.22, 0.14, 0.34, 0.9) if card.get_controller() == viewer else Color(0.56, 0.18, 0.28, 0.9)
-					muted_style.border_color = Color(0.82, 0.9, 1.0, 0.95) if card.get_controller() == viewer else Color(1.0, 0.76, 0.84, 0.95)
+					var muted_badge_viewer := _get_viewer_player()
+					muted_style.bg_color = Color(0.22, 0.14, 0.34, 0.9) if card.get_controller() == muted_badge_viewer else Color(0.56, 0.18, 0.28, 0.9)
+					muted_style.border_color = Color(0.82, 0.9, 1.0, 0.95) if card.get_controller() == muted_badge_viewer else Color(1.0, 0.76, 0.84, 0.95)
 					muted_style.corner_radius_top_left = 6
 					muted_style.corner_radius_top_right = 6
 					muted_style.corner_radius_bottom_left = 6
@@ -850,7 +853,7 @@ func _refresh_display() -> void:
 					muted_lbl.add_theme_color_override("font_color", Color(0.95, 0.98, 1.0))
 					muted_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 					muted_badge.add_child(muted_lbl)
-					overlay.add_child(muted_badge)
+					god_overlay.add_child(muted_badge)
 			return
 
 		var is_def_creature := card.card_type == Card.CardType.CREATURE and card.creature_mode == Card.CreatureMode.DEFENSIVE
@@ -872,24 +875,24 @@ func _refresh_display() -> void:
 				style.border_color = Color(0.5, 0.5, 0.5)
 				add_theme_stylebox_override("panel", style)
 
-		var overlay := Control.new()
-		overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-		add_child(overlay)
+		var card_overlay := Control.new()
+		card_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		card_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		add_child(card_overlay)
 		if _is_card_attacking_on_stack(card):
-			_add_attack_aura(overlay)
+			_add_attack_aura(card_overlay)
 		if _should_show_playing_aura(card):
-			_add_playing_aura(overlay)
+			_add_playing_aura(card_overlay)
 		if _is_card_usable_for_priority(card):
-			_add_priority_response_aura(overlay)
+			_add_priority_response_aura(card_overlay)
 		if _is_card_targeted_on_stack(card) or _is_card_pending_target(card):
-			_add_stack_target_indicator(overlay)
+			_add_stack_target_indicator(card_overlay)
 
 		# Art background; stealth shows hazed art (own) or cardback (opponent)
 		var show_public_stealth := card.is_stealth and card.is_temporarily_revealed()
 		if card.is_stealth:
-			var viewer := _get_viewer_player()
-			var is_own := card.get_controller() == viewer
+			var stealth_viewer := _get_viewer_player()
+			var is_own := card.get_controller() == stealth_viewer
 			var tex_path := card.art_path if (is_own or show_public_stealth) and card.art_path != "" else "res://images/cardbackAI.png"
 			var tex: Texture2D = load(tex_path)
 			if tex:
@@ -899,13 +902,13 @@ func _refresh_display() -> void:
 				art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 				art.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 				art.mouse_filter = Control.MOUSE_FILTER_IGNORE
-				overlay.add_child(art)
+				card_overlay.add_child(art)
 			if is_own or show_public_stealth:
 				var haze := ColorRect.new()
 				haze.color = Color(0.05, 0.05, 0.2, 0.34) if is_own else Color(0.85, 0.22, 0.45, 0.18)
 				haze.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 				haze.mouse_filter = Control.MOUSE_FILTER_IGNORE
-				overlay.add_child(haze)
+				card_overlay.add_child(haze)
 		elif card.art_path != "":
 			var tex: Texture2D = load(card.art_path)
 			if tex:
@@ -915,26 +918,26 @@ func _refresh_display() -> void:
 				art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 				art.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 				art.mouse_filter = Control.MOUSE_FILTER_IGNORE
-				overlay.add_child(art)
+				card_overlay.add_child(art)
 
-		_add_sleep_affordance(overlay, card)
-		var viewer := _get_viewer_player()
-		if not card.is_stealth or card.get_controller() == viewer or card.is_temporarily_revealed():
-			_add_equipment_affordances(overlay, card)
-			_add_binding_affordances(overlay, card)
+		_add_sleep_affordance(card_overlay, card)
+		var board_viewer := _get_viewer_player()
+		if not card.is_stealth or card.get_controller() == board_viewer or card.is_temporarily_revealed():
+			_add_equipment_affordances(card_overlay, card)
+			_add_binding_affordances(card_overlay, card)
 
 		# VBox fills the zone; spacer pushes the stat label to the bottom
 		var vbox := VBoxContainer.new()
 		vbox.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		overlay.add_child(vbox)
+		card_overlay.add_child(vbox)
 
-		var spacer := Control.new()
-		spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
-		spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		vbox.add_child(spacer)
+		var stats_spacer := Control.new()
+		stats_spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		stats_spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		vbox.add_child(stats_spacer)
 
-		var is_own_stealth_faceup := card.is_stealth and (card.get_controller() == viewer or card.is_temporarily_revealed())
+		var is_own_stealth_faceup := card.is_stealth and (card.get_controller() == board_viewer or card.is_temporarily_revealed())
 		if card.card_type == Card.CardType.CREATURE and not card.is_god and (not card.is_stealth or is_own_stealth_faceup):
 			var eff_str := card.get_effective_strength()
 			var eff_res := card.get_effective_resilience()
@@ -1011,8 +1014,8 @@ func _refresh_display() -> void:
 			muted_badge.offset_top = -26
 			muted_badge.offset_bottom = -6
 			var muted_style := StyleBoxFlat.new()
-			muted_style.bg_color = Color(0.22, 0.14, 0.34, 0.9) if card.get_controller() == viewer else Color(0.56, 0.18, 0.28, 0.9)
-			muted_style.border_color = Color(0.82, 0.9, 1.0, 0.95) if card.get_controller() == viewer else Color(1.0, 0.76, 0.84, 0.95)
+			muted_style.bg_color = Color(0.22, 0.14, 0.34, 0.9) if card.get_controller() == board_viewer else Color(0.56, 0.18, 0.28, 0.9)
+			muted_style.border_color = Color(0.82, 0.9, 1.0, 0.95) if card.get_controller() == board_viewer else Color(1.0, 0.76, 0.84, 0.95)
 			muted_style.corner_radius_top_left = 6
 			muted_style.corner_radius_top_right = 6
 			muted_style.corner_radius_bottom_left = 6
@@ -1028,10 +1031,10 @@ func _refresh_display() -> void:
 			muted_lbl.add_theme_color_override("font_color", Color(0.95, 0.98, 1.0))
 			muted_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			muted_badge.add_child(muted_lbl)
-			overlay.add_child(muted_badge)
+			card_overlay.add_child(muted_badge)
 
-		_defense_overlay = overlay if is_def_creature else null
-		_raised_overlay  = overlay if (is_def_creature or card.is_stealth) else null
+		_defense_overlay = card_overlay if is_def_creature else null
+		_raised_overlay  = card_overlay if (is_def_creature or card.is_stealth) else null
 		z_index = 2 if _raised_overlay != null else 0
 
 	else:
@@ -1118,9 +1121,10 @@ func _notification(what: int) -> void:
 			var viewer := _get_viewer_player()
 			if _c != null and (not _c.is_face_down or _c.get_controller() == viewer or _is_public_power(_c) or _c.is_temporarily_revealed()):
 				var _delay := 1.0 if (_c.is_god) else 1.5
-				get_tree().create_timer(_delay).timeout.connect(
-					func() -> void: _try_show_popup()
-				)
+				if is_inside_tree() and not is_queued_for_deletion():
+					get_tree().create_timer(_delay).timeout.connect(
+						func() -> void: _try_show_popup()
+					)
 		NOTIFICATION_MOUSE_EXIT:
 			_hovered = false
 			z_index = 2 if (_raised_overlay and is_instance_valid(_raised_overlay)) else 0
@@ -1128,6 +1132,8 @@ func _notification(what: int) -> void:
 
 func _schedule_hide() -> void:
 	if _pinned or _hide_pending:
+		return
+	if not is_inside_tree() or is_queued_for_deletion():
 		return
 	_hide_pending = true
 	await get_tree().create_timer(0.15).timeout
@@ -1171,6 +1177,8 @@ func _show_ability_popup() -> void:
 		return
 	if zone == null or zone.cards.size() == 0:
 		return
+	if not is_inside_tree() or is_queued_for_deletion():
+		return
 	var card := zone.cards[0]
 	var tree := get_tree()
 	if tree == null:
@@ -1203,8 +1211,8 @@ func _show_ability_popup() -> void:
 	popup.add_child(vbox)
 
 	# Hidden = opponent's stealth card; own stealth cards show full info
-	var viewer := _get_viewer_player()
-	var hidden := (card.is_stealth or (card.is_face_down and not _is_public_power(card))) and card.get_controller() != viewer and not card.is_temporarily_revealed()
+	var popup_viewer := _get_viewer_player()
+	var is_hidden_card := (card.is_stealth or (card.is_face_down and not _is_public_power(card))) and card.get_controller() != popup_viewer and not card.is_temporarily_revealed()
 
 	# Header row
 	var header_row := HBoxContainer.new()
@@ -1215,11 +1223,11 @@ func _show_ability_popup() -> void:
 	var name_lbl := Label.new()
 	name_lbl.add_theme_font_size_override("font_size", 13)
 	name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	name_lbl.text = card.get_display_name_for_control(name_lbl) if not hidden else "???"
+	name_lbl.text = card.get_display_name_for_control(name_lbl) if not is_hidden_card else "???"
 	name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header_row.add_child(name_lbl)
 
-	if not hidden and card.culture != "":
+	if not is_hidden_card and card.culture != "":
 		var culture_lbl := Label.new()
 		culture_lbl.text = card.culture
 		culture_lbl.add_theme_font_size_override("font_size", 11)
@@ -1229,7 +1237,7 @@ func _show_ability_popup() -> void:
 		header_row.add_child(culture_lbl)
 
 	# Types
-	if not hidden:
+	if not is_hidden_card:
 		var type_lbl := Label.new()
 		var type_parts: Array[String] = [_get_card_type_label(card)]
 		for card_type_name in card.card_types:
@@ -1261,7 +1269,7 @@ func _show_ability_popup() -> void:
 			vbox.add_child(muted_status_lbl)
 
 	# Level (gods have no level)
-	if not hidden and not card.is_god:
+	if not is_hidden_card and not card.is_god:
 		var level_lbl := Label.new()
 		level_lbl.text = "Level %d" % card.level
 		level_lbl.add_theme_font_size_override("font_size", 11)
@@ -1270,7 +1278,7 @@ func _show_ability_popup() -> void:
 		vbox.add_child(level_lbl)
 
 	if card.card_type == Card.CardType.CREATURE and not card.is_god:
-		if not hidden:
+		if not is_hidden_card:
 			if card.is_sleeping:
 				var sleep_lbl := Label.new()
 				sleep_lbl.text = "Sleeping"
@@ -1412,7 +1420,7 @@ func _show_ability_popup() -> void:
 			effects_lbl.add_theme_color_override("font_color", Color(1.0, 0.45, 0.45) if card.is_petrified() else Color(0.78, 0.9, 1.0))
 			effects_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			vbox.add_child(effects_lbl)
-	elif not hidden and card.speed > 0:
+	elif not is_hidden_card and card.speed > 0:
 		var eff_spd := card.get_effective_speed()
 		var spd_lbl := Label.new()
 		spd_lbl.text = "SPD:%d" % eff_spd
@@ -1432,7 +1440,7 @@ func _show_ability_popup() -> void:
 		vbox.add_child(spd_lbl)
 
 	# Ability text
-	if card.ability_text != "" and not hidden:
+	if card.ability_text != "" and not is_hidden_card:
 		var display_ability_text := (card as PowerCard).get_display_ability_bbcode_text(game_manager) if card is PowerCard else card.ability_text
 		var rtl := RichTextLabel.new()
 		rtl.bbcode_enabled = true
@@ -1446,7 +1454,7 @@ func _show_ability_popup() -> void:
 		rtl.mouse_filter = Control.MOUSE_FILTER_STOP
 		vbox.add_child(rtl)
 
-	if card is PowerCard and not hidden:
+	if card is PowerCard and not is_hidden_card:
 		var power_cost_lines := _get_power_hover_cost_lines(card as PowerCard)
 		if power_cost_lines.size() > 0:
 			var cost_lbl := Label.new()
@@ -1457,8 +1465,8 @@ func _show_ability_popup() -> void:
 			cost_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			vbox.add_child(cost_lbl)
 
-	var hover_detail_lines := card.get_hover_detail_lines(viewer)
-	if hover_detail_lines.size() > 0 and not hidden:
+	var hover_detail_lines := card.get_hover_detail_lines(popup_viewer)
+	if hover_detail_lines.size() > 0 and not is_hidden_card:
 		var hover_details_lbl := Label.new()
 		hover_details_lbl.text = "\n".join(hover_detail_lines)
 		hover_details_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -1468,7 +1476,7 @@ func _show_ability_popup() -> void:
 		vbox.add_child(hover_details_lbl)
 
 	# Flavor text
-	if card.flavor_text != "" and not hidden:
+	if card.flavor_text != "" and not is_hidden_card:
 		var flavor_lbl := Label.new()
 		flavor_lbl.text = card.flavor_text
 		flavor_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART

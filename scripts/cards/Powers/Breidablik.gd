@@ -192,11 +192,12 @@ func _get_indices_nearest_power(count: int) -> Array[int]:
 	for index in range(count):
 		indices.append(index)
 	# Power slots render to the left of the board lanes, so lower indexes are closest.
-	indices.sort_custom(func(a: int, b: int) -> bool:
-		var distance_a := a + 1
-		var distance_b := b + 1
-		if distance_a == distance_b:
-			return a < b
-		return distance_a < distance_b
-	)
+	indices.sort_custom(_compare_nearest_power_index)
 	return indices
+
+func _compare_nearest_power_index(a: int, b: int) -> bool:
+	var distance_a := a + 1
+	var distance_b := b + 1
+	if distance_a == distance_b:
+		return a < b
+	return distance_a < distance_b

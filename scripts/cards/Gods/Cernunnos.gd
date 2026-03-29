@@ -5,8 +5,6 @@ const PASSIVE_SOURCE := "Cernunnos Master of the Deep Wood"
 const BUFF_STRENGTH := 2
 const BUFF_SPEED := 2
 
-var paragon: String = "Paragon of Nature"
-
 func _init() -> void:
 	super._init()
 	card_name = "Cernunnos"
