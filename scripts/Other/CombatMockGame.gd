@@ -224,6 +224,10 @@ var _pending_summon_priority_events: Array[Dictionary] = []
 var _pending_wolf_master_source: Card = null
 var _pending_wolf_master_summon: Card = null
 var _pending_wolf_master_mode: String = ""
+var _pending_hati_prompts: Array[Hati] = []
+var _pending_hati_summon: Hati = null
+var _pending_hati_mode: String = ""
+var _pending_hati_sacrifice: Card = null
 var _pending_skoll_prompts: Array[Skoll] = []
 var _pending_skoll_summon: Skoll = null
 var _pending_skoll_mode: String = ""
@@ -235,6 +239,7 @@ var _pending_en_hedu_anna: Card = null
 var _pending_harii_shaman: HariiShamanScript = null
 var _pending_harii_shaman_target: Card = null
 var _pending_erlqueens_nightingale: ErlqueensNightingaleScript = null
+var _hati_prompt_panel: Control = null
 var _skoll_prompt_panel: Control = null
 var _gala_tura_prompt_panel: Control = null
 var _habrok_breakout_prompt_panel: Control = null
@@ -297,6 +302,7 @@ var _pending_end_turn_discard_uids: Array = []
 var _ui_update_pending: bool = false
 var _match_reconnect_waiting: bool = false
 var _match_reconnect_wait_message: String = "Waiting for opponent to reconnect..."
+var _awaiting_initial_full_state: bool = false
 var _current_match_info: Dictionary = {}
 
 const TRANSIENT_UI_Z_INDEX := 1000
@@ -1189,7 +1195,9 @@ func start_game(
 	await get_tree().process_frame
 	var default_match_setup = DefaultMatchSetupScript.new()
 	var match_players: Dictionary = {}
-	if server_match_session != null and not server_match_session.player_decks_by_session.is_empty():
+	if _is_networked_client:
+		match_players = default_match_setup.build_empty_match_shell(game_manager)
+	elif server_match_session != null and not server_match_session.player_decks_by_session.is_empty():
 		match_players = default_match_setup.build_match_from_session_decks(game_manager, server_match_session)
 	if match_players.is_empty():
 		match_players = default_match_setup.build_default_match(game_manager)
@@ -1229,6 +1237,12 @@ func start_game(
 	# Pin the server's view to Player 1 so the board never flips to P2's perspective
 	if not _is_networked_client and game_manager.players.size() > 0:
 		game_manager.feedback_viewer = game_manager.players[0]
+	if _is_networked_client:
+		_awaiting_initial_full_state = true
+		action_label.text = "Joining match. Waiting for server state..."
+		update_ui()
+		_update_waiting_overlay()
+		return
 	game_manager.start_turn()
 	update_ui()
 	_open_upkeep_choice_window()
@@ -1351,6 +1365,8 @@ func _restore_turn_choice_after_skoll_prompt() -> void:
 		action_label.text = "Choose Draw Card, Gain 4 Mana, or Sun Hunt."
 
 func _can_interact_with_board_during_turn_choice(card: Card = null) -> bool:
+	if _pending_hati_summon != null:
+		return true
 	if _pending_skoll_summon != null:
 		return true
 	if _awaiting_creature_sacrifice or _awaiting_altar_void_payment or _awaiting_drag_sacrifice_zone:
@@ -3276,6 +3292,181 @@ func _clear_skoll_upkeep_summon() -> void:
 	_pending_skoll_mode = ""
 	_pending_creature_play_resolver = Callable()
 
+func _get_pending_hati_moon_hunts_for_turn_end() -> Array[Hati]:
+	var candidates: Array[Hati] = []
+	if game_manager == null or game_manager.current_player == null:
+		return candidates
+	for card in game_manager.current_player.hand_zone.cards:
+		if card is Hati and (card as Hati).can_use_moon_hunt_summon(game_manager):
+			candidates.append(card as Hati)
+	return candidates
+
+func _maybe_prompt_hati_moon_hunt_before_end_turn() -> bool:
+	_hide_hati_prompt()
+	_pending_hati_prompts = _get_pending_hati_moon_hunts_for_turn_end()
+	if _pending_hati_prompts.is_empty():
+		return false
+	_show_next_hati_prompt()
+	return true
+
+func _show_next_hati_prompt() -> void:
+	_hide_hati_prompt()
+	while not _pending_hati_prompts.is_empty():
+		var hati := _pending_hati_prompts.pop_front() as Hati
+		if hati == null or not is_instance_valid(hati):
+			continue
+		if not hati.can_use_moon_hunt_summon(game_manager):
+			continue
+		_show_hati_prompt(hati)
+		return
+	_clear_hati_moon_hunt_state()
+	_continue_end_turn_sequence()
+
+func _show_hati_prompt(hati: Hati) -> void:
+	if hati == null:
+		_show_next_hati_prompt()
+		return
+
+	var panel := PanelContainer.new()
+	panel.name = "HatiPromptPanel"
+	_hati_prompt_panel = panel
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.08, 0.10, 0.14, 0.97)
+	style.border_color = Color(0.68, 0.86, 1.0, 0.95)
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		style.set_border_width(side, 2)
+	panel.add_theme_stylebox_override("panel", style)
+	panel.custom_minimum_size = Vector2(440, 0)
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 8)
+	panel.add_child(vbox)
+
+	var title := Label.new()
+	title.text = hati.card_name
+	title.add_theme_font_size_override("font_size", 14)
+	vbox.add_child(title)
+
+	var info := Label.new()
+	info.text = hati.get_moon_hunt_prompt_text(game_manager)
+	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	vbox.add_child(info)
+
+	var buttons := HBoxContainer.new()
+	buttons.add_theme_constant_override("separation", 8)
+	vbox.add_child(buttons)
+
+	for option in [
+		{"label": "Aggressive", "mode": "aggressive"},
+		{"label": "Defensive", "mode": "defensive"},
+		{"label": "Stealth", "mode": "stealth"}
+	]:
+		var summon_btn := Button.new()
+		summon_btn.text = str(option["label"])
+		summon_btn.pressed.connect(_begin_hati_moon_hunt.bind(hati, str(option["mode"])))
+		buttons.add_child(summon_btn)
+
+	var decline_btn := Button.new()
+	decline_btn.text = "Decline"
+	decline_btn.pressed.connect(_resolve_hati_prompt_decline)
+	buttons.add_child(decline_btn)
+
+	add_child(panel)
+	_promote_transient_ui(panel)
+	panel.anchor_left = 0.5
+	panel.anchor_right = 0.5
+	panel.anchor_top = 0.5
+	panel.anchor_bottom = 0.5
+	panel.offset_left = -220
+	panel.offset_right = 220
+	panel.offset_top = -90
+	panel.offset_bottom = 90
+	action_label.text = "Moon Hunt: choose how to summon Hati."
+
+func _begin_hati_moon_hunt(hati: Hati, mode: String) -> void:
+	if hati == null or not hati.can_use_moon_hunt_summon(game_manager):
+		_show_next_hati_prompt()
+		return
+	_hide_hati_prompt()
+	_pending_hati_summon = hati
+	_pending_hati_mode = mode
+	_pending_hati_sacrifice = null
+	action_label.text = "Hati: choose a friendly creature to sacrifice for Moon Hunt."
+	update_ui()
+
+func _resolve_hati_prompt_decline() -> void:
+	_hide_hati_prompt()
+	action_label.text = "Moon Hunt declined."
+	update_ui()
+	_show_next_hati_prompt()
+
+func _select_hati_moon_hunt_sacrifice(card: Card) -> void:
+	if _pending_hati_summon == null:
+		return
+	if card == null or not _pending_hati_summon.is_valid_moon_hunt_sacrifice(card):
+		action_label.text = "Hati: choose one of your sacrificable creatures."
+		update_ui()
+		return
+	_pending_hati_sacrifice = card
+	action_label.text = "Hati: choose an empty friendly zone to summon in " + _pending_hati_mode.to_upper() + "."
+	update_ui()
+
+func _resolve_hati_moon_hunt(zone: Zone) -> void:
+	var hati := _pending_hati_summon
+	var sacrifice_target := _pending_hati_sacrifice
+	var mode := _pending_hati_mode
+	if hati == null or game_manager == null:
+		_clear_hati_moon_hunt_state()
+		update_ui()
+		return
+	if sacrifice_target == null:
+		action_label.text = "Hati: choose a friendly creature to sacrifice first."
+		update_ui()
+		return
+	if zone == null or zone.zone_owner != game_manager.current_player or zone.zone_type not in [Zone.ZoneType.FRONTLINE, Zone.ZoneType.RESERVE] or not zone.cards.is_empty():
+		action_label.text = "Hati: choose an empty friendly zone."
+		update_ui()
+		return
+
+	var summon_mode: Card.CreatureMode = Card.CreatureMode.DEFENSIVE
+	if mode == "aggressive":
+		summon_mode = Card.CreatureMode.AGGRESSIVE
+	var stealth := mode == "stealth"
+
+	if _is_networked_client:
+		game_input.submit_action({
+			type = "hati_moon_hunt",
+			hati_uid = hati.uid,
+			sacrifice_uid = sacrifice_target.uid,
+			player_index = game_manager.players.find(zone.zone_owner),
+			zone_type = zone.zone_type,
+			zone_index = zone.zone_index,
+			mode = mode
+		})
+		_clear_hati_moon_hunt_state()
+		action_label.text = "Moon Hunt sent. Finishing end turn..."
+		update_ui()
+		return
+	if not hati.resolve_moon_hunt_summon(game_manager, zone, sacrifice_target, summon_mode, stealth):
+		action_label.text = "Moon Hunt fizzles: Hati could not be summoned."
+		update_ui()
+		return
+	action_label.text = "Moon Hunt resolved. Hati was summoned."
+
+	_clear_hati_moon_hunt_state()
+	update_ui()
+	_show_next_hati_prompt()
+
+func _clear_hati_moon_hunt_state() -> void:
+	_pending_hati_summon = null
+	_pending_hati_mode = ""
+	_pending_hati_sacrifice = null
+
+func _hide_hati_prompt() -> void:
+	if _hati_prompt_panel != null and is_instance_valid(_hati_prompt_panel):
+		_hati_prompt_panel.queue_free()
+	_hati_prompt_panel = null
+
 func _queue_skoll_turn_start_priority() -> void:
 	var skoll := _queued_skoll_turn_start_summon
 	if skoll == null or game_manager == null:
@@ -4898,6 +5089,9 @@ func _on_empty_zone_pressed(zone: Zone) -> void:
 	if _pending_skoll_summon != null and not _awaiting_creature_sacrifice and not _awaiting_altar_void_payment:
 		_resolve_skoll_upkeep_summon(zone)
 		return
+	if _pending_hati_summon != null:
+		_resolve_hati_moon_hunt(zone)
+		return
 	if _is_turn_choice_pending():
 		_reject_pre_turn_action()
 		return
@@ -6161,6 +6355,10 @@ func _on_board_card_pressed(card: Card) -> void:
 			and selected_card.sacrifice_cost > 0 \
 			and _can_use_zone_after_sacrifice(card.current_zone, card):
 		_try_play_selected_creature_to_zone(card.current_zone)
+		return
+
+	if _pending_hati_summon != null and _pending_hati_sacrifice == null:
+		_select_hati_moon_hunt_sacrifice(card)
 		return
 
 	if _awaiting_creature_sacrifice:
@@ -9392,6 +9590,7 @@ func _dismiss_transient_prompts() -> void:
 	_dismiss_zone_overlay()
 	_hide_priority_prompt()
 	_hide_retreat_prompt()
+	_hide_hati_prompt()
 	_hide_skoll_prompt()
 	_hide_doorway_choice_prompt()
 	_hide_sacrifice_payment_prompt()
@@ -9410,6 +9609,8 @@ func _dismiss_transient_prompts() -> void:
 	_hide_aphrodite_prompt()
 	_hide_blot_sacrifice_prompt()
 	_hide_deucalion_prompt()
+	_pending_hati_prompts.clear()
+	_clear_hati_moon_hunt_state()
 	_pending_skoll_prompts.clear()
 	_clear_skoll_upkeep_summon()
 	if _resurrection_panel and is_instance_valid(_resurrection_panel):
@@ -9595,6 +9796,13 @@ func _on_match_move_validated(move: Dictionary) -> void:
 		"skoll_upkeep_summon":
 			# Skoll already summoned by MatchManager; open standard turn-start priority.
 			_queue_standard_turn_start_priority("Skoll summoned via Sun Hunt.")
+		"hati_moon_hunt":
+			action_label.text = "Moon Hunt resolved. Hati was summoned."
+			if _is_networked_client:
+				if not _pending_hati_prompts.is_empty():
+					_show_next_hati_prompt()
+				else:
+					_continue_end_turn_sequence()
 		"attack":
 			var attacker: Card = move.get("attacker")
 			var target = move.get("target")
@@ -9774,6 +9982,9 @@ func _on_mana_button_pressed() -> void:
 		_queue_standard_turn_start_priority("Gained 4 additional mana.")
 
 func _close_turn_start_windows() -> void:
+	_hide_hati_prompt()
+	_pending_hati_prompts.clear()
+	_clear_hati_moon_hunt_state()
 	_hide_skoll_prompt()
 	_pending_skoll_prompts.clear()
 	_pending_skoll_summon = null
@@ -9829,6 +10040,8 @@ func _continue_end_turn_sequence() -> void:
 			candidates.append(card)
 			
 	if candidates.is_empty():
+		if _maybe_prompt_hati_moon_hunt_before_end_turn():
+			return
 		if _maybe_prompt_habrok_breakout_before_end_turn():
 			return
 		_do_end_turn()
@@ -10044,6 +10257,7 @@ func _apply_full_state(data: Dictionary) -> void:
 			var local_idx: int = network_manager.local_player_index
 			if local_idx < game_manager.players.size():
 				game_manager.feedback_viewer = game_manager.players[local_idx]
+		_awaiting_initial_full_state = false
 	# Host has the live authoritative game_manager — no zone rebuild needed.
 	# Show server's action message if any
 	var msg: String = data.get("action_message", "")
@@ -10093,6 +10307,9 @@ func _update_waiting_overlay() -> void:
 		return
 	if not _is_networked_client:
 		_update_waiting_status(false)
+		return
+	if _awaiting_initial_full_state:
+		_update_waiting_status(true, "Waiting for authoritative match state...")
 		return
 		
 	var local_idx = network_manager.local_player_index
@@ -10790,7 +11007,11 @@ func _on_card_dropped_to_zone(card: Card, zone: Zone, is_rotated: bool = false, 
 
 func cleanup() -> void:
 	_set_match_reconnect_wait(false)
+	_awaiting_initial_full_state = false
 	_current_match_info.clear()
+	_hide_hati_prompt()
+	_pending_hati_prompts.clear()
+	_clear_hati_moon_hunt_state()
 	_hide_skoll_prompt()
 	_pending_skoll_prompts.clear()
 	_clear_skoll_upkeep_summon()

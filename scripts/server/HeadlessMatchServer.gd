@@ -59,14 +59,14 @@ func start_from_config(config: Dictionary) -> Error:
 		startup_failed.emit("Dedicated match transport failed to bind port %d." % match_session.match_port)
 		return transport_err
 
-	var match_players: Dictionary = {}
-	if match_session != null and not match_session.player_decks_by_session.is_empty():
-		match_players = _default_match_setup.build_match_from_session_decks(game_manager, match_session)
-		if match_players.is_empty():
-			startup_failed.emit("Dedicated match bootstrap failed to build the submitted player decks.")
-			return ERR_INVALID_DATA
-	else:
-		match_players = _default_match_setup.build_default_match(game_manager)
+	if match_session == null or match_session.player_decks_by_session.is_empty():
+		startup_failed.emit("Dedicated match launch was missing submitted deck data.")
+		return ERR_INVALID_DATA
+
+	var match_players: Dictionary = _default_match_setup.build_match_from_session_decks(game_manager, match_session)
+	if match_players.is_empty():
+		startup_failed.emit("Dedicated match bootstrap failed to build the submitted player decks.")
+		return ERR_INVALID_DATA
 	headless_match_host.enable_authoritative_broadcasts()
 	game_event_broadcaster = headless_match_host.game_event_broadcaster
 	if not game_manager.game_ended.is_connected(_on_game_ended):

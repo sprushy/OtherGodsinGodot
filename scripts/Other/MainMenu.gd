@@ -307,7 +307,7 @@ func _refresh_multiplayer_action_state() -> void:
 	if leave_seek_button != null:
 		leave_seek_button.visible = in_room
 	if ready_button != null:
-		ready_button.visible = in_room
+		ready_button.visible = false
 
 func _queue_room_list_refresh() -> void:
 	if lobby_client == null:
@@ -1283,8 +1283,7 @@ func _on_host_game_pressed() -> void:
 	_current_lobby_ip = _get_lobby_ip()
 	_write_smoke_trace("host_pressed")
 	multiplayer_container.visible = true
-	ready_button.visible = true
-	ready_button.text = "Ready"
+	ready_button.visible = false
 	status_label.text = "Starting dedicated lobby server..."
 	_dedicated_lobby_connect_attempts_remaining = 20
 	_spawned_lobby_process_id = _launch_dedicated_lobby_server()
@@ -1388,11 +1387,7 @@ func _connect_local_host_to_dedicated_lobby() -> void:
 		_queue_host_lobby_retry("Could not connect to dedicated lobby at %s." % _current_lobby_ip)
 
 func _on_ready_button_pressed() -> void:
-	var next_ready := not _is_local_player_ready()
-	if lobby_client != null:
-		lobby_client.set_ready(next_ready)
-	elif _is_local_lobby_host and lobby_server != null:
-		lobby_server.set_local_ready(next_ready)
+	status_label.text = "Your seek locks in automatically once your selected deck is valid."
 
 func _bind_lobby_server_signals() -> void:
 	if lobby_server == null:
@@ -1512,7 +1507,7 @@ func _on_lobby_room_list_updated(rooms: Array) -> void:
 	_refresh_seek_list()
 	if _current_room_snapshot.is_empty():
 		if _open_seek_rooms.is_empty():
-			status_label.text = "No open seeks right now. Create one when you're ready."
+			status_label.text = "No open seeks right now. Create one to start a match."
 		else:
 			status_label.text = "Click an open seek to join, or create your own."
 	_refresh_multiplayer_action_state()
@@ -1532,8 +1527,7 @@ func _apply_room_snapshot(snapshot: Dictionary) -> void:
 	room_code_line_edit.text = room_id
 	_write_smoke_room_code(room_id)
 	_maybe_submit_current_profile_deck(room_id, snapshot)
-	ready_button.visible = true
-	ready_button.text = "Unready" if _is_local_player_ready() else "Ready"
+	ready_button.visible = false
 	leave_seek_button.visible = true
 
 	var member_lines: Array[String] = []
@@ -1553,7 +1547,7 @@ func _apply_room_snapshot(snapshot: Dictionary) -> void:
 
 	var guidance := "Waiting for another player to join your seek."
 	if int(snapshot.get("member_count", 0)) >= int(snapshot.get("max_players", 2)):
-		guidance = "Both players are here. Press Ready when you're set."
+		guidance = "Both players are here. Launching automatically once both decks are valid."
 	var local_deck_message := ""
 	var deck_error := str(local_member.get("deck_error", "")).strip_edges()
 	if not deck_error.is_empty():
@@ -1575,7 +1569,7 @@ func _on_local_match_assigned(match_info: Dictionary) -> void:
 	_match_launch_queued = true
 	_save_active_match_resume(match_info)
 	_write_smoke_trace("local_match_assigned match=%s" % str(match_info.get("match_id", "")))
-	status_label.text = "Both players are ready. Preparing the match server..."
+	status_label.text = "Both players joined. Preparing the match server..."
 	_write_smoke_result("MATCH_ASSIGNED_HOST:%s" % str(match_info))
 	call_deferred("_launch_host_match_after_lobby_handoff", match_info)
 
@@ -2166,7 +2160,7 @@ func _maybe_submit_current_profile_deck(room_id: String, snapshot: Dictionary) -
 		}
 		selected_deck_id = "smoke_default"
 	if selected_deck.is_empty():
-		status_label.text = "Choose a saved legal deck before readying up."
+		status_label.text = "Choose a saved legal deck before joining or creating a seek."
 		_last_submitted_lobby_room_id = ""
 		_last_submitted_lobby_deck_id = ""
 		_refresh_multiplayer_action_state()
@@ -2255,15 +2249,10 @@ func _maybe_progress_smoke_from_room_snapshot(room_id: String) -> void:
 		return
 
 	var role := str(_smoke_config.get("role", "")).to_lower()
-	if role == "host":
-		if not _is_local_player_ready():
-			_on_ready_button_pressed()
-	elif role == "client":
+	if role == "client":
 		var expected_room := str(_pending_join_room_code).strip_edges().to_upper()
 		if expected_room.is_empty() or room_id != expected_room:
 			return
-		if not _is_local_player_ready():
-			_on_ready_button_pressed()
 
 func _parse_smoke_config(args: Array) -> Dictionary:
 	var config: Dictionary = {}

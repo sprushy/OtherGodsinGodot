@@ -481,6 +481,8 @@ func _get_required_player_for_command(command: Dictionary) -> Player:
 			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("charm_uid", ""))))
 		"play_hex_response":
 			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("hex_uid", ""))))
+		"hati_moon_hunt":
+			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("hati_uid", ""))))
 		"skoll_upkeep_summon":
 			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("skoll_uid", ""))))
 		"activate_card_ability", "en_hedu_anna_exaltation", "aphrodite_enslave_choice", "blessed_knights_choice":
@@ -801,6 +803,37 @@ func _process_command_impl(command: Dictionary) -> bool:
 				move_failed.emit("Skoll could not be summoned.")
 				return false
 			skoll.apply_upkeep_summon_tax(game_manager)
+			move_validated.emit(command)
+			return true
+		"hati_moon_hunt":
+			var hati_uid: String = command.get("hati_uid", "")
+			var hati_card := game_manager.get_card_by_uid(hati_uid)
+			if hati_card == null or not (hati_card is Hati):
+				move_failed.emit("hati_moon_hunt: Hati card not found")
+				return false
+			var hati := hati_card as Hati
+			if not hati.can_use_moon_hunt_summon(game_manager):
+				move_failed.emit("Hati cannot use Moon Hunt right now.")
+				return false
+			var sacrifice_uid: String = command.get("sacrifice_uid", "")
+			var sacrifice_target := game_manager.get_card_by_uid(sacrifice_uid)
+			if sacrifice_target == null or not hati.is_valid_moon_hunt_sacrifice(sacrifice_target):
+				move_failed.emit("Moon Hunt requires a valid friendly creature sacrifice.")
+				return false
+			var hati_zone := resolve_zone(command)
+			if hati_zone == null or hati_zone.zone_owner != game_manager.current_player \
+					or hati_zone.zone_type not in [Zone.ZoneType.FRONTLINE, Zone.ZoneType.RESERVE] \
+					or not hati_zone.cards.is_empty():
+				move_failed.emit("Moon Hunt: invalid zone.")
+				return false
+			var hati_mode_str: String = command.get("mode", "defensive")
+			var hati_mode: Card.CreatureMode = Card.CreatureMode.DEFENSIVE
+			if hati_mode_str == "aggressive":
+				hati_mode = Card.CreatureMode.AGGRESSIVE
+			var hati_stealth := hati_mode_str == "stealth"
+			if not hati.resolve_moon_hunt_summon(game_manager, hati_zone, sacrifice_target, hati_mode, hati_stealth):
+				move_failed.emit("Moon Hunt fizzled.")
+				return false
 			move_validated.emit(command)
 			return true
 		"unlock_power":

@@ -627,9 +627,11 @@ func _submit_deck_for_session(session_id: String, deck_name: String, deck_id: St
 	if not room.submit_deck(session_id, deck_name, deck_id, validation.get("cards", {}), validation):
 		_send_error_to_session(session_id, "Unable to store selected deck.")
 		return
-	if not bool(validation.get("is_valid", false)):
-		room.set_ready(session_id, false)
+	var deck_is_valid := bool(validation.get("is_valid", false))
+	room.set_ready(session_id, deck_is_valid)
 	_emit_room_updates(room)
+	if deck_is_valid and room.can_start() and room.status != LobbyRoomScript.STATUS_IN_MATCH:
+		_assign_match(room)
 
 func _broadcast_room_snapshot(room: LobbyRoom) -> void:
 	var snapshot: Dictionary = room.to_snapshot(sessions_by_id)

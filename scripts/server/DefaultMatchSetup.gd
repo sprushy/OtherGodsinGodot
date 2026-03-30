@@ -56,6 +56,26 @@ func build_default_match(game_manager: GameManager) -> Dictionary:
 		"player2": player2,
 	}
 
+func build_empty_match_shell(game_manager: GameManager, player_count: int = 2) -> Dictionary:
+	if game_manager == null or player_count <= 0:
+		return {}
+
+	var players: Array[Player] = []
+	for player_index in range(player_count):
+		var player := Player.new()
+		player.player_name = "Player %d" % [player_index + 1]
+		game_manager.players.append(player)
+		players.append(player)
+
+	game_manager.setup_game()
+	if not players.is_empty():
+		game_manager.feedback_viewer = players[0]
+
+	return {
+		"player1": players[0] if players.size() > 0 else null,
+		"player2": players[1] if players.size() > 1 else null,
+	}
+
 func build_match_from_session_decks(game_manager: GameManager, match_session) -> Dictionary:
 	if game_manager == null or match_session == null:
 		return {}
