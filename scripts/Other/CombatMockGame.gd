@@ -7020,12 +7020,13 @@ func _bdrag_finish(drop_pos: Vector2) -> void:
 	# Move: own empty adjacent zone
 	if not target_zu._is_enemy and target_zone.cards.size() == 0:
 		if not _creature_can_move(card):
+			var minor_action_limit := card.get_max_minor_creature_actions_per_turn()
 			if card.is_sleeping:
 				action_label.text = card.card_name + " is Sleeping and cannot move."
 			elif card.creature_major_action_used:
 				action_label.text = card.card_name + " has already used its major action this turn."
-			elif card.creature_minor_actions_used >= 2:
-				action_label.text = card.card_name + " has already used two minor actions this turn."
+			elif card.creature_minor_actions_used >= minor_action_limit:
+				action_label.text = "%s has already used %d minor actions this turn." % [card.card_name, minor_action_limit]
 			else:
 				action_label.text = card.card_name + " cannot move right now."
 			return
@@ -7042,12 +7043,13 @@ func _bdrag_finish(drop_pos: Vector2) -> void:
 
 	# Attack guard checks
 	if not match_manager.can_attack(card):
+		var major_minor_limit := card.get_max_minor_creature_actions_before_major()
 		if card.is_sleeping:
 			action_label.text = card.card_name + " is Sleeping and cannot act."
 		elif card.creature_major_action_used:
 			action_label.text = card.card_name + " has already used its major action this turn."
-		elif card.creature_minor_actions_used >= 2:
-			action_label.text = card.card_name + " has already used two minor actions this turn."
+		elif card.creature_minor_actions_used >= major_minor_limit:
+			action_label.text = "%s has already used %d minor actions this turn." % [card.card_name, major_minor_limit]
 		elif card.creature_mode == Card.CreatureMode.DEFENSIVE:
 			action_label.text = card.card_name + " is in defensive stance and cannot attack."
 		elif from_zone.zone_type == Zone.ZoneType.RESERVE:

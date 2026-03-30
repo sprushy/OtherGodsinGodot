@@ -318,7 +318,9 @@ func get_attack_invalid_reason(card: Card) -> String:
 	if card.card_type != Card.CardType.CREATURE:
 		return "Only creatures can attack."
 	if not card.can_take_major_creature_action():
-		return card.card_name + " has already used its major action this turn."
+		if card.creature_major_action_used:
+			return card.card_name + " has already used its major action this turn."
+		return card.card_name + " has already used all of its minor actions this turn."
 	if card.is_sleeping:
 		return card.card_name + " is Sleeping and cannot act."
 	if card.has_status_effect("cannot_attack"):

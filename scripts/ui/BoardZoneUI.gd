@@ -1419,7 +1419,10 @@ func _show_ability_popup() -> void:
 			vbox.add_child(acted_lbl)
 		elif card.creature_minor_actions_used > 0:
 			var moved_lbl := Label.new()
-			moved_lbl.text = "Minor actions: %d/2" % card.creature_minor_actions_used
+			moved_lbl.text = "Minor actions: %d/%d" % [
+				card.creature_minor_actions_used,
+				card.get_max_minor_creature_actions_per_turn()
+			]
 			moved_lbl.add_theme_font_size_override("font_size", 9)
 			moved_lbl.modulate = Color(0.6, 0.9, 0.6)
 			moved_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE

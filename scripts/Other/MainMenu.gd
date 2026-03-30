@@ -5,6 +5,7 @@ const LobbyServerScript = preload("res://scripts/server/LobbyServer.gd")
 const LobbyClientScript = preload("res://scripts/client/LobbyClient.gd")
 const AppReleaseInfoScript = preload("res://scripts/client/AppReleaseInfo.gd")
 const LocalProfileStoreScript = preload("res://scripts/client/LocalProfileStore.gd")
+const DeckValidatorScript = preload("res://scripts/server/DeckValidator.gd")
 const MatchSessionScript = preload("res://scripts/server/MatchSession.gd")
 const DEDICATED_LOBBY_ENTRY_SCRIPT_PATH := "res://scripts/server/DedicatedLobbyServerMain.gd"
 const DEDICATED_SERVER_EXPORT_RELATIVE_PATH := "res://.exports/server/ClaudeOtherGodsServer.exe"
@@ -15,10 +16,17 @@ const AUTH_MODE_REGISTER := "register"
 @onready var menu_container = $MenuContainer
 @onready var game_container = $GameContainer
 @onready var multiplayer_container = $MenuContainer/MultiplayerContainer
+@onready var multiplayer_button = $MenuContainer/MultiplayerButton
+@onready var multiplayer_back_button = $MenuContainer/MultiplayerContainer/MultiplayerHeaderRow/BackButton
 @onready var ip_line_edit = $MenuContainer/MultiplayerContainer/IPLineEdit
 @onready var player_name_line_edit = $MenuContainer/MultiplayerContainer/PlayerNameLineEdit
+@onready var deck_picker_option = $MenuContainer/MultiplayerContainer/DeckPickerOption
+@onready var deck_hint_label = $MenuContainer/MultiplayerContainer/DeckHintLabel
+@onready var create_seek_button = $MenuContainer/MultiplayerContainer/CreateSeekButton
+@onready var seek_list = $MenuContainer/MultiplayerContainer/SeekList
+@onready var leave_seek_button = $MenuContainer/MultiplayerContainer/LeaveSeekButton
 @onready var room_code_line_edit = $MenuContainer/MultiplayerContainer/RoomCodeLineEdit
-@onready var connect_button = $MenuContainer/MultiplayerContainer/ConnectButton
+@onready var connect_button = $MenuContainer/MultiplayerContainer/MultiplayerHeaderRow/ConnectButton
 @onready var ready_button = $MenuContainer/MultiplayerContainer/ReadyButton
 @onready var status_label = $MenuContainer/MultiplayerContainer/StatusLabel
 
@@ -26,21 +34,28 @@ var _smoke_config: Dictionary = {}
 var lobby_server = null
 var lobby_client = null
 var _current_room_snapshot: Dictionary = {}
+var _open_seek_rooms: Array[Dictionary] = []
 var _lobby_session_id: String = ""
 var _lobby_reconnect_token: String = ""
 var _pending_join_room_code: String = ""
+var _pending_join_room_id: String = ""
 var _current_lobby_ip: String = "127.0.0.1"
 var _is_local_lobby_host: bool = false
 var _match_launch_queued: bool = false
 var _pending_host_room_creation: bool = false
+var _pending_local_lobby_launch_on_connect_failure: bool = false
 var _spawned_lobby_process_id: int = 0
 var _dedicated_lobby_connect_attempts_remaining: int = 0
 var _local_profile_store = null
 var _local_profile_id: String = ""
+var _selected_multiplayer_deck_id: String = ""
+var _legal_multiplayer_decks: Array[Dictionary] = []
+var _deck_validator = DeckValidatorScript.new()
 var _last_submitted_lobby_room_id: String = ""
 var _last_submitted_lobby_deck_id: String = ""
 var _auth_mode_option: OptionButton = null
 var _password_line_edit: LineEdit = null
+var _switch_account_button: Button = null
 var _resume_match_button: Button = null
 var _profile_summary_label: Label = null
 var _current_profile_summary: Dictionary = {}
@@ -80,8 +95,6 @@ func _ready() -> void:
 	var mock_btn = $MenuContainer/MockGameButton
 	var deck_btn = $MenuContainer/DeckBuilderButton
 	var card_test_btn = $MenuContainer/CardTestButton
-	var host_btn = $MenuContainer/HostGameButton
-	var join_btn = $MenuContainer/JoinGameButton
 
 	if mock_btn:
 		mock_btn.pressed.connect(_on_mock_game_pressed)
@@ -89,12 +102,20 @@ func _ready() -> void:
 		deck_btn.pressed.connect(_on_deck_builder_pressed)
 	if card_test_btn:
 		card_test_btn.pressed.connect(_on_card_test_pressed)
-	if host_btn:
-		host_btn.pressed.connect(_on_host_game_pressed)
-	if join_btn:
-		join_btn.pressed.connect(_on_join_game_pressed)
+	if multiplayer_button:
+		multiplayer_button.pressed.connect(_on_multiplayer_pressed)
+	if multiplayer_back_button:
+		multiplayer_back_button.pressed.connect(_on_multiplayer_back_pressed)
 	if connect_button:
-		connect_button.pressed.connect(_on_connect_pressed)
+		connect_button.pressed.connect(_on_refresh_seeks_pressed)
+	if create_seek_button:
+		create_seek_button.pressed.connect(_on_create_seek_pressed)
+	if leave_seek_button:
+		leave_seek_button.pressed.connect(_on_leave_seek_pressed)
+	if deck_picker_option:
+		deck_picker_option.item_selected.connect(_on_multiplayer_deck_selected)
+	if seek_list != null and seek_list.has_signal("item_clicked"):
+		seek_list.item_clicked.connect(_on_seek_item_clicked)
 	if ready_button:
 		ready_button.pressed.connect(_on_ready_button_pressed)
 
@@ -104,6 +125,9 @@ func _ready() -> void:
 	_build_profile_summary_controls()
 	_build_account_identity_controls()
 	_build_resume_controls()
+	_refresh_multiplayer_deck_options()
+	_refresh_seek_list()
+	_refresh_multiplayer_action_state()
 	_restore_saved_resume_state()
 	show_menu()
 	_smoke_config = _parse_smoke_config(OS.get_cmdline_user_args())
@@ -131,10 +155,295 @@ func _fit_to_viewport() -> void:
 func show_menu() -> void:
 	menu_container.visible = true
 	game_container.visible = false
+	_refresh_multiplayer_deck_options()
+	_refresh_multiplayer_action_state()
 
 func show_game() -> void:
 	menu_container.visible = false
 	game_container.visible = true
+
+func _on_multiplayer_pressed() -> void:
+	_open_multiplayer_screen()
+
+func _on_multiplayer_back_pressed() -> void:
+	_cleanup_lobby(true)
+	multiplayer_container.visible = false
+	status_label.text = "Refresh open seeks or create one after choosing a deck."
+	_refresh_seek_list()
+	_refresh_multiplayer_action_state()
+
+func _open_multiplayer_screen() -> void:
+	multiplayer_container.visible = true
+	_refresh_multiplayer_deck_options()
+	_refresh_auth_controls()
+	_refresh_seek_list()
+	_refresh_multiplayer_action_state()
+	if not _current_room_snapshot.is_empty():
+		_apply_room_snapshot(_current_room_snapshot)
+		return
+	if _has_active_lobby_connection():
+		status_label.text = "Refreshing open seeks..."
+		lobby_client.list_rooms()
+		return
+	status_label.text = "Choose a deck, then refresh open seeks or create your own."
+
+func _has_active_lobby_connection() -> bool:
+	return lobby_client != null and is_instance_valid(lobby_client) and not _lobby_session_id.is_empty()
+
+func _refresh_multiplayer_deck_options() -> void:
+	_legal_multiplayer_decks.clear()
+	if deck_picker_option == null:
+		return
+	deck_picker_option.clear()
+
+	var preferred_deck_id := _selected_multiplayer_deck_id
+	if preferred_deck_id.is_empty() and _local_profile_store != null:
+		preferred_deck_id = _local_profile_store.get_last_selected_deck_id(_local_profile_id)
+
+	var preferred_deck: Dictionary = {}
+	if _local_profile_store != null and not _local_profile_id.is_empty():
+		for saved_deck in _local_profile_store.list_decks(_local_profile_id):
+			if not _is_saved_deck_legal(saved_deck):
+				continue
+			var deck_id := str(saved_deck.get("deck_id", "")).strip_edges()
+			if deck_id == preferred_deck_id and preferred_deck.is_empty():
+				preferred_deck = saved_deck.duplicate(true)
+				continue
+			_legal_multiplayer_decks.append(saved_deck.duplicate(true))
+
+	if not preferred_deck.is_empty():
+		_legal_multiplayer_decks.push_front(preferred_deck)
+
+	if _legal_multiplayer_decks.is_empty():
+		deck_picker_option.disabled = true
+		deck_picker_option.add_item("No legal saved decks")
+		deck_picker_option.set_item_metadata(0, "")
+		_selected_multiplayer_deck_id = ""
+		_update_multiplayer_deck_hint()
+		_refresh_multiplayer_action_state()
+		return
+
+	deck_picker_option.disabled = false
+	var selected_index := 0
+	for index in range(_legal_multiplayer_decks.size()):
+		var saved_deck: Dictionary = _legal_multiplayer_decks[index]
+		var deck_id := str(saved_deck.get("deck_id", "")).strip_edges()
+		var deck_name := str(saved_deck.get("name", "Deck")).strip_edges()
+		if deck_name.is_empty():
+			deck_name = "Deck"
+		deck_picker_option.add_item(deck_name)
+		deck_picker_option.set_item_metadata(index, deck_id)
+		if deck_id == preferred_deck_id:
+			selected_index = index
+
+	deck_picker_option.select(selected_index)
+	_selected_multiplayer_deck_id = str(deck_picker_option.get_item_metadata(selected_index)).strip_edges()
+	_update_multiplayer_deck_hint()
+	_refresh_multiplayer_action_state()
+
+func _is_saved_deck_legal(saved_deck: Dictionary) -> bool:
+	if saved_deck.is_empty():
+		return false
+	var validation: Dictionary = _deck_validator.validate_deck(saved_deck.get("cards", {}))
+	return bool(validation.get("is_valid", false))
+
+func _update_multiplayer_deck_hint() -> void:
+	if deck_hint_label == null:
+		return
+	var selected_deck: Dictionary = _get_selected_multiplayer_deck()
+	if selected_deck.is_empty():
+		deck_hint_label.text = "Choose one of your saved legal decks before you create or join a seek."
+		return
+	deck_hint_label.text = "Selected deck: %s" % str(selected_deck.get("name", "Deck"))
+
+func _get_selected_multiplayer_deck() -> Dictionary:
+	var selected_deck_id := _selected_multiplayer_deck_id.strip_edges()
+	if selected_deck_id.is_empty():
+		return {}
+	for saved_deck in _legal_multiplayer_decks:
+		if str(saved_deck.get("deck_id", "")).strip_edges() == selected_deck_id:
+			return saved_deck.duplicate(true)
+	if _local_profile_store == null or _local_profile_id.is_empty():
+		return {}
+	var saved_deck: Dictionary = _local_profile_store.get_deck(_local_profile_id, selected_deck_id)
+	if saved_deck.is_empty() or not _is_saved_deck_legal(saved_deck):
+		return {}
+	return saved_deck
+
+func _refresh_seek_list() -> void:
+	if seek_list == null:
+		return
+	seek_list.clear()
+	if _open_seek_rooms.is_empty():
+		seek_list.add_item("No open seeks right now.")
+		seek_list.set_item_disabled(0, true)
+		return
+	for room in _open_seek_rooms:
+		var room_id := str(room.get("room_id", "")).strip_edges()
+		var host_name := str(room.get("host_name", "Host")).strip_edges()
+		var member_count := int(room.get("member_count", 0))
+		var max_players := int(room.get("max_players", 2))
+		var status := str(room.get("status", "waiting")).capitalize()
+		seek_list.add_item("%s  %d/%d  %s" % [host_name, member_count, max_players, status])
+		seek_list.set_item_metadata(seek_list.get_item_count() - 1, room_id)
+
+func _refresh_multiplayer_action_state() -> void:
+	var has_legal_deck := not _get_selected_multiplayer_deck().is_empty()
+	var in_room := not _current_room_snapshot.is_empty()
+	if create_seek_button != null:
+		create_seek_button.disabled = not has_legal_deck or in_room
+	if leave_seek_button != null:
+		leave_seek_button.visible = in_room
+	if ready_button != null:
+		ready_button.visible = in_room
+
+func _queue_room_list_refresh() -> void:
+	if lobby_client == null:
+		return
+	status_label.text = "Refreshing open seeks..."
+	lobby_client.list_rooms()
+
+func _on_multiplayer_deck_selected(index: int) -> void:
+	if deck_picker_option == null:
+		return
+	var deck_id := str(deck_picker_option.get_item_metadata(index)).strip_edges()
+	if deck_id.is_empty():
+		return
+	_selected_multiplayer_deck_id = deck_id
+	if _local_profile_store != null and not _local_profile_id.is_empty():
+		_local_profile_store.remember_last_selected_deck(_local_profile_id, deck_id)
+	_update_multiplayer_deck_hint()
+	_refresh_multiplayer_action_state()
+	if not _current_room_snapshot.is_empty():
+		_maybe_submit_current_profile_deck(str(_current_room_snapshot.get("room_id", "")), _current_room_snapshot)
+
+func _on_seek_item_clicked(index: int, _at_position: Vector2, _mouse_button_index: int) -> void:
+	if seek_list == null or index < 0 or index >= seek_list.get_item_count():
+		return
+	if seek_list.is_item_disabled(index):
+		return
+	if not _current_room_snapshot.is_empty():
+		status_label.text = "Leave your current seek before joining another."
+		return
+	if _get_selected_multiplayer_deck().is_empty():
+		status_label.text = "Choose a saved legal deck before joining a seek."
+		return
+	var room_id := str(seek_list.get_item_metadata(index)).strip_edges()
+	if room_id.is_empty():
+		return
+	_on_join_seek_requested(room_id)
+
+func _on_refresh_seeks_pressed() -> void:
+	var auth_error := _validate_auth_inputs()
+	if not auth_error.is_empty():
+		status_label.text = auth_error
+		return
+	_pending_host_room_creation = false
+	_pending_join_room_id = ""
+	_pending_local_lobby_launch_on_connect_failure = false
+	multiplayer_container.visible = true
+	_connect_to_browseable_lobby("Connecting to multiplayer...")
+
+func _on_create_seek_pressed() -> void:
+	var auth_error := _validate_auth_inputs()
+	if not auth_error.is_empty():
+		status_label.text = auth_error
+		return
+	if _get_selected_multiplayer_deck().is_empty():
+		status_label.text = "Choose a saved legal deck before creating a seek."
+		return
+	if not _current_room_snapshot.is_empty():
+		status_label.text = "Leave your current seek before creating another."
+		return
+	_pending_host_room_creation = true
+	_pending_join_room_id = ""
+	_pending_local_lobby_launch_on_connect_failure = _is_local_lobby_target(_get_lobby_ip())
+	multiplayer_container.visible = true
+	_connect_to_browseable_lobby("Connecting to multiplayer...")
+
+func _on_join_seek_requested(room_id: String) -> void:
+	var auth_error := _validate_auth_inputs()
+	if not auth_error.is_empty():
+		status_label.text = auth_error
+		return
+	if _get_selected_multiplayer_deck().is_empty():
+		status_label.text = "Choose a saved legal deck before joining a seek."
+		return
+	if not _current_room_snapshot.is_empty():
+		status_label.text = "Leave your current seek before joining a new one."
+		return
+	_pending_host_room_creation = false
+	_pending_join_room_id = room_id.strip_edges().to_upper()
+	_pending_local_lobby_launch_on_connect_failure = false
+	multiplayer_container.visible = true
+	_connect_to_browseable_lobby("Connecting to multiplayer...")
+
+func _on_leave_seek_pressed() -> void:
+	if lobby_client == null:
+		return
+	_clear_current_seek_state()
+	status_label.text = "Leaving seek..."
+	lobby_client.leave_room()
+
+func _connect_to_browseable_lobby(connect_status: String) -> void:
+	var target_lobby_ip := _get_lobby_ip()
+	if _has_active_lobby_connection() and _current_lobby_ip == target_lobby_ip:
+		_run_pending_multiplayer_action()
+		return
+
+	_current_lobby_ip = target_lobby_ip
+	_cleanup_lobby_client()
+	status_label.text = connect_status
+
+	lobby_client = LobbyClientScript.new()
+	lobby_client.name = "LobbyPeer"
+	lobby_client.use_default_multiplayer = true
+	_configure_lobby_client_trace(lobby_client)
+	_attach_lobby_client(lobby_client)
+	_bind_lobby_client_signals()
+
+	var connect_err: Error = lobby_client.connect_to_server(
+		_current_lobby_ip,
+		_get_lobby_login_name("Guest"),
+		_lobby_session_id,
+		_lobby_reconnect_token,
+		_get_configured_lobby_port(),
+		_local_profile_id,
+		_get_selected_auth_mode(),
+		_get_auth_password()
+	)
+	if connect_err != OK:
+		status_label.text = "Could not connect to lobby at %s." % _current_lobby_ip
+
+func _run_pending_multiplayer_action() -> void:
+	if lobby_client == null:
+		return
+	if _pending_host_room_creation:
+		_pending_host_room_creation = false
+		_pending_local_lobby_launch_on_connect_failure = false
+		status_label.text = "Creating seek..."
+		lobby_client.create_room()
+		return
+	if not _pending_join_room_id.is_empty():
+		var room_id := _pending_join_room_id
+		_pending_join_room_id = ""
+		status_label.text = "Joining seek %s..." % room_id
+		lobby_client.join_room(room_id)
+		return
+	_queue_room_list_refresh()
+
+func _is_local_lobby_target(host: String) -> bool:
+	var normalized_host := host.strip_edges().to_lower()
+	return normalized_host.is_empty() or normalized_host == "127.0.0.1" or normalized_host == "localhost"
+
+func _clear_current_seek_state() -> void:
+	_current_room_snapshot.clear()
+	ready_button.visible = false
+	leave_seek_button.visible = false
+	_last_submitted_lobby_room_id = ""
+	_last_submitted_lobby_deck_id = ""
+	status_label.text = "Click an open seek to join, or create your own."
+	_refresh_multiplayer_action_state()
 
 func _is_server_runtime_launch() -> bool:
 	if OS.has_feature("dedicated_server"):
@@ -631,6 +940,29 @@ func _maybe_show_auth_onboarding() -> void:
 		return
 	_show_auth_onboarding()
 
+func _prompt_account_login() -> void:
+	if _local_profile_store != null:
+		_local_profile_store.set_preferred_auth_mode(AUTH_MODE_LOGIN)
+		_local_profile_store.clear_account_password()
+	_set_auth_mode(AUTH_MODE_LOGIN)
+	if _password_line_edit != null:
+		_password_line_edit.text = ""
+	if _auth_onboarding_overlay == null or not is_instance_valid(_auth_onboarding_overlay):
+		_show_auth_onboarding()
+	_begin_auth_onboarding_account_flow(AUTH_MODE_LOGIN)
+
+func _is_account_logged_in() -> bool:
+	return not _logged_in_account_username.is_empty()
+
+func _on_switch_account_pressed() -> void:
+	_cleanup_lobby(true)
+	_logged_in_account_username = ""
+	_current_profile_summary.clear()
+	_refresh_profile_summary_label()
+	_refresh_account_identity_label()
+	_refresh_auth_controls()
+	_prompt_account_login()
+
 func _show_auth_onboarding() -> void:
 	_auth_onboarding_selected_mode = AUTH_MODE_LOGIN
 	_auth_onboarding_overlay = Control.new()
@@ -711,7 +1043,7 @@ func _show_auth_onboarding() -> void:
 	guest_btn.pressed.connect(func() -> void:
 		_complete_auth_onboarding(
 			AUTH_MODE_GUEST,
-			"Guest mode selected. You can switch to Login or Register anytime from the multiplayer panel."
+			"Guest mode selected. Open Multiplayer whenever you're ready."
 		)
 	)
 	button_column.add_child(guest_btn)
@@ -789,7 +1121,7 @@ func _submit_auth_onboarding() -> bool:
 	if auth_mode == AUTH_MODE_GUEST:
 		_complete_auth_onboarding(
 			AUTH_MODE_GUEST,
-			"Guest mode selected. You can switch to Login or Register anytime from the multiplayer panel."
+			"Guest mode selected. Open Multiplayer whenever you're ready."
 		)
 		return true
 	if auth_mode not in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
@@ -816,7 +1148,7 @@ func _submit_auth_onboarding() -> bool:
 	player_name_line_edit.text = username
 	if _password_line_edit != null:
 		_password_line_edit.text = password
-	_complete_auth_onboarding(auth_mode, "Account details ready. Host or Join to sign in.")
+	_complete_auth_onboarding(auth_mode, "Account details saved. Open Multiplayer to sign in.")
 	return true
 
 func _get_launch_auth_mode() -> String:
@@ -839,15 +1171,13 @@ func _complete_auth_onboarding(auth_mode: String, message: String) -> void:
 	if _local_profile_store != null:
 		_local_profile_store.set_preferred_auth_mode(auth_mode)
 		_local_profile_store.mark_auth_onboarding_seen()
-	multiplayer_container.visible = true
+	multiplayer_container.visible = false
 	ready_button.visible = false
 	status_label.text = message
-	if auth_mode == AUTH_MODE_GUEST:
-		player_name_line_edit.grab_focus()
-	elif player_name_line_edit.text.strip_edges().is_empty():
-		player_name_line_edit.grab_focus()
-	elif _password_line_edit != null:
-		_password_line_edit.grab_focus()
+	show_menu()
+	_refresh_auth_controls()
+	if multiplayer_button != null:
+		multiplayer_button.grab_focus()
 	_dismiss_auth_onboarding()
 
 func _dismiss_auth_onboarding() -> void:
@@ -1036,6 +1366,8 @@ func _bind_lobby_client_signals() -> void:
 		lobby_client.login_succeeded.connect(_on_lobby_login_succeeded)
 	if not lobby_client.reconnect_succeeded.is_connected(_on_lobby_reconnect_succeeded):
 		lobby_client.reconnect_succeeded.connect(_on_lobby_reconnect_succeeded)
+	if not lobby_client.room_list_updated.is_connected(_on_lobby_room_list_updated):
+		lobby_client.room_list_updated.connect(_on_lobby_room_list_updated)
 	if not lobby_client.room_snapshot_updated.is_connected(_on_lobby_room_snapshot_updated):
 		lobby_client.room_snapshot_updated.connect(_on_lobby_room_snapshot_updated)
 	if not lobby_client.room_error.is_connected(_on_lobby_room_error):
@@ -1072,15 +1404,8 @@ func _on_lobby_login_succeeded(session_id: String, reconnect_token: String, play
 	_maybe_request_profile_summary()
 	player_name_line_edit.text = player_name
 	_update_resume_controls()
-	if _is_local_lobby_host and _pending_host_room_creation:
-		_pending_host_room_creation = false
-		status_label.text = "Signed in as %s. Creating room..." % player_name
-		if lobby_client != null:
-			lobby_client.create_room()
-		return
-	status_label.text = "Signed in as %s. Joining room %s..." % [player_name, _pending_join_room_code]
-	if lobby_client != null and not _pending_join_room_code.is_empty():
-		lobby_client.join_room(_pending_join_room_code)
+	status_label.text = "Signed in as %s." % player_name
+	_run_pending_multiplayer_action()
 
 func _on_lobby_reconnect_succeeded(
 	session_id: String,
@@ -1108,20 +1433,42 @@ func _on_lobby_reconnect_succeeded(
 		return
 	if not _get_saved_active_match().is_empty():
 		_clear_saved_match_resume()
-	if _is_local_lobby_host and _pending_host_room_creation:
+	if _pending_host_room_creation:
 		if room.is_empty():
-			_pending_host_room_creation = false
-			status_label.text = "Lobby session restored. Creating room..."
-			if lobby_client != null:
-				lobby_client.create_room()
+			status_label.text = "Lobby session restored."
+			_run_pending_multiplayer_action()
 			return
 	if room.is_empty():
-		status_label.text = "Lobby session restored. Joining room %s..." % _pending_join_room_code
-		if lobby_client != null and not _pending_join_room_code.is_empty():
-			lobby_client.join_room(_pending_join_room_code)
+		status_label.text = "Lobby session restored."
+		_run_pending_multiplayer_action()
 		return
 	_apply_room_snapshot(room)
 	status_label.text = "Lobby session restored."
+
+func _on_lobby_room_list_updated(rooms: Array) -> void:
+	_open_seek_rooms.clear()
+	var current_room_id := str(_current_room_snapshot.get("room_id", "")).strip_edges()
+	var current_room_still_visible := false
+	for room in rooms:
+		if not (room is Dictionary):
+			continue
+		var entry: Dictionary = (room as Dictionary).duplicate(true)
+		if str(entry.get("room_id", "")).strip_edges() == current_room_id:
+			current_room_still_visible = true
+		if int(entry.get("member_count", 0)) >= int(entry.get("max_players", 2)):
+			continue
+		if str(entry.get("status", "")).strip_edges().to_lower() == "in_match":
+			continue
+		_open_seek_rooms.append(entry)
+	if not current_room_id.is_empty() and not current_room_still_visible:
+		_clear_current_seek_state()
+	_refresh_seek_list()
+	if _current_room_snapshot.is_empty():
+		if _open_seek_rooms.is_empty():
+			status_label.text = "No open seeks right now. Create one when you're ready."
+		else:
+			status_label.text = "Click an open seek to join, or create your own."
+	_refresh_multiplayer_action_state()
 
 func _on_lobby_room_snapshot_updated(snapshot: Dictionary) -> void:
 	_apply_room_snapshot(snapshot)
@@ -1140,8 +1487,10 @@ func _apply_room_snapshot(snapshot: Dictionary) -> void:
 	_maybe_submit_current_profile_deck(room_id, snapshot)
 	ready_button.visible = true
 	ready_button.text = "Unready" if _is_local_player_ready() else "Ready"
+	leave_seek_button.visible = true
 
 	var member_lines: Array[String] = []
+	var local_member: Dictionary = {}
 	for member in snapshot.get("members", []):
 		var player_name := str(member.get("player_name", "Guest"))
 		var ready_text := "ready" if bool(member.get("is_ready", false)) else "waiting"
@@ -1151,10 +1500,26 @@ func _apply_room_snapshot(snapshot: Dictionary) -> void:
 		var selected_deck_name := str(member.get("selected_deck_name", "")).strip_edges()
 		if not selected_deck_name.is_empty():
 			deck_text = selected_deck_name
+		if str(member.get("session_id", "")) == _lobby_session_id:
+			local_member = (member as Dictionary).duplicate(true)
 		member_lines.append("%s%s - %s, %s, %s" % [player_name, host_text, ready_text, connect_text, deck_text])
 
-	var share_text := "Share IP %s and room code %s." % [_current_lobby_ip, room_id]
-	status_label.text = "Room %s\n%s\n%s" % [room_id, "\n".join(member_lines), share_text]
+	var guidance := "Waiting for another player to join your seek."
+	if int(snapshot.get("member_count", 0)) >= int(snapshot.get("max_players", 2)):
+		guidance = "Both players are here. Press Ready when you're set."
+	var local_deck_message := ""
+	var deck_error := str(local_member.get("deck_error", "")).strip_edges()
+	if not deck_error.is_empty():
+		local_deck_message = deck_error
+	elif not str(local_member.get("selected_deck_name", "")).strip_edges().is_empty():
+		local_deck_message = "Your deck: %s" % str(local_member.get("selected_deck_name", ""))
+	status_label.text = "Seek %s\n%s\n%s%s" % [
+		room_id,
+		"\n".join(member_lines),
+		guidance,
+		"\n%s" % local_deck_message if not local_deck_message.is_empty() else ""
+	]
+	_refresh_multiplayer_action_state()
 	_maybe_progress_smoke_from_room_snapshot(room_id)
 
 func _on_local_match_assigned(match_info: Dictionary) -> void:
@@ -1241,6 +1606,11 @@ func _on_lobby_connection_failed(message: String) -> void:
 	if _should_retry_host_lobby_connect():
 		_queue_host_lobby_retry(message)
 		return
+	if _pending_host_room_creation and _pending_local_lobby_launch_on_connect_failure and _is_local_lobby_target(_current_lobby_ip):
+		_pending_local_lobby_launch_on_connect_failure = false
+		status_label.text = "No local lobby was running. Starting one for your seek..."
+		_on_host_game_pressed()
+		return
 	_logged_in_account_username = ""
 	_refresh_account_identity_label()
 	status_label.text = message
@@ -1253,7 +1623,8 @@ func _on_lobby_disconnected() -> void:
 		return
 	_logged_in_account_username = ""
 	_refresh_account_identity_label()
-	status_label.text = "Lobby connection lost. Press Join Game to reconnect."
+	_clear_current_seek_state()
+	status_label.text = "Lobby connection lost. Refresh open seeks to reconnect."
 	_fail_smoke_if_enabled("DISCONNECTED_FROM_LOBBY")
 
 func _on_back_to_menu_pressed() -> void:
@@ -1278,17 +1649,20 @@ func _return_to_menu() -> void:
 func _cleanup_lobby(clear_session: bool) -> void:
 	_cleanup_lobby_client()
 	_cleanup_lobby_server()
-	_current_room_snapshot.clear()
-	ready_button.visible = false
+	_clear_current_seek_state()
+	_open_seek_rooms.clear()
+	_refresh_seek_list()
 	if clear_session:
 		_match_launch_queued = false
 		_pending_host_room_creation = false
+		_pending_local_lobby_launch_on_connect_failure = false
 		_dedicated_lobby_connect_attempts_remaining = 0
 		_last_submitted_lobby_room_id = ""
 		_last_submitted_lobby_deck_id = ""
 		_lobby_session_id = ""
 		_lobby_reconnect_token = ""
 		_pending_join_room_code = ""
+		_pending_join_room_id = ""
 		_current_lobby_ip = "127.0.0.1"
 		_is_local_lobby_host = false
 		room_code_line_edit.text = ""
@@ -1298,8 +1672,9 @@ func _cleanup_lobby(clear_session: bool) -> void:
 		_logged_in_account_username = ""
 		_refresh_profile_summary_label()
 		_refresh_account_identity_label()
-		status_label.text = "Host a room on this machine, or join one by IP and room code."
+		status_label.text = "Refresh open seeks or create one after choosing a deck."
 	_update_resume_controls()
+	_refresh_multiplayer_action_state()
 
 func _cleanup_lobby_client() -> void:
 	if lobby_client == null:
@@ -1452,6 +1827,7 @@ func _on_profile_summary_received(summary) -> void:
 	_refresh_profile_summary_label()
 
 func _refresh_open_deck_builder_saved_decks() -> void:
+	_refresh_multiplayer_deck_options()
 	var deck_builder = game_container.get_node_or_null("DeckBuilder")
 	if deck_builder == null or not deck_builder.has_method("reload_saved_decks_from_store"):
 		return
@@ -1491,9 +1867,11 @@ func _refresh_account_identity_label() -> void:
 	if _logged_in_account_username.is_empty():
 		_account_identity_label.visible = false
 		_account_identity_label.text = ""
+		_refresh_auth_controls()
 		return
 	_account_identity_label.text = "Signed in: %s" % _logged_in_account_username
 	_account_identity_label.visible = true
+	_refresh_auth_controls()
 
 func _refresh_profile_summary_label() -> void:
 	if _profile_summary_label == null:
@@ -1554,7 +1932,7 @@ func _build_resume_controls() -> void:
 	_resume_match_button.visible = false
 	_resume_match_button.pressed.connect(_on_resume_match_pressed)
 	multiplayer_container.add_child(_resume_match_button)
-	var insert_index := multiplayer_container.get_children().find(connect_button)
+	var insert_index := multiplayer_container.get_children().find(create_seek_button)
 	if insert_index >= 0:
 		multiplayer_container.move_child(_resume_match_button, insert_index)
 
@@ -1565,7 +1943,7 @@ func _restore_saved_resume_state() -> void:
 	var saved_lobby_resume := _get_saved_lobby_resume()
 	if saved_match.is_empty() or saved_lobby_resume.is_empty():
 		return
-	multiplayer_container.visible = true
+	multiplayer_container.visible = false
 	ready_button.visible = false
 	ip_line_edit.text = str(saved_lobby_resume.get("lobby_ip", "127.0.0.1"))
 	status_label.text = "A live match can be resumed from this device."
@@ -1702,15 +2080,9 @@ func _maybe_submit_current_profile_deck(room_id: String, snapshot: Dictionary) -
 		break
 	if local_member.is_empty():
 		return
-	if bool(local_member.get("has_valid_deck", false)):
-		_last_submitted_lobby_room_id = room_id
-		_last_submitted_lobby_deck_id = str(local_member.get("selected_deck_id", "")).strip_edges()
-		return
 
-	var selected_deck_id: String = _local_profile_store.get_last_selected_deck_id(_local_profile_id)
-	var selected_deck: Dictionary = {}
-	if not selected_deck_id.is_empty():
-		selected_deck = _local_profile_store.get_deck(_local_profile_id, selected_deck_id)
+	var selected_deck_id: String = _selected_multiplayer_deck_id.strip_edges()
+	var selected_deck: Dictionary = _get_selected_multiplayer_deck()
 	if selected_deck.is_empty() and not _smoke_config.is_empty():
 		selected_deck = {
 			"deck_id": "smoke_default",
@@ -1733,7 +2105,15 @@ func _maybe_submit_current_profile_deck(room_id: String, snapshot: Dictionary) -
 		}
 		selected_deck_id = "smoke_default"
 	if selected_deck.is_empty():
-		status_label.text = "Open Deck Builder and save a valid deck before readying up."
+		status_label.text = "Choose a saved legal deck before readying up."
+		_last_submitted_lobby_room_id = ""
+		_last_submitted_lobby_deck_id = ""
+		_refresh_multiplayer_action_state()
+		return
+	var submitted_deck_id := str(local_member.get("selected_deck_id", "")).strip_edges()
+	if bool(local_member.get("has_valid_deck", false)) and submitted_deck_id == selected_deck_id:
+		_last_submitted_lobby_room_id = room_id
+		_last_submitted_lobby_deck_id = selected_deck_id
 		return
 	if _last_submitted_lobby_room_id == room_id and _last_submitted_lobby_deck_id == selected_deck_id:
 		return
@@ -2043,7 +2423,7 @@ func _on_toggle_mode_button_pressed() -> void:
 	pass
 
 func _build_auth_controls() -> void:
-	if multiplayer_container == null:
+	if multiplayer_container == null or menu_container == null:
 		return
 	if _auth_mode_option == null:
 		_auth_mode_option = OptionButton.new()
@@ -2068,6 +2448,17 @@ func _build_auth_controls() -> void:
 		multiplayer_container.add_child(_password_line_edit)
 		var password_insert_index := multiplayer_container.get_children().find(_auth_mode_option) + 1
 		multiplayer_container.move_child(_password_line_edit, password_insert_index)
+	if _switch_account_button == null:
+		_switch_account_button = Button.new()
+		_switch_account_button.name = "SwitchAccountButton"
+		_switch_account_button.text = "Switch Account"
+		_switch_account_button.visible = false
+		_switch_account_button.pressed.connect(_on_switch_account_pressed)
+		menu_container.add_child(_switch_account_button)
+		var switch_insert_index := menu_container.get_children().find(multiplayer_button) + 1
+		if switch_insert_index <= 0:
+			switch_insert_index = menu_container.get_child_count()
+		menu_container.move_child(_switch_account_button, switch_insert_index)
 	_refresh_auth_controls()
 
 func _restore_auth_preferences() -> void:
@@ -2115,13 +2506,22 @@ func _get_selected_auth_mode() -> String:
 
 func _refresh_auth_controls() -> void:
 	var auth_mode := _get_selected_auth_mode()
+	var signed_in_account := _is_account_logged_in()
 	if player_name_line_edit != null:
 		player_name_line_edit.placeholder_text = "Player name" if auth_mode == AUTH_MODE_GUEST else "Account username"
+		player_name_line_edit.editable = not signed_in_account
+		player_name_line_edit.visible = false
 	if _password_line_edit != null:
-		_password_line_edit.visible = auth_mode != AUTH_MODE_GUEST
+		_password_line_edit.visible = false
+	if _auth_mode_option != null:
+		_auth_mode_option.visible = false
+	if _switch_account_button != null:
+		_switch_account_button.visible = signed_in_account
 
 func _validate_auth_inputs() -> String:
 	var auth_mode: String = _get_selected_auth_mode()
+	if _is_account_logged_in():
+		return ""
 	if auth_mode == AUTH_MODE_GUEST:
 		return ""
 	var username: String = player_name_line_edit.text.strip_edges()
@@ -2138,6 +2538,11 @@ func _get_auth_password() -> String:
 
 func _get_lobby_login_name(default_name: String) -> String:
 	var auth_mode := _get_selected_auth_mode()
+	if _is_account_logged_in():
+		if _local_profile_store != null:
+			_local_profile_store.set_preferred_auth_mode(AUTH_MODE_LOGIN)
+			_local_profile_store.remember_account_username(_logged_in_account_username)
+		return _logged_in_account_username
 	var player_name := _get_player_name(default_name)
 	if auth_mode == AUTH_MODE_GUEST:
 		return _remember_local_profile(player_name)

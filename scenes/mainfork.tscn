@@ -37,35 +37,72 @@ text = "Mock Game"
 layout_mode = 2
 text = "Card Test"
 
-[node name="HostGameButton" type="Button" parent="Control/MenuContainer" unique_id=1094446563]
+[node name="MultiplayerButton" type="Button" parent="Control/MenuContainer" unique_id=1094446563]
 layout_mode = 2
-text = "Host Game"
-
-[node name="JoinGameButton" type="Button" parent="Control/MenuContainer" unique_id=1094446564]
-layout_mode = 2
-text = "Join Game"
+text = "Multiplayer"
 
 [node name="MultiplayerContainer" type="VBoxContainer" parent="Control/MenuContainer" unique_id=157483093]
 visible = false
 layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 8
+
+[node name="MultiplayerHeaderRow" type="HBoxContainer" parent="Control/MenuContainer/MultiplayerContainer"]
+layout_mode = 2
+
+[node name="BackButton" type="Button" parent="Control/MenuContainer/MultiplayerContainer/MultiplayerHeaderRow"]
+layout_mode = 2
+text = "Back"
+
+[node name="MultiplayerTitleLabel" type="Label" parent="Control/MenuContainer/MultiplayerContainer/MultiplayerHeaderRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Multiplayer"
+
+[node name="ConnectButton" type="Button" parent="Control/MenuContainer/MultiplayerContainer/MultiplayerHeaderRow" unique_id=157483095]
+layout_mode = 2
+text = "Refresh Seeks"
 
 [node name="IPLineEdit" type="LineEdit" parent="Control/MenuContainer/MultiplayerContainer" unique_id=157483094]
+visible = false
 layout_mode = 2
 text = "127.0.0.1"
-placeholder_text = "Lobby / Host IP"
+placeholder_text = "Lobby IP"
 
 [node name="PlayerNameLineEdit" type="LineEdit" parent="Control/MenuContainer/MultiplayerContainer" unique_id=157483096]
+visible = false
 layout_mode = 2
 text = "Host"
 placeholder_text = "Player name"
 
-[node name="RoomCodeLineEdit" type="LineEdit" parent="Control/MenuContainer/MultiplayerContainer" unique_id=157483097]
+[node name="DeckPickerLabel" type="Label" parent="Control/MenuContainer/MultiplayerContainer"]
 layout_mode = 2
-placeholder_text = "Room code"
+text = "Deck For Multiplayer"
 
-[node name="ConnectButton" type="Button" parent="Control/MenuContainer/MultiplayerContainer" unique_id=157483095]
+[node name="DeckPickerOption" type="OptionButton" parent="Control/MenuContainer/MultiplayerContainer"]
 layout_mode = 2
-text = "Join Room"
+
+[node name="DeckHintLabel" type="Label" parent="Control/MenuContainer/MultiplayerContainer"]
+layout_mode = 2
+autowrap_mode = 3
+text = "Choose one of your saved legal decks before you create or join a seek."
+
+[node name="CreateSeekButton" type="Button" parent="Control/MenuContainer/MultiplayerContainer"]
+layout_mode = 2
+text = "Create Seek"
+
+[node name="OpenSeeksLabel" type="Label" parent="Control/MenuContainer/MultiplayerContainer"]
+layout_mode = 2
+text = "Open Seeks"
+
+[node name="SeekList" type="ItemList" parent="Control/MenuContainer/MultiplayerContainer"]
+custom_minimum_size = Vector2(0, 180)
+layout_mode = 2
+
+[node name="LeaveSeekButton" type="Button" parent="Control/MenuContainer/MultiplayerContainer"]
+visible = false
+layout_mode = 2
+text = "Leave Seek"
 
 [node name="ReadyButton" type="Button" parent="Control/MenuContainer/MultiplayerContainer" unique_id=157483098]
 visible = false
@@ -75,7 +112,12 @@ text = "Ready"
 [node name="StatusLabel" type="Label" parent="Control/MenuContainer/MultiplayerContainer" unique_id=157483099]
 layout_mode = 2
 autowrap_mode = 3
-text = "Host a room on this machine, or join one by IP and room code."
+text = "Refresh open seeks or create one after choosing a deck."
+
+[node name="RoomCodeLineEdit" type="LineEdit" parent="Control/MenuContainer/MultiplayerContainer" unique_id=157483097]
+visible = false
+layout_mode = 2
+placeholder_text = "Room code"
 
 [node name="GameContainer" type="Control" parent="Control" unique_id=1297052031]
 layout_mode = 1

@@ -78,3 +78,9 @@ Card (Resource)           # Stats, costs, state flags
 - Exactly 1 God card required
 - Max 3 Power cards
 - Legendaries: max 1 per 10 regular cards
+- Powers are singleton cards in a deck
+
+## GDScript Pitfalls
+
+- Prefer explicit local variable types when values come from helper/store methods or mixed dictionaries. Example: use `var saved_deck: Dictionary = store.get_deck(...)` instead of `var saved_deck := store.get_deck(...)`.
+- Be especially careful with `Dictionary`, `Array[Dictionary]`, and values returned from `get()`/profile-store/lobby helpers, since Godot often cannot infer those types reliably and throws parser errors.

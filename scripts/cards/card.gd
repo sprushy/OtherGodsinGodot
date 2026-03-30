@@ -911,11 +911,17 @@ func reset_creature_action_state() -> void:
 	creature_major_action_used = false
 	creature_minor_actions_used = 0
 
+func get_max_minor_creature_actions_per_turn() -> int:
+	return 2
+
+func get_max_minor_creature_actions_before_major() -> int:
+	return get_max_minor_creature_actions_per_turn()
+
 func can_take_major_creature_action() -> bool:
-	return not creature_major_action_used and creature_minor_actions_used < 2
+	return not creature_major_action_used and creature_minor_actions_used < get_max_minor_creature_actions_before_major()
 
 func can_take_minor_creature_action() -> bool:
-	return not creature_major_action_used and creature_minor_actions_used < 2
+	return not creature_major_action_used and creature_minor_actions_used < get_max_minor_creature_actions_per_turn()
 
 func spend_major_creature_action() -> void:
 	creature_major_action_used = true
@@ -925,7 +931,7 @@ func spend_minor_creature_action(marked_as_move: bool = false) -> void:
 	creature_minor_actions_used += 1
 	if marked_as_move:
 		has_moved_this_turn = true
-	if creature_minor_actions_used >= 2:
+	if creature_minor_actions_used >= get_max_minor_creature_actions_per_turn():
 		has_acted_this_turn = true
 
 func mark_attacked_this_turn() -> void:
