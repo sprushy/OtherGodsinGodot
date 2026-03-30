@@ -2,6 +2,7 @@ extends Control
 class_name CombatMockGame
 
 const EnHeduAnnaScript = preload("res://scripts/cards/Creatures/EnHeduAnna.gd")
+const HariiShamanScript = preload("res://scripts/cards/Creatures/HariiShaman.gd")
 const ErlqueensNightingaleScript = preload("res://scripts/cards/Creatures/ErlqueensNightingale.gd")
 const SacrificeCursorSource = preload("res://images/card_art/BloodySacrificeCursor.png")
 const DevourCursorSource = preload("res://images/card_art/BloodyWolfJawsPGN.png")
@@ -231,6 +232,8 @@ var _queued_skoll_turn_start_zone: Zone = null
 var _queued_skoll_turn_start_mode: String = ""
 var _pending_creature_play_resolver: Callable = Callable()
 var _pending_en_hedu_anna: Card = null
+var _pending_harii_shaman: HariiShamanScript = null
+var _pending_harii_shaman_target: Card = null
 var _pending_erlqueens_nightingale: ErlqueensNightingaleScript = null
 var _skoll_prompt_panel: Control = null
 var _gala_tura_prompt_panel: Control = null
@@ -6670,6 +6673,9 @@ func _on_creature_right_clicked(card: Card) -> void:
 			if card is EnHeduAnnaScript:
 				_show_en_hedu_anna_prompt(card as EnHeduAnnaScript)
 				return
+			if card is HariiShamanScript:
+				_begin_harii_shaman_activation(card as HariiShamanScript)
+				return
 			if card is ErlqueensNightingaleScript:
 				_show_erlqueens_nightingale_prompt(card as ErlqueensNightingaleScript)
 				return
@@ -8400,6 +8406,122 @@ func _hide_erlqueens_nightingale_prompt() -> void:
 		panel.queue_free()
 	_pending_erlqueens_nightingale = null
 
+func _begin_harii_shaman_activation(card: HariiShamanScript) -> void:
+	if card == null or game_manager == null:
+		return
+	var targets: Array = card.get_valid_targets(game_manager)
+	if targets.is_empty():
+		action_label.text = card.card_name + " has no valid targets right now."
+		update_ui()
+		return
+	_show_card_selection_overlay(
+		"Choose a target for " + card.card_name,
+		targets,
+		func(chosen_card: Card) -> void:
+			_handle_harii_shaman_target_choice(card, chosen_card)
+	)
+
+func _handle_harii_shaman_target_choice(card: HariiShamanScript, target: Card) -> void:
+	if card == null or target == null:
+		return
+	if target.has_type("Animal"):
+		_resolve_harii_shaman_activation(card, target)
+		return
+	_show_harii_shaman_prompt(card, target)
+
+func _show_harii_shaman_prompt(card: HariiShamanScript, target: Card) -> void:
+	_hide_harii_shaman_prompt()
+	if card == null or target == null:
+		return
+	_pending_harii_shaman = card
+	_pending_harii_shaman_target = target
+
+	var panel := PanelContainer.new()
+	panel.name = "HariiShamanPromptPanel"
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.08, 0.13, 0.09, 0.97)
+	style.border_color = Color(0.67, 0.88, 0.56, 0.95)
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		style.set_border_width(side, 2)
+	panel.add_theme_stylebox_override("panel", style)
+	panel.custom_minimum_size = Vector2(360, 0)
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 8)
+	panel.add_child(vbox)
+
+	var title := Label.new()
+	title.text = card.card_name
+	title.add_theme_font_size_override("font_size", 14)
+	vbox.add_child(title)
+
+	var info := Label.new()
+	info.text = "Choose an Animal subtype for " + _get_target_label(target, game_manager.get_feedback_viewer(), target.card_name) + "."
+	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	vbox.add_child(info)
+
+	for subtype in card.get_animal_subtype_options(target):
+		var btn := Button.new()
+		btn.text = subtype
+		btn.pressed.connect(_resolve_harii_shaman_subtype.bind(subtype))
+		vbox.add_child(btn)
+
+	var cancel_btn := Button.new()
+	cancel_btn.text = "Cancel"
+	cancel_btn.pressed.connect(_hide_harii_shaman_prompt)
+	vbox.add_child(cancel_btn)
+
+	add_child(panel)
+	_promote_transient_ui(panel)
+	panel.anchor_left = 0.5
+	panel.anchor_right = 0.5
+	panel.anchor_top = 0.5
+	panel.anchor_bottom = 0.5
+	panel.offset_left = -180
+	panel.offset_right = 180
+	panel.offset_top = -140
+	panel.offset_bottom = 160
+
+func _hide_harii_shaman_prompt() -> void:
+	var panel := get_node_or_null("HariiShamanPromptPanel")
+	if panel:
+		panel.queue_free()
+	_pending_harii_shaman = null
+	_pending_harii_shaman_target = null
+
+func _resolve_harii_shaman_subtype(subtype: String) -> void:
+	var card := _pending_harii_shaman
+	var target := _pending_harii_shaman_target
+	_hide_harii_shaman_prompt()
+	if card == null or target == null:
+		update_ui()
+		return
+	_resolve_harii_shaman_activation(card, target, subtype)
+
+func _resolve_harii_shaman_activation(card: HariiShamanScript, target: Card, animal_subtype: String = "") -> void:
+	if card == null or target == null:
+		update_ui()
+		return
+	var option := {"target_uid": target.uid}
+	if animal_subtype != "":
+		option["animal_subtype"] = animal_subtype
+	var target_label := _get_target_label(target, game_manager.get_feedback_viewer(), target.card_name)
+	var resolution_text := "%s is transforming %s." % [_get_attack_card_label(card, card.card_name), target_label]
+	if animal_subtype != "":
+		resolution_text = "%s is transforming %s into %s." % [_get_attack_card_label(card, card.card_name), target_label, animal_subtype]
+	if _is_networked_client:
+		game_input.submit_action({type = "activate_card_ability", source_uid = card.uid, option = option})
+		return
+	_queue_magical_action(
+		CardAction.Type.ABILITY,
+		card,
+		target,
+		resolution_text,
+		func() -> void:
+			card.activate(game_manager, option)
+	)
+	update_ui()
+
 func _resolve_erlqueens_nightingale_shift(return_to_hand_after_shift: bool) -> void:
 	var card := _pending_erlqueens_nightingale
 	_hide_erlqueens_nightingale_prompt()
@@ -9280,6 +9402,7 @@ func _dismiss_transient_prompts() -> void:
 	_hide_blessed_knights_prompt()
 	_hide_habrok_breakout_prompt(true)
 	_hide_byggvir_reveal_prompt()
+	_hide_harii_shaman_prompt()
 	_hide_erlqueens_nightingale_prompt()
 	_hide_breidablik_prompt()
 	_hide_e2_abzu_prompt()

@@ -20,7 +20,7 @@ func _boot_server(launch_args: Dictionary) -> void:
 	var trace_file_path: String = str(launch_args.get("trace_file", "")).strip_edges()
 
 	_scene_root = Node.new()
-	_scene_root.name = "DedicatedLobbyScene"
+	_scene_root.name = "Main"
 	get_root().add_child(_scene_root)
 	current_scene = _scene_root
 

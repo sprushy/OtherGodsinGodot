@@ -34,7 +34,7 @@ func login_profile(
 		resolved_profile_id = ""
 	else:
 		resolved_profile_id = requested_profile_id.strip_edges()
-	if resolved_profile_id.is_empty() or not _profiles_by_id.has(resolved_profile_id):
+	if resolved_profile_id.is_empty():
 		resolved_profile_id = _generate_profile_id()
 
 	var profile: Dictionary = _profiles_by_id.get(resolved_profile_id, {

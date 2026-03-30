@@ -3,13 +3,8 @@
 .exports/
 .godot_portable/
 *.tmp
-scripts/tmp/smoke_*.txt
-scripts/tmp/*.log
-scripts/tmp/*.trace.log
-scripts/tmp/*_result.txt
-scripts/tmp/*_room_code.txt
-scripts/tmp/*_pid.txt
-scripts/tmp/*_ready.txt
+scripts/tmp/
 
 # Claude Code
 .claude/
+CLAUDE.md

@@ -830,6 +830,8 @@ func _process_command_impl(command: Dictionary) -> bool:
 				aca_target = game_manager.get_card_by_uid(aca_target_uid)
 			if command.has("return_to_hand"):
 				aca_source.activate(game_manager, {"return_to_hand": bool(command.get("return_to_hand", false))})
+			elif command.has("option"):
+				aca_source.activate(game_manager, command.get("option", {}))
 			elif aca_target != null:
 				aca_source.activate(game_manager, aca_target)
 			else:

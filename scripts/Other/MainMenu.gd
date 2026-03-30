@@ -97,11 +97,17 @@ func _ready() -> void:
 	var card_test_btn = $MenuContainer/CardTestButton
 
 	if mock_btn:
-		mock_btn.pressed.connect(_on_mock_game_pressed)
+		if OS.is_debug_build():
+			mock_btn.pressed.connect(_on_mock_game_pressed)
+		else:
+			mock_btn.visible = false
 	if deck_btn:
 		deck_btn.pressed.connect(_on_deck_builder_pressed)
 	if card_test_btn:
-		card_test_btn.pressed.connect(_on_card_test_pressed)
+		if OS.is_debug_build():
+			card_test_btn.pressed.connect(_on_card_test_pressed)
+		else:
+			card_test_btn.visible = false
 	if multiplayer_button:
 		multiplayer_button.pressed.connect(_on_multiplayer_pressed)
 	if multiplayer_back_button:
