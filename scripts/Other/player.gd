@@ -86,6 +86,7 @@ func validate_deck(deck: Array[Card]) -> bool:
 	var power_count = 0
 	var regular_card_count = 0
 	var god_culture := ""
+	var power_name_counts: Dictionary = {}
 	
 	for card in deck:
 		if card.is_god:
@@ -93,6 +94,8 @@ func validate_deck(deck: Array[Card]) -> bool:
 			god_culture = card.culture
 		elif card.is_power:
 			power_count += 1
+			var power_name := str(card.card_name)
+			power_name_counts[power_name] = int(power_name_counts.get(power_name, 0)) + 1
 		else:
 			regular_card_count += 1
 			if card.is_legendary:
@@ -104,6 +107,9 @@ func validate_deck(deck: Array[Card]) -> bool:
 		return false
 	if regular_card_count < 35:
 		return false
+	for count in power_name_counts.values():
+		if int(count) > 1:
+			return false
 	for card in deck:
 		if card.is_power and not card.is_god:
 			if card.culture != "Neutral" and card.culture != god_culture:

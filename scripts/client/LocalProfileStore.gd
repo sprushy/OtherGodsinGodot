@@ -8,6 +8,7 @@ const DEFAULT_DECK_NAME := "Default Deck"
 const AUTH_MODE_GUEST := "guest"
 const AUTH_MODE_LOGIN := "login"
 const AUTH_MODE_REGISTER := "register"
+const DISMISSED_RELEASE_VERSION_KEY := "dismissed_release_version"
 
 var _data: Dictionary = {}
 var _loaded: bool = false
@@ -239,6 +240,19 @@ func clear_account_password() -> void:
 	_data["last_account_password"] = ""
 	_save()
 
+func get_dismissed_release_version() -> String:
+	_ensure_loaded()
+	return str(_data.get(DISMISSED_RELEASE_VERSION_KEY, "")).strip_edges()
+
+func remember_dismissed_release_version(version: String) -> void:
+	_ensure_loaded()
+	var normalized := version.strip_edges()
+	if normalized.is_empty():
+		_data.erase(DISMISSED_RELEASE_VERSION_KEY)
+	else:
+		_data[DISMISSED_RELEASE_VERSION_KEY] = normalized
+	_save()
+
 func remember_lobby_resume(
 	profile_id: String,
 	session_id: String,
@@ -364,6 +378,7 @@ func _ensure_loaded() -> void:
 		"last_account_username": "",
 		"last_account_password": "",
 		"auth_onboarding_seen": false,
+		DISMISSED_RELEASE_VERSION_KEY: "",
 	}
 	if not FileAccess.file_exists(STORAGE_PATH):
 		return

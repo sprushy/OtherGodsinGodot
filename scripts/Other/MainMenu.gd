@@ -3,6 +3,7 @@ extends Control
 const LobbyProtocolScript = preload("res://scripts/network/LobbyProtocol.gd")
 const LobbyServerScript = preload("res://scripts/server/LobbyServer.gd")
 const LobbyClientScript = preload("res://scripts/client/LobbyClient.gd")
+const AppReleaseInfoScript = preload("res://scripts/client/AppReleaseInfo.gd")
 const LocalProfileStoreScript = preload("res://scripts/client/LocalProfileStore.gd")
 const MatchSessionScript = preload("res://scripts/server/MatchSession.gd")
 const DEDICATED_LOBBY_ENTRY_SCRIPT_PATH := "res://scripts/server/DedicatedLobbyServerMain.gd"
@@ -48,8 +49,7 @@ var _auth_onboarding_selected_mode: String = AUTH_MODE_GUEST
 var _auth_onboarding_mode_hint_label: Label = null
 var _auth_onboarding_username_edit: LineEdit = null
 var _auth_onboarding_password_edit: LineEdit = null
-var _auth_onboarding_continue_host_button: Button = null
-var _auth_onboarding_continue_join_button: Button = null
+var _auth_onboarding_continue_button: Button = null
 var _report_bug_button: Button = null
 var _bug_report_overlay: Control = null
 var _bug_report_expected_edit: TextEdit = null
@@ -59,8 +59,17 @@ var _bug_report_screenshot_label: Label = null
 var _bug_report_screenshot_preview: TextureRect = null
 var _bug_report_file_dialog: FileDialog = null
 var _bug_report_selected_screenshot_path: String = ""
+var _account_identity_label: Label = null
+var _logged_in_account_username: String = ""
+var _update_check_request: HTTPRequest = null
+var _update_prompt_overlay: Control = null
+var _pending_update_release_version: String = ""
+var _pending_update_release_url: String = AppReleaseInfoScript.RELEASES_PAGE_URL
+var _startup_prompt_gate_open: bool = false
 
 func _ready() -> void:
+	if _is_server_runtime_launch():
+		return
 	_fit_to_viewport()
 	get_viewport().size_changed.connect(_fit_to_viewport)
 
@@ -93,6 +102,7 @@ func _ready() -> void:
 	_ensure_local_profile_store()
 	_restore_auth_preferences()
 	_build_profile_summary_controls()
+	_build_account_identity_controls()
 	_build_resume_controls()
 	_restore_saved_resume_state()
 	show_menu()
@@ -100,7 +110,7 @@ func _ready() -> void:
 	if not _smoke_config.is_empty():
 		call_deferred("_start_smoke_mode")
 	else:
-		call_deferred("_maybe_show_auth_onboarding")
+		call_deferred("_begin_startup_prompts")
 
 func _bind_game_signals() -> void:
 	for node_name in ["MockGame", "CardTest"]:
@@ -125,6 +135,198 @@ func show_menu() -> void:
 func show_game() -> void:
 	menu_container.visible = false
 	game_container.visible = true
+
+func _is_server_runtime_launch() -> bool:
+	if OS.has_feature("dedicated_server"):
+		return true
+	for raw_arg in OS.get_cmdline_user_args():
+		var arg := str(raw_arg).strip_edges()
+		if arg.begins_with("server_mode="):
+			return true
+		if arg.begins_with("match_config="):
+			return true
+	return false
+
+func _begin_startup_prompts() -> void:
+	_startup_prompt_gate_open = true
+	if _should_check_for_updates():
+		_start_update_check()
+		return
+	_complete_startup_prompts()
+
+func _complete_startup_prompts() -> void:
+	if not _startup_prompt_gate_open:
+		return
+	_startup_prompt_gate_open = false
+	_maybe_show_auth_onboarding()
+
+func _should_check_for_updates() -> bool:
+	if not _smoke_config.is_empty():
+		return false
+	return AppReleaseInfoScript.is_release_version(AppReleaseInfoScript.get_current_version())
+
+func _ensure_update_check_request() -> void:
+	if _update_check_request != null and is_instance_valid(_update_check_request):
+		return
+	_update_check_request = HTTPRequest.new()
+	_update_check_request.name = "LatestReleaseRequest"
+	_update_check_request.timeout = 5.0
+	_update_check_request.request_completed.connect(_on_update_check_request_completed)
+	add_child(_update_check_request)
+
+func _start_update_check() -> void:
+	_ensure_update_check_request()
+	var headers := PackedStringArray([
+		"Accept: application/vnd.github+json",
+		"User-Agent: ClaudeOtherGods",
+		"X-GitHub-Api-Version: 2022-11-28",
+	])
+	var request_error := _update_check_request.request(AppReleaseInfoScript.RELEASES_API_URL, headers)
+	if request_error != OK:
+		_complete_startup_prompts()
+
+func _on_update_check_request_completed(
+	result: int,
+	response_code: int,
+	_headers: PackedStringArray,
+	body: PackedByteArray
+) -> void:
+	if result != HTTPRequest.RESULT_SUCCESS or response_code < 200 or response_code >= 300:
+		_complete_startup_prompts()
+		return
+	var parsed = JSON.parse_string(body.get_string_from_utf8())
+	if not (parsed is Dictionary):
+		_complete_startup_prompts()
+		return
+	var payload := parsed as Dictionary
+	var latest_version := AppReleaseInfoScript.normalize_version(str(payload.get("tag_name", "")))
+	if not _should_prompt_for_update(latest_version):
+		_complete_startup_prompts()
+		return
+	var release_url := str(payload.get("html_url", AppReleaseInfoScript.RELEASES_PAGE_URL)).strip_edges()
+	if release_url.is_empty():
+		release_url = AppReleaseInfoScript.RELEASES_PAGE_URL
+	_show_update_prompt(latest_version, release_url)
+
+func _should_prompt_for_update(latest_version: String) -> bool:
+	if not AppReleaseInfoScript.is_release_version(latest_version):
+		return false
+	var current_version := AppReleaseInfoScript.get_current_version()
+	if AppReleaseInfoScript.compare_versions(current_version, latest_version) >= 0:
+		return false
+	if _local_profile_store == null:
+		return true
+	var dismissed_version: String = str(_local_profile_store.get_dismissed_release_version()).strip_edges()
+	if not dismissed_version.is_empty() and AppReleaseInfoScript.compare_versions(current_version, dismissed_version) >= 0:
+		_local_profile_store.remember_dismissed_release_version("")
+		dismissed_version = ""
+	return dismissed_version != latest_version
+
+func _show_update_prompt(latest_version: String, release_url: String) -> void:
+	if _update_prompt_overlay != null and is_instance_valid(_update_prompt_overlay):
+		return
+	_pending_update_release_version = latest_version
+	_pending_update_release_url = release_url
+
+	_update_prompt_overlay = Control.new()
+	_update_prompt_overlay.name = "UpdatePromptOverlay"
+	_update_prompt_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_update_prompt_overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	add_child(_update_prompt_overlay)
+
+	var shade := ColorRect.new()
+	shade.color = Color(0.02, 0.03, 0.06, 0.84)
+	shade.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	shade.mouse_filter = Control.MOUSE_FILTER_STOP
+	_update_prompt_overlay.add_child(shade)
+
+	var center := CenterContainer.new()
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_update_prompt_overlay.add_child(center)
+
+	var panel := PanelContainer.new()
+	panel.custom_minimum_size = Vector2(460, 0)
+	panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	var panel_style := StyleBoxFlat.new()
+	panel_style.bg_color = Color(0.09, 0.10, 0.16, 0.98)
+	panel_style.border_color = Color(0.38, 0.66, 1.0, 0.95)
+	panel_style.corner_radius_top_left = 12
+	panel_style.corner_radius_top_right = 12
+	panel_style.corner_radius_bottom_left = 12
+	panel_style.corner_radius_bottom_right = 12
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		panel_style.set_border_width(side, 2)
+	panel.add_theme_stylebox_override("panel", panel_style)
+	center.add_child(panel)
+
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 18)
+	margin.add_theme_constant_override("margin_right", 18)
+	margin.add_theme_constant_override("margin_top", 18)
+	margin.add_theme_constant_override("margin_bottom", 18)
+	panel.add_child(margin)
+
+	var content := VBoxContainer.new()
+	content.add_theme_constant_override("separation", 12)
+	margin.add_child(content)
+
+	var title := Label.new()
+	title.text = "Update Available"
+	title.add_theme_font_size_override("font_size", 22)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	content.add_child(title)
+
+	var current_version := AppReleaseInfoScript.get_current_version()
+	var body_label := Label.new()
+	body_label.text = "You're running %s, and the latest release is %s. Open the release page to download the newest build." % [current_version, latest_version]
+	body_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	body_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	content.add_child(body_label)
+
+	var button_row := HBoxContainer.new()
+	button_row.alignment = BoxContainer.ALIGNMENT_END
+	button_row.add_theme_constant_override("separation", 8)
+	content.add_child(button_row)
+
+	var later_button := Button.new()
+	later_button.text = "Later"
+	later_button.custom_minimum_size = Vector2(110, 38)
+	later_button.pressed.connect(_on_update_prompt_later_pressed)
+	button_row.add_child(later_button)
+
+	var update_button := Button.new()
+	update_button.text = "Open Download Page"
+	update_button.custom_minimum_size = Vector2(180, 38)
+	update_button.pressed.connect(_on_update_prompt_open_pressed)
+	button_row.add_child(update_button)
+
+	update_button.grab_focus()
+
+func _dismiss_update_prompt() -> void:
+	if _update_prompt_overlay != null and is_instance_valid(_update_prompt_overlay):
+		_update_prompt_overlay.queue_free()
+	_update_prompt_overlay = null
+	_pending_update_release_version = ""
+	_pending_update_release_url = AppReleaseInfoScript.RELEASES_PAGE_URL
+
+func _on_update_prompt_later_pressed() -> void:
+	if _local_profile_store != null and not _pending_update_release_version.is_empty():
+		_local_profile_store.remember_dismissed_release_version(_pending_update_release_version)
+	_dismiss_update_prompt()
+	_complete_startup_prompts()
+
+func _on_update_prompt_open_pressed() -> void:
+	var release_url := _pending_update_release_url
+	if release_url.is_empty():
+		release_url = AppReleaseInfoScript.RELEASES_PAGE_URL
+	var open_error := OS.shell_open(release_url)
+	if open_error == OK:
+		status_label.text = "Opened the latest release page in your browser."
+	else:
+		status_label.text = "Couldn't open the latest release page automatically."
+	_dismiss_update_prompt()
+	_complete_startup_prompts()
 
 func _build_bug_report_controls() -> void:
 	if _report_bug_button == null:
@@ -427,20 +629,10 @@ func _maybe_show_auth_onboarding() -> void:
 		return
 	if _auth_onboarding_overlay != null and is_instance_valid(_auth_onboarding_overlay):
 		return
-	if _local_profile_store.has_seen_auth_onboarding():
-		return
-	if not _get_saved_lobby_resume().is_empty() or not _get_saved_active_match().is_empty():
-		_local_profile_store.mark_auth_onboarding_seen()
-		return
-	var preferred_auth_mode: String = _local_profile_store.get_preferred_auth_mode()
-	var saved_username: String = _local_profile_store.get_last_account_username()
-	if preferred_auth_mode != AUTH_MODE_GUEST or not saved_username.is_empty():
-		_local_profile_store.mark_auth_onboarding_seen()
-		return
 	_show_auth_onboarding()
 
 func _show_auth_onboarding() -> void:
-	_auth_onboarding_selected_mode = AUTH_MODE_GUEST
+	_auth_onboarding_selected_mode = AUTH_MODE_LOGIN
 	_auth_onboarding_overlay = Control.new()
 	_auth_onboarding_overlay.name = "AuthOnboardingOverlay"
 	_auth_onboarding_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -490,13 +682,13 @@ func _show_auth_onboarding() -> void:
 	margin.add_child(inner)
 
 	var title := Label.new()
-	title.text = "Play Online With an Account?"
+	title.text = "Sign In"
 	title.add_theme_font_size_override("font_size", 22)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	inner.add_child(title)
 
 	var body := Label.new()
-	body.text = "Accounts let you keep decks, stats, and match history tied to your profile. You can still play as a guest if you want."
+	body.text = "Use your account to keep decks, stats, and match history tied to your profile."
 	body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	body.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	inner.add_child(body)
@@ -513,14 +705,6 @@ func _show_auth_onboarding() -> void:
 	)
 	button_column.add_child(register_btn)
 
-	var login_btn := Button.new()
-	login_btn.text = "I Already Have One"
-	login_btn.custom_minimum_size = Vector2(0, 40)
-	login_btn.pressed.connect(func() -> void:
-		_begin_auth_onboarding_account_flow(AUTH_MODE_LOGIN)
-	)
-	button_column.add_child(login_btn)
-
 	var guest_btn := Button.new()
 	guest_btn.text = "Continue as Guest"
 	guest_btn.custom_minimum_size = Vector2(0, 40)
@@ -533,7 +717,8 @@ func _show_auth_onboarding() -> void:
 	button_column.add_child(guest_btn)
 
 	_auth_onboarding_mode_hint_label = Label.new()
-	_auth_onboarding_mode_hint_label.text = "Choose Create Account or Login to enter your credentials here before continuing."
+	_auth_onboarding_mode_hint_label.text = ""
+	_auth_onboarding_mode_hint_label.visible = false
 	_auth_onboarding_mode_hint_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_auth_onboarding_mode_hint_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_auth_onboarding_mode_hint_label.modulate = Color(0.76, 0.80, 0.92)
@@ -543,6 +728,9 @@ func _show_auth_onboarding() -> void:
 	_auth_onboarding_username_edit.placeholder_text = "Account username"
 	_auth_onboarding_username_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_auth_onboarding_username_edit.visible = false
+	_auth_onboarding_username_edit.text_submitted.connect(func(_text: String) -> void:
+		_submit_auth_onboarding()
+	)
 	inner.add_child(_auth_onboarding_username_edit)
 
 	_auth_onboarding_password_edit = LineEdit.new()
@@ -550,40 +738,29 @@ func _show_auth_onboarding() -> void:
 	_auth_onboarding_password_edit.secret = true
 	_auth_onboarding_password_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_auth_onboarding_password_edit.visible = false
+	_auth_onboarding_password_edit.text_submitted.connect(func(_text: String) -> void:
+		_submit_auth_onboarding()
+	)
 	inner.add_child(_auth_onboarding_password_edit)
 
 	var continue_row := HBoxContainer.new()
 	continue_row.add_theme_constant_override("separation", 8)
 	inner.add_child(continue_row)
 
-	_auth_onboarding_continue_host_button = Button.new()
-	_auth_onboarding_continue_host_button.text = "Continue to Host"
-	_auth_onboarding_continue_host_button.custom_minimum_size = Vector2(0, 40)
-	_auth_onboarding_continue_host_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_auth_onboarding_continue_host_button.visible = false
-	_auth_onboarding_continue_host_button.pressed.connect(func() -> void:
-		_continue_auth_onboarding_to_multiplayer("host")
+	_auth_onboarding_continue_button = Button.new()
+	_auth_onboarding_continue_button.text = "Login"
+	_auth_onboarding_continue_button.custom_minimum_size = Vector2(0, 40)
+	_auth_onboarding_continue_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_auth_onboarding_continue_button.pressed.connect(func() -> void:
+		_submit_auth_onboarding()
 	)
-	continue_row.add_child(_auth_onboarding_continue_host_button)
+	continue_row.add_child(_auth_onboarding_continue_button)
 
-	_auth_onboarding_continue_join_button = Button.new()
-	_auth_onboarding_continue_join_button.text = "Continue to Join"
-	_auth_onboarding_continue_join_button.custom_minimum_size = Vector2(0, 40)
-	_auth_onboarding_continue_join_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_auth_onboarding_continue_join_button.visible = false
-	_auth_onboarding_continue_join_button.pressed.connect(func() -> void:
-		_continue_auth_onboarding_to_multiplayer("join")
-	)
-	continue_row.add_child(_auth_onboarding_continue_join_button)
-
-	register_btn.grab_focus()
+	_begin_auth_onboarding_account_flow(_get_launch_auth_mode())
 
 func _begin_auth_onboarding_account_flow(auth_mode: String) -> void:
 	_auth_onboarding_selected_mode = auth_mode
-	if _auth_onboarding_mode_hint_label != null:
-		var auth_label := "Create Account" if auth_mode == AUTH_MODE_REGISTER else "Login"
-		_auth_onboarding_mode_hint_label.text = "%s selected. Enter your username and password, then continue to Host or Join." % auth_label
-		_auth_onboarding_mode_hint_label.modulate = Color(0.76, 0.80, 0.92)
+	_set_auth_onboarding_hint("")
 	if _auth_onboarding_username_edit != null:
 		_auth_onboarding_username_edit.visible = true
 		if _auth_onboarding_username_edit.text.strip_edges().is_empty():
@@ -599,19 +776,24 @@ func _begin_auth_onboarding_account_flow(auth_mode: String) -> void:
 			_auth_onboarding_password_edit.text = _local_profile_store.get_last_account_password()
 		else:
 			_auth_onboarding_password_edit.text = ""
-	if _auth_onboarding_continue_host_button != null:
-		_auth_onboarding_continue_host_button.visible = true
-	if _auth_onboarding_continue_join_button != null:
-		_auth_onboarding_continue_join_button.visible = true
+	if _auth_onboarding_continue_button != null:
+		_auth_onboarding_continue_button.visible = true
+		_auth_onboarding_continue_button.text = "Create Account" if auth_mode == AUTH_MODE_REGISTER else "Login"
 	if _auth_onboarding_username_edit != null and _auth_onboarding_username_edit.text.strip_edges().is_empty():
 		_auth_onboarding_username_edit.grab_focus()
 	elif _auth_onboarding_password_edit != null:
 		_auth_onboarding_password_edit.grab_focus()
 
-func _continue_auth_onboarding_to_multiplayer(destination: String) -> void:
+func _submit_auth_onboarding() -> bool:
 	var auth_mode := _auth_onboarding_selected_mode
+	if auth_mode == AUTH_MODE_GUEST:
+		_complete_auth_onboarding(
+			AUTH_MODE_GUEST,
+			"Guest mode selected. You can switch to Login or Register anytime from the multiplayer panel."
+		)
+		return true
 	if auth_mode not in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
-		return
+		return false
 	var username := ""
 	var password := ""
 	if _auth_onboarding_username_edit != null:
@@ -622,28 +804,33 @@ func _continue_auth_onboarding_to_multiplayer(destination: String) -> void:
 		_set_auth_onboarding_hint("Enter an account username to continue.", true)
 		if _auth_onboarding_username_edit != null:
 			_auth_onboarding_username_edit.grab_focus()
-		return
+		return false
 	if password.is_empty():
 		_set_auth_onboarding_hint("Enter an account password to continue.", true)
 		if _auth_onboarding_password_edit != null:
 			_auth_onboarding_password_edit.grab_focus()
-		return
+		return false
 	if _local_profile_store != null:
 		_local_profile_store.remember_account_username(username)
 		_local_profile_store.remember_account_password(password)
 	player_name_line_edit.text = username
 	if _password_line_edit != null:
 		_password_line_edit.text = password
-	var message := "Account details ready. Continue with Host Game or Join Game."
-	_complete_auth_onboarding(auth_mode, message)
-	if destination == "host":
-		_on_host_game_pressed()
-	else:
-		_on_join_game_pressed()
+	_complete_auth_onboarding(auth_mode, "Account details ready. Host or Join to sign in.")
+	return true
+
+func _get_launch_auth_mode() -> String:
+	if _local_profile_store == null:
+		return AUTH_MODE_LOGIN
+	var preferred_auth_mode: String = _local_profile_store.get_preferred_auth_mode()
+	if preferred_auth_mode == AUTH_MODE_REGISTER:
+		return AUTH_MODE_REGISTER
+	return AUTH_MODE_LOGIN
 
 func _set_auth_onboarding_hint(message: String, is_error: bool = false) -> void:
 	if _auth_onboarding_mode_hint_label == null:
 		return
+	_auth_onboarding_mode_hint_label.visible = not message.is_empty()
 	_auth_onboarding_mode_hint_label.text = message
 	_auth_onboarding_mode_hint_label.modulate = Color(1.0, 0.72, 0.72) if is_error else Color(0.76, 0.80, 0.92)
 
@@ -672,8 +859,7 @@ func _dismiss_auth_onboarding() -> void:
 	_auth_onboarding_mode_hint_label = null
 	_auth_onboarding_username_edit = null
 	_auth_onboarding_password_edit = null
-	_auth_onboarding_continue_host_button = null
-	_auth_onboarding_continue_join_button = null
+	_auth_onboarding_continue_button = null
 
 func _on_deck_builder_pressed() -> void:
 	_cleanup_lobby(true)
@@ -729,6 +915,9 @@ func _on_host_game_pressed() -> void:
 	status_label.text = "Starting dedicated lobby server..."
 	_dedicated_lobby_connect_attempts_remaining = 20
 	_spawned_lobby_process_id = _launch_dedicated_lobby_server()
+	if _spawned_lobby_process_id <= 0:
+		status_label.text = "Could not start the dedicated lobby server. Make sure ClaudeOtherGodsServer.exe is installed with the client."
+		return
 	if _spawned_lobby_process_id > 0:
 		_write_smoke_trace("host_spawned_lobby_pid=%d" % _spawned_lobby_process_id)
 		_write_smoke_lobby_pid(_spawned_lobby_process_id)
@@ -875,6 +1064,7 @@ func _on_lobby_login_succeeded(session_id: String, reconnect_token: String, play
 	_lobby_session_id = session_id
 	_lobby_reconnect_token = reconnect_token
 	_capture_logged_in_profile(player_name)
+	_refresh_account_identity_label()
 	_save_lobby_resume()
 	_current_profile_summary.clear()
 	_refresh_profile_summary_label()
@@ -903,6 +1093,7 @@ func _on_lobby_reconnect_succeeded(
 	_lobby_session_id = session_id
 	_lobby_reconnect_token = reconnect_token
 	_capture_logged_in_profile(player_name)
+	_refresh_account_identity_label()
 	_save_lobby_resume()
 	_current_profile_summary.clear()
 	_refresh_profile_summary_label()
@@ -1050,6 +1241,8 @@ func _on_lobby_connection_failed(message: String) -> void:
 	if _should_retry_host_lobby_connect():
 		_queue_host_lobby_retry(message)
 		return
+	_logged_in_account_username = ""
+	_refresh_account_identity_label()
 	status_label.text = message
 	_fail_smoke_if_enabled("CONNECTION_FAILED:%s" % message)
 
@@ -1058,6 +1251,8 @@ func _on_lobby_disconnected() -> void:
 	if _should_retry_host_lobby_connect():
 		_queue_host_lobby_retry("Dedicated lobby disconnected before room setup completed.")
 		return
+	_logged_in_account_username = ""
+	_refresh_account_identity_label()
 	status_label.text = "Lobby connection lost. Press Join Game to reconnect."
 	_fail_smoke_if_enabled("DISCONNECTED_FROM_LOBBY")
 
@@ -1100,7 +1295,9 @@ func _cleanup_lobby(clear_session: bool) -> void:
 		_clear_saved_lobby_resume()
 		_clear_saved_match_resume()
 		_current_profile_summary.clear()
+		_logged_in_account_username = ""
 		_refresh_profile_summary_label()
+		_refresh_account_identity_label()
 		status_label.text = "Host a room on this machine, or join one by IP and room code."
 	_update_resume_controls()
 
@@ -1181,6 +1378,10 @@ func _capture_logged_in_profile(player_name: String) -> void:
 		return
 	if lobby_client != null:
 		_local_profile_id = str(lobby_client.current_profile_id).strip_edges()
+		if not str(lobby_client.current_account_id).strip_edges().is_empty():
+			_logged_in_account_username = str(lobby_client.current_username).strip_edges()
+		else:
+			_logged_in_account_username = ""
 		if not str(lobby_client.current_username).strip_edges().is_empty():
 			_local_profile_store.remember_account_username(str(lobby_client.current_username))
 			_local_profile_store.set_preferred_auth_mode(AUTH_MODE_LOGIN)
@@ -1191,6 +1392,7 @@ func _capture_logged_in_profile(player_name: String) -> void:
 	var profile: Dictionary = _local_profile_store.remember_profile(_local_profile_id, player_name)
 	_local_profile_id = str(profile.get("profile_id", _local_profile_id)).strip_edges()
 	_update_resume_controls()
+	_refresh_account_identity_label()
 
 func _maybe_request_account_decks() -> void:
 	if lobby_client == null:
@@ -1265,6 +1467,33 @@ func _build_profile_summary_controls() -> void:
 	_profile_summary_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	_profile_summary_label.vertical_alignment = VERTICAL_ALIGNMENT_TOP
 	multiplayer_container.add_child(_profile_summary_label)
+
+func _build_account_identity_controls() -> void:
+	if _account_identity_label != null:
+		return
+	_account_identity_label = Label.new()
+	_account_identity_label.name = "AccountIdentityLabel"
+	_account_identity_label.visible = false
+	_account_identity_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_account_identity_label.vertical_alignment = VERTICAL_ALIGNMENT_TOP
+	_account_identity_label.anchor_left = 1.0
+	_account_identity_label.anchor_right = 1.0
+	_account_identity_label.offset_left = -280
+	_account_identity_label.offset_right = -18
+	_account_identity_label.offset_top = 16
+	_account_identity_label.offset_bottom = 48
+	add_child(_account_identity_label)
+	_refresh_account_identity_label()
+
+func _refresh_account_identity_label() -> void:
+	if _account_identity_label == null:
+		return
+	if _logged_in_account_username.is_empty():
+		_account_identity_label.visible = false
+		_account_identity_label.text = ""
+		return
+	_account_identity_label.text = "Signed in: %s" % _logged_in_account_username
+	_account_identity_label.visible = true
 
 func _refresh_profile_summary_label() -> void:
 	if _profile_summary_label == null:
@@ -1710,6 +1939,8 @@ func _launch_dedicated_lobby_server() -> int:
 	var exported_server_path := _resolve_dedicated_server_runtime_path()
 	if not exported_server_path.is_empty():
 		return _launch_exported_dedicated_lobby_server(exported_server_path)
+	if OS.has_feature("template"):
+		return 0
 
 	var executable_path := _resolve_headless_executable_path(OS.get_executable_path())
 	if project_path.is_empty() or executable_path.is_empty():
@@ -1769,10 +2000,14 @@ func _resolve_headless_executable_path(executable_path: String) -> String:
 	return normalized_path
 
 func _resolve_dedicated_server_runtime_path() -> String:
+	var executable_dir := OS.get_executable_path().get_base_dir()
+	var executable_parent_dir := executable_dir.get_base_dir()
 	var candidates := PackedStringArray([
 		ProjectSettings.globalize_path(DEDICATED_SERVER_EXPORT_RELATIVE_PATH),
-		OS.get_executable_path().get_base_dir().path_join("ClaudeOtherGodsServer.exe"),
-		OS.get_executable_path().get_base_dir().path_join("ClaudeOtherGodsServer_console.exe"),
+		executable_dir.path_join("ClaudeOtherGodsServer.exe"),
+		executable_dir.path_join("ClaudeOtherGodsServer_console.exe"),
+		executable_dir.path_join("server").path_join("ClaudeOtherGodsServer.exe"),
+		executable_parent_dir.path_join("server").path_join("ClaudeOtherGodsServer.exe"),
 	])
 	for candidate in candidates:
 		if candidate.is_empty():

@@ -3,6 +3,11 @@ class_name CardTestGame
 
 var _test_turn_owner: Player = null
 var _test_turn_opponent: Player = null
+var _habrok_scenario_button: Button = null
+
+func _ready() -> void:
+	super._ready()
+	_ensure_card_test_scenario_button()
 
 # Override start_game to set up a focused test board while preserving
 # the CombatMockGame interface.
@@ -22,6 +27,15 @@ func update_ui() -> void:
 	super.update_ui()
 	if turn_label != null and player1 != null and player2 != null:
 		turn_label.text += " | P1 Mana %d | P2 Mana %d" % [player1.mana, player2.mana]
+
+func _ensure_card_test_scenario_button() -> void:
+	if left_panel == null or choice_container == null or _habrok_scenario_button != null:
+		return
+	_habrok_scenario_button = Button.new()
+	_habrok_scenario_button.text = "Load Habrok Scenario"
+	_habrok_scenario_button.pressed.connect(load_habrok_test_scenario)
+	left_panel.add_child(_habrok_scenario_button)
+	left_panel.move_child(_habrok_scenario_button, choice_container.get_index())
 
 func _sync_test_priority_control() -> void:
 	if game_manager == null or player1 == null or player2 == null:
@@ -132,7 +146,7 @@ func _place_test_prepared_card(player: Player, zone: Zone, card: Card) -> void:
 	zone.add_card(card)
 	if game_manager == null:
 		return
-	var ready_turn := maxi(0, game_manager.turn_number - 1)
+	var ready_turn: int = maxi(0, game_manager.turn_number - 1)
 	if card.card_type == Card.CardType.HEX:
 		game_manager.prepared_hexes[card] = ready_turn
 	elif card is CharmCard:
@@ -159,7 +173,7 @@ func _reset_player_test_state(player: Player) -> void:
 	for zone in player.reserve_zones:
 		_clear_zone(zone)
 
-func _setup_test_board() -> void:
+func _reset_test_match_state() -> void:
 	_reset_player_test_state(player1)
 	_reset_player_test_state(player2)
 	game_manager.prepared_hexes.clear()
@@ -172,6 +186,64 @@ func _setup_test_board() -> void:
 	game_manager.consecutive_passes = 0
 	game_manager.priority_player = null
 	game_manager._temporary_summon_cost_modifiers.clear()
+	selected_card = null
+	selected_attacker = null
+	selected_interceptor = null
+
+func load_habrok_test_scenario() -> void:
+	if game_manager == null or player1 == null or player2 == null:
+		return
+	_dismiss_transient_prompts()
+	_reset_test_match_state()
+
+	_add_test_god(player1, Thor.new())
+	_add_test_god(player2, Thor.new())
+
+	var habrok: HabrokParagonOfHawks = HabrokParagonOfHawks.new()
+	var blessed_knights: BlessedKnights = BlessedKnights.new()
+	var brown_bear: BrownBear = BrownBear.new()
+	var enkidu: Enkidu = Enkidu.new()
+
+	_place_test_board_card(player1, player1.frontline_zones[2], habrok, Card.CreatureMode.AGGRESSIVE)
+	_place_test_board_card(player2, player2.frontline_zones[1], blessed_knights, Card.CreatureMode.AGGRESSIVE)
+	_place_test_board_card(player2, player2.frontline_zones[2], brown_bear, Card.CreatureMode.AGGRESSIVE)
+	_place_test_board_card(player2, player2.frontline_zones[3], enkidu, Card.CreatureMode.AGGRESSIVE)
+
+	player1.spend_mana(player1.mana)
+	player1.gain_mana(10)
+	player2.spend_mana(player2.mana)
+	player2.gain_mana(10)
+	player1.followers = 100
+	player2.followers = 100
+	player1.followers_changed.emit(player1.followers)
+	player2.followers_changed.emit(player2.followers)
+	player1.has_summoned_this_turn = false
+	player2.has_summoned_this_turn = false
+
+	game_manager.current_player = player1
+	game_manager.other_player = player2
+	game_manager.turn_player = player1
+	game_manager.feedback_viewer = player1
+	player1.is_turn_player = true
+	player2.is_turn_player = false
+	game_manager.current_phase = GameManager.GamePhase.MAIN
+	game_manager.turn_number = 1
+	_test_turn_owner = player1
+	_test_turn_opponent = player2
+
+	hide_turn_choice()
+	action_label.text = (
+		"HABROK TEST  |  "
+		+ "Habrok is your only creature on the field.  |  "
+		+ "Click End Turn, choose any upkeep option for P2, then click End Turn again.  |  "
+		+ "At the end of P2's turn, Habrok should return to your hand and destroy Blessed Knights as the weakest enemy creature.  |  "
+		+ "Brown Bear and Enkidu should remain on the board.  |  "
+		+ "Click Load Habrok Scenario again to reset."
+	)
+	update_ui()
+
+func _setup_test_board() -> void:
+	_reset_test_match_state()
 
 	# ── Gods ─────────────────────────────────────────────────────────────────
 	var guan_yu := GuanYu.new()
@@ -265,6 +337,7 @@ func _setup_test_board() -> void:
 	hide_turn_choice()
 	action_label.text = (
 		"G-CARD TEST  |  "
+		+ "Click Load Habrok Scenario for a focused Breakout test.  |  "
 		+ "GuanYu (god): 3 tactic counters ready — activate Champion's Call to destroy any board card. End P1's turn to test upkeep (P1 has 5 frontline vs P2's 3, gains another counter each turn).  |  "
 		+ "GlitnirThePeaceful (P1 reserve[6]): forces all summons this game to defensive — test by summoning any hand card.  |  "
 		+ "Berserker has 'cannot_attack' status — use Gawain Healing Hands (2 mana, minor action) to remove it; then Berserker can attack; play Gungnir from hand in response to destroy the target.  |  "

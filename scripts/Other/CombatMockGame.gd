@@ -215,6 +215,8 @@ var _overlay_card_selected: Callable = Callable()
 var _pending_absence_spell: Absence = null
 var _pending_absence_target: Card = null
 var _pending_blessed_knights: BlessedKnights = null
+var _pending_habrok_breakouts: Array[HabrokParagonOfHawks] = []
+var _pending_habrok_breakout: HabrokParagonOfHawks = null
 var _pending_byggvir: Byggvir = null
 var _pending_byggvir_options: Array[Dictionary] = []
 var _pending_summon_priority_events: Array[Dictionary] = []
@@ -232,6 +234,7 @@ var _pending_en_hedu_anna: Card = null
 var _pending_erlqueens_nightingale: ErlqueensNightingaleScript = null
 var _skoll_prompt_panel: Control = null
 var _gala_tura_prompt_panel: Control = null
+var _habrok_breakout_prompt_panel: Control = null
 var _pending_gala_tura: Card = null
 var _pending_gala_tura_selected: Array[Card] = []
 var _breidablik_panel: Control = null
@@ -8509,6 +8512,112 @@ func _hide_blessed_knights_prompt() -> void:
 		panel.queue_free()
 	_pending_blessed_knights = null
 
+func _get_pending_habrok_breakouts_for_turn_end() -> Array[HabrokParagonOfHawks]:
+	var candidates: Array[HabrokParagonOfHawks] = []
+	if game_manager == null or game_manager.current_player == null:
+		return candidates
+	var ending_player: Player = game_manager.current_player
+	var opponent: Player = game_manager.get_opponent(ending_player)
+	if opponent == null:
+		return candidates
+	for zone in opponent.frontline_zones + opponent.reserve_zones:
+		for card in zone.cards:
+			var habrok: HabrokParagonOfHawks = card as HabrokParagonOfHawks
+			if habrok == null:
+				continue
+			if not _is_player_local(habrok.card_owner):
+				continue
+			if habrok.can_trigger_breakout(game_manager, ending_player):
+				candidates.append(habrok)
+	return candidates
+
+func _maybe_prompt_habrok_breakout_before_end_turn() -> bool:
+	if _is_networked_client:
+		return false
+	_pending_habrok_breakouts = _get_pending_habrok_breakouts_for_turn_end()
+	if _pending_habrok_breakouts.is_empty():
+		return false
+	_show_next_habrok_breakout_prompt()
+	return true
+
+func _show_next_habrok_breakout_prompt() -> void:
+	_hide_habrok_breakout_prompt()
+	while not _pending_habrok_breakouts.is_empty():
+		var card: HabrokParagonOfHawks = _pending_habrok_breakouts.pop_front() as HabrokParagonOfHawks
+		if card == null or not is_instance_valid(card):
+			continue
+		if not card.can_trigger_breakout(game_manager, game_manager.current_player):
+			continue
+		_pending_habrok_breakout = card
+
+		var panel := PanelContainer.new()
+		panel.name = "HabrokBreakoutPromptPanel"
+		_habrok_breakout_prompt_panel = panel
+		var style := StyleBoxFlat.new()
+		style.bg_color = Color(0.12, 0.10, 0.05, 0.97)
+		style.border_color = Color(0.92, 0.80, 0.46, 0.95)
+		for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+			style.set_border_width(side, 2)
+		panel.add_theme_stylebox_override("panel", style)
+		panel.custom_minimum_size = Vector2(420, 0)
+
+		var vbox := VBoxContainer.new()
+		vbox.add_theme_constant_override("separation", 8)
+		panel.add_child(vbox)
+
+		var title := Label.new()
+		title.text = card.card_name
+		title.add_theme_font_size_override("font_size", 14)
+		vbox.add_child(title)
+
+		var info := Label.new()
+		info.text = card.get_breakout_prompt_text(game_manager)
+		info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		vbox.add_child(info)
+
+		var buttons := HBoxContainer.new()
+		vbox.add_child(buttons)
+
+		var breakout_btn := Button.new()
+		breakout_btn.text = "Breakout"
+		breakout_btn.pressed.connect(_resolve_habrok_breakout_prompt.bind(true))
+		buttons.add_child(breakout_btn)
+
+		var decline_btn := Button.new()
+		decline_btn.text = "Decline"
+		decline_btn.pressed.connect(_resolve_habrok_breakout_prompt.bind(false))
+		buttons.add_child(decline_btn)
+
+		add_child(panel)
+		_promote_transient_ui(panel)
+		panel.anchor_left = 0.5
+		panel.anchor_right = 0.5
+		panel.anchor_top = 0.5
+		panel.anchor_bottom = 0.5
+		panel.offset_left = -210
+		panel.offset_right = 210
+		panel.offset_top = -70
+		panel.offset_bottom = 70
+		return
+	_pending_habrok_breakout = null
+	_continue_end_turn_sequence()
+
+func _hide_habrok_breakout_prompt(clear_queue: bool = false) -> void:
+	if _habrok_breakout_prompt_panel != null and is_instance_valid(_habrok_breakout_prompt_panel):
+		_habrok_breakout_prompt_panel.queue_free()
+	_habrok_breakout_prompt_panel = null
+	_pending_habrok_breakout = null
+	if clear_queue:
+		_pending_habrok_breakouts.clear()
+
+func _resolve_habrok_breakout_prompt(do_breakout: bool) -> void:
+	var card: HabrokParagonOfHawks = _pending_habrok_breakout
+	_hide_habrok_breakout_prompt()
+	if card != null and is_instance_valid(card):
+		card.resolve_breakout_choice(game_manager, do_breakout)
+	update_ui()
+	_show_next_habrok_breakout_prompt()
+
 func _resolve_blessed_knights_impact(ward_kind: String) -> void:
 	var card := _pending_blessed_knights
 	_hide_blessed_knights_prompt()
@@ -9167,6 +9276,7 @@ func _dismiss_transient_prompts() -> void:
 	_pending_book_of_life_spell = null
 	_hide_absence_mode_prompt()
 	_hide_blessed_knights_prompt()
+	_hide_habrok_breakout_prompt(true)
 	_hide_byggvir_reveal_prompt()
 	_hide_erlqueens_nightingale_prompt()
 	_hide_breidablik_prompt()
@@ -9594,6 +9704,8 @@ func _continue_end_turn_sequence() -> void:
 			candidates.append(card)
 			
 	if candidates.is_empty():
+		if _maybe_prompt_habrok_breakout_before_end_turn():
+			return
 		_do_end_turn()
 		return
 

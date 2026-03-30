@@ -108,6 +108,8 @@ func _result(is_valid: bool, error_message: String, sanitized_cards: Dictionary,
 func _max_copies(card) -> int:
 	if bool(card.is_god):
 		return 1
+	if bool(card.is_power):
+		return 1
 	if bool(card.is_legendary):
 		return 1
 	return 3
