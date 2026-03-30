@@ -13,7 +13,7 @@ func _init() -> void:
 	speed = 25
 	resilience = 25
 	strength = 3
-	ability_text = "Celestial Charge ([b]Impact[/b]): You may destroy a card with Res 30 or higher and slower Spd, but your opponent may activate hexes in response which can normally only activate on an attack. Then, return this card from the field to your hand."
+	ability_text = "Celestial Charge ([b]Impact[/b]): You may destroy a creature or structure with Res 30 or higher and slower Spd, but your opponent may activate hexes in response which can normally only activate on an attack. If you do, return this card from the field to your hand."
 	flavor_text = ""
 	culture = "Ancient"
 	artist = "Ricarrdo Zoppello"
@@ -21,13 +21,10 @@ func _init() -> void:
 
 func on_impact(game_manager: GameManager) -> void:
 	var prompt_host := _get_prompt_host(game_manager)
-	if prompt_host != null and prompt_host.has_method("_queue_gugalanna_impact_prompt"):
-		prompt_host.call("_queue_gugalanna_impact_prompt", self)
+	if prompt_host != null and prompt_host.has_method("_begin_gugalanna_impact_targeting"):
+		prompt_host.call("_begin_gugalanna_impact_targeting", self)
 		return
-	# Fallback: no valid target or no prompt host — just return to hand.
-	_return_to_hand(game_manager)
-	if game_manager != null:
-		game_manager.note_player_feedback("%s returns to hand." % card_name)
+	# Fallback: stay on field, no prompt available.
 
 # Called by the prompt host after the player makes their choice.
 # Pass null as target if the player declines to destroy anything.
@@ -47,26 +44,25 @@ func apply_celestial_charge(game_manager: GameManager, target: Card) -> void:
 			)
 	else:
 		game_manager.note_player_feedback("%s: Celestial Charge skipped." % card_name)
+		return
 
-	# Always return to hand if still on the board.
+	# Return to hand after destroying a target.
 	_return_to_hand(game_manager)
 
 func get_valid_impact_targets(game_manager: GameManager) -> Array[Card]:
 	var valid: Array[Card] = []
 	if game_manager == null:
 		return valid
-	var opponent := game_manager.get_opponent(get_controller())
-	if opponent == null:
-		return valid
-	for zone in opponent.frontline_zones + opponent.reserve_zones:
-		for card in zone.cards:
-			if _is_valid_target(card):
-				valid.append(card)
+	for player in game_manager.players:
+		for zone in player.frontline_zones + player.reserve_zones:
+			for card in zone.cards:
+				if _is_valid_target(card):
+					valid.append(card)
 	return valid
 
 func _is_valid_target(target: Card) -> bool:
 	return target != null \
-		and target.card_type == Card.CardType.CREATURE \
+		and (target.card_type == Card.CardType.CREATURE or target.card_type == Card.CardType.STRUCTURE) \
 		and target.get_effective_resilience() >= MIN_RES_TARGET \
 		and target.get_effective_speed() < get_effective_speed() \
 		and target.current_zone != null \

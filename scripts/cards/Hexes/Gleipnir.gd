@@ -52,16 +52,25 @@ func on_activate_action(game_manager: GameManager, action: CardAction) -> void:
 			card_owner.move_card(self, card_owner.graveyard_zone)
 		return
 	if game_manager != null and target != null:
-		game_manager.note_player_feedback(
-			"%s binds %s. It cannot attack, intercept, or use abilities while Gleipnir remains attached."
-			% [card_name, target.get_target_log_display_name(game_manager.get_feedback_viewer())]
-		)
+		var target_name := target.get_target_log_display_name(game_manager.get_feedback_viewer())
+		if game_manager.is_immune_to_source(target, self):
+			game_manager.note_player_feedback(
+				"%s binds %s, but it has no effect while that creature remains protected from hexes."
+				% [card_name, target_name]
+			)
+		else:
+			game_manager.note_player_feedback(
+				"%s binds %s. It cannot attack, intercept, or use abilities while Gleipnir remains attached."
+				% [card_name, target_name]
+			)
 
 func on_attached(game_manager: GameManager, target: Card) -> void:
-	_apply_binding_to_target(game_manager, target)
+	_apply_binding_to_target(target)
 	print("%s binds %s." % [card_name, target.card_name])
 
 func on_turn_start(game_manager: GameManager) -> void:
+	if attached_target == null:
+		return
 	if not _is_target_still_bound():
 		_release_self(game_manager)
 
@@ -75,23 +84,21 @@ func on_removed(game_manager: GameManager) -> void:
 	if attached_target != null:
 		attached_target.remove_status_effects_from_source_card(self, ATTACK_LOCK_STATUS)
 		attached_target.remove_status_effects_from_source_card(self, INTERCEPT_LOCK_STATUS)
-		# Unmute only if we were the one who muted it.
-		if attached_target.is_muted and attached_target.mute_turns_remaining == -1:
-			attached_target.is_muted = false
-			attached_target.mute_turns_remaining = 0
-			if attached_target.has_method("on_unmuted"):
-				attached_target.on_unmuted(game_manager)
+		attached_target.remove_status_effects_from_source_card(self, Card.ABILITY_NEGATED_STATUS)
 	attached_target = null
 	_pending_attach_target = null
 
-func _apply_binding_to_target(game_manager: GameManager, target: Card) -> void:
+func _apply_binding_to_target(target: Card) -> void:
 	target.remove_status_effects_from_source_card(self, ATTACK_LOCK_STATUS)
 	target.add_status_effect(
 		ATTACK_LOCK_STATUS,
 		STATUS_SOURCE,
 		self,
 		card_owner,
-		{"display_name": "Cannot attack (Gleipnir)"}
+		{
+			"display_name": "Cannot attack (Gleipnir)",
+			"blocked_by_source_immunity": true,
+		}
 	)
 	target.remove_status_effects_from_source_card(self, INTERCEPT_LOCK_STATUS)
 	target.add_status_effect(
@@ -99,9 +106,22 @@ func _apply_binding_to_target(game_manager: GameManager, target: Card) -> void:
 		STATUS_SOURCE,
 		self,
 		card_owner,
-		{"display_name": "Cannot intercept (Gleipnir)"}
+		{
+			"display_name": "Cannot intercept (Gleipnir)",
+			"blocked_by_source_immunity": true,
+		}
 	)
-	target.mute_permanently(game_manager)
+	target.remove_status_effects_from_source_card(self, Card.ABILITY_NEGATED_STATUS)
+	target.add_status_effect(
+		Card.ABILITY_NEGATED_STATUS,
+		STATUS_SOURCE,
+		self,
+		card_owner,
+		{
+			"display_name": "Abilities negated (Gleipnir)",
+			"blocked_by_source_immunity": true,
+		}
+	)
 
 func _is_target_still_bound() -> bool:
 	return attached_target != null \

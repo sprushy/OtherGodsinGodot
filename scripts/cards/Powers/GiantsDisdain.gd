@@ -9,7 +9,7 @@ func _init() -> void:
 	mana_cost = 4
 	culture = "Neutral"
 	card_types = ["Power", "Class Buff", "Giant"]
-	ability_text = "Giants you control do not count your opponent's non-Giant creatures' stats when calculating follower damage, and gain +5 Speed when intercepting non-Giant creatures."
+	ability_text = "Giants you control treat non-Giant opponents' stats as half (rounded down) when calculating follower damage, and gain +5 Speed when intercepting non-Giant creatures."
 	art_path = ART_PATH
 
 func on_unlock(_game_manager: GameManager) -> void:

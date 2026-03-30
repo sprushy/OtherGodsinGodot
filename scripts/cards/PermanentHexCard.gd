@@ -38,8 +38,6 @@ func can_play_to_target(game_manager: GameManager, target: Card) -> bool:
 		return false
 	if game_manager.is_guardian_protected(target, self):
 		return false
-	if game_manager.is_immune_to_source(target, self):
-		return false
 	return target_zone.get_equipment().is_empty()
 
 func can_activate_on_target(game_manager: GameManager, target: Card) -> bool:
@@ -53,8 +51,6 @@ func can_activate_on_target(game_manager: GameManager, target: Card) -> bool:
 	if target_zone == null or not target_zone.is_board_zone():
 		return false
 	if game_manager.is_guardian_protected(target, self):
-		return false
-	if game_manager.is_immune_to_source(target, self):
 		return false
 	return target_zone.get_equipment().is_empty()
 

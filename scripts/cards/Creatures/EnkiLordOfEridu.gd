@@ -18,7 +18,7 @@ func _init() -> void:
 	artist = "Ricarrdo Zoppello"
 
 func protects_from_hex(target: Card) -> bool:
-	if abilities_suppressed():
+	if hex_protection_is_suppressed_raw():
 		return false
 	if target == null:
 		return false
@@ -27,3 +27,20 @@ func protects_from_hex(target: Card) -> bool:
 		and target.get_controller() == get_controller()
 		and target.has_type("Mage")
 	)
+
+func hex_protection_is_suppressed_raw() -> bool:
+	if is_enslaved() or is_muted:
+		return true
+	for status in active_statuses:
+		if status.get("name", "") == "petrified":
+			return true
+	for status in active_statuses:
+		if status.get("name", "") != Card.ABILITY_NEGATED_STATUS:
+			continue
+		var source_card := status.get("source_card", null) as Card
+		if source_card == null:
+			return true
+		var immunity_tag := source_card.get_ability_immunity_tag() if source_card.has_method("get_ability_immunity_tag") else ""
+		if immunity_tag != "hexes":
+			return true
+	return false

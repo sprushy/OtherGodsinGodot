@@ -43,6 +43,22 @@ var _password_line_edit: LineEdit = null
 var _resume_match_button: Button = null
 var _profile_summary_label: Label = null
 var _current_profile_summary: Dictionary = {}
+var _auth_onboarding_overlay: Control = null
+var _auth_onboarding_selected_mode: String = AUTH_MODE_GUEST
+var _auth_onboarding_mode_hint_label: Label = null
+var _auth_onboarding_username_edit: LineEdit = null
+var _auth_onboarding_password_edit: LineEdit = null
+var _auth_onboarding_continue_host_button: Button = null
+var _auth_onboarding_continue_join_button: Button = null
+var _report_bug_button: Button = null
+var _bug_report_overlay: Control = null
+var _bug_report_expected_edit: TextEdit = null
+var _bug_report_actual_edit: TextEdit = null
+var _bug_report_status_label: Label = null
+var _bug_report_screenshot_label: Label = null
+var _bug_report_screenshot_preview: TextureRect = null
+var _bug_report_file_dialog: FileDialog = null
+var _bug_report_selected_screenshot_path: String = ""
 
 func _ready() -> void:
 	_fit_to_viewport()
@@ -83,6 +99,8 @@ func _ready() -> void:
 	_smoke_config = _parse_smoke_config(OS.get_cmdline_user_args())
 	if not _smoke_config.is_empty():
 		call_deferred("_start_smoke_mode")
+	else:
+		call_deferred("_maybe_show_auth_onboarding")
 
 func _bind_game_signals() -> void:
 	for node_name in ["MockGame", "CardTest"]:
@@ -107,6 +125,555 @@ func show_menu() -> void:
 func show_game() -> void:
 	menu_container.visible = false
 	game_container.visible = true
+
+func _build_bug_report_controls() -> void:
+	if _report_bug_button == null:
+		_report_bug_button = Button.new()
+		_report_bug_button.name = "ReportBugButton"
+		_report_bug_button.text = "Report Bug"
+		_report_bug_button.custom_minimum_size = Vector2(120, 38)
+		_report_bug_button.anchor_left = 1.0
+		_report_bug_button.anchor_right = 1.0
+		_report_bug_button.anchor_top = 1.0
+		_report_bug_button.anchor_bottom = 1.0
+		_report_bug_button.offset_left = -142
+		_report_bug_button.offset_right = -18
+		_report_bug_button.offset_top = -54
+		_report_bug_button.offset_bottom = -16
+		_report_bug_button.pressed.connect(_open_bug_report_overlay)
+		add_child(_report_bug_button)
+
+	if _bug_report_file_dialog == null:
+		_bug_report_file_dialog = FileDialog.new()
+		_bug_report_file_dialog.name = "BugReportScreenshotDialog"
+		_bug_report_file_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
+		_bug_report_file_dialog.access = FileDialog.ACCESS_FILESYSTEM
+		_bug_report_file_dialog.title = "Choose Screenshot"
+		_bug_report_file_dialog.filters = PackedStringArray([
+			"*.png, *.jpg, *.jpeg, *.webp ; Image Files",
+		])
+		_bug_report_file_dialog.file_selected.connect(_on_bug_report_screenshot_selected)
+		add_child(_bug_report_file_dialog)
+
+func _open_bug_report_overlay() -> void:
+	if _bug_report_overlay != null and is_instance_valid(_bug_report_overlay):
+		return
+
+	_bug_report_overlay = Control.new()
+	_bug_report_overlay.name = "BugReportOverlay"
+	_bug_report_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_bug_report_overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	add_child(_bug_report_overlay)
+
+	var shade := ColorRect.new()
+	shade.color = Color(0.01, 0.02, 0.05, 0.86)
+	shade.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	shade.mouse_filter = Control.MOUSE_FILTER_STOP
+	_bug_report_overlay.add_child(shade)
+
+	var center := CenterContainer.new()
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_bug_report_overlay.add_child(center)
+
+	var panel := PanelContainer.new()
+	panel.custom_minimum_size = Vector2(640, 0)
+	panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	var panel_style := StyleBoxFlat.new()
+	panel_style.bg_color = Color(0.08, 0.10, 0.16, 0.98)
+	panel_style.border_color = Color(0.54, 0.76, 1.0, 0.95)
+	panel_style.corner_radius_top_left = 12
+	panel_style.corner_radius_top_right = 12
+	panel_style.corner_radius_bottom_left = 12
+	panel_style.corner_radius_bottom_right = 12
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		panel_style.set_border_width(side, 2)
+	panel.add_theme_stylebox_override("panel", panel_style)
+	center.add_child(panel)
+
+	var outer_margin := MarginContainer.new()
+	outer_margin.add_theme_constant_override("margin_left", 18)
+	outer_margin.add_theme_constant_override("margin_right", 18)
+	outer_margin.add_theme_constant_override("margin_top", 18)
+	outer_margin.add_theme_constant_override("margin_bottom", 18)
+	panel.add_child(outer_margin)
+
+	var content := VBoxContainer.new()
+	content.custom_minimum_size = Vector2(640, 0)
+	content.add_theme_constant_override("separation", 10)
+	outer_margin.add_child(content)
+
+	var title := Label.new()
+	title.text = "Bug Report"
+	title.add_theme_font_size_override("font_size", 22)
+	content.add_child(title)
+
+	var intro := Label.new()
+	intro.text = "Tell us what you expected to happen, what happened instead, and optionally attach a screenshot."
+	intro.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	content.add_child(intro)
+
+	var expected_label := Label.new()
+	expected_label.text = "What did you expect to happen?"
+	content.add_child(expected_label)
+
+	_bug_report_expected_edit = TextEdit.new()
+	_bug_report_expected_edit.custom_minimum_size = Vector2(0, 110)
+	_bug_report_expected_edit.placeholder_text = "Describe the expected result."
+	_bug_report_expected_edit.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
+	content.add_child(_bug_report_expected_edit)
+
+	var actual_label := Label.new()
+	actual_label.text = "What happened?"
+	content.add_child(actual_label)
+
+	_bug_report_actual_edit = TextEdit.new()
+	_bug_report_actual_edit.custom_minimum_size = Vector2(0, 140)
+	_bug_report_actual_edit.placeholder_text = "Describe what the game actually did."
+	_bug_report_actual_edit.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
+	content.add_child(_bug_report_actual_edit)
+
+	var screenshot_label := Label.new()
+	screenshot_label.text = "Screenshot"
+	content.add_child(screenshot_label)
+
+	var screenshot_row := HBoxContainer.new()
+	screenshot_row.add_theme_constant_override("separation", 8)
+	content.add_child(screenshot_row)
+
+	var choose_btn := Button.new()
+	choose_btn.text = "Add Screenshot"
+	choose_btn.custom_minimum_size = Vector2(160, 36)
+	choose_btn.pressed.connect(_open_bug_report_file_dialog)
+	screenshot_row.add_child(choose_btn)
+
+	var clear_btn := Button.new()
+	clear_btn.text = "Clear Screenshot"
+	clear_btn.custom_minimum_size = Vector2(150, 36)
+	clear_btn.pressed.connect(_clear_bug_report_screenshot)
+	screenshot_row.add_child(clear_btn)
+
+	_bug_report_screenshot_label = Label.new()
+	_bug_report_screenshot_label.text = "No screenshot selected."
+	_bug_report_screenshot_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_bug_report_screenshot_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	screenshot_row.add_child(_bug_report_screenshot_label)
+
+	_bug_report_screenshot_preview = TextureRect.new()
+	_bug_report_screenshot_preview.custom_minimum_size = Vector2(240, 135)
+	_bug_report_screenshot_preview.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	_bug_report_screenshot_preview.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_bug_report_screenshot_preview.visible = false
+	content.add_child(_bug_report_screenshot_preview)
+
+	_bug_report_status_label = Label.new()
+	_bug_report_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_bug_report_status_label.visible = false
+	content.add_child(_bug_report_status_label)
+
+	var actions := HBoxContainer.new()
+	actions.alignment = BoxContainer.ALIGNMENT_END
+	actions.add_theme_constant_override("separation", 8)
+	content.add_child(actions)
+
+	var cancel_btn := Button.new()
+	cancel_btn.text = "Close"
+	cancel_btn.custom_minimum_size = Vector2(110, 38)
+	cancel_btn.pressed.connect(_close_bug_report_overlay)
+	actions.add_child(cancel_btn)
+
+	var submit_btn := Button.new()
+	submit_btn.text = "Save Report"
+	submit_btn.custom_minimum_size = Vector2(130, 38)
+	submit_btn.pressed.connect(_submit_bug_report)
+	actions.add_child(submit_btn)
+
+	_refresh_bug_report_screenshot_preview()
+	_bug_report_expected_edit.grab_focus()
+
+func _close_bug_report_overlay() -> void:
+	if _bug_report_overlay == null:
+		return
+	if is_instance_valid(_bug_report_overlay):
+		_bug_report_overlay.queue_free()
+	_bug_report_overlay = null
+	_bug_report_expected_edit = null
+	_bug_report_actual_edit = null
+	_bug_report_status_label = null
+	_bug_report_screenshot_label = null
+	_bug_report_screenshot_preview = null
+
+func _open_bug_report_file_dialog() -> void:
+	if _bug_report_file_dialog == null:
+		return
+	_bug_report_file_dialog.popup_centered_ratio(0.7)
+
+func _on_bug_report_screenshot_selected(path: String) -> void:
+	_bug_report_selected_screenshot_path = path.strip_edges()
+	_refresh_bug_report_screenshot_preview()
+
+func _clear_bug_report_screenshot() -> void:
+	_bug_report_selected_screenshot_path = ""
+	_refresh_bug_report_screenshot_preview()
+
+func _refresh_bug_report_screenshot_preview() -> void:
+	if _bug_report_screenshot_label != null:
+		_bug_report_screenshot_label.text = "No screenshot selected." if _bug_report_selected_screenshot_path.is_empty() else _bug_report_selected_screenshot_path
+	if _bug_report_screenshot_preview == null:
+		return
+	_bug_report_screenshot_preview.texture = null
+	_bug_report_screenshot_preview.visible = false
+	if _bug_report_selected_screenshot_path.is_empty():
+		return
+	var image := Image.new()
+	var err := image.load(_bug_report_selected_screenshot_path)
+	if err != OK:
+		if _bug_report_status_label != null:
+			_bug_report_status_label.visible = true
+			_bug_report_status_label.text = "Could not load the selected screenshot preview."
+		return
+	_bug_report_screenshot_preview.texture = ImageTexture.create_from_image(image)
+	_bug_report_screenshot_preview.visible = true
+
+func _submit_bug_report() -> void:
+	if _bug_report_expected_edit == null or _bug_report_actual_edit == null:
+		return
+	var expected_text := _bug_report_expected_edit.text.strip_edges()
+	var actual_text := _bug_report_actual_edit.text.strip_edges()
+	if expected_text.is_empty():
+		_set_bug_report_status("Please fill in what you expected to happen.")
+		_bug_report_expected_edit.grab_focus()
+		return
+	if actual_text.is_empty():
+		_set_bug_report_status("Please fill in what happened.")
+		_bug_report_actual_edit.grab_focus()
+		return
+
+	var report_id := "report_%d_%d" % [int(Time.get_unix_time_from_system()), Time.get_ticks_msec() % 100000]
+	var reports_dir := "user://bug_reports"
+	var screenshots_dir := reports_dir + "/screenshots"
+	_ensure_user_directory(reports_dir)
+	_ensure_user_directory(screenshots_dir)
+
+	var screenshot_saved_path := ""
+	if not _bug_report_selected_screenshot_path.is_empty():
+		screenshot_saved_path = _copy_bug_report_screenshot(_bug_report_selected_screenshot_path, screenshots_dir, report_id)
+		if screenshot_saved_path.is_empty():
+			_set_bug_report_status("The report text was ready, but the screenshot could not be copied.")
+			return
+
+	var report_data := {
+		"report_id": report_id,
+		"reported_at_unix": int(Time.get_unix_time_from_system()),
+		"reported_at_utc": Time.get_datetime_string_from_system(true, true),
+		"expected_behavior": expected_text,
+		"actual_behavior": actual_text,
+		"screenshot_original_path": _bug_report_selected_screenshot_path,
+		"screenshot_saved_path": screenshot_saved_path,
+		"profile_id": _local_profile_id,
+		"lobby_session_id": _lobby_session_id,
+		"selected_auth_mode": _get_selected_auth_mode(),
+		"menu_visible": menu_container.visible,
+		"game_visible": game_container.visible,
+		"pending_room_code": _pending_join_room_code,
+	}
+
+	var report_path := "%s/%s.json" % [reports_dir, report_id]
+	var file := FileAccess.open(report_path, FileAccess.WRITE)
+	if file == null:
+		_set_bug_report_status("Could not save the bug report file.")
+		return
+	file.store_string(JSON.stringify(report_data, "\t"))
+	file.flush()
+	file.close()
+
+	_set_bug_report_status("Bug report saved to %s" % report_path)
+	status_label.text = "Bug report saved to %s" % report_path
+	_bug_report_expected_edit.text = ""
+	_bug_report_actual_edit.text = ""
+	_bug_report_selected_screenshot_path = ""
+	_refresh_bug_report_screenshot_preview()
+
+func _set_bug_report_status(message: String) -> void:
+	if _bug_report_status_label == null:
+		return
+	_bug_report_status_label.visible = not message.is_empty()
+	_bug_report_status_label.text = message
+
+func _ensure_user_directory(path: String) -> void:
+	var global_path := ProjectSettings.globalize_path(path)
+	DirAccess.make_dir_recursive_absolute(global_path)
+
+func _copy_bug_report_screenshot(source_path: String, screenshots_dir: String, report_id: String) -> String:
+	var source_file := FileAccess.open(source_path, FileAccess.READ)
+	if source_file == null:
+		return ""
+	var bytes := source_file.get_buffer(source_file.get_length())
+	source_file.close()
+	var extension := source_path.get_extension().to_lower()
+	if extension.is_empty():
+		extension = "png"
+	var destination_path := "%s/%s.%s" % [screenshots_dir, report_id, extension]
+	var destination_file := FileAccess.open(destination_path, FileAccess.WRITE)
+	if destination_file == null:
+		return ""
+	destination_file.store_buffer(bytes)
+	destination_file.flush()
+	destination_file.close()
+	return destination_path
+
+func _maybe_show_auth_onboarding() -> void:
+	if _local_profile_store == null:
+		return
+	if _auth_onboarding_overlay != null and is_instance_valid(_auth_onboarding_overlay):
+		return
+	if _local_profile_store.has_seen_auth_onboarding():
+		return
+	if not _get_saved_lobby_resume().is_empty() or not _get_saved_active_match().is_empty():
+		_local_profile_store.mark_auth_onboarding_seen()
+		return
+	var preferred_auth_mode: String = _local_profile_store.get_preferred_auth_mode()
+	var saved_username: String = _local_profile_store.get_last_account_username()
+	if preferred_auth_mode != AUTH_MODE_GUEST or not saved_username.is_empty():
+		_local_profile_store.mark_auth_onboarding_seen()
+		return
+	_show_auth_onboarding()
+
+func _show_auth_onboarding() -> void:
+	_auth_onboarding_selected_mode = AUTH_MODE_GUEST
+	_auth_onboarding_overlay = Control.new()
+	_auth_onboarding_overlay.name = "AuthOnboardingOverlay"
+	_auth_onboarding_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_auth_onboarding_overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	add_child(_auth_onboarding_overlay)
+
+	var shade := ColorRect.new()
+	shade.color = Color(0.02, 0.03, 0.06, 0.84)
+	shade.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	shade.mouse_filter = Control.MOUSE_FILTER_STOP
+	_auth_onboarding_overlay.add_child(shade)
+
+	var center := CenterContainer.new()
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_auth_onboarding_overlay.add_child(center)
+
+	var panel := PanelContainer.new()
+	panel.custom_minimum_size = Vector2(420, 0)
+	panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	var panel_style := StyleBoxFlat.new()
+	panel_style.bg_color = Color(0.09, 0.10, 0.16, 0.98)
+	panel_style.border_color = Color(0.38, 0.66, 1.0, 0.95)
+	panel_style.corner_radius_top_left = 12
+	panel_style.corner_radius_top_right = 12
+	panel_style.corner_radius_bottom_left = 12
+	panel_style.corner_radius_bottom_right = 12
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		panel_style.set_border_width(side, 2)
+	panel.add_theme_stylebox_override("panel", panel_style)
+	center.add_child(panel)
+
+	var content := VBoxContainer.new()
+	content.custom_minimum_size = Vector2(420, 0)
+	content.add_theme_constant_override("separation", 12)
+	panel.add_child(content)
+
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 18)
+	margin.add_theme_constant_override("margin_right", 18)
+	margin.add_theme_constant_override("margin_top", 18)
+	margin.add_theme_constant_override("margin_bottom", 18)
+	content.add_child(margin)
+
+	var inner := VBoxContainer.new()
+	inner.add_theme_constant_override("separation", 12)
+	margin.add_child(inner)
+
+	var title := Label.new()
+	title.text = "Play Online With an Account?"
+	title.add_theme_font_size_override("font_size", 22)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	inner.add_child(title)
+
+	var body := Label.new()
+	body.text = "Accounts let you keep decks, stats, and match history tied to your profile. You can still play as a guest if you want."
+	body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	body.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	inner.add_child(body)
+
+	var button_column := VBoxContainer.new()
+	button_column.add_theme_constant_override("separation", 8)
+	inner.add_child(button_column)
+
+	var register_btn := Button.new()
+	register_btn.text = "Create Account"
+	register_btn.custom_minimum_size = Vector2(0, 40)
+	register_btn.pressed.connect(func() -> void:
+		_begin_auth_onboarding_account_flow(AUTH_MODE_REGISTER)
+	)
+	button_column.add_child(register_btn)
+
+	var login_btn := Button.new()
+	login_btn.text = "I Already Have One"
+	login_btn.custom_minimum_size = Vector2(0, 40)
+	login_btn.pressed.connect(func() -> void:
+		_begin_auth_onboarding_account_flow(AUTH_MODE_LOGIN)
+	)
+	button_column.add_child(login_btn)
+
+	var guest_btn := Button.new()
+	guest_btn.text = "Continue as Guest"
+	guest_btn.custom_minimum_size = Vector2(0, 40)
+	guest_btn.pressed.connect(func() -> void:
+		_complete_auth_onboarding(
+			AUTH_MODE_GUEST,
+			"Guest mode selected. You can switch to Login or Register anytime from the multiplayer panel."
+		)
+	)
+	button_column.add_child(guest_btn)
+
+	_auth_onboarding_mode_hint_label = Label.new()
+	_auth_onboarding_mode_hint_label.text = "Choose Create Account or Login to enter your credentials here before continuing."
+	_auth_onboarding_mode_hint_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_auth_onboarding_mode_hint_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_auth_onboarding_mode_hint_label.modulate = Color(0.76, 0.80, 0.92)
+	inner.add_child(_auth_onboarding_mode_hint_label)
+
+	_auth_onboarding_username_edit = LineEdit.new()
+	_auth_onboarding_username_edit.placeholder_text = "Account username"
+	_auth_onboarding_username_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_auth_onboarding_username_edit.visible = false
+	inner.add_child(_auth_onboarding_username_edit)
+
+	_auth_onboarding_password_edit = LineEdit.new()
+	_auth_onboarding_password_edit.placeholder_text = "Account password"
+	_auth_onboarding_password_edit.secret = true
+	_auth_onboarding_password_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_auth_onboarding_password_edit.visible = false
+	inner.add_child(_auth_onboarding_password_edit)
+
+	var continue_row := HBoxContainer.new()
+	continue_row.add_theme_constant_override("separation", 8)
+	inner.add_child(continue_row)
+
+	_auth_onboarding_continue_host_button = Button.new()
+	_auth_onboarding_continue_host_button.text = "Continue to Host"
+	_auth_onboarding_continue_host_button.custom_minimum_size = Vector2(0, 40)
+	_auth_onboarding_continue_host_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_auth_onboarding_continue_host_button.visible = false
+	_auth_onboarding_continue_host_button.pressed.connect(func() -> void:
+		_continue_auth_onboarding_to_multiplayer("host")
+	)
+	continue_row.add_child(_auth_onboarding_continue_host_button)
+
+	_auth_onboarding_continue_join_button = Button.new()
+	_auth_onboarding_continue_join_button.text = "Continue to Join"
+	_auth_onboarding_continue_join_button.custom_minimum_size = Vector2(0, 40)
+	_auth_onboarding_continue_join_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_auth_onboarding_continue_join_button.visible = false
+	_auth_onboarding_continue_join_button.pressed.connect(func() -> void:
+		_continue_auth_onboarding_to_multiplayer("join")
+	)
+	continue_row.add_child(_auth_onboarding_continue_join_button)
+
+	register_btn.grab_focus()
+
+func _begin_auth_onboarding_account_flow(auth_mode: String) -> void:
+	_auth_onboarding_selected_mode = auth_mode
+	if _auth_onboarding_mode_hint_label != null:
+		var auth_label := "Create Account" if auth_mode == AUTH_MODE_REGISTER else "Login"
+		_auth_onboarding_mode_hint_label.text = "%s selected. Enter your username and password, then continue to Host or Join." % auth_label
+		_auth_onboarding_mode_hint_label.modulate = Color(0.76, 0.80, 0.92)
+	if _auth_onboarding_username_edit != null:
+		_auth_onboarding_username_edit.visible = true
+		if _auth_onboarding_username_edit.text.strip_edges().is_empty():
+			var saved_username := ""
+			if _local_profile_store != null:
+				saved_username = _local_profile_store.get_last_account_username()
+			if saved_username.is_empty():
+				saved_username = player_name_line_edit.text.strip_edges()
+			_auth_onboarding_username_edit.text = saved_username
+	if _auth_onboarding_password_edit != null:
+		_auth_onboarding_password_edit.visible = true
+		if _local_profile_store != null:
+			_auth_onboarding_password_edit.text = _local_profile_store.get_last_account_password()
+		else:
+			_auth_onboarding_password_edit.text = ""
+	if _auth_onboarding_continue_host_button != null:
+		_auth_onboarding_continue_host_button.visible = true
+	if _auth_onboarding_continue_join_button != null:
+		_auth_onboarding_continue_join_button.visible = true
+	if _auth_onboarding_username_edit != null and _auth_onboarding_username_edit.text.strip_edges().is_empty():
+		_auth_onboarding_username_edit.grab_focus()
+	elif _auth_onboarding_password_edit != null:
+		_auth_onboarding_password_edit.grab_focus()
+
+func _continue_auth_onboarding_to_multiplayer(destination: String) -> void:
+	var auth_mode := _auth_onboarding_selected_mode
+	if auth_mode not in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
+		return
+	var username := ""
+	var password := ""
+	if _auth_onboarding_username_edit != null:
+		username = _auth_onboarding_username_edit.text.strip_edges()
+	if _auth_onboarding_password_edit != null:
+		password = _auth_onboarding_password_edit.text
+	if username.is_empty():
+		_set_auth_onboarding_hint("Enter an account username to continue.", true)
+		if _auth_onboarding_username_edit != null:
+			_auth_onboarding_username_edit.grab_focus()
+		return
+	if password.is_empty():
+		_set_auth_onboarding_hint("Enter an account password to continue.", true)
+		if _auth_onboarding_password_edit != null:
+			_auth_onboarding_password_edit.grab_focus()
+		return
+	if _local_profile_store != null:
+		_local_profile_store.remember_account_username(username)
+		_local_profile_store.remember_account_password(password)
+	player_name_line_edit.text = username
+	if _password_line_edit != null:
+		_password_line_edit.text = password
+	var message := "Account details ready. Continue with Host Game or Join Game."
+	_complete_auth_onboarding(auth_mode, message)
+	if destination == "host":
+		_on_host_game_pressed()
+	else:
+		_on_join_game_pressed()
+
+func _set_auth_onboarding_hint(message: String, is_error: bool = false) -> void:
+	if _auth_onboarding_mode_hint_label == null:
+		return
+	_auth_onboarding_mode_hint_label.text = message
+	_auth_onboarding_mode_hint_label.modulate = Color(1.0, 0.72, 0.72) if is_error else Color(0.76, 0.80, 0.92)
+
+func _complete_auth_onboarding(auth_mode: String, message: String) -> void:
+	_set_auth_mode(auth_mode)
+	if _local_profile_store != null:
+		_local_profile_store.set_preferred_auth_mode(auth_mode)
+		_local_profile_store.mark_auth_onboarding_seen()
+	multiplayer_container.visible = true
+	ready_button.visible = false
+	status_label.text = message
+	if auth_mode == AUTH_MODE_GUEST:
+		player_name_line_edit.grab_focus()
+	elif player_name_line_edit.text.strip_edges().is_empty():
+		player_name_line_edit.grab_focus()
+	elif _password_line_edit != null:
+		_password_line_edit.grab_focus()
+	_dismiss_auth_onboarding()
+
+func _dismiss_auth_onboarding() -> void:
+	if _auth_onboarding_overlay == null:
+		return
+	if is_instance_valid(_auth_onboarding_overlay):
+		_auth_onboarding_overlay.queue_free()
+	_auth_onboarding_overlay = null
+	_auth_onboarding_mode_hint_label = null
+	_auth_onboarding_username_edit = null
+	_auth_onboarding_password_edit = null
+	_auth_onboarding_continue_host_button = null
+	_auth_onboarding_continue_join_button = null
 
 func _on_deck_builder_pressed() -> void:
 	_cleanup_lobby(true)
@@ -617,12 +1184,12 @@ func _capture_logged_in_profile(player_name: String) -> void:
 		if not str(lobby_client.current_username).strip_edges().is_empty():
 			_local_profile_store.remember_account_username(str(lobby_client.current_username))
 			_local_profile_store.set_preferred_auth_mode(AUTH_MODE_LOGIN)
+			if _password_line_edit != null and not _password_line_edit.text.is_empty():
+				_local_profile_store.remember_account_password(_password_line_edit.text)
 		else:
 			_local_profile_store.set_preferred_auth_mode(AUTH_MODE_GUEST)
 	var profile: Dictionary = _local_profile_store.remember_profile(_local_profile_id, player_name)
 	_local_profile_id = str(profile.get("profile_id", _local_profile_id)).strip_edges()
-	if _password_line_edit != null and str(lobby_client.current_account_id).strip_edges() != "":
-		_password_line_edit.text = ""
 	_update_resume_controls()
 
 func _maybe_request_account_decks() -> void:
@@ -1277,6 +1844,8 @@ func _restore_auth_preferences() -> void:
 		var saved_username: String = _local_profile_store.get_last_account_username()
 		if not saved_username.is_empty():
 			player_name_line_edit.text = saved_username
+		if _password_line_edit != null:
+			_password_line_edit.text = _local_profile_store.get_last_account_password()
 	_refresh_auth_controls()
 
 func _on_auth_mode_selected(_index: int) -> void:
@@ -1287,6 +1856,8 @@ func _on_auth_mode_selected(_index: int) -> void:
 	_local_profile_store.set_preferred_auth_mode(auth_mode)
 	if auth_mode != AUTH_MODE_GUEST:
 		_local_profile_store.remember_account_username(player_name_line_edit.text)
+		if _password_line_edit != null and _password_line_edit.text.is_empty():
+			_password_line_edit.text = _local_profile_store.get_last_account_password()
 
 func _set_auth_mode(auth_mode: String) -> void:
 	if _auth_mode_option == null:
@@ -1338,4 +1909,5 @@ func _get_lobby_login_name(default_name: String) -> String:
 	if _local_profile_store != null:
 		_local_profile_store.set_preferred_auth_mode(auth_mode)
 		_local_profile_store.remember_account_username(player_name)
+		_local_profile_store.remember_account_password(_get_auth_password())
 	return player_name

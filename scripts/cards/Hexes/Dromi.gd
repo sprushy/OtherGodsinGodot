@@ -50,18 +50,29 @@ func on_activate_action(game_manager: GameManager, action: CardAction) -> void:
 			card_owner.move_card(self, card_owner.graveyard_zone)
 		return
 	if game_manager != null and target != null:
-		game_manager.note_player_feedback(
-			"%s binds %s. It cannot attack while Dromi remains attached."
-			% [card_name, target.get_target_log_display_name(game_manager.get_feedback_viewer())]
-		)
+		var target_name := target.get_target_log_display_name(game_manager.get_feedback_viewer())
+		if game_manager.is_immune_to_source(target, self):
+			game_manager.note_player_feedback(
+				"%s binds %s, but it has no effect while that creature remains immune to hexes."
+				% [card_name, target_name]
+			)
+		else:
+			game_manager.note_player_feedback(
+				"%s binds %s. It cannot attack while Dromi remains attached."
+				% [card_name, target_name]
+			)
 
 func on_attached(_game_manager: GameManager, target: Card) -> void:
 	_apply_binding_to_target(target)
 	print("%s binds %s. It cannot attack while Dromi remains attached." % [card_name, target.card_name])
 
 func on_turn_start(game_manager: GameManager) -> void:
+	if attached_target == null:
+		return
 	if not _is_target_still_bound():
 		_release_self(game_manager)
+		return
+	if game_manager != null and game_manager.is_immune_to_source(attached_target, self):
 		return
 	var controller := attached_target.get_controller()
 	if controller == null:
@@ -89,7 +100,10 @@ func _apply_binding_to_target(target: Card) -> void:
 		STATUS_SOURCE,
 		self,
 		card_owner,
-		{"display_name": "Cannot attack"}
+		{
+			"display_name": "Cannot attack",
+			"blocked_by_source_immunity": true,
+		}
 	)
 
 func _is_target_still_bound() -> bool:

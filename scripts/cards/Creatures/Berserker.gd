@@ -37,8 +37,15 @@ func can_activate(game_manager: GameManager) -> bool:
 		return false
 	return not is_used
 
+func get_activation_failure_reason(game_manager: GameManager) -> String:
+	return card_name + " cannot activate right now."
+
 func activate(game_manager: GameManager, _target: Card = null) -> void:
 	if not can_activate(game_manager):
+		return
+	if game_manager != null and game_manager.is_immune_to_source(self, self):
+		is_used = true
+		game_manager.note_player_feedback("%s activates Berserker Rage, but Creature Ward prevents any effect." % card_name)
 		return
 	is_used = true
 	rage_active_this_turn = true

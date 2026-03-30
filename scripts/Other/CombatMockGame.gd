@@ -7,7 +7,6 @@ const SacrificeCursorSource = preload("res://images/card_art/BloodySacrificeCurs
 const DevourCursorSource = preload("res://images/card_art/BloodyWolfJawsPGN.png")
 const SilenceCursorSource = preload("res://images/SilenceCursorPGN.png")
 const GiantMasterArchitectCursorSource = preload("res://images/card_art/GiantMasterArchitectHammerCursor.png")
-const GugalannaCursorSource = preload("res://images/card_art/JeweledHornsCursor.png")
 const GuanYuCursorSource = preload("res://images/card_art/GuanYuCursor.png")
 const PromptRouterScript = preload("res://scripts/server/PromptRouter.gd")
 const HeadlessMatchHostScript = preload("res://scripts/server/HeadlessMatchHost.gd")
@@ -283,7 +282,6 @@ var _sacrifice_cursor_texture: Texture2D = null
 var _devour_cursor_texture: Texture2D = null
 var _silence_cursor_texture: Texture2D = null
 var _giant_master_architect_cursor_texture: Texture2D = null
-var _gugalanna_cursor_texture: Texture2D = null
 var _guan_yu_cursor_texture: Texture2D = null
 var _active_selection_cursor_mode: String = ""
 var _overlay_selection_cursor_mode: String = ""
@@ -321,8 +319,6 @@ const SILENCE_CURSOR_TARGET_HEIGHT := 96
 const SILENCE_CURSOR_HOTSPOT_RATIO := Vector2(0.49, 0.22)
 const GIANT_MASTER_ARCHITECT_CURSOR_TARGET_HEIGHT := 96
 const GIANT_MASTER_ARCHITECT_CURSOR_HOTSPOT_RATIO := Vector2(0.50, 0.18)
-const GUGALANNA_CURSOR_TARGET_HEIGHT := 96
-const GUGALANNA_CURSOR_HOTSPOT_RATIO := Vector2(0.50, 0.85)
 const GUAN_YU_CURSOR_TARGET_HEIGHT := 96
 const GUAN_YU_CURSOR_HOTSPOT_RATIO := Vector2(0.95, 0.94)
 const SACRIFICE_CURSOR_SHAPES := [
@@ -556,9 +552,6 @@ func _is_silence_cursor_mode_active() -> bool:
 func _is_giant_master_architect_cursor_mode_active() -> bool:
 	return _overlay_selection_cursor_mode == "giant_master_architect_structure"
 
-func _is_gugalanna_cursor_mode_active() -> bool:
-	return _overlay_selection_cursor_mode == "gugalanna_celestial_charge"
-
 func _is_guan_yu_cursor_mode_active() -> bool:
 	return awaiting_god_ability_target and god_ability_source is GuanYu
 
@@ -683,8 +676,6 @@ func _position_devour_cancel_prompt() -> void:
 	_devour_cancel_prompt.global_position = (viewport_size - prompt_size) * 0.5
 
 func _get_selection_cursor_mode() -> String:
-	if _is_gugalanna_cursor_mode_active():
-		return "gugalanna"
 	if _is_giant_master_architect_cursor_mode_active():
 		return "giant_master_architect"
 	if _is_guan_yu_cursor_mode_active():
@@ -768,16 +759,6 @@ func _apply_silence_cursor() -> bool:
 		Input.set_custom_mouse_cursor(_silence_cursor_texture, cursor_shape, hotspot)
 	return true
 
-func _apply_gugalanna_cursor() -> bool:
-	if _gugalanna_cursor_texture == null:
-		_gugalanna_cursor_texture = _build_cursor_texture(GugalannaCursorSource, GUGALANNA_CURSOR_TARGET_HEIGHT)
-	if _gugalanna_cursor_texture == null:
-		return false
-	var hotspot := _get_cursor_hotspot(_gugalanna_cursor_texture, GUGALANNA_CURSOR_HOTSPOT_RATIO)
-	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
-		Input.set_custom_mouse_cursor(_gugalanna_cursor_texture, cursor_shape, hotspot)
-	return true
-
 func _apply_giant_master_architect_cursor() -> bool:
 	if _giant_master_architect_cursor_texture == null:
 		_giant_master_architect_cursor_texture = _build_cursor_texture(
@@ -817,13 +798,6 @@ func _restore_default_selection_cursor() -> void:
 func _sync_sacrifice_cursor() -> void:
 	var cursor_mode := _get_selection_cursor_mode()
 	if cursor_mode == _active_selection_cursor_mode:
-		return
-
-	if cursor_mode == "gugalanna":
-		if _apply_gugalanna_cursor():
-			_active_selection_cursor_mode = "gugalanna"
-		else:
-			_restore_default_selection_cursor()
 		return
 
 	if cursor_mode == "guan_yu":
@@ -1382,7 +1356,7 @@ func _can_interact_with_board_during_turn_choice(card: Card = null) -> bool:
 func update_ui() -> void:
 	if game_manager == null:
 		return
-	if _is_networked_client or (network_manager != null and network_manager.get("is_server") == true):
+	if _is_networked_client or _is_real_network_host():
 		if _ui_update_pending:
 			return
 		_ui_update_pending = true
@@ -1435,7 +1409,9 @@ func _get_board_zone_extent_target() -> float:
 	return maxf(base_extent, minf(horizontal_extent, vertical_extent))
 
 func _update_board_zone_extent() -> void:
+	var previous_extent := BoardZoneUI.get_zone_extent()
 	BoardZoneUI.set_zone_extent(_get_board_zone_extent_target())
+	var extent_changed := not is_equal_approx(previous_extent, BoardZoneUI.get_zone_extent())
 	var board_half_height: float = BoardZoneUI.get_zone_extent() * 2.0
 	_update_side_panel_layout()
 	if enemy_board_container != null:
@@ -1446,6 +1422,10 @@ func _update_board_zone_extent() -> void:
 		hand_container.custom_minimum_size.y = HAND_LAYOUT_RESERVED
 	if board_separator != null:
 		board_separator.custom_minimum_size = Vector2(_get_board_row_width(), BOARD_SEPARATOR_HEIGHT)
+	if extent_changed:
+		# Zone wrappers cache their minimum sizes on creation, so a post-startup
+		# board resize needs a full rebuild rather than an in-place repaint.
+		_invalidate_cached_board_layouts()
 	call_deferred("_update_center_action_panel_layout")
 
 func _on_board_layout_resized() -> void:
@@ -1726,6 +1706,10 @@ func _is_card_usable_for_priority(card: Card) -> bool:
 
 func _get_visible_hand_player() -> Player:
 	return _get_display_player()
+
+func _invalidate_cached_board_layouts() -> void:
+	_last_board_player = null
+	_last_enemy_player = null
 
 func _get_display_player() -> Player:
 	if game_manager == null:
@@ -2031,8 +2015,49 @@ func _get_board_row_width() -> float:
 func _get_separator_line_width() -> float:
 	return BoardZoneUI.get_zone_extent() * BOARD_MAIN_COLUMN_COUNT + BOARD_ZONE_COLUMN_GAP * (BOARD_MAIN_COLUMN_COUNT - 1.0)
 
+func _refresh_stats_panel(panel: PanelContainer, player: Player, show_mana: bool = true) -> void:
+	if panel == null or player == null:
+		return
+	var name_lbl := panel.get_node_or_null("StatsVBox/NameLabel") as Label
+	if name_lbl != null:
+		name_lbl.text = player.player_name
+	var hand_lbl := panel.get_node_or_null("StatsVBox/HandLabel") as Label
+	if hand_lbl != null:
+		hand_lbl.text = "Hand: " + str(player.hand_zone.get_card_count())
+	var mana_lbl := panel.get_node_or_null("StatsVBox/ManaLabel") as Label
+	if mana_lbl != null:
+		mana_lbl.visible = show_mana
+		if show_mana:
+			mana_lbl.text = "Mana: " + str(player.mana)
+	var followers_lbl := panel.get_node_or_null("StatsVBox/FollowersLabel") as Label
+	if followers_lbl != null:
+		followers_lbl.text = "Followers:\n" + str(player.followers)
+	var deck_lbl := panel.get_node_or_null("StatsVBox/DeckLabel") as Label
+	if deck_lbl != null:
+		deck_lbl.text = "Deck: " + str(player.deck_zone.get_card_count())
+
+func _get_stats_panel_for_zone_ui(zone_ui: BoardZoneUI) -> PanelContainer:
+	if zone_ui == null or not is_instance_valid(zone_ui):
+		return null
+	var wrapper := zone_ui.get_parent()
+	if wrapper == null:
+		return null
+	var cluster := wrapper.get_parent()
+	if cluster == null:
+		return null
+	return cluster.get_node_or_null("StatsPanel") as PanelContainer
+
+func _refresh_visible_stat_panels() -> void:
+	var player_panel := _get_stats_panel_for_zone_ui(_player_god_zone_ui)
+	if player_panel != null and player1 != null:
+		_refresh_stats_panel(player_panel, player1, true)
+	var enemy_panel := _get_stats_panel_for_zone_ui(_enemy_god_zone_ui)
+	if enemy_panel != null and player2 != null:
+		_refresh_stats_panel(enemy_panel, player2, true)
+
 func _make_stats_panel(player: Player, show_mana: bool = true) -> PanelContainer:
 	var panel := PanelContainer.new()
+	panel.name = "StatsPanel"
 	panel.custom_minimum_size = Vector2(110, 128)
 	panel.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	var style := StyleBoxFlat.new()
@@ -2046,28 +2071,30 @@ func _make_stats_panel(player: Player, show_mana: bool = true) -> PanelContainer
 	style.corner_radius_bottom_right = 4
 	panel.add_theme_stylebox_override("panel", style)
 	var vbox := VBoxContainer.new()
+	vbox.name = "StatsVBox"
 	panel.add_child(vbox)
 	var name_lbl := Label.new()
-	name_lbl.text = player.player_name
+	name_lbl.name = "NameLabel"
 	name_lbl.add_theme_font_size_override("font_size", 12)
 	vbox.add_child(name_lbl)
 	var hand_lbl := Label.new()
-	hand_lbl.text = "Hand: " + str(player.hand_zone.get_card_count())
+	hand_lbl.name = "HandLabel"
 	hand_lbl.add_theme_font_size_override("font_size", 13)
 	vbox.add_child(hand_lbl)
 	if show_mana:
 		var mana_lbl := Label.new()
-		mana_lbl.text = "Mana: " + str(player.mana)
+		mana_lbl.name = "ManaLabel"
 		mana_lbl.add_theme_font_size_override("font_size", 13)
 		vbox.add_child(mana_lbl)
 	var fol_lbl := Label.new()
-	fol_lbl.text = "Followers:\n" + str(player.followers)
+	fol_lbl.name = "FollowersLabel"
 	fol_lbl.add_theme_font_size_override("font_size", 13)
 	vbox.add_child(fol_lbl)
 	var deck_lbl := Label.new()
-	deck_lbl.text = "Deck: " + str(player.deck_zone.get_card_count())
+	deck_lbl.name = "DeckLabel"
 	deck_lbl.add_theme_font_size_override("font_size", 13)
 	vbox.add_child(deck_lbl)
+	_refresh_stats_panel(panel, player, show_mana)
 	return panel
 
 func _make_god_cluster(zone: Zone, player: Player, is_enemy: bool) -> Control:
@@ -2526,6 +2553,9 @@ func _make_power_icon(card: Card, is_enemy: bool, _player: Player) -> Control:
 		)
 	return panel
 func _on_power_pressed(power: PowerCard) -> void:
+	if _is_card_usable_for_priority(power):
+		_on_priority_response_chosen(power)
+		return
 	if _has_pending_target_selection():
 		if _try_handle_pending_click_selection(power):
 			return
@@ -4321,6 +4351,7 @@ func _resolve_charm_action(charm: CharmCard, target: Card = null) -> void:
 func _on_local_player_card_moved(card: Card, from_zone: Zone, to_zone: Zone) -> void:
 	if card == null or from_zone == null or to_zone == null:
 		return
+	_invalidate_cached_board_layouts()
 	if from_zone.zone_type != Zone.ZoneType.HAND:
 		return
 	if to_zone.is_board_zone() and card.card_type in [Card.CardType.CREATURE, Card.CardType.STRUCTURE]:
@@ -5046,6 +5077,9 @@ func get_resurrectible_cards() -> Array[Card]:
 	return cards
 
 func _on_god_card_pressed(card: Card) -> void:
+	if _is_card_usable_for_priority(card):
+		_on_priority_response_chosen(card)
+		return
 	if _has_pending_target_selection():
 		if _try_handle_pending_click_selection(card):
 			return
@@ -5531,7 +5565,7 @@ func _queue_fourth_sage_enmegalamma_impact_prompt(card) -> void:
 	action_label.text = card.card_name + " impact waits on priority."
 	_offer_priority()
 
-func _queue_gugalanna_impact_prompt(card) -> void:
+func _begin_gugalanna_impact_targeting(card) -> void:
 	if card == null or game_manager == null:
 		return
 	var action := CardAction.new()
@@ -5543,9 +5577,7 @@ func _queue_gugalanna_impact_prompt(card) -> void:
 	action.resolve_callback = func() -> void:
 		var valid_targets: Array[Card] = card.get_valid_impact_targets(game_manager)
 		if valid_targets.is_empty():
-			# No valid targets — still return to hand.
-			card.apply_celestial_charge(game_manager, null)
-			var text: String = card.card_name + ": no valid targets. " + card.card_name + " returns to hand."
+			var text: String = card.card_name + ": no valid targets for Celestial Charge. %s stays on field." % card.card_name
 			if _stack_resolution_paused:
 				_resume_after_deferred_resolution(text)
 			else:
@@ -5553,23 +5585,24 @@ func _queue_gugalanna_impact_prompt(card) -> void:
 				update_ui()
 			return
 		_pause_stack_resolution(card.card_owner)
-		var on_choose := func(chosen: Card) -> void:
-			card.apply_celestial_charge(game_manager, chosen)
-			_resume_after_deferred_resolution(
-				"Celestial Charge: %s destroys %s. %s returns to hand." % [
-					card.card_name, chosen.card_name, card.card_name
-				]
-			)
-		var on_cancel := func() -> void:
-			card.apply_celestial_charge(game_manager, null)
-			_resume_after_deferred_resolution(card.card_name + " skips Celestial Charge and returns to hand.")
-		_show_card_selection_overlay(
-			"Celestial Charge: choose a target (Res 30+, slower Spd) — or cancel to skip",
-			valid_targets,
-			on_choose,
-			on_cancel,
-			"gugalanna_celestial_charge"
+		_begin_pending_click_selection(
+			card.card_name + ": Celestial Charge",
+			card,
+			func(clicked_card: Card) -> bool:
+				return clicked_card != null and clicked_card in card.get_valid_impact_targets(game_manager),
+			func(clicked_card: Card) -> void:
+				card.apply_celestial_charge(game_manager, clicked_card)
+				_resume_after_deferred_resolution(
+					"Celestial Charge: %s destroys %s. %s returns to hand." % [
+						card.card_name, clicked_card.card_name, card.card_name
+					]
+				),
+			func() -> void:
+				card.apply_celestial_charge(game_manager, null)
+				_resume_after_deferred_resolution(card.card_name + " skips Celestial Charge and stays on the field.")
 		)
+		action_label.text = card.card_name + ": click a target (Res 30+, slower Spd) — or press Cancel to skip."
+		update_ui()
 	game_manager.push_to_stack(action)
 	update_ui()
 	action_label.text = card.card_name + " Celestial Charge waits on priority."
@@ -6101,16 +6134,6 @@ func _on_board_card_pressed(card: Card) -> void:
 				+ " is protected by Guardian."
 			)
 			return
-		if game_manager.is_immune_to_source(card, stupefy_source):
-			_cancel_pending_target_selection(
-				_get_pending_target_selection_name()
-				+ " cancelled: "
-				+ card.card_name
-				+ " is immune to "
-				+ stupefy_source.card_name
-				+ "."
-			)
-			return
 
 	if _try_resolve_stupefy_target(card):
 		return
@@ -6300,8 +6323,8 @@ func _on_board_card_pressed(card: Card) -> void:
 		_show_en_hedu_anna_prompt(card as EnHeduAnnaScript)
 		return
 
-	if network_manager != null:
-		network_manager.request_action({
+	if _is_networked_client:
+		game_input.submit_action({
 			"type": "select_attacker",
 			"card_uid": card.get("uid")
 		})
@@ -6408,16 +6431,6 @@ func _on_enemy_card_pressed(target_card: Card) -> void:
 				+ " is protected by Guardian."
 			)
 			return
-		if game_manager.is_immune_to_source(target_card, stupefy_source):
-			_cancel_pending_target_selection(
-				_get_pending_target_selection_name()
-				+ " cancelled: "
-				+ target_card.card_name
-				+ " is immune to "
-				+ stupefy_source.card_name
-				+ "."
-			)
-			return
 
 	if _try_resolve_stupefy_target(target_card):
 		return
@@ -6508,8 +6521,8 @@ func _on_enemy_card_pressed(target_card: Card) -> void:
 			target_id = target_card.get("uid")
 		
 		if target_id != "":
-			if network_manager != null:
-				network_manager.request_action({
+			if _is_networked_client:
+				game_input.submit_action({
 					"type": "request_attack",
 					"attacker_uid": selected_attacker.get("uid"),
 					"target_id": target_id
@@ -7225,6 +7238,12 @@ func _get_declared_attack_speed(attacker: Card) -> int:
 		return attacker.get_united_front_attack_speed(game_manager)
 	return attacker.get_effective_speed()
 
+func _is_real_network_host() -> bool:
+	return headless_match_host != null \
+		and headless_match_host.should_route_prompts_via_network() \
+		and network_manager != null \
+		and network_manager.get("is_server") == true
+
 func can_intercept(defender: Card, attacker: Card, protected_target) -> bool:
 	if attacker == null:
 		return false
@@ -7236,7 +7255,8 @@ func can_intercept(defender: Card, attacker: Card, protected_target) -> bool:
 		return false
 	if defender.is_sleeping:
 		return false
-	if defender.get_effective_speed() < _get_declared_attack_speed(attacker):
+	var interceptor_speed := game_manager.get_interceptor_speed_against_attacker(defender, attacker)
+	if interceptor_speed < _get_declared_attack_speed(attacker):
 		return false
 	if not game_manager.can_interceptor_engage_attacker(defender, attacker):
 		return false
@@ -7263,9 +7283,7 @@ func check_for_possible_intercepts() -> void:
 	var defender_peer_id := -1
 	if network_manager != null and defender_idx >= 0:
 		defender_peer_id = int(network_manager.player_peer_ids.get(defender_idx, -1))
-	var is_remote_defender: bool = network_manager != null \
-		and network_manager.get("is_server") == true \
-		and defender_peer_id > 1
+	var is_remote_defender: bool = _is_real_network_host() and defender_peer_id > 1
 
 	if is_remote_defender:
 		if possible_interceptors.size() > 0:
@@ -7422,8 +7440,7 @@ func _offer_priority() -> void:
 	var responses := game_manager.get_priority_responses(player)
 	update_ui()
 
-	var is_remote_priority: bool = network_manager != null \
-		and network_manager.get("is_server") == true \
+	var is_remote_priority: bool = _is_real_network_host() \
 		and not game_manager.players.is_empty() \
 		and player != game_manager.players[0]
 
@@ -7534,6 +7551,19 @@ func _show_priority_prompt(player: Player) -> void:
 	pass_btn.text = "Pass Priority"
 	pass_btn.pressed.connect(_on_priority_pass_pressed)
 	vbox.add_child(pass_btn)
+
+	for response_card in game_manager.get_priority_responses(player):
+		if response_card == null:
+			continue
+		var response: Card = response_card as Card
+		if response == null:
+			continue
+		var btn := Button.new()
+		btn.text = "Use " + response.card_name
+		btn.pressed.connect(func() -> void:
+			_on_priority_response_chosen(response)
+		)
+		vbox.add_child(btn)
 
 	_promote_transient_ui(panel)
 	panel.show()
@@ -10114,9 +10144,14 @@ func _do_end_turn() -> void:
 		if _is_networked_client:
 			return  # Client waits for server to send upkeep_needed
 		# GameEventBroadcaster sends upkeep_needed to the remote client via _on_turn_started.
-		# Only open the window locally when it's still the host's (player 0) turn.
+		# Only suppress the local window when this is a real hosted network match and
+		# the new turn belongs to the remote player. Local tools like CardTestGame
+		# also install a stub NetworkManager, but both players are controlled here.
 		var new_cp_idx: int = game_manager.players.find(game_manager.current_player)
-		var is_remote_new_turn: bool = network_manager != null \
+		var is_real_network_host_turn: bool = headless_match_host != null \
+			and headless_match_host.should_receive_network_events()
+		var is_remote_new_turn: bool = is_real_network_host_turn \
+			and network_manager != null \
 			and network_manager.get("is_server") == true \
 			and new_cp_idx != 0
 		if not is_remote_new_turn:
@@ -10226,13 +10261,19 @@ func _on_allow_ai_attack() -> void:
 	pass
 
 func _on_player_mana_changed(_new_mana: int) -> void:
+	_invalidate_cached_board_layouts()
+	_refresh_visible_stat_panels()
 	if game_manager and game_manager.current_player == player1:
 		update_ui()
 
 func _on_player_followers_changed(_new_followers: int) -> void:
+	_invalidate_cached_board_layouts()
+	_refresh_visible_stat_panels()
 	_request_ui_refresh()
 
 func _on_enemy_followers_changed(_new_followers: int) -> void:
+	_invalidate_cached_board_layouts()
+	_refresh_visible_stat_panels()
 	_request_ui_refresh()
 
 func _on_game_ended(winner: Player, loser: Player) -> void:
@@ -10256,6 +10297,9 @@ func _on_game_ended(winner: Player, loser: Player) -> void:
 	update_ui()
 
 func _request_ui_refresh() -> void:
+	if not _is_networked_client and not _is_real_network_host():
+		update_ui()
+		return
 	if _ui_refresh_queued:
 		return
 	_ui_refresh_queued = true

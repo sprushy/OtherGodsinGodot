@@ -115,6 +115,8 @@ func get_valid_targets(game_manager: GameManager) -> Array[Card]:
 				continue
 			if get_removable_statuses(card).is_empty():
 				continue
+			if game_manager.is_immune_to_source(card, self):
+				continue
 			valid_targets.append(card)
 	return valid_targets
 
@@ -140,6 +142,9 @@ func activate(game_manager: GameManager, target: Card = null) -> void:
 			game_manager.note_player_feedback(
 				"%s: choose a friendly creature with a negative effect." % card_name
 			)
+		return
+	if game_manager.is_immune_to_source(target, self):
+		game_manager.note_player_feedback("%s: %s is immune to creature abilities." % [card_name, target.card_name])
 		return
 	var removable := get_removable_statuses(target)
 	if removable.is_empty():

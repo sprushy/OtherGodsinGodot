@@ -163,25 +163,30 @@ func can_interceptor_engage_attacker(interceptor: Card, attacker: Card) -> bool:
 # Returns eligible speed-2+ responses the given player can play against the top stack action.
 func get_priority_responses(player: Player) -> Array:
 	var responses: Array = []
+	var seen_response_ids: Dictionary = {}
 	if action_stack.is_empty():
 		return responses
 	for card in player.god_zone.cards:
-		if can_card_respond_to_priority(card, player):
-			responses.append(card)
+		_append_unique_priority_response(responses, seen_response_ids, card, player)
 	for zone in player.power_zones + player.frontline_zones + player.reserve_zones:
 		for card in zone.cards:
-			if can_card_respond_to_priority(card, player):
-				responses.append(card)
+			_append_unique_priority_response(responses, seen_response_ids, card, player)
 	for hex in prepared_hexes.keys().duplicate():
-		if can_card_respond_to_priority(hex, player):
-			responses.append(hex)
+		_append_unique_priority_response(responses, seen_response_ids, hex, player)
 	for charm in prepared_charms.keys().duplicate():
-		if can_card_respond_to_priority(charm, player):
-			responses.append(charm)
+		_append_unique_priority_response(responses, seen_response_ids, charm, player)
 	for c in player.hand_zone.cards:
-		if can_card_respond_to_priority(c, player):
-			responses.append(c)
+		_append_unique_priority_response(responses, seen_response_ids, c, player)
 	return responses
+
+func _append_unique_priority_response(responses: Array, seen_response_ids: Dictionary, card: Card, player: Player) -> void:
+	if card == null or not can_card_respond_to_priority(card, player):
+		return
+	var card_id := card.get_instance_id()
+	if seen_response_ids.has(card_id):
+		return
+	seen_response_ids[card_id] = true
+	responses.append(card)
 
 func can_card_respond_to_priority(card: Card, player: Player = null) -> bool:
 	if card == null or action_stack.is_empty():
@@ -403,6 +408,14 @@ func has_target_immunity(target: Card, source: Card, immunity_kind: String) -> b
 		if status.get("ward_kind", "") != immunity_kind:
 			continue
 		return true
+	if immunity_kind == "hexes":
+		var controller := target.get_controller()
+		if controller == null:
+			return false
+		for zone in controller.frontline_zones + controller.reserve_zones:
+			for card in zone.cards:
+				if card is EnkiLordOfEridu and (card as EnkiLordOfEridu).protects_from_hex(target):
+					return true
 	return false
 
 func _is_watchbeast_active() -> bool:
@@ -1075,15 +1088,33 @@ func creature_attack(attacker: Card, target) -> void:
 		else:
 			resolve_combat(attacker, target)
 	elif target is Player:
-		var attackers: Array[Card] = _get_active_united_front_attackers(attacker, united_front_partner)
-		var total_strength := 0
-		for combatant in attackers:
-			total_strength += combatant.get_effective_strength()
-		if total_strength <= 0:
-			total_strength = attacker.get_effective_strength()
-		target.lose_followers(total_strength)
-		_notify_after_united_front_combat(attacker, united_front_partner, null)
-		_notify_opponent_attacks_followers(attacker, target)
+		resolve_followers_attack(_get_active_united_front_attackers(attacker, united_front_partner), target)
+
+func resolve_followers_attack(attackers: Array[Card], defending_player: Player) -> int:
+	if defending_player == null:
+		return 0
+	var active_attackers: Array[Card] = []
+	for combatant in attackers:
+		if combatant != null and combatant.current_zone != null and combatant.current_zone.is_board_zone():
+			active_attackers.append(combatant)
+	if active_attackers.is_empty():
+		return 0
+
+	var follower_damage := 0
+	for combatant in active_attackers:
+		follower_damage += combatant.get_effective_strength()
+	if follower_damage > 0:
+		defending_player.lose_followers(follower_damage)
+
+	if active_attackers.size() >= 2:
+		_notify_after_united_front_combat(active_attackers[0], active_attackers[1], null)
+	else:
+		_notify_after_combat(active_attackers[0], null)
+
+	for combatant in active_attackers:
+		_notify_opponent_attacks_followers(combatant, defending_player)
+
+	return follower_damage
 
 func _notify_opponent_attacks_followers(attacker: Card, defending_player: Player) -> void:
 	if attacker == null or defending_player == null:
@@ -1103,10 +1134,7 @@ func _can_intercept_followers(defender: Card, attacker: Card) -> bool:
 		return false
 	if not defender.get_status_effect("cannot_intercept").is_empty():
 		return false
-	var interceptor_speed := defender.get_effective_speed()
-	if defender.has_type("Giant") and not attacker.has_type("Giant") \
-			and _has_giants_disdain(defender.get_controller()):
-		interceptor_speed += 5
+	var interceptor_speed := get_interceptor_speed_against_attacker(defender, attacker)
 	if interceptor_speed < attacker.get_effective_speed():
 		return false
 	if not _can_interceptor_engage_attacker(defender, attacker):
@@ -1135,6 +1163,17 @@ func _can_interceptor_engage_attacker(interceptor: Card, attacker: Card) -> bool
 	if attacker.has_method("can_be_engaged_by") and not attacker.can_be_engaged_by(interceptor):
 		return false
 	return true
+
+func get_interceptor_speed_against_attacker(interceptor: Card, attacker: Card) -> int:
+	if interceptor == null:
+		return 0
+	var interceptor_speed := interceptor.get_effective_speed()
+	if attacker != null \
+			and interceptor.has_type("Giant") \
+			and not attacker.has_type("Giant") \
+			and _has_giants_disdain(interceptor.get_controller()):
+		interceptor_speed += 5
+	return interceptor_speed
 
 func check_for_intercept(attacker: Card, defending_player: Player) -> Card:
 	print("	Checking for intercepts...")
@@ -1192,20 +1231,19 @@ func resolve_combat(attacker: Card, defender: Card, continue_callback: Callable 
 
 	if defender.card_type == Card.CardType.CREATURE:
 		if defender.creature_mode == Card.CreatureMode.AGGRESSIVE:
-			# Strength vs Strength
-			var defender_str = defender.get_effective_strength()
-			# Giant's Disdain: ignore the non-Giant defender's strength for damage calc
-			if _giants_disdain_applies(attacker, defender):
-				defender_str = 0
-			print("	STR vs STR: " + str(attacker_str) + " vs " + str(defender_str))
+			# Strength vs Strength — real stats determine who wins; disdain halves for damage only
+			var defender_str_real: int = defender.get_effective_strength()
+			var defender_str_for_damage: int = _get_giants_disdain_damage_stat(defender, [attacker], defender_str_real)
+			var attacker_str_for_damage: int = _get_giants_disdain_damage_stat(attacker, [defender], attacker_str)
+			print("	STR vs STR: " + str(attacker_str) + " vs " + str(defender_str_real) + ((" (disdain→damage as %d)" % defender_str_for_damage) if defender_str_for_damage != defender_str_real else ""))
 
-			if attacker_str > defender_str:
-				var diff = attacker_str - defender_str
+			if attacker_str > defender_str_real:
+				var diff = attacker_str - defender_str_for_damage
 				print("	" + defender.card_name + " destroyed! " + defender_controller.player_name + " loses " + str(diff) + " followers")
 				defender_controller.lose_followers(diff)
 				_combat_kill(attacker, defender)
-			elif defender_str > attacker_str:
-				var diff = defender_str - attacker_str
+			elif defender_str_real > attacker_str:
+				var diff = defender_str_real - attacker_str_for_damage
 				print("	" + attacker.card_name + " destroyed! " + attacker_controller.player_name + " loses " + str(diff) + " followers")
 				attacker_controller.lose_followers(diff)
 				_combat_kill(defender, attacker)
@@ -1215,31 +1253,32 @@ func resolve_combat(attacker: Card, defender: Card, continue_callback: Callable 
 				var void_defender := _should_class_rend(attacker, defender)
 				_combat_kill_routed(defender, attacker, void_attacker)
 				_combat_kill_routed(attacker, defender, void_defender)
-		else:	# Defensive stance
+		else:	# Defensive stance - real RES determines kill; Giant's Disdain only reduces the opposing attack stat.
 			var vs_defense_bonus := 0
 			for equip in attacker.equipment:
 				if equip is EquipmentCard:
 					vs_defense_bonus += equip.get_bonus_strength_vs_defense(attacker)
 			var attacker_str_vs_res: int = attacker_str + vs_defense_bonus
-			var defender_res: int = defender.get_effective_resilience()
-			# Giant's Disdain: ignore the non-Giant defender's resilience for damage calc
-			if _giants_disdain_applies(attacker, defender):
-				defender_res = 0
-			print("	STR vs RES: " + str(attacker_str_vs_res) + " vs " + str(defender_res))
+			var attacker_str_for_conversion: int = _get_giants_disdain_damage_stat(attacker, [defender], attacker_str) + vs_defense_bonus
+			var defender_res_real: int = defender.get_effective_resilience()
+			print("\tSTR vs RES: " + str(attacker_str_vs_res) + " vs " + str(defender_res_real))
 
-			if attacker_str_vs_res > defender_res:
+			if attacker_str_vs_res > defender_res_real:
 				print("	" + defender.card_name + " destroyed!")
 				_combat_kill(attacker, defender)
-			elif attacker_str_vs_res < defender_res:
+			elif attacker_str_vs_res < defender_res_real:
 				if _ferocious_defence_triggers(defender, attacker_str_vs_res):
 					print("	Ferocious Defence! " + attacker.card_name + " destroyed!")
 					_combat_kill(defender, attacker)
 				else:
-					# Followers convert to defender's side
-					var diff: int = defender_res - attacker_str_vs_res
-					print("	" + str(diff) + " followers convert to " + defender_controller.player_name)
-					attacker_controller.lose_followers(diff)
-					defender_controller.gain_followers(diff)
+					# Followers convert using the defender's full resilience, with Giant's Disdain reducing only the opposing attack stat.
+					var diff_damage: int = maxi(0, defender_res_real - attacker_str_for_conversion)
+					var diff_gain: int = defender_res_real - attacker_str_vs_res
+					print("	" + str(diff_damage) + " followers convert to " + defender_controller.player_name)
+					attacker_controller.lose_followers(diff_damage)
+					defender_controller.gain_followers(diff_damage)
+					if diff_gain != diff_damage:
+						print("\t(disdain adjusted conversion from %d to %d)" % [diff_gain, diff_damage])
 			else:
 				print("	Exact match - no effect")
 	elif defender.card_type == Card.CardType.EQUIPMENT and defender.equipped_on == null:
@@ -1288,18 +1327,17 @@ func resolve_united_front_combat(attacker: Card, partner: Card, defender: Card) 
 
 	if defender.card_type == Card.CardType.CREATURE:
 		if defender.creature_mode == Card.CreatureMode.AGGRESSIVE:
-			var defender_str := defender.get_effective_strength()
-			# Giant's Disdain: ignore non-Giant defender's strength for damage calc
-			if _giants_disdain_applies(primary, defender):
-				defender_str = 0
-			print("	Combined STR vs STR: %d vs %d" % [combined_strength, defender_str])
-			if combined_strength > defender_str:
-				var diff := combined_strength - defender_str
+			var defender_str_real: int = defender.get_effective_strength()
+			var defender_str_for_damage: int = _get_giants_disdain_damage_stat(defender, active_attackers, defender_str_real)
+			var combined_strength_for_damage: int = _get_giants_disdain_combined_strength_for_damage(active_attackers, defender)
+			print("	Combined STR vs STR: %d vs %d" % [combined_strength, defender_str_real])
+			if combined_strength > defender_str_real:
+				var diff := combined_strength - defender_str_for_damage
 				print("	%s destroyed! %s loses %d followers" % [defender.card_name, defender_controller.player_name, diff])
 				defender_controller.lose_followers(diff)
 				_combat_kill(primary, defender)
-			elif defender_str > combined_strength:
-				var diff := defender_str - combined_strength
+			elif defender_str_real > combined_strength:
+				var diff := defender_str_real - combined_strength_for_damage
 				print("	United Front loses! %s loses %d followers" % [attacker_controller.player_name, diff])
 				note_player_feedback("United Front loses! Both attackers are destroyed.")
 				attacker_controller.lose_followers(diff)
@@ -1320,24 +1358,22 @@ func resolve_united_front_combat(attacker: Card, partner: Card, defender: Card) 
 					if equip is EquipmentCard:
 						vs_defense_bonus += equip.get_bonus_strength_vs_defense(combatant)
 			var attacker_str_vs_res: int = combined_strength + vs_defense_bonus
-			var defender_res := defender.get_effective_resilience()
-			# Giant's Disdain: ignore non-Giant defender's resilience for damage calc
-			if _giants_disdain_applies(primary, defender):
-				defender_res = 0
-			print("	Combined STR vs RES: %d vs %d" % [attacker_str_vs_res, defender_res])
-			if attacker_str_vs_res > defender_res:
+			var attacker_str_for_conversion: int = _get_giants_disdain_combined_strength_for_damage(active_attackers, defender) + vs_defense_bonus
+			var defender_res_real: int = defender.get_effective_resilience()
+			print("\tCombined STR vs RES: %d vs %d" % [attacker_str_vs_res, defender_res_real])
+			if attacker_str_vs_res > defender_res_real:
 				print("	%s destroyed!" % defender.card_name)
 				_combat_kill(primary, defender)
-			elif attacker_str_vs_res < defender_res:
+			elif attacker_str_vs_res < defender_res_real:
 				if _ferocious_defence_triggers(defender, attacker_str_vs_res):
 					print("	Ferocious Defence! United Front attackers destroyed!")
 					_combat_kill(defender, primary)
 					_combat_kill(defender, support)
 				else:
-					var diff := defender_res - attacker_str_vs_res
-					print("	%d followers convert to %s" % [diff, defender_controller.player_name])
-					attacker_controller.lose_followers(diff)
-					defender_controller.gain_followers(diff)
+					var diff_damage: int = maxi(0, defender_res_real - attacker_str_for_conversion)
+					print("	%d followers convert to %s" % [diff_damage, defender_controller.player_name])
+					attacker_controller.lose_followers(diff_damage)
+					defender_controller.gain_followers(diff_damage)
 			else:
 				print("	Exact match - no effect")
 	elif defender.card_type == Card.CardType.EQUIPMENT and defender.equipped_on == null:
@@ -1386,6 +1422,7 @@ func resolve_combat_with_continuation(
 	if defender.is_god:
 		defender_controller.lose_followers(attacker.get_effective_strength())
 		print(attacker.card_name + " attacks " + defender_controller.player_name + "'s followers for " + str(attacker.get_effective_strength()) + " (via god)!")
+		_notify_opponent_attacks_followers(attacker, defender_controller)
 		finish.call()
 		return true
 	if attacker.has_method("on_attack") and not attacker.abilities_suppressed():
@@ -1404,18 +1441,17 @@ func resolve_combat_with_continuation(
 		return true
 	if defender.card_type == Card.CardType.CREATURE:
 		if defender.creature_mode == Card.CreatureMode.AGGRESSIVE:
-			var defender_str := defender.get_effective_strength()
-			# Giant's Disdain: ignore non-Giant defender's strength for damage calc
-			if _giants_disdain_applies(attacker, defender):
-				defender_str = 0
-			print("	STR vs STR: " + str(attacker_str) + " vs " + str(defender_str))
-			if attacker_str > defender_str:
-				var diff := attacker_str - defender_str
+			var defender_str_real: int = defender.get_effective_strength()
+			var defender_str_for_damage: int = _get_giants_disdain_damage_stat(defender, [attacker], defender_str_real)
+			var attacker_str_for_damage: int = _get_giants_disdain_damage_stat(attacker, [defender], attacker_str)
+			print("	STR vs STR: " + str(attacker_str) + " vs " + str(defender_str_real))
+			if attacker_str > defender_str_real:
+				var diff := attacker_str - defender_str_for_damage
 				print("	" + defender.card_name + " destroyed! " + defender_controller.player_name + " loses " + str(diff) + " followers")
 				defender_controller.lose_followers(diff)
 				return _combat_kill_deferred(attacker, defender, finish)
-			if defender_str > attacker_str:
-				var diff := defender_str - attacker_str
+			if defender_str_real > attacker_str:
+				var diff := defender_str_real - attacker_str_for_damage
 				print("	" + attacker.card_name + " destroyed! " + attacker_controller.player_name + " loses " + str(diff) + " followers")
 				attacker_controller.lose_followers(diff)
 				return _combat_kill_deferred(defender, attacker, finish)
@@ -1429,22 +1465,20 @@ func resolve_combat_with_continuation(
 			if equip is EquipmentCard:
 				vs_defense_bonus += equip.get_bonus_strength_vs_defense(attacker)
 		var attacker_str_vs_res: int = attacker_str + vs_defense_bonus
-		var defender_res: int = defender.get_effective_resilience()
-		# Giant's Disdain: ignore non-Giant defender's resilience for damage calc
-		if _giants_disdain_applies(attacker, defender):
-			defender_res = 0
-		print("	STR vs RES: " + str(attacker_str_vs_res) + " vs " + str(defender_res))
-		if attacker_str_vs_res > defender_res:
+		var attacker_str_for_conversion: int = _get_giants_disdain_damage_stat(attacker, [defender], attacker_str) + vs_defense_bonus
+		var defender_res_real: int = defender.get_effective_resilience()
+		print("\tSTR vs RES: " + str(attacker_str_vs_res) + " vs " + str(defender_res_real))
+		if attacker_str_vs_res > defender_res_real:
 			print("	" + defender.card_name + " destroyed!")
 			return _combat_kill_deferred(attacker, defender, finish)
-		if attacker_str_vs_res < defender_res:
+		if attacker_str_vs_res < defender_res_real:
 			if _ferocious_defence_triggers(defender, attacker_str_vs_res):
 				print("	Ferocious Defence! " + attacker.card_name + " destroyed!")
 				return _combat_kill_deferred(defender, attacker, finish)
-			var diff: int = defender_res - attacker_str_vs_res
-			print("	" + str(diff) + " followers convert to " + defender_controller.player_name)
-			attacker_controller.lose_followers(diff)
-			defender_controller.gain_followers(diff)
+			var diff_damage: int = maxi(0, defender_res_real - attacker_str_for_conversion)
+			print("	" + str(diff_damage) + " followers convert to " + defender_controller.player_name)
+			attacker_controller.lose_followers(diff_damage)
+			defender_controller.gain_followers(diff_damage)
 	elif defender.card_type == Card.CardType.EQUIPMENT and defender.equipped_on == null:
 		print("	Equipment destroyed!")
 		return _combat_kill_deferred(attacker, defender, finish)
@@ -2196,17 +2230,34 @@ func _has_ferocious_defence(player: Player) -> bool:
 func _has_giants_disdain(player: Player) -> bool:
 	return _player_has_active_power_of_type(player, GiantsDisdain)
 
-# Returns true when Giant's Disdain should suppress the defender's stats for
-# follower-damage calculation: attacker is a Giant, defender is not, and the
-# attacker's controller has Giant's Disdain active.
-func _giants_disdain_applies(attacker: Card, defender: Card) -> bool:
-	if attacker == null or defender == null:
+# Returns true when Giant's Disdain should halve `stat_owner`'s stat for
+# follower-damage calculation because an opposing Giant with the power is in combat.
+func _giants_disdain_applies(stat_owner: Card, opposing_cards: Array[Card]) -> bool:
+	if stat_owner == null:
 		return false
-	if not attacker.has_type("Giant"):
+	if stat_owner.has_type("Giant"):
 		return false
-	if defender.has_type("Giant"):
-		return false
-	return _has_giants_disdain(attacker.get_controller())
+	for opposing_card in opposing_cards:
+		if opposing_card == null:
+			continue
+		if not opposing_card.has_type("Giant"):
+			continue
+		if _has_giants_disdain(opposing_card.get_controller()):
+			return true
+	return false
+
+func _get_giants_disdain_damage_stat(stat_owner: Card, opposing_cards: Array[Card], base_stat: int) -> int:
+	if not _giants_disdain_applies(stat_owner, opposing_cards):
+		return base_stat
+	return maxi(0, int(floor(float(base_stat) / 2.0)))
+
+func _get_giants_disdain_combined_strength_for_damage(attackers: Array[Card], opposing_card: Card) -> int:
+	var total := 0
+	for attacker in attackers:
+		if attacker == null:
+			continue
+		total += _get_giants_disdain_damage_stat(attacker, [opposing_card], attacker.get_effective_strength())
+	return total
 
 func _ferocious_defence_triggers(defender: Card, opposing_strength: int) -> bool:
 	if defender == null:

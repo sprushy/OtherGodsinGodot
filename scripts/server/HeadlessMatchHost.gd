@@ -52,6 +52,9 @@ func setup_transport(
 		network_manager.create_client(server_ip, server_port)
 	else:
 		network_manager.is_server = true
+		network_manager.local_player_index = 0
+		network_manager.player_peer_ids.clear()
+		network_manager.player_peer_ids[0] = 1
 
 	if match_manager != null:
 		match_manager.network_manager = network_manager

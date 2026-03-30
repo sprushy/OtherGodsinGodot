@@ -199,6 +199,15 @@ func get_preferred_auth_mode() -> String:
 		return mode
 	return AUTH_MODE_GUEST
 
+func has_seen_auth_onboarding() -> bool:
+	_ensure_loaded()
+	return bool(_data.get("auth_onboarding_seen", false))
+
+func mark_auth_onboarding_seen(seen: bool = true) -> void:
+	_ensure_loaded()
+	_data["auth_onboarding_seen"] = seen
+	_save()
+
 func set_preferred_auth_mode(auth_mode: String) -> void:
 	_ensure_loaded()
 	var resolved_mode := auth_mode.strip_edges().to_lower()
@@ -214,6 +223,20 @@ func get_last_account_username() -> String:
 func remember_account_username(username: String) -> void:
 	_ensure_loaded()
 	_data["last_account_username"] = username.strip_edges()
+	_save()
+
+func get_last_account_password() -> String:
+	_ensure_loaded()
+	return str(_data.get("last_account_password", ""))
+
+func remember_account_password(password: String) -> void:
+	_ensure_loaded()
+	_data["last_account_password"] = password
+	_save()
+
+func clear_account_password() -> void:
+	_ensure_loaded()
+	_data["last_account_password"] = ""
 	_save()
 
 func remember_lobby_resume(
@@ -339,6 +362,8 @@ func _ensure_loaded() -> void:
 		"active_match_by_profile": {},
 		"preferred_auth_mode": AUTH_MODE_GUEST,
 		"last_account_username": "",
+		"last_account_password": "",
+		"auth_onboarding_seen": false,
 	}
 	if not FileAccess.file_exists(STORAGE_PATH):
 		return

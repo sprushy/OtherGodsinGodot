@@ -270,7 +270,7 @@ func _setup_test_board() -> void:
 		+ "Berserker has 'cannot_attack' status — use Gawain Healing Hands (2 mana, minor action) to remove it; then Berserker can attack; play Gungnir from hand in response to destroy the target.  |  "
 		+ "Gawain Sun Blessing: check tripled stats (10 Str → 30, 7 Res → 21) during P1's turn; resets after first attack.  |  "
 		+ "Gilgamesh attacks EnkiLordOfEridu (level 6 vs 3): Inspired Strength grants +21 Str for that combat.  |  "
-		+ "GududPriest (Activate, minor action): target any creature to make it immune to creature abilities this turn.  |  "
+		+ "Gudu Priest Creature Ward: target Berserker or any creature to clear creature-applied effects, then make it immune to creature abilities this turn.  |  "
 		+ "Garm Watchbeast: graveyard cards (Gallu, AgainWalker) immune to opponent effects while Garm is in play.  |  "
 		+ "GalaTura (reserve): Water of Life graveward active on both graveyard cards — destroy GalaTura to trigger Destroyed and return up to 3 graveyard creatures to deck bottom.  |  "
 		+ "GidimEnsi (reserve, defensive, Incorporeal): any P2 creature that attacks P1's followers falls asleep; can only be engaged by Spirits or faster Mages.  |  "

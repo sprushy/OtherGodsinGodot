@@ -203,6 +203,12 @@ func _resolve_attack(action: CardAction) -> void:
 	action.attacker.mark_attacked_this_turn()
 
 	if actual_target is Card:
+		# If the target left the board before the attack resolved (e.g. Gungnir destroyed it),
+		# the attack fizzles — attacker still spends their action.
+		if actual_target.current_zone == null or not actual_target.current_zone.is_board_zone():
+			action.attacker.spend_major_creature_action()
+			last_resolution_text = action.attacker.card_name + "'s attack fizzles — target is no longer on the board."
+			return
 		# Check for Askelladen Tactful Retreat prompts.
 		# If any combatant can retreat, delegate to the UI for the interactive prompt.
 		# Otherwise, resolve headlessly so the server can handle networked combat.
@@ -219,19 +225,15 @@ func _resolve_attack(action: CardAction) -> void:
 		var active_attackers := _get_active_attackers(action)
 		if active_attackers.is_empty():
 			return
-			
-		var follower_damage := 0
 		for combatant in active_attackers:
-			follower_damage += combatant.get_effective_strength()
 			combatant.spend_major_creature_action()
 			combatant.mark_attacked_this_turn()
-			
-		if active_attackers.size() >= 2:
-			game_manager._notify_after_united_front_combat(active_attackers[0], active_attackers[1], null)
-		else:
-			game_manager._notify_after_combat(active_attackers[0], null)
-			
-		actual_target.lose_followers(follower_damage)
+		var follower_damage := game_manager.resolve_followers_attack(active_attackers, actual_target)
+		last_resolution_text = "%s attacks %s's followers for %d!" % [
+			action.attacker.card_name,
+			actual_target.player_name,
+			follower_damage
+		]
 
 ## Headless combat resolution (no retreat dialog needed).
 ## Called by _resolve_attack when no Askelladen can retreat.
@@ -354,8 +356,13 @@ func request_attack(attacker, target) -> void:
 	var target_obj = target
 	
 	if target is String:
+		target_obj = null
 		# Check if target is a card
 		target_obj = game_manager.get_card_by_uid(target)
+		if target_obj == null:
+			var target_index := int(target)
+			if str(target_index) == target and target_index >= 0 and target_index < game_manager.players.size():
+				target_obj = game_manager.players[target_index]
 		if target_obj == null:
 			# Check if target is a player (by index or name)
 			for p in game_manager.players:

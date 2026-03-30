@@ -141,6 +141,12 @@ func _build_top_bar(parent: Control) -> void:
 	title.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	inner.add_child(title)
 
+	var title_gap := Control.new()
+	title_gap.custom_minimum_size.x = 16
+	inner.add_child(title_gap)
+
+	_add_faction_filter_controls(inner, 30)
+
 	var spacer := Control.new()
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	inner.add_child(spacer)
@@ -186,16 +192,23 @@ func _build_faction_bar(parent: Control) -> void:
 	pad_l.custom_minimum_size.x = 8
 	inner.add_child(pad_l)
 
-	var faction_lbl := Label.new()
-	faction_lbl.text = "Faction:"
-	faction_lbl.add_theme_font_size_override("font_size", 11)
-	faction_lbl.modulate = Color(0.7, 0.7, 0.7)
-	faction_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	faction_lbl.custom_minimum_size.y = 30
-	faction_lbl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	inner.add_child(faction_lbl)
+	var view_lbl := Label.new()
+	view_lbl.text = "Card View:"
+	view_lbl.add_theme_font_size_override("font_size", 11)
+	view_lbl.modulate = Color(0.7, 0.7, 0.7)
+	view_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	view_lbl.custom_minimum_size.y = 30
+	view_lbl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	inner.add_child(view_lbl)
 
-	# Collect unique cultures from card pool, sorted
+	_add_card_view_controls(inner)
+
+	var spacer := Control.new()
+	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	inner.add_child(spacer)
+
+func _add_faction_filter_controls(parent: Control, button_height: float = 26.0) -> void:
+	# Collect unique cultures from card pool, sorted.
 	var cultures: Array = []
 	for card in _all_cards:
 		if card.culture != "" and card.culture not in cultures:
@@ -209,14 +222,23 @@ func _build_faction_bar(parent: Control) -> void:
 		btn.toggle_mode = true
 		btn.button_group = btn_group
 		btn.button_pressed = (label == _faction_filter)
-		btn.custom_minimum_size = Vector2(72, 26)
+		btn.custom_minimum_size = Vector2(72, button_height)
 		var captured: String = label
 		btn.pressed.connect(func() -> void: _set_faction_filter(captured))
-		inner.add_child(btn)
+		parent.add_child(btn)
 
-	var spacer := Control.new()
-	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	inner.add_child(spacer)
+func _add_card_view_controls(parent: Control) -> void:
+	var view_group := ButtonGroup.new()
+	for preset: Dictionary in CARD_VIEW_PRESETS:
+		var btn := Button.new()
+		btn.text = str(preset["label"])
+		btn.toggle_mode = true
+		btn.button_group = view_group
+		btn.button_pressed = int(preset["rows"]) == _collection_rows
+		btn.custom_minimum_size = Vector2(64, 28)
+		var captured_rows: int = int(preset["rows"])
+		btn.pressed.connect(func() -> void: _set_collection_rows(captured_rows))
+		parent.add_child(btn)
 
 func _build_collection_panel(parent: Control) -> void:
 	var panel := PanelContainer.new()
@@ -236,29 +258,6 @@ func _build_collection_panel(parent: Control) -> void:
 	var view_bar := HBoxContainer.new()
 	view_bar.add_theme_constant_override("separation", 6)
 	content.add_child(view_bar)
-
-	var view_lbl := Label.new()
-	view_lbl.text = "Card View:"
-	view_lbl.add_theme_font_size_override("font_size", 11)
-	view_lbl.modulate = Color(0.7, 0.7, 0.7)
-	view_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	view_bar.add_child(view_lbl)
-
-	var view_group := ButtonGroup.new()
-	for preset: Dictionary in CARD_VIEW_PRESETS:
-		var btn := Button.new()
-		btn.text = str(preset["label"])
-		btn.toggle_mode = true
-		btn.button_group = view_group
-		btn.button_pressed = int(preset["rows"]) == _collection_rows
-		btn.custom_minimum_size = Vector2(64, 28)
-		var captured_rows: int = int(preset["rows"])
-		btn.pressed.connect(func() -> void: _set_collection_rows(captured_rows))
-		view_bar.add_child(btn)
-
-	var view_spacer := Control.new()
-	view_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	view_bar.add_child(view_spacer)
 
 	var sort_lbl := Label.new()
 	sort_lbl.text = "Sort:"

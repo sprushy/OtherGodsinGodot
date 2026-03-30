@@ -108,6 +108,7 @@ var _was_muted_last_check: bool = false
 var _pending_chosen_discards: Array[Card] = []
 
 const EXTERNAL_EFFECT_NEGATION_STATUS := "external_effect_negation"
+const ABILITY_NEGATED_STATUS := "ability_negated"
 const COST_KIND_POWER_UNLOCK := "power_unlock"
 const COST_KIND_POWER_ACTIVATION := "power_activation"
 const COST_KIND_CREATURE_SUMMON := "creature_summon"
@@ -337,7 +338,7 @@ func is_silenced() -> bool:
 	return is_muted and mute_turns_remaining < 0
 
 func abilities_suppressed() -> bool:
-	return is_enslaved() or is_petrified() or is_muted
+	return is_enslaved() or is_petrified() or is_muted or has_status_effect(ABILITY_NEGATED_STATUS)
 
 func get_effective_speed() -> int:
 	var base_speed = speed
@@ -432,6 +433,9 @@ func get_effect_summary_lines() -> Array[String]:
 			continue
 		if raw_status_name == "activation_locked":
 			lines.append("Cannot activate this turn from " + str(status.get("source", "?")))
+			continue
+		if raw_status_name == ABILITY_NEGATED_STATUS:
+			lines.append("Abilities negated from " + str(status.get("source", "?")))
 			continue
 		var status_name := raw_status_name.capitalize()
 		lines.append(status_name + " from " + str(status.get("source", "?")))
@@ -695,17 +699,67 @@ func _get_effective_buffs() -> Array[Dictionary]:
 
 func _get_effective_statuses() -> Array[Dictionary]:
 	if not negates_external_effects():
-		return active_statuses
+		var direct_statuses: Array[Dictionary] = []
+		for status in active_statuses:
+			if _is_blocked_by_source_immunity(status):
+				continue
+			direct_statuses.append(status)
+		return direct_statuses
 	var filtered: Array[Dictionary] = []
 	for status in active_statuses:
-		if not _is_external_effect_entry(status):
-			filtered.append(status)
+		if _is_external_effect_entry(status):
+			continue
+		if _is_blocked_by_source_immunity(status):
+			continue
+		filtered.append(status)
 	return filtered
 
 func _is_external_effect_entry(entry: Dictionary) -> bool:
 	if entry.get("allow_while_negated", false) == true:
 		return false
 	return entry.get("source_card", null) != self
+
+func _is_blocked_by_source_immunity(entry: Dictionary) -> bool:
+	if entry.get("blocked_by_source_immunity", false) != true:
+		return false
+	var source_card := entry.get("source_card", null) as Card
+	if source_card == null:
+		return false
+	var immunity_kind := source_card.get_ability_immunity_tag() if source_card.has_method("get_ability_immunity_tag") else ""
+	if immunity_kind == "":
+		return false
+	for status in active_statuses:
+		if status.get("name", "") != "blessed_ward":
+			continue
+		if negates_external_effects() and _is_external_effect_entry(status):
+			continue
+		if status.get("ward_kind", "") == immunity_kind:
+			return true
+	if immunity_kind != "hexes":
+		return false
+	return _has_raw_enki_hex_immunity()
+
+func _has_raw_enki_hex_immunity() -> bool:
+	if card_type != CardType.CREATURE:
+		return false
+	if not has_type("Mage"):
+		return false
+	var controller := get_controller()
+	if controller == null:
+		return false
+	for zone in controller.frontline_zones + controller.reserve_zones:
+		for board_card in zone.cards:
+			if not (board_card is EnkiLordOfEridu):
+				continue
+			var enki := board_card as EnkiLordOfEridu
+			if enki == null:
+				continue
+			if enki.get_controller() != controller:
+				continue
+			if enki.hex_protection_is_suppressed_raw():
+				continue
+			return true
+	return false
 
 func mute_for_turns(turns: int, game_manager: GameManager = null) -> void:
 	var was_muted := is_muted
