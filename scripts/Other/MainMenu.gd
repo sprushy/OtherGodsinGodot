@@ -9,6 +9,8 @@ const DeckValidatorScript = preload("res://scripts/server/DeckValidator.gd")
 const MatchSessionScript = preload("res://scripts/server/MatchSession.gd")
 const DEDICATED_LOBBY_ENTRY_SCRIPT_PATH := "res://scripts/server/DedicatedLobbyServerMain.gd"
 const DEDICATED_SERVER_EXPORT_RELATIVE_PATH := "res://.exports/server/ClaudeOtherGodsServer.exe"
+const DEFAULT_LOBBY_HOST_SETTING := "application/config/default_lobby_host"
+const DEFAULT_LOBBY_HOST := ""
 const AUTH_MODE_GUEST := "guest"
 const AUTH_MODE_LOGIN := "login"
 const AUTH_MODE_REGISTER := "register"
@@ -39,7 +41,7 @@ var _lobby_session_id: String = ""
 var _lobby_reconnect_token: String = ""
 var _pending_join_room_code: String = ""
 var _pending_join_room_id: String = ""
-var _current_lobby_ip: String = "127.0.0.1"
+var _current_lobby_ip: String = ""
 var _is_local_lobby_host: bool = false
 var _match_launch_queued: bool = false
 var _pending_host_room_creation: bool = false
@@ -87,6 +89,10 @@ func _ready() -> void:
 		return
 	_fit_to_viewport()
 	get_viewport().size_changed.connect(_fit_to_viewport)
+	if ip_line_edit != null:
+		ip_line_edit.visible = false
+		ip_line_edit.text = ""
+		ip_line_edit.placeholder_text = "Dedicated lobby IP or hostname"
 
 	get_node("GameContainer/MockGame").visible = false
 	get_node("GameContainer/CardTest").visible = false
@@ -174,7 +180,7 @@ func _on_multiplayer_pressed() -> void:
 func _on_multiplayer_back_pressed() -> void:
 	_cleanup_lobby(true)
 	multiplayer_container.visible = false
-	status_label.text = "Refresh open seeks or create one after choosing a deck."
+	status_label.text = "Refresh open seeks or create your own."
 	_refresh_seek_list()
 	_refresh_multiplayer_action_state()
 
@@ -340,6 +346,10 @@ func _on_seek_item_clicked(index: int, _at_position: Vector2, _mouse_button_inde
 	_on_join_seek_requested(room_id)
 
 func _on_refresh_seeks_pressed() -> void:
+	var target_error := _validate_multiplayer_target()
+	if not target_error.is_empty():
+		status_label.text = target_error
+		return
 	var auth_error := _validate_auth_inputs()
 	if not auth_error.is_empty():
 		status_label.text = auth_error
@@ -348,9 +358,13 @@ func _on_refresh_seeks_pressed() -> void:
 	_pending_join_room_id = ""
 	_pending_local_lobby_launch_on_connect_failure = false
 	multiplayer_container.visible = true
-	_connect_to_browseable_lobby("Connecting to multiplayer...")
+	_connect_to_browseable_lobby("Connecting to lobby...")
 
 func _on_create_seek_pressed() -> void:
+	var target_error := _validate_multiplayer_target()
+	if not target_error.is_empty():
+		status_label.text = target_error
+		return
 	var auth_error := _validate_auth_inputs()
 	if not auth_error.is_empty():
 		status_label.text = auth_error
@@ -363,11 +377,15 @@ func _on_create_seek_pressed() -> void:
 		return
 	_pending_host_room_creation = true
 	_pending_join_room_id = ""
-	_pending_local_lobby_launch_on_connect_failure = _is_local_lobby_target(_get_lobby_ip())
+	_pending_local_lobby_launch_on_connect_failure = false
 	multiplayer_container.visible = true
-	_connect_to_browseable_lobby("Connecting to multiplayer...")
+	_connect_to_browseable_lobby("Connecting to lobby...")
 
 func _on_join_seek_requested(room_id: String) -> void:
+	var target_error := _validate_multiplayer_target()
+	if not target_error.is_empty():
+		status_label.text = target_error
+		return
 	var auth_error := _validate_auth_inputs()
 	if not auth_error.is_empty():
 		status_label.text = auth_error
@@ -382,7 +400,7 @@ func _on_join_seek_requested(room_id: String) -> void:
 	_pending_join_room_id = room_id.strip_edges().to_upper()
 	_pending_local_lobby_launch_on_connect_failure = false
 	multiplayer_container.visible = true
-	_connect_to_browseable_lobby("Connecting to multiplayer...")
+	_connect_to_browseable_lobby("Connecting to lobby...")
 
 func _on_leave_seek_pressed() -> void:
 	if lobby_client == null:
@@ -392,6 +410,10 @@ func _on_leave_seek_pressed() -> void:
 	lobby_client.leave_room()
 
 func _connect_to_browseable_lobby(connect_status: String) -> void:
+	var target_error := _validate_multiplayer_target()
+	if not target_error.is_empty():
+		status_label.text = target_error
+		return
 	var target_lobby_ip := _get_lobby_ip()
 	if _has_active_lobby_connection() and _current_lobby_ip == target_lobby_ip:
 		_run_pending_multiplayer_action()
@@ -419,7 +441,7 @@ func _connect_to_browseable_lobby(connect_status: String) -> void:
 		_get_auth_password()
 	)
 	if connect_err != OK:
-		status_label.text = "Could not connect to lobby at %s." % _current_lobby_ip
+		status_label.text = "Could not connect to the lobby."
 
 func _run_pending_multiplayer_action() -> void:
 	if lobby_client == null:
@@ -448,7 +470,7 @@ func _clear_current_seek_state() -> void:
 	leave_seek_button.visible = false
 	_last_submitted_lobby_room_id = ""
 	_last_submitted_lobby_deck_id = ""
-	status_label.text = "Click an open seek to join, or create your own."
+	status_label.text = "Refresh open seeks or create your own."
 	_refresh_multiplayer_action_state()
 
 func _is_server_runtime_launch() -> bool:
@@ -1235,6 +1257,10 @@ func _on_card_test_pressed() -> void:
 	get_node("GameContainer/CardTest").start_game()
 
 func _on_host_game_pressed() -> void:
+	var target_error := _validate_multiplayer_target()
+	if not target_error.is_empty():
+		status_label.text = target_error
+		return
 	var auth_error := _validate_auth_inputs()
 	if not auth_error.is_empty():
 		status_label.text = auth_error
@@ -1266,9 +1292,13 @@ func _on_join_game_pressed() -> void:
 	_pending_host_room_creation = false
 	multiplayer_container.visible = true
 	ready_button.visible = false
-	status_label.text = "Enter the host IP and room code, then join the lobby."
+	status_label.text = "Enter a room code, then join the lobby."
 
 func _on_connect_pressed() -> void:
+	var target_error := _validate_multiplayer_target()
+	if not target_error.is_empty():
+		status_label.text = target_error
+		return
 	_match_launch_queued = false
 	_pending_host_room_creation = false
 	_pending_join_room_code = room_code_line_edit.text.strip_edges().to_upper()
@@ -1280,7 +1310,7 @@ func _on_connect_pressed() -> void:
 	_cleanup_lobby_client()
 	_is_local_lobby_host = false
 	_current_lobby_ip = _get_lobby_ip()
-	status_label.text = "Connecting to lobby at %s..." % _current_lobby_ip
+	status_label.text = "Connecting to lobby..."
 
 	lobby_client = LobbyClientScript.new()
 	lobby_client.name = "LobbyPeer"
@@ -1300,7 +1330,7 @@ func _on_connect_pressed() -> void:
 		_get_auth_password()
 	)
 	if connect_err != OK:
-		status_label.text = "Could not connect to lobby at %s." % _current_lobby_ip
+		status_label.text = "Could not connect to the lobby."
 
 func _connect_local_host_to_dedicated_lobby() -> void:
 	var auth_error := _validate_auth_inputs()
@@ -1325,7 +1355,7 @@ func _connect_local_host_to_dedicated_lobby() -> void:
 	var wait_seconds := 0.8 if _spawned_lobby_process_id > 0 else 0.25
 	await get_tree().create_timer(wait_seconds).timeout
 	_cleanup_lobby_client()
-	status_label.text = "Connecting to dedicated lobby at %s..." % _current_lobby_ip
+	status_label.text = "Connecting to dedicated lobby..."
 	_write_smoke_trace("host_connecting_to_lobby ip=%s port=%d" % [_current_lobby_ip, _get_configured_lobby_port()])
 	lobby_client = LobbyClientScript.new()
 	lobby_client.name = "LobbyPeer"
@@ -1612,11 +1642,6 @@ func _on_lobby_connection_failed(message: String) -> void:
 	if _should_retry_host_lobby_connect():
 		_queue_host_lobby_retry(message)
 		return
-	if _pending_host_room_creation and _pending_local_lobby_launch_on_connect_failure and _is_local_lobby_target(_current_lobby_ip):
-		_pending_local_lobby_launch_on_connect_failure = false
-		status_label.text = "No local lobby was running. Starting one for your seek..."
-		_on_host_game_pressed()
-		return
 	_logged_in_account_username = ""
 	_refresh_account_identity_label()
 	status_label.text = message
@@ -1669,7 +1694,7 @@ func _cleanup_lobby(clear_session: bool) -> void:
 		_lobby_reconnect_token = ""
 		_pending_join_room_code = ""
 		_pending_join_room_id = ""
-		_current_lobby_ip = "127.0.0.1"
+		_current_lobby_ip = ""
 		_is_local_lobby_host = false
 		room_code_line_edit.text = ""
 		_clear_saved_lobby_resume()
@@ -1678,7 +1703,7 @@ func _cleanup_lobby(clear_session: bool) -> void:
 		_logged_in_account_username = ""
 		_refresh_profile_summary_label()
 		_refresh_account_identity_label()
-		status_label.text = "Refresh open seeks or create one after choosing a deck."
+		status_label.text = "Refresh open seeks or create your own."
 	_update_resume_controls()
 	_refresh_multiplayer_action_state()
 
@@ -1723,11 +1748,28 @@ func _is_local_player_ready() -> bool:
 			return bool(member.get("is_ready", false))
 	return false
 
+func _get_configured_lobby_host() -> String:
+	if not _smoke_config.is_empty():
+		return str(_smoke_config.get("ip", "")).strip_edges()
+	var configured_host := str(ProjectSettings.get_setting(DEFAULT_LOBBY_HOST_SETTING, DEFAULT_LOBBY_HOST)).strip_edges()
+	if configured_host.is_empty():
+		return DEFAULT_LOBBY_HOST.strip_edges()
+	return configured_host
+
+func _validate_multiplayer_target() -> String:
+	var host := _get_configured_lobby_host()
+	if not _smoke_config.is_empty():
+		if host.is_empty():
+			return "Enter the lobby IP first."
+		return ""
+	if host.is_empty():
+		return "Multiplayer is not configured in this build yet."
+	if _is_local_lobby_target(host):
+		return "Set application/config/default_lobby_host to your public laptop address before shipping this build."
+	return ""
+
 func _get_lobby_ip() -> String:
-	var ip: String = ip_line_edit.text.strip_edges()
-	if ip.is_empty():
-		return "127.0.0.1"
-	return ip
+	return _get_configured_lobby_host()
 
 func _get_player_name(default_name: String) -> String:
 	var player_name: String = player_name_line_edit.text.strip_edges()
@@ -1809,7 +1851,7 @@ func _on_account_deck_list_received(decks) -> void:
 			)
 		_refresh_open_deck_builder_saved_decks()
 		return
-	_local_profile_store.replace_decks(_local_profile_id, remote_decks)
+	_local_profile_store.merge_decks(_local_profile_id, remote_decks)
 	_refresh_open_deck_builder_saved_decks()
 
 func _on_account_deck_saved(deck) -> void:
@@ -1951,7 +1993,6 @@ func _restore_saved_resume_state() -> void:
 		return
 	multiplayer_container.visible = false
 	ready_button.visible = false
-	ip_line_edit.text = str(saved_lobby_resume.get("lobby_ip", "127.0.0.1"))
 	status_label.text = "A live match can be resumed from this device."
 
 func _update_resume_controls() -> void:
@@ -2035,10 +2076,10 @@ func _on_resume_match_pressed() -> void:
 	_is_local_lobby_host = false
 	multiplayer_container.visible = true
 	ready_button.visible = false
-	_current_lobby_ip = str(saved_lobby_resume.get("lobby_ip", "127.0.0.1")).strip_edges()
+	_current_lobby_ip = str(saved_lobby_resume.get("lobby_ip", _get_configured_lobby_host())).strip_edges()
 	if _current_lobby_ip.is_empty():
-		_current_lobby_ip = "127.0.0.1"
-	ip_line_edit.text = _current_lobby_ip
+		status_label.text = "Multiplayer is not configured in this build yet."
+		return
 	status_label.text = "Restoring your lobby session..."
 	lobby_client = LobbyClientScript.new()
 	lobby_client.name = "LobbyPeer"

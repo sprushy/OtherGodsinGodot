@@ -66,8 +66,7 @@ text = "Refresh Seeks"
 [node name="IPLineEdit" type="LineEdit" parent="Control/MenuContainer/MultiplayerContainer" unique_id=157483094]
 visible = false
 layout_mode = 2
-text = "127.0.0.1"
-placeholder_text = "Lobby IP"
+placeholder_text = "Dedicated lobby IP or hostname"
 
 [node name="PlayerNameLineEdit" type="LineEdit" parent="Control/MenuContainer/MultiplayerContainer" unique_id=157483096]
 visible = false
@@ -112,7 +111,7 @@ text = "Ready"
 [node name="StatusLabel" type="Label" parent="Control/MenuContainer/MultiplayerContainer" unique_id=157483099]
 layout_mode = 2
 autowrap_mode = 3
-text = "Refresh open seeks or create one after choosing a deck."
+text = "Refresh open seeks or create your own."
 
 [node name="RoomCodeLineEdit" type="LineEdit" parent="Control/MenuContainer/MultiplayerContainer" unique_id=157483097]
 visible = false

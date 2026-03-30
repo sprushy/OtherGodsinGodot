@@ -39,7 +39,7 @@ func ensure_profile(profile_id: String = "", display_name: String = DEFAULT_PROF
 	var profiles := _get_profiles()
 	var resolved_profile_id := profile_id.strip_edges()
 	var now_unix := int(Time.get_unix_time_from_system())
-	if resolved_profile_id.is_empty() or not profiles.has(resolved_profile_id):
+	if resolved_profile_id.is_empty():
 		resolved_profile_id = _generate_id("profile_", 12)
 
 	var profile: Dictionary = profiles.get(resolved_profile_id, {
@@ -143,6 +143,19 @@ func replace_decks(profile_id: String, decks: Array[Dictionary]) -> void:
 			selected_deck_id = str(replacement_bucket.keys()[0])
 			last_selected[resolved_profile_id] = selected_deck_id
 		_data["last_selected_deck_by_profile"] = last_selected
+	_save()
+
+func merge_decks(profile_id: String, decks: Array[Dictionary]) -> void:
+	var profile := ensure_profile(profile_id, DEFAULT_PROFILE_NAME, true)
+	var resolved_profile_id := str(profile.get("profile_id", "")).strip_edges()
+	var deck_bucket := _get_deck_bucket(resolved_profile_id, true)
+	for saved_deck in decks:
+		var normalized_deck: Dictionary = _normalize_saved_deck(saved_deck)
+		var deck_id := str(normalized_deck.get("deck_id", "")).strip_edges()
+		if deck_id.is_empty():
+			continue
+		deck_bucket[deck_id] = normalized_deck
+	_set_deck_bucket(resolved_profile_id, deck_bucket)
 	_save()
 
 func upsert_saved_deck(profile_id: String, saved_deck: Dictionary, make_selected: bool = false) -> Dictionary:
@@ -384,23 +397,37 @@ func _ensure_loaded() -> void:
 		return
 	var file := FileAccess.open(STORAGE_PATH, FileAccess.READ)
 	if file == null:
+		print("LocalProfileStore: Error opening file for read: ", STORAGE_PATH)
 		return
-	var parsed = JSON.parse_string(file.get_as_text())
+	var content := file.get_as_text()
 	file.close()
+	if content.strip_edges().is_empty():
+		return
+	var parsed = JSON.parse_string(content)
 	if parsed is Dictionary:
 		_data.merge(parsed as Dictionary, true)
+	else:
+		print("LocalProfileStore: Error parsing JSON from ", STORAGE_PATH)
 
 func _save() -> void:
 	var global_path := ProjectSettings.globalize_path(STORAGE_PATH)
 	var parent_dir := global_path.get_base_dir()
-	if not parent_dir.is_empty():
-		DirAccess.make_dir_recursive_absolute(parent_dir)
+	if not parent_dir.is_empty() and not DirAccess.dir_exists_absolute(parent_dir):
+		var err := DirAccess.make_dir_recursive_absolute(parent_dir)
+		if err != OK:
+			print("LocalProfileStore: Error creating directory ", parent_dir, " : ", err)
+
 	var file := FileAccess.open(STORAGE_PATH, FileAccess.WRITE)
 	if file == null:
+		print("LocalProfileStore: Error opening file for write: ", STORAGE_PATH, " (Error: ", FileAccess.get_open_error(), ")")
 		return
-	file.store_string(JSON.stringify(_data, "\t"))
+	var json_string := JSON.stringify(_data, "\t")
+	file.store_string(json_string)
 	file.flush()
 	file.close()
+	# Verify save by checking file existence if it didn't exist before
+	if not FileAccess.file_exists(STORAGE_PATH):
+		print("LocalProfileStore: Critical - file does not exist immediately after save!")
 
 func _get_profiles() -> Dictionary:
 	var profiles = _data.get("profiles", {})

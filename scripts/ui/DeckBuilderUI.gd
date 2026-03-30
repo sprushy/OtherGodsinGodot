@@ -979,6 +979,8 @@ func _on_saved_deck_selected(index: int) -> void:
 		_selected_saved_deck_id = ""
 		return
 	_selected_saved_deck_id = str(metadata).strip_edges()
+	if not _selected_saved_deck_id.is_empty():
+		_load_selected_deck()
 
 func _ensure_local_profile_store() -> void:
 	if _local_profile_store == null:
