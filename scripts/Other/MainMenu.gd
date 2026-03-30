@@ -992,7 +992,7 @@ func _on_switch_account_pressed() -> void:
 	_prompt_account_login()
 
 func _show_auth_onboarding() -> void:
-	_auth_onboarding_selected_mode = AUTH_MODE_LOGIN
+	_auth_onboarding_selected_mode = AUTH_MODE_GUEST
 	_auth_onboarding_overlay = Control.new()
 	_auth_onboarding_overlay.name = "AuthOnboardingOverlay"
 	_auth_onboarding_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -1056,6 +1056,14 @@ func _show_auth_onboarding() -> void:
 	var button_column := VBoxContainer.new()
 	button_column.add_theme_constant_override("separation", 8)
 	inner.add_child(button_column)
+
+	var login_btn := Button.new()
+	login_btn.text = "Login"
+	login_btn.custom_minimum_size = Vector2(0, 40)
+	login_btn.pressed.connect(func() -> void:
+		_begin_auth_onboarding_account_flow(AUTH_MODE_LOGIN)
+	)
+	button_column.add_child(login_btn)
 
 	var register_btn := Button.new()
 	register_btn.text = "Create Account"
@@ -1181,11 +1189,14 @@ func _submit_auth_onboarding() -> bool:
 
 func _get_launch_auth_mode() -> String:
 	if _local_profile_store == null:
+		return AUTH_MODE_GUEST
+	var saved_username: String = _local_profile_store.get_last_account_username()
+	if not saved_username.is_empty():
 		return AUTH_MODE_LOGIN
 	var preferred_auth_mode: String = _local_profile_store.get_preferred_auth_mode()
-	if preferred_auth_mode == AUTH_MODE_REGISTER:
-		return AUTH_MODE_REGISTER
-	return AUTH_MODE_LOGIN
+	if preferred_auth_mode in [AUTH_MODE_GUEST, AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
+		return preferred_auth_mode
+	return AUTH_MODE_GUEST
 
 func _set_auth_onboarding_hint(message: String, is_error: bool = false) -> void:
 	if _auth_onboarding_mode_hint_label == null:
@@ -1799,10 +1810,12 @@ func _capture_logged_in_profile(player_name: String) -> void:
 	_ensure_local_profile_store()
 	if _local_profile_store == null:
 		return
+	var resolved_auth_mode := AUTH_MODE_GUEST
 	if lobby_client != null:
 		_local_profile_id = str(lobby_client.current_profile_id).strip_edges()
 		if not str(lobby_client.current_account_id).strip_edges().is_empty():
 			_logged_in_account_username = str(lobby_client.current_username).strip_edges()
+			resolved_auth_mode = AUTH_MODE_LOGIN
 		else:
 			_logged_in_account_username = ""
 		if not str(lobby_client.current_username).strip_edges().is_empty():
@@ -1812,6 +1825,7 @@ func _capture_logged_in_profile(player_name: String) -> void:
 				_local_profile_store.remember_account_password(_password_line_edit.text)
 		else:
 			_local_profile_store.set_preferred_auth_mode(AUTH_MODE_GUEST)
+	_set_auth_mode(resolved_auth_mode)
 	var profile: Dictionary = _local_profile_store.remember_profile(_local_profile_id, player_name)
 	_local_profile_id = str(profile.get("profile_id", _local_profile_id)).strip_edges()
 	_update_resume_controls()
