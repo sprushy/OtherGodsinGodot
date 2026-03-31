@@ -48,6 +48,7 @@ var _pending_doorway_card: Card = null
 var _pending_doorway_combat_death: bool = false
 var _pending_doorway_destruction: bool = false
 var _pending_doorway_continue: Callable = Callable()
+var _temporary_combat_follower_damage_halved: bool = false
 
 # Priority system
 var priority_player: Player = null
@@ -116,6 +117,16 @@ func set_interaction_host(host: Object) -> void:
 
 func get_interaction_host() -> Object:
 	return interaction_host
+
+func set_temporary_combat_follower_damage_halved(halved: bool) -> void:
+	_temporary_combat_follower_damage_halved = halved
+
+func _adjust_combat_follower_damage(amount: int) -> int:
+	if amount <= 0:
+		return 0
+	if _temporary_combat_follower_damage_halved:
+		return int(floor(float(amount) / 2.0))
+	return amount
 
 func get_card_by_uid(uid: String) -> Card:
 	if uid == "":
@@ -1107,6 +1118,7 @@ func resolve_followers_attack(attackers: Array[Card], defending_player: Player) 
 	var follower_damage := 0
 	for combatant in active_attackers:
 		follower_damage += combatant.get_effective_strength()
+	follower_damage = _adjust_combat_follower_damage(follower_damage)
 	if follower_damage > 0:
 		defending_player.lose_followers(follower_damage)
 
@@ -1176,7 +1188,7 @@ func get_interceptor_speed_against_attacker(interceptor: Card, attacker: Card) -
 			and interceptor.has_type("Giant") \
 			and not attacker.has_type("Giant") \
 			and _has_giants_disdain(interceptor.get_controller()):
-		interceptor_speed += 5
+		interceptor_speed += 1
 	return interceptor_speed
 
 func check_for_intercept(attacker: Card, defending_player: Player) -> Card:
@@ -1212,8 +1224,9 @@ func resolve_combat(attacker: Card, defender: Card, continue_callback: Callable 
 			continue_callback.call()
 	if defender.is_god:
 		# Gods cannot be targeted in combat — redirect to follower damage
-		defender_controller.lose_followers(attacker.get_effective_strength())
-		print(attacker.card_name + " attacks " + defender_controller.player_name + "'s followers for " + str(attacker.get_effective_strength()) + " (via god)!")
+		var god_damage := _adjust_combat_follower_damage(attacker.get_effective_strength())
+		defender_controller.lose_followers(god_damage)
+		print(attacker.card_name + " attacks " + defender_controller.player_name + "'s followers for " + str(god_damage) + " (via god)!")
 		finish.call()
 		return true
 	if attacker.has_method("on_attack") and not attacker.abilities_suppressed():
@@ -1242,12 +1255,12 @@ func resolve_combat(attacker: Card, defender: Card, continue_callback: Callable 
 			print("	STR vs STR: " + str(attacker_str) + " vs " + str(defender_str_real) + ((" (disdain→damage as %d)" % defender_str_for_damage) if defender_str_for_damage != defender_str_real else ""))
 
 			if attacker_str > defender_str_real:
-				var diff = attacker_str - defender_str_for_damage
+				var diff = _adjust_combat_follower_damage(attacker_str - defender_str_for_damage)
 				print("	" + defender.card_name + " destroyed! " + defender_controller.player_name + " loses " + str(diff) + " followers")
 				defender_controller.lose_followers(diff)
 				_combat_kill(attacker, defender)
 			elif defender_str_real > attacker_str:
-				var diff = defender_str_real - attacker_str_for_damage
+				var diff = _adjust_combat_follower_damage(defender_str_real - attacker_str_for_damage)
 				print("	" + attacker.card_name + " destroyed! " + attacker_controller.player_name + " loses " + str(diff) + " followers")
 				attacker_controller.lose_followers(diff)
 				_combat_kill(defender, attacker)
@@ -1276,7 +1289,7 @@ func resolve_combat(attacker: Card, defender: Card, continue_callback: Callable 
 					_combat_kill(defender, attacker)
 				else:
 					# Followers convert using the defender's full resilience, with Giant's Disdain reducing only the opposing attack stat.
-					var diff_damage: int = maxi(0, defender_res_real - attacker_str_for_conversion)
+					var diff_damage: int = _adjust_combat_follower_damage(maxi(0, defender_res_real - attacker_str_for_conversion))
 					var diff_gain: int = defender_res_real - attacker_str_vs_res
 					print("	" + str(diff_damage) + " followers convert to " + defender_controller.player_name)
 					attacker_controller.lose_followers(diff_damage)
@@ -1313,8 +1326,9 @@ func resolve_united_front_combat(attacker: Card, partner: Card, defender: Card) 
 	var combined_strength := primary.get_effective_strength() + support.get_effective_strength()
 
 	if defender.is_god:
-		defender_controller.lose_followers(combined_strength)
-		print("%s and %s attack %s's followers for %d!" % [primary.card_name, support.card_name, defender_controller.player_name, combined_strength])
+		var god_damage := _adjust_combat_follower_damage(combined_strength)
+		defender_controller.lose_followers(god_damage)
+		print("%s and %s attack %s's followers for %d!" % [primary.card_name, support.card_name, defender_controller.player_name, god_damage])
 		_notify_after_united_front_combat(attacker, partner, defender)
 		return
 
@@ -1336,12 +1350,12 @@ func resolve_united_front_combat(attacker: Card, partner: Card, defender: Card) 
 			var combined_strength_for_damage: int = _get_giants_disdain_combined_strength_for_damage(active_attackers, defender)
 			print("	Combined STR vs STR: %d vs %d" % [combined_strength, defender_str_real])
 			if combined_strength > defender_str_real:
-				var diff := combined_strength - defender_str_for_damage
+				var diff := _adjust_combat_follower_damage(combined_strength - defender_str_for_damage)
 				print("	%s destroyed! %s loses %d followers" % [defender.card_name, defender_controller.player_name, diff])
 				defender_controller.lose_followers(diff)
 				_combat_kill(primary, defender)
 			elif defender_str_real > combined_strength:
-				var diff := defender_str_real - combined_strength_for_damage
+				var diff := _adjust_combat_follower_damage(defender_str_real - combined_strength_for_damage)
 				print("	United Front loses! %s loses %d followers" % [attacker_controller.player_name, diff])
 				note_player_feedback("United Front loses! Both attackers are destroyed.")
 				attacker_controller.lose_followers(diff)
@@ -1374,7 +1388,7 @@ func resolve_united_front_combat(attacker: Card, partner: Card, defender: Card) 
 					_combat_kill(defender, primary)
 					_combat_kill(defender, support)
 				else:
-					var diff_damage: int = maxi(0, defender_res_real - attacker_str_for_conversion)
+					var diff_damage: int = _adjust_combat_follower_damage(maxi(0, defender_res_real - attacker_str_for_conversion))
 					print("	%d followers convert to %s" % [diff_damage, defender_controller.player_name])
 					attacker_controller.lose_followers(diff_damage)
 					defender_controller.gain_followers(diff_damage)
@@ -1424,8 +1438,9 @@ func resolve_combat_with_continuation(
 		if continue_callback.is_valid():
 			continue_callback.call()
 	if defender.is_god:
-		defender_controller.lose_followers(attacker.get_effective_strength())
-		print(attacker.card_name + " attacks " + defender_controller.player_name + "'s followers for " + str(attacker.get_effective_strength()) + " (via god)!")
+		var god_damage := _adjust_combat_follower_damage(attacker.get_effective_strength())
+		defender_controller.lose_followers(god_damage)
+		print(attacker.card_name + " attacks " + defender_controller.player_name + "'s followers for " + str(god_damage) + " (via god)!")
 		_notify_opponent_attacks_followers(attacker, defender_controller)
 		finish.call()
 		return true
@@ -1450,12 +1465,12 @@ func resolve_combat_with_continuation(
 			var attacker_str_for_damage: int = _get_giants_disdain_damage_stat(attacker, [defender], attacker_str)
 			print("	STR vs STR: " + str(attacker_str) + " vs " + str(defender_str_real))
 			if attacker_str > defender_str_real:
-				var diff := attacker_str - defender_str_for_damage
+				var diff := _adjust_combat_follower_damage(attacker_str - defender_str_for_damage)
 				print("	" + defender.card_name + " destroyed! " + defender_controller.player_name + " loses " + str(diff) + " followers")
 				defender_controller.lose_followers(diff)
 				return _combat_kill_deferred(attacker, defender, finish)
 			if defender_str_real > attacker_str:
-				var diff := defender_str_real - attacker_str_for_damage
+				var diff := _adjust_combat_follower_damage(defender_str_real - attacker_str_for_damage)
 				print("	" + attacker.card_name + " destroyed! " + attacker_controller.player_name + " loses " + str(diff) + " followers")
 				attacker_controller.lose_followers(diff)
 				return _combat_kill_deferred(defender, attacker, finish)
@@ -1479,7 +1494,7 @@ func resolve_combat_with_continuation(
 			if _ferocious_defence_triggers(defender, attacker_str_vs_res):
 				print("	Ferocious Defence! " + attacker.card_name + " destroyed!")
 				return _combat_kill_deferred(defender, attacker, finish)
-			var diff_damage: int = maxi(0, defender_res_real - attacker_str_for_conversion)
+			var diff_damage: int = _adjust_combat_follower_damage(maxi(0, defender_res_real - attacker_str_for_conversion))
 			print("	" + str(diff_damage) + " followers convert to " + defender_controller.player_name)
 			attacker_controller.lose_followers(diff_damage)
 			defender_controller.gain_followers(diff_damage)

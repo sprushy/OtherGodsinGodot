@@ -101,8 +101,8 @@ func _run_probe() -> void:
 
 	_assert_state(compelled_attacker.creature_major_action_used, "The compelled attacker should spend its major action.")
 	_assert_state(compelled_attacker.has_attacked_this_turn, "The compelled attacker should count as having attacked.")
-	_assert_state(player2.followers == 94, "The forced attack should resolve against the highest-level friendly creature.")
-	_assert_state(player1.followers == 106, "Follower conversion from the forced attack should be applied.")
+	_assert_state(player2.followers == 97, "The forced attack should halve follower damage against the attacking player.")
+	_assert_state(player1.followers == 103, "Follower conversion from the forced attack should be halved.")
 
 	var moved_callback := Callable(game_manager, "_on_player_card_moved")
 	var defeated_callback := Callable(game_manager, "_on_player_defeated")

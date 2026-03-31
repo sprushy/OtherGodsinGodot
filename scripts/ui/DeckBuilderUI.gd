@@ -51,9 +51,11 @@ var _saved_decks_cache: Array[Dictionary] = []
 
 # ── major UI refs ──────────────────────────────────────────────────
 var _grid:             HFlowContainer
+var _body_scroll:      ScrollContainer
 var _body_grid:        GridContainer
 var _collection_panel: PanelContainer
 var _collection_host:  Control
+var _deck_scroll:      ScrollContainer
 var _page_label:       Label
 var _prev_page_btn:    Button
 var _next_page_btn:    Button
@@ -135,13 +137,23 @@ func _build_ui() -> void:
 	_build_top_bar(root)
 	_build_faction_bar(root)
 
+	var body_scroll := ScrollContainer.new()
+	_body_scroll = body_scroll
+	body_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	body_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	body_scroll.follow_focus = true
+	body_scroll.clip_contents = true
+	body_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	body_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	root.add_child(body_scroll)
+
 	var body := GridContainer.new()
 	_body_grid = body
 	body.columns = 2
 	body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	body.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	body.add_theme_constant_override("separation", 6)
-	root.add_child(body)
+	body_scroll.add_child(body)
 
 	_build_collection_panel(body)
 	_build_deck_panel(body)
@@ -351,7 +363,7 @@ func _build_collection_panel(parent: Control) -> void:
 	_grid.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_collection_host.add_child(_grid)
 
-	var page_bar := HBoxContainer.new()
+	var page_bar := HFlowContainer.new()
 	page_bar.add_theme_constant_override("separation", 8)
 	content.add_child(page_bar)
 
@@ -553,9 +565,12 @@ func _build_deck_panel(parent: Control) -> void:
 	saved_hdr.add_child(delete_btn)
 
 	var deck_scroll := ScrollContainer.new()
+	_deck_scroll = deck_scroll
 	deck_scroll.size_flags_vertical   = Control.SIZE_EXPAND_FILL
 	deck_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	deck_scroll.custom_minimum_size.y = 280
+	deck_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	deck_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 	panel.add_child(deck_scroll)
 
 	_deck_list = VBoxContainer.new()
@@ -1647,11 +1662,15 @@ func _update_responsive_layout() -> void:
 		return
 
 	var viewport_width := size.x
+	var viewport_height := size.y
 	if viewport_width <= 0.0:
 		return
 
 	var use_stacked_layout := viewport_width < STACKED_LAYOUT_WIDTH_THRESHOLD
 	_body_grid.columns = 1 if use_stacked_layout else 2
+	_body_grid.custom_minimum_size.x = maxf(0.0, viewport_width - 16.0)
+	if is_instance_valid(_body_scroll):
+		_body_scroll.custom_minimum_size.y = maxf(0.0, viewport_height - 84.0)
 
 	var target_panel_width := clampf(floor(viewport_width * 0.34), MIN_DECK_PANEL_WIDTH, MAX_DECK_PANEL_WIDTH)
 	if use_stacked_layout:
@@ -1666,11 +1685,20 @@ func _update_responsive_layout() -> void:
 	_deck_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL if use_stacked_layout else Control.SIZE_FILL
 	if is_instance_valid(_collection_panel):
 		_collection_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_collection_panel.custom_minimum_size.y = maxf(280.0, viewport_height - 176.0)
+	if is_instance_valid(_collection_host):
+		_collection_host.custom_minimum_size.y = maxf(196.0, viewport_height - 248.0)
 
 	if is_instance_valid(_preview_outer):
 		var preview_height := 300.0
 		if target_panel_width <= COMPACT_PREVIEW_WIDTH_THRESHOLD:
 			preview_height = 248.0
+		if viewport_height < 900.0:
+			preview_height = min(preview_height, 232.0)
+		if viewport_height < 800.0:
+			preview_height = min(preview_height, 208.0)
+		if viewport_height < 720.0:
+			preview_height = min(preview_height, 184.0)
 		_preview_outer.custom_minimum_size = Vector2(target_panel_width, preview_height)
 
 	if is_instance_valid(_preview_layout):
@@ -1684,6 +1712,23 @@ func _update_responsive_layout() -> void:
 
 	if is_instance_valid(_preview_text_box):
 		_preview_text_box.custom_minimum_size.x = 0
+
+	if is_instance_valid(_deck_scroll):
+		var deck_scroll_height := 280.0
+		if viewport_height < 900.0:
+			deck_scroll_height = 232.0
+		if viewport_height < 800.0:
+			deck_scroll_height = 208.0
+		if viewport_height < 720.0:
+			deck_scroll_height = 176.0
+		_deck_scroll.custom_minimum_size.y = deck_scroll_height
+
+	if is_instance_valid(_prev_page_btn):
+		var page_button_width := 96.0 if viewport_width < 1100.0 else 120.0
+		_prev_page_btn.custom_minimum_size.x = page_button_width
+	if is_instance_valid(_next_page_btn):
+		var next_button_width := 96.0 if viewport_width < 1100.0 else 120.0
+		_next_page_btn.custom_minimum_size.x = next_button_width
 
 func _update_collection_layout() -> void:
 	if not is_instance_valid(_collection_host) or not is_instance_valid(_grid):

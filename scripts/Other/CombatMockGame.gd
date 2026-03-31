@@ -323,7 +323,7 @@ const HAND_CARD_EXPOSED_HEIGHT := 100.0
 const HAND_LAYOUT_RESERVED := 0.0
 const HAND_OVERLAY_SIDE_PADDING := 18.0
 const HAND_OVERLAY_BOTTOM_PADDING := 4.0
-const LEFT_PANEL_MIN_WIDTH := 140.0
+const LEFT_PANEL_MIN_WIDTH := 164.0
 const BOARD_RIGHT_NUDGE := 12.0
 const SACRIFICE_CURSOR_TARGET_HEIGHT := 96
 const SACRIFICE_CURSOR_HOTSPOT_RATIO := Vector2(0.03, 0.80)
@@ -340,8 +340,8 @@ const SACRIFICE_CURSOR_SHAPES := [
 	Input.CURSOR_POINTING_HAND,
 	Input.CURSOR_HELP,
 ]
-const ACTION_LOG_MIN_WIDTH := 126.0
-const ACTION_LOG_PREVIEW_HEIGHT := 92.0
+const ACTION_LOG_MIN_WIDTH := 188.0
+const ACTION_LOG_PREVIEW_HEIGHT := 156.0
 const ACTION_LOG_FONT_SIZE := 11
 const ACTION_LOG_LINE_SEPARATION := 4
 const ACTION_LOG_POPUP_WIDTH := 420.0
@@ -352,7 +352,7 @@ const ZONE_INFO_ICON_SIZE := 74.0
 const CENTER_ACTION_PANEL_WIDTH := 138.0
 const CENTER_ACTION_PANEL_HEIGHT := 114.0
 const CENTER_ACTION_BUTTON_HEIGHT := 28.0
-const RIGHT_PANEL_MIN_WIDTH := 136.0
+const RIGHT_PANEL_MIN_WIDTH := 148.0
 const RIGHT_PANEL_CONTROL_GAP := 6
 const RIGHT_PANEL_TEXT_FONT_SIZE := 10
 
@@ -522,6 +522,7 @@ func _ready() -> void:
 	stealth_mode_btn.pressed.connect(_on_stealth_mode_pressed)
 
 	var priority_toggle := CheckButton.new()
+	priority_toggle.name = "AutoPriorityToggle"
 	priority_toggle.text = "Auto Priority"
 	priority_toggle.button_pressed = auto_priority
 	priority_toggle.custom_minimum_size = Vector2(RIGHT_PANEL_MIN_WIDTH - 20.0, 24.0)
@@ -537,8 +538,11 @@ func _ready() -> void:
 		enemy_board_container.resized.connect(_on_board_layout_resized)
 	if not center_panel.resized.is_connected(_on_board_layout_resized):
 		center_panel.resized.connect(_on_board_layout_resized)
+	if not resized.is_connected(_on_board_layout_resized):
+		resized.connect(_on_board_layout_resized)
 	_setup_action_log()
 	_capture_action_log_message(true)
+	_update_match_side_panel_layout()
 
 	_restore_default_selection_cursor()
 
@@ -918,7 +922,7 @@ func _setup_action_log() -> void:
 	log_box.name = "ActionLogBox"
 	log_box.add_theme_constant_override("separation", 4)
 	log_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	log_box.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	log_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
 
 	var header := HBoxContainer.new()
 	header.add_theme_constant_override("separation", 4)
@@ -946,11 +950,11 @@ func _setup_action_log() -> void:
 	log_text.name = "ActionLogText"
 	log_text.bbcode_enabled = false
 	log_text.fit_content = false
-	log_text.scroll_active = false
+	log_text.scroll_active = true
 	log_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	log_text.custom_minimum_size = Vector2(ACTION_LOG_MIN_WIDTH, ACTION_LOG_PREVIEW_HEIGHT)
 	log_text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	log_text.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	log_text.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	log_text.add_theme_font_size_override("normal_font_size", ACTION_LOG_FONT_SIZE)
 	log_text.add_theme_constant_override("line_separation", ACTION_LOG_LINE_SEPARATION)
 	log_text.selection_enabled = true
@@ -1015,8 +1019,16 @@ func _refresh_action_log() -> void:
 		return
 	var preview_messages := _get_action_log_preview_messages()
 	_action_log_view.text = "\n".join(preview_messages) if not preview_messages.is_empty() else "No actions yet."
+	call_deferred("_scroll_action_log_preview_to_bottom")
 	_refresh_action_log_history_button()
 	_refresh_action_log_popup()
+
+func _scroll_action_log_preview_to_bottom() -> void:
+	if _action_log_view == null or not is_instance_valid(_action_log_view):
+		return
+	var bar := _action_log_view.get_v_scroll_bar()
+	if bar != null:
+		_action_log_view.scroll_to_line(maxi(0, _action_log_view.get_line_count() - 1))
 
 func _get_action_log_preview_messages() -> Array[String]:
 	var preview_messages: Array[String] = []
@@ -1213,6 +1225,7 @@ func start_game(
 		game_manager.card_summoned.connect(_on_card_summoned)
 
 	player1.mana_changed.connect(_on_player_mana_changed)
+	player2.mana_changed.connect(_on_player_mana_changed)
 	player1.followers_changed.connect(_on_player_followers_changed)
 	player2.followers_changed.connect(_on_enemy_followers_changed)
 	game_manager.game_ended.connect(_on_game_ended)
@@ -1458,10 +1471,48 @@ func _update_board_zone_extent() -> void:
 func _on_board_layout_resized() -> void:
 	if _fan_container != null and is_instance_valid(_fan_container):
 		call_deferred("_layout_fan")
+	_update_match_side_panel_layout()
 	if game_manager == null:
 		return
 	if not is_equal_approx(_get_board_zone_extent_target(), BoardZoneUI.get_zone_extent()):
 		_request_ui_refresh()
+
+func _update_match_side_panel_layout() -> void:
+	if left_panel == null or right_panel == null:
+		return
+	var viewport_width := size.x
+	var viewport_height := size.y
+	if viewport_width <= 0.0 or viewport_height <= 0.0:
+		return
+
+	var left_width := clampf(floor(viewport_width * 0.17), LEFT_PANEL_MIN_WIDTH + BOARD_RIGHT_NUDGE, 286.0)
+	var right_width := clampf(floor(viewport_width * 0.135), RIGHT_PANEL_MIN_WIDTH, 236.0)
+	if viewport_width < 1500.0:
+		left_width = maxf(left_width, 212.0)
+		right_width = maxf(right_width, 172.0)
+	if viewport_width < 1260.0:
+		left_width = maxf(left_width, 224.0)
+		right_width = maxf(right_width, 184.0)
+
+	left_panel.custom_minimum_size.x = left_width
+	right_panel.custom_minimum_size.x = right_width
+	if action_label != null:
+		action_label.custom_minimum_size.x = maxf(ACTION_LOG_MIN_WIDTH, left_width - 20.0)
+
+	if turn_label != null:
+		turn_label.custom_minimum_size.x = right_width - 4.0
+	if end_turn_button != null:
+		end_turn_button.custom_minimum_size.x = right_width - 4.0
+	if all_attack_btn != null:
+		all_attack_btn.custom_minimum_size.x = right_width - 4.0
+
+	var priority_toggle := right_panel.get_node_or_null("AutoPriorityToggle") as CheckButton
+	if priority_toggle != null:
+		priority_toggle.custom_minimum_size.x = right_width - 20.0
+
+	if _action_log_view != null and is_instance_valid(_action_log_view):
+		var log_height := clampf(floor(viewport_height * 0.22), ACTION_LOG_PREVIEW_HEIGHT, 248.0)
+		_action_log_view.custom_minimum_size = Vector2(maxf(ACTION_LOG_MIN_WIDTH, left_width - 12.0), log_height)
 
 func _get_zone_ui_for_zone(zone: Zone) -> BoardZoneUI:
 	if zone == null:
@@ -2095,12 +2146,14 @@ func _get_stats_panel_for_zone_ui(zone_ui: BoardZoneUI) -> PanelContainer:
 	return cluster.get_node_or_null("StatsPanel") as PanelContainer
 
 func _refresh_visible_stat_panels() -> void:
+	var display_player := _get_display_player()
+	var display_opponent := _get_display_opponent()
 	var player_panel := _get_stats_panel_for_zone_ui(_player_god_zone_ui)
-	if player_panel != null and player1 != null:
-		_refresh_stats_panel(player_panel, player1, true)
+	if player_panel != null and display_player != null:
+		_refresh_stats_panel(player_panel, display_player, true)
 	var enemy_panel := _get_stats_panel_for_zone_ui(_enemy_god_zone_ui)
-	if enemy_panel != null and player2 != null:
-		_refresh_stats_panel(enemy_panel, player2, true)
+	if enemy_panel != null and display_opponent != null:
+		_refresh_stats_panel(enemy_panel, display_opponent, true)
 
 func _make_stats_panel(player: Player, show_mana: bool = true) -> PanelContainer:
 	var panel := PanelContainer.new()
@@ -6120,6 +6173,7 @@ func _queue_foolish_optimism_attack(card: FoolishOptimism, attacker: Card, defen
 	action.united_front_partner = _get_declared_attack_partner(attacker)
 	action.attack_speed_override = _get_declared_attack_speed(attacker)
 	action.target = defender
+	action.halve_follower_damage = true
 	game_manager.push_to_stack(action)
 	update_ui()
 	return "%s compels %s to attack %s." % [card.card_name, attacker.card_name, defender.card_name]
@@ -10806,8 +10860,7 @@ func _on_allow_ai_attack() -> void:
 func _on_player_mana_changed(_new_mana: int) -> void:
 	_invalidate_cached_board_layouts()
 	_refresh_visible_stat_panels()
-	if game_manager and game_manager.current_player == player1:
-		update_ui()
+	_request_ui_refresh()
 
 func _on_player_followers_changed(_new_followers: int) -> void:
 	_invalidate_cached_board_layouts()

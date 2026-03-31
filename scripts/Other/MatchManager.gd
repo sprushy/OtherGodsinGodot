@@ -228,7 +228,9 @@ func _resolve_attack(action: CardAction) -> void:
 		for combatant in active_attackers:
 			combatant.spend_major_creature_action()
 			combatant.mark_attacked_this_turn()
+		game_manager.set_temporary_combat_follower_damage_halved(action.halve_follower_damage)
 		var follower_damage := game_manager.resolve_followers_attack(active_attackers, actual_target)
+		game_manager.set_temporary_combat_follower_damage_halved(false)
 		last_resolution_text = "%s attacks %s's followers for %d!" % [
 			action.attacker.card_name,
 			actual_target.player_name,
@@ -256,10 +258,16 @@ func _finish_creature_combat(action: CardAction, target: Card) -> void:
 			last_resolution_text = active[0].card_name + " fought " + target.card_name + "!"
 		
 	if partner != null:
+		game_manager.set_temporary_combat_follower_damage_halved(action.halve_follower_damage)
 		game_manager.resolve_united_front_combat(attacker, partner, target)
+		game_manager.set_temporary_combat_follower_damage_halved(false)
 		finish.call()
 	else:
-		game_manager.resolve_combat_with_continuation(attacker, target, finish, action.interceptor != null)
+		game_manager.set_temporary_combat_follower_damage_halved(action.halve_follower_damage)
+		var wrapped_finish := func() -> void:
+			game_manager.set_temporary_combat_follower_damage_halved(false)
+			finish.call()
+		game_manager.resolve_combat_with_continuation(attacker, target, wrapped_finish, action.interceptor != null)
 
 ## Returns any Askelladen cards in the combat that qualify for Tactful Retreat.
 func _get_retreat_candidates(attacker: Card, defender: Card, _turn_player: Player) -> Array:

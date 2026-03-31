@@ -1,6 +1,8 @@
 extends GodCard
 class_name GuanYu
 
+const TACTIC_COUNTER_COST := 4
+
 var tactic_counters: int = 0
 var _last_counter_turn: int = -1
 
@@ -12,7 +14,7 @@ func _init() -> void:
 	culture = "Tian"
 	targets = true
 	flavor_text = ""
-	ability_text = "Tactical Break ([b]Passive[/b]/[b]Activate[/b]): At the start of each of your turns, if you have more creatures on the frontline than your opponent, gain 1 tactic counter. Remove 3 tactic counters to destroy a card.\n[b]Champion's Call[/b]"
+	ability_text = "Tactical Break ([b]Passive[/b]/[b]Activate[/b]): At the start of each of your turns, if you have more creatures on the frontline than your opponent, gain 1 tactic counter. Remove 4 tactic counters to destroy a card.\n[b]Champion's Call[/b]"
 	art_path = "res://images/card_art/gods/guan_yu.png"
 	artist = "Ricarrdo Zoppello"
 	name_at_bottom = true
@@ -47,7 +49,7 @@ func can_activate(game_manager: GameManager) -> bool:
 		return false
 	if card_owner != game_manager.current_player:
 		return false
-	if tactic_counters < 3:
+	if tactic_counters < TACTIC_COUNTER_COST:
 		return false
 	return not get_valid_targets(game_manager).is_empty()
 
@@ -58,8 +60,8 @@ func get_activation_failure_reason(game_manager: GameManager) -> String:
 		return card_name + " is muted."
 	if card_owner != game_manager.current_player:
 		return "It is not " + card_name + "'s turn to act."
-	if tactic_counters < 3:
-		return "Tactical Break needs 3 tactic counters (have %d)." % tactic_counters
+	if tactic_counters < TACTIC_COUNTER_COST:
+		return "Tactical Break needs %d tactic counters (have %d)." % [TACTIC_COUNTER_COST, tactic_counters]
 	if get_valid_targets(game_manager).is_empty():
 		return "Tactical Break has no valid targets."
 	return ""
@@ -96,10 +98,10 @@ func activate(game_manager: GameManager, target: Card = null) -> void:
 		)
 		return
 
-	tactic_counters -= 3
+	tactic_counters -= TACTIC_COUNTER_COST
 	game_manager.note_player_feedback(
-		"Tactical Break: %s spends 3 tactic counters (now %d) to destroy %s." % [
-			card_name, tactic_counters, target.card_name
+		"Tactical Break: %s spends %d tactic counters (now %d) to destroy %s." % [
+			card_name, TACTIC_COUNTER_COST, tactic_counters, target.card_name
 		]
 	)
 	game_manager.request_send_to_graveyard(target, Callable(), false, true)
@@ -111,7 +113,7 @@ func on_removed(_game_manager: GameManager) -> void:
 
 func get_effect_summary_lines() -> Array[String]:
 	var lines: Array[String] = []
-	lines.append("Tactic counters: %d / 3" % tactic_counters)
+	lines.append("Tactic counters: %d / %d" % [tactic_counters, TACTIC_COUNTER_COST])
 	return lines
 
 func _count_frontline_creatures(player: Player) -> int:

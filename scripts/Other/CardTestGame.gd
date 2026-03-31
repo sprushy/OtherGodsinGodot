@@ -247,7 +247,7 @@ func _setup_test_board() -> void:
 
 	# ── Gods ─────────────────────────────────────────────────────────────────
 	var guan_yu := GuanYu.new()
-	guan_yu.tactic_counters = 3  # Champion's Call immediately available (costs 3)
+	guan_yu.tactic_counters = 4  # Champion's Call immediately available (costs 4)
 	_add_test_god(player1, guan_yu)
 	_add_test_god(player2, Thor.new())
 
@@ -338,7 +338,7 @@ func _setup_test_board() -> void:
 	action_label.text = (
 		"G-CARD TEST  |  "
 		+ "Click Load Habrok Scenario for a focused Breakout test.  |  "
-		+ "GuanYu (god): 3 tactic counters ready — activate Champion's Call to destroy any board card. End P1's turn to test upkeep (P1 has 5 frontline vs P2's 3, gains another counter each turn).  |  "
+		+ "GuanYu (god): 4 tactic counters ready — activate Champion's Call to destroy any board card. End P1's turn to test upkeep (P1 has 5 frontline vs P2's 3, gains another counter each turn).  |  "
 		+ "GlitnirThePeaceful (P1 reserve[6]): forces all summons this game to defensive — test by summoning any hand card.  |  "
 		+ "Berserker has 'cannot_attack' status — use Gawain Healing Hands (2 mana, minor action) to remove it; then Berserker can attack; play Gungnir from hand in response to destroy the target.  |  "
 		+ "Gawain Sun Blessing: check tripled stats (10 Str → 30, 7 Res → 21) during P1's turn; resets after first attack.  |  "
@@ -348,7 +348,7 @@ func _setup_test_board() -> void:
 		+ "GalaTura (reserve): Water of Life graveward active on both graveyard cards — destroy GalaTura to trigger Destroyed and return up to 3 graveyard creatures to deck bottom.  |  "
 		+ "GidimEnsi (reserve, defensive, Incorporeal): any P2 creature that attacks P1's followers falls asleep; can only be engaged by Spirits or faster Mages.  |  "
 		+ "Hand — Gugalanna: summon for Celestial Charge impact (destroys EnkiLordOfEridu RES 36 or Enkidu RES 30, both SPD < 25; opponent may trigger attack hexes; Gugalanna returns to hand). "
-		+ "GiantMasterArchitect: summon for Master Plan impact (finds GlitnirThePeaceful from deck; also tests GiantsDisdain +5 SPD intercept as a Giant). "
+		+ "GiantMasterArchitect: summon for Master Plan impact (finds GlitnirThePeaceful from deck; also tests GiantsDisdain +1 Reach/+1 SPD intercept as a Giant). "
 		+ "Gleipnir: play to bind Enkidu (cannot attack/intercept, abilities negated). "
 		+ "Gungnir: respond to a Norse Warrior (Berserker after healing) attacking to destroy its target. "
 		+ "Gullinbursti: vanilla SPD-4 creature."

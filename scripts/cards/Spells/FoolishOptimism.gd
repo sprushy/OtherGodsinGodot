@@ -14,7 +14,7 @@ func _init() -> void:
 	flavor_text = ""
 	artist = "David Revoy"
 	art_path = "res://images/card_art/hexes/foolish_optimism_crop.jpg"
-	ability_text = "Force your opponent's lowest lvl face-up creature to attack your highest lvl face-up creature."
+	ability_text = "Force your opponent's lowest lvl face-up creature to attack your highest lvl face-up creature. Halve follower damage from that combat."
 
 func resolve(game_manager: GameManager, _target = null) -> void:
 	if game_manager == null:

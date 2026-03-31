@@ -19,6 +19,7 @@ var attacker: Card
 var united_front_partner: Card = null
 var attack_speed_override: int = -1
 var interceptor: Card   # may be null
+var halve_follower_damage: bool = false
 
 # SPELL / ABILITY / EVENT specific
 var display_zone: Zone = null
@@ -57,6 +58,7 @@ func to_dict(game_manager: GameManager) -> Dictionary:
 		"united_front_partner_uid": united_front_partner.get("uid") if united_front_partner != null else "",
 		"attack_speed_override": attack_speed_override,
 		"interceptor_uid": interceptor.get("uid") if interceptor != null else "",
+		"halve_follower_damage": halve_follower_damage,
 		# Event specific
 		"event_name": event_name,
 		"event_speed": event_speed,
@@ -105,6 +107,7 @@ static func from_dict(dict: Dictionary, game_manager: GameManager) -> CardAction
 	action.united_front_partner = game_manager.get_card_by_uid(dict.get("united_front_partner_uid", ""))
 	action.attack_speed_override = dict.get("attack_speed_override", -1)
 	action.interceptor = game_manager.get_card_by_uid(dict.get("interceptor_uid", ""))
+	action.halve_follower_damage = bool(dict.get("halve_follower_damage", false))
 	
 	# Event specific
 	action.event_name = dict.get("event_name", "")
