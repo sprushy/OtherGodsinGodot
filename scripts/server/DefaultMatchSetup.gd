@@ -4,6 +4,11 @@ class_name DefaultMatchSetup
 const CardCatalogScript = preload("res://scripts/cards/CardCatalog.gd")
 const DeckBuilderScript = preload("res://scripts/Other/DeckBuilder.gd")
 
+var _rng := RandomNumberGenerator.new()
+
+func _init() -> void:
+	_rng.randomize()
+
 ## Shared debug-match bootstrap used by both the visible game scene and
 ## the dedicated headless match server. Keeping this in one place avoids
 ## the two authority paths drifting apart.
@@ -50,6 +55,7 @@ func build_default_match(game_manager: GameManager) -> Dictionary:
 		player1.draw_card()
 		player2.draw_card()
 
+	_apply_random_first_player_bonus(game_manager)
 	game_manager.feedback_viewer = player1
 	return {
 		"player1": player1,
@@ -103,6 +109,7 @@ func build_match_from_session_decks(game_manager: GameManager, match_session) ->
 
 	game_manager.setup_game()
 	_apply_standard_opening(players)
+	_apply_random_first_player_bonus(game_manager)
 	game_manager.feedback_viewer = players[0]
 	return {
 		"player1": players[0],
@@ -157,6 +164,22 @@ func _apply_standard_opening(players: Array[Player]) -> void:
 		for player in players:
 			if player != null:
 				player.draw_card()
+
+func _apply_random_first_player_bonus(game_manager: GameManager) -> void:
+	if game_manager == null or game_manager.players.size() < 2:
+		return
+	var first_player_index: int = _rng.randi_range(0, game_manager.players.size() - 1)
+	var first_player: Player = game_manager.players[first_player_index]
+	var second_player: Player = game_manager.players[1 - first_player_index]
+	for player in game_manager.players:
+		if player != null:
+			player.is_turn_player = false
+	game_manager.current_player = first_player
+	game_manager.other_player = second_player
+	game_manager.turn_player = first_player
+	first_player.is_turn_player = true
+	second_player.is_turn_player = false
+	second_player.gain_mana(2)
 
 func _get_session_deck_submission(match_session, session_id: String) -> Dictionary:
 	if session_id.is_empty() or match_session == null:

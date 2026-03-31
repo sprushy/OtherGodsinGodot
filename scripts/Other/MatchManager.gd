@@ -302,10 +302,11 @@ func can_attack(card: Card) -> bool:
 		
 	return (
 		card.card_type == Card.CardType.CREATURE
+		and card.get_controller() == game_manager.current_player
 		and card.can_take_major_creature_action()
 		and not card.is_sleeping
 		and not card.has_status_effect("cannot_attack")
-		and game_manager.turn_number > 0
+		and game_manager.turn_number > 1
 		and card.creature_mode == Card.CreatureMode.AGGRESSIVE
 		and card.current_zone != null
 		and card.current_zone.zone_type == Zone.ZoneType.FRONTLINE
@@ -327,7 +328,9 @@ func get_attack_invalid_reason(card: Card) -> String:
 		var status = card.get_status_effect("cannot_attack")
 		var source = status.get("source", "an effect")
 		return card.card_name + " cannot attack because of " + source + "."
-	if game_manager.turn_number == 0:
+	if card.get_controller() != game_manager.current_player:
+		return "It is not " + card.card_name + "'s controller's turn."
+	if game_manager.turn_number <= 1:
 		return "Cannot attack on the first turn!"
 	if card.creature_mode != Card.CreatureMode.AGGRESSIVE:
 		return card.card_name + " is in defensive stance and cannot attack."

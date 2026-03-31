@@ -1405,6 +1405,7 @@ func _do_update_ui() -> void:
 	draw_hand()
 	draw_board()
 	draw_enemy_board()
+	_refresh_visible_stat_panels()
 	_sync_stack_zone_previews()
 
 func _get_board_zone_extent_target() -> float:
@@ -6744,7 +6745,7 @@ func _on_all_attack_followers_pressed() -> void:
 	if _is_turn_choice_pending():
 		_reject_pre_turn_action()
 		return
-	if game_manager.turn_number == 0:
+	if game_manager.turn_number <= 1:
 		action_label.text = "Cannot attack on the first turn!"
 		return
 	if game_manager.attack_restrictions.has(game_manager.current_player):
@@ -7307,7 +7308,9 @@ func _bdrag_cleanup() -> void:
 func _get_attack_block_reason(attacker: Card) -> String:
 	if attacker == null or not attacker is Card:
 		return "Invalid attacker selected."
-	if game_manager.turn_number == 0:
+	if attacker.get_controller() != game_manager.current_player:
+		return "It is not your turn to attack."
+	if game_manager.turn_number <= 1:
 		return "Cannot attack on the first turn!"
 	if not attacker.can_take_major_creature_action():
 		return _get_card_name_safe(attacker, "That creature") + " has already acted this turn."
@@ -10258,6 +10261,7 @@ func _apply_full_state(data: Dictionary) -> void:
 			if local_idx < game_manager.players.size():
 				game_manager.feedback_viewer = game_manager.players[local_idx]
 		_awaiting_initial_full_state = false
+		_sync_network_turn_entry_ui_from_state()
 	# Host has the live authoritative game_manager — no zone rebuild needed.
 	# Show server's action message if any
 	var msg: String = data.get("action_message", "")
@@ -10267,6 +10271,24 @@ func _apply_full_state(data: Dictionary) -> void:
 
 	update_ui()
 	_update_waiting_overlay()
+
+func _sync_network_turn_entry_ui_from_state() -> void:
+	if not _is_networked_client or game_manager == null or network_manager == null:
+		return
+	if _game_finished or network_manager.local_player_index < 0:
+		return
+	var local_idx: int = network_manager.local_player_index
+	var current_idx: int = game_manager.players.find(game_manager.current_player)
+	if current_idx != local_idx:
+		choice_container.visible = false
+		end_turn_button.visible = false
+		_close_turn_start_windows()
+		return
+	if game_manager.has_resolved_turn_upkeep():
+		hide_turn_choice()
+	else:
+		show_turn_choice()
+		_maybe_prompt_turn_start_windows()
 
 func _update_waiting_status(is_waiting: bool, message: String = "Waiting for Opponent...") -> void:
 	var panel = get_node_or_null("WaitingOverlay")
