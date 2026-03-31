@@ -5,7 +5,7 @@ func _init() -> void:
 	card_name = "Fourth Sage Enmegalamma"
 	card_types = ["Mer", "Mage", "Priest", "Sage", "Ancient Creature"]
 	level = 3
-	mana_cost = 3
+	mana_cost = 0
 	sacrifice_cost = 0
 	speed = 1
 	resilience = 15

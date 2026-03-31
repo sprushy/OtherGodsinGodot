@@ -12,7 +12,7 @@ func _init() -> void:
 	if "Targeting" not in card_types:
 		card_types.append("Targeting")
 	level = 2
-	mana_cost = 2
+	mana_cost = 0
 	sacrifice_cost = 0
 	speed = 2
 	resilience = 9

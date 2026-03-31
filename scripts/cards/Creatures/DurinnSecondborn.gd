@@ -1,17 +1,19 @@
 extends CreatureCard
 class_name DurinnSecondborn
 
+const REFORGE_COST := 2
+
 func _init() -> void:
 	super._init()
 	card_name = "Durinn Secondborn"
 	card_types = ["Dwarf", "Smith", "Norse Creature", "Targeting"]
 	level = 2
-	mana_cost = 2
+	mana_cost = 0
 	sacrifice_cost = 0
 	speed = 1
 	resilience = 5
 	strength = 14
-	ability_text = "Reforge ([b]Impact[/b]): Add a Weapon from either graveyard to your hand."
+	ability_text = "Reforge ([b]Impact[/b], 2 mana): Add a Weapon from either graveyard to your hand."
 	flavor_text = ""
 	culture = "Norse"
 	artist = "Lorinda Tomko"
@@ -19,6 +21,11 @@ func _init() -> void:
 	targets = true
 
 func on_impact(game_manager: GameManager) -> void:
+	var controller := get_controller()
+	if controller == null or controller.mana < REFORGE_COST:
+		if game_manager != null:
+			game_manager.note_player_feedback("%s needs %d mana to reforge a weapon." % [card_name, REFORGE_COST])
+		return
 	var valid_targets := get_valid_targets(game_manager)
 	if valid_targets.is_empty():
 		if game_manager != null:
@@ -50,9 +57,13 @@ func resolve_reforge_impact(game_manager: GameManager, target: Card) -> String:
 	var controller := get_controller()
 	if controller == null:
 		return card_name + " has no controller for Reforge."
+	if controller.mana < REFORGE_COST:
+		return card_name + " needs %d mana to reforge a weapon." % REFORGE_COST
 	var valid_targets := get_valid_targets(game_manager)
 	if target == null or target not in valid_targets:
 		return card_name + " found no valid weapon to reforge."
+	if not controller.spend_mana(REFORGE_COST):
+		return card_name + " needs %d mana to reforge a weapon." % REFORGE_COST
 
 	var previous_owner := target.card_owner
 	if previous_owner == null:

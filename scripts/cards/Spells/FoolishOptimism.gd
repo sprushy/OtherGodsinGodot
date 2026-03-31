@@ -7,7 +7,7 @@ func _init() -> void:
 	culture = "Neutral"
 	card_types = ["Compulsion", "Attack"]
 	level = 1
-	mana_cost = 1
+	mana_cost = 0
 	speed = 1
 	is_legendary = false
 	sacrifice_cost = 0

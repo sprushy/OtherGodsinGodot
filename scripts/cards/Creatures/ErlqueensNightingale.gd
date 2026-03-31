@@ -8,7 +8,7 @@ func _init() -> void:
 	card_name = "Erlqueen's Nightingale"
 	card_types = _get_human_form_types()
 	level = 1
-	mana_cost = 1
+	mana_cost = 0
 	speed = 3
 	resilience = 10
 	strength = 13

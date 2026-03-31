@@ -1,6 +1,7 @@
 extends CreatureCard
 class_name Berserker
 
+const RAGE_ACTIVATION_COST := 1
 const RAGE_STR_BONUS := 10
 const RAGE_SOURCE := "Berserker Rage"
 
@@ -11,12 +12,12 @@ func _init() -> void:
 	card_name = "Berserker"
 	card_types = ["Human", "Warrior"]
 	level = 3
-	mana_cost = 1
+	mana_cost = 0
 	speed = 1
 	resilience = 10
 	strength = 17
 	sacrifice_cost = 0
-	ability_text = "[b]Berserker Rage[/b] (Once per turn): This turn gain 10 Str and [b]Immortal[/b]. After any attack, sleep in defensive stance until the start of your next turn."
+	ability_text = "[b]Berserker Rage[/b] (Once per turn, 1 mana): This turn gain 10 Str and [b]Immortal[/b]. After any attack, sleep in defensive stance until the start of your next turn."
 	culture = "Norse"
 	artist = "Ricardo Zoppello"
 	art_path = "res://images/card_art/creatures/Berserker's Steele(web).jpg"
@@ -35,13 +36,23 @@ func can_activate(game_manager: GameManager) -> bool:
 		return false
 	if is_sleeping:
 		return false
+	if card_owner == null or card_owner.mana < RAGE_ACTIVATION_COST:
+		return false
 	return not is_used
 
 func get_activation_failure_reason(game_manager: GameManager) -> String:
+	if card_owner == null or card_owner.mana < RAGE_ACTIVATION_COST:
+		return card_name + " needs %d mana to activate Berserker Rage." % RAGE_ACTIVATION_COST
 	return card_name + " cannot activate right now."
 
 func activate(game_manager: GameManager, _target: Card = null) -> void:
 	if not can_activate(game_manager):
+		if game_manager != null and card_owner != null and card_owner.mana < RAGE_ACTIVATION_COST:
+			game_manager.note_player_feedback("%s needs %d mana to activate Berserker Rage." % [card_name, RAGE_ACTIVATION_COST])
+		return
+	if not card_owner.spend_mana(RAGE_ACTIVATION_COST):
+		if game_manager != null:
+			game_manager.note_player_feedback("%s needs %d mana to activate Berserker Rage." % [card_name, RAGE_ACTIVATION_COST])
 		return
 	if game_manager != null and game_manager.is_immune_to_source(self, self):
 		is_used = true

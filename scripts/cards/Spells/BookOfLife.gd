@@ -9,7 +9,7 @@ func _init() -> void:
 	culture = "Neutral"
 	card_types = ["Summon", "Creature"]
 	level = 1
-	mana_cost = 1
+	mana_cost = 0
 	speed = 1
 	is_legendary = true
 	flavor_text = ""

@@ -6,7 +6,7 @@ func _init() -> void:
 	card_name = "Aurbo" + char(240) + "a"
 	card_types = ["Giant", "Warrior", "Norse Creature"]
 	level = 3
-	mana_cost = 1
+	mana_cost = 0
 	sacrifice_cost = 0
 	speed = 1
 	resilience = 3

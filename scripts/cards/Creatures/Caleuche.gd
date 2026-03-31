@@ -8,7 +8,7 @@ func _init() -> void:
 	card_name = "Caleuche, the Ghost Ship"
 	card_types = ["Vessel", "Spirit", "Aqueous", "Nahuatl Creature"]
 	level = 2
-	mana_cost = 2
+	mana_cost = 0
 	sacrifice_cost = 0
 	speed = 1
 	resilience = 10

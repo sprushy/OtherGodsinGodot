@@ -10,7 +10,7 @@ func _init() -> void:
 	culture = "Norse"
 	card_types = ["Petrification"]
 	level = 1
-	mana_cost = 1
+	mana_cost = 0
 	speed = 1
 	is_legendary = false
 	flavor_text = ""

@@ -8,7 +8,7 @@ func _init() -> void:
 	card_name = "Blessed Knights"
 	card_types = ["Human", "Warrior", "Knight", "Horde"]
 	level = 1
-	mana_cost = 1
+	mana_cost = 0
 	speed = 1
 	resilience = 13
 	strength = 15

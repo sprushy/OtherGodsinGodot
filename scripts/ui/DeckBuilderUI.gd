@@ -17,6 +17,12 @@ const COLLECTION_GAP  := 8.0
 const PAGE_REPEAT_INTERVAL_MS := 90
 const COLLECTION_MODE_CARDS := "cards"
 const COLLECTION_MODE_SAVED_DECKS := "saved_decks"
+const MANA_FILTER_ANY := "Any"
+const MIN_DECK_PANEL_WIDTH := 260.0
+const MAX_DECK_PANEL_WIDTH := 380.0
+const NARROW_DECK_PANEL_WIDTH := 300.0
+const COMPACT_PREVIEW_WIDTH_THRESHOLD := 300.0
+const STACKED_LAYOUT_WIDTH_THRESHOLD := 900.0
 const CARD_VIEW_PRESETS := [
 	{"label": "Tiny", "rows": 5},
 	{"label": "Small", "rows": 4},
@@ -30,6 +36,7 @@ var _all_cards: Array  = []        # template Card instances (read-only)
 var _deck: Dictionary  = {}        # card_name (String) -> count (int)
 var _filter: String         = "All"
 var _faction_filter: String = "All"
+var _mana_cost_filter: String = MANA_FILTER_ANY
 var _collection_sort: String = "Default"
 var _filtered_cards_cache: Array = []
 var _current_page: int      = 0
@@ -44,10 +51,16 @@ var _saved_decks_cache: Array[Dictionary] = []
 
 # ── major UI refs ──────────────────────────────────────────────────
 var _grid:             HFlowContainer
+var _body_grid:        GridContainer
+var _collection_panel: PanelContainer
 var _collection_host:  Control
 var _page_label:       Label
 var _prev_page_btn:    Button
 var _next_page_btn:    Button
+var _deck_panel:       VBoxContainer
+var _preview_outer:    PanelContainer
+var _preview_layout:   HBoxContainer
+var _preview_text_box: VBoxContainer
 var _deck_list:        VBoxContainer
 var _deck_count_lbl:   Label
 var _validation_lbl:   Label
@@ -55,6 +68,8 @@ var _profile_lbl:      Label
 var _deck_name_edit:   LineEdit
 var _saved_decks_option: OptionButton
 var _saved_decks_view_btn: Button
+var _saved_actions_bar: HFlowContainer
+var _deck_footer_buttons: HFlowContainer
 # preview
 var _prev_art:         TextureRect
 var _prev_name:        Label
@@ -73,9 +88,11 @@ var _online_lobby_client = null
 # ── init ───────────────────────────────────────────────────────────
 func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	resized.connect(_queue_responsive_layout_refresh)
 	_all_cards = _make_all_cards()
 	_rebuild_filtered_cards_cache()
 	_build_ui()
+	_queue_responsive_layout_refresh()
 	_ensure_local_profile_store()
 	_load_profile_decks()
 	_apply_default_collection_mode()
@@ -118,7 +135,10 @@ func _build_ui() -> void:
 	_build_top_bar(root)
 	_build_faction_bar(root)
 
-	var body := HBoxContainer.new()
+	var body := GridContainer.new()
+	_body_grid = body
+	body.columns = 2
+	body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	body.add_theme_constant_override("separation", 6)
 	root.add_child(body)
@@ -133,7 +153,7 @@ func _build_top_bar(parent: Control) -> void:
 	bar.add_theme_stylebox_override("panel", bar_style)
 	parent.add_child(bar)
 
-	var inner := HBoxContainer.new()
+	var inner := HFlowContainer.new()
 	inner.add_theme_constant_override("separation", 8)
 	bar.add_child(inner)
 
@@ -193,7 +213,7 @@ func _build_faction_bar(parent: Control) -> void:
 	bar.add_theme_stylebox_override("panel", bar_style)
 	parent.add_child(bar)
 
-	var inner := HBoxContainer.new()
+	var inner := HFlowContainer.new()
 	inner.add_theme_constant_override("separation", 6)
 	bar.add_child(inner)
 
@@ -216,6 +236,17 @@ func _build_faction_bar(parent: Control) -> void:
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	inner.add_child(spacer)
 
+	var mana_lbl := Label.new()
+	mana_lbl.text = "Mana:"
+	mana_lbl.add_theme_font_size_override("font_size", 11)
+	mana_lbl.modulate = Color(0.7, 0.7, 0.7)
+	mana_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	mana_lbl.custom_minimum_size.y = 30
+	mana_lbl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	inner.add_child(mana_lbl)
+
+	_add_mana_filter_controls(inner)
+
 func _add_faction_filter_controls(parent: Control, button_height: float = 26.0) -> void:
 	# Collect unique cultures from card pool, sorted.
 	var cultures: Array = []
@@ -236,6 +267,19 @@ func _add_faction_filter_controls(parent: Control, button_height: float = 26.0) 
 		btn.pressed.connect(func() -> void: _set_faction_filter(captured))
 		parent.add_child(btn)
 
+func _add_mana_filter_controls(parent: Control) -> void:
+	var mana_group := ButtonGroup.new()
+	for label in [MANA_FILTER_ANY, "0", "1", "2", "3", "4", "5+"]:
+		var btn := Button.new()
+		btn.text = label
+		btn.toggle_mode = true
+		btn.button_group = mana_group
+		btn.button_pressed = (label == _mana_cost_filter)
+		btn.custom_minimum_size = Vector2(46 if label == MANA_FILTER_ANY else 36, 28)
+		var captured_label: String = label
+		btn.pressed.connect(func() -> void: _set_mana_cost_filter(captured_label))
+		parent.add_child(btn)
+
 func _add_card_view_controls(parent: Control) -> void:
 	var view_group := ButtonGroup.new()
 	for preset: Dictionary in CARD_VIEW_PRESETS:
@@ -251,6 +295,7 @@ func _add_card_view_controls(parent: Control) -> void:
 
 func _build_collection_panel(parent: Control) -> void:
 	var panel := PanelContainer.new()
+	_collection_panel = panel
 	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	panel.size_flags_vertical   = Control.SIZE_EXPAND_FILL
 	var ps := StyleBoxFlat.new()
@@ -332,7 +377,8 @@ func _build_collection_panel(parent: Control) -> void:
 
 func _build_deck_panel(parent: Control) -> void:
 	var panel := VBoxContainer.new()
-	panel.custom_minimum_size.x = 380
+	_deck_panel = panel
+	panel.custom_minimum_size.x = NARROW_DECK_PANEL_WIDTH
 	panel.size_flags_horizontal = Control.SIZE_FILL
 	panel.size_flags_vertical   = Control.SIZE_EXPAND_FILL
 	panel.add_theme_constant_override("separation", 8)
@@ -340,7 +386,8 @@ func _build_deck_panel(parent: Control) -> void:
 
 	# ── preview ──────────────────────────────────────────
 	var prev_outer := PanelContainer.new()
-	prev_outer.custom_minimum_size = Vector2(380, 300)
+	_preview_outer = prev_outer
+	prev_outer.custom_minimum_size = Vector2(NARROW_DECK_PANEL_WIDTH, 300)
 	prev_outer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var prev_style := StyleBoxFlat.new()
 	prev_style.bg_color = Color(0.10, 0.10, 0.16)
@@ -351,6 +398,7 @@ func _build_deck_panel(parent: Control) -> void:
 	panel.add_child(prev_outer)
 
 	var prev_hbox := HBoxContainer.new()
+	_preview_layout = prev_hbox
 	prev_hbox.add_theme_constant_override("separation", 8)
 	prev_outer.add_child(prev_hbox)
 
@@ -362,7 +410,8 @@ func _build_deck_panel(parent: Control) -> void:
 	prev_hbox.add_child(_prev_art)
 
 	var prev_text := VBoxContainer.new()
-	prev_text.custom_minimum_size.x = 220
+	_preview_text_box = prev_text
+	prev_text.custom_minimum_size.x = 0
 	prev_text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	prev_text.size_flags_vertical   = Control.SIZE_EXPAND_FILL
 	prev_text.add_theme_constant_override("separation", 5)
@@ -469,17 +518,20 @@ func _build_deck_panel(parent: Control) -> void:
 	_deck_name_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	deck_name_row.add_child(_deck_name_edit)
 
-	var saved_hdr := HBoxContainer.new()
+	var saved_hdr := HFlowContainer.new()
+	_saved_actions_bar = saved_hdr
 	saved_hdr.add_theme_constant_override("separation", 6)
 	panel.add_child(saved_hdr)
 
 	var save_btn := Button.new()
 	save_btn.text = "Save Deck"
+	save_btn.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	save_btn.pressed.connect(_save_profile_deck)
 	saved_hdr.add_child(save_btn)
 
 	var new_btn := Button.new()
 	new_btn.text = "New Deck"
+	new_btn.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	new_btn.pressed.connect(_new_deck)
 	saved_hdr.add_child(new_btn)
 
@@ -490,11 +542,13 @@ func _build_deck_panel(parent: Control) -> void:
 
 	_saved_decks_view_btn = Button.new()
 	_saved_decks_view_btn.text = "Saved Decks"
+	_saved_decks_view_btn.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	_saved_decks_view_btn.pressed.connect(_toggle_saved_decks_view)
 	saved_hdr.add_child(_saved_decks_view_btn)
 
 	var delete_btn := Button.new()
 	delete_btn.text = "Delete"
+	delete_btn.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	delete_btn.pressed.connect(_delete_selected_deck)
 	saved_hdr.add_child(delete_btn)
 
@@ -520,7 +574,8 @@ func _build_deck_panel(parent: Control) -> void:
 	panel.add_child(_validation_lbl)
 
 	# ── action buttons ───────────────────────────────────
-	var btns := HBoxContainer.new()
+	var btns := HFlowContainer.new()
+	_deck_footer_buttons = btns
 	btns.add_theme_constant_override("separation", 6)
 	panel.add_child(btns)
 
@@ -553,11 +608,13 @@ func _refresh_grid() -> void:
 	var start_index := _current_page * _page_size()
 	var end_index := mini(start_index + _page_size(), total_items)
 	if _collection_mode == COLLECTION_MODE_SAVED_DECKS:
-		if _saved_decks_cache.is_empty():
-			_grid.add_child(_make_saved_decks_empty_state())
-		else:
-			for idx in range(start_index, end_index):
-				_grid.add_child(_make_saved_deck_cover(_saved_decks_cache[idx]))
+		for idx in range(start_index, end_index):
+			if idx == 0:
+				_grid.add_child(_make_new_deck_cover())
+				continue
+			var deck_idx := idx - 1
+			if deck_idx >= 0 and deck_idx < _saved_decks_cache.size():
+				_grid.add_child(_make_saved_deck_cover(_saved_decks_cache[deck_idx]))
 	else:
 		for idx in range(start_index, end_index):
 			var card: Card = _filtered_cards_cache[idx]
@@ -569,6 +626,8 @@ func _refresh_grid() -> void:
 
 func _matches_filter(card: Card) -> bool:
 	if _faction_filter != "All" and card.culture != _faction_filter:
+		return false
+	if not _matches_mana_cost_filter(card):
 		return false
 	match _filter:
 		"All":       return true
@@ -582,6 +641,13 @@ func _matches_filter(card: Card) -> bool:
 		"Structures":return card.card_type == Card.CardType.STRUCTURE
 		"Hexes":     return card.card_type == Card.CardType.HEX
 	return true
+
+func _matches_mana_cost_filter(card: Card) -> bool:
+	if _mana_cost_filter == MANA_FILTER_ANY:
+		return true
+	if _mana_cost_filter == "5+":
+		return card.mana_cost >= 5
+	return card.mana_cost == int(_mana_cost_filter)
 
 func _make_card_item(card: Card) -> Control:
 	var root := Control.new()
@@ -1160,6 +1226,71 @@ func _make_saved_deck_cover(saved_deck: Dictionary) -> Control:
 
 	return wrapper
 
+func _make_new_deck_cover() -> Control:
+	var glow_margin := 12
+	var wrapper := MarginContainer.new()
+	wrapper.add_theme_constant_override("margin_left", glow_margin)
+	wrapper.add_theme_constant_override("margin_top", glow_margin)
+	wrapper.add_theme_constant_override("margin_right", glow_margin)
+	wrapper.add_theme_constant_override("margin_bottom", glow_margin)
+	wrapper.custom_minimum_size = _card_size + Vector2(glow_margin * 2, glow_margin * 2)
+
+	var cover := Button.new()
+	cover.flat = false
+	cover.custom_minimum_size = _card_size
+	cover.focus_mode = Control.FOCUS_NONE
+	cover.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	cover.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	cover.pressed.connect(_new_deck)
+	wrapper.add_child(cover)
+
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.10, 0.11, 0.16)
+	style.border_color = Color(0.28, 0.32, 0.42)
+	style.corner_radius_top_left = 8
+	style.corner_radius_top_right = 8
+	style.corner_radius_bottom_left = 8
+	style.corner_radius_bottom_right = 8
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		style.set_border_width(side, 2)
+	cover.add_theme_stylebox_override("normal", style)
+
+	var hover_style := style.duplicate() as StyleBoxFlat
+	hover_style.border_color = Color(0.95, 0.82, 0.38)
+	cover.add_theme_stylebox_override("hover", hover_style)
+	cover.add_theme_stylebox_override("pressed", hover_style)
+
+	var plus_label := Label.new()
+	plus_label.text = "+"
+	plus_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	plus_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	plus_label.add_theme_font_size_override("font_size", 56)
+	plus_label.add_theme_color_override("font_color", Color(0.95, 0.82, 0.38))
+	plus_label.anchor_left = 0
+	plus_label.anchor_right = 1
+	plus_label.anchor_top = 0
+	plus_label.anchor_bottom = 1
+	plus_label.offset_top = -20
+	plus_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	cover.add_child(plus_label)
+
+	var caption := Label.new()
+	caption.text = "New Deck"
+	caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	caption.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	caption.add_theme_font_size_override("font_size", 16)
+	caption.add_theme_color_override("font_color", Color(0.95, 0.95, 0.95))
+	caption.anchor_left = 0
+	caption.anchor_right = 1
+	caption.anchor_top = 1
+	caption.anchor_bottom = 1
+	caption.offset_top = -42
+	caption.offset_bottom = -10
+	caption.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	cover.add_child(caption)
+
+	return wrapper
+
 func _make_saved_deck_cover_style(is_selected: bool, glow_color: Color, hovered: bool) -> StyleBoxFlat:
 	var panel_style := StyleBoxFlat.new()
 	panel_style.bg_color = Color(0.12, 0.13, 0.18)
@@ -1447,6 +1578,14 @@ func _set_faction_filter(new_faction: String) -> void:
 	_refresh_grid()
 	_update_count_badges()
 
+func _set_mana_cost_filter(new_filter: String) -> void:
+	_set_collection_mode(COLLECTION_MODE_CARDS, false)
+	_mana_cost_filter = new_filter
+	_current_page = 0
+	_rebuild_filtered_cards_cache()
+	_refresh_grid()
+	_update_count_badges()
+
 func _set_collection_rows(rows: int) -> void:
 	if rows == _collection_rows:
 		return
@@ -1499,6 +1638,52 @@ func _try_handle_page_key(keycode: Key, is_echo: bool) -> bool:
 
 func _queue_collection_layout_refresh() -> void:
 	call_deferred("_update_collection_layout")
+
+func _queue_responsive_layout_refresh() -> void:
+	call_deferred("_update_responsive_layout")
+
+func _update_responsive_layout() -> void:
+	if not is_instance_valid(_deck_panel) or not is_instance_valid(_body_grid):
+		return
+
+	var viewport_width := size.x
+	if viewport_width <= 0.0:
+		return
+
+	var use_stacked_layout := viewport_width < STACKED_LAYOUT_WIDTH_THRESHOLD
+	_body_grid.columns = 1 if use_stacked_layout else 2
+
+	var target_panel_width := clampf(floor(viewport_width * 0.34), MIN_DECK_PANEL_WIDTH, MAX_DECK_PANEL_WIDTH)
+	if use_stacked_layout:
+		target_panel_width = max(MIN_DECK_PANEL_WIDTH, viewport_width - 24.0)
+	else:
+		if viewport_width < 1100.0:
+			target_panel_width = min(target_panel_width, NARROW_DECK_PANEL_WIDTH)
+		if viewport_width < 860.0:
+			target_panel_width = MIN_DECK_PANEL_WIDTH
+
+	_deck_panel.custom_minimum_size.x = target_panel_width
+	_deck_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL if use_stacked_layout else Control.SIZE_FILL
+	if is_instance_valid(_collection_panel):
+		_collection_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+	if is_instance_valid(_preview_outer):
+		var preview_height := 300.0
+		if target_panel_width <= COMPACT_PREVIEW_WIDTH_THRESHOLD:
+			preview_height = 248.0
+		_preview_outer.custom_minimum_size = Vector2(target_panel_width, preview_height)
+
+	if is_instance_valid(_preview_layout):
+		_preview_layout.add_theme_constant_override("separation", 6 if target_panel_width <= COMPACT_PREVIEW_WIDTH_THRESHOLD else 8)
+
+	if is_instance_valid(_prev_art):
+		if target_panel_width <= COMPACT_PREVIEW_WIDTH_THRESHOLD:
+			_prev_art.custom_minimum_size = Vector2(96, 128)
+		else:
+			_prev_art.custom_minimum_size = Vector2(132, 176)
+
+	if is_instance_valid(_preview_text_box):
+		_preview_text_box.custom_minimum_size.x = 0
 
 func _update_collection_layout() -> void:
 	if not is_instance_valid(_collection_host) or not is_instance_valid(_grid):
@@ -1592,7 +1777,7 @@ func _update_pagination_controls(total_cards: int) -> void:
 
 func _current_grid_total() -> int:
 	if _collection_mode == COLLECTION_MODE_SAVED_DECKS:
-		return _saved_decks_cache.size()
+		return _saved_decks_cache.size() + 1
 	return _filtered_cards_cache.size()
 
 func _toggle_saved_decks_view() -> void:

@@ -6,7 +6,7 @@ func _init() -> void:
 	card_name = "Asakku"
 	card_types = ["Demon", "Ancient Creature"]
 	level = 2
-	mana_cost = 1
+	mana_cost = 0
 	sacrifice_cost = 0
 	speed = 1
 	resilience = 13
