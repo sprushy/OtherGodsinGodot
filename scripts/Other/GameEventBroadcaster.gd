@@ -26,6 +26,7 @@ func _init(gm: GameManager, mm: MatchManager, nm: Node, p_prompt_router = null) 
 func _connect_signals() -> void:
 	match_manager.move_validated.connect(_on_move_validated)
 	match_manager.action_resolved.connect(_on_action_resolved)
+	game_manager.turn_upkeep_started.connect(_on_turn_upkeep_started)
 	game_manager.turn_started.connect(_on_turn_started)
 	game_manager.game_ended.connect(_on_game_ended)
 	match_manager.request_ui_interaction.connect(_on_ui_interaction_requested)
@@ -46,21 +47,23 @@ func _on_move_validated(move: Dictionary) -> void:
 func _on_action_resolved(_action: CardAction) -> void:
 	_broadcast_full_state("")
 
+func _on_turn_upkeep_started(_turn_number: int, player: Player) -> void:
+	if network_manager == null:
+		return
+	var player_idx := game_manager.players.find(player)
+	var peer_id: int = network_manager.player_peer_ids.get(player_idx, -1)
+	if peer_id != 1 and peer_id != -1:
+		network_manager.broadcast_event_to_peer(peer_id, "upkeep_needed", {
+			current_player_index = player_idx,
+		})
+
 func _on_turn_started(turn_number: int, player: Player) -> void:
 	var player_idx := game_manager.players.find(player)
 	_broadcast_full_state("Turn %d — %s's turn." % [turn_number, player.player_name])
-	# Also fire a dedicated turn_started event so clients can open upkeep window
 	network_manager.broadcast_event_to_all("turn_started", {
 		turn_number = turn_number,
 		current_player_index = player_idx,
 	})
-	# If the turn player is a remote client, notify them specifically about upkeep
-	if network_manager != null:
-		var peer_id: int = network_manager.player_peer_ids.get(player_idx, -1)
-		if peer_id != 1 and peer_id != -1:
-			network_manager.broadcast_event_to_peer(peer_id, "upkeep_needed", {
-				current_player_index = player_idx
-			})
 
 func _on_game_ended(winner: Player, _loser: Player) -> void:
 	var winner_idx := game_manager.players.find(winner)
@@ -129,8 +132,7 @@ func _label_for_move(move: Dictionary) -> String:
 			var card := game_manager.get_card_by_uid(move.get("card_uid", ""))
 			return ("Played %s." % card.card_name) if card else "Card played."
 		"prepare_card":
-			var card := game_manager.get_card_by_uid(move.get("card_uid", ""))
-			return ("Prepared %s." % card.card_name) if card else "Card prepared."
+			return "A card was prepared face-down."
 		"creature_move":
 			var card := game_manager.get_card_by_uid(move.get("card_uid", ""))
 			return ("%s moved." % card.card_name) if card else "Creature moved."

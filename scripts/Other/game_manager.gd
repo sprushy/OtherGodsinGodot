@@ -607,6 +607,8 @@ func can_play_card(player: Player, card: Card, target_zone: Zone) -> bool:
 		return false
 	if card == null or not card.can_be_played(self, player):
 		return false
+	if player == current_player and not has_resolved_turn_upkeep():
+		return false
 	# Check if player can pay costs
 	var mana_required := card.mana_cost
 	if card_uses_summon_cost_rules(card):
@@ -664,6 +666,8 @@ func can_prepare_card(player: Player, card: Card, target_zone: Zone) -> bool:
 	if is_game_over:
 		return false
 	if player == null or card == null:
+		return false
+	if player == current_player and not has_resolved_turn_upkeep():
 		return false
 	if card.card_type not in [Card.CardType.SPELL, Card.CardType.HEX, Card.CardType.CHARM]:
 		return false

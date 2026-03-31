@@ -304,6 +304,8 @@ var _match_reconnect_waiting: bool = false
 var _match_reconnect_wait_message: String = "Waiting for opponent to reconnect..."
 var _awaiting_initial_full_state: bool = false
 var _current_match_info: Dictionary = {}
+var _network_upkeep_prompt_turn: int = -1
+var _network_upkeep_prompt_player_index: int = -1
 
 const TRANSIENT_UI_Z_INDEX := 1000
 const HOVER_PREVIEW_Z_INDEX := TRANSIENT_UI_Z_INDEX + 50
@@ -4873,6 +4875,9 @@ func _on_hand_card_pressed(card: Card) -> void:
 			action_label.text = "Absence - click a Power or God Ability to target it, or drag onto one directly"
 		else:
 			action_label.text = "Selected spell: " + card.card_name + " - click a zone to cast it, or drag with S/right-click to prepare it."
+	elif card.card_type == Card.CardType.HEX:
+		placement_mode = ""
+		action_label.text = "Selected hex: " + card.card_name + " - click an empty friendly zone to prepare it, or drag it onto a valid target if it attaches."
 	elif fenrir_hand_ability_available:
 		action_label.text = card.card_name + " selected - right-click for placement options or Wolf Master, or drag to place (S while dragging = stealth)"
 	elif card.card_type == Card.CardType.CREATURE and not card.is_god:
@@ -10179,7 +10184,7 @@ func _apply_network_event(event_type: String, data: Dictionary) -> void:
 			# Server tells this client it's their turn and they need to choose upkeep
 			if network_manager != null:
 				var cp_idx: int = data.get("current_player_index", -1)
-				if cp_idx == network_manager.local_player_index:
+				if cp_idx == network_manager.local_player_index and not game_manager.has_resolved_turn_upkeep():
 					call_deferred("_open_upkeep_choice_window")
 		"turn_started":
 			# Turn hooks resolved; update label only — upkeep_needed already opened the window
@@ -10291,7 +10296,8 @@ func _sync_network_turn_entry_ui_from_state() -> void:
 		hide_turn_choice()
 	else:
 		show_turn_choice()
-		_maybe_prompt_turn_start_windows()
+		if _network_upkeep_prompt_turn != game_manager.turn_number or _network_upkeep_prompt_player_index != local_idx:
+			call_deferred("_open_upkeep_choice_window")
 
 func _sync_network_turn_controls() -> void:
 	if end_turn_button == null or all_attack_btn == null or choice_container == null:
@@ -10664,6 +10670,17 @@ func _do_end_turn() -> void:
 	)
 
 func _open_upkeep_choice_window() -> void:
+	if game_manager == null or _game_finished:
+		return
+	if _is_networked_client and network_manager != null:
+		var local_idx: int = network_manager.local_player_index
+		var current_idx: int = game_manager.players.find(game_manager.current_player)
+		if local_idx < 0 or current_idx != local_idx or game_manager.has_resolved_turn_upkeep():
+			return
+		if _network_upkeep_prompt_turn == game_manager.turn_number and _network_upkeep_prompt_player_index == local_idx and choice_container.visible:
+			return
+		_network_upkeep_prompt_turn = game_manager.turn_number
+		_network_upkeep_prompt_player_index = local_idx
 	update_ui()
 	show_turn_choice()
 	action_label.text = "Upkeep for " + game_manager.current_player.player_name + ": choose your upkeep option."

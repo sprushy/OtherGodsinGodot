@@ -531,6 +531,25 @@ func _validate_sender_authority(command: Dictionary, sender_info: Dictionary) ->
 		return "Unauthorized command: that action belongs to %s." % required_player.player_name
 	return ""
 
+func _get_command_actor(sender_info: Dictionary) -> Player:
+	var sender_player := _resolve_sender_player(sender_info)
+	return sender_player if sender_player != null else game_manager.current_player
+
+func _requires_resolved_upkeep(command_type: String) -> bool:
+	match command_type:
+		"upkeep_choice", "priority_pass", "intercept_decision", "play_hex_response", "play_charm_response":
+			return false
+	return true
+
+func _validate_turn_action_window(command: Dictionary, sender_info: Dictionary) -> String:
+	var command_type := str(command.get("type", ""))
+	var actor := _get_command_actor(sender_info)
+	if actor == null:
+		return ""
+	if _requires_resolved_upkeep(command_type) and actor == game_manager.current_player and not game_manager.has_resolved_turn_upkeep():
+		return "Resolve upkeep before taking other actions."
+	return ""
+
 func _on_move_failed(reason: String) -> void:
 	last_move_failed_reason = reason
 	_send_rejection_to_sender(_active_command_sender_info, reason)
@@ -547,11 +566,17 @@ func process_command(command: Dictionary, sender_info: Dictionary = {}) -> bool:
 		move_failed.emit(authority_error)
 		_active_command_sender_info.clear()
 		return false
+	var turn_window_error := _validate_turn_action_window(command, sender_info)
+	if not turn_window_error.is_empty():
+		move_failed.emit(turn_window_error)
+		_active_command_sender_info.clear()
+		return false
 	var result := _process_command_impl(command)
 	_active_command_sender_info.clear()
 	return result
 
 func _process_command_impl(command: Dictionary) -> bool:
+	var acting_player := _get_command_actor(_active_command_sender_info)
 	match command.get("type", ""):
 		"select_attacker":
 			var uid = command.get("card_uid", "")
@@ -582,10 +607,10 @@ func _process_command_impl(command: Dictionary) -> bool:
 			if card == null:
 				move_failed.emit("play_card: card not found")
 				return false
-			if not game_manager.can_play_card(game_manager.current_player, card, zone):
+			if not game_manager.can_play_card(acting_player, card, zone):
 				move_failed.emit("Cannot play " + card.card_name + "! Not enough resources.")
 				return false
-			game_manager.play_card(game_manager.current_player, card, zone)
+			game_manager.play_card(acting_player, card, zone)
 			move_validated.emit(command)
 			return true
 		"prepare_card":
@@ -594,10 +619,10 @@ func _process_command_impl(command: Dictionary) -> bool:
 			if card == null:
 				move_failed.emit("prepare_card: card not found")
 				return false
-			if not game_manager.can_prepare_card(game_manager.current_player, card, zone):
+			if not game_manager.can_prepare_card(acting_player, card, zone):
 				move_failed.emit("Cannot prepare " + card.card_name + "!")
 				return false
-			game_manager.prepare_card(game_manager.current_player, card, zone)
+			game_manager.prepare_card(acting_player, card, zone)
 			move_validated.emit(command)
 			return true
 		"creature_move":
@@ -623,15 +648,21 @@ func _process_command_impl(command: Dictionary) -> bool:
 			move_validated.emit(command)
 			return true
 		"end_turn":
+			if acting_player != game_manager.current_player:
+				move_failed.emit("It is not your turn.")
+				return false
 			var et_discard_uids: Array = command.get("discard_uids", [])
 			for et_uid in et_discard_uids:
 				var et_card := game_manager.get_card_by_uid(et_uid as String)
-				if et_card != null and et_card.current_zone == game_manager.current_player.hand_zone:
-					game_manager.current_player.discard_card(et_card)
+				if et_card != null and et_card.current_zone == acting_player.hand_zone:
+					acting_player.discard_card(et_card)
 			game_manager.end_turn()
 			move_validated.emit(command)
 			return true
 		"upkeep_choice":
+			if acting_player != game_manager.current_player:
+				move_failed.emit("It is not your turn.")
+				return false
 			match command.get("choice", ""):
 				"draw":
 					game_manager.player_chooses_draw()
@@ -650,11 +681,11 @@ func _process_command_impl(command: Dictionary) -> bool:
 			if card == null or zone == null:
 				move_failed.emit("play_creature: invalid card or zone")
 				return false
-			if not game_manager.can_play_card(game_manager.current_player, card, zone):
+			if not game_manager.can_play_card(acting_player, card, zone):
 				move_failed.emit("Cannot play " + card.card_name + "!")
 				return false
 			var success := game_manager.summon_creature_by_effect(
-				game_manager.current_player, card, zone,
+				acting_player, card, zone,
 				mode, stealth, stealth,
 				null, true, true, true
 			)
@@ -669,7 +700,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 			if spell == null or not (spell is SpellCard):
 				move_failed.emit("cast_spell: spell not found or not a SpellCard")
 				return false
-			var player := game_manager.current_player
+			var player := acting_player
 			if not game_manager.can_play_card(player, spell, null):
 				move_failed.emit("Cannot cast " + spell.card_name + "!")
 				return false
