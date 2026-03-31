@@ -48,9 +48,6 @@ func build_default_match(game_manager: GameManager) -> Dictionary:
 	axe2.card_owner = player2
 	player2.reserve_zones[3].add_card(axe2)
 
-	player1.gain_mana(20)
-	player2.gain_mana(20)
-
 	for _i in range(5):
 		player1.draw_card()
 		player2.draw_card()
@@ -156,10 +153,6 @@ func _own(card: Card, player: Player) -> Card:
 	return card
 
 func _apply_standard_opening(players: Array[Player]) -> void:
-	for player in players:
-		if player == null:
-			continue
-		player.gain_mana(20)
 	for _draw_index in range(5):
 		for player in players:
 			if player != null:

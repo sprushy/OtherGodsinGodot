@@ -1406,6 +1406,7 @@ func _do_update_ui() -> void:
 	draw_board()
 	draw_enemy_board()
 	_refresh_visible_stat_panels()
+	_sync_network_turn_controls()
 	_sync_stack_zone_previews()
 
 func _get_board_zone_extent_target() -> float:
@@ -10282,6 +10283,8 @@ func _sync_network_turn_entry_ui_from_state() -> void:
 	if current_idx != local_idx:
 		choice_container.visible = false
 		end_turn_button.visible = false
+		end_turn_button.disabled = true
+		all_attack_btn.disabled = true
 		_close_turn_start_windows()
 		return
 	if game_manager.has_resolved_turn_upkeep():
@@ -10289,6 +10292,26 @@ func _sync_network_turn_entry_ui_from_state() -> void:
 	else:
 		show_turn_choice()
 		_maybe_prompt_turn_start_windows()
+
+func _sync_network_turn_controls() -> void:
+	if end_turn_button == null or all_attack_btn == null or choice_container == null:
+		return
+	if _game_finished:
+		end_turn_button.disabled = true
+		all_attack_btn.disabled = true
+		return
+	if not _is_networked_client or game_manager == null or network_manager == null or network_manager.local_player_index < 0:
+		end_turn_button.disabled = false
+		all_attack_btn.disabled = false
+		return
+	var local_idx: int = network_manager.local_player_index
+	var current_idx: int = game_manager.players.find(game_manager.current_player)
+	var is_local_turn: bool = current_idx == local_idx
+	end_turn_button.disabled = not is_local_turn or choice_container.visible
+	all_attack_btn.disabled = not is_local_turn or choice_container.visible
+	if not is_local_turn:
+		selected_attacker = null
+		pending_attack_target = null
 
 func _update_waiting_status(is_waiting: bool, message: String = "Waiting for Opponent...") -> void:
 	var panel = get_node_or_null("WaitingOverlay")
