@@ -11016,6 +11016,17 @@ func cleanup() -> void:
 	_pending_skoll_prompts.clear()
 	_clear_skoll_upkeep_summon()
 	_clear_wolf_master_summon()
+	if network_manager != null:
+		if network_manager.has_method("disconnect_client") and not bool(network_manager.get("is_server")):
+			network_manager.disconnect_client()
+		if network_manager.get_parent() != null:
+			network_manager.get_parent().remove_child(network_manager)
+		network_manager.queue_free()
+		network_manager = null
+	match_client = null
+	headless_match_host = null
+	game_event_broadcaster = null
+	game_input = null
 	if game_manager:
 		game_manager.set_interaction_host(null)
 		game_manager = null

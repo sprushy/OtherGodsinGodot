@@ -5,6 +5,7 @@ class_name HeadlessMatchHost
 ## This keeps server responsibilities out of CombatMockGame's UI bootstrap.
 
 const PromptRouterScript = preload("res://scripts/server/PromptRouter.gd")
+const NETWORK_MANAGER_NODE_NAME := "MatchNetworkManager"
 
 signal game_event_received(event_type: String, data: Dictionary)
 signal peer_disconnected(peer_id: int)
@@ -43,8 +44,18 @@ func setup_transport(
 	if nm_script == null:
 		return null
 
+	if parent == null or parent.get_tree() == null:
+		return null
+	var transport_root: Node = parent.get_tree().root
+	var existing_transport := transport_root.get_node_or_null(NETWORK_MANAGER_NODE_NAME)
+	if existing_transport != null:
+		if existing_transport.get_parent() != null:
+			existing_transport.get_parent().remove_child(existing_transport)
+		existing_transport.queue_free()
+
 	network_manager = nm_script.new()
-	parent.add_child(network_manager)
+	network_manager.name = NETWORK_MANAGER_NODE_NAME
+	transport_root.add_child(network_manager)
 
 	if is_host:
 		network_manager.create_server(server_port, assign_local_host_player)
