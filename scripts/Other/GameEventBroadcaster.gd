@@ -51,6 +51,7 @@ func _on_turn_upkeep_started(_turn_number: int, player: Player) -> void:
 	if network_manager == null:
 		return
 	var player_idx := game_manager.players.find(player)
+	_broadcast_full_state("Turn %d — %s's turn." % [game_manager.turn_number, player.player_name])
 	var peer_id: int = network_manager.player_peer_ids.get(player_idx, -1)
 	if peer_id != 1 and peer_id != -1:
 		network_manager.broadcast_event_to_peer(peer_id, "upkeep_needed", {

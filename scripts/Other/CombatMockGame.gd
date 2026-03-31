@@ -1408,6 +1408,7 @@ func _do_update_ui() -> void:
 	draw_board()
 	draw_enemy_board()
 	_refresh_visible_stat_panels()
+	_refresh_zone_info_icons()
 	_sync_network_turn_controls()
 	_sync_stack_zone_previews()
 
@@ -1997,6 +1998,7 @@ func _make_deck_panel(zone: Zone) -> Control:
 
 func _make_zone_info_icon(label_text: String, short_label: String, zone: Zone, color: Color) -> PanelContainer:
 	var panel := PanelContainer.new()
+	panel.name = "ZoneInfoIcon"
 	panel.custom_minimum_size = Vector2(ZONE_INFO_ICON_SIZE, ZONE_INFO_ICON_SIZE)
 	panel.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	var style := StyleBoxFlat.new()
@@ -2009,17 +2011,22 @@ func _make_zone_info_icon(label_text: String, short_label: String, zone: Zone, c
 	style.bg_color = color.darkened(0.4)
 	style.border_color = color
 	panel.add_theme_stylebox_override("panel", style)
+	panel.set_meta("zone_ref", zone)
+	panel.set_meta("zone_label_text", label_text)
 	panel.tooltip_text = label_text + ": " + str(zone.cards.size()) + " cards"
 
 	var vbox := VBoxContainer.new()
+	vbox.name = "ZoneInfoVBox"
 	vbox.add_theme_constant_override("separation", 2)
 	panel.add_child(vbox)
 	var name_lbl := Label.new()
+	name_lbl.name = "ZoneShortLabel"
 	name_lbl.text = short_label
 	name_lbl.add_theme_font_size_override("font_size", 12)
 	name_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	vbox.add_child(name_lbl)
 	var count_lbl := Label.new()
+	count_lbl.name = "ZoneCountLabel"
 	count_lbl.text = str(zone.cards.size())
 	count_lbl.add_theme_font_size_override("font_size", 18)
 	count_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -2034,6 +2041,20 @@ func _make_zone_info_icon(label_text: String, short_label: String, zone: Zone, c
 	)
 
 	return panel
+
+func _refresh_zone_info_icons() -> void:
+	for child in find_children("ZoneInfoIcon", "PanelContainer", true, false):
+		var panel := child as PanelContainer
+		if panel == null or not panel.has_meta("zone_ref"):
+			continue
+		var zone := panel.get_meta("zone_ref") as Zone
+		if zone == null:
+			continue
+		var label_text := str(panel.get_meta("zone_label_text", "Zone"))
+		panel.tooltip_text = label_text + ": " + str(zone.cards.size()) + " cards"
+		var count_lbl := panel.get_node_or_null("ZoneInfoVBox/ZoneCountLabel") as Label
+		if count_lbl != null:
+			count_lbl.text = str(zone.cards.size())
 
 func _get_board_row_width() -> float:
 	return BoardZoneUI.get_zone_extent() * BOARD_MAIN_COLUMN_COUNT + ZONE_INFO_ICON_SIZE + BOARD_ZONE_COLUMN_GAP * BOARD_MAIN_COLUMN_COUNT
@@ -10069,6 +10090,9 @@ func _continue_end_turn_sequence() -> void:
 func _on_end_turn_button_pressed() -> void:
 	if _game_finished:
 		return
+	if _is_networked_client:
+		end_turn_button.visible = false
+		end_turn_button.disabled = true
 	if _is_blot_selection_active():
 		_hide_blot_sacrifice_prompt()
 	_dismiss_transient_prompts()
@@ -10303,17 +10327,20 @@ func _sync_network_turn_controls() -> void:
 	if end_turn_button == null or all_attack_btn == null or choice_container == null:
 		return
 	if _game_finished:
+		end_turn_button.visible = false
 		end_turn_button.disabled = true
 		all_attack_btn.disabled = true
 		return
 	if not _is_networked_client or game_manager == null or network_manager == null or network_manager.local_player_index < 0:
+		end_turn_button.visible = true
 		end_turn_button.disabled = false
 		all_attack_btn.disabled = false
 		return
 	var local_idx: int = network_manager.local_player_index
 	var current_idx: int = game_manager.players.find(game_manager.current_player)
 	var is_local_turn: bool = current_idx == local_idx
-	end_turn_button.disabled = not is_local_turn or choice_container.visible
+	end_turn_button.visible = is_local_turn and not choice_container.visible
+	end_turn_button.disabled = not end_turn_button.visible
 	all_attack_btn.disabled = not is_local_turn or choice_container.visible
 	if not is_local_turn:
 		selected_attacker = null
