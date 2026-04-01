@@ -3,7 +3,7 @@ class_name GodCard
 
 func _init() -> void:
 	super._init()
-	card_type = Card.CardType.CREATURE
+	card_type = Card.CardType.GOD
 	is_god = true
 	is_power = true
 	ability_immunity_tag = "powers"

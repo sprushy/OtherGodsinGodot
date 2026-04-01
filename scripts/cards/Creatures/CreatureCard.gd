@@ -64,6 +64,10 @@ func on_after_combat(_game_manager: GameManager, _opposing_card: Card) -> void:
 	# Called after this creature is involved in combat and survives long enough to receive hooks.
 	pass
 
+func on_friendly_creature_after_combat(_game_manager: GameManager, _friendly_creature: Card, _opposing_card: Card) -> void:
+	# Called on friendly board creatures when another allied creature finishes combat.
+	pass
+
 func on_sacrificed_for_summon(_game_manager: GameManager, _summoned_card: Card) -> void:
 	# Called when this creature is sacrificed to pay another creature's summon cost.
 	pass
@@ -75,4 +79,8 @@ func on_opponent_attacks_followers(_game_manager: GameManager, _attacker: Card) 
 
 func on_friendly_god_power_activated(_game_manager: GameManager, _god: Card, _target: Card = null) -> void:
 	# Called after this creature's controller successfully activates their god's power.
+	pass
+
+func on_card_revealed_by_effect(_game_manager: GameManager, _revealed_card: Card, _source_card: Card) -> void:
+	# Called on board cards whenever a magical or power effect reveals a card.
 	pass

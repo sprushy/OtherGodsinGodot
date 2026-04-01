@@ -71,6 +71,12 @@ func _initialize() -> void:
 	if _get_god_record_value(loser_summary, "Mummu", "losses") != 1:
 		_fail("loser god record was wrong")
 		return
+	if _get_deck_record_value(winner_summary, "Baldr Trial Deck", "wins") != 1:
+		_fail("winner deck record was wrong")
+		return
+	if _get_deck_record_value(loser_summary, "Mummu Trial Deck", "losses") != 1:
+		_fail("loser deck record was wrong")
+		return
 
 	_cleanup_probe_file()
 	print("PASS")
@@ -86,6 +92,18 @@ func _get_god_record_value(summary: Dictionary, god_name: String, field_name: St
 		var god_record: Dictionary = raw_record as Dictionary
 		if str(god_record.get("god_name", "")) == god_name:
 			return int(god_record.get(field_name, 0))
+	return 0
+
+func _get_deck_record_value(summary: Dictionary, deck_name: String, field_name: String) -> int:
+	var deck_records = summary.get("deck_records", [])
+	if not (deck_records is Array):
+		return 0
+	for raw_record in deck_records:
+		if not (raw_record is Dictionary):
+			continue
+		var deck_record: Dictionary = raw_record as Dictionary
+		if str(deck_record.get("deck_name", "")) == deck_name:
+			return int(deck_record.get(field_name, 0))
 	return 0
 
 func _cleanup_probe_file() -> void:

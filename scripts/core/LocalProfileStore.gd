@@ -19,26 +19,26 @@ func _init() -> void:
 
 func restore_last_profile(default_name: String = DEFAULT_PROFILE_NAME) -> Dictionary:
 	_ensure_loaded()
-	var current_profile_id := str(_data.get("current_profile_id", "")).strip_edges()
+	var current_profile_id: String = str(_data.get("current_profile_id", "")).strip_edges()
 	if not current_profile_id.is_empty():
-		var existing := get_profile(current_profile_id)
+		var existing: Dictionary = get_profile(current_profile_id)
 		if not existing.is_empty():
-			var restored := remember_profile(current_profile_id, str(existing.get("display_name", default_name)))
+			var restored: Dictionary = remember_profile(current_profile_id, str(existing.get("display_name", default_name)))
 			_import_legacy_deck_if_needed(str(restored.get("profile_id", "")))
 			return restored
-	var created := ensure_profile("", default_name, true)
+	var created: Dictionary = ensure_profile("", default_name, true)
 	_import_legacy_deck_if_needed(str(created.get("profile_id", "")))
 	return created
 
 func ensure_profile(profile_id: String = "", display_name: String = DEFAULT_PROFILE_NAME, make_current: bool = true) -> Dictionary:
 	_ensure_loaded()
-	var clean_name := display_name.strip_edges()
+	var clean_name: String = display_name.strip_edges()
 	if clean_name.is_empty():
 		clean_name = DEFAULT_PROFILE_NAME
 
-	var profiles := _get_profiles()
-	var resolved_profile_id := profile_id.strip_edges()
-	var now_unix := int(Time.get_unix_time_from_system())
+	var profiles: Dictionary = _get_profiles()
+	var resolved_profile_id: String = profile_id.strip_edges()
+	var now_unix: int = int(Time.get_unix_time_from_system())
 	if resolved_profile_id.is_empty():
 		resolved_profile_id = _generate_id("profile_", 12)
 

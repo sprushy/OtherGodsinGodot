@@ -43,7 +43,10 @@ func _should_petrify(card: Card) -> bool:
 	return not card.is_face_down and card.get_effective_level() < 3
 
 func _apply_petrification(card: Card, game_manager: GameManager) -> void:
+	var was_hidden := card.is_face_down or card.is_stealth
 	card.reveal(game_manager)
+	if was_hidden and game_manager != null and game_manager.has_method("notify_card_revealed_by_effect"):
+		game_manager.notify_card_revealed_by_effect(card, self)
 	card.card_type = Card.CardType.STRUCTURE
 	card.strength = 0
 	card.speed = 0

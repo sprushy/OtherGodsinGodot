@@ -35,7 +35,7 @@ func is_board_zone() -> bool:
 
 func get_creature() -> Card:
 	for card in cards:
-		if card.card_type == Card.CardType.CREATURE:
+		if card.is_creature_card():
 			return card
 	return null
 

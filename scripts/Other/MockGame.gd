@@ -61,6 +61,7 @@ func create_mock_deck(player: Player) -> void:
 	# Create god card
 	var god = Card.new()
 	god.card_name = "Mock God"
+	god.card_type = Card.CardType.GOD
 	god.is_god = true
 	god.card_owner = player
 	deck.append(god)
@@ -152,7 +153,7 @@ func _on_game_ended(winner: Player, loser: Player) -> void:
 	end_turn_button.disabled = true
 	turn_label.text = winner.player_name + " wins the game!" if winner != null else "Game over!"
 	followers_label.text = loser.player_name + " has 0 followers" if loser != null else followers_label.text
-	action_label.text = winner.player_name + " wins the game! " + loser.player_name + " reached 0 followers." if winner != null and loser != null else "Game over!"
+	action_label.text = game_manager.get_game_result_message(winner, loser) if game_manager != null else "Game over!"
 
 func cleanup() -> void:
 	if game_manager:

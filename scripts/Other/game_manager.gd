@@ -149,6 +149,15 @@ func consume_player_feedback() -> String:
 	last_player_feedback_text = ""
 	return text
 
+func get_game_result_message(winner: Player = winning_player, loser: Player = losing_player) -> String:
+	if winner != null and loser != null:
+		return "%s wins the game! %s reached 0 followers." % [winner.player_name, loser.player_name]
+	if loser != null:
+		return "Game over! %s reached 0 followers." % [loser.player_name]
+	if winner != null:
+		return winner.player_name + " wins the game!"
+	return "Game over!"
+
 func set_interaction_host(host: Object) -> void:
 	interaction_host = host
 
@@ -701,7 +710,7 @@ func can_play_card(player: Player, card: Card, target_zone: Zone) -> bool:
 
 	# One creature summon per turn
 	if card.card_type == Card.CardType.CREATURE and player == current_player:
-		if player.has_summoned_this_turn:
+		if player.has_summoned_this_turn and not _can_use_extra_normal_summon(player, card, target_zone):
 			return false
 
 	# Equipment zone rules: unequipped equipment cannot share a zone with anything else.
@@ -764,6 +773,13 @@ func play_card(player: Player, card: Card, target_zone: Zone, prepared: bool = f
 	var can_place := can_prepare_card(player, card, target_zone) if prepared else can_play_card(player, card, target_zone)
 	if can_place:
 		var from_zone := card.current_zone
+		var used_extra_normal_summon := (
+			not prepared
+			and card.card_type == Card.CardType.CREATURE
+			and player == current_player
+			and player.has_summoned_this_turn
+			and _can_use_extra_normal_summon(player, card, target_zone)
+		)
 		var entered_field_face_up_from_hand := (
 			from_zone == player.hand_zone
 			and target_zone != null
@@ -798,6 +814,8 @@ func play_card(player: Player, card: Card, target_zone: Zone, prepared: bool = f
 		# Mark summoned
 		if card.card_type == Card.CardType.CREATURE:
 			player.has_summoned_this_turn = true
+			if used_extra_normal_summon:
+				_consume_extra_normal_summon(player, card, target_zone)
 			card.summoned_this_turn = true	# Track summoning sickness for movement/mode change
 			# Apply any active god passives to the newly placed creature
 			_apply_god_passives_to_card(player, card)
@@ -883,8 +901,12 @@ func summon_creature_by_effect(
 		return false
 	if not target_zone.cards.is_empty():
 		return false
+	var using_extra_normal_summon := false
 	if player == current_player and consume_turn_summon and player.has_summoned_this_turn:
-		return false
+		if _can_use_extra_normal_summon(player, card, target_zone):
+			using_extra_normal_summon = true
+		else:
+			return false
 	if not can_pay_creature_summon_cost(player, card, summon_source, pay_normal_summon_costs):
 		return false
 
@@ -915,6 +937,8 @@ func summon_creature_by_effect(
 	card.summoned_this_turn = true
 	if consume_turn_summon:
 		player.has_summoned_this_turn = true
+		if using_extra_normal_summon:
+			_consume_extra_normal_summon(player, card, target_zone)
 
 	if not face_down:
 		card.wake_up()
@@ -941,6 +965,7 @@ func _trigger_board_summon(
 	if not face_down and trigger_impact and card.has_method("on_impact"):
 		card.on_impact(self)
 	card_summoned.emit(player, card, from_zone, target_zone, summon_source, face_down, stealth)
+	_notify_powers_of_creature_summon(player, card, from_zone, target_zone, summon_source, face_down, stealth)
 
 func prepare_card(player: Player, card: Card, target_zone: Zone) -> void:
 	play_card(player, card, target_zone, true)
@@ -1297,12 +1322,12 @@ func resolve_combat(attacker: Card, defender: Card, continue_callback: Callable 
 		if continue_callback.is_valid():
 			continue_callback.call()
 		return false
-	attacker.reveal_from_stealth(self)
-	defender.reveal_from_stealth(self)
+	_begin_declared_combat(attacker, defender)
 	var attacker_controller := attacker.get_controller()
 	var defender_controller := defender.get_controller()
 	var finish := func() -> void:
 		_notify_after_combat(attacker, defender)
+		_clear_combat_engagement_state(defender)
 		if continue_callback.is_valid():
 			continue_callback.call()
 	if defender.is_god:
@@ -1312,11 +1337,12 @@ func resolve_combat(attacker: Card, defender: Card, continue_callback: Callable 
 		print(attacker.card_name + " attacks " + defender_controller.player_name + "'s followers for " + str(god_damage) + " (via god)!")
 		finish.call()
 		return true
-	_notify_creature_enters_combat(attacker, defender)
 	if attacker.has_method("on_attack") and not attacker.abilities_suppressed():
 		attacker.on_attack(self, defender)
 	if defender.has_method("on_defend") and not defender.abilities_suppressed():
 		defender.on_defend(self, attacker)
+	attacker.reveal_from_stealth(self)
+	defender.reveal_from_stealth(self)
 	var attacker_str = attacker.get_effective_strength()
 
 	print("=== COMBAT: " + attacker.card_name + " (STR:" + str(attacker_str) + ") vs " + defender.card_name + " ===")
@@ -1397,25 +1423,28 @@ func resolve_united_front_combat(attacker: Card, partner: Card, defender: Card) 
 		return
 	var primary: Card = active_attackers[0]
 	var support: Card = active_attackers[1]
-	primary.reveal_from_stealth(self)
-	support.reveal_from_stealth(self)
-	defender.reveal_from_stealth(self)
+	_begin_declared_combat(primary, defender)
+	_begin_declared_combat(support, defender)
 	var attacker_controller := primary.get_controller()
 	var defender_controller := defender.get_controller()
-	for combatant in active_attackers:
-		_notify_creature_enters_combat(combatant, defender)
+	var finish := func() -> void:
+		_notify_after_united_front_combat(attacker, partner, defender)
+		_clear_combat_engagement_state(defender)
 	for combatant in active_attackers:
 		if combatant.has_method("on_attack") and not combatant.abilities_suppressed():
 			combatant.on_attack(self, defender)
 	if defender.has_method("on_defend") and not defender.abilities_suppressed():
 		defender.on_defend(self, primary)
+	primary.reveal_from_stealth(self)
+	support.reveal_from_stealth(self)
+	defender.reveal_from_stealth(self)
 	var combined_strength := primary.get_effective_strength() + support.get_effective_strength()
 
 	if defender.is_god:
 		var god_damage := _adjust_combat_follower_damage(combined_strength)
 		defender_controller.lose_followers(god_damage)
 		print("%s and %s attack %s's followers for %d!" % [primary.card_name, support.card_name, defender_controller.player_name, god_damage])
-		_notify_after_united_front_combat(attacker, partner, defender)
+		finish.call()
 		return
 
 	print("=== UNITED FRONT COMBAT: %s + %s (STR:%d) vs %s ===" % [primary.card_name, support.card_name, combined_strength, defender.card_name])
@@ -1426,7 +1455,7 @@ func resolve_united_front_combat(attacker: Card, partner: Card, defender: Card) 
 		if combined_strength > defender_res:
 			print("	Structure destroyed!")
 			_combat_kill(primary, defender)
-		_notify_after_united_front_combat(attacker, partner, defender)
+		finish.call()
 		return
 
 	if defender.card_type == Card.CardType.CREATURE:
@@ -1483,7 +1512,7 @@ func resolve_united_front_combat(attacker: Card, partner: Card, defender: Card) 
 	elif defender.card_type == Card.CardType.EQUIPMENT and defender.equipped_on == null:
 		print("	Equipment destroyed!")
 		_combat_kill(primary, defender)
-	_notify_after_united_front_combat(attacker, partner, defender)
+	finish.call()
 
 func resolve_combat_with_continuation(
 	attacker: Card,
@@ -1515,12 +1544,12 @@ func resolve_combat_with_continuation(
 			if continue_callback.is_valid():
 				continue_callback.call()
 			return false
-	attacker.reveal_from_stealth(self)
-	defender.reveal_from_stealth(self)
+	_begin_declared_combat(attacker, defender)
 	var attacker_controller := attacker.get_controller()
 	var defender_controller := defender.get_controller()
 	var finish := func() -> void:
 		_notify_after_combat(attacker, defender)
+		_clear_combat_engagement_state(defender)
 		if continue_callback.is_valid():
 			continue_callback.call()
 	if defender.is_god:
@@ -1535,6 +1564,8 @@ func resolve_combat_with_continuation(
 			attacker.on_attack(self, defender)
 		if defender.has_method("on_defend") and not defender.abilities_suppressed():
 			defender.on_defend(self, attacker)
+		attacker.reveal_from_stealth(self)
+		defender.reveal_from_stealth(self)
 		var attacker_str := attacker.get_effective_strength()
 		print("=== COMBAT: " + attacker.card_name + " (STR:" + str(attacker_str) + ") vs " + defender.card_name + " ===")
 		if defender.is_petrified() or defender.card_type == Card.CardType.STRUCTURE:
@@ -1592,10 +1623,6 @@ func resolve_combat_with_continuation(
 		return true
 	_combat_resolution_deferred = false
 	_deferred_combat_resume = Callable()
-	_notify_creature_enters_combat(attacker, defender)
-	if _combat_resolution_deferred:
-		_deferred_combat_resume = continue_resolution
-		return true
 	return continue_resolution.call()
 
 func _combat_kill_deferred(killer: Card, victim: Card, continue_callback: Callable = Callable()) -> bool:
@@ -1664,6 +1691,8 @@ func _notify_after_combat(attacker: Card, defender: Card) -> void:
 		attacker.on_after_combat(self, defender)
 	if defender != null and defender.has_method("on_after_combat"):
 		defender.on_after_combat(self, attacker)
+	_notify_friendly_creature_after_combat(attacker, defender)
+	_notify_friendly_creature_after_combat(defender, attacker)
 	for player in players:
 		for zone in player.power_zones:
 			for card in zone.cards:
@@ -1672,16 +1701,51 @@ func _notify_after_combat(attacker: Card, defender: Card) -> void:
 	_expire_after_combat_effects(attacker)
 	_expire_after_combat_effects(defender)
 
+func _begin_declared_combat(attacker: Card, defender: Card) -> void:
+	if attacker == null or defender == null:
+		return
+	if not defender.has_meta("combat_declared_attackers"):
+		_mark_combat_engagement_state(defender)
+	var declared_attackers: Array = defender.get_meta("combat_declared_attackers", [])
+	var attacker_key := _get_combat_declaration_key(attacker)
+	if attacker_key in declared_attackers:
+		return
+	declared_attackers = declared_attackers.duplicate()
+	declared_attackers.append(attacker_key)
+	defender.set_meta("combat_declared_attackers", declared_attackers)
+	_notify_creature_enters_combat(attacker, defender)
+
 func _notify_creature_enters_combat(attacker: Card, defender: Card) -> void:
 	for power in _get_active_powers():
 		if power != null and power.has_method("on_creature_enters_combat"):
 			power.on_creature_enters_combat(self, attacker, defender)
+	for player in players:
+		if player == null:
+			continue
+		for zone in player.frontline_zones + player.reserve_zones:
+			for card in zone.cards:
+				if card != null and card.has_method("on_creature_enters_combat") and not card.abilities_suppressed():
+					card.on_creature_enters_combat(self, attacker, defender)
 
 func _notify_after_united_front_combat(attacker: Card, partner: Card, defender: Card) -> void:
 	_notify_after_combat(attacker, defender)
 	if partner != null and partner != attacker and partner.has_method("on_after_combat"):
 		partner.on_after_combat(self, defender)
+	_notify_friendly_creature_after_combat(partner, defender)
 	_expire_after_combat_effects(partner)
+
+func _notify_friendly_creature_after_combat(friendly_creature: Card, opposing_card: Card) -> void:
+	if friendly_creature == null or opposing_card == null:
+		return
+	if friendly_creature.card_type != Card.CardType.CREATURE:
+		return
+	var controller := friendly_creature.get_controller()
+	if controller == null:
+		return
+	for zone in controller.frontline_zones + controller.reserve_zones:
+		for card in zone.cards:
+			if card != null and card.has_method("on_friendly_creature_after_combat") and not card.abilities_suppressed():
+				card.on_friendly_creature_after_combat(self, friendly_creature, opposing_card)
 
 func defer_combat_resolution() -> void:
 	_combat_resolution_deferred = true
@@ -1702,6 +1766,26 @@ func _expire_after_combat_effects(card: Card) -> void:
 	if card == null:
 		return
 	card.remove_effects_expiring_after_combat()
+
+func _get_combat_declaration_key(card: Card) -> String:
+	if card == null:
+		return ""
+	if str(card.uid) != "":
+		return str(card.uid)
+	return str(card.get_instance_id())
+
+func _mark_combat_engagement_state(defender: Card) -> void:
+	if defender == null:
+		return
+	defender.set_meta("combat_was_stealth_when_engaged", defender.is_stealth)
+	defender.set_meta("combat_was_sleeping_when_engaged", defender.is_sleeping)
+
+func _clear_combat_engagement_state(defender: Card) -> void:
+	if defender == null:
+		return
+	defender.remove_meta("combat_was_stealth_when_engaged")
+	defender.remove_meta("combat_was_sleeping_when_engaged")
+	defender.remove_meta("combat_declared_attackers")
 
 func _get_active_united_front_attackers(attacker: Card, partner: Card) -> Array[Card]:
 	var active_attackers: Array[Card] = []
@@ -1828,6 +1912,7 @@ func _notify_global_turn_start(starting_player: Player) -> void:
 	for card in _get_all_turn_event_cards():
 		if card.has_method("on_global_turn_start"):
 			card.on_global_turn_start(self, starting_player)
+	MalinalxochitlAcolyte.process_persistent_poison_turn_start(self, starting_player)
 
 func _notify_controller_turn_end(player: Player) -> void:
 	controller_turn_ended.emit(turn_number, player)
@@ -2181,6 +2266,26 @@ func _notify_board_cards_of_movement(moved_card: Card, from_zone: Zone, to_zone:
 				if board_card != null and board_card.has_method("on_any_card_moved"):
 					board_card.on_any_card_moved(self, moved_card, from_zone, to_zone)
 
+func notify_card_revealed_by_effect(revealed_card: Card, source_card: Card) -> void:
+	if revealed_card == null or source_card == null:
+		return
+	if not _is_reveal_effect_source(source_card):
+		return
+	for player in players:
+		for zone in [player.god_zone] + player.power_zones + player.frontline_zones + player.reserve_zones:
+			for board_card in zone.cards.duplicate():
+				if board_card != null and board_card.has_method("on_card_revealed_by_effect"):
+					board_card.on_card_revealed_by_effect(self, revealed_card, source_card)
+
+func _is_reveal_effect_source(source_card: Card) -> bool:
+	if source_card == null:
+		return false
+	if source_card.is_god:
+		return true
+	if source_card.card_type == Card.CardType.POWER:
+		return true
+	return source_card.is_magical_card()
+
 func _notify_creature_sent_to_void(creature: Card) -> void:
 	for power in _get_active_powers():
 		if power.has_method("on_creature_sent_to_void"):
@@ -2190,6 +2295,42 @@ func _notify_creature_returned_from_void(creature: Card) -> void:
 	for power in _get_active_powers():
 		if power.has_method("on_creature_returned_from_void"):
 			power.on_creature_returned_from_void(creature, self)
+
+func _notify_powers_of_creature_summon(
+	player: Player,
+	card: Card,
+	from_zone: Zone,
+	to_zone: Zone,
+	summon_source: Card,
+	face_down: bool,
+	stealth: bool
+) -> void:
+	if card == null or card.card_type != Card.CardType.CREATURE:
+		return
+	for power in _get_active_powers():
+		if power != null and power.has_method("on_creature_summoned"):
+			power.on_creature_summoned(player, card, from_zone, to_zone, summon_source, face_down, stealth, self)
+
+func _can_use_extra_normal_summon(player: Player, card: Card, target_zone: Zone) -> bool:
+	if player == null or card == null:
+		return false
+	for power in _get_active_powers():
+		if power != null and power.has_method("can_grant_extra_normal_summon"):
+			if power.can_grant_extra_normal_summon(player, card, target_zone, self):
+				return true
+	return false
+
+func _consume_extra_normal_summon(player: Player, card: Card, target_zone: Zone) -> void:
+	if player == null or card == null:
+		return
+	for power in _get_active_powers():
+		if power == null or not power.has_method("can_grant_extra_normal_summon"):
+			continue
+		if not power.can_grant_extra_normal_summon(player, card, target_zone, self):
+			continue
+		if power.has_method("consume_extra_normal_summon"):
+			power.consume_extra_normal_summon(player, card, target_zone, self)
+		return
 
 func notify_spell_played(player: Player, spell_card: Card) -> void:
 	_notify_spell_played(player, spell_card)
@@ -2471,8 +2612,5 @@ func _on_player_defeated(defeated_player: Player) -> void:
 	winning_player = get_opponent(defeated_player)
 	is_game_over = true
 	_set_phase(GamePhase.END)
-	if winning_player != null:
-		print(winning_player.player_name + " wins the game! " + defeated_player.player_name + " reached 0 followers.")
-	else:
-		print("Game over! " + defeated_player.player_name + " reached 0 followers.")
+	print(get_game_result_message(winning_player, losing_player))
 	game_ended.emit(winning_player, losing_player)

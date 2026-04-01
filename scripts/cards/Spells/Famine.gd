@@ -32,6 +32,8 @@ func resolve(game_manager: GameManager, _target = null) -> void:
 				all_creatures.append(card)
 				if card.is_face_down:
 					card.reveal(game_manager)
+					if game_manager.has_method("notify_card_revealed_by_effect"):
+						game_manager.notify_card_revealed_by_effect(card, self)
 					revealed_count += 1
 
 	var doomed_creatures: Array[Card] = []

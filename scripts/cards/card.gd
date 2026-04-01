@@ -2,7 +2,7 @@
 extends Resource
 class_name Card
 
-enum CardType { CREATURE, SPELL, EQUIPMENT, STRUCTURE, HEX, POWER, CHARM }
+enum CardType { CREATURE, SPELL, EQUIPMENT, STRUCTURE, HEX, POWER, CHARM, GOD }
 enum CreatureMode { AGGRESSIVE, DEFENSIVE }
 
 @export var card_name: String
@@ -64,6 +64,34 @@ func switch_to_exhausted_art() -> void:
 @export var sacrifice_cost: int = 0  # Number of creatures to sacrifice from board
 @export var banish_cost: int = 0  # Number of cards to banish
 @export var shelve_cost: int = 0  # Number of cards to shelve (return to bottom of deck)
+
+func has_additional_costs() -> bool:
+	return discard_cost > 0 \
+		or sacrifice_cost > 0 \
+		or banish_cost > 0 \
+		or shelve_cost > 0
+
+func has_listed_play_costs() -> bool:
+	return mana_cost > 0 or has_additional_costs()
+
+func get_cost_shorthand_parts(mana_override: int = -1, force_show_mana: bool = false) -> Array[String]:
+	var parts: Array[String] = []
+	var display_mana_cost := mana_override if mana_override >= 0 else mana_cost
+	var show_mana := display_mana_cost > 0 or force_show_mana
+	if show_mana:
+		parts.append(str(display_mana_cost) + "M")
+	if discard_cost > 0:
+		parts.append(str(discard_cost) + "D")
+	if sacrifice_cost > 0:
+		parts.append(str(sacrifice_cost) + "S")
+	if banish_cost > 0:
+		parts.append(str(banish_cost) + "B")
+	if shelve_cost > 0:
+		parts.append(str(shelve_cost) + "Sh")
+	return parts
+
+func get_cost_shorthand(mana_override: int = -1, force_show_mana: bool = false) -> String:
+	return " ".join(get_cost_shorthand_parts(mana_override, force_show_mana))
 
 # Creature stats
 @export var strength: int = 0
@@ -305,6 +333,8 @@ func temporarily_reveal_until_end_of_turn(
 	)
 	if was_hidden and game_manager != null:
 		on_reveal(game_manager)
+		if source_card != null and game_manager.has_method("notify_card_revealed_by_effect"):
+			game_manager.notify_card_revealed_by_effect(self, source_card)
 
 func is_activation_locked(game_manager: GameManager = null) -> bool:
 	if not has_status_effect("activation_locked"):
@@ -366,6 +396,9 @@ func _append_unique_passive_card(passive_cards: Array[Card], seen_cards: Diction
 	seen_cards[candidate_id] = true
 	passive_cards.append(candidate)
 
+func is_creature_card() -> bool:
+	return card_type == CardType.CREATURE
+
 func get_effective_speed() -> int:
 	var base_speed = speed
 	if is_stealth:
@@ -374,13 +407,13 @@ func get_effective_speed() -> int:
 		base_speed += equip.speed_modifier
 	for buff in _get_effective_buffs():
 		base_speed += buff.get("spd", 0)
-	return max(1, base_speed)
+	return clampi(base_speed, 1, 7)
 
 func get_effective_level() -> int:
 	var total := level
 	for buff in _get_effective_buffs():
 		total += buff.get("lvl", 0)
-	return max(0, total)
+	return max(1, total)
 
 func get_effective_strength() -> int:
 	var total = strength
@@ -388,7 +421,7 @@ func get_effective_strength() -> int:
 		total += equip.strength_modifier
 	for buff in _get_effective_buffs():
 		total += buff.get("str", 0)
-	return total
+	return max(0, total)
 
 func get_effective_resilience() -> int:
 	var total = resilience
@@ -396,7 +429,7 @@ func get_effective_resilience() -> int:
 		total += equip.resilience_modifier
 	for buff in _get_effective_buffs():
 		total += buff.get("res", 0)
-	return total
+	return max(0, total)
 
 # Returns a human-readable breakdown of all active buffs for a stat ("str", "res", "spd", "lvl")
 func get_buff_tooltip(stat: String) -> String:
@@ -696,7 +729,7 @@ func can_respond_to(other_card: Card) -> bool:
 	return get_effective_speed() >= 2 and get_effective_speed() >= other_card.get_effective_speed()
 
 func is_permanent() -> bool:
-	return has_type("Permanent") or card_type in [CardType.CREATURE, CardType.EQUIPMENT, CardType.STRUCTURE, CardType.POWER]
+	return has_type("Permanent") or card_type in [CardType.CREATURE, CardType.EQUIPMENT, CardType.STRUCTURE, CardType.POWER, CardType.GOD]
 
 func goes_to_graveyard_after_use() -> bool:
 	return not is_permanent() and card_type in [CardType.SPELL, CardType.HEX, CardType.CHARM]
@@ -776,7 +809,7 @@ func _is_blocked_by_source_immunity(entry: Dictionary) -> bool:
 	return _has_raw_enki_hex_immunity()
 
 func _has_raw_enki_hex_immunity() -> bool:
-	if card_type != CardType.CREATURE:
+	if not is_creature_card():
 		return false
 	if not has_type("Mage"):
 		return false
@@ -862,7 +895,7 @@ func reveal(game_manager: GameManager = null) -> void:
 	is_stealth = false
 	# Reveal triggers whenever a card becomes visible from a hidden state,
 	# even if that same card was revealed earlier and later became hidden again.
-	if was_hidden and game_manager != null:
+	if was_hidden and game_manager != null and not abilities_suppressed():
 		on_reveal(game_manager)
 
 func has_type(type_name: String) -> bool:
@@ -891,7 +924,7 @@ func is_magical_card() -> bool:
 	return card_type in [CardType.SPELL, CardType.HEX, CardType.CHARM]
 
 func can_receive_equipment() -> bool:
-	return card_type == CardType.CREATURE \
+	return is_creature_card() \
 		and not is_face_down \
 		and not is_stealth
 
@@ -919,7 +952,7 @@ func unequip() -> void:
 func can_be_engaged_by(source: Card) -> bool:
 	if not incorporeal:
 		return true
-	if source == null or source.card_type != Card.CardType.CREATURE:
+	if source == null or not source.is_creature_card():
 		return false
 	if source.has_type("Spirit"):
 		return true
@@ -929,7 +962,7 @@ func can_be_engaged_by(source: Card) -> bool:
 func can_engage(target: Card) -> bool:
 	if not incorporeal:
 		return true
-	if target == null or target.card_type != Card.CardType.CREATURE:
+	if target == null or not target.is_creature_card():
 		return false
 	if target.has_type("Spirit"):
 		return true
@@ -1007,7 +1040,7 @@ func can_pay_costs_with_mana_cost(player: Player, mana_required: int) -> bool:
 	var creature_count = 0
 	for zone in player.frontline_zones + player.reserve_zones:
 		for card in zone.cards:
-			if card.card_type == CardType.CREATURE and card.can_be_used_for_creature_sacrifice:
+			if card.is_creature_card() and card.can_be_used_for_creature_sacrifice:
 				creature_count += 1
 	if creature_count < sacrifice_cost:
 		return false
@@ -1085,7 +1118,7 @@ func pay_costs_with_mana_cost(player: Player, mana_required: int, game_manager: 
 				if creature_found:
 					break
 				for card in zone.cards:
-					if card.card_type == CardType.CREATURE and card.can_be_used_for_creature_sacrifice:
+					if card.is_creature_card() and card.can_be_used_for_creature_sacrifice:
 						if game_manager != null:
 							game_manager._send_to_graveyard_with_hook(card, false, false)
 						else:

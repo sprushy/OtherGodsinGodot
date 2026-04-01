@@ -166,7 +166,7 @@ func move_card(card: Card, to_zone: Zone) -> void:
 		game_manager.note_player_feedback("Laws of Civilization prevents cards from being added to hand outside upkeep.")
 		return
 	var creature_left_board := (
-		card.card_type == Card.CardType.CREATURE
+		card.is_creature_card()
 		and from_zone != null
 		and from_zone.is_board_zone()
 		and destination_zone != null
@@ -200,7 +200,7 @@ func move_card(card: Card, to_zone: Zone) -> void:
 	destination_zone.add_card(card)
 	card_moved.emit(card, from_zone, destination_zone)
 	
-	if card.card_type == Card.CardType.CREATURE and destination_zone != null and destination_zone.is_board_zone():
+	if card.is_creature_card() and destination_zone != null and destination_zone.is_board_zone():
 		for equip in card.equipment.duplicate():
 			if equip == null:
 				continue
@@ -237,7 +237,7 @@ func shuffle_card_into_deck(card: Card) -> bool:
 func _resolve_destination_zone(card: Card, from_zone: Zone, to_zone: Zone) -> Zone:
 	if card == null or to_zone == null:
 		return to_zone
-	if card.card_type != Card.CardType.CREATURE:
+	if not card.is_creature_card():
 		return to_zone
 	if from_zone == null or not from_zone.is_board_zone():
 		return to_zone
@@ -291,5 +291,5 @@ func reset_creature_actions() -> void:
 	has_summoned_this_turn = false
 	for zone in frontline_zones + reserve_zones:
 		for card in zone.cards:
-			if card.card_type == Card.CardType.CREATURE:
+			if card.is_creature_card():
 				card.reset_creature_action_state()

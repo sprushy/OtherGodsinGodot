@@ -4,19 +4,22 @@ const LobbyProtocolScript = preload("res://scripts/network/LobbyProtocol.gd")
 const LobbyServerScript = preload("res://scripts/server/LobbyServer.gd")
 const LobbyClientScript = preload("res://scripts/client/LobbyClient.gd")
 const AppReleaseInfoScript = preload("res://scripts/client/AppReleaseInfo.gd")
-const LocalProfileStoreScript = preload("res://scripts/client/LocalProfileStore.gd")
+const LocalProfileStoreScript = preload("res://scripts/core/LocalProfileStore.gd")
 const DeckValidatorScript = preload("res://scripts/server/DeckValidator.gd")
+const MatchHistoryStoreScript = preload("res://scripts/server/MatchHistoryStore.gd")
 const MatchSessionScript = preload("res://scripts/server/MatchSession.gd")
 const DEDICATED_LOBBY_ENTRY_SCRIPT_PATH := "res://scripts/server/DedicatedLobbyServerMain.gd"
 const DEDICATED_SERVER_EXPORT_RELATIVE_PATH := "res://.exports/server/ClaudeOtherGodsServer.exe"
 const DEFAULT_LOBBY_HOST_SETTING := "application/config/default_lobby_host"
 const DEFAULT_LOBBY_HOST := ""
+const RULES_DOC_PATH := "res://docs/new-player-rules.md"
 const AUTH_MODE_GUEST := "guest"
 const AUTH_MODE_LOGIN := "login"
 const AUTH_MODE_REGISTER := "register"
 
 @onready var menu_container = $MenuContainer
 @onready var game_container = $GameContainer
+@onready var rules_button = $MenuContainer/RulesButton
 @onready var multiplayer_container = $MenuContainer/MultiplayerContainer
 @onready var multiplayer_button = $MenuContainer/MultiplayerButton
 @onready var multiplayer_back_button = $MenuContainer/MultiplayerContainer/MultiplayerHeaderRow/BackButton
@@ -83,6 +86,7 @@ var _update_prompt_overlay: Control = null
 var _pending_update_release_version: String = ""
 var _pending_update_release_url: String = AppReleaseInfoScript.RELEASES_PAGE_URL
 var _startup_prompt_gate_open: bool = false
+var _rules_overlay: Control = null
 
 func _ready() -> void:
 	if _is_server_runtime_launch():
@@ -100,6 +104,7 @@ func _ready() -> void:
 
 	var mock_btn = $MenuContainer/MockGameButton
 	var deck_btn = $MenuContainer/DeckBuilderButton
+	var rules_btn = $MenuContainer/RulesButton
 	var card_test_btn = $MenuContainer/CardTestButton
 
 	if mock_btn:
@@ -109,6 +114,8 @@ func _ready() -> void:
 			mock_btn.visible = false
 	if deck_btn:
 		deck_btn.pressed.connect(_on_deck_builder_pressed)
+	if rules_btn:
+		rules_btn.pressed.connect(_open_rules_overlay)
 	if card_test_btn:
 		if OS.is_debug_build():
 			card_test_btn.pressed.connect(_on_card_test_pressed)
@@ -188,6 +195,8 @@ func _open_multiplayer_screen() -> void:
 	multiplayer_container.visible = true
 	_refresh_multiplayer_deck_options()
 	_refresh_auth_controls()
+	if _current_profile_summary.is_empty() and not _has_active_lobby_connection():
+		_refresh_profile_summary_from_local_history(_local_profile_id)
 	_refresh_seek_list()
 	_refresh_multiplayer_action_state()
 	if not _current_room_snapshot.is_empty():
@@ -1251,6 +1260,125 @@ func _on_deck_builder_pressed() -> void:
 	game_container.add_child(db)
 	show_game()
 
+func _open_rules_overlay() -> void:
+	if _rules_overlay != null and is_instance_valid(_rules_overlay):
+		return
+
+	_rules_overlay = Control.new()
+	_rules_overlay.name = "RulesOverlay"
+	_rules_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_rules_overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	add_child(_rules_overlay)
+
+	var shade := ColorRect.new()
+	shade.color = Color(0.02, 0.03, 0.06, 0.86)
+	shade.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	shade.mouse_filter = Control.MOUSE_FILTER_STOP
+	_rules_overlay.add_child(shade)
+
+	var outer_margin := MarginContainer.new()
+	outer_margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	outer_margin.add_theme_constant_override("margin_left", 40)
+	outer_margin.add_theme_constant_override("margin_right", 40)
+	outer_margin.add_theme_constant_override("margin_top", 36)
+	outer_margin.add_theme_constant_override("margin_bottom", 36)
+	outer_margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_rules_overlay.add_child(outer_margin)
+
+	var panel := PanelContainer.new()
+	panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	var panel_style := StyleBoxFlat.new()
+	panel_style.bg_color = Color(0.08, 0.10, 0.16, 0.98)
+	panel_style.border_color = Color(0.54, 0.76, 1.0, 0.95)
+	panel_style.corner_radius_top_left = 12
+	panel_style.corner_radius_top_right = 12
+	panel_style.corner_radius_bottom_left = 12
+	panel_style.corner_radius_bottom_right = 12
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		panel_style.set_border_width(side, 2)
+	panel.add_theme_stylebox_override("panel", panel_style)
+	outer_margin.add_child(panel)
+
+	var inner_margin := MarginContainer.new()
+	inner_margin.add_theme_constant_override("margin_left", 18)
+	inner_margin.add_theme_constant_override("margin_right", 18)
+	inner_margin.add_theme_constant_override("margin_top", 18)
+	inner_margin.add_theme_constant_override("margin_bottom", 18)
+	panel.add_child(inner_margin)
+
+	var content := VBoxContainer.new()
+	content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	content.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	content.add_theme_constant_override("separation", 10)
+	inner_margin.add_child(content)
+
+	var title := Label.new()
+	title.text = "Rules"
+	title.add_theme_font_size_override("font_size", 24)
+	content.add_child(title)
+
+	var intro := Label.new()
+	intro.text = "New player rules reference."
+	intro.modulate = Color(0.78, 0.83, 0.95)
+	content.add_child(intro)
+
+	var rules_view := RichTextLabel.new()
+	rules_view.bbcode_enabled = false
+	rules_view.fit_content = false
+	rules_view.scroll_active = true
+	rules_view.selection_enabled = true
+	rules_view.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	rules_view.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	rules_view.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	rules_view.custom_minimum_size = Vector2(0, 420)
+	rules_view.text = _get_rules_display_text()
+	content.add_child(rules_view)
+
+	var actions := HBoxContainer.new()
+	actions.alignment = BoxContainer.ALIGNMENT_END
+	actions.add_theme_constant_override("separation", 8)
+	content.add_child(actions)
+
+	var close_btn := Button.new()
+	close_btn.text = "Close"
+	close_btn.custom_minimum_size = Vector2(110, 38)
+	close_btn.pressed.connect(_close_rules_overlay)
+	actions.add_child(close_btn)
+
+	close_btn.grab_focus()
+
+func _close_rules_overlay() -> void:
+	if _rules_overlay == null:
+		return
+	if is_instance_valid(_rules_overlay):
+		_rules_overlay.queue_free()
+	_rules_overlay = null
+	if rules_button != null:
+		rules_button.grab_focus()
+
+func _get_rules_display_text() -> String:
+	var file := FileAccess.open(RULES_DOC_PATH, FileAccess.READ)
+	if file == null:
+		return "Unable to load the rules document at %s." % RULES_DOC_PATH
+	return _format_rules_text(file.get_as_text())
+
+func _format_rules_text(markdown: String) -> String:
+	var formatted_lines: Array[String] = []
+	for raw_line in markdown.split("\n"):
+		var line := raw_line.rstrip("\r").replace("`", "")
+		if line.begins_with("# "):
+			formatted_lines.append(line.substr(2))
+			formatted_lines.append("")
+			continue
+		if line.begins_with("## "):
+			formatted_lines.append(line.substr(3))
+			continue
+		if line.begins_with("- "):
+			formatted_lines.append("- " + line.substr(2))
+			continue
+		formatted_lines.append(line)
+	return "\n".join(formatted_lines)
+
 func _on_mock_game_pressed() -> void:
 	_match_launch_queued = false
 	_cleanup_lobby(true)
@@ -1265,7 +1393,9 @@ func _on_card_test_pressed() -> void:
 	get_node("GameContainer/CardTest").visible = true
 	get_node("GameContainer/MockGame").visible = false
 	show_game()
-	get_node("GameContainer/CardTest").start_game()
+	var card_test: CardTestGame = get_node("GameContainer/CardTest")
+	await card_test.start_game()
+	card_test.load_pictish_test_scenario()
 
 func _on_host_game_pressed() -> void:
 	var target_error := _validate_multiplayer_target()
@@ -1958,6 +2088,23 @@ func _refresh_profile_summary_label() -> void:
 			if displayed_god_records >= 4:
 				break
 
+	var deck_records = _current_profile_summary.get("deck_records", [])
+	if deck_records is Array and not (deck_records as Array).is_empty():
+		lines.append("By Deck:")
+		var displayed_deck_records: int = 0
+		for raw_record in deck_records:
+			if not (raw_record is Dictionary):
+				continue
+			var deck_record: Dictionary = raw_record as Dictionary
+			lines.append("%s %d-%d" % [
+				_get_profile_summary_deck_name(str(deck_record.get("deck_name", ""))),
+				int(deck_record.get("wins", 0)),
+				int(deck_record.get("losses", 0)),
+			])
+			displayed_deck_records += 1
+			if displayed_deck_records >= 3:
+				break
+
 	var recent_matches = _current_profile_summary.get("recent_matches", [])
 	if recent_matches is Array and not (recent_matches as Array).is_empty():
 		lines.append("Recent:")
@@ -1969,8 +2116,14 @@ func _refresh_profile_summary_label() -> void:
 			var result_text: String = "W" if str(recent_match.get("result", "")).to_lower() == "win" else "L"
 			lines.append("%s as %s vs %s" % [
 				result_text,
-				str(recent_match.get("god_name", "Unknown God")),
-				str(recent_match.get("opponent_god_name", "Unknown God")),
+				_get_profile_summary_loadout(
+					str(recent_match.get("god_name", "Unknown God")),
+					str(recent_match.get("deck_name", ""))
+				),
+				_get_profile_summary_loadout(
+					str(recent_match.get("opponent_god_name", "Unknown God")),
+					str(recent_match.get("opponent_deck_name", ""))
+				),
 			])
 			displayed_recent_matches += 1
 			if displayed_recent_matches >= 3:
@@ -1978,6 +2131,36 @@ func _refresh_profile_summary_label() -> void:
 
 	_profile_summary_label.text = "\n".join(lines)
 	_profile_summary_label.visible = true
+
+func _get_profile_summary_deck_name(deck_name: String) -> String:
+	var resolved_deck_name := deck_name.strip_edges()
+	if resolved_deck_name.is_empty():
+		return "Unknown Deck"
+	return resolved_deck_name
+
+func _get_profile_summary_loadout(god_name: String, deck_name: String) -> String:
+	var resolved_god_name := god_name.strip_edges()
+	if resolved_god_name.is_empty():
+		resolved_god_name = "Unknown God"
+	var resolved_deck_name := deck_name.strip_edges()
+	if resolved_deck_name.is_empty():
+		return resolved_god_name
+	return "%s (%s)" % [resolved_god_name, resolved_deck_name]
+
+func _refresh_profile_summary_from_local_history(profile_id: String) -> void:
+	var resolved_profile_id := profile_id.strip_edges()
+	if resolved_profile_id.is_empty():
+		return
+	var history_store = MatchHistoryStoreScript.new()
+	_current_profile_summary = history_store.get_profile_summary(resolved_profile_id)
+	_refresh_profile_summary_label()
+
+func _should_refresh_profile_summary_from_local_history(saved_match: Dictionary) -> bool:
+	if saved_match.is_empty():
+		return false
+	if _is_local_lobby_host:
+		return true
+	return str(saved_match.get("server_mode", "")).strip_edges() == MatchSessionScript.SERVER_MODE_IN_PROCESS_HOST
 
 func _build_resume_controls() -> void:
 	if multiplayer_container == null or _resume_match_button != null:
@@ -2122,7 +2305,11 @@ func _resume_active_match_from_lobby(match_info: Dictionary) -> void:
 	)
 
 func _on_match_session_cleared() -> void:
+	var saved_match := _get_saved_active_match()
+	var resume_profile_id := _get_resume_profile_id()
 	_clear_saved_match_resume()
+	if _should_refresh_profile_summary_from_local_history(saved_match):
+		_refresh_profile_summary_from_local_history(resume_profile_id)
 
 func _maybe_submit_current_profile_deck(room_id: String, snapshot: Dictionary) -> void:
 	if lobby_client == null or _local_profile_store == null or _lobby_session_id.is_empty():

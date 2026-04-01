@@ -45,6 +45,83 @@ class DromiChainIndicator extends Control:
 		draw_line(Vector2(10.5, 7.2), Vector2(7.7, 10.8), chain_color, 2.2, true)
 		draw_circle(Vector2(9.2, 9.1), 1.1, Color(1.0, 0.83, 0.76, 0.92))
 
+class DebuffEffectIndicator extends Control:
+	const KIND_GENERIC := "generic"
+	const KIND_FLAME := "flame"
+	const KIND_POISON := "poison"
+	const KIND_LOCK := "lock"
+
+	var kind: String = KIND_GENERIC
+
+	func _init(indicator_kind: String = KIND_GENERIC) -> void:
+		kind = indicator_kind
+
+	func _ready() -> void:
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		custom_minimum_size = Vector2(18, 18)
+		queue_redraw()
+
+	func _draw() -> void:
+		match kind:
+			KIND_FLAME:
+				_draw_flame()
+			KIND_POISON:
+				_draw_poison()
+			KIND_LOCK:
+				_draw_lock()
+			_:
+				_draw_generic()
+
+	func _draw_flame() -> void:
+		var shadow := PackedVector2Array([
+			Vector2(9.0, 1.4), Vector2(12.7, 5.2), Vector2(13.4, 9.1),
+			Vector2(11.0, 14.5), Vector2(7.3, 16.0), Vector2(4.2, 13.1),
+			Vector2(4.8, 8.3), Vector2(6.8, 5.0)
+		])
+		var fill := PackedVector2Array([
+			Vector2(9.0, 2.3), Vector2(11.9, 5.2), Vector2(12.4, 8.6),
+			Vector2(10.5, 13.1), Vector2(7.5, 14.4), Vector2(5.4, 12.0),
+			Vector2(5.9, 8.3), Vector2(7.3, 5.5)
+		])
+		var core := PackedVector2Array([
+			Vector2(9.0, 5.0), Vector2(10.5, 7.5), Vector2(9.9, 10.8),
+			Vector2(8.2, 12.0), Vector2(7.2, 9.8), Vector2(7.8, 7.0)
+		])
+		draw_colored_polygon(shadow, Color(0.35, 0.02, 0.02, 0.92))
+		draw_colored_polygon(fill, Color(1.0, 0.32, 0.14, 0.98))
+		draw_colored_polygon(core, Color(1.0, 0.8, 0.35, 0.94))
+
+	func _draw_poison() -> void:
+		var drop := PackedVector2Array([
+			Vector2(9.0, 1.8), Vector2(12.6, 5.7), Vector2(12.9, 9.4),
+			Vector2(10.9, 13.0), Vector2(9.0, 14.3), Vector2(7.1, 13.0),
+			Vector2(5.1, 9.4), Vector2(5.4, 5.7)
+		])
+		var highlight := PackedVector2Array([
+			Vector2(8.2, 4.4), Vector2(9.6, 5.6), Vector2(9.1, 7.4),
+			Vector2(7.6, 7.1), Vector2(7.2, 5.7)
+		])
+		draw_colored_polygon(drop, Color(0.4, 0.95, 0.42, 0.96))
+		draw_colored_polygon(highlight, Color(0.86, 1.0, 0.82, 0.9))
+		draw_circle(Vector2(7.0, 10.8), 1.1, Color(0.11, 0.22, 0.1, 0.92))
+		draw_circle(Vector2(10.8, 10.8), 1.1, Color(0.11, 0.22, 0.1, 0.92))
+		draw_arc(Vector2(8.9, 11.2), 2.4, 0.1, PI - 0.1, 12, Color(0.11, 0.22, 0.1, 0.92), 1.2, true)
+
+	func _draw_lock() -> void:
+		var body := Rect2(Vector2(4.4, 8.0), Vector2(9.2, 6.4))
+		draw_rect(body, Color(0.96, 0.24, 0.2, 0.96))
+		draw_arc(Vector2(9.0, 7.8), 3.0, PI, TAU, 16, Color(1.0, 0.76, 0.72, 0.92), 1.8, true)
+		draw_line(Vector2(5.2, 4.2), Vector2(13.7, 13.8), Color(0.32, 0.02, 0.02, 0.94), 2.3, true)
+
+	func _draw_generic() -> void:
+		var chevron := PackedVector2Array([
+			Vector2(9.0, 13.9), Vector2(3.3, 7.2), Vector2(6.2, 7.2),
+			Vector2(6.2, 3.0), Vector2(11.8, 3.0), Vector2(11.8, 7.2),
+			Vector2(14.7, 7.2)
+		])
+		draw_colored_polygon(chevron, Color(0.98, 0.24, 0.22, 0.96))
+		draw_line(Vector2(5.1, 4.2), Vector2(12.9, 12.0), Color(1.0, 0.84, 0.8, 0.88), 1.2, true)
+
 class AttackAura extends Control:
 	const _ARC_STEPS := 8
 
@@ -118,10 +195,84 @@ class AttackAura extends Control:
 			var angle := lerpf(from_angle, to_angle, t)
 			points.append(center + Vector2(cos(angle), sin(angle)) * radius)
 
+class TargetAura extends Control:
+	const _ARC_STEPS := 8
+
+	func _ready() -> void:
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		queue_redraw()
+
+	func _draw() -> void:
+		var outer_rect := Rect2(Vector2(4.0, 4.0), size - Vector2(8.0, 8.0))
+		if outer_rect.size.x <= 0.0 or outer_rect.size.y <= 0.0:
+			return
+
+		_draw_rounded_outline(outer_rect, 10.0, Color(1.0, 0.80, 0.18, 0.10), 16.0)
+		_draw_rounded_outline(outer_rect, 10.0, Color(1.0, 0.84, 0.22, 0.20), 10.0)
+		_draw_rounded_outline(outer_rect, 10.0, Color(1.0, 0.88, 0.32, 0.34), 5.0)
+		_draw_rounded_outline(outer_rect, 10.0, Color(1.0, 0.92, 0.48, 0.98), 2.6)
+
+		var inner_rect := outer_rect.grow(-6.0)
+		if inner_rect.size.x > 0.0 and inner_rect.size.y > 0.0:
+			_draw_rounded_outline(inner_rect, 7.0, Color(1.0, 0.97, 0.74, 0.66), 1.2)
+
+	func _draw_rounded_outline(rect: Rect2, radius: float, color: Color, width: float) -> void:
+		var points := _build_rounded_rect_points(rect, radius)
+		if points.size() >= 2:
+			draw_polyline(points, color, width, true)
+
+	func _build_rounded_rect_points(rect: Rect2, radius: float) -> PackedVector2Array:
+		var clamped_radius := minf(radius, minf(rect.size.x * 0.5, rect.size.y * 0.5))
+		var points := PackedVector2Array()
+		points.append(rect.position + Vector2(clamped_radius, 0.0))
+		_append_arc(
+			points,
+			rect.position + Vector2(rect.size.x - clamped_radius, clamped_radius),
+			-PI * 0.5,
+			0.0,
+			clamped_radius
+		)
+		_append_arc(
+			points,
+			rect.position + Vector2(rect.size.x - clamped_radius, rect.size.y - clamped_radius),
+			0.0,
+			PI * 0.5,
+			clamped_radius
+		)
+		_append_arc(
+			points,
+			rect.position + Vector2(clamped_radius, rect.size.y - clamped_radius),
+			PI * 0.5,
+			PI,
+			clamped_radius
+		)
+		_append_arc(
+			points,
+			rect.position + Vector2(clamped_radius, clamped_radius),
+			PI,
+			PI * 1.5,
+			clamped_radius
+		)
+		points.append(points[0])
+		return points
+
+	func _append_arc(
+		points: PackedVector2Array,
+		center: Vector2,
+		from_angle: float,
+		to_angle: float,
+		radius: float
+	) -> void:
+		for step in range(1, _ARC_STEPS + 1):
+			var t := float(step) / float(_ARC_STEPS)
+			var angle := lerpf(from_angle, to_angle, t)
+			points.append(center + Vector2(cos(angle), sin(angle)) * radius)
+
 signal zone_clicked(zone: Zone)
 signal card_clicked(card: Card)
 signal creature_drag_started(card: Card, from_zone: Zone)
 signal creature_right_clicked(card: Card)
+signal god_right_clicked(card: Card)
 
 var zone: Zone
 var game_manager: GameManager
@@ -141,6 +292,8 @@ const BASE_ZONE_EXTENT := 165.0
 const DROMI_BINDING_NAME := "Dromi"
 const DROMI_BINDING_HOVER_TEXT := "Cannot attack. Losing 7 followers on opponent's turn start - Dromi"
 const EQUIPMENT_AFFORDANCE_GAP := 4.0
+const DEBUFF_AFFORDANCE_GAP := 4.0
+const DEBUFF_BADGE_SIZE := 22.0
 const POWER_LOCK_TEXTURE := preload("res://images/Norse Power Lock.png")
 static var _zone_extent: float = BASE_ZONE_EXTENT
 
@@ -393,12 +546,22 @@ func _add_stack_target_indicator(overlay: Control) -> void:
 
 	var marker := StackTargetIndicator.new()
 	marker.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	marker.z_index = 4
 	marker.set_anchors_preset(Control.PRESET_TOP_RIGHT)
 	marker.offset_left = -28
 	marker.offset_top = 6
 	marker.offset_right = -6
 	marker.offset_bottom = 28
 	overlay.add_child(marker)
+
+func _add_target_aura(overlay: Control) -> void:
+	if overlay == null:
+		return
+
+	var aura := TargetAura.new()
+	aura.z_index = 3
+	aura.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	overlay.add_child(aura)
 
 func _add_equipment_indicator_badge(
 	overlay: Control,
@@ -517,6 +680,192 @@ func _add_binding_affordances(overlay: Control, card: Card) -> void:
 		Color(1.0, 0.35, 0.28, 0.96)
 	)
 
+func _add_debuff_affordances(overlay: Control, card: Card) -> void:
+	if overlay == null or card == null or card.card_type != Card.CardType.CREATURE or card.is_god:
+		return
+	var entries := _get_debuff_affordance_entries(card)
+	if entries.is_empty():
+		return
+
+	var badge_top := 32.0 if _is_card_targeted_on_stack(card) else 6.0
+	var badge_right := -6.0
+	for entry in entries:
+		var badge := PanelContainer.new()
+		badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+		badge.offset_left = badge_right - DEBUFF_BADGE_SIZE
+		badge.offset_top = badge_top
+		badge.offset_right = badge_right
+		badge.offset_bottom = badge_top + DEBUFF_BADGE_SIZE
+
+		var badge_style := StyleBoxFlat.new()
+		badge_style.bg_color = Color(0.18, 0.02, 0.02, 0.95)
+		badge_style.border_color = Color(1.0, 0.28, 0.24, 0.98)
+		badge_style.shadow_color = Color(0.28, 0.02, 0.02, 0.52)
+		badge_style.shadow_size = 4
+		badge_style.corner_radius_top_left = 11
+		badge_style.corner_radius_top_right = 11
+		badge_style.corner_radius_bottom_left = 11
+		badge_style.corner_radius_bottom_right = 11
+		for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+			badge_style.set_border_width(side, 1)
+		badge.add_theme_stylebox_override("panel", badge_style)
+		overlay.add_child(badge)
+
+		var preview := _make_debuff_source_preview(entry)
+		if preview != null:
+			badge.add_child(preview)
+
+		var count := int(entry.get("count", 1))
+		if count > 1:
+			var count_label := Label.new()
+			count_label.text = str(count)
+			count_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			count_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+			count_label.add_theme_font_size_override("font_size", 9)
+			count_label.add_theme_color_override("font_color", Color(1.0, 0.94, 0.94))
+			count_label.add_theme_color_override("font_shadow_color", Color(0.22, 0.0, 0.0, 0.9))
+			count_label.add_theme_constant_override("shadow_offset_x", 1)
+			count_label.add_theme_constant_override("shadow_offset_y", 1)
+			count_label.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
+			count_label.offset_left = -10
+			count_label.offset_top = -10
+			count_label.offset_right = 0
+			count_label.offset_bottom = 0
+			count_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			badge.add_child(count_label)
+
+		badge_right -= DEBUFF_BADGE_SIZE + DEBUFF_AFFORDANCE_GAP
+
+func _get_debuff_affordance_entries(card: Card) -> Array[Dictionary]:
+	var entries: Array[Dictionary] = []
+	if card == null:
+		return entries
+
+	var seen: Dictionary = {}
+	for status in card._get_effective_statuses():
+		_append_debuff_affordance_entry(entries, seen, _build_debuff_entry_from_status(card, status))
+	for buff in card._get_effective_buffs():
+		_append_debuff_affordance_entry(entries, seen, _build_debuff_entry_from_buff(buff))
+	return entries
+
+func _append_debuff_affordance_entry(entries: Array[Dictionary], seen: Dictionary, entry: Dictionary) -> void:
+	if entry.is_empty():
+		return
+	var key := str(entry.get("key", ""))
+	if key != "" and seen.has(key):
+		var index := int(seen[key])
+		var merged := entries[index]
+		merged["count"] = int(merged.get("count", 1)) + int(entry.get("count", 1))
+		entries[index] = merged
+		return
+	if not entry.has("count"):
+		entry["count"] = 1
+	if key != "":
+		seen[key] = entries.size()
+	entries.append(entry)
+
+func _make_debuff_source_preview(entry: Dictionary) -> Control:
+	var source_card := entry.get("source_card", null) as Card
+	if source_card != null and source_card.art_path != "":
+		var tex := load(source_card.art_path) as Texture2D
+		if tex != null:
+			var art := TextureRect.new()
+			art.texture = tex
+			art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+			art.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			art.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+			art.offset_left = 2
+			art.offset_top = 2
+			art.offset_right = -2
+			art.offset_bottom = -2
+			return art
+	var fallback := DebuffEffectIndicator.new(str(entry.get("kind", DebuffEffectIndicator.KIND_GENERIC)))
+	fallback.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	fallback.offset_left = 2
+	fallback.offset_top = 2
+	fallback.offset_right = -2
+	fallback.offset_bottom = -2
+	return fallback
+
+func _build_debuff_entry_from_status(card: Card, status: Dictionary) -> Dictionary:
+	if card == null or status.is_empty():
+		return {}
+	var status_name := str(status.get("name", ""))
+	if status_name in ["", "sleep", "temporarily_revealed", "blessed_ward", Card.EXTERNAL_EFFECT_NEGATION_STATUS]:
+		return {}
+	if status_name == "cannot_attack":
+		var dromi_source := _get_dromi_binding_source(card)
+		var source_card := status.get("source_card", null) as Card
+		if dromi_source != null and (source_card == dromi_source or str(status.get("source", "")) == DROMI_BINDING_NAME):
+			return {}
+
+	var source_key := _get_debuff_source_key(status)
+	var source_card := status.get("source_card", null) as Card
+	if status_name == "malinalxochitl_poison" or status_name.contains("poison"):
+		return {
+			"key": "poison:%s" % source_key,
+			"kind": DebuffEffectIndicator.KIND_POISON,
+			"source_card": source_card,
+			"count": 1,
+		}
+	if status_name in ["cannot_attack", "cannot_move", "activation_locked", Card.ABILITY_NEGATED_STATUS]:
+		return {
+			"key": "lock:%s:%s" % [status_name, source_key],
+			"kind": DebuffEffectIndicator.KIND_LOCK,
+			"source_card": source_card,
+			"count": 1,
+		}
+	if status_name in ["doomed", "petrified"]:
+		return {
+			"key": "status:%s:%s" % [status_name, source_key],
+			"kind": DebuffEffectIndicator.KIND_GENERIC,
+			"source_card": source_card,
+			"count": 1,
+		}
+	return {}
+
+func _build_debuff_entry_from_buff(buff: Dictionary) -> Dictionary:
+	if buff.is_empty():
+		return {}
+	var str_change := int(buff.get("str", 0))
+	var res_change := int(buff.get("res", 0))
+	var spd_change := int(buff.get("spd", 0))
+	var lvl_change := int(buff.get("lvl", 0))
+	if str_change >= 0 and res_change >= 0 and spd_change >= 0 and lvl_change >= 0:
+		return {}
+
+	var effect_type := str(buff.get("effect_type", ""))
+	var source := str(buff.get("source", ""))
+	var lower_source := source.to_lower()
+	if effect_type.contains("poison") or lower_source.contains("poison"):
+		return {}
+
+	var kind := DebuffEffectIndicator.KIND_GENERIC
+	if effect_type == "structure_debuff" or lower_source.contains("pyre"):
+		kind = DebuffEffectIndicator.KIND_FLAME
+	elif effect_type.contains("lock") or effect_type.contains("negat") or effect_type.contains("bound"):
+		kind = DebuffEffectIndicator.KIND_LOCK
+
+	var source_key := _get_debuff_source_key(buff)
+	var effect_key := effect_type if effect_type != "" else source
+	return {
+		"key": "buff:%s:%s:%s" % [kind, effect_key, source_key],
+		"kind": kind,
+		"source_card": buff.get("source_card", null),
+		"count": 1,
+	}
+
+func _get_debuff_source_key(entry: Dictionary) -> String:
+	var source_card := entry.get("source_card", null) as Card
+	if source_card != null and source_card.uid != "":
+		return source_card.uid
+	var source := str(entry.get("source", ""))
+	if source != "":
+		return source
+	return str(entry.get("name", "effect"))
+
 func _get_binding_hover_lines(binding: Card) -> Array[String]:
 	var details: Array[String] = []
 	if binding == null:
@@ -543,16 +892,76 @@ func _is_card_targeted_on_stack(card: Card) -> bool:
 			return true
 	return false
 
+func _get_targeting_scene_root() -> Node:
+	if not is_inside_tree() or is_queued_for_deletion():
+		return null
+	var tree := get_tree()
+	if tree == null:
+		return null
+	return tree.current_scene
+
+func _get_pending_target_source(scene_root: Node) -> Card:
+	if scene_root == null:
+		return null
+	var pending_source = scene_root.get("_pending_click_selection_source")
+	if pending_source is Card:
+		return pending_source as Card
+	if scene_root.get("awaiting_pyre_target") == true and scene_root.get("pyre_source") is Card:
+		return scene_root.get("pyre_source") as Card
+	if scene_root.get("awaiting_anointing_target") == true and scene_root.get("anointing_source") is Card:
+		return scene_root.get("anointing_source") as Card
+	if scene_root.get("awaiting_stupefy_target") == true and scene_root.get("stupefy_source") is Card:
+		return scene_root.get("stupefy_source") as Card
+	if scene_root.get("awaiting_god_ability_target") == true and scene_root.get("god_ability_source") is Card:
+		return scene_root.get("god_ability_source") as Card
+	if scene_root.get("awaiting_spell_target") == true and scene_root.get("spell_waiting_for_target") is Card:
+		return scene_root.get("spell_waiting_for_target") as Card
+	return null
+
+func _method_allows_self_target(source: Card, method_name: String, args: Array = []) -> bool:
+	if source == null or not source.has_method(method_name):
+		return false
+	var result = null
+	match args.size():
+		0:
+			result = source.call(method_name)
+		1:
+			result = source.call(method_name, args[0])
+		2:
+			result = source.call(method_name, args[0], args[1])
+		_:
+			return false
+	if result is Array:
+		return source in (result as Array)
+	return false
+
+func _allows_pending_self_target_highlight(source: Card, scene_root: Node) -> bool:
+	if source == null:
+		return false
+	if _method_allows_self_target(source, "get_valid_targets", [game_manager]):
+		return true
+	if _method_allows_self_target(source, "get_valid_devour_targets", [game_manager]):
+		return true
+	if _method_allows_self_target(source, "get_valid_impact_targets", [game_manager]):
+		return true
+	if source.has_method("is_valid_activation_target") and source.call("is_valid_activation_target", source) == true:
+		return true
+	if source.has_method("is_valid_target") and source.call("is_valid_target", source) == true:
+		return true
+	if source.has_method("can_play_to_target") and source.call("can_play_to_target", game_manager, source) == true:
+		return true
+	if scene_root != null and scene_root.get("awaiting_pyre_target") == true and scene_root.get("pyre_source") == source:
+		return true
+	return false
+
 func _is_card_pending_target(card: Card) -> bool:
 	if card == null:
 		return false
-	if not is_inside_tree() or is_queued_for_deletion():
-		return false
-	var tree := get_tree()
-	if tree == null:
-		return false
-	var scene_root := tree.current_scene
+	var scene_root := _get_targeting_scene_root()
 	if scene_root == null:
+		return false
+	var source := _get_pending_target_source(scene_root)
+	if source == card and not _allows_pending_self_target_highlight(source, scene_root):
 		return false
 
 	var pending_validator = scene_root.get("_pending_click_selection_validator")
@@ -746,6 +1155,7 @@ func _refresh_display() -> void:
 			if _is_card_attacking_on_stack(card):
 				_add_attack_aura(fd_overlay)
 			if _is_card_targeted_on_stack(card) or _is_card_pending_target(card):
+				_add_target_aura(fd_overlay)
 				_add_stack_target_indicator(fd_overlay)
 			var _fd_is_def := card.card_type == Card.CardType.CREATURE and card.creature_mode == Card.CreatureMode.DEFENSIVE
 			_defense_overlay = fd_overlay if _fd_is_def else null
@@ -776,6 +1186,7 @@ func _refresh_display() -> void:
 				if _is_card_usable_for_priority(card):
 					_add_priority_response_aura(god_overlay)
 				if _is_card_targeted_on_stack(card) or _is_card_pending_target(card):
+					_add_target_aura(god_overlay)
 					_add_stack_target_indicator(god_overlay)
 
 				var art := TextureRect.new()
@@ -919,6 +1330,7 @@ func _refresh_display() -> void:
 		if _is_card_usable_for_priority(card):
 			_add_priority_response_aura(card_overlay)
 		if _is_card_targeted_on_stack(card) or _is_card_pending_target(card):
+			_add_target_aura(card_overlay)
 			_add_stack_target_indicator(card_overlay)
 
 		# Art background; stealth shows hazed art (own) or cardback (opponent)
@@ -958,6 +1370,7 @@ func _refresh_display() -> void:
 		if not card.is_stealth or card.get_controller() == board_viewer or card.is_temporarily_revealed():
 			_add_equipment_affordances(card_overlay, card)
 			_add_binding_affordances(card_overlay, card)
+			_add_debuff_affordances(card_overlay, card)
 
 		# VBox fills the zone; spacer pushes the stat label to the bottom
 		var vbox := VBoxContainer.new()
@@ -1125,6 +1538,10 @@ func _gui_input(event: InputEvent) -> void:
 			var card := zone.cards[0]
 			if not _is_enemy and card.card_type == Card.CardType.CREATURE and card.get_controller() == game_manager.current_player:
 				creature_right_clicked.emit(card)
+			elif not _is_enemy and card.is_god and card.get_controller() == game_manager.current_player:
+				god_right_clicked.emit(card)
+				accept_event()
+				return
 			# Pin the info popup on right-click for any visible card
 			var viewer := _get_viewer_player()
 			if not card.is_face_down or card.get_controller() == viewer or _is_public_power(card) or card.is_temporarily_revealed():
@@ -1304,10 +1721,27 @@ func _show_ability_popup() -> void:
 	# Level (gods have no level)
 	if not is_hidden_card and not card.is_god:
 		var level_lbl := Label.new()
-		level_lbl.text = "Level %d" % card.get_effective_level()
+		var eff_lvl := card.get_effective_level()
+		level_lbl.text = "Level %d" % eff_lvl
 		level_lbl.add_theme_font_size_override("font_size", 11)
-		level_lbl.modulate = Color(0.7, 0.7, 0.7)
-		level_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var level_breakdown := card.get_buff_tooltip("lvl")
+		if eff_lvl > card.level:
+			level_lbl.modulate = Color(0.4, 1.0, 0.4)
+			if level_breakdown != "":
+				level_lbl.tooltip_text = "LVL:\n" + level_breakdown
+				level_lbl.mouse_filter = Control.MOUSE_FILTER_STOP
+			else:
+				level_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		elif eff_lvl < card.level:
+			level_lbl.modulate = Color(1.0, 0.35, 0.35)
+			if level_breakdown != "":
+				level_lbl.tooltip_text = "LVL:\n" + level_breakdown
+				level_lbl.mouse_filter = Control.MOUSE_FILTER_STOP
+			else:
+				level_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		else:
+			level_lbl.modulate = Color(0.7, 0.7, 0.7)
+			level_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		vbox.add_child(level_lbl)
 
 	if card.card_type == Card.CardType.CREATURE and not card.is_god:

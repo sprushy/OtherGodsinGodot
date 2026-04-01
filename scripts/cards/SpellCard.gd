@@ -30,7 +30,9 @@ func should_go_to_graveyard() -> bool:
 ## Override in spells that need additional data (choices, x_value, mode, etc.).
 func resolve_from_command(game_manager: GameManager, command: Dictionary) -> void:
 	var target_uid: String = command.get("target_uid", "")
-	var target = game_manager.get_card_by_uid(target_uid) if target_uid != "" else null
+	var target: Card = null
+	if target_uid != "":
+		target = game_manager.get_card_by_uid(target_uid)
 	resolve(game_manager, target)
 
 # Spells can only be played on your turn (speed 1)

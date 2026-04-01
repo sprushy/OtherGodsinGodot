@@ -64,7 +64,7 @@ func get_valid_targets(game_manager: GameManager) -> Array[Card]:
 
 func is_valid_activation_target(target: Card) -> bool:
 	return target != null \
-		and target.card_type == Card.CardType.CREATURE \
+		and target.is_creature_card() \
 		and target.current_zone != null \
 		and target.current_zone.is_board_zone() \
 		and not target.is_face_down \

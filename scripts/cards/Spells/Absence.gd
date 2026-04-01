@@ -23,7 +23,9 @@ func _init() -> void:
 
 func resolve_from_command(game_manager: GameManager, command: Dictionary) -> void:
 	var target_uid: String = command.get("target_uid", "")
-	var target = game_manager.get_card_by_uid(target_uid) if target_uid != "" else null
+	var target: Card = null
+	if target_uid != "":
+		target = game_manager.get_card_by_uid(target_uid)
 	var mode: String = command.get("mode", "mute")
 	apply_to_power(target, mode, game_manager)
 
@@ -46,5 +48,7 @@ func apply_to_power(power: Card, mode: String, game_manager: GameManager = null)
 	else:
 		if power is PowerCard and power.is_face_down:
 			power.reveal_while_face_down()
+			if game_manager != null and game_manager.has_method("notify_card_revealed_by_effect"):
+				game_manager.notify_card_revealed_by_effect(power, self)
 		power.mute_for_turns(MUTE_DURATION, game_manager)
 		print("Absence muted a power for " + str(MUTE_DURATION) + " of its owner's turns.")

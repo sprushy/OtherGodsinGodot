@@ -18,7 +18,7 @@ func start_game(
 	server_match_session = null
 ) -> void:
 	await super.start_game(is_host, is_client, server_ip, server_port, match_info, server_match_session)
-	load_test_scenario_one()
+	load_m_card_scenario()
 
 func update_ui() -> void:
 	_sync_test_priority_control()
@@ -36,10 +36,9 @@ func _sync_test_priority_control() -> void:
 		_test_turn_owner = player1
 		_test_turn_opponent = player2
 
-	var viewer := _test_turn_owner
-	if not game_manager.action_stack.is_empty() and game_manager.priority_player != null:
-		viewer = game_manager.priority_player
-	game_manager.feedback_viewer = viewer
+	# Keep CardTest on the active player's perspective even during priority windows.
+	# Swapping to priority_player mid-stack makes the whole board appear to invert.
+	game_manager.feedback_viewer = _test_turn_owner
 
 	var turn_owner := game_manager.turn_player if game_manager.turn_player != null else game_manager.current_player
 	player1.is_turn_player = turn_owner == player1
@@ -184,7 +183,146 @@ func _reset_test_match_state() -> void:
 	selected_interceptor = null
 
 func _setup_test_board() -> void:
-	load_test_scenario_one()
+	load_m_card_scenario()
+
+func load_m_card_scenario() -> void:
+	_reset_test_match_state()
+	_add_test_god(player1, Mummu.new())
+	_add_test_god(player2, Thor.new())
+
+	# P1 powers: Mech Factory and Myrkwood unlocked for immediate testing.
+	_add_test_power(player1, 0, MechFactory.new(), true)
+	_add_test_power(player1, 1, Myrkwood.new(), true)
+
+	# P1 board: live M-creatures plus a prepared Mead of Poetry.
+	_place_test_board_card(player1, player1.frontline_zones[0], Muninn.new(), Card.CreatureMode.AGGRESSIVE)
+	_place_test_board_card(player1, player1.frontline_zones[1], MalinalxochitlAcolyte.new(), Card.CreatureMode.AGGRESSIVE)
+	_place_test_board_card(player1, player1.reserve_zones[0], Mopsus.new(), Card.CreatureMode.DEFENSIVE)
+	_place_test_prepared_card(player1, player1.reserve_zones[1], MeadOfPoetry.new())
+
+	# P1 hand: remaining M-cards to play/prepare.
+	_add_test_hand_card(player1, MalinalxochitlThrall.new())
+	_add_test_hand_card(player1, MeadOfPoetry.new())
+
+	# P1 deck: draw a Thrall first; keep Mead in deck for Muninn to prime later.
+	_add_test_deck_card(player1, MalinalxochitlThrall.new())
+	_add_test_deck_card(player1, MeadOfPoetry.new())
+
+	# P2 board: face-up combat targets for the M-creatures.
+	_place_test_board_card(player2, player2.frontline_zones[0], BrownBear.new(), Card.CreatureMode.DEFENSIVE)
+	_place_test_board_card(player2, player2.reserve_zones[0], LesserMushussu.new(), Card.CreatureMode.DEFENSIVE)
+
+	# P2 hand: visible hand-testing targets for Mopsus.
+	_add_test_hand_card(player2, HeroicStand.new())
+	_add_test_hand_card(player2, FallOfTheMighty.new())
+
+	# P2 deck: simple draw targets for longer second-player test loops.
+	_add_test_deck_card(player2, BrownBear.new())
+	_add_test_deck_card(player2, Berserker.new())
+
+	player1.spend_mana(player1.mana)
+	player1.gain_mana(8)
+	player2.spend_mana(player2.mana)
+	player2.gain_mana(8)
+	player1.followers = 100
+	player2.followers = 100
+	player1.followers_changed.emit(player1.followers)
+	player2.followers_changed.emit(player2.followers)
+	player1.has_summoned_this_turn = false
+	player2.has_summoned_this_turn = false
+
+	game_manager.current_player = player1
+	game_manager.other_player = player2
+	game_manager.feedback_viewer = player1
+	player1.is_turn_player = true
+	player2.is_turn_player = false
+	selected_card = null
+	selected_attacker = null
+	selected_interceptor = null
+	_test_turn_owner = player1
+	_test_turn_opponent = player2
+	game_manager.start_turn()
+	_open_upkeep_choice_window()
+	action_label.text = (
+		"M-Card Scenario: All cards starting with M. Choose Draw Card or Gain 4 Mana first.  |  "
+		+ "Gods - Mummu leads P1; Thor leads P2 so Entropic Force can be tested right away.  |  "
+		+ "Powers - Mech Factory and Myrkwood are unlocked for immediate token and extra-Animal summon testing.  |  "
+		+ "Board - Muninn, Malinalxochitl Acolyte, and Mopsus are live; Mead of Poetry is already prepared in reserve.  |  "
+		+ "Hand - Malinalxochitl Thrall and another Mead of Poetry are ready to play.  |  "
+		+ "Deck - Malinalxochitl Thrall is the next draw, and Mead of Poetry stays in deck for Muninn's perish-prime.  |  "
+		+ "Opponent - Brown Bear and Lesser Mushussu give you combat targets, while two hand cards let Mopsus use Seer."
+	)
+	update_ui()
+
+func load_pictish_test_scenario() -> void:
+	_reset_test_match_state()
+	_add_test_god(player1, ManannanMacLir.new())
+	_add_test_god(player2, Thor.new())
+
+	var minotaur := MinotaurFootsoldier.new()
+	var face_up_beast := PictishBeast.new()
+	var sleeping_bear := BrownBear.new()
+
+	_place_test_board_card(player1, player1.frontline_zones[0], minotaur, Card.CreatureMode.AGGRESSIVE)
+	_place_test_board_card(player1, player1.reserve_zones[0], face_up_beast, Card.CreatureMode.DEFENSIVE)
+	_place_test_hidden_creature(player1, player1.reserve_zones[1], PictishBeast.new())
+
+	_add_test_hand_card(player1, PictishBeast.new())
+	_add_test_hand_card(player1, MasmassuPriest.new())
+	_add_test_hand_card(player1, Muninn.new())
+	_add_test_graveyard_card(player1, PictishBeast.new())
+
+	_add_test_deck_card(player1, PictishBeast.new())
+	_add_test_deck_card(player1, MinotaurFootsoldier.new())
+	_add_test_deck_card(player1, MeadOfPoetry.new())
+
+	_place_test_board_card(player2, player2.frontline_zones[0], sleeping_bear, Card.CreatureMode.DEFENSIVE)
+	sleeping_bear.add_status_effect("sleep", "Scenario Setup", minotaur, player1)
+	_place_test_board_card(player2, player2.frontline_zones[1], GududPriest.new(), Card.CreatureMode.DEFENSIVE)
+	_place_test_hidden_creature(player2, player2.reserve_zones[0], BrownBear.new())
+
+	_add_test_hand_card(player2, BrownBear.new())
+	_add_test_hand_card(player2, Berserker.new())
+	_add_test_hand_card(player2, MinotaurFootsoldier.new())
+	_add_test_hand_card(player2, Muninn.new())
+
+	_add_test_deck_card(player2, BrownBear.new())
+	_add_test_deck_card(player2, GududPriest.new())
+	_add_test_deck_card(player2, HeroicStand.new())
+
+	player1.spend_mana(player1.mana)
+	player1.gain_mana(6)
+	player2.spend_mana(player2.mana)
+	player2.gain_mana(6)
+	player1.followers = 100
+	player2.followers = 100
+	player1.followers_changed.emit(player1.followers)
+	player2.followers_changed.emit(player2.followers)
+	player1.has_summoned_this_turn = false
+	player2.has_summoned_this_turn = false
+
+	game_manager.current_player = player1
+	game_manager.other_player = player2
+	game_manager.feedback_viewer = player1
+	player1.is_turn_player = true
+	player2.is_turn_player = false
+	selected_card = null
+	selected_attacker = null
+	selected_interceptor = null
+	_test_turn_owner = player1
+	_test_turn_opponent = player2
+	game_manager.start_turn()
+	_open_upkeep_choice_window()
+	action_label.text = (
+		"Pictish Scenario: Pictish Beast, Manannan mac Lir, Masmassu Priest, and Minotaur Footsoldier. Choose Draw Card or Gain 4 Mana first.  |  "
+		+ "God - Manannan leads P1 so Mists of the Blessed Isles can hide your Triskelion creatures immediately.  |  "
+		+ "Board - Minotaur Footsoldier is live on the frontline, one Pictish Beast is face-up, and another is already hidden in reserve.  |  "
+		+ "Hand - A fresh Pictish Beast, Masmassu Priest, and Muninn are ready on P1, and P2 also has a Muninn for mirror testing.  |  "
+		+ "Deck - Each player now has a Charm in deck for Muninn to prime on perish.  |  "
+		+ "Grave - Another Pictish Beast is already in your graveyard so Mana Boon can spike mana as soon as one reveals.  |  "
+		+ "Opponent - A sleeping Brown Bear tests Minotaur Footsoldier's stun, a hidden Brown Bear gives you a stealth target, and Gudud Priest is a Human that Masmassu Priest should leave alone."
+	)
+	update_ui()
 
 func load_test_scenario_one() -> void:
 	_reset_test_match_state()

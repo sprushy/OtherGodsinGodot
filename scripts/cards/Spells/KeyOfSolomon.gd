@@ -67,8 +67,8 @@ func resolve(game_manager: GameManager, target = null) -> void:
 func resolve_from_command(game_manager: GameManager, command: Dictionary) -> void:
 	var choice_uids: Array = command.get("choices", [])
 	var demons: Array[Card] = []
-	for uid in choice_uids:
-		var c := game_manager.get_card_by_uid(uid as String)
+	for chosen_uid in choice_uids:
+		var c := game_manager.get_card_by_uid(chosen_uid as String)
 		if c != null:
 			demons.append(c)
 	_add_demons_to_hand(game_manager, demons)

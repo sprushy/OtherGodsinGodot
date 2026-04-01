@@ -73,7 +73,11 @@ func _is_norse_warrior(card: Card) -> bool:
 func _get_combat_target(action: CardAction) -> Card:
 	if action == null:
 		return null
-	var target: Card = action.interceptor if action.interceptor != null else action.target as Card
+	var target: Card = null
+	if action.interceptor != null:
+		target = action.interceptor
+	else:
+		target = action.target as Card
 	if target == null or target.current_zone == null or not target.current_zone.is_board_zone():
 		return null
 	return target

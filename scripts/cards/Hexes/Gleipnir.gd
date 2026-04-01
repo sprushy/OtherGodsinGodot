@@ -64,7 +64,7 @@ func on_activate_action(game_manager: GameManager, action: CardAction) -> void:
 				% [card_name, target_name]
 			)
 
-func on_attached(game_manager: GameManager, target: Card) -> void:
+func on_attached(_game_manager: GameManager, target: Card) -> void:
 	_apply_binding_to_target(target)
 	print("%s binds %s." % [card_name, target.card_name])
 
@@ -80,7 +80,7 @@ func on_any_card_moved(game_manager: GameManager, moved_card: Card, _from_zone: 
 	if not _is_target_still_bound():
 		_release_self(game_manager)
 
-func on_removed(game_manager: GameManager) -> void:
+func on_removed(_game_manager: GameManager) -> void:
 	if attached_target != null:
 		attached_target.remove_status_effects_from_source_card(self, ATTACK_LOCK_STATUS)
 		attached_target.remove_status_effects_from_source_card(self, INTERCEPT_LOCK_STATUS)

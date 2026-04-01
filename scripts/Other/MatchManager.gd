@@ -194,11 +194,10 @@ func _resolve_attack(action: CardAction) -> void:
 	game_manager.current_phase = GameManager.GamePhase.COMBAT
 	var actual_target = action.interceptor if action.interceptor != null else action.target
 
-	action.attacker.reveal(game_manager)
-	if action.united_front_partner != null:
-		action.united_front_partner.reveal(game_manager)
-	if actual_target is Card:
-		actual_target.reveal(game_manager)
+	if actual_target is Card and actual_target.current_zone != null and actual_target.current_zone.is_board_zone():
+		game_manager._begin_declared_combat(action.attacker, actual_target)
+		if action.united_front_partner != null:
+			game_manager._begin_declared_combat(action.united_front_partner, actual_target)
 
 	action.attacker.mark_attacked_this_turn()
 
@@ -207,6 +206,7 @@ func _resolve_attack(action: CardAction) -> void:
 		# the attack fizzles — attacker still spends their action.
 		if actual_target.current_zone == null or not actual_target.current_zone.is_board_zone():
 			action.attacker.spend_major_creature_action()
+			game_manager._clear_combat_engagement_state(actual_target)
 			last_resolution_text = action.attacker.card_name + "'s attack fizzles — target is no longer on the board."
 			return
 		# Check for Askelladen Tactful Retreat prompts.
@@ -653,7 +653,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 			if card == null:
 				move_failed.emit("change_mode: card not found")
 				return false
-			var mode := int(command.get("mode", -1))
+			var mode: Card.CreatureMode = int(command.get("mode", -1)) as Card.CreatureMode
 			if not game_manager.creature_change_mode(card, mode):
 				move_failed.emit("Cannot change mode for " + card.card_name)
 				return false

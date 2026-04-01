@@ -199,9 +199,15 @@ func _get_best_return_zone(creature: Card, entry: Dictionary) -> Zone:
 	if preferred_zone != null and preferred_zone.cards.is_empty():
 		return preferred_zone
 
-	var origin_type := int(entry.get("zone_type", -1))
-	var primary_zones := creature.card_owner.frontline_zones if origin_type == Zone.ZoneType.FRONTLINE else creature.card_owner.reserve_zones
-	var secondary_zones := creature.card_owner.reserve_zones if origin_type == Zone.ZoneType.FRONTLINE else creature.card_owner.frontline_zones
+	var origin_type: Zone.ZoneType = int(entry.get("zone_type", -1)) as Zone.ZoneType
+	var primary_zones: Array[Zone] = []
+	var secondary_zones: Array[Zone] = []
+	if origin_type == Zone.ZoneType.FRONTLINE:
+		primary_zones.assign(creature.card_owner.frontline_zones)
+		secondary_zones.assign(creature.card_owner.reserve_zones)
+	else:
+		primary_zones.assign(creature.card_owner.reserve_zones)
+		secondary_zones.assign(creature.card_owner.frontline_zones)
 
 	for zone in primary_zones:
 		if zone.cards.is_empty():
@@ -214,7 +220,7 @@ func _get_best_return_zone(creature: Card, entry: Dictionary) -> Zone:
 func _get_zone_from_entry(player: Player, entry: Dictionary) -> Zone:
 	if player == null:
 		return null
-	var zone_type := int(entry.get("zone_type", -1))
+	var zone_type: Zone.ZoneType = int(entry.get("zone_type", -1)) as Zone.ZoneType
 	var zone_index := int(entry.get("zone_index", -1))
 	var zones: Array[Zone] = []
 	if zone_type == Zone.ZoneType.FRONTLINE:

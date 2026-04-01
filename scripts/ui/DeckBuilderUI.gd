@@ -3,7 +3,7 @@
 extends Control
 class_name DeckBuilderUI
 
-const LocalProfileStoreScript = preload("res://scripts/client/LocalProfileStore.gd")
+const LocalProfileStoreScript = preload("res://scripts/core/LocalProfileStore.gd")
 const CardCatalogScript = preload("res://scripts/cards/CardCatalog.gd")
 
 signal back_pressed
@@ -774,27 +774,29 @@ func _make_card_item(card: Card) -> Control:
 	type_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(type_lbl)
 
-	# Mana cost (top-right, only if > 0)
-	if card.mana_cost > 0:
+	# Cost badge (top-right)
+	if card.has_listed_play_costs():
+		var cost_text := card.get_cost_shorthand()
+		var badge_width := maxi(22, 12 + cost_text.length() * 6)
 		var mana_bg := ColorRect.new()
 		mana_bg.color = Color(0.1, 0.25, 0.55, 0.85)
-		mana_bg.custom_minimum_size = Vector2(22, 22)
+		mana_bg.custom_minimum_size = Vector2(badge_width, 22)
 		mana_bg.anchor_right  = 1; mana_bg.anchor_left  = 1
 		mana_bg.anchor_top    = 0; mana_bg.anchor_bottom = 0
-		mana_bg.offset_left   = -24; mana_bg.offset_right  = -2
+		mana_bg.offset_left   = -badge_width - 2; mana_bg.offset_right  = -2
 		mana_bg.offset_top    = 2;   mana_bg.offset_bottom = 24
 		mana_bg.mouse_filter  = Control.MOUSE_FILTER_IGNORE
 		root.add_child(mana_bg)
 
 		var mana_lbl := Label.new()
-		mana_lbl.text = str(card.mana_cost)
-		mana_lbl.add_theme_font_size_override("font_size", 11)
+		mana_lbl.text = cost_text
+		mana_lbl.add_theme_font_size_override("font_size", 10 if cost_text.length() > 3 else 11)
 		mana_lbl.add_theme_color_override("font_color", Color(0.6, 0.9, 1.0))
 		mana_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		mana_lbl.vertical_alignment   = VERTICAL_ALIGNMENT_CENTER
 		mana_lbl.anchor_right  = 1; mana_lbl.anchor_left  = 1
 		mana_lbl.anchor_top    = 0; mana_lbl.anchor_bottom = 0
-		mana_lbl.offset_left   = -24; mana_lbl.offset_right  = -2
+		mana_lbl.offset_left   = -badge_width - 2; mana_lbl.offset_right  = -2
 		mana_lbl.offset_top    = 2;   mana_lbl.offset_bottom = 24
 		mana_lbl.mouse_filter  = Control.MOUSE_FILTER_IGNORE
 		root.add_child(mana_lbl)
@@ -1594,11 +1596,16 @@ func _show_preview(card: Card) -> void:
 		stat_parts.append("  ".join(equip_parts))
 	elif card.card_type in [Card.CardType.SPELL, Card.CardType.HEX, Card.CardType.CHARM]:
 		stat_parts.append("SPD:%d" % card.speed)
-	if card.mana_cost > 0:
-		stat_parts.append("Mana: %d" % card.mana_cost)
+	if card.has_listed_play_costs():
+		stat_parts.append("Cost: " + card.get_cost_shorthand())
 	_prev_stats.text = "  ".join(stat_parts)
 
-	_prev_ability.text = BaseCard.apply_keyword_hints(card.ability_text) if card.ability_text != "" else ""
+	if card.ability_text != "":
+		_prev_ability.text = BaseCard.apply_keyword_hints(card.ability_text)
+		_prev_ability.custom_minimum_size.y = 96
+	else:
+		_prev_ability.text = ""
+		_prev_ability.custom_minimum_size.y = 0
 	_prev_flavor.text  = card.flavor_text  if card.flavor_text  != "" else ""
 
 # ── filter ─────────────────────────────────────────────────────────

@@ -142,7 +142,7 @@ func _resolve_tree_of_life() -> void:
 
 	_clear_tree_of_life_state()
 
-func _find_open_board_zone(gm: GameManager, exclude: Zone) -> Zone:
+func _find_open_board_zone(_gm: GameManager, exclude: Zone) -> Zone:
 	if card_owner == null:
 		return null
 	for zone in card_owner.reserve_zones:

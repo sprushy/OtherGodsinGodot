@@ -78,6 +78,7 @@ func get_profile_summary(profile_id: String, recent_limit: int = 5) -> Dictionar
 	var total_wins: int = 0
 	var total_losses: int = 0
 	var god_records_map: Dictionary = {}
+	var deck_records_map: Dictionary = {}
 	var recent_matches: Array[Dictionary] = []
 	var history_ids: Array[String] = _get_profile_history_ids(resolved_profile_id)
 	var remaining_recent: int = maxi(1, recent_limit)
@@ -113,13 +114,31 @@ func get_profile_summary(profile_id: String, recent_limit: int = 5) -> Dictionar
 			god_record["losses"] = int(god_record.get("losses", 0)) + 1
 		god_records_map[god_name] = god_record
 
+		var deck_id: String = str(player_entry.get("deck_id", "")).strip_edges()
+		var deck_name: String = str(player_entry.get("deck_name", "")).strip_edges()
+		var deck_display_name: String = deck_name if not deck_name.is_empty() else "Unknown Deck"
+		var deck_record_key: String = _get_deck_record_key(deck_id, deck_display_name)
+		var deck_record: Dictionary = deck_records_map.get(deck_record_key, {
+			"deck_id": deck_id,
+			"deck_name": deck_display_name,
+			"wins": 0,
+			"losses": 0,
+			"games": 0,
+		})
+		deck_record["games"] = int(deck_record.get("games", 0)) + 1
+		if result == "win":
+			deck_record["wins"] = int(deck_record.get("wins", 0)) + 1
+		elif result == "loss":
+			deck_record["losses"] = int(deck_record.get("losses", 0)) + 1
+		deck_records_map[deck_record_key] = deck_record
+
 		if recent_matches.size() < remaining_recent:
 			recent_matches.append({
 				"match_id": str(entry.get("match_id", "")),
 				"played_unix": int(entry.get("played_unix", 0)),
 				"result": result,
 				"god_name": god_name,
-				"deck_name": str(player_entry.get("deck_name", "")),
+				"deck_name": deck_name,
 				"opponent_name": str(opponent_entry.get("player_name", "Opponent")),
 				"opponent_god_name": str(opponent_entry.get("god_name", "Unknown God")),
 				"opponent_deck_name": str(opponent_entry.get("deck_name", "")),
@@ -131,12 +150,19 @@ func get_profile_summary(profile_id: String, recent_limit: int = 5) -> Dictionar
 			god_records.append((record as Dictionary).duplicate(true))
 	god_records.sort_custom(_sort_god_records)
 
+	var deck_records: Array[Dictionary] = []
+	for record in deck_records_map.values():
+		if record is Dictionary:
+			deck_records.append((record as Dictionary).duplicate(true))
+	deck_records.sort_custom(_sort_deck_records)
+
 	return {
 		"profile_id": resolved_profile_id,
 		"total_wins": total_wins,
 		"total_losses": total_losses,
 		"total_matches": total_wins + total_losses,
 		"god_records": god_records,
+		"deck_records": deck_records,
 		"recent_matches": recent_matches,
 	}
 
@@ -227,6 +253,7 @@ func _make_empty_summary(profile_id: String) -> Dictionary:
 		"total_losses": 0,
 		"total_matches": 0,
 		"god_records": [],
+		"deck_records": [],
 		"recent_matches": [],
 	}
 
@@ -282,3 +309,23 @@ func _sort_god_records(a: Dictionary, b: Dictionary) -> bool:
 	if a_wins != b_wins:
 		return a_wins > b_wins
 	return str(a.get("god_name", "")).to_lower() < str(b.get("god_name", "")).to_lower()
+
+func _get_deck_record_key(deck_id: String, deck_name: String) -> String:
+	var resolved_deck_id := deck_id.strip_edges()
+	if not resolved_deck_id.is_empty():
+		return "id:%s" % resolved_deck_id
+	var resolved_deck_name := deck_name.strip_edges()
+	if not resolved_deck_name.is_empty():
+		return "name:%s" % resolved_deck_name.to_lower()
+	return "unknown"
+
+func _sort_deck_records(a: Dictionary, b: Dictionary) -> bool:
+	var a_games: int = int(a.get("games", 0))
+	var b_games: int = int(b.get("games", 0))
+	if a_games != b_games:
+		return a_games > b_games
+	var a_wins: int = int(a.get("wins", 0))
+	var b_wins: int = int(b.get("wins", 0))
+	if a_wins != b_wins:
+		return a_wins > b_wins
+	return str(a.get("deck_name", "")).to_lower() < str(b.get("deck_name", "")).to_lower()

@@ -40,7 +40,7 @@ func can_activate(game_manager: GameManager) -> bool:
 		return false
 	return not is_used
 
-func get_activation_failure_reason(game_manager: GameManager) -> String:
+func get_activation_failure_reason(_game_manager: GameManager) -> String:
 	if card_owner == null or card_owner.mana < RAGE_ACTIVATION_COST:
 		return card_name + " needs %d mana to activate Berserker Rage." % RAGE_ACTIVATION_COST
 	return card_name + " cannot activate right now."

@@ -86,7 +86,7 @@ func _compute_natural_height() -> float:
 		var tex: Texture2D = load(card_data.art_path)
 		if tex:
 			h += _card_width * float(tex.get_height()) / float(tex.get_width())
-	if not (card_data.card_type == Card.CardType.CREATURE and card_data.is_god):
+	if not card_data.is_god:
 		h += 18.0  # stats / speed / resilience row
 	if card_data.ability_text != "":
 		var raw := card_data.ability_text.replace("[b]", "").replace("[/b]", "")
@@ -150,29 +150,33 @@ func _populate_vbox(vbox: VBoxContainer) -> void:
 	if not card_data.name_at_bottom:
 		top_row.add_child(_make_name_label())
 
-	var mana_lbl := Label.new()
 	var display_mana_cost := _get_display_mana_cost()
-	mana_lbl.text = str(display_mana_cost) + "M"
-	mana_lbl.add_theme_font_size_override("font_size", 14)
-	if display_mana_cost > card_data.mana_cost:
-		mana_lbl.add_theme_color_override("font_color", Color(1.0, 0.65, 0.65))
-	elif display_mana_cost < card_data.mana_cost:
-		mana_lbl.add_theme_color_override("font_color", Color(0.65, 1.0, 0.7))
-	top_row.add_child(mana_lbl)
+	var cost_text := card_data.get_cost_shorthand(display_mana_cost)
+	if cost_text != "":
+		var cost_lbl := Label.new()
+		cost_lbl.text = cost_text
+		cost_lbl.add_theme_font_size_override("font_size", 14)
+		cost_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		if display_mana_cost > card_data.mana_cost:
+			cost_lbl.add_theme_color_override("font_color", Color(1.0, 0.65, 0.65))
+		elif display_mana_cost < card_data.mana_cost:
+			cost_lbl.add_theme_color_override("font_color", Color(0.65, 1.0, 0.7))
+		top_row.add_child(cost_lbl)
 
 	var art := _build_art_node()
 	if art:
 		vbox.add_child(art)
 
 	match card_data.card_type:
+		Card.CardType.GOD:
+			pass
 		Card.CardType.CREATURE:
-			if not card_data.is_god:
-				var stats_lbl := Label.new()
-				stats_lbl.text = "STR:%d RES:%d SPD:%d" % [
-					card_data.strength, card_data.resilience, card_data.speed
-				]
-				stats_lbl.add_theme_font_size_override("font_size", 13)
-				vbox.add_child(stats_lbl)
+			var stats_lbl := Label.new()
+			stats_lbl.text = "STR:%d RES:%d SPD:%d" % [
+				card_data.strength, card_data.resilience, card_data.speed
+			]
+			stats_lbl.add_theme_font_size_override("font_size", 13)
+			vbox.add_child(stats_lbl)
 		Card.CardType.STRUCTURE:
 			var res_lbl := Label.new()
 			res_lbl.text = "RES:%d" % card_data.resilience
@@ -246,6 +250,9 @@ func _apply_card_style() -> void:
 		style.set_border_width(side, 2)
 
 	match card_data.card_type:
+		Card.CardType.GOD:
+			style.bg_color = Color(0.38, 0.28, 0.08)
+			style.border_color = Color(0.95, 0.8, 0.28)
 		Card.CardType.CREATURE:
 			style.bg_color = Color(0.13, 0.22, 0.42)
 			style.border_color = Color(0.4, 0.65, 1.0)
@@ -293,6 +300,7 @@ func _apply_card_style() -> void:
 
 func _type_abbrev() -> String:
 	match card_data.card_type:
+		Card.CardType.GOD:      return "G"
 		Card.CardType.CREATURE: return "C"
 		Card.CardType.SPELL:    return "S"
 		Card.CardType.CHARM:    return "CH"
@@ -749,23 +757,24 @@ func _show_hover_panel() -> void:
 
 	# Stats
 	match card_data.card_type:
+		Card.CardType.GOD:
+			pass
 		Card.CardType.CREATURE:
-			if not card_data.is_god:
-				var eff_str := card_data.get_effective_strength()
-				var eff_res := card_data.get_effective_resilience()
-				var eff_spd := card_data.get_effective_speed()
-				var stats_lbl := Label.new()
-				stats_lbl.text = "STR: %d   RES: %d   SPD: %d" % [eff_str, eff_res, eff_spd]
-				stats_lbl.add_theme_font_size_override("font_size", 12)
-				var tip_parts: Array[String] = []
-				for entry in [["STR", "str"], ["RES", "res"], ["SPD", "spd"]]:
-					var bd := card_data.get_full_stat_breakdown(entry[1])
-					if bd != "":
-						tip_parts.append(entry[0] + ": " + bd)
-				if tip_parts.size() > 0:
-					stats_lbl.tooltip_text = "\n".join(tip_parts)
-					stats_lbl.mouse_filter = Control.MOUSE_FILTER_STOP
-				vbox.add_child(stats_lbl)
+			var eff_str := card_data.get_effective_strength()
+			var eff_res := card_data.get_effective_resilience()
+			var eff_spd := card_data.get_effective_speed()
+			var stats_lbl := Label.new()
+			stats_lbl.text = "STR: %d   RES: %d   SPD: %d" % [eff_str, eff_res, eff_spd]
+			stats_lbl.add_theme_font_size_override("font_size", 12)
+			var tip_parts: Array[String] = []
+			for entry in [["STR", "str"], ["RES", "res"], ["SPD", "spd"]]:
+				var bd := card_data.get_full_stat_breakdown(entry[1])
+				if bd != "":
+					tip_parts.append(entry[0] + ": " + bd)
+			if tip_parts.size() > 0:
+				stats_lbl.tooltip_text = "\n".join(tip_parts)
+				stats_lbl.mouse_filter = Control.MOUSE_FILTER_STOP
+			vbox.add_child(stats_lbl)
 		Card.CardType.STRUCTURE:
 			var res_lbl := Label.new()
 			res_lbl.text = "RES: %d" % card_data.resilience
@@ -777,15 +786,10 @@ func _show_hover_panel() -> void:
 			spd_lbl.add_theme_font_size_override("font_size", 12)
 			vbox.add_child(spd_lbl)
 
-	# Costs (non-zero extras)
-	var cost_parts: Array[String] = []
-	if card_data.sacrifice_cost > 0:
-		cost_parts.append("Sacrifice: " + str(card_data.sacrifice_cost))
-	if card_data.discard_cost > 0:
-		cost_parts.append("Discard: " + str(card_data.discard_cost))
-	if cost_parts.size() > 0:
+	# Extra costs
+	if card_data.has_additional_costs():
 		var cost_lbl := Label.new()
-		cost_lbl.text = "  |  ".join(cost_parts)
+		cost_lbl.text = "Extra Costs: " + " ".join(card_data.get_cost_shorthand_parts(0))
 		cost_lbl.add_theme_font_size_override("font_size", 11)
 		cost_lbl.add_theme_color_override("font_color", Color(1.0, 0.6, 0.4))
 		vbox.add_child(cost_lbl)

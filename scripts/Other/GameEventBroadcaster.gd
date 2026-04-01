@@ -66,12 +66,14 @@ func _on_turn_started(turn_number: int, player: Player) -> void:
 		current_player_index = player_idx,
 	})
 
-func _on_game_ended(winner: Player, _loser: Player) -> void:
+func _on_game_ended(winner: Player, loser: Player) -> void:
 	var winner_idx := game_manager.players.find(winner)
-	_broadcast_full_state(winner.player_name + " wins!")
+	var result_message := game_manager.get_game_result_message(winner, loser)
+	_broadcast_full_state(result_message)
 	network_manager.broadcast_event_to_all("game_ended", {
 		winner_index = winner_idx,
-		winner_name  = winner.player_name,
+		winner_name  = winner.player_name if winner != null else "",
+		result_message = result_message,
 	})
 
 func _on_ui_interaction_requested(player_index: int, type: String, data: Dictionary) -> void:

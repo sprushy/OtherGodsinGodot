@@ -1,25 +1,94 @@
 extends RefCounted
 class_name CardCatalog
 
-static func make_all_cards() -> Array:
-	return [
-		Thor.new(), Mummu.new(), AphroditeAreia.new(), Baldr.new(), Cernunnos.new(), DellingrTheDayspring.new(), Freyja.new(), GuanYu.new(), Hermes.new(),
-		AcceleratedFate.new(), ACostToWalkTheWorlds.new(), AdvancedBuildingTechniques.new(), AllfathersSacrifice.new(), AltarOfDreams.new(), AnankesBinding.new(), AncientWisdom.new(), BerserkerMead.new(), Breidablik.new(), CallOfTheValkyrie.new(), DivineCaprice.new(), FeastOfAmbrosiaAndNectar.new(), FerociousDefence.new(), FireAndGold.new(), GiantsDisdain.new(), HuntingTactics.new(), ImmortalTechniques.new(), KurnugiaTheBeginningOfTheEnd.new(), load("res://scripts/cards/Powers/LawsOfCivilization.gd").new(), MechFactory.new(),
-		Berserker.new(), Beyla.new(), BlessedKnights.new(), BrownBear.new(), Byggvir.new(), DurinnSecondborn.new(), Fenrir.new(), FirstSageAdapa.new(), load("res://scripts/cards/Creatures/FourthSageEnmegalamma.gd").new(), GiantMasterArchitect.new(), Hati.new(), HariiFransiscan.new(), load("res://scripts/cards/Creatures/HariiJarl.gd").new(), load("res://scripts/cards/Creatures/HariiShaman.gd").new(), load("res://scripts/cards/Creatures/HariiWarrior.gd").new(), Skoll.new(), AnkouServantToTheReaper.new(), Anzu.new(), AnTheBowbender.new(),
-		AsagTheDestroyer.new(), Asakku.new(), Asaruludu.new(), Caleuche.new(), Capricorn.new(), ClayEaters.new(), HabrokParagonOfHawks.new(),
-		AgainWalker.new(), Alu.new(), Askelladen.new(), Aurboda.new(), DraugRevenant.new(), DevastatorMech.new(), Edimmu.new(), EnHeduAnna.new(), Enkidu.new(), EnkiLordOfEridu.new(), ErlqueensNightingale.new(), Gallu.new(), GalaTura.new(), GarmWatchdogOfHel.new(), Gawain.new(), GidimEnsi.new(), Gilgamesh.new(), GududPriest.new(), GugalannaBullOfHeaven.new(), Gullinbursti.new(), HelBlarDraug.new(), Hrimgrimmnir.new(), Huginn.new(), HumbabaTheTerrible.new(), HyenaPack.new(), load("res://scripts/cards/Creatures/Isimud.gd").new(), Jiaolong.new(), KurJara.new(), Lailoken.new(), load("res://scripts/cards/Creatures/Lamashatu.gd").new(), LesserMushussu.new(), RoboticFootsoldier.new(), SoldierOfTheBlackEmperor.new(), TitanicMech.new(),
-		BitMeseri.new(), CircleOfRebirth.new(), Earthquake.new(), FallOfTheMighty.new(), Famine.new(), FoolishOptimism.new(), preload("res://scripts/cards/Spells/FiresOfJudgment.gd").new(), ApollyonsDemiurge.new(), Absence.new(), BaneOfTheSvartalfar.new(), BlotSacrifice.new(), BookOfLife.new(), Exorcism.new(), HeroicStand.new(), Hringhorni.new(), MeadOfPoetry.new(), DivineLightning.new(), FifaTheMagicalArrow.new(), GungnirTheSpearOfOdin.new(), HeavySnow.new(), DeucalionsInfants.new(),
-		BeardedAxe.new(), DraupnirTheMultiplying.new(), Gambanteinn.new(),
-		WardingStone.new(), AncientPyre.new(), AnointingStatue.new(), DoorwayToTheVoid.new(), E2Abzu.new(), EriduCityOfSages.new(), GlitnirThePeaceful.new(),
-		VoidShield.new(), Banishment.new(), Dromi.new(), Gleipnir.new(),
-	]
+const CARDS_DIR := "res://scripts/cards/"
+const EXCLUDED_FILENAMES := [
+	"BaseCard.gd",
+	"card.gd",
+	"CardCatalog.gd",
+	"CharmCard.gd",
+	"CreatureCard.gd",
+	"Deck.gd",
+	"EquipmentCard.gd",
+	"GenericCreature.gd",
+	"GodCard.gd",
+	"HexCard.gd",
+	"PermanentHexCard.gd",
+	"PowerCard.gd",
+	"SpellCard.gd",
+	"StructureCard.gd"
+]
+
+static var _cached_all_cards: Array[Card] = []
+
+static func make_all_cards() -> Array[Card]:
+	if not _cached_all_cards.is_empty():
+		var duplicates: Array[Card] = []
+		for card in _cached_all_cards:
+			duplicates.append(card.duplicate(true))
+		return duplicates
+	
+	var discovered_cards: Array[Card] = []
+	_discover_cards_recursive(CARDS_DIR, discovered_cards)
+	
+	_cached_all_cards = discovered_cards
+	
+	# Return duplicates so the caller doesn't modify the cache
+	var duplicates: Array[Card] = []
+	for card in _cached_all_cards:
+		duplicates.append(card.duplicate(true))
+	return duplicates
+
+static func _discover_cards_recursive(path: String, out_cards: Array[Card]) -> void:
+	var dir := DirAccess.open(path)
+	if dir == null:
+		print("CardCatalog: Error opening directory ", path)
+		return
+	
+	dir.list_dir_begin()
+	var file_name := dir.get_next()
+	while file_name != "":
+		if dir.current_is_dir():
+			if file_name != "." and file_name != "..":
+				_discover_cards_recursive(path + file_name + "/", out_cards)
+		else:
+			if file_name.ends_with(".gd") and file_name not in EXCLUDED_FILENAMES:
+				var full_path := path + file_name
+				var script: GDScript = load(full_path)
+				if script:
+					var inst = script.new()
+					if inst is Card:
+						var is_valid_for_catalog := true
+						# Skip tokens - check both property and card types
+						if inst.is_token or inst.card_types.has("Token"):
+							is_valid_for_catalog = false
+						# Skip base/placeholder cards
+						elif inst.card_name == "" or inst.card_name == "Unnamed" or inst.card_name == "Card":
+							is_valid_for_catalog = false
+						
+						if is_valid_for_catalog:
+							out_cards.append(inst)
+						else:
+							if inst is Object and not inst is RefCounted:
+								inst.free()
+					else:
+						# If it's not a Card instance, we should free it if it's an Object
+						if inst is Object and not inst is RefCounted:
+							inst.free()
+		file_name = dir.get_next()
+	dir.list_dir_end()
 
 static func instantiate_card_by_name(card_name: String) -> Card:
 	var requested_name := str(card_name).strip_edges()
 	if requested_name.is_empty():
 		return null
+	
+	# Ensure cache is populated
+	if _cached_all_cards.is_empty():
+		make_all_cards()
+		
 	var requested_lookup_key: String = to_lookup_key(requested_name)
-	for template in make_all_cards():
+	for template in _cached_all_cards:
 		if template == null:
 			continue
 		if _matches_card_name(template, requested_name):

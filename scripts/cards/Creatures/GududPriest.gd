@@ -14,9 +14,9 @@ func _init() -> void:
 	level = 2
 	mana_cost = 0
 	sacrifice_cost = 0
-	speed = 2
+	speed = 1
 	resilience = 9
-	strength = 1
+	strength = 2
 	targets = true
 	ability_text = "[b]Creature Ward[/b] ([b]Activate[/b], Spd3): Once per turn, choose a creature. Remove creature-applied effects from it. For the remainder of the turn it is unaffected by creature abilities."
 	flavor_text = ""
@@ -103,15 +103,15 @@ func _clear_creature_applied_effects(target: Card) -> void:
 	if target == null:
 		return
 	for status in target.active_statuses.duplicate():
-		var source_card := status.get("source_card", null) as Card
-		if not _is_creature_ability_source(source_card):
+		var status_source_card := status.get("source_card", null) as Card
+		if not _is_creature_ability_source(status_source_card):
 			continue
-		target.remove_status_effects_from_source_card(source_card, str(status.get("name", "")))
+		target.remove_status_effects_from_source_card(status_source_card, str(status.get("name", "")))
 	for buff in target.active_buffs.duplicate():
-		var source_card := buff.get("source_card", null) as Card
-		if not _is_creature_ability_source(source_card):
+		var buff_source_card := buff.get("source_card", null) as Card
+		if not _is_creature_ability_source(buff_source_card):
 			continue
-		target.remove_buffs_from_source_card(source_card, str(buff.get("effect_type", "")))
+		target.remove_buffs_from_source_card(buff_source_card, str(buff.get("effect_type", "")))
 
 func _is_creature_ability_source(source_card: Card) -> bool:
 	return source_card != null and source_card.card_type == Card.CardType.CREATURE

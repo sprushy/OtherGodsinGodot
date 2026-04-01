@@ -120,7 +120,7 @@ func _remove_weather_lock(creature: Card) -> void:
 	creature.is_stealth = bool(creature.get_meta(PREV_STEALTH_META, creature.is_stealth))
 	var previous_mode = creature.get_meta(PREV_MODE_META, creature.creature_mode)
 	if previous_mode is int:
-		creature.creature_mode = int(previous_mode)
+		creature.creature_mode = int(previous_mode) as Card.CreatureMode
 	creature.remove_meta(FORCED_STEALTH_SOURCE_META)
 	creature.remove_meta(PREV_FACE_DOWN_META)
 	creature.remove_meta(PREV_STEALTH_META)
