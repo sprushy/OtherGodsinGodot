@@ -18,6 +18,148 @@ const EXCLUDED_FILENAMES := [
 	"SpellCard.gd",
 	"StructureCard.gd"
 ]
+const CARD_SCRIPT_PATHS := [
+	"res://scripts/cards/Charms/DivineLightning.gd",
+	"res://scripts/cards/Charms/Exorcism.gd",
+	"res://scripts/cards/Charms/FifaTheMagicalArrow.gd",
+	"res://scripts/cards/Charms/GungnirTheSpearOfOdin.gd",
+	"res://scripts/cards/Charms/HeavySnow.gd",
+	"res://scripts/cards/Charms/HeroicStand.gd",
+	"res://scripts/cards/Charms/Hringhorni.gd",
+	"res://scripts/cards/Charms/MeadOfPoetry.gd",
+	"res://scripts/cards/Creatures/AgainWalker.gd",
+	"res://scripts/cards/Creatures/Alu.gd",
+	"res://scripts/cards/Creatures/AnkouServantToTheReaper.gd",
+	"res://scripts/cards/Creatures/AnTheBowbender.gd",
+	"res://scripts/cards/Creatures/Anzu.gd",
+	"res://scripts/cards/Creatures/AsagTheDestroyer.gd",
+	"res://scripts/cards/Creatures/Asakku.gd",
+	"res://scripts/cards/Creatures/Asaruludu.gd",
+	"res://scripts/cards/Creatures/Askelladen.gd",
+	"res://scripts/cards/Creatures/Aurboda.gd",
+	"res://scripts/cards/Creatures/Berserker.gd",
+	"res://scripts/cards/Creatures/Beyla.gd",
+	"res://scripts/cards/Creatures/BlessedKnights.gd",
+	"res://scripts/cards/Creatures/BrownBear.gd",
+	"res://scripts/cards/Creatures/Byggvir.gd",
+	"res://scripts/cards/Creatures/Caleuche.gd",
+	"res://scripts/cards/Creatures/Capricorn.gd",
+	"res://scripts/cards/Creatures/ClayEaters.gd",
+	"res://scripts/cards/Creatures/CombatMech.gd",
+	"res://scripts/cards/Creatures/DevastatorMech.gd",
+	"res://scripts/cards/Creatures/DraugRevenant.gd",
+	"res://scripts/cards/Creatures/DurinnSecondborn.gd",
+	"res://scripts/cards/Creatures/Edimmu.gd",
+	"res://scripts/cards/Creatures/EnHeduAnna.gd",
+	"res://scripts/cards/Creatures/Enkidu.gd",
+	"res://scripts/cards/Creatures/EnkiLordOfEridu.gd",
+	"res://scripts/cards/Creatures/ErlqueensNightingale.gd",
+	"res://scripts/cards/Creatures/Fenrir.gd",
+	"res://scripts/cards/Creatures/FirstSageAdapa.gd",
+	"res://scripts/cards/Creatures/FourthSageEnmegalamma.gd",
+	"res://scripts/cards/Creatures/GalaTura.gd",
+	"res://scripts/cards/Creatures/Gallu.gd",
+	"res://scripts/cards/Creatures/Garm.gd",
+	"res://scripts/cards/Creatures/Gawain.gd",
+	"res://scripts/cards/Creatures/GiantMasterArchitect.gd",
+	"res://scripts/cards/Creatures/GidimEnsi.gd",
+	"res://scripts/cards/Creatures/Gilgamesh.gd",
+	"res://scripts/cards/Creatures/GududPriest.gd",
+	"res://scripts/cards/Creatures/GugalannaBullOfHeaven.gd",
+	"res://scripts/cards/Creatures/Gullinbursti.gd",
+	"res://scripts/cards/Creatures/HabrokParagonOfHawks.gd",
+	"res://scripts/cards/Creatures/HariiFransiscan.gd",
+	"res://scripts/cards/Creatures/HariiJarl.gd",
+	"res://scripts/cards/Creatures/HariiShaman.gd",
+	"res://scripts/cards/Creatures/HariiWarrior.gd",
+	"res://scripts/cards/Creatures/Hati.gd",
+	"res://scripts/cards/Creatures/HelBlarDraug.gd",
+	"res://scripts/cards/Creatures/Hrimgrimmnir.gd",
+	"res://scripts/cards/Creatures/Huginn.gd",
+	"res://scripts/cards/Creatures/HumbabaTheTerrible.gd",
+	"res://scripts/cards/Creatures/HyenaPack.gd",
+	"res://scripts/cards/Creatures/Isimud.gd",
+	"res://scripts/cards/Creatures/Jiaolong.gd",
+	"res://scripts/cards/Creatures/KurJara.gd",
+	"res://scripts/cards/Creatures/Lailoken.gd",
+	"res://scripts/cards/Creatures/Lamashatu.gd",
+	"res://scripts/cards/Creatures/LesserMushussu.gd",
+	"res://scripts/cards/Creatures/Lindwyrm.gd",
+	"res://scripts/cards/Creatures/LowLightTroll.gd",
+	"res://scripts/cards/Creatures/Lugalbanda.gd",
+	"res://scripts/cards/Creatures/MalinalxochitlAcolyte.gd",
+	"res://scripts/cards/Creatures/MalinalxochitlThrall.gd",
+	"res://scripts/cards/Creatures/MasmassuPriest.gd",
+	"res://scripts/cards/Creatures/MinotaurFootsoldier.gd",
+	"res://scripts/cards/Creatures/Mopsus.gd",
+	"res://scripts/cards/Creatures/Muninn.gd",
+	"res://scripts/cards/Creatures/PictishBeast.gd",
+	"res://scripts/cards/Creatures/RoboticFootsoldier.gd",
+	"res://scripts/cards/Creatures/Skoll.gd",
+	"res://scripts/cards/Creatures/SoldierOfTheBlackEmperor.gd",
+	"res://scripts/cards/Creatures/StoneInfant.gd",
+	"res://scripts/cards/Creatures/TitanicMech.gd",
+	"res://scripts/cards/Equipment/BeardedAxe.gd",
+	"res://scripts/cards/Equipment/DraupnirTheMultiplying.gd",
+	"res://scripts/cards/Equipment/Gambanteinn.gd",
+	"res://scripts/cards/Gods/AphroditeAreia.gd",
+	"res://scripts/cards/Gods/Baldr.gd",
+	"res://scripts/cards/Gods/Cernunnos.gd",
+	"res://scripts/cards/Gods/DellingrTheDayspring.gd",
+	"res://scripts/cards/Gods/Freyja.gd",
+	"res://scripts/cards/Gods/GuanYu.gd",
+	"res://scripts/cards/Gods/Hermes.gd",
+	"res://scripts/cards/Gods/ManannanMacLir.gd",
+	"res://scripts/cards/Gods/Mummu.gd",
+	"res://scripts/cards/Gods/Thor.gd",
+	"res://scripts/cards/Hexes/Banishment.gd",
+	"res://scripts/cards/Hexes/Dromi.gd",
+	"res://scripts/cards/Hexes/Gleipnir.gd",
+	"res://scripts/cards/Hexes/VoidShield.gd",
+	"res://scripts/cards/Powers/AcceleratedFate.gd",
+	"res://scripts/cards/Powers/ACostToWalkTheWorlds.gd",
+	"res://scripts/cards/Powers/AdvancedBuildingTechniques.gd",
+	"res://scripts/cards/Powers/AllfathersSacrifice.gd",
+	"res://scripts/cards/Powers/AltarOfDreams.gd",
+	"res://scripts/cards/Powers/AnankesBinding.gd",
+	"res://scripts/cards/Powers/AncientWisdom.gd",
+	"res://scripts/cards/Powers/BerserkerMead.gd",
+	"res://scripts/cards/Powers/Breidablik.gd",
+	"res://scripts/cards/Powers/CallOfTheValkyrie.gd",
+	"res://scripts/cards/Powers/DivineCaprice.gd",
+	"res://scripts/cards/Powers/FeastOfAmbrosiaAndNectar.gd",
+	"res://scripts/cards/Powers/FerociousDefence.gd",
+	"res://scripts/cards/Powers/FireAndGold.gd",
+	"res://scripts/cards/Powers/GiantsDisdain.gd",
+	"res://scripts/cards/Powers/HuntingTactics.gd",
+	"res://scripts/cards/Powers/ImmortalTechniques.gd",
+	"res://scripts/cards/Powers/Kurnugia.gd",
+	"res://scripts/cards/Powers/LawsOfCivilization.gd",
+	"res://scripts/cards/Powers/MechFactory.gd",
+	"res://scripts/cards/Powers/Myrkwood.gd",
+	"res://scripts/cards/Spells/Absence.gd",
+	"res://scripts/cards/Spells/ApollyonsDemiurge.gd",
+	"res://scripts/cards/Spells/BaneOfTheSvartalfar.gd",
+	"res://scripts/cards/Spells/BitMeseri.gd",
+	"res://scripts/cards/Spells/BlotSacrifice.gd",
+	"res://scripts/cards/Spells/BookOfLife.gd",
+	"res://scripts/cards/Spells/CircleofRebirth.gd",
+	"res://scripts/cards/Spells/DeucalionsInfants.gd",
+	"res://scripts/cards/Spells/Earthquake.gd",
+	"res://scripts/cards/Spells/FalloftheMighty.gd",
+	"res://scripts/cards/Spells/Famine.gd",
+	"res://scripts/cards/Spells/FiresOfJudgment.gd",
+	"res://scripts/cards/Spells/FoolishOptimism.gd",
+	"res://scripts/cards/Spells/KeyOfSolomon.gd",
+	"res://scripts/cards/Spells/LightOfMorningsDoors.gd",
+	"res://scripts/cards/Structures/AncientPyre.gd",
+	"res://scripts/cards/Structures/AnointingStatue.gd",
+	"res://scripts/cards/Structures/DoorwayToTheVoid.gd",
+	"res://scripts/cards/Structures/E2Abzu.gd",
+	"res://scripts/cards/Structures/EriduCityOfSages.gd",
+	"res://scripts/cards/Structures/GlitnirThePeaceful.gd",
+	"res://scripts/cards/Structures/WardingStone.gd",
+]
 
 static var _cached_all_cards: Array[Card] = []
 
@@ -29,7 +171,7 @@ static func make_all_cards() -> Array[Card]:
 		return duplicates
 	
 	var discovered_cards: Array[Card] = []
-	_discover_cards_recursive(CARDS_DIR, discovered_cards)
+	_discover_cards_from_registry(discovered_cards)
 	
 	_cached_all_cards = discovered_cards
 	
@@ -39,44 +181,25 @@ static func make_all_cards() -> Array[Card]:
 		duplicates.append(card.duplicate(true))
 	return duplicates
 
-static func _discover_cards_recursive(path: String, out_cards: Array[Card]) -> void:
-	var dir := DirAccess.open(path)
-	if dir == null:
-		print("CardCatalog: Error opening directory ", path)
-		return
-	
-	dir.list_dir_begin()
-	var file_name := dir.get_next()
-	while file_name != "":
-		if dir.current_is_dir():
-			if file_name != "." and file_name != "..":
-				_discover_cards_recursive(path + file_name + "/", out_cards)
-		else:
-			if file_name.ends_with(".gd") and file_name not in EXCLUDED_FILENAMES:
-				var full_path := path + file_name
-				var script: GDScript = load(full_path)
-				if script:
-					var inst = script.new()
-					if inst is Card:
-						var is_valid_for_catalog := true
-						# Skip tokens - check both property and card types
-						if inst.is_token or inst.card_types.has("Token"):
-							is_valid_for_catalog = false
-						# Skip base/placeholder cards
-						elif inst.card_name == "" or inst.card_name == "Unnamed" or inst.card_name == "Card":
-							is_valid_for_catalog = false
-						
-						if is_valid_for_catalog:
-							out_cards.append(inst)
-						else:
-							if inst is Object and not inst is RefCounted:
-								inst.free()
-					else:
-						# If it's not a Card instance, we should free it if it's an Object
-						if inst is Object and not inst is RefCounted:
-							inst.free()
-		file_name = dir.get_next()
-	dir.list_dir_end()
+static func _discover_cards_from_registry(out_cards: Array[Card]) -> void:
+	for full_path in CARD_SCRIPT_PATHS:
+		var script: GDScript = load(full_path)
+		if script == null:
+			push_warning("CardCatalog: Failed to load card script %s" % full_path)
+			continue
+		var inst = script.new()
+		if inst is Card:
+			var is_valid_for_catalog := true
+			if inst.is_token or inst.card_types.has("Token"):
+				is_valid_for_catalog = false
+			elif inst.card_name == "" or inst.card_name == "Unnamed" or inst.card_name == "Card":
+				is_valid_for_catalog = false
+			if is_valid_for_catalog:
+				out_cards.append(inst)
+			elif inst is Object and not inst is RefCounted:
+				inst.free()
+		elif inst is Object and not inst is RefCounted:
+			inst.free()
 
 static func instantiate_card_by_name(card_name: String) -> Card:
 	var requested_name := str(card_name).strip_edges()
