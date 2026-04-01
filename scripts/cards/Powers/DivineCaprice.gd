@@ -12,7 +12,7 @@ func _init() -> void:
 	level = 0
 	mana_cost = UNLOCK_COST
 	card_types = ["Repositioning"]
-	ability_text = "[b]Unlock[/b] (1): [b]Activate[/b] - Move your cards to different legal slots."
+	ability_text = "[b]Unlock[/b] (1): [b]Activate[/b] (2 mana) - Move your cards to different legal slots."
 	artist = "Riccardo Zoppello"
 	art_path = "res://images/card_art/powers/DivineCapriceAIEdit.png"
 

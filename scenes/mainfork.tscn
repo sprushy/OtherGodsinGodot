@@ -1,4 +1,4 @@
-[gd_scene format=3 uid="uid://gpaa31rvtxtn" load_steps=7]
+[gd_scene format=3 uid="uid://gpaa31rvtxtn"]
 
 [ext_resource type="Script" uid="uid://b5f252qlg5ipp" path="res://scripts/Other/MainMenu.gd" id="1_l61jj"]
 [ext_resource type="PackedScene" uid="uid://clg2cgm1pgncs" path="res://scenes/card_slot.tscn" id="1_olwsv"]
@@ -47,14 +47,14 @@ layout_mode = 2
 size_flags_horizontal = 3
 theme_override_constants/separation = 8
 
-[node name="MultiplayerHeaderRow" type="HBoxContainer" parent="Control/MenuContainer/MultiplayerContainer"]
+[node name="MultiplayerHeaderRow" type="HBoxContainer" parent="Control/MenuContainer/MultiplayerContainer" unique_id=1268137170]
 layout_mode = 2
 
-[node name="BackButton" type="Button" parent="Control/MenuContainer/MultiplayerContainer/MultiplayerHeaderRow"]
+[node name="BackButton" type="Button" parent="Control/MenuContainer/MultiplayerContainer/MultiplayerHeaderRow" unique_id=1110711949]
 layout_mode = 2
 text = "Back"
 
-[node name="MultiplayerTitleLabel" type="Label" parent="Control/MenuContainer/MultiplayerContainer/MultiplayerHeaderRow"]
+[node name="MultiplayerTitleLabel" type="Label" parent="Control/MenuContainer/MultiplayerContainer/MultiplayerHeaderRow" unique_id=1355324305]
 layout_mode = 2
 size_flags_horizontal = 3
 text = "Multiplayer"
@@ -74,31 +74,31 @@ layout_mode = 2
 text = "Host"
 placeholder_text = "Player name"
 
-[node name="DeckPickerLabel" type="Label" parent="Control/MenuContainer/MultiplayerContainer"]
+[node name="DeckPickerLabel" type="Label" parent="Control/MenuContainer/MultiplayerContainer" unique_id=490962701]
 layout_mode = 2
 text = "Deck For Multiplayer"
 
-[node name="DeckPickerOption" type="OptionButton" parent="Control/MenuContainer/MultiplayerContainer"]
+[node name="DeckPickerOption" type="OptionButton" parent="Control/MenuContainer/MultiplayerContainer" unique_id=520904963]
 layout_mode = 2
 
-[node name="DeckHintLabel" type="Label" parent="Control/MenuContainer/MultiplayerContainer"]
+[node name="DeckHintLabel" type="Label" parent="Control/MenuContainer/MultiplayerContainer" unique_id=2045762444]
 layout_mode = 2
-autowrap_mode = 3
 text = "Choose one of your saved legal decks before you create or join a seek."
+autowrap_mode = 3
 
-[node name="CreateSeekButton" type="Button" parent="Control/MenuContainer/MultiplayerContainer"]
+[node name="CreateSeekButton" type="Button" parent="Control/MenuContainer/MultiplayerContainer" unique_id=1087590090]
 layout_mode = 2
 text = "Create Seek"
 
-[node name="OpenSeeksLabel" type="Label" parent="Control/MenuContainer/MultiplayerContainer"]
+[node name="OpenSeeksLabel" type="Label" parent="Control/MenuContainer/MultiplayerContainer" unique_id=780342706]
 layout_mode = 2
 text = "Open Seeks"
 
-[node name="SeekList" type="ItemList" parent="Control/MenuContainer/MultiplayerContainer"]
+[node name="SeekList" type="ItemList" parent="Control/MenuContainer/MultiplayerContainer" unique_id=254099637]
 custom_minimum_size = Vector2(0, 180)
 layout_mode = 2
 
-[node name="LeaveSeekButton" type="Button" parent="Control/MenuContainer/MultiplayerContainer"]
+[node name="LeaveSeekButton" type="Button" parent="Control/MenuContainer/MultiplayerContainer" unique_id=124902114]
 visible = false
 layout_mode = 2
 text = "Leave Seek"
@@ -110,8 +110,8 @@ text = "Ready"
 
 [node name="StatusLabel" type="Label" parent="Control/MenuContainer/MultiplayerContainer" unique_id=157483099]
 layout_mode = 2
-autowrap_mode = 3
 text = "Refresh open seeks or create your own."
+autowrap_mode = 3
 
 [node name="RoomCodeLineEdit" type="LineEdit" parent="Control/MenuContainer/MultiplayerContainer" unique_id=157483097]
 visible = false
