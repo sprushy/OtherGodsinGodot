@@ -101,7 +101,7 @@ var is_muted: bool = false
 var mute_turns_remaining: int = 0
 var _mute_applied_owner_turn_number: int = -1
 
-# Runtime stat buffs: Array of {source: String, str: int, res: int, spd: int}
+# Runtime stat buffs: Array of {source: String, str: int, res: int, spd: int, lvl: int}
 var active_buffs: Array[Dictionary] = []
 var active_statuses: Array[Dictionary] = []
 var _was_muted_last_check: bool = false
@@ -112,6 +112,7 @@ const ABILITY_NEGATED_STATUS := "ability_negated"
 const COST_KIND_POWER_UNLOCK := "power_unlock"
 const COST_KIND_POWER_ACTIVATION := "power_activation"
 const COST_KIND_CREATURE_SUMMON := "creature_summon"
+const COST_KIND_HAND_PLAY := "hand_play"
 
 func get_controller() -> Player:
 	if current_zone != null and current_zone.is_board_zone() and current_zone.zone_owner != null:
@@ -340,6 +341,31 @@ func is_silenced() -> bool:
 func abilities_suppressed() -> bool:
 	return is_enslaved() or is_petrified() or is_muted or has_status_effect(ABILITY_NEGATED_STATUS)
 
+func get_controller_passive_cards() -> Array[Card]:
+	var passive_cards: Array[Card] = []
+	var seen_cards: Dictionary = {}
+	var controller := get_controller()
+	if controller == null:
+		return passive_cards
+
+	for zone in controller.frontline_zones + controller.reserve_zones + controller.power_zones:
+		for zone_card in zone.cards:
+			_append_unique_passive_card(passive_cards, seen_cards, zone_card)
+			if zone_card == null or not zone_card.has_method("get_sheltered_cards_for_passive_effects"):
+				continue
+			for sheltered_card in zone_card.get_sheltered_cards_for_passive_effects():
+				_append_unique_passive_card(passive_cards, seen_cards, sheltered_card)
+	return passive_cards
+
+func _append_unique_passive_card(passive_cards: Array[Card], seen_cards: Dictionary, candidate: Card) -> void:
+	if candidate == null:
+		return
+	var candidate_id := candidate.get_instance_id()
+	if seen_cards.has(candidate_id):
+		return
+	seen_cards[candidate_id] = true
+	passive_cards.append(candidate)
+
 func get_effective_speed() -> int:
 	var base_speed = speed
 	if is_stealth:
@@ -349,6 +375,12 @@ func get_effective_speed() -> int:
 	for buff in _get_effective_buffs():
 		base_speed += buff.get("spd", 0)
 	return max(1, base_speed)
+
+func get_effective_level() -> int:
+	var total := level
+	for buff in _get_effective_buffs():
+		total += buff.get("lvl", 0)
+	return max(0, total)
 
 func get_effective_strength() -> int:
 	var total = strength
@@ -366,7 +398,7 @@ func get_effective_resilience() -> int:
 		total += buff.get("res", 0)
 	return total
 
-# Returns a human-readable breakdown of all active buffs for a stat ("str", "res", "spd")
+# Returns a human-readable breakdown of all active buffs for a stat ("str", "res", "spd", "lvl")
 func get_buff_tooltip(stat: String) -> String:
 	var lines: Array[String] = []
 	for buff in _get_effective_buffs():
@@ -383,6 +415,7 @@ func get_full_stat_breakdown(stat: String) -> String:
 		"str": base = strength
 		"res": base = resilience
 		"spd": base = speed
+		"lvl": base = level
 		_: return ""
 	var lines: Array[String] = []
 	for equip in equipment:
@@ -409,12 +442,15 @@ func get_effect_summary_lines() -> Array[String]:
 		var str_change: int = buff.get("str", 0)
 		var res_change: int = buff.get("res", 0)
 		var spd_change: int = buff.get("spd", 0)
+		var lvl_change: int = buff.get("lvl", 0)
 		if str_change != 0:
 			parts.append(("STR %+d" % str_change))
 		if res_change != 0:
 			parts.append(("RES %+d" % res_change))
 		if spd_change != 0:
 			parts.append(("SPD %+d" % spd_change))
+		if lvl_change != 0:
+			parts.append(("LVL %+d" % lvl_change))
 		if parts.size() == 0:
 			continue
 		lines.append(", ".join(parts) + " from " + str(buff.get("source", "?")))
@@ -747,18 +783,17 @@ func _has_raw_enki_hex_immunity() -> bool:
 	var controller := get_controller()
 	if controller == null:
 		return false
-	for zone in controller.frontline_zones + controller.reserve_zones:
-		for board_card in zone.cards:
-			if not (board_card is EnkiLordOfEridu):
-				continue
-			var enki := board_card as EnkiLordOfEridu
-			if enki == null:
-				continue
-			if enki.get_controller() != controller:
-				continue
-			if enki.hex_protection_is_suppressed_raw():
-				continue
-			return true
+	for passive_card in get_controller_passive_cards():
+		if not (passive_card is EnkiLordOfEridu):
+			continue
+		var enki := passive_card as EnkiLordOfEridu
+		if enki == null:
+			continue
+		if enki.get_controller() != controller:
+			continue
+		if enki.hex_protection_is_suppressed_raw():
+			continue
+		return true
 	return false
 
 func mute_for_turns(turns: int, game_manager: GameManager = null) -> void:
@@ -917,11 +952,16 @@ func get_max_minor_creature_actions_per_turn() -> int:
 func get_max_minor_creature_actions_before_major() -> int:
 	return get_max_minor_creature_actions_per_turn()
 
+func can_take_minor_creature_action_after_major() -> bool:
+	return false
+
 func can_take_major_creature_action() -> bool:
 	return not creature_major_action_used and creature_minor_actions_used < get_max_minor_creature_actions_before_major()
 
 func can_take_minor_creature_action() -> bool:
-	return not creature_major_action_used and creature_minor_actions_used < get_max_minor_creature_actions_per_turn()
+	if creature_major_action_used:
+		return can_take_minor_creature_action_after_major() and creature_minor_actions_used < get_max_minor_creature_actions_per_turn()
+	return creature_minor_actions_used < get_max_minor_creature_actions_per_turn()
 
 func spend_major_creature_action() -> void:
 	creature_major_action_used = true
@@ -946,7 +986,10 @@ func can_prepare(game_manager: GameManager, player: Player) -> bool:
 		return false
 	if player.hand_zone == null or current_zone != player.hand_zone:
 		return false
-	return can_pay_costs(player)
+	var mana_required := mana_cost
+	if game_manager.has_method("get_card_play_mana_cost"):
+		mana_required = game_manager.get_card_play_mana_cost(player, self, true)
+	return can_pay_costs_with_mana_cost(player, mana_required)
 
 func can_pay_costs(player: Player) -> bool:
 	return can_pay_costs_with_mana_cost(player, mana_cost)

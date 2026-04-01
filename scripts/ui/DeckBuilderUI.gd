@@ -37,6 +37,7 @@ var _deck: Dictionary  = {}        # card_name (String) -> count (int)
 var _filter: String         = "All"
 var _faction_filter: String = "All"
 var _mana_cost_filter: String = MANA_FILTER_ANY
+var _search_query: String = ""
 var _collection_sort: String = "Default"
 var _filtered_cards_cache: Array = []
 var _current_page: int      = 0
@@ -72,6 +73,7 @@ var _saved_decks_option: OptionButton
 var _saved_decks_view_btn: Button
 var _saved_actions_bar: HFlowContainer
 var _deck_footer_buttons: HFlowContainer
+var _search_edit:      LineEdit
 # preview
 var _prev_art:         TextureRect
 var _prev_name:        Label
@@ -343,6 +345,23 @@ func _build_collection_panel(parent: Control) -> void:
 		var captured_sort: String = label
 		sort_btn.pressed.connect(func() -> void: _set_collection_sort(captured_sort))
 		view_bar.add_child(sort_btn)
+
+	var search_lbl := Label.new()
+	search_lbl.text = "Search:"
+	search_lbl.add_theme_font_size_override("font_size", 11)
+	search_lbl.modulate = Color(0.7, 0.7, 0.7)
+	search_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	view_bar.add_child(search_lbl)
+
+	var search_edit := LineEdit.new()
+	_search_edit = search_edit
+	search_edit.placeholder_text = "Card names or tags"
+	search_edit.text = _search_query
+	search_edit.clear_button_enabled = true
+	search_edit.custom_minimum_size = Vector2(220, 28)
+	search_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	search_edit.text_changed.connect(_set_search_query)
+	view_bar.add_child(search_edit)
 
 	var spacer := Control.new()
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -644,6 +663,8 @@ func _matches_filter(card: Card) -> bool:
 		return false
 	if not _matches_mana_cost_filter(card):
 		return false
+	if not _matches_search_query(card):
+		return false
 	match _filter:
 		"All":       return true
 		"Gods":      return card.is_god
@@ -663,6 +684,32 @@ func _matches_mana_cost_filter(card: Card) -> bool:
 	if _mana_cost_filter == "5+":
 		return card.mana_cost >= 5
 	return card.mana_cost == int(_mana_cost_filter)
+
+func _matches_search_query(card: Card) -> bool:
+	if _search_query.is_empty():
+		return true
+
+	var search_key := _to_search_key(_search_query)
+	if search_key.is_empty():
+		return true
+
+	if _to_search_key(card.get_normalized_card_name()).contains(search_key):
+		return true
+	if _to_search_key(card.get_ascii_card_name()).contains(search_key):
+		return true
+	if _to_search_key(_get_type_label(card)).contains(search_key):
+		return true
+	if _to_search_key(card.culture).contains(search_key):
+		return true
+
+	for card_type: String in card.card_types:
+		if _to_search_key(card_type).contains(search_key):
+			return true
+
+	return false
+
+func _to_search_key(value: String) -> String:
+	return CardCatalogScript.to_lookup_key(str(value))
 
 func _make_card_item(card: Card) -> Control:
 	var root := Control.new()
@@ -1596,6 +1643,17 @@ func _set_faction_filter(new_faction: String) -> void:
 func _set_mana_cost_filter(new_filter: String) -> void:
 	_set_collection_mode(COLLECTION_MODE_CARDS, false)
 	_mana_cost_filter = new_filter
+	_current_page = 0
+	_rebuild_filtered_cards_cache()
+	_refresh_grid()
+	_update_count_badges()
+
+func _set_search_query(new_query: String) -> void:
+	_set_collection_mode(COLLECTION_MODE_CARDS, false)
+	var normalized_query := new_query.strip_edges()
+	if normalized_query == _search_query:
+		return
+	_search_query = normalized_query
 	_current_page = 0
 	_rebuild_filtered_cards_cache()
 	_refresh_grid()

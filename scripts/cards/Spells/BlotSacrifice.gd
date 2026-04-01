@@ -55,7 +55,7 @@ func get_valid_hand_creatures(max_total_levels: int = MAX_SUMMON_LEVELS, exclude
 			continue
 		if card.is_god:
 			continue
-		if card.level > max_total_levels:
+		if card.get_effective_level() > max_total_levels:
 			continue
 		cards.append(card)
 	return cards

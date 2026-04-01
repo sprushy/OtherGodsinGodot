@@ -23,7 +23,7 @@ func applies_to(card: Card) -> bool:
 		and card != null
 		and card.card_type == Card.CardType.CREATURE
 		and card.has_type("Animal")
-		and card.level >= 5
+		and card.get_effective_level() >= 5
 		and card.current_zone != null
 		and card.current_zone.is_board_zone()
 	)

@@ -43,7 +43,7 @@ func _apply_inspired_strength(game_manager: GameManager, opponent: Card) -> void
 		return
 	if opponent == null or opponent.card_type != Card.CardType.CREATURE:
 		return
-	var diff := opponent.level - level
+	var diff := opponent.get_effective_level() - get_effective_level()
 	if diff <= 0:
 		return
 	var bonus := STR_PER_LEVEL * diff

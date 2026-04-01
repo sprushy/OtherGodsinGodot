@@ -117,12 +117,11 @@ func _build_art_node() -> TextureRect:
 	var tex: Texture2D = load(card_data.art_path)
 	if tex == null:
 		return null
-	var aspect := float(tex.get_height()) / float(tex.get_width())
 	var art := TextureRect.new()
 	art.texture = tex
 	art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	art.custom_minimum_size = Vector2(_card_width, _card_width * aspect)
+	art.custom_minimum_size = Vector2(_card_width, _card_width * float(tex.get_height()) / float(tex.get_width()))
 	art.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_art_rect = art
 	return art
@@ -737,8 +736,8 @@ func _show_hover_panel() -> void:
 
 	# Level / Mana / Culture row
 	var meta_parts: Array[String] = []
-	if card_data.level > 0:
-		meta_parts.append("Level " + str(card_data.level))
+	if card_data.get_effective_level() > 0:
+		meta_parts.append("Level " + str(card_data.get_effective_level()))
 	meta_parts.append("Mana: " + str(_get_display_mana_cost()))
 	if card_data.culture != "":
 		meta_parts.append(card_data.culture)
@@ -831,11 +830,15 @@ func _show_hover_panel() -> void:
 		detail_sep.add_theme_color_override("color", Color(0.22, 0.45, 0.4))
 		vbox.add_child(detail_sep)
 
-		var detail_lbl := Label.new()
+		var detail_lbl := RichTextLabel.new()
+		detail_lbl.bbcode_enabled = true
 		detail_lbl.text = "\n".join(hover_details)
 		detail_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		detail_lbl.add_theme_font_size_override("font_size", 11)
-		detail_lbl.add_theme_color_override("font_color", Color(0.72, 0.96, 0.86))
+		detail_lbl.scroll_active = false
+		detail_lbl.fit_content = true
+		detail_lbl.add_theme_font_size_override("normal_font_size", 11)
+		detail_lbl.add_theme_font_size_override("bold_font_size", 11)
+		detail_lbl.add_theme_color_override("default_color", Color(0.72, 0.96, 0.86))
 		detail_lbl.custom_minimum_size = Vector2(210, 0)
 		vbox.add_child(detail_lbl)
 

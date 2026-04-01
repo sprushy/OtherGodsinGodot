@@ -78,12 +78,12 @@ func get_lowest_level_attacker_choices(game_manager: GameManager) -> Array[Card]
 	var candidates := get_forced_attacker_candidates(game_manager)
 	if candidates.is_empty():
 		return []
-	var lowest_level := candidates[0].level
+	var lowest_level := candidates[0].get_effective_level()
 	for creature in candidates:
-		lowest_level = mini(lowest_level, creature.level)
+		lowest_level = mini(lowest_level, creature.get_effective_level())
 	var ties: Array[Card] = []
 	for creature in candidates:
-		if creature.level == lowest_level:
+		if creature.get_effective_level() == lowest_level:
 			ties.append(creature)
 	return ties
 
@@ -91,12 +91,12 @@ func get_highest_level_defender_choices(game_manager: GameManager) -> Array[Card
 	var candidates := get_forced_defender_candidates(game_manager)
 	if candidates.is_empty():
 		return []
-	var highest_level := candidates[0].level
+	var highest_level := candidates[0].get_effective_level()
 	for creature in candidates:
-		highest_level = maxi(highest_level, creature.level)
+		highest_level = maxi(highest_level, creature.get_effective_level())
 	var ties: Array[Card] = []
 	for creature in candidates:
-		if creature.level == highest_level:
+		if creature.get_effective_level() == highest_level:
 			ties.append(creature)
 	return ties
 
@@ -143,14 +143,14 @@ func _is_face_up_board_creature(card: Card) -> bool:
 func _pick_lowest_level_creature(candidates: Array[Card]) -> Card:
 	var chosen: Card = null
 	for creature in candidates:
-		if chosen == null or creature.level < chosen.level:
+		if chosen == null or creature.get_effective_level() < chosen.get_effective_level():
 			chosen = creature
 	return chosen
 
 func _pick_highest_level_creature(candidates: Array[Card]) -> Card:
 	var chosen: Card = null
 	for creature in candidates:
-		if chosen == null or creature.level > chosen.level:
+		if chosen == null or creature.get_effective_level() > chosen.get_effective_level():
 			chosen = creature
 	return chosen
 

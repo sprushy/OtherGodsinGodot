@@ -56,6 +56,20 @@ func shift_forms() -> void:
 	in_bird_form = not in_bird_form
 	card_types = _get_bird_form_types() if in_bird_form else _get_human_form_types()
 
+func get_hover_detail_lines(_viewer: Player = null) -> Array[String]:
+	return [
+		"[b]Shift Forms[/b]",
+		_current_form_hover_text(),
+		_inactive_form_hover_text(),
+	]
+
+func _current_form_hover_text() -> String:
+	return "Current: " + ("Animal, Avian, Aerial" if in_bird_form else "Human, Servant, Mage, Witch")
+
+func _inactive_form_hover_text() -> String:
+	var inactive_form := "Human, Servant, Mage, Witch" if in_bird_form else "Animal, Avian, Aerial"
+	return "[color=#8a8a8a]Can shift to: %s[/color]" % inactive_form
+
 func can_return_to_hand_after_shift() -> bool:
 	return card_owner != null and current_zone != null and current_zone.is_board_zone()
 

@@ -40,7 +40,7 @@ func _should_petrify(card: Card) -> bool:
 		return false
 	if card.has_type("Dwarf"):
 		return true
-	return not card.is_face_down and card.level < 3
+	return not card.is_face_down and card.get_effective_level() < 3
 
 func _apply_petrification(card: Card, game_manager: GameManager) -> void:
 	card.reveal(game_manager)

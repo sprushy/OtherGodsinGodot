@@ -39,6 +39,7 @@ const KEYWORD_HINTS = {
 	"Search": "Look through your deck for a card, then shuffle.",
 	"Shuffle": "Return this card to its owner's deck, then shuffle that deck.",
 	"Prime": "Put a card on top of your deck.",
+	"Perish": "This card died in any way and was sent to the graveyard.",
 	"Silence": "Remove this card's abilities.",
 	"Frontlined": "This effect applies while this card is in the frontline.",
 	"Upkeep": "This effect happens during upkeep at the beginning of your turn.",
@@ -66,7 +67,12 @@ func on_play(_game_manager: GameManager, _target = null) -> void:
 	pass
 
 func can_be_played(_game_manager: GameManager, player: Player) -> bool:
-	return can_pay_costs(player)
+	if _game_manager == null:
+		return can_pay_costs(player)
+	var mana_required := mana_cost
+	if _game_manager.has_method("get_card_play_mana_cost"):
+		mana_required = _game_manager.get_card_play_mana_cost(player, self, false)
+	return can_pay_costs_with_mana_cost(player, mana_required)
 
 func on_enter_zone(_zone: Zone) -> void:
 	pass

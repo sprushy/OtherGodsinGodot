@@ -20,6 +20,7 @@ var attack_restriction_turns: int = 0
 
 var card_collection: Array[Card] = []
 var current_deck: Array[Card] = []
+var game_manager: GameManager = null
 
 var hand_zone: Zone
 var deck_zone: Zone
@@ -122,6 +123,9 @@ func validate_deck(deck: Array[Card]) -> bool:
 	return true
 
 func gain_mana(amount: int) -> void:
+	if amount > 0 and game_manager != null and not game_manager.can_player_gain_mana_now(self):
+		game_manager.note_player_feedback("Laws of Civilization prevents gaining mana outside upkeep.")
+		return
 	mana += amount
 	mana_changed.emit(mana)
 
@@ -154,6 +158,13 @@ func game_over() -> void:
 func move_card(card: Card, to_zone: Zone) -> void:
 	var from_zone = card.current_zone
 	var destination_zone := _resolve_destination_zone(card, from_zone, to_zone)
+	if destination_zone == hand_zone \
+			and card != null \
+			and card.current_zone != hand_zone \
+			and game_manager != null \
+			and not game_manager.can_player_add_to_hand_now(self):
+		game_manager.note_player_feedback("Laws of Civilization prevents cards from being added to hand outside upkeep.")
+		return
 	var creature_left_board := (
 		card.card_type == Card.CardType.CREATURE
 		and from_zone != null
@@ -202,7 +213,8 @@ func draw_card() -> Card:
 	if deck_zone.get_card_count() > 0:
 		var card = deck_zone.cards[0]
 		move_card(card, hand_zone)
-		return card
+		if card.current_zone == hand_zone:
+			return card
 	return null
 
 func discard_card(card: Card) -> void:

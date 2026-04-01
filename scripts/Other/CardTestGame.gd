@@ -3,11 +3,9 @@ class_name CardTestGame
 
 var _test_turn_owner: Player = null
 var _test_turn_opponent: Player = null
-var _habrok_scenario_button: Button = null
 
 func _ready() -> void:
 	super._ready()
-	_ensure_card_test_scenario_button()
 
 # Override start_game to set up a focused test board while preserving
 # the CombatMockGame interface.
@@ -20,22 +18,13 @@ func start_game(
 	server_match_session = null
 ) -> void:
 	await super.start_game(is_host, is_client, server_ip, server_port, match_info, server_match_session)
-	_setup_test_board()
+	load_test_scenario_one()
 
 func update_ui() -> void:
 	_sync_test_priority_control()
 	super.update_ui()
 	if turn_label != null and player1 != null and player2 != null:
 		turn_label.text += " | P1 Mana %d | P2 Mana %d" % [player1.mana, player2.mana]
-
-func _ensure_card_test_scenario_button() -> void:
-	if left_panel == null or choice_container == null or _habrok_scenario_button != null:
-		return
-	_habrok_scenario_button = Button.new()
-	_habrok_scenario_button.text = "Load Habrok Scenario"
-	_habrok_scenario_button.pressed.connect(load_habrok_test_scenario)
-	left_panel.add_child(_habrok_scenario_button)
-	left_panel.move_child(_habrok_scenario_button, choice_container.get_index())
 
 func _sync_test_priority_control() -> void:
 	if game_manager == null or player1 == null or player2 == null:
@@ -185,134 +174,53 @@ func _reset_test_match_state() -> void:
 	game_manager.action_stack.clear()
 	game_manager.consecutive_passes = 0
 	game_manager.priority_player = null
+	game_manager.turn_player = null
+	game_manager.turn_number = 0
+	game_manager._upkeep_started_turn = -1
+	game_manager._upkeep_resolved_turn = -1
 	game_manager._temporary_summon_cost_modifiers.clear()
 	selected_card = null
 	selected_attacker = null
 	selected_interceptor = null
 
-func load_habrok_test_scenario() -> void:
-	if game_manager == null or player1 == null or player2 == null:
-		return
-	_dismiss_transient_prompts()
-	_reset_test_match_state()
-
-	_add_test_god(player1, Thor.new())
-	_add_test_god(player2, Thor.new())
-
-	var habrok: HabrokParagonOfHawks = HabrokParagonOfHawks.new()
-	var blessed_knights: BlessedKnights = BlessedKnights.new()
-	var brown_bear: BrownBear = BrownBear.new()
-	var enkidu: Enkidu = Enkidu.new()
-
-	_place_test_board_card(player1, player1.frontline_zones[2], habrok, Card.CreatureMode.AGGRESSIVE)
-	_place_test_board_card(player2, player2.frontline_zones[1], blessed_knights, Card.CreatureMode.AGGRESSIVE)
-	_place_test_board_card(player2, player2.frontline_zones[2], brown_bear, Card.CreatureMode.AGGRESSIVE)
-	_place_test_board_card(player2, player2.frontline_zones[3], enkidu, Card.CreatureMode.AGGRESSIVE)
-
-	player1.spend_mana(player1.mana)
-	player1.gain_mana(10)
-	player2.spend_mana(player2.mana)
-	player2.gain_mana(10)
-	player1.followers = 100
-	player2.followers = 100
-	player1.followers_changed.emit(player1.followers)
-	player2.followers_changed.emit(player2.followers)
-	player1.has_summoned_this_turn = false
-	player2.has_summoned_this_turn = false
-
-	game_manager.current_player = player1
-	game_manager.other_player = player2
-	game_manager.turn_player = player1
-	game_manager.feedback_viewer = player1
-	player1.is_turn_player = true
-	player2.is_turn_player = false
-	game_manager.current_phase = GameManager.GamePhase.MAIN
-	game_manager.turn_number = 1
-	_test_turn_owner = player1
-	_test_turn_opponent = player2
-
-	hide_turn_choice()
-	action_label.text = (
-		"HABROK TEST  |  "
-		+ "Habrok is your only creature on the field.  |  "
-		+ "Click End Turn, choose any upkeep option for P2, then click End Turn again.  |  "
-		+ "At the end of P2's turn, Habrok should return to your hand and destroy Blessed Knights as the weakest enemy creature.  |  "
-		+ "Brown Bear and Enkidu should remain on the board.  |  "
-		+ "Click Load Habrok Scenario again to reset."
-	)
-	update_ui()
-
 func _setup_test_board() -> void:
+	load_test_scenario_one()
+
+func load_test_scenario_one() -> void:
 	_reset_test_match_state()
-
-	# ── Gods ─────────────────────────────────────────────────────────────────
-	var guan_yu := GuanYu.new()
-	guan_yu.tactic_counters = 4  # Champion's Call immediately available (costs 4)
-	_add_test_god(player1, guan_yu)
+	_add_test_god(player1, Hermes.new())
 	_add_test_god(player2, Thor.new())
+	_add_test_power(player1, 0, KurnugiaTheBeginningOfTheEnd.new(), true)
 
-	# ── Powers ───────────────────────────────────────────────────────────────
-	_add_test_power(player1, 0, GiantsDisdain.new(), true)
-
-	# ── P1 Board ─────────────────────────────────────────────────────────────
-	var berserker := Berserker.new()
-	var gilgamesh := Gilgamesh.new()
-	var gawain := Gawain.new()
-	var gudu_priest := GududPriest.new()
-	var garm := GarmWatchdogOfHel.new()
-	var gala_tura := GalaTura.new()
-	var gidim_ensi := GidimEnsi.new()
-	var gallu_board := Gallu.new()
-
-	# Graveyard cards must be placed BEFORE GalaTura summon so graveward applies to them.
-	_add_test_graveyard_card(player1, Gallu.new())
-	_add_test_graveyard_card(player1, AgainWalker.new())
-
-	_place_test_board_card(player1, player1.frontline_zones[0], berserker, Card.CreatureMode.AGGRESSIVE)
-	_place_test_board_card(player1, player1.frontline_zones[1], gilgamesh, Card.CreatureMode.AGGRESSIVE)
-	_place_test_board_card(player1, player1.frontline_zones[2], gawain, Card.CreatureMode.AGGRESSIVE)
-	gawain.on_summon(game_manager)  # Apply Sun Blessing for P1's active turn
-	_place_test_board_card(player1, player1.frontline_zones[3], gudu_priest, Card.CreatureMode.AGGRESSIVE)
-	_place_test_board_card(player1, player1.frontline_zones[4], garm, Card.CreatureMode.AGGRESSIVE)
-	_place_test_board_card(player1, player1.reserve_zones[0], gala_tura, Card.CreatureMode.AGGRESSIVE)
-	gala_tura.on_summon(game_manager)  # Apply Water of Life graveward to graveyard cards
-	_place_test_board_card(player1, player1.reserve_zones[1], gidim_ensi, Card.CreatureMode.DEFENSIVE)
-	gidim_ensi.on_summon(game_manager)  # Apply permanent cannot_attack to itself
-	_place_test_board_card(player1, player1.reserve_zones[2], gallu_board, Card.CreatureMode.AGGRESSIVE)
-	_place_test_board_permanent(player1, player1.reserve_zones[4], GlitnirThePeaceful.new())
-
-	# Give Berserker a removable status so Gawain's Healing Hands has something to cure.
-	berserker.add_status_effect(
-		"cannot_attack",
-		"Bound (test)",
-		gidim_ensi,
-		player1,
-		{"display_name": "Cannot attack — use Gawain Healing Hands (2 mana) to remove"}
-	)
-
-	# ── P1 Hand ──────────────────────────────────────────────────────────────
-	_add_test_hand_card(player1, GugalannaBullOfHeaven.new())
-	_add_test_hand_card(player1, GiantMasterArchitect.new())
-	_add_test_hand_card(player1, Gleipnir.new())
-	_add_test_hand_card(player1, GungnirTheSpearOfOdin.new())
-	_add_test_hand_card(player1, Gullinbursti.new())
-
-	# ── P1 Deck (for GiantMasterArchitect's Master Plan impact) ──────────────
-	_add_test_deck_card(player1, GlitnirThePeaceful.new())
-	_add_test_deck_card(player1, GlitnirThePeaceful.new())
-
-	# ── P2 Board ─────────────────────────────────────────────────────────────
-	var enki := EnkiLordOfEridu.new()
 	var enkidu := Enkidu.new()
-	_place_test_board_card(player2, player2.frontline_zones[0], enki, Card.CreatureMode.AGGRESSIVE)
-	_place_test_board_card(player2, player2.frontline_zones[1], enkidu, Card.CreatureMode.AGGRESSIVE)
-	_place_test_board_card(player2, player2.frontline_zones[2], BlessedKnights.new(), Card.CreatureMode.AGGRESSIVE)
+	var frontline_enki := EnkiLordOfEridu.new()
+	var en_hedu_anna := EnHeduAnna.new()
+	var kur_jara := KurJara.new()
+	_place_test_board_card(player1, player1.frontline_zones[0], enkidu, Card.CreatureMode.AGGRESSIVE)
+	_place_test_board_card(player1, player1.frontline_zones[1], frontline_enki, Card.CreatureMode.DEFENSIVE)
+	_place_test_board_card(player1, player1.reserve_zones[0], en_hedu_anna, Card.CreatureMode.DEFENSIVE)
+	_place_test_board_card(player1, player1.reserve_zones[1], kur_jara, Card.CreatureMode.AGGRESSIVE)
 
-	# ── Mana / followers ─────────────────────────────────────────────────────
+	_add_test_hand_card(player1, Lailoken.new())
+	_add_test_hand_card(player1, HeroicStand.new())
+
+	var graveyard_enki := EnkiLordOfEridu.new()
+	_add_test_graveyard_card(player1, graveyard_enki)
+
+	var enemy_brown_bear := BrownBear.new()
+	_place_test_board_card(player2, player2.frontline_zones[0], enemy_brown_bear, Card.CreatureMode.DEFENSIVE)
+	_place_test_prepared_card(player2, player2.reserve_zones[0], Exorcism.new())
+	_add_test_hand_card(player2, FallOfTheMighty.new())
+	_add_test_hand_card(player2, FallOfTheMighty.new())
+	_add_test_hand_card(player2, VoidShield.new())
+
+	_add_test_deck_card(player2, BrownBear.new())
+	_add_test_deck_card(player2, Berserker.new())
+
 	player1.spend_mana(player1.mana)
-	player1.gain_mana(10)
+	player1.gain_mana(4)
 	player2.spend_mana(player2.mana)
-	player2.gain_mana(10)
+	player2.gain_mana(4)
 	player1.followers = 100
 	player2.followers = 100
 	player1.followers_changed.emit(player1.followers)
@@ -320,37 +228,27 @@ func _setup_test_board() -> void:
 	player1.has_summoned_this_turn = false
 	player2.has_summoned_this_turn = false
 
-	# ── Turn state ───────────────────────────────────────────────────────────
 	game_manager.current_player = player1
 	game_manager.other_player = player2
-	game_manager.turn_player = player1
 	game_manager.feedback_viewer = player1
 	player1.is_turn_player = true
 	player2.is_turn_player = false
-	game_manager.current_phase = GameManager.GamePhase.MAIN
-	game_manager.turn_number = 1
 	selected_card = null
 	selected_attacker = null
 	selected_interceptor = null
 	_test_turn_owner = player1
 	_test_turn_opponent = player2
-	hide_turn_choice()
+	game_manager.start_turn()
+	game_manager.record_interception(en_hedu_anna)
+	game_manager.record_interception(en_hedu_anna)
+	_open_upkeep_choice_window()
 	action_label.text = (
-		"G-CARD TEST  |  "
-		+ "Click Load Habrok Scenario for a focused Breakout test.  |  "
-		+ "GuanYu (god): 4 tactic counters ready — activate Champion's Call to destroy any board card. End P1's turn to test upkeep (P1 has 5 frontline vs P2's 3, gains another counter each turn).  |  "
-		+ "GlitnirThePeaceful (P1 reserve[6]): forces all summons this game to defensive — test by summoning any hand card.  |  "
-		+ "Berserker has 'cannot_attack' status — use Gawain Healing Hands (2 mana, minor action) to remove it; then Berserker can attack; play Gungnir from hand in response to destroy the target.  |  "
-		+ "Gawain Sun Blessing: check tripled stats (10 Str → 30, 7 Res → 21) during P1's turn; resets after first attack.  |  "
-		+ "Gilgamesh attacks EnkiLordOfEridu (level 6 vs 3): Inspired Strength grants +21 Str for that combat.  |  "
-		+ "Gudu Priest Creature Ward: target Berserker or any creature to clear creature-applied effects, then make it immune to creature abilities this turn.  |  "
-		+ "Garm Watchbeast: graveyard cards (Gallu, AgainWalker) immune to opponent effects while Garm is in play.  |  "
-		+ "GalaTura (reserve): Water of Life graveward active on both graveyard cards — destroy GalaTura to trigger Destroyed and return up to 3 graveyard creatures to deck bottom.  |  "
-		+ "GidimEnsi (reserve, defensive, Incorporeal): any P2 creature that attacks P1's followers falls asleep; can only be engaged by Spirits or faster Mages.  |  "
-		+ "Hand — Gugalanna: summon for Celestial Charge impact (destroys EnkiLordOfEridu RES 36 or Enkidu RES 30, both SPD < 25; opponent may trigger attack hexes; Gugalanna returns to hand). "
-		+ "GiantMasterArchitect: summon for Master Plan impact (finds GlitnirThePeaceful from deck; also tests GiantsDisdain +1 Reach/+1 SPD intercept as a Giant). "
-		+ "Gleipnir: play to bind Enkidu (cannot attack/intercept, abilities negated). "
-		+ "Gungnir: respond to a Norse Warrior (Berserker after healing) attacking to destroy its target. "
-		+ "Gullinbursti: vanilla SPD-4 creature."
+		"Scenario 1: Lailoken, Heroic Stand, Kurnugia, and Kur-Jara. Choose Draw Card or Gain 4 Mana first.  |  "
+		+ "Hand - Heroic Stand is already live because En-hedu-anna counts as having intercepted twice this turn.  |  "
+		+ "Hand - Lailoken can reveal into any open lane and drain the prepared enemy Exorcism in reserve.  |  "
+		+ "Power - Kurnugia is unlocked and ready to shelter your Ancient Humans or Mer when they are destroyed or voided.  |  "
+		+ "Opponent - Thor starts with two Fall of the Mighty and a Void Shield in hand for repeated destroy and protection tests.  |  "
+		+ "Board - Enki, Lord of Eridu is on your frontline as a live Mer target for Kurnugia, and another copy is in your graveyard as a Tree of Life target.  |  "
+		+ "Follow-up - activate Kur-Jara, then end your turns twice to resurrect Kur-Jara and Enki while Kurnugia shelters En-hedu-anna and Enkidu from the level-cost destruction."
 	)
 	update_ui()

@@ -48,7 +48,7 @@ func get_valid_targets(game_manager: GameManager) -> Array[Card]:
 					continue
 				if card.card_type != Card.CardType.CREATURE:
 					continue
-				if card.level > level:
+				if card.get_effective_level() > get_effective_level():
 					continue
 				valid_targets.append(card)
 	return valid_targets
@@ -58,7 +58,7 @@ func activate(game_manager: GameManager, target: Card = null) -> void:
 		return
 	if target == null or target not in get_valid_targets(game_manager):
 		if game_manager != null:
-			game_manager.note_player_feedback("%s fizzles: choose a creature of level %d or lower." % [card_name, level])
+			game_manager.note_player_feedback("%s fizzles: choose a creature of level %d or lower." % [card_name, get_effective_level()])
 		return
 	if game_manager != null and game_manager.is_guardian_protected(target, self):
 		game_manager.note_player_feedback(target.get_target_log_display_name(game_manager.get_feedback_viewer()) + " is protected by Guardian!")

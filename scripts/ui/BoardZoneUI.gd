@@ -1105,7 +1105,7 @@ func _is_draggable_creature() -> bool:
 		return false
 	if card.get_controller() != game_manager.current_player:
 		return false
-	if card.creature_major_action_used or card.creature_minor_actions_used >= 2:
+	if not card.can_take_major_creature_action() and not card.can_take_minor_creature_action():
 		return false
 	return true
 
@@ -1304,7 +1304,7 @@ func _show_ability_popup() -> void:
 	# Level (gods have no level)
 	if not is_hidden_card and not card.is_god:
 		var level_lbl := Label.new()
-		level_lbl.text = "Level %d" % card.level
+		level_lbl.text = "Level %d" % card.get_effective_level()
 		level_lbl.add_theme_font_size_override("font_size", 11)
 		level_lbl.modulate = Color(0.7, 0.7, 0.7)
 		level_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -1417,7 +1417,7 @@ func _show_ability_popup() -> void:
 			acted_lbl.modulate = Color(0.8, 0.8, 0.4)
 			acted_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			vbox.add_child(acted_lbl)
-		elif card.creature_minor_actions_used > 0:
+		if card.creature_minor_actions_used > 0:
 			var moved_lbl := Label.new()
 			moved_lbl.text = "Minor actions: %d/%d" % [
 				card.creature_minor_actions_used,
@@ -1503,11 +1503,15 @@ func _show_ability_popup() -> void:
 
 	var hover_detail_lines := card.get_hover_detail_lines(popup_viewer)
 	if hover_detail_lines.size() > 0 and not is_hidden_card:
-		var hover_details_lbl := Label.new()
+		var hover_details_lbl := RichTextLabel.new()
+		hover_details_lbl.bbcode_enabled = true
 		hover_details_lbl.text = "\n".join(hover_detail_lines)
 		hover_details_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		hover_details_lbl.add_theme_font_size_override("font_size", 10)
-		hover_details_lbl.add_theme_color_override("font_color", Color(0.66, 0.97, 0.93))
+		hover_details_lbl.scroll_active = false
+		hover_details_lbl.fit_content = true
+		hover_details_lbl.add_theme_font_size_override("normal_font_size", 10)
+		hover_details_lbl.add_theme_font_size_override("bold_font_size", 10)
+		hover_details_lbl.add_theme_color_override("default_color", Color(0.66, 0.97, 0.93))
 		hover_details_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		vbox.add_child(hover_details_lbl)
 
@@ -1569,6 +1573,13 @@ func can_accept_card(card: Card) -> bool:
 		if card.current_zone == card.card_owner.hand_zone:
 			return charm.can_activate_from_hand(game_manager)
 		return charm.can_activate_prepared(game_manager)
+	if card is CharmCard:
+		if zone.cards.size() > 0:
+			return false
+		if card.current_zone == card.card_owner.hand_zone:
+			return (card as CharmCard).can_activate_from_hand(game_manager) \
+				or game_manager.can_prepare_card(owning_player, card, zone)
+		return (card as CharmCard).can_activate_prepared(game_manager)
 	if card.card_type == Card.CardType.HEX:
 		if zone.cards.size() > 0:
 			return false

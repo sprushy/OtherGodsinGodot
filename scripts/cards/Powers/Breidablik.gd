@@ -89,7 +89,7 @@ func on_turn_end(_game_manager: GameManager) -> void:
 	var total_levels: int = 0
 	for priest in stored_priests:
 		if priest != null:
-			total_levels += priest.level
+			total_levels += priest.get_effective_level()
 	if total_levels > 0:
 		card_owner.gain_followers(total_levels * FOLLOWERS_PER_LEVEL)
 
@@ -125,17 +125,13 @@ func _store_priest(priest: Card) -> void:
 func _return_all_stored_priests() -> void:
 	if stored_priests.is_empty():
 		return
-	var remaining: Array[Card] = []
+	var unresolved: Array[Card] = []
 	for priest in stored_priests:
-		remaining.append(priest)
-	stored_priests.clear()
-	for priest in remaining:
 		if priest == null:
 			continue
 		var zone: Zone = _get_best_return_zone(priest)
 		if zone == null:
-			stored_priest_origins.erase(priest)
-			card_owner.hand_zone.add_card(priest)
+			unresolved.append(priest)
 			continue
 		stored_priest_origins.erase(priest)
 		zone.add_card(priest)
@@ -144,6 +140,7 @@ func _return_all_stored_priests() -> void:
 		priest.wake_up()
 		priest.reset_creature_action_state()
 		priest.summoned_this_turn = false
+	stored_priests = unresolved
 	return_window_open = false
 
 func _get_open_field_zones() -> Array[Zone]:

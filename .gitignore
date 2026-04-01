@@ -4,6 +4,8 @@
 .godot_portable/
 *.tmp
 scripts/tmp/
+.release/
+server_upload/
 
 # Claude Code
 .claude/

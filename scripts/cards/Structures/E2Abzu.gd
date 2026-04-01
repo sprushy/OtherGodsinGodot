@@ -180,7 +180,7 @@ func _can_return_void_target(card: Card) -> bool:
 	if not _is_mer_mage(card):
 		return false
 	var remaining_mana := card_owner.mana - RETURN_TO_HAND_COST
-	return card.level < remaining_mana
+	return card.get_effective_level() < remaining_mana
 
 func _store_temporary_return(creature: Card, game_manager: GameManager) -> void:
 	_temporarily_voided_creatures = _temporarily_voided_creatures.filter(func(entry: Dictionary) -> bool:

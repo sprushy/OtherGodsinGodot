@@ -267,6 +267,8 @@ func _finish_creature_combat(action: CardAction, target: Card) -> void:
 		var wrapped_finish := func() -> void:
 			game_manager.set_temporary_combat_follower_damage_halved(false)
 			finish.call()
+		if action.interceptor != null:
+			game_manager.record_interception(action.interceptor)
 		game_manager.resolve_combat_with_continuation(attacker, target, wrapped_finish, action.interceptor != null)
 
 ## Returns any Askelladen cards in the combat that qualify for Tactful Retreat.
@@ -486,6 +488,8 @@ func _get_required_player_for_command(command: Dictionary) -> Player:
 			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("spell_uid", ""))))
 		"god_ability":
 			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("god_uid", ""))))
+		"play_priority_ability":
+			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("source_uid", ""))))
 		"activate_power", "unlock_power", "activate_divine_caprice":
 			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("power_uid", ""))))
 		"cast_charm", "play_charm_response":
@@ -545,7 +549,7 @@ func _get_command_actor(sender_info: Dictionary) -> Player:
 
 func _requires_resolved_upkeep(command_type: String) -> bool:
 	match command_type:
-		"upkeep_choice", "priority_pass", "intercept_decision", "play_hex_response", "play_charm_response":
+		"upkeep_choice", "priority_pass", "intercept_decision", "play_hex_response", "play_charm_response", "play_priority_ability":
 			return false
 	return true
 
@@ -730,9 +734,17 @@ func _process_command_impl(command: Dictionary) -> bool:
 				if sac_card != null:
 					spell.set_meta("pending_sacrifice_choice", sac_card)
 			
-			if not spell.pay_costs_with_mana_cost(player, spell.mana_cost, game_manager):
+			var mana_required := game_manager.get_card_play_mana_cost(player, spell, false)
+			if not spell.pay_costs_with_mana_cost(player, mana_required, game_manager):
 				move_failed.emit("Cannot afford " + spell.card_name + "!")
 				return false
+			if mana_required < spell.mana_cost:
+				game_manager.claim_cost_adjustments(
+					spell,
+					spell.mana_cost,
+					Card.COST_KIND_HAND_PLAY,
+					{"player": player, "prepared": false}
+				)
 			game_manager.notify_spell_played(player, spell)
 			(spell as SpellCard).resolve_from_command(game_manager, command)
 			if (spell as SpellCard).should_go_to_graveyard() and spell.current_zone != player.graveyard_zone:
@@ -811,7 +823,9 @@ func _process_command_impl(command: Dictionary) -> bool:
 					move_failed.emit("Cannot afford " + charm_card.card_name + "!")
 					return false
 			charm_card.resolve(game_manager, charm_target)
-			if charm_card.current_zone != null and charm_card.current_zone != charm_card.card_owner.graveyard_zone:
+			if charm_card.goes_to_graveyard_after_use() \
+					and charm_card.current_zone != null \
+					and charm_card.current_zone != charm_card.card_owner.graveyard_zone:
 				charm_card.card_owner.move_card(charm_card, charm_card.card_owner.graveyard_zone)
 			move_validated.emit(command)
 			return true
@@ -1050,6 +1064,39 @@ func _process_command_impl(command: Dictionary) -> bool:
 						and pcr_charm_card.current_zone != pcr_charm_card.card_owner.graveyard_zone:
 					pcr_charm_card.card_owner.move_card(pcr_charm_card, pcr_charm_card.card_owner.graveyard_zone)
 			game_manager.push_to_stack(pcr_action)
+			move_validated.emit(command)
+			return true
+		"play_priority_ability":
+			var pra_source_uid: String = command.get("source_uid", "")
+			var pra_source := game_manager.get_card_by_uid(pra_source_uid)
+			if pra_source == null:
+				move_failed.emit("play_priority_ability: source card not found")
+				return false
+			if game_manager.action_stack.is_empty():
+				move_failed.emit("play_priority_ability: no action on stack")
+				return false
+			if not pra_source.has_method("activate"):
+				move_failed.emit("play_priority_ability: source card has no activatable ability")
+				return false
+			if not game_manager.can_card_respond_to_priority(pra_source, pra_source.card_owner):
+				move_failed.emit("play_priority_ability: source cannot respond right now")
+				return false
+			var pra_target: Card = null
+			var pra_target_uid: String = command.get("target_uid", "")
+			if pra_target_uid != "":
+				pra_target = game_manager.get_card_by_uid(pra_target_uid)
+			var pra_action := CardAction.new()
+			pra_action.type = CardAction.Type.ABILITY
+			pra_action.source_player = pra_source.card_owner
+			pra_action.card = pra_source
+			pra_action.target = pra_target
+			pra_action.response_to = game_manager.action_stack.back()
+			pra_action.resolve_callback = func() -> void:
+				if pra_target != null:
+					pra_source.activate(game_manager, pra_target)
+				else:
+					pra_source.activate(game_manager)
+			game_manager.push_to_stack(pra_action)
 			move_validated.emit(command)
 			return true
 		"priority_pass":

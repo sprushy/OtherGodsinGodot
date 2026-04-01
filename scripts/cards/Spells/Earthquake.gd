@@ -14,7 +14,7 @@ func _init() -> void:
 	culture = "Neutral"
 	artist = "Lorinda Tomko"
 	art_path = "res://images/card_art/spells/EarthquakeAIEdit.png"
-	ability_text = "Destroy all structures and face-up machines on the field."
+	ability_text = "Destroy all structures and face-up non-aerial machines on the field."
 
 func resolve(game_manager: GameManager, _target = null) -> void:
 	if game_manager == null:
@@ -26,11 +26,11 @@ func resolve(game_manager: GameManager, _target = null) -> void:
 				if _is_doomed_card(card):
 					doomed_cards.append(card)
 	if doomed_cards.is_empty():
-		print("Earthquake found no structures or face-up machines to destroy.")
+		print("Earthquake found no structures or face-up non-aerial machines to destroy.")
 		return
 	for doomed_card in doomed_cards:
 		game_manager.request_send_to_graveyard(doomed_card, Callable(), false, true)
-	print("Earthquake destroys all structures and face-up machines on the field.")
+	print("Earthquake destroys all structures and face-up non-aerial machines on the field.")
 
 func _is_doomed_card(card: Card) -> bool:
 	if card == null:
@@ -39,4 +39,4 @@ func _is_doomed_card(card: Card) -> bool:
 		return false
 	if card.card_type == Card.CardType.STRUCTURE:
 		return true
-	return card.has_type("Machine") and not card.is_stealth
+	return card.has_type("Machine") and not card.has_type("Aerial") and not card.is_stealth

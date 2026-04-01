@@ -201,8 +201,8 @@ var _pending_structure_bonus_structure: Card = null
 var _awaiting_altar_void_payment: bool = false
 var _altar_pending_power: AltarOfDreams = null
 var _altar_void_targets_chosen: Array[Card] = []
-var _pending_demiurge_spell = null  # ApollyonsDemiurge — untyped for duck typing
-var _pending_blot_spell = null  # BlotSacrifice — untyped for duck typing
+var _pending_demiurge_spell = null  # ApollyonsDemiurge â€” untyped for duck typing
+var _pending_blot_spell = null  # BlotSacrifice â€” untyped for duck typing
 var _pending_blot_sacrifice_target: Card = null
 var _pending_blot_selected_creatures: Array[Card] = []
 var _pending_blot_display_zone: Zone = null
@@ -225,6 +225,12 @@ var _pending_wolf_master_source: Card = null
 var _pending_wolf_master_summon: Card = null
 var _pending_wolf_master_mode: String = ""
 var _pending_hati_prompts: Array[Hati] = []
+var _declined_hati_prompts: Array[Hati] = []
+var _active_hati_prompt: Hati = null
+var _pending_huginn_prime_prompts: Array[Huginn] = []
+var _active_huginn_prime_prompt: Huginn = null
+var _pending_humbaba_prompts: Array[HumbabaTheTerrible] = []
+var _active_humbaba_prompt: HumbabaTheTerrible = null
 var _pending_hati_summon: Hati = null
 var _pending_hati_mode: String = ""
 var _pending_hati_sacrifice: Card = null
@@ -238,10 +244,21 @@ var _pending_creature_play_resolver: Callable = Callable()
 var _pending_en_hedu_anna: Card = null
 var _pending_harii_shaman: HariiShamanScript = null
 var _pending_harii_shaman_target: Card = null
+var _pending_kur_jara: KurJara = null
+var _pending_kur_jara_selected: Array[Card] = []
+var _pending_hunting_tactics_power: HuntingTactics = null
+var _pending_hunting_tactics_attacker: Card = null
+var _pending_hunting_tactics_supporters: Array[Card] = []
+var _pending_key_of_solomon: KeyOfSolomon = null
+var _pending_kos_sacrifice: Card = null
+var _pending_kos_selected_demons: Array[Card] = []
+var _pending_harii_jarl: HariiJarl = null
+var _pending_harii_jarl_choices: Array[Card] = []
 var _pending_erlqueens_nightingale: ErlqueensNightingaleScript = null
 var _hati_prompt_panel: Control = null
 var _skoll_prompt_panel: Control = null
 var _gala_tura_prompt_panel: Control = null
+var _kur_jara_prompt_panel: Control = null
 var _habrok_breakout_prompt_panel: Control = null
 var _pending_gala_tura: Card = null
 var _pending_gala_tura_selected: Array[Card] = []
@@ -289,6 +306,7 @@ var _action_log_popup: PanelContainer = null
 var _action_log_popup_view: RichTextLabel = null
 var _center_action_panel: VBoxContainer = null
 var _board_separator_line: ColorRect = null
+var _auto_priority_toggle: CheckButton = null
 var _sacrifice_cursor_texture: Texture2D = null
 var _devour_cursor_texture: Texture2D = null
 var _silence_cursor_texture: Texture2D = null
@@ -316,15 +334,20 @@ const BOARD_MAIN_COLUMN_COUNT := 7.0
 const BOARD_ROW_COUNT := 4.0
 const CENTER_PANEL_SECTION_GAP := 2
 const BOARD_SEPARATOR_HEIGHT := 4
-const BOARD_SIZE_TRIM := 8.0
+const BOARD_SIZE_TRIM := 4.0
 const HAND_DOCK_HEIGHT := 118.0
 const HAND_CARD_PEEK_OVERLAP := 14.0
 const HAND_CARD_EXPOSED_HEIGHT := 100.0
 const HAND_LAYOUT_RESERVED := 0.0
+const PREFERRED_BOARD_ZONE_EXTENT := 196.0
 const HAND_OVERLAY_SIDE_PADDING := 18.0
 const HAND_OVERLAY_BOTTOM_PADDING := 4.0
-const LEFT_PANEL_MIN_WIDTH := 164.0
-const BOARD_RIGHT_NUDGE := 12.0
+const LEFT_PANEL_MIN_WIDTH := 136.0
+const BOARD_RIGHT_NUDGE := 10.0
+const BOARD_HORIZONTAL_OFFSET := -2.0
+const ENEMY_BOARD_STRETCH_RATIO := 0.82
+const PLAYER_BOARD_STRETCH_RATIO := 1.18
+const BOARD_WIDTH_TRIM := 8.0
 const SACRIFICE_CURSOR_TARGET_HEIGHT := 96
 const SACRIFICE_CURSOR_HOTSPOT_RATIO := Vector2(0.03, 0.80)
 const DEVOUR_CURSOR_TARGET_HEIGHT := 96
@@ -340,8 +363,8 @@ const SACRIFICE_CURSOR_SHAPES := [
 	Input.CURSOR_POINTING_HAND,
 	Input.CURSOR_HELP,
 ]
-const ACTION_LOG_MIN_WIDTH := 188.0
-const ACTION_LOG_PREVIEW_HEIGHT := 156.0
+const ACTION_LOG_MIN_WIDTH := 126.0
+const ACTION_LOG_PREVIEW_HEIGHT := 92.0
 const ACTION_LOG_FONT_SIZE := 11
 const ACTION_LOG_LINE_SEPARATION := 4
 const ACTION_LOG_POPUP_WIDTH := 420.0
@@ -349,12 +372,16 @@ const ACTION_LOG_POPUP_HEIGHT := 320.0
 const ACTION_LOG_LEFT_INSET := 6
 const TURN_CHOICE_TOP_GAP := 10.0
 const ZONE_INFO_ICON_SIZE := 74.0
-const CENTER_ACTION_PANEL_WIDTH := 138.0
-const CENTER_ACTION_PANEL_HEIGHT := 114.0
-const CENTER_ACTION_BUTTON_HEIGHT := 28.0
-const RIGHT_PANEL_MIN_WIDTH := 148.0
+const CENTER_ACTION_PANEL_WIDTH := 104.0
+const CENTER_ACTION_PANEL_HEIGHT := 98.0
+const CENTER_ACTION_BUTTON_HEIGHT := 24.0
+const CENTER_ACTION_PANEL_RIGHT_OVERHANG := 10.0
+const RIGHT_PANEL_MIN_WIDTH := 100.0
 const RIGHT_PANEL_CONTROL_GAP := 6
 const RIGHT_PANEL_TEXT_FONT_SIZE := 10
+const AUTO_PRIORITY_TOGGLE_WIDTH := 118.0
+const LEFT_LOG_VERTICAL_BIAS := 8.0
+const CENTER_ACTION_FONT_SIZE := 9
 
 func _is_turn_choice_pending() -> bool:
 	return choice_container.visible
@@ -370,6 +397,17 @@ func _can_activate_before_turn_choice(card: Card) -> bool:
 
 func _reject_pre_turn_action() -> void:
 	action_label.text = "Finish resolving upkeep before taking other actions."
+
+func _has_active_modal_prompt() -> bool:
+	return (_zone_overlay != null and is_instance_valid(_zone_overlay)) \
+		or (_retreat_prompt_panel != null and is_instance_valid(_retreat_prompt_panel)) \
+		or (_resurrection_panel != null and is_instance_valid(_resurrection_panel)) \
+		or (_hati_prompt_panel != null and is_instance_valid(_hati_prompt_panel)) \
+		or (_skoll_prompt_panel != null and is_instance_valid(_skoll_prompt_panel)) \
+		or (_kur_jara_prompt_panel != null and is_instance_valid(_kur_jara_prompt_panel))
+
+func _reject_modal_prompt_action() -> void:
+	action_label.text = "Finish resolving the current prompt before taking other actions."
 
 func _promote_transient_ui(control: Control, overlay_z_index: int = TRANSIENT_UI_Z_INDEX) -> void:
 	if control == null:
@@ -491,15 +529,19 @@ func _ready() -> void:
 	choice_container.visible = false
 	end_turn_button.visible = false
 	placement_container.visible = false
-	board_container.size_flags_vertical = Control.SIZE_FILL
-	enemy_board_container.size_flags_vertical = Control.SIZE_FILL
+	board_container.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	enemy_board_container.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	board_container.size_flags_stretch_ratio = PLAYER_BOARD_STRETCH_RATIO
+	enemy_board_container.size_flags_stretch_ratio = ENEMY_BOARD_STRETCH_RATIO
+	board_container.alignment = BoxContainer.ALIGNMENT_BEGIN
+	enemy_board_container.alignment = BoxContainer.ALIGNMENT_END
 	top_spacer.size_flags_vertical = 0
 	hand_container.size_flags_vertical = 0
 	hand_container.visible = false
 	center_panel.add_theme_constant_override("separation", CENTER_PANEL_SECTION_GAP)
 	top_spacer.custom_minimum_size.y = 0
 	board_separator.custom_minimum_size.y = BOARD_SEPARATOR_HEIGHT
-	board_separator.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	board_separator.size_flags_horizontal = Control.SIZE_SHRINK_END
 	board_separator.clip_contents = false
 	board_separator.mouse_filter = Control.MOUSE_FILTER_PASS
 	board_separator.add_theme_stylebox_override("panel", StyleBoxEmpty.new())
@@ -521,16 +563,19 @@ func _ready() -> void:
 	defensive_stance_btn.pressed.connect(_on_defensive_stance_pressed)
 	stealth_mode_btn.pressed.connect(_on_stealth_mode_pressed)
 
-	var priority_toggle := CheckButton.new()
-	priority_toggle.name = "AutoPriorityToggle"
-	priority_toggle.text = "Auto Priority"
-	priority_toggle.button_pressed = auto_priority
-	priority_toggle.custom_minimum_size = Vector2(RIGHT_PANEL_MIN_WIDTH - 20.0, 24.0)
-	priority_toggle.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
-	priority_toggle.add_theme_font_size_override("font_size", RIGHT_PANEL_TEXT_FONT_SIZE)
-	priority_toggle.toggled.connect(func(on: bool) -> void: auto_priority = on)
-
-	$MainHBox/RightPanel.add_child(priority_toggle)
+	_auto_priority_toggle = CheckButton.new()
+	_auto_priority_toggle.name = "AutoPriorityToggle"
+	_auto_priority_toggle.text = "Auto Priority"
+	_auto_priority_toggle.button_pressed = auto_priority
+	_auto_priority_toggle.custom_minimum_size = Vector2(AUTO_PRIORITY_TOGGLE_WIDTH, 24.0)
+	_auto_priority_toggle.add_theme_font_size_override("font_size", RIGHT_PANEL_TEXT_FONT_SIZE)
+	_auto_priority_toggle.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
+	_auto_priority_toggle.offset_left = -132.0
+	_auto_priority_toggle.offset_top = -28.0
+	_auto_priority_toggle.offset_right = -16.0
+	_auto_priority_toggle.offset_bottom = -2.0
+	_auto_priority_toggle.toggled.connect(func(on: bool) -> void: auto_priority = on)
+	add_child(_auto_priority_toggle)
 	_setup_center_action_panel()
 	if not board_container.resized.is_connected(_on_board_layout_resized):
 		board_container.resized.connect(_on_board_layout_resized)
@@ -543,6 +588,7 @@ func _ready() -> void:
 	_setup_action_log()
 	_capture_action_log_message(true)
 	_update_match_side_panel_layout()
+	call_deferred("_apply_board_horizontal_offset")
 
 	_restore_default_selection_cursor()
 
@@ -551,7 +597,10 @@ func _exit_tree() -> void:
 	_restore_default_selection_cursor()
 
 func _is_sacrifice_cursor_mode_active() -> bool:
-	return _awaiting_creature_sacrifice or _is_blot_sacrifice_target_selection_active()
+	return _awaiting_creature_sacrifice \
+		or _is_blot_sacrifice_target_selection_active() \
+		or _is_kos_sacrifice_target_selection_active() \
+		or _is_hati_moon_hunt_sacrifice_selection_active()
 
 func _is_devour_cursor_mode_active() -> bool:
 	return _has_pending_click_selection() and _get_pending_target_selection_name().contains("Devour")
@@ -856,35 +905,53 @@ func _sync_sacrifice_cursor() -> void:
 	_restore_default_selection_cursor()
 
 func _setup_center_action_panel() -> void:
-	if right_panel == null:
+	if board_separator == null:
 		return
+	if turn_label != null:
+		_reparent_control(turn_label, self)
+	if end_turn_button != null:
+		_reparent_control(end_turn_button, self)
+	if all_attack_btn != null:
+		_reparent_control(all_attack_btn, self)
 	if _center_action_panel != null and is_instance_valid(_center_action_panel):
 		_center_action_panel.queue_free()
 	_center_action_panel = null
 	if _board_separator_line != null and is_instance_valid(_board_separator_line):
 		_board_separator_line.queue_free()
 	_board_separator_line = null
-	_reparent_control(turn_label, right_panel)
-	_reparent_control(end_turn_button, right_panel)
-	_reparent_control(all_attack_btn, right_panel)
-	var insert_index := right_panel.get_children().find(right_bottom_spacer)
-	if insert_index < 0:
-		insert_index = right_panel.get_child_count()
-	right_panel.move_child(turn_label, insert_index)
-	right_panel.move_child(end_turn_button, insert_index + 1)
-	right_panel.move_child(all_attack_btn, insert_index + 2)
-	turn_label.custom_minimum_size = Vector2(RIGHT_PANEL_MIN_WIDTH - 4.0, 24.0)
+	_board_separator_line = ColorRect.new()
+	_board_separator_line.name = "BoardSeparatorLine"
+	_board_separator_line.color = Color(0.31, 0.37, 0.34, 1.0)
+	_board_separator_line.visible = false
+	_board_separator_line.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	board_separator.add_child(_board_separator_line)
+	_center_action_panel = VBoxContainer.new()
+	_center_action_panel.name = "CenterActionPanel"
+	_center_action_panel.custom_minimum_size = Vector2(CENTER_ACTION_PANEL_WIDTH, CENTER_ACTION_PANEL_HEIGHT)
+	_center_action_panel.add_theme_constant_override("separation", RIGHT_PANEL_CONTROL_GAP)
+	_center_action_panel.mouse_filter = Control.MOUSE_FILTER_PASS
+	_center_action_panel.z_index = 1
+	board_separator.add_child(_center_action_panel)
+	_reparent_control(turn_label, _center_action_panel)
+	_reparent_control(end_turn_button, _center_action_panel)
+	_reparent_control(all_attack_btn, _center_action_panel)
+	turn_label.custom_minimum_size = Vector2(CENTER_ACTION_PANEL_WIDTH, 22.0)
 	turn_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	turn_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	turn_label.add_theme_font_size_override("font_size", RIGHT_PANEL_TEXT_FONT_SIZE)
-	end_turn_button.custom_minimum_size = Vector2(RIGHT_PANEL_MIN_WIDTH - 4.0, CENTER_ACTION_BUTTON_HEIGHT)
+	turn_label.add_theme_font_size_override("font_size", CENTER_ACTION_FONT_SIZE)
+	end_turn_button.custom_minimum_size = Vector2(CENTER_ACTION_PANEL_WIDTH, CENTER_ACTION_BUTTON_HEIGHT)
 	end_turn_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	end_turn_button.add_theme_font_size_override("font_size", RIGHT_PANEL_TEXT_FONT_SIZE)
-	all_attack_btn.custom_minimum_size = Vector2(RIGHT_PANEL_MIN_WIDTH - 4.0, CENTER_ACTION_BUTTON_HEIGHT)
+	end_turn_button.add_theme_font_size_override("font_size", CENTER_ACTION_FONT_SIZE)
+	all_attack_btn.custom_minimum_size = Vector2(CENTER_ACTION_PANEL_WIDTH, CENTER_ACTION_BUTTON_HEIGHT)
 	all_attack_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	all_attack_btn.add_theme_font_size_override("font_size", RIGHT_PANEL_TEXT_FONT_SIZE)
-	right_top_spacer.visible = true
-	right_bottom_spacer.visible = true
+	all_attack_btn.text = "Attack All"
+	all_attack_btn.tooltip_text = "All Attack Followers"
+	all_attack_btn.add_theme_font_size_override("font_size", CENTER_ACTION_FONT_SIZE)
+	right_top_spacer.visible = false
+	right_bottom_spacer.visible = false
+	stats_container.visible = false
+	right_panel.visible = false
+	_update_center_action_panel_layout()
 
 func _reparent_control(node: Control, new_parent: Control) -> void:
 	if node == null or new_parent == null:
@@ -897,12 +964,12 @@ func _reparent_control(node: Control, new_parent: Control) -> void:
 func _update_center_action_panel_layout() -> void:
 	if board_separator == null or _center_action_panel == null:
 		return
-	_center_action_panel.size = _center_action_panel.custom_minimum_size
+	_center_action_panel.size = _center_action_panel.get_combined_minimum_size()
 	if _board_separator_line != null and is_instance_valid(_board_separator_line):
 		_board_separator_line.position = Vector2.ZERO
 		_board_separator_line.size = Vector2(_get_separator_line_width(), BOARD_SEPARATOR_HEIGHT)
 	_center_action_panel.position = Vector2(
-		maxf(0.0, (_get_separator_line_width() - _center_action_panel.size.x) * 0.5),
+		maxf(0.0, _get_board_row_width() - _center_action_panel.size.x + CENTER_ACTION_PANEL_RIGHT_OVERHANG),
 		BOARD_SEPARATOR_HEIGHT * 0.5 - _center_action_panel.size.y * 0.5
 	)
 
@@ -979,6 +1046,8 @@ func _setup_action_log() -> void:
 	_refresh_action_log()
 
 func _get_right_action_stack_height() -> float:
+	if _center_action_panel != null and is_instance_valid(_center_action_panel):
+		return 0.0
 	if turn_label == null or end_turn_button == null or all_attack_btn == null or right_panel == null:
 		return 0.0
 	var separation: float = float(right_panel.get_theme_constant("separation"))
@@ -989,10 +1058,14 @@ func _get_right_action_stack_height() -> float:
 
 func _update_side_panel_layout() -> void:
 	var stats_height: float = BoardZoneUI.get_zone_extent()
-	left_top_spacer.custom_minimum_size.y = stats_height
-	left_bottom_spacer.custom_minimum_size.y = stats_height
+	left_top_spacer.custom_minimum_size.y = stats_height + LEFT_LOG_VERTICAL_BIAS
+	left_bottom_spacer.custom_minimum_size.y = maxf(0.0, stats_height - LEFT_LOG_VERTICAL_BIAS)
 	left_top_spacer.size_flags_vertical = 0
 	left_bottom_spacer.size_flags_vertical = 0
+	if right_panel == null or not right_panel.visible:
+		right_top_spacer.custom_minimum_size.y = 0.0
+		right_bottom_spacer.custom_minimum_size.y = 0.0
+		return
 	var action_stack_height: float = _get_right_action_stack_height()
 	var board_midpoint: float = stats_height * 2.0 + BOARD_SEPARATOR_HEIGHT * 0.5
 	right_top_spacer.custom_minimum_size.y = maxf(0.0, board_midpoint - action_stack_height * 0.5)
@@ -1241,12 +1314,12 @@ func start_game(
 		player2.card_moved.connect(_on_local_player_card_moved)
 	
 	for i in range(0):
-		print("Ã‚Â  Drawing card ", i, " for P1")
+		print("Ãƒâ€šÃ‚Â  Drawing card ", i, " for P1")
 		player1.draw_card()
-		print("Ã‚Â  P1 hand size now: ", player1.hand_zone.cards.size())
-		print("Ã‚Â  Drawing card ", i, " for P2")
+		print("Ãƒâ€šÃ‚Â  P1 hand size now: ", player1.hand_zone.cards.size())
+		print("Ãƒâ€šÃ‚Â  Drawing card ", i, " for P2")
 		player2.draw_card()
-		print("Ã‚Â  P2 hand size now: ", player2.hand_zone.cards.size())
+		print("Ãƒâ€šÃ‚Â  P2 hand size now: ", player2.hand_zone.cards.size())
 	
 	
 	# Pin the server's view to Player 1 so the board never flips to P2's perspective
@@ -1430,7 +1503,7 @@ func _get_board_zone_extent_target() -> float:
 	if center_panel == null:
 		return base_extent
 
-	var available_width: float = center_panel.size.x - ZONE_INFO_ICON_SIZE - BOARD_ZONE_COLUMN_GAP * BOARD_MAIN_COLUMN_COUNT
+	var available_width: float = center_panel.size.x - ZONE_INFO_ICON_SIZE - BOARD_ZONE_COLUMN_GAP * BOARD_MAIN_COLUMN_COUNT - BOARD_WIDTH_TRIM
 	if available_width <= 0.0:
 		return base_extent
 
@@ -1466,53 +1539,55 @@ func _update_board_zone_extent() -> void:
 		# Zone wrappers cache their minimum sizes on creation, so a post-startup
 		# board resize needs a full rebuild rather than an in-place repaint.
 		_invalidate_cached_board_layouts()
+	call_deferred("_apply_board_horizontal_offset")
 	call_deferred("_update_center_action_panel_layout")
 
 func _on_board_layout_resized() -> void:
 	if _fan_container != null and is_instance_valid(_fan_container):
 		call_deferred("_layout_fan")
+	call_deferred("_apply_board_horizontal_offset")
 	_update_match_side_panel_layout()
 	if game_manager == null:
 		return
 	if not is_equal_approx(_get_board_zone_extent_target(), BoardZoneUI.get_zone_extent()):
 		_request_ui_refresh()
 
+func _apply_board_horizontal_offset() -> void:
+	if enemy_board_container != null:
+		enemy_board_container.position.x = BOARD_HORIZONTAL_OFFSET
+	if board_separator != null:
+		board_separator.position.x = BOARD_HORIZONTAL_OFFSET
+	if board_container != null:
+		board_container.position.x = BOARD_HORIZONTAL_OFFSET
+
 func _update_match_side_panel_layout() -> void:
 	if left_panel == null or right_panel == null:
 		return
-	var viewport_width := size.x
 	var viewport_height := size.y
-	if viewport_width <= 0.0 or viewport_height <= 0.0:
+	if viewport_height <= 0.0:
 		return
 
-	var left_width := clampf(floor(viewport_width * 0.17), LEFT_PANEL_MIN_WIDTH + BOARD_RIGHT_NUDGE, 286.0)
-	var right_width := clampf(floor(viewport_width * 0.135), RIGHT_PANEL_MIN_WIDTH, 236.0)
-	if viewport_width < 1500.0:
-		left_width = maxf(left_width, 212.0)
-		right_width = maxf(right_width, 172.0)
-	if viewport_width < 1260.0:
-		left_width = maxf(left_width, 224.0)
-		right_width = maxf(right_width, 184.0)
+	var left_width := LEFT_PANEL_MIN_WIDTH + BOARD_RIGHT_NUDGE
+	var right_width := 0.0 if not right_panel.visible else RIGHT_PANEL_MIN_WIDTH
 
 	left_panel.custom_minimum_size.x = left_width
 	right_panel.custom_minimum_size.x = right_width
 	if action_label != null:
-		action_label.custom_minimum_size.x = maxf(ACTION_LOG_MIN_WIDTH, left_width - 20.0)
+		action_label.custom_minimum_size.x = ACTION_LOG_MIN_WIDTH
 
-	if turn_label != null:
+	if turn_label != null and turn_label.get_parent() == right_panel:
 		turn_label.custom_minimum_size.x = right_width - 4.0
-	if end_turn_button != null:
+	if end_turn_button != null and end_turn_button.get_parent() == right_panel:
 		end_turn_button.custom_minimum_size.x = right_width - 4.0
-	if all_attack_btn != null:
+	if all_attack_btn != null and all_attack_btn.get_parent() == right_panel:
 		all_attack_btn.custom_minimum_size.x = right_width - 4.0
 
-	var priority_toggle := right_panel.get_node_or_null("AutoPriorityToggle") as CheckButton
-	if priority_toggle != null:
-		priority_toggle.custom_minimum_size.x = right_width - 20.0
+	if _auto_priority_toggle != null and is_instance_valid(_auto_priority_toggle):
+		_auto_priority_toggle.custom_minimum_size.x = AUTO_PRIORITY_TOGGLE_WIDTH
 
 	if _action_log_view != null and is_instance_valid(_action_log_view):
 		var log_height := clampf(floor(viewport_height * 0.22), ACTION_LOG_PREVIEW_HEIGHT, 248.0)
-		_action_log_view.custom_minimum_size = Vector2(maxf(ACTION_LOG_MIN_WIDTH, left_width - 12.0), log_height)
+		_action_log_view.custom_minimum_size = Vector2(ACTION_LOG_MIN_WIDTH, log_height)
 
 func _get_zone_ui_for_zone(zone: Zone) -> BoardZoneUI:
 	if zone == null:
@@ -1611,6 +1686,20 @@ func _find_nearest_stack_display_zone(player: Player, reference_zone: Zone) -> Z
 		return best_zone
 	return _find_available_stack_display_zone(player)
 
+func _can_use_stack_display_zone(zone: Zone, player: Player) -> bool:
+	if zone == null or player == null:
+		return false
+	if not zone.is_board_zone():
+		return false
+	if zone.zone_owner != player:
+		return false
+	if not zone.cards.is_empty():
+		return false
+	for action in game_manager.action_stack:
+		if action != null and action.display_zone == zone:
+			return false
+	return true
+
 func _resolve_stack_display_zone(source_card: Card, source_player: Player) -> Zone:
 	if source_card != null and source_card.current_zone != null and source_card.current_zone.is_board_zone():
 		return source_card.current_zone
@@ -1628,7 +1717,7 @@ func _assign_stack_display_zone(action: CardAction) -> void:
 func _resolve_pending_display_zone(card: Card, preferred_zone: Zone = null) -> Zone:
 	var source_player := card.card_owner if card != null and card.card_owner != null else game_manager.current_player
 	if preferred_zone != null and preferred_zone.is_board_zone():
-		if preferred_zone.zone_owner == source_player:
+		if _can_use_stack_display_zone(preferred_zone, source_player):
 			return preferred_zone
 		var nearest_zone := _find_nearest_stack_display_zone(source_player, preferred_zone)
 		if nearest_zone != null:
@@ -1684,6 +1773,12 @@ func _is_blot_selection_active() -> bool:
 func _is_blot_sacrifice_target_selection_active() -> bool:
 	return _has_pending_click_selection() and _pending_click_selection_source != null and (_pending_click_selection_source is BlotSacrifice or _pending_click_selection_source.card_name == "Blot Sacrifice")
 
+func _is_kos_sacrifice_target_selection_active() -> bool:
+	return _has_pending_click_selection() and _pending_click_selection_source is KeyOfSolomon
+
+func _is_hati_moon_hunt_sacrifice_selection_active() -> bool:
+	return _pending_hati_summon != null and _pending_hati_sacrifice == null
+
 func _cancel_blot_sacrifice_target_selection(reason: String) -> bool:
 	if not _is_blot_sacrifice_target_selection_active():
 		return false
@@ -1708,7 +1803,7 @@ func _get_blot_remaining_levels() -> int:
 	_sanitize_blot_selected_creatures()
 	var used_levels: int = 0
 	for chosen_card in _pending_blot_selected_creatures:
-		used_levels += chosen_card.level
+		used_levels += chosen_card.get_effective_level()
 	return maxi(0, BlotSacrifice.MAX_SUMMON_LEVELS - used_levels)
 
 func _get_blot_valid_choices(spell) -> Array[Card]:
@@ -1840,22 +1935,27 @@ func _get_hand_card_display_mana_cost(card: Card) -> int:
 	var hand_player := _get_visible_hand_player()
 	if hand_player == null:
 		return card.mana_cost
-	if game_manager.card_uses_summon_cost_rules(card):
-		return game_manager.get_card_summon_mana_cost(hand_player, card)
-	return card.mana_cost
+	return game_manager.get_card_play_mana_cost(hand_player, card)
 
 func _get_hand_card_cost_adjustment_lines(card: Card) -> Array[String]:
 	var lines: Array[String] = []
 	if card == null or game_manager == null:
 		return lines
 	var hand_player := _get_visible_hand_player()
-	if hand_player == null or not game_manager.card_uses_summon_cost_rules(card):
+	if hand_player == null:
 		return lines
+	if game_manager.card_uses_summon_cost_rules(card):
+		return card.get_cost_adjustment_lines(
+			card.mana_cost,
+			Card.COST_KIND_CREATURE_SUMMON,
+			game_manager,
+			{"player": hand_player}
+		)
 	return card.get_cost_adjustment_lines(
 		card.mana_cost,
-		Card.COST_KIND_CREATURE_SUMMON,
+		Card.COST_KIND_HAND_PLAY,
 		game_manager,
-		{"player": hand_player}
+		{"player": hand_player, "prepared": false}
 	)
 
 func _get_graveyard_hand_proxy_cards(hand_player: Player) -> Array[Card]:
@@ -1888,10 +1988,13 @@ func _get_graveyard_hand_proxy_display_mana_cost(card: Card) -> int:
 
 func draw_hand() -> void:
 	if _fan_container != null and is_instance_valid(_fan_container):
-		remove_child(_fan_container)
+		if _fan_container.get_parent() == self:
+			remove_child(_fan_container)
 		_fan_container.queue_free()
 	_fan_container = null
 	_hand_visual_cards.clear()
+	if hand_container != null:
+		hand_container.visible = false
 	var hand_player := _get_visible_hand_player()
 	if hand_player == null:
 		return
@@ -1901,6 +2004,7 @@ func draw_hand() -> void:
 
 	_fan_container = Control.new()
 	_fan_container.name = "HandOverlay"
+	_fan_container.custom_minimum_size = Vector2(180.0, HAND_DOCK_HEIGHT)
 	_fan_container.mouse_filter = Control.MOUSE_FILTER_PASS
 	_fan_container.clip_contents = false
 	_fan_container.z_index = TRANSIENT_UI_Z_INDEX - 10
@@ -1944,7 +2048,8 @@ func draw_hand() -> void:
 		_hand_visual_cards.append(vc)
 
 	if _hand_visual_cards.is_empty():
-		remove_child(_fan_container)
+		if _fan_container.get_parent() == self:
+			remove_child(_fan_container)
 		_fan_container.queue_free()
 		_fan_container = null
 		return
@@ -1990,7 +2095,7 @@ func _make_deck_panel(zone: Zone) -> Control:
 	const H := 110
 	var tex: Texture2D = load(CARD_BACK)
 
-	# Outer container Ã¢â‚¬â€ standard zone size, shadows go inward
+	# Outer container ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â standard zone size, shadows go inward
 	var outer := Control.new()
 	outer.custom_minimum_size = Vector2(W, H)
 	outer.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -2769,9 +2874,9 @@ func _on_power_pressed(power: PowerCard) -> void:
 		elif power.is_activation_locked(game_manager):
 			action_label.text = power.card_name + " cannot be activated this turn."
 		elif power.is_face_down:
-			action_label.text = power.card_name + " Ã¢â‚¬â€ needs " + str(power.mana_cost) + " mana to unlock."
+			action_label.text = power.card_name + " ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â needs " + str(power.mana_cost) + " mana to unlock."
 		else:
-			action_label.text = power.card_name + " Ã¢â‚¬â€ cannot activate right now."
+			action_label.text = power.card_name + " ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â cannot activate right now."
 
 func _show_breidablik_prompt(power: Breidablik) -> void:
 	_hide_breidablik_prompt()
@@ -3381,7 +3486,9 @@ func _get_pending_hati_moon_hunts_for_turn_end() -> Array[Hati]:
 
 func _maybe_prompt_hati_moon_hunt_before_end_turn() -> bool:
 	_hide_hati_prompt()
-	_pending_hati_prompts = _get_pending_hati_moon_hunts_for_turn_end()
+	_pending_hati_prompts = _get_pending_hati_moon_hunts_for_turn_end().filter(func(card: Hati) -> bool:
+		return card != null and card not in _declined_hati_prompts
+	)
 	if _pending_hati_prompts.is_empty():
 		return false
 	_show_next_hati_prompt()
@@ -3404,6 +3511,7 @@ func _show_hati_prompt(hati: Hati) -> void:
 	if hati == null:
 		_show_next_hati_prompt()
 		return
+	_active_hati_prompt = hati
 
 	var panel := PanelContainer.new()
 	panel.name = "HatiPromptPanel"
@@ -3473,6 +3581,8 @@ func _begin_hati_moon_hunt(hati: Hati, mode: String) -> void:
 	update_ui()
 
 func _resolve_hati_prompt_decline() -> void:
+	if _active_hati_prompt != null and is_instance_valid(_active_hati_prompt) and _active_hati_prompt not in _declined_hati_prompts:
+		_declined_hati_prompts.append(_active_hati_prompt)
 	_hide_hati_prompt()
 	action_label.text = "Moon Hunt declined."
 	update_ui()
@@ -3542,8 +3652,10 @@ func _clear_hati_moon_hunt_state() -> void:
 
 func _hide_hati_prompt() -> void:
 	if _hati_prompt_panel != null and is_instance_valid(_hati_prompt_panel):
+		_hati_prompt_panel.visible = false
 		_hati_prompt_panel.queue_free()
 	_hati_prompt_panel = null
+	_active_hati_prompt = null
 
 func _queue_skoll_turn_start_priority() -> void:
 	var skoll := _queued_skoll_turn_start_summon
@@ -3795,7 +3907,8 @@ func _show_card_selection_overlay(
 	cards: Array,
 	on_selected: Callable,
 	on_cancel: Callable = Callable(),
-	cursor_mode: String = ""
+	cursor_mode: String = "",
+	cancel_button_text: String = ""
 ) -> void:
 	if cards.is_empty():
 		action_label.text = title_text + ": no valid cards."
@@ -3876,6 +3989,18 @@ func _show_card_selection_overlay(
 				if callback.is_valid():
 					callback.call(captured)
 		)
+
+	if cancel_button_text.strip_edges() != "" and on_cancel.is_valid():
+		var decline_button := Button.new()
+		decline_button.text = cancel_button_text
+		decline_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		decline_button.pressed.connect(func() -> void:
+			var dismiss_callback := _overlay_card_dismissed
+			_dismiss_zone_overlay()
+			if dismiss_callback.is_valid():
+				dismiss_callback.call()
+		)
+		vbox.add_child(decline_button)
 
 	overlay.gui_input.connect(func(event: InputEvent) -> void:
 		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
@@ -4102,6 +4227,45 @@ func _begin_hand_permanent_hex_target_selection(hex: PermanentHexCard) -> void:
 	action_label.text = hex.card_name + ": click a creature to target."
 	update_ui()
 
+func _begin_bit_meseri_target_selection(spell: BitMeseri) -> void:
+	if spell == null or game_manager == null:
+		return
+	selected_card = spell
+	for vc in _hand_visual_cards:
+		vc.set_highlighted(vc.card_data == spell)
+	var valid_targets: Array[Card] = []
+	for player in game_manager.players:
+		if player == null:
+			continue
+		for zone in player.frontline_zones + player.reserve_zones:
+			for board_card in zone.cards:
+				if board_card == null:
+					continue
+				if board_card.card_type not in [Card.CardType.CREATURE, Card.CardType.STRUCTURE, Card.CardType.EQUIPMENT]:
+					continue
+				if game_manager.is_guardian_protected(board_card, spell):
+					continue
+				valid_targets.append(board_card)
+	if valid_targets.is_empty():
+		action_label.text = spell.card_name + " has no valid physical targets right now."
+		update_ui()
+		return
+	_begin_pending_click_selection(
+		spell.card_name,
+		spell,
+		func(clicked_card: Card) -> bool:
+			return clicked_card != null and clicked_card in valid_targets,
+		func(clicked_card: Card) -> void:
+			_cast_targeted_spell(spell, clicked_card),
+		func() -> void:
+			if selected_card == spell:
+				selected_card = null
+			action_label.text = "Cancelled " + spell.card_name + " target selection."
+			update_ui()
+	)
+	action_label.text = spell.card_name + ": click a creature, structure, or equipment to void it."
+	update_ui()
+
 func _queue_priority_hex_response_with_target(
 	hex: HexCard,
 	source_action: CardAction,
@@ -4250,7 +4414,17 @@ func _pay_hand_card_costs(card: Card, custom_pay_callback: Callable = Callable()
 		return false
 	if custom_pay_callback.is_valid():
 		return custom_pay_callback.call() == true
-	return card.pay_costs(card.card_owner, game_manager)
+	var mana_required := game_manager.get_card_play_mana_cost(card.card_owner, card, false)
+	if not card.pay_costs_with_mana_cost(card.card_owner, mana_required, game_manager):
+		return false
+	if not game_manager.card_uses_summon_cost_rules(card) and mana_required < card.mana_cost:
+		game_manager.claim_cost_adjustments(
+			card,
+			card.mana_cost,
+			Card.COST_KIND_HAND_PLAY,
+			{"player": card.card_owner, "prepared": false}
+		)
+	return true
 
 func _queue_power_activation_action(
 	power: PowerCard,
@@ -4582,6 +4756,7 @@ func _queue_charm_action(charm: CharmCard, triggering_action: CardAction = null,
 		game_manager.prepared_charms.erase(charm)
 		charm.is_prepared = false
 		charm.reveal(game_manager)
+		preferred_display_zone = charm.current_zone
 	var action := CardAction.new()
 	action.type = CardAction.Type.SPELL
 	action.source_player = charm.card_owner
@@ -4634,6 +4809,8 @@ func _on_local_player_card_moved(card: Card, from_zone: Zone, to_zone: Zone) -> 
 	if not _is_in_play_zone(to_zone):
 		return
 	if card.current_zone != to_zone:
+		return
+	if card.is_prepared or card.is_face_down:
 		return
 	if card.goes_to_graveyard_after_use():
 		return
@@ -4738,7 +4915,7 @@ func draw_board() -> void:
 
 	var board_row := HBoxContainer.new()
 	board_row.add_theme_constant_override("separation", int(BOARD_ZONE_COLUMN_GAP))
-	board_row.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	board_row.size_flags_horizontal = Control.SIZE_SHRINK_END
 	board_row.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	board_container.add_child(board_row)
 
@@ -4768,7 +4945,7 @@ func draw_board() -> void:
 
 	var reserve_row := HBoxContainer.new()
 	reserve_row.add_theme_constant_override("separation", int(BOARD_ZONE_COLUMN_GAP))
-	reserve_row.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	reserve_row.size_flags_horizontal = Control.SIZE_SHRINK_END
 	reserve_row.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	board_container.add_child(reserve_row)
 	reserve_row.add_child(_make_god_cluster(display_player.god_zone, display_player, false))
@@ -4820,7 +4997,7 @@ func draw_enemy_board() -> void:
 
 	var enemy_reserve_row := HBoxContainer.new()
 	enemy_reserve_row.add_theme_constant_override("separation", int(BOARD_ZONE_COLUMN_GAP))
-	enemy_reserve_row.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	enemy_reserve_row.size_flags_horizontal = Control.SIZE_SHRINK_END
 	enemy_reserve_row.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	enemy_board_container.add_child(enemy_reserve_row)
 	enemy_reserve_row.add_child(_make_god_cluster(enemy_player.god_zone, enemy_player, true))
@@ -4844,7 +5021,7 @@ func draw_enemy_board() -> void:
 
 	var enemy_row := HBoxContainer.new()
 	enemy_row.add_theme_constant_override("separation", int(BOARD_ZONE_COLUMN_GAP))
-	enemy_row.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	enemy_row.size_flags_horizontal = Control.SIZE_SHRINK_END
 	enemy_row.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	enemy_board_container.add_child(enemy_row)
 
@@ -4944,7 +5121,7 @@ func _on_hand_card_pressed(card: Card) -> void:
 	elif card.card_type == Card.CardType.SPELL:
 		placement_mode = ""
 		if card is BitMeseri:
-			action_label.text = "BitMeseri - Drag onto a creature or structure to void it"
+			_begin_bit_meseri_target_selection(card as BitMeseri)
 		elif card is Absence:
 			action_label.text = "Absence - click a Power or God Ability to target it, or drag onto one directly"
 		else:
@@ -4955,9 +5132,9 @@ func _on_hand_card_pressed(card: Card) -> void:
 	elif fenrir_hand_ability_available:
 		action_label.text = card.card_name + " selected - right-click for placement options or Wolf Master, or drag to place (S while dragging = stealth)"
 	elif card.card_type == Card.CardType.CREATURE and not card.is_god:
-		action_label.text = card.card_name + " selected Ã¢â‚¬â€ right-click for placement options, or drag to place (S while dragging = stealth)"
+		action_label.text = card.card_name + " selected ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â right-click for placement options, or drag to place (S while dragging = stealth)"
 	elif card.is_god:
-		action_label.text = card.card_name + " Ã¢â‚¬â€ God card, place in your God slot"
+		action_label.text = card.card_name + " ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â God card, place in your God slot"
 	# --- STRUCTURE UI CHANGE START ---
 	elif card.card_type == Card.CardType.STRUCTURE:
 		# Structures don't need mode selection, but we set placement_mode for the next step to trigger the placement logic
@@ -5088,7 +5265,7 @@ func _on_hand_card_right_clicked(card: Card) -> void:
 			return
 			selected_card = card
 			placement_mode = mode
-			action_label.text = card.card_name + " Ã¢â‚¬â€ click an empty zone to place (" + mode.to_upper() + ")"
+			action_label.text = card.card_name + " ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â click an empty zone to place (" + mode.to_upper() + ")"
 		)
 		vbox.add_child(btn)
 
@@ -5210,7 +5387,7 @@ func _on_empty_zone_pressed(zone: Zone) -> void:
 				action_label.text = card.card_name + " moved."
 				update_ui()
 				return
-		action_label.text = "Invalid move target Ã¢â‚¬â€ must be an adjacent empty zone."
+		action_label.text = "Invalid move target ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â must be an adjacent empty zone."
 		update_ui()
 		return
 	if selected_card == null:
@@ -5257,6 +5434,8 @@ func _on_empty_zone_pressed(zone: Zone) -> void:
 					_queue_deucalion_resolution(selected_card as DeucalionsInfants)
 				elif selected_card != null and (selected_card is BlotSacrifice or selected_card.card_name == "Blot Sacrifice"):
 					_show_blot_sacrifice_prompt(selected_card)
+				elif selected_card is KeyOfSolomon:
+					_show_kos_sacrifice_prompt(selected_card as KeyOfSolomon)
 				elif selected_card is Absence:
 					_prompt_absence_target_selection()
 				elif selected_card is CircleOfRebirth:
@@ -5800,6 +5979,54 @@ func _queue_first_sage_adapa_impact_prompt(card: FirstSageAdapa) -> void:
 	action_label.text = card.card_name + " impact waits on priority."
 	_offer_priority()
 
+func _queue_lailoken_reveal_prompt(card: Lailoken) -> void:
+	if card == null or game_manager == null:
+		return
+	var targets := card.get_valid_targets(game_manager)
+	if targets.is_empty():
+		return
+	var action := CardAction.new()
+	action.type = CardAction.Type.EVENT
+	action.source_player = card.card_owner
+	action.card = card
+	action.event_name = "lailoken_reveal"
+	action.event_speed = 0
+	action.resolve_callback = func() -> void:
+		var current_targets := card.get_valid_targets(game_manager)
+		if current_targets.is_empty():
+			var no_target_text := card.card_name + " found no prepared magical cards to drain."
+			if _stack_resolution_paused:
+				_resume_after_deferred_resolution(no_target_text)
+			else:
+				action_label.text = no_target_text
+				update_ui()
+			return
+
+		_pause_stack_resolution(card.card_owner)
+		var finish_magic_drain := func(result_text: String) -> void:
+			_resume_after_deferred_resolution(result_text)
+
+		if current_targets.size() == 1:
+			card.begin_magic_drain_reveal(game_manager, current_targets[0], finish_magic_drain)
+			return
+
+		_begin_pending_click_selection(
+			card.card_name,
+			card,
+			func(clicked_card: Card) -> bool:
+				return clicked_card != null and clicked_card in card.get_valid_targets(game_manager),
+			func(clicked_card: Card) -> void:
+				card.begin_magic_drain_reveal(game_manager, clicked_card, finish_magic_drain),
+			func() -> void:
+				_resume_after_deferred_resolution(card.card_name + " reveal fizzles.")
+		)
+		action_label.text = card.card_name + ": click a prepared magical card to destroy."
+		update_ui()
+	game_manager.push_to_stack(action)
+	update_ui()
+	action_label.text = card.card_name + " reveal waits on priority."
+	_offer_priority()
+
 func _queue_fourth_sage_enmegalamma_impact_prompt(card) -> void:
 	if card == null or game_manager == null:
 		return
@@ -5882,7 +6109,7 @@ func _begin_gugalanna_impact_targeting(card) -> void:
 				card.apply_celestial_charge(game_manager, null)
 				_resume_after_deferred_resolution(card.card_name + " skips Celestial Charge and stays on the field.")
 		)
-		action_label.text = card.card_name + ": click a target (Res 30+, slower Spd) — or press Cancel to skip."
+		action_label.text = card.card_name + ": click a target (Res 30+, slower Spd) â€” or press Cancel to skip."
 		update_ui()
 	game_manager.push_to_stack(action)
 	update_ui()
@@ -5935,6 +6162,281 @@ func _queue_giant_master_architect_impact_prompt(card) -> void:
 	update_ui()
 	action_label.text = card.card_name + " impact waits on priority."
 	_offer_priority()
+
+func _queue_humbaba_augury_reading_prompt(card: HumbabaTheTerrible) -> void:
+	if card == null or game_manager == null:
+		return
+	_pending_humbaba_prompts.append(card)
+	call_deferred("_show_next_humbaba_augury_prompt")
+
+func _show_next_humbaba_augury_prompt() -> void:
+	if _active_humbaba_prompt != null:
+		return
+	if game_manager == null:
+		_pending_humbaba_prompts.clear()
+		return
+	while not _pending_humbaba_prompts.is_empty():
+		var card = _pending_humbaba_prompts.pop_front()
+		if card == null:
+			continue
+		var current_targets: Array[Card] = card.get_augury_cards(game_manager)
+		if current_targets.is_empty():
+			action_label.text = card.card_name + " found no cards to read."
+			update_ui()
+			continue
+		if current_targets.size() == 1:
+			action_label.text = card.resolve_augury_reading(game_manager, current_targets[0])
+			update_ui()
+			continue
+		_active_humbaba_prompt = card
+		var on_choose_augury := func(chosen_card: Card) -> void:
+			var resolved_card := _active_humbaba_prompt
+			_active_humbaba_prompt = null
+			if resolved_card == null or game_manager == null:
+				call_deferred("_show_next_humbaba_augury_prompt")
+				return
+			action_label.text = resolved_card.resolve_augury_reading(game_manager, chosen_card)
+			update_ui()
+			call_deferred("_show_next_humbaba_augury_prompt")
+		var on_cancel_augury := func() -> void:
+			var resolved_card := _active_humbaba_prompt
+			_active_humbaba_prompt = null
+			if resolved_card == null or game_manager == null:
+				call_deferred("_show_next_humbaba_augury_prompt")
+				return
+			var fallback_targets: Array[Card] = resolved_card.get_augury_cards(game_manager)
+			if fallback_targets.is_empty():
+				action_label.text = resolved_card.card_name + " found no cards to read."
+			else:
+				action_label.text = resolved_card.resolve_augury_reading(game_manager, fallback_targets[0])
+			update_ui()
+			call_deferred("_show_next_humbaba_augury_prompt")
+		_show_card_selection_overlay(
+			"Choose a card to prime for " + card.card_name,
+			current_targets,
+			on_choose_augury,
+			on_cancel_augury
+		)
+		action_label.text = card.card_name + ": choose one of the top cards to prime."
+		update_ui()
+		return
+
+func _queue_huginn_perish_prime_prompt(card: Huginn) -> void:
+	if card == null or game_manager == null:
+		return
+	_pending_huginn_prime_prompts.append(card)
+	call_deferred("_show_next_huginn_perish_prime_prompt")
+
+func _show_next_huginn_perish_prime_prompt() -> void:
+	if _active_huginn_prime_prompt != null:
+		return
+	if game_manager == null:
+		_pending_huginn_prime_prompts.clear()
+		return
+	while not _pending_huginn_prime_prompts.is_empty():
+		var card = _pending_huginn_prime_prompts.pop_front()
+		if card == null:
+			continue
+		var current_targets: Array[Card] = card.get_valid_hex_targets()
+		if current_targets.is_empty():
+			action_label.text = "%s perished, but found no hex to prime." % card.card_name
+			update_ui()
+			continue
+		if not _is_player_local(card.card_owner):
+			action_label.text = card.resolve_perish_prime_choice(game_manager, current_targets[0])
+			update_ui()
+			continue
+		_active_huginn_prime_prompt = card
+		var on_choose_prime := func(chosen_hex: Card) -> void:
+			var resolved_card := _active_huginn_prime_prompt
+			_active_huginn_prime_prompt = null
+			if resolved_card == null or game_manager == null:
+				call_deferred("_show_next_huginn_perish_prime_prompt")
+				return
+			action_label.text = resolved_card.resolve_perish_prime_choice(game_manager, chosen_hex)
+			update_ui()
+			call_deferred("_show_next_huginn_perish_prime_prompt")
+		var on_cancel_prime := func() -> void:
+			var pending_card := _active_huginn_prime_prompt
+			_active_huginn_prime_prompt = null
+			if pending_card != null:
+				_pending_huginn_prime_prompts.insert(0, pending_card)
+			call_deferred("_show_next_huginn_perish_prime_prompt")
+		_show_card_selection_overlay(
+			"Choose a Hex to prime for " + card.card_name,
+			current_targets,
+			on_choose_prime,
+			on_cancel_prime
+		)
+		action_label.text = card.card_name + ": choose a Hex to prime."
+		update_ui()
+		return
+
+func _queue_harii_jarl_impact_prompt(card: HariiJarl) -> void:
+	if card == null or game_manager == null:
+		return
+	var targets := card.get_valid_warband_targets(game_manager)
+	if targets.is_empty():
+		return
+	var action := CardAction.new()
+	action.type = CardAction.Type.EVENT
+	action.source_player = card.card_owner
+	action.card = card
+	action.event_name = "harii_jarl_impact"
+	action.event_speed = 0
+	action.resolve_callback = func() -> void:
+		_pending_harii_jarl = card
+		_pending_harii_jarl_choices.clear()
+		_pause_stack_resolution(card.card_owner)
+		_prompt_harii_jarl_next_choice()
+	game_manager.push_to_stack(action)
+	update_ui()
+	action_label.text = card.card_name + " impact waits on priority."
+	_offer_priority()
+
+func _resolve_hunting_tactics_prompt(power: HuntingTactics, attacker: Card) -> void:
+	if power == null or attacker == null or game_manager == null:
+		if _stack_resolution_paused:
+			_resume_after_deferred_resolution("Hunting Tactics fizzles.")
+		else:
+			update_ui()
+		return
+	var current_supporters := power.get_support_choices(attacker)
+	if current_supporters.is_empty():
+		var no_support_text := "Hunting Tactics found no valid supporters for %s." % attacker.card_name
+		if _stack_resolution_paused:
+			_resume_after_deferred_resolution(no_support_text)
+		else:
+			action_label.text = no_support_text
+			update_ui()
+		return
+	if _executing_stack_action and not _stack_resolution_paused:
+		_pause_stack_resolution(attacker.get_controller())
+	game_manager.defer_combat_resolution()
+	if not _is_player_local(attacker.get_controller()):
+		var auto_feedback := power.resolve_combat_support_choice(game_manager, attacker, current_supporters)
+		game_manager.note_player_feedback(auto_feedback)
+		action_label.text = auto_feedback
+		update_ui()
+		game_manager.resume_deferred_combat()
+		return
+	_pending_hunting_tactics_power = power
+	_pending_hunting_tactics_attacker = attacker
+	_pending_hunting_tactics_supporters.clear()
+	_prompt_hunting_tactics_support_choice()
+
+func _prompt_hunting_tactics_support_choice() -> void:
+	var power := _pending_hunting_tactics_power
+	var attacker := _pending_hunting_tactics_attacker
+	if power == null or attacker == null or game_manager == null:
+		_finish_hunting_tactics_prompt("Hunting Tactics cannot resolve right now.")
+		return
+	var current_supporters := power.get_support_choices(attacker)
+	for chosen_supporter in _pending_hunting_tactics_supporters.duplicate():
+		if chosen_supporter == null or chosen_supporter not in current_supporters:
+			_pending_hunting_tactics_supporters.erase(chosen_supporter)
+	var remaining_supporters: Array[Card] = []
+	for supporter in current_supporters:
+		if supporter not in _pending_hunting_tactics_supporters:
+			remaining_supporters.append(supporter)
+	if remaining_supporters.is_empty():
+		_finish_hunting_tactics_prompt(
+			power.resolve_combat_support_choice(game_manager, attacker, _pending_hunting_tactics_supporters)
+		)
+		return
+	_show_card_selection_overlay(
+		"Choose supporters for Hunting Tactics",
+		remaining_supporters,
+		Callable(self, "_on_hunting_tactics_supporter_selected"),
+		Callable(self, "_on_hunting_tactics_supporter_done"),
+		"",
+		"Done"
+	)
+	action_label.text = "Hunting Tactics: choose Ravens or Lupines to support %s, then press Done." % attacker.card_name
+	update_ui()
+
+func _on_hunting_tactics_supporter_selected(chosen_supporter: Card) -> void:
+	if chosen_supporter != null and chosen_supporter not in _pending_hunting_tactics_supporters:
+		_pending_hunting_tactics_supporters.append(chosen_supporter)
+	_prompt_hunting_tactics_support_choice()
+
+func _on_hunting_tactics_supporter_done() -> void:
+	var power := _pending_hunting_tactics_power
+	var attacker := _pending_hunting_tactics_attacker
+	if power == null or attacker == null or game_manager == null:
+		_finish_hunting_tactics_prompt("Hunting Tactics cannot resolve right now.")
+		return
+	_finish_hunting_tactics_prompt(
+		power.resolve_combat_support_choice(game_manager, attacker, _pending_hunting_tactics_supporters)
+	)
+
+func _finish_hunting_tactics_prompt(feedback: String) -> void:
+	_clear_hunting_tactics_prompt_state()
+	if game_manager != null and game_manager.has_deferred_combat_resolution():
+		game_manager.note_player_feedback(feedback)
+		action_label.text = feedback
+		update_ui()
+		game_manager.resume_deferred_combat()
+		if _stack_resolution_paused:
+			_resume_after_deferred_resolution(feedback)
+	elif _stack_resolution_paused:
+		_resume_after_deferred_resolution(feedback)
+	else:
+		action_label.text = feedback
+		update_ui()
+
+func _clear_hunting_tactics_prompt_state() -> void:
+	_pending_hunting_tactics_power = null
+	_pending_hunting_tactics_attacker = null
+	_pending_hunting_tactics_supporters.clear()
+
+func _prompt_harii_jarl_next_choice() -> void:
+	var card := _pending_harii_jarl
+	if card == null or game_manager == null:
+		_finish_harii_jarl_prompt("Harii Jarl cannot resolve Warband right now.")
+		return
+	var current_targets := card.get_valid_warband_targets(game_manager)
+	for chosen_card in _pending_harii_jarl_choices.duplicate():
+		if chosen_card == null or chosen_card not in current_targets:
+			_pending_harii_jarl_choices.erase(chosen_card)
+	var max_summons := HariiJarl.MAX_WARBAND_SUMMONS
+	if _pending_harii_jarl_choices.size() >= max_summons or current_targets.is_empty():
+		_finish_harii_jarl_prompt(card.resolve_warband_impact(game_manager, _pending_harii_jarl_choices))
+		return
+	var remaining_targets: Array[Card] = []
+	for target in current_targets:
+		if target not in _pending_harii_jarl_choices:
+			remaining_targets.append(target)
+	if remaining_targets.is_empty():
+		_finish_harii_jarl_prompt(card.resolve_warband_impact(game_manager, _pending_harii_jarl_choices))
+		return
+	var choice_number := _pending_harii_jarl_choices.size() + 1
+	var title_text := "Choose Harii %d of %d for %s" % [choice_number, max_summons, card.card_name]
+	_show_card_selection_overlay(
+		title_text,
+		remaining_targets,
+		Callable(self, "_on_harii_jarl_target_selected"),
+		Callable(self, "_on_harii_jarl_selection_cancel"),
+		"",
+		"Decline"
+	)
+
+func _on_harii_jarl_target_selected(chosen_target: Card) -> void:
+	if chosen_target != null and chosen_target not in _pending_harii_jarl_choices:
+		_pending_harii_jarl_choices.append(chosen_target)
+	_prompt_harii_jarl_next_choice()
+
+func _on_harii_jarl_selection_cancel() -> void:
+	var card := _pending_harii_jarl
+	if card == null or game_manager == null:
+		_finish_harii_jarl_prompt("Harii Jarl cannot resolve Warband right now.")
+		return
+	_finish_harii_jarl_prompt(card.resolve_warband_impact(game_manager, _pending_harii_jarl_choices))
+
+func _finish_harii_jarl_prompt(feedback: String) -> void:
+	_pending_harii_jarl = null
+	_pending_harii_jarl_choices.clear()
+	_resume_after_deferred_resolution(feedback)
 
 func _queue_gala_tura_destroyed_prompt(card) -> void:
 	if card == null or game_manager == null:
@@ -6086,6 +6588,172 @@ func _resolve_gala_tura_prompt(use_selection: bool) -> void:
 	else:
 		action_label.text = feedback
 		update_ui()
+
+func _queue_kur_jara_tree_of_life_destroy_prompt(card: KurJara) -> void:
+	if card == null or game_manager == null:
+		return
+	_pending_kur_jara = card
+	_pending_kur_jara_selected.clear()
+	_show_kur_jara_tree_of_life_prompt()
+
+func _sanitize_kur_jara_tree_of_life_selection() -> void:
+	if _pending_kur_jara == null or game_manager == null:
+		_pending_kur_jara_selected.clear()
+		return
+	var valid_targets: Array[Card] = _pending_kur_jara.get_tree_of_life_destroy_candidates(game_manager)
+	var cleaned: Array[Card] = []
+	var max_choices := _pending_kur_jara.get_tree_of_life_pending_destroy_count()
+	for selected_card in _pending_kur_jara_selected:
+		if selected_card == null or selected_card not in valid_targets or selected_card in cleaned:
+			continue
+		cleaned.append(selected_card)
+		if cleaned.size() >= max_choices:
+			break
+	_pending_kur_jara_selected = cleaned
+
+func _show_kur_jara_tree_of_life_prompt() -> void:
+	var card := _pending_kur_jara
+	if card == null or game_manager == null:
+		_hide_kur_jara_tree_of_life_prompt()
+		update_ui()
+		return
+	_sanitize_kur_jara_tree_of_life_selection()
+	var valid_targets: Array[Card] = card.get_tree_of_life_destroy_candidates(game_manager)
+	var remaining_targets: Array[Card] = []
+	for target in valid_targets:
+		if target not in _pending_kur_jara_selected:
+			remaining_targets.append(target)
+	var required_count := card.get_tree_of_life_pending_destroy_count()
+	var choose_count := mini(required_count, valid_targets.size())
+	if choose_count <= 0:
+		_resolve_kur_jara_tree_of_life_prompt()
+		return
+
+	if _kur_jara_prompt_panel != null and is_instance_valid(_kur_jara_prompt_panel):
+		_kur_jara_prompt_panel.queue_free()
+	_kur_jara_prompt_panel = null
+
+	var overlay := ColorRect.new()
+	overlay.color = Color(0.0, 0.0, 0.0, 0.6)
+	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	overlay.z_index = 300
+	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	add_child(overlay)
+	_promote_transient_ui(overlay)
+	_kur_jara_prompt_panel = overlay
+
+	var panel := PanelContainer.new()
+	panel.set_anchors_preset(Control.PRESET_CENTER)
+	panel.custom_minimum_size = Vector2(420, 0)
+	overlay.add_child(panel)
+
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.09, 0.08, 0.11, 0.98)
+	style.border_color = Color(0.78, 0.72, 0.42, 0.95)
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		style.set_border_width(side, 2)
+	panel.add_theme_stylebox_override("panel", style)
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 8)
+	panel.add_child(vbox)
+
+	var title := Label.new()
+	title.text = card.card_name + " - Tree of Life"
+	title.add_theme_font_size_override("font_size", 15)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	vbox.add_child(title)
+
+	var target_name := card.get_tree_of_life_target_name(game_manager.get_feedback_viewer())
+	var info := Label.new()
+	info.text = "Choose %d friendly creature(s) to destroy. %s was resurrected for Tree of Life. Kur-Jara and that resurrected creature can both be chosen." % [
+		choose_count,
+		target_name
+	]
+	if required_count > valid_targets.size():
+		info.text += "\nOnly %d valid creature(s) are available, so any unpaid remainder will fail." % valid_targets.size()
+	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	vbox.add_child(info)
+
+	var selected_label := Label.new()
+	if _pending_kur_jara_selected.is_empty():
+		selected_label.text = "Selected: none"
+	else:
+		var selected_names: Array[String] = []
+		for selected_card in _pending_kur_jara_selected:
+			selected_names.append(selected_card.card_name)
+		selected_label.text = "Selected: " + ", ".join(selected_names)
+	selected_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	vbox.add_child(selected_label)
+
+	if not _pending_kur_jara_selected.is_empty():
+		var remove_box := VBoxContainer.new()
+		remove_box.add_theme_constant_override("separation", 4)
+		vbox.add_child(remove_box)
+		for selected_card in _pending_kur_jara_selected:
+			var captured_selected := selected_card
+			var remove_btn := Button.new()
+			remove_btn.text = "Undo " + captured_selected.card_name
+			remove_btn.pressed.connect(func() -> void:
+				_pending_kur_jara_selected.erase(captured_selected)
+				_show_kur_jara_tree_of_life_prompt()
+			)
+			remove_box.add_child(remove_btn)
+
+	var choices_box := VBoxContainer.new()
+	choices_box.add_theme_constant_override("separation", 4)
+	vbox.add_child(choices_box)
+
+	if _pending_kur_jara_selected.size() < choose_count:
+		for target in remaining_targets:
+			var captured_target := target
+			var choose_btn := Button.new()
+			choose_btn.text = "Destroy " + captured_target.card_name
+			choose_btn.pressed.connect(func() -> void:
+				if captured_target in _pending_kur_jara_selected:
+					return
+				_pending_kur_jara_selected.append(captured_target)
+				_show_kur_jara_tree_of_life_prompt()
+			)
+			choices_box.add_child(choose_btn)
+
+	if remaining_targets.is_empty():
+		var no_more_label := Label.new()
+		no_more_label.text = "No more valid creatures remain to choose."
+		choices_box.add_child(no_more_label)
+
+	var status_label := Label.new()
+	status_label.text = "Choose %d more." % maxi(0, choose_count - _pending_kur_jara_selected.size())
+	vbox.add_child(status_label)
+
+	var resolve_btn := Button.new()
+	resolve_btn.text = "Resolve Tree of Life"
+	resolve_btn.disabled = _pending_kur_jara_selected.size() < choose_count
+	resolve_btn.pressed.connect(func() -> void:
+		_resolve_kur_jara_tree_of_life_prompt()
+	)
+	vbox.add_child(resolve_btn)
+
+	action_label.text = card.card_name + ": choose which friendly creatures Tree of Life destroys."
+	update_ui()
+
+func _resolve_kur_jara_tree_of_life_prompt() -> void:
+	var card := _pending_kur_jara
+	if card == null or game_manager == null:
+		_hide_kur_jara_tree_of_life_prompt()
+		update_ui()
+		return
+	var feedback := card.resolve_tree_of_life_destroy_selection(game_manager, _pending_kur_jara_selected)
+	_hide_kur_jara_tree_of_life_prompt()
+	action_label.text = feedback
+	update_ui()
+
+func _hide_kur_jara_tree_of_life_prompt() -> void:
+	if _kur_jara_prompt_panel != null and is_instance_valid(_kur_jara_prompt_panel):
+		_kur_jara_prompt_panel.queue_free()
+	_kur_jara_prompt_panel = null
+	_pending_kur_jara = null
+	_pending_kur_jara_selected.clear()
 
 func _hide_gala_tura_prompt() -> void:
 	if _gala_tura_prompt_panel != null and is_instance_valid(_gala_tura_prompt_panel):
@@ -6313,7 +6981,7 @@ func _finish_altar_void_play() -> void:
 func _try_resolve_stupefy_target(card: Card) -> bool:
 	if not awaiting_stupefy_target or stupefy_source == null:
 		return false
-	if card.card_type == Card.CardType.CREATURE and card.level <= stupefy_source.level:
+	if card.card_type == Card.CardType.CREATURE and card.get_effective_level() <= stupefy_source.get_effective_level():
 		var source_stupefy := stupefy_source
 		if game_manager.is_guardian_protected(card, source_stupefy):
 			action_label.text = card.card_name + " is protected by Guardian!"
@@ -6332,7 +7000,7 @@ func _try_resolve_stupefy_target(card: Card) -> bool:
 		stupefy_source = null
 		update_ui()
 	else:
-		action_label.text = "Invalid target Ã¢â‚¬â€ choose a creature of level " + str(stupefy_source.level) + " or lower."
+		action_label.text = "Invalid target ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â choose a creature of level " + str(stupefy_source.get_effective_level()) + " or lower."
 	return true
 
 func _on_board_card_pressed(card: Card) -> void:
@@ -6348,6 +7016,9 @@ func _on_board_card_pressed(card: Card) -> void:
 		_handle_invalid_pending_target_click(_get_pending_click_invalid_reason(card))
 		return
 	if _reject_priority_locked_action():
+		return
+	if _has_active_modal_prompt():
+		_reject_modal_prompt_action()
 		return
 	if _is_turn_choice_pending() and not _can_interact_with_board_during_turn_choice(card):
 		_reject_pre_turn_action()
@@ -6399,7 +7070,7 @@ func _on_board_card_pressed(card: Card) -> void:
 		return
 
 	if awaiting_stupefy_target and stupefy_source != null \
-			and not (card.card_type == Card.CardType.CREATURE and card.level <= stupefy_source.level):
+			and not (card.card_type == Card.CardType.CREATURE and card.get_effective_level() <= stupefy_source.get_effective_level()):
 		_cancel_pending_target_selection(
 			_get_pending_target_selection_name()
 			+ " cancelled: invalid target "
@@ -6493,7 +7164,7 @@ func _on_board_card_pressed(card: Card) -> void:
 	if _try_queue_god_targeted_ability(card):
 		return
 
-	# Non-targeted spell selected Ã¢â‚¬â€ clicking any zone (occupied or not) casts it
+	# Non-targeted spell selected ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â clicking any zone (occupied or not) casts it
 	# from the nearest available empty zone on the player's side.
 	if selected_card != null and selected_card.card_type == Card.CardType.SPELL \
 			and not awaiting_spell_target:
@@ -6589,7 +7260,7 @@ func _on_board_card_pressed(card: Card) -> void:
 							func() -> void:
 								(card as AncientPyre).activate(game_manager)
 						)
-					action_label.text = "Ancient Pyre: Ritual Flame Ã¢â‚¬â€ 5 followers converted!"
+					action_label.text = "Ancient Pyre: Ritual Flame ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â 5 followers converted!"
 					update_ui()
 			else:
 				action_label.text = "Ancient Pyre cannot activate right now (need 2 mana or no valid targets)."
@@ -6637,6 +7308,9 @@ func _on_enemy_card_pressed(target_card: Card) -> void:
 		_handle_invalid_pending_target_click(_get_pending_click_invalid_reason(target_card))
 		return
 	if _reject_priority_locked_action():
+		return
+	if _has_active_modal_prompt():
+		_reject_modal_prompt_action()
 		return
 	if _is_turn_choice_pending():
 		_reject_pre_turn_action()
@@ -6700,7 +7374,7 @@ func _on_enemy_card_pressed(target_card: Card) -> void:
 		return
 
 	if awaiting_stupefy_target and stupefy_source != null \
-			and not (target_card.card_type == Card.CardType.CREATURE and target_card.level <= stupefy_source.level):
+			and not (target_card.card_type == Card.CardType.CREATURE and target_card.get_effective_level() <= stupefy_source.get_effective_level()):
 		_cancel_pending_target_selection(
 			_get_pending_target_selection_name()
 			+ " cancelled: invalid target "
@@ -6721,7 +7395,7 @@ func _on_enemy_card_pressed(target_card: Card) -> void:
 	if _try_resolve_stupefy_target(target_card):
 		return
 
-	# Non-targeted spell selected Ã¢â‚¬â€ redirect to an empty friendly zone
+	# Non-targeted spell selected ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â redirect to an empty friendly zone
 	# BlotSacrifice selected, clicking a friendly creature: auto-use as sacrifice target.
 	if selected_card != null and (selected_card is BlotSacrifice or selected_card.card_name == "Blot Sacrifice") \
 			and target_card.card_type == Card.CardType.CREATURE \
@@ -6732,6 +7406,21 @@ func _on_enemy_card_pressed(target_card: Card) -> void:
 			action_label.text = "Cannot cast " + selected_card.card_name + "!"
 			return
 		_initiate_blot_with_sacrifice(selected_card, target_card)
+		selected_card = null
+		return
+
+	if selected_card is KeyOfSolomon \
+			and target_card.card_type == Card.CardType.CREATURE \
+			and not target_card.is_god \
+			and target_card.get_controller() == game_manager.current_player \
+			and not awaiting_spell_target:
+		if not target_card.has_type("Animal") or not _can_use_card_for_creature_sacrifice(target_card):
+			action_label.text = target_card.card_name + " cannot be sacrificed for Key of Solomon."
+			return
+		if not _can_cast_hand_spell(selected_card):
+			action_label.text = "Cannot cast " + selected_card.card_name + "!"
+			return
+		_initiate_kos_with_sacrifice(selected_card as KeyOfSolomon, target_card)
 		selected_card = null
 		return
 
@@ -6929,7 +7618,7 @@ func _on_creature_right_clicked(card: Card) -> void:
 		btn.pressed.connect(func():
 			_close_context_menu()
 			selected_attacker = card
-			action_label.text = card.card_name + " ready to attack Ã¢â‚¬â€ click an enemy creature or zone"
+			action_label.text = card.card_name + " ready to attack ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â click an enemy creature or zone"
 		)
 		vbox.add_child(btn)
 
@@ -6940,7 +7629,7 @@ func _on_creature_right_clicked(card: Card) -> void:
 			_close_context_menu()
 			awaiting_stupefy_target = true
 			stupefy_source = card
-			action_label.text = "Stupefy Ã¢â‚¬â€ click an enemy creature of level " + str(card.level) + " or lower"
+			action_label.text = "Stupefy ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â click an enemy creature of level " + str(card.get_effective_level()) + " or lower"
 		)
 		vbox.add_child(btn)
 
@@ -7077,7 +7766,7 @@ func _on_creature_right_clicked(card: Card) -> void:
 		btn.pressed.connect(func():
 			_close_context_menu()
 			_pending_move_card = card
-			action_label.text = card.card_name + " Ã¢â‚¬â€ click an adjacent empty zone to move"
+			action_label.text = card.card_name + " ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â click an adjacent empty zone to move"
 		)
 		vbox.add_child(btn)
 
@@ -7200,7 +7889,7 @@ func _input(event: InputEvent) -> void:
 		if _bdrag_ghost != null:
 			_bdrag_finish(get_global_mouse_position())
 		else:
-			# Was a click (no movement) Ã¢â‚¬â€ treat as board card click
+			# Was a click (no movement) ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â treat as board card click
 			if _bdrag_card != null:
 				_on_board_card_pressed(_bdrag_card)
 		_bdrag_cleanup()
@@ -7309,6 +7998,11 @@ func _bdrag_finish(drop_pos: Vector2) -> void:
 			var minor_action_limit := card.get_max_minor_creature_actions_per_turn()
 			if card.is_sleeping:
 				action_label.text = card.card_name + " is Sleeping and cannot move."
+			elif not card.get_status_effect("cannot_move").is_empty():
+				var move_status := card.get_status_effect("cannot_move")
+				action_label.text = card.card_name + " cannot move because of " + str(move_status.get("source", "an effect")) + "."
+			elif card.summoned_this_turn:
+				action_label.text = card.card_name + " was summoned this turn and cannot move yet."
 			elif card.creature_major_action_used:
 				action_label.text = card.card_name + " has already used its major action this turn."
 			elif card.creature_minor_actions_used >= minor_action_limit:
@@ -7462,6 +8156,7 @@ func _creature_can_move(card: Card) -> bool:
 	return (
 		card.card_type == Card.CardType.CREATURE
 		and card.can_take_minor_creature_action()
+		and card.get_status_effect("cannot_move").is_empty()
 		and not card.summoned_this_turn
 		and not card.is_sleeping
 	)
@@ -7617,7 +8312,7 @@ func _broadcast_intercept_offered(possible_interceptors: Array[Card]) -> void:
 		target_uid = target_uid,
 		target_is_player = target_is_player,
 		interceptor_uids = interceptor_uids,
-		action_message = attacker_label + " is attacking — intercept or allow?",
+		action_message = attacker_label + " is attacking â€” intercept or allow?",
 	}
 	var peer_id: int = network_manager.player_peer_ids.get(defender_idx, -1)
 	if peer_id == 1:
@@ -7693,7 +8388,7 @@ func check_for_possible_intercepts_for_equip_action() -> void:
 		var names: Array[String] = []
 		for card in possible:
 			names.append(card.card_name)
-		action_label.text = "Intercept " + _pending_equip_actor.card_name + "'s " + _pending_equip_action + "? Possible interceptors: " + ", ".join(names) + " — click one or 'No Intercept'"
+		action_label.text = "Intercept " + _pending_equip_actor.card_name + "'s " + _pending_equip_action + "? Possible interceptors: " + ", ".join(names) + " â€” click one or 'No Intercept'"
 		_show_no_intercept_equip_button()
 	else:
 		resolve_pending_equip_action(null)
@@ -7701,7 +8396,7 @@ func check_for_possible_intercepts_for_equip_action() -> void:
 func _show_no_intercept_equip_button() -> void:
 	_remove_no_intercept_button()
 	_no_intercept_btn = Button.new()
-	_no_intercept_btn.text = "No Intercept — Allow " + _pending_equip_action.capitalize()
+	_no_intercept_btn.text = "No Intercept â€” Allow " + _pending_equip_action.capitalize()
 	_no_intercept_btn.pressed.connect(func(): resolve_pending_equip_action(null))
 	enemy_board_container.add_child(_no_intercept_btn)
 
@@ -7715,6 +8410,7 @@ func resolve_pending_equip_action(interceptor: Card) -> void:
 	_pending_equip_action = ""
 	if interceptor != null:
 		interceptor.spend_major_creature_action()
+		game_manager.record_interception(interceptor)
 		action_label.text = _get_card_name_safe(interceptor) + " intercepts!"
 		game_manager.resolve_combat_with_continuation(actor, interceptor, func() -> void:
 			update_ui()
@@ -7752,7 +8448,7 @@ func _offer_priority() -> void:
 		return
 
 	if is_remote_priority:
-		# The remote player has valid responses — ask them over the network.
+		# The remote player has valid responses â€” ask them over the network.
 		# The priority loop pauses here; it resumes when their command arrives.
 		_broadcast_priority_offered(player, responses)
 		return
@@ -7792,10 +8488,21 @@ func _broadcast_priority_offered(player: Player, responses: Array) -> void:
 				target_uids = target_uids,
 				from_hand = from_hand,
 			})
+		elif card != null and card.is_god and card.has_method("get_valid_targets"):
+			var god_targets: Array = card.get_valid_targets(game_manager)
+			var target_uids: Array = []
+			for t in god_targets:
+				if t is Card:
+					target_uids.append((t as Card).uid)
+			response_options.append({
+				response_type = "god",
+				card_uid = card.uid,
+				target_uids = target_uids,
+			})
 
 	var action_msg := ""
 	if top.type == CardAction.Type.ATTACK and top.attacker != null:
-		action_msg = top.attacker.card_name + " is attacking — you may respond!"
+		action_msg = top.attacker.card_name + " is attacking â€” you may respond!"
 
 	var event_data := {responses = response_options, action_message = action_msg}
 	var remote_player_idx := game_manager.players.find(player)
@@ -7912,6 +8619,28 @@ func _on_priority_response_chosen(card: Card) -> void:
 			_prompt_charm_target_selection(charm, game_manager.action_stack.back())
 		else:
 			_queue_charm_action(charm, game_manager.action_stack.back())
+	elif card != null and card.is_god and card.has_method("get_valid_targets"):
+		var god_targets: Array = card.get_valid_targets(game_manager)
+		var choose_priority_god_target := func(chosen_target: Card) -> void:
+			_queue_targeted_ability_action(
+				card,
+				chosen_target,
+				func() -> void:
+					card.activate(game_manager, chosen_target),
+				_get_attack_card_label(card, card.card_name) + " is targeting " + _get_target_label(chosen_target, game_manager.get_feedback_viewer(), chosen_target.card_name) + "."
+			)
+		if god_targets.is_empty():
+			action_label.text = card.card_name + " has no valid targets."
+			update_ui()
+			return
+		if god_targets.size() == 1 and god_targets[0] is Card:
+			choose_priority_god_target.call(god_targets[0] as Card)
+			return
+		_show_card_selection_overlay(
+			"Choose a target for " + card.card_name,
+			god_targets,
+			choose_priority_god_target
+		)
 	elif card is E2Abzu:
 		var structure := card as E2Abzu
 		var top: CardAction = game_manager.action_stack.back() as CardAction
@@ -7951,6 +8680,8 @@ func _on_priority_response_chosen(card: Card) -> void:
 			_queue_deucalion_resolution(card as DeucalionsInfants)
 		elif card != null and (card is BlotSacrifice or card.card_name == "Blot Sacrifice"):
 			_show_blot_sacrifice_prompt(card)
+		elif card is KeyOfSolomon:
+			_show_kos_sacrifice_prompt(card as KeyOfSolomon)
 		elif card is CircleOfRebirth:
 			if _is_networked_client:
 				var spell_uid: String = card.get("uid") if "uid" in card else ""
@@ -9563,7 +10294,7 @@ func _show_blot_creature_prompt() -> void:
 		var chosen_label := Label.new()
 		var chosen_parts: Array[String] = []
 		for chosen_card in _pending_blot_selected_creatures:
-			chosen_parts.append("%s (Lv %d)" % [chosen_card.card_name, chosen_card.level])
+			chosen_parts.append("%s (Lv %d)" % [chosen_card.card_name, chosen_card.get_effective_level()])
 		chosen_label.text = "Chosen: " + ", ".join(chosen_parts)
 		chosen_label.add_theme_font_size_override("font_size", 10)
 		chosen_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -9608,6 +10339,151 @@ func _blot_has_more_summonable_creatures(spell) -> bool:
 	if remaining_levels <= 0:
 		return false
 	return not _get_blot_valid_choices(spell).is_empty()
+
+## â”€â”€ Key of Solomon â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+func _show_kos_sacrifice_prompt(spell: KeyOfSolomon) -> void:
+	if spell == null:
+		update_ui()
+		return
+	var valid_sacrifices: Array[Card] = spell.get_valid_sacrifices()
+	if valid_sacrifices.is_empty():
+		action_label.text = "Key of Solomon needs a friendly Animal to sacrifice."
+		update_ui()
+		return
+	if spell.get_valid_demon_targets().is_empty():
+		action_label.text = "Key of Solomon needs a Demon in your grave or void."
+		update_ui()
+		return
+	selected_card = spell
+	_begin_pending_click_selection(
+		"Key of Solomon",
+		spell,
+		func(clicked_card: Card) -> bool:
+			return clicked_card != null \
+				and clicked_card.get_controller() == game_manager.current_player \
+				and clicked_card.has_type("Animal") \
+				and _can_use_card_for_creature_sacrifice(clicked_card),
+		func(clicked_card: Card) -> void:
+			_initiate_kos_with_sacrifice(spell, clicked_card)
+	)
+	action_label.text = "Key of Solomon: select a friendly Animal to sacrifice."
+	update_ui()
+
+func _initiate_kos_with_sacrifice(spell: KeyOfSolomon, sacrifice_target: Card) -> void:
+	_clear_pending_click_selection()
+	if spell == null or sacrifice_target == null:
+		update_ui()
+		return
+	if not _can_use_card_for_creature_sacrifice(sacrifice_target):
+		action_label.text = "Key of Solomon requires a sacrificable friendly Animal."
+		update_ui()
+		return
+	if not _can_cast_hand_spell(spell):
+		action_label.text = "Key of Solomon cancelled: cannot pay costs."
+		update_ui()
+		return
+	var orig_sacrifice_cost: int = spell.sacrifice_cost
+	spell.sacrifice_cost = 0
+	var paid: bool = spell.pay_costs(game_manager.current_player, game_manager)
+	spell.sacrifice_cost = orig_sacrifice_cost
+	if not paid:
+		action_label.text = "Cannot cast Key of Solomon."
+		update_ui()
+		return
+	_pending_key_of_solomon = spell
+	_pending_kos_sacrifice = sacrifice_target
+	_pending_kos_selected_demons.clear()
+	game_manager.request_send_to_graveyard(sacrifice_target, func() -> void:
+		var display_zone := _resolve_pending_display_zone(spell, null)
+		var action := CardAction.new()
+		action.type = CardAction.Type.SPELL
+		action.source_player = spell.card_owner
+		action.card = spell
+		action.display_zone = display_zone
+		action.resolution_text = "Key of Solomon resolves."
+		action.resolve_callback = func() -> void:
+			_begin_kos_demon_selection(spell)
+		_assign_stack_display_zone(action)
+		game_manager.push_to_stack(action)
+		selected_card = null
+		update_ui()
+		action_label.text = spell.card_name + " [" + _get_stack_card_type_label(spell) + "] goes on the stack."
+		_offer_priority()
+	)
+
+func _begin_kos_demon_selection(spell: KeyOfSolomon) -> void:
+	if spell == null:
+		update_ui()
+		return
+	game_manager.notify_spell_played(spell.card_owner, spell)
+	var valid_demons: Array[Card] = spell.get_valid_demon_targets()
+	if valid_demons.is_empty():
+		_send_used_hand_card_to_graveyard(spell)
+		_finish_kos_resolution("Key of Solomon resolved, but no Demons were found in grave or void.")
+		return
+	_pending_key_of_solomon = spell
+	_pending_kos_selected_demons.clear()
+	_pause_stack_resolution(spell.card_owner)
+	_prompt_kos_demon_choice()
+
+func _prompt_kos_demon_choice() -> void:
+	var spell := _pending_key_of_solomon
+	if spell == null:
+		_finish_kos_resolution("Key of Solomon cannot resolve right now.")
+		return
+	var valid_demons: Array[Card] = spell.get_valid_demon_targets()
+	for already_chosen in _pending_kos_selected_demons.duplicate():
+		if already_chosen == null or already_chosen not in valid_demons:
+			_pending_kos_selected_demons.erase(already_chosen)
+	var remaining: Array[Card] = []
+	for demon in valid_demons:
+		if demon not in _pending_kos_selected_demons:
+			remaining.append(demon)
+	if remaining.is_empty() or _pending_kos_selected_demons.size() >= KeyOfSolomon.MAX_DEMONS_TO_RETURN:
+		_on_kos_demon_done()
+		return
+	_show_card_selection_overlay(
+		"Choose a Demon to return to hand (%d/%d)" % [
+			_pending_kos_selected_demons.size(), KeyOfSolomon.MAX_DEMONS_TO_RETURN
+		],
+		remaining,
+		Callable(self, "_on_kos_demon_selected"),
+		Callable(self, "_on_kos_demon_done"),
+		"",
+		"Done"
+	)
+	action_label.text = "Key of Solomon: choose up to %d Demon(s) from your grave or void." % KeyOfSolomon.MAX_DEMONS_TO_RETURN
+	update_ui()
+
+func _on_kos_demon_selected(demon: Card) -> void:
+	if demon != null and demon not in _pending_kos_selected_demons:
+		_pending_kos_selected_demons.append(demon)
+	_prompt_kos_demon_choice()
+
+func _on_kos_demon_done() -> void:
+	var spell := _pending_key_of_solomon
+	if spell == null:
+		_finish_kos_resolution("Key of Solomon cannot resolve right now.")
+		return
+	spell.resolve(game_manager, _pending_kos_selected_demons)
+	_send_used_hand_card_to_graveyard(spell)
+	var count: int = _pending_kos_selected_demons.size()
+	_pending_kos_selected_demons.clear()
+	_pending_key_of_solomon = null
+	_pending_kos_sacrifice = null
+	_finish_kos_resolution(
+		"Key of Solomon returned %d Demon(s) to hand." % count if count > 0 else "Key of Solomon resolved with no Demons returned."
+	)
+
+func _finish_kos_resolution(feedback: String) -> void:
+	if _stack_resolution_paused:
+		_resume_after_deferred_resolution(feedback)
+	else:
+		action_label.text = feedback
+		update_ui()
+
+## â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 func _hide_blot_sacrifice_prompt() -> void:
 	_dismiss_zone_overlay()
@@ -9675,6 +10551,8 @@ func _dismiss_transient_prompts() -> void:
 	_hide_priority_prompt()
 	_hide_retreat_prompt()
 	_hide_hati_prompt()
+	_hide_kur_jara_tree_of_life_prompt()
+	_declined_hati_prompts.clear()
 	_hide_skoll_prompt()
 	_hide_doorway_choice_prompt()
 	_hide_sacrifice_payment_prompt()
@@ -9687,6 +10565,7 @@ func _dismiss_transient_prompts() -> void:
 	_hide_byggvir_reveal_prompt()
 	_hide_harii_shaman_prompt()
 	_hide_erlqueens_nightingale_prompt()
+	_clear_hunting_tactics_prompt_state()
 	_hide_breidablik_prompt()
 	_hide_e2_abzu_prompt()
 	_hide_divine_caprice_prompt()
@@ -9920,6 +10799,11 @@ func _on_match_move_validated(move: Dictionary) -> void:
 			if pcr_charm != null:
 				action_label.text = pcr_charm.card_name + " responds!"
 			_offer_priority()
+		"play_priority_ability":
+			var response_card := game_manager.get_card_by_uid(move.get("source_uid", ""))
+			if response_card != null:
+				action_label.text = response_card.card_name + " responds!"
+			_offer_priority()
 	update_ui()
 
 func _on_match_move_failed(reason: String) -> void:
@@ -10044,13 +10928,10 @@ func _on_draw_button_pressed() -> void:
 	if _skoll_prompt_panel != null or _pending_skoll_summon != null:
 		action_label.text = "Finish resolving Sun Hunt or cancel it before choosing another upkeep option."
 		return
-	var _deck_had_cards: bool = game_manager.current_player.deck_zone.get_card_count() > 0
 	game_input.submit_action({type = "upkeep_choice", choice = "draw"})
 	_close_turn_start_windows()
 	update_ui()
 	hide_turn_choice()
-	if not _is_networked_client:
-		_queue_standard_turn_start_priority("Drew a card." if _deck_had_cards else "No cards left to draw.")
 
 func _on_mana_button_pressed() -> void:
 	if _game_finished:
@@ -10062,12 +10943,11 @@ func _on_mana_button_pressed() -> void:
 	_close_turn_start_windows()
 	update_ui()
 	hide_turn_choice()
-	if not _is_networked_client:
-		_queue_standard_turn_start_priority("Gained 4 additional mana.")
 
 func _close_turn_start_windows() -> void:
 	_hide_hati_prompt()
 	_pending_hati_prompts.clear()
+	_declined_hati_prompts.clear()
 	_clear_hati_moon_hunt_state()
 	_hide_skoll_prompt()
 	_pending_skoll_prompts.clear()
@@ -10180,6 +11060,8 @@ func _on_end_turn_button_pressed() -> void:
 # ---------------------------------------------------------------------------
 
 func _is_player_local(player: Player) -> bool:
+	if not _is_networked_client and not _is_real_network_host():
+		return true
 	if network_manager == null:
 		return true # Local mode
 	if network_manager.local_player_index < 0:
@@ -10265,7 +11147,7 @@ func _apply_network_event(event_type: String, data: Dictionary) -> void:
 				if cp_idx == network_manager.local_player_index and not game_manager.has_resolved_turn_upkeep():
 					call_deferred("_open_upkeep_choice_window")
 		"turn_started":
-			# Turn hooks resolved; update label only — upkeep_needed already opened the window
+			# Turn hooks resolved; update label only â€” upkeep_needed already opened the window
 			pass
 		"priority_offered":
 			_apply_priority_offered(data)
@@ -10346,7 +11228,7 @@ func _apply_full_state(data: Dictionary) -> void:
 				game_manager.feedback_viewer = game_manager.players[local_idx]
 		_awaiting_initial_full_state = false
 		_sync_network_turn_entry_ui_from_state()
-	# Host has the live authoritative game_manager — no zone rebuild needed.
+	# Host has the live authoritative game_manager â€” no zone rebuild needed.
 	# Show server's action message if any
 	var msg: String = data.get("action_message", "")
 	if msg != "":
@@ -10597,6 +11479,29 @@ func _show_remote_priority_prompt(responses: Array) -> void:
 								charm_uid = card_uid,
 								target_uid = chosen_card.uid,
 								from_hand = from_hand,
+							})
+					)
+			elif rtype == "god":
+				if target_uids.size() == 1:
+					network_manager.request_action({
+						type = "play_priority_ability",
+						source_uid = card_uid,
+						target_uid = target_uids[0],
+					})
+				else:
+					var target_cards: Array[Card] = []
+					for target_uid in target_uids:
+						var c := game_manager.get_card_by_uid(target_uid as String)
+						if c != null:
+							target_cards.append(c)
+					_show_card_selection_overlay(
+						"Choose a target for " + card_name,
+						target_cards,
+						func(chosen_card: Card) -> void:
+							network_manager.request_action({
+								type = "play_priority_ability",
+								source_uid = card_uid,
+								target_uid = chosen_card.uid,
 							})
 					)
 		)
@@ -10918,6 +11823,10 @@ func _on_card_drag_released(card: Card, drop_pos: Vector2, card_rotated: bool, c
 	if not priority_drop_allowed and _reject_priority_locked_action():
 		update_ui()
 		return
+	if _has_active_modal_prompt():
+		_reject_modal_prompt_action()
+		update_ui()
+		return
 	if _is_turn_choice_pending():
 		_reject_pre_turn_action()
 		update_ui()
@@ -10986,6 +11895,36 @@ func _on_card_drag_released(card: Card, drop_pos: Vector2, card_rotated: bool, c
 			update_ui()
 			return
 
+	# Key of Solomon dropped onto an occupied friendly creature zone:
+	# use that creature as the sacrifice target instead of redirecting
+	# through the generic non-targeted spell drop flow.
+	if card is KeyOfSolomon:
+		for zu in _board_zone_uis:
+			if not zu.get_global_rect().has_point(drop_pos) or zu._is_enemy:
+				continue
+			if zu.zone.cards.is_empty():
+				continue
+			var target_creature: Card = zu.zone.cards[0]
+			if target_creature.card_type != Card.CardType.CREATURE or target_creature.is_god:
+				action_label.text = "Key of Solomon must be dropped onto a friendly Animal or an empty friendly zone."
+				update_ui()
+				return
+			if target_creature.get_controller() != game_manager.current_player:
+				action_label.text = "Key of Solomon requires one of your own Animals."
+				update_ui()
+				return
+			if not target_creature.has_type("Animal") or not _can_use_card_for_creature_sacrifice(target_creature):
+				action_label.text = target_creature.card_name + " cannot be sacrificed for Key of Solomon."
+				update_ui()
+				return
+			if not _can_cast_hand_spell(card):
+				action_label.text = "Cannot cast " + card.card_name + "!"
+				update_ui()
+				return
+			_initiate_kos_with_sacrifice(card as KeyOfSolomon, target_creature)
+			update_ui()
+			return
+
 	# Non-targeted spell/hex dropped on any friendly zone (occupied or not):
 	# find an empty zone and route through the normal cast/prepare flow there.
 	if card.card_type in [Card.CardType.SPELL, Card.CardType.HEX] and not card.targets:
@@ -11032,6 +11971,8 @@ func _on_card_drag_released(card: Card, drop_pos: Vector2, card_rotated: bool, c
 	update_ui()
 
 func _cast_targeted_spell(spell: Card, target: Card) -> void:
+	if _has_pending_click_selection():
+		_clear_pending_click_selection()
 	if _is_networked_client:
 		var spell_uid: String = spell.get("uid") if "uid" in spell else ""
 		var target_uid: String = target.get("uid") if target != null and "uid" in target else ""

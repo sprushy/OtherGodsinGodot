@@ -40,7 +40,7 @@ func activate(game_manager: GameManager, target: Card) -> void:
 	if game_manager != null and game_manager.is_immune_to_source(target, self):
 		game_manager.note_player_feedback("Entropic Force fizzles: " + target.card_name + " is immune to powers.")
 		return
-	var mana_gained: int = max(0, target.level - 1)
+	var mana_gained: int = max(0, target.get_effective_level() - 1)
 	if game_manager != null:
 		game_manager.note_player_feedback("Entropic Force returned " + target.card_name + " and gained " + str(mana_gained) + " mana.")
 	game_manager.send_to_deck_bottom_with_hook(target)

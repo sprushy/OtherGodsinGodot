@@ -11,15 +11,7 @@ func _init() -> void:
 
 func can_prepare(game_manager: GameManager, player: Player = null) -> bool:
 	var preparing_player := player if player != null else card_owner
-	if game_manager == null or preparing_player == null:
-		return false
-	if card_owner != null and card_owner != preparing_player:
-		return false
-	if preparing_player != game_manager.current_player:
-		return false
-	if current_zone != preparing_player.hand_zone:
-		return false
-	return can_pay_costs(preparing_player)
+	return super.can_prepare(game_manager, preparing_player)
 
 func can_activate_from_hand(game_manager: GameManager, triggering_action: CardAction = null) -> bool:
 	if must_be_prepared_to_activate:

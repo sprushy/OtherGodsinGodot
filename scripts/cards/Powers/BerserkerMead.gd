@@ -34,7 +34,7 @@ func get_valid_targets(_game_manager: GameManager) -> Array[Card]:
 		for card in zone.cards:
 			if card.card_type != Card.CardType.CREATURE:
 				continue
-			if card.level >= 5:
+			if card.get_effective_level() >= 5:
 				continue
 			if card.culture != "Norse":
 				continue
