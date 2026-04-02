@@ -2046,11 +2046,6 @@ func _get_preferred_guest_display_name(default_name: String = "Guest") -> String
 	if resolved_default.is_empty():
 		resolved_default = "Guest"
 	var guest_display_name := _get_saved_guest_display_name(resolved_default)
-	if not guest_display_name.is_empty() and guest_display_name not in ["Player", "Guest"]:
-		return guest_display_name
-	var saved_account_username := _get_saved_account_username()
-	if not saved_account_username.is_empty():
-		return saved_account_username
 	if not guest_display_name.is_empty():
 		return guest_display_name
 	return resolved_default

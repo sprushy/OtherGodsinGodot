@@ -304,6 +304,157 @@ func _get_active_attackers(action: CardAction) -> Array[Card]:
 			active.append(c)
 	return active
 
+func _uses_authoritative_headless_attack_flow() -> bool:
+	if network_manager == null or not bool(network_manager.get("is_server")):
+		return false
+	var interaction_host := game_manager.get_interaction_host()
+	if interaction_host == null:
+		return false
+	var host_script = interaction_host.get_script()
+	if host_script == null:
+		return false
+	return str(host_script.resource_path).ends_with("HeadlessMatchServer.gd")
+
+func _get_intercept_target_row_depth(protected_target) -> int:
+	if protected_target is Player:
+		return 2
+	if not (protected_target is Card):
+		return -1
+	var target_card := protected_target as Card
+	if target_card.card_type == Card.CardType.EQUIPMENT and target_card.equipped_on != null:
+		return _get_intercept_target_row_depth(target_card.equipped_on)
+	if target_card.current_zone == null:
+		return -1
+	match target_card.current_zone.zone_type:
+		Zone.ZoneType.FRONTLINE:
+			return 0
+		Zone.ZoneType.RESERVE:
+			return 1
+		Zone.ZoneType.GOD_SLOT:
+			return 2
+		_:
+			return -1
+
+func _get_interceptor_row_depth(defender: Card) -> int:
+	if defender == null or defender.current_zone == null:
+		return -1
+	match defender.current_zone.zone_type:
+		Zone.ZoneType.FRONTLINE:
+			return 0
+		Zone.ZoneType.RESERVE:
+			return 1
+		_:
+			return -1
+
+func _get_intercept_row_distance(defender: Card, protected_target) -> int:
+	var defender_depth := _get_interceptor_row_depth(defender)
+	var target_depth := _get_intercept_target_row_depth(protected_target)
+	if defender_depth < 0 or target_depth < 0 or target_depth < defender_depth:
+		return -1
+	return target_depth - defender_depth
+
+func _get_minimum_intercept_row_distance(defender: Card) -> int:
+	var minimum_depth := 1
+	if defender.creature_mode == Card.CreatureMode.AGGRESSIVE:
+		minimum_depth = 2
+	minimum_depth = max(0, minimum_depth - defender.get_intercept_reach_bonus())
+	return minimum_depth
+
+func _get_declared_attack_partner(attacker: Card) -> Card:
+	if attacker == null or not attacker.has_method("get_united_front_partner_for_attack"):
+		return null
+	return attacker.get_united_front_partner_for_attack(game_manager)
+
+func _get_declared_attack_speed(attacker: Card) -> int:
+	if attacker == null:
+		return 0
+	if attacker.has_method("get_united_front_attack_speed"):
+		return attacker.get_united_front_attack_speed(game_manager)
+	return attacker.get_effective_speed()
+
+func _can_intercept(defender: Card, attacker: Card, protected_target) -> bool:
+	if attacker == null or protected_target == null:
+		return false
+	if protected_target is Card and defender == protected_target:
+		return false
+	if defender == null or defender.card_type != Card.CardType.CREATURE:
+		return false
+	if defender.is_sleeping:
+		return false
+	var interceptor_speed := game_manager.get_interceptor_speed_against_attacker(defender, attacker)
+	if interceptor_speed < _get_declared_attack_speed(attacker):
+		return false
+	if not game_manager.can_interceptor_engage_attacker(defender, attacker):
+		return false
+	if defender.creature_mode == Card.CreatureMode.AGGRESSIVE and defender.can_take_major_creature_action():
+		return _get_intercept_row_distance(defender, protected_target) >= _get_minimum_intercept_row_distance(defender)
+	if defender.creature_mode == Card.CreatureMode.DEFENSIVE:
+		return _get_intercept_row_distance(defender, protected_target) >= _get_minimum_intercept_row_distance(defender)
+	return false
+
+func _get_possible_interceptors(attacker: Card, protected_target) -> Array[Card]:
+	var possible_interceptors: Array[Card] = []
+	var defender: Player = protected_target if protected_target is Player else (protected_target as Card).get_controller()
+	if defender == null:
+		return possible_interceptors
+	for zone in defender.frontline_zones + defender.reserve_zones:
+		for card in zone.cards:
+			if _can_intercept(card, attacker, protected_target):
+				possible_interceptors.append(card)
+	return possible_interceptors
+
+func _build_pending_attack_action() -> CardAction:
+	if selected_attacker == null or pending_attack_target == null:
+		return null
+	var action := CardAction.new()
+	action.type = CardAction.Type.ATTACK
+	action.source_player = game_manager.current_player
+	action.attacker = selected_attacker
+	action.united_front_partner = _get_declared_attack_partner(selected_attacker)
+	action.attack_speed_override = _get_declared_attack_speed(selected_attacker)
+	action.interceptor = selected_interceptor
+	action.target = pending_attack_target
+	return action
+
+func _clear_pending_attack_state() -> void:
+	selected_attacker = null
+	selected_interceptor = null
+	pending_attack_target = null
+
+func _resolve_authoritative_headless_attack() -> void:
+	var attack_action := _build_pending_attack_action()
+	if attack_action == null:
+		move_failed.emit("The pending attack could not be resolved.")
+		_clear_pending_attack_state()
+		return
+	_clear_pending_attack_state()
+	resolve_action(attack_action)
+
+func _start_authoritative_headless_attack() -> void:
+	if selected_attacker == null or pending_attack_target == null:
+		move_failed.emit("The pending attack is missing an attacker or target.")
+		_clear_pending_attack_state()
+		return
+	selected_interceptor = null
+	var possible_interceptors := _get_possible_interceptors(selected_attacker, pending_attack_target)
+	if possible_interceptors.is_empty():
+		_resolve_authoritative_headless_attack()
+		return
+	var defender: Player = pending_attack_target if pending_attack_target is Player else (pending_attack_target as Card).get_controller()
+	var defender_idx := game_manager.players.find(defender)
+	if defender_idx < 0:
+		move_failed.emit("Could not determine which player may intercept.")
+		_clear_pending_attack_state()
+		return
+	var interceptor_uids: Array[String] = []
+	for interceptor in possible_interceptors:
+		interceptor_uids.append(interceptor.uid)
+	var attacker_name := selected_attacker.card_name if selected_attacker != null else "A creature"
+	request_ui_interaction.emit(defender_idx, "intercept", {
+		"interceptor_uids": interceptor_uids,
+		"action_message": attacker_name + " is attacking - intercept or allow?"
+	})
+
 # --- Attack Management ---
 
 func can_attack(card: Card) -> bool:
@@ -401,10 +552,12 @@ func request_attack(attacker, target) -> void:
 	
 	selected_attacker = attacker_card
 	pending_attack_target = target_obj
+	selected_interceptor = null
 	
 	# In a real game, this might trigger an "intercept" phase
-	# For now, we signal that an attack is requested/pending
 	move_validated.emit({"type": "attack", "attacker": attacker_card, "target": target_obj})
+	if _uses_authoritative_headless_attack_flow():
+		_start_authoritative_headless_attack()
 
 func broadcast_event(event_type: String, data: Dictionary) -> void:
 	if network_manager != null and network_manager.is_server:
@@ -1044,6 +1197,8 @@ func _process_command_impl(command: Dictionary) -> bool:
 			var int_uid: String = command.get("interceptor_uid", "")
 			var interceptor: Card = game_manager.get_card_by_uid(int_uid) if int_uid != "" else null
 			selected_interceptor = interceptor
+			if _uses_authoritative_headless_attack_flow():
+				_resolve_authoritative_headless_attack()
 			move_validated.emit(command)
 			return true
 		"play_charm_response":

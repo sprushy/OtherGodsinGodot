@@ -39,13 +39,13 @@ func _connect_signals() -> void:
 func _on_move_validated(move: Dictionary) -> void:
 	# "end_turn" already triggers _on_turn_started which broadcasts full_state;
 	# broadcasting again here would send it twice per turn change.
-	if move.get("type", "") == "end_turn":
+	if move.get("type", "") in ["end_turn", "intercept_decision"]:
 		return
 	var label := _label_for_move(move)
 	_broadcast_full_state(label)
 
 func _on_action_resolved(_action: CardAction) -> void:
-	_broadcast_full_state("")
+	_broadcast_full_state(match_manager.last_resolution_text)
 
 func _on_turn_upkeep_started(_turn_number: int, player: Player) -> void:
 	if network_manager == null:
@@ -130,7 +130,17 @@ func _broadcast_full_state(action_message: String) -> void:
 func _label_for_move(move: Dictionary) -> String:
 	match move.get("type", ""):
 		"attack":
-			return "Combat resolved."
+			var attacker := move.get("attacker", null) as Card
+			var target = move.get("target", null)
+			if attacker == null:
+				return "An attack was declared."
+			if target is Player:
+				return "%s attacks %s's followers." % [attacker.card_name, (target as Player).player_name]
+			if target is Card:
+				return "%s attacks %s." % [attacker.card_name, (target as Card).card_name]
+			return attacker.card_name + " attacks."
+		"intercept_decision":
+			return ""
 		"play_card":
 			var card := game_manager.get_card_by_uid(move.get("card_uid", ""))
 			return ("Played %s." % card.card_name) if card else "Card played."

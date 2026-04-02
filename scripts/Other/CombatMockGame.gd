@@ -11530,6 +11530,12 @@ func _on_match_ui_interaction(player_index: int, type: String, data: Dictionary)
 		return
 		
 	match type:
+		"intercept":
+			var interceptor_uids = data.get("interceptor_uids", [])
+			var action_message := str(data.get("action_message", "")).strip_edges()
+			if action_message != "":
+				action_label.text = action_message
+			_show_intercept_prompt(interceptor_uids)
 		"combat_retreat":
 			var action: CardAction = data["action"]
 			var target = data.get("target")
@@ -11928,6 +11934,8 @@ func _apply_ui_interaction(event_data: Dictionary) -> void:
 		_pause_stack_resolution(pause_player)
 	
 	match type:
+		"intercept":
+			_apply_intercept_offered(payload)
 		"combat_retreat":
 			var action_dict: Dictionary = payload.get("action", {})
 			var action := CardAction.from_dict(action_dict, game_manager)
