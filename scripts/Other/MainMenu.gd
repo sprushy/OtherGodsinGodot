@@ -1845,26 +1845,37 @@ func _cleanup_lobby(clear_session: bool) -> void:
 func _cleanup_lobby_client() -> void:
 	if lobby_client == null:
 		return
-	lobby_client.disconnect_from_server()
-	lobby_client.queue_free()
+	var existing_client := lobby_client
 	lobby_client = null
+	existing_client.disconnect_from_server()
+	if existing_client.get_parent() != null:
+		existing_client.get_parent().remove_child(existing_client)
+	existing_client.queue_free()
 	_cleanup_dedicated_lobby_mount_if_unused()
 
 func _cleanup_lobby_server() -> void:
 	if lobby_server == null:
 		return
-	lobby_server.stop_server()
-	lobby_server.queue_free()
+	var existing_server = lobby_server
 	lobby_server = null
+	existing_server.stop_server()
+	if existing_server.get_parent() != null:
+		existing_server.get_parent().remove_child(existing_server)
+	existing_server.queue_free()
 
 func _attach_lobby_client(client: Node) -> void:
 	var active_scene := get_tree().current_scene
-	if active_scene == null:
-		add_child(client)
-		return
-	active_scene.add_child(client)
+	var parent_node: Node = active_scene if active_scene != null else self
+	var existing_client := parent_node.get_node_or_null(NodePath(client.name))
+	if existing_client != null and existing_client != client:
+		parent_node.remove_child(existing_client)
+		existing_client.queue_free()
+	parent_node.add_child(client)
 	if client is LobbyClient:
-		client.multiplayer_mount_path = active_scene.get_path()
+		if active_scene != null:
+			client.multiplayer_mount_path = active_scene.get_path()
+		else:
+			client.multiplayer_mount_path = NodePath("")
 
 func _cleanup_dedicated_lobby_mount_if_unused() -> void:
 	pass

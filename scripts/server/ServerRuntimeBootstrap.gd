@@ -36,6 +36,7 @@ func _boot_lobby_runtime(launch_args: Dictionary) -> void:
 	lobby_server.name = "LobbyPeer"
 	lobby_server.use_dedicated_match_processes = true
 	lobby_server.allow_in_process_match_fallback = false
+	lobby_server.use_default_multiplayer = true
 	lobby_server.trace_file_path = trace_file_path
 	add_child(lobby_server)
 	_server_node = lobby_server
