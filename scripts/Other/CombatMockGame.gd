@@ -304,6 +304,7 @@ var _no_intercept_btn: Button = null
 var _ui_refresh_queued: bool = false
 var _power_hover_popup: Control = null
 var _game_finished: bool = false
+var _pending_forfeit_return_to_menu: bool = false
 var _action_log_view: RichTextLabel = null
 var _action_log_history_button: Button = null
 var _action_log_messages: Array[String] = []
@@ -1273,6 +1274,7 @@ func start_game(
 ) -> void:
 	print("=== STARTING COMBAT MOCK GAME ===")
 	_game_finished = false
+	_pending_forfeit_return_to_menu = false
 	_local_match_result_recorded = false
 	_current_match_info = match_info.duplicate(true)
 	
@@ -4929,6 +4931,8 @@ func _on_local_player_card_moved(card: Card, from_zone: Zone, to_zone: Zone) -> 
 	if card == null or from_zone == null or to_zone == null:
 		return
 	_invalidate_cached_board_layouts()
+	if _is_networked_client:
+		return
 	if from_zone.zone_type != Zone.ZoneType.HAND:
 		return
 	if to_zone.is_board_zone() and card.card_type in [Card.CardType.CREATURE, Card.CardType.STRUCTURE]:
@@ -4948,6 +4952,8 @@ func _on_local_player_card_moved(card: Card, from_zone: Zone, to_zone: Zone) -> 
 
 func _on_card_summoned(player: Player, card: Card, _from_zone: Zone, to_zone: Zone, _summon_source: Card, face_down: bool, stealth: bool) -> void:
 	if player == null or card == null or to_zone == null:
+		return
+	if _is_networked_client:
 		return
 	if face_down or stealth:
 		return
@@ -5563,24 +5569,30 @@ func _on_empty_zone_pressed(zone: Zone) -> void:
 				elif selected_card is Absence:
 					_prompt_absence_target_selection()
 				elif selected_card is CircleOfRebirth:
-					var resurrect_count := get_resurrectible_cards().size()
-					var spell := selected_card
-					_queue_hand_spell_cast(
-						spell,
-						null,
-						("Circle of Rebirth resurrected %d creature(s)!" % resurrect_count) if resurrect_count > 0 else "Cast Circle of Rebirth but no creatures to resurrect!",
-						func() -> void:
-							(spell as SpellCard).resolve(game_manager, null)
-					)
+					if _is_networked_client:
+						game_input.submit_action({type = "cast_spell", spell_uid = selected_card.uid})
+					else:
+						var resurrect_count := get_resurrectible_cards().size()
+						var spell := selected_card
+						_queue_hand_spell_cast(
+							spell,
+							null,
+							("Circle of Rebirth resurrected %d creature(s)!" % resurrect_count) if resurrect_count > 0 else "Cast Circle of Rebirth but no creatures to resurrect!",
+							func() -> void:
+								(spell as SpellCard).resolve(game_manager, null)
+						)
 				else:
-					var spell := selected_card
-					_queue_hand_spell_cast(
-						spell,
-						null,
-						"Cast " + spell.card_name + "!",
-						func() -> void:
-							(spell as SpellCard).resolve(game_manager, null)
-					)
+					if _is_networked_client:
+						game_input.submit_action({type = "cast_spell", spell_uid = selected_card.uid})
+					else:
+						var spell := selected_card
+						_queue_hand_spell_cast(
+							spell,
+							null,
+							"Cast " + spell.card_name + "!",
+							func() -> void:
+								(spell as SpellCard).resolve(game_manager, null)
+						)
 			else:
 				action_label.text = "Cannot cast spell! Not enough resources"
 	elif selected_card.current_zone == game_manager.current_player.hand_zone \
@@ -7825,21 +7837,23 @@ func _on_enemy_card_pressed(target_card: Card) -> void:
 
 	# Direct attack target selection
 	if selected_attacker:
-		var target_id: String = ""
+		var attack_target = null
 		if target_card.is_god:
-			target_id = target_card.card_owner.player_name
+			attack_target = target_card.card_owner
 		elif target_card.card_type == Card.CardType.CREATURE or target_card.card_type == Card.CardType.STRUCTURE:
-			target_id = target_card.get("uid")
+			attack_target = target_card
 		
-		if target_id != "":
+		if attack_target != null:
 			if _is_networked_client:
-				game_input.submit_action({
-					"type": "request_attack",
-					"attacker_uid": selected_attacker.get("uid"),
-					"target_id": target_id
-				})
+				if not _submit_network_attack_request(selected_attacker, attack_target):
+					action_label.text = "Could not send that attack to the server."
+					return
+				selected_attacker = null
+				selected_interceptor = null
+				pending_attack_target = null
+				update_ui()
 			else:
-				match_manager.request_attack(selected_attacker, target_id)
+				match_manager.request_attack(selected_attacker, attack_target)
 		else:
 			action_label.text = "Can only attack creatures or structures"
 	else:
@@ -7873,6 +7887,24 @@ func _on_all_attack_followers_pressed() -> void:
 	_queued_attackers = attackers
 	_advance_attack_queue()
 
+func _submit_network_attack_request(attacker: Card, target) -> bool:
+	if not _is_networked_client or attacker == null:
+		return false
+	var target_id := ""
+	if target is Player:
+		var target_index := game_manager.players.find(target as Player)
+		if target_index >= 0:
+			target_id = str(target_index)
+	elif target is Card:
+		target_id = str((target as Card).get("uid"))
+	if target_id.is_empty():
+		return false
+	return game_input.submit_action({
+		"type": "request_attack",
+		"attacker_uid": str(attacker.get("uid")),
+		"target_id": target_id,
+	})
+
 func _advance_attack_queue() -> void:
 	while not _queued_attackers.is_empty():
 		var attacker: Card = _queued_attackers.pop_front()
@@ -7880,6 +7912,11 @@ func _advance_attack_queue() -> void:
 		if not match_manager.can_attack(attacker):
 			continue
 		# Set up exactly like a manual attack targeting followers
+		if _is_networked_client:
+			if _submit_network_attack_request(attacker, game_manager.other_player):
+				_queued_attackers.clear()
+				return
+			continue
 		match_manager.request_attack(attacker, game_manager.other_player)
 		return
 	# Queue exhausted
@@ -8425,6 +8462,15 @@ func _bdrag_finish(drop_pos: Vector2) -> void:
 			if not game_manager.can_cards_engage_each_other(card, target_card):
 				action_label.text = _get_card_name_safe(card, "That card") + " cannot engage " + _get_card_name_safe(target_card, "that target") + "."
 				return
+			if _is_networked_client:
+				if not _submit_network_attack_request(card, target_card):
+					action_label.text = "Could not send that attack to the server."
+					return
+				selected_attacker = null
+				selected_interceptor = null
+				pending_attack_target = null
+				update_ui()
+				return
 			pending_attack_target = target_card
 			action_label.text = _get_attack_card_label(card, "A creature") + " attacking " + _get_card_name_safe(target_card, "an enemy card") + "..."
 			check_for_possible_intercepts()
@@ -8461,6 +8507,15 @@ func _on_attack_followers_pressed() -> void:
 		var block := _get_attack_block_reason(selected_attacker)
 		if block != "":
 			action_label.text = block
+			return
+		if _is_networked_client:
+			if not _submit_network_attack_request(selected_attacker, game_manager.other_player):
+				action_label.text = "Could not send that attack to the server."
+				return
+			selected_attacker = null
+			selected_interceptor = null
+			pending_attack_target = null
+			update_ui()
 			return
 		pending_attack_target = game_manager.other_player
 		check_for_possible_intercepts()
@@ -11724,6 +11779,27 @@ func _is_player_local(player: Player) -> bool:
 	var idx := game_manager.players.find(player)
 	return idx == network_manager.local_player_index
 
+func _get_local_forfeit_player_index() -> int:
+	if network_manager != null and network_manager.local_player_index >= 0:
+		return network_manager.local_player_index
+	if game_manager == null or game_manager.players.is_empty():
+		return -1
+	if not _is_networked_client and not _is_real_network_host():
+		var current_idx := game_manager.players.find(game_manager.current_player)
+		if current_idx >= 0:
+			return current_idx
+	var viewer := game_manager.get_feedback_viewer()
+	var viewer_idx := game_manager.players.find(viewer)
+	if viewer_idx >= 0:
+		return viewer_idx
+	var fallback_idx := game_manager.players.find(game_manager.current_player)
+	if fallback_idx >= 0:
+		return fallback_idx
+	return 0
+
+func _emit_forfeit_requested() -> void:
+	forfeit_requested.emit()
+
 func _on_peer_disconnected(_peer_id: int) -> void:
 	if _game_finished:
 		return
@@ -11818,6 +11894,10 @@ func _apply_network_event(event_type: String, data: Dictionary) -> void:
 		"intercept_offered":
 			_apply_intercept_offered(data)
 		"command_rejected":
+			if _pending_forfeit_return_to_menu:
+				_pending_forfeit_return_to_menu = false
+				if not _game_finished:
+					forfeit_button.disabled = false
 			action_label.text = str(data.get("reason", "That move was rejected by the server."))
 			update_ui()
 		"game_ended":
@@ -11829,6 +11909,9 @@ func _apply_network_event(event_type: String, data: Dictionary) -> void:
 			_game_finished = true
 			match_session_cleared.emit()
 			update_ui()
+			if _pending_forfeit_return_to_menu:
+				_pending_forfeit_return_to_menu = false
+				call_deferred("_emit_forfeit_requested")
 
 func _apply_ui_interaction(event_data: Dictionary) -> void:
 	var type: String = event_data.get("type", "")
@@ -12285,21 +12368,35 @@ func _on_forfeit_button_pressed() -> void:
 	placement_mode = ""
 	placement_container.visible = false
 	_clear_wolf_master_summon()
-	action_label.text = "Game forfeited."
-	match_session_cleared.emit()
-	forfeit_requested.emit()
+	var forfeiting_index := _get_local_forfeit_player_index()
+	if forfeiting_index < 0 or game_input == null:
+		action_label.text = "Could not determine which player is forfeiting."
+		update_ui()
+		return
+	_pending_forfeit_return_to_menu = true
+	forfeit_button.disabled = true
+	action_label.text = "Forfeit requested..."
+	if not game_input.submit_action({type = "forfeit", player_index = forfeiting_index}):
+		_pending_forfeit_return_to_menu = false
+		forfeit_button.disabled = false
+		action_label.text = "Could not send the forfeit request."
+	update_ui()
 
 func _do_end_turn() -> void:
 	if _game_finished:
 		return
 	print("=== TURN ENDED ===")
 	_dismiss_transient_prompts()
+	var et_cmd := {type = "end_turn"}
+	if not _pending_end_turn_discard_uids.is_empty():
+		et_cmd["discard_uids"] = _pending_end_turn_discard_uids.duplicate()
+		_pending_end_turn_discard_uids.clear()
+	if _is_networked_client:
+		game_input.submit_action(et_cmd)
+		update_ui()
+		return
 	var end_turn_priority_owner := game_manager.current_player
 	var resolve_end_turn := func() -> void:
-		var et_cmd := {type = "end_turn"}
-		if not _pending_end_turn_discard_uids.is_empty():
-			et_cmd["discard_uids"] = _pending_end_turn_discard_uids.duplicate()
-			_pending_end_turn_discard_uids.clear()
 		game_input.submit_action(et_cmd)
 		update_ui()
 		if _is_networked_client:
@@ -12501,6 +12598,9 @@ func _on_game_ended(winner: Player, loser: Player) -> void:
 		_capture_action_log_message(true)
 	match_session_cleared.emit()
 	update_ui()
+	if _pending_forfeit_return_to_menu:
+		_pending_forfeit_return_to_menu = false
+		call_deferred("_emit_forfeit_requested")
 
 func _request_ui_refresh() -> void:
 	if not _is_networked_client and not _is_real_network_host():
@@ -12796,6 +12896,7 @@ func _on_card_dropped_to_zone(card: Card, zone: Zone, is_rotated: bool = false, 
 func cleanup() -> void:
 	_set_match_reconnect_wait(false)
 	_awaiting_initial_full_state = false
+	_pending_forfeit_return_to_menu = false
 	_local_match_result_recorded = false
 	_current_match_info.clear()
 	_hide_hati_prompt()

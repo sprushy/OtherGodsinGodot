@@ -518,6 +518,11 @@ func _get_required_player_for_command(command: Dictionary) -> Player:
 			return resurrect_card.card_owner if resurrect_card != null else null
 		"priority_pass":
 			return game_manager.priority_player if game_manager.priority_player != null else game_manager.current_player
+		"forfeit":
+			var forfeiting_index := int(command.get("player_index", -1))
+			if forfeiting_index >= 0 and forfeiting_index < game_manager.players.size():
+				return game_manager.players[forfeiting_index]
+			return null
 		"upkeep_choice", "end_turn":
 			return game_manager.current_player
 	return null
@@ -549,7 +554,7 @@ func _get_command_actor(sender_info: Dictionary) -> Player:
 
 func _requires_resolved_upkeep(command_type: String) -> bool:
 	match command_type:
-		"upkeep_choice", "priority_pass", "intercept_decision", "play_hex_response", "play_charm_response", "play_priority_ability":
+		"upkeep_choice", "priority_pass", "intercept_decision", "play_hex_response", "play_charm_response", "play_priority_ability", "forfeit":
 			return false
 	return true
 
@@ -683,6 +688,20 @@ func _process_command_impl(command: Dictionary) -> bool:
 				_:
 					move_failed.emit("upkeep_choice: unknown choice '" + str(command.get("choice")) + "'")
 					return false
+			move_validated.emit(command)
+			return true
+		"forfeit":
+			if game_manager.is_game_over:
+				move_failed.emit("The game is already over.")
+				return false
+			var forfeiting_player: Player = acting_player
+			var forfeiting_index := int(command.get("player_index", -1))
+			if forfeiting_index >= 0 and forfeiting_index < game_manager.players.size():
+				forfeiting_player = game_manager.players[forfeiting_index]
+			if forfeiting_player == null:
+				move_failed.emit("forfeit: player not found")
+				return false
+			game_manager.forfeit_game(forfeiting_player)
 			move_validated.emit(command)
 			return true
 		"play_creature":

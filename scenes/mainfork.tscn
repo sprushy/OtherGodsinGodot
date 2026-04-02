@@ -23,7 +23,7 @@ offset_bottom = 40.0
 
 [node name="TitleLabel" type="Label" parent="Control/MenuContainer" unique_id=1494767711]
 layout_mode = 2
-text = "card game"
+text = "Guest"
 
 [node name="DeckBuilderButton" type="Button" parent="Control/MenuContainer" unique_id=1418293355]
 layout_mode = 2

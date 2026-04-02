@@ -106,7 +106,7 @@ func build_match_from_session_decks(game_manager: GameManager, match_session) ->
 
 	game_manager.setup_game()
 	_apply_standard_opening(players)
-	_apply_random_first_player_bonus(game_manager)
+	_apply_seeded_first_player_bonus(game_manager, _get_session_first_player_index(game_manager, match_session))
 	game_manager.feedback_viewer = players[0]
 	return {
 		"player1": players[0],
@@ -162,8 +162,17 @@ func _apply_random_first_player_bonus(game_manager: GameManager) -> void:
 	if game_manager == null or game_manager.players.size() < 2:
 		return
 	var first_player_index: int = _rng.randi_range(0, game_manager.players.size() - 1)
-	var first_player: Player = game_manager.players[first_player_index]
-	var second_player: Player = game_manager.players[1 - first_player_index]
+	_apply_seeded_first_player_bonus(game_manager, first_player_index)
+
+func _apply_seeded_first_player_bonus(game_manager: GameManager, first_player_index: int) -> void:
+	if game_manager == null or game_manager.players.size() < 2:
+		return
+	var resolved_first_player_index := first_player_index
+	if resolved_first_player_index < 0 or resolved_first_player_index >= game_manager.players.size():
+		resolved_first_player_index = 0
+	var first_player: Player = game_manager.players[resolved_first_player_index]
+	var second_player_index := (resolved_first_player_index + 1) % game_manager.players.size()
+	var second_player: Player = game_manager.players[second_player_index]
 	for player in game_manager.players:
 		if player != null:
 			player.is_turn_player = false
@@ -173,6 +182,20 @@ func _apply_random_first_player_bonus(game_manager: GameManager) -> void:
 	first_player.is_turn_player = true
 	second_player.is_turn_player = false
 	second_player.gain_mana(2)
+
+func _get_session_first_player_index(game_manager: GameManager, match_session) -> int:
+	if game_manager == null or match_session == null or game_manager.players.is_empty():
+		return 0
+	var seed_text := "%s|%s" % [
+		str(match_session.match_id).strip_edges(),
+		str(match_session.room_id).strip_edges(),
+	]
+	if seed_text.strip_edges().is_empty():
+		return _rng.randi_range(0, game_manager.players.size() - 1)
+	var accumulator: int = 0
+	for char_index in range(seed_text.length()):
+		accumulator = int((accumulator * 131 + seed_text.unicode_at(char_index)) % 2147483647)
+	return accumulator % game_manager.players.size()
 
 func _get_session_deck_submission(match_session, session_id: String) -> Dictionary:
 	if session_id.is_empty() or match_session == null:

@@ -17,6 +17,8 @@ signal god_power_activated(turn_number: int, player: Player, god: Card, target: 
 signal card_summoned(player: Player, card: Card, from_zone: Zone, to_zone: Zone, summon_source: Card, face_down: bool, stealth: bool)
 
 enum GamePhase { MULLIGAN, MAIN, COMBAT, END }
+const GAME_END_REASON_DEFEAT := "defeat"
+const GAME_END_REASON_FORFEIT := "forfeit"
 
 var players: Array[Player] = []
 var current_player: Player
@@ -28,6 +30,7 @@ var current_phase: GamePhase = GamePhase.MULLIGAN
 var is_game_over: bool = false
 var winning_player: Player = null
 var losing_player: Player = null
+var game_end_reason: String = ""
 var turn_number: int = 0
 var action_stack: Array[CardAction] = []
 var prepared_hexes: Dictionary = {}
@@ -149,7 +152,17 @@ func consume_player_feedback() -> String:
 	last_player_feedback_text = ""
 	return text
 
-func get_game_result_message(winner: Player = winning_player, loser: Player = losing_player) -> String:
+func get_game_result_message(winner: Player = winning_player, loser: Player = losing_player, reason: String = "") -> String:
+	var resolved_reason := reason.strip_edges()
+	if resolved_reason == "":
+		resolved_reason = game_end_reason
+	if resolved_reason == GAME_END_REASON_FORFEIT:
+		if winner != null and loser != null:
+			return "%s wins the game! %s forfeited." % [winner.player_name, loser.player_name]
+		if loser != null:
+			return "Game over! %s forfeited." % [loser.player_name]
+		if winner != null:
+			return winner.player_name + " wins by forfeit!"
 	if winner != null and loser != null:
 		return "%s wins the game! %s reached 0 followers." % [winner.player_name, loser.player_name]
 	if loser != null:
@@ -347,6 +360,7 @@ func setup_game() -> void:
 	is_game_over = false
 	winning_player = null
 	losing_player = null
+	game_end_reason = ""
 	for player in players:
 		player.game_manager = self
 		if not player.card_moved.is_connected(_on_player_card_moved):
@@ -2605,12 +2619,19 @@ func _apply_god_passives_to_card(_player: Player, _card: Card) -> void:
 	# Keep this helper as a no-op for existing call sites and local probes.
 	return
 
-func _on_player_defeated(defeated_player: Player) -> void:
-	if is_game_over or defeated_player == null:
+func forfeit_game(forfeiting_player: Player) -> void:
+	_finish_game(forfeiting_player, GAME_END_REASON_FORFEIT)
+
+func _finish_game(losing_player_ref: Player, reason: String = GAME_END_REASON_DEFEAT) -> void:
+	if is_game_over or losing_player_ref == null:
 		return
-	losing_player = defeated_player
-	winning_player = get_opponent(defeated_player)
+	losing_player = losing_player_ref
+	winning_player = get_opponent(losing_player_ref)
+	game_end_reason = reason
 	is_game_over = true
 	_set_phase(GamePhase.END)
-	print(get_game_result_message(winning_player, losing_player))
+	print(get_game_result_message(winning_player, losing_player, reason))
 	game_ended.emit(winning_player, losing_player)
+
+func _on_player_defeated(defeated_player: Player) -> void:
+	_finish_game(defeated_player, GAME_END_REASON_DEFEAT)
