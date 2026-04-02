@@ -135,6 +135,7 @@ const FAN_ROT_MAX     := 12.0   # degrees at the outermost card
 const FAN_ARC_HEIGHT  := 22.0   # px the arc dips at centre
 const FAN_CARD_SPACING := 130   # px between card pivot centres
 const STACK_LINGER_SECONDS := 0.8
+const POST_GAME_RETURN_DELAY_SECONDS := 1.6
 
 @onready var choice_container = $MainHBox/LeftPanel/ChoiceContainer
 @onready var choice_intro_label = $MainHBox/LeftPanel/ChoiceContainer/ChoiceIntroLabel
@@ -305,6 +306,7 @@ var _ui_refresh_queued: bool = false
 var _power_hover_popup: Control = null
 var _game_finished: bool = false
 var _pending_forfeit_return_to_menu: bool = false
+var _pending_post_game_return_to_menu: bool = false
 var _action_log_view: RichTextLabel = null
 var _action_log_history_button: Button = null
 var _action_log_messages: Array[String] = []
@@ -1275,8 +1277,12 @@ func start_game(
 	print("=== STARTING COMBAT MOCK GAME ===")
 	_game_finished = false
 	_pending_forfeit_return_to_menu = false
+	_pending_post_game_return_to_menu = false
 	_local_match_result_recorded = false
 	_current_match_info = match_info.duplicate(true)
+	if forfeit_button != null:
+		forfeit_button.disabled = false
+		forfeit_button.visible = true
 	
 	game_manager = GameManager.new()
 	game_manager.set_interaction_host(self)
@@ -11806,6 +11812,25 @@ func _get_local_forfeit_player_index() -> int:
 func _emit_forfeit_requested() -> void:
 	forfeit_requested.emit()
 
+func _schedule_post_game_return_to_menu() -> void:
+	if _pending_post_game_return_to_menu:
+		return
+	if not _is_networked_client and not _is_real_network_host():
+		return
+	_pending_post_game_return_to_menu = true
+	var tree := get_tree()
+	if tree == null:
+		_pending_post_game_return_to_menu = false
+		_emit_forfeit_requested()
+		return
+	var timer := tree.create_timer(POST_GAME_RETURN_DELAY_SECONDS)
+	timer.timeout.connect(func() -> void:
+		if not _pending_post_game_return_to_menu:
+			return
+		_pending_post_game_return_to_menu = false
+		_emit_forfeit_requested()
+	)
+
 func _on_peer_disconnected(_peer_id: int) -> void:
 	if _game_finished:
 		return
@@ -11912,12 +11937,12 @@ func _apply_network_event(event_type: String, data: Dictionary) -> void:
 				var winner_name: String = data.get("winner_name", "Unknown")
 				result_message = winner_name + " wins!"
 			action_label.text = result_message
+			_capture_action_log_message(true)
 			_game_finished = true
 			match_session_cleared.emit()
 			update_ui()
-			if _pending_forfeit_return_to_menu:
-				_pending_forfeit_return_to_menu = false
-				call_deferred("_emit_forfeit_requested")
+			_pending_forfeit_return_to_menu = false
+			_schedule_post_game_return_to_menu()
 
 func _apply_ui_interaction(event_data: Dictionary) -> void:
 	var type: String = event_data.get("type", "")
@@ -12602,13 +12627,11 @@ func _on_game_ended(winner: Player, loser: Player) -> void:
 	pending_attack_target = null
 	placement_mode = ""
 	action_label.text = game_manager.get_game_result_message(winner, loser) if game_manager != null else ("Game over!")
-	if not _is_networked_client and not _is_real_network_host():
-		_capture_action_log_message(true)
+	_capture_action_log_message(true)
 	match_session_cleared.emit()
 	update_ui()
-	if _pending_forfeit_return_to_menu:
-		_pending_forfeit_return_to_menu = false
-		call_deferred("_emit_forfeit_requested")
+	_pending_forfeit_return_to_menu = false
+	_schedule_post_game_return_to_menu()
 
 func _request_ui_refresh() -> void:
 	if not _is_networked_client and not _is_real_network_host():
@@ -12905,6 +12928,7 @@ func cleanup() -> void:
 	_set_match_reconnect_wait(false)
 	_awaiting_initial_full_state = false
 	_pending_forfeit_return_to_menu = false
+	_pending_post_game_return_to_menu = false
 	_local_match_result_recorded = false
 	_current_match_info.clear()
 	_hide_hati_prompt()

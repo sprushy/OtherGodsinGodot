@@ -39,7 +39,7 @@ func _connect_signals() -> void:
 func _on_move_validated(move: Dictionary) -> void:
 	# "end_turn" already triggers _on_turn_started which broadcasts full_state;
 	# broadcasting again here would send it twice per turn change.
-	if move.get("type", "") in ["end_turn", "intercept_decision"]:
+	if move.get("type", "") in ["end_turn", "intercept_decision", "priority_pass"]:
 		return
 	var label := _label_for_move(move)
 	_broadcast_full_state(label)

@@ -315,6 +315,9 @@ func _uses_authoritative_headless_attack_flow() -> bool:
 		return false
 	return str(host_script.resource_path).ends_with("HeadlessMatchServer.gd")
 
+func _uses_authoritative_headless_priority_flow() -> bool:
+	return _uses_authoritative_headless_attack_flow()
+
 func _get_intercept_target_row_depth(protected_target) -> int:
 	if protected_target is Player:
 		return 2
@@ -416,6 +419,124 @@ func _build_pending_attack_action() -> CardAction:
 	action.target = pending_attack_target
 	return action
 
+func _build_priority_response_options(responses: Array) -> Array:
+	var response_options: Array = []
+	if game_manager.action_stack.is_empty():
+		return response_options
+	var top: CardAction = game_manager.action_stack.back()
+	for card in responses:
+		if card is HexCard:
+			var hex := card as HexCard
+			var targets := game_manager.get_priority_hex_targets(hex, top)
+			var target_is_attacker := not hex.has_method("get_priority_targets") and top.type == CardAction.Type.ATTACK
+			var target_uids: Array = []
+			for t in targets:
+				target_uids.append(t.uid)
+			response_options.append({
+				response_type = "hex",
+				card_uid = hex.uid,
+				target_uids = target_uids,
+				target_is_attacker = target_is_attacker,
+			})
+		elif card is CharmCard:
+			var charm := card as CharmCard
+			var targets := charm.get_valid_targets(game_manager)
+			var target_uids: Array = []
+			for t in targets:
+				target_uids.append(t.uid)
+			var from_hand := charm.current_zone == charm.card_owner.hand_zone
+			response_options.append({
+				response_type = "charm",
+				card_uid = charm.uid,
+				target_uids = target_uids,
+				from_hand = from_hand,
+			})
+		elif card != null and card.is_god and card.has_method("get_valid_targets"):
+			var god_targets: Array = card.get_valid_targets(game_manager)
+			var god_target_uids: Array = []
+			for t in god_targets:
+				if t is Card:
+					god_target_uids.append((t as Card).uid)
+			response_options.append({
+				response_type = "god",
+				card_uid = card.uid,
+				target_uids = god_target_uids,
+			})
+	return response_options
+
+func _get_priority_action_message(top: CardAction) -> String:
+	if top == null:
+		return ""
+	match top.type:
+		CardAction.Type.ATTACK:
+			if top.attacker != null:
+				return top.attacker.card_name + " is attacking - you may respond!"
+		CardAction.Type.EVENT:
+			if top.event_name == "start_turn":
+				return "Start-of-turn priority window."
+			if top.event_name == "end_turn":
+				return "End-of-turn priority window."
+	return ""
+
+func _broadcast_priority_offered(player: Player, responses: Array) -> void:
+	if network_manager == null or game_manager.action_stack.is_empty() or player == null:
+		return
+	var event_data := {
+		responses = _build_priority_response_options(responses),
+		action_message = _get_priority_action_message(game_manager.action_stack.back()),
+	}
+	var player_idx := game_manager.players.find(player)
+	var peer_id: int = network_manager.player_peer_ids.get(player_idx, -1)
+	if peer_id == 1:
+		network_manager.game_event_received.emit("priority_offered", event_data)
+	elif peer_id > 0:
+		network_manager.broadcast_event_to_peer(peer_id, "priority_offered", event_data)
+
+func _advance_authoritative_priority() -> void:
+	if not _uses_authoritative_headless_priority_flow():
+		return
+	if game_manager.action_stack.is_empty():
+		return
+	var player := game_manager.priority_player
+	if player == null:
+		var top_action: CardAction = game_manager.action_stack.back()
+		player = top_action.initial_priority_player if top_action.initial_priority_player != null else game_manager.get_opponent(top_action.source_player)
+		game_manager.priority_player = player
+	if player == null:
+		return
+	var responses := game_manager.get_priority_responses(player)
+	if responses.is_empty():
+		game_manager.pass_priority()
+		if game_manager.both_passed():
+			if game_manager.action_stack.is_empty():
+				return
+			var action: CardAction = game_manager.action_stack.pop_back()
+			resolve_action(action)
+			if not game_manager.action_stack.is_empty():
+				_advance_authoritative_priority()
+		else:
+			_advance_authoritative_priority()
+		return
+	_broadcast_priority_offered(player, responses)
+
+func _queue_authoritative_priority_event(
+	event_name: String,
+	resolve_callback: Callable = Callable(),
+	initial_priority_player: Player = null,
+	source_player_override: Player = null,
+	resolution_text: String = ""
+) -> void:
+	var action := CardAction.new()
+	action.type = CardAction.Type.EVENT
+	action.source_player = source_player_override if source_player_override != null else game_manager.current_player
+	action.initial_priority_player = initial_priority_player
+	action.event_name = event_name
+	action.event_speed = 0
+	action.resolve_callback = resolve_callback
+	action.resolution_text = resolution_text
+	game_manager.push_to_stack(action)
+	_advance_authoritative_priority()
+
 func _clear_pending_attack_state() -> void:
 	selected_attacker = null
 	selected_interceptor = null
@@ -428,7 +549,8 @@ func _resolve_authoritative_headless_attack() -> void:
 		_clear_pending_attack_state()
 		return
 	_clear_pending_attack_state()
-	resolve_action(attack_action)
+	game_manager.push_to_stack(attack_action)
+	_advance_authoritative_priority()
 
 func _start_authoritative_headless_attack() -> void:
 	if selected_attacker == null or pending_attack_target == null:
@@ -826,8 +948,18 @@ func _process_command_impl(command: Dictionary) -> bool:
 				var et_card := game_manager.get_card_by_uid(et_uid as String)
 				if et_card != null and et_card.current_zone == acting_player.hand_zone:
 					acting_player.discard_card(et_card)
-			game_manager.end_turn()
 			move_validated.emit(command)
+			if _uses_authoritative_headless_priority_flow():
+				_queue_authoritative_priority_event(
+					"end_turn",
+					func() -> void:
+						game_manager.end_turn(),
+					acting_player,
+					acting_player,
+					"End-turn window closed."
+				)
+				return true
+			game_manager.end_turn()
 			return true
 		"upkeep_choice":
 			if acting_player != game_manager.current_player:
@@ -842,6 +974,15 @@ func _process_command_impl(command: Dictionary) -> bool:
 					move_failed.emit("upkeep_choice: unknown choice '" + str(command.get("choice")) + "'")
 					return false
 			move_validated.emit(command)
+			if _uses_authoritative_headless_priority_flow():
+				var choice_feedback := "Drew a card." if command.get("choice", "") == "draw" else "Gained 4 additional mana."
+				_queue_authoritative_priority_event(
+					"start_turn",
+					Callable(),
+					game_manager.current_player,
+					game_manager.current_player,
+					choice_feedback
+				)
 			return true
 		"forfeit":
 			if game_manager.is_game_over:
@@ -1239,6 +1380,8 @@ func _process_command_impl(command: Dictionary) -> bool:
 					pcr_charm_card.card_owner.move_card(pcr_charm_card, pcr_charm_card.card_owner.graveyard_zone)
 			game_manager.push_to_stack(pcr_action)
 			move_validated.emit(command)
+			if _uses_authoritative_headless_priority_flow():
+				_advance_authoritative_priority()
 			return true
 		"play_priority_ability":
 			var pra_source_uid: String = command.get("source_uid", "")
@@ -1272,9 +1415,22 @@ func _process_command_impl(command: Dictionary) -> bool:
 					pra_source.activate(game_manager)
 			game_manager.push_to_stack(pra_action)
 			move_validated.emit(command)
+			if _uses_authoritative_headless_priority_flow():
+				_advance_authoritative_priority()
 			return true
 		"priority_pass":
-			# Remote player explicitly passes priority; CombatMockGame continues the loop.
+			if _uses_authoritative_headless_priority_flow():
+				game_manager.pass_priority()
+				move_validated.emit(command)
+				if game_manager.both_passed():
+					if not game_manager.action_stack.is_empty():
+						var resolved_action: CardAction = game_manager.action_stack.pop_back()
+						resolve_action(resolved_action)
+						if not game_manager.action_stack.is_empty():
+							_advance_authoritative_priority()
+				else:
+					_advance_authoritative_priority()
+				return true
 			move_validated.emit(command)
 			return true
 		"resurrection_choice":
@@ -1352,6 +1508,8 @@ func _process_command_impl(command: Dictionary) -> bool:
 			phr_hex_card.is_prepared = false
 			phr_hex_card.reveal(game_manager)
 			move_validated.emit(command)
+			if _uses_authoritative_headless_priority_flow():
+				_advance_authoritative_priority()
 			return true
 	move_failed.emit("Unknown command type: " + str(command.get("type")))
 	return false

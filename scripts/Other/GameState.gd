@@ -24,6 +24,8 @@ static func serialize(gm: GameManager, viewer_player_index: int = -1) -> Diction
 		priority_player_index = gm.players.find(gm.priority_player),
 		consecutive_passes = gm.consecutive_passes,
 		attack_restrictions = _serialize_attack_restrictions(gm),
+		prepared_hexes = _serialize_prepared_cards(gm.prepared_hexes),
+		prepared_charms = _serialize_prepared_cards(gm.prepared_charms),
 		players = [],
 	}
 	if gm.winning_player != null:
@@ -136,6 +138,17 @@ static func _serialize_attack_restrictions(gm: GameManager) -> Array:
 		})
 	return result
 
+static func _serialize_prepared_cards(prepared_map: Dictionary) -> Array:
+	var result := []
+	for card in prepared_map.keys():
+		if card == null:
+			continue
+		result.append({
+			uid = card.uid,
+			prepared_turn = int(prepared_map.get(card, 0)),
+		})
+	return result
+
 # -------------------------------------------------------------------------
 # Deserialization (dict → ghost GameManager)
 # -------------------------------------------------------------------------
@@ -167,6 +180,9 @@ static func apply_to_manager(data: Dictionary, gm: GameManager) -> void:
 				turns = entry.get("turns", 0),
 				source = null,
 			}
+
+	gm.prepared_hexes.clear()
+	gm.prepared_charms.clear()
 
 	var players_data: Array = data.get("players", [])
 	for i in mini(players_data.size(), gm.players.size()):
@@ -203,6 +219,9 @@ static func apply_to_manager(data: Dictionary, gm: GameManager) -> void:
 		var res_data: Array = pdata.get("reserve_zones", [])
 		for j in mini(res_data.size(), player.reserve_zones.size()):
 			_apply_zone_cards(player.reserve_zones[j], res_data[j])
+
+	_restore_prepared_cards(data.get("prepared_hexes", []), gm.prepared_hexes, gm)
+	_restore_prepared_cards(data.get("prepared_charms", []), gm.prepared_charms, gm)
 
 static func _apply_zone_cards(zone: Zone, cards_data: Array) -> void:
 	zone.cards.clear()
@@ -294,3 +313,15 @@ static func _deserialize_card(cdata: Dictionary) -> Card:
 	card._sync_status_flags()
 
 	return card
+
+static func _restore_prepared_cards(entries: Array, target_map: Dictionary, gm: GameManager) -> void:
+	for entry in entries:
+		if not (entry is Dictionary):
+			continue
+		var uid := str((entry as Dictionary).get("uid", "")).strip_edges()
+		if uid.is_empty():
+			continue
+		var card := gm.get_card_by_uid(uid)
+		if card == null:
+			continue
+		target_map[card] = int((entry as Dictionary).get("prepared_turn", gm.turn_number))
