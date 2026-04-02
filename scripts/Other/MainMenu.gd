@@ -36,8 +36,8 @@ const AUTH_MODE_REGISTER := "register"
 @onready var status_label = $MenuContainer/MultiplayerContainer/StatusLabel
 
 var _smoke_config: Dictionary = {}
-var lobby_server = null
-var lobby_client = null
+var lobby_server: LobbyServer = null
+var lobby_client: LobbyClient = null
 var _current_room_snapshot: Dictionary = {}
 var _open_seek_rooms: Array[Dictionary] = []
 var _lobby_session_id: String = ""
@@ -1845,7 +1845,7 @@ func _cleanup_lobby(clear_session: bool) -> void:
 func _cleanup_lobby_client() -> void:
 	if lobby_client == null:
 		return
-	var existing_client := lobby_client
+	var existing_client: LobbyClient = lobby_client
 	lobby_client = null
 	existing_client.disconnect_from_server()
 	if existing_client.get_parent() != null:
@@ -1856,7 +1856,7 @@ func _cleanup_lobby_client() -> void:
 func _cleanup_lobby_server() -> void:
 	if lobby_server == null:
 		return
-	var existing_server = lobby_server
+	var existing_server: LobbyServer = lobby_server
 	lobby_server = null
 	existing_server.stop_server()
 	if existing_server.get_parent() != null:
@@ -1866,7 +1866,7 @@ func _cleanup_lobby_server() -> void:
 func _attach_lobby_client(client: Node) -> void:
 	var active_scene := get_tree().current_scene
 	var parent_node: Node = active_scene if active_scene != null else self
-	var existing_client := parent_node.get_node_or_null(NodePath(client.name))
+	var existing_client: Node = parent_node.get_node_or_null(NodePath(client.name))
 	if existing_client != null and existing_client != client:
 		parent_node.remove_child(existing_client)
 		existing_client.queue_free()
