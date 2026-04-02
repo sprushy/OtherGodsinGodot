@@ -39,19 +39,16 @@ jobs:
 
       - name: Package release zips
         run: |
-          cp .exports/windows/ClaudeOtherGods.exe dist/ClaudeOtherGods.exe
-          cp .exports/server/ClaudeOtherGodsServer.exe dist/ClaudeOtherGodsServer.exe
-          cd dist
-          zip -9 -r ClaudeOtherGods-windows.zip ClaudeOtherGods.exe
-          zip -9 -r ClaudeOtherGodsServer-windows.zip ClaudeOtherGodsServer.exe
+          cd .exports/windows
+          zip -9 -r ../../dist/ClaudeOtherGods-windows.zip ClaudeOtherGods.exe
+          cd ../server
+          zip -9 -r ../../dist/ClaudeOtherGodsServer-windows.zip ClaudeOtherGodsServer.exe
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
           name: ClaudeOtherGods-windows
           path: |
-            .exports/windows/ClaudeOtherGods.exe
-            .exports/server/ClaudeOtherGodsServer.exe
             dist/ClaudeOtherGods-windows.zip
             dist/ClaudeOtherGodsServer-windows.zip
 
@@ -60,7 +57,5 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            .exports/windows/ClaudeOtherGods.exe
-            .exports/server/ClaudeOtherGodsServer.exe
             dist/ClaudeOtherGods-windows.zip
             dist/ClaudeOtherGodsServer-windows.zip

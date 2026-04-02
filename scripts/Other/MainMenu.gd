@@ -2026,7 +2026,7 @@ func _merge_local_profile_decks(source_profile_id: String, target_profile_id: St
 	var source_selected_deck_id := str(_local_profile_store.get_last_selected_deck_id(source_id)).strip_edges()
 	if source_selected_deck_id.is_empty():
 		return
-	var migrated_selected_deck := _local_profile_store.get_deck(target_id, source_selected_deck_id)
+	var migrated_selected_deck = _local_profile_store.get_deck(target_id, source_selected_deck_id)
 	if migrated_selected_deck.is_empty():
 		return
 	_local_profile_store.remember_last_selected_deck(target_id, source_selected_deck_id)
