@@ -20,6 +20,9 @@ var _server_ip: String = "127.0.0.1"
 var _server_port: int = 12345
 var _reconnect_attempts_remaining: int = 0
 var _is_reconnecting: bool = false
+var _is_retrying_initial_connect: bool = false
+var _match_join_requested: bool = false
+var _has_authenticated_match: bool = false
 
 func _init(
 	p_match_manager: MatchManager,
@@ -58,6 +61,7 @@ func _init(
 			network_manager.server_disconnected.connect(_on_server_disconnected)
 		if network_manager.has_signal("connection_failed"):
 			network_manager.connection_failed.connect(_on_connection_failed)
+	_try_submit_match_join_if_already_connected()
 
 func get_game_input() -> GameInput:
 	return _game_input
@@ -77,18 +81,16 @@ func requires_match_auth() -> bool:
 	return _is_networked_client and not _match_info.is_empty() and str(_match_info.get("match_token", "")).strip_edges() != ""
 
 func _on_connected_to_server() -> void:
-	if not requires_match_auth() or network_manager == null:
-		return
-	network_manager.submit_match_join({
-		"match_id": str(_match_info.get("match_id", "")),
-		"session_id": str(_match_info.get("session_id", "")),
-		"match_token": str(_match_info.get("match_token", "")),
-	})
+	_is_retrying_initial_connect = false
+	_submit_match_join_request()
 
 func _on_match_join_approved(match_info: Dictionary) -> void:
 	var was_reconnecting := _is_reconnecting
 	_match_info.merge(match_info, true)
 	_is_reconnecting = false
+	_is_retrying_initial_connect = false
+	_match_join_requested = false
+	_has_authenticated_match = true
 	_reconnect_attempts_remaining = 2 if requires_match_auth() else 0
 	if str(match_info.get("server_ip", "")).strip_edges() != "":
 		_server_ip = str(match_info.get("server_ip", _server_ip))
@@ -103,24 +105,44 @@ func _on_match_join_approved(match_info: Dictionary) -> void:
 func _on_match_join_denied(reason: String) -> void:
 	var was_reconnecting := _is_reconnecting
 	_is_reconnecting = false
+	_is_retrying_initial_connect = false
+	_match_join_requested = false
+	_has_authenticated_match = false
 	match_join_failed.emit(reason)
 	if was_reconnecting:
 		game_event_received.emit("match_reconnect_failed", {"reason": reason})
 	game_event_received.emit("match_join_denied", {"reason": reason})
 
 func _on_server_disconnected() -> void:
+	_match_join_requested = false
 	if _try_reconnect():
 		return
 	server_disconnected.emit()
 	game_event_received.emit("server_disconnected", {})
 
 func _on_connection_failed() -> void:
-	if _is_reconnecting:
+	_match_join_requested = false
+	if _has_authenticated_match and _is_reconnecting:
 		_is_reconnecting = false
+		if _try_reconnect():
+			return
 		game_event_received.emit("match_reconnect_failed", {
 			"reason": "Reconnect attempt failed.",
 		})
 		return
+	if _has_authenticated_match:
+		if _try_reconnect():
+			return
+		server_disconnected.emit()
+		game_event_received.emit("server_disconnected", {})
+		return
+	if _is_retrying_initial_connect:
+		_is_retrying_initial_connect = false
+	if _try_initial_connect_retry():
+		return
+	var reason := "Could not connect to the match server."
+	match_join_failed.emit(reason)
+	game_event_received.emit("match_join_denied", {"reason": reason})
 
 func _try_reconnect() -> bool:
 	if not requires_match_auth() or network_manager == null:
@@ -140,6 +162,42 @@ func _try_reconnect() -> bool:
 		"reason": "Reconnect attempt failed.",
 	})
 	return false
+
+func _try_initial_connect_retry() -> bool:
+	if not requires_match_auth() or network_manager == null:
+		return false
+	if _reconnect_attempts_remaining <= 0:
+		return false
+	_reconnect_attempts_remaining -= 1
+	_is_retrying_initial_connect = true
+	game_event_received.emit("match_connect_retry_started", {
+		"attempts_remaining": _reconnect_attempts_remaining,
+	})
+	var reconnect_err: Error = network_manager.reconnect_client(_server_ip, _server_port)
+	if reconnect_err == OK:
+		return true
+	_is_retrying_initial_connect = false
+	return false
+
+func _submit_match_join_request() -> void:
+	if not requires_match_auth() or network_manager == null or _match_join_requested:
+		return
+	_match_join_requested = true
+	network_manager.submit_match_join({
+		"match_id": str(_match_info.get("match_id", "")),
+		"session_id": str(_match_info.get("session_id", "")),
+		"match_token": str(_match_info.get("match_token", "")),
+	})
+
+func _try_submit_match_join_if_already_connected() -> void:
+	if not requires_match_auth() or network_manager == null:
+		return
+	var multiplayer_peer = network_manager.multiplayer.multiplayer_peer
+	if multiplayer_peer == null:
+		return
+	if multiplayer_peer.get_connection_status() != MultiplayerPeer.CONNECTION_CONNECTED:
+		return
+	_submit_match_join_request()
 
 func _on_game_event_received(event_type: String, data: Dictionary) -> void:
 	game_event_received.emit(event_type, data)

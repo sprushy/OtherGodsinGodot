@@ -11752,10 +11752,19 @@ func _apply_network_event(event_type: String, data: Dictionary) -> void:
 		"match_join_ok":
 			action_label.text = "Match authenticated. Waiting for state sync..."
 			update_ui()
+			_update_waiting_overlay()
+		"match_connect_retry_started":
+			var attempts_remaining := int(data.get("attempts_remaining", 0))
+			_update_waiting_status(true, "Match server is still starting...")
+			action_label.text = "Match server is still starting... (%d retries left)" % attempts_remaining
+			update_ui()
 		"match_join_denied":
+			_awaiting_initial_full_state = false
+			_set_match_reconnect_wait(false)
 			action_label.text = str(data.get("reason", "Match authentication failed."))
 			match_session_cleared.emit()
 			update_ui()
+			_update_waiting_overlay()
 		"peer_left":
 			var player_idx := int(data.get("player_index", -1))
 			var player_name := "Opponent"
