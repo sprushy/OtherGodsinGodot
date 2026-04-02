@@ -1963,9 +1963,11 @@ func _capture_logged_in_profile(player_name: String) -> void:
 	_ensure_local_profile_store()
 	if _local_profile_store == null:
 		return
+	var previous_profile_id := _local_profile_id.strip_edges()
+	var resolved_profile_id := previous_profile_id
 	var resolved_auth_mode := AUTH_MODE_GUEST
 	if lobby_client != null:
-		_local_profile_id = str(lobby_client.current_profile_id).strip_edges()
+		resolved_profile_id = str(lobby_client.current_profile_id).strip_edges()
 		if not str(lobby_client.current_account_id).strip_edges().is_empty():
 			_logged_in_account_username = str(lobby_client.current_username).strip_edges()
 			resolved_auth_mode = AUTH_MODE_LOGIN
@@ -1978,11 +1980,58 @@ func _capture_logged_in_profile(player_name: String) -> void:
 				_local_profile_store.remember_account_password(_password_line_edit.text)
 		else:
 			_local_profile_store.set_preferred_auth_mode(AUTH_MODE_GUEST)
+	if resolved_profile_id.is_empty():
+		resolved_profile_id = previous_profile_id
+	_merge_local_profile_decks(previous_profile_id, resolved_profile_id)
+	_local_profile_id = resolved_profile_id
 	_set_auth_mode(resolved_auth_mode)
 	var profile: Dictionary = _local_profile_store.remember_profile(_local_profile_id, player_name)
 	_local_profile_id = str(profile.get("profile_id", _local_profile_id)).strip_edges()
+	_refresh_open_deck_builder_saved_decks()
 	_update_resume_controls()
 	_refresh_account_identity_label()
+
+func _merge_local_profile_decks(source_profile_id: String, target_profile_id: String) -> void:
+	if _local_profile_store == null:
+		return
+	var source_id := source_profile_id.strip_edges()
+	var target_id := target_profile_id.strip_edges()
+	if source_id.is_empty() or target_id.is_empty() or source_id == target_id:
+		return
+
+	var target_decks_by_id: Dictionary = {}
+	for existing_deck in _local_profile_store.list_decks(target_id):
+		var existing_deck_id := str(existing_deck.get("deck_id", "")).strip_edges()
+		if existing_deck_id.is_empty():
+			continue
+		target_decks_by_id[existing_deck_id] = existing_deck.duplicate(true)
+
+	var decks_to_merge: Array[Dictionary] = []
+	for source_deck in _local_profile_store.list_decks(source_id):
+		var source_deck_id := str(source_deck.get("deck_id", "")).strip_edges()
+		if source_deck_id.is_empty():
+			continue
+		var existing_target_deck = target_decks_by_id.get(source_deck_id, {})
+		if existing_target_deck is Dictionary and not (existing_target_deck as Dictionary).is_empty():
+			if int((existing_target_deck as Dictionary).get("updated_unix", 0)) >= int(source_deck.get("updated_unix", 0)):
+				continue
+		decks_to_merge.append(source_deck.duplicate(true))
+
+	if not decks_to_merge.is_empty():
+		_local_profile_store.merge_decks(target_id, decks_to_merge)
+
+	var target_selected_deck_id := str(_local_profile_store.get_last_selected_deck_id(target_id)).strip_edges()
+	if not target_selected_deck_id.is_empty():
+		return
+	var source_selected_deck_id := str(_local_profile_store.get_last_selected_deck_id(source_id)).strip_edges()
+	if source_selected_deck_id.is_empty():
+		return
+	var migrated_selected_deck := _local_profile_store.get_deck(target_id, source_selected_deck_id)
+	if migrated_selected_deck.is_empty():
+		return
+	_local_profile_store.remember_last_selected_deck(target_id, source_selected_deck_id)
+	if _selected_multiplayer_deck_id.is_empty():
+		_selected_multiplayer_deck_id = source_selected_deck_id
 
 func _maybe_request_account_decks() -> void:
 	if lobby_client == null:
@@ -2044,7 +2093,11 @@ func _on_profile_summary_received(summary) -> void:
 func _refresh_open_deck_builder_saved_decks() -> void:
 	_refresh_multiplayer_deck_options()
 	var deck_builder = game_container.get_node_or_null("DeckBuilder")
-	if deck_builder == null or not deck_builder.has_method("reload_saved_decks_from_store"):
+	if deck_builder == null:
+		return
+	if deck_builder.has_method("configure_profile_store"):
+		deck_builder.configure_profile_store(_local_profile_store, _local_profile_id, _get_player_name("Player"))
+	if not deck_builder.has_method("reload_saved_decks_from_store"):
 		return
 	deck_builder.reload_saved_decks_from_store()
 
