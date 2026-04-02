@@ -34,7 +34,7 @@ func can_activate_from_hand(game_manager: GameManager, triggering_action: CardAc
 	return can_respond_to_action(triggering_action, game_manager)
 
 func can_activate_prepared(game_manager: GameManager, triggering_action: CardAction = null) -> bool:
-	if game_manager == null:
+	if game_manager == null or card_owner == null:
 		return false
 	if game_manager._has_pending_stack_action_for_card(self):
 		return false
@@ -47,6 +47,8 @@ func can_activate_prepared(game_manager: GameManager, triggering_action: CardAct
 	if is_activation_locked(game_manager):
 		return false
 	if not game_manager.is_prepared_charm_ready(self, triggering_action):
+		return false
+	if not game_manager.can_pay_prepared_card_activation_cost(self, card_owner):
 		return false
 	if targets and get_valid_targets(game_manager).is_empty():
 		return false

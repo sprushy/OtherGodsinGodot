@@ -157,8 +157,14 @@ func resolve_action(action: CardAction) -> void:
 			_resolve_event(action)
 		CardAction.Type.ATTACK:
 			_resolve_attack(action)
+	_remove_resolved_action(action)
 	
 	action_resolved.emit(action)
+
+func _remove_resolved_action(action: CardAction) -> void:
+	if action == null or game_manager == null:
+		return
+	game_manager.action_stack.erase(action)
 
 func _resolve_ability(action: CardAction) -> void:
 	if action.card is HexCard:
@@ -317,6 +323,19 @@ func _uses_authoritative_headless_attack_flow() -> bool:
 
 func _uses_authoritative_headless_priority_flow() -> bool:
 	return _uses_authoritative_headless_attack_flow()
+
+func _clear_priority_window_state() -> void:
+	if game_manager == null:
+		return
+	game_manager.priority_player = null
+	game_manager.consecutive_passes = 0
+
+func _resolve_authoritative_stack_top_after_priority() -> void:
+	if game_manager == null or game_manager.action_stack.is_empty():
+		return
+	var resolved_action: CardAction = game_manager.action_stack.back()
+	_clear_priority_window_state()
+	resolve_action(resolved_action)
 
 func _get_intercept_target_row_depth(protected_target) -> int:
 	if protected_target is Player:
@@ -520,9 +539,9 @@ func _advance_authoritative_priority() -> void:
 		game_manager.pass_priority()
 		if game_manager.both_passed():
 			if game_manager.action_stack.is_empty():
+				_clear_priority_window_state()
 				return
-			var action: CardAction = game_manager.action_stack.pop_back()
-			resolve_action(action)
+			_resolve_authoritative_stack_top_after_priority()
 			if not game_manager.action_stack.is_empty():
 				_advance_authoritative_priority()
 		else:
@@ -541,10 +560,7 @@ func _queue_or_resolve_authoritative_priority_event(action: CardAction) -> void:
 	if first_has_responses or second_has_responses:
 		_advance_authoritative_priority()
 		return
-	if not game_manager.action_stack.is_empty() and game_manager.action_stack.back() == action:
-		game_manager.action_stack.pop_back()
-	game_manager.priority_player = null
-	game_manager.consecutive_passes = 0
+	_clear_priority_window_state()
 	resolve_action(action)
 
 func _queue_authoritative_priority_event(
@@ -1150,17 +1166,17 @@ func _process_command_impl(command: Dictionary) -> bool:
 			var charm_source_action: CardAction = game_manager.action_stack.back() if not game_manager.action_stack.is_empty() else null
 			if charm_prepared:
 				if not charm_card.can_activate_prepared(game_manager, charm_source_action):
-					move_failed.emit(charm_card.card_name + " cannot activate right now.")
+					move_failed.emit(game_manager.get_activation_mana_unavailable_text(charm_card) if game_manager.has_insufficient_activation_mana(charm_card, true, charm_card.card_owner) else charm_card.card_name + " cannot activate right now.")
 					return false
-				game_manager.prepared_charms.erase(charm_card)
-				charm_card.is_prepared = false
-				charm_card.reveal(game_manager)
+				if not game_manager.activate_prepared_card(charm_card, charm_card.card_owner):
+					move_failed.emit(game_manager.get_activation_mana_unavailable_text(charm_card) if game_manager.has_insufficient_activation_mana(charm_card, true, charm_card.card_owner) else "Cannot afford " + charm_card.card_name + "!")
+					return false
 			else:
 				if not charm_card.can_activate_from_hand(game_manager, charm_source_action):
 					move_failed.emit(charm_card.card_name + " cannot be played right now.")
 					return false
 				if not charm_card.pay_costs(charm_card.card_owner, game_manager):
-					move_failed.emit("Cannot afford " + charm_card.card_name + "!")
+					move_failed.emit(game_manager.get_activation_mana_unavailable_text(charm_card) if game_manager.has_insufficient_activation_mana(charm_card, false, charm_card.card_owner) else "Cannot afford " + charm_card.card_name + "!")
 					return false
 			charm_card.resolve(game_manager, charm_target)
 			if charm_card.goes_to_graveyard_after_use() \
@@ -1379,21 +1395,21 @@ func _process_command_impl(command: Dictionary) -> bool:
 				move_failed.emit("play_charm_response: no action on stack")
 				return false
 			var pcr_source: CardAction = game_manager.action_stack.back()
-			if not game_manager.can_card_respond_to_priority(pcr_charm, pcr_charm.card_owner):
-				move_failed.emit("play_charm_response: charm cannot respond right now")
-				return false
 			var pcr_from_hand: bool = command.get("from_hand", false)
+			if not game_manager.can_card_respond_to_priority(pcr_charm, pcr_charm.card_owner):
+				move_failed.emit(game_manager.get_activation_mana_unavailable_text(pcr_charm) if game_manager.has_insufficient_activation_mana(pcr_charm, not pcr_from_hand, pcr_charm.card_owner) else "play_charm_response: charm cannot respond right now")
+				return false
 			var pcr_charm_card := pcr_charm as CharmCard
 			var pcr_target_uid: String = command.get("target_uid", "")
 			var pcr_target: Card = game_manager.get_card_by_uid(pcr_target_uid) if pcr_target_uid != "" else null
 			if pcr_from_hand:
 				if not pcr_charm_card.pay_costs(pcr_charm_card.card_owner, game_manager):
-					move_failed.emit("Cannot afford " + pcr_charm_card.card_name + "!")
+					move_failed.emit(game_manager.get_activation_mana_unavailable_text(pcr_charm_card) if game_manager.has_insufficient_activation_mana(pcr_charm_card, false, pcr_charm_card.card_owner) else "Cannot afford " + pcr_charm_card.card_name + "!")
 					return false
 			else:
-				game_manager.prepared_charms.erase(pcr_charm)
-				pcr_charm.is_prepared = false
-				pcr_charm.reveal(game_manager)
+				if not game_manager.activate_prepared_card(pcr_charm, pcr_charm.card_owner):
+					move_failed.emit(game_manager.get_activation_mana_unavailable_text(pcr_charm_card) if game_manager.has_insufficient_activation_mana(pcr_charm_card, true, pcr_charm_card.card_owner) else "Cannot afford " + pcr_charm_card.card_name + "!")
+					return false
 			var pcr_action := CardAction.new()
 			pcr_action.type = CardAction.Type.SPELL
 			pcr_action.source_player = pcr_charm_card.card_owner
@@ -1451,10 +1467,11 @@ func _process_command_impl(command: Dictionary) -> bool:
 				move_validated.emit(command)
 				if game_manager.both_passed():
 					if not game_manager.action_stack.is_empty():
-						var resolved_action: CardAction = game_manager.action_stack.pop_back()
-						resolve_action(resolved_action)
+						_resolve_authoritative_stack_top_after_priority()
 						if not game_manager.action_stack.is_empty():
 							_advance_authoritative_priority()
+					else:
+						_clear_priority_window_state()
 				else:
 					_advance_authoritative_priority()
 				return true
@@ -1516,7 +1533,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 				return false
 			var phr_source: CardAction = game_manager.action_stack.back()
 			if not game_manager.can_card_respond_to_priority(phr_hex_card, phr_hex_card.card_owner):
-				move_failed.emit("play_hex_response: hex cannot respond right now")
+				move_failed.emit(game_manager.get_activation_mana_unavailable_text(phr_hex_card) if game_manager.has_insufficient_activation_mana(phr_hex_card, true, phr_hex_card.card_owner) else "play_hex_response: hex cannot respond right now")
 				return false
 			var phr_target_uid: String = command.get("target_uid", "")
 			var phr_target: Card = game_manager.get_card_by_uid(phr_target_uid) if phr_target_uid != "" else null
@@ -1530,10 +1547,10 @@ func _process_command_impl(command: Dictionary) -> bool:
 			phr_ability.attacker = phr_target if phr_target_is_attacker and phr_target != null else phr_source.attacker
 			phr_ability.interceptor = phr_source.interceptor
 			phr_ability.target = phr_target if not phr_target_is_attacker and phr_target != null else phr_source.target
+			if not game_manager.activate_prepared_card(phr_hex_card, phr_hex_card.card_owner):
+				move_failed.emit(game_manager.get_activation_mana_unavailable_text(phr_hex) if game_manager.has_insufficient_activation_mana(phr_hex, true, phr_hex.card_owner) else "Cannot afford " + phr_hex.card_name + "!")
+				return false
 			game_manager.push_to_stack(phr_ability)
-			game_manager.prepared_hexes.erase(phr_hex_card)
-			phr_hex_card.is_prepared = false
-			phr_hex_card.reveal(game_manager)
 			move_validated.emit(command)
 			if _uses_authoritative_headless_priority_flow():
 				_advance_authoritative_priority()

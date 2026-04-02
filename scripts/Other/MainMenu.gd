@@ -8,7 +8,7 @@ const LocalProfileStoreScript = preload("res://scripts/core/LocalProfileStore.gd
 const DeckValidatorScript = preload("res://scripts/server/DeckValidator.gd")
 const MatchHistoryStoreScript = preload("res://scripts/server/MatchHistoryStore.gd")
 const MatchSessionScript = preload("res://scripts/server/MatchSession.gd")
-const PracticeThorGameScript = preload("res://scripts/Other/PracticeThorGame.gd")
+const PracticeThorScene = preload("res://scenes/practice_thor_game.tscn")
 const DEDICATED_LOBBY_ENTRY_SCRIPT_PATH := "res://scripts/server/DedicatedLobbyServerMain.gd"
 const DEDICATED_SERVER_EXPORT_RELATIVE_PATH := "res://.exports/server/ClaudeOtherGodsServer.exe"
 const DEFAULT_LOBBY_HOST_SETTING := "application/config/default_lobby_host"
@@ -176,13 +176,14 @@ func _ensure_practice_thor_entry() -> void:
 	if game_container == null or menu_container == null:
 		return
 	var practice_game = game_container.get_node_or_null("PracticeThor")
-	var mock_game = game_container.get_node_or_null("MockGame")
-	if practice_game == null and mock_game != null:
-		practice_game = mock_game.duplicate(DUPLICATE_GROUPS | DUPLICATE_SCRIPTS)
-		practice_game.name = "PracticeThor"
-		practice_game.visible = false
-		practice_game.set_script(PracticeThorGameScript)
-		game_container.add_child(practice_game)
+	if practice_game == null and PracticeThorScene != null:
+		var practice_instance := PracticeThorScene.instantiate()
+		if practice_instance != null:
+			practice_instance.name = "PracticeThor"
+			if practice_instance is Control:
+				practice_instance.visible = false
+			game_container.add_child(practice_instance)
+			practice_game = practice_instance
 	var practice_button = menu_container.get_node_or_null("PracticeThorButton")
 	if practice_button == null:
 		practice_button = Button.new()
@@ -192,9 +193,9 @@ func _ensure_practice_thor_entry() -> void:
 		var insert_index := multiplayer_button.get_index() if multiplayer_button != null else menu_container.get_child_count() - 1
 		menu_container.move_child(practice_button, insert_index)
 	if practice_button != null:
-		practice_button.visible = true
+		practice_button.visible = practice_game != null
 		var callback := Callable(self, "_on_practice_thor_pressed")
-		if not practice_button.pressed.is_connected(callback):
+		if practice_game != null and not practice_button.pressed.is_connected(callback):
 			practice_button.pressed.connect(_on_practice_thor_pressed)
 
 func _get_embedded_game_node_names() -> Array[String]:
@@ -2693,6 +2694,10 @@ func _start_smoke_mode() -> void:
 		_join_smoke_room(room_code)
 		return
 
+	if role == "practice_thor":
+		call_deferred("_run_practice_thor_smoke")
+		return
+
 	if role == "resume":
 		var resume_timer := get_tree().create_timer(0.5)
 		resume_timer.timeout.connect(func() -> void:
@@ -2713,6 +2718,118 @@ func _join_smoke_room(room_code: String) -> void:
 	room_code_line_edit.text = room_code
 	_pending_join_room_code = room_code
 	_on_connect_pressed()
+
+func _run_practice_thor_smoke() -> void:
+	var practice_game = _show_embedded_game("PracticeThor")
+	if practice_game == null:
+		_complete_practice_thor_smoke(false, "practice_thor_missing")
+		return
+	show_game()
+	await practice_game.start_game()
+	await get_tree().process_frame
+	await get_tree().process_frame
+
+	var setup_error := _get_practice_thor_smoke_setup_error(practice_game)
+	if not setup_error.is_empty():
+		_complete_practice_thor_smoke(false, setup_error)
+		return
+
+	if not practice_game.game_input.submit_action({type = "upkeep_choice", choice = "draw"}):
+		_complete_practice_thor_smoke(false, "practice_thor_upkeep_choice_failed")
+		return
+	if not await _wait_for_practice_thor_smoke_condition(
+		func() -> bool:
+			return practice_game.game_manager.current_player == practice_game.player1 \
+				and practice_game.game_manager.has_resolved_turn_upkeep() \
+				and practice_game.game_manager.action_stack.is_empty(),
+		180
+	):
+		_complete_practice_thor_smoke(false, "practice_thor_player_one_upkeep_timeout")
+		return
+
+	practice_game._do_end_turn()
+	if not await _wait_for_practice_thor_smoke_condition(
+		func() -> bool:
+			return practice_game.game_manager.current_player == practice_game.player1 \
+				and practice_game.game_manager.turn_number >= 3 \
+				and practice_game.game_manager.action_stack.is_empty(),
+		400
+	):
+		_complete_practice_thor_smoke(false, "practice_thor_turn_timeout")
+		return
+
+	if _count_cards_of_type_in_zones(practice_game.player2.frontline_zones + practice_game.player2.reserve_zones, HariiWarrior) != 1:
+		_complete_practice_thor_smoke(false, "practice_thor_missing_harii")
+		return
+	if _count_cards_of_type_in_zones(practice_game.player2.frontline_zones + practice_game.player2.reserve_zones, MeadOfPoetry, true) != 1:
+		_complete_practice_thor_smoke(false, "practice_thor_missing_mead")
+		return
+	if _count_cards_of_type_in_zones(practice_game.player2.frontline_zones + practice_game.player2.reserve_zones, VoidShield, true) != 1:
+		_complete_practice_thor_smoke(false, "practice_thor_missing_void_shield")
+		return
+	if practice_game.player1.followers >= 100:
+		_complete_practice_thor_smoke(false, "practice_thor_no_direct_attack")
+		return
+
+	_complete_practice_thor_smoke(true, "practice_thor")
+
+func _get_practice_thor_smoke_setup_error(practice_game) -> String:
+	if practice_game == null:
+		return "practice_thor_missing"
+	if practice_game.player2 == null or practice_game.player1 == null:
+		return "practice_thor_players_missing"
+	if practice_game.player2.player_name != "Thor":
+		return "practice_thor_wrong_name"
+	if practice_game.player2.god_zone.cards.size() != 1 or not (practice_game.player2.god_zone.cards[0] is Thor):
+		return "practice_thor_wrong_god"
+	if practice_game.game_manager.current_player != practice_game.player1:
+		return "practice_thor_wrong_start_player"
+	if practice_game.game_manager.has_resolved_turn_upkeep():
+		return "practice_thor_upkeep_already_resolved"
+	if practice_game.player2.mana != 2:
+		return "practice_thor_wrong_starting_mana"
+	var regular_zones := [practice_game.player2.hand_zone, practice_game.player2.deck_zone]
+	if _count_cards_of_type_in_zones(regular_zones, EnkiLordOfEridu) != 2:
+		return "practice_thor_wrong_enki_count"
+	if _count_cards_of_type_in_zones(regular_zones, MeadOfPoetry) != 1:
+		return "practice_thor_wrong_mead_count"
+	if _count_cards_of_type_in_zones(regular_zones, HariiWarrior) != 3:
+		return "practice_thor_wrong_harii_count"
+	if _count_cards_of_type_in_zones(regular_zones, BrownBear) != 3:
+		return "practice_thor_wrong_brown_bear_count"
+	if _count_cards_of_type_in_zones(regular_zones, FallOfTheMighty) != 3:
+		return "practice_thor_wrong_fall_count"
+	if _count_cards_of_type_in_zones(regular_zones, VoidShield) != 3:
+		return "practice_thor_wrong_void_shield_count"
+	if _count_cards_of_type_in_zones(regular_zones, DivineLightning) != 3:
+		return "practice_thor_wrong_divine_lightning_count"
+	return ""
+
+func _count_cards_of_type_in_zones(zones: Array, script_type, prepared_only: bool = false) -> int:
+	var count := 0
+	for zone in zones:
+		if zone == null:
+			continue
+		for card in zone.cards:
+			if prepared_only and not card.is_prepared:
+				continue
+			if is_instance_of(card, script_type):
+				count += 1
+	return count
+
+func _wait_for_practice_thor_smoke_condition(predicate: Callable, max_frames: int) -> bool:
+	for _frame in range(max_frames):
+		if predicate.call():
+			return true
+		await get_tree().process_frame
+	return false
+
+func _complete_practice_thor_smoke(success: bool, message: String) -> void:
+	if success:
+		_finish_smoke_if_enabled("PASS:%s" % message)
+	else:
+		_fail_smoke_if_enabled(message)
+	get_tree().quit()
 
 func _maybe_progress_smoke_from_room_snapshot(room_id: String) -> void:
 	if _smoke_config.is_empty():

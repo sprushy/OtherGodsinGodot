@@ -134,7 +134,7 @@ var _fan_container: Control = null
 const FAN_ROT_MAX     := 12.0   # degrees at the outermost card
 const FAN_ARC_HEIGHT  := 22.0   # px the arc dips at centre
 const FAN_CARD_SPACING := 130   # px between card pivot centres
-const STACK_LINGER_SECONDS := 0.8
+const STACK_ACTION_LINGER_SECONDS := 0.5
 const POST_GAME_RETURN_DELAY_SECONDS := 1.6
 
 @onready var choice_container = $MainHBox/LeftPanel/ChoiceContainer
@@ -4206,6 +4206,20 @@ func _get_activation_unavailable_text(card: Card, fallback: String) -> String:
 			return str(reason)
 	return fallback
 
+func _get_priority_response_unavailable_text(card: Card) -> String:
+	if card == null or game_manager == null or game_manager.priority_player == null:
+		return ""
+	if card.card_owner != game_manager.priority_player:
+		return ""
+	if card.is_prepared and card.current_zone != null and card.current_zone.is_board_zone():
+		if game_manager.has_insufficient_activation_mana(card, true, card.card_owner):
+			return game_manager.get_activation_mana_unavailable_text(card)
+		return ""
+	if card.current_zone == card.card_owner.hand_zone and (card.card_type == Card.CardType.SPELL or card is CharmCard):
+		if game_manager.has_insufficient_activation_mana(card, false, card.card_owner):
+			return game_manager.get_activation_mana_unavailable_text(card)
+	return ""
+
 func _begin_pending_click_selection(
 		selection_name: String,
 		source_card: Card,
@@ -4361,9 +4375,6 @@ func _queue_priority_hex_response_with_target(
 ) -> void:
 	if hex == null or source_action == null:
 		return
-	game_manager.prepared_hexes.erase(hex)
-	hex.is_prepared = false
-	hex.reveal(game_manager)
 	_queue_hex_response_action(hex, source_action, chosen_target, target_is_attacker)
 
 func _begin_priority_hex_target_selection(
@@ -4493,6 +4504,10 @@ func _queue_hex_response_action(
 	chosen_target_is_attacker: bool = false
 ) -> void:
 	if hex == null or source_action == null:
+		return
+	if hex.is_prepared and not game_manager.activate_prepared_card(hex, hex.card_owner):
+		action_label.text = game_manager.get_activation_mana_unavailable_text(hex) if game_manager.has_insufficient_activation_mana(hex, true, hex.card_owner) else "Cannot afford " + hex.card_name + "!"
+		update_ui()
 		return
 	var ability := CardAction.new()
 	ability.type = CardAction.Type.ABILITY
@@ -4880,19 +4895,23 @@ func _queue_charm_action(charm: CharmCard, triggering_action: CardAction = null,
 	if from_hand:
 		if not charm.can_activate_from_hand(game_manager, source_action):
 			action_label.text = charm.card_name + " cannot be played right now."
+			update_ui()
 			return
 		if _get_paid_hand_card_display_zone(charm) == null:
 			if not charm.pay_costs(charm.card_owner, game_manager):
-				action_label.text = "Cannot afford " + charm.card_name + "!"
+				action_label.text = game_manager.get_activation_mana_unavailable_text(charm) if game_manager.has_insufficient_activation_mana(charm, false, charm.card_owner) else "Cannot afford " + charm.card_name + "!"
+				update_ui()
 				return
 			_begin_paid_hand_card_preview(charm, preferred_display_zone)
 	else:
 		if not charm.can_activate_prepared(game_manager, source_action):
-			action_label.text = charm.card_name + " is not ready to activate."
+			action_label.text = game_manager.get_activation_mana_unavailable_text(charm) if game_manager.has_insufficient_activation_mana(charm, true, charm.card_owner) else charm.card_name + " is not ready to activate."
+			update_ui()
 			return
-		game_manager.prepared_charms.erase(charm)
-		charm.is_prepared = false
-		charm.reveal(game_manager)
+		if not game_manager.activate_prepared_card(charm, charm.card_owner):
+			action_label.text = game_manager.get_activation_mana_unavailable_text(charm) if game_manager.has_insufficient_activation_mana(charm, true, charm.card_owner) else "Cannot afford " + charm.card_name + "!"
+			update_ui()
+			return
 		preferred_display_zone = charm.current_zone
 	var action := CardAction.new()
 	action.type = CardAction.Type.SPELL
@@ -5226,7 +5245,8 @@ func _on_hand_card_pressed(card: Card) -> void:
 		_on_priority_response_chosen(card)
 		return
 	if game_manager != null and not game_manager.action_stack.is_empty():
-		action_label.text = card.card_name + " is not a legal priority response."
+		var priority_failure_text := _get_priority_response_unavailable_text(card)
+		action_label.text = priority_failure_text if priority_failure_text != "" else card.card_name + " is not a legal priority response."
 		update_ui()
 		return
 	if _is_blot_selection_active():
@@ -7367,6 +7387,12 @@ func _on_board_card_pressed(card: Card) -> void:
 		_suppress_next_devour_cancel_prompt = _pending_click_selection_source is Fenrir
 		_handle_invalid_pending_target_click(_get_pending_click_invalid_reason(card))
 		return
+	if _is_priority_prompt_visible():
+		var priority_failure_text := _get_priority_response_unavailable_text(card)
+		if priority_failure_text != "":
+			action_label.text = priority_failure_text
+			update_ui()
+			return
 	if _reject_priority_locked_action():
 		return
 	if _has_active_modal_prompt():
@@ -7453,7 +7479,8 @@ func _on_board_card_pressed(card: Card) -> void:
 			else:
 				_queue_charm_action(charm)
 		else:
-			action_label.text = charm.card_name + " is not ready to activate yet."
+			action_label.text = game_manager.get_activation_mana_unavailable_text(charm) if game_manager.has_insufficient_activation_mana(charm, true, charm.card_owner) else charm.card_name + " is not ready to activate yet."
+			update_ui()
 		return
 
 	if selected_card != null \
@@ -8897,7 +8924,6 @@ func _offer_priority() -> void:
 		game_manager.pass_priority()
 		if game_manager.both_passed():
 			update_ui()
-			await get_tree().create_timer(STACK_LINGER_SECONDS).timeout
 			if game_manager.action_stack.is_empty():
 				update_ui()
 				return
@@ -9066,9 +9092,6 @@ func _on_priority_response_chosen(card: Card) -> void:
 		if hex is PermanentHexCard and hex.targets and has_manual_targets:
 			_begin_priority_hex_target_selection(hex, top, target_is_attacker)
 			return
-		game_manager.prepared_hexes.erase(card)
-		card.is_prepared = false
-		card.reveal(game_manager)
 		if hex.targets and hex_targets.size() > 1:
 			var on_choose_priority_hex_target := func(chosen_card: Card) -> void:
 				_queue_hex_response_action(hex, top, chosen_card, target_is_attacker)
@@ -11456,12 +11479,26 @@ func _on_retreat_no() -> void:
 
 func _execute_top_of_stack() -> void:
 	_hide_priority_prompt()
+	if _executing_stack_action:
+		return
 	if game_manager.action_stack.is_empty():
 		update_ui()
 		return
 
 	_executing_stack_action = true
-	var action: CardAction = game_manager.action_stack.pop_back()
+	var action: CardAction = game_manager.action_stack.back()
+	var should_linger := action != null and action.type in [
+		CardAction.Type.SPELL,
+		CardAction.Type.ABILITY,
+		CardAction.Type.ATTACK
+	]
+	if should_linger:
+		update_ui()
+		await get_tree().create_timer(STACK_ACTION_LINGER_SECONDS).timeout
+		if game_manager == null or action == null or not game_manager.action_stack.has(action):
+			_executing_stack_action = false
+			update_ui()
+			return
 	
 	match_manager.resolve_action(action)
 	# The rest is now handled by MatchManager and its callbacks/signals
@@ -12917,10 +12954,24 @@ func _on_card_dropped_to_zone(card: Card, zone: Zone, is_rotated: bool = false, 
 			action_label.text = "Cannot prepare " + card.card_name + "!"
 			update_ui()
 			return
-		game_input.submit_action({type = "prepare_card", card_uid = card.uid,
-				player_index = game_manager.players.find(zone.zone_owner),
-				zone_type = zone.zone_type, zone_index = zone.zone_index})
+		var prepare_success := game_input.submit_action({
+			type = "prepare_card",
+			card_uid = card.uid,
+			player_index = game_manager.players.find(zone.zone_owner),
+			zone_type = zone.zone_type,
+			zone_index = zone.zone_index
+		})
 		_pending_spell_display_zone = null
+		if not prepare_success:
+			_select_hand_card(card)
+			if card is CharmCard:
+				placement_mode = "prepare_charm"
+			elif card.card_type == Card.CardType.SPELL:
+				placement_mode = "prepare_spell"
+			if action_label.text.strip_edges() == "":
+				action_label.text = "Cannot prepare " + card.card_name + "!"
+			update_ui()
+			return
 		action_label.text = "Prepared " + _get_stack_card_type_label(card) + ": " + card.card_name + " (face-down)!"
 		selected_card = null
 		placement_mode = ""

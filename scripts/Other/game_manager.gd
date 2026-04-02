@@ -109,6 +109,20 @@ func note_player_feedback(text: String) -> void:
 	last_player_feedback_text = text
 	print(text)
 
+func get_activation_mana_unavailable_text(card: Card = null) -> String:
+	if card != null and str(card.card_name).strip_edges() != "":
+		return "You do not have enough mana to activate " + card.card_name + "."
+	return "You do not have enough mana to activate this card."
+
+func has_insufficient_activation_mana(card: Card, prepared: bool = false, player: Player = null) -> bool:
+	if card == null:
+		return false
+	var paying_player := player if player != null else card.card_owner
+	if paying_player == null:
+		return false
+	var mana_required := get_prepared_card_activation_mana_cost(paying_player, card) if prepared else get_card_play_mana_cost(paying_player, card, false)
+	return paying_player.mana < mana_required
+
 func get_feedback_viewer() -> Player:
 	if feedback_viewer != null:
 		return feedback_viewer
@@ -281,6 +295,8 @@ func can_card_respond_to_priority(card: Card, player: Player = null) -> bool:
 			return false
 		if _has_pending_stack_action_for_card(card):
 			return false
+		if not can_pay_prepared_card_activation_cost(card, responding_player):
+			return false
 		var typed_hex := card as HexCard
 		if typed_hex.has_method("can_respond_after_upkeep") and not typed_hex.can_respond_after_upkeep(self):
 			return false
@@ -431,11 +447,6 @@ func start_turn() -> void:
 
 	_begin_turn_upkeep()
 
-func activate_prepared_hexes(defending_player: Player) -> void:
-	for hex in prepared_hexes.keys():
-		if hex.card_owner == defending_player and prepared_hexes[hex] < turn_number:
-			hex.is_prepared = false
-
 func _begin_turn_upkeep() -> void:
 	if _upkeep_started_turn == turn_number:
 		return
@@ -458,27 +469,6 @@ func _resolve_turn_upkeep() -> void:
 	_notify_controller_turn_start(current_player)
 	_notify_global_turn_start(current_player)
 	turn_started.emit(turn_number, current_player)
-
-# Checks all prepared hexes belonging to the defender's owner.
-# If one can activate, it fires and returns true (combat should be cancelled).
-func find_triggerable_hex(attacker: Card, defender: Card) -> HexCard:
-	var defending_player := defender.get_controller()
-	for hex in prepared_hexes.keys().duplicate():
-		if hex.card_owner != defending_player:
-			continue
-		if prepared_hexes[hex] >= turn_number:
-			continue
-		if hex.is_activation_locked(self):
-			continue
-		if not (hex is HexCard):
-			continue
-		var typed_hex := hex as HexCard
-		if not typed_hex.can_activate(attacker, defender):
-			continue
-		if is_guardian_protected(attacker, hex):
-			return null
-		return typed_hex
-	return null
 
 func has_target_immunity(target: Card, source: Card, immunity_kind: String) -> bool:
 	if target == null or source == null:
@@ -563,24 +553,21 @@ func _is_hex_immune(target: Card, source: Card = null) -> bool:
 			return true
 	return false
 
-func activate_hex(hex: HexCard, attacker: Card, defender: Card) -> void:
+func activate_hex(hex: HexCard, attacker: Card, defender: Card) -> bool:
 	print(hex.card_name + " triggers!")
 	last_hex_resolution_text = ""
+	if hex != null and hex.is_prepared and not activate_prepared_card(hex, hex.card_owner):
+		last_hex_resolution_text = get_activation_mana_unavailable_text(hex) if has_insufficient_activation_mana(hex, true, hex.card_owner) else "Cannot afford %s!" % hex.card_name
+		return false
 	prepared_hexes.erase(hex)
 	for affected_card in hex.get_affected_cards(attacker, defender):
 		if _is_hex_immune(affected_card, hex):
 			print(hex.card_name + " fizzles against " + affected_card.card_name + " due to hex immunity.")
 			last_hex_resolution_text = "%s triggered, but %s was immune to hexes." % [hex.card_name, affected_card.card_name]
 			hex.on_immune_activate(self, attacker, defender)
-			return
+			return true
 	hex.on_activate(self, attacker, defender)
-
-func check_and_trigger_hexes(attacker: Card, defender: Card) -> bool:
-	var hex := find_triggerable_hex(attacker, defender)
-	if hex:
-		activate_hex(hex, attacker, defender)
-		return true
-	return false
+	return true
 
 func player_chooses_draw() -> void:
 	if is_game_over:
@@ -658,6 +645,50 @@ func get_card_play_mana_cost(
 		self,
 		{"player": player, "prepared": prepared}
 	)
+
+func get_prepared_card_activation_mana_cost(player: Player, card: Card) -> int:
+	if player == null or card == null:
+		return 0
+	return get_card_play_mana_cost(player, card, true)
+
+func can_pay_prepared_card_activation_cost(card: Card, player: Player = null) -> bool:
+	if card == null:
+		return false
+	if not card.is_prepared:
+		return false
+	if card.current_zone == null or not card.current_zone.is_board_zone():
+		return false
+	var paying_player := player if player != null else card.card_owner
+	if paying_player == null:
+		return false
+	var mana_required := get_prepared_card_activation_mana_cost(paying_player, card)
+	return card.can_pay_costs_with_mana_cost(paying_player, mana_required)
+
+func activate_prepared_card(card: Card, player: Player = null) -> bool:
+	if card == null:
+		return false
+	if not card.is_prepared:
+		return false
+	if card.current_zone == null or not card.current_zone.is_board_zone():
+		return false
+	var paying_player := player if player != null else card.card_owner
+	if paying_player == null:
+		return false
+	var mana_required := get_prepared_card_activation_mana_cost(paying_player, card)
+	if not card.pay_costs_with_mana_cost(paying_player, mana_required, self):
+		return false
+	if not card_uses_summon_cost_rules(card) and mana_required < card.mana_cost:
+		claim_cost_adjustments(
+			card,
+			card.mana_cost,
+			Card.COST_KIND_HAND_PLAY,
+			{"player": paying_player, "prepared": true}
+		)
+	prepared_hexes.erase(card)
+	prepared_charms.erase(card)
+	card.is_prepared = false
+	card.reveal(self)
+	return true
 
 func get_additional_summon_mana_cost(player: Player, creature: Card, summon_source: Card = null) -> int:
 	if player == null or creature == null:
@@ -770,10 +801,6 @@ func can_prepare_card(player: Player, card: Card, target_zone: Zone) -> bool:
 		return false
 	if not card.can_prepare(self, player):
 		return false
-	var mana_required := get_card_play_mana_cost(player, card, true)
-	if not card.can_pay_costs_with_mana_cost(player, mana_required):
-		print("Cannot afford card costs")
-		return false
 	if target_zone == null or not target_zone.is_board_zone():
 		return false
 	if target_zone.zone_owner != player:
@@ -807,18 +834,19 @@ func play_card(player: Player, card: Card, target_zone: Zone, prepared: bool = f
 			and not prepared
 		)
 
-		# Pay costs before playing
-		var mana_required := get_card_play_mana_cost(player, card, prepared)
-		if not card.pay_costs_with_mana_cost(player, mana_required, self):
-			print("Failed to pay costs")
-			return
-		if not card_uses_summon_cost_rules(card) and mana_required < card.mana_cost:
-			claim_cost_adjustments(
-				card,
-				card.mana_cost,
-				Card.COST_KIND_HAND_PLAY,
-				{"player": player, "prepared": prepared}
-			)
+		if not prepared:
+			# Prepared cards now pay when they activate, not when they are set.
+			var mana_required := get_card_play_mana_cost(player, card, prepared)
+			if not card.pay_costs_with_mana_cost(player, mana_required, self):
+				print("Failed to pay costs")
+				return
+			if not card_uses_summon_cost_rules(card) and mana_required < card.mana_cost:
+				claim_cost_adjustments(
+					card,
+					card.mana_cost,
+					Card.COST_KIND_HAND_PLAY,
+					{"player": player, "prepared": prepared}
+				)
 		
 		card.is_prepared = prepared
 		card.is_face_down = prepared

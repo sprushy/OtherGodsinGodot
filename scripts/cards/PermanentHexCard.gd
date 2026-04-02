@@ -74,6 +74,8 @@ func play_to_target(game_manager: GameManager, target: Card) -> bool:
 func activate_on_target(game_manager: GameManager, target: Card) -> bool:
 	if not can_activate_on_target(game_manager, target):
 		return false
+	if is_prepared and (game_manager == null or not game_manager.activate_prepared_card(self, card_owner)):
+		return false
 	_pending_attach_target = target
 	is_prepared = false
 	is_face_down = false

@@ -1,0 +1,132 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" uid="uid://s23xyv3axy5i" path="res://scripts/Other/PracticeThorGame.gd" id="1_practice_thor"]
+
+[node name="PracticeThor" type="Control"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_practice_thor")
+
+[node name="MainHBox" type="HBoxContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="LeftPanel" type="VBoxContainer" parent="./MainHBox"]
+custom_minimum_size = Vector2(180, 0)
+layout_mode = 2
+
+[node name="LeftTopSpacer" type="Control" parent="./MainHBox/LeftPanel"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="ActionLabel" type="Label" parent="./MainHBox/LeftPanel"]
+layout_mode = 2
+autowrap_mode = 3
+
+[node name="ChoiceContainer" type="VBoxContainer" parent="./MainHBox/LeftPanel"]
+layout_mode = 2
+
+[node name="ChoiceIntroLabel" type="Label" parent="./MainHBox/LeftPanel/ChoiceContainer"]
+layout_mode = 2
+text = "+1 mana and:"
+
+[node name="DrawButton" type="Button" parent="./MainHBox/LeftPanel/ChoiceContainer"]
+layout_mode = 2
+text = "Draw Card"
+
+[node name="ManaButton" type="Button" parent="./MainHBox/LeftPanel/ChoiceContainer"]
+layout_mode = 2
+text = "Gain 4 Mana"
+
+[node name="PlacementContainer" type="VBoxContainer" parent="./MainHBox/LeftPanel"]
+layout_mode = 2
+
+[node name="AggressiveStanceBtn" type="Button" parent="./MainHBox/LeftPanel/PlacementContainer"]
+layout_mode = 2
+text = "Aggressive Stance"
+
+[node name="DefensiveStanceBtn" type="Button" parent="./MainHBox/LeftPanel/PlacementContainer"]
+layout_mode = 2
+text = "Defensive Stance"
+
+[node name="StealthModeBtn" type="Button" parent="./MainHBox/LeftPanel/PlacementContainer"]
+layout_mode = 2
+text = "Stealth Mode"
+
+[node name="ToggleModeButton" type="Button" parent="./MainHBox/LeftPanel/PlacementContainer"]
+layout_mode = 2
+text = "Toggle Stance"
+
+[node name="LeftBottomSpacer" type="Control" parent="./MainHBox/LeftPanel"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="CenterPanel" type="VBoxContainer" parent="./MainHBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="TopSpacer" type="Control" parent="./MainHBox/CenterPanel"]
+custom_minimum_size = Vector2(0, 2)
+layout_mode = 2
+
+[node name="EnemyBoardContainer" type="VBoxContainer" parent="./MainHBox/CenterPanel"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="BoardSeparator" type="Panel" parent="./MainHBox/CenterPanel"]
+custom_minimum_size = Vector2(0, 6)
+layout_mode = 2
+
+[node name="BoardContainer" type="VBoxContainer" parent="./MainHBox/CenterPanel"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="HandContainer" type="VBoxContainer" parent="./MainHBox/CenterPanel"]
+layout_mode = 2
+
+[node name="RightPanel" type="VBoxContainer" parent="./MainHBox"]
+custom_minimum_size = Vector2(180, 0)
+layout_mode = 2
+
+[node name="RightTopSpacer" type="Control" parent="./MainHBox/RightPanel"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="TurnLabel" type="Label" parent="./MainHBox/RightPanel"]
+layout_mode = 2
+autowrap_mode = 3
+
+[node name="EndTurnButton" type="Button" parent="./MainHBox/RightPanel"]
+layout_mode = 2
+text = "End Turn"
+
+[node name="AllAttackBtn" type="Button" parent="./MainHBox/RightPanel"]
+layout_mode = 2
+text = "All Attack Followers"
+
+[node name="RightBottomSpacer" type="Control" parent="./MainHBox/RightPanel"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="StatsContainer" type="VBoxContainer" parent="./MainHBox/RightPanel"]
+layout_mode = 2
+
+[node name="ForfeitButton" type="Button" parent="."]
+layout_mode = 0
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -128.0
+offset_top = -60.0
+offset_right = -16.0
+offset_bottom = -32.0
+text = "Forfeit"

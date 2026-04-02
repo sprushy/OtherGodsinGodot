@@ -1019,10 +1019,7 @@ func can_prepare(game_manager: GameManager, player: Player) -> bool:
 		return false
 	if player.hand_zone == null or current_zone != player.hand_zone:
 		return false
-	var mana_required := mana_cost
-	if game_manager.has_method("get_card_play_mana_cost"):
-		mana_required = game_manager.get_card_play_mana_cost(player, self, true)
-	return can_pay_costs_with_mana_cost(player, mana_required)
+	return true
 
 func can_pay_costs(player: Player) -> bool:
 	return can_pay_costs_with_mana_cost(player, mana_cost)
