@@ -565,6 +565,8 @@ func _ready() -> void:
 	right_panel.add_theme_constant_override("separation", RIGHT_PANEL_CONTROL_GAP)
 	forfeit_button.offset_left = -112.0
 	forfeit_button.offset_right = -2.0
+	forfeit_button.z_index = TRANSIENT_UI_Z_INDEX + 100
+	forfeit_button.mouse_filter = Control.MOUSE_FILTER_STOP
 
 	draw_button.pressed.connect(_on_draw_button_pressed)
 	mana_button.pressed.connect(_on_mana_button_pressed)
@@ -8310,6 +8312,10 @@ func _is_priority_prompt_visible() -> bool:
 	var panel = get_node_or_null("PriorityPromptPanel")
 	return panel != null and panel.visible
 
+func _is_intercept_prompt_visible() -> bool:
+	var panel = get_node_or_null("InterceptPromptPanel")
+	return panel != null and panel.visible
+
 func _reject_priority_locked_action(reason: String = "Only legal priority responses can be used right now.") -> bool:
 	if not _is_priority_prompt_visible():
 		return false
@@ -12133,6 +12139,9 @@ func _update_waiting_overlay() -> void:
 	if _awaiting_initial_full_state:
 		_update_waiting_status(true, "Waiting for authoritative match state...")
 		return
+	if _is_priority_prompt_visible() or _is_intercept_prompt_visible():
+		_update_waiting_status(false)
+		return
 		
 	var local_idx = network_manager.local_player_index
 	var current_priority_player := game_manager.priority_player
@@ -12167,6 +12176,11 @@ func _apply_priority_offered(data: Dictionary) -> void:
 	var msg: String = data.get("action_message", "")
 	if msg != "":
 		action_label.text = msg
+	if game_manager != null and network_manager != null and network_manager.local_player_index >= 0:
+		var local_idx: int = network_manager.local_player_index
+		if local_idx < game_manager.players.size():
+			game_manager.priority_player = game_manager.players[local_idx]
+	_update_waiting_status(false)
 	_show_remote_priority_prompt(data.get("responses", []))
 
 func _show_remote_priority_prompt(responses: Array) -> void:

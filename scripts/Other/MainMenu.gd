@@ -8,6 +8,7 @@ const LocalProfileStoreScript = preload("res://scripts/core/LocalProfileStore.gd
 const DeckValidatorScript = preload("res://scripts/server/DeckValidator.gd")
 const MatchHistoryStoreScript = preload("res://scripts/server/MatchHistoryStore.gd")
 const MatchSessionScript = preload("res://scripts/server/MatchSession.gd")
+const PracticeThorGameScript = preload("res://scripts/Other/PracticeThorGame.gd")
 const DEDICATED_LOBBY_ENTRY_SCRIPT_PATH := "res://scripts/server/DedicatedLobbyServerMain.gd"
 const DEDICATED_SERVER_EXPORT_RELATIVE_PATH := "res://.exports/server/ClaudeOtherGodsServer.exe"
 const DEFAULT_LOBBY_HOST_SETTING := "application/config/default_lobby_host"
@@ -16,6 +17,7 @@ const RULES_DOC_PATH := "res://docs/new-player-rules.md"
 const AUTH_MODE_GUEST := "guest"
 const AUTH_MODE_LOGIN := "login"
 const AUTH_MODE_REGISTER := "register"
+const SEEK_AUTO_REFRESH_INTERVAL_SECONDS := 3.0
 
 @onready var menu_container = $MenuContainer
 @onready var game_container = $GameContainer
@@ -88,6 +90,8 @@ var _pending_update_release_version: String = ""
 var _pending_update_release_url: String = AppReleaseInfoScript.RELEASES_PAGE_URL
 var _startup_prompt_gate_open: bool = false
 var _rules_overlay: Control = null
+var _seek_auto_refresh_elapsed: float = 0.0
+var _seek_list_request_pending: bool = false
 
 func _ready() -> void:
 	if _is_server_runtime_launch():
@@ -99,8 +103,8 @@ func _ready() -> void:
 		ip_line_edit.text = ""
 		ip_line_edit.placeholder_text = "Dedicated lobby IP or hostname"
 
-	get_node("GameContainer/MockGame").visible = false
-	get_node("GameContainer/CardTest").visible = false
+	_ensure_practice_thor_entry()
+	_hide_embedded_games()
 	_bind_game_signals()
 
 	var mock_btn = $MenuContainer/MockGameButton
@@ -157,7 +161,7 @@ func _ready() -> void:
 		call_deferred("_begin_startup_prompts")
 
 func _bind_game_signals() -> void:
-	for node_name in ["MockGame", "CardTest"]:
+	for node_name in _get_embedded_game_node_names():
 		var game = get_node_or_null("GameContainer/" + node_name)
 		if game != null and game.has_signal("forfeit_requested"):
 			var callback := Callable(self, "_on_game_forfeit_requested")
@@ -168,9 +172,60 @@ func _bind_game_signals() -> void:
 			if not game.match_session_cleared.is_connected(clear_callback):
 				game.match_session_cleared.connect(clear_callback)
 
+func _ensure_practice_thor_entry() -> void:
+	if game_container == null or menu_container == null:
+		return
+	var practice_game = game_container.get_node_or_null("PracticeThor")
+	var mock_game = game_container.get_node_or_null("MockGame")
+	if practice_game == null and mock_game != null:
+		practice_game = mock_game.duplicate(DUPLICATE_GROUPS | DUPLICATE_SCRIPTS)
+		practice_game.name = "PracticeThor"
+		practice_game.visible = false
+		practice_game.set_script(PracticeThorGameScript)
+		game_container.add_child(practice_game)
+	var practice_button = menu_container.get_node_or_null("PracticeThorButton")
+	if practice_button == null:
+		practice_button = Button.new()
+		practice_button.name = "PracticeThorButton"
+		practice_button.text = "Practice vs Thor"
+		menu_container.add_child(practice_button)
+		var insert_index := multiplayer_button.get_index() if multiplayer_button != null else menu_container.get_child_count() - 1
+		menu_container.move_child(practice_button, insert_index)
+	if practice_button != null:
+		practice_button.visible = true
+		var callback := Callable(self, "_on_practice_thor_pressed")
+		if not practice_button.pressed.is_connected(callback):
+			practice_button.pressed.connect(_on_practice_thor_pressed)
+
+func _get_embedded_game_node_names() -> Array[String]:
+	return ["MockGame", "CardTest", "PracticeThor"]
+
+func _hide_embedded_games() -> void:
+	for node_name in _get_embedded_game_node_names():
+		var game = get_node_or_null("GameContainer/" + node_name)
+		if game != null:
+			game.visible = false
+
+func _show_embedded_game(node_name: String) -> Node:
+	_hide_embedded_games()
+	var game = get_node_or_null("GameContainer/" + node_name)
+	if game != null:
+		game.visible = true
+	return game
+
 func _fit_to_viewport() -> void:
 	position = Vector2.ZERO
 	size = get_viewport().get_visible_rect().size
+
+func _process(delta: float) -> void:
+	if not _should_auto_refresh_seeks():
+		_seek_auto_refresh_elapsed = 0.0
+		return
+	_seek_auto_refresh_elapsed += delta
+	if _seek_auto_refresh_elapsed < SEEK_AUTO_REFRESH_INTERVAL_SECONDS:
+		return
+	_seek_auto_refresh_elapsed = 0.0
+	_queue_room_list_refresh(false)
 
 func show_menu() -> void:
 	menu_container.visible = true
@@ -204,8 +259,7 @@ func _open_multiplayer_screen() -> void:
 		_apply_room_snapshot(_current_room_snapshot)
 		return
 	if _has_active_lobby_connection():
-		status_label.text = "Refreshing open seeks..."
-		lobby_client.list_rooms()
+		_queue_room_list_refresh()
 		return
 	status_label.text = "Choose a deck, then refresh open seeks or create your own."
 
@@ -319,10 +373,24 @@ func _refresh_multiplayer_action_state() -> void:
 	if ready_button != null:
 		ready_button.visible = false
 
-func _queue_room_list_refresh() -> void:
+func _should_auto_refresh_seeks() -> bool:
+	return (
+		multiplayer_container != null
+		and multiplayer_container.visible
+		and not _match_launch_queued
+		and lobby_client != null
+		and is_instance_valid(lobby_client)
+		and not str(lobby_client.current_session_id).strip_edges().is_empty()
+	)
+
+func _queue_room_list_refresh(show_status: bool = true) -> void:
 	if lobby_client == null:
 		return
-	status_label.text = "Refreshing open seeks..."
+	if _seek_list_request_pending:
+		return
+	_seek_list_request_pending = true
+	if show_status:
+		status_label.text = "Refreshing open seeks..."
 	lobby_client.list_rooms()
 
 func _on_multiplayer_deck_selected(index: int) -> void:
@@ -1026,8 +1094,6 @@ func _get_effective_account_username() -> String:
 	var connected_username := _get_connected_account_username()
 	if not connected_username.is_empty():
 		return connected_username
-	if _get_selected_auth_mode() not in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
-		return ""
 	return _logged_in_account_username.strip_edges()
 
 func _get_preferred_account_username() -> String:
@@ -1337,8 +1403,7 @@ func _on_deck_builder_pressed() -> void:
 		db.queue_free()
 		show_menu()
 	)
-	get_node("GameContainer/MockGame").visible = false
-	get_node("GameContainer/CardTest").visible = false
+	_hide_embedded_games()
 	game_container.add_child(db)
 	show_game()
 
@@ -1464,20 +1529,26 @@ func _format_rules_text(markdown: String) -> String:
 func _on_mock_game_pressed() -> void:
 	_match_launch_queued = false
 	_cleanup_lobby(true)
-	get_node("GameContainer/MockGame").visible = true
-	get_node("GameContainer/CardTest").visible = false
+	_show_embedded_game("MockGame")
 	show_game()
 	get_node("GameContainer/MockGame").start_game()
 
 func _on_card_test_pressed() -> void:
 	_match_launch_queued = false
 	_cleanup_lobby(true)
-	get_node("GameContainer/CardTest").visible = true
-	get_node("GameContainer/MockGame").visible = false
+	_show_embedded_game("CardTest")
 	show_game()
 	var card_test: CardTestGame = get_node("GameContainer/CardTest")
 	await card_test.start_game()
 	card_test.load_pictish_test_scenario()
+
+func _on_practice_thor_pressed() -> void:
+	_match_launch_queued = false
+	_cleanup_lobby(true)
+	var practice_game = _show_embedded_game("PracticeThor")
+	show_game()
+	if practice_game != null:
+		await practice_game.start_game()
 
 func _on_host_game_pressed() -> void:
 	var target_error := _validate_multiplayer_target()
@@ -1649,6 +1720,8 @@ func _on_lobby_login_succeeded(session_id: String, reconnect_token: String, play
 	_write_smoke_trace("lobby_login_succeeded session=%s player=%s host=%s" % [session_id, player_name, str(_is_local_lobby_host)])
 	_lobby_session_id = session_id
 	_lobby_reconnect_token = reconnect_token
+	_seek_list_request_pending = false
+	_seek_auto_refresh_elapsed = SEEK_AUTO_REFRESH_INTERVAL_SECONDS
 	_capture_logged_in_profile(player_name)
 	_refresh_account_identity_label()
 	_save_lobby_resume()
@@ -1672,6 +1745,8 @@ func _on_lobby_reconnect_succeeded(
 	_write_smoke_trace("lobby_reconnect_succeeded session=%s player=%s" % [session_id, player_name])
 	_lobby_session_id = session_id
 	_lobby_reconnect_token = reconnect_token
+	_seek_list_request_pending = false
+	_seek_auto_refresh_elapsed = SEEK_AUTO_REFRESH_INTERVAL_SECONDS
 	_capture_logged_in_profile(player_name)
 	_refresh_account_identity_label()
 	_save_lobby_resume()
@@ -1702,6 +1777,7 @@ func _on_lobby_reconnect_succeeded(
 	status_label.text = "Lobby session restored."
 
 func _on_lobby_room_list_updated(rooms: Array) -> void:
+	_seek_list_request_pending = false
 	_open_seek_rooms.clear()
 	var current_room_id := str(_current_room_snapshot.get("room_id", "")).strip_edges()
 	var current_room_still_visible := false
@@ -1807,8 +1883,7 @@ func _launch_assigned_match(
 	match_info: Dictionary = {},
 	server_match_session = null
 ) -> void:
-	get_node("GameContainer/MockGame").visible = true
-	get_node("GameContainer/CardTest").visible = false
+	_show_embedded_game("MockGame")
 	show_game()
 	if is_host:
 		get_node("GameContainer/MockGame").start_game(true, false, server_ip, match_port, match_info, server_match_session)
@@ -1860,6 +1935,8 @@ func _on_lobby_status_changed(message: String) -> void:
 
 func _on_lobby_connection_failed(message: String) -> void:
 	_write_smoke_trace("lobby_connection_failed %s" % message)
+	_seek_list_request_pending = false
+	_seek_auto_refresh_elapsed = 0.0
 	if _should_retry_host_lobby_connect():
 		_queue_host_lobby_retry(message)
 		return
@@ -1870,6 +1947,8 @@ func _on_lobby_connection_failed(message: String) -> void:
 
 func _on_lobby_disconnected() -> void:
 	_write_smoke_trace("lobby_disconnected")
+	_seek_list_request_pending = false
+	_seek_auto_refresh_elapsed = 0.0
 	if _should_retry_host_lobby_connect():
 		_queue_host_lobby_retry("Dedicated lobby disconnected before room setup completed.")
 		return
@@ -1889,7 +1968,7 @@ func _return_to_menu() -> void:
 	show_menu()
 	_match_launch_queued = false
 	_cleanup_lobby(true)
-	for node_name in ["MockGame", "CardTest"]:
+	for node_name in _get_embedded_game_node_names():
 		var game = get_node_or_null("GameContainer/" + node_name)
 		if game and game.has_method("cleanup"):
 			game.cleanup()
@@ -1903,6 +1982,8 @@ func _cleanup_lobby(clear_session: bool) -> void:
 	_cleanup_lobby_server()
 	_clear_current_seek_state()
 	_open_seek_rooms.clear()
+	_seek_list_request_pending = false
+	_seek_auto_refresh_elapsed = 0.0
 	_refresh_seek_list()
 	if clear_session:
 		_match_launch_queued = false

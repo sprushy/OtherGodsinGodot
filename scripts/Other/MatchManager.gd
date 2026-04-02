@@ -530,6 +530,23 @@ func _advance_authoritative_priority() -> void:
 		return
 	_broadcast_priority_offered(player, responses)
 
+func _queue_or_resolve_authoritative_priority_event(action: CardAction) -> void:
+	if action == null:
+		return
+	game_manager.push_to_stack(action)
+	var first_player: Player = game_manager.priority_player
+	var second_player: Player = game_manager.get_opponent(first_player) if first_player != null else null
+	var first_has_responses: bool = first_player != null and not game_manager.get_priority_responses(first_player).is_empty()
+	var second_has_responses: bool = second_player != null and not game_manager.get_priority_responses(second_player).is_empty()
+	if first_has_responses or second_has_responses:
+		_advance_authoritative_priority()
+		return
+	if not game_manager.action_stack.is_empty() and game_manager.action_stack.back() == action:
+		game_manager.action_stack.pop_back()
+	game_manager.priority_player = null
+	game_manager.consecutive_passes = 0
+	resolve_action(action)
+
 func _queue_authoritative_priority_event(
 	event_name: String,
 	resolve_callback: Callable = Callable(),
@@ -545,8 +562,7 @@ func _queue_authoritative_priority_event(
 	action.event_speed = 0
 	action.resolve_callback = resolve_callback
 	action.resolution_text = resolution_text
-	game_manager.push_to_stack(action)
-	_advance_authoritative_priority()
+	_queue_or_resolve_authoritative_priority_event(action)
 
 func _clear_pending_attack_state() -> void:
 	selected_attacker = null
