@@ -1199,13 +1199,29 @@ func _submit_auth_onboarding() -> bool:
 func _get_launch_auth_mode() -> String:
 	if _local_profile_store == null:
 		return AUTH_MODE_GUEST
-	var saved_username: String = _local_profile_store.get_last_account_username()
-	if not saved_username.is_empty():
-		return AUTH_MODE_LOGIN
 	var preferred_auth_mode: String = _local_profile_store.get_preferred_auth_mode()
 	if preferred_auth_mode in [AUTH_MODE_GUEST, AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
 		return preferred_auth_mode
+	var saved_username: String = _local_profile_store.get_last_account_username()
+	if not saved_username.is_empty():
+		return AUTH_MODE_LOGIN
 	return AUTH_MODE_GUEST
+
+func _should_prompt_for_account_recovery(message: String) -> bool:
+	if _is_account_logged_in():
+		return false
+	var normalized_message := message.strip_edges().to_lower()
+	return normalized_message in [
+		"that account was not found.",
+		"incorrect password.",
+	]
+
+func _show_auth_recovery_prompt(message: String) -> void:
+	if _local_profile_store != null:
+		_local_profile_store.set_preferred_auth_mode(AUTH_MODE_GUEST)
+	_maybe_show_auth_onboarding()
+	_begin_auth_onboarding_account_flow(AUTH_MODE_LOGIN)
+	_set_auth_onboarding_hint("%s Use Continue as Guest if this server doesn't know this account yet." % message, true)
 
 func _set_auth_onboarding_hint(message: String, is_error: bool = false) -> void:
 	if _auth_onboarding_mode_hint_label == null:
@@ -1766,6 +1782,8 @@ func _uses_dedicated_match_server(match_info: Dictionary) -> bool:
 func _on_lobby_room_error(message: String) -> void:
 	_write_smoke_trace("lobby_room_error %s" % message)
 	status_label.text = message
+	if _should_prompt_for_account_recovery(message):
+		_show_auth_recovery_prompt(message)
 	_fail_smoke_if_enabled("ROOM_ERROR:%s" % message)
 
 func _on_lobby_status_changed(message: String) -> void:
