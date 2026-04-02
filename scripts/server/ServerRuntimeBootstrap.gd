@@ -2,6 +2,7 @@ extends Node2D
 
 const LobbyServerScript = preload("res://scripts/server/LobbyServer.gd")
 const HeadlessMatchServerScript = preload("res://scripts/server/HeadlessMatchServer.gd")
+const DEFAULT_LOBBY_HOST_SETTING := "application/config/default_lobby_host"
 
 var _server_node: Node = null
 var _launch_args: Dictionary = {}
@@ -24,7 +25,8 @@ func _boot_server_runtime() -> void:
 	_boot_lobby_runtime(_launch_args)
 
 func _boot_lobby_runtime(launch_args: Dictionary) -> void:
-	var advertised_host: String = str(launch_args.get("lobby_host", "127.0.0.1")).strip_edges()
+	var configured_default_host: String = str(ProjectSettings.get_setting(DEFAULT_LOBBY_HOST_SETTING, "")).strip_edges()
+	var advertised_host: String = str(launch_args.get("lobby_host", configured_default_host)).strip_edges()
 	if advertised_host.is_empty():
 		advertised_host = "127.0.0.1"
 	var lobby_port: int = int(launch_args.get("lobby_port", 22345))
