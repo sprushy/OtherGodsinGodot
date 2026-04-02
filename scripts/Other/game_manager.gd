@@ -269,6 +269,12 @@ func can_card_respond_to_priority(card: Card, player: Player = null) -> bool:
 	var top: CardAction = action_stack.back()
 	var top_speed := top.get_timing_speed()
 	if card is HexCard:
+		if not prepared_hexes.has(card):
+			return false
+		if not card.is_prepared:
+			return false
+		if card.current_zone == null or not card.current_zone.is_board_zone():
+			return false
 		if prepared_hexes.get(card, turn_number) >= turn_number:
 			return false
 		if card.is_activation_locked(self):

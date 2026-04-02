@@ -8908,6 +8908,24 @@ func _offer_priority() -> void:
 
 	_show_priority_prompt(player)
 
+func _get_priority_response_target_uids(card: Card, top: CardAction) -> Array:
+	var target_uids: Array = []
+	if card == null:
+		return target_uids
+	var targets: Array = []
+	if card is HexCard:
+		targets = game_manager.get_priority_hex_targets(card as HexCard, top)
+	elif card is CharmCard:
+		targets = (card as CharmCard).get_valid_targets(game_manager)
+	elif card.has_method("get_priority_field_targets"):
+		targets = card.get_priority_field_targets(game_manager, top)
+	elif card.has_method("get_valid_targets"):
+		targets = card.get_valid_targets(game_manager)
+	for target in targets:
+		if target is Card:
+			target_uids.append((target as Card).uid)
+	return target_uids
+
 func _broadcast_priority_offered(player: Player, responses: Array) -> void:
 	if network_manager == null or game_manager.action_stack.is_empty():
 		return
@@ -8916,41 +8934,34 @@ func _broadcast_priority_offered(player: Player, responses: Array) -> void:
 	for card in responses:
 		if card is HexCard:
 			var hex := card as HexCard
-			var targets := game_manager.get_priority_hex_targets(hex, top)
 			var target_is_attacker := not hex.has_method("get_priority_targets") \
 				and top.type == CardAction.Type.ATTACK
-			var target_uids: Array = []
-			for t in targets:
-				target_uids.append(t.uid)
 			response_options.append({
 				response_type = "hex",
 				card_uid = hex.uid,
-				target_uids = target_uids,
+				target_uids = _get_priority_response_target_uids(hex, top),
 				target_is_attacker = target_is_attacker,
 			})
 		elif card is CharmCard:
 			var charm := card as CharmCard
-			var targets := charm.get_valid_targets(game_manager)
-			var target_uids: Array = []
-			for t in targets:
-				target_uids.append(t.uid)
 			var from_hand := charm.current_zone == charm.card_owner.hand_zone
 			response_options.append({
 				response_type = "charm",
 				card_uid = charm.uid,
-				target_uids = target_uids,
+				target_uids = _get_priority_response_target_uids(charm, top),
 				from_hand = from_hand,
 			})
 		elif card != null and card.is_god and card.has_method("get_valid_targets"):
-			var god_targets: Array = card.get_valid_targets(game_manager)
-			var target_uids: Array = []
-			for t in god_targets:
-				if t is Card:
-					target_uids.append((t as Card).uid)
 			response_options.append({
 				response_type = "god",
 				card_uid = card.uid,
-				target_uids = target_uids,
+				target_uids = _get_priority_response_target_uids(card, top),
+			})
+		elif card != null and card.has_method("can_respond_to_priority_action") and card.has_method("activate"):
+			response_options.append({
+				response_type = "ability",
+				card_uid = card.uid,
+				target_uids = _get_priority_response_target_uids(card, top),
 			})
 
 	var action_msg := ""
@@ -11470,10 +11481,16 @@ func _on_match_move_validated(move: Dictionary) -> void:
 			# so both players can respond to upkeep effects (hexes, charms, etc.).
 			var choice: String = move.get("choice", "")
 			var feedback := "Drew a card." if choice == "draw" else "Gained 4 additional mana."
-			_queue_standard_turn_start_priority(feedback)
+			if _is_networked_client:
+				action_label.text = feedback
+			else:
+				_queue_standard_turn_start_priority(feedback)
 		"skoll_upkeep_summon":
 			# Skoll already summoned by MatchManager; open standard turn-start priority.
-			_queue_standard_turn_start_priority("Skoll summoned via Sun Hunt.")
+			if _is_networked_client:
+				action_label.text = "Skoll summoned via Sun Hunt."
+			else:
+				_queue_standard_turn_start_priority("Skoll summoned via Sun Hunt.")
 		"hati_moon_hunt":
 			action_label.text = "Moon Hunt resolved. Hati was summoned."
 			if _is_networked_client:
@@ -11486,20 +11503,24 @@ func _on_match_move_validated(move: Dictionary) -> void:
 			var target = move.get("target")
 			if target is Player:
 				action_label.text = _get_attack_card_label(attacker, "A creature") + " attacks " + target.player_name + "'s followers!"
-				check_for_possible_intercepts()
+				if not _is_networked_client:
+					check_for_possible_intercepts()
 			elif target is Card:
 				action_label.text = _get_attack_card_label(attacker, "A creature") + " attacking " + _get_card_name_safe(target, "an enemy card") + "..."
-				check_for_possible_intercepts()
+				if not _is_networked_client:
+					check_for_possible_intercepts()
 		"intercept_decision":
 			# selected_interceptor was set by MatchManager; proceed to resolve the attack.
-			resolve_pending_attack()
+			if not _is_networked_client:
+				resolve_pending_attack()
 		"priority_pass":
 			# Remote player passed priority; continue the server-side priority loop.
-			game_manager.pass_priority()
-			if game_manager.both_passed():
-				_execute_top_of_stack()
-			else:
-				_offer_priority()
+			if not _is_networked_client:
+				game_manager.pass_priority()
+				if game_manager.both_passed():
+					_execute_top_of_stack()
+				else:
+					_offer_priority()
 		"resurrection_choice":
 			_continue_end_turn_sequence()
 		"play_hex_response":
@@ -11507,18 +11528,21 @@ func _on_match_move_validated(move: Dictionary) -> void:
 			var phr_hex := game_manager.get_card_by_uid(move.get("hex_uid", ""))
 			if phr_hex != null:
 				action_label.text = phr_hex.card_name + " responds!"
-			_offer_priority()
+			if not _is_networked_client:
+				_offer_priority()
 		"play_charm_response":
 			# Remote player activated a charm; the SPELL was already pushed by MatchManager.
 			var pcr_charm := game_manager.get_card_by_uid(move.get("charm_uid", ""))
 			if pcr_charm != null:
 				action_label.text = pcr_charm.card_name + " responds!"
-			_offer_priority()
+			if not _is_networked_client:
+				_offer_priority()
 		"play_priority_ability":
 			var response_card := game_manager.get_card_by_uid(move.get("source_uid", ""))
 			if response_card != null:
 				action_label.text = response_card.card_name + " responds!"
-			_offer_priority()
+			if not _is_networked_client:
+				_offer_priority()
 	update_ui()
 
 func _on_match_move_failed(reason: String) -> void:
@@ -12077,7 +12101,7 @@ func _update_waiting_status(is_waiting: bool, message: String = "Waiting for Opp
 		panel.color = Color(0, 0, 0, 0.3)
 		panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		panel.z_index = 200
-		panel.mouse_filter = Control.MOUSE_FILTER_STOP
+		panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		add_child(panel)
 		_promote_transient_ui(panel)
 		
@@ -12093,6 +12117,7 @@ func _update_waiting_status(is_waiting: bool, message: String = "Waiting for Opp
 		style.content_margin_top = 10
 		style.content_margin_bottom = 10
 		label.add_theme_stylebox_override("normal", style)
+		label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		panel.add_child(label)
 	
 	var lbl = panel.get_node("WaitingLabel")
@@ -12186,6 +12211,7 @@ func _show_remote_priority_prompt(responses: Array) -> void:
 	)
 	vbox.add_child(pass_btn)
 
+	var interactive_response_count := 0
 	for response in responses:
 		var rtype: String = response.get("response_type", "hex")
 		var card_uid: String = response.get("card_uid", "")
@@ -12193,6 +12219,7 @@ func _show_remote_priority_prompt(responses: Array) -> void:
 		var resp_card := game_manager.get_card_by_uid(card_uid)
 		if resp_card == null:
 			continue
+		interactive_response_count += 1
 		var card_name: String = resp_card.card_name
 		var btn := Button.new()
 		btn.text = "Use " + card_name
@@ -12266,12 +12293,17 @@ func _show_remote_priority_prompt(responses: Array) -> void:
 						target_cards,
 						on_choose_charm_response_target
 					)
-			elif rtype == "god":
+			elif rtype == "god" or rtype == "ability":
 				if target_uids.size() == 1:
 					network_manager.request_action({
 						type = "play_priority_ability",
 						source_uid = card_uid,
 						target_uid = target_uids[0],
+					})
+				elif target_uids.is_empty():
+					network_manager.request_action({
+						type = "play_priority_ability",
+						source_uid = card_uid,
 					})
 				else:
 					var target_cards: Array[Card] = []
@@ -12292,6 +12324,11 @@ func _show_remote_priority_prompt(responses: Array) -> void:
 					)
 		)
 		vbox.add_child(btn)
+
+	if auto_priority and interactive_response_count == 0:
+		panel.hide()
+		call_deferred("_on_priority_pass_pressed")
+		return
 
 	_promote_transient_ui(panel)
 	panel.show()

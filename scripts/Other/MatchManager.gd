@@ -419,6 +419,24 @@ func _build_pending_attack_action() -> CardAction:
 	action.target = pending_attack_target
 	return action
 
+func _get_priority_response_target_uids(card: Card, top: CardAction) -> Array:
+	var target_uids: Array = []
+	if card == null:
+		return target_uids
+	var targets: Array = []
+	if card is HexCard:
+		targets = game_manager.get_priority_hex_targets(card as HexCard, top)
+	elif card is CharmCard:
+		targets = (card as CharmCard).get_valid_targets(game_manager)
+	elif card.has_method("get_priority_field_targets"):
+		targets = card.get_priority_field_targets(game_manager, top)
+	elif card.has_method("get_valid_targets"):
+		targets = card.get_valid_targets(game_manager)
+	for target in targets:
+		if target is Card:
+			target_uids.append((target as Card).uid)
+	return target_uids
+
 func _build_priority_response_options(responses: Array) -> Array:
 	var response_options: Array = []
 	if game_manager.action_stack.is_empty():
@@ -427,40 +445,33 @@ func _build_priority_response_options(responses: Array) -> Array:
 	for card in responses:
 		if card is HexCard:
 			var hex := card as HexCard
-			var targets := game_manager.get_priority_hex_targets(hex, top)
 			var target_is_attacker := not hex.has_method("get_priority_targets") and top.type == CardAction.Type.ATTACK
-			var target_uids: Array = []
-			for t in targets:
-				target_uids.append(t.uid)
 			response_options.append({
 				response_type = "hex",
 				card_uid = hex.uid,
-				target_uids = target_uids,
+				target_uids = _get_priority_response_target_uids(hex, top),
 				target_is_attacker = target_is_attacker,
 			})
 		elif card is CharmCard:
 			var charm := card as CharmCard
-			var targets := charm.get_valid_targets(game_manager)
-			var target_uids: Array = []
-			for t in targets:
-				target_uids.append(t.uid)
 			var from_hand := charm.current_zone == charm.card_owner.hand_zone
 			response_options.append({
 				response_type = "charm",
 				card_uid = charm.uid,
-				target_uids = target_uids,
+				target_uids = _get_priority_response_target_uids(charm, top),
 				from_hand = from_hand,
 			})
 		elif card != null and card.is_god and card.has_method("get_valid_targets"):
-			var god_targets: Array = card.get_valid_targets(game_manager)
-			var god_target_uids: Array = []
-			for t in god_targets:
-				if t is Card:
-					god_target_uids.append((t as Card).uid)
 			response_options.append({
 				response_type = "god",
 				card_uid = card.uid,
-				target_uids = god_target_uids,
+				target_uids = _get_priority_response_target_uids(card, top),
+			})
+		elif card != null and card.has_method("can_respond_to_priority_action") and card.has_method("activate"):
+			response_options.append({
+				response_type = "ability",
+				card_uid = card.uid,
+				target_uids = _get_priority_response_target_uids(card, top),
 			})
 	return response_options
 
