@@ -80,7 +80,7 @@ func ensure_account_profile(
 				normalized_key,
 				ensure_profile(resolved_preferred_id, normalized_username, make_current)
 			)
-	var matched_profile_id := find_profile_id_by_display_name(normalized_username)
+	var matched_profile_id := find_profile_id_by_account_username(normalized_username)
 	if not matched_profile_id.is_empty():
 		return _remember_account_profile_mapping(
 			normalized_key,
@@ -89,13 +89,34 @@ func ensure_account_profile(
 	var created_profile := ensure_profile(resolved_preferred_id, normalized_username, make_current)
 	return _remember_account_profile_mapping(normalized_key, created_profile)
 
+func find_profile_id_by_account_username(account_username: String) -> String:
+	_ensure_loaded()
+	var normalized_username := account_username.strip_edges().to_lower()
+	if normalized_username.is_empty():
+		return ""
+	var mapped_profile_id := str(_get_account_profile_id_by_username().get(normalized_username, "")).strip_edges()
+	if not mapped_profile_id.is_empty():
+		var mapped_profile := get_profile(mapped_profile_id)
+		if not mapped_profile.is_empty():
+			return mapped_profile_id
+	var profiles := _get_profiles()
+	for profile_id in profiles.keys():
+		var profile = profiles.get(profile_id, {})
+		if not (profile is Dictionary):
+			continue
+		var stored_username := str((profile as Dictionary).get("account_username_key", "")).strip_edges().to_lower()
+		if stored_username == normalized_username:
+			return str(profile_id)
+	return find_profile_id_by_display_name(normalized_username)
+
 func find_profile_id_by_display_name(display_name: String) -> String:
 	_ensure_loaded()
 	var normalized_name := display_name.strip_edges().to_lower()
 	if normalized_name.is_empty():
 		return ""
-	for profile_id in _get_profiles().keys():
-		var profile = _get_profiles().get(profile_id, {})
+	var profiles := _get_profiles()
+	for profile_id in profiles.keys():
+		var profile = profiles.get(profile_id, {})
 		if not (profile is Dictionary):
 			continue
 		var stored_name := str((profile as Dictionary).get("display_name", "")).strip_edges().to_lower()
@@ -142,9 +163,63 @@ func get_profile(profile_id: String) -> Dictionary:
 		return (existing as Dictionary).duplicate(true)
 	return {}
 
+func get_profile_display_name(profile_id: String, default_name: String = DEFAULT_PROFILE_NAME) -> String:
+	var profile := get_profile(profile_id)
+	var resolved_default := default_name.strip_edges()
+	if resolved_default.is_empty():
+		resolved_default = DEFAULT_PROFILE_NAME
+	var display_name := str(profile.get("display_name", resolved_default)).strip_edges()
+	if display_name.is_empty():
+		return resolved_default
+	return display_name
+
 func get_current_profile_id() -> String:
 	_ensure_loaded()
 	return str(_data.get("current_profile_id", "")).strip_edges()
+
+func activate_guest_session(display_name: String = DEFAULT_PROFILE_NAME) -> Dictionary:
+	_ensure_loaded()
+	var resolved_display_name := display_name.strip_edges()
+	if resolved_display_name.is_empty():
+		resolved_display_name = DEFAULT_PROFILE_NAME
+	var profile := ensure_guest_profile(resolved_display_name, true)
+	_data["preferred_auth_mode"] = AUTH_MODE_GUEST
+	_save()
+	return get_profile(str(profile.get("profile_id", "")))
+
+func activate_account_session(
+	account_username: String,
+	preferred_profile_id: String = "",
+	auth_mode: String = AUTH_MODE_LOGIN,
+	password: String = "",
+	persist_password: bool = false
+) -> Dictionary:
+	_ensure_loaded()
+	var resolved_username := account_username.strip_edges()
+	if resolved_username.is_empty():
+		return ensure_profile(preferred_profile_id, DEFAULT_PROFILE_NAME, true)
+	var resolved_auth_mode := auth_mode.strip_edges().to_lower()
+	if resolved_auth_mode not in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
+		resolved_auth_mode = AUTH_MODE_LOGIN
+	var profile := ensure_account_profile(resolved_username, preferred_profile_id, true)
+	var resolved_profile_id := str(profile.get("profile_id", "")).strip_edges()
+	if resolved_profile_id.is_empty():
+		return profile
+	var profiles := _get_profiles()
+	var stored_profile = profiles.get(resolved_profile_id, {})
+	if stored_profile is Dictionary:
+		var updated_profile := (stored_profile as Dictionary).duplicate(true)
+		updated_profile["display_name"] = resolved_username
+		updated_profile["account_username_key"] = resolved_username.to_lower()
+		profiles[resolved_profile_id] = updated_profile
+		_data["profiles"] = profiles
+	_data["current_profile_id"] = resolved_profile_id
+	_data["preferred_auth_mode"] = resolved_auth_mode
+	_data["last_account_username"] = resolved_username
+	if persist_password:
+		_data["last_account_password"] = password
+	_save()
+	return get_profile(resolved_profile_id)
 
 func save_deck(profile_id: String, deck_name: String, cards: Dictionary, deck_id: String = "") -> Dictionary:
 	var profile := ensure_profile(profile_id, DEFAULT_PROFILE_NAME, true)
@@ -285,15 +360,6 @@ func get_preferred_auth_mode() -> String:
 	if mode in [AUTH_MODE_GUEST, AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
 		return mode
 	return AUTH_MODE_GUEST
-
-func has_seen_auth_onboarding() -> bool:
-	_ensure_loaded()
-	return bool(_data.get("auth_onboarding_seen", false))
-
-func mark_auth_onboarding_seen(seen: bool = true) -> void:
-	_ensure_loaded()
-	_data["auth_onboarding_seen"] = seen
-	_save()
 
 func set_preferred_auth_mode(auth_mode: String) -> void:
 	_ensure_loaded()
@@ -465,7 +531,6 @@ func _ensure_loaded() -> void:
 		"preferred_auth_mode": AUTH_MODE_GUEST,
 		"last_account_username": "",
 		"last_account_password": "",
-		"auth_onboarding_seen": false,
 		DISMISSED_RELEASE_VERSION_KEY: "",
 	}
 	var primary_snapshot: Dictionary = _read_storage_snapshot(STORAGE_PATH, "primary")

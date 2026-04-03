@@ -183,8 +183,6 @@ func _can_force_attack(game_manager: GameManager, attacker: Card, defender: Card
 		return false
 	if not attacker.get_status_effect("cannot_attack").is_empty():
 		return false
-	if not attacker.can_take_major_creature_action():
-		return false
 	if attacker.current_zone == null or attacker.current_zone.zone_type != Zone.ZoneType.FRONTLINE:
 		return false
 	if attacker.has_method("can_engage") and not attacker.can_engage(defender):

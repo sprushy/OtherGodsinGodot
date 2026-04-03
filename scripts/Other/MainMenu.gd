@@ -5,6 +5,7 @@ const LobbyServerScript = preload("res://scripts/server/LobbyServer.gd")
 const LobbyClientScript = preload("res://scripts/client/LobbyClient.gd")
 const AppReleaseInfoScript = preload("res://scripts/client/AppReleaseInfo.gd")
 const LocalProfileStoreScript = preload("res://scripts/core/LocalProfileStore.gd")
+const CardCatalogScript = preload("res://scripts/cards/CardCatalog.gd")
 const DeckValidatorScript = preload("res://scripts/server/DeckValidator.gd")
 const MatchHistoryStoreScript = preload("res://scripts/server/MatchHistoryStore.gd")
 const MatchSessionScript = preload("res://scripts/server/MatchSession.gd")
@@ -28,6 +29,7 @@ const SEEK_AUTO_REFRESH_INTERVAL_SECONDS := 3.0
 @onready var multiplayer_back_button = $MenuContainer/MultiplayerContainer/MultiplayerHeaderRow/BackButton
 @onready var ip_line_edit = $MenuContainer/MultiplayerContainer/IPLineEdit
 @onready var player_name_line_edit = $MenuContainer/MultiplayerContainer/PlayerNameLineEdit
+@onready var deck_picker_label = $MenuContainer/MultiplayerContainer/DeckPickerLabel
 @onready var deck_picker_option = $MenuContainer/MultiplayerContainer/DeckPickerOption
 @onready var deck_hint_label = $MenuContainer/MultiplayerContainer/DeckHintLabel
 @onready var create_seek_button = $MenuContainer/MultiplayerContainer/CreateSeekButton
@@ -57,7 +59,7 @@ var _dedicated_lobby_connect_attempts_remaining: int = 0
 var _local_profile_store = null
 var _local_profile_id: String = ""
 var _selected_multiplayer_deck_id: String = ""
-var _legal_multiplayer_decks: Array[Dictionary] = []
+var _multiplayer_deck_entries: Array[Dictionary] = []
 var _deck_validator = DeckValidatorScript.new()
 var _last_submitted_lobby_room_id: String = ""
 var _last_submitted_lobby_deck_id: String = ""
@@ -84,6 +86,9 @@ var _bug_report_file_dialog: FileDialog = null
 var _bug_report_selected_screenshot_path: String = ""
 var _account_identity_label: Label = null
 var _logged_in_account_username: String = ""
+var _selected_auth_mode: String = AUTH_MODE_GUEST
+var _selected_account_username: String = ""
+var _selected_account_password: String = ""
 var _update_check_request: HTTPRequest = null
 var _update_prompt_overlay: Control = null
 var _pending_update_release_version: String = ""
@@ -92,6 +97,15 @@ var _startup_prompt_gate_open: bool = false
 var _rules_overlay: Control = null
 var _seek_auto_refresh_elapsed: float = 0.0
 var _seek_list_request_pending: bool = false
+var _deck_picker_button: Button = null
+var _deck_picker_popup: PanelContainer = null
+var _deck_picker_popup_list: VBoxContainer = null
+var _multiplayer_deck_summary_panel: PanelContainer = null
+var _multiplayer_deck_summary_art: TextureRect = null
+var _multiplayer_deck_summary_name_label: Label = null
+var _multiplayer_deck_summary_god_label: Label = null
+var _menu_card_templates: Dictionary = {}
+var _menu_card_art_cache: Dictionary = {}
 
 func _ready() -> void:
 	if _is_server_runtime_launch():
@@ -136,13 +150,13 @@ func _ready() -> void:
 		create_seek_button.pressed.connect(_on_create_seek_pressed)
 	if leave_seek_button:
 		leave_seek_button.pressed.connect(_on_leave_seek_pressed)
-	if deck_picker_option:
-		deck_picker_option.item_selected.connect(_on_multiplayer_deck_selected)
 	if seek_list != null and seek_list.has_signal("item_clicked"):
 		seek_list.item_clicked.connect(_on_seek_item_clicked)
 	if ready_button:
 		ready_button.pressed.connect(_on_ready_button_pressed)
 
+	_build_menu_card_template_cache()
+	_build_multiplayer_deck_controls()
 	_build_auth_controls()
 	_ensure_local_profile_store()
 	_restore_auth_preferences()
@@ -217,6 +231,8 @@ func _show_embedded_game(node_name: String) -> Node:
 func _fit_to_viewport() -> void:
 	position = Vector2.ZERO
 	size = get_viewport().get_visible_rect().size
+	if _deck_picker_popup != null and is_instance_valid(_deck_picker_popup) and _deck_picker_popup.visible:
+		_position_multiplayer_deck_popup()
 
 func _process(delta: float) -> void:
 	if not _should_auto_refresh_seeks():
@@ -228,21 +244,45 @@ func _process(delta: float) -> void:
 	_seek_auto_refresh_elapsed = 0.0
 	_queue_room_list_refresh(false)
 
+func _input(event: InputEvent) -> void:
+	if _deck_picker_popup == null or not is_instance_valid(_deck_picker_popup) or not _deck_picker_popup.visible:
+		return
+	if event is InputEventKey:
+		var key_event := event as InputEventKey
+		if key_event.pressed and key_event.keycode == KEY_ESCAPE:
+			_hide_multiplayer_deck_popup()
+			get_viewport().set_input_as_handled()
+			return
+	if event is InputEventMouseButton:
+		var mouse_event := event as InputEventMouseButton
+		if not mouse_event.pressed:
+			return
+		var popup_rect := _deck_picker_popup.get_global_rect()
+		var button_rect := Rect2()
+		if _deck_picker_button != null and is_instance_valid(_deck_picker_button):
+			button_rect = _deck_picker_button.get_global_rect()
+		if popup_rect.has_point(mouse_event.position) or button_rect.has_point(mouse_event.position):
+			return
+		_hide_multiplayer_deck_popup()
+
 func show_menu() -> void:
 	menu_container.visible = true
 	game_container.visible = false
+	_hide_multiplayer_deck_popup()
 	_refresh_multiplayer_deck_options()
 	_refresh_multiplayer_action_state()
 
 func show_game() -> void:
 	menu_container.visible = false
 	game_container.visible = true
+	_hide_multiplayer_deck_popup()
 
 func _on_multiplayer_pressed() -> void:
 	_open_multiplayer_screen()
 
 func _on_multiplayer_back_pressed() -> void:
 	multiplayer_container.visible = false
+	_hide_multiplayer_deck_popup()
 	status_label.text = "Refresh open seeks or create your own."
 	_refresh_seek_list()
 	_refresh_multiplayer_action_state()
@@ -266,85 +306,474 @@ func _open_multiplayer_screen() -> void:
 func _has_active_lobby_connection() -> bool:
 	return lobby_client != null and is_instance_valid(lobby_client) and lobby_client.is_authenticated()
 
-func _refresh_multiplayer_deck_options() -> void:
-	_legal_multiplayer_decks.clear()
-	if deck_picker_option == null:
+func _build_menu_card_template_cache() -> void:
+	_menu_card_templates.clear()
+	for card in CardCatalogScript.make_all_cards():
+		if card == null:
+			continue
+		var card_name := str(card.card_name).strip_edges()
+		if not card_name.is_empty():
+			_menu_card_templates[card_name] = card
+		var lookup_key := CardCatalogScript.to_lookup_key(card_name)
+		if not lookup_key.is_empty():
+			_menu_card_templates[lookup_key] = card
+
+func _build_multiplayer_deck_controls() -> void:
+	if menu_container == null or multiplayer_container == null or _deck_picker_button != null:
 		return
-	deck_picker_option.clear()
+	if deck_picker_label != null:
+		deck_picker_label.visible = false
+	if deck_picker_option != null:
+		deck_picker_option.visible = false
+		deck_picker_option.disabled = true
+	if deck_hint_label != null:
+		deck_hint_label.visible = false
+
+	var button := Button.new()
+	button.name = "DeckPickerButton"
+	button.text = "Change Deck: No saved decks"
+	button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	button.custom_minimum_size = Vector2(0, 36)
+	button.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	button.pressed.connect(_toggle_multiplayer_deck_popup)
+	menu_container.add_child(button)
+	var menu_insert_index := multiplayer_button.get_index() if multiplayer_button != null else menu_container.get_child_count() - 1
+	menu_container.move_child(button, menu_insert_index)
+	_deck_picker_button = button
+
+	var summary_panel := PanelContainer.new()
+	summary_panel.name = "SelectedDeckSummaryPanel"
+	summary_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var summary_style := StyleBoxFlat.new()
+	summary_style.bg_color = Color(0.08, 0.09, 0.13, 0.95)
+	summary_style.border_color = Color(0.32, 0.36, 0.46, 1.0)
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		summary_style.set_border_width(side, 1)
+	summary_style.corner_radius_top_left = 6
+	summary_style.corner_radius_top_right = 6
+	summary_style.corner_radius_bottom_left = 6
+	summary_style.corner_radius_bottom_right = 6
+	summary_panel.add_theme_stylebox_override("panel", summary_style)
+	multiplayer_container.add_child(summary_panel)
+	if create_seek_button != null:
+		multiplayer_container.move_child(summary_panel, create_seek_button.get_index())
+	_multiplayer_deck_summary_panel = summary_panel
+
+	var summary_row := HBoxContainer.new()
+	summary_row.add_theme_constant_override("separation", 12)
+	summary_panel.add_child(summary_row)
+
+	var art := TextureRect.new()
+	art.custom_minimum_size = Vector2(78, 104)
+	art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	art.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	summary_row.add_child(art)
+	_multiplayer_deck_summary_art = art
+
+	var summary_text := VBoxContainer.new()
+	summary_text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	summary_text.add_theme_constant_override("separation", 4)
+	summary_row.add_child(summary_text)
+
+	var summary_name := Label.new()
+	summary_name.text = "No deck selected"
+	summary_name.add_theme_font_size_override("font_size", 17)
+	summary_name.add_theme_color_override("font_color", Color(0.94, 0.90, 0.78))
+	summary_name.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	summary_text.add_child(summary_name)
+	_multiplayer_deck_summary_name_label = summary_name
+
+	var summary_god := Label.new()
+	summary_god.text = ""
+	summary_god.add_theme_font_size_override("font_size", 12)
+	summary_god.add_theme_color_override("font_color", Color(0.72, 0.78, 0.86))
+	summary_god.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	summary_text.add_child(summary_god)
+	_multiplayer_deck_summary_god_label = summary_god
+
+	var popup := PanelContainer.new()
+	popup.name = "DeckPickerPopup"
+	popup.visible = false
+	popup.top_level = true
+	popup.mouse_filter = Control.MOUSE_FILTER_STOP
+	popup.focus_mode = Control.FOCUS_NONE
+	var popup_style := StyleBoxFlat.new()
+	popup_style.bg_color = Color(0.08, 0.09, 0.14, 0.98)
+	popup_style.border_color = Color(0.42, 0.46, 0.56, 1.0)
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		popup_style.set_border_width(side, 1)
+	popup_style.corner_radius_top_left = 6
+	popup_style.corner_radius_top_right = 6
+	popup_style.corner_radius_bottom_left = 6
+	popup_style.corner_radius_bottom_right = 6
+	popup.add_theme_stylebox_override("panel", popup_style)
+	add_child(popup)
+	_deck_picker_popup = popup
+
+	var scroll := ScrollContainer.new()
+	scroll.custom_minimum_size = Vector2(460, 240)
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	popup.add_child(scroll)
+
+	var list := VBoxContainer.new()
+	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	list.add_theme_constant_override("separation", 6)
+	scroll.add_child(list)
+	_deck_picker_popup_list = list
+
+func _get_saved_deck_name(saved_deck: Dictionary) -> String:
+	var deck_name := str(saved_deck.get("name", "Deck")).strip_edges()
+	if deck_name.is_empty():
+		return "Deck"
+	return deck_name
+
+func _get_saved_deck_validation(saved_deck: Dictionary) -> Dictionary:
+	if saved_deck.is_empty():
+		return {"is_valid": false, "error": "Deck is missing."}
+	return _deck_validator.validate_deck(saved_deck.get("cards", {}))
+
+func _get_multiplayer_deck_entry(deck_id: String) -> Dictionary:
+	var resolved_deck_id := deck_id.strip_edges()
+	if resolved_deck_id.is_empty():
+		return {}
+	for entry in _multiplayer_deck_entries:
+		if str(entry.get("deck_id", "")).strip_edges() == resolved_deck_id:
+			return (entry as Dictionary).duplicate(true)
+	return {}
+
+func _get_selected_multiplayer_deck_entry() -> Dictionary:
+	return _get_multiplayer_deck_entry(_selected_multiplayer_deck_id)
+
+func _find_menu_card_template(card_name: String) -> Card:
+	var resolved_name := str(card_name).strip_edges()
+	if resolved_name.is_empty():
+		return null
+	if _menu_card_templates.has(resolved_name):
+		return _menu_card_templates[resolved_name] as Card
+	var lookup_key := CardCatalogScript.to_lookup_key(resolved_name)
+	if _menu_card_templates.has(lookup_key):
+		return _menu_card_templates[lookup_key] as Card
+	return null
+
+func _get_saved_deck_god_template(saved_deck: Dictionary) -> Card:
+	if saved_deck.is_empty():
+		return null
+	var raw_deck_cards: Variant = saved_deck.get("cards", {})
+	if not (raw_deck_cards is Dictionary):
+		return null
+	var deck_cards: Dictionary = raw_deck_cards as Dictionary
+	for raw_card_name in deck_cards.keys():
+		if int(deck_cards[raw_card_name]) <= 0:
+			continue
+		var card: Card = _find_menu_card_template(str(raw_card_name))
+		if card != null and bool(card.is_god):
+			return card
+	return null
+
+func _get_menu_card_art_texture(art_path: String) -> Texture2D:
+	var resolved_path := art_path.strip_edges()
+	if resolved_path.is_empty():
+		return null
+	if _menu_card_art_cache.has(resolved_path):
+		return _menu_card_art_cache[resolved_path] as Texture2D
+	var texture := load(resolved_path) as Texture2D
+	_menu_card_art_cache[resolved_path] = texture
+	return texture
+
+func _refresh_multiplayer_deck_picker_button() -> void:
+	if _deck_picker_button == null:
+		return
+	if _multiplayer_deck_entries.is_empty():
+		_deck_picker_button.text = "Change Deck: No saved decks"
+		_deck_picker_button.tooltip_text = "No saved decks yet."
+		_deck_picker_button.disabled = true
+		return
+	var selected_entry: Dictionary = _get_selected_multiplayer_deck_entry()
+	if selected_entry.is_empty():
+		_deck_picker_button.text = "Change Deck: Choose a deck"
+		_deck_picker_button.tooltip_text = "Choose one of your saved decks."
+		_deck_picker_button.disabled = false
+		return
+	var deck_name := str(selected_entry.get("deck_name", "Deck"))
+	if bool(selected_entry.get("is_legal", false)):
+		_deck_picker_button.text = "Change Deck: %s" % deck_name
+		_deck_picker_button.tooltip_text = "Current multiplayer deck: %s" % deck_name
+	else:
+		var reason := str(selected_entry.get("reason", "")).strip_edges()
+		_deck_picker_button.text = "Change Deck: %s (Unavailable)" % deck_name
+		_deck_picker_button.tooltip_text = reason if not reason.is_empty() else "This deck is unavailable for multiplayer."
+	_deck_picker_button.disabled = false
+
+func _make_multiplayer_deck_entry_row(entry: Dictionary) -> Control:
+	var row := PanelContainer.new()
+	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.custom_minimum_size.y = 92
+	row.mouse_filter = Control.MOUSE_FILTER_STOP
+
+	var is_legal := bool(entry.get("is_legal", false))
+	var is_selected := str(entry.get("deck_id", "")).strip_edges() == _selected_multiplayer_deck_id.strip_edges()
+	var deck_name := str(entry.get("deck_name", "Deck"))
+	var reason := str(entry.get("reason", "")).strip_edges()
+	var god_card: Card = _get_saved_deck_god_template(entry.get("saved_deck", {}) as Dictionary)
+
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.12, 0.14, 0.18, 0.98) if is_legal else Color(0.15, 0.11, 0.12, 0.97)
+	style.border_color = Color(0.86, 0.78, 0.36, 1.0) if is_selected else (Color(0.42, 0.46, 0.56, 1.0) if is_legal else Color(0.64, 0.26, 0.26, 1.0))
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		style.set_border_width(side, 2 if is_selected else 1)
+	style.corner_radius_top_left = 5
+	style.corner_radius_top_right = 5
+	style.corner_radius_bottom_left = 5
+	style.corner_radius_bottom_right = 5
+	row.add_theme_stylebox_override("panel", style)
+
+	var inner := HBoxContainer.new()
+	inner.add_theme_constant_override("separation", 10)
+	row.add_child(inner)
+
+	var marker := Label.new()
+	marker.custom_minimum_size = Vector2(18, 0)
+	marker.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	marker.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	marker.add_theme_font_size_override("font_size", 18)
+	if is_legal:
+		marker.text = ">" if is_selected else ""
+		marker.add_theme_color_override("font_color", Color(0.96, 0.86, 0.34))
+	else:
+		marker.text = "X"
+		marker.add_theme_color_override("font_color", Color(1.0, 0.26, 0.26))
+	inner.add_child(marker)
+
+	var art_frame := PanelContainer.new()
+	art_frame.custom_minimum_size = Vector2(52, 72)
+	var art_style := StyleBoxFlat.new()
+	art_style.bg_color = Color(0.06, 0.07, 0.10, 0.96)
+	art_style.border_color = Color(0.34, 0.38, 0.48, 1.0) if is_legal else Color(0.56, 0.26, 0.26, 1.0)
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		art_style.set_border_width(side, 1)
+	art_style.corner_radius_top_left = 4
+	art_style.corner_radius_top_right = 4
+	art_style.corner_radius_bottom_left = 4
+	art_style.corner_radius_bottom_right = 4
+	art_frame.add_theme_stylebox_override("panel", art_style)
+	inner.add_child(art_frame)
+
+	var art := TextureRect.new()
+	art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	art.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	art.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	if god_card != null and str(god_card.art_path).strip_edges() != "":
+		art.texture = _get_menu_card_art_texture(str(god_card.art_path))
+	art.modulate = Color(1.0, 1.0, 1.0, 1.0) if is_legal else Color(0.72, 0.72, 0.72, 0.80)
+	art_frame.add_child(art)
+
+	var text_box := VBoxContainer.new()
+	text_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	text_box.add_theme_constant_override("separation", 2)
+	inner.add_child(text_box)
+
+	var name_label := Label.new()
+	name_label.text = "%s%s" % [deck_name, "  [Loaded]" if is_selected else ""]
+	name_label.add_theme_font_size_override("font_size", 14)
+	name_label.add_theme_color_override("font_color", Color(0.95, 0.95, 0.96) if is_legal else Color(0.80, 0.80, 0.82))
+	name_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	text_box.add_child(name_label)
+
+	var detail_label := Label.new()
+	detail_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	detail_label.add_theme_font_size_override("font_size", 11)
+	if is_legal:
+		detail_label.text = "Currently loaded for multiplayer." if is_selected else "Click to load this deck for multiplayer."
+		detail_label.add_theme_color_override("font_color", Color(0.72, 0.78, 0.84))
+	else:
+		detail_label.text = reason if not reason.is_empty() else "This deck is unavailable for multiplayer."
+		detail_label.add_theme_color_override("font_color", Color(1.0, 0.76, 0.76))
+	text_box.add_child(detail_label)
+
+	if god_card != null:
+		var god_label := Label.new()
+		god_label.text = god_card.get_display_name_for_control()
+		god_label.add_theme_font_size_override("font_size", 11)
+		god_label.add_theme_color_override("font_color", Color(0.88, 0.84, 0.66) if is_legal else Color(0.82, 0.76, 0.76))
+		god_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		text_box.add_child(god_label)
+
+	row.tooltip_text = reason if not reason.is_empty() else deck_name
+	if is_legal:
+		row.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+		row.gui_input.connect(func(event: InputEvent) -> void:
+			if event is InputEventMouseButton:
+				var mouse_event := event as InputEventMouseButton
+				if mouse_event.pressed and mouse_event.button_index == MOUSE_BUTTON_LEFT:
+					_select_multiplayer_deck(str(entry.get("deck_id", "")))
+		)
+	else:
+		row.mouse_default_cursor_shape = Control.CURSOR_FORBIDDEN
+		row.modulate = Color(0.8, 0.8, 0.8, 0.92)
+
+	return row
+
+func _rebuild_multiplayer_deck_popup() -> void:
+	if _deck_picker_popup_list == null:
+		return
+	for child in _deck_picker_popup_list.get_children():
+		child.queue_free()
+	if _multiplayer_deck_entries.is_empty():
+		var empty_label := Label.new()
+		empty_label.text = "No saved decks yet."
+		empty_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		empty_label.add_theme_color_override("font_color", Color(0.78, 0.78, 0.82))
+		_deck_picker_popup_list.add_child(empty_label)
+		return
+	for entry in _multiplayer_deck_entries:
+		_deck_picker_popup_list.add_child(_make_multiplayer_deck_entry_row(entry as Dictionary))
+
+func _position_multiplayer_deck_popup() -> void:
+	if _deck_picker_popup == null or not is_instance_valid(_deck_picker_popup):
+		return
+	if _deck_picker_button == null or not is_instance_valid(_deck_picker_button):
+		return
+	var button_rect: Rect2 = _deck_picker_button.get_global_rect()
+	var viewport_rect: Rect2 = get_viewport().get_visible_rect()
+	var popup_width: float = minf(maxf(button_rect.size.x, 520.0), maxf(320.0, viewport_rect.size.x - 24.0))
+	var row_count: int = maxi(1, _multiplayer_deck_entries.size())
+	var target_height: float = 24.0 + float(mini(row_count, 4)) * 98.0
+	var popup_height: float = minf(480.0, maxf(180.0, target_height))
+	var popup_x: float = clampf(button_rect.position.x, 12.0, viewport_rect.size.x - popup_width - 12.0)
+	var popup_y: float = button_rect.position.y + button_rect.size.y + 4.0
+	if popup_y + popup_height > viewport_rect.size.y - 12.0:
+		popup_y = maxf(12.0, button_rect.position.y - popup_height - 4.0)
+	_deck_picker_popup.position = Vector2(popup_x, popup_y)
+	_deck_picker_popup.size = Vector2(popup_width, popup_height)
+
+func _show_multiplayer_deck_popup() -> void:
+	if _deck_picker_popup == null or _deck_picker_button == null:
+		return
+	_rebuild_multiplayer_deck_popup()
+	_deck_picker_popup.visible = true
+	_position_multiplayer_deck_popup()
+
+func _hide_multiplayer_deck_popup() -> void:
+	if _deck_picker_popup != null and is_instance_valid(_deck_picker_popup):
+		_deck_picker_popup.visible = false
+
+func _toggle_multiplayer_deck_popup() -> void:
+	if _deck_picker_popup == null or not is_instance_valid(_deck_picker_popup):
+		return
+	if _deck_picker_popup.visible:
+		_hide_multiplayer_deck_popup()
+		return
+	_show_multiplayer_deck_popup()
+
+func _select_multiplayer_deck(deck_id: String, persist: bool = true) -> void:
+	var selected_entry: Dictionary = _get_multiplayer_deck_entry(deck_id)
+	if selected_entry.is_empty() or not bool(selected_entry.get("is_legal", false)):
+		return
+	_selected_multiplayer_deck_id = str(selected_entry.get("deck_id", "")).strip_edges()
+	if persist and _local_profile_store != null and not _local_profile_id.is_empty():
+		_local_profile_store.remember_last_selected_deck(_local_profile_id, _selected_multiplayer_deck_id)
+	_refresh_multiplayer_deck_picker_button()
+	_update_multiplayer_deck_hint()
+	_refresh_multiplayer_action_state()
+	_hide_multiplayer_deck_popup()
+	if not _current_room_snapshot.is_empty():
+		_maybe_submit_current_profile_deck(str(_current_room_snapshot.get("room_id", "")), _current_room_snapshot)
+
+func _refresh_multiplayer_deck_options() -> void:
+	_multiplayer_deck_entries.clear()
 
 	var preferred_deck_id := _selected_multiplayer_deck_id
 	if preferred_deck_id.is_empty() and _local_profile_store != null:
 		preferred_deck_id = _local_profile_store.get_last_selected_deck_id(_local_profile_id)
 
-	var preferred_deck: Dictionary = {}
 	if _local_profile_store != null and not _local_profile_id.is_empty():
 		for saved_deck in _local_profile_store.list_decks(_local_profile_id):
-			if not _is_saved_deck_legal(saved_deck):
-				continue
 			var deck_id := str(saved_deck.get("deck_id", "")).strip_edges()
-			if deck_id == preferred_deck_id and preferred_deck.is_empty():
-				preferred_deck = saved_deck.duplicate(true)
+			if deck_id.is_empty():
 				continue
-			_legal_multiplayer_decks.append(saved_deck.duplicate(true))
+			var saved_deck_copy: Dictionary = (saved_deck as Dictionary).duplicate(true)
+			var validation: Dictionary = _get_saved_deck_validation(saved_deck_copy)
+			var entry: Dictionary = {
+				"deck_id": deck_id,
+				"deck_name": _get_saved_deck_name(saved_deck_copy),
+				"saved_deck": saved_deck_copy,
+				"is_legal": bool(validation.get("is_valid", false)),
+				"reason": str(validation.get("error", "")).strip_edges(),
+				"validation": validation.duplicate(true),
+			}
+			_multiplayer_deck_entries.append(entry)
 
-	if not preferred_deck.is_empty():
-		_legal_multiplayer_decks.push_front(preferred_deck)
+	var resolved_selected_deck_id := ""
+	if not preferred_deck_id.is_empty():
+		var preferred_entry: Dictionary = _get_multiplayer_deck_entry(preferred_deck_id)
+		if not preferred_entry.is_empty():
+			resolved_selected_deck_id = str(preferred_entry.get("deck_id", "")).strip_edges()
+	if resolved_selected_deck_id.is_empty():
+		for entry in _multiplayer_deck_entries:
+			if bool(entry.get("is_legal", false)):
+				resolved_selected_deck_id = str(entry.get("deck_id", "")).strip_edges()
+				break
+	if resolved_selected_deck_id.is_empty() and not _multiplayer_deck_entries.is_empty():
+		resolved_selected_deck_id = str(_multiplayer_deck_entries[0].get("deck_id", "")).strip_edges()
+	_selected_multiplayer_deck_id = resolved_selected_deck_id
 
-	if _legal_multiplayer_decks.is_empty():
-		deck_picker_option.disabled = true
-		deck_picker_option.add_item("No legal saved decks")
-		deck_picker_option.set_item_metadata(0, "")
-		_selected_multiplayer_deck_id = ""
-		_update_multiplayer_deck_hint()
-		_refresh_multiplayer_action_state()
-		return
-
-	deck_picker_option.disabled = false
-	var selected_index := 0
-	for index in range(_legal_multiplayer_decks.size()):
-		var saved_deck: Dictionary = _legal_multiplayer_decks[index]
-		var deck_id := str(saved_deck.get("deck_id", "")).strip_edges()
-		var deck_name := str(saved_deck.get("name", "Deck")).strip_edges()
-		if deck_name.is_empty():
-			deck_name = "Deck"
-		deck_picker_option.add_item(deck_name)
-		deck_picker_option.set_item_metadata(index, deck_id)
-		if deck_id == preferred_deck_id:
-			selected_index = index
-
-	deck_picker_option.select(selected_index)
-	_selected_multiplayer_deck_id = str(deck_picker_option.get_item_metadata(selected_index)).strip_edges()
+	_refresh_multiplayer_deck_picker_button()
+	_rebuild_multiplayer_deck_popup()
+	if _deck_picker_popup != null and _deck_picker_popup.visible:
+		_position_multiplayer_deck_popup()
 	_update_multiplayer_deck_hint()
 	_refresh_multiplayer_action_state()
 
-func _is_saved_deck_legal(saved_deck: Dictionary) -> bool:
-	if saved_deck.is_empty():
-		return false
-	var validation: Dictionary = _deck_validator.validate_deck(saved_deck.get("cards", {}))
-	return bool(validation.get("is_valid", false))
-
 func _update_multiplayer_deck_hint() -> void:
+	var selected_entry: Dictionary = _get_selected_multiplayer_deck_entry()
+	if _multiplayer_deck_summary_name_label != null:
+		if selected_entry.is_empty():
+			_multiplayer_deck_summary_name_label.text = "No deck selected" if _multiplayer_deck_entries.is_empty() else "Choose a deck on the main menu"
+			if _multiplayer_deck_summary_god_label != null:
+				_multiplayer_deck_summary_god_label.text = ""
+			if _multiplayer_deck_summary_art != null:
+				_multiplayer_deck_summary_art.texture = null
+				_multiplayer_deck_summary_art.modulate = Color(1.0, 1.0, 1.0, 0.28)
+		else:
+			var deck_name := str(selected_entry.get("deck_name", "Deck"))
+			var is_legal := bool(selected_entry.get("is_legal", false))
+			_multiplayer_deck_summary_name_label.text = deck_name if is_legal else "%s (Unavailable)" % deck_name
+			var god_card: Card = _get_saved_deck_god_template(selected_entry.get("saved_deck", {}) as Dictionary)
+			if _multiplayer_deck_summary_god_label != null:
+				_multiplayer_deck_summary_god_label.text = god_card.get_display_name_for_control() if god_card != null else ""
+			if _multiplayer_deck_summary_art != null:
+				if god_card != null and str(god_card.art_path).strip_edges() != "":
+					_multiplayer_deck_summary_art.texture = _get_menu_card_art_texture(str(god_card.art_path))
+				else:
+					_multiplayer_deck_summary_art.texture = null
+				_multiplayer_deck_summary_art.modulate = Color(1.0, 1.0, 1.0, 1.0) if is_legal else Color(0.74, 0.74, 0.74, 0.82)
 	if deck_hint_label == null:
 		return
-	var selected_deck: Dictionary = _get_selected_multiplayer_deck()
-	if selected_deck.is_empty():
-		deck_hint_label.text = "Choose one of your saved legal decks before you create or join a seek."
+	if selected_entry.is_empty():
+		if _multiplayer_deck_entries.is_empty():
+			deck_hint_label.text = "No saved decks yet. Build one before you create or join a seek."
+		else:
+			deck_hint_label.text = "Choose one of your saved legal decks before you create or join a seek."
 		return
-	deck_hint_label.text = "Selected deck: %s" % str(selected_deck.get("name", "Deck"))
+	var deck_name := str(selected_entry.get("deck_name", "Deck"))
+	if bool(selected_entry.get("is_legal", false)):
+		deck_hint_label.text = "Current deck: %s" % deck_name
+		return
+	var reason := str(selected_entry.get("reason", "")).strip_edges()
+	if reason.is_empty():
+		reason = "This deck is unavailable for multiplayer."
+	deck_hint_label.text = "Current deck unavailable: %s. %s" % [deck_name, reason]
 
 func _get_selected_multiplayer_deck() -> Dictionary:
-	var selected_deck_id := _selected_multiplayer_deck_id.strip_edges()
-	if selected_deck_id.is_empty():
+	var selected_entry: Dictionary = _get_selected_multiplayer_deck_entry()
+	if selected_entry.is_empty() or not bool(selected_entry.get("is_legal", false)):
 		return {}
-	for saved_deck in _legal_multiplayer_decks:
-		if str(saved_deck.get("deck_id", "")).strip_edges() == selected_deck_id:
-			return saved_deck.duplicate(true)
-	if _local_profile_store == null or _local_profile_id.is_empty():
-		return {}
-	var saved_deck: Dictionary = _local_profile_store.get_deck(_local_profile_id, selected_deck_id)
-	if saved_deck.is_empty() or not _is_saved_deck_legal(saved_deck):
-		return {}
-	return saved_deck
+	return (selected_entry.get("saved_deck", {}) as Dictionary).duplicate(true)
 
 func _refresh_seek_list() -> void:
 	if seek_list == null:
@@ -394,20 +823,6 @@ func _queue_room_list_refresh(show_status: bool = true) -> void:
 	if show_status:
 		status_label.text = "Refreshing open seeks..."
 	lobby_client.list_rooms()
-
-func _on_multiplayer_deck_selected(index: int) -> void:
-	if deck_picker_option == null:
-		return
-	var deck_id := str(deck_picker_option.get_item_metadata(index)).strip_edges()
-	if deck_id.is_empty():
-		return
-	_selected_multiplayer_deck_id = deck_id
-	if _local_profile_store != null and not _local_profile_id.is_empty():
-		_local_profile_store.remember_last_selected_deck(_local_profile_id, deck_id)
-	_update_multiplayer_deck_hint()
-	_refresh_multiplayer_action_state()
-	if not _current_room_snapshot.is_empty():
-		_maybe_submit_current_profile_deck(str(_current_room_snapshot.get("room_id", "")), _current_room_snapshot)
 
 func _on_seek_item_clicked(index: int, _at_position: Vector2, _mouse_button_index: int) -> void:
 	if seek_list == null or index < 0 or index >= seek_list.get_item_count():
@@ -1052,6 +1467,7 @@ func _prompt_account_login() -> void:
 	if _local_profile_store != null:
 		_local_profile_store.set_preferred_auth_mode(AUTH_MODE_LOGIN)
 		_local_profile_store.clear_account_password()
+	_set_selected_account_password("")
 	_set_auth_mode(AUTH_MODE_LOGIN)
 	if _password_line_edit != null:
 		_password_line_edit.text = ""
@@ -1079,6 +1495,28 @@ func _get_saved_account_username() -> String:
 		return ""
 	return _local_profile_store.get_last_account_username()
 
+func _set_selected_account_username(username: String, sync_field: bool = true) -> void:
+	_selected_account_username = username.strip_edges()
+	if sync_field and player_name_line_edit != null and _selected_auth_mode != AUTH_MODE_GUEST:
+		player_name_line_edit.text = _selected_account_username
+
+func _set_selected_account_password(password: String, sync_field: bool = true) -> void:
+	_selected_account_password = password
+	if sync_field and _password_line_edit != null:
+		_password_line_edit.text = _selected_account_password
+
+func _sync_legacy_auth_fields() -> void:
+	if _auth_mode_option != null:
+		for index in range(_auth_mode_option.item_count):
+			if str(_auth_mode_option.get_item_metadata(index)) != _selected_auth_mode:
+				continue
+			_auth_mode_option.select(index)
+			break
+	if player_name_line_edit != null and _selected_auth_mode != AUTH_MODE_GUEST and not _selected_account_username.is_empty():
+		player_name_line_edit.text = _selected_account_username
+	if _password_line_edit != null:
+		_password_line_edit.text = _selected_account_password
+
 func _should_recover_saved_account_identity() -> bool:
 	if _local_profile_store == null:
 		return false
@@ -1089,7 +1527,7 @@ func _should_recover_saved_account_identity() -> bool:
 	var current_profile_id: String = _local_profile_store.get_current_profile_id()
 	if not guest_profile_id.is_empty() and current_profile_id != guest_profile_id:
 		return false
-	return not _local_profile_store.find_profile_id_by_display_name(saved_username).is_empty()
+	return not _local_profile_store.find_profile_id_by_account_username(saved_username).is_empty()
 
 func _get_connected_account_username() -> String:
 	if lobby_client == null:
@@ -1117,6 +1555,8 @@ func _get_preferred_account_username() -> String:
 	var auth_mode := _get_selected_auth_mode()
 	if auth_mode not in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
 		return ""
+	if not _selected_account_username.is_empty():
+		return _selected_account_username
 	var saved_username := _get_saved_account_username()
 	if not saved_username.is_empty():
 		return saved_username
@@ -1132,15 +1572,17 @@ func _get_effective_identity_name(default_name: String = "Guest") -> String:
 	if fallback_name.is_empty():
 		fallback_name = "Guest"
 	if _get_selected_auth_mode() in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
-		var saved_account_username := _get_saved_account_username()
-		if not saved_account_username.is_empty():
-			return saved_account_username
+		var selected_account_username := _get_selected_account_username()
+		if not selected_account_username.is_empty():
+			return selected_account_username
 	return _get_preferred_guest_display_name(fallback_name)
 
 func _get_selected_account_username() -> String:
 	var auth_mode := _get_selected_auth_mode()
 	if auth_mode not in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
 		return ""
+	if not _selected_account_username.is_empty():
+		return _selected_account_username
 	var saved_account_username := _get_saved_account_username()
 	if not saved_account_username.is_empty():
 		return saved_account_username
@@ -1165,16 +1607,24 @@ func _get_active_profile_display_name(default_name: String = "Player") -> String
 			return profile_display_name
 	return _get_effective_identity_name(resolved_default)
 
-func _activate_account_profile(account_username: String, preferred_profile_id: String = "") -> String:
+func _activate_account_profile(
+	account_username: String,
+	preferred_profile_id: String = "",
+	auth_mode: String = AUTH_MODE_LOGIN,
+	persist_password: bool = false
+) -> String:
 	_ensure_local_profile_store()
 	var resolved_username := account_username.strip_edges()
 	if _local_profile_store == null or resolved_username.is_empty():
 		return _local_profile_id
-	var profile: Dictionary = _local_profile_store.ensure_account_profile(
+	var profile: Dictionary = _local_profile_store.activate_account_session(
 		resolved_username,
 		preferred_profile_id,
-		true
+		auth_mode,
+		_get_auth_password(),
+		persist_password
 	)
+	_set_selected_account_username(resolved_username)
 	_local_profile_id = str(profile.get("profile_id", _local_profile_id)).strip_edges()
 	return _local_profile_id
 
@@ -1346,7 +1796,7 @@ func _begin_auth_onboarding_account_flow(auth_mode: String) -> void:
 			if _local_profile_store != null:
 				saved_username = _local_profile_store.get_last_account_username()
 			if saved_username.is_empty():
-				saved_username = player_name_line_edit.text.strip_edges()
+				saved_username = _selected_account_username
 			_auth_onboarding_username_edit.text = saved_username
 	if _auth_onboarding_password_edit != null:
 		_auth_onboarding_password_edit.visible = true
@@ -1388,12 +1838,8 @@ func _submit_auth_onboarding() -> bool:
 		if _auth_onboarding_password_edit != null:
 			_auth_onboarding_password_edit.grab_focus()
 		return false
-	if _local_profile_store != null:
-		_local_profile_store.remember_account_username(username)
-		_local_profile_store.remember_account_password(password)
-	player_name_line_edit.text = username
-	if _password_line_edit != null:
-		_password_line_edit.text = password
+	_set_selected_account_username(username)
+	_set_selected_account_password(password)
 	_complete_auth_onboarding(auth_mode, "Account details saved. Open Multiplayer to sign in.")
 	return true
 
@@ -1433,17 +1879,12 @@ func _set_auth_onboarding_hint(message: String, is_error: bool = false) -> void:
 
 func _complete_auth_onboarding(auth_mode: String, message: String) -> void:
 	_set_auth_mode(auth_mode)
-	if _local_profile_store != null:
-		_local_profile_store.set_preferred_auth_mode(auth_mode)
-		_local_profile_store.mark_auth_onboarding_seen()
 	if auth_mode == AUTH_MODE_GUEST:
 		_apply_guest_display_name("Guest")
 	else:
 		var selected_account_username := _get_selected_account_username()
 		if not selected_account_username.is_empty():
-			_activate_account_profile(selected_account_username)
-			if player_name_line_edit != null:
-				player_name_line_edit.text = selected_account_username
+			_activate_account_profile(selected_account_username, "", auth_mode, true)
 	multiplayer_container.visible = false
 	ready_button.visible = false
 	status_label.text = message
@@ -1475,7 +1916,7 @@ func _on_deck_builder_pressed() -> void:
 
 	var db := DeckBuilderUI.new()
 	db.name = "DeckBuilder"
-	db.configure_profile_store(_local_profile_store, _local_profile_id, _get_active_profile_display_name("Player"))
+	db.configure_profile_store(_local_profile_store, _local_profile_id)
 	if db.has_method("configure_online_sync"):
 		db.configure_online_sync(lobby_client)
 	_maybe_request_account_decks()
@@ -2167,7 +2608,11 @@ func _get_lobby_ip() -> String:
 	return _get_configured_lobby_host()
 
 func _get_player_name(default_name: String) -> String:
-	var player_name: String = player_name_line_edit.text.strip_edges()
+	var player_name := ""
+	if _get_selected_auth_mode() in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
+		player_name = _get_selected_account_username()
+	elif player_name_line_edit != null:
+		player_name = player_name_line_edit.text.strip_edges()
 	if player_name.is_empty():
 		return default_name
 	return player_name
@@ -2186,7 +2631,7 @@ func _remember_local_profile(player_name: String) -> String:
 	_ensure_local_profile_store()
 	if _local_profile_store == null:
 		return player_name
-	var profile: Dictionary = _local_profile_store.ensure_guest_profile(player_name, true)
+	var profile: Dictionary = _local_profile_store.activate_guest_session(player_name)
 	_local_profile_id = str(profile.get("profile_id", _local_profile_id)).strip_edges()
 	_selected_multiplayer_deck_id = ""
 	_refresh_open_deck_builder_saved_decks()
@@ -2220,7 +2665,7 @@ func _get_preferred_guest_display_name(default_name: String = "Guest") -> String
 func _apply_guest_display_name(default_name: String = "Player") -> String:
 	var guest_display_name := _get_preferred_guest_display_name(default_name)
 	if _local_profile_store != null:
-		var profile: Dictionary = _local_profile_store.ensure_guest_profile(guest_display_name, true)
+		var profile: Dictionary = _local_profile_store.activate_guest_session(guest_display_name)
 		_local_profile_id = str(profile.get("profile_id", _local_profile_id)).strip_edges()
 		guest_display_name = str(profile.get("display_name", guest_display_name)).strip_edges()
 		_selected_multiplayer_deck_id = ""
@@ -2243,46 +2688,36 @@ func _capture_logged_in_profile(player_name: String) -> void:
 	if lobby_client != null:
 		resolved_profile_id = str(lobby_client.current_profile_id).strip_edges()
 		var lobby_auth_mode := _normalize_auth_mode(str(lobby_client.current_auth_mode), resolved_auth_mode)
+		if lobby_auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
+			resolved_auth_mode = lobby_auth_mode
 		resolved_account_username = _get_connected_account_username()
-		if resolved_account_username.is_empty() and lobby_auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
+		if resolved_account_username.is_empty() and resolved_auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
 			resolved_account_username = str(lobby_client.current_username).strip_edges()
-		if resolved_account_username.is_empty() and lobby_auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
+		if resolved_account_username.is_empty() and resolved_auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
 			resolved_account_username = player_name.strip_edges()
-		if not resolved_account_username.is_empty():
-			_logged_in_account_username = resolved_account_username
-			if lobby_auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
-				resolved_auth_mode = lobby_auth_mode
-			else:
-				resolved_auth_mode = AUTH_MODE_LOGIN
-		else:
-			_logged_in_account_username = ""
-			if lobby_auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
-				resolved_auth_mode = lobby_auth_mode
-			else:
-				resolved_auth_mode = AUTH_MODE_GUEST
-		if not resolved_account_username.is_empty():
-			_local_profile_store.remember_account_username(resolved_account_username)
-			_local_profile_store.set_preferred_auth_mode(resolved_auth_mode)
-			if _password_line_edit != null and not _password_line_edit.text.is_empty():
-				_local_profile_store.remember_account_password(_password_line_edit.text)
 	if resolved_profile_id.is_empty():
 		resolved_profile_id = previous_profile_id
 	if resolved_account_username.is_empty() and resolved_auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
-		resolved_account_username = _get_saved_account_username()
+		resolved_account_username = _get_preferred_account_username()
 	if not resolved_account_username.is_empty():
-		resolved_profile_id = _activate_account_profile(resolved_account_username, resolved_profile_id)
-	_local_profile_id = resolved_profile_id
+		_logged_in_account_username = resolved_account_username
+		_set_selected_account_username(resolved_account_username)
+		resolved_profile_id = _activate_account_profile(
+			resolved_account_username,
+			resolved_profile_id,
+			resolved_auth_mode,
+			not _get_auth_password().is_empty()
+		)
+		_local_profile_id = resolved_profile_id
+	else:
+		_logged_in_account_username = ""
+		resolved_auth_mode = AUTH_MODE_GUEST
+		var guest_profile: Dictionary = _local_profile_store.activate_guest_session("Guest")
+		_local_profile_id = str(guest_profile.get("profile_id", resolved_profile_id)).strip_edges()
+		if player_name_line_edit != null:
+			player_name_line_edit.text = str(guest_profile.get("display_name", "Guest")).strip_edges()
 	_selected_multiplayer_deck_id = ""
 	_set_auth_mode(resolved_auth_mode)
-	var profile_display_name := player_name.strip_edges()
-	if not resolved_account_username.is_empty():
-		profile_display_name = resolved_account_username
-	elif resolved_auth_mode == AUTH_MODE_GUEST:
-		profile_display_name = "Guest"
-	if profile_display_name in ["", "Player", "Guest"]:
-		profile_display_name = "Guest"
-	var profile: Dictionary = _local_profile_store.remember_profile(_local_profile_id, profile_display_name)
-	_local_profile_id = str(profile.get("profile_id", _local_profile_id)).strip_edges()
 	_refresh_open_deck_builder_saved_decks()
 	_refresh_profile_summary_from_local_history(_local_profile_id)
 	_update_resume_controls()
@@ -2351,7 +2786,7 @@ func _refresh_open_deck_builder_saved_decks() -> void:
 	if deck_builder == null:
 		return
 	if deck_builder.has_method("configure_profile_store"):
-		deck_builder.configure_profile_store(_local_profile_store, _local_profile_id, _get_active_profile_display_name("Player"))
+		deck_builder.configure_profile_store(_local_profile_store, _local_profile_id)
 	if not deck_builder.has_method("reload_saved_decks_from_store"):
 		return
 	deck_builder.reload_saved_decks_from_store()
@@ -2368,20 +2803,9 @@ func _build_profile_summary_controls() -> void:
 	multiplayer_container.add_child(_profile_summary_label)
 
 func _build_account_identity_controls() -> void:
-	if _account_identity_label != null:
-		return
-	_account_identity_label = Label.new()
-	_account_identity_label.name = "AccountIdentityLabel"
-	_account_identity_label.visible = false
-	_account_identity_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	_account_identity_label.vertical_alignment = VERTICAL_ALIGNMENT_TOP
-	_account_identity_label.anchor_left = 1.0
-	_account_identity_label.anchor_right = 1.0
-	_account_identity_label.offset_left = -280
-	_account_identity_label.offset_right = -18
-	_account_identity_label.offset_top = 16
-	_account_identity_label.offset_bottom = 48
-	add_child(_account_identity_label)
+	if _account_identity_label != null and is_instance_valid(_account_identity_label):
+		_account_identity_label.queue_free()
+	_account_identity_label = null
 	_refresh_account_identity_label()
 
 func _refresh_account_identity_label() -> void:
@@ -2731,13 +3155,12 @@ func _start_smoke_mode() -> void:
 		return
 
 	ip_line_edit.text = str(_smoke_config.get("ip", "127.0.0.1"))
-	player_name_line_edit.text = str(_smoke_config.get("player_name", "Smoke%s" % role.capitalize()))
+	_set_selected_account_username(str(_smoke_config.get("player_name", "Smoke%s" % role.capitalize())))
 	var smoke_auth_mode: String = str(_smoke_config.get("auth_mode", AUTH_MODE_GUEST)).strip_edges().to_lower()
 	if smoke_auth_mode not in [AUTH_MODE_GUEST, AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
 		smoke_auth_mode = AUTH_MODE_GUEST
 	_set_auth_mode(smoke_auth_mode)
-	if _password_line_edit != null:
-		_password_line_edit.text = str(_smoke_config.get("password", ""))
+	_set_selected_account_password(str(_smoke_config.get("password", "")))
 
 	var timeout_seconds := float(_smoke_config.get("timeout", 25.0))
 	var timeout_timer := get_tree().create_timer(timeout_seconds)
@@ -3161,6 +3584,7 @@ func _build_auth_controls() -> void:
 		if switch_insert_index <= 0:
 			switch_insert_index = menu_container.get_child_count()
 		menu_container.move_child(_switch_account_button, switch_insert_index)
+	_sync_legacy_auth_fields()
 	_refresh_auth_controls()
 
 func _restore_auth_preferences() -> void:
@@ -3171,33 +3595,34 @@ func _restore_auth_preferences() -> void:
 	if auth_mode == AUTH_MODE_GUEST and _should_recover_saved_account_identity():
 		auth_mode = AUTH_MODE_LOGIN
 		_local_profile_store.set_preferred_auth_mode(auth_mode)
+	_set_selected_account_username(saved_username)
+	_set_selected_account_password(_local_profile_store.get_last_account_password())
 	_set_auth_mode(auth_mode)
 	if auth_mode != AUTH_MODE_GUEST:
 		if not saved_username.is_empty():
-			player_name_line_edit.text = saved_username
-			_activate_account_profile(saved_username)
-		if _password_line_edit != null:
-			_password_line_edit.text = _local_profile_store.get_last_account_password()
+			_activate_account_profile(saved_username, "", auth_mode, false)
 	else:
 		_apply_guest_display_name("Guest")
 	_refresh_auth_controls()
 	_refresh_account_identity_label()
 
 func _on_auth_mode_selected(_index: int) -> void:
+	if _auth_mode_option != null and _auth_mode_option.item_count > 0:
+		var metadata = _auth_mode_option.get_item_metadata(_auth_mode_option.selected)
+		_selected_auth_mode = _normalize_auth_mode(str(metadata), AUTH_MODE_GUEST)
 	_refresh_auth_controls()
 	if _local_profile_store == null:
 		return
 	var auth_mode := _get_selected_auth_mode()
-	_local_profile_store.set_preferred_auth_mode(auth_mode)
 	if auth_mode != AUTH_MODE_GUEST:
 		var preferred_account_username := _get_preferred_account_username()
 		if not preferred_account_username.is_empty():
-			_local_profile_store.remember_account_username(preferred_account_username)
-			_activate_account_profile(preferred_account_username)
-			if player_name_line_edit != null:
-				player_name_line_edit.text = preferred_account_username
-		if _password_line_edit != null and _password_line_edit.text.is_empty():
-			_password_line_edit.text = _local_profile_store.get_last_account_password()
+			_set_selected_account_username(preferred_account_username)
+			_activate_account_profile(preferred_account_username, "", auth_mode, false)
+		elif _local_profile_store != null:
+			_local_profile_store.set_preferred_auth_mode(auth_mode)
+		if _get_auth_password().is_empty():
+			_set_selected_account_password(_local_profile_store.get_last_account_password())
 	else:
 		_apply_guest_display_name("Guest")
 	_refresh_open_deck_builder_saved_decks()
@@ -3206,23 +3631,19 @@ func _on_auth_mode_selected(_index: int) -> void:
 	_refresh_account_identity_label()
 
 func _set_auth_mode(auth_mode: String) -> void:
+	_selected_auth_mode = _normalize_auth_mode(auth_mode, AUTH_MODE_GUEST)
 	if _auth_mode_option == null:
+		_refresh_auth_controls()
 		return
 	for index in range(_auth_mode_option.item_count):
-		if str(_auth_mode_option.get_item_metadata(index)) != auth_mode:
+		if str(_auth_mode_option.get_item_metadata(index)) != _selected_auth_mode:
 			continue
 		_auth_mode_option.select(index)
 		break
 	_refresh_auth_controls()
 
 func _get_selected_auth_mode() -> String:
-	if _auth_mode_option == null or _auth_mode_option.item_count <= 0:
-		return AUTH_MODE_GUEST
-	var metadata = _auth_mode_option.get_item_metadata(_auth_mode_option.selected)
-	var auth_mode := str(metadata).strip_edges().to_lower()
-	if auth_mode in [AUTH_MODE_GUEST, AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
-		return auth_mode
-	return AUTH_MODE_GUEST
+	return _selected_auth_mode
 
 func _refresh_auth_controls() -> void:
 	var auth_mode := _get_selected_auth_mode()
@@ -3244,44 +3665,35 @@ func _validate_auth_inputs() -> String:
 		return ""
 	if auth_mode == AUTH_MODE_GUEST:
 		return ""
-	var username: String = player_name_line_edit.text.strip_edges()
+	var username: String = _get_preferred_account_username()
 	if username.is_empty():
 		return "Enter an account username first."
-	if _password_line_edit == null or _password_line_edit.text.is_empty():
+	if _get_auth_password().is_empty():
 		return "Enter your account password first."
 	return ""
 
 func _get_auth_password() -> String:
+	if not _selected_account_password.is_empty():
+		return _selected_account_password
 	if _password_line_edit == null:
 		return ""
 	return _password_line_edit.text
 
 func _get_lobby_login_name(default_name: String) -> String:
 	var auth_mode := _get_selected_auth_mode()
-	var active_account_username := _get_effective_account_username()
-	if not active_account_username.is_empty():
-		if _local_profile_store != null:
-			_local_profile_store.set_preferred_auth_mode(AUTH_MODE_LOGIN)
-			_local_profile_store.remember_account_username(active_account_username)
-		return active_account_username
 	if auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
 		var preferred_account_username := _get_preferred_account_username()
 		if not preferred_account_username.is_empty():
-			if _local_profile_store != null:
-				_local_profile_store.set_preferred_auth_mode(auth_mode)
-				_local_profile_store.remember_account_username(preferred_account_username)
-				_local_profile_store.remember_account_password(_get_auth_password())
-			if player_name_line_edit != null:
-				player_name_line_edit.text = preferred_account_username
+			_set_selected_account_username(preferred_account_username)
+			_activate_account_profile(
+				preferred_account_username,
+				_local_profile_id,
+				auth_mode,
+				not _get_auth_password().is_empty()
+			)
 			return preferred_account_username
 	if auth_mode == AUTH_MODE_GUEST:
 		var guest_name := _get_preferred_guest_display_name(default_name)
-		if player_name_line_edit != null:
-			player_name_line_edit.text = guest_name
 		return _remember_local_profile(guest_name)
 	var player_name := _get_player_name(default_name)
-	if _local_profile_store != null:
-		_local_profile_store.set_preferred_auth_mode(auth_mode)
-		_local_profile_store.remember_account_username(player_name)
-		_local_profile_store.remember_account_password(_get_auth_password())
 	return player_name

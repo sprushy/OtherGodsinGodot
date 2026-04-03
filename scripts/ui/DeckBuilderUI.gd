@@ -74,6 +74,9 @@ var _saved_decks_view_btn: Button
 var _saved_actions_bar: HFlowContainer
 var _deck_footer_buttons: HFlowContainer
 var _search_edit:      LineEdit
+var _filter_buttons: Dictionary = {}
+var _faction_buttons: Dictionary = {}
+var _mana_filter_buttons: Dictionary = {}
 # preview
 var _prev_art:         TextureRect
 var _prev_name:        Label
@@ -104,7 +107,7 @@ func _ready() -> void:
 	_queue_collection_layout_refresh()
 	_refresh_deck_panel()
 
-func configure_profile_store(profile_store, profile_id: String, player_name: String) -> void:
+func configure_profile_store(profile_store, profile_id: String, player_name: String = "") -> void:
 	_local_profile_store = profile_store
 	_active_profile_id = profile_id.strip_edges()
 	_active_player_name = player_name.strip_edges()
@@ -204,6 +207,7 @@ func _build_top_bar(parent: Control) -> void:
 		btn.custom_minimum_size = Vector2(96 if label == "Legendaries" else 72, 32)
 		var captured_label: String = label
 		btn.pressed.connect(func() -> void: _set_filter(captured_label))
+		_filter_buttons[label] = btn
 		inner.add_child(btn)
 
 	var gap := Control.new()
@@ -279,6 +283,7 @@ func _add_faction_filter_controls(parent: Control, button_height: float = 26.0) 
 		btn.custom_minimum_size = Vector2(72, button_height)
 		var captured: String = label
 		btn.pressed.connect(func() -> void: _set_faction_filter(captured))
+		_faction_buttons[label] = btn
 		parent.add_child(btn)
 
 func _add_mana_filter_controls(parent: Control) -> void:
@@ -292,6 +297,7 @@ func _add_mana_filter_controls(parent: Control) -> void:
 		btn.custom_minimum_size = Vector2(46 if label == MANA_FILTER_ANY else 36, 28)
 		var captured_label: String = label
 		btn.pressed.connect(func() -> void: _set_mana_cost_filter(captured_label))
+		_mana_filter_buttons[label] = btn
 		parent.add_child(btn)
 
 func _add_card_view_controls(parent: Control) -> void:
@@ -715,6 +721,12 @@ func _make_card_item(card: Card) -> Control:
 	var root := Control.new()
 	root.custom_minimum_size = _card_size
 	root.mouse_filter = Control.MOUSE_FILTER_STOP
+	var unavailable_reason := _get_card_unavailable_reason(card)
+	var is_unavailable := not unavailable_reason.is_empty()
+	if is_unavailable:
+		root.tooltip_text = unavailable_reason
+		root.mouse_default_cursor_shape = Control.CURSOR_FORBIDDEN
+	var unavailable_badge_text := _get_card_unavailable_badge_text(card)
 
 	# Border / background
 	var bg := Panel.new()
@@ -823,10 +835,69 @@ func _make_card_item(card: Card) -> Control:
 	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(dim)
 
+	var unavailable_overlay := ColorRect.new()
+	unavailable_overlay.name = "UnavailableOverlay"
+	unavailable_overlay.color = Color(0.05, 0.0, 0.0, 0.62) if is_unavailable else Color(0.0, 0.0, 0.0, 0.0)
+	unavailable_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	unavailable_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(unavailable_overlay)
+
+	var unavailable_mark := Label.new()
+	unavailable_mark.name = "UnavailableMark"
+	unavailable_mark.text = "X" if is_unavailable else ""
+	unavailable_mark.visible = is_unavailable
+	unavailable_mark.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	unavailable_mark.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	unavailable_mark.add_theme_font_size_override("font_size", 72)
+	unavailable_mark.add_theme_color_override("font_color", Color(1.0, 0.24, 0.24, 0.9))
+	unavailable_mark.add_theme_color_override("font_shadow_color", Color(0.08, 0.0, 0.0, 0.85))
+	unavailable_mark.add_theme_constant_override("shadow_offset_x", 2)
+	unavailable_mark.add_theme_constant_override("shadow_offset_y", 2)
+	unavailable_mark.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	unavailable_mark.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(unavailable_mark)
+
+	if is_unavailable and not unavailable_badge_text.is_empty():
+		var unavailable_band := ColorRect.new()
+		unavailable_band.name = "UnavailableReasonBand"
+		unavailable_band.color = Color(0.35, 0.0, 0.0, 0.88)
+		unavailable_band.anchor_left = 0
+		unavailable_band.anchor_right = 1
+		unavailable_band.anchor_top = 1
+		unavailable_band.anchor_bottom = 1
+		unavailable_band.offset_left = 0
+		unavailable_band.offset_right = 0
+		unavailable_band.offset_top = -74
+		unavailable_band.offset_bottom = -44
+		unavailable_band.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		root.add_child(unavailable_band)
+
+		var unavailable_reason_lbl := Label.new()
+		unavailable_reason_lbl.name = "UnavailableReasonLabel"
+		unavailable_reason_lbl.text = unavailable_badge_text
+		unavailable_reason_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		unavailable_reason_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		unavailable_reason_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		unavailable_reason_lbl.add_theme_font_size_override("font_size", 10)
+		unavailable_reason_lbl.add_theme_color_override("font_color", Color(1.0, 0.86, 0.86))
+		unavailable_reason_lbl.anchor_left = 0
+		unavailable_reason_lbl.anchor_right = 1
+		unavailable_reason_lbl.anchor_top = 1
+		unavailable_reason_lbl.anchor_bottom = 1
+		unavailable_reason_lbl.offset_left = 6
+		unavailable_reason_lbl.offset_right = -6
+		unavailable_reason_lbl.offset_top = -74
+		unavailable_reason_lbl.offset_bottom = -44
+		unavailable_reason_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		root.add_child(unavailable_reason_lbl)
+
 	# Input
 	root.gui_input.connect(func(ev: InputEvent) -> void:
 		if ev is InputEventMouseButton and ev.pressed:
 			if ev.button_index == MOUSE_BUTTON_LEFT:
+				if is_unavailable:
+					_set_status_flash(unavailable_reason)
+					return
 				_add_to_deck(card)
 			elif ev.button_index == MOUSE_BUTTON_RIGHT:
 				_remove_from_deck(card.card_name)
@@ -928,6 +999,10 @@ func _add_to_deck(card: Card) -> void:
 	var current: int = _deck.get(card.card_name, 0)
 	if current >= _max_copies(card):
 		return
+	var unavailable_reason := _get_card_unavailable_reason(card)
+	if not unavailable_reason.is_empty():
+		_set_status_flash(unavailable_reason)
+		return
 	# Only one god allowed total
 	if card.is_god:
 		if not _can_add_god_to_current_deck(card):
@@ -940,6 +1015,8 @@ func _add_to_deck(card: Card) -> void:
 		return
 	_deck[card.card_name] = current + 1
 	_refresh_deck_panel()
+	if card.is_god:
+		_focus_power_selection()
 
 func _remove_from_deck(card_name: String) -> void:
 	if not _deck.has(card_name) or _deck[card_name] <= 0:
@@ -1094,7 +1171,7 @@ func _new_deck() -> void:
 	_select_saved_deck("")
 	if _local_profile_store != null:
 		_refresh_saved_deck_gallery(_local_profile_store.list_decks(_active_profile_id))
-	_set_collection_mode(COLLECTION_MODE_CARDS, false)
+	_focus_god_selection()
 	_refresh_deck_panel()
 	_set_status_flash("Started a new deck.")
 
@@ -1112,10 +1189,15 @@ func _on_saved_deck_selected(index: int) -> void:
 func _ensure_local_profile_store() -> void:
 	if _local_profile_store == null:
 		_local_profile_store = LocalProfileStoreScript.new()
+	if _active_profile_id.is_empty():
+		var restored_profile: Dictionary = _local_profile_store.restore_last_profile("Player")
+		_active_profile_id = str(restored_profile.get("profile_id", _active_profile_id)).strip_edges()
 	var resolved_profile_name := _get_resolved_profile_name("Player")
-	var profile: Dictionary = _local_profile_store.ensure_profile(_active_profile_id, resolved_profile_name, true)
-	_active_profile_id = str(profile.get("profile_id", _active_profile_id)).strip_edges()
-	_active_player_name = str(profile.get("display_name", resolved_profile_name)).strip_edges()
+	var profile: Dictionary = _local_profile_store.get_profile(_active_profile_id)
+	if profile.is_empty():
+		profile = _local_profile_store.ensure_profile(_active_profile_id, resolved_profile_name, false)
+		_active_profile_id = str(profile.get("profile_id", _active_profile_id)).strip_edges()
+	_active_player_name = _local_profile_store.get_profile_display_name(_active_profile_id, resolved_profile_name)
 
 func _get_resolved_profile_name(default_name: String = "Player") -> String:
 	var resolved_default := default_name.strip_edges()
@@ -1645,6 +1727,7 @@ func _set_filter(new_filter: String) -> void:
 	_set_collection_mode(COLLECTION_MODE_CARDS, false)
 	_filter = new_filter
 	_current_page = 0
+	_refresh_filter_button_states()
 	_rebuild_filtered_cards_cache()
 	_refresh_grid()
 	_update_count_badges()
@@ -1653,6 +1736,7 @@ func _set_faction_filter(new_faction: String) -> void:
 	_set_collection_mode(COLLECTION_MODE_CARDS, false)
 	_faction_filter = new_faction
 	_current_page = 0
+	_refresh_faction_button_states()
 	_rebuild_filtered_cards_cache()
 	_refresh_grid()
 	_update_count_badges()
@@ -1661,6 +1745,7 @@ func _set_mana_cost_filter(new_filter: String) -> void:
 	_set_collection_mode(COLLECTION_MODE_CARDS, false)
 	_mana_cost_filter = new_filter
 	_current_page = 0
+	_refresh_mana_filter_button_states()
 	_rebuild_filtered_cards_cache()
 	_refresh_grid()
 	_update_count_badges()
@@ -2002,6 +2087,33 @@ func _get_selected_god_template() -> Card:
 			return card
 	return null
 
+func _get_card_unavailable_badge_text(card: Card) -> String:
+	if card == null:
+		return ""
+	if card.is_power and not card.is_god:
+		var god := _get_selected_god_template()
+		if god != null and not _is_power_compatible_with_culture(card, god.culture):
+			return "Needs %s or Neutral" % god.culture
+	if card.is_god and not _can_add_god_to_current_deck(card):
+		return "Conflicts with powers"
+	return ""
+
+func _get_card_unavailable_reason(card: Card) -> String:
+	if card == null:
+		return ""
+	if card.is_power and not card.is_god:
+		var god := _get_selected_god_template()
+		if god != null and not _is_power_compatible_with_culture(card, god.culture):
+			return "Unavailable: %s decks can only use %s or Neutral powers. %s is %s." % [
+				god.get_display_name_for_control(),
+				god.culture,
+				card.get_display_name_for_control(),
+				card.culture
+			]
+	if card.is_god and not _can_add_god_to_current_deck(card):
+		return "Unavailable: this god conflicts with powers already in the deck. Powers must match your god's culture or be Neutral."
+	return ""
+
 func _is_power_compatible_with_culture(power: Card, culture: String) -> bool:
 	if power == null or not power.is_power or power.is_god:
 		return true
@@ -2023,6 +2135,47 @@ func _can_add_god_to_current_deck(god: Card) -> bool:
 		if not _is_power_compatible_with_culture(card, god.culture):
 			return false
 	return true
+
+func _refresh_filter_button_states() -> void:
+	for label in _filter_buttons.keys():
+		var button = _filter_buttons.get(label)
+		if button is Button:
+			(button as Button).button_pressed = str(label) == _filter
+
+func _refresh_faction_button_states() -> void:
+	for label in _faction_buttons.keys():
+		var button = _faction_buttons.get(label)
+		if button is Button:
+			(button as Button).button_pressed = str(label) == _faction_filter
+
+func _refresh_mana_filter_button_states() -> void:
+	for label in _mana_filter_buttons.keys():
+		var button = _mana_filter_buttons.get(label)
+		if button is Button:
+			(button as Button).button_pressed = str(label) == _mana_cost_filter
+
+func _apply_guided_collection_view(filter_name: String) -> void:
+	_collection_mode = COLLECTION_MODE_CARDS
+	_filter = filter_name
+	_faction_filter = "All"
+	_mana_cost_filter = MANA_FILTER_ANY
+	_current_page = 0
+	_search_query = ""
+	if _search_edit != null:
+		_search_edit.text = ""
+	_refresh_saved_decks_view_button()
+	_refresh_filter_button_states()
+	_refresh_faction_button_states()
+	_refresh_mana_filter_button_states()
+	_rebuild_filtered_cards_cache()
+	_refresh_grid()
+	_update_count_badges()
+
+func _focus_god_selection() -> void:
+	_apply_guided_collection_view("Gods")
+
+func _focus_power_selection() -> void:
+	_apply_guided_collection_view("Powers")
 
 func _get_type_color(card: Card) -> Color:
 	if card.is_god: return Color(0.9, 0.75, 0.2)

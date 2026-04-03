@@ -27,101 +27,6 @@ class BindingHexIndicator extends Control:
 		draw_line(Vector2(10.2, 6.0), Vector2(7.8, 12.0), accent_color, 1.8, true)
 		draw_circle(Vector2(9.0, 9.0), 1.2, Color(0.85, 1.0, 0.98, 0.95))
 
-class DromiChainIndicator extends Control:
-	func _ready() -> void:
-		mouse_filter = Control.MOUSE_FILTER_IGNORE
-		custom_minimum_size = Vector2(18, 18)
-
-	func _draw() -> void:
-		var chain_color := Color(0.95, 0.18, 0.15, 0.98)
-		var glow_color := Color(1.0, 0.55, 0.44, 0.72)
-		var shadow_color := Color(0.26, 0.03, 0.03, 0.92)
-		draw_arc(Vector2(6.0, 7.6), 3.7, PI * 0.15, PI * 1.87, 20, glow_color, 4.2, true)
-		draw_arc(Vector2(11.9, 10.3), 3.7, -PI * 0.83, PI * 0.88, 20, glow_color, 4.2, true)
-		draw_arc(Vector2(6.0, 7.6), 3.3, PI * 0.15, PI * 1.87, 20, chain_color, 2.4, true)
-		draw_arc(Vector2(11.9, 10.3), 3.3, -PI * 0.83, PI * 0.88, 20, chain_color, 2.4, true)
-		draw_line(Vector2(8.2, 8.8), Vector2(9.8, 9.4), shadow_color, 2.2, true)
-		draw_line(Vector2(8.4, 7.7), Vector2(10.6, 10.5), chain_color, 2.2, true)
-		draw_line(Vector2(10.5, 7.2), Vector2(7.7, 10.8), chain_color, 2.2, true)
-		draw_circle(Vector2(9.2, 9.1), 1.1, Color(1.0, 0.83, 0.76, 0.92))
-
-class DebuffEffectIndicator extends Control:
-	const KIND_GENERIC := "generic"
-	const KIND_FLAME := "flame"
-	const KIND_POISON := "poison"
-	const KIND_LOCK := "lock"
-
-	var kind: String = KIND_GENERIC
-
-	func _init(indicator_kind: String = KIND_GENERIC) -> void:
-		kind = indicator_kind
-
-	func _ready() -> void:
-		mouse_filter = Control.MOUSE_FILTER_IGNORE
-		custom_minimum_size = Vector2(18, 18)
-		queue_redraw()
-
-	func _draw() -> void:
-		match kind:
-			KIND_FLAME:
-				_draw_flame()
-			KIND_POISON:
-				_draw_poison()
-			KIND_LOCK:
-				_draw_lock()
-			_:
-				_draw_generic()
-
-	func _draw_flame() -> void:
-		var shadow := PackedVector2Array([
-			Vector2(9.0, 1.4), Vector2(12.7, 5.2), Vector2(13.4, 9.1),
-			Vector2(11.0, 14.5), Vector2(7.3, 16.0), Vector2(4.2, 13.1),
-			Vector2(4.8, 8.3), Vector2(6.8, 5.0)
-		])
-		var fill := PackedVector2Array([
-			Vector2(9.0, 2.3), Vector2(11.9, 5.2), Vector2(12.4, 8.6),
-			Vector2(10.5, 13.1), Vector2(7.5, 14.4), Vector2(5.4, 12.0),
-			Vector2(5.9, 8.3), Vector2(7.3, 5.5)
-		])
-		var core := PackedVector2Array([
-			Vector2(9.0, 5.0), Vector2(10.5, 7.5), Vector2(9.9, 10.8),
-			Vector2(8.2, 12.0), Vector2(7.2, 9.8), Vector2(7.8, 7.0)
-		])
-		draw_colored_polygon(shadow, Color(0.35, 0.02, 0.02, 0.92))
-		draw_colored_polygon(fill, Color(1.0, 0.32, 0.14, 0.98))
-		draw_colored_polygon(core, Color(1.0, 0.8, 0.35, 0.94))
-
-	func _draw_poison() -> void:
-		var drop := PackedVector2Array([
-			Vector2(9.0, 1.8), Vector2(12.6, 5.7), Vector2(12.9, 9.4),
-			Vector2(10.9, 13.0), Vector2(9.0, 14.3), Vector2(7.1, 13.0),
-			Vector2(5.1, 9.4), Vector2(5.4, 5.7)
-		])
-		var highlight := PackedVector2Array([
-			Vector2(8.2, 4.4), Vector2(9.6, 5.6), Vector2(9.1, 7.4),
-			Vector2(7.6, 7.1), Vector2(7.2, 5.7)
-		])
-		draw_colored_polygon(drop, Color(0.4, 0.95, 0.42, 0.96))
-		draw_colored_polygon(highlight, Color(0.86, 1.0, 0.82, 0.9))
-		draw_circle(Vector2(7.0, 10.8), 1.1, Color(0.11, 0.22, 0.1, 0.92))
-		draw_circle(Vector2(10.8, 10.8), 1.1, Color(0.11, 0.22, 0.1, 0.92))
-		draw_arc(Vector2(8.9, 11.2), 2.4, 0.1, PI - 0.1, 12, Color(0.11, 0.22, 0.1, 0.92), 1.2, true)
-
-	func _draw_lock() -> void:
-		var body := Rect2(Vector2(4.4, 8.0), Vector2(9.2, 6.4))
-		draw_rect(body, Color(0.96, 0.24, 0.2, 0.96))
-		draw_arc(Vector2(9.0, 7.8), 3.0, PI, TAU, 16, Color(1.0, 0.76, 0.72, 0.92), 1.8, true)
-		draw_line(Vector2(5.2, 4.2), Vector2(13.7, 13.8), Color(0.32, 0.02, 0.02, 0.94), 2.3, true)
-
-	func _draw_generic() -> void:
-		var chevron := PackedVector2Array([
-			Vector2(9.0, 13.9), Vector2(3.3, 7.2), Vector2(6.2, 7.2),
-			Vector2(6.2, 3.0), Vector2(11.8, 3.0), Vector2(11.8, 7.2),
-			Vector2(14.7, 7.2)
-		])
-		draw_colored_polygon(chevron, Color(0.98, 0.24, 0.22, 0.96))
-		draw_line(Vector2(5.1, 4.2), Vector2(12.9, 12.0), Color(1.0, 0.84, 0.8, 0.88), 1.2, true)
-
 class AttackAura extends Control:
 	const _ARC_STEPS := 8
 
@@ -677,14 +582,20 @@ func _has_dromi_binding(card: Card) -> bool:
 func _add_binding_affordances(overlay: Control, card: Card) -> void:
 	if overlay == null or card == null or card.card_type != Card.CardType.CREATURE:
 		return
-	if not _has_dromi_binding(card):
+	var dromi_source := _get_dromi_binding_source(card)
+	if dromi_source == null:
 		return
 	var badge_top := 32.0 if card.is_sleeping else 6.0
 	if not card.equipment.is_empty():
 		badge_top += EquipmentCard.EQUIPPED_AFFORDANCE_SIZE.y + EQUIPMENT_AFFORDANCE_GAP
+	var art_preview: Control = null
+	if dromi_source != card:
+		art_preview = _make_card_art_preview(dromi_source)
+	if art_preview == null:
+		return
 	_add_equipment_indicator_badge(
 		overlay,
-		DromiChainIndicator.new(),
+		art_preview,
 		6.0,
 		badge_top,
 		Color(0.28, 0.05, 0.05, 0.94),
@@ -701,6 +612,9 @@ func _add_debuff_affordances(overlay: Control, card: Card) -> void:
 	var badge_top := 32.0 if _is_card_targeted_on_stack(card) else 6.0
 	var badge_right := -6.0
 	for entry in entries:
+		var preview := _make_debuff_source_preview(entry)
+		if preview == null:
+			continue
 		var badge := PanelContainer.new()
 		badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
@@ -723,9 +637,7 @@ func _add_debuff_affordances(overlay: Control, card: Card) -> void:
 		badge.add_theme_stylebox_override("panel", badge_style)
 		overlay.add_child(badge)
 
-		var preview := _make_debuff_source_preview(entry)
-		if preview != null:
-			badge.add_child(preview)
+		badge.add_child(preview)
 
 		var count := int(entry.get("count", 1))
 		if count > 1:
@@ -776,29 +688,27 @@ func _append_debuff_affordance_entry(entries: Array[Dictionary], seen: Dictionar
 		seen[key] = entries.size()
 	entries.append(entry)
 
+func _make_card_art_preview(source_card: Card) -> Control:
+	if source_card == null or source_card.art_path == "":
+		return null
+	var tex := load(source_card.art_path) as Texture2D
+	if tex == null:
+		return null
+	var art := TextureRect.new()
+	art.texture = tex
+	art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	art.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	art.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	art.offset_left = 2
+	art.offset_top = 2
+	art.offset_right = -2
+	art.offset_bottom = -2
+	return art
+
 func _make_debuff_source_preview(entry: Dictionary) -> Control:
 	var source_card := entry.get("source_card", null) as Card
-	if source_card != null and source_card.art_path != "":
-		var tex := load(source_card.art_path) as Texture2D
-		if tex != null:
-			var art := TextureRect.new()
-			art.texture = tex
-			art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-			art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-			art.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			art.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-			art.offset_left = 2
-			art.offset_top = 2
-			art.offset_right = -2
-			art.offset_bottom = -2
-			return art
-	var fallback := DebuffEffectIndicator.new(str(entry.get("kind", DebuffEffectIndicator.KIND_GENERIC)))
-	fallback.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	fallback.offset_left = 2
-	fallback.offset_top = 2
-	fallback.offset_right = -2
-	fallback.offset_bottom = -2
-	return fallback
+	return _make_card_art_preview(source_card)
 
 func _build_debuff_entry_from_status(card: Card, status: Dictionary) -> Dictionary:
 	if card == null or status.is_empty():
@@ -816,22 +726,19 @@ func _build_debuff_entry_from_status(card: Card, status: Dictionary) -> Dictiona
 	var source_card := status.get("source_card", null) as Card
 	if status_name == "malinalxochitl_poison" or status_name.contains("poison"):
 		return {
-			"key": "poison:%s" % source_key,
-			"kind": DebuffEffectIndicator.KIND_POISON,
+			"key": "source:%s" % source_key,
 			"source_card": source_card,
 			"count": 1,
 		}
 	if status_name in ["cannot_attack", "cannot_move", "activation_locked", Card.ABILITY_NEGATED_STATUS]:
 		return {
-			"key": "lock:%s:%s" % [status_name, source_key],
-			"kind": DebuffEffectIndicator.KIND_LOCK,
+			"key": "source:%s" % source_key,
 			"source_card": source_card,
 			"count": 1,
 		}
 	if status_name in ["doomed", "petrified"]:
 		return {
-			"key": "status:%s:%s" % [status_name, source_key],
-			"kind": DebuffEffectIndicator.KIND_GENERIC,
+			"key": "source:%s" % source_key,
 			"source_card": source_card,
 			"count": 1,
 		}
@@ -853,17 +760,9 @@ func _build_debuff_entry_from_buff(buff: Dictionary) -> Dictionary:
 	if effect_type.contains("poison") or lower_source.contains("poison"):
 		return {}
 
-	var kind := DebuffEffectIndicator.KIND_GENERIC
-	if effect_type == "structure_debuff" or lower_source.contains("pyre"):
-		kind = DebuffEffectIndicator.KIND_FLAME
-	elif effect_type.contains("lock") or effect_type.contains("negat") or effect_type.contains("bound"):
-		kind = DebuffEffectIndicator.KIND_LOCK
-
 	var source_key := _get_debuff_source_key(buff)
-	var effect_key := effect_type if effect_type != "" else source
 	return {
-		"key": "buff:%s:%s:%s" % [kind, effect_key, source_key],
-		"kind": kind,
+		"key": "source:%s" % source_key,
 		"source_card": buff.get("source_card", null),
 		"count": 1,
 	}

@@ -11852,10 +11852,10 @@ func _get_local_forfeit_player_index() -> int:
 func _emit_forfeit_requested() -> void:
 	forfeit_requested.emit()
 
-func _schedule_post_game_return_to_menu() -> void:
+func _schedule_post_game_return_to_menu(force_return: bool = false) -> void:
 	if _pending_post_game_return_to_menu:
 		return
-	if not _is_networked_client and not _is_real_network_host():
+	if not force_return and not _is_networked_client and not _is_real_network_host():
 		return
 	_pending_post_game_return_to_menu = true
 	var tree := get_tree()
@@ -11981,8 +11981,9 @@ func _apply_network_event(event_type: String, data: Dictionary) -> void:
 			_game_finished = true
 			match_session_cleared.emit()
 			update_ui()
+			var should_return_to_menu := _pending_forfeit_return_to_menu or _is_networked_client or _is_real_network_host()
 			_pending_forfeit_return_to_menu = false
-			_schedule_post_game_return_to_menu()
+			_schedule_post_game_return_to_menu(should_return_to_menu)
 
 func _apply_ui_interaction(event_data: Dictionary) -> void:
 	var type: String = event_data.get("type", "")
@@ -12729,8 +12730,9 @@ func _on_game_ended(winner: Player, loser: Player) -> void:
 	_capture_action_log_message(true)
 	match_session_cleared.emit()
 	update_ui()
+	var should_return_to_menu := _pending_forfeit_return_to_menu or _is_networked_client or _is_real_network_host()
 	_pending_forfeit_return_to_menu = false
-	_schedule_post_game_return_to_menu()
+	_schedule_post_game_return_to_menu(should_return_to_menu)
 
 func _request_ui_refresh() -> void:
 	if not _is_networked_client and not _is_real_network_host():

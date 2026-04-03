@@ -96,6 +96,8 @@ func _run_probe() -> void:
 	game_manager.prepared_hexes.erase(spell)
 	spell.is_prepared = false
 	spell.is_face_down = false
+	compelled_attacker.spend_major_creature_action()
+	compelled_attacker.mark_attacked_this_turn()
 
 	spell.resolve(game_manager)
 

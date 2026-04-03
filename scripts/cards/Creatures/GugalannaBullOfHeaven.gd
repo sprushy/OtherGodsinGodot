@@ -10,9 +10,9 @@ func _init() -> void:
 	level = 4
 	mana_cost = 3
 	sacrifice_cost = 0
-	speed = 25
+	speed = 3
 	resilience = 25
-	strength = 3
+	strength = 25
 	ability_text = "Celestial Charge ([b]Impact[/b]): You may destroy a creature or structure with Res 30 or higher and slower Spd, but your opponent may activate hexes in response which can normally only activate on an attack. If you do, return this card from the field to your hand."
 	flavor_text = ""
 	culture = "Ancient"

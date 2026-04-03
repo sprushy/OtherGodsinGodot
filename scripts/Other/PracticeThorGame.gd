@@ -43,6 +43,18 @@ func _show_priority_prompt(player: Player) -> void:
 		return
 	super._show_priority_prompt(player)
 
+func _show_retreat_prompt(ask_card: Askelladen) -> void:
+	if _practice_active and ask_card != null and _is_thor_player(ask_card.get_controller()):
+		var other_card: Card = null
+		if _pending_retreat_action != null and _pending_retreat_target != null:
+			other_card = _get_retreat_opponent(ask_card, _pending_retreat_action.attacker, _pending_retreat_target)
+		if _should_thor_use_askelladen_retreat(ask_card, other_card):
+			call_deferred("_on_retreat_yes")
+		else:
+			call_deferred("_on_retreat_no")
+		return
+	super._show_retreat_prompt(ask_card)
+
 func check_for_possible_intercepts() -> void:
 	if _practice_active and game_manager != null and pending_attack_target != null:
 		var defender: Player = pending_attack_target if pending_attack_target is Player else pending_attack_target.get_controller()
@@ -61,6 +73,7 @@ func _load_thor_practice_match() -> void:
 	var player_deck_name := _load_player_practice_deck(player1)
 
 	_add_practice_god(player2, Thor.new())
+	_add_practice_power(player2, 0, CallOfTheValkyrie.new())
 	for card in _build_thor_practice_deck():
 		_add_practice_deck_card(player2, card)
 
@@ -182,6 +195,23 @@ func _add_practice_deck_card(player: Player, card: Card) -> void:
 	card.card_owner = player
 	player.deck_zone.add_card(card)
 
+func _add_practice_power(player: Player, slot_index: int, power: PowerCard, unlocked: bool = false) -> void:
+	if player == null or power == null:
+		return
+	if slot_index < 0 or slot_index >= player.power_zones.size():
+		return
+	power.card_owner = player
+	power.is_publicly_revealed = false
+	power.is_muted = false
+	power.mute_turns_remaining = 0
+	if unlocked:
+		power.is_face_down = false
+	else:
+		power.relock()
+	player.power_zones[slot_index].add_card(power)
+	if unlocked:
+		power.on_unlock(game_manager)
+
 func _load_player_practice_deck(player: Player) -> String:
 	if _try_load_saved_player_practice_deck(player):
 		return str(_player_practice_deck.get("name", "")).strip_edges()
@@ -221,6 +251,8 @@ func _build_thor_practice_deck() -> Array[Card]:
 		FallOfTheMighty.new(),
 		VoidShield.new(),
 		VoidShield.new(),
+		Askelladen.new(),
+		Askelladen.new(),
 	]
 
 func _queue_thor_ai_step() -> void:
@@ -308,15 +340,23 @@ func _choose_thor_priority_response() -> Card:
 func _take_thor_main_phase_action() -> bool:
 	if _try_activate_mead_for_enki():
 		return true
+	if _try_summon_askelladen_answer():
+		return true
 	if _try_summon_best_thor_creature():
 		return true
 	if _try_cast_divine_lightning():
 		return true
 	if _try_cast_fall_of_the_mighty():
 		return true
+	if _try_unlock_call_of_the_valkyrie():
+		return true
+	if _try_activate_call_of_the_valkyrie():
+		return true
 	if _try_prepare_void_shield():
 		return true
 	if _try_prepare_mead_of_poetry():
+		return true
+	if _try_switch_thor_to_aggressive_mode():
 		return true
 	if _try_attack_with_thor():
 		return true
@@ -353,6 +393,23 @@ func _try_summon_best_thor_creature() -> bool:
 	if creature == null:
 		return false
 	_do_place_creature(creature, zone, "aggressive")
+	return true
+
+func _try_summon_askelladen_answer() -> bool:
+	if game_manager == null or player2 == null or player2.has_summoned_this_turn:
+		return false
+	var askelladen := _find_hand_askelladen()
+	if askelladen == null:
+		return false
+	var zone := _get_first_open_summon_zone(player2)
+	if zone == null:
+		return false
+	var target := _get_thor_askelladen_problem_creature()
+	if target == null:
+		return false
+	if not _can_thor_evaluate_creature_play(askelladen, zone, player2.mana):
+		return false
+	_do_place_creature(askelladen, zone, "aggressive")
 	return true
 
 func _try_cast_divine_lightning() -> bool:
@@ -400,6 +457,31 @@ func _try_prepare_mead_of_poetry() -> bool:
 		return false
 	return _submit_prepare_card(mead, zone)
 
+func _try_unlock_call_of_the_valkyrie() -> bool:
+	var call := _find_thor_call_of_the_valkyrie()
+	if call == null or not call.is_face_down:
+		return false
+	if not _should_thor_use_call_of_the_valkyrie():
+		return false
+	return _submit_unlock_power(call)
+
+func _try_activate_call_of_the_valkyrie() -> bool:
+	var call := _find_thor_call_of_the_valkyrie()
+	if call == null or call.is_face_down:
+		return false
+	if not _should_thor_use_call_of_the_valkyrie():
+		return false
+	var target := _choose_thor_call_of_the_valkyrie_target(call)
+	if target == null or not call.can_activate(game_manager):
+		return false
+	return _submit_activate_power(call, target)
+
+func _try_switch_thor_to_aggressive_mode() -> bool:
+	var creature := _get_best_thor_mode_switch_candidate()
+	if creature == null:
+		return false
+	return _submit_change_mode(creature, Card.CreatureMode.AGGRESSIVE)
+
 func _try_attack_with_thor() -> bool:
 	var attackers := _get_attack_ready_thor_creatures()
 	if attackers.is_empty():
@@ -408,6 +490,9 @@ func _try_attack_with_thor() -> bool:
 	if opposing_creatures.is_empty():
 		var direct_attacker := _pick_best_board_creature(attackers)
 		return _submit_attack(direct_attacker, player1)
+	var askelladen_attack := _get_best_thor_askelladen_attack(attackers, opposing_creatures)
+	if not askelladen_attack.is_empty():
+		return _submit_attack(askelladen_attack.get("attacker", null), askelladen_attack.get("target", null))
 	var attack_threshold := _get_highest_opposing_strength_or_resilience(opposing_creatures)
 	var viable_attackers: Array[Card] = []
 	for attacker in attackers:
@@ -454,6 +539,8 @@ func _get_thor_hand_value(card: Card) -> int:
 		return 90
 	if card is DivineLightning:
 		return 80
+	if card is Askelladen:
+		return 75
 	if card is FallOfTheMighty:
 		return 70
 	if card is VoidShield:
@@ -489,6 +576,32 @@ func _submit_attack(attacker: Card, target) -> bool:
 		type = "request_attack",
 		attacker_uid = attacker.uid,
 		target_id = target_id,
+	})
+
+func _submit_change_mode(card: Card, mode: Card.CreatureMode) -> bool:
+	if card == null or game_manager == null:
+		return false
+	return game_input.submit_action({
+		type = "change_mode",
+		card_uid = card.uid,
+		mode = mode,
+	})
+
+func _submit_unlock_power(power: PowerCard) -> bool:
+	if power == null:
+		return false
+	return game_input.submit_action({
+		type = "unlock_power",
+		power_uid = power.uid,
+	})
+
+func _submit_activate_power(power: PowerCard, target: Card) -> bool:
+	if power == null or target == null:
+		return false
+	return game_input.submit_action({
+		type = "activate_power",
+		power_uid = power.uid,
+		target_uid = target.uid,
 	})
 
 func _get_best_affordable_thor_hand_creature(extra_mana: int, preferred_zone: Zone = null) -> Card:
@@ -580,10 +693,75 @@ func _get_projected_resilience(card: Card) -> int:
 func _would_receive_thor_buff(card: Card) -> bool:
 	return card != null and card.has_type("Human") and card.has_type("Warrior")
 
+func _get_best_thor_askelladen_attack(attackers: Array[Card], opposing_creatures: Array[Card]) -> Dictionary:
+	var best_attack := {}
+	for attacker in attackers:
+		if not (attacker is Askelladen):
+			continue
+		var target := _get_best_askelladen_target_for(attacker as Askelladen, opposing_creatures)
+		if target == null:
+			continue
+		if best_attack.is_empty():
+			best_attack = {"attacker": attacker, "target": target}
+			continue
+		var current_attacker: Card = best_attack.get("attacker", null)
+		var current_target: Card = best_attack.get("target", null)
+		if _is_board_creature_better(attacker, current_attacker):
+			best_attack = {"attacker": attacker, "target": target}
+			continue
+		if attacker == current_attacker and _is_board_creature_better(target, current_target):
+			best_attack = {"attacker": attacker, "target": target}
+	return best_attack
+
+func _get_best_askelladen_target_for(askelladen: Askelladen, opposing_creatures: Array[Card]) -> Card:
+	var best_target: Card = null
+	for creature in opposing_creatures:
+		if not _should_thor_use_askelladen_retreat(askelladen, creature):
+			continue
+		if best_target == null or _is_board_creature_better(creature, best_target):
+			best_target = creature
+	return best_target
+
+func _get_best_thor_mode_switch_candidate() -> Card:
+	if player2 == null or game_manager == null:
+		return null
+	var opposing_creatures := _get_board_creatures(player1)
+	var best_creature: Card = null
+	var best_score := -1
+	for zone in player2.frontline_zones:
+		for creature in zone.cards:
+			var score := _get_thor_mode_switch_score(creature, opposing_creatures)
+			if score > best_score:
+				best_score = score
+				best_creature = creature
+	return best_creature
+
+func _get_thor_mode_switch_score(creature: Card, opposing_creatures: Array[Card]) -> int:
+	if creature == null or creature.card_type != Card.CardType.CREATURE:
+		return -1
+	if creature.creature_mode != Card.CreatureMode.DEFENSIVE:
+		return -1
+	if not creature.can_take_minor_creature_action():
+		return -1
+	var score := creature.get_effective_strength() * 100 + creature.get_effective_resilience() * 10 + creature.get_effective_speed()
+	if creature is Askelladen and _get_best_askelladen_target_for(creature as Askelladen, opposing_creatures) != null:
+		score += 1000000
+	elif opposing_creatures.is_empty():
+		score += 500000
+	elif creature.get_effective_strength() > _get_highest_opposing_strength_or_resilience(opposing_creatures):
+		score += 400000
+	return score
+
 func _find_hand_enki() -> EnkiLordOfEridu:
 	for card in player2.hand_zone.cards:
 		if card is EnkiLordOfEridu:
 			return card as EnkiLordOfEridu
+	return null
+
+func _find_hand_askelladen() -> Askelladen:
+	for card in player2.hand_zone.cards:
+		if card is Askelladen:
+			return card as Askelladen
 	return null
 
 func _find_hand_divine_lightning() -> DivineLightning:
@@ -615,6 +793,15 @@ func _find_ready_prepared_mead() -> MeadOfPoetry:
 		for card in zone.cards:
 			if card is MeadOfPoetry and game_manager.is_prepared_charm_ready(card as MeadOfPoetry):
 				return card as MeadOfPoetry
+	return null
+
+func _find_thor_call_of_the_valkyrie() -> CallOfTheValkyrie:
+	if player2 == null:
+		return null
+	for zone in player2.power_zones:
+		for card in zone.cards:
+			if card is CallOfTheValkyrie:
+				return card as CallOfTheValkyrie
 	return null
 
 func _pick_divine_lightning_target(opponent: Player) -> Card:
@@ -654,6 +841,107 @@ func _get_highest_opposing_strength_or_resilience(cards: Array[Card]) -> int:
 	for card in cards:
 		threshold = maxi(threshold, maxi(card.get_effective_strength(), card.get_effective_resilience()))
 	return threshold
+
+func _get_thor_askelladen_problem_creature() -> Card:
+	var best_target: Card = null
+	var sample_askelladen := Askelladen.new()
+	sample_askelladen.card_owner = player2
+	for creature in _get_board_creatures(player1):
+		if creature == null or not _can_askelladen_retreat(sample_askelladen, creature):
+			continue
+		if _thor_can_clear_creature_without_askelladen(creature):
+			continue
+		if best_target == null or _is_board_creature_better(creature, best_target):
+			best_target = creature
+	return best_target
+
+func _thor_can_clear_creature_without_askelladen(target: Card) -> bool:
+	if target == null or target.card_type != Card.CardType.CREATURE:
+		return true
+	var threshold := maxi(target.get_effective_strength(), target.get_effective_resilience())
+	for creature in _get_board_creatures(player2):
+		if creature == null or creature is Askelladen:
+			continue
+		if creature.current_zone not in player2.frontline_zones:
+			continue
+		if creature.is_sleeping or not creature.can_take_major_creature_action():
+			continue
+		if creature.creature_mode != Card.CreatureMode.AGGRESSIVE and not creature.can_take_minor_creature_action():
+			continue
+		if creature.get_effective_strength() > threshold:
+			return true
+	var summon_zone := _get_first_open_summon_zone(player2)
+	if summon_zone != null:
+		for card in player2.hand_zone.cards:
+			if card == null or card is Askelladen:
+				continue
+			if not _can_thor_evaluate_creature_play(card, summon_zone, player2.mana):
+				continue
+			if _get_projected_strength(card) > threshold:
+				return true
+	var divine_lightning := _find_hand_divine_lightning()
+	if divine_lightning != null and target.is_magical_card() and divine_lightning.can_activate_from_hand(game_manager):
+		return true
+	var fall := _find_hand_fall_of_the_mighty()
+	var highest_strength := 0
+	for creature in _get_board_creatures(player1) + _get_board_creatures(player2):
+		highest_strength = maxi(highest_strength, creature.get_effective_strength())
+	if fall != null \
+		and _opponent_controls_strictly_strongest_creature() \
+		and target.get_effective_strength() == highest_strength \
+		and _can_afford_hand_card(fall, false):
+		return true
+	return false
+
+func _should_thor_use_call_of_the_valkyrie() -> bool:
+	if player2 == null:
+		return false
+	if _needs_thor_askelladen_support():
+		return true
+	return player2.hand_zone.cards.is_empty() and _choose_thor_call_of_the_valkyrie_target(_find_thor_call_of_the_valkyrie()) != null
+
+func _needs_thor_askelladen_support() -> bool:
+	if _get_thor_askelladen_problem_creature() == null:
+		return false
+	if _find_hand_askelladen() != null:
+		return false
+	for creature in _get_board_creatures(player2):
+		if creature is Askelladen:
+			return false
+	return _find_thor_graveyard_askelladen() != null
+
+func _choose_thor_call_of_the_valkyrie_target(call: CallOfTheValkyrie) -> Card:
+	if call == null:
+		return null
+	var valid_targets := call.get_valid_targets(game_manager)
+	if valid_targets.is_empty():
+		return null
+	if _needs_thor_askelladen_support():
+		for target in valid_targets:
+			if target is Askelladen:
+				return target
+	var best_target: Card = null
+	for target in valid_targets:
+		if best_target == null or _is_projected_creature_better(target, best_target):
+			best_target = target
+	return best_target
+
+func _find_thor_graveyard_askelladen() -> Askelladen:
+	if player2 == null:
+		return null
+	for card in player2.graveyard_zone.cards:
+		if card is Askelladen:
+			return card as Askelladen
+	return null
+
+func _should_thor_use_askelladen_retreat(ask_card: Askelladen, other_card: Card) -> bool:
+	if ask_card == null or other_card == null:
+		return false
+	if other_card.get_controller() == player2:
+		return false
+	if not _can_askelladen_retreat(ask_card, other_card):
+		return false
+	return not _thor_can_clear_creature_without_askelladen(other_card)
 
 func _get_attack_ready_thor_creatures() -> Array[Card]:
 	var ready_creatures: Array[Card] = []
