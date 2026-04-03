@@ -493,20 +493,17 @@ func _try_attack_with_thor() -> bool:
 	var askelladen_attack := _get_best_thor_askelladen_attack(attackers, opposing_creatures)
 	if not askelladen_attack.is_empty():
 		return _submit_attack(askelladen_attack.get("attacker", null), askelladen_attack.get("target", null))
-	var attack_threshold := _get_highest_opposing_strength_or_resilience(opposing_creatures)
-	var viable_attackers: Array[Card] = []
-	for attacker in attackers:
-		if attacker.get_effective_strength() > attack_threshold:
-			viable_attackers.append(attacker)
-	if viable_attackers.is_empty():
-		return false
-	var chosen_attacker := _pick_best_board_creature(viable_attackers)
-	var chosen_target := _pick_best_board_creature(opposing_creatures)
-	return _submit_attack(chosen_attacker, chosen_target)
+	var standard_attack := _get_best_thor_standard_attack(attackers, opposing_creatures)
+	if not standard_attack.is_empty():
+		return _submit_attack(standard_attack.get("attacker", null), standard_attack.get("target", null))
+	if _has_hidden_opposing_creature(opposing_creatures):
+		var direct_attacker := _pick_best_board_creature(attackers)
+		return _submit_attack(direct_attacker, player1)
+	return false
 
 func _finish_thor_turn() -> void:
 	_discard_thor_end_turn_cards_if_needed()
-	_do_end_turn()
+	_continue_end_turn_sequence()
 
 func _discard_thor_end_turn_cards_if_needed() -> void:
 	while player2 != null and player2.hand_zone.cards.size() > Player.MAX_HAND_SIZE:
@@ -716,11 +713,56 @@ func _get_best_thor_askelladen_attack(attackers: Array[Card], opposing_creatures
 func _get_best_askelladen_target_for(askelladen: Askelladen, opposing_creatures: Array[Card]) -> Card:
 	var best_target: Card = null
 	for creature in opposing_creatures:
+		if not _can_thor_attack_creature(askelladen, creature):
+			continue
 		if not _should_thor_use_askelladen_retreat(askelladen, creature):
 			continue
 		if best_target == null or _is_board_creature_better(creature, best_target):
 			best_target = creature
 	return best_target
+
+func _get_best_thor_standard_attack(attackers: Array[Card], opposing_creatures: Array[Card]) -> Dictionary:
+	var best_attack := {}
+	for attacker in attackers:
+		for target in opposing_creatures:
+			if not _can_thor_attack_creature(attacker, target):
+				continue
+			var target_threshold := maxi(target.get_effective_strength(), target.get_effective_resilience())
+			if attacker.get_effective_strength() <= target_threshold:
+				continue
+			if best_attack.is_empty():
+				best_attack = {"attacker": attacker, "target": target}
+				continue
+			var current_attacker: Card = best_attack.get("attacker", null)
+			var current_target: Card = best_attack.get("target", null)
+			if _is_thor_attack_plan_better(attacker, target, current_attacker, current_target):
+				best_attack = {"attacker": attacker, "target": target}
+	return best_attack
+
+func _is_thor_attack_plan_better(candidate_attacker: Card, candidate_target: Card, current_attacker: Card, current_target: Card) -> bool:
+	if current_target == null:
+		return true
+	if _is_board_creature_better(candidate_target, current_target):
+		return true
+	if _is_board_creature_better(current_target, candidate_target):
+		return false
+	return _is_board_creature_better(candidate_attacker, current_attacker)
+
+func _can_thor_attack_creature(attacker: Card, target: Card) -> bool:
+	return attacker != null \
+		and target != null \
+		and game_manager != null \
+		and attacker.current_zone != null \
+		and attacker.current_zone.is_board_zone() \
+		and target.current_zone != null \
+		and target.current_zone.is_board_zone() \
+		and game_manager.can_cards_engage_each_other(attacker, target)
+
+func _has_hidden_opposing_creature(cards: Array[Card]) -> bool:
+	for card in cards:
+		if card != null and (card.is_stealth or card.is_face_down):
+			return true
+	return false
 
 func _get_best_thor_mode_switch_candidate() -> Card:
 	if player2 == null or game_manager == null:
