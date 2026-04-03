@@ -11,6 +11,7 @@ const SilenceCursorSource = preload("res://images/SilenceCursorPGN.png")
 const GiantMasterArchitectCursorSource = preload("res://images/card_art/GiantMasterArchitectHammerCursor.png")
 const HermesCursorSource = preload("res://images/card_art/SpeedHermesCursor.png")
 const GuanYuCursorSource = preload("res://images/card_art/GuanYuCursor.png")
+const AncientPyreCursorSource = preload("res://images/card_art/PyreCursor.png")
 const PromptRouterScript = preload("res://scripts/server/PromptRouter.gd")
 const HeadlessMatchHostScript = preload("res://scripts/server/HeadlessMatchHost.gd")
 const MatchClientScript = preload("res://scripts/client/MatchClient.gd")
@@ -307,6 +308,8 @@ var _power_hover_popup: Control = null
 var _game_finished: bool = false
 var _pending_forfeit_return_to_menu: bool = false
 var _pending_post_game_return_to_menu: bool = false
+var _game_result_overlay: Control = null
+var _forfeit_button_default_text: String = ""
 var _action_log_view: RichTextLabel = null
 var _action_log_history_button: Button = null
 var _action_log_messages: Array[String] = []
@@ -322,6 +325,7 @@ var _silence_cursor_texture: Texture2D = null
 var _giant_master_architect_cursor_texture: Texture2D = null
 var _hermes_cursor_texture: Texture2D = null
 var _guan_yu_cursor_texture: Texture2D = null
+var _ancient_pyre_cursor_texture: Texture2D = null
 var _active_selection_cursor_mode: String = ""
 var _overlay_selection_cursor_mode: String = ""
 var _devour_cancel_prompt: Control = null
@@ -371,6 +375,8 @@ const HERMES_CURSOR_TARGET_HEIGHT := 96
 const HERMES_CURSOR_HOTSPOT_RATIO := Vector2(0.10, 0.88)
 const GUAN_YU_CURSOR_TARGET_HEIGHT := 96
 const GUAN_YU_CURSOR_HOTSPOT_RATIO := Vector2(0.95, 0.94)
+const ANCIENT_PYRE_CURSOR_TARGET_HEIGHT := 96
+const ANCIENT_PYRE_CURSOR_HOTSPOT_RATIO := Vector2(0.50, 0.12)
 const SACRIFICE_CURSOR_SHAPES := [
 	Input.CURSOR_ARROW,
 	Input.CURSOR_POINTING_HAND,
@@ -563,6 +569,7 @@ func _ready() -> void:
 	left_bottom_spacer.visible = true
 	right_panel.custom_minimum_size.x = RIGHT_PANEL_MIN_WIDTH
 	right_panel.add_theme_constant_override("separation", RIGHT_PANEL_CONTROL_GAP)
+	_forfeit_button_default_text = forfeit_button.text
 	forfeit_button.offset_left = -112.0
 	forfeit_button.offset_right = -2.0
 	forfeit_button.z_index = TRANSIENT_UI_Z_INDEX + 100
@@ -633,6 +640,9 @@ func _is_silence_cursor_mode_active() -> bool:
 
 func _is_giant_master_architect_cursor_mode_active() -> bool:
 	return _overlay_selection_cursor_mode == "giant_master_architect_structure"
+
+func _is_ancient_pyre_cursor_mode_active() -> bool:
+	return awaiting_pyre_target and pyre_source != null
 
 func _is_hermes_cursor_mode_active() -> bool:
 	return awaiting_god_ability_target and god_ability_source is Hermes
@@ -767,6 +777,8 @@ func _get_selection_cursor_mode() -> String:
 		return "hermes"
 	if _is_guan_yu_cursor_mode_active():
 		return "guan_yu"
+	if _is_ancient_pyre_cursor_mode_active():
+		return "ancient_pyre"
 	if _is_sacrifice_cursor_mode_active():
 		return "sacrifice"
 	if _is_devour_cursor_mode_active():
@@ -891,6 +903,20 @@ func _apply_guan_yu_cursor() -> bool:
 		Input.set_custom_mouse_cursor(_guan_yu_cursor_texture, cursor_shape, hotspot)
 	return true
 
+func _apply_ancient_pyre_cursor() -> bool:
+	if _ancient_pyre_cursor_texture == null:
+		_ancient_pyre_cursor_texture = _build_cursor_texture(
+			AncientPyreCursorSource,
+			ANCIENT_PYRE_CURSOR_TARGET_HEIGHT
+		)
+	if _ancient_pyre_cursor_texture == null:
+		return false
+
+	var hotspot := _get_cursor_hotspot(_ancient_pyre_cursor_texture, ANCIENT_PYRE_CURSOR_HOTSPOT_RATIO)
+	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
+		Input.set_custom_mouse_cursor(_ancient_pyre_cursor_texture, cursor_shape, hotspot)
+	return true
+
 func _restore_default_selection_cursor() -> void:
 	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
 		Input.set_custom_mouse_cursor(null, cursor_shape)
@@ -939,6 +965,13 @@ func _sync_sacrifice_cursor() -> void:
 	if cursor_mode == "giant_master_architect":
 		if _apply_giant_master_architect_cursor():
 			_active_selection_cursor_mode = "giant_master_architect"
+		else:
+			_restore_default_selection_cursor()
+		return
+
+	if cursor_mode == "ancient_pyre":
+		if _apply_ancient_pyre_cursor():
+			_active_selection_cursor_mode = "ancient_pyre"
 		else:
 			_restore_default_selection_cursor()
 		return
@@ -1280,11 +1313,10 @@ func start_game(
 	_game_finished = false
 	_pending_forfeit_return_to_menu = false
 	_pending_post_game_return_to_menu = false
+	_hide_game_result_overlay()
 	_local_match_result_recorded = false
 	_current_match_info = match_info.duplicate(true)
-	if forfeit_button != null:
-		forfeit_button.disabled = false
-		forfeit_button.visible = true
+	_restore_corner_action_button()
 	
 	game_manager = GameManager.new()
 	game_manager.set_interaction_host(self)
@@ -3867,7 +3899,7 @@ func _prompt_absence_target_selection() -> void:
 		action_label.text = "Absence has no valid targets."
 		update_ui()
 		return
-	if not _can_cast_hand_spell(spell):
+	if not _can_cast_spell_from_current_zone(spell):
 		action_label.text = "Cannot cast " + spell.card_name + "!"
 		update_ui()
 		return
@@ -4521,6 +4553,87 @@ func _can_cast_hand_spell(spell: Card) -> bool:
 		and spell.card_owner != null \
 		and game_manager.can_play_card(spell.card_owner, spell, null)
 
+func _is_prepared_board_spell(spell: Card) -> bool:
+	return spell != null \
+		and spell is SpellCard \
+		and spell.is_prepared \
+		and spell.current_zone != null \
+		and spell.current_zone.is_board_zone()
+
+func _can_cast_spell_from_current_zone(spell: Card) -> bool:
+	if spell == null or game_manager == null:
+		return false
+	if _is_prepared_board_spell(spell):
+		return (spell as SpellCard).can_activate_prepared(game_manager, spell.card_owner)
+	return _can_cast_hand_spell(spell)
+
+func _is_owned_board_spell(card: Card) -> bool:
+	return card != null \
+		and card is SpellCard \
+		and game_manager != null \
+		and card.get_controller() == game_manager.current_player \
+		and card.current_zone != null \
+		and card.current_zone.is_board_zone()
+
+func _try_activate_owned_board_spell(card: Card) -> bool:
+	if not _is_owned_board_spell(card):
+		return false
+	if _is_card_waiting_on_priority(card):
+		action_label.text = card.card_name + " is already on the stack."
+		update_ui()
+		return true
+	var prepared_spell := _is_prepared_board_spell(card)
+	if not _can_cast_spell_from_current_zone(card):
+		if prepared_spell:
+			action_label.text = game_manager.get_activation_mana_unavailable_text(card) if game_manager.has_insufficient_activation_mana(card, true, card.card_owner) else card.card_name + " is not ready to activate yet."
+		else:
+			action_label.text = "Cannot cast " + card.card_name + "!"
+		update_ui()
+		return true
+	selected_card = card
+	if card is BitMeseri:
+		_begin_bit_meseri_target_selection(card as BitMeseri)
+	elif card is Absence:
+		_prompt_absence_target_selection()
+	elif card is ApollyonsDemiurge or card.card_name == "Apollyon's Demiurge":
+		_show_demiurge_prompt(card)
+	elif card is BookOfLife:
+		_show_book_of_life_prompt(card as BookOfLife)
+	elif card is DeucalionsInfants:
+		_queue_deucalion_resolution(card as DeucalionsInfants)
+	elif card != null and (card is BlotSacrifice or card.card_name == "Blot Sacrifice"):
+		_show_blot_sacrifice_prompt(card)
+	elif card is KeyOfSolomon:
+		_show_kos_sacrifice_prompt(card as KeyOfSolomon)
+	elif card is CircleOfRebirth:
+		if _is_networked_client:
+			var prepared_spell_uid: String = card.get("uid") if "uid" in card else ""
+			game_input.submit_action({type = "cast_spell", spell_uid = prepared_spell_uid})
+		else:
+			var board_spell := card
+			var resurrect_count := get_resurrectible_cards().size()
+			_queue_hand_spell_cast(
+				board_spell,
+				null,
+				("Circle of Rebirth resurrected %d creature(s)!" % resurrect_count) if resurrect_count > 0 else "Cast Circle of Rebirth but no creatures to resurrect!",
+				func() -> void:
+					(board_spell as SpellCard).resolve(game_manager, null)
+			)
+	else:
+		if _is_networked_client:
+			var spell_uid: String = card.get("uid") if "uid" in card else ""
+			game_input.submit_action({type = "cast_spell", spell_uid = spell_uid})
+		else:
+			var board_spell := card
+			_queue_hand_spell_cast(
+				board_spell,
+				null,
+				"Cast " + board_spell.card_name + "!",
+				func() -> void:
+					(board_spell as SpellCard).resolve(game_manager, null)
+			)
+	return true
+
 func _pay_hand_card_costs(card: Card, custom_pay_callback: Callable = Callable()) -> bool:
 	if card == null or game_manager == null or card.card_owner == null:
 		return false
@@ -4659,31 +4772,48 @@ func _queue_hand_spell_cast(
 	if spell == null:
 		update_ui()
 		return false
-	var display_zone := _get_paid_hand_card_display_zone(spell)
+	var prepared_spell := _is_prepared_board_spell(spell)
+	var display_zone := spell.current_zone if prepared_spell else _get_paid_hand_card_display_zone(spell)
 	if display_zone == null and _pending_spell_display_zone != null:
 		display_zone = _resolve_pending_display_zone(spell, _pending_spell_display_zone)
-	var costs_already_paid := display_zone != null
+	var costs_already_paid := display_zone != null and not prepared_spell
 	if not costs_already_paid:
-		if not custom_pay_callback.is_valid() and spell.requires_chosen_hand_discards() and not spell.has_pending_chosen_discards_for_cost():
-			var on_choose_spell_cost := func() -> void:
-				_queue_hand_spell_cast(spell, target, resolution_text, resolve_callback, custom_pay_callback, after_payment_callback)
-			var on_cancel_spell_cost := func() -> void:
-				action_label.text = "Cancelled " + spell.card_name + "."
+		if prepared_spell:
+			if custom_pay_callback.is_valid():
+				if custom_pay_callback.call() != true:
+					action_label.text = "Cannot afford " + spell.card_name + "!"
+					update_ui()
+					return false
+			else:
+				if not (spell as SpellCard).can_activate_prepared(game_manager, spell.card_owner):
+					action_label.text = game_manager.get_activation_mana_unavailable_text(spell) if game_manager.has_insufficient_activation_mana(spell, true, spell.card_owner) else spell.card_name + " cannot activate right now."
+					update_ui()
+					return false
+				if not game_manager.activate_prepared_card(spell, spell.card_owner):
+					action_label.text = game_manager.get_activation_mana_unavailable_text(spell) if game_manager.has_insufficient_activation_mana(spell, true, spell.card_owner) else "Cannot afford " + spell.card_name + "!"
+					update_ui()
+					return false
+		else:
+			if not custom_pay_callback.is_valid() and spell.requires_chosen_hand_discards() and not spell.has_pending_chosen_discards_for_cost():
+				var on_choose_spell_cost := func() -> void:
+					_queue_hand_spell_cast(spell, target, resolution_text, resolve_callback, custom_pay_callback, after_payment_callback)
+				var on_cancel_spell_cost := func() -> void:
+					action_label.text = "Cancelled " + spell.card_name + "."
+					update_ui()
+				_prompt_chosen_hand_discards(
+					spell,
+					on_choose_spell_cost,
+					on_cancel_spell_cost
+				)
+				return true
+			if not _can_cast_hand_spell(spell):
+				action_label.text = "Cannot cast " + spell.card_name + "!"
 				update_ui()
-			_prompt_chosen_hand_discards(
-				spell,
-				on_choose_spell_cost,
-				on_cancel_spell_cost
-			)
-			return true
-		if not _can_cast_hand_spell(spell):
-			action_label.text = "Cannot cast " + spell.card_name + "!"
-			update_ui()
-			return false
-		if not _pay_hand_card_costs(spell, custom_pay_callback):
-			action_label.text = "Cannot afford " + spell.card_name + "!"
-			update_ui()
-			return false
+				return false
+			if not _pay_hand_card_costs(spell, custom_pay_callback):
+				action_label.text = "Cannot afford " + spell.card_name + "!"
+				update_ui()
+				return false
 		if after_payment_callback.is_valid():
 			after_payment_callback.call()
 	var queued_resolve := func() -> void:
@@ -4753,31 +4883,48 @@ func _queue_hand_spell_with_deferred_resolution(
 	if spell == null:
 		update_ui()
 		return false
-	var display_zone := _get_paid_hand_card_display_zone(spell)
+	var prepared_spell := _is_prepared_board_spell(spell)
+	var display_zone := spell.current_zone if prepared_spell else _get_paid_hand_card_display_zone(spell)
 	if display_zone == null and _pending_spell_display_zone != null:
 		display_zone = _resolve_pending_display_zone(spell, _pending_spell_display_zone)
-	var costs_already_paid := display_zone != null
+	var costs_already_paid := display_zone != null and not prepared_spell
 	if not costs_already_paid:
-		if not custom_pay_callback.is_valid() and spell.requires_chosen_hand_discards() and not spell.has_pending_chosen_discards_for_cost():
-			var on_choose_deferred_spell_cost := func() -> void:
-				_queue_hand_spell_with_deferred_resolution(spell, target, resolution_text, resolve_callback, custom_pay_callback, after_payment_callback)
-			var on_cancel_deferred_spell_cost := func() -> void:
-				action_label.text = "Cancelled " + spell.card_name + "."
+		if prepared_spell:
+			if custom_pay_callback.is_valid():
+				if custom_pay_callback.call() != true:
+					action_label.text = "Cannot afford " + spell.card_name + "!"
+					update_ui()
+					return false
+			else:
+				if not (spell as SpellCard).can_activate_prepared(game_manager, spell.card_owner):
+					action_label.text = game_manager.get_activation_mana_unavailable_text(spell) if game_manager.has_insufficient_activation_mana(spell, true, spell.card_owner) else spell.card_name + " cannot activate right now."
+					update_ui()
+					return false
+				if not game_manager.activate_prepared_card(spell, spell.card_owner):
+					action_label.text = game_manager.get_activation_mana_unavailable_text(spell) if game_manager.has_insufficient_activation_mana(spell, true, spell.card_owner) else "Cannot afford " + spell.card_name + "!"
+					update_ui()
+					return false
+		else:
+			if not custom_pay_callback.is_valid() and spell.requires_chosen_hand_discards() and not spell.has_pending_chosen_discards_for_cost():
+				var on_choose_deferred_spell_cost := func() -> void:
+					_queue_hand_spell_with_deferred_resolution(spell, target, resolution_text, resolve_callback, custom_pay_callback, after_payment_callback)
+				var on_cancel_deferred_spell_cost := func() -> void:
+					action_label.text = "Cancelled " + spell.card_name + "."
+					update_ui()
+				_prompt_chosen_hand_discards(
+					spell,
+					on_choose_deferred_spell_cost,
+					on_cancel_deferred_spell_cost
+				)
+				return true
+			if not _can_cast_hand_spell(spell):
+				action_label.text = "Cannot cast " + spell.card_name + "!"
 				update_ui()
-			_prompt_chosen_hand_discards(
-				spell,
-				on_choose_deferred_spell_cost,
-				on_cancel_deferred_spell_cost
-			)
-			return true
-		if not _can_cast_hand_spell(spell):
-			action_label.text = "Cannot cast " + spell.card_name + "!"
-			update_ui()
-			return false
-		if not _pay_hand_card_costs(spell, custom_pay_callback):
-			action_label.text = "Cannot afford " + spell.card_name + "!"
-			update_ui()
-			return false
+				return false
+			if not _pay_hand_card_costs(spell, custom_pay_callback):
+				action_label.text = "Cannot afford " + spell.card_name + "!"
+				update_ui()
+				return false
 		if after_payment_callback.is_valid():
 			after_payment_callback.call()
 	var queued_resolve := func() -> void:
@@ -4843,7 +4990,7 @@ func _queue_charm_action(charm: CharmCard, triggering_action: CardAction = null,
 		spell_waiting_for_action = null
 		spell_waiting_for_display_zone = null
 		return
-	var preferred_display_zone := _get_paid_hand_card_display_zone(charm)
+	var preferred_display_zone: Zone = _get_paid_hand_card_display_zone(charm)
 	if preferred_display_zone == null and spell_waiting_for_display_zone != null:
 		preferred_display_zone = _resolve_pending_display_zone(charm, spell_waiting_for_display_zone)
 	elif preferred_display_zone == null and _pending_spell_display_zone != null:
@@ -4916,10 +5063,34 @@ func _resolve_charm_action(charm: CharmCard, target: Card = null) -> void:
 	if charm.current_zone != null and charm.current_zone != charm.card_owner.graveyard_zone:
 		charm.card_owner.move_card(charm, charm.card_owner.graveyard_zone)
 
+func _clear_interaction_refs_for_moved_card(card: Card, from_zone: Zone, to_zone: Zone) -> bool:
+	if card == null:
+		return false
+	var changed := false
+	if selected_card == card:
+		selected_card = null
+		placement_mode = ""
+		changed = true
+	var card_left_board := from_zone != null and from_zone.is_board_zone() and (to_zone == null or not to_zone.is_board_zone())
+	if card_left_board:
+		if selected_attacker == card:
+			selected_attacker = null
+			changed = true
+		if selected_interceptor == card:
+			selected_interceptor = null
+			changed = true
+		if pending_attack_target == card:
+			pending_attack_target = null
+			changed = true
+	return changed
+
 func _on_local_player_card_moved(card: Card, from_zone: Zone, to_zone: Zone) -> void:
 	if card == null or from_zone == null or to_zone == null:
 		return
 	_invalidate_cached_board_layouts()
+	var cleared_interaction_refs := _clear_interaction_refs_for_moved_card(card, from_zone, to_zone)
+	if from_zone.is_board_zone() or to_zone.is_board_zone() or cleared_interaction_refs:
+		call_deferred("_request_ui_refresh")
 	if _is_networked_client:
 		return
 	if from_zone.zone_type != Zone.ZoneType.HAND:
@@ -5520,6 +5691,8 @@ func _on_empty_zone_pressed(zone: Zone) -> void:
 	if selected_card is CharmCard:
 		var charm := selected_card as CharmCard
 		if placement_mode == "prepare_charm" or charm.must_be_prepared_to_activate:
+			if _has_pending_click_selection():
+				_clear_pending_click_selection()
 			if game_input.submit_action({type = "prepare_card", card_uid = selected_card.uid,
 					player_index = game_manager.players.find(zone.zone_owner),
 					zone_type = zone.zone_type, zone_index = zone.zone_index}):
@@ -5537,57 +5710,59 @@ func _on_empty_zone_pressed(zone: Zone) -> void:
 				_queue_charm_action(charm)
 		return
 	if selected_card.card_type == Card.CardType.SPELL:
-			if placement_mode == "prepare_spell":
-				if game_input.submit_action({type = "prepare_card", card_uid = selected_card.uid,
-						player_index = game_manager.players.find(zone.zone_owner),
-						zone_type = zone.zone_type, zone_index = zone.zone_index}):
-					action_label.text = "Prepared Spell: " + selected_card.card_name + " (face-down)!"
-					selected_card = null
-					placement_mode = ""
-					placement_container.visible = false
-					update_ui()
-				else:
-					action_label.text = "Cannot prepare " + selected_card.card_name + "!"
-			elif game_manager.can_play_card(game_manager.current_player, selected_card, zone):
-				if selected_card is ApollyonsDemiurge or selected_card.card_name == "Apollyon's Demiurge":
-					_show_demiurge_prompt(selected_card)
-				elif selected_card is BookOfLife:
-					_show_book_of_life_prompt(selected_card as BookOfLife)
-				elif selected_card is DeucalionsInfants:
-					_queue_deucalion_resolution(selected_card as DeucalionsInfants)
-				elif selected_card != null and (selected_card is BlotSacrifice or selected_card.card_name == "Blot Sacrifice"):
-					_show_blot_sacrifice_prompt(selected_card)
-				elif selected_card is KeyOfSolomon:
-					_show_kos_sacrifice_prompt(selected_card as KeyOfSolomon)
-				elif selected_card is Absence:
-					_prompt_absence_target_selection()
-				elif selected_card is CircleOfRebirth:
-					if _is_networked_client:
-						game_input.submit_action({type = "cast_spell", spell_uid = selected_card.uid})
-					else:
-						var resurrect_count := get_resurrectible_cards().size()
-						var spell := selected_card
-						_queue_hand_spell_cast(
-							spell,
-							null,
-							("Circle of Rebirth resurrected %d creature(s)!" % resurrect_count) if resurrect_count > 0 else "Cast Circle of Rebirth but no creatures to resurrect!",
-							func() -> void:
-								(spell as SpellCard).resolve(game_manager, null)
-						)
-				else:
-					if _is_networked_client:
-						game_input.submit_action({type = "cast_spell", spell_uid = selected_card.uid})
-					else:
-						var spell := selected_card
-						_queue_hand_spell_cast(
-							spell,
-							null,
-							"Cast " + spell.card_name + "!",
-							func() -> void:
-								(spell as SpellCard).resolve(game_manager, null)
-						)
+		if placement_mode == "prepare_spell":
+			if _has_pending_click_selection():
+				_clear_pending_click_selection()
+			if game_input.submit_action({type = "prepare_card", card_uid = selected_card.uid,
+					player_index = game_manager.players.find(zone.zone_owner),
+					zone_type = zone.zone_type, zone_index = zone.zone_index}):
+				action_label.text = "Prepared Spell: " + selected_card.card_name + " (face-down)!"
+				selected_card = null
+				placement_mode = ""
+				placement_container.visible = false
+				update_ui()
 			else:
-				action_label.text = "Cannot cast spell! Not enough resources"
+				action_label.text = "Cannot prepare " + selected_card.card_name + "!"
+		elif game_manager.can_play_card(game_manager.current_player, selected_card, zone):
+			if selected_card is ApollyonsDemiurge or selected_card.card_name == "Apollyon's Demiurge":
+				_show_demiurge_prompt(selected_card)
+			elif selected_card is BookOfLife:
+				_show_book_of_life_prompt(selected_card as BookOfLife)
+			elif selected_card is DeucalionsInfants:
+				_queue_deucalion_resolution(selected_card as DeucalionsInfants)
+			elif selected_card != null and (selected_card is BlotSacrifice or selected_card.card_name == "Blot Sacrifice"):
+				_show_blot_sacrifice_prompt(selected_card)
+			elif selected_card is KeyOfSolomon:
+				_show_kos_sacrifice_prompt(selected_card as KeyOfSolomon)
+			elif selected_card is Absence:
+				_prompt_absence_target_selection()
+			elif selected_card is CircleOfRebirth:
+				if _is_networked_client:
+					game_input.submit_action({type = "cast_spell", spell_uid = selected_card.uid})
+				else:
+					var resurrect_count := get_resurrectible_cards().size()
+					var spell := selected_card
+					_queue_hand_spell_cast(
+						spell,
+						null,
+						("Circle of Rebirth resurrected %d creature(s)!" % resurrect_count) if resurrect_count > 0 else "Cast Circle of Rebirth but no creatures to resurrect!",
+						func() -> void:
+							(spell as SpellCard).resolve(game_manager, null)
+					)
+			else:
+				if _is_networked_client:
+					game_input.submit_action({type = "cast_spell", spell_uid = selected_card.uid})
+				else:
+					var spell := selected_card
+					_queue_hand_spell_cast(
+						spell,
+						null,
+						"Cast " + spell.card_name + "!",
+						func() -> void:
+							(spell as SpellCard).resolve(game_manager, null)
+					)
+		else:
+			action_label.text = "Cannot cast spell! Not enough resources"
 	elif selected_card.current_zone == game_manager.current_player.hand_zone \
 			and selected_card.requires_chosen_hand_discards() \
 			and not selected_card.has_pending_chosen_discards_for_cost():
@@ -5645,6 +5820,8 @@ func _on_empty_zone_pressed(zone: Zone) -> void:
 		else:
 			action_label.text = "Cannot play " + selected_card.card_name + "! Not enough resources."
 	elif selected_card.card_type == Card.CardType.HEX:
+		if _has_pending_click_selection():
+			_clear_pending_click_selection()
 		if game_input.submit_action({type = "prepare_card", card_uid = selected_card.uid,
 				player_index = game_manager.players.find(zone.zone_owner),
 				zone_type = zone.zone_type, zone_index = zone.zone_index}):
@@ -7446,6 +7623,9 @@ func _on_board_card_pressed(card: Card) -> void:
 		else:
 			action_label.text = game_manager.get_activation_mana_unavailable_text(charm) if game_manager.has_insufficient_activation_mana(charm, true, charm.card_owner) else charm.card_name + " is not ready to activate yet."
 			update_ui()
+		return
+
+	if _try_activate_owned_board_spell(card):
 		return
 
 	if selected_card != null \
@@ -10859,28 +11039,29 @@ func _initiate_blot_with_sacrifice(spell, sacrifice_target: Card) -> void:
 		action_label.text = "Blot Sacrifice requires a sacrificable friendly creature."
 		update_ui()
 		return
-	if not _can_cast_hand_spell(spell):
+	if not _can_cast_spell_from_current_zone(spell):
 		action_label.text = "Blot Sacrifice cancelled: cannot pay costs."
 		update_ui()
 		return
+	var prepared_spell := _is_prepared_board_spell(spell)
 	var orig_creature_cost: int = spell.sacrifice_cost
 	spell.sacrifice_cost = 0
-	var paid: bool = spell.pay_costs(game_manager.current_player, game_manager)
+	var paid: bool = game_manager.activate_prepared_card(spell, game_manager.current_player) if prepared_spell else spell.pay_costs(game_manager.current_player, game_manager)
 	spell.sacrifice_cost = orig_creature_cost
 	if not paid:
-		action_label.text = "Cannot cast Blot Sacrifice."
+		action_label.text = game_manager.get_activation_mana_unavailable_text(spell) if prepared_spell and game_manager.has_insufficient_activation_mana(spell, true, spell.card_owner) else "Cannot cast Blot Sacrifice."
 		update_ui()
 		return
+	var preferred_display_zone: Zone = spell.current_zone if prepared_spell else _resolve_pending_display_zone(spell, null)
 	game_manager.request_send_to_graveyard(sacrifice_target, func() -> void:
-		var display_zone := _resolve_pending_display_zone(spell, null)
 		var action := CardAction.new()
 		action.type = CardAction.Type.SPELL
 		action.source_player = spell.card_owner
 		action.card = spell
-		action.display_zone = display_zone
+		action.display_zone = preferred_display_zone
 		action.resolution_text = "Blot Sacrifice resolves."
 		action.resolve_callback = func() -> void:
-			_begin_blot_resolution_prompt(spell, sacrifice_target, display_zone)
+			_begin_blot_resolution_prompt(spell, sacrifice_target, preferred_display_zone)
 		_assign_stack_display_zone(action)
 		game_manager.push_to_stack(action)
 		selected_card = null
@@ -11108,28 +11289,29 @@ func _initiate_kos_with_sacrifice(spell: KeyOfSolomon, sacrifice_target: Card) -
 		action_label.text = "Key of Solomon requires a sacrificable friendly Animal."
 		update_ui()
 		return
-	if not _can_cast_hand_spell(spell):
+	if not _can_cast_spell_from_current_zone(spell):
 		action_label.text = "Key of Solomon cancelled: cannot pay costs."
 		update_ui()
 		return
+	var prepared_spell := _is_prepared_board_spell(spell)
 	var orig_sacrifice_cost: int = spell.sacrifice_cost
 	spell.sacrifice_cost = 0
-	var paid: bool = spell.pay_costs(game_manager.current_player, game_manager)
+	var paid: bool = game_manager.activate_prepared_card(spell, game_manager.current_player) if prepared_spell else spell.pay_costs(game_manager.current_player, game_manager)
 	spell.sacrifice_cost = orig_sacrifice_cost
 	if not paid:
-		action_label.text = "Cannot cast Key of Solomon."
+		action_label.text = game_manager.get_activation_mana_unavailable_text(spell) if prepared_spell and game_manager.has_insufficient_activation_mana(spell, true, spell.card_owner) else "Cannot cast Key of Solomon."
 		update_ui()
 		return
 	_pending_key_of_solomon = spell
 	_pending_kos_sacrifice = sacrifice_target
 	_pending_kos_selected_demons.clear()
+	var preferred_display_zone: Zone = spell.current_zone if prepared_spell else _resolve_pending_display_zone(spell, null)
 	game_manager.request_send_to_graveyard(sacrifice_target, func() -> void:
-		var display_zone := _resolve_pending_display_zone(spell, null)
 		var action := CardAction.new()
 		action.type = CardAction.Type.SPELL
 		action.source_player = spell.card_owner
 		action.card = spell
-		action.display_zone = display_zone
+		action.display_zone = preferred_display_zone
 		action.resolution_text = "Key of Solomon resolves."
 		action.resolve_callback = func() -> void:
 			_begin_kos_demon_selection(spell)
@@ -11324,7 +11506,7 @@ func _on_demiurge_confirm_pressed(spin: SpinBox) -> void:
 	if spell == null:
 		update_ui()
 		return
-	if not _can_cast_hand_spell(spell):
+	if not _can_cast_spell_from_current_zone(spell):
 		action_label.text = "Cannot cast " + spell.card_name + "!"
 		update_ui()
 		return
@@ -11333,6 +11515,9 @@ func _on_demiurge_confirm_pressed(spin: SpinBox) -> void:
 		update_ui()
 		return
 	var pay_demiurge_costs := func() -> bool:
+		if _is_prepared_board_spell(spell):
+			return game_manager.activate_prepared_card(spell, game_manager.current_player) \
+				and spell.pay_x_cost(game_manager, x_value)
 		return spell.pay_costs(game_manager.current_player, game_manager) \
 			and spell.pay_x_cost(game_manager, x_value)
 	var resolve_demiurge := func() -> void:
@@ -11410,11 +11595,14 @@ func _on_retreat_yes() -> void:
 	if action == null or defender == null:
 		update_ui()
 		return
+	_executing_stack_action = false
 	_send_to_deck_bottom(action.attacker)
 	_send_to_deck_bottom(defender)
 	action_label.text = "Tactful Retreat! Both creatures returned to the bottom of their decks."
-	update_ui()
-	_finish_post_execute(action.source_player)
+	if _stack_resolution_paused:
+		_resume_after_deferred_resolution(action_label.text)
+	else:
+		update_ui()
 
 func _on_retreat_no() -> void:
 	_hide_retreat_prompt()
@@ -11871,6 +12059,147 @@ func _schedule_post_game_return_to_menu(force_return: bool = false) -> void:
 		_emit_forfeit_requested()
 	)
 
+func _restore_corner_action_button() -> void:
+	if forfeit_button == null:
+		return
+	if _forfeit_button_default_text == "":
+		_forfeit_button_default_text = forfeit_button.text
+	forfeit_button.text = _forfeit_button_default_text
+	forfeit_button.tooltip_text = ""
+	forfeit_button.disabled = false
+	forfeit_button.visible = true
+
+func _hide_corner_action_button() -> void:
+	if forfeit_button == null:
+		return
+	forfeit_button.visible = false
+	forfeit_button.disabled = true
+
+func _show_post_game_return_button() -> void:
+	if forfeit_button == null:
+		return
+	if _forfeit_button_default_text == "":
+		_forfeit_button_default_text = forfeit_button.text
+	forfeit_button.text = "Return to Menu"
+	forfeit_button.tooltip_text = "Leave the finished match and return to the menu."
+	forfeit_button.disabled = false
+	forfeit_button.visible = true
+
+func _hide_game_result_overlay() -> void:
+	if _game_result_overlay != null and is_instance_valid(_game_result_overlay):
+		_game_result_overlay.queue_free()
+	_game_result_overlay = null
+
+func _get_result_viewer():
+	if game_manager == null:
+		return null
+	if network_manager != null and network_manager.local_player_index >= 0:
+		var local_idx = network_manager.local_player_index
+		if local_idx < game_manager.players.size():
+			return game_manager.players[local_idx]
+	var viewer = game_manager.get_feedback_viewer()
+	if viewer != null:
+		return viewer
+	if not game_manager.players.is_empty():
+		return game_manager.players[0]
+	return null
+
+func _get_game_result_title(winner, loser) -> String:
+	var viewer = _get_result_viewer()
+	if viewer != null:
+		if winner == viewer:
+			return "Victory"
+		if loser == viewer:
+			return "Defeat"
+	if winner != null:
+		return str(winner.player_name) + " Wins"
+	return "Game Over"
+
+func _on_game_result_stay_here_pressed() -> void:
+	_hide_game_result_overlay()
+	_show_post_game_return_button()
+
+func _on_game_result_back_to_menu_pressed() -> void:
+	_pending_post_game_return_to_menu = false
+	_hide_game_result_overlay()
+	_hide_corner_action_button()
+	_emit_forfeit_requested()
+
+func _show_game_result_overlay(result_message: String, winner = null, loser = null, auto_return: bool = false) -> void:
+	_hide_game_result_overlay()
+
+	var overlay := ColorRect.new()
+	overlay.name = "GameResultOverlay"
+	overlay.color = Color(0.02, 0.03, 0.05, 0.78)
+	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	add_child(overlay)
+	_promote_transient_ui(overlay, TRANSIENT_UI_Z_INDEX + 120)
+	_game_result_overlay = overlay
+
+	var panel := PanelContainer.new()
+	panel.set_anchors_preset(Control.PRESET_CENTER)
+	panel.custom_minimum_size = Vector2(420, 0)
+	overlay.add_child(panel)
+
+	var panel_style := StyleBoxFlat.new()
+	panel_style.bg_color = Color(0.08, 0.10, 0.14, 0.96)
+	panel_style.border_color = Color(0.86, 0.75, 0.44, 0.95)
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		panel_style.set_border_width(side, 2)
+	panel_style.content_margin_left = 24
+	panel_style.content_margin_right = 24
+	panel_style.content_margin_top = 22
+	panel_style.content_margin_bottom = 20
+	panel.add_theme_stylebox_override("panel", panel_style)
+
+	var vbox := VBoxContainer.new()
+	vbox.alignment = BoxContainer.ALIGNMENT_CENTER
+	vbox.add_theme_constant_override("separation", 14)
+	panel.add_child(vbox)
+
+	var title := Label.new()
+	title.text = _get_game_result_title(winner, loser)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 28)
+	vbox.add_child(title)
+
+	var resolved_message := result_message.strip_edges()
+	if resolved_message == "":
+		resolved_message = "Game over!"
+	var body := Label.new()
+	body.text = resolved_message
+	body.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	body.add_theme_font_size_override("font_size", 16)
+	vbox.add_child(body)
+
+	var info := Label.new()
+	info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	info.modulate = Color(0.83, 0.86, 0.90, 0.9)
+	info.add_theme_font_size_override("font_size", 13)
+	vbox.add_child(info)
+
+	if auto_return:
+		info.text = "Returning to menu..."
+		return
+
+	info.text = "You can review the final board or return to the menu."
+	var buttons := HBoxContainer.new()
+	buttons.alignment = BoxContainer.ALIGNMENT_CENTER
+	buttons.add_theme_constant_override("separation", 12)
+	vbox.add_child(buttons)
+
+	var close_btn := Button.new()
+	close_btn.text = "Stay Here"
+	close_btn.pressed.connect(_on_game_result_stay_here_pressed)
+	buttons.add_child(close_btn)
+
+	var menu_btn := Button.new()
+	menu_btn.text = "Back to Menu"
+	menu_btn.pressed.connect(_on_game_result_back_to_menu_pressed)
+	buttons.add_child(menu_btn)
+
 func _on_peer_disconnected(_peer_id: int) -> void:
 	if _game_finished:
 		return
@@ -11976,12 +12305,25 @@ func _apply_network_event(event_type: String, data: Dictionary) -> void:
 			if result_message.is_empty():
 				var winner_name: String = data.get("winner_name", "Unknown")
 				result_message = winner_name + " wins!"
+			var winner: Player = null
+			var loser: Player = null
+			var winner_idx := int(data.get("winner_index", -1))
+			if game_manager != null and winner_idx >= 0 and winner_idx < game_manager.players.size():
+				winner = game_manager.players[winner_idx]
+				if game_manager.players.size() == 2:
+					loser = game_manager.get_opponent(winner)
 			action_label.text = result_message
 			_capture_action_log_message(true)
 			_game_finished = true
+			_dismiss_transient_prompts()
+			_hide_priority_prompt()
+			_hide_intercept_prompt()
+			_update_waiting_status(false)
+			_hide_corner_action_button()
 			match_session_cleared.emit()
 			update_ui()
 			var should_return_to_menu := _pending_forfeit_return_to_menu or _is_networked_client or _is_real_network_host()
+			_show_game_result_overlay(result_message, winner, loser, should_return_to_menu)
 			_pending_forfeit_return_to_menu = false
 			_schedule_post_game_return_to_menu(should_return_to_menu)
 
@@ -12483,6 +12825,7 @@ func _clear_network_selection_state() -> void:
 
 func _on_forfeit_button_pressed() -> void:
 	if _game_finished:
+		_on_game_result_back_to_menu_pressed()
 		return
 	_set_match_reconnect_wait(false)
 	if _is_blot_selection_active():
@@ -12557,6 +12900,8 @@ func _do_end_turn() -> void:
 
 func _open_upkeep_choice_window() -> void:
 	if game_manager == null or _game_finished:
+		return
+	if game_manager.has_resolved_turn_upkeep():
 		return
 	if _is_networked_client and network_manager != null:
 		var local_idx: int = network_manager.local_player_index
@@ -12713,13 +13058,16 @@ func _on_game_ended(winner: Player, loser: Player) -> void:
 	_game_finished = true
 	_set_match_reconnect_wait(false)
 	_record_local_host_match_result(winner, loser)
+	_dismiss_transient_prompts()
+	_hide_priority_prompt()
+	_hide_intercept_prompt()
 	choice_container.visible = false
 	end_turn_button.visible = false
 	placement_container.visible = false
 	draw_button.disabled = true
 	mana_button.disabled = true
 	end_turn_button.disabled = true
-	forfeit_button.disabled = true
+	_hide_corner_action_button()
 	all_attack_btn.disabled = true
 	selected_card = null
 	selected_attacker = null
@@ -12731,6 +13079,7 @@ func _on_game_ended(winner: Player, loser: Player) -> void:
 	match_session_cleared.emit()
 	update_ui()
 	var should_return_to_menu := _pending_forfeit_return_to_menu or _is_networked_client or _is_real_network_host()
+	_show_game_result_overlay(action_label.text, winner, loser, should_return_to_menu)
 	_pending_forfeit_return_to_menu = false
 	_schedule_post_game_return_to_menu(should_return_to_menu)
 
@@ -12751,6 +13100,18 @@ func _try_handle_blot_drag_selection(card: Card) -> bool:
 	if card == null:
 		return false
 	return _try_add_creature_to_blot(card)
+
+func _should_prepare_magical_card_on_drop(card: Card, is_drag_prepare: bool = false) -> bool:
+	if card == null:
+		return false
+	if card.card_type == Card.CardType.HEX:
+		return true
+	if card == selected_card:
+		if card.card_type == Card.CardType.SPELL and placement_mode == "prepare_spell":
+			return true
+		if card is CharmCard and placement_mode == "prepare_charm":
+			return true
+	return is_drag_prepare and (card.card_type == Card.CardType.SPELL or card is CharmCard)
 
 func _on_card_drag_released(card: Card, drop_pos: Vector2, card_rotated: bool, card_stealth: bool) -> void:
 	if _game_finished:
@@ -12862,15 +13223,27 @@ func _on_card_drag_released(card: Card, drop_pos: Vector2, card_rotated: bool, c
 			update_ui()
 			return
 
+	var prepare_on_drop := _should_prepare_magical_card_on_drop(card, card_stealth)
+	if prepare_on_drop:
+		for zu in _board_zone_uis:
+			if zu.get_global_rect().has_point(drop_pos) and not zu._is_enemy:
+				_on_card_dropped_to_zone(card, zu.zone, card_rotated, card_stealth)
+				update_ui()
+				return
+		if board_container != null and board_container.get_global_rect().has_point(drop_pos):
+			var nearest_prepare_zone := _find_nearest_empty_friendly_zone(drop_pos)
+			if nearest_prepare_zone != null:
+				_on_card_dropped_to_zone(card, nearest_prepare_zone, card_rotated, card_stealth)
+			else:
+				action_label.text = "Choose an empty friendly zone to prepare " + card.card_name + "."
+			update_ui()
+			return
+
 	# Non-targeted spell/hex dropped on a friendly zone:
 	# respect the dropped zone for preparation, otherwise fall back to an empty slot.
 	if card.card_type in [Card.CardType.SPELL, Card.CardType.HEX] and not card.targets:
 		for zu in _board_zone_uis:
 			if zu.get_global_rect().has_point(drop_pos) and not zu._is_enemy:
-				var prepare_from_selected_mode := card == selected_card and placement_mode == "prepare_spell"
-				var prepare_on_drop := prepare_from_selected_mode \
-					or (card.card_type == Card.CardType.HEX and not card.targets) \
-					or (card_stealth and (card.card_type == Card.CardType.SPELL or card is CharmCard))
 				var empty_zone: Zone = zu.zone if zu.zone != null and zu.zone.cards.is_empty() else _find_empty_player_zone()
 				var target_zone: Zone = zu.zone if prepare_on_drop else empty_zone
 				if target_zone != null:
@@ -12959,10 +13332,7 @@ func _on_card_dropped_to_zone(card: Card, zone: Zone, is_rotated: bool = false, 
 	if not priority_drop_allowed and _reject_priority_locked_action():
 		return
 	_pending_spell_display_zone = zone
-	var prepare_from_selected_mode := card == selected_card and placement_mode == "prepare_spell"
-	var prepare_on_drop := prepare_from_selected_mode \
-		or (card.card_type == Card.CardType.HEX and not card.targets) \
-		or (is_stealth and (card.card_type == Card.CardType.SPELL or card is CharmCard))
+	var prepare_on_drop := _should_prepare_magical_card_on_drop(card, is_stealth)
 	if prepare_on_drop:
 		if zone == null or not zone.is_board_zone() or zone.zone_owner != game_manager.current_player or zone.cards.size() > 0:
 			action_label.text = "Choose an empty friendly zone to prepare " + card.card_name + "."
@@ -12972,6 +13342,8 @@ func _on_card_dropped_to_zone(card: Card, zone: Zone, is_rotated: bool = false, 
 			action_label.text = "Cannot prepare " + card.card_name + "!"
 			update_ui()
 			return
+		if _has_pending_click_selection():
+			_clear_pending_click_selection()
 		var prepare_success := game_input.submit_action({
 			type = "prepare_card",
 			card_uid = card.uid,
@@ -12999,6 +13371,8 @@ func _on_card_dropped_to_zone(card: Card, zone: Zone, is_rotated: bool = false, 
 	if card is BitMeseri:
 		if zone.cards.size() > 0:
 			_cast_targeted_spell(card, zone.cards[0])
+		else:
+			_begin_bit_meseri_target_selection(card as BitMeseri)
 		return
 	if card is PermanentHexCard and zone.cards.size() > 0:
 		selected_card = card
@@ -13043,6 +13417,8 @@ func cleanup() -> void:
 	_awaiting_initial_full_state = false
 	_pending_forfeit_return_to_menu = false
 	_pending_post_game_return_to_menu = false
+	_hide_game_result_overlay()
+	_hide_corner_action_button()
 	_local_match_result_recorded = false
 	_current_match_info.clear()
 	_hide_hati_prompt()

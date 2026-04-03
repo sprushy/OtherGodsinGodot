@@ -19,41 +19,56 @@ func _init() -> void:
 	flavor_text = "Destroy the strongest creature(s) on the field."
 	culture = "Neutral"
 	art_path = "res://images/card_art/spells/fall_of_the_mighty.jpg"
-	ability_text = "Destroy all creatures on the field with the highest strength."
+	ability_text = "Destroy all non-stealthed creatures on the field with the highest strength."
+
+static func counts_for_strength_check(card: Card) -> bool:
+	return card != null \
+		and card.card_type == Card.CardType.CREATURE \
+		and not card.is_stealth
+
+static func get_creatures_for_strength_check(game_manager: GameManager) -> Array[Card]:
+	var creatures: Array[Card] = []
+	if game_manager == null:
+		return creatures
+	for player: Player in game_manager.players:
+		if player == null:
+			continue
+		for zone: Zone in player.frontline_zones + player.reserve_zones:
+			for card: Card in zone.cards:
+				if counts_for_strength_check(card):
+					creatures.append(card)
+	return creatures
+
+static func get_strongest_creatures(game_manager: GameManager) -> Array[Card]:
+	var strongest_creatures: Array[Card] = []
+	var max_strength := -1
+	for creature: Card in get_creatures_for_strength_check(game_manager):
+		var strength_value := creature.get_effective_strength()
+		if strength_value > max_strength:
+			max_strength = strength_value
+			strongest_creatures.clear()
+			strongest_creatures.append(creature)
+		elif strength_value == max_strength:
+			strongest_creatures.append(creature)
+	return strongest_creatures
 
 func resolve(game_manager: GameManager, _target = null) -> void:
 	print("Fall of the Mighty - The strong shall fall!")
 	
-	var all_creatures: Array[Card] = []
-	
-	# Collect all creatures from both players
-	for player: Player in game_manager.players:
-		for zone: Zone in player.frontline_zones:
-			for card: Card in zone.cards:
-				if card.card_type == Card.CardType.CREATURE:
-					all_creatures.append(card)
-		for zone: Zone in player.reserve_zones:
-			for card: Card in zone.cards:
-				if card.card_type == Card.CardType.CREATURE:
-					all_creatures.append(card)
+	var all_creatures := get_creatures_for_strength_check(game_manager)
 	
 	if all_creatures.size() == 0:
-		print("No creatures on the field to destroy!")
+		print("No non-stealthed creatures on the field to destroy!")
 		return
 	
 	# Find the highest strength
-	var max_strength: int = 0
+	var max_strength := all_creatures[0].get_effective_strength()
 	for creature: Card in all_creatures:
-		var str_val: int = creature.get_effective_strength()
-		if str_val > max_strength:
-			max_strength = str_val
+		max_strength = maxi(max_strength, creature.get_effective_strength())
 	
 	print("Maximum strength found: " + str(max_strength))
 	
-	var doomed_creatures: Array[Card] = []
-	for creature: Card in all_creatures:
-		if creature.get_effective_strength() == max_strength:
-			doomed_creatures.append(creature)
+	var doomed_creatures := get_strongest_creatures(game_manager)
 
 	var destroyed_count: int = 0
 	for creature: Card in doomed_creatures:

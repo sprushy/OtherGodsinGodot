@@ -323,6 +323,8 @@ func _add_sleep_affordance(overlay: Control, card: Card) -> void:
 func _add_speed_badge(overlay: Control, card: Card) -> void:
 	if overlay == null or card == null:
 		return
+	if not is_instance_valid(overlay) or overlay.is_queued_for_deletion():
+		return
 	if card.speed <= 0:
 		return
 
@@ -359,6 +361,8 @@ func _add_speed_badge(overlay: Control, card: Card) -> void:
 		label.modulate = Color(1.0, 0.35, 0.35)
 	badge.add_child(label)
 
+	if not is_instance_valid(overlay) or overlay.is_queued_for_deletion():
+		return
 	overlay.add_child(badge)
 
 func _add_power_lock_overlay(overlay: Control, card: Card) -> void:
@@ -999,6 +1003,7 @@ func _refresh_display() -> void:
 			add_theme_stylebox_override("panel", StyleBoxEmpty.new())
 			var fd_overlay := Control.new()
 			fd_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			fd_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 			add_child(fd_overlay)
 			var face_down_viewer := _get_viewer_player()
 			var revealed_face_down_power := (card is PowerCard and (card as PowerCard).is_publicly_revealed) or card.is_temporarily_revealed()

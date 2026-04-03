@@ -17,7 +17,7 @@ func _init() -> void:
 	speed = 1
 	level = 1
 	targets = true
-	ability_text = "Pay 2 mana. If equipped to a Mage, put a creature to Sleep until end of turn. If equipped to a Shaman, it may instead switch a defensive creature to aggressive stance until end of turn. Only Mages and Shamans can equip this card."
+	ability_text = "Pay 2 mana. If equipped to a Mage, put a creature to [b]Sleep[/b] until end of turn. If equipped to a Shaman, it may instead switch a defensive creature to aggressive stance until end of turn. Only Mages and Shamans can equip this card."
 	flavor_text = ""
 	artist = "Lorinda Tomko"
 	art_path = "res://images/card_art/equipment/gambanteinn_ai_edit.png"

@@ -29,17 +29,18 @@ func update_ui() -> void:
 	_queue_thor_ai_step()
 
 func _open_upkeep_choice_window() -> void:
-	if _practice_active and game_manager != null and _is_thor_player(game_manager.current_player) and not game_manager.has_resolved_turn_upkeep():
+	if _practice_active and game_manager != null and _is_thor_player(game_manager.current_player):
 		hide_turn_choice()
-		action_label.text = "Upkeep for Thor: deciding..."
-		_queue_thor_ai_step()
+		if not game_manager.has_resolved_turn_upkeep():
+			action_label.text = "Upkeep for Thor: deciding..."
+			_queue_thor_ai_step()
 		return
 	super._open_upkeep_choice_window()
 
 func _show_priority_prompt(player: Player) -> void:
 	if _practice_active and _is_thor_player(player):
 		_hide_priority_prompt()
-		_queue_thor_ai_step()
+		call_deferred("_run_thor_priority_step")
 		return
 	super._show_priority_prompt(player)
 
@@ -272,9 +273,11 @@ func _should_queue_thor_ai_step() -> bool:
 		return false
 	if _awaiting_drag_sacrifice_zone or _awaiting_altar_void_payment:
 		return false
-	if selected_card != null or selected_attacker != null or selected_interceptor != null:
+	if selected_attacker != null or selected_interceptor != null:
 		return false
 	if pending_attack_target != null:
+		return false
+	if _has_active_modal_prompt():
 		return false
 	if not game_manager.action_stack.is_empty():
 		return game_manager.priority_player == player2
@@ -295,6 +298,21 @@ func _run_thor_ai_step() -> void:
 	if _take_thor_main_phase_action():
 		return
 	_finish_thor_turn()
+
+func _run_thor_priority_step() -> void:
+	if not _practice_active or game_manager == null or player2 == null or _game_finished:
+		return
+	if game_manager.action_stack.is_empty() or game_manager.priority_player != player2:
+		return
+	if _executing_stack_action or _stack_resolution_paused:
+		return
+	if awaiting_spell_target or awaiting_god_ability_target or awaiting_stupefy_target:
+		return
+	if awaiting_pyre_target or awaiting_anointing_target or _awaiting_creature_sacrifice:
+		return
+	if _awaiting_drag_sacrifice_zone or _awaiting_altar_void_payment:
+		return
+	_handle_thor_priority()
 
 func _handle_thor_upkeep() -> void:
 	hide_turn_choice()
@@ -870,13 +888,17 @@ func _is_divine_lightning_target_better(candidate: Card, current_best: Card) -> 
 	return _get_card_order_index(candidate) < _get_card_order_index(current_best)
 
 func _opponent_controls_strictly_strongest_creature() -> bool:
-	var thor_max_strength := 0
+	var thor_max_strength := -1
 	for creature in _get_board_creatures(player2):
+		if not FallOfTheMighty.counts_for_strength_check(creature):
+			continue
 		thor_max_strength = maxi(thor_max_strength, creature.get_effective_strength())
-	var opponent_max_strength := 0
+	var opponent_max_strength := -1
 	for creature in _get_board_creatures(player1):
+		if not FallOfTheMighty.counts_for_strength_check(creature):
+			continue
 		opponent_max_strength = maxi(opponent_max_strength, creature.get_effective_strength())
-	return opponent_max_strength > thor_max_strength
+	return opponent_max_strength >= 0 and opponent_max_strength > thor_max_strength
 
 func _get_highest_opposing_strength_or_resilience(cards: Array[Card]) -> int:
 	var threshold := 0
@@ -925,12 +947,11 @@ func _thor_can_clear_creature_without_askelladen(target: Card) -> bool:
 	if divine_lightning != null and target.is_magical_card() and divine_lightning.can_activate_from_hand(game_manager):
 		return true
 	var fall := _find_hand_fall_of_the_mighty()
-	var highest_strength := 0
-	for creature in _get_board_creatures(player1) + _get_board_creatures(player2):
-		highest_strength = maxi(highest_strength, creature.get_effective_strength())
+	var strongest_creatures := FallOfTheMighty.get_strongest_creatures(game_manager)
 	if fall != null \
+		and FallOfTheMighty.counts_for_strength_check(target) \
 		and _opponent_controls_strictly_strongest_creature() \
-		and target.get_effective_strength() == highest_strength \
+		and strongest_creatures.has(target) \
 		and _can_afford_hand_card(fall, false):
 		return true
 	return false
