@@ -79,6 +79,7 @@ func on_any_card_moved(game_manager: GameManager, moved_card: Card, _from_zone: 
 		return
 	if not _is_target_still_bound():
 		_release_self(game_manager)
+		return
 
 func on_removed(_game_manager: GameManager) -> void:
 	if attached_target != null:

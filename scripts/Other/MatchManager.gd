@@ -143,8 +143,11 @@ func get_targeting_name() -> String:
 signal action_resolved(action: CardAction)
 signal request_ui_interaction(player_index: int, type: String, data: Dictionary)
 
+const AUTHORITATIVE_STACK_ACTION_LINGER_SECONDS := 0.66
+
 var last_resolution_text: String = ""
 var last_move_failed_reason: String = ""
+var _authoritative_stack_resolution_pending: bool = false
 
 func resolve_action(action: CardAction) -> void:
 	last_resolution_text = ""
@@ -337,6 +340,128 @@ func _resolve_authoritative_stack_top_after_priority() -> void:
 	_clear_priority_window_state()
 	resolve_action(resolved_action)
 
+func _get_authoritative_resolution_tree():
+	if game_manager != null:
+		var interaction_host = game_manager.get_interaction_host()
+		if interaction_host != null and interaction_host is Node:
+			return interaction_host.get_tree()
+	if network_manager != null and network_manager is Node:
+		return network_manager.get_tree()
+	return null
+
+func _schedule_authoritative_stack_top_after_priority() -> void:
+	if _authoritative_stack_resolution_pending:
+		return
+	if game_manager == null or game_manager.action_stack.is_empty():
+		_clear_priority_window_state()
+		return
+	_authoritative_stack_resolution_pending = true
+	var resolved_action: CardAction = game_manager.action_stack.back()
+	_clear_priority_window_state()
+	var tree = _get_authoritative_resolution_tree()
+	if tree == null:
+		_finish_authoritative_stack_resolution(resolved_action)
+		return
+	tree.create_timer(AUTHORITATIVE_STACK_ACTION_LINGER_SECONDS).timeout.connect(
+		func() -> void:
+			_finish_authoritative_stack_resolution(resolved_action),
+		CONNECT_ONE_SHOT
+	)
+
+func _finish_authoritative_stack_resolution(action: CardAction) -> void:
+	_authoritative_stack_resolution_pending = false
+	if game_manager == null or action == null:
+		return
+	if not game_manager.action_stack.has(action):
+		if not game_manager.action_stack.is_empty():
+			_advance_authoritative_priority()
+		return
+	resolve_action(action)
+	if not game_manager.action_stack.is_empty():
+		_advance_authoritative_priority()
+
+func _get_action_label(card: Card) -> String:
+	return card.card_name if card != null else "Card"
+
+func _get_action_target_label(target) -> String:
+	if target is Card:
+		return (target as Card).card_name
+	if target is Player:
+		return (target as Player).player_name + "'s followers"
+	return "target"
+
+func _build_authoritative_resolution_text(action_type: int, source_card: Card, target = null) -> String:
+	var source_name := _get_action_label(source_card)
+	if target != null:
+		return "%s is targeting %s." % [source_name, _get_action_target_label(target)]
+	if action_type == CardAction.Type.SPELL:
+		return "Cast " + source_name + "!"
+	return source_name + " activated!"
+
+func _find_available_stack_display_zone(player: Player) -> Zone:
+	if player == null:
+		return null
+	for zone in player.frontline_zones + player.reserve_zones:
+		if zone.cards.size() > 0:
+			continue
+		var already_reserved := false
+		for action in game_manager.action_stack:
+			if action != null and action.display_zone == zone:
+				already_reserved = true
+				break
+		if not already_reserved:
+			return zone
+	return null
+
+func _can_use_stack_display_zone(zone: Zone, player: Player) -> bool:
+	if zone == null or player == null:
+		return false
+	if not zone.is_board_zone():
+		return false
+	if zone.zone_owner != player:
+		return false
+	if not zone.cards.is_empty():
+		return false
+	for action in game_manager.action_stack:
+		if action != null and action.display_zone == zone:
+			return false
+	return true
+
+func _assign_stack_display_zone(action: CardAction, preferred_zone: Zone = null) -> void:
+	if action == null or action.card == null or action.source_player == null:
+		return
+	if not action.card.goes_to_graveyard_after_use():
+		return
+	if preferred_zone != null and _can_use_stack_display_zone(preferred_zone, action.source_player):
+		action.display_zone = preferred_zone
+		return
+	if action.card.current_zone != null and action.card.current_zone.is_board_zone():
+		action.display_zone = action.card.current_zone
+		return
+	action.display_zone = _find_available_stack_display_zone(action.source_player)
+
+func _queue_authoritative_magical_action(
+	action_type: int,
+	source_card: Card,
+	target,
+	resolve_callback: Callable,
+	resolution_text: String = "",
+	preferred_display_zone: Zone = null,
+	response_to: CardAction = null
+) -> void:
+	if game_manager == null or source_card == null:
+		return
+	var action := CardAction.new()
+	action.type = action_type
+	action.source_player = source_card.card_owner if source_card.card_owner != null else game_manager.current_player
+	action.card = source_card
+	action.target = target
+	action.response_to = response_to
+	action.resolve_callback = resolve_callback
+	action.resolution_text = resolution_text if resolution_text != "" else _build_authoritative_resolution_text(action_type, source_card, target)
+	_assign_stack_display_zone(action, preferred_display_zone)
+	game_manager.push_to_stack(action)
+
 func _get_intercept_target_row_depth(protected_target) -> int:
 	if protected_target is Player:
 		return 2
@@ -525,6 +650,8 @@ func _broadcast_priority_offered(player: Player, responses: Array) -> void:
 func _advance_authoritative_priority() -> void:
 	if not _uses_authoritative_headless_priority_flow():
 		return
+	if _authoritative_stack_resolution_pending:
+		return
 	if game_manager.action_stack.is_empty():
 		return
 	var player := game_manager.priority_player
@@ -541,9 +668,7 @@ func _advance_authoritative_priority() -> void:
 			if game_manager.action_stack.is_empty():
 				_clear_priority_window_state()
 				return
-			_resolve_authoritative_stack_top_after_priority()
-			if not game_manager.action_stack.is_empty():
-				_advance_authoritative_priority()
+			_schedule_authoritative_stack_top_after_priority()
 		else:
 			_advance_authoritative_priority()
 		return
@@ -1069,9 +1194,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 				move_failed.emit("cast_spell: spell not found or not a SpellCard")
 				return false
 			var player := acting_player
-			if not game_manager.can_play_card(player, spell, null):
-				move_failed.emit("Cannot cast " + spell.card_name + "!")
-				return false
+			var prepared_spell := spell.is_prepared and spell.current_zone != null and spell.current_zone.is_board_zone()
 			
 			# Set chosen discards
 			var discard_uids: Array = command.get("discard_uids", [])
@@ -1089,18 +1212,59 @@ func _process_command_impl(command: Dictionary) -> bool:
 				var sac_card := game_manager.get_card_by_uid(sacrifice_uid)
 				if sac_card != null:
 					spell.set_meta("pending_sacrifice_choice", sac_card)
-			
-			var mana_required := game_manager.get_card_play_mana_cost(player, spell, false)
-			if not spell.pay_costs_with_mana_cost(player, mana_required, game_manager):
-				move_failed.emit("Cannot afford " + spell.card_name + "!")
-				return false
-			if mana_required < spell.mana_cost:
-				game_manager.claim_cost_adjustments(
-					spell,
-					spell.mana_cost,
-					Card.COST_KIND_HAND_PLAY,
-					{"player": player, "prepared": false}
+
+			if prepared_spell:
+				if not (spell as SpellCard).can_activate_prepared(game_manager, player):
+					move_failed.emit(
+						game_manager.get_activation_mana_unavailable_text(spell)
+						if game_manager.has_insufficient_activation_mana(spell, true, player)
+						else spell.card_name + " cannot activate right now."
+					)
+					return false
+				if not game_manager.activate_prepared_card(spell, player):
+					move_failed.emit(
+						game_manager.get_activation_mana_unavailable_text(spell)
+						if game_manager.has_insufficient_activation_mana(spell, true, player)
+						else "Cannot afford " + spell.card_name + "!"
+					)
+					return false
+			else:
+				if not game_manager.can_play_card(player, spell, null):
+					move_failed.emit("Cannot cast " + spell.card_name + "!")
+					return false
+				var mana_required := game_manager.get_card_play_mana_cost(player, spell, false)
+				if not spell.pay_costs_with_mana_cost(player, mana_required, game_manager):
+					move_failed.emit("Cannot afford " + spell.card_name + "!")
+					return false
+				if mana_required < spell.mana_cost:
+					game_manager.claim_cost_adjustments(
+						spell,
+						spell.mana_cost,
+						Card.COST_KIND_HAND_PLAY,
+						{"player": player, "prepared": false}
+					)
+			if _uses_authoritative_headless_priority_flow():
+				var spell_target_uid: String = command.get("target_uid", "")
+				var spell_target: Card = game_manager.get_card_by_uid(spell_target_uid) if spell_target_uid != "" else null
+				var preferred_display_zone: Zone = spell.current_zone if prepared_spell else (
+					spell_target.current_zone if spell_target != null and spell_target.current_zone != null and spell_target.current_zone.is_board_zone() else null
 				)
+				var spell_resolve := func() -> void:
+					game_manager.notify_spell_played(player, spell)
+					(spell as SpellCard).resolve_from_command(game_manager, command)
+					if (spell as SpellCard).should_go_to_graveyard() and spell.current_zone != player.graveyard_zone:
+						player.move_card(spell, player.graveyard_zone)
+				_queue_authoritative_magical_action(
+					CardAction.Type.SPELL,
+					spell,
+					spell_target,
+					spell_resolve,
+					"",
+					preferred_display_zone
+				)
+				move_validated.emit(command)
+				_advance_authoritative_priority()
+				return true
 			game_manager.notify_spell_played(player, spell)
 			(spell as SpellCard).resolve_from_command(game_manager, command)
 			if (spell as SpellCard).should_go_to_graveyard() and spell.current_zone != player.graveyard_zone:
@@ -1120,6 +1284,17 @@ func _process_command_impl(command: Dictionary) -> bool:
 			var target_uid: String = command.get("target_uid", "")
 			if target_uid != "":
 				target = game_manager.get_card_by_uid(target_uid)
+			if _uses_authoritative_headless_priority_flow():
+				_queue_authoritative_magical_action(
+					CardAction.Type.ABILITY,
+					god_card,
+					target,
+					func() -> void:
+						god_card.activate(game_manager, target)
+				)
+				move_validated.emit(command)
+				_advance_authoritative_priority()
+				return true
 			if god_card.has_method("activate"):
 				god_card.activate(game_manager, target)
 			move_validated.emit(command)
@@ -1143,11 +1318,33 @@ func _process_command_impl(command: Dictionary) -> bool:
 				if not breidablik.can_return_priest(game_manager):
 					move_failed.emit(power_card.card_name + " cannot return a priest right now.")
 					return false
+				if _uses_authoritative_headless_priority_flow():
+					_queue_authoritative_magical_action(
+						CardAction.Type.ABILITY,
+						power_card,
+						act_target,
+						func() -> void:
+							breidablik.return_priest(game_manager, act_target)
+					)
+					move_validated.emit(command)
+					_advance_authoritative_priority()
+					return true
 				breidablik.return_priest(game_manager, act_target)
 			else:
 				if not power_card.can_activate(game_manager):
 					move_failed.emit(power_card.card_name + " cannot activate right now.")
 					return false
+				if _uses_authoritative_headless_priority_flow():
+					_queue_authoritative_magical_action(
+						CardAction.Type.ABILITY,
+						power_card,
+						act_target,
+						func() -> void:
+							power_card.activate(game_manager, act_target)
+					)
+					move_validated.emit(command)
+					_advance_authoritative_priority()
+					return true
 				power_card.activate(game_manager, act_target)
 			move_validated.emit(command)
 			return true
@@ -1178,6 +1375,26 @@ func _process_command_impl(command: Dictionary) -> bool:
 				if not charm_card.pay_costs(charm_card.card_owner, game_manager):
 					move_failed.emit(game_manager.get_activation_mana_unavailable_text(charm_card) if game_manager.has_insufficient_activation_mana(charm_card, false, charm_card.card_owner) else "Cannot afford " + charm_card.card_name + "!")
 					return false
+			if _uses_authoritative_headless_priority_flow():
+				var preferred_display_zone: Zone = charm_card.current_zone if charm_prepared else (charm_target.current_zone if charm_target != null and charm_target.current_zone != null and charm_target.current_zone.is_board_zone() else null)
+				var charm_resolve := func() -> void:
+					charm_card.resolve(game_manager, charm_target)
+					if charm_card.goes_to_graveyard_after_use() \
+							and charm_card.current_zone != null \
+							and charm_card.current_zone != charm_card.card_owner.graveyard_zone:
+						charm_card.card_owner.move_card(charm_card, charm_card.card_owner.graveyard_zone)
+				_queue_authoritative_magical_action(
+					CardAction.Type.SPELL,
+					charm_card,
+					charm_target,
+					charm_resolve,
+					"",
+					preferred_display_zone,
+					charm_source_action
+				)
+				move_validated.emit(command)
+				_advance_authoritative_priority()
+				return true
 			charm_card.resolve(game_manager, charm_target)
 			if charm_card.goes_to_graveyard_after_use() \
 					and charm_card.current_zone != null \
@@ -1273,6 +1490,24 @@ func _process_command_impl(command: Dictionary) -> bool:
 			var aca_target_uid: String = command.get("target_uid", "")
 			if aca_target_uid != "":
 				aca_target = game_manager.get_card_by_uid(aca_target_uid)
+			if _uses_authoritative_headless_priority_flow():
+				_queue_authoritative_magical_action(
+					CardAction.Type.ABILITY,
+					aca_source,
+					aca_target,
+					func() -> void:
+						if command.has("return_to_hand"):
+							aca_source.activate(game_manager, {"return_to_hand": bool(command.get("return_to_hand", false))})
+						elif command.has("option"):
+							aca_source.activate(game_manager, command.get("option", {}))
+						elif aca_target != null:
+							aca_source.activate(game_manager, aca_target)
+						else:
+							aca_source.activate(game_manager)
+				)
+				move_validated.emit(command)
+				_advance_authoritative_priority()
+				return true
 			if command.has("return_to_hand"):
 				aca_source.activate(game_manager, {"return_to_hand": bool(command.get("return_to_hand", false))})
 			elif command.has("option"):
@@ -1467,9 +1702,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 				move_validated.emit(command)
 				if game_manager.both_passed():
 					if not game_manager.action_stack.is_empty():
-						_resolve_authoritative_stack_top_after_priority()
-						if not game_manager.action_stack.is_empty():
-							_advance_authoritative_priority()
+						_schedule_authoritative_stack_top_after_priority()
 					else:
 						_clear_priority_window_state()
 				else:

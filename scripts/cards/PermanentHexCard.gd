@@ -18,27 +18,9 @@ func get_valid_targets(game_manager: GameManager) -> Array[Card]:
 	for player in game_manager.players:
 		for zone in player.frontline_zones + player.reserve_zones:
 			var creature := zone.get_creature()
-			if creature != null and can_play_to_target(game_manager, creature):
+			if creature != null and can_activate_on_target(game_manager, creature):
 				valid_targets.append(creature)
 	return valid_targets
-
-func can_play_to_target(game_manager: GameManager, target: Card) -> bool:
-	if game_manager == null or card_owner == null or target == null:
-		return false
-	if current_zone != card_owner.hand_zone:
-		return false
-	if card_owner != game_manager.current_player:
-		return false
-	if not can_be_played(game_manager, card_owner):
-		return false
-	if not can_attach_to_target(game_manager, target):
-		return false
-	var target_zone := target.current_zone
-	if target_zone == null or not target_zone.is_board_zone():
-		return false
-	if game_manager.is_guardian_protected(target, self):
-		return false
-	return target_zone.get_equipment().is_empty()
 
 func can_activate_on_target(game_manager: GameManager, target: Card) -> bool:
 	if game_manager == null or card_owner == null or target == null:
@@ -53,23 +35,6 @@ func can_activate_on_target(game_manager: GameManager, target: Card) -> bool:
 	if game_manager.is_guardian_protected(target, self):
 		return false
 	return target_zone.get_equipment().is_empty()
-
-func play_to_target(game_manager: GameManager, target: Card) -> bool:
-	if not can_play_to_target(game_manager, target):
-		return false
-	var target_zone := target.current_zone
-	_pending_attach_target = target
-	if not pay_costs(card_owner, game_manager):
-		_pending_attach_target = null
-		return false
-	card_owner.move_card(self, target_zone)
-	is_prepared = false
-	is_face_down = false
-	on_impact(game_manager)
-	var attached_successfully := attached_target == target and current_zone == target_zone
-	if not attached_successfully:
-		_pending_attach_target = null
-	return attached_successfully
 
 func activate_on_target(game_manager: GameManager, target: Card) -> bool:
 	if not can_activate_on_target(game_manager, target):

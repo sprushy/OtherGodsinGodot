@@ -1,8 +1,15 @@
 extends CombatMockGame
 class_name PracticeThorGame
 
+const DeckBuilderScript = preload("res://scripts/Other/DeckBuilder.gd")
+const CardCatalogScript = preload("res://scripts/cards/CardCatalog.gd")
+
 var _practice_active: bool = false
 var _thor_ai_step_queued: bool = false
+var _player_practice_deck: Dictionary = {}
+
+func set_player_practice_deck(saved_deck: Dictionary) -> void:
+	_player_practice_deck = saved_deck.duplicate(true)
 
 func start_game(
 	is_host: bool = false,
@@ -51,8 +58,7 @@ func _load_thor_practice_match() -> void:
 	player1.player_name = "Player 1"
 	player2.player_name = "Thor"
 
-	_add_practice_god(player1, Baldr.new())
-	create_deck(player1)
+	var player_deck_name := _load_player_practice_deck(player1)
 
 	_add_practice_god(player2, Thor.new())
 	for card in _build_thor_practice_deck():
@@ -80,7 +86,10 @@ func _load_thor_practice_match() -> void:
 	player2.is_turn_player = false
 	_practice_active = true
 	game_manager.start_turn()
-	action_label.text = "Practice vs Thor: Thor follows a fixed combat script."
+	if player_deck_name.is_empty():
+		action_label.text = "Practice vs Thor: Thor follows a fixed combat script."
+	else:
+		action_label.text = "Practice vs Thor: using %s. Thor follows a fixed combat script." % player_deck_name
 	update_ui()
 	_open_upkeep_choice_window()
 
@@ -133,6 +142,7 @@ func _reset_practice_match_state() -> void:
 func _reset_player_practice_state(player: Player) -> void:
 	if player == null:
 		return
+	player.current_deck.clear()
 	_clear_zone(player.hand_zone)
 	_clear_zone(player.deck_zone)
 	_clear_zone(player.graveyard_zone)
@@ -171,6 +181,25 @@ func _add_practice_deck_card(player: Player, card: Card) -> void:
 		return
 	card.card_owner = player
 	player.deck_zone.add_card(card)
+
+func _load_player_practice_deck(player: Player) -> String:
+	if _try_load_saved_player_practice_deck(player):
+		return str(_player_practice_deck.get("name", "")).strip_edges()
+	_add_practice_god(player, Baldr.new())
+	create_deck(player)
+	return ""
+
+func _try_load_saved_player_practice_deck(player: Player) -> bool:
+	if player == null or _player_practice_deck.is_empty():
+		return false
+	var saved_counts = _player_practice_deck.get("cards", {})
+	if not (saved_counts is Dictionary) or (saved_counts as Dictionary).is_empty():
+		return false
+	var submitted_cards := CardCatalogScript.make_cards_from_counts(saved_counts)
+	if submitted_cards.is_empty():
+		return false
+	var deck_builder := DeckBuilderScript.new()
+	return deck_builder.build_deck(player, submitted_cards)
 
 func _build_thor_practice_deck() -> Array[Card]:
 	return [

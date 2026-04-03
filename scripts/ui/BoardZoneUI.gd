@@ -578,8 +578,8 @@ func _add_equipment_indicator_badge(
 	badge.set_anchors_preset(Control.PRESET_TOP_LEFT)
 	badge.offset_left = badge_offset_left
 	badge.offset_top = badge_offset_top
-	badge.offset_right = offset_left + 22.0
-	badge.offset_bottom = offset_top + 22.0
+	badge.offset_right = badge_offset_left + 22.0
+	badge.offset_bottom = badge_offset_top + 22.0
 
 	var badge_style := StyleBoxFlat.new()
 	badge_style.bg_color = fill_color
@@ -632,13 +632,24 @@ func _add_equipment_affordances(overlay: Control, card: Card) -> void:
 
 func _get_attached_permanent_hexes(card: Card) -> Array[Card]:
 	var bindings: Array[Card] = []
-	if card == null or card.current_zone == null:
+	if card == null:
 		return bindings
-	for zone_card in card.current_zone.cards:
-		if zone_card == null or zone_card == card:
+	var scanned_zones: Array[Zone] = []
+	if game_manager != null:
+		for player in game_manager.players:
+			scanned_zones.append_array(player.frontline_zones)
+			scanned_zones.append_array(player.reserve_zones)
+			scanned_zones.append_array(player.power_zones)
+	elif card.current_zone != null:
+		scanned_zones.append(card.current_zone)
+	for scanned_zone in scanned_zones:
+		if scanned_zone == null:
 			continue
-		if zone_card is PermanentHexCard and (zone_card as PermanentHexCard).attached_target == card:
-			bindings.append(zone_card)
+		for zone_card in scanned_zone.cards:
+			if zone_card == null or zone_card == card or zone_card in bindings:
+				continue
+			if zone_card is PermanentHexCard and (zone_card as PermanentHexCard).attached_target == card:
+				bindings.append(zone_card)
 	return bindings
 
 func _get_dromi_binding_source(card: Card) -> Card:

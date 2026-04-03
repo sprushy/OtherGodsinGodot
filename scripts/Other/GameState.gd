@@ -26,6 +26,7 @@ static func serialize(gm: GameManager, viewer_player_index: int = -1) -> Diction
 		attack_restrictions = _serialize_attack_restrictions(gm),
 		prepared_hexes = _serialize_prepared_cards(gm.prepared_hexes),
 		prepared_charms = _serialize_prepared_cards(gm.prepared_charms),
+		action_stack = _serialize_action_stack(gm.action_stack, gm),
 		players = [],
 	}
 	if gm.winning_player != null:
@@ -149,6 +150,14 @@ static func _serialize_prepared_cards(prepared_map: Dictionary) -> Array:
 		})
 	return result
 
+static func _serialize_action_stack(action_stack: Array, gm: GameManager) -> Array:
+	var result := []
+	for action in action_stack:
+		if action == null or not (action is CardAction):
+			continue
+		result.append((action as CardAction).to_dict(gm))
+	return result
+
 # -------------------------------------------------------------------------
 # Deserialization (dict → ghost GameManager)
 # -------------------------------------------------------------------------
@@ -183,6 +192,7 @@ static func apply_to_manager(data: Dictionary, gm: GameManager) -> void:
 
 	gm.prepared_hexes.clear()
 	gm.prepared_charms.clear()
+	gm.action_stack.clear()
 
 	var players_data: Array = data.get("players", [])
 	for i in mini(players_data.size(), gm.players.size()):
@@ -222,6 +232,10 @@ static func apply_to_manager(data: Dictionary, gm: GameManager) -> void:
 
 	_restore_prepared_cards(data.get("prepared_hexes", []), gm.prepared_hexes, gm)
 	_restore_prepared_cards(data.get("prepared_charms", []), gm.prepared_charms, gm)
+	for action_data in data.get("action_stack", []):
+		if not (action_data is Dictionary):
+			continue
+		gm.action_stack.append(CardAction.from_dict(action_data, gm))
 
 static func _apply_zone_cards(zone: Zone, cards_data: Array) -> void:
 	zone.cards.clear()

@@ -134,7 +134,7 @@ var _fan_container: Control = null
 const FAN_ROT_MAX     := 12.0   # degrees at the outermost card
 const FAN_ARC_HEIGHT  := 22.0   # px the arc dips at centre
 const FAN_CARD_SPACING := 130   # px between card pivot centres
-const STACK_ACTION_LINGER_SECONDS := 0.5
+const STACK_ACTION_LINGER_SECONDS := 0.66
 const POST_GAME_RETURN_DELAY_SECONDS := 1.6
 
 @onready var choice_container = $MainHBox/LeftPanel/ChoiceContainer
@@ -4287,44 +4287,6 @@ func _try_handle_pending_click_selection(clicked_card: Card) -> bool:
 	match_manager.confirm_click_selection(clicked_card)
 	return true
 
-func _resolve_hand_permanent_hex_target(hex: PermanentHexCard, target: Card) -> void:
-	if hex == null or target == null or game_manager == null:
-		return
-	if not hex.play_to_target(game_manager, target):
-		action_label.text = hex.card_name + " fizzles: choose a valid creature."
-		update_ui()
-		return
-	selected_card = null
-	placement_mode = ""
-	placement_container.visible = false
-	var target_label := _get_target_label(target, game_manager.get_feedback_viewer(), "target")
-	action_label.text = _consume_resolution_feedback(hex.card_name + " attaches to " + target_label + ".")
-	update_ui()
-
-func _begin_hand_permanent_hex_target_selection(hex: PermanentHexCard) -> void:
-	if hex == null:
-		return
-	selected_card = hex
-	for vc in _hand_visual_cards:
-		vc.set_highlighted(vc.card_data == hex)
-	var targets := hex.get_valid_targets(game_manager)
-	if targets.is_empty():
-		action_label.text = hex.card_name + " has no valid creature targets right now."
-		update_ui()
-		return
-	var validate_hex_target := func(clicked_card: Card) -> bool:
-		return clicked_card != null and hex.can_play_to_target(game_manager, clicked_card)
-	var confirm_hex_target := func(clicked_card: Card) -> void:
-		_resolve_hand_permanent_hex_target(hex, clicked_card)
-	_begin_pending_click_selection(
-		hex.card_name,
-		hex,
-		validate_hex_target,
-		confirm_hex_target
-	)
-	action_label.text = hex.card_name + ": click a creature to target."
-	update_ui()
-
 func _begin_bit_meseri_target_selection(spell: BitMeseri) -> void:
 	if spell == null or game_manager == null:
 		return
@@ -5270,7 +5232,10 @@ func _on_hand_card_pressed(card: Card) -> void:
 		update_ui()
 		return
 	if card is PermanentHexCard:
-		_begin_hand_permanent_hex_target_selection(card as PermanentHexCard)
+		_select_hand_card(card)
+		placement_mode = ""
+		action_label.text = "Selected hex: " + card.card_name + " - click an empty friendly zone to prepare it."
+		update_ui()
 		return
 	_select_hand_card(card)
 	var fenrir_hand_ability_available := card is Fenrir and (card as Fenrir).can_use_hand_ability(game_manager)
@@ -5290,7 +5255,7 @@ func _on_hand_card_pressed(card: Card) -> void:
 			action_label.text = "Selected spell: " + card.card_name + " - click a zone to cast it, or drag with S/right-click to prepare it."
 	elif card.card_type == Card.CardType.HEX:
 		placement_mode = ""
-		action_label.text = "Selected hex: " + card.card_name + " - click an empty friendly zone to prepare it, or drag it onto a valid target if it attaches."
+		action_label.text = "Selected hex: " + card.card_name + " - click an empty friendly zone to prepare it."
 	elif fenrir_hand_ability_available:
 		action_label.text = card.card_name + " selected - right-click for placement options or Wolf Master, or drag to place (S while dragging = stealth)"
 	elif card.card_type == Card.CardType.CREATURE and not card.is_god:
@@ -8531,6 +8496,8 @@ func _bdrag_cleanup() -> void:
 func _get_attack_block_reason(attacker: Card) -> String:
 	if attacker == null or not attacker is Card:
 		return "Invalid attacker selected."
+	if match_manager != null and not match_manager.can_attack(attacker):
+		return match_manager.get_attack_invalid_reason(attacker)
 	if attacker.get_controller() != game_manager.current_player:
 		return "It is not your turn to attack."
 	if game_manager.turn_number <= 1:
@@ -8828,6 +8795,13 @@ func resolve_pending_attack() -> void:
 	_remove_no_intercept_button()
 	if selected_attacker == null:
 		action_label.text = "No attacker is selected."
+		update_ui()
+		return
+	if match_manager != null and not match_manager.can_attack(selected_attacker):
+		action_label.text = match_manager.get_attack_invalid_reason(selected_attacker)
+		selected_attacker = null
+		selected_interceptor = null
+		pending_attack_target = null
 		update_ui()
 		return
 
@@ -11359,8 +11333,7 @@ func _on_demiurge_confirm_pressed(spin: SpinBox) -> void:
 		update_ui()
 		return
 	var pay_demiurge_costs := func() -> bool:
-		return spell.can_cast_with_x(game_manager, x_value) \
-			and spell.pay_costs(game_manager.current_player, game_manager) \
+		return spell.pay_costs(game_manager.current_player, game_manager) \
 			and spell.pay_x_cost(game_manager, x_value)
 	var resolve_demiurge := func() -> void:
 		var demon_choices: Array = spell.resolve_with_x(game_manager, x_value, true)
@@ -12278,7 +12251,14 @@ func _show_remote_priority_prompt(responses: Array) -> void:
 			_hide_priority_prompt()
 			if rtype == "hex":
 				var target_is_attacker: bool = response.get("target_is_attacker", false)
-				if target_uids.size() == 1:
+				if resp_card is PermanentHexCard and target_uids.size() > 1:
+					_begin_remote_priority_permanent_hex_target_selection(
+						resp_card as PermanentHexCard,
+						target_uids,
+						target_is_attacker,
+						responses
+					)
+				elif target_uids.size() == 1:
 					network_manager.request_action({
 						type = "play_hex_response",
 						hex_uid = card_uid,
@@ -12383,6 +12363,37 @@ func _show_remote_priority_prompt(responses: Array) -> void:
 
 	_promote_transient_ui(panel)
 	panel.show()
+
+func _begin_remote_priority_permanent_hex_target_selection(
+	hex: PermanentHexCard,
+	target_uids: Array,
+	target_is_attacker: bool,
+	responses: Array
+) -> void:
+	if hex == null or network_manager == null:
+		return
+	var validate_hex_target := func(clicked_card: Card) -> bool:
+		return clicked_card != null and clicked_card.uid in target_uids
+	var confirm_hex_target := func(chosen_card: Card) -> void:
+		network_manager.request_action({
+			type = "play_hex_response",
+			hex_uid = hex.uid,
+			target_uid = chosen_card.uid,
+			target_is_attacker = target_is_attacker,
+		})
+	var cancel_hex_target := func() -> void:
+		action_label.text = "Cancelled " + hex.card_name + " target selection."
+		update_ui()
+		_show_remote_priority_prompt(responses)
+	_begin_pending_click_selection(
+		hex.card_name,
+		hex,
+		validate_hex_target,
+		confirm_hex_target,
+		cancel_hex_target
+	)
+	action_label.text = hex.card_name + ": click a creature to target."
+	update_ui()
 
 func _apply_intercept_offered(data: Dictionary) -> void:
 	var msg: String = data.get("action_message", "")
@@ -12849,14 +12860,19 @@ func _on_card_drag_released(card: Card, drop_pos: Vector2, card_rotated: bool, c
 			update_ui()
 			return
 
-	# Non-targeted spell/hex dropped on any friendly zone (occupied or not):
-	# find an empty zone and route through the normal cast/prepare flow there.
+	# Non-targeted spell/hex dropped on a friendly zone:
+	# respect the dropped zone for preparation, otherwise fall back to an empty slot.
 	if card.card_type in [Card.CardType.SPELL, Card.CardType.HEX] and not card.targets:
 		for zu in _board_zone_uis:
 			if zu.get_global_rect().has_point(drop_pos) and not zu._is_enemy:
-				var empty_zone := _find_empty_player_zone()
-				if empty_zone != null:
-					_on_card_dropped_to_zone(card, empty_zone, card_rotated, card_stealth)
+				var prepare_from_selected_mode := card == selected_card and placement_mode == "prepare_spell"
+				var prepare_on_drop := prepare_from_selected_mode \
+					or (card.card_type == Card.CardType.HEX and not card.targets) \
+					or (card_stealth and (card.card_type == Card.CardType.SPELL or card is CharmCard))
+				var empty_zone: Zone = zu.zone if zu.zone != null and zu.zone.cards.is_empty() else _find_empty_player_zone()
+				var target_zone: Zone = zu.zone if prepare_on_drop else empty_zone
+				if target_zone != null:
+					_on_card_dropped_to_zone(card, target_zone, card_rotated, card_stealth)
 				else:
 					action_label.text = "No empty zone available to place " + card.card_name + "!"
 				update_ui()
@@ -12983,15 +12999,9 @@ func _on_card_dropped_to_zone(card: Card, zone: Zone, is_rotated: bool = false, 
 			_cast_targeted_spell(card, zone.cards[0])
 		return
 	if card is PermanentHexCard and zone.cards.size() > 0:
-		var permanent_hex := card as PermanentHexCard
-		var dropped_target := zone.get_creature()
-		if dropped_target != null and permanent_hex.can_play_to_target(game_manager, dropped_target):
-			_pending_drop_zone = null
-			_resolve_hand_permanent_hex_target(permanent_hex, dropped_target)
-		else:
-			selected_card = permanent_hex
-			action_label.text = permanent_hex.card_name + " must target a creature."
-			update_ui()
+		selected_card = card
+		action_label.text = card.card_name + " must be prepared on an empty friendly zone first."
+		update_ui()
 		return
 	if card is Absence:
 		if zone.cards.size() > 0 and (zone.cards[0] is PowerCard or zone.cards[0].is_god):

@@ -144,6 +144,31 @@ func _label_for_move(move: Dictionary) -> String:
 		"play_card":
 			var card := game_manager.get_card_by_uid(move.get("card_uid", ""))
 			return ("Played %s." % card.card_name) if card else "Card played."
+		"cast_spell":
+			return _label_for_stack_move(
+				game_manager.get_card_by_uid(move.get("spell_uid", "")),
+				game_manager.get_card_by_uid(move.get("target_uid", ""))
+			)
+		"cast_charm":
+			return _label_for_stack_move(
+				game_manager.get_card_by_uid(move.get("charm_uid", "")),
+				game_manager.get_card_by_uid(move.get("target_uid", ""))
+			)
+		"god_ability":
+			return _label_for_stack_move(
+				game_manager.get_card_by_uid(move.get("god_uid", "")),
+				game_manager.get_card_by_uid(move.get("target_uid", ""))
+			)
+		"activate_power":
+			return _label_for_stack_move(
+				game_manager.get_card_by_uid(move.get("power_uid", "")),
+				game_manager.get_card_by_uid(move.get("target_uid", ""))
+			)
+		"activate_card_ability":
+			return _label_for_stack_move(
+				game_manager.get_card_by_uid(move.get("source_uid", "")),
+				game_manager.get_card_by_uid(move.get("target_uid", ""))
+			)
 		"prepare_card":
 			return "A card was prepared face-down."
 		"creature_move":
@@ -155,3 +180,10 @@ func _label_for_move(move: Dictionary) -> String:
 		"end_turn":
 			return "Turn ended."
 	return ""
+
+func _label_for_stack_move(card: Card, target: Card = null) -> String:
+	if card == null:
+		return ""
+	if target != null:
+		return "%s is targeting %s." % [card.card_name, target.card_name]
+	return card.card_name + " goes on the stack."

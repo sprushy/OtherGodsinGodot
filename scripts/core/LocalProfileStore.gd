@@ -2,6 +2,8 @@ extends RefCounted
 class_name LocalProfileStore
 
 const STORAGE_PATH := "user://player_profiles.json"
+const STORAGE_TEMP_PATH := "user://player_profiles.json.tmp"
+const STORAGE_BACKUP_PATH := "user://player_profiles.json.bak"
 const LEGACY_DECK_PATH := "user://saved_deck.json"
 const DEFAULT_PROFILE_NAME := "Player"
 const DEFAULT_DECK_NAME := "Default Deck"
@@ -29,6 +31,77 @@ func restore_last_profile(default_name: String = DEFAULT_PROFILE_NAME) -> Dictio
 	var created: Dictionary = ensure_profile("", default_name, true)
 	_import_legacy_deck_if_needed(str(created.get("profile_id", "")))
 	return created
+
+func ensure_guest_profile(display_name: String = DEFAULT_PROFILE_NAME, make_current: bool = true) -> Dictionary:
+	_ensure_loaded()
+	var guest_profile_id := str(_data.get("guest_profile_id", "")).strip_edges()
+	if not guest_profile_id.is_empty():
+		var existing := get_profile(guest_profile_id)
+		if not existing.is_empty():
+			var restored := ensure_profile(guest_profile_id, display_name, make_current)
+			_import_legacy_deck_if_needed(str(restored.get("profile_id", "")))
+			return restored
+	var created := ensure_profile("", display_name, make_current)
+	var created_profile_id := str(created.get("profile_id", "")).strip_edges()
+	if created_profile_id.is_empty():
+		return created
+	_data["guest_profile_id"] = created_profile_id
+	_save()
+	_import_legacy_deck_if_needed(created_profile_id)
+	return created
+
+func get_guest_profile_id() -> String:
+	_ensure_loaded()
+	return str(_data.get("guest_profile_id", "")).strip_edges()
+
+func ensure_account_profile(
+	account_username: String,
+	preferred_profile_id: String = "",
+	make_current: bool = true
+) -> Dictionary:
+	_ensure_loaded()
+	var normalized_username := account_username.strip_edges()
+	if normalized_username.is_empty():
+		return ensure_profile(preferred_profile_id, DEFAULT_PROFILE_NAME, make_current)
+	var normalized_key := normalized_username.to_lower()
+	var mapped_profile_id := str(_get_account_profile_id_by_username().get(normalized_key, "")).strip_edges()
+	if not mapped_profile_id.is_empty():
+		var mapped_profile := get_profile(mapped_profile_id)
+		if not mapped_profile.is_empty():
+			return _remember_account_profile_mapping(
+				normalized_key,
+				ensure_profile(mapped_profile_id, normalized_username, make_current)
+			)
+	var resolved_preferred_id := preferred_profile_id.strip_edges()
+	if not resolved_preferred_id.is_empty():
+		var preferred_profile := get_profile(resolved_preferred_id)
+		if not preferred_profile.is_empty():
+			return _remember_account_profile_mapping(
+				normalized_key,
+				ensure_profile(resolved_preferred_id, normalized_username, make_current)
+			)
+	var matched_profile_id := find_profile_id_by_display_name(normalized_username)
+	if not matched_profile_id.is_empty():
+		return _remember_account_profile_mapping(
+			normalized_key,
+			ensure_profile(matched_profile_id, normalized_username, make_current)
+		)
+	var created_profile := ensure_profile(resolved_preferred_id, normalized_username, make_current)
+	return _remember_account_profile_mapping(normalized_key, created_profile)
+
+func find_profile_id_by_display_name(display_name: String) -> String:
+	_ensure_loaded()
+	var normalized_name := display_name.strip_edges().to_lower()
+	if normalized_name.is_empty():
+		return ""
+	for profile_id in _get_profiles().keys():
+		var profile = _get_profiles().get(profile_id, {})
+		if not (profile is Dictionary):
+			continue
+		var stored_name := str((profile as Dictionary).get("display_name", "")).strip_edges().to_lower()
+		if stored_name == normalized_name:
+			return str(profile_id)
+	return ""
 
 func ensure_profile(profile_id: String = "", display_name: String = DEFAULT_PROFILE_NAME, make_current: bool = true) -> Dictionary:
 	_ensure_loaded()
@@ -382,6 +455,8 @@ func _ensure_loaded() -> void:
 	_loaded = true
 	_data = {
 		"current_profile_id": "",
+		"guest_profile_id": "",
+		"account_profile_id_by_username": {},
 		"profiles": {},
 		"decks_by_profile": {},
 		"last_selected_deck_by_profile": {},
@@ -393,47 +468,162 @@ func _ensure_loaded() -> void:
 		"auth_onboarding_seen": false,
 		DISMISSED_RELEASE_VERSION_KEY: "",
 	}
-	if not FileAccess.file_exists(STORAGE_PATH):
+	var primary_snapshot: Dictionary = _read_storage_snapshot(STORAGE_PATH, "primary")
+	if _merge_storage_snapshot(primary_snapshot):
+		if not FileAccess.file_exists(STORAGE_BACKUP_PATH):
+			_copy_storage_snapshot(STORAGE_PATH, STORAGE_BACKUP_PATH)
 		return
-	var file := FileAccess.open(STORAGE_PATH, FileAccess.READ)
-	if file == null:
-		print("LocalProfileStore: Error opening file for read: ", STORAGE_PATH)
-		return
-	var content := file.get_as_text()
-	file.close()
-	if content.strip_edges().is_empty():
-		return
-	var parsed = JSON.parse_string(content)
-	if parsed is Dictionary:
-		_data.merge(parsed as Dictionary, true)
-	else:
-		print("LocalProfileStore: Error parsing JSON from ", STORAGE_PATH)
 
-func _save() -> void:
-	var global_path := ProjectSettings.globalize_path(STORAGE_PATH)
-	var parent_dir := global_path.get_base_dir()
-	if not parent_dir.is_empty() and not DirAccess.dir_exists_absolute(parent_dir):
-		var err := DirAccess.make_dir_recursive_absolute(parent_dir)
-		if err != OK:
-			print("LocalProfileStore: Error creating directory ", parent_dir, " : ", err)
+	var temp_snapshot: Dictionary = _read_storage_snapshot(STORAGE_TEMP_PATH, "temp")
+	if _merge_storage_snapshot(temp_snapshot):
+		print("LocalProfileStore: Restoring profile data from temp snapshot.")
+		_save(true)
+		return
 
-	var file := FileAccess.open(STORAGE_PATH, FileAccess.WRITE)
-	if file == null:
-		print("LocalProfileStore: Error opening file for write: ", STORAGE_PATH, " (Error: ", FileAccess.get_open_error(), ")")
+	var backup_snapshot: Dictionary = _read_storage_snapshot(STORAGE_BACKUP_PATH, "backup")
+	if _merge_storage_snapshot(backup_snapshot):
+		print("LocalProfileStore: Restoring profile data from backup snapshot.")
+		_save(true)
+
+func _save(skip_backup_refresh: bool = false) -> void:
+	if not _ensure_storage_parent_exists(STORAGE_PATH):
 		return
 	var json_string := JSON.stringify(_data, "\t")
-	file.store_string(json_string)
+	if not _write_storage_snapshot(STORAGE_TEMP_PATH, json_string):
+		return
+
+	if not skip_backup_refresh and FileAccess.file_exists(STORAGE_PATH):
+		if FileAccess.file_exists(STORAGE_BACKUP_PATH):
+			DirAccess.remove_absolute(ProjectSettings.globalize_path(STORAGE_BACKUP_PATH))
+		if not _copy_storage_snapshot(STORAGE_PATH, STORAGE_BACKUP_PATH):
+			print("LocalProfileStore: Aborting save because the backup snapshot could not be refreshed.")
+			return
+
+	var storage_global_path: String = ProjectSettings.globalize_path(STORAGE_PATH)
+	if FileAccess.file_exists(STORAGE_PATH):
+		var remove_err := DirAccess.remove_absolute(storage_global_path)
+		if remove_err != OK:
+			print("LocalProfileStore: Error replacing existing storage file ", STORAGE_PATH, " : ", remove_err)
+			return
+
+	var rename_err := DirAccess.rename_absolute(
+		ProjectSettings.globalize_path(STORAGE_TEMP_PATH),
+		storage_global_path
+	)
+	if rename_err != OK:
+		print("LocalProfileStore: Error promoting temp snapshot ", STORAGE_TEMP_PATH, " : ", rename_err)
+		if not FileAccess.file_exists(STORAGE_PATH) and FileAccess.file_exists(STORAGE_BACKUP_PATH):
+			_copy_storage_snapshot(STORAGE_BACKUP_PATH, STORAGE_PATH)
+		return
+
+	if not FileAccess.file_exists(STORAGE_BACKUP_PATH):
+		_copy_storage_snapshot(STORAGE_PATH, STORAGE_BACKUP_PATH)
+
+func _read_storage_snapshot(storage_path: String, label: String) -> Dictionary:
+	if not FileAccess.file_exists(storage_path):
+		return {
+			"ok": false,
+			"data": {},
+		}
+	var file := FileAccess.open(storage_path, FileAccess.READ)
+	if file == null:
+		print("LocalProfileStore: Error opening ", label, " snapshot for read: ", storage_path)
+		return {
+			"ok": false,
+			"data": {},
+		}
+	var content: String = file.get_as_text()
+	file.close()
+	if content.strip_edges().is_empty():
+		print("LocalProfileStore: ", label, " snapshot was empty: ", storage_path)
+		return {
+			"ok": false,
+			"data": {},
+		}
+	var parsed = JSON.parse_string(content)
+	if parsed is Dictionary:
+		return {
+			"ok": true,
+			"data": (parsed as Dictionary).duplicate(true),
+		}
+	print("LocalProfileStore: Error parsing ", label, " snapshot from ", storage_path)
+	return {
+		"ok": false,
+		"data": {},
+	}
+
+func _merge_storage_snapshot(snapshot: Dictionary) -> bool:
+	if not bool(snapshot.get("ok", false)):
+		return false
+	var snapshot_data = snapshot.get("data", {})
+	if not (snapshot_data is Dictionary):
+		return false
+	_data.merge(snapshot_data as Dictionary, true)
+	return true
+
+func _ensure_storage_parent_exists(storage_path: String) -> bool:
+	var global_path := ProjectSettings.globalize_path(storage_path)
+	var parent_dir := global_path.get_base_dir()
+	if parent_dir.is_empty() or DirAccess.dir_exists_absolute(parent_dir):
+		return true
+	var err := DirAccess.make_dir_recursive_absolute(parent_dir)
+	if err != OK:
+		print("LocalProfileStore: Error creating directory ", parent_dir, " : ", err)
+		return false
+	return true
+
+func _write_storage_snapshot(storage_path: String, content: String) -> bool:
+	if not _ensure_storage_parent_exists(storage_path):
+		return false
+	var file := FileAccess.open(storage_path, FileAccess.WRITE)
+	if file == null:
+		print("LocalProfileStore: Error opening file for write: ", storage_path, " (Error: ", FileAccess.get_open_error(), ")")
+		return false
+	file.store_string(content)
 	file.flush()
 	file.close()
-	# Verify save by checking file existence if it didn't exist before
-	if not FileAccess.file_exists(STORAGE_PATH):
-		print("LocalProfileStore: Critical - file does not exist immediately after save!")
+	if not FileAccess.file_exists(storage_path):
+		print("LocalProfileStore: Critical - file does not exist immediately after save: ", storage_path)
+		return false
+	return true
+
+func _copy_storage_snapshot(source_path: String, target_path: String) -> bool:
+	if not FileAccess.file_exists(source_path):
+		return false
+	if not _ensure_storage_parent_exists(target_path):
+		return false
+	var source_file := FileAccess.open(source_path, FileAccess.READ)
+	if source_file == null:
+		print("LocalProfileStore: Error opening source snapshot for read: ", source_path)
+		return false
+	var content: String = source_file.get_as_text()
+	source_file.close()
+	return _write_storage_snapshot(target_path, content)
 
 func _get_profiles() -> Dictionary:
 	var profiles = _data.get("profiles", {})
 	if profiles is Dictionary:
 		return (profiles as Dictionary).duplicate(true)
 	return {}
+
+func _get_account_profile_id_by_username() -> Dictionary:
+	var mappings = _data.get("account_profile_id_by_username", {})
+	if mappings is Dictionary:
+		return (mappings as Dictionary).duplicate(true)
+	return {}
+
+func _remember_account_profile_mapping(account_username_key: String, profile: Dictionary) -> Dictionary:
+	var resolved_key := account_username_key.strip_edges().to_lower()
+	if resolved_key.is_empty():
+		return profile.duplicate(true)
+	var resolved_profile_id := str(profile.get("profile_id", "")).strip_edges()
+	if resolved_profile_id.is_empty():
+		return profile.duplicate(true)
+	var mappings := _get_account_profile_id_by_username()
+	mappings[resolved_key] = resolved_profile_id
+	_data["account_profile_id_by_username"] = mappings
+	_save()
+	return profile.duplicate(true)
 
 func _get_decks_by_profile() -> Dictionary:
 	var decks_by_profile = _data.get("decks_by_profile", {})

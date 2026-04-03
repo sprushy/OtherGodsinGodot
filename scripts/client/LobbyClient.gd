@@ -38,6 +38,7 @@ var trace_file_path: String = ""
 var multiplayer_mount_path: NodePath = NodePath("")
 var use_default_multiplayer: bool = false
 var network_manager: Node = null
+var _is_authenticated: bool = false
 
 var _pending_player_name: String = "Guest"
 var _pending_session_id: String = ""
@@ -59,6 +60,7 @@ func connect_to_server(
 	auth_mode: String = "guest",
 	password: String = ""
 ) -> Error:
+	_is_authenticated = false
 	_pending_player_name = player_name.strip_edges()
 	if _pending_player_name.is_empty():
 		_pending_player_name = "Guest"
@@ -81,8 +83,25 @@ func connect_to_server(
 	return network_manager.create_client(connect_address, port)
 
 func disconnect_from_server() -> void:
+	_is_authenticated = false
 	if network_manager != null:
 		network_manager.disconnect_client()
+
+func is_transport_connected() -> bool:
+	if network_manager == null:
+		return false
+	var multiplayer_api: MultiplayerAPI = network_manager.multiplayer
+	if multiplayer_api == null:
+		return false
+	var multiplayer_peer := multiplayer_api.multiplayer_peer
+	if multiplayer_peer == null:
+		return false
+	return multiplayer_peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED
+
+func is_authenticated() -> bool:
+	return _is_authenticated \
+		and is_transport_connected() \
+		and not current_session_id.strip_edges().is_empty()
 
 func create_room() -> void:
 	_send_request(LobbyProtocolScript.CREATE_ROOM)
@@ -131,6 +150,7 @@ func lobby_event(message: Dictionary) -> void:
 
 	match message_type:
 		LobbyProtocolScript.HELLO_OK:
+			_is_authenticated = true
 			current_session_id = str(payload.get("session_id", ""))
 			current_reconnect_token = str(payload.get("reconnect_token", ""))
 			current_player_name = str(payload.get("player_name", _pending_player_name))
@@ -141,6 +161,7 @@ func lobby_event(message: Dictionary) -> void:
 			current_active_match_info = {}
 			login_succeeded.emit(current_session_id, current_reconnect_token, current_player_name)
 		LobbyProtocolScript.LOBBY_RECONNECT_OK:
+			_is_authenticated = true
 			current_session_id = str(payload.get("session_id", ""))
 			current_reconnect_token = str(payload.get("reconnect_token", ""))
 			current_player_name = str(payload.get("player_name", _pending_player_name))
@@ -205,15 +226,20 @@ func _on_connected_to_server() -> void:
 	})
 
 func _on_connection_failed() -> void:
+	_is_authenticated = false
 	_trace("connection failed")
 	connection_failed.emit("The lobby connection failed.")
 
 func _on_server_disconnected() -> void:
+	_is_authenticated = false
 	_trace("server disconnected")
 	disconnected_from_lobby.emit()
 
 func _send_request(message_type: String, payload: Dictionary = {}) -> void:
 	if network_manager == null:
+		return
+	if not is_transport_connected():
+		_trace("skipping %s: lobby transport is not connected" % message_type)
 		return
 	_trace("sending %s" % message_type)
 	network_manager.request_action(LobbyProtocolScript.make_message(message_type, payload))

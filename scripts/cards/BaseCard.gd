@@ -70,8 +70,9 @@ func can_be_played(_game_manager: GameManager, player: Player) -> bool:
 	if _game_manager == null:
 		return can_pay_costs(player)
 	var mana_required := mana_cost
+	var prepared := is_prepared and current_zone != null and current_zone.is_board_zone()
 	if _game_manager.has_method("get_card_play_mana_cost"):
-		mana_required = _game_manager.get_card_play_mana_cost(player, self, false)
+		mana_required = _game_manager.get_card_play_mana_cost(player, self, prepared)
 	return can_pay_costs_with_mana_cost(player, mana_required)
 
 func on_enter_zone(_zone: Zone) -> void:

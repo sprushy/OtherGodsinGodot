@@ -41,3 +41,16 @@ func can_be_played(game_manager: GameManager, player: Player) -> bool:
 		print("Spells can only be cast on your turn")
 		return false
 	return super.can_be_played(game_manager, player)
+
+func can_activate_prepared(game_manager: GameManager, player: Player) -> bool:
+	if game_manager == null or player == null:
+		return false
+	if player != game_manager.current_player:
+		return false
+	if card_owner != null and player != card_owner:
+		return false
+	if not is_prepared:
+		return false
+	if current_zone == null or not current_zone.is_board_zone():
+		return false
+	return can_be_played(game_manager, player)

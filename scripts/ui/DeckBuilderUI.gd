@@ -1040,9 +1040,6 @@ func _save_profile_deck() -> void:
 	if _deck.is_empty():
 		_set_status_flash("Nothing to save.")
 		return
-	var profile: Dictionary = _local_profile_store.remember_profile(_active_profile_id, _active_player_name)
-	_active_profile_id = str(profile.get("profile_id", _active_profile_id)).strip_edges()
-	_active_player_name = str(profile.get("display_name", _active_player_name)).strip_edges()
 	var deck_name := _deck_name_edit.text if _deck_name_edit != null else ""
 	var saved_deck: Dictionary = _local_profile_store.save_deck(
 		_active_profile_id,
@@ -1115,11 +1112,24 @@ func _on_saved_deck_selected(index: int) -> void:
 func _ensure_local_profile_store() -> void:
 	if _local_profile_store == null:
 		_local_profile_store = LocalProfileStoreScript.new()
-	if _active_player_name.is_empty():
-		_active_player_name = "Player"
-	var profile: Dictionary = _local_profile_store.ensure_profile(_active_profile_id, _active_player_name, true)
+	var resolved_profile_name := _get_resolved_profile_name("Player")
+	var profile: Dictionary = _local_profile_store.ensure_profile(_active_profile_id, resolved_profile_name, true)
 	_active_profile_id = str(profile.get("profile_id", _active_profile_id)).strip_edges()
-	_active_player_name = str(profile.get("display_name", _active_player_name)).strip_edges()
+	_active_player_name = str(profile.get("display_name", resolved_profile_name)).strip_edges()
+
+func _get_resolved_profile_name(default_name: String = "Player") -> String:
+	var resolved_default := default_name.strip_edges()
+	if resolved_default.is_empty():
+		resolved_default = "Player"
+	if _local_profile_store != null and not _active_profile_id.is_empty():
+		var existing_profile: Dictionary = _local_profile_store.get_profile(_active_profile_id)
+		var existing_name := str(existing_profile.get("display_name", "")).strip_edges()
+		if not existing_name.is_empty():
+			return existing_name
+	var resolved_name := _active_player_name.strip_edges()
+	if resolved_name.is_empty():
+		return resolved_default
+	return resolved_name
 
 func _load_profile_decks() -> void:
 	_ensure_local_profile_store()
@@ -1452,7 +1462,7 @@ func _can_sync_account_decks() -> bool:
 		return false
 	if str(_online_lobby_client.current_account_id).strip_edges().is_empty():
 		return false
-	return not str(_online_lobby_client.current_session_id).strip_edges().is_empty()
+	return _online_lobby_client.is_authenticated()
 
 func _set_status_flash(message: String) -> void:
 	if _validation_lbl == null:

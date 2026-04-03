@@ -25,12 +25,9 @@ func _run_probe() -> void:
 
 	card_test._add_test_hand_card(player2, Exorcism.new())
 
-	var dromi: Dromi = null
-	for card in player1.hand_zone.cards:
-		if card is Dromi:
-			dromi = card
-			break
-	_assert_state(dromi != null, "Expected Dromi in Player 1 hand.")
+	var dromi := Dromi.new()
+	card_test._place_test_prepared_card(player1, player1.reserve_zones[4], dromi)
+	_assert_state(dromi.is_prepared, "Expected Dromi to begin prepared on the board.")
 
 	var exorcism: Exorcism = null
 	for card in player2.hand_zone.cards:
@@ -41,16 +38,20 @@ func _run_probe() -> void:
 
 	var target: Card = player2.frontline_zones[1].get_creature()
 	_assert_state(target != null, "Expected a Player 2 creature target in frontline lane 2.")
+	var prepared_zone := dromi.current_zone
 
-	card_test._begin_hand_permanent_hex_target_selection(dromi)
-	_assert_state(card_test._has_pending_click_selection(), "Dromi should enter click-to-select targeting mode.")
-	_assert_state(card_test.selected_card == dromi, "Dromi should remain selected during targeting.")
-
-	var handled := card_test._try_handle_pending_click_selection(target)
-	_assert_state(handled, "Dromi targeting flow should accept the chosen target.")
+	_assert_state(dromi.activate_on_target(card_test.game_manager, target), "Prepared Dromi should attach successfully.")
 	_assert_state(dromi.attached_target == target, "Dromi should remain attached to the target creature.")
-	_assert_state(dromi.current_zone == target.current_zone, "Dromi should share the target creature's board zone.")
+	_assert_state(dromi.current_zone == prepared_zone, "Dromi should stay in the zone it was prepared in after attaching.")
 	_assert_state(target.has_status_effect("cannot_attack"), "The Dromi-bound creature should have cannot_attack.")
+	_assert_state(not card_test.match_manager.can_attack(target), "The Dromi-bound creature should not be able to attack.")
+
+	var moved_zone := player2.reserve_zones[2]
+	_assert_state(moved_zone != null and moved_zone.cards.is_empty(), "Expected an empty reserve lane to test target movement while Dromi stays in place.")
+	player2.move_card(target, moved_zone)
+	_assert_state(dromi.current_zone == prepared_zone, "Dromi should remain in its original prepared zone when the target moves.")
+	_assert_state(dromi.attached_target == target, "Dromi should stay attached after the target moves.")
+	_assert_state(target.has_status_effect("cannot_attack"), "Moving the target should not clear Dromi's attack lock.")
 
 	_assert_state(exorcism.current_zone == player2.hand_zone, "Exorcism should remain in Player 2 hand.")
 	_assert_state(exorcism.is_valid_target(target), "Exorcism should be able to target the Dromi-bound friendly creature.")

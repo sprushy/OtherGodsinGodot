@@ -62,7 +62,8 @@ func to_dict(game_manager: GameManager) -> Dictionary:
 		# Event specific
 		"event_name": event_name,
 		"event_speed": event_speed,
-		"event_data": event_data
+		"event_data": event_data,
+		"display_zone": _zone_to_dict(display_zone, game_manager)
 	}
 	
 	if source_player != null:
@@ -113,8 +114,45 @@ static func from_dict(dict: Dictionary, game_manager: GameManager) -> CardAction
 	action.event_name = dict.get("event_name", "")
 	action.event_speed = dict.get("event_speed", 0)
 	action.event_data = dict.get("event_data", {})
+	action.display_zone = _dict_to_zone(dict.get("display_zone", {}), game_manager)
 	
 	return action
+
+static func _zone_to_dict(zone: Zone, game_manager: GameManager) -> Dictionary:
+	if zone == null or zone.zone_owner == null or game_manager == null:
+		return {}
+	return {
+		"player_index": game_manager.players.find(zone.zone_owner),
+		"zone_type": zone.zone_type,
+		"zone_index": zone.zone_index,
+	}
+
+static func _dict_to_zone(zone_dict: Dictionary, game_manager: GameManager) -> Zone:
+	if zone_dict.is_empty() or game_manager == null:
+		return null
+	var player_idx := int(zone_dict.get("player_index", -1))
+	if player_idx < 0 or player_idx >= game_manager.players.size():
+		return null
+	var player := game_manager.players[player_idx]
+	var zone_idx := int(zone_dict.get("zone_index", 0))
+	match int(zone_dict.get("zone_type", -1)):
+		Zone.ZoneType.HAND:
+			return player.hand_zone
+		Zone.ZoneType.DECK:
+			return player.deck_zone
+		Zone.ZoneType.GRAVEYARD:
+			return player.graveyard_zone
+		Zone.ZoneType.ABYSS:
+			return player.abyss_zone
+		Zone.ZoneType.GOD_SLOT:
+			return player.god_zone
+		Zone.ZoneType.POWER_SLOT:
+			return player.power_zones[zone_idx] if zone_idx >= 0 and zone_idx < player.power_zones.size() else null
+		Zone.ZoneType.FRONTLINE:
+			return player.frontline_zones[zone_idx] if zone_idx >= 0 and zone_idx < player.frontline_zones.size() else null
+		Zone.ZoneType.RESERVE:
+			return player.reserve_zones[zone_idx] if zone_idx >= 0 and zone_idx < player.reserve_zones.size() else null
+	return null
 
 # New virtual method for Phase 2
 func resolve(_match_manager: MatchManager) -> void:
