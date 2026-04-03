@@ -14,5 +14,5 @@ func _init() -> void:
 	sacrifice_cost = 0
 	flavor_text = "\"Growl\""
 	culture = "Norse"
-	art_path = "res://images/card_art/creatures/brownbearai.jpg"
+	art_path = "res://images/card_art/creatures/BrownBearEdit2.png"
 	artist = "Lorinda Tomko"

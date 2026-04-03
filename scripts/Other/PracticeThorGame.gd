@@ -56,6 +56,29 @@ func _show_retreat_prompt(ask_card: Askelladen) -> void:
 		return
 	super._show_retreat_prompt(ask_card)
 
+func _show_nusku_well_of_fire_prompt(nusku: NuskuFirebearer, choices: Array[Card], mill_count: int) -> void:
+	if not _practice_active or nusku == null or game_manager == null:
+		super._show_nusku_well_of_fire_prompt(nusku, choices, mill_count)
+		return
+	var opponent: Player = game_manager.get_opponent(nusku.card_owner)
+	if not _is_thor_player(opponent):
+		super._show_nusku_well_of_fire_prompt(nusku, choices, mill_count)
+		return
+	# Thor is the opponent — auto-pick without UI
+	_pause_stack_resolution(nusku.card_owner)
+	var chosen_card: Card = nusku.choose_opponent_pick(choices)
+	var feedback: String = "Well of Fire milled %d card(s)." % mill_count
+	if chosen_card != null:
+		nusku.card_owner.move_card(chosen_card, nusku.card_owner.hand_zone)
+		feedback += " %s chose %s to return to %s's hand." % [
+			opponent.player_name, chosen_card.card_name, nusku.card_owner.player_name
+		]
+		if game_manager != null:
+			nusku.notify_power_activated(game_manager, chosen_card)
+	else:
+		feedback += " No Ancient Charm or Spell was milled."
+	_resume_after_deferred_resolution(feedback)
+
 func check_for_possible_intercepts() -> void:
 	if _practice_active and game_manager != null and pending_attack_target != null:
 		var defender: Player = pending_attack_target if pending_attack_target is Player else pending_attack_target.get_controller()
@@ -505,6 +528,9 @@ func _try_attack_with_thor() -> bool:
 	if attackers.is_empty():
 		return false
 	var opposing_creatures := _get_board_creatures(player1)
+	if _can_thor_kill_with_all_attackers(attackers):
+		var direct_attacker := _pick_best_board_creature(attackers)
+		return _submit_attack(direct_attacker, player1)
 	if opposing_creatures.is_empty():
 		var direct_attacker := _pick_best_board_creature(attackers)
 		return _submit_attack(direct_attacker, player1)
@@ -514,9 +540,9 @@ func _try_attack_with_thor() -> bool:
 	var standard_attack := _get_best_thor_standard_attack(attackers, opposing_creatures)
 	if not standard_attack.is_empty():
 		return _submit_attack(standard_attack.get("attacker", null), standard_attack.get("target", null))
-	if _has_hidden_opposing_creature(opposing_creatures):
-		var direct_attacker := _pick_best_board_creature(attackers)
-		return _submit_attack(direct_attacker, player1)
+	var stealth_attack := _get_best_thor_stealth_attack(attackers, opposing_creatures)
+	if not stealth_attack.is_empty():
+		return _submit_attack(stealth_attack.get("attacker", null), stealth_attack.get("target", null))
 	return false
 
 func _finish_thor_turn() -> void:
@@ -781,6 +807,30 @@ func _has_hidden_opposing_creature(cards: Array[Card]) -> bool:
 		if card != null and (card.is_stealth or card.is_face_down):
 			return true
 	return false
+
+func _can_thor_kill_with_all_attackers(attackers: Array[Card]) -> bool:
+	if player1 == null:
+		return false
+	var total_str := 0
+	for attacker in attackers:
+		total_str += attacker.get_effective_strength()
+	return total_str >= player1.followers
+
+func _get_best_thor_stealth_attack(attackers: Array[Card], opposing_creatures: Array[Card]) -> Dictionary:
+	var best_attacker: Card = null
+	var best_target: Card = null
+	for target in opposing_creatures:
+		if target == null or not (target.is_stealth or target.is_face_down):
+			continue
+		for attacker in attackers:
+			if not _can_thor_attack_creature(attacker, target):
+				continue
+			if best_attacker == null or _is_board_creature_better(attacker, best_attacker):
+				best_attacker = attacker
+				best_target = target
+	if best_attacker == null:
+		return {}
+	return {"attacker": best_attacker, "target": best_target}
 
 func _get_best_thor_mode_switch_candidate() -> Card:
 	if player2 == null or game_manager == null:

@@ -7,7 +7,7 @@ func _init() -> void:
 	super._init()
 	card_name = "Gungnir, the Spear of Odin"
 	culture = "Norse"
-	card_types = ["Charm", "Combat Aid", "Runic"]
+	card_types = ["Charm", "Combat Aid", "Runic", "Destruction"]
 	level = 3
 	mana_cost = 1
 	speed = 3

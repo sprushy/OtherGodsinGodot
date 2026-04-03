@@ -2061,7 +2061,6 @@ func _on_card_test_pressed() -> void:
 	show_game()
 	var card_test: CardTestGame = get_node("GameContainer/CardTest")
 	await card_test.start_game()
-	card_test.load_pictish_test_scenario()
 
 func _on_practice_thor_pressed() -> void:
 	_match_launch_queued = false

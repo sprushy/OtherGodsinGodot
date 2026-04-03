@@ -31,6 +31,9 @@ func on_turn_end(_game_manager: GameManager) -> void:
 	# Called at end of owner's turn
 	pass
 
+func blocks_attack_on_target(_game_manager: GameManager, _attacker: Card, _defender: Card, _allied_attackers: Array = []) -> bool:
+	return false
+
 func replaces_graveyard_send(_card: Card, _game_manager: GameManager) -> bool:
 	return false
 

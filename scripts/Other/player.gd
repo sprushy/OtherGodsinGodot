@@ -136,6 +136,14 @@ func spend_mana(amount: int) -> bool:
 		return true
 	return false
 
+func lose_mana(amount: int) -> int:
+	var removed := mini(max(amount, 0), mana)
+	if removed <= 0:
+		return 0
+	mana -= removed
+	mana_changed.emit(mana)
+	return removed
+
 func gain_followers(amount: int) -> void:
 	if is_defeated:
 		return

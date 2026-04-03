@@ -151,10 +151,12 @@ func to_match_info(session_id: String = "") -> Dictionary:
 		"server_mode": server_mode,
 	}
 	if not session_id.is_empty():
+		var selected_deck := _get_player_deck(session_id)
 		match_info["session_id"] = session_id
 		match_info["match_token"] = get_match_token(session_id)
 		match_info["reconnect_deadline_unix"] = get_reconnect_deadline_for_session(session_id)
-		match_info["selected_deck_name"] = str(_get_player_deck(session_id).get("deck_name", ""))
+		match_info["selected_deck_name"] = str(selected_deck.get("deck_name", ""))
+		match_info["selected_deck_cards"] = selected_deck.get("cards", {})
 	match_info["reconnect_window_seconds"] = reconnect_window_seconds
 	match_info["waiting_for_reconnect"] = is_waiting_for_reconnect()
 	return match_info

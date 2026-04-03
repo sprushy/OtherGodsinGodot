@@ -40,3 +40,12 @@ func _is_doomed_card(card: Card) -> bool:
 	if card.card_type == Card.CardType.STRUCTURE:
 		return true
 	return card.has_type("Machine") and not card.has_type("Aerial") and not card.is_stealth
+
+func would_destroy_creature_of_player(_game_manager: GameManager, protected_player: Player, _chosen_target = null) -> bool:
+	if protected_player == null:
+		return false
+	for zone in protected_player.frontline_zones + protected_player.reserve_zones:
+		for card in zone.cards:
+			if card != null and _is_doomed_card(card):
+				return true
+	return false

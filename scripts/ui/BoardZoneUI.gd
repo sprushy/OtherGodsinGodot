@@ -525,6 +525,26 @@ func _add_equipment_affordances(overlay: Control, card: Card) -> void:
 		var affordance: Control = null
 		if equip is EquipmentCard:
 			affordance = (equip as EquipmentCard).create_equipped_affordance()
+		elif equip.art_path != "":
+			affordance = PanelContainer.new()
+			affordance.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			affordance.custom_minimum_size = EquipmentCard.EQUIPPED_AFFORDANCE_SIZE
+			affordance.clip_contents = true
+			var style := StyleBoxFlat.new()
+			style.bg_color = Color(0.10, 0.08, 0.06, 0.96)
+			style.border_color = Color(0.96, 0.84, 0.58, 0.95)
+			style.shadow_color = Color(0.02, 0.02, 0.02, 0.45)
+			style.shadow_size = 4
+			style.corner_radius_top_left = 4
+			style.corner_radius_top_right = 4
+			style.corner_radius_bottom_left = 4
+			style.corner_radius_bottom_right = 4
+			for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+				style.set_border_width(side, 1)
+			affordance.add_theme_stylebox_override("panel", style)
+			var art_preview := _make_card_art_preview(equip)
+			if art_preview != null:
+				affordance.add_child(art_preview)
 		if affordance == null:
 			continue
 		var affordance_size := affordance.custom_minimum_size

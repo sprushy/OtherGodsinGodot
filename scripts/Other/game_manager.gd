@@ -36,6 +36,7 @@ var action_stack: Array[CardAction] = []
 var prepared_hexes: Dictionary = {}
 var prepared_charms: Dictionary = {}
 var attack_restrictions: Dictionary = {}# player -> turns remaining
+var turn_destruction_wards: Dictionary = {} # player -> {expires_turn, source_card}
 var died_this_turn: Array[Card] = []
 var destroyed_this_turn: Array[Card] = []
 var pending_resurrections: Array[Card] = []
@@ -62,6 +63,7 @@ const INTERCEPT_COUNT_VALUE_META := "intercept_count_value"
 # Priority system
 var priority_player: Player = null
 var consecutive_passes: int = 0
+var _effect_source_card_stack: Array[Card] = []
 
 func get_phase_name(phase: int = -1) -> String:
 	var resolved_phase: GamePhase = current_phase
@@ -129,6 +131,95 @@ func get_feedback_viewer() -> Player:
 	if turn_player != null:
 		return turn_player
 	return current_player
+
+func push_effect_source_card(source_card: Card) -> void:
+	_effect_source_card_stack.append(source_card)
+
+func pop_effect_source_card() -> void:
+	if _effect_source_card_stack.is_empty():
+		return
+	_effect_source_card_stack.pop_back()
+
+func get_effect_source_card() -> Card:
+	if _effect_source_card_stack.is_empty():
+		return null
+	return _effect_source_card_stack.back()
+
+func run_with_effect_source(source_card: Card, callback: Callable) -> void:
+	var pushed := false
+	if source_card != null:
+		push_effect_source_card(source_card)
+		pushed = true
+	if callback.is_valid():
+		callback.call()
+	if pushed:
+		pop_effect_source_card()
+
+func grant_turn_destruction_ward(player: Player, source_card: Card = null, expires_turn: int = -1) -> void:
+	if player == null:
+		return
+	var resolved_expires_turn := turn_number if expires_turn < 0 else expires_turn
+	turn_destruction_wards[player] = {
+		"expires_turn": resolved_expires_turn,
+		"source_card": source_card,
+	}
+
+func has_turn_destruction_ward(player: Player) -> bool:
+	if player == null:
+		return false
+	var ward_data: Variant = turn_destruction_wards.get(player, null)
+	if not (ward_data is Dictionary):
+		return false
+	var expires_turn := int((ward_data as Dictionary).get("expires_turn", -1))
+	return expires_turn >= turn_number
+
+func get_turn_destruction_ward_activation_block_reason(source_card: Card, chosen_target = null) -> String:
+	if source_card == null:
+		return ""
+	for protected_key in turn_destruction_wards.keys():
+		var protected_player := protected_key as Player
+		if protected_player == null or not has_turn_destruction_ward(protected_player):
+			continue
+		if _would_activation_break_turn_destruction_ward(source_card, protected_player, chosen_target):
+			return "%s cannot be activated: %s's creatures are warded from opposing destruction effects this turn." % [
+				source_card.card_name,
+				protected_player.player_name
+			]
+	return ""
+
+func _clear_expired_turn_destruction_wards(current_turn: int) -> void:
+	for player in turn_destruction_wards.keys().duplicate():
+		var ward_data: Variant = turn_destruction_wards.get(player, null)
+		if not (ward_data is Dictionary):
+			turn_destruction_wards.erase(player)
+			continue
+		var expires_turn := int((ward_data as Dictionary).get("expires_turn", -1))
+		if expires_turn <= current_turn:
+			turn_destruction_wards.erase(player)
+
+func _would_activation_break_turn_destruction_ward(source_card: Card, protected_player: Player, chosen_target = null) -> bool:
+	if source_card == null or protected_player == null:
+		return false
+	var source_controller := source_card.get_controller()
+	if source_controller == null:
+		source_controller = source_card.card_owner
+	if source_controller == null or source_controller == protected_player:
+		return false
+	if source_card.has_method("would_destroy_creature_of_player"):
+		return source_card.would_destroy_creature_of_player(self, protected_player, chosen_target)
+	var targeted_card := chosen_target as Card
+	return targeted_card != null \
+		and targeted_card.card_type == Card.CardType.CREATURE \
+		and targeted_card.get_controller() == protected_player \
+		and _card_has_destruction_theme(source_card)
+
+func _card_has_destruction_theme(source_card: Card) -> bool:
+	if source_card == null:
+		return false
+	for raw_type in source_card.card_types:
+		if str(raw_type).findn("destruction") >= 0:
+			return true
+	return false
 
 func record_interception(interceptor: Card) -> void:
 	if interceptor == null:
@@ -228,6 +319,8 @@ func get_card_by_uid(uid: String) -> Card:
 
 func can_cards_engage_each_other(attacker: Card, defender: Card) -> bool:
 	if attacker == null or defender == null:
+		return false
+	if is_attack_blocked_by_active_structure(attacker, defender):
 		return false
 	if attacker.has_method("can_engage") and not attacker.can_engage(defender):
 		return false
@@ -906,6 +999,59 @@ func play_creature_stealth(player: Player, card: Card, target_zone: Zone) -> voi
 			true
 		)
 
+func summon_structure_without_cost(
+	player: Player,
+	card: Card,
+	target_zone: Zone
+) -> bool:
+	return summon_structure_by_effect(
+		player,
+		card,
+		target_zone,
+		null,
+		false,
+		true
+	)
+
+func summon_structure_by_effect(
+	player: Player,
+	card: Card,
+	target_zone: Zone,
+	summon_source: Card = null,
+	pay_normal_summon_costs: bool = false,
+	trigger_impact: bool = true
+) -> bool:
+	if is_game_over or player == null or card == null:
+		return false
+	if card.card_type != Card.CardType.STRUCTURE:
+		return false
+	if target_zone == null:
+		return false
+	if target_zone not in player.frontline_zones and target_zone not in player.reserve_zones:
+		return false
+	if not target_zone.cards.is_empty():
+		return false
+
+	var mana_required := get_card_summon_mana_cost(
+		player,
+		card,
+		summon_source,
+		not pay_normal_summon_costs
+	)
+	if pay_normal_summon_costs:
+		if not card.pay_costs_with_mana_cost(player, mana_required, self):
+			return false
+	elif mana_required > 0 and not player.spend_mana(mana_required):
+		return false
+
+	var from_zone := card.current_zone
+	player.move_card(card, target_zone)
+	card.is_prepared = false
+	card.is_face_down = false
+	card.is_stealth = false
+	_trigger_board_summon(card, player, from_zone, target_zone, summon_source, false, false, trigger_impact)
+	return true
+
 func summon_creature_without_cost(
 	player: Player,
 	card: Card,
@@ -1181,6 +1327,33 @@ func creature_pick_up_equipment(creature: Card, equipment: Card) -> bool:
 	print(creature.card_name + " picks up " + equipment.card_name)
 	return true
 
+func creature_use_steed(creature: Card, steed: Card) -> bool:
+	if is_game_over:
+		return false
+	if creature == null or steed == null:
+		return false
+	if creature.card_type != Card.CardType.CREATURE:
+		return false
+	if not creature.can_take_minor_creature_action():
+		return false
+	if not steed.has_method("can_be_used_as_steed_by") or not steed.can_be_used_as_steed_by(creature, self):
+		return false
+
+	var steed_zone := steed.current_zone
+	if steed_zone == null or not steed_zone.is_board_zone():
+		return false
+
+	steed_zone.remove_card(steed)
+	creature.current_zone.add_card(steed)
+	if not steed.has_method("mount_to_creature") or not steed.mount_to_creature(creature):
+		creature.current_zone.remove_card(steed)
+		steed_zone.add_card(steed)
+		return false
+
+	creature.spend_minor_creature_action()
+	print(creature.card_name + " mounts " + steed.card_name)
+	return true
+
 # Creature destroys an unequipped equipment card.
 # Own or in-range enemy equipment: interceptable only if enemy.
 # Out-of-range enemy equipment: interceptable.
@@ -1360,6 +1533,11 @@ func check_for_intercept(attacker: Card, defending_player: Player) -> Card:
 func resolve_combat(attacker: Card, defender: Card, continue_callback: Callable = Callable()) -> bool:
 	if attacker == null or defender == null:
 		return false
+	if is_attack_blocked_by_active_structure(attacker, defender):
+		print(attacker.card_name + " cannot engage " + defender.card_name + ".")
+		if continue_callback.is_valid():
+			continue_callback.call()
+		return false
 	if attacker.has_method("can_engage") and not attacker.can_engage(defender):
 		print(attacker.card_name + " cannot engage " + defender.card_name + ".")
 		if continue_callback.is_valid():
@@ -1471,6 +1649,9 @@ func resolve_united_front_combat(attacker: Card, partner: Card, defender: Card) 
 		return
 	var primary: Card = active_attackers[0]
 	var support: Card = active_attackers[1]
+	if is_attack_blocked_by_active_structure(primary, defender, [support]):
+		print(primary.card_name + " and " + support.card_name + " cannot engage " + defender.card_name + ".")
+		return
 	_begin_declared_combat(primary, defender)
 	_begin_declared_combat(support, defender)
 	var attacker_controller := primary.get_controller()
@@ -1582,6 +1763,11 @@ func resolve_combat_with_continuation(
 				continue_callback.call()
 			return false
 	else:
+		if is_attack_blocked_by_active_structure(attacker, defender):
+			print(attacker.card_name + " cannot engage " + defender.card_name + ".")
+			if continue_callback.is_valid():
+				continue_callback.call()
+			return false
 		if attacker.has_method("can_engage") and not attacker.can_engage(defender):
 			print(attacker.card_name + " cannot engage " + defender.card_name + ".")
 			if continue_callback.is_valid():
@@ -1889,6 +2075,7 @@ func end_turn() -> void:
 	for card in _get_all_turn_event_cards():
 		card.remove_expired_buffs(turn_number)
 		card.remove_expired_statuses(turn_number)
+	_clear_expired_turn_destruction_wards(turn_number)
 	
 	# Swap players for the next turn
 	var temp = current_player
@@ -2186,6 +2373,9 @@ func request_send_to_graveyard(card: Card, continue_callback: Callable = Callabl
 	return success
 
 func _send_to_graveyard_with_hook_resolved(card: Card, send_to_abyss: bool, combat_death: bool = false, destruction: bool = false) -> bool:
+	if destruction and not combat_death and _is_turn_destruction_ward_protected(card):
+		print(card.card_name + " resists destruction from " + get_effect_source_card().card_name + " this turn.")
+		return false
 	if destruction and (
 		card.has_status_effect("berserker_rage_guard")
 		or card.has_status_effect("berserker_mead_guard")
@@ -2222,6 +2412,20 @@ func _send_to_graveyard_with_hook_resolved(card: Card, send_to_abyss: bool, comb
 	else:
 		card.card_owner.move_card(card, card.card_owner.graveyard_zone)
 	return true
+
+func _is_turn_destruction_ward_protected(card: Card) -> bool:
+	if card == null or card.card_type != Card.CardType.CREATURE:
+		return false
+	var protected_player := card.get_controller()
+	if protected_player == null or not has_turn_destruction_ward(protected_player):
+		return false
+	var source_card := get_effect_source_card()
+	if source_card == null:
+		return false
+	var source_controller := source_card.get_controller()
+	if source_controller == null:
+		source_controller = source_card.card_owner
+	return source_controller != null and source_controller != protected_player
 
 func has_pending_doorway_choice() -> bool:
 	return _pending_doorway_structure != null and _pending_doorway_card != null
@@ -2427,7 +2631,7 @@ func claim_cost_adjustments(
 ) -> bool:
 	if target_card == null or base_cost <= 0:
 		return false
-	var claimed := false
+	var claimed := _claim_state_cost_adjustments(target_card, base_cost, cost_kind, metadata)
 	for source_card in _get_cost_adjustment_source_cards():
 		if source_card != null and source_card.claim_cost_adjustment(target_card, base_cost, cost_kind, self, metadata):
 			claimed = true
@@ -2481,7 +2685,47 @@ func _get_state_cost_adjustment_entries(
 				"source_card": source_card,
 				"delta": amount,
 			})
+	if _has_prepared_activation_cost_waiver(target_card, cost_kind, metadata):
+		entries.append({
+			"source": str(target_card.get_meta("prepared_activation_cost_waiver_source", "Prepared cost waiver")),
+			"source_card": target_card.get_meta("prepared_activation_cost_waiver_source_card", null),
+			"delta": -_base_cost,
+		})
 	return entries
+
+func _claim_state_cost_adjustments(
+	target_card: Card,
+	_base_cost: int,
+	cost_kind: String,
+	metadata: Dictionary = {}
+) -> bool:
+	var claimed := false
+	if _has_prepared_activation_cost_waiver(target_card, cost_kind, metadata):
+		_clear_prepared_activation_cost_waiver(target_card)
+		claimed = true
+	return claimed
+
+func _has_prepared_activation_cost_waiver(target_card: Card, cost_kind: String, metadata: Dictionary = {}) -> bool:
+	if target_card == null:
+		return false
+	if cost_kind != Card.COST_KIND_HAND_PLAY:
+		return false
+	if not bool(metadata.get("prepared", false)):
+		return false
+	if not target_card.is_prepared:
+		return false
+	return bool(target_card.get_meta("prepared_activation_cost_waived", false))
+
+func _clear_prepared_activation_cost_waiver(target_card: Card) -> void:
+	if target_card == null:
+		return
+	for key in [
+		"prepared_activation_cost_waived",
+		"prepared_activation_cost_waiver_source",
+		"prepared_activation_cost_waiver_source_card"
+	]:
+		if target_card.has_meta(key):
+			target_card.remove_meta(key)
 
 func _get_cost_adjustment_source_cards() -> Array[Card]:
 	var sources: Array[Card] = []
@@ -2628,6 +2872,14 @@ func _get_active_structures() -> Array[StructureCard]:
 				if structure != null and not structure.abilities_suppressed():
 					active_structures.append(structure)
 	return active_structures
+
+func is_attack_blocked_by_active_structure(attacker: Card, defender: Card, allied_attackers: Array = []) -> bool:
+	if attacker == null or defender == null:
+		return false
+	for structure in _get_active_structures():
+		if structure.has_method("blocks_attack_on_target") and structure.blocks_attack_on_target(self, attacker, defender, allied_attackers):
+			return true
+	return false
 
 func _any_active_structure_forces_defensive_summon() -> bool:
 	for structure in _get_active_structures():

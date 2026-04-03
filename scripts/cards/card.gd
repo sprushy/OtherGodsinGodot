@@ -401,10 +401,19 @@ func is_creature_card() -> bool:
 
 func get_effective_speed() -> int:
 	var base_speed = speed
+	var speed_override: Variant = null
+	var equipment_speed_bonus := 0
 	if is_stealth:
 		base_speed -= 1
 	for equip in equipment:
-		base_speed += equip.speed_modifier
+		equipment_speed_bonus += equip.speed_modifier
+		if equip != null and equip.has_method("get_speed_override_for_equipped_creature"):
+			var override_candidate = equip.get_speed_override_for_equipped_creature(self)
+			if override_candidate != null:
+				speed_override = int(override_candidate)
+	if speed_override != null:
+		base_speed = int(speed_override)
+	base_speed += equipment_speed_bonus
 	for buff in _get_effective_buffs():
 		base_speed += buff.get("spd", 0)
 	return clampi(base_speed, 1, 7)
@@ -903,7 +912,16 @@ func has_type(type_name: String) -> bool:
 		return is_physical_card()
 	if type_name == "Magic" or type_name == "Magical":
 		return is_magical_card()
-	return type_name in card_types
+	if type_name in card_types:
+		return true
+	for equip in equipment:
+		if equip == null:
+			continue
+		if not equip.has_method("grants_type_to_equipped_creature"):
+			continue
+		if equip.grants_type_to_equipped_creature(self, type_name):
+			return true
+	return false
 
 func get_intercept_reach_bonus() -> int:
 	if card_type != CardType.CREATURE or ability_text == "":
@@ -950,6 +968,11 @@ func unequip() -> void:
 # Incorporeal keyword — shared engagement logic.
 # Returns false when this card is incorporeal and `source` is not a permitted engager.
 func can_be_engaged_by(source: Card) -> bool:
+	if _has_equipped_evasive():
+		if source == null or not source.is_creature_card():
+			return false
+		if not (source.has_type("Aerial") or source.has_type("Archer")):
+			return false
 	if not incorporeal:
 		return true
 	if source == null or not source.is_creature_card():
@@ -971,6 +994,16 @@ func can_engage(target: Card) -> bool:
 func reveal_from_stealth(game_manager: GameManager = null) -> void:
 	if is_stealth:
 		reveal(game_manager)
+
+func _has_equipped_evasive() -> bool:
+	for equip in equipment:
+		if equip == null:
+			continue
+		if not equip.has_method("grants_evasive_to_equipped_creature"):
+			continue
+		if equip.grants_evasive_to_equipped_creature(self):
+			return true
+	return false
 
 func reset_creature_action_state() -> void:
 	has_acted_this_turn = false

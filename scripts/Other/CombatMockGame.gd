@@ -5,6 +5,7 @@ const EnHeduAnnaScript = preload("res://scripts/cards/Creatures/EnHeduAnna.gd")
 const HariiShamanScript = preload("res://scripts/cards/Creatures/HariiShaman.gd")
 const ErlqueensNightingaleScript = preload("res://scripts/cards/Creatures/ErlqueensNightingale.gd")
 const MopsusScript = preload("res://scripts/cards/Creatures/Mopsus.gd")
+const NimueScript = preload("res://scripts/cards/Creatures/Nimue.gd")
 const SacrificeCursorSource = preload("res://images/card_art/BloodySacrificeCursor.png")
 const DevourCursorSource = preload("res://images/card_art/BloodyWolfJawsPGN.png")
 const SilenceCursorSource = preload("res://images/SilenceCursorPGN.png")
@@ -237,8 +238,15 @@ var _pending_huginn_prime_prompts: Array[Huginn] = []
 var _active_huginn_prime_prompt: Huginn = null
 var _pending_muninn_prime_prompts: Array[Muninn] = []
 var _active_muninn_prime_prompt: Muninn = null
+var _pending_oracles_sight_prompts: Array[OraclesSight] = []
+var _active_oracles_sight_prompt: OraclesSight = null
 var _pending_humbaba_prompts: Array[HumbabaTheTerrible] = []
 var _active_humbaba_prompt: HumbabaTheTerrible = null
+var _pending_ragnarok_power: Ragnarok = null
+var _pending_ragnarok_destroyed_count: int = 0
+var _pending_ragnarok_discarded_count: int = 0
+var _pending_ragnarok_hand_limit: int = 5
+var _pending_ragnarok_players: Array[Player] = []
 var _pending_hati_summon: Hati = null
 var _pending_hati_mode: String = ""
 var _pending_hati_sacrifice: Card = null
@@ -4066,7 +4074,7 @@ func _show_card_selection_overlay(
 	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	scroll.custom_minimum_size = Vector2(0, VisualCard.CARD_HEIGHT + 24)
+	scroll.custom_minimum_size = Vector2(0, VisualCard.CARD_HEIGHT + 56)
 	scroll.mouse_filter = Control.MOUSE_FILTER_STOP
 	vbox.add_child(scroll)
 
@@ -4086,11 +4094,27 @@ func _show_card_selection_overlay(
 		wrapper.add_theme_stylebox_override("panel", wstyle)
 		hbox.add_child(wrapper)
 
+		var card_vbox := VBoxContainer.new()
+		card_vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		card_vbox.add_theme_constant_override("separation", 2)
+		wrapper.add_child(card_vbox)
+
 		var vc := VisualCard.new()
 		vc.setup(card)
 		vc.set_hover_viewer(game_manager.get_feedback_viewer())
 		vc.set_disabled(true, false)
-		wrapper.add_child(vc)
+		card_vbox.add_child(vc)
+
+		var zone_label_text := _get_card_zone_label(card)
+		if zone_label_text != "":
+			var zone_lbl := Label.new()
+			zone_lbl.text = zone_label_text
+			zone_lbl.add_theme_font_size_override("font_size", 10)
+			zone_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			zone_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			zone_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			zone_lbl.custom_minimum_size = Vector2(VisualCard.CARD_WIDTH, 0)
+			card_vbox.add_child(zone_lbl)
 
 		var captured: Card = card
 		wrapper.gui_input.connect(func(event: InputEvent) -> void:
@@ -4130,6 +4154,46 @@ func _dismiss_zone_overlay() -> void:
 	_overlay_card_dismissed = Callable()
 	_overlay_selection_cursor_mode = ""
 	_sync_sacrifice_cursor()
+
+func _get_card_zone_label(card: Card) -> String:
+	if card == null or card.current_zone == null:
+		return ""
+	var zone: Zone = card.current_zone
+	var owner_name := ""
+	if zone.zone_owner != null:
+		owner_name = zone.zone_owner.player_name
+	var zone_name := ""
+	match zone.zone_type:
+		Zone.ZoneType.HAND:
+			zone_name = "Hand"
+		Zone.ZoneType.DECK:
+			zone_name = "Deck"
+		Zone.ZoneType.GRAVEYARD:
+			zone_name = "Graveyard"
+		Zone.ZoneType.ABYSS:
+			zone_name = "Abyss"
+		Zone.ZoneType.FRONTLINE:
+			if zone.zone_index >= 0:
+				zone_name = "Frontline %d" % (zone.zone_index + 1)
+			else:
+				zone_name = "Frontline"
+		Zone.ZoneType.RESERVE:
+			if zone.zone_index >= 0:
+				zone_name = "Reserve %d" % (zone.zone_index + 1)
+			else:
+				zone_name = "Reserve"
+		Zone.ZoneType.GOD_SLOT:
+			zone_name = "God Slot"
+		Zone.ZoneType.POWER_SLOT:
+			if zone.zone_index >= 0:
+				zone_name = "Power %d" % (zone.zone_index + 1)
+			else:
+				zone_name = "Power Slot"
+		_:
+			return ""
+	if owner_name == "":
+		return zone_name
+	return "%s's %s" % [owner_name, zone_name]
 
 func _get_stack_card_type_label(card: Card) -> String:
 	if card == null:
@@ -5872,6 +5936,9 @@ func _on_god_card_pressed(card: Card) -> void:
 	if not card.can_activate(game_manager):
 		action_label.text = _get_activation_unavailable_text(card, card.card_name + "'s ability cannot be activated right now.")
 		return
+	if card is Odin:
+		_begin_odin_runic_knowledge_activation(card as Odin)
+		return
 	if not card.targets:
 		if _is_networked_client:
 			var god_uid: String = card.get("uid") if "uid" in card else ""
@@ -6007,6 +6074,301 @@ func _god_ability_should_use_selection_overlay(card: Card) -> bool:
 
 func _on_god_power_activated(_turn_number: int, _player: Player, _god: Card, _target: Card) -> void:
 	pass
+
+func _begin_odin_runic_knowledge_activation(card: Odin) -> void:
+	if card == null or game_manager == null:
+		return
+	var offerings: Array[Card] = card.get_valid_runic_knowledge_offerings()
+	if offerings.is_empty():
+		action_label.text = card.get_activation_failure_reason(game_manager)
+		update_ui()
+		return
+	if offerings.size() == 1:
+		_show_odin_runic_knowledge_guess_prompt(card, offerings[0])
+		return
+	var on_choose_offering := func(chosen_card: Card) -> void:
+		_show_odin_runic_knowledge_guess_prompt(card, chosen_card)
+	var on_cancel_offering := func() -> void:
+		action_label.text = "Cancelled " + card.card_name + "."
+		update_ui()
+	_show_card_selection_overlay(
+		"Choose a Runic or \"of Odin\" card to void for " + card.card_name,
+		offerings,
+		on_choose_offering,
+		on_cancel_offering
+	)
+	action_label.text = card.card_name + ": choose a Runic or \"of Odin\" card to void."
+	update_ui()
+
+func _show_odin_runic_knowledge_guess_prompt(card: Odin, offering_card: Card) -> void:
+	if card == null or offering_card == null or game_manager == null:
+		return
+	if not card.is_valid_runic_knowledge_offering(offering_card):
+		action_label.text = "Runic Knowledge needs a valid Runic or \"of Odin\" offering."
+		update_ui()
+		return
+	var deck_names: Array[String] = _get_odin_runic_knowledge_main_deck_names(card.card_owner)
+	if deck_names.is_empty():
+		action_label.text = "Runic Knowledge could not find the names from your main deck list."
+		update_ui()
+		return
+
+	_dismiss_zone_overlay()
+
+	var overlay := Control.new()
+	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	overlay.z_index = 300
+	add_child(overlay)
+	_promote_transient_ui(overlay)
+	_zone_overlay = overlay
+
+	var bg := ColorRect.new()
+	bg.color = Color(0.0, 0.0, 0.0, 0.65)
+	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	overlay.add_child(bg)
+
+	var panel := _create_centered_overlay_panel(overlay, 0.42, 0.72)
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 8)
+	vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	vbox.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	panel.add_child(vbox)
+
+	var title := Label.new()
+	title.text = card.card_name + ": Name the top card"
+	title.add_theme_font_size_override("font_size", 16)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vbox.add_child(title)
+
+	var info := Label.new()
+	info.text = "Voiding %s. Type to filter your main deck list, then click the card name you want to guess." % offering_card.card_name
+	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	info.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vbox.add_child(info)
+
+	var search := LineEdit.new()
+	search.placeholder_text = "Search card names"
+	search.clear_button_enabled = true
+	search.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	vbox.add_child(search)
+
+	var results_label := Label.new()
+	results_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vbox.add_child(results_label)
+
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	vbox.add_child(scroll)
+
+	var list_vbox := VBoxContainer.new()
+	list_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	list_vbox.add_theme_constant_override("separation", 4)
+	scroll.add_child(list_vbox)
+
+	var action_row := HBoxContainer.new()
+	action_row.alignment = BoxContainer.ALIGNMENT_END
+	vbox.add_child(action_row)
+
+	var cancel_btn := Button.new()
+	cancel_btn.text = "Cancel"
+	action_row.add_child(cancel_btn)
+
+	var filtered_names: Array[String] = deck_names.duplicate()
+	var submit_guess := func(chosen_name: String) -> void:
+		var resolved_name := str(chosen_name).strip_edges()
+		if resolved_name.is_empty():
+			return
+		_dismiss_zone_overlay()
+		_submit_odin_runic_knowledge_activation(card, offering_card, resolved_name)
+	var rebuild_name_list := func(filter_text: String) -> void:
+		for child in list_vbox.get_children():
+			child.queue_free()
+		filtered_names = _filter_odin_runic_knowledge_name_options(deck_names, filter_text)
+		results_label.text = "Matching cards: %d" % filtered_names.size()
+		if filtered_names.is_empty():
+			var empty_label := Label.new()
+			empty_label.text = "No matching cards."
+			empty_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			empty_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			list_vbox.add_child(empty_label)
+			return
+		for candidate_name in filtered_names:
+			var chosen_name := candidate_name
+			var name_button := Button.new()
+			name_button.text = chosen_name
+			name_button.alignment = HORIZONTAL_ALIGNMENT_LEFT
+			name_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			name_button.pressed.connect(func() -> void:
+				submit_guess.call(chosen_name)
+			)
+			list_vbox.add_child(name_button)
+
+	search.text_changed.connect(func(new_text: String) -> void:
+		rebuild_name_list.call(new_text)
+	)
+	search.text_submitted.connect(func(submitted_text: String) -> void:
+		var exact_match := _find_odin_runic_knowledge_name_match(deck_names, submitted_text)
+		if exact_match != "":
+			submit_guess.call(exact_match)
+			return
+		if not filtered_names.is_empty():
+			submit_guess.call(filtered_names[0])
+	)
+	cancel_btn.pressed.connect(func() -> void:
+		_dismiss_zone_overlay()
+		action_label.text = "Cancelled " + card.card_name + "."
+		update_ui()
+	)
+	overlay.gui_input.connect(func(event: InputEvent) -> void:
+		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+			_dismiss_zone_overlay()
+			action_label.text = "Cancelled " + card.card_name + "."
+			update_ui()
+	)
+
+	rebuild_name_list.call("")
+	search.grab_focus()
+	action_label.text = card.card_name + ": name the top card of your deck."
+	update_ui()
+
+func _submit_odin_runic_knowledge_activation(card: Odin, offering_card: Card, named_card_name: String) -> void:
+	if card == null or offering_card == null or game_manager == null:
+		return
+	var guessed_name := str(named_card_name).strip_edges()
+	if guessed_name.is_empty():
+		action_label.text = "Runic Knowledge needs a card name."
+		update_ui()
+		return
+	if _is_networked_client:
+		game_input.submit_action({
+			type = "activate_card_ability",
+			source_uid = card.uid,
+			option = {
+				offering_uid = offering_card.uid,
+				named_card_name = guessed_name,
+			}
+		})
+		action_label.text = card.card_name + " invokes Runic Knowledge."
+		update_ui()
+		return
+	_queue_magical_action(
+		CardAction.Type.ABILITY,
+		card,
+		offering_card,
+		card.card_name + " invokes Runic Knowledge.",
+		func() -> void:
+			card.activate(game_manager, {
+				offering_card = offering_card,
+				named_card_name = guessed_name,
+			})
+	)
+
+func _get_odin_runic_knowledge_main_deck_names(player: Player) -> Array[String]:
+	var unique_names: Dictionary = {}
+	var submitted_cards = _get_local_selected_deck_cards(player)
+	if submitted_cards is Dictionary and not (submitted_cards as Dictionary).is_empty():
+		for raw_card_name in (submitted_cards as Dictionary).keys():
+			_add_odin_runic_knowledge_name(unique_names, str(raw_card_name))
+	if unique_names.is_empty() and player != null and not player.current_deck.is_empty():
+		for deck_card in player.current_deck:
+			var typed_card := deck_card as Card
+			if typed_card == null:
+				continue
+			if typed_card.is_god or typed_card.is_power:
+				continue
+			unique_names[str(typed_card.card_name)] = true
+	if unique_names.is_empty() and player != null:
+		for zone in _get_all_player_zones(player):
+			if zone == null:
+				continue
+			for zone_card in zone.cards:
+				var typed_zone_card := zone_card as Card
+				if typed_zone_card == null:
+					continue
+				if typed_zone_card.is_god or typed_zone_card.is_power:
+					continue
+				unique_names[str(typed_zone_card.card_name)] = true
+	var output: Array[String] = []
+	for card_name in unique_names.keys():
+		output.append(str(card_name))
+	output.sort()
+	return output
+
+func _get_local_selected_deck_cards(player: Player) -> Dictionary:
+	if player == null:
+		return {}
+	if network_manager != null and network_manager.local_player_index >= 0 and game_manager != null:
+		var player_index := game_manager.players.find(player)
+		if player_index != network_manager.local_player_index:
+			return {}
+	var selected_deck_cards = _current_match_info.get("selected_deck_cards", {})
+	if selected_deck_cards is Dictionary:
+		return (selected_deck_cards as Dictionary).duplicate(true)
+	return {}
+
+func _get_all_player_zones(player: Player) -> Array[Zone]:
+	if player == null:
+		return []
+	var zones: Array[Zone] = [
+		player.hand_zone,
+		player.deck_zone,
+		player.graveyard_zone,
+		player.abyss_zone,
+		player.god_zone,
+	]
+	zones.append_array(player.power_zones)
+	zones.append_array(player.frontline_zones)
+	zones.append_array(player.reserve_zones)
+	return zones
+
+func _add_odin_runic_knowledge_name(unique_names: Dictionary, card_name: String) -> void:
+	var resolved_name := str(card_name).strip_edges()
+	if resolved_name.is_empty():
+		return
+	var template := CardCatalog.instantiate_card_by_name(resolved_name)
+	if template == null:
+		return
+	if template.is_god or template.is_power:
+		return
+	unique_names[str(template.card_name)] = true
+
+func _filter_odin_runic_knowledge_name_options(all_names: Array[String], filter_text: String) -> Array[String]:
+	var query := str(filter_text).strip_edges()
+	if query.is_empty():
+		return all_names.duplicate()
+	var query_key := CardCatalog.to_lookup_key(query)
+	var exact_matches: Array[String] = []
+	var prefix_matches: Array[String] = []
+	var contains_matches: Array[String] = []
+	for candidate_name in all_names:
+		var candidate_key := CardCatalog.to_lookup_key(candidate_name)
+		if candidate_key == query_key:
+			exact_matches.append(candidate_name)
+		elif candidate_key.begins_with(query_key):
+			prefix_matches.append(candidate_name)
+		elif candidate_key.contains(query_key):
+			contains_matches.append(candidate_name)
+	var filtered: Array[String] = []
+	filtered.append_array(exact_matches)
+	filtered.append_array(prefix_matches)
+	filtered.append_array(contains_matches)
+	return filtered
+
+func _find_odin_runic_knowledge_name_match(all_names: Array[String], query_text: String) -> String:
+	var query_key := CardCatalog.to_lookup_key(query_text)
+	if query_key.is_empty():
+		return ""
+	for candidate_name in all_names:
+		if CardCatalog.to_lookup_key(candidate_name) == query_key:
+			return candidate_name
+	return ""
 
 func _execute_drag_sacrifice(zone: Zone) -> void:
 	var card := _drag_sacrifice_card
@@ -6575,6 +6937,56 @@ func _begin_gugalanna_impact_targeting(card) -> void:
 	action_label.text = card.card_name + " Celestial Charge waits on priority."
 	_offer_priority()
 
+func _queue_nergal_lion_impact_prompt(card: NergalLion) -> void:
+	if card == null or game_manager == null:
+		return
+	var valid_targets := card.get_valid_immolate_targets(game_manager)
+	if valid_targets.is_empty():
+		var no_target_text := card.card_name + " found no physical destruction card to immolate."
+		game_manager.note_player_feedback(no_target_text)
+		action_label.text = _consume_resolution_feedback(no_target_text)
+		update_ui()
+		return
+	var valid_zones := card.get_valid_immolate_zones()
+	if valid_zones.is_empty():
+		var no_zone_text := card.card_name + " has no open field zone for Immolate."
+		game_manager.note_player_feedback(no_zone_text)
+		action_label.text = _consume_resolution_feedback(no_zone_text)
+		update_ui()
+		return
+	if valid_targets.size() == 1:
+		var auto_feedback := card.resolve_immolate_impact(game_manager, valid_targets[0], valid_zones[0])
+		game_manager.note_player_feedback(auto_feedback)
+		action_label.text = _consume_resolution_feedback(auto_feedback)
+		update_ui()
+		return
+
+	action_label.text = card.card_name + ": choose a destruction card in your graveyard to immolate."
+	var on_choose_target := func(chosen_card: Card) -> void:
+		var current_targets := card.get_valid_immolate_targets(game_manager)
+		var current_zones := card.get_valid_immolate_zones()
+		var feedback := ""
+		if chosen_card == null or chosen_card not in current_targets:
+			feedback = card.card_name + " found no valid destruction card to immolate."
+		elif current_zones.is_empty():
+			feedback = card.card_name + " has no open field zone for Immolate."
+		else:
+			feedback = card.resolve_immolate_impact(game_manager, chosen_card, current_zones[0])
+		game_manager.note_player_feedback(feedback)
+		action_label.text = _consume_resolution_feedback(feedback)
+		update_ui()
+	var on_cancel_target := func() -> void:
+		action_label.text = card.card_name + " must choose a destruction card to immolate."
+		update_ui()
+		call_deferred("_queue_nergal_lion_impact_prompt", card)
+	_show_card_selection_overlay(
+		"Choose a destruction card for " + card.card_name,
+		valid_targets,
+		on_choose_target,
+		on_cancel_target
+	)
+	update_ui()
+
 func _queue_giant_master_architect_impact_prompt(card) -> void:
 	if card == null or game_manager == null:
 		return
@@ -6627,6 +7039,62 @@ func _queue_humbaba_augury_reading_prompt(card: HumbabaTheTerrible) -> void:
 		return
 	_pending_humbaba_prompts.append(card)
 	call_deferred("_show_next_humbaba_augury_prompt")
+
+func _queue_oracles_sight_prompt(card: OraclesSight) -> void:
+	if card == null or game_manager == null:
+		return
+	_pending_oracles_sight_prompts.append(card)
+	call_deferred("_show_next_oracles_sight_prompt")
+
+func _show_next_oracles_sight_prompt() -> void:
+	if _active_oracles_sight_prompt != null:
+		return
+	if game_manager == null:
+		_pending_oracles_sight_prompts.clear()
+		return
+	while not _pending_oracles_sight_prompts.is_empty():
+		var card = _pending_oracles_sight_prompts.pop_front()
+		if card == null:
+			continue
+		var current_targets: Array[Card] = card.get_foresight_cards()
+		if current_targets.is_empty():
+			action_label.text = card.card_name + " found no cards to read."
+			update_ui()
+			continue
+		if current_targets.size() == 1 or not _is_player_local(card.card_owner):
+			action_label.text = card.resolve_foresight_choice(game_manager, current_targets[0])
+			update_ui()
+			continue
+		_active_oracles_sight_prompt = card
+		var on_choose_foresight := func(chosen_card: Card) -> void:
+			var resolved_card := _active_oracles_sight_prompt
+			_active_oracles_sight_prompt = null
+			if resolved_card == null or game_manager == null:
+				call_deferred("_show_next_oracles_sight_prompt")
+				return
+			action_label.text = resolved_card.resolve_foresight_choice(game_manager, chosen_card)
+			update_ui()
+			call_deferred("_show_next_oracles_sight_prompt")
+		var on_cancel_foresight := func() -> void:
+			var resolved_card := _active_oracles_sight_prompt
+			_active_oracles_sight_prompt = null
+			if resolved_card == null:
+				call_deferred("_show_next_oracles_sight_prompt")
+				return
+			_pending_oracles_sight_prompts.insert(0, resolved_card)
+			if game_manager != null:
+				action_label.text = resolved_card.card_name + " still needs you to choose a card to prime."
+				update_ui()
+			call_deferred("_show_next_oracles_sight_prompt")
+		_show_card_selection_overlay(
+			"Choose a card to prime for " + card.card_name,
+			current_targets,
+			on_choose_foresight,
+			on_cancel_foresight
+		)
+		action_label.text = "%s: choose one of the next %d cards to prime." % [card.card_name, current_targets.size()]
+		update_ui()
+		return
 
 func _show_next_humbaba_augury_prompt() -> void:
 	if _active_humbaba_prompt != null:
@@ -8189,57 +8657,76 @@ func _on_creature_right_clicked(card: Card) -> void:
 		vbox.add_child(btn)
 
 	if can_activate_creature:
-		var btn := Button.new()
-		var card_activation_label: String = card.get_activation_label() if card.has_method("get_activation_label") else "Activate Ability"
-		btn.text = card_activation_label
-		var on_choose_creature_target := func(chosen_card: Card) -> void:
-			_queue_context_targeted_ability(card, chosen_card)
-		var on_cancel_creature_target := func() -> void:
-			action_label.text = "Cancelled " + card.card_name + "."
-			update_ui()
-		btn.pressed.connect(func():
-			_close_context_menu()
-			if card is EnHeduAnnaScript:
-				_show_en_hedu_anna_prompt(card as EnHeduAnnaScript)
-				return
-			if card is HariiShamanScript:
-				_begin_harii_shaman_activation(card as HariiShamanScript)
-				return
-			if card is ErlqueensNightingaleScript:
-				_show_erlqueens_nightingale_prompt(card as ErlqueensNightingaleScript)
-				return
-			if card is MopsusScript:
-				_show_mopsus_hand_prompt(card as MopsusScript)
-				return
-			if _uses_devour_click_selection(card):
-				_begin_devour_activation(card)
-				return
-			if card.has_method("get_valid_targets"):
-				var targets: Array = card.get_valid_targets(game_manager)
-				if targets.is_empty():
-					action_label.text = card.card_name + " has no valid targets right now."
-					update_ui()
-					return
-				_show_card_selection_overlay(
-					"Choose a target for " + card.card_name,
-					targets,
-					on_choose_creature_target,
-					on_cancel_creature_target
+		if card is NimueScript:
+			var nimue := card as NimueScript
+			if nimue.can_activate_entomb(game_manager):
+				var entomb_btn := Button.new()
+				entomb_btn.text = "Entomb"
+				entomb_btn.pressed.connect(func() -> void:
+					_close_context_menu()
+					_begin_nimue_entomb_activation(nimue)
 				)
-			else:
-				if _is_networked_client:
-					game_input.submit_action({type = "activate_card_ability", source_uid = card.uid})
-				else:
-					_queue_magical_action(
-						CardAction.Type.ABILITY,
-						card,
-						null,
-						card.card_name + " activated!",
-						func() -> void:
-							card.activate(game_manager)
+				vbox.add_child(entomb_btn)
+			if nimue.can_activate_present(game_manager):
+				var present_btn := Button.new()
+				present_btn.text = "Present"
+				present_btn.pressed.connect(func() -> void:
+					_close_context_menu()
+					_show_nimue_present_prompt(nimue)
+				)
+				vbox.add_child(present_btn)
+		else:
+			var btn := Button.new()
+			var card_activation_label: String = card.get_activation_label() if card.has_method("get_activation_label") else "Activate Ability"
+			btn.text = card_activation_label
+			var on_choose_creature_target := func(chosen_card: Card) -> void:
+				_queue_context_targeted_ability(card, chosen_card)
+			var on_cancel_creature_target := func() -> void:
+				action_label.text = "Cancelled " + card.card_name + "."
+				update_ui()
+			btn.pressed.connect(func():
+				_close_context_menu()
+				if card is EnHeduAnnaScript:
+					_show_en_hedu_anna_prompt(card as EnHeduAnnaScript)
+					return
+				if card is HariiShamanScript:
+					_begin_harii_shaman_activation(card as HariiShamanScript)
+					return
+				if card is ErlqueensNightingaleScript:
+					_show_erlqueens_nightingale_prompt(card as ErlqueensNightingaleScript)
+					return
+				if card is MopsusScript:
+					_show_mopsus_hand_prompt(card as MopsusScript)
+					return
+				if _uses_devour_click_selection(card):
+					_begin_devour_activation(card)
+					return
+				if card.has_method("get_valid_targets"):
+					var targets: Array = card.get_valid_targets(game_manager)
+					if targets.is_empty():
+						action_label.text = card.card_name + " has no valid targets right now."
+						update_ui()
+						return
+					_show_card_selection_overlay(
+						"Choose a target for " + card.card_name,
+						targets,
+						on_choose_creature_target,
+						on_cancel_creature_target
 					)
-		)
-		vbox.add_child(btn)
+				else:
+					if _is_networked_client:
+						game_input.submit_action({type = "activate_card_ability", source_uid = card.uid})
+					else:
+						_queue_magical_action(
+							CardAction.Type.ABILITY,
+							card,
+							null,
+							card.card_name + " activated!",
+							func() -> void:
+								card.activate(game_manager)
+						)
+			)
+			vbox.add_child(btn)
 
 	for equip in equipped_ability_cards:
 		var equipped_card := equip
@@ -8335,19 +8822,25 @@ func _on_creature_right_clicked(card: Card) -> void:
 		var equip: Card = entry["equipment"]
 		var is_enemy: bool = entry["is_enemy"]
 		var in_range: bool = entry["in_range"]
-		var can_pick_up_this_entry := _can_pick_up_equipment_entry(card, is_enemy)
-		var can_break_this_entry := _can_destroy_equipment_entry(card, is_enemy)
+		var can_pick_up_this_entry := bool(entry.get("allow_pick_up", true)) and _can_pick_up_equipment_entry(card, is_enemy)
+		var can_break_this_entry := bool(entry.get("allow_destroy", true)) and _can_destroy_equipment_entry(card, is_enemy)
+		var pick_up_label := str(entry.get("pick_up_label", "Pick Up"))
+		var pick_up_success := str(entry.get("pick_up_success", "picks up"))
+		var pick_up_failure := str(entry.get("pick_up_failure", "failed to pick up"))
 		var loc := ("zone %d" % equip.current_zone.zone_index) if equip.current_zone != null and equip.current_zone.zone_index >= 0 else "board"
 		var owner_label := "Enemy" if is_enemy else "Own"
 		var range_label := "" if in_range else " (out of range)"
 
 		if not is_enemy and can_pick_up_this_entry:
 			var pick_btn := Button.new()
-			pick_btn.text = "Pick Up: %s [%s %s]" % [equip.card_name, owner_label, loc]
+			pick_btn.text = "%s: %s [%s %s]" % [pick_up_label, equip.card_name, owner_label, loc]
 			pick_btn.pressed.connect(func():
 				_close_context_menu()
 				var ok := _resolve_equipment_action(card, equip, "pick_up")
-				action_label.text = card.card_name + (" picks up " if ok else " failed to pick up ") + equip.card_name
+				var result_phrase := " %s " % pick_up_success
+				if not ok:
+					result_phrase = " %s " % pick_up_failure
+				action_label.text = card.card_name + result_phrase + equip.card_name
 				update_ui()
 			)
 			vbox.add_child(pick_btn)
@@ -8407,6 +8900,53 @@ func _queue_context_targeted_ability(source_card: Card, chosen_card: Card) -> vo
 		func() -> void:
 			source_card.activate(game_manager, chosen_card)
 	)
+
+func _begin_nimue_entomb_activation(card: NimueScript) -> void:
+	if card == null or game_manager == null:
+		return
+	var targets: Array[Card] = card.get_valid_entomb_targets(game_manager)
+	if targets.is_empty():
+		action_label.text = card.card_name + " has no creatures to Entomb right now."
+		update_ui()
+		return
+	var validate_entomb_target := func(clicked_card: Card) -> bool:
+		return clicked_card != null and clicked_card in card.get_valid_entomb_targets(game_manager)
+	var confirm_entomb_target := func(clicked_card: Card) -> void:
+		_queue_context_targeted_ability(card, clicked_card)
+	var cancel_entomb_target := func() -> void:
+		action_label.text = "Cancelled " + card.card_name + "."
+		update_ui()
+	_begin_pending_click_selection(
+		card.card_name + ": Entomb",
+		card,
+		validate_entomb_target,
+		confirm_entomb_target,
+		cancel_entomb_target
+	)
+	action_label.text = card.card_name + ": click a creature to Entomb."
+	update_ui()
+
+func _show_nimue_present_prompt(card: NimueScript) -> void:
+	if card == null or game_manager == null:
+		return
+	var targets: Array[Card] = card.get_valid_present_targets(game_manager)
+	if targets.is_empty():
+		action_label.text = card.card_name + " has no Equipment to Present right now."
+		update_ui()
+		return
+	var on_choose_present_target := func(chosen_card: Card) -> void:
+		_queue_context_targeted_ability(card, chosen_card)
+	var on_cancel_present_target := func() -> void:
+		action_label.text = "Cancelled " + card.card_name + "."
+		update_ui()
+	_show_card_selection_overlay(
+		"Choose Equipment for " + card.card_name,
+		targets,
+		on_choose_present_target,
+		on_cancel_present_target
+	)
+	action_label.text = card.card_name + ": choose Equipment in your graveyard to Present."
+	update_ui()
 
 func _clamp_context_menu_to_viewport(panel: Control, anchor_pos: Vector2) -> void:
 	if panel == null or not is_instance_valid(panel):
@@ -8741,7 +9281,31 @@ func _get_reachable_equipment(creature: Card) -> Array[Dictionary]:
 			result.append({
 				"equipment": equip,
 				"is_enemy": zone.zone_owner != controller,
-				"in_range": true
+				"in_range": true,
+				"allow_pick_up": true,
+				"allow_destroy": true,
+			})
+		for zone_card in zone.cards:
+			if zone_card == null or zone_card in seen:
+				continue
+			if zone_card.card_type != Card.CardType.CREATURE:
+				continue
+			if zone_card.get_controller() != controller:
+				continue
+			if not zone_card.has_method("can_be_used_as_steed_by"):
+				continue
+			if not zone_card.can_be_used_as_steed_by(creature, game_manager):
+				continue
+			seen.append(zone_card)
+			result.append({
+				"equipment": zone_card,
+				"is_enemy": false,
+				"in_range": true,
+				"allow_pick_up": true,
+				"allow_destroy": false,
+				"pick_up_label": "Mount",
+				"pick_up_success": "mounts",
+				"pick_up_failure": "failed to mount",
 			})
 
 	# Out-of-range enemy equipment (frontline creature only)
@@ -8756,7 +9320,9 @@ func _get_reachable_equipment(creature: Card) -> Array[Dictionary]:
 					result.append({
 						"equipment": equip,
 						"is_enemy": true,
-						"in_range": false
+						"in_range": false,
+						"allow_pick_up": true,
+						"allow_destroy": true,
 					})
 	return result
 
@@ -8765,6 +9331,12 @@ func _resolve_equipment_action(actor: Card, target: Card, action: String) -> boo
 		return false
 	if actor.has_method("resolve_equipment_action"):
 		return actor.resolve_equipment_action(game_manager, target, action)
+	if target.has_method("can_be_used_as_steed_by"):
+		match action:
+			"pick_up":
+				return game_manager.creature_use_steed(actor, target)
+			_:
+				return false
 	match action:
 		"pick_up", "steal":
 			return game_manager.creature_pick_up_equipment(actor, target)
@@ -11930,6 +12502,75 @@ func _prompt_end_turn_discards() -> void:
 	)
 	action_label.text = "Choose %d card(s) to discard before ending your turn." % excess
 
+func _resolve_ragnarok_post_destroy(power: Ragnarok, destroyed_count: int, hand_limit: int) -> void:
+	if game_manager == null or power == null:
+		return
+	_pending_ragnarok_power = power
+	_pending_ragnarok_destroyed_count = destroyed_count
+	_pending_ragnarok_discarded_count = 0
+	_pending_ragnarok_hand_limit = maxi(0, hand_limit)
+	_pending_ragnarok_players.clear()
+	for player in game_manager.players:
+		if player != null and player.hand_zone != null and player.hand_zone.get_card_count() > _pending_ragnarok_hand_limit:
+			_pending_ragnarok_players.append(player)
+	_continue_ragnarok_discard_prompt()
+
+func _continue_ragnarok_discard_prompt() -> void:
+	if _pending_ragnarok_power == null or game_manager == null:
+		_clear_ragnarok_prompt_state()
+		return
+	while not _pending_ragnarok_players.is_empty():
+		var player := _pending_ragnarok_players[0]
+		if player == null or player.hand_zone == null or player.hand_zone.get_card_count() <= _pending_ragnarok_hand_limit:
+			_pending_ragnarok_players.remove_at(0)
+			continue
+		_prompt_ragnarok_discards_for_player(player)
+		return
+	_pending_ragnarok_power._finish_resolution(
+		game_manager,
+		_pending_ragnarok_destroyed_count,
+		_pending_ragnarok_discarded_count
+	)
+	_clear_ragnarok_prompt_state()
+	update_ui()
+
+func _prompt_ragnarok_discards_for_player(player: Player) -> void:
+	if player == null or player.hand_zone == null:
+		_continue_ragnarok_discard_prompt()
+		return
+	var excess := maxi(0, player.hand_zone.get_card_count() - _pending_ragnarok_hand_limit)
+	if excess <= 0:
+		_pending_ragnarok_players.remove_at(0)
+		_continue_ragnarok_discard_prompt()
+		return
+	var on_choose_discard := func(chosen_card: Card) -> void:
+		_discard_ragnarok_card(player, chosen_card)
+	_show_card_selection_overlay(
+		"%s: discard %d card(s) to reach %d cards" % [player.player_name, excess, _pending_ragnarok_hand_limit],
+		player.hand_zone.cards.duplicate(),
+		on_choose_discard
+	)
+	action_label.text = "%s chooses %d discard(s) for Ragnarok." % [player.player_name, excess]
+
+func _discard_ragnarok_card(player: Player, card: Card) -> void:
+	if player == null or player.hand_zone == null:
+		_continue_ragnarok_discard_prompt()
+		return
+	if card == null or card.current_zone != player.hand_zone:
+		_prompt_ragnarok_discards_for_player(player)
+		return
+	player.discard_card(card)
+	_pending_ragnarok_discarded_count += 1
+	update_ui()
+	_prompt_ragnarok_discards_for_player(player)
+
+func _clear_ragnarok_prompt_state() -> void:
+	_pending_ragnarok_power = null
+	_pending_ragnarok_destroyed_count = 0
+	_pending_ragnarok_discarded_count = 0
+	_pending_ragnarok_hand_limit = 5
+	_pending_ragnarok_players.clear()
+
 func _discard_end_turn_card(card: Card) -> void:
 	if card == null or card.current_zone != game_manager.current_player.hand_zone:
 		_prompt_end_turn_discards()
@@ -12226,6 +12867,7 @@ func _apply_network_event(event_type: String, data: Dictionary) -> void:
 		"ui_interaction":
 			_apply_ui_interaction(data)
 		"match_join_ok":
+			_current_match_info.merge(data, true)
 			action_label.text = "Match authenticated. Waiting for state sync..."
 			update_ui()
 			_update_waiting_overlay()
@@ -12266,6 +12908,7 @@ func _apply_network_event(event_type: String, data: Dictionary) -> void:
 			action_label.text = "Connection lost. Reconnecting to match server... (%d retries left)" % attempts_remaining
 			update_ui()
 		"match_reconnect_ok":
+			_current_match_info.merge(data, true)
 			_set_match_reconnect_wait(false)
 			action_label.text = "Reconnected to the match server."
 			update_ui()
@@ -12916,6 +13559,30 @@ func _open_upkeep_choice_window() -> void:
 	show_turn_choice()
 	action_label.text = "Upkeep for " + game_manager.current_player.player_name + ": choose your upkeep option."
 	_maybe_prompt_turn_start_windows()
+
+func _show_nusku_well_of_fire_prompt(nusku: NuskuFirebearer, choices: Array[Card], mill_count: int) -> void:
+	if nusku == null or choices.is_empty() or game_manager == null:
+		return
+	_pause_stack_resolution(nusku.card_owner)
+	var opponent: Player = game_manager.get_opponent(nusku.card_owner)
+	var opp_name: String = opponent.player_name if opponent != null else "Opponent"
+	action_label.text = "%s: Well of Fire — choose a card to return to %s's hand." % [opp_name, nusku.card_owner.player_name]
+	_show_card_selection_overlay(
+		"%s: Well of Fire" % opp_name,
+		choices,
+		func(chosen_card: Card) -> void:
+			if chosen_card == null or nusku == null or not is_instance_valid(nusku) or nusku.card_owner == null:
+				_resume_after_deferred_resolution("Well of Fire milled %d card(s). No card returned." % mill_count)
+				return
+			nusku.card_owner.move_card(chosen_card, nusku.card_owner.hand_zone)
+			var feedback := "Well of Fire milled %d card(s). %s chose %s to return to %s's hand." % [
+				mill_count, opp_name, chosen_card.card_name, nusku.card_owner.player_name
+			]
+			if game_manager != null:
+				game_manager.note_player_feedback(feedback)
+				nusku.notify_power_activated(game_manager, chosen_card)
+			_resume_after_deferred_resolution(feedback)
+	)
 
 var _resurrection_panel: Control = null
 var _resurrection_queue: Array[Card] = []

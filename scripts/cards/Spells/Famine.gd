@@ -69,3 +69,12 @@ func _should_destroy(card: Card) -> bool:
 	if card.has_type("Machine") or card.has_type("Spirit"):
 		return false
 	return true
+
+func would_destroy_creature_of_player(_game_manager: GameManager, protected_player: Player, _chosen_target = null) -> bool:
+	if protected_player == null:
+		return false
+	for zone in protected_player.frontline_zones + protected_player.reserve_zones:
+		for card in zone.cards:
+			if card != null and _should_destroy(card):
+				return true
+	return false

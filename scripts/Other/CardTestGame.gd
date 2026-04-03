@@ -18,7 +18,7 @@ func start_game(
 	server_match_session = null
 ) -> void:
 	await super.start_game(is_host, is_client, server_ip, server_port, match_info, server_match_session)
-	load_m_card_scenario()
+	load_p_card_scenario()
 
 func update_ui() -> void:
 	_sync_test_priority_control()
@@ -183,7 +183,161 @@ func _reset_test_match_state() -> void:
 	selected_interceptor = null
 
 func _setup_test_board() -> void:
-	load_m_card_scenario()
+	load_p_card_scenario()
+
+func load_p_card_scenario() -> void:
+	_reset_test_match_state()
+	_add_test_god(player1, ManannanMacLir.new())
+	_add_test_god(player2, Thor.new())
+
+	# P1 power: Palisade starts unlocked so the lane shield can be tested immediately.
+	_add_test_power(player1, 0, PalisadePower.new(), true)
+
+	# P1 board: Berserker is a ready Human for Pegasus to mount, while a hidden Pictish Beast
+	# sits behind the open lane where Palisade will be summoned.
+	_place_test_board_card(player1, player1.frontline_zones[0], Berserker.new(), Card.CreatureMode.AGGRESSIVE)
+	_place_test_board_card(player1, player1.reserve_zones[0], Pegasus.new(), Card.CreatureMode.DEFENSIVE)
+	_place_test_hidden_creature(player1, player1.reserve_zones[1], PictishBeast.new())
+
+	# P1 hand: Pazuzu is ready for an impact drain, and another Beast gives easy Mana Boon fodder.
+	_add_test_hand_card(player1, Pazuzu.new())
+	_add_test_hand_card(player1, PictishBeast.new())
+
+	# P1 grave/deck: Mana Boon already counts a graveyard copy, and the next draws stay on-theme.
+	_add_test_graveyard_card(player1, PictishBeast.new())
+	_add_test_deck_card(player1, Pegasus.new())
+	_add_test_deck_card(player1, PictishBeast.new())
+	_add_test_deck_card(player1, Pazuzu.new())
+
+	# P2 board: a grounded attacker and an aerial attacker let you test Palisade's restriction.
+	_place_test_board_card(player2, player2.frontline_zones[0], BrownBear.new(), Card.CreatureMode.DEFENSIVE)
+	_place_test_board_card(player2, player2.frontline_zones[1], Pegasus.new(), Card.CreatureMode.AGGRESSIVE)
+	_place_test_board_card(player2, player2.reserve_zones[0], BrownBear.new(), Card.CreatureMode.DEFENSIVE)
+
+	# P2 hand/deck: simple follow-up bodies for second-player testing.
+	_add_test_hand_card(player2, BrownBear.new())
+	_add_test_hand_card(player2, HeroicStand.new())
+	_add_test_deck_card(player2, BrownBear.new())
+	_add_test_deck_card(player2, Pegasus.new())
+	_add_test_deck_card(player2, Berserker.new())
+
+	player1.spend_mana(player1.mana)
+	player1.gain_mana(10)
+	player2.spend_mana(player2.mana)
+	player2.gain_mana(8)
+	player1.followers = 100
+	player2.followers = 100
+	player1.followers_changed.emit(player1.followers)
+	player2.followers_changed.emit(player2.followers)
+	player1.has_summoned_this_turn = false
+	player2.has_summoned_this_turn = false
+
+	game_manager.current_player = player1
+	game_manager.other_player = player2
+	game_manager.feedback_viewer = player1
+	player1.is_turn_player = true
+	player2.is_turn_player = false
+	selected_card = null
+	selected_attacker = null
+	selected_interceptor = null
+	_test_turn_owner = player1
+	_test_turn_opponent = player2
+	game_manager.start_turn()
+	_open_upkeep_choice_window()
+	action_label.text = (
+		"P-Card Scenario: All cards starting with P. Choose Draw Card or Gain 4 Mana first.  |  "
+		+ "Power - Palisade is already unlocked, and the open frontline lane in front of your hidden Pictish Beast is reserved for its barrier.  |  "
+		+ "Board - Berserker is live so Pegasus can be mounted immediately, while the hidden Pictish Beast can reveal into Mana Boon with another copy already in your graveyard.  |  "
+		+ "Hand - Pazuzu is ready for Locust Swarm, and the extra Pictish Beast gives you an easy way to grow Mana Boon or provide sacrifice fodder.  |  "
+		+ "Opponent - Brown Bear should be blocked from attacking through Palisade, while the enemy Pegasus lets you test that aerial attackers can still bypass the barrier."
+	)
+	update_ui()
+
+func load_n_o_card_scenario() -> void:
+	_reset_test_match_state()
+	_add_test_god(player1, Odin.new())
+	_add_test_god(player2, NuskuFirebearer.new())
+
+	# P1 powers: Oracle's Sight starts locked to test its unlock resolution; Bloodlust is already live.
+	_add_test_power(player1, 0, OraclesSight.new(), false)
+	_add_test_power(player1, 1, NorseBloodlust.new(), true)
+
+	# P1 board: live N-creatures plus a prepared Namburbi for the opening turn-start window.
+	_place_test_board_card(player1, player1.frontline_zones[0], Berserker.new(), Card.CreatureMode.AGGRESSIVE)
+	_place_test_board_card(player1, player1.frontline_zones[1], Nagual.new(), Card.CreatureMode.AGGRESSIVE)
+	_place_test_board_card(player1, player1.reserve_zones[0], Nimue.new(), Card.CreatureMode.DEFENSIVE)
+	_place_test_prepared_card(player1, player1.reserve_zones[1], NamburbiApotropaeon.new())
+
+	# P1 hand: the rest of the N/O package plus a Norse Warrior for Bloodlust follow-up.
+	_add_test_hand_card(player1, NergalLion.new())
+	_add_test_hand_card(player1, OccultSingularity.new())
+	_add_test_hand_card(player1, GungnirTheSpearOfOdin.new())
+	_add_test_hand_card(player1, HariiWarrior.new())
+	_add_test_hand_card(player1, RunicShortsword.new())
+
+	# P1 graveyard: Nimue can Present the sword, and Nergal Lion can immolate Earthquake immediately.
+	_add_test_graveyard_card(player1, RunicShortsword.new())
+	_add_test_graveyard_card(player1, Earthquake.new())
+
+	# P1 deck: Oracle's Sight and Odin both have known top-deck cards to work with.
+	_add_test_deck_card(player1, OccultSingularity.new())
+	_add_test_deck_card(player1, NamburbiApotropaeon.new())
+	_add_test_deck_card(player1, Nagual.new())
+	_add_test_deck_card(player1, RunicShortsword.new())
+	_add_test_deck_card(player1, Nimue.new())
+	_add_test_deck_card(player1, HariiWarrior.new())
+
+	# P2 board: clean combat and Entomb targets while leaving open space for follow-up testing.
+	_place_test_board_card(player2, player2.frontline_zones[0], BrownBear.new(), Card.CreatureMode.DEFENSIVE)
+	_place_test_board_card(player2, player2.reserve_zones[0], MinotaurFootsoldier.new(), Card.CreatureMode.DEFENSIVE)
+	_place_test_board_card(player2, player2.reserve_zones[1], BrownBear.new(), Card.CreatureMode.DEFENSIVE)
+
+	# P2 hand: simple visible cards for longer follow-up turns.
+	_add_test_hand_card(player2, HeroicStand.new())
+	_add_test_hand_card(player2, OccultSingularity.new())
+
+	# P2 deck: seven cards so Nusku mills the full amount and always finds Ancient charms/spells.
+	_add_test_deck_card(player2, NamburbiApotropaeon.new())
+	_add_test_deck_card(player2, BitMeseri.new())
+	_add_test_deck_card(player2, KeyOfSolomon.new())
+	_add_test_deck_card(player2, NamburbiApotropaeon.new())
+	_add_test_deck_card(player2, BitMeseri.new())
+	_add_test_deck_card(player2, KeyOfSolomon.new())
+	_add_test_deck_card(player2, BrownBear.new())
+
+	player1.spend_mana(player1.mana)
+	player1.gain_mana(12)
+	player2.spend_mana(player2.mana)
+	player2.gain_mana(12)
+	player1.followers = 100
+	player2.followers = 100
+	player1.followers_changed.emit(player1.followers)
+	player2.followers_changed.emit(player2.followers)
+	player1.has_summoned_this_turn = false
+	player2.has_summoned_this_turn = false
+
+	game_manager.current_player = player1
+	game_manager.other_player = player2
+	game_manager.feedback_viewer = player1
+	player1.is_turn_player = true
+	player2.is_turn_player = false
+	selected_card = null
+	selected_attacker = null
+	selected_interceptor = null
+	_test_turn_owner = player1
+	_test_turn_opponent = player2
+	game_manager.start_turn()
+	_open_upkeep_choice_window()
+	action_label.text = (
+		"N/O Scenario: All cards starting with N and O. Choose Draw Card or Gain 4 Mana first.  |  "
+		+ "Gods - Odin leads P1 with a ready Runic Knowledge guess, while Nusku leads P2 with a full seven-card Ancient deck to mill.  |  "
+		+ "Powers - Oracle's Sight starts locked so you can unlock it immediately, and Norse Bloodlust is already active for Berserker's first kill.  |  "
+		+ "Board - Berserker, Nagual, and Nimue are live, and Namburbi Apotropaeon is already prepared for the opening turn-start window.  |  "
+		+ "Hand - Nergal Lion, Occult Singularity, Gungnir, Harii Warrior, and Runic Shortsword cover the remaining N/O cards and Bloodlust follow-up.  |  "
+		+ "Graveyard - Runic Shortsword lets Nimue use Present, and Earthquake gives Nergal Lion a destruction spell to immolate.  |  "
+		+ "Opponent - Brown Bears and a Minotaur Footsoldier give you clean combat and Entomb targets before passing to Nusku for Well of Fire."
+	)
+	update_ui()
 
 func load_m_card_scenario() -> void:
 	_reset_test_match_state()

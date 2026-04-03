@@ -74,3 +74,11 @@ func _is_doomed_card(card: Card, opponent: Player) -> bool:
 		Card.CardType.STRUCTURE,
 		Card.CardType.EQUIPMENT,
 	]
+
+func would_destroy_creature_of_player(game_manager: GameManager, protected_player: Player, _chosen_target = null) -> bool:
+	if game_manager == null or protected_player == null:
+		return false
+	for doomed_card in _get_doomed_cards(game_manager):
+		if doomed_card != null and doomed_card.card_type == Card.CardType.CREATURE and doomed_card.get_controller() == protected_player:
+			return true
+	return false

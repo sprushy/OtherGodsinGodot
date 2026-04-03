@@ -151,6 +151,10 @@ var _authoritative_stack_resolution_pending: bool = false
 
 func resolve_action(action: CardAction) -> void:
 	last_resolution_text = ""
+	var pushed_effect_source := false
+	if game_manager != null and action != null and action.card != null:
+		game_manager.push_effect_source_card(action.card)
+		pushed_effect_source = true
 	match action.type:
 		CardAction.Type.ABILITY:
 			_resolve_ability(action)
@@ -160,6 +164,8 @@ func resolve_action(action: CardAction) -> void:
 			_resolve_event(action)
 		CardAction.Type.ATTACK:
 			_resolve_attack(action)
+	if game_manager != null and pushed_effect_source:
+		game_manager.pop_effect_source_card()
 	_remove_resolved_action(action)
 	
 	action_resolved.emit(action)
@@ -1193,6 +1199,12 @@ func _process_command_impl(command: Dictionary) -> bool:
 			if spell == null or not (spell is SpellCard):
 				move_failed.emit("cast_spell: spell not found or not a SpellCard")
 				return false
+			var spell_target_uid: String = command.get("target_uid", "")
+			var spell_target: Card = game_manager.get_card_by_uid(spell_target_uid) if spell_target_uid != "" else null
+			var spell_ward_block_reason := game_manager.get_turn_destruction_ward_activation_block_reason(spell, spell_target)
+			if spell_ward_block_reason != "":
+				move_failed.emit(spell_ward_block_reason)
+				return false
 			var player := acting_player
 			var prepared_spell := spell.is_prepared and spell.current_zone != null and spell.current_zone.is_board_zone()
 			
@@ -1244,8 +1256,6 @@ func _process_command_impl(command: Dictionary) -> bool:
 						{"player": player, "prepared": false}
 					)
 			if _uses_authoritative_headless_priority_flow():
-				var spell_target_uid: String = command.get("target_uid", "")
-				var spell_target: Card = game_manager.get_card_by_uid(spell_target_uid) if spell_target_uid != "" else null
 				var preferred_display_zone: Zone = spell.current_zone if prepared_spell else (
 					spell_target.current_zone if spell_target != null and spell_target.current_zone != null and spell_target.current_zone.is_board_zone() else null
 				)
@@ -1266,7 +1276,11 @@ func _process_command_impl(command: Dictionary) -> bool:
 				_advance_authoritative_priority()
 				return true
 			game_manager.notify_spell_played(player, spell)
-			(spell as SpellCard).resolve_from_command(game_manager, command)
+			game_manager.run_with_effect_source(
+				spell,
+				func() -> void:
+					(spell as SpellCard).resolve_from_command(game_manager, command)
+			)
 			if (spell as SpellCard).should_go_to_graveyard() and spell.current_zone != player.graveyard_zone:
 				player.move_card(spell, player.graveyard_zone)
 			move_validated.emit(command)
@@ -1284,6 +1298,10 @@ func _process_command_impl(command: Dictionary) -> bool:
 			var target_uid: String = command.get("target_uid", "")
 			if target_uid != "":
 				target = game_manager.get_card_by_uid(target_uid)
+			var god_ward_block_reason := game_manager.get_turn_destruction_ward_activation_block_reason(god_card, target)
+			if god_ward_block_reason != "":
+				move_failed.emit(god_ward_block_reason)
+				return false
 			if _uses_authoritative_headless_priority_flow():
 				_queue_authoritative_magical_action(
 					CardAction.Type.ABILITY,
@@ -1296,7 +1314,11 @@ func _process_command_impl(command: Dictionary) -> bool:
 				_advance_authoritative_priority()
 				return true
 			if god_card.has_method("activate"):
-				god_card.activate(game_manager, target)
+				game_manager.run_with_effect_source(
+					god_card,
+					func() -> void:
+						god_card.activate(game_manager, target)
+				)
 			move_validated.emit(command)
 			return true
 		"activate_power":
@@ -1309,6 +1331,10 @@ func _process_command_impl(command: Dictionary) -> bool:
 			var act_target_uid: String = command.get("target_uid", "")
 			if act_target_uid != "":
 				act_target = game_manager.get_card_by_uid(act_target_uid)
+			var power_ward_block_reason := game_manager.get_turn_destruction_ward_activation_block_reason(power_card, act_target)
+			if power_ward_block_reason != "":
+				move_failed.emit(power_ward_block_reason)
+				return false
 			var act_mode: String = command.get("mode", "")
 			if act_mode == "return_priest":
 				if not (power_card is Breidablik):
@@ -1329,7 +1355,11 @@ func _process_command_impl(command: Dictionary) -> bool:
 					move_validated.emit(command)
 					_advance_authoritative_priority()
 					return true
-				breidablik.return_priest(game_manager, act_target)
+				game_manager.run_with_effect_source(
+					power_card,
+					func() -> void:
+						breidablik.return_priest(game_manager, act_target)
+				)
 			else:
 				if not power_card.can_activate(game_manager):
 					move_failed.emit(power_card.card_name + " cannot activate right now.")
@@ -1345,7 +1375,11 @@ func _process_command_impl(command: Dictionary) -> bool:
 					move_validated.emit(command)
 					_advance_authoritative_priority()
 					return true
-				power_card.activate(game_manager, act_target)
+				game_manager.run_with_effect_source(
+					power_card,
+					func() -> void:
+						power_card.activate(game_manager, act_target)
+				)
 			move_validated.emit(command)
 			return true
 		"cast_charm":
@@ -1359,6 +1393,10 @@ func _process_command_impl(command: Dictionary) -> bool:
 			var charm_target_uid: String = command.get("target_uid", "")
 			if charm_target_uid != "":
 				charm_target = game_manager.get_card_by_uid(charm_target_uid)
+			var charm_ward_block_reason := game_manager.get_turn_destruction_ward_activation_block_reason(charm_card, charm_target)
+			if charm_ward_block_reason != "":
+				move_failed.emit(charm_ward_block_reason)
+				return false
 			var charm_prepared: bool = command.get("prepared", false) or charm_card.is_prepared
 			var charm_source_action: CardAction = game_manager.action_stack.back() if not game_manager.action_stack.is_empty() else null
 			if charm_prepared:
@@ -1395,7 +1433,11 @@ func _process_command_impl(command: Dictionary) -> bool:
 				move_validated.emit(command)
 				_advance_authoritative_priority()
 				return true
-			charm_card.resolve(game_manager, charm_target)
+			game_manager.run_with_effect_source(
+				charm_card,
+				func() -> void:
+					charm_card.resolve(game_manager, charm_target)
+			)
 			if charm_card.goes_to_graveyard_after_use() \
 					and charm_card.current_zone != null \
 					and charm_card.current_zone != charm_card.card_owner.graveyard_zone:
@@ -1490,6 +1532,10 @@ func _process_command_impl(command: Dictionary) -> bool:
 			var aca_target_uid: String = command.get("target_uid", "")
 			if aca_target_uid != "":
 				aca_target = game_manager.get_card_by_uid(aca_target_uid)
+			var ability_ward_block_reason := game_manager.get_turn_destruction_ward_activation_block_reason(aca_source, aca_target)
+			if ability_ward_block_reason != "":
+				move_failed.emit(ability_ward_block_reason)
+				return false
 			if _uses_authoritative_headless_priority_flow():
 				_queue_authoritative_magical_action(
 					CardAction.Type.ABILITY,
@@ -1509,13 +1555,29 @@ func _process_command_impl(command: Dictionary) -> bool:
 				_advance_authoritative_priority()
 				return true
 			if command.has("return_to_hand"):
-				aca_source.activate(game_manager, {"return_to_hand": bool(command.get("return_to_hand", false))})
+				game_manager.run_with_effect_source(
+					aca_source,
+					func() -> void:
+						aca_source.activate(game_manager, {"return_to_hand": bool(command.get("return_to_hand", false))})
+				)
 			elif command.has("option"):
-				aca_source.activate(game_manager, command.get("option", {}))
+				game_manager.run_with_effect_source(
+					aca_source,
+					func() -> void:
+						aca_source.activate(game_manager, command.get("option", {}))
+				)
 			elif aca_target != null:
-				aca_source.activate(game_manager, aca_target)
+				game_manager.run_with_effect_source(
+					aca_source,
+					func() -> void:
+						aca_source.activate(game_manager, aca_target)
+				)
 			else:
-				aca_source.activate(game_manager)
+				game_manager.run_with_effect_source(
+					aca_source,
+					func() -> void:
+						aca_source.activate(game_manager)
+				)
 			move_validated.emit(command)
 			return true
 		"en_hedu_anna_exaltation":

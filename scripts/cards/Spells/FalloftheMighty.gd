@@ -76,3 +76,11 @@ func resolve(game_manager: GameManager, _target = null) -> void:
 		if game_manager.request_send_to_graveyard(creature, Callable(), false, true):
 			destroyed_count += 1
 	print("Fall of the Mighty destroyed " + str(destroyed_count) + " mighty creature(s)!")
+
+func would_destroy_creature_of_player(game_manager: GameManager, protected_player: Player, _chosen_target = null) -> bool:
+	if game_manager == null or protected_player == null:
+		return false
+	for creature in get_strongest_creatures(game_manager):
+		if creature != null and creature.get_controller() == protected_player:
+			return true
+	return false
