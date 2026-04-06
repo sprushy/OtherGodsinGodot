@@ -96,22 +96,11 @@ func _ensure_loaded() -> void:
 	if not (parsed is Dictionary):
 		return
 	var root := parsed as Dictionary
-	var stored_accounts = root.get("accounts_by_id", {})
-	var stored_index = root.get("account_id_by_username", {})
-	if stored_accounts is Dictionary:
-		_accounts_by_id = (stored_accounts as Dictionary).duplicate(true)
-	if stored_index is Dictionary:
-		_account_id_by_username = (stored_index as Dictionary).duplicate(true)
-	if _account_id_by_username.is_empty():
-		for account_id in _accounts_by_id.keys():
-			var account = _accounts_by_id[account_id]
-			if not (account is Dictionary):
-				continue
-			var username_key := str((account as Dictionary).get("username_key", ""))
-			if username_key.is_empty():
-				username_key = _username_key(str((account as Dictionary).get("username", "")))
-			if not username_key.is_empty():
-				_account_id_by_username[username_key] = str(account_id)
+	var extracted_payload := _extract_accounts_payload(root)
+	_accounts_by_id = extracted_payload.get("accounts_by_id", {})
+	_rebuild_account_username_index()
+	if bool(extracted_payload.get("migration_dirty", false)):
+		_save()
 
 func _save() -> void:
 	var storage_path: String = _get_storage_path()
@@ -192,3 +181,88 @@ func _hash_password(password: String, salt: String) -> String:
 
 func _get_storage_path() -> String:
 	return ServerPathsScript.get_server_data_file_path("accounts.json")
+
+func _extract_accounts_payload(root: Dictionary) -> Dictionary:
+	var extracted: Dictionary = {}
+	var migration_dirty := false
+	var stored_accounts = root.get("accounts_by_id", null)
+	if stored_accounts is Dictionary:
+		for account_id in (stored_accounts as Dictionary).keys():
+			var normalization: Dictionary = _normalize_loaded_account(stored_accounts[account_id], str(account_id))
+			var normalized: Dictionary = normalization.get("account", {})
+			if normalized.is_empty():
+				continue
+			extracted[str(normalized.get("account_id", ""))] = normalized
+			if bool(normalization.get("migration_dirty", false)) \
+					or str(normalized.get("account_id", "")) != str(account_id):
+				migration_dirty = true
+	else:
+		for legacy_key in root.keys():
+			var normalization: Dictionary = _normalize_loaded_account(root[legacy_key], str(legacy_key))
+			var normalized: Dictionary = normalization.get("account", {})
+			if normalized.is_empty():
+				continue
+			extracted[str(normalized.get("account_id", ""))] = normalized
+			migration_dirty = true
+	return {
+		"accounts_by_id": extracted,
+		"migration_dirty": migration_dirty,
+	}
+
+func _normalize_loaded_account(raw_account, fallback_key: String = "") -> Dictionary:
+	if not (raw_account is Dictionary):
+		return {
+			"account": {},
+			"migration_dirty": false,
+		}
+	var account: Dictionary = (raw_account as Dictionary).duplicate(true)
+	var migration_dirty := false
+	var account_id := str(account.get("account_id", fallback_key)).strip_edges()
+	var username := _normalize_username(str(account.get("username", "")))
+	if account_id.is_empty() or username.is_empty():
+		return {
+			"account": {},
+			"migration_dirty": migration_dirty,
+		}
+	if str(account.get("account_id", "")).strip_edges() != account_id:
+		migration_dirty = true
+	if str(account.get("username", "")) != username:
+		migration_dirty = true
+	account["account_id"] = account_id
+	account["username"] = username
+	var username_key := _username_key(username)
+	if str(account.get("username_key", "")).strip_edges() != username_key:
+		migration_dirty = true
+	account["username_key"] = username_key
+	var password_hash := str(account.get("password_hash", "")).strip_edges()
+	var password_salt := str(account.get("password_salt", "")).strip_edges()
+	if password_hash.is_empty() or password_salt.is_empty():
+		var legacy_password := str(account.get("password", ""))
+		if legacy_password.strip_edges().is_empty():
+			return {
+				"account": {},
+				"migration_dirty": migration_dirty,
+			}
+		password_salt = _generate_salt(24)
+		password_hash = _hash_password(legacy_password, password_salt)
+		account.erase("password")
+		account["password_salt"] = password_salt
+		account["password_hash"] = password_hash
+		migration_dirty = true
+	return {
+		"account": account,
+		"migration_dirty": migration_dirty,
+	}
+
+func _rebuild_account_username_index() -> void:
+	_account_id_by_username = {}
+	for account_id in _accounts_by_id.keys():
+		var account = _accounts_by_id[account_id]
+		if not (account is Dictionary):
+			continue
+		var username_key := str((account as Dictionary).get("username_key", "")).strip_edges()
+		if username_key.is_empty():
+			username_key = _username_key(str((account as Dictionary).get("username", "")))
+		if username_key.is_empty():
+			continue
+		_account_id_by_username[username_key] = str(account_id)

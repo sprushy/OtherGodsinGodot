@@ -181,8 +181,7 @@ func _get_top_deck_card() -> Card:
 func _get_field_zones() -> Array[Zone]:
 	if card_owner == null:
 		return []
-	var zones: Array[Zone] = [card_owner.god_zone]
-	zones.append_array(card_owner.power_zones)
+	var zones: Array[Zone] = []
 	zones.append_array(card_owner.frontline_zones)
 	zones.append_array(card_owner.reserve_zones)
 	return zones

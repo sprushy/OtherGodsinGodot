@@ -9,6 +9,7 @@ const CardCatalogScript = preload("res://scripts/cards/CardCatalog.gd")
 const DeckValidatorScript = preload("res://scripts/server/DeckValidator.gd")
 const MatchHistoryStoreScript = preload("res://scripts/server/MatchHistoryStore.gd")
 const MatchSessionScript = preload("res://scripts/server/MatchSession.gd")
+const LobbyRoomScript = preload("res://scripts/server/LobbyRoom.gd")
 const PracticeThorScene = preload("res://scenes/practice_thor_game.tscn")
 const DEDICATED_LOBBY_ENTRY_SCRIPT_PATH := "res://scripts/server/DedicatedLobbyServerMain.gd"
 const DEDICATED_SERVER_EXPORT_RELATIVE_PATH := "res://.exports/server/ClaudeOtherGodsServer.exe"
@@ -63,12 +64,14 @@ var _multiplayer_deck_entries: Array[Dictionary] = []
 var _deck_validator = DeckValidatorScript.new()
 var _last_submitted_lobby_room_id: String = ""
 var _last_submitted_lobby_deck_id: String = ""
+var _last_submitted_lobby_deck_hash: String = ""
 var _auth_mode_option: OptionButton = null
 var _password_line_edit: LineEdit = null
 var _switch_account_button: Button = null
 var _resume_match_button: Button = null
 var _profile_summary_label: Label = null
 var _current_profile_summary: Dictionary = {}
+var _account_decks_cache: Array[Dictionary] = []
 var _auth_onboarding_overlay: Control = null
 var _auth_onboarding_selected_mode: String = AUTH_MODE_GUEST
 var _auth_onboarding_mode_hint_label: Label = null
@@ -436,6 +439,40 @@ func _get_saved_deck_validation(saved_deck: Dictionary) -> Dictionary:
 		return {"is_valid": false, "error": "Deck is missing."}
 	return _deck_validator.validate_deck(saved_deck.get("cards", {}))
 
+func _get_saved_decks_for_current_identity() -> Array[Dictionary]:
+	if _uses_server_account_storage():
+		var decks: Array[Dictionary] = []
+		for entry in _account_decks_cache:
+			decks.append(entry.duplicate(true))
+		return decks
+	if _local_profile_store == null or _local_profile_id.is_empty():
+		return []
+	return _local_profile_store.list_decks(_local_profile_id)
+
+func _replace_account_decks_cache(decks: Array[Dictionary]) -> void:
+	_account_decks_cache.clear()
+	for entry in decks:
+		_account_decks_cache.append(entry.duplicate(true))
+
+func _upsert_account_deck_cache(deck: Dictionary) -> void:
+	var deck_id := str(deck.get("deck_id", "")).strip_edges()
+	if deck_id.is_empty():
+		return
+	for index in range(_account_decks_cache.size()):
+		if str(_account_decks_cache[index].get("deck_id", "")).strip_edges() != deck_id:
+			continue
+		_account_decks_cache[index] = deck.duplicate(true)
+		return
+	_account_decks_cache.append(deck.duplicate(true))
+
+func _remove_account_deck_from_cache(deck_id: String) -> void:
+	var resolved_deck_id := deck_id.strip_edges()
+	if resolved_deck_id.is_empty():
+		return
+	for index in range(_account_decks_cache.size() - 1, -1, -1):
+		if str(_account_decks_cache[index].get("deck_id", "")).strip_edges() == resolved_deck_id:
+			_account_decks_cache.remove_at(index)
+
 func _get_multiplayer_deck_entry(deck_id: String) -> Dictionary:
 	var resolved_deck_id := deck_id.strip_edges()
 	if resolved_deck_id.is_empty():
@@ -675,8 +712,13 @@ func _select_multiplayer_deck(deck_id: String, persist: bool = true) -> void:
 	if selected_entry.is_empty() or not bool(selected_entry.get("is_legal", false)):
 		return
 	_selected_multiplayer_deck_id = str(selected_entry.get("deck_id", "")).strip_edges()
-	if persist and _local_profile_store != null and not _local_profile_id.is_empty():
-		_local_profile_store.remember_last_selected_deck(_local_profile_id, _selected_multiplayer_deck_id)
+	if persist:
+		if _uses_server_account_storage():
+			var preferred_deck_id := _get_server_preferred_account_deck_id()
+			if lobby_client != null and preferred_deck_id != _selected_multiplayer_deck_id:
+				lobby_client.set_account_preferred_deck(_selected_multiplayer_deck_id)
+		elif _local_profile_store != null and not _local_profile_id.is_empty():
+			_local_profile_store.remember_last_selected_deck(_local_profile_id, _selected_multiplayer_deck_id)
 	_refresh_multiplayer_deck_picker_button()
 	_update_multiplayer_deck_hint()
 	_refresh_multiplayer_action_state()
@@ -688,25 +730,27 @@ func _refresh_multiplayer_deck_options() -> void:
 	_multiplayer_deck_entries.clear()
 
 	var preferred_deck_id := _selected_multiplayer_deck_id
-	if preferred_deck_id.is_empty() and _local_profile_store != null:
-		preferred_deck_id = _local_profile_store.get_last_selected_deck_id(_local_profile_id)
+	if preferred_deck_id.is_empty():
+		if _uses_server_account_storage():
+			preferred_deck_id = _get_server_preferred_account_deck_id()
+		elif _local_profile_store != null:
+			preferred_deck_id = _local_profile_store.get_last_selected_deck_id(_local_profile_id)
 
-	if _local_profile_store != null and not _local_profile_id.is_empty():
-		for saved_deck in _local_profile_store.list_decks(_local_profile_id):
-			var deck_id := str(saved_deck.get("deck_id", "")).strip_edges()
-			if deck_id.is_empty():
-				continue
-			var saved_deck_copy: Dictionary = (saved_deck as Dictionary).duplicate(true)
-			var validation: Dictionary = _get_saved_deck_validation(saved_deck_copy)
-			var entry: Dictionary = {
-				"deck_id": deck_id,
-				"deck_name": _get_saved_deck_name(saved_deck_copy),
-				"saved_deck": saved_deck_copy,
-				"is_legal": bool(validation.get("is_valid", false)),
-				"reason": str(validation.get("error", "")).strip_edges(),
-				"validation": validation.duplicate(true),
-			}
-			_multiplayer_deck_entries.append(entry)
+	for saved_deck in _get_saved_decks_for_current_identity():
+		var deck_id := str(saved_deck.get("deck_id", "")).strip_edges()
+		if deck_id.is_empty():
+			continue
+		var saved_deck_copy: Dictionary = (saved_deck as Dictionary).duplicate(true)
+		var validation: Dictionary = _get_saved_deck_validation(saved_deck_copy)
+		var entry: Dictionary = {
+			"deck_id": deck_id,
+			"deck_name": _get_saved_deck_name(saved_deck_copy),
+			"saved_deck": saved_deck_copy,
+			"is_legal": bool(validation.get("is_valid", false)),
+			"reason": str(validation.get("error", "")).strip_edges(),
+			"validation": validation.duplicate(true),
+		}
+		_multiplayer_deck_entries.append(entry)
 
 	var resolved_selected_deck_id := ""
 	if not preferred_deck_id.is_empty():
@@ -965,6 +1009,7 @@ func _clear_current_seek_state() -> void:
 	leave_seek_button.visible = false
 	_last_submitted_lobby_room_id = ""
 	_last_submitted_lobby_deck_id = ""
+	_last_submitted_lobby_deck_hash = ""
 	status_label.text = "Refresh open seeks or create your own."
 	_refresh_multiplayer_action_state()
 
@@ -1478,6 +1523,16 @@ func _prompt_account_login() -> void:
 func _is_account_logged_in() -> bool:
 	return not _get_effective_account_username().is_empty()
 
+func _uses_server_account_storage() -> bool:
+	if lobby_client == null:
+		return false
+	return not str(lobby_client.current_account_id).strip_edges().is_empty()
+
+func _get_server_preferred_account_deck_id() -> String:
+	if not _uses_server_account_storage() or lobby_client == null:
+		return ""
+	return str(lobby_client.current_preferred_account_deck_id).strip_edges()
+
 func _normalize_auth_mode(auth_mode: String, fallback_mode: String = AUTH_MODE_GUEST) -> String:
 	var resolved_auth_mode := auth_mode.strip_edges().to_lower()
 	match resolved_auth_mode:
@@ -1890,6 +1945,9 @@ func _complete_auth_onboarding(auth_mode: String, message: String) -> void:
 	status_label.text = message
 	show_menu()
 	_refresh_open_deck_builder_saved_decks()
+	if auth_mode != AUTH_MODE_GUEST:
+		_current_profile_summary.clear()
+		_refresh_profile_summary_label()
 	_refresh_profile_summary_from_local_history(_local_profile_id)
 	_update_resume_controls()
 	_refresh_account_identity_label()
@@ -1916,9 +1974,15 @@ func _on_deck_builder_pressed() -> void:
 
 	var db := DeckBuilderUI.new()
 	db.name = "DeckBuilder"
-	db.configure_profile_store(_local_profile_store, _local_profile_id)
+	db.configure_profile_store(_local_profile_store, _local_profile_id, _get_active_profile_display_name("Player"))
 	if db.has_method("configure_online_sync"):
 		db.configure_online_sync(lobby_client)
+	if db.has_method("configure_account_decks"):
+		db.configure_account_decks(
+			_account_decks_cache,
+			_uses_server_account_storage(),
+			_get_server_preferred_account_deck_id()
+		)
 	_maybe_request_account_decks()
 	db.back_pressed.connect(func() -> void:
 		db.queue_free()
@@ -2515,6 +2579,7 @@ func _cleanup_lobby(clear_session: bool) -> void:
 		_dedicated_lobby_connect_attempts_remaining = 0
 		_last_submitted_lobby_room_id = ""
 		_last_submitted_lobby_deck_id = ""
+		_last_submitted_lobby_deck_hash = ""
 		_lobby_session_id = ""
 		_lobby_reconnect_token = ""
 		_pending_join_room_code = ""
@@ -2525,6 +2590,7 @@ func _cleanup_lobby(clear_session: bool) -> void:
 		_clear_saved_lobby_resume()
 		_clear_saved_match_resume()
 		_current_profile_summary.clear()
+		_account_decks_cache.clear()
 		_refresh_profile_summary_label()
 		_refresh_account_identity_label()
 		status_label.text = "Refresh open seeks or create your own."
@@ -2699,6 +2765,7 @@ func _capture_logged_in_profile(player_name: String) -> void:
 	if resolved_account_username.is_empty() and resolved_auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
 		resolved_account_username = _get_preferred_account_username()
 	if not resolved_account_username.is_empty():
+		_account_decks_cache.clear()
 		_logged_in_account_username = resolved_account_username
 		_set_selected_account_username(resolved_account_username)
 		resolved_profile_id = _activate_account_profile(
@@ -2710,6 +2777,7 @@ func _capture_logged_in_profile(player_name: String) -> void:
 		_local_profile_id = resolved_profile_id
 	else:
 		_logged_in_account_username = ""
+		_account_decks_cache.clear()
 		resolved_auth_mode = AUTH_MODE_GUEST
 		var guest_profile: Dictionary = _local_profile_store.activate_guest_session("Guest")
 		_local_profile_id = str(guest_profile.get("profile_id", resolved_profile_id)).strip_edges()
@@ -2736,41 +2804,48 @@ func _maybe_request_profile_summary() -> void:
 		return
 	lobby_client.request_profile_summary()
 
-func _on_account_deck_list_received(decks) -> void:
-	_ensure_local_profile_store()
-	if _local_profile_store == null or _local_profile_id.is_empty():
-		return
+func _on_account_deck_list_received(decks, preferred_deck_id: String = "") -> void:
 	var remote_decks: Array[Dictionary] = []
 	if decks is Array:
 		for entry in decks:
 			if entry is Dictionary:
 				remote_decks.append((entry as Dictionary).duplicate(true))
-	if remote_decks.is_empty():
-		for local_deck in _local_profile_store.list_decks(_local_profile_id):
-			if lobby_client == null:
+	_replace_account_decks_cache(remote_decks)
+	var resolved_preferred_deck_id := preferred_deck_id.strip_edges()
+	if resolved_preferred_deck_id.is_empty():
+		resolved_preferred_deck_id = _get_server_preferred_account_deck_id()
+	var has_selected_deck := false
+	if not _selected_multiplayer_deck_id.is_empty():
+		for entry in remote_decks:
+			if str(entry.get("deck_id", "")).strip_edges() == _selected_multiplayer_deck_id:
+				has_selected_deck = true
 				break
-			lobby_client.save_account_deck(
-				str(local_deck.get("name", "")),
-				local_deck.get("cards", {}),
-				str(local_deck.get("deck_id", ""))
-			)
-		_refresh_open_deck_builder_saved_decks()
-		return
-	_local_profile_store.merge_decks(_local_profile_id, remote_decks)
+	if not resolved_preferred_deck_id.is_empty():
+		var has_preferred_deck := false
+		for entry in remote_decks:
+			if str(entry.get("deck_id", "")).strip_edges() == resolved_preferred_deck_id:
+				has_preferred_deck = true
+				break
+		if has_preferred_deck:
+			_selected_multiplayer_deck_id = resolved_preferred_deck_id
+		elif not has_selected_deck:
+			_selected_multiplayer_deck_id = ""
+	elif not has_selected_deck:
+		_selected_multiplayer_deck_id = ""
 	_refresh_open_deck_builder_saved_decks()
 
 func _on_account_deck_saved(deck) -> void:
-	_ensure_local_profile_store()
-	if _local_profile_store == null or _local_profile_id.is_empty() or not (deck is Dictionary):
+	if not (deck is Dictionary):
 		return
-	_local_profile_store.upsert_saved_deck(_local_profile_id, deck as Dictionary)
+	_upsert_account_deck_cache(deck as Dictionary)
 	_refresh_open_deck_builder_saved_decks()
 
 func _on_account_deck_deleted(deck_id: String) -> void:
-	_ensure_local_profile_store()
-	if _local_profile_store == null or _local_profile_id.is_empty():
-		return
-	_local_profile_store.delete_deck(_local_profile_id, deck_id)
+	_remove_account_deck_from_cache(deck_id)
+	if _get_server_preferred_account_deck_id() == deck_id.strip_edges() and lobby_client != null:
+		lobby_client.current_preferred_account_deck_id = ""
+	if _selected_multiplayer_deck_id == deck_id.strip_edges():
+		_selected_multiplayer_deck_id = ""
 	_refresh_open_deck_builder_saved_decks()
 
 func _on_profile_summary_received(summary) -> void:
@@ -2785,7 +2860,15 @@ func _refresh_open_deck_builder_saved_decks() -> void:
 	if deck_builder == null:
 		return
 	if deck_builder.has_method("configure_profile_store"):
-		deck_builder.configure_profile_store(_local_profile_store, _local_profile_id)
+		deck_builder.configure_profile_store(_local_profile_store, _local_profile_id, _get_active_profile_display_name("Player"))
+	if deck_builder.has_method("configure_online_sync"):
+		deck_builder.configure_online_sync(lobby_client)
+	if deck_builder.has_method("configure_account_decks"):
+		deck_builder.configure_account_decks(
+			_account_decks_cache,
+			_uses_server_account_storage(),
+			_get_server_preferred_account_deck_id()
+		)
 	if not deck_builder.has_method("reload_saved_decks_from_store"):
 		return
 	deck_builder.reload_saved_decks_from_store()
@@ -2919,6 +3002,8 @@ func _get_profile_summary_loadout(god_name: String, deck_name: String) -> String
 	return "%s (%s)" % [resolved_god_name, resolved_deck_name]
 
 func _refresh_profile_summary_from_local_history(profile_id: String) -> void:
+	if _is_account_logged_in() or _get_selected_auth_mode() in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
+		return
 	var resolved_profile_id := profile_id.strip_edges()
 	if resolved_profile_id.is_empty():
 		return
@@ -3121,22 +3206,37 @@ func _maybe_submit_current_profile_deck(room_id: String, snapshot: Dictionary) -
 		status_label.text = "Choose a saved legal deck before joining or creating a seek."
 		_last_submitted_lobby_room_id = ""
 		_last_submitted_lobby_deck_id = ""
+		_last_submitted_lobby_deck_hash = ""
 		_refresh_multiplayer_action_state()
 		return
+	var selected_deck_hash := LobbyRoomScript.compute_deck_hash(
+		str(selected_deck.get("name", "Default Deck")),
+		selected_deck.get("cards", {}) as Dictionary
+	)
 	var submitted_deck_id := str(local_member.get("selected_deck_id", "")).strip_edges()
-	if bool(local_member.get("has_valid_deck", false)) and submitted_deck_id == selected_deck_id:
+	var submitted_deck_hash := str(local_member.get("selected_deck_hash", "")).strip_edges()
+	if bool(local_member.get("has_valid_deck", false)) \
+			and submitted_deck_id == selected_deck_id \
+			and submitted_deck_hash == selected_deck_hash:
 		_last_submitted_lobby_room_id = room_id
 		_last_submitted_lobby_deck_id = selected_deck_id
+		_last_submitted_lobby_deck_hash = selected_deck_hash
 		return
-	if _last_submitted_lobby_room_id == room_id and _last_submitted_lobby_deck_id == selected_deck_id:
+	if _last_submitted_lobby_room_id == room_id \
+			and _last_submitted_lobby_deck_id == selected_deck_id \
+			and _last_submitted_lobby_deck_hash == selected_deck_hash:
 		return
-	lobby_client.submit_deck(
-		str(selected_deck.get("name", "Default Deck")),
-		selected_deck.get("cards", {}),
-		selected_deck_id
-	)
+	if _uses_server_account_storage():
+		lobby_client.submit_deck("", {}, selected_deck_id)
+	else:
+		lobby_client.submit_deck(
+			str(selected_deck.get("name", "Default Deck")),
+			selected_deck.get("cards", {}),
+			selected_deck_id
+		)
 	_last_submitted_lobby_room_id = room_id
 	_last_submitted_lobby_deck_id = selected_deck_id
+	_last_submitted_lobby_deck_hash = selected_deck_hash
 
 func _get_configured_lobby_port() -> int:
 	if _smoke_config.is_empty():

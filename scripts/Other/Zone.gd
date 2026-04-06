@@ -31,7 +31,7 @@ func get_card_count() -> int:
 	return cards.size()
 
 func is_board_zone() -> bool:
-	return zone_type in [ZoneType.FRONTLINE, ZoneType.RESERVE, ZoneType.GOD_SLOT, ZoneType.POWER_SLOT]
+	return zone_type in [ZoneType.FRONTLINE, ZoneType.RESERVE]
 
 func get_creature() -> Card:
 	for card in cards:

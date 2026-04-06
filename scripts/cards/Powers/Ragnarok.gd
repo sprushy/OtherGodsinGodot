@@ -14,7 +14,7 @@ func _init() -> void:
 	is_legendary = true
 	card_types = ["Power", "Legendary Destruction", "Universal"]
 	targets = false
-	ability_text = "[b]Unlock[/b] (9): [b]Activate[/b] - Destroy all cards on the field; then each player with more than 5 cards discards down to 5. You cannot attack this turn."
+	ability_text = "[b]Unlock[/b] (9): [b]Activate[/b] - Destroy all creatures on the field; then each player with more than 5 cards discards down to 5. You cannot attack this turn."
 	artist = "Riccardo Zoppello"
 	art_path = ART_PATH
 
@@ -48,8 +48,7 @@ func _get_field_cards(game_manager: GameManager) -> Array[Card]:
 	if game_manager == null:
 		return field_cards
 	for player in game_manager.players:
-		var zones: Array[Zone] = [player.god_zone]
-		zones.append_array(player.power_zones)
+		var zones: Array[Zone] = []
 		zones.append_array(player.frontline_zones)
 		zones.append_array(player.reserve_zones)
 		for zone in zones:

@@ -1,6 +1,8 @@
 extends CombatMockGame
 class_name CardTestGame
 
+const SharurTheFlyingMaceScript := preload("res://scripts/cards/Equipment/SharurTheFlyingMace.gd")
+
 var _test_turn_owner: Player = null
 var _test_turn_opponent: Player = null
 
@@ -18,7 +20,7 @@ func start_game(
 	server_match_session = null
 ) -> void:
 	await super.start_game(is_host, is_client, server_ip, server_port, match_info, server_match_session)
-	load_p_card_scenario()
+	load_s_card_scenario()
 
 func update_ui() -> void:
 	_sync_test_priority_control()
@@ -183,7 +185,173 @@ func _reset_test_match_state() -> void:
 	selected_interceptor = null
 
 func _setup_test_board() -> void:
-	load_p_card_scenario()
+	load_s_card_scenario()
+
+func load_s_card_scenario() -> void:
+	_reset_test_match_state()
+	_add_test_god(player1, Odin.new())
+	_add_test_god(player2, Thor.new())
+
+	# P1 board: a live S-weapon target, a direct attacker for follower pressure, and an Ancient Sage
+	# so Seventh Sage Utuabzu can immediately test Channel Ally and Imbue Ally.
+	_place_test_board_card(player1, player1.frontline_zones[0], SevenHeadedSerpent.new(), Card.CreatureMode.AGGRESSIVE)
+	_place_test_board_card(player1, player1.reserve_zones[0], ScorpionManWarrior.new(), Card.CreatureMode.AGGRESSIVE)
+	_place_test_board_card(player1, player1.reserve_zones[1], FirstSageAdapa.new(), Card.CreatureMode.DEFENSIVE)
+
+	# P1 prepared cards: Sap punishes frontline entry, and Sep Lemutti catches summoned Monsters.
+	_place_test_prepared_card(player1, player1.reserve_zones[3], Sap.new())
+	_place_test_prepared_card(player1, player1.reserve_zones[4], SepLemutti.new())
+
+	# P1 hand: the remaining S cards in this alphabetical block.
+	_add_test_hand_card(player1, SapStrength.new())
+	_add_test_hand_card(player1, ScorpionManArcher.new())
+	_add_test_hand_card(player1, SevenLeagueBoots.new())
+	_add_test_hand_card(player1, SeventhSageUtuabzu.new())
+	_add_test_hand_card(player1, SharurTheFlyingMaceScript.new())
+
+	# P1 void/deck: Utuabzu can channel Adapa from the Void immediately, and another Adapa copy is ready for longer loops.
+	_add_test_deck_card(player1, FirstSageAdapa.new())
+	_add_test_deck_card(player1, SeventhSageUtuabzu.new())
+	_add_test_deck_card(player1, SevenHeadedSerpent.new())
+	_add_test_deck_card(player1, ScorpionManArcher.new())
+	var void_adapa := FirstSageAdapa.new()
+	void_adapa.card_owner = player1
+	player1.abyss_zone.add_card(void_adapa)
+
+	# P2 power: Saving Grace starts face-down with an otherwise empty field so direct attacks can test it cleanly.
+	_add_test_power(player2, 0, SavingGrace.new(), false)
+
+	# P2 hand/deck: S-creature summons can be fed into Sap and Sep Lemutti once Saving Grace has been tested.
+	_add_test_hand_card(player2, ScorpionManArcher.new())
+	_add_test_hand_card(player2, ScorpionManWarrior.new())
+	_add_test_hand_card(player2, SevenHeadedSerpent.new())
+	_add_test_deck_card(player2, ScorpionManArcher.new())
+	_add_test_deck_card(player2, ScorpionManWarrior.new())
+	_add_test_deck_card(player2, BrownBear.new())
+
+	player1.spend_mana(player1.mana)
+	player1.gain_mana(12)
+	player2.spend_mana(player2.mana)
+	player2.gain_mana(8)
+	player1.followers = 100
+	player2.followers = 100
+	player1.followers_changed.emit(player1.followers)
+	player2.followers_changed.emit(player2.followers)
+	player1.has_summoned_this_turn = false
+	player2.has_summoned_this_turn = false
+
+	game_manager.current_player = player1
+	game_manager.other_player = player2
+	game_manager.feedback_viewer = player1
+	player1.is_turn_player = true
+	player2.is_turn_player = false
+	selected_card = null
+	selected_attacker = null
+	selected_interceptor = null
+	_test_turn_owner = player1
+	_test_turn_opponent = player2
+	game_manager.start_turn()
+	_open_upkeep_choice_window()
+	action_label.text = (
+		"S Scenario: Saving Grace through Sharur alphabetically. Choose Draw Card or Gain 4 Mana first.  |  "
+		+ "Opponent - P2 starts with only a face-down Saving Grace, so attack followers immediately with Seven-Headed Serpent to test the base response, then try again later after boosting speed with Seven-League Boots for the fast-response version.  |  "
+		+ "Prepared - Sap is waiting to destroy frontline entries, and Sep Lemutti is waiting to return summoned Monsters; let P2 summon Scorpion-Man Archer or Scorpion-Man Warrior on later turns to test each trigger.  |  "
+		+ "Hand - Sap Strength, Scorpion-Man Archer, Seven-League Boots, Seventh Sage Utuabzu, and Sharur cover the rest of the S block.  |  "
+		+ "Board - Scorpion-Man Warrior is a clean bearer for Seven-League Boots or Sharur, while First Sage Adapa is already in play so Utuabzu can use Imbue Ally right away.  |  "
+		+ "Void/Deck - First Sage Adapa is already in your Void for Utuabzu's Channel Ally impact, and another copy is stacked in deck for longer follow-up turns."
+	)
+	update_ui()
+
+func load_r_card_scenario() -> void:
+	_reset_test_match_state()
+	_add_test_god(player1, Odin.new())
+	_add_test_god(player2, Thor.new())
+
+	# P1 powers: Rally starts active for the level-5 Warrior summon, and Ragnarok is ready as the reset button.
+	_add_test_power(player1, 0, RallyTheTroops.new(), true)
+	_add_test_power(player1, 1, Ragnarok.new(), true)
+
+	# P1 board: Rabid Wolf can attack immediately to trigger Raven Storm, while Red Cap must attack or perish.
+	var rabid_wolf := RabidWolf.new()
+	var red_cap := RedCap.new()
+	_place_test_board_card(player1, player1.frontline_zones[0], rabid_wolf, Card.CreatureMode.AGGRESSIVE)
+	_place_test_board_card(player1, player1.frontline_zones[1], red_cap, Card.CreatureMode.AGGRESSIVE)
+
+	# P1 hand: the rest of the R package plus a level-5 Norse Warrior to fire Rally the Troops.
+	var rally_trigger := HariiWarrior.new()
+	rally_trigger.level = 5
+	rally_trigger.mana_cost = 0
+	_add_test_hand_card(player1, Sap.new())
+	_add_test_hand_card(player1, Rabisu.new())
+	_add_test_hand_card(player1, ReedBow.new())
+	_add_test_hand_card(player1, RunicShortsword.new())
+	_add_test_hand_card(player1, RunicSpellbreaker.new())
+	_add_test_hand_card(player1, rally_trigger)
+
+	# P1 deck: Rally reveals a non-Warrior, an R-Warrior recruit, and another shelf card in that order.
+	_add_test_deck_card(player1, AncientPyre.new())
+	_add_test_deck_card(player1, RedCap.new())
+	_add_test_deck_card(player1, BrownBear.new())
+	_add_test_deck_card(player1, RabidWolf.new())
+	_add_test_deck_card(player1, RunicShortsword.new())
+
+	# P2 power: a live magical target for Runic Spellbreaker, with extra copies hiding in deck.
+	_add_test_power(player2, 0, NorseBloodlust.new(), true)
+
+	# P2 board: sleeping creatures let Rabisu drain on impact, and a live defender survives Rabid Wolf combat to test Disease.
+	var sleeping_bear := BrownBear.new()
+	var sleeping_knight := BlessedKnights.new()
+	var disease_target := MinotaurFootsoldier.new()
+	_place_test_board_card(player2, player2.frontline_zones[0], sleeping_bear, Card.CreatureMode.DEFENSIVE)
+	_place_test_board_card(player2, player2.frontline_zones[1], disease_target, Card.CreatureMode.DEFENSIVE)
+	_place_test_board_card(player2, player2.reserve_zones[0], sleeping_knight, Card.CreatureMode.DEFENSIVE)
+	sleeping_bear.add_status_effect("sleep", "Scenario Setup", rabid_wolf, player1)
+	sleeping_knight.add_status_effect("sleep", "Scenario Setup", rabid_wolf, player1)
+
+	# P2 hand/deck: enough cards to test Ragnarok's discard clause and Spellbreaker's deck mill.
+	_add_test_hand_card(player2, HeroicStand.new())
+	_add_test_hand_card(player2, FallOfTheMighty.new())
+	_add_test_hand_card(player2, BrownBear.new())
+	_add_test_hand_card(player2, Berserker.new())
+	_add_test_hand_card(player2, DivineLightning.new())
+	_add_test_hand_card(player2, VoidShield.new())
+	_add_test_deck_card(player2, NorseBloodlust.new())
+	_add_test_deck_card(player2, NorseBloodlust.new())
+	_add_test_deck_card(player2, BrownBear.new())
+	_add_test_deck_card(player2, Berserker.new())
+
+	player1.spend_mana(player1.mana)
+	player1.gain_mana(12)
+	player2.spend_mana(player2.mana)
+	player2.gain_mana(12)
+	player1.followers = 100
+	player2.followers = 100
+	player1.followers_changed.emit(player1.followers)
+	player2.followers_changed.emit(player2.followers)
+	player1.has_summoned_this_turn = false
+	player2.has_summoned_this_turn = false
+
+	game_manager.current_player = player1
+	game_manager.other_player = player2
+	game_manager.feedback_viewer = player1
+	player1.is_turn_player = true
+	player2.is_turn_player = false
+	selected_card = null
+	selected_attacker = null
+	selected_interceptor = null
+	_test_turn_owner = player1
+	_test_turn_opponent = player2
+	game_manager.start_turn()
+	_open_upkeep_choice_window()
+	action_label.text = (
+		"R-Card Scenario: All cards starting with R, except Robotic Footsoldier. Choose Draw Card or Gain 4 Mana first.  |  "
+		+ "Powers - Rally the Troops and Ragnarok both start unlocked so you can test recruitment first and the full-board reset afterward.  |  "
+		+ "Board - Rabid Wolf is ready to attack and trigger Raven Storm, while Red Cap must attack this turn or Fresh Blood will destroy it at end of turn.  |  "
+		+ "Hand - Raven Storm, Rabisu, Reed Bow, Runic Shortsword, and Runic Spellbreaker are ready, plus a level-5 Harii Warrior to trigger Rally the Troops immediately.  |  "
+		+ "Deck - Your top three cards are stacked so Rally reveals Ancient Pyre, Red Cap, and Brown Bear, letting you recruit the Red Cap and shelve the rest.  |  "
+		+ "Opponent - Sleeping Brown Bear and Blessed Knights fuel Rabisu's impact drain, Minotaur Footsoldier is a durable Disease target for Rabid Wolf, and the unlocked enemy Norse Bloodlust is a clean Runic Spellbreaker target with two more copies in deck."
+	)
+	update_ui()
 
 func load_p_card_scenario() -> void:
 	_reset_test_match_state()
@@ -542,5 +710,76 @@ func load_test_scenario_one() -> void:
 		+ "Opponent - Thor starts with two Fall of the Mighty and a Void Shield in hand for repeated destroy and protection tests.  |  "
 		+ "Board - Enki, Lord of Eridu is on your frontline as a live Mer target for Kurnugia, and another copy is in your graveyard as a Tree of Life target.  |  "
 		+ "Follow-up - activate Kur-Jara, then end your turns twice to resurrect Kur-Jara and Enki while Kurnugia shelters En-hedu-anna and Enkidu from the level-cost destruction."
+	)
+	update_ui()
+
+func load_sap_ragnarok_scenario() -> void:
+	_reset_test_match_state()
+	_add_test_god(player1, Odin.new())
+	_add_test_god(player2, Thor.new())
+
+	# P1 power: Ragnarok is unlocked and ready to fire — both gods and this power should survive its activation.
+	_add_test_power(player1, 0, Ragnarok.new(), true)
+
+	# P1 board: a loaded frontline and reserve give Ragnarok plenty of targets on both sides.
+	_place_test_board_card(player1, player1.frontline_zones[0], Berserker.new(), Card.CreatureMode.AGGRESSIVE)
+	_place_test_board_card(player1, player1.frontline_zones[1], BrownBear.new(), Card.CreatureMode.AGGRESSIVE)
+	_place_test_board_card(player1, player1.reserve_zones[0], MinotaurFootsoldier.new(), Card.CreatureMode.DEFENSIVE)
+
+	# Sap is prepared so it intercepts any creature entering the frontline — including friendly plays.
+	_place_test_prepared_card(player1, player1.reserve_zones[1], Sap.new())
+
+	# P1 hand: SapStrength weakens a board creature by 10 Str; Rabid Wolf and Berserker can be summoned
+	# to the frontline to show Sap fires on P1's own summons too.
+	_add_test_hand_card(player1, SapStrength.new())
+	_add_test_hand_card(player1, RabidWolf.new())
+	_add_test_hand_card(player1, Berserker.new())
+
+	# P1 deck: simple follow-up draws.
+	_add_test_deck_card(player1, BrownBear.new())
+	_add_test_deck_card(player1, Berserker.new())
+
+	# P2 board: three creatures to give SapStrength and Ragnarok meaningful targets.
+	_place_test_board_card(player2, player2.frontline_zones[0], BrownBear.new(), Card.CreatureMode.DEFENSIVE)
+	_place_test_board_card(player2, player2.frontline_zones[1], MinotaurFootsoldier.new(), Card.CreatureMode.DEFENSIVE)
+	_place_test_board_card(player2, player2.reserve_zones[0], Berserker.new(), Card.CreatureMode.DEFENSIVE)
+
+	# P2 hand: Brown Bear can be summoned to the frontline to trigger Sap on P2's turn.
+	_add_test_hand_card(player2, BrownBear.new())
+	_add_test_hand_card(player2, HeroicStand.new())
+	_add_test_hand_card(player2, FallOfTheMighty.new())
+
+	# P2 deck: extra bodies for follow-up testing.
+	_add_test_deck_card(player2, Berserker.new())
+	_add_test_deck_card(player2, BrownBear.new())
+
+	player1.spend_mana(player1.mana)
+	player1.gain_mana(12)
+	player2.spend_mana(player2.mana)
+	player2.gain_mana(12)
+	player1.followers = 100
+	player2.followers = 100
+	player1.followers_changed.emit(player1.followers)
+	player2.followers_changed.emit(player2.followers)
+	player1.has_summoned_this_turn = false
+	player2.has_summoned_this_turn = false
+
+	game_manager.current_player = player1
+	game_manager.other_player = player2
+	game_manager.feedback_viewer = player1
+	player1.is_turn_player = true
+	player2.is_turn_player = false
+	selected_card = null
+	selected_attacker = null
+	selected_interceptor = null
+	_test_turn_owner = player1
+	_test_turn_opponent = player2
+	game_manager.start_turn()
+	_open_upkeep_choice_window()
+	action_label.text = (
+		"Sap / Sap Strength / Ragnarok Scenario. Choose Draw Card or Gain 4 Mana first.  |  "
+		+ "Sap - already prepared in your reserve; summon Rabid Wolf or Berserker from hand to the frontline to watch Sap destroy it on entry. Pass to P2 and let them summon their Brown Bear to test that it fires on the opponent's summons too.  |  "
+		+ "Sap Strength - play it from hand and target any creature on the board to reduce its Str by 10 for the rest of the turn; useful for weakening a strong attacker before combat.  |  "
+		+ "Ragnarok - activate from the unlocked power slot to wipe all frontline and reserve creatures; Odin, Thor, and the Ragnarok power itself should all survive untouched."
 	)
 	update_ui()

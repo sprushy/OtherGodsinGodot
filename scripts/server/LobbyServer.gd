@@ -198,6 +198,8 @@ func _handle_request(peer_id: int, message: Dictionary) -> void:
 			_handle_save_account_deck(peer_id, payload)
 		LobbyProtocolScript.DELETE_ACCOUNT_DECK:
 			_handle_delete_account_deck(peer_id, payload)
+		LobbyProtocolScript.SET_ACCOUNT_PREFERRED_DECK:
+			_handle_set_account_preferred_deck(peer_id, payload)
 		LobbyProtocolScript.REQUEST_PROFILE_SUMMARY:
 			_handle_request_profile_summary(peer_id)
 		LobbyProtocolScript.SET_READY:
@@ -233,14 +235,13 @@ func _handle_register_account(peer_id: int, payload: Dictionary) -> void:
 		return
 	var requested_username := str(payload.get("username", ""))
 	var requested_password := str(payload.get("password", ""))
-	var requested_profile_id := str(payload.get("profile_id", "")).strip_edges()
 	var account_result: Dictionary = account_store.register_account(requested_username, requested_password)
 	if not bool(account_result.get("success", false)):
 		_send_error_to_peer(peer_id, str(account_result.get("message", "Could not create account.")))
 		return
 	var account: Dictionary = account_result.get("account", {})
 	var profile: Dictionary = profile_store.login_profile(
-		requested_profile_id,
+		"",
 		str(account.get("username", requested_username)),
 		str(account.get("account_id", "")),
 		str(account.get("username", requested_username))
@@ -262,14 +263,13 @@ func _handle_login_account(peer_id: int, payload: Dictionary) -> void:
 		return
 	var requested_username := str(payload.get("username", ""))
 	var requested_password := str(payload.get("password", ""))
-	var requested_profile_id := str(payload.get("profile_id", "")).strip_edges()
 	var account_result: Dictionary = account_store.login_account(requested_username, requested_password)
 	if not bool(account_result.get("success", false)):
 		_send_error_to_peer(peer_id, str(account_result.get("message", "Could not log in.")))
 		return
 	var account: Dictionary = account_result.get("account", {})
 	var profile: Dictionary = profile_store.login_profile(
-		requested_profile_id,
+		"",
 		str(account.get("username", requested_username)),
 		str(account.get("account_id", "")),
 		str(account.get("username", requested_username))
@@ -367,11 +367,13 @@ func _handle_request_account_decks(peer_id: int) -> void:
 		_send_error_to_peer(peer_id, "Log into an account before requesting saved decks.")
 		return
 	_ensure_deck_store()
+	_ensure_profile_store()
 	if deck_store == null:
 		_send_error_to_peer(peer_id, "Deck storage is unavailable.")
 		return
 	_send_to_peer(peer_id, LobbyProtocolScript.ACCOUNT_DECK_LIST, {
 		"decks": deck_store.list_decks(account_id),
+		"preferred_deck_id": str(profile_store.get_preferred_deck_id_for_account(account_id)) if profile_store != null else "",
 	})
 
 func _handle_save_account_deck(peer_id: int, payload: Dictionary) -> void:
@@ -410,6 +412,7 @@ func _handle_delete_account_deck(peer_id: int, payload: Dictionary) -> void:
 		_send_error_to_peer(peer_id, "Log into an account before deleting decks.")
 		return
 	_ensure_deck_store()
+	_ensure_profile_store()
 	if deck_store == null:
 		_send_error_to_peer(peer_id, "Deck storage is unavailable.")
 		return
@@ -417,9 +420,36 @@ func _handle_delete_account_deck(peer_id: int, payload: Dictionary) -> void:
 	if not bool(delete_result.get("success", false)):
 		_send_error_to_peer(peer_id, str(delete_result.get("message", "Could not delete that deck.")))
 		return
+	if profile_store != null:
+		var deleted_deck_id := str(delete_result.get("deck_id", ""))
+		if profile_store.get_preferred_deck_id_for_account(account_id) == deleted_deck_id:
+			profile_store.set_preferred_deck_id_for_account(account_id, "")
 	_send_to_peer(peer_id, LobbyProtocolScript.ACCOUNT_DECK_DELETED, {
 		"deck_id": str(delete_result.get("deck_id", "")),
 	})
+
+func _handle_set_account_preferred_deck(peer_id: int, payload: Dictionary) -> void:
+	var session: Dictionary = _get_session_for_peer(peer_id)
+	if session.is_empty():
+		_send_error_to_peer(peer_id, "Join the lobby before choosing a preferred deck.")
+		return
+	var account_id: String = str(session.get("account_id", "")).strip_edges()
+	var deck_id: String = str(payload.get("deck_id", "")).strip_edges()
+	if account_id.is_empty():
+		_send_error_to_peer(peer_id, "Log into an account before choosing a preferred deck.")
+		return
+	if deck_id.is_empty():
+		_send_error_to_peer(peer_id, "Choose a saved deck first.")
+		return
+	_ensure_deck_store()
+	_ensure_profile_store()
+	if deck_store == null or profile_store == null:
+		_send_error_to_peer(peer_id, "Deck storage is unavailable.")
+		return
+	if deck_store.get_deck(account_id, deck_id).is_empty():
+		_send_error_to_peer(peer_id, "That saved deck was not found.")
+		return
+	profile_store.set_preferred_deck_id_for_account(account_id, deck_id)
 
 func _handle_request_profile_summary(peer_id: int) -> void:
 	var session: Dictionary = _get_session_for_peer(peer_id)
@@ -615,16 +645,44 @@ func _submit_deck_for_session(session_id: String, deck_name: String, deck_id: St
 	if room_id.is_empty() or not rooms_by_id.has(room_id):
 		_send_error_to_session(session_id, "Join a room before selecting a deck.")
 		return
-	if not (cards is Dictionary):
-		_send_error_to_session(session_id, "Deck submission was missing cards.")
-		return
+	var session: Dictionary = sessions_by_id.get(session_id, {})
+	var account_id: String = str(session.get("account_id", "")).strip_edges()
+	var resolved_deck_name := deck_name.strip_edges()
+	var resolved_deck_id := deck_id.strip_edges()
+	var resolved_cards: Dictionary = {}
+	if not account_id.is_empty():
+		_ensure_deck_store()
+		_ensure_profile_store()
+		if deck_store == null:
+			_send_error_to_session(session_id, "Deck storage is unavailable.")
+			return
+		if resolved_deck_id.is_empty():
+			_send_error_to_session(session_id, "Choose one of your saved decks.")
+			return
+		var saved_deck: Dictionary = deck_store.get_deck(account_id, resolved_deck_id)
+		if saved_deck.is_empty():
+			_send_error_to_session(session_id, "That saved deck was not found on the server.")
+			return
+		resolved_deck_name = str(saved_deck.get("name", resolved_deck_name)).strip_edges()
+		var saved_cards = saved_deck.get("cards", {})
+		if not (saved_cards is Dictionary):
+			_send_error_to_session(session_id, "That saved deck is missing its cards.")
+			return
+		resolved_cards = (saved_cards as Dictionary).duplicate(true)
+		if profile_store != null:
+			profile_store.set_preferred_deck_id_for_account(account_id, resolved_deck_id)
+	else:
+		if not (cards is Dictionary):
+			_send_error_to_session(session_id, "Deck submission was missing cards.")
+			return
+		resolved_cards = (cards as Dictionary).duplicate(true)
 	_ensure_deck_validator()
 	if deck_validator == null:
 		_send_error_to_session(session_id, "Deck validator is unavailable.")
 		return
-	var validation: Dictionary = deck_validator.validate_deck(cards as Dictionary)
+	var validation: Dictionary = deck_validator.validate_deck(resolved_cards)
 	var room: LobbyRoom = rooms_by_id[room_id]
-	if not room.submit_deck(session_id, deck_name, deck_id, validation.get("cards", {}), validation):
+	if not room.submit_deck(session_id, resolved_deck_name, resolved_deck_id, validation.get("cards", {}), validation):
 		_send_error_to_session(session_id, "Unable to store selected deck.")
 		return
 	var deck_is_valid := bool(validation.get("is_valid", false))

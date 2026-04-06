@@ -18,7 +18,7 @@ signal room_list_updated(rooms: Array)
 signal room_snapshot_updated(snapshot: Dictionary)
 signal room_error(message: String)
 signal match_assigned(match_info: Dictionary)
-signal account_deck_list_received(decks: Array)
+signal account_deck_list_received(decks: Array, preferred_deck_id: String)
 signal account_deck_saved(deck: Dictionary)
 signal account_deck_deleted(deck_id: String)
 signal profile_summary_received(summary: Dictionary)
@@ -33,6 +33,7 @@ var current_account_id: String = ""
 var current_username: String = ""
 var current_auth_mode: String = "guest"
 var current_active_match_info: Dictionary = {}
+var current_preferred_account_deck_id: String = ""
 var trace_network: bool = false
 var trace_file_path: String = ""
 var multiplayer_mount_path: NodePath = NodePath("")
@@ -118,12 +119,15 @@ func leave_room() -> void:
 func set_ready(is_ready: bool) -> void:
 	_send_request(LobbyProtocolScript.SET_READY, {"is_ready": is_ready})
 
-func submit_deck(deck_name: String, cards: Dictionary, deck_id: String = "") -> void:
-	_send_request(LobbyProtocolScript.SELECT_DECK, {
-		"deck_name": deck_name.strip_edges(),
+func submit_deck(deck_name: String = "", cards: Dictionary = {}, deck_id: String = "") -> void:
+	var payload: Dictionary = {
 		"deck_id": deck_id.strip_edges(),
-		"cards": cards.duplicate(true),
-	})
+	}
+	if not deck_name.strip_edges().is_empty():
+		payload["deck_name"] = deck_name.strip_edges()
+	if not cards.is_empty():
+		payload["cards"] = cards.duplicate(true)
+	_send_request(LobbyProtocolScript.SELECT_DECK, payload)
 
 func request_account_decks() -> void:
 	_send_request(LobbyProtocolScript.REQUEST_ACCOUNT_DECKS)
@@ -138,6 +142,12 @@ func save_account_deck(deck_name: String, cards: Dictionary, deck_id: String = "
 func delete_account_deck(deck_id: String) -> void:
 	_send_request(LobbyProtocolScript.DELETE_ACCOUNT_DECK, {
 		"deck_id": deck_id.strip_edges(),
+	})
+
+func set_account_preferred_deck(deck_id: String) -> void:
+	current_preferred_account_deck_id = deck_id.strip_edges()
+	_send_request(LobbyProtocolScript.SET_ACCOUNT_PREFERRED_DECK, {
+		"deck_id": current_preferred_account_deck_id,
 	})
 
 func request_profile_summary() -> void:
@@ -159,6 +169,7 @@ func lobby_event(message: Dictionary) -> void:
 			current_username = str(payload.get("username", current_player_name))
 			current_auth_mode = str(payload.get("auth_mode", _pending_auth_mode))
 			current_active_match_info = {}
+			current_preferred_account_deck_id = ""
 			login_succeeded.emit(current_session_id, current_reconnect_token, current_player_name)
 		LobbyProtocolScript.LOBBY_RECONNECT_OK:
 			_is_authenticated = true
@@ -171,6 +182,7 @@ func lobby_event(message: Dictionary) -> void:
 			current_auth_mode = str(payload.get("auth_mode", _pending_auth_mode))
 			var active_match = payload.get("active_match_info", {})
 			current_active_match_info = active_match.duplicate(true) if active_match is Dictionary else {}
+			current_preferred_account_deck_id = ""
 			reconnect_succeeded.emit(
 				current_session_id,
 				current_reconnect_token,
@@ -187,7 +199,8 @@ func lobby_event(message: Dictionary) -> void:
 		LobbyProtocolScript.MATCH_ASSIGNED:
 			match_assigned.emit(payload)
 		LobbyProtocolScript.ACCOUNT_DECK_LIST:
-			account_deck_list_received.emit(payload.get("decks", []))
+			current_preferred_account_deck_id = str(payload.get("preferred_deck_id", current_preferred_account_deck_id)).strip_edges()
+			account_deck_list_received.emit(payload.get("decks", []), current_preferred_account_deck_id)
 		LobbyProtocolScript.ACCOUNT_DECK_SAVED:
 			account_deck_saved.emit(payload.get("deck", {}))
 		LobbyProtocolScript.ACCOUNT_DECK_DELETED:
@@ -209,14 +222,12 @@ func _on_connected_to_server() -> void:
 		_send_request(LobbyProtocolScript.REGISTER_ACCOUNT, {
 			"username": _pending_player_name,
 			"password": _pending_password,
-			"profile_id": _pending_profile_id,
 		})
 		return
 	if _pending_auth_mode == "login":
 		_send_request(LobbyProtocolScript.LOGIN_ACCOUNT, {
 			"username": _pending_player_name,
 			"password": _pending_password,
-			"profile_id": _pending_profile_id,
 		})
 		return
 

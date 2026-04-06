@@ -199,10 +199,13 @@ const DROMI_BINDING_HOVER_TEXT := "Cannot attack. Losing 7 followers on opponent
 const EQUIPMENT_AFFORDANCE_GAP := 4.0
 const DEBUFF_AFFORDANCE_GAP := 4.0
 const DEBUFF_BADGE_SIZE := 22.0
+const FOLLOWERS_ATTACK_RESULT_SECONDS := 0.66
 const POWER_LOCK_TEXTURE := preload("res://images/Norse Power Lock.png")
 static var _zone_extent: float = BASE_ZONE_EXTENT
 
 var _row_label: String = ""
+var _followers_attack_result_text: String = ""
+var _followers_attack_result_sequence: int = 0
 
 static func get_base_zone_extent() -> float:
 	return BASE_ZONE_EXTENT
@@ -448,6 +451,56 @@ func _add_attack_aura(overlay: Control) -> void:
 	aura.z_index = 1
 	aura.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	overlay.add_child(aura)
+
+func _add_followers_attack_target_tint(overlay: Control) -> void:
+	if overlay == null:
+		return
+
+	var glow := ColorRect.new()
+	glow.color = Color(0.92, 0.10, 0.08, 0.22)
+	glow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	glow.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	overlay.add_child(glow)
+
+	var ring := PanelContainer.new()
+	ring.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ring.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	ring.offset_left = 4
+	ring.offset_top = 4
+	ring.offset_right = -4
+	ring.offset_bottom = -4
+
+	var ring_style := StyleBoxFlat.new()
+	ring_style.bg_color = Color(0, 0, 0, 0)
+	ring_style.border_color = Color(0.98, 0.28, 0.22, 0.96)
+	ring_style.shadow_color = Color(0.82, 0.08, 0.05, 0.34)
+	ring_style.shadow_size = 10
+	ring_style.corner_radius_top_left = 8
+	ring_style.corner_radius_top_right = 8
+	ring_style.corner_radius_bottom_left = 8
+	ring_style.corner_radius_bottom_right = 8
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		ring_style.set_border_width(side, 2)
+	ring.add_theme_stylebox_override("panel", ring_style)
+	overlay.add_child(ring)
+
+func _add_followers_attack_result_label(overlay: Control) -> void:
+	if overlay == null or _followers_attack_result_text == "":
+		return
+
+	var result_label := Label.new()
+	result_label.text = _followers_attack_result_text
+	result_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	result_label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	result_label.offset_left = 8
+	result_label.offset_top = 40
+	result_label.offset_right = -8
+	result_label.offset_bottom = -40
+	result_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	result_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	result_label.add_theme_font_size_override("font_size", 34)
+	result_label.add_theme_color_override("font_color", Color(1.0, 0.18, 0.14, 0.98))
+	overlay.add_child(result_label)
 
 func _add_stack_target_indicator(overlay: Control) -> void:
 	if overlay == null:
@@ -961,6 +1014,18 @@ func _is_card_attacking_on_stack(card: Card) -> bool:
 			return true
 	return false
 
+func _is_god_targeted_by_followers_attack(card: Card) -> bool:
+	if card == null or not card.is_god or game_manager == null or owning_player == null:
+		return false
+	if zone == null or zone.zone_type != Zone.ZoneType.GOD_SLOT:
+		return false
+	for action in game_manager.action_stack:
+		if action == null or action.type != CardAction.Type.ATTACK:
+			continue
+		if action.target is Player and action.target == owning_player:
+			return true
+	return false
+
 func _is_card_usable_for_priority(card: Card) -> bool:
 	if card == null or game_manager == null:
 		return false
@@ -972,6 +1037,31 @@ func _should_show_playing_aura(card: Card) -> bool:
 func set_preview_card(card: Card) -> void:
 	_preview_card = card
 	_refresh_display()
+
+func _clear_followers_attack_result_if_current(sequence: int) -> void:
+	if is_queued_for_deletion():
+		return
+	if _followers_attack_result_sequence != sequence:
+		return
+	_followers_attack_result_text = ""
+	_refresh_display()
+
+func show_followers_attack_result(new_followers: int, duration_seconds: float = FOLLOWERS_ATTACK_RESULT_SECONDS) -> void:
+	_followers_attack_result_text = str(new_followers)
+	_followers_attack_result_sequence += 1
+	var flash_sequence := _followers_attack_result_sequence
+	_refresh_display()
+
+	if not is_inside_tree() or is_queued_for_deletion():
+		return
+	var tree := get_tree()
+	if tree == null:
+		return
+	var timer := tree.create_timer(maxf(duration_seconds, 0.0))
+	timer.timeout.connect(
+		Callable(self, "_clear_followers_attack_result_if_current").bind(flash_sequence),
+		CONNECT_ONE_SHOT
+	)
 
 func get_visual_anchor_global() -> Vector2:
 	var anchor_control: Control = _raised_overlay
@@ -1131,6 +1221,8 @@ func _refresh_display() -> void:
 				art.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 				art.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				god_overlay.add_child(art)
+				if _is_god_targeted_by_followers_attack(card):
+					_add_followers_attack_target_tint(god_overlay)
 
 				# VBoxContainer fills overlay via anchors; spacer pushes label to correct edge
 				var name_vbox := VBoxContainer.new()
@@ -1233,6 +1325,7 @@ func _refresh_display() -> void:
 					muted_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 					muted_badge.add_child(muted_lbl)
 					god_overlay.add_child(muted_badge)
+				_add_followers_attack_result_label(god_overlay)
 			return
 
 		var is_def_creature := card.card_type == Card.CardType.CREATURE and card.creature_mode == Card.CreatureMode.DEFENSIVE

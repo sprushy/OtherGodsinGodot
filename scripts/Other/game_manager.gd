@@ -37,6 +37,7 @@ var prepared_hexes: Dictionary = {}
 var prepared_charms: Dictionary = {}
 var attack_restrictions: Dictionary = {}# player -> turns remaining
 var turn_destruction_wards: Dictionary = {} # player -> {expires_turn, source_card}
+var turn_follower_loss_preventions: Dictionary = {} # player -> {expires_turn, source_card}
 var died_this_turn: Array[Card] = []
 var destroyed_this_turn: Array[Card] = []
 var pending_resurrections: Array[Card] = []
@@ -196,6 +197,39 @@ func _clear_expired_turn_destruction_wards(current_turn: int) -> void:
 		var expires_turn := int((ward_data as Dictionary).get("expires_turn", -1))
 		if expires_turn <= current_turn:
 			turn_destruction_wards.erase(player)
+
+func grant_turn_follower_loss_prevention(player: Player, source_card: Card = null, expires_turn: int = -1) -> void:
+	if player == null:
+		return
+	var resolved_expires_turn := turn_number if expires_turn < 0 else expires_turn
+	turn_follower_loss_preventions[player] = {
+		"expires_turn": resolved_expires_turn,
+		"source_card": source_card,
+	}
+
+func has_turn_follower_loss_prevention(player: Player) -> bool:
+	if player == null:
+		return false
+	var prevention_data: Variant = turn_follower_loss_preventions.get(player, null)
+	if not (prevention_data is Dictionary):
+		return false
+	var expires_turn := int((prevention_data as Dictionary).get("expires_turn", -1))
+	return expires_turn >= turn_number
+
+func can_player_lose_followers_now(player: Player) -> bool:
+	if player == null:
+		return false
+	return not has_turn_follower_loss_prevention(player)
+
+func _clear_expired_turn_follower_loss_preventions(current_turn: int) -> void:
+	for player in turn_follower_loss_preventions.keys().duplicate():
+		var prevention_data: Variant = turn_follower_loss_preventions.get(player, null)
+		if not (prevention_data is Dictionary):
+			turn_follower_loss_preventions.erase(player)
+			continue
+		var expires_turn := int((prevention_data as Dictionary).get("expires_turn", -1))
+		if expires_turn <= current_turn:
+			turn_follower_loss_preventions.erase(player)
 
 func _would_activation_break_turn_destruction_ward(source_card: Card, protected_player: Player, chosen_target = null) -> bool:
 	if source_card == null or protected_player == null:
@@ -1444,6 +1478,9 @@ func resolve_followers_attack(attackers: Array[Card], defending_player: Player) 
 	if active_attackers.is_empty():
 		return 0
 
+	for combatant in active_attackers:
+		_notify_attack_declared(combatant)
+
 	var follower_damage := 0
 	for combatant in active_attackers:
 		follower_damage += combatant.get_effective_strength()
@@ -1460,6 +1497,12 @@ func resolve_followers_attack(attackers: Array[Card], defending_player: Player) 
 		_notify_opponent_attacks_followers(combatant, defending_player)
 
 	return follower_damage
+
+func _notify_attack_declared(attacker: Card, target: Card = null) -> void:
+	if attacker == null:
+		return
+	if attacker.has_method("on_attack") and not attacker.abilities_suppressed():
+		attacker.on_attack(self, target)
 
 func _notify_opponent_attacks_followers(attacker: Card, defending_player: Player) -> void:
 	if attacker == null or defending_player == null:
@@ -1556,6 +1599,7 @@ func resolve_combat(attacker: Card, defender: Card, continue_callback: Callable 
 		_clear_combat_engagement_state(defender)
 		if continue_callback.is_valid():
 			continue_callback.call()
+	_notify_attack_declared(attacker, defender)
 	if defender.is_god:
 		# Gods cannot be targeted in combat — redirect to follower damage
 		var god_damage := _adjust_combat_follower_damage(attacker.get_effective_strength())
@@ -1563,8 +1607,6 @@ func resolve_combat(attacker: Card, defender: Card, continue_callback: Callable 
 		print(attacker.card_name + " attacks " + defender_controller.player_name + "'s followers for " + str(god_damage) + " (via god)!")
 		finish.call()
 		return true
-	if attacker.has_method("on_attack") and not attacker.abilities_suppressed():
-		attacker.on_attack(self, defender)
 	if defender.has_method("on_defend") and not defender.abilities_suppressed():
 		defender.on_defend(self, attacker)
 	attacker.reveal_from_stealth(self)
@@ -1660,8 +1702,7 @@ func resolve_united_front_combat(attacker: Card, partner: Card, defender: Card) 
 		_notify_after_united_front_combat(attacker, partner, defender)
 		_clear_combat_engagement_state(defender)
 	for combatant in active_attackers:
-		if combatant.has_method("on_attack") and not combatant.abilities_suppressed():
-			combatant.on_attack(self, defender)
+		_notify_attack_declared(combatant, defender)
 	if defender.has_method("on_defend") and not defender.abilities_suppressed():
 		defender.on_defend(self, primary)
 	primary.reveal_from_stealth(self)
@@ -1786,6 +1827,7 @@ func resolve_combat_with_continuation(
 		_clear_combat_engagement_state(defender)
 		if continue_callback.is_valid():
 			continue_callback.call()
+	_notify_attack_declared(attacker, defender)
 	if defender.is_god:
 		var god_damage := _adjust_combat_follower_damage(attacker.get_effective_strength())
 		defender_controller.lose_followers(god_damage)
@@ -1794,8 +1836,6 @@ func resolve_combat_with_continuation(
 		finish.call()
 		return true
 	var continue_resolution := func() -> bool:
-		if attacker.has_method("on_attack") and not attacker.abilities_suppressed():
-			attacker.on_attack(self, defender)
 		if defender.has_method("on_defend") and not defender.abilities_suppressed():
 			defender.on_defend(self, attacker)
 		attacker.reveal_from_stealth(self)
@@ -2076,6 +2116,7 @@ func end_turn() -> void:
 		card.remove_expired_buffs(turn_number)
 		card.remove_expired_statuses(turn_number)
 	_clear_expired_turn_destruction_wards(turn_number)
+	_clear_expired_turn_follower_loss_preventions(turn_number)
 	
 	# Swap players for the next turn
 	var temp = current_player
@@ -2510,6 +2551,18 @@ func _on_player_card_moved(card: Card, from_zone: Zone, to_zone: Zone) -> void:
 		elif to_zone.zone_type == Zone.ZoneType.ABYSS:
 			_notify_creature_sent_to_void(card)
 	_notify_board_cards_of_movement(card, from_zone, to_zone)
+	if to_zone.zone_type == Zone.ZoneType.FRONTLINE and card.card_type == Card.CardType.CREATURE:
+		_push_frontline_entry_event(card)
+
+func _push_frontline_entry_event(card: Card) -> void:
+	if card == null or card.card_owner == null:
+		return
+	var action := CardAction.new()
+	action.type = CardAction.Type.EVENT
+	action.event_name = "frontline_entry"
+	action.card = card
+	action.source_player = card.card_owner
+	push_to_stack(action)
 
 func _notify_board_cards_of_movement(moved_card: Card, from_zone: Zone, to_zone: Zone) -> void:
 	for player in players:

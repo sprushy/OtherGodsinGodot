@@ -91,6 +91,9 @@ var _active_profile_id: String = ""
 var _active_player_name: String = "Player"
 var _selected_saved_deck_id: String = ""
 var _online_lobby_client = null
+var _remote_account_decks_cache: Array[Dictionary] = []
+var _use_remote_account_decks: bool = false
+var _remote_preferred_deck_id: String = ""
 
 # ── init ───────────────────────────────────────────────────────────
 func _ready() -> void:
@@ -122,6 +125,19 @@ func configure_profile_store(profile_store, profile_id: String, player_name: Str
 
 func configure_online_sync(lobby_client) -> void:
 	_online_lobby_client = lobby_client
+
+func configure_account_decks(decks: Array, use_remote: bool = false, preferred_deck_id: String = "") -> void:
+	_remote_account_decks_cache.clear()
+	for entry in decks:
+		if entry is Dictionary:
+			_remote_account_decks_cache.append((entry as Dictionary).duplicate(true))
+	_use_remote_account_decks = use_remote
+	_remote_preferred_deck_id = preferred_deck_id.strip_edges()
+	if is_inside_tree():
+		_load_profile_decks()
+		_apply_default_collection_mode()
+		_refresh_grid()
+		_refresh_profile_labels()
 
 func _make_all_cards() -> Array:
 	return CardCatalogScript.make_all_cards()
@@ -1110,14 +1126,30 @@ func _save_deck() -> void:
 
 # ── validation ─────────────────────────────────────────────────────
 func _save_profile_deck() -> void:
-	_ensure_local_profile_store()
-	if _local_profile_store == null:
-		print("DeckBuilder: local profile store unavailable.")
-		return
 	if _deck.is_empty():
 		_set_status_flash("Nothing to save.")
 		return
 	var deck_name := _deck_name_edit.text if _deck_name_edit != null else ""
+	if _uses_remote_account_decks():
+		if not _can_sync_account_decks():
+			_set_status_flash("Connect to the lobby to save account decks.")
+			return
+		var resolved_name := deck_name.strip_edges()
+		if resolved_name.is_empty():
+			resolved_name = LocalProfileStoreScript.DEFAULT_DECK_NAME
+		if _deck_name_edit != null:
+			_deck_name_edit.text = resolved_name
+		_online_lobby_client.save_account_deck(
+			resolved_name,
+			_deck,
+			_selected_saved_deck_id
+		)
+		_set_status_flash("Saving deck for %s..." % _active_player_name)
+		return
+	_ensure_local_profile_store()
+	if _local_profile_store == null:
+		print("DeckBuilder: local profile store unavailable.")
+		return
 	var saved_deck: Dictionary = _local_profile_store.save_deck(
 		_active_profile_id,
 		deck_name,
@@ -1128,19 +1160,12 @@ func _save_profile_deck() -> void:
 	if _deck_name_edit != null:
 		_deck_name_edit.text = str(saved_deck.get("name", _deck_name_edit.text))
 	_load_profile_decks()
-	if _can_sync_account_decks():
-		_online_lobby_client.save_account_deck(
-			str(saved_deck.get("name", _deck_name_edit.text if _deck_name_edit != null else LocalProfileStoreScript.DEFAULT_DECK_NAME)),
-			saved_deck.get("cards", _deck),
-			_selected_saved_deck_id
-		)
 	_set_status_flash("Deck saved for %s." % _active_player_name)
 
 func _load_selected_deck() -> void:
-	_ensure_local_profile_store()
-	if _local_profile_store == null or _selected_saved_deck_id.is_empty():
+	if _selected_saved_deck_id.is_empty():
 		return
-	var saved_deck: Dictionary = _local_profile_store.get_deck(_active_profile_id, _selected_saved_deck_id)
+	var saved_deck: Dictionary = _get_saved_deck_by_id(_selected_saved_deck_id)
 	if saved_deck.is_empty():
 		return
 	_apply_saved_deck(saved_deck)
@@ -1148,17 +1173,27 @@ func _load_selected_deck() -> void:
 	_set_status_flash("Loaded %s." % str(saved_deck.get("name", "deck")))
 
 func _delete_selected_deck() -> void:
-	_ensure_local_profile_store()
-	if _local_profile_store == null or _selected_saved_deck_id.is_empty():
+	if _selected_saved_deck_id.is_empty():
 		return
 	var deleted_deck_id: String = _selected_saved_deck_id
-	_local_profile_store.delete_deck(_active_profile_id, _selected_saved_deck_id)
+	if _uses_remote_account_decks():
+		if not _can_sync_account_decks():
+			_set_status_flash("Connect to the lobby to delete account decks.")
+			return
+		_selected_saved_deck_id = ""
+		if _deck_name_edit != null:
+			_deck_name_edit.text = LocalProfileStoreScript.DEFAULT_DECK_NAME
+		_online_lobby_client.delete_account_deck(deleted_deck_id)
+		_set_status_flash("Deleting saved deck...")
+		return
+	_ensure_local_profile_store()
+	if _local_profile_store == null:
+		return
 	_selected_saved_deck_id = ""
 	if _deck_name_edit != null:
 		_deck_name_edit.text = LocalProfileStoreScript.DEFAULT_DECK_NAME
+	_local_profile_store.delete_deck(_active_profile_id, deleted_deck_id)
 	_load_profile_decks()
-	if _can_sync_account_decks():
-		_online_lobby_client.delete_account_deck(deleted_deck_id)
 	_set_status_flash("Saved deck deleted.")
 
 func _new_deck() -> void:
@@ -1169,8 +1204,7 @@ func _new_deck() -> void:
 		_deck_name_edit.grab_focus()
 		_deck_name_edit.select_all()
 	_select_saved_deck("")
-	if _local_profile_store != null:
-		_refresh_saved_deck_gallery(_local_profile_store.list_decks(_active_profile_id))
+	_refresh_saved_deck_gallery(_get_saved_decks())
 	_focus_god_selection()
 	_refresh_deck_panel()
 	_set_status_flash("Started a new deck.")
@@ -1199,6 +1233,51 @@ func _ensure_local_profile_store() -> void:
 		_active_profile_id = str(profile.get("profile_id", _active_profile_id)).strip_edges()
 	_active_player_name = _local_profile_store.get_profile_display_name(_active_profile_id, resolved_profile_name)
 
+func _uses_remote_account_decks() -> bool:
+	return _use_remote_account_decks
+
+func _get_saved_decks() -> Array[Dictionary]:
+	if _uses_remote_account_decks():
+		var decks: Array[Dictionary] = []
+		for entry in _remote_account_decks_cache:
+			decks.append(entry.duplicate(true))
+		return decks
+	_ensure_local_profile_store()
+	if _local_profile_store == null or _active_profile_id.is_empty():
+		return []
+	return _local_profile_store.list_decks(_active_profile_id)
+
+func _get_saved_deck_by_id(deck_id: String) -> Dictionary:
+	var resolved_deck_id := deck_id.strip_edges()
+	if resolved_deck_id.is_empty():
+		return {}
+	for saved_deck in _get_saved_decks():
+		if str(saved_deck.get("deck_id", "")).strip_edges() == resolved_deck_id:
+			return saved_deck.duplicate(true)
+	return {}
+
+func _get_last_selected_saved_deck_id() -> String:
+	if _uses_remote_account_decks():
+		var resolved_selected_deck_id := _selected_saved_deck_id.strip_edges()
+		if not resolved_selected_deck_id.is_empty():
+			for saved_deck in _remote_account_decks_cache:
+				if str(saved_deck.get("deck_id", "")).strip_edges() == resolved_selected_deck_id:
+					return resolved_selected_deck_id
+		return _remote_preferred_deck_id.strip_edges()
+	_ensure_local_profile_store()
+	if _local_profile_store == null:
+		return ""
+	return str(_local_profile_store.get_last_selected_deck_id(_active_profile_id)).strip_edges()
+
+func _remember_selected_saved_deck(deck_id: String) -> void:
+	_selected_saved_deck_id = deck_id.strip_edges()
+	if _uses_remote_account_decks():
+		return
+	_ensure_local_profile_store()
+	if _local_profile_store == null or _active_profile_id.is_empty() or _selected_saved_deck_id.is_empty():
+		return
+	_local_profile_store.remember_last_selected_deck(_active_profile_id, _selected_saved_deck_id)
+
 func _get_resolved_profile_name(default_name: String = "Player") -> String:
 	var resolved_default := default_name.strip_edges()
 	if resolved_default.is_empty():
@@ -1214,26 +1293,25 @@ func _get_resolved_profile_name(default_name: String = "Player") -> String:
 	return resolved_name
 
 func _load_profile_decks() -> void:
-	_ensure_local_profile_store()
 	_refresh_profile_labels()
 	if _saved_decks_option == null:
 		return
 	_saved_decks_option.clear()
 	_saved_decks_option.add_item("Saved Decks")
 	_saved_decks_option.set_item_metadata(0, "")
-	var decks: Array[Dictionary] = _local_profile_store.list_decks(_active_profile_id)
+	var decks: Array[Dictionary] = _get_saved_decks()
 	for deck in decks:
 		var deck_name := str(deck.get("name", "Deck"))
 		_saved_decks_option.add_item(deck_name)
 		_saved_decks_option.set_item_metadata(_saved_decks_option.get_item_count() - 1, str(deck.get("deck_id", "")))
 
-	var preferred_deck_id := str(_local_profile_store.get_last_selected_deck_id(_active_profile_id)).strip_edges()
+	var preferred_deck_id := _get_last_selected_saved_deck_id()
 	if preferred_deck_id.is_empty() and not decks.is_empty():
 		preferred_deck_id = str(decks[0].get("deck_id", "")).strip_edges()
 	_select_saved_deck(preferred_deck_id)
 	_refresh_saved_deck_gallery(decks)
 	if not preferred_deck_id.is_empty() and _deck.is_empty():
-		var saved_deck: Dictionary = _local_profile_store.get_deck(_active_profile_id, preferred_deck_id)
+		var saved_deck: Dictionary = _get_saved_deck_by_id(preferred_deck_id)
 		if not saved_deck.is_empty():
 			_apply_saved_deck(saved_deck)
 	elif _deck_name_edit != null and _deck_name_edit.text.strip_edges().is_empty():
@@ -1277,9 +1355,9 @@ func _apply_saved_deck(saved_deck: Dictionary) -> void:
 			var count := int((cards as Dictionary)[raw_card_name])
 			if count > 0:
 				_deck[str(raw_card_name)] = count
-	_local_profile_store.remember_last_selected_deck(_active_profile_id, _selected_saved_deck_id)
+	_remember_selected_saved_deck(_selected_saved_deck_id)
 	_select_saved_deck(_selected_saved_deck_id)
-	_refresh_saved_deck_gallery(_local_profile_store.list_decks(_active_profile_id))
+	_refresh_saved_deck_gallery(_get_saved_decks())
 	_refresh_deck_panel()
 
 func _refresh_saved_deck_gallery(decks: Array[Dictionary]) -> void:

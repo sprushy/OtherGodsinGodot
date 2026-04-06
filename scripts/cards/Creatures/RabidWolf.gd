@@ -1,7 +1,7 @@
 extends CreatureCard
 class_name RabidWolf
 
-const ART_PATH := "res://scripts/cards/Creatures/RabidWolfEdit.png"
+const ART_PATH := "res://scripts/cards/Creatures/RabidWolfEdit2.png"
 const DISEASE_SOURCE := "Rabid Wolf Disease"
 const DISEASE_EFFECT_TYPE := "rabid_wolf_disease"
 

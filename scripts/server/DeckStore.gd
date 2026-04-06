@@ -26,6 +26,20 @@ func list_decks(account_id: String) -> Array[Dictionary]:
 	decks.sort_custom(_sort_decks)
 	return decks
 
+func get_deck(account_id: String, deck_id: String) -> Dictionary:
+	_ensure_loaded()
+	var resolved_account_id: String = account_id.strip_edges()
+	var resolved_deck_id: String = deck_id.strip_edges()
+	if resolved_account_id.is_empty() or resolved_deck_id.is_empty():
+		return {}
+	var deck_bucket = _decks_by_account_id.get(resolved_account_id, {})
+	if not (deck_bucket is Dictionary):
+		return {}
+	var raw_deck = (deck_bucket as Dictionary).get(resolved_deck_id, {})
+	if raw_deck is Dictionary:
+		return (raw_deck as Dictionary).duplicate(true)
+	return {}
+
 func save_deck(account_id: String, deck_name: String, cards: Dictionary, deck_id: String = "") -> Dictionary:
 	_ensure_loaded()
 	var resolved_account_id: String = account_id.strip_edges()

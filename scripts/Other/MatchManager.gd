@@ -61,6 +61,8 @@ var pending_divine_caprice_selected_zone: Zone = null
 
 var pending_retreat_action: CardAction = null
 var pending_retreat_target: Card = null
+var pending_retreat_prompt_uids: Array[String] = []
+var pending_retreat_guardian_blocked_uids: Array[String] = []
 var _active_command_sender_info: Dictionary = {}
 
 func _init(p_game_manager: GameManager) -> void:
@@ -229,9 +231,20 @@ func _resolve_attack(action: CardAction) -> void:
 		# Otherwise, resolve headlessly so the server can handle networked combat.
 		var retreat_prompts := _get_retreat_candidates(action.attacker, actual_target, action.source_player)
 		if not retreat_prompts.is_empty():
-			var target_player: Player = retreat_prompts[0].card_owner
+			pending_retreat_action = action
+			pending_retreat_target = actual_target
+			pending_retreat_prompt_uids.clear()
+			for prompt in retreat_prompts:
+				if prompt != null:
+					pending_retreat_prompt_uids.append(str(prompt.uid))
+			pending_retreat_guardian_blocked_uids = _get_guardian_blocked_retreat_candidate_uids(action.attacker, actual_target)
+			var target_player: Player = _get_card_controller(retreat_prompts[0])
 			var player_idx := game_manager.players.find(target_player)
-			request_ui_interaction.emit(player_idx, "combat_retreat", {"action": action, "target": actual_target})
+			request_ui_interaction.emit(player_idx, "combat_retreat", {
+				"action": action,
+				"target": actual_target,
+				"askelladen_uid": str(retreat_prompts[0].uid),
+			})
 			return
 		# No retreat possible - resolve directly.
 		_finish_creature_combat(action, actual_target)
@@ -303,6 +316,23 @@ func _get_retreat_candidates(attacker: Card, defender: Card, _turn_player: Playe
 		if not game_manager.is_guardian_protected(other, ask):
 			candidates.append(ask)
 	return candidates
+
+func _get_guardian_blocked_retreat_candidate_uids(attacker: Card, defender: Card) -> Array[String]:
+	var blocked: Array[String] = []
+	for card in [attacker, defender]:
+		if not (card is Askelladen):
+			continue
+		var other: Card = defender if card == attacker else attacker
+		var ask := card as Askelladen
+		if ask.is_face_down or ask.abilities_suppressed():
+			continue
+		if game_manager.is_immune_to_source(other, ask):
+			continue
+		if other.get_effective_speed() > ask.get_effective_speed():
+			continue
+		if game_manager.is_guardian_protected(other, ask):
+			blocked.append(str(ask.uid))
+	return blocked
 
 func is_targeting_active() -> bool:
 	return pending_click_selection_confirm.is_valid() or \
@@ -962,6 +992,11 @@ func _get_required_player_for_command(command: Dictionary) -> Player:
 			if pending_attack_target is Player:
 				return pending_attack_target
 			return game_manager.other_player
+		"combat_retreat_decision":
+			var askelladen_uid := str(command.get("askelladen_uid", "")).strip_edges()
+			if not askelladen_uid.is_empty():
+				return _get_card_controller(game_manager.get_card_by_uid(askelladen_uid))
+			return _get_pending_retreat_prompt_player()
 		"resurrection_choice":
 			var resurrect_card := game_manager.get_card_by_uid(str(command.get("card_uid", "")))
 			return resurrect_card.card_owner if resurrect_card != null else null
@@ -1003,7 +1038,7 @@ func _get_command_actor(sender_info: Dictionary) -> Player:
 
 func _requires_resolved_upkeep(command_type: String) -> bool:
 	match command_type:
-		"upkeep_choice", "priority_pass", "intercept_decision", "play_hex_response", "play_charm_response", "play_priority_ability", "forfeit":
+		"upkeep_choice", "priority_pass", "intercept_decision", "combat_retreat_decision", "play_hex_response", "play_charm_response", "play_priority_ability", "forfeit":
 			return false
 	return true
 
@@ -1682,6 +1717,8 @@ func _process_command_impl(command: Dictionary) -> bool:
 				_resolve_authoritative_headless_attack()
 			move_validated.emit(command)
 			return true
+		"combat_retreat_decision":
+			return _process_combat_retreat_decision(command)
 		"play_charm_response":
 			var pcr_charm_uid: String = command.get("charm_uid", "")
 			var pcr_charm := game_manager.get_card_by_uid(pcr_charm_uid)
@@ -1742,14 +1779,36 @@ func _process_command_impl(command: Dictionary) -> bool:
 			var pra_target_uid: String = command.get("target_uid", "")
 			if pra_target_uid != "":
 				pra_target = game_manager.get_card_by_uid(pra_target_uid)
+			var pra_zone: Zone = null
+			if command.has("zone_type"):
+				pra_zone = resolve_zone(command)
+				if pra_zone == null:
+					move_failed.emit("play_priority_ability: invalid zone")
+					return false
 			var pra_action := CardAction.new()
 			pra_action.type = CardAction.Type.ABILITY
 			pra_action.source_player = pra_source.card_owner
 			pra_action.card = pra_source
 			pra_action.target = pra_target
 			pra_action.response_to = game_manager.action_stack.back()
+			if pra_zone != null:
+				pra_action.event_data["summon_zone"] = CardAction._zone_to_dict(pra_zone, game_manager)
+			if command.has("mode"):
+				pra_action.event_data["summon_mode"] = int(command.get("mode", Card.CreatureMode.DEFENSIVE))
 			pra_action.resolve_callback = func() -> void:
-				if pra_target != null:
+				if not pra_action.event_data.is_empty():
+					var activation_context: Dictionary = {}
+					if pra_target != null:
+						activation_context["triggering_attacker"] = pra_target
+					var summon_zone_dict = pra_action.event_data.get("summon_zone", {})
+					if summon_zone_dict is Dictionary and not (summon_zone_dict as Dictionary).is_empty():
+						var resolved_zone := CardAction._dict_to_zone(summon_zone_dict as Dictionary, game_manager)
+						if resolved_zone != null:
+							activation_context["summon_zone"] = resolved_zone
+					if pra_action.event_data.has("summon_mode"):
+						activation_context["summon_mode"] = int(pra_action.event_data.get("summon_mode", Card.CreatureMode.DEFENSIVE))
+					pra_source.activate(game_manager, activation_context)
+				elif pra_target != null:
 					pra_source.activate(game_manager, pra_target)
 				else:
 					pra_source.activate(game_manager)
@@ -1852,6 +1911,68 @@ func _process_command_impl(command: Dictionary) -> bool:
 			return true
 	move_failed.emit("Unknown command type: " + str(command.get("type")))
 	return false
+
+func _process_combat_retreat_decision(command: Dictionary) -> bool:
+	var current_prompt := _get_pending_retreat_prompt()
+	if pending_retreat_action == null or pending_retreat_target == null or current_prompt == null:
+		move_failed.emit("combat_retreat_decision: no retreat prompt is waiting for a response")
+		_clear_pending_retreat_state()
+		return false
+	var requested_uid := str(command.get("askelladen_uid", "")).strip_edges()
+	if not requested_uid.is_empty() and requested_uid != str(current_prompt.uid):
+		move_failed.emit("combat_retreat_decision: that retreat prompt is no longer active")
+		return false
+	var action := pending_retreat_action
+	var target := pending_retreat_target
+	var blocked_ask := _get_first_guardian_blocked_retreat_prompt()
+	if not pending_retreat_prompt_uids.is_empty():
+		pending_retreat_prompt_uids.remove_at(0)
+	if bool(command.get("retreat", false)):
+		game_manager.send_to_deck_bottom_with_hook(action.attacker)
+		game_manager.send_to_deck_bottom_with_hook(target)
+		last_resolution_text = "Tactful Retreat! Both creatures returned to the bottom of their decks."
+		_clear_pending_retreat_state()
+		action_resolved.emit(action)
+		return true
+	if not pending_retreat_prompt_uids.is_empty():
+		var next_prompt := _get_pending_retreat_prompt()
+		if next_prompt == null:
+			_clear_pending_retreat_state()
+			move_failed.emit("combat_retreat_decision: next retreat prompt was unavailable")
+			return false
+		var player_idx := game_manager.players.find(_get_card_controller(next_prompt))
+		request_ui_interaction.emit(player_idx, "combat_retreat", {
+			"action": action,
+			"target": target,
+			"askelladen_uid": str(next_prompt.uid),
+		})
+		return true
+	_clear_pending_retreat_state()
+	_finish_creature_combat(action, target)
+	if blocked_ask != null:
+		last_resolution_text = "Asaruludu's Guardian prevented %s's Tactful Retreat!" % blocked_ask.card_name
+	action_resolved.emit(action)
+	return true
+
+func _get_pending_retreat_prompt() -> Askelladen:
+	if pending_retreat_prompt_uids.is_empty():
+		return null
+	return game_manager.get_card_by_uid(str(pending_retreat_prompt_uids[0])) as Askelladen
+
+func _get_pending_retreat_prompt_player() -> Player:
+	var prompt := _get_pending_retreat_prompt()
+	return _get_card_controller(prompt)
+
+func _get_first_guardian_blocked_retreat_prompt() -> Askelladen:
+	if pending_retreat_guardian_blocked_uids.is_empty():
+		return null
+	return game_manager.get_card_by_uid(str(pending_retreat_guardian_blocked_uids[0])) as Askelladen
+
+func _clear_pending_retreat_state() -> void:
+	pending_retreat_action = null
+	pending_retreat_target = null
+	pending_retreat_prompt_uids.clear()
+	pending_retreat_guardian_blocked_uids.clear()
 
 func _check_for_next_resurrection() -> void:
 	# Only relevant if we have pending resurrections

@@ -153,6 +153,10 @@ func gain_followers(amount: int) -> void:
 func lose_followers(amount: int) -> void:
 	if is_defeated:
 		return
+	if amount <= 0:
+		return
+	if game_manager != null and not game_manager.can_player_lose_followers_now(self):
+		return
 	followers = max(0, followers - amount)
 	followers_changed.emit(followers)
 	if followers <= 0 and not is_defeated:

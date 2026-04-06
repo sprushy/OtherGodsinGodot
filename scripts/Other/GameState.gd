@@ -24,6 +24,7 @@ static func serialize(gm: GameManager, viewer_player_index: int = -1) -> Diction
 		priority_player_index = gm.players.find(gm.priority_player),
 		consecutive_passes = gm.consecutive_passes,
 		attack_restrictions = _serialize_attack_restrictions(gm),
+		turn_follower_loss_preventions = _serialize_turn_follower_loss_preventions(gm),
 		prepared_hexes = _serialize_prepared_cards(gm.prepared_hexes),
 		prepared_charms = _serialize_prepared_cards(gm.prepared_charms),
 		action_stack = _serialize_action_stack(gm.action_stack, gm),
@@ -150,6 +151,20 @@ static func _serialize_prepared_cards(prepared_map: Dictionary) -> Array:
 		})
 	return result
 
+static func _serialize_turn_follower_loss_preventions(gm: GameManager) -> Array:
+	var result := []
+	for player in gm.turn_follower_loss_preventions:
+		var prevention_data: Variant = gm.turn_follower_loss_preventions.get(player, null)
+		if not (prevention_data is Dictionary):
+			continue
+		var source: Card = (prevention_data as Dictionary).get("source_card", null)
+		result.append({
+			player_index = gm.players.find(player),
+			expires_turn = int((prevention_data as Dictionary).get("expires_turn", -1)),
+			source_uid = source.uid if source != null and "uid" in source else "",
+		})
+	return result
+
 static func _serialize_action_stack(action_stack: Array, gm: GameManager) -> Array:
 	var result := []
 	for action in action_stack:
@@ -188,6 +203,15 @@ static func apply_to_manager(data: Dictionary, gm: GameManager) -> void:
 			gm.attack_restrictions[gm.players[p_idx]] = {
 				turns = entry.get("turns", 0),
 				source = null,
+			}
+
+	gm.turn_follower_loss_preventions.clear()
+	for entry in data.get("turn_follower_loss_preventions", []):
+		var p_idx: int = entry.get("player_index", -1)
+		if p_idx >= 0 and p_idx < gm.players.size():
+			gm.turn_follower_loss_preventions[gm.players[p_idx]] = {
+				expires_turn = int(entry.get("expires_turn", -1)),
+				source_card = null,
 			}
 
 	gm.prepared_hexes.clear()

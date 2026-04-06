@@ -16,6 +16,7 @@ const SELECT_DECK := "select_deck"
 const REQUEST_ACCOUNT_DECKS := "request_account_decks"
 const SAVE_ACCOUNT_DECK := "save_account_deck"
 const DELETE_ACCOUNT_DECK := "delete_account_deck"
+const SET_ACCOUNT_PREFERRED_DECK := "set_account_preferred_deck"
 const REQUEST_PROFILE_SUMMARY := "request_profile_summary"
 const REQUEST_RECONNECT_LOBBY := "request_reconnect_lobby"
 
@@ -65,16 +66,21 @@ static func validate_request(message: Dictionary) -> String:
 			if str(payload.get("room_id", "")).strip_edges().is_empty():
 				return "Missing room code."
 		SELECT_DECK:
-			if str(payload.get("deck_name", "")).strip_edges().is_empty():
+			var has_deck_id := not str(payload.get("deck_id", "")).strip_edges().is_empty()
+			var has_cards := payload.has("cards") and payload.get("cards") is Dictionary
+			if not has_deck_id and not has_cards:
+				return "Missing saved deck id or deck cards."
+			if has_cards and str(payload.get("deck_name", "")).strip_edges().is_empty():
 				return "Missing deck name."
-			if not payload.has("cards") or not (payload.get("cards") is Dictionary):
-				return "Missing deck cards."
 		SAVE_ACCOUNT_DECK:
 			if str(payload.get("deck_name", "")).strip_edges().is_empty():
 				return "Missing deck name."
 			if not payload.has("cards") or not (payload.get("cards") is Dictionary):
 				return "Missing deck cards."
 		DELETE_ACCOUNT_DECK:
+			if str(payload.get("deck_id", "")).strip_edges().is_empty():
+				return "Missing deck id."
+		SET_ACCOUNT_PREFERRED_DECK:
 			if str(payload.get("deck_id", "")).strip_edges().is_empty():
 				return "Missing deck id."
 		SET_READY:

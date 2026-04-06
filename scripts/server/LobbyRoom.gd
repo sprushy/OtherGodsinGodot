@@ -85,6 +85,7 @@ func submit_deck(session_id: String, deck_name: String, deck_id: String, deck_ca
 		"deck_name": deck_name.strip_edges(),
 		"deck_id": deck_id.strip_edges(),
 		"cards": deck_cards.duplicate(true),
+		"deck_hash": compute_deck_hash(deck_name, deck_cards),
 		"validation": validation.duplicate(true),
 	}
 	refresh_status()
@@ -122,6 +123,7 @@ func to_snapshot(sessions_by_id: Dictionary) -> Dictionary:
 			"is_connected": bool(session.get("connected", false)),
 			"selected_deck_id": str(submission.get("deck_id", "")),
 			"selected_deck_name": str(submission.get("deck_name", "")),
+			"selected_deck_hash": str(submission.get("deck_hash", "")),
 			"has_valid_deck": bool(validation.get("is_valid", false)),
 			"deck_error": str(validation.get("error", "")),
 		})
@@ -147,3 +149,13 @@ func to_room_list_entry(sessions_by_id: Dictionary) -> Dictionary:
 		"max_players": MAX_PLAYERS,
 		"status": status,
 	}
+
+static func compute_deck_hash(deck_name: String, deck_cards: Dictionary) -> String:
+	var card_rows: Array[String] = []
+	for raw_card_name in deck_cards.keys():
+		var card_name := str(raw_card_name).strip_edges()
+		if card_name.is_empty():
+			continue
+		card_rows.append("%s=%d" % [card_name, int(deck_cards[raw_card_name])])
+	card_rows.sort()
+	return "%s|%s" % [deck_name.strip_edges(), "|".join(card_rows)]

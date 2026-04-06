@@ -6,6 +6,7 @@ const DEFAULT_PLAYER_NAME := "Guest"
 
 var _profiles_by_id: Dictionary = {}
 var _profile_id_by_account_id: Dictionary = {}
+var _profile_id_by_account_username: Dictionary = {}
 var _loaded: bool = false
 var _rng := RandomNumberGenerator.new()
 
@@ -25,11 +26,17 @@ func login_profile(
 
 	var now_unix := int(Time.get_unix_time_from_system())
 	var resolved_account_id := account_id.strip_edges()
+	var resolved_account_username := account_username.strip_edges()
+	var account_username_key := resolved_account_username.to_lower()
 	var resolved_profile_id := ""
 	if not resolved_account_id.is_empty():
 		resolved_profile_id = str(_profile_id_by_account_id.get(resolved_account_id, "")).strip_edges()
+		if resolved_profile_id.is_empty() and not account_username_key.is_empty():
+			resolved_profile_id = str(_profile_id_by_account_username.get(account_username_key, "")).strip_edges()
 		if resolved_profile_id.is_empty():
-			resolved_profile_id = _generate_profile_id()
+			resolved_profile_id = requested_profile_id.strip_edges()
+			if resolved_profile_id.is_empty():
+				resolved_profile_id = _generate_profile_id()
 	elif requested_profile_id.strip_edges().is_empty():
 		resolved_profile_id = ""
 	else:
@@ -44,13 +51,15 @@ func login_profile(
 	profile["profile_id"] = resolved_profile_id
 	profile["display_name"] = clean_name
 	profile["account_id"] = resolved_account_id
-	profile["account_username"] = account_username.strip_edges()
+	profile["account_username"] = resolved_account_username
 	if not profile.has("created_unix"):
 		profile["created_unix"] = now_unix
 	profile["last_seen_unix"] = now_unix
 	_profiles_by_id[resolved_profile_id] = profile
 	if not resolved_account_id.is_empty():
 		_profile_id_by_account_id[resolved_account_id] = resolved_profile_id
+	if not account_username_key.is_empty():
+		_profile_id_by_account_username[account_username_key] = resolved_profile_id
 	_save()
 	return profile.duplicate(true)
 
@@ -61,12 +70,42 @@ func get_profile(profile_id: String) -> Dictionary:
 		return (existing as Dictionary).duplicate(true)
 	return {}
 
+func get_preferred_deck_id_for_account(account_id: String) -> String:
+	_ensure_loaded()
+	var resolved_account_id := account_id.strip_edges()
+	if resolved_account_id.is_empty():
+		return ""
+	var profile_id := str(_profile_id_by_account_id.get(resolved_account_id, "")).strip_edges()
+	if profile_id.is_empty():
+		return ""
+	var profile = _profiles_by_id.get(profile_id, {})
+	if not (profile is Dictionary):
+		return ""
+	return str((profile as Dictionary).get("preferred_deck_id", "")).strip_edges()
+
+func set_preferred_deck_id_for_account(account_id: String, deck_id: String) -> void:
+	_ensure_loaded()
+	var resolved_account_id := account_id.strip_edges()
+	if resolved_account_id.is_empty():
+		return
+	var profile_id := str(_profile_id_by_account_id.get(resolved_account_id, "")).strip_edges()
+	if profile_id.is_empty():
+		return
+	var profile = _profiles_by_id.get(profile_id, {})
+	if not (profile is Dictionary):
+		return
+	var updated_profile := (profile as Dictionary).duplicate(true)
+	updated_profile["preferred_deck_id"] = deck_id.strip_edges()
+	_profiles_by_id[profile_id] = updated_profile
+	_save()
+
 func _ensure_loaded() -> void:
 	if _loaded:
 		return
 	_loaded = true
 	_profiles_by_id = {}
 	_profile_id_by_account_id = {}
+	_profile_id_by_account_username = {}
 	var storage_path: String = _get_storage_path()
 	if not FileAccess.file_exists(storage_path):
 		return
@@ -84,6 +123,9 @@ func _ensure_loaded() -> void:
 		var account_id := str((profile as Dictionary).get("account_id", "")).strip_edges()
 		if not account_id.is_empty():
 			_profile_id_by_account_id[account_id] = str(profile_id)
+		var account_username_key := str((profile as Dictionary).get("account_username", "")).strip_edges().to_lower()
+		if not account_username_key.is_empty():
+			_profile_id_by_account_username[account_username_key] = str(profile_id)
 
 func _save() -> void:
 	var storage_path: String = _get_storage_path()
