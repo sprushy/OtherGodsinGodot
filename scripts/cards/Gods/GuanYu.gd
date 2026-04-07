@@ -2,6 +2,7 @@ extends GodCard
 class_name GuanYu
 
 const TACTIC_COUNTER_COST := 4
+const GUAN_YU_ACTIVE_SCRIPT := preload("res://scripts/cards/ActiveGods/GuanYuActive.gd")
 
 var tactic_counters: int = 0
 var _last_counter_turn: int = -1
@@ -14,7 +15,7 @@ func _init() -> void:
 	culture = "Tian"
 	targets = true
 	flavor_text = ""
-	ability_text = "Tactical Break ([b]Passive[/b]/[b]Activate[/b]): At the start of each of your turns, if you have more creatures on the frontline than your opponent, gain 1 tactic counter. Remove 4 tactic counters to destroy a card.\n[b]Champion's Call[/b]"
+	ability_text = "Tactical Break ([b]Passive[/b]/[b]Activate[/b]): At the start of each of your turns, if you have more creatures on the frontline than your opponent, gain 1 tactic counter. Remove 4 tactic counters to destroy a card.\n[b]Champion's Call[/b] ([b]Activate[/b]): Summon Guan Yu, Active God. You may [b]Shelve[/b] cards from your hand to pay 4 mana each of its summon cost."
 	art_path = "res://images/card_art/gods/guan_yu.png"
 	artist = "Ricarrdo Zoppello"
 	name_at_bottom = true
@@ -43,28 +44,18 @@ func on_turn_upkeep(game_manager: GameManager) -> void:
 		)
 
 func can_activate(game_manager: GameManager) -> bool:
-	if game_manager == null:
-		return false
-	if is_muted:
-		return false
-	if card_owner != game_manager.current_player:
-		return false
-	if tactic_counters < TACTIC_COUNTER_COST:
-		return false
-	return not get_valid_targets(game_manager).is_empty()
+	if _can_use_tactical_break(game_manager):
+		return true
+	return can_use_champions_call(game_manager)
 
 func get_activation_failure_reason(game_manager: GameManager) -> String:
-	if game_manager == null:
-		return card_name + " cannot activate right now."
-	if is_muted:
-		return card_name + " is muted."
-	if card_owner != game_manager.current_player:
-		return "It is not " + card_name + "'s turn to act."
-	if tactic_counters < TACTIC_COUNTER_COST:
-		return "Tactical Break needs %d tactic counters (have %d)." % [TACTIC_COUNTER_COST, tactic_counters]
-	if get_valid_targets(game_manager).is_empty():
-		return "Tactical Break has no valid targets."
-	return ""
+	if _can_use_tactical_break(game_manager):
+		return ""
+	if can_use_champions_call(game_manager):
+		return ""
+	var tactical_reason := _get_tactical_break_failure_reason(game_manager)
+	var champion_reason := get_champions_call_failure_reason(game_manager)
+	return tactical_reason + " " + champion_reason
 
 func get_valid_targets(game_manager: GameManager) -> Array[Card]:
 	var valid: Array[Card] = []
@@ -84,28 +75,33 @@ func is_valid_activation_target(target: Card) -> bool:
 		and target.current_zone.is_board_zone()
 
 func activate(game_manager: GameManager, target: Card = null) -> void:
-	if not can_activate(game_manager):
-		if game_manager != null:
-			game_manager.note_player_feedback(get_activation_failure_reason(game_manager))
+	if target != null:
+		_activate_tactical_break(game_manager, target)
 		return
-	if not is_valid_activation_target(target):
-		if game_manager != null:
-			game_manager.note_player_feedback("Tactical Break fizzles: invalid target.")
+	if can_use_champions_call(game_manager):
+		game_manager.note_player_feedback(resolve_champions_call(game_manager))
+		if current_zone != card_owner.god_zone:
+			notify_power_activated(game_manager, null)
 		return
-	if game_manager.is_immune_to_source(target, self):
-		game_manager.note_player_feedback(
-			"Tactical Break fizzles: %s is immune." % target.card_name
-		)
-		return
+	if game_manager != null:
+		game_manager.note_player_feedback(get_activation_failure_reason(game_manager))
 
-	tactic_counters -= TACTIC_COUNTER_COST
-	game_manager.note_player_feedback(
-		"Tactical Break: %s spends %d tactic counters (now %d) to destroy %s." % [
-			card_name, TACTIC_COUNTER_COST, tactic_counters, target.card_name
-		]
-	)
-	game_manager.request_send_to_graveyard(target, Callable(), false, true)
-	notify_power_activated(game_manager, target)
+func activate_from_command(game_manager: GameManager, command: Dictionary) -> void:
+	if game_manager == null:
+		return
+	var target_uid := str(command.get("target_uid", ""))
+	var target: Card = game_manager.get_card_by_uid(target_uid) if not target_uid.is_empty() else null
+	if target != null:
+		_activate_tactical_break(game_manager, target)
+		return
+	if can_use_champions_call(game_manager):
+		game_manager.note_player_feedback(
+			resolve_champions_call(game_manager, get_champions_call_selected_cards_from_command(game_manager, command))
+		)
+		if current_zone != card_owner.god_zone:
+			notify_power_activated(game_manager, null)
+		return
+	game_manager.note_player_feedback(get_activation_failure_reason(game_manager))
 
 func on_removed(_game_manager: GameManager) -> void:
 	tactic_counters = 0
@@ -125,3 +121,67 @@ func _count_frontline_creatures(player: Player) -> int:
 			if card.card_type == Card.CardType.CREATURE:
 				count += 1
 	return count
+
+func get_champions_call_candidate(_allow_fallback: bool = true) -> Card:
+	if card_owner == null:
+		return null
+	for zone in [
+		card_owner.hand_zone,
+		card_owner.deck_zone,
+		card_owner.graveyard_zone,
+		card_owner.abyss_zone,
+	] + card_owner.frontline_zones + card_owner.reserve_zones:
+		for card in zone.cards:
+			var active_god := card as ActiveGodCard
+			if active_god == null or active_god.get_linked_god_name() != "Guan Yu":
+				continue
+			if card.current_zone != null and card.current_zone.is_board_zone():
+				return null
+			return card
+	var manifestation := GUAN_YU_ACTIVE_SCRIPT.new()
+	manifestation.card_owner = card_owner
+	return manifestation
+
+func _can_use_tactical_break(game_manager: GameManager) -> bool:
+	if not can_use_god_power(game_manager):
+		return false
+	if tactic_counters < TACTIC_COUNTER_COST:
+		return false
+	return not get_valid_targets(game_manager).is_empty()
+
+func _get_tactical_break_failure_reason(game_manager: GameManager) -> String:
+	if game_manager == null:
+		return card_name + " cannot activate right now."
+	if is_muted:
+		return card_name + " is muted."
+	if card_owner != game_manager.current_player:
+		return "It is not " + card_name + "'s turn to act."
+	if tactic_counters < TACTIC_COUNTER_COST:
+		return "Tactical Break needs %d tactic counters (have %d)." % [TACTIC_COUNTER_COST, tactic_counters]
+	if get_valid_targets(game_manager).is_empty():
+		return "Tactical Break has no valid targets."
+	return ""
+
+func _activate_tactical_break(game_manager: GameManager, target: Card) -> void:
+	if not _can_use_tactical_break(game_manager):
+		if game_manager != null:
+			game_manager.note_player_feedback(_get_tactical_break_failure_reason(game_manager))
+		return
+	if not is_valid_activation_target(target):
+		if game_manager != null:
+			game_manager.note_player_feedback("Tactical Break fizzles: invalid target.")
+		return
+	if game_manager.is_immune_to_source(target, self):
+		game_manager.note_player_feedback(
+			"Tactical Break fizzles: %s is immune." % target.card_name
+		)
+		return
+
+	tactic_counters -= TACTIC_COUNTER_COST
+	game_manager.note_player_feedback(
+		"Tactical Break: %s spends %d tactic counters (now %d) to destroy %s." % [
+			card_name, TACTIC_COUNTER_COST, tactic_counters, target.card_name
+		]
+	)
+	game_manager.request_send_to_graveyard(target, Callable(), false, true)
+	notify_power_activated(game_manager, target)

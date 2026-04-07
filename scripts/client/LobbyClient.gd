@@ -119,7 +119,12 @@ func leave_room() -> void:
 func set_ready(is_ready: bool) -> void:
 	_send_request(LobbyProtocolScript.SET_READY, {"is_ready": is_ready})
 
-func submit_deck(deck_name: String = "", cards: Dictionary = {}, deck_id: String = "") -> void:
+func submit_deck(
+	deck_name: String = "",
+	cards: Dictionary = {},
+	deck_id: String = "",
+	special_setup: Dictionary = {}
+) -> void:
 	var payload: Dictionary = {
 		"deck_id": deck_id.strip_edges(),
 	}
@@ -127,16 +132,24 @@ func submit_deck(deck_name: String = "", cards: Dictionary = {}, deck_id: String
 		payload["deck_name"] = deck_name.strip_edges()
 	if not cards.is_empty():
 		payload["cards"] = cards.duplicate(true)
+	if not special_setup.is_empty():
+		payload["special_setup"] = special_setup.duplicate(true)
 	_send_request(LobbyProtocolScript.SELECT_DECK, payload)
 
 func request_account_decks() -> void:
 	_send_request(LobbyProtocolScript.REQUEST_ACCOUNT_DECKS)
 
-func save_account_deck(deck_name: String, cards: Dictionary, deck_id: String = "") -> void:
+func save_account_deck(
+	deck_name: String,
+	cards: Dictionary,
+	deck_id: String = "",
+	special_setup: Dictionary = {}
+) -> void:
 	_send_request(LobbyProtocolScript.SAVE_ACCOUNT_DECK, {
 		"deck_name": deck_name.strip_edges(),
 		"deck_id": deck_id.strip_edges(),
 		"cards": cards.duplicate(true),
+		"special_setup": special_setup.duplicate(true),
 	})
 
 func delete_account_deck(deck_id: String) -> void:

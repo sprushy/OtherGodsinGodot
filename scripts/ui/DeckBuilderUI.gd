@@ -5,6 +5,7 @@ class_name DeckBuilderUI
 
 const LocalProfileStoreScript = preload("res://scripts/core/LocalProfileStore.gd")
 const CardCatalogScript = preload("res://scripts/cards/CardCatalog.gd")
+const TiamatScript = preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
 
 signal back_pressed
 
@@ -74,6 +75,9 @@ var _saved_decks_view_btn: Button
 var _saved_actions_bar: HFlowContainer
 var _deck_footer_buttons: HFlowContainer
 var _search_edit:      LineEdit
+var _tiamat_panel:     PanelContainer
+var _tiamat_hint_lbl:  Label
+var _tiamat_rows:      VBoxContainer
 var _filter_buttons: Dictionary = {}
 var _faction_buttons: Dictionary = {}
 var _mana_filter_buttons: Dictionary = {}
@@ -94,6 +98,8 @@ var _online_lobby_client = null
 var _remote_account_decks_cache: Array[Dictionary] = []
 var _use_remote_account_decks: bool = false
 var _remote_preferred_deck_id: String = ""
+var _tiamat_slots: Array = [[], [], []]
+var _tiamat_assignment_slot_index: int = -1
 
 # ── init ───────────────────────────────────────────────────────────
 func _ready() -> void:
@@ -605,6 +611,36 @@ func _build_deck_panel(parent: Control) -> void:
 	delete_btn.pressed.connect(_delete_selected_deck)
 	saved_hdr.add_child(delete_btn)
 
+	var tiamat_panel := PanelContainer.new()
+	_tiamat_panel = tiamat_panel
+	var tiamat_style := StyleBoxFlat.new()
+	tiamat_style.bg_color = Color(0.12, 0.10, 0.08)
+	tiamat_style.border_color = Color(0.44, 0.35, 0.24)
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		tiamat_style.set_border_width(side, 1)
+	tiamat_panel.add_theme_stylebox_override("panel", tiamat_style)
+	panel.add_child(tiamat_panel)
+
+	var tiamat_box := VBoxContainer.new()
+	tiamat_box.add_theme_constant_override("separation", 6)
+	tiamat_panel.add_child(tiamat_box)
+
+	var tiamat_title := Label.new()
+	tiamat_title.text = "MATRIARCH SLOTS"
+	tiamat_title.add_theme_font_size_override("font_size", 12)
+	tiamat_title.add_theme_color_override("font_color", Color(0.92, 0.80, 0.58))
+	tiamat_box.add_child(tiamat_title)
+
+	_tiamat_hint_lbl = Label.new()
+	_tiamat_hint_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_tiamat_hint_lbl.add_theme_font_size_override("font_size", 10)
+	_tiamat_hint_lbl.modulate = Color(0.74, 0.74, 0.74)
+	tiamat_box.add_child(_tiamat_hint_lbl)
+
+	_tiamat_rows = VBoxContainer.new()
+	_tiamat_rows.add_theme_constant_override("separation", 4)
+	tiamat_box.add_child(_tiamat_rows)
+
 	var deck_scroll := ScrollContainer.new()
 	_deck_scroll = deck_scroll
 	deck_scroll.size_flags_vertical   = Control.SIZE_EXPAND_FILL
@@ -914,7 +950,7 @@ func _make_card_item(card: Card) -> Control:
 				if is_unavailable:
 					_set_status_flash(unavailable_reason)
 					return
-				_add_to_deck(card)
+				_handle_collection_card_add(card)
 			elif ev.button_index == MOUSE_BUTTON_RIGHT:
 				_remove_from_deck(card.card_name)
 	)
@@ -956,10 +992,101 @@ func _refresh_deck_panel() -> void:
 			_deck_list.add_child(sep_lbl)
 		_deck_list.add_child(_make_deck_row(card))
 
+	_refresh_tiamat_panel()
 	_update_validation()
 	_rebuild_filtered_cards_cache()
 	_refresh_grid()
 	_update_count_badges()
+
+func _refresh_tiamat_panel() -> void:
+	if _tiamat_panel == null or _tiamat_rows == null or _tiamat_hint_lbl == null:
+		return
+	var show_panel := _deck_uses_tiamat() or _has_any_tiamat_slot_cards()
+	_tiamat_panel.visible = show_panel
+	if not show_panel:
+		return
+
+	for child in _tiamat_rows.get_children():
+		child.queue_free()
+
+	if _deck_uses_tiamat():
+		if _tiamat_assignment_slot_index >= 0:
+			_tiamat_hint_lbl.text = "Slot %d selected. Click Ancient Demon or Dragon cards in the collection to assign them here." % [_tiamat_assignment_slot_index + 1]
+		else:
+			_tiamat_hint_lbl.text = "Select a slot, then click Ancient Demon or Dragon cards in the collection to add them. Each slot may hold up to 6 total levels."
+	else:
+		_tiamat_hint_lbl.text = "These saved Matriarch slots only apply while Tiamat is your god."
+
+	for slot_index in range(_tiamat_slots.size()):
+		var slot_cards: Array = _tiamat_slots[slot_index]
+		var row := VBoxContainer.new()
+		row.add_theme_constant_override("separation", 2)
+		_tiamat_rows.add_child(row)
+
+		var header := HBoxContainer.new()
+		header.add_theme_constant_override("separation", 4)
+		row.add_child(header)
+
+		var slot_label := Label.new()
+		slot_label.text = "Slot %d  Lv %d/%d" % [
+			slot_index + 1,
+			_get_tiamat_slot_level_total(slot_index),
+			TiamatScript.MAX_SLOT_LEVEL_TOTAL
+		]
+		slot_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		slot_label.add_theme_font_size_override("font_size", 10)
+		header.add_child(slot_label)
+
+		var select_btn := Button.new()
+		select_btn.text = "Selected" if _tiamat_assignment_slot_index == slot_index else "Select"
+		select_btn.custom_minimum_size = Vector2(64, 22)
+		select_btn.disabled = not _deck_uses_tiamat()
+		select_btn.pressed.connect(func() -> void:
+			_tiamat_assignment_slot_index = -1 if _tiamat_assignment_slot_index == slot_index else slot_index
+			_refresh_deck_panel()
+		)
+		header.add_child(select_btn)
+
+		var clear_btn := Button.new()
+		clear_btn.text = "Clear"
+		clear_btn.custom_minimum_size = Vector2(52, 22)
+		clear_btn.disabled = slot_cards.is_empty()
+		clear_btn.pressed.connect(func() -> void:
+			_tiamat_slots[slot_index].clear()
+			if _tiamat_assignment_slot_index == slot_index and _tiamat_slots[slot_index].is_empty():
+				_tiamat_assignment_slot_index = -1
+			_refresh_deck_panel()
+		)
+		header.add_child(clear_btn)
+
+		if slot_cards.is_empty():
+			var empty_label := Label.new()
+			empty_label.text = "Empty"
+			empty_label.add_theme_font_size_override("font_size", 10)
+			empty_label.modulate = Color(0.7, 0.7, 0.7)
+			row.add_child(empty_label)
+			continue
+
+		for card_name in slot_cards:
+			var entry := HBoxContainer.new()
+			entry.add_theme_constant_override("separation", 4)
+			row.add_child(entry)
+
+			var entry_label := Label.new()
+			entry_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			entry_label.add_theme_font_size_override("font_size", 10)
+			var card := _find_template(card_name)
+			var card_level := card.level if card != null else 0
+			entry_label.text = "%s (Lv %d)" % [card_name, card_level]
+			entry.add_child(entry_label)
+
+			var remove_btn := Button.new()
+			remove_btn.text = "-"
+			remove_btn.custom_minimum_size = Vector2(24, 20)
+			remove_btn.pressed.connect(func() -> void:
+				_remove_tiamat_slot_card(slot_index, card_name)
+			)
+			entry.add_child(remove_btn)
 
 func _make_deck_row(card: Card) -> Control:
 	var row := HBoxContainer.new()
@@ -1010,6 +1137,94 @@ func _make_deck_row(card: Card) -> Control:
 
 	return row
 
+func _handle_collection_card_add(card: Card) -> void:
+	if _try_assign_card_to_tiamat_slot(card):
+		return
+	_add_to_deck(card)
+
+func _deck_uses_tiamat() -> bool:
+	return TiamatScript.is_tiamat_god(_get_selected_god_template())
+
+func _has_any_tiamat_slot_cards() -> bool:
+	for slot_cards in _tiamat_slots:
+		if not slot_cards.is_empty():
+			return true
+	return false
+
+func _get_tiamat_special_setup() -> Dictionary:
+	return TiamatScript.build_special_setup(_tiamat_slots)
+
+func _clear_tiamat_slots() -> void:
+	_tiamat_slots = [[], [], []]
+	_tiamat_assignment_slot_index = -1
+
+func _count_tiamat_occupied_slots() -> int:
+	var occupied := 0
+	for slot_cards in _tiamat_slots:
+		if not slot_cards.is_empty():
+			occupied += 1
+	return occupied
+
+func _get_tiamat_slot_level_total(slot_index: int) -> int:
+	if slot_index < 0 or slot_index >= _tiamat_slots.size():
+		return 0
+	var total := 0
+	for card_name in _tiamat_slots[slot_index]:
+		var card := _find_template(card_name)
+		if card != null:
+			total += int(card.level)
+	return total
+
+func _find_tiamat_slot_for_card(card_name: String) -> int:
+	for slot_index in range(_tiamat_slots.size()):
+		if card_name in _tiamat_slots[slot_index]:
+			return slot_index
+	return -1
+
+func _get_tiamat_assignment_error(card: Card, slot_index: int) -> String:
+	if card == null:
+		return "No card selected for Matriarch Rule."
+	if not _deck_uses_tiamat():
+		return "Choose Tiamat as your god before assigning Matriarch slot creatures."
+	if slot_index < 0 or slot_index >= _tiamat_slots.size():
+		return "Select a Matriarch slot first."
+	if not TiamatScript.is_valid_slot_creature(card):
+		return "Only Ancient Demons or Dragons can be assigned to Matriarch slots."
+	var existing_slot := _find_tiamat_slot_for_card(card.card_name)
+	if existing_slot >= 0:
+		return "%s is already assigned to slot %d." % [card.card_name, existing_slot + 1]
+	var new_slot_total := _get_tiamat_slot_level_total(slot_index) + int(card.level)
+	if new_slot_total > TiamatScript.MAX_SLOT_LEVEL_TOTAL:
+		return "Slot %d would exceed %d total levels." % [slot_index + 1, TiamatScript.MAX_SLOT_LEVEL_TOTAL]
+	var occupied_slots := _count_tiamat_occupied_slots()
+	if _tiamat_slots[slot_index].is_empty():
+		occupied_slots += 1
+	if _count_powers_in_current_deck() + occupied_slots > 3:
+		return "Powers and Matriarch slots together can occupy at most 3 power slots."
+	return ""
+
+func _try_assign_card_to_tiamat_slot(card: Card) -> bool:
+	if _tiamat_assignment_slot_index < 0 or card == null or not TiamatScript.is_valid_slot_creature(card):
+		return false
+	var error := _get_tiamat_assignment_error(card, _tiamat_assignment_slot_index)
+	if not error.is_empty():
+		_set_status_flash(error)
+		return true
+	_tiamat_slots[_tiamat_assignment_slot_index].append(card.card_name)
+	_refresh_deck_panel()
+	_set_status_flash("%s assigned to Matriarch slot %d." % [card.card_name, _tiamat_assignment_slot_index + 1])
+	return true
+
+func _remove_tiamat_slot_card(slot_index: int, card_name: String) -> void:
+	if slot_index < 0 or slot_index >= _tiamat_slots.size():
+		return
+	_tiamat_slots[slot_index] = _tiamat_slots[slot_index].filter(func(existing_name: String) -> bool:
+		return existing_name != card_name
+	)
+	if _tiamat_assignment_slot_index == slot_index and _tiamat_slots[slot_index].is_empty():
+		_tiamat_assignment_slot_index = -1
+	_refresh_deck_panel()
+
 # ── deck mutation ──────────────────────────────────────────────────
 func _add_to_deck(card: Card) -> void:
 	var current: int = _deck.get(card.card_name, 0)
@@ -1030,6 +1245,8 @@ func _add_to_deck(card: Card) -> void:
 	elif card.is_power and not _can_add_power_to_current_deck(card):
 		return
 	_deck[card.card_name] = current + 1
+	if card.is_god and not TiamatScript.is_tiamat_god(card):
+		_clear_tiamat_slots()
 	_refresh_deck_panel()
 	if card.is_god:
 		_focus_power_selection()
@@ -1040,10 +1257,13 @@ func _remove_from_deck(card_name: String) -> void:
 	_deck[card_name] -= 1
 	if _deck[card_name] == 0:
 		_deck.erase(card_name)
+	if not _deck_uses_tiamat():
+		_clear_tiamat_slots()
 	_refresh_deck_panel()
 
 func _clear_deck() -> void:
 	_deck.clear()
+	_clear_tiamat_slots()
 	_refresh_deck_panel()
 
 func _autofill_deck_to_minimum() -> void:
@@ -1142,7 +1362,8 @@ func _save_profile_deck() -> void:
 		_online_lobby_client.save_account_deck(
 			resolved_name,
 			_deck,
-			_selected_saved_deck_id
+			_selected_saved_deck_id,
+			_get_tiamat_special_setup()
 		)
 		_set_status_flash("Saving deck for %s..." % _active_player_name)
 		return
@@ -1154,7 +1375,8 @@ func _save_profile_deck() -> void:
 		_active_profile_id,
 		deck_name,
 		_deck,
-		_selected_saved_deck_id
+		_selected_saved_deck_id,
+		_get_tiamat_special_setup()
 	)
 	_selected_saved_deck_id = str(saved_deck.get("deck_id", _selected_saved_deck_id)).strip_edges()
 	if _deck_name_edit != null:
@@ -1199,6 +1421,7 @@ func _delete_selected_deck() -> void:
 func _new_deck() -> void:
 	_selected_saved_deck_id = ""
 	_deck.clear()
+	_clear_tiamat_slots()
 	if _deck_name_edit != null:
 		_deck_name_edit.text = LocalProfileStoreScript.DEFAULT_DECK_NAME
 		_deck_name_edit.grab_focus()
@@ -1355,6 +1578,9 @@ func _apply_saved_deck(saved_deck: Dictionary) -> void:
 			var count := int((cards as Dictionary)[raw_card_name])
 			if count > 0:
 				_deck[str(raw_card_name)] = count
+	_tiamat_slots = TiamatScript.get_slot_card_names_from_setup(saved_deck.get("special_setup", {}))
+	if not _deck_uses_tiamat():
+		_clear_tiamat_slots()
 	_remember_selected_saved_deck(_selected_saved_deck_id)
 	_select_saved_deck(_selected_saved_deck_id)
 	_refresh_saved_deck_gallery(_get_saved_decks())
@@ -1640,10 +1866,12 @@ func _update_validation() -> void:
 	var power_count := 0
 	var regular_count := 0
 	var legendary_count := 0
-	var invalid_powers: PackedStringArray = []
+	var tiamat_slot_count := _count_tiamat_occupied_slots()
+	var invalid_culture_cards: PackedStringArray = []
 	var duplicate_powers: PackedStringArray = []
 	var god_culture := ""
 	var god_name := ""
+	var god_template: GodCard = null
 
 	for card_name: String in _deck:
 		var cnt: int = _deck[card_name]
@@ -1656,6 +1884,7 @@ func _update_validation() -> void:
 			if god_name == "":
 				god_name = card.card_name
 				god_culture = card.culture
+				god_template = card as GodCard
 		elif card.is_power and not card.is_god:
 			power_count += cnt
 			if cnt > 1:
@@ -1668,14 +1897,18 @@ func _update_validation() -> void:
 	if god_culture != "":
 		for card_name: String in _deck:
 			var card := _find_template(card_name)
-			if card == null or not card.is_power or card.is_god:
+			if card == null or card.is_god:
 				continue
-			if not _is_power_compatible_with_culture(card, god_culture):
-				invalid_powers.append(card.card_name)
+			if god_template != null and god_template.uses_culture_locked_deckbuilding():
+				if not god_template.can_include_card_in_culture_locked_deck(card):
+					invalid_culture_cards.append(card.card_name)
+			elif card.is_power and not _is_power_compatible_with_culture(card, god_culture):
+				invalid_culture_cards.append(card.card_name)
 
 	var max_legends := int(regular_count / 10.0)
 	var lines: PackedStringArray = []
 	var ok := true
+	var occupied_power_slots := power_count + tiamat_slot_count
 
 	if god_count == 0:
 		lines.append("✗ God: none required");   ok = false
@@ -1689,16 +1922,26 @@ func _update_validation() -> void:
 	else:
 		lines.append("✗ Powers: %d / 3" % power_count); ok = false
 
+	if occupied_power_slots <= 3:
+		lines.append("✓ Occupied Power Slots: %d / 3" % occupied_power_slots)
+	else:
+		lines.append("✗ Occupied Power Slots: %d / 3" % occupied_power_slots); ok = false
+
 	if duplicate_powers.is_empty():
 		lines.append("✓ Power copies: unique")
 	else:
 		lines.append("✗ Power copies: %s" % ", ".join(duplicate_powers)); ok = false
 
-	if invalid_powers.is_empty():
-		if god_culture != "":
+	if invalid_culture_cards.is_empty():
+		if god_template != null and god_template.uses_culture_locked_deckbuilding():
+			lines.append("✓ Deck culture: Neutral or %s" % god_culture)
+		elif god_culture != "":
 			lines.append("✓ Power culture: Neutral or %s" % god_culture)
 	elif god_name != "":
-		lines.append("✗ Power culture: %s" % ", ".join(invalid_powers)); ok = false
+		if god_template != null and god_template.uses_culture_locked_deckbuilding():
+			lines.append("✗ Deck culture: %s" % ", ".join(invalid_culture_cards)); ok = false
+		else:
+			lines.append("✗ Power culture: %s" % ", ".join(invalid_culture_cards)); ok = false
 
 	if legendary_count <= max_legends:
 		lines.append("✓ Legendaries: %d / %d" % [legendary_count, max_legends])
@@ -1709,6 +1952,19 @@ func _update_validation() -> void:
 		lines.append("✗ Regular Cards: %d (min %d, God/Powers excluded)" % [regular_count, MIN_REGULAR_CARDS]); ok = false
 	else:
 		lines.append("✓ Regular Cards: %d / %d" % [regular_count, MIN_REGULAR_CARDS])
+
+	if _deck_uses_tiamat() or tiamat_slot_count > 0:
+		if _deck_uses_tiamat():
+			lines.append("✓ Matriarch Rule: enabled")
+		else:
+			lines.append("✗ Matriarch Rule: requires Tiamat as your god"); ok = false
+		lines.append("  Matriarch Slots: %d / %d" % [tiamat_slot_count, TiamatScript.POWER_SLOT_COUNT])
+		for slot_index in range(TiamatScript.POWER_SLOT_COUNT):
+			var slot_total := _get_tiamat_slot_level_total(slot_index)
+			if slot_total <= TiamatScript.MAX_SLOT_LEVEL_TOTAL:
+				lines.append("  Slot %d Levels: %d / %d" % [slot_index + 1, slot_total, TiamatScript.MAX_SLOT_LEVEL_TOTAL])
+			else:
+				lines.append("✗ Slot %d Levels: %d / %d" % [slot_index + 1, slot_total, TiamatScript.MAX_SLOT_LEVEL_TOTAL]); ok = false
 
 	lines.append("  Total Cards: %d" % total)
 
@@ -2168,27 +2424,36 @@ func _get_selected_god_template() -> Card:
 func _get_card_unavailable_badge_text(card: Card) -> String:
 	if card == null:
 		return ""
-	if card.is_power and not card.is_god:
-		var god := _get_selected_god_template()
-		if god != null and not _is_power_compatible_with_culture(card, god.culture):
-			return "Needs %s or Neutral" % god.culture
+	var god := _get_selected_god_template() as GodCard
+	if god != null and not card.is_god and not _is_card_compatible_with_selected_god(card, god):
+		return "Needs %s or Neutral" % god.culture
 	if card.is_god and not _can_add_god_to_current_deck(card):
-		return "Conflicts with powers"
+		var god_card := card as GodCard
+		return "Conflicts with deck" if god_card != null and god_card.uses_culture_locked_deckbuilding() else "Conflicts with powers"
 	return ""
 
 func _get_card_unavailable_reason(card: Card) -> String:
 	if card == null:
 		return ""
-	if card.is_power and not card.is_god:
-		var god := _get_selected_god_template()
-		if god != null and not _is_power_compatible_with_culture(card, god.culture):
-			return "Unavailable: %s decks can only use %s or Neutral powers. %s is %s." % [
+	var god := _get_selected_god_template() as GodCard
+	if god != null and not card.is_god and not _is_card_compatible_with_selected_god(card, god):
+		if god.uses_culture_locked_deckbuilding():
+			return "Unavailable: %s decks can only use %s or Neutral cards. %s is %s." % [
 				god.get_display_name_for_control(),
 				god.culture,
 				card.get_display_name_for_control(),
 				card.culture
 			]
+		return "Unavailable: %s decks can only use %s or Neutral powers. %s is %s." % [
+			god.get_display_name_for_control(),
+			god.culture,
+			card.get_display_name_for_control(),
+			card.culture
+		]
 	if card.is_god and not _can_add_god_to_current_deck(card):
+		var god_card := card as GodCard
+		if god_card != null and god_card.uses_culture_locked_deckbuilding():
+			return "Unavailable: this god conflicts with cards already in the deck. Patriarch and Matriarch decks can only use matching-culture or Neutral cards."
 		return "Unavailable: this god conflicts with powers already in the deck. Powers must match your god's culture or be Neutral."
 	return ""
 
@@ -2197,20 +2462,30 @@ func _is_power_compatible_with_culture(power: Card, culture: String) -> bool:
 		return true
 	return power.culture == "Neutral" or culture == "" or power.culture == culture
 
+func _is_card_compatible_with_selected_god(card: Card, god: GodCard) -> bool:
+	if card == null or god == null or card.is_god:
+		return true
+	if god.uses_culture_locked_deckbuilding():
+		return god.can_include_card_in_culture_locked_deck(card)
+	if card.is_power and not card.is_god:
+		return _is_power_compatible_with_culture(card, god.culture)
+	return true
+
 func _can_add_power_to_current_deck(power: Card) -> bool:
-	var god := _get_selected_god_template()
+	var god := _get_selected_god_template() as GodCard
 	if god == null:
 		return true
-	return _is_power_compatible_with_culture(power, god.culture)
+	return _is_card_compatible_with_selected_god(power, god)
 
 func _can_add_god_to_current_deck(god: Card) -> bool:
-	if god == null or not god.is_god:
+	var god_card := god as GodCard
+	if god_card == null or not god.is_god:
 		return false
 	for card_name: String in _deck:
 		var card := _find_template(card_name)
-		if card == null or not card.is_power or card.is_god or _deck.get(card_name, 0) <= 0:
+		if card == null or card.is_god or _deck.get(card_name, 0) <= 0:
 			continue
-		if not _is_power_compatible_with_culture(card, god.culture):
+		if not _is_card_compatible_with_selected_god(card, god_card):
 			return false
 	return true
 

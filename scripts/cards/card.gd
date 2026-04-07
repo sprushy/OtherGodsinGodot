@@ -300,6 +300,9 @@ func has_status_effect(status_name: String) -> bool:
 			return true
 	return false
 
+func is_shapeshift_locked() -> bool:
+	return has_status_effect("tonal_extraction_no_shift")
+
 func get_status_effect(status_name: String) -> Dictionary:
 	for status in _get_effective_statuses():
 		if status.get("name", "") == status_name:
@@ -751,6 +754,8 @@ func get_ability_immunity_tag() -> String:
 	match card_type:
 		CardType.CREATURE:
 			return "creature_abilities"
+		CardType.SPELL:
+			return "spells"
 		CardType.POWER:
 			return "powers"
 		CardType.HEX:
@@ -912,6 +917,10 @@ func has_type(type_name: String) -> bool:
 		return is_physical_card()
 	if type_name == "Magic" or type_name == "Magical":
 		return is_magical_card()
+	if _has_suppressed_type(type_name):
+		return false
+	if _has_granted_type(type_name):
+		return true
 	if type_name in card_types:
 		return true
 	for equip in equipment:
@@ -923,7 +932,31 @@ func has_type(type_name: String) -> bool:
 			return true
 	return false
 
-func get_intercept_reach_bonus() -> int:
+func _has_suppressed_type(type_name: String) -> bool:
+	for status in _get_effective_statuses():
+		var suppressed_types = status.get("suppressed_types", [])
+		if suppressed_types is Array and type_name in suppressed_types:
+			return true
+	return false
+
+func _has_granted_type(type_name: String) -> bool:
+	for status in _get_effective_statuses():
+		var granted_types = status.get("granted_types", [])
+		if granted_types is Array and type_name in granted_types:
+			return true
+	return false
+
+func remove_status_effects_with_flag(flag_name: String) -> void:
+	active_statuses = active_statuses.filter(func(s):
+		return s.get(flag_name, false) != true
+	)
+	_sync_status_flags()
+
+func get_intercept_reach_bonus(
+	_game_manager: GameManager = null,
+	_attacker: Card = null,
+	_protected_target = null
+) -> int:
 	if card_type != CardType.CREATURE or ability_text == "":
 		return 0
 	var normalized := " " + ability_text.to_lower() + " "
@@ -934,6 +967,22 @@ func get_intercept_reach_bonus() -> int:
 	if normalized.contains(" reach "):
 		return 1
 	return 0
+
+func get_intercept_speed_bonus_against_attacker(
+	_game_manager: GameManager,
+	_attacker: Card,
+	_protected_target = null
+) -> int:
+	return 0
+
+func can_special_intercept(_game_manager: GameManager, _attacker: Card, _protected_target) -> bool:
+	return false
+
+func halves_follower_damage_inflicted() -> bool:
+	return false
+
+func get_tonal_extraction_spirit_profile() -> Dictionary:
+	return {}
 
 func is_physical_card() -> bool:
 	return card_type in [CardType.CREATURE, CardType.STRUCTURE, CardType.EQUIPMENT]
@@ -948,6 +997,15 @@ func can_receive_equipment() -> bool:
 
 func can_equip_to(creature: Card) -> bool:
 	return creature != null and creature.can_receive_equipment()
+
+func get_cannot_equip_reason(creature: Card) -> String:
+	if creature == null:
+		return "No bearer was selected."
+	if not creature.can_receive_equipment():
+		if creature.is_face_down or creature.is_stealth:
+			return creature.card_name + " is hidden and cannot carry equipment."
+		return creature.card_name + " cannot carry equipment right now."
+	return card_name + " can't be equipped to " + creature.card_name + "."
 
 func equip_to(creature: Card) -> bool:
 	if card_type != CardType.EQUIPMENT or not can_equip_to(creature):
@@ -990,6 +1048,26 @@ func can_engage(target: Card) -> bool:
 	if target.has_type("Spirit"):
 		return true
 	return target.has_type("Mage") and target.get_effective_speed() < get_effective_speed()
+
+func can_ignore_attack_targeting_restrictions(target: Card = null) -> bool:
+	for equip in equipment:
+		if equip == null:
+			continue
+		if not equip.has_method("grants_attack_targeting_override_to_equipped_creature"):
+			continue
+		if equip.grants_attack_targeting_override_to_equipped_creature(self, target):
+			return true
+	return false
+
+func can_destroy_combat_protected_creatures(target: Card = null) -> bool:
+	for equip in equipment:
+		if equip == null:
+			continue
+		if not equip.has_method("grants_battle_destroy_override_to_equipped_creature"):
+			continue
+		if equip.grants_battle_destroy_override_to_equipped_creature(self, target):
+			return true
+	return false
 
 func reveal_from_stealth(game_manager: GameManager = null) -> void:
 	if is_stealth:

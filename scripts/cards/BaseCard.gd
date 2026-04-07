@@ -28,8 +28,10 @@ const KEYWORD_HINTS = {
 	"Reach": "This creature can intercept for targets one row further forward than normal.",
 	"Passive": "This effect is always active while this card remains in play.",
 	"Impact": "This effect triggers when this card enters the field.",
+	"Imbue": "Weapons equipped from your hand gain an added effect.",
 	"Reveal": "This effect triggers when this card is revealed.",
 	"Destroyed": "This effect triggers when this creature is destroyed.",
+	"Fatality": "This effect triggers when this creature is destroyed in combat.",
 	"Unlock": "This card must be unlocked before its unlocked ability can be used.",
 	"Activate": "Use this card's activated ability.",
 	"Relock": "Turn an unlocked power face-down again.",
@@ -37,6 +39,7 @@ const KEYWORD_HINTS = {
 	"Wake": "Remove Sleep from a creature.",
 	"Returns": "This card enters the field from the Abyss.",
 	"Search": "Look through your deck for a card, then shuffle.",
+	"Dodge": "This creature cannot be attacked by creatures with lower speed.",
 	"Shuffle": "Return this card to its owner's deck, then shuffle that deck.",
 	"Prime": "Put a card on top of your deck.",
 	"Perish": "This card died in any way and was sent to the graveyard.",
@@ -48,6 +51,9 @@ const KEYWORD_HINTS = {
 	"Slain": "This card was destroyed in combat.",
 	"Trollskap": "If this card is destroyed by an effect, return it to your hand instead.",
 	"Stone Infant": "Token creature with 17 STR, 17 RES, 1 SPD, and the types Token, Human, Stone, and Golem.",
+	"Stone Skin": "This creature cannot be destroyed in combat.",
+	"Terror": "When this card enters the field, return a lower-level opposing creature to its owner's hand.",
+	"God Death": "If you have no normal god and no face-up, awake Active God on the field, you gain no upkeep mana, cannot use powers, and lose 7 followers at upkeep.",
 }
 
 static func _escape_hint_text(text: String) -> String:

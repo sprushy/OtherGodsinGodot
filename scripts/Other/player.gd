@@ -88,11 +88,13 @@ func validate_deck(deck: Array[Card]) -> bool:
 	var regular_card_count = 0
 	var god_culture := ""
 	var power_name_counts: Dictionary = {}
+	var god_template: GodCard = null
 	
 	for card in deck:
 		if card.is_god:
 			god_count += 1
 			god_culture = card.culture
+			god_template = card as GodCard
 		elif card.is_power:
 			power_count += 1
 			var power_name := str(card.card_name)
@@ -112,7 +114,12 @@ func validate_deck(deck: Array[Card]) -> bool:
 		if int(count) > 1:
 			return false
 	for card in deck:
-		if card.is_power and not card.is_god:
+		if card.is_god:
+			continue
+		if god_template != null and god_template.uses_culture_locked_deckbuilding():
+			if not god_template.can_include_card_in_culture_locked_deck(card):
+				return false
+		elif card.is_power and not card.is_god:
 			if card.culture != "Neutral" and card.culture != god_culture:
 				return false
 	
@@ -198,6 +205,8 @@ func move_card(card: Card, to_zone: Zone) -> void:
 	if from_zone and from_zone.is_board_zone() and destination_zone and not destination_zone.is_board_zone():
 		if card.has_method("reset_activation_counter"):
 			card.reset_activation_counter()
+		if card.has_method("remove_status_effects_with_flag"):
+			card.remove_status_effects_with_flag("remove_when_leaves_board")
 		card.remove_effects_expiring_after_combat()
 
 	if card.is_token and (destination_zone == null or not destination_zone.is_board_zone()):

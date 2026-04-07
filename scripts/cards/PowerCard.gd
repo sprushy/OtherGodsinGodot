@@ -24,6 +24,8 @@ func can_unlock(game_manager: GameManager) -> bool:
 		return false
 	if is_muted:
 		return false
+	if game_manager != null and card_owner != null and game_manager.has_method("can_player_use_powers") and not game_manager.can_player_use_powers(card_owner):
+		return false
 	if is_activation_locked(game_manager):
 		return false
 	if card_owner != game_manager.current_player:
@@ -55,6 +57,8 @@ func can_activate(game_manager: GameManager) -> bool:
 	if is_face_down:
 		return false
 	if is_muted:
+		return false
+	if game_manager != null and card_owner != null and game_manager.has_method("can_player_use_powers") and not game_manager.can_player_use_powers(card_owner):
 		return false
 	if is_activation_locked(game_manager):
 		return false
@@ -231,6 +235,8 @@ func get_unlock_failure_reason(game_manager: GameManager) -> String:
 		return card_name + " is already unlocked."
 	if is_muted:
 		return card_name + " is muted."
+	if card_owner != null and game_manager.has_method("can_player_use_powers") and not game_manager.can_player_use_powers(card_owner):
+		return "[b]God Death[/b] prevents powers from being used."
 	if is_activation_locked(game_manager):
 		return card_name + " cannot be unlocked this turn."
 	if card_owner != game_manager.current_player:
@@ -251,6 +257,8 @@ func get_activation_failure_reason(game_manager: GameManager) -> String:
 		return card_name + " must be unlocked first."
 	if is_muted:
 		return card_name + " is muted."
+	if card_owner != null and game_manager.has_method("can_player_use_powers") and not game_manager.can_player_use_powers(card_owner):
+		return "[b]God Death[/b] prevents powers from being used."
 	if is_activation_locked(game_manager):
 		return card_name + " cannot be activated this turn."
 	if card_owner != game_manager.current_player:

@@ -2,6 +2,7 @@ extends BaseCard
 class_name EquipmentCard
 
 const EQUIPPED_AFFORDANCE_SIZE := Vector2(24, 32)
+const TELCHINE_IMBUE_STATUS := "telchine_apprentice_imbue"
 
 func _init() -> void:
 	super._init()
@@ -68,3 +69,36 @@ func on_equip(_creature: Card) -> void:
 # Override in specific equipment cards for conditional bonuses.
 func get_bonus_strength_vs_defense(_attacker: Card) -> int:
 	return 0
+
+func apply_telchine_apprentice_imbue(source_card: Card = null, source_owner: Player = null) -> void:
+	if not has_type("Weapon"):
+		return
+	if has_status_effect(TELCHINE_IMBUE_STATUS):
+		return
+	add_status_effect(
+		TELCHINE_IMBUE_STATUS,
+		"Telchine Apprentice",
+		source_card,
+		source_owner,
+		{"display_name": "Imbued"}
+	)
+
+func has_telchine_apprentice_imbue() -> bool:
+	return has_status_effect(TELCHINE_IMBUE_STATUS)
+
+func grants_attack_targeting_override_to_equipped_creature(_creature: Card, _target: Card = null) -> bool:
+	return has_telchine_apprentice_imbue() and _is_actively_equipped() and not abilities_suppressed()
+
+func grants_battle_destroy_override_to_equipped_creature(_creature: Card, _target: Card = null) -> bool:
+	return has_telchine_apprentice_imbue() and _is_actively_equipped() and not abilities_suppressed()
+
+func get_effect_summary_lines() -> Array[String]:
+	var lines := super.get_effect_summary_lines()
+	if has_telchine_apprentice_imbue():
+		lines.append("Imbued by Telchine Apprentice")
+	return lines
+
+func _is_actively_equipped() -> bool:
+	return equipped_on != null \
+		and current_zone != null \
+		and equipped_on.current_zone == current_zone

@@ -34,13 +34,17 @@ func resolve(game_manager: GameManager, _target = null) -> void:
 func on_any_card_moved(game_manager: GameManager, moved_card: Card, _from_zone: Zone, _to_zone: Zone) -> void:
 	if game_manager == null:
 		return
+	if moved_card == null or moved_card.card_type != Card.CardType.CREATURE:
+		return
+	if _from_zone != null and _from_zone.is_board_zone() and (_to_zone == null or not _to_zone.is_board_zone()):
+		_remove_weather_lock(moved_card)
+		return
 	if current_zone == null or not current_zone.is_board_zone():
 		return
 	if not _is_active():
 		return
-	if moved_card == self:
-		_destroy_face_up_weather_charms(game_manager)
-	_refresh_weather_lock(game_manager)
+	if _to_zone != null and _to_zone.is_board_zone():
+		_refresh_weather_lock(game_manager)
 
 func on_removed(game_manager: GameManager) -> void:
 	_clear_weather_lock(game_manager)
@@ -77,7 +81,7 @@ func _refresh_weather_lock(game_manager: GameManager) -> void:
 				var creature := card as Card
 				if creature == null or creature.card_type != Card.CardType.CREATURE:
 					continue
-				if _is_active() and _is_weather_locked_creature(creature):
+				if _is_active() and _is_weather_locked_creature(creature) and not _weather_effect_is_blocked(creature):
 					_apply_weather_lock(creature)
 				else:
 					_remove_weather_lock(creature)
@@ -131,3 +135,8 @@ func _is_active() -> bool:
 
 func _is_weather_locked_creature(card: Card) -> bool:
 	return card != null and (card.has_type("Anguine") or card.has_type("Amphibious"))
+
+func _weather_effect_is_blocked(creature: Card) -> bool:
+	return creature != null \
+		and creature.has_method("blocks_weather_effect") \
+		and creature.blocks_weather_effect(self, 0, 0, 0)

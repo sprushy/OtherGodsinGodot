@@ -1,6 +1,8 @@
 extends RefCounted
 class_name LocalProfileStore
 
+const TiamatScript = preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
+
 const STORAGE_PATH := "user://player_profiles.json"
 const STORAGE_TEMP_PATH := "user://player_profiles.json.tmp"
 const STORAGE_BACKUP_PATH := "user://player_profiles.json.bak"
@@ -221,7 +223,13 @@ func activate_account_session(
 	_save()
 	return get_profile(resolved_profile_id)
 
-func save_deck(profile_id: String, deck_name: String, cards: Dictionary, deck_id: String = "") -> Dictionary:
+func save_deck(
+	profile_id: String,
+	deck_name: String,
+	cards: Dictionary,
+	deck_id: String = "",
+	special_setup: Dictionary = {}
+) -> Dictionary:
 	var profile := ensure_profile(profile_id, DEFAULT_PROFILE_NAME, true)
 	var resolved_profile_id := str(profile.get("profile_id", "")).strip_edges()
 	var clean_name := deck_name.strip_edges()
@@ -241,6 +249,7 @@ func save_deck(profile_id: String, deck_name: String, cards: Dictionary, deck_id
 	deck_entry["deck_id"] = resolved_deck_id
 	deck_entry["name"] = clean_name
 	deck_entry["cards"] = _sanitize_cards(cards)
+	deck_entry["special_setup"] = _sanitize_special_setup(special_setup)
 	if not deck_entry.has("created_unix"):
 		deck_entry["created_unix"] = now_unix
 	deck_entry["updated_unix"] = now_unix
@@ -738,6 +747,13 @@ func _sanitize_cards(cards: Dictionary) -> Dictionary:
 		sanitized[card_name] = count
 	return sanitized
 
+func _sanitize_special_setup(special_setup: Dictionary) -> Dictionary:
+	if special_setup == null or special_setup.is_empty():
+		return {}
+	return TiamatScript.build_special_setup(
+		TiamatScript.get_slot_card_names_from_setup(special_setup)
+	)
+
 func _normalize_saved_deck(saved_deck: Dictionary) -> Dictionary:
 	var now_unix := int(Time.get_unix_time_from_system())
 	var resolved_deck_id := str(saved_deck.get("deck_id", "")).strip_edges()
@@ -747,6 +763,7 @@ func _normalize_saved_deck(saved_deck: Dictionary) -> Dictionary:
 		"deck_id": resolved_deck_id,
 		"name": str(saved_deck.get("name", DEFAULT_DECK_NAME)).strip_edges(),
 		"cards": _sanitize_cards(saved_deck.get("cards", {})),
+		"special_setup": _sanitize_special_setup(saved_deck.get("special_setup", {})),
 		"created_unix": int(saved_deck.get("created_unix", now_unix)),
 		"updated_unix": int(saved_deck.get("updated_unix", now_unix)),
 	}

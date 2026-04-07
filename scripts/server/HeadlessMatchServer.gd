@@ -102,6 +102,21 @@ func _on_match_player_authenticated(_player_index: int, _session_id: String, was
 		return
 	maybe_start_match_if_ready()
 
+func _queue_wolf_adolescent_maturation_prompt(card: WolfAdolescent) -> void:
+	if card == null or game_manager == null or match_manager == null:
+		return
+	var player_idx := game_manager.players.find(card.card_owner)
+	if player_idx < 0:
+		return
+	var target_uids: Array[String] = []
+	for target in card.get_valid_maturation_targets():
+		if target != null:
+			target_uids.append(target.uid)
+	match_manager.request_ui_interaction.emit(player_idx, "wolf_adolescent_maturation", {
+		"source_uid": card.uid,
+		"target_uids": target_uids,
+	})
+
 func _validate_config(config: Dictionary) -> String:
 	if config.is_empty():
 		return "Dedicated headless match config was empty."

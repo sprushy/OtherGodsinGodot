@@ -3211,7 +3211,8 @@ func _maybe_submit_current_profile_deck(room_id: String, snapshot: Dictionary) -
 		return
 	var selected_deck_hash := LobbyRoomScript.compute_deck_hash(
 		str(selected_deck.get("name", "Default Deck")),
-		selected_deck.get("cards", {}) as Dictionary
+		selected_deck.get("cards", {}) as Dictionary,
+		selected_deck.get("special_setup", {})
 	)
 	var submitted_deck_id := str(local_member.get("selected_deck_id", "")).strip_edges()
 	var submitted_deck_hash := str(local_member.get("selected_deck_hash", "")).strip_edges()
@@ -3232,7 +3233,8 @@ func _maybe_submit_current_profile_deck(room_id: String, snapshot: Dictionary) -
 		lobby_client.submit_deck(
 			str(selected_deck.get("name", "Default Deck")),
 			selected_deck.get("cards", {}),
-			selected_deck_id
+			selected_deck_id,
+			selected_deck.get("special_setup", {})
 		)
 	_last_submitted_lobby_room_id = room_id
 	_last_submitted_lobby_deck_id = selected_deck_id

@@ -5,6 +5,8 @@ class_name MatchManager
 # This class manages high-level match flow and targeting state,
 # decoupling game rules from the UI.
 
+const TiamatScript = preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
+
 signal targeting_started(source: Card, target_type: String)
 signal targeting_ended()
 signal move_validated(move: Dictionary)
@@ -416,20 +418,20 @@ func _finish_authoritative_stack_resolution(action: CardAction) -> void:
 	if not game_manager.action_stack.is_empty():
 		_advance_authoritative_priority()
 
-func _get_action_label(card: Card) -> String:
-	return card.card_name if card != null else "Card"
+func _get_action_label(card: Card, viewer: Player = null) -> String:
+	return card.get_log_display_name(viewer) if card != null else "Card"
 
-func _get_action_target_label(target) -> String:
+func _get_action_target_label(target, viewer: Player = null) -> String:
 	if target is Card:
-		return (target as Card).card_name
+		return (target as Card).get_target_log_display_name(viewer)
 	if target is Player:
 		return (target as Player).player_name + "'s followers"
 	return "target"
 
-func _build_authoritative_resolution_text(action_type: int, source_card: Card, target = null) -> String:
-	var source_name := _get_action_label(source_card)
+func _build_authoritative_resolution_text(action_type: int, source_card: Card, target = null, viewer: Player = null) -> String:
+	var source_name := _get_action_label(source_card, viewer)
 	if target != null:
-		return "%s is targeting %s." % [source_name, _get_action_target_label(target)]
+		return "%s is targeting %s." % [source_name, _get_action_target_label(target, viewer)]
 	if action_type == CardAction.Type.SPELL:
 		return "Cast " + source_name + "!"
 	return source_name + " activated!"
@@ -466,15 +468,36 @@ func _can_use_stack_display_zone(zone: Zone, player: Player) -> bool:
 func _assign_stack_display_zone(action: CardAction, preferred_zone: Zone = null) -> void:
 	if action == null or action.card == null or action.source_player == null:
 		return
-	if not action.card.goes_to_graveyard_after_use():
-		return
 	if preferred_zone != null and _can_use_stack_display_zone(preferred_zone, action.source_player):
 		action.display_zone = preferred_zone
+		if not action.card.goes_to_graveyard_after_use():
+			return
+	if not action.card.goes_to_graveyard_after_use():
 		return
 	if action.card.current_zone != null and action.card.current_zone.is_board_zone():
 		action.display_zone = action.card.current_zone
 		return
 	action.display_zone = _find_available_stack_display_zone(action.source_player)
+
+func _place_persistent_charm_on_board(charm: CharmCard, display_zone: Zone = null) -> void:
+	if charm == null or charm.card_owner == null:
+		return
+	if charm.goes_to_graveyard_after_use():
+		return
+	if charm.current_zone != charm.card_owner.hand_zone:
+		return
+	var target_zone := display_zone
+	if target_zone == null \
+			or not target_zone.is_board_zone() \
+			or target_zone.zone_owner != charm.card_owner \
+			or not target_zone.cards.is_empty():
+		target_zone = _find_available_stack_display_zone(charm.card_owner)
+	if target_zone == null \
+			or not target_zone.is_board_zone() \
+			or target_zone.zone_owner != charm.card_owner \
+			or not target_zone.cards.is_empty():
+		return
+	charm.card_owner.move_card(charm, target_zone)
 
 func _queue_authoritative_magical_action(
 	action_type: int,
@@ -536,11 +559,11 @@ func _get_intercept_row_distance(defender: Card, protected_target) -> int:
 		return -1
 	return target_depth - defender_depth
 
-func _get_minimum_intercept_row_distance(defender: Card) -> int:
+func _get_minimum_intercept_row_distance(defender: Card, attacker: Card, protected_target) -> int:
 	var minimum_depth := 1
 	if defender.creature_mode == Card.CreatureMode.AGGRESSIVE:
 		minimum_depth = 2
-	minimum_depth = max(0, minimum_depth - defender.get_intercept_reach_bonus())
+	minimum_depth = max(0, minimum_depth - defender.get_intercept_reach_bonus(game_manager, attacker, protected_target))
 	return minimum_depth
 
 func _get_declared_attack_partner(attacker: Card) -> Card:
@@ -564,15 +587,17 @@ func _can_intercept(defender: Card, attacker: Card, protected_target) -> bool:
 		return false
 	if defender.is_sleeping:
 		return false
-	var interceptor_speed := game_manager.get_interceptor_speed_against_attacker(defender, attacker)
+	if defender.can_special_intercept(game_manager, attacker, protected_target):
+		return game_manager.can_interceptor_engage_attacker(defender, attacker)
+	var interceptor_speed := game_manager.get_interceptor_speed_against_attacker(defender, attacker, protected_target)
 	if interceptor_speed < _get_declared_attack_speed(attacker):
 		return false
 	if not game_manager.can_interceptor_engage_attacker(defender, attacker):
 		return false
 	if defender.creature_mode == Card.CreatureMode.AGGRESSIVE and defender.can_take_major_creature_action():
-		return _get_intercept_row_distance(defender, protected_target) >= _get_minimum_intercept_row_distance(defender)
+		return _get_intercept_row_distance(defender, protected_target) >= _get_minimum_intercept_row_distance(defender, attacker, protected_target)
 	if defender.creature_mode == Card.CreatureMode.DEFENSIVE:
-		return _get_intercept_row_distance(defender, protected_target) >= _get_minimum_intercept_row_distance(defender)
+		return _get_intercept_row_distance(defender, protected_target) >= _get_minimum_intercept_row_distance(defender, attacker, protected_target)
 	return false
 
 func _get_possible_interceptors(attacker: Card, protected_target) -> Array[Card]:
@@ -597,6 +622,7 @@ func _build_pending_attack_action() -> CardAction:
 	action.attack_speed_override = _get_declared_attack_speed(selected_attacker)
 	action.interceptor = selected_interceptor
 	action.target = pending_attack_target
+	action.halve_follower_damage = selected_attacker != null and selected_attacker.halves_follower_damage_inflicted()
 	return action
 
 func _get_priority_response_target_uids(card: Card, top: CardAction) -> Array:
@@ -655,13 +681,13 @@ func _build_priority_response_options(responses: Array) -> Array:
 			})
 	return response_options
 
-func _get_priority_action_message(top: CardAction) -> String:
+func _get_priority_action_message(top: CardAction, viewer: Player = null) -> String:
 	if top == null:
 		return ""
 	match top.type:
 		CardAction.Type.ATTACK:
 			if top.attacker != null:
-				return top.attacker.card_name + " is attacking - you may respond!"
+				return _get_action_label(top.attacker, viewer) + " is attacking - you may respond!"
 		CardAction.Type.EVENT:
 			if top.event_name == "start_turn":
 				return "Start-of-turn priority window."
@@ -674,7 +700,7 @@ func _broadcast_priority_offered(player: Player, responses: Array) -> void:
 		return
 	var event_data := {
 		responses = _build_priority_response_options(responses),
-		action_message = _get_priority_action_message(game_manager.action_stack.back()),
+		action_message = _get_priority_action_message(game_manager.action_stack.back(), player),
 	}
 	var player_idx := game_manager.players.find(player)
 	var peer_id: int = network_manager.player_peer_ids.get(player_idx, -1)
@@ -775,7 +801,7 @@ func _start_authoritative_headless_attack() -> void:
 	var interceptor_uids: Array[String] = []
 	for interceptor in possible_interceptors:
 		interceptor_uids.append(interceptor.uid)
-	var attacker_name := selected_attacker.card_name if selected_attacker != null else "A creature"
+	var attacker_name := _get_action_label(selected_attacker, defender) if selected_attacker != null else "A creature"
 	request_ui_interaction.emit(defender_idx, "intercept", {
 		"interceptor_uids": interceptor_uids,
 		"action_message": attacker_name + " is attacking - intercept or allow?"
@@ -965,6 +991,8 @@ func _get_required_player_for_command(command: Dictionary) -> Player:
 			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("card_uid", ""))))
 		"cast_spell":
 			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("spell_uid", ""))))
+		"activate_prepared_hex":
+			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("hex_uid", ""))))
 		"god_ability":
 			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("god_uid", ""))))
 		"play_priority_ability":
@@ -979,7 +1007,7 @@ func _get_required_player_for_command(command: Dictionary) -> Player:
 			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("hati_uid", ""))))
 		"skoll_upkeep_summon":
 			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("skoll_uid", ""))))
-		"activate_card_ability", "en_hedu_anna_exaltation", "aphrodite_enslave_choice", "blessed_knights_choice":
+		"activate_card_ability", "en_hedu_anna_exaltation", "aphrodite_enslave_choice", "blessed_knights_choice", "wolf_adolescent_maturation_choice", "wheel_of_fire_turn_start_choice", "tezcatlipoca_active_titlacauan_choice":
 			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("source_uid", ""))))
 		"wolf_master_summon":
 			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("fenrir_uid", ""))))
@@ -1007,7 +1035,7 @@ func _get_required_player_for_command(command: Dictionary) -> Player:
 			if forfeiting_index >= 0 and forfeiting_index < game_manager.players.size():
 				return game_manager.players[forfeiting_index]
 			return null
-		"upkeep_choice", "end_turn":
+		"upkeep_choice", "tiamat_upkeep_choice", "end_turn":
 			return game_manager.current_player
 	return null
 
@@ -1038,7 +1066,7 @@ func _get_command_actor(sender_info: Dictionary) -> Player:
 
 func _requires_resolved_upkeep(command_type: String) -> bool:
 	match command_type:
-		"upkeep_choice", "priority_pass", "intercept_decision", "combat_retreat_decision", "play_hex_response", "play_charm_response", "play_priority_ability", "forfeit":
+		"upkeep_choice", "tiamat_upkeep_choice", "priority_pass", "intercept_decision", "combat_retreat_decision", "play_hex_response", "play_charm_response", "play_priority_ability", "forfeit":
 			return false
 	return true
 
@@ -1193,6 +1221,29 @@ func _process_command_impl(command: Dictionary) -> bool:
 					choice_feedback
 				)
 			return true
+		"tiamat_upkeep_choice":
+			if acting_player != game_manager.current_player:
+				move_failed.emit("It is not your turn.")
+				return false
+			var tiamat_card_uid := str(command.get("card_uid", "")).strip_edges()
+			var tiamat_card := game_manager.get_card_by_uid(tiamat_card_uid)
+			if tiamat_card == null:
+				move_failed.emit("Matriarch Rule: card not found.")
+				return false
+			if not TiamatScript.resolve_matriarch_rule(game_manager, tiamat_card):
+				move_failed.emit("Matriarch Rule is not available for that card.")
+				return false
+			game_manager.player_chooses_upkeep_only()
+			move_validated.emit(command)
+			if _uses_authoritative_headless_priority_flow():
+				_queue_authoritative_priority_event(
+					"start_turn",
+					Callable(),
+					game_manager.current_player,
+					game_manager.current_player,
+					"Matriarch Rule returned %s to hand." % tiamat_card.card_name
+				)
+			return true
 		"forfeit":
 			if game_manager.is_game_over:
 				move_failed.emit("The game is already over.")
@@ -1320,6 +1371,37 @@ func _process_command_impl(command: Dictionary) -> bool:
 				player.move_card(spell, player.graveyard_zone)
 			move_validated.emit(command)
 			return true
+		"activate_prepared_hex":
+			var hex_uid: String = command.get("hex_uid", "")
+			var hex_card := game_manager.get_card_by_uid(hex_uid)
+			if hex_card == null or not (hex_card is HexCard):
+				move_failed.emit("activate_prepared_hex: hex not found")
+				return false
+			var hex := hex_card as HexCard
+			if not hex.can_activate_prepared(game_manager, acting_player):
+				move_failed.emit(
+					game_manager.get_activation_mana_unavailable_text(hex)
+					if game_manager.has_insufficient_activation_mana(hex, true, acting_player)
+					else hex.card_name + " cannot activate right now."
+				)
+				return false
+			if not game_manager.activate_prepared_card(hex, acting_player):
+				move_failed.emit(
+					game_manager.get_activation_mana_unavailable_text(hex)
+					if game_manager.has_insufficient_activation_mana(hex, true, acting_player)
+					else "Cannot afford " + hex.card_name + "!"
+				)
+				return false
+			var hex_action := CardAction.new()
+			hex_action.type = CardAction.Type.ABILITY
+			hex_action.source_player = hex.card_owner
+			hex_action.card = hex
+			hex_action.resolution_text = hex.card_name + " resolved."
+			game_manager.push_to_stack(hex_action)
+			move_validated.emit(command)
+			if _uses_authoritative_headless_priority_flow():
+				_advance_authoritative_priority()
+			return true
 		"god_ability":
 			var god_uid: String = command.get("god_uid", "")
 			var god_card := game_manager.get_card_by_uid(god_uid)
@@ -1343,7 +1425,10 @@ func _process_command_impl(command: Dictionary) -> bool:
 					god_card,
 					target,
 					func() -> void:
-						god_card.activate(game_manager, target)
+						if god_card.has_method("activate_from_command"):
+							god_card.activate_from_command(game_manager, command)
+						else:
+							god_card.activate(game_manager, target)
 				)
 				move_validated.emit(command)
 				_advance_authoritative_priority()
@@ -1352,7 +1437,10 @@ func _process_command_impl(command: Dictionary) -> bool:
 				game_manager.run_with_effect_source(
 					god_card,
 					func() -> void:
-						god_card.activate(game_manager, target)
+						if god_card.has_method("activate_from_command"):
+							god_card.activate_from_command(game_manager, command)
+						else:
+							god_card.activate(game_manager, target)
 				)
 			move_validated.emit(command)
 			return true
@@ -1451,6 +1539,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 			if _uses_authoritative_headless_priority_flow():
 				var preferred_display_zone: Zone = charm_card.current_zone if charm_prepared else (charm_target.current_zone if charm_target != null and charm_target.current_zone != null and charm_target.current_zone.is_board_zone() else null)
 				var charm_resolve := func() -> void:
+					_place_persistent_charm_on_board(charm_card, preferred_display_zone)
 					charm_card.resolve(game_manager, charm_target)
 					if charm_card.goes_to_graveyard_after_use() \
 							and charm_card.current_zone != null \
@@ -1471,6 +1560,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 			game_manager.run_with_effect_source(
 				charm_card,
 				func() -> void:
+					_place_persistent_charm_on_board(charm_card, charm_target.current_zone if charm_target != null else null)
 					charm_card.resolve(game_manager, charm_target)
 			)
 			if charm_card.goes_to_graveyard_after_use() \
@@ -1542,6 +1632,20 @@ func _process_command_impl(command: Dictionary) -> bool:
 				return false
 			move_validated.emit(command)
 			return true
+		"wheel_of_fire_turn_start_choice":
+			var source_uid: String = str(command.get("source_uid", "")).strip_edges()
+			var wheel := game_manager.get_card_by_uid(source_uid) as WheelOfFire
+			if wheel == null:
+				move_failed.emit("wheel_of_fire_turn_start_choice: Wheel of Fire not found")
+				return false
+			if not wheel.can_offer_turn_start_advance(game_manager):
+				move_failed.emit("Wheel of Fire cannot advance its target right now.")
+				return false
+			var feedback := wheel.resolve_turn_start_advance_choice(game_manager, bool(command.get("pay_cost", false)))
+			if feedback.strip_edges() != "":
+				game_manager.note_player_feedback(feedback)
+			move_validated.emit(command)
+			return true
 		"unlock_power":
 			var up_uid: String = command.get("power_uid", "")
 			var up_card := game_manager.get_card_by_uid(up_uid)
@@ -1571,12 +1675,19 @@ func _process_command_impl(command: Dictionary) -> bool:
 			if ability_ward_block_reason != "":
 				move_failed.emit(ability_ward_block_reason)
 				return false
+			if aca_source.card_type == Card.CardType.CREATURE \
+					and not game_manager.can_pay_creature_action_mana_cost(aca_source, "activate"):
+				move_failed.emit(aca_source.card_name + " needs 1 mana to activate while Wheel of Fire is attached.")
+				return false
 			if _uses_authoritative_headless_priority_flow():
 				_queue_authoritative_magical_action(
 					CardAction.Type.ABILITY,
 					aca_source,
 					aca_target,
 					func() -> void:
+						if aca_source.card_type == Card.CardType.CREATURE \
+								and not game_manager.pay_creature_action_mana_cost(aca_source, "activate"):
+							return
 						if command.has("return_to_hand"):
 							aca_source.activate(game_manager, {"return_to_hand": bool(command.get("return_to_hand", false))})
 						elif command.has("option"):
@@ -1593,24 +1704,36 @@ func _process_command_impl(command: Dictionary) -> bool:
 				game_manager.run_with_effect_source(
 					aca_source,
 					func() -> void:
+						if aca_source.card_type == Card.CardType.CREATURE \
+								and not game_manager.pay_creature_action_mana_cost(aca_source, "activate"):
+							return
 						aca_source.activate(game_manager, {"return_to_hand": bool(command.get("return_to_hand", false))})
 				)
 			elif command.has("option"):
 				game_manager.run_with_effect_source(
 					aca_source,
 					func() -> void:
+						if aca_source.card_type == Card.CardType.CREATURE \
+								and not game_manager.pay_creature_action_mana_cost(aca_source, "activate"):
+							return
 						aca_source.activate(game_manager, command.get("option", {}))
 				)
 			elif aca_target != null:
 				game_manager.run_with_effect_source(
 					aca_source,
 					func() -> void:
+						if aca_source.card_type == Card.CardType.CREATURE \
+								and not game_manager.pay_creature_action_mana_cost(aca_source, "activate"):
+							return
 						aca_source.activate(game_manager, aca_target)
 				)
 			else:
 				game_manager.run_with_effect_source(
 					aca_source,
 					func() -> void:
+						if aca_source.card_type == Card.CardType.CREATURE \
+								and not game_manager.pay_creature_action_mana_cost(aca_source, "activate"):
+							return
 						aca_source.activate(game_manager)
 				)
 			move_validated.emit(command)
@@ -1646,6 +1769,35 @@ func _process_command_impl(command: Dictionary) -> bool:
 				move_failed.emit("blessed_knights_choice: card not found")
 				return false
 			card.apply_blessed_ward(game_manager, ward_kind)
+			move_validated.emit(command)
+			return true
+		"tezcatlipoca_active_titlacauan_choice":
+			var source_uid: String = command.get("source_uid", "")
+			var active_god := game_manager.get_card_by_uid(source_uid)
+			if active_god == null or not active_god.has_method("resolve_from_command"):
+				move_failed.emit("tezcatlipoca_active_titlacauan_choice: active god not found")
+				return false
+			active_god.resolve_from_command(game_manager, command)
+			move_validated.emit(command)
+			return true
+		"wolf_adolescent_maturation_choice":
+			var source_uid: String = command.get("source_uid", "")
+			var wolf := game_manager.get_card_by_uid(source_uid) as WolfAdolescent
+			if wolf == null:
+				move_failed.emit("wolf_adolescent_maturation_choice: card not found")
+				return false
+			if not wolf.can_offer_maturation(game_manager):
+				move_failed.emit("wolf_adolescent_maturation_choice: Maturation is not available")
+				return false
+			var target_uid: String = command.get("target_uid", "")
+			var target: Card = game_manager.get_card_by_uid(target_uid) if target_uid != "" else null
+			var valid_targets := wolf.get_valid_maturation_targets()
+			if target != null and target not in valid_targets:
+				move_failed.emit("wolf_adolescent_maturation_choice: invalid Lupine target")
+				return false
+			var feedback := wolf.resolve_maturation_choice(game_manager, target)
+			if feedback.strip_edges() != "":
+				game_manager.note_player_feedback(feedback)
 			move_validated.emit(command)
 			return true
 		"wolf_master_summon":
@@ -1751,10 +1903,16 @@ func _process_command_impl(command: Dictionary) -> bool:
 			pcr_action.target = pcr_target
 			pcr_action.response_to = pcr_source
 			pcr_action.resolve_callback = func() -> void:
+				_place_persistent_charm_on_board(pcr_charm_card, pcr_action.display_zone)
 				pcr_charm_card.resolve(game_manager, pcr_target)
-				if pcr_charm_card.current_zone != null \
+				if pcr_charm_card.goes_to_graveyard_after_use() \
+						and pcr_charm_card.current_zone != null \
 						and pcr_charm_card.current_zone != pcr_charm_card.card_owner.graveyard_zone:
 					pcr_charm_card.card_owner.move_card(pcr_charm_card, pcr_charm_card.card_owner.graveyard_zone)
+			_assign_stack_display_zone(
+				pcr_action,
+				pcr_target.current_zone if pcr_target != null and pcr_target.current_zone != null and pcr_target.current_zone.is_board_zone() else null
+			)
 			game_manager.push_to_stack(pcr_action)
 			move_validated.emit(command)
 			if _uses_authoritative_headless_priority_flow():

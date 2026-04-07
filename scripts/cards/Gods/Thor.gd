@@ -2,6 +2,7 @@ extends GodCard
 class_name Thor
 
 const PASSIVE_SOURCE := "Thor's Patron of Midguard"
+const THOR_ACTIVE_SCRIPT := preload("res://scripts/cards/ActiveGods/ThorActive.gd")
 
 func _init() -> void:
 	super._init()
@@ -10,10 +11,60 @@ func _init() -> void:
 	mana_cost = 0
 	culture = "Norse"
 	flavor_text = "Thunder echoes across Midgard wherever he walks."
-	ability_text = "Patron of Midguard (Passive): Friendly Human Warriors gain +3 STR and +3 RES."
+	ability_text = "Patron of Midguard ([b]Passive[/b]): Friendly Human Warriors gain +3 STR and +3 RES.\n[b]Champion's Call[/b] ([b]Activate[/b]): Summon Thor, Active God. You may [b]Shelve[/b] cards from your hand to pay 4 mana each of its summon cost."
 	art_path = "res://images/card_art/gods/ThorAIedit.png"
 	name_at_bottom = true
 	artist = "Ricarrdo Zoppello"
+
+func can_activate(game_manager: GameManager) -> bool:
+	return can_use_champions_call(game_manager)
+
+func get_activation_failure_reason(game_manager: GameManager) -> String:
+	return get_champions_call_failure_reason(game_manager)
+
+func activate(game_manager: GameManager, _target: Card = null) -> void:
+	if not can_use_champions_call(game_manager):
+		if game_manager != null:
+			game_manager.note_player_feedback(get_champions_call_failure_reason(game_manager))
+		return
+	var feedback := resolve_champions_call(game_manager)
+	if game_manager != null:
+		game_manager.note_player_feedback(feedback)
+	if current_zone != card_owner.god_zone:
+		notify_power_activated(game_manager, null)
+
+func activate_from_command(game_manager: GameManager, command: Dictionary) -> void:
+	if not can_use_champions_call(game_manager):
+		activate(game_manager, null)
+		return
+	var feedback := resolve_champions_call(game_manager, get_champions_call_selected_cards_from_command(game_manager, command))
+	if game_manager != null:
+		game_manager.note_player_feedback(feedback)
+	if current_zone != card_owner.god_zone:
+		notify_power_activated(game_manager, null)
+
+func get_champions_call_candidate(allow_fallback: bool = true) -> Card:
+	if card_owner == null:
+		return null
+	for zone in [
+		card_owner.hand_zone,
+		card_owner.deck_zone,
+		card_owner.graveyard_zone,
+		card_owner.abyss_zone,
+	] + card_owner.frontline_zones + card_owner.reserve_zones:
+		for card in zone.cards:
+			var active_god := card as ActiveGodCard
+			if active_god == null or active_god.get_linked_god_name() != "Thor":
+				continue
+			if card.current_zone != null and card.current_zone.is_board_zone():
+				return null
+			return card
+	if allow_fallback:
+		var manifestation := THOR_ACTIVE_SCRIPT.new()
+		manifestation.card_owner = card_owner
+		return manifestation
+	return null
+
 func applies_to(card: Card) -> bool:
 	return (
 		not is_muted

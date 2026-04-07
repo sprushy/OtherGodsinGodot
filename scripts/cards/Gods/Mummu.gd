@@ -18,9 +18,7 @@ func _init() -> void:
 
 func can_activate(game_manager: GameManager) -> bool:
 	# Speed 1: only usable on your own turn
-	if is_muted:
-		return false
-	if card_owner != game_manager.current_player:
+	if not can_use_god_power(game_manager):
 		return false
 	# Need at least one face-up card you control on the board (excluding self)
 	for zone in card_owner.frontline_zones + card_owner.reserve_zones:

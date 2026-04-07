@@ -45,7 +45,7 @@ func can_be_used_as_steed_by(creature: Card, game_manager: GameManager = null) -
 		return false
 	if abilities_suppressed():
 		return false
-	if not creature.has_type("Human"):
+	if not creature.has_type("Human") and not creature.has_type("Active God"):
 		return false
 	if not creature.can_receive_equipment():
 		return false

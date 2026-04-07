@@ -26,9 +26,7 @@ func _init() -> void:
 	name_at_bottom = true
 
 func can_activate(game_manager: GameManager) -> bool:
-	if game_manager == null:
-		return false
-	if is_muted:
+	if not can_use_god_power(game_manager):
 		return false
 	if _was_used_this_turn(game_manager):
 		return false

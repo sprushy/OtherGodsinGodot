@@ -2,6 +2,7 @@ extends RefCounted
 class_name DeckValidator
 
 const CardCatalogScript = preload("res://scripts/cards/CardCatalog.gd")
+const TiamatScript = preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
 const MIN_REGULAR_CARDS := 35
 const MAX_POWERS := 3
 
@@ -27,14 +28,15 @@ func _init() -> void:
 				continue
 			_cards_by_name[clean_alias] = card
 
-func validate_deck(deck_cards: Dictionary) -> Dictionary:
+func validate_deck(deck_cards: Dictionary, special_setup: Dictionary = {}) -> Dictionary:
 	var sanitized_cards: Dictionary = {}
 	var god_count := 0
 	var power_count := 0
 	var regular_count := 0
 	var legendary_count := 0
 	var god_culture := ""
-	var invalid_powers: PackedStringArray = []
+	var invalid_culture_cards: PackedStringArray = []
+	var god_template = null
 
 	for raw_card_name in deck_cards.keys():
 		var card_name := str(raw_card_name).strip_edges()
@@ -56,6 +58,8 @@ func validate_deck(deck_cards: Dictionary) -> Dictionary:
 			god_count += count
 			if god_culture.is_empty():
 				god_culture = str(card.culture)
+			if god_template == null:
+				god_template = card
 		elif bool(card.is_power):
 			power_count += count
 		else:
@@ -72,20 +76,35 @@ func validate_deck(deck_cards: Dictionary) -> Dictionary:
 
 	for card_name in sanitized_cards.keys():
 		var card = _cards_by_name[card_name]
-		if not bool(card.is_power) or bool(card.is_god):
+		if card == null or bool(card.is_god) or god_template == null:
 			continue
-		if god_culture.is_empty():
-			continue
-		var culture := str(card.culture)
-		if culture != "Neutral" and culture != god_culture:
-			invalid_powers.append(card_name)
+		var is_invalid := false
+		if god_template is GodCard and (god_template as GodCard).uses_culture_locked_deckbuilding():
+			is_invalid = not (god_template as GodCard).can_include_card_in_culture_locked_deck(card)
+		elif bool(card.is_power):
+			var culture := str(card.culture)
+			is_invalid = not god_culture.is_empty() and culture != "Neutral" and culture != god_culture
+		if is_invalid:
+			invalid_culture_cards.append(card_name)
 
-	if not invalid_powers.is_empty():
-		return _result(false, "Power culture mismatch: %s." % ", ".join(invalid_powers), sanitized_cards)
+	if not invalid_culture_cards.is_empty():
+		var rule_label := "Deck culture mismatch" if god_template is GodCard and (god_template as GodCard).uses_culture_locked_deckbuilding() else "Power culture mismatch"
+		return _result(false, "%s: %s." % [rule_label, ", ".join(invalid_culture_cards)], sanitized_cards)
 
 	var max_legendaries := int(floor(regular_count / 10.0))
 	if legendary_count > max_legendaries:
 		return _result(false, "Deck has too many legendary cards (%d / %d)." % [legendary_count, max_legendaries], sanitized_cards)
+
+	var validated_special_setup := _validate_special_setup(special_setup, god_template, power_count)
+	if not bool(validated_special_setup.get("is_valid", false)):
+		return _result(
+			false,
+			str(validated_special_setup.get("error", "Invalid special setup.")),
+			sanitized_cards,
+			{
+				"special_setup": validated_special_setup.get("special_setup", {}),
+			}
+		)
 
 	return _result(true, "", sanitized_cards, {
 		"total_cards": regular_count + god_count + power_count,
@@ -94,7 +113,84 @@ func validate_deck(deck_cards: Dictionary) -> Dictionary:
 		"regular_count": regular_count,
 		"legendary_count": legendary_count,
 		"god_culture": god_culture,
+		"special_setup": validated_special_setup.get("special_setup", {}),
 	})
+
+func _validate_special_setup(special_setup: Dictionary, god_template, power_count: int) -> Dictionary:
+	var sanitized_slots := TiamatScript.get_slot_card_names_from_setup(special_setup)
+	var canonical_slots: Array = []
+	var occupied_slot_count := 0
+	var seen_card_names: Dictionary = {}
+
+	for slot_index in range(sanitized_slots.size()):
+		var slot_cards: Array = sanitized_slots[slot_index]
+		var canonical_slot: Array[String] = []
+		var slot_level_total := 0
+		if not slot_cards.is_empty():
+			occupied_slot_count += 1
+		for raw_card_name in slot_cards:
+			var requested_name := str(raw_card_name).strip_edges()
+			if requested_name.is_empty():
+				continue
+			var card_lookup_key: String = CardCatalogScript.to_lookup_key(requested_name)
+			var resolved_key: String = requested_name
+			if not _cards_by_name.has(resolved_key) and _cards_by_name.has(card_lookup_key):
+				resolved_key = card_lookup_key
+			if not _cards_by_name.has(resolved_key):
+				return {
+					"is_valid": false,
+					"error": "Unknown Tiamat slot card: %s." % requested_name,
+					"special_setup": TiamatScript.build_special_setup(canonical_slots),
+				}
+			var card = _cards_by_name[resolved_key]
+			if not TiamatScript.is_valid_slot_creature(card):
+				return {
+					"is_valid": false,
+					"error": "%s is not a valid Tiamat slot creature." % str(card.card_name),
+					"special_setup": TiamatScript.build_special_setup(canonical_slots),
+				}
+			var canonical_name := str(card.card_name)
+			if seen_card_names.has(canonical_name):
+				return {
+					"is_valid": false,
+					"error": "Tiamat slot creatures must all be different. %s was chosen more than once." % canonical_name,
+					"special_setup": TiamatScript.build_special_setup(canonical_slots),
+				}
+			seen_card_names[canonical_name] = true
+			slot_level_total += int(card.level)
+			canonical_slot.append(canonical_name)
+		if slot_level_total > TiamatScript.MAX_SLOT_LEVEL_TOTAL:
+			return {
+				"is_valid": false,
+				"error": "Tiamat slot %d exceeds %d total levels." % [slot_index + 1, TiamatScript.MAX_SLOT_LEVEL_TOTAL],
+				"special_setup": TiamatScript.build_special_setup(canonical_slots),
+			}
+		canonical_slots.append(canonical_slot)
+		if canonical_slots.size() >= TiamatScript.POWER_SLOT_COUNT:
+			break
+
+	if occupied_slot_count <= 0:
+		return {"is_valid": true, "error": "", "special_setup": {}}
+	if not TiamatScript.is_tiamat_god(god_template):
+		return {
+			"is_valid": false,
+			"error": "Only Tiamat can use Matriarch Rule slot creatures.",
+			"special_setup": TiamatScript.build_special_setup(canonical_slots),
+		}
+	if power_count + occupied_slot_count > MAX_POWERS:
+		return {
+			"is_valid": false,
+			"error": "Tiamat deck uses %d total power slots (powers + Matriarch slots), but only %d are allowed." % [
+				power_count + occupied_slot_count,
+				MAX_POWERS
+			],
+			"special_setup": TiamatScript.build_special_setup(canonical_slots),
+		}
+	return {
+		"is_valid": true,
+		"error": "",
+		"special_setup": TiamatScript.build_special_setup(canonical_slots),
+	}
 
 func _result(is_valid: bool, error_message: String, sanitized_cards: Dictionary, extra: Dictionary = {}) -> Dictionary:
 	var output := {

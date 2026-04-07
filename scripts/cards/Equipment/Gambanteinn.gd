@@ -25,6 +25,15 @@ func _init() -> void:
 func can_equip_to(creature: Card) -> bool:
 	return super.can_equip_to(creature) and _is_valid_bearer(creature)
 
+func get_cannot_equip_reason(creature: Card) -> String:
+	if creature == null:
+		return super.get_cannot_equip_reason(creature)
+	if not creature.can_receive_equipment():
+		return super.get_cannot_equip_reason(creature)
+	if not _is_valid_bearer(creature):
+		return card_name + " can only be equipped to Mages and Shamans."
+	return super.get_cannot_equip_reason(creature)
+
 func get_activation_label() -> String:
 	return "Use Gambanteinn"
 

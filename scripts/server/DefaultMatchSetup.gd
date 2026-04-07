@@ -25,28 +25,68 @@ func build_default_match(game_manager: GameManager) -> Dictionary:
 	_create_deck(player1)
 	_create_deck(player2)
 
-	var baldr := Baldr.new()
-	baldr.card_owner = player1
-	player1.god_zone.add_card(baldr)
+	# Thor (P1) vs Tiamat the Primordial (P2) — Thiazi to Tonal Extraction test
+	var thor := Thor.new()
+	thor.card_owner = player1
+	player1.god_zone.add_card(thor)
 
-	var mummu := Mummu.new()
-	mummu.card_owner = player2
-	player2.god_zone.add_card(mummu)
+	var tiamat := TiamatThePrimordial.new()
+	tiamat.card_owner = player2
+	player2.god_zone.add_card(tiamat)
 
 	game_manager.setup_game()
 
-	var ananke := AnankesBinding.new()
-	ananke.card_owner = player1
-	ananke.is_face_down = false
-	player1.power_zones[0].add_card(ananke)
+	# --- Player 1 board ---
+	# TonalExtraction power (face-down/locked); targets Thiazi on frontline
+	var p1_tonal := TonalExtraction.new()
+	p1_tonal.card_owner = player1
+	player1.power_zones[0].add_card(p1_tonal)
 
-	var axe1 := BeardedAxe.new()
-	axe1.card_owner = player1
-	player1.reserve_zones[3].add_card(axe1)
+	# Thiazi (Shapeshifter) — TonalExtraction target; can Shift between forms
+	var p1_thiazi := Thiazi.new()
+	p1_thiazi.card_owner = player1
+	player1.frontline_zones[3].add_card(p1_thiazi)
 
-	var axe2 := BeardedAxe.new()
-	axe2.card_owner = player2
-	player2.reserve_zones[3].add_card(axe2)
+	# Third Sage Enmedugga — free Ancient Mer Sage; Impact blesses a Mer Sage
+	var p1_sage := ThirdSageEnmedugga.new()
+	p1_sage.card_owner = player1
+	player1.frontline_zones[4].add_card(p1_sage)
+
+	# Titanic Mech — high-cost powerhouse in reserve
+	var p1_mech := TitanicMech.new()
+	p1_mech.card_owner = player1
+	player1.reserve_zones[2].add_card(p1_mech)
+
+	# Ancient creature in graveyard so P1 can test Tablet of Life
+	var p1_gy_sage := ThirdSageEnmedugga.new()
+	p1_gy_sage.card_owner = player1
+	player1.graveyard_zone.add_card(p1_gy_sage)
+
+	# --- Player 2 board ---
+	# TonalExtraction power (face-down/locked); targets Thiazi in reserve
+	var p2_tonal := TonalExtraction.new()
+	p2_tonal.card_owner = player2
+	player2.power_zones[0].add_card(p2_tonal)
+
+	# Tianlong, Holy Dragon — Heaven's Guard protects god and higher-level dragons
+	var p2_tianlong := TianlongHolyDragon.new()
+	p2_tianlong.card_owner = player2
+	player2.frontline_zones[3].add_card(p2_tianlong)
+
+	# Titanic Mech — heavy frontline threat
+	var p2_mech := TitanicMech.new()
+	p2_mech.card_owner = player2
+	player2.frontline_zones[2].add_card(p2_mech)
+
+	# Thiazi (Shapeshifter) in reserve — TonalExtraction target for P2
+	var p2_thiazi := Thiazi.new()
+	p2_thiazi.card_owner = player2
+	player2.reserve_zones[3].add_card(p2_thiazi)
+
+	# Ancient creature in graveyard so P2 can test Tablet of Life
+	var p2_gy_sage := ThirdSageEnmedugga.new()
+	p2_gy_sage.card_owner = player2
+	player2.graveyard_zone.add_card(p2_gy_sage)
 
 	for _i in range(5):
 		player1.draw_card()
@@ -101,7 +141,11 @@ func build_match_from_session_decks(game_manager: GameManager, match_session) ->
 		var submitted_cards: Array[Card] = CardCatalogScript.make_cards_from_counts(submission.get("cards", {}))
 		if submitted_cards.is_empty():
 			return {}
-		if not deck_builder.build_deck(players[player_index], submitted_cards):
+		if not deck_builder.build_deck(
+			players[player_index],
+			submitted_cards,
+			submission.get("special_setup", {})
+		):
 			return {}
 
 	game_manager.setup_game()
@@ -116,33 +160,15 @@ func build_match_from_session_decks(game_manager: GameManager, match_session) ->
 func _create_deck(player: Player) -> void:
 	var deck: Array[Card] = []
 
-	deck.append(_own(Alu.new(), player))
-	deck.append(_own(AsagTheDestroyer.new(), player))
-	deck.append(_own(BrownBear.new(), player))
-	deck.append(_own(AgainWalker.new(), player))
-	deck.append(_own(Anzu.new(), player))
-	deck.append(_own(Berserker.new(), player))
-	deck.append(_own(Beyla.new(), player))
-	deck.append(_own(BlessedKnights.new(), player))
-
-	deck.append(_own(BitMeseri.new(), player))
-	deck.append(_own(BitMeseri.new(), player))
-	deck.append(_own(FallOfTheMighty.new(), player))
-	deck.append(_own(CircleOfRebirth.new(), player))
-	deck.append(_own(Absence.new(), player))
-	deck.append(_own(Absence.new(), player))
-	deck.append(_own(BlotSacrifice.new(), player))
-	deck.append(_own(BlotSacrifice.new(), player))
-	deck.append(_own(ApollyonsDemiurge.new(), player))
-
-	deck.append(_own(WardingStone.new(), player))
-	deck.append(_own(WardingStone.new(), player))
-
-	deck.append(_own(VoidShield.new(), player))
-	deck.append(_own(VoidShield.new(), player))
-
-	deck.append(_own(BeardedAxe.new(), player))
-	deck.append(_own(BeardedAxe.new(), player))
+	# Thiazi to Tonal Extraction — alphabetical test deck
+	deck.append(_own(Thiazi.new(), player))
+	deck.append(_own(ThirdSageEnmedugga.new(), player))
+	deck.append(_own(ThirdSageEnmedugga.new(), player))
+	deck.append(_own(TianlongHolyDragon.new(), player))
+	deck.append(_own(TianlongHolyDragon.new(), player))
+	deck.append(_own(TitanicMech.new(), player))
+	deck.append(_own(TabletOfLife.new(), player))
+	deck.append(_own(TabletOfLife.new(), player))
 
 	deck.shuffle()
 	for card in deck:

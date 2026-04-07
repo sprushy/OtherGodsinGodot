@@ -109,6 +109,8 @@ func resolve_transform(game_manager: GameManager, target: Card, chosen_subtype: 
 	if _can_restore_target(target):
 		_restore_to_norse_human_warrior(target)
 		_transforms_used_this_turn += 1
+		if game_manager != null:
+			game_manager.notify_creature_shapeshifted(target, self)
 		return "%s transformed %s into a Norse Human Warrior." % [
 			card_name,
 			target.get_target_log_display_name(game_manager.get_feedback_viewer()) if game_manager != null else target.card_name,
@@ -121,6 +123,8 @@ func resolve_transform(game_manager: GameManager, target: Card, chosen_subtype: 
 
 	_transform_to_animal(target, chosen_subtype)
 	_transforms_used_this_turn += 1
+	if game_manager != null:
+		game_manager.notify_creature_shapeshifted(target, self)
 	return "%s transformed %s into %s." % [
 		card_name,
 		target.get_target_log_display_name(game_manager.get_feedback_viewer()) if game_manager != null else target.card_name,

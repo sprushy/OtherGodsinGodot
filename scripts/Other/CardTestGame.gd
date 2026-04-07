@@ -20,13 +20,25 @@ func start_game(
 	server_match_session = null
 ) -> void:
 	await super.start_game(is_host, is_client, server_ip, server_port, match_info, server_match_session)
-	load_s_card_scenario()
+	load_v_w_card_scenario()
 
 func update_ui() -> void:
 	_sync_test_priority_control()
 	super.update_ui()
 	if turn_label != null and player1 != null and player2 != null:
 		turn_label.text += " | P1 Mana %d | P2 Mana %d" % [player1.mana, player2.mana]
+
+func _on_forfeit_button_pressed() -> void:
+	if _game_finished:
+		super._on_forfeit_button_pressed()
+		return
+	_pending_forfeit_return_to_menu = false
+	_pending_post_game_return_to_menu = false
+	_set_match_reconnect_wait(false)
+	_dismiss_transient_prompts()
+	_hide_game_result_overlay()
+	_hide_corner_action_button()
+	_emit_forfeit_requested()
 
 func _sync_test_priority_control() -> void:
 	if game_manager == null or player1 == null or player2 == null:
@@ -74,6 +86,23 @@ func _add_test_power(player: Player, slot_index: int, power: PowerCard, unlocked
 	player.power_zones[slot_index].add_card(power)
 	if unlocked:
 		power.on_unlock(game_manager)
+
+func _add_test_tiamat_slot_creature(player: Player, slot_index: int, creature: Card) -> void:
+	if player == null or creature == null:
+		return
+	if slot_index < 0 or slot_index >= player.power_zones.size():
+		return
+	if not TiamatThePrimordial.is_valid_slot_creature(creature):
+		return
+	creature.card_owner = player
+	creature.is_face_down = false
+	creature.is_stealth = false
+	creature.is_muted = false
+	creature.mute_turns_remaining = 0
+	creature.reset_creature_action_state()
+	creature.summoned_this_turn = false
+	creature.wake_up()
+	player.power_zones[slot_index].add_card(creature)
 
 func _add_test_god(player: Player, god: GodCard) -> void:
 	if player == null or god == null:
@@ -168,6 +197,10 @@ func _reset_test_match_state() -> void:
 	_reset_player_test_state(player2)
 	game_manager.prepared_hexes.clear()
 	game_manager.prepared_charms.clear()
+	if game_manager.has_method("_clear_pending_doorway_choice"):
+		game_manager._clear_pending_doorway_choice()
+	if game_manager.has_method("_clear_pending_return_to_hand_choice"):
+		game_manager._clear_pending_return_to_hand_choice()
 	game_manager.attack_restrictions.clear()
 	game_manager.died_this_turn.clear()
 	game_manager.pending_resurrections.clear()
@@ -185,54 +218,46 @@ func _reset_test_match_state() -> void:
 	selected_interceptor = null
 
 func _setup_test_board() -> void:
-	load_s_card_scenario()
+	load_v_w_card_scenario()
 
-func load_s_card_scenario() -> void:
+func load_tiamat_ragnarok_scenario() -> void:
 	_reset_test_match_state()
-	_add_test_god(player1, Odin.new())
+	_add_test_god(player1, TiamatThePrimordial.new())
 	_add_test_god(player2, Thor.new())
 
-	# P1 board: a live S-weapon target, a direct attacker for follower pressure, and an Ancient Sage
-	# so Seventh Sage Utuabzu can immediately test Channel Ally and Imbue Ally.
-	_place_test_board_card(player1, player1.frontline_zones[0], SevenHeadedSerpent.new(), Card.CreatureMode.AGGRESSIVE)
-	_place_test_board_card(player1, player1.reserve_zones[0], ScorpionManWarrior.new(), Card.CreatureMode.AGGRESSIVE)
-	_place_test_board_card(player1, player1.reserve_zones[1], FirstSageAdapa.new(), Card.CreatureMode.DEFENSIVE)
+	# Tiamat replaces her power slots with Ancient Demons and Dragons. The first two slots
+	# hold multiple creatures so the Matriarch stack visuals and chain release are easy to test.
+	_add_test_tiamat_slot_creature(player1, 0, Anzu.new())
+	_add_test_tiamat_slot_creature(player1, 0, Asakku.new())
+	_add_test_tiamat_slot_creature(player1, 1, Alu.new())
+	_add_test_tiamat_slot_creature(player1, 1, Rabisu.new())
+	_add_test_tiamat_slot_creature(player1, 2, LesserMushussu.new())
+	_add_test_tiamat_slot_creature(player1, 2, SulakTheUnclean.new())
 
-	# P1 prepared cards: Sap punishes frontline entry, and Sep Lemutti catches summoned Monsters.
-	_place_test_prepared_card(player1, player1.reserve_zones[3], Sap.new())
-	_place_test_prepared_card(player1, player1.reserve_zones[4], SepLemutti.new())
+	# Thor keeps Ragnarok face-up so the opposing reset button is available immediately.
+	_add_test_power(player2, 0, Ragnarok.new(), true)
 
-	# P1 hand: the remaining S cards in this alphabetical block.
-	_add_test_hand_card(player1, SapStrength.new())
-	_add_test_hand_card(player1, ScorpionManArcher.new())
-	_add_test_hand_card(player1, SevenLeagueBoots.new())
-	_add_test_hand_card(player1, SeventhSageUtuabzu.new())
-	_add_test_hand_card(player1, SharurTheFlyingMaceScript.new())
+	# Seed both battlefields so Ragnarok has visible payoff once it is activated.
+	_place_test_board_card(player1, player1.frontline_zones[0], GududPriest.new(), Card.CreatureMode.AGGRESSIVE)
+	_place_test_board_card(player1, player1.reserve_zones[0], BrownBear.new(), Card.CreatureMode.DEFENSIVE)
+	_place_test_board_card(player2, player2.frontline_zones[0], Berserker.new(), Card.CreatureMode.AGGRESSIVE)
+	_place_test_board_card(player2, player2.reserve_zones[0], MinotaurFootsoldier.new(), Card.CreatureMode.DEFENSIVE)
 
-	# P1 void/deck: Utuabzu can channel Adapa from the Void immediately, and another Adapa copy is ready for longer loops.
-	_add_test_deck_card(player1, FirstSageAdapa.new())
-	_add_test_deck_card(player1, SeventhSageUtuabzu.new())
-	_add_test_deck_card(player1, SevenHeadedSerpent.new())
-	_add_test_deck_card(player1, ScorpionManArcher.new())
-	var void_adapa := FirstSageAdapa.new()
-	void_adapa.card_owner = player1
-	player1.abyss_zone.add_card(void_adapa)
+	# A couple of visible follow-ups make it easy to test Matriarch Rule versus normal draw.
+	_add_test_hand_card(player1, HeroicStand.new())
+	_add_test_hand_card(player1, BrownBear.new())
+	_add_test_deck_card(player1, GududPriest.new())
+	_add_test_deck_card(player1, BrownBear.new())
 
-	# P2 power: Saving Grace starts face-down with an otherwise empty field so direct attacks can test it cleanly.
-	_add_test_power(player2, 0, SavingGrace.new(), false)
-
-	# P2 hand/deck: S-creature summons can be fed into Sap and Sep Lemutti once Saving Grace has been tested.
-	_add_test_hand_card(player2, ScorpionManArcher.new())
-	_add_test_hand_card(player2, ScorpionManWarrior.new())
-	_add_test_hand_card(player2, SevenHeadedSerpent.new())
-	_add_test_deck_card(player2, ScorpionManArcher.new())
-	_add_test_deck_card(player2, ScorpionManWarrior.new())
+	_add_test_hand_card(player2, BrownBear.new())
+	_add_test_hand_card(player2, HeroicStand.new())
+	_add_test_deck_card(player2, Berserker.new())
 	_add_test_deck_card(player2, BrownBear.new())
 
 	player1.spend_mana(player1.mana)
-	player1.gain_mana(12)
+	player1.gain_mana(10)
 	player2.spend_mana(player2.mana)
-	player2.gain_mana(8)
+	player2.gain_mana(12)
 	player1.followers = 100
 	player2.followers = 100
 	player1.followers_changed.emit(player1.followers)
@@ -253,12 +278,175 @@ func load_s_card_scenario() -> void:
 	game_manager.start_turn()
 	_open_upkeep_choice_window()
 	action_label.text = (
-		"S Scenario: Saving Grace through Sharur alphabetically. Choose Draw Card or Gain 4 Mana first.  |  "
-		+ "Opponent - P2 starts with only a face-down Saving Grace, so attack followers immediately with Seven-Headed Serpent to test the base response, then try again later after boosting speed with Seven-League Boots for the fast-response version.  |  "
-		+ "Prepared - Sap is waiting to destroy frontline entries, and Sep Lemutti is waiting to return summoned Monsters; let P2 summon Scorpion-Man Archer or Scorpion-Man Warrior on later turns to test each trigger.  |  "
-		+ "Hand - Sap Strength, Scorpion-Man Archer, Seven-League Boots, Seventh Sage Utuabzu, and Sharur cover the rest of the S block.  |  "
-		+ "Board - Scorpion-Man Warrior is a clean bearer for Seven-League Boots or Sharur, while First Sage Adapa is already in play so Utuabzu can use Imbue Ally right away.  |  "
-		+ "Void/Deck - First Sage Adapa is already in your Void for Utuabzu's Channel Ally impact, and another copy is stacked in deck for longer follow-up turns."
+		"Tiamat vs Thor / Ragnarok Scenario. Choose Draw Card, Gain 4 Mana, or Matriarch Rule first.  |  "
+		+ "Tiamat - your three power slots are filled with face-up Ancient Demons and Dragons. The slot chains should remain over each stack until that slot is emptied into your hand.  |  "
+		+ "Matriarch Rule - choose it on upkeep to add one slotted creature to hand instead of drawing, then repeat on later turns until a slot is empty and its chain disappears.  |  "
+		+ "Thor - Ragnarok is already unlocked on the opposing side, with creatures on both fields so you can fire it immediately and confirm only creatures are destroyed.  |  "
+		+ "Board - Gudud Priest and Brown Bear give Tiamat simple bodies to preserve or sacrifice, while Thor starts with Berserker and Minotaur Footsoldier so the wipe has obvious results."
+	)
+	update_ui()
+
+func load_t_card_scenario() -> void:
+	_reset_test_match_state()
+	_add_test_god(player1, TezcatlipocaTheSmokingMirror.new())
+	_add_test_god(player2, Thor.new())
+
+	# P1 board: the alphabetical T-range package is live immediately. Brown Bear is the
+	# clean sacrifice for Tezcatlipoca Blasphemer, White Serpent is ready to answer an
+	# enemy target, and Nagual is support for Tezcatlipoca's mana passive.
+	_place_test_board_card(player1, player1.frontline_zones[0], TezcatlipocaBlasphemer.new(), Card.CreatureMode.AGGRESSIVE)
+	_place_test_board_card(player1, player1.frontline_zones[1], BrownBear.new(), Card.CreatureMode.AGGRESSIVE)
+	_place_test_board_card(player1, player1.reserve_zones[0], TheWhiteSerpent.new(), Card.CreatureMode.DEFENSIVE)
+	_place_test_board_card(player1, player1.reserve_zones[1], Nagual.new(), Card.CreatureMode.DEFENSIVE)
+
+	# P1 prepared cards: The Inferno should punish the next enemy attack, and The Deluge
+	# should wipe physical cards the next time a creature or structure is summoned.
+	_place_test_prepared_card(player1, player1.reserve_zones[2], TheInferno.new())
+	_place_test_prepared_card(player1, player1.reserve_zones[3], TheDeluge.new())
+
+	# P1 hand/deck: an extra White Serpent gives you a deliberate Deluge trigger later,
+	# with extra T-range copies in deck for follow-up draws.
+	_add_test_hand_card(player1, TheWhiteSerpent.new())
+	_add_test_deck_card(player1, TezcatlipocaBlasphemer.new())
+	_add_test_deck_card(player1, TheWhiteSerpent.new())
+
+	# P2 board: an enemy Tezcatlipoca Blasphemer plus sacrifice fodder lets White Serpent
+	# answer a targeted Blood Magic activation, while the frontline is loaded for Inferno.
+	_place_test_board_card(player2, player2.frontline_zones[0], BrownBear.new(), Card.CreatureMode.AGGRESSIVE)
+	_place_test_board_card(player2, player2.frontline_zones[1], MinotaurFootsoldier.new(), Card.CreatureMode.AGGRESSIVE)
+	_place_test_board_card(player2, player2.reserve_zones[0], TezcatlipocaBlasphemer.new(), Card.CreatureMode.DEFENSIVE)
+	_place_test_board_card(player2, player2.reserve_zones[1], BrownBear.new(), Card.CreatureMode.DEFENSIVE)
+
+	# P2 prepared/hand: the prepared Heroic Stand is the clean magical target for your
+	# Blood Magic, and the hand creature is the deliberate Deluge trigger after the other tests.
+	_place_test_prepared_card(player2, player2.reserve_zones[2], HeroicStand.new())
+	_add_test_hand_card(player2, BrownBear.new())
+	_add_test_hand_card(player2, HeroicStand.new())
+	_add_test_deck_card(player2, BrownBear.new())
+	_add_test_deck_card(player2, Berserker.new())
+
+	player1.spend_mana(player1.mana)
+	player1.gain_mana(12)
+	player2.spend_mana(player2.mana)
+	player2.gain_mana(12)
+	player1.followers = 100
+	player2.followers = 100
+	player1.followers_changed.emit(player1.followers)
+	player2.followers_changed.emit(player2.followers)
+	player1.has_summoned_this_turn = false
+	player2.has_summoned_this_turn = false
+
+	game_manager.current_player = player1
+	game_manager.other_player = player2
+	game_manager.feedback_viewer = player1
+	player1.is_turn_player = true
+	player2.is_turn_player = false
+	selected_card = null
+	selected_attacker = null
+	selected_interceptor = null
+	_test_turn_owner = player1
+	_test_turn_opponent = player2
+	game_manager.start_turn()
+	_open_upkeep_choice_window()
+	action_label.text = (
+		"T-Range Scenario: Tezcatlipoca Blasphemer through The White Serpent alphabetically. Choose Draw Card or Gain 4 Mana first.  |  "
+		+ "God - Tezcatlipoca, the Smoking Mirror leads P1. Use Nagual's shapeshift on your reserve to gain 1 mana from Tonal Mastery before moving on to the other tests.  |  "
+		+ "Board - Your Tezcatlipoca Blasphemer starts on the frontline with a Brown Bear beside it as sacrifice fodder, while The White Serpent is already face-up in reserve so it can answer enemy targeting.  |  "
+		+ "Blood Magic - Enemy Heroic Stand is already prepared in reserve as the clean magical target for your Tezcatlipoca Blasphemer. Sacrifice your Brown Bear to destroy it. Then pass the turn so the opposing Tezcatlipoca Blasphemer can try to target your prepared Inferno or Deluge, and respond with The White Serpent's Shift Medicine.  |  "
+		+ "Prepared - The Inferno and The Deluge are already prepared on your side. Let P2 declare an attack to trigger The Inferno and burn down its frontline, then have P2 summon the Brown Bear from hand when you are ready for The Deluge to wipe all physical cards.  |  "
+		+ "Hand - A second The White Serpent is in your hand for a follow-up summon or a deliberate Deluge trigger if you want to fire it on your own turn instead."
+	)
+	update_ui()
+
+func load_s_card_scenario() -> void:
+	_reset_test_match_state()
+	_add_test_god(player1, Odin.new())
+	_add_test_god(player2, Thor.new())
+
+	# P1 power: Summoned Sap starts unlocked so its aura is live immediately.
+	_add_test_power(player1, 0, SummonedSap.new(), true)
+
+	# P1 board: Brown Bear keeps Summoned Sap active, Sulak is the clean non-Animal stance target
+	# and an easy bearer for Sharur, Gudud Priest gives Storm a live activated-ability target,
+	# and Tatzelwurm starts ready to attack for an immediate Dragon Heart test.
+	_place_test_board_card(player1, player1.frontline_zones[0], GududPriest.new(), Card.CreatureMode.DEFENSIVE)
+	_place_test_board_card(player1, player1.frontline_zones[1], Tatzelwurm.new(), Card.CreatureMode.AGGRESSIVE)
+	_place_test_board_card(player1, player1.reserve_zones[0], BrownBear.new(), Card.CreatureMode.DEFENSIVE)
+	_place_test_board_card(player1, player1.reserve_zones[1], SulakTheUnclean.new(), Card.CreatureMode.AGGRESSIVE)
+
+	# P1 prepared cards: Shroud answers any action, Smite punishes an attack declaration,
+	# and Spell Demolition is waiting for the opponent's spell.
+	_place_test_prepared_card(player1, player1.reserve_zones[2], ShroudOfTheAncients.new())
+	_place_test_prepared_card(player1, player1.reserve_zones[3], Smite.new())
+	_place_test_prepared_card(player1, player1.reserve_zones[4], SpellDemolition.new())
+
+	# P1 hand: Sharur equips to Sulak or another valid bearer, Storm clears the weather lane,
+	# Tablet of Life can resurrect the Ancient creature already waiting in the graveyard,
+	# and a second Tatzelwurm lets you retest Dragon Heart from hand.
+	_add_test_hand_card(player1, SharurTheFlyingMaceScript.new())
+	_add_test_hand_card(player1, Storm.new())
+	_add_test_hand_card(player1, TabletOfLife.new())
+	_add_test_hand_card(player1, Tatzelwurm.new())
+
+	# P1 graveyard/deck: Tablet of Life has multiple Ancient ability creatures to bring back immediately,
+	# and Tatzelwurm has multiple Dragons to search after a combat kill.
+	_add_test_graveyard_card(player1, Alu.new())
+	_add_test_graveyard_card(player1, FirstSageAdapa.new())
+	_add_test_deck_card(player1, SulakTheUnclean.new())
+	_add_test_deck_card(player1, Storm.new())
+	_add_test_deck_card(player1, TabletOfLife.new())
+	_add_test_deck_card(player1, Lindwyrm.new())
+	_add_test_deck_card(player1, LesserMushussu.new())
+	_add_test_deck_card(player1, Jiaolong.new())
+
+	# P2 board: Brown Bear is ready to attack into Smite, Pegasus is a live Storm target,
+	# Gudud Priest in lane 2 is a clean Tatzelwurm kill and also another activated-ability body
+	# for silence testing, and Heavy Snow is face-up so Storm can destroy an existing Weather charm on resolution.
+	_place_test_board_card(player2, player2.frontline_zones[0], BrownBear.new(), Card.CreatureMode.AGGRESSIVE)
+	_place_test_board_card(player2, player2.frontline_zones[1], GududPriest.new(), Card.CreatureMode.DEFENSIVE)
+	_place_test_board_card(player2, player2.reserve_zones[0], Pegasus.new(), Card.CreatureMode.DEFENSIVE)
+	_place_test_board_permanent(player2, player2.reserve_zones[1], HeavySnow.new())
+
+	# P2 hand/deck: Earthquake is the clean Spell Demolition target, with a second spell and follow-up creatures
+	# available for longer S/T test lines after the first response window.
+	_add_test_hand_card(player2, Earthquake.new())
+	_add_test_hand_card(player2, FoolishOptimism.new())
+	_add_test_hand_card(player2, BrownBear.new())
+	_add_test_deck_card(player2, Pegasus.new())
+	_add_test_deck_card(player2, BrownBear.new())
+	_add_test_deck_card(player2, Earthquake.new())
+
+	player1.spend_mana(player1.mana)
+	player1.gain_mana(12)
+	player2.spend_mana(player2.mana)
+	player2.gain_mana(12)
+	player1.followers = 100
+	player2.followers = 100
+	player1.followers_changed.emit(player1.followers)
+	player2.followers_changed.emit(player2.followers)
+	player1.has_summoned_this_turn = false
+	player2.has_summoned_this_turn = false
+
+	game_manager.current_player = player1
+	game_manager.other_player = player2
+	game_manager.feedback_viewer = player1
+	player1.is_turn_player = true
+	player2.is_turn_player = false
+	selected_card = null
+	selected_attacker = null
+	selected_interceptor = null
+	_test_turn_owner = player1
+	_test_turn_opponent = player2
+	game_manager.start_turn()
+	_open_upkeep_choice_window()
+	action_label.text = (
+		"S/T Scenario: Sharur through Tablet of Life alphabetically. Choose Draw Card or Gain 4 Mana first.  |  "
+		+ "Tatzelwurm - A ready Tatzelwurm starts in your second frontline lane with enemy Gudu Priest directly across from it. Attack there first for a clean Dragon Heart trigger, then choose Lindwyrm, Lesser Mushussu, or Jiaolong from your deck. A second Tatzelwurm is also in hand for repeat tests.  |  "
+		+ "Power - Summoned Sap starts unlocked. Because Brown Bear is already on your field, Sulak is slowed by 1; switch Sulak's stance to confirm the aura makes it use up its full turn action.  |  "
+		+ "Hand - Sharur, Storm, and Tablet of Life are ready now. Play Sharur onto Sulak or any valid bearer, cast Storm to destroy the face-up Heavy Snow and silence Gudud Priest while stripping Pegasus of Aerial, and cast Tablet of Life to resurrect Alu or First Sage Adapa from your graveyard with negated abilities.  |  "
+		+ "Prepared - Shroud of the Ancients, Smite, and Spell Demolition are already prepared in reserve. Pass to P2 so Brown Bear can attack into Smite, and let Earthquake or Foolish Optimism give you clean response windows for Spell Demolition or Shroud.  |  "
+		+ "Board - Your own Gudu Priest gives you an activated creature ability to test before and after Storm, while Sulak is your simple Ancient Demon body for Sharur and Summoned Sap testing.  |  "
+		+ "Opponent - Pegasus is the best Storm target, Heavy Snow is the face-up Weather charm Storm should destroy on resolve, enemy Gudud Priest is another silence target, and P2 has extra spell and creature follow-ups in hand and deck for longer test loops."
 	)
 	update_ui()
 
@@ -781,5 +969,106 @@ func load_sap_ragnarok_scenario() -> void:
 		+ "Sap - already prepared in your reserve; summon Rabid Wolf or Berserker from hand to the frontline to watch Sap destroy it on entry. Pass to P2 and let them summon their Brown Bear to test that it fires on the opponent's summons too.  |  "
 		+ "Sap Strength - play it from hand and target any creature on the board to reduce its Str by 10 for the rest of the turn; useful for weakening a strong attacker before combat.  |  "
 		+ "Ragnarok - activate from the unlocked power slot to wipe all frontline and reserve creatures; Odin, Thor, and the Ragnarok power itself should all survive untouched."
+	)
+	update_ui()
+
+func load_v_w_card_scenario() -> void:
+	_reset_test_match_state()
+	_add_test_god(player1, Odin.new())
+	_add_test_god(player2, Thor.new())
+
+	# P1 power: Walk of the Sage starts unlocked so you can immediately pay 2 mana to Void
+	# a Mage from your deck; Lailoken and Nimue are both valid targets in the deck.
+	_add_test_power(player1, 0, WalkOfTheSage.new(), true)
+
+	# P1 board: Wolf Cub fires Maturation automatically on the very first upkeep and converts
+	# into Skoll from the deck. Wolf Adolescent is live and aggressive on the frontline —
+	# attack Gudud Priest this turn to earn the kill, then Maturation is offered on your next
+	# upkeep to send Wolf Adolescent to the grave and summon Hati. Warrior Dragon is a ready
+	# Aerial Ancient body. White Stag sits in reserve; let it die to trigger Hunter's Mark.
+	_place_test_board_card(player1, player1.frontline_zones[0], WolfAdolescent.new(), Card.CreatureMode.AGGRESSIVE)
+	_place_test_board_card(player1, player1.frontline_zones[1], WarriorDragon.new(), Card.CreatureMode.AGGRESSIVE)
+	_place_test_board_card(player1, player1.reserve_zones[0], WolfCub.new(), Card.CreatureMode.DEFENSIVE)
+	_place_test_board_card(player1, player1.reserve_zones[1], WhiteStag.new(), Card.CreatureMode.AGGRESSIVE)
+
+	# P1 prepared hexes: Void Shield intercepts any enemy attack on your creatures and banishes
+	# the attacker; Vision of Odin can respond to any action to swing a creature's Str and Spd
+	# (choose a non-Norse for -7/-1, or target Wolf Adolescent for +7/+1).
+	_place_test_prepared_card(player1, player1.reserve_zones[2], VoidShield.new())
+	_place_test_prepared_card(player1, player1.reserve_zones[3], VisionOfOdin.new())
+
+	# P1 hand: Wild Magic shelves Brown Bear then Lailoken before landing on Heroic Stand;
+	# Vision of Tartarus hits any board creature for -6 Str / -6 Res (two Void creatures primed);
+	# Wheel of Fire permanently binds the enemy Minotaur and can push it back again each turn.
+	_add_test_hand_card(player1, WildMagic.new())
+	_add_test_hand_card(player1, VisionOfTartarus.new())
+	_add_test_hand_card(player1, WheelOfFire.new())
+
+	# P1 abyss: two banished creatures so Vision of Tartarus applies -6 Str / -6 Res immediately.
+	var void_bear := BrownBear.new()
+	void_bear.card_owner = player1
+	player1.abyss_zone.add_card(void_bear)
+	var void_berserker := Berserker.new()
+	void_berserker.card_owner = player1
+	player1.abyss_zone.add_card(void_berserker)
+
+	# P1 deck: stacked so Wild Magic shelves Brown Bear and Lailoken before finding Heroic Stand;
+	# Walk of the Sage can Void Lailoken or Nimue (both Mages); Skoll is Wolf Cub's Maturation
+	# target and Hati follows as Wolf Adolescent's Maturation target on the next turn.
+	_add_test_deck_card(player1, BrownBear.new())
+	_add_test_deck_card(player1, Lailoken.new())
+	_add_test_deck_card(player1, HeroicStand.new())
+	_add_test_deck_card(player1, Nimue.new())
+	_add_test_deck_card(player1, Skoll.new())
+	_add_test_deck_card(player1, Hati.new())
+
+	# P2 board: Gudud Priest is the clean kill target for Wolf Adolescent; an aggressive Brown
+	# Bear in the adjacent lane will attack your creatures this turn so Void Shield can intercept;
+	# Minotaur Footsoldier in reserve is a durable Wheel of Fire and Vision of Tartarus target.
+	_place_test_board_card(player2, player2.frontline_zones[0], GududPriest.new(), Card.CreatureMode.DEFENSIVE)
+	_place_test_board_card(player2, player2.frontline_zones[1], BrownBear.new(), Card.CreatureMode.AGGRESSIVE)
+	_place_test_board_card(player2, player2.reserve_zones[0], MinotaurFootsoldier.new(), Card.CreatureMode.DEFENSIVE)
+
+	# P2 hand/deck: simple follow-up bodies for longer V/W test lines.
+	_add_test_hand_card(player2, BrownBear.new())
+	_add_test_hand_card(player2, HeroicStand.new())
+	_add_test_hand_card(player2, FallOfTheMighty.new())
+	_add_test_deck_card(player2, BrownBear.new())
+	_add_test_deck_card(player2, Berserker.new())
+
+	player1.spend_mana(player1.mana)
+	player1.gain_mana(12)
+	player2.spend_mana(player2.mana)
+	player2.gain_mana(10)
+	player1.followers = 100
+	player2.followers = 100
+	player1.followers_changed.emit(player1.followers)
+	player2.followers_changed.emit(player2.followers)
+	player1.has_summoned_this_turn = false
+	player2.has_summoned_this_turn = false
+
+	game_manager.current_player = player1
+	game_manager.other_player = player2
+	game_manager.feedback_viewer = player1
+	player1.is_turn_player = true
+	player2.is_turn_player = false
+	selected_card = null
+	selected_attacker = null
+	selected_interceptor = null
+	_test_turn_owner = player1
+	_test_turn_opponent = player2
+	# Start on turn 2 so attacks are allowed immediately (turn_number > 1 is required to attack).
+	game_manager.turn_number = 1
+	game_manager.start_turn()
+	_open_upkeep_choice_window()
+	action_label.text = (
+		"V/W Scenario: All V and W cards except Warding Stone. Choose Draw Card or Gain 4 Mana first.  |  "
+		+ "Upkeep - when you choose Draw or Gain Mana, Wolf Cub's Maturation fires automatically: it sends itself to the graveyard and Skoll is summoned from your deck to its reserve lane.  |  "
+		+ "Board - attack Gudud Priest with Wolf Adolescent this turn to earn the kill; on your next P1 upkeep (after choosing Draw or Gain Mana) the Maturation prompt appears and you can send Wolf Adolescent to the grave and summon Hati from your deck.  |  "
+		+ "Warrior Dragon - ready Aerial Ancient on frontline lane 1; attack with it or hold it as a wall.  |  "
+		+ "White Stag - in reserve, aggressive; let it attack into something that can kill it to trigger Hunter's Mark and hand your opponent 2 mana.  |  "
+		+ "Hand - Wild Magic shelves Brown Bear then Lailoken from the top of your deck before landing on Heroic Stand and adding it to hand. Vision of Tartarus hits any board creature for -6 Str / -6 Res (two creatures are already banished in your Abyss). Wheel of Fire binds the enemy Minotaur Footsoldier, pushes it back one row on cast, then lets you pay 1 mana at the start of your turn to push it further again.  |  "
+		+ "Prepared - pass to P2 and let the aggressive Brown Bear declare an attack on your creature: Void Shield intercepts and banishes the attacker. Vision of Odin is also prepared; respond to any action, target a non-Norse creature for -7 Str / -1 Spd, or target Wolf Adolescent (Norse) for +7 Str / +1 Spd instead.  |  "
+		+ "Power - Walk of the Sage is unlocked; pay 2 mana to Void Lailoken or Nimue (both Mages) from your deck."
 	)
 	update_ui()

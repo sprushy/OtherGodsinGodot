@@ -20,11 +20,7 @@ func _init() -> void:
 	name_at_bottom = true
 
 func can_activate(game_manager: GameManager) -> bool:
-	if game_manager == null:
-		return false
-	if is_muted:
-		return false
-	if card_owner != game_manager.current_player:
+	if not can_use_god_power(game_manager):
 		return false
 	if card_owner.mana < ACTIVATION_COST:
 		return false

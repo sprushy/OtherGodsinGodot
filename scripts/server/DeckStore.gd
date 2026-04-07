@@ -3,6 +3,7 @@ class_name DeckStore
 
 const ServerPathsScript = preload("res://scripts/server/ServerPaths.gd")
 const CardCatalogScript = preload("res://scripts/cards/CardCatalog.gd")
+const TiamatScript = preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
 const DEFAULT_DECK_NAME := "Default Deck"
 
 var _decks_by_account_id: Dictionary = {}
@@ -40,7 +41,13 @@ func get_deck(account_id: String, deck_id: String) -> Dictionary:
 		return (raw_deck as Dictionary).duplicate(true)
 	return {}
 
-func save_deck(account_id: String, deck_name: String, cards: Dictionary, deck_id: String = "") -> Dictionary:
+func save_deck(
+	account_id: String,
+	deck_name: String,
+	cards: Dictionary,
+	deck_id: String = "",
+	special_setup: Dictionary = {}
+) -> Dictionary:
 	_ensure_loaded()
 	var resolved_account_id: String = account_id.strip_edges()
 	if resolved_account_id.is_empty():
@@ -66,6 +73,7 @@ func save_deck(account_id: String, deck_name: String, cards: Dictionary, deck_id
 	deck_entry["deck_id"] = resolved_deck_id
 	deck_entry["name"] = clean_name
 	deck_entry["cards"] = sanitized_cards
+	deck_entry["special_setup"] = _sanitize_special_setup(special_setup)
 	if not deck_entry.has("created_unix"):
 		deck_entry["created_unix"] = now_unix
 	deck_entry["updated_unix"] = now_unix
@@ -134,6 +142,13 @@ func _sanitize_cards(cards: Dictionary) -> Dictionary:
 			continue
 		sanitized[str(template.card_name)] = count
 	return sanitized
+
+func _sanitize_special_setup(special_setup: Dictionary) -> Dictionary:
+	if special_setup == null or special_setup.is_empty():
+		return {}
+	return TiamatScript.build_special_setup(
+		TiamatScript.get_slot_card_names_from_setup(special_setup)
+	)
 
 func _get_deck_bucket(account_id: String) -> Dictionary:
 	var deck_bucket = _decks_by_account_id.get(account_id, {})

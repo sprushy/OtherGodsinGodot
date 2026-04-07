@@ -2,6 +2,10 @@
 extends RefCounted
 class_name GameState
 
+const HIDDEN_MODE_NONE := 0
+const HIDDEN_MODE_HAND := 1
+const HIDDEN_MODE_BOARD := 2
+
 # Serializes and deserializes full game state for network transmission.
 # Used by GameEventBroadcaster (server side) and CombatMockGame (client side).
 
@@ -11,9 +15,13 @@ class_name GameState
 
 ## Produce a full state dict from a live GameManager.
 ## viewer_player_index: only that player sees their own hand cards;
-## the opponent's hand is sent as hidden placeholders.
+## the opponent's hand is sent as hidden placeholders, and opponent hidden
+## board cards are masked down to public board-facing state only.
 ## Pass -1 to include all hands unmasked (server-internal use only).
 static func serialize(gm: GameManager, viewer_player_index: int = -1) -> Dictionary:
+	var viewer: Player = null
+	if viewer_player_index >= 0 and viewer_player_index < gm.players.size():
+		viewer = gm.players[viewer_player_index]
 	var data := {
 		turn_number = gm.turn_number,
 		current_player_index = gm.players.find(gm.current_player),
@@ -27,7 +35,7 @@ static func serialize(gm: GameManager, viewer_player_index: int = -1) -> Diction
 		turn_follower_loss_preventions = _serialize_turn_follower_loss_preventions(gm),
 		prepared_hexes = _serialize_prepared_cards(gm.prepared_hexes),
 		prepared_charms = _serialize_prepared_cards(gm.prepared_charms),
-		action_stack = _serialize_action_stack(gm.action_stack, gm),
+		action_stack = _serialize_action_stack(gm.action_stack, gm, viewer),
 		players = [],
 	}
 	if gm.winning_player != null:
@@ -35,41 +43,65 @@ static func serialize(gm: GameManager, viewer_player_index: int = -1) -> Diction
 
 	for i in gm.players.size():
 		var player := gm.players[i]
-		var hide_hand := viewer_player_index >= 0 and i != viewer_player_index
+		var hide_hand := viewer != null and i != viewer_player_index
 		var pdata := {
 			mana = player.mana,
 			followers = player.followers,
 			deck_count = player.deck_zone.cards.size(),
 			has_summoned_this_turn = player.has_summoned_this_turn,
-			hand         = _serialize_zone_cards(player.hand_zone, hide_hand),
-			god_zone     = _serialize_zone_cards(player.god_zone, false),
+			hand         = _serialize_zone_cards(player.hand_zone, viewer, hide_hand),
+			god_zone     = _serialize_zone_cards(player.god_zone, viewer, false),
 			power_zones  = [] as Array,
 			frontline_zones = [] as Array,
 			reserve_zones   = [] as Array,
-			graveyard    = _serialize_zone_cards(player.graveyard_zone, false),
-			abyss        = _serialize_zone_cards(player.abyss_zone, false),
+			graveyard    = _serialize_zone_cards(player.graveyard_zone, viewer, false),
+			abyss        = _serialize_zone_cards(player.abyss_zone, viewer, false),
 		}
 		for z in player.power_zones:
-			pdata.power_zones.append(_serialize_zone_cards(z, false))
+			pdata.power_zones.append(_serialize_zone_cards(z, viewer, false))
 		for z in player.frontline_zones:
-			pdata.frontline_zones.append(_serialize_zone_cards(z, false))
+			pdata.frontline_zones.append(_serialize_zone_cards(z, viewer, false))
 		for z in player.reserve_zones:
-			pdata.reserve_zones.append(_serialize_zone_cards(z, false))
+			pdata.reserve_zones.append(_serialize_zone_cards(z, viewer, false))
 		data.players.append(pdata)
 
 	return data
 
-static func _serialize_zone_cards(zone: Zone, hidden: bool) -> Array:
+static func _serialize_zone_cards(zone: Zone, viewer: Player = null, hide_hand: bool = false) -> Array:
 	var result := []
 	for card in zone.cards:
-		result.append(_serialize_card(card, hidden))
+		var hidden_mode := HIDDEN_MODE_NONE
+		if hide_hand:
+			hidden_mode = HIDDEN_MODE_HAND
+		elif viewer != null and zone.zone_type in [Zone.ZoneType.FRONTLINE, Zone.ZoneType.RESERVE, Zone.ZoneType.POWER_SLOT, Zone.ZoneType.GOD_SLOT] and card.is_hidden_from_viewer(viewer):
+			hidden_mode = HIDDEN_MODE_BOARD
+		result.append(_serialize_card(card, hidden_mode))
 	return result
 
-static func _serialize_card(card: Card, hidden: bool) -> Dictionary:
+static func _serialize_card(card: Card, hidden_mode: int = HIDDEN_MODE_NONE) -> Dictionary:
 	var uid: String = card.get("uid") if "uid" in card else ""
-	# Hidden = opponent's hand card that hasn't been revealed
-	if hidden and not card.is_face_down:
-		return {uid = uid, hidden = true}
+	if hidden_mode == HIDDEN_MODE_HAND:
+		return {
+			uid = uid,
+			hidden = true,
+			hidden_mode = HIDDEN_MODE_HAND,
+			is_face_down = true,
+		}
+	if hidden_mode == HIDDEN_MODE_BOARD:
+		return {
+			uid = uid,
+			hidden = true,
+			hidden_mode = HIDDEN_MODE_BOARD,
+			card_type = card.card_type,
+			card_types = card.card_types.duplicate(),
+			is_face_down = card.is_face_down,
+			is_stealth = card.is_stealth,
+			is_prepared = card.is_prepared,
+			creature_mode = card.creature_mode,
+			is_god = card.is_god,
+			is_power = card.is_power,
+			is_token = card.is_token,
+		}
 
 	var script_path := ""
 	var script = card.get_script()
@@ -165,13 +197,54 @@ static func _serialize_turn_follower_loss_preventions(gm: GameManager) -> Array:
 		})
 	return result
 
-static func _serialize_action_stack(action_stack: Array, gm: GameManager) -> Array:
+static func _serialize_action_stack(action_stack: Array, gm: GameManager, viewer: Player = null) -> Array:
 	var result := []
 	for action in action_stack:
 		if action == null or not (action is CardAction):
 			continue
-		result.append((action as CardAction).to_dict(gm))
+		var serialized := (action as CardAction).to_dict(gm)
+		serialized["resolution_text"] = _serialize_action_resolution_text(action as CardAction, viewer)
+		result.append(serialized)
 	return result
+
+static func _serialize_action_resolution_text(action: CardAction, viewer: Player = null) -> String:
+	if action == null:
+		return ""
+	if viewer == null or not _action_involves_hidden_card(action, viewer):
+		return action.resolution_text
+	match action.type:
+		CardAction.Type.ATTACK:
+			if action.target is Player:
+				return "%s is attacking %s's followers." % [_card_label_for_viewer(action.attacker, viewer), (action.target as Player).player_name]
+			if action.target is Card:
+				return "%s is targeting %s." % [_card_label_for_viewer(action.attacker, viewer), _target_label_for_viewer(action.target, viewer)]
+			return _card_label_for_viewer(action.attacker, viewer) + " attacks."
+		CardAction.Type.EVENT:
+			return action.event_name.replace("_", " ").capitalize() + "."
+		_:
+			if action.target != null:
+				return "%s is targeting %s." % [_card_label_for_viewer(action.card, viewer), _target_label_for_viewer(action.target, viewer)]
+			return _card_label_for_viewer(action.card, viewer) + " goes on the stack."
+
+static func _card_label_for_viewer(card: Card, viewer: Player = null) -> String:
+	if card == null:
+		return "Card"
+	return card.get_log_display_name(viewer)
+
+static func _target_label_for_viewer(target, viewer: Player = null) -> String:
+	if target is Card:
+		return (target as Card).get_target_log_display_name(viewer)
+	if target is Player:
+		return (target as Player).player_name + "'s followers"
+	return "target"
+
+static func _action_involves_hidden_card(action: CardAction, viewer: Player) -> bool:
+	for maybe_card in [action.card, action.attacker, action.united_front_partner, action.interceptor]:
+		if maybe_card != null and (maybe_card as Card).is_hidden_from_viewer(viewer):
+			return true
+	if action.target is Card and (action.target as Card).is_hidden_from_viewer(viewer):
+		return true
+	return false
 
 # -------------------------------------------------------------------------
 # Deserialization (dict → ghost GameManager)
@@ -291,8 +364,18 @@ static func _deserialize_card(cdata: Dictionary) -> Card:
 	if cdata.get("hidden", false):
 		var placeholder := BaseCard.new()
 		placeholder.uid = cdata.get("uid", "")
-		placeholder.card_name = "???"
-		placeholder.is_face_down = true
+		placeholder.card_name = "Hidden card"
+		placeholder.card_type = int(cdata.get("card_type", placeholder.card_type)) as Card.CardType
+		var hidden_card_types = cdata.get("card_types", null)
+		if hidden_card_types is Array:
+			placeholder.card_types = hidden_card_types
+		placeholder.is_face_down = cdata.get("is_face_down", true)
+		placeholder.is_stealth = cdata.get("is_stealth", false)
+		placeholder.is_prepared = cdata.get("is_prepared", false)
+		placeholder.creature_mode = int(cdata.get("creature_mode", placeholder.creature_mode)) as Card.CreatureMode
+		placeholder.is_god = cdata.get("is_god", false)
+		placeholder.is_power = cdata.get("is_power", false)
+		placeholder.is_token = cdata.get("is_token", false)
 		return placeholder
 
 	var script_path: String = cdata.get("script_path", "")

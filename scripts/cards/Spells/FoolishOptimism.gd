@@ -50,7 +50,9 @@ func resolve_with_choices(game_manager: GameManager, attacker: Card, defender: C
 
 	var feedback := "%s compels %s to attack %s." % [card_name, attacker.card_name, defender.card_name]
 	print(feedback)
+	game_manager.set_temporary_combat_follower_damage_halved(attacker != null and attacker.halves_follower_damage_inflicted())
 	game_manager.creature_attack(attacker, defender)
+	game_manager.set_temporary_combat_follower_damage_halved(false)
 	return feedback
 
 func finish_prompt_resolution(game_manager: GameManager, attacker: Card, defender: Card) -> String:

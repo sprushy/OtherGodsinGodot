@@ -19,7 +19,11 @@ func _init() -> void:
 	artist = "Ricardo Zoppello"
 	art_path = ART_PATH
 
-func get_intercept_reach_bonus() -> int:
+func get_intercept_reach_bonus(
+	_game_manager: GameManager = null,
+	_attacker: Card = null,
+	_protected_target = null
+) -> int:
 	if abilities_suppressed() or is_face_down or is_stealth or is_prepared:
 		return 0
 	return 2

@@ -78,14 +78,22 @@ func reset_after_match() -> void:
 func get_ready(session_id: String) -> bool:
 	return bool(ready_by_session_id.get(session_id, false))
 
-func submit_deck(session_id: String, deck_name: String, deck_id: String, deck_cards: Dictionary, validation: Dictionary) -> bool:
+func submit_deck(
+	session_id: String,
+	deck_name: String,
+	deck_id: String,
+	deck_cards: Dictionary,
+	validation: Dictionary,
+	special_setup: Dictionary = {}
+) -> bool:
 	if not contains_session(session_id):
 		return false
 	deck_submission_by_session_id[session_id] = {
 		"deck_name": deck_name.strip_edges(),
 		"deck_id": deck_id.strip_edges(),
 		"cards": deck_cards.duplicate(true),
-		"deck_hash": compute_deck_hash(deck_name, deck_cards),
+		"special_setup": special_setup.duplicate(true),
+		"deck_hash": compute_deck_hash(deck_name, deck_cards, special_setup),
 		"validation": validation.duplicate(true),
 	}
 	refresh_status()
@@ -150,7 +158,7 @@ func to_room_list_entry(sessions_by_id: Dictionary) -> Dictionary:
 		"status": status,
 	}
 
-static func compute_deck_hash(deck_name: String, deck_cards: Dictionary) -> String:
+static func compute_deck_hash(deck_name: String, deck_cards: Dictionary, special_setup: Dictionary = {}) -> String:
 	var card_rows: Array[String] = []
 	for raw_card_name in deck_cards.keys():
 		var card_name := str(raw_card_name).strip_edges()
@@ -158,4 +166,20 @@ static func compute_deck_hash(deck_name: String, deck_cards: Dictionary) -> Stri
 			continue
 		card_rows.append("%s=%d" % [card_name, int(deck_cards[raw_card_name])])
 	card_rows.sort()
-	return "%s|%s" % [deck_name.strip_edges(), "|".join(card_rows)]
+	var special_rows: Array[String] = []
+	var tiamat_slots = special_setup.get("tiamat_slots", [])
+	if tiamat_slots is Array:
+		for slot_index in range((tiamat_slots as Array).size()):
+			var raw_slot = (tiamat_slots as Array)[slot_index]
+			if raw_slot is not Array:
+				continue
+			var slot_rows: Array[String] = []
+			for raw_card_name in raw_slot:
+				var card_name := str(raw_card_name).strip_edges()
+				if not card_name.is_empty():
+					slot_rows.append(card_name)
+			slot_rows.sort()
+			if not slot_rows.is_empty():
+				special_rows.append("slot%d=%s" % [slot_index + 1, ",".join(slot_rows)])
+	special_rows.sort()
+	return "%s|%s|%s" % [deck_name.strip_edges(), "|".join(card_rows), "|".join(special_rows)]

@@ -13,7 +13,7 @@ func _init() -> void:
 	culture = "Triskelion"
 	flavor_text = ""
 	ability_text = "Master of the Deep Wood ([b]Passive[/b]): Animals level 5 and above gain +2 SPD and +2 STR. Triskelion Animals cannot be [b]Enslaved[/b]."
-	art_path = "res://images/card_art/gods/CernunnosAIEdit.png"
+	art_path = "res://scripts/cards/Gods/CernunnosEdit2.png"
 	name_at_bottom = true
 	artist = "Ricardo Zoppello"
 

@@ -28,6 +28,18 @@ func update_ui() -> void:
 	super.update_ui()
 	_queue_thor_ai_step()
 
+func _on_forfeit_button_pressed() -> void:
+	if _game_finished:
+		super._on_forfeit_button_pressed()
+		return
+	_pending_forfeit_return_to_menu = false
+	_pending_post_game_return_to_menu = false
+	_set_match_reconnect_wait(false)
+	_dismiss_transient_prompts()
+	_hide_game_result_overlay()
+	_hide_corner_action_button()
+	_emit_forfeit_requested()
+
 func _open_upkeep_choice_window() -> void:
 	if _practice_active and game_manager != null and _is_thor_player(game_manager.current_player):
 		hide_turn_choice()
@@ -253,7 +265,7 @@ func _try_load_saved_player_practice_deck(player: Player) -> bool:
 	if submitted_cards.is_empty():
 		return false
 	var deck_builder := DeckBuilderScript.new()
-	return deck_builder.build_deck(player, submitted_cards)
+	return deck_builder.build_deck(player, submitted_cards, _player_practice_deck.get("special_setup", {}))
 
 func _build_thor_practice_deck() -> Array[Card]:
 	return [

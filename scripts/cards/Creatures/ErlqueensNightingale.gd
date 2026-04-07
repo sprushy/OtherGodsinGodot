@@ -79,6 +79,7 @@ func _get_human_form_types() -> Array[String]:
 	types.append("Servant")
 	types.append("Mage")
 	types.append("Witch")
+	types.append("Shapeshifter")
 	types.append("Norse Creature")
 	return types
 
@@ -87,5 +88,6 @@ func _get_bird_form_types() -> Array[String]:
 	types.append("Animal")
 	types.append("Avian")
 	types.append("Aerial")
+	types.append("Shapeshifter")
 	types.append("Norse Creature")
 	return types

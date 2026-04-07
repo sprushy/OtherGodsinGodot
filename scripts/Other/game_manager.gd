@@ -19,6 +19,7 @@ signal card_summoned(player: Player, card: Card, from_zone: Zone, to_zone: Zone,
 enum GamePhase { MULLIGAN, MAIN, COMBAT, END }
 const GAME_END_REASON_DEFEAT := "defeat"
 const GAME_END_REASON_FORFEIT := "forfeit"
+const GOD_DEATH_FOLLOWER_LOSS := 7
 
 var players: Array[Player] = []
 var current_player: Player
@@ -38,6 +39,7 @@ var prepared_charms: Dictionary = {}
 var attack_restrictions: Dictionary = {}# player -> turns remaining
 var turn_destruction_wards: Dictionary = {} # player -> {expires_turn, source_card}
 var turn_follower_loss_preventions: Dictionary = {} # player -> {expires_turn, source_card}
+var turn_opponent_targeting_immunities: Dictionary = {} # player -> {expires_turn, source_card}
 var died_this_turn: Array[Card] = []
 var destroyed_this_turn: Array[Card] = []
 var pending_resurrections: Array[Card] = []
@@ -54,6 +56,11 @@ var _pending_doorway_card: Card = null
 var _pending_doorway_combat_death: bool = false
 var _pending_doorway_destruction: bool = false
 var _pending_doorway_continue: Callable = Callable()
+var _pending_return_to_hand_card: Card = null
+var _pending_return_to_hand_reason: String = ""
+var _pending_return_to_hand_send_to_abyss: bool = false
+var _pending_return_to_hand_continue: Callable = Callable()
+var _pending_return_to_hand_steal_actor: Card = null
 var _temporary_combat_follower_damage_halved: bool = false
 var _combat_resolution_deferred: bool = false
 var _deferred_combat_resume: Callable = Callable()
@@ -221,6 +228,24 @@ func can_player_lose_followers_now(player: Player) -> bool:
 		return false
 	return not has_turn_follower_loss_prevention(player)
 
+func grant_turn_opponent_targeting_immunity(player: Player, source_card: Card = null, expires_turn: int = -1) -> void:
+	if player == null:
+		return
+	var resolved_expires_turn := turn_number if expires_turn < 0 else expires_turn
+	turn_opponent_targeting_immunities[player] = {
+		"expires_turn": resolved_expires_turn,
+		"source_card": source_card,
+	}
+
+func has_turn_opponent_targeting_immunity(player: Player) -> bool:
+	if player == null:
+		return false
+	var immunity_data: Variant = turn_opponent_targeting_immunities.get(player, null)
+	if not (immunity_data is Dictionary):
+		return false
+	var expires_turn := int((immunity_data as Dictionary).get("expires_turn", -1))
+	return expires_turn >= turn_number
+
 func _clear_expired_turn_follower_loss_preventions(current_turn: int) -> void:
 	for player in turn_follower_loss_preventions.keys().duplicate():
 		var prevention_data: Variant = turn_follower_loss_preventions.get(player, null)
@@ -230,6 +255,16 @@ func _clear_expired_turn_follower_loss_preventions(current_turn: int) -> void:
 		var expires_turn := int((prevention_data as Dictionary).get("expires_turn", -1))
 		if expires_turn <= current_turn:
 			turn_follower_loss_preventions.erase(player)
+
+func _clear_expired_turn_opponent_targeting_immunities(current_turn: int) -> void:
+	for player in turn_opponent_targeting_immunities.keys().duplicate():
+		var immunity_data: Variant = turn_opponent_targeting_immunities.get(player, null)
+		if not (immunity_data is Dictionary):
+			turn_opponent_targeting_immunities.erase(player)
+			continue
+		var expires_turn := int((immunity_data as Dictionary).get("expires_turn", -1))
+		if expires_turn <= current_turn:
+			turn_opponent_targeting_immunities.erase(player)
 
 func _would_activation_break_turn_destruction_ward(source_card: Card, protected_player: Player, chosen_target = null) -> bool:
 	if source_card == null or protected_player == null:
@@ -356,9 +391,10 @@ func can_cards_engage_each_other(attacker: Card, defender: Card) -> bool:
 		return false
 	if is_attack_blocked_by_active_structure(attacker, defender):
 		return false
-	if attacker.has_method("can_engage") and not attacker.can_engage(defender):
+	var ignore_targeting_limits := attacker.can_ignore_attack_targeting_restrictions(defender)
+	if not ignore_targeting_limits and attacker.has_method("can_engage") and not attacker.can_engage(defender):
 		return false
-	if defender.has_method("can_be_engaged_by") and not defender.can_be_engaged_by(attacker):
+	if not ignore_targeting_limits and defender.has_method("can_be_engaged_by") and not defender.can_be_engaged_by(attacker):
 		return false
 	return true
 
@@ -404,6 +440,8 @@ func can_card_respond_to_priority(card: Card, player: Player = null) -> bool:
 		return false
 	var responding_player := player if player != null else priority_player
 	if responding_player == null or card.card_owner != responding_player:
+		return false
+	if (card.is_power or card.is_god) and not can_player_use_powers(card.card_owner):
 		return false
 	if card.card_type == Card.CardType.SPELL and card.current_zone == card.card_owner.hand_zone and spells_must_be_prepared():
 		return false
@@ -579,7 +617,16 @@ func _begin_turn_upkeep() -> void:
 		return
 	_upkeep_started_turn = turn_number
 	turn_upkeep_started.emit(turn_number, current_player)
-	current_player.gain_mana(1)
+	if is_player_under_god_death(current_player):
+		current_player.lose_followers(GOD_DEATH_FOLLOWER_LOSS)
+		note_player_feedback(
+			"[b]God Death[/b]: %s loses %d followers and gains no upkeep mana." % [
+				current_player.player_name,
+				GOD_DEATH_FOLLOWER_LOSS
+			]
+		)
+	else:
+		current_player.gain_mana(1)
 	for card in _get_sorted_upkeep_cards_for_player(current_player, "on_turn_upkeep"):
 		card.on_turn_upkeep(self)
 	var opponent := get_opponent(current_player)
@@ -601,11 +648,16 @@ func has_target_immunity(target: Card, source: Card, immunity_kind: String) -> b
 	if target == null or source == null:
 		return false
 	for status in target.active_statuses:
-		if status.get("name", "") != "blessed_ward":
-			continue
-		if status.get("ward_kind", "") != immunity_kind:
-			continue
-		return true
+		var status_name := str(status.get("name", ""))
+		if status_name == "blessed_ward":
+			if status.get("ward_kind", "") != immunity_kind:
+				continue
+			return true
+		if status_name == "third_sage_good_fortune":
+			if status.get("ward_kind", "") != immunity_kind:
+				continue
+			if _is_third_sage_good_fortune_active(target, status):
+				return true
 	if immunity_kind == "hexes":
 		var controller := target.get_controller()
 		if controller == null:
@@ -614,6 +666,23 @@ func has_target_immunity(target: Card, source: Card, immunity_kind: String) -> b
 			if passive_card is EnkiLordOfEridu and (passive_card as EnkiLordOfEridu).protects_from_hex(target):
 				return true
 	return false
+
+func _is_third_sage_good_fortune_active(target: Card, status: Dictionary) -> bool:
+	if target == null:
+		return false
+	var source_card := status.get("source_card", null) as Card
+	if source_card == null:
+		return false
+	if source_card.abilities_suppressed():
+		return false
+	if source_card.is_face_down or source_card.is_stealth:
+		return false
+	if source_card.current_zone == null or not source_card.current_zone.is_board_zone():
+		return false
+	var expected_board_entry_order := int(status.get("source_board_entry_order", source_card.board_entry_order))
+	if expected_board_entry_order >= 0 and source_card.board_entry_order != expected_board_entry_order:
+		return false
+	return true
 
 func _is_watchbeast_active() -> bool:
 	for player in players:
@@ -657,6 +726,18 @@ func is_immune_to_source(target: Card, source: Card) -> bool:
 	if target == null or source == null:
 		return false
 	if _has_gala_tura_graveward(target, source):
+		return true
+	var target_controller := target.get_controller()
+	if target_controller == null:
+		target_controller = target.card_owner
+	var source_controller := source.get_controller()
+	if source_controller == null:
+		source_controller = source.card_owner
+	if target_controller != null \
+			and source_controller != null \
+			and target_controller != source_controller \
+			and source.targets \
+			and has_turn_opponent_targeting_immunity(target_controller):
 		return true
 	if target.current_zone != null \
 			and target.current_zone.zone_type == Zone.ZoneType.GRAVEYARD \
@@ -984,6 +1065,7 @@ func play_card(player: Player, card: Card, target_zone: Zone, prepared: bool = f
 			var creature_there := target_zone.get_creature()
 			if creature_there != null:
 				card.equip_to(creature_there)
+				_maybe_apply_telchine_hand_weapon_imbue(player, from_zone, card, creature_there)
 				print(card.card_name + " equipped to " + creature_there.card_name)
 
 		# Mark summoned
@@ -1225,6 +1307,50 @@ func spells_must_be_prepared() -> bool:
 				return true
 	return false
 
+func get_creature_action_mana_cost(creature: Card, _action_name: String = "") -> int:
+	if creature == null:
+		return 0
+	var total_cost := 0
+	for player in players:
+		if player == null:
+			continue
+		for zone in player.frontline_zones + player.reserve_zones + player.power_zones:
+			if zone == null:
+				continue
+			for zone_card in zone.cards:
+				if not (zone_card is PermanentHexCard):
+					continue
+				var binding_hex := zone_card as PermanentHexCard
+				if binding_hex == null or binding_hex.attached_target != creature:
+					continue
+				if zone_card.has_method("get_creature_action_tax_amount"):
+					total_cost += int(zone_card.get_creature_action_tax_amount(creature, self))
+	return maxi(0, total_cost)
+
+func can_pay_creature_action_mana_cost(creature: Card, action_name: String = "") -> bool:
+	var cost := get_creature_action_mana_cost(creature, action_name)
+	if cost <= 0:
+		return true
+	var controller := creature.get_controller()
+	return controller != null and controller.mana >= cost
+
+func pay_creature_action_mana_cost(creature: Card, action_name: String = "") -> bool:
+	var cost := get_creature_action_mana_cost(creature, action_name)
+	if cost <= 0:
+		return true
+	var controller := creature.get_controller()
+	if controller == null or not controller.spend_mana(cost):
+		return false
+	var viewer := get_feedback_viewer()
+	var action_label := action_name if action_name != "" else "act"
+	note_player_feedback("%s pays %d mana for %s to %s." % [
+		controller.player_name,
+		cost,
+		creature.get_target_log_display_name(viewer),
+		action_label
+	])
+	return true
+
 func creature_move(creature: Card, target_zone: Zone) -> bool:
 	if is_game_over:
 		return false
@@ -1249,6 +1375,10 @@ func creature_move(creature: Card, target_zone: Zone) -> bool:
 		if target_zone.get_equipment().size() > 0:
 			print("Cannot move: zone contains unequipped equipment")
 			return false
+		if not can_pay_creature_action_mana_cost(creature, "move"):
+			return false
+		if not pay_creature_action_mana_cost(creature, "move"):
+			return false
 		creature.reveal_from_stealth(self)
 		creature.card_owner.move_card(creature, target_zone)
 		creature.spend_minor_creature_action(true)
@@ -1267,8 +1397,13 @@ func creature_change_mode(creature: Card, target_mode: int = -1) -> bool:
 	
 	if not creature.can_take_minor_creature_action():
 		return false
+	if not can_pay_creature_action_mana_cost(creature, "change stance"):
+		return false
+	if not pay_creature_action_mana_cost(creature, "change stance"):
+		return false
 	
 	var requested_mode: int = target_mode
+	var old_mode: Card.CreatureMode = creature.creature_mode
 	creature.reveal_from_stealth(self)
 	if requested_mode == Card.CreatureMode.AGGRESSIVE or requested_mode == Card.CreatureMode.DEFENSIVE:
 		creature.creature_mode = requested_mode as Card.CreatureMode
@@ -1278,6 +1413,10 @@ func creature_change_mode(creature: Card, target_mode: int = -1) -> bool:
 		creature.creature_mode = Card.CreatureMode.AGGRESSIVE
 
 	creature.spend_minor_creature_action()
+	if old_mode != creature.creature_mode:
+		if creature.has_method("on_mode_change") and not creature.abilities_suppressed():
+			creature.on_mode_change(self, old_mode)
+		_notify_cards_of_creature_mode_change(creature, old_mode)
 	return true
 
 func equip_card(equipment: Card, creature: Card) -> bool:
@@ -1291,13 +1430,44 @@ func equip_card(equipment: Card, creature: Card) -> bool:
 	
 	if not creature.can_take_major_creature_action():
 		return false
+	if not can_pay_creature_action_mana_cost(creature, "equip"):
+		return false
 	
 	if equipment.current_zone != creature.current_zone:
 		return false
 	
+	if not pay_creature_action_mana_cost(creature, "equip"):
+		return false
 	equipment.equip_to(creature)
 	creature.spend_major_creature_action()
 	return true
+
+func _maybe_apply_telchine_hand_weapon_imbue(player: Player, from_zone: Zone, equipment: Card, _creature: Card) -> void:
+	if player == null or equipment == null or from_zone != player.hand_zone:
+		return
+	if equipment.card_type != Card.CardType.EQUIPMENT or not equipment.has_type("Weapon"):
+		return
+	var source := _get_active_telchine_apprentice(player)
+	if source == null:
+		return
+	if equipment.has_method("apply_telchine_apprentice_imbue"):
+		equipment.apply_telchine_apprentice_imbue(source, player)
+
+func _get_active_telchine_apprentice(player: Player) -> Card:
+	if player == null:
+		return null
+	for zone in player.frontline_zones + player.reserve_zones:
+		for card in zone.cards:
+			if card == null:
+				continue
+			if card.card_type != Card.CardType.CREATURE:
+				continue
+			if card.card_name != "Telchine Apprentice":
+				continue
+			if card.abilities_suppressed() or card.is_face_down or card.is_stealth or card.is_prepared:
+				continue
+			return card
+	return null
 
 # Returns all board zones reachable by a creature:
 # - own adjacent/diagonal zones (same player's board)
@@ -1347,19 +1517,21 @@ func creature_pick_up_equipment(creature: Card, equipment: Card) -> bool:
 			return false
 	elif not creature.can_take_minor_creature_action():
 		return false
+	if not can_pay_creature_action_mana_cost(creature, "pick up equipment"):
+		return false
 	# Must be in frontline to act on out-of-range enemy equipment
 	if is_enemy and not in_range and creature.current_zone.zone_type != Zone.ZoneType.FRONTLINE:
+		return false
+	if not pay_creature_action_mana_cost(creature, "pick up equipment"):
 		return false
 	if is_enemy:
 		creature.spend_major_creature_action()
 	else:
 		creature.spend_minor_creature_action()
-	# Move equipment to creature's zone and equip it
-	equip_zone.remove_card(equipment)
-	creature.current_zone.add_card(equipment)
-	equipment.equip_to(creature)
-	print(creature.card_name + " picks up " + equipment.card_name)
-	return true
+	if is_enemy and equipment.has_method("request_self_steal_replacement_choice") and not equipment.abilities_suppressed():
+		if equipment.request_self_steal_replacement_choice(self, creature):
+			return true
+	return _complete_creature_pick_up_equipment(creature, equipment)
 
 func creature_use_steed(creature: Card, steed: Card) -> bool:
 	if is_game_over:
@@ -1370,6 +1542,8 @@ func creature_use_steed(creature: Card, steed: Card) -> bool:
 		return false
 	if not creature.can_take_minor_creature_action():
 		return false
+	if not can_pay_creature_action_mana_cost(creature, "mount"):
+		return false
 	if not steed.has_method("can_be_used_as_steed_by") or not steed.can_be_used_as_steed_by(creature, self):
 		return false
 
@@ -1377,6 +1551,8 @@ func creature_use_steed(creature: Card, steed: Card) -> bool:
 	if steed_zone == null or not steed_zone.is_board_zone():
 		return false
 
+	if not pay_creature_action_mana_cost(creature, "mount"):
+		return false
 	steed_zone.remove_card(steed)
 	creature.current_zone.add_card(steed)
 	if not steed.has_method("mount_to_creature") or not steed.mount_to_creature(creature):
@@ -1398,6 +1574,8 @@ func creature_destroy_equipment(creature: Card, equipment: Card) -> bool:
 		return false
 	if not creature.can_take_major_creature_action():
 		return false
+	if not can_pay_creature_action_mana_cost(creature, "destroy equipment"):
+		return false
 	if equipment.card_type != Card.CardType.EQUIPMENT or equipment.equipped_on != null:
 		return false
 	var equip_zone := equipment.current_zone
@@ -1411,9 +1589,91 @@ func creature_destroy_equipment(creature: Card, equipment: Card) -> bool:
 	var in_range := equip_zone in reachable
 	if is_enemy and not in_range and creature.current_zone.zone_type != Zone.ZoneType.FRONTLINE:
 		return false
+	if not pay_creature_action_mana_cost(creature, "destroy equipment"):
+		return false
 	creature.spend_major_creature_action()
 	print(creature.card_name + " destroys " + equipment.card_name)
 	_send_to_graveyard_with_hook(equipment, false, true)
+	return true
+
+func get_equipment_action_failure_text(creature: Card, equipment: Card, action: String) -> String:
+	if is_game_over:
+		return "The game is already over."
+	if creature == null or equipment == null:
+		return "That equipment action is no longer valid."
+	if creature.card_type != Card.CardType.CREATURE:
+		return creature.card_name + " cannot use equipment."
+	if equipment.card_type != Card.CardType.EQUIPMENT:
+		return equipment.card_name + " is not equipment."
+
+	match action:
+		"pick_up", "steal":
+			if not creature.can_receive_equipment():
+				if creature.is_face_down or creature.is_stealth:
+					return creature.card_name + " is hidden and cannot carry equipment."
+				return creature.card_name + " cannot carry equipment right now."
+			if equipment.equipped_on != null:
+				return equipment.card_name + " is already equipped."
+			var equip_zone := equipment.current_zone
+			if equip_zone == null or not equip_zone.is_board_zone():
+				return equipment.card_name + " is no longer on the field."
+			if not equipment.can_equip_to(creature):
+				if equipment.has_method("get_cannot_equip_reason"):
+					var reason = str(equipment.get_cannot_equip_reason(creature)).strip_edges()
+					if reason != "":
+						return reason
+				return equipment.card_name + " can't be equipped to " + creature.card_name + "."
+			var reachable := get_reachable_board_zones(creature)
+			var controller := creature.get_controller()
+			if controller == null:
+				return creature.card_name + " has no controller."
+			var is_enemy := equip_zone.zone_owner != controller
+			var in_range := equip_zone in reachable
+			if is_enemy:
+				if not creature.can_take_major_creature_action():
+					return creature.card_name + " cannot spend a major action to steal equipment."
+				if not in_range and creature.current_zone.zone_type != Zone.ZoneType.FRONTLINE:
+					return creature.card_name + " must be on the frontline to steal that equipment from range."
+			elif not creature.can_take_minor_creature_action():
+				return creature.card_name + " cannot spend a minor action to pick up equipment."
+			return creature.card_name + " failed to " + ("steal " if action == "steal" else "pick up ") + equipment.card_name + "."
+		"destroy":
+			if not creature.can_take_major_creature_action():
+				return creature.card_name + " cannot spend a major action to destroy equipment."
+			if equipment.equipped_on != null:
+				return equipment.card_name + " is already equipped."
+			var equip_zone := equipment.current_zone
+			if equip_zone == null or not equip_zone.is_board_zone():
+				return equipment.card_name + " is no longer on the field."
+			var reachable := get_reachable_board_zones(creature)
+			var controller := creature.get_controller()
+			if controller == null:
+				return creature.card_name + " has no controller."
+			var is_enemy := equip_zone.zone_owner != controller
+			var in_range := equip_zone in reachable
+			if is_enemy and not in_range and creature.current_zone.zone_type != Zone.ZoneType.FRONTLINE:
+				return creature.card_name + " must be on the frontline to destroy that equipment from range."
+			return creature.card_name + " failed to destroy " + equipment.card_name + "."
+	return creature.card_name + " failed to act on " + equipment.card_name + "."
+
+func _complete_creature_pick_up_equipment(creature: Card, equipment: Card) -> bool:
+	if creature == null or equipment == null:
+		return false
+	if not creature.can_receive_equipment():
+		return false
+	if creature.current_zone == null or not creature.current_zone.is_board_zone():
+		return false
+	if equipment.card_type != Card.CardType.EQUIPMENT or equipment.equipped_on != null:
+		return false
+	var equip_zone := equipment.current_zone
+	if equip_zone == null or not equip_zone.is_board_zone():
+		return false
+	if not equipment.can_equip_to(creature):
+		return false
+	equip_zone.remove_card(equipment)
+	creature.current_zone.add_card(equipment)
+	equipment.equip_to(creature)
+	print(creature.card_name + " picks up " + equipment.card_name)
 	return true
 
 func creature_attack(attacker: Card, target) -> void:
@@ -1445,6 +1705,11 @@ func creature_attack(attacker: Card, target) -> void:
 
 	if attacker.creature_mode == Card.CreatureMode.DEFENSIVE:
 		print(attacker.card_name + " is in defensive stance and cannot attack")
+		return
+	if not can_pay_creature_action_mana_cost(attacker, "attack"):
+		print(attacker.card_name + " cannot attack because its controller cannot pay the action tax.")
+		return
+	if not pay_creature_action_mana_cost(attacker, "attack"):
 		return
 
 	if attacker.is_stealth:
@@ -1481,12 +1746,19 @@ func resolve_followers_attack(attackers: Array[Card], defending_player: Player) 
 	for combatant in active_attackers:
 		_notify_attack_declared(combatant)
 
-	var follower_damage := 0
+	var converting_attacker: Card = null
+	var converting_strength := 0
+	var normal_strength := 0
 	for combatant in active_attackers:
-		follower_damage += combatant.get_effective_strength()
-	follower_damage = _adjust_combat_follower_damage(follower_damage)
-	if follower_damage > 0:
-		defending_player.lose_followers(follower_damage)
+		if _source_converts_combat_follower_damage(combatant):
+			if converting_attacker == null:
+				converting_attacker = combatant
+			converting_strength += combatant.get_effective_strength()
+		else:
+			normal_strength += combatant.get_effective_strength()
+	var follower_damage := 0
+	follower_damage += _apply_combat_follower_damage(null, defending_player, normal_strength)
+	follower_damage += _apply_combat_follower_damage(converting_attacker, defending_player, converting_strength)
 
 	if active_attackers.size() >= 2:
 		_notify_after_united_front_combat(active_attackers[0], active_attackers[1], null)
@@ -1522,6 +1794,8 @@ func _can_intercept_followers(defender: Card, attacker: Card) -> bool:
 		return false
 	if not defender.get_status_effect("cannot_intercept").is_empty():
 		return false
+	if defender.can_special_intercept(self, attacker, defender.get_controller()):
+		return _can_interceptor_engage_attacker(defender, attacker)
 	var interceptor_speed := get_interceptor_speed_against_attacker(defender, attacker)
 	if interceptor_speed < attacker.get_effective_speed():
 		return false
@@ -1540,7 +1814,7 @@ func _can_intercept_followers(defender: Card, attacker: Card) -> bool:
 	var minimum_distance := 1
 	if defender.creature_mode == Card.CreatureMode.AGGRESSIVE:
 		minimum_distance = 2
-	minimum_distance = max(0, minimum_distance - defender.get_intercept_reach_bonus())
+	minimum_distance = max(0, minimum_distance - defender.get_intercept_reach_bonus(self, attacker, defender.get_controller()))
 	return row_distance >= minimum_distance
 
 func _can_interceptor_engage_attacker(interceptor: Card, attacker: Card) -> bool:
@@ -1552,10 +1826,15 @@ func _can_interceptor_engage_attacker(interceptor: Card, attacker: Card) -> bool
 		return false
 	return true
 
-func get_interceptor_speed_against_attacker(interceptor: Card, attacker: Card) -> int:
+func get_interceptor_speed_against_attacker(
+	interceptor: Card,
+	attacker: Card,
+	protected_target = null
+) -> int:
 	if interceptor == null:
 		return 0
 	var interceptor_speed := interceptor.get_effective_speed()
+	interceptor_speed += interceptor.get_intercept_speed_bonus_against_attacker(self, attacker, protected_target)
 	if attacker != null \
 			and interceptor.has_type("Giant") \
 			and not attacker.has_type("Giant") \
@@ -1576,17 +1855,18 @@ func check_for_intercept(attacker: Card, defending_player: Player) -> Card:
 func resolve_combat(attacker: Card, defender: Card, continue_callback: Callable = Callable()) -> bool:
 	if attacker == null or defender == null:
 		return false
+	var ignore_targeting_limits := attacker.can_ignore_attack_targeting_restrictions(defender)
 	if is_attack_blocked_by_active_structure(attacker, defender):
 		print(attacker.card_name + " cannot engage " + defender.card_name + ".")
 		if continue_callback.is_valid():
 			continue_callback.call()
 		return false
-	if attacker.has_method("can_engage") and not attacker.can_engage(defender):
+	if not ignore_targeting_limits and attacker.has_method("can_engage") and not attacker.can_engage(defender):
 		print(attacker.card_name + " cannot engage " + defender.card_name + ".")
 		if continue_callback.is_valid():
 			continue_callback.call()
 		return false
-	if defender.has_method("can_be_engaged_by") and not defender.can_be_engaged_by(attacker):
+	if not ignore_targeting_limits and defender.has_method("can_be_engaged_by") and not defender.can_be_engaged_by(attacker):
 		print(defender.card_name + " cannot be engaged by " + attacker.card_name + ".")
 		if continue_callback.is_valid():
 			continue_callback.call()
@@ -1602,8 +1882,7 @@ func resolve_combat(attacker: Card, defender: Card, continue_callback: Callable 
 	_notify_attack_declared(attacker, defender)
 	if defender.is_god:
 		# Gods cannot be targeted in combat — redirect to follower damage
-		var god_damage := _adjust_combat_follower_damage(attacker.get_effective_strength())
-		defender_controller.lose_followers(god_damage)
+		var god_damage := _apply_combat_follower_damage(attacker, defender_controller, attacker.get_effective_strength())
 		print(attacker.card_name + " attacks " + defender_controller.player_name + "'s followers for " + str(god_damage) + " (via god)!")
 		finish.call()
 		return true
@@ -1633,14 +1912,12 @@ func resolve_combat(attacker: Card, defender: Card, continue_callback: Callable 
 			print("	STR vs STR: " + str(attacker_str) + " vs " + str(defender_str_real) + ((" (disdain→damage as %d)" % defender_str_for_damage) if defender_str_for_damage != defender_str_real else ""))
 
 			if attacker_str > defender_str_real:
-				var diff = _adjust_combat_follower_damage(attacker_str - defender_str_for_damage)
+				var diff = _apply_combat_follower_damage(attacker, defender_controller, attacker_str - defender_str_for_damage)
 				print("	" + defender.card_name + " destroyed! " + defender_controller.player_name + " loses " + str(diff) + " followers")
-				defender_controller.lose_followers(diff)
 				_combat_kill(attacker, defender)
 			elif defender_str_real > attacker_str:
-				var diff = _adjust_combat_follower_damage(defender_str_real - attacker_str_for_damage)
+				var diff = _apply_combat_follower_damage(defender, attacker_controller, defender_str_real - attacker_str_for_damage)
 				print("	" + attacker.card_name + " destroyed! " + attacker_controller.player_name + " loses " + str(diff) + " followers")
-				attacker_controller.lose_followers(diff)
 				_combat_kill(defender, attacker)
 			else:	# Tie — pre-compute routing before either card moves zones
 				print("	Tie! Both creatures destroyed")
@@ -1711,8 +1988,12 @@ func resolve_united_front_combat(attacker: Card, partner: Card, defender: Card) 
 	var combined_strength := primary.get_effective_strength() + support.get_effective_strength()
 
 	if defender.is_god:
-		var god_damage := _adjust_combat_follower_damage(combined_strength)
-		defender_controller.lose_followers(god_damage)
+		var converting_attacker: Card = null
+		for combatant in active_attackers:
+			if _source_converts_combat_follower_damage(combatant):
+				converting_attacker = combatant
+				break
+		var god_damage := _apply_combat_follower_damage(converting_attacker, defender_controller, combined_strength)
 		print("%s and %s attack %s's followers for %d!" % [primary.card_name, support.card_name, defender_controller.player_name, god_damage])
 		finish.call()
 		return
@@ -1735,15 +2016,18 @@ func resolve_united_front_combat(attacker: Card, partner: Card, defender: Card) 
 			var combined_strength_for_damage: int = _get_giants_disdain_combined_strength_for_damage(active_attackers, defender)
 			print("	Combined STR vs STR: %d vs %d" % [combined_strength, defender_str_real])
 			if combined_strength > defender_str_real:
-				var diff := _adjust_combat_follower_damage(combined_strength - defender_str_for_damage)
+				var converting_attacker: Card = null
+				for combatant in active_attackers:
+					if _source_converts_combat_follower_damage(combatant):
+						converting_attacker = combatant
+						break
+				var diff := _apply_combat_follower_damage(converting_attacker, defender_controller, combined_strength - defender_str_for_damage)
 				print("	%s destroyed! %s loses %d followers" % [defender.card_name, defender_controller.player_name, diff])
-				defender_controller.lose_followers(diff)
 				_combat_kill(primary, defender)
 			elif defender_str_real > combined_strength:
-				var diff := _adjust_combat_follower_damage(defender_str_real - combined_strength_for_damage)
+				var diff := _apply_combat_follower_damage(defender, attacker_controller, defender_str_real - combined_strength_for_damage)
 				print("	United Front loses! %s loses %d followers" % [attacker_controller.player_name, diff])
 				note_player_feedback("United Front loses! Both attackers are destroyed.")
-				attacker_controller.lose_followers(diff)
 				_combat_kill(defender, primary)
 				_combat_kill(defender, support)
 			else:
@@ -1804,17 +2088,18 @@ func resolve_combat_with_continuation(
 				continue_callback.call()
 			return false
 	else:
+		var ignore_targeting_limits := attacker.can_ignore_attack_targeting_restrictions(defender)
 		if is_attack_blocked_by_active_structure(attacker, defender):
 			print(attacker.card_name + " cannot engage " + defender.card_name + ".")
 			if continue_callback.is_valid():
 				continue_callback.call()
 			return false
-		if attacker.has_method("can_engage") and not attacker.can_engage(defender):
+		if not ignore_targeting_limits and attacker.has_method("can_engage") and not attacker.can_engage(defender):
 			print(attacker.card_name + " cannot engage " + defender.card_name + ".")
 			if continue_callback.is_valid():
 				continue_callback.call()
 			return false
-		if defender.has_method("can_be_engaged_by") and not defender.can_be_engaged_by(attacker):
+		if not ignore_targeting_limits and defender.has_method("can_be_engaged_by") and not defender.can_be_engaged_by(attacker):
 			print(defender.card_name + " cannot be engaged by " + attacker.card_name + ".")
 			if continue_callback.is_valid():
 				continue_callback.call()
@@ -1829,8 +2114,7 @@ func resolve_combat_with_continuation(
 			continue_callback.call()
 	_notify_attack_declared(attacker, defender)
 	if defender.is_god:
-		var god_damage := _adjust_combat_follower_damage(attacker.get_effective_strength())
-		defender_controller.lose_followers(god_damage)
+		var god_damage := _apply_combat_follower_damage(attacker, defender_controller, attacker.get_effective_strength())
 		print(attacker.card_name + " attacks " + defender_controller.player_name + "'s followers for " + str(god_damage) + " (via god)!")
 		_notify_opponent_attacks_followers(attacker, defender_controller)
 		finish.call()
@@ -1857,14 +2141,12 @@ func resolve_combat_with_continuation(
 				var attacker_str_for_damage: int = _get_giants_disdain_damage_stat(attacker, [defender], attacker_str)
 				print("	STR vs STR: " + str(attacker_str) + " vs " + str(defender_str_real))
 				if attacker_str > defender_str_real:
-					var diff := _adjust_combat_follower_damage(attacker_str - defender_str_for_damage)
+					var diff := _apply_combat_follower_damage(attacker, defender_controller, attacker_str - defender_str_for_damage)
 					print("	" + defender.card_name + " destroyed! " + defender_controller.player_name + " loses " + str(diff) + " followers")
-					defender_controller.lose_followers(diff)
 					return _combat_kill_deferred(attacker, defender, finish)
 				if defender_str_real > attacker_str:
-					var diff := _adjust_combat_follower_damage(defender_str_real - attacker_str_for_damage)
+					var diff := _apply_combat_follower_damage(defender, attacker_controller, defender_str_real - attacker_str_for_damage)
 					print("	" + attacker.card_name + " destroyed! " + attacker_controller.player_name + " loses " + str(diff) + " followers")
-					attacker_controller.lose_followers(diff)
 					return _combat_kill_deferred(defender, attacker, finish)
 				print("	Tie! Both creatures destroyed")
 				return _combat_kill_sequence_deferred([
@@ -1905,6 +2187,7 @@ func _combat_kill_deferred(killer: Card, victim: Card, continue_callback: Callab
 func _combat_kill_routed_deferred(killer: Card, victim: Card, do_void: bool, continue_callback: Callable = Callable()) -> bool:
 	var killer_controller := killer.get_controller() if killer != null else null
 	var victim_controller := victim.get_controller()
+	var bypass_combat_survival := killer != null and killer.can_destroy_combat_protected_creatures(victim)
 	var finish := func() -> void:
 		var victim_counts_as_creature_kill := victim != null and victim.card_type == Card.CardType.CREATURE and not victim.is_petrified()
 		var victim_counts_as_attack_target_destroy := victim != null \
@@ -1913,6 +2196,8 @@ func _combat_kill_routed_deferred(killer: Card, victim: Card, do_void: bool, con
 			and victim_controller != killer_controller
 		if killer != null and killer.has_method("on_kill") and not killer.abilities_suppressed() and victim_counts_as_creature_kill:
 			killer.on_kill(self, victim)
+		if killer != null and killer.has_method("on_attack_target_destroyed") and not killer.abilities_suppressed() and victim_counts_as_attack_target_destroy:
+			killer.on_attack_target_destroyed(self, victim)
 		if victim_counts_as_attack_target_destroy:
 			combat_destroy_events_this_turn.append({
 				"killer_owner": killer_controller,
@@ -1943,7 +2228,7 @@ func _combat_kill_routed_deferred(killer: Card, victim: Card, do_void: bool, con
 		victim.card_owner.move_card(victim, victim.card_owner.abyss_zone)
 		finish.call()
 		return true
-	return request_send_to_graveyard(victim, finish, true, true)
+	return request_send_to_graveyard(victim, finish, true, true, bypass_combat_survival)
 
 func _combat_kill_sequence_deferred(kills: Array[Dictionary], continue_callback: Callable = Callable()) -> bool:
 	if kills.is_empty():
@@ -2084,11 +2369,31 @@ func resolve_stack() -> void:
 		var action = action_stack.pop_back()
 		action.resolve()
 		
-func convert_followers(from_player: Player, to_player: Player, amount: int) -> void:
+func convert_followers(from_player: Player, to_player: Player, amount: int) -> int:
 	var actual: int = mini(amount, from_player.followers)
 	from_player.lose_followers(actual)
 	to_player.gain_followers(actual)
 	print("Convert! " + str(actual) + " followers move from " + from_player.player_name + " to " + to_player.player_name)
+	return actual
+
+func _source_converts_combat_follower_damage(source_card: Card) -> bool:
+	if source_card == null or not source_card.has_method("converts_follower_damage_to_conversion"):
+		return false
+	return source_card.converts_follower_damage_to_conversion(self)
+
+func _apply_combat_follower_damage(source_card: Card, damaged_player: Player, amount: int) -> int:
+	if damaged_player == null or amount <= 0:
+		return 0
+	var adjusted_amount := _adjust_combat_follower_damage(amount)
+	if adjusted_amount <= 0:
+		return 0
+	var source_controller := source_card.get_controller() if source_card != null else null
+	if _source_converts_combat_follower_damage(source_card) \
+			and source_controller != null \
+			and source_controller != damaged_player:
+		return convert_followers(damaged_player, source_controller, adjusted_amount)
+	damaged_player.lose_followers(adjusted_amount)
+	return adjusted_amount
 
 func apply_attack_restriction(player: Player, turns: int, source: Card = null) -> void:
 	attack_restrictions[player] = {turns = turns, source = source}
@@ -2117,6 +2422,7 @@ func end_turn() -> void:
 		card.remove_expired_statuses(turn_number)
 	_clear_expired_turn_destruction_wards(turn_number)
 	_clear_expired_turn_follower_loss_preventions(turn_number)
+	_clear_expired_turn_opponent_targeting_immunities(turn_number)
 	
 	# Swap players for the next turn
 	var temp = current_player
@@ -2132,9 +2438,11 @@ func _get_player_turn_event_cards(player: Player, include_god: bool = true) -> A
 	if player == null:
 		return cards
 	var zones: Array[Zone] = []
-	if include_god:
+	var powers_enabled := can_player_use_powers(player)
+	if include_god and powers_enabled:
 		zones.append(player.god_zone)
-	zones.append_array(player.power_zones)
+	if powers_enabled:
+		zones.append_array(player.power_zones)
 	zones.append_array(player.frontline_zones)
 	zones.append_array(player.reserve_zones)
 	for zone in zones:
@@ -2201,6 +2509,7 @@ func _notify_global_turn_end(ending_player: Player) -> void:
 	for card in _get_all_turn_event_cards():
 		if card.has_method("on_global_turn_end"):
 			card.on_global_turn_end(self, ending_player)
+	_resolve_destroy_at_turn_end_statuses()
 
 func notify_god_power_activated(player: Player, god: Card, target: Card = null) -> void:
 	if player == null or god == null:
@@ -2210,6 +2519,13 @@ func notify_god_power_activated(player: Player, god: Card, target: Card = null) 
 			if card != null and card.has_method("on_friendly_god_power_activated"):
 				card.on_friendly_god_power_activated(self, god, target)
 	god_power_activated.emit(turn_number, player, god, target)
+
+func notify_creature_shapeshifted(creature: Card, source_card: Card = null) -> void:
+	if creature == null:
+		return
+	for card in _get_all_turn_event_cards():
+		if card != null and card.has_method("on_creature_shapeshifted"):
+			card.on_creature_shapeshifted(self, creature, source_card)
 
 
 # --- New Helper Function for Card Removal ---
@@ -2257,6 +2573,7 @@ func _should_class_rend(killer: Card, victim: Card) -> bool:
 func _combat_kill_routed(killer: Card, victim: Card, do_void: bool) -> void:
 	var killer_controller := killer.get_controller() if killer != null else null
 	var victim_controller := victim.get_controller()
+	var bypass_combat_survival := killer != null and killer.can_destroy_combat_protected_creatures(victim)
 	var finish := func() -> void:
 		var victim_counts_as_creature_kill := victim != null and victim.card_type == Card.CardType.CREATURE and not victim.is_petrified()
 		var victim_counts_as_attack_target_destroy := victim != null \
@@ -2265,6 +2582,8 @@ func _combat_kill_routed(killer: Card, victim: Card, do_void: bool) -> void:
 			and victim_controller != killer_controller
 		if killer != null and killer.has_method("on_kill") and not killer.abilities_suppressed() and victim_counts_as_creature_kill:
 			killer.on_kill(self, victim)
+		if killer != null and killer.has_method("on_attack_target_destroyed") and not killer.abilities_suppressed() and victim_counts_as_attack_target_destroy:
+			killer.on_attack_target_destroyed(self, victim)
 		if victim_counts_as_attack_target_destroy:
 			combat_destroy_events_this_turn.append({
 				"killer_owner": killer_controller,
@@ -2292,7 +2611,7 @@ func _combat_kill_routed(killer: Card, victim: Card, do_void: bool) -> void:
 		victim.card_owner.move_card(victim, victim.card_owner.abyss_zone)
 		finish.call()
 		return
-	request_send_to_graveyard(victim, finish, true, true)
+	request_send_to_graveyard(victim, finish, true, true, bypass_combat_survival)
 
 func player_destroyed_creature_by_combat_this_turn(player: Player) -> bool:
 	for event in combat_destroy_events_this_turn:
@@ -2393,7 +2712,13 @@ func _combat_kill(killer: Card, victim: Card) -> void:
 func _send_to_graveyard_with_hook(card: Card, combat_death: bool = false, destruction: bool = false) -> bool:
 	return _send_to_graveyard_with_hook_resolved(card, false, combat_death, destruction)
 
-func request_send_to_graveyard(card: Card, continue_callback: Callable = Callable(), combat_death: bool = false, destruction: bool = false) -> bool:
+func request_send_to_graveyard(
+	card: Card,
+	continue_callback: Callable = Callable(),
+	combat_death: bool = false,
+	destruction: bool = false,
+	ignore_self_combat_replacement: bool = false
+) -> bool:
 	if card == null:
 		if continue_callback.is_valid():
 			continue_callback.call()
@@ -2408,14 +2733,27 @@ func request_send_to_graveyard(card: Card, continue_callback: Callable = Callabl
 		_pending_doorway_continue = continue_callback
 		doorway_choice_requested.emit(_pending_doorway_structure, card, combat_death, destruction)
 		return false
-	var success := _send_to_graveyard_with_hook_resolved(card, false, combat_death, destruction)
-	if continue_callback.is_valid():
-		continue_callback.call()
-	return success
+	return _send_to_graveyard_with_hook_resolved(
+		card,
+		false,
+		combat_death,
+		destruction,
+		continue_callback,
+		ignore_self_combat_replacement
+	)
 
-func _send_to_graveyard_with_hook_resolved(card: Card, send_to_abyss: bool, combat_death: bool = false, destruction: bool = false) -> bool:
+func _send_to_graveyard_with_hook_resolved(
+	card: Card,
+	send_to_abyss: bool,
+	combat_death: bool = false,
+	destruction: bool = false,
+	continue_callback: Callable = Callable(),
+	ignore_self_combat_replacement: bool = false
+) -> bool:
 	if destruction and not combat_death and _is_turn_destruction_ward_protected(card):
 		print(card.card_name + " resists destruction from " + get_effect_source_card().card_name + " this turn.")
+		if continue_callback.is_valid():
+			continue_callback.call()
 		return false
 	if destruction and (
 		card.has_status_effect("berserker_rage_guard")
@@ -2423,6 +2761,8 @@ func _send_to_graveyard_with_hook_resolved(card: Card, send_to_abyss: bool, comb
 		or card.has_status_effect("en_hedu_anna_exaltation_guard")
 	):
 		print(card.card_name + " resists destruction this turn.")
+		if continue_callback.is_valid():
+			continue_callback.call()
 		return false
 	# Record board position before the zone changes so Circle of Rebirth can
 	# auto-resurrect to the same spot.
@@ -2431,7 +2771,8 @@ func _send_to_graveyard_with_hook_resolved(card: Card, send_to_abyss: bool, comb
 		card.last_board_zone_index = card.current_zone.zone_index
 
 	var replacement_zone: Zone = null
-	if card.has_method("get_self_graveyard_replacement_zone") and not card.abilities_suppressed() \
+	if not (ignore_self_combat_replacement and combat_death) \
+			and card.has_method("get_self_graveyard_replacement_zone") and not card.abilities_suppressed() \
 			and not _is_watchbeast_active():
 		replacement_zone = card.get_self_graveyard_replacement_zone(self, combat_death, destruction, send_to_abyss)
 
@@ -2447,12 +2788,98 @@ func _send_to_graveyard_with_hook_resolved(card: Card, send_to_abyss: bool, comb
 		card.card_owner.move_card(card, replacement_zone)
 		if replacement_zone == card.card_owner.hand_zone:
 			print("%s returns to %s's hand instead." % [card.card_name, card.card_owner.player_name])
+		if continue_callback.is_valid():
+			continue_callback.call()
 		return true
+	if not (ignore_self_combat_replacement and combat_death) \
+			and card.has_method("request_self_graveyard_replacement_choice") and not card.abilities_suppressed() \
+			and not _is_watchbeast_active():
+		if card.request_self_graveyard_replacement_choice(
+			self,
+			combat_death,
+			destruction,
+			send_to_abyss,
+			continue_callback
+		):
+			return false
 	if send_to_abyss:
 		card.card_owner.move_card(card, card.card_owner.abyss_zone)
 	else:
 		card.card_owner.move_card(card, card.card_owner.graveyard_zone)
+	if continue_callback.is_valid():
+		continue_callback.call()
 	return true
+
+func has_pending_return_to_hand_choice() -> bool:
+	return _pending_return_to_hand_card != null
+
+func begin_pending_return_to_hand_choice(
+	card: Card,
+	reason: String,
+	continue_callback: Callable = Callable(),
+	send_to_abyss: bool = false,
+	steal_actor: Card = null
+) -> bool:
+	if card == null or _pending_return_to_hand_card != null:
+		return false
+	var interaction_host := get_interaction_host()
+	if interaction_host == null or not interaction_host.has_method("_queue_sharur_escape_prompt"):
+		return false
+	_pending_return_to_hand_card = card
+	_pending_return_to_hand_reason = reason
+	_pending_return_to_hand_send_to_abyss = send_to_abyss
+	_pending_return_to_hand_continue = continue_callback
+	_pending_return_to_hand_steal_actor = steal_actor
+	interaction_host.call("_queue_sharur_escape_prompt", card, reason)
+	return true
+
+func resolve_pending_return_to_hand_choice(pay_cost: bool) -> bool:
+	if not has_pending_return_to_hand_choice():
+		return false
+	var card := _pending_return_to_hand_card
+	var reason := _pending_return_to_hand_reason
+	var send_to_abyss := _pending_return_to_hand_send_to_abyss
+	var continue_callback := _pending_return_to_hand_continue
+	var steal_actor := _pending_return_to_hand_steal_actor
+	_clear_pending_return_to_hand_choice()
+
+	var resolved := false
+	var feedback := ""
+	if pay_cost and card != null and is_instance_valid(card) \
+			and card.has_method("resolve_return_to_hand_replacement_choice"):
+		feedback = card.resolve_return_to_hand_replacement_choice(self, true, reason)
+		resolved = card.card_owner != null and card.current_zone == card.card_owner.hand_zone
+
+	if not resolved and reason == "stolen":
+		resolved = _complete_creature_pick_up_equipment(steal_actor, card)
+		if feedback == "":
+			if resolved and steal_actor != null and card != null:
+				feedback = "%s steals %s." % [steal_actor.card_name, card.card_name]
+			elif card != null:
+				feedback = "%s could not be stolen." % card.card_name
+	elif not resolved and card != null and card.card_owner != null:
+		if send_to_abyss:
+			card.card_owner.move_card(card, card.card_owner.abyss_zone)
+			if feedback == "":
+				feedback = "%s is sent to the abyss." % card.card_name
+		else:
+			card.card_owner.move_card(card, card.card_owner.graveyard_zone)
+			if feedback == "":
+				feedback = "%s is destroyed." % card.card_name
+		resolved = true
+
+	if feedback.strip_edges() != "":
+		note_player_feedback(feedback)
+	if continue_callback.is_valid():
+		continue_callback.call()
+	return resolved
+
+func _clear_pending_return_to_hand_choice() -> void:
+	_pending_return_to_hand_card = null
+	_pending_return_to_hand_reason = ""
+	_pending_return_to_hand_send_to_abyss = false
+	_pending_return_to_hand_continue = Callable()
+	_pending_return_to_hand_steal_actor = null
 
 func _is_turn_destruction_ward_protected(card: Card) -> bool:
 	if card == null or card.card_type != Card.CardType.CREATURE:
@@ -2523,6 +2950,35 @@ func _clear_pending_doorway_choice() -> void:
 func banish_card_with_hook(card: Card) -> void:
 	_send_to_abyss_with_hook(card)
 
+func remove_card_from_game_with_hook(card: Card) -> void:
+	if card == null:
+		return
+	var from_zone := card.current_zone
+	if from_zone == null:
+		return
+	if card.current_zone.is_board_zone():
+		card.last_board_zone_type = card.current_zone.zone_type
+		card.last_board_zone_index = card.current_zone.zone_index
+	if card.is_creature_card() and from_zone.is_board_zone():
+		for equip in card.equipment.duplicate():
+			if equip == null:
+				continue
+			equip.unequip()
+	if card.card_type == Card.CardType.EQUIPMENT and card.equipped_on != null:
+		card.unequip()
+	if from_zone.is_board_zone():
+		if card.has_method("reset_activation_counter"):
+			card.reset_activation_counter()
+		if card.has_method("remove_status_effects_with_flag"):
+			card.remove_status_effects_with_flag("remove_when_leaves_board")
+		card.remove_effects_expiring_after_combat()
+	if card.has_method("on_removed") and not card.abilities_suppressed():
+		card.on_removed(self)
+	from_zone.remove_card(card)
+	card.board_entry_order = -1
+	if card.card_owner != null:
+		card.card_owner.card_moved.emit(card, from_zone, null)
+
 func _send_to_abyss_with_hook(card: Card) -> void:
 	if card.has_method("on_removed") and not card.abilities_suppressed():
 		card.on_removed(self)
@@ -2570,6 +3026,35 @@ func _notify_board_cards_of_movement(moved_card: Card, from_zone: Zone, to_zone:
 			for board_card in zone.cards.duplicate():
 				if board_card != null and board_card.has_method("on_any_card_moved"):
 					board_card.on_any_card_moved(self, moved_card, from_zone, to_zone)
+
+func _notify_cards_of_creature_mode_change(creature: Card, old_mode: Card.CreatureMode) -> void:
+	for player in players:
+		for zone in [player.god_zone] + player.power_zones + player.frontline_zones + player.reserve_zones:
+			for board_card in zone.cards.duplicate():
+				if board_card != null and board_card.has_method("on_any_creature_mode_changed") and not board_card.abilities_suppressed():
+					board_card.on_any_creature_mode_changed(self, creature, old_mode)
+
+func _resolve_destroy_at_turn_end_statuses() -> void:
+	var due_cards: Array[Card] = []
+	for player in players:
+		for zone in player.frontline_zones + player.reserve_zones:
+			for card in zone.cards.duplicate():
+				if card == null or not card.has_status_effect("destroy_at_turn_end"):
+					continue
+				var status = card.get_status_effect("destroy_at_turn_end")
+				if int(status.get("expires_turn", -1)) > turn_number:
+					continue
+				due_cards.append(card)
+
+	for card in due_cards:
+		if card == null or card.current_zone == null or not card.current_zone.is_board_zone():
+			continue
+		var card_name_for_feedback := card.get_target_log_display_name(get_feedback_viewer())
+		card.remove_status_effects_by_name("destroy_at_turn_end")
+		var on_destroy_complete := func() -> void:
+			if card.current_zone == null or not card.current_zone.is_board_zone():
+				note_player_feedback("%s is destroyed at turn's end." % card_name_for_feedback)
+		request_send_to_graveyard(card, on_destroy_complete, false, true)
 
 func notify_card_revealed_by_effect(revealed_card: Card, source_card: Card) -> void:
 	if revealed_card == null or source_card == null:
@@ -2795,6 +3280,8 @@ func _get_cost_adjustment_source_cards() -> Array[Card]:
 func _can_source_adjust_costs(card: Card) -> bool:
 	if card == null or card.current_zone == null or card.card_owner == null:
 		return false
+	if (card.is_power or card.is_god) and not can_player_use_powers(card.card_owner):
+		return false
 	if card is PowerCard:
 		return (card as PowerCard).is_effectively_active()
 	if card.current_zone == card.card_owner.god_zone:
@@ -2830,6 +3317,8 @@ func _normalize_cost_adjustment_entry(raw_entry, source_card: Card) -> Dictionar
 func _get_active_powers() -> Array[PowerCard]:
 	var active_powers: Array[PowerCard] = []
 	for player in players:
+		if not can_player_use_powers(player):
+			continue
 		for zone in player.power_zones:
 			if zone.cards.is_empty():
 				continue
@@ -2837,6 +3326,48 @@ func _get_active_powers() -> Array[PowerCard]:
 			if power != null and power.is_effectively_active():
 				active_powers.append(power)
 	return active_powers
+
+func player_has_normal_god(player: Player) -> bool:
+	return player != null and player.god_zone != null and not player.god_zone.cards.is_empty()
+
+func player_has_face_up_awake_active_god(player: Player) -> bool:
+	if player == null:
+		return false
+	var current_god := player.god_zone.cards[0] as GodCard if player.god_zone != null and not player.god_zone.cards.is_empty() else null
+	for zone in player.frontline_zones + player.reserve_zones:
+		for card in zone.cards:
+			if card == null:
+				continue
+			if not card.has_type("Active God"):
+				continue
+			if card.get_controller() != player:
+				continue
+			if card.is_face_down or card.is_stealth or card.is_sleeping:
+				continue
+			var active_god := card as ActiveGodCard
+			if current_god != null and current_god.uses_culture_locked_deckbuilding():
+				if active_god == null or not current_god.is_own_active_god_card(active_god):
+					continue
+			elif current_god == null:
+				if active_god == null:
+					continue
+				var stored_god := active_god.get_stored_normal_god() as GodCard
+				if stored_god == null:
+					continue
+				if stored_god.uses_culture_locked_deckbuilding() and not stored_god.is_own_active_god_card(active_god):
+					continue
+			return true
+	return false
+
+func can_player_use_powers(player: Player) -> bool:
+	if player == null:
+		return false
+	return player_has_normal_god(player) or player_has_face_up_awake_active_god(player)
+
+func is_player_under_god_death(player: Player) -> bool:
+	if player == null:
+		return false
+	return not can_player_use_powers(player)
 
 func has_active_laws_of_civilization() -> bool:
 	for power in _get_active_powers():

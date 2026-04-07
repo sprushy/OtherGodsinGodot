@@ -201,6 +201,8 @@ const DEBUFF_AFFORDANCE_GAP := 4.0
 const DEBUFF_BADGE_SIZE := 22.0
 const FOLLOWERS_ATTACK_RESULT_SECONDS := 0.66
 const POWER_LOCK_TEXTURE := preload("res://images/Norse Power Lock.png")
+const TIAMAT_GOD_SCRIPT := preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
+const TIAMAT_STACK_MAX_VISIBLE_CARDS := 4
 static var _zone_extent: float = BASE_ZONE_EXTENT
 
 var _row_label: String = ""
@@ -373,17 +375,7 @@ func _add_power_lock_overlay(overlay: Control, card: Card) -> void:
 		return
 	if card.card_type != Card.CardType.POWER or not card.is_face_down:
 		return
-	if POWER_LOCK_TEXTURE == null:
-		return
-
-	var lock_overlay := TextureRect.new()
-	lock_overlay.texture = POWER_LOCK_TEXTURE
-	lock_overlay.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-	lock_overlay.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	lock_overlay.modulate = Color(1.0, 1.0, 1.0, 1.0)
-	lock_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	lock_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	overlay.add_child(lock_overlay)
+	_add_power_lock_texture_overlay(overlay)
 
 func _add_playing_aura(overlay: Control) -> void:
 	if overlay == null:
@@ -783,6 +775,167 @@ func _make_card_art_preview(source_card: Card) -> Control:
 	art.offset_bottom = -2
 	return art
 
+func _is_tiamat_power_creature_zone() -> bool:
+	if _preview_card != null:
+		return false
+	if zone == null or owning_player == null:
+		return false
+	if zone.zone_type != Zone.ZoneType.POWER_SLOT or zone.cards.is_empty():
+		return false
+	if owning_player.god_zone == null or owning_player.god_zone.cards.is_empty():
+		return false
+	if not TIAMAT_GOD_SCRIPT.is_tiamat_god(owning_player.god_zone.cards[0]):
+		return false
+	for slot_card in zone.cards:
+		if not TIAMAT_GOD_SCRIPT.is_valid_slot_creature(slot_card):
+			return false
+	return true
+
+func _add_power_lock_texture_overlay(overlay: Control) -> void:
+	if overlay == null or POWER_LOCK_TEXTURE == null:
+		return
+
+	var lock_overlay := TextureRect.new()
+	lock_overlay.texture = POWER_LOCK_TEXTURE
+	lock_overlay.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	lock_overlay.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	lock_overlay.modulate = Color(1.0, 1.0, 1.0, 1.0)
+	lock_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	lock_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	overlay.add_child(lock_overlay)
+
+func _make_tiamat_slot_card_preview(slot_card: Card, rect: Rect2, z_order: int) -> Control:
+	var frame := PanelContainer.new()
+	frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	frame.position = rect.position
+	frame.size = rect.size
+	frame.z_index = z_order
+
+	var frame_style := StyleBoxFlat.new()
+	frame_style.bg_color = Color(0.03, 0.03, 0.05, 0.96)
+	frame_style.border_color = Color(0.9, 0.84, 0.54, 0.94)
+	frame_style.corner_radius_top_left = 7
+	frame_style.corner_radius_top_right = 7
+	frame_style.corner_radius_bottom_left = 7
+	frame_style.corner_radius_bottom_right = 7
+	frame_style.shadow_color = Color(0.0, 0.0, 0.0, 0.4)
+	frame_style.shadow_size = 6
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		frame_style.set_border_width(side, 1)
+	frame.add_theme_stylebox_override("panel", frame_style)
+
+	if slot_card != null and slot_card.art_path != "":
+		var tex := load(slot_card.art_path) as Texture2D
+		if tex != null:
+			var art := TextureRect.new()
+			art.texture = tex
+			art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+			art.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			art.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+			art.offset_left = 2
+			art.offset_top = 2
+			art.offset_right = -2
+			art.offset_bottom = -2
+			frame.add_child(art)
+
+	var level_badge := PanelContainer.new()
+	level_badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	level_badge.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
+	level_badge.offset_left = -28
+	level_badge.offset_top = -20
+	level_badge.offset_right = -4
+	level_badge.offset_bottom = -4
+
+	var badge_style := StyleBoxFlat.new()
+	badge_style.bg_color = Color(0.12, 0.09, 0.04, 0.92)
+	badge_style.border_color = Color(0.98, 0.9, 0.56, 0.95)
+	badge_style.corner_radius_top_left = 6
+	badge_style.corner_radius_top_right = 6
+	badge_style.corner_radius_bottom_left = 6
+	badge_style.corner_radius_bottom_right = 6
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		badge_style.set_border_width(side, 1)
+	level_badge.add_theme_stylebox_override("panel", badge_style)
+
+	var level_label := Label.new()
+	level_label.text = str(slot_card.level) if slot_card != null else "?"
+	level_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	level_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	level_label.add_theme_font_size_override("font_size", 11)
+	level_label.add_theme_color_override("font_color", Color(1.0, 0.96, 0.78))
+	level_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	level_badge.add_child(level_label)
+	frame.add_child(level_badge)
+
+	return frame
+
+func _add_tiamat_power_creature_stack(overlay: Control) -> void:
+	if overlay == null or zone == null or zone.cards.is_empty():
+		return
+
+	var visible_cards: Array[Card] = []
+	var start_index := maxi(0, zone.cards.size() - TIAMAT_STACK_MAX_VISIBLE_CARDS)
+	for card_index in range(start_index, zone.cards.size()):
+		var slot_card := zone.cards[card_index] as Card
+		if slot_card != null:
+			visible_cards.append(slot_card)
+	if visible_cards.is_empty():
+		return
+
+	var zone_size := size
+	if zone_size.x <= 0.0 or zone_size.y <= 0.0:
+		zone_size = get_zone_size()
+
+	var step_y := 18.0
+	var max_width := maxf(74.0, zone_size.x - 72.0)
+	var max_height := maxf(104.0, zone_size.y - (visible_cards.size() - 1) * step_y - 16.0)
+	var card_height := clampf(max_height, 104.0, 132.0)
+	var card_width := clampf(card_height * 0.7, 72.0, max_width)
+	var stack_height := card_height + (visible_cards.size() - 1) * step_y
+	var start_x := (zone_size.x - card_width) * 0.5
+	var start_y := maxf(6.0, (zone_size.y - stack_height) * 0.5)
+
+	for visible_index in range(visible_cards.size()):
+		var rect := Rect2(
+			Vector2(start_x, start_y + float(visible_index) * step_y),
+			Vector2(card_width, card_height)
+		)
+		overlay.add_child(_make_tiamat_slot_card_preview(visible_cards[visible_index], rect, visible_index))
+
+	if zone.cards.size() > visible_cards.size():
+		var extra_count := zone.cards.size() - visible_cards.size()
+		var count_badge := PanelContainer.new()
+		count_badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		count_badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+		count_badge.offset_left = -34
+		count_badge.offset_top = 6
+		count_badge.offset_right = -6
+		count_badge.offset_bottom = 24
+
+		var count_style := StyleBoxFlat.new()
+		count_style.bg_color = Color(0.12, 0.08, 0.03, 0.94)
+		count_style.border_color = Color(0.96, 0.88, 0.48, 0.95)
+		count_style.corner_radius_top_left = 6
+		count_style.corner_radius_top_right = 6
+		count_style.corner_radius_bottom_left = 6
+		count_style.corner_radius_bottom_right = 6
+		for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+			count_style.set_border_width(side, 1)
+		count_badge.add_theme_stylebox_override("panel", count_style)
+
+		var count_label := Label.new()
+		count_label.text = "+%d" % extra_count
+		count_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		count_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		count_label.add_theme_font_size_override("font_size", 10)
+		count_label.add_theme_color_override("font_color", Color(1.0, 0.96, 0.8))
+		count_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		count_badge.add_child(count_label)
+		overlay.add_child(count_badge)
+
+	_add_power_lock_texture_overlay(overlay)
+
 func _make_debuff_source_preview(entry: Dictionary) -> Control:
 	var source_card := entry.get("source_card", null) as Card
 	return _make_card_art_preview(source_card)
@@ -1022,7 +1175,17 @@ func _is_god_targeted_by_followers_attack(card: Card) -> bool:
 	for action in game_manager.action_stack:
 		if action == null or action.type != CardAction.Type.ATTACK:
 			continue
-		if action.target is Player and action.target == owning_player:
+		if action.target is Player and action.target == owning_player and action.interceptor == null:
+			return true
+	return false
+
+func _is_card_intercepting_followers_attack(card: Card) -> bool:
+	if card == null or game_manager == null:
+		return false
+	for action in game_manager.action_stack:
+		if action == null or action.type != CardAction.Type.ATTACK:
+			continue
+		if action.interceptor == card and action.target is Player:
 			return true
 	return false
 
@@ -1107,6 +1270,18 @@ func _refresh_display() -> void:
 		style.set_border_width(side, 2)
 
 	if card != null:
+		if _is_tiamat_power_creature_zone():
+			style.bg_color = Color(0.09, 0.12, 0.16, 0.92)
+			style.border_color = Color(0.82, 0.72, 0.36, 0.96)
+			add_theme_stylebox_override("panel", style)
+
+			var tiamat_overlay := Control.new()
+			tiamat_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			tiamat_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+			add_child(tiamat_overlay)
+			_add_tiamat_power_creature_stack(tiamat_overlay)
+			_add_followers_attack_result_label(tiamat_overlay)
+			return
 
 		# Face-down cards: own stealth / locked powers / prepared cards show hazed art; others show cardback
 		if card.is_face_down:
@@ -1360,6 +1535,8 @@ func _refresh_display() -> void:
 		if _is_card_targeted_on_stack(card) or _is_card_pending_target(card):
 			_add_target_aura(card_overlay)
 			_add_stack_target_indicator(card_overlay)
+		if _is_card_intercepting_followers_attack(card):
+			_add_followers_attack_target_tint(card_overlay)
 
 		# Art background; stealth shows hazed art (own) or cardback (opponent)
 		var show_public_stealth := card.is_stealth and card.is_temporarily_revealed()

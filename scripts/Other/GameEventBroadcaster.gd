@@ -41,11 +41,10 @@ func _on_move_validated(move: Dictionary) -> void:
 	# broadcasting again here would send it twice per turn change.
 	if move.get("type", "") in ["end_turn", "intercept_decision", "priority_pass"]:
 		return
-	var label := _label_for_move(move)
-	_broadcast_full_state(label)
+	_broadcast_full_state_for_move(move)
 
-func _on_action_resolved(_action: CardAction) -> void:
-	_broadcast_full_state(match_manager.last_resolution_text)
+func _on_action_resolved(action: CardAction) -> void:
+	_broadcast_full_state_for_action(action)
 
 func _on_turn_upkeep_started(_turn_number: int, player: Player) -> void:
 	if network_manager == null:
@@ -109,7 +108,7 @@ func _broadcast_ui_interaction(player_index: int, type: String, data: Dictionary
 func _broadcast_full_state(action_message: String) -> void:
 	if network_manager == null:
 		return
-	# Send personalized state to each player (hand privacy)
+	# Send personalized state to each player (hand privacy + hidden board privacy)
 	for player_index in network_manager.player_peer_ids:
 		var peer_id: int = network_manager.player_peer_ids[player_index]
 		var state_data := GameState.serialize(game_manager, player_index)
@@ -123,11 +122,42 @@ func _broadcast_full_state(action_message: String) -> void:
 		else:
 			network_manager.broadcast_event_to_peer(peer_id, "full_state", event_data)
 
+func _broadcast_full_state_for_move(move: Dictionary) -> void:
+	if network_manager == null:
+		return
+	for player_index in network_manager.player_peer_ids:
+		var peer_id: int = network_manager.player_peer_ids[player_index]
+		var state_data := GameState.serialize(game_manager, player_index)
+		var event_data := {
+			state = state_data,
+			action_message = _label_for_move(move, _viewer_for_player_index(player_index)),
+		}
+		if peer_id == 1:
+			network_manager.game_event_received.emit("full_state", event_data)
+		else:
+			network_manager.broadcast_event_to_peer(peer_id, "full_state", event_data)
+
+func _broadcast_full_state_for_action(action: CardAction) -> void:
+	if network_manager == null:
+		return
+	for player_index in network_manager.player_peer_ids:
+		var peer_id: int = network_manager.player_peer_ids[player_index]
+		var viewer := _viewer_for_player_index(player_index)
+		var state_data := GameState.serialize(game_manager, player_index)
+		var event_data := {
+			state = state_data,
+			action_message = _label_for_resolved_action(action, viewer),
+		}
+		if peer_id == 1:
+			network_manager.game_event_received.emit("full_state", event_data)
+		else:
+			network_manager.broadcast_event_to_peer(peer_id, "full_state", event_data)
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-func _label_for_move(move: Dictionary) -> String:
+func _label_for_move(move: Dictionary, viewer: Player = null) -> String:
 	match move.get("type", ""):
 		"attack":
 			var attacker := move.get("attacker", null) as Card
@@ -135,55 +165,115 @@ func _label_for_move(move: Dictionary) -> String:
 			if attacker == null:
 				return "An attack was declared."
 			if target is Player:
-				return "%s attacks %s's followers." % [attacker.card_name, (target as Player).player_name]
+				return "%s attacks %s's followers." % [_card_label_for_viewer(attacker, viewer), (target as Player).player_name]
 			if target is Card:
-				return "%s attacks %s." % [attacker.card_name, (target as Card).card_name]
-			return attacker.card_name + " attacks."
+				return "%s attacks %s." % [_card_label_for_viewer(attacker, viewer), _target_label_for_viewer(target, viewer)]
+			return _card_label_for_viewer(attacker, viewer) + " attacks."
 		"intercept_decision":
 			return ""
 		"play_card":
 			var card := game_manager.get_card_by_uid(move.get("card_uid", ""))
-			return ("Played %s." % card.card_name) if card else "Card played."
+			return ("Played %s." % _card_label_for_viewer(card, viewer)) if card else "Card played."
 		"cast_spell":
 			return _label_for_stack_move(
 				game_manager.get_card_by_uid(move.get("spell_uid", "")),
-				game_manager.get_card_by_uid(move.get("target_uid", ""))
+				game_manager.get_card_by_uid(move.get("target_uid", "")),
+				viewer
 			)
 		"cast_charm":
 			return _label_for_stack_move(
 				game_manager.get_card_by_uid(move.get("charm_uid", "")),
-				game_manager.get_card_by_uid(move.get("target_uid", ""))
+				game_manager.get_card_by_uid(move.get("target_uid", "")),
+				viewer
 			)
 		"god_ability":
 			return _label_for_stack_move(
 				game_manager.get_card_by_uid(move.get("god_uid", "")),
-				game_manager.get_card_by_uid(move.get("target_uid", ""))
+				game_manager.get_card_by_uid(move.get("target_uid", "")),
+				viewer
 			)
 		"activate_power":
 			return _label_for_stack_move(
 				game_manager.get_card_by_uid(move.get("power_uid", "")),
-				game_manager.get_card_by_uid(move.get("target_uid", ""))
+				game_manager.get_card_by_uid(move.get("target_uid", "")),
+				viewer
 			)
 		"activate_card_ability":
 			return _label_for_stack_move(
 				game_manager.get_card_by_uid(move.get("source_uid", "")),
-				game_manager.get_card_by_uid(move.get("target_uid", ""))
+				game_manager.get_card_by_uid(move.get("target_uid", "")),
+				viewer
 			)
+		"wolf_adolescent_maturation_choice":
+			var wolf := game_manager.get_card_by_uid(move.get("source_uid", ""))
+			var lupine := game_manager.get_card_by_uid(move.get("target_uid", ""))
+			if lupine != null:
+				return "%s matures into %s." % [_card_label_for_viewer(wolf, viewer), _card_label_for_viewer(lupine, viewer)]
+			return ("%s skips Maturation." % _card_label_for_viewer(wolf, viewer)) if wolf != null else "Wolf Adolescent skips Maturation."
 		"prepare_card":
 			return "A card was prepared face-down."
 		"creature_move":
 			var card := game_manager.get_card_by_uid(move.get("card_uid", ""))
-			return ("%s moved." % card.card_name) if card else "Creature moved."
+			return ("%s moved." % _card_label_for_viewer(card, viewer)) if card else "Creature moved."
 		"change_mode":
 			var card := game_manager.get_card_by_uid(move.get("card_uid", ""))
-			return ("%s changed stance." % card.card_name) if card else "Stance changed."
+			return ("%s changed stance." % _card_label_for_viewer(card, viewer)) if card else "Stance changed."
+		"tiamat_upkeep_choice":
+			var tiamat_card := game_manager.get_card_by_uid(str(move.get("card_uid", "")))
+			return ("Matriarch Rule returned %s to hand." % _card_label_for_viewer(tiamat_card, viewer)) if tiamat_card else "Matriarch Rule returned a slotted creature to hand."
 		"end_turn":
 			return "Turn ended."
 	return ""
 
-func _label_for_stack_move(card: Card, target: Card = null) -> String:
+func _label_for_resolved_action(action: CardAction, viewer: Player = null) -> String:
+	if action == null:
+		return match_manager.last_resolution_text
+	if not _action_involves_hidden_card(action, viewer):
+		return match_manager.last_resolution_text
+	match action.type:
+		CardAction.Type.ATTACK:
+			if action.target is Player:
+				return "%s attacks %s's followers." % [_card_label_for_viewer(action.attacker, viewer), (action.target as Player).player_name]
+			if action.target is Card:
+				return "%s fought %s." % [_card_label_for_viewer(action.attacker, viewer), _target_label_for_viewer(action.target, viewer)]
+			return _card_label_for_viewer(action.attacker, viewer) + " attacks."
+		CardAction.Type.EVENT:
+			return action.event_name.replace("_", " ").capitalize() + "."
+		_:
+			return _label_for_stack_move(action.card, action.target, viewer)
+
+func _label_for_stack_move(card: Card, target = null, viewer: Player = null) -> String:
 	if card == null:
 		return ""
 	if target != null:
-		return "%s is targeting %s." % [card.card_name, target.card_name]
-	return card.card_name + " goes on the stack."
+		return "%s is targeting %s." % [_card_label_for_viewer(card, viewer), _target_label_for_viewer(target, viewer)]
+	return _card_label_for_viewer(card, viewer) + " goes on the stack."
+
+func _viewer_for_player_index(player_index: int) -> Player:
+	if game_manager == null:
+		return null
+	if player_index < 0 or player_index >= game_manager.players.size():
+		return null
+	return game_manager.players[player_index]
+
+func _card_label_for_viewer(card: Card, viewer: Player = null) -> String:
+	if card == null:
+		return "Card"
+	return card.get_log_display_name(viewer)
+
+func _target_label_for_viewer(target, viewer: Player = null) -> String:
+	if target is Card:
+		return (target as Card).get_target_log_display_name(viewer)
+	if target is Player:
+		return (target as Player).player_name + "'s followers"
+	return "target"
+
+func _action_involves_hidden_card(action: CardAction, viewer: Player = null) -> bool:
+	if viewer == null or action == null:
+		return false
+	for maybe_card in [action.card, action.attacker, action.united_front_partner, action.interceptor]:
+		if maybe_card != null and (maybe_card as Card).is_hidden_from_viewer(viewer):
+			return true
+	if action.target is Card and (action.target as Card).is_hidden_from_viewer(viewer):
+		return true
+	return false

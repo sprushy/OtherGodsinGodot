@@ -190,7 +190,8 @@ func _handle_request(peer_id: int, message: Dictionary) -> void:
 				str(deck_session.get("session_id", "")),
 				str(payload.get("deck_name", "")),
 				str(payload.get("deck_id", "")),
-				payload.get("cards", {})
+				payload.get("cards", {}),
+				payload.get("special_setup", {})
 			)
 		LobbyProtocolScript.REQUEST_ACCOUNT_DECKS:
 			_handle_request_account_decks(peer_id)
@@ -393,7 +394,8 @@ func _handle_save_account_deck(peer_id: int, payload: Dictionary) -> void:
 		account_id,
 		str(payload.get("deck_name", "")),
 		payload.get("cards", {}),
-		str(payload.get("deck_id", ""))
+		str(payload.get("deck_id", "")),
+		payload.get("special_setup", {})
 	)
 	if not bool(save_result.get("success", false)):
 		_send_error_to_peer(peer_id, str(save_result.get("message", "Could not save that deck.")))
@@ -640,7 +642,13 @@ func _emit_room_updates(room: LobbyRoom) -> void:
 	_broadcast_room_snapshot(room)
 	_broadcast_room_lists()
 
-func _submit_deck_for_session(session_id: String, deck_name: String, deck_id: String, cards) -> void:
+func _submit_deck_for_session(
+	session_id: String,
+	deck_name: String,
+	deck_id: String,
+	cards,
+	special_setup = {}
+) -> void:
 	var room_id: String = str(room_id_by_session.get(session_id, ""))
 	if room_id.is_empty() or not rooms_by_id.has(room_id):
 		_send_error_to_session(session_id, "Join a room before selecting a deck.")
@@ -650,6 +658,7 @@ func _submit_deck_for_session(session_id: String, deck_name: String, deck_id: St
 	var resolved_deck_name := deck_name.strip_edges()
 	var resolved_deck_id := deck_id.strip_edges()
 	var resolved_cards: Dictionary = {}
+	var resolved_special_setup: Dictionary = {}
 	if not account_id.is_empty():
 		_ensure_deck_store()
 		_ensure_profile_store()
@@ -669,6 +678,9 @@ func _submit_deck_for_session(session_id: String, deck_name: String, deck_id: St
 			_send_error_to_session(session_id, "That saved deck is missing its cards.")
 			return
 		resolved_cards = (saved_cards as Dictionary).duplicate(true)
+		var saved_special_setup = saved_deck.get("special_setup", {})
+		if saved_special_setup is Dictionary:
+			resolved_special_setup = (saved_special_setup as Dictionary).duplicate(true)
 		if profile_store != null:
 			profile_store.set_preferred_deck_id_for_account(account_id, resolved_deck_id)
 	else:
@@ -676,13 +688,23 @@ func _submit_deck_for_session(session_id: String, deck_name: String, deck_id: St
 			_send_error_to_session(session_id, "Deck submission was missing cards.")
 			return
 		resolved_cards = (cards as Dictionary).duplicate(true)
+		var submitted_special_setup = special_setup
+		if submitted_special_setup is Dictionary:
+			resolved_special_setup = (submitted_special_setup as Dictionary).duplicate(true)
 	_ensure_deck_validator()
 	if deck_validator == null:
 		_send_error_to_session(session_id, "Deck validator is unavailable.")
 		return
-	var validation: Dictionary = deck_validator.validate_deck(resolved_cards)
+	var validation: Dictionary = deck_validator.validate_deck(resolved_cards, resolved_special_setup)
 	var room: LobbyRoom = rooms_by_id[room_id]
-	if not room.submit_deck(session_id, resolved_deck_name, resolved_deck_id, validation.get("cards", {}), validation):
+	if not room.submit_deck(
+		session_id,
+		resolved_deck_name,
+		resolved_deck_id,
+		validation.get("cards", {}),
+		validation,
+		validation.get("special_setup", {})
+	):
 		_send_error_to_session(session_id, "Unable to store selected deck.")
 		return
 	var deck_is_valid := bool(validation.get("is_valid", false))

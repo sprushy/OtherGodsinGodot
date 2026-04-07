@@ -20,11 +20,7 @@ func _init() -> void:
 	paragon_of_champions = "Ecstasy, Death"
 
 func can_activate(game_manager: GameManager) -> bool:
-	if game_manager == null:
-		return false
-	if is_muted:
-		return false
-	if card_owner != game_manager.current_player:
+	if not can_use_god_power(game_manager):
 		return false
 	if card_owner == null or card_owner.deck_zone == null or card_owner.deck_zone.cards.is_empty():
 		return false

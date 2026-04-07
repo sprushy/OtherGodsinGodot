@@ -36,9 +36,24 @@ func can_activate(game_manager: GameManager) -> bool:
 		return false
 	if abilities_suppressed():
 		return false
+	if is_shapeshift_locked():
+		return false
 	if is_sleeping:
 		return false
 	return can_take_major_creature_action()
+
+func get_tonal_extraction_spirit_profile() -> Dictionary:
+	return {
+		"card_name": card_name + " Spirit",
+		"level": level,
+		"speed": 1,
+		"resilience": HUMAN_RES_BONUS + resilience if in_feline_form else resilience,
+		"strength": strength if in_feline_form else strength + FELINE_STR_BONUS,
+		"card_types": _get_human_form_types() if in_feline_form else _get_feline_form_types(),
+		"culture": culture,
+		"artist": artist,
+		"art_path": art_path,
+	}
 
 func activate(game_manager: GameManager, _target: Card = null) -> void:
 	if not can_activate(game_manager):
@@ -46,6 +61,7 @@ func activate(game_manager: GameManager, _target: Card = null) -> void:
 	shift_forms()
 	spend_major_creature_action()
 	if game_manager != null:
+		game_manager.notify_creature_shapeshifted(self, self)
 		game_manager.note_player_feedback(
 			"%s shifts into %s form." % [card_name, "Feline" if in_feline_form else "Human"]
 		)
