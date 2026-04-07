@@ -951,11 +951,10 @@ func _make_card_item(card: Card) -> Control:
 		if active_candidate != null:
 			var active_tag := PanelContainer.new()
 			active_tag.mouse_filter = Control.MOUSE_FILTER_STOP
-			active_tag.anchor_left = 0.5; active_tag.anchor_right = 0.5
-			active_tag.anchor_top = 0; active_tag.anchor_bottom = 0
-			active_tag.offset_left = -30; active_tag.offset_right = 30
-			active_tag.offset_top = 22; active_tag.offset_bottom = 38
-			
+			active_tag.anchor_left = 1; active_tag.anchor_right = 1
+			active_tag.anchor_top = 1; active_tag.anchor_bottom = 1
+			active_tag.offset_left = -64; active_tag.offset_right = -4
+			active_tag.offset_top = -62; active_tag.offset_bottom = -46			
 			var tag_style := StyleBoxFlat.new()
 			tag_style.bg_color = Color(0.15, 0.45, 0.15, 0.9)
 			tag_style.border_color = Color(0.6, 1.0, 0.6, 0.8)
