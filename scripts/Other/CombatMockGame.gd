@@ -463,6 +463,113 @@ func _promote_transient_ui(control: Control, overlay_z_index: int = TRANSIENT_UI
 	control.z_index = overlay_z_index
 	control.move_to_front()
 
+var _pending_mummu_entropy_prompts: Array[Dictionary] = []
+var _mummu_entropy_panel: Control = null
+
+func _queue_mummu_entropy_prompt(mummu: Card, victim: Card) -> void:
+	if mummu == null or victim == null or game_manager == null:
+		return
+	_pending_mummu_entropy_prompts.append({"source": mummu, "victim": victim})
+	if _mummu_entropy_panel == null:
+		_show_next_mummu_entropy_prompt()
+
+func _show_next_mummu_entropy_prompt() -> void:
+	_hide_mummu_entropy_prompt()
+	if _pending_mummu_entropy_prompts.is_empty():
+		return
+	
+	var data := _pending_mummu_entropy_prompts[0]
+	var mummu: Card = data.source
+	var victim: Card = data.victim
+	
+	if not is_instance_valid(mummu) or not is_instance_valid(victim):
+		_pending_mummu_entropy_prompts.remove_at(0)
+		_show_next_mummu_entropy_prompt()
+		return
+
+	var panel := PanelContainer.new()
+	panel.name = "MummuEntropyPromptPanel"
+	_mummu_entropy_panel = panel
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.05, 0.05, 0.08, 0.97)
+	style.border_color = Color(0.4, 0.4, 0.5, 0.95)
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		style.set_border_width(side, 2)
+	panel.add_theme_stylebox_override("panel", style)
+	panel.custom_minimum_size = Vector2(320, 0)
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 8)
+	panel.add_child(vbox)
+
+	var title := Label.new()
+	title.text = "Entropy: " + victim.card_name
+	title.add_theme_font_size_override("font_size", 14)
+	vbox.add_child(title)
+
+	var info := Label.new()
+	info.text = "Choose whether to Prime or Shelve " + victim.card_name + "."
+	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	info.add_theme_font_size_override("font_size", 11)
+	vbox.add_child(info)
+
+	var buttons := HBoxContainer.new()
+	buttons.add_theme_constant_override("separation", 10)
+	buttons.alignment = BoxContainer.ALIGNMENT_CENTER
+	vbox.add_child(buttons)
+
+	var prime_btn := Button.new()
+	prime_btn.text = "Prime"
+	prime_btn.custom_minimum_size = Vector2(100, 32)
+	prime_btn.pressed.connect(_resolve_mummu_entropy_prompt.bind("prime"))
+	buttons.add_child(prime_btn)
+
+	var shelve_btn := Button.new()
+	shelve_btn.text = "Shelve"
+	shelve_btn.custom_minimum_size = Vector2(100, 32)
+	shelve_btn.pressed.connect(_resolve_mummu_entropy_prompt.bind("shelve"))
+	buttons.add_child(shelve_btn)
+
+	add_child(panel)
+	_promote_transient_ui(panel)
+	panel.anchor_left = 0.5
+	panel.anchor_right = 0.5
+	panel.anchor_top = 0.5
+	panel.anchor_bottom = 0.5
+	panel.offset_left = -160
+	panel.offset_right = 160
+	panel.offset_top = -60
+	panel.offset_bottom = 60
+	
+	action_label.text = "Entropy: Choose Prime or Shelve for " + victim.card_name + "."
+	update_ui()
+
+func _resolve_mummu_entropy_prompt(choice: String) -> void:
+	if _pending_mummu_entropy_prompts.is_empty():
+		_hide_mummu_entropy_prompt()
+		return
+	
+	var data := _pending_mummu_entropy_prompts.pop_front()
+	var mummu: Card = data.source
+	var victim: Card = data.victim
+	_hide_mummu_entropy_prompt()
+
+	if is_instance_valid(mummu) and is_instance_valid(victim) and game_input != null:
+		game_input.submit_action({
+			"type": "mummu_entropy_choice",
+			"source_uid": mummu.uid,
+			"chosen_uid": victim.uid,
+			"placement": choice
+		})
+	
+	_show_next_mummu_entropy_prompt()
+	update_ui()
+
+func _hide_mummu_entropy_prompt() -> void:
+	if _mummu_entropy_panel != null and is_instance_valid(_mummu_entropy_panel):
+		_mummu_entropy_panel.queue_free()
+	_mummu_entropy_panel = null
+
 func _get_doorway_replacement_source(card: Card) -> DoorwayToTheVoid:
 	if game_manager == null or card == null or card.card_type != Card.CardType.CREATURE:
 		return null

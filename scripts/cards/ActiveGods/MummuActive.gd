@@ -19,7 +19,7 @@ func _init() -> void:
 	strength = 35
 	culture = "Ancient"
 	flavor_text = "Awakened entropy devours the field, then sinks back beneath creation."
-	ability_text = "[b]Entropy[/b] ([b]Passive[/b]): Cards destroyed by Mummu are [b]Primed[/b] or [b]Shelved[/b]. When this card leaves the field, [b]Shelve[/b] it and reactivate your god card."
+	ability_text = "[b]Entropy[/b] ([b]Passive[/b]): Choose to [b]Prime[/b] or [b]Shelve[/b] any card destroyed by Mummu. When this card leaves the field, reactivate your god card."
 	art_path = ART_PATH
 	name_at_bottom = true
 	artist = "Ricarrdo Zoppello"
@@ -73,19 +73,17 @@ func on_removed(game_manager: GameManager) -> void:
 func _restore_normal_god_after_leaving_field(game_manager: GameManager) -> void:
 	if has_meta(RESTORE_DEFERRED_META):
 		remove_meta(RESTORE_DEFERRED_META)
-	if card_owner == null or card_owner.deck_zone == null:
+	if card_owner == null:
 		return
 	if current_zone != null and current_zone.is_board_zone():
 		return
 
-	card_owner.move_card(self, card_owner.deck_zone)
-	card_owner.deck_zone.cards.erase(self)
-	card_owner.deck_zone.cards.append(self)
+	if game_manager != null:
+		game_manager.remove_card_from_game_with_hook(self)
 
 	var restored_god := restore_stored_normal_god()
 	if restored_god != null and game_manager != null:
-		game_manager.note_player_feedback("%s was shelved and %s was reactivated." % [
-			card_name,
+		game_manager.note_player_feedback("%s was reactivated." % [
 			restored_god.card_name
 		])
 
