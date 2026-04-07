@@ -220,13 +220,13 @@ func _build_top_bar(parent: Control) -> void:
 	inner.add_child(spacer)
 
 	var btn_group := ButtonGroup.new()
-	for label in ["All", "Gods", "Powers", "Legendaries", "Creatures", "Equipment", "Charms", "Spells", "Structures", "Hexes"]:
+	for label in ["All", "Gods", "Active Gods", "Powers", "Legendaries", "Creatures", "Equipment", "Charms", "Spells", "Structures", "Hexes"]:
 		var btn := Button.new()
 		btn.text = label
 		btn.toggle_mode = true
 		btn.button_group = btn_group
 		btn.button_pressed = (label == _filter)
-		btn.custom_minimum_size = Vector2(96 if label == "Legendaries" else 72, 32)
+		btn.custom_minimum_size = Vector2(96 if label == "Legendaries" or label == "Active Gods" else 72, 32)
 		var captured_label: String = label
 		btn.pressed.connect(func() -> void: _set_filter(captured_label))
 		_filter_buttons[label] = btn
@@ -718,7 +718,11 @@ func _refresh_grid() -> void:
 
 func _matches_filter(card: Card) -> bool:
 	if card is ActiveGodCard:
+		if _filter != "Active Gods":
+			return false
+	elif _filter == "Active Gods":
 		return false
+
 	if _faction_filter != "All" and card.culture != _faction_filter:
 		return false
 	if not _matches_mana_cost_filter(card):
@@ -728,6 +732,7 @@ func _matches_filter(card: Card) -> bool:
 	match _filter:
 		"All":       return true
 		"Gods":      return card.is_god
+		"Active Gods": return card is ActiveGodCard
 		"Powers":    return card.is_power and not card.is_god
 		"Legendaries": return card.is_legendary and not card.is_god and not card.is_power
 		"Creatures": return card.card_type == Card.CardType.CREATURE and not card.is_god
@@ -951,6 +956,13 @@ func _make_card_item(card: Card) -> Control:
 		if active_candidate != null:
 			var active_tag := PanelContainer.new()
 			active_tag.mouse_filter = Control.MOUSE_FILTER_STOP
+			
+			active_tag.gui_input.connect(func(ev: InputEvent) -> void:
+				if ev is InputEventMouseButton and ev.pressed:
+					# Prevent clicking the tag from also clicking the card under it
+					get_viewport().set_input_as_handled()
+			)
+			
 			active_tag.anchor_left = 1; active_tag.anchor_right = 1
 			active_tag.anchor_top = 1; active_tag.anchor_bottom = 1
 			active_tag.offset_left = -64; active_tag.offset_right = -4
