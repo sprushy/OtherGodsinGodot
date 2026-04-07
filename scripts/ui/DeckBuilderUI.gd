@@ -717,6 +717,8 @@ func _refresh_grid() -> void:
 		_update_count_badges()
 
 func _matches_filter(card: Card) -> bool:
+	if card is ActiveGodCard:
+		return false
 	if _faction_filter != "All" and card.culture != _faction_filter:
 		return false
 	if not _matches_mana_cost_filter(card):
@@ -996,13 +998,15 @@ func _refresh_deck_panel() -> void:
 		child.queue_free()
 
 	var total := 0
-	for cnt: int in _deck.values():
-		total += cnt
+	for card_name in _deck:
+		var card := _find_template(card_name)
+		if card != null and not card is ActiveGodCard:
+			total += int(_deck[card_name])
 	_deck_count_lbl.text = "%d cards" % total
 
 	# Sort: gods → creatures → spells → structures → hexes, then alphabetical
 	var in_deck_filter := func(c: Card) -> bool:
-		return _deck.has(c.card_name) and _deck[c.card_name] > 0
+		return _deck.has(c.card_name) and _deck[c.card_name] > 0 and not c is ActiveGodCard
 	var in_deck: Array = _all_cards.filter(in_deck_filter)
 	var in_deck_sort := func(a: Card, b: Card) -> bool:
 		var oa := _type_order(a)
@@ -1942,7 +1946,7 @@ func _update_validation() -> void:
 	for card_name: String in _deck:
 		var cnt: int = _deck[card_name]
 		var card := _find_template(card_name)
-		if card == null:
+		if card == null or card is ActiveGodCard:
 			continue
 		total += cnt
 		if card.is_god:
