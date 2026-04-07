@@ -945,37 +945,35 @@ func _make_card_item(card: Card) -> Control:
 
 	# Active God tag
 	if card.is_god:
-		var god_card := card as GodCard
-		if god_card != null:
-			var active_candidate := god_card.get_champions_call_candidate(true)
-			if active_candidate != null:
-				var active_tag := PanelContainer.new()
-				active_tag.mouse_filter = Control.MOUSE_FILTER_STOP
-				active_tag.anchor_left = 0.5; active_tag.anchor_right = 0.5
-				active_tag.anchor_top = 0; active_tag.anchor_bottom = 0
-				active_tag.offset_left = -30; active_tag.offset_right = 30
-				active_tag.offset_top = 22; active_tag.offset_bottom = 38
-				
-				var tag_style := StyleBoxFlat.new()
-				tag_style.bg_color = Color(0.15, 0.45, 0.15, 0.9)
-				tag_style.border_color = Color(0.6, 1.0, 0.6, 0.8)
-				for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-					tag_style.set_border_width(side, 1)
-				tag_style.corner_radius_top_left = 4; tag_style.corner_radius_top_right = 4
-				tag_style.corner_radius_bottom_left = 4; tag_style.corner_radius_bottom_right = 4
-				active_tag.add_theme_stylebox_override("panel", tag_style)
-				
-				var tag_lbl := Label.new()
-				tag_lbl.text = "ACTIVE GOD"
-				tag_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-				tag_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-				tag_lbl.add_theme_font_size_override("font_size", 8)
-				tag_lbl.add_theme_color_override("font_color", Color(0.9, 1.0, 0.9))
-				active_tag.add_child(tag_lbl)
-				root.add_child(active_tag)
-				
-				active_tag.mouse_entered.connect(func() -> void: _show_preview(active_candidate))
-				active_tag.mouse_exited.connect(func() -> void: _show_preview(card))
+		var active_candidate := _get_active_god_form(card)
+		if active_candidate != null:
+			var active_tag := PanelContainer.new()
+			active_tag.mouse_filter = Control.MOUSE_FILTER_STOP
+			active_tag.anchor_left = 0.5; active_tag.anchor_right = 0.5
+			active_tag.anchor_top = 0; active_tag.anchor_bottom = 0
+			active_tag.offset_left = -30; active_tag.offset_right = 30
+			active_tag.offset_top = 22; active_tag.offset_bottom = 38
+			
+			var tag_style := StyleBoxFlat.new()
+			tag_style.bg_color = Color(0.15, 0.45, 0.15, 0.9)
+			tag_style.border_color = Color(0.6, 1.0, 0.6, 0.8)
+			for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+				tag_style.set_border_width(side, 1)
+			tag_style.corner_radius_top_left = 4; tag_style.corner_radius_top_right = 4
+			tag_style.corner_radius_bottom_left = 4; tag_style.corner_radius_bottom_right = 4
+			active_tag.add_theme_stylebox_override("panel", tag_style)
+			
+			var tag_lbl := Label.new()
+			tag_lbl.text = "ACTIVE GOD"
+			tag_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			tag_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+			tag_lbl.add_theme_font_size_override("font_size", 8)
+			tag_lbl.add_theme_color_override("font_color", Color(0.9, 1.0, 0.9))
+			active_tag.add_child(tag_lbl)
+			root.add_child(active_tag)
+			
+			active_tag.mouse_entered.connect(func() -> void: _show_preview(active_candidate))
+			active_tag.mouse_exited.connect(func() -> void: _show_preview(card))
 
 	# Input
 	root.gui_input.connect(func(ev: InputEvent) -> void:
@@ -1259,6 +1257,18 @@ func _remove_tiamat_slot_card(slot_index: int, card_name: String) -> void:
 		_tiamat_assignment_slot_index = -1
 	_refresh_deck_panel()
 
+func _get_active_god_form(god: Card) -> ActiveGodCard:
+	if god == null or not god.is_god:
+		return null
+	var god_card := god as GodCard
+	if god_card == null:
+		return null
+	for card in _all_cards:
+		var active_god := card as ActiveGodCard
+		if active_god != null and god_card.is_own_active_god_card(active_god):
+			return active_god
+	return null
+
 # ── deck mutation ──────────────────────────────────────────────────
 func _add_to_deck(card: Card) -> void:
 	var current: int = _deck.get(card.card_name, 0)
@@ -1272,10 +1282,24 @@ func _add_to_deck(card: Card) -> void:
 	if card.is_god:
 		if not _can_add_god_to_current_deck(card):
 			return
+		
+		# If switching gods, clear old god's active forms
+		var old_god := _get_selected_god_template()
+		if old_god != null and old_god.card_name != card.card_name:
+			var old_active := _get_active_god_form(old_god)
+			if old_active != null:
+				_deck.erase(old_active.card_name)
+		
 		for deck_card_name in _deck:
 			var tmpl := _find_template(deck_card_name)
 			if tmpl and tmpl.is_god and _deck[deck_card_name] > 0:
 				return
+		
+		# Adding a main god automatically adds its active version if not already present
+		var active_form := _get_active_god_form(card)
+		if active_form != null and not _deck.has(active_form.card_name):
+			_deck[active_form.card_name] = _max_copies(active_form)
+
 	elif card.is_power and not _can_add_power_to_current_deck(card):
 		return
 	_deck[card.card_name] = current + 1
@@ -1288,6 +1312,14 @@ func _add_to_deck(card: Card) -> void:
 func _remove_from_deck(card_name: String) -> void:
 	if not _deck.has(card_name) or _deck[card_name] <= 0:
 		return
+	
+	var card := _find_template(card_name)
+	if card != null and card.is_god:
+		# Removing a god should also remove its matching active form
+		var active_form := _get_active_god_form(card)
+		if active_form != null:
+			_deck.erase(active_form.card_name)
+
 	_deck[card_name] -= 1
 	if _deck[card_name] == 0:
 		_deck.erase(card_name)
