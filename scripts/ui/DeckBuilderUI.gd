@@ -943,6 +943,40 @@ func _make_card_item(card: Card) -> Control:
 		unavailable_reason_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		root.add_child(unavailable_reason_lbl)
 
+	# Active God tag
+	if card.is_god:
+		var god_card := card as GodCard
+		if god_card != null:
+			var active_candidate := god_card.get_champions_call_candidate(true)
+			if active_candidate != null:
+				var active_tag := PanelContainer.new()
+				active_tag.mouse_filter = Control.MOUSE_FILTER_STOP
+				active_tag.anchor_left = 0.5; active_tag.anchor_right = 0.5
+				active_tag.anchor_top = 0; active_tag.anchor_bottom = 0
+				active_tag.offset_left = -30; active_tag.offset_right = 30
+				active_tag.offset_top = 22; active_tag.offset_bottom = 38
+				
+				var tag_style := StyleBoxFlat.new()
+				tag_style.bg_color = Color(0.15, 0.45, 0.15, 0.9)
+				tag_style.border_color = Color(0.6, 1.0, 0.6, 0.8)
+				for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+					tag_style.set_border_width(side, 1)
+				tag_style.corner_radius_top_left = 4; tag_style.corner_radius_top_right = 4
+				tag_style.corner_radius_bottom_left = 4; tag_style.corner_radius_bottom_right = 4
+				active_tag.add_theme_stylebox_override("panel", tag_style)
+				
+				var tag_lbl := Label.new()
+				tag_lbl.text = "ACTIVE GOD"
+				tag_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+				tag_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+				tag_lbl.add_theme_font_size_override("font_size", 8)
+				tag_lbl.add_theme_color_override("font_color", Color(0.9, 1.0, 0.9))
+				active_tag.add_child(tag_lbl)
+				root.add_child(active_tag)
+				
+				active_tag.mouse_entered.connect(func() -> void: _show_preview(active_candidate))
+				active_tag.mouse_exited.connect(func() -> void: _show_preview(card))
+
 	# Input
 	root.gui_input.connect(func(ev: InputEvent) -> void:
 		if ev is InputEventMouseButton and ev.pressed:
@@ -2426,6 +2460,10 @@ func _get_card_unavailable_badge_text(card: Card) -> String:
 		return ""
 	var god := _get_selected_god_template() as GodCard
 	if god != null and not card.is_god and not _is_card_compatible_with_selected_god(card, god):
+		if card is ActiveGodCard:
+			if not god.uses_culture_locked_deckbuilding():
+				return "Needs Patriarch/Matriarch"
+			return "Needs matching God"
 		return "Needs %s or Neutral" % god.culture
 	if card.is_god and not _can_add_god_to_current_deck(card):
 		var god_card := card as GodCard
@@ -2437,6 +2475,10 @@ func _get_card_unavailable_reason(card: Card) -> String:
 		return ""
 	var god := _get_selected_god_template() as GodCard
 	if god != null and not card.is_god and not _is_card_compatible_with_selected_god(card, god):
+		if card is ActiveGodCard:
+			if not god.uses_culture_locked_deckbuilding():
+				return "Unavailable: Only Patriarchs and Matriarchs can include Active God forms in their deck."
+			return "Unavailable: This Active God form does not belong to %s." % god.card_name
 		if god.uses_culture_locked_deckbuilding():
 			return "Unavailable: %s decks can only use %s or Neutral cards. %s is %s." % [
 				god.get_display_name_for_control(),
@@ -2465,6 +2507,16 @@ func _is_power_compatible_with_culture(power: Card, culture: String) -> bool:
 func _is_card_compatible_with_selected_god(card: Card, god: GodCard) -> bool:
 	if card == null or god == null or card.is_god:
 		return true
+
+	# Check for Active God card compatibility
+	var active_god := card as ActiveGodCard
+	if active_god != null:
+		# Only Patriarchs and Matriarchs can add active god forms to their deck
+		if not god.uses_culture_locked_deckbuilding():
+			return false
+		# And only if it's their own active form
+		return god.is_own_active_god_card(active_god)
+
 	if god.uses_culture_locked_deckbuilding():
 		return god.can_include_card_in_culture_locked_deck(card)
 	if card.is_power and not card.is_god:
