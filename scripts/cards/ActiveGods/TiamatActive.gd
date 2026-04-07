@@ -2,7 +2,7 @@ extends ActiveGodCard
 class_name TiamatActive
 
 const LINKED_GOD_NAME := "Tiamat"
-const ART_PATH := "res://images/card_art/gods/TiamatActive.jpg"
+const ART_PATH := "res://images/card_art/gods/TiamatEdit.png"
 const BIRTH_MAX_LEVEL := 4
 const DEATH_MAX_LEVEL := 6
 

@@ -3,7 +3,7 @@ class_name ThorActive
 
 const PASSIVE_SOURCE := "Thor Active - Patron's Hand"
 const LINKED_GOD_NAME := "Thor"
-const ART_PATH := "res://images/card_art/gods/ThorActive.jpg"
+const ART_PATH := "res://images/card_art/gods/ThorAIedit.png"
 
 func _init() -> void:
 	super._init()

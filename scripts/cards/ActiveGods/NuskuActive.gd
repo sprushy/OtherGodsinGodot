@@ -3,7 +3,7 @@ class_name NuskuActive
 
 const LINKED_GOD_NAME := "Nusku, Firebearer"
 const MILL_COUNT := 7
-const ART_PATH := "res://images/card_art/gods/Nusku.jpg"
+const ART_PATH := "res://scripts/cards/Charms/NuskuEdit2.png"
 
 var _declined_core_flame: bool = false
 
