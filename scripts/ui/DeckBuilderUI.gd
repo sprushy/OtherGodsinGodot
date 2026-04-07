@@ -1009,15 +1009,22 @@ func _refresh_deck_panel() -> void:
 		child.queue_free()
 
 	var total := 0
+	var selected_god := _get_selected_god_template() as GodCard
 	for card_name in _deck:
 		var card := _find_template(card_name)
-		if card != null and not card is ActiveGodCard:
+		if card != null:
+			if card is ActiveGodCard and selected_god != null and selected_god.is_own_active_god_card(card):
+				continue # Hide own manifestation
 			total += int(_deck[card_name])
 	_deck_count_lbl.text = "%d cards" % total
 
 	# Sort: gods → creatures → spells → structures → hexes, then alphabetical
 	var in_deck_filter := func(c: Card) -> bool:
-		return _deck.has(c.card_name) and _deck[c.card_name] > 0 and not c is ActiveGodCard
+		if not _deck.has(c.card_name) or _deck[c.card_name] <= 0:
+			return false
+		if c is ActiveGodCard and selected_god != null and selected_god.is_own_active_god_card(c):
+			return false # Hide own manifestation
+		return true
 	var in_deck: Array = _all_cards.filter(in_deck_filter)
 	var in_deck_sort := func(a: Card, b: Card) -> bool:
 		var oa := _type_order(a)
@@ -1957,8 +1964,10 @@ func _update_validation() -> void:
 	for card_name: String in _deck:
 		var cnt: int = _deck[card_name]
 		var card := _find_template(card_name)
-		if card == null or card is ActiveGodCard:
+		if card == null:
 			continue
+		if card is ActiveGodCard and god_template != null and god_template.is_own_active_god_card(card):
+			continue # Don't count own manifestation
 		total += cnt
 		if card.is_god:
 			god_count += cnt
@@ -2510,7 +2519,7 @@ func _get_card_unavailable_badge_text(card: Card) -> String:
 		if card is ActiveGodCard:
 			if not god.uses_culture_locked_deckbuilding():
 				return "Needs Patriarch/Matriarch"
-			return "Needs matching God"
+			return "Needs %s God" % god.culture
 		return "Needs %s or Neutral" % god.culture
 	if card.is_god and not _can_add_god_to_current_deck(card):
 		var god_card := card as GodCard
@@ -2525,7 +2534,7 @@ func _get_card_unavailable_reason(card: Card) -> String:
 		if card is ActiveGodCard:
 			if not god.uses_culture_locked_deckbuilding():
 				return "Unavailable: Only Patriarchs and Matriarchs can include Active God forms in their deck."
-			return "Unavailable: This Active God form does not belong to %s." % god.card_name
+			return "Unavailable: Only %s Active God forms can be included in a %s deck." % [god.culture, god.culture]
 		if god.uses_culture_locked_deckbuilding():
 			return "Unavailable: %s decks can only use %s or Neutral cards. %s is %s." % [
 				god.get_display_name_for_control(),
@@ -2561,8 +2570,8 @@ func _is_card_compatible_with_selected_god(card: Card, god: GodCard) -> bool:
 		# Only Patriarchs and Matriarchs can add active god forms to their deck
 		if not god.uses_culture_locked_deckbuilding():
 			return false
-		# And only if it's their own active form
-		return god.is_own_active_god_card(active_god)
+		# They can add any active god form from their culture
+		return god.can_include_card_in_culture_locked_deck(active_god)
 
 	if god.uses_culture_locked_deckbuilding():
 		return god.can_include_card_in_culture_locked_deck(card)
