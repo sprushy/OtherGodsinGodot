@@ -218,7 +218,56 @@ func _reset_test_match_state() -> void:
 	selected_interceptor = null
 
 func _setup_test_board() -> void:
-	load_v_w_card_scenario()
+	load_thor_vs_tiamat_scenario()
+
+func load_thor_vs_tiamat_scenario() -> void:
+	_reset_test_match_state()
+	_add_test_god(player1, Thor.new())
+	_add_test_god(player2, TiamatThePrimordial.new())
+
+	# Thor (P1)
+	_add_test_hand_card(player1, Berserker.new())
+	_add_test_hand_card(player1, HariiWarrior.new())
+	_add_test_deck_card(player1, ThorActive.new()) # Active form in deck for Take the Field
+
+	# Tiamat (P2)
+	# She should have Take the Field and some Demons in hand
+	_add_test_hand_card(player2, TakeTheField.new())
+	_add_test_hand_card(player2, Alu.new())
+	_add_test_hand_card(player2, Rabisu.new())
+	_add_test_hand_card(player2, Asakku.new())
+	_add_test_deck_card(player2, TiamatActive.new()) # Active form in deck for Take the Field
+
+	# Tiamat replaces her power slots with Ancient Demons and Dragons
+	_add_test_tiamat_slot_creature(player2, 0, Anzu.new())
+	_add_test_tiamat_slot_creature(player2, 1, LesserMushussu.new())
+	_add_test_tiamat_slot_creature(player2, 2, SulakTheUnclean.new())
+
+	# Seed some board for testing
+	_place_test_board_card(player1, player1.frontline_zones[0], MinotaurFootsoldier.new(), Card.CreatureMode.AGGRESSIVE)
+	_place_test_board_card(player2, player2.frontline_zones[0], GududPriest.new(), Card.CreatureMode.DEFENSIVE)
+
+	player1.spend_mana(player1.mana)
+	player1.gain_mana(15)
+	player2.spend_mana(player2.mana)
+	player2.gain_mana(15)
+	player1.followers = 100
+	player2.followers = 100
+	player1.followers_changed.emit(player1.followers)
+	player2.followers_changed.emit(player2.followers)
+
+	game_manager.current_player = player1
+	game_manager.other_player = player2
+	game_manager.feedback_viewer = player1
+	player1.is_turn_player = true
+	player2.is_turn_player = false
+	_test_turn_owner = player1
+	_test_turn_opponent = player2
+	game_manager.start_turn()
+	_open_upkeep_choice_window()
+	
+	action_label.text = "Thor vs Tiamat Scenario. Tiamat has Take the Field and Ancient Demons in hand. Thor is ready to fight."
+	update_ui()
 
 func load_tiamat_ragnarok_scenario() -> void:
 	_reset_test_match_state()

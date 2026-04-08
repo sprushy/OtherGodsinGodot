@@ -549,7 +549,7 @@ func _resolve_mummu_entropy_prompt(choice: String) -> void:
 		_hide_mummu_entropy_prompt()
 		return
 	
-	var data := _pending_mummu_entropy_prompts.pop_front()
+	var data = _pending_mummu_entropy_prompts.pop_front()
 	var mummu: Card = data.source
 	var victim: Card = data.victim
 	_hide_mummu_entropy_prompt()
