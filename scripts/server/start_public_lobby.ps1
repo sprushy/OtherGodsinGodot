@@ -1,3 +1,7 @@
+param(
+    [switch]$StopOnly
+)
+
 $ErrorActionPreference = "Stop"
 
 $RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
@@ -6,26 +10,47 @@ $LobbyHost = "63.33.96.156"
 $LobbyPort = 22345
 $MatchPort = 12345
 
-if (-not (Test-Path -LiteralPath $ServerExe)) {
-    throw "Server executable not found at $ServerExe"
-}
+function Stop-LobbyListener {
+    param(
+        [int]$Port
+    )
 
-$Existing = netstat -ano -p UDP |
-    Select-String ":$LobbyPort\s" |
-    ForEach-Object {
-        $parts = ($_ -replace '\s+', ' ').Trim().Split(' ')
-        if ($parts.Length -gt 0) { [int]$parts[-1] }
-    } |
-    Select-Object -Unique
-if ($Existing) {
-    foreach ($ProcessId in $Existing) {
+    $existing = netstat -ano -p UDP |
+        Select-String ":$Port\s" |
+        ForEach-Object {
+            $parts = ($_ -replace '\s+', ' ').Trim().Split(' ')
+            if ($parts.Length -gt 0) { [int]$parts[-1] }
+        } |
+        Select-Object -Unique
+
+    if (-not $existing) {
+        return $false
+    }
+
+    foreach ($processId in $existing) {
         try {
-            Stop-Process -Id $ProcessId -Force -ErrorAction Stop
+            Stop-Process -Id $processId -Force -ErrorAction Stop
         } catch {
-            Write-Warning "Could not stop process $ProcessId listening on UDP ${LobbyPort}: $($_.Exception.Message)"
+            Write-Warning "Could not stop process $processId listening on UDP ${Port}: $($_.Exception.Message)"
         }
     }
+
     Start-Sleep -Seconds 1
+    return $true
+}
+
+$stoppedExisting = Stop-LobbyListener -Port $LobbyPort
+if ($StopOnly) {
+    if ($stoppedExisting) {
+        Write-Host "Stopped public lobby server listener on UDP ${LobbyPort}"
+    } else {
+        Write-Host "No public lobby server listener found on UDP ${LobbyPort}"
+    }
+    return
+}
+
+if (-not (Test-Path -LiteralPath $ServerExe)) {
+    throw "Server executable not found at $ServerExe"
 }
 
 $Arguments = @(
