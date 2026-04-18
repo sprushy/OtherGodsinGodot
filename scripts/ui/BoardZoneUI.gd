@@ -337,8 +337,8 @@ func _add_speed_badge(overlay: Control, card: Card) -> void:
 	var badge := PanelContainer.new()
 	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	badge.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
-	badge.offset_left = -62
-	badge.offset_top = -30
+	badge.offset_left = -66
+	badge.offset_top = -32
 	badge.offset_right = -6
 	badge.offset_bottom = -6
 
@@ -349,6 +349,10 @@ func _add_speed_badge(overlay: Control, card: Card) -> void:
 	style.corner_radius_top_right = 6
 	style.corner_radius_bottom_left = 6
 	style.corner_radius_bottom_right = 6
+	style.content_margin_left = 6
+	style.content_margin_right = 6
+	style.content_margin_top = 2
+	style.content_margin_bottom = 2
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
 		style.set_border_width(side, 1)
 	badge.add_theme_stylebox_override("panel", style)
@@ -357,7 +361,7 @@ func _add_speed_badge(overlay: Control, card: Card) -> void:
 	label.text = "SPD:%d" % eff_spd
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	label.add_theme_font_size_override("font_size", 11)
+	label.add_theme_font_size_override("font_size", 12)
 	label.add_theme_color_override("font_color", Color(0.92, 0.97, 1.0))
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	if eff_spd > card.speed:
@@ -369,6 +373,58 @@ func _add_speed_badge(overlay: Control, card: Card) -> void:
 	if not is_instance_valid(overlay) or overlay.is_queued_for_deletion():
 		return
 	overlay.add_child(badge)
+
+func _make_field_stat_badge(text: String, font_size: int = 15, font_color: Color = Color(0.92, 0.97, 1.0)) -> PanelContainer:
+	var badge := PanelContainer.new()
+	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	badge.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.08, 0.12, 0.24, 0.9)
+	style.border_color = Color(0.62, 0.8, 1.0, 0.95)
+	style.corner_radius_top_left = 6
+	style.corner_radius_top_right = 6
+	style.corner_radius_bottom_left = 6
+	style.corner_radius_bottom_right = 6
+	style.content_margin_left = 5
+	style.content_margin_right = 5
+	style.content_margin_top = 2
+	style.content_margin_bottom = 2
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		style.set_border_width(side, 1)
+	badge.add_theme_stylebox_override("panel", style)
+
+	var label := Label.new()
+	label.text = text
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	label.add_theme_font_size_override("font_size", font_size)
+	label.add_theme_color_override("font_color", font_color)
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	badge.add_child(label)
+
+	return badge
+
+func _add_overlay_stat_badge(
+	overlay: Control,
+	text: String,
+	anchor_preset: int,
+	left: float,
+	top: float,
+	right: float,
+	bottom: float,
+	font_color: Color = Color(0.92, 0.97, 1.0)
+) -> PanelContainer:
+	if overlay == null or not is_instance_valid(overlay) or overlay.is_queued_for_deletion():
+		return null
+	var badge := _make_field_stat_badge(text, 12, font_color)
+	badge.set_anchors_preset(anchor_preset)
+	badge.offset_left = left
+	badge.offset_top = top
+	badge.offset_right = right
+	badge.offset_bottom = bottom
+	overlay.add_child(badge)
+	return badge
 
 func _add_power_lock_overlay(overlay: Control, card: Card) -> void:
 	if overlay == null or card == null:
@@ -1594,67 +1650,71 @@ func _refresh_display() -> void:
 			var eff_res := card.get_effective_resilience()
 			var eff_spd := card.get_effective_speed()
 			var is_def := card.creature_mode == Card.CreatureMode.DEFENSIVE
-			var stat_row := HBoxContainer.new()
-			stat_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
-			var left_lbl := Label.new()
-			left_lbl.text = "RES:%d" % eff_res if is_def else "STR:%d" % eff_str
-			left_lbl.add_theme_font_size_override("font_size", 13)
 			var left_base := card.resilience if is_def else card.strength
 			var left_eff  := eff_res if is_def else eff_str
 			var left_stat := "res" if is_def else "str"
+			var left_font_color := Color(0.92, 0.97, 1.0)
 			if left_eff > left_base:
-				left_lbl.modulate = Color(0.4, 1.0, 0.4)
+				left_font_color = Color(0.4, 1.0, 0.4)
 			elif left_eff < left_base:
-				left_lbl.modulate = Color(1.0, 0.35, 0.35)
+				left_font_color = Color(1.0, 0.35, 0.35)
+			var left_badge := _add_overlay_stat_badge(
+				card_overlay,
+				"RES:%d" % eff_res if is_def else "STR:%d" % eff_str,
+				Control.PRESET_BOTTOM_LEFT,
+				6,
+				-32,
+				66,
+				-6,
+				left_font_color
+			)
 			var left_breakdown := card.get_full_stat_breakdown(left_stat)
-			if left_breakdown != "":
-				left_lbl.tooltip_text = left_breakdown
-				left_lbl.mouse_filter = Control.MOUSE_FILTER_STOP
-			else:
-				left_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			stat_row.add_child(left_lbl)
+			if left_badge != null and left_breakdown != "":
+				left_badge.tooltip_text = left_breakdown
+				left_badge.mouse_filter = Control.MOUSE_FILTER_STOP
 
-			var mid_spacer := Control.new()
-			mid_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			mid_spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			stat_row.add_child(mid_spacer)
-
-			var right_lbl := Label.new()
-			right_lbl.text = "SPD:%d" % eff_spd
-			right_lbl.add_theme_font_size_override("font_size", 13)
+			var right_font_color := Color(0.92, 0.97, 1.0)
 			if eff_spd > card.speed:
-				right_lbl.modulate = Color(0.4, 1.0, 0.4)
+				right_font_color = Color(0.4, 1.0, 0.4)
 			elif eff_spd < card.speed:
-				right_lbl.modulate = Color(1.0, 0.35, 0.35)
+				right_font_color = Color(1.0, 0.35, 0.35)
+			var right_badge := _add_overlay_stat_badge(
+				card_overlay,
+				"SPD:%d" % eff_spd,
+				Control.PRESET_BOTTOM_RIGHT,
+				-66,
+				-32,
+				-6,
+				-6,
+				right_font_color
+			)
 			var spd_breakdown := card.get_full_stat_breakdown("spd")
-			if spd_breakdown != "":
-				right_lbl.tooltip_text = spd_breakdown
-				right_lbl.mouse_filter = Control.MOUSE_FILTER_STOP
-			else:
-				right_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			stat_row.add_child(right_lbl)
-
-			vbox.add_child(stat_row)
+			if right_badge != null and spd_breakdown != "":
+				right_badge.tooltip_text = spd_breakdown
+				right_badge.mouse_filter = Control.MOUSE_FILTER_STOP
 
 		elif card.card_type == Card.CardType.STRUCTURE:
 			var eff_res_s := card.get_effective_resilience()
-			var res_lbl := Label.new()
-			res_lbl.text = "RES:%d" % eff_res_s
-			res_lbl.add_theme_font_size_override("font_size", 13)
-			res_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			var breakdown := card.get_buff_tooltip("res")
+			var res_font_color := Color(0.92, 0.97, 1.0)
 			if eff_res_s < card.resilience:
-				res_lbl.modulate = Color(1.0, 0.35, 0.35)
-				if breakdown != "":
-					res_lbl.tooltip_text = "RES:\n" + breakdown
-					res_lbl.mouse_filter = Control.MOUSE_FILTER_STOP
+				res_font_color = Color(1.0, 0.35, 0.35)
 			elif eff_res_s > card.resilience:
-				res_lbl.modulate = Color(0.4, 1.0, 0.4)
-				if breakdown != "":
-					res_lbl.tooltip_text = "RES:\n" + breakdown
-					res_lbl.mouse_filter = Control.MOUSE_FILTER_STOP
-			vbox.add_child(res_lbl)
+				res_font_color = Color(0.4, 1.0, 0.4)
+			var res_badge := _add_overlay_stat_badge(
+				card_overlay,
+				"RES:%d" % eff_res_s,
+				Control.PRESET_BOTTOM_LEFT,
+				6,
+				-32,
+				66,
+				-6,
+				res_font_color
+			)
+			if res_badge != null and breakdown != "":
+				res_badge.tooltip_text = "RES:\n" + breakdown
+				res_badge.mouse_filter = Control.MOUSE_FILTER_STOP
 
 		if card.is_power and card.is_muted and card.mute_turns_remaining > 0:
 			var muted_badge := PanelContainer.new()
@@ -1972,7 +2032,7 @@ func _show_ability_popup() -> void:
 			var eff_spd := card.get_effective_speed()
 			var stats_rtl := RichTextLabel.new()
 			stats_rtl.bbcode_enabled = true
-			stats_rtl.add_theme_font_size_override("normal_font_size", 11)
+			stats_rtl.add_theme_font_size_override("normal_font_size", 18)
 			stats_rtl.scroll_active = false
 			stats_rtl.fit_content = true
 			stats_rtl.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -2071,7 +2131,7 @@ func _show_ability_popup() -> void:
 		var eff_res_s := card.get_effective_resilience()
 		var res_lbl := Label.new()
 		res_lbl.text = "RES:%d" % eff_res_s
-		res_lbl.add_theme_font_size_override("font_size", 11)
+		res_lbl.add_theme_font_size_override("font_size", 18)
 		res_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		var breakdown := card.get_buff_tooltip("res")
 		if eff_res_s < card.resilience:
@@ -2099,7 +2159,7 @@ func _show_ability_popup() -> void:
 		var eff_spd := card.get_effective_speed()
 		var spd_lbl := Label.new()
 		spd_lbl.text = "SPD:%d" % eff_spd
-		spd_lbl.add_theme_font_size_override("font_size", 11)
+		spd_lbl.add_theme_font_size_override("font_size", 18)
 		spd_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		var spd_breakdown := card.get_full_stat_breakdown("spd")
 		if eff_spd < card.speed:

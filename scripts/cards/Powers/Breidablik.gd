@@ -19,7 +19,7 @@ func _init() -> void:
 	if "Targeting" not in card_types:
 		card_types.append("Targeting")
 	targets = true
-	ability_text = "Peaceful Runes: You may place a friendly Priest that attacked this turn under this card. End of turn: gain followers equal to 3 times the total level of Priests under it. [b]Upkeep[/b]: You may pay 1 mana to return a Priest to the field. If this card is flipped, return all cards under it to the field."
+	ability_text = "Peaceful Runes: You may [b]Harbor[/b] a friendly Priest that hasn't attacked this turn.\nEnd of turn: gain followers equal to 3x the level of the harbored Priests.\n[b]Upkeep[/b]: Pay 1 mana to return a harbored Priest to the field.\nIf this card is flipped, return all harbored Priests to the field."
 	artist = "Lorinda Tomko"
 	art_path = "res://images/card_art/powers/breidablik.jpg"
 

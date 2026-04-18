@@ -18,14 +18,14 @@ func _init() -> void:
 	speed = 1
 	resilience = 17
 	strength = 17
-	ability_text = "[b]Shapeshift[/b] ([b]Activate[/b]): Switch this card between Human, Mage, Shaman, Shapeshifter and Animal, Feline, Mage, Shaman, Shapeshifter.\n[b]Tonal Strengths[/b] ([b]Passive[/b]): Gain +4 STR and +1 SPD while in Feline form. Gain +5 RES while in Human form."
+	ability_text = "[b]Shift[/b] ([b]Activate[/b]): Switch between Human, Mage, Shaman, Shapeshifter and Animal, Feline, Mage, Shaman, Shapeshifter.\nTonal Strengths ([b]Passive[/b]): Feline form gets +4 STR and +1 SPD. Human form gets +5 RES."
 	flavor_text = ""
 	culture = "Nahuatl"
 	artist = "Ricardo Zoppello"
 	art_path = ART_PATH
 
 func get_activation_label() -> String:
-	return "Shapeshift"
+	return "Shift"
 
 func can_activate(game_manager: GameManager) -> bool:
 	if game_manager == null:

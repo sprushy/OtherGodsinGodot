@@ -17,7 +17,7 @@ func _init() -> void:
 	culture = "Ancient"
 	artist = "Ricardo Zoppello"
 	art_path = "res://images/card_art/Isimud(web).jpg"
-	ability_text = "[b]Forerunner[/b] ([b]Passive[/b]): Reduce the summon cost of your Divine Manifestations by 6 mana.\n[b]Revelation[/b] ([b]Activate[/b]): Spend this card's major action to summon a Divine Manifestation from your hand. That summon costs 2 additional mana."
+	ability_text = "Forerunner ([b]Passive[/b]): Your Divine Manifestations cost 6 less to summon.\nRevelation ([b]Activate[/b]): Use this card's major action to summon a Divine Manifestation from your hand. It costs 2 more mana."
 
 func get_cost_adjustment_entries(
 	target_card: Card,

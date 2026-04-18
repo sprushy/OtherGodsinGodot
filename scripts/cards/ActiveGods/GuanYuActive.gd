@@ -20,7 +20,7 @@ func _init() -> void:
 	culture = "Tian"
 	targets = true
 	flavor_text = "The general enters the field already armed with practiced discipline and battlefield momentum."
-	ability_text = "[b]Knowledge of the General[/b] ([b]Impact[/b]): Put 7 tactic counters on this card. When a friendly warrior destroys a creature, add a tactic counter to this card.\n[b]Manoeuvre[/b] ([b]Activate[/b]): Move a tactic counter from this card to another tactic-counter card you control."
+	ability_text = "Knowledge of the General ([b]Impact[/b]): Put 7 tactic counters on this. Whenever a friendly Warrior destroys a creature, put 1 tactic counter on this.\nManoeuvre ([b]Activate[/b]): Move a tactic counter from this to another tactic-counter card you control."
 	art_path = ART_PATH
 	name_at_bottom = true
 	artist = "Ricardo Zoppello"

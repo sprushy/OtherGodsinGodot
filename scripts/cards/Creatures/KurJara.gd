@@ -18,7 +18,7 @@ func _init() -> void:
 	speed = 3
 	resilience = 26
 	strength = 21
-	ability_text = "[b]Tree of Life[/b] ([b]Activate[/b]): Choose a Divine or Priest in your grave, and send this card to the grave. At the end of your second turn after activation, [b]Resurrect[/b] both cards to the reserve line and destroy a friendly creature for each level higher the chosen creature is than this card."
+	ability_text = "Tree of Life ([b]Activate[/b]): Choose a Divine or Priest in your graveyard and send this to the grave.\nAfter 2 of your turns, [b]Resurrect[/b] both to your reserve line.\nThen destroy a friendly creature for each level the chosen card exceeds this one by."
 	flavor_text = ""
 	culture = "Ancient"
 	artist = "Ricardo Zoppello"

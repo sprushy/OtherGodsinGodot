@@ -71,7 +71,7 @@ func can_use_champions_call(game_manager: GameManager) -> bool:
 	var manifestation := get_champions_call_candidate(true)
 	if manifestation == null:
 		return false
-	if _get_champions_call_open_zone() == null:
+	if get_champions_call_open_zones().is_empty():
 		return false
 	return _can_pay_champions_call_cost(game_manager, manifestation)
 
@@ -87,7 +87,7 @@ func get_champions_call_failure_reason(game_manager: GameManager) -> String:
 	var manifestation := get_champions_call_candidate(true)
 	if manifestation == null:
 		return card_name + " found no matching Active God to summon."
-	if _get_champions_call_open_zone() == null:
+	if get_champions_call_open_zones().is_empty():
 		return card_name + " needs an open lane for its Active God."
 	return card_name + " cannot afford that Active God's summon cost, even after shelving cards."
 
@@ -102,6 +102,18 @@ func get_champions_call_required_shelve_count(game_manager: GameManager) -> int:
 	if shortfall <= 0:
 		return 0
 	return int(ceili(float(shortfall) / 4.0))
+
+func get_champions_call_max_shelve_count(game_manager: GameManager, manifestation: Card = null) -> int:
+	if game_manager == null or card_owner == null:
+		return 0
+	var resolved_manifestation := manifestation if manifestation != null else get_champions_call_candidate(true)
+	if resolved_manifestation == null:
+		return 0
+	var mana_required := game_manager.get_creature_summon_mana_cost(card_owner, resolved_manifestation, self, false)
+	if mana_required <= 0:
+		return 0
+	var available_choices := _get_champions_call_shelvable_hand_cards(resolved_manifestation).size()
+	return mini(available_choices, int(ceili(float(mana_required) / 4.0)))
 
 func get_champions_call_shelvable_hand_cards(manifestation: Card = null) -> Array[Card]:
 	var resolved_manifestation := manifestation if manifestation != null else get_champions_call_candidate(true)
@@ -126,15 +138,27 @@ func get_champions_call_selected_cards_from_command(game_manager: GameManager, c
 			selected.append(chosen_card)
 	return selected
 
-func resolve_champions_call(game_manager: GameManager, chosen_shelved_cards: Array[Card] = []) -> String:
+func resolve_champions_call(
+	game_manager: GameManager,
+	chosen_shelved_cards: Array[Card] = [],
+	summon_zone: Zone = null,
+	summon_mode_name: String = "aggressive"
+) -> String:
 	if game_manager == null or card_owner == null:
 		return card_name + " cannot use Champion's Call right now."
 	var manifestation := get_champions_call_candidate(true)
 	if manifestation == null:
 		return card_name + " found no matching Active God to summon."
-	var summon_zone := _get_champions_call_open_zone()
+	if summon_zone == null:
+		summon_zone = _get_champions_call_open_zone()
 	if summon_zone == null:
 		return card_name + " needs an open lane for its Active God."
+	if summon_zone.zone_owner != card_owner:
+		return card_name + " must summon its Active God to one of your own lanes."
+	if summon_zone.zone_type not in [Zone.ZoneType.FRONTLINE, Zone.ZoneType.RESERVE]:
+		return card_name + " must summon its Active God to the frontline or reserve line."
+	if not summon_zone.cards.is_empty():
+		return card_name + " needs an empty lane for its Active God."
 	if not _can_pay_champions_call_cost(game_manager, manifestation):
 		return card_name + " cannot afford that Active God's summon cost, even after shelving cards."
 
@@ -150,16 +174,20 @@ func resolve_champions_call(game_manager: GameManager, chosen_shelved_cards: Arr
 	if active_god != null:
 		active_god.set_stored_normal_god(self)
 
+	var summon_mode := Card.CreatureMode.DEFENSIVE
+	if summon_mode_name == "aggressive":
+		summon_mode = Card.CreatureMode.AGGRESSIVE
 	var summoned := game_manager.summon_creature_by_effect(
 		card_owner,
 		manifestation,
 		summon_zone,
-		Card.CreatureMode.AGGRESSIVE,
+		summon_mode,
 		false,
 		false,
 		self,
 		false,
 		false,
+		true,
 		true
 	)
 	if not summoned:
@@ -187,20 +215,20 @@ func _can_pay_champions_call_cost(game_manager: GameManager, manifestation: Card
 
 func _get_champions_call_cards_to_shelve(mana_required: int, manifestation: Card = null, chosen_cards: Array[Card] = []) -> Array[Card]:
 	var chosen: Array[Card] = []
+	var valid_choices := _get_champions_call_shelvable_hand_cards(manifestation)
+	var max_shelve_count := mini(valid_choices.size(), int(ceili(float(maxi(0, mana_required)) / 4.0)))
 	var shortfall := maxi(0, mana_required - (card_owner.mana if card_owner != null else 0))
-	if shortfall <= 0:
-		return chosen
 	if not chosen_cards.is_empty():
 		var unique_choices: Array[Card] = []
-		var valid_choices := _get_champions_call_shelvable_hand_cards(manifestation)
-		var required_count := int(ceili(float(shortfall) / 4.0))
 		for card in chosen_cards:
 			if card == null or card in unique_choices or not valid_choices.has(card):
 				return []
 			unique_choices.append(card)
-		if unique_choices.size() != required_count:
+		if unique_choices.size() > max_shelve_count:
 			return []
 		return unique_choices
+	if shortfall <= 0:
+		return chosen
 	for card in _get_champions_call_shelvable_hand_cards(manifestation):
 		chosen.append(card)
 		shortfall -= 4
@@ -219,17 +247,42 @@ func _get_champions_call_shelvable_hand_cards(excluded_card: Card = null) -> Arr
 	return cards
 
 func _get_champions_call_open_zone() -> Zone:
+	var open_zones := get_champions_call_open_zones()
+	return open_zones[0] if not open_zones.is_empty() else null
+
+func get_champions_call_open_zones() -> Array[Zone]:
+	var zones: Array[Zone] = []
 	if card_owner == null:
-		return null
+		return zones
 	var preferred_frontline := [2, 1, 3, 0, 4]
 	for index in preferred_frontline:
 		if index >= 0 and index < card_owner.frontline_zones.size():
 			var zone := card_owner.frontline_zones[index]
 			if zone.cards.is_empty():
-				return zone
+				zones.append(zone)
 	for index in preferred_frontline:
 		if index >= 0 and index < card_owner.reserve_zones.size():
 			var zone := card_owner.reserve_zones[index]
 			if zone.cards.is_empty():
-				return zone
+				zones.append(zone)
+	return zones
+
+func get_champions_call_zone_from_command(command: Dictionary) -> Zone:
+	if command.is_empty() or card_owner == null:
+		return null
+	var zone_type := int(command.get("zone_type", -1))
+	var zone_index := int(command.get("zone_index", -1))
+	if zone_index < 0:
+		return null
+	match zone_type:
+		Zone.ZoneType.FRONTLINE:
+			if zone_index < card_owner.frontline_zones.size():
+				return card_owner.frontline_zones[zone_index]
+		Zone.ZoneType.RESERVE:
+			if zone_index < card_owner.reserve_zones.size():
+				return card_owner.reserve_zones[zone_index]
 	return null
+
+func get_champions_call_mode_from_command(command: Dictionary) -> String:
+	var mode_name := str(command.get("mode", "aggressive")).to_lower()
+	return "defensive" if mode_name == "defensive" else "aggressive"

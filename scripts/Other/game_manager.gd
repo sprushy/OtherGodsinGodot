@@ -1199,7 +1199,8 @@ func summon_creature_by_effect(
 	summon_source: Card = null,
 	pay_normal_summon_costs: bool = false,
 	consume_turn_summon: bool = false,
-	trigger_impact: bool = true
+	trigger_impact: bool = true,
+	skip_mana_payment: bool = false
 ) -> bool:
 	if is_game_over or player == null or card == null:
 		return false
@@ -1229,7 +1230,7 @@ func summon_creature_by_effect(
 	if pay_normal_summon_costs:
 		if not card.pay_costs_with_mana_cost(player, mana_required, self):
 			return false
-	elif mana_required > 0 and not player.spend_mana(mana_required):
+	elif not skip_mana_payment and mana_required > 0 and not player.spend_mana(mana_required):
 		return false
 
 	var from_zone := card.current_zone

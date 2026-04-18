@@ -136,6 +136,10 @@ var _pending_click_selection_source: Card:
 			match_manager.pending_click_selection_source = val
 var auto_priority: bool = true
 var _fan_container: Control = null
+var _hand_hover_preview: Control = null
+var _hand_hover_vc: VisualCard = null
+var _hand_hover_preview_card: VisualCard = null
+var _hand_hover_preview_keywords: Control = null
 
 const FAN_ROT_MAX     := 12.0   # degrees at the outermost card
 const FAN_ARC_HEIGHT  := 22.0   # px the arc dips at centre
@@ -238,6 +242,8 @@ var _pending_summon_priority_events: Array[Dictionary] = []
 var _pending_wolf_master_source: Card = null
 var _pending_wolf_master_summon: Card = null
 var _pending_wolf_master_mode: String = ""
+var _pending_champions_call_god: GodCard = null
+var _pending_champions_call_shelves: Array[Card] = []
 var _pending_hati_prompts: Array[Hati] = []
 var _declined_hati_prompts: Array[Hati] = []
 var _active_hati_prompt: Hati = null
@@ -285,6 +291,7 @@ var _skoll_prompt_panel: Control = null
 var _gala_tura_prompt_panel: Control = null
 var _kur_jara_prompt_panel: Control = null
 var _habrok_breakout_prompt_panel: Control = null
+var _champions_call_prompt_panel: Control = null
 var _sharur_escape_prompt_panel: Control = null
 var _wheel_of_fire_prompt_panel: Control = null
 var _pending_gala_tura: Card = null
@@ -345,6 +352,14 @@ var _action_log_popup_view: RichTextLabel = null
 var _center_action_panel: VBoxContainer = null
 var _board_separator_line: ColorRect = null
 var _auto_priority_toggle: CheckButton = null
+var _pause_menu_overlay: Control = null
+var _pause_menu_panel: PanelContainer = null
+var _settings_menu_panel: PanelContainer = null
+var _auto_select_spell_play_zones: bool = true
+var _auto_select_spell_prepare_zones: bool = true
+var _auto_select_hex_prepare_zones: bool = true
+var _auto_select_charm_play_zones: bool = true
+var _auto_select_charm_prepare_zones: bool = true
 var _sacrifice_cursor_texture: Texture2D = null
 var _devour_cursor_texture: Texture2D = null
 var _silence_cursor_texture: Texture2D = null
@@ -447,11 +462,13 @@ func _has_active_modal_prompt() -> bool:
 	return (_zone_overlay != null and is_instance_valid(_zone_overlay)) \
 		or (_retreat_prompt_panel != null and is_instance_valid(_retreat_prompt_panel)) \
 		or (_resurrection_panel != null and is_instance_valid(_resurrection_panel)) \
+		or (_champions_call_prompt_panel != null and is_instance_valid(_champions_call_prompt_panel)) \
 		or (_sharur_escape_prompt_panel != null and is_instance_valid(_sharur_escape_prompt_panel)) \
 		or (_wheel_of_fire_prompt_panel != null and is_instance_valid(_wheel_of_fire_prompt_panel)) \
 		or (_hati_prompt_panel != null and is_instance_valid(_hati_prompt_panel)) \
 		or (_skoll_prompt_panel != null and is_instance_valid(_skoll_prompt_panel)) \
-		or (_kur_jara_prompt_panel != null and is_instance_valid(_kur_jara_prompt_panel))
+		or (_kur_jara_prompt_panel != null and is_instance_valid(_kur_jara_prompt_panel)) \
+		or (_pause_menu_overlay != null and is_instance_valid(_pause_menu_overlay))
 
 func _reject_modal_prompt_action() -> void:
 	action_label.text = "Finish resolving the current prompt before taking other actions."
@@ -462,6 +479,199 @@ func _promote_transient_ui(control: Control, overlay_z_index: int = TRANSIENT_UI
 	control.top_level = true
 	control.z_index = overlay_z_index
 	control.move_to_front()
+
+func _is_pause_menu_open() -> bool:
+	return _pause_menu_overlay != null and is_instance_valid(_pause_menu_overlay)
+
+func _is_settings_menu_open() -> bool:
+	return _settings_menu_panel != null and is_instance_valid(_settings_menu_panel) and _settings_menu_panel.visible
+
+func _make_pause_menu_style(border_color: Color) -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.07, 0.09, 0.14, 0.97)
+	style.border_color = border_color
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		style.set_border_width(side, 2)
+	style.corner_radius_top_left = 8
+	style.corner_radius_top_right = 8
+	style.corner_radius_bottom_left = 8
+	style.corner_radius_bottom_right = 8
+	style.content_margin_left = 18
+	style.content_margin_right = 18
+	style.content_margin_top = 18
+	style.content_margin_bottom = 18
+	return style
+
+func _make_auto_zone_toggle(label_text: String, initial_state: bool, toggle_callback: Callable) -> CheckButton:
+	var toggle := CheckButton.new()
+	toggle.text = label_text
+	toggle.button_pressed = initial_state
+	toggle.custom_minimum_size = Vector2(0, 34)
+	if toggle_callback.is_valid():
+		toggle.toggled.connect(toggle_callback)
+	return toggle
+
+func _show_pause_menu_page() -> void:
+	if _pause_menu_panel != null and is_instance_valid(_pause_menu_panel):
+		_pause_menu_panel.show()
+	if _settings_menu_panel != null and is_instance_valid(_settings_menu_panel):
+		_settings_menu_panel.hide()
+
+func _show_pause_settings_menu() -> void:
+	if _pause_menu_panel != null and is_instance_valid(_pause_menu_panel):
+		_pause_menu_panel.hide()
+	if _settings_menu_panel != null and is_instance_valid(_settings_menu_panel):
+		_settings_menu_panel.show()
+
+func _hide_pause_menu() -> void:
+	if _pause_menu_overlay != null and is_instance_valid(_pause_menu_overlay):
+		_pause_menu_overlay.queue_free()
+	_pause_menu_overlay = null
+	_pause_menu_panel = null
+	_settings_menu_panel = null
+
+func _show_pause_menu() -> void:
+	if _is_pause_menu_open():
+		_show_pause_menu_page()
+		_promote_transient_ui(_pause_menu_overlay, TRANSIENT_UI_Z_INDEX + 110)
+		return
+	_close_context_menu()
+	_hide_power_hover_popup()
+	_hide_hand_hover_preview()
+
+	var overlay := ColorRect.new()
+	overlay.name = "PauseMenuOverlay"
+	overlay.color = Color(0.02, 0.03, 0.05, 0.74)
+	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	add_child(overlay)
+	_promote_transient_ui(overlay, TRANSIENT_UI_Z_INDEX + 110)
+	_pause_menu_overlay = overlay
+
+	var menu_panel := PanelContainer.new()
+	menu_panel.name = "PauseMenuPanel"
+	menu_panel.add_theme_stylebox_override("panel", _make_pause_menu_style(Color(0.72, 0.82, 0.94, 0.95)))
+	menu_panel.anchor_left = 0.5
+	menu_panel.anchor_right = 0.5
+	menu_panel.anchor_top = 0.5
+	menu_panel.anchor_bottom = 0.5
+	menu_panel.offset_left = -180
+	menu_panel.offset_right = 180
+	menu_panel.offset_top = -116
+	menu_panel.offset_bottom = 116
+	overlay.add_child(menu_panel)
+	_pause_menu_panel = menu_panel
+
+	var menu_vbox := VBoxContainer.new()
+	menu_vbox.add_theme_constant_override("separation", 10)
+	menu_panel.add_child(menu_vbox)
+
+	var menu_title := Label.new()
+	menu_title.text = "Game Menu"
+	menu_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	menu_title.add_theme_font_size_override("font_size", 24)
+	menu_vbox.add_child(menu_title)
+
+	var menu_info := Label.new()
+	menu_info.text = "Press Escape again to resume."
+	menu_info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	menu_info.add_theme_color_override("font_color", Color(0.80, 0.85, 0.92))
+	menu_vbox.add_child(menu_info)
+
+	var resume_btn := Button.new()
+	resume_btn.text = "Resume"
+	resume_btn.custom_minimum_size = Vector2(0, 38)
+	resume_btn.pressed.connect(_hide_pause_menu)
+	menu_vbox.add_child(resume_btn)
+
+	var settings_btn := Button.new()
+	settings_btn.text = "Settings"
+	settings_btn.custom_minimum_size = Vector2(0, 38)
+	settings_btn.pressed.connect(_show_pause_settings_menu)
+	menu_vbox.add_child(settings_btn)
+
+	var settings_panel := PanelContainer.new()
+	settings_panel.name = "SettingsMenuPanel"
+	settings_panel.visible = false
+	settings_panel.add_theme_stylebox_override("panel", _make_pause_menu_style(Color(0.60, 0.86, 0.70, 0.95)))
+	settings_panel.anchor_left = 0.5
+	settings_panel.anchor_right = 0.5
+	settings_panel.anchor_top = 0.5
+	settings_panel.anchor_bottom = 0.5
+	settings_panel.offset_left = -280
+	settings_panel.offset_right = 280
+	settings_panel.offset_top = -210
+	settings_panel.offset_bottom = 210
+	overlay.add_child(settings_panel)
+	_settings_menu_panel = settings_panel
+
+	var settings_vbox := VBoxContainer.new()
+	settings_vbox.add_theme_constant_override("separation", 10)
+	settings_panel.add_child(settings_vbox)
+
+	var settings_title := Label.new()
+	settings_title.text = "Settings"
+	settings_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	settings_title.add_theme_font_size_override("font_size", 24)
+	settings_vbox.add_child(settings_title)
+
+	var settings_info := Label.new()
+	settings_info.text = "When enabled, right-click Play/Prepare will auto-pick a friendly zone and prefer reserve line slots."
+	settings_info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	settings_info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	settings_info.add_theme_color_override("font_color", Color(0.80, 0.85, 0.92))
+	settings_vbox.add_child(settings_info)
+
+	settings_vbox.add_child(_make_auto_zone_toggle(
+		"Auto-select spell play zones",
+		_auto_select_spell_play_zones,
+		func(pressed: bool) -> void:
+			_auto_select_spell_play_zones = pressed
+	))
+	settings_vbox.add_child(_make_auto_zone_toggle(
+		"Auto-select spell prepare zones",
+		_auto_select_spell_prepare_zones,
+		func(pressed: bool) -> void:
+			_auto_select_spell_prepare_zones = pressed
+	))
+	settings_vbox.add_child(_make_auto_zone_toggle(
+		"Auto-select hex prepare zones",
+		_auto_select_hex_prepare_zones,
+		func(pressed: bool) -> void:
+			_auto_select_hex_prepare_zones = pressed
+	))
+	settings_vbox.add_child(_make_auto_zone_toggle(
+		"Auto-select charm play zones",
+		_auto_select_charm_play_zones,
+		func(pressed: bool) -> void:
+			_auto_select_charm_play_zones = pressed
+	))
+	settings_vbox.add_child(_make_auto_zone_toggle(
+		"Auto-select charm prepare zones",
+		_auto_select_charm_prepare_zones,
+		func(pressed: bool) -> void:
+			_auto_select_charm_prepare_zones = pressed
+	))
+
+	var settings_buttons := HBoxContainer.new()
+	settings_buttons.add_theme_constant_override("separation", 10)
+	settings_vbox.add_child(settings_buttons)
+
+	var back_btn := Button.new()
+	back_btn.text = "Back"
+	back_btn.custom_minimum_size = Vector2(0, 38)
+	back_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	back_btn.pressed.connect(_show_pause_menu_page)
+	settings_buttons.add_child(back_btn)
+
+	var settings_resume_btn := Button.new()
+	settings_resume_btn.text = "Resume"
+	settings_resume_btn.custom_minimum_size = Vector2(0, 38)
+	settings_resume_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	settings_resume_btn.pressed.connect(_hide_pause_menu)
+	settings_buttons.add_child(settings_resume_btn)
+
+	_show_pause_menu_page()
 
 var _pending_mummu_entropy_prompts: Array[Dictionary] = []
 var _mummu_entropy_panel: Control = null
@@ -1412,8 +1622,11 @@ func _update_center_action_panel_layout() -> void:
 	)
 
 func _process(_delta: float) -> void:
+	if not is_visible_in_tree():
+		return
 	_sync_sacrifice_cursor()
 	_capture_action_log_message()
+	_update_hand_hover_preview()
 
 func _setup_action_log() -> void:
 	if action_label == null:
@@ -2350,6 +2563,22 @@ func _is_card_usable_for_priority(card: Card) -> bool:
 func _get_visible_hand_player() -> Player:
 	return _get_display_player()
 
+func _is_hand_context_menu_stale(hand_player: Player) -> bool:
+	if _context_menu == null or not is_instance_valid(_context_menu):
+		return false
+	if str(_context_menu.get_meta("context_scope", "")) != "hand_card":
+		return false
+	var source_uid := str(_context_menu.get_meta("context_card_uid", "")).strip_edges()
+	if source_uid == "":
+		return false
+	if hand_player == null or hand_player.hand_zone == null:
+		return true
+	for hand_card in hand_player.hand_zone.cards:
+		var card := hand_card as Card
+		if card != null and card.uid == source_uid:
+			return false
+	return true
+
 func _invalidate_cached_board_layouts() -> void:
 	_last_board_player = null
 	_last_enemy_player = null
@@ -2464,6 +2693,7 @@ func _get_graveyard_hand_proxy_display_mana_cost(card: Card) -> int:
 	return card.mana_cost
 
 func draw_hand() -> void:
+	_hide_hand_hover_preview()
 	if _fan_container != null and is_instance_valid(_fan_container):
 		if _fan_container.get_parent() == self:
 			remove_child(_fan_container)
@@ -2473,6 +2703,8 @@ func draw_hand() -> void:
 	if hand_container != null:
 		hand_container.visible = false
 	var hand_player := _get_visible_hand_player()
+	if _is_hand_context_menu_stale(hand_player):
+		_close_context_menu()
 	if hand_player == null:
 		return
 	var blot_valid_choices: Array[Card] = []
@@ -2483,7 +2715,7 @@ func draw_hand() -> void:
 	_fan_container.name = "HandOverlay"
 	_fan_container.custom_minimum_size = Vector2(180.0, HAND_DOCK_HEIGHT)
 	_fan_container.mouse_filter = Control.MOUSE_FILTER_PASS
-	_fan_container.clip_contents = false
+	_fan_container.clip_contents = true
 	_fan_container.z_index = TRANSIENT_UI_Z_INDEX - 10
 	add_child(_fan_container)
 
@@ -2503,6 +2735,9 @@ func draw_hand() -> void:
 		vc.set_waiting_on_priority(_is_card_waiting_on_priority(card))
 		vc.set_priority_response_available(_is_card_usable_for_priority(card))
 		vc.set_blot_summon_state(card in blot_valid_choices, card in _pending_blot_selected_creatures)
+		vc.set_hand_mode(true)
+		vc.hand_hovered.connect(_on_hand_card_hover_started)
+		vc.hand_unhovered.connect(_on_hand_card_hover_ended)
 		vc.card_clicked.connect(_on_hand_card_pressed)
 		vc.card_right_clicked.connect(_on_hand_card_right_clicked)
 		vc.card_drag_released.connect(_on_card_drag_released)
@@ -2519,6 +2754,9 @@ func draw_hand() -> void:
 		)
 		vc.set_hand_proxy_visual(true, true)
 		vc.set_hover_viewer(game_manager.get_feedback_viewer())
+		vc.set_hand_mode(true)
+		vc.hand_hovered.connect(_on_hand_card_hover_started)
+		vc.hand_unhovered.connect(_on_hand_card_hover_ended)
 		vc.card_clicked.connect(_on_hand_card_pressed)
 		vc.card_right_clicked.connect(_on_hand_card_right_clicked)
 		vc.card_drag_released.connect(_on_card_drag_released)
@@ -2548,6 +2786,8 @@ func _layout_fan() -> void:
 	var spacing: float = FAN_CARD_SPACING if n == 1 else max(36.0, min(float(FAN_CARD_SPACING), (container_w - 180.0) / float(max(n - 1, 1))))
 	var total_span: float = spacing * float(n - 1)
 	var start_x: float = (container_w - total_span) * 0.5
+	var centers: Array[float] = []
+	centers.resize(n)
 
 	for i in range(n):
 		var vc: VisualCard = cards[i]
@@ -2560,11 +2800,249 @@ func _layout_fan() -> void:
 		# Arc: centre of fan is highest (y = 0), edges dip down
 		var arc_y := FAN_ARC_HEIGHT * t * t
 		var cx: float = start_x + float(i) * spacing
+		centers[i] = cx
 		vc.size = sz
 		vc.pivot_offset = sz / 2.0
 		vc.position = Vector2(cx - sz.x * 0.5, arc_y)
 		vc.rotation_degrees = rot
 		vc.set_base_z_index(i)
+	for i in range(n):
+		var vc: VisualCard = cards[i]
+		var left_bound: float = 0.0 if i == 0 else (centers[i - 1] + centers[i]) * 0.5
+		var right_bound: float = container_w if i == (n - 1) else (centers[i] + centers[i + 1]) * 0.5
+		var local_left := clampf(left_bound - vc.position.x, 0.0, vc.size.x)
+		var local_right := clampf(right_bound - vc.position.x, 0.0, vc.size.x)
+		var hit_width := maxf(1.0, local_right - local_left)
+		vc.set_hand_hover_hit_rect(Rect2(Vector2(local_left, 0.0), Vector2(hit_width, vc.size.y)))
+
+func _on_hand_card_hover_started(vc: VisualCard) -> void:
+	if vc != null and vc != _hand_hover_vc:
+		_show_hand_hover_preview(vc)
+
+func _on_hand_card_hover_ended(_vc: VisualCard) -> void:
+	call_deferred("_refresh_hand_hover_from_mouse")
+
+func _hide_hand_hover_preview() -> void:
+	if _hand_hover_preview != null and is_instance_valid(_hand_hover_preview):
+		_hand_hover_preview.queue_free()
+	_hand_hover_preview = null
+	_hand_hover_vc = null
+	_hand_hover_preview_card = null
+	_hand_hover_preview_keywords = null
+
+func _show_hand_hover_preview(vc: VisualCard) -> void:
+	if vc == null or not is_instance_valid(vc) or vc.card_data == null:
+		return
+	if vc == _hand_hover_vc and _hand_hover_preview != null and is_instance_valid(_hand_hover_preview):
+		_position_hand_hover_preview()
+		return
+	_hide_hand_hover_preview()
+	_hand_hover_vc = vc
+	var card := vc.card_data
+
+	var preview := Control.new()
+	preview.top_level = true
+	preview.z_index = HOVER_PREVIEW_Z_INDEX + 10
+	preview.mouse_filter = Control.MOUSE_FILTER_STOP
+	preview.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	preview.visible = false
+	preview.gui_input.connect(_on_hand_hover_preview_gui_input)
+
+	var large_vc := VisualCard.new()
+	large_vc.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	preview.add_child(large_vc)
+	large_vc.setup(card, 255, 0,
+		_get_hand_card_display_mana_cost(card),
+		_get_hand_card_cost_adjustment_lines(card))
+	large_vc.set_disabled(true, false)
+
+	var keywords_panel: Control = null
+	var keywords := _extract_card_keywords(card)
+	if keywords.size() > 0:
+		keywords_panel = _build_hand_keywords_panel(keywords)
+		preview.add_child(keywords_panel)
+
+	add_child(preview)
+	_hand_hover_preview = preview
+	_hand_hover_preview_card = large_vc
+	_hand_hover_preview_keywords = keywords_panel
+	call_deferred("_position_hand_hover_preview")
+
+func _position_hand_hover_preview() -> void:
+	if _hand_hover_preview == null or not is_instance_valid(_hand_hover_preview):
+		return
+	var vc := _hand_hover_vc
+	if vc == null or not is_instance_valid(vc):
+		return
+	var preview := _hand_hover_preview
+	var large_vc := _hand_hover_preview_card
+	if large_vc == null or not is_instance_valid(large_vc):
+		return
+	var vp_size := get_viewport().get_visible_rect().size
+	var card_sz := large_vc.get_combined_minimum_size()
+	large_vc.position = Vector2.ZERO
+	large_vc.size = card_sz
+	var preview_gap := 8.0
+	var keywords_panel := _hand_hover_preview_keywords
+	var keywords_sz := Vector2.ZERO
+	if keywords_panel != null and is_instance_valid(keywords_panel):
+		keywords_sz = keywords_panel.get_combined_minimum_size()
+	var show_keywords_left := false
+	var card_cx := vc.global_position.x + vc.size.x * 0.5
+	if keywords_sz.x > 0.0:
+		var room_on_right := vp_size.x - (card_cx + card_sz.x * 0.5) - 4.0
+		var room_on_left := (card_cx - card_sz.x * 0.5) - 4.0
+		show_keywords_left = room_on_right < keywords_sz.x + preview_gap and room_on_left > room_on_right
+		if show_keywords_left:
+			keywords_panel.position = Vector2.ZERO
+			large_vc.position = Vector2(keywords_sz.x + preview_gap, 0.0)
+		else:
+			keywords_panel.position = Vector2(card_sz.x + preview_gap, 0.0)
+	else:
+		show_keywords_left = false
+	var preview_sz := Vector2(
+		card_sz.x + (keywords_sz.x + preview_gap if keywords_sz.x > 0.0 else 0.0),
+		maxf(card_sz.y, keywords_sz.y)
+	)
+	preview.size = preview_sz
+	if keywords_panel != null and is_instance_valid(keywords_panel):
+		keywords_panel.size = keywords_sz
+	var desired_px := card_cx - (large_vc.position.x + card_sz.x * 0.5)
+	var px := clampf(desired_px, 4.0, maxf(4.0, vp_size.x - preview_sz.x - 4.0))
+	var py := maxf(0.0, vp_size.y - preview_sz.y)
+	preview.global_position = Vector2(px, py)
+	preview.visible = true
+
+func _refresh_hand_hover_from_mouse() -> void:
+	if _is_pause_menu_open():
+		_hide_hand_hover_preview()
+		return
+	if _any_hand_card_interacting():
+		_hide_hand_hover_preview()
+		return
+	var hovered_vc := _find_hand_hover_card_at(get_global_mouse_position())
+	if hovered_vc == null:
+		_hide_hand_hover_preview()
+	else:
+		_show_hand_hover_preview(hovered_vc)
+
+func _on_hand_hover_preview_gui_input(event: InputEvent) -> void:
+	var hover_vc := _hand_hover_vc
+	if hover_vc == null or not is_instance_valid(hover_vc):
+		return
+	if event is InputEventMouseButton and event.pressed:
+		if event.button_index == MOUSE_BUTTON_LEFT or event.button_index == MOUSE_BUTTON_RIGHT:
+			if event.button_index == MOUSE_BUTTON_LEFT:
+				_hide_hand_hover_preview()
+			hover_vc.proxy_mouse_button_press(event.button_index, get_global_mouse_position())
+			get_viewport().set_input_as_handled()
+
+func _update_hand_hover_preview() -> void:
+	if _fan_container == null or not is_instance_valid(_fan_container) or _hand_visual_cards.is_empty():
+		_hide_hand_hover_preview()
+		return
+	if _is_pause_menu_open():
+		_hide_hand_hover_preview()
+		return
+	if _any_hand_card_interacting():
+		_hide_hand_hover_preview()
+		return
+	var hovered_vc := _find_hand_hover_card_at(get_global_mouse_position())
+	if hovered_vc == null:
+		if _hand_hover_vc != null:
+			_hide_hand_hover_preview()
+		return
+	if hovered_vc != _hand_hover_vc:
+		_show_hand_hover_preview(hovered_vc)
+	elif _hand_hover_preview != null and is_instance_valid(_hand_hover_preview):
+		_position_hand_hover_preview()
+
+func _any_hand_card_interacting() -> bool:
+	for hand_vc in _hand_visual_cards:
+		var vc := hand_vc as VisualCard
+		if vc != null and is_instance_valid(vc) and vc.is_hand_interacting():
+			return true
+	return false
+
+func _find_hand_hover_card_at(global_pos: Vector2) -> VisualCard:
+	for i in range(_hand_visual_cards.size() - 1, -1, -1):
+		var vc: VisualCard = _hand_visual_cards[i]
+		if vc != null \
+				and is_instance_valid(vc) \
+				and vc.visible \
+				and not vc.is_hand_interacting() \
+				and vc.contains_global_point(global_pos):
+			return vc
+	if _hand_hover_preview != null and is_instance_valid(_hand_hover_preview):
+		if _hand_hover_preview.get_global_rect().has_point(global_pos):
+			return _hand_hover_vc
+	return null
+
+func _extract_card_keywords(card: Card) -> Array[String]:
+	var found: Array[String] = []
+	if card.ability_text == "":
+		return found
+	var regex := RegEx.new()
+	regex.compile("\\[b\\](.*?)\\[/b\\]")
+	for m in regex.search_all(card.ability_text):
+		var kw := m.get_string(1)
+		if kw in BaseCard.KEYWORD_HINTS and kw not in found:
+			found.append(kw)
+	return found
+
+const _HAND_KW_PANEL_WIDTH := 210.0
+
+func _build_hand_keywords_panel(keywords: Array[String]) -> Control:
+	var panel := PanelContainer.new()
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.custom_minimum_size = Vector2(_HAND_KW_PANEL_WIDTH, 0)
+	# Shrink to content height — HBoxContainer would otherwise stretch this to
+	# match the taller card preview, leaving a large empty space below the text.
+	panel.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.04, 0.04, 0.10, 0.96)
+	style.border_color = Color(0.42, 0.58, 0.88)
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		style.set_border_width(side, 1)
+	style.corner_radius_top_left = 5
+	style.corner_radius_top_right = 5
+	style.corner_radius_bottom_left = 5
+	style.corner_radius_bottom_right = 5
+	style.content_margin_left = 10
+	style.content_margin_right = 10
+	style.content_margin_top = 8
+	style.content_margin_bottom = 8
+	panel.add_theme_stylebox_override("panel", style)
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 10)
+	vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_child(vbox)
+	for i in keywords.size():
+		var kw: String = keywords[i]
+		var kw_vbox := VBoxContainer.new()
+		kw_vbox.add_theme_constant_override("separation", 3)
+		kw_vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		vbox.add_child(kw_vbox)
+		var name_lbl := Label.new()
+		name_lbl.text = kw
+		name_lbl.add_theme_font_size_override("font_size", 13)
+		name_lbl.add_theme_color_override("font_color", Color(0.95, 0.88, 0.5))
+		name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		kw_vbox.add_child(name_lbl)
+		var desc_lbl := Label.new()
+		desc_lbl.text = BaseCard.KEYWORD_HINTS[kw]
+		desc_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		desc_lbl.add_theme_font_size_override("font_size", 14)
+		desc_lbl.add_theme_color_override("font_color", Color(0.72, 0.72, 0.72))
+		desc_lbl.custom_minimum_size = Vector2(_HAND_KW_PANEL_WIDTH - 24.0, 0)
+		desc_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		kw_vbox.add_child(desc_lbl)
+		if i < keywords.size() - 1:
+			var sep := HSeparator.new()
+			sep.add_theme_color_override("color", Color(0.2, 0.25, 0.35))
+			sep.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			vbox.add_child(sep)
+	return panel
 
 func _make_deck_panel(zone: Zone) -> Control:
 	const CARD_BACK := "res://images/cardbackAI.png"
@@ -5520,38 +5998,298 @@ func _prompt_power_activation_discards(power: PowerCard, on_complete: Callable, 
 func _prompt_champions_call_shelving(god: GodCard, on_complete: Callable, on_cancel: Callable = Callable(), chosen: Array[Card] = []) -> bool:
 	if god == null or game_manager == null:
 		return false
-	var chosen_shelves: Array[Card] = chosen.duplicate()
 	var required_count := god.get_champions_call_required_shelve_count(game_manager)
-	if required_count <= 0:
-		if on_complete.is_valid():
-			on_complete.call(chosen_shelves)
-		return true
-	if chosen_shelves.size() >= required_count:
-		if on_complete.is_valid():
-			on_complete.call(chosen_shelves)
-		return true
-	var available_choices := god.get_champions_call_shelvable_hand_cards()
-	for already_chosen in chosen_shelves:
-		available_choices.erase(already_chosen)
-	if available_choices.is_empty():
+	var manifestation := god.get_champions_call_candidate(true)
+	var manifestation_name := manifestation.card_name if manifestation != null else "its Active God"
+	var available_choices := god.get_champions_call_shelvable_hand_cards(manifestation)
+	var max_shelve_count := god.get_champions_call_max_shelve_count(game_manager, manifestation)
+	var has_shelve_choices := max_shelve_count > 0 and not available_choices.is_empty()
+	if required_count > available_choices.size():
 		action_label.text = "Cannot finish Champion's Call for %s: choose another hand card to shelve." % god.card_name
 		update_ui()
 		if on_cancel.is_valid():
 			on_cancel.call()
 		return true
-	var on_choose_shelved_card := func(selected_card: Card) -> void:
-		var next_chosen: Array[Card] = chosen_shelves.duplicate()
-		next_chosen.append(selected_card)
-		_prompt_champions_call_shelving(god, on_complete, on_cancel, next_chosen)
-	_show_card_selection_overlay(
-		"Choose shelved card %d of %d for %s" % [chosen_shelves.size() + 1, required_count, god.card_name],
-		available_choices,
-		on_choose_shelved_card,
-		on_cancel,
-		"",
-		"Cancel"
+
+	_dismiss_zone_overlay()
+	_overlay_card_selected = Callable()
+	_overlay_card_dismissed = Callable()
+	_overlay_selection_cursor_mode = ""
+	_sync_sacrifice_cursor()
+
+	var overlay := Control.new()
+	overlay.name = "ChampionsCallOverlay"
+	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	overlay.z_index = 300
+	add_child(overlay)
+	_promote_transient_ui(overlay)
+	_zone_overlay = overlay
+
+	var bg := ColorRect.new()
+	bg.color = Color(0.02, 0.02, 0.04, 0.74)
+	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	overlay.add_child(bg)
+
+	var panel_width := 0.52 if has_shelve_choices else 0.44
+	var panel_height := 0.38 if has_shelve_choices else 0.28
+	var panel := _create_centered_overlay_panel(overlay, panel_width, panel_height)
+	panel.name = "ChampionsCallPanel"
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 10)
+	vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	panel.add_child(vbox)
+
+	var title := Label.new()
+	title.text = god.card_name + ": Champion's Call"
+	title.add_theme_font_size_override("font_size", 16)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vbox.add_child(title)
+
+	var mana_required := game_manager.get_creature_summon_mana_cost(god.card_owner, manifestation, god, false) if manifestation != null else 0
+	var current_mana := god.card_owner.mana if god.card_owner != null else 0
+	var info := Label.new()
+	if max_shelve_count <= 0:
+		info.text = "Summon %s. No hand cards can be shelved for this %d-cost summon. Current mana: %d." % [
+			manifestation_name,
+			mana_required,
+			current_mana
+		]
+	elif required_count > 0:
+		info.text = "Summon %s. Choose at least %d and up to %d hand card(s) to shelve. Each shelved card pays 4 mana toward the %d-cost summon. Current mana: %d." % [
+			manifestation_name,
+			required_count,
+			max_shelve_count,
+			mana_required,
+			current_mana
+		]
+	else:
+		info.text = "Summon %s. Shelving is optional here: choose up to %d hand card(s) to shelve toward the %d-cost summon, or choose none. Current mana: %d." % [
+			manifestation_name,
+			max_shelve_count,
+			mana_required,
+			current_mana
+		]
+	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	info.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vbox.add_child(info)
+
+	var status := Label.new()
+	status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	status.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vbox.add_child(status)
+
+	var action_row := HBoxContainer.new()
+	action_row.add_theme_constant_override("separation", 8)
+	vbox.add_child(action_row)
+
+	var confirm_btn := Button.new()
+	confirm_btn.text = "Summon " + manifestation_name
+	confirm_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	action_row.add_child(confirm_btn)
+
+	var decline_btn := Button.new()
+	decline_btn.text = "Decline"
+	decline_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	decline_btn.pressed.connect(func() -> void:
+		_dismiss_zone_overlay()
+		if on_cancel.is_valid():
+			on_cancel.call()
 	)
+	action_row.add_child(decline_btn)
+
+	var selected_targets: Array[Card] = []
+	for chosen_card in chosen:
+		if chosen_card != null and chosen_card in available_choices and chosen_card not in selected_targets:
+			selected_targets.append(chosen_card)
+	if selected_targets.size() > max_shelve_count:
+		selected_targets = selected_targets.slice(0, max_shelve_count)
+
+	var wrapper_map: Dictionary = {}
+	var apply_wrapper_style := func(wrapper: PanelContainer, is_selected: bool) -> void:
+		if wrapper == null:
+			return
+		var style := StyleBoxFlat.new()
+		style.bg_color = Color(0.16, 0.18, 0.26, 0.96) if is_selected else Color(0.06, 0.06, 0.10, 0.90)
+		style.border_color = Color(0.95, 0.78, 0.28, 1.0) if is_selected else Color(0.52, 0.64, 0.92, 0.58)
+		for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+			style.set_border_width(side, 2)
+		style.corner_radius_top_left = 6
+		style.corner_radius_top_right = 6
+		style.corner_radius_bottom_left = 6
+		style.corner_radius_bottom_right = 6
+		wrapper.add_theme_stylebox_override("panel", style)
+
+	var refresh_selection_state := func() -> void:
+		if max_shelve_count <= 0:
+			status.text = "No shelving choices available."
+			confirm_btn.disabled = false
+		elif required_count > 0:
+			status.text = "Selected %d hand card(s). Need at least %d, up to %d." % [selected_targets.size(), required_count, max_shelve_count]
+			confirm_btn.disabled = selected_targets.size() < required_count or selected_targets.size() > max_shelve_count
+		else:
+			status.text = "Selected %d of up to %d optional hand card(s)." % [selected_targets.size(), max_shelve_count]
+			confirm_btn.disabled = false
+		for choice in available_choices:
+			var wrapper := wrapper_map.get(choice) as PanelContainer
+			apply_wrapper_style.call(wrapper, choice in selected_targets)
+
+	if has_shelve_choices:
+		var scroll := ScrollContainer.new()
+		scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+		scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+		scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		scroll.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+		scroll.custom_minimum_size = Vector2(0, VisualCard.CARD_HEIGHT + 28)
+		scroll.mouse_filter = Control.MOUSE_FILTER_STOP
+		vbox.add_child(scroll)
+
+		var hbox := HBoxContainer.new()
+		hbox.add_theme_constant_override("separation", 8)
+		hbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		scroll.add_child(hbox)
+
+		for card in available_choices:
+			var wrapper := PanelContainer.new()
+			wrapper.mouse_filter = Control.MOUSE_FILTER_STOP
+			hbox.add_child(wrapper)
+			wrapper_map[card] = wrapper
+			apply_wrapper_style.call(wrapper, card in selected_targets)
+
+			var card_vbox := VBoxContainer.new()
+			card_vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			card_vbox.add_theme_constant_override("separation", 4)
+			wrapper.add_child(card_vbox)
+
+			card_vbox.add_child(_build_selection_overlay_card_preview(card))
+
+			var card_name := Label.new()
+			card_name.text = card.card_name
+			card_name.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			card_name.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			card_name.custom_minimum_size = Vector2(VisualCard.CARD_WIDTH, 0)
+			card_name.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			card_vbox.add_child(card_name)
+
+			var selected_card := card
+			wrapper.gui_input.connect(func(event: InputEvent) -> void:
+				if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+					if selected_card in selected_targets:
+						selected_targets.erase(selected_card)
+					elif selected_targets.size() < max_shelve_count:
+						selected_targets.append(selected_card)
+					refresh_selection_state.call()
+			)
+	vbox.move_child(action_row, vbox.get_child_count() - 1)
+
+	confirm_btn.pressed.connect(func() -> void:
+		if selected_targets.size() < required_count or selected_targets.size() > max_shelve_count:
+			return
+		var chosen_shelves: Array[Card] = selected_targets.duplicate()
+		_dismiss_zone_overlay()
+		if on_complete.is_valid():
+			on_complete.call(chosen_shelves)
+	)
+
+	refresh_selection_state.call()
+	action_label.text = "%s: choose hand cards to shelve, then confirm or decline." % god.card_name
+	update_ui()
 	return true
+
+func _show_champions_call_prompt(god: GodCard) -> void:
+	_hide_champions_call_prompt()
+	if god == null or game_manager == null:
+		return
+	if not god.can_use_champions_call(game_manager):
+		action_label.text = god.get_champions_call_failure_reason(game_manager)
+		update_ui()
+		return
+	var panel := PanelContainer.new()
+	panel.name = "ChampionsCallPromptPanel"
+	_champions_call_prompt_panel = panel
+
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.11, 0.09, 0.05, 0.97)
+	style.border_color = Color(0.96, 0.78, 0.28, 0.95)
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		style.set_border_width(side, 2)
+	panel.add_theme_stylebox_override("panel", style)
+	panel.custom_minimum_size = Vector2(420, 0)
+
+	var content := HBoxContainer.new()
+	content.add_theme_constant_override("separation", 10)
+	panel.add_child(content)
+
+	var left_vbox := VBoxContainer.new()
+	left_vbox.add_theme_constant_override("separation", 8)
+	left_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	content.add_child(left_vbox)
+
+	var title := Label.new()
+	title.text = "Use Champion's Call?"
+	title.add_theme_font_size_override("font_size", 14)
+	left_vbox.add_child(title)
+
+	var buttons := HBoxContainer.new()
+	buttons.add_theme_constant_override("separation", 8)
+	left_vbox.add_child(buttons)
+
+	var use_btn := Button.new()
+	use_btn.text = "Champion's Call"
+	use_btn.pressed.connect(func() -> void:
+		_hide_champions_call_prompt()
+		_begin_champions_call_activation(god)
+	)
+	buttons.add_child(use_btn)
+
+	var decline_btn := Button.new()
+	decline_btn.text = "Decline"
+	decline_btn.pressed.connect(func() -> void:
+		_hide_champions_call_prompt()
+		action_label.text = "Cancelled " + god.card_name + "."
+		update_ui()
+	)
+	buttons.add_child(decline_btn)
+
+	content.add_child(_build_hand_keywords_panel(["Champion's Call"]))
+
+	add_child(panel)
+	_promote_transient_ui(panel)
+	panel.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
+	call_deferred("_position_champions_call_prompt", panel, _get_champions_call_prompt_source(god))
+	action_label.text = god.card_name + ": choose whether to use Champion's Call."
+	update_ui()
+
+func _hide_champions_call_prompt() -> void:
+	if _champions_call_prompt_panel != null and is_instance_valid(_champions_call_prompt_panel):
+		_champions_call_prompt_panel.queue_free()
+	_champions_call_prompt_panel = null
+
+func _get_champions_call_prompt_source(god: GodCard) -> Control:
+	if god == null or game_manager == null:
+		return _player_god_zone_ui
+	if god.card_owner == game_manager.current_player:
+		return _player_god_zone_ui
+	return _enemy_god_zone_ui
+
+func _position_champions_call_prompt(panel: Control, source: Control) -> void:
+	if panel == null or not is_instance_valid(panel):
+		return
+	panel.size = panel.get_combined_minimum_size()
+	var vp_size := get_viewport_rect().size
+	var pos := Vector2(12.0, 12.0)
+	if source != null and is_instance_valid(source):
+		var rect := source.get_global_rect()
+		pos = Vector2(rect.end.x + 8.0, rect.position.y)
+		if pos.x + panel.size.x > vp_size.x - 8.0:
+			pos.x = rect.position.x - panel.size.x - 8.0
+		pos.y = clamp(pos.y, 8.0, vp_size.y - panel.size.y - 8.0)
+	pos.x = clamp(pos.x, 8.0, vp_size.x - panel.size.x - 8.0)
+	panel.global_position = pos
 
 func _should_start_champions_call_activation(god: GodCard) -> bool:
 	if god == null or game_manager == null or not god.can_use_champions_call(game_manager):
@@ -5562,16 +6300,23 @@ func _should_start_champions_call_activation(god: GodCard) -> bool:
 		return true
 	return god.get_valid_targets(game_manager).is_empty()
 
-func _queue_champions_call_activation(god: GodCard, chosen_shelves: Array[Card] = []) -> void:
+func _queue_champions_call_activation(god: GodCard, chosen_shelves: Array[Card] = [], zone: Zone = null, mode: String = "aggressive") -> void:
 	if god == null:
 		return
+	var shelve_uids: Array[String] = []
+	for card in chosen_shelves:
+		if card != null and "uid" in card:
+			shelve_uids.append(card.uid)
 	if _is_networked_client:
 		var god_uid: String = god.get("uid") if "uid" in god else ""
-		var shelve_uids: Array[String] = []
-		for card in chosen_shelves:
-			if card != null and "uid" in card:
-				shelve_uids.append(card.uid)
-		game_input.submit_action({type = "god_ability", god_uid = god_uid, shelve_uids = shelve_uids})
+		game_input.submit_action({
+			type = "god_ability",
+			god_uid = god_uid,
+			shelve_uids = shelve_uids,
+			zone_type = zone.zone_type if zone != null else -1,
+			zone_index = zone.zone_index if zone != null else -1,
+			mode = mode,
+		})
 		return
 	_queue_magical_action(
 		CardAction.Type.ABILITY,
@@ -5580,7 +6325,12 @@ func _queue_champions_call_activation(god: GodCard, chosen_shelves: Array[Card] 
 		god.card_name + " goes on the stack.",
 		func() -> void:
 			if god.has_method("activate_from_command"):
-				god.activate_from_command(game_manager, {"shelve_uids": chosen_shelves})
+				god.activate_from_command(game_manager, {
+					"shelve_uids": shelve_uids,
+					"zone_type": zone.zone_type if zone != null else -1,
+					"zone_index": zone.zone_index if zone != null else -1,
+					"mode": mode,
+				})
 			else:
 				god.activate(game_manager, null)
 	)
@@ -5588,16 +6338,58 @@ func _queue_champions_call_activation(god: GodCard, chosen_shelves: Array[Card] 
 func _begin_champions_call_activation(god: GodCard) -> void:
 	if god == null:
 		return
-	var required_count := god.get_champions_call_required_shelve_count(game_manager)
-	if required_count <= 0:
-		_queue_champions_call_activation(god)
-		return
 	var on_confirm_shelving := func(chosen_shelves: Array[Card]) -> void:
-		_queue_champions_call_activation(god, chosen_shelves)
+		_begin_champions_call_placement(god, chosen_shelves)
 	var on_cancel_shelving := func() -> void:
 		action_label.text = "Cancelled " + god.card_name + "."
 		update_ui()
 	_prompt_champions_call_shelving(god, on_confirm_shelving, on_cancel_shelving)
+
+func _begin_champions_call_placement(god: GodCard, chosen_shelves: Array[Card]) -> void:
+	if god == null:
+		return
+	_pending_champions_call_god = god
+	_pending_champions_call_shelves = chosen_shelves.duplicate()
+	selected_card = null
+	placement_mode = ""
+	if placement_container != null:
+		placement_container.visible = true
+	if stealth_mode_btn != null:
+		stealth_mode_btn.visible = false
+	action_label.text = god.card_name + ": choose aggressive or defensive stance, then click an empty friendly zone for its Active God."
+	update_ui()
+
+func _clear_champions_call_placement() -> void:
+	_pending_champions_call_god = null
+	_pending_champions_call_shelves.clear()
+	placement_mode = ""
+	if placement_container != null:
+		placement_container.visible = false
+	if stealth_mode_btn != null:
+		stealth_mode_btn.visible = true
+		stealth_mode_btn.disabled = false
+
+func _resolve_champions_call_placement(zone: Zone) -> void:
+	var god := _pending_champions_call_god
+	if god == null or game_manager == null:
+		_clear_champions_call_placement()
+		update_ui()
+		return
+	if placement_mode not in ["aggressive", "defensive"]:
+		action_label.text = "Champion's Call: choose aggressive or defensive stance first."
+		update_ui()
+		return
+	if zone == null or zone.zone_owner != god.card_owner:
+		action_label.text = "Champion's Call must summon into an empty friendly zone."
+		update_ui()
+		return
+	if zone.zone_type not in [Zone.ZoneType.FRONTLINE, Zone.ZoneType.RESERVE] or not zone.cards.is_empty():
+		action_label.text = "Champion's Call needs an empty frontline or reserve zone."
+		update_ui()
+		return
+	_queue_champions_call_activation(god, _pending_champions_call_shelves, zone, placement_mode)
+	_clear_champions_call_placement()
+	update_ui()
 
 func _send_used_hand_card_to_graveyard(card: Card) -> void:
 	if card == null or game_manager == null or card.card_owner == null:
@@ -6228,6 +7020,137 @@ func _select_hand_card(card: Card) -> void:
 	for vc in _hand_visual_cards:
 		vc.set_highlighted(vc.card_data == card)
 
+func _get_auto_select_zone_candidates(player: Player) -> Array[Zone]:
+	var zones: Array[Zone] = []
+	if player == null:
+		return zones
+	zones.append_array(player.reserve_zones)
+	zones.append_array(player.frontline_zones)
+	return zones
+
+func _find_preferred_auto_prepare_zone(card: Card) -> Zone:
+	if card == null or game_manager == null:
+		return null
+	var owner := card.card_owner if card.card_owner != null else game_manager.current_player
+	if owner == null:
+		return null
+	for zone in _get_auto_select_zone_candidates(owner):
+		if zone == null or not zone.is_board_zone() or not zone.cards.is_empty():
+			continue
+		if game_manager.can_prepare_card(owner, card, zone):
+			return zone
+	return null
+
+func _find_preferred_auto_display_zone(card: Card) -> Zone:
+	if card == null or game_manager == null:
+		return null
+	var owner := card.card_owner if card.card_owner != null else game_manager.current_player
+	if owner == null:
+		return null
+	for zone in _get_auto_select_zone_candidates(owner):
+		if _can_use_stack_display_zone(zone, owner):
+			return zone
+	return null
+
+func _try_auto_resolve_hand_card_to_zone(
+	card: Card,
+	zone: Zone,
+	new_placement_mode: String = "",
+	use_display_zone: bool = false
+) -> bool:
+	if card == null or zone == null:
+		return false
+	_pending_move_card = null
+	_pending_drop_zone = null
+	_select_hand_card(card)
+	placement_mode = new_placement_mode
+	if placement_container != null:
+		placement_container.visible = false
+	_pending_spell_display_zone = zone if use_display_zone else null
+	_on_empty_zone_pressed(zone)
+	return true
+
+func _begin_manual_spell_prepare_from_menu(card: Card) -> void:
+	_pending_spell_display_zone = null
+	_pending_drop_zone = null
+	_select_hand_card(card)
+	placement_mode = "prepare_spell"
+	if placement_container != null:
+		placement_container.visible = false
+	action_label.text = "Selected spell: " + card.card_name + " - preparation mode on. Click or drag to an empty friendly zone to prepare it face-down."
+	update_ui()
+
+func _begin_manual_hex_prepare_from_menu(card: Card) -> void:
+	_pending_spell_display_zone = null
+	_pending_drop_zone = null
+	_select_hand_card(card)
+	placement_mode = ""
+	if placement_container != null:
+		placement_container.visible = false
+	action_label.text = "Selected hex: " + card.card_name + " - click an empty friendly zone to prepare it."
+	update_ui()
+
+func _begin_manual_charm_prepare_from_menu(card: Card) -> void:
+	_pending_spell_display_zone = null
+	_pending_drop_zone = null
+	_select_hand_card(card)
+	placement_mode = "prepare_charm"
+	if placement_container != null:
+		placement_container.visible = false
+	action_label.text = card.card_name + " selected - click an empty friendly zone to prepare it."
+	update_ui()
+
+func _handle_spell_cast_menu_action(card: Card) -> void:
+	_close_context_menu()
+	if _auto_select_spell_play_zones and _try_auto_resolve_hand_card_to_zone(
+		card,
+		_find_preferred_auto_display_zone(card),
+		"",
+		true
+	):
+		return
+	_on_hand_card_pressed(card)
+
+func _handle_spell_prepare_menu_action(card: Card) -> void:
+	_close_context_menu()
+	if _auto_select_spell_prepare_zones and _try_auto_resolve_hand_card_to_zone(
+		card,
+		_find_preferred_auto_prepare_zone(card),
+		"prepare_spell"
+	):
+		return
+	_begin_manual_spell_prepare_from_menu(card)
+
+func _handle_hex_prepare_menu_action(card: Card) -> void:
+	_close_context_menu()
+	if _auto_select_hex_prepare_zones and _try_auto_resolve_hand_card_to_zone(
+		card,
+		_find_preferred_auto_prepare_zone(card)
+	):
+		return
+	_begin_manual_hex_prepare_from_menu(card)
+
+func _handle_charm_play_menu_action(card: Card) -> void:
+	_close_context_menu()
+	if _auto_select_charm_play_zones and _try_auto_resolve_hand_card_to_zone(
+		card,
+		_find_preferred_auto_display_zone(card),
+		"",
+		true
+	):
+		return
+	_on_hand_card_pressed(card)
+
+func _handle_charm_prepare_menu_action(card: Card) -> void:
+	_close_context_menu()
+	if _auto_select_charm_prepare_zones and _try_auto_resolve_hand_card_to_zone(
+		card,
+		_find_preferred_auto_prepare_zone(card),
+		"prepare_charm"
+	):
+		return
+	_begin_manual_charm_prepare_from_menu(card)
+
 func _select_hand_creature_for_placement(card: Card, mode: String) -> void:
 	_pending_spell_display_zone = null
 	_pending_move_card = null
@@ -6323,75 +7246,66 @@ func _on_hand_card_right_clicked(card: Card) -> void:
 		return
 	if _try_activate_graveyard_hand_proxy(card):
 		return
-	if card == selected_card and card.card_type == Card.CardType.SPELL:
-		_toggle_selected_spell_prepare_mode()
-		return
-	if card is CharmCard:
+	if card.card_type == Card.CardType.SPELL or card.card_type == Card.CardType.HEX or card is CharmCard:
 		_close_context_menu()
-		var charm_panel := PanelContainer.new()
-		charm_panel.name = "HandCardContextMenu"
-		var charm_style := StyleBoxFlat.new()
-		charm_style.bg_color = Color(0.1, 0.1, 0.18, 0.97)
-		charm_style.border_color = Color(0.45, 0.82, 0.95)
+		var magical_panel := PanelContainer.new()
+		magical_panel.name = "HandCardContextMenu"
+		var magical_style := StyleBoxFlat.new()
+		magical_style.bg_color = Color(0.1, 0.1, 0.18, 0.97)
+		magical_style.border_color = Color(0.45, 0.82, 0.95) if card is CharmCard else Color(0.78, 0.66, 0.98)
 		for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-			charm_style.set_border_width(side, 2)
-		charm_style.corner_radius_top_left = 4
-		charm_style.corner_radius_top_right = 4
-		charm_style.corner_radius_bottom_left = 4
-		charm_style.corner_radius_bottom_right = 4
-		charm_panel.add_theme_stylebox_override("panel", charm_style)
-		charm_panel.z_index = 200
+			magical_style.set_border_width(side, 2)
+		magical_style.corner_radius_top_left = 4
+		magical_style.corner_radius_top_right = 4
+		magical_style.corner_radius_bottom_left = 4
+		magical_style.corner_radius_bottom_right = 4
+		magical_panel.add_theme_stylebox_override("panel", magical_style)
 
-		var charm_vbox := VBoxContainer.new()
-		charm_vbox.add_theme_constant_override("separation", 4)
-		charm_panel.add_child(charm_vbox)
+		var magical_vbox := VBoxContainer.new()
+		magical_vbox.add_theme_constant_override("separation", 4)
+		magical_panel.add_child(magical_vbox)
 
-		var charm_title := Label.new()
-		charm_title.text = card.card_name
-		charm_title.add_theme_font_size_override("font_size", 13)
-		charm_title.modulate = Color(0.85, 0.95, 1.0)
-		charm_vbox.add_child(charm_title)
+		var magical_title := Label.new()
+		magical_title.text = card.card_name
+		magical_title.add_theme_font_size_override("font_size", 13)
+		magical_title.modulate = Color(0.85, 0.95, 1.0) if card is CharmCard else Color(0.92, 0.88, 1.0)
+		magical_vbox.add_child(magical_title)
 
-		if not (card as CharmCard).must_be_prepared_to_activate:
-			var play_btn := Button.new()
-			play_btn.text = "Play Charm"
-			play_btn.pressed.connect(func() -> void:
-				_close_context_menu()
-				selected_card = card
-				placement_mode = ""
-				action_label.text = card.card_name + " selected - click a zone to play it."
-			)
-			charm_vbox.add_child(play_btn)
+		if card is CharmCard:
+			if not (card as CharmCard).must_be_prepared_to_activate:
+				var play_charm_btn := Button.new()
+				play_charm_btn.text = "Play Charm"
+				play_charm_btn.pressed.connect(_handle_charm_play_menu_action.bind(card))
+				magical_vbox.add_child(play_charm_btn)
 
-		var prepare_btn := Button.new()
-		prepare_btn.text = "Prepare Charm"
-		prepare_btn.pressed.connect(func() -> void:
-			_close_context_menu()
-			selected_card = card
-			placement_mode = "prepare_charm"
-			action_label.text = card.card_name + " selected - click an empty friendly zone to prepare it."
+			var prepare_charm_btn := Button.new()
+			prepare_charm_btn.text = "Prepare Charm"
+			prepare_charm_btn.pressed.connect(_handle_charm_prepare_menu_action.bind(card))
+			magical_vbox.add_child(prepare_charm_btn)
+		elif card.card_type == Card.CardType.SPELL:
+			var cast_spell_btn := Button.new()
+			cast_spell_btn.text = "Cast Spell"
+			cast_spell_btn.pressed.connect(_handle_spell_cast_menu_action.bind(card))
+			magical_vbox.add_child(cast_spell_btn)
+
+			var prepare_spell_btn := Button.new()
+			prepare_spell_btn.text = "Prepare Spell"
+			prepare_spell_btn.pressed.connect(_handle_spell_prepare_menu_action.bind(card))
+			magical_vbox.add_child(prepare_spell_btn)
+		else:
+			var prepare_hex_btn := Button.new()
+			prepare_hex_btn.text = "Prepare Hex"
+			prepare_hex_btn.pressed.connect(_handle_hex_prepare_menu_action.bind(card))
+			magical_vbox.add_child(prepare_hex_btn)
+
+		var magical_cancel_btn := Button.new()
+		magical_cancel_btn.text = "Cancel"
+		magical_cancel_btn.pressed.connect(func() -> void:
+			_cancel_hand_card_context_menu(card)
 		)
-		charm_vbox.add_child(prepare_btn)
+		magical_vbox.add_child(magical_cancel_btn)
 
-		var charm_cancel_btn := Button.new()
-		charm_cancel_btn.text = "Cancel"
-		charm_cancel_btn.pressed.connect(_close_context_menu)
-		charm_vbox.add_child(charm_cancel_btn)
-
-		_context_menu = charm_panel
-		add_child(charm_panel)
-		_promote_transient_ui(charm_panel)
-		charm_panel.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
-		var charm_mouse_pos := get_global_mouse_position()
-		charm_panel.global_position = charm_mouse_pos
-		await get_tree().process_frame
-		if not is_instance_valid(charm_panel):
-			return
-		var charm_viewport_size := get_viewport_rect().size
-		charm_panel.global_position = Vector2(
-			clamp(charm_mouse_pos.x, 4.0, charm_viewport_size.x - charm_panel.size.x - 4.0),
-			clamp(charm_mouse_pos.y, 4.0, charm_viewport_size.y - charm_panel.size.y - 4.0)
-		)
+		_show_hand_context_menu_panel(magical_panel, card)
 		return
 
 	if card.card_type != Card.CardType.CREATURE or card.is_god:
@@ -6443,23 +7357,12 @@ func _on_hand_card_right_clicked(card: Card) -> void:
 
 	var cancel := Button.new()
 	cancel.text = "Cancel"
-	cancel.pressed.connect(_close_context_menu)
+	cancel.pressed.connect(func() -> void:
+		_cancel_hand_card_context_menu(card)
+	)
 	vbox.add_child(cancel)
 
-	_context_menu = panel
-	add_child(panel)
-	_promote_transient_ui(panel)
-	panel.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
-	var _mp := get_global_mouse_position()
-	panel.global_position = _mp
-	await get_tree().process_frame
-	if not is_instance_valid(panel):
-		return
-	var _vp := get_viewport_rect().size
-	panel.global_position = Vector2(
-		clamp(_mp.x, 4.0, _vp.x - panel.size.x - 4.0),
-		clamp(_mp.y, 4.0, _vp.y - panel.size.y - 4.0)
-	)
+	_show_hand_context_menu_panel(panel, card)
 
 func _toggle_selected_spell_prepare_mode() -> void:
 	if selected_card == null or selected_card.card_type != Card.CardType.SPELL:
@@ -6472,12 +7375,61 @@ func _toggle_selected_spell_prepare_mode() -> void:
 		action_label.text = "Selected spell: " + selected_card.card_name + " - preparation mode on. Click or drag to an empty friendly zone to prepare it face-down."
 	update_ui()
 
+func _show_hand_context_menu_panel(panel: Control, card: Card) -> void:
+	if panel == null:
+		return
+	panel.set_meta("context_scope", "hand_card")
+	panel.set_meta("context_card_uid", card.uid if card != null else "")
+	_context_menu = panel
+	add_child(panel)
+	_promote_transient_ui(panel, HOVER_PREVIEW_Z_INDEX + 20)
+	panel.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
+	call_deferred("_position_hand_context_menu_panel", panel, card)
+
+func _position_hand_context_menu_panel(panel: Control, card: Card) -> void:
+	if panel == null or not is_instance_valid(panel):
+		return
+	var viewport_size := get_viewport_rect().size
+	var anchor_pos := get_global_mouse_position()
+	if card != null \
+			and card == _hand_hover_vc \
+			and _hand_hover_preview != null \
+			and is_instance_valid(_hand_hover_preview) \
+			and _hand_hover_preview.visible:
+		var preview_rect := _hand_hover_preview.get_global_rect()
+		var px := preview_rect.end.x + 8.0
+		if px + panel.size.x > viewport_size.x - 4.0:
+			px = maxf(4.0, preview_rect.position.x - panel.size.x - 8.0)
+		var py := clampf(preview_rect.position.y, 4.0, viewport_size.y - panel.size.y - 4.0)
+		panel.global_position = Vector2(px, py)
+		return
+	_clamp_context_menu_to_viewport(panel, anchor_pos)
+
+func _cancel_hand_card_context_menu(card: Card) -> void:
+	_close_context_menu()
+	if card == null or selected_card != card:
+		return
+	selected_card = null
+	placement_mode = ""
+	_pending_drop_zone = null
+	if placement_container != null:
+		placement_container.visible = false
+	for hand_vc in _hand_visual_cards:
+		var vc := hand_vc as VisualCard
+		if vc != null and is_instance_valid(vc):
+			vc.set_highlighted(false)
+	action_label.text = card.card_name + " deselected"
+	update_ui()
+
 func _on_aggressive_stance_pressed() -> void:
 	if _is_turn_choice_pending():
 		_reject_pre_turn_action()
 		return
 	placement_mode = "aggressive"
-	action_label.text = "Aggressive stance selected - Click empty zone to place"
+	if _pending_champions_call_god != null:
+		action_label.text = "Champion's Call: aggressive stance selected. Click an empty friendly zone."
+	else:
+		action_label.text = "Aggressive stance selected - Click empty zone to place"
 	if _pending_drop_zone != null:
 		_on_empty_zone_pressed(_pending_drop_zone)
 		_pending_drop_zone = null
@@ -6487,7 +7439,10 @@ func _on_defensive_stance_pressed() -> void:
 		_reject_pre_turn_action()
 		return
 	placement_mode = "defensive"
-	action_label.text = "Defensive stance selected - Click empty zone to place"
+	if _pending_champions_call_god != null:
+		action_label.text = "Champion's Call: defensive stance selected. Click an empty friendly zone."
+	else:
+		action_label.text = "Defensive stance selected - Click empty zone to place"
 	if _pending_drop_zone != null:
 		_on_empty_zone_pressed(_pending_drop_zone)
 		_pending_drop_zone = null
@@ -6504,6 +7459,9 @@ func _on_stealth_mode_pressed() -> void:
 
 func _on_empty_zone_pressed(zone: Zone) -> void:
 	if _game_finished:
+		return
+	if _pending_champions_call_god != null:
+		_resolve_champions_call_placement(zone)
 		return
 	if _pending_skoll_summon != null and not _awaiting_creature_sacrifice and not _awaiting_altar_void_payment:
 		_resolve_skoll_upkeep_summon(zone)
@@ -6757,7 +7715,7 @@ func _on_god_card_pressed(card: Card) -> void:
 		return
 	var champion_god := card as GodCard
 	if champion_god != null and _should_start_champions_call_activation(champion_god):
-		_begin_champions_call_activation(champion_god)
+		_show_champions_call_prompt(champion_god)
 		return
 	if not card.targets:
 		if _is_networked_client:
@@ -6857,11 +7815,19 @@ func _on_god_right_clicked(card: Card) -> void:
 	title.modulate = Color(1.0, 0.95, 0.6)
 	vbox.add_child(title)
 
+	var activation_label: String = card.get_activation_label() if card.has_method("get_activation_label") else "Activate Ability"
+	var champion_god := card as GodCard
+	if champion_god != null and _should_start_champions_call_activation(champion_god):
+		activation_label = "Use Champion's Call"
+
 	var activate_btn := Button.new()
-	activate_btn.text = card.get_activation_label() if card.has_method("get_activation_label") else "Activate Ability"
+	activate_btn.text = activation_label
 	activate_btn.pressed.connect(func() -> void:
 		_close_context_menu()
-		_on_god_card_pressed(card)
+		if champion_god != null and _should_start_champions_call_activation(champion_god):
+			_begin_champions_call_activation(champion_god)
+		else:
+			_on_god_card_pressed(card)
 	)
 	vbox.add_child(activate_btn)
 
@@ -10294,6 +11260,8 @@ func _on_creature_right_clicked(card: Card) -> void:
 
 func _close_context_menu() -> void:
 	if _context_menu and is_instance_valid(_context_menu):
+		_context_menu.visible = false
+		_context_menu.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		_context_menu.queue_free()
 	_context_menu = null
 
@@ -10386,6 +11354,10 @@ func _on_creature_drag_started(card: Card, from_zone: Zone) -> void:
 	_bdrag_active = true
 
 func _input(event: InputEvent) -> void:
+	if not is_visible_in_tree():
+		return
+	if _try_handle_escape_key(event):
+		return
 	if event is InputEventMouseButton:
 		var mouse_button_event := event as InputEventMouseButton
 		if mouse_button_event.pressed and mouse_button_event.button_index == MOUSE_BUTTON_RIGHT \
@@ -10443,9 +11415,36 @@ func _reject_priority_locked_action(reason: String = "Only legal priority respon
 	update_ui()
 	return true
 
+func _try_handle_escape_key(event: InputEvent) -> bool:
+	if not (event is InputEventKey):
+		return false
+	var key_event := event as InputEventKey
+	if not key_event.pressed or key_event.echo or key_event.keycode != KEY_ESCAPE:
+		return false
+	if _is_settings_menu_open():
+		_show_pause_menu_page()
+		get_viewport().set_input_as_handled()
+		return true
+	if _is_pause_menu_open():
+		_hide_pause_menu()
+		get_viewport().set_input_as_handled()
+		return true
+	if not _game_finished and (_game_result_overlay == null or not is_instance_valid(_game_result_overlay)):
+		_show_pause_menu()
+		get_viewport().set_input_as_handled()
+		return true
+	return false
+
 func _unhandled_input(event: InputEvent) -> void:
+	if not is_visible_in_tree():
+		return
 	if event is InputEventKey:
 		var key_event := event as InputEventKey
+		if _try_handle_escape_key(event):
+			return
+		if _is_pause_menu_open():
+			get_viewport().set_input_as_handled()
+			return
 		if key_event.pressed and not key_event.echo and key_event.keycode == KEY_SPACE and _is_priority_prompt_visible():
 			_on_priority_pass_pressed()
 			get_viewport().set_input_as_handled()
@@ -14023,6 +15022,7 @@ func _on_blot_sacrifice_cancel_pressed() -> void:
 		update_ui()
 
 func _dismiss_transient_prompts() -> void:
+	_hide_pause_menu()
 	_hide_devour_cancel_prompt()
 	_dismiss_zone_overlay()
 	_hide_priority_prompt()
@@ -14039,6 +15039,7 @@ func _dismiss_transient_prompts() -> void:
 	_hide_absence_mode_prompt()
 	_hide_blessed_knights_prompt()
 	_hide_habrok_breakout_prompt(true)
+	_hide_champions_call_prompt()
 	_hide_sharur_escape_prompt()
 	_hide_wheel_of_fire_turn_start_prompt()
 	_hide_byggvir_reveal_prompt()
@@ -14882,6 +15883,7 @@ func _present_game_result_from_state(state: Dictionary, action_message: String) 
 	_finalize_game_result_ui(action_message, winner, loser, should_return_to_menu)
 
 func _show_game_result_overlay(result_message: String, winner = null, loser = null, auto_return: bool = false) -> void:
+	_hide_pause_menu()
 	_hide_game_result_overlay()
 
 	var overlay := ColorRect.new()
@@ -16214,6 +17216,7 @@ func cleanup() -> void:
 	_game_result_presented = false
 	_pending_forfeit_return_to_menu = false
 	_pending_post_game_return_to_menu = false
+	_hide_pause_menu()
 	_hide_game_result_overlay()
 	_hide_corner_action_button()
 	_local_match_result_recorded = false

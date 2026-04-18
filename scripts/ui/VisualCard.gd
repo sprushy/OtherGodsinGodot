@@ -4,6 +4,8 @@ extends PanelContainer
 signal card_clicked(card: Card)
 signal card_right_clicked(card: Card)
 signal card_drag_released(card: Card, global_pos: Vector2, rotated: bool, stealth: bool)
+signal hand_hovered(vc: VisualCard)
+signal hand_unhovered(vc: VisualCard)
 
 var card_data: Card
 var _disabled: bool = false
@@ -24,8 +26,8 @@ const _DRAG_PREPARE_OVERLAY_NAME := "DragPrepareOverlay"
 const _DRAG_ROT_SPEED: float = 600.0  # degrees per second (90° in 0.15 s)
 var _base_z_index: int = 0
 const _HOVER_PANEL_Z_INDEX := 2000
-const _HOVER_PANEL_WIDTH := 280.0
-const _HOVER_PANEL_MAX_HEIGHT := 360.0
+const _HOVER_PANEL_WIDTH := 320.0
+const _HOVER_PANEL_MAX_HEIGHT := 420.0
 var _hover_panel: Control = null
 var _hover_viewer: Player = null
 var _waiting_on_priority: bool = false
@@ -38,6 +40,8 @@ var _display_cost_adjustment_lines: Array[String] = []
 var _ghostly_hand_proxy: bool = false
 var _click_only: bool = false
 var _dim_when_disabled: bool = true
+var _hand_mode: bool = false
+var _hand_hover_hit_rect: Rect2 = Rect2()
 
 func set_base_z_index(idx: int) -> void:
 	_base_z_index = idx
@@ -81,17 +85,22 @@ func _get_display_mana_cost() -> int:
 	return _display_mana_cost if _display_mana_cost >= 0 else card_data.mana_cost
 
 func _compute_natural_height() -> float:
-	var h := 22.0  # name + mana row
+	var h := 26.0  # name + mana row
 	if card_data.art_path != "":
 		var tex: Texture2D = load(card_data.art_path)
 		if tex:
 			h += _card_width * float(tex.get_height()) / float(tex.get_width())
 	if not card_data.is_god:
-		h += 18.0  # stats / speed / resilience row
+		h += 22.0  # stats / speed / resilience row
 	if card_data.ability_text != "":
 		var raw := card_data.ability_text.replace("[b]", "").replace("[/b]", "")
-		var est_lines: int = max(2, ceili(float(raw.length()) / 28.0))
-		h += float(est_lines) * 14.0
+		var content_width := maxf(96.0, float(_card_width) - 10.0)
+		var chars_per_line = max(12, int(floor(content_width / 7.2)))
+		var est_lines := 0
+		for part in raw.split("\n", false):
+			est_lines += max(1, ceili(float(part.length()) / float(chars_per_line)))
+		est_lines = max(est_lines, 2)
+		h += float(est_lines) * 18.0 + 12.0
 	return h
 
 func _should_show_power_lock_overlay() -> bool:
@@ -123,6 +132,7 @@ func _build_art_node() -> TextureRect:
 	art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	art.custom_minimum_size = Vector2(_card_width, _card_width * float(tex.get_height()) / float(tex.get_width()))
 	art.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	art.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_art_rect = art
 	return art
 
@@ -141,10 +151,12 @@ func _make_name_label() -> Label:
 	name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	name_lbl.custom_minimum_size = Vector2(_card_width - 8, 0)
 	name_lbl.text = card_data.get_display_name_for_control(name_lbl)
+	name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return name_lbl
 
 func _populate_vbox(vbox: VBoxContainer) -> void:
 	var top_row := HBoxContainer.new()
+	top_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vbox.add_child(top_row)
 
 	if not card_data.name_at_bottom:
@@ -155,12 +167,13 @@ func _populate_vbox(vbox: VBoxContainer) -> void:
 	if cost_text != "":
 		var cost_lbl := Label.new()
 		cost_lbl.text = cost_text
-		cost_lbl.add_theme_font_size_override("font_size", 14)
+		cost_lbl.add_theme_font_size_override("font_size", 17)
 		cost_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 		if display_mana_cost > card_data.mana_cost:
 			cost_lbl.add_theme_color_override("font_color", Color(1.0, 0.65, 0.65))
 		elif display_mana_cost < card_data.mana_cost:
 			cost_lbl.add_theme_color_override("font_color", Color(0.65, 1.0, 0.7))
+		cost_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		top_row.add_child(cost_lbl)
 
 	var art := _build_art_node()
@@ -175,17 +188,20 @@ func _populate_vbox(vbox: VBoxContainer) -> void:
 			stats_lbl.text = "STR:%d RES:%d SPD:%d" % [
 				card_data.strength, card_data.resilience, card_data.speed
 			]
-			stats_lbl.add_theme_font_size_override("font_size", 13)
+			stats_lbl.add_theme_font_size_override("font_size", 19)
+			stats_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			vbox.add_child(stats_lbl)
 		Card.CardType.STRUCTURE:
 			var res_lbl := Label.new()
 			res_lbl.text = "RES:%d" % card_data.resilience
-			res_lbl.add_theme_font_size_override("font_size", 10)
+			res_lbl.add_theme_font_size_override("font_size", 16)
+			res_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			vbox.add_child(res_lbl)
 		Card.CardType.SPELL, Card.CardType.HEX, Card.CardType.CHARM:
 			var spd_lbl := Label.new()
 			spd_lbl.text = "SPD:%d" % card_data.speed
-			spd_lbl.add_theme_font_size_override("font_size", 10)
+			spd_lbl.add_theme_font_size_override("font_size", 16)
+			spd_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			vbox.add_child(spd_lbl)
 
 	if card_data.ability_text != "":
@@ -193,17 +209,19 @@ func _populate_vbox(vbox: VBoxContainer) -> void:
 		ability_lbl.bbcode_enabled = true
 		ability_lbl.text = BaseCard.apply_keyword_hints(card_data.ability_text)
 		ability_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		ability_lbl.add_theme_font_size_override("normal_font_size", 10)
-		ability_lbl.add_theme_font_size_override("bold_font_size", 10)
+		ability_lbl.add_theme_font_size_override("normal_font_size", 14)
+		ability_lbl.add_theme_font_size_override("bold_font_size", 14)
 		ability_lbl.add_theme_color_override("default_color", Color(0.9, 0.85, 1.0))
 		ability_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		ability_lbl.size_flags_vertical = Control.SIZE_EXPAND_FILL
 		ability_lbl.scroll_active = false
+		ability_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		vbox.add_child(ability_lbl)
 
 	if card_data.name_at_bottom:
 		var spacer := Control.new()
 		spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		vbox.add_child(spacer)
 		vbox.add_child(_make_name_label())
 
@@ -224,6 +242,7 @@ func _build_content() -> void:
 
 	var vbox := VBoxContainer.new()
 	vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_inner.add_child(vbox)
 	_populate_vbox(vbox)
 
@@ -359,8 +378,43 @@ func set_hand_proxy_visual(enabled: bool, click_only: bool = true) -> void:
 func set_hover_viewer(viewer: Player) -> void:
 	_hover_viewer = viewer
 
+func set_hand_mode(enabled: bool) -> void:
+	_hand_mode = enabled
+	if not enabled:
+		_hand_hover_hit_rect = Rect2()
+
+func set_hand_hover_hit_rect(rect: Rect2) -> void:
+	_hand_hover_hit_rect = rect
+
 func _refresh_mouse_filter() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP if (not _disabled or _hover_preview_when_disabled) else Control.MOUSE_FILTER_IGNORE
+
+func _has_point(point: Vector2) -> bool:
+	var hit_rect := Rect2(Vector2.ZERO, size)
+	if _hand_mode and _hand_hover_hit_rect.size.x > 0.0 and _hand_hover_hit_rect.size.y > 0.0:
+		hit_rect = _hand_hover_hit_rect
+		if hit_rect.has_point(point):
+			return true
+		var bottom_band_height := minf(size.y, maxf(44.0, size.y * 0.16))
+		var bottom_band_top := maxf(0.0, size.y - bottom_band_height)
+		return point.x >= 0.0 and point.x < size.x and point.y >= bottom_band_top and point.y < size.y
+	return hit_rect.has_point(point)
+
+func contains_global_point(global_point: Vector2) -> bool:
+	var local_point := get_global_transform().affine_inverse() * global_point
+	return _has_point(local_point)
+
+func proxy_mouse_button_press(button_index: MouseButton, global_mouse_pos: Vector2) -> void:
+	if _disabled:
+		return
+	if button_index == MOUSE_BUTTON_LEFT:
+		_drag_offset = global_mouse_pos - global_position
+		_picked_up = true
+	elif button_index == MOUSE_BUTTON_RIGHT:
+		card_right_clicked.emit(card_data)
+
+func is_hand_interacting() -> bool:
+	return _picked_up or _dragging
 
 func set_highlighted(value: bool) -> void:
 	modulate = Color(1.2, 1.2, 0.65) if value else Color.WHITE
@@ -737,7 +791,7 @@ func _show_hover_panel() -> void:
 	if card_data.card_types.size() > 0:
 		var type_lbl := Label.new()
 		type_lbl.text = " • ".join(card_data.card_types)
-		type_lbl.add_theme_font_size_override("font_size", 11)
+		type_lbl.add_theme_font_size_override("font_size", 14)
 		type_lbl.add_theme_color_override("font_color", Color(0.7, 0.85, 1.0))
 		type_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		vbox.add_child(type_lbl)
@@ -751,7 +805,7 @@ func _show_hover_panel() -> void:
 		meta_parts.append(card_data.culture)
 	var meta_lbl := Label.new()
 	meta_lbl.text = "  |  ".join(meta_parts)
-	meta_lbl.add_theme_font_size_override("font_size", 11)
+	meta_lbl.add_theme_font_size_override("font_size", 14)
 	meta_lbl.add_theme_color_override("font_color", Color(0.65, 0.65, 0.65))
 	vbox.add_child(meta_lbl)
 
@@ -765,7 +819,7 @@ func _show_hover_panel() -> void:
 			var eff_spd := card_data.get_effective_speed()
 			var stats_lbl := Label.new()
 			stats_lbl.text = "STR: %d   RES: %d   SPD: %d" % [eff_str, eff_res, eff_spd]
-			stats_lbl.add_theme_font_size_override("font_size", 12)
+			stats_lbl.add_theme_font_size_override("font_size", 18)
 			var tip_parts: Array[String] = []
 			for entry in [["STR", "str"], ["RES", "res"], ["SPD", "spd"]]:
 				var bd := card_data.get_full_stat_breakdown(entry[1])
@@ -778,19 +832,19 @@ func _show_hover_panel() -> void:
 		Card.CardType.STRUCTURE:
 			var res_lbl := Label.new()
 			res_lbl.text = "RES: %d" % card_data.resilience
-			res_lbl.add_theme_font_size_override("font_size", 12)
+			res_lbl.add_theme_font_size_override("font_size", 18)
 			vbox.add_child(res_lbl)
 		Card.CardType.SPELL, Card.CardType.HEX, Card.CardType.CHARM:
 			var spd_lbl := Label.new()
 			spd_lbl.text = "Speed: %d" % card_data.speed
-			spd_lbl.add_theme_font_size_override("font_size", 12)
+			spd_lbl.add_theme_font_size_override("font_size", 18)
 			vbox.add_child(spd_lbl)
 
 	# Extra costs
 	if card_data.has_additional_costs():
 		var cost_lbl := Label.new()
 		cost_lbl.text = "Extra Costs: " + " ".join(card_data.get_cost_shorthand_parts(0))
-		cost_lbl.add_theme_font_size_override("font_size", 11)
+		cost_lbl.add_theme_font_size_override("font_size", 14)
 		cost_lbl.add_theme_color_override("font_color", Color(1.0, 0.6, 0.4))
 		vbox.add_child(cost_lbl)
 
@@ -798,7 +852,7 @@ func _show_hover_panel() -> void:
 		var summon_cost_lbl := Label.new()
 		summon_cost_lbl.text = "\n".join(_display_cost_adjustment_lines)
 		summon_cost_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		summon_cost_lbl.add_theme_font_size_override("font_size", 11)
+		summon_cost_lbl.add_theme_font_size_override("font_size", 14)
 		summon_cost_lbl.add_theme_color_override("font_color", Color(1.0, 0.72, 0.72))
 		summon_cost_lbl.custom_minimum_size = Vector2(210, 0)
 		vbox.add_child(summon_cost_lbl)
@@ -814,7 +868,7 @@ func _show_hover_panel() -> void:
 		var ability_lbl := Label.new()
 		ability_lbl.text = card_data.ability_text.replace("[b]", "").replace("[/b]", "")
 		ability_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		ability_lbl.add_theme_font_size_override("font_size", 12)
+		ability_lbl.add_theme_font_size_override("font_size", 16)
 		ability_lbl.add_theme_color_override("font_color", Color(0.9, 0.85, 1.0))
 		ability_lbl.custom_minimum_size = Vector2(210, 0)
 		vbox.add_child(ability_lbl)
@@ -824,7 +878,7 @@ func _show_hover_panel() -> void:
 		var flavor_lbl := Label.new()
 		flavor_lbl.text = card_data.flavor_text
 		flavor_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		flavor_lbl.add_theme_font_size_override("font_size", 11)
+		flavor_lbl.add_theme_font_size_override("font_size", 14)
 		flavor_lbl.add_theme_color_override("font_color", Color(0.6, 0.6, 0.6))
 		vbox.add_child(flavor_lbl)
 
@@ -840,8 +894,8 @@ func _show_hover_panel() -> void:
 		detail_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		detail_lbl.scroll_active = false
 		detail_lbl.fit_content = true
-		detail_lbl.add_theme_font_size_override("normal_font_size", 11)
-		detail_lbl.add_theme_font_size_override("bold_font_size", 11)
+		detail_lbl.add_theme_font_size_override("normal_font_size", 14)
+		detail_lbl.add_theme_font_size_override("bold_font_size", 14)
 		detail_lbl.add_theme_color_override("default_color", Color(0.72, 0.96, 0.86))
 		detail_lbl.custom_minimum_size = Vector2(210, 0)
 		vbox.add_child(detail_lbl)
@@ -875,6 +929,10 @@ func _notification(what: int) -> void:
 				_inner.pivot_offset = size / 2.0
 			_layout_power_lock_overlay()
 		NOTIFICATION_MOUSE_ENTER:
+			if _hand_mode:
+				if not _picked_up:
+					hand_hovered.emit(self)
+				return
 			if (not _disabled or _hover_preview_when_disabled) and not _picked_up:
 				pivot_offset = size / 2.0
 				z_index = _base_z_index + 50
@@ -882,6 +940,10 @@ func _notification(what: int) -> void:
 				tw.tween_property(self, "scale", Vector2(1.08, 1.08), 0.08)
 				_show_hover_panel()
 		NOTIFICATION_MOUSE_EXIT:
+			if _hand_mode:
+				if not _picked_up:
+					hand_unhovered.emit(self)
+				return
 			if not _picked_up:
 				z_index = _base_z_index
 				var tw := create_tween()

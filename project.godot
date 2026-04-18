@@ -15,7 +15,7 @@ compatibility/default_parent_skeleton_in_mesh_instance_3d=true
 [application]
 
 config/name="ClaudeOtherGods"
-config/version="0.2.50"
+config/version="0.2.51"
 run/main_scene="uid://gpaa31rvtxtn"
 config/features=PackedStringArray("4.6", "Forward Plus")
 config/icon="res://images/icon (2).svg"
@@ -23,7 +23,11 @@ config/default_lobby_host="63.33.96.156"
 
 [display]
 
+window/size/viewport_width=1920
+window/size/viewport_height=1080
 window/size/mode=2
+window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
 
 [dotnet]
 

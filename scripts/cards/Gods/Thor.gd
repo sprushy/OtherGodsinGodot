@@ -37,7 +37,12 @@ func activate_from_command(game_manager: GameManager, command: Dictionary) -> vo
 	if not can_use_champions_call(game_manager):
 		activate(game_manager, null)
 		return
-	var feedback := resolve_champions_call(game_manager, get_champions_call_selected_cards_from_command(game_manager, command))
+	var feedback := resolve_champions_call(
+		game_manager,
+		get_champions_call_selected_cards_from_command(game_manager, command),
+		get_champions_call_zone_from_command(command),
+		get_champions_call_mode_from_command(command)
+	)
 	if game_manager != null:
 		game_manager.note_player_feedback(feedback)
 	if current_zone != card_owner.god_zone:

@@ -16,7 +16,7 @@ func _init() -> void:
 	speed = 2
 	resilience = 26
 	strength = 26
-	ability_text = "[b]Shift[/b] ([b]Activate[/b]): Switch this card between Human, Mage, Shapeshifter and Animal, Anguine, Shapeshifter.\n[b]Medicine[/b] ([b]Activate[/b], Spd 2): Negate the effects of your opponent's cards which are targeting yours until the end of the turn."
+	ability_text = "[b]Shift[/b] ([b]Activate[/b]): Switch between Human, Mage, Shapeshifter and Animal, Anguine, Shapeshifter.\nMedicine ([b]Activate[/b], [b]Spd[/b] 2): Negate enemy effects targeting your cards until end of turn."
 	flavor_text = ""
 	culture = "Tian"
 	artist = "Ricardo Zoppello"

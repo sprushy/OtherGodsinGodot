@@ -17,7 +17,7 @@ func _init() -> void:
 	strength = 30
 	culture = "Norse"
 	flavor_text = "Dellingr's radiance strips away every shadow and leaves hostile magic dormant."
-	ability_text = "[b]Radiate[/b] ([b]Impact[/b]): Reveal all your opponent's face-down and in-hand cards until the end of the turn; if they are magical, they cannot be activated this turn; if they have a [b]Reveal[/b] ability, you may choose not to activate them."
+	ability_text = "Radiate ([b]Impact[/b]): Reveal all opponent face-down and in-hand cards. Magical cards revealed this way cannot be activated this turn. If a revealed card has [b]Reveal[/b], you may decline to resolve it."
 	art_path = ART_PATH
 	name_at_bottom = true
 	artist = "Ricardo Zoppello"
@@ -44,7 +44,7 @@ func on_impact(game_manager: GameManager) -> void:
 			target.lock_activation_until_end_of_turn(game_manager.turn_number, REVEAL_SOURCE, self, card_owner)
 			locked_count += 1
 
-	var feedback := "%s reveals %d hidden opposing card(s) until end of turn." % [card_name, revealed_count]
+	var feedback := "%s reveals %d hidden opposing card(s)." % [card_name, revealed_count]
 	if locked_count > 0:
 		feedback += " %d magical card(s) cannot be activated this turn." % locked_count
 	game_manager.note_player_feedback(feedback)
@@ -88,7 +88,7 @@ func _reveal_without_triggering_reveal_ability(target: Card, game_manager: GameM
 		REVEAL_SOURCE,
 		self,
 		card_owner,
-		{"expires_turn": game_manager.turn_number}
+		{}
 	)
 	if game_manager.has_method("notify_card_revealed_by_effect"):
 		game_manager.notify_card_revealed_by_effect(target, self)

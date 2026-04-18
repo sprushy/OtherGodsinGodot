@@ -14,7 +14,7 @@ func _init() -> void:
 	speed = 2
 	resilience = 29
 	strength = 30
-	ability_text = "[b]Sun Hunt[/b]: [b]Upkeep[/b]: You may forgo your other upkeep options to summon this card from your hand. This summon costs no mana and no sacrifice. Until end of turn, all other summoning, normal or effect-based, costs 2 additional mana."
+	ability_text = "Sun Hunt ([b]Upkeep[/b]): You may skip your other upkeep options to summon this from your hand without paying its cost. Until end of turn, all other summons cost 2 more."
 	culture = "Norse"
 	artist = "Riccardo Zoppello"
 	art_path = ART_PATH

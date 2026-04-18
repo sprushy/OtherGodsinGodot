@@ -15,7 +15,7 @@ func _init() -> void:
 	culture = "Tian"
 	targets = true
 	flavor_text = ""
-	ability_text = "Tactical Break ([b]Passive[/b]/[b]Activate[/b]): At the start of each of your turns, if you have more creatures on the frontline than your opponent, gain 1 tactic counter. Remove 4 tactic counters to destroy a card.\n[b]Champion's Call[/b] ([b]Activate[/b]): Summon Guan Yu, Active God. You may [b]Shelve[/b] cards from your hand to pay 4 mana each of its summon cost."
+	ability_text = "Tactical Break ([b]Upkeep[/b]/[b]Activate[/b]): If you control more frontline creatures than your opponent, gain 1 tactic counter. Remove 4 tactic counters: destroy a card.\n[b]Champion's Call[/b] ([b]Activate[/b]): Summon Guan Yu, Active God. You may [b]Shelve[/b] cards from your hand to pay 4 mana each."
 	art_path = "res://images/card_art/gods/guan_yu.png"
 	artist = "Ricarrdo Zoppello"
 	name_at_bottom = true
@@ -96,7 +96,12 @@ func activate_from_command(game_manager: GameManager, command: Dictionary) -> vo
 		return
 	if can_use_champions_call(game_manager):
 		game_manager.note_player_feedback(
-			resolve_champions_call(game_manager, get_champions_call_selected_cards_from_command(game_manager, command))
+			resolve_champions_call(
+				game_manager,
+				get_champions_call_selected_cards_from_command(game_manager, command),
+				get_champions_call_zone_from_command(command),
+				get_champions_call_mode_from_command(command)
+			)
 		)
 		if current_zone != card_owner.god_zone:
 			notify_power_activated(game_manager, null)

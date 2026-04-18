@@ -13,7 +13,7 @@ func _init() -> void:
 	speed = 1
 	resilience = 21
 	strength = 21
-	ability_text = "[b]Imbue[/b] ([b]Passive[/b]): Weapons you equip from your hand gain this effect: \"The equipped may target creatures and structures which could not normally be targeted for an attack and destroy creatures which cannot normally be destroyed in combat.\""
+	ability_text = "[b]Imbue[/b] ([b]Passive[/b]): Weapons equipped from your hand gain: \"This can target creatures and structures that cannot normally be attacked, and can destroy creatures that cannot normally be destroyed in combat.\""
 	flavor_text = ""
 	culture = "Olympic"
 	artist = "Ricardo Zoppello"

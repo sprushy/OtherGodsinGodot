@@ -518,7 +518,7 @@ func _build_deck_panel(parent: Control) -> void:
 	_prev_ability.scroll_active   = false
 	_prev_ability.fit_content     = true
 	_prev_ability.custom_minimum_size.y = 96
-	_prev_ability.mouse_filter    = Control.MOUSE_FILTER_IGNORE
+	_prev_ability.mouse_filter    = Control.MOUSE_FILTER_STOP
 	details_box.add_child(_prev_ability)
 
 	_prev_flavor = Label.new()

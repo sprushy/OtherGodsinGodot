@@ -15,7 +15,7 @@ func _init() -> void:
 	resilience = 22
 	strength = 18
 	incorporeal = true
-	ability_text = "[b]Incorporeal[/b] ([b]Passive[/b]): Can only be engaged by Spirits or faster Mages. Can only engage Spirits or slower Mages.\n[b]Guardian[/b] ([b]Passive[/b]): Any creature that attacks your followers sleeps until the end of their owner's next turn. This card cannot attack."
+	ability_text = "[b]Incorporeal[/b]\nGuardian ([b]Passive[/b]): Creatures that attack your followers sleep until the end of their controller's next turn. This card cannot attack."
 	flavor_text = ""
 	culture = "Ancient"
 	artist = "Ricarrdo Zoppello"
