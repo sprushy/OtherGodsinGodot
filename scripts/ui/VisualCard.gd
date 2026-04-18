@@ -72,9 +72,9 @@ func setup(
 	_card_height = height
 	_display_mana_cost = display_mana_cost
 	_display_cost_adjustment_lines = display_cost_adjustment_lines.duplicate()
-	# Pre-compute natural height so get_combined_minimum_size() is reliable
-	# before any layout pass runs (avoids RichTextLabel width=0 sizing explosion).
-	var natural_h: float = _card_height if _card_height > 0 else _compute_natural_height()
+	# Treat the requested height as a floor, not a cap, so long rules text
+	# can still grow the card instead of getting clipped at the bottom.
+	var natural_h: float = maxf(float(_card_height), _compute_natural_height())
 	custom_minimum_size = Vector2(_card_width, natural_h)
 	size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
@@ -104,6 +104,12 @@ func _compute_natural_height() -> float:
 		est_lines = max(est_lines, 2)
 		h += float(est_lines) * 18.0 + 12.0
 	return h
+
+func _sync_minimum_height() -> void:
+	var measured_h := maxf(float(_card_height), _compute_natural_height())
+	if _inner != null and is_instance_valid(_inner):
+		measured_h = maxf(measured_h, _inner.get_combined_minimum_size().y)
+	custom_minimum_size = Vector2(_card_width, measured_h)
 
 func _should_show_power_lock_overlay() -> bool:
 	return card_data != null \
@@ -144,6 +150,8 @@ func _on_art_updated(new_path: String) -> void:
 	var tex: Texture2D = load(new_path)
 	if tex:
 		_art_rect.texture = tex
+		_sync_minimum_height()
+		call_deferred("_sync_minimum_height")
 		call_deferred("_layout_power_lock_overlay")
 
 func _make_name_label() -> Label:
@@ -211,11 +219,13 @@ func _populate_vbox(vbox: VBoxContainer) -> void:
 		ability_lbl.bbcode_enabled = true
 		ability_lbl.text = BaseCard.apply_keyword_hints(card_data.ability_text)
 		ability_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		ability_lbl.fit_content = true
 		ability_lbl.add_theme_font_size_override("normal_font_size", 14)
 		ability_lbl.add_theme_font_size_override("bold_font_size", 14)
 		ability_lbl.add_theme_color_override("default_color", Color(0.9, 0.85, 1.0))
+		ability_lbl.custom_minimum_size = Vector2(maxf(96.0, float(_card_width) - 10.0), 0.0)
 		ability_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		ability_lbl.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		ability_lbl.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 		ability_lbl.scroll_active = false
 		ability_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		vbox.add_child(ability_lbl)
@@ -247,6 +257,7 @@ func _build_content() -> void:
 	vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_inner.add_child(vbox)
 	_populate_vbox(vbox)
+	_sync_minimum_height()
 
 	_disabled_overlay = ColorRect.new()
 	_disabled_overlay.color = Color(0.0, 0.0, 0.0, 0.55)
@@ -257,6 +268,7 @@ func _build_content() -> void:
 
 	_refresh_power_lock_overlay()
 	_refresh_disabled_visual_state()
+	call_deferred("_sync_minimum_height")
 	call_deferred("_layout_power_lock_overlay")
 
 func _apply_card_style() -> void:

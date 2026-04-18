@@ -10,6 +10,7 @@ var room_id: String = ""
 var host_session_id: String = ""
 var assigned_match_id: String = ""
 var status: String = STATUS_WAITING
+var is_ranked: bool = true
 var members: Array[String] = []
 var ready_by_session_id: Dictionary = {}
 var deck_submission_by_session_id: Dictionary = {}
@@ -141,6 +142,7 @@ func to_snapshot(sessions_by_id: Dictionary) -> Dictionary:
 		"host_session_id": host_session_id,
 		"assigned_match_id": assigned_match_id,
 		"status": status,
+		"is_ranked": is_ranked,
 		"member_count": members.size(),
 		"max_players": MAX_PLAYERS,
 		"members": member_snapshots,
@@ -153,6 +155,7 @@ func to_room_list_entry(sessions_by_id: Dictionary) -> Dictionary:
 	return {
 		"room_id": room_id,
 		"host_name": host_name,
+		"is_ranked": is_ranked,
 		"member_count": members.size(),
 		"max_players": MAX_PLAYERS,
 		"status": status,

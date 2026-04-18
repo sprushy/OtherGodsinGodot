@@ -15,7 +15,7 @@ func _init() -> void:
 	mana_cost = UNLOCK_COST
 	speed = BASE_RESPONSE_SPEED
 	card_types = ["Power", "Ward", "Followers"]
-	ability_text = "[b]Ward[/b]: If you have no creatures or magical cards on the field, when your opponent attacks your followers you may flip this card face-up and lose no followers this turn. ([b]Spd[/b] 5, or pay 2 additional mana for [b]Spd[/b] 7.)"
+	ability_text = "[b]Ward[/b]: If you control no creatures or magical cards, when your opponent attacks your followers, you may flip this face-up. You lose no followers this turn. ([b]Spd[/b] 5, or pay 2 additional mana for [b]Spd[/b] 7.)"
 	artist = "Riccardo Zoppello"
 	art_path = ART_PATH
 

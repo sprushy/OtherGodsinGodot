@@ -143,6 +143,8 @@ func _on_game_ended(_winner: Player, _loser: Player) -> void:
 func _record_match_result(winner: Player, loser: Player) -> void:
 	if match_session == null or game_manager == null or winner == null or loser == null:
 		return
+	if not match_session.is_ranked:
+		return
 	var winner_index: int = game_manager.players.find(winner)
 	var loser_index: int = game_manager.players.find(loser)
 	if winner_index < 0 or loser_index < 0:

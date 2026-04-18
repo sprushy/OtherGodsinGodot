@@ -54,6 +54,7 @@ var _current_lobby_ip: String = ""
 var _is_local_lobby_host: bool = false
 var _match_launch_queued: bool = false
 var _pending_host_room_creation: bool = false
+var _pending_room_is_ranked: bool = true
 var _pending_local_lobby_launch_on_connect_failure: bool = false
 var _spawned_lobby_process_id: int = 0
 var _dedicated_lobby_connect_attempts_remaining: int = 0
@@ -69,6 +70,7 @@ var _auth_mode_option: OptionButton = null
 var _password_line_edit: LineEdit = null
 var _switch_account_button: Button = null
 var _resume_match_button: Button = null
+var _create_unranked_seek_button: Button = null
 var _profile_summary_label: Label = null
 var _current_profile_summary: Dictionary = {}
 var _account_decks_cache: Array[Dictionary] = []
@@ -107,6 +109,8 @@ var _multiplayer_deck_summary_panel: PanelContainer = null
 var _multiplayer_deck_summary_art: TextureRect = null
 var _multiplayer_deck_summary_name_label: Label = null
 var _multiplayer_deck_summary_god_label: Label = null
+var _server_version_label: Label = null
+var _connected_server_version: String = ""
 var _menu_card_templates: Dictionary = {}
 var _menu_card_art_cache: Dictionary = {}
 
@@ -114,6 +118,7 @@ func _ready() -> void:
 	if _is_server_runtime_launch():
 		return
 	_fit_to_viewport()
+	_build_server_version_overlay()
 	get_viewport().size_changed.connect(_fit_to_viewport)
 	if ip_line_edit != null:
 		ip_line_edit.visible = false
@@ -166,6 +171,7 @@ func _ready() -> void:
 	_build_profile_summary_controls()
 	_build_account_identity_controls()
 	_build_resume_controls()
+	_build_unranked_seek_controls()
 	_refresh_multiplayer_deck_options()
 	_refresh_seek_list()
 	_refresh_multiplayer_action_state()
@@ -236,6 +242,39 @@ func _fit_to_viewport() -> void:
 	size = get_viewport().get_visible_rect().size
 	if _deck_picker_popup != null and is_instance_valid(_deck_picker_popup) and _deck_picker_popup.visible:
 		_position_multiplayer_deck_popup()
+
+func _build_server_version_overlay() -> void:
+	if _server_version_label != null and is_instance_valid(_server_version_label):
+		return
+	var label := Label.new()
+	label.name = "ServerVersionLabel"
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	label.tooltip_text = "Version reported by the connected lobby server."
+	label.anchor_left = 1.0
+	label.anchor_right = 1.0
+	label.offset_left = -260.0
+	label.offset_top = 10.0
+	label.offset_right = -14.0
+	label.offset_bottom = 34.0
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	label.add_theme_font_size_override("font_size", 14)
+	label.add_theme_color_override("font_color", Color(0.84, 0.90, 0.97, 0.94))
+	add_child(label)
+	_server_version_label = label
+	_refresh_server_version_label()
+
+func _set_connected_server_version(version: String) -> void:
+	_connected_server_version = AppReleaseInfoScript.normalize_version(version)
+	_refresh_server_version_label()
+
+func _refresh_server_version_label() -> void:
+	if _server_version_label == null or not is_instance_valid(_server_version_label):
+		return
+	if _connected_server_version.is_empty():
+		_server_version_label.text = "Server: not connected"
+		return
+	_server_version_label.text = "Server: %s" % _connected_server_version
 
 func _process(delta: float) -> void:
 	if not _should_auto_refresh_seeks():
@@ -833,7 +872,8 @@ func _refresh_seek_list() -> void:
 		var member_count := int(room.get("member_count", 0))
 		var max_players := int(room.get("max_players", 2))
 		var status := str(room.get("status", "waiting")).capitalize()
-		seek_list.add_item("%s  %d/%d  %s" % [host_name, member_count, max_players, status])
+		var rank_tag := "" if bool(room.get("is_ranked", true)) else "[Unranked]  "
+		seek_list.add_item("%s%s  %d/%d  %s" % [rank_tag, host_name, member_count, max_players, status])
 		seek_list.set_item_metadata(seek_list.get_item_count() - 1, room_id)
 
 func _refresh_multiplayer_action_state() -> void:
@@ -841,6 +881,8 @@ func _refresh_multiplayer_action_state() -> void:
 	var in_room := not _current_room_snapshot.is_empty()
 	if create_seek_button != null:
 		create_seek_button.disabled = not has_legal_deck or in_room
+	if _create_unranked_seek_button != null:
+		_create_unranked_seek_button.disabled = not has_legal_deck or in_room
 	if leave_seek_button != null:
 		leave_seek_button.visible = in_room
 	if ready_button != null:
@@ -915,6 +957,29 @@ func _on_create_seek_pressed() -> void:
 		status_label.text = "Leave your current seek before creating another."
 		return
 	_pending_host_room_creation = true
+	_pending_room_is_ranked = true
+	_pending_join_room_id = ""
+	_pending_local_lobby_launch_on_connect_failure = false
+	multiplayer_container.visible = true
+	_connect_to_browseable_lobby("Connecting to lobby...")
+
+func _on_create_unranked_seek_pressed() -> void:
+	var target_error := _validate_multiplayer_target()
+	if not target_error.is_empty():
+		status_label.text = target_error
+		return
+	var auth_error := _validate_auth_inputs()
+	if not auth_error.is_empty():
+		status_label.text = auth_error
+		return
+	if _get_selected_multiplayer_deck().is_empty():
+		status_label.text = "Choose a saved legal deck before creating a seek."
+		return
+	if not _current_room_snapshot.is_empty():
+		status_label.text = "Leave your current seek before creating another."
+		return
+	_pending_host_room_creation = true
+	_pending_room_is_ranked = false
 	_pending_join_room_id = ""
 	_pending_local_lobby_launch_on_connect_failure = false
 	multiplayer_container.visible = true
@@ -986,10 +1051,12 @@ func _run_pending_multiplayer_action() -> void:
 	if lobby_client == null:
 		return
 	if _pending_host_room_creation:
+		var is_ranked := _pending_room_is_ranked
 		_pending_host_room_creation = false
+		_pending_room_is_ranked = true
 		_pending_local_lobby_launch_on_connect_failure = false
 		status_label.text = "Creating seek..."
-		lobby_client.create_room()
+		lobby_client.create_room(is_ranked)
 		return
 	if not _pending_join_room_id.is_empty():
 		var room_id := _pending_join_room_id
@@ -2297,13 +2364,20 @@ func _bind_lobby_client_signals() -> void:
 		lobby_client.connection_failed.connect(_on_lobby_connection_failed)
 	if not lobby_client.disconnected_from_lobby.is_connected(_on_lobby_disconnected):
 		lobby_client.disconnected_from_lobby.connect(_on_lobby_disconnected)
+	if not lobby_client.server_version_updated.is_connected(_on_server_version_updated):
+		lobby_client.server_version_updated.connect(_on_server_version_updated)
+	_set_connected_server_version(lobby_client.current_server_version)
 
 func _on_lobby_connected() -> void:
 	_write_smoke_trace("lobby_connected")
 	status_label.text = "Connected to lobby. Signing in..."
 
+func _on_server_version_updated(version: String) -> void:
+	_set_connected_server_version(version)
+
 func _on_lobby_login_succeeded(session_id: String, reconnect_token: String, player_name: String) -> void:
 	_write_smoke_trace("lobby_login_succeeded session=%s player=%s host=%s" % [session_id, player_name, str(_is_local_lobby_host)])
+	_set_connected_server_version(lobby_client.current_server_version if lobby_client != null else "")
 	_lobby_session_id = session_id
 	_lobby_reconnect_token = reconnect_token
 	_seek_list_request_pending = false
@@ -2330,6 +2404,7 @@ func _on_lobby_reconnect_succeeded(
 	active_match_info: Dictionary
 ) -> void:
 	_write_smoke_trace("lobby_reconnect_succeeded session=%s player=%s" % [session_id, player_name])
+	_set_connected_server_version(lobby_client.current_server_version if lobby_client != null else "")
 	_lobby_session_id = session_id
 	_lobby_reconnect_token = reconnect_token
 	_seek_list_request_pending = false
@@ -2523,6 +2598,7 @@ func _on_lobby_status_changed(message: String) -> void:
 
 func _on_lobby_connection_failed(message: String) -> void:
 	_write_smoke_trace("lobby_connection_failed %s" % message)
+	_set_connected_server_version("")
 	_seek_list_request_pending = false
 	_seek_auto_refresh_elapsed = 0.0
 	if _should_retry_host_lobby_connect():
@@ -2535,6 +2611,7 @@ func _on_lobby_connection_failed(message: String) -> void:
 
 func _on_lobby_disconnected() -> void:
 	_write_smoke_trace("lobby_disconnected")
+	_set_connected_server_version("")
 	_seek_list_request_pending = false
 	_seek_auto_refresh_elapsed = 0.0
 	if _should_retry_host_lobby_connect():
@@ -2567,6 +2644,7 @@ func _return_to_menu() -> void:
 func _cleanup_lobby(clear_session: bool) -> void:
 	_cleanup_lobby_client()
 	_cleanup_lobby_server()
+	_set_connected_server_version("")
 	_clear_current_seek_state()
 	_open_seek_rooms.clear()
 	_seek_list_request_pending = false
@@ -2876,13 +2954,29 @@ func _refresh_open_deck_builder_saved_decks() -> void:
 func _build_profile_summary_controls() -> void:
 	if multiplayer_container == null or _profile_summary_label != null:
 		return
+	var panel := PanelContainer.new()
+	panel.name = "ProfileSummaryPanel"
+	panel.visible = false
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.08, 0.10, 0.14, 0.92)
+	style.border_color = Color(0.30, 0.40, 0.55, 0.8)
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		style.set_border_width(side, 1)
+	style.corner_radius_top_left = 4
+	style.corner_radius_top_right = 4
+	style.corner_radius_bottom_left = 4
+	style.corner_radius_bottom_right = 4
+	panel.add_theme_stylebox_override("panel", style)
 	_profile_summary_label = Label.new()
 	_profile_summary_label.name = "ProfileSummaryLabel"
-	_profile_summary_label.visible = false
 	_profile_summary_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_profile_summary_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	_profile_summary_label.vertical_alignment = VERTICAL_ALIGNMENT_TOP
-	multiplayer_container.add_child(_profile_summary_label)
+	_profile_summary_label.add_theme_font_size_override("font_size", 13)
+	panel.add_child(_profile_summary_label)
+	multiplayer_container.add_child(panel)
+	if seek_list != null:
+		multiplayer_container.move_child(panel, seek_list.get_index())
 
 func _build_account_identity_controls() -> void:
 	if _account_identity_label != null and is_instance_valid(_account_identity_label):
@@ -2916,9 +3010,11 @@ func _refresh_account_identity_label() -> void:
 func _refresh_profile_summary_label() -> void:
 	if _profile_summary_label == null:
 		return
+	var panel := _profile_summary_label.get_parent()
 	if _current_profile_summary.is_empty():
-		_profile_summary_label.visible = false
 		_profile_summary_label.text = ""
+		if panel != null:
+			panel.visible = false
 		return
 	var total_wins: int = int(_current_profile_summary.get("total_wins", 0))
 	var total_losses: int = int(_current_profile_summary.get("total_losses", 0))
@@ -2984,7 +3080,8 @@ func _refresh_profile_summary_label() -> void:
 				break
 
 	_profile_summary_label.text = "\n".join(lines)
-	_profile_summary_label.visible = true
+	if panel != null:
+		panel.visible = true
 
 func _get_profile_summary_deck_name(deck_name: String) -> String:
 	var resolved_deck_name := deck_name.strip_edges()
@@ -3030,6 +3127,16 @@ func _build_resume_controls() -> void:
 	var insert_index := multiplayer_container.get_children().find(create_seek_button)
 	if insert_index >= 0:
 		multiplayer_container.move_child(_resume_match_button, insert_index)
+
+func _build_unranked_seek_controls() -> void:
+	if multiplayer_container == null or create_seek_button == null or _create_unranked_seek_button != null:
+		return
+	_create_unranked_seek_button = Button.new()
+	_create_unranked_seek_button.name = "CreateUnrankedSeekButton"
+	_create_unranked_seek_button.text = "Create Unranked Seek"
+	_create_unranked_seek_button.pressed.connect(_on_create_unranked_seek_pressed)
+	multiplayer_container.add_child(_create_unranked_seek_button)
+	multiplayer_container.move_child(_create_unranked_seek_button, create_seek_button.get_index() + 1)
 
 func _restore_saved_resume_state() -> void:
 	_update_resume_controls()
@@ -3166,6 +3273,7 @@ func _on_match_session_cleared() -> void:
 	_clear_saved_match_resume()
 	if _should_refresh_profile_summary_from_local_history(saved_match):
 		_refresh_profile_summary_from_local_history(resume_profile_id)
+	_maybe_request_profile_summary()
 
 func _maybe_submit_current_profile_deck(room_id: String, snapshot: Dictionary) -> void:
 	if lobby_client == null or _local_profile_store == null or _lobby_session_id.is_empty():

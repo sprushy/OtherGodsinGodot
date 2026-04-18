@@ -15,7 +15,7 @@ func _init() -> void:
 	flavor_text = ""
 	artist = ""
 	art_path = "res://images/card_art/spells/DeucalionsInfants.png"
-	ability_text = "Children of the Earth: You may destroy your structures and Golems, then your opponent destroys 1 of theirs. For each structure or Golem destroyed this turn, summon a [b]Stone Infant[/b] token."
+	ability_text = "Children of the Earth: You may destroy any number of your structures and Golems. Then your opponent destroys 1 of theirs. Summon a [b]Stone Infant[/b] token for each structure or Golem destroyed this turn."
 
 func resolve_from_command(game_manager: GameManager, command: Dictionary) -> void:
 	var choice_uids: Array = command.get("choices", [])

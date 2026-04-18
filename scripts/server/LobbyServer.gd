@@ -2,6 +2,7 @@ extends Node
 class_name LobbyServer
 
 const LobbyProtocolScript = preload("res://scripts/network/LobbyProtocol.gd")
+const AppReleaseInfoScript = preload("res://scripts/client/AppReleaseInfo.gd")
 const LobbyRoomScript = preload("res://scripts/server/LobbyRoom.gd")
 const MatchSupervisorScript = preload("res://scripts/server/MatchSupervisor.gd")
 const NetworkManagerScript = preload("res://scripts/Other/NetworkManager.gd")
@@ -122,10 +123,10 @@ func create_local_guest_session(player_name: String = "Host") -> Dictionary:
 	local_session_id = str(session.get("session_id", ""))
 	return session.duplicate(true)
 
-func create_room_for_local_session() -> Dictionary:
+func create_room_for_local_session(is_ranked: bool = true) -> Dictionary:
 	if local_session_id.is_empty():
 		return {}
-	var room: LobbyRoom = _create_room_for_session(local_session_id)
+	var room: LobbyRoom = _create_room_for_session(local_session_id, is_ranked)
 	return room.to_snapshot(sessions_by_id)
 
 func set_local_ready(is_ready: bool) -> void:
@@ -166,7 +167,7 @@ func _handle_request(peer_id: int, message: Dictionary) -> void:
 			if session.is_empty():
 				_send_error_to_peer(peer_id, "Join the lobby before creating a room.")
 				return
-			var room: LobbyRoom = _create_room_for_session(str(session.get("session_id", "")))
+			var room: LobbyRoom = _create_room_for_session(str(session.get("session_id", "")), bool(payload.get("is_ranked", true)))
 			_broadcast_room_snapshot(room)
 		LobbyProtocolScript.LIST_ROOMS:
 			_send_room_list_to_peer(peer_id)
@@ -311,6 +312,7 @@ func _complete_login_for_peer(
 		"account_id": str(existing.get("account_id", "")),
 		"username": str(existing.get("username", "")),
 		"auth_mode": str(existing.get("auth_mode", LobbyProtocolScript.LOGIN_GUEST)),
+		"server_version": _get_server_version(),
 	})
 	_send_room_list_to_peer(peer_id)
 
@@ -354,6 +356,7 @@ func _handle_reconnect_request(peer_id: int, payload: Dictionary) -> void:
 		"account_id": str(session.get("account_id", "")),
 		"username": str(session.get("username", "")),
 		"auth_mode": str(session.get("auth_mode", LobbyProtocolScript.LOGIN_GUEST)),
+		"server_version": _get_server_version(),
 		"room": room_snapshot,
 		"active_match_info": active_match_info,
 	})
@@ -503,7 +506,7 @@ func _create_session(
 		session_id_by_peer[peer_id] = session_id
 	return session
 
-func _create_room_for_session(session_id: String) -> LobbyRoom:
+func _create_room_for_session(session_id: String, is_ranked: bool = true) -> LobbyRoom:
 	var existing_room_id: String = str(room_id_by_session.get(session_id, ""))
 	if not existing_room_id.is_empty() and rooms_by_id.has(existing_room_id):
 		return rooms_by_id[existing_room_id]
@@ -513,6 +516,7 @@ func _create_room_for_session(session_id: String) -> LobbyRoom:
 		room_id = _generate_room_code()
 
 	var room: LobbyRoom = LobbyRoomScript.new(room_id, session_id)
+	room.is_ranked = is_ranked
 	room.add_member(session_id)
 	rooms_by_id[room_id] = room
 	room_id_by_session[session_id] = room_id
@@ -617,7 +621,8 @@ func _assign_match(room: LobbyRoom) -> void:
 		room.room_id,
 		room.members,
 		player_decks_by_session,
-		player_identity_by_session
+		player_identity_by_session,
+		room.is_ranked
 	)
 	if match_session == null:
 		var error_message := str(match_supervisor.last_create_match_error).strip_edges()
@@ -917,6 +922,9 @@ func _on_match_closed(match_id: String, room_id: String, _final_status: String) 
 		return
 	room.reset_after_match()
 	_emit_room_updates(room)
+
+func _get_server_version() -> String:
+	return AppReleaseInfoScript.get_current_version()
 
 func _trace(message: String) -> void:
 	if not trace_network and trace_file_path.is_empty():

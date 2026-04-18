@@ -15,6 +15,7 @@ var match_port: int = 12345
 var player_session_ids: Array[String] = []
 var status: String = STATUS_STARTING
 var server_mode: String = SERVER_MODE_IN_PROCESS_HOST
+var is_ranked: bool = true
 var launch_config_path: String = ""
 var process_id: int = 0
 var process_launch_error: String = ""
@@ -149,6 +150,7 @@ func to_match_info(session_id: String = "") -> Dictionary:
 		"player_index": get_player_index(session_id) if not session_id.is_empty() else -1,
 		"status": status,
 		"server_mode": server_mode,
+		"is_ranked": is_ranked,
 	}
 	if not session_id.is_empty():
 		var selected_deck := _get_player_deck(session_id)
@@ -170,6 +172,7 @@ func to_launch_config() -> Dictionary:
 		"player_session_ids": player_session_ids.duplicate(),
 		"status": status,
 		"server_mode": server_mode,
+		"is_ranked": is_ranked,
 		"reconnect_window_seconds": reconnect_window_seconds,
 		"player_match_tokens": player_match_tokens.duplicate(true),
 		"player_decks_by_session": player_decks_by_session.duplicate(true),
@@ -199,6 +202,7 @@ static func from_launch_config(config: Dictionary) -> MatchSession:
 	)
 	session.status = str(config.get("status", STATUS_STARTING))
 	session.server_mode = str(config.get("server_mode", SERVER_MODE_IN_PROCESS_HOST))
+	session.is_ranked = bool(config.get("is_ranked", true))
 	session.reconnect_window_seconds = int(config.get("reconnect_window_seconds", 30))
 	var configured_tokens = config.get("player_match_tokens", {})
 	if configured_tokens is Dictionary:

@@ -362,8 +362,11 @@ func _uses_authoritative_headless_attack_flow() -> bool:
 		return false
 	return str(host_script.resource_path).ends_with("HeadlessMatchServer.gd")
 
-func _uses_authoritative_headless_priority_flow() -> bool:
+func uses_authoritative_priority_flow() -> bool:
 	return _uses_authoritative_headless_attack_flow()
+
+func _uses_authoritative_headless_priority_flow() -> bool:
+	return uses_authoritative_priority_flow()
 
 func _clear_priority_window_state() -> void:
 	if game_manager == null:
@@ -667,6 +670,13 @@ func _build_priority_response_options(responses: Array) -> Array:
 				target_uids = _get_priority_response_target_uids(charm, top),
 				from_hand = from_hand,
 			})
+		elif card is SpellCard:
+			var spell := card as SpellCard
+			response_options.append({
+				response_type = "spell",
+				card_uid = spell.uid,
+				target_uids = _get_priority_response_target_uids(spell, top),
+			})
 		elif card != null and card.is_god and card.has_method("get_valid_targets"):
 			response_options.append({
 				response_type = "god",
@@ -680,6 +690,18 @@ func _build_priority_response_options(responses: Array) -> Array:
 				target_uids = _get_priority_response_target_uids(card, top),
 			})
 	return response_options
+
+func build_priority_prompt_data(player: Player) -> Dictionary:
+	if game_manager == null or player == null or game_manager.action_stack.is_empty():
+		return {
+			responses = [],
+			action_message = "",
+		}
+	var responses := game_manager.get_priority_responses(player)
+	return {
+		responses = _build_priority_response_options(responses),
+		action_message = _get_priority_action_message(game_manager.action_stack.back(), player),
+	}
 
 func _get_priority_action_message(top: CardAction, viewer: Player = null) -> String:
 	if top == null:
@@ -709,6 +731,9 @@ func _broadcast_priority_offered(player: Player, responses: Array) -> void:
 	elif peer_id > 0:
 		network_manager.broadcast_event_to_peer(peer_id, "priority_offered", event_data)
 
+func advance_priority() -> void:
+	_advance_authoritative_priority()
+
 func _advance_authoritative_priority() -> void:
 	if not _uses_authoritative_headless_priority_flow():
 		return
@@ -734,21 +759,27 @@ func _advance_authoritative_priority() -> void:
 		else:
 			_advance_authoritative_priority()
 		return
-	_broadcast_priority_offered(player, responses)
+	var player_idx := game_manager.players.find(player)
+	request_ui_interaction.emit(player_idx, "priority", build_priority_prompt_data(player))
 
-func _queue_or_resolve_authoritative_priority_event(action: CardAction) -> void:
+func queue_or_resolve_priority_event(action: CardAction) -> bool:
 	if action == null:
-		return
+		return false
 	game_manager.push_to_stack(action)
 	var first_player: Player = game_manager.priority_player
 	var second_player: Player = game_manager.get_opponent(first_player) if first_player != null else null
 	var first_has_responses: bool = first_player != null and not game_manager.get_priority_responses(first_player).is_empty()
 	var second_has_responses: bool = second_player != null and not game_manager.get_priority_responses(second_player).is_empty()
 	if first_has_responses or second_has_responses:
-		_advance_authoritative_priority()
-		return
+		if _uses_authoritative_headless_priority_flow():
+			_advance_authoritative_priority()
+		return true
 	_clear_priority_window_state()
 	resolve_action(action)
+	return false
+
+func _queue_or_resolve_authoritative_priority_event(action: CardAction) -> void:
+	queue_or_resolve_priority_event(action)
 
 func _queue_authoritative_priority_event(
 	event_name: String,

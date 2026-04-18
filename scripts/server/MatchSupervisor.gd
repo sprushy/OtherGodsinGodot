@@ -51,7 +51,8 @@ func create_match(
 	room_id: String,
 	player_session_ids: Array[String],
 	player_decks_by_session: Dictionary = {},
-	player_identity_by_session: Dictionary = {}
+	player_identity_by_session: Dictionary = {},
+	is_ranked: bool = true
 ):
 	last_create_match_error = ""
 	var match_id: String = _generate_match_id()
@@ -69,6 +70,7 @@ func create_match(
 		player_decks_by_session,
 		player_identity_by_session
 	)
+	session.is_ranked = is_ranked
 	session.mark_active()
 	if use_dedicated_headless and _launch_dedicated_match(session):
 		session.server_mode = MatchSessionScript.SERVER_MODE_DEDICATED_HEADLESS

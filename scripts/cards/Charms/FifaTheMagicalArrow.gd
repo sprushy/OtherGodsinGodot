@@ -22,7 +22,7 @@ func _init() -> void:
 	is_legendary = false
 	targets = true
 	flavor_text = ""
-	ability_text = "Choose a friendly Warrior. It gains +5 STR until the end of its next combat. This turn, after the Archer it enchanted destroys an attack target, you may pay 4 mana from the graveyard to return this card to your hand."
+	ability_text = "Choose a friendly Warrior. It gains +5 STR until the end of its next combat. This turn, if the enchanted Archer destroys an attack target, you may pay 4 graveyard mana to return this to your hand."
 	artist = "Lorinda Tomko"
 	art_path = "res://images/card_art/FifaAIEdit.png"
 

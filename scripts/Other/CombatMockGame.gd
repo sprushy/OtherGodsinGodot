@@ -559,8 +559,8 @@ func _show_pause_menu() -> void:
 	menu_panel.anchor_bottom = 0.5
 	menu_panel.offset_left = -180
 	menu_panel.offset_right = 180
-	menu_panel.offset_top = -116
-	menu_panel.offset_bottom = 116
+	menu_panel.offset_top = -140
+	menu_panel.offset_bottom = 140
 	overlay.add_child(menu_panel)
 	_pause_menu_panel = menu_panel
 
@@ -591,6 +591,15 @@ func _show_pause_menu() -> void:
 	settings_btn.custom_minimum_size = Vector2(0, 38)
 	settings_btn.pressed.connect(_show_pause_settings_menu)
 	menu_vbox.add_child(settings_btn)
+
+	var forfeit_btn := Button.new()
+	forfeit_btn.text = "Forfeit"
+	forfeit_btn.custom_minimum_size = Vector2(0, 38)
+	forfeit_btn.pressed.connect(func() -> void:
+		_hide_pause_menu()
+		_on_forfeit_button_pressed()
+	)
+	menu_vbox.add_child(forfeit_btn)
 
 	var settings_panel := PanelContainer.new()
 	settings_panel.name = "SettingsMenuPanel"
@@ -6517,10 +6526,20 @@ func _queue_priority_event(
 	action.event_name = event_name
 	action.event_speed = event_speed
 	action.resolve_callback = resolve_callback
-	game_manager.push_to_stack(action)
+	var remains_on_stack := match_manager.queue_or_resolve_priority_event(action) if match_manager != null else false
+	if not remains_on_stack:
+		return
+	if match_manager != null and match_manager.uses_authoritative_priority_flow():
+		return
 	update_ui()
 	action_label.text = event_name.replace("_", " ").capitalize() + " window opened."
 	_offer_priority()
+
+func _clear_priority_window_state() -> void:
+	if game_manager == null:
+		return
+	game_manager.priority_player = null
+	game_manager.consecutive_passes = 0
 
 func _pause_stack_resolution(source_player: Player) -> void:
 	_stack_resolution_paused = true
@@ -12122,6 +12141,9 @@ func resolve_pending_equip_action(interceptor: Card) -> void:
 	update_ui()
 
 func _offer_priority() -> void:
+	if match_manager != null and match_manager.uses_authoritative_priority_flow():
+		match_manager.advance_priority()
+		return
 	var player := game_manager.priority_player
 	var responses := game_manager.get_priority_responses(player)
 	update_ui()
@@ -12193,6 +12215,13 @@ func _broadcast_priority_offered(player: Player, responses: Array) -> void:
 				card_uid = charm.uid,
 				target_uids = _get_priority_response_target_uids(charm, top),
 				from_hand = from_hand,
+			})
+		elif card is SpellCard:
+			var spell := card as SpellCard
+			response_options.append({
+				response_type = "spell",
+				card_uid = spell.uid,
+				target_uids = _get_priority_response_target_uids(spell, top),
 			})
 		elif card != null and card.is_god and card.has_method("get_valid_targets"):
 			response_options.append({
@@ -12286,6 +12315,9 @@ func _on_priority_pass_pressed() -> void:
 		network_manager.request_action({type = "priority_pass"})
 		return
 	game_manager.pass_priority()
+	if match_manager != null and match_manager.uses_authoritative_priority_flow():
+		match_manager.advance_priority()
+		return
 	if game_manager.both_passed():
 		_execute_top_of_stack()
 	else:
@@ -15332,7 +15364,8 @@ func _execute_top_of_stack() -> void:
 			_executing_stack_action = false
 			update_ui()
 			return
-	
+
+	_clear_priority_window_state()
 	match_manager.resolve_action(action)
 	# The rest is now handled by MatchManager and its callbacks/signals
 
@@ -15351,6 +15384,7 @@ func _on_match_action_resolved(action: CardAction) -> void:
 	update_ui()
 
 func _on_match_move_validated(move: Dictionary) -> void:
+	var authoritative_priority := match_manager != null and match_manager.uses_authoritative_priority_flow()
 	match move.get("type", ""):
 		"upkeep_choice":
 			# Client resolved upkeep; server must open the turn-start priority window
@@ -15411,11 +15445,11 @@ func _on_match_move_validated(move: Dictionary) -> void:
 			if not _is_networked_client:
 				resolve_pending_attack()
 		"play_creature":
-			if not _is_networked_client and not game_manager.action_stack.is_empty():
+			if not _is_networked_client and not authoritative_priority and not game_manager.action_stack.is_empty():
 				_offer_priority()
 		"priority_pass":
 			# Remote player passed priority; continue the server-side priority loop.
-			if not _is_networked_client:
+			if not _is_networked_client and not authoritative_priority:
 				game_manager.pass_priority()
 				if game_manager.both_passed():
 					_execute_top_of_stack()
@@ -15428,26 +15462,26 @@ func _on_match_move_validated(move: Dictionary) -> void:
 			var phr_hex := game_manager.get_card_by_uid(move.get("hex_uid", ""))
 			if phr_hex != null:
 				action_label.text = phr_hex.card_name + " responds!"
-			if not _is_networked_client:
+			if not _is_networked_client and not authoritative_priority:
 				_offer_priority()
 		"activate_prepared_hex":
 			var prepared_hex := game_manager.get_card_by_uid(move.get("hex_uid", ""))
 			if prepared_hex != null:
 				action_label.text = prepared_hex.card_name + " goes on the stack."
-			if not _is_networked_client:
+			if not _is_networked_client and not authoritative_priority:
 				_offer_priority()
 		"play_charm_response":
 			# Remote player activated a charm; the SPELL was already pushed by MatchManager.
 			var pcr_charm := game_manager.get_card_by_uid(move.get("charm_uid", ""))
 			if pcr_charm != null:
 				action_label.text = pcr_charm.card_name + " responds!"
-			if not _is_networked_client:
+			if not _is_networked_client and not authoritative_priority:
 				_offer_priority()
 		"play_priority_ability":
 			var response_card := game_manager.get_card_by_uid(move.get("source_uid", ""))
 			if response_card != null:
 				action_label.text = response_card.card_name + " responds!"
-			if not _is_networked_client:
+			if not _is_networked_client and not authoritative_priority:
 				_offer_priority()
 	update_ui()
 
@@ -15466,6 +15500,8 @@ func _on_match_ui_interaction(player_index: int, type: String, data: Dictionary)
 		return
 		
 	match type:
+		"priority":
+			_apply_priority_prompt_for_player(player_index, data)
 		"intercept":
 			var interceptor_uids = data.get("interceptor_uids", [])
 			var action_message := str(data.get("action_message", "")).strip_edges()
@@ -15627,6 +15663,9 @@ func _close_turn_start_windows() -> void:
 	for zone in game_manager.current_player.power_zones + game_manager.current_player.frontline_zones + game_manager.current_player.reserve_zones:
 		for card in zone.cards:
 			if card.has_method("close_turn_start_window"):
+				var wheel := card as WheelOfFire
+				if wheel != null and (wheel == _active_wheel_of_fire_prompt or _pending_wheel_of_fire_prompts.has(wheel)):
+					continue
 				card.close_turn_start_window()
 
 func _get_end_turn_discard_count() -> int:
@@ -16178,6 +16217,8 @@ func _apply_ui_interaction(event_data: Dictionary) -> void:
 		_pause_stack_resolution(pause_player)
 	
 	match type:
+		"priority":
+			_apply_priority_prompt_for_player(int(event_data.get("player_index", local_idx)), payload)
 		"intercept":
 			_apply_intercept_offered(payload)
 		"combat_retreat":
@@ -16391,15 +16432,21 @@ func _set_match_reconnect_wait(is_waiting: bool, message: String = "Waiting for 
 	_update_waiting_status(false)
 
 func _apply_priority_offered(data: Dictionary) -> void:
+	var priority_idx = network_manager.local_player_index if network_manager != null else -1
+	_apply_priority_prompt_for_player(priority_idx, data)
+
+func _apply_priority_prompt_for_player(player_index: int, data: Dictionary) -> void:
 	var msg: String = data.get("action_message", "")
 	if msg != "":
 		action_label.text = msg
-	if game_manager != null and network_manager != null and network_manager.local_player_index >= 0:
-		var local_idx: int = network_manager.local_player_index
-		if local_idx < game_manager.players.size():
-			game_manager.priority_player = game_manager.players[local_idx]
+	if game_manager != null and player_index >= 0 and player_index < game_manager.players.size():
+		game_manager.priority_player = game_manager.players[player_index]
 	_update_waiting_status(false)
-	_show_remote_priority_prompt(data.get("responses", []))
+	if _is_networked_client:
+		_show_remote_priority_prompt(data.get("responses", []))
+		return
+	if game_manager != null and player_index >= 0 and player_index < game_manager.players.size():
+		_show_priority_prompt(game_manager.players[player_index])
 
 func _show_remote_priority_prompt(responses: Array) -> void:
 	var panel = get_node_or_null("PriorityPromptPanel")
@@ -16531,6 +16578,35 @@ func _show_remote_priority_prompt(responses: Array) -> void:
 						"Choose a target for " + card_name,
 						target_cards,
 						on_choose_charm_response_target
+					)
+			elif rtype == "spell":
+				if target_uids.size() == 1:
+					network_manager.request_action({
+						type = "cast_spell",
+						spell_uid = card_uid,
+						target_uid = target_uids[0],
+					})
+				elif target_uids.is_empty():
+					network_manager.request_action({
+						type = "cast_spell",
+						spell_uid = card_uid,
+					})
+				else:
+					var target_cards: Array[Card] = []
+					for target_uid in target_uids:
+						var c := game_manager.get_card_by_uid(target_uid as String)
+						if c != null:
+							target_cards.append(c)
+					var on_choose_spell_response_target := func(chosen_card: Card) -> void:
+						network_manager.request_action({
+							type = "cast_spell",
+							spell_uid = card_uid,
+							target_uid = chosen_card.uid,
+						})
+					_show_card_selection_overlay(
+						"Choose a target for " + card_name,
+						target_cards,
+						on_choose_spell_response_target
 					)
 			elif rtype == "god" or rtype == "ability":
 				if target_uids.size() == 1:
@@ -16938,6 +17014,8 @@ func _record_local_host_match_result(winner: Player, loser: Player) -> void:
 	if headless_match_host == null or headless_match_host.match_session == null or game_manager == null:
 		return
 	if str(headless_match_host.match_session.server_mode).strip_edges() != MatchSessionScript.SERVER_MODE_IN_PROCESS_HOST:
+		return
+	if not headless_match_host.match_session.is_ranked:
 		return
 	var winner_index: int = game_manager.players.find(winner)
 	var loser_index: int = game_manager.players.find(loser)

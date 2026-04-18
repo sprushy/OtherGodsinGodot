@@ -2,10 +2,12 @@ extends Node
 class_name LobbyClient
 
 const LobbyProtocolScript = preload("res://scripts/network/LobbyProtocol.gd")
+const AppReleaseInfoScript = preload("res://scripts/client/AppReleaseInfo.gd")
 const NetworkManagerScript = preload("res://scripts/Other/NetworkManager.gd")
 const LOBBY_EVENT_TYPE := "__lobby_event__"
 
 signal connected_to_lobby()
+signal server_version_updated(version: String)
 signal login_succeeded(session_id: String, reconnect_token: String, player_name: String)
 signal reconnect_succeeded(
 	session_id: String,
@@ -32,6 +34,7 @@ var current_profile_id: String = ""
 var current_account_id: String = ""
 var current_username: String = ""
 var current_auth_mode: String = "guest"
+var current_server_version: String = ""
 var current_active_match_info: Dictionary = {}
 var current_preferred_account_deck_id: String = ""
 var trace_network: bool = false
@@ -62,6 +65,7 @@ func connect_to_server(
 	password: String = ""
 ) -> Error:
 	_is_authenticated = false
+	_set_current_server_version("")
 	_pending_player_name = player_name.strip_edges()
 	if _pending_player_name.is_empty():
 		_pending_player_name = "Guest"
@@ -85,6 +89,7 @@ func connect_to_server(
 
 func disconnect_from_server() -> void:
 	_is_authenticated = false
+	_set_current_server_version("")
 	if network_manager != null:
 		network_manager.disconnect_client()
 
@@ -104,8 +109,8 @@ func is_authenticated() -> bool:
 		and is_transport_connected() \
 		and not current_session_id.strip_edges().is_empty()
 
-func create_room() -> void:
-	_send_request(LobbyProtocolScript.CREATE_ROOM)
+func create_room(is_ranked: bool = true) -> void:
+	_send_request(LobbyProtocolScript.CREATE_ROOM, {"is_ranked": is_ranked})
 
 func list_rooms() -> void:
 	_send_request(LobbyProtocolScript.LIST_ROOMS)
@@ -174,6 +179,7 @@ func lobby_event(message: Dictionary) -> void:
 	match message_type:
 		LobbyProtocolScript.HELLO_OK:
 			_is_authenticated = true
+			_set_current_server_version(str(payload.get("server_version", "")))
 			current_session_id = str(payload.get("session_id", ""))
 			current_reconnect_token = str(payload.get("reconnect_token", ""))
 			current_player_name = str(payload.get("player_name", _pending_player_name))
@@ -186,6 +192,7 @@ func lobby_event(message: Dictionary) -> void:
 			login_succeeded.emit(current_session_id, current_reconnect_token, current_player_name)
 		LobbyProtocolScript.LOBBY_RECONNECT_OK:
 			_is_authenticated = true
+			_set_current_server_version(str(payload.get("server_version", "")))
 			current_session_id = str(payload.get("session_id", ""))
 			current_reconnect_token = str(payload.get("reconnect_token", ""))
 			current_player_name = str(payload.get("player_name", _pending_player_name))
@@ -251,11 +258,13 @@ func _on_connected_to_server() -> void:
 
 func _on_connection_failed() -> void:
 	_is_authenticated = false
+	_set_current_server_version("")
 	_trace("connection failed")
 	connection_failed.emit("The lobby connection failed.")
 
 func _on_server_disconnected() -> void:
 	_is_authenticated = false
+	_set_current_server_version("")
 	_trace("server disconnected")
 	disconnected_from_lobby.emit()
 
@@ -305,6 +314,13 @@ func _on_network_game_event_received(event_type: String, data: Dictionary) -> vo
 	if event_type != LOBBY_EVENT_TYPE:
 		return
 	lobby_event(data)
+
+func _set_current_server_version(version: String) -> void:
+	var normalized_version := AppReleaseInfoScript.normalize_version(version)
+	if current_server_version == normalized_version:
+		return
+	current_server_version = normalized_version
+	server_version_updated.emit(current_server_version)
 
 func _trace(message: String) -> void:
 	if not trace_network and trace_file_path.is_empty():
