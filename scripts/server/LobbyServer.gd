@@ -720,6 +720,7 @@ func _submit_deck_for_session(
 
 func _broadcast_room_snapshot(room: LobbyRoom) -> void:
 	var snapshot: Dictionary = room.to_snapshot(sessions_by_id)
+	snapshot["server_version"] = _get_server_version()
 	for session_id in room.members:
 		_send_to_session(session_id, LobbyProtocolScript.ROOM_SNAPSHOT, snapshot)
 		if session_id == local_session_id:
@@ -728,11 +729,17 @@ func _broadcast_room_snapshot(room: LobbyRoom) -> void:
 func _broadcast_room_lists() -> void:
 	var rooms: Array = _build_room_list()
 	for peer_id in session_id_by_peer.keys():
-		_send_to_peer(int(peer_id), LobbyProtocolScript.ROOM_LIST, {"rooms": rooms})
+		_send_to_peer(int(peer_id), LobbyProtocolScript.ROOM_LIST, {
+			"rooms": rooms,
+			"server_version": _get_server_version(),
+		})
 	room_list_updated.emit(rooms)
 
 func _send_room_list_to_peer(peer_id: int) -> void:
-	_send_to_peer(peer_id, LobbyProtocolScript.ROOM_LIST, {"rooms": _build_room_list()})
+	_send_to_peer(peer_id, LobbyProtocolScript.ROOM_LIST, {
+		"rooms": _build_room_list(),
+		"server_version": _get_server_version(),
+	})
 
 func _build_room_list() -> Array:
 	var rooms: Array = []

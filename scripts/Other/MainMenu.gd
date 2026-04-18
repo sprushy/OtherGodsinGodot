@@ -272,6 +272,9 @@ func _refresh_server_version_label() -> void:
 	if _server_version_label == null or not is_instance_valid(_server_version_label):
 		return
 	if _connected_server_version.is_empty():
+		if _has_active_lobby_connection():
+			_server_version_label.text = "Server: version unavailable"
+			return
 		_server_version_label.text = "Server: not connected"
 		return
 	_server_version_label.text = "Server: %s" % _connected_server_version

@@ -211,8 +211,10 @@ func lobby_event(message: Dictionary) -> void:
 				current_active_match_info
 			)
 		LobbyProtocolScript.ROOM_LIST:
+			_set_current_server_version(str(payload.get("server_version", current_server_version)))
 			room_list_updated.emit(payload.get("rooms", []))
 		LobbyProtocolScript.ROOM_SNAPSHOT:
+			_set_current_server_version(str(payload.get("server_version", current_server_version)))
 			room_snapshot_updated.emit(payload)
 		LobbyProtocolScript.ROOM_ERROR:
 			room_error.emit(str(payload.get("message", "Unknown lobby error.")))
