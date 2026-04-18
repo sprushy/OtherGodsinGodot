@@ -1,6 +1,8 @@
 class_name VisualCard
 extends PanelContainer
 
+const CardDetailContentBuilder = preload("res://scripts/ui/CardDetailContentBuilder.gd")
+
 signal card_clicked(card: Card)
 signal card_right_clicked(card: Card)
 signal card_drag_released(card: Card, global_pos: Vector2, rotated: bool, stealth: bool)
@@ -765,140 +767,15 @@ func _show_hover_panel() -> void:
 	style.content_margin_top = 8
 	style.content_margin_bottom = 8
 	panel.add_theme_stylebox_override("panel", style)
-
-	var scroll := ScrollContainer.new()
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
-	scroll.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	scroll.custom_minimum_size = Vector2(_HOVER_PANEL_WIDTH - 20.0, 0.0)
-	panel.add_child(scroll)
-
-	var vbox := VBoxContainer.new()
-	vbox.add_theme_constant_override("separation", 4)
-	vbox.custom_minimum_size.x = _HOVER_PANEL_WIDTH - 20.0
-	vbox.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
-	scroll.add_child(vbox)
-
-	# Name
-	var name_lbl := Label.new()
-	name_lbl.add_theme_font_size_override("font_size", 15)
-	name_lbl.add_theme_color_override("font_color", Color(1.0, 0.95, 0.7))
-	name_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	name_lbl.text = card_data.get_display_name_for_control(name_lbl)
-	vbox.add_child(name_lbl)
-
-	# Types
-	if card_data.card_types.size() > 0:
-		var type_lbl := Label.new()
-		type_lbl.text = " • ".join(card_data.card_types)
-		type_lbl.add_theme_font_size_override("font_size", 14)
-		type_lbl.add_theme_color_override("font_color", Color(0.7, 0.85, 1.0))
-		type_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		vbox.add_child(type_lbl)
-
-	# Level / Mana / Culture row
-	var meta_parts: Array[String] = []
-	if card_data.get_effective_level() > 0:
-		meta_parts.append("Level " + str(card_data.get_effective_level()))
-	meta_parts.append("Mana: " + str(_get_display_mana_cost()))
-	if card_data.culture != "":
-		meta_parts.append(card_data.culture)
-	var meta_lbl := Label.new()
-	meta_lbl.text = "  |  ".join(meta_parts)
-	meta_lbl.add_theme_font_size_override("font_size", 14)
-	meta_lbl.add_theme_color_override("font_color", Color(0.65, 0.65, 0.65))
-	vbox.add_child(meta_lbl)
-
-	# Stats
-	match card_data.card_type:
-		Card.CardType.GOD:
-			pass
-		Card.CardType.CREATURE:
-			var eff_str := card_data.get_effective_strength()
-			var eff_res := card_data.get_effective_resilience()
-			var eff_spd := card_data.get_effective_speed()
-			var stats_lbl := Label.new()
-			stats_lbl.text = "STR: %d   RES: %d   SPD: %d" % [eff_str, eff_res, eff_spd]
-			stats_lbl.add_theme_font_size_override("font_size", 18)
-			var tip_parts: Array[String] = []
-			for entry in [["STR", "str"], ["RES", "res"], ["SPD", "spd"]]:
-				var bd := card_data.get_full_stat_breakdown(entry[1])
-				if bd != "":
-					tip_parts.append(entry[0] + ": " + bd)
-			if tip_parts.size() > 0:
-				stats_lbl.tooltip_text = "\n".join(tip_parts)
-				stats_lbl.mouse_filter = Control.MOUSE_FILTER_STOP
-			vbox.add_child(stats_lbl)
-		Card.CardType.STRUCTURE:
-			var res_lbl := Label.new()
-			res_lbl.text = "RES: %d" % card_data.resilience
-			res_lbl.add_theme_font_size_override("font_size", 18)
-			vbox.add_child(res_lbl)
-		Card.CardType.SPELL, Card.CardType.HEX, Card.CardType.CHARM:
-			var spd_lbl := Label.new()
-			spd_lbl.text = "Speed: %d" % card_data.speed
-			spd_lbl.add_theme_font_size_override("font_size", 18)
-			vbox.add_child(spd_lbl)
-
-	# Extra costs
-	if card_data.has_additional_costs():
-		var cost_lbl := Label.new()
-		cost_lbl.text = "Extra Costs: " + " ".join(card_data.get_cost_shorthand_parts(0))
-		cost_lbl.add_theme_font_size_override("font_size", 14)
-		cost_lbl.add_theme_color_override("font_color", Color(1.0, 0.6, 0.4))
-		vbox.add_child(cost_lbl)
-
-	if not _display_cost_adjustment_lines.is_empty():
-		var summon_cost_lbl := Label.new()
-		summon_cost_lbl.text = "\n".join(_display_cost_adjustment_lines)
-		summon_cost_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		summon_cost_lbl.add_theme_font_size_override("font_size", 14)
-		summon_cost_lbl.add_theme_color_override("font_color", Color(1.0, 0.72, 0.72))
-		summon_cost_lbl.custom_minimum_size = Vector2(210, 0)
-		vbox.add_child(summon_cost_lbl)
-
-	# Separator
-	if card_data.ability_text != "" or card_data.flavor_text != "":
-		var sep := HSeparator.new()
-		sep.add_theme_color_override("color", Color(0.3, 0.3, 0.5))
-		vbox.add_child(sep)
-
-	# Ability text
-	if card_data.ability_text != "":
-		var ability_lbl := Label.new()
-		ability_lbl.text = card_data.ability_text.replace("[b]", "").replace("[/b]", "")
-		ability_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		ability_lbl.add_theme_font_size_override("font_size", 16)
-		ability_lbl.add_theme_color_override("font_color", Color(0.9, 0.85, 1.0))
-		ability_lbl.custom_minimum_size = Vector2(210, 0)
-		vbox.add_child(ability_lbl)
-
-	# Flavor text
-	if card_data.flavor_text != "":
-		var flavor_lbl := Label.new()
-		flavor_lbl.text = card_data.flavor_text
-		flavor_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		flavor_lbl.add_theme_font_size_override("font_size", 14)
-		flavor_lbl.add_theme_color_override("font_color", Color(0.6, 0.6, 0.6))
-		vbox.add_child(flavor_lbl)
-
-	var hover_details := card_data.get_hover_detail_lines(_hover_viewer)
-	if hover_details.size() > 0:
-		var detail_sep := HSeparator.new()
-		detail_sep.add_theme_color_override("color", Color(0.22, 0.45, 0.4))
-		vbox.add_child(detail_sep)
-
-		var detail_lbl := RichTextLabel.new()
-		detail_lbl.bbcode_enabled = true
-		detail_lbl.text = "\n".join(hover_details)
-		detail_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		detail_lbl.scroll_active = false
-		detail_lbl.fit_content = true
-		detail_lbl.add_theme_font_size_override("normal_font_size", 14)
-		detail_lbl.add_theme_font_size_override("bold_font_size", 14)
-		detail_lbl.add_theme_color_override("default_color", Color(0.72, 0.96, 0.86))
-		detail_lbl.custom_minimum_size = Vector2(210, 0)
-		vbox.add_child(detail_lbl)
+	panel.add_child(CardDetailContentBuilder.build_visual_hover_body(
+		card_data,
+		_hover_viewer,
+		{
+			"content_width": _HOVER_PANEL_WIDTH - 20.0,
+			"display_mana_cost": _get_display_mana_cost(),
+			"display_cost_adjustment_lines": _display_cost_adjustment_lines
+		}
+	))
 
 	scene_root.add_child(panel)
 	panel.move_to_front()

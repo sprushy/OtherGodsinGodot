@@ -1,6 +1,8 @@
 class_name BoardZoneUI
 extends PanelContainer
 
+const CardDetailContentBuilder = preload("res://scripts/ui/CardDetailContentBuilder.gd")
+
 class StackTargetIndicator extends Control:
 	func _ready() -> void:
 		mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -191,7 +193,7 @@ var _hovered: bool = false
 var _pinned: bool = false
 var _hide_pending: bool = false
 var _defense_overlay: Control = null
-var _raised_overlay: Control = null  # non-null for DEF or stealth — floats above the zone row
+var _raised_overlay: Control = null  # non-null for DEF or stealth - floats above the zone row
 
 const BASE_ZONE_EXTENT := 165.0
 const DROMI_BINDING_NAME := "Dromi"
@@ -1428,7 +1430,7 @@ func _refresh_display() -> void:
 			add_theme_stylebox_override("panel", style)
 			var tex: Texture2D = load(card.art_path)
 			if tex:
-				# Single Control overlay — PanelContainer fills it to the zone size.
+				# Single Control overlay - PanelContainer fills it to the zone size.
 				# Children inside use anchors relative to the overlay, bypassing
 				# PanelContainer's child-fill behaviour entirely.
 				var god_overlay := Control.new()
@@ -1563,7 +1565,7 @@ func _refresh_display() -> void:
 		match card.card_type:
 			Card.CardType.CREATURE:
 				if is_def_creature:
-					# Transparent — the rotated overlay IS the visual
+					# Transparent - the rotated overlay IS the visual
 					add_theme_stylebox_override("panel", StyleBoxEmpty.new())
 				else:
 					style.bg_color    = Color(0.13, 0.22, 0.42)
@@ -1749,7 +1751,7 @@ func _refresh_display() -> void:
 		z_index = 2 if _raised_overlay != null else 0
 
 	else:
-		# Empty zone styling — God slot gets gold treatment
+		# Empty zone styling - God slot gets gold treatment
 		if zone.zone_type == Zone.ZoneType.GOD_SLOT:
 			style.bg_color    = Color(0.35, 0.28, 0.04, 0.7)
 			style.border_color = Color(0.9, 0.75, 0.2)
@@ -1920,172 +1922,26 @@ func _show_ability_popup() -> void:
 			_schedule_hide()
 	)
 
-	var vbox := VBoxContainer.new()
-	vbox.custom_minimum_size = Vector2(210, 0)
-	vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	popup.add_child(vbox)
+	var popup_viewer_shared := _get_viewer_player()
+	var is_hidden_card_shared := (card.is_stealth or (card.is_face_down and not _is_public_power(card))) and card.get_controller() != popup_viewer_shared and not card.is_temporarily_revealed()
 
-	# Hidden = opponent's stealth card; own stealth cards show full info
-	var popup_viewer := _get_viewer_player()
-	var is_hidden_card := (card.is_stealth or (card.is_face_down and not _is_public_power(card))) and card.get_controller() != popup_viewer and not card.is_temporarily_revealed()
-
-	# Header row
-	var header_row := HBoxContainer.new()
-	header_row.add_theme_constant_override("separation", 8)
-	header_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	vbox.add_child(header_row)
-
-	var name_lbl := Label.new()
-	name_lbl.add_theme_font_size_override("font_size", 13)
-	name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	name_lbl.text = card.get_display_name_for_control(name_lbl) if not is_hidden_card else "???"
-	name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	header_row.add_child(name_lbl)
-
-	if not is_hidden_card and card.culture != "":
-		var culture_lbl := Label.new()
-		culture_lbl.text = card.culture
-		culture_lbl.add_theme_font_size_override("font_size", 11)
-		culture_lbl.add_theme_color_override("font_color", Color(0.96, 0.88, 0.62))
-		culture_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-		culture_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		header_row.add_child(culture_lbl)
-
-	# Types
-	if not is_hidden_card:
-		var type_lbl := Label.new()
-		var type_parts: Array[String] = [_get_card_type_label(card)]
-		for card_type_name in card.card_types:
-			if card_type_name not in type_parts:
-				type_parts.append(card_type_name)
-		type_lbl.text = " • ".join(type_parts)
-		type_lbl.add_theme_font_size_override("font_size", 11)
-		type_lbl.add_theme_color_override("font_color", Color(1.0, 0.55, 0.55) if card.is_petrified() else Color(0.7, 0.85, 1.0))
-		type_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		type_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		vbox.add_child(type_lbl)
-
-		if card.is_petrified():
-			var petrified_lbl := Label.new()
-			petrified_lbl.text = "Status: Petrified Creature"
-			petrified_lbl.add_theme_font_size_override("font_size", 11)
-			petrified_lbl.add_theme_color_override("font_color", Color(1.0, 0.35, 0.35))
-			petrified_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			vbox.add_child(petrified_lbl)
-		if card.is_muted and card.mute_turns_remaining > 0:
-			var muted_status_lbl := Label.new()
-			muted_status_lbl.text = "Status: Muted (%d turn%s)" % [
-				card.mute_turns_remaining,
-				"" if card.mute_turns_remaining == 1 else "s"
-			]
-			muted_status_lbl.add_theme_font_size_override("font_size", 11)
-			muted_status_lbl.add_theme_color_override("font_color", Color(1.0, 0.78, 0.86))
-			muted_status_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			vbox.add_child(muted_status_lbl)
-
-	# Level (gods have no level)
-	if not is_hidden_card and not card.is_god:
-		var level_lbl := Label.new()
-		var eff_lvl := card.get_effective_level()
-		level_lbl.text = "Level %d" % eff_lvl
-		level_lbl.add_theme_font_size_override("font_size", 11)
-		var level_breakdown := card.get_buff_tooltip("lvl")
-		if eff_lvl > card.level:
-			level_lbl.modulate = Color(0.4, 1.0, 0.4)
-			if level_breakdown != "":
-				level_lbl.tooltip_text = "LVL:\n" + level_breakdown
-				level_lbl.mouse_filter = Control.MOUSE_FILTER_STOP
-			else:
-				level_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		elif eff_lvl < card.level:
-			level_lbl.modulate = Color(1.0, 0.35, 0.35)
-			if level_breakdown != "":
-				level_lbl.tooltip_text = "LVL:\n" + level_breakdown
-				level_lbl.mouse_filter = Control.MOUSE_FILTER_STOP
-			else:
-				level_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		else:
-			level_lbl.modulate = Color(0.7, 0.7, 0.7)
-			level_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		vbox.add_child(level_lbl)
-
-	if card.card_type == Card.CardType.CREATURE and not card.is_god:
-		if not is_hidden_card:
-			if card.is_sleeping:
-				var sleep_lbl := Label.new()
-				sleep_lbl.text = "Sleeping"
-				sleep_lbl.add_theme_font_size_override("font_size", 11)
-				sleep_lbl.modulate = Color(0.7, 0.86, 1.0)
-				sleep_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-				vbox.add_child(sleep_lbl)
-
-			var mode_lbl := Label.new()
-			mode_lbl.text = "DEF" if card.creature_mode == Card.CreatureMode.DEFENSIVE else "AGG"
-			mode_lbl.add_theme_font_size_override("font_size", 11)
-			mode_lbl.modulate = Color(0.7, 0.7, 0.7)
-			mode_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			vbox.add_child(mode_lbl)
-
-			# Full stats
-			var eff_str := card.get_effective_strength()
-			var eff_res := card.get_effective_resilience()
-			var eff_spd := card.get_effective_speed()
-			var stats_rtl := RichTextLabel.new()
-			stats_rtl.bbcode_enabled = true
-			stats_rtl.add_theme_font_size_override("normal_font_size", 18)
-			stats_rtl.scroll_active = false
-			stats_rtl.fit_content = true
-			stats_rtl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			var stat_parts: Array[String] = []
-			var tooltip_lines: Array[String] = []
-			for s_info in [["STR", eff_str, card.strength, "str"], ["RES", eff_res, card.resilience, "res"], ["SPD", eff_spd, card.speed, "spd"]]:
-				var lbl_text: String = s_info[0] + ":" + str(s_info[1])
-				if s_info[1] != s_info[2]:
-					var breakdown := card.get_buff_tooltip(s_info[3])
-					if s_info[1] > s_info[2]:
-						stat_parts.append("[color=#66ff66]" + lbl_text + "[/color]")
-					else:
-						stat_parts.append("[color=#ff5555]" + lbl_text + "[/color]")
-					if breakdown != "":
-						tooltip_lines.append(s_info[0] + ":\n" + breakdown)
-				else:
-					stat_parts.append(lbl_text)
-			stats_rtl.text = " ".join(stat_parts)
-			if tooltip_lines.size() > 0:
-				stats_rtl.tooltip_text = "\n\n".join(tooltip_lines)
-				stats_rtl.mouse_filter = Control.MOUSE_FILTER_STOP
-			vbox.add_child(stats_rtl)
-
-			var effect_lines := card.get_effect_summary_lines()
-			if effect_lines.size() > 0:
-				var effects_lbl := Label.new()
-				effects_lbl.text = "\n".join(effect_lines)
-				effects_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-				effects_lbl.add_theme_font_size_override("font_size", 10)
-				effects_lbl.add_theme_color_override("font_color", Color(0.78, 0.9, 1.0))
-				effects_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-				vbox.add_child(effects_lbl)
-
-			var equipment_lines := card.get_equipment_summary_lines()
-			if equipment_lines.size() > 0:
-				var equipment_lbl := Label.new()
-				equipment_lbl.text = "Equipment:\n" + "\n".join(equipment_lines)
-				equipment_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-				equipment_lbl.add_theme_font_size_override("font_size", 10)
-				equipment_lbl.add_theme_color_override("font_color", Color(1.0, 0.87, 0.62))
-				equipment_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-				vbox.add_child(equipment_lbl)
-
-			var binding_lines: Array[String] = []
+	var effect_lines_shared: Array[String] = []
+	var equipment_lines_shared: Array[String] = []
+	var binding_lines_shared: Array[String] = []
+	var power_cost_lines_shared: Array[String] = []
+	if not is_hidden_card_shared:
+		if card.card_type == Card.CardType.CREATURE:
+			effect_lines_shared = card.get_effect_summary_lines()
+			equipment_lines_shared = card.get_equipment_summary_lines()
 			for binding in _get_attached_permanent_hexes(card):
 				var line := binding.card_name
 				var binding_effect_lines := _get_binding_hover_lines(binding)
 				if binding_effect_lines.is_empty():
-					binding_lines.append(line)
+					binding_lines_shared.append(line)
 				else:
-					binding_lines.append(line + ": " + " | ".join(binding_effect_lines))
+					binding_lines_shared.append(line + ": " + " | ".join(binding_effect_lines))
 			var has_dromi_line := false
-			for line in binding_lines:
+			for line in binding_lines_shared:
 				if line.begins_with(DROMI_BINDING_NAME):
 					has_dromi_line = true
 					break
@@ -2094,150 +1950,43 @@ func _show_ability_popup() -> void:
 				if dromi_source != null and dromi_source != card:
 					var dromi_effect_lines := _get_binding_hover_lines(dromi_source)
 					if dromi_effect_lines.is_empty():
-						binding_lines.append(DROMI_BINDING_NAME + ": " + DROMI_BINDING_HOVER_TEXT)
+						binding_lines_shared.append(DROMI_BINDING_NAME + ": " + DROMI_BINDING_HOVER_TEXT)
 					else:
-						binding_lines.append(DROMI_BINDING_NAME + ": " + " | ".join(dromi_effect_lines))
+						binding_lines_shared.append(DROMI_BINDING_NAME + ": " + " | ".join(dromi_effect_lines))
 				else:
-					binding_lines.append(DROMI_BINDING_NAME + ": " + DROMI_BINDING_HOVER_TEXT)
-			if binding_lines.size() > 0:
-				var binding_lbl := Label.new()
-				binding_lbl.text = "Bindings:\n" + "\n".join(binding_lines)
-				binding_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-				binding_lbl.add_theme_font_size_override("font_size", 10)
-				binding_lbl.add_theme_color_override("font_color", Color(0.66, 0.97, 0.93))
-				binding_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-				vbox.add_child(binding_lbl)
+					binding_lines_shared.append(DROMI_BINDING_NAME + ": " + DROMI_BINDING_HOVER_TEXT)
+		elif card.card_type == Card.CardType.STRUCTURE:
+			effect_lines_shared = card.get_effect_summary_lines()
+		if card is PowerCard:
+			power_cost_lines_shared = _get_power_hover_cost_lines(card as PowerCard)
 
-		# Action usage
-		if card.creature_major_action_used:
-			var acted_lbl := Label.new()
-			acted_lbl.text = "Major action used"
-			acted_lbl.add_theme_font_size_override("font_size", 9)
-			acted_lbl.modulate = Color(0.8, 0.8, 0.4)
-			acted_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			vbox.add_child(acted_lbl)
-		if card.creature_minor_actions_used > 0:
-			var moved_lbl := Label.new()
-			moved_lbl.text = "Minor actions: %d/%d" % [
-				card.creature_minor_actions_used,
-				card.get_max_minor_creature_actions_per_turn()
-			]
-			moved_lbl.add_theme_font_size_override("font_size", 9)
-			moved_lbl.modulate = Color(0.6, 0.9, 0.6)
-			moved_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			vbox.add_child(moved_lbl)
-
-	elif card.card_type == Card.CardType.STRUCTURE:
-		var eff_res_s := card.get_effective_resilience()
-		var res_lbl := Label.new()
-		res_lbl.text = "RES:%d" % eff_res_s
-		res_lbl.add_theme_font_size_override("font_size", 18)
-		res_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		var breakdown := card.get_buff_tooltip("res")
-		if eff_res_s < card.resilience:
-			res_lbl.modulate = Color(1.0, 0.35, 0.35)
-			if breakdown != "":
-				res_lbl.tooltip_text = "RES:\n" + breakdown
-				res_lbl.mouse_filter = Control.MOUSE_FILTER_STOP
-		elif eff_res_s > card.resilience:
-			res_lbl.modulate = Color(0.4, 1.0, 0.4)
-			if breakdown != "":
-				res_lbl.tooltip_text = "RES:\n" + breakdown
-				res_lbl.mouse_filter = Control.MOUSE_FILTER_STOP
-		vbox.add_child(res_lbl)
-
-		var effect_lines := card.get_effect_summary_lines()
-		if effect_lines.size() > 0:
-			var effects_lbl := Label.new()
-			effects_lbl.text = "\n".join(effect_lines)
-			effects_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-			effects_lbl.add_theme_font_size_override("font_size", 10)
-			effects_lbl.add_theme_color_override("font_color", Color(1.0, 0.45, 0.45) if card.is_petrified() else Color(0.78, 0.9, 1.0))
-			effects_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			vbox.add_child(effects_lbl)
-	elif not is_hidden_card and card.speed > 0:
-		var eff_spd := card.get_effective_speed()
-		var spd_lbl := Label.new()
-		spd_lbl.text = "SPD:%d" % eff_spd
-		spd_lbl.add_theme_font_size_override("font_size", 18)
-		spd_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		var spd_breakdown := card.get_full_stat_breakdown("spd")
-		if eff_spd < card.speed:
-			spd_lbl.modulate = Color(1.0, 0.35, 0.35)
-			if spd_breakdown != "":
-				spd_lbl.tooltip_text = "SPD:\n" + spd_breakdown
-				spd_lbl.mouse_filter = Control.MOUSE_FILTER_STOP
-		elif eff_spd > card.speed:
-			spd_lbl.modulate = Color(0.4, 1.0, 0.4)
-			if spd_breakdown != "":
-				spd_lbl.tooltip_text = "SPD:\n" + spd_breakdown
-				spd_lbl.mouse_filter = Control.MOUSE_FILTER_STOP
-		vbox.add_child(spd_lbl)
-
-	# Ability text
-	if card.ability_text != "" and not is_hidden_card:
-		var display_ability_text := (card as PowerCard).get_display_ability_bbcode_text(game_manager) if card is PowerCard else card.ability_text
-		var rtl := RichTextLabel.new()
-		rtl.bbcode_enabled = true
-		rtl.text = BaseCard.apply_keyword_hints(display_ability_text)
-		rtl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		rtl.add_theme_font_size_override("normal_font_size", 11)
-		rtl.add_theme_font_size_override("bold_font_size", 11)
-		rtl.add_theme_color_override("default_color", Color(0.9, 0.85, 1.0))
-		rtl.scroll_active = false
-		rtl.fit_content = true
-		rtl.mouse_filter = Control.MOUSE_FILTER_STOP
-		vbox.add_child(rtl)
-
-	if card is PowerCard and not is_hidden_card:
-		var power_cost_lines := _get_power_hover_cost_lines(card as PowerCard)
-		if power_cost_lines.size() > 0:
-			var cost_lbl := Label.new()
-			cost_lbl.text = "\n".join(power_cost_lines)
-			cost_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-			cost_lbl.add_theme_font_size_override("font_size", 10)
-			cost_lbl.add_theme_color_override("font_color", Color(1.0, 0.84, 0.62))
-			cost_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			vbox.add_child(cost_lbl)
-
-	var hover_detail_lines := card.get_hover_detail_lines(popup_viewer)
-	if hover_detail_lines.size() > 0 and not is_hidden_card:
-		var hover_details_lbl := RichTextLabel.new()
-		hover_details_lbl.bbcode_enabled = true
-		hover_details_lbl.text = "\n".join(hover_detail_lines)
-		hover_details_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		hover_details_lbl.scroll_active = false
-		hover_details_lbl.fit_content = true
-		hover_details_lbl.add_theme_font_size_override("normal_font_size", 10)
-		hover_details_lbl.add_theme_font_size_override("bold_font_size", 10)
-		hover_details_lbl.add_theme_color_override("default_color", Color(0.66, 0.97, 0.93))
-		hover_details_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		vbox.add_child(hover_details_lbl)
-
-	# Flavor text
-	if card.flavor_text != "" and not is_hidden_card:
-		var flavor_lbl := Label.new()
-		flavor_lbl.text = card.flavor_text
-		flavor_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		flavor_lbl.add_theme_font_size_override("font_size", 10)
-		flavor_lbl.add_theme_color_override("font_color", Color(0.55, 0.55, 0.55))
-		flavor_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		vbox.add_child(flavor_lbl)
+	popup.add_child(CardDetailContentBuilder.build_board_popup_body(
+		card,
+		popup_viewer_shared,
+		{
+			"is_hidden_card": is_hidden_card_shared,
+			"type_label": _get_card_type_label(card),
+			"effect_lines": effect_lines_shared,
+			"equipment_lines": equipment_lines_shared,
+			"binding_lines": binding_lines_shared,
+			"power_cost_lines": power_cost_lines_shared,
+			"game_manager": game_manager
+		}
+	))
 
 	_popup = popup
 	scene_root.add_child(popup)
 
-	# Wait one frame for the popup to size itself, then position it
 	await get_tree().process_frame
 	if not is_instance_valid(popup):
 		return
-	var vp_size := get_viewport_rect().size
-	var pos := global_position
-	pos.y -= popup.size.y + 6
-	if pos.y < 0:
-		pos.y = global_position.y + size.y + 6
-	pos.x = clamp(pos.x, 4.0, vp_size.x - popup.size.x - 4.0)
-	popup.global_position = pos
+	var popup_vp_size_shared := get_viewport_rect().size
+	var popup_pos_shared := global_position
+	popup_pos_shared.y -= popup.size.y + 6
+	if popup_pos_shared.y < 0:
+		popup_pos_shared.y = global_position.y + size.y + 6
+	popup_pos_shared.x = clamp(popup_pos_shared.x, 4.0, popup_vp_size_shared.x - popup.size.x - 4.0)
+	popup.global_position = popup_pos_shared
 
 func _hide_ability_popup() -> void:
 	if _popup and is_instance_valid(_popup):
