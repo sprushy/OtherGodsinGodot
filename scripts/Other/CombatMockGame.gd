@@ -300,6 +300,8 @@ var _pending_sharur_escape_card: Card = null
 var _pending_sharur_escape_reason: String = ""
 var _pending_wheel_of_fire_prompts: Array[WheelOfFire] = []
 var _active_wheel_of_fire_prompt: WheelOfFire = null
+var _pending_wolf_adolescent_prompts: Array[WolfAdolescent] = []
+var _active_wolf_adolescent_prompt: WolfAdolescent = null
 var _pending_tezcatlipoca_active_prompt: TezcatlipocaActive = null
 var _pending_turn_start_priority_feedback: String = ""
 var _breidablik_panel: Control = null
@@ -1072,6 +1074,27 @@ func _finish_wheel_of_fire_turn_start_sequence() -> void:
 	var feedback := _pending_turn_start_priority_feedback
 	_pending_turn_start_priority_feedback = ""
 	_pending_wheel_of_fire_prompts.clear()
+	if _active_wolf_adolescent_prompt != null or not _pending_wolf_adolescent_prompts.is_empty():
+		_pending_turn_start_priority_feedback = feedback
+		if _active_wolf_adolescent_prompt == null:
+			_show_next_wolf_adolescent_maturation_prompt()
+		update_ui()
+		return
+	if _is_networked_client:
+		if feedback.strip_edges() != "":
+			action_label.text = feedback
+		update_ui()
+		return
+	_queue_standard_turn_start_priority(feedback)
+
+func _finish_wolf_adolescent_turn_start_sequence() -> void:
+	var feedback := _pending_turn_start_priority_feedback
+	_pending_turn_start_priority_feedback = ""
+	_pending_wolf_adolescent_prompts.clear()
+	_active_wolf_adolescent_prompt = null
+	if _begin_wheel_of_fire_turn_start_sequence(feedback):
+		update_ui()
+		return
 	if _is_networked_client:
 		if feedback.strip_edges() != "":
 			action_label.text = feedback
@@ -1082,6 +1105,12 @@ func _finish_wheel_of_fire_turn_start_sequence() -> void:
 func _continue_after_upkeep_choice(feedback: String) -> void:
 	if _is_networked_client:
 		action_label.text = feedback
+		update_ui()
+		return
+	if _active_wolf_adolescent_prompt != null or not _pending_wolf_adolescent_prompts.is_empty():
+		_pending_turn_start_priority_feedback = feedback
+		if _active_wolf_adolescent_prompt == null:
+			_show_next_wolf_adolescent_maturation_prompt()
 		update_ui()
 		return
 	if _begin_wheel_of_fire_turn_start_sequence(feedback):
@@ -2840,6 +2869,8 @@ func _show_hand_hover_preview(vc: VisualCard) -> void:
 	_hand_hover_vc = vc
 	var card := vc.card_data
 
+	# Hand hover intentionally uses a large-card preview instead of the shared
+	# text-detail popup builder used by board cards and standalone overlay cards.
 	var preview := Control.new()
 	preview.top_level = true
 	preview.z_index = HOVER_PREVIEW_Z_INDEX + 10
@@ -8530,22 +8561,59 @@ func _queue_wolf_adolescent_maturation_prompt(card: WolfAdolescent) -> void:
 		action_label.text = _consume_resolution_feedback(no_target_text)
 		update_ui()
 		return
-	if network_manager != null and network_manager.is_server:
-		var player_idx := game_manager.players.find(card.card_owner)
-		var target_uids: Array[String] = []
-		for target in targets:
-			if target != null:
-				target_uids.append(target.uid)
-		match_manager.request_ui_interaction.emit(player_idx, "wolf_adolescent_maturation", {
-			"source_uid": card.uid,
-			"target_uids": target_uids,
-		})
+	if card == _active_wolf_adolescent_prompt or card in _pending_wolf_adolescent_prompts:
 		return
-	_show_wolf_adolescent_maturation_prompt(card, targets)
+	_pending_wolf_adolescent_prompts.append(card)
+	if _active_wolf_adolescent_prompt == null:
+		_show_next_wolf_adolescent_maturation_prompt()
+
+func _show_next_wolf_adolescent_maturation_prompt() -> bool:
+	while not _pending_wolf_adolescent_prompts.is_empty():
+		var wolf := _pending_wolf_adolescent_prompts[0]
+		if wolf == null or not is_instance_valid(wolf) or not wolf.can_offer_maturation(game_manager):
+			_pending_wolf_adolescent_prompts.remove_at(0)
+			continue
+		var targets: Array[Card] = wolf.get_valid_maturation_targets()
+		if targets.is_empty():
+			var no_target_text := wolf.card_name + " matured, but found no level 5 or lower Lupine in the deck."
+			game_manager.note_player_feedback(no_target_text)
+			action_label.text = _consume_resolution_feedback(no_target_text)
+			_pending_wolf_adolescent_prompts.remove_at(0)
+			continue
+		_active_wolf_adolescent_prompt = wolf
+		if network_manager != null and network_manager.is_server and not _is_player_local(game_manager.current_player):
+			var player_idx := game_manager.players.find(wolf.card_owner)
+			var target_uids: Array[String] = []
+			for target in targets:
+				if target != null:
+					target_uids.append(target.uid)
+			match_manager.request_ui_interaction.emit(player_idx, "wolf_adolescent_maturation", {
+				"source_uid": wolf.uid,
+				"target_uids": target_uids,
+			})
+			return true
+		call_deferred("_show_wolf_adolescent_maturation_prompt", wolf, targets)
+		return true
+	_active_wolf_adolescent_prompt = null
+	return false
+
+func _consume_current_wolf_adolescent_prompt() -> void:
+	var resolved_prompt := _active_wolf_adolescent_prompt
+	_active_wolf_adolescent_prompt = null
+	if resolved_prompt == null:
+		if not _pending_wolf_adolescent_prompts.is_empty():
+			_pending_wolf_adolescent_prompts.remove_at(0)
+		return
+	var remaining: Array[WolfAdolescent] = []
+	for wolf in _pending_wolf_adolescent_prompts:
+		if wolf != resolved_prompt:
+			remaining.append(wolf)
+	_pending_wolf_adolescent_prompts = remaining
 
 func _show_wolf_adolescent_maturation_prompt(card: WolfAdolescent, prompt_targets: Array = []) -> void:
 	if card == null or game_manager == null:
 		return
+	_active_wolf_adolescent_prompt = card
 	var current_targets: Array[Card] = []
 	if prompt_targets.is_empty():
 		current_targets = card.get_valid_maturation_targets()
@@ -8557,6 +8625,9 @@ func _show_wolf_adolescent_maturation_prompt(card: WolfAdolescent, prompt_target
 				current_targets.append(candidate_card)
 	if current_targets.is_empty():
 		action_label.text = card.card_name + " matured, but found no level 5 or lower Lupine in the deck."
+		_consume_current_wolf_adolescent_prompt()
+		if not _show_next_wolf_adolescent_maturation_prompt():
+			_finish_wolf_adolescent_turn_start_sequence()
 		update_ui()
 		return
 
@@ -8570,6 +8641,9 @@ func _show_wolf_adolescent_maturation_prompt(card: WolfAdolescent, prompt_target
 			return
 		var feedback := card.resolve_maturation_choice(game_manager, chosen_card)
 		action_label.text = _consume_resolution_feedback(feedback)
+		_consume_current_wolf_adolescent_prompt()
+		if not _show_next_wolf_adolescent_maturation_prompt():
+			_finish_wolf_adolescent_turn_start_sequence()
 		update_ui()
 	var on_skip_maturation := func() -> void:
 		if _is_networked_client:
@@ -8581,6 +8655,9 @@ func _show_wolf_adolescent_maturation_prompt(card: WolfAdolescent, prompt_target
 			return
 		var feedback := card.resolve_maturation_choice(game_manager, null)
 		action_label.text = _consume_resolution_feedback(feedback)
+		_consume_current_wolf_adolescent_prompt()
+		if not _show_next_wolf_adolescent_maturation_prompt():
+			_finish_wolf_adolescent_turn_start_sequence()
 		update_ui()
 
 	_show_card_selection_overlay(
@@ -15053,6 +15130,8 @@ func _dismiss_transient_prompts() -> void:
 	_hide_blot_sacrifice_prompt()
 	_hide_deucalion_prompt()
 	_pending_wheel_of_fire_prompts.clear()
+	_pending_wolf_adolescent_prompts.clear()
+	_active_wolf_adolescent_prompt = null
 	_pending_turn_start_priority_feedback = ""
 	_pending_hati_prompts.clear()
 	_clear_hati_moon_hunt_state()
@@ -15285,6 +15364,15 @@ func _on_match_move_validated(move: Dictionary) -> void:
 			if tiamat_card != null:
 				feedback = "Matriarch Rule returned %s to hand." % tiamat_card.card_name
 			_continue_after_upkeep_choice(feedback)
+		"wolf_adolescent_maturation_choice":
+			var feedback := _consume_resolution_feedback()
+			if feedback.strip_edges() != "":
+				_pending_turn_start_priority_feedback = feedback
+				action_label.text = feedback
+			_consume_current_wolf_adolescent_prompt()
+			if not _is_networked_client:
+				if not _show_next_wolf_adolescent_maturation_prompt():
+					_finish_wolf_adolescent_turn_start_sequence()
 		"wheel_of_fire_turn_start_choice":
 			var feedback := _consume_resolution_feedback()
 			if feedback.strip_edges() != "":
