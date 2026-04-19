@@ -78,8 +78,6 @@ func _on_game_ended(winner: Player, loser: Player) -> void:
 func _on_ui_interaction_requested(player_index: int, type: String, data: Dictionary) -> void:
 	var serialized_data: Dictionary = prompt_router.serialize_prompt_data(data)
 	_broadcast_ui_interaction(player_index, type, serialized_data)
-	if type == "priority":
-		_broadcast_full_state("")
 
 func _on_doorway_choice_requested(structure: Card, card: Card, combat_death: bool, destruction: bool) -> void:
 	var player := structure.card_owner if structure != null else game_manager.current_player

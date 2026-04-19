@@ -16335,7 +16335,8 @@ func _restore_priority_prompt_from_authoritative_state() -> void:
 	if local_player == null or game_manager.priority_player != local_player:
 		return
 	var prompt_data := match_manager.build_priority_prompt_data(local_player)
-	if prompt_data.is_empty():
+	var prompt_responses: Array = prompt_data.get("responses", [])
+	if prompt_responses.is_empty():
 		return
 	_apply_priority_prompt_for_player(local_idx, prompt_data)
 
@@ -16440,8 +16441,10 @@ func _update_waiting_overlay() -> void:
 	
 	# If someone else has priority, we are waiting
 	if priority_idx != -1 and priority_idx != local_idx:
-		_update_waiting_status(true, "Opponent has priority...")
-		return
+		var priority_responses: Array = game_manager.get_priority_responses(current_priority_player)
+		if not priority_responses.is_empty():
+			_update_waiting_status(true, "Opponent has priority...")
+			return
 		
 	# If we are in combat and waiting for intercept
 	if game_manager.current_phase == GameManager.GamePhase.COMBAT:

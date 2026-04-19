@@ -71,8 +71,10 @@ var _password_line_edit: LineEdit = null
 var _switch_account_button: Button = null
 var _resume_match_button: Button = null
 var _create_unranked_seek_button: Button = null
+var _profile_summary_panel: PanelContainer = null
 var _profile_summary_label: Label = null
 var _current_profile_summary: Dictionary = {}
+var _profile_summary_expanded: bool = false
 var _account_decks_cache: Array[Dictionary] = []
 var _auth_onboarding_overlay: Control = null
 var _auth_onboarding_selected_mode: String = AUTH_MODE_GUEST
@@ -2971,6 +2973,9 @@ func _build_profile_summary_controls() -> void:
 	var panel := PanelContainer.new()
 	panel.name = "ProfileSummaryPanel"
 	panel.visible = false
+	panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	panel.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	panel.gui_input.connect(_on_profile_summary_panel_gui_input)
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color(0.08, 0.10, 0.14, 0.92)
 	style.border_color = Color(0.30, 0.40, 0.55, 0.8)
@@ -2981,12 +2986,14 @@ func _build_profile_summary_controls() -> void:
 	style.corner_radius_bottom_left = 4
 	style.corner_radius_bottom_right = 4
 	panel.add_theme_stylebox_override("panel", style)
+	_profile_summary_panel = panel
 	_profile_summary_label = Label.new()
 	_profile_summary_label.name = "ProfileSummaryLabel"
 	_profile_summary_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_profile_summary_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	_profile_summary_label.vertical_alignment = VERTICAL_ALIGNMENT_TOP
 	_profile_summary_label.add_theme_font_size_override("font_size", 13)
+	_profile_summary_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	panel.add_child(_profile_summary_label)
 	multiplayer_container.add_child(panel)
 	if seek_list != null:
@@ -3024,7 +3031,7 @@ func _refresh_account_identity_label() -> void:
 func _refresh_profile_summary_label() -> void:
 	if _profile_summary_label == null:
 		return
-	var panel := _profile_summary_label.get_parent()
+	var panel := _profile_summary_panel if _profile_summary_panel != null else _profile_summary_label.get_parent()
 	if _current_profile_summary.is_empty():
 		_profile_summary_label.text = ""
 		if panel != null:
@@ -3032,70 +3039,110 @@ func _refresh_profile_summary_label() -> void:
 		return
 	var total_wins: int = int(_current_profile_summary.get("total_wins", 0))
 	var total_losses: int = int(_current_profile_summary.get("total_losses", 0))
-	var lines: Array[String] = []
-	lines.append("Match Record: %d-%d" % [total_wins, total_losses])
+	var summary_line := "Match Record: %d-%d" % [total_wins, total_losses]
+	var lines: Array[String] = [summary_line]
 
 	var god_records = _current_profile_summary.get("god_records", [])
-	if god_records is Array and not (god_records as Array).is_empty():
-		lines.append("By God:")
-		var displayed_god_records: int = 0
-		for raw_record in god_records:
-			if not (raw_record is Dictionary):
-				continue
-			var god_record: Dictionary = raw_record as Dictionary
-			lines.append("%s %d-%d" % [
-				str(god_record.get("god_name", "Unknown God")),
-				int(god_record.get("wins", 0)),
-				int(god_record.get("losses", 0)),
-			])
-			displayed_god_records += 1
-			if displayed_god_records >= 4:
-				break
-
 	var deck_records = _current_profile_summary.get("deck_records", [])
-	if deck_records is Array and not (deck_records as Array).is_empty():
-		lines.append("By Deck:")
-		var displayed_deck_records: int = 0
-		for raw_record in deck_records:
-			if not (raw_record is Dictionary):
-				continue
-			var deck_record: Dictionary = raw_record as Dictionary
-			lines.append("%s %d-%d" % [
-				_get_profile_summary_deck_name(str(deck_record.get("deck_name", ""))),
-				int(deck_record.get("wins", 0)),
-				int(deck_record.get("losses", 0)),
-			])
-			displayed_deck_records += 1
-			if displayed_deck_records >= 3:
-				break
-
 	var recent_matches = _current_profile_summary.get("recent_matches", [])
-	if recent_matches is Array and not (recent_matches as Array).is_empty():
-		lines.append("Recent:")
-		var displayed_recent_matches: int = 0
-		for raw_match in recent_matches:
-			if not (raw_match is Dictionary):
-				continue
-			var recent_match: Dictionary = raw_match as Dictionary
-			var result_text: String = "W" if str(recent_match.get("result", "")).to_lower() == "win" else "L"
-			lines.append("%s as %s vs %s" % [
-				result_text,
-				_get_profile_summary_loadout(
-					str(recent_match.get("god_name", "Unknown God")),
-					str(recent_match.get("deck_name", ""))
-				),
-				_get_profile_summary_loadout(
-					str(recent_match.get("opponent_god_name", "Unknown God")),
-					str(recent_match.get("opponent_deck_name", ""))
-				),
-			])
-			displayed_recent_matches += 1
-			if displayed_recent_matches >= 3:
-				break
+	var has_details := (
+		(god_records is Array and not (god_records as Array).is_empty())
+		or (deck_records is Array and not (deck_records as Array).is_empty())
+		or (recent_matches is Array and not (recent_matches as Array).is_empty())
+	)
+
+	if _profile_summary_expanded and has_details:
+		if god_records is Array and not (god_records as Array).is_empty():
+			lines.append("")
+			lines.append("By God:")
+			var displayed_god_records: int = 0
+			for raw_record in god_records:
+				if not (raw_record is Dictionary):
+					continue
+				var god_record: Dictionary = raw_record as Dictionary
+				lines.append("%s %d-%d" % [
+					str(god_record.get("god_name", "Unknown God")),
+					int(god_record.get("wins", 0)),
+					int(god_record.get("losses", 0)),
+				])
+				displayed_god_records += 1
+				if displayed_god_records >= 4:
+					break
+
+		if deck_records is Array and not (deck_records as Array).is_empty():
+			lines.append("")
+			lines.append("By Deck:")
+			var displayed_deck_records: int = 0
+			for raw_record in deck_records:
+				if not (raw_record is Dictionary):
+					continue
+				var deck_record: Dictionary = raw_record as Dictionary
+				lines.append("%s %d-%d" % [
+					_get_profile_summary_deck_name(str(deck_record.get("deck_name", ""))),
+					int(deck_record.get("wins", 0)),
+					int(deck_record.get("losses", 0)),
+				])
+				displayed_deck_records += 1
+				if displayed_deck_records >= 3:
+					break
+
+		if recent_matches is Array and not (recent_matches as Array).is_empty():
+			lines.append("")
+			lines.append("Recent:")
+			var displayed_recent_matches: int = 0
+			for raw_match in recent_matches:
+				if not (raw_match is Dictionary):
+					continue
+				var recent_match: Dictionary = raw_match as Dictionary
+				var result_text: String = "W" if str(recent_match.get("result", "")).to_lower() == "win" else "L"
+				lines.append("%s as %s vs %s" % [
+					result_text,
+					_get_profile_summary_loadout(
+						str(recent_match.get("god_name", "Unknown God")),
+						str(recent_match.get("deck_name", ""))
+					),
+					_get_profile_summary_loadout(
+						str(recent_match.get("opponent_god_name", "Unknown God")),
+						str(recent_match.get("opponent_deck_name", ""))
+					),
+				])
+				displayed_recent_matches += 1
+				if displayed_recent_matches >= 3:
+					break
+
+		lines.append("")
+		lines.append("Tap to collapse")
+	elif has_details:
+		lines.append("Tap for details")
 
 	_profile_summary_label.text = "\n".join(lines)
 	if panel != null:
 		panel.visible = true
+
+func _on_profile_summary_panel_gui_input(event: InputEvent) -> void:
+	if _current_profile_summary.is_empty():
+		return
+	var wants_toggle := false
+	if event is InputEventMouseButton:
+		var mouse_event := event as InputEventMouseButton
+		wants_toggle = mouse_event.button_index == MOUSE_BUTTON_LEFT and mouse_event.pressed
+	elif event is InputEventScreenTouch:
+		var touch_event := event as InputEventScreenTouch
+		wants_toggle = touch_event.pressed
+	if not wants_toggle:
+		return
+	var god_records = _current_profile_summary.get("god_records", [])
+	var deck_records = _current_profile_summary.get("deck_records", [])
+	var recent_matches = _current_profile_summary.get("recent_matches", [])
+	var has_details := (
+		(god_records is Array and not (god_records as Array).is_empty())
+		or (deck_records is Array and not (deck_records as Array).is_empty())
+		or (recent_matches is Array and not (recent_matches as Array).is_empty())
+	)
+	if not has_details:
+		return
+	_profile_summary_expanded = not _profile_summary_expanded
+	_refresh_profile_summary_label()
 
 func _get_profile_summary_deck_name(deck_name: String) -> String:
 	var resolved_deck_name := deck_name.strip_edges()
