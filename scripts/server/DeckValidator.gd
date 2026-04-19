@@ -230,16 +230,17 @@ func _validate_active_gods_for_deck(sanitized_cards: Dictionary, god_template) -
 			continue
 		var active_god := card as ActiveGodCard
 		var count := int(sanitized_cards.get(card_name, 0))
-		if god_card.is_own_active_god_card(active_god):
-			if count > 1:
-				return {
-					"is_valid": false,
-					"error": "%s can reserve at most 1 copy of its own Active God." % god_card.card_name,
-					"reserved_active_god_count": reserved_active_god_count,
-				}
-			reserved_active_god_count += count
-			continue
-		illegal_active_gods.append(str(active_god.card_name))
+		match god_card.get_active_god_deck_role(active_god):
+			GodCard.ACTIVE_GOD_DECK_ROLE_RESERVED:
+				if count > 1:
+					return {
+						"is_valid": false,
+						"error": "%s can reserve at most 1 copy of its own Active God." % god_card.card_name,
+						"reserved_active_god_count": reserved_active_god_count,
+					}
+				reserved_active_god_count += count
+			_:
+				illegal_active_gods.append(str(active_god.card_name))
 	if illegal_active_gods.is_empty():
 		return {
 			"is_valid": true,

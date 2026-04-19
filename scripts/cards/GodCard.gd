@@ -1,6 +1,10 @@
 extends BaseCard
 class_name GodCard
 
+const ACTIVE_GOD_DECK_ROLE_ALLOWED := "allowed"
+const ACTIVE_GOD_DECK_ROLE_RESERVED := "reserved"
+const ACTIVE_GOD_DECK_ROLE_ILLEGAL := "illegal"
+
 func _init() -> void:
 	super._init()
 	card_type = Card.CardType.GOD
@@ -61,6 +65,13 @@ func is_own_active_god_card(active_god: ActiveGodCard) -> bool:
 		return false
 	var base_name := card_name.split(",")[0].strip_edges()
 	return linked_name == base_name
+
+func get_active_god_deck_role(active_god: ActiveGodCard) -> String:
+	if active_god == null:
+		return ACTIVE_GOD_DECK_ROLE_ILLEGAL
+	if uses_culture_locked_deckbuilding():
+		return ACTIVE_GOD_DECK_ROLE_ALLOWED if can_include_card_in_culture_locked_deck(active_god) else ACTIVE_GOD_DECK_ROLE_ILLEGAL
+	return ACTIVE_GOD_DECK_ROLE_RESERVED if is_own_active_god_card(active_god) else ACTIVE_GOD_DECK_ROLE_ILLEGAL
 
 func get_champions_call_candidate(_allow_fallback: bool = true) -> Card:
 	return null

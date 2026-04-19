@@ -120,16 +120,16 @@ func validate_deck(deck: Array[Card]) -> bool:
 		if card is ActiveGodCard:
 			if god_template == null:
 				return false
-			if god_template.uses_culture_locked_deckbuilding():
-				if not god_template.can_include_card_in_culture_locked_deck(card):
+			match god_template.get_active_god_deck_role(card):
+				GodCard.ACTIVE_GOD_DECK_ROLE_ALLOWED:
+					continue
+				GodCard.ACTIVE_GOD_DECK_ROLE_RESERVED:
+					reserved_active_god_count += 1
+					if reserved_active_god_count > 1:
+						return false
+					continue
+				_:
 					return false
-				continue
-			if not god_template.is_own_active_god_card(card):
-				return false
-			reserved_active_god_count += 1
-			if reserved_active_god_count > 1:
-				return false
-			continue
 		if god_template != null and god_template.uses_culture_locked_deckbuilding():
 			if not god_template.can_include_card_in_culture_locked_deck(card):
 				return false

@@ -6839,22 +6839,24 @@ func _flush_summon_priority_events() -> void:
 	if game_manager == null:
 		_pending_summon_priority_events.clear()
 		return
-	var event: Dictionary = _pending_summon_priority_events.pop_front()
+	if not game_manager.action_stack.is_empty():
+		call_deferred("_flush_summon_priority_events")
+		return
+	var event: Dictionary = _pending_summon_priority_events.front()
 	var player: Player = event.get("player", null)
 	var card: Card = event.get("card", null)
 	var zone: Zone = event.get("zone", null)
 	if player == null or card == null or zone == null:
+		_pending_summon_priority_events.pop_front()
 		if not _pending_summon_priority_events.is_empty():
 			call_deferred("_flush_summon_priority_events")
 		return
 	if card.current_zone != zone:
+		_pending_summon_priority_events.pop_front()
 		if not _pending_summon_priority_events.is_empty():
 			call_deferred("_flush_summon_priority_events")
 		return
-	if not game_manager.action_stack.is_empty():
-		if not _pending_summon_priority_events.is_empty():
-			call_deferred("_flush_summon_priority_events")
-		return
+	_pending_summon_priority_events.pop_front()
 	var on_resolve := func() -> void:
 		update_ui()
 		action_label.text = card.card_name + " was summoned."
@@ -16310,7 +16312,32 @@ func _apply_full_state(data: Dictionary) -> void:
 		_present_game_result_from_state(state, msg)
 
 	update_ui()
+	_restore_priority_prompt_from_authoritative_state()
 	_update_waiting_overlay()
+
+func _restore_priority_prompt_from_authoritative_state() -> void:
+	if match_manager == null or game_manager == null:
+		return
+	if not match_manager.uses_authoritative_priority_flow():
+		return
+	if game_manager.action_stack.is_empty():
+		return
+	if _is_priority_prompt_visible() or _is_intercept_prompt_visible():
+		return
+	if _game_finished:
+		return
+	var local_idx := -1
+	if network_manager != null:
+		local_idx = network_manager.local_player_index
+	if local_idx < 0 or local_idx >= game_manager.players.size():
+		return
+	var local_player: Player = game_manager.players[local_idx]
+	if local_player == null or game_manager.priority_player != local_player:
+		return
+	var prompt_data := match_manager.build_priority_prompt_data(local_player)
+	if prompt_data.is_empty():
+		return
+	_apply_priority_prompt_for_player(local_idx, prompt_data)
 
 func _sync_network_turn_entry_ui_from_state() -> void:
 	if not _is_networked_client or game_manager == null or network_manager == null:

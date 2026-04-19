@@ -1013,7 +1013,7 @@ func _refresh_deck_panel() -> void:
 	for card_name in _deck:
 		var card := _find_template(card_name)
 		if card != null:
-			if card is ActiveGodCard and selected_god != null and selected_god.is_own_active_god_card(card):
+			if _is_reserved_active_god_card_for_god(card, selected_god):
 				continue # Hide own manifestation
 			total += int(_deck[card_name])
 	_deck_count_lbl.text = "%d cards" % total
@@ -1022,7 +1022,7 @@ func _refresh_deck_panel() -> void:
 	var in_deck_filter := func(c: Card) -> bool:
 		if not _deck.has(c.card_name) or _deck[c.card_name] <= 0:
 			return false
-		if c is ActiveGodCard and selected_god != null and selected_god.is_own_active_god_card(c):
+		if _is_reserved_active_god_card_for_god(c, selected_god):
 			return false # Hide own manifestation
 		return true
 	var in_deck: Array = _all_cards.filter(in_deck_filter)
@@ -1982,10 +1982,10 @@ func _update_validation() -> void:
 			if card.is_legendary:
 				legendary_count += cnt
 
-	if god_template != null and not god_template.uses_culture_locked_deckbuilding():
+	if god_template != null:
 		for card_name: String in _deck:
 			var card := _find_template(card_name)
-			if card is ActiveGodCard and god_template.is_own_active_god_card(card):
+			if _is_reserved_active_god_card_for_god(card, god_template):
 				var reserved_count := int(_deck.get(card_name, 0))
 				total -= reserved_count
 				regular_count -= reserved_count
@@ -1995,7 +1995,7 @@ func _update_validation() -> void:
 			var card := _find_template(card_name)
 			if card == null or card.is_god:
 				continue
-			if card is ActiveGodCard and god_template != null and not god_template.uses_culture_locked_deckbuilding() and god_template.is_own_active_god_card(card):
+			if _is_reserved_active_god_card_for_god(card, god_template):
 				continue
 			if god_template != null and god_template.uses_culture_locked_deckbuilding():
 				if not god_template.can_include_card_in_culture_locked_deck(card):
@@ -2552,12 +2552,12 @@ func _get_card_unavailable_reason(card: Card) -> String:
 		return "Unavailable: Choose a Patriarch or Matriarch god before adding Active God forms."
 	if god != null and not card.is_god and not _is_card_compatible_with_selected_god(card, god):
 		if card is ActiveGodCard:
+			if god.get_active_god_deck_role(card) == GodCard.ACTIVE_GOD_DECK_ROLE_RESERVED:
+				return "Reserved: %s keeps %s out of the draw pile and accesses it through Take the Field or Champion's Call." % [
+					god.get_display_name_for_control(),
+					card.get_display_name_for_control()
+				]
 			if not god.uses_culture_locked_deckbuilding():
-				if god.is_own_active_god_card(card):
-					return "Reserved: %s keeps %s out of the draw pile and accesses it through Take the Field or Champion's Call." % [
-						god.get_display_name_for_control(),
-						card.get_display_name_for_control()
-					]
 				return "Unavailable: Only Patriarchs and Matriarchs can include Active God forms in their deck."
 			return "Unavailable: Only %s Active God forms can be included in a %s deck." % [god.culture, god.culture]
 		if god.uses_culture_locked_deckbuilding():
@@ -2592,17 +2592,19 @@ func _is_card_compatible_with_selected_god(card: Card, god: GodCard) -> bool:
 	# Check for Active God card compatibility
 	var active_god := card as ActiveGodCard
 	if active_god != null:
-		# Only Patriarchs and Matriarchs can add active god forms to their deck
-		if not god.uses_culture_locked_deckbuilding():
-			return false
-		# They can add any active god form from their culture
-		return god.can_include_card_in_culture_locked_deck(active_god)
+		return god.get_active_god_deck_role(active_god) != GodCard.ACTIVE_GOD_DECK_ROLE_ILLEGAL
 
 	if god.uses_culture_locked_deckbuilding():
 		return god.can_include_card_in_culture_locked_deck(card)
 	if card.is_power and not card.is_god:
 		return _is_power_compatible_with_culture(card, god.culture)
 	return true
+
+func _is_reserved_active_god_card_for_god(card: Card, god: GodCard) -> bool:
+	var active_god := card as ActiveGodCard
+	return active_god != null \
+		and god != null \
+		and god.get_active_god_deck_role(active_god) == GodCard.ACTIVE_GOD_DECK_ROLE_RESERVED
 
 func _can_add_power_to_current_deck(power: Card) -> bool:
 	var god := _get_selected_god_template() as GodCard
