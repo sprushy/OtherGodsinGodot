@@ -59,7 +59,8 @@ var _inner: PanelContainer = null
 var _art_rect: TextureRect = null
 var _disabled_overlay: ColorRect = null
 var _power_lock_overlay: TextureRect = null
-const _POWER_LOCK_TEXTURE := preload("res://images/Norse Power Lock.png")
+const _DEFAULT_POWER_LOCK_TEXTURE := preload("res://images/Norse Power Lock.png")
+const _ANCIENT_POWER_LOCK_TEXTURE := preload("res://images/Ancient Power Lock.png")
 
 func setup(
 	p_card: Card,
@@ -118,16 +119,23 @@ func _should_show_power_lock_overlay() -> bool:
 		and card_data.is_face_down
 
 func _make_power_lock_overlay() -> TextureRect:
-	if _POWER_LOCK_TEXTURE == null:
+	var power_lock_texture := _get_power_lock_texture()
+	if power_lock_texture == null:
 		return null
 	var overlay := TextureRect.new()
-	overlay.texture = _POWER_LOCK_TEXTURE
+	overlay.texture = power_lock_texture
 	overlay.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 	overlay.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	overlay.modulate = Color(1.0, 1.0, 1.0, 1.0)
 	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	return overlay
+
+func _get_power_lock_texture() -> Texture2D:
+	if card_data != null and card_data.card_type == Card.CardType.POWER:
+		if str(card_data.culture).strip_edges() == "Ancient" or card_data.has_type("Ancient Power"):
+			return _ANCIENT_POWER_LOCK_TEXTURE
+	return _DEFAULT_POWER_LOCK_TEXTURE
 
 func _build_art_node() -> TextureRect:
 	if card_data.art_path == "":
