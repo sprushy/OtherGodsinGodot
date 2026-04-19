@@ -363,6 +363,99 @@ func remember_last_selected_deck(profile_id: String, deck_id: String) -> void:
 	_data["last_selected_deck_by_profile"] = last_selected
 	_save()
 
+func get_synced_account_deck_ids(profile_id: String) -> PackedStringArray:
+	_ensure_loaded()
+	var resolved_profile_id := profile_id.strip_edges()
+	if resolved_profile_id.is_empty():
+		return PackedStringArray()
+	var synced_by_profile := _get_synced_account_deck_ids_by_profile()
+	var synced_bucket = synced_by_profile.get(resolved_profile_id, {})
+	var synced_ids := PackedStringArray()
+	if synced_bucket is Dictionary:
+		for raw_deck_id in (synced_bucket as Dictionary).keys():
+			var deck_id := str(raw_deck_id).strip_edges()
+			if deck_id.is_empty():
+				continue
+			synced_ids.append(deck_id)
+	return synced_ids
+
+func mark_account_decks_synced(profile_id: String, deck_ids: Array) -> void:
+	_ensure_loaded()
+	var resolved_profile_id := profile_id.strip_edges()
+	if resolved_profile_id.is_empty():
+		return
+	var synced_by_profile := _get_synced_account_deck_ids_by_profile()
+	var synced_bucket = synced_by_profile.get(resolved_profile_id, {})
+	var bucket: Dictionary = {}
+	if synced_bucket is Dictionary:
+		bucket = (synced_bucket as Dictionary).duplicate(true)
+	var deleted_by_profile := _get_deleted_account_deck_ids_by_profile()
+	var deleted_bucket = deleted_by_profile.get(resolved_profile_id, {})
+	var deleted_lookup: Dictionary = {}
+	if deleted_bucket is Dictionary:
+		deleted_lookup = (deleted_bucket as Dictionary).duplicate(true)
+	var changed := false
+	for raw_deck_id in deck_ids:
+		var deck_id := str(raw_deck_id).strip_edges()
+		if deck_id.is_empty():
+			continue
+		if deleted_lookup.has(deck_id):
+			deleted_lookup.erase(deck_id)
+			changed = true
+		if bucket.has(deck_id):
+			continue
+		bucket[deck_id] = true
+		changed = true
+	if not changed:
+		return
+	synced_by_profile[resolved_profile_id] = bucket
+	_data["synced_account_deck_ids_by_profile"] = synced_by_profile
+	if deleted_lookup.is_empty():
+		deleted_by_profile.erase(resolved_profile_id)
+	else:
+		deleted_by_profile[resolved_profile_id] = deleted_lookup
+	_data["deleted_account_deck_ids_by_profile"] = deleted_by_profile
+	_save()
+
+func get_deleted_account_deck_ids(profile_id: String) -> PackedStringArray:
+	_ensure_loaded()
+	var resolved_profile_id := profile_id.strip_edges()
+	if resolved_profile_id.is_empty():
+		return PackedStringArray()
+	var deleted_by_profile := _get_deleted_account_deck_ids_by_profile()
+	var deleted_bucket = deleted_by_profile.get(resolved_profile_id, {})
+	var deleted_ids := PackedStringArray()
+	if deleted_bucket is Dictionary:
+		for raw_deck_id in (deleted_bucket as Dictionary).keys():
+			var deck_id := str(raw_deck_id).strip_edges()
+			if deck_id.is_empty():
+				continue
+			deleted_ids.append(deck_id)
+	return deleted_ids
+
+func mark_account_decks_deleted(profile_id: String, deck_ids: Array) -> void:
+	_ensure_loaded()
+	var resolved_profile_id := profile_id.strip_edges()
+	if resolved_profile_id.is_empty():
+		return
+	var deleted_by_profile := _get_deleted_account_deck_ids_by_profile()
+	var deleted_bucket = deleted_by_profile.get(resolved_profile_id, {})
+	var bucket: Dictionary = {}
+	if deleted_bucket is Dictionary:
+		bucket = (deleted_bucket as Dictionary).duplicate(true)
+	var changed := false
+	for raw_deck_id in deck_ids:
+		var deck_id := str(raw_deck_id).strip_edges()
+		if deck_id.is_empty() or bucket.has(deck_id):
+			continue
+		bucket[deck_id] = true
+		changed = true
+	if not changed:
+		return
+	deleted_by_profile[resolved_profile_id] = bucket
+	_data["deleted_account_deck_ids_by_profile"] = deleted_by_profile
+	_save()
+
 func get_preferred_auth_mode() -> String:
 	_ensure_loaded()
 	var mode := str(_data.get("preferred_auth_mode", AUTH_MODE_GUEST)).strip_edges().to_lower()
@@ -534,6 +627,8 @@ func _ensure_loaded() -> void:
 		"account_profile_id_by_username": {},
 		"profiles": {},
 		"decks_by_profile": {},
+		"synced_account_deck_ids_by_profile": {},
+		"deleted_account_deck_ids_by_profile": {},
 		"last_selected_deck_by_profile": {},
 		"lobby_resume_by_profile": {},
 		"active_match_by_profile": {},
@@ -709,6 +804,18 @@ func _get_last_selected_deck_by_profile() -> Dictionary:
 	var selected = _data.get("last_selected_deck_by_profile", {})
 	if selected is Dictionary:
 		return (selected as Dictionary).duplicate(true)
+	return {}
+
+func _get_synced_account_deck_ids_by_profile() -> Dictionary:
+	var synced = _data.get("synced_account_deck_ids_by_profile", {})
+	if synced is Dictionary:
+		return (synced as Dictionary).duplicate(true)
+	return {}
+
+func _get_deleted_account_deck_ids_by_profile() -> Dictionary:
+	var deleted = _data.get("deleted_account_deck_ids_by_profile", {})
+	if deleted is Dictionary:
+		return (deleted as Dictionary).duplicate(true)
 	return {}
 
 func _get_lobby_resume_by_profile() -> Dictionary:

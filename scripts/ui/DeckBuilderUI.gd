@@ -2456,30 +2456,18 @@ func _max_copies(card: Card) -> int:
 
 func _get_autofill_candidates(legendary_only: bool) -> Array[Card]:
 	var candidates: Array[Card] = []
+	var god := _get_selected_god_template() as GodCard
 	for card: Card in _all_cards:
-		if not _is_regular_card(card):
-			continue
-		if legendary_only and not card.is_legendary:
-			continue
-		if not legendary_only and card.is_legendary:
-			continue
-		if int(_deck.get(card.card_name, 0)) >= _max_copies(card):
+		if not _can_autofill_regular_card(card, god, legendary_only):
 			continue
 		candidates.append(card)
 	return candidates
 
 func _get_autofill_power_candidates() -> Array[Card]:
 	var candidates: Array[Card] = []
-	var god := _get_selected_god_template()
+	var god := _get_selected_god_template() as GodCard
 	for card: Card in _all_cards:
-		if card == null or not card.is_power or card.is_god:
-			continue
-		if int(_deck.get(card.card_name, 0)) >= _max_copies(card):
-			continue
-		if god == null:
-			if card.culture != "Neutral":
-				continue
-		elif not _can_add_power_to_current_deck(card):
+		if not _can_autofill_power_card(card, god):
 			continue
 		candidates.append(card)
 	return candidates
@@ -2513,6 +2501,28 @@ func _count_regular_legendary_cards_in_current_deck() -> int:
 
 func _is_regular_card(card: Card) -> bool:
 	return card != null and not card.is_god and not card.is_power
+
+func _can_autofill_regular_card(card: Card, god: GodCard, legendary_only: bool) -> bool:
+	if not _is_regular_card(card):
+		return false
+	if legendary_only and not card.is_legendary:
+		return false
+	if not legendary_only and card.is_legendary:
+		return false
+	if int(_deck.get(card.card_name, 0)) >= _max_copies(card):
+		return false
+	if god == null:
+		return card is not ActiveGodCard
+	return _is_card_compatible_with_selected_god(card, god)
+
+func _can_autofill_power_card(card: Card, god: GodCard) -> bool:
+	if card == null or not card.is_power or card.is_god:
+		return false
+	if int(_deck.get(card.card_name, 0)) >= _max_copies(card):
+		return false
+	if god == null:
+		return str(card.culture).strip_edges() == "Neutral"
+	return _is_card_compatible_with_selected_god(card, god)
 
 func _find_template(card_name: String) -> Card:
 	for card: Card in _all_cards:

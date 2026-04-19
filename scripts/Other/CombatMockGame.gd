@@ -11365,7 +11365,7 @@ func _on_creature_right_clicked(card: Card) -> void:
 			pick_btn.text = "%s: %s [%s %s]" % [pick_up_label, equip.card_name, owner_label, loc]
 			pick_btn.pressed.connect(func():
 				_close_context_menu()
-				var ok := _resolve_equipment_action(card, equip, "pick_up")
+				var ok := game_input.submit_action({type = "equip_action", card_uid = card.uid, equipment_uid = equip.uid, action = "pick_up"})
 				var result_phrase := " %s " % pick_up_success
 				if not ok:
 					result_phrase = " %s " % pick_up_failure
@@ -12199,10 +12199,10 @@ func resolve_pending_equip_action(interceptor: Card) -> void:
 		)
 		return
 	if action == "steal":
-		var ok := _resolve_equipment_action(actor, target, "steal")
+		var ok := game_input.submit_action({type = "equip_action", card_uid = actor.uid, equipment_uid = target.uid, action = "steal"})
 		action_label.text = _get_card_name_safe(actor) + " steals " + _get_card_name_safe(target) if ok else game_manager.get_equipment_action_failure_text(actor, target, "steal")
 	elif action == "destroy":
-		var ok := _resolve_equipment_action(actor, target, "destroy")
+		var ok := game_input.submit_action({type = "equip_action", card_uid = actor.uid, equipment_uid = target.uid, action = "destroy"})
 		action_label.text = _get_card_name_safe(actor) + " destroys " + _get_card_name_safe(target) if ok else game_manager.get_equipment_action_failure_text(actor, target, "destroy")
 	update_ui()
 
@@ -15507,15 +15507,15 @@ func _on_match_move_validated(move: Dictionary) -> void:
 			var target = move.get("target")
 			if target is Player:
 				action_label.text = _get_attack_card_label(attacker, "A creature") + " attacks " + target.player_name + "'s followers!"
-				if not _is_networked_client:
+				if not _is_networked_client and not authoritative_priority:
 					check_for_possible_intercepts()
 			elif target is Card:
 				action_label.text = _get_attack_card_label(attacker, "A creature") + " attacking " + _get_card_name_safe(target, "an enemy card") + "..."
-				if not _is_networked_client:
+				if not _is_networked_client and not authoritative_priority:
 					check_for_possible_intercepts()
 		"intercept_decision":
 			# selected_interceptor was set by MatchManager; proceed to resolve the attack.
-			if not _is_networked_client:
+			if not _is_networked_client and not authoritative_priority:
 				resolve_pending_attack()
 		"play_creature":
 			if not _is_networked_client and not authoritative_priority and not game_manager.action_stack.is_empty():
@@ -16088,7 +16088,7 @@ func _present_game_result_from_state(state: Dictionary, action_message: String) 
 		winner = game_manager.players[winner_idx]
 		if game_manager.players.size() == 2:
 			loser = game_manager.get_opponent(winner)
-	var should_return_to_menu := _pending_forfeit_return_to_menu or _is_networked_client or _is_real_network_host()
+	var should_return_to_menu := _pending_forfeit_return_to_menu
 	_finalize_game_result_ui(action_message, winner, loser, should_return_to_menu)
 
 func _show_game_result_overlay(result_message: String, winner = null, loser = null, auto_return: bool = false) -> void:
@@ -16281,7 +16281,7 @@ func _apply_network_event(event_type: String, data: Dictionary) -> void:
 				winner = game_manager.players[winner_idx]
 				if game_manager.players.size() == 2:
 					loser = game_manager.get_opponent(winner)
-			var should_return_to_menu := _pending_forfeit_return_to_menu or _is_networked_client or _is_real_network_host()
+			var should_return_to_menu := _pending_forfeit_return_to_menu
 			_finalize_game_result_ui(result_message, winner, loser, should_return_to_menu)
 
 func _apply_ui_interaction(event_data: Dictionary) -> void:
@@ -17194,7 +17194,7 @@ func _get_player_god_name(player: Player) -> String:
 
 func _on_game_ended(winner: Player, loser: Player) -> void:
 	_record_local_host_match_result(winner, loser)
-	var should_return_to_menu := _pending_forfeit_return_to_menu or _is_networked_client or _is_real_network_host()
+	var should_return_to_menu := _pending_forfeit_return_to_menu
 	_finalize_game_result_ui("", winner, loser, should_return_to_menu)
 
 func _request_ui_refresh() -> void:

@@ -119,7 +119,14 @@ function Get-Current-Version {
 }
 
 $mutex = New-Object System.Threading.Mutex($false, "Global\ClaudeOtherGodsPublicLobbyUpdater")
-if (-not $mutex.WaitOne(0)) {
+$acquiredMutex = $false
+try {
+    $acquiredMutex = $mutex.WaitOne(0)
+} catch [System.Threading.AbandonedMutexException] {
+    # Previous run was killed without releasing — we now own it
+    $acquiredMutex = $true
+}
+if (-not $acquiredMutex) {
     Write-Log "Another updater instance is already running."
     return
 }
@@ -175,7 +182,17 @@ try {
     & $StartScript -StopOnly
 
     Write-Log "Installing server build $latestVersion"
-    Copy-Item -LiteralPath $downloadedExe -Destination $ServerExe -Force
+    $maxAttempts = 5
+    for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+        try {
+            Copy-Item -LiteralPath $downloadedExe -Destination $ServerExe -Force
+            break
+        } catch {
+            if ($attempt -eq $maxAttempts) { throw }
+            Write-Log "Exe still locked, retrying in 2s (attempt $attempt of $maxAttempts)"
+            Start-Sleep -Seconds 2
+        }
+    }
     Set-Content -LiteralPath $VersionFile -Value $latestVersion -NoNewline
 
     Write-Log "Restarting public lobby server"

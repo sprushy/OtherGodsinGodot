@@ -1657,6 +1657,20 @@ func get_equipment_action_failure_text(creature: Card, equipment: Card, action: 
 			return creature.card_name + " failed to destroy " + equipment.card_name + "."
 	return creature.card_name + " failed to act on " + equipment.card_name + "."
 
+func resolve_creature_equipment_action(actor: Card, target: Card, action: String) -> bool:
+	if actor == null or target == null:
+		return false
+	if actor.has_method("resolve_equipment_action"):
+		return actor.resolve_equipment_action(self, target, action)
+	if target.has_method("can_be_used_as_steed_by"):
+		return creature_use_steed(actor, target) if action == "pick_up" else false
+	match action:
+		"pick_up", "steal":
+			return creature_pick_up_equipment(actor, target)
+		"destroy":
+			return creature_destroy_equipment(actor, target)
+	return false
+
 func _complete_creature_pick_up_equipment(creature: Card, equipment: Card) -> bool:
 	if creature == null or equipment == null:
 		return false

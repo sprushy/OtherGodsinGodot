@@ -36,6 +36,7 @@ var current_username: String = ""
 var current_auth_mode: String = "guest"
 var current_server_version: String = ""
 var current_active_match_info: Dictionary = {}
+var current_room_snapshot: Dictionary = {}
 var current_preferred_account_deck_id: String = ""
 var trace_network: bool = false
 var trace_file_path: String = ""
@@ -187,7 +188,10 @@ func lobby_event(message: Dictionary) -> void:
 			current_account_id = str(payload.get("account_id", ""))
 			current_username = str(payload.get("username", current_player_name))
 			current_auth_mode = str(payload.get("auth_mode", _pending_auth_mode))
-			current_active_match_info = {}
+			var hello_room = payload.get("room", {})
+			current_room_snapshot = hello_room.duplicate(true) if hello_room is Dictionary else {}
+			var hello_active_match = payload.get("active_match_info", {})
+			current_active_match_info = hello_active_match.duplicate(true) if hello_active_match is Dictionary else {}
 			current_preferred_account_deck_id = ""
 			login_succeeded.emit(current_session_id, current_reconnect_token, current_player_name)
 		LobbyProtocolScript.LOBBY_RECONNECT_OK:
@@ -200,6 +204,8 @@ func lobby_event(message: Dictionary) -> void:
 			current_account_id = str(payload.get("account_id", ""))
 			current_username = str(payload.get("username", current_player_name))
 			current_auth_mode = str(payload.get("auth_mode", _pending_auth_mode))
+			var room = payload.get("room", {})
+			current_room_snapshot = room.duplicate(true) if room is Dictionary else {}
 			var active_match = payload.get("active_match_info", {})
 			current_active_match_info = active_match.duplicate(true) if active_match is Dictionary else {}
 			current_preferred_account_deck_id = ""
@@ -215,6 +221,7 @@ func lobby_event(message: Dictionary) -> void:
 			room_list_updated.emit(payload.get("rooms", []))
 		LobbyProtocolScript.ROOM_SNAPSHOT:
 			_set_current_server_version(str(payload.get("server_version", current_server_version)))
+			current_room_snapshot = payload.duplicate(true)
 			room_snapshot_updated.emit(payload)
 		LobbyProtocolScript.ROOM_ERROR:
 			room_error.emit(str(payload.get("message", "Unknown lobby error.")))

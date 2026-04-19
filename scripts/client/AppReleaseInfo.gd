@@ -5,6 +5,7 @@ const VERSION_PROJECT_SETTING := "application/config/version"
 const UNKNOWN_VERSION := "dev"
 const RELEASES_API_URL := "https://api.github.com/repos/sprushy/OtherGodsinGodot/releases/latest"
 const RELEASES_PAGE_URL := "https://github.com/sprushy/OtherGodsinGodot/releases/latest"
+const WINDOWS_ASSET_NAME := "ClaudeOtherGods-windows.zip"
 
 static func get_current_version() -> String:
 	return normalize_version(str(ProjectSettings.get_setting(VERSION_PROJECT_SETTING, UNKNOWN_VERSION)))

@@ -22,41 +22,23 @@ if (-not (Test-Path -LiteralPath $UpdateScript)) {
     throw "Update script not found at $UpdateScript"
 }
 
-function Register-Task {
-    param(
-        [string]$Name,
-        [string[]]$Arguments
-    )
+$principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -RunLevel Highest
+$settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 10) -StartWhenAvailable
 
-    & schtasks.exe @Arguments | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        throw "Failed to register scheduled task: $Name"
-    }
-}
+$startAction = New-ScheduledTaskAction -Execute $PowerShellExe `
+    -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$StartScript`""
+$startTrigger = New-ScheduledTaskTrigger -AtStartup
+Register-ScheduledTask -TaskName $StartupTaskName `
+    -Action $startAction -Trigger $startTrigger `
+    -Settings $settings -Principal $principal -Force | Out-Null
 
-$startCommand = "$PowerShellExe -NoProfile -ExecutionPolicy Bypass -File `"$StartScript`""
-$updateCommand = "$PowerShellExe -NoProfile -ExecutionPolicy Bypass -File `"$UpdateScript`""
-
-Register-Task -Name $StartupTaskName -Arguments @(
-    "/Create",
-    "/TN", $StartupTaskName,
-    "/TR", $startCommand,
-    "/SC", "ONSTART",
-    "/RU", "SYSTEM",
-    "/RL", "HIGHEST",
-    "/F"
-)
-
-Register-Task -Name $UpdateTaskName -Arguments @(
-    "/Create",
-    "/TN", $UpdateTaskName,
-    "/TR", $updateCommand,
-    "/SC", "MINUTE",
-    "/MO", "$UpdateIntervalMinutes",
-    "/RU", "SYSTEM",
-    "/RL", "HIGHEST",
-    "/F"
-)
+$updateAction = New-ScheduledTaskAction -Execute $PowerShellExe `
+    -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$UpdateScript`""
+$updateTrigger = New-ScheduledTaskTrigger -RepetitionInterval (New-TimeSpan -Minutes $UpdateIntervalMinutes) `
+    -Once -At "00:00"
+Register-ScheduledTask -TaskName $UpdateTaskName `
+    -Action $updateAction -Trigger $updateTrigger `
+    -Settings $settings -Principal $principal -Force | Out-Null
 
 Write-Host "Installed scheduled tasks:"
 Write-Host " - $StartupTaskName"

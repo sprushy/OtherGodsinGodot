@@ -15,19 +15,13 @@ function Stop-LobbyListener {
         [int]$Port
     )
 
-    $existing = netstat -ano -p UDP |
-        Select-String ":$Port\s" |
-        ForEach-Object {
-            $parts = ($_ -replace '\s+', ' ').Trim().Split(' ')
-            if ($parts.Length -gt 0) { [int]$parts[-1] }
-        } |
-        Select-Object -Unique
-
-    if (-not $existing) {
+    $endpoints = Get-NetUDPEndpoint -LocalPort $Port -ErrorAction SilentlyContinue
+    if (-not $endpoints) {
         return $false
     }
 
-    foreach ($processId in $existing) {
+    $pids = @($endpoints | Select-Object -ExpandProperty OwningProcess -Unique)
+    foreach ($processId in $pids) {
         try {
             Stop-Process -Id $processId -Force -ErrorAction Stop
         } catch {

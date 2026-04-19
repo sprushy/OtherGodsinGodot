@@ -44,10 +44,12 @@ static func serialize(gm: GameManager, viewer_player_index: int = -1) -> Diction
 	for i in gm.players.size():
 		var player := gm.players[i]
 		var hide_hand := viewer != null and i != viewer_player_index
+		var hide_deck := viewer != null and i != viewer_player_index
 		var pdata := {
 			mana = player.mana,
 			followers = player.followers,
 			deck_count = player.deck_zone.cards.size(),
+			deck         = [] if hide_deck else _serialize_zone_cards(player.deck_zone, viewer, false),
 			has_summoned_this_turn = player.has_summoned_this_turn,
 			hand         = _serialize_zone_cards(player.hand_zone, viewer, hide_hand),
 			god_zone     = _serialize_zone_cards(player.god_zone, viewer, false),
@@ -299,10 +301,12 @@ static func apply_to_manager(data: Dictionary, gm: GameManager) -> void:
 		player.followers = pdata.get("followers", 100)
 		player.has_summoned_this_turn = pdata.get("has_summoned_this_turn", false)
 
-		# Populate deck zone with placeholders so get_card_count() is accurate on clients
+		var dk_cards: Array = pdata.get("deck", [])
 		var dk_count: int = pdata.get("deck_count", -1)
-		if dk_count >= 0:
-			player.deck_zone.cards.clear()
+		player.deck_zone.cards.clear()
+		if not dk_cards.is_empty():
+			_apply_zone_cards(player.deck_zone, dk_cards)
+		elif dk_count >= 0:
 			for _k in dk_count:
 				var ph := BaseCard.new()
 				ph.is_face_down = true

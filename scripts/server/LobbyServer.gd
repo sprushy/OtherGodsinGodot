@@ -311,7 +311,11 @@ func _complete_login_for_peer(
 ) -> void:
 	var existing: Dictionary = _get_session_for_peer(peer_id)
 	if existing.is_empty():
-		existing = _create_session(player_name, peer_id, false, profile_id, account_id, username, auth_mode)
+		existing = _find_resumable_session(profile_id, account_id)
+		if existing.is_empty():
+			existing = _create_session(player_name, peer_id, false, profile_id, account_id, username, auth_mode)
+		else:
+			existing = _reclaim_session_for_peer(existing, peer_id, player_name, profile_id, account_id, username, auth_mode)
 	else:
 		existing["player_name"] = player_name
 		existing["profile_id"] = profile_id
@@ -319,6 +323,12 @@ func _complete_login_for_peer(
 		existing["username"] = username
 		existing["auth_mode"] = auth_mode
 		sessions_by_id[str(existing.get("session_id", ""))] = existing
+	var session_id := str(existing.get("session_id", "")).strip_edges()
+	var room_snapshot: Dictionary = {}
+	var room_id := str(room_id_by_session.get(session_id, "")).strip_edges()
+	if not room_id.is_empty() and rooms_by_id.has(room_id):
+		room_snapshot = rooms_by_id[room_id].to_snapshot(sessions_by_id)
+	var active_match_info := _build_active_match_info_for_session(session_id)
 	_trace("login accepted for peer %d as session %s" % [peer_id, str(existing.get("session_id", ""))])
 	_send_to_peer(peer_id, LobbyProtocolScript.HELLO_OK, {
 		"session_id": str(existing.get("session_id", "")),
@@ -329,6 +339,8 @@ func _complete_login_for_peer(
 		"username": str(existing.get("username", "")),
 		"auth_mode": str(existing.get("auth_mode", LobbyProtocolScript.LOGIN_GUEST)),
 		"server_version": _get_server_version(),
+		"room": room_snapshot,
+		"active_match_info": active_match_info,
 	})
 	_send_room_list_to_peer(peer_id)
 
@@ -521,6 +533,80 @@ func _create_session(
 	if peer_id > 0 and not is_local:
 		session_id_by_peer[peer_id] = session_id
 	return session
+
+func _find_resumable_session(profile_id: String, account_id: String) -> Dictionary:
+	var resolved_profile_id := profile_id.strip_edges()
+	var resolved_account_id := account_id.strip_edges()
+	var best_match: Dictionary = {}
+	var best_score := -1
+	for session_id_variant in sessions_by_id.keys():
+		var session_id := str(session_id_variant).strip_edges()
+		if session_id.is_empty():
+			continue
+		var existing = sessions_by_id.get(session_id, {})
+		if not (existing is Dictionary):
+			continue
+		var session := existing as Dictionary
+		if bool(session.get("is_local", false)) or bool(session.get("connected", false)):
+			continue
+		var score := _get_resumable_session_score(session, resolved_profile_id, resolved_account_id)
+		if score <= best_score:
+			continue
+		best_score = score
+		best_match = session.duplicate(true)
+	return best_match
+
+func _get_resumable_session_score(session: Dictionary, profile_id: String, account_id: String) -> int:
+	if session.is_empty():
+		return -1
+	var session_profile_id := str(session.get("profile_id", "")).strip_edges()
+	var session_account_id := str(session.get("account_id", "")).strip_edges()
+	var session_id := str(session.get("session_id", "")).strip_edges()
+	var identity_score := -1
+	if not account_id.is_empty():
+		if session_account_id != account_id:
+			return -1
+		identity_score = 100
+	elif not profile_id.is_empty():
+		if session_profile_id != profile_id:
+			return -1
+		identity_score = 50
+	else:
+		return -1
+	if not _build_active_match_info_for_session(session_id).is_empty():
+		return identity_score + 20
+	if not str(room_id_by_session.get(session_id, "")).strip_edges().is_empty():
+		return identity_score + 10
+	return identity_score
+
+func _reclaim_session_for_peer(
+	session: Dictionary,
+	peer_id: int,
+	player_name: String,
+	profile_id: String,
+	account_id: String,
+	username: String,
+	auth_mode: String
+) -> Dictionary:
+	if session.is_empty():
+		return {}
+	var session_id := str(session.get("session_id", "")).strip_edges()
+	if session_id.is_empty():
+		return {}
+	var previous_peer_id := int(session.get("peer_id", 0))
+	if previous_peer_id > 0:
+		session_id_by_peer.erase(previous_peer_id)
+	session["player_name"] = player_name
+	session["profile_id"] = profile_id
+	session["account_id"] = account_id
+	session["username"] = username
+	session["auth_mode"] = auth_mode
+	session["peer_id"] = peer_id
+	session["connected"] = true
+	sessions_by_id[session_id] = session
+	if peer_id > 0:
+		session_id_by_peer[peer_id] = session_id
+	return session.duplicate(true)
 
 func _create_room_for_session(session_id: String, is_ranked: bool = true) -> LobbyRoom:
 	var existing_room_id: String = str(room_id_by_session.get(session_id, ""))

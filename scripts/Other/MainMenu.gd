@@ -100,6 +100,11 @@ var _update_check_request: HTTPRequest = null
 var _update_prompt_overlay: Control = null
 var _pending_update_release_version: String = ""
 var _pending_update_release_url: String = AppReleaseInfoScript.RELEASES_PAGE_URL
+var _pending_update_download_url: String = ""
+var _update_download_request: HTTPRequest = null
+var _update_now_button: Button = null
+var _update_download_status_label: Label = null
+var _is_auto_updating: bool = false
 var _startup_prompt_gate_open: bool = false
 var _rules_overlay: Control = null
 var _seek_auto_refresh_elapsed: float = 0.0
@@ -282,6 +287,15 @@ func _refresh_server_version_label() -> void:
 	_server_version_label.text = "Server: %s" % _connected_server_version
 
 func _process(delta: float) -> void:
+	if _is_auto_updating and _update_download_request != null and is_instance_valid(_update_download_request):
+		if _update_download_status_label != null and is_instance_valid(_update_download_status_label):
+			var total := _update_download_request.get_body_size()
+			var downloaded := _update_download_request.get_downloaded_bytes()
+			if total > 0:
+				var percent := int(float(downloaded) / float(total) * 100.0)
+				_update_download_status_label.text = "Downloading... %d%%" % percent
+			else:
+				_update_download_status_label.text = "Downloading... %.1f MB" % (float(downloaded) / 1048576.0)
 	if not _should_auto_refresh_seeks():
 		_seek_auto_refresh_elapsed = 0.0
 		return
@@ -508,6 +522,78 @@ func _replace_account_decks_cache(decks: Array[Dictionary]) -> void:
 	_account_decks_cache.clear()
 	for entry in decks:
 		_account_decks_cache.append(entry.duplicate(true))
+
+func _get_local_saved_decks_for_active_profile() -> Array[Dictionary]:
+	if _local_profile_store == null or _local_profile_id.is_empty():
+		return []
+	return _local_profile_store.list_decks(_local_profile_id)
+
+func _get_synced_account_deck_lookup() -> Dictionary:
+	var synced_lookup: Dictionary = {}
+	if _local_profile_store == null or _local_profile_id.is_empty():
+		return synced_lookup
+	for deck_id in _local_profile_store.get_synced_account_deck_ids(_local_profile_id):
+		var resolved_deck_id := str(deck_id).strip_edges()
+		if resolved_deck_id.is_empty():
+			continue
+		synced_lookup[resolved_deck_id] = true
+	return synced_lookup
+
+func _get_deleted_account_deck_lookup() -> Dictionary:
+	var deleted_lookup: Dictionary = {}
+	if _local_profile_store == null or _local_profile_id.is_empty():
+		return deleted_lookup
+	for deck_id in _local_profile_store.get_deleted_account_deck_ids(_local_profile_id):
+		var resolved_deck_id := str(deck_id).strip_edges()
+		if resolved_deck_id.is_empty():
+			continue
+		deleted_lookup[resolved_deck_id] = true
+	return deleted_lookup
+
+static func _should_ignore_account_deck_sync_update(deck_id: String, deleted_lookup: Dictionary) -> bool:
+	var resolved_deck_id := deck_id.strip_edges()
+	if resolved_deck_id.is_empty():
+		return true
+	return bool(deleted_lookup.get(resolved_deck_id, false))
+
+func _mark_active_profile_account_decks_synced(deck_ids: Array) -> void:
+	if _local_profile_store == null or _local_profile_id.is_empty() or deck_ids.is_empty():
+		return
+	_local_profile_store.mark_account_decks_synced(_local_profile_id, deck_ids)
+
+func _mirror_remote_account_deck_locally(deck: Dictionary) -> void:
+	if _local_profile_store == null or _local_profile_id.is_empty() or deck.is_empty():
+		return
+	_local_profile_store.upsert_saved_deck(_local_profile_id, deck, false)
+
+static func _merge_account_deck_catalogs(
+	remote_decks: Array[Dictionary],
+	local_decks: Array[Dictionary],
+	synced_lookup: Dictionary,
+	deleted_lookup: Dictionary
+) -> Dictionary:
+	var visible_decks: Array[Dictionary] = []
+	var remote_deck_lookup: Dictionary = {}
+	var local_migration_decks: Array[Dictionary] = []
+	for remote_deck in remote_decks:
+		var remote_id := str(remote_deck.get("deck_id", "")).strip_edges()
+		if _should_ignore_account_deck_sync_update(remote_id, deleted_lookup) or remote_deck_lookup.has(remote_id):
+			continue
+		remote_deck_lookup[remote_id] = true
+		visible_decks.append(remote_deck.duplicate(true))
+	for local_deck in local_decks:
+		var local_id := str(local_deck.get("deck_id", "")).strip_edges()
+		if _should_ignore_account_deck_sync_update(local_id, deleted_lookup) or remote_deck_lookup.has(local_id):
+			continue
+		if bool(synced_lookup.get(local_id, false)):
+			continue
+		var copied_local_deck := local_deck.duplicate(true)
+		visible_decks.append(copied_local_deck)
+		local_migration_decks.append(copied_local_deck.duplicate(true))
+	return {
+		"visible_decks": visible_decks,
+		"local_migration_decks": local_migration_decks,
+	}
 
 func _upsert_account_deck_cache(deck: Dictionary) -> void:
 	var deck_id := str(deck.get("deck_id", "")).strip_edges()
@@ -1182,7 +1268,13 @@ func _on_update_check_request_completed(
 	var release_url := str(payload.get("html_url", AppReleaseInfoScript.RELEASES_PAGE_URL)).strip_edges()
 	if release_url.is_empty():
 		release_url = AppReleaseInfoScript.RELEASES_PAGE_URL
-	_show_update_prompt(latest_version, release_url)
+	var download_url := ""
+	var assets: Array = payload.get("assets", [])
+	for asset in assets:
+		if str(asset.get("name", "")) == AppReleaseInfoScript.WINDOWS_ASSET_NAME:
+			download_url = str(asset.get("browser_download_url", "")).strip_edges()
+			break
+	_show_update_prompt(latest_version, release_url, download_url)
 
 func _should_prompt_for_update(latest_version: String) -> bool:
 	if not AppReleaseInfoScript.is_release_version(latest_version):
@@ -1198,11 +1290,12 @@ func _should_prompt_for_update(latest_version: String) -> bool:
 		dismissed_version = ""
 	return dismissed_version != latest_version
 
-func _show_update_prompt(latest_version: String, release_url: String) -> void:
+func _show_update_prompt(latest_version: String, release_url: String, download_url: String = "") -> void:
 	if _update_prompt_overlay != null and is_instance_valid(_update_prompt_overlay):
 		return
 	_pending_update_release_version = latest_version
 	_pending_update_release_url = release_url
+	_pending_update_download_url = download_url
 
 	_update_prompt_overlay = Control.new()
 	_update_prompt_overlay.name = "UpdatePromptOverlay"
@@ -1255,7 +1348,7 @@ func _show_update_prompt(latest_version: String, release_url: String) -> void:
 
 	var current_version := AppReleaseInfoScript.get_current_version()
 	var body_label := Label.new()
-	body_label.text = "You're running %s, and the latest release is %s. Open the release page to download the newest build." % [current_version, latest_version]
+	body_label.text = "You're running %s, and the latest release is %s." % [current_version, latest_version]
 	body_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	body_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	content.add_child(body_label)
@@ -1277,9 +1370,33 @@ func _show_update_prompt(latest_version: String, release_url: String) -> void:
 	update_button.pressed.connect(_on_update_prompt_open_pressed)
 	button_row.add_child(update_button)
 
-	update_button.grab_focus()
+	if not download_url.is_empty() and OS.get_name() == "Windows":
+		var auto_button := Button.new()
+		auto_button.text = "Update Now"
+		auto_button.custom_minimum_size = Vector2(130, 38)
+		auto_button.pressed.connect(_on_update_prompt_auto_update_pressed)
+		button_row.add_child(auto_button)
+		_update_now_button = auto_button
+
+		var progress_label := Label.new()
+		progress_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		progress_label.visible = false
+		content.add_child(progress_label)
+		_update_download_status_label = progress_label
+
+		auto_button.grab_focus()
+	else:
+		update_button.grab_focus()
 
 func _dismiss_update_prompt() -> void:
+	if _update_download_request != null and is_instance_valid(_update_download_request):
+		_update_download_request.cancel_request()
+		_update_download_request.queue_free()
+	_update_download_request = null
+	_is_auto_updating = false
+	_update_now_button = null
+	_update_download_status_label = null
+	_pending_update_download_url = ""
 	if _update_prompt_overlay != null and is_instance_valid(_update_prompt_overlay):
 		_update_prompt_overlay.queue_free()
 	_update_prompt_overlay = null
@@ -1303,6 +1420,104 @@ func _on_update_prompt_open_pressed() -> void:
 		status_label.text = "Couldn't open the latest release page automatically."
 	_dismiss_update_prompt()
 	_complete_startup_prompts()
+
+func _on_update_prompt_auto_update_pressed() -> void:
+	if _is_auto_updating:
+		return
+	_is_auto_updating = true
+	if _update_now_button != null and is_instance_valid(_update_now_button):
+		_update_now_button.disabled = true
+	if _update_download_status_label != null and is_instance_valid(_update_download_status_label):
+		_update_download_status_label.text = "Downloading..."
+		_update_download_status_label.visible = true
+
+	var zip_path := OS.get_user_data_dir() + "/update_download.zip"
+	if FileAccess.file_exists(zip_path):
+		DirAccess.remove_absolute(zip_path)
+
+	_update_download_request = HTTPRequest.new()
+	_update_download_request.name = "UpdateDownloadRequest"
+	_update_download_request.download_file = zip_path
+	_update_download_request.use_threads = true
+	_update_download_request.request_completed.connect(_on_auto_update_download_completed.bind(zip_path))
+	add_child(_update_download_request)
+
+	if _update_download_request.request(_pending_update_download_url) != OK:
+		_on_auto_update_failed("Failed to start download.")
+
+func _on_auto_update_download_completed(
+	result: int,
+	response_code: int,
+	_headers: PackedStringArray,
+	_body: PackedByteArray,
+	zip_path: String
+) -> void:
+	if result != HTTPRequest.RESULT_SUCCESS or response_code < 200 or response_code >= 300:
+		_on_auto_update_failed("Download failed (HTTP %d)." % response_code)
+		return
+	_apply_update_and_restart(zip_path)
+
+func _apply_update_and_restart(zip_path: String) -> void:
+	if _update_download_status_label != null and is_instance_valid(_update_download_status_label):
+		_update_download_status_label.text = "Applying update..."
+
+	var zip := ZIPReader.new()
+	if zip.open(zip_path) != OK:
+		_on_auto_update_failed("Failed to open downloaded archive.")
+		return
+
+	var exe_in_zip := ""
+	for f: String in zip.get_files():
+		if f.ends_with(".exe"):
+			exe_in_zip = f
+			break
+
+	if exe_in_zip.is_empty():
+		zip.close()
+		_on_auto_update_failed("No executable found in archive.")
+		return
+
+	var exe_bytes := zip.read_file(exe_in_zip)
+	zip.close()
+	DirAccess.remove_absolute(zip_path)
+
+	var current_exe := OS.get_executable_path()
+	var exe_dir := current_exe.get_base_dir()
+	var new_exe_path := exe_dir + "/ClaudeOtherGods_update.exe"
+
+	var new_exe_file := FileAccess.open(new_exe_path, FileAccess.WRITE)
+	if new_exe_file == null:
+		_on_auto_update_failed("Failed to write update file.")
+		return
+	new_exe_file.store_buffer(exe_bytes)
+	new_exe_file.close()
+
+	var current_exe_win := current_exe.replace("/", "\\")
+	var new_exe_win := new_exe_path.replace("/", "\\")
+	var bat_path := exe_dir + "/updater.bat"
+	var bat_content := (
+		"@echo off\r\n"
+		+ "timeout /t 2 /nobreak >nul\r\n"
+		+ "move /y \"" + new_exe_win + "\" \"" + current_exe_win + "\"\r\n"
+		+ "if %errorlevel% equ 0 start \"\" \"" + current_exe_win + "\"\r\n"
+		+ "(goto) 2>nul & del \"%~f0\"\r\n"
+	)
+	var bat_file := FileAccess.open(bat_path, FileAccess.WRITE)
+	if bat_file == null:
+		_on_auto_update_failed("Failed to write updater script.")
+		return
+	bat_file.store_string(bat_content)
+	bat_file.close()
+
+	OS.create_process("C:/Windows/System32/cmd.exe", ["/c", bat_path.replace("/", "\\")])
+	get_tree().quit()
+
+func _on_auto_update_failed(message: String) -> void:
+	_is_auto_updating = false
+	if _update_now_button != null and is_instance_valid(_update_now_button):
+		_update_now_button.disabled = false
+	if _update_download_status_label != null and is_instance_valid(_update_download_status_label):
+		_update_download_status_label.text = message
 
 func _build_bug_report_controls() -> void:
 	if _report_bug_button == null:
@@ -2428,6 +2643,16 @@ func _on_lobby_login_succeeded(session_id: String, reconnect_token: String, play
 	player_name_line_edit.text = resolved_identity_name
 	_refresh_open_deck_builder_saved_decks()
 	_update_resume_controls()
+	var active_match_info: Dictionary = {}
+	if lobby_client != null:
+		active_match_info = lobby_client.current_active_match_info.duplicate(true)
+	if not active_match_info.is_empty():
+		_save_active_match_resume(active_match_info)
+		status_label.text = "Signed in as %s. Rejoining your active match..." % resolved_identity_name
+		call_deferred("_resume_active_match_from_lobby", active_match_info)
+		return
+	if not _get_saved_active_match().is_empty():
+		_clear_saved_match_resume()
 	status_label.text = "Signed in as %s." % resolved_identity_name
 	_run_pending_multiplayer_action()
 
@@ -2924,19 +3149,45 @@ func _on_account_deck_list_received(decks, preferred_deck_id: String = "") -> vo
 		for entry in decks:
 			if entry is Dictionary:
 				remote_decks.append((entry as Dictionary).duplicate(true))
-	_replace_account_decks_cache(remote_decks)
+	var deleted_lookup := _get_deleted_account_deck_lookup()
+	var remote_deck_ids: Array[String] = []
+	for remote_deck in remote_decks:
+		var remote_deck_id := str(remote_deck.get("deck_id", "")).strip_edges()
+		if _should_ignore_account_deck_sync_update(remote_deck_id, deleted_lookup):
+			continue
+		remote_deck_ids.append(remote_deck_id)
+		_mirror_remote_account_deck_locally(remote_deck)
+	_mark_active_profile_account_decks_synced(remote_deck_ids)
+	var merged_decks := _merge_account_deck_catalogs(
+		remote_decks,
+		_get_local_saved_decks_for_active_profile(),
+		_get_synced_account_deck_lookup(),
+		deleted_lookup
+	)
+	var visible_decks: Array[Dictionary] = merged_decks.get("visible_decks", [])
+	var local_migration_decks: Array[Dictionary] = merged_decks.get("local_migration_decks", [])
+	_replace_account_decks_cache(visible_decks)
+	for local_deck in local_migration_decks:
+		if lobby_client == null:
+			break
+		lobby_client.save_account_deck(
+			str(local_deck.get("name", "Deck")),
+			local_deck.get("cards", {}),
+			str(local_deck.get("deck_id", "")),
+			local_deck.get("special_setup", {})
+		)
 	var resolved_preferred_deck_id := preferred_deck_id.strip_edges()
 	if resolved_preferred_deck_id.is_empty():
 		resolved_preferred_deck_id = _get_server_preferred_account_deck_id()
 	var has_selected_deck := false
 	if not _selected_multiplayer_deck_id.is_empty():
-		for entry in remote_decks:
+		for entry in visible_decks:
 			if str(entry.get("deck_id", "")).strip_edges() == _selected_multiplayer_deck_id:
 				has_selected_deck = true
 				break
 	if not resolved_preferred_deck_id.is_empty():
 		var has_preferred_deck := false
-		for entry in remote_decks:
+		for entry in visible_decks:
 			if str(entry.get("deck_id", "")).strip_edges() == resolved_preferred_deck_id:
 				has_preferred_deck = true
 				break
@@ -2951,14 +3202,26 @@ func _on_account_deck_list_received(decks, preferred_deck_id: String = "") -> vo
 func _on_account_deck_saved(deck) -> void:
 	if not (deck is Dictionary):
 		return
-	_upsert_account_deck_cache(deck as Dictionary)
+	var saved_deck := (deck as Dictionary).duplicate(true)
+	var saved_deck_id := str(saved_deck.get("deck_id", "")).strip_edges()
+	if _should_ignore_account_deck_sync_update(saved_deck_id, _get_deleted_account_deck_lookup()):
+		_remove_account_deck_from_cache(saved_deck_id)
+		_refresh_open_deck_builder_saved_decks()
+		return
+	_upsert_account_deck_cache(saved_deck)
+	_mirror_remote_account_deck_locally(saved_deck)
+	_mark_active_profile_account_decks_synced([saved_deck_id])
 	_refresh_open_deck_builder_saved_decks()
 
 func _on_account_deck_deleted(deck_id: String) -> void:
-	_remove_account_deck_from_cache(deck_id)
-	if _get_server_preferred_account_deck_id() == deck_id.strip_edges() and lobby_client != null:
+	var resolved_deck_id := deck_id.strip_edges()
+	_remove_account_deck_from_cache(resolved_deck_id)
+	if _local_profile_store != null and not _local_profile_id.is_empty():
+		_local_profile_store.mark_account_decks_deleted(_local_profile_id, [resolved_deck_id])
+		_local_profile_store.delete_deck(_local_profile_id, resolved_deck_id)
+	if _get_server_preferred_account_deck_id() == resolved_deck_id and lobby_client != null:
 		lobby_client.current_preferred_account_deck_id = ""
-	if _selected_multiplayer_deck_id == deck_id.strip_edges():
+	if _selected_multiplayer_deck_id == resolved_deck_id:
 		_selected_multiplayer_deck_id = ""
 	_refresh_open_deck_builder_saved_decks()
 

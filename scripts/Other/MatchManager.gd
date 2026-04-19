@@ -814,6 +814,15 @@ func _clear_pending_attack_state() -> void:
 	selected_interceptor = null
 	pending_attack_target = null
 
+func _refresh_interaction_host_ui() -> void:
+	if game_manager == null:
+		return
+	var interaction_host = game_manager.get_interaction_host()
+	if interaction_host == null:
+		return
+	if interaction_host.has_method("update_ui"):
+		interaction_host.call_deferred("update_ui")
+
 func _resolve_authoritative_headless_attack() -> void:
 	var attack_action := _build_pending_attack_action()
 	if attack_action == null:
@@ -822,6 +831,7 @@ func _resolve_authoritative_headless_attack() -> void:
 		return
 	_clear_pending_attack_state()
 	game_manager.push_to_stack(attack_action)
+	_refresh_interaction_host_ui()
 	_advance_authoritative_priority()
 
 func _start_authoritative_headless_attack() -> void:
@@ -1029,7 +1039,7 @@ func _get_required_player_for_command(command: Dictionary) -> Player:
 			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("attacker_uid", ""))))
 		"cancel_targeting", "confirm_click_selection":
 			return _get_current_targeting_player()
-		"play_card", "prepare_card", "play_creature", "creature_move", "change_mode":
+		"play_card", "prepare_card", "play_creature", "creature_move", "change_mode", "equip_action":
 			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("card_uid", ""))))
 		"cast_spell":
 			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("spell_uid", ""))))
@@ -1207,6 +1217,18 @@ func _process_command_impl(command: Dictionary) -> bool:
 				return false
 			if not game_manager.creature_move(card, zone):
 				move_failed.emit("Invalid move - must be an adjacent empty zone.")
+				return false
+			move_validated.emit(command)
+			return true
+		"equip_action":
+			var card := game_manager.get_card_by_uid(command.get("card_uid", ""))
+			var equipment := game_manager.get_card_by_uid(command.get("equipment_uid", ""))
+			var action: String = command.get("action", "pick_up")
+			if card == null or equipment == null:
+				move_failed.emit("equip_action: invalid card or equipment")
+				return false
+			if not game_manager.resolve_creature_equipment_action(card, equipment, action):
+				move_failed.emit("equip_action failed")
 				return false
 			move_validated.emit(command)
 			return true
