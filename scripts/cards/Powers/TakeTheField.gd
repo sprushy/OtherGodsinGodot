@@ -1,8 +1,8 @@
 extends PowerCard
 class_name TakeTheField
 
+const CardCatalogScript = preload("res://scripts/cards/CardCatalog.gd")
 const ART_PATH := "res://scripts/cards/Gods/Take the Field(web).jpg"
-const THOR_ACTIVE_SCRIPT := preload("res://scripts/cards/ActiveGods/ThorActive.gd")
 
 func _init() -> void:
 	super._init()
@@ -120,10 +120,8 @@ func _find_manifestation_candidate(allow_fallback: bool) -> Card:
 				return null
 			return card
 
-	if allow_fallback and god_name == "Thor":
-		var manifestation := THOR_ACTIVE_SCRIPT.new()
-		manifestation.card_owner = card_owner
-		return manifestation
+	if allow_fallback:
+		return _build_manifestation_fallback(god_name)
 	return null
 
 func _get_manifest_search_zones() -> Array[Zone]:
@@ -139,6 +137,17 @@ func _get_manifest_search_zones() -> Array[Zone]:
 func _matches_manifestation(card: Card, god_name: String) -> bool:
 	var active_god := card as ActiveGodCard
 	return active_god != null and active_god.get_linked_god_name() == god_name
+
+func _build_manifestation_fallback(god_name: String) -> Card:
+	if god_name.is_empty():
+		return null
+	for template in CardCatalogScript.make_all_cards():
+		var active_god := template as ActiveGodCard
+		if active_god == null or active_god.get_linked_god_name() != god_name:
+			continue
+		active_god.card_owner = card_owner
+		return active_god
+	return null
 
 func _find_open_summon_zone() -> Zone:
 	if card_owner == null:

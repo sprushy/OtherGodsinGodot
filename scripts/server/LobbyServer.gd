@@ -12,6 +12,8 @@ const DeckStoreScript = preload("res://scripts/server/DeckStore.gd")
 const DeckValidatorScript = preload("res://scripts/server/DeckValidator.gd")
 const MatchHistoryStoreScript = preload("res://scripts/server/MatchHistoryStore.gd")
 const LOBBY_EVENT_TYPE := "__lobby_event__"
+const SEEK_TIMEOUT_SECONDS := 30 * 60
+const SEEK_TIMEOUT_CHECK_INTERVAL_SECONDS := 5.0
 
 signal local_room_snapshot_updated(snapshot: Dictionary)
 signal room_list_updated(rooms: Array)
@@ -43,6 +45,7 @@ var deck_validator = null
 var match_history_store = null
 
 var _rng := RandomNumberGenerator.new()
+var _seek_timeout_check_elapsed: float = 0.0
 
 func _ready() -> void:
 	_rng.randomize()
@@ -53,6 +56,16 @@ func _ready() -> void:
 	_ensure_match_history_store()
 	_ensure_match_supervisor()
 	_ensure_network_manager()
+
+func _process(delta: float) -> void:
+	if not is_listening or rooms_by_id.is_empty():
+		_seek_timeout_check_elapsed = 0.0
+		return
+	_seek_timeout_check_elapsed += delta
+	if _seek_timeout_check_elapsed < SEEK_TIMEOUT_CHECK_INTERVAL_SECONDS:
+		return
+	_seek_timeout_check_elapsed = 0.0
+	_expire_stale_seeks()
 
 func start_server(p_advertised_host: String = "127.0.0.1", port: int = LobbyProtocolScript.PORT, p_match_port: int = LobbyProtocolScript.MATCH_PORT) -> Error:
 	if is_listening:
@@ -97,6 +110,7 @@ func stop_server() -> void:
 	advertised_host = "127.0.0.1"
 	lobby_port = LobbyProtocolScript.PORT
 	match_port = LobbyProtocolScript.MATCH_PORT
+	_seek_timeout_check_elapsed = 0.0
 	sessions_by_id.clear()
 	session_id_by_peer.clear()
 	rooms_by_id.clear()
@@ -151,6 +165,8 @@ func _handle_request(peer_id: int, message: Dictionary) -> void:
 	if not validation_error.is_empty():
 		_send_error_to_peer(peer_id, validation_error)
 		return
+
+	_expire_stale_seeks()
 
 	var message_type: String = LobbyProtocolScript.get_type(message)
 	var payload: Dictionary = LobbyProtocolScript.get_payload(message)
@@ -510,6 +526,7 @@ func _create_room_for_session(session_id: String, is_ranked: bool = true) -> Lob
 	var existing_room_id: String = str(room_id_by_session.get(session_id, ""))
 	if not existing_room_id.is_empty() and rooms_by_id.has(existing_room_id):
 		return rooms_by_id[existing_room_id]
+	_prune_excess_open_seeks_for_session(session_id)
 
 	var room_id: String = _generate_room_code()
 	while rooms_by_id.has(room_id):
@@ -746,6 +763,105 @@ func _build_room_list() -> Array:
 	for room_id in rooms_by_id.keys():
 		rooms.append(rooms_by_id[room_id].to_room_list_entry(sessions_by_id))
 	return rooms
+
+func _expire_stale_seeks() -> void:
+	var expired_room_ids: Array[String] = []
+	for room_id_variant in rooms_by_id.keys():
+		var room_id := str(room_id_variant)
+		var room_variant = rooms_by_id.get(room_id, null)
+		if room_variant == null or not (room_variant is LobbyRoom):
+			continue
+		var room: LobbyRoom = room_variant
+		if room.has_waited_for_opponent_too_long(SEEK_TIMEOUT_SECONDS):
+			expired_room_ids.append(room_id)
+	if expired_room_ids.is_empty():
+		return
+	for room_id in expired_room_ids:
+		_close_room(
+			room_id,
+			"Seek %s expired after 30 minutes of waiting for an opponent." % room_id
+		)
+	_broadcast_room_lists()
+
+func _prune_excess_open_seeks_for_session(session_id: String) -> void:
+	var seek_owner_key := _get_seek_owner_key_for_session(session_id)
+	if seek_owner_key.is_empty():
+		return
+	var open_seek_room_ids := _get_open_seek_room_ids_for_owner(seek_owner_key)
+	if open_seek_room_ids.size() < 2:
+		return
+	open_seek_room_ids.sort_custom(func(a: String, b: String) -> bool:
+		return _get_room_waiting_since_msec(a) < _get_room_waiting_since_msec(b)
+	)
+	while open_seek_room_ids.size() >= 2:
+		var oldest_room_id := open_seek_room_ids[0]
+		_close_room(
+			oldest_room_id,
+			"Seek %s was canceled because you can only keep 2 seeks open at once." % oldest_room_id
+		)
+		open_seek_room_ids.remove_at(0)
+	_broadcast_room_lists()
+
+func _close_room(room_id: String, message: String = "") -> void:
+	if room_id.is_empty() or not rooms_by_id.has(room_id):
+		return
+	var room: LobbyRoom = rooms_by_id[room_id]
+	var affected_sessions: Array[String] = []
+	for session_id in room.members:
+		affected_sessions.append(session_id)
+	rooms_by_id.erase(room_id)
+	for session_id in affected_sessions:
+		if str(room_id_by_session.get(session_id, "")) == room_id:
+			room_id_by_session.erase(session_id)
+		if session_id == local_session_id:
+			local_room_snapshot_updated.emit({})
+		if not message.strip_edges().is_empty():
+			_send_error_to_session(session_id, message)
+
+func _get_seek_owner_key_for_session(session_id: String) -> String:
+	var session: Dictionary = sessions_by_id.get(session_id, {})
+	return _get_seek_owner_key_for_session_data(session)
+
+func _get_seek_owner_key_for_room(room: LobbyRoom) -> String:
+	if room == null:
+		return ""
+	var host_session: Dictionary = sessions_by_id.get(room.host_session_id, {})
+	return _get_seek_owner_key_for_session_data(host_session)
+
+func _get_seek_owner_key_for_session_data(session: Dictionary) -> String:
+	if session.is_empty():
+		return ""
+	var account_id := str(session.get("account_id", "")).strip_edges()
+	if not account_id.is_empty():
+		return "account:%s" % account_id
+	var profile_id := str(session.get("profile_id", "")).strip_edges()
+	if not profile_id.is_empty():
+		return "profile:%s" % profile_id
+	return "session:%s" % str(session.get("session_id", "")).strip_edges()
+
+func _get_open_seek_room_ids_for_owner(seek_owner_key: String) -> Array[String]:
+	var room_ids: Array[String] = []
+	if seek_owner_key.is_empty():
+		return room_ids
+	for room_id_variant in rooms_by_id.keys():
+		var room_id := str(room_id_variant)
+		var room_variant = rooms_by_id.get(room_id, null)
+		if room_variant == null or not (room_variant is LobbyRoom):
+			continue
+		var room: LobbyRoom = room_variant
+		if not room.is_waiting_for_opponent():
+			continue
+		if _get_seek_owner_key_for_room(room) != seek_owner_key:
+			continue
+		room_ids.append(room_id)
+	return room_ids
+
+func _get_room_waiting_since_msec(room_id: String) -> int:
+	var room_variant = rooms_by_id.get(room_id, null)
+	if room_variant == null or not (room_variant is LobbyRoom):
+		return 0
+	var room: LobbyRoom = room_variant
+	return room.waiting_for_opponent_since_msec
 
 func _send_to_session(session_id: String, message_type: String, payload: Dictionary) -> void:
 	var session: Dictionary = sessions_by_id.get(session_id, {})

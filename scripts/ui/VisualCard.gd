@@ -2,6 +2,7 @@ class_name VisualCard
 extends PanelContainer
 
 const CardDetailContentBuilder = preload("res://scripts/ui/CardDetailContentBuilder.gd")
+const LockedPowerCursor = preload("res://scripts/ui/LockedPowerCursor.gd")
 
 signal card_clicked(card: Card)
 signal card_right_clicked(card: Card)
@@ -77,8 +78,8 @@ func setup(
 	var natural_h: float = maxf(float(_card_height), _compute_natural_height())
 	custom_minimum_size = Vector2(_card_width, natural_h)
 	size_flags_vertical = Control.SIZE_SHRINK_BEGIN
-	mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	mouse_filter = Control.MOUSE_FILTER_STOP
+	_refresh_mouse_cursor_shape()
 	_build_content()
 	if card_data.exhausted_art_path != "":
 		card_data.art_updated.connect(_on_art_updated)
@@ -348,6 +349,7 @@ func _refresh_disabled_visual_state() -> void:
 
 func _refresh_power_lock_overlay() -> void:
 	var should_show := _should_show_power_lock_overlay()
+	_refresh_mouse_cursor_shape()
 	if not should_show:
 		if _power_lock_overlay != null and is_instance_valid(_power_lock_overlay):
 			_power_lock_overlay.queue_free()
@@ -402,6 +404,12 @@ func set_hand_hover_hit_rect(rect: Rect2) -> void:
 
 func _refresh_mouse_filter() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP if (not _disabled or _hover_preview_when_disabled) else Control.MOUSE_FILTER_IGNORE
+
+func _refresh_mouse_cursor_shape() -> void:
+	if _should_show_power_lock_overlay():
+		mouse_default_cursor_shape = LockedPowerCursor.get_control_cursor_shape(Control.CURSOR_POINTING_HAND)
+		return
+	mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 
 func _has_point(point: Vector2) -> bool:
 	var hit_rect := Rect2(Vector2.ZERO, size)

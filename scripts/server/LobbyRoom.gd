@@ -14,10 +14,12 @@ var is_ranked: bool = true
 var members: Array[String] = []
 var ready_by_session_id: Dictionary = {}
 var deck_submission_by_session_id: Dictionary = {}
+var waiting_for_opponent_since_msec: int = 0
 
 func _init(p_room_id: String = "", p_host_session_id: String = "") -> void:
 	room_id = p_room_id
 	host_session_id = p_host_session_id
+	_refresh_seek_timeout_state()
 
 func add_member(session_id: String) -> bool:
 	if members.has(session_id):
@@ -114,9 +116,29 @@ func get_deck_submission(session_id: String) -> Dictionary:
 	return {}
 
 func refresh_status() -> void:
-	if status == STATUS_IN_MATCH:
+	if status != STATUS_IN_MATCH:
+		status = STATUS_READY if can_start() else STATUS_WAITING
+	_refresh_seek_timeout_state()
+
+func is_waiting_for_opponent() -> bool:
+	return status != STATUS_IN_MATCH and not members.is_empty() and members.size() < MAX_PLAYERS
+
+func has_waited_for_opponent_too_long(timeout_seconds: int) -> bool:
+	if timeout_seconds <= 0 or not is_waiting_for_opponent():
+		return false
+	if waiting_for_opponent_since_msec <= 0:
+		return false
+	return _get_current_time_msec() - waiting_for_opponent_since_msec >= timeout_seconds * 1000
+
+func _refresh_seek_timeout_state() -> void:
+	if not is_waiting_for_opponent():
+		waiting_for_opponent_since_msec = 0
 		return
-	status = STATUS_READY if can_start() else STATUS_WAITING
+	if waiting_for_opponent_since_msec <= 0:
+		waiting_for_opponent_since_msec = _get_current_time_msec()
+
+func _get_current_time_msec() -> int:
+	return Time.get_ticks_msec()
 
 func to_snapshot(sessions_by_id: Dictionary) -> Dictionary:
 	var member_snapshots: Array[Dictionary] = []

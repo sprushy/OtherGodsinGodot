@@ -11939,6 +11939,11 @@ func _is_real_network_host() -> bool:
 		and network_manager != null \
 		and network_manager.get("is_server") == true
 
+func uses_authoritative_match_flow() -> bool:
+	# CombatMockGame and its local derivatives (CardTestGame, PracticeThor, etc.)
+	# should use the same MatchManager-driven attack/priority flow as hosted matches.
+	return true
+
 func can_intercept(defender: Card, attacker: Card, protected_target) -> bool:
 	if attacker == null:
 		return false
@@ -12311,13 +12316,13 @@ func _hide_priority_prompt() -> void:
 
 func _on_priority_pass_pressed() -> void:
 	_hide_priority_prompt()
+	if match_manager != null and match_manager.uses_authoritative_priority_flow() and game_input != null:
+		game_input.submit_action({type = "priority_pass"})
+		return
 	if _is_networked_client:
 		network_manager.request_action({type = "priority_pass"})
 		return
 	game_manager.pass_priority()
-	if match_manager != null and match_manager.uses_authoritative_priority_flow():
-		match_manager.advance_priority()
-		return
 	if game_manager.both_passed():
 		_execute_top_of_stack()
 	else:

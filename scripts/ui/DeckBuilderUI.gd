@@ -1316,11 +1316,10 @@ func _add_to_deck(card: Card) -> void:
 			var tmpl := _find_template(deck_card_name)
 			if tmpl and tmpl.is_god and _deck[deck_card_name] > 0:
 				return
-		
-		# Adding a main god automatically adds its active version if not already present
+
 		var active_form := _get_active_god_form(card)
-		if active_form != null and not _deck.has(active_form.card_name):
-			_deck[active_form.card_name] = _max_copies(active_form)
+		if active_form != null:
+			_deck[active_form.card_name] = 1
 
 	elif card.is_power and not _can_add_power_to_current_deck(card):
 		return
@@ -1956,6 +1955,7 @@ func _update_validation() -> void:
 	var legendary_count := 0
 	var tiamat_slot_count := _count_tiamat_occupied_slots()
 	var invalid_culture_cards: PackedStringArray = []
+	var illegal_active_gods: PackedStringArray = []
 	var duplicate_powers: PackedStringArray = []
 	var god_culture := ""
 	var god_name := ""
@@ -1966,8 +1966,6 @@ func _update_validation() -> void:
 		var card := _find_template(card_name)
 		if card == null:
 			continue
-		if card is ActiveGodCard and god_template != null and god_template.is_own_active_god_card(card):
-			continue # Don't count own manifestation
 		total += cnt
 		if card.is_god:
 			god_count += cnt
@@ -1984,14 +1982,26 @@ func _update_validation() -> void:
 			if card.is_legendary:
 				legendary_count += cnt
 
+	if god_template != null and not god_template.uses_culture_locked_deckbuilding():
+		for card_name: String in _deck:
+			var card := _find_template(card_name)
+			if card is ActiveGodCard and god_template.is_own_active_god_card(card):
+				var reserved_count := int(_deck.get(card_name, 0))
+				total -= reserved_count
+				regular_count -= reserved_count
+
 	if god_culture != "":
 		for card_name: String in _deck:
 			var card := _find_template(card_name)
 			if card == null or card.is_god:
 				continue
+			if card is ActiveGodCard and god_template != null and not god_template.uses_culture_locked_deckbuilding() and god_template.is_own_active_god_card(card):
+				continue
 			if god_template != null and god_template.uses_culture_locked_deckbuilding():
 				if not god_template.can_include_card_in_culture_locked_deck(card):
 					invalid_culture_cards.append(card.card_name)
+			elif card is ActiveGodCard:
+				illegal_active_gods.append(card.card_name)
 			elif card.is_power and not _is_power_compatible_with_culture(card, god_culture):
 				invalid_culture_cards.append(card.card_name)
 
@@ -2055,6 +2065,12 @@ func _update_validation() -> void:
 				lines.append("  Slot %d Levels: %d / %d" % [slot_index + 1, slot_total, TiamatScript.MAX_SLOT_LEVEL_TOTAL])
 			else:
 				lines.append("✗ Slot %d Levels: %d / %d" % [slot_index + 1, slot_total, TiamatScript.MAX_SLOT_LEVEL_TOTAL]); ok = false
+
+	if illegal_active_gods.is_empty():
+		if god_template != null and not god_template.uses_culture_locked_deckbuilding():
+			lines.append("✓ Active Gods: summoned separately")
+	else:
+		lines.append("✗ Active Gods: %s" % ", ".join(illegal_active_gods)); ok = false
 
 	lines.append("  Total Cards: %d" % total)
 
@@ -2515,6 +2531,8 @@ func _get_card_unavailable_badge_text(card: Card) -> String:
 	if card == null:
 		return ""
 	var god := _get_selected_god_template() as GodCard
+	if card is ActiveGodCard and god == null:
+		return "Pick God First"
 	if god != null and not card.is_god and not _is_card_compatible_with_selected_god(card, god):
 		if card is ActiveGodCard:
 			if not god.uses_culture_locked_deckbuilding():
@@ -2530,9 +2548,16 @@ func _get_card_unavailable_reason(card: Card) -> String:
 	if card == null:
 		return ""
 	var god := _get_selected_god_template() as GodCard
+	if card is ActiveGodCard and god == null:
+		return "Unavailable: Choose a Patriarch or Matriarch god before adding Active God forms."
 	if god != null and not card.is_god and not _is_card_compatible_with_selected_god(card, god):
 		if card is ActiveGodCard:
 			if not god.uses_culture_locked_deckbuilding():
+				if god.is_own_active_god_card(card):
+					return "Reserved: %s keeps %s out of the draw pile and accesses it through Take the Field or Champion's Call." % [
+						god.get_display_name_for_control(),
+						card.get_display_name_for_control()
+					]
 				return "Unavailable: Only Patriarchs and Matriarchs can include Active God forms in their deck."
 			return "Unavailable: Only %s Active God forms can be included in a %s deck." % [god.culture, god.culture]
 		if god.uses_culture_locked_deckbuilding():

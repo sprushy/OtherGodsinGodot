@@ -228,7 +228,6 @@ func load_thor_vs_tiamat_scenario() -> void:
 	# Thor (P1)
 	_add_test_hand_card(player1, Berserker.new())
 	_add_test_hand_card(player1, HariiWarrior.new())
-	_add_test_deck_card(player1, ThorActive.new()) # Active form in deck for Take the Field
 
 	# Tiamat (P2)
 	# She should have Take the Field and some Demons in hand
@@ -236,7 +235,6 @@ func load_thor_vs_tiamat_scenario() -> void:
 	_add_test_hand_card(player2, Alu.new())
 	_add_test_hand_card(player2, Rabisu.new())
 	_add_test_hand_card(player2, Asakku.new())
-	_add_test_deck_card(player2, TiamatActive.new()) # Active form in deck for Take the Field
 
 	# Tiamat replaces her power slots with Ancient Demons and Dragons
 	_add_test_tiamat_slot_creature(player2, 0, Anzu.new())

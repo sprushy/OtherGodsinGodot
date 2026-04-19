@@ -2,6 +2,7 @@ class_name BoardZoneUI
 extends PanelContainer
 
 const CardDetailContentBuilder = preload("res://scripts/ui/CardDetailContentBuilder.gd")
+const LockedPowerCursor = preload("res://scripts/ui/LockedPowerCursor.gd")
 
 class StackTargetIndicator extends Control:
 	func _ready() -> void:
@@ -1296,6 +1297,12 @@ func get_visual_anchor_global() -> Vector2:
 func _get_minimum_size() -> Vector2:
 	return get_zone_size()
 
+func _refresh_mouse_cursor_shape(card: Card = null) -> void:
+	if card != null and card.card_type == Card.CardType.POWER and card.is_face_down:
+		mouse_default_cursor_shape = LockedPowerCursor.get_control_cursor_shape(Control.CURSOR_ARROW)
+		return
+	mouse_default_cursor_shape = Control.CURSOR_ARROW
+
 func setup(p_zone: Zone, p_gm: GameManager, p_player: Player, idx: int,
 		drop_cb: Callable, is_enemy: bool = false, row_label: String = "") -> void:
 	zone         = p_zone
@@ -1318,6 +1325,7 @@ func _refresh_display() -> void:
 	for child in get_children():
 		child.queue_free()
 	var card: Card = _preview_card if _preview_card != null else (zone.cards[0] if zone.cards.size() > 0 else null)
+	_refresh_mouse_cursor_shape(card)
 
 	var style := StyleBoxFlat.new()
 	style.corner_radius_top_left    = 4

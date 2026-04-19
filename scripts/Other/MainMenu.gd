@@ -346,7 +346,18 @@ func _open_multiplayer_screen() -> void:
 	if _has_active_lobby_connection():
 		_queue_room_list_refresh()
 		return
-	status_label.text = "Choose a deck, then refresh open seeks or create your own."
+	var target_error := _validate_multiplayer_target()
+	if not target_error.is_empty():
+		status_label.text = target_error
+		return
+	var auth_error := _validate_auth_inputs()
+	if not auth_error.is_empty():
+		status_label.text = auth_error
+		return
+	_pending_host_room_creation = false
+	_pending_join_room_id = ""
+	_pending_local_lobby_launch_on_connect_failure = false
+	_connect_to_browseable_lobby("Connecting to lobby...")
 
 func _has_active_lobby_connection() -> bool:
 	return lobby_client != null and is_instance_valid(lobby_client) and lobby_client.is_authenticated()

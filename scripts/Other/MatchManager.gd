@@ -357,10 +357,16 @@ func _uses_authoritative_headless_attack_flow() -> bool:
 	var interaction_host := game_manager.get_interaction_host()
 	if interaction_host == null:
 		return false
+	if interaction_host.has_method("uses_authoritative_match_flow"):
+		return bool(interaction_host.call("uses_authoritative_match_flow"))
 	var host_script = interaction_host.get_script()
-	if host_script == null:
-		return false
-	return str(host_script.resource_path).ends_with("HeadlessMatchServer.gd")
+	if host_script != null and str(host_script.resource_path).ends_with("HeadlessMatchServer.gd"):
+		return true
+	# Peer-hosted CombatMockGame sessions also have a real authoritative server,
+	# even though the interaction host is not the standalone HeadlessMatchServer scene.
+	if interaction_host.has_method("_is_real_network_host"):
+		return bool(interaction_host.call("_is_real_network_host"))
+	return false
 
 func uses_authoritative_priority_flow() -> bool:
 	return _uses_authoritative_headless_attack_flow()
@@ -715,6 +721,10 @@ func _get_priority_action_message(top: CardAction, viewer: Player = null) -> Str
 				return "Start-of-turn priority window."
 			if top.event_name == "end_turn":
 				return "End-of-turn priority window."
+			if top.event_name == "summon" and top.card != null:
+				return _get_action_label(top.card, viewer) + " was summoned - you may respond!"
+			if top.event_name == "hand_play" and top.card != null:
+				return _get_action_label(top.card, viewer) + " was played - you may respond!"
 	return ""
 
 func _broadcast_priority_offered(player: Player, responses: Array) -> void:
@@ -748,8 +758,9 @@ func _advance_authoritative_priority() -> void:
 		game_manager.priority_player = player
 	if player == null:
 		return
-	var responses := game_manager.get_priority_responses(player)
-	if responses.is_empty():
+	var prompt_data := build_priority_prompt_data(player)
+	var prompt_responses: Array = prompt_data.get("responses", [])
+	if prompt_responses.is_empty():
 		game_manager.pass_priority()
 		if game_manager.both_passed():
 			if game_manager.action_stack.is_empty():
@@ -760,7 +771,7 @@ func _advance_authoritative_priority() -> void:
 			_advance_authoritative_priority()
 		return
 	var player_idx := game_manager.players.find(player)
-	request_ui_interaction.emit(player_idx, "priority", build_priority_prompt_data(player))
+	request_ui_interaction.emit(player_idx, "priority", prompt_data)
 
 func queue_or_resolve_priority_event(action: CardAction) -> bool:
 	if action == null:
