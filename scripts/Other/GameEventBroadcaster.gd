@@ -210,6 +210,12 @@ func _label_for_move(move: Dictionary, viewer: Player = null) -> String:
 			if lupine != null:
 				return "%s matures into %s." % [_card_label_for_viewer(wolf, viewer), _card_label_for_viewer(lupine, viewer)]
 			return ("%s skips Maturation." % _card_label_for_viewer(wolf, viewer)) if wolf != null else "Wolf Adolescent skips Maturation."
+		"humbaba_augury_choice":
+			var humbaba := game_manager.get_card_by_uid(move.get("source_uid", ""))
+			var chosen := game_manager.get_card_by_uid(move.get("target_uid", ""))
+			if humbaba != null and chosen != null:
+				return "%s primes %s with Augury Reading." % [_card_label_for_viewer(humbaba, viewer), _card_label_for_viewer(chosen, viewer)]
+			return ("%s resolves Augury Reading." % _card_label_for_viewer(humbaba, viewer)) if humbaba != null else "Humbaba resolves Augury Reading."
 		"prepare_card":
 			return "A card was prepared face-down."
 		"creature_move":

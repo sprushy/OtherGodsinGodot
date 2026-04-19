@@ -22,9 +22,8 @@ func can_respond_to_action(action: CardAction) -> bool:
 		return false
 	if action.card.has_method("can_be_negated") and not action.card.can_be_negated(action):
 		return false
-	if action.type != CardAction.Type.SPELL and action.type != CardAction.Type.ABILITY:
-		return false
-	if action.type == CardAction.Type.ABILITY and not _is_magical_ability_source(action.card):
+	# Banishment only counters magical cards as they are played, not later board/prepared activations.
+	if action.type != CardAction.Type.SPELL:
 		return false
 	return action.card.is_magical_card()
 
@@ -41,7 +40,3 @@ func on_activate_action(game_manager: GameManager, action: CardAction) -> void:
 	game_manager.banish_card_with_hook(negated_action.card)
 	card_owner.move_card(self, card_owner.graveyard_zone)
 
-func _is_magical_ability_source(card: Card) -> bool:
-	if card == null:
-		return false
-	return card.is_magical_card() and card.card_type != Card.CardType.POWER

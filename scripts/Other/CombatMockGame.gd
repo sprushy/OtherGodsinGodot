@@ -9260,6 +9260,8 @@ func _queue_pai_long_autumn_king_impact_prompt(card: PaiLongAutumnKing) -> void:
 func _queue_humbaba_augury_reading_prompt(card: HumbabaTheTerrible) -> void:
 	if card == null or game_manager == null:
 		return
+	if card == _active_humbaba_prompt or card in _pending_humbaba_prompts:
+		return
 	_pending_humbaba_prompts.append(card)
 	call_deferred("_show_next_humbaba_augury_prompt")
 
@@ -9463,6 +9465,80 @@ func _resolve_tonal_extraction_prompt(card: TonalExtraction, chosen_target: Card
 	action_label.text = _consume_resolution_feedback(card.card_name + " extracts a Spirit.")
 	update_ui()
 
+func _get_humbaba_augury_prompt_player(card: HumbabaTheTerrible) -> Player:
+	if card == null or game_manager == null:
+		return null
+	return game_manager.get_opponent(card.get_controller())
+
+func _consume_current_humbaba_prompt() -> void:
+	var resolved_prompt := _active_humbaba_prompt
+	_active_humbaba_prompt = null
+	if resolved_prompt == null:
+		if not _pending_humbaba_prompts.is_empty():
+			_pending_humbaba_prompts.remove_at(0)
+		return
+	var remaining: Array[HumbabaTheTerrible] = []
+	for humbaba in _pending_humbaba_prompts:
+		if humbaba != resolved_prompt:
+			remaining.append(humbaba)
+	_pending_humbaba_prompts = remaining
+
+func _show_humbaba_augury_prompt(card: HumbabaTheTerrible, prompt_targets: Array = []) -> void:
+	if card == null or game_manager == null:
+		return
+	_active_humbaba_prompt = card
+	var current_targets: Array[Card] = []
+	if prompt_targets.is_empty():
+		current_targets = card.get_augury_cards(game_manager)
+	else:
+		var valid_targets := card.get_augury_cards(game_manager)
+		for candidate in prompt_targets:
+			var candidate_card := candidate as Card
+			if candidate_card != null and candidate_card in valid_targets:
+				current_targets.append(candidate_card)
+	if current_targets.is_empty():
+		action_label.text = card.card_name + " found no cards to read."
+		_consume_current_humbaba_prompt()
+		call_deferred("_show_next_humbaba_augury_prompt")
+		update_ui()
+		return
+
+	var on_choose_augury := func(chosen_card: Card) -> void:
+		if _is_networked_client:
+			game_input.submit_action({
+				"type": "humbaba_augury_choice",
+				"source_uid": card.uid,
+				"target_uid": chosen_card.uid,
+			})
+			return
+		action_label.text = card.resolve_augury_reading(game_manager, chosen_card)
+		_consume_current_humbaba_prompt()
+		update_ui()
+		call_deferred("_show_next_humbaba_augury_prompt")
+	var on_default_augury := func() -> void:
+		if _is_networked_client:
+			game_input.submit_action({
+				"type": "humbaba_augury_choice",
+				"source_uid": card.uid,
+				"target_uid": "",
+			})
+			return
+		action_label.text = card.resolve_augury_reading(game_manager, current_targets[0])
+		_consume_current_humbaba_prompt()
+		update_ui()
+		call_deferred("_show_next_humbaba_augury_prompt")
+
+	_show_card_selection_overlay(
+		"Choose a card to prime for " + card.card_name,
+		current_targets,
+		on_choose_augury,
+		on_default_augury,
+		"",
+		"Prime Top Card"
+	)
+	action_label.text = card.card_name + ": choose one of the top cards to prime."
+	update_ui()
+
 func _show_next_humbaba_augury_prompt() -> void:
 	if _active_humbaba_prompt != null:
 		return
@@ -9483,36 +9559,19 @@ func _show_next_humbaba_augury_prompt() -> void:
 			update_ui()
 			continue
 		_active_humbaba_prompt = card
-		var on_choose_augury := func(chosen_card: Card) -> void:
-			var resolved_card := _active_humbaba_prompt
-			_active_humbaba_prompt = null
-			if resolved_card == null or game_manager == null:
-				call_deferred("_show_next_humbaba_augury_prompt")
-				return
-			action_label.text = resolved_card.resolve_augury_reading(game_manager, chosen_card)
-			update_ui()
-			call_deferred("_show_next_humbaba_augury_prompt")
-		var on_cancel_augury := func() -> void:
-			var resolved_card := _active_humbaba_prompt
-			_active_humbaba_prompt = null
-			if resolved_card == null or game_manager == null:
-				call_deferred("_show_next_humbaba_augury_prompt")
-				return
-			var fallback_targets: Array[Card] = resolved_card.get_augury_cards(game_manager)
-			if fallback_targets.is_empty():
-				action_label.text = resolved_card.card_name + " found no cards to read."
-			else:
-				action_label.text = resolved_card.resolve_augury_reading(game_manager, fallback_targets[0])
-			update_ui()
-			call_deferred("_show_next_humbaba_augury_prompt")
-		_show_card_selection_overlay(
-			"Choose a card to prime for " + card.card_name,
-			current_targets,
-			on_choose_augury,
-			on_cancel_augury
-		)
-		action_label.text = card.card_name + ": choose one of the top cards to prime."
-		update_ui()
+		var prompt_player := _get_humbaba_augury_prompt_player(card)
+		if network_manager != null and network_manager.is_server and prompt_player != null and not _is_player_local(prompt_player):
+			var player_idx := game_manager.players.find(prompt_player)
+			var target_uids: Array[String] = []
+			for target in current_targets:
+				if target != null:
+					target_uids.append(target.uid)
+			match_manager.request_ui_interaction.emit(player_idx, "humbaba_augury", {
+				"source_uid": card.uid,
+				"target_uids": target_uids,
+			})
+			return
+		call_deferred("_show_humbaba_augury_prompt", card, current_targets)
 		return
 
 func _queue_huginn_perish_prime_prompt(card: Huginn) -> void:
@@ -15414,6 +15473,13 @@ func _on_match_move_validated(move: Dictionary) -> void:
 			if not _is_networked_client:
 				if not _show_next_wolf_adolescent_maturation_prompt():
 					_finish_wolf_adolescent_turn_start_sequence()
+		"humbaba_augury_choice":
+			var feedback := _consume_resolution_feedback()
+			if feedback.strip_edges() != "":
+				action_label.text = feedback
+			_consume_current_humbaba_prompt()
+			if not _is_networked_client:
+				call_deferred("_show_next_humbaba_augury_prompt")
 		"wheel_of_fire_turn_start_choice":
 			var feedback := _consume_resolution_feedback()
 			if feedback.strip_edges() != "":
@@ -15592,6 +15658,15 @@ func _on_match_ui_interaction(player_index: int, type: String, data: Dictionary)
 					if target_card != null:
 						prompt_targets.append(target_card)
 				_show_wolf_adolescent_maturation_prompt(card, prompt_targets)
+		"humbaba_augury":
+			var card := game_manager.get_card_by_uid(data.get("source_uid", "")) as HumbabaTheTerrible
+			if card != null:
+				var prompt_targets: Array[Card] = []
+				for target_uid in data.get("target_uids", []):
+					var target_card := game_manager.get_card_by_uid(str(target_uid))
+					if target_card != null:
+						prompt_targets.append(target_card)
+				_show_humbaba_augury_prompt(card, prompt_targets)
 		"wheel_of_fire_turn_start":
 			var card := game_manager.get_card_by_uid(data.get("source_uid", "")) as WheelOfFire
 			if card != null:
@@ -16279,6 +16354,15 @@ func _apply_ui_interaction(event_data: Dictionary) -> void:
 					if target_card != null:
 						prompt_targets.append(target_card)
 				_show_wolf_adolescent_maturation_prompt(card, prompt_targets)
+		"humbaba_augury":
+			var card := game_manager.get_card_by_uid(payload.get("source_uid", "")) as HumbabaTheTerrible
+			if card != null:
+				var prompt_targets: Array[Card] = []
+				for target_uid in payload.get("target_uids", []):
+					var target_card := game_manager.get_card_by_uid(str(target_uid))
+					if target_card != null:
+						prompt_targets.append(target_card)
+				_show_humbaba_augury_prompt(card, prompt_targets)
 		"wheel_of_fire_turn_start":
 			var card := game_manager.get_card_by_uid(payload.get("source_uid", "")) as WheelOfFire
 			if card != null:
@@ -16720,6 +16804,29 @@ func _apply_intercept_offered(data: Dictionary) -> void:
 		action_label.text = msg
 	_show_intercept_prompt(data.get("interceptor_uids", []))
 
+func _make_intercept_prompt_art(card: Card) -> Control:
+	var frame := PanelContainer.new()
+	frame.custom_minimum_size = Vector2(44, 44)
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.12, 0.12, 0.18, 0.96)
+	style.border_color = Color(0.88, 0.52, 0.28, 0.95)
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		style.set_border_width(side, 1)
+	frame.add_theme_stylebox_override("panel", style)
+
+	if card != null and card.art_path != "":
+		var tex := load(card.art_path) as Texture2D
+		if tex != null:
+			var art := TextureRect.new()
+			art.texture = tex
+			art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+			art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			art.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+			art.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			frame.add_child(art)
+
+	return frame
+
 func _show_intercept_prompt(interceptor_uids: Array) -> void:
 	var panel = get_node_or_null("InterceptPromptPanel")
 	if panel == null:
@@ -16731,7 +16838,7 @@ func _show_intercept_prompt(interceptor_uids: Array) -> void:
 		for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
 			style.set_border_width(side, 2)
 		panel.add_theme_stylebox_override("panel", style)
-		panel.custom_minimum_size.x = 220
+		panel.custom_minimum_size.x = 300
 		add_child(panel)
 		_promote_transient_ui(panel)
 		panel.anchor_left = 1.0
@@ -16768,13 +16875,21 @@ func _show_intercept_prompt(interceptor_uids: Array) -> void:
 			continue
 		var card_name := card.card_name
 		var captured_interceptor_uid: String = interceptor_uid as String
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 8)
+		vbox.add_child(row)
+
+		var art_frame := _make_intercept_prompt_art(card)
+		row.add_child(art_frame)
+
 		var btn := Button.new()
 		btn.text = "Intercept: " + card_name
+		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		btn.pressed.connect(func() -> void:
 			_hide_intercept_prompt()
 			network_manager.request_action({type = "intercept_decision", interceptor_uid = captured_interceptor_uid})
 		)
-		vbox.add_child(btn)
+		row.add_child(btn)
 
 	_promote_transient_ui(panel)
 	panel.show()

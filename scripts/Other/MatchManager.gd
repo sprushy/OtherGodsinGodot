@@ -1051,6 +1051,9 @@ func _get_required_player_for_command(command: Dictionary) -> Player:
 			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("skoll_uid", ""))))
 		"activate_card_ability", "en_hedu_anna_exaltation", "aphrodite_enslave_choice", "blessed_knights_choice", "wolf_adolescent_maturation_choice", "wheel_of_fire_turn_start_choice", "tezcatlipoca_active_titlacauan_choice":
 			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("source_uid", ""))))
+		"humbaba_augury_choice":
+			var humbaba := game_manager.get_card_by_uid(str(command.get("source_uid", ""))) as HumbabaTheTerrible
+			return game_manager.get_opponent(humbaba.get_controller()) if humbaba != null else null
 		"wolf_master_summon":
 			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("fenrir_uid", ""))))
 		"intercept_decision":
@@ -1108,7 +1111,7 @@ func _get_command_actor(sender_info: Dictionary) -> Player:
 
 func _requires_resolved_upkeep(command_type: String) -> bool:
 	match command_type:
-		"upkeep_choice", "tiamat_upkeep_choice", "priority_pass", "intercept_decision", "combat_retreat_decision", "play_hex_response", "play_charm_response", "play_priority_ability", "forfeit":
+		"upkeep_choice", "tiamat_upkeep_choice", "priority_pass", "intercept_decision", "combat_retreat_decision", "play_hex_response", "play_charm_response", "play_priority_ability", "forfeit", "humbaba_augury_choice":
 			return false
 	return true
 
@@ -1838,6 +1841,26 @@ func _process_command_impl(command: Dictionary) -> bool:
 				move_failed.emit("wolf_adolescent_maturation_choice: invalid Lupine target")
 				return false
 			var feedback := wolf.resolve_maturation_choice(game_manager, target)
+			if feedback.strip_edges() != "":
+				game_manager.note_player_feedback(feedback)
+			move_validated.emit(command)
+			return true
+		"humbaba_augury_choice":
+			var source_uid: String = command.get("source_uid", "")
+			var humbaba := game_manager.get_card_by_uid(source_uid) as HumbabaTheTerrible
+			if humbaba == null:
+				move_failed.emit("humbaba_augury_choice: card not found")
+				return false
+			var valid_targets := humbaba.get_augury_cards(game_manager)
+			if valid_targets.is_empty():
+				move_failed.emit("humbaba_augury_choice: no cards available to prime")
+				return false
+			var target_uid: String = command.get("target_uid", "")
+			var target: Card = game_manager.get_card_by_uid(target_uid) if target_uid != "" else null
+			if target != null and target not in valid_targets:
+				move_failed.emit("humbaba_augury_choice: invalid card choice")
+				return false
+			var feedback := humbaba.resolve_augury_reading(game_manager, target)
 			if feedback.strip_edges() != "":
 				game_manager.note_player_feedback(feedback)
 			move_validated.emit(command)

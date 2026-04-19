@@ -117,6 +117,24 @@ func _queue_wolf_adolescent_maturation_prompt(card: WolfAdolescent) -> void:
 		"target_uids": target_uids,
 	})
 
+func _queue_humbaba_augury_reading_prompt(card: HumbabaTheTerrible) -> void:
+	if card == null or game_manager == null or match_manager == null:
+		return
+	var prompt_player := game_manager.get_opponent(card.get_controller())
+	var player_idx := game_manager.players.find(prompt_player)
+	if player_idx < 0:
+		return
+	var target_uids: Array[String] = []
+	for target in card.get_augury_cards(game_manager):
+		if target != null:
+			target_uids.append(target.uid)
+	if target_uids.is_empty():
+		return
+	match_manager.request_ui_interaction.emit(player_idx, "humbaba_augury", {
+		"source_uid": card.uid,
+		"target_uids": target_uids,
+	})
+
 func _validate_config(config: Dictionary) -> String:
 	if config.is_empty():
 		return "Dedicated headless match config was empty."

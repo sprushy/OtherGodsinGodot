@@ -1226,6 +1226,16 @@ func _is_card_attacking_on_stack(card: Card) -> bool:
 			return true
 	return false
 
+func _is_card_intercepting_on_stack(card: Card) -> bool:
+	if card == null or game_manager == null:
+		return false
+	for action in game_manager.action_stack:
+		if action == null or action.type != CardAction.Type.ATTACK:
+			continue
+		if action.interceptor == card:
+			return true
+	return false
+
 func _is_god_targeted_by_followers_attack(card: Card) -> bool:
 	if card == null or not card.is_god or game_manager == null or owning_player == null:
 		return false
@@ -1418,7 +1428,7 @@ func _refresh_display() -> void:
 			_add_power_lock_overlay(fd_overlay, card)
 			if card.get_controller() == face_down_viewer and card.is_prepared and card.is_magical_card():
 				_add_speed_badge(fd_overlay, card)
-			if _is_card_attacking_on_stack(card):
+			if _is_card_attacking_on_stack(card) or _is_card_intercepting_on_stack(card):
 				_add_attack_aura(fd_overlay)
 			if _is_card_targeted_on_stack(card) or _is_card_pending_target(card):
 				_add_target_aura(fd_overlay)
@@ -1445,7 +1455,7 @@ func _refresh_display() -> void:
 				god_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				god_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 				add_child(god_overlay)
-				if _is_card_attacking_on_stack(card):
+				if _is_card_attacking_on_stack(card) or _is_card_intercepting_on_stack(card):
 					_add_attack_aura(god_overlay)
 				if _should_show_playing_aura(card):
 					_add_playing_aura(god_overlay)
@@ -1592,7 +1602,7 @@ func _refresh_display() -> void:
 		card_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		card_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		add_child(card_overlay)
-		if _is_card_attacking_on_stack(card):
+		if _is_card_attacking_on_stack(card) or _is_card_intercepting_on_stack(card):
 			_add_attack_aura(card_overlay)
 		if _should_show_playing_aura(card):
 			_add_playing_aura(card_overlay)
