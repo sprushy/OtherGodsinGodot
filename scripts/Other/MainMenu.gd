@@ -1063,6 +1063,22 @@ func _connect_to_browseable_lobby(connect_status: String) -> void:
 	if connect_err != OK:
 		status_label.text = "Could not connect to the lobby."
 
+func _maybe_connect_authenticated_lobby(connect_status: String = "Connecting to lobby...") -> void:
+	if _get_selected_auth_mode() not in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
+		return
+	var auth_error := _validate_auth_inputs()
+	if not auth_error.is_empty():
+		status_label.text = auth_error
+		return
+	var target_error := _validate_multiplayer_target()
+	if not target_error.is_empty():
+		status_label.text = target_error
+		return
+	_pending_host_room_creation = false
+	_pending_join_room_id = ""
+	_pending_local_lobby_launch_on_connect_failure = false
+	_connect_to_browseable_lobby(connect_status)
+
 func _run_pending_multiplayer_action() -> void:
 	if lobby_client == null:
 		return
@@ -2038,6 +2054,8 @@ func _complete_auth_onboarding(auth_mode: String, message: String) -> void:
 	if multiplayer_button != null:
 		multiplayer_button.grab_focus()
 	_dismiss_auth_onboarding()
+	if auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
+		call_deferred("_maybe_connect_authenticated_lobby", "Signing in to lobby...")
 
 func _dismiss_auth_onboarding() -> void:
 	if _auth_onboarding_overlay == null:
@@ -2210,13 +2228,14 @@ func _on_card_test_pressed() -> void:
 	await card_test.start_game()
 
 func _on_practice_thor_pressed() -> void:
+	_refresh_multiplayer_deck_options()
+	var selected_practice_deck := _get_selected_multiplayer_deck()
 	_match_launch_queued = false
 	_cleanup_lobby(true)
 	var practice_game = _show_embedded_game("PracticeThor")
 	show_game()
 	if practice_game != null:
-		_refresh_multiplayer_deck_options()
-		practice_game.set_player_practice_deck(_get_selected_multiplayer_deck())
+		practice_game.set_player_practice_deck(selected_practice_deck)
 		await practice_game.start_game()
 
 func _on_host_game_pressed() -> void:
@@ -2656,6 +2675,7 @@ func _return_to_menu() -> void:
 	if db:
 		db.queue_free()
 	multiplayer_container.visible = false
+	_maybe_connect_authenticated_lobby("Reconnecting to lobby...")
 
 func _cleanup_lobby(clear_session: bool) -> void:
 	_cleanup_lobby_client()
@@ -3875,6 +3895,8 @@ func _restore_auth_preferences() -> void:
 		_apply_guest_display_name("Guest")
 	_refresh_auth_controls()
 	_refresh_account_identity_label()
+	if auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
+		call_deferred("_maybe_connect_authenticated_lobby", "Restoring lobby session...")
 
 func _on_auth_mode_selected(_index: int) -> void:
 	if _auth_mode_option != null and _auth_mode_option.item_count > 0:

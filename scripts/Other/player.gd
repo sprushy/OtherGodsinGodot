@@ -192,6 +192,7 @@ func game_over() -> void:
 func move_card(card: Card, to_zone: Zone) -> void:
 	var from_zone = card.current_zone
 	var destination_zone := _resolve_destination_zone(card, from_zone, to_zone)
+	var detached_equipment: Array[Card] = []
 	if destination_zone == hand_zone \
 			and card != null \
 			and card.current_zone != hand_zone \
@@ -208,7 +209,8 @@ func move_card(card: Card, to_zone: Zone) -> void:
 	)
 	
 	if creature_left_board:
-		for equip in card.equipment.duplicate():
+		detached_equipment.assign(card.equipment.duplicate())
+		for equip in detached_equipment:
 			if equip == null:
 				continue
 			equip.unequip()
@@ -235,6 +237,9 @@ func move_card(card: Card, to_zone: Zone) -> void:
 		from_zone.remove_card(card)
 	destination_zone.add_card(card)
 	card_moved.emit(card, from_zone, destination_zone)
+
+	if creature_left_board and from_zone != null:
+		_reposition_detached_equipment(from_zone, detached_equipment)
 	
 	if card.is_creature_card() and destination_zone != null and destination_zone.is_board_zone():
 		for equip in card.equipment.duplicate():
@@ -244,6 +249,58 @@ func move_card(card: Card, to_zone: Zone) -> void:
 			if equip_zone == destination_zone:
 				continue
 			equip.card_owner.move_card(equip, destination_zone)
+
+func _reposition_detached_equipment(source_zone: Zone, detached_equipment: Array[Card]) -> void:
+	if source_zone == null or not source_zone.is_board_zone():
+		return
+	var dropped_equipment: Array[Card] = []
+	for equip in detached_equipment:
+		if equip == null:
+			continue
+		if equip.card_type != Card.CardType.EQUIPMENT:
+			continue
+		if equip.current_zone != source_zone:
+			continue
+		dropped_equipment.append(equip)
+	if dropped_equipment.size() <= 1:
+		return
+
+	var available_zones := _get_nearest_available_board_zones(source_zone)
+	for i in range(1, dropped_equipment.size()):
+		if available_zones.is_empty():
+			return
+		var equip := dropped_equipment[i]
+		var destination := available_zones.pop_front() as Zone
+		if equip != null and destination != null:
+			move_card(equip, destination)
+
+func _get_nearest_available_board_zones(source_zone: Zone) -> Array[Zone]:
+	var same_row: Array[Zone] = []
+	var other_row: Array[Zone] = []
+	for zone in frontline_zones + reserve_zones:
+		if zone == null or zone == source_zone:
+			continue
+		if not zone.cards.is_empty():
+			continue
+		if zone.zone_type == source_zone.zone_type:
+			same_row.append(zone)
+		else:
+			other_row.append(zone)
+	_sort_board_zones_by_proximity(same_row, source_zone.zone_index)
+	_sort_board_zones_by_proximity(other_row, source_zone.zone_index)
+	var ordered: Array[Zone] = []
+	ordered.append_array(same_row)
+	ordered.append_array(other_row)
+	return ordered
+
+func _sort_board_zones_by_proximity(zones: Array[Zone], source_index: int) -> void:
+	zones.sort_custom(func(a: Zone, b: Zone) -> bool:
+		var a_distance = abs(a.zone_index - source_index)
+		var b_distance = abs(b.zone_index - source_index)
+		if a_distance == b_distance:
+			return a.zone_index < b.zone_index
+		return a_distance < b_distance
+	)
 
 func draw_card() -> Card:
 	if deck_zone.get_card_count() > 0:
