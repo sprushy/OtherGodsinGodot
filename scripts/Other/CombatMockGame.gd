@@ -9789,14 +9789,14 @@ func _begin_gugalanna_impact_targeting(card: GugalannaBullOfHeaven, prompt_targe
 		card.apply_celestial_charge(game_manager, null)
 		_resume_after_deferred_resolution(card.card_name + " skips Celestial Charge and stays on the field.")
 	_begin_pending_click_selection(
-			card.card_name + ": Celestial Charge",
-			card,
-			validate_celestial_charge,
-			confirm_celestial_charge,
-			cancel_celestial_charge
-		)
-		action_label.text = card.card_name + ": click a target (Res 30+, slower Spd) â€” or press Cancel to skip."
-		update_ui()
+		card.card_name + ': Celestial Charge',
+		card,
+		validate_celestial_charge,
+		confirm_celestial_charge,
+		cancel_celestial_charge
+	)
+	action_label.text = card.card_name + ': click a target (Res 30+, slower Spd) or press Cancel to skip.'
+	update_ui()
 
 func _queue_nergal_lion_impact_prompt(card: NergalLion, prompt_targets: Array = []) -> void:
 	if card == null or game_manager == null:
@@ -16714,7 +16714,7 @@ func _on_match_move_validated(move: Dictionary) -> void:
 				if not _show_next_wheel_of_fire_turn_start_prompt():
 					_finish_wheel_of_fire_turn_start_sequence()
 		"en_hedu_anna_exaltation":
-			var card := game_manager.get_card_by_uid(str(move.get("source_uid", ""))) as EnHeduAnnaScript
+			var card := game_manager.get_card_by_uid(str(move.get("source_uid", ""))) as EnHeduAnna
 			var option: Dictionary = move.get("option", {})
 			if card != null:
 				action_label.text = "%s gains %s and cannot attack, be destroyed, or be targeted until the end of the next turn." % [
@@ -16729,7 +16729,10 @@ func _on_match_move_validated(move: Dictionary) -> void:
 			if confirmed:
 				awaiting_god_ability_target = true
 				god_ability_source = god
-				action_label.text = god.card_name + " - Violent Delights: click an enemy creature to enslave." if god != null else "Violent Delights: click an enemy creature to enslave."
+				if god != null:
+					action_label.text = god.card_name + " - Violent Delights: click an enemy creature to enslave."
+				else:
+					action_label.text = "Violent Delights: click an enemy creature to enslave."
 			else:
 				awaiting_god_ability_target = false
 				god_ability_source = null
@@ -16810,6 +16813,11 @@ func _submit_prompt_choice_command(command: Dictionary) -> bool:
 	if game_input == null:
 		return false
 	return bool(game_input.submit_action(command))
+
+func _submit_network_command(command: Dictionary) -> bool:
+	# Compatibility shim for older prompt code paths; current flow uses
+	# _submit_prompt_choice_command(), but keeping this avoids stale parser failures.
+	return _submit_prompt_choice_command(command)
 
 func _apply_prompt_choice_feedback() -> void:
 	var feedback := _consume_resolution_feedback()
