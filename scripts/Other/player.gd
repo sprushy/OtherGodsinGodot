@@ -21,6 +21,7 @@ var attack_restriction_turns: int = 0
 var card_collection: Array[Card] = []
 var current_deck: Array[Card] = []
 var game_manager: GameManager = null
+var reserved_active_god: ActiveGodCard = null
 
 var hand_zone: Zone
 var deck_zone: Zone
@@ -193,6 +194,8 @@ func move_card(card: Card, to_zone: Zone) -> void:
 	var from_zone = card.current_zone
 	var destination_zone := _resolve_destination_zone(card, from_zone, to_zone)
 	var detached_equipment: Array[Card] = []
+	if card != null and card == reserved_active_god and destination_zone != null:
+		reserved_active_god = null
 	if destination_zone == hand_zone \
 			and card != null \
 			and card.current_zone != hand_zone \

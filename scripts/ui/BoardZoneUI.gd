@@ -3,6 +3,10 @@ extends PanelContainer
 
 const CardDetailContentBuilder = preload("res://scripts/ui/CardDetailContentBuilder.gd")
 const LockedPowerCursor = preload("res://scripts/ui/LockedPowerCursor.gd")
+const BASE_BOARD_Z_INDEX := 0
+const RAISED_BOARD_Z_INDEX := 2
+const HOVER_BOARD_Z_INDEX := 1050
+const POPUP_Z_INDEX := 1100
 
 class StackTargetIndicator extends Control:
 	func _ready() -> void:
@@ -430,6 +434,39 @@ func _add_overlay_stat_badge(
 	overlay.add_child(badge)
 	return badge
 
+func _add_level_badge(
+	overlay: Control,
+	card: Card,
+	anchor_preset: int,
+	left: float,
+	top: float,
+	right: float,
+	bottom: float
+) -> PanelContainer:
+	if overlay == null or card == null or card.is_god:
+		return null
+	var effective_level := card.get_effective_level()
+	var font_color := Color(1.0, 0.96, 0.78)
+	if effective_level > card.level:
+		font_color = Color(0.4, 1.0, 0.4)
+	elif effective_level < card.level:
+		font_color = Color(1.0, 0.35, 0.35)
+	var badge := _add_overlay_stat_badge(
+		overlay,
+		"LV:%d" % effective_level,
+		anchor_preset,
+		left,
+		top,
+		right,
+		bottom,
+		font_color
+	)
+	var breakdown := card.get_full_stat_breakdown("lvl")
+	if badge != null and breakdown != "":
+		badge.tooltip_text = breakdown
+		badge.mouse_filter = Control.MOUSE_FILTER_STOP
+	return badge
+
 func _add_hidden_creature_stat_badge(
 	overlay: Control,
 	card: Card,
@@ -540,10 +577,32 @@ func _add_attack_aura(overlay: Control) -> void:
 	if overlay == null:
 		return
 
-	var aura := AttackAura.new()
-	aura.z_index = 1
-	aura.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	overlay.add_child(aura)
+	var glow := ColorRect.new()
+	glow.color = Color(0.98, 0.12, 0.10, 0.20)
+	glow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	glow.z_index = 3
+	glow.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	overlay.add_child(glow)
+
+	var ring := PanelContainer.new()
+	ring.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ring.z_index = 4
+	ring.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	ring.offset_left = 4
+	ring.offset_top = 4
+	ring.offset_right = -4
+	ring.offset_bottom = -4
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.0, 0.0, 0.0, 0.0)
+	style.border_color = Color(1.0, 0.34, 0.22, 0.98)
+	style.corner_radius_top_left = 10
+	style.corner_radius_top_right = 10
+	style.corner_radius_bottom_left = 10
+	style.corner_radius_bottom_right = 10
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		style.set_border_width(side, 3)
+	ring.add_theme_stylebox_override("panel", style)
+	overlay.add_child(ring)
 
 func _add_followers_attack_target_tint(overlay: Control) -> void:
 	if overlay == null:
@@ -1374,7 +1433,11 @@ func setup(p_zone: Zone, p_gm: GameManager, p_player: Player, idx: int,
 	custom_minimum_size = get_zone_size()
 	size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	mouse_filter = Control.MOUSE_FILTER_STOP
+	z_as_relative = false
 	_refresh_display()
+
+func _get_resting_z_index() -> int:
+	return RAISED_BOARD_Z_INDEX if (_raised_overlay and is_instance_valid(_raised_overlay)) else BASE_BOARD_Z_INDEX
 
 func _refresh_display() -> void:
 	if not is_inside_tree() or is_queued_for_deletion():
@@ -1485,7 +1548,7 @@ func _refresh_display() -> void:
 			var _fd_is_def := card.card_type == Card.CardType.CREATURE and card.creature_mode == Card.CreatureMode.DEFENSIVE
 			_defense_overlay = fd_overlay if _fd_is_def else null
 			_raised_overlay  = fd_overlay if (_fd_is_def or card.is_stealth) else null
-			z_index = 2 if _raised_overlay != null else 0
+			z_index = _get_resting_z_index()
 			return
 
 		# God slot: show art image filling the zone
@@ -1563,6 +1626,7 @@ func _refresh_display() -> void:
 				deck_lbl.offset_top = 4
 				deck_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				god_overlay.add_child(deck_lbl)
+				_add_level_badge(god_overlay, card, Control.PRESET_TOP_LEFT, 6, 24, 54, 42)
 
 				var _effect_lines: Array[String] = []
 				if card.has_method("get_effect_summary_lines"):
@@ -1694,6 +1758,7 @@ func _refresh_display() -> void:
 				art.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 				art.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				card_overlay.add_child(art)
+		_add_level_badge(card_overlay, card, Control.PRESET_TOP_LEFT, 6, 6, 54, 24)
 
 		_add_sleep_affordance(card_overlay, card)
 		var board_viewer := _get_viewer_player()
@@ -1817,7 +1882,7 @@ func _refresh_display() -> void:
 
 		_defense_overlay = card_overlay if is_def_creature else null
 		_raised_overlay  = card_overlay if (is_def_creature or card.is_stealth) else null
-		z_index = 2 if _raised_overlay != null else 0
+		z_index = _get_resting_z_index()
 
 	else:
 		# Empty zone styling - God slot gets gold treatment
@@ -1902,7 +1967,7 @@ func _notification(what: int) -> void:
 
 		NOTIFICATION_MOUSE_ENTER:
 			_hovered = true
-			z_index = 10
+			z_index = HOVER_BOARD_Z_INDEX
 			var _c := zone.cards[0] if zone != null and zone.cards.size() > 0 else null
 			var viewer := _get_viewer_player()
 			if _c != null and (not _c.is_face_down or _c.get_controller() == viewer or _is_public_power(_c) or _c.is_temporarily_revealed()):
@@ -1913,7 +1978,7 @@ func _notification(what: int) -> void:
 					)
 		NOTIFICATION_MOUSE_EXIT:
 			_hovered = false
-			z_index = 2 if (_raised_overlay and is_instance_valid(_raised_overlay)) else 0
+			z_index = _get_resting_z_index()
 			_schedule_hide()
 
 func _schedule_hide() -> void:
@@ -1985,7 +2050,9 @@ func _show_ability_popup() -> void:
 	pstyle.border_color = Color(0.5, 0.5, 0.75)
 	popup.add_theme_stylebox_override("panel", pstyle)
 	popup.mouse_filter = Control.MOUSE_FILTER_STOP
-	popup.z_index = 200
+	popup.top_level = true
+	popup.z_as_relative = false
+	popup.z_index = POPUP_Z_INDEX
 	popup.mouse_exited.connect(func() -> void:
 		if not _pinned:
 			_schedule_hide()
@@ -2026,6 +2093,8 @@ func _show_ability_popup() -> void:
 					binding_lines_shared.append(DROMI_BINDING_NAME + ": " + DROMI_BINDING_HOVER_TEXT)
 		elif card.card_type == Card.CardType.STRUCTURE:
 			effect_lines_shared = card.get_effect_summary_lines()
+		elif card.card_type == Card.CardType.EQUIPMENT:
+			effect_lines_shared = card.get_effect_summary_lines()
 		if card is PowerCard:
 			power_cost_lines_shared = _get_power_hover_cost_lines(card as PowerCard)
 
@@ -2045,6 +2114,7 @@ func _show_ability_popup() -> void:
 
 	_popup = popup
 	scene_root.add_child(popup)
+	popup.move_to_front()
 
 	await get_tree().process_frame
 	if not is_instance_valid(popup):

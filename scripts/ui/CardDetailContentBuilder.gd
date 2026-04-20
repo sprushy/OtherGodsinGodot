@@ -36,7 +36,7 @@ static func build_visual_hover_body(card: Card, viewer: Player, config: Dictiona
 		vbox.add_child(type_lbl)
 
 	var meta_parts: Array[String] = []
-	if card.get_effective_level() > 0:
+	if not card.is_god and card.get_effective_level() > 0:
 		meta_parts.append("Level " + str(card.get_effective_level()))
 	meta_parts.append("Mana: " + str(display_mana_cost))
 	if card.culture != "":

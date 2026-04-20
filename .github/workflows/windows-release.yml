@@ -40,9 +40,9 @@ jobs:
       - name: Package release zips
         run: |
           cd .exports/windows
-          zip -9 -r ../../dist/ClaudeOtherGods-windows.zip ClaudeOtherGods.exe
+          zip -9 -r ../../dist/ClaudeOtherGods-windows.zip *
           cd ../server
-          zip -9 -r ../../dist/ClaudeOtherGodsServer-windows.zip ClaudeOtherGodsServer.exe
+          zip -9 -r ../../dist/ClaudeOtherGodsServer-windows.zip *
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4

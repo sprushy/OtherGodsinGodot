@@ -173,6 +173,28 @@ func _make_name_label() -> Label:
 	name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return name_lbl
 
+func _make_level_label() -> Label:
+	if card_data == null or card_data.is_god:
+		return null
+	var level_lbl := Label.new()
+	var effective_level := card_data.get_effective_level()
+	level_lbl.text = "LV %d" % effective_level
+	level_lbl.add_theme_font_size_override("font_size", 13)
+	level_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	var level_breakdown := card_data.get_buff_tooltip("lvl")
+	if effective_level > card_data.level:
+		level_lbl.add_theme_color_override("font_color", Color(0.4, 1.0, 0.4))
+	elif effective_level < card_data.level:
+		level_lbl.add_theme_color_override("font_color", Color(1.0, 0.35, 0.35))
+	else:
+		level_lbl.add_theme_color_override("font_color", Color(0.95, 0.9, 0.65))
+	if level_breakdown != "":
+		level_lbl.tooltip_text = "LVL:\n" + level_breakdown
+		level_lbl.mouse_filter = Control.MOUSE_FILTER_STOP
+	else:
+		level_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return level_lbl
+
 func _populate_vbox(vbox: VBoxContainer) -> void:
 	var top_row := HBoxContainer.new()
 	top_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -180,6 +202,10 @@ func _populate_vbox(vbox: VBoxContainer) -> void:
 
 	if not card_data.name_at_bottom:
 		top_row.add_child(_make_name_label())
+
+	var level_lbl := _make_level_label()
+	if level_lbl != null:
+		top_row.add_child(level_lbl)
 
 	var display_mana_cost := _get_display_mana_cost()
 	var cost_text := card_data.get_cost_shorthand(display_mana_cost)

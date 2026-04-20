@@ -130,11 +130,13 @@ func _count_frontline_creatures(player: Player) -> int:
 func get_champions_call_candidate(_allow_fallback: bool = true) -> Card:
 	if card_owner == null:
 		return null
+	var reserved_manifestation := get_reserved_active_god_candidate()
+	if reserved_manifestation != null:
+		return reserved_manifestation
 	for zone in [
 		card_owner.hand_zone,
 		card_owner.deck_zone,
 		card_owner.graveyard_zone,
-		card_owner.abyss_zone,
 	] + card_owner.frontline_zones + card_owner.reserve_zones:
 		for card in zone.cards:
 			var active_god := card as ActiveGodCard

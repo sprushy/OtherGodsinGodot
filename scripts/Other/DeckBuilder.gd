@@ -12,6 +12,7 @@ func build_deck(player: Player, selected_cards: Array[Card], special_setup: Dict
 			unique_cards.append(card.duplicate(true))
 			
 		player.current_deck = unique_cards.duplicate()
+		player.reserved_active_god = null
 		
 		var god_card: Card = null
 		var power_cards: Array[Card] = []
@@ -49,7 +50,8 @@ func build_deck(player: Player, selected_cards: Array[Card], special_setup: Dict
 		for card in regular_cards:
 			player.deck_zone.add_card(card)
 		if reserved_active_god != null:
-			player.abyss_zone.add_card(reserved_active_god)
+			reserved_active_god.current_zone = null
+			player.reserved_active_god = reserved_active_god
 
 		_apply_special_setup(player, special_setup)
 		

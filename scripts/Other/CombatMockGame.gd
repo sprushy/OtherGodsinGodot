@@ -424,10 +424,10 @@ const ENEMY_HAND_PEEK_MAX_CARDS := 5
 const ENEMY_HAND_CARD_SPACING := 74.0
 const ENEMY_HAND_PEEK_ROTATION := 8.0
 const ENEMY_HAND_OVERLAY_SIDE_PADDING := 76.0
-const ENEMY_HAND_OVERLAY_TOP_PADDING := 6.0
+const ENEMY_HAND_OVERLAY_TOP_PADDING := -2.0
 const PREFERRED_BOARD_ZONE_EXTENT := 196.0
 const HAND_OVERLAY_SIDE_PADDING := 18.0
-const HAND_OVERLAY_BOTTOM_PADDING := 4.0
+const HAND_OVERLAY_BOTTOM_PADDING := -2.0
 const LEFT_PANEL_MIN_WIDTH := 136.0
 const BOARD_RIGHT_NUDGE := 10.0
 const BOARD_HORIZONTAL_OFFSET := -2.0
@@ -3001,7 +3001,7 @@ func draw_hand() -> void:
 	_fan_container.name = "HandOverlay"
 	_fan_container.custom_minimum_size = Vector2(180.0, HAND_DOCK_HEIGHT)
 	_fan_container.mouse_filter = Control.MOUSE_FILTER_PASS
-	_fan_container.clip_contents = true
+	_fan_container.clip_contents = false
 	_fan_container.z_index = TRANSIENT_UI_Z_INDEX - 10
 	add_child(_fan_container)
 
@@ -5193,7 +5193,7 @@ func _create_centered_overlay_panel(overlay: Control, width_ratio: float = 0.90,
 	return panel
 
 func _show_zone_contents(zone_name: String, zone: Zone) -> void:
-	if zone.cards.size() == 0:
+	if zone.cards.is_empty():
 		action_label.text = zone_name + " is empty."
 		return
 
@@ -12725,12 +12725,28 @@ func _is_intercept_prompt_visible() -> bool:
 	var panel = get_node_or_null("InterceptPromptPanel")
 	return panel != null and panel.visible
 
+func _has_unresolved_priority_state() -> bool:
+	return _is_priority_prompt_visible() \
+		or _is_intercept_prompt_visible() \
+		or _executing_stack_action \
+		or _deferred_priority_flush_scheduled \
+		or not _pending_summon_priority_events.is_empty() \
+		or not _pending_hand_play_events.is_empty() \
+		or (
+			game_manager != null
+			and not _stack_resolution_paused
+			and not game_manager.action_stack.is_empty()
+		)
+
 func _reject_priority_locked_action(reason: String = "Only legal priority responses can be used right now.") -> bool:
-	if not _is_priority_prompt_visible():
+	if not _has_unresolved_priority_state():
 		return false
 	if _has_pending_target_selection():
 		return false
-	action_label.text = reason
+	var feedback := reason
+	if not _is_priority_prompt_visible() and feedback == "Only legal priority responses can be used right now.":
+		feedback = "Resolve the pending stack action before continuing."
+	action_label.text = feedback
 	update_ui()
 	return true
 
@@ -12958,6 +12974,13 @@ func _on_attack_followers_pressed() -> void:
 		if block != "":
 			action_label.text = block
 			return
+		var allied_attackers: Array = []
+		var united_front_partner := _get_declared_attack_partner(selected_attacker)
+		if united_front_partner != null:
+			allied_attackers.append(united_front_partner)
+		if game_manager.is_followers_attack_blocked_by_active_structure(selected_attacker, game_manager.other_player, allied_attackers):
+			action_label.text = _get_attack_card_label(selected_attacker, "That creature") + " cannot attack followers through Palisade."
+			return
 		if _is_networked_client:
 			if not _submit_network_attack_request(selected_attacker, game_manager.other_player):
 				action_label.text = "Could not send that attack to the server."
@@ -12979,6 +13002,7 @@ func _creature_can_use_equipment_action(card: Card) -> bool:
 		card.card_type == Card.CardType.CREATURE
 		and (card.can_take_major_creature_action() or card.can_take_minor_creature_action())
 		and not card.is_sleeping
+		and not card.is_stealth
 		and game_manager.turn_number > 0
 		and card.get_controller() == game_manager.current_player
 		and card.current_zone != null
@@ -17458,6 +17482,8 @@ func _continue_end_turn_sequence() -> void:
 
 func _on_end_turn_button_pressed() -> void:
 	if _game_finished:
+		return
+	if _reject_priority_locked_action("Resolve the pending stack action before ending the turn."):
 		return
 	if _is_networked_client:
 		end_turn_button.visible = false

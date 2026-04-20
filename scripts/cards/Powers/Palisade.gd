@@ -15,7 +15,7 @@ func _init() -> void:
 	card_types = ["Power", "Construct", "Summon Structure", "Defense"]
 	targets = false
 	flavor_text = ""
-	ability_text = "[b]Unlock[/b] (1): [b]Activate[/b] - Pay 4 mana to add a LV3, 25 RES Palisade structure to the field. Cards in the same lane behind it cannot be attacked except by Aerial creatures."
+	ability_text = "[b]Unlock[/b] (1): [b]Activate[/b] - Pay 4 mana to add a LV3, 25 RES Palisade structure to the field. Cards and followers on the line behind it cannot be attacked except by Aerial creatures."
 	artist = "Lorinda Tomko"
 	art_path = ART_PATH
 

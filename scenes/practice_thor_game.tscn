@@ -29,6 +29,7 @@ size_flags_vertical = 3
 
 [node name="ActionLabel" type="Label" parent="./MainHBox/LeftPanel"]
 layout_mode = 2
+theme_override_font_sizes/font_size = 24
 autowrap_mode = 3
 
 [node name="ChoiceContainer" type="VBoxContainer" parent="./MainHBox/LeftPanel"]

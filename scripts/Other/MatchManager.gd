@@ -978,7 +978,15 @@ func request_attack(attacker, target) -> void:
 		if not game_manager.can_cards_engage_each_other(attacker_card, target_obj):
 			move_failed.emit(attacker_card.card_name + " cannot engage " + target_obj.card_name + ".")
 			return
-	
+	elif target_obj is Player:
+		var allied_attackers := []
+		var united_front_partner := _get_declared_attack_partner(attacker_card)
+		if united_front_partner != null:
+			allied_attackers.append(united_front_partner)
+		if game_manager.is_followers_attack_blocked_by_active_structure(attacker_card, target_obj, allied_attackers):
+			move_failed.emit(attacker_card.card_name + " cannot attack " + target_obj.player_name + "'s followers.")
+			return
+
 	selected_attacker = attacker_card
 	pending_attack_target = target_obj
 	selected_interceptor = null

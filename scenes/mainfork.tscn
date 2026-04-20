@@ -157,6 +157,7 @@ size_flags_vertical = 3
 
 [node name="ActionLabel" type="Label" parent="Control/GameContainer/MockGame/MainHBox/LeftPanel" unique_id=1244399908]
 layout_mode = 2
+theme_override_font_sizes/font_size = 24
 autowrap_mode = 3
 
 [node name="ChoiceContainer" type="VBoxContainer" parent="Control/GameContainer/MockGame/MainHBox/LeftPanel" unique_id=1118823496]
@@ -286,6 +287,7 @@ size_flags_vertical = 3
 
 [node name="ActionLabel" type="Label" parent="Control/GameContainer/CardTest/MainHBox/LeftPanel" unique_id=-1294967291]
 layout_mode = 2
+theme_override_font_sizes/font_size = 24
 autowrap_mode = 3
 
 [node name="ChoiceContainer" type="VBoxContainer" parent="Control/GameContainer/CardTest/MainHBox/LeftPanel" unique_id=-1294967290]

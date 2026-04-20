@@ -1476,46 +1476,72 @@ func _apply_update_and_restart(zip_path: String) -> void:
 	if _update_download_status_label != null and is_instance_valid(_update_download_status_label):
 		_update_download_status_label.text = "Applying update..."
 
+	var current_exe := OS.get_executable_path()
+	if current_exe.is_empty():
+		_on_auto_update_failed("Couldn't locate the current app executable.")
+		return
+	var staging_root := OS.get_user_data_dir() + "/self_update_staging"
+	if not _clear_update_staging_root(staging_root):
+		_on_auto_update_failed("Couldn't clear the update staging folder.")
+		return
+	if DirAccess.make_dir_recursive_absolute(staging_root) != OK:
+		_on_auto_update_failed("Couldn't create the update staging folder.")
+		return
+
 	var zip := ZIPReader.new()
 	if zip.open(zip_path) != OK:
 		_on_auto_update_failed("Failed to open downloaded archive.")
 		return
 
-	var exe_in_zip := ""
-	for f: String in zip.get_files():
-		if f.ends_with(".exe"):
-			exe_in_zip = f
-			break
-
-	if exe_in_zip.is_empty():
-		zip.close()
-		_on_auto_update_failed("No executable found in archive.")
-		return
-
-	var exe_bytes := zip.read_file(exe_in_zip)
+	var extracted_files := _extract_update_archive_to_staging(zip, staging_root)
 	zip.close()
 	DirAccess.remove_absolute(zip_path)
-
-	var current_exe := OS.get_executable_path()
-	var exe_dir := current_exe.get_base_dir()
-	var new_exe_path := exe_dir + "/ClaudeOtherGods_update.exe"
-
-	var new_exe_file := FileAccess.open(new_exe_path, FileAccess.WRITE)
-	if new_exe_file == null:
-		_on_auto_update_failed("Failed to write update file.")
+	if extracted_files.is_empty():
+		_clear_update_staging_root(staging_root)
+		_on_auto_update_failed("Failed to extract the downloaded update.")
 		return
-	new_exe_file.store_buffer(exe_bytes)
-	new_exe_file.close()
+
+	var exe_dir := current_exe.get_base_dir()
+	var current_exe_name := current_exe.get_file()
+	if not _align_staged_windows_build_names(staging_root, extracted_files, current_exe_name):
+		_clear_update_staging_root(staging_root)
+		_on_auto_update_failed("The downloaded update didn't contain a usable app build.")
+		return
+
+	var batch_dir := OS.get_user_data_dir() + "/self_update_runner"
+	if not _clear_update_staging_root(batch_dir):
+		_on_auto_update_failed("Couldn't clear the updater runner folder.")
+		return
+	if DirAccess.make_dir_recursive_absolute(batch_dir) != OK:
+		_on_auto_update_failed("Couldn't create the updater runner folder.")
+		return
 
 	var current_exe_win := current_exe.replace("/", "\\")
-	var new_exe_win := new_exe_path.replace("/", "\\")
-	var bat_path := exe_dir + "/updater.bat"
+	var exe_dir_win := exe_dir.replace("/", "\\")
+	var staging_root_win := staging_root.replace("/", "\\")
+	var bat_path := batch_dir + "/updater.bat"
+	var bat_path_win := bat_path.replace("/", "\\")
 	var bat_content := (
 		"@echo off\r\n"
-		+ "timeout /t 2 /nobreak >nul\r\n"
-		+ "move /y \"" + new_exe_win + "\" \"" + current_exe_win + "\"\r\n"
-		+ "if %errorlevel% equ 0 start \"\" \"" + current_exe_win + "\"\r\n"
+		+ "setlocal\r\n"
+		+ "set retry_count=0\r\n"
+		+ ":copy_retry\r\n"
+		+ "timeout /t 1 /nobreak >nul\r\n"
+		+ "xcopy /E /I /Y \"" + staging_root_win + "\\*\" \"" + exe_dir_win + "\\\" >nul\r\n"
+		+ "if %errorlevel% lss 4 goto copy_ok\r\n"
+		+ "set /a retry_count+=1\r\n"
+		+ "if %retry_count% lss 15 goto copy_retry\r\n"
+		+ "if %errorlevel% geq 4 goto copy_failed\r\n"
+		+ ":copy_ok\r\n"
+		+ "start \"\" \"" + current_exe_win + "\"\r\n"
+		+ "rd /s /q \"" + staging_root_win + "\"\r\n"
+		+ "rd /s /q \"" + batch_dir.replace("/", "\\") + "\" 2>nul\r\n"
 		+ "(goto) 2>nul & del \"%~f0\"\r\n"
+		+ "exit /b 0\r\n"
+		+ ":copy_failed\r\n"
+		+ "start \"\" \"" + current_exe_win + "\"\r\n"
+		+ "(goto) 2>nul & del \"%~f0\"\r\n"
+		+ "exit /b 1\r\n"
 	)
 	var bat_file := FileAccess.open(bat_path, FileAccess.WRITE)
 	if bat_file == null:
@@ -1524,7 +1550,12 @@ func _apply_update_and_restart(zip_path: String) -> void:
 	bat_file.store_string(bat_content)
 	bat_file.close()
 
-	OS.create_process("C:/Windows/System32/cmd.exe", ["/c", bat_path.replace("/", "\\")])
+	if _update_download_status_label != null and is_instance_valid(_update_download_status_label):
+		_update_download_status_label.text = "Restarting to finish update..."
+	var updater_pid := OS.create_process("C:/Windows/System32/cmd.exe", ["/c", bat_path_win])
+	if updater_pid == -1:
+		_on_auto_update_failed("Failed to launch the updater.")
+		return
 	get_tree().quit()
 
 func _on_auto_update_failed(message: String) -> void:
@@ -1533,6 +1564,106 @@ func _on_auto_update_failed(message: String) -> void:
 		_update_now_button.disabled = false
 	if _update_download_status_label != null and is_instance_valid(_update_download_status_label):
 		_update_download_status_label.text = message
+
+func _extract_update_archive_to_staging(zip: ZIPReader, staging_root: String) -> Array[String]:
+	var extracted_files: Array[String] = []
+	if zip == null:
+		return extracted_files
+	for archive_path_raw: String in zip.get_files():
+		var archive_path := archive_path_raw.replace("\\", "/")
+		if archive_path.is_empty() or archive_path.ends_with("/"):
+			continue
+		var output_path := staging_root.path_join(archive_path)
+		if DirAccess.make_dir_recursive_absolute(output_path.get_base_dir()) != OK:
+			return []
+		var contents := zip.read_file(archive_path_raw)
+		if contents.is_empty() and not archive_path.to_lower().ends_with(".md"):
+			return []
+		var out_file := FileAccess.open(output_path, FileAccess.WRITE)
+		if out_file == null:
+			return []
+		out_file.store_buffer(contents)
+		out_file.close()
+		extracted_files.append(archive_path)
+	return extracted_files
+
+func _align_staged_windows_build_names(
+	staging_root: String,
+	extracted_files: Array[String],
+	current_exe_name: String
+) -> bool:
+	if extracted_files.is_empty() or current_exe_name.is_empty():
+		return false
+	var staged_executable := ""
+	for relative_path in extracted_files:
+		if relative_path.to_lower().ends_with(".exe"):
+			staged_executable = relative_path
+			break
+	if staged_executable.is_empty():
+		return false
+
+	var staged_exe_dir := staged_executable.get_base_dir()
+	if staged_exe_dir == ".":
+		staged_exe_dir = ""
+	var staged_exe_name := staged_executable.get_file()
+	var staged_exe_base := staged_exe_name.get_basename()
+	var current_exe_base := current_exe_name.get_basename()
+
+	if staged_exe_name != current_exe_name:
+		var renamed_exe_relative := current_exe_name if staged_exe_dir.is_empty() else staged_exe_dir.path_join(current_exe_name)
+		if DirAccess.rename_absolute(
+			staging_root.path_join(staged_executable),
+			staging_root.path_join(renamed_exe_relative)
+		) != OK:
+			return false
+		staged_executable = renamed_exe_relative
+
+	for relative_path in extracted_files:
+		if not relative_path.to_lower().ends_with(".pck"):
+			continue
+		if relative_path.get_file().get_basename() != staged_exe_base:
+			continue
+		var pck_dir := relative_path.get_base_dir()
+		if pck_dir == ".":
+			pck_dir = ""
+		var renamed_pck_relative := "%s.pck" % current_exe_base
+		if not pck_dir.is_empty():
+			renamed_pck_relative = pck_dir.path_join(renamed_pck_relative)
+		if relative_path == renamed_pck_relative:
+			break
+		if DirAccess.rename_absolute(
+			staging_root.path_join(relative_path),
+			staging_root.path_join(renamed_pck_relative)
+		) != OK:
+			return false
+		break
+
+	return true
+
+func _clear_update_staging_root(path: String) -> bool:
+	if path.is_empty() or not DirAccess.dir_exists_absolute(path):
+		return true
+	var dir := DirAccess.open(path)
+	if dir == null:
+		return false
+	dir.list_dir_begin()
+	var child_name := dir.get_next()
+	while child_name != "":
+		if child_name == "." or child_name == "..":
+			child_name = dir.get_next()
+			continue
+		var child_path := path.path_join(child_name)
+		if dir.current_is_dir():
+			if not _clear_update_staging_root(child_path):
+				dir.list_dir_end()
+				return false
+		else:
+			if DirAccess.remove_absolute(child_path) != OK:
+				dir.list_dir_end()
+				return false
+		child_name = dir.get_next()
+	dir.list_dir_end()
+	return DirAccess.remove_absolute(path) == OK
 
 func _build_bug_report_controls() -> void:
 	if _report_bug_button == null:

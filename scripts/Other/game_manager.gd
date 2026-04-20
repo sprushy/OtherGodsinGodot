@@ -369,6 +369,9 @@ func get_card_by_uid(uid: String) -> Card:
 		# Check graveyard
 		for c in p.graveyard_zone.cards:
 			if c.get("uid") == uid: return c
+		# Check abyss
+		for c in p.abyss_zone.cards:
+			if c.get("uid") == uid: return c
 		# Check god zone
 		for c in p.god_zone.cards:
 			if c.get("uid") == uid: return c
@@ -1756,6 +1759,8 @@ func resolve_followers_attack(attackers: Array[Card], defending_player: Player) 
 		if combatant != null and combatant.current_zone != null and combatant.current_zone.is_board_zone():
 			active_attackers.append(combatant)
 	if active_attackers.is_empty():
+		return 0
+	if is_followers_attack_blocked_by_active_structure(active_attackers[0], defending_player, active_attackers.slice(1)):
 		return 0
 
 	for combatant in active_attackers:
@@ -3483,6 +3488,19 @@ func is_attack_blocked_by_active_structure(attacker: Card, defender: Card, allie
 		return false
 	for structure in _get_active_structures():
 		if structure.has_method("blocks_attack_on_target") and structure.blocks_attack_on_target(self, attacker, defender, allied_attackers):
+			return true
+	return false
+
+func is_followers_attack_blocked_by_active_structure(
+	attacker: Card,
+	defending_player: Player,
+	allied_attackers: Array = []
+) -> bool:
+	if attacker == null or defending_player == null:
+		return false
+	for structure in _get_active_structures():
+		if structure.has_method("blocks_attack_on_followers") \
+				and structure.blocks_attack_on_followers(self, attacker, defending_player, allied_attackers):
 			return true
 	return false
 

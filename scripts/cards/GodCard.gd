@@ -76,6 +76,16 @@ func get_active_god_deck_role(active_god: ActiveGodCard) -> String:
 func get_champions_call_candidate(_allow_fallback: bool = true) -> Card:
 	return null
 
+func get_reserved_active_god_candidate() -> ActiveGodCard:
+	if card_owner == null:
+		return null
+	var manifestation := card_owner.reserved_active_god
+	if manifestation == null or not is_own_active_god_card(manifestation):
+		return null
+	if manifestation.current_zone != null and manifestation.current_zone.is_board_zone():
+		return null
+	return manifestation
+
 func can_use_champions_call(game_manager: GameManager) -> bool:
 	if not can_use_god_power(game_manager):
 		return false

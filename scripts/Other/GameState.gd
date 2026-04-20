@@ -297,6 +297,7 @@ static func apply_to_manager(data: Dictionary, gm: GameManager) -> void:
 	for i in mini(players_data.size(), gm.players.size()):
 		var player := gm.players[i]
 		var pdata: Dictionary = players_data[i]
+		player.reserved_active_god = null
 		player.mana = pdata.get("mana", 0)
 		player.followers = pdata.get("followers", 100)
 		player.has_summoned_this_turn = pdata.get("has_summoned_this_turn", false)
