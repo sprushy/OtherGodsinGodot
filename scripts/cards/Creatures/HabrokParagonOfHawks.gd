@@ -164,25 +164,3 @@ func _return_to_hand() -> void:
 func _consume_breakout_choice(game_manager: GameManager) -> void:
 	_breakout_choice_consumed_turn = game_manager.turn_number if game_manager != null else -1
 
-func _get_prompt_host(game_manager: GameManager = null) -> Node:
-	if game_manager != null:
-		var direct_host: Object = game_manager.get_interaction_host()
-		var direct_node: Node = direct_host as Node
-		if direct_node != null and is_instance_valid(direct_node):
-			return direct_node
-	var tree: SceneTree = Engine.get_main_loop() as SceneTree
-	if tree == null:
-		return null
-	var hosts: Array = tree.get_nodes_in_group("combat_mock_game")
-	if tree.current_scene != null:
-		for host in hosts:
-			var node: Node = host as Node
-			if node != null and node.is_inside_tree() and (node == tree.current_scene or tree.current_scene.is_ancestor_of(node)):
-				return node
-	for host in hosts:
-		var node: Node = host as Node
-		if node != null and node.is_inside_tree() and node.get("game_manager") != null:
-			return node
-	if tree.current_scene != null:
-		return tree.current_scene
-	return null

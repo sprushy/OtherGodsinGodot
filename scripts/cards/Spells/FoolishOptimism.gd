@@ -42,17 +42,20 @@ func resolve_with_choices(game_manager: GameManager, attacker: Card, defender: C
 	if not _can_force_attack(game_manager, attacker, defender):
 		return "%s fizzles: %s cannot legally attack %s." % [card_name, attacker.card_name, defender.card_name]
 
-	var prompt_host := _get_prompt_host(game_manager)
-	if prompt_host != null and prompt_host.has_method("_queue_foolish_optimism_attack"):
-		var queued_feedback := str(prompt_host.call("_queue_foolish_optimism_attack", self, attacker, defender))
-		print(queued_feedback)
-		return queued_feedback
-
 	var feedback := "%s compels %s to attack %s." % [card_name, attacker.card_name, defender.card_name]
 	print(feedback)
-	game_manager.set_temporary_combat_follower_damage_halved(attacker != null and attacker.halves_follower_damage_inflicted())
-	game_manager.creature_attack(attacker, defender)
-	game_manager.set_temporary_combat_follower_damage_halved(false)
+	var action := CardAction.new()
+	action.type = CardAction.Type.ATTACK
+	action.source_player = attacker.get_controller()
+	action.card = self
+	action.attacker = attacker
+	if attacker.has_method("get_united_front_partner_for_attack"):
+		action.united_front_partner = attacker.get_united_front_partner_for_attack(game_manager)
+	if attacker.has_method("get_united_front_attack_speed"):
+		action.attack_speed_override = attacker.get_united_front_attack_speed(game_manager)
+	action.target = defender
+	action.halve_follower_damage = true
+	game_manager.push_to_stack(action)
 	return feedback
 
 func finish_prompt_resolution(game_manager: GameManager, attacker: Card, defender: Card) -> String:
@@ -164,11 +167,20 @@ func _begin_resolution(game_manager: GameManager) -> String:
 	if defender_choices.is_empty():
 		return "%s fizzles: no friendly creature to attack when it resolves." % card_name
 
-	var prompt_host := _get_prompt_host(game_manager)
-	if (attacker_choices.size() > 1 or defender_choices.size() > 1) \
-			and prompt_host != null \
-			and prompt_host.has_method("_resolve_foolish_optimism_prompt"):
-		prompt_host.call("_resolve_foolish_optimism_prompt", self, attacker_choices, defender_choices)
+	if attacker_choices.size() > 1 or defender_choices.size() > 1:
+		var attacker_uids: Array[String] = []
+		for attacker in attacker_choices:
+			if attacker != null:
+				attacker_uids.append(attacker.uid)
+		var defender_uids: Array[String] = []
+		for defender in defender_choices:
+			if defender != null:
+				defender_uids.append(defender.uid)
+		game_manager.decision_requested.emit(_get_spell_controller(game_manager), "foolish_optimism", {
+			source_uid = uid,
+			attacker_uids = attacker_uids,
+			defender_uids = defender_uids,
+		})
 		return ""
 
 	return resolve_with_choices(game_manager, attacker_choices[0], defender_choices[0])
@@ -193,25 +205,3 @@ func _can_force_attack(game_manager: GameManager, attacker: Card, defender: Card
 		return false
 	return true
 
-func _get_prompt_host(game_manager: GameManager = null) -> Node:
-	if game_manager != null:
-		var direct_host := game_manager.get_interaction_host()
-		var direct_node := direct_host as Node
-		if direct_node != null and is_instance_valid(direct_node):
-			return direct_node
-	var tree: SceneTree = Engine.get_main_loop() as SceneTree
-	if tree == null:
-		return null
-	var hosts: Array = tree.get_nodes_in_group("combat_mock_game")
-	if tree.current_scene != null:
-		for host in hosts:
-			var node: Node = host as Node
-			if node != null and node.is_inside_tree() and (node == tree.current_scene or tree.current_scene.is_ancestor_of(node)):
-				return node
-	for host in hosts:
-		var node: Node = host as Node
-		if node != null and node.is_inside_tree() and node.get("game_manager") != null:
-			return node
-	if tree.current_scene != null:
-		return tree.current_scene
-	return null

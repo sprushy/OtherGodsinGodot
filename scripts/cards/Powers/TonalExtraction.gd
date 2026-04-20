@@ -55,11 +55,16 @@ func on_unlock(game_manager: GameManager) -> void:
 		game_manager.note_player_feedback(card_name + " found no friendly Shapeshifter to extract.")
 		relock()
 		return
-	var prompt_host := _get_prompt_host(game_manager)
-	if prompt_host != null and prompt_host.has_method("_queue_tonal_extraction_prompt"):
-		prompt_host.call("_queue_tonal_extraction_prompt", self)
+	if card_owner == null:
 		return
-	activate(game_manager, valid_targets[0])
+	var target_uids: Array[String] = []
+	for target in valid_targets:
+		if target != null:
+			target_uids.append(target.uid)
+	game_manager.decision_requested.emit(card_owner, "tonal_extraction", {
+		"source_uid": uid,
+		"target_uids": target_uids,
+	})
 
 func can_activate(game_manager: GameManager) -> bool:
 	return super.can_activate(game_manager) \
@@ -217,27 +222,4 @@ func _find_open_summon_zone() -> Zone:
 	for zone in card_owner.reserve_zones:
 		if zone.cards.is_empty():
 			return zone
-	return null
-
-func _get_prompt_host(game_manager: GameManager = null) -> Node:
-	if game_manager != null:
-		var direct_host := game_manager.get_interaction_host()
-		var direct_node := direct_host as Node
-		if direct_node != null and is_instance_valid(direct_node):
-			return direct_node
-	var tree: SceneTree = Engine.get_main_loop() as SceneTree
-	if tree == null:
-		return null
-	var hosts: Array = tree.get_nodes_in_group("combat_mock_game")
-	if tree.current_scene != null:
-		for host in hosts:
-			var node: Node = host as Node
-			if node != null and node.is_inside_tree() and (node == tree.current_scene or tree.current_scene.is_ancestor_of(node)):
-				return node
-	for host in hosts:
-		var node: Node = host as Node
-		if node != null and node.is_inside_tree() and node.get("game_manager") != null:
-			return node
-	if tree.current_scene != null:
-		return tree.current_scene
 	return null

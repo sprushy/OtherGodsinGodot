@@ -15,6 +15,7 @@ signal move_failed(reason: String)
 var game_manager: GameManager
 var game_state: GameState
 var network_manager: Node = null # Set this if in multiplayer mode
+var authoritative_match_flow_enabled: bool = false
 
 # Targeting State (moved from CombatMockGame)
 var pending_click_selection_name: String = ""
@@ -70,6 +71,8 @@ var _active_command_sender_info: Dictionary = {}
 func _init(p_game_manager: GameManager) -> void:
 	game_manager = p_game_manager
 	move_failed.connect(_on_move_failed)
+	if game_manager != null and not game_manager.decision_requested.is_connected(_on_game_manager_decision_requested):
+		game_manager.decision_requested.connect(_on_game_manager_decision_requested)
 
 # --- Targeting Control ---
 
@@ -146,12 +149,56 @@ func get_targeting_name() -> String:
 
 signal action_resolved(action: CardAction)
 signal request_ui_interaction(player_index: int, type: String, data: Dictionary)
+signal ui_refresh_requested()
 
 const AUTHORITATIVE_STACK_ACTION_LINGER_SECONDS := 0.66
 
 var last_resolution_text: String = ""
 var last_move_failed_reason: String = ""
 var _authoritative_stack_resolution_pending: bool = false
+
+func _on_game_manager_decision_requested(player: Player, type: String, data: Dictionary) -> void:
+	if game_manager == null or player == null:
+		return
+	var interaction_data := data.duplicate(true)
+	if bool(interaction_data.get("queue_with_priority", false)):
+		interaction_data.erase("queue_with_priority")
+		var source_card := game_manager.get_card_by_uid(str(interaction_data.get("source_uid", "")))
+		var event_name := str(interaction_data.get("event_name", type)).strip_edges()
+		interaction_data.erase("event_name")
+		_queue_decision_priority_event(player, source_card, event_name if event_name != "" else type, type, interaction_data)
+		return
+	_emit_ui_interaction_for_player(player, type, interaction_data)
+
+func _emit_ui_interaction_for_player(player: Player, type: String, data: Dictionary) -> void:
+	if game_manager == null or player == null:
+		return
+	var player_idx := game_manager.players.find(player)
+	if player_idx < 0:
+		return
+	request_ui_interaction.emit(player_idx, type, data)
+
+func _queue_decision_priority_event(
+	player: Player,
+	source_card: Card,
+	event_name: String,
+	interaction_type: String,
+	interaction_data: Dictionary
+) -> void:
+	if game_manager == null or player == null:
+		return
+	var action := CardAction.new()
+	action.type = CardAction.Type.EVENT
+	action.source_player = source_card.card_owner if source_card != null and source_card.card_owner != null else player
+	action.initial_priority_player = game_manager.get_opponent(action.source_player) if action.source_player != null else null
+	action.card = source_card
+	action.event_name = event_name
+	action.event_speed = 0
+	action.resolve_callback = func() -> void:
+		_emit_ui_interaction_for_player(player, interaction_type, interaction_data)
+	var remains_on_stack := queue_or_resolve_priority_event(action)
+	if not remains_on_stack:
+		return
 
 func resolve_action(action: CardAction) -> void:
 	last_resolution_text = ""
@@ -352,21 +399,7 @@ func _get_active_attackers(action: CardAction) -> Array[Card]:
 	return active
 
 func _uses_authoritative_headless_attack_flow() -> bool:
-	if network_manager == null or not bool(network_manager.get("is_server")):
-		return false
-	var interaction_host := game_manager.get_interaction_host()
-	if interaction_host == null:
-		return false
-	if interaction_host.has_method("uses_authoritative_match_flow"):
-		return bool(interaction_host.call("uses_authoritative_match_flow"))
-	var host_script = interaction_host.get_script()
-	if host_script != null and str(host_script.resource_path).ends_with("HeadlessMatchServer.gd"):
-		return true
-	# Peer-hosted CombatMockGame sessions also have a real authoritative server,
-	# even though the interaction host is not the standalone HeadlessMatchServer scene.
-	if interaction_host.has_method("_is_real_network_host"):
-		return bool(interaction_host.call("_is_real_network_host"))
-	return false
+	return authoritative_match_flow_enabled
 
 func uses_authoritative_priority_flow() -> bool:
 	return _uses_authoritative_headless_attack_flow()
@@ -388,10 +421,6 @@ func _resolve_authoritative_stack_top_after_priority() -> void:
 	resolve_action(resolved_action)
 
 func _get_authoritative_resolution_tree():
-	if game_manager != null:
-		var interaction_host = game_manager.get_interaction_host()
-		if interaction_host != null and interaction_host is Node:
-			return interaction_host.get_tree()
 	if network_manager != null and network_manager is Node:
 		return network_manager.get_tree()
 	return null
@@ -725,6 +754,8 @@ func _get_priority_action_message(top: CardAction, viewer: Player = null) -> Str
 				return _get_action_label(top.card, viewer) + " was summoned - you may respond!"
 			if top.event_name == "hand_play" and top.card != null:
 				return _get_action_label(top.card, viewer) + " was played - you may respond!"
+			if top.card != null:
+				return _get_action_label(top.card, viewer) + " effect waits on priority."
 	return ""
 
 func _broadcast_priority_offered(player: Player, responses: Array) -> void:
@@ -814,14 +845,8 @@ func _clear_pending_attack_state() -> void:
 	selected_interceptor = null
 	pending_attack_target = null
 
-func _refresh_interaction_host_ui() -> void:
-	if game_manager == null:
-		return
-	var interaction_host = game_manager.get_interaction_host()
-	if interaction_host == null:
-		return
-	if interaction_host.has_method("update_ui"):
-		interaction_host.call_deferred("update_ui")
+func _request_ui_refresh() -> void:
+	ui_refresh_requested.emit()
 
 func _resolve_authoritative_headless_attack() -> void:
 	var attack_action := _build_pending_attack_action()
@@ -831,7 +856,7 @@ func _resolve_authoritative_headless_attack() -> void:
 		return
 	_clear_pending_attack_state()
 	game_manager.push_to_stack(attack_action)
-	_refresh_interaction_host_ui()
+	_request_ui_refresh()
 	_advance_authoritative_priority()
 
 func _start_authoritative_headless_attack() -> void:
@@ -1059,11 +1084,19 @@ func _get_required_player_for_command(command: Dictionary) -> Player:
 			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("hati_uid", ""))))
 		"skoll_upkeep_summon":
 			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("skoll_uid", ""))))
-		"activate_card_ability", "en_hedu_anna_exaltation", "aphrodite_enslave_choice", "blessed_knights_choice", "wolf_adolescent_maturation_choice", "wheel_of_fire_turn_start_choice", "tezcatlipoca_active_titlacauan_choice":
+		"activate_card_ability", "en_hedu_anna_exaltation", "aphrodite_enslave_choice", "blessed_knights_choice", "wolf_adolescent_maturation_choice", "wheel_of_fire_turn_start_choice", "tezcatlipoca_active_titlacauan_choice", "nusku_active_core_flame_choice", "mummu_entropy_choice", "first_sage_adapa_choice", "third_sage_enmedugga_choice", "fourth_sage_enmegalamma_choice", "sixth_sage_an_enlilda_choice", "lailoken_reveal_choice", "masmassu_priest_reveal_choice", "rally_the_troops_choice", "terror_impact_choice", "huginn_perish_prime_choice", "muninn_perish_prime_choice", "fenrir_devour_choice", "harii_jarl_impact_choice", "durinn_secondborn_choice", "kur_jara_tree_of_life_choice", "hunting_tactics_choice", "foolish_optimism_choice", "gugalanna_celestial_charge_choice", "giant_master_architect_choice", "pai_long_autumn_king_choice", "nergal_lion_choice", "gala_tura_destroyed_choice", "gawain_healing_hands_choice", "tatzelwurm_dragon_heart_choice", "byggvir_reveal_choice":
 			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("source_uid", ""))))
 		"humbaba_augury_choice":
 			var humbaba := game_manager.get_card_by_uid(str(command.get("source_uid", ""))) as HumbabaTheTerrible
 			return game_manager.get_opponent(humbaba.get_controller()) if humbaba != null else null
+		"nusku_well_of_fire_choice":
+			var nusku := game_manager.get_card_by_uid(str(command.get("source_uid", ""))) as NuskuFirebearer
+			return game_manager.get_opponent(nusku.get_controller()) if nusku != null else null
+		"ragnarok_discard_choice":
+			var power := game_manager.get_card_by_uid(str(command.get("source_uid", ""))) as Ragnarok
+			return power.get_pending_discard_player(game_manager) if power != null else null
+		"return_to_hand_choice":
+			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("card_uid", ""))))
 		"wolf_master_summon":
 			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("fenrir_uid", ""))))
 		"intercept_decision":
@@ -1121,7 +1154,7 @@ func _get_command_actor(sender_info: Dictionary) -> Player:
 
 func _requires_resolved_upkeep(command_type: String) -> bool:
 	match command_type:
-		"upkeep_choice", "tiamat_upkeep_choice", "priority_pass", "intercept_decision", "combat_retreat_decision", "play_hex_response", "play_charm_response", "play_priority_ability", "forfeit", "humbaba_augury_choice":
+		"upkeep_choice", "tiamat_upkeep_choice", "priority_pass", "intercept_decision", "combat_retreat_decision", "play_hex_response", "play_charm_response", "play_priority_ability", "forfeit", "humbaba_augury_choice", "return_to_hand_choice":
 			return false
 	return true
 
@@ -1132,6 +1165,15 @@ func _validate_turn_action_window(command: Dictionary, sender_info: Dictionary) 
 		return ""
 	if _requires_resolved_upkeep(command_type) and actor == game_manager.current_player and not game_manager.has_resolved_turn_upkeep():
 		return "Resolve upkeep before taking other actions."
+	return ""
+
+func _validate_upkeep_choice_window(actor: Player) -> String:
+	if game_manager == null or actor == null:
+		return ""
+	if actor != game_manager.current_player:
+		return "It is not your turn."
+	if not game_manager.is_player_in_upkeep_window(actor):
+		return "Upkeep has already been resolved."
 	return ""
 
 func _on_move_failed(reason: String) -> void:
@@ -1266,8 +1308,9 @@ func _process_command_impl(command: Dictionary) -> bool:
 			game_manager.end_turn()
 			return true
 		"upkeep_choice":
-			if acting_player != game_manager.current_player:
-				move_failed.emit("It is not your turn.")
+			var upkeep_window_error := _validate_upkeep_choice_window(acting_player)
+			if not upkeep_window_error.is_empty():
+				move_failed.emit(upkeep_window_error)
 				return false
 			match command.get("choice", ""):
 				"draw":
@@ -1289,8 +1332,9 @@ func _process_command_impl(command: Dictionary) -> bool:
 				)
 			return true
 		"tiamat_upkeep_choice":
-			if acting_player != game_manager.current_player:
-				move_failed.emit("It is not your turn.")
+			var tiamat_upkeep_error := _validate_upkeep_choice_window(acting_player)
+			if not tiamat_upkeep_error.is_empty():
+				move_failed.emit(tiamat_upkeep_error)
 				return false
 			var tiamat_card_uid := str(command.get("card_uid", "")).strip_edges()
 			var tiamat_card := game_manager.get_card_by_uid(tiamat_card_uid)
@@ -1637,6 +1681,10 @@ func _process_command_impl(command: Dictionary) -> bool:
 			move_validated.emit(command)
 			return true
 		"skoll_upkeep_summon":
+			var skoll_upkeep_error := _validate_upkeep_choice_window(acting_player)
+			if not skoll_upkeep_error.is_empty():
+				move_failed.emit(skoll_upkeep_error)
+				return false
 			var skoll_uid: String = command.get("skoll_uid", "")
 			var skoll_card := game_manager.get_card_by_uid(skoll_uid)
 			if skoll_card == null or not (skoll_card is Skoll):
@@ -1828,6 +1876,520 @@ func _process_command_impl(command: Dictionary) -> bool:
 			# "Choose Target" part is handled by a subsequent god_ability command from the client
 			move_validated.emit(command)
 			return true
+		"first_sage_adapa_choice":
+			var source_uid: String = command.get("source_uid", "")
+			var sage := game_manager.get_card_by_uid(source_uid) as FirstSageAdapa
+			if sage == null:
+				move_failed.emit("first_sage_adapa_choice: card not found")
+				return false
+			var valid_targets := sage.get_valid_targets(game_manager)
+			var target_uid: String = command.get("target_uid", "")
+			if target_uid == "":
+				var feedback := "%s found no opposing powers or God abilities to silence." % sage.card_name if valid_targets.is_empty() else sage.card_name + " impact fizzles."
+				game_manager.note_player_feedback(feedback)
+				move_validated.emit(command)
+				return true
+			var target := game_manager.get_card_by_uid(target_uid)
+			if target == null or target not in valid_targets:
+				move_failed.emit("first_sage_adapa_choice: invalid silence target")
+				return false
+			game_manager.note_player_feedback(sage.resolve_silence_divine_impact(game_manager, target))
+			move_validated.emit(command)
+			return true
+		"third_sage_enmedugga_choice":
+			var source_uid: String = command.get("source_uid", "")
+			var sage := game_manager.get_card_by_uid(source_uid) as ThirdSageEnmedugga
+			if sage == null:
+				move_failed.emit("third_sage_enmedugga_choice: card not found")
+				return false
+			var valid_targets := sage.get_valid_targets(game_manager)
+			var target_uid: String = command.get("target_uid", "")
+			if target_uid == "":
+				var feedback := "%s found no Mer Sage to bless." % sage.card_name if valid_targets.is_empty() else sage.card_name + " impact fizzles."
+				game_manager.note_player_feedback(feedback)
+				move_validated.emit(command)
+				return true
+			var target := game_manager.get_card_by_uid(target_uid)
+			if target == null or target not in valid_targets:
+				move_failed.emit("third_sage_enmedugga_choice: invalid Mer Sage target")
+				return false
+			game_manager.note_player_feedback(sage.resolve_good_fortune_impact(game_manager, target))
+			move_validated.emit(command)
+			return true
+		"fourth_sage_enmegalamma_choice":
+			var source_uid: String = command.get("source_uid", "")
+			var sage := game_manager.get_card_by_uid(source_uid)
+			if sage == null or not sage.has_method("get_valid_targets") or not sage.has_method("resolve_search_sage_impact") or not sage.has_method("resolve_search_sage_decline"):
+				move_failed.emit("fourth_sage_enmegalamma_choice: card not found")
+				return false
+			var valid_targets: Array[Card] = []
+			for entry in sage.call("get_valid_targets", game_manager):
+				var target_card := entry as Card
+				if target_card != null:
+					valid_targets.append(target_card)
+			var target_uid: String = command.get("target_uid", "")
+			if target_uid == "":
+				game_manager.note_player_feedback(str(sage.call("resolve_search_sage_decline", game_manager)))
+				move_validated.emit(command)
+				return true
+			var target := game_manager.get_card_by_uid(target_uid)
+			if target == null or target not in valid_targets:
+				move_failed.emit("fourth_sage_enmegalamma_choice: invalid Mer Sage target")
+				return false
+			game_manager.note_player_feedback(str(sage.call("resolve_search_sage_impact", game_manager, target)))
+			move_validated.emit(command)
+			return true
+		"sixth_sage_an_enlilda_choice":
+			var source_uid: String = command.get("source_uid", "")
+			var sage := game_manager.get_card_by_uid(source_uid) as SixthSageAnEnlilda
+			if sage == null:
+				move_failed.emit("sixth_sage_an_enlilda_choice: card not found")
+				return false
+			var valid_targets := sage.get_valid_targets(game_manager)
+			var target_uid: String = command.get("target_uid", "")
+			if target_uid == "":
+				var feedback := sage.resolve_no_conjure_home_targets() if valid_targets.is_empty() else sage.resolve_conjure_home_decline(game_manager)
+				game_manager.note_player_feedback(feedback)
+				move_validated.emit(command)
+				return true
+			var target := game_manager.get_card_by_uid(target_uid)
+			if target == null or target not in valid_targets:
+				move_failed.emit("sixth_sage_an_enlilda_choice: invalid Ancient Dwelling target")
+				return false
+			game_manager.note_player_feedback(sage.resolve_conjure_home_impact(game_manager, target))
+			move_validated.emit(command)
+			return true
+		"lailoken_reveal_choice":
+			var source_uid: String = command.get("source_uid", "")
+			var lailoken := game_manager.get_card_by_uid(source_uid) as Lailoken
+			if lailoken == null:
+				move_failed.emit("lailoken_reveal_choice: card not found")
+				return false
+			var valid_targets := lailoken.get_valid_targets(game_manager)
+			var target_uid: String = command.get("target_uid", "")
+			if target_uid == "":
+				var feedback := "%s found no prepared magical cards to drain." % lailoken.card_name if valid_targets.is_empty() else lailoken.card_name + " reveal fizzles."
+				game_manager.note_player_feedback(feedback)
+				move_validated.emit(command)
+				return true
+			var target := game_manager.get_card_by_uid(target_uid)
+			if target == null or target not in valid_targets:
+				move_failed.emit("lailoken_reveal_choice: invalid magical target")
+				return false
+			lailoken.begin_magic_drain_reveal(
+				game_manager,
+				target,
+				func(result_text: String) -> void:
+					if result_text.strip_edges() != "":
+						game_manager.note_player_feedback(result_text)
+			)
+			move_validated.emit(command)
+			return true
+		"masmassu_priest_reveal_choice":
+			var source_uid: String = command.get("source_uid", "")
+			var priest := game_manager.get_card_by_uid(source_uid) as MasmassuPriest
+			if priest == null:
+				move_failed.emit("masmassu_priest_reveal_choice: card not found")
+				return false
+			var valid_targets := priest.get_valid_targets(game_manager)
+			var target_uid: String = command.get("target_uid", "")
+			if target_uid == "":
+				var feedback := "%s found no non-Human creatures to break." % priest.card_name if valid_targets.is_empty() else priest.card_name + " reveal fizzles."
+				game_manager.note_player_feedback(feedback)
+				move_validated.emit(command)
+				return true
+			var target := game_manager.get_card_by_uid(target_uid)
+			if target == null or target not in valid_targets:
+				move_failed.emit("masmassu_priest_reveal_choice: invalid creature target")
+				return false
+			priest.begin_dalkhu_break_reveal(
+				game_manager,
+				target,
+				func(result_text: String) -> void:
+					if result_text.strip_edges() != "":
+						game_manager.note_player_feedback(result_text)
+			)
+			move_validated.emit(command)
+			return true
+		"rally_the_troops_choice":
+			var source_uid: String = command.get("source_uid", "")
+			var rally := game_manager.get_card_by_uid(source_uid) as RallyTheTroops
+			if rally == null:
+				move_failed.emit("rally_the_troops_choice: power not found")
+				return false
+			var target_uid: String = command.get("target_uid", "")
+			var target := game_manager.get_card_by_uid(target_uid) if target_uid != "" else null
+			var valid_targets := rally.get_valid_rally_targets(game_manager)
+			if target != null and target not in valid_targets:
+				move_failed.emit("rally_the_troops_choice: invalid Warrior target")
+				return false
+			var summoned_uid := str(command.get("summoned_uid", ""))
+			var summoned_card := game_manager.get_card_by_uid(summoned_uid) if summoned_uid != "" else null
+			game_manager.note_player_feedback(rally.resolve_rally_choice(game_manager, target, summoned_card))
+			move_validated.emit(command)
+			return true
+		"terror_impact_choice":
+			var source_uid: String = command.get("source_uid", "")
+			var terror := game_manager.get_card_by_uid(source_uid) as Terror
+			if terror == null:
+				move_failed.emit("terror_impact_choice: power not found")
+				return false
+			var demon_uid := str(command.get("demon_uid", ""))
+			var demon := game_manager.get_card_by_uid(demon_uid)
+			if demon == null:
+				move_failed.emit("terror_impact_choice: demon not found")
+				return false
+			var valid_targets := terror.get_valid_terror_targets(game_manager, demon)
+			var target_uid: String = command.get("target_uid", "")
+			var target := game_manager.get_card_by_uid(target_uid) if target_uid != "" else null
+			if target == null or target not in valid_targets:
+				move_failed.emit("terror_impact_choice: invalid creature target")
+				return false
+			game_manager.note_player_feedback(terror.resolve_terror_impact(game_manager, demon, target))
+			move_validated.emit(command)
+			return true
+		"huginn_perish_prime_choice":
+			var source_uid: String = command.get("source_uid", "")
+			var huginn := game_manager.get_card_by_uid(source_uid) as Huginn
+			if huginn == null:
+				move_failed.emit("huginn_perish_prime_choice: card not found")
+				return false
+			var valid_targets := huginn.get_valid_hex_targets()
+			var target_uid: String = command.get("target_uid", "")
+			var target := game_manager.get_card_by_uid(target_uid) if target_uid != "" else null
+			if target == null or target not in valid_targets:
+				move_failed.emit("huginn_perish_prime_choice: invalid Hex target")
+				return false
+			game_manager.note_player_feedback(huginn.resolve_perish_prime_choice(game_manager, target))
+			move_validated.emit(command)
+			return true
+		"muninn_perish_prime_choice":
+			var source_uid: String = command.get("source_uid", "")
+			var muninn := game_manager.get_card_by_uid(source_uid) as Muninn
+			if muninn == null:
+				move_failed.emit("muninn_perish_prime_choice: card not found")
+				return false
+			var valid_targets := muninn.get_valid_charm_targets()
+			var target_uid: String = command.get("target_uid", "")
+			var target := game_manager.get_card_by_uid(target_uid) if target_uid != "" else null
+			if target == null or target not in valid_targets:
+				move_failed.emit("muninn_perish_prime_choice: invalid Charm target")
+				return false
+			game_manager.note_player_feedback(muninn.resolve_perish_prime_choice(game_manager, target))
+			move_validated.emit(command)
+			return true
+		"fenrir_devour_choice":
+			var source_uid: String = command.get("source_uid", "")
+			var fenrir := game_manager.get_card_by_uid(source_uid) as Fenrir
+			if fenrir == null:
+				move_failed.emit("fenrir_devour_choice: card not found")
+				return false
+			var valid_targets := fenrir.get_valid_devour_targets(game_manager)
+			var target_uid: String = command.get("target_uid", "")
+			if target_uid == "":
+				game_manager.note_player_feedback(fenrir.card_name + " impact fizzles.")
+				move_validated.emit(command)
+				return true
+			var target := game_manager.get_card_by_uid(target_uid)
+			if target == null or target not in valid_targets:
+				move_failed.emit("fenrir_devour_choice: invalid creature target")
+				return false
+			fenrir.resolve_devour_impact(
+				game_manager,
+				target,
+				func(feedback: String) -> void:
+					if feedback.strip_edges() != "":
+						game_manager.note_player_feedback(feedback)
+			)
+			move_validated.emit(command)
+			return true
+		"harii_jarl_impact_choice":
+			var source_uid: String = command.get("source_uid", "")
+			var jarl := game_manager.get_card_by_uid(source_uid) as HariiJarl
+			if jarl == null:
+				move_failed.emit("harii_jarl_impact_choice: card not found")
+				return false
+			var valid_targets := jarl.get_valid_warband_targets(game_manager)
+			var chosen_cards: Array[Card] = []
+			for chosen_uid in command.get("chosen_uids", []):
+				var chosen_card := game_manager.get_card_by_uid(str(chosen_uid))
+				if chosen_card == null or chosen_card not in valid_targets or chosen_card in chosen_cards:
+					move_failed.emit("harii_jarl_impact_choice: invalid Harii target")
+					return false
+				chosen_cards.append(chosen_card)
+				if chosen_cards.size() > HariiJarl.MAX_WARBAND_SUMMONS:
+					move_failed.emit("harii_jarl_impact_choice: too many Harii selected")
+					return false
+			game_manager.note_player_feedback(jarl.resolve_warband_impact(game_manager, chosen_cards))
+			move_validated.emit(command)
+			return true
+		"durinn_secondborn_choice":
+			var source_uid: String = command.get("source_uid", "")
+			var durinn := game_manager.get_card_by_uid(source_uid) as DurinnSecondborn
+			if durinn == null:
+				move_failed.emit("durinn_secondborn_choice: card not found")
+				return false
+			var valid_targets := durinn.get_valid_targets(game_manager)
+			var target_uid: String = command.get("target_uid", "")
+			if target_uid == "":
+				var feedback := "%s found no weapons to reforge." % durinn.card_name if valid_targets.is_empty() else durinn.card_name + " impact fizzles."
+				game_manager.note_player_feedback(feedback)
+				move_validated.emit(command)
+				return true
+			var target := game_manager.get_card_by_uid(target_uid)
+			if target == null or target not in valid_targets:
+				move_failed.emit("durinn_secondborn_choice: invalid weapon target")
+				return false
+			game_manager.note_player_feedback(durinn.resolve_reforge_impact(game_manager, target))
+			move_validated.emit(command)
+			return true
+		"kur_jara_tree_of_life_choice":
+			var source_uid: String = command.get("source_uid", "")
+			var kur_jara := game_manager.get_card_by_uid(source_uid) as KurJara
+			if kur_jara == null:
+				move_failed.emit("kur_jara_tree_of_life_choice: card not found")
+				return false
+			var valid_targets := kur_jara.get_tree_of_life_destroy_candidates(game_manager)
+			var required_count := kur_jara.get_tree_of_life_pending_destroy_count()
+			var chosen_cards: Array[Card] = []
+			for chosen_uid in command.get("chosen_uids", []):
+				var chosen_card := game_manager.get_card_by_uid(str(chosen_uid))
+				if chosen_card == null or chosen_card not in valid_targets or chosen_card in chosen_cards:
+					move_failed.emit("kur_jara_tree_of_life_choice: invalid creature target")
+					return false
+				chosen_cards.append(chosen_card)
+				if chosen_cards.size() > required_count:
+					move_failed.emit("kur_jara_tree_of_life_choice: too many creatures selected")
+					return false
+			kur_jara.resolve_tree_of_life_destroy_selection(game_manager, chosen_cards)
+			move_validated.emit(command)
+			return true
+		"hunting_tactics_choice":
+			var source_uid: String = command.get("source_uid", "")
+			var power := game_manager.get_card_by_uid(source_uid) as HuntingTactics
+			if power == null:
+				move_failed.emit("hunting_tactics_choice: power not found")
+				return false
+			var attacker_uid: String = command.get("attacker_uid", "")
+			var attacker := game_manager.get_card_by_uid(attacker_uid)
+			if attacker == null:
+				move_failed.emit("hunting_tactics_choice: attacker not found")
+				return false
+			var valid_targets := power.get_support_choices(attacker)
+			var chosen_cards: Array[Card] = []
+			for chosen_uid in command.get("chosen_uids", []):
+				var chosen_card := game_manager.get_card_by_uid(str(chosen_uid))
+				if chosen_card == null or chosen_card not in valid_targets or chosen_card in chosen_cards:
+					move_failed.emit("hunting_tactics_choice: invalid supporter")
+					return false
+				chosen_cards.append(chosen_card)
+			game_manager.note_player_feedback(power.resolve_combat_support_choice(game_manager, attacker, chosen_cards))
+			move_validated.emit(command)
+			return true
+		"gugalanna_celestial_charge_choice":
+			var source_uid: String = command.get("source_uid", "")
+			var card := game_manager.get_card_by_uid(source_uid) as GugalannaBullOfHeaven
+			if card == null:
+				move_failed.emit("gugalanna_celestial_charge_choice: card not found")
+				return false
+			var valid_targets := card.get_valid_impact_targets(game_manager)
+			var target_uid: String = command.get("target_uid", "")
+			var target := game_manager.get_card_by_uid(target_uid) if target_uid != "" else null
+			if target != null and target not in valid_targets:
+				move_failed.emit("gugalanna_celestial_charge_choice: invalid target")
+				return false
+			card.apply_celestial_charge(game_manager, target)
+			move_validated.emit(command)
+			return true
+		"giant_master_architect_choice":
+			var source_uid: String = command.get("source_uid", "")
+			var card := game_manager.get_card_by_uid(source_uid) as GiantMasterArchitect
+			if card == null:
+				move_failed.emit("giant_master_architect_choice: card not found")
+				return false
+			var valid_targets := card.get_valid_targets(game_manager)
+			var target_uid: String = command.get("target_uid", "")
+			if target_uid == "":
+				game_manager.note_player_feedback(card.resolve_master_plan_cancel(game_manager))
+				move_validated.emit(command)
+				return true
+			var target := game_manager.get_card_by_uid(target_uid)
+			if target == null or target not in valid_targets:
+				move_failed.emit("giant_master_architect_choice: invalid structure target")
+				return false
+			game_manager.note_player_feedback(card.resolve_master_plan_impact(game_manager, target))
+			move_validated.emit(command)
+			return true
+		"pai_long_autumn_king_choice":
+			var source_uid: String = command.get("source_uid", "")
+			var card := game_manager.get_card_by_uid(source_uid) as PaiLongAutumnKing
+			if card == null:
+				move_failed.emit("pai_long_autumn_king_choice: card not found")
+				return false
+			var valid_targets := card.get_valid_targets(game_manager)
+			var target_uid: String = command.get("target_uid", "")
+			if target_uid == "":
+				game_manager.note_player_feedback(card.resolve_stormcloud_cancel(game_manager))
+				move_validated.emit(command)
+				return true
+			var target := game_manager.get_card_by_uid(target_uid)
+			if target == null or target not in valid_targets:
+				move_failed.emit("pai_long_autumn_king_choice: invalid Weather charm target")
+				return false
+			game_manager.note_player_feedback(card.resolve_stormcloud_impact(game_manager, target))
+			move_validated.emit(command)
+			return true
+		"nergal_lion_choice":
+			var source_uid: String = command.get("source_uid", "")
+			var card := game_manager.get_card_by_uid(source_uid) as NergalLion
+			if card == null:
+				move_failed.emit("nergal_lion_choice: card not found")
+				return false
+			var valid_targets := card.get_valid_immolate_targets(game_manager)
+			var valid_zones := card.get_valid_immolate_zones()
+			if valid_zones.is_empty():
+				move_failed.emit("nergal_lion_choice: no valid field zone")
+				return false
+			var target_uid: String = command.get("target_uid", "")
+			var target := game_manager.get_card_by_uid(target_uid) if target_uid != "" else null
+			if target == null or target not in valid_targets:
+				move_failed.emit("nergal_lion_choice: invalid destruction target")
+				return false
+			game_manager.note_player_feedback(card.resolve_immolate_impact(game_manager, target, valid_zones[0]))
+			move_validated.emit(command)
+			return true
+		"gala_tura_destroyed_choice":
+			var source_uid: String = command.get("source_uid", "")
+			var card := game_manager.get_card_by_uid(source_uid) as GalaTura
+			if card == null:
+				move_failed.emit("gala_tura_destroyed_choice: card not found")
+				return false
+			var valid_targets := card.get_destroyed_trigger_targets(game_manager)
+			var chosen_cards: Array[Card] = []
+			for chosen_uid in command.get("chosen_uids", []):
+				var chosen_card := game_manager.get_card_by_uid(str(chosen_uid))
+				if chosen_card == null or chosen_card not in valid_targets or chosen_card in chosen_cards:
+					move_failed.emit("gala_tura_destroyed_choice: invalid creature target")
+					return false
+				chosen_cards.append(chosen_card)
+				if chosen_cards.size() > GalaTura.MAX_RETURN_COUNT:
+					move_failed.emit("gala_tura_destroyed_choice: too many creatures selected")
+					return false
+			game_manager.note_player_feedback(card.resolve_destroyed_trigger(game_manager, chosen_cards))
+			move_validated.emit(command)
+			return true
+		"gawain_healing_hands_choice":
+			var source_uid: String = command.get("source_uid", "")
+			var card := game_manager.get_card_by_uid(source_uid) as Gawain
+			if card == null:
+				move_failed.emit("gawain_healing_hands_choice: card not found")
+				return false
+			var target_uid: String = command.get("target_uid", "")
+			var target := game_manager.get_card_by_uid(target_uid)
+			var valid_targets := card.get_valid_targets(game_manager)
+			if target == null or target not in valid_targets:
+				move_failed.emit("gawain_healing_hands_choice: invalid creature target")
+				return false
+			var status_index := int(command.get("status_index", -1))
+			var removable := card.get_removable_statuses(target)
+			if status_index < 0 or status_index >= removable.size():
+				move_failed.emit("gawain_healing_hands_choice: invalid status choice")
+				return false
+			game_manager.note_player_feedback(card.resolve_healing_hands_by_index(game_manager, target, status_index))
+			move_validated.emit(command)
+			return true
+		"tatzelwurm_dragon_heart_choice":
+			var source_uid: String = command.get("source_uid", "")
+			var card := game_manager.get_card_by_uid(source_uid) as Tatzelwurm
+			if card == null:
+				move_failed.emit("tatzelwurm_dragon_heart_choice: card not found")
+				return false
+			var valid_targets := card.get_valid_targets(game_manager)
+			var target_uid: String = command.get("target_uid", "")
+			if target_uid == "":
+				game_manager.note_player_feedback(card.resolve_dragon_heart_decline(game_manager))
+				move_validated.emit(command)
+				return true
+			var target := game_manager.get_card_by_uid(target_uid)
+			if target == null or target not in valid_targets:
+				move_failed.emit("tatzelwurm_dragon_heart_choice: invalid Dragon target")
+				return false
+			game_manager.note_player_feedback(card.resolve_dragon_heart(game_manager, target))
+			move_validated.emit(command)
+			return true
+		"byggvir_reveal_choice":
+			var source_uid: String = command.get("source_uid", "")
+			var card := game_manager.get_card_by_uid(source_uid) as Byggvir
+			if card == null:
+				move_failed.emit("byggvir_reveal_choice: card not found")
+				return false
+			var choice_data: Dictionary = command.get("choice", {})
+			var matched := card.find_matching_brewing_option(game_manager, choice_data)
+			if matched.is_empty():
+				move_failed.emit("byggvir_reveal_choice: invalid Brewing option")
+				return false
+			game_manager.note_player_feedback(card.resolve_brewing_option(game_manager, matched))
+			move_validated.emit(command)
+			return true
+		"nusku_well_of_fire_choice":
+			var source_uid: String = command.get("source_uid", "")
+			var nusku := game_manager.get_card_by_uid(source_uid) as NuskuFirebearer
+			if nusku == null:
+				move_failed.emit("nusku_well_of_fire_choice: card not found")
+				return false
+			var target_uid: String = command.get("target_uid", "")
+			var target := game_manager.get_card_by_uid(target_uid) if target_uid != "" else null
+			var pending_choice_uids: Array = nusku.get_meta("well_of_fire_pending_choice_uids", [])
+			if target == null or target.uid not in pending_choice_uids:
+				move_failed.emit("nusku_well_of_fire_choice: invalid Well of Fire choice")
+				return false
+			nusku._complete_well_of_fire(game_manager, target, int(nusku.get_meta("well_of_fire_pending_mill_count", int(command.get("mill_count", NuskuFirebearer.MILL_COUNT)))))
+			move_validated.emit(command)
+			return true
+		"ragnarok_discard_choice":
+			var source_uid: String = command.get("source_uid", "")
+			var power := game_manager.get_card_by_uid(source_uid) as Ragnarok
+			if power == null:
+				move_failed.emit("ragnarok_discard_choice: power not found")
+				return false
+			var discard_player := power.get_pending_discard_player(game_manager)
+			if discard_player == null or discard_player.hand_zone == null:
+				move_failed.emit("ragnarok_discard_choice: no discard prompt is pending")
+				return false
+			var target_uid: String = str(command.get("target_uid", "")).strip_edges()
+			var chosen_card := game_manager.get_card_by_uid(target_uid)
+			if chosen_card == null or chosen_card.current_zone != discard_player.hand_zone or not discard_player.hand_zone.cards.has(chosen_card):
+				move_failed.emit("ragnarok_discard_choice: invalid discard choice")
+				return false
+			power.resolve_discard_choice(game_manager, chosen_card)
+			move_validated.emit(command)
+			return true
+		"foolish_optimism_choice":
+			var source_uid: String = command.get("source_uid", "")
+			var spell := game_manager.get_card_by_uid(source_uid) as FoolishOptimism
+			if spell == null:
+				move_failed.emit("foolish_optimism_choice: spell not found")
+				return false
+			var attacker_uid: String = command.get("attacker_uid", "")
+			var defender_uid: String = command.get("defender_uid", "")
+			if attacker_uid == "" or defender_uid == "":
+				spell.send_to_graveyard_if_needed()
+				game_manager.note_player_feedback(spell.card_name + " fizzles.")
+				move_validated.emit(command)
+				return true
+			var attacker := game_manager.get_card_by_uid(attacker_uid)
+			var defender := game_manager.get_card_by_uid(defender_uid)
+			if attacker == null or defender == null:
+				move_failed.emit("foolish_optimism_choice: attacker or defender not found")
+				return false
+			var valid_attackers := spell.get_lowest_level_attacker_choices(game_manager)
+			var valid_defenders := spell.get_highest_level_defender_choices(game_manager)
+			if attacker not in valid_attackers or defender not in valid_defenders:
+				move_failed.emit("foolish_optimism_choice: invalid tied creature choice")
+				return false
+			game_manager.note_player_feedback(spell.finish_prompt_resolution(game_manager, attacker, defender))
+			move_validated.emit(command)
+			return true
 		"blessed_knights_choice":
 			var source_uid: String = command.get("source_uid", "")
 			var ward_kind: String = command.get("ward_kind", "")
@@ -1843,6 +2405,15 @@ func _process_command_impl(command: Dictionary) -> bool:
 			var active_god := game_manager.get_card_by_uid(source_uid)
 			if active_god == null or not active_god.has_method("resolve_from_command"):
 				move_failed.emit("tezcatlipoca_active_titlacauan_choice: active god not found")
+				return false
+			active_god.resolve_from_command(game_manager, command)
+			move_validated.emit(command)
+			return true
+		"nusku_active_core_flame_choice":
+			var source_uid: String = command.get("source_uid", "")
+			var active_god := game_manager.get_card_by_uid(source_uid)
+			if active_god == null or not active_god.has_method("resolve_from_command"):
+				move_failed.emit("nusku_active_core_flame_choice: active god not found")
 				return false
 			active_god.resolve_from_command(game_manager, command)
 			move_validated.emit(command)
@@ -1885,6 +2456,15 @@ func _process_command_impl(command: Dictionary) -> bool:
 			var feedback := humbaba.resolve_augury_reading(game_manager, target)
 			if feedback.strip_edges() != "":
 				game_manager.note_player_feedback(feedback)
+			move_validated.emit(command)
+			return true
+		"mummu_entropy_choice":
+			var source_uid: String = command.get("source_uid", "")
+			var active_god := game_manager.get_card_by_uid(source_uid)
+			if active_god == null or not active_god.has_method("resolve_from_command"):
+				move_failed.emit("mummu_entropy_choice: active god not found")
+				return false
+			active_god.resolve_from_command(game_manager, command)
 			move_validated.emit(command)
 			return true
 		"wolf_master_summon":
@@ -2120,6 +2700,20 @@ func _process_command_impl(command: Dictionary) -> bool:
 			move_validated.emit(command)
 			# CombatMockGame's _on_match_move_validated("resurrection_choice") drives
 			# the next step via _continue_end_turn_sequence(); no need to call it here.
+			return true
+		"return_to_hand_choice":
+			var card_uid := str(command.get("card_uid", "")).strip_edges()
+			var pending_card := game_manager.get_pending_return_to_hand_card()
+			if pending_card == null:
+				move_failed.emit("return_to_hand_choice: no pending choice")
+				return false
+			if pending_card.uid != card_uid:
+				move_failed.emit("return_to_hand_choice: pending choice does not match card")
+				return false
+			if not game_manager.resolve_pending_return_to_hand_choice(bool(command.get("pay_cost", false))):
+				move_failed.emit("return_to_hand_choice: failed to resolve")
+				return false
+			move_validated.emit(command)
 			return true
 		"play_hex_response":
 			var phr_hex_uid: String = command.get("hex_uid", "")

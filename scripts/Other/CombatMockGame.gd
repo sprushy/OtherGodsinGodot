@@ -16,6 +16,7 @@ const GiantMasterArchitectCursorSource = preload("res://images/card_art/GiantMas
 const HermesCursorSource = preload("res://images/card_art/SpeedHermesCursor.png")
 const GuanYuCursorSource = preload("res://images/card_art/GuanYuCursor.png")
 const AncientPyreCursorSource = preload("res://images/card_art/PyreCursor.png")
+const CardBackTexture = preload("res://images/cardbackAI.png")
 const PromptRouterScript = preload("res://scripts/server/PromptRouter.gd")
 const HeadlessMatchHostScript = preload("res://scripts/server/HeadlessMatchHost.gd")
 const MatchClientScript = preload("res://scripts/client/MatchClient.gd")
@@ -135,7 +136,9 @@ var _pending_click_selection_source: Card:
 		if match_manager != null:
 			match_manager.pending_click_selection_source = val
 var auto_priority: bool = true
+var _pending_local_priority_prompt_signature: Dictionary = {}
 var _fan_container: Control = null
+var _enemy_hand_overlay: Control = null
 var _hand_hover_preview: Control = null
 var _hand_hover_vc: VisualCard = null
 var _hand_hover_preview_card: VisualCard = null
@@ -234,10 +237,17 @@ var _overlay_card_selected: Callable = Callable()
 var _pending_absence_spell: Absence = null
 var _pending_absence_target: Card = null
 var _pending_blessed_knights: BlessedKnights = null
+var _pending_nusku_active: NuskuActive = null
+var _pending_nusku_active_preview_cards: Array[Card] = []
+var _pending_nusku_active_recoverable_cards: Array[Card] = []
+var _pending_nusku_active_mill_count: int = 0
 var _pending_habrok_breakouts: Array[HabrokParagonOfHawks] = []
 var _pending_habrok_breakout: HabrokParagonOfHawks = null
 var _pending_byggvir: Byggvir = null
 var _pending_byggvir_options: Array[Dictionary] = []
+var _pending_gawain: Gawain = null
+var _pending_gawain_target: Card = null
+var _pending_gawain_status_options: Array[Dictionary] = []
 var _pending_summon_priority_events: Array[Dictionary] = []
 var _pending_wolf_master_source: Card = null
 var _pending_wolf_master_summon: Card = null
@@ -249,19 +259,23 @@ var _declined_hati_prompts: Array[Hati] = []
 var _active_hati_prompt: Hati = null
 var _pending_huginn_prime_prompts: Array[Huginn] = []
 var _active_huginn_prime_prompt: Huginn = null
+var _queued_huginn_prime_prompt_targets: Dictionary = {}
 var _pending_muninn_prime_prompts: Array[Muninn] = []
 var _active_muninn_prime_prompt: Muninn = null
+var _queued_muninn_prime_prompt_targets: Dictionary = {}
 var _pending_oracles_sight_prompts: Array[OraclesSight] = []
 var _active_oracles_sight_prompt: OraclesSight = null
+var _queued_oracles_sight_prompt_targets: Dictionary = {}
 var _pending_tonal_extraction_prompts: Array[TonalExtraction] = []
 var _active_tonal_extraction_prompt: TonalExtraction = null
+var _queued_tonal_extraction_prompt_targets: Dictionary = {}
 var _pending_humbaba_prompts: Array[HumbabaTheTerrible] = []
 var _active_humbaba_prompt: HumbabaTheTerrible = null
+var _queued_humbaba_prompt_targets: Dictionary = {}
 var _pending_ragnarok_power: Ragnarok = null
-var _pending_ragnarok_destroyed_count: int = 0
-var _pending_ragnarok_discarded_count: int = 0
+var _pending_ragnarok_player: Player = null
 var _pending_ragnarok_hand_limit: int = 5
-var _pending_ragnarok_players: Array[Player] = []
+var _pending_ragnarok_cards: Array[Card] = []
 var _pending_hati_summon: Hati = null
 var _pending_hati_mode: String = ""
 var _pending_hati_sacrifice: Card = null
@@ -285,6 +299,8 @@ var _pending_kos_sacrifice: Card = null
 var _pending_kos_selected_demons: Array[Card] = []
 var _pending_harii_jarl: HariiJarl = null
 var _pending_harii_jarl_choices: Array[Card] = []
+var _queued_harii_jarl_prompt_targets: Dictionary = {}
+var _queued_fenrir_devour_prompt_targets: Dictionary = {}
 var _pending_erlqueens_nightingale: ErlqueensNightingaleScript = null
 var _hati_prompt_panel: Control = null
 var _skoll_prompt_panel: Control = null
@@ -294,14 +310,17 @@ var _habrok_breakout_prompt_panel: Control = null
 var _champions_call_prompt_panel: Control = null
 var _sharur_escape_prompt_panel: Control = null
 var _wheel_of_fire_prompt_panel: Control = null
+var _nusku_active_core_flame_panel: Control = null
 var _pending_gala_tura: Card = null
 var _pending_gala_tura_selected: Array[Card] = []
+var _queued_gala_tura_prompt_targets: Array[Card] = []
 var _pending_sharur_escape_card: Card = null
 var _pending_sharur_escape_reason: String = ""
 var _pending_wheel_of_fire_prompts: Array[WheelOfFire] = []
 var _active_wheel_of_fire_prompt: WheelOfFire = null
 var _pending_wolf_adolescent_prompts: Array[WolfAdolescent] = []
 var _active_wolf_adolescent_prompt: WolfAdolescent = null
+var _queued_wolf_adolescent_prompt_targets: Dictionary = {}
 var _pending_tezcatlipoca_active_prompt: TezcatlipocaActive = null
 var _pending_turn_start_priority_feedback: String = ""
 var _breidablik_panel: Control = null
@@ -397,6 +416,14 @@ const HAND_DOCK_HEIGHT := 118.0
 const HAND_CARD_PEEK_OVERLAP := 14.0
 const HAND_CARD_EXPOSED_HEIGHT := 100.0
 const HAND_LAYOUT_RESERVED := 0.0
+const ENEMY_HAND_DOCK_HEIGHT := 52.0
+const ENEMY_HAND_CARD_WIDTH := 180.0
+const ENEMY_HAND_CARD_HEIGHT := 118.0
+const ENEMY_HAND_PEEK_MAX_CARDS := 5
+const ENEMY_HAND_CARD_SPACING := 74.0
+const ENEMY_HAND_PEEK_ROTATION := 8.0
+const ENEMY_HAND_OVERLAY_SIDE_PADDING := 76.0
+const ENEMY_HAND_OVERLAY_TOP_PADDING := 6.0
 const PREFERRED_BOARD_ZONE_EXTENT := 196.0
 const HAND_OVERLAY_SIDE_PADDING := 18.0
 const HAND_OVERLAY_BOTTOM_PADDING := 4.0
@@ -775,21 +802,154 @@ func _resolve_mummu_entropy_prompt(choice: String) -> void:
 	var victim: Card = data.victim
 	_hide_mummu_entropy_prompt()
 
-	if is_instance_valid(mummu) and is_instance_valid(victim) and game_input != null:
-		game_input.submit_action({
+	if is_instance_valid(mummu) and is_instance_valid(victim):
+		if _submit_prompt_choice_command({
 			"type": "mummu_entropy_choice",
 			"source_uid": mummu.uid,
 			"chosen_uid": victim.uid,
 			"placement": choice
-		})
-	
-	_show_next_mummu_entropy_prompt()
+		}):
+			_show_next_mummu_entropy_prompt()
+			update_ui()
+			return
+		var feedback := (mummu as MummuActive).resolve_entropy_choice(game_manager, victim, choice)
+		action_label.text = feedback
+		update_ui()
+		_show_next_mummu_entropy_prompt()
+		return
 	update_ui()
 
 func _hide_mummu_entropy_prompt() -> void:
 	if _mummu_entropy_panel != null and is_instance_valid(_mummu_entropy_panel):
 		_mummu_entropy_panel.queue_free()
 	_mummu_entropy_panel = null
+
+func _show_nusku_active_core_flame_prompt(
+	card: NuskuActive,
+	preview_cards: Array = [],
+	recoverable_cards: Array = [],
+	mill_count: int = 0
+) -> void:
+	_hide_nusku_active_core_flame_prompt()
+	if card == null or game_manager == null:
+		return
+	_pending_nusku_active = card
+	_pending_nusku_active_mill_count = mill_count if mill_count > 0 else card.get_core_flame_preview_cards().size()
+	_pending_nusku_active_preview_cards.clear()
+	var resolved_preview_cards: Array = preview_cards if not preview_cards.is_empty() else card.get_core_flame_preview_cards()
+	for preview in resolved_preview_cards:
+		var preview_card := preview as Card
+		if preview_card != null:
+			_pending_nusku_active_preview_cards.append(preview_card)
+	_pending_nusku_active_recoverable_cards.clear()
+	var resolved_recoverable_cards: Array = recoverable_cards if not recoverable_cards.is_empty() else card.get_core_flame_recoverable_cards()
+	for recoverable in resolved_recoverable_cards:
+		var recoverable_card := recoverable as Card
+		if recoverable_card != null:
+			_pending_nusku_active_recoverable_cards.append(recoverable_card)
+
+	var panel := PanelContainer.new()
+	panel.name = "NuskuActiveCoreFlamePanel"
+	_nusku_active_core_flame_panel = panel
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.13, 0.06, 0.02, 0.97)
+	style.border_color = Color(0.93, 0.58, 0.18)
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		style.set_border_width(side, 2)
+	panel.add_theme_stylebox_override("panel", style)
+	panel.custom_minimum_size = Vector2(420, 0)
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 8)
+	panel.add_child(vbox)
+
+	var title := Label.new()
+	title.text = card.card_name
+	title.add_theme_font_size_override("font_size", 14)
+	vbox.add_child(title)
+
+	var info := Label.new()
+	info.text = "Choose whether to mill %d card(s) for Core Flame." % _pending_nusku_active_mill_count
+	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	vbox.add_child(info)
+
+	if not _pending_nusku_active_preview_cards.is_empty():
+		var preview_label := Label.new()
+		var preview_names: Array[String] = []
+		for preview_card in _pending_nusku_active_preview_cards:
+			preview_names.append(preview_card.get_target_log_display_name(game_manager.get_feedback_viewer()))
+		preview_label.text = "Top cards: " + ", ".join(preview_names)
+		preview_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		preview_label.add_theme_font_size_override("font_size", 11)
+		vbox.add_child(preview_label)
+
+	var buttons := VBoxContainer.new()
+	buttons.add_theme_constant_override("separation", 6)
+	vbox.add_child(buttons)
+
+	if _pending_nusku_active_recoverable_cards.is_empty():
+		var mill_btn := Button.new()
+		mill_btn.text = "Mill %d" % _pending_nusku_active_mill_count
+		mill_btn.pressed.connect(func() -> void:
+			_resolve_nusku_active_core_flame_prompt(null, false)
+		)
+		buttons.add_child(mill_btn)
+	else:
+		for recoverable_card in _pending_nusku_active_recoverable_cards:
+			var chosen_card := recoverable_card
+			var btn := Button.new()
+			btn.text = "Mill and take " + chosen_card.card_name
+			btn.pressed.connect(func() -> void:
+				_resolve_nusku_active_core_flame_prompt(chosen_card, false)
+			)
+			buttons.add_child(btn)
+
+	var decline_btn := Button.new()
+	decline_btn.text = "Decline"
+	decline_btn.pressed.connect(func() -> void:
+		_resolve_nusku_active_core_flame_prompt(null, true)
+	)
+	buttons.add_child(decline_btn)
+
+	add_child(panel)
+	_promote_transient_ui(panel)
+	panel.anchor_left = 0.5
+	panel.anchor_right = 0.5
+	panel.anchor_top = 0.5
+	panel.anchor_bottom = 0.5
+	panel.offset_left = -210
+	panel.offset_right = 210
+	panel.offset_top = -90
+	panel.offset_bottom = 90
+	action_label.text = "Core Flame: choose how " + card.card_name + " resolves."
+	update_ui()
+
+func _resolve_nusku_active_core_flame_prompt(chosen_card: Card = null, decline: bool = false) -> void:
+	var card := _pending_nusku_active
+	_hide_nusku_active_core_flame_prompt()
+	if card == null:
+		update_ui()
+		return
+	if _submit_prompt_choice_command({
+		"type": "nusku_active_core_flame_choice",
+		"source_uid": card.uid,
+		"chosen_uid": chosen_card.uid if chosen_card != null else "",
+		"decline": decline,
+	}):
+		update_ui()
+		return
+	var feedback := card.resolve_core_flame(game_manager, chosen_card, decline)
+	action_label.text = feedback
+	update_ui()
+
+func _hide_nusku_active_core_flame_prompt() -> void:
+	if _nusku_active_core_flame_panel != null and is_instance_valid(_nusku_active_core_flame_panel):
+		_nusku_active_core_flame_panel.queue_free()
+	_nusku_active_core_flame_panel = null
+	_pending_nusku_active = null
+	_pending_nusku_active_preview_cards.clear()
+	_pending_nusku_active_recoverable_cards.clear()
+	_pending_nusku_active_mill_count = 0
 
 func _get_doorway_replacement_source(card: Card) -> DoorwayToTheVoid:
 	if game_manager == null or card == null or card.card_type != Card.CardType.CREATURE:
@@ -1128,8 +1288,18 @@ func _continue_after_upkeep_choice(feedback: String) -> void:
 	_queue_standard_turn_start_priority(feedback)
 
 func _resolve_sharur_escape_prompt(pay_cost: bool) -> void:
+	var card := _pending_sharur_escape_card
 	_hide_sharur_escape_prompt()
 	if game_manager == null:
+		update_ui()
+		return
+	if _is_networked_client:
+		if game_input != null and card != null:
+			game_input.submit_action({
+				"type": "return_to_hand_choice",
+				"card_uid": card.uid,
+				"pay_cost": pay_cost,
+			})
 		update_ui()
 		return
 	game_manager.resolve_pending_return_to_hand_choice(pay_cost)
@@ -1931,7 +2101,6 @@ func start_game(
 	_restore_corner_action_button()
 	
 	game_manager = GameManager.new()
-	game_manager.set_interaction_host(self)
 	match_manager = MatchManager.new(game_manager)
 	prompt_router = PromptRouterScript.new(game_manager)
 	headless_match_host = HeadlessMatchHostScript.new()
@@ -1965,6 +2134,7 @@ func start_game(
 	
 	match_manager.move_validated.connect(_on_match_move_validated)
 	match_manager.move_failed.connect(_on_match_move_failed)
+	match_manager.ui_refresh_requested.connect(_request_ui_refresh)
 	match_manager.targeting_started.connect(func(_source: Card, _target_type: String) -> void:
 		_hide_devour_cancel_prompt()
 		_sync_sacrifice_cursor()
@@ -2214,6 +2384,7 @@ func _do_update_ui() -> void:
 	draw_hand()
 	draw_board()
 	draw_enemy_board()
+	draw_enemy_hand_overlay()
 	_refresh_visible_stat_panels()
 	_refresh_zone_info_icons()
 	_sync_network_turn_controls()
@@ -2266,6 +2437,8 @@ func _update_board_zone_extent() -> void:
 func _on_board_layout_resized() -> void:
 	if _fan_container != null and is_instance_valid(_fan_container):
 		call_deferred("_layout_fan")
+	if _enemy_hand_overlay != null and is_instance_valid(_enemy_hand_overlay):
+		call_deferred("_layout_enemy_hand_overlay")
 	call_deferred("_apply_board_horizontal_offset")
 	_update_match_side_panel_layout()
 	if game_manager == null:
@@ -2588,10 +2761,10 @@ func _refresh_side_stats() -> void:
 func _is_card_waiting_on_priority(card: Card) -> bool:
 	if card == null or game_manager == null:
 		return false
-	for action in game_manager.action_stack:
-		if action != null and action.card == card:
-			return true
-	return false
+	if game_manager.action_stack.is_empty():
+		return false
+	var top_action: CardAction = game_manager.action_stack.back()
+	return top_action != null and top_action.card == card
 
 func _is_card_usable_for_priority(card: Card) -> bool:
 	if card == null or game_manager == null:
@@ -2645,6 +2818,80 @@ func _get_display_opponent() -> Player:
 		if opponent != null:
 			return opponent
 	return game_manager.other_player
+
+func _get_enemy_hand_overlay_card_count(enemy_player: Player) -> int:
+	if enemy_player == null or enemy_player.hand_zone == null:
+		return 0
+	return mini(enemy_player.hand_zone.cards.size(), ENEMY_HAND_PEEK_MAX_CARDS)
+
+func _get_enemy_hand_overlay_rect() -> Rect2:
+	if center_panel == null:
+		return Rect2(Vector2.ZERO, Vector2(180.0, ENEMY_HAND_DOCK_HEIGHT))
+	var center_rect: Rect2 = center_panel.get_global_rect()
+	var local_top_left: Vector2 = get_global_transform().affine_inverse() * center_rect.position
+	var overlay_width: float = maxf(180.0, center_rect.size.x - ENEMY_HAND_OVERLAY_SIDE_PADDING * 2.0)
+	var overlay_x: float = local_top_left.x + (center_rect.size.x - overlay_width) * 0.5
+	var overlay_y: float = local_top_left.y + ENEMY_HAND_OVERLAY_TOP_PADDING
+	return Rect2(Vector2(overlay_x, overlay_y), Vector2(overlay_width, ENEMY_HAND_DOCK_HEIGHT))
+
+func draw_enemy_hand_overlay() -> void:
+	if _enemy_hand_overlay != null and is_instance_valid(_enemy_hand_overlay):
+		if _enemy_hand_overlay.get_parent() == self:
+			remove_child(_enemy_hand_overlay)
+		_enemy_hand_overlay.queue_free()
+	_enemy_hand_overlay = null
+
+	var enemy_player := _get_display_opponent()
+	var peek_count := _get_enemy_hand_overlay_card_count(enemy_player)
+	if peek_count <= 0:
+		return
+
+	_enemy_hand_overlay = Control.new()
+	_enemy_hand_overlay.name = "EnemyHandOverlay"
+	_enemy_hand_overlay.custom_minimum_size = Vector2(180.0, ENEMY_HAND_DOCK_HEIGHT)
+	_enemy_hand_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_enemy_hand_overlay.clip_contents = true
+	_enemy_hand_overlay.z_index = TRANSIENT_UI_Z_INDEX - 20
+	add_child(_enemy_hand_overlay)
+
+	for _i in range(peek_count):
+		var card_back := TextureRect.new()
+		card_back.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		card_back.texture = CardBackTexture
+		card_back.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+		card_back.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		card_back.size = Vector2(ENEMY_HAND_CARD_WIDTH, ENEMY_HAND_CARD_HEIGHT)
+		card_back.pivot_offset = card_back.size * 0.5
+		_enemy_hand_overlay.add_child(card_back)
+
+	call_deferred("_layout_enemy_hand_overlay")
+
+func _layout_enemy_hand_overlay() -> void:
+	if _enemy_hand_overlay == null or not is_instance_valid(_enemy_hand_overlay):
+		return
+	var enemy_player := _get_display_opponent()
+	var cards := _enemy_hand_overlay.get_children()
+	var n := mini(cards.size(), _get_enemy_hand_overlay_card_count(enemy_player))
+	if n <= 0:
+		return
+	var overlay_rect := _get_enemy_hand_overlay_rect()
+	_enemy_hand_overlay.position = overlay_rect.position
+	_enemy_hand_overlay.size = overlay_rect.size
+	var container_w: float = maxf(overlay_rect.size.x, ENEMY_HAND_CARD_WIDTH)
+	var spacing: float = ENEMY_HAND_CARD_SPACING if n == 1 else maxf(30.0, minf(ENEMY_HAND_CARD_SPACING, (container_w - ENEMY_HAND_CARD_WIDTH) / float(max(n - 1, 1))))
+	var total_span: float = spacing * float(n - 1)
+	var start_x: float = (container_w - total_span) * 0.5
+	for i in range(n):
+		var card_back := cards[i] as TextureRect
+		if card_back == null:
+			continue
+		var t := 0.0 if n == 1 else (float(i) / float(n - 1)) * 2.0 - 1.0
+		var cx: float = start_x + float(i) * spacing
+		card_back.position = Vector2(
+			cx - ENEMY_HAND_CARD_WIDTH * 0.5,
+			-ENEMY_HAND_CARD_HEIGHT + ENEMY_HAND_DOCK_HEIGHT - 2.0 - absf(t) * 5.0
+		)
+		card_back.rotation_degrees = -t * ENEMY_HAND_PEEK_ROTATION
 
 func _get_hand_overlay_rect() -> Rect2:
 	if center_panel == null:
@@ -6559,6 +6806,7 @@ func _resume_after_deferred_resolution(feedback_text: String = "") -> void:
 		action_label.text = feedback_text
 	else:
 		action_label.text = _consume_resolution_feedback(action_label.text)
+	_flush_deferred_priority_events()
 	_finish_post_execute(source_player)
 
 func _queue_hand_spell_with_deferred_resolution(
@@ -6814,10 +7062,61 @@ func _on_local_player_card_moved(card: Card, from_zone: Zone, to_zone: Zone) -> 
 		return
 	if card.goes_to_graveyard_after_use():
 		return
-	if card in _pending_hand_play_events:
+	if _has_pending_hand_play_priority_event(card):
 		return
 	_pending_hand_play_events.append(card)
 	call_deferred("_flush_hand_play_priority_events")
+
+func _can_flush_deferred_priority_events() -> bool:
+	return game_manager != null \
+		and not _executing_stack_action \
+		and not _stack_resolution_paused \
+		and not _is_priority_prompt_visible() \
+		and not _is_intercept_prompt_visible()
+
+func _has_pending_impact_priority_action(card: Card) -> bool:
+	if card == null or game_manager == null:
+		return false
+	for action in game_manager.action_stack:
+		if action == null or action.card != card or action.type != CardAction.Type.EVENT:
+			continue
+		if action.event_name.contains("impact"):
+			return true
+	return false
+
+func _has_pending_priority_action(card: Card, event_name: String) -> bool:
+	if card == null or game_manager == null:
+		return false
+	for action in game_manager.action_stack:
+		if action == null or action.card != card or action.type != CardAction.Type.EVENT:
+			continue
+		if action.event_name == event_name:
+			return true
+	return false
+
+func _has_pending_summon_priority_event(card: Card, zone: Zone) -> bool:
+	if card == null:
+		return false
+	for event in _pending_summon_priority_events:
+		if event.get("card", null) == card and event.get("zone", null) == zone:
+			return true
+	return _has_pending_priority_action(card, "summon")
+
+func _has_pending_hand_play_priority_event(card: Card) -> bool:
+	if card == null:
+		return false
+	if card in _pending_hand_play_events:
+		return true
+	return _has_pending_priority_action(card, "hand_play")
+
+func _flush_deferred_priority_events() -> void:
+	if not _can_flush_deferred_priority_events():
+		return
+	if not _pending_summon_priority_events.is_empty():
+		_flush_summon_priority_events()
+		return
+	if not _pending_hand_play_events.is_empty():
+		_flush_hand_play_priority_events()
 
 func _on_card_summoned(player: Player, card: Card, _from_zone: Zone, to_zone: Zone, _summon_source: Card, face_down: bool, stealth: bool) -> void:
 	if player == null or card == null or to_zone == null:
@@ -6825,6 +7124,10 @@ func _on_card_summoned(player: Player, card: Card, _from_zone: Zone, to_zone: Zo
 	if _is_networked_client:
 		return
 	if face_down or stealth:
+		return
+	if _has_pending_impact_priority_action(card):
+		return
+	if _has_pending_summon_priority_event(card, to_zone):
 		return
 	_pending_summon_priority_events.append({
 		"player": player,
@@ -6839,8 +7142,7 @@ func _flush_summon_priority_events() -> void:
 	if game_manager == null:
 		_pending_summon_priority_events.clear()
 		return
-	if not game_manager.action_stack.is_empty():
-		call_deferred("_flush_summon_priority_events")
+	if not _can_flush_deferred_priority_events():
 		return
 	var event: Dictionary = _pending_summon_priority_events.front()
 	var player: Player = event.get("player", null)
@@ -6874,8 +7176,10 @@ func _flush_summon_priority_events() -> void:
 func _flush_hand_play_priority_events() -> void:
 	if _pending_hand_play_events.is_empty():
 		return
-	if game_manager == null or not game_manager.action_stack.is_empty():
-		call_deferred("_flush_hand_play_priority_events")
+	if game_manager == null:
+		_pending_hand_play_events.clear()
+		return
+	if not _can_flush_deferred_priority_events():
 		return
 	var played_card: Card = _pending_hand_play_events.pop_front()
 	if played_card == null or played_card.current_zone == null or not _is_in_play_zone(played_card.current_zone):
@@ -8572,14 +8876,21 @@ func _queue_tezcatlipoca_active_titlacauan_prompt(card: TezcatlipocaActive) -> v
 	action_label.text = card.card_name + " impact waits on priority."
 	_offer_priority()
 
-func _queue_wolf_adolescent_maturation_prompt(card: WolfAdolescent) -> void:
+func _queue_wolf_adolescent_maturation_prompt(card: WolfAdolescent, prompt_targets: Array = []) -> void:
 	if card == null or game_manager == null:
 		return
-	var targets: Array[Card] = card.get_valid_maturation_targets()
+	if not prompt_targets.is_empty():
+		_queued_wolf_adolescent_prompt_targets[card.uid] = prompt_targets.duplicate()
+	var targets: Array[Card] = []
+	if _queued_wolf_adolescent_prompt_targets.has(card.uid):
+		targets.assign(_queued_wolf_adolescent_prompt_targets.get(card.uid, []))
+	else:
+		targets = card.get_valid_maturation_targets()
 	if targets.is_empty():
 		var no_target_text := card.card_name + " matured, but found no level 5 or lower Lupine in the deck."
 		game_manager.note_player_feedback(no_target_text)
 		action_label.text = _consume_resolution_feedback(no_target_text)
+		_queued_wolf_adolescent_prompt_targets.erase(card.uid)
 		update_ui()
 		return
 	if card == _active_wolf_adolescent_prompt or card in _pending_wolf_adolescent_prompts:
@@ -8592,13 +8903,20 @@ func _show_next_wolf_adolescent_maturation_prompt() -> bool:
 	while not _pending_wolf_adolescent_prompts.is_empty():
 		var wolf := _pending_wolf_adolescent_prompts[0]
 		if wolf == null or not is_instance_valid(wolf) or not wolf.can_offer_maturation(game_manager):
+			if wolf != null:
+				_queued_wolf_adolescent_prompt_targets.erase(wolf.uid)
 			_pending_wolf_adolescent_prompts.remove_at(0)
 			continue
-		var targets: Array[Card] = wolf.get_valid_maturation_targets()
+		var targets: Array[Card] = []
+		if _queued_wolf_adolescent_prompt_targets.has(wolf.uid):
+			targets.assign(_queued_wolf_adolescent_prompt_targets.get(wolf.uid, []))
+		else:
+			targets = wolf.get_valid_maturation_targets()
 		if targets.is_empty():
 			var no_target_text := wolf.card_name + " matured, but found no level 5 or lower Lupine in the deck."
 			game_manager.note_player_feedback(no_target_text)
 			action_label.text = _consume_resolution_feedback(no_target_text)
+			_queued_wolf_adolescent_prompt_targets.erase(wolf.uid)
 			_pending_wolf_adolescent_prompts.remove_at(0)
 			continue
 		_active_wolf_adolescent_prompt = wolf
@@ -8623,8 +8941,12 @@ func _consume_current_wolf_adolescent_prompt() -> void:
 	_active_wolf_adolescent_prompt = null
 	if resolved_prompt == null:
 		if not _pending_wolf_adolescent_prompts.is_empty():
+			var pending_wolf := _pending_wolf_adolescent_prompts[0]
+			if pending_wolf != null:
+				_queued_wolf_adolescent_prompt_targets.erase(pending_wolf.uid)
 			_pending_wolf_adolescent_prompts.remove_at(0)
 		return
+	_queued_wolf_adolescent_prompt_targets.erase(resolved_prompt.uid)
 	var remaining: Array[WolfAdolescent] = []
 	for wolf in _pending_wolf_adolescent_prompts:
 		if wolf != resolved_prompt:
@@ -8653,12 +8975,11 @@ func _show_wolf_adolescent_maturation_prompt(card: WolfAdolescent, prompt_target
 		return
 
 	var on_choose_lupine := func(chosen_card: Card) -> void:
-		if _is_networked_client:
-			game_input.submit_action({
-				"type": "wolf_adolescent_maturation_choice",
-				"source_uid": card.uid,
-				"target_uid": chosen_card.uid,
-			})
+		if _submit_prompt_choice_command({
+			"type": "wolf_adolescent_maturation_choice",
+			"source_uid": card.uid,
+			"target_uid": chosen_card.uid,
+		}):
 			return
 		var feedback := card.resolve_maturation_choice(game_manager, chosen_card)
 		action_label.text = _consume_resolution_feedback(feedback)
@@ -8667,12 +8988,11 @@ func _show_wolf_adolescent_maturation_prompt(card: WolfAdolescent, prompt_target
 			_finish_wolf_adolescent_turn_start_sequence()
 		update_ui()
 	var on_skip_maturation := func() -> void:
-		if _is_networked_client:
-			game_input.submit_action({
-				"type": "wolf_adolescent_maturation_choice",
-				"source_uid": card.uid,
-				"target_uid": "",
-			})
+		if _submit_prompt_choice_command({
+			"type": "wolf_adolescent_maturation_choice",
+			"source_uid": card.uid,
+			"target_uid": "",
+		}):
 			return
 		var feedback := card.resolve_maturation_choice(game_manager, null)
 		action_label.text = _consume_resolution_feedback(feedback)
@@ -8692,51 +9012,64 @@ func _show_wolf_adolescent_maturation_prompt(card: WolfAdolescent, prompt_target
 	action_label.text = card.card_name + ": choose a Lupine to summon or skip Maturation."
 	update_ui()
 
-func _queue_durinn_secondborn_impact_prompt(card: DurinnSecondborn) -> void:
+func _queue_durinn_secondborn_impact_prompt(card: DurinnSecondborn, prompt_targets: Array = []) -> void:
 	if card == null or game_manager == null:
 		return
-	var targets: Array = card.get_valid_targets(game_manager)
-	if targets.is_empty():
+	var current_targets := _resolve_prompt_targets(card.get_valid_targets(game_manager), prompt_targets)
+	if current_targets.is_empty():
+		if _submit_prompt_choice_command({
+			"type": "durinn_secondborn_choice",
+			"source_uid": card.uid,
+			"target_uid": "",
+		}):
+			return
+		var no_target_text := card.card_name + " found no weapons to reforge."
+		if _stack_resolution_paused:
+			_resume_after_deferred_resolution(no_target_text)
+		else:
+			action_label.text = no_target_text
+			update_ui()
 		return
-	var action := CardAction.new()
-	action.type = CardAction.Type.EVENT
-	action.source_player = card.card_owner
-	action.card = card
-	action.event_name = "durinn_secondborn_impact"
-	action.event_speed = 0
-	action.resolve_callback = func() -> void:
-		var current_targets: Array = card.get_valid_targets(game_manager)
-		if current_targets.is_empty():
-			var no_target_text := card.card_name + " found no weapons to reforge."
-			if _stack_resolution_paused:
-				_resume_after_deferred_resolution(no_target_text)
-			else:
-				action_label.text = no_target_text
-				update_ui()
+	if current_targets.size() == 1:
+		if _submit_prompt_choice_command({
+			"type": "durinn_secondborn_choice",
+			"source_uid": card.uid,
+			"target_uid": current_targets[0].uid,
+		}):
 			return
-		if current_targets.size() == 1:
-			var auto_text := card.resolve_reforge_impact(game_manager, current_targets[0])
-			if _stack_resolution_paused:
-				_resume_after_deferred_resolution(auto_text)
-			else:
-				action_label.text = auto_text
-				update_ui()
-			return
+		var auto_text := card.resolve_reforge_impact(game_manager, current_targets[0])
+		if _stack_resolution_paused:
+			_resume_after_deferred_resolution(auto_text)
+		else:
+			action_label.text = auto_text
+			update_ui()
+		return
+	if _executing_stack_action and not _stack_resolution_paused:
 		_pause_stack_resolution(card.card_owner)
-		var on_choose_weapon := func(chosen_card: Card) -> void:
-			_resume_after_deferred_resolution(card.resolve_reforge_impact(game_manager, chosen_card))
-		var on_cancel_weapon := func() -> void:
-			_resume_after_deferred_resolution(card.card_name + " impact fizzles.")
-		_show_card_selection_overlay(
-			"Choose a weapon for " + card.card_name,
-			current_targets,
-			on_choose_weapon,
-			on_cancel_weapon
-		)
-	game_manager.push_to_stack(action)
+	var on_choose_weapon := func(chosen_card: Card) -> void:
+		if _submit_prompt_choice_command({
+			"type": "durinn_secondborn_choice",
+			"source_uid": card.uid,
+			"target_uid": chosen_card.uid if chosen_card != null else "",
+		}):
+			return
+		_resume_after_deferred_resolution(card.resolve_reforge_impact(game_manager, chosen_card))
+	var on_cancel_weapon := func() -> void:
+		if _submit_prompt_choice_command({
+			"type": "durinn_secondborn_choice",
+			"source_uid": card.uid,
+			"target_uid": "",
+		}):
+			return
+		_resume_after_deferred_resolution(card.card_name + " impact fizzles.")
+	_show_card_selection_overlay(
+		"Choose a weapon for " + card.card_name,
+		current_targets,
+		on_choose_weapon,
+		on_cancel_weapon
+	)
+	action_label.text = card.card_name + ": choose a weapon to reforge."
 	update_ui()
-	action_label.text = card.card_name + " impact waits on priority."
-	_offer_priority()
 
 func _queue_first_sage_adapa_impact_prompt(card: FirstSageAdapa) -> void:
 	if card == null or game_manager == null:
@@ -8789,6 +9122,71 @@ func _queue_first_sage_adapa_impact_prompt(card: FirstSageAdapa) -> void:
 	action_label.text = card.card_name + " impact waits on priority."
 	_offer_priority()
 
+func _resolve_prompt_targets(valid_targets: Array[Card], prompt_targets: Array = []) -> Array[Card]:
+	var resolved_targets: Array[Card] = []
+	if prompt_targets.is_empty():
+		resolved_targets.assign(valid_targets)
+		return resolved_targets
+	for candidate in prompt_targets:
+		var candidate_card := candidate as Card
+		if candidate_card != null and candidate_card in valid_targets:
+			resolved_targets.append(candidate_card)
+	return resolved_targets
+
+func _show_first_sage_adapa_impact_prompt(card: FirstSageAdapa, prompt_targets: Array = []) -> void:
+	if card == null or game_manager == null:
+		return
+	var current_targets := _resolve_prompt_targets(card.get_valid_targets(game_manager), prompt_targets)
+	if current_targets.is_empty():
+		if _submit_prompt_choice_command({
+			"type": "first_sage_adapa_choice",
+			"source_uid": card.uid,
+			"target_uid": "",
+		}):
+			return
+		action_label.text = _consume_resolution_feedback("%s found no opposing powers or God abilities to silence." % card.card_name)
+		update_ui()
+		return
+	if current_targets.size() == 1:
+		if _submit_prompt_choice_command({
+			"type": "first_sage_adapa_choice",
+			"source_uid": card.uid,
+			"target_uid": current_targets[0].uid,
+		}):
+			return
+		action_label.text = _consume_resolution_feedback(card.resolve_silence_divine_impact(game_manager, current_targets[0]))
+		update_ui()
+		return
+	var on_choose_silence_target := func(clicked_card: Card) -> void:
+		if _submit_prompt_choice_command({
+			"type": "first_sage_adapa_choice",
+			"source_uid": card.uid,
+			"target_uid": clicked_card.uid,
+		}):
+			return
+		action_label.text = _consume_resolution_feedback(card.resolve_silence_divine_impact(game_manager, clicked_card))
+		update_ui()
+	var on_cancel_silence_target := func() -> void:
+		if _submit_prompt_choice_command({
+			"type": "first_sage_adapa_choice",
+			"source_uid": card.uid,
+			"target_uid": "",
+		}):
+			return
+		action_label.text = _consume_resolution_feedback(card.card_name + " impact fizzles.")
+		update_ui()
+	var validate_silence_target := func(clicked_card: Card) -> bool:
+		return clicked_card != null and clicked_card in card.get_valid_targets(game_manager)
+	_begin_pending_click_selection(
+		card.card_name,
+		card,
+		validate_silence_target,
+		on_choose_silence_target,
+		on_cancel_silence_target
+	)
+	action_label.text = card.card_name + ": click an opposing power or God ability to silence."
+	update_ui()
+
 func _queue_third_sage_enmedugga_impact_prompt(card) -> void:
 	if card == null or game_manager == null:
 		return
@@ -8834,6 +9232,183 @@ func _queue_third_sage_enmedugga_impact_prompt(card) -> void:
 	game_manager.push_to_stack(action)
 	update_ui()
 	_offer_priority()
+
+func _show_third_sage_enmedugga_impact_prompt(card: ThirdSageEnmedugga, prompt_targets: Array = []) -> void:
+	if card == null or game_manager == null:
+		return
+	var current_targets := _resolve_prompt_targets(card.get_valid_targets(game_manager), prompt_targets)
+	if current_targets.is_empty():
+		if _submit_prompt_choice_command({
+			"type": "third_sage_enmedugga_choice",
+			"source_uid": card.uid,
+			"target_uid": "",
+		}):
+			return
+		action_label.text = _consume_resolution_feedback("%s found no Mer Sage to bless." % card.card_name)
+		update_ui()
+		return
+	if current_targets.size() == 1:
+		if _submit_prompt_choice_command({
+			"type": "third_sage_enmedugga_choice",
+			"source_uid": card.uid,
+			"target_uid": current_targets[0].uid,
+		}):
+			return
+		action_label.text = _consume_resolution_feedback(card.resolve_good_fortune_impact(game_manager, current_targets[0]))
+		update_ui()
+		return
+	var on_choose_sage := func(chosen_card: Card) -> void:
+		if _submit_prompt_choice_command({
+			"type": "third_sage_enmedugga_choice",
+			"source_uid": card.uid,
+			"target_uid": chosen_card.uid,
+		}):
+			return
+		action_label.text = _consume_resolution_feedback(card.resolve_good_fortune_impact(game_manager, chosen_card))
+		update_ui()
+	var on_cancel_sage := func() -> void:
+		if _submit_prompt_choice_command({
+			"type": "third_sage_enmedugga_choice",
+			"source_uid": card.uid,
+			"target_uid": "",
+		}):
+			return
+		action_label.text = _consume_resolution_feedback(card.card_name + " impact fizzles.")
+		update_ui()
+	_show_card_selection_overlay(
+		"Choose a Mer Sage for " + card.card_name,
+		current_targets,
+		on_choose_sage,
+		on_cancel_sage
+	)
+
+func _show_lailoken_reveal_prompt(card: Lailoken, prompt_targets: Array = []) -> void:
+	if card == null or game_manager == null:
+		return
+	var current_targets := _resolve_prompt_targets(card.get_valid_targets(game_manager), prompt_targets)
+	if current_targets.is_empty():
+		if _submit_prompt_choice_command({
+			"type": "lailoken_reveal_choice",
+			"source_uid": card.uid,
+			"target_uid": "",
+		}):
+			return
+		action_label.text = _consume_resolution_feedback("%s found no prepared magical cards to drain." % card.card_name)
+		update_ui()
+		return
+	if current_targets.size() == 1:
+		if _submit_prompt_choice_command({
+			"type": "lailoken_reveal_choice",
+			"source_uid": card.uid,
+			"target_uid": current_targets[0].uid,
+		}):
+			return
+		card.begin_magic_drain_reveal(
+			game_manager,
+			current_targets[0],
+			func(result_text: String) -> void:
+				action_label.text = _consume_resolution_feedback(result_text)
+				update_ui()
+		)
+		return
+	var on_choose_magic_drain := func(clicked_card: Card) -> void:
+		if _submit_prompt_choice_command({
+			"type": "lailoken_reveal_choice",
+			"source_uid": card.uid,
+			"target_uid": clicked_card.uid,
+		}):
+			return
+		card.begin_magic_drain_reveal(
+			game_manager,
+			clicked_card,
+			func(result_text: String) -> void:
+				action_label.text = _consume_resolution_feedback(result_text)
+				update_ui()
+		)
+	var on_cancel_magic_drain := func() -> void:
+		if _submit_prompt_choice_command({
+			"type": "lailoken_reveal_choice",
+			"source_uid": card.uid,
+			"target_uid": "",
+		}):
+			return
+		action_label.text = _consume_resolution_feedback(card.card_name + " reveal fizzles.")
+		update_ui()
+	var validate_magic_drain_target := func(clicked_card: Card) -> bool:
+		return clicked_card != null and clicked_card in card.get_valid_targets(game_manager)
+	_begin_pending_click_selection(
+		card.card_name,
+		card,
+		validate_magic_drain_target,
+		on_choose_magic_drain,
+		on_cancel_magic_drain
+	)
+	action_label.text = card.card_name + ": click a prepared magical card to destroy."
+	update_ui()
+
+func _show_masmassu_priest_reveal_prompt(card: MasmassuPriest, prompt_targets: Array = []) -> void:
+	if card == null or game_manager == null:
+		return
+	var current_targets := _resolve_prompt_targets(card.get_valid_targets(game_manager), prompt_targets)
+	if current_targets.is_empty():
+		if _submit_prompt_choice_command({
+			"type": "masmassu_priest_reveal_choice",
+			"source_uid": card.uid,
+			"target_uid": "",
+		}):
+			return
+		action_label.text = _consume_resolution_feedback("%s found no non-Human creatures to break." % card.card_name)
+		update_ui()
+		return
+	if current_targets.size() == 1:
+		if _submit_prompt_choice_command({
+			"type": "masmassu_priest_reveal_choice",
+			"source_uid": card.uid,
+			"target_uid": current_targets[0].uid,
+		}):
+			return
+		card.begin_dalkhu_break_reveal(
+			game_manager,
+			current_targets[0],
+			func(result_text: String) -> void:
+				action_label.text = _consume_resolution_feedback(result_text)
+				update_ui()
+		)
+		return
+	var on_choose_dalkhu_break := func(clicked_card: Card) -> void:
+		if _submit_prompt_choice_command({
+			"type": "masmassu_priest_reveal_choice",
+			"source_uid": card.uid,
+			"target_uid": clicked_card.uid,
+		}):
+			return
+		card.begin_dalkhu_break_reveal(
+			game_manager,
+			clicked_card,
+			func(result_text: String) -> void:
+				action_label.text = _consume_resolution_feedback(result_text)
+				update_ui()
+		)
+	var on_cancel_dalkhu_break := func() -> void:
+		if _submit_prompt_choice_command({
+			"type": "masmassu_priest_reveal_choice",
+			"source_uid": card.uid,
+			"target_uid": "",
+		}):
+			return
+		action_label.text = _consume_resolution_feedback(card.card_name + " reveal fizzles.")
+		update_ui()
+	var validate_dalkhu_break_target := func(clicked_card: Card) -> bool:
+		return clicked_card != null and clicked_card in card.get_valid_targets(game_manager)
+	_begin_pending_click_selection(
+		card.card_name,
+		card,
+		validate_dalkhu_break_target,
+		on_choose_dalkhu_break,
+		on_cancel_dalkhu_break
+	)
+	action_label.text = card.card_name + ": click a non-Human creature to destroy."
+	update_ui()
 
 func _queue_lailoken_reveal_prompt(card: Lailoken) -> void:
 	if card == null or game_manager == null:
@@ -8983,6 +9558,55 @@ func _queue_fourth_sage_enmegalamma_impact_prompt(card) -> void:
 	action_label.text = card.card_name + " impact waits on priority."
 	_offer_priority()
 
+func _show_fourth_sage_enmegalamma_impact_prompt(card, prompt_targets: Array = []) -> void:
+	if card == null or game_manager == null:
+		return
+	var current_targets := _resolve_prompt_targets(card.get_valid_targets(game_manager), prompt_targets)
+	if current_targets.is_empty():
+		if _submit_prompt_choice_command({
+			"type": "fourth_sage_enmegalamma_choice",
+			"source_uid": card.uid,
+			"target_uid": "",
+		}):
+			return
+		action_label.text = _consume_resolution_feedback(card.resolve_search_sage_decline(game_manager))
+		update_ui()
+		return
+	if current_targets.size() == 1:
+		if _submit_prompt_choice_command({
+			"type": "fourth_sage_enmegalamma_choice",
+			"source_uid": card.uid,
+			"target_uid": current_targets[0].uid,
+		}):
+			return
+		action_label.text = _consume_resolution_feedback(card.resolve_search_sage_impact(game_manager, current_targets[0]))
+		update_ui()
+		return
+	var on_choose_sage := func(chosen_card: Card) -> void:
+		if _submit_prompt_choice_command({
+			"type": "fourth_sage_enmegalamma_choice",
+			"source_uid": card.uid,
+			"target_uid": chosen_card.uid,
+		}):
+			return
+		action_label.text = _consume_resolution_feedback(card.resolve_search_sage_impact(game_manager, chosen_card))
+		update_ui()
+	var on_cancel_sage := func() -> void:
+		if _submit_prompt_choice_command({
+			"type": "fourth_sage_enmegalamma_choice",
+			"source_uid": card.uid,
+			"target_uid": "",
+		}):
+			return
+		action_label.text = _consume_resolution_feedback(card.resolve_search_sage_decline(game_manager))
+		update_ui()
+	_show_card_selection_overlay(
+		"Choose a Mer Sage for " + card.card_name,
+		current_targets,
+		on_choose_sage,
+		on_cancel_sage
+	)
+
 func _queue_sixth_sage_an_enlilda_impact_prompt(card) -> void:
 	if card == null or game_manager == null:
 		return
@@ -9020,6 +9644,55 @@ func _queue_sixth_sage_an_enlilda_impact_prompt(card) -> void:
 	update_ui()
 	action_label.text = card.card_name + " impact waits on priority."
 	_offer_priority()
+
+func _show_sixth_sage_an_enlilda_impact_prompt(card: SixthSageAnEnlilda, prompt_targets: Array = []) -> void:
+	if card == null or game_manager == null:
+		return
+	var current_targets := _resolve_prompt_targets(card.get_valid_targets(game_manager), prompt_targets)
+	if current_targets.is_empty():
+		if _submit_prompt_choice_command({
+			"type": "sixth_sage_an_enlilda_choice",
+			"source_uid": card.uid,
+			"target_uid": "",
+		}):
+			return
+		action_label.text = _consume_resolution_feedback(card.resolve_no_conjure_home_targets())
+		update_ui()
+		return
+	if current_targets.size() == 1:
+		if _submit_prompt_choice_command({
+			"type": "sixth_sage_an_enlilda_choice",
+			"source_uid": card.uid,
+			"target_uid": current_targets[0].uid,
+		}):
+			return
+		action_label.text = _consume_resolution_feedback(card.resolve_conjure_home_impact(game_manager, current_targets[0]))
+		update_ui()
+		return
+	var on_choose_dwelling := func(chosen_card: Card) -> void:
+		if _submit_prompt_choice_command({
+			"type": "sixth_sage_an_enlilda_choice",
+			"source_uid": card.uid,
+			"target_uid": chosen_card.uid,
+		}):
+			return
+		action_label.text = _consume_resolution_feedback(card.resolve_conjure_home_impact(game_manager, chosen_card))
+		update_ui()
+	var on_cancel_dwelling := func() -> void:
+		if _submit_prompt_choice_command({
+			"type": "sixth_sage_an_enlilda_choice",
+			"source_uid": card.uid,
+			"target_uid": "",
+		}):
+			return
+		action_label.text = _consume_resolution_feedback(card.resolve_conjure_home_decline(game_manager))
+		update_ui()
+	_show_card_selection_overlay(
+		"Choose an Ancient Dwelling for " + card.card_name,
+		current_targets,
+		on_choose_dwelling,
+		on_cancel_dwelling
+	)
 
 func _queue_terror_impact_prompt(power: Terror, demon: Card) -> void:
 	if power == null or demon == null or game_manager == null:
@@ -9067,39 +9740,55 @@ func _queue_terror_impact_prompt(power: Terror, demon: Card) -> void:
 	action_label.text = demon.card_name + " impact waits on priority."
 	_offer_priority()
 
-func _begin_gugalanna_impact_targeting(card) -> void:
+func _begin_gugalanna_impact_targeting(card: GugalannaBullOfHeaven, prompt_targets: Array = []) -> void:
 	if card == null or game_manager == null:
 		return
-	var action := CardAction.new()
-	action.type = CardAction.Type.EVENT
-	action.source_player = card.card_owner
-	action.card = card
-	action.event_name = "gugalanna_celestial_charge"
-	action.event_speed = 0
-	action.resolve_callback = func() -> void:
-		var valid_targets: Array[Card] = card.get_valid_impact_targets(game_manager)
-		if valid_targets.is_empty():
-			var text: String = card.card_name + ": no valid targets for Celestial Charge. %s stays on field." % card.card_name
-			if _stack_resolution_paused:
-				_resume_after_deferred_resolution(text)
-			else:
-				action_label.text = text
-				update_ui()
+	var current_targets := _resolve_prompt_targets(card.get_valid_impact_targets(game_manager), prompt_targets)
+	if current_targets.is_empty():
+		if _is_networked_client:
+			game_input.submit_action({
+				"type": "gugalanna_celestial_charge_choice",
+				"source_uid": card.uid,
+				"target_uid": "",
+			})
 			return
+		var text: String = card.card_name + ": no valid targets for Celestial Charge. %s stays on field." % card.card_name
+		if _stack_resolution_paused:
+			_resume_after_deferred_resolution(text)
+		else:
+			action_label.text = text
+			update_ui()
+		return
+	if _executing_stack_action and not _stack_resolution_paused:
 		_pause_stack_resolution(card.card_owner)
-		var validate_celestial_charge := func(clicked_card: Card) -> bool:
-			return clicked_card != null and clicked_card in card.get_valid_impact_targets(game_manager)
-		var confirm_celestial_charge := func(clicked_card: Card) -> void:
-			card.apply_celestial_charge(game_manager, clicked_card)
-			_resume_after_deferred_resolution(
-				"Celestial Charge: %s destroys %s. %s returns to hand." % [
-					card.card_name, clicked_card.card_name, card.card_name
-				]
-			)
-		var cancel_celestial_charge := func() -> void:
-			card.apply_celestial_charge(game_manager, null)
-			_resume_after_deferred_resolution(card.card_name + " skips Celestial Charge and stays on the field.")
-		_begin_pending_click_selection(
+	var validate_celestial_charge := func(clicked_card: Card) -> bool:
+		return clicked_card != null and clicked_card in current_targets
+	var confirm_celestial_charge := func(clicked_card: Card) -> void:
+		if _is_networked_client:
+			game_input.submit_action({
+				"type": "gugalanna_celestial_charge_choice",
+				"source_uid": card.uid,
+				"target_uid": clicked_card.uid if clicked_card != null else "",
+			})
+			return
+		card.apply_celestial_charge(game_manager, clicked_card)
+		_resume_after_deferred_resolution(
+			"Celestial Charge: %s destroys %s. %s returns to hand." % [
+				card.card_name, clicked_card.card_name, card.card_name
+			]
+		)
+	var cancel_celestial_charge := func() -> void:
+		if _is_networked_client:
+			game_input.submit_action({
+				"type": "gugalanna_celestial_charge_choice",
+				"source_uid": card.uid,
+				"target_uid": "",
+			})
+			update_ui()
+			return
+		card.apply_celestial_charge(game_manager, null)
+		_resume_after_deferred_resolution(card.card_name + " skips Celestial Charge and stays on the field.")
+	_begin_pending_click_selection(
 			card.card_name + ": Celestial Charge",
 			card,
 			validate_celestial_charge,
@@ -9108,171 +9797,237 @@ func _begin_gugalanna_impact_targeting(card) -> void:
 		)
 		action_label.text = card.card_name + ": click a target (Res 30+, slower Spd) â€” or press Cancel to skip."
 		update_ui()
-	game_manager.push_to_stack(action)
-	update_ui()
-	action_label.text = card.card_name + " Celestial Charge waits on priority."
-	_offer_priority()
 
-func _queue_nergal_lion_impact_prompt(card: NergalLion) -> void:
+func _queue_nergal_lion_impact_prompt(card: NergalLion, prompt_targets: Array = []) -> void:
 	if card == null or game_manager == null:
 		return
-	var valid_targets := card.get_valid_immolate_targets(game_manager)
-	if valid_targets.is_empty():
+	var current_targets := _resolve_prompt_targets(card.get_valid_immolate_targets(game_manager), prompt_targets)
+	if current_targets.is_empty():
 		var no_target_text := card.card_name + " found no physical destruction card to immolate."
-		game_manager.note_player_feedback(no_target_text)
-		action_label.text = _consume_resolution_feedback(no_target_text)
-		update_ui()
+		if _stack_resolution_paused:
+			_resume_after_deferred_resolution(no_target_text)
+		else:
+			action_label.text = _consume_resolution_feedback(no_target_text)
+			update_ui()
 		return
 	var valid_zones := card.get_valid_immolate_zones()
 	if valid_zones.is_empty():
 		var no_zone_text := card.card_name + " has no open field zone for Immolate."
-		game_manager.note_player_feedback(no_zone_text)
-		action_label.text = _consume_resolution_feedback(no_zone_text)
-		update_ui()
+		if _stack_resolution_paused:
+			_resume_after_deferred_resolution(no_zone_text)
+		else:
+			action_label.text = _consume_resolution_feedback(no_zone_text)
+			update_ui()
 		return
-	if valid_targets.size() == 1:
-		var auto_feedback := card.resolve_immolate_impact(game_manager, valid_targets[0], valid_zones[0])
-		game_manager.note_player_feedback(auto_feedback)
-		action_label.text = _consume_resolution_feedback(auto_feedback)
-		update_ui()
+	if current_targets.size() == 1:
+		if _is_networked_client:
+			game_input.submit_action({
+				"type": "nergal_lion_choice",
+				"source_uid": card.uid,
+				"target_uid": current_targets[0].uid,
+			})
+			return
+		var auto_feedback := card.resolve_immolate_impact(game_manager, current_targets[0], valid_zones[0])
+		if _stack_resolution_paused:
+			_resume_after_deferred_resolution(auto_feedback)
+		else:
+			action_label.text = _consume_resolution_feedback(auto_feedback)
+			update_ui()
 		return
+
+	if _executing_stack_action and not _stack_resolution_paused:
+		_pause_stack_resolution(card.card_owner)
 
 	action_label.text = card.card_name + ": choose a destruction card in your graveyard to immolate."
 	var on_choose_target := func(chosen_card: Card) -> void:
-		var current_targets := card.get_valid_immolate_targets(game_manager)
+		var current_valid_targets := card.get_valid_immolate_targets(game_manager)
 		var current_zones := card.get_valid_immolate_zones()
 		var feedback := ""
-		if chosen_card == null or chosen_card not in current_targets:
+		if chosen_card == null or chosen_card not in current_valid_targets:
 			feedback = card.card_name + " found no valid destruction card to immolate."
 		elif current_zones.is_empty():
 			feedback = card.card_name + " has no open field zone for Immolate."
 		else:
+			if _is_networked_client:
+				game_input.submit_action({
+					"type": "nergal_lion_choice",
+					"source_uid": card.uid,
+					"target_uid": chosen_card.uid,
+				})
+				update_ui()
+				return
 			feedback = card.resolve_immolate_impact(game_manager, chosen_card, current_zones[0])
-		game_manager.note_player_feedback(feedback)
-		action_label.text = _consume_resolution_feedback(feedback)
-		update_ui()
+		if _stack_resolution_paused:
+			_resume_after_deferred_resolution(feedback)
+		else:
+			action_label.text = _consume_resolution_feedback(feedback)
+			update_ui()
 	var on_cancel_target := func() -> void:
 		action_label.text = card.card_name + " must choose a destruction card to immolate."
 		update_ui()
-		call_deferred("_queue_nergal_lion_impact_prompt", card)
+		call_deferred("_queue_nergal_lion_impact_prompt", card, prompt_targets)
 	_show_card_selection_overlay(
 		"Choose a destruction card for " + card.card_name,
-		valid_targets,
+		current_targets,
 		on_choose_target,
 		on_cancel_target
 	)
 	update_ui()
 
-func _queue_giant_master_architect_impact_prompt(card) -> void:
+func _queue_giant_master_architect_impact_prompt(card: GiantMasterArchitect, prompt_targets: Array = []) -> void:
 	if card == null or game_manager == null:
 		return
-	var targets: Array[Card] = card.get_valid_targets(game_manager)
-	if targets.is_empty():
+	var current_targets := _resolve_prompt_targets(card.get_valid_targets(game_manager), prompt_targets)
+	if current_targets.is_empty():
+		if _is_networked_client:
+			game_input.submit_action({
+				"type": "giant_master_architect_choice",
+				"source_uid": card.uid,
+				"target_uid": "",
+			})
+			return
+		var no_target_text: String = card.resolve_no_structure_targets()
+		if _stack_resolution_paused:
+			_resume_after_deferred_resolution(no_target_text)
+		else:
+			action_label.text = no_target_text
+			update_ui()
 		return
-	var action := CardAction.new()
-	action.type = CardAction.Type.EVENT
-	action.source_player = card.card_owner
-	action.card = card
-	action.event_name = "giant_master_architect_impact"
-	action.event_speed = 0
-	action.resolve_callback = func() -> void:
-		var current_targets: Array[Card] = card.get_valid_targets(game_manager)
-		if current_targets.is_empty():
-			var no_target_text: String = card.resolve_no_structure_targets()
-			if _stack_resolution_paused:
-				_resume_after_deferred_resolution(no_target_text)
-			else:
-				action_label.text = no_target_text
-				update_ui()
+	if current_targets.size() == 1:
+		if _is_networked_client:
+			game_input.submit_action({
+				"type": "giant_master_architect_choice",
+				"source_uid": card.uid,
+				"target_uid": current_targets[0].uid,
+			})
 			return
-		if current_targets.size() == 1:
-			var auto_text: String = card.resolve_master_plan_impact(game_manager, current_targets[0])
-			if _stack_resolution_paused:
-				_resume_after_deferred_resolution(auto_text)
-			else:
-				action_label.text = auto_text
-				update_ui()
-			return
+		var auto_text: String = card.resolve_master_plan_impact(game_manager, current_targets[0])
+		if _stack_resolution_paused:
+			_resume_after_deferred_resolution(auto_text)
+		else:
+			action_label.text = auto_text
+			update_ui()
+		return
+	if _executing_stack_action and not _stack_resolution_paused:
 		_pause_stack_resolution(card.card_owner)
-		var on_choose_structure := func(chosen_card: Card) -> void:
-			_resume_after_deferred_resolution(card.resolve_master_plan_impact(game_manager, chosen_card))
-		var on_cancel_structure := func() -> void:
-			_resume_after_deferred_resolution(card.resolve_master_plan_cancel(game_manager))
-		_show_card_selection_overlay(
-			"Choose a structure for " + card.card_name,
-			current_targets,
-			on_choose_structure,
-			on_cancel_structure,
-			"giant_master_architect_structure"
-		)
-	game_manager.push_to_stack(action)
+	var on_choose_structure := func(chosen_card: Card) -> void:
+		if _is_networked_client:
+			game_input.submit_action({
+				"type": "giant_master_architect_choice",
+				"source_uid": card.uid,
+				"target_uid": chosen_card.uid if chosen_card != null else "",
+			})
+			return
+		_resume_after_deferred_resolution(card.resolve_master_plan_impact(game_manager, chosen_card))
+	var on_cancel_structure := func() -> void:
+		if _is_networked_client:
+			game_input.submit_action({
+				"type": "giant_master_architect_choice",
+				"source_uid": card.uid,
+				"target_uid": "",
+			})
+			return
+		_resume_after_deferred_resolution(card.resolve_master_plan_cancel(game_manager))
+	_show_card_selection_overlay(
+		"Choose a structure for " + card.card_name,
+		current_targets,
+		on_choose_structure,
+		on_cancel_structure,
+		"giant_master_architect_structure"
+	)
+	action_label.text = card.card_name + ": choose a structure to add to hand."
 	update_ui()
-	action_label.text = card.card_name + " impact waits on priority."
-	_offer_priority()
 
-func _queue_pai_long_autumn_king_impact_prompt(card: PaiLongAutumnKing) -> void:
+func _queue_pai_long_autumn_king_impact_prompt(card: PaiLongAutumnKing, prompt_targets: Array = []) -> void:
 	if card == null or game_manager == null:
 		return
-	var targets: Array[Card] = card.get_valid_targets(game_manager)
-	if targets.is_empty():
+	var current_targets := _resolve_prompt_targets(card.get_valid_targets(game_manager), prompt_targets)
+	if current_targets.is_empty():
+		if _is_networked_client:
+			game_input.submit_action({
+				"type": "pai_long_autumn_king_choice",
+				"source_uid": card.uid,
+				"target_uid": "",
+			})
+			return
+		var no_target_text: String = card.resolve_no_weather_targets()
+		if _stack_resolution_paused:
+			_resume_after_deferred_resolution(no_target_text)
+		else:
+			action_label.text = no_target_text
+			update_ui()
 		return
-	var action := CardAction.new()
-	action.type = CardAction.Type.EVENT
-	action.source_player = card.card_owner
-	action.card = card
-	action.event_name = "pai_long_autumn_king_impact"
-	action.event_speed = 0
-	action.resolve_callback = func() -> void:
-		var current_targets: Array[Card] = card.get_valid_targets(game_manager)
-		if current_targets.is_empty():
-			var no_target_text: String = card.resolve_no_weather_targets()
-			if _stack_resolution_paused:
-				_resume_after_deferred_resolution(no_target_text)
-			else:
-				action_label.text = no_target_text
-				update_ui()
+	if current_targets.size() == 1:
+		if _is_networked_client:
+			game_input.submit_action({
+				"type": "pai_long_autumn_king_choice",
+				"source_uid": card.uid,
+				"target_uid": current_targets[0].uid,
+			})
 			return
-		if current_targets.size() == 1:
-			var auto_text: String = card.resolve_stormcloud_impact(game_manager, current_targets[0])
-			if _stack_resolution_paused:
-				_resume_after_deferred_resolution(auto_text)
-			else:
-				action_label.text = auto_text
-				update_ui()
-			return
+		var auto_text: String = card.resolve_stormcloud_impact(game_manager, current_targets[0])
+		if _stack_resolution_paused:
+			_resume_after_deferred_resolution(auto_text)
+		else:
+			action_label.text = auto_text
+			update_ui()
+		return
+	if _executing_stack_action and not _stack_resolution_paused:
 		_pause_stack_resolution(card.card_owner)
-		var on_choose_weather := func(chosen_card: Card) -> void:
-			_resume_after_deferred_resolution(card.resolve_stormcloud_impact(game_manager, chosen_card))
-		var on_cancel_weather := func() -> void:
-			_resume_after_deferred_resolution(card.resolve_stormcloud_cancel(game_manager))
-		_show_card_selection_overlay(
-			"Choose a Weather charm for " + card.card_name,
-			current_targets,
-			on_choose_weather,
-			on_cancel_weather,
-			"pai_long_autumn_king_weather"
-		)
-	game_manager.push_to_stack(action)
-	action_label.text = card.card_name + " impact waits on priority."
+	var on_choose_weather := func(chosen_card: Card) -> void:
+		if _is_networked_client:
+			game_input.submit_action({
+				"type": "pai_long_autumn_king_choice",
+				"source_uid": card.uid,
+				"target_uid": chosen_card.uid if chosen_card != null else "",
+			})
+			return
+		_resume_after_deferred_resolution(card.resolve_stormcloud_impact(game_manager, chosen_card))
+	var on_cancel_weather := func() -> void:
+		if _is_networked_client:
+			game_input.submit_action({
+				"type": "pai_long_autumn_king_choice",
+				"source_uid": card.uid,
+				"target_uid": "",
+			})
+			return
+		_resume_after_deferred_resolution(card.resolve_stormcloud_cancel(game_manager))
+	_show_card_selection_overlay(
+		"Choose a Weather charm for " + card.card_name,
+		current_targets,
+		on_choose_weather,
+		on_cancel_weather,
+		"pai_long_autumn_king_weather"
+	)
+	action_label.text = card.card_name + ": choose a Weather charm to add to hand."
 	update_ui()
-	_offer_priority()
 
-func _queue_humbaba_augury_reading_prompt(card: HumbabaTheTerrible) -> void:
+func _queue_humbaba_augury_reading_prompt(card: HumbabaTheTerrible, prompt_targets: Array = []) -> void:
 	if card == null or game_manager == null:
 		return
+	if not prompt_targets.is_empty():
+		_queued_humbaba_prompt_targets[card.uid] = prompt_targets.duplicate()
 	if card == _active_humbaba_prompt or card in _pending_humbaba_prompts:
 		return
 	_pending_humbaba_prompts.append(card)
 	call_deferred("_show_next_humbaba_augury_prompt")
 
-func _queue_oracles_sight_prompt(card: OraclesSight) -> void:
+func _queue_oracles_sight_prompt(card: OraclesSight, prompt_targets: Array = []) -> void:
 	if card == null or game_manager == null:
+		return
+	if not prompt_targets.is_empty():
+		_queued_oracles_sight_prompt_targets[card.uid] = prompt_targets.duplicate()
+	if card == _active_oracles_sight_prompt or card in _pending_oracles_sight_prompts:
 		return
 	_pending_oracles_sight_prompts.append(card)
 	call_deferred("_show_next_oracles_sight_prompt")
 
-func _queue_tonal_extraction_prompt(card: TonalExtraction) -> void:
+func _queue_tonal_extraction_prompt(card: TonalExtraction, prompt_targets: Array = []) -> void:
 	if card == null or game_manager == null:
+		return
+	if not prompt_targets.is_empty():
+		_queued_tonal_extraction_prompt_targets[card.uid] = prompt_targets.duplicate()
+	if card == _active_tonal_extraction_prompt or card in _pending_tonal_extraction_prompts:
 		return
 	_pending_tonal_extraction_prompts.append(card)
 	call_deferred("_show_next_tonal_extraction_prompt")
@@ -9343,17 +10098,34 @@ func _show_next_oracles_sight_prompt() -> void:
 		return
 	if game_manager == null:
 		_pending_oracles_sight_prompts.clear()
+		_queued_oracles_sight_prompt_targets.clear()
 		return
 	while not _pending_oracles_sight_prompts.is_empty():
 		var card = _pending_oracles_sight_prompts.pop_front()
 		if card == null:
 			continue
-		var current_targets: Array[Card] = card.get_foresight_cards()
+		var current_targets: Array[Card] = []
+		if _queued_oracles_sight_prompt_targets.has(card.uid):
+			current_targets = _resolve_prompt_targets(card.get_foresight_cards(), _queued_oracles_sight_prompt_targets.get(card.uid, []))
+		else:
+			current_targets = card.get_foresight_cards()
 		if current_targets.is_empty():
+			_queued_oracles_sight_prompt_targets.erase(card.uid)
 			action_label.text = card.card_name + " found no cards to read."
 			update_ui()
 			continue
-		if current_targets.size() == 1 or not _is_player_local(card.card_owner):
+		if current_targets.size() == 1:
+			_queued_oracles_sight_prompt_targets.erase(card.uid)
+			if _is_networked_client and _is_player_local(card.card_owner):
+				game_input.submit_action({type = "activate_power", power_uid = card.uid, target_uid = current_targets[0].uid})
+				action_label.text = card.card_name + " is priming " + current_targets[0].card_name + "."
+				update_ui()
+				continue
+			action_label.text = card.resolve_foresight_choice(game_manager, current_targets[0])
+			update_ui()
+			continue
+		if not _is_player_local(card.card_owner):
+			_queued_oracles_sight_prompt_targets.erase(card.uid)
 			action_label.text = card.resolve_foresight_choice(game_manager, current_targets[0])
 			update_ui()
 			continue
@@ -9361,7 +10133,14 @@ func _show_next_oracles_sight_prompt() -> void:
 		var on_choose_foresight := func(chosen_card: Card) -> void:
 			var resolved_card := _active_oracles_sight_prompt
 			_active_oracles_sight_prompt = null
+			_queued_oracles_sight_prompt_targets.erase(card.uid)
 			if resolved_card == null or game_manager == null:
+				call_deferred("_show_next_oracles_sight_prompt")
+				return
+			if _is_networked_client:
+				game_input.submit_action({type = "activate_power", power_uid = resolved_card.uid, target_uid = chosen_card.uid})
+				action_label.text = resolved_card.card_name + " is priming " + chosen_card.card_name + "."
+				update_ui()
 				call_deferred("_show_next_oracles_sight_prompt")
 				return
 			action_label.text = resolved_card.resolve_foresight_choice(game_manager, chosen_card)
@@ -9393,23 +10172,31 @@ func _show_next_tonal_extraction_prompt() -> void:
 		return
 	if game_manager == null:
 		_pending_tonal_extraction_prompts.clear()
+		_queued_tonal_extraction_prompt_targets.clear()
 		return
 	while not _pending_tonal_extraction_prompts.is_empty():
 		var card = _pending_tonal_extraction_prompts.pop_front()
 		if card == null:
 			continue
-		var current_targets: Array[Card] = card.get_valid_targets(game_manager)
+		var current_targets: Array[Card] = []
+		if _queued_tonal_extraction_prompt_targets.has(card.uid):
+			current_targets = _resolve_prompt_targets(card.get_valid_targets(game_manager), _queued_tonal_extraction_prompt_targets.get(card.uid, []))
+		else:
+			current_targets = card.get_valid_targets(game_manager)
 		if current_targets.is_empty():
+			_queued_tonal_extraction_prompt_targets.erase(card.uid)
 			action_label.text = card.card_name + " found no friendly Shapeshifter to extract."
 			update_ui()
 			continue
 		if current_targets.size() == 1 or not _is_player_local(card.card_owner):
+			_queued_tonal_extraction_prompt_targets.erase(card.uid)
 			_resolve_tonal_extraction_prompt(card, current_targets[0])
 			continue
 		_active_tonal_extraction_prompt = card
 		var on_choose_extraction := func(chosen_card: Card) -> void:
 			var resolved_card := _active_tonal_extraction_prompt
 			_active_tonal_extraction_prompt = null
+			_queued_tonal_extraction_prompt_targets.erase(card.uid)
 			if resolved_card == null or game_manager == null:
 				call_deferred("_show_next_tonal_extraction_prompt")
 				return
@@ -9465,6 +10252,104 @@ func _resolve_tonal_extraction_prompt(card: TonalExtraction, chosen_target: Card
 	action_label.text = _consume_resolution_feedback(card.card_name + " extracts a Spirit.")
 	update_ui()
 
+func _show_rally_the_troops_prompt(card: RallyTheTroops, summoned_card: Card = null, prompt_targets: Array = []) -> void:
+	if card == null or game_manager == null:
+		return
+	var current_targets := _resolve_prompt_targets(card.get_valid_rally_targets(game_manager), prompt_targets)
+	if current_targets.is_empty():
+		if _submit_prompt_choice_command({
+			"type": "rally_the_troops_choice",
+			"source_uid": card.uid,
+			"summoned_uid": summoned_card.uid if summoned_card != null else "",
+			"target_uid": "",
+		}):
+			return
+		action_label.text = _consume_resolution_feedback(card.resolve_rally_choice(game_manager, null, summoned_card))
+		update_ui()
+		return
+	if current_targets.size() == 1:
+		if _submit_prompt_choice_command({
+			"type": "rally_the_troops_choice",
+			"source_uid": card.uid,
+			"summoned_uid": summoned_card.uid if summoned_card != null else "",
+			"target_uid": current_targets[0].uid,
+		}):
+			return
+		action_label.text = _consume_resolution_feedback(card.resolve_rally_choice(game_manager, current_targets[0], summoned_card))
+		update_ui()
+		return
+	var reveal_summary := card.get_rally_reveal_summary(game_manager.get_feedback_viewer())
+	var on_choose_rally := func(chosen_card: Card) -> void:
+		if _submit_prompt_choice_command({
+			"type": "rally_the_troops_choice",
+			"source_uid": card.uid,
+			"summoned_uid": summoned_card.uid if summoned_card != null else "",
+			"target_uid": chosen_card.uid,
+		}):
+			return
+		action_label.text = _consume_resolution_feedback(card.resolve_rally_choice(game_manager, chosen_card, summoned_card))
+		update_ui()
+	var on_cancel_rally := func() -> void:
+		if _submit_prompt_choice_command({
+			"type": "rally_the_troops_choice",
+			"source_uid": card.uid,
+			"summoned_uid": summoned_card.uid if summoned_card != null else "",
+			"target_uid": "",
+		}):
+			return
+		action_label.text = _consume_resolution_feedback(card.resolve_rally_choice(game_manager, null, summoned_card))
+		update_ui()
+	_show_card_selection_overlay(
+		"Choose a Warrior for " + card.card_name,
+		current_targets,
+		on_choose_rally,
+		on_cancel_rally
+	)
+	action_label.text = "%s revealed %s. Choose a Warrior to add to hand, or Cancel to shelve them all." % [
+		card.card_name,
+		reveal_summary
+	]
+	update_ui()
+
+func _show_terror_impact_prompt(power: Terror, demon: Card, prompt_targets: Array = []) -> void:
+	if power == null or demon == null or game_manager == null:
+		return
+	var current_targets := _resolve_prompt_targets(power.get_valid_terror_targets(game_manager, demon), prompt_targets)
+	if current_targets.is_empty():
+		action_label.text = _consume_resolution_feedback("%s spread terror through %s, but there was no lower-level enemy creature to return." % [
+			power.card_name,
+			demon.get_target_log_display_name(game_manager.get_feedback_viewer())
+		])
+		update_ui()
+		return
+	if current_targets.size() == 1:
+		if _submit_prompt_choice_command({
+			"type": "terror_impact_choice",
+			"source_uid": power.uid,
+			"demon_uid": demon.uid,
+			"target_uid": current_targets[0].uid,
+		}):
+			return
+		action_label.text = _consume_resolution_feedback(power.resolve_terror_impact(game_manager, demon, current_targets[0]))
+		update_ui()
+		return
+	var on_choose_target := func(chosen_card: Card) -> void:
+		if _submit_prompt_choice_command({
+			"type": "terror_impact_choice",
+			"source_uid": power.uid,
+			"demon_uid": demon.uid,
+			"target_uid": chosen_card.uid,
+		}):
+			return
+		action_label.text = _consume_resolution_feedback(power.resolve_terror_impact(game_manager, demon, chosen_card))
+		update_ui()
+	_show_card_selection_overlay(
+		"Choose a creature for " + demon.card_name + "'s Terror",
+		current_targets,
+		on_choose_target
+	)
+	update_ui()
+
 func _get_humbaba_augury_prompt_player(card: HumbabaTheTerrible) -> Player:
 	if card == null or game_manager == null:
 		return null
@@ -9475,8 +10360,12 @@ func _consume_current_humbaba_prompt() -> void:
 	_active_humbaba_prompt = null
 	if resolved_prompt == null:
 		if not _pending_humbaba_prompts.is_empty():
+			var pending_humbaba := _pending_humbaba_prompts[0]
+			if pending_humbaba != null:
+				_queued_humbaba_prompt_targets.erase(pending_humbaba.uid)
 			_pending_humbaba_prompts.remove_at(0)
 		return
+	_queued_humbaba_prompt_targets.erase(resolved_prompt.uid)
 	var remaining: Array[HumbabaTheTerrible] = []
 	for humbaba in _pending_humbaba_prompts:
 		if humbaba != resolved_prompt:
@@ -9504,24 +10393,22 @@ func _show_humbaba_augury_prompt(card: HumbabaTheTerrible, prompt_targets: Array
 		return
 
 	var on_choose_augury := func(chosen_card: Card) -> void:
-		if _is_networked_client:
-			game_input.submit_action({
-				"type": "humbaba_augury_choice",
-				"source_uid": card.uid,
-				"target_uid": chosen_card.uid,
-			})
+		if _submit_prompt_choice_command({
+			"type": "humbaba_augury_choice",
+			"source_uid": card.uid,
+			"target_uid": chosen_card.uid,
+		}):
 			return
 		action_label.text = card.resolve_augury_reading(game_manager, chosen_card)
 		_consume_current_humbaba_prompt()
 		update_ui()
 		call_deferred("_show_next_humbaba_augury_prompt")
 	var on_default_augury := func() -> void:
-		if _is_networked_client:
-			game_input.submit_action({
-				"type": "humbaba_augury_choice",
-				"source_uid": card.uid,
-				"target_uid": "",
-			})
+		if _submit_prompt_choice_command({
+			"type": "humbaba_augury_choice",
+			"source_uid": card.uid,
+			"target_uid": "",
+		}):
 			return
 		action_label.text = card.resolve_augury_reading(game_manager, current_targets[0])
 		_consume_current_humbaba_prompt()
@@ -9544,12 +10431,18 @@ func _show_next_humbaba_augury_prompt() -> void:
 		return
 	if game_manager == null:
 		_pending_humbaba_prompts.clear()
+		_queued_humbaba_prompt_targets.clear()
 		return
 	while not _pending_humbaba_prompts.is_empty():
 		var card = _pending_humbaba_prompts.pop_front()
 		if card == null:
 			continue
-		var current_targets: Array[Card] = card.get_augury_cards(game_manager)
+		var current_targets: Array[Card] = []
+		if _queued_humbaba_prompt_targets.has(card.uid):
+			current_targets.assign(_queued_humbaba_prompt_targets.get(card.uid, []))
+			_queued_humbaba_prompt_targets.erase(card.uid)
+		else:
+			current_targets = card.get_augury_cards(game_manager)
 		if current_targets.is_empty():
 			action_label.text = card.card_name + " found no cards to read."
 			update_ui()
@@ -9574,9 +10467,11 @@ func _show_next_humbaba_augury_prompt() -> void:
 		call_deferred("_show_humbaba_augury_prompt", card, current_targets)
 		return
 
-func _queue_huginn_perish_prime_prompt(card: Huginn) -> void:
+func _queue_huginn_perish_prime_prompt(card: Huginn, prompt_targets: Array = []) -> void:
 	if card == null or game_manager == null:
 		return
+	if not prompt_targets.is_empty():
+		_queued_huginn_prime_prompt_targets[card.uid] = prompt_targets.duplicate()
 	_pending_huginn_prime_prompts.append(card)
 	call_deferred("_show_next_huginn_perish_prime_prompt")
 
@@ -9590,12 +10485,21 @@ func _show_next_huginn_perish_prime_prompt() -> void:
 		var card = _pending_huginn_prime_prompts.pop_front()
 		if card == null:
 			continue
-		var current_targets: Array[Card] = card.get_valid_hex_targets()
+		var current_targets: Array[Card] = []
+		var cached_targets = _queued_huginn_prime_prompt_targets.get(card.uid, [])
+		if cached_targets is Array and not cached_targets.is_empty():
+			for target in cached_targets:
+				if target is Card and target != null:
+					current_targets.append(target)
+		else:
+			current_targets = card.get_valid_hex_targets()
 		if current_targets.is_empty():
+			_queued_huginn_prime_prompt_targets.erase(card.uid)
 			action_label.text = "%s perished, but found no hex to prime." % card.card_name
 			update_ui()
 			continue
 		if not _is_player_local(card.card_owner):
+			_queued_huginn_prime_prompt_targets.erase(card.uid)
 			action_label.text = card.resolve_perish_prime_choice(game_manager, current_targets[0])
 			update_ui()
 			continue
@@ -9606,7 +10510,16 @@ func _show_next_huginn_perish_prime_prompt() -> void:
 			if resolved_card == null or game_manager == null:
 				call_deferred("_show_next_huginn_perish_prime_prompt")
 				return
-			action_label.text = resolved_card.resolve_perish_prime_choice(game_manager, chosen_hex)
+			_queued_huginn_prime_prompt_targets.erase(resolved_card.uid)
+			if _submit_prompt_choice_command({
+				"type": "huginn_perish_prime_choice",
+				"source_uid": resolved_card.uid,
+				"target_uid": chosen_hex.uid if chosen_hex != null else "",
+			}):
+				update_ui()
+			else:
+				action_label.text = resolved_card.resolve_perish_prime_choice(game_manager, chosen_hex)
+				update_ui()
 			update_ui()
 			call_deferred("_show_next_huginn_perish_prime_prompt")
 		var on_cancel_prime := func() -> void:
@@ -9625,9 +10538,11 @@ func _show_next_huginn_perish_prime_prompt() -> void:
 		update_ui()
 		return
 
-func _queue_muninn_perish_prime_prompt(card: Muninn) -> void:
+func _queue_muninn_perish_prime_prompt(card: Muninn, prompt_targets: Array = []) -> void:
 	if card == null or game_manager == null:
 		return
+	if not prompt_targets.is_empty():
+		_queued_muninn_prime_prompt_targets[card.uid] = prompt_targets.duplicate()
 	_pending_muninn_prime_prompts.append(card)
 	call_deferred("_show_next_muninn_perish_prime_prompt")
 
@@ -9641,12 +10556,21 @@ func _show_next_muninn_perish_prime_prompt() -> void:
 		var card = _pending_muninn_prime_prompts.pop_front()
 		if card == null:
 			continue
-		var current_targets: Array[Card] = card.get_valid_charm_targets()
+		var current_targets: Array[Card] = []
+		var cached_targets = _queued_muninn_prime_prompt_targets.get(card.uid, [])
+		if cached_targets is Array and not cached_targets.is_empty():
+			for target in cached_targets:
+				if target is Card and target != null:
+					current_targets.append(target)
+		else:
+			current_targets = card.get_valid_charm_targets()
 		if current_targets.is_empty():
+			_queued_muninn_prime_prompt_targets.erase(card.uid)
 			action_label.text = "%s perished, but found no charm to prime." % card.card_name
 			update_ui()
 			continue
 		if not _is_player_local(card.card_owner):
+			_queued_muninn_prime_prompt_targets.erase(card.uid)
 			action_label.text = card.resolve_perish_prime_choice(game_manager, current_targets[0])
 			update_ui()
 			continue
@@ -9657,7 +10581,16 @@ func _show_next_muninn_perish_prime_prompt() -> void:
 			if resolved_card == null or game_manager == null:
 				call_deferred("_show_next_muninn_perish_prime_prompt")
 				return
-			action_label.text = resolved_card.resolve_perish_prime_choice(game_manager, chosen_charm)
+			_queued_muninn_prime_prompt_targets.erase(resolved_card.uid)
+			if _submit_prompt_choice_command({
+				"type": "muninn_perish_prime_choice",
+				"source_uid": resolved_card.uid,
+				"target_uid": chosen_charm.uid if chosen_charm != null else "",
+			}):
+				update_ui()
+			else:
+				action_label.text = resolved_card.resolve_perish_prime_choice(game_manager, chosen_charm)
+				update_ui()
 			update_ui()
 			call_deferred("_show_next_muninn_perish_prime_prompt")
 		var on_cancel_prime := func() -> void:
@@ -9676,48 +10609,43 @@ func _show_next_muninn_perish_prime_prompt() -> void:
 		update_ui()
 		return
 
-func _queue_harii_jarl_impact_prompt(card: HariiJarl) -> void:
+func _show_harii_jarl_impact_prompt(card: HariiJarl, prompt_targets: Array = []) -> void:
 	if card == null or game_manager == null:
 		return
-	var targets := card.get_valid_warband_targets(game_manager)
-	if targets.is_empty():
-		return
-	var action := CardAction.new()
-	action.type = CardAction.Type.EVENT
-	action.source_player = card.card_owner
-	action.card = card
-	action.event_name = "harii_jarl_impact"
-	action.event_speed = 0
-	action.resolve_callback = func() -> void:
-		_pending_harii_jarl = card
-		_pending_harii_jarl_choices.clear()
-		_pause_stack_resolution(card.card_owner)
-		_prompt_harii_jarl_next_choice()
-	game_manager.push_to_stack(action)
-	update_ui()
-	action_label.text = card.card_name + " impact waits on priority."
-	_offer_priority()
+	if not prompt_targets.is_empty():
+		_queued_harii_jarl_prompt_targets[card.uid] = prompt_targets.duplicate()
+	_pending_harii_jarl = card
+	_pending_harii_jarl_choices.clear()
+	_prompt_harii_jarl_next_choice()
 
-func _resolve_hunting_tactics_prompt(power: HuntingTactics, attacker: Card) -> void:
+func _resolve_hunting_tactics_prompt(power: HuntingTactics, attacker: Card, prompt_targets: Array = []) -> void:
 	if power == null or attacker == null or game_manager == null:
 		if _stack_resolution_paused:
 			_resume_after_deferred_resolution("Hunting Tactics fizzles.")
 		else:
 			update_ui()
 		return
-	var current_supporters := power.get_support_choices(attacker)
+	var current_supporters := _resolve_prompt_targets(power.get_support_choices(attacker), prompt_targets)
 	if current_supporters.is_empty():
 		var no_support_text := "Hunting Tactics found no valid supporters for %s." % attacker.card_name
-		if _stack_resolution_paused:
+		if _submit_prompt_choice_command({
+			"type": "hunting_tactics_choice",
+			"source_uid": power.uid,
+			"attacker_uid": attacker.uid,
+			"chosen_uids": [],
+		}):
+			update_ui()
+		elif _stack_resolution_paused:
 			_resume_after_deferred_resolution(no_support_text)
 		else:
 			action_label.text = no_support_text
 			update_ui()
 		return
-	if _executing_stack_action and not _stack_resolution_paused:
+	if not _is_networked_client and _executing_stack_action and not _stack_resolution_paused:
 		_pause_stack_resolution(attacker.get_controller())
-	game_manager.defer_combat_resolution()
-	if not _is_player_local(attacker.get_controller()):
+	if not _is_networked_client:
+		game_manager.defer_combat_resolution()
+	if not _is_networked_client and not _is_player_local(attacker.get_controller()):
 		var auto_feedback := power.resolve_combat_support_choice(game_manager, attacker, current_supporters)
 		game_manager.note_player_feedback(auto_feedback)
 		action_label.text = auto_feedback
@@ -9770,12 +10698,27 @@ func _on_hunting_tactics_supporter_done() -> void:
 	if power == null or attacker == null or game_manager == null:
 		_finish_hunting_tactics_prompt("Hunting Tactics cannot resolve right now.")
 		return
+	var chosen_uids: Array[String] = []
+	for chosen_supporter in _pending_hunting_tactics_supporters:
+		if chosen_supporter != null:
+			chosen_uids.append(chosen_supporter.uid)
+	if _submit_prompt_choice_command({
+		"type": "hunting_tactics_choice",
+		"source_uid": power.uid,
+		"attacker_uid": attacker.uid,
+		"chosen_uids": chosen_uids,
+	}):
+		_finish_hunting_tactics_prompt("")
+		return
 	_finish_hunting_tactics_prompt(
 		power.resolve_combat_support_choice(game_manager, attacker, _pending_hunting_tactics_supporters)
 	)
 
 func _finish_hunting_tactics_prompt(feedback: String) -> void:
 	_clear_hunting_tactics_prompt_state()
+	if feedback.strip_edges() == "":
+		update_ui()
+		return
 	if game_manager != null and game_manager.has_deferred_combat_resolution():
 		game_manager.note_player_feedback(feedback)
 		action_label.text = feedback
@@ -9789,29 +10732,150 @@ func _finish_hunting_tactics_prompt(feedback: String) -> void:
 		action_label.text = feedback
 		update_ui()
 
-func _resolve_tatzelwurm_dragon_heart_prompt(card: Tatzelwurm) -> void:
+func _show_gawain_healing_hands_prompt(card: Gawain, target: Card, status_options: Array = []) -> void:
+	_hide_gawain_healing_hands_prompt()
+	if card == null or target == null or game_manager == null:
+		update_ui()
+		return
+	var options: Array[Dictionary] = []
+	if status_options.is_empty():
+		options = card.serialize_healing_hands_statuses(target)
+	else:
+		options.assign(status_options)
+	if options.is_empty():
+		action_label.text = card.card_name + ": " + target.card_name + " has no removable effects."
+		update_ui()
+		return
+	if options.size() == 1:
+		var option: Dictionary = options[0]
+		if _submit_prompt_choice_command({
+			"type": "gawain_healing_hands_choice",
+			"source_uid": card.uid,
+			"target_uid": target.uid,
+			"status_index": int(option.get("index", -1)),
+		}):
+			update_ui()
+			return
+		action_label.text = card.resolve_healing_hands_by_index(game_manager, target, int(option.get("index", -1)))
+		update_ui()
+		return
+	_pending_gawain = card
+	_pending_gawain_target = target
+	_pending_gawain_status_options = options.duplicate(true)
+	var panel := PanelContainer.new()
+	panel.name = "GawainHealingHandsPromptPanel"
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.14, 0.12, 0.08, 0.97)
+	style.border_color = Color(0.95, 0.82, 0.48)
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		style.set_border_width(side, 2)
+	panel.add_theme_stylebox_override("panel", style)
+	panel.custom_minimum_size = Vector2(460, 0)
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 8)
+	panel.add_child(vbox)
+	var title := Label.new()
+	title.text = card.card_name
+	title.add_theme_font_size_override("font_size", 14)
+	vbox.add_child(title)
+	var info := Label.new()
+	info.text = "Choose an effect to remove from " + target.card_name + "."
+	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	vbox.add_child(info)
+	for option in options:
+		var btn := Button.new()
+		btn.text = str(option.get("label", "Remove effect"))
+		btn.pressed.connect(_resolve_gawain_healing_hands_option.bind(option))
+		vbox.add_child(btn)
+	add_child(panel)
+	_promote_transient_ui(panel)
+	panel.anchor_left = 0.5
+	panel.anchor_right = 0.5
+	panel.anchor_top = 0.5
+	panel.anchor_bottom = 0.5
+	panel.offset_left = -230
+	panel.offset_right = 230
+	panel.offset_top = -110
+	panel.offset_bottom = 110
+	action_label.text = card.card_name + ": choose which effect Healing Hands removes."
+	update_ui()
+
+func _hide_gawain_healing_hands_prompt() -> void:
+	var panel := get_node_or_null("GawainHealingHandsPromptPanel")
+	if panel:
+		panel.queue_free()
+	_pending_gawain = null
+	_pending_gawain_target = null
+	_pending_gawain_status_options.clear()
+
+func _resolve_gawain_healing_hands_option(option: Dictionary) -> void:
+	var card := _pending_gawain
+	var target := _pending_gawain_target
+	_hide_gawain_healing_hands_prompt()
+	if card == null or target == null:
+		update_ui()
+		return
+	var status_index := int(option.get("index", -1))
+	if _submit_prompt_choice_command({
+		"type": "gawain_healing_hands_choice",
+		"source_uid": card.uid,
+		"target_uid": target.uid,
+		"status_index": status_index,
+	}):
+		update_ui()
+		return
+	action_label.text = card.resolve_healing_hands_by_index(game_manager, target, status_index)
+	update_ui()
+
+func _resolve_tatzelwurm_dragon_heart_prompt(card: Tatzelwurm, prompt_targets: Array = []) -> void:
 	if card == null or game_manager == null:
 		if _stack_resolution_paused:
 			_resume_after_deferred_resolution("Tatzelwurm fizzles.")
 		else:
 			update_ui()
 		return
-	var current_targets: Array[Card] = card.get_valid_targets(game_manager)
+	var current_targets := _resolve_prompt_targets(card.get_valid_targets(game_manager), prompt_targets)
 	if current_targets.is_empty():
+		if _submit_prompt_choice_command({
+			"type": "tatzelwurm_dragon_heart_choice",
+			"source_uid": card.uid,
+			"target_uid": "",
+		}):
+			update_ui()
+			return
 		_finish_tatzelwurm_dragon_heart_prompt(card.resolve_no_dragon_heart_targets())
 		return
 	if _executing_stack_action and not _stack_resolution_paused:
 		_pause_stack_resolution(card.get_controller())
-	game_manager.defer_combat_resolution()
-	if not _is_player_local(card.get_controller()):
-		_finish_tatzelwurm_dragon_heart_prompt(card.resolve_dragon_heart(game_manager, current_targets[0]))
-		return
+	if not _is_networked_client:
+		game_manager.defer_combat_resolution()
 	if current_targets.size() == 1:
+		if _submit_prompt_choice_command({
+			"type": "tatzelwurm_dragon_heart_choice",
+			"source_uid": card.uid,
+			"target_uid": current_targets[0].uid,
+		}):
+			update_ui()
+			return
 		_finish_tatzelwurm_dragon_heart_prompt(card.resolve_dragon_heart(game_manager, current_targets[0]))
 		return
 	var on_choose_dragon := func(chosen_card: Card) -> void:
+		if _submit_prompt_choice_command({
+			"type": "tatzelwurm_dragon_heart_choice",
+			"source_uid": card.uid,
+			"target_uid": chosen_card.uid if chosen_card != null else "",
+		}):
+			update_ui()
+			return
 		_finish_tatzelwurm_dragon_heart_prompt(card.resolve_dragon_heart(game_manager, chosen_card))
 	var on_cancel_dragon := func() -> void:
+		if _submit_prompt_choice_command({
+			"type": "tatzelwurm_dragon_heart_choice",
+			"source_uid": card.uid,
+			"target_uid": "",
+		}):
+			update_ui()
+			return
 		_finish_tatzelwurm_dragon_heart_prompt(card.resolve_dragon_heart_decline(game_manager))
 	_show_card_selection_overlay(
 		"Choose a Dragon for " + card.card_name,
@@ -9848,20 +10912,23 @@ func _prompt_harii_jarl_next_choice() -> void:
 	if card == null or game_manager == null:
 		_finish_harii_jarl_prompt("Harii Jarl cannot resolve Warband right now.")
 		return
-	var current_targets := card.get_valid_warband_targets(game_manager)
+	var current_targets := _resolve_prompt_targets(
+		card.get_valid_warband_targets(game_manager),
+		_queued_harii_jarl_prompt_targets.get(card.uid, [])
+	)
 	for chosen_card in _pending_harii_jarl_choices.duplicate():
 		if chosen_card == null or chosen_card not in current_targets:
 			_pending_harii_jarl_choices.erase(chosen_card)
 	var max_summons := HariiJarl.MAX_WARBAND_SUMMONS
 	if _pending_harii_jarl_choices.size() >= max_summons or current_targets.is_empty():
-		_finish_harii_jarl_prompt(card.resolve_warband_impact(game_manager, _pending_harii_jarl_choices))
+		_resolve_harii_jarl_prompt_selection(card)
 		return
 	var remaining_targets: Array[Card] = []
 	for target in current_targets:
 		if target not in _pending_harii_jarl_choices:
 			remaining_targets.append(target)
 	if remaining_targets.is_empty():
-		_finish_harii_jarl_prompt(card.resolve_warband_impact(game_manager, _pending_harii_jarl_choices))
+		_resolve_harii_jarl_prompt_selection(card)
 		return
 	var choice_number := _pending_harii_jarl_choices.size() + 1
 	var title_text := "Choose Harii %d of %d for %s" % [choice_number, max_summons, card.card_name]
@@ -9884,17 +10951,40 @@ func _on_harii_jarl_selection_cancel() -> void:
 	if card == null or game_manager == null:
 		_finish_harii_jarl_prompt("Harii Jarl cannot resolve Warband right now.")
 		return
+	_resolve_harii_jarl_prompt_selection(card)
+
+func _resolve_harii_jarl_prompt_selection(card: HariiJarl) -> void:
+	if card == null:
+		_finish_harii_jarl_prompt("Harii Jarl cannot resolve Warband right now.")
+		return
+	var chosen_uids: Array[String] = []
+	for chosen_card in _pending_harii_jarl_choices:
+		if chosen_card != null:
+			chosen_uids.append(chosen_card.uid)
+	if _submit_prompt_choice_command({
+		"type": "harii_jarl_impact_choice",
+		"source_uid": card.uid,
+		"chosen_uids": chosen_uids,
+	}):
+		_finish_harii_jarl_prompt("")
+		return
 	_finish_harii_jarl_prompt(card.resolve_warband_impact(game_manager, _pending_harii_jarl_choices))
 
 func _finish_harii_jarl_prompt(feedback: String) -> void:
+	if _pending_harii_jarl != null:
+		_queued_harii_jarl_prompt_targets.erase(_pending_harii_jarl.uid)
 	_pending_harii_jarl = null
 	_pending_harii_jarl_choices.clear()
-	_resume_after_deferred_resolution(feedback)
+	if feedback.strip_edges() == "":
+		update_ui()
+		return
+	action_label.text = _consume_resolution_feedback(feedback)
+	update_ui()
 
-func _queue_gala_tura_destroyed_prompt(card) -> void:
+func _queue_gala_tura_destroyed_prompt(card: GalaTura, prompt_targets: Array = []) -> void:
 	if card == null or game_manager == null:
 		return
-	var targets: Array[Card] = card.get_destroyed_trigger_targets(game_manager)
+	var targets: Array[Card] = _resolve_prompt_targets(card.get_destroyed_trigger_targets(game_manager), prompt_targets)
 	if targets.is_empty():
 		var no_target_text: String = card.card_name + " found no creatures to return."
 		if _stack_resolution_paused:
@@ -9907,6 +10997,7 @@ func _queue_gala_tura_destroyed_prompt(card) -> void:
 		_pause_stack_resolution(card.card_owner)
 	_pending_gala_tura = card
 	_pending_gala_tura_selected.clear()
+	_queued_gala_tura_prompt_targets = targets.duplicate()
 	_show_gala_tura_prompt()
 
 func _show_gala_tura_prompt() -> void:
@@ -9916,7 +11007,7 @@ func _show_gala_tura_prompt() -> void:
 		update_ui()
 		return
 	_sanitize_gala_tura_selection()
-	var valid_targets: Array[Card] = card.get_destroyed_trigger_targets(game_manager)
+	var valid_targets: Array[Card] = _resolve_prompt_targets(card.get_destroyed_trigger_targets(game_manager), _queued_gala_tura_prompt_targets)
 	var remaining_targets: Array[Card] = []
 	for target in valid_targets:
 		if target not in _pending_gala_tura_selected:
@@ -10017,7 +11108,7 @@ func _sanitize_gala_tura_selection() -> void:
 	if _pending_gala_tura == null or game_manager == null:
 		_pending_gala_tura_selected.clear()
 		return
-	var valid_targets: Array[Card] = _pending_gala_tura.get_destroyed_trigger_targets(game_manager)
+	var valid_targets: Array[Card] = _resolve_prompt_targets(_pending_gala_tura.get_destroyed_trigger_targets(game_manager), _queued_gala_tura_prompt_targets)
 	var cleaned: Array[Card] = []
 	for card in _pending_gala_tura_selected:
 		if card == null or card not in valid_targets or card in cleaned:
@@ -10031,6 +11122,18 @@ func _resolve_gala_tura_prompt(use_selection: bool) -> void:
 	var card := _pending_gala_tura
 	_sanitize_gala_tura_selection()
 	var chosen_targets: Array[Card] = _pending_gala_tura_selected.duplicate() if use_selection else []
+	var chosen_uids: Array[String] = []
+	for chosen_card in chosen_targets:
+		if chosen_card != null:
+			chosen_uids.append(chosen_card.uid)
+	if _submit_prompt_choice_command({
+		"type": "gala_tura_destroyed_choice",
+		"source_uid": card.uid if card != null else "",
+		"chosen_uids": chosen_uids,
+	}):
+		_hide_gala_tura_prompt()
+		update_ui()
+		return
 	_hide_gala_tura_prompt()
 	if card == null or game_manager == null:
 		update_ui()
@@ -10196,6 +11299,18 @@ func _resolve_kur_jara_tree_of_life_prompt() -> void:
 		_hide_kur_jara_tree_of_life_prompt()
 		update_ui()
 		return
+	var chosen_uids: Array[String] = []
+	for chosen_card in _pending_kur_jara_selected:
+		if chosen_card != null:
+			chosen_uids.append(chosen_card.uid)
+	if _submit_prompt_choice_command({
+		"type": "kur_jara_tree_of_life_choice",
+		"source_uid": card.uid,
+		"chosen_uids": chosen_uids,
+	}):
+		_hide_kur_jara_tree_of_life_prompt()
+		update_ui()
+		return
 	var feedback := card.resolve_tree_of_life_destroy_selection(game_manager, _pending_kur_jara_selected)
 	_hide_kur_jara_tree_of_life_prompt()
 	action_label.text = feedback
@@ -10214,11 +11329,12 @@ func _hide_gala_tura_prompt() -> void:
 	_gala_tura_prompt_panel = null
 	_pending_gala_tura = null
 	_pending_gala_tura_selected.clear()
+	_queued_gala_tura_prompt_targets.clear()
 
 func _resolve_foolish_optimism_prompt(
 	card: FoolishOptimism,
-	_attacker_choices: Array,
-	_defender_choices: Array
+	attacker_choices: Array,
+	defender_choices: Array
 ) -> void:
 	if card == null or game_manager == null:
 		if _stack_resolution_paused:
@@ -10227,14 +11343,31 @@ func _resolve_foolish_optimism_prompt(
 			update_ui()
 		return
 
-	_pause_stack_resolution(card.card_owner)
+	if not _is_networked_client and _executing_stack_action and not _stack_resolution_paused:
+		_pause_stack_resolution(card.card_owner)
 
 	var finish_resolution := func(chosen_attacker: Card, chosen_defender: Card) -> void:
+		if _submit_prompt_choice_command({
+			"type": "foolish_optimism_choice",
+			"source_uid": card.uid,
+			"attacker_uid": chosen_attacker.uid if chosen_attacker != null else "",
+			"defender_uid": chosen_defender.uid if chosen_defender != null else "",
+		}):
+			update_ui()
+			return
 		_resume_after_deferred_resolution(card.finish_prompt_resolution(game_manager, chosen_attacker, chosen_defender))
 
 	var prompt_defender_choice := func(chosen_attacker: Card) -> void:
-		var current_defender_choices := card.get_highest_level_defender_choices(game_manager)
+		var current_defender_choices := _resolve_prompt_targets(card.get_highest_level_defender_choices(game_manager), defender_choices)
 		if current_defender_choices.is_empty():
+			if _submit_prompt_choice_command({
+				"type": "foolish_optimism_choice",
+				"source_uid": card.uid,
+				"attacker_uid": chosen_attacker.uid if chosen_attacker != null else "",
+				"defender_uid": "",
+			}):
+				update_ui()
+				return
 			_resume_after_deferred_resolution(card.finish_prompt_resolution(game_manager, chosen_attacker, null))
 			return
 		if current_defender_choices.size() == 1:
@@ -10243,6 +11376,14 @@ func _resolve_foolish_optimism_prompt(
 		var on_choose_defender := func(chosen_defender: Card) -> void:
 			finish_resolution.call(chosen_attacker, chosen_defender)
 		var on_cancel_defender := func() -> void:
+			if _submit_prompt_choice_command({
+				"type": "foolish_optimism_choice",
+				"source_uid": card.uid,
+				"attacker_uid": "",
+				"defender_uid": "",
+			}):
+				update_ui()
+				return
 			card.send_to_graveyard_if_needed()
 			_resume_after_deferred_resolution(card.card_name + " fizzles.")
 		_show_card_selection_overlay(
@@ -10252,8 +11393,16 @@ func _resolve_foolish_optimism_prompt(
 			on_cancel_defender
 		)
 
-	var current_attacker_choices := card.get_lowest_level_attacker_choices(game_manager)
+	var current_attacker_choices := _resolve_prompt_targets(card.get_lowest_level_attacker_choices(game_manager), attacker_choices)
 	if current_attacker_choices.is_empty():
+		if _submit_prompt_choice_command({
+			"type": "foolish_optimism_choice",
+			"source_uid": card.uid,
+			"attacker_uid": "",
+			"defender_uid": "",
+		}):
+			update_ui()
+			return
 		_resume_after_deferred_resolution(card.finish_prompt_resolution(game_manager, null, null))
 		return
 	if current_attacker_choices.size() == 1:
@@ -10263,6 +11412,14 @@ func _resolve_foolish_optimism_prompt(
 	var on_choose_attacker := func(chosen_attacker: Card) -> void:
 		prompt_defender_choice.call(chosen_attacker)
 	var on_cancel_attacker := func() -> void:
+		if _submit_prompt_choice_command({
+			"type": "foolish_optimism_choice",
+			"source_uid": card.uid,
+			"attacker_uid": "",
+			"defender_uid": "",
+		}):
+			update_ui()
+			return
 		card.send_to_graveyard_if_needed()
 		_resume_after_deferred_resolution(card.card_name + " fizzles.")
 	_show_card_selection_overlay(
@@ -10272,86 +11429,69 @@ func _resolve_foolish_optimism_prompt(
 		on_cancel_attacker
 	)
 
-func _queue_foolish_optimism_attack(card: FoolishOptimism, attacker: Card, defender: Card) -> String:
-	if card == null or game_manager == null:
-		return "Foolish Optimism fizzles."
-	if attacker == null:
-		return "%s fizzles: no opposing creature to compel when it resolves." % card.card_name
-	if defender == null:
-		return "%s fizzles: no friendly creature to attack when it resolves." % card.card_name
-	if attacker.current_zone == null or not attacker.current_zone.is_board_zone():
-		return "%s fizzles: the chosen attacker is no longer on the field." % card.card_name
-	if defender.current_zone == null or not defender.current_zone.is_board_zone():
-		return "%s fizzles: the chosen defender is no longer on the field." % card.card_name
-	if not game_manager.can_cards_engage_each_other(attacker, defender):
-		return "%s fizzles: %s cannot legally attack %s." % [card.card_name, attacker.card_name, defender.card_name]
-
-	var action := CardAction.new()
-	action.type = CardAction.Type.ATTACK
-	action.source_player = attacker.get_controller()
-	action.card = card
-	action.attacker = attacker
-	action.united_front_partner = _get_declared_attack_partner(attacker)
-	action.attack_speed_override = _get_declared_attack_speed(attacker)
-	action.target = defender
-	action.halve_follower_damage = true
-	game_manager.push_to_stack(action)
-	update_ui()
-	return "%s compels %s to attack %s." % [card.card_name, attacker.card_name, defender.card_name]
-
-func _queue_fenrir_devour_prompt(card: Fenrir) -> void:
+func _show_fenrir_devour_prompt(card: Fenrir, prompt_targets: Array = []) -> void:
 	if card == null or game_manager == null:
 		return
-	var targets := card.get_valid_devour_targets(game_manager)
-	if targets.is_empty():
-		return
-	var action := CardAction.new()
-	action.type = CardAction.Type.EVENT
-	action.source_player = card.card_owner
-	action.card = card
-	action.event_name = "fenrir_devour_impact"
-	action.event_speed = 0
-	action.resolve_callback = func() -> void:
-		var current_targets := card.get_valid_devour_targets(game_manager)
-		if current_targets.is_empty():
-			var no_target_text := card.card_name + " found no creature weak enough to devour."
-			action.resolution_text = no_target_text
-			if _stack_resolution_paused:
-				_resume_after_deferred_resolution(no_target_text)
-			else:
-				action_label.text = no_target_text
-				update_ui()
+	if not prompt_targets.is_empty():
+		_queued_fenrir_devour_prompt_targets[card.uid] = prompt_targets.duplicate()
+	var current_targets := _resolve_prompt_targets(
+		card.get_valid_devour_targets(game_manager),
+		_queued_fenrir_devour_prompt_targets.get(card.uid, [])
+	)
+	if current_targets.is_empty():
+		_queued_fenrir_devour_prompt_targets.erase(card.uid)
+		if _submit_prompt_choice_command({
+			"type": "fenrir_devour_choice",
+			"source_uid": card.uid,
+			"target_uid": "",
+		}):
 			return
-		_pause_stack_resolution(card.card_owner)
-		if current_targets.size() == 1:
-			card.resolve_devour_impact(game_manager, current_targets[0], func(feedback: String) -> void:
-				action.resolution_text = feedback
-				_resume_after_deferred_resolution(feedback)
-			)
-			return
-		action.resolution_text = "Click a Devour target."
-		var validate_devour_impact_target := func(clicked_card: Card) -> bool:
-			return clicked_card != null and clicked_card in card.get_valid_devour_targets(game_manager)
-		var confirm_devour_impact_target := func(chosen_card: Card) -> void:
-			var finish_devour_impact := func(feedback: String) -> void:
-				_resume_after_deferred_resolution(feedback)
-			card.resolve_devour_impact(game_manager, chosen_card, finish_devour_impact)
-		var cancel_devour_impact_target := func() -> void:
-			_resume_after_deferred_resolution(card.card_name + " impact fizzles.")
-		_begin_pending_click_selection(
-			card.card_name + ": Devour",
-			card,
-			validate_devour_impact_target,
-			confirm_devour_impact_target,
-			cancel_devour_impact_target
-		)
-		action_label.text = "Click a Devour target."
-		_capture_action_log_message()
+		action_label.text = "%s found no creature weak enough to devour." % card.card_name
 		update_ui()
-	game_manager.push_to_stack(action)
+		return
+	if current_targets.size() == 1:
+		_queued_fenrir_devour_prompt_targets.erase(card.uid)
+		if _submit_prompt_choice_command({
+			"type": "fenrir_devour_choice",
+			"source_uid": card.uid,
+			"target_uid": current_targets[0].uid,
+		}):
+			return
+		card.resolve_devour_impact(game_manager, current_targets[0], func(feedback: String) -> void:
+			action_label.text = feedback
+			update_ui()
+		)
+		return
+	var on_choose_devour_target := func(chosen_card: Card) -> void:
+		_queued_fenrir_devour_prompt_targets.erase(card.uid)
+		if _submit_prompt_choice_command({
+			"type": "fenrir_devour_choice",
+			"source_uid": card.uid,
+			"target_uid": chosen_card.uid if chosen_card != null else "",
+		}):
+			return
+		card.resolve_devour_impact(game_manager, chosen_card, func(feedback: String) -> void:
+			action_label.text = feedback
+			update_ui()
+		)
+	var on_cancel_devour_target := func() -> void:
+		_queued_fenrir_devour_prompt_targets.erase(card.uid)
+		if _submit_prompt_choice_command({
+			"type": "fenrir_devour_choice",
+			"source_uid": card.uid,
+			"target_uid": "",
+		}):
+			return
+		action_label.text = card.card_name + " impact fizzles."
+		update_ui()
+	_show_card_selection_overlay(
+		"Choose a creature to devour for " + card.card_name,
+		current_targets,
+		on_choose_devour_target,
+		on_cancel_devour_target
+	)
+	action_label.text = card.card_name + ": choose a creature to devour."
 	update_ui()
-	action_label.text = card.card_name + " impact waits on priority."
-	_offer_priority()
 
 func _finish_creature_sacrifice_play() -> void:
 	var card := _sacrifice_pending_card
@@ -12001,9 +13141,10 @@ func _is_real_network_host() -> bool:
 		and network_manager.get("is_server") == true
 
 func uses_authoritative_match_flow() -> bool:
-	# CombatMockGame and its local derivatives (CardTestGame, PracticeThor, etc.)
-	# should use the same MatchManager-driven attack/priority flow as hosted matches.
-	return true
+	# Only real hosted matches should force the authoritative server flow.
+	# Local tools like CardTestGame still install a stub NetworkManager, but both
+	# players are controlled in one scene and should stay on the simpler local flow.
+	return _is_real_network_host()
 
 func can_intercept(defender: Card, attacker: Card, protected_target) -> bool:
 	if attacker == null:
@@ -12210,6 +13351,8 @@ func _offer_priority() -> void:
 	if match_manager != null and match_manager.uses_authoritative_priority_flow():
 		match_manager.advance_priority()
 		return
+	if _consume_duplicate_local_priority_offer():
+		return
 	var player := game_manager.priority_player
 	var responses := game_manager.get_priority_responses(player)
 	update_ui()
@@ -12238,6 +13381,44 @@ func _offer_priority() -> void:
 		return
 
 	_show_priority_prompt(player)
+
+func _build_local_priority_prompt_signature() -> Dictionary:
+	if game_manager == null or game_manager.priority_player == null:
+		return {}
+	var signature := {
+		"player_index": game_manager.players.find(game_manager.priority_player),
+		"stack_size": game_manager.action_stack.size(),
+	}
+	if not game_manager.action_stack.is_empty():
+		var top: CardAction = game_manager.action_stack.back()
+		signature["top_type"] = int(top.type)
+		signature["top_event_name"] = top.event_name
+		signature["top_card_uid"] = top.card.uid if top.card != null else ""
+		signature["top_source_index"] = game_manager.players.find(top.source_player)
+		signature["top_attacker_uid"] = top.attacker.uid if top.attacker != null else ""
+		if top.target is Card:
+			signature["top_target_uid"] = (top.target as Card).uid
+		elif top.target is Player:
+			signature["top_target_player_index"] = game_manager.players.find(top.target)
+	var response_uids: Array[String] = []
+	for response in game_manager.get_priority_responses(game_manager.priority_player):
+		if response is Card:
+			response_uids.append((response as Card).uid)
+	signature["response_uids"] = response_uids
+	return signature
+
+func _remember_local_priority_prompt_signature() -> void:
+	if _is_networked_client or match_manager == null or match_manager.uses_authoritative_priority_flow():
+		_pending_local_priority_prompt_signature.clear()
+		return
+	_pending_local_priority_prompt_signature = _build_local_priority_prompt_signature()
+
+func _consume_duplicate_local_priority_offer() -> bool:
+	if _pending_local_priority_prompt_signature.is_empty():
+		return false
+	var matches := _build_local_priority_prompt_signature() == _pending_local_priority_prompt_signature
+	_pending_local_priority_prompt_signature.clear()
+	return matches
 
 func _get_priority_response_target_uids(card: Card, top: CardAction) -> Array:
 	var target_uids: Array = []
@@ -12371,6 +13552,7 @@ func _show_priority_prompt(player: Player) -> void:
 	panel.show()
 
 func _hide_priority_prompt() -> void:
+	_pending_local_priority_prompt_signature.clear()
 	var panel = get_node_or_null("PriorityPromptPanel")
 	if panel:
 		panel.hide()
@@ -13160,19 +14342,28 @@ func _show_blessed_knights_prompt(card: BlessedKnights) -> void:
 	panel.offset_top = -60
 	panel.offset_bottom = 60
 
-func _show_byggvir_reveal_prompt(card: Byggvir) -> void:
+func _show_byggvir_reveal_prompt(card: Byggvir, prompt_options: Array = []) -> void:
 	_hide_byggvir_reveal_prompt()
 	if card == null or game_manager == null or game_manager.current_player == null:
 		return
-	if not card.consume_brewing_reveal_pending():
+	if prompt_options.is_empty() and not card.consume_brewing_reveal_pending():
 		return
-	var options: Array[Dictionary] = card.get_brewing_options(game_manager)
+	if not prompt_options.is_empty():
+		card.consume_brewing_reveal_pending()
+	var options: Array[Dictionary] = prompt_options if not prompt_options.is_empty() else card.serialize_brewing_options(game_manager)
 	if options.is_empty():
 		action_label.text = card.card_name + " has no Brewing options on reveal."
 		update_ui()
 		return
 	if options.size() == 1:
-		action_label.text = card.resolve_brewing_option(game_manager, options[0])
+		if _submit_prompt_choice_command({
+			"type": "byggvir_reveal_choice",
+			"source_uid": card.uid,
+			"choice": options[0],
+		}):
+			update_ui()
+			return
+		action_label.text = card.resolve_brewing_option_from_payload(game_manager, options[0])
 		update_ui()
 		return
 
@@ -13205,7 +14396,7 @@ func _show_byggvir_reveal_prompt(card: Byggvir) -> void:
 
 	for option in options:
 		var btn := Button.new()
-		btn.text = card.get_brewing_option_label(option)
+		btn.text = str(option.get("label", "Use Brewing"))
 		btn.pressed.connect(_resolve_byggvir_reveal_option.bind(option))
 		vbox.add_child(btn)
 
@@ -13233,14 +14424,19 @@ func _resolve_byggvir_reveal_option(option: Dictionary) -> void:
 	if card == null:
 		update_ui()
 		return
-	action_label.text = card.resolve_brewing_option(game_manager, option)
+	if _submit_prompt_choice_command({
+		"type": "byggvir_reveal_choice",
+		"source_uid": card.uid,
+		"choice": option,
+	}):
+		update_ui()
+		return
+	action_label.text = card.resolve_brewing_option_from_payload(game_manager, option)
 	update_ui()
 
 func _handle_post_reveal_prompt(card: Card, was_stealth: bool) -> void:
 	if not was_stealth or card == null:
 		return
-	if card is Byggvir and (card as Byggvir).has_pending_brewing_reveal():
-		_show_byggvir_reveal_prompt(card as Byggvir)
 
 func _show_erlqueens_nightingale_prompt(card: ErlqueensNightingaleScript) -> void:
 	_hide_erlqueens_nightingale_prompt()
@@ -13705,16 +14901,15 @@ func _resolve_tezcatlipoca_active_titlacauan_prompt(targets: Array[Card]) -> voi
 		else:
 			update_ui()
 		return
-	if _is_networked_client:
-		var target_uids: Array[String] = []
-		for target in targets:
-			if target != null:
-				target_uids.append(target.uid)
-		game_input.submit_action({
-			"type": "tezcatlipoca_active_titlacauan_choice",
-			"source_uid": card.uid,
-			"option": {"target_uids": target_uids, "skip": targets.is_empty()},
-		})
+	var target_uids: Array[String] = []
+	for target in targets:
+		if target != null:
+			target_uids.append(target.uid)
+	if _submit_prompt_choice_command({
+		"type": "tezcatlipoca_active_titlacauan_choice",
+		"source_uid": card.uid,
+		"option": {"target_uids": target_uids, "skip": targets.is_empty()},
+	}):
 		return
 	var resolution_text := card.resolve_titlacauan_choice(game_manager, targets, not targets.is_empty())
 	if _stack_resolution_paused:
@@ -14269,8 +15464,8 @@ func _resolve_en_hedu_anna_exaltation(option: Dictionary) -> void:
 	if card == null:
 		update_ui()
 		return
-	if _is_networked_client:
-		game_input.submit_action({type = "en_hedu_anna_exaltation", source_uid = card.uid, option = option})
+	if _submit_prompt_choice_command({type = "en_hedu_anna_exaltation", source_uid = card.uid, option = option}):
+		update_ui()
 		return
 	_queue_magical_action(
 		CardAction.Type.ABILITY,
@@ -14408,16 +15603,16 @@ func _resolve_blessed_knights_impact(ward_kind: String) -> void:
 		else: update_ui()
 		return
 	
-	if _is_networked_client:
-		game_input.submit_action({"type": "blessed_knights_choice", "source_uid": card.uid, "ward_kind": ward_kind})
+	if _submit_prompt_choice_command({"type": "blessed_knights_choice", "source_uid": card.uid, "ward_kind": ward_kind}):
+		update_ui()
+		return
+	card.apply_blessed_ward(game_manager, ward_kind)
+	var resolution_text := card.card_name + " grants Blessed Ward against " + card.get_blessed_ward_label(ward_kind) + " this turn."
+	if _stack_resolution_paused:
+		_resume_after_deferred_resolution(resolution_text)
 	else:
-		card.apply_blessed_ward(game_manager, ward_kind)
-		var resolution_text := card.card_name + " grants Blessed Ward against " + card.get_blessed_ward_label(ward_kind) + " this turn."
-		if _stack_resolution_paused:
-			_resume_after_deferred_resolution(resolution_text)
-		else:
-			action_label.text = resolution_text
-			update_ui()
+		action_label.text = resolution_text
+		update_ui()
 
 func _hide_absence_mode_prompt() -> void:
 	var panel := get_node_or_null("AbsenceModePromptPanel")
@@ -14467,28 +15662,28 @@ func _hide_aphrodite_prompt() -> void:
 
 func _on_aphrodite_confirm_pressed(god: AphroditeAreia) -> void:
 	_hide_aphrodite_prompt()
-	if _is_networked_client:
-		game_input.submit_action({"type": "aphrodite_enslave_choice", "source_uid": god.uid, "confirm": true})
-	else:
-		awaiting_god_ability_target = true
-		god_ability_source = god
-		action_label.text = god.card_name + " - Violent Delights: click an enemy creature to enslave."
+	if _submit_prompt_choice_command({"type": "aphrodite_enslave_choice", "source_uid": god.uid, "confirm": true}):
 		update_ui()
+		return
+	awaiting_god_ability_target = true
+	god_ability_source = god
+	action_label.text = god.card_name + " - Violent Delights: click an enemy creature to enslave."
+	update_ui()
 
 func _on_aphrodite_decline_pressed() -> void:
 	_hide_aphrodite_prompt()
-	if _is_networked_client:
-		var god_uid := ""
-		if game_manager.current_player != null:
-			var god_zone := game_manager.current_player.god_zone
-			if not god_zone.cards.is_empty():
-				god_uid = god_zone.cards[0].uid
-		game_input.submit_action({"type": "aphrodite_enslave_choice", "source_uid": god_uid, "confirm": false})
-	else:
-		awaiting_god_ability_target = false
-		god_ability_source = null
-		action_label.text = "Declined Aphrodite Areia."
+	var god_uid := ""
+	if game_manager.current_player != null:
+		var god_zone := game_manager.current_player.god_zone
+		if not god_zone.cards.is_empty():
+			god_uid = god_zone.cards[0].uid
+	if _submit_prompt_choice_command({"type": "aphrodite_enslave_choice", "source_uid": god_uid, "confirm": false}):
 		update_ui()
+		return
+	awaiting_god_ability_target = false
+	god_ability_source = null
+	action_label.text = "Declined Aphrodite Areia."
+	update_ui()
 
 func _hide_demiurge_prompt() -> void:
 	var panel := get_node_or_null("DemiurgePromptPanel")
@@ -15213,11 +16408,13 @@ func _dismiss_transient_prompts() -> void:
 	_pending_book_of_life_spell = null
 	_hide_absence_mode_prompt()
 	_hide_blessed_knights_prompt()
+	_hide_nusku_active_core_flame_prompt()
 	_hide_habrok_breakout_prompt(true)
 	_hide_champions_call_prompt()
 	_hide_sharur_escape_prompt()
 	_hide_wheel_of_fire_turn_start_prompt()
 	_hide_byggvir_reveal_prompt()
+	_hide_gawain_healing_hands_prompt()
 	_hide_harii_shaman_prompt()
 	_hide_erlqueens_nightingale_prompt()
 	_clear_hunting_tactics_prompt_state()
@@ -15235,6 +16432,22 @@ func _dismiss_transient_prompts() -> void:
 	_clear_hati_moon_hunt_state()
 	_pending_skoll_prompts.clear()
 	_clear_skoll_upkeep_summon()
+	_pending_harii_jarl = null
+	_pending_harii_jarl_choices.clear()
+	_pending_huginn_prime_prompts.clear()
+	_active_huginn_prime_prompt = null
+	_pending_muninn_prime_prompts.clear()
+	_active_muninn_prime_prompt = null
+	_pending_mummu_entropy_prompts.clear()
+	_hide_mummu_entropy_prompt()
+	_queued_harii_jarl_prompt_targets.clear()
+	_queued_fenrir_devour_prompt_targets.clear()
+	_queued_huginn_prime_prompt_targets.clear()
+	_queued_muninn_prime_prompt_targets.clear()
+	_queued_wolf_adolescent_prompt_targets.clear()
+	_queued_humbaba_prompt_targets.clear()
+	_queued_oracles_sight_prompt_targets.clear()
+	_queued_tonal_extraction_prompt_targets.clear()
 	if _resurrection_panel and is_instance_valid(_resurrection_panel):
 		_resurrection_panel.queue_free()
 	_resurrection_panel = null
@@ -15446,6 +16659,7 @@ func _on_match_action_resolved(action: CardAction) -> void:
 	if _stack_resolution_paused:
 		return
 		
+	_flush_deferred_priority_events()
 	_finish_post_execute(action.source_player)
 	update_ui()
 
@@ -15480,6 +16694,16 @@ func _on_match_move_validated(move: Dictionary) -> void:
 			_consume_current_humbaba_prompt()
 			if not _is_networked_client:
 				call_deferred("_show_next_humbaba_augury_prompt")
+		"huginn_perish_prime_choice":
+			_apply_prompt_choice_feedback()
+			if not _is_networked_client:
+				call_deferred("_show_next_huginn_perish_prime_prompt")
+			return
+		"muninn_perish_prime_choice":
+			_apply_prompt_choice_feedback()
+			if not _is_networked_client:
+				call_deferred("_show_next_muninn_perish_prime_prompt")
+			return
 		"wheel_of_fire_turn_start_choice":
 			var feedback := _consume_resolution_feedback()
 			if feedback.strip_edges() != "":
@@ -15489,6 +16713,27 @@ func _on_match_move_validated(move: Dictionary) -> void:
 				_consume_current_wheel_of_fire_prompt()
 				if not _show_next_wheel_of_fire_turn_start_prompt():
 					_finish_wheel_of_fire_turn_start_sequence()
+		"en_hedu_anna_exaltation":
+			var card := game_manager.get_card_by_uid(str(move.get("source_uid", ""))) as EnHeduAnnaScript
+			var option: Dictionary = move.get("option", {})
+			if card != null:
+				action_label.text = "%s gains %s and cannot attack, be destroyed, or be targeted until the end of the next turn." % [
+					card.card_name,
+					card.get_exaltation_option_label(option)
+				]
+			else:
+				action_label.text = "En-hedu-anna resolved Exaltation."
+		"aphrodite_enslave_choice":
+			var god := game_manager.get_card_by_uid(str(move.get("source_uid", ""))) as AphroditeAreia
+			var confirmed := bool(move.get("confirm", false))
+			if confirmed:
+				awaiting_god_ability_target = true
+				god_ability_source = god
+				action_label.text = god.card_name + " - Violent Delights: click an enemy creature to enslave." if god != null else "Violent Delights: click an enemy creature to enslave."
+			else:
+				awaiting_god_ability_target = false
+				god_ability_source = null
+				action_label.text = "Declined Aphrodite Areia."
 		"skoll_upkeep_summon":
 			# Skoll already summoned by MatchManager; open standard turn-start priority.
 			if _is_networked_client:
@@ -15556,6 +16801,32 @@ func _on_match_move_validated(move: Dictionary) -> void:
 				action_label.text = response_card.card_name + " responds!"
 			if not _is_networked_client and not authoritative_priority:
 				_offer_priority()
+		"durinn_secondborn_choice", "first_sage_adapa_choice", "third_sage_enmedugga_choice", "fourth_sage_enmegalamma_choice", "sixth_sage_an_enlilda_choice", "lailoken_reveal_choice", "masmassu_priest_reveal_choice", "rally_the_troops_choice", "terror_impact_choice", "fenrir_devour_choice", "gawain_healing_hands_choice", "tatzelwurm_dragon_heart_choice", "byggvir_reveal_choice", "harii_jarl_impact_choice", "gala_tura_destroyed_choice", "kur_jara_tree_of_life_choice", "hunting_tactics_choice", "foolish_optimism_choice", "blessed_knights_choice", "tezcatlipoca_active_titlacauan_choice", "mummu_entropy_choice", "nusku_active_core_flame_choice", "nusku_well_of_fire_choice":
+			_apply_prompt_choice_feedback()
+			return
+	update_ui()
+
+func _submit_prompt_choice_command(command: Dictionary) -> bool:
+	if game_input == null:
+		return false
+	return bool(game_input.submit_action(command))
+
+func _apply_prompt_choice_feedback() -> void:
+	var feedback := _consume_resolution_feedback()
+	if feedback.strip_edges() == "":
+		update_ui()
+		return
+	if game_manager != null and game_manager.has_deferred_combat_resolution():
+		action_label.text = feedback
+		update_ui()
+		game_manager.resume_deferred_combat()
+		if _stack_resolution_paused:
+			_resume_after_deferred_resolution(feedback)
+		return
+	if _stack_resolution_paused:
+		_resume_after_deferred_resolution(feedback)
+		return
+	action_label.text = feedback
 	update_ui()
 
 func _on_match_move_failed(reason: String) -> void:
@@ -15645,10 +16916,280 @@ func _on_match_ui_interaction(player_index: int, type: String, data: Dictionary)
 			var god := game_manager.get_card_by_uid(data.get("source_uid", "")) as AphroditeAreia
 			if god != null:
 				_show_aphrodite_prompt(god)
+		"gawain_healing_hands":
+			var card := game_manager.get_card_by_uid(data.get("source_uid", "")) as Gawain
+			var target := game_manager.get_card_by_uid(data.get("target_uid", ""))
+			if card != null and target != null:
+				_show_gawain_healing_hands_prompt(card, target, data.get("statuses", []))
+		"tatzelwurm_dragon_heart":
+			var card := game_manager.get_card_by_uid(data.get("source_uid", "")) as Tatzelwurm
+			if card != null:
+				var prompt_targets: Array[Card] = []
+				for target_uid in data.get("target_uids", []):
+					var target_card := game_manager.get_card_by_uid(str(target_uid))
+					if target_card != null:
+						prompt_targets.append(target_card)
+				_resolve_tatzelwurm_dragon_heart_prompt(card, prompt_targets)
+		"byggvir_reveal":
+			var card := game_manager.get_card_by_uid(data.get("source_uid", "")) as Byggvir
+			if card != null:
+				_show_byggvir_reveal_prompt(card, data.get("options", []))
+		"nusku_well_of_fire":
+			var nusku := game_manager.get_card_by_uid(data.get("source_uid", "")) as NuskuFirebearer
+			if nusku != null:
+				var choices: Array[Card] = []
+				for target_uid in data.get("target_uids", []):
+					var chosen_card := game_manager.get_card_by_uid(str(target_uid))
+					if chosen_card != null:
+						choices.append(chosen_card)
+				_show_nusku_well_of_fire_prompt(nusku, choices, int(data.get("mill_count", 0)))
+		"ragnarok_discard":
+			var power := game_manager.get_card_by_uid(data.get("source_uid", "")) as Ragnarok
+			if power != null and player_index >= 0 and player_index < game_manager.players.size():
+				var prompt_cards: Array[Card] = []
+				for target_uid in data.get("target_uids", []):
+					var prompt_card := game_manager.get_card_by_uid(str(target_uid))
+					if prompt_card != null:
+						prompt_cards.append(prompt_card)
+				_show_ragnarok_discard_prompt(
+					power,
+					game_manager.players[player_index],
+					int(data.get("hand_limit", Ragnarok.HAND_LIMIT)),
+					prompt_cards
+				)
+		"gugalanna_celestial_charge":
+			var card := game_manager.get_card_by_uid(data.get("source_uid", "")) as GugalannaBullOfHeaven
+			if card != null:
+				var prompt_targets: Array[Card] = []
+				for target_uid in data.get("target_uids", []):
+					var target_card := game_manager.get_card_by_uid(str(target_uid))
+					if target_card != null:
+						prompt_targets.append(target_card)
+				_begin_gugalanna_impact_targeting(card, prompt_targets)
+		"giant_master_architect_impact":
+			var card := game_manager.get_card_by_uid(data.get("source_uid", "")) as GiantMasterArchitect
+			if card != null:
+				var prompt_targets: Array[Card] = []
+				for target_uid in data.get("target_uids", []):
+					var target_card := game_manager.get_card_by_uid(str(target_uid))
+					if target_card != null:
+						prompt_targets.append(target_card)
+				_queue_giant_master_architect_impact_prompt(card, prompt_targets)
+		"pai_long_autumn_king_impact":
+			var card := game_manager.get_card_by_uid(data.get("source_uid", "")) as PaiLongAutumnKing
+			if card != null:
+				var prompt_targets: Array[Card] = []
+				for target_uid in data.get("target_uids", []):
+					var target_card := game_manager.get_card_by_uid(str(target_uid))
+					if target_card != null:
+						prompt_targets.append(target_card)
+				_queue_pai_long_autumn_king_impact_prompt(card, prompt_targets)
+		"nergal_lion_impact":
+			var card := game_manager.get_card_by_uid(data.get("source_uid", "")) as NergalLion
+			if card != null:
+				var prompt_targets: Array[Card] = []
+				for target_uid in data.get("target_uids", []):
+					var target_card := game_manager.get_card_by_uid(str(target_uid))
+					if target_card != null:
+						prompt_targets.append(target_card)
+				_queue_nergal_lion_impact_prompt(card, prompt_targets)
+		"gala_tura_destroyed":
+			var card := game_manager.get_card_by_uid(data.get("source_uid", "")) as GalaTura
+			if card != null:
+				var prompt_targets: Array[Card] = []
+				for target_uid in data.get("target_uids", []):
+					var target_card := game_manager.get_card_by_uid(str(target_uid))
+					if target_card != null:
+						prompt_targets.append(target_card)
+				_queue_gala_tura_destroyed_prompt(card, prompt_targets)
+		"durinn_secondborn_impact":
+			var card := game_manager.get_card_by_uid(data.get("source_uid", "")) as DurinnSecondborn
+			if card != null:
+				var prompt_targets: Array[Card] = []
+				for target_uid in data.get("target_uids", []):
+					var target_card := game_manager.get_card_by_uid(str(target_uid))
+					if target_card != null:
+						prompt_targets.append(target_card)
+				_queue_durinn_secondborn_impact_prompt(card, prompt_targets)
+		"kur_jara_tree_of_life":
+			var card := game_manager.get_card_by_uid(data.get("source_uid", "")) as KurJara
+			if card != null:
+				_queue_kur_jara_tree_of_life_destroy_prompt(card)
+		"hunting_tactics":
+			var power := game_manager.get_card_by_uid(data.get("source_uid", "")) as HuntingTactics
+			var attacker := game_manager.get_card_by_uid(data.get("attacker_uid", ""))
+			if power != null and attacker != null:
+				var prompt_targets: Array[Card] = []
+				for target_uid in data.get("target_uids", []):
+					var target_card := game_manager.get_card_by_uid(str(target_uid))
+					if target_card != null:
+						prompt_targets.append(target_card)
+				_resolve_hunting_tactics_prompt(power, attacker, prompt_targets)
+		"foolish_optimism":
+			var card := game_manager.get_card_by_uid(data.get("source_uid", "")) as FoolishOptimism
+			if card != null:
+				var attacker_choices: Array[Card] = []
+				for attacker_uid in data.get("attacker_uids", []):
+					var attacker := game_manager.get_card_by_uid(str(attacker_uid))
+					if attacker != null:
+						attacker_choices.append(attacker)
+				var defender_choices: Array[Card] = []
+				for defender_uid in data.get("defender_uids", []):
+					var defender := game_manager.get_card_by_uid(str(defender_uid))
+					if defender != null:
+						defender_choices.append(defender)
+				_resolve_foolish_optimism_prompt(card, attacker_choices, defender_choices)
+		"fenrir_devour_impact":
+			var card := game_manager.get_card_by_uid(data.get("source_uid", "")) as Fenrir
+			if card != null:
+				var prompt_targets: Array[Card] = []
+				for target_uid in data.get("target_uids", []):
+					var target_card := game_manager.get_card_by_uid(str(target_uid))
+					if target_card != null:
+						prompt_targets.append(target_card)
+				_show_fenrir_devour_prompt(card, prompt_targets)
+		"harii_jarl_impact":
+			var card := game_manager.get_card_by_uid(data.get("source_uid", "")) as HariiJarl
+			if card != null:
+				var prompt_targets: Array[Card] = []
+				for target_uid in data.get("target_uids", []):
+					var target_card := game_manager.get_card_by_uid(str(target_uid))
+					if target_card != null:
+						prompt_targets.append(target_card)
+				_show_harii_jarl_impact_prompt(card, prompt_targets)
+		"huginn_perish_prime":
+			var card := game_manager.get_card_by_uid(data.get("source_uid", "")) as Huginn
+			if card != null:
+				var prompt_targets: Array[Card] = []
+				for target_uid in data.get("target_uids", []):
+					var target_card := game_manager.get_card_by_uid(str(target_uid))
+					if target_card != null:
+						prompt_targets.append(target_card)
+				_queue_huginn_perish_prime_prompt(card, prompt_targets)
+		"muninn_perish_prime":
+			var card := game_manager.get_card_by_uid(data.get("source_uid", "")) as Muninn
+			if card != null:
+				var prompt_targets: Array[Card] = []
+				for target_uid in data.get("target_uids", []):
+					var target_card := game_manager.get_card_by_uid(str(target_uid))
+					if target_card != null:
+						prompt_targets.append(target_card)
+				_queue_muninn_perish_prime_prompt(card, prompt_targets)
+		"lailoken_reveal":
+			var card := game_manager.get_card_by_uid(data.get("source_uid", "")) as Lailoken
+			if card != null:
+				var prompt_targets: Array[Card] = []
+				for target_uid in data.get("target_uids", []):
+					var target_card := game_manager.get_card_by_uid(str(target_uid))
+					if target_card != null:
+						prompt_targets.append(target_card)
+				_show_lailoken_reveal_prompt(card, prompt_targets)
+		"masmassu_priest_reveal":
+			var card := game_manager.get_card_by_uid(data.get("source_uid", "")) as MasmassuPriest
+			if card != null:
+				var prompt_targets: Array[Card] = []
+				for target_uid in data.get("target_uids", []):
+					var target_card := game_manager.get_card_by_uid(str(target_uid))
+					if target_card != null:
+						prompt_targets.append(target_card)
+				_show_masmassu_priest_reveal_prompt(card, prompt_targets)
+		"oracles_sight":
+			var card := game_manager.get_card_by_uid(data.get("source_uid", "")) as OraclesSight
+			if card != null:
+				var prompt_targets: Array[Card] = []
+				for target_uid in data.get("target_uids", []):
+					var target_card := game_manager.get_card_by_uid(str(target_uid))
+					if target_card != null:
+						prompt_targets.append(target_card)
+				_queue_oracles_sight_prompt(card, prompt_targets)
+		"rally_the_troops":
+			var card := game_manager.get_card_by_uid(data.get("source_uid", "")) as RallyTheTroops
+			var summoned_card := game_manager.get_card_by_uid(data.get("summoned_uid", ""))
+			if card != null:
+				var prompt_targets: Array[Card] = []
+				for target_uid in data.get("target_uids", []):
+					var target_card := game_manager.get_card_by_uid(str(target_uid))
+					if target_card != null:
+						prompt_targets.append(target_card)
+				_show_rally_the_troops_prompt(card, summoned_card, prompt_targets)
+		"terror_impact":
+			var power := game_manager.get_card_by_uid(data.get("source_uid", "")) as Terror
+			var demon := game_manager.get_card_by_uid(data.get("demon_uid", ""))
+			if power != null and demon != null:
+				var prompt_targets: Array[Card] = []
+				for target_uid in data.get("target_uids", []):
+					var target_card := game_manager.get_card_by_uid(str(target_uid))
+					if target_card != null:
+						prompt_targets.append(target_card)
+				_show_terror_impact_prompt(power, demon, prompt_targets)
+		"tonal_extraction":
+			var card := game_manager.get_card_by_uid(data.get("source_uid", "")) as TonalExtraction
+			if card != null:
+				var prompt_targets: Array[Card] = []
+				for target_uid in data.get("target_uids", []):
+					var target_card := game_manager.get_card_by_uid(str(target_uid))
+					if target_card != null:
+						prompt_targets.append(target_card)
+				_queue_tonal_extraction_prompt(card, prompt_targets)
+		"first_sage_adapa_impact":
+			var card := game_manager.get_card_by_uid(data.get("source_uid", "")) as FirstSageAdapa
+			if card != null:
+				var prompt_targets: Array[Card] = []
+				for target_uid in data.get("target_uids", []):
+					var target_card := game_manager.get_card_by_uid(str(target_uid))
+					if target_card != null:
+						prompt_targets.append(target_card)
+				_show_first_sage_adapa_impact_prompt(card, prompt_targets)
+		"third_sage_enmedugga_impact":
+			var card := game_manager.get_card_by_uid(data.get("source_uid", "")) as ThirdSageEnmedugga
+			if card != null:
+				var prompt_targets: Array[Card] = []
+				for target_uid in data.get("target_uids", []):
+					var target_card := game_manager.get_card_by_uid(str(target_uid))
+					if target_card != null:
+						prompt_targets.append(target_card)
+				_show_third_sage_enmedugga_impact_prompt(card, prompt_targets)
+		"fourth_sage_enmegalamma_impact":
+			var card = game_manager.get_card_by_uid(data.get("source_uid", ""))
+			if card != null:
+				var prompt_targets: Array[Card] = []
+				for target_uid in data.get("target_uids", []):
+					var target_card := game_manager.get_card_by_uid(str(target_uid))
+					if target_card != null:
+						prompt_targets.append(target_card)
+				_show_fourth_sage_enmegalamma_impact_prompt(card, prompt_targets)
+		"sixth_sage_an_enlilda_impact":
+			var card := game_manager.get_card_by_uid(data.get("source_uid", "")) as SixthSageAnEnlilda
+			if card != null:
+				var prompt_targets: Array[Card] = []
+				for target_uid in data.get("target_uids", []):
+					var target_card := game_manager.get_card_by_uid(str(target_uid))
+					if target_card != null:
+						prompt_targets.append(target_card)
+				_show_sixth_sage_an_enlilda_impact_prompt(card, prompt_targets)
 		"blessed_knights_ward":
 			var card := game_manager.get_card_by_uid(data.get("source_uid", "")) as BlessedKnights
 			if card != null:
 				_show_blessed_knights_prompt(card)
+		"nusku_active_core_flame":
+			var card := game_manager.get_card_by_uid(data.get("source_uid", "")) as NuskuActive
+			if card != null:
+				var preview_cards: Array[Card] = []
+				for preview_uid in data.get("preview_uids", []):
+					var preview_card := game_manager.get_card_by_uid(str(preview_uid))
+					if preview_card != null:
+						preview_cards.append(preview_card)
+				var recoverable_cards: Array[Card] = []
+				for recoverable_uid in data.get("recoverable_uids", []):
+					var recoverable_card := game_manager.get_card_by_uid(str(recoverable_uid))
+					if recoverable_card != null:
+						recoverable_cards.append(recoverable_card)
+				_show_nusku_active_core_flame_prompt(
+					card,
+					preview_cards,
+					recoverable_cards,
+					int(data.get("mill_count", preview_cards.size()))
+				)
 		"wolf_adolescent_maturation":
 			var card := game_manager.get_card_by_uid(data.get("source_uid", "")) as WolfAdolescent
 			if card != null:
@@ -15657,7 +17198,7 @@ func _on_match_ui_interaction(player_index: int, type: String, data: Dictionary)
 					var target_card := game_manager.get_card_by_uid(str(target_uid))
 					if target_card != null:
 						prompt_targets.append(target_card)
-				_show_wolf_adolescent_maturation_prompt(card, prompt_targets)
+				_queue_wolf_adolescent_maturation_prompt(card, prompt_targets)
 		"humbaba_augury":
 			var card := game_manager.get_card_by_uid(data.get("source_uid", "")) as HumbabaTheTerrible
 			if card != null:
@@ -15666,7 +17207,12 @@ func _on_match_ui_interaction(player_index: int, type: String, data: Dictionary)
 					var target_card := game_manager.get_card_by_uid(str(target_uid))
 					if target_card != null:
 						prompt_targets.append(target_card)
-				_show_humbaba_augury_prompt(card, prompt_targets)
+				_queue_humbaba_augury_reading_prompt(card, prompt_targets)
+		"mummu_entropy":
+			var card := game_manager.get_card_by_uid(data.get("source_uid", "")) as MummuActive
+			var victim := game_manager.get_card_by_uid(data.get("victim_uid", ""))
+			if card != null and victim != null:
+				_queue_mummu_entropy_prompt(card, victim)
 		"wheel_of_fire_turn_start":
 			var card := game_manager.get_card_by_uid(data.get("source_uid", "")) as WheelOfFire
 			if card != null:
@@ -15675,6 +17221,12 @@ func _on_match_ui_interaction(player_index: int, type: String, data: Dictionary)
 			var card := game_manager.get_card_by_uid(data.get("source_uid", "")) as EnHeduAnna
 			if card != null:
 				_show_en_hedu_anna_prompt(card)
+		"return_to_hand_choice":
+			var card := data.get("card") as Card
+			if card == null:
+				card = game_manager.get_card_by_uid(str(data.get("card_uid", "")))
+			if card != null:
+				_queue_sharur_escape_prompt(card, str(data.get("reason", "")))
 
 func _find_empty_player_zone() -> Zone:
 	for zone in game_manager.current_player.frontline_zones + game_manager.current_player.reserve_zones:
@@ -15707,6 +17259,11 @@ func _is_attacker_on_board(attacker: Card, owning_player: Player) -> bool:
 func _on_draw_button_pressed() -> void:
 	if _game_finished:
 		return
+	if game_manager == null or not game_manager.is_player_in_upkeep_window(game_manager.current_player):
+		action_label.text = "Upkeep has already been resolved."
+		update_ui()
+		hide_turn_choice()
+		return
 	if _skoll_prompt_panel != null or _pending_skoll_summon != null:
 		action_label.text = "Finish resolving Sun Hunt or cancel it before choosing another upkeep option."
 		return
@@ -15717,6 +17274,11 @@ func _on_draw_button_pressed() -> void:
 
 func _on_mana_button_pressed() -> void:
 	if _game_finished:
+		return
+	if game_manager == null or not game_manager.is_player_in_upkeep_window(game_manager.current_player):
+		action_label.text = "Upkeep has already been resolved."
+		update_ui()
+		hide_turn_choice()
 		return
 	if _skoll_prompt_panel != null or _pending_skoll_summon != null:
 		action_label.text = "Finish resolving Sun Hunt or cancel it before choosing another upkeep option."
@@ -15767,74 +17329,61 @@ func _prompt_end_turn_discards() -> void:
 	)
 	action_label.text = "Choose %d card(s) to discard before ending your turn." % excess
 
-func _resolve_ragnarok_post_destroy(power: Ragnarok, destroyed_count: int, hand_limit: int) -> void:
-	if game_manager == null or power == null:
+func _show_ragnarok_discard_prompt(power: Ragnarok, player: Player, hand_limit: int, prompt_cards: Array[Card] = []) -> void:
+	if power == null or player == null or player.hand_zone == null:
+		_clear_ragnarok_prompt_state()
+		update_ui()
 		return
 	_pending_ragnarok_power = power
-	_pending_ragnarok_destroyed_count = destroyed_count
-	_pending_ragnarok_discarded_count = 0
+	_pending_ragnarok_player = player
 	_pending_ragnarok_hand_limit = maxi(0, hand_limit)
-	_pending_ragnarok_players.clear()
-	for player in game_manager.players:
-		if player != null and player.hand_zone != null and player.hand_zone.get_card_count() > _pending_ragnarok_hand_limit:
-			_pending_ragnarok_players.append(player)
-	_continue_ragnarok_discard_prompt()
-
-func _continue_ragnarok_discard_prompt() -> void:
-	if _pending_ragnarok_power == null or game_manager == null:
-		_clear_ragnarok_prompt_state()
-		return
-	while not _pending_ragnarok_players.is_empty():
-		var player := _pending_ragnarok_players[0]
-		if player == null or player.hand_zone == null or player.hand_zone.get_card_count() <= _pending_ragnarok_hand_limit:
-			_pending_ragnarok_players.remove_at(0)
-			continue
-		_prompt_ragnarok_discards_for_player(player)
-		return
-	_pending_ragnarok_power._finish_resolution(
-		game_manager,
-		_pending_ragnarok_destroyed_count,
-		_pending_ragnarok_discarded_count
-	)
-	_clear_ragnarok_prompt_state()
-	update_ui()
-
-func _prompt_ragnarok_discards_for_player(player: Player) -> void:
-	if player == null or player.hand_zone == null:
-		_continue_ragnarok_discard_prompt()
-		return
+	_pending_ragnarok_cards = prompt_cards.duplicate()
+	var display_cards: Array[Card] = _pending_ragnarok_cards if not _pending_ragnarok_cards.is_empty() else player.hand_zone.cards.duplicate()
 	var excess := maxi(0, player.hand_zone.get_card_count() - _pending_ragnarok_hand_limit)
-	if excess <= 0:
-		_pending_ragnarok_players.remove_at(0)
-		_continue_ragnarok_discard_prompt()
-		return
 	var on_choose_discard := func(chosen_card: Card) -> void:
-		_discard_ragnarok_card(player, chosen_card)
+		_submit_ragnarok_discard_choice(chosen_card)
+	var on_cancel := func() -> void:
+		call_deferred("_reopen_ragnarok_discard_prompt")
 	_show_card_selection_overlay(
 		"%s: discard %d card(s) to reach %d cards" % [player.player_name, excess, _pending_ragnarok_hand_limit],
-		player.hand_zone.cards.duplicate(),
-		on_choose_discard
+		display_cards,
+		on_choose_discard,
+		on_cancel
 	)
 	action_label.text = "%s chooses %d discard(s) for Ragnarok." % [player.player_name, excess]
 
-func _discard_ragnarok_card(player: Player, card: Card) -> void:
-	if player == null or player.hand_zone == null:
-		_continue_ragnarok_discard_prompt()
+func _reopen_ragnarok_discard_prompt() -> void:
+	if _pending_ragnarok_power == null or _pending_ragnarok_player == null:
 		return
-	if card == null or card.current_zone != player.hand_zone:
-		_prompt_ragnarok_discards_for_player(player)
+	_show_ragnarok_discard_prompt(
+		_pending_ragnarok_power,
+		_pending_ragnarok_player,
+		_pending_ragnarok_hand_limit,
+		_pending_ragnarok_cards
+	)
+
+func _submit_ragnarok_discard_choice(card: Card) -> void:
+	var power := _pending_ragnarok_power
+	_clear_ragnarok_prompt_state()
+	if power == null or card == null:
+		update_ui()
 		return
-	player.discard_card(card)
-	_pending_ragnarok_discarded_count += 1
-	update_ui()
-	_prompt_ragnarok_discards_for_player(player)
+	var command := {
+		"type": "ragnarok_discard_choice",
+		"source_uid": power.uid,
+		"target_uid": card.uid,
+	}
+	if game_input != null:
+		game_input.submit_action(command)
+		return
+	if match_manager != null:
+		match_manager.process_command(command)
 
 func _clear_ragnarok_prompt_state() -> void:
 	_pending_ragnarok_power = null
-	_pending_ragnarok_destroyed_count = 0
-	_pending_ragnarok_discarded_count = 0
+	_pending_ragnarok_player = null
 	_pending_ragnarok_hand_limit = 5
-	_pending_ragnarok_players.clear()
+	_pending_ragnarok_cards.clear()
 
 func _discard_end_turn_card(card: Card) -> void:
 	if card == null or card.current_zone != game_manager.current_player.hand_zone:
@@ -16332,6 +17881,258 @@ func _apply_ui_interaction(event_data: Dictionary) -> void:
 			var god := game_manager.get_card_by_uid(payload.get("source_uid", "")) as AphroditeAreia
 			if god != null:
 				_show_aphrodite_prompt(god)
+		"gawain_healing_hands":
+			var card := game_manager.get_card_by_uid(payload.get("source_uid", "")) as Gawain
+			var target := game_manager.get_card_by_uid(payload.get("target_uid", ""))
+			if card != null and target != null:
+				_show_gawain_healing_hands_prompt(card, target, payload.get("statuses", []))
+		"tatzelwurm_dragon_heart":
+			var card := game_manager.get_card_by_uid(payload.get("source_uid", "")) as Tatzelwurm
+			if card != null:
+				var prompt_targets: Array[Card] = []
+				for target_uid in payload.get("target_uids", []):
+					var target_card := game_manager.get_card_by_uid(str(target_uid))
+					if target_card != null:
+						prompt_targets.append(target_card)
+				_resolve_tatzelwurm_dragon_heart_prompt(card, prompt_targets)
+		"byggvir_reveal":
+			var card := game_manager.get_card_by_uid(payload.get("source_uid", "")) as Byggvir
+			if card != null:
+				_show_byggvir_reveal_prompt(card, payload.get("options", []))
+		"nusku_well_of_fire":
+			var nusku := game_manager.get_card_by_uid(payload.get("source_uid", "")) as NuskuFirebearer
+			if nusku != null:
+				var choices: Array[Card] = []
+				for target_uid in payload.get("target_uids", []):
+					var chosen_card := game_manager.get_card_by_uid(str(target_uid))
+					if chosen_card != null:
+						choices.append(chosen_card)
+				_show_nusku_well_of_fire_prompt(nusku, choices, int(payload.get("mill_count", 0)))
+		"ragnarok_discard":
+			var power := game_manager.get_card_by_uid(payload.get("source_uid", "")) as Ragnarok
+			var prompt_player_index := int(event_data.get("player_index", local_idx))
+			if power != null and prompt_player_index >= 0 and prompt_player_index < game_manager.players.size():
+				var prompt_cards: Array[Card] = []
+				for target_uid in payload.get("target_uids", []):
+					var prompt_card := game_manager.get_card_by_uid(str(target_uid))
+					if prompt_card != null:
+						prompt_cards.append(prompt_card)
+				_show_ragnarok_discard_prompt(
+					power,
+					game_manager.players[prompt_player_index],
+					int(payload.get("hand_limit", Ragnarok.HAND_LIMIT)),
+					prompt_cards
+				)
+		"gugalanna_celestial_charge":
+			var card := game_manager.get_card_by_uid(payload.get("source_uid", "")) as GugalannaBullOfHeaven
+			if card != null:
+				var prompt_targets: Array[Card] = []
+				for target_uid in payload.get("target_uids", []):
+					var target_card := game_manager.get_card_by_uid(str(target_uid))
+					if target_card != null:
+						prompt_targets.append(target_card)
+				_begin_gugalanna_impact_targeting(card, prompt_targets)
+		"giant_master_architect_impact":
+			var card := game_manager.get_card_by_uid(payload.get("source_uid", "")) as GiantMasterArchitect
+			if card != null:
+				var prompt_targets: Array[Card] = []
+				for target_uid in payload.get("target_uids", []):
+					var target_card := game_manager.get_card_by_uid(str(target_uid))
+					if target_card != null:
+						prompt_targets.append(target_card)
+				_queue_giant_master_architect_impact_prompt(card, prompt_targets)
+		"pai_long_autumn_king_impact":
+			var card := game_manager.get_card_by_uid(payload.get("source_uid", "")) as PaiLongAutumnKing
+			if card != null:
+				var prompt_targets: Array[Card] = []
+				for target_uid in payload.get("target_uids", []):
+					var target_card := game_manager.get_card_by_uid(str(target_uid))
+					if target_card != null:
+						prompt_targets.append(target_card)
+				_queue_pai_long_autumn_king_impact_prompt(card, prompt_targets)
+		"nergal_lion_impact":
+			var card := game_manager.get_card_by_uid(payload.get("source_uid", "")) as NergalLion
+			if card != null:
+				var prompt_targets: Array[Card] = []
+				for target_uid in payload.get("target_uids", []):
+					var target_card := game_manager.get_card_by_uid(str(target_uid))
+					if target_card != null:
+						prompt_targets.append(target_card)
+				_queue_nergal_lion_impact_prompt(card, prompt_targets)
+		"gala_tura_destroyed":
+			var card := game_manager.get_card_by_uid(payload.get("source_uid", "")) as GalaTura
+			if card != null:
+				var prompt_targets: Array[Card] = []
+				for target_uid in payload.get("target_uids", []):
+					var target_card := game_manager.get_card_by_uid(str(target_uid))
+					if target_card != null:
+						prompt_targets.append(target_card)
+				_queue_gala_tura_destroyed_prompt(card, prompt_targets)
+		"durinn_secondborn_impact":
+			var card := game_manager.get_card_by_uid(payload.get("source_uid", "")) as DurinnSecondborn
+			if card != null:
+				var prompt_targets: Array[Card] = []
+				for target_uid in payload.get("target_uids", []):
+					var target_card := game_manager.get_card_by_uid(str(target_uid))
+					if target_card != null:
+						prompt_targets.append(target_card)
+				_queue_durinn_secondborn_impact_prompt(card, prompt_targets)
+		"kur_jara_tree_of_life":
+			var card := game_manager.get_card_by_uid(payload.get("source_uid", "")) as KurJara
+			if card != null:
+				_queue_kur_jara_tree_of_life_destroy_prompt(card)
+		"hunting_tactics":
+			var power := game_manager.get_card_by_uid(payload.get("source_uid", "")) as HuntingTactics
+			var attacker := game_manager.get_card_by_uid(payload.get("attacker_uid", ""))
+			if power != null and attacker != null:
+				var prompt_targets: Array[Card] = []
+				for target_uid in payload.get("target_uids", []):
+					var target_card := game_manager.get_card_by_uid(str(target_uid))
+					if target_card != null:
+						prompt_targets.append(target_card)
+				_resolve_hunting_tactics_prompt(power, attacker, prompt_targets)
+		"foolish_optimism":
+			var card := game_manager.get_card_by_uid(payload.get("source_uid", "")) as FoolishOptimism
+			if card != null:
+				var attacker_choices: Array[Card] = []
+				for attacker_uid in payload.get("attacker_uids", []):
+					var attacker := game_manager.get_card_by_uid(str(attacker_uid))
+					if attacker != null:
+						attacker_choices.append(attacker)
+				var defender_choices: Array[Card] = []
+				for defender_uid in payload.get("defender_uids", []):
+					var defender := game_manager.get_card_by_uid(str(defender_uid))
+					if defender != null:
+						defender_choices.append(defender)
+				_resolve_foolish_optimism_prompt(card, attacker_choices, defender_choices)
+		"fenrir_devour_impact":
+			var card := game_manager.get_card_by_uid(payload.get("source_uid", "")) as Fenrir
+			if card != null:
+				var prompt_targets: Array[Card] = []
+				for target_uid in payload.get("target_uids", []):
+					var target_card := game_manager.get_card_by_uid(str(target_uid))
+					if target_card != null:
+						prompt_targets.append(target_card)
+				_show_fenrir_devour_prompt(card, prompt_targets)
+		"harii_jarl_impact":
+			var card := game_manager.get_card_by_uid(payload.get("source_uid", "")) as HariiJarl
+			if card != null:
+				var prompt_targets: Array[Card] = []
+				for target_uid in payload.get("target_uids", []):
+					var target_card := game_manager.get_card_by_uid(str(target_uid))
+					if target_card != null:
+						prompt_targets.append(target_card)
+				_show_harii_jarl_impact_prompt(card, prompt_targets)
+		"huginn_perish_prime":
+			var card := game_manager.get_card_by_uid(payload.get("source_uid", "")) as Huginn
+			if card != null:
+				var prompt_targets: Array[Card] = []
+				for target_uid in payload.get("target_uids", []):
+					var target_card := game_manager.get_card_by_uid(str(target_uid))
+					if target_card != null:
+						prompt_targets.append(target_card)
+				_queue_huginn_perish_prime_prompt(card, prompt_targets)
+		"muninn_perish_prime":
+			var card := game_manager.get_card_by_uid(payload.get("source_uid", "")) as Muninn
+			if card != null:
+				var prompt_targets: Array[Card] = []
+				for target_uid in payload.get("target_uids", []):
+					var target_card := game_manager.get_card_by_uid(str(target_uid))
+					if target_card != null:
+						prompt_targets.append(target_card)
+				_queue_muninn_perish_prime_prompt(card, prompt_targets)
+		"lailoken_reveal":
+			var card := game_manager.get_card_by_uid(payload.get("source_uid", "")) as Lailoken
+			if card != null:
+				var prompt_targets: Array[Card] = []
+				for target_uid in payload.get("target_uids", []):
+					var target_card := game_manager.get_card_by_uid(str(target_uid))
+					if target_card != null:
+						prompt_targets.append(target_card)
+				_show_lailoken_reveal_prompt(card, prompt_targets)
+		"masmassu_priest_reveal":
+			var card := game_manager.get_card_by_uid(payload.get("source_uid", "")) as MasmassuPriest
+			if card != null:
+				var prompt_targets: Array[Card] = []
+				for target_uid in payload.get("target_uids", []):
+					var target_card := game_manager.get_card_by_uid(str(target_uid))
+					if target_card != null:
+						prompt_targets.append(target_card)
+				_show_masmassu_priest_reveal_prompt(card, prompt_targets)
+		"oracles_sight":
+			var card := game_manager.get_card_by_uid(payload.get("source_uid", "")) as OraclesSight
+			if card != null:
+				var prompt_targets: Array[Card] = []
+				for target_uid in payload.get("target_uids", []):
+					var target_card := game_manager.get_card_by_uid(str(target_uid))
+					if target_card != null:
+						prompt_targets.append(target_card)
+				_queue_oracles_sight_prompt(card, prompt_targets)
+		"rally_the_troops":
+			var card := game_manager.get_card_by_uid(payload.get("source_uid", "")) as RallyTheTroops
+			var summoned_card := game_manager.get_card_by_uid(payload.get("summoned_uid", ""))
+			if card != null:
+				var prompt_targets: Array[Card] = []
+				for target_uid in payload.get("target_uids", []):
+					var target_card := game_manager.get_card_by_uid(str(target_uid))
+					if target_card != null:
+						prompt_targets.append(target_card)
+				_show_rally_the_troops_prompt(card, summoned_card, prompt_targets)
+		"terror_impact":
+			var power := game_manager.get_card_by_uid(payload.get("source_uid", "")) as Terror
+			var demon := game_manager.get_card_by_uid(payload.get("demon_uid", ""))
+			if power != null and demon != null:
+				var prompt_targets: Array[Card] = []
+				for target_uid in payload.get("target_uids", []):
+					var target_card := game_manager.get_card_by_uid(str(target_uid))
+					if target_card != null:
+						prompt_targets.append(target_card)
+				_show_terror_impact_prompt(power, demon, prompt_targets)
+		"tonal_extraction":
+			var card := game_manager.get_card_by_uid(payload.get("source_uid", "")) as TonalExtraction
+			if card != null:
+				var prompt_targets: Array[Card] = []
+				for target_uid in payload.get("target_uids", []):
+					var target_card := game_manager.get_card_by_uid(str(target_uid))
+					if target_card != null:
+						prompt_targets.append(target_card)
+				_queue_tonal_extraction_prompt(card, prompt_targets)
+		"first_sage_adapa_impact":
+			var card := game_manager.get_card_by_uid(payload.get("source_uid", "")) as FirstSageAdapa
+			if card != null:
+				var prompt_targets: Array[Card] = []
+				for target_uid in payload.get("target_uids", []):
+					var target_card := game_manager.get_card_by_uid(str(target_uid))
+					if target_card != null:
+						prompt_targets.append(target_card)
+				_show_first_sage_adapa_impact_prompt(card, prompt_targets)
+		"third_sage_enmedugga_impact":
+			var card := game_manager.get_card_by_uid(payload.get("source_uid", "")) as ThirdSageEnmedugga
+			if card != null:
+				var prompt_targets: Array[Card] = []
+				for target_uid in payload.get("target_uids", []):
+					var target_card := game_manager.get_card_by_uid(str(target_uid))
+					if target_card != null:
+						prompt_targets.append(target_card)
+				_show_third_sage_enmedugga_impact_prompt(card, prompt_targets)
+		"fourth_sage_enmegalamma_impact":
+			var card = game_manager.get_card_by_uid(payload.get("source_uid", ""))
+			if card != null:
+				var prompt_targets: Array[Card] = []
+				for target_uid in payload.get("target_uids", []):
+					var target_card := game_manager.get_card_by_uid(str(target_uid))
+					if target_card != null:
+						prompt_targets.append(target_card)
+				_show_fourth_sage_enmegalamma_impact_prompt(card, prompt_targets)
+		"sixth_sage_an_enlilda_impact":
+			var card := game_manager.get_card_by_uid(payload.get("source_uid", "")) as SixthSageAnEnlilda
+			if card != null:
+				var prompt_targets: Array[Card] = []
+				for target_uid in payload.get("target_uids", []):
+					var target_card := game_manager.get_card_by_uid(str(target_uid))
+					if target_card != null:
+						prompt_targets.append(target_card)
+				_show_sixth_sage_an_enlilda_impact_prompt(card, prompt_targets)
 		"blessed_knights_ward":
 			var card := game_manager.get_card_by_uid(payload.get("source_uid", "")) as BlessedKnights
 			if card != null:
@@ -16345,6 +18146,25 @@ func _apply_ui_interaction(event_data: Dictionary) -> void:
 					if target_card != null:
 						prompt_targets.append(target_card)
 				_show_tezcatlipoca_active_titlacauan_prompt(card, prompt_targets)
+		"nusku_active_core_flame":
+			var card := game_manager.get_card_by_uid(payload.get("source_uid", "")) as NuskuActive
+			if card != null:
+				var preview_cards: Array[Card] = []
+				for preview_uid in payload.get("preview_uids", []):
+					var preview_card := game_manager.get_card_by_uid(str(preview_uid))
+					if preview_card != null:
+						preview_cards.append(preview_card)
+				var recoverable_cards: Array[Card] = []
+				for recoverable_uid in payload.get("recoverable_uids", []):
+					var recoverable_card := game_manager.get_card_by_uid(str(recoverable_uid))
+					if recoverable_card != null:
+						recoverable_cards.append(recoverable_card)
+				_show_nusku_active_core_flame_prompt(
+					card,
+					preview_cards,
+					recoverable_cards,
+					int(payload.get("mill_count", preview_cards.size()))
+				)
 		"wolf_adolescent_maturation":
 			var card := game_manager.get_card_by_uid(payload.get("source_uid", "")) as WolfAdolescent
 			if card != null:
@@ -16353,7 +18173,7 @@ func _apply_ui_interaction(event_data: Dictionary) -> void:
 					var target_card := game_manager.get_card_by_uid(str(target_uid))
 					if target_card != null:
 						prompt_targets.append(target_card)
-				_show_wolf_adolescent_maturation_prompt(card, prompt_targets)
+				_queue_wolf_adolescent_maturation_prompt(card, prompt_targets)
 		"humbaba_augury":
 			var card := game_manager.get_card_by_uid(payload.get("source_uid", "")) as HumbabaTheTerrible
 			if card != null:
@@ -16362,7 +18182,12 @@ func _apply_ui_interaction(event_data: Dictionary) -> void:
 					var target_card := game_manager.get_card_by_uid(str(target_uid))
 					if target_card != null:
 						prompt_targets.append(target_card)
-				_show_humbaba_augury_prompt(card, prompt_targets)
+				_queue_humbaba_augury_reading_prompt(card, prompt_targets)
+		"mummu_entropy":
+			var card := game_manager.get_card_by_uid(payload.get("source_uid", "")) as MummuActive
+			var victim := game_manager.get_card_by_uid(payload.get("victim_uid", ""))
+			if card != null and victim != null:
+				_queue_mummu_entropy_prompt(card, victim)
 		"wheel_of_fire_turn_start":
 			var card := game_manager.get_card_by_uid(payload.get("source_uid", "")) as WheelOfFire
 			if card != null:
@@ -16371,6 +18196,10 @@ func _apply_ui_interaction(event_data: Dictionary) -> void:
 			var card := game_manager.get_card_by_uid(payload.get("source_uid", "")) as EnHeduAnna
 			if card != null:
 				_show_en_hedu_anna_prompt(card)
+		"return_to_hand_choice":
+			var card := game_manager.get_card_by_uid(payload.get("card_uid", ""))
+			if card != null:
+				_queue_sharur_escape_prompt(card, str(payload.get("reason", "")))
 
 func _apply_full_state(data: Dictionary) -> void:
 	var state: Dictionary = data.get("state", {})
@@ -16560,6 +18389,7 @@ func _apply_priority_prompt_for_player(player_index: int, data: Dictionary) -> v
 		action_label.text = msg
 	if game_manager != null and player_index >= 0 and player_index < game_manager.players.size():
 		game_manager.priority_player = game_manager.players[player_index]
+	_remember_local_priority_prompt_signature()
 	_update_waiting_status(false)
 	if _is_networked_client:
 		_show_remote_priority_prompt(data.get("responses", []))
@@ -16994,12 +18824,12 @@ func _do_end_turn() -> void:
 func _open_upkeep_choice_window() -> void:
 	if game_manager == null or _game_finished:
 		return
-	if game_manager.has_resolved_turn_upkeep():
+	if not game_manager.is_player_in_upkeep_window(game_manager.current_player):
 		return
 	if _is_networked_client and network_manager != null:
 		var local_idx: int = network_manager.local_player_index
 		var current_idx: int = game_manager.players.find(game_manager.current_player)
-		if local_idx < 0 or current_idx != local_idx or game_manager.has_resolved_turn_upkeep():
+		if local_idx < 0 or current_idx != local_idx or not game_manager.is_player_in_upkeep_window(game_manager.current_player):
 			return
 		if _network_upkeep_prompt_turn == game_manager.turn_number and _network_upkeep_prompt_player_index == local_idx and choice_container.visible:
 			return
@@ -17013,7 +18843,8 @@ func _open_upkeep_choice_window() -> void:
 func _show_nusku_well_of_fire_prompt(nusku: NuskuFirebearer, choices: Array[Card], mill_count: int) -> void:
 	if nusku == null or choices.is_empty() or game_manager == null:
 		return
-	_pause_stack_resolution(nusku.card_owner)
+	if _executing_stack_action and not _stack_resolution_paused:
+		_pause_stack_resolution(nusku.card_owner)
 	var opponent: Player = game_manager.get_opponent(nusku.card_owner)
 	var opp_name: String = opponent.player_name if opponent != null else "Opponent"
 	action_label.text = "%s: Well of Fire — choose a card to return to %s's hand." % [opp_name, nusku.card_owner.player_name]
@@ -17023,6 +18854,14 @@ func _show_nusku_well_of_fire_prompt(nusku: NuskuFirebearer, choices: Array[Card
 		func(chosen_card: Card) -> void:
 			if chosen_card == null or nusku == null or not is_instance_valid(nusku) or nusku.card_owner == null:
 				_resume_after_deferred_resolution("Well of Fire milled %d card(s). No card returned." % mill_count)
+				return
+			if _submit_prompt_choice_command({
+				"type": "nusku_well_of_fire_choice",
+				"source_uid": nusku.uid,
+				"target_uid": chosen_card.uid,
+				"mill_count": mill_count,
+			}):
+				update_ui()
 				return
 			nusku.card_owner.move_card(chosen_card, nusku.card_owner.hand_zone)
 			var feedback := "Well of Fire milled %d card(s). %s chose %s to return to %s's hand." % [
@@ -17556,5 +19395,4 @@ func cleanup() -> void:
 	game_event_broadcaster = null
 	game_input = null
 	if game_manager:
-		game_manager.set_interaction_host(null)
 		game_manager = null

@@ -84,11 +84,24 @@ func is_valid_titlacauan_selection(game_manager: GameManager, chosen_targets: Ar
 func on_impact(game_manager: GameManager) -> void:
 	if game_manager == null:
 		return
-	var prompt_host := _get_prompt_host(game_manager)
-	if prompt_host != null and prompt_host.has_method("_queue_tezcatlipoca_active_titlacauan_prompt"):
-		prompt_host.call("_queue_tezcatlipoca_active_titlacauan_prompt", self)
+	var valid_targets := get_valid_titlacauan_targets(game_manager)
+	if get_titlacauan_level_budget() <= 0 or valid_targets.is_empty():
+		game_manager.note_player_feedback(resolve_titlacauan_choice(game_manager))
 		return
-	game_manager.note_player_feedback(resolve_titlacauan_choice(game_manager))
+	var controller := get_controller()
+	if controller == null:
+		game_manager.note_player_feedback(resolve_titlacauan_choice(game_manager))
+		return
+	var target_uids: Array[String] = []
+	for target in valid_targets:
+		if target != null:
+			target_uids.append(target.uid)
+	game_manager.decision_requested.emit(controller, "tezcatlipoca_active_titlacauan", {
+		"source_uid": uid,
+		"target_uids": target_uids,
+		"queue_with_priority": true,
+		"event_name": "tezcatlipoca_active_titlacauan",
+	})
 
 func resolve_from_command(game_manager: GameManager, command: Dictionary) -> void:
 	if game_manager == null:
@@ -162,25 +175,3 @@ func _auto_select_titlacauan_targets(valid_targets: Array[Card], budget: int) ->
 		remaining_budget -= target_level
 	return chosen
 
-func _get_prompt_host(game_manager: GameManager = null) -> Node:
-	if game_manager != null:
-		var direct_host := game_manager.get_interaction_host()
-		var direct_node := direct_host as Node
-		if direct_node != null and is_instance_valid(direct_node):
-			return direct_node
-	var tree: SceneTree = Engine.get_main_loop() as SceneTree
-	if tree == null:
-		return null
-	var hosts: Array = tree.get_nodes_in_group("combat_mock_game")
-	if tree.current_scene != null:
-		for host in hosts:
-			var node: Node = host as Node
-			if node != null and node.is_inside_tree() and (node == tree.current_scene or tree.current_scene.is_ancestor_of(node)):
-				return node
-	for host in hosts:
-		var node: Node = host as Node
-		if node != null and node.is_inside_tree() and node.get("game_manager") != null:
-			return node
-	if tree.current_scene != null:
-		return tree.current_scene
-	return null

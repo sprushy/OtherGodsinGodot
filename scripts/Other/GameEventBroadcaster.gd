@@ -216,6 +216,195 @@ func _label_for_move(move: Dictionary, viewer: Player = null) -> String:
 			if humbaba != null and chosen != null:
 				return "%s primes %s with Augury Reading." % [_card_label_for_viewer(humbaba, viewer), _card_label_for_viewer(chosen, viewer)]
 			return ("%s resolves Augury Reading." % _card_label_for_viewer(humbaba, viewer)) if humbaba != null else "Humbaba resolves Augury Reading."
+		"first_sage_adapa_choice":
+			var adapa := game_manager.get_card_by_uid(move.get("source_uid", ""))
+			var chosen := game_manager.get_card_by_uid(move.get("target_uid", ""))
+			if adapa != null and chosen != null:
+				return "%s silences %s." % [_card_label_for_viewer(adapa, viewer), _card_label_for_viewer(chosen, viewer)]
+			return ("%s resolves Silence Divine." % _card_label_for_viewer(adapa, viewer)) if adapa != null else "Silence Divine resolves."
+		"third_sage_enmedugga_choice":
+			var enmedugga := game_manager.get_card_by_uid(move.get("source_uid", ""))
+			var chosen := game_manager.get_card_by_uid(move.get("target_uid", ""))
+			if enmedugga != null and chosen != null:
+				return "%s grants Good Fortune to %s." % [_card_label_for_viewer(enmedugga, viewer), _card_label_for_viewer(chosen, viewer)]
+			return ("%s resolves Good Fortune." % _card_label_for_viewer(enmedugga, viewer)) if enmedugga != null else "Good Fortune resolves."
+		"fourth_sage_enmegalamma_choice":
+			var enmegalamma := game_manager.get_card_by_uid(move.get("source_uid", ""))
+			var chosen := game_manager.get_card_by_uid(move.get("target_uid", ""))
+			if enmegalamma != null and chosen != null:
+				return "%s adds %s from the deck." % [_card_label_for_viewer(enmegalamma, viewer), _card_label_for_viewer(chosen, viewer)]
+			return ("%s resolves Search Sage." % _card_label_for_viewer(enmegalamma, viewer)) if enmegalamma != null else "Search Sage resolves."
+		"sixth_sage_an_enlilda_choice":
+			var enlilda := game_manager.get_card_by_uid(move.get("source_uid", ""))
+			var chosen := game_manager.get_card_by_uid(move.get("target_uid", ""))
+			if enlilda != null and chosen != null:
+				return "%s conjures %s home." % [_card_label_for_viewer(enlilda, viewer), _card_label_for_viewer(chosen, viewer)]
+			return ("%s resolves Conjure Home." % _card_label_for_viewer(enlilda, viewer)) if enlilda != null else "Conjure Home resolves."
+		"lailoken_reveal_choice":
+			var lailoken := game_manager.get_card_by_uid(move.get("source_uid", ""))
+			var chosen := game_manager.get_card_by_uid(move.get("target_uid", ""))
+			if lailoken != null and chosen != null:
+				return "%s drains %s." % [_card_label_for_viewer(lailoken, viewer), _card_label_for_viewer(chosen, viewer)]
+			return ("%s resolves Magic Drain." % _card_label_for_viewer(lailoken, viewer)) if lailoken != null else "Magic Drain resolves."
+		"masmassu_priest_reveal_choice":
+			var priest := game_manager.get_card_by_uid(move.get("source_uid", ""))
+			var chosen := game_manager.get_card_by_uid(move.get("target_uid", ""))
+			if priest != null and chosen != null:
+				return "%s breaks %s." % [_card_label_for_viewer(priest, viewer), _card_label_for_viewer(chosen, viewer)]
+			return ("%s resolves Dalkhu Break." % _card_label_for_viewer(priest, viewer)) if priest != null else "Dalkhu Break resolves."
+		"rally_the_troops_choice":
+			var rally := game_manager.get_card_by_uid(move.get("source_uid", ""))
+			var chosen := game_manager.get_card_by_uid(move.get("target_uid", ""))
+			if rally != null and chosen != null:
+				return "%s recruits %s." % [_card_label_for_viewer(rally, viewer), _card_label_for_viewer(chosen, viewer)]
+			return ("%s resolves Rally." % _card_label_for_viewer(rally, viewer)) if rally != null else "Rally resolves."
+		"terror_impact_choice":
+			var terror := game_manager.get_card_by_uid(move.get("source_uid", ""))
+			var chosen := game_manager.get_card_by_uid(move.get("target_uid", ""))
+			if terror != null and chosen != null:
+				return "%s returns %s to hand." % [_card_label_for_viewer(terror, viewer), _card_label_for_viewer(chosen, viewer)]
+			return ("%s resolves Terror." % _card_label_for_viewer(terror, viewer)) if terror != null else "Terror resolves."
+		"huginn_perish_prime_choice":
+			var huginn := game_manager.get_card_by_uid(move.get("source_uid", ""))
+			var chosen := game_manager.get_card_by_uid(move.get("target_uid", ""))
+			if huginn != null and chosen != null:
+				return "%s primes %s." % [_card_label_for_viewer(huginn, viewer), _card_label_for_viewer(chosen, viewer)]
+			return ("%s resolves Hex Search." % _card_label_for_viewer(huginn, viewer)) if huginn != null else "Hex Search resolves."
+		"muninn_perish_prime_choice":
+			var muninn := game_manager.get_card_by_uid(move.get("source_uid", ""))
+			var chosen := game_manager.get_card_by_uid(move.get("target_uid", ""))
+			if muninn != null and chosen != null:
+				return "%s primes %s." % [_card_label_for_viewer(muninn, viewer), _card_label_for_viewer(chosen, viewer)]
+			return ("%s resolves Charm Search." % _card_label_for_viewer(muninn, viewer)) if muninn != null else "Charm Search resolves."
+		"fenrir_devour_choice":
+			var fenrir := game_manager.get_card_by_uid(move.get("source_uid", ""))
+			var chosen := game_manager.get_card_by_uid(move.get("target_uid", ""))
+			if fenrir != null and chosen != null:
+				return "%s devours %s." % [_card_label_for_viewer(fenrir, viewer), _card_label_for_viewer(chosen, viewer)]
+			return ("%s resolves Devour." % _card_label_for_viewer(fenrir, viewer)) if fenrir != null else "Devour resolves."
+		"harii_jarl_impact_choice":
+			var jarl := game_manager.get_card_by_uid(move.get("source_uid", ""))
+			var chosen_names: Array[String] = []
+			for chosen_uid in move.get("chosen_uids", []):
+				var chosen := game_manager.get_card_by_uid(str(chosen_uid))
+				if chosen != null:
+					chosen_names.append(_card_label_for_viewer(chosen, viewer))
+			if jarl != null and not chosen_names.is_empty():
+				return "%s summons %s." % [_card_label_for_viewer(jarl, viewer), ", ".join(chosen_names)]
+			return ("%s resolves Warband." % _card_label_for_viewer(jarl, viewer)) if jarl != null else "Warband resolves."
+		"durinn_secondborn_choice":
+			var durinn := game_manager.get_card_by_uid(move.get("source_uid", ""))
+			var chosen := game_manager.get_card_by_uid(move.get("target_uid", ""))
+			if durinn != null and chosen != null:
+				return "%s reforges %s." % [_card_label_for_viewer(durinn, viewer), _card_label_for_viewer(chosen, viewer)]
+			return ("%s resolves Reforge." % _card_label_for_viewer(durinn, viewer)) if durinn != null else "Reforge resolves."
+		"kur_jara_tree_of_life_choice":
+			var kur_jara := game_manager.get_card_by_uid(move.get("source_uid", ""))
+			var chosen_names: Array[String] = []
+			for chosen_uid in move.get("chosen_uids", []):
+				var chosen := game_manager.get_card_by_uid(str(chosen_uid))
+				if chosen != null:
+					chosen_names.append(_card_label_for_viewer(chosen, viewer))
+			if kur_jara != null and not chosen_names.is_empty():
+				return "%s completes Tree of Life using %s." % [_card_label_for_viewer(kur_jara, viewer), ", ".join(chosen_names)]
+			return ("%s resolves Tree of Life." % _card_label_for_viewer(kur_jara, viewer)) if kur_jara != null else "Tree of Life resolves."
+		"hunting_tactics_choice":
+			var power := game_manager.get_card_by_uid(move.get("source_uid", ""))
+			var attacker := game_manager.get_card_by_uid(move.get("attacker_uid", ""))
+			var chosen_names: Array[String] = []
+			for chosen_uid in move.get("chosen_uids", []):
+				var chosen := game_manager.get_card_by_uid(str(chosen_uid))
+				if chosen != null:
+					chosen_names.append(_card_label_for_viewer(chosen, viewer))
+			if power != null and attacker != null and not chosen_names.is_empty():
+				return "%s supports %s with %s." % [_card_label_for_viewer(power, viewer), _card_label_for_viewer(attacker, viewer), ", ".join(chosen_names)]
+			if power != null and attacker != null:
+				return "%s declines to support %s." % [_card_label_for_viewer(power, viewer), _card_label_for_viewer(attacker, viewer)]
+			return "Hunting Tactics resolves."
+		"gugalanna_celestial_charge_choice":
+			var gugalanna := game_manager.get_card_by_uid(move.get("source_uid", ""))
+			var chosen := game_manager.get_card_by_uid(move.get("target_uid", ""))
+			if gugalanna != null and chosen != null:
+				return "%s charges down %s." % [_card_label_for_viewer(gugalanna, viewer), _card_label_for_viewer(chosen, viewer)]
+			return ("%s resolves Celestial Charge." % _card_label_for_viewer(gugalanna, viewer)) if gugalanna != null else "Celestial Charge resolves."
+		"giant_master_architect_choice":
+			var architect := game_manager.get_card_by_uid(move.get("source_uid", ""))
+			var chosen := game_manager.get_card_by_uid(move.get("target_uid", ""))
+			if architect != null and chosen != null:
+				return "%s takes %s from the deck." % [_card_label_for_viewer(architect, viewer), _card_label_for_viewer(chosen, viewer)]
+			return ("%s resolves Master Plan." % _card_label_for_viewer(architect, viewer)) if architect != null else "Master Plan resolves."
+		"pai_long_autumn_king_choice":
+			var pai_long := game_manager.get_card_by_uid(move.get("source_uid", ""))
+			var chosen := game_manager.get_card_by_uid(move.get("target_uid", ""))
+			if pai_long != null and chosen != null:
+				return "%s takes %s from the deck." % [_card_label_for_viewer(pai_long, viewer), _card_label_for_viewer(chosen, viewer)]
+			return ("%s resolves Stormcloud." % _card_label_for_viewer(pai_long, viewer)) if pai_long != null else "Stormcloud resolves."
+		"nergal_lion_choice":
+			var lion := game_manager.get_card_by_uid(move.get("source_uid", ""))
+			var chosen := game_manager.get_card_by_uid(move.get("target_uid", ""))
+			if lion != null and chosen != null:
+				return "%s immolates %s." % [_card_label_for_viewer(lion, viewer), _card_label_for_viewer(chosen, viewer)]
+			return ("%s resolves Immolate." % _card_label_for_viewer(lion, viewer)) if lion != null else "Immolate resolves."
+		"gala_tura_destroyed_choice":
+			var gala_tura := game_manager.get_card_by_uid(move.get("source_uid", ""))
+			var chosen_names: Array[String] = []
+			for chosen_uid in move.get("chosen_uids", []):
+				var chosen := game_manager.get_card_by_uid(str(chosen_uid))
+				if chosen != null:
+					chosen_names.append(_card_label_for_viewer(chosen, viewer))
+			if gala_tura != null and not chosen_names.is_empty():
+				return "%s returns %s to the deck." % [_card_label_for_viewer(gala_tura, viewer), ", ".join(chosen_names)]
+			return ("%s resolves Water of Life." % _card_label_for_viewer(gala_tura, viewer)) if gala_tura != null else "Water of Life resolves."
+		"gawain_healing_hands_choice":
+			var gawain := game_manager.get_card_by_uid(move.get("source_uid", ""))
+			var target := game_manager.get_card_by_uid(move.get("target_uid", ""))
+			if gawain != null and target != null:
+				return "%s heals %s." % [_card_label_for_viewer(gawain, viewer), _card_label_for_viewer(target, viewer)]
+			return ("%s resolves Healing Hands." % _card_label_for_viewer(gawain, viewer)) if gawain != null else "Healing Hands resolves."
+		"tatzelwurm_dragon_heart_choice":
+			var tatzelwurm := game_manager.get_card_by_uid(move.get("source_uid", ""))
+			var chosen := game_manager.get_card_by_uid(move.get("target_uid", ""))
+			if tatzelwurm != null and chosen != null:
+				return "%s takes %s from the deck." % [_card_label_for_viewer(tatzelwurm, viewer), _card_label_for_viewer(chosen, viewer)]
+			return ("%s resolves Dragon Heart." % _card_label_for_viewer(tatzelwurm, viewer)) if tatzelwurm != null else "Dragon Heart resolves."
+		"byggvir_reveal_choice":
+			var byggvir := game_manager.get_card_by_uid(move.get("source_uid", ""))
+			return ("%s resolves Brewing." % _card_label_for_viewer(byggvir, viewer)) if byggvir != null else "Brewing resolves."
+		"nusku_well_of_fire_choice":
+			var nusku := game_manager.get_card_by_uid(move.get("source_uid", ""))
+			var chosen := game_manager.get_card_by_uid(move.get("target_uid", ""))
+			if nusku != null and chosen != null:
+				return "%s chooses %s for Well of Fire." % [_card_label_for_viewer(nusku, viewer), _card_label_for_viewer(chosen, viewer)]
+			return ("%s resolves Well of Fire." % _card_label_for_viewer(nusku, viewer)) if nusku != null else "Well of Fire resolves."
+		"ragnarok_discard_choice":
+			var ragnarok := game_manager.get_card_by_uid(move.get("source_uid", ""))
+			return ("%s forces a discard." % _card_label_for_viewer(ragnarok, viewer)) if ragnarok != null else "Ragnarok forces a discard."
+		"foolish_optimism_choice":
+			var spell := game_manager.get_card_by_uid(move.get("source_uid", ""))
+			var attacker := game_manager.get_card_by_uid(move.get("attacker_uid", ""))
+			var defender := game_manager.get_card_by_uid(move.get("defender_uid", ""))
+			if spell != null and attacker != null and defender != null:
+				return "%s compels %s to attack %s." % [_card_label_for_viewer(spell, viewer), _card_label_for_viewer(attacker, viewer), _card_label_for_viewer(defender, viewer)]
+			return ("%s fizzles." % _card_label_for_viewer(spell, viewer)) if spell != null else "Foolish Optimism fizzles."
+		"blessed_knights_choice":
+			var knights := game_manager.get_card_by_uid(move.get("source_uid", ""))
+			var ward_kind := str(move.get("ward_kind", "")).replace("_", " ")
+			return ("%s grants Blessed Ward against %s." % [_card_label_for_viewer(knights, viewer), ward_kind]) if knights != null else "Blessed Ward was chosen."
+		"tezcatlipoca_active_titlacauan_choice":
+			var tez := game_manager.get_card_by_uid(move.get("source_uid", ""))
+			return ("%s resolves Titlacauan." % _card_label_for_viewer(tez, viewer)) if tez != null else "Titlacauan resolves."
+		"nusku_active_core_flame_choice":
+			var nusku := game_manager.get_card_by_uid(move.get("source_uid", ""))
+			if bool(move.get("decline", false)):
+				return ("%s declines Core Flame." % _card_label_for_viewer(nusku, viewer)) if nusku != null else "Core Flame was declined."
+			return ("%s resolves Core Flame." % _card_label_for_viewer(nusku, viewer)) if nusku != null else "Core Flame resolves."
+		"mummu_entropy_choice":
+			var mummu := game_manager.get_card_by_uid(move.get("source_uid", ""))
+			var chosen := game_manager.get_card_by_uid(move.get("chosen_uid", ""))
+			var placement := str(move.get("placement", "prime")).capitalize()
+			if mummu != null and chosen != null:
+				return "%s chooses %s for %s." % [_card_label_for_viewer(mummu, viewer), placement, _card_label_for_viewer(chosen, viewer)]
+			return ("%s resolves Entropy." % _card_label_for_viewer(mummu, viewer)) if mummu != null else "Entropy resolves."
 		"prepare_card":
 			return "A card was prepared face-down."
 		"creature_move":
@@ -227,6 +416,9 @@ func _label_for_move(move: Dictionary, viewer: Player = null) -> String:
 		"tiamat_upkeep_choice":
 			var tiamat_card := game_manager.get_card_by_uid(str(move.get("card_uid", "")))
 			return ("Matriarch Rule returned %s to hand." % _card_label_for_viewer(tiamat_card, viewer)) if tiamat_card else "Matriarch Rule returned a slotted creature to hand."
+		"return_to_hand_choice":
+			var return_card := game_manager.get_card_by_uid(str(move.get("card_uid", "")))
+			return ("Resolved %s's escape choice." % _card_label_for_viewer(return_card, viewer)) if return_card else "Resolved a return-to-hand choice."
 		"end_turn":
 			return "Turn ended."
 	return ""

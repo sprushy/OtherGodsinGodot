@@ -30,9 +30,10 @@ func on_reveal(game_manager: GameManager) -> void:
 	if options.is_empty():
 		return
 	brewing_reveal_pending = true
-	var prompt_host: Node = _get_brewing_prompt_host(game_manager)
-	if prompt_host != null and prompt_host.has_method("_show_byggvir_reveal_prompt"):
-		prompt_host.call_deferred("_show_byggvir_reveal_prompt", self)
+	game_manager.decision_requested.emit(get_controller(), "byggvir_reveal", {
+		"source_uid": uid,
+		"options": serialize_brewing_options(game_manager),
+	})
 
 func get_brewing_options(game_manager: GameManager) -> Array[Dictionary]:
 	var options: Array[Dictionary] = []
@@ -133,6 +134,66 @@ func resolve_brewing_option(game_manager: GameManager, option: Dictionary) -> St
 			return "%s reveals and returns %s from the graveyard to hand." % [card_name, mead_card.card_name]
 	return card_name + " had no Brewing option."
 
+func resolve_brewing_option_from_payload(game_manager: GameManager, payload: Dictionary) -> String:
+	var option := find_matching_brewing_option(game_manager, payload)
+	if option.is_empty():
+		return card_name + " had no valid Brewing option."
+	return resolve_brewing_option(game_manager, option)
+
+func serialize_brewing_options(game_manager: GameManager) -> Array[Dictionary]:
+	var serialized: Array[Dictionary] = []
+	for option in get_brewing_options(game_manager):
+		serialized.append(serialize_brewing_option(option))
+	return serialized
+
+func serialize_brewing_option(option: Dictionary) -> Dictionary:
+	var serialized := {
+		"kind": str(option.get("kind", "")),
+		"label": get_brewing_option_label(option),
+	}
+	var power := option.get("power", null) as Card
+	if power != null:
+		serialized["power_uid"] = power.uid
+	var target := option.get("target", null) as Card
+	if target != null:
+		serialized["target_uid"] = target.uid
+	var card := option.get("card", null) as Card
+	if card != null:
+		serialized["card_uid"] = card.uid
+	return serialized
+
+func find_matching_brewing_option(game_manager: GameManager, payload: Dictionary) -> Dictionary:
+	for option in get_brewing_options(game_manager):
+		if _brewing_option_matches_payload(option, payload):
+			return option
+	return {}
+
+func _brewing_option_matches_payload(option: Dictionary, payload: Dictionary) -> bool:
+	if str(option.get("kind", "")) != str(payload.get("kind", "")):
+		return false
+	var power := option.get("power", null) as Card
+	var power_uid: String = str(payload.get("power_uid", ""))
+	if power_uid != "":
+		if power == null or power.uid != power_uid:
+			return false
+	elif power != null:
+		return false
+	var target := option.get("target", null) as Card
+	var target_uid: String = str(payload.get("target_uid", ""))
+	if target_uid != "":
+		if target == null or target.uid != target_uid:
+			return false
+	elif target != null:
+		return false
+	var card := option.get("card", null) as Card
+	var card_uid: String = str(payload.get("card_uid", ""))
+	if card_uid != "":
+		if card == null or card.uid != card_uid:
+			return false
+	elif card != null:
+		return false
+	return true
+
 func _flip_mead_power(game_manager: GameManager) -> bool:
 	for zone in get_controller().power_zones:
 		if zone.cards.is_empty():
@@ -196,25 +257,3 @@ func consume_brewing_reveal_pending() -> bool:
 	brewing_reveal_pending = false
 	return was_pending
 
-func _get_brewing_prompt_host(game_manager: GameManager = null) -> Node:
-	if game_manager != null:
-		var direct_host := game_manager.get_interaction_host()
-		var direct_node := direct_host as Node
-		if direct_node != null and is_instance_valid(direct_node):
-			return direct_node
-	var tree: SceneTree = Engine.get_main_loop() as SceneTree
-	if tree == null:
-		return null
-	var hosts: Array = tree.get_nodes_in_group("combat_mock_game")
-	if tree.current_scene != null:
-		for host in hosts:
-			var node: Node = host as Node
-			if node != null and node.is_inside_tree() and (node == tree.current_scene or tree.current_scene.is_ancestor_of(node)):
-				return node
-	for host in hosts:
-		var node: Node = host as Node
-		if node != null and node.is_inside_tree() and node.get("game_manager") != null:
-			return node
-	if tree.current_scene != null:
-		return tree.current_scene
-	return null

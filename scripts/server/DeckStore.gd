@@ -58,7 +58,7 @@ func save_deck(
 
 	var deck_bucket: Dictionary = _get_deck_bucket(resolved_account_id)
 	var resolved_deck_id: String = deck_id.strip_edges()
-	if resolved_deck_id.is_empty() or not deck_bucket.has(resolved_deck_id):
+	if resolved_deck_id.is_empty():
 		resolved_deck_id = _generate_id("deck_", 12)
 
 	var clean_name: String = deck_name.strip_edges()

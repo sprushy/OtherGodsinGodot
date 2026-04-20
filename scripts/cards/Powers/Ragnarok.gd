@@ -33,12 +33,9 @@ func activate(game_manager: GameManager, _target: Card = null) -> void:
 		if game_manager.request_send_to_graveyard(doomed_card, Callable(), false, true):
 			destroyed_count += 1
 
-	var discarded_count := 0
-	var interaction_host := game_manager.get_interaction_host()
-	if interaction_host != null and interaction_host.has_method("_resolve_ragnarok_post_destroy"):
-		interaction_host.call("_resolve_ragnarok_post_destroy", self, destroyed_count, HAND_LIMIT)
+	if _begin_pending_discards(game_manager, destroyed_count, HAND_LIMIT):
 		return
-
+	var discarded_count := 0
 	for player in game_manager.players:
 		discarded_count += _discard_down_to_limit(player, HAND_LIMIT)
 	_finish_resolution(game_manager, destroyed_count, discarded_count)
@@ -70,6 +67,90 @@ func _discard_down_to_limit(player: Player, limit: int) -> int:
 		player.discard_card(discard_card)
 		discarded += 1
 	return discarded
+
+func _begin_pending_discards(game_manager: GameManager, destroyed_count: int, hand_limit: int) -> bool:
+	if game_manager == null:
+		return false
+	var pending_indices: Array[int] = []
+	for i in range(game_manager.players.size()):
+		var player := game_manager.players[i]
+		if player != null and player.hand_zone != null and player.hand_zone.get_card_count() > hand_limit:
+			pending_indices.append(i)
+	if pending_indices.is_empty():
+		return false
+	set_meta("ragnarok_pending_destroyed_count", destroyed_count)
+	set_meta("ragnarok_pending_discarded_count", 0)
+	set_meta("ragnarok_pending_hand_limit", maxi(0, hand_limit))
+	set_meta("ragnarok_pending_player_indices", pending_indices)
+	_emit_next_pending_discard_prompt(game_manager)
+	return true
+
+func get_pending_discard_player(game_manager: GameManager) -> Player:
+	if game_manager == null:
+		return null
+	var pending_indices: Array = get_meta("ragnarok_pending_player_indices", [])
+	var hand_limit := int(get_meta("ragnarok_pending_hand_limit", HAND_LIMIT))
+	while not pending_indices.is_empty():
+		var player_index := int(pending_indices[0])
+		var player: Player = game_manager.players[player_index] if player_index >= 0 and player_index < game_manager.players.size() else null
+		if player != null and player.hand_zone != null and player.hand_zone.get_card_count() > hand_limit:
+			set_meta("ragnarok_pending_player_indices", pending_indices)
+			return player
+		pending_indices.remove_at(0)
+	set_meta("ragnarok_pending_player_indices", pending_indices)
+	return null
+
+func get_pending_discard_targets(game_manager: GameManager) -> Array[Card]:
+	var targets: Array[Card] = []
+	var player := get_pending_discard_player(game_manager)
+	if player == null or player.hand_zone == null:
+		return targets
+	for card in player.hand_zone.cards:
+		if card != null:
+			targets.append(card)
+	return targets
+
+func resolve_discard_choice(game_manager: GameManager, chosen_card: Card) -> void:
+	var player := get_pending_discard_player(game_manager)
+	if player == null or player.hand_zone == null or chosen_card == null or chosen_card.current_zone != player.hand_zone:
+		return
+	player.discard_card(chosen_card)
+	set_meta(
+		"ragnarok_pending_discarded_count",
+		int(get_meta("ragnarok_pending_discarded_count", 0)) + 1
+	)
+	_emit_next_pending_discard_prompt(game_manager)
+
+func _emit_next_pending_discard_prompt(game_manager: GameManager) -> void:
+	if game_manager == null:
+		return
+	var player := get_pending_discard_player(game_manager)
+	if player == null:
+		_finish_pending_discards(game_manager)
+		return
+	var target_uids: Array[String] = []
+	for card in get_pending_discard_targets(game_manager):
+		if card != null:
+			target_uids.append(card.uid)
+	game_manager.decision_requested.emit(player, "ragnarok_discard", {
+		"source_uid": uid,
+		"target_uids": target_uids,
+		"hand_limit": int(get_meta("ragnarok_pending_hand_limit", HAND_LIMIT)),
+	})
+
+func _finish_pending_discards(game_manager: GameManager) -> void:
+	_finish_resolution(
+		game_manager,
+		int(get_meta("ragnarok_pending_destroyed_count", 0)),
+		int(get_meta("ragnarok_pending_discarded_count", 0))
+	)
+	_clear_pending_discards()
+
+func _clear_pending_discards() -> void:
+	remove_meta("ragnarok_pending_destroyed_count")
+	remove_meta("ragnarok_pending_discarded_count")
+	remove_meta("ragnarok_pending_hand_limit")
+	remove_meta("ragnarok_pending_player_indices")
 
 func _finish_resolution(game_manager: GameManager, destroyed_count: int, discarded_count: int) -> void:
 	if game_manager == null:

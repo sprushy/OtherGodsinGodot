@@ -70,6 +70,8 @@ static func can_offer_matriarch_rule(game_manager: GameManager) -> bool:
 	if game_manager == null or game_manager.current_player == null:
 		return false
 	var player := game_manager.current_player
+	if not game_manager.is_player_in_upkeep_window(player):
+		return false
 	if player.god_zone == null or player.god_zone.cards.is_empty():
 		return false
 	if not is_tiamat_god(player.god_zone.cards[0]):

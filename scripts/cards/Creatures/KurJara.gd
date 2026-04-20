@@ -128,16 +128,14 @@ func _resolve_tree_of_life() -> void:
 		var level_diff := chosen.get_effective_level() - get_effective_level()
 		if level_diff > 0:
 			_tree_of_life_pending_destroy_count = level_diff
-			var prompt_host := _get_prompt_host(gm)
-			if prompt_host != null and prompt_host.has_method("_queue_kur_jara_tree_of_life_destroy_prompt"):
-				prompt_host.call("_queue_kur_jara_tree_of_life_destroy_prompt", self)
-				return
-			var fallback_targets: Array[Card] = []
+			var target_uids: Array[String] = []
 			for candidate in get_tree_of_life_destroy_candidates(gm):
-				fallback_targets.append(candidate)
-				if fallback_targets.size() >= level_diff:
-					break
-			resolve_tree_of_life_destroy_selection(gm, fallback_targets)
+				if candidate != null:
+					target_uids.append(candidate.uid)
+			gm.decision_requested.emit(card_owner, "kur_jara_tree_of_life", {
+				source_uid = uid,
+				target_uids = target_uids,
+			})
 			return
 
 	_clear_tree_of_life_state()
@@ -247,26 +245,3 @@ func _apply_destruction_cost(gm: GameManager, count: int) -> void:
 			"Tree of Life: not enough friendly creatures to fully pay the level cost (%d remaining)." % remaining
 		)
 
-func _get_prompt_host(game_manager: GameManager = null) -> Node:
-	if game_manager != null:
-		var direct_host := game_manager.get_interaction_host()
-		var direct_node := direct_host as Node
-		if direct_node != null and is_instance_valid(direct_node):
-			return direct_node
-	var tree: SceneTree = Engine.get_main_loop() as SceneTree
-	if tree == null:
-		return null
-	var hosts: Array = tree.get_nodes_in_group("combat_mock_game")
-	if tree.current_scene != null:
-		for host in hosts:
-			var node: Node = host as Node
-			if node != null and node.is_inside_tree() \
-					and (node == tree.current_scene or tree.current_scene.is_ancestor_of(node)):
-				return node
-	for host in hosts:
-		var node: Node = host as Node
-		if node != null and node.is_inside_tree() and node.get("game_manager") != null:
-			return node
-	if tree.current_scene != null:
-		return tree.current_scene
-	return null

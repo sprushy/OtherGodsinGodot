@@ -52,10 +52,18 @@ func activate(game_manager: GameManager, _target: Card = null) -> void:
 	var eligible_choices := get_eligible_well_of_fire_choices(milled_cards)
 
 	if not eligible_choices.is_empty() and game_manager != null:
-		var host: Node = game_manager.get_interaction_host() as Node
-		if host != null and is_instance_valid(host) and host.has_method("_show_nusku_well_of_fire_prompt"):
-			host.call("_show_nusku_well_of_fire_prompt", self, eligible_choices, milled_cards.size())
-			return
+		var choice_uids: Array[String] = []
+		for choice in eligible_choices:
+			if choice != null:
+				choice_uids.append(choice.uid)
+		set_meta("well_of_fire_pending_choice_uids", choice_uids)
+		set_meta("well_of_fire_pending_mill_count", milled_cards.size())
+		game_manager.decision_requested.emit(game_manager.get_opponent(card_owner), "nusku_well_of_fire", {
+			"source_uid": uid,
+			"target_uids": choice_uids,
+			"mill_count": milled_cards.size(),
+		})
+		return
 
 	_complete_well_of_fire(game_manager, choose_opponent_pick(eligible_choices), milled_cards.size())
 
@@ -74,6 +82,8 @@ func _complete_well_of_fire(game_manager: GameManager, chosen_card: Card, mill_c
 	if game_manager != null:
 		game_manager.note_player_feedback(feedback)
 		notify_power_activated(game_manager, chosen_card)
+	remove_meta("well_of_fire_pending_choice_uids")
+	remove_meta("well_of_fire_pending_mill_count")
 
 func get_eligible_well_of_fire_choices(milled_cards: Array[Card]) -> Array[Card]:
 	var eligible: Array[Card] = []

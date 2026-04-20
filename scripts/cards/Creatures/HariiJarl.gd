@@ -25,12 +25,16 @@ func on_impact(game_manager: GameManager) -> void:
 		if game_manager != null:
 			game_manager.note_player_feedback("%s found no other Harii in hand that can be summoned." % card_name)
 		return
-	var prompt_host := _get_prompt_host(game_manager)
-	if prompt_host != null and prompt_host.has_method("_queue_harii_jarl_impact_prompt"):
-		prompt_host.call("_queue_harii_jarl_impact_prompt", self)
-		return
-	if game_manager != null:
-		game_manager.note_player_feedback("%s may summon up to two other Harii from hand via Warband." % card_name)
+	var target_uids: Array[String] = []
+	for target in valid_targets:
+		if target != null:
+			target_uids.append(target.uid)
+	game_manager.decision_requested.emit(get_controller(), "harii_jarl_impact", {
+		"source_uid": uid,
+		"target_uids": target_uids,
+		"queue_with_priority": true,
+		"event_name": "harii_jarl_impact",
+	})
 
 func get_available_warband_zones() -> Array[Zone]:
 	var zones: Array[Zone] = []
@@ -115,26 +119,3 @@ func _is_valid_warband_target(card: Card, controller: Player) -> bool:
 
 func _is_harii_card(card: Card) -> bool:
 	return card != null and card.card_name.to_lower().contains("harii")
-
-func _get_prompt_host(game_manager: GameManager = null) -> Node:
-	if game_manager != null:
-		var direct_host := game_manager.get_interaction_host()
-		var direct_node := direct_host as Node
-		if direct_node != null and is_instance_valid(direct_node):
-			return direct_node
-	var tree: SceneTree = Engine.get_main_loop() as SceneTree
-	if tree == null:
-		return null
-	var hosts: Array = tree.get_nodes_in_group("combat_mock_game")
-	if tree.current_scene != null:
-		for host in hosts:
-			var node: Node = host as Node
-			if node != null and node.is_inside_tree() and (node == tree.current_scene or tree.current_scene.is_ancestor_of(node)):
-				return node
-	for host in hosts:
-		var node: Node = host as Node
-		if node != null and node.is_inside_tree() and node.get("game_manager") != null:
-			return node
-	if tree.current_scene != null:
-		return tree.current_scene
-	return tree.root

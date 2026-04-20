@@ -913,6 +913,7 @@ func _refresh_multiplayer_deck_options() -> void:
 		_position_multiplayer_deck_popup()
 	_update_multiplayer_deck_hint()
 	_refresh_multiplayer_action_state()
+	_maybe_submit_selected_deck_for_current_room()
 
 func _update_multiplayer_deck_hint() -> void:
 	var selected_entry: Dictionary = _get_selected_multiplayer_deck_entry()
@@ -989,6 +990,14 @@ func _refresh_multiplayer_action_state() -> void:
 		leave_seek_button.visible = in_room
 	if ready_button != null:
 		ready_button.visible = false
+
+func _maybe_submit_selected_deck_for_current_room() -> void:
+	if _current_room_snapshot.is_empty():
+		return
+	var room_id := str(_current_room_snapshot.get("room_id", "")).strip_edges()
+	if room_id.is_empty():
+		return
+	_maybe_submit_current_profile_deck(room_id, _current_room_snapshot)
 
 func _should_auto_refresh_seeks() -> bool:
 	return (
@@ -2299,6 +2308,8 @@ func _on_deck_builder_pressed() -> void:
 			_uses_server_account_storage(),
 			_get_server_preferred_account_deck_id()
 		)
+	if db.has_signal("account_deck_deleted_locally") and not db.account_deck_deleted_locally.is_connected(_on_deck_builder_account_deck_deleted_locally):
+		db.account_deck_deleted_locally.connect(_on_deck_builder_account_deck_deleted_locally)
 	_maybe_request_account_decks()
 	db.back_pressed.connect(func() -> void:
 		db.queue_free()
@@ -3225,6 +3236,17 @@ func _on_account_deck_deleted(deck_id: String) -> void:
 		_selected_multiplayer_deck_id = ""
 	_refresh_open_deck_builder_saved_decks()
 
+func _on_deck_builder_account_deck_deleted_locally(deck_id: String) -> void:
+	var resolved_deck_id := deck_id.strip_edges()
+	if resolved_deck_id.is_empty():
+		return
+	_remove_account_deck_from_cache(resolved_deck_id)
+	if _get_server_preferred_account_deck_id() == resolved_deck_id and lobby_client != null:
+		lobby_client.current_preferred_account_deck_id = ""
+	if _selected_multiplayer_deck_id == resolved_deck_id:
+		_selected_multiplayer_deck_id = ""
+	_refresh_open_deck_builder_saved_decks()
+
 func _on_profile_summary_received(summary) -> void:
 	if not (summary is Dictionary):
 		return
@@ -3620,7 +3642,7 @@ func _on_match_session_cleared() -> void:
 	_maybe_request_profile_summary()
 
 func _maybe_submit_current_profile_deck(room_id: String, snapshot: Dictionary) -> void:
-	if lobby_client == null or _local_profile_store == null or _lobby_session_id.is_empty():
+	if lobby_client == null or _lobby_session_id.is_empty():
 		return
 	var local_member: Dictionary = {}
 	for member in snapshot.get("members", []):

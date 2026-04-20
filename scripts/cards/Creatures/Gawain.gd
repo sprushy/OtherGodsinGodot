@@ -163,13 +163,11 @@ func activate(game_manager: GameManager, target: Card = null) -> void:
 		return
 
 	# Multiple effects — ask the UI to let the player choose.
-	var prompt_host := _get_prompt_host(game_manager)
-	if prompt_host != null and prompt_host.has_method("_queue_gawain_healing_hands_prompt"):
-		prompt_host.call("_queue_gawain_healing_hands_prompt", self, target)
-		return
-
-	# Fallback: remove the first removable effect.
-	_resolve_healing_hands(game_manager, target, removable[0])
+	game_manager.decision_requested.emit(get_controller(), "gawain_healing_hands", {
+		"source_uid": uid,
+		"target_uid": target.uid,
+		"statuses": serialize_healing_hands_statuses(target),
+	})
 
 func resolve_healing_hands(game_manager: GameManager, target: Card, status: Dictionary) -> String:
 	if game_manager == null or target == null or status.is_empty():
@@ -201,25 +199,20 @@ func _resolve_healing_hands(game_manager: GameManager, target: Card, status: Dic
 			]
 		)
 
-func _get_prompt_host(game_manager: GameManager = null) -> Node:
-	if game_manager != null:
-		var direct_host := game_manager.get_interaction_host()
-		var direct_node := direct_host as Node
-		if direct_node != null and is_instance_valid(direct_node):
-			return direct_node
-	var tree: SceneTree = Engine.get_main_loop() as SceneTree
-	if tree == null:
-		return null
-	var hosts: Array = tree.get_nodes_in_group("combat_mock_game")
-	if tree.current_scene != null:
-		for host in hosts:
-			var node: Node = host as Node
-			if node != null and node.is_inside_tree() and (node == tree.current_scene or tree.current_scene.is_ancestor_of(node)):
-				return node
-	for host in hosts:
-		var node: Node = host as Node
-		if node != null and node.is_inside_tree() and node.get("game_manager") != null:
-			return node
-	if tree.current_scene != null:
-		return tree.current_scene
-	return null
+func serialize_healing_hands_statuses(target: Card) -> Array[Dictionary]:
+	var serialized: Array[Dictionary] = []
+	var removable := get_removable_statuses(target)
+	for idx in range(removable.size()):
+		var status: Dictionary = removable[idx]
+		serialized.append({
+			"index": idx,
+			"label": str(status.get("source", status.get("name", "effect"))),
+		})
+	return serialized
+
+func resolve_healing_hands_by_index(game_manager: GameManager, target: Card, status_index: int) -> String:
+	var removable := get_removable_statuses(target)
+	if status_index < 0 or status_index >= removable.size():
+		return card_name + " cannot remove an effect right now."
+	return resolve_healing_hands(game_manager, target, removable[status_index])
+

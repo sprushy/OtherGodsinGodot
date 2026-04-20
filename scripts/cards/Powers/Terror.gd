@@ -26,10 +26,19 @@ func on_any_card_moved(game_manager: GameManager, moved_card: Card, from_zone: Z
 			moved_card.get_target_log_display_name(game_manager.get_feedback_viewer())
 		])
 		return
-
-	var prompt_host := _get_prompt_host(game_manager)
-	if prompt_host != null and prompt_host.has_method("_queue_terror_impact_prompt"):
-		prompt_host.call("_queue_terror_impact_prompt", self, moved_card)
+	var controller := moved_card.get_controller()
+	if game_manager != null and controller != null:
+		var target_uids: Array[String] = []
+		for target in valid_targets:
+			if target != null:
+				target_uids.append(target.uid)
+		game_manager.decision_requested.emit(controller, "terror_impact", {
+			"source_uid": uid,
+			"demon_uid": moved_card.uid,
+			"target_uids": target_uids,
+			"queue_with_priority": true,
+			"event_name": "terror_impact",
+		})
 		return
 
 	game_manager.note_player_feedback(resolve_terror_impact(game_manager, moved_card, valid_targets[0]))
@@ -106,26 +115,3 @@ func _is_valid_terror_target(card: Card, demon: Card) -> bool:
 		and card.current_zone != null \
 		and card.current_zone.is_board_zone() \
 		and card.get_effective_level() < demon.get_effective_level()
-
-func _get_prompt_host(game_manager: GameManager = null) -> Node:
-	if game_manager != null:
-		var direct_host := game_manager.get_interaction_host()
-		var direct_node := direct_host as Node
-		if direct_node != null and is_instance_valid(direct_node):
-			return direct_node
-	var tree: SceneTree = Engine.get_main_loop() as SceneTree
-	if tree == null:
-		return null
-	var hosts: Array = tree.get_nodes_in_group("combat_mock_game")
-	if tree.current_scene != null:
-		for host in hosts:
-			var node: Node = host as Node
-			if node != null and node.is_inside_tree() and (node == tree.current_scene or tree.current_scene.is_ancestor_of(node)):
-				return node
-	for host in hosts:
-		var node: Node = host as Node
-		if node != null and node.is_inside_tree() and node.get("game_manager") != null:
-			return node
-	if tree.current_scene != null:
-		return tree.current_scene
-	return null

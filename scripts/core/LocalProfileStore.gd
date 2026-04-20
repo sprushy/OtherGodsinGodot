@@ -238,7 +238,7 @@ func save_deck(
 
 	var deck_bucket := _get_deck_bucket(resolved_profile_id, true)
 	var resolved_deck_id := deck_id.strip_edges()
-	if resolved_deck_id.is_empty() or not deck_bucket.has(resolved_deck_id):
+	if resolved_deck_id.is_empty():
 		resolved_deck_id = _generate_id("deck_", 12)
 
 	var now_unix := int(Time.get_unix_time_from_system())

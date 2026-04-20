@@ -23,12 +23,17 @@ func get_blessed_ward_options() -> Array[String]:
 	return ["hexes", "creature_abilities", "powers"]
 
 func on_impact(game_manager: GameManager) -> void:
-	var prompt_host := _get_prompt_host(game_manager)
-	if prompt_host != null and prompt_host.has_method("_queue_blessed_knights_impact_prompt"):
-		prompt_host.call("_queue_blessed_knights_impact_prompt", self)
+	if game_manager == null:
 		return
-	if game_manager != null:
+	var controller := get_controller()
+	if controller == null:
 		game_manager.note_player_feedback("%s impact is waiting for a Blessed Ward choice." % card_name)
+		return
+	game_manager.decision_requested.emit(controller, "blessed_knights_ward", {
+		"source_uid": uid,
+		"queue_with_priority": true,
+		"event_name": "blessed_knights_impact",
+	})
 
 func get_blessed_ward_label(ward_kind: String) -> String:
 	match ward_kind:
@@ -62,25 +67,3 @@ func apply_blessed_ward(game_manager: GameManager, ward_kind: String) -> void:
 				}
 			)
 
-func _get_prompt_host(game_manager: GameManager = null) -> Node:
-	if game_manager != null:
-		var direct_host := game_manager.get_interaction_host()
-		var direct_node := direct_host as Node
-		if direct_node != null and is_instance_valid(direct_node):
-			return direct_node
-	var tree: SceneTree = Engine.get_main_loop() as SceneTree
-	if tree == null:
-		return null
-	var hosts: Array = tree.get_nodes_in_group("combat_mock_game")
-	if tree.current_scene != null:
-		for host in hosts:
-			var node: Node = host as Node
-			if node != null and node.is_inside_tree() and (node == tree.current_scene or tree.current_scene.is_ancestor_of(node)):
-				return node
-	for host in hosts:
-		var node: Node = host as Node
-		if node != null and node.is_inside_tree() and node.get("game_manager") != null:
-			return node
-	if tree.current_scene != null:
-		return tree.current_scene
-	return null

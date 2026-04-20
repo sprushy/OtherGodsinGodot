@@ -8,6 +8,7 @@ const CardCatalogScript = preload("res://scripts/cards/CardCatalog.gd")
 const TiamatScript = preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
 
 signal back_pressed
+signal account_deck_deleted_locally(deck_id: String)
 
 # ── constants ──────────────────────────────────────────────────────
 const CARD_W    := 140
@@ -94,16 +95,19 @@ var _local_profile_store = null
 var _active_profile_id: String = ""
 var _active_player_name: String = "Player"
 var _selected_saved_deck_id: String = ""
+var _pending_remote_saved_deck_id: String = ""
 var _online_lobby_client = null
 var _remote_account_decks_cache: Array[Dictionary] = []
 var _use_remote_account_decks: bool = false
 var _remote_preferred_deck_id: String = ""
 var _tiamat_slots: Array = [[], [], []]
 var _tiamat_assignment_slot_index: int = -1
+var _deck_id_rng := RandomNumberGenerator.new()
 
 # ── init ───────────────────────────────────────────────────────────
 func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_deck_id_rng.randomize()
 	resized.connect(_queue_responsive_layout_refresh)
 	_all_cards = _make_all_cards()
 	_rebuild_filtered_cards_cache()
@@ -138,6 +142,8 @@ func configure_account_decks(decks: Array, use_remote: bool = false, preferred_d
 		if entry is Dictionary:
 			_remote_account_decks_cache.append((entry as Dictionary).duplicate(true))
 	_use_remote_account_decks = use_remote
+	if not _use_remote_account_decks:
+		_pending_remote_saved_deck_id = ""
 	_remote_preferred_deck_id = preferred_deck_id.strip_edges()
 	if is_inside_tree():
 		_load_profile_decks()
@@ -1446,6 +1452,9 @@ func _save_profile_deck() -> void:
 			resolved_name = LocalProfileStoreScript.DEFAULT_DECK_NAME
 		if _deck_name_edit != null:
 			_deck_name_edit.text = resolved_name
+		if _selected_saved_deck_id.is_empty():
+			_selected_saved_deck_id = _generate_saved_deck_id()
+		_pending_remote_saved_deck_id = _selected_saved_deck_id
 		_online_lobby_client.save_account_deck(
 			resolved_name,
 			_deck,
@@ -1465,6 +1474,7 @@ func _save_profile_deck() -> void:
 		_selected_saved_deck_id,
 		_get_tiamat_special_setup()
 	)
+	_pending_remote_saved_deck_id = ""
 	_selected_saved_deck_id = str(saved_deck.get("deck_id", _selected_saved_deck_id)).strip_edges()
 	if _deck_name_edit != null:
 		_deck_name_edit.text = str(saved_deck.get("name", _deck_name_edit.text))
@@ -1485,15 +1495,25 @@ func _delete_selected_deck() -> void:
 	if _selected_saved_deck_id.is_empty():
 		return
 	var deleted_deck_id: String = _selected_saved_deck_id
+	if deleted_deck_id == _pending_remote_saved_deck_id:
+		_pending_remote_saved_deck_id = ""
 	if _uses_remote_account_decks():
-		if not _can_sync_account_decks():
+		var should_request_remote_delete := _is_synced_account_deck_id(deleted_deck_id)
+		if should_request_remote_delete and not _can_sync_account_decks():
 			_set_status_flash("Connect to the lobby to delete account decks.")
 			return
 		_selected_saved_deck_id = ""
 		if _deck_name_edit != null:
 			_deck_name_edit.text = LocalProfileStoreScript.DEFAULT_DECK_NAME
-		_online_lobby_client.delete_account_deck(deleted_deck_id)
-		_set_status_flash("Deleting saved deck...")
+		_remove_account_deck_locally(deleted_deck_id)
+		_remove_remote_account_deck_from_cache(deleted_deck_id)
+		account_deck_deleted_locally.emit(deleted_deck_id)
+		_load_profile_decks()
+		if should_request_remote_delete:
+			_online_lobby_client.delete_account_deck(deleted_deck_id)
+			_set_status_flash("Deleting saved deck...")
+		else:
+			_set_status_flash("Saved deck deleted.")
 		return
 	_ensure_local_profile_store()
 	if _local_profile_store == null:
@@ -1505,7 +1525,34 @@ func _delete_selected_deck() -> void:
 	_load_profile_decks()
 	_set_status_flash("Saved deck deleted.")
 
+func _is_synced_account_deck_id(deck_id: String) -> bool:
+	_ensure_local_profile_store()
+	var resolved_deck_id := deck_id.strip_edges()
+	if _local_profile_store == null or _active_profile_id.is_empty() or resolved_deck_id.is_empty():
+		return false
+	for synced_deck_id in _local_profile_store.get_synced_account_deck_ids(_active_profile_id):
+		if str(synced_deck_id).strip_edges() == resolved_deck_id:
+			return true
+	return false
+
+func _remove_account_deck_locally(deck_id: String) -> void:
+	_ensure_local_profile_store()
+	var resolved_deck_id := deck_id.strip_edges()
+	if _local_profile_store == null or _active_profile_id.is_empty() or resolved_deck_id.is_empty():
+		return
+	_local_profile_store.mark_account_decks_deleted(_active_profile_id, [resolved_deck_id])
+	_local_profile_store.delete_deck(_active_profile_id, resolved_deck_id)
+
+func _remove_remote_account_deck_from_cache(deck_id: String) -> void:
+	var resolved_deck_id := deck_id.strip_edges()
+	if resolved_deck_id.is_empty():
+		return
+	for index in range(_remote_account_decks_cache.size() - 1, -1, -1):
+		if str(_remote_account_decks_cache[index].get("deck_id", "")).strip_edges() == resolved_deck_id:
+			_remote_account_decks_cache.remove_at(index)
+
 func _new_deck() -> void:
+	_pending_remote_saved_deck_id = ""
 	_selected_saved_deck_id = ""
 	_deck.clear()
 	_clear_tiamat_slots()
@@ -1568,6 +1615,9 @@ func _get_saved_deck_by_id(deck_id: String) -> Dictionary:
 
 func _get_last_selected_saved_deck_id() -> String:
 	if _uses_remote_account_decks():
+		var pending_deck_id := _pending_remote_saved_deck_id.strip_edges()
+		if not pending_deck_id.is_empty():
+			return pending_deck_id
 		var resolved_selected_deck_id := _selected_saved_deck_id.strip_edges()
 		if not resolved_selected_deck_id.is_empty():
 			for saved_deck in _remote_account_decks_cache:
@@ -1610,6 +1660,11 @@ func _load_profile_decks() -> void:
 	_saved_decks_option.add_item("Saved Decks")
 	_saved_decks_option.set_item_metadata(0, "")
 	var decks: Array[Dictionary] = _get_saved_decks()
+	if not _pending_remote_saved_deck_id.is_empty():
+		for deck in decks:
+			if str(deck.get("deck_id", "")).strip_edges() == _pending_remote_saved_deck_id:
+				_pending_remote_saved_deck_id = ""
+				break
 	for deck in decks:
 		var deck_name := str(deck.get("name", "Deck"))
 		_saved_decks_option.add_item(deck_name)
@@ -1656,6 +1711,7 @@ func _select_saved_deck(deck_id: String) -> void:
 
 func _apply_saved_deck(saved_deck: Dictionary) -> void:
 	_selected_saved_deck_id = str(saved_deck.get("deck_id", _selected_saved_deck_id)).strip_edges()
+	_pending_remote_saved_deck_id = ""
 	if _deck_name_edit != null:
 		_deck_name_edit.text = str(saved_deck.get("name", LocalProfileStoreScript.DEFAULT_DECK_NAME))
 	_deck = {}
@@ -2447,6 +2503,23 @@ func _refresh_saved_decks_view_button() -> void:
 	if _saved_decks_view_btn == null:
 		return
 	_saved_decks_view_btn.text = "Back to Cards" if _collection_mode == COLLECTION_MODE_SAVED_DECKS else "Saved Decks"
+
+func _generate_saved_deck_id() -> String:
+	var existing_deck_ids: Dictionary = {}
+	for saved_deck in _get_saved_decks():
+		var deck_id := str(saved_deck.get("deck_id", "")).strip_edges()
+		if not deck_id.is_empty():
+			existing_deck_ids[deck_id] = true
+	if not _pending_remote_saved_deck_id.is_empty():
+		existing_deck_ids[_pending_remote_saved_deck_id] = true
+	for _attempt in range(32):
+		var candidate := "deck_%d%06d" % [
+			int(Time.get_unix_time_from_system()),
+			_deck_id_rng.randi_range(0, 999999),
+		]
+		if not existing_deck_ids.has(candidate):
+			return candidate
+	return "deck_%d" % int(Time.get_ticks_usec())
 
 func _max_copies(card: Card) -> int:
 	if card.is_god:       return 1

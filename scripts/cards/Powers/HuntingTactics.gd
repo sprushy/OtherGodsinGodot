@@ -28,15 +28,18 @@ func on_creature_enters_combat(game_manager: GameManager, attacker: Card, _defen
 	if not _is_hunting_tactics_attacker(attacker):
 		return
 
-	var prompt_host := _get_prompt_host(game_manager)
-	if prompt_host != null and prompt_host.has_method("_resolve_hunting_tactics_prompt"):
-		prompt_host.call("_resolve_hunting_tactics_prompt", self, attacker)
-		return
-
 	var default_supporters := get_support_choices(attacker)
 	if default_supporters.is_empty():
 		return
-	game_manager.note_player_feedback(resolve_combat_support_choice(game_manager, attacker, default_supporters))
+	var supporter_uids: Array[String] = []
+	for supporter in default_supporters:
+		if supporter != null:
+			supporter_uids.append(supporter.uid)
+	game_manager.decision_requested.emit(card_owner, "hunting_tactics", {
+		source_uid = uid,
+		attacker_uid = attacker.uid,
+		target_uids = supporter_uids,
+	})
 
 func get_support_choices(attacker: Card) -> Array[Card]:
 	var supporters: Array[Card] = []
@@ -167,25 +170,3 @@ func _get_friendly_lupines(attacker: Card) -> Array[Card]:
 			supporters.append(card)
 	return supporters
 
-func _get_prompt_host(game_manager: GameManager = null) -> Node:
-	if game_manager != null:
-		var direct_host := game_manager.get_interaction_host()
-		var direct_node := direct_host as Node
-		if direct_node != null and is_instance_valid(direct_node):
-			return direct_node
-	var tree: SceneTree = Engine.get_main_loop() as SceneTree
-	if tree == null:
-		return null
-	var hosts: Array = tree.get_nodes_in_group("combat_mock_game")
-	if tree.current_scene != null:
-		for host in hosts:
-			var node: Node = host as Node
-			if node != null and node.is_inside_tree() and (node == tree.current_scene or tree.current_scene.is_ancestor_of(node)):
-				return node
-	for host in hosts:
-		var node: Node = host as Node
-		if node != null and node.is_inside_tree() and node.get("game_manager") != null:
-			return node
-	if tree.current_scene != null:
-		return tree.current_scene
-	return null

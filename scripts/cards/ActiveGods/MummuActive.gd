@@ -27,9 +27,14 @@ func _init() -> void:
 func on_attack_target_destroyed(game_manager: GameManager, victim: Card) -> void:
 	if game_manager == null or victim == null:
 		return
-	var prompt_host := _get_prompt_host(game_manager)
-	if prompt_host != null and prompt_host.has_method("_queue_mummu_entropy_prompt"):
-		prompt_host.call("_queue_mummu_entropy_prompt", self, victim)
+	var prompt_player := get_controller()
+	if prompt_player == null:
+		prompt_player = card_owner
+	if prompt_player != null:
+		game_manager.decision_requested.emit(prompt_player, "mummu_entropy", {
+			"source_uid": uid,
+			"victim_uid": victim.uid,
+		})
 		return
 	game_manager.note_player_feedback(resolve_entropy_choice(game_manager, victim, ENTROPY_PRIME))
 
@@ -87,25 +92,3 @@ func _restore_normal_god_after_leaving_field(game_manager: GameManager) -> void:
 			restored_god.card_name
 		])
 
-func _get_prompt_host(game_manager: GameManager = null) -> Node:
-	if game_manager != null:
-		var direct_host := game_manager.get_interaction_host()
-		var direct_node := direct_host as Node
-		if direct_node != null and is_instance_valid(direct_node):
-			return direct_node
-	var tree: SceneTree = Engine.get_main_loop() as SceneTree
-	if tree == null:
-		return null
-	var hosts: Array = tree.get_nodes_in_group("combat_mock_game")
-	if tree.current_scene != null:
-		for host in hosts:
-			var node: Node = host as Node
-			if node != null and node.is_inside_tree() and (node == tree.current_scene or tree.current_scene.is_ancestor_of(node)):
-				return node
-	for host in hosts:
-		var node: Node = host as Node
-		if node != null and node.is_inside_tree() and node.get("game_manager") != null:
-			return node
-	if tree.current_scene != null:
-		return tree.current_scene
-	return null

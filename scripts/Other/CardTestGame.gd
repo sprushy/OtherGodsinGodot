@@ -20,7 +20,7 @@ func start_game(
 	server_match_session = null
 ) -> void:
 	await super.start_game(is_host, is_client, server_ip, server_port, match_info, server_match_session)
-	load_v_w_card_scenario()
+	load_clean_start_scenario()
 
 func update_ui() -> void:
 	_sync_test_priority_control()
@@ -218,7 +218,65 @@ func _reset_test_match_state() -> void:
 	selected_interceptor = null
 
 func _setup_test_board() -> void:
-	load_thor_vs_tiamat_scenario()
+	load_clean_start_scenario()
+
+func load_clean_start_scenario() -> void:
+	_reset_test_match_state()
+	_add_test_god(player1, Odin.new())
+	_add_test_god(player2, Thor.new())
+
+	# Fresh opening hands only: no seeded board, no prepared cards, no active powers.
+	_add_test_hand_card(player1, Berserker.new())
+	_add_test_hand_card(player1, BrownBear.new())
+	_add_test_hand_card(player1, HeroicStand.new())
+	_add_test_hand_card(player1, HariiWarrior.new())
+	_add_test_hand_card(player1, FallOfTheMighty.new())
+
+	_add_test_hand_card(player2, MinotaurFootsoldier.new())
+	_add_test_hand_card(player2, BrownBear.new())
+	_add_test_hand_card(player2, HeroicStand.new())
+	_add_test_hand_card(player2, Berserker.new())
+	_add_test_hand_card(player2, DivineLightning.new())
+
+	# Small known decks so draw/upkeep remains deterministic while staying low-complexity.
+	_add_test_deck_card(player1, BrownBear.new())
+	_add_test_deck_card(player1, MinotaurFootsoldier.new())
+	_add_test_deck_card(player1, HeroicStand.new())
+	_add_test_deck_card(player1, Berserker.new())
+
+	_add_test_deck_card(player2, BrownBear.new())
+	_add_test_deck_card(player2, MinotaurFootsoldier.new())
+	_add_test_deck_card(player2, HeroicStand.new())
+	_add_test_deck_card(player2, Berserker.new())
+
+	player1.spend_mana(player1.mana)
+	player1.gain_mana(8)
+	player2.spend_mana(player2.mana)
+	player2.gain_mana(8)
+	player1.followers = 100
+	player2.followers = 100
+	player1.followers_changed.emit(player1.followers)
+	player2.followers_changed.emit(player2.followers)
+	player1.has_summoned_this_turn = false
+	player2.has_summoned_this_turn = false
+
+	game_manager.current_player = player1
+	game_manager.other_player = player2
+	game_manager.feedback_viewer = player1
+	player1.is_turn_player = true
+	player2.is_turn_player = false
+	selected_card = null
+	selected_attacker = null
+	selected_interceptor = null
+	_test_turn_owner = player1
+	_test_turn_opponent = player2
+	game_manager.start_turn()
+	_open_upkeep_choice_window()
+	action_label.text = (
+		"Clean Start Scenario. Fresh game state with gods, empty boards, simple opening hands, and no seeded powers, summons, or queued effects. "
+		+ "Choose Draw Card or Gain 4 Mana first, then test priority windows from a plain opening turn."
+	)
+	update_ui()
 
 func load_thor_vs_tiamat_scenario() -> void:
 	_reset_test_match_state()

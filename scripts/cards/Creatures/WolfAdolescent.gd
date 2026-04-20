@@ -41,9 +41,16 @@ func on_turn_start(game_manager: GameManager) -> void:
 			_set_maturation_ready(false)
 		return
 
-	var prompt_host := _get_prompt_host(game_manager)
-	if prompt_host != null and prompt_host.has_method("_queue_wolf_adolescent_maturation_prompt"):
-		prompt_host.call("_queue_wolf_adolescent_maturation_prompt", self)
+	var controller := get_controller()
+	if controller != null:
+		var target_uids: Array[String] = []
+		for target in get_valid_maturation_targets():
+			if target != null:
+				target_uids.append(target.uid)
+		game_manager.decision_requested.emit(controller, "wolf_adolescent_maturation", {
+			"source_uid": uid,
+			"target_uids": target_uids,
+		})
 		return
 
 	# Fallback when no UI host is available — handle inline.
@@ -129,29 +136,6 @@ func _is_valid_maturation_target(card: Card, controller: Player) -> bool:
 		and not card.is_god \
 		and card.has_type("Lupine") \
 		and card.get_effective_level() <= 5
-
-func _get_prompt_host(game_manager: GameManager = null) -> Node:
-	if game_manager != null:
-		var direct_host := game_manager.get_interaction_host()
-		var direct_node := direct_host as Node
-		if direct_node != null and is_instance_valid(direct_node):
-			return direct_node
-	var tree: SceneTree = Engine.get_main_loop() as SceneTree
-	if tree == null:
-		return null
-	var hosts: Array = tree.get_nodes_in_group("combat_mock_game")
-	if tree.current_scene != null:
-		for host in hosts:
-			var node: Node = host as Node
-			if node != null and node.is_inside_tree() and (node == tree.current_scene or tree.current_scene.is_ancestor_of(node)):
-				return node
-	for host in hosts:
-		var node: Node = host as Node
-		if node != null and node.is_inside_tree() and node.get("game_manager") != null:
-			return node
-	if tree.current_scene != null:
-		return tree.current_scene
-	return null
 
 func _set_maturation_ready(value: bool) -> void:
 	_maturation_ready = value

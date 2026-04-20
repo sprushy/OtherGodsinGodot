@@ -69,6 +69,7 @@ func setup_transport(
 
 	if match_manager != null:
 		match_manager.network_manager = network_manager
+		match_manager.authoritative_match_flow_enabled = is_host
 		network_manager.command_received.connect(func(command: Dictionary, sender_info: Dictionary) -> void:
 			match_manager.process_command(command, sender_info)
 		)

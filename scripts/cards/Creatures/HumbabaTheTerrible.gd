@@ -31,12 +31,19 @@ func _trigger_augury_reading(game_manager: GameManager) -> void:
 		game_manager.note_player_feedback("%s found no cards to read." % card_name)
 		return
 
-	var prompt_host := _get_prompt_host(game_manager)
-	if prompt_host != null and prompt_host.has_method("_queue_humbaba_augury_reading_prompt"):
-		prompt_host.call("_queue_humbaba_augury_reading_prompt", self)
+	var prompt_player := _get_opponent(game_manager)
+	if top_cards.size() == 1 or prompt_player == null:
+		game_manager.note_player_feedback(resolve_augury_reading(game_manager, top_cards[0]))
 		return
 
-	game_manager.note_player_feedback(resolve_augury_reading(game_manager, top_cards[0]))
+	var target_uids: Array[String] = []
+	for card in top_cards:
+		if card != null:
+			target_uids.append(card.uid)
+	game_manager.decision_requested.emit(prompt_player, "humbaba_augury", {
+		"source_uid": uid,
+		"target_uids": target_uids,
+	})
 
 func get_augury_cards(game_manager: GameManager) -> Array[Card]:
 	var cards: Array[Card] = []
@@ -90,25 +97,3 @@ func _get_opponent(game_manager: GameManager) -> Player:
 		return null
 	return game_manager.get_opponent(controller)
 
-func _get_prompt_host(game_manager: GameManager = null) -> Node:
-	if game_manager != null:
-		var direct_host := game_manager.get_interaction_host()
-		var direct_node := direct_host as Node
-		if direct_node != null and is_instance_valid(direct_node):
-			return direct_node
-	var tree: SceneTree = Engine.get_main_loop() as SceneTree
-	if tree == null:
-		return null
-	var hosts: Array = tree.get_nodes_in_group("combat_mock_game")
-	if tree.current_scene != null:
-		for host in hosts:
-			var node: Node = host as Node
-			if node != null and node.is_inside_tree() and (node == tree.current_scene or tree.current_scene.is_ancestor_of(node)):
-				return node
-	for host in hosts:
-		var node: Node = host as Node
-		if node != null and node.is_inside_tree() and node.get("game_manager") != null:
-			return node
-	if tree.current_scene != null:
-		return tree.current_scene
-	return null

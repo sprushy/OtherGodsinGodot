@@ -430,6 +430,47 @@ func _add_overlay_stat_badge(
 	overlay.add_child(badge)
 	return badge
 
+func _add_hidden_creature_stat_badge(
+	overlay: Control,
+	card: Card,
+	is_def: bool,
+	eff_str: int,
+	eff_res: int
+) -> void:
+	if overlay == null or card == null:
+		return
+	var hidden_stat := "str" if is_def else "res"
+	var hidden_base := card.strength if is_def else card.resilience
+	var hidden_eff := eff_str if is_def else eff_res
+	if hidden_eff == hidden_base:
+		return
+
+	var hidden_label := ""
+	if is_def:
+		hidden_label = "STR:%d" % hidden_eff
+	else:
+		hidden_label = "RES:%d" % hidden_eff
+	var hidden_font_color := Color(0.92, 0.97, 1.0)
+	if hidden_eff > hidden_base:
+		hidden_font_color = Color(0.4, 1.0, 0.4)
+	elif hidden_eff < hidden_base:
+		hidden_font_color = Color(1.0, 0.35, 0.35)
+
+	var hidden_badge := _add_overlay_stat_badge(
+		overlay,
+		hidden_label,
+		Control.PRESET_TOP_LEFT,
+		6,
+		6,
+		74,
+		30,
+		hidden_font_color
+	)
+	var hidden_breakdown := card.get_full_stat_breakdown(hidden_stat)
+	if hidden_badge != null and hidden_breakdown != "":
+		hidden_badge.tooltip_text = hidden_breakdown
+		hidden_badge.mouse_filter = Control.MOUSE_FILTER_STOP
+
 func _add_power_lock_overlay(overlay: Control, card: Card) -> void:
 	if overlay == null or card == null:
 		return
@@ -1219,10 +1260,10 @@ func _is_card_pending_selection_source(card: Card) -> bool:
 func _is_card_waiting_on_priority(card: Card) -> bool:
 	if card == null or game_manager == null:
 		return false
-	for action in game_manager.action_stack:
-		if action != null and action.card == card:
-			return true
-	return false
+	if game_manager.action_stack.is_empty():
+		return false
+	var top_action: CardAction = game_manager.action_stack.back()
+	return top_action != null and top_action.card == card
 
 func _is_card_attacking_on_stack(card: Card) -> bool:
 	if card == null or game_manager == null:
@@ -1721,6 +1762,8 @@ func _refresh_display() -> void:
 			if right_badge != null and spd_breakdown != "":
 				right_badge.tooltip_text = spd_breakdown
 				right_badge.mouse_filter = Control.MOUSE_FILTER_STOP
+
+			_add_hidden_creature_stat_badge(card_overlay, card, is_def, eff_str, eff_res)
 
 		elif card.card_type == Card.CardType.STRUCTURE:
 			var eff_res_s := card.get_effective_resilience()

@@ -34,7 +34,6 @@ func start_from_config(config: Dictionary) -> Error:
 		return ERR_INVALID_DATA
 
 	game_manager = GameManager.new()
-	game_manager.set_interaction_host(self)
 	match_manager = MatchManager.new(game_manager)
 	prompt_router = PromptRouterScript.new(game_manager)
 	headless_match_host = HeadlessMatchHostScript.new()

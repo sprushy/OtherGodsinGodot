@@ -24,6 +24,8 @@ func can_use_upkeep_summon(game_manager: GameManager) -> bool:
 		return false
 	if game_manager.current_player != card_owner:
 		return false
+	if not game_manager.is_player_in_upkeep_window(card_owner):
+		return false
 	if current_zone != card_owner.hand_zone:
 		return false
 	if _get_open_summon_zones().is_empty():

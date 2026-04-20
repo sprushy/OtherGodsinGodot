@@ -27,14 +27,16 @@ func on_impact(game_manager: GameManager) -> void:
 			game_manager.note_player_feedback(no_target_text)
 		return
 
-	var prompt_host := _get_prompt_host(game_manager)
-	if prompt_host != null and prompt_host.has_method("_queue_giant_master_architect_impact_prompt"):
-		prompt_host.call("_queue_giant_master_architect_impact_prompt", self)
-		return
-
-	var fallback_text := resolve_master_plan_impact(game_manager, valid_targets[0])
-	if game_manager != null:
-		game_manager.note_player_feedback(fallback_text)
+	var target_uids: Array[String] = []
+	for target in valid_targets:
+		if target != null:
+			target_uids.append(target.uid)
+	game_manager.decision_requested.emit(get_controller(), "giant_master_architect_impact", {
+		"source_uid": uid,
+		"target_uids": target_uids,
+		"queue_with_priority": true,
+		"event_name": "giant_master_architect_impact",
+	})
 
 func get_valid_targets(_game_manager: GameManager) -> Array[Card]:
 	var valid_targets: Array[Card] = []
@@ -88,25 +90,3 @@ func _is_valid_structure_target(card: Card, controller: Player) -> bool:
 		and card.current_zone == controller.deck_zone \
 		and card.card_type == Card.CardType.STRUCTURE
 
-func _get_prompt_host(game_manager: GameManager = null) -> Node:
-	if game_manager != null:
-		var direct_host := game_manager.get_interaction_host()
-		var direct_node := direct_host as Node
-		if direct_node != null and is_instance_valid(direct_node):
-			return direct_node
-	var tree: SceneTree = Engine.get_main_loop() as SceneTree
-	if tree == null:
-		return null
-	var hosts: Array = tree.get_nodes_in_group("combat_mock_game")
-	if tree.current_scene != null:
-		for host in hosts:
-			var node: Node = host as Node
-			if node != null and node.is_inside_tree() and (node == tree.current_scene or tree.current_scene.is_ancestor_of(node)):
-				return node
-	for host in hosts:
-		var node: Node = host as Node
-		if node != null and node.is_inside_tree() and node.get("game_manager") != null:
-			return node
-	if tree.current_scene != null:
-		return tree.current_scene
-	return null

@@ -20,11 +20,21 @@ func _init() -> void:
 	art_path = "res://images/card_art/creatures/gugalanna_bull_of_heaven.png"
 
 func on_impact(game_manager: GameManager) -> void:
-	var prompt_host := _get_prompt_host(game_manager)
-	if prompt_host != null and prompt_host.has_method("_begin_gugalanna_impact_targeting"):
-		prompt_host.call("_begin_gugalanna_impact_targeting", self)
+	var valid_targets := get_valid_impact_targets(game_manager)
+	if valid_targets.is_empty():
+		if game_manager != null:
+			game_manager.note_player_feedback("%s: no valid targets for Celestial Charge. %s stays on field." % [card_name, card_name])
 		return
-	# Fallback: stay on field, no prompt available.
+	var target_uids: Array[String] = []
+	for target in valid_targets:
+		if target != null:
+			target_uids.append(target.uid)
+	game_manager.decision_requested.emit(get_controller(), "gugalanna_celestial_charge", {
+		"source_uid": uid,
+		"target_uids": target_uids,
+		"queue_with_priority": true,
+		"event_name": "gugalanna_celestial_charge",
+	})
 
 # Called by the prompt host after the player makes their choice.
 # Pass null as target if the player declines to destroy anything.
@@ -78,25 +88,3 @@ func _return_to_hand(game_manager: GameManager) -> void:
 		game_manager.note_player_feedback("%s returns to hand." % card_name)
 	owner.move_card(self, owner.hand_zone)
 
-func _get_prompt_host(game_manager: GameManager = null) -> Node:
-	if game_manager != null:
-		var host := game_manager.get_interaction_host()
-		var node := host as Node
-		if node != null and is_instance_valid(node):
-			return node
-	var tree: SceneTree = Engine.get_main_loop() as SceneTree
-	if tree == null:
-		return null
-	var hosts: Array = tree.get_nodes_in_group("combat_mock_game")
-	if tree.current_scene != null:
-		for host in hosts:
-			var node: Node = host as Node
-			if node != null and node.is_inside_tree() and (node == tree.current_scene or tree.current_scene.is_ancestor_of(node)):
-				return node
-	for host in hosts:
-		var node: Node = host as Node
-		if node != null and node.is_inside_tree() and node.get("game_manager") != null:
-			return node
-	if tree.current_scene != null:
-		return tree.current_scene
-	return null

@@ -30,11 +30,30 @@ func on_summon(_game_manager: GameManager) -> void:
 func on_impact(game_manager: GameManager) -> void:
 	if game_manager == null or card_owner == null or card_owner.deck_zone == null:
 		return
-	var prompt_host := _get_prompt_host(game_manager)
-	if prompt_host != null and prompt_host.has_method("_queue_nusku_active_core_flame_prompt"):
-		prompt_host.call("_queue_nusku_active_core_flame_prompt", self)
+	var preview_cards := get_core_flame_preview_cards()
+	if preview_cards.is_empty():
+		game_manager.note_player_feedback(resolve_core_flame(game_manager))
 		return
-	game_manager.note_player_feedback(resolve_core_flame(game_manager))
+	var prompt_player := get_controller()
+	if prompt_player == null:
+		prompt_player = card_owner
+	if prompt_player == null:
+		game_manager.note_player_feedback(resolve_core_flame(game_manager))
+		return
+	var preview_uids: Array[String] = []
+	for card in preview_cards:
+		if card != null:
+			preview_uids.append(card.uid)
+	var recoverable_uids: Array[String] = []
+	for card in get_core_flame_recoverable_cards():
+		if card != null:
+			recoverable_uids.append(card.uid)
+	game_manager.decision_requested.emit(prompt_player, "nusku_active_core_flame", {
+		"source_uid": uid,
+		"preview_uids": preview_uids,
+		"recoverable_uids": recoverable_uids,
+		"mill_count": preview_cards.size(),
+	})
 
 func resolve_from_command(game_manager: GameManager, command: Dictionary) -> void:
 	if game_manager == null:
@@ -73,6 +92,24 @@ func resolve_core_flame(game_manager: GameManager, chosen_card: Card = null, dec
 		feedback += " No magical card was milled."
 	return feedback
 
+func get_core_flame_preview_cards() -> Array[Card]:
+	var preview: Array[Card] = []
+	if card_owner == null or card_owner.deck_zone == null:
+		return preview
+	var limit := mini(MILL_COUNT, card_owner.deck_zone.cards.size())
+	for i in range(limit):
+		var deck_card := card_owner.deck_zone.cards[i] as Card
+		if deck_card != null:
+			preview.append(deck_card)
+	return preview
+
+func get_core_flame_recoverable_cards() -> Array[Card]:
+	var eligible: Array[Card] = []
+	for card in get_core_flame_preview_cards():
+		if card != null and card.is_magical_card():
+			eligible.append(card)
+	return eligible
+
 func on_death(game_manager: GameManager) -> void:
 	if game_manager == null or not _declined_core_flame:
 		return
@@ -110,25 +147,3 @@ func _get_eligible_milled_magical_cards(milled_cards: Array[Card]) -> Array[Card
 			eligible.append(card)
 	return eligible
 
-func _get_prompt_host(game_manager: GameManager = null) -> Node:
-	if game_manager != null:
-		var direct_host := game_manager.get_interaction_host()
-		var direct_node := direct_host as Node
-		if direct_node != null and is_instance_valid(direct_node):
-			return direct_node
-	var tree: SceneTree = Engine.get_main_loop() as SceneTree
-	if tree == null:
-		return null
-	var hosts: Array = tree.get_nodes_in_group("combat_mock_game")
-	if tree.current_scene != null:
-		for host in hosts:
-			var node: Node = host as Node
-			if node != null and node.is_inside_tree() and (node == tree.current_scene or tree.current_scene.is_ancestor_of(node)):
-				return node
-	for host in hosts:
-		var node: Node = host as Node
-		if node != null and node.is_inside_tree() and node.get("game_manager") != null:
-			return node
-	if tree.current_scene != null:
-		return tree.current_scene
-	return null

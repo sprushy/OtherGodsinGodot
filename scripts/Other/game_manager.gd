@@ -4,6 +4,7 @@ class_name GameManager
 
 signal game_ended(winner: Player, loser: Player)
 signal doorway_choice_requested(structure: StructureCard, card: Card, combat_death: bool, destruction: bool)
+signal decision_requested(player: Player, type: String, data: Dictionary)
 signal turn_started(turn_number: int, player: Player)
 signal turn_ended(turn_number: int, player: Player)
 signal controller_turn_started(turn_number: int, player: Player)
@@ -26,7 +27,6 @@ var current_player: Player
 var other_player: Player
 var turn_player: Player
 var feedback_viewer: Player
-var interaction_host: Object = null
 var current_phase: GamePhase = GamePhase.MULLIGAN
 var is_game_over: bool = false
 var winning_player: Player = null
@@ -344,12 +344,6 @@ func get_game_result_message(winner: Player = winning_player, loser: Player = lo
 	if winner != null:
 		return winner.player_name + " wins the game!"
 	return "Game over!"
-
-func set_interaction_host(host: Object) -> void:
-	interaction_host = host
-
-func get_interaction_host() -> Object:
-	return interaction_host
 
 func set_temporary_combat_follower_damage_halved(halved: bool) -> void:
 	_temporary_combat_follower_damage_halved = halved
@@ -780,6 +774,8 @@ func activate_hex(hex: HexCard, attacker: Card, defender: Card) -> bool:
 func player_chooses_draw() -> void:
 	if is_game_over:
 		return
+	if not is_player_in_upkeep_window(current_player):
+		return
 	_begin_turn_upkeep()
 	current_player.draw_card()
 	_resolve_turn_upkeep()
@@ -787,12 +783,16 @@ func player_chooses_draw() -> void:
 func player_chooses_mana() -> void:
 	if is_game_over:
 		return
+	if not is_player_in_upkeep_window(current_player):
+		return
 	_begin_turn_upkeep()
 	current_player.gain_mana(4)
 	_resolve_turn_upkeep()
 
 func player_chooses_upkeep_only() -> void:
 	if is_game_over:
+		return
+	if not is_player_in_upkeep_window(current_player):
 		return
 	_resolve_turn_upkeep()
 
@@ -2828,6 +2828,9 @@ func _send_to_graveyard_with_hook_resolved(
 func has_pending_return_to_hand_choice() -> bool:
 	return _pending_return_to_hand_card != null
 
+func get_pending_return_to_hand_card() -> Card:
+	return _pending_return_to_hand_card
+
 func begin_pending_return_to_hand_choice(
 	card: Card,
 	reason: String,
@@ -2837,15 +2840,18 @@ func begin_pending_return_to_hand_choice(
 ) -> bool:
 	if card == null or _pending_return_to_hand_card != null:
 		return false
-	var interaction_host := get_interaction_host()
-	if interaction_host == null or not interaction_host.has_method("_queue_sharur_escape_prompt"):
+	var prompt_player := card.card_owner if card.card_owner != null else current_player
+	if prompt_player == null:
 		return false
 	_pending_return_to_hand_card = card
 	_pending_return_to_hand_reason = reason
 	_pending_return_to_hand_send_to_abyss = send_to_abyss
 	_pending_return_to_hand_continue = continue_callback
 	_pending_return_to_hand_steal_actor = steal_actor
-	interaction_host.call("_queue_sharur_escape_prompt", card, reason)
+	decision_requested.emit(prompt_player, "return_to_hand_choice", {
+		"card": card,
+		"reason": reason,
+	})
 	return true
 
 func resolve_pending_return_to_hand_choice(pay_cost: bool) -> bool:
