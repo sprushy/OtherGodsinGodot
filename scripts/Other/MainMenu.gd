@@ -4,6 +4,7 @@ const LobbyProtocolScript = preload("res://scripts/network/LobbyProtocol.gd")
 const LobbyServerScript = preload("res://scripts/server/LobbyServer.gd")
 const LobbyClientScript = preload("res://scripts/client/LobbyClient.gd")
 const AppReleaseInfoScript = preload("res://scripts/client/AppReleaseInfo.gd")
+const DeckCatalogUtilsScript = preload("res://scripts/core/DeckCatalogUtils.gd")
 const LocalProfileStoreScript = preload("res://scripts/core/LocalProfileStore.gd")
 const CardCatalogScript = preload("res://scripts/cards/CardCatalog.gd")
 const DeckValidatorScript = preload("res://scripts/server/DeckValidator.gd")
@@ -520,7 +521,12 @@ func _get_saved_decks_for_current_identity() -> Array[Dictionary]:
 
 func _replace_account_decks_cache(decks: Array[Dictionary]) -> void:
 	_account_decks_cache.clear()
-	for entry in decks:
+	var visible_decks := DeckCatalogUtilsScript.dedupe_exact_copies(
+		decks,
+		_get_server_preferred_account_deck_id(),
+		_selected_multiplayer_deck_id
+	)
+	for entry in visible_decks:
 		_account_decks_cache.append(entry.duplicate(true))
 
 func _get_local_saved_decks_for_active_profile() -> Array[Dictionary]:

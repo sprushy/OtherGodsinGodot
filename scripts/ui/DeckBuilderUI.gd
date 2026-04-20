@@ -4,6 +4,7 @@ extends Control
 class_name DeckBuilderUI
 
 const LocalProfileStoreScript = preload("res://scripts/core/LocalProfileStore.gd")
+const DeckCatalogUtilsScript = preload("res://scripts/core/DeckCatalogUtils.gd")
 const CardCatalogScript = preload("res://scripts/cards/CardCatalog.gd")
 const TiamatScript = preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
 
@@ -138,9 +139,17 @@ func configure_online_sync(lobby_client) -> void:
 
 func configure_account_decks(decks: Array, use_remote: bool = false, preferred_deck_id: String = "") -> void:
 	_remote_account_decks_cache.clear()
+	var visible_decks: Array[Dictionary] = []
 	for entry in decks:
 		if entry is Dictionary:
-			_remote_account_decks_cache.append((entry as Dictionary).duplicate(true))
+			visible_decks.append((entry as Dictionary).duplicate(true))
+	visible_decks = DeckCatalogUtilsScript.dedupe_exact_copies(
+		visible_decks,
+		preferred_deck_id,
+		_pending_remote_saved_deck_id if not _pending_remote_saved_deck_id.is_empty() else _selected_saved_deck_id
+	)
+	for entry in visible_decks:
+		_remote_account_decks_cache.append(entry.duplicate(true))
 	_use_remote_account_decks = use_remote
 	if not _use_remote_account_decks:
 		_pending_remote_saved_deck_id = ""
