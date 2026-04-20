@@ -5,6 +5,8 @@ class_name MatchClient
 ## The current direct-connect flow still works, but CombatMockGame now depends
 ## on this boundary instead of talking to transport details directly.
 
+const CONNECT_ATTEMPT_TIMEOUT_SECONDS := 5.0
+
 signal game_event_received(event_type: String, data: Dictionary)
 signal peer_disconnected(peer_id: int)
 signal match_join_failed(reason: String)
@@ -23,6 +25,7 @@ var _is_reconnecting: bool = false
 var _is_retrying_initial_connect: bool = false
 var _match_join_requested: bool = false
 var _has_authenticated_match: bool = false
+var _connect_attempt_serial: int = 0
 
 func _init(
 	p_match_manager: MatchManager,
@@ -62,6 +65,7 @@ func _init(
 		if network_manager.has_signal("connection_failed"):
 			network_manager.connection_failed.connect(_on_connection_failed)
 	_try_submit_match_join_if_already_connected()
+	_arm_connect_timeout_if_connecting()
 
 func get_game_input() -> GameInput:
 	return _game_input
@@ -81,10 +85,12 @@ func requires_match_auth() -> bool:
 	return _is_networked_client and not _match_info.is_empty() and str(_match_info.get("match_token", "")).strip_edges() != ""
 
 func _on_connected_to_server() -> void:
+	_cancel_connect_attempt_timeout()
 	_is_retrying_initial_connect = false
 	_submit_match_join_request()
 
 func _on_match_join_approved(match_info: Dictionary) -> void:
+	_cancel_connect_attempt_timeout()
 	var was_reconnecting := _is_reconnecting
 	_match_info.merge(match_info, true)
 	_is_reconnecting = false
@@ -103,6 +109,7 @@ func _on_match_join_approved(match_info: Dictionary) -> void:
 	game_event_received.emit("match_join_ok", match_info)
 
 func _on_match_join_denied(reason: String) -> void:
+	_cancel_connect_attempt_timeout()
 	var was_reconnecting := _is_reconnecting
 	_is_reconnecting = false
 	_is_retrying_initial_connect = false
@@ -114,6 +121,7 @@ func _on_match_join_denied(reason: String) -> void:
 	game_event_received.emit("match_join_denied", {"reason": reason})
 
 func _on_server_disconnected() -> void:
+	_cancel_connect_attempt_timeout()
 	_match_join_requested = false
 	if _try_reconnect():
 		return
@@ -121,13 +129,31 @@ func _on_server_disconnected() -> void:
 	game_event_received.emit("server_disconnected", {})
 
 func _on_connection_failed() -> void:
+	_handle_connection_failure("Could not connect to the match server.", "Reconnect attempt failed.")
+
+func _on_connect_attempt_timeout() -> void:
+	if network_manager == null:
+		return
+	var multiplayer_api = network_manager.multiplayer
+	if multiplayer_api != null:
+		var multiplayer_peer = multiplayer_api.multiplayer_peer
+		if multiplayer_peer != null and multiplayer_peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED:
+			return
+	network_manager.disconnect_client()
+	_handle_connection_failure(
+		"Connection attempt to the match server timed out.",
+		"Reconnect attempt timed out."
+	)
+
+func _handle_connection_failure(initial_reason: String, reconnect_reason: String) -> void:
+	_cancel_connect_attempt_timeout()
 	_match_join_requested = false
 	if _has_authenticated_match and _is_reconnecting:
 		_is_reconnecting = false
 		if _try_reconnect():
 			return
 		game_event_received.emit("match_reconnect_failed", {
-			"reason": "Reconnect attempt failed.",
+			"reason": reconnect_reason,
 		})
 		return
 	if _has_authenticated_match:
@@ -140,9 +166,8 @@ func _on_connection_failed() -> void:
 		_is_retrying_initial_connect = false
 	if _try_initial_connect_retry():
 		return
-	var reason := "Could not connect to the match server."
-	match_join_failed.emit(reason)
-	game_event_received.emit("match_join_denied", {"reason": reason})
+	match_join_failed.emit(initial_reason)
+	game_event_received.emit("match_join_denied", {"reason": initial_reason})
 
 func _try_reconnect() -> bool:
 	if not requires_match_auth() or network_manager == null:
@@ -156,6 +181,7 @@ func _try_reconnect() -> bool:
 	})
 	var reconnect_err: Error = network_manager.reconnect_client(_server_ip, _server_port)
 	if reconnect_err == OK:
+		_arm_connect_attempt_timeout()
 		return true
 	_is_reconnecting = false
 	game_event_received.emit("match_reconnect_failed", {
@@ -175,6 +201,7 @@ func _try_initial_connect_retry() -> bool:
 	})
 	var reconnect_err: Error = network_manager.reconnect_client(_server_ip, _server_port)
 	if reconnect_err == OK:
+		_arm_connect_attempt_timeout()
 		return true
 	_is_retrying_initial_connect = false
 	return false
@@ -198,6 +225,37 @@ func _try_submit_match_join_if_already_connected() -> void:
 	if multiplayer_peer.get_connection_status() != MultiplayerPeer.CONNECTION_CONNECTED:
 		return
 	_submit_match_join_request()
+
+func _arm_connect_timeout_if_connecting() -> void:
+	if network_manager == null:
+		return
+	var multiplayer_api = network_manager.multiplayer
+	if multiplayer_api == null:
+		return
+	var multiplayer_peer = multiplayer_api.multiplayer_peer
+	if multiplayer_peer == null:
+		return
+	if multiplayer_peer.get_connection_status() != MultiplayerPeer.CONNECTION_CONNECTING:
+		return
+	_arm_connect_attempt_timeout()
+
+func _arm_connect_attempt_timeout() -> void:
+	if network_manager == null:
+		return
+	var tree := network_manager.get_tree()
+	if tree == null:
+		return
+	_connect_attempt_serial += 1
+	var expected_serial := _connect_attempt_serial
+	var timeout_timer := tree.create_timer(CONNECT_ATTEMPT_TIMEOUT_SECONDS)
+	timeout_timer.timeout.connect(func() -> void:
+		if expected_serial != _connect_attempt_serial:
+			return
+		_on_connect_attempt_timeout()
+	)
+
+func _cancel_connect_attempt_timeout() -> void:
+	_connect_attempt_serial += 1
 
 func _on_game_event_received(event_type: String, data: Dictionary) -> void:
 	game_event_received.emit(event_type, data)

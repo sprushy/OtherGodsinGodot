@@ -1071,6 +1071,12 @@ func _ensure_account_store() -> void:
 	if account_store != null:
 		return
 	account_store = AccountStoreScript.new()
+	print(
+		"LobbyServer: account store ready path=%s accounts=%d" % [
+			account_store.get_storage_path_for_debug(),
+			account_store.get_account_count(),
+		]
+	)
 
 func _ensure_deck_store() -> void:
 	if deck_store != null:

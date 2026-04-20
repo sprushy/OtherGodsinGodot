@@ -331,6 +331,7 @@ var _pending_divine_caprice_selected_zone: Zone = null
 var _pending_divine_caprice_plan: Array[Dictionary] = []
 var _pending_divine_caprice_virtual_slots: Dictionary = {}
 var _pending_hand_play_events: Array[Card] = []
+var _deferred_priority_flush_scheduled: bool = false
 var _stack_resolution_paused: bool = false
 var _pending_post_execute_source_player: Player = null
 var _overlay_card_dismissed: Callable = Callable()
@@ -7065,7 +7066,9 @@ func _on_local_player_card_moved(card: Card, from_zone: Zone, to_zone: Zone) -> 
 	if _has_pending_hand_play_priority_event(card):
 		return
 	_pending_hand_play_events.append(card)
-	call_deferred("_flush_hand_play_priority_events")
+	_flush_deferred_priority_events()
+	if not _pending_hand_play_events.is_empty():
+		_schedule_deferred_priority_flush()
 
 func _can_flush_deferred_priority_events() -> bool:
 	return game_manager != null \
@@ -7073,6 +7076,20 @@ func _can_flush_deferred_priority_events() -> bool:
 		and not _stack_resolution_paused \
 		and not _is_priority_prompt_visible() \
 		and not _is_intercept_prompt_visible()
+
+func _schedule_deferred_priority_flush() -> void:
+	if _deferred_priority_flush_scheduled:
+		return
+	_deferred_priority_flush_scheduled = true
+	call_deferred("_retry_deferred_priority_events")
+
+func _retry_deferred_priority_events() -> void:
+	_deferred_priority_flush_scheduled = false
+	_flush_deferred_priority_events()
+	if _pending_summon_priority_events.is_empty() and _pending_hand_play_events.is_empty():
+		return
+	if not _can_flush_deferred_priority_events():
+		_schedule_deferred_priority_flush()
 
 func _has_pending_impact_priority_action(card: Card) -> bool:
 	if card == null or game_manager == null:
@@ -7111,6 +7128,7 @@ func _has_pending_hand_play_priority_event(card: Card) -> bool:
 
 func _flush_deferred_priority_events() -> void:
 	if not _can_flush_deferred_priority_events():
+		_schedule_deferred_priority_flush()
 		return
 	if not _pending_summon_priority_events.is_empty():
 		_flush_summon_priority_events()
@@ -7134,7 +7152,9 @@ func _on_card_summoned(player: Player, card: Card, _from_zone: Zone, to_zone: Zo
 		"card": card,
 		"zone": to_zone,
 	})
-	call_deferred("_flush_summon_priority_events")
+	_flush_deferred_priority_events()
+	if not _pending_summon_priority_events.is_empty():
+		_schedule_deferred_priority_flush()
 
 func _flush_summon_priority_events() -> void:
 	if _pending_summon_priority_events.is_empty():
@@ -7143,6 +7163,7 @@ func _flush_summon_priority_events() -> void:
 		_pending_summon_priority_events.clear()
 		return
 	if not _can_flush_deferred_priority_events():
+		_schedule_deferred_priority_flush()
 		return
 	var event: Dictionary = _pending_summon_priority_events.front()
 	var player: Player = event.get("player", null)
@@ -7180,6 +7201,7 @@ func _flush_hand_play_priority_events() -> void:
 		_pending_hand_play_events.clear()
 		return
 	if not _can_flush_deferred_priority_events():
+		_schedule_deferred_priority_flush()
 		return
 	var played_card: Card = _pending_hand_play_events.pop_front()
 	if played_card == null or played_card.current_zone == null or not _is_in_play_zone(played_card.current_zone):
@@ -16766,8 +16788,8 @@ func _on_match_move_validated(move: Dictionary) -> void:
 			if not _is_networked_client and not authoritative_priority:
 				resolve_pending_attack()
 		"play_creature":
-			if not _is_networked_client and not authoritative_priority and not game_manager.action_stack.is_empty():
-				_offer_priority()
+			if not _is_networked_client and not authoritative_priority:
+				_flush_deferred_priority_events()
 		"priority_pass":
 			# Remote player passed priority; continue the server-side priority loop.
 			if not _is_networked_client and not authoritative_priority:

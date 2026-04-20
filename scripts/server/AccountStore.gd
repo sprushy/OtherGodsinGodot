@@ -46,6 +46,14 @@ func register_account(username: String, password: String) -> Dictionary:
 	_accounts_by_id[account_id] = account
 	_account_id_by_username[username_key] = account_id
 	_save()
+	print(
+		"AccountStore: registered account username=%s account_id=%s storage=%s total_accounts=%d" % [
+			normalized_username,
+			account_id,
+			get_storage_path_for_debug(),
+			_accounts_by_id.size(),
+		]
+	)
 	return _result(true, "", _sanitize_account(account))
 
 func login_account(username: String, password: String) -> Dictionary:
@@ -56,20 +64,58 @@ func login_account(username: String, password: String) -> Dictionary:
 		return _result(false, username_error)
 	var username_key := _username_key(normalized_username)
 	if not _account_id_by_username.has(username_key):
+		print(
+			"AccountStore: login failed, username not found username=%s key=%s storage=%s total_accounts=%d" % [
+				normalized_username,
+				username_key,
+				get_storage_path_for_debug(),
+				_accounts_by_id.size(),
+			]
+		)
 		return _result(false, "That account was not found.")
 	var account_id := str(_account_id_by_username.get(username_key, "")).strip_edges()
 	if account_id.is_empty() or not _accounts_by_id.has(account_id):
+		print(
+			"AccountStore: login failed, username index points at missing account username=%s key=%s account_id=%s storage=%s total_accounts=%d" % [
+				normalized_username,
+				username_key,
+				account_id,
+				get_storage_path_for_debug(),
+				_accounts_by_id.size(),
+			]
+		)
 		return _result(false, "That account was not found.")
 	var account: Dictionary = (_accounts_by_id[account_id] as Dictionary).duplicate(true)
 	var expected_hash := str(account.get("password_hash", ""))
 	var salt := str(account.get("password_salt", ""))
 	if expected_hash.is_empty() or salt.is_empty():
+		print(
+			"AccountStore: login failed, account missing password data username=%s account_id=%s storage=%s" % [
+				normalized_username,
+				account_id,
+				get_storage_path_for_debug(),
+			]
+		)
 		return _result(false, "That account is missing password data.")
 	if _hash_password(password, salt) != expected_hash:
+		print(
+			"AccountStore: login failed, incorrect password username=%s account_id=%s storage=%s" % [
+				normalized_username,
+				account_id,
+				get_storage_path_for_debug(),
+			]
+		)
 		return _result(false, "Incorrect password.")
 	account["last_seen_unix"] = int(Time.get_unix_time_from_system())
 	_accounts_by_id[account_id] = account
 	_save()
+	print(
+		"AccountStore: login succeeded username=%s account_id=%s storage=%s" % [
+			normalized_username,
+			account_id,
+			get_storage_path_for_debug(),
+		]
+	)
 	return _result(true, "", _sanitize_account(account))
 
 func get_account(account_id: String) -> Dictionary:
@@ -79,6 +125,13 @@ func get_account(account_id: String) -> Dictionary:
 		return _sanitize_account(existing as Dictionary)
 	return {}
 
+func get_storage_path_for_debug() -> String:
+	return ProjectSettings.globalize_path(_get_storage_path())
+
+func get_account_count() -> int:
+	_ensure_loaded()
+	return _accounts_by_id.size()
+
 func _ensure_loaded() -> void:
 	if _loaded:
 		return
@@ -86,19 +139,30 @@ func _ensure_loaded() -> void:
 	_accounts_by_id = {}
 	_account_id_by_username = {}
 	var storage_path: String = _get_storage_path()
+	var storage_global_path := ProjectSettings.globalize_path(storage_path)
+	print("AccountStore: loading accounts from %s" % storage_global_path)
 	if not FileAccess.file_exists(storage_path):
+		print("AccountStore: no account storage file found at %s" % storage_global_path)
 		return
 	var file := FileAccess.open(storage_path, FileAccess.READ)
 	if file == null:
+		print("AccountStore: failed to open account storage file at %s" % storage_global_path)
 		return
 	var parsed = JSON.parse_string(file.get_as_text())
 	file.close()
 	if not (parsed is Dictionary):
+		print("AccountStore: account storage file was not a Dictionary payload at %s" % storage_global_path)
 		return
 	var root := parsed as Dictionary
 	var extracted_payload := _extract_accounts_payload(root)
 	_accounts_by_id = extracted_payload.get("accounts_by_id", {})
 	_rebuild_account_username_index()
+	print(
+		"AccountStore: loaded %d account(s) from %s" % [
+			_accounts_by_id.size(),
+			storage_global_path,
+		]
+	)
 	if bool(extracted_payload.get("migration_dirty", false)):
 		_save()
 
