@@ -2,6 +2,7 @@ extends RefCounted
 class_name LocalProfileStore
 
 const TiamatScript = preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
+const DeckCatalogUtilsScript = preload("res://scripts/core/DeckCatalogUtils.gd")
 
 const STORAGE_PATH := "user://player_profiles.json"
 const STORAGE_TEMP_PATH := "user://player_profiles.json.tmp"
@@ -272,6 +273,7 @@ func list_decks(profile_id: String) -> Array[Dictionary]:
 	for raw_deck in deck_bucket.values():
 		if raw_deck is Dictionary:
 			decks.append((raw_deck as Dictionary).duplicate(true))
+	decks = _dedupe_exact_deck_copies(resolved_profile_id, decks)
 	decks.sort_custom(_sort_decks)
 	return decks
 
@@ -954,6 +956,93 @@ func _normalize_saved_deck(saved_deck: Dictionary) -> Dictionary:
 	if str(normalized_deck.get("name", "")).strip_edges().is_empty():
 		normalized_deck["name"] = DEFAULT_DECK_NAME
 	return normalized_deck
+
+func _dedupe_exact_deck_copies(profile_id: String, decks: Array[Dictionary]) -> Array[Dictionary]:
+	if decks.size() < 2:
+		return decks
+	var resolved_profile_id := profile_id.strip_edges()
+	var selected_deck_id := str(_get_last_selected_deck_by_profile().get(resolved_profile_id, "")).strip_edges()
+	var deduped_decks := DeckCatalogUtilsScript.dedupe_exact_copies(decks, "", selected_deck_id)
+	if deduped_decks.size() == decks.size():
+		return deduped_decks
+	_replace_decks_after_dedupe(resolved_profile_id, decks, deduped_decks)
+	return deduped_decks
+
+func _replace_decks_after_dedupe(
+	profile_id: String,
+	original_decks: Array[Dictionary],
+	deduped_decks: Array[Dictionary]
+) -> void:
+	var resolved_profile_id := profile_id.strip_edges()
+	if resolved_profile_id.is_empty():
+		return
+	var replacement_bucket: Dictionary = {}
+	var signature_to_retained_id: Dictionary = {}
+	for deck in deduped_decks:
+		var normalized_deck := _normalize_saved_deck(deck)
+		var deck_id := str(normalized_deck.get("deck_id", "")).strip_edges()
+		if deck_id.is_empty():
+			continue
+		replacement_bucket[deck_id] = normalized_deck
+		signature_to_retained_id[DeckCatalogUtilsScript.semantic_signature(normalized_deck)] = deck_id
+	_set_deck_bucket(resolved_profile_id, replacement_bucket)
+	_remap_synced_account_deck_ids_after_dedupe(resolved_profile_id, original_decks, signature_to_retained_id)
+	var last_selected := _get_last_selected_deck_by_profile()
+	var selected_deck_id := str(last_selected.get(resolved_profile_id, "")).strip_edges()
+	if selected_deck_id.is_empty() or replacement_bucket.has(selected_deck_id):
+		_save()
+		return
+	if replacement_bucket.is_empty():
+		last_selected.erase(resolved_profile_id)
+	else:
+		last_selected[resolved_profile_id] = str(replacement_bucket.keys()[0]).strip_edges()
+	_data["last_selected_deck_by_profile"] = last_selected
+	_save()
+
+func _remap_synced_account_deck_ids_after_dedupe(
+	profile_id: String,
+	original_decks: Array[Dictionary],
+	signature_to_retained_id: Dictionary
+) -> void:
+	var synced_by_profile := _get_synced_account_deck_ids_by_profile()
+	var synced_bucket = synced_by_profile.get(profile_id, {})
+	if not (synced_bucket is Dictionary):
+		return
+	var original_signature_by_id: Dictionary = {}
+	for deck in original_decks:
+		var deck_id := str(deck.get("deck_id", "")).strip_edges()
+		if deck_id.is_empty():
+			continue
+		original_signature_by_id[deck_id] = DeckCatalogUtilsScript.semantic_signature(deck)
+	var remapped_bucket: Dictionary = {}
+	for raw_deck_id in (synced_bucket as Dictionary).keys():
+		var deck_id := str(raw_deck_id).strip_edges()
+		if deck_id.is_empty():
+			continue
+		if _dictionary_has_value(signature_to_retained_id, deck_id):
+			remapped_bucket[deck_id] = true
+			continue
+		var signature := str(original_signature_by_id.get(deck_id, "")).strip_edges()
+		if signature.is_empty():
+			continue
+		var retained_deck_id := str(signature_to_retained_id.get(signature, "")).strip_edges()
+		if retained_deck_id.is_empty():
+			continue
+		remapped_bucket[retained_deck_id] = true
+	if remapped_bucket.is_empty():
+		synced_by_profile.erase(profile_id)
+	else:
+		synced_by_profile[profile_id] = remapped_bucket
+	_data["synced_account_deck_ids_by_profile"] = synced_by_profile
+
+func _dictionary_has_value(values: Dictionary, target_value: String) -> bool:
+	var resolved_target := target_value.strip_edges()
+	if resolved_target.is_empty():
+		return false
+	for raw_value in values.values():
+		if str(raw_value).strip_edges() == resolved_target:
+			return true
+	return false
 
 func _resolve_profile_id(profile_id: String) -> String:
 	var resolved_profile_id := profile_id.strip_edges()
