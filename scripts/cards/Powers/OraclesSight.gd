@@ -1,7 +1,7 @@
 extends PowerCard
 class_name OraclesSight
 
-const UNLOCK_COST := 2
+const UNLOCK_COST := 3
 const LOOK_COUNT := 5
 const ART_PATH := "res://images/card_art/powers/OraclesSightEdit.png"
 
@@ -17,7 +17,7 @@ func _init() -> void:
 	if "Targeting" not in card_types:
 		card_types.append("Targeting")
 	targets = true
-	ability_text = "[b]Unlock[/b] (2): [b]Foresight[/b] - Look at the next 5 cards in your deck; choose one to [b]Prime[/b] and [b]Shelve[/b] the rest."
+	ability_text = "[b]Unlock[/b] (3): [b]Foresight[/b] - Look at the next 5 cards in your deck; choose one to [b]Prime[/b] and [b]Shelve[/b] the rest."
 	artist = "Eliot Chan"
 	art_path = ART_PATH
 

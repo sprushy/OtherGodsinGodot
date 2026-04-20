@@ -24,6 +24,7 @@ const DefaultMatchSetupScript = preload("res://scripts/server/DefaultMatchSetup.
 const MatchHistoryStoreScript = preload("res://scripts/server/MatchHistoryStore.gd")
 const MatchSessionScript = preload("res://scripts/server/MatchSession.gd")
 const TiamatScript = preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
+const UIArtScaler = preload("res://scripts/ui/UIArtScaler.gd")
 
 signal forfeit_requested
 signal match_session_cleared
@@ -390,7 +391,15 @@ var _hermes_cursor_texture: Texture2D = null
 var _guan_yu_cursor_texture: Texture2D = null
 var _ancient_pyre_cursor_texture: Texture2D = null
 var _active_selection_cursor_mode: String = ""
+var _active_selection_cursor_target_height: int = 0
 var _overlay_selection_cursor_mode: String = ""
+var _sacrifice_cursor_target_height: int = 0
+var _devour_cursor_target_height: int = 0
+var _silence_cursor_target_height: int = 0
+var _giant_master_architect_cursor_target_height: int = 0
+var _hermes_cursor_target_height: int = 0
+var _guan_yu_cursor_target_height: int = 0
+var _ancient_pyre_cursor_target_height: int = 0
 var _devour_cancel_prompt: Control = null
 var _suppress_next_devour_cancel_prompt: bool = false
 var _pending_end_turn_discard_uids: Array = []
@@ -425,7 +434,7 @@ const ENEMY_HAND_CARD_SPACING := 74.0
 const ENEMY_HAND_PEEK_ROTATION := 8.0
 const ENEMY_HAND_OVERLAY_SIDE_PADDING := 76.0
 const ENEMY_HAND_OVERLAY_TOP_PADDING := -2.0
-const PREFERRED_BOARD_ZONE_EXTENT := 196.0
+const PREFERRED_BOARD_ZONE_EXTENT := UIArtScaler.DEFAULT_BOARD_ART_REFERENCE_EXTENT
 const HAND_OVERLAY_SIDE_PADDING := 18.0
 const HAND_OVERLAY_BOTTOM_PADDING := -2.0
 const LEFT_PANEL_MIN_WIDTH := 136.0
@@ -1566,87 +1575,75 @@ func _get_selection_cursor_mode() -> String:
 		return "silence"
 	return ""
 
-func _build_cursor_texture(source_texture: Texture2D, target_height_limit: int) -> Texture2D:
-	if source_texture == null:
-		return null
-	var source_image := source_texture.get_image()
-	if source_image == null or source_image.is_empty():
-		return null
-
-	var used_rect := source_image.get_used_rect()
-	if used_rect.size.x <= 0 or used_rect.size.y <= 0:
-		return ImageTexture.create_from_image(source_image)
-
-	var cursor_image := source_image.get_region(used_rect)
-	if cursor_image == null or cursor_image.is_empty():
-		return null
-
-	var target_height := mini(target_height_limit, cursor_image.get_height())
-	var cursor_scale := float(target_height) / float(cursor_image.get_height())
-	var target_width := maxi(1, int(round(cursor_image.get_width() * cursor_scale)))
-	cursor_image.resize(target_width, target_height, Image.INTERPOLATE_LANCZOS)
-	return ImageTexture.create_from_image(cursor_image)
-
-func _get_cursor_hotspot(texture: Texture2D, hotspot_ratio: Vector2) -> Vector2:
-	if texture == null:
-		return Vector2.ZERO
-
-	return Vector2(
-		clampi(
-			int(round(float(texture.get_width()) * hotspot_ratio.x)),
-			0,
-			maxi(0, texture.get_width() - 1)
-		),
-		clampi(
-			int(round(float(texture.get_height()) * hotspot_ratio.y)),
-			0,
-			maxi(0, texture.get_height() - 1)
-		)
-	)
+func _get_cursor_mode_target_height(cursor_mode: String) -> int:
+	match cursor_mode:
+		"sacrifice":
+			return UIArtScaler.get_board_cursor_target_height(SACRIFICE_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+		"devour":
+			return UIArtScaler.get_board_cursor_target_height(DEVOUR_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+		"silence":
+			return UIArtScaler.get_board_cursor_target_height(SILENCE_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+		"giant_master_architect":
+			return UIArtScaler.get_board_cursor_target_height(GIANT_MASTER_ARCHITECT_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+		"hermes":
+			return UIArtScaler.get_board_cursor_target_height(HERMES_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+		"guan_yu":
+			return UIArtScaler.get_board_cursor_target_height(GUAN_YU_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+		"ancient_pyre":
+			return UIArtScaler.get_board_cursor_target_height(ANCIENT_PYRE_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+	return 0
 
 func _apply_sacrifice_cursor() -> bool:
-	if _sacrifice_cursor_texture == null:
-		_sacrifice_cursor_texture = _build_cursor_texture(SacrificeCursorSource, SACRIFICE_CURSOR_TARGET_HEIGHT)
+	var target_height := UIArtScaler.get_board_cursor_target_height(SACRIFICE_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+	if _sacrifice_cursor_texture == null or _sacrifice_cursor_target_height != target_height:
+		_sacrifice_cursor_texture = UIArtScaler.build_cursor_texture(SacrificeCursorSource, target_height)
+		_sacrifice_cursor_target_height = target_height
 	if _sacrifice_cursor_texture == null:
 		return false
 
-	var hotspot := _get_cursor_hotspot(_sacrifice_cursor_texture, SACRIFICE_CURSOR_HOTSPOT_RATIO)
+	var hotspot := UIArtScaler.get_cursor_hotspot(_sacrifice_cursor_texture, SACRIFICE_CURSOR_HOTSPOT_RATIO)
 	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
 		Input.set_custom_mouse_cursor(_sacrifice_cursor_texture, cursor_shape, hotspot)
 	return true
 
 func _apply_devour_cursor() -> bool:
-	if _devour_cursor_texture == null:
-		_devour_cursor_texture = _build_cursor_texture(DevourCursorSource, DEVOUR_CURSOR_TARGET_HEIGHT)
+	var target_height := UIArtScaler.get_board_cursor_target_height(DEVOUR_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+	if _devour_cursor_texture == null or _devour_cursor_target_height != target_height:
+		_devour_cursor_texture = UIArtScaler.build_cursor_texture(DevourCursorSource, target_height)
+		_devour_cursor_target_height = target_height
 	if _devour_cursor_texture == null:
 		return false
 
-	var hotspot := _get_cursor_hotspot(_devour_cursor_texture, DEVOUR_CURSOR_HOTSPOT_RATIO)
+	var hotspot := UIArtScaler.get_cursor_hotspot(_devour_cursor_texture, DEVOUR_CURSOR_HOTSPOT_RATIO)
 	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
 		Input.set_custom_mouse_cursor(_devour_cursor_texture, cursor_shape, hotspot)
 	return true
 
 func _apply_silence_cursor() -> bool:
-	if _silence_cursor_texture == null:
-		_silence_cursor_texture = _build_cursor_texture(SilenceCursorSource, SILENCE_CURSOR_TARGET_HEIGHT)
+	var target_height := UIArtScaler.get_board_cursor_target_height(SILENCE_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+	if _silence_cursor_texture == null or _silence_cursor_target_height != target_height:
+		_silence_cursor_texture = UIArtScaler.build_cursor_texture(SilenceCursorSource, target_height)
+		_silence_cursor_target_height = target_height
 	if _silence_cursor_texture == null:
 		return false
 
-	var hotspot := _get_cursor_hotspot(_silence_cursor_texture, SILENCE_CURSOR_HOTSPOT_RATIO)
+	var hotspot := UIArtScaler.get_cursor_hotspot(_silence_cursor_texture, SILENCE_CURSOR_HOTSPOT_RATIO)
 	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
 		Input.set_custom_mouse_cursor(_silence_cursor_texture, cursor_shape, hotspot)
 	return true
 
 func _apply_giant_master_architect_cursor() -> bool:
-	if _giant_master_architect_cursor_texture == null:
-		_giant_master_architect_cursor_texture = _build_cursor_texture(
+	var target_height := UIArtScaler.get_board_cursor_target_height(GIANT_MASTER_ARCHITECT_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+	if _giant_master_architect_cursor_texture == null or _giant_master_architect_cursor_target_height != target_height:
+		_giant_master_architect_cursor_texture = UIArtScaler.build_cursor_texture(
 			GiantMasterArchitectCursorSource,
-			GIANT_MASTER_ARCHITECT_CURSOR_TARGET_HEIGHT
+			target_height
 		)
+		_giant_master_architect_cursor_target_height = target_height
 	if _giant_master_architect_cursor_texture == null:
 		return false
 
-	var hotspot := _get_cursor_hotspot(
+	var hotspot := UIArtScaler.get_cursor_hotspot(
 		_giant_master_architect_cursor_texture,
 		GIANT_MASTER_ARCHITECT_CURSOR_HOTSPOT_RATIO
 	)
@@ -1655,43 +1652,49 @@ func _apply_giant_master_architect_cursor() -> bool:
 	return true
 
 func _apply_hermes_cursor() -> bool:
-	if _hermes_cursor_texture == null:
-		_hermes_cursor_texture = _build_cursor_texture(
+	var target_height := UIArtScaler.get_board_cursor_target_height(HERMES_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+	if _hermes_cursor_texture == null or _hermes_cursor_target_height != target_height:
+		_hermes_cursor_texture = UIArtScaler.build_cursor_texture(
 			HermesCursorSource,
-			HERMES_CURSOR_TARGET_HEIGHT
+			target_height
 		)
+		_hermes_cursor_target_height = target_height
 	if _hermes_cursor_texture == null:
 		return false
 
-	var hotspot := _get_cursor_hotspot(_hermes_cursor_texture, HERMES_CURSOR_HOTSPOT_RATIO)
+	var hotspot := UIArtScaler.get_cursor_hotspot(_hermes_cursor_texture, HERMES_CURSOR_HOTSPOT_RATIO)
 	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
 		Input.set_custom_mouse_cursor(_hermes_cursor_texture, cursor_shape, hotspot)
 	return true
 
 func _apply_guan_yu_cursor() -> bool:
-	if _guan_yu_cursor_texture == null:
-		_guan_yu_cursor_texture = _build_cursor_texture(
+	var target_height := UIArtScaler.get_board_cursor_target_height(GUAN_YU_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+	if _guan_yu_cursor_texture == null or _guan_yu_cursor_target_height != target_height:
+		_guan_yu_cursor_texture = UIArtScaler.build_cursor_texture(
 			GuanYuCursorSource,
-			GUAN_YU_CURSOR_TARGET_HEIGHT
+			target_height
 		)
+		_guan_yu_cursor_target_height = target_height
 	if _guan_yu_cursor_texture == null:
 		return false
 
-	var hotspot := _get_cursor_hotspot(_guan_yu_cursor_texture, GUAN_YU_CURSOR_HOTSPOT_RATIO)
+	var hotspot := UIArtScaler.get_cursor_hotspot(_guan_yu_cursor_texture, GUAN_YU_CURSOR_HOTSPOT_RATIO)
 	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
 		Input.set_custom_mouse_cursor(_guan_yu_cursor_texture, cursor_shape, hotspot)
 	return true
 
 func _apply_ancient_pyre_cursor() -> bool:
-	if _ancient_pyre_cursor_texture == null:
-		_ancient_pyre_cursor_texture = _build_cursor_texture(
+	var target_height := UIArtScaler.get_board_cursor_target_height(ANCIENT_PYRE_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+	if _ancient_pyre_cursor_texture == null or _ancient_pyre_cursor_target_height != target_height:
+		_ancient_pyre_cursor_texture = UIArtScaler.build_cursor_texture(
 			AncientPyreCursorSource,
-			ANCIENT_PYRE_CURSOR_TARGET_HEIGHT
+			target_height
 		)
+		_ancient_pyre_cursor_target_height = target_height
 	if _ancient_pyre_cursor_texture == null:
 		return false
 
-	var hotspot := _get_cursor_hotspot(_ancient_pyre_cursor_texture, ANCIENT_PYRE_CURSOR_HOTSPOT_RATIO)
+	var hotspot := UIArtScaler.get_cursor_hotspot(_ancient_pyre_cursor_texture, ANCIENT_PYRE_CURSOR_HOTSPOT_RATIO)
 	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
 		Input.set_custom_mouse_cursor(_ancient_pyre_cursor_texture, cursor_shape, hotspot)
 	return true
@@ -1700,15 +1703,18 @@ func _restore_default_selection_cursor() -> void:
 	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
 		Input.set_custom_mouse_cursor(null, cursor_shape)
 		_active_selection_cursor_mode = ""
+		_active_selection_cursor_target_height = 0
 
 func _sync_sacrifice_cursor() -> void:
 	var cursor_mode := _get_selection_cursor_mode()
-	if cursor_mode == _active_selection_cursor_mode:
+	var target_height := _get_cursor_mode_target_height(cursor_mode)
+	if cursor_mode == _active_selection_cursor_mode and target_height == _active_selection_cursor_target_height:
 		return
 
 	if cursor_mode == "guan_yu":
 		if _apply_guan_yu_cursor():
 			_active_selection_cursor_mode = "guan_yu"
+			_active_selection_cursor_target_height = target_height
 		else:
 			_restore_default_selection_cursor()
 		return
@@ -1716,6 +1722,7 @@ func _sync_sacrifice_cursor() -> void:
 	if cursor_mode == "hermes":
 		if _apply_hermes_cursor():
 			_active_selection_cursor_mode = "hermes"
+			_active_selection_cursor_target_height = target_height
 		else:
 			_restore_default_selection_cursor()
 		return
@@ -1723,6 +1730,7 @@ func _sync_sacrifice_cursor() -> void:
 	if cursor_mode == "sacrifice":
 		if _apply_sacrifice_cursor():
 			_active_selection_cursor_mode = "sacrifice"
+			_active_selection_cursor_target_height = target_height
 		else:
 			_restore_default_selection_cursor()
 		return
@@ -1730,6 +1738,7 @@ func _sync_sacrifice_cursor() -> void:
 	if cursor_mode == "devour":
 		if _apply_devour_cursor():
 			_active_selection_cursor_mode = "devour"
+			_active_selection_cursor_target_height = target_height
 		else:
 			_restore_default_selection_cursor()
 		return
@@ -1737,6 +1746,7 @@ func _sync_sacrifice_cursor() -> void:
 	if cursor_mode == "silence":
 		if _apply_silence_cursor():
 			_active_selection_cursor_mode = "silence"
+			_active_selection_cursor_target_height = target_height
 		else:
 			_restore_default_selection_cursor()
 		return
@@ -1744,6 +1754,7 @@ func _sync_sacrifice_cursor() -> void:
 	if cursor_mode == "giant_master_architect":
 		if _apply_giant_master_architect_cursor():
 			_active_selection_cursor_mode = "giant_master_architect"
+			_active_selection_cursor_target_height = target_height
 		else:
 			_restore_default_selection_cursor()
 		return
@@ -1751,6 +1762,7 @@ func _sync_sacrifice_cursor() -> void:
 	if cursor_mode == "ancient_pyre":
 		if _apply_ancient_pyre_cursor():
 			_active_selection_cursor_mode = "ancient_pyre"
+			_active_selection_cursor_target_height = target_height
 		else:
 			_restore_default_selection_cursor()
 		return

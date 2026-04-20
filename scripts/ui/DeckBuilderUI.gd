@@ -20,12 +20,14 @@ const COLLECTION_GAP  := 8.0
 const PAGE_REPEAT_INTERVAL_MS := 90
 const COLLECTION_MODE_CARDS := "cards"
 const COLLECTION_MODE_SAVED_DECKS := "saved_decks"
-const MANA_FILTER_ANY := "Any"
+const LEVEL_FILTER_ANY := "Any"
+const MAX_DECK_UNDO_STATES := 100
 const MIN_DECK_PANEL_WIDTH := 260.0
 const MAX_DECK_PANEL_WIDTH := 380.0
 const NARROW_DECK_PANEL_WIDTH := 300.0
 const COMPACT_PREVIEW_WIDTH_THRESHOLD := 300.0
 const STACKED_LAYOUT_WIDTH_THRESHOLD := 900.0
+const DESKTOP_LAYOUT_BOTTOM_CLEARANCE := 44.0
 const CARD_VIEW_PRESETS := [
 	{"label": "Tiny", "rows": 5},
 	{"label": "Small", "rows": 4},
@@ -39,7 +41,7 @@ var _all_cards: Array  = []        # template Card instances (read-only)
 var _deck: Dictionary  = {}        # card_name (String) -> count (int)
 var _filter: String         = "All"
 var _faction_filter: String = "All"
-var _mana_cost_filter: String = MANA_FILTER_ANY
+var _level_filter: String = LEVEL_FILTER_ANY
 var _search_query: String = ""
 var _collection_sort: String = "Default"
 var _filtered_cards_cache: Array = []
@@ -63,6 +65,7 @@ var _deck_scroll:      ScrollContainer
 var _page_label:       Label
 var _prev_page_btn:    Button
 var _next_page_btn:    Button
+var _card_view_controls_bar: HBoxContainer
 var _deck_panel:       VBoxContainer
 var _preview_outer:    PanelContainer
 var _preview_layout:   HBoxContainer
@@ -76,13 +79,14 @@ var _saved_decks_option: OptionButton
 var _saved_decks_view_btn: Button
 var _saved_actions_bar: HFlowContainer
 var _deck_footer_buttons: HFlowContainer
+var _delete_confirm_dialog: ConfirmationDialog
 var _search_edit:      LineEdit
 var _tiamat_panel:     PanelContainer
 var _tiamat_hint_lbl:  Label
 var _tiamat_rows:      VBoxContainer
 var _filter_buttons: Dictionary = {}
 var _faction_buttons: Dictionary = {}
-var _mana_filter_buttons: Dictionary = {}
+var _level_filter_buttons: Dictionary = {}
 # preview
 var _prev_art:         TextureRect
 var _prev_name:        Label
@@ -101,9 +105,14 @@ var _online_lobby_client = null
 var _remote_account_decks_cache: Array[Dictionary] = []
 var _use_remote_account_decks: bool = false
 var _remote_preferred_deck_id: String = ""
+var _pending_delete_deck_id: String = ""
 var _tiamat_slots: Array = [[], [], []]
 var _tiamat_assignment_slot_index: int = -1
 var _deck_id_rng := RandomNumberGenerator.new()
+var _deck_undo_history: Array[Dictionary] = []
+
+func _escape_preview_bbcode_text(text: String) -> String:
+	return text.replace("[", "[lb]").replace("]", "[rb]")
 
 # ── init ───────────────────────────────────────────────────────────
 func _ready() -> void:
@@ -177,7 +186,6 @@ func _build_ui() -> void:
 	add_child(root)
 
 	_build_top_bar(root)
-	_build_faction_bar(root)
 
 	var body_scroll := ScrollContainer.new()
 	_body_scroll = body_scroll
@@ -199,6 +207,7 @@ func _build_ui() -> void:
 
 	_build_collection_panel(body)
 	_build_deck_panel(body)
+	_build_delete_confirm_dialog()
 
 func _build_top_bar(parent: Control) -> void:
 	var bar := PanelContainer.new()
@@ -261,47 +270,6 @@ func _build_top_bar(parent: Control) -> void:
 	pad_r.custom_minimum_size.x = 8
 	inner.add_child(pad_r)
 
-func _build_faction_bar(parent: Control) -> void:
-	var bar := PanelContainer.new()
-	var bar_style := StyleBoxFlat.new()
-	bar_style.bg_color = Color(0.08, 0.08, 0.13)
-	bar.add_theme_stylebox_override("panel", bar_style)
-	parent.add_child(bar)
-
-	var inner := HFlowContainer.new()
-	inner.add_theme_constant_override("separation", 6)
-	bar.add_child(inner)
-
-	var pad_l := Control.new()
-	pad_l.custom_minimum_size.x = 8
-	inner.add_child(pad_l)
-
-	var view_lbl := Label.new()
-	view_lbl.text = "Card View:"
-	view_lbl.add_theme_font_size_override("font_size", 11)
-	view_lbl.modulate = Color(0.7, 0.7, 0.7)
-	view_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	view_lbl.custom_minimum_size.y = 30
-	view_lbl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	inner.add_child(view_lbl)
-
-	_add_card_view_controls(inner)
-
-	var spacer := Control.new()
-	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	inner.add_child(spacer)
-
-	var mana_lbl := Label.new()
-	mana_lbl.text = "Mana:"
-	mana_lbl.add_theme_font_size_override("font_size", 11)
-	mana_lbl.modulate = Color(0.7, 0.7, 0.7)
-	mana_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	mana_lbl.custom_minimum_size.y = 30
-	mana_lbl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	inner.add_child(mana_lbl)
-
-	_add_mana_filter_controls(inner)
-
 func _add_faction_filter_controls(parent: Control, button_height: float = 26.0) -> void:
 	# Collect unique cultures from card pool, sorted.
 	var cultures: Array = []
@@ -323,18 +291,18 @@ func _add_faction_filter_controls(parent: Control, button_height: float = 26.0) 
 		_faction_buttons[label] = btn
 		parent.add_child(btn)
 
-func _add_mana_filter_controls(parent: Control) -> void:
-	var mana_group := ButtonGroup.new()
-	for label in [MANA_FILTER_ANY, "0", "1", "2", "3", "4", "5+"]:
+func _add_level_filter_controls(parent: Control) -> void:
+	var level_group := ButtonGroup.new()
+	for label in [LEVEL_FILTER_ANY, "0", "1", "2", "3", "4", "5+"]:
 		var btn := Button.new()
 		btn.text = label
 		btn.toggle_mode = true
-		btn.button_group = mana_group
-		btn.button_pressed = (label == _mana_cost_filter)
-		btn.custom_minimum_size = Vector2(46 if label == MANA_FILTER_ANY else 36, 28)
+		btn.button_group = level_group
+		btn.button_pressed = (label == _level_filter)
+		btn.custom_minimum_size = Vector2(46 if label == LEVEL_FILTER_ANY else 36, 28)
 		var captured_label: String = label
-		btn.pressed.connect(func() -> void: _set_mana_cost_filter(captured_label))
-		_mana_filter_buttons[label] = btn
+		btn.pressed.connect(func() -> void: _set_level_filter(captured_label))
+		_level_filter_buttons[label] = btn
 		parent.add_child(btn)
 
 func _add_card_view_controls(parent: Control) -> void:
@@ -363,7 +331,7 @@ func _build_collection_panel(parent: Control) -> void:
 	var content := VBoxContainer.new()
 	content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	content.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	content.add_theme_constant_override("separation", 10)
+	content.add_theme_constant_override("separation", 4)
 	panel.add_child(content)
 
 	var view_bar := HBoxContainer.new()
@@ -389,6 +357,19 @@ func _build_collection_panel(parent: Control) -> void:
 		sort_btn.pressed.connect(func() -> void: _set_collection_sort(captured_sort))
 		view_bar.add_child(sort_btn)
 
+	var level_lbl := Label.new()
+	level_lbl.text = "Level:"
+	level_lbl.add_theme_font_size_override("font_size", 11)
+	level_lbl.modulate = Color(0.7, 0.7, 0.7)
+	level_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	view_bar.add_child(level_lbl)
+
+	_add_level_filter_controls(view_bar)
+
+	var spacer := Control.new()
+	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	view_bar.add_child(spacer)
+
 	var search_lbl := Label.new()
 	search_lbl.text = "Search:"
 	search_lbl.add_theme_font_size_override("font_size", 11)
@@ -401,14 +382,10 @@ func _build_collection_panel(parent: Control) -> void:
 	search_edit.placeholder_text = "Card names or tags"
 	search_edit.text = _search_query
 	search_edit.clear_button_enabled = true
-	search_edit.custom_minimum_size = Vector2(220, 28)
+	search_edit.custom_minimum_size = Vector2(420, 28)
 	search_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	search_edit.text_changed.connect(_set_search_query)
 	view_bar.add_child(search_edit)
-
-	var spacer := Control.new()
-	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	view_bar.add_child(spacer)
 
 	_collection_host = Control.new()
 	_collection_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -425,13 +402,14 @@ func _build_collection_panel(parent: Control) -> void:
 	_grid.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_collection_host.add_child(_grid)
 
-	var page_bar := HFlowContainer.new()
-	page_bar.add_theme_constant_override("separation", 8)
+	var page_bar := HBoxContainer.new()
+	page_bar.add_theme_constant_override("separation", 6)
+	page_bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	content.add_child(page_bar)
 
 	_prev_page_btn = Button.new()
 	_prev_page_btn.text = "Previous Page"
-	_prev_page_btn.custom_minimum_size = Vector2(120, 32)
+	_prev_page_btn.custom_minimum_size = Vector2(120, 28)
 	_prev_page_btn.pressed.connect(_show_previous_page)
 	page_bar.add_child(_prev_page_btn)
 
@@ -445,9 +423,27 @@ func _build_collection_panel(parent: Control) -> void:
 
 	_next_page_btn = Button.new()
 	_next_page_btn.text = "Next Page"
-	_next_page_btn.custom_minimum_size = Vector2(120, 32)
+	_next_page_btn.custom_minimum_size = Vector2(120, 28)
 	_next_page_btn.pressed.connect(_show_next_page)
 	page_bar.add_child(_next_page_btn)
+
+	var page_spacer := Control.new()
+	page_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	page_bar.add_child(page_spacer)
+
+	var card_view_bar := HBoxContainer.new()
+	_card_view_controls_bar = card_view_bar
+	card_view_bar.add_theme_constant_override("separation", 6)
+	page_bar.add_child(card_view_bar)
+
+	var view_lbl := Label.new()
+	view_lbl.text = "Card View:"
+	view_lbl.add_theme_font_size_override("font_size", 11)
+	view_lbl.modulate = Color(0.7, 0.7, 0.7)
+	view_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	card_view_bar.add_child(view_lbl)
+
+	_add_card_view_controls(card_view_bar)
 
 func _build_deck_panel(parent: Control) -> void:
 	var panel := VBoxContainer.new()
@@ -455,14 +451,15 @@ func _build_deck_panel(parent: Control) -> void:
 	panel.custom_minimum_size.x = NARROW_DECK_PANEL_WIDTH
 	panel.size_flags_horizontal = Control.SIZE_FILL
 	panel.size_flags_vertical   = Control.SIZE_EXPAND_FILL
-	panel.add_theme_constant_override("separation", 8)
+	panel.add_theme_constant_override("separation", 6)
 	parent.add_child(panel)
 
 	# ── preview ──────────────────────────────────────────
 	var prev_outer := PanelContainer.new()
 	_preview_outer = prev_outer
-	prev_outer.custom_minimum_size = Vector2(NARROW_DECK_PANEL_WIDTH, 300)
+	prev_outer.custom_minimum_size = Vector2(NARROW_DECK_PANEL_WIDTH, 220)
 	prev_outer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	prev_outer.clip_contents = true
 	var prev_style := StyleBoxFlat.new()
 	prev_style.bg_color = Color(0.10, 0.10, 0.16)
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
@@ -473,11 +470,11 @@ func _build_deck_panel(parent: Control) -> void:
 
 	var prev_hbox := HBoxContainer.new()
 	_preview_layout = prev_hbox
-	prev_hbox.add_theme_constant_override("separation", 8)
+	prev_hbox.add_theme_constant_override("separation", 6)
 	prev_outer.add_child(prev_hbox)
 
 	_prev_art = TextureRect.new()
-	_prev_art.custom_minimum_size = Vector2(132, 176)
+	_prev_art.custom_minimum_size = Vector2(112, 150)
 	_prev_art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 	_prev_art.expand_mode  = TextureRect.EXPAND_IGNORE_SIZE
 	_prev_art.size_flags_vertical = Control.SIZE_SHRINK_CENTER
@@ -500,13 +497,15 @@ func _build_deck_panel(parent: Control) -> void:
 
 	_prev_type = Label.new()
 	_prev_type.text = ""
-	_prev_type.add_theme_font_size_override("font_size", 16)
+	_prev_type.add_theme_font_size_override("font_size", 13)
 	_prev_type.modulate = Color(0.7, 0.85, 1.0)
-	_prev_type.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_prev_type.autowrap_mode = TextServer.AUTOWRAP_OFF
+	_prev_type.clip_text = true
 
 	var details_scroll := ScrollContainer.new()
 	details_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	details_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	details_scroll.custom_minimum_size.y = 0
 	details_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	details_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 	prev_text.add_child(details_scroll)
@@ -532,7 +531,8 @@ func _build_deck_panel(parent: Control) -> void:
 	_prev_ability.add_theme_color_override("default_color", Color(0.85, 0.8, 1.0))
 	_prev_ability.scroll_active   = false
 	_prev_ability.fit_content     = true
-	_prev_ability.custom_minimum_size.y = 96
+	_prev_ability.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	_prev_ability.custom_minimum_size.y = 64
 	_prev_ability.mouse_filter    = Control.MOUSE_FILTER_STOP
 	details_box.add_child(_prev_ability)
 
@@ -541,55 +541,19 @@ func _build_deck_panel(parent: Control) -> void:
 	_prev_flavor.add_theme_font_size_override("font_size", 14)
 	_prev_flavor.add_theme_color_override("font_color", Color(0.5, 0.5, 0.55))
 	_prev_flavor.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	details_box.add_child(_prev_flavor)
+	_prev_flavor.visible = false
 
 	# ── deck header ──────────────────────────────────────
-	var hdr := HBoxContainer.new()
-	panel.add_child(hdr)
-
-	var deck_title := Label.new()
-	deck_title.text = "MY DECK"
-	deck_title.add_theme_font_size_override("font_size", 16)
-	deck_title.add_theme_color_override("font_color", Color(0.9, 0.8, 0.4))
-	deck_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	hdr.add_child(deck_title)
-
-	_deck_count_lbl = Label.new()
-	_deck_count_lbl.text = "0 cards"
-	_deck_count_lbl.add_theme_font_size_override("font_size", 12)
-	_deck_count_lbl.modulate = Color(0.7, 0.7, 0.7)
-	hdr.add_child(_deck_count_lbl)
 
 	# ── deck scroll list ─────────────────────────────────
-	var profile_row := HBoxContainer.new()
-	profile_row.add_theme_constant_override("separation", 6)
-	panel.add_child(profile_row)
-
-	var profile_caption := Label.new()
-	profile_caption.text = "Profile:"
-	profile_caption.add_theme_font_size_override("font_size", 11)
-	profile_caption.modulate = Color(0.7, 0.7, 0.7)
-	profile_row.add_child(profile_caption)
-
-	_profile_lbl = Label.new()
-	_profile_lbl.text = "Player"
-	_profile_lbl.add_theme_font_size_override("font_size", 11)
-	_profile_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	profile_row.add_child(_profile_lbl)
-
 	var deck_name_row := HBoxContainer.new()
-	deck_name_row.add_theme_constant_override("separation", 6)
+	deck_name_row.add_theme_constant_override("separation", 4)
 	panel.add_child(deck_name_row)
-
-	var deck_name_caption := Label.new()
-	deck_name_caption.text = "Deck Name:"
-	deck_name_caption.add_theme_font_size_override("font_size", 11)
-	deck_name_caption.modulate = Color(0.7, 0.7, 0.7)
-	deck_name_row.add_child(deck_name_caption)
 
 	_deck_name_edit = LineEdit.new()
 	_deck_name_edit.placeholder_text = "Default Deck"
 	_deck_name_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_deck_name_edit.custom_minimum_size.y = 28
 	deck_name_row.add_child(_deck_name_edit)
 
 	var saved_hdr := HFlowContainer.new()
@@ -619,12 +583,6 @@ func _build_deck_panel(parent: Control) -> void:
 	_saved_decks_view_btn.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	_saved_decks_view_btn.pressed.connect(_toggle_saved_decks_view)
 	saved_hdr.add_child(_saved_decks_view_btn)
-
-	var delete_btn := Button.new()
-	delete_btn.text = "Delete"
-	delete_btn.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
-	delete_btn.pressed.connect(_delete_selected_deck)
-	saved_hdr.add_child(delete_btn)
 
 	var tiamat_panel := PanelContainer.new()
 	_tiamat_panel = tiamat_panel
@@ -667,16 +625,14 @@ func _build_deck_panel(parent: Control) -> void:
 
 	_deck_list = VBoxContainer.new()
 	_deck_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_deck_list.add_theme_constant_override("separation", 2)
+	_deck_list.add_theme_constant_override("separation", 4)
 	deck_scroll.add_child(_deck_list)
 
-	var sep := HSeparator.new()
-	panel.add_child(sep)
 
 	# ── validation status ────────────────────────────────
 	_validation_lbl = Label.new()
 	_validation_lbl.text = ""
-	_validation_lbl.add_theme_font_size_override("font_size", 11)
+	_validation_lbl.add_theme_font_size_override("font_size", 12)
 	_validation_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	panel.add_child(_validation_lbl)
 
@@ -701,6 +657,23 @@ func _build_deck_panel(parent: Control) -> void:
 	var pad_bot := Control.new()
 	pad_bot.custom_minimum_size.y = 4
 	panel.add_child(pad_bot)
+
+func _build_delete_confirm_dialog() -> void:
+	if _delete_confirm_dialog != null and is_instance_valid(_delete_confirm_dialog):
+		return
+	var dialog := ConfirmationDialog.new()
+	dialog.title = "Delete Saved Deck?"
+	dialog.dialog_text = "Delete this saved deck?"
+	dialog.initial_position = Window.WINDOW_INITIAL_POSITION_CENTER_PRIMARY_SCREEN
+	dialog.exclusive = true
+	dialog.get_ok_button().text = "Delete"
+	dialog.get_ok_button().modulate = Color(1.0, 0.84, 0.84)
+	dialog.canceled.connect(func() -> void:
+		_pending_delete_deck_id = ""
+	)
+	dialog.confirmed.connect(_confirm_delete_saved_deck)
+	add_child(dialog)
+	_delete_confirm_dialog = dialog
 
 # ── collection grid ────────────────────────────────────────────────
 func _refresh_grid() -> void:
@@ -740,7 +713,7 @@ func _matches_filter(card: Card) -> bool:
 
 	if _faction_filter != "All" and card.culture != _faction_filter:
 		return false
-	if not _matches_mana_cost_filter(card):
+	if not _matches_level_filter(card):
 		return false
 	if not _matches_search_query(card):
 		return false
@@ -758,12 +731,12 @@ func _matches_filter(card: Card) -> bool:
 		"Hexes":     return card.card_type == Card.CardType.HEX
 	return true
 
-func _matches_mana_cost_filter(card: Card) -> bool:
-	if _mana_cost_filter == MANA_FILTER_ANY:
+func _matches_level_filter(card: Card) -> bool:
+	if _level_filter == LEVEL_FILTER_ANY:
 		return true
-	if _mana_cost_filter == "5+":
-		return card.mana_cost >= 5
-	return card.mana_cost == int(_mana_cost_filter)
+	if _level_filter == "5+":
+		return int(card.level) >= 5
+	return int(card.level) == int(_level_filter)
 
 func _matches_search_query(card: Card) -> bool:
 	if _search_query.is_empty():
@@ -1031,7 +1004,8 @@ func _refresh_deck_panel() -> void:
 			if _is_reserved_active_god_card_for_god(card, selected_god):
 				continue # Hide own manifestation
 			total += int(_deck[card_name])
-	_deck_count_lbl.text = "%d cards" % total
+	if _deck_count_lbl != null:
+		_deck_count_lbl.text = "%d cards" % total
 
 	# Sort: gods → creatures → spells → structures → hexes, then alphabetical
 	var in_deck_filter := func(c: Card) -> bool:
@@ -1056,7 +1030,7 @@ func _refresh_deck_panel() -> void:
 			last_section = sec
 			var sep_lbl := Label.new()
 			sep_lbl.text = sec
-			sep_lbl.add_theme_font_size_override("font_size", 9)
+			sep_lbl.add_theme_font_size_override("font_size", 11)
 			sep_lbl.add_theme_color_override("font_color", _get_type_color(card).lerp(Color.WHITE, 0.3))
 			_deck_list.add_child(sep_lbl)
 		_deck_list.add_child(_make_deck_row(card))
@@ -1066,6 +1040,7 @@ func _refresh_deck_panel() -> void:
 	_rebuild_filtered_cards_cache()
 	_refresh_grid()
 	_update_count_badges()
+	_queue_responsive_layout_refresh()
 
 func _refresh_tiamat_panel() -> void:
 	if _tiamat_panel == null or _tiamat_rows == null or _tiamat_hint_lbl == null:
@@ -1159,17 +1134,17 @@ func _refresh_tiamat_panel() -> void:
 
 func _make_deck_row(card: Card) -> Control:
 	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 4)
+	row.add_theme_constant_override("separation", 6)
 	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
 	var dot := ColorRect.new()
-	dot.custom_minimum_size = Vector2(7, 7)
+	dot.custom_minimum_size = Vector2(9, 9)
 	dot.color = _get_type_color(card)
 	dot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	row.add_child(dot)
 
 	var name_lbl := Label.new()
-	name_lbl.add_theme_font_size_override("font_size", 10)
+	name_lbl.add_theme_font_size_override("font_size", 13)
 	name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	name_lbl.clip_text = true
 	name_lbl.text = card.get_display_name_for_control(name_lbl)
@@ -1177,28 +1152,28 @@ func _make_deck_row(card: Card) -> Control:
 
 	var legendary_lbl := Label.new()
 	legendary_lbl.text = "L" if card.is_legendary else ""
-	legendary_lbl.add_theme_font_size_override("font_size", 10)
+	legendary_lbl.add_theme_font_size_override("font_size", 12)
 	legendary_lbl.add_theme_color_override("font_color", Color(0.95, 0.82, 0.28))
-	legendary_lbl.custom_minimum_size.x = 10
+	legendary_lbl.custom_minimum_size.x = 14
 	legendary_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	row.add_child(legendary_lbl)
 
 	var cnt_lbl := Label.new()
 	cnt_lbl.text = "×%d" % _deck[card.card_name]
-	cnt_lbl.add_theme_font_size_override("font_size", 10)
+	cnt_lbl.add_theme_font_size_override("font_size", 12)
 	cnt_lbl.add_theme_color_override("font_color", Color(0.9, 0.9, 0.4))
-	cnt_lbl.custom_minimum_size.x = 22
+	cnt_lbl.custom_minimum_size.x = 30
 	row.add_child(cnt_lbl)
 
 	var minus := Button.new()
 	minus.text = "−"
-	minus.custom_minimum_size = Vector2(24, 22)
+	minus.custom_minimum_size = Vector2(28, 24)
 	minus.pressed.connect(func() -> void: _remove_from_deck(card.card_name))
 	row.add_child(minus)
 
 	var plus := Button.new()
 	plus.text = "+"
-	plus.custom_minimum_size = Vector2(24, 22)
+	plus.custom_minimum_size = Vector2(28, 24)
 	plus.pressed.connect(func() -> void: _add_to_deck(card))
 	row.add_child(plus)
 
@@ -1279,6 +1254,7 @@ func _try_assign_card_to_tiamat_slot(card: Card) -> bool:
 	if not error.is_empty():
 		_set_status_flash(error)
 		return true
+	_push_current_deck_undo_state()
 	_tiamat_slots[_tiamat_assignment_slot_index].append(card.card_name)
 	_refresh_deck_panel()
 	_set_status_flash("%s assigned to Matriarch slot %d." % [card.card_name, _tiamat_assignment_slot_index + 1])
@@ -1287,12 +1263,65 @@ func _try_assign_card_to_tiamat_slot(card: Card) -> bool:
 func _remove_tiamat_slot_card(slot_index: int, card_name: String) -> void:
 	if slot_index < 0 or slot_index >= _tiamat_slots.size():
 		return
+	_push_current_deck_undo_state()
 	_tiamat_slots[slot_index] = _tiamat_slots[slot_index].filter(func(existing_name: String) -> bool:
 		return existing_name != card_name
 	)
 	if _tiamat_assignment_slot_index == slot_index and _tiamat_slots[slot_index].is_empty():
 		_tiamat_assignment_slot_index = -1
 	_refresh_deck_panel()
+
+func _make_deck_undo_state() -> Dictionary:
+	return {
+		"deck": _deck.duplicate(true),
+		"tiamat_slots": _tiamat_slots.duplicate(true),
+		"deck_name": _deck_name_edit.text if _deck_name_edit != null else "",
+		"selected_saved_deck_id": _selected_saved_deck_id,
+		"pending_remote_saved_deck_id": _pending_remote_saved_deck_id,
+	}
+
+func _deck_undo_states_equal(a: Dictionary, b: Dictionary) -> bool:
+	return (
+		a.get("deck", {}) == b.get("deck", {})
+		and a.get("tiamat_slots", []) == b.get("tiamat_slots", [])
+		and str(a.get("deck_name", "")) == str(b.get("deck_name", ""))
+		and str(a.get("selected_saved_deck_id", "")) == str(b.get("selected_saved_deck_id", ""))
+		and str(a.get("pending_remote_saved_deck_id", "")) == str(b.get("pending_remote_saved_deck_id", ""))
+	)
+
+func _push_current_deck_undo_state() -> void:
+	var snapshot := _make_deck_undo_state()
+	if not _deck_undo_history.is_empty():
+		var last_snapshot: Dictionary = _deck_undo_history[_deck_undo_history.size() - 1]
+		if _deck_undo_states_equal(last_snapshot, snapshot):
+			return
+	_deck_undo_history.append(snapshot)
+	if _deck_undo_history.size() > MAX_DECK_UNDO_STATES:
+		_deck_undo_history.remove_at(0)
+
+func _restore_deck_undo_state(state: Dictionary) -> void:
+	_deck = (state.get("deck", {}) as Dictionary).duplicate(true)
+	_tiamat_slots = (state.get("tiamat_slots", []) as Array).duplicate(true)
+	_selected_saved_deck_id = str(state.get("selected_saved_deck_id", "")).strip_edges()
+	_pending_remote_saved_deck_id = str(state.get("pending_remote_saved_deck_id", "")).strip_edges()
+	if _deck_name_edit != null:
+		_deck_name_edit.text = str(state.get("deck_name", LocalProfileStoreScript.DEFAULT_DECK_NAME))
+	_select_saved_deck(_selected_saved_deck_id)
+	_refresh_saved_deck_gallery(_get_saved_decks())
+	_refresh_deck_panel()
+
+func _undo_last_deck_change() -> bool:
+	if _deck_undo_history.is_empty():
+		return false
+	var previous_state: Dictionary = _deck_undo_history[_deck_undo_history.size() - 1]
+	_deck_undo_history.remove_at(_deck_undo_history.size() - 1)
+	_restore_deck_undo_state(previous_state)
+	_set_status_flash("Undid deck change.")
+	return true
+
+func _is_text_input_focused() -> bool:
+	var focus_owner := get_viewport().gui_get_focus_owner()
+	return focus_owner is LineEdit or focus_owner is TextEdit or focus_owner is CodeEdit
 
 func _get_active_god_form(god: Card) -> ActiveGodCard:
 	if god == null or not god.is_god:
@@ -1319,18 +1348,20 @@ func _add_to_deck(card: Card) -> void:
 	if card.is_god:
 		if not _can_add_god_to_current_deck(card):
 			return
-		
+
+		for deck_card_name in _deck:
+			var tmpl := _find_template(deck_card_name)
+			if tmpl and tmpl.is_god and _deck[deck_card_name] > 0:
+				return
+
+		_push_current_deck_undo_state()
+
 		# If switching gods, clear old god's active forms
 		var old_god := _get_selected_god_template()
 		if old_god != null and old_god.card_name != card.card_name:
 			var old_active := _get_active_god_form(old_god)
 			if old_active != null:
 				_deck.erase(old_active.card_name)
-		
-		for deck_card_name in _deck:
-			var tmpl := _find_template(deck_card_name)
-			if tmpl and tmpl.is_god and _deck[deck_card_name] > 0:
-				return
 
 		var active_form := _get_active_god_form(card)
 		if active_form != null:
@@ -1338,6 +1369,11 @@ func _add_to_deck(card: Card) -> void:
 
 	elif card.is_power and not _can_add_power_to_current_deck(card):
 		return
+	elif not card.is_power:
+		_push_current_deck_undo_state()
+
+	if card.is_power:
+		_push_current_deck_undo_state()
 	_deck[card.card_name] = current + 1
 	if card.is_god and not TiamatScript.is_tiamat_god(card):
 		_clear_tiamat_slots()
@@ -1348,7 +1384,8 @@ func _add_to_deck(card: Card) -> void:
 func _remove_from_deck(card_name: String) -> void:
 	if not _deck.has(card_name) or _deck[card_name] <= 0:
 		return
-	
+
+	_push_current_deck_undo_state()
 	var card := _find_template(card_name)
 	if card != null and card.is_god:
 		# Removing a god should also remove its matching active form
@@ -1364,6 +1401,9 @@ func _remove_from_deck(card_name: String) -> void:
 	_refresh_deck_panel()
 
 func _clear_deck() -> void:
+	if _deck.is_empty() and not _has_any_tiamat_slot_cards():
+		return
+	_push_current_deck_undo_state()
 	_deck.clear()
 	_clear_tiamat_slots()
 	_refresh_deck_panel()
@@ -1382,6 +1422,8 @@ func _autofill_deck_to_minimum() -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.randomize()
 
+	var undo_history_size_before := _deck_undo_history.size()
+	_push_current_deck_undo_state()
 	var regular_added := 0
 	regular_added += _add_random_regular_cards(rng, legendary_cards_needed, true)
 	regular_added += _add_random_regular_cards(rng, cards_needed - regular_added, false)
@@ -1389,6 +1431,8 @@ func _autofill_deck_to_minimum() -> void:
 	var added_count := regular_added + powers_added
 
 	if added_count <= 0:
+		if _deck_undo_history.size() > undo_history_size_before:
+			_deck_undo_history.remove_at(_deck_undo_history.size() - 1)
 		_set_status_flash("No legal cards were available to auto-fill this deck.")
 		return
 
@@ -1496,14 +1540,38 @@ func _load_selected_deck() -> void:
 	var saved_deck: Dictionary = _get_saved_deck_by_id(_selected_saved_deck_id)
 	if saved_deck.is_empty():
 		return
+	_push_current_deck_undo_state()
 	_apply_saved_deck(saved_deck)
 	_set_collection_mode(COLLECTION_MODE_CARDS, false)
 	_set_status_flash("Loaded %s." % str(saved_deck.get("name", "deck")))
 
 func _delete_selected_deck() -> void:
-	if _selected_saved_deck_id.is_empty():
+	_request_delete_saved_deck(_selected_saved_deck_id)
+
+func _request_delete_saved_deck(deck_id: String) -> void:
+	var resolved_deck_id := deck_id.strip_edges()
+	if resolved_deck_id.is_empty():
 		return
-	var deleted_deck_id: String = _selected_saved_deck_id
+	var saved_deck := _get_saved_deck_by_id(resolved_deck_id)
+	if saved_deck.is_empty():
+		return
+	_pending_delete_deck_id = resolved_deck_id
+	if _delete_confirm_dialog != null and is_instance_valid(_delete_confirm_dialog):
+		_delete_confirm_dialog.dialog_text = "Delete \"%s\"? This can't be undone." % str(saved_deck.get("name", "Deck"))
+		_delete_confirm_dialog.popup_centered()
+
+func _confirm_delete_saved_deck() -> void:
+	var resolved_deck_id := _pending_delete_deck_id.strip_edges()
+	_pending_delete_deck_id = ""
+	if resolved_deck_id.is_empty():
+		return
+	_delete_saved_deck(resolved_deck_id)
+
+func _delete_saved_deck(deck_id: String) -> void:
+	var deleted_deck_id: String = deck_id.strip_edges()
+	if deleted_deck_id.is_empty():
+		return
+	var deleted_selected_deck := deleted_deck_id == _selected_saved_deck_id
 	if deleted_deck_id == _pending_remote_saved_deck_id:
 		_pending_remote_saved_deck_id = ""
 	if _uses_remote_account_decks():
@@ -1511,8 +1579,9 @@ func _delete_selected_deck() -> void:
 		if should_request_remote_delete and not _can_sync_account_decks():
 			_set_status_flash("Connect to the lobby to delete account decks.")
 			return
-		_selected_saved_deck_id = ""
-		if _deck_name_edit != null:
+		if deleted_selected_deck:
+			_selected_saved_deck_id = ""
+		if deleted_selected_deck and _deck_name_edit != null:
 			_deck_name_edit.text = LocalProfileStoreScript.DEFAULT_DECK_NAME
 		_remove_account_deck_locally(deleted_deck_id)
 		_remove_remote_account_deck_from_cache(deleted_deck_id)
@@ -1527,12 +1596,88 @@ func _delete_selected_deck() -> void:
 	_ensure_local_profile_store()
 	if _local_profile_store == null:
 		return
-	_selected_saved_deck_id = ""
-	if _deck_name_edit != null:
+	if deleted_selected_deck:
+		_selected_saved_deck_id = ""
+	if deleted_selected_deck and _deck_name_edit != null:
 		_deck_name_edit.text = LocalProfileStoreScript.DEFAULT_DECK_NAME
 	_local_profile_store.delete_deck(_active_profile_id, deleted_deck_id)
 	_load_profile_decks()
 	_set_status_flash("Saved deck deleted.")
+
+func _copy_saved_deck(deck_id: String) -> void:
+	var source_deck := _get_saved_deck_by_id(deck_id)
+	if source_deck.is_empty():
+		return
+	var copied_deck_name := _make_copied_deck_name(str(source_deck.get("name", LocalProfileStoreScript.DEFAULT_DECK_NAME)))
+	var copied_deck_id := _generate_saved_deck_id()
+	if _uses_remote_account_decks():
+		if not _can_sync_account_decks():
+			_set_status_flash("Connect to the lobby to copy account decks.")
+			return
+		_selected_saved_deck_id = copied_deck_id
+		_pending_remote_saved_deck_id = copied_deck_id
+		_online_lobby_client.save_account_deck(
+			copied_deck_name,
+			source_deck.get("cards", {}),
+			copied_deck_id,
+			source_deck.get("special_setup", {})
+		)
+		_set_status_flash("Copying saved deck...")
+		return
+	_ensure_local_profile_store()
+	if _local_profile_store == null:
+		return
+	var copied_deck: Dictionary = _local_profile_store.save_deck(
+		_active_profile_id,
+		copied_deck_name,
+		source_deck.get("cards", {}),
+		copied_deck_id,
+		source_deck.get("special_setup", {})
+	)
+	_selected_saved_deck_id = str(copied_deck.get("deck_id", copied_deck_id)).strip_edges()
+	_pending_remote_saved_deck_id = ""
+	_load_profile_decks()
+	_apply_saved_deck(copied_deck)
+	_set_status_flash("Saved deck copied.")
+
+func _make_copied_deck_name(source_name: String) -> String:
+	var resolved_name := source_name.strip_edges()
+	if resolved_name.is_empty():
+		resolved_name = LocalProfileStoreScript.DEFAULT_DECK_NAME
+	return "%s Copy" % resolved_name
+
+func _apply_saved_deck_action_button_style(button: Button, accent_color: Color) -> void:
+	var normal_style := StyleBoxFlat.new()
+	normal_style.bg_color = Color(0.10, 0.12, 0.18, 0.92)
+	normal_style.border_color = Color(0.42, 0.46, 0.56, 0.92)
+	normal_style.corner_radius_top_left = 7
+	normal_style.corner_radius_top_right = 7
+	normal_style.corner_radius_bottom_left = 7
+	normal_style.corner_radius_bottom_right = 7
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		normal_style.set_border_width(side, 1)
+	button.add_theme_stylebox_override("normal", normal_style)
+
+	var hover_style := normal_style.duplicate() as StyleBoxFlat
+	hover_style.bg_color = Color(
+		clampf(accent_color.r * 0.35, 0.0, 1.0),
+		clampf(accent_color.g * 0.35, 0.0, 1.0),
+		clampf(accent_color.b * 0.35, 0.0, 1.0),
+		0.98
+	)
+	hover_style.border_color = accent_color
+	hover_style.shadow_color = accent_color
+	hover_style.shadow_size = 8
+	hover_style.shadow_offset = Vector2.ZERO
+	button.add_theme_stylebox_override("hover", hover_style)
+	button.add_theme_stylebox_override("pressed", hover_style)
+	button.modulate = Color(0.86, 0.90, 0.97, 0.96)
+	button.mouse_entered.connect(func() -> void:
+		button.modulate = accent_color.lightened(0.25)
+	)
+	button.mouse_exited.connect(func() -> void:
+		button.modulate = Color(0.86, 0.90, 0.97, 0.96)
+	)
 
 func _is_synced_account_deck_id(deck_id: String) -> bool:
 	_ensure_local_profile_store()
@@ -1561,6 +1706,7 @@ func _remove_remote_account_deck_from_cache(deck_id: String) -> void:
 			_remote_account_decks_cache.remove_at(index)
 
 func _new_deck() -> void:
+	_push_current_deck_undo_state()
 	_pending_remote_saved_deck_id = ""
 	_selected_saved_deck_id = ""
 	_deck.clear()
@@ -1767,6 +1913,55 @@ func _make_saved_deck_cover(saved_deck: Dictionary) -> Control:
 	)
 	wrapper.add_child(cover)
 
+	var actions := VBoxContainer.new()
+	actions.anchor_left = 1.0
+	actions.anchor_right = 1.0
+	actions.anchor_top = 0.0
+	actions.anchor_bottom = 0.0
+	actions.offset_left = -40
+	actions.offset_right = -6
+	actions.offset_top = 8
+	actions.offset_bottom = 72
+	actions.add_theme_constant_override("separation", 6)
+	actions.visible = false
+	actions.z_index = 10
+	actions.mouse_filter = Control.MOUSE_FILTER_PASS
+	cover.add_child(actions)
+
+	var copy_btn := Button.new()
+	copy_btn.text = "⎘"
+	copy_btn.tooltip_text = "Copy Deck"
+	copy_btn.custom_minimum_size = Vector2(32, 28)
+	copy_btn.focus_mode = Control.FOCUS_NONE
+	_apply_saved_deck_action_button_style(copy_btn, Color(0.92, 0.82, 0.32, 1.0))
+	copy_btn.pressed.connect(func() -> void:
+		_copy_saved_deck(deck_id)
+	)
+	copy_btn.mouse_entered.connect(func() -> void:
+		actions.visible = true
+	)
+	copy_btn.mouse_exited.connect(func() -> void:
+		_queue_saved_deck_actions_visibility_update(cover, actions)
+	)
+	actions.add_child(copy_btn)
+
+	var delete_btn := Button.new()
+	delete_btn.text = "🗑"
+	delete_btn.tooltip_text = "Delete Deck"
+	delete_btn.custom_minimum_size = Vector2(32, 28)
+	delete_btn.focus_mode = Control.FOCUS_NONE
+	_apply_saved_deck_action_button_style(delete_btn, Color(1.0, 0.46, 0.40, 1.0))
+	delete_btn.pressed.connect(func() -> void:
+		_request_delete_saved_deck(deck_id)
+	)
+	delete_btn.mouse_entered.connect(func() -> void:
+		actions.visible = true
+	)
+	delete_btn.mouse_exited.connect(func() -> void:
+		_queue_saved_deck_actions_visibility_update(cover, actions)
+	)
+	actions.add_child(delete_btn)
+
 	var panel_style := StyleBoxFlat.new()
 	var cards = saved_deck.get("cards", {})
 	var god := _get_saved_deck_god_template(saved_deck)
@@ -1784,6 +1979,7 @@ func _make_saved_deck_cover(saved_deck: Dictionary) -> Control:
 		art.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		cover.add_child(art)
 		cover.mouse_entered.connect(func() -> void:
+			actions.visible = true
 			_show_preview(god)
 		)
 	else:
@@ -1792,6 +1988,18 @@ func _make_saved_deck_cover(saved_deck: Dictionary) -> Control:
 		fallback.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		fallback.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		cover.add_child(fallback)
+		cover.mouse_entered.connect(func() -> void:
+			actions.visible = true
+		)
+	actions.mouse_entered.connect(func() -> void:
+		actions.visible = true
+	)
+	actions.mouse_exited.connect(func() -> void:
+		_queue_saved_deck_actions_visibility_update(cover, actions)
+	)
+	cover.mouse_exited.connect(func() -> void:
+		_queue_saved_deck_actions_visibility_update(cover, actions)
+	)
 
 	var text_band := ColorRect.new()
 	text_band.color = Color(0.0, 0.0, 0.0, 0.74)
@@ -1945,6 +2153,18 @@ func _on_saved_deck_cover_pressed(deck_id: String) -> void:
 	_select_saved_deck(deck_id)
 	_load_selected_deck()
 
+func _queue_saved_deck_actions_visibility_update(cover: Control, actions: Control) -> void:
+	call_deferred("_update_saved_deck_actions_visibility", cover, actions)
+
+func _update_saved_deck_actions_visibility(cover: Control, actions: Control) -> void:
+	if cover == null or actions == null:
+		return
+	if not is_instance_valid(cover) or not is_instance_valid(actions):
+		return
+	var mouse_position := cover.get_global_mouse_position()
+	var cover_rect := Rect2(cover.global_position, cover.size)
+	actions.visible = cover_rect.has_point(mouse_position)
+
 func _make_saved_decks_empty_state() -> Control:
 	var empty_state := PanelContainer.new()
 	empty_state.custom_minimum_size = Vector2(maxf(260.0, _card_size.x * 1.8), maxf(160.0, _card_size.y * 0.8))
@@ -2013,6 +2233,31 @@ func _set_status_flash(message: String) -> void:
 	)
 
 func _update_validation() -> void:
+	var regular_count_summary := 0
+	var legendary_count_summary := 0
+	var selected_god_template := _get_selected_god_template() as GodCard
+
+	for card_name: String in _deck:
+		var cnt: int = _deck[card_name]
+		var card := _find_template(card_name)
+		if card == null or card.is_god or card.is_power:
+			continue
+		if _is_reserved_active_god_card_for_god(card, selected_god_template):
+			continue
+		regular_count_summary += cnt
+		if card.is_legendary:
+			legendary_count_summary += cnt
+
+	var max_legends_summary := int(regular_count_summary / 10.0)
+	var summary_lines := PackedStringArray([
+		"Card Count: %d / %d" % [regular_count_summary, MIN_REGULAR_CARDS],
+		"Legendaries: %d / %d" % [legendary_count_summary, max_legends_summary]
+	])
+	var summary_ok := regular_count_summary >= MIN_REGULAR_CARDS and legendary_count_summary <= max_legends_summary
+	_validation_lbl.text = "\n".join(summary_lines)
+	_validation_lbl.modulate = Color(0.5, 1.0, 0.55) if summary_ok else Color(1.0, 0.85, 0.45)
+	return
+
 	var total := 0
 	var god_count := 0
 	var power_count := 0
@@ -2173,8 +2418,9 @@ func _show_preview(card: Card) -> void:
 	if card.culture != "":
 		type_parts.append(card.culture)
 	if card.card_types.size() > 0:
-		type_parts.append(" • ".join(Array(card.card_types)))
-	_prev_type.text = " | ".join(type_parts)
+		type_parts.append("/".join(Array(card.card_types)))
+	_prev_type.text = " · ".join(type_parts)
+	_prev_type.tooltip_text = _prev_type.text
 	_prev_type.add_theme_color_override("font_color", _get_type_color(card))
 
 	var stat_parts: PackedStringArray = []
@@ -2197,13 +2443,18 @@ func _show_preview(card: Card) -> void:
 		stat_parts.append("Cost: " + card.get_cost_shorthand())
 	_prev_stats.text = "  ".join(stat_parts)
 
+	var preview_body := ""
 	if card.ability_text != "":
-		_prev_ability.text = BaseCard.apply_keyword_hints(card.ability_text)
-		_prev_ability.custom_minimum_size.y = 96
-	else:
-		_prev_ability.text = ""
-		_prev_ability.custom_minimum_size.y = 0
-	_prev_flavor.text  = card.flavor_text  if card.flavor_text  != "" else ""
+		preview_body = BaseCard.apply_keyword_hints(card.ability_text)
+	if card.flavor_text != "":
+		var escaped_flavor := _escape_preview_bbcode_text(card.flavor_text)
+		if not preview_body.is_empty():
+			preview_body += "\n\n[color=#7f7f89][i]%s[/i][/color]" % escaped_flavor
+		else:
+			preview_body = "[color=#7f7f89][i]%s[/i][/color]" % escaped_flavor
+	_prev_ability.text = preview_body
+	_prev_ability.custom_minimum_size.y = 64 if not preview_body.is_empty() else 0
+	_prev_flavor.text = ""
 
 # ── filter ─────────────────────────────────────────────────────────
 func _input(event: InputEvent) -> void:
@@ -2213,6 +2464,9 @@ func _input(event: InputEvent) -> void:
 		return
 	var key_event := event as InputEventKey
 	if not key_event.pressed:
+		return
+	if _try_handle_deck_undo_shortcut(key_event):
+		get_viewport().set_input_as_handled()
 		return
 	if _try_handle_page_key(key_event.keycode, key_event.echo):
 		get_viewport().set_input_as_handled()
@@ -2224,6 +2478,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	var key_event := event as InputEventKey
 	if not key_event.pressed:
+		return
+	if _try_handle_deck_undo_shortcut(key_event):
+		get_viewport().set_input_as_handled()
 		return
 	if _try_handle_page_key(key_event.keycode, key_event.echo):
 		get_viewport().set_input_as_handled()
@@ -2246,11 +2503,11 @@ func _set_faction_filter(new_faction: String) -> void:
 	_refresh_grid()
 	_update_count_badges()
 
-func _set_mana_cost_filter(new_filter: String) -> void:
+func _set_level_filter(new_filter: String) -> void:
 	_set_collection_mode(COLLECTION_MODE_CARDS, false)
-	_mana_cost_filter = new_filter
+	_level_filter = new_filter
 	_current_page = 0
-	_refresh_mana_filter_button_states()
+	_refresh_level_filter_button_states()
 	_rebuild_filtered_cards_cache()
 	_refresh_grid()
 	_update_count_badges()
@@ -2316,6 +2573,19 @@ func _try_handle_page_key(keycode: Key, is_echo: bool) -> bool:
 		_show_next_page()
 	return true
 
+func _try_handle_deck_undo_shortcut(key_event: InputEventKey) -> bool:
+	if key_event.echo:
+		return false
+	if _is_text_input_focused():
+		return false
+	if key_event.alt_pressed or key_event.shift_pressed:
+		return false
+	if key_event.keycode != KEY_Z:
+		return false
+	if not key_event.ctrl_pressed and not key_event.meta_pressed:
+		return false
+	return _undo_last_deck_change()
+
 func _queue_collection_layout_refresh() -> void:
 	call_deferred("_update_collection_layout")
 
@@ -2332,10 +2602,23 @@ func _update_responsive_layout() -> void:
 		return
 
 	var use_stacked_layout := viewport_width < STACKED_LAYOUT_WIDTH_THRESHOLD
+	var body_available_height := 0.0
+	if is_instance_valid(_body_scroll) and _body_scroll.size.y > 0.0:
+		body_available_height = _body_scroll.size.y
+	else:
+		var body_top := _body_scroll.position.y if is_instance_valid(_body_scroll) else 84.0
+		body_available_height = maxf(0.0, viewport_height - body_top - 18.0)
+	body_available_height = maxf(0.0, body_available_height - 12.0)
+	var column_available_height := body_available_height
+	if not use_stacked_layout:
+		column_available_height = maxf(0.0, body_available_height - DESKTOP_LAYOUT_BOTTOM_CLEARANCE)
 	_body_grid.columns = 1 if use_stacked_layout else 2
 	_body_grid.custom_minimum_size.x = maxf(0.0, viewport_width - 16.0)
+	_body_grid.custom_minimum_size.y = column_available_height * (2.0 if use_stacked_layout else 1.0)
 	if is_instance_valid(_body_scroll):
-		_body_scroll.custom_minimum_size.y = maxf(0.0, viewport_height - 84.0)
+		_body_scroll.custom_minimum_size.y = 0.0
+		_body_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO if use_stacked_layout else ScrollContainer.SCROLL_MODE_DISABLED
+		_body_scroll.scroll_vertical = 0
 
 	var target_panel_width := clampf(floor(viewport_width * 0.34), MIN_DECK_PANEL_WIDTH, MAX_DECK_PANEL_WIDTH)
 	if use_stacked_layout:
@@ -2347,45 +2630,59 @@ func _update_responsive_layout() -> void:
 			target_panel_width = MIN_DECK_PANEL_WIDTH
 
 	_deck_panel.custom_minimum_size.x = target_panel_width
+	_deck_panel.custom_minimum_size.y = column_available_height
 	_deck_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL if use_stacked_layout else Control.SIZE_FILL
+	_deck_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	if is_instance_valid(_collection_panel):
 		_collection_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		_collection_panel.custom_minimum_size.y = maxf(280.0, viewport_height - 176.0)
+		_collection_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		_collection_panel.custom_minimum_size.y = column_available_height
 	if is_instance_valid(_collection_host):
-		_collection_host.custom_minimum_size.y = maxf(196.0, viewport_height - 248.0)
+		_collection_host.custom_minimum_size.y = maxf(196.0, column_available_height - 84.0)
 
+	var preview_height := 252.0
 	if is_instance_valid(_preview_outer):
-		var preview_height := 300.0
 		if target_panel_width <= COMPACT_PREVIEW_WIDTH_THRESHOLD:
-			preview_height = 248.0
+			preview_height = 212.0
+		if viewport_height < 1200.0:
+			preview_height = min(preview_height, 228.0)
 		if viewport_height < 900.0:
-			preview_height = min(preview_height, 232.0)
+			preview_height = min(preview_height, 204.0)
 		if viewport_height < 800.0:
-			preview_height = min(preview_height, 208.0)
-		if viewport_height < 720.0:
 			preview_height = min(preview_height, 184.0)
+		if viewport_height < 720.0:
+			preview_height = min(preview_height, 164.0)
 		_preview_outer.custom_minimum_size = Vector2(target_panel_width, preview_height)
 
 	if is_instance_valid(_preview_layout):
-		_preview_layout.add_theme_constant_override("separation", 6 if target_panel_width <= COMPACT_PREVIEW_WIDTH_THRESHOLD else 8)
+		_preview_layout.add_theme_constant_override("separation", 4 if target_panel_width <= COMPACT_PREVIEW_WIDTH_THRESHOLD else 6)
 
 	if is_instance_valid(_prev_art):
 		if target_panel_width <= COMPACT_PREVIEW_WIDTH_THRESHOLD:
-			_prev_art.custom_minimum_size = Vector2(96, 128)
+			_prev_art.custom_minimum_size = Vector2(80, 108)
 		else:
-			_prev_art.custom_minimum_size = Vector2(132, 176)
+			_prev_art.custom_minimum_size = Vector2(104, 140)
 
 	if is_instance_valid(_preview_text_box):
 		_preview_text_box.custom_minimum_size.x = 0
 
 	if is_instance_valid(_deck_scroll):
-		var deck_scroll_height := 280.0
-		if viewport_height < 900.0:
-			deck_scroll_height = 232.0
-		if viewport_height < 800.0:
-			deck_scroll_height = 208.0
-		if viewport_height < 720.0:
-			deck_scroll_height = 176.0
+		var visible_child_count := 0
+		var fixed_deck_panel_height := 0.0
+		for child in _deck_panel.get_children():
+			if not (child is Control):
+				continue
+			var control_child := child as Control
+			if not control_child.visible:
+				continue
+			visible_child_count += 1
+			if control_child == _deck_scroll:
+				continue
+			fixed_deck_panel_height += control_child.get_combined_minimum_size().y
+
+		var deck_panel_separation := float(_deck_panel.get_theme_constant("separation"))
+		fixed_deck_panel_height += maxf(0.0, float(visible_child_count - 1)) * deck_panel_separation
+		var deck_scroll_height := maxf(72.0, column_available_height - fixed_deck_panel_height)
 		_deck_scroll.custom_minimum_size.y = deck_scroll_height
 
 	if is_instance_valid(_prev_page_btn):
@@ -2403,23 +2700,56 @@ func _update_collection_layout() -> void:
 	if available.x <= 0.0 or available.y <= 0.0:
 		return
 
-	var max_card_height: float = floor((available.y - COLLECTION_GAP * float(_collection_rows - 1)) / float(_collection_rows))
-	max_card_height = max(max_card_height, 1.0)
-
+	var total_items := _current_grid_total()
 	var aspect: float = CARD_W / float(CARD_H)
-	var estimated_width: float = floor(max_card_height * aspect)
-	var columns: int = max(1, int(floor((available.x + COLLECTION_GAP) / max(1.0, estimated_width + COLLECTION_GAP))))
-	var width_limited: float = floor((available.x - COLLECTION_GAP * float(columns - 1)) / float(columns))
-	var height_from_width: float = floor(width_limited / aspect)
+	var columns := 1
+	var next_size := Vector2(CARD_W, CARD_H)
+	var visible_rows := 1
+	var max_card_height := 1.0
+	var width_limited := 1.0
+	var estimated_width := 1.0
+	var height_from_width := 1.0
 
-	if height_from_width < max_card_height:
-		max_card_height = height_from_width
-		estimated_width = width_limited
-	else:
+	if _collection_mode == COLLECTION_MODE_SAVED_DECKS and total_items > 0:
+		if total_items <= 2:
+			columns = 1
+		elif total_items <= 4:
+			columns = 2
+		else:
+			columns = 3
+
+		var target_rows := maxi(1, int(ceil(total_items / float(columns))))
+		max_card_height = floor((available.y - COLLECTION_GAP * float(target_rows - 1)) / float(target_rows))
+		max_card_height = max(max_card_height, 1.0)
+		width_limited = floor((available.x - COLLECTION_GAP * float(columns - 1)) / float(columns))
 		estimated_width = floor(max_card_height * aspect)
+		height_from_width = floor(width_limited / aspect)
 
-	var next_size: Vector2 = Vector2(max(1.0, estimated_width), max(1.0, max_card_height))
-	var visible_rows := maxi(1, mini(_collection_rows, int(floor((available.y + COLLECTION_GAP) / max(1.0, next_size.y + COLLECTION_GAP)))))
+		if height_from_width < max_card_height:
+			max_card_height = height_from_width
+			estimated_width = width_limited
+		else:
+			estimated_width = floor(max_card_height * aspect)
+
+		next_size = Vector2(max(1.0, estimated_width), max(1.0, max_card_height))
+		visible_rows = target_rows
+	else:
+		max_card_height = floor((available.y - COLLECTION_GAP * float(_collection_rows - 1)) / float(_collection_rows))
+		max_card_height = max(max_card_height, 1.0)
+		estimated_width = floor(max_card_height * aspect)
+		columns = max(1, int(floor((available.x + COLLECTION_GAP) / max(1.0, estimated_width + COLLECTION_GAP))))
+		width_limited = floor((available.x - COLLECTION_GAP * float(columns - 1)) / float(columns))
+		height_from_width = floor(width_limited / aspect)
+
+		if height_from_width < max_card_height:
+			max_card_height = height_from_width
+			estimated_width = width_limited
+		else:
+			estimated_width = floor(max_card_height * aspect)
+
+		next_size = Vector2(max(1.0, estimated_width), max(1.0, max_card_height))
+		visible_rows = maxi(1, mini(_collection_rows, int(floor((available.y + COLLECTION_GAP) / max(1.0, next_size.y + COLLECTION_GAP)))))
+
 	_grid.custom_minimum_size.y = visible_rows * next_size.y + COLLECTION_GAP * float(visible_rows - 1)
 
 	if columns != _grid_columns or next_size != _card_size or visible_rows != _visible_collection_rows:
@@ -2501,17 +2831,21 @@ func _set_collection_mode(mode: String, reset_page: bool = true) -> void:
 		return
 	if _collection_mode == mode:
 		_refresh_saved_decks_view_button()
+		_queue_collection_layout_refresh()
 		return
 	_collection_mode = mode
 	if reset_page:
 		_current_page = 0
 	_refresh_saved_decks_view_button()
 	_refresh_grid()
+	_queue_collection_layout_refresh()
 
 func _refresh_saved_decks_view_button() -> void:
 	if _saved_decks_view_btn == null:
 		return
 	_saved_decks_view_btn.text = "Back to Cards" if _collection_mode == COLLECTION_MODE_SAVED_DECKS else "Saved Decks"
+	if _card_view_controls_bar != null:
+		_card_view_controls_bar.visible = (_collection_mode == COLLECTION_MODE_CARDS)
 
 func _generate_saved_deck_id() -> String:
 	var existing_deck_ids: Dictionary = {}
@@ -2728,17 +3062,17 @@ func _refresh_faction_button_states() -> void:
 		if button is Button:
 			(button as Button).button_pressed = str(label) == _faction_filter
 
-func _refresh_mana_filter_button_states() -> void:
-	for label in _mana_filter_buttons.keys():
-		var button = _mana_filter_buttons.get(label)
+func _refresh_level_filter_button_states() -> void:
+	for label in _level_filter_buttons.keys():
+		var button = _level_filter_buttons.get(label)
 		if button is Button:
-			(button as Button).button_pressed = str(label) == _mana_cost_filter
+			(button as Button).button_pressed = str(label) == _level_filter
 
 func _apply_guided_collection_view(filter_name: String) -> void:
 	_collection_mode = COLLECTION_MODE_CARDS
 	_filter = filter_name
 	_faction_filter = "All"
-	_mana_cost_filter = MANA_FILTER_ANY
+	_level_filter = LEVEL_FILTER_ANY
 	_current_page = 0
 	_search_query = ""
 	if _search_edit != null:
@@ -2746,7 +3080,7 @@ func _apply_guided_collection_view(filter_name: String) -> void:
 	_refresh_saved_decks_view_button()
 	_refresh_filter_button_states()
 	_refresh_faction_button_states()
-	_refresh_mana_filter_button_states()
+	_refresh_level_filter_button_states()
 	_rebuild_filtered_cards_cache()
 	_refresh_grid()
 	_update_count_badges()
