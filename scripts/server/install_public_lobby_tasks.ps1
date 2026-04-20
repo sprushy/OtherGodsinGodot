@@ -12,8 +12,8 @@ if ($UpdateIntervalMinutes -lt 5) {
 $PowerShellExe = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
 $StartScript = Join-Path $PSScriptRoot "start_public_lobby.ps1"
 $UpdateScript = Join-Path $PSScriptRoot "update_public_lobby.ps1"
-$StartupTaskName = "ClaudeOtherGods Public Lobby Startup"
-$UpdateTaskName = "ClaudeOtherGods Public Lobby AutoUpdate"
+$StartupTaskName = "OtherGods Public Lobby Startup"
+$UpdateTaskName = "OtherGods Public Lobby AutoUpdate"
 
 if (-not (Test-Path -LiteralPath $StartScript)) {
     throw "Start script not found at $StartScript"

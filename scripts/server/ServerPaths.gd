@@ -2,6 +2,8 @@ extends RefCounted
 class_name ServerPaths
 
 const DEDICATED_SERVER_EXECUTABLE_NAMES := [
+	"othergodsserver.exe",
+	"othergodsserver_console.exe",
 	"claudeothergodsserver.exe",
 	"claudeothergodsserver_console.exe",
 ]

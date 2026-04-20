@@ -4,7 +4,7 @@ class_name MatchSupervisor
 const MatchSessionScript = preload("res://scripts/server/MatchSession.gd")
 const ServerPathsScript = preload("res://scripts/server/ServerPaths.gd")
 const HEADLESS_ENTRY_SCRIPT_PATH := "res://scripts/server/HeadlessMatchServerMain.gd"
-const DEDICATED_SERVER_EXPORT_RELATIVE_PATH := "res://.exports/server/ClaudeOtherGodsServer.exe"
+const DEDICATED_SERVER_EXPORT_RELATIVE_PATH := "res://.exports/server/OtherGodsServer.exe"
 
 signal match_created(match_session)
 signal match_closed(match_id: String, room_id: String, final_status: String)
@@ -236,4 +236,7 @@ func _resolve_runtime_executable_path(configured_path: String) -> String:
 
 func _is_exported_server_runtime(executable_path: String) -> bool:
 	var normalized_path := executable_path.strip_edges().to_lower()
-	return normalized_path.ends_with("claudeothergodsserver.exe") or normalized_path.ends_with("claudeothergodsserver_console.exe")
+	return normalized_path.ends_with("othergodsserver.exe") \
+		or normalized_path.ends_with("othergodsserver_console.exe") \
+		or normalized_path.ends_with("claudeothergodsserver.exe") \
+		or normalized_path.ends_with("claudeothergodsserver_console.exe")

@@ -13,7 +13,7 @@ const MatchSessionScript = preload("res://scripts/server/MatchSession.gd")
 const LobbyRoomScript = preload("res://scripts/server/LobbyRoom.gd")
 const PracticeThorScene = preload("res://scenes/practice_thor_game.tscn")
 const DEDICATED_LOBBY_ENTRY_SCRIPT_PATH := "res://scripts/server/DedicatedLobbyServerMain.gd"
-const DEDICATED_SERVER_EXPORT_RELATIVE_PATH := "res://.exports/server/ClaudeOtherGodsServer.exe"
+const DEDICATED_SERVER_EXPORT_RELATIVE_PATH := "res://.exports/server/OtherGodsServer.exe"
 const DEFAULT_LOBBY_HOST_SETTING := "application/config/default_lobby_host"
 const DEFAULT_LOBBY_HOST := ""
 const RULES_DOC_PATH := "res://docs/new-player-rules.md"
@@ -271,6 +271,7 @@ func _build_server_version_overlay() -> void:
 	add_child(label)
 	_server_version_label = label
 	_refresh_server_version_label()
+	_refresh_server_version_overlay_visibility()
 
 func _set_connected_server_version(version: String) -> void:
 	_connected_server_version = AppReleaseInfoScript.normalize_version(version)
@@ -286,6 +287,12 @@ func _refresh_server_version_label() -> void:
 		_server_version_label.text = "Server: not connected"
 		return
 	_server_version_label.text = "Server: %s" % _connected_server_version
+
+func _refresh_server_version_overlay_visibility() -> void:
+	if _server_version_label == null or not is_instance_valid(_server_version_label):
+		return
+	var deck_builder := game_container.get_node_or_null("DeckBuilder") if game_container != null else null
+	_server_version_label.visible = not (deck_builder != null and deck_builder.visible)
 
 func _process(delta: float) -> void:
 	if _is_auto_updating and _update_download_request != null and is_instance_valid(_update_download_request):
@@ -333,11 +340,13 @@ func show_menu() -> void:
 	_hide_multiplayer_deck_popup()
 	_refresh_multiplayer_deck_options()
 	_refresh_multiplayer_action_state()
+	_refresh_server_version_overlay_visibility()
 
 func show_game() -> void:
 	menu_container.visible = false
 	game_container.visible = true
 	_hide_multiplayer_deck_popup()
+	_refresh_server_version_overlay_visibility()
 
 func _on_multiplayer_pressed() -> void:
 	_open_multiplayer_screen()
@@ -1255,7 +1264,7 @@ func _start_update_check() -> void:
 	_ensure_update_check_request()
 	var headers := PackedStringArray([
 		"Accept: application/vnd.github+json",
-		"User-Agent: ClaudeOtherGods",
+		"User-Agent: OtherGods",
 		"X-GitHub-Api-Version: 2022-11-28",
 	])
 	var request_error := _update_check_request.request(AppReleaseInfoScript.RELEASES_API_URL, headers)
@@ -1285,9 +1294,17 @@ func _on_update_check_request_completed(
 		release_url = AppReleaseInfoScript.RELEASES_PAGE_URL
 	var download_url := ""
 	var assets: Array = payload.get("assets", [])
-	for asset in assets:
-		if str(asset.get("name", "")) == AppReleaseInfoScript.WINDOWS_ASSET_NAME:
+	var windows_asset_names := PackedStringArray([
+		"OtherGods-windows.zip",
+		"ClaudeOtherGods-windows.zip",
+	])
+	for asset_name in windows_asset_names:
+		for asset in assets:
+			if str(asset.get("name", "")) != asset_name:
+				continue
 			download_url = str(asset.get("browser_download_url", "")).strip_edges()
+			break
+		if not download_url.is_empty():
 			break
 	_show_update_prompt(latest_version, release_url, download_url)
 
@@ -1503,7 +1520,10 @@ func _apply_update_and_restart(zip_path: String) -> void:
 
 	var exe_dir := current_exe.get_base_dir()
 	var current_exe_name := current_exe.get_file()
-	if not _align_staged_windows_build_names(staging_root, extracted_files, current_exe_name):
+	var target_exe_name := "OtherGods.exe"
+	if target_exe_name.is_empty():
+		target_exe_name = current_exe_name
+	if not _align_staged_windows_build_names(staging_root, extracted_files, target_exe_name):
 		_clear_update_staging_root(staging_root)
 		_on_auto_update_failed("The downloaded update didn't contain a usable app build.")
 		return
@@ -1517,6 +1537,10 @@ func _apply_update_and_restart(zip_path: String) -> void:
 		return
 
 	var current_exe_win := current_exe.replace("/", "\\")
+	var target_exe_path := exe_dir.path_join(target_exe_name)
+	var target_exe_win := target_exe_path.replace("/", "\\")
+	var current_pck_win := exe_dir.path_join("%s.pck" % current_exe_name.get_basename()).replace("/", "\\")
+	var target_pck_win := exe_dir.path_join("%s.pck" % target_exe_name.get_basename()).replace("/", "\\")
 	var exe_dir_win := exe_dir.replace("/", "\\")
 	var staging_root_win := staging_root.replace("/", "\\")
 	var bat_path := batch_dir + "/updater.bat"
@@ -1533,7 +1557,9 @@ func _apply_update_and_restart(zip_path: String) -> void:
 		+ "if %retry_count% lss 15 goto copy_retry\r\n"
 		+ "if %errorlevel% geq 4 goto copy_failed\r\n"
 		+ ":copy_ok\r\n"
-		+ "start \"\" \"" + current_exe_win + "\"\r\n"
+		+ "if /I not \"" + current_exe_win + "\"==\"" + target_exe_win + "\" del /f /q \"" + current_exe_win + "\" 2>nul\r\n"
+		+ "if /I not \"" + current_pck_win + "\"==\"" + target_pck_win + "\" del /f /q \"" + current_pck_win + "\" 2>nul\r\n"
+		+ "start \"\" \"" + target_exe_win + "\"\r\n"
 		+ "rd /s /q \"" + staging_root_win + "\"\r\n"
 		+ "rd /s /q \"" + batch_dir.replace("/", "\\") + "\" 2>nul\r\n"
 		+ "(goto) 2>nul & del \"%~f0\"\r\n"
@@ -1590,9 +1616,9 @@ func _extract_update_archive_to_staging(zip: ZIPReader, staging_root: String) ->
 func _align_staged_windows_build_names(
 	staging_root: String,
 	extracted_files: Array[String],
-	current_exe_name: String
+	target_exe_name: String
 ) -> bool:
-	if extracted_files.is_empty() or current_exe_name.is_empty():
+	if extracted_files.is_empty() or target_exe_name.is_empty():
 		return false
 	var staged_executable := ""
 	for relative_path in extracted_files:
@@ -1607,10 +1633,10 @@ func _align_staged_windows_build_names(
 		staged_exe_dir = ""
 	var staged_exe_name := staged_executable.get_file()
 	var staged_exe_base := staged_exe_name.get_basename()
-	var current_exe_base := current_exe_name.get_basename()
+	var target_exe_base := target_exe_name.get_basename()
 
-	if staged_exe_name != current_exe_name:
-		var renamed_exe_relative := current_exe_name if staged_exe_dir.is_empty() else staged_exe_dir.path_join(current_exe_name)
+	if staged_exe_name != target_exe_name:
+		var renamed_exe_relative := target_exe_name if staged_exe_dir.is_empty() else staged_exe_dir.path_join(target_exe_name)
 		if DirAccess.rename_absolute(
 			staging_root.path_join(staged_executable),
 			staging_root.path_join(renamed_exe_relative)
@@ -1626,7 +1652,7 @@ func _align_staged_windows_build_names(
 		var pck_dir := relative_path.get_base_dir()
 		if pck_dir == ".":
 			pck_dir = ""
-		var renamed_pck_relative := "%s.pck" % current_exe_base
+		var renamed_pck_relative := "%s.pck" % target_exe_base
 		if not pck_dir.is_empty():
 			renamed_pck_relative = pck_dir.path_join(renamed_pck_relative)
 		if relative_path == renamed_pck_relative:
@@ -2454,6 +2480,7 @@ func _on_deck_builder_pressed() -> void:
 	)
 	_hide_embedded_games()
 	game_container.add_child(db)
+	_refresh_server_version_overlay_visibility()
 	show_game()
 
 func _open_rules_overlay() -> void:
@@ -2622,7 +2649,7 @@ func _on_host_game_pressed() -> void:
 	_dedicated_lobby_connect_attempts_remaining = 20
 	_spawned_lobby_process_id = _launch_dedicated_lobby_server()
 	if _spawned_lobby_process_id <= 0:
-		status_label.text = "Could not start the dedicated lobby server. Make sure ClaudeOtherGodsServer.exe is installed with the client."
+		status_label.text = "Could not start the dedicated lobby server. Make sure OtherGodsServer.exe is installed with the client."
 		return
 	if _spawned_lobby_process_id > 0:
 		_write_smoke_trace("host_spawned_lobby_pid=%d" % _spawned_lobby_process_id)
@@ -3047,6 +3074,7 @@ func _return_to_menu() -> void:
 	var db := game_container.get_node_or_null("DeckBuilder")
 	if db:
 		db.queue_free()
+	_refresh_server_version_overlay_visibility()
 	multiplayer_container.visible = false
 	_maybe_connect_authenticated_lobby("Reconnecting to lobby...")
 
@@ -4221,9 +4249,13 @@ func _resolve_dedicated_server_runtime_path() -> String:
 	var executable_parent_dir := executable_dir.get_base_dir()
 	var candidates := PackedStringArray([
 		ProjectSettings.globalize_path(DEDICATED_SERVER_EXPORT_RELATIVE_PATH),
+		executable_dir.path_join("OtherGodsServer.exe"),
+		executable_dir.path_join("OtherGodsServer_console.exe"),
 		executable_dir.path_join("ClaudeOtherGodsServer.exe"),
 		executable_dir.path_join("ClaudeOtherGodsServer_console.exe"),
+		executable_dir.path_join("server").path_join("OtherGodsServer.exe"),
 		executable_dir.path_join("server").path_join("ClaudeOtherGodsServer.exe"),
+		executable_parent_dir.path_join("server").path_join("OtherGodsServer.exe"),
 		executable_parent_dir.path_join("server").path_join("ClaudeOtherGodsServer.exe"),
 	])
 	for candidate in candidates:

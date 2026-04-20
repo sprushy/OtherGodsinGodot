@@ -34,21 +34,42 @@ jobs:
       - name: Export Windows build
         run: |
           mkdir -p .exports/windows .exports/server dist
-          godot --headless --path . --export-release "Windows Desktop" .exports/windows/ClaudeOtherGods.exe
-          godot --headless --path . --export-release "Windows Dedicated Server" .exports/server/ClaudeOtherGodsServer.exe
+          godot --headless --path . --export-release "Windows Desktop" .exports/windows/OtherGods.exe
+          godot --headless --path . --export-release "Windows Dedicated Server" .exports/server/OtherGodsServer.exe
 
       - name: Package release zips
         run: |
           cd .exports/windows
-          zip -9 -r ../../dist/ClaudeOtherGods-windows.zip *
+          zip -9 -r ../../dist/OtherGods-windows.zip *
           cd ../server
-          zip -9 -r ../../dist/ClaudeOtherGodsServer-windows.zip *
+          zip -9 -r ../../dist/OtherGodsServer-windows.zip *
+          cd ../..
+          mkdir -p dist/windows_legacy dist/server_legacy
+          cp -R .exports/windows/* dist/windows_legacy/
+          if [ -f dist/windows_legacy/OtherGods.exe ]; then mv dist/windows_legacy/OtherGods.exe dist/windows_legacy/ClaudeOtherGods.exe; fi
+          if [ -f dist/windows_legacy/OtherGods.pck ]; then mv dist/windows_legacy/OtherGods.pck dist/windows_legacy/ClaudeOtherGods.pck; fi
+          if [ -f dist/windows_legacy/OtherGods_console.exe ]; then mv dist/windows_legacy/OtherGods_console.exe dist/windows_legacy/ClaudeOtherGods_console.exe; fi
+          (
+            cd dist/windows_legacy
+            zip -9 -r ../ClaudeOtherGods-windows.zip *
+          )
+          cp -R .exports/server/* dist/server_legacy/
+          if [ -f dist/server_legacy/OtherGodsServer.exe ]; then mv dist/server_legacy/OtherGodsServer.exe dist/server_legacy/ClaudeOtherGodsServer.exe; fi
+          if [ -f dist/server_legacy/OtherGodsServer.pck ]; then mv dist/server_legacy/OtherGodsServer.pck dist/server_legacy/ClaudeOtherGodsServer.pck; fi
+          if [ -f dist/server_legacy/OtherGodsServer_console.exe ]; then mv dist/server_legacy/OtherGodsServer_console.exe dist/server_legacy/ClaudeOtherGodsServer_console.exe; fi
+          (
+            cd dist/server_legacy
+            zip -9 -r ../ClaudeOtherGodsServer-windows.zip *
+          )
+          rm -rf dist/windows_legacy dist/server_legacy
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ClaudeOtherGods-windows
+          name: OtherGods-windows
           path: |
+            dist/OtherGods-windows.zip
+            dist/OtherGodsServer-windows.zip
             dist/ClaudeOtherGods-windows.zip
             dist/ClaudeOtherGodsServer-windows.zip
 
@@ -57,6 +78,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
+            dist/OtherGods-windows.zip
+            dist/OtherGodsServer-windows.zip
             dist/ClaudeOtherGods-windows.zip
             dist/ClaudeOtherGodsServer-windows.zip
 
@@ -84,17 +107,17 @@ jobs:
       - name: Export macOS build
         run: |
           mkdir -p .exports/macos dist
-          godot --headless --path . --export-release "macOS" .exports/macos/ClaudeOtherGods-macos.zip
-          cp .exports/macos/ClaudeOtherGods-macos.zip dist/ClaudeOtherGods-macos.zip
+          godot --headless --path . --export-release "macOS" .exports/macos/OtherGods-macos.zip
+          cp .exports/macos/OtherGods-macos.zip dist/OtherGods-macos.zip
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ClaudeOtherGods-macos
-          path: dist/ClaudeOtherGods-macos.zip
+          name: OtherGods-macos
+          path: dist/OtherGods-macos.zip
 
       - name: Publish GitHub release assets
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/ClaudeOtherGods-macos.zip
+          files: dist/OtherGods-macos.zip

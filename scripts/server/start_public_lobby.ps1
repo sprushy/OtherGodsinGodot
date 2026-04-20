@@ -5,7 +5,14 @@ param(
 $ErrorActionPreference = "Stop"
 
 $RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-$ServerExe = Join-Path $RepoRoot ".exports\server\ClaudeOtherGodsServer.exe"
+$ServerExeCandidates = @(
+    (Join-Path $RepoRoot ".exports\server\OtherGodsServer.exe"),
+    (Join-Path $RepoRoot ".exports\server\ClaudeOtherGodsServer.exe")
+)
+$ServerExe = $ServerExeCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+if (-not $ServerExe) {
+    $ServerExe = $ServerExeCandidates[0]
+}
 $LobbyHost = "63.33.96.156"
 $LobbyPort = 22345
 $MatchPort = 12345

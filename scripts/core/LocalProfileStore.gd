@@ -7,6 +7,9 @@ const STORAGE_PATH := "user://player_profiles.json"
 const STORAGE_TEMP_PATH := "user://player_profiles.json.tmp"
 const STORAGE_BACKUP_PATH := "user://player_profiles.json.bak"
 const LEGACY_DECK_PATH := "user://saved_deck.json"
+const LEGACY_APP_USER_DIR_NAMES := [
+	"ClaudeOtherGods",
+]
 const DEFAULT_PROFILE_NAME := "Player"
 const DEFAULT_DECK_NAME := "Default Deck"
 const AUTH_MODE_GUEST := "guest"
@@ -639,19 +642,28 @@ func _ensure_loaded() -> void:
 	}
 	var primary_snapshot: Dictionary = _read_storage_snapshot(STORAGE_PATH, "primary")
 	if _merge_storage_snapshot(primary_snapshot):
+		_try_migrate_legacy_storage_over_placeholder_data()
 		if not FileAccess.file_exists(STORAGE_BACKUP_PATH):
 			_copy_storage_snapshot(STORAGE_PATH, STORAGE_BACKUP_PATH)
 		return
 
 	var temp_snapshot: Dictionary = _read_storage_snapshot(STORAGE_TEMP_PATH, "temp")
 	if _merge_storage_snapshot(temp_snapshot):
+		_try_migrate_legacy_storage_over_placeholder_data()
 		print("LocalProfileStore: Restoring profile data from temp snapshot.")
 		_save(true)
 		return
 
 	var backup_snapshot: Dictionary = _read_storage_snapshot(STORAGE_BACKUP_PATH, "backup")
 	if _merge_storage_snapshot(backup_snapshot):
+		_try_migrate_legacy_storage_over_placeholder_data()
 		print("LocalProfileStore: Restoring profile data from backup snapshot.")
+		_save(true)
+		return
+
+	var legacy_snapshot: Dictionary = _read_legacy_storage_snapshot()
+	if _merge_storage_snapshot(legacy_snapshot):
+		print("LocalProfileStore: Migrating profile data from legacy app storage.")
 		_save(true)
 
 func _save(skip_backup_refresh: bool = false) -> void:
@@ -720,6 +732,71 @@ func _read_storage_snapshot(storage_path: String, label: String) -> Dictionary:
 		"ok": false,
 		"data": {},
 	}
+
+func _read_legacy_storage_snapshot() -> Dictionary:
+	for storage_path in _get_legacy_storage_paths():
+		var label := "legacy %s" % storage_path.get_file()
+		var snapshot := _read_storage_snapshot(storage_path, label)
+		if bool(snapshot.get("ok", false)):
+			return snapshot
+	return {
+		"ok": false,
+		"data": {},
+	}
+
+func _get_legacy_storage_paths() -> Array[String]:
+	var current_storage_dir := ProjectSettings.globalize_path("user://")
+	var app_userdata_dir := current_storage_dir.get_base_dir()
+	if app_userdata_dir.is_empty():
+		return []
+	var legacy_paths: Array[String] = []
+	for legacy_dir_name in LEGACY_APP_USER_DIR_NAMES:
+		var resolved_dir_name := str(legacy_dir_name).strip_edges()
+		if resolved_dir_name.is_empty():
+			continue
+		var legacy_dir := app_userdata_dir.path_join(resolved_dir_name)
+		for file_name in [
+			STORAGE_PATH.get_file(),
+			STORAGE_TEMP_PATH.get_file(),
+			STORAGE_BACKUP_PATH.get_file(),
+		]:
+			legacy_paths.append(legacy_dir.path_join(file_name))
+	return legacy_paths
+
+func _try_migrate_legacy_storage_over_placeholder_data() -> void:
+	if _has_meaningful_persisted_state(_data):
+		return
+	var legacy_snapshot := _read_legacy_storage_snapshot()
+	if not bool(legacy_snapshot.get("ok", false)):
+		return
+	var legacy_data = legacy_snapshot.get("data", {})
+	if not (legacy_data is Dictionary):
+		return
+	if not _has_meaningful_persisted_state(legacy_data as Dictionary):
+		return
+	print("LocalProfileStore: Replacing placeholder profile data with legacy app storage.")
+	_data.merge(legacy_data as Dictionary, true)
+
+func _has_meaningful_persisted_state(data: Dictionary) -> bool:
+	if not str(data.get("last_account_username", "")).strip_edges().is_empty():
+		return true
+	var account_mappings = data.get("account_profile_id_by_username", {})
+	if account_mappings is Dictionary and not (account_mappings as Dictionary).is_empty():
+		return true
+	var lobby_resume = data.get("lobby_resume_by_profile", {})
+	if lobby_resume is Dictionary and not (lobby_resume as Dictionary).is_empty():
+		return true
+	var active_match = data.get("active_match_by_profile", {})
+	if active_match is Dictionary and not (active_match as Dictionary).is_empty():
+		return true
+	var profiles = data.get("profiles", {})
+	if profiles is Dictionary:
+		for profile_value in (profiles as Dictionary).values():
+			if not (profile_value is Dictionary):
+				continue
+			if not str((profile_value as Dictionary).get("account_username_key", "")).strip_edges().is_empty():
+				return true
+	return false
 
 func _merge_storage_snapshot(snapshot: Dictionary) -> bool:
 	if not bool(snapshot.get("ok", false)):
