@@ -7,7 +7,7 @@ func _init() -> void:
 	super._init()
 	card_name = "Smite"
 	level = 2
-	mana_cost = 5
+	mana_cost = 0
 	speed = 5
 	culture = "Neutral"
 	card_types = ["Destruction", "Creature"]

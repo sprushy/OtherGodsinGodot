@@ -47,9 +47,11 @@ var _collection_sort: String = "Default"
 var _filtered_cards_cache: Array = []
 var _current_page: int      = 0
 var _grid_columns: int      = 1
+var _page_grid_columns: int = 1
 var _card_size: Vector2     = Vector2(CARD_W, CARD_H)
 var _collection_rows: int   = DEFAULT_COLLECTION_ROWS
 var _visible_collection_rows: int = DEFAULT_COLLECTION_ROWS
+var _page_visible_collection_rows: int = DEFAULT_COLLECTION_ROWS
 var _last_page_turn_ms: int = -PAGE_REPEAT_INTERVAL_MS
 var _art_cache: Dictionary = {}
 var _collection_mode: String = COLLECTION_MODE_CARDS
@@ -77,7 +79,7 @@ var _profile_lbl:      Label
 var _deck_name_edit:   LineEdit
 var _saved_decks_option: OptionButton
 var _saved_decks_view_btn: Button
-var _saved_actions_bar: HFlowContainer
+var _saved_actions_bar: HBoxContainer
 var _deck_footer_buttons: HFlowContainer
 var _delete_confirm_dialog: ConfirmationDialog
 var _search_edit:      LineEdit
@@ -366,10 +368,6 @@ func _build_collection_panel(parent: Control) -> void:
 
 	_add_level_filter_controls(view_bar)
 
-	var spacer := Control.new()
-	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	view_bar.add_child(spacer)
-
 	var search_lbl := Label.new()
 	search_lbl.text = "Search:"
 	search_lbl.add_theme_font_size_override("font_size", 11)
@@ -386,6 +384,34 @@ func _build_collection_panel(parent: Control) -> void:
 	search_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	search_edit.text_changed.connect(_set_search_query)
 	view_bar.add_child(search_edit)
+
+	var spacer := Control.new()
+	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	view_bar.add_child(spacer)
+
+	var saved_hdr := HBoxContainer.new()
+	_saved_actions_bar = saved_hdr
+	saved_hdr.add_theme_constant_override("separation", 6)
+	saved_hdr.size_flags_horizontal = Control.SIZE_SHRINK_END
+	view_bar.add_child(saved_hdr)
+
+	var save_btn := Button.new()
+	save_btn.text = "Save Deck"
+	save_btn.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	save_btn.pressed.connect(_save_profile_deck)
+	saved_hdr.add_child(save_btn)
+
+	var new_btn := Button.new()
+	new_btn.text = "New Deck"
+	new_btn.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	new_btn.pressed.connect(_new_deck)
+	saved_hdr.add_child(new_btn)
+
+	_saved_decks_view_btn = Button.new()
+	_saved_decks_view_btn.text = "Saved Decks"
+	_saved_decks_view_btn.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	_saved_decks_view_btn.pressed.connect(_toggle_saved_decks_view)
+	saved_hdr.add_child(_saved_decks_view_btn)
 
 	_collection_host = Control.new()
 	_collection_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -425,11 +451,6 @@ func _build_collection_panel(parent: Control) -> void:
 	_next_page_btn.text = "Next Page"
 	_next_page_btn.custom_minimum_size = Vector2(120, 28)
 	_next_page_btn.pressed.connect(_show_next_page)
-	page_bar.add_child(_next_page_btn)
-
-	var page_spacer := Control.new()
-	page_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	page_bar.add_child(page_spacer)
 
 	var card_view_bar := HBoxContainer.new()
 	_card_view_controls_bar = card_view_bar
@@ -444,6 +465,12 @@ func _build_collection_panel(parent: Control) -> void:
 	card_view_bar.add_child(view_lbl)
 
 	_add_card_view_controls(card_view_bar)
+
+	var page_spacer := Control.new()
+	page_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	page_bar.add_child(page_spacer)
+
+	page_bar.add_child(_next_page_btn)
 
 func _build_deck_panel(parent: Control) -> void:
 	var panel := VBoxContainer.new()
@@ -556,33 +583,10 @@ func _build_deck_panel(parent: Control) -> void:
 	_deck_name_edit.custom_minimum_size.y = 28
 	deck_name_row.add_child(_deck_name_edit)
 
-	var saved_hdr := HFlowContainer.new()
-	_saved_actions_bar = saved_hdr
-	saved_hdr.add_theme_constant_override("separation", 6)
-	panel.add_child(saved_hdr)
-
-	var save_btn := Button.new()
-	save_btn.text = "Save Deck"
-	save_btn.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
-	save_btn.pressed.connect(_save_profile_deck)
-	saved_hdr.add_child(save_btn)
-
-	var new_btn := Button.new()
-	new_btn.text = "New Deck"
-	new_btn.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
-	new_btn.pressed.connect(_new_deck)
-	saved_hdr.add_child(new_btn)
-
 	_saved_decks_option = OptionButton.new()
 	_saved_decks_option.visible = false
 	_saved_decks_option.item_selected.connect(_on_saved_deck_selected)
 	panel.add_child(_saved_decks_option)
-
-	_saved_decks_view_btn = Button.new()
-	_saved_decks_view_btn.text = "Saved Decks"
-	_saved_decks_view_btn.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
-	_saved_decks_view_btn.pressed.connect(_toggle_saved_decks_view)
-	saved_hdr.add_child(_saved_decks_view_btn)
 
 	var tiamat_panel := PanelContainer.new()
 	_tiamat_panel = tiamat_panel
@@ -633,7 +637,9 @@ func _build_deck_panel(parent: Control) -> void:
 	_validation_lbl = Label.new()
 	_validation_lbl.text = ""
 	_validation_lbl.add_theme_font_size_override("font_size", 12)
-	_validation_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_validation_lbl.autowrap_mode = TextServer.AUTOWRAP_OFF
+	_validation_lbl.clip_text = true
+	_validation_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	panel.add_child(_validation_lbl)
 
 	# ── action buttons ───────────────────────────────────
@@ -1134,17 +1140,18 @@ func _refresh_tiamat_panel() -> void:
 
 func _make_deck_row(card: Card) -> Control:
 	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 6)
+	row.add_theme_constant_override("separation", 8)
 	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.custom_minimum_size.y = 34.0
 
 	var dot := ColorRect.new()
-	dot.custom_minimum_size = Vector2(9, 9)
+	dot.custom_minimum_size = Vector2(11, 11)
 	dot.color = _get_type_color(card)
 	dot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	row.add_child(dot)
 
 	var name_lbl := Label.new()
-	name_lbl.add_theme_font_size_override("font_size", 13)
+	name_lbl.add_theme_font_size_override("font_size", 16)
 	name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	name_lbl.clip_text = true
 	name_lbl.text = card.get_display_name_for_control(name_lbl)
@@ -1152,28 +1159,29 @@ func _make_deck_row(card: Card) -> Control:
 
 	var legendary_lbl := Label.new()
 	legendary_lbl.text = "L" if card.is_legendary else ""
-	legendary_lbl.add_theme_font_size_override("font_size", 12)
+	legendary_lbl.add_theme_font_size_override("font_size", 14)
 	legendary_lbl.add_theme_color_override("font_color", Color(0.95, 0.82, 0.28))
-	legendary_lbl.custom_minimum_size.x = 14
+	legendary_lbl.custom_minimum_size.x = 18
 	legendary_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	row.add_child(legendary_lbl)
 
 	var cnt_lbl := Label.new()
 	cnt_lbl.text = "×%d" % _deck[card.card_name]
-	cnt_lbl.add_theme_font_size_override("font_size", 12)
+	cnt_lbl.add_theme_font_size_override("font_size", 14)
 	cnt_lbl.add_theme_color_override("font_color", Color(0.9, 0.9, 0.4))
-	cnt_lbl.custom_minimum_size.x = 30
+	cnt_lbl.custom_minimum_size.x = 42
+	cnt_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	row.add_child(cnt_lbl)
 
 	var minus := Button.new()
 	minus.text = "−"
-	minus.custom_minimum_size = Vector2(28, 24)
+	minus.custom_minimum_size = Vector2(32, 28)
 	minus.pressed.connect(func() -> void: _remove_from_deck(card.card_name))
 	row.add_child(minus)
 
 	var plus := Button.new()
 	plus.text = "+"
-	plus.custom_minimum_size = Vector2(28, 24)
+	plus.custom_minimum_size = Vector2(32, 28)
 	plus.pressed.connect(func() -> void: _add_to_deck(card))
 	row.add_child(plus)
 
@@ -2249,12 +2257,13 @@ func _update_validation() -> void:
 			legendary_count_summary += cnt
 
 	var max_legends_summary := int(regular_count_summary / 10.0)
-	var summary_lines := PackedStringArray([
-		"Card Count: %d / %d" % [regular_count_summary, MIN_REGULAR_CARDS],
-		"Legendaries: %d / %d" % [legendary_count_summary, max_legends_summary]
-	])
 	var summary_ok := regular_count_summary >= MIN_REGULAR_CARDS and legendary_count_summary <= max_legends_summary
-	_validation_lbl.text = "\n".join(summary_lines)
+	_validation_lbl.text = "Card Count: %d / %d      Legendaries: %d / %d" % [
+		regular_count_summary,
+		MIN_REGULAR_CARDS,
+		legendary_count_summary,
+		max_legends_summary
+	]
 	_validation_lbl.modulate = Color(0.5, 1.0, 0.55) if summary_ok else Color(1.0, 0.85, 0.45)
 	return
 
@@ -2702,6 +2711,8 @@ func _update_collection_layout() -> void:
 
 	var total_items := _current_grid_total()
 	var aspect: float = CARD_W / float(CARD_H)
+	var previous_page_grid_columns := _page_grid_columns
+	var previous_page_visible_rows := _page_visible_collection_rows
 	var columns := 1
 	var next_size := Vector2(CARD_W, CARD_H)
 	var visible_rows := 1
@@ -2733,26 +2744,67 @@ func _update_collection_layout() -> void:
 
 		next_size = Vector2(max(1.0, estimated_width), max(1.0, max_card_height))
 		visible_rows = target_rows
+		_page_grid_columns = columns
+		_page_visible_collection_rows = visible_rows
 	else:
-		max_card_height = floor((available.y - COLLECTION_GAP * float(_collection_rows - 1)) / float(_collection_rows))
-		max_card_height = max(max_card_height, 1.0)
-		estimated_width = floor(max_card_height * aspect)
-		columns = max(1, int(floor((available.x + COLLECTION_GAP) / max(1.0, estimated_width + COLLECTION_GAP))))
-		width_limited = floor((available.x - COLLECTION_GAP * float(columns - 1)) / float(columns))
-		height_from_width = floor(width_limited / aspect)
+		var base_max_card_height = floor((available.y - COLLECTION_GAP * float(_collection_rows - 1)) / float(_collection_rows))
+		base_max_card_height = max(base_max_card_height, 1.0)
+		var base_estimated_width = floor(base_max_card_height * aspect)
+		var base_columns = max(1, int(floor((available.x + COLLECTION_GAP) / max(1.0, base_estimated_width + COLLECTION_GAP))))
+		var base_width_limited = floor((available.x - COLLECTION_GAP * float(base_columns - 1)) / float(base_columns))
+		var base_height_from_width = floor(base_width_limited / aspect)
 
-		if height_from_width < max_card_height:
-			max_card_height = height_from_width
-			estimated_width = width_limited
+		if base_height_from_width < base_max_card_height:
+			base_max_card_height = base_height_from_width
+			base_estimated_width = base_width_limited
 		else:
-			estimated_width = floor(max_card_height * aspect)
+			base_estimated_width = floor(base_max_card_height * aspect)
 
-		next_size = Vector2(max(1.0, estimated_width), max(1.0, max_card_height))
-		visible_rows = maxi(1, mini(_collection_rows, int(floor((available.y + COLLECTION_GAP) / max(1.0, next_size.y + COLLECTION_GAP)))))
+		var base_card_size := Vector2(max(1.0, base_estimated_width), max(1.0, base_max_card_height))
+		var base_visible_rows := maxi(1, mini(_collection_rows, int(floor((available.y + COLLECTION_GAP) / max(1.0, base_card_size.y + COLLECTION_GAP)))))
+		_page_grid_columns = base_columns
+		_page_visible_collection_rows = base_visible_rows
+
+		var current_page_capacity = max(1, _page_grid_columns * _page_visible_collection_rows)
+		var current_page_start = _current_page * current_page_capacity
+		var current_page_item_count := maxi(0, mini(total_items - current_page_start, current_page_capacity))
+		if current_page_item_count <= 0:
+			current_page_item_count = mini(total_items, current_page_capacity)
+		current_page_item_count = max(1, current_page_item_count)
+
+		var best_card_size := base_card_size
+		var best_columns := _page_grid_columns
+		var best_rows := maxi(1, mini(_page_visible_collection_rows, int(ceil(current_page_item_count / float(_page_grid_columns)))))
+		var max_candidate_rows := mini(_page_visible_collection_rows, current_page_item_count)
+
+		for candidate_rows in range(1, max_candidate_rows + 1):
+			var candidate_columns := maxi(1, int(ceil(current_page_item_count / float(candidate_rows))))
+			var candidate_width = floor((available.x - COLLECTION_GAP * float(candidate_columns - 1)) / float(candidate_columns))
+			var candidate_height = floor((available.y - COLLECTION_GAP * float(candidate_rows - 1)) / float(candidate_rows))
+			candidate_width = max(candidate_width, 1.0)
+			candidate_height = max(candidate_height, 1.0)
+
+			var height_from_candidate_width = floor(candidate_width / aspect)
+			var final_height = max(1.0, min(candidate_height, height_from_candidate_width))
+			var final_width = max(1.0, floor(final_height * aspect))
+			var candidate_size := Vector2(final_width, final_height)
+
+			if candidate_size.y > best_card_size.y or (candidate_size.y == best_card_size.y and candidate_size.x > best_card_size.x):
+				best_card_size = candidate_size
+				best_columns = candidate_columns
+				best_rows = candidate_rows
+
+		next_size = best_card_size
+		columns = best_columns
+		visible_rows = best_rows
 
 	_grid.custom_minimum_size.y = visible_rows * next_size.y + COLLECTION_GAP * float(visible_rows - 1)
 
-	if columns != _grid_columns or next_size != _card_size or visible_rows != _visible_collection_rows:
+	if columns != _grid_columns \
+			or next_size != _card_size \
+			or visible_rows != _visible_collection_rows \
+			or previous_page_grid_columns != _page_grid_columns \
+			or previous_page_visible_rows != _page_visible_collection_rows:
 		_grid_columns = columns
 		_card_size = next_size
 		_visible_collection_rows = visible_rows
@@ -2792,7 +2844,7 @@ func _get_card_art_texture(art_path: String) -> Texture2D:
 	return tex
 
 func _page_size() -> int:
-	return max(1, _grid_columns * _visible_collection_rows)
+	return max(1, _page_grid_columns * _page_visible_collection_rows)
 
 func _page_count(total_cards: int) -> int:
 	if total_cards <= 0:

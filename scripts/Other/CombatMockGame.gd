@@ -17564,6 +17564,28 @@ func _get_local_forfeit_player_index() -> int:
 func _emit_forfeit_requested() -> void:
 	forfeit_requested.emit()
 
+func _can_submit_network_action() -> bool:
+	if not _is_networked_client:
+		return true
+	if network_manager == null:
+		return false
+	var multiplayer_api = network_manager.multiplayer
+	if multiplayer_api == null:
+		return false
+	var multiplayer_peer = multiplayer_api.multiplayer_peer
+	if multiplayer_peer == null:
+		return false
+	return multiplayer_peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED
+
+func _cancel_match_locally(result_message: String) -> void:
+	_pending_forfeit_return_to_menu = false
+	_pending_post_game_return_to_menu = false
+	_awaiting_initial_full_state = false
+	_set_match_reconnect_wait(false)
+	if network_manager != null and network_manager.has_method("disconnect_client") and not bool(network_manager.get("is_server")):
+		network_manager.disconnect_client()
+	_finalize_game_result_ui(result_message, null, null, false)
+
 func _schedule_post_game_return_to_menu(force_return: bool = false) -> void:
 	if _pending_post_game_return_to_menu:
 		return
@@ -17804,6 +17826,18 @@ func _on_peer_disconnected(_peer_id: int) -> void:
 	update_ui()
 
 func _apply_network_event(event_type: String, data: Dictionary) -> void:
+	if _game_finished and event_type in [
+		"match_connect_retry_started",
+		"match_join_ok",
+		"match_join_denied",
+		"peer_left",
+		"peer_rejoined",
+		"match_reconnect_started",
+		"match_reconnect_ok",
+		"match_reconnect_failed",
+		"server_disconnected"
+	]:
+		return
 	match event_type:
 		"full_state":
 			_apply_full_state(data)
@@ -18316,8 +18350,7 @@ func _restore_priority_prompt_from_authoritative_state() -> void:
 	if local_player == null or game_manager.priority_player != local_player:
 		return
 	var prompt_data := match_manager.build_priority_prompt_data(local_player)
-	var prompt_responses: Array = prompt_data.get("responses", [])
-	if prompt_responses.is_empty():
+	if prompt_data.is_empty():
 		return
 	_apply_priority_prompt_for_player(local_idx, prompt_data)
 
@@ -18358,9 +18391,10 @@ func _sync_network_turn_controls() -> void:
 	var local_idx: int = network_manager.local_player_index
 	var current_idx: int = game_manager.players.find(game_manager.current_player)
 	var is_local_turn: bool = current_idx == local_idx
-	end_turn_button.visible = is_local_turn and not choice_container.visible
+	var stack_locked: bool = not game_manager.action_stack.is_empty()
+	end_turn_button.visible = is_local_turn and not choice_container.visible and not stack_locked
 	end_turn_button.disabled = not end_turn_button.visible
-	all_attack_btn.disabled = not is_local_turn or choice_container.visible
+	all_attack_btn.disabled = not is_local_turn or choice_container.visible or stack_locked
 	if not is_local_turn:
 		selected_attacker = null
 		pending_attack_target = null
@@ -18420,12 +18454,10 @@ func _update_waiting_overlay() -> void:
 	var current_priority_player := game_manager.priority_player
 	var priority_idx := game_manager.players.find(current_priority_player)
 	
-	# If someone else has priority, we are waiting
-	if priority_idx != -1 and priority_idx != local_idx:
-		var priority_responses: Array = game_manager.get_priority_responses(current_priority_player)
-		if not priority_responses.is_empty():
-			_update_waiting_status(true, "Opponent has priority...")
-			return
+	# If someone else owns the current stack window, keep the local player in a waiting state.
+	if not game_manager.action_stack.is_empty() and priority_idx != -1 and priority_idx != local_idx:
+		_update_waiting_status(true, "Opponent has priority...")
+		return
 		
 	# If we are in combat and waiting for intercept
 	if game_manager.current_phase == GameManager.GamePhase.COMBAT:
@@ -18817,6 +18849,14 @@ func _on_forfeit_button_pressed() -> void:
 	if _game_finished:
 		_on_game_result_back_to_menu_pressed()
 		return
+	if _is_networked_client and not _can_submit_network_action():
+		var cancel_message := "Match canceled."
+		if _awaiting_initial_full_state:
+			cancel_message = "Match canceled before the server finished loading."
+		elif _match_reconnect_waiting:
+			cancel_message = "Match canceled after the connection was lost."
+		_cancel_match_locally(cancel_message)
+		return
 	_set_match_reconnect_wait(false)
 	if _is_blot_selection_active():
 		_hide_blot_sacrifice_prompt()
@@ -18840,7 +18880,7 @@ func _on_forfeit_button_pressed() -> void:
 		action_label.text = "Could not determine which player is forfeiting."
 		update_ui()
 		return
-	_pending_forfeit_return_to_menu = true
+	_pending_forfeit_return_to_menu = false
 	forfeit_button.disabled = true
 	action_label.text = "Forfeit requested..."
 	if not game_input.submit_action({type = "forfeit", player_index = forfeiting_index}):
