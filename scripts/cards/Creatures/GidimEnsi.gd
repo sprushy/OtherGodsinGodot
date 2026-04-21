@@ -22,13 +22,13 @@ func _init() -> void:
 	art_path = ART_PATH
 
 func on_summon(_game_manager: GameManager) -> void:
-	_apply_cannot_attack()
+	_refresh_cannot_attack_lock()
 
 func on_reveal(_game_manager: GameManager) -> void:
-	_apply_cannot_attack()
+	_refresh_cannot_attack_lock()
 
 func on_turn_start(_game_manager: GameManager) -> void:
-	_apply_cannot_attack()
+	_refresh_cannot_attack_lock()
 
 func on_removed(_game_manager: GameManager) -> void:
 	remove_status_effects_by_name("cannot_attack")
@@ -58,6 +58,8 @@ func on_opponent_attacks_followers(game_manager: GameManager, attacker: Card) ->
 		]
 	)
 
-func _apply_cannot_attack() -> void:
+func _refresh_cannot_attack_lock() -> void:
 	remove_status_effects_by_name("cannot_attack")
+	if is_stealth or is_face_down or is_prepared or abilities_suppressed():
+		return
 	add_status_effect("cannot_attack", card_name, self, card_owner)

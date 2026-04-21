@@ -33,6 +33,7 @@ static func serialize(gm: GameManager, viewer_player_index: int = -1) -> Diction
 		consecutive_passes = gm.consecutive_passes,
 		attack_restrictions = _serialize_attack_restrictions(gm),
 		turn_follower_loss_preventions = _serialize_turn_follower_loss_preventions(gm),
+		combat_destroy_events_this_turn = _serialize_combat_destroy_events(gm),
 		prepared_hexes = _serialize_prepared_cards(gm.prepared_hexes),
 		prepared_charms = _serialize_prepared_cards(gm.prepared_charms),
 		action_stack = _serialize_action_stack(gm.action_stack, gm, viewer),
@@ -185,6 +186,23 @@ static func _serialize_prepared_cards(prepared_map: Dictionary) -> Array:
 		})
 	return result
 
+static func _serialize_combat_destroy_events(gm: GameManager) -> Array:
+	var result := []
+	for event in gm.combat_destroy_events_this_turn:
+		if not (event is Dictionary):
+			continue
+		var killer := (event as Dictionary).get("killer", null) as Card
+		var victim := (event as Dictionary).get("victim", null) as Card
+		var killer_owner := (event as Dictionary).get("killer_owner", null) as Player
+		var victim_owner := (event as Dictionary).get("victim_owner", null) as Player
+		result.append({
+			killer_uid = killer.uid if killer != null and "uid" in killer else "",
+			victim_uid = victim.uid if victim != null and "uid" in victim else "",
+			killer_owner_index = gm.players.find(killer_owner),
+			victim_owner_index = gm.players.find(victim_owner),
+		})
+	return result
+
 static func _serialize_turn_follower_loss_preventions(gm: GameManager) -> Array:
 	var result := []
 	for player in gm.turn_follower_loss_preventions:
@@ -291,6 +309,7 @@ static func apply_to_manager(data: Dictionary, gm: GameManager) -> void:
 
 	gm.prepared_hexes.clear()
 	gm.prepared_charms.clear()
+	gm.combat_destroy_events_this_turn.clear()
 	gm.action_stack.clear()
 
 	var players_data: Array = data.get("players", [])
@@ -334,6 +353,7 @@ static func apply_to_manager(data: Dictionary, gm: GameManager) -> void:
 
 	_restore_prepared_cards(data.get("prepared_hexes", []), gm.prepared_hexes, gm)
 	_restore_prepared_cards(data.get("prepared_charms", []), gm.prepared_charms, gm)
+	_restore_combat_destroy_events(data.get("combat_destroy_events_this_turn", []), gm)
 	for action_data in data.get("action_stack", []):
 		if not (action_data is Dictionary):
 			continue
@@ -451,3 +471,23 @@ static func _restore_prepared_cards(entries: Array, target_map: Dictionary, gm: 
 		if card == null:
 			continue
 		target_map[card] = int((entry as Dictionary).get("prepared_turn", gm.turn_number))
+
+static func _restore_combat_destroy_events(entries: Array, gm: GameManager) -> void:
+	for entry in entries:
+		if not (entry is Dictionary):
+			continue
+		var event_dict := entry as Dictionary
+		var killer_uid := str(event_dict.get("killer_uid", "")).strip_edges()
+		var victim_uid := str(event_dict.get("victim_uid", "")).strip_edges()
+		var killer := gm.get_card_by_uid(killer_uid) if not killer_uid.is_empty() else null
+		var victim := gm.get_card_by_uid(victim_uid) if not victim_uid.is_empty() else null
+		var killer_owner_index := int(event_dict.get("killer_owner_index", -1))
+		var victim_owner_index := int(event_dict.get("victim_owner_index", -1))
+		var killer_owner := gm.players[killer_owner_index] if killer_owner_index >= 0 and killer_owner_index < gm.players.size() else null
+		var victim_owner := gm.players[victim_owner_index] if victim_owner_index >= 0 and victim_owner_index < gm.players.size() else null
+		gm.combat_destroy_events_this_turn.append({
+			"killer": killer,
+			"victim": victim,
+			"killer_owner": killer_owner,
+			"victim_owner": victim_owner,
+		})

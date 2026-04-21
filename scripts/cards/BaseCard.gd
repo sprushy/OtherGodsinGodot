@@ -29,7 +29,7 @@ const KEYWORD_HINTS = {
 	"Passive": "This effect is always active while this card remains in play.",
 	"Impact": "This effect triggers when this card enters the field.",
 	"Imbue": "Weapons equipped from your hand gain an added effect.",
-	"Reveal": "This effect triggers when this card is revealed.",
+	"Reveal": "This ability activates when this card becomes visible, such as when it exits stealth or is turned face-up.",
 	"Destroyed": "This effect triggers when this creature is destroyed.",
 	"Fatality": "This effect triggers when this creature is destroyed in combat.",
 	"Unlock": "This card must be unlocked before its unlocked ability can be used.",

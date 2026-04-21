@@ -423,6 +423,7 @@ const CENTER_PANEL_SECTION_GAP := 2
 const BOARD_SEPARATOR_HEIGHT := 4
 const BOARD_SIZE_TRIM := 4.0
 const HAND_DOCK_HEIGHT := 118.0
+const HAND_OVERLAY_TOP_BLEED := 28.0
 const HAND_CARD_PEEK_OVERLAP := 14.0
 const HAND_CARD_EXPOSED_HEIGHT := 100.0
 const HAND_LAYOUT_RESERVED := 0.0
@@ -437,6 +438,7 @@ const ENEMY_HAND_OVERLAY_TOP_PADDING := -2.0
 const PREFERRED_BOARD_ZONE_EXTENT := UIArtScaler.DEFAULT_BOARD_ART_REFERENCE_EXTENT
 const HAND_OVERLAY_SIDE_PADDING := 18.0
 const HAND_OVERLAY_BOTTOM_PADDING := -2.0
+const HAND_OVERLAY_Z_INDEX := HOVER_PREVIEW_Z_INDEX + 5
 const LEFT_PANEL_MIN_WIDTH := 136.0
 const BOARD_RIGHT_NUDGE := 10.0
 const BOARD_HORIZONTAL_OFFSET := -2.0
@@ -2912,13 +2914,14 @@ func _layout_enemy_hand_overlay() -> void:
 
 func _get_hand_overlay_rect() -> Rect2:
 	if center_panel == null:
-		return Rect2(Vector2.ZERO, Vector2(180.0, HAND_DOCK_HEIGHT))
+		return Rect2(Vector2.ZERO, Vector2(180.0, HAND_DOCK_HEIGHT + HAND_OVERLAY_TOP_BLEED))
 	var center_rect: Rect2 = center_panel.get_global_rect()
 	var local_top_left: Vector2 = get_global_transform().affine_inverse() * center_rect.position
 	var overlay_width: float = maxf(180.0, center_rect.size.x - HAND_OVERLAY_SIDE_PADDING * 2.0)
 	var overlay_x: float = local_top_left.x + HAND_OVERLAY_SIDE_PADDING
-	var overlay_y: float = local_top_left.y + center_rect.size.y - HAND_DOCK_HEIGHT - HAND_OVERLAY_BOTTOM_PADDING
-	return Rect2(Vector2(overlay_x, overlay_y), Vector2(overlay_width, HAND_DOCK_HEIGHT))
+	var overlay_height := HAND_DOCK_HEIGHT + HAND_OVERLAY_TOP_BLEED
+	var overlay_y: float = local_top_left.y + center_rect.size.y - HAND_DOCK_HEIGHT - HAND_OVERLAY_BOTTOM_PADDING - HAND_OVERLAY_TOP_BLEED
+	return Rect2(Vector2(overlay_x, overlay_y), Vector2(overlay_width, overlay_height))
 
 func _should_hide_hand_card(card: Card) -> bool:
 	var hand_player := _get_visible_hand_player()
@@ -3015,10 +3018,10 @@ func draw_hand() -> void:
 
 	_fan_container = Control.new()
 	_fan_container.name = "HandOverlay"
-	_fan_container.custom_minimum_size = Vector2(180.0, HAND_DOCK_HEIGHT)
+	_fan_container.custom_minimum_size = Vector2(180.0, HAND_DOCK_HEIGHT + HAND_OVERLAY_TOP_BLEED)
 	_fan_container.mouse_filter = Control.MOUSE_FILTER_PASS
 	_fan_container.clip_contents = false
-	_fan_container.z_index = TRANSIENT_UI_Z_INDEX - 10
+	_fan_container.z_index = HAND_OVERLAY_Z_INDEX
 	add_child(_fan_container)
 
 	for card in hand_player.hand_zone.cards:
@@ -3105,7 +3108,10 @@ func _layout_fan() -> void:
 		centers[i] = cx
 		vc.size = sz
 		vc.pivot_offset = sz / 2.0
-		vc.position = Vector2(cx - sz.x * 0.5, arc_y)
+		# The fan overlay intentionally extends upward beyond the visible dock so
+		# the exposed top edge of tilted cards still captures hover before the
+		# board underneath can raise above them.
+		vc.position = Vector2(cx - sz.x * 0.5, HAND_OVERLAY_TOP_BLEED + arc_y)
 		vc.rotation_degrees = rot
 		vc.set_base_z_index(i)
 	for i in range(n):
@@ -7073,7 +7079,7 @@ func _on_local_player_card_moved(card: Card, from_zone: Zone, to_zone: Zone) -> 
 		return
 	if card.current_zone != to_zone:
 		return
-	if card.is_prepared or card.is_face_down:
+	if card.is_prepared or card.is_face_down or card.is_stealth:
 		return
 	if card is CharmCard and not card.goes_to_graveyard_after_use():
 		return
@@ -7157,7 +7163,7 @@ func _on_card_summoned(player: Player, card: Card, _from_zone: Zone, to_zone: Zo
 		return
 	if _is_networked_client:
 		return
-	if face_down or stealth:
+	if face_down or stealth or card.is_face_down or card.is_prepared or card.is_stealth:
 		return
 	if _has_pending_impact_priority_action(card):
 		return
@@ -7195,6 +7201,11 @@ func _flush_summon_priority_events() -> void:
 		if not _pending_summon_priority_events.is_empty():
 			call_deferred("_flush_summon_priority_events")
 		return
+	if card.is_face_down or card.is_prepared or card.is_stealth:
+		_pending_summon_priority_events.pop_front()
+		if not _pending_summon_priority_events.is_empty():
+			call_deferred("_flush_summon_priority_events")
+		return
 	_pending_summon_priority_events.pop_front()
 	var on_resolve := func() -> void:
 		update_ui()
@@ -7222,6 +7233,10 @@ func _flush_hand_play_priority_events() -> void:
 	var played_card: Card = _pending_hand_play_events.pop_front()
 	if played_card == null or played_card.current_zone == null or not _is_in_play_zone(played_card.current_zone):
 		call_deferred("_flush_hand_play_priority_events")
+		return
+	if played_card.is_face_down or played_card.is_prepared or played_card.is_stealth:
+		if not _pending_hand_play_events.is_empty():
+			call_deferred("_flush_hand_play_priority_events")
 		return
 	_queue_priority_event(
 		"hand_play",
@@ -12954,6 +12969,7 @@ func _bdrag_finish(drop_pos: Vector2) -> void:
 			pending_attack_target = target_card
 			action_label.text = _get_attack_card_label(card, "A creature") + " attacking " + _get_card_name_safe(target_card, "an enemy card") + "..."
 			check_for_possible_intercepts()
+			update_ui()
 			return
 
 	action_label.text = "Invalid drop target."
@@ -13008,6 +13024,7 @@ func _on_attack_followers_pressed() -> void:
 			return
 		pending_attack_target = game_manager.other_player
 		check_for_possible_intercepts()
+		update_ui()
 	else:
 		action_label.text = "Select your creature first to attack"
 
@@ -17602,7 +17619,7 @@ func _cancel_match_locally(result_message: String) -> void:
 func _schedule_post_game_return_to_menu(force_return: bool = false) -> void:
 	if _pending_post_game_return_to_menu:
 		return
-	if not force_return and not _is_networked_client and not _is_real_network_host():
+	if not force_return:
 		return
 	_pending_post_game_return_to_menu = true
 	var tree := get_tree()

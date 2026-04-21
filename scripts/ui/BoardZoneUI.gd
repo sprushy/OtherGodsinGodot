@@ -211,6 +211,7 @@ const POWER_LOCK_TEXTURE := preload("res://images/Norse Power Lock.png")
 const ANCIENT_POWER_LOCK_TEXTURE := preload("res://images/Ancient Power Lock.png")
 const TIAMAT_GOD_SCRIPT := preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
 const TIAMAT_STACK_MAX_VISIBLE_CARDS := 4
+const KEYWORD_PANEL_GAP := 8.0
 static var _zone_extent: float = BASE_ZONE_EXTENT
 
 var _row_label: String = ""
@@ -291,6 +292,52 @@ func _get_power_hover_cost_lines(power: PowerCard) -> Array[String]:
 		var text := str(extra_line).strip_edges()
 		if text != "":
 			lines.append(text)
+	return lines
+
+func _can_show_prepared_magical_cost(card: Card) -> bool:
+	if card == null or game_manager == null:
+		return false
+	if not card.is_prepared or not card.is_magical_card():
+		return false
+	if card.current_zone == null or not card.current_zone.is_board_zone():
+		return false
+	return card.get_controller() == _get_viewer_player()
+
+func _get_prepared_magical_cost_player(card: Card) -> Player:
+	if card == null:
+		return null
+	var controller := card.get_controller()
+	if controller != null:
+		return controller
+	return card.card_owner
+
+func _get_prepared_magical_display_mana_cost(card: Card) -> int:
+	if not _can_show_prepared_magical_cost(card):
+		return 0
+	var paying_player := _get_prepared_magical_cost_player(card)
+	if paying_player == null:
+		return card.mana_cost
+	return game_manager.get_prepared_card_activation_mana_cost(paying_player, card)
+
+func _get_prepared_magical_hover_cost_lines(card: Card) -> Array[String]:
+	var lines: Array[String] = []
+	if not _can_show_prepared_magical_cost(card):
+		return lines
+
+	var current_cost := _get_prepared_magical_display_mana_cost(card)
+	if current_cost > 0 or card.mana_cost > 0:
+		lines.append("Activation Cost: %d" % current_cost)
+
+	var paying_player := _get_prepared_magical_cost_player(card)
+	if paying_player != null:
+		for breakdown_line in card.get_cost_adjustment_lines(
+			card.mana_cost,
+			Card.COST_KIND_HAND_PLAY,
+			game_manager,
+			{"player": paying_player, "prepared": true}
+		):
+			lines.append(breakdown_line)
+
 	return lines
 
 func _add_sleep_affordance(overlay: Control, card: Card) -> void:
@@ -382,6 +429,39 @@ func _add_speed_badge(overlay: Control, card: Card) -> void:
 		return
 	overlay.add_child(badge)
 
+func _add_prepared_magical_mana_badge(overlay: Control, card: Card) -> void:
+	if overlay == null or card == null:
+		return
+	if not is_instance_valid(overlay) or overlay.is_queued_for_deletion():
+		return
+	if not _can_show_prepared_magical_cost(card):
+		return
+
+	var display_cost := _get_prepared_magical_display_mana_cost(card)
+	if display_cost <= 0 and card.mana_cost <= 0:
+		return
+
+	var font_color := Color(0.92, 0.97, 1.0)
+	if display_cost > card.mana_cost:
+		font_color = Color(1.0, 0.7, 0.7)
+	elif display_cost < card.mana_cost:
+		font_color = Color(0.65, 1.0, 0.72)
+
+	var badge := _add_overlay_stat_badge(
+		overlay,
+		"M:%d" % display_cost,
+		Control.PRESET_BOTTOM_LEFT,
+		6,
+		-32,
+		66,
+		-6,
+		font_color
+	)
+	var tooltip_lines := _get_prepared_magical_hover_cost_lines(card)
+	if badge != null and not tooltip_lines.is_empty():
+		badge.tooltip_text = "\n".join(tooltip_lines)
+		badge.mouse_filter = Control.MOUSE_FILTER_STOP
+
 func _make_field_stat_badge(text: String, font_size: int = 15, font_color: Color = Color(0.92, 0.97, 1.0)) -> PanelContainer:
 	var badge := PanelContainer.new()
 	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -443,7 +523,7 @@ func _add_level_badge(
 	right: float,
 	bottom: float
 ) -> PanelContainer:
-	if overlay == null or card == null or card.is_god:
+	if overlay == null or card == null or card.is_god or card.is_power:
 		return null
 	var effective_level := card.get_effective_level()
 	var font_color := Color(1.0, 0.96, 0.78)
@@ -577,32 +657,11 @@ func _add_attack_aura(overlay: Control) -> void:
 	if overlay == null:
 		return
 
-	var glow := ColorRect.new()
-	glow.color = Color(0.98, 0.12, 0.10, 0.20)
-	glow.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	glow.z_index = 3
-	glow.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	overlay.add_child(glow)
-
-	var ring := PanelContainer.new()
-	ring.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	ring.z_index = 4
-	ring.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	ring.offset_left = 4
-	ring.offset_top = 4
-	ring.offset_right = -4
-	ring.offset_bottom = -4
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.0, 0.0, 0.0, 0.0)
-	style.border_color = Color(1.0, 0.34, 0.22, 0.98)
-	style.corner_radius_top_left = 10
-	style.corner_radius_top_right = 10
-	style.corner_radius_bottom_left = 10
-	style.corner_radius_bottom_right = 10
-	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		style.set_border_width(side, 3)
-	ring.add_theme_stylebox_override("panel", style)
-	overlay.add_child(ring)
+	var aura := AttackAura.new()
+	aura.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	aura.z_index = 20
+	aura.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	overlay.add_child(aura)
 
 func _add_followers_attack_target_tint(overlay: Control) -> void:
 	if overlay == null:
@@ -1202,14 +1261,46 @@ func _is_card_targeted_on_stack(card: Card) -> bool:
 func _get_targeting_scene_root() -> Node:
 	if not is_inside_tree() or is_queued_for_deletion():
 		return null
+	# CombatMockGame is often embedded under a menu/root scene, so current_scene
+	# may be the shell rather than the node that owns transient targeting state.
+	var node: Node = self
+	while node != null:
+		if node.is_in_group("combat_mock_game"):
+			return node
+		node = node.get_parent()
 	var tree := get_tree()
 	if tree == null:
 		return null
+	for candidate in tree.get_nodes_in_group("combat_mock_game"):
+		if candidate is Node and is_instance_valid(candidate):
+			return candidate as Node
 	return tree.current_scene
+
+func _get_targeting_match_manager(scene_root: Node) -> MatchManager:
+	if scene_root == null:
+		return null
+	var manager = scene_root.get("match_manager")
+	if manager is MatchManager:
+		return manager as MatchManager
+	return null
+
+func _get_pending_target_validator(scene_root: Node) -> Callable:
+	if scene_root == null:
+		return Callable()
+	var targeting_match_manager := _get_targeting_match_manager(scene_root)
+	if targeting_match_manager != null and targeting_match_manager.pending_click_selection_validator.is_valid():
+		return targeting_match_manager.pending_click_selection_validator
+	var pending_validator = scene_root.get("_pending_click_selection_validator")
+	if pending_validator is Callable and (pending_validator as Callable).is_valid():
+		return pending_validator as Callable
+	return Callable()
 
 func _get_pending_target_source(scene_root: Node) -> Card:
 	if scene_root == null:
 		return null
+	var targeting_match_manager := _get_targeting_match_manager(scene_root)
+	if targeting_match_manager != null and targeting_match_manager.pending_click_selection_source is Card:
+		return targeting_match_manager.pending_click_selection_source as Card
 	var pending_source = scene_root.get("_pending_click_selection_source")
 	if pending_source is Card:
 		return pending_source as Card
@@ -1271,9 +1362,9 @@ func _is_card_pending_target(card: Card) -> bool:
 	if source == card and not _allows_pending_self_target_highlight(source, scene_root):
 		return false
 
-	var pending_validator = scene_root.get("_pending_click_selection_validator")
-	if pending_validator is Callable and (pending_validator as Callable).is_valid():
-		return (pending_validator as Callable).call(card) == true
+	var pending_validator := _get_pending_target_validator(scene_root)
+	if pending_validator.is_valid():
+		return pending_validator.call(card) == true
 
 	if scene_root.get("awaiting_pyre_target") == true:
 		return true
@@ -1306,15 +1397,133 @@ func _is_card_pending_target(card: Card) -> bool:
 func _is_card_pending_selection_source(card: Card) -> bool:
 	if card == null:
 		return false
-	if not is_inside_tree() or is_queued_for_deletion():
-		return false
-	var tree := get_tree()
-	if tree == null:
-		return false
-	var scene_root := tree.current_scene
+	var scene_root := _get_targeting_scene_root()
 	if scene_root == null:
 		return false
-	return scene_root.get("_pending_click_selection_source") == card
+	return _get_pending_target_source(scene_root) == card
+
+func _get_selected_attacker(scene_root: Node) -> Card:
+	if scene_root == null:
+		return null
+	var targeting_match_manager := _get_targeting_match_manager(scene_root)
+	if targeting_match_manager != null and targeting_match_manager.selected_attacker is Card:
+		return targeting_match_manager.selected_attacker as Card
+	var attacker = scene_root.get("selected_attacker")
+	if attacker is Card:
+		return attacker as Card
+	return null
+
+func _get_selected_interceptor(scene_root: Node) -> Card:
+	if scene_root == null:
+		return null
+	var targeting_match_manager := _get_targeting_match_manager(scene_root)
+	if targeting_match_manager != null and targeting_match_manager.selected_interceptor is Card:
+		return targeting_match_manager.selected_interceptor as Card
+	var interceptor = scene_root.get("selected_interceptor")
+	if interceptor is Card:
+		return interceptor as Card
+	return null
+
+func _get_pending_attack_target(scene_root: Node):
+	if scene_root == null:
+		return null
+	var targeting_match_manager := _get_targeting_match_manager(scene_root)
+	if targeting_match_manager != null:
+		return targeting_match_manager.pending_attack_target
+	return scene_root.get("pending_attack_target")
+
+func _get_declared_attack_partner(scene_root: Node, attacker: Card) -> Card:
+	if scene_root == null or attacker == null or not scene_root.has_method("_get_declared_attack_partner"):
+		return null
+	var partner = scene_root.call("_get_declared_attack_partner", attacker)
+	if partner is Card:
+		return partner as Card
+	return null
+
+func _is_card_selected_attacker(card: Card) -> bool:
+	if card == null:
+		return false
+	var scene_root := _get_targeting_scene_root()
+	if scene_root == null:
+		return false
+	return _get_selected_attacker(scene_root) == card
+
+func _is_card_selected_interceptor(card: Card) -> bool:
+	if card == null:
+		return false
+	var scene_root := _get_targeting_scene_root()
+	if scene_root == null:
+		return false
+	return _get_selected_interceptor(scene_root) == card
+
+func _is_card_pending_attack_target(card: Card) -> bool:
+	if card == null:
+		return false
+	var scene_root := _get_targeting_scene_root()
+	if scene_root == null:
+		return false
+	var pending_target = _get_pending_attack_target(scene_root)
+	return pending_target is Card and pending_target == card
+
+func _is_card_attack_candidate(card: Card) -> bool:
+	if card == null or game_manager == null:
+		return false
+	var scene_root := _get_targeting_scene_root()
+	if scene_root == null:
+		return false
+	if _get_pending_attack_target(scene_root) != null:
+		return false
+	var attacker := _get_selected_attacker(scene_root)
+	if attacker == null or attacker == card or card.get_controller() == attacker.get_controller():
+		return false
+	return (card.card_type == Card.CardType.CREATURE or card.card_type == Card.CardType.STRUCTURE) \
+		and game_manager.can_cards_engage_each_other(attacker, card)
+
+func _can_selected_attacker_hit_followers(scene_root: Node) -> bool:
+	if scene_root == null or game_manager == null or owning_player == null:
+		return false
+	if _get_pending_attack_target(scene_root) != null:
+		return false
+	var attacker := _get_selected_attacker(scene_root)
+	if attacker == null or attacker.get_controller() == owning_player:
+		return false
+	var allied_attackers: Array = []
+	var united_front_partner := _get_declared_attack_partner(scene_root, attacker)
+	if united_front_partner != null:
+		allied_attackers.append(united_front_partner)
+	return not game_manager.is_followers_attack_blocked_by_active_structure(attacker, owning_player, allied_attackers)
+
+func _is_god_pending_followers_attack(card: Card) -> bool:
+	if card == null or not card.is_god or owning_player == null:
+		return false
+	if zone == null or zone.zone_type != Zone.ZoneType.GOD_SLOT:
+		return false
+	var scene_root := _get_targeting_scene_root()
+	if scene_root == null:
+		return false
+	if _get_selected_interceptor(scene_root) != null:
+		return false
+	var pending_target = _get_pending_attack_target(scene_root)
+	return pending_target is Player and pending_target == owning_player
+
+func _is_god_attack_candidate(card: Card) -> bool:
+	if card == null or not card.is_god:
+		return false
+	if zone == null or zone.zone_type != Zone.ZoneType.GOD_SLOT:
+		return false
+	var scene_root := _get_targeting_scene_root()
+	if scene_root == null:
+		return false
+	return _can_selected_attacker_hit_followers(scene_root)
+
+func _is_card_pending_intercepting_followers_attack(card: Card) -> bool:
+	if card == null:
+		return false
+	var scene_root := _get_targeting_scene_root()
+	if scene_root == null:
+		return false
+	var pending_target = _get_pending_attack_target(scene_root)
+	return pending_target is Player and _get_selected_interceptor(scene_root) == card
 
 func _is_card_waiting_on_priority(card: Card) -> bool:
 	if card == null or game_manager == null:
@@ -1540,9 +1749,10 @@ func _refresh_display() -> void:
 			_add_power_lock_overlay(fd_overlay, card)
 			if card.get_controller() == face_down_viewer and card.is_prepared and card.is_magical_card():
 				_add_speed_badge(fd_overlay, card)
-			if _is_card_attacking_on_stack(card) or _is_card_intercepting_on_stack(card):
+				_add_prepared_magical_mana_badge(fd_overlay, card)
+			if _is_card_attacking_on_stack(card) or _is_card_intercepting_on_stack(card) or _is_card_selected_attacker(card) or _is_card_selected_interceptor(card):
 				_add_attack_aura(fd_overlay)
-			if _is_card_targeted_on_stack(card) or _is_card_pending_target(card):
+			if _is_card_targeted_on_stack(card) or _is_card_pending_target(card) or _is_card_pending_attack_target(card) or _is_card_attack_candidate(card):
 				_add_target_aura(fd_overlay)
 				_add_stack_target_indicator(fd_overlay)
 			var _fd_is_def := card.card_type == Card.CardType.CREATURE and card.creature_mode == Card.CreatureMode.DEFENSIVE
@@ -1567,13 +1777,13 @@ func _refresh_display() -> void:
 				god_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				god_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 				add_child(god_overlay)
-				if _is_card_attacking_on_stack(card) or _is_card_intercepting_on_stack(card):
+				if _is_card_attacking_on_stack(card) or _is_card_intercepting_on_stack(card) or _is_card_selected_attacker(card) or _is_card_selected_interceptor(card):
 					_add_attack_aura(god_overlay)
 				if _should_show_playing_aura(card):
 					_add_playing_aura(god_overlay)
 				if _is_card_usable_for_priority(card):
 					_add_priority_response_aura(god_overlay)
-				if _is_card_targeted_on_stack(card) or _is_card_pending_target(card):
+				if _is_card_targeted_on_stack(card) or _is_card_pending_target(card) or _is_card_pending_attack_target(card) or _is_card_attack_candidate(card):
 					_add_target_aura(god_overlay)
 					_add_stack_target_indicator(god_overlay)
 
@@ -1584,7 +1794,7 @@ func _refresh_display() -> void:
 				art.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 				art.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				god_overlay.add_child(art)
-				if _is_god_targeted_by_followers_attack(card):
+				if _is_god_targeted_by_followers_attack(card) or _is_god_pending_followers_attack(card) or _is_god_attack_candidate(card):
 					_add_followers_attack_target_tint(god_overlay)
 
 				# VBoxContainer fills overlay via anchors; spacer pushes label to correct edge
@@ -1715,16 +1925,16 @@ func _refresh_display() -> void:
 		card_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		card_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		add_child(card_overlay)
-		if _is_card_attacking_on_stack(card) or _is_card_intercepting_on_stack(card):
+		if _is_card_attacking_on_stack(card) or _is_card_intercepting_on_stack(card) or _is_card_selected_attacker(card) or _is_card_selected_interceptor(card):
 			_add_attack_aura(card_overlay)
 		if _should_show_playing_aura(card):
 			_add_playing_aura(card_overlay)
 		if _is_card_usable_for_priority(card):
 			_add_priority_response_aura(card_overlay)
-		if _is_card_targeted_on_stack(card) or _is_card_pending_target(card):
+		if _is_card_targeted_on_stack(card) or _is_card_pending_target(card) or _is_card_pending_attack_target(card) or _is_card_attack_candidate(card):
 			_add_target_aura(card_overlay)
 			_add_stack_target_indicator(card_overlay)
-		if _is_card_intercepting_followers_attack(card):
+		if _is_card_intercepting_followers_attack(card) or _is_card_pending_intercepting_followers_attack(card):
 			_add_followers_attack_target_tint(card_overlay)
 
 		# Art background; stealth shows hazed art (own) or cardback (opponent)
@@ -1759,6 +1969,7 @@ func _refresh_display() -> void:
 				art.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				card_overlay.add_child(art)
 		_add_level_badge(card_overlay, card, Control.PRESET_TOP_LEFT, 6, 6, 54, 24)
+		_add_prepared_magical_mana_badge(card_overlay, card)
 
 		_add_sleep_affordance(card_overlay, card)
 		var board_viewer := _get_viewer_player()
@@ -2038,6 +2249,12 @@ func _show_ability_popup() -> void:
 	if scene_root == null:
 		return
 
+	var popup_root := Control.new()
+	popup_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	popup_root.top_level = true
+	popup_root.z_as_relative = false
+	popup_root.z_index = POPUP_Z_INDEX
+
 	var popup := PanelContainer.new()
 	var pstyle := StyleBoxFlat.new()
 	pstyle.bg_color = Color(0.08, 0.08, 0.14, 0.96)
@@ -2050,9 +2267,6 @@ func _show_ability_popup() -> void:
 	pstyle.border_color = Color(0.5, 0.5, 0.75)
 	popup.add_theme_stylebox_override("panel", pstyle)
 	popup.mouse_filter = Control.MOUSE_FILTER_STOP
-	popup.top_level = true
-	popup.z_as_relative = false
-	popup.z_index = POPUP_Z_INDEX
 	popup.mouse_exited.connect(func() -> void:
 		if not _pinned:
 			_schedule_hide()
@@ -2065,6 +2279,7 @@ func _show_ability_popup() -> void:
 	var equipment_lines_shared: Array[String] = []
 	var binding_lines_shared: Array[String] = []
 	var power_cost_lines_shared: Array[String] = []
+	var cost_lines_shared: Array[String] = []
 	if not is_hidden_card_shared:
 		if card.card_type == Card.CardType.CREATURE:
 			effect_lines_shared = card.get_effect_summary_lines()
@@ -2097,6 +2312,8 @@ func _show_ability_popup() -> void:
 			effect_lines_shared = card.get_effect_summary_lines()
 		if card is PowerCard:
 			power_cost_lines_shared = _get_power_hover_cost_lines(card as PowerCard)
+		elif card.is_prepared and card.is_magical_card():
+			cost_lines_shared = _get_prepared_magical_hover_cost_lines(card)
 
 	popup.add_child(CardDetailContentBuilder.build_board_popup_body(
 		card,
@@ -2107,25 +2324,58 @@ func _show_ability_popup() -> void:
 			"effect_lines": effect_lines_shared,
 			"equipment_lines": equipment_lines_shared,
 			"binding_lines": binding_lines_shared,
+			"cost_lines": cost_lines_shared,
 			"power_cost_lines": power_cost_lines_shared,
 			"game_manager": game_manager
 		}
 	))
 
-	_popup = popup
-	scene_root.add_child(popup)
-	popup.move_to_front()
+	popup_root.add_child(popup)
+
+	var keywords_panel: Control = null
+	if not is_hidden_card_shared:
+		var keywords := CardDetailContentBuilder.extract_card_keywords(card)
+		if not keywords.is_empty():
+			keywords_panel = CardDetailContentBuilder.build_keywords_panel(keywords)
+			popup_root.add_child(keywords_panel)
+
+	_popup = popup_root
+	scene_root.add_child(popup_root)
+	popup_root.move_to_front()
 
 	await get_tree().process_frame
-	if not is_instance_valid(popup):
+	if not is_instance_valid(popup_root) or not is_instance_valid(popup):
 		return
 	var popup_vp_size_shared := get_viewport_rect().size
+	var popup_size := popup.get_combined_minimum_size()
+	popup.size = popup_size
+	popup.position = Vector2.ZERO
+
+	var keyword_size := Vector2.ZERO
+	var keywords_on_left := false
+	if keywords_panel != null and is_instance_valid(keywords_panel):
+		keyword_size = keywords_panel.get_combined_minimum_size()
+		var room_on_right := popup_vp_size_shared.x - (global_position.x + popup_size.x) - 4.0
+		var room_on_left := global_position.x - keyword_size.x - KEYWORD_PANEL_GAP - 4.0
+		keywords_on_left = room_on_right < keyword_size.x + KEYWORD_PANEL_GAP and room_on_left > 0.0
+		keywords_panel.position = Vector2.ZERO if keywords_on_left else Vector2(popup_size.x + KEYWORD_PANEL_GAP, 0.0)
+		keywords_panel.size = keyword_size
+		if keywords_on_left:
+			popup.position = Vector2(keyword_size.x + KEYWORD_PANEL_GAP, 0.0)
+
+	var popup_root_size := Vector2(
+		popup_size.x + (keyword_size.x + KEYWORD_PANEL_GAP if keyword_size.x > 0.0 else 0.0),
+		maxf(popup_size.y, keyword_size.y)
+	)
+	popup_root.size = popup_root_size
+
 	var popup_pos_shared := global_position
 	popup_pos_shared.y -= popup.size.y + 6
 	if popup_pos_shared.y < 0:
 		popup_pos_shared.y = global_position.y + size.y + 6
-	popup_pos_shared.x = clamp(popup_pos_shared.x, 4.0, popup_vp_size_shared.x - popup.size.x - 4.0)
-	popup.global_position = popup_pos_shared
+	var desired_x := global_position.x - (keyword_size.x + KEYWORD_PANEL_GAP if keywords_on_left else 0.0)
+	popup_pos_shared.x = clamp(desired_x, 4.0, popup_vp_size_shared.x - popup_root_size.x - 4.0)
+	popup_root.global_position = popup_pos_shared
 
 func _hide_ability_popup() -> void:
 	if _popup and is_instance_valid(_popup):

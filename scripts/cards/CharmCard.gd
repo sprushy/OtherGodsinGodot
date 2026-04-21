@@ -24,8 +24,12 @@ func can_activate_from_hand(game_manager: GameManager, triggering_action: CardAc
 		return false
 	if current_zone != card_owner.hand_zone:
 		return false
-	var turn_owner := game_manager.turn_player if game_manager.turn_player != null else game_manager.current_player
-	if card_owner != turn_owner:
+	var responding_player := game_manager.priority_player
+	if responding_player == null and triggering_action != null:
+		responding_player = triggering_action.initial_priority_player
+	if responding_player == null:
+		responding_player = game_manager.turn_player if game_manager.turn_player != null else game_manager.current_player
+	if card_owner != responding_player:
 		return false
 	if not can_pay_costs(card_owner):
 		return false

@@ -26,6 +26,7 @@ var _drag_ghost_pivot: Vector2 = Vector2.ZERO
 var _drag_target_rotation: float = 0.0
 var _drag_stealth: bool = false
 const _DRAG_PREPARE_OVERLAY_NAME := "DragPrepareOverlay"
+const _FLOATING_GHOST_Z_INDEX := 1300
 const _DRAG_ROT_SPEED: float = 600.0  # degrees per second (90° in 0.15 s)
 var _base_z_index: int = 0
 const _HOVER_PANEL_Z_INDEX := 2000
@@ -624,7 +625,8 @@ func _build_rotation_ghost(from_angle: float) -> Control:
 	if scene_root == null:
 		return null
 	var ghost := duplicate(0) as Control
-	ghost.z_index = 100
+	ghost.top_level = true
+	ghost.z_index = _FLOATING_GHOST_Z_INDEX
 	ghost.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	ghost.modulate.a = 1.0
 	ghost.scale = Vector2(1.0, 1.0)
@@ -644,6 +646,7 @@ func _build_rotation_ghost(from_angle: float) -> Control:
 	# only resolves correctly once the node is in the scene tree.
 	var card_global_pos := global_position
 	scene_root.add_child(ghost)
+	ghost.move_to_front()
 	ghost.global_position = card_global_pos
 	return ghost
 
@@ -752,11 +755,13 @@ func _start_drag() -> void:
 	scene_root.add_child(self)
 	visible = false
 	scene_root.add_child(_drag_ghost)
+	_drag_ghost.move_to_front()
 	_update_ghost_position()
 
 func _build_drag_ghost() -> Control:
 	var ghost := duplicate(0) as Control
-	ghost.z_index = 100
+	ghost.top_level = true
+	ghost.z_index = _FLOATING_GHOST_Z_INDEX
 	ghost.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	ghost.modulate.a = 1.0
 	ghost.scale = Vector2(1.0, 1.0)

@@ -1135,8 +1135,11 @@ func _on_match_closed(match_id: String, room_id: String, _final_status: String) 
 	var room: LobbyRoom = rooms_by_id[room_id]
 	if room.assigned_match_id != match_id:
 		return
-	room.reset_after_match()
-	_emit_room_updates(room)
+	# A finished match should retire its originating seek. Leaving the room
+	# alive here causes reconnect/login to reclaim the old seek and blocks the
+	# player from joining a fresh one after returning to the menu.
+	_close_room(room_id)
+	_broadcast_room_lists()
 
 func _get_server_version() -> String:
 	return AppReleaseInfoScript.get_current_version()

@@ -3,6 +3,7 @@ extends RefCounted
 
 const _BULLET_SEPARATOR := " | "
 const _BOARD_POPUP_WIDTH := 210.0
+const _KEYWORD_PANEL_WIDTH := 210.0
 
 static func build_visual_hover_body(card: Card, viewer: Player, config: Dictionary = {}) -> Control:
 	var content_width := float(config.get("content_width", 300.0))
@@ -92,13 +93,12 @@ static func build_visual_hover_body(card: Card, viewer: Player, config: Dictiona
 		vbox.add_child(_make_separator(Color(0.3, 0.3, 0.5)))
 
 	if card.ability_text != "":
-		var ability_lbl := _make_label(
-			card.ability_text.replace("[b]", "").replace("[/b]", ""),
+		var ability_lbl := _make_rich_text(
+			BaseCard.apply_keyword_hints(card.ability_text),
 			17,
 			Color(0.9, 0.85, 1.0),
-			true
+			210.0
 		)
-		ability_lbl.custom_minimum_size = Vector2(210.0, 0.0)
 		vbox.add_child(ability_lbl)
 
 	if card.flavor_text != "":
@@ -123,6 +123,7 @@ static func build_board_popup_body(card: Card, viewer: Player, config: Dictionar
 	var effect_lines: Array[String] = _to_string_array(config.get("effect_lines", []))
 	var equipment_lines: Array[String] = _to_string_array(config.get("equipment_lines", []))
 	var binding_lines: Array[String] = _to_string_array(config.get("binding_lines", []))
+	var cost_lines: Array[String] = _to_string_array(config.get("cost_lines", []))
 	var power_cost_lines: Array[String] = _to_string_array(config.get("power_cost_lines", []))
 	var game_manager = config.get("game_manager", null)
 
@@ -284,6 +285,9 @@ static func build_board_popup_body(card: Card, viewer: Player, config: Dictionar
 			Color(0.9, 0.85, 1.0)
 		))
 
+	if cost_lines.size() > 0 and not is_hidden_card:
+		vbox.add_child(_make_label("\n".join(cost_lines), 12, Color(0.78, 0.9, 1.0), true))
+
 	if power_cost_lines.size() > 0 and not is_hidden_card:
 		vbox.add_child(_make_label("\n".join(power_cost_lines), 12, Color(1.0, 0.84, 0.62), true))
 
@@ -295,6 +299,75 @@ static func build_board_popup_body(card: Card, viewer: Player, config: Dictionar
 		vbox.add_child(_make_label(card.flavor_text, 13, Color(0.55, 0.55, 0.55), true))
 
 	return vbox
+
+static func extract_card_keywords(card: Card) -> Array[String]:
+	var found: Array[String] = []
+	if card == null or card.ability_text == "":
+		return found
+	var regex := RegEx.new()
+	regex.compile("\\[b\\](.*?)\\[/b\\]")
+	for match in regex.search_all(card.ability_text):
+		var keyword := match.get_string(1)
+		if keyword in BaseCard.KEYWORD_HINTS and keyword not in found:
+			found.append(keyword)
+	return found
+
+static func build_keywords_panel(keywords: Array[String]) -> Control:
+	var panel := PanelContainer.new()
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.custom_minimum_size = Vector2(_KEYWORD_PANEL_WIDTH, 0.0)
+	panel.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.04, 0.04, 0.10, 0.96)
+	style.border_color = Color(0.42, 0.58, 0.88)
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		style.set_border_width(side, 1)
+	style.corner_radius_top_left = 5
+	style.corner_radius_top_right = 5
+	style.corner_radius_bottom_left = 5
+	style.corner_radius_bottom_right = 5
+	style.content_margin_left = 10
+	style.content_margin_right = 10
+	style.content_margin_top = 8
+	style.content_margin_bottom = 8
+	panel.add_theme_stylebox_override("panel", style)
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 10)
+	vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_child(vbox)
+
+	for i in keywords.size():
+		var keyword := keywords[i]
+		var keyword_box := VBoxContainer.new()
+		keyword_box.add_theme_constant_override("separation", 3)
+		keyword_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		vbox.add_child(keyword_box)
+
+		var name_lbl := Label.new()
+		name_lbl.text = keyword
+		name_lbl.add_theme_font_size_override("font_size", 13)
+		name_lbl.add_theme_color_override("font_color", Color(0.95, 0.88, 0.5))
+		name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		keyword_box.add_child(name_lbl)
+
+		var desc_lbl := Label.new()
+		desc_lbl.text = BaseCard.KEYWORD_HINTS[keyword]
+		desc_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		desc_lbl.add_theme_font_size_override("font_size", 14)
+		desc_lbl.add_theme_color_override("font_color", Color(0.72, 0.72, 0.72))
+		desc_lbl.custom_minimum_size = Vector2(_KEYWORD_PANEL_WIDTH - 24.0, 0.0)
+		desc_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		keyword_box.add_child(desc_lbl)
+
+		if i < keywords.size() - 1:
+			var sep := HSeparator.new()
+			sep.add_theme_color_override("color", Color(0.2, 0.25, 0.35))
+			sep.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			vbox.add_child(sep)
+
+	return panel
 
 static func _build_board_creature_stats_text(card: Card) -> String:
 	var stat_parts: Array[String] = []
@@ -356,7 +429,8 @@ static func _make_rich_text(
 	rtl.add_theme_font_size_override("normal_font_size", font_size)
 	rtl.add_theme_font_size_override("bold_font_size", font_size)
 	rtl.add_theme_color_override("default_color", font_color)
-	rtl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# Keyword hints in BBCode need mouse interaction so hover tooltips can appear.
+	rtl.mouse_filter = Control.MOUSE_FILTER_STOP if text.contains("[hint=") else Control.MOUSE_FILTER_IGNORE
 	if min_width > 0.0:
 		rtl.custom_minimum_size = Vector2(min_width, 0.0)
 	return rtl

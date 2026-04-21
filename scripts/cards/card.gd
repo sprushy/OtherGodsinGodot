@@ -372,7 +372,14 @@ func is_silenced() -> bool:
 	return is_muted and mute_turns_remaining < 0
 
 func abilities_suppressed() -> bool:
-	return is_enslaved() or is_petrified() or is_muted or has_status_effect(ABILITY_NEGATED_STATUS)
+	return is_enslaved() \
+		or is_petrified() \
+		or is_muted \
+		or has_status_effect(ABILITY_NEGATED_STATUS) \
+		or _abilities_disabled_by_hidden_state()
+
+func _abilities_disabled_by_hidden_state() -> bool:
+	return card_type == CardType.CREATURE and is_stealth
 
 func get_controller_passive_cards() -> Array[Card]:
 	var passive_cards: Array[Card] = []
@@ -392,6 +399,8 @@ func get_controller_passive_cards() -> Array[Card]:
 
 func _append_unique_passive_card(passive_cards: Array[Card], seen_cards: Dictionary, candidate: Card) -> void:
 	if candidate == null:
+		return
+	if candidate.card_type == CardType.CREATURE and candidate.is_stealth:
 		return
 	var candidate_id := candidate.get_instance_id()
 	if seen_cards.has(candidate_id):
