@@ -1200,7 +1200,7 @@ func _resolve_wheel_of_fire_turn_start_prompt(pay_cost: bool) -> void:
 	if card == null or game_input == null:
 		update_ui()
 		return
-	game_input.submit_action({
+	_submit_prompt_choice_command({
 		"type": "wheel_of_fire_turn_start_choice",
 		"source_uid": card.uid,
 		"pay_cost": pay_cost,
@@ -5084,13 +5084,26 @@ func _hide_skoll_prompt() -> void:
 func _on_sun_hunt_button_pressed() -> void:
 	if _game_finished:
 		return
-	if not _maybe_prompt_skoll_on_turn_start():
+	if game_manager == null or not game_manager.is_player_in_upkeep_window(game_manager.current_player):
+		action_label.text = "Upkeep has already been resolved."
+		update_ui()
+		hide_turn_choice()
+		return
+	if _skoll_prompt_panel != null or _pending_skoll_summon != null:
+		action_label.text = "Finish resolving Sun Hunt or cancel it before choosing another upkeep option."
+		return
+	var available_skolls := _get_available_skoll_upkeep_cards()
+	if available_skolls.is_empty():
 		_refresh_turn_choice_options()
 		action_label.text = "Sun Hunt is not available right now."
 		update_ui()
 		return
+	_hide_skoll_prompt()
+	_pending_skoll_prompts.clear()
+	for skoll in available_skolls:
+		_pending_skoll_prompts.append(skoll)
 	_lock_turn_choice_for_sun_hunt()
-	update_ui()
+	_show_next_skoll_prompt()
 
 func _submit_tiamat_upkeep_choice(chosen_card: Card) -> void:
 	if chosen_card == null:
@@ -15746,17 +15759,62 @@ func _on_absence_cancel_pressed() -> void:
 func _hide_aphrodite_prompt() -> void:
 	var panel := get_node_or_null("AphroditePromptPanel")
 	if panel:
+		panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		panel.queue_free()
+
+func _begin_aphrodite_target_selection(god: AphroditeAreia) -> void:
+	if god == null or game_manager == null:
+		awaiting_god_ability_target = false
+		god_ability_source = null
+		action_label.text = "Violent Delights has no valid targets right now."
+		update_ui()
+		return
+	var targets: Array[Card] = god.get_valid_enslave_targets(game_manager)
+	if targets.is_empty():
+		awaiting_god_ability_target = false
+		god_ability_source = null
+		action_label.text = god.get_activation_failure_reason(game_manager)
+		update_ui()
+		return
+	awaiting_god_ability_target = false
+	god_ability_source = null
+	var choose_target := func(chosen_target: Card) -> void:
+		if chosen_target == null:
+			action_label.text = "Violent Delights cancelled."
+			update_ui()
+			return
+		if _is_networked_client:
+			var god_uid: String = god.get("uid") if "uid" in god else ""
+			var target_uid: String = chosen_target.get("uid") if chosen_target != null and "uid" in chosen_target else ""
+			game_input.submit_action({type = "god_ability", god_uid = god_uid, target_uid = target_uid})
+			action_label.text = god.card_name + " is targeting " + _get_target_label(chosen_target, game_manager.get_feedback_viewer(), chosen_target.card_name) + "."
+			update_ui()
+			return
+		_queue_targeted_ability_action(
+			god,
+			chosen_target,
+			func() -> void:
+				god.activate(game_manager, chosen_target),
+			god.card_name + " is targeting " + _get_target_label(chosen_target, game_manager.get_feedback_viewer(), chosen_target.card_name) + "."
+		)
+	var cancel_target_selection := func() -> void:
+		action_label.text = "Violent Delights cancelled."
+		update_ui()
+	_show_card_selection_overlay(
+		"Choose a creature for Violent Delights",
+		targets,
+		choose_target,
+		cancel_target_selection
+	)
+	action_label.text = god.card_name + " - Violent Delights: choose an enemy creature to enslave."
+	update_ui()
 
 func _on_aphrodite_confirm_pressed(god: AphroditeAreia) -> void:
 	_hide_aphrodite_prompt()
 	if _submit_prompt_choice_command({"type": "aphrodite_enslave_choice", "source_uid": god.uid, "confirm": true}):
 		update_ui()
 		return
-	awaiting_god_ability_target = true
-	god_ability_source = god
-	action_label.text = god.card_name + " - Violent Delights: click an enemy creature to enslave."
-	update_ui()
+	_begin_aphrodite_target_selection(god)
 
 func _on_aphrodite_decline_pressed() -> void:
 	_hide_aphrodite_prompt()
@@ -15788,7 +15846,7 @@ func _show_book_of_life_prompt(spell: BookOfLife) -> void:
 		null,
 		"Book of Life resolves.",
 		func() -> void:
-			_begin_book_of_life_resolution(spell)
+			_queue_book_of_life_resolution(spell)
 	)
 
 func _begin_book_of_life_resolution(spell: BookOfLife) -> void:
@@ -15811,6 +15869,20 @@ func _begin_book_of_life_resolution(spell: BookOfLife) -> void:
 		on_choose_creature,
 		on_cancel_creature
 	)
+
+func _queue_book_of_life_resolution(spell: BookOfLife) -> void:
+	if spell == null:
+		update_ui()
+		return
+	if network_manager != null and network_manager.is_server and not _is_player_local(spell.card_owner):
+		if _executing_stack_action and not _stack_resolution_paused:
+			_pause_stack_resolution(spell.card_owner)
+		var player_idx := game_manager.players.find(spell.card_owner)
+		match_manager.request_ui_interaction.emit(player_idx, "book_of_life", {
+			"source_uid": spell.uid,
+		})
+		return
+	_begin_book_of_life_resolution(spell)
 
 func _resolve_book_of_life(chosen: Card) -> void:
 	var spell := _pending_book_of_life_spell
@@ -16084,7 +16156,7 @@ func _initiate_blot_with_sacrifice(spell, sacrifice_target: Card) -> void:
 		action.display_zone = preferred_display_zone
 		action.resolution_text = "Blot Sacrifice resolves."
 		action.resolve_callback = func() -> void:
-			_begin_blot_resolution_prompt(spell, sacrifice_target, preferred_display_zone)
+			_queue_blot_resolution_prompt(spell, sacrifice_target, preferred_display_zone)
 		_assign_stack_display_zone(action)
 		game_manager.push_to_stack(action)
 		selected_card = null
@@ -16118,6 +16190,21 @@ func _begin_blot_resolution_prompt(spell, sacrifice_target: Card, display_zone: 
 	game_manager.note_player_feedback("Blot Sacrifice resolved. Choose creatures to summon.")
 	_pause_stack_resolution(spell.card_owner)
 	_show_blot_creature_prompt()
+
+func _queue_blot_resolution_prompt(spell, sacrifice_target: Card, display_zone: Zone = null) -> void:
+	if spell == null:
+		update_ui()
+		return
+	if network_manager != null and network_manager.is_server and not _is_player_local(spell.card_owner):
+		if _executing_stack_action and not _stack_resolution_paused:
+			_pause_stack_resolution(spell.card_owner)
+		var player_idx := game_manager.players.find(spell.card_owner)
+		match_manager.request_ui_interaction.emit(player_idx, "blot_sacrifice", {
+			"source_uid": spell.uid,
+			"sacrifice_target_uid": sacrifice_target.uid if sacrifice_target != null else "",
+		})
+		return
+	_begin_blot_resolution_prompt(spell, sacrifice_target, display_zone)
 
 func _show_blot_sacrifice_prompt(spell) -> void:
 	_hide_blot_sacrifice_prompt()
@@ -16815,12 +16902,8 @@ func _on_match_move_validated(move: Dictionary) -> void:
 			var god := game_manager.get_card_by_uid(str(move.get("source_uid", ""))) as AphroditeAreia
 			var confirmed := bool(move.get("confirm", false))
 			if confirmed:
-				awaiting_god_ability_target = true
-				god_ability_source = god
-				if god != null:
-					action_label.text = god.card_name + " - Violent Delights: click an enemy creature to enslave."
-				else:
-					action_label.text = "Violent Delights: click an enemy creature to enslave."
+				if not _is_networked_client:
+					_begin_aphrodite_target_selection(god)
 			else:
 				awaiting_god_ability_target = false
 				god_ability_source = null
@@ -16900,7 +16983,30 @@ func _on_match_move_validated(move: Dictionary) -> void:
 func _submit_prompt_choice_command(command: Dictionary) -> bool:
 	if game_input == null:
 		return false
-	return bool(game_input.submit_action(command))
+	var submitted := bool(game_input.submit_action(command))
+	if submitted:
+		_apply_client_prompt_submission_followup(command)
+	return submitted
+
+func _apply_client_prompt_submission_followup(command: Dictionary) -> void:
+	if not _is_networked_client or game_manager == null:
+		return
+	match str(command.get("type", "")):
+		"aphrodite_enslave_choice":
+			if not bool(command.get("confirm", false)):
+				return
+			var god := game_manager.get_card_by_uid(str(command.get("source_uid", ""))) as AphroditeAreia
+			if god != null:
+				_begin_aphrodite_target_selection(god)
+		"wolf_adolescent_maturation_choice":
+			_consume_current_wolf_adolescent_prompt()
+			call_deferred("_show_next_wolf_adolescent_maturation_prompt")
+		"humbaba_augury_choice":
+			_consume_current_humbaba_prompt()
+			call_deferred("_show_next_humbaba_augury_prompt")
+		"wheel_of_fire_turn_start_choice":
+			_consume_current_wheel_of_fire_prompt()
+			call_deferred("_show_next_wheel_of_fire_turn_start_prompt")
 
 func _submit_network_command(command: Dictionary) -> bool:
 	# Compatibility shim for older prompt code paths; current flow uses
@@ -17012,6 +17118,15 @@ func _on_match_ui_interaction(player_index: int, type: String, data: Dictionary)
 			var god := game_manager.get_card_by_uid(data.get("source_uid", "")) as AphroditeAreia
 			if god != null:
 				_show_aphrodite_prompt(god)
+		"book_of_life":
+			var spell := game_manager.get_card_by_uid(data.get("source_uid", "")) as BookOfLife
+			if spell != null:
+				_begin_book_of_life_resolution(spell)
+		"blot_sacrifice":
+			var spell := game_manager.get_card_by_uid(data.get("source_uid", ""))
+			var sacrifice_target := game_manager.get_card_by_uid(data.get("sacrifice_target_uid", ""))
+			if spell != null:
+				_begin_blot_resolution_prompt(spell, sacrifice_target)
 		"gawain_healing_hands":
 			var card := game_manager.get_card_by_uid(data.get("source_uid", "")) as Gawain
 			var target := game_manager.get_card_by_uid(data.get("target_uid", ""))
@@ -18013,6 +18128,15 @@ func _apply_ui_interaction(event_data: Dictionary) -> void:
 			var god := game_manager.get_card_by_uid(payload.get("source_uid", "")) as AphroditeAreia
 			if god != null:
 				_show_aphrodite_prompt(god)
+		"book_of_life":
+			var spell := game_manager.get_card_by_uid(payload.get("source_uid", "")) as BookOfLife
+			if spell != null:
+				_begin_book_of_life_resolution(spell)
+		"blot_sacrifice":
+			var spell := game_manager.get_card_by_uid(payload.get("source_uid", ""))
+			var sacrifice_target := game_manager.get_card_by_uid(payload.get("sacrifice_target_uid", ""))
+			if spell != null:
+				_begin_blot_resolution_prompt(spell, sacrifice_target)
 		"gawain_healing_hands":
 			var card := game_manager.get_card_by_uid(payload.get("source_uid", "")) as Gawain
 			var target := game_manager.get_card_by_uid(payload.get("target_uid", ""))

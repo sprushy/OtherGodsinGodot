@@ -34,8 +34,8 @@ try {
     Start-Sleep -Seconds 2
     Remove-Item -LiteralPath $Zip -Force -ErrorAction SilentlyContinue
 
-    & curl.exe -L $asset.browser_download_url -o $Zip
-    if ($LASTEXITCODE -ne 0) { throw "curl failed: $LASTEXITCODE" }
+    $ProgressPreference = 'SilentlyContinue'
+    Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $Zip -UseBasicParsing
 
     Expand-Archive -LiteralPath $Zip -DestinationPath $Root -Force
     if ((Test-Path -LiteralPath $LegacyExe) -and -not (Test-Path -LiteralPath $PreferredExe)) {
