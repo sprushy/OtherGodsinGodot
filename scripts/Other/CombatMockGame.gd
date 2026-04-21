@@ -2132,6 +2132,10 @@ func start_game(
 	)
 	game_input = match_client.get_game_input()
 	_is_networked_client = match_client.is_networked_client()
+	if match_manager != null:
+		# Real hosted matches use the server as the source of truth for priority
+		# resolution, whether this scene is the host or a remote client.
+		match_manager.authoritative_match_flow_enabled = _is_networked_client or uses_authoritative_match_flow()
 	
 	if match_client.receives_network_events():
 		match_client.game_event_received.connect(_apply_network_event)
@@ -13406,6 +13410,8 @@ func resolve_pending_equip_action(interceptor: Card) -> void:
 	update_ui()
 
 func _offer_priority() -> void:
+	if _is_networked_client:
+		return
 	if match_manager != null and match_manager.uses_authoritative_priority_flow():
 		match_manager.advance_priority()
 		return
@@ -13593,18 +13599,25 @@ func _show_priority_prompt(player: Player) -> void:
 	pass_btn.pressed.connect(_on_priority_pass_pressed)
 	vbox.add_child(pass_btn)
 
+	var interactive_response_count := 0
 	for response_card in game_manager.get_priority_responses(player):
 		if response_card == null:
 			continue
 		var response: Card = response_card as Card
 		if response == null:
 			continue
+		interactive_response_count += 1
 		var btn := Button.new()
 		btn.text = "Use " + response.card_name
 		btn.pressed.connect(func() -> void:
 			_on_priority_response_chosen(response)
 		)
 		vbox.add_child(btn)
+
+	if auto_priority and interactive_response_count == 0:
+		panel.hide()
+		call_deferred("_on_priority_pass_pressed")
+		return
 
 	_promote_transient_ui(panel)
 	panel.show()
