@@ -4,7 +4,7 @@ class_name HelBlarDraug
 const GROUNDBOUND_SOURCE := "Groundbound"
 const GROUNDBOUND_EFFECT_TYPE := "hel_blar_draug_groundbound"
 const AERIAL_TYPE := "Aerial"
-const ART_PATH := "res://images/card_art/Hel-BlarDraugEdit.png"
+const ART_PATH := "res://images/card_art/creatures/Hel-BlarDraugEdit.png"
 
 func _init() -> void:
 	super._init()

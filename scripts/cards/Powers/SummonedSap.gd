@@ -4,7 +4,7 @@ class_name SummonedSap
 const UNLOCK_COST := 6
 const PASSIVE_SOURCE := "Summoned Sap"
 const SPEED_DEBUFF_EFFECT_TYPE := "summoned_sap_speed"
-const ART_PATH := "res://scripts/cards/Powers/SummonedSapArt.jpg"
+const ART_PATH := "res://images/card_art/powers/SummonedSapArt.jpg"
 
 func _init() -> void:
 	super._init()

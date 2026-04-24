@@ -1,7 +1,7 @@
 extends CreatureCard
 class_name Pegasus
 
-const ART_PATH := "res://scripts/cards/Gods/PegasusArt.jpg"
+const ART_PATH := "res://images/card_art/creatures/PegasusArt.jpg"
 const STEED_SPEED := 5
 
 func _init() -> void:

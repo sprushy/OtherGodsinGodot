@@ -24,7 +24,7 @@ func _init() -> void:
 	flavor_text = ""
 	ability_text = "Choose a friendly Warrior. It gains +5 STR until the end of its next combat. This turn, if the enchanted Archer destroys an attack target, you may pay 4 graveyard mana to return this to your hand."
 	artist = "Lorinda Tomko"
-	art_path = "res://images/card_art/FifaAIEdit.png"
+	art_path = "res://images/card_art/charms/FifaAIEdit.png"
 
 func get_valid_targets(_game_manager: GameManager) -> Array[Card]:
 	var valid_targets: Array[Card] = []

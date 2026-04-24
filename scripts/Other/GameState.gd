@@ -222,6 +222,8 @@ static func _serialize_action_stack(action_stack: Array, gm: GameManager, viewer
 	for action in action_stack:
 		if action == null or not (action is CardAction):
 			continue
+		if gm != null and action in gm.resolving_stack_actions:
+			continue
 		var serialized := (action as CardAction).to_dict(gm)
 		serialized["resolution_text"] = _serialize_action_resolution_text(action as CardAction, viewer)
 		result.append(serialized)
@@ -311,6 +313,7 @@ static func apply_to_manager(data: Dictionary, gm: GameManager) -> void:
 	gm.prepared_charms.clear()
 	gm.combat_destroy_events_this_turn.clear()
 	gm.action_stack.clear()
+	gm.resolving_stack_actions.clear()
 
 	var players_data: Array = data.get("players", [])
 	for i in mini(players_data.size(), gm.players.size()):

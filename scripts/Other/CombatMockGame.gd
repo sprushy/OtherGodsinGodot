@@ -9,13 +9,13 @@ const NimueScript = preload("res://scripts/cards/Creatures/Nimue.gd")
 const TezcatlipocaBlasphemerScript = preload("res://scripts/cards/Creatures/TezcatlipocaBlasphemer.gd")
 const TheWhiteSerpentScript = preload("res://scripts/cards/Creatures/TheWhiteSerpent.gd")
 const WingedLionScript = preload("res://scripts/cards/Creatures/WingedLion.gd")
-const SacrificeCursorSource = preload("res://images/card_art/BloodySacrificeCursor.png")
-const DevourCursorSource = preload("res://images/card_art/BloodyWolfJawsPGN.png")
+const SacrificeCursorSource = preload("res://images/ui/cursors/BloodySacrificeCursor.png")
+const DevourCursorSource = preload("res://images/ui/cursors/BloodyWolfJawsPGN.png")
 const SilenceCursorSource = preload("res://images/SilenceCursorPGN.png")
-const GiantMasterArchitectCursorSource = preload("res://images/card_art/GiantMasterArchitectHammerCursor.png")
-const HermesCursorSource = preload("res://images/card_art/SpeedHermesCursor.png")
-const GuanYuCursorSource = preload("res://images/card_art/GuanYuCursor.png")
-const AncientPyreCursorSource = preload("res://images/card_art/PyreCursor.png")
+const GiantMasterArchitectCursorSource = preload("res://images/ui/cursors/GiantMasterArchitectHammerCursor.png")
+const HermesCursorSource = preload("res://images/ui/cursors/SpeedHermesCursor.png")
+const GuanYuCursorSource = preload("res://images/ui/cursors/GuanYuCursor.png")
+const AncientPyreCursorSource = preload("res://images/ui/cursors/PyreCursor.png")
 const CardBackTexture = preload("res://images/cardbackAI.png")
 const PromptRouterScript = preload("res://scripts/server/PromptRouter.gd")
 const HeadlessMatchHostScript = preload("res://scripts/server/HeadlessMatchHost.gd")
@@ -150,6 +150,10 @@ const FAN_ARC_HEIGHT  := 22.0   # px the arc dips at centre
 const FAN_CARD_SPACING := 130   # px between card pivot centres
 const STACK_ACTION_LINGER_SECONDS := 0.66
 const POST_GAME_RETURN_DELAY_SECONDS := 1.6
+const PRIORITY_IDLE_AUTO_PASS_MSEC := 5000
+const MOVE_TIMEOUT_MSEC := 90000
+const MOVE_TIMEOUT_WARNING_MSEC := 30000
+const MOVE_TIMEOUT_CRITICAL_WARNING_MSEC := 10000
 
 @onready var choice_container = $MainHBox/LeftPanel/ChoiceContainer
 @onready var choice_intro_label = $MainHBox/LeftPanel/ChoiceContainer/ChoiceIntroLabel
@@ -411,6 +415,16 @@ var _current_match_info: Dictionary = {}
 var _network_upkeep_prompt_turn: int = -1
 var _network_upkeep_prompt_player_index: int = -1
 var _local_match_result_recorded: bool = false
+var _priority_prompt_idle_deadline_msec: int = 0
+var _priority_prompt_timeout_pending: bool = false
+var _move_timer_turn_number: int = -1
+var _move_timer_player_index: int = -1
+var _move_timer_remaining_msec: int = MOVE_TIMEOUT_MSEC
+var _move_timer_active_started_msec: int = 0
+var _move_timer_running: bool = false
+var _move_timer_warning_stage: int = 0
+var _move_timer_timeout_pending: bool = false
+var _move_timer_last_display_seconds: int = -1
 
 const TRANSIENT_UI_Z_INDEX := 1000
 const HOVER_PREVIEW_Z_INDEX := TRANSIENT_UI_Z_INDEX + 50
@@ -1847,9 +1861,228 @@ func _update_center_action_panel_layout() -> void:
 func _process(_delta: float) -> void:
 	if not is_visible_in_tree():
 		return
+	_sync_turn_activity_timers()
 	_sync_sacrifice_cursor()
 	_capture_action_log_message()
 	_update_hand_hover_preview()
+
+func _now_msec() -> int:
+	return Time.get_ticks_msec()
+
+func _reset_turn_activity_timers() -> void:
+	_priority_prompt_idle_deadline_msec = 0
+	_priority_prompt_timeout_pending = false
+	_move_timer_turn_number = -1
+	_move_timer_player_index = -1
+	_move_timer_remaining_msec = MOVE_TIMEOUT_MSEC
+	_move_timer_active_started_msec = 0
+	_move_timer_running = false
+	_move_timer_warning_stage = 0
+	_move_timer_timeout_pending = false
+	_move_timer_last_display_seconds = -1
+
+func _note_priority_prompt_input_activity(event: InputEvent) -> void:
+	if not auto_priority or not _is_priority_prompt_visible():
+		return
+	if event is InputEventMouseButton and event.pressed:
+		_arm_priority_prompt_timeout()
+		return
+	if event is InputEventScreenTouch and event.pressed:
+		_arm_priority_prompt_timeout()
+		return
+	if event is InputEventKey:
+		var key_event := event as InputEventKey
+		if key_event.pressed and not key_event.echo:
+			_arm_priority_prompt_timeout()
+
+func _arm_priority_prompt_timeout() -> void:
+	if not auto_priority or not _is_priority_prompt_visible():
+		_priority_prompt_idle_deadline_msec = 0
+		_priority_prompt_timeout_pending = false
+		return
+	_priority_prompt_idle_deadline_msec = _now_msec() + PRIORITY_IDLE_AUTO_PASS_MSEC
+	_priority_prompt_timeout_pending = false
+
+func _sync_priority_prompt_timeout() -> void:
+	if _game_finished or not auto_priority or not _is_priority_prompt_visible():
+		_priority_prompt_idle_deadline_msec = 0
+		_priority_prompt_timeout_pending = false
+		return
+	if _priority_prompt_timeout_pending:
+		return
+	if _priority_prompt_idle_deadline_msec <= 0:
+		_arm_priority_prompt_timeout()
+		return
+	if _now_msec() < _priority_prompt_idle_deadline_msec:
+		return
+	_priority_prompt_timeout_pending = true
+	action_label.text = "Priority timed out. Passing."
+	update_ui()
+	call_deferred("_on_priority_pass_pressed")
+
+func _get_local_move_timer_context() -> Dictionary:
+	if game_manager == null or _game_finished:
+		return {}
+	var current_player := game_manager.current_player
+	if current_player == null or not _is_player_local(current_player):
+		return {}
+	var player_index := game_manager.players.find(current_player)
+	if player_index < 0:
+		return {}
+	return {
+		"turn_number": game_manager.turn_number,
+		"player_index": player_index,
+	}
+
+func _should_run_local_move_timer() -> bool:
+	var context := _get_local_move_timer_context()
+	if context.is_empty():
+		return false
+	if _match_reconnect_waiting or _awaiting_initial_full_state:
+		return false
+	if game_manager == null or game_manager.current_player == null:
+		return false
+	if game_manager.is_player_in_upkeep_window(game_manager.current_player):
+		return false
+	return not _has_unresolved_priority_state()
+
+func _get_move_timer_remaining_msec(now_msec: int = -1) -> int:
+	if _move_timer_turn_number < 0 or _move_timer_player_index < 0:
+		return -1
+	var remaining := _move_timer_remaining_msec
+	if _move_timer_running:
+		var current_now := now_msec if now_msec >= 0 else _now_msec()
+		remaining -= maxi(0, current_now - _move_timer_active_started_msec)
+	return maxi(0, remaining)
+
+func _pause_move_timer(now_msec: int) -> void:
+	if not _move_timer_running:
+		return
+	_move_timer_remaining_msec = _get_move_timer_remaining_msec(now_msec)
+	_move_timer_active_started_msec = 0
+	_move_timer_running = false
+
+func _resume_move_timer(now_msec: int) -> void:
+	if _move_timer_running:
+		return
+	_move_timer_active_started_msec = now_msec
+	_move_timer_running = true
+
+func _reset_local_move_timer_budget(now_msec: int = -1) -> void:
+	var context := _get_local_move_timer_context()
+	if context.is_empty():
+		return
+	var current_now := now_msec if now_msec >= 0 else _now_msec()
+	_move_timer_turn_number = int(context.get("turn_number", -1))
+	_move_timer_player_index = int(context.get("player_index", -1))
+	_move_timer_remaining_msec = MOVE_TIMEOUT_MSEC
+	_move_timer_warning_stage = 0
+	_move_timer_timeout_pending = false
+	_move_timer_last_display_seconds = -1
+	if _should_run_local_move_timer():
+		_move_timer_running = true
+		_move_timer_active_started_msec = current_now
+	else:
+		_move_timer_running = false
+		_move_timer_active_started_msec = 0
+
+func _maybe_warn_about_move_timer(remaining_msec: int) -> void:
+	if not _move_timer_running or remaining_msec < 0:
+		return
+	if remaining_msec <= MOVE_TIMEOUT_CRITICAL_WARNING_MSEC and _move_timer_warning_stage < 2:
+		_move_timer_warning_stage = 2
+		action_label.text = "10 seconds left to act or your turn will end."
+		update_ui()
+		return
+	if remaining_msec <= MOVE_TIMEOUT_WARNING_MSEC and _move_timer_warning_stage < 1:
+		_move_timer_warning_stage = 1
+		action_label.text = "30 seconds left to act."
+		update_ui()
+
+func _format_move_timer_clock(remaining_msec: int) -> String:
+	var total_seconds := int(ceil(float(maxi(0, remaining_msec)) / 1000.0))
+	var minutes := total_seconds / 60
+	var seconds := total_seconds % 60
+	return "%d:%02d" % [minutes, seconds]
+
+func _refresh_turn_label() -> void:
+	if turn_label == null:
+		return
+	if game_manager == null:
+		turn_label.text = ""
+		turn_label.modulate = Color(1, 1, 1, 1)
+		return
+	var current = game_manager.turn_player if game_manager.turn_player != null else game_manager.current_player
+	if current == null or game_manager.current_player == null or game_manager.other_player == null:
+		turn_label.text = "Turn " + str(game_manager.turn_number)
+		turn_label.modulate = Color(1, 1, 1, 1)
+		return
+	turn_label.text = "Turn " + str(game_manager.turn_number) + " - " + current.player_name + "'s Turn"
+	turn_label.modulate = Color(1, 1, 1, 1)
+	var context := _get_local_move_timer_context()
+	if context.is_empty() or game_manager.is_player_in_upkeep_window(game_manager.current_player):
+		return
+	var remaining_msec := _get_move_timer_remaining_msec()
+	if remaining_msec < 0:
+		return
+	turn_label.text += " [" + _format_move_timer_clock(remaining_msec) + "]"
+	if remaining_msec <= MOVE_TIMEOUT_CRITICAL_WARNING_MSEC:
+		turn_label.modulate = Color(1.0, 0.45, 0.45, 1.0)
+	elif remaining_msec <= MOVE_TIMEOUT_WARNING_MSEC:
+		turn_label.modulate = Color(1.0, 0.82, 0.36, 1.0)
+
+func _sync_turn_activity_timers() -> void:
+	_sync_priority_prompt_timeout()
+	var now_msec := _now_msec()
+	var context := _get_local_move_timer_context()
+	if context.is_empty():
+		if _move_timer_running:
+			_pause_move_timer(now_msec)
+		if _move_timer_turn_number != -1 or _move_timer_last_display_seconds != -1:
+			_move_timer_turn_number = -1
+			_move_timer_player_index = -1
+			_move_timer_remaining_msec = MOVE_TIMEOUT_MSEC
+			_move_timer_active_started_msec = 0
+			_move_timer_running = false
+			_move_timer_warning_stage = 0
+			_move_timer_timeout_pending = false
+			_move_timer_last_display_seconds = -1
+			_refresh_turn_label()
+		return
+	var turn_number := int(context.get("turn_number", -1))
+	var player_index := int(context.get("player_index", -1))
+	if turn_number != _move_timer_turn_number or player_index != _move_timer_player_index:
+		_move_timer_turn_number = turn_number
+		_move_timer_player_index = player_index
+		_move_timer_remaining_msec = MOVE_TIMEOUT_MSEC
+		_move_timer_active_started_msec = 0
+		_move_timer_running = false
+		_move_timer_warning_stage = 0
+		_move_timer_timeout_pending = false
+		_move_timer_last_display_seconds = -1
+	if _should_run_local_move_timer():
+		_resume_move_timer(now_msec)
+	else:
+		_pause_move_timer(now_msec)
+	var remaining_msec := _get_move_timer_remaining_msec(now_msec)
+	_maybe_warn_about_move_timer(remaining_msec)
+	var remaining_seconds := int(ceil(float(maxi(0, remaining_msec)) / 1000.0))
+	if remaining_seconds != _move_timer_last_display_seconds:
+		_move_timer_last_display_seconds = remaining_seconds
+		_refresh_turn_label()
+	if _move_timer_running and remaining_msec <= 0 and not _move_timer_timeout_pending:
+		_move_timer_timeout_pending = true
+		_pause_move_timer(now_msec)
+		action_label.text = "Move timer expired. Ending turn."
+		update_ui()
+		call_deferred("_auto_end_turn_after_move_timeout")
+
+func _auto_end_turn_after_move_timeout() -> void:
+	if _game_finished or game_manager == null:
+		return
+	if _get_local_move_timer_context().is_empty():
+		return
+	_on_end_turn_button_pressed()
 
 func _setup_action_log() -> void:
 	if action_label == null:
@@ -2110,6 +2343,7 @@ func start_game(
 	_game_result_presented = false
 	_pending_forfeit_return_to_menu = false
 	_pending_post_game_return_to_menu = false
+	_reset_turn_activity_timers()
 	_hide_game_result_overlay()
 	_local_match_result_recorded = false
 	_current_match_info = match_info.duplicate(true)
@@ -2394,11 +2628,10 @@ func _do_update_ui() -> void:
 	_update_board_zone_extent()
 	var current = game_manager.turn_player if game_manager.turn_player != null else game_manager.current_player
 	if current == null or game_manager.current_player == null or game_manager.other_player == null:
-		if turn_label != null:
-			turn_label.text = "Turn " + str(game_manager.turn_number)
+		_refresh_turn_label()
 		return
 
-	turn_label.text = "Turn " + str(game_manager.turn_number) + " - " + current.player_name + "'s Turn"
+	_refresh_turn_label()
 
 	draw_hand()
 	draw_board()
@@ -7261,6 +7494,37 @@ func _flush_hand_play_priority_events() -> void:
 			if not _pending_hand_play_events.is_empty():
 				call_deferred("_flush_hand_play_priority_events")
 	)
+
+func _prune_stale_deferred_priority_events() -> void:
+	if game_manager == null:
+		_pending_summon_priority_events.clear()
+		_pending_hand_play_events.clear()
+		_deferred_priority_flush_scheduled = false
+		return
+	while not _pending_summon_priority_events.is_empty():
+		var pending_event: Dictionary = _pending_summon_priority_events.front()
+		var pending_card: Card = pending_event.get("card", null)
+		var pending_zone: Zone = pending_event.get("zone", null)
+		if pending_card != null \
+				and pending_zone != null \
+				and pending_card.current_zone == pending_zone \
+				and not pending_card.is_face_down \
+				and not pending_card.is_prepared \
+				and not pending_card.is_stealth:
+			break
+		_pending_summon_priority_events.pop_front()
+	while not _pending_hand_play_events.is_empty():
+		var played_card: Card = _pending_hand_play_events.front()
+		if played_card != null \
+				and played_card.current_zone != null \
+				and _is_in_play_zone(played_card.current_zone) \
+				and not played_card.is_face_down \
+				and not played_card.is_prepared \
+				and not played_card.is_stealth:
+			break
+		_pending_hand_play_events.pop_front()
+	if _pending_summon_priority_events.is_empty() and _pending_hand_play_events.is_empty():
+		_deferred_priority_flush_scheduled = false
 
 func _is_in_play_zone(zone: Zone) -> bool:
 	if zone == null:
@@ -12719,6 +12983,7 @@ func _on_creature_drag_started(card: Card, from_zone: Zone) -> void:
 func _input(event: InputEvent) -> void:
 	if not is_visible_in_tree():
 		return
+	_note_priority_prompt_input_activity(event)
 	if _try_handle_escape_key(event):
 		return
 	if event is InputEventMouseButton:
@@ -12770,26 +13035,86 @@ func _is_intercept_prompt_visible() -> bool:
 	return panel != null and panel.visible
 
 func _has_unresolved_priority_state() -> bool:
+	_prune_stale_deferred_priority_events()
+	var has_deferred_priority_events := not _pending_summon_priority_events.is_empty() \
+		or not _pending_hand_play_events.is_empty()
 	return _is_priority_prompt_visible() \
 		or _is_intercept_prompt_visible() \
 		or _executing_stack_action \
-		or _deferred_priority_flush_scheduled \
-		or not _pending_summon_priority_events.is_empty() \
-		or not _pending_hand_play_events.is_empty() \
+		or has_deferred_priority_events \
 		or (
 			game_manager != null
 			and not _stack_resolution_paused
 			and not game_manager.action_stack.is_empty()
 		)
 
+func _try_resolve_stalled_priority_event() -> bool:
+	if game_manager == null or match_manager == null:
+		return false
+	if _stack_resolution_paused or _executing_stack_action:
+		return false
+	if _is_priority_prompt_visible() or _is_intercept_prompt_visible():
+		return false
+	if game_manager.action_stack.is_empty():
+		return false
+	var top_action: CardAction = game_manager.action_stack.back()
+	if top_action == null or top_action.type != CardAction.Type.EVENT:
+		return false
+	var first_player := game_manager.priority_player
+	if first_player == null:
+		first_player = top_action.initial_priority_player if top_action.initial_priority_player != null else game_manager.get_opponent(top_action.source_player)
+		game_manager.priority_player = first_player
+	var second_player := game_manager.get_opponent(first_player) if first_player != null else null
+	var first_has_responses := first_player != null and not game_manager.get_priority_responses(first_player).is_empty()
+	var second_has_responses := second_player != null and not game_manager.get_priority_responses(second_player).is_empty()
+	if first_has_responses or second_has_responses:
+		return false
+	_execute_top_of_stack()
+	return true
+
+func _describe_unresolved_priority_state() -> String:
+	_prune_stale_deferred_priority_events()
+	if _is_priority_prompt_visible():
+		return "priority response"
+	if _is_intercept_prompt_visible():
+		return "interception choice"
+	if _executing_stack_action:
+		return "stack resolution"
+	if not _pending_summon_priority_events.is_empty():
+		return "summon priority"
+	if not _pending_hand_play_events.is_empty():
+		return "hand-play priority"
+	if game_manager == null or _stack_resolution_paused or game_manager.action_stack.is_empty():
+		return "stack action"
+	var top_action: CardAction = game_manager.action_stack.back()
+	if top_action == null:
+		return "stack action"
+	match top_action.type:
+		CardAction.Type.EVENT:
+			var event_name := str(top_action.event_name).strip_edges()
+			return event_name.replace("_", " ") + " event" if event_name != "" else "event action"
+		CardAction.Type.ATTACK:
+			return "attack action"
+		CardAction.Type.ABILITY:
+			return "ability action"
+		CardAction.Type.SPELL:
+			return "spell action"
+		CardAction.Type.CHARM:
+			return "charm action"
+	return "stack action"
+
 func _reject_priority_locked_action(reason: String = "Only legal priority responses can be used right now.") -> bool:
+	if _try_resolve_stalled_priority_event() and not _has_unresolved_priority_state():
+		return false
 	if not _has_unresolved_priority_state():
 		return false
 	if _has_pending_target_selection():
 		return false
 	var feedback := reason
+	if feedback == "Resolve the pending stack action before ending the turn.":
+		feedback = "Resolve the pending %s before ending the turn." % _describe_unresolved_priority_state()
 	if not _is_priority_prompt_visible() and feedback == "Only legal priority responses can be used right now.":
-		feedback = "Resolve the pending stack action before continuing."
+		feedback = "Resolve the pending %s before continuing." % _describe_unresolved_priority_state()
 	action_label.text = feedback
 	update_ui()
 	return true
@@ -13644,16 +13969,23 @@ func _show_priority_prompt(player: Player) -> void:
 		)
 		vbox.add_child(btn)
 
-	if auto_priority and interactive_response_count == 0:
-		panel.hide()
-		call_deferred("_on_priority_pass_pressed")
-		return
+	if interactive_response_count == 0:
+		lbl.text += " (no responses)"
+	if auto_priority:
+		var hint := Label.new()
+		hint.text = "Auto-passes after 5s of inactivity."
+		hint.add_theme_font_size_override("font_size", 10)
+		hint.modulate = Color(0.82, 0.86, 0.96, 0.9)
+		vbox.add_child(hint)
 
 	_promote_transient_ui(panel)
 	panel.show()
+	_arm_priority_prompt_timeout()
 
 func _hide_priority_prompt() -> void:
 	_pending_local_priority_prompt_signature.clear()
+	_priority_prompt_idle_deadline_msec = 0
+	_priority_prompt_timeout_pending = false
 	var panel = get_node_or_null("PriorityPromptPanel")
 	if panel:
 		panel.hide()
@@ -16840,6 +17172,7 @@ func _on_match_action_resolved(action: CardAction) -> void:
 
 func _on_match_move_validated(move: Dictionary) -> void:
 	var authoritative_priority := match_manager != null and match_manager.uses_authoritative_priority_flow()
+	_reset_local_move_timer_budget()
 	match move.get("type", ""):
 		"upkeep_choice":
 			# Client resolved upkeep; server must open the turn-start priority window
@@ -17053,6 +17386,13 @@ func _on_match_ui_interaction(player_index: int, type: String, data: Dictionary)
 			var action_message := str(data.get("action_message", "")).strip_edges()
 			if action_message != "":
 				action_label.text = action_message
+			if _is_networked_client:
+				_restore_network_attack_preview_from_state({
+					"attacker_uid": str(data.get("attacker_uid", "")),
+					"target_uid": str(data.get("target_uid", "")),
+					"target_player_index": int(data.get("target_player_index", -1)),
+				})
+				update_ui()
 			_show_intercept_prompt(interceptor_uids)
 		"combat_retreat":
 			var action: CardAction = data["action"]
@@ -18468,6 +18808,7 @@ func _apply_full_state(data: Dictionary) -> void:
 			var local_idx: int = network_manager.local_player_index
 			if local_idx < game_manager.players.size():
 				game_manager.feedback_viewer = game_manager.players[local_idx]
+		_restore_network_attack_preview_from_state(data.get("pending_attack_preview", {}))
 		_awaiting_initial_full_state = false
 		_sync_network_turn_entry_ui_from_state()
 	# Host has the live authoritative game_manager â€” no zone rebuild needed.
@@ -18483,6 +18824,31 @@ func _apply_full_state(data: Dictionary) -> void:
 	update_ui()
 	_restore_priority_prompt_from_authoritative_state()
 	_update_waiting_overlay()
+
+func _restore_network_attack_preview_from_state(preview_data: Dictionary) -> void:
+	if not _is_networked_client or match_manager == null or game_manager == null:
+		return
+	if not (preview_data is Dictionary) or preview_data.is_empty():
+		match_manager._clear_pending_attack_state()
+		return
+	var attacker_uid := str(preview_data.get("attacker_uid", "")).strip_edges()
+	var attacker := game_manager.get_card_by_uid(attacker_uid)
+	if attacker == null:
+		match_manager._clear_pending_attack_state()
+		return
+	match_manager.selected_attacker = attacker
+	match_manager.selected_interceptor = null
+	var target_uid := str(preview_data.get("target_uid", "")).strip_edges()
+	if not target_uid.is_empty():
+		var target_card := game_manager.get_card_by_uid(target_uid)
+		if target_card != null:
+			match_manager.pending_attack_target = target_card
+			return
+	var target_player_index := int(preview_data.get("target_player_index", -1))
+	if target_player_index >= 0 and target_player_index < game_manager.players.size():
+		match_manager.pending_attack_target = game_manager.players[target_player_index]
+		return
+	match_manager._clear_pending_attack_state()
 
 func _restore_priority_prompt_from_authoritative_state() -> void:
 	if match_manager == null or game_manager == null:
@@ -18505,6 +18871,9 @@ func _restore_priority_prompt_from_authoritative_state() -> void:
 		return
 	var prompt_data := match_manager.build_priority_prompt_data(local_player)
 	if prompt_data.is_empty():
+		return
+	var responses: Array = prompt_data.get("responses", [])
+	if auto_priority and responses.is_empty():
 		return
 	_apply_priority_prompt_for_player(local_idx, prompt_data)
 
@@ -18608,8 +18977,9 @@ func _update_waiting_overlay() -> void:
 	var current_priority_player := game_manager.priority_player
 	var priority_idx := game_manager.players.find(current_priority_player)
 	
-	# If someone else owns the current stack window, keep the local player in a waiting state.
-	if not game_manager.action_stack.is_empty() and priority_idx != -1 and priority_idx != local_idx:
+	# Only show opponent-priority waiting when there is an actual response choice.
+	# Auto-passed no-response windows can exist for a frame during state sync.
+	if _should_show_opponent_priority_waiting(current_priority_player, priority_idx, local_idx):
 		_update_waiting_status(true, "Opponent has priority...")
 		return
 		
@@ -18623,6 +18993,15 @@ func _update_waiting_overlay() -> void:
 				return
 
 	_update_waiting_status(false)
+
+func _should_show_opponent_priority_waiting(priority_player: Player, priority_idx: int, local_idx: int) -> bool:
+	if game_manager == null or priority_player == null:
+		return false
+	if game_manager.action_stack.is_empty():
+		return false
+	if priority_idx == -1 or priority_idx == local_idx:
+		return false
+	return not game_manager.get_priority_responses(priority_player).is_empty()
 
 func _set_match_reconnect_wait(is_waiting: bool, message: String = "Waiting for opponent to reconnect...") -> void:
 	_match_reconnect_waiting = is_waiting
@@ -18646,7 +19025,12 @@ func _apply_priority_prompt_for_player(player_index: int, data: Dictionary) -> v
 	_remember_local_priority_prompt_signature()
 	_update_waiting_status(false)
 	if _is_networked_client:
-		_show_remote_priority_prompt(data.get("responses", []))
+		var responses: Array = data.get("responses", [])
+		if auto_priority and responses.is_empty():
+			_hide_priority_prompt()
+			_update_waiting_overlay()
+			return
+		_show_remote_priority_prompt(responses)
 		return
 	if game_manager != null and player_index >= 0 and player_index < game_manager.players.size():
 		_show_priority_prompt(game_manager.players[player_index])
@@ -18687,10 +19071,7 @@ func _show_remote_priority_prompt(responses: Array) -> void:
 
 	var pass_btn := Button.new()
 	pass_btn.text = "Pass Priority"
-	pass_btn.pressed.connect(func() -> void:
-		_hide_priority_prompt()
-		network_manager.request_action({type = "priority_pass"})
-	)
+	pass_btn.pressed.connect(_on_priority_pass_pressed)
 	vbox.add_child(pass_btn)
 
 	var interactive_response_count := 0
@@ -18843,13 +19224,18 @@ func _show_remote_priority_prompt(responses: Array) -> void:
 		)
 		vbox.add_child(btn)
 
-	if auto_priority and interactive_response_count == 0:
-		panel.hide()
-		call_deferred("_on_priority_pass_pressed")
-		return
+	if interactive_response_count == 0:
+		lbl.text += " (no responses)"
+	if auto_priority:
+		var hint := Label.new()
+		hint.text = "Auto-passes after 5s of inactivity."
+		hint.add_theme_font_size_override("font_size", 10)
+		hint.modulate = Color(0.82, 0.86, 0.96, 0.9)
+		vbox.add_child(hint)
 
 	_promote_transient_ui(panel)
 	panel.show()
+	_arm_priority_prompt_timeout()
 
 func _begin_remote_priority_permanent_hex_target_selection(
 	hex: PermanentHexCard,
@@ -18886,6 +19272,13 @@ func _apply_intercept_offered(data: Dictionary) -> void:
 	var msg: String = data.get("action_message", "")
 	if msg != "":
 		action_label.text = msg
+	if _is_networked_client:
+		_restore_network_attack_preview_from_state({
+			"attacker_uid": str(data.get("attacker_uid", "")),
+			"target_uid": str(data.get("target_uid", "")),
+			"target_player_index": int(data.get("target_player_index", -1)),
+		})
+		update_ui()
 	_show_intercept_prompt(data.get("interceptor_uids", []))
 
 func _make_intercept_prompt_art(card: Card) -> Control:
@@ -19633,6 +20026,7 @@ func cleanup() -> void:
 	_game_result_presented = false
 	_pending_forfeit_return_to_menu = false
 	_pending_post_game_return_to_menu = false
+	_reset_turn_activity_timers()
 	_hide_pause_menu()
 	_hide_game_result_overlay()
 	_hide_corner_action_button()

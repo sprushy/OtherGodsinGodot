@@ -14,4 +14,4 @@ func _init() -> void:
 	flavor_text = "Some kings of old thought to keep Mushussu as pets, but these inclinations always vanished when they saw the size and ferocity of the matured beast."
 	culture = "Ancient"
 	artist = "Ricardo Zoppello"
-	art_path = "res://images/card_art/Lesser Mushussu(print).jpg"
+	art_path = "res://images/card_art/creatures/Lesser Mushussu(print).jpg"

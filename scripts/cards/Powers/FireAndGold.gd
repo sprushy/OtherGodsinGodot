@@ -16,7 +16,7 @@ func _init() -> void:
 	targets = true
 	ability_text = "[b]Unlock[/b] (2): [b]Activate[/b] - Discard 1 card. If you have a Tian Dragon on the frontline, destroy one structure."
 	artist = "Josh13 via pixabay"
-	art_path = "res://images/card_art/FireandGoldAIEdit.png"
+	art_path = "res://images/card_art/powers/FireandGoldAIEdit.png"
 
 func get_activation_discard_cost() -> int:
 	return ACTIVATION_DISCARD_COST

@@ -15,7 +15,7 @@ func _init() -> void:
 	ability_text = "[b]Trollskap[/b]: If this card is destroyed by an effect, return it to your hand instead."
 	culture = "Norse"
 	artist = "Riccardo Zoppello"
-	art_path = "res://images/card_art/DragrRevenantAIEdit.png"
+	art_path = "res://images/card_art/creatures/DragrRevenantAIEdit.png"
 
 func get_self_graveyard_replacement_zone(
 	_game_manager: GameManager,

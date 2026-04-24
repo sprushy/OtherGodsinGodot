@@ -2,7 +2,7 @@ extends SpellCard
 class_name KeyOfSolomon
 
 const MAX_DEMONS_TO_RETURN := 2
-const ART_PATH := "res://images/card_art/SolomonKeyEdit.png"
+const ART_PATH := "res://images/card_art/spells/SolomonKeyEdit.png"
 
 func _init() -> void:
 	super._init()

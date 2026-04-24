@@ -2772,31 +2772,38 @@ func _update_collection_layout() -> void:
 			current_page_item_count = mini(total_items, current_page_capacity)
 		current_page_item_count = max(1, current_page_item_count)
 
-		var best_card_size := base_card_size
-		var best_columns := _page_grid_columns
-		var best_rows := maxi(1, mini(_page_visible_collection_rows, int(ceil(current_page_item_count / float(_page_grid_columns)))))
-		var max_candidate_rows := mini(_page_visible_collection_rows, current_page_item_count)
+		if current_page_item_count <= 1:
+			# Keep the chosen card-size preset authoritative for single-result searches
+			# instead of upscaling the lone card to fill the entire finder.
+			next_size = base_card_size
+			columns = base_columns
+			visible_rows = base_visible_rows
+		else:
+			var best_card_size := base_card_size
+			var best_columns := _page_grid_columns
+			var best_rows := maxi(1, mini(_page_visible_collection_rows, int(ceil(current_page_item_count / float(_page_grid_columns)))))
+			var max_candidate_rows := mini(_page_visible_collection_rows, current_page_item_count)
 
-		for candidate_rows in range(1, max_candidate_rows + 1):
-			var candidate_columns := maxi(1, int(ceil(current_page_item_count / float(candidate_rows))))
-			var candidate_width = floor((available.x - COLLECTION_GAP * float(candidate_columns - 1)) / float(candidate_columns))
-			var candidate_height = floor((available.y - COLLECTION_GAP * float(candidate_rows - 1)) / float(candidate_rows))
-			candidate_width = max(candidate_width, 1.0)
-			candidate_height = max(candidate_height, 1.0)
+			for candidate_rows in range(1, max_candidate_rows + 1):
+				var candidate_columns := maxi(1, int(ceil(current_page_item_count / float(candidate_rows))))
+				var candidate_width = floor((available.x - COLLECTION_GAP * float(candidate_columns - 1)) / float(candidate_columns))
+				var candidate_height = floor((available.y - COLLECTION_GAP * float(candidate_rows - 1)) / float(candidate_rows))
+				candidate_width = max(candidate_width, 1.0)
+				candidate_height = max(candidate_height, 1.0)
 
-			var height_from_candidate_width = floor(candidate_width / aspect)
-			var final_height = max(1.0, min(candidate_height, height_from_candidate_width))
-			var final_width = max(1.0, floor(final_height * aspect))
-			var candidate_size := Vector2(final_width, final_height)
+				var height_from_candidate_width = floor(candidate_width / aspect)
+				var final_height = max(1.0, min(candidate_height, height_from_candidate_width))
+				var final_width = max(1.0, floor(final_height * aspect))
+				var candidate_size := Vector2(final_width, final_height)
 
-			if candidate_size.y > best_card_size.y or (candidate_size.y == best_card_size.y and candidate_size.x > best_card_size.x):
-				best_card_size = candidate_size
-				best_columns = candidate_columns
-				best_rows = candidate_rows
+				if candidate_size.y > best_card_size.y or (candidate_size.y == best_card_size.y and candidate_size.x > best_card_size.x):
+					best_card_size = candidate_size
+					best_columns = candidate_columns
+					best_rows = candidate_rows
 
-		next_size = best_card_size
-		columns = best_columns
-		visible_rows = best_rows
+			next_size = best_card_size
+			columns = best_columns
+			visible_rows = best_rows
 
 	_grid.custom_minimum_size.y = visible_rows * next_size.y + COLLECTION_GAP * float(visible_rows - 1)
 

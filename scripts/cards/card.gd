@@ -23,14 +23,25 @@ enum CreatureMode { AGGRESSIVE, DEFENSIVE }
 @export_multiline var ability_text: String = ""
 @export var targets: bool = false  # True if this card's effect targets a specific card
 @export var culture: String = ""  # e.g., "Sumerian", "Norse", "Egyptian"
-@export var art_path: String = ""  # e.g., "res://images/card_art/hexes/VoidShield.jpg"
+@export var art_path: String = "":  # e.g., "res://images/card_art/hexes/VoidShield.jpg"
+	set(value):
+		_art_path = resolve_art_path(value)
+	get:
+		return _art_path
 @export var artist: String = ""
 @export var paragon_of_champions: String = ""  # Name of the champion type this god is patron of; empty if not a paragon
 @export var name_at_bottom: bool = false  # If true, card name is rendered at the bottom instead of the top
-@export var exhausted_art_path: String = ""  # Art to switch to when the card's effect is exhausted
+@export var exhausted_art_path: String = "":  # Art to switch to when the card's effect is exhausted
+	set(value):
+		_exhausted_art_path = resolve_art_path(value)
+	get:
+		return _exhausted_art_path
 @export var ability_immunity_tag: String = ""
 
 signal art_updated(new_path: String)
+
+var _art_path: String = ""
+var _exhausted_art_path: String = ""
 
 const CARD_NAME_MOJIBAKE_FIXES := {
 	"AurboÃƒÂ°a": "Aurboða",
@@ -52,6 +63,111 @@ const CARD_NAME_ASCII_FALLBACKS := {
 	"ÿ": "y", "Œ": "Oe", "œ": "oe", "Š": "S", "š": "s", "Ž": "Z",
 	"ž": "z", "Ł": "L", "ł": "l"
 }
+
+const ART_PATH_REDIRECTS := {
+	"res://images/card_art/DragrRevenantAIEdit.png": "res://images/card_art/creatures/DragrRevenantAIEdit.png",
+	"res://images/card_art/DurinnAIEdit.png": "res://images/card_art/creatures/DurinnAIEdit.png",
+	"res://images/card_art/FifaAIEdit.png": "res://images/card_art/charms/FifaAIEdit.png",
+	"res://images/card_art/FireandGoldAIEdit.png": "res://images/card_art/powers/FireandGoldAIEdit.png",
+	"res://images/card_art/FirstSageAdapaAIedit.png": "res://images/card_art/creatures/FirstSageAdapaAIedit.png",
+	"res://images/card_art/FourthSageAiEdit2.png": "res://images/card_art/creatures/FourthSageAiEdit2.png",
+	"res://images/card_art/GleipnirEdit.png": "res://images/card_art/hexes/GleipnirEdit.png",
+	"res://images/card_art/HariiShamanEdit.png": "res://images/card_art/creatures/HariiShamanEdit.png",
+	"res://images/card_art/HariiWarriorEdit.png": "res://images/card_art/creatures/HariiWarriorEdit.png",
+	"res://images/card_art/Hel-BlarDraugEdit.png": "res://images/card_art/creatures/Hel-BlarDraugEdit.png",
+	"res://images/card_art/Humbaba(print)Art.jpg": "res://images/card_art/creatures/Humbaba(print)Art.jpg",
+	"res://images/card_art/HuntingTacticsEdit.png": "res://images/card_art/powers/HuntingTacticsEdit.png",
+	"res://images/card_art/Hyena Pack(print).jpg": "res://images/card_art/creatures/Hyena Pack(print).jpg",
+	"res://images/card_art/ImmortalTechniqueEdit.png": "res://images/card_art/powers/ImmortalTechniqueEdit.png",
+	"res://images/card_art/InfernoAIEdit.png": "res://images/card_art/spells/InfernoAIEdit.png",
+	"res://images/card_art/Isimud(web).jpg": "res://images/card_art/creatures/Isimud(web).jpg",
+	"res://images/card_art/KurnugiaArt.jpg": "res://images/card_art/powers/KurnugiaArt.jpg",
+	"res://images/card_art/LawsArtEdit.jpg": "res://images/card_art/powers/LawsArtEdit.jpg",
+	"res://images/card_art/Lesser Mushussu(print).jpg": "res://images/card_art/creatures/Lesser Mushussu(print).jpg",
+	"res://images/card_art/MalinalxochitalAcolyteEdit2.png": "res://images/card_art/creatures/MalinalxochitalAcolyteEdit2.png",
+	"res://images/card_art/MeadofPoetryAIEdit.png": "res://images/card_art/charms/MeadofPoetryAIEdit.png",
+	"res://images/card_art/SolomonKeyEdit.png": "res://images/card_art/spells/SolomonKeyEdit.png",
+	"res://scripts/cards/Charms/NuskuEdit2.png": "res://images/card_art/gods/NuskuEdit2.png",
+	"res://scripts/cards/Charms/PalisadeArtEdit.png": "res://images/card_art/structures/PalisadeArtEdit.png",
+	"res://scripts/cards/Creatures/kite shield image.png": "res://images/card_art/unused/kite shield image.png",
+	"res://scripts/cards/Creatures/NagualEdit.png": "res://images/card_art/creatures/NagualEdit.png",
+	"res://scripts/cards/Creatures/NamburbiArt.jpg": "res://images/card_art/charms/NamburbiArt.jpg",
+	"res://scripts/cards/Creatures/NergalLionEdit.png": "res://images/card_art/creatures/NergalLionEdit.png",
+	"res://scripts/cards/Creatures/NimueEdit.png": "res://images/card_art/creatures/NimueEdit.png",
+	"res://scripts/cards/Creatures/NorseBloodlustEdit.png": "res://images/card_art/powers/NorseBloodlustEdit.png",
+	"res://scripts/cards/Creatures/NorseShortswordEdit.png": "res://images/card_art/equipment/NorseShortswordEdit.png",
+	"res://scripts/cards/Creatures/NuskuEdit.png": "res://images/card_art/gods/NuskuEdit.png",
+	"res://scripts/cards/Creatures/OccultSingularityEdit.png": "res://images/card_art/spells/OccultSingularityEdit.png",
+	"res://scripts/cards/Creatures/OdinBloodlust.png": "res://images/card_art/gods/OdinBloodlust.png",
+	"res://scripts/cards/Creatures/OdinBloodlust2.png": "res://images/card_art/gods/OdinBloodlust2.png",
+	"res://scripts/cards/Creatures/OdinEdit.png": "res://images/card_art/gods/OdinEdit.png",
+	"res://images/card_art/gods/OdinBloodlust.png": "res://images/card_art/gods/Odin.jpg",
+	"res://images/card_art/gods/OdinBloodlust2.png": "res://images/card_art/gods/Odin.jpg",
+	"res://images/card_art/gods/OdinEdit.png": "res://images/card_art/gods/Odin.jpg",
+	"res://scripts/cards/Creatures/OraclesSightEdit.png": "res://images/card_art/powers/OraclesSightEdit.png",
+	"res://scripts/cards/Creatures/RabidWolfEdit.png": "res://images/card_art/creatures/RabidWolfEdit.png",
+	"res://scripts/cards/Creatures/RabidWolfEdit2.png": "res://images/card_art/creatures/RabidWolfEdit2.png",
+	"res://scripts/cards/Creatures/RabisuEdit.png": "res://images/card_art/creatures/RabisuEdit.png",
+	"res://scripts/cards/Creatures/WheelofFireEdit.png": "res://images/card_art/hexes/WheelofFireEdit.png",
+	"res://scripts/cards/Creatures/WolfCubEdit.png": "res://images/card_art/creatures/WolfCubEdit.png",
+	"res://scripts/cards/Gods/BrownBearEdit2.png": "res://images/card_art/creatures/BrownBearEdit2.png",
+	"res://scripts/cards/Gods/CernunnosEdit.png": "res://images/card_art/gods/CernunnosEdit.png",
+	"res://scripts/cards/Gods/CernunnosEdit2.png": "res://images/card_art/gods/CernunnosEdit2.png",
+	"res://scripts/cards/Gods/PazuzuEdit.png": "res://images/card_art/creatures/PazuzuEdit.png",
+	"res://scripts/cards/Gods/PegasusArt.jpg": "res://images/card_art/creatures/PegasusArt.jpg",
+	"res://scripts/cards/Gods/Take the Field(web).jpg": "res://images/card_art/powers/Take the Field(web).jpg",
+	"res://scripts/cards/Hexes/CernunnodEdit.png": "res://images/card_art/unused/CernunnodEdit.png",
+	"res://scripts/cards/Hexes/SapStrengthEdit2.png": "res://images/card_art/hexes/SapStrengthEdit2.png",
+	"res://scripts/cards/Powers/inferno(web).jpg": "res://images/card_art/hexes/inferno(web).jpg",
+	"res://scripts/cards/Powers/Sulak the Unclean(web).jpg": "res://images/card_art/creatures/Sulak the Unclean(web).jpg",
+	"res://scripts/cards/Powers/SummonedSapArt.jpg": "res://images/card_art/powers/SummonedSapArt.jpg",
+	"res://scripts/cards/Powers/TabletofLifeEdit.jpg": "res://images/card_art/spells/TabletofLifeEdit.jpg",
+	"res://scripts/cards/Powers/TatzelwyrmEdit.png": "res://images/card_art/creatures/TatzelwyrmEdit.png",
+	"res://scripts/cards/Powers/TelchineApprenticeEdit.png": "res://images/card_art/creatures/TelchineApprenticeEdit.png",
+	"res://scripts/cards/Powers/Terror(web).jpg": "res://images/card_art/powers/Terror(web).jpg",
+	"res://scripts/cards/Powers/TezArt.png": "res://images/card_art/gods/TezArt.png",
+	"res://scripts/cards/Powers/TezBlasphemerEdit.png": "res://images/card_art/creatures/TezBlasphemerEdit.png",
+	"res://scripts/cards/Powers/TheDelugeEdit.png": "res://images/card_art/hexes/TheDelugeEdit.png",
+	"res://scripts/cards/Powers/TheDragonKingEdit.png": "res://images/card_art/creatures/TheDragonKingEdit.png",
+	"res://scripts/cards/Powers/TheWhiteSerpentEdit.png": "res://images/card_art/creatures/TheWhiteSerpentEdit.png",
+	"res://scripts/cards/Powers/ThirdSageEnmeduggaArt.jpg": "res://images/card_art/creatures/ThirdSageEnmeduggaArt.jpg",
+	"res://scripts/cards/Powers/ThroneodOdinEdit.png": "res://images/card_art/structures/ThroneodOdinEdit.png",
+	"res://scripts/cards/Powers/VisionofOdinEdit.png": "res://images/card_art/hexes/VisionofOdinEdit.png",
+	"res://scripts/cards/Powers/Walk of the Sage(web).jpg": "res://images/card_art/powers/Walk of the Sage(web).jpg",
+	"res://scripts/cards/Powers/WheelofFireEdit.png": "res://images/card_art/hexes/WheelofFireEdit.png",
+	"res://scripts/cards/Powers/WhiteStageEdit.png": "res://images/card_art/unused/WhiteStageEdit.png",
+	"res://scripts/cards/Powers/WolfAdolescentArt.jpg": "res://images/card_art/creatures/WolfAdolescentArt.jpg",
+	"res://scripts/cards/Structures/TiamatEdit.png": "res://images/card_art/gods/TiamatEdit.png",
+	"res://scripts/cards/Structures/TonalExtractionEdit.png": "res://images/card_art/powers/TonalExtractionEdit.png",
+	"res://scripts/cards/Structures/UriskGrovekeepersEdit.png": "res://images/card_art/creatures/UriskGrovekeepersEdit.png",
+	"res://scripts/cards/Structures/VisionofTarturusEdit.png": "res://images/card_art/hexes/VisionofTarturusEdit.png",
+	"res://scripts/cards/ShroudoftheAncientsArt.jpg": "res://images/card_art/hexes/ShroudoftheAncientsArt.jpg",
+	"res://scripts/cards/SixthSageEdit.png": "res://images/card_art/creatures/SixthSageEdit.png",
+	"res://scripts/cards/SmiteArt.jpg": "res://images/card_art/hexes/SmiteArt.jpg",
+	"res://scripts/cards/SpellDemolition.jpg": "res://images/card_art/hexes/SpellDemolition.jpg",
+	"res://scripts/cards/SpellDemolitionArt.jpg": "res://images/card_art/hexes/SpellDemolitionArt.jpg",
+	"res://scripts/cards/StormEdit.png": "res://images/card_art/charms/StormEdit.png",
+	"res://scripts/cards/SummonedSapArt.jpg": "res://images/card_art/powers/SummonedSapArt.jpg",
+	"res://scripts/cards/TianLongEdit.png": "res://images/card_art/creatures/TianLongEdit.png",
+	"res://scripts/core/RabidWolfEdit2.png": "res://images/card_art/creatures/RabidWolfEdit2.png",
+	"res://scripts/Other/Saving GraceArt.jpg": "res://images/card_art/powers/Saving GraceArt.jpg",
+	"res://scripts/Other/Scorpion man axe(print)art.jpg": "res://images/card_art/unused/Scorpion man axe(print)art.jpg",
+	"res://scripts/Other/SepLemmutiEdit.png": "res://images/card_art/hexes/SepLemmutiEdit.png",
+	"res://scripts/Other/Sevenhsart.jpg": "res://images/card_art/unused/Sevenhsart.jpg",
+	"res://scripts/Other/SevenLeagueBootsEdit.png": "res://images/card_art/equipment/SevenLeagueBootsEdit.png",
+	"res://scripts/Other/SeventhSageEdit.png": "res://images/card_art/creatures/SeventhSageEdit.png",
+	"res://scripts/Other/SharurEdit.png": "res://images/card_art/equipment/SharurEdit.png"
+}
+
+static func resolve_art_path(raw_path: String) -> String:
+	var resolved_path := str(raw_path).strip_edges()
+	if resolved_path == "":
+		return ""
+	var seen: Dictionary = {}
+	while ART_PATH_REDIRECTS.has(resolved_path) and not seen.has(resolved_path):
+		seen[resolved_path] = true
+		resolved_path = str(ART_PATH_REDIRECTS[resolved_path]).strip_edges()
+	return resolved_path
 
 func switch_to_exhausted_art() -> void:
 	if exhausted_art_path != "":

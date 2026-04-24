@@ -3,7 +3,7 @@ class_name WalkOfTheSage
 
 const UNLOCK_COST := 1
 const ACTIVATION_COST := 2
-const ART_PATH := "res://scripts/cards/Powers/Walk of the Sage(web).jpg"
+const ART_PATH := "res://images/card_art/powers/Walk of the Sage(web).jpg"
 
 func _init() -> void:
 	super._init()

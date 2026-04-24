@@ -3,6 +3,7 @@ extends PanelContainer
 
 const CardDetailContentBuilder = preload("res://scripts/ui/CardDetailContentBuilder.gd")
 const LockedPowerCursor = preload("res://scripts/ui/LockedPowerCursor.gd")
+const DefenseShieldOverlay = preload("res://scripts/ui/DefenseShieldOverlay.gd")
 
 signal card_clicked(card: Card)
 signal card_right_clicked(card: Card)
@@ -60,6 +61,7 @@ var _inner: PanelContainer = null
 var _art_rect: TextureRect = null
 var _disabled_overlay: ColorRect = null
 var _power_lock_overlay: TextureRect = null
+var _defense_shield_overlay: Control = null
 const _DEFAULT_POWER_LOCK_TEXTURE := preload("res://images/Norse Power Lock.png")
 const _ANCIENT_POWER_LOCK_TEXTURE := preload("res://images/Ancient Power Lock.png")
 
@@ -303,6 +305,7 @@ func _build_content() -> void:
 	_inner.add_child(_disabled_overlay)
 
 	_refresh_power_lock_overlay()
+	_refresh_defense_shield_overlay()
 	_refresh_disabled_visual_state()
 	call_deferred("_sync_minimum_height")
 	call_deferred("_layout_power_lock_overlay")
@@ -407,6 +410,16 @@ func _layout_power_lock_overlay() -> void:
 		_power_lock_overlay.position = _inner.global_position - global_position
 		_power_lock_overlay.size = _inner.size
 
+func _refresh_defense_shield_overlay() -> void:
+	if _inner == null or not is_instance_valid(_inner):
+		_defense_shield_overlay = null
+		return
+	if is_rotated:
+		_defense_shield_overlay = DefenseShieldOverlay.ensure_on(_inner, DefenseShieldOverlay.LAYOUT_CENTER)
+	else:
+		DefenseShieldOverlay.remove_from(_inner)
+		_defense_shield_overlay = null
+
 func set_disabled(value: bool, dim_visuals: bool = true) -> void:
 	_disabled = value
 	_dim_when_disabled = dim_visuals
@@ -505,7 +518,7 @@ func _cancel_drag() -> void:
 		# Sync _inner rotation to match is_rotated — drag rotation only modifies
 		# the drag ghost, so _inner can lag behind when the card returns to hand.
 		if _inner:
-			_inner.rotation_degrees = 90.0 if is_rotated else 0.0
+			_inner.rotation_degrees = 0.0
 			_inner.pivot_offset = size / 2.0
 	if _drag_ghost and is_instance_valid(_drag_ghost):
 		_drag_ghost.queue_free()
@@ -582,40 +595,32 @@ func _set_drag_prepare_preview(enabled: bool) -> void:
 
 	ghost_inner.add_child(overlay)
 
+# Legacy name: this toggles the defensive summon preview state.
 func _toggle_rotation() -> void:
 	is_rotated = not is_rotated
-	var target_angle := 90.0 if is_rotated else 0.0
-	if _dragging and _drag_ghost and is_instance_valid(_drag_ghost):
-		# Set the target; _process() animates toward it and updates position in
-		# the same tick so rotation and position are never a frame out of sync.
-		_drag_target_rotation = target_angle
-	else:
-		# Cancel any in-flight rotation ghost before starting a new one,
-		# then snap _inner to the previous target so the new ghost starts correctly.
-		_cancel_rot_ghost()
-		_inner.rotation_degrees = 0.0 if is_rotated else 90.0  # previous angle
+	_drag_target_rotation = 0.0
+	if _inner:
+		_inner.rotation_degrees = 0.0
 		_inner.pivot_offset = size / 2.0
+	_refresh_defense_shield_overlay()
+	_refresh_drag_defense_shield_overlay()
 
-		var current_angle := _inner.rotation_degrees
-		var ghost := _build_rotation_ghost(current_angle)
-		if ghost == null:
-			_inner.pivot_offset = size / 2.0
-			var tw := _inner.create_tween()
-			tw.tween_property(_inner, "rotation_degrees", target_angle, 0.15)
-			return
-		_rot_ghost = ghost
-		_inner.modulate.a = 0.0
-		_rot_tween = ghost.create_tween()
-		_rot_tween.tween_property(ghost, "rotation_degrees", target_angle, 0.15)
-		_rot_tween.tween_callback(func() -> void:
-			_inner.rotation_degrees = target_angle
-			_inner.pivot_offset = size / 2.0
-			_inner.modulate.a = 1.0
-			if is_instance_valid(ghost):
-				ghost.queue_free()
-			_rot_ghost = null
-			_rot_tween = null
-		)
+func _should_show_drag_defense_shield() -> bool:
+	return card_data != null \
+		and card_data.card_type == Card.CardType.CREATURE \
+		and (is_rotated or _drag_stealth)
+
+func _refresh_drag_defense_shield_overlay() -> void:
+	if not (_drag_ghost and is_instance_valid(_drag_ghost)):
+		return
+	var ghost_inner := _drag_ghost.get_child(0) as Control
+	if ghost_inner == null:
+		return
+	if _should_show_drag_defense_shield():
+		var shield_scale := DefenseShieldOverlay.STEALTH_VIEW_SIZE_MULTIPLIER if _drag_stealth else 1.0
+		DefenseShieldOverlay.ensure_on(ghost_inner, DefenseShieldOverlay.LAYOUT_CENTER, shield_scale)
+	else:
+		DefenseShieldOverlay.remove_from(ghost_inner)
 
 func _build_rotation_ghost(from_angle: float) -> Control:
 	var tree := get_tree()
@@ -697,6 +702,8 @@ func _input(event: InputEvent) -> void:
 				_toggle_rotation()
 			elif not _drag_stealth and is_rotated:
 				_toggle_rotation()
+			else:
+				_refresh_drag_defense_shield_overlay()
 			get_viewport().set_input_as_handled()
 
 func _update_ghost_position() -> void:
@@ -738,7 +745,7 @@ func _start_drag() -> void:
 	# correctly rotated before _build_drag_ghost() duplicates it.
 	if _rot_ghost or _rot_tween:
 		_cancel_rot_ghost()
-		_inner.rotation_degrees = 90.0 if is_rotated else 0.0
+		_inner.rotation_degrees = 0.0
 		_inner.pivot_offset = size / 2.0
 	var tree := get_tree()
 	if tree == null or tree.current_scene == null:
@@ -773,13 +780,14 @@ func _build_drag_ghost() -> Control:
 	# Consolidate _inner's rotation onto the ghost outer so the whole ghost
 	# can be rotated cleanly during drag (ghost is at scene root, no Container).
 	if _inner:
-		ghost.rotation_degrees = _inner.rotation_degrees
+		ghost.rotation_degrees = 0.0
 		var ghost_inner := ghost.get_child(0) as Control
 		if ghost_inner:
 			ghost_inner.rotation_degrees = 0.0
 			ghost_inner.pivot_offset = Vector2.ZERO
 	_drag_ghost = ghost
 	_set_drag_prepare_preview(_drag_stealth and _can_toggle_drag_prepare())
+	_refresh_drag_defense_shield_overlay()
 	_drag_ghost = null
 	return ghost
 
@@ -794,7 +802,7 @@ func _finish_drag() -> void:
 	# Sync _inner so it matches is_rotated — drag rotation only touches the
 	# drag ghost, so _inner.rotation_degrees can lag behind is_rotated.
 	if _inner:
-		_inner.rotation_degrees = 90.0 if is_rotated else 0.0
+		_inner.rotation_degrees = 0.0
 		_inner.pivot_offset = size / 2.0
 	var was_stealth := _drag_stealth
 	_drag_stealth = false

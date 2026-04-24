@@ -14,4 +14,4 @@ func _init() -> void:
 	ability_text = ""
 	culture = "Norse"
 	artist = "Ricardo Zoppello"
-	art_path = "res://images/card_art/HariiWarriorEdit.png"
+	art_path = "res://images/card_art/creatures/HariiWarriorEdit.png"

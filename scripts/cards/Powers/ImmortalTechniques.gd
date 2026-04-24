@@ -1,7 +1,7 @@
 extends PowerCard
 class_name ImmortalTechniques
 
-const ART_PATH := "res://images/card_art/ImmortalTechniqueEdit.png"
+const ART_PATH := "res://images/card_art/powers/ImmortalTechniqueEdit.png"
 
 func _init() -> void:
 	super._init()

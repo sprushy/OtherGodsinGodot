@@ -1,7 +1,7 @@
 extends CreatureCard
 class_name Rabisu
 
-const ART_PATH := "res://scripts/cards/Creatures/RabisuEdit.png"
+const ART_PATH := "res://images/card_art/creatures/RabisuEdit.png"
 const LIFE_DRAIN_SOURCE := "Rabisu Life Drain"
 const LIFE_DRAIN_EFFECT_TYPE := "rabisu_life_drain"
 const DRAIN_PER_SLEEPING_CREATURE := 3

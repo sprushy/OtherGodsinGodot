@@ -1,7 +1,7 @@
 extends CreatureCard
 class_name MalinalxochitlAcolyte
 
-const ART_PATH := "res://images/card_art/MalinalxochitalAcolyteEdit2.png"
+const ART_PATH := "res://images/card_art/creatures/MalinalxochitalAcolyteEdit2.png"
 const POISON_STATUS := "malinalxochitl_poison"
 const POISON_SOURCE := "Malinalxochitl Acolyte Poison Glands"
 const POISON_EFFECT_TYPE := "malinalxochitl_poison_tick"

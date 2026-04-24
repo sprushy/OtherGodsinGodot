@@ -1,7 +1,7 @@
 extends HexCard
 class_name VisionOfOdin
 
-const ART_PATH := "res://scripts/cards/Powers/VisionofOdinEdit.png"
+const ART_PATH := "res://images/card_art/hexes/VisionofOdinEdit.png"
 const STR_SWING := 7
 const SPEED_SWING := 1
 const EFFECT_SOURCE := "Vision of Odin"

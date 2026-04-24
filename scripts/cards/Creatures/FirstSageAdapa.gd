@@ -18,7 +18,7 @@ func _init() -> void:
 	flavor_text = ""
 	culture = "Ancient"
 	artist = "Ricardo Zoppello"
-	art_path = "res://images/card_art/FirstSageAdapaAIedit.png"
+	art_path = "res://images/card_art/creatures/FirstSageAdapaAIedit.png"
 
 func on_impact(game_manager: GameManager) -> void:
 	var valid_targets := get_valid_targets(game_manager)

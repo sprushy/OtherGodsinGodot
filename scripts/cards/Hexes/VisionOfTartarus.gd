@@ -1,7 +1,7 @@
 extends HexCard
 class_name VisionOfTartarus
 
-const ART_PATH := "res://scripts/cards/Structures/VisionofTarturusEdit.png"
+const ART_PATH := "res://images/card_art/hexes/VisionofTarturusEdit.png"
 const DEBUFF_PER_VOID_CREATURE := 3
 const EFFECT_SOURCE := "Vision of Tartarus"
 const EFFECT_TYPE := "vision_of_tartarus_modifier"

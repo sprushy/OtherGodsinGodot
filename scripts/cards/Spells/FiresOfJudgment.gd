@@ -13,7 +13,7 @@ func _init() -> void:
 	sacrifice_cost = 0
 	flavor_text = ""
 	artist = "Lorinda Tomko"
-	art_path = "res://images/card_art/InfernoAIEdit.png"
+	art_path = "res://images/card_art/spells/InfernoAIEdit.png"
 	ability_text = "Destroy all of your opponent's face up creatures, structures, and equipment."
 
 func resolve(game_manager: GameManager, _target = null) -> void:

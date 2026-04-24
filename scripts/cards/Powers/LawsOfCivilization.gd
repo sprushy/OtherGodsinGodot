@@ -1,7 +1,7 @@
 extends PowerCard
 class_name LawsOfCivilization
 
-const ART_PATH := "res://images/card_art/LawsArtEdit.jpg"
+const ART_PATH := "res://images/card_art/powers/LawsArtEdit.jpg"
 
 func _init() -> void:
 	super._init()

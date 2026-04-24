@@ -3,7 +3,7 @@ class_name PalisadePower
 
 const UNLOCK_COST := 1
 const ACTIVATION_COST := 4
-const ART_PATH := "res://scripts/cards/Charms/PalisadeArtEdit.png"
+const ART_PATH := "res://images/card_art/structures/PalisadeArtEdit.png"
 const PALISADE_STRUCTURE_SCRIPT := preload("res://scripts/cards/Structures/PalisadeBarrier.gd")
 
 func _init() -> void:

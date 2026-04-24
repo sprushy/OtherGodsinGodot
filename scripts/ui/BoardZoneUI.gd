@@ -3,6 +3,7 @@ extends PanelContainer
 
 const CardDetailContentBuilder = preload("res://scripts/ui/CardDetailContentBuilder.gd")
 const LockedPowerCursor = preload("res://scripts/ui/LockedPowerCursor.gd")
+const DefenseShieldOverlay = preload("res://scripts/ui/DefenseShieldOverlay.gd")
 const BASE_BOARD_Z_INDEX := 0
 const RAISED_BOARD_Z_INDEX := 2
 const HOVER_BOARD_Z_INDEX := 1050
@@ -552,21 +553,17 @@ func _add_hidden_creature_stat_badge(
 	card: Card,
 	is_def: bool,
 	eff_str: int,
-	eff_res: int
+	_eff_res: int
 ) -> void:
-	if overlay == null or card == null:
+	if overlay == null or card == null or not is_def:
 		return
-	var hidden_stat := "str" if is_def else "res"
-	var hidden_base := card.strength if is_def else card.resilience
-	var hidden_eff := eff_str if is_def else eff_res
+	var hidden_stat := "str"
+	var hidden_base := card.strength
+	var hidden_eff := eff_str
 	if hidden_eff == hidden_base:
 		return
 
-	var hidden_label := ""
-	if is_def:
-		hidden_label = "STR:%d" % hidden_eff
-	else:
-		hidden_label = "RES:%d" % hidden_eff
+	var hidden_label := "STR:%d" % hidden_eff
 	var hidden_font_color := Color(0.92, 0.97, 1.0)
 	if hidden_eff > hidden_base:
 		hidden_font_color = Color(0.4, 1.0, 0.4)
@@ -576,11 +573,11 @@ func _add_hidden_creature_stat_badge(
 	var hidden_badge := _add_overlay_stat_badge(
 		overlay,
 		hidden_label,
-		Control.PRESET_TOP_LEFT,
+		Control.PRESET_BOTTOM_LEFT,
 		6,
-		6,
+		-58,
 		74,
-		30,
+		-32,
 		hidden_font_color
 	)
 	var hidden_breakdown := card.get_full_stat_breakdown(hidden_stat)
@@ -1652,6 +1649,7 @@ func _refresh_display() -> void:
 	if not is_inside_tree() or is_queued_for_deletion():
 		return
 	_hide_ability_popup()
+	_defense_overlay = null
 	_raised_overlay = null
 	for child in get_children():
 		child.queue_free()
@@ -1680,14 +1678,19 @@ func _refresh_display() -> void:
 			_add_followers_attack_result_label(tiamat_overlay)
 			return
 
-		# Face-down cards: own stealth / locked powers / prepared cards show hazed art; others show cardback
-		if card.is_face_down:
+		var face_down_viewer := _get_viewer_player()
+		var can_render_stealth_creature_normally := card.card_type == Card.CardType.CREATURE \
+			and card.is_stealth \
+			and (card.get_controller() == face_down_viewer or card.is_temporarily_revealed())
+
+		# Face-down cards: own stealth creatures that are visible to the viewer use the normal
+		# renderer below so they keep their full stats and defensive shield placement.
+		if card.is_face_down and not can_render_stealth_creature_normally:
 			add_theme_stylebox_override("panel", StyleBoxEmpty.new())
 			var fd_overlay := Control.new()
 			fd_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			fd_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 			add_child(fd_overlay)
-			var face_down_viewer := _get_viewer_player()
 			var revealed_face_down_power := (card is PowerCard and (card as PowerCard).is_publicly_revealed) or card.is_temporarily_revealed()
 			var is_own_hidden_card := card.get_controller() == face_down_viewer and (
 				card.is_stealth
@@ -1755,7 +1758,13 @@ func _refresh_display() -> void:
 			if _is_card_targeted_on_stack(card) or _is_card_pending_target(card) or _is_card_pending_attack_target(card) or _is_card_attack_candidate(card):
 				_add_target_aura(fd_overlay)
 				_add_stack_target_indicator(fd_overlay)
-			var _fd_is_def := card.card_type == Card.CardType.CREATURE and card.creature_mode == Card.CreatureMode.DEFENSIVE
+			var _fd_is_def := card.card_type == Card.CardType.CREATURE and (
+				card.creature_mode == Card.CreatureMode.DEFENSIVE
+				or card.is_stealth
+			)
+			if _fd_is_def:
+				var shield_scale := DefenseShieldOverlay.STEALTH_VIEW_SIZE_MULTIPLIER if card.is_stealth else 1.0
+				DefenseShieldOverlay.ensure_on(fd_overlay, DefenseShieldOverlay.LAYOUT_CENTER, shield_scale)
 			_defense_overlay = fd_overlay if _fd_is_def else null
 			_raised_overlay  = fd_overlay if (_fd_is_def or card.is_stealth) else null
 			z_index = _get_resting_z_index()
@@ -1903,15 +1912,12 @@ func _refresh_display() -> void:
 			return
 
 		var is_def_creature := card.card_type == Card.CardType.CREATURE and card.creature_mode == Card.CreatureMode.DEFENSIVE
+		var shows_defense_shield := card.card_type == Card.CardType.CREATURE and (is_def_creature or card.is_stealth)
 		match card.card_type:
 			Card.CardType.CREATURE:
-				if is_def_creature:
-					# Transparent - the rotated overlay IS the visual
-					add_theme_stylebox_override("panel", StyleBoxEmpty.new())
-				else:
-					style.bg_color    = Color(0.13, 0.22, 0.42)
-					style.border_color = Color(0.4, 0.65, 1.0)
-					add_theme_stylebox_override("panel", style)
+				style.bg_color    = Color(0.13, 0.22, 0.42)
+				style.border_color = Color(0.4, 0.65, 1.0)
+				add_theme_stylebox_override("panel", style)
 			Card.CardType.STRUCTURE:
 				style.bg_color    = Color(0.28, 0.18, 0.08)
 				style.border_color = Color(0.75, 0.55, 0.3)
@@ -1921,6 +1927,8 @@ func _refresh_display() -> void:
 				style.border_color = Color(0.5, 0.5, 0.5)
 				add_theme_stylebox_override("panel", style)
 
+		var board_viewer := _get_viewer_player()
+		var can_view_stealth_details := card.get_controller() == board_viewer or card.is_temporarily_revealed()
 		var card_overlay := Control.new()
 		card_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		card_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -1968,11 +1976,16 @@ func _refresh_display() -> void:
 				art.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 				art.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				card_overlay.add_child(art)
+		if shows_defense_shield:
+			var shield_layout := DefenseShieldOverlay.LAYOUT_STAT_UNDER
+			if card.is_stealth and not can_view_stealth_details:
+				shield_layout = DefenseShieldOverlay.LAYOUT_CENTER
+			var shield_scale := DefenseShieldOverlay.STEALTH_VIEW_SIZE_MULTIPLIER if shield_layout == DefenseShieldOverlay.LAYOUT_CENTER else 1.0
+			DefenseShieldOverlay.ensure_on(card_overlay, shield_layout, shield_scale)
 		_add_level_badge(card_overlay, card, Control.PRESET_TOP_LEFT, 6, 6, 54, 24)
 		_add_prepared_magical_mana_badge(card_overlay, card)
 
 		_add_sleep_affordance(card_overlay, card)
-		var board_viewer := _get_viewer_player()
 		if not card.is_stealth or card.get_controller() == board_viewer or card.is_temporarily_revealed():
 			_add_equipment_affordances(card_overlay, card)
 			_add_binding_affordances(card_overlay, card)
@@ -2091,8 +2104,8 @@ func _refresh_display() -> void:
 			muted_badge.add_child(muted_lbl)
 			card_overlay.add_child(muted_badge)
 
-		_defense_overlay = card_overlay if is_def_creature else null
-		_raised_overlay  = card_overlay if (is_def_creature or card.is_stealth) else null
+		_defense_overlay = card_overlay if shows_defense_shield else null
+		_raised_overlay  = card_overlay if (shows_defense_shield or card.is_stealth) else null
 		z_index = _get_resting_z_index()
 
 	else:
@@ -2169,13 +2182,6 @@ func _notification(what: int) -> void:
 			_hovered = false
 			_hide_pending = false
 			_hide_ability_popup()
-		NOTIFICATION_SORT_CHILDREN:
-			# Fires after PanelContainer has sized its children. Re-apply defense
-			# rotation here so the pivot uses the overlay's actual post-layout size.
-			if _defense_overlay and is_instance_valid(_defense_overlay):
-				_defense_overlay.pivot_offset = _defense_overlay.size / 2.0
-				_defense_overlay.rotation_degrees = 90.0
-
 		NOTIFICATION_MOUSE_ENTER:
 			_hovered = true
 			z_index = HOVER_BOARD_Z_INDEX

@@ -72,6 +72,7 @@ const INTERCEPT_COUNT_VALUE_META := "intercept_count_value"
 var priority_player: Player = null
 var consecutive_passes: int = 0
 var _effect_source_card_stack: Array[Card] = []
+var resolving_stack_actions: Array[CardAction] = []
 
 func get_phase_name(phase: int = -1) -> String:
 	var resolved_phase: GamePhase = current_phase
@@ -112,6 +113,16 @@ func pass_priority() -> void:
 
 func both_passed() -> bool:
 	return consecutive_passes >= 2
+
+func begin_stack_action_resolution(action: CardAction) -> void:
+	if action == null or action in resolving_stack_actions:
+		return
+	resolving_stack_actions.append(action)
+
+func end_stack_action_resolution(action: CardAction) -> void:
+	if action == null:
+		return
+	resolving_stack_actions.erase(action)
 
 func note_player_feedback(text: String) -> void:
 	if text.strip_edges() == "":

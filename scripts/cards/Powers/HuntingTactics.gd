@@ -5,7 +5,7 @@ const UNLOCK_COST := 5
 const ATTACK_BUFF_SOURCE := "Hunting Tactics"
 const ATTACK_BUFF_EFFECT_TYPE := "hunting_tactics_attack_buff"
 const CANNOT_ATTACK_STATUS := "cannot_attack"
-const ART_PATH := "res://images/card_art/HuntingTacticsEdit.png"
+const ART_PATH := "res://images/card_art/powers/HuntingTacticsEdit.png"
 
 func _init() -> void:
 	super._init()

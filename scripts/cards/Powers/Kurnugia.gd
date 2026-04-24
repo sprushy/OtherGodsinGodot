@@ -1,7 +1,7 @@
 extends PowerCard
 class_name KurnugiaTheBeginningOfTheEnd
 
-const ART_PATH := "res://images/card_art/KurnugiaArt.jpg"
+const ART_PATH := "res://images/card_art/powers/KurnugiaArt.jpg"
 
 # Maps card uid -> turn_number when the card was sheltered
 var _sheltered_release_turns: Dictionary = {}

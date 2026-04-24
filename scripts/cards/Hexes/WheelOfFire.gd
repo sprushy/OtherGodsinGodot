@@ -1,7 +1,7 @@
 extends PermanentHexCard
 class_name WheelOfFire
 
-const ART_PATH := "res://scripts/cards/Creatures/WheelofFireEdit.png"
+const ART_PATH := "res://images/card_art/hexes/WheelofFireEdit.png"
 const ACTION_TAX_AMOUNT := 1
 const ADVANCE_COST := 1
 var _turn_start_advance_window_open: bool = false

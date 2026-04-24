@@ -1,7 +1,7 @@
 extends StructureCard
 class_name PalisadeBarrier
 
-const ART_PATH := "res://scripts/cards/Charms/PalisadeArtEdit.png"
+const ART_PATH := "res://images/card_art/structures/PalisadeArtEdit.png"
 
 func _init() -> void:
 	super._init()

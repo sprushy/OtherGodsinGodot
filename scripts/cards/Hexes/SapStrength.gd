@@ -1,7 +1,7 @@
 extends HexCard
 class_name SapStrength
 
-const ART_PATH := "res://scripts/cards/Hexes/SapStrengthEdit2.png"
+const ART_PATH := "res://images/card_art/hexes/SapStrengthEdit2.png"
 const STR_REDUCTION := 10
 const DEBUFF_SOURCE := "Sap Strength"
 const DEBUFF_EFFECT_TYPE := "sap_strength_debuff"

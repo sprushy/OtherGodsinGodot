@@ -206,6 +206,8 @@ func resolve_action(action: CardAction) -> void:
 	if game_manager != null and action != null and action.card != null:
 		game_manager.push_effect_source_card(action.card)
 		pushed_effect_source = true
+	if game_manager != null and action != null:
+		game_manager.begin_stack_action_resolution(action)
 	match action.type:
 		CardAction.Type.ABILITY:
 			_resolve_ability(action)
@@ -218,6 +220,8 @@ func resolve_action(action: CardAction) -> void:
 	if game_manager != null and pushed_effect_source:
 		game_manager.pop_effect_source_card()
 	_remove_resolved_action(action)
+	if game_manager != null and action != null:
+		game_manager.end_stack_action_resolution(action)
 	
 	action_resolved.emit(action)
 
@@ -881,6 +885,8 @@ func _start_authoritative_headless_attack() -> void:
 	var attacker_name := _get_action_label(selected_attacker, defender) if selected_attacker != null else "A creature"
 	request_ui_interaction.emit(defender_idx, "intercept", {
 		"interceptor_uids": interceptor_uids,
+		"attacker": selected_attacker,
+		"target": pending_attack_target,
 		"action_message": attacker_name + " is attacking - intercept or allow?"
 	})
 

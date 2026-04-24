@@ -26,6 +26,7 @@ func _init(gm: GameManager, mm: MatchManager, nm: Node, p_prompt_router = null) 
 func _connect_signals() -> void:
 	match_manager.move_validated.connect(_on_move_validated)
 	match_manager.action_resolved.connect(_on_action_resolved)
+	match_manager.ui_refresh_requested.connect(_on_ui_refresh_requested)
 	game_manager.turn_upkeep_started.connect(_on_turn_upkeep_started)
 	game_manager.turn_started.connect(_on_turn_started)
 	game_manager.game_ended.connect(_on_game_ended)
@@ -45,6 +46,21 @@ func _on_move_validated(move: Dictionary) -> void:
 
 func _on_action_resolved(action: CardAction) -> void:
 	_broadcast_full_state_for_action(action)
+
+func _on_ui_refresh_requested() -> void:
+	if network_manager == null or game_manager == null or game_manager.action_stack.is_empty():
+		return
+	for player_index in network_manager.player_peer_ids:
+		var peer_id: int = network_manager.player_peer_ids[player_index]
+		var viewer := _viewer_for_player_index(player_index)
+		var event_data := _build_full_state_event_data(
+			player_index,
+			_label_for_pending_stack_action(game_manager.action_stack.back(), viewer)
+		)
+		if peer_id == 1:
+			network_manager.game_event_received.emit("full_state", event_data)
+		else:
+			network_manager.broadcast_event_to_peer(peer_id, "full_state", event_data)
 
 func _on_turn_upkeep_started(_turn_number: int, player: Player) -> void:
 	if network_manager == null:
@@ -111,11 +127,7 @@ func _broadcast_full_state(action_message: String) -> void:
 	# Send personalized state to each player (hand privacy + hidden board privacy)
 	for player_index in network_manager.player_peer_ids:
 		var peer_id: int = network_manager.player_peer_ids[player_index]
-		var state_data := GameState.serialize(game_manager, player_index)
-		var event_data := {
-			state = state_data,
-			action_message = action_message,
-		}
+		var event_data := _build_full_state_event_data(player_index, action_message)
 		if peer_id == 1:
 			# Server's own "peer" — emit locally so the host UI updates too
 			network_manager.game_event_received.emit("full_state", event_data)
@@ -127,11 +139,10 @@ func _broadcast_full_state_for_move(move: Dictionary) -> void:
 		return
 	for player_index in network_manager.player_peer_ids:
 		var peer_id: int = network_manager.player_peer_ids[player_index]
-		var state_data := GameState.serialize(game_manager, player_index)
-		var event_data := {
-			state = state_data,
-			action_message = _label_for_move(move, _viewer_for_player_index(player_index)),
-		}
+		var event_data := _build_full_state_event_data(
+			player_index,
+			_label_for_move(move, _viewer_for_player_index(player_index))
+		)
 		if peer_id == 1:
 			network_manager.game_event_received.emit("full_state", event_data)
 		else:
@@ -143,11 +154,10 @@ func _broadcast_full_state_for_action(action: CardAction) -> void:
 	for player_index in network_manager.player_peer_ids:
 		var peer_id: int = network_manager.player_peer_ids[player_index]
 		var viewer := _viewer_for_player_index(player_index)
-		var state_data := GameState.serialize(game_manager, player_index)
-		var event_data := {
-			state = state_data,
-			action_message = _label_for_resolved_action(action, viewer),
-		}
+		var event_data := _build_full_state_event_data(
+			player_index,
+			_label_for_resolved_action(action, viewer)
+		)
 		if peer_id == 1:
 			network_manager.game_event_received.emit("full_state", event_data)
 		else:
@@ -156,6 +166,37 @@ func _broadcast_full_state_for_action(action: CardAction) -> void:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+func _build_full_state_event_data(player_index: int, action_message: String) -> Dictionary:
+	var event_data := {
+		state = GameState.serialize(game_manager, player_index),
+		action_message = action_message,
+	}
+	var attack_preview := _serialize_pending_attack_preview()
+	if not attack_preview.is_empty():
+		event_data["pending_attack_preview"] = attack_preview
+	return event_data
+
+func _serialize_pending_attack_preview() -> Dictionary:
+	if match_manager == null or match_manager.selected_attacker == null or match_manager.pending_attack_target == null:
+		return {}
+	var preview := {
+		"attacker_uid": match_manager.selected_attacker.uid,
+	}
+	if match_manager.pending_attack_target is Card:
+		preview["target_uid"] = (match_manager.pending_attack_target as Card).uid
+	elif match_manager.pending_attack_target is Player:
+		preview["target_player_index"] = game_manager.players.find(match_manager.pending_attack_target)
+	return preview
+
+func _label_for_pending_stack_action(action: CardAction, viewer: Player = null) -> String:
+	if action == null:
+		return ""
+	if match_manager != null:
+		var prompt_message := str(match_manager._get_priority_action_message(action, viewer)).strip_edges()
+		if not prompt_message.is_empty():
+			return prompt_message
+	return _label_for_resolved_action(action, viewer)
 
 func _label_for_move(move: Dictionary, viewer: Player = null) -> String:
 	match move.get("type", ""):

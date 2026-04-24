@@ -15,7 +15,7 @@ func _init() -> void:
 	flavor_text = ""
 	culture = "Ancient"
 	artist = "Ricardo Zoppello"
-	art_path = "res://images/card_art/Humbaba(print)Art.jpg"
+	art_path = "res://images/card_art/creatures/Humbaba(print)Art.jpg"
 
 func on_attack(game_manager: GameManager, _target) -> void:
 	_trigger_augury_reading(game_manager)

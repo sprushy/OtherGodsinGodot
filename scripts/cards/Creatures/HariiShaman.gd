@@ -48,7 +48,7 @@ func _init() -> void:
 	ability_text = "[b]Transform[/b] ([b]Activate[/b]): Twice per turn, choose a friendly Norse Warrior and change it to an Animal subtype, or choose a friendly Animal and change it to a Norse Human Warrior."
 	culture = "Norse"
 	artist = "Ricardo Zoppello"
-	art_path = "res://images/card_art/HariiShamanEdit.png"
+	art_path = "res://images/card_art/creatures/HariiShamanEdit.png"
 
 func get_activation_label() -> String:
 	return "Transform"

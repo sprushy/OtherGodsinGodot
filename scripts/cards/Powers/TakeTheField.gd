@@ -2,7 +2,7 @@ extends PowerCard
 class_name TakeTheField
 
 const CardCatalogScript = preload("res://scripts/cards/CardCatalog.gd")
-const ART_PATH := "res://scripts/cards/Gods/Take the Field(web).jpg"
+const ART_PATH := "res://images/card_art/powers/Take the Field(web).jpg"
 
 func _init() -> void:
 	super._init()

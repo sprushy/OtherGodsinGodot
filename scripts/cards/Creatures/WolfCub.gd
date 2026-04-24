@@ -1,7 +1,7 @@
 extends CreatureCard
 class_name WolfCub
 
-const ART_PATH := "res://scripts/cards/Creatures/WolfCubEdit.png"
+const ART_PATH := "res://images/card_art/creatures/WolfCubEdit.png"
 
 func _init() -> void:
 	super._init()

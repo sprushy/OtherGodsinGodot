@@ -3,7 +3,7 @@ class_name NuskuFirebearer
 
 const ACTIVATION_COST := 4
 const MILL_COUNT := 7
-const ART_PATH := "res://scripts/cards/Charms/NuskuEdit2.png"
+const ART_PATH := "res://images/card_art/gods/NuskuEdit2.png"
 
 func _init() -> void:
 	super._init()

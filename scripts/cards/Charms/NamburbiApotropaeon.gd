@@ -1,7 +1,7 @@
 extends CharmCard
 class_name NamburbiApotropaeon
 
-const ART_PATH := "res://scripts/cards/Creatures/NamburbiArt.jpg"
+const ART_PATH := "res://images/card_art/charms/NamburbiArt.jpg"
 
 func _init() -> void:
 	super._init()

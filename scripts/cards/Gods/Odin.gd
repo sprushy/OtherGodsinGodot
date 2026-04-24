@@ -2,7 +2,7 @@ extends GodCard
 class_name Odin
 
 const FOLLOWER_PENALTY := 15
-const ART_PATH := "res://images/card_art/gods/OdinEdit.png"
+const ART_PATH := "res://images/card_art/gods/Odin.jpg"
 
 func _init() -> void:
 	super._init()
@@ -15,7 +15,7 @@ func _init() -> void:
 	targets = true
 	flavor_text = ""
 	ability_text = "Patriarch Rule\nRunic Knowledge ([b]Activate[/b]): [b]Void[/b] a Runic or an \"of Odin\" card from your hand, field, or grave. Name the top card of your deck and reveal it; if you are correct, draw it. If not, lose 15 followers and [b]Shelve[/b] it."
-	artist = "Ricardo Zoppello"
+	artist = "User-provided"
 	art_path = ART_PATH
 	paragon_of_champions = "Ecstasy, Death"
 

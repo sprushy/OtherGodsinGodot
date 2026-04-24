@@ -1,7 +1,7 @@
 extends CreatureCard
 class_name HyenaPack
 
-const ART_PATH := "res://images/card_art/Hyena Pack(print).jpg"
+const ART_PATH := "res://images/card_art/creatures/Hyena Pack(print).jpg"
 
 func _init() -> void:
 	super._init()
