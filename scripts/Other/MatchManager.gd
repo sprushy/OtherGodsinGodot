@@ -73,6 +73,8 @@ func _init(p_game_manager: GameManager) -> void:
 	move_failed.connect(_on_move_failed)
 	if game_manager != null and not game_manager.decision_requested.is_connected(_on_game_manager_decision_requested):
 		game_manager.decision_requested.connect(_on_game_manager_decision_requested)
+	if game_manager != null and not game_manager.card_summoned.is_connected(_on_game_manager_card_summoned):
+		game_manager.card_summoned.connect(_on_game_manager_card_summoned)
 
 # --- Targeting Control ---
 
@@ -199,6 +201,36 @@ func _queue_decision_priority_event(
 	var remains_on_stack := queue_or_resolve_priority_event(action)
 	if not remains_on_stack:
 		return
+
+func _on_game_manager_card_summoned(
+	player: Player,
+	card: Card,
+	_from_zone: Zone,
+	to_zone: Zone,
+	_summon_source: Card,
+	face_down: bool,
+	stealth: bool
+) -> void:
+	if game_manager == null or not _uses_authoritative_headless_priority_flow():
+		return
+	if player == null or card == null or to_zone == null:
+		return
+	if face_down or stealth or card.is_face_down or card.is_prepared or card.is_stealth:
+		return
+	if card.current_zone != to_zone or not to_zone.is_board_zone():
+		return
+	if _has_pending_impact_priority_action(card):
+		return
+	if _has_pending_event_priority_action(card, "summon"):
+		return
+	var summon_priority_action := CardAction.new()
+	summon_priority_action.type = CardAction.Type.EVENT
+	summon_priority_action.source_player = player
+	summon_priority_action.initial_priority_player = game_manager.get_opponent(player)
+	summon_priority_action.card = card
+	summon_priority_action.event_name = "summon"
+	summon_priority_action.event_speed = card.get_effective_speed()
+	game_manager.push_to_stack(summon_priority_action)
 
 func resolve_action(action: CardAction) -> void:
 	last_resolution_text = ""
@@ -693,40 +725,55 @@ func _build_priority_response_options(responses: Array) -> Array:
 	for card in responses:
 		if card is HexCard:
 			var hex := card as HexCard
+			var hex_target_uids := _get_priority_response_target_uids(hex, top)
+			if hex.targets and hex_target_uids.is_empty():
+				continue
 			var target_is_attacker := not hex.has_method("get_priority_targets") and top.type == CardAction.Type.ATTACK
 			response_options.append({
 				response_type = "hex",
 				card_uid = hex.uid,
-				target_uids = _get_priority_response_target_uids(hex, top),
+				target_uids = hex_target_uids,
 				target_is_attacker = target_is_attacker,
 			})
 		elif card is CharmCard:
 			var charm := card as CharmCard
+			var charm_target_uids := _get_priority_response_target_uids(charm, top)
+			if charm.targets and charm_target_uids.is_empty():
+				continue
 			var from_hand := charm.current_zone == charm.card_owner.hand_zone
 			response_options.append({
 				response_type = "charm",
 				card_uid = charm.uid,
-				target_uids = _get_priority_response_target_uids(charm, top),
+				target_uids = charm_target_uids,
 				from_hand = from_hand,
 			})
 		elif card is SpellCard:
 			var spell := card as SpellCard
+			var spell_target_uids := _get_priority_response_target_uids(spell, top)
+			if spell.targets and spell_target_uids.is_empty():
+				continue
 			response_options.append({
 				response_type = "spell",
 				card_uid = spell.uid,
-				target_uids = _get_priority_response_target_uids(spell, top),
+				target_uids = spell_target_uids,
 			})
 		elif card != null and card.is_god and card.has_method("get_valid_targets"):
+			var god_target_uids := _get_priority_response_target_uids(card, top)
+			if card.targets and god_target_uids.is_empty():
+				continue
 			response_options.append({
 				response_type = "god",
 				card_uid = card.uid,
-				target_uids = _get_priority_response_target_uids(card, top),
+				target_uids = god_target_uids,
 			})
 		elif card != null and card.has_method("can_respond_to_priority_action") and card.has_method("activate"):
+			var ability_target_uids := _get_priority_response_target_uids(card, top)
+			if card.targets and ability_target_uids.is_empty():
+				continue
 			response_options.append({
 				response_type = "ability",
 				card_uid = card.uid,
-				target_uids = _get_priority_response_target_uids(card, top),
+				target_uids = ability_target_uids,
 			})
 	return response_options
 
@@ -741,6 +788,15 @@ func build_priority_prompt_data(player: Player) -> Dictionary:
 		responses = _build_priority_response_options(responses),
 		action_message = _get_priority_action_message(game_manager.action_stack.back(), player),
 	}
+
+func _player_has_priority_prompt_responses(player: Player) -> bool:
+	if player == null:
+		return false
+	var prompt_data := build_priority_prompt_data(player)
+	if prompt_data.is_empty():
+		return false
+	var responses: Array = prompt_data.get("responses", [])
+	return not responses.is_empty()
 
 func _get_priority_action_message(top: CardAction, viewer: Player = null) -> String:
 	if top == null:
@@ -814,8 +870,8 @@ func queue_or_resolve_priority_event(action: CardAction) -> bool:
 	game_manager.push_to_stack(action)
 	var first_player: Player = game_manager.priority_player
 	var second_player: Player = game_manager.get_opponent(first_player) if first_player != null else null
-	var first_has_responses: bool = first_player != null and not game_manager.get_priority_responses(first_player).is_empty()
-	var second_has_responses: bool = second_player != null and not game_manager.get_priority_responses(second_player).is_empty()
+	var first_has_responses: bool = _player_has_priority_prompt_responses(first_player)
+	var second_has_responses: bool = _player_has_priority_prompt_responses(second_player)
 	if first_has_responses or second_has_responses:
 		if _uses_authoritative_headless_priority_flow():
 			_advance_authoritative_priority()
@@ -832,17 +888,55 @@ func _queue_authoritative_priority_event(
 	resolve_callback: Callable = Callable(),
 	initial_priority_player: Player = null,
 	source_player_override: Player = null,
-	resolution_text: String = ""
+	resolution_text: String = "",
+	source_card: Card = null,
+	event_speed: int = 0
 ) -> void:
 	var action := CardAction.new()
 	action.type = CardAction.Type.EVENT
 	action.source_player = source_player_override if source_player_override != null else game_manager.current_player
 	action.initial_priority_player = initial_priority_player
+	action.card = source_card
 	action.event_name = event_name
-	action.event_speed = 0
+	action.event_speed = event_speed
 	action.resolve_callback = resolve_callback
 	action.resolution_text = resolution_text
 	_queue_or_resolve_authoritative_priority_event(action)
+
+func _has_pending_impact_priority_action(card: Card) -> bool:
+	if game_manager == null or card == null:
+		return false
+	for action in game_manager.action_stack:
+		if action == null or not (action is CardAction):
+			continue
+		var typed_action := action as CardAction
+		if typed_action.type != CardAction.Type.EVENT or typed_action.card != card:
+			continue
+		if str(typed_action.event_name).contains("impact"):
+			return true
+	return false
+
+func _has_pending_event_priority_action(card: Card, event_name: String) -> bool:
+	if game_manager == null or card == null:
+		return false
+	for action in game_manager.action_stack:
+		if action == null or not (action is CardAction):
+			continue
+		var typed_action := action as CardAction
+		if typed_action.type != CardAction.Type.EVENT or typed_action.card != card:
+			continue
+		if typed_action.event_name == event_name:
+			return true
+	return false
+
+func _advance_authoritative_priority_for_pending_summon(card: Card) -> void:
+	if not _uses_authoritative_headless_priority_flow() or game_manager == null or card == null:
+		return
+	if _authoritative_stack_resolution_pending or not game_manager.resolving_stack_actions.is_empty():
+		return
+	if not _has_pending_event_priority_action(card, "summon"):
+		return
+	_advance_authoritative_priority()
 
 func _clear_pending_attack_state() -> void:
 	selected_attacker = null
@@ -1403,6 +1497,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 				move_failed.emit("Summon failed for " + card.card_name)
 				return false
 			move_validated.emit(command)
+			_advance_authoritative_priority_for_pending_summon(card)
 			return true
 		"cast_spell":
 			var spell_uid: String = command.get("spell_uid", "")
@@ -1729,6 +1824,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 				return false
 			skoll.apply_upkeep_summon_tax(game_manager)
 			move_validated.emit(command)
+			_advance_authoritative_priority_for_pending_summon(skoll)
 			return true
 		"hati_moon_hunt":
 			var hati_uid: String = command.get("hati_uid", "")
@@ -1760,6 +1856,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 				move_failed.emit("Moon Hunt fizzled.")
 				return false
 			move_validated.emit(command)
+			_advance_authoritative_priority_for_pending_summon(hati)
 			return true
 		"wheel_of_fire_turn_start_choice":
 			var source_uid: String = str(command.get("source_uid", "")).strip_edges()
@@ -2518,6 +2615,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 				move_failed.emit("Wolf Master: summon failed for " + wm_lupine.card_name)
 				return false
 			move_validated.emit(command)
+			_advance_authoritative_priority_for_pending_summon(wm_lupine)
 			return true
 		"activate_divine_caprice":
 			var dc_uid: String = command.get("power_uid", "")
@@ -2712,6 +2810,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 			# Remove from pending list regardless of choice (or if failed)
 			game_manager.pending_resurrections.erase(card)
 			move_validated.emit(command)
+			_advance_authoritative_priority_for_pending_summon(card)
 			# CombatMockGame's _on_match_move_validated("resurrection_choice") drives
 			# the next step via _continue_end_turn_sequence(); no need to call it here.
 			return true

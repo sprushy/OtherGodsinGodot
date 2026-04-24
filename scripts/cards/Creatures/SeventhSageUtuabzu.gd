@@ -78,7 +78,7 @@ func activate(game_manager: GameManager, target: Card = null) -> void:
 	if game_manager != null and feedback != "":
 		game_manager.note_player_feedback(feedback)
 
-func get_channel_ally_targets(game_manager: GameManager) -> Array[Card]:
+func get_channel_ally_targets(_game_manager: GameManager) -> Array[Card]:
 	var valid_targets: Array[Card] = []
 	var controller := get_controller()
 	if controller == null:

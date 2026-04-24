@@ -430,7 +430,7 @@ func _build_multiplayer_deck_controls() -> void:
 	summary_style.bg_color = Color(0.08, 0.09, 0.13, 0.95)
 	summary_style.border_color = Color(0.32, 0.36, 0.46, 1.0)
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		summary_style.set_border_width(side, 1)
+		summary_style.set_border_width(side as Side, 1)
 	summary_style.corner_radius_top_left = 6
 	summary_style.corner_radius_top_right = 6
 	summary_style.corner_radius_bottom_left = 6
@@ -484,7 +484,7 @@ func _build_multiplayer_deck_controls() -> void:
 	popup_style.bg_color = Color(0.08, 0.09, 0.14, 0.98)
 	popup_style.border_color = Color(0.42, 0.46, 0.56, 1.0)
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		popup_style.set_border_width(side, 1)
+		popup_style.set_border_width(side as Side, 1)
 	popup_style.corner_radius_top_left = 6
 	popup_style.corner_radius_top_right = 6
 	popup_style.corner_radius_bottom_left = 6
@@ -709,7 +709,7 @@ func _make_multiplayer_deck_entry_row(entry: Dictionary) -> Control:
 
 	var is_legal := bool(entry.get("is_legal", false))
 	var is_selected := str(entry.get("deck_id", "")).strip_edges() == _selected_multiplayer_deck_id.strip_edges()
-	var deck_name := str(entry.get("deck_name", "Deck"))
+	var entry_deck_name := str(entry.get("deck_name", "Deck"))
 	var reason := str(entry.get("reason", "")).strip_edges()
 	var god_card: Card = _get_saved_deck_god_template(entry.get("saved_deck", {}) as Dictionary)
 
@@ -717,7 +717,7 @@ func _make_multiplayer_deck_entry_row(entry: Dictionary) -> Control:
 	style.bg_color = Color(0.12, 0.14, 0.18, 0.98) if is_legal else Color(0.15, 0.11, 0.12, 0.97)
 	style.border_color = Color(0.86, 0.78, 0.36, 1.0) if is_selected else (Color(0.42, 0.46, 0.56, 1.0) if is_legal else Color(0.64, 0.26, 0.26, 1.0))
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		style.set_border_width(side, 2 if is_selected else 1)
+		style.set_border_width(side as Side, 2 if is_selected else 1)
 	style.corner_radius_top_left = 5
 	style.corner_radius_top_right = 5
 	style.corner_radius_bottom_left = 5
@@ -747,7 +747,7 @@ func _make_multiplayer_deck_entry_row(entry: Dictionary) -> Control:
 	art_style.bg_color = Color(0.06, 0.07, 0.10, 0.96)
 	art_style.border_color = Color(0.34, 0.38, 0.48, 1.0) if is_legal else Color(0.56, 0.26, 0.26, 1.0)
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		art_style.set_border_width(side, 1)
+		art_style.set_border_width(side as Side, 1)
 	art_style.corner_radius_top_left = 4
 	art_style.corner_radius_top_right = 4
 	art_style.corner_radius_bottom_left = 4
@@ -771,7 +771,7 @@ func _make_multiplayer_deck_entry_row(entry: Dictionary) -> Control:
 	inner.add_child(text_box)
 
 	var name_label := Label.new()
-	name_label.text = "%s%s" % [deck_name, "  [Loaded]" if is_selected else ""]
+	name_label.text = "%s%s" % [entry_deck_name, "  [Loaded]" if is_selected else ""]
 	name_label.add_theme_font_size_override("font_size", 14)
 	name_label.add_theme_color_override("font_color", Color(0.95, 0.95, 0.96) if is_legal else Color(0.80, 0.80, 0.82))
 	name_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -796,7 +796,7 @@ func _make_multiplayer_deck_entry_row(entry: Dictionary) -> Control:
 		god_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		text_box.add_child(god_label)
 
-	row.tooltip_text = reason if not reason.is_empty() else deck_name
+	row.tooltip_text = reason if not reason.is_empty() else entry_deck_name
 	if is_legal:
 		row.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 		row.gui_input.connect(func(event: InputEvent) -> void:
@@ -1357,7 +1357,7 @@ func _show_update_prompt(latest_version: String, release_url: String, download_u
 	panel_style.corner_radius_bottom_left = 12
 	panel_style.corner_radius_bottom_right = 12
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		panel_style.set_border_width(side, 2)
+		panel_style.set_border_width(side as Side, 2)
 	panel.add_theme_stylebox_override("panel", panel_style)
 	center.add_child(panel)
 
@@ -1752,7 +1752,7 @@ func _open_bug_report_overlay() -> void:
 	panel_style.corner_radius_bottom_left = 12
 	panel_style.corner_radius_bottom_right = 12
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		panel_style.set_border_width(side, 2)
+		panel_style.set_border_width(side as Side, 2)
 	panel.add_theme_stylebox_override("panel", panel_style)
 	center.add_child(panel)
 
@@ -2208,7 +2208,7 @@ func _show_auth_onboarding() -> void:
 	panel_style.corner_radius_bottom_left = 12
 	panel_style.corner_radius_bottom_right = 12
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		panel_style.set_border_width(side, 2)
+		panel_style.set_border_width(side as Side, 2)
 	panel.add_theme_stylebox_override("panel", panel_style)
 	center.add_child(panel)
 
@@ -2518,7 +2518,7 @@ func _open_rules_overlay() -> void:
 	panel_style.corner_radius_bottom_left = 12
 	panel_style.corner_radius_bottom_right = 12
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		panel_style.set_border_width(side, 2)
+		panel_style.set_border_width(side as Side, 2)
 	panel.add_theme_stylebox_override("panel", panel_style)
 	outer_margin.add_child(panel)
 
@@ -3450,7 +3450,7 @@ func _build_profile_summary_controls() -> void:
 	style.bg_color = Color(0.08, 0.10, 0.14, 0.92)
 	style.border_color = Color(0.30, 0.40, 0.55, 0.8)
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		style.set_border_width(side, 1)
+		style.set_border_width(side as Side, 1)
 	style.corner_radius_top_left = 4
 	style.corner_radius_top_right = 4
 	style.corner_radius_bottom_left = 4

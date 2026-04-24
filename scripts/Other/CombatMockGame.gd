@@ -7409,6 +7409,8 @@ func _on_card_summoned(player: Player, card: Card, _from_zone: Zone, to_zone: Zo
 		return
 	if _is_networked_client:
 		return
+	if match_manager != null and match_manager.uses_authoritative_priority_flow():
+		return
 	if face_down or stealth or card.is_face_down or card.is_prepared or card.is_stealth:
 		return
 	if _has_pending_impact_priority_action(card):
@@ -13065,8 +13067,8 @@ func _try_resolve_stalled_priority_event() -> bool:
 		first_player = top_action.initial_priority_player if top_action.initial_priority_player != null else game_manager.get_opponent(top_action.source_player)
 		game_manager.priority_player = first_player
 	var second_player := game_manager.get_opponent(first_player) if first_player != null else null
-	var first_has_responses := first_player != null and not game_manager.get_priority_responses(first_player).is_empty()
-	var second_has_responses := second_player != null and not game_manager.get_priority_responses(second_player).is_empty()
+	var first_has_responses := match_manager != null and match_manager._player_has_priority_prompt_responses(first_player)
+	var second_has_responses := match_manager != null and match_manager._player_has_priority_prompt_responses(second_player)
 	if first_has_responses or second_has_responses:
 		return false
 	_execute_top_of_stack()
@@ -19001,7 +19003,7 @@ func _should_show_opponent_priority_waiting(priority_player: Player, priority_id
 		return false
 	if priority_idx == -1 or priority_idx == local_idx:
 		return false
-	return not game_manager.get_priority_responses(priority_player).is_empty()
+	return match_manager != null and match_manager._player_has_priority_prompt_responses(priority_player)
 
 func _set_match_reconnect_wait(is_waiting: bool, message: String = "Waiting for opponent to reconnect...") -> void:
 	_match_reconnect_waiting = is_waiting

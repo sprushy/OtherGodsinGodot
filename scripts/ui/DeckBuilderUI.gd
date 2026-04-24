@@ -490,7 +490,7 @@ func _build_deck_panel(parent: Control) -> void:
 	var prev_style := StyleBoxFlat.new()
 	prev_style.bg_color = Color(0.10, 0.10, 0.16)
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		prev_style.set_border_width(side, 1)
+		prev_style.set_border_width(side as Side, 1)
 	prev_style.border_color = Color(0.3, 0.3, 0.5)
 	prev_outer.add_theme_stylebox_override("panel", prev_style)
 	panel.add_child(prev_outer)
@@ -594,7 +594,7 @@ func _build_deck_panel(parent: Control) -> void:
 	tiamat_style.bg_color = Color(0.12, 0.10, 0.08)
 	tiamat_style.border_color = Color(0.44, 0.35, 0.24)
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		tiamat_style.set_border_width(side, 1)
+		tiamat_style.set_border_width(side as Side, 1)
 	tiamat_panel.add_theme_stylebox_override("panel", tiamat_style)
 	panel.add_child(tiamat_panel)
 
@@ -790,7 +790,7 @@ func _make_card_item(card: Card) -> Control:
 	sty.bg_color = tc.darkened(0.75)
 	sty.border_color = tc
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		sty.set_border_width(side, 2)
+		sty.set_border_width(side as Side, 2)
 	sty.corner_radius_top_left    = 4; sty.corner_radius_top_right    = 4
 	sty.corner_radius_bottom_left = 4; sty.corner_radius_bottom_right = 4
 	bg.add_theme_stylebox_override("panel", sty)
@@ -965,7 +965,7 @@ func _make_card_item(card: Card) -> Control:
 			tag_style.bg_color = Color(0.15, 0.45, 0.15, 0.9)
 			tag_style.border_color = Color(0.6, 1.0, 0.6, 0.8)
 			for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-				tag_style.set_border_width(side, 1)
+				tag_style.set_border_width(side as Side, 1)
 			tag_style.corner_radius_top_left = 4; tag_style.corner_radius_top_right = 4
 			tag_style.corner_radius_bottom_left = 4; tag_style.corner_radius_bottom_right = 4
 			active_tag.add_theme_stylebox_override("panel", tag_style)
@@ -1663,7 +1663,7 @@ func _apply_saved_deck_action_button_style(button: Button, accent_color: Color) 
 	normal_style.corner_radius_bottom_left = 7
 	normal_style.corner_radius_bottom_right = 7
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		normal_style.set_border_width(side, 1)
+		normal_style.set_border_width(side as Side, 1)
 	button.add_theme_stylebox_override("normal", normal_style)
 
 	var hover_style := normal_style.duplicate() as StyleBoxFlat
@@ -1829,8 +1829,8 @@ func _load_profile_decks() -> void:
 				_pending_remote_saved_deck_id = ""
 				break
 	for deck in decks:
-		var deck_name := str(deck.get("name", "Deck"))
-		_saved_decks_option.add_item(deck_name)
+		var saved_deck_name := str(deck.get("name", "Deck"))
+		_saved_decks_option.add_item(saved_deck_name)
 		_saved_decks_option.set_item_metadata(_saved_decks_option.get_item_count() - 1, str(deck.get("deck_id", "")))
 
 	var preferred_deck_id := _get_last_selected_saved_deck_id()
@@ -1900,9 +1900,9 @@ func _refresh_saved_deck_gallery(decks: Array[Dictionary]) -> void:
 
 func _make_saved_deck_cover(saved_deck: Dictionary) -> Control:
 	var deck_id := str(saved_deck.get("deck_id", "")).strip_edges()
-	var deck_name := str(saved_deck.get("name", "Deck")).strip_edges()
-	if deck_name.is_empty():
-		deck_name = "Deck"
+	var saved_deck_name := str(saved_deck.get("name", "Deck")).strip_edges()
+	if saved_deck_name.is_empty():
+		saved_deck_name = "Deck"
 	var glow_margin := 12
 	var wrapper := MarginContainer.new()
 	wrapper.add_theme_constant_override("margin_left", glow_margin)
@@ -2034,7 +2034,7 @@ func _make_saved_deck_cover(saved_deck: Dictionary) -> Control:
 	cover.add_child(info)
 
 	var name_lbl := Label.new()
-	name_lbl.text = deck_name
+	name_lbl.text = saved_deck_name
 	name_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	name_lbl.add_theme_font_size_override("font_size", 12)
 	name_lbl.add_theme_color_override("font_color", Color(1.0, 0.97, 0.82))
@@ -2080,7 +2080,7 @@ func _make_new_deck_cover() -> Control:
 	style.corner_radius_bottom_left = 8
 	style.corner_radius_bottom_right = 8
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		style.set_border_width(side, 2)
+		style.set_border_width(side as Side, 2)
 	cover.add_theme_stylebox_override("normal", style)
 
 	var hover_style := style.duplicate() as StyleBoxFlat
@@ -2128,7 +2128,7 @@ func _make_saved_deck_cover_style(is_selected: bool, glow_color: Color, hovered:
 	panel_style.corner_radius_bottom_left = 8
 	panel_style.corner_radius_bottom_right = 8
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		panel_style.set_border_width(side, 2)
+		panel_style.set_border_width(side as Side, 2)
 	if hovered and glow_color.a > 0.0:
 		panel_style.shadow_color = glow_color
 		panel_style.shadow_size = 24
@@ -2184,7 +2184,7 @@ func _make_saved_decks_empty_state() -> Control:
 	style.corner_radius_bottom_left = 10
 	style.corner_radius_bottom_right = 10
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		style.set_border_width(side, 1)
+		style.set_border_width(side as Side, 1)
 	empty_state.add_theme_stylebox_override("panel", style)
 
 	var label := Label.new()
@@ -2265,8 +2265,9 @@ func _update_validation() -> void:
 		max_legends_summary
 	]
 	_validation_lbl.modulate = Color(0.5, 1.0, 0.55) if summary_ok else Color(1.0, 0.85, 0.45)
-	return
+	_validation_lbl.tooltip_text = ""
 
+func _legacy_validation_details() -> void:
 	var total := 0
 	var god_count := 0
 	var power_count := 0

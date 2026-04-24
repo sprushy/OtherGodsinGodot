@@ -645,6 +645,12 @@ func _ensure_loaded() -> void:
 	var primary_snapshot: Dictionary = _read_storage_snapshot(STORAGE_PATH, "primary")
 	if _merge_storage_snapshot(primary_snapshot):
 		_try_migrate_legacy_storage_over_placeholder_data()
+		if bool(primary_snapshot.get("recovered", false)):
+			print("LocalProfileStore: Repairing malformed primary snapshot.")
+			_save(true)
+			if not FileAccess.file_exists(STORAGE_BACKUP_PATH):
+				_copy_storage_snapshot(STORAGE_PATH, STORAGE_BACKUP_PATH)
+			return
 		if not FileAccess.file_exists(STORAGE_BACKUP_PATH):
 			_copy_storage_snapshot(STORAGE_PATH, STORAGE_BACKUP_PATH)
 		return
@@ -707,6 +713,7 @@ func _read_storage_snapshot(storage_path: String, label: String) -> Dictionary:
 		return {
 			"ok": false,
 			"data": {},
+			"recovered": false,
 		}
 	var file := FileAccess.open(storage_path, FileAccess.READ)
 	if file == null:
@@ -714,6 +721,7 @@ func _read_storage_snapshot(storage_path: String, label: String) -> Dictionary:
 		return {
 			"ok": false,
 			"data": {},
+			"recovered": false,
 		}
 	var content: String = file.get_as_text()
 	file.close()
@@ -722,18 +730,84 @@ func _read_storage_snapshot(storage_path: String, label: String) -> Dictionary:
 		return {
 			"ok": false,
 			"data": {},
+			"recovered": false,
 		}
-	var parsed = JSON.parse_string(content)
-	if parsed is Dictionary:
+	return _parse_storage_snapshot_content(content, storage_path, label)
+
+func _parse_storage_snapshot_content(content: String, storage_path: String, label: String) -> Dictionary:
+	var json := JSON.new()
+	var parse_err := json.parse(content)
+	if parse_err == OK and json.data is Dictionary:
 		return {
 			"ok": true,
-			"data": (parsed as Dictionary).duplicate(true),
+			"data": (json.data as Dictionary).duplicate(true),
+			"recovered": false,
 		}
-	print("LocalProfileStore: Error parsing ", label, " snapshot from ", storage_path)
+	var recovered_prefix := _extract_root_json_object_prefix(content)
+	if not recovered_prefix.is_empty() and recovered_prefix.strip_edges() != content.strip_edges():
+		var recovered_json := JSON.new()
+		if recovered_json.parse(recovered_prefix) == OK and recovered_json.data is Dictionary:
+			print("LocalProfileStore: Recovered valid ", label, " snapshot prefix from malformed file: ", storage_path)
+			return {
+				"ok": true,
+				"data": (recovered_json.data as Dictionary).duplicate(true),
+				"recovered": true,
+			}
+	var error_message := json.get_error_message()
+	if error_message.is_empty():
+		print("LocalProfileStore: Error parsing ", label, " snapshot from ", storage_path)
+	else:
+		print(
+			"LocalProfileStore: Error parsing ",
+			label,
+			" snapshot from ",
+			storage_path,
+			" at line ",
+			json.get_error_line(),
+			": ",
+			error_message
+		)
 	return {
 		"ok": false,
 		"data": {},
+		"recovered": false,
 	}
+
+func _extract_root_json_object_prefix(content: String) -> String:
+	var start_index := -1
+	for index in range(content.length()):
+		var codepoint := content.unicode_at(index)
+		if codepoint == 32 or codepoint == 9 or codepoint == 10 or codepoint == 13:
+			continue
+		start_index = index
+		break
+	if start_index < 0 or content.unicode_at(start_index) != 123:
+		return ""
+	var depth := 0
+	var in_string := false
+	var escaped := false
+	for index in range(start_index, content.length()):
+		var codepoint := content.unicode_at(index)
+		if in_string:
+			if escaped:
+				escaped = false
+			elif codepoint == 92:
+				escaped = true
+			elif codepoint == 34:
+				in_string = false
+			continue
+		if codepoint == 34:
+			in_string = true
+			continue
+		if codepoint == 123:
+			depth += 1
+			continue
+		if codepoint != 125:
+			continue
+		depth -= 1
+		if depth == 0:
+			return content.substr(0, index + 1)
+	return ""
 
 func _read_legacy_storage_snapshot() -> Dictionary:
 	for storage_path in _get_legacy_storage_paths():

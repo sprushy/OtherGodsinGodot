@@ -443,6 +443,24 @@ func _append_unique_priority_response(responses: Array, seen_response_ids: Dicti
 	seen_response_ids[card_id] = true
 	responses.append(card)
 
+func _get_priority_response_targets(card: Card, action: CardAction) -> Array:
+	if card == null:
+		return []
+	if card is HexCard:
+		return get_priority_hex_targets(card as HexCard, action)
+	if card.has_method("get_priority_field_targets"):
+		return card.get_priority_field_targets(self, action)
+	if card.has_method("get_valid_targets"):
+		return card.get_valid_targets(self)
+	return []
+
+func _priority_response_has_required_targets(card: Card, action: CardAction) -> bool:
+	if card == null or action == null:
+		return false
+	if not card.targets:
+		return true
+	return not _get_priority_response_targets(card, action).is_empty()
+
 func can_card_respond_to_priority(card: Card, player: Player = null) -> bool:
 	if card == null or action_stack.is_empty():
 		return false
@@ -481,8 +499,11 @@ func can_card_respond_to_priority(card: Card, player: Player = null) -> bool:
 	if card is CharmCard:
 		var typed_charm := card as CharmCard
 		if card.current_zone == card.card_owner.hand_zone:
-			return typed_charm.can_activate_from_hand(self, top)
-		return typed_charm.can_activate_prepared(self, top)
+			if not typed_charm.can_activate_from_hand(self, top):
+				return false
+		elif not typed_charm.can_activate_prepared(self, top):
+			return false
+		return _priority_response_has_required_targets(card, top)
 	if card.has_method("can_respond_to_priority_action"):
 		if _has_pending_stack_action_for_card(card):
 			return false
@@ -493,7 +514,9 @@ func can_card_respond_to_priority(card: Card, player: Player = null) -> bool:
 			return false
 		if top_speed > 0 and response_speed < top_speed:
 			return false
-		return card.can_respond_to_priority_action(top, self)
+		if not card.can_respond_to_priority_action(top, self):
+			return false
+		return _priority_response_has_required_targets(card, top)
 	if card.current_zone != responding_player.hand_zone:
 		return false
 	if _has_pending_stack_action_for_card(card):
@@ -504,7 +527,9 @@ func can_card_respond_to_priority(card: Card, player: Player = null) -> bool:
 		return false
 	if top_speed > 0 and card.get_effective_speed() < top_speed:
 		return false
-	return true
+	if not can_play_card(responding_player, card, null):
+		return false
+	return _priority_response_has_required_targets(card, top)
 
 func get_priority_hex_targets(hex: HexCard, action: CardAction) -> Array[Card]:
 	var valid_targets: Array[Card] = []
