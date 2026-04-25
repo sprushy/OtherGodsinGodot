@@ -14,7 +14,7 @@ func _init() -> void:
 	flavor_text = "Death is never the end for those who walk again."
 	ability_text = "[b]Again[/b] (end of turn): If [b]Slain[/b] this turn, you may pay 1 mana to resurrect this card to your reserve line face-up in aggressive stance."
 	culture = "Norse"
-	art_path = "res://images/card_art/creatures/Again-Walker(web).jpg"
+	art_path = "res://images/card_art/creatures/Again-Walker(web) - Copy.jpg"
 
 func on_death(game_manager: GameManager) -> void:
 	game_manager.pending_resurrections.append(self)

@@ -18,6 +18,8 @@ func can_activate_from_hand(game_manager: GameManager, triggering_action: CardAc
 		return false
 	if game_manager == null or card_owner == null:
 		return false
+	if game_manager.current_player != card_owner:
+		return false
 	if game_manager._has_pending_stack_action_for_card(self):
 		return false
 	if is_activation_locked(game_manager):

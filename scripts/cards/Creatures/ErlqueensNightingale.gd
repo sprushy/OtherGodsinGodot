@@ -13,7 +13,7 @@ func _init() -> void:
 	resilience = 10
 	strength = 13
 	sacrifice_cost = 0
-	ability_text = "[b]Shift[/b] ([b]Activate[/b]): Switch this card between Human, Servant, Mage, Witch and Animal, Avian, Aerial. When this card shifts, you may return it to your hand."
+	ability_text = "[b]Shift[/b] ([b]Activate[/b], [b]Minor Action[/b]): Switch this card between Human, Servant, Mage, Witch and Animal, Avian, Aerial. When this card shifts, you may return it to your hand."
 	flavor_text = ""
 	culture = "Norse"
 	artist = "Jessica Kings Via Tcg-Maker"
@@ -33,7 +33,7 @@ func can_activate(game_manager: GameManager) -> bool:
 		return false
 	if is_sleeping:
 		return false
-	return not creature_major_action_used
+	return can_take_minor_creature_action()
 
 func activate(game_manager: GameManager, target = null) -> void:
 	var return_to_hand_after_shift := false
@@ -42,10 +42,11 @@ func activate(game_manager: GameManager, target = null) -> void:
 	if not can_activate(game_manager):
 		return
 	shift_forms()
-	spend_major_creature_action()
+	spend_minor_creature_action()
 	if return_to_hand_after_shift and card_owner != null:
 		card_owner.move_card(self, card_owner.hand_zone)
 	if game_manager != null:
+		game_manager.notify_creature_shapeshifted(self, self)
 		var form_label := "Animal, Avian, Aerial" if in_bird_form else "Human, Servant, Mage, Witch"
 		var feedback := "%s shifts into %s." % [card_name, form_label]
 		if return_to_hand_after_shift:
@@ -54,6 +55,18 @@ func activate(game_manager: GameManager, target = null) -> void:
 
 func shift_forms() -> void:
 	in_bird_form = not in_bird_form
+	card_types = _get_bird_form_types() if in_bird_form else _get_human_form_types()
+
+func get_serialized_state() -> Dictionary:
+	return {
+		"in_bird_form": in_bird_form,
+	}
+
+func apply_serialized_state(state: Dictionary) -> void:
+	if state.is_empty():
+		in_bird_form = card_types.has("Avian")
+	else:
+		in_bird_form = bool(state.get("in_bird_form", false))
 	card_types = _get_bird_form_types() if in_bird_form else _get_human_form_types()
 
 func get_hover_detail_lines(_viewer: Player = null) -> Array[String]:

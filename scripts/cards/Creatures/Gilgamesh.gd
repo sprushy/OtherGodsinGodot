@@ -1,7 +1,7 @@
 extends CreatureCard
 class_name Gilgamesh
 
-const ART_PATH := "res://images/card_art/creatures/gilgamesh.png"
+const ART_PATH := "res://images/card_art/creatures/gilgamesh - Copy.png"
 const INSPIRED_SOURCE := "Gilgamesh Inspired Strength"
 const STR_PER_LEVEL := 7
 

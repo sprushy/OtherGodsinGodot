@@ -215,6 +215,8 @@ func _on_game_manager_card_summoned(
 		return
 	if player == null or card == null or to_zone == null:
 		return
+	if card.card_type != Card.CardType.CREATURE:
+		return
 	if face_down or stealth or card.is_face_down or card.is_prepared or card.is_stealth:
 		return
 	if card.current_zone != to_zone or not to_zone.is_board_zone():

@@ -41,10 +41,16 @@ func on_turn_start(game_manager: GameManager) -> void:
 			_set_maturation_ready(false)
 		return
 
+	var valid_targets := get_valid_maturation_targets()
+	if valid_targets.is_empty():
+		_set_maturation_ready(false)
+		game_manager.note_player_feedback("%s matured, but found no level 5 or lower Lupine in the deck." % card_name)
+		return
+
 	var controller := get_controller()
 	if controller != null:
 		var target_uids: Array[String] = []
-		for target in get_valid_maturation_targets():
+		for target in valid_targets:
 			if target != null:
 				target_uids.append(target.uid)
 		game_manager.decision_requested.emit(controller, "wolf_adolescent_maturation", {
@@ -54,12 +60,8 @@ func on_turn_start(game_manager: GameManager) -> void:
 		return
 
 	# Fallback when no UI host is available — handle inline.
-	var valid_targets := get_valid_maturation_targets()
 	_set_maturation_ready(false)
-	if valid_targets.is_empty():
-		game_manager.note_player_feedback("%s matured, but found no level 5 or lower Lupine in the deck." % card_name)
-	else:
-		game_manager.note_player_feedback("%s is ready to mature, but no selection UI was available." % card_name)
+	game_manager.note_player_feedback("%s is ready to mature, but no selection UI was available." % card_name)
 
 func can_offer_maturation(game_manager: GameManager) -> bool:
 	_sync_maturation_ready_state()

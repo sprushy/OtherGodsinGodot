@@ -71,6 +71,9 @@ const ART_PATH_REDIRECTS := {
 	"res://images/card_art/FireandGoldAIEdit.png": "res://images/card_art/powers/FireandGoldAIEdit.png",
 	"res://images/card_art/FirstSageAdapaAIedit.png": "res://images/card_art/creatures/FirstSageAdapaAIedit.png",
 	"res://images/card_art/FourthSageAiEdit2.png": "res://images/card_art/creatures/FourthSageAiEdit2.png",
+	"res://images/card_art/creatures/Again-Walker(web).jpg": "res://images/card_art/creatures/Again-Walker(web) - Copy.jpg",
+	"res://images/card_art/creatures/enki_lord_of_eridu.jpg": "res://images/card_art/creatures/enki_lord_of_eridu - Copy.jpg",
+	"res://images/card_art/creatures/gilgamesh.png": "res://images/card_art/creatures/gilgamesh - Copy.png",
 	"res://images/card_art/GleipnirEdit.png": "res://images/card_art/hexes/GleipnirEdit.png",
 	"res://images/card_art/HariiShamanEdit.png": "res://images/card_art/creatures/HariiShamanEdit.png",
 	"res://images/card_art/HariiWarriorEdit.png": "res://images/card_art/creatures/HariiWarriorEdit.png",
@@ -1108,6 +1111,12 @@ func halves_follower_damage_inflicted() -> bool:
 
 func get_tonal_extraction_spirit_profile() -> Dictionary:
 	return {}
+
+func get_serialized_state() -> Dictionary:
+	return {}
+
+func apply_serialized_state(_state: Dictionary) -> void:
+	pass
 
 func is_physical_card() -> bool:
 	return card_type in [CardType.CREATURE, CardType.STRUCTURE, CardType.EQUIPMENT]

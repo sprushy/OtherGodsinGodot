@@ -62,7 +62,6 @@ var _art_rect: TextureRect = null
 var _disabled_overlay: ColorRect = null
 var _power_lock_overlay: TextureRect = null
 var _defense_shield_overlay: Control = null
-var _hand_type_badge: Control = null
 const _DEFAULT_POWER_LOCK_TEXTURE := preload("res://images/Norse Power Lock.png")
 const _ANCIENT_POWER_LOCK_TEXTURE := preload("res://images/Ancient Power Lock.png")
 
@@ -371,71 +370,6 @@ func _apply_card_style() -> void:
 	_inner.add_theme_stylebox_override("panel", style)
 	_inner.self_modulate = Color(0.92, 0.98, 1.0, 0.82) if _ghostly_hand_proxy else Color.WHITE
 
-func _type_abbrev() -> String:
-	match card_data.card_type:
-		Card.CardType.GOD:      return "G"
-		Card.CardType.CREATURE: return "C"
-		Card.CardType.SPELL:    return "S"
-		Card.CardType.CHARM:    return "CH"
-		Card.CardType.STRUCTURE:return "ST"
-		Card.CardType.EQUIPMENT:return "EQ"
-		Card.CardType.HEX:      return "H"
-		_:                      return "?"
-
-func _type_name() -> String:
-	match card_data.card_type:
-		Card.CardType.GOD:       return "God"
-		Card.CardType.CREATURE:  return "Creature"
-		Card.CardType.SPELL:     return "Spell"
-		Card.CardType.CHARM:     return "Charm"
-		Card.CardType.STRUCTURE: return "Structure"
-		Card.CardType.EQUIPMENT: return "Equipment"
-		Card.CardType.HEX:       return "Hex"
-		Card.CardType.POWER:     return "Power"
-		_:                       return "Card"
-
-func _refresh_hand_type_badge() -> void:
-	if not _hand_mode or _inner == null or not is_instance_valid(_inner) or card_data == null:
-		if _hand_type_badge != null and is_instance_valid(_hand_type_badge):
-			_hand_type_badge.queue_free()
-		_hand_type_badge = null
-		return
-
-	if _hand_type_badge == null or not is_instance_valid(_hand_type_badge):
-		var badge := PanelContainer.new()
-		badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		badge.z_index = 6
-		badge.position = Vector2(6, 30)
-
-		var style := StyleBoxFlat.new()
-		style.bg_color = Color(0.04, 0.07, 0.12, 0.88)
-		style.border_color = Color(0.84, 0.9, 1.0, 0.58)
-		style.corner_radius_top_left = 5
-		style.corner_radius_top_right = 5
-		style.corner_radius_bottom_left = 5
-		style.corner_radius_bottom_right = 5
-		style.content_margin_left = 7
-		style.content_margin_right = 7
-		style.content_margin_top = 2
-		style.content_margin_bottom = 2
-		for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-			style.set_border_width(side, 1)
-		badge.add_theme_stylebox_override("panel", style)
-
-		var label := Label.new()
-		label.name = "TypeLabel"
-		label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		label.add_theme_font_size_override("font_size", 11)
-		label.add_theme_color_override("font_color", Color(0.95, 0.97, 1.0))
-		badge.add_child(label)
-
-		_inner.add_child(badge)
-		_hand_type_badge = badge
-
-	var type_label := _hand_type_badge.get_node_or_null("TypeLabel") as Label
-	if type_label != null:
-		type_label.text = _type_name()
-
 func _refresh_disabled_visual_state() -> void:
 	if _disabled_overlay != null and is_instance_valid(_disabled_overlay):
 		_disabled_overlay.visible = _disabled and _dim_when_disabled
@@ -499,7 +433,6 @@ func set_hover_viewer(viewer: Player) -> void:
 
 func set_hand_mode(enabled: bool) -> void:
 	_hand_mode = enabled
-	_refresh_hand_type_badge()
 	if not enabled:
 		_hand_hover_hit_rect = Rect2()
 

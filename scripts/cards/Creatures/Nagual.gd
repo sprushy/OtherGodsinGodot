@@ -18,7 +18,7 @@ func _init() -> void:
 	speed = 1
 	resilience = 17
 	strength = 17
-	ability_text = "[b]Shift[/b] ([b]Activate[/b]): Switch between Human, Mage, Shaman, Shapeshifter and Animal, Feline, Mage, Shaman, Shapeshifter.\nTonal Strengths ([b]Passive[/b]): Feline form gets +4 STR and +1 SPD. Human form gets +5 RES."
+	ability_text = "[b]Shift[/b] ([b]Activate[/b], [b]Minor Action[/b]): Switch between Human, Mage, Shaman, Shapeshifter and Animal, Feline, Mage, Shaman, Shapeshifter.\nTonal Strengths ([b]Passive[/b]): Feline form gets +4 STR and +1 SPD. Human form gets +5 RES."
 	flavor_text = ""
 	culture = "Nahuatl"
 	artist = "Ricardo Zoppello"
@@ -40,7 +40,7 @@ func can_activate(game_manager: GameManager) -> bool:
 		return false
 	if is_sleeping:
 		return false
-	return can_take_major_creature_action()
+	return can_take_minor_creature_action()
 
 func get_tonal_extraction_spirit_profile() -> Dictionary:
 	return {
@@ -59,7 +59,7 @@ func activate(game_manager: GameManager, _target: Card = null) -> void:
 	if not can_activate(game_manager):
 		return
 	shift_forms()
-	spend_major_creature_action()
+	spend_minor_creature_action()
 	if game_manager != null:
 		game_manager.notify_creature_shapeshifted(self, self)
 		game_manager.note_player_feedback(
@@ -68,6 +68,18 @@ func activate(game_manager: GameManager, _target: Card = null) -> void:
 
 func shift_forms() -> void:
 	in_feline_form = not in_feline_form
+	card_types = _get_feline_form_types() if in_feline_form else _get_human_form_types()
+
+func get_serialized_state() -> Dictionary:
+	return {
+		"in_feline_form": in_feline_form,
+	}
+
+func apply_serialized_state(state: Dictionary) -> void:
+	if state.is_empty():
+		in_feline_form = card_types.has("Feline")
+	else:
+		in_feline_form = bool(state.get("in_feline_form", false))
 	card_types = _get_feline_form_types() if in_feline_form else _get_human_form_types()
 
 func get_effective_speed() -> int:

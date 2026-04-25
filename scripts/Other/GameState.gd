@@ -146,6 +146,7 @@ static func _serialize_card(card: Card, hidden_mode: int = HIDDEN_MODE_NONE) -> 
 		culture                   = card.culture,
 		equipped_on_uid           = equipped_on_uid,
 		active_statuses           = _serialize_card_statuses(card),
+		serialized_state          = card.get_serialized_state(),
 	}
 
 static func _serialize_card_statuses(card: Card) -> Array:
@@ -460,6 +461,7 @@ static func _deserialize_card(cdata: Dictionary) -> Card:
 	for sdata in cdata.get("active_statuses", []):
 		card.active_statuses.append((sdata as Dictionary).duplicate())
 	card._sync_status_flags()
+	card.apply_serialized_state(cdata.get("serialized_state", {}))
 
 	return card
 

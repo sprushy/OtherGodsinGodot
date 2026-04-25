@@ -150,8 +150,9 @@ const FAN_ARC_HEIGHT  := 22.0   # px the arc dips at centre
 const FAN_CARD_SPACING := 130   # px between card pivot centres
 const STACK_ACTION_LINGER_SECONDS := 0.66
 const POST_GAME_RETURN_DELAY_SECONDS := 1.6
+const CARD_PLAY_TIME_BONUS_MSEC := 2000
 const PRIORITY_IDLE_AUTO_PASS_MSEC := 5000
-const MOVE_TIMEOUT_MSEC := 90000
+const MOVE_TIMEOUT_MSEC := 120000
 const MOVE_TIMEOUT_WARNING_MSEC := 30000
 const MOVE_TIMEOUT_CRITICAL_WARNING_MSEC := 10000
 
@@ -1942,9 +1943,28 @@ func _should_run_local_move_timer() -> bool:
 		return false
 	if game_manager == null or game_manager.current_player == null:
 		return false
-	if game_manager.is_player_in_upkeep_window(game_manager.current_player):
+	return not _should_pause_local_move_timer_for_nonlocal_window()
+
+func _should_pause_local_move_timer_for_nonlocal_window() -> bool:
+	_prune_stale_deferred_priority_events()
+	if _executing_stack_action:
+		return true
+	if _is_intercept_prompt_visible():
+		return true
+	if _is_priority_prompt_visible():
+		return game_manager == null \
+			or game_manager.current_player == null \
+			or game_manager.priority_player == null \
+			or game_manager.priority_player != game_manager.current_player
+	var has_deferred_priority_events := not _pending_summon_priority_events.is_empty() \
+		or not _pending_hand_play_events.is_empty()
+	if has_deferred_priority_events:
+		return true
+	if game_manager == null or game_manager.current_player == null:
 		return false
-	return not _has_unresolved_priority_state()
+	if _stack_resolution_paused or game_manager.action_stack.is_empty():
+		return false
+	return game_manager.priority_player == null or game_manager.priority_player != game_manager.current_player
 
 func _get_move_timer_remaining_msec(now_msec: int = -1) -> int:
 	if _move_timer_turn_number < 0 or _move_timer_player_index < 0:
@@ -1986,6 +2006,44 @@ func _reset_local_move_timer_budget(now_msec: int = -1) -> void:
 		_move_timer_running = false
 		_move_timer_active_started_msec = 0
 
+func _grant_local_move_timer_bonus(bonus_msec: int, now_msec: int = -1) -> void:
+	if bonus_msec <= 0:
+		return
+	var context := _get_local_move_timer_context()
+	if context.is_empty():
+		return
+	var current_turn := int(context.get("turn_number", -1))
+	var current_player_index := int(context.get("player_index", -1))
+	if current_turn != _move_timer_turn_number or current_player_index != _move_timer_player_index:
+		return
+	var current_now := now_msec if now_msec >= 0 else _now_msec()
+	var remaining_msec := _get_move_timer_remaining_msec(current_now)
+	if remaining_msec < 0:
+		return
+	_move_timer_remaining_msec = mini(MOVE_TIMEOUT_MSEC, remaining_msec + bonus_msec)
+	_move_timer_active_started_msec = current_now if _move_timer_running else 0
+	_move_timer_timeout_pending = false
+	if _move_timer_remaining_msec > MOVE_TIMEOUT_WARNING_MSEC:
+		_move_timer_warning_stage = 0
+	elif _move_timer_remaining_msec > MOVE_TIMEOUT_CRITICAL_WARNING_MSEC:
+		_move_timer_warning_stage = mini(_move_timer_warning_stage, 1)
+	var remaining_seconds := int(ceil(float(maxi(0, _move_timer_remaining_msec)) / 1000.0))
+	if remaining_seconds != _move_timer_last_display_seconds:
+		_move_timer_last_display_seconds = remaining_seconds
+		_refresh_turn_label()
+		_refresh_visible_stat_panels()
+
+func _is_card_play_move_type(move_type: String) -> bool:
+	return move_type in [
+		"play_card",
+		"prepare_card",
+		"play_creature",
+		"cast_spell",
+		"cast_charm",
+		"play_charm_response",
+		"play_hex_response",
+	]
+
 func _maybe_warn_about_move_timer(remaining_msec: int) -> void:
 	if not _move_timer_running or remaining_msec < 0:
 		return
@@ -2020,7 +2078,7 @@ func _refresh_turn_label() -> void:
 	turn_label.text = "Turn " + str(game_manager.turn_number) + " - " + current.player_name + "'s Turn"
 	turn_label.modulate = Color(1, 1, 1, 1)
 	var context := _get_local_move_timer_context()
-	if context.is_empty() or game_manager.is_player_in_upkeep_window(game_manager.current_player):
+	if context.is_empty():
 		return
 	var remaining_msec := _get_move_timer_remaining_msec()
 	if remaining_msec < 0:
@@ -2048,6 +2106,7 @@ func _sync_turn_activity_timers() -> void:
 			_move_timer_timeout_pending = false
 			_move_timer_last_display_seconds = -1
 			_refresh_turn_label()
+			_refresh_visible_stat_panels()
 		return
 	var turn_number := int(context.get("turn_number", -1))
 	var player_index := int(context.get("player_index", -1))
@@ -2070,6 +2129,7 @@ func _sync_turn_activity_timers() -> void:
 	if remaining_seconds != _move_timer_last_display_seconds:
 		_move_timer_last_display_seconds = remaining_seconds
 		_refresh_turn_label()
+		_refresh_visible_stat_panels()
 	if _move_timer_running and remaining_msec <= 0 and not _move_timer_timeout_pending:
 		_move_timer_timeout_pending = true
 		_pause_move_timer(now_msec)
@@ -2339,6 +2399,7 @@ func start_game(
 	server_match_session = null
 ) -> void:
 	print("=== STARTING COMBAT MOCK GAME ===")
+	_prepare_for_match_launch("")
 	_game_finished = false
 	_game_result_presented = false
 	_pending_forfeit_return_to_menu = false
@@ -2452,6 +2513,58 @@ func start_game(
 	game_manager.start_turn()
 	update_ui()
 	_open_upkeep_choice_window()
+
+func _prepare_for_match_launch(status_message: String = "Connecting to match...") -> void:
+	_set_match_reconnect_wait(false)
+	_awaiting_initial_full_state = false
+	_game_finished = false
+	_game_result_presented = false
+	_pending_forfeit_return_to_menu = false
+	_pending_post_game_return_to_menu = false
+	_hide_pause_menu()
+	_hide_game_result_overlay()
+	_hide_corner_action_button()
+	_hide_devour_cancel_prompt()
+	_hide_hand_hover_preview()
+	_hide_power_hover_popup()
+	_hide_hati_prompt()
+	_hide_skoll_prompt()
+	_dismiss_transient_prompts()
+	_close_context_menu()
+	_clear_network_selection_state()
+	_invalidate_cached_board_layouts()
+	_queued_attackers.clear()
+	_hand_visual_cards.clear()
+	_board_zone_uis.clear()
+	_enemy_zone_uis.clear()
+	_player_god_zone_ui = null
+	_enemy_god_zone_ui = null
+	player1 = null
+	player2 = null
+	selected_card = null
+	_pending_drop_zone = null
+	_pending_move_card = null
+	_pending_equip_actor = null
+	_pending_equip_target = null
+	_pending_equip_action = ""
+	action_label.text = status_message
+	_refresh_turn_label()
+	_refresh_side_stats()
+	_detach_container_children(board_container)
+	_detach_container_children(enemy_board_container)
+	if _fan_container != null and is_instance_valid(_fan_container):
+		if _fan_container.get_parent() == self:
+			remove_child(_fan_container)
+		_fan_container.queue_free()
+	_fan_container = null
+	if _enemy_hand_overlay != null and is_instance_valid(_enemy_hand_overlay):
+		if _enemy_hand_overlay.get_parent() == self:
+			remove_child(_enemy_hand_overlay)
+		_enemy_hand_overlay.queue_free()
+	_enemy_hand_overlay = null
+	if hand_container != null:
+		hand_container.visible = false
+	_update_waiting_status(not str(status_message).strip_edges().is_empty(), status_message)
 
 func create_deck(player: Player) -> void:
 	var deck: Array[Card] = []
@@ -3384,12 +3497,11 @@ func _show_hand_hover_preview(vc: VisualCard) -> void:
 	# Hand hover intentionally uses a large-card preview instead of the shared
 	# text-detail popup builder used by board cards and standalone overlay cards.
 	var preview := Control.new()
-	preview.top_level = true
-	preview.z_index = HOVER_PREVIEW_Z_INDEX + 10
 	preview.mouse_filter = Control.MOUSE_FILTER_STOP
 	preview.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	preview.visible = false
 	preview.gui_input.connect(_on_hand_hover_preview_gui_input)
+	_promote_transient_ui(preview, HAND_OVERLAY_Z_INDEX + 100)
 
 	var large_vc := VisualCard.new()
 	large_vc.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -3400,9 +3512,9 @@ func _show_hand_hover_preview(vc: VisualCard) -> void:
 	large_vc.set_disabled(true, false)
 
 	var keywords_panel: Control = null
-	var keywords := _extract_card_keywords(card)
-	if keywords.size() > 0:
-		keywords_panel = _build_hand_keywords_panel(keywords)
+	var info_sections := _build_hand_info_sections(card)
+	if not info_sections.is_empty():
+		keywords_panel = _build_hand_keywords_panel(info_sections)
 		preview.add_child(keywords_panel)
 
 	add_child(preview)
@@ -3533,9 +3645,52 @@ func _extract_card_keywords(card: Card) -> Array[String]:
 			found.append(kw)
 	return found
 
+func _build_hand_info_sections(card: Card) -> Array[Dictionary]:
+	var sections: Array[Dictionary] = []
+	if card == null:
+		return sections
+	var display_types: Array[String] = []
+	for card_type in card.card_types:
+		var normalized := str(card_type).strip_edges()
+		if normalized.is_empty() or normalized in display_types:
+			continue
+		display_types.append(normalized)
+	if not display_types.is_empty():
+		sections.append({
+			"title": "",
+			"body": "Types: " + ", ".join(display_types),
+			"title_color": Color(0.78, 0.9, 1.0),
+			"body_color": Color(0.82, 0.88, 0.96),
+		})
+	for kw in _extract_card_keywords(card):
+		sections.append({
+			"title": kw,
+			"body": BaseCard.KEYWORD_HINTS.get(kw, ""),
+			"title_color": Color(0.95, 0.88, 0.5),
+			"body_color": Color(0.72, 0.72, 0.72),
+		})
+	return sections
+
+func _normalize_hand_info_sections(raw_sections: Array) -> Array[Dictionary]:
+	var normalized_sections: Array[Dictionary] = []
+	for raw_section in raw_sections:
+		if raw_section is Dictionary:
+			normalized_sections.append((raw_section as Dictionary).duplicate(true))
+			continue
+		var keyword := str(raw_section).strip_edges()
+		if keyword.is_empty():
+			continue
+		normalized_sections.append({
+			"title": keyword,
+			"body": BaseCard.KEYWORD_HINTS.get(keyword, ""),
+			"title_color": Color(0.95, 0.88, 0.5),
+			"body_color": Color(0.72, 0.72, 0.72),
+		})
+	return normalized_sections
+
 const _HAND_KW_PANEL_WIDTH := 210.0
 
-func _build_hand_keywords_panel(keywords: Array[String]) -> Control:
+func _build_hand_keywords_panel(sections: Array) -> Control:
 	var panel := PanelContainer.new()
 	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	panel.custom_minimum_size = Vector2(_HAND_KW_PANEL_WIDTH, 0)
@@ -3560,27 +3715,34 @@ func _build_hand_keywords_panel(keywords: Array[String]) -> Control:
 	vbox.add_theme_constant_override("separation", 10)
 	vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	panel.add_child(vbox)
-	for i in keywords.size():
-		var kw: String = keywords[i]
+	var resolved_sections := _normalize_hand_info_sections(sections)
+	for i in resolved_sections.size():
+		var section: Dictionary = resolved_sections[i]
+		var title := str(section.get("title", "")).strip_edges()
+		var body := str(section.get("body", "")).strip_edges()
+		if title.is_empty() and body.is_empty():
+			continue
 		var kw_vbox := VBoxContainer.new()
 		kw_vbox.add_theme_constant_override("separation", 3)
 		kw_vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		vbox.add_child(kw_vbox)
-		var name_lbl := Label.new()
-		name_lbl.text = kw
-		name_lbl.add_theme_font_size_override("font_size", 13)
-		name_lbl.add_theme_color_override("font_color", Color(0.95, 0.88, 0.5))
-		name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		kw_vbox.add_child(name_lbl)
-		var desc_lbl := Label.new()
-		desc_lbl.text = BaseCard.KEYWORD_HINTS[kw]
-		desc_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		desc_lbl.add_theme_font_size_override("font_size", 14)
-		desc_lbl.add_theme_color_override("font_color", Color(0.72, 0.72, 0.72))
-		desc_lbl.custom_minimum_size = Vector2(_HAND_KW_PANEL_WIDTH - 24.0, 0)
-		desc_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		kw_vbox.add_child(desc_lbl)
-		if i < keywords.size() - 1:
+		if not title.is_empty():
+			var name_lbl := Label.new()
+			name_lbl.text = title
+			name_lbl.add_theme_font_size_override("font_size", 13)
+			name_lbl.add_theme_color_override("font_color", section.get("title_color", Color(0.95, 0.88, 0.5)))
+			name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			kw_vbox.add_child(name_lbl)
+		if not body.is_empty():
+			var desc_lbl := Label.new()
+			desc_lbl.text = body
+			desc_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART if "\n" not in body else TextServer.AUTOWRAP_OFF
+			desc_lbl.add_theme_font_size_override("font_size", 14)
+			desc_lbl.add_theme_color_override("font_color", section.get("body_color", Color(0.72, 0.72, 0.72)))
+			desc_lbl.custom_minimum_size = Vector2(_HAND_KW_PANEL_WIDTH - 24.0, 0)
+			desc_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			kw_vbox.add_child(desc_lbl)
+		if i < resolved_sections.size() - 1:
 			var sep := HSeparator.new()
 			sep.add_theme_color_override("color", Color(0.2, 0.25, 0.35))
 			sep.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -3719,6 +3881,11 @@ func _get_separator_line_width() -> float:
 func _refresh_stats_panel(panel: PanelContainer, player: Player, show_mana: bool = true) -> void:
 	if panel == null or player == null:
 		return
+	var clock_lbl := panel.get_node_or_null("StatsVBox/TurnClockLabel") as Label
+	if clock_lbl != null:
+		var clock_data := _get_stats_panel_turn_clock_data(player)
+		clock_lbl.text = str(clock_data.get("text", "--:--"))
+		clock_lbl.modulate = clock_data.get("color", Color(0.72, 0.74, 0.78, 0.92))
 	var name_lbl := panel.get_node_or_null("StatsVBox/NameLabel") as Label
 	if name_lbl != null:
 		name_lbl.text = player.player_name
@@ -3736,6 +3903,32 @@ func _refresh_stats_panel(panel: PanelContainer, player: Player, show_mana: bool
 	var deck_lbl := panel.get_node_or_null("StatsVBox/DeckLabel") as Label
 	if deck_lbl != null:
 		deck_lbl.text = "Deck: " + str(player.deck_zone.get_card_count())
+
+func _get_stats_panel_turn_clock_data(player: Player) -> Dictionary:
+	var inactive := {
+		"text": "--:--",
+		"color": Color(0.72, 0.74, 0.78, 0.92),
+	}
+	if player == null or game_manager == null or _game_finished:
+		return inactive
+	var timer_context := _get_local_move_timer_context()
+	if timer_context.is_empty():
+		return inactive
+	var current_player := game_manager.current_player
+	if current_player == null or player != current_player:
+		return inactive
+	var remaining_msec := _get_move_timer_remaining_msec()
+	if remaining_msec < 0:
+		return inactive
+	var color := Color(0.84, 0.92, 1.0, 0.98)
+	if remaining_msec <= MOVE_TIMEOUT_CRITICAL_WARNING_MSEC:
+		color = Color(1.0, 0.45, 0.45, 1.0)
+	elif remaining_msec <= MOVE_TIMEOUT_WARNING_MSEC:
+		color = Color(1.0, 0.82, 0.36, 1.0)
+	return {
+		"text": _format_move_timer_clock(remaining_msec),
+		"color": color,
+	}
 
 func _get_stats_panel_for_zone_ui(zone_ui: BoardZoneUI) -> PanelContainer:
 	if zone_ui == null or not is_instance_valid(zone_ui):
@@ -3761,7 +3954,7 @@ func _refresh_visible_stat_panels() -> void:
 func _make_stats_panel(player: Player, show_mana: bool = true) -> PanelContainer:
 	var panel := PanelContainer.new()
 	panel.name = "StatsPanel"
-	panel.custom_minimum_size = Vector2(110, 128)
+	panel.custom_minimum_size = Vector2(118, 128)
 	panel.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color(0.1, 0.1, 0.1, 0.7)
@@ -3775,10 +3968,12 @@ func _make_stats_panel(player: Player, show_mana: bool = true) -> PanelContainer
 	panel.add_theme_stylebox_override("panel", style)
 	var vbox := VBoxContainer.new()
 	vbox.name = "StatsVBox"
+	vbox.add_theme_constant_override("separation", 4)
 	panel.add_child(vbox)
 	var name_lbl := Label.new()
 	name_lbl.name = "NameLabel"
 	name_lbl.add_theme_font_size_override("font_size", 12)
+	name_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	vbox.add_child(name_lbl)
 	var hand_lbl := Label.new()
 	hand_lbl.name = "HandLabel"
@@ -3797,6 +3992,14 @@ func _make_stats_panel(player: Player, show_mana: bool = true) -> PanelContainer
 	deck_lbl.name = "DeckLabel"
 	deck_lbl.add_theme_font_size_override("font_size", 13)
 	vbox.add_child(deck_lbl)
+	var clock_lbl := Label.new()
+	clock_lbl.name = "TurnClockLabel"
+	clock_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	clock_lbl.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
+	clock_lbl.add_theme_font_size_override("font_size", 24)
+	clock_lbl.add_theme_color_override("font_color", Color(0.84, 0.92, 1.0, 0.98))
+	clock_lbl.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	vbox.add_child(clock_lbl)
 	_refresh_stats_panel(panel, player, show_mana)
 	return panel
 
@@ -3819,8 +4022,8 @@ func _make_god_cluster(zone: Zone, player: Player, is_enemy: bool) -> Control:
 	god_zone_ui.setup(zone, game_manager, player, -1, _on_card_dropped_to_zone, is_enemy, "God")
 
 	var stats_panel := _make_stats_panel(player, true)
-	stats_panel.custom_minimum_size = Vector2(102, BoardZoneUI.get_zone_extent())
-	stats_panel.position = Vector2(-106, 0)
+	stats_panel.custom_minimum_size = Vector2(118, BoardZoneUI.get_zone_extent())
+	stats_panel.position = Vector2(-122, 0)
 	cluster.add_child(stats_panel)
 
 	if is_enemy:
@@ -7319,7 +7522,7 @@ func _on_local_player_card_moved(card: Card, from_zone: Zone, to_zone: Zone) -> 
 		return
 	if from_zone.zone_type != Zone.ZoneType.HAND:
 		return
-	if to_zone.is_board_zone() and card.card_type in [Card.CardType.CREATURE, Card.CardType.STRUCTURE]:
+	if to_zone.is_board_zone() and card.card_type == Card.CardType.CREATURE:
 		return
 	if not _is_in_play_zone(to_zone):
 		return
@@ -7351,12 +7554,18 @@ func _schedule_deferred_priority_flush() -> void:
 	_deferred_priority_flush_scheduled = true
 	call_deferred("_retry_deferred_priority_events")
 
+func _should_retry_deferred_priority_flush() -> bool:
+	return game_manager != null \
+		and (_executing_stack_action \
+			or _stack_resolution_paused \
+			or _is_intercept_prompt_visible())
+
 func _retry_deferred_priority_events() -> void:
 	_deferred_priority_flush_scheduled = false
 	_flush_deferred_priority_events()
 	if _pending_summon_priority_events.is_empty() and _pending_hand_play_events.is_empty():
 		return
-	if not _can_flush_deferred_priority_events():
+	if not _can_flush_deferred_priority_events() and _should_retry_deferred_priority_flush():
 		_schedule_deferred_priority_flush()
 
 func _has_pending_impact_priority_action(card: Card) -> bool:
@@ -7396,7 +7605,8 @@ func _has_pending_hand_play_priority_event(card: Card) -> bool:
 
 func _flush_deferred_priority_events() -> void:
 	if not _can_flush_deferred_priority_events():
-		_schedule_deferred_priority_flush()
+		if _should_retry_deferred_priority_flush():
+			_schedule_deferred_priority_flush()
 		return
 	if not _pending_summon_priority_events.is_empty():
 		_flush_summon_priority_events()
@@ -7406,6 +7616,8 @@ func _flush_deferred_priority_events() -> void:
 
 func _on_card_summoned(player: Player, card: Card, _from_zone: Zone, to_zone: Zone, _summon_source: Card, face_down: bool, stealth: bool) -> void:
 	if player == null or card == null or to_zone == null:
+		return
+	if card.card_type != Card.CardType.CREATURE:
 		return
 	if _is_networked_client:
 		return
@@ -7855,6 +8067,13 @@ func _on_hand_card_pressed(card: Card) -> void:
 	if _is_card_usable_for_priority(card):
 		_on_priority_response_chosen(card)
 		return
+	if _recover_stalled_priority_state():
+		if _is_card_usable_for_priority(card):
+			_on_priority_response_chosen(card)
+			return
+		if game_manager == null or _has_unresolved_priority_state():
+			update_ui()
+			return
 	if game_manager != null and not game_manager.action_stack.is_empty():
 		var priority_failure_text := _get_priority_response_unavailable_text(card)
 		action_label.text = priority_failure_text if priority_failure_text != "" else card.card_name + " is not a legal priority response."
@@ -9299,7 +9518,10 @@ func _show_wolf_adolescent_maturation_prompt(card: WolfAdolescent, prompt_target
 			if candidate_card != null and candidate_card in valid_targets:
 				current_targets.append(candidate_card)
 	if current_targets.is_empty():
-		action_label.text = card.card_name + " matured, but found no level 5 or lower Lupine in the deck."
+		var no_target_text := card.card_name + " matured, but found no level 5 or lower Lupine in the deck."
+		card._set_maturation_ready(false)
+		game_manager.note_player_feedback(no_target_text)
+		action_label.text = _consume_resolution_feedback(no_target_text)
 		_consume_current_wolf_adolescent_prompt()
 		if not _show_next_wolf_adolescent_maturation_prompt():
 			_finish_wolf_adolescent_turn_start_sequence()
@@ -13057,17 +13279,19 @@ func _has_unresolved_priority_state() -> bool:
 			and not game_manager.action_stack.is_empty()
 		)
 
-func _try_resolve_stalled_priority_event() -> bool:
+func _recover_stalled_priority_state() -> bool:
 	if game_manager == null or match_manager == null:
 		return false
 	if _stack_resolution_paused or _executing_stack_action:
+		return false
+	if _has_pending_target_selection():
 		return false
 	if _is_priority_prompt_visible() or _is_intercept_prompt_visible():
 		return false
 	if game_manager.action_stack.is_empty():
 		return false
 	var top_action: CardAction = game_manager.action_stack.back()
-	if top_action == null or top_action.type != CardAction.Type.EVENT:
+	if top_action == null:
 		return false
 	var first_player := game_manager.priority_player
 	if first_player == null:
@@ -13077,7 +13301,8 @@ func _try_resolve_stalled_priority_event() -> bool:
 	var first_has_responses := match_manager != null and match_manager._player_has_priority_prompt_responses(first_player)
 	var second_has_responses := match_manager != null and match_manager._player_has_priority_prompt_responses(second_player)
 	if first_has_responses or second_has_responses:
-		return false
+		_offer_priority()
+		return true
 	_execute_top_of_stack()
 	return true
 
@@ -13113,7 +13338,9 @@ func _describe_unresolved_priority_state() -> String:
 	return "stack action"
 
 func _reject_priority_locked_action(reason: String = "Only legal priority responses can be used right now.") -> bool:
-	if _try_resolve_stalled_priority_event() and not _has_unresolved_priority_state():
+	if _recover_stalled_priority_state():
+		if _has_unresolved_priority_state():
+			return true
 		return false
 	if not _has_unresolved_priority_state():
 		return false
@@ -17185,8 +17412,10 @@ func _on_match_action_resolved(action: CardAction) -> void:
 
 func _on_match_move_validated(move: Dictionary) -> void:
 	var authoritative_priority := match_manager != null and match_manager.uses_authoritative_priority_flow()
-	_reset_local_move_timer_budget()
-	match move.get("type", ""):
+	var move_type := str(move.get("type", ""))
+	if _is_card_play_move_type(move_type):
+		_grant_local_move_timer_bonus(CARD_PLAY_TIME_BONUS_MSEC)
+	match move_type:
 		"upkeep_choice":
 			# Client resolved upkeep; server must open the turn-start priority window
 			# so both players can respond to upkeep effects (hexes, charms, etc.).
@@ -17281,8 +17510,7 @@ func _on_match_move_validated(move: Dictionary) -> void:
 			if not _is_networked_client and not authoritative_priority:
 				resolve_pending_attack()
 		"play_creature":
-			if not _is_networked_client and not authoritative_priority:
-				_flush_deferred_priority_events()
+			pass
 		"priority_pass":
 			# Remote player passed priority; continue the server-side priority loop.
 			if not _is_networked_client and not authoritative_priority:
@@ -18934,6 +19162,9 @@ func _sync_network_turn_controls() -> void:
 		pending_attack_target = null
 
 func _update_waiting_status(is_waiting: bool, message: String = "Waiting for Opponent...") -> void:
+	var normalized_message := str(message).strip_edges()
+	if is_waiting and normalized_message.is_empty():
+		is_waiting = false
 	var panel = get_node_or_null("WaitingOverlay")
 	if not is_waiting:
 		if panel: panel.queue_free()
@@ -18965,7 +19196,7 @@ func _update_waiting_status(is_waiting: bool, message: String = "Waiting for Opp
 		panel.add_child(label)
 	
 	var lbl = panel.get_node("WaitingLabel")
-	lbl.text = message
+	lbl.text = normalized_message
 
 func _update_waiting_overlay() -> void:
 	if _match_reconnect_waiting:
@@ -20032,22 +20263,11 @@ func _on_card_dropped_to_zone(card: Card, zone: Zone, is_rotated: bool = false, 
 
 
 func cleanup() -> void:
-	_set_match_reconnect_wait(false)
-	_awaiting_initial_full_state = false
-	_game_result_presented = false
-	_pending_forfeit_return_to_menu = false
-	_pending_post_game_return_to_menu = false
+	_prepare_for_match_launch("")
 	_reset_turn_activity_timers()
-	_hide_pause_menu()
-	_hide_game_result_overlay()
-	_hide_corner_action_button()
 	_local_match_result_recorded = false
 	_current_match_info.clear()
-	_hide_hati_prompt()
-	_pending_hati_prompts.clear()
 	_clear_hati_moon_hunt_state()
-	_hide_skoll_prompt()
-	_pending_skoll_prompts.clear()
 	_clear_skoll_upkeep_summon()
 	_clear_wolf_master_summon()
 	if network_manager != null:

@@ -129,8 +129,8 @@ func _ready() -> void:
 	_build_server_version_overlay()
 	get_viewport().size_changed.connect(_fit_to_viewport)
 	if ip_line_edit != null:
-		ip_line_edit.visible = false
-		ip_line_edit.text = ""
+		ip_line_edit.visible = true
+		ip_line_edit.text = _get_project_default_lobby_host()
 		ip_line_edit.placeholder_text = "Dedicated lobby IP or hostname"
 
 	_ensure_practice_thor_entry()
@@ -2911,6 +2911,13 @@ func _apply_room_snapshot(snapshot: Dictionary) -> void:
 	var room_id := str(snapshot.get("room_id", "")).strip_edges()
 	if room_id.is_empty():
 		return
+	var room_status := str(snapshot.get("status", "")).strip_edges().to_lower()
+	if room_status == "in_match" and not _match_launch_queued and lobby_client != null:
+		var active_match_info: Dictionary = lobby_client.current_active_match_info.duplicate(true)
+		if not active_match_info.is_empty() and str(active_match_info.get("room_id", "")).strip_edges() == room_id:
+			_save_active_match_resume(active_match_info)
+			call_deferred("_resume_active_match_from_lobby", active_match_info)
+			return
 	_write_smoke_trace("room_snapshot room=%s members=%d" % [room_id, snapshot.get("members", []).size()])
 	room_code_line_edit.text = room_id
 	_write_smoke_room_code(room_id)
@@ -2981,7 +2988,9 @@ func _launch_assigned_match(
 	match_info: Dictionary = {},
 	server_match_session = null
 ) -> void:
-	_show_embedded_game("MockGame")
+	var mock_game = _show_embedded_game("MockGame")
+	if mock_game != null and mock_game.has_method("_prepare_for_match_launch"):
+		mock_game._prepare_for_match_launch("Connecting to match...")
 	show_game()
 	if is_host:
 		get_node("GameContainer/MockGame").start_game(true, false, server_ip, match_port, match_info, server_match_session)
@@ -3167,6 +3176,16 @@ func _is_local_player_ready() -> bool:
 func _get_configured_lobby_host() -> String:
 	if not _smoke_config.is_empty():
 		return str(_smoke_config.get("ip", "")).strip_edges()
+	if ip_line_edit != null:
+		var typed_host = ip_line_edit.text.strip_edges()
+		if not typed_host.is_empty():
+			return typed_host
+	var configured_host := str(ProjectSettings.get_setting(DEFAULT_LOBBY_HOST_SETTING, DEFAULT_LOBBY_HOST)).strip_edges()
+	if configured_host.is_empty():
+		return DEFAULT_LOBBY_HOST.strip_edges()
+	return configured_host
+
+func _get_project_default_lobby_host() -> String:
 	var configured_host := str(ProjectSettings.get_setting(DEFAULT_LOBBY_HOST_SETTING, DEFAULT_LOBBY_HOST)).strip_edges()
 	if configured_host.is_empty():
 		return DEFAULT_LOBBY_HOST.strip_edges()

@@ -5,6 +5,7 @@ const LobbyProtocolScript = preload("res://scripts/network/LobbyProtocol.gd")
 const AppReleaseInfoScript = preload("res://scripts/client/AppReleaseInfo.gd")
 const NetworkManagerScript = preload("res://scripts/Other/NetworkManager.gd")
 const LOBBY_EVENT_TYPE := "__lobby_event__"
+const CONNECT_ATTEMPT_TIMEOUT_SECONDS := 5.0
 
 signal connected_to_lobby()
 signal server_version_updated(version: String)
@@ -51,6 +52,7 @@ var _pending_reconnect_token: String = ""
 var _pending_profile_id: String = ""
 var _pending_auth_mode: String = "guest"
 var _pending_password: String = ""
+var _connect_attempt_serial: int = 0
 
 func _ready() -> void:
 	_ensure_network_manager()
@@ -86,7 +88,10 @@ func connect_to_server(
 	if network_manager == null:
 		connection_failed.emit("Could not initialize lobby network transport.")
 		return ERR_UNAVAILABLE
-	return network_manager.create_client(connect_address, port)
+	var connect_err = network_manager.create_client(connect_address, port)
+	if connect_err == OK:
+		_arm_connect_attempt_timeout()
+	return connect_err
 
 func disconnect_from_server() -> void:
 	_is_authenticated = false
@@ -226,6 +231,7 @@ func lobby_event(message: Dictionary) -> void:
 		LobbyProtocolScript.ROOM_ERROR:
 			room_error.emit(str(payload.get("message", "Unknown lobby error.")))
 		LobbyProtocolScript.MATCH_ASSIGNED:
+			current_active_match_info = payload.duplicate(true)
 			match_assigned.emit(payload)
 		LobbyProtocolScript.ACCOUNT_DECK_LIST:
 			current_preferred_account_deck_id = str(payload.get("preferred_deck_id", current_preferred_account_deck_id)).strip_edges()
@@ -238,6 +244,7 @@ func lobby_event(message: Dictionary) -> void:
 			profile_summary_received.emit(payload)
 
 func _on_connected_to_server() -> void:
+	_cancel_connect_attempt_timeout()
 	_trace("connected to server")
 	connected_to_lobby.emit()
 	if not _pending_session_id.is_empty() and not _pending_reconnect_token.is_empty():
@@ -266,12 +273,14 @@ func _on_connected_to_server() -> void:
 	})
 
 func _on_connection_failed() -> void:
+	_cancel_connect_attempt_timeout()
 	_is_authenticated = false
 	_set_current_server_version("")
 	_trace("connection failed")
 	connection_failed.emit("The lobby connection failed.")
 
 func _on_server_disconnected() -> void:
+	_cancel_connect_attempt_timeout()
 	_is_authenticated = false
 	_set_current_server_version("")
 	_trace("server disconnected")
@@ -323,6 +332,29 @@ func _on_network_game_event_received(event_type: String, data: Dictionary) -> vo
 	if event_type != LOBBY_EVENT_TYPE:
 		return
 	lobby_event(data)
+
+func _arm_connect_attempt_timeout() -> void:
+	var tree := get_tree()
+	if tree == null:
+		return
+	_connect_attempt_serial += 1
+	var expected_serial := _connect_attempt_serial
+	var timeout_timer := tree.create_timer(CONNECT_ATTEMPT_TIMEOUT_SECONDS)
+	timeout_timer.timeout.connect(func() -> void:
+		if expected_serial != _connect_attempt_serial:
+			return
+		_on_connect_attempt_timeout()
+	)
+
+func _cancel_connect_attempt_timeout() -> void:
+	_connect_attempt_serial += 1
+
+func _on_connect_attempt_timeout() -> void:
+	if is_transport_connected():
+		return
+	_trace("connect attempt timed out")
+	disconnect_from_server()
+	connection_failed.emit("The lobby connection timed out.")
 
 func _set_current_server_version(version: String) -> void:
 	var normalized_version := AppReleaseInfoScript.normalize_version(version)

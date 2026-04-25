@@ -18,7 +18,7 @@ func _init() -> void:
 	speed = 1
 	resilience = 26
 	strength = 24
-	ability_text = "[b]Shift[/b] ([b]Activate[/b]): Switch this card between Giant, Mage, Shapeshifter and Animal, Mage, Avian, Aerial.\n[b]Animal Form[/b] ([b]Passive[/b]): While in Animal form, this card's stats become SPD 3 / RES 15 / STR 27."
+	ability_text = "[b]Shift[/b] ([b]Activate[/b], [b]Minor Action[/b]): Switch this card between Giant, Mage, Shapeshifter and Animal, Mage, Avian, Aerial.\n[b]Animal Form[/b] ([b]Passive[/b]): While in Animal form, this card's stats become SPD 3 / RES 15 / STR 27."
 	flavor_text = ""
 	culture = "Norse"
 	artist = "Lorinda Tomko"
@@ -40,7 +40,7 @@ func can_activate(game_manager: GameManager) -> bool:
 		return false
 	if is_sleeping:
 		return false
-	return can_take_major_creature_action()
+	return can_take_minor_creature_action()
 
 func get_tonal_extraction_spirit_profile() -> Dictionary:
 	return {
@@ -59,13 +59,25 @@ func activate(game_manager: GameManager, _target: Card = null) -> void:
 	if not can_activate(game_manager):
 		return
 	shift_forms()
-	spend_major_creature_action()
+	spend_minor_creature_action()
 	if game_manager != null:
 		game_manager.notify_creature_shapeshifted(self, self)
 		game_manager.note_player_feedback("%s shifts into %s." % [card_name, _get_current_form_label()])
 
 func shift_forms() -> void:
 	in_animal_form = not in_animal_form
+	card_types = _get_animal_form_types() if in_animal_form else _get_giant_form_types()
+
+func get_serialized_state() -> Dictionary:
+	return {
+		"in_animal_form": in_animal_form,
+	}
+
+func apply_serialized_state(state: Dictionary) -> void:
+	if state.is_empty():
+		in_animal_form = card_types.has("Avian")
+	else:
+		in_animal_form = bool(state.get("in_animal_form", false))
 	card_types = _get_animal_form_types() if in_animal_form else _get_giant_form_types()
 
 func get_effective_speed() -> int:

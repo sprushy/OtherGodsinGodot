@@ -16,7 +16,7 @@ func _init() -> void:
 	speed = 2
 	resilience = 26
 	strength = 26
-	ability_text = "[b]Shift[/b] ([b]Activate[/b]): Switch between Human, Mage, Shapeshifter and Animal, Anguine, Shapeshifter.\nMedicine ([b]Activate[/b], [b]Spd[/b] 2): Negate enemy effects targeting your cards until end of turn."
+	ability_text = "[b]Shift[/b] ([b]Activate[/b], [b]Minor Action[/b]): Switch between Human, Mage, Shapeshifter and Animal, Anguine, Shapeshifter.\nMedicine ([b]Activate[/b], [b]Spd[/b] 2): Negate enemy effects targeting your cards until end of turn."
 	flavor_text = ""
 	culture = "Tian"
 	artist = "Ricardo Zoppello"
@@ -31,10 +31,12 @@ func can_activate(game_manager: GameManager) -> bool:
 func can_activate_shift(game_manager: GameManager) -> bool:
 	return _can_use_base_creature_action(game_manager) \
 		and not is_shapeshift_locked() \
+		and can_take_minor_creature_action() \
 		and get_controller() == game_manager.current_player
 
 func can_activate_medicine(game_manager: GameManager) -> bool:
 	return _can_use_base_creature_action(game_manager) \
+		and can_take_major_creature_action() \
 		and get_controller() == game_manager.current_player
 
 func get_activation_failure_reason(game_manager: GameManager) -> String:
@@ -116,7 +118,7 @@ func _activate_shift(game_manager: GameManager) -> void:
 		return
 
 	shift_forms()
-	spend_major_creature_action()
+	spend_minor_creature_action()
 	game_manager.notify_creature_shapeshifted(self, self)
 	game_manager.note_player_feedback(
 		"%s shifts into %s form." % [card_name, "Serpent" if in_serpent_form else "Human"]
@@ -154,8 +156,19 @@ func _can_use_base_creature_action(game_manager: GameManager) -> bool:
 		and not is_prepared \
 		and not is_sleeping \
 		and not abilities_suppressed() \
-		and not is_activation_locked(game_manager) \
-		and can_take_major_creature_action()
+		and not is_activation_locked(game_manager)
+
+func get_serialized_state() -> Dictionary:
+	return {
+		"in_serpent_form": in_serpent_form,
+	}
+
+func apply_serialized_state(state: Dictionary) -> void:
+	if state.is_empty():
+		in_serpent_form = card_types.has("Anguine")
+	else:
+		in_serpent_form = bool(state.get("in_serpent_form", false))
+	card_types = _get_serpent_form_types() if in_serpent_form else _get_human_form_types()
 
 func _resolve_requested_ability(activation_data) -> String:
 	if activation_data is Dictionary:
