@@ -668,7 +668,7 @@ func _can_intercept(defender: Card, attacker: Card, protected_target) -> bool:
 		return false
 	if not game_manager.can_interceptor_engage_attacker(defender, attacker):
 		return false
-	if defender.creature_mode == Card.CreatureMode.AGGRESSIVE and defender.can_take_major_creature_action():
+	if defender.creature_mode == Card.CreatureMode.AGGRESSIVE:
 		return _get_intercept_row_distance(defender, protected_target) >= _get_minimum_intercept_row_distance(defender, attacker, protected_target)
 	if defender.creature_mode == Card.CreatureMode.DEFENSIVE:
 		return _get_intercept_row_distance(defender, protected_target) >= _get_minimum_intercept_row_distance(defender, attacker, protected_target)
@@ -1262,7 +1262,10 @@ func _get_command_actor(sender_info: Dictionary) -> Player:
 
 func _requires_resolved_upkeep(command_type: String) -> bool:
 	match command_type:
-		"upkeep_choice", "tiamat_upkeep_choice", "priority_pass", "intercept_decision", "combat_retreat_decision", "play_hex_response", "play_charm_response", "play_priority_ability", "forfeit", "humbaba_augury_choice", "return_to_hand_choice":
+		# These commands are valid while the current player is still inside a
+		# turn-start prompt/upkeep window and should not be blocked by the
+		# generic "resolve upkeep first" guard.
+		"upkeep_choice", "tiamat_upkeep_choice", "skoll_upkeep_summon", "priority_pass", "intercept_decision", "combat_retreat_decision", "play_hex_response", "play_charm_response", "play_priority_ability", "forfeit", "humbaba_augury_choice", "return_to_hand_choice":
 			return false
 	return true
 
@@ -1353,8 +1356,9 @@ func _process_command_impl(command: Dictionary) -> bool:
 			if card == null:
 				move_failed.emit("prepare_card: card not found")
 				return false
-			if not game_manager.can_prepare_card(acting_player, card, zone):
-				move_failed.emit("Cannot prepare " + card.card_name + "!")
+			var prepare_failure_reason := game_manager.get_prepare_card_failure_reason(acting_player, card, zone)
+			if not prepare_failure_reason.is_empty():
+				move_failed.emit(prepare_failure_reason)
 				return false
 			game_manager.prepare_card(acting_player, card, zone)
 			move_validated.emit(command)

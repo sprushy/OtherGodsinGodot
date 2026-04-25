@@ -426,7 +426,7 @@ var _move_timer_warning_stage: int = 0
 var _move_timer_timeout_pending: bool = false
 var _move_timer_last_display_seconds: int = -1
 
-const TRANSIENT_UI_Z_INDEX := 1000
+const TRANSIENT_UI_Z_INDEX := 2200
 const HOVER_PREVIEW_Z_INDEX := TRANSIENT_UI_Z_INDEX + 50
 const ACTION_LOG_MAX_MESSAGES := 250
 const ACTION_LOG_PREVIEW_COUNT := 2
@@ -9970,7 +9970,9 @@ func _queue_sixth_sage_an_enlilda_impact_prompt(card) -> void:
 			"Choose an Ancient Dwelling for " + card.card_name,
 			current_targets,
 			on_choose_dwelling,
-			on_cancel_dwelling
+			on_cancel_dwelling,
+			"",
+			"Decline"
 		)
 	game_manager.push_to_stack(action)
 	update_ui()
@@ -9989,16 +9991,6 @@ func _show_sixth_sage_an_enlilda_impact_prompt(card: SixthSageAnEnlilda, prompt_
 		}):
 			return
 		action_label.text = _consume_resolution_feedback(card.resolve_no_conjure_home_targets())
-		update_ui()
-		return
-	if current_targets.size() == 1:
-		if _submit_prompt_choice_command({
-			"type": "sixth_sage_an_enlilda_choice",
-			"source_uid": card.uid,
-			"target_uid": current_targets[0].uid,
-		}):
-			return
-		action_label.text = _consume_resolution_feedback(card.resolve_conjure_home_impact(game_manager, current_targets[0]))
 		update_ui()
 		return
 	var on_choose_dwelling := func(chosen_card: Card) -> void:
@@ -10023,7 +10015,9 @@ func _show_sixth_sage_an_enlilda_impact_prompt(card: SixthSageAnEnlilda, prompt_
 		"Choose an Ancient Dwelling for " + card.card_name,
 		current_targets,
 		on_choose_dwelling,
-		on_cancel_dwelling
+		on_cancel_dwelling,
+		"",
+		"Decline"
 	)
 
 func _queue_terror_impact_prompt(power: Terror, demon: Card) -> void:
@@ -10704,6 +10698,19 @@ func _consume_current_humbaba_prompt() -> void:
 			remaining.append(humbaba)
 	_pending_humbaba_prompts = remaining
 
+func _show_humbaba_augury_feedback(feedback: String) -> void:
+	if _stack_resolution_paused:
+		_resume_after_deferred_resolution(feedback)
+		return
+	action_label.text = feedback
+	update_ui()
+
+func _finish_humbaba_augury_prompt(feedback: String, consume_active_prompt: bool = false) -> void:
+	if consume_active_prompt:
+		_consume_current_humbaba_prompt()
+	_show_humbaba_augury_feedback(feedback)
+	call_deferred("_show_next_humbaba_augury_prompt")
+
 func _show_humbaba_augury_prompt(card: HumbabaTheTerrible, prompt_targets: Array = []) -> void:
 	if card == null or game_manager == null:
 		return
@@ -10717,12 +10724,12 @@ func _show_humbaba_augury_prompt(card: HumbabaTheTerrible, prompt_targets: Array
 			var candidate_card := candidate as Card
 			if candidate_card != null and candidate_card in valid_targets:
 				current_targets.append(candidate_card)
+	var prompt_player := _get_humbaba_augury_prompt_player(card)
 	if current_targets.is_empty():
-		action_label.text = card.card_name + " found no cards to read."
-		_consume_current_humbaba_prompt()
-		call_deferred("_show_next_humbaba_augury_prompt")
-		update_ui()
+		_finish_humbaba_augury_prompt(card.card_name + " found no cards to read.", true)
 		return
+	if _executing_stack_action and not _stack_resolution_paused and prompt_player != null:
+		_pause_stack_resolution(prompt_player)
 
 	var on_choose_augury := func(chosen_card: Card) -> void:
 		if _submit_prompt_choice_command({
@@ -10731,10 +10738,7 @@ func _show_humbaba_augury_prompt(card: HumbabaTheTerrible, prompt_targets: Array
 			"target_uid": chosen_card.uid,
 		}):
 			return
-		action_label.text = card.resolve_augury_reading(game_manager, chosen_card)
-		_consume_current_humbaba_prompt()
-		update_ui()
-		call_deferred("_show_next_humbaba_augury_prompt")
+		_finish_humbaba_augury_prompt(card.resolve_augury_reading(game_manager, chosen_card), true)
 	var on_default_augury := func() -> void:
 		if _submit_prompt_choice_command({
 			"type": "humbaba_augury_choice",
@@ -10742,10 +10746,7 @@ func _show_humbaba_augury_prompt(card: HumbabaTheTerrible, prompt_targets: Array
 			"target_uid": "",
 		}):
 			return
-		action_label.text = card.resolve_augury_reading(game_manager, current_targets[0])
-		_consume_current_humbaba_prompt()
-		update_ui()
-		call_deferred("_show_next_humbaba_augury_prompt")
+		_finish_humbaba_augury_prompt(card.resolve_augury_reading(game_manager, current_targets[0]), true)
 
 	_show_card_selection_overlay(
 		"Choose a card to prime for " + card.card_name,
@@ -10776,12 +10777,18 @@ func _show_next_humbaba_augury_prompt() -> void:
 		else:
 			current_targets = card.get_augury_cards(game_manager)
 		if current_targets.is_empty():
-			action_label.text = card.card_name + " found no cards to read."
-			update_ui()
+			var was_paused := _stack_resolution_paused
+			_show_humbaba_augury_feedback(card.card_name + " found no cards to read.")
+			if was_paused:
+				call_deferred("_show_next_humbaba_augury_prompt")
+				return
 			continue
 		if current_targets.size() == 1:
-			action_label.text = card.resolve_augury_reading(game_manager, current_targets[0])
-			update_ui()
+			var was_paused := _stack_resolution_paused
+			_show_humbaba_augury_feedback(card.resolve_augury_reading(game_manager, current_targets[0]))
+			if was_paused:
+				call_deferred("_show_next_humbaba_augury_prompt")
+				return
 			continue
 		_active_humbaba_prompt = card
 		var prompt_player := _get_humbaba_augury_prompt_player(card)
@@ -13583,8 +13590,8 @@ func can_intercept(defender: Card, attacker: Card, protected_target) -> bool:
 		return false
 	if not game_manager.can_interceptor_engage_attacker(defender, attacker):
 		return false
-	# Aggressive-stance creatures can intercept once per turn at equal or greater speed
-	if defender.creature_mode == Card.CreatureMode.AGGRESSIVE and defender.can_take_major_creature_action():
+	# Aggressive-stance creatures can intercept once per turn at equal or greater speed.
+	if defender.creature_mode == Card.CreatureMode.AGGRESSIVE:
 		return _get_intercept_row_distance(defender, protected_target) >= _get_minimum_intercept_row_distance(defender, attacker, protected_target)
 	if defender.creature_mode == Card.CreatureMode.DEFENSIVE:
 		return _get_intercept_row_distance(defender, protected_target) >= _get_minimum_intercept_row_distance(defender, attacker, protected_target)
@@ -16175,6 +16182,9 @@ func _show_book_of_life_prompt(spell: BookOfLife) -> void:
 	if spell == null:
 		update_ui()
 		return
+	if _is_networked_client:
+		_begin_book_of_life_resolution(spell)
+		return
 	_queue_hand_spell_with_deferred_resolution(
 		spell,
 		null,
@@ -16192,7 +16202,8 @@ func _begin_book_of_life_resolution(spell: BookOfLife) -> void:
 	if valid_creatures.is_empty():
 		_resolve_book_of_life(null)
 		return
-	_pause_stack_resolution(spell.card_owner)
+	if not _is_networked_client:
+		_pause_stack_resolution(spell.card_owner)
 	var on_choose_creature := func(selected_creature: Card) -> void:
 		_resolve_book_of_life(selected_creature)
 	var on_cancel_creature := func() -> void:
@@ -17198,11 +17209,9 @@ func _on_match_move_validated(move: Dictionary) -> void:
 				if not _show_next_wolf_adolescent_maturation_prompt():
 					_finish_wolf_adolescent_turn_start_sequence()
 		"humbaba_augury_choice":
-			var feedback := _consume_resolution_feedback()
-			if feedback.strip_edges() != "":
-				action_label.text = feedback
-			_consume_current_humbaba_prompt()
+			_apply_prompt_choice_feedback()
 			if not _is_networked_client:
+				_consume_current_humbaba_prompt()
 				call_deferred("_show_next_humbaba_augury_prompt")
 		"huginn_perish_prime_choice":
 			_apply_prompt_choice_feedback()

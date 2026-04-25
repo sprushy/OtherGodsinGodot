@@ -1246,16 +1246,21 @@ func spend_minor_creature_action(marked_as_move: bool = false) -> void:
 func mark_attacked_this_turn() -> void:
 	has_attacked_this_turn = true
 
-func can_prepare(game_manager: GameManager, player: Player) -> bool:
-	if game_manager == null or player == null:
-		return false
+func get_prepare_failure_reason(game_manager: GameManager, player: Player) -> String:
+	if game_manager == null:
+		return "No game manager is available."
+	if player == null:
+		return "No acting player was provided."
 	if card_owner != null and card_owner != player:
-		return false
+		return "%s belongs to %s." % [card_name, card_owner.player_name]
 	if player != game_manager.current_player:
-		return false
+		return "You can only prepare cards during your own turn."
 	if player.hand_zone == null or current_zone != player.hand_zone:
-		return false
-	return true
+		return "%s must be in your hand to be prepared." % card_name
+	return ""
+
+func can_prepare(game_manager: GameManager, player: Player) -> bool:
+	return get_prepare_failure_reason(game_manager, player).is_empty()
 
 func can_pay_costs(player: Player) -> bool:
 	return can_pay_costs_with_mana_cost(player, mana_cost)

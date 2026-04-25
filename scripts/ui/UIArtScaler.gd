@@ -9,20 +9,18 @@ const FALLBACK_VIEWPORT_WIDTH := 1920
 const FALLBACK_VIEWPORT_HEIGHT := 1080
 
 # Cursor and other UI art should scale from the gameplay layout baseline,
-# not stay at a fixed pixel size once the board or window grows.
+# not stay pinned to a fixed pixel size once the board or window changes.
 static func get_window_scale_factor() -> float:
 	var base_width := int(ProjectSettings.get_setting("display/window/size/viewport_width", FALLBACK_VIEWPORT_WIDTH))
 	var base_height := int(ProjectSettings.get_setting("display/window/size/viewport_height", FALLBACK_VIEWPORT_HEIGHT))
 	var window_size := DisplayServer.window_get_size()
 	var width_ratio := float(window_size.x) / maxf(1.0, float(base_width))
 	var height_ratio := float(window_size.y) / maxf(1.0, float(base_height))
-	return maxf(1.0, minf(width_ratio, height_ratio))
+	return maxf(0.01, minf(width_ratio, height_ratio))
 
 static func get_board_art_scale(reference_extent: float = DEFAULT_BOARD_ART_REFERENCE_EXTENT) -> float:
 	var zone_extent := BoardZoneUI.get_zone_extent()
-	if zone_extent <= reference_extent:
-		return 1.0
-	return zone_extent / reference_extent
+	return maxf(0.01, zone_extent / maxf(1.0, reference_extent))
 
 static func get_cursor_target_height(
 	base_height: int,
@@ -30,8 +28,8 @@ static func get_cursor_target_height(
 	max_height: int = DEFAULT_CURSOR_MAX_HEIGHT
 ) -> int:
 	return clampi(
-		int(round(float(base_height) * maxf(1.0, scale_factor))),
-		base_height,
+		int(round(float(base_height) * maxf(0.01, scale_factor))),
+		1,
 		max_height
 	)
 

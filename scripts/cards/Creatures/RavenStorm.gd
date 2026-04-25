@@ -10,10 +10,10 @@ func _init() -> void:
 	level = 2
 	mana_cost = 0
 	sacrifice_cost = 0
-	speed = 2
+	speed = 3
 	resilience = 7
 	strength = 5
-	ability_text = "[b]Sighting[/b] ([b]Spd[/b] 2): When a friendly Norse Human Warrior or Lupine attacks, you may summon this creature from your hand."
+	ability_text = "[b]Sighting[/b] ([b]Spd[/b] 3): When a friendly Norse Human Warrior or Lupine attacks, you may summon this creature from your hand."
 	culture = "Norse"
 	artist = "Ricardo Zoppello"
 	art_path = ART_PATH

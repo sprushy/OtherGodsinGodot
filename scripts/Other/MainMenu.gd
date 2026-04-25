@@ -3672,8 +3672,10 @@ func _build_unranked_seek_controls() -> void:
 func _restore_saved_resume_state() -> void:
 	_update_resume_controls()
 	_refresh_profile_summary_label()
-	var saved_match := _get_saved_active_match()
-	var saved_lobby_resume := _get_saved_lobby_resume()
+	if _get_selected_auth_mode() != AUTH_MODE_GUEST:
+		return
+	var saved_match := _get_saved_active_match_for_profile(_local_profile_id)
+	var saved_lobby_resume := _get_saved_lobby_resume_for_profile(_local_profile_id)
 	if saved_match.is_empty() or saved_lobby_resume.is_empty():
 		return
 	multiplayer_container.visible = false
@@ -3683,7 +3685,10 @@ func _restore_saved_resume_state() -> void:
 func _update_resume_controls() -> void:
 	if _resume_match_button == null or _local_profile_store == null:
 		return
-	var has_resume := not _get_saved_active_match().is_empty() and not _get_saved_lobby_resume().is_empty()
+	var has_resume := false
+	if _get_selected_auth_mode() == AUTH_MODE_GUEST:
+		has_resume = not _get_saved_active_match_for_profile(_local_profile_id).is_empty() \
+			and not _get_saved_lobby_resume_for_profile(_local_profile_id).is_empty()
 	_resume_match_button.visible = has_resume
 
 func _get_saved_lobby_resume() -> Dictionary:
@@ -3695,6 +3700,16 @@ func _get_saved_active_match() -> Dictionary:
 	if _local_profile_store == null:
 		return {}
 	return _local_profile_store.get_active_match(_get_resume_profile_id())
+
+func _get_saved_lobby_resume_for_profile(profile_id: String) -> Dictionary:
+	if _local_profile_store == null:
+		return {}
+	return _local_profile_store.get_lobby_resume(profile_id)
+
+func _get_saved_active_match_for_profile(profile_id: String) -> Dictionary:
+	if _local_profile_store == null:
+		return {}
+	return _local_profile_store.get_active_match(profile_id)
 
 func _get_resume_profile_id() -> String:
 	if _local_profile_store == null:

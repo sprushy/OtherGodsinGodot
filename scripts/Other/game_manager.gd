@@ -1035,29 +1035,39 @@ func can_play_card(player: Player, card: Card, target_zone: Zone) -> bool:
 
 	return true
 
-func can_prepare_card(player: Player, card: Card, target_zone: Zone) -> bool:
+func get_prepare_card_failure_reason(player: Player, card: Card, target_zone: Zone) -> String:
 	if is_game_over:
-		return false
-	if player == null or card == null:
-		return false
+		return "The game is already over."
+	if player == null:
+		return "No acting player was provided."
+	if card == null:
+		return "The selected card was not found."
 	if not action_stack.is_empty():
-		return false
+		return "Cannot prepare cards while another action is resolving."
 	if player == current_player and not has_resolved_turn_upkeep():
-		return false
+		return "Resolve upkeep before taking other actions."
 	if card.card_type not in [Card.CardType.SPELL, Card.CardType.HEX, Card.CardType.CHARM]:
-		return false
-	if not card.can_prepare(self, player):
-		return false
+		return "%s cannot be prepared." % card.card_name
+	var card_reason := card.get_prepare_failure_reason(self, player)
+	if not card_reason.is_empty():
+		return card_reason
 	if target_zone == null or not target_zone.is_board_zone():
-		return false
+		return "Choose a friendly board zone."
 	if target_zone.zone_owner != player:
-		return false
+		return "You can only prepare cards into your own zones."
 	if target_zone not in player.frontline_zones and target_zone not in player.reserve_zones:
-		return false
+		return "Choose a frontline or reserve zone."
 	if target_zone.cards.size() > 0:
-		return false
+		return "That zone is occupied."
 	if target_zone.get_equipment().size() > 0:
-		print("Cannot prepare card: zone contains unequipped equipment")
+		return "Cannot prepare card: zone contains unequipped equipment"
+	return ""
+
+func can_prepare_card(player: Player, card: Card, target_zone: Zone) -> bool:
+	var failure_reason := get_prepare_card_failure_reason(player, card, target_zone)
+	if not failure_reason.is_empty():
+		if failure_reason == "Cannot prepare card: zone contains unequipped equipment":
+			print(failure_reason)
 		return false
 	return true
 
