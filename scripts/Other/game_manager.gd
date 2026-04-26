@@ -124,6 +124,69 @@ func end_stack_action_resolution(action: CardAction) -> void:
 		return
 	resolving_stack_actions.erase(action)
 
+func _is_zone_in_play(zone: Zone) -> bool:
+	if zone == null:
+		return false
+	return zone.is_board_zone() or zone.zone_type == Zone.ZoneType.GOD_SLOT or zone.zone_type == Zone.ZoneType.POWER_SLOT
+
+func _is_hidden_board_card(card: Card) -> bool:
+	return card != null \
+		and card.current_zone != null \
+		and card.current_zone.is_board_zone() \
+		and (card.is_face_down or card.is_stealth or card.is_prepared)
+
+func _action_is_stale(action: CardAction) -> bool:
+	if action == null:
+		return true
+	match action.type:
+		CardAction.Type.EVENT:
+			if action.event_name == "summon":
+				return action.card == null \
+					or action.card.current_zone == null \
+					or not action.card.current_zone.is_board_zone() \
+					or action.card.is_face_down \
+					or action.card.is_stealth \
+					or action.card.is_prepared
+			if action.event_name == "hand_play":
+				return action.card == null \
+					or action.card.current_zone == null \
+					or not _is_zone_in_play(action.card.current_zone) \
+					or action.card.is_face_down \
+					or action.card.is_stealth \
+					or action.card.is_prepared
+			if action.event_name not in ["start_turn", "end_turn"] and _is_hidden_board_card(action.card):
+				return true
+		CardAction.Type.ATTACK:
+			var attacker_active := action.attacker != null \
+				and action.attacker.current_zone != null \
+				and action.attacker.current_zone.is_board_zone()
+			var partner_active := action.united_front_partner != null \
+				and action.united_front_partner.current_zone != null \
+				and action.united_front_partner.current_zone.is_board_zone()
+			return not attacker_active and not partner_active
+	return false
+
+func _prune_stale_stack_actions() -> void:
+	if action_stack.is_empty() and resolving_stack_actions.is_empty():
+		return
+	var removed_action := false
+	var kept_actions: Array[CardAction] = []
+	for action in action_stack:
+		if _action_is_stale(action):
+			removed_action = true
+			continue
+		kept_actions.append(action)
+	if removed_action:
+		action_stack = kept_actions
+		var kept_resolving: Array[CardAction] = []
+		for action in resolving_stack_actions:
+			if action != null and action in action_stack:
+				kept_resolving.append(action)
+		resolving_stack_actions = kept_resolving
+		if action_stack.is_empty():
+			priority_player = null
+			consecutive_passes = 0
+
 func note_player_feedback(text: String) -> void:
 	if text.strip_edges() == "":
 		return
@@ -612,6 +675,7 @@ func get_opponent(player: Player) -> Player:
 func start_turn() -> void:
 	if is_game_over:
 		return
+	_prune_stale_stack_actions()
 	turn_player = current_player
 	turn_number += 1
 	_set_phase(GamePhase.MAIN)
@@ -974,6 +1038,7 @@ func can_pay_creature_summon_cost(
 	return player.mana >= mana_required
 
 func can_play_card(player: Player, card: Card, target_zone: Zone) -> bool:
+	_prune_stale_stack_actions()
 	if is_game_over:
 		return false
 	if card == null or not card.can_be_played(self, player):
@@ -1034,6 +1099,7 @@ func can_play_card(player: Player, card: Card, target_zone: Zone) -> bool:
 	return true
 
 func get_prepare_card_failure_reason(player: Player, card: Card, target_zone: Zone) -> String:
+	_prune_stale_stack_actions()
 	if is_game_over:
 		return "The game is already over."
 	if player == null:
@@ -1808,6 +1874,8 @@ func resolve_followers_attack(attackers: Array[Card], defending_player: Player) 
 		return 0
 
 	for combatant in active_attackers:
+		combatant.reveal_from_stealth(self)
+	for combatant in active_attackers:
 		_notify_attack_declared(combatant)
 
 	var converting_attacker: Card = null
@@ -1943,6 +2011,8 @@ func resolve_combat(attacker: Card, defender: Card, continue_callback: Callable 
 		_clear_combat_engagement_state(defender)
 		if continue_callback.is_valid():
 			continue_callback.call()
+	attacker.reveal_from_stealth(self)
+	defender.reveal_from_stealth(self)
 	_notify_attack_declared(attacker, defender)
 	if defender.is_god:
 		# Gods cannot be targeted in combat — redirect to follower damage
@@ -1952,8 +2022,6 @@ func resolve_combat(attacker: Card, defender: Card, continue_callback: Callable 
 		return true
 	if defender.has_method("on_defend") and not defender.abilities_suppressed():
 		defender.on_defend(self, attacker)
-	attacker.reveal_from_stealth(self)
-	defender.reveal_from_stealth(self)
 	var attacker_str = attacker.get_effective_strength()
 
 	print("=== COMBAT: " + attacker.card_name + " (STR:" + str(attacker_str) + ") vs " + defender.card_name + " ===")
@@ -2043,12 +2111,12 @@ func resolve_united_front_combat(attacker: Card, partner: Card, defender: Card) 
 		_notify_after_united_front_combat(attacker, partner, defender)
 		_clear_combat_engagement_state(defender)
 	for combatant in active_attackers:
+		combatant.reveal_from_stealth(self)
+	defender.reveal_from_stealth(self)
+	for combatant in active_attackers:
 		_notify_attack_declared(combatant, defender)
 	if defender.has_method("on_defend") and not defender.abilities_suppressed():
 		defender.on_defend(self, primary)
-	primary.reveal_from_stealth(self)
-	support.reveal_from_stealth(self)
-	defender.reveal_from_stealth(self)
 	var combined_strength := primary.get_effective_strength() + support.get_effective_strength()
 
 	if defender.is_god:
@@ -2176,6 +2244,8 @@ func resolve_combat_with_continuation(
 		_clear_combat_engagement_state(defender)
 		if continue_callback.is_valid():
 			continue_callback.call()
+	attacker.reveal_from_stealth(self)
+	defender.reveal_from_stealth(self)
 	_notify_attack_declared(attacker, defender)
 	if defender.is_god:
 		var god_damage := _apply_combat_follower_damage(attacker, defender_controller, attacker.get_effective_strength())
@@ -2186,8 +2256,6 @@ func resolve_combat_with_continuation(
 	var continue_resolution := func() -> bool:
 		if defender.has_method("on_defend") and not defender.abilities_suppressed():
 			defender.on_defend(self, attacker)
-		attacker.reveal_from_stealth(self)
-		defender.reveal_from_stealth(self)
 		var attacker_str := attacker.get_effective_strength()
 		print("=== COMBAT: " + attacker.card_name + " (STR:" + str(attacker_str) + ") vs " + defender.card_name + " ===")
 		if defender.is_petrified() or defender.card_type == Card.CardType.STRUCTURE:

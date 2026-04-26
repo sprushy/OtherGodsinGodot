@@ -240,6 +240,7 @@ func _on_game_manager_card_summoned(
 func resolve_action(action: CardAction) -> void:
 	last_resolution_text = ""
 	var pushed_effect_source := false
+	var action_completed := true
 	if game_manager != null and action != null and action.card != null:
 		game_manager.push_effect_source_card(action.card)
 		pushed_effect_source = true
@@ -254,12 +255,17 @@ func resolve_action(action: CardAction) -> void:
 			_resolve_event(action)
 		CardAction.Type.ATTACK:
 			_resolve_attack(action)
+			action_completed = pending_retreat_action != action and pending_humbaba_action != action
 	if game_manager != null and pushed_effect_source:
 		game_manager.pop_effect_source_card()
+	if not action_completed:
+		return
+	_finalize_resolved_action(action)
+
+func _finalize_resolved_action(action: CardAction) -> void:
 	_remove_resolved_action(action)
 	if game_manager != null and action != null:
 		game_manager.end_stack_action_resolution(action)
-	
 	action_resolved.emit(action)
 
 func _remove_resolved_action(action: CardAction) -> void:
@@ -937,6 +943,15 @@ func _get_priority_action_message(top: CardAction, viewer: Player = null) -> Str
 		CardAction.Type.ATTACK:
 			if top.attacker != null:
 				return _get_action_label(top.attacker, viewer) + " is attacking - you may respond!"
+		CardAction.Type.SPELL:
+			if top.card != null:
+				return _get_action_label(top.card, viewer) + " is waiting to resolve - you may respond!"
+		CardAction.Type.ABILITY:
+			if top.card != null:
+				return _get_action_label(top.card, viewer) + " ability is waiting to resolve - you may respond!"
+		CardAction.Type.CHARM:
+			if top.card != null:
+				return _get_action_label(top.card, viewer) + " is waiting to resolve - you may respond!"
 		CardAction.Type.EVENT:
 			if top.event_name == "start_turn":
 				return "Start-of-turn priority window."
@@ -2743,7 +2758,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 					return true
 				_clear_pending_humbaba_state()
 				_continue_pending_humbaba_attack_resolution(action, pending_target)
-				action_resolved.emit(action)
+				_finalize_resolved_action(action)
 			return true
 		"mummu_entropy_choice":
 			var source_uid: String = command.get("source_uid", "")
@@ -3060,7 +3075,7 @@ func _process_combat_retreat_decision(command: Dictionary) -> bool:
 		game_manager.send_to_deck_bottom_with_hook(target)
 		last_resolution_text = "Tactful Retreat! Both creatures returned to the bottom of their decks."
 		_clear_pending_retreat_state()
-		action_resolved.emit(action)
+		_finalize_resolved_action(action)
 		return true
 	if not pending_retreat_prompt_uids.is_empty():
 		var next_prompt := _get_pending_retreat_prompt()
@@ -3079,7 +3094,7 @@ func _process_combat_retreat_decision(command: Dictionary) -> bool:
 	_finish_creature_combat(action, target)
 	if blocked_ask != null:
 		last_resolution_text = "Asaruludu's Guardian prevented %s's Tactful Retreat!" % blocked_ask.card_name
-	action_resolved.emit(action)
+	_finalize_resolved_action(action)
 	return true
 
 func _get_pending_retreat_prompt() -> Askelladen:

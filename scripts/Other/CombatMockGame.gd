@@ -9707,10 +9707,29 @@ func _resolve_prompt_targets(valid_targets: Array[Card], prompt_targets: Array =
 	if prompt_targets.is_empty():
 		resolved_targets.assign(valid_targets)
 		return resolved_targets
+	var valid_targets_by_uid: Dictionary = {}
+	for valid_target in valid_targets:
+		if valid_target == null:
+			continue
+		var valid_uid := str(valid_target.uid).strip_edges()
+		if valid_uid != "" and not valid_targets_by_uid.has(valid_uid):
+			valid_targets_by_uid[valid_uid] = valid_target
 	for candidate in prompt_targets:
+		var candidate_uid := ""
 		var candidate_card := candidate as Card
-		if candidate_card != null and candidate_card in valid_targets:
-			resolved_targets.append(candidate_card)
+		if candidate_card != null:
+			candidate_uid = str(candidate_card.uid).strip_edges()
+			if candidate_card in valid_targets:
+				if candidate_card not in resolved_targets:
+					resolved_targets.append(candidate_card)
+				continue
+		elif candidate is String:
+			candidate_uid = str(candidate).strip_edges()
+		if candidate_uid == "" or not valid_targets_by_uid.has(candidate_uid):
+			continue
+		var resolved_card := valid_targets_by_uid[candidate_uid] as Card
+		if resolved_card != null and resolved_card not in resolved_targets:
+			resolved_targets.append(resolved_card)
 	return resolved_targets
 
 func _show_first_sage_adapa_impact_prompt(card: FirstSageAdapa, prompt_targets: Array = []) -> void:
@@ -10968,15 +10987,7 @@ func _show_humbaba_augury_prompt(card: HumbabaTheTerrible, prompt_targets: Array
 	if card == null or game_manager == null:
 		return
 	_active_humbaba_prompt = card
-	var current_targets: Array[Card] = []
-	if prompt_targets.is_empty():
-		current_targets = card.get_augury_cards(game_manager)
-	else:
-		var valid_targets := card.get_augury_cards(game_manager)
-		for candidate in prompt_targets:
-			var candidate_card := candidate as Card
-			if candidate_card != null and candidate_card in valid_targets:
-				current_targets.append(candidate_card)
+	var current_targets := _resolve_prompt_targets(card.get_augury_cards(game_manager), prompt_targets)
 	var prompt_player := _get_humbaba_augury_prompt_player(card)
 	if current_targets.is_empty():
 		_finish_humbaba_augury_prompt(card.card_name + " found no cards to read.", true)
@@ -11025,7 +11036,10 @@ func _show_next_humbaba_augury_prompt() -> void:
 			continue
 		var current_targets: Array[Card] = []
 		if _queued_humbaba_prompt_targets.has(card.uid):
-			current_targets.assign(_queued_humbaba_prompt_targets.get(card.uid, []))
+			current_targets = _resolve_prompt_targets(
+				card.get_augury_cards(game_manager),
+				_queued_humbaba_prompt_targets.get(card.uid, [])
+			)
 			_queued_humbaba_prompt_targets.erase(card.uid)
 		else:
 			current_targets = card.get_augury_cards(game_manager)
@@ -14221,6 +14235,17 @@ func _broadcast_priority_offered(player: Player, responses: Array) -> void:
 	elif peer_id > 0:
 		network_manager.broadcast_event_to_peer(peer_id, "priority_offered", event_data)
 
+func _get_priority_prompt_action_message(viewer: Player = null) -> String:
+	if match_manager == null:
+		return ""
+	var resolved_viewer := viewer
+	if resolved_viewer == null and game_manager != null:
+		resolved_viewer = game_manager.priority_player
+	if resolved_viewer == null:
+		return ""
+	var prompt_data := match_manager.build_priority_prompt_data(resolved_viewer)
+	return str(prompt_data.get("action_message", "")).strip_edges()
+
 func _show_priority_prompt(player: Player) -> void:
 	var panel = get_node_or_null("PriorityPromptPanel")
 	if panel == null:
@@ -14255,6 +14280,15 @@ func _show_priority_prompt(player: Player) -> void:
 	lbl.text = player.player_name + " has priority"
 	lbl.add_theme_font_size_override("font_size", 13)
 	vbox.add_child(lbl)
+
+	var action_message := _get_priority_prompt_action_message(player)
+	if action_message != "":
+		var info := Label.new()
+		info.text = action_message
+		info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		info.add_theme_font_size_override("font_size", 11)
+		info.modulate = Color(0.88, 0.92, 0.98, 0.96)
+		vbox.add_child(info)
 
 	var pass_btn := Button.new()
 	pass_btn.text = "Pass Priority"
@@ -19367,12 +19401,12 @@ func _apply_priority_prompt_for_player(player_index: int, data: Dictionary) -> v
 			_hide_priority_prompt()
 			_update_waiting_overlay()
 			return
-		_show_remote_priority_prompt(responses)
+		_show_remote_priority_prompt(responses, msg)
 		return
 	if game_manager != null and player_index >= 0 and player_index < game_manager.players.size():
 		_show_priority_prompt(game_manager.players[player_index])
 
-func _show_remote_priority_prompt(responses: Array) -> void:
+func _show_remote_priority_prompt(responses: Array, action_message: String = "") -> void:
 	var panel = get_node_or_null("PriorityPromptPanel")
 	if panel == null:
 		panel = PanelContainer.new()
@@ -19405,6 +19439,14 @@ func _show_remote_priority_prompt(responses: Array) -> void:
 	lbl.text = "You have priority"
 	lbl.add_theme_font_size_override("font_size", 13)
 	vbox.add_child(lbl)
+
+	if action_message.strip_edges() != "":
+		var info := Label.new()
+		info.text = action_message
+		info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		info.add_theme_font_size_override("font_size", 11)
+		info.modulate = Color(0.88, 0.92, 0.98, 0.96)
+		vbox.add_child(info)
 
 	var pass_btn := Button.new()
 	pass_btn.text = "Pass Priority"

@@ -2,6 +2,7 @@ extends PowerCard
 class_name OraclesSight
 
 const UNLOCK_COST := 3
+const ACTIVATION_COST := 3
 const LOOK_COUNT := 5
 const ART_PATH := "res://images/card_art/powers/OraclesSightEdit.png"
 
@@ -82,6 +83,14 @@ func resolve_from_command(game_manager: GameManager, command: Dictionary) -> voi
 	var chosen_uid := str(command.get("chosen_uid", command.get("target_uid", "")))
 	var chosen_card: Card = game_manager.get_card_by_uid(chosen_uid) if chosen_uid != "" else null
 	activate(game_manager, chosen_card)
+
+func get_serialized_state() -> Dictionary:
+	return {
+		"pending_unlock_resolution": _pending_unlock_resolution,
+	}
+
+func apply_serialized_state(state: Dictionary) -> void:
+	_pending_unlock_resolution = bool(state.get("pending_unlock_resolution", false))
 
 func get_foresight_cards() -> Array[Card]:
 	var cards: Array[Card] = []

@@ -15,7 +15,7 @@ compatibility/default_parent_skeleton_in_mesh_instance_3d=true
 [application]
 
 config/name="OtherGods"
-config/version="0.2.77"
+config/version="0.2.78"
 run/main_scene="uid://gpaa31rvtxtn"
 config/features=PackedStringArray("4.6", "Forward Plus")
 config/icon="res://images/icon (2).svg"
@@ -39,4 +39,5 @@ enabled=PackedStringArray("res://addons/godot_mcp/plugin.cfg")
 
 [rendering]
 
+rendering_device/driver.windows="d3d12"
 textures/vram_compression/import_etc2_astc=true
