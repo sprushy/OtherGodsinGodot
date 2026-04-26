@@ -62,6 +62,8 @@ var _art_rect: TextureRect = null
 var _disabled_overlay: ColorRect = null
 var _power_lock_overlay: TextureRect = null
 var _defense_shield_overlay: Control = null
+var _level_label: Label = null
+var _stats_label: Label = null
 const _DEFAULT_POWER_LOCK_TEXTURE := preload("res://images/Norse Power Lock.png")
 const _ANCIENT_POWER_LOCK_TEXTURE := preload("res://images/Ancient Power Lock.png")
 
@@ -85,6 +87,7 @@ func setup(
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	_refresh_mouse_cursor_shape()
 	_build_content()
+	_bind_visual_state()
 	if card_data.exhausted_art_path != "":
 		card_data.art_updated.connect(_on_art_updated)
 
@@ -196,7 +199,76 @@ func _make_level_label() -> Label:
 		level_lbl.mouse_filter = Control.MOUSE_FILTER_STOP
 	else:
 		level_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_level_label = level_lbl
 	return level_lbl
+
+func _bind_visual_state() -> void:
+	if card_data == null:
+		return
+	if not card_data.visual_state_changed.is_connected(_on_card_visual_state_changed):
+		card_data.visual_state_changed.connect(_on_card_visual_state_changed)
+
+func _unbind_visual_state() -> void:
+	if card_data == null:
+		return
+	if card_data.visual_state_changed.is_connected(_on_card_visual_state_changed):
+		card_data.visual_state_changed.disconnect(_on_card_visual_state_changed)
+
+func _refresh_dynamic_labels() -> void:
+	if card_data == null:
+		return
+	if _level_label != null and is_instance_valid(_level_label):
+		var effective_level := card_data.get_effective_level()
+		_level_label.text = "LV %d" % effective_level
+		var level_breakdown := card_data.get_buff_tooltip("lvl")
+		if effective_level > card_data.level:
+			_level_label.add_theme_color_override("font_color", Color(0.4, 1.0, 0.4))
+		elif effective_level < card_data.level:
+			_level_label.add_theme_color_override("font_color", Color(1.0, 0.35, 0.35))
+		else:
+			_level_label.add_theme_color_override("font_color", Color(0.95, 0.9, 0.65))
+		if level_breakdown != "":
+			_level_label.tooltip_text = "LVL:\n" + level_breakdown
+			_level_label.mouse_filter = Control.MOUSE_FILTER_STOP
+		else:
+			_level_label.tooltip_text = ""
+			_level_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	if _stats_label == null or not is_instance_valid(_stats_label):
+		return
+	match card_data.card_type:
+		Card.CardType.CREATURE:
+			_stats_label.text = "STR:%d RES:%d SPD:%d" % [
+				card_data.get_effective_strength(),
+				card_data.get_effective_resilience(),
+				card_data.get_effective_speed()
+			]
+			var creature_tooltips: Array[String] = []
+			for stat_info in [["STR", "str"], ["RES", "res"], ["SPD", "spd"]]:
+				var breakdown := card_data.get_full_stat_breakdown(stat_info[1])
+				if breakdown != "":
+					creature_tooltips.append(stat_info[0] + ":\n" + breakdown)
+			_stats_label.tooltip_text = "\n\n".join(creature_tooltips)
+			_stats_label.mouse_filter = Control.MOUSE_FILTER_STOP if not creature_tooltips.is_empty() else Control.MOUSE_FILTER_IGNORE
+		Card.CardType.STRUCTURE:
+			_stats_label.text = "RES:%d" % card_data.get_effective_resilience()
+			var structure_breakdown := card_data.get_full_stat_breakdown("res")
+			_stats_label.tooltip_text = "RES:\n" + structure_breakdown if structure_breakdown != "" else ""
+			_stats_label.mouse_filter = Control.MOUSE_FILTER_STOP if structure_breakdown != "" else Control.MOUSE_FILTER_IGNORE
+		Card.CardType.SPELL, Card.CardType.HEX, Card.CardType.CHARM:
+			_stats_label.text = "SPD:%d" % card_data.get_effective_speed()
+			var speed_breakdown := card_data.get_full_stat_breakdown("spd")
+			_stats_label.tooltip_text = "SPD:\n" + speed_breakdown if speed_breakdown != "" else ""
+			_stats_label.mouse_filter = Control.MOUSE_FILTER_STOP if speed_breakdown != "" else Control.MOUSE_FILTER_IGNORE
+		_:
+			_stats_label.tooltip_text = ""
+			_stats_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+func _on_card_visual_state_changed() -> void:
+	_refresh_dynamic_labels()
+	_apply_card_style()
+	if _hover_panel != null and is_instance_valid(_hover_panel):
+		_hide_hover_panel()
+		_show_hover_panel()
 
 func _populate_vbox(vbox: VBoxContainer) -> void:
 	var top_row := HBoxContainer.new()
@@ -233,23 +305,18 @@ func _populate_vbox(vbox: VBoxContainer) -> void:
 			pass
 		Card.CardType.CREATURE:
 			var stats_lbl := Label.new()
-			stats_lbl.text = "STR:%d RES:%d SPD:%d" % [
-				card_data.strength, card_data.resilience, card_data.speed
-			]
 			stats_lbl.add_theme_font_size_override("font_size", 19)
-			stats_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			_stats_label = stats_lbl
 			vbox.add_child(stats_lbl)
 		Card.CardType.STRUCTURE:
 			var res_lbl := Label.new()
-			res_lbl.text = "RES:%d" % card_data.resilience
 			res_lbl.add_theme_font_size_override("font_size", 16)
-			res_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			_stats_label = res_lbl
 			vbox.add_child(res_lbl)
 		Card.CardType.SPELL, Card.CardType.HEX, Card.CardType.CHARM:
 			var spd_lbl := Label.new()
-			spd_lbl.text = "SPD:%d" % card_data.speed
 			spd_lbl.add_theme_font_size_override("font_size", 16)
-			spd_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			_stats_label = spd_lbl
 			vbox.add_child(spd_lbl)
 
 	if card_data.ability_text != "":
@@ -276,6 +343,8 @@ func _populate_vbox(vbox: VBoxContainer) -> void:
 		vbox.add_child(_make_name_label())
 
 func _build_content() -> void:
+	_level_label = null
+	_stats_label = null
 	# Outer (self) is a transparent layout-only shell — the HBoxContainer
 	# manages it, but rotation never touches it, preventing re-sort cascades.
 	var empty_style := StyleBoxEmpty.new()
@@ -307,6 +376,7 @@ func _build_content() -> void:
 	_refresh_power_lock_overlay()
 	_refresh_defense_shield_overlay()
 	_refresh_disabled_visual_state()
+	_refresh_dynamic_labels()
 	call_deferred("_sync_minimum_height")
 	call_deferred("_layout_power_lock_overlay")
 
@@ -855,6 +925,10 @@ func _hide_hover_panel() -> void:
 
 func _notification(what: int) -> void:
 	match what:
+		NOTIFICATION_ENTER_TREE:
+			_bind_visual_state()
+		NOTIFICATION_EXIT_TREE:
+			_unbind_visual_state()
 		NOTIFICATION_RESIZED:
 			# Safe: setting _inner.pivot_offset only notifies self (outer),
 			# not the HBoxContainer, so no re-sort cascade.

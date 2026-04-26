@@ -81,7 +81,13 @@ func ensure_account_profile(
 	var resolved_preferred_id := preferred_profile_id.strip_edges()
 	if not resolved_preferred_id.is_empty():
 		var preferred_profile := get_profile(resolved_preferred_id)
-		if not preferred_profile.is_empty():
+		var preferred_account_username_key := str(
+			preferred_profile.get("account_username_key", "")
+		).strip_edges().to_lower()
+		if not preferred_profile.is_empty() and (
+			preferred_account_username_key.is_empty()
+			or preferred_account_username_key == normalized_key
+		):
 			return _remember_account_profile_mapping(
 				normalized_key,
 				ensure_profile(resolved_preferred_id, normalized_username, make_current)

@@ -200,6 +200,7 @@ var _pinned: bool = false
 var _hide_pending: bool = false
 var _defense_overlay: Control = null
 var _raised_overlay: Control = null  # non-null for DEF or stealth - floats above the zone row
+var _visual_state_card: Card = null
 
 const BASE_ZONE_EXTENT := 165.0
 const DROMI_BINDING_NAME := "Dromi"
@@ -615,6 +616,38 @@ func _add_playing_aura(overlay: Control) -> void:
 	ring_style.border_color = Color(1.0, 0.88, 0.38, 0.98)
 	ring_style.shadow_color = Color(1.0, 0.82, 0.2, 0.7)
 	ring_style.shadow_size = 12
+	ring_style.corner_radius_top_left = 8
+	ring_style.corner_radius_top_right = 8
+	ring_style.corner_radius_bottom_left = 8
+	ring_style.corner_radius_bottom_right = 8
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		ring_style.set_border_width(side, 2)
+	ring.add_theme_stylebox_override("panel", ring_style)
+	overlay.add_child(ring)
+
+func _add_aphrodite_activation_aura(overlay: Control) -> void:
+	if overlay == null:
+		return
+
+	var glow := ColorRect.new()
+	glow.color = Color(1.0, 0.56, 0.78, 0.12)
+	glow.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	glow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	overlay.add_child(glow)
+
+	var ring := PanelContainer.new()
+	ring.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ring.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	ring.offset_left = 5
+	ring.offset_top = 5
+	ring.offset_right = -5
+	ring.offset_bottom = -5
+
+	var ring_style := StyleBoxFlat.new()
+	ring_style.bg_color = Color(0, 0, 0, 0)
+	ring_style.border_color = Color(1.0, 0.76, 0.90, 0.92)
+	ring_style.shadow_color = Color(1.0, 0.45, 0.74, 0.5)
+	ring_style.shadow_size = 9
 	ring_style.corner_radius_top_left = 8
 	ring_style.corner_radius_top_right = 8
 	ring_style.corner_radius_bottom_left = 8
@@ -1580,9 +1613,38 @@ func _is_card_usable_for_priority(card: Card) -> bool:
 func _should_show_playing_aura(card: Card) -> bool:
 	return _preview_card != null or _is_card_waiting_on_priority(card) or _is_card_pending_selection_source(card)
 
+func _should_show_aphrodite_activation_aura(card: Card) -> bool:
+	if card == null or game_manager == null:
+		return false
+	if card is not AphroditeAreia:
+		return false
+	var viewer := _get_viewer_player()
+	if viewer == null or card.get_controller() != viewer:
+		return false
+	return card.can_activate(game_manager)
+
 func set_preview_card(card: Card) -> void:
 	_preview_card = card
 	_refresh_display()
+
+func _sync_visual_state_card(card: Card) -> void:
+	if _visual_state_card == card:
+		return
+	if _visual_state_card != null and _visual_state_card.visual_state_changed.is_connected(_on_visual_state_card_changed):
+		_visual_state_card.visual_state_changed.disconnect(_on_visual_state_card_changed)
+	_visual_state_card = card
+	if _visual_state_card != null and not _visual_state_card.visual_state_changed.is_connected(_on_visual_state_card_changed):
+		_visual_state_card.visual_state_changed.connect(_on_visual_state_card_changed)
+
+func _disconnect_visual_state_card() -> void:
+	if _visual_state_card != null and _visual_state_card.visual_state_changed.is_connected(_on_visual_state_card_changed):
+		_visual_state_card.visual_state_changed.disconnect(_on_visual_state_card_changed)
+	_visual_state_card = null
+
+func _on_visual_state_card_changed() -> void:
+	if not is_inside_tree() or is_queued_for_deletion():
+		return
+	call_deferred("_refresh_display")
 
 func _clear_followers_attack_result_if_current(sequence: int) -> void:
 	if is_queued_for_deletion():
@@ -1654,6 +1716,7 @@ func _refresh_display() -> void:
 	for child in get_children():
 		child.queue_free()
 	var card: Card = _preview_card if _preview_card != null else (zone.cards[0] if zone.cards.size() > 0 else null)
+	_sync_visual_state_card(card)
 	_refresh_mouse_cursor_shape(card)
 
 	var style := StyleBoxFlat.new()
@@ -1790,6 +1853,8 @@ func _refresh_display() -> void:
 					_add_attack_aura(god_overlay)
 				if _should_show_playing_aura(card):
 					_add_playing_aura(god_overlay)
+				if _should_show_aphrodite_activation_aura(card):
+					_add_aphrodite_activation_aura(god_overlay)
 				if _is_card_usable_for_priority(card):
 					_add_priority_response_aura(god_overlay)
 				if _is_card_targeted_on_stack(card) or _is_card_pending_target(card) or _is_card_pending_attack_target(card) or _is_card_attack_candidate(card):
@@ -2181,6 +2246,7 @@ func _notification(what: int) -> void:
 			_pinned = false
 			_hovered = false
 			_hide_pending = false
+			_disconnect_visual_state_card()
 			_hide_ability_popup()
 		NOTIFICATION_MOUSE_ENTER:
 			_hovered = true

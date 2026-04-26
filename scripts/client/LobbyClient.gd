@@ -68,6 +68,15 @@ func connect_to_server(
 	password: String = ""
 ) -> Error:
 	_is_authenticated = false
+	current_session_id = ""
+	current_reconnect_token = ""
+	current_profile_id = ""
+	current_account_id = ""
+	current_username = ""
+	current_auth_mode = "guest"
+	current_room_snapshot = {}
+	current_active_match_info = {}
+	current_preferred_account_deck_id = ""
 	_set_current_server_version("")
 	_pending_player_name = player_name.strip_edges()
 	if _pending_player_name.is_empty():
@@ -95,6 +104,15 @@ func connect_to_server(
 
 func disconnect_from_server() -> void:
 	_is_authenticated = false
+	current_session_id = ""
+	current_reconnect_token = ""
+	current_profile_id = ""
+	current_account_id = ""
+	current_username = ""
+	current_auth_mode = "guest"
+	current_room_snapshot = {}
+	current_active_match_info = {}
+	current_preferred_account_deck_id = ""
 	_set_current_server_version("")
 	if network_manager != null:
 		network_manager.disconnect_client()
@@ -275,6 +293,15 @@ func _on_connected_to_server() -> void:
 func _on_connection_failed() -> void:
 	_cancel_connect_attempt_timeout()
 	_is_authenticated = false
+	current_session_id = ""
+	current_reconnect_token = ""
+	current_profile_id = ""
+	current_account_id = ""
+	current_username = ""
+	current_auth_mode = "guest"
+	current_room_snapshot = {}
+	current_active_match_info = {}
+	current_preferred_account_deck_id = ""
 	_set_current_server_version("")
 	_trace("connection failed")
 	connection_failed.emit("The lobby connection failed.")
@@ -282,6 +309,15 @@ func _on_connection_failed() -> void:
 func _on_server_disconnected() -> void:
 	_cancel_connect_attempt_timeout()
 	_is_authenticated = false
+	current_session_id = ""
+	current_reconnect_token = ""
+	current_profile_id = ""
+	current_account_id = ""
+	current_username = ""
+	current_auth_mode = "guest"
+	current_room_snapshot = {}
+	current_active_match_info = {}
+	current_preferred_account_deck_id = ""
 	_set_current_server_version("")
 	_trace("server disconnected")
 	disconnected_from_lobby.emit()

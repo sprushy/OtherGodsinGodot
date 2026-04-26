@@ -66,6 +66,9 @@ var pending_retreat_action: CardAction = null
 var pending_retreat_target: Card = null
 var pending_retreat_prompt_uids: Array[String] = []
 var pending_retreat_guardian_blocked_uids: Array[String] = []
+var pending_humbaba_action: CardAction = null
+var pending_humbaba_target = null
+var pending_humbaba_prompt_uids: Array[String] = []
 var _active_command_sender_info: Dictionary = {}
 
 func _init(p_game_manager: GameManager) -> void:
@@ -297,13 +300,25 @@ func _resolve_attack(action: CardAction) -> void:
 
 	game_manager.current_phase = GameManager.GamePhase.COMBAT
 	var actual_target = action.interceptor if action.interceptor != null else action.target
+	var attacker_on_board := action.attacker.current_zone != null and action.attacker.current_zone.is_board_zone()
+	var partner_on_board := action.united_front_partner != null \
+		and action.united_front_partner.current_zone != null \
+		and action.united_front_partner.current_zone.is_board_zone()
+
+	if not attacker_on_board and not partner_on_board:
+		if actual_target is Card:
+			game_manager._clear_combat_engagement_state(actual_target)
+		last_resolution_text = action.attacker.card_name + "'s attack fizzles — attacker is no longer on the board."
+		return
 
 	if actual_target is Card and actual_target.current_zone != null and actual_target.current_zone.is_board_zone():
-		game_manager._begin_declared_combat(action.attacker, actual_target)
-		if action.united_front_partner != null:
+		if attacker_on_board:
+			game_manager._begin_declared_combat(action.attacker, actual_target)
+		if partner_on_board:
 			game_manager._begin_declared_combat(action.united_front_partner, actual_target)
 
-	action.attacker.mark_attacked_this_turn()
+	if attacker_on_board:
+		action.attacker.mark_attacked_this_turn()
 
 	if actual_target is Card:
 		# If the target left the board before the attack resolved (e.g. Gungnir destroyed it),
@@ -333,24 +348,41 @@ func _resolve_attack(action: CardAction) -> void:
 				"askelladen_uid": str(retreat_prompts[0].uid),
 			})
 			return
+		pending_humbaba_action = action
+		pending_humbaba_target = actual_target
+		pending_humbaba_prompt_uids = _get_humbaba_prompt_uids_for_attack(action, actual_target)
+		if _emit_next_pending_humbaba_prompt():
+			return
+		_clear_pending_humbaba_state()
 		# No retreat possible - resolve directly.
 		_finish_creature_combat(action, actual_target)
 		return
 	elif actual_target is Player:
-		var active_attackers := _get_active_attackers(action)
-		if active_attackers.is_empty():
+		pending_humbaba_action = action
+		pending_humbaba_target = actual_target
+		pending_humbaba_prompt_uids = _get_humbaba_prompt_uids_for_attack(action, actual_target)
+		if _emit_next_pending_humbaba_prompt():
 			return
-		for combatant in active_attackers:
-			combatant.spend_major_creature_action()
-			combatant.mark_attacked_this_turn()
-		game_manager.set_temporary_combat_follower_damage_halved(action.halve_follower_damage)
-		var follower_damage := game_manager.resolve_followers_attack(active_attackers, actual_target)
-		game_manager.set_temporary_combat_follower_damage_halved(false)
-		last_resolution_text = "%s attacks %s's followers for %d!" % [
-			action.attacker.card_name,
-			actual_target.player_name,
-			follower_damage
-		]
+		_clear_pending_humbaba_state()
+		_finish_followers_attack(action, actual_target)
+
+func _finish_followers_attack(action: CardAction, defending_player: Player) -> void:
+	if action == null or defending_player == null:
+		return
+	var active_attackers := _get_active_attackers(action)
+	if active_attackers.is_empty():
+		return
+	for combatant in active_attackers:
+		combatant.spend_major_creature_action()
+		combatant.mark_attacked_this_turn()
+	game_manager.set_temporary_combat_follower_damage_halved(action.halve_follower_damage)
+	var follower_damage := game_manager.resolve_followers_attack(active_attackers, defending_player)
+	game_manager.set_temporary_combat_follower_damage_halved(false)
+	last_resolution_text = "%s attacks %s's followers for %d!" % [
+		action.attacker.card_name,
+		defending_player.player_name,
+		follower_damage
+	]
 
 ## Headless combat resolution (no retreat dialog needed).
 ## Called by _resolve_attack when no Askelladen can retreat.
@@ -421,6 +453,84 @@ func _get_guardian_blocked_retreat_candidate_uids(attacker: Card, defender: Card
 			blocked.append(str(ask.uid))
 	return blocked
 
+func _get_humbaba_prompt_uids_for_attack(action: CardAction, actual_target) -> Array[String]:
+	var prompt_uids: Array[String] = []
+	if action == null:
+		return prompt_uids
+	for combatant in _get_active_attackers(action):
+		var humbaba := combatant as HumbabaTheTerrible
+		if humbaba == null:
+			continue
+		var humbaba_uid := str(humbaba.uid)
+		if humbaba_uid != "" and humbaba_uid not in prompt_uids:
+			prompt_uids.append(humbaba_uid)
+	if actual_target is Card:
+		var defending_humbaba := actual_target as HumbabaTheTerrible
+		if defending_humbaba != null:
+			var defending_uid := str(defending_humbaba.uid)
+			if defending_uid != "" and defending_uid not in prompt_uids:
+				prompt_uids.append(defending_uid)
+	return prompt_uids
+
+func _get_pending_humbaba_prompt() -> HumbabaTheTerrible:
+	if pending_humbaba_prompt_uids.is_empty():
+		return null
+	return game_manager.get_card_by_uid(str(pending_humbaba_prompt_uids[0])) as HumbabaTheTerrible
+
+func _emit_next_pending_humbaba_prompt() -> bool:
+	if game_manager == null:
+		return false
+	while not pending_humbaba_prompt_uids.is_empty():
+		var humbaba := _get_pending_humbaba_prompt()
+		if humbaba == null:
+			pending_humbaba_prompt_uids.remove_at(0)
+			continue
+		humbaba.queue_augury_trigger_suppression()
+		var prompt_targets := humbaba.get_augury_cards(game_manager)
+		if prompt_targets.is_empty():
+			game_manager.note_player_feedback("%s found no cards to read." % humbaba.card_name)
+			pending_humbaba_prompt_uids.remove_at(0)
+			continue
+		var prompt_player := game_manager.get_opponent(humbaba.get_controller())
+		if prompt_targets.size() == 1 or prompt_player == null:
+			game_manager.note_player_feedback(humbaba.resolve_augury_reading(game_manager, prompt_targets[0]))
+			pending_humbaba_prompt_uids.remove_at(0)
+			continue
+		var player_idx := game_manager.players.find(prompt_player)
+		if player_idx < 0:
+			game_manager.note_player_feedback(humbaba.resolve_augury_reading(game_manager, prompt_targets[0]))
+			pending_humbaba_prompt_uids.remove_at(0)
+			continue
+		var target_uids: Array[String] = []
+		for target in prompt_targets:
+			if target != null:
+				target_uids.append(target.uid)
+		request_ui_interaction.emit(player_idx, "humbaba_augury", {
+			"source_uid": humbaba.uid,
+			"target_uids": target_uids,
+		})
+		return true
+	return false
+
+func _continue_pending_humbaba_attack_resolution(action: CardAction, actual_target) -> void:
+	if action == null:
+		return
+	if actual_target is Card:
+		var target_card := actual_target as Card
+		if target_card.current_zone == null or not target_card.current_zone.is_board_zone():
+			action.attacker.spend_major_creature_action()
+			game_manager._clear_combat_engagement_state(target_card)
+			last_resolution_text = action.attacker.card_name + "'s attack fizzles â€” target is no longer on the board."
+			return
+		_finish_creature_combat(action, target_card)
+	elif actual_target is Player:
+		_finish_followers_attack(action, actual_target)
+
+func _clear_pending_humbaba_state() -> void:
+	pending_humbaba_action = null
+	pending_humbaba_target = null
+	pending_humbaba_prompt_uids.clear()
+
 func is_targeting_active() -> bool:
 	return pending_click_selection_confirm.is_valid() or \
 		awaiting_spell_target or \
@@ -451,8 +561,25 @@ func _clear_priority_window_state() -> void:
 	game_manager.priority_player = null
 	game_manager.consecutive_passes = 0
 
+func _can_resolve_top_stack_action_now() -> bool:
+	if game_manager == null or game_manager.action_stack.is_empty():
+		return true
+	if game_manager.both_passed():
+		return true
+	var top_action: CardAction = game_manager.action_stack.back()
+	if top_action == null:
+		return true
+	var first_player := game_manager.priority_player
+	if first_player == null:
+		first_player = top_action.initial_priority_player if top_action.initial_priority_player != null else game_manager.get_opponent(top_action.source_player)
+	var second_player := game_manager.get_opponent(first_player) if first_player != null else null
+	return not _player_has_priority_prompt_responses(first_player) and not _player_has_priority_prompt_responses(second_player)
+
 func _resolve_authoritative_stack_top_after_priority() -> void:
 	if game_manager == null or game_manager.action_stack.is_empty():
+		return
+	if not _can_resolve_top_stack_action_now():
+		_advance_authoritative_priority()
 		return
 	var resolved_action: CardAction = game_manager.action_stack.back()
 	_clear_priority_window_state()
@@ -489,6 +616,9 @@ func _finish_authoritative_stack_resolution(action: CardAction) -> void:
 	if not game_manager.action_stack.has(action):
 		if not game_manager.action_stack.is_empty():
 			_advance_authoritative_priority()
+		return
+	if not _can_resolve_top_stack_action_now():
+		_advance_authoritative_priority()
 		return
 	resolve_action(action)
 	if not game_manager.action_stack.is_empty():
@@ -904,6 +1034,16 @@ func _queue_authoritative_priority_event(
 	action.resolve_callback = resolve_callback
 	action.resolution_text = resolution_text
 	_queue_or_resolve_authoritative_priority_event(action)
+
+func _build_upkeep_resolution_feedback(default_feedback: String) -> String:
+	if game_manager == null:
+		return default_feedback
+	var resolved_feedback := game_manager.consume_player_feedback()
+	if resolved_feedback.strip_edges() == "":
+		return default_feedback
+	if default_feedback.strip_edges() == "" or resolved_feedback == default_feedback:
+		return resolved_feedback
+	return "%s %s" % [default_feedback, resolved_feedback]
 
 func _has_pending_impact_priority_action(card: Card) -> bool:
 	if game_manager == null or card == null:
@@ -1436,7 +1576,9 @@ func _process_command_impl(command: Dictionary) -> bool:
 					return false
 			move_validated.emit(command)
 			if _uses_authoritative_headless_priority_flow():
-				var choice_feedback := "Drew a card." if command.get("choice", "") == "draw" else "Gained 4 additional mana."
+				var choice_feedback := _build_upkeep_resolution_feedback(
+					"Drew a card." if command.get("choice", "") == "draw" else "Gained 4 additional mana."
+				)
 				_queue_authoritative_priority_event(
 					"start_turn",
 					Callable(),
@@ -1461,12 +1603,15 @@ func _process_command_impl(command: Dictionary) -> bool:
 			game_manager.player_chooses_upkeep_only()
 			move_validated.emit(command)
 			if _uses_authoritative_headless_priority_flow():
+				var tiamat_feedback := _build_upkeep_resolution_feedback(
+					"Matriarch Rule returned %s to hand." % tiamat_card.card_name
+				)
 				_queue_authoritative_priority_event(
 					"start_turn",
 					Callable(),
 					game_manager.current_player,
 					game_manager.current_player,
-					"Matriarch Rule returned %s to hand." % tiamat_card.card_name
+					tiamat_feedback
 				)
 			return true
 		"forfeit":
@@ -1488,10 +1633,15 @@ func _process_command_impl(command: Dictionary) -> bool:
 			var zone := resolve_zone(command)
 			var mode: Card.CreatureMode = int(command.get("mode", Card.CreatureMode.DEFENSIVE)) as Card.CreatureMode
 			var stealth: bool = command.get("stealth", false)
+			var sacrifice_paid: bool = command.get("sacrifice_paid", false)
 			if card == null or zone == null:
 				move_failed.emit("play_creature: invalid card or zone")
 				return false
+			var original_sacrifice_cost := card.sacrifice_cost
+			if sacrifice_paid and original_sacrifice_cost > 0:
+				card.sacrifice_cost = 0
 			if not game_manager.can_play_card(acting_player, card, zone):
+				card.sacrifice_cost = original_sacrifice_cost
 				move_failed.emit("Cannot play " + card.card_name + "!")
 				return false
 			var success := game_manager.summon_creature_by_effect(
@@ -1499,6 +1649,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 				mode, stealth, stealth,
 				null, true, true, true
 			)
+			card.sacrifice_cost = original_sacrifice_cost
 			if not success:
 				move_failed.emit("Summon failed for " + card.card_name)
 				return false
@@ -2561,6 +2712,15 @@ func _process_command_impl(command: Dictionary) -> bool:
 			if humbaba == null:
 				move_failed.emit("humbaba_augury_choice: card not found")
 				return false
+			if pending_humbaba_action != null:
+				var current_prompt := _get_pending_humbaba_prompt()
+				if current_prompt == null:
+					move_failed.emit("humbaba_augury_choice: no augury prompt is waiting for a response")
+					_clear_pending_humbaba_state()
+					return false
+				if source_uid != "" and source_uid != str(current_prompt.uid):
+					move_failed.emit("humbaba_augury_choice: that augury prompt is no longer active")
+					return false
 			var valid_targets := humbaba.get_augury_cards(game_manager)
 			if valid_targets.is_empty():
 				move_failed.emit("humbaba_augury_choice: no cards available to prime")
@@ -2574,6 +2734,16 @@ func _process_command_impl(command: Dictionary) -> bool:
 			if feedback.strip_edges() != "":
 				game_manager.note_player_feedback(feedback)
 			move_validated.emit(command)
+			if pending_humbaba_action != null:
+				var action := pending_humbaba_action
+				var pending_target = pending_humbaba_target
+				if not pending_humbaba_prompt_uids.is_empty():
+					pending_humbaba_prompt_uids.remove_at(0)
+				if _emit_next_pending_humbaba_prompt():
+					return true
+				_clear_pending_humbaba_state()
+				_continue_pending_humbaba_attack_resolution(action, pending_target)
+				action_resolved.emit(action)
 			return true
 		"mummu_entropy_choice":
 			var source_uid: String = command.get("source_uid", "")

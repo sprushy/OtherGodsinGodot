@@ -388,6 +388,24 @@ func _open_multiplayer_screen() -> void:
 func _has_active_lobby_connection() -> bool:
 	return lobby_client != null and is_instance_valid(lobby_client) and lobby_client.is_authenticated()
 
+func _should_reuse_active_lobby_connection(target_lobby_ip: String) -> bool:
+	if not _has_active_lobby_connection():
+		return false
+	if _current_lobby_ip != target_lobby_ip:
+		return false
+	var desired_auth_mode := _get_selected_auth_mode()
+	var connected_auth_mode := _normalize_auth_mode(
+		str(lobby_client.current_auth_mode) if lobby_client != null else "",
+		AUTH_MODE_GUEST
+	)
+	if desired_auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
+		var desired_username := _get_preferred_account_username().strip_edges().to_lower()
+		var connected_username := _get_connected_account_username().strip_edges().to_lower()
+		return not desired_username.is_empty() \
+			and connected_auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER] \
+			and connected_username == desired_username
+	return desired_auth_mode == AUTH_MODE_GUEST and connected_auth_mode == AUTH_MODE_GUEST
+
 func _build_menu_card_template_cache() -> void:
 	_menu_card_templates.clear()
 	for card in CardCatalogScript.make_all_cards():
@@ -1145,9 +1163,14 @@ func _connect_to_browseable_lobby(connect_status: String) -> void:
 		status_label.text = target_error
 		return
 	var target_lobby_ip := _get_lobby_ip()
-	if _has_active_lobby_connection() and _current_lobby_ip == target_lobby_ip:
+	if _should_reuse_active_lobby_connection(target_lobby_ip):
 		_run_pending_multiplayer_action()
 		return
+	if _has_active_lobby_connection():
+		# A reused connection keeps the old server session alive. Clear resume
+		# tokens before reconnecting so account switches perform a fresh login.
+		_lobby_session_id = ""
+		_lobby_reconnect_token = ""
 
 	_current_lobby_ip = target_lobby_ip
 	_cleanup_lobby_client()
@@ -2072,6 +2095,8 @@ func _should_recover_saved_account_identity() -> bool:
 
 func _get_connected_account_username() -> String:
 	if lobby_client == null:
+		return ""
+	if not lobby_client.is_authenticated():
 		return ""
 	var lobby_username := str(lobby_client.current_username).strip_edges()
 	if lobby_username.is_empty():

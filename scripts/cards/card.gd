@@ -39,6 +39,7 @@ enum CreatureMode { AGGRESSIVE, DEFENSIVE }
 @export var ability_immunity_tag: String = ""
 
 signal art_updated(new_path: String)
+signal visual_state_changed()
 
 var _art_path: String = ""
 var _exhausted_art_path: String = ""
@@ -176,6 +177,9 @@ func switch_to_exhausted_art() -> void:
 	if exhausted_art_path != "":
 		art_path = exhausted_art_path
 		art_updated.emit(art_path)
+
+func _emit_visual_state_changed() -> void:
+	visual_state_changed.emit()
 
 # Costs
 @export var mana_cost: int = 0
@@ -738,16 +742,22 @@ func get_equipment_summary_lines() -> Array[String]:
 	return lines
 
 func clear_buffs_from(source: String) -> void:
+	var previous_buff_count := active_buffs.size()
 	active_buffs = active_buffs.filter(func(b):
 		return b.get("source", "") != source
 	)
+	if active_buffs.size() != previous_buff_count:
+		_emit_visual_state_changed()
 
 func remove_buffs_from_source_card(source_card: Card, effect_type: String = "") -> void:
+	var previous_buff_count := active_buffs.size()
 	active_buffs = active_buffs.filter(func(b):
 		var same_source: bool = b.get("source_card", null) == source_card
 		var same_effect_type: bool = effect_type == "" or b.get("effect_type", "") == effect_type
 		return not (same_source and same_effect_type)
 	)
+	if active_buffs.size() != previous_buff_count:
+		_emit_visual_state_changed()
 
 func add_buff(
 	source: String,
@@ -771,6 +781,7 @@ func add_buff(
 	for key in extra_metadata.keys():
 		buff[key] = extra_metadata[key]
 	active_buffs.append(buff)
+	_emit_visual_state_changed()
 
 func add_status_effect(
 	status_name: String,
@@ -789,35 +800,50 @@ func add_status_effect(
 		status[key] = extra_metadata[key]
 	active_statuses.append(status)
 	_sync_status_flags()
+	_emit_visual_state_changed()
 
 func remove_status_effects_by_name(status_name: String) -> void:
+	var previous_status_count := active_statuses.size()
 	active_statuses = active_statuses.filter(func(s):
 		return s.get("name", "") != status_name
 	)
 	_sync_status_flags()
+	if active_statuses.size() != previous_status_count:
+		_emit_visual_state_changed()
 
 func remove_status_effects_from_source_card(source_card: Card, status_name: String = "") -> void:
+	var previous_status_count := active_statuses.size()
 	active_statuses = active_statuses.filter(func(s):
 		var same_source: bool = s.get("source_card", null) == source_card
 		var same_status: bool = status_name == "" or s.get("name", "") == status_name
 		return not (same_source and same_status)
 	)
 	_sync_status_flags()
+	if active_statuses.size() != previous_status_count:
+		_emit_visual_state_changed()
 
 func remove_expired_buffs(current_turn: int) -> void:
+	var previous_buff_count := active_buffs.size()
 	active_buffs = active_buffs.filter(func(b):
 		var expires_turn = b.get("expires_turn", null)
 		return expires_turn == null or int(expires_turn) > current_turn
 	)
+	if active_buffs.size() != previous_buff_count:
+		_emit_visual_state_changed()
 
 func remove_expired_statuses(current_turn: int) -> void:
+	var previous_status_count := active_statuses.size()
 	active_statuses = active_statuses.filter(func(s):
 		var expires_turn = s.get("expires_turn", null)
 		return expires_turn == null or int(expires_turn) > current_turn
 	)
 	_sync_status_flags()
+	if active_statuses.size() != previous_status_count:
+		_emit_visual_state_changed()
 
 func remove_effects_expiring_after_combat() -> void:
+	var previous_buff_count := active_buffs.size()
+	var previous_status_count := active_statuses.size()
 	active_buffs = active_buffs.filter(func(b):
 		return b.get("expires_after_combat", false) != true
 	)
@@ -825,6 +851,8 @@ func remove_effects_expiring_after_combat() -> void:
 		return s.get("expires_after_combat", false) != true
 	)
 	_sync_status_flags()
+	if active_buffs.size() != previous_buff_count or active_statuses.size() != previous_status_count:
+		_emit_visual_state_changed()
 
 func has_effects_from_player(player: Player) -> bool:
 	for buff in active_buffs:
@@ -836,6 +864,8 @@ func has_effects_from_player(player: Player) -> bool:
 	return false
 
 func remove_effects_from_player(player: Player) -> void:
+	var previous_buff_count := active_buffs.size()
+	var previous_status_count := active_statuses.size()
 	active_buffs = active_buffs.filter(func(b):
 		return b.get("source_owner", null) != player
 	)
@@ -843,6 +873,8 @@ func remove_effects_from_player(player: Player) -> void:
 		return s.get("source_owner", null) != player
 	)
 	_sync_status_flags()
+	if active_buffs.size() != previous_buff_count or active_statuses.size() != previous_status_count:
+		_emit_visual_state_changed()
 
 func apply_sleep(source_card: Card) -> void:
 	remove_status_effects_by_name("sleep")
@@ -852,9 +884,12 @@ func wake_up() -> void:
 	remove_status_effects_by_name("sleep")
 
 func clear_all_effects() -> void:
+	var had_changes := not active_buffs.is_empty() or not active_statuses.is_empty()
 	active_buffs.clear()
 	active_statuses.clear()
 	_sync_status_flags()
+	if had_changes:
+		_emit_visual_state_changed()
 
 func _sync_status_flags() -> void:
 	var sleep_status: Dictionary = {}
@@ -1075,10 +1110,13 @@ func _has_granted_type(type_name: String) -> bool:
 	return false
 
 func remove_status_effects_with_flag(flag_name: String) -> void:
+	var previous_status_count := active_statuses.size()
 	active_statuses = active_statuses.filter(func(s):
 		return s.get(flag_name, false) != true
 	)
 	_sync_status_flags()
+	if active_statuses.size() != previous_status_count:
+		_emit_visual_state_changed()
 
 func get_intercept_reach_bonus(
 	_game_manager: GameManager = null,
@@ -1147,15 +1185,19 @@ func equip_to(creature: Card) -> bool:
 	
 	if equipped_on:
 		equipped_on.equipment.erase(self)
+		equipped_on._emit_visual_state_changed()
 	
 	equipped_on = creature
 	creature.equipment.append(self)
+	creature._emit_visual_state_changed()
 	return true
 
 func unequip() -> void:
 	if equipped_on:
+		var previous_bearer := equipped_on
 		equipped_on.equipment.erase(self)
 		equipped_on = null
+		previous_bearer._emit_visual_state_changed()
 
 # Incorporeal keyword — shared engagement logic.
 # Returns false when this card is incorporeal and `source` is not a permitted engager.

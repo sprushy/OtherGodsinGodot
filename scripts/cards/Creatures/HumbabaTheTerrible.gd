@@ -1,6 +1,8 @@
 extends CreatureCard
 class_name HumbabaTheTerrible
 
+const QUEUED_AUGURY_SUPPRESSION_META := "queued_humbaba_augury_suppression"
+
 func _init() -> void:
 	super._init()
 	card_name = "Humbaba the Terrible"
@@ -18,10 +20,28 @@ func _init() -> void:
 	art_path = "res://images/card_art/creatures/Humbaba(print)Art.jpg"
 
 func on_attack(game_manager: GameManager, _target) -> void:
+	if _consume_queued_augury_suppression():
+		return
 	_trigger_augury_reading(game_manager)
 
 func on_defend(game_manager: GameManager, _attacker: Card) -> void:
+	if _consume_queued_augury_suppression():
+		return
 	_trigger_augury_reading(game_manager)
+
+func queue_augury_trigger_suppression() -> void:
+	var remaining := int(get_meta(QUEUED_AUGURY_SUPPRESSION_META, 0))
+	set_meta(QUEUED_AUGURY_SUPPRESSION_META, remaining + 1)
+
+func _consume_queued_augury_suppression() -> bool:
+	var remaining := int(get_meta(QUEUED_AUGURY_SUPPRESSION_META, 0))
+	if remaining <= 0:
+		return false
+	if remaining <= 1:
+		remove_meta(QUEUED_AUGURY_SUPPRESSION_META)
+	else:
+		set_meta(QUEUED_AUGURY_SUPPRESSION_META, remaining - 1)
+	return true
 
 func _trigger_augury_reading(game_manager: GameManager) -> void:
 	if game_manager == null:

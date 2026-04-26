@@ -145,9 +145,25 @@ static func _serialize_card(card: Card, hidden_mode: int = HIDDEN_MODE_NONE) -> 
 		card_types                = card.card_types.duplicate(),
 		culture                   = card.culture,
 		equipped_on_uid           = equipped_on_uid,
+		active_buffs             = _serialize_card_buffs(card),
 		active_statuses           = _serialize_card_statuses(card),
 		serialized_state          = card.get_serialized_state(),
 	}
+
+static func _serialize_card_buffs(card: Card) -> Array:
+	var result := []
+	for buff in card.active_buffs:
+		var b := {}
+		for key in buff.keys():
+			var val = buff[key]
+			if val is Card:
+				b[key + "_uid"] = (val as Card).uid if "uid" in val else ""
+			elif val is Object:
+				pass  # Skip Player and other node refs; scalar metadata is enough for client rendering.
+			else:
+				b[key] = val
+		result.append(b)
+	return result
 
 static func _serialize_card_statuses(card: Card) -> Array:
 	var result := []
@@ -455,6 +471,10 @@ static func _deserialize_card(cdata: Dictionary) -> Card:
 	var equipped_uid: String = cdata.get("equipped_on_uid", "")
 	if equipped_uid != "":
 		card.set_meta("_equipped_on_uid", equipped_uid)
+
+	card.active_buffs.clear()
+	for bdata in cdata.get("active_buffs", []):
+		card.active_buffs.append((bdata as Dictionary).duplicate())
 
 	# Restore status effects (Card/Player refs will be absent on client; name+metadata is enough)
 	card.active_statuses.clear()

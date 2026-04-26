@@ -546,8 +546,6 @@ func get_attack_hex_targets(action: CardAction, hex: HexCard) -> Array[Card]:
 	if action == null or hex == null or action.type != CardAction.Type.ATTACK:
 		return valid_targets
 	var defender: Card = action.interceptor if action.interceptor != null else (action.target if action.target is Card else null)
-	if defender == null:
-		return valid_targets
 	var candidates: Array[Card] = [action.attacker]
 	if action.united_front_partner != null:
 		candidates.append(action.united_front_partner)

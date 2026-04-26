@@ -278,6 +278,7 @@ var _queued_tonal_extraction_prompt_targets: Dictionary = {}
 var _pending_humbaba_prompts: Array[HumbabaTheTerrible] = []
 var _active_humbaba_prompt: HumbabaTheTerrible = null
 var _queued_humbaba_prompt_targets: Dictionary = {}
+var _humbaba_prompt_paused_resolution: bool = false
 var _pending_ragnarok_power: Ragnarok = null
 var _pending_ragnarok_player: Player = null
 var _pending_ragnarok_hand_limit: int = 5
@@ -340,6 +341,7 @@ var _pending_hand_play_events: Array[Card] = []
 var _deferred_priority_flush_scheduled: bool = false
 var _stack_resolution_paused: bool = false
 var _pending_post_execute_source_player: Player = null
+var _priority_recovery_check_scheduled: bool = false
 var _overlay_card_dismissed: Callable = Callable()
 var _doorway_prompt_panel: Control = null
 var _pending_doorway_structure: DoorwayToTheVoid = null
@@ -1313,6 +1315,14 @@ func _continue_after_upkeep_choice(feedback: String) -> void:
 		update_ui()
 		return
 	_queue_standard_turn_start_priority(feedback)
+
+func _build_upkeep_resolution_feedback(default_feedback: String) -> String:
+	var resolved_feedback := _consume_resolution_feedback()
+	if resolved_feedback.strip_edges() == "":
+		return default_feedback
+	if default_feedback.strip_edges() == "" or resolved_feedback == default_feedback:
+		return resolved_feedback
+	return "%s %s" % [default_feedback, resolved_feedback]
 
 func _resolve_sharur_escape_prompt(pay_cost: bool) -> void:
 	var card := _pending_sharur_escape_card
@@ -3080,6 +3090,18 @@ func _get_blot_selection_summary() -> String:
 		BlotSacrifice.MAX_SUMMON_LEVELS,
 		open_zones
 	]
+
+func _show_blot_hand_selection_feedback() -> void:
+	action_label.text = "Blot Sacrifice: click a green creature in hand."
+	update_ui()
+
+func _try_handle_blot_prompt_card_input(card: Card) -> bool:
+	if not _is_blot_selection_active() or card == null or game_manager == null or game_manager.current_player == null:
+		return false
+	if card.current_zone != game_manager.current_player.hand_zone:
+		_show_blot_hand_selection_feedback()
+		return true
+	return _try_add_creature_to_blot(card)
 
 func _try_add_creature_to_blot(card: Card) -> bool:
 	var spell = _pending_blot_spell
@@ -8064,6 +8086,8 @@ func _on_hand_card_pressed(card: Card) -> void:
 	if _game_finished:
 		return
 	_pending_spell_display_zone = null
+	if _try_handle_blot_prompt_card_input(card):
+		return
 	if _is_card_usable_for_priority(card):
 		_on_priority_response_chosen(card)
 		return
@@ -8079,9 +8103,6 @@ func _on_hand_card_pressed(card: Card) -> void:
 		action_label.text = priority_failure_text if priority_failure_text != "" else card.card_name + " is not a legal priority response."
 		update_ui()
 		return
-	if _is_blot_selection_active():
-		if _try_add_creature_to_blot(card):
-			return
 	if _has_pending_target_selection():
 		_cancel_pending_target_selection(
 			_get_pending_target_selection_name()
@@ -8366,6 +8387,9 @@ func _on_stealth_mode_pressed() -> void:
 
 func _on_empty_zone_pressed(zone: Zone) -> void:
 	if _game_finished:
+		return
+	if _is_blot_selection_active():
+		_show_blot_hand_selection_feedback()
 		return
 	if _pending_champions_call_god != null:
 		_resolve_champions_call_placement(zone)
@@ -9150,6 +9174,7 @@ func _do_place_creature(card: Card, zone: Zone, mode: String) -> void:
 		summon_mode = Card.CreatureMode.AGGRESSIVE
 	var stealth := mode == "stealth"
 	var card_uid: String = card.get("uid") if "uid" in card else ""
+	var sacrifice_paid := card.sacrifice_cost <= 0
 	var success := game_input.submit_action({
 		type = "play_creature",
 		card_uid = card_uid,
@@ -9158,6 +9183,7 @@ func _do_place_creature(card: Card, zone: Zone, mode: String) -> void:
 		zone_index = zone.zone_index,
 		mode = summon_mode,
 		stealth = stealth,
+		sacrifice_paid = sacrifice_paid,
 	})
 	if not _is_networked_client:
 		if not success:
@@ -10555,6 +10581,10 @@ func _queue_humbaba_augury_reading_prompt(card: HumbabaTheTerrible, prompt_targe
 		return
 	if not prompt_targets.is_empty():
 		_queued_humbaba_prompt_targets[card.uid] = prompt_targets.duplicate()
+	var prompt_player := _get_humbaba_augury_prompt_player(card)
+	if _executing_stack_action and not _stack_resolution_paused and prompt_player != null:
+		_humbaba_prompt_paused_resolution = true
+		_pause_stack_resolution(prompt_player)
 	if card == _active_humbaba_prompt or card in _pending_humbaba_prompts:
 		return
 	_pending_humbaba_prompts.append(card)
@@ -10922,6 +10952,7 @@ func _consume_current_humbaba_prompt() -> void:
 
 func _show_humbaba_augury_feedback(feedback: String) -> void:
 	if _stack_resolution_paused:
+		_humbaba_prompt_paused_resolution = false
 		_resume_after_deferred_resolution(feedback)
 		return
 	action_label.text = feedback
@@ -12164,6 +12195,8 @@ func _try_resolve_stupefy_target(card: Card) -> bool:
 func _on_board_card_pressed(card: Card) -> void:
 	if _game_finished:
 		return
+	if _try_handle_blot_prompt_card_input(card):
+		return
 	if _is_card_usable_for_priority(card):
 		_on_priority_response_chosen(card)
 		return
@@ -12397,7 +12430,7 @@ func _on_board_card_pressed(card: Card) -> void:
 		if card.get_controller() == game_manager.other_player and can_intercept(card, selected_attacker, pending_attack_target):
 			_remove_no_intercept_button()
 			selected_interceptor = card
-			action_label.text = _get_card_name_safe(card) + " will intercept! Resolving combat..."
+			action_label.text = _get_card_name_safe(card) + " will intercept. Resolve priority to continue."
 			resolve_pending_attack()
 		else:
 			action_label.text = "Cannot use this creature (wrong player, mode, or too slow)"
@@ -12659,7 +12692,7 @@ func _on_enemy_card_pressed(target_card: Card) -> void:
 		if target_card.get_controller() == game_manager.other_player and can_intercept(target_card, selected_attacker, pending_attack_target):
 			_remove_no_intercept_button()
 			selected_interceptor = target_card
-			action_label.text = _get_card_name_safe(target_card, "An interceptor") + " will intercept! Resolving combat..."
+			action_label.text = _get_card_name_safe(target_card, "An interceptor") + " will intercept. Resolve priority to continue."
 			resolve_pending_attack()
 		else:
 			action_label.text = "This card cannot intercept"
@@ -13903,7 +13936,7 @@ func _remove_no_intercept_button() -> void:
 
 func _on_no_intercept_pressed() -> void:
 	selected_interceptor = null
-	action_label.text = "No intercept - " + _get_attack_card_label(selected_attacker, "the attacker") + " attacks directly!"
+	action_label.text = "No intercept - " + _get_attack_card_label(selected_attacker, "the attacker") + " attack is waiting on priority."
 	resolve_pending_attack()
 
 func resolve_pending_attack() -> void:
@@ -14005,8 +14038,10 @@ func _offer_priority() -> void:
 		return
 	if match_manager != null and match_manager.uses_authoritative_priority_flow():
 		match_manager.advance_priority()
+		_schedule_priority_recovery_check()
 		return
 	if _consume_duplicate_local_priority_offer():
+		_schedule_priority_recovery_check()
 		return
 	var player := game_manager.priority_player
 	var responses := game_manager.get_priority_responses(player)
@@ -14027,15 +14062,18 @@ func _offer_priority() -> void:
 			_execute_top_of_stack()
 		else:
 			_offer_priority()
+		_schedule_priority_recovery_check()
 		return
 
 	if is_remote_priority:
 		# The remote player has valid responses â€” ask them over the network.
 		# The priority loop pauses here; it resumes when their command arrives.
 		_broadcast_priority_offered(player, responses)
+		_schedule_priority_recovery_check()
 		return
 
 	_show_priority_prompt(player)
+	_schedule_priority_recovery_check()
 
 func _build_local_priority_prompt_signature() -> Dictionary:
 	if game_manager == null or game_manager.priority_player == null:
@@ -14074,6 +14112,39 @@ func _consume_duplicate_local_priority_offer() -> bool:
 	var matches := _build_local_priority_prompt_signature() == _pending_local_priority_prompt_signature
 	_pending_local_priority_prompt_signature.clear()
 	return matches
+
+func _schedule_priority_recovery_check() -> void:
+	if _priority_recovery_check_scheduled:
+		return
+	_priority_recovery_check_scheduled = true
+	call_deferred("_run_priority_recovery_check")
+
+func _run_priority_recovery_check() -> void:
+	_priority_recovery_check_scheduled = false
+	_recover_stalled_priority_state()
+
+func _stack_action_has_possible_priority_responses(action: CardAction = null) -> bool:
+	if game_manager == null or match_manager == null or game_manager.action_stack.is_empty():
+		return false
+	var top_action: CardAction = action if action != null else game_manager.action_stack.back()
+	if top_action == null:
+		return false
+	var first_player := game_manager.priority_player
+	if first_player == null:
+		first_player = top_action.initial_priority_player if top_action.initial_priority_player != null else game_manager.get_opponent(top_action.source_player)
+	var second_player := game_manager.get_opponent(first_player) if first_player != null else null
+	return match_manager._player_has_priority_prompt_responses(first_player) \
+		or match_manager._player_has_priority_prompt_responses(second_player)
+
+func _can_resolve_top_stack_action_now() -> bool:
+	if game_manager == null or match_manager == null or game_manager.action_stack.is_empty():
+		return true
+	if game_manager.both_passed():
+		return true
+	var top_action: CardAction = game_manager.action_stack.back()
+	if top_action == null:
+		return true
+	return not _stack_action_has_possible_priority_responses(top_action)
 
 func _get_priority_response_target_uids(card: Card, top: CardAction) -> Array:
 	var target_uids: Array = []
@@ -16495,7 +16566,7 @@ func _show_deucalion_prompt(spell: DeucalionsInfants) -> void:
 		return
 
 	if _deucalion_panel != null and is_instance_valid(_deucalion_panel):
-		_deucalion_panel.free()
+		_deucalion_panel.queue_free()
 	_deucalion_panel = null
 
 	var panel := PanelContainer.new()
@@ -16598,7 +16669,7 @@ func _sanitize_deucalion_targets() -> void:
 
 func _hide_deucalion_prompt() -> void:
 	if _deucalion_panel != null and is_instance_valid(_deucalion_panel):
-		_deucalion_panel.free()
+		_deucalion_panel.queue_free()
 	_deucalion_panel = null
 	_pending_deucalion_spell = null
 	_pending_deucalion_friendly_targets.clear()
@@ -16732,6 +16803,9 @@ func _initiate_blot_with_sacrifice(spell, sacrifice_target: Card) -> void:
 		_assign_stack_display_zone(action)
 		game_manager.push_to_stack(action)
 		selected_card = null
+		if _can_resolve_top_stack_action_now():
+			_execute_top_of_stack()
+			return
 		update_ui()
 		action_label.text = spell.card_name + " [" + _get_stack_card_type_label(spell) + "] goes on the stack."
 		_offer_priority()
@@ -17193,6 +17267,7 @@ func _dismiss_transient_prompts() -> void:
 	_queued_muninn_prime_prompt_targets.clear()
 	_queued_wolf_adolescent_prompt_targets.clear()
 	_queued_humbaba_prompt_targets.clear()
+	_humbaba_prompt_paused_resolution = false
 	_queued_oracles_sight_prompt_targets.clear()
 	_queued_tonal_extraction_prompt_targets.clear()
 	if _resurrection_panel and is_instance_valid(_resurrection_panel):
@@ -17375,6 +17450,13 @@ func _execute_top_of_stack() -> void:
 	if game_manager.action_stack.is_empty():
 		update_ui()
 		return
+	if not _can_resolve_top_stack_action_now():
+		var top_action: CardAction = game_manager.action_stack.back()
+		if top_action != null and game_manager.priority_player == null:
+			game_manager.priority_player = top_action.initial_priority_player if top_action.initial_priority_player != null else game_manager.get_opponent(top_action.source_player)
+		_offer_priority()
+		update_ui()
+		return
 
 	_executing_stack_action = true
 	var action: CardAction = game_manager.action_stack.back()
@@ -17382,7 +17464,7 @@ func _execute_top_of_stack() -> void:
 		CardAction.Type.SPELL,
 		CardAction.Type.ABILITY,
 		CardAction.Type.ATTACK
-	]
+	] and _stack_action_has_possible_priority_responses(action)
 	if should_linger:
 		update_ui()
 		await get_tree().create_timer(STACK_ACTION_LINGER_SECONDS).timeout
@@ -17404,6 +17486,13 @@ func _on_match_action_resolved(action: CardAction) -> void:
 
 	_executing_stack_action = false
 	if _stack_resolution_paused:
+		if _humbaba_prompt_paused_resolution \
+				and action != null \
+				and action.type == CardAction.Type.ATTACK \
+				and _active_humbaba_prompt == null \
+				and _pending_humbaba_prompts.is_empty():
+			_humbaba_prompt_paused_resolution = false
+			_resume_after_deferred_resolution(action_label.text)
 		return
 		
 	_flush_deferred_priority_events()
@@ -17420,13 +17509,16 @@ func _on_match_move_validated(move: Dictionary) -> void:
 			# Client resolved upkeep; server must open the turn-start priority window
 			# so both players can respond to upkeep effects (hexes, charms, etc.).
 			var choice: String = move.get("choice", "")
-			var feedback := "Drew a card." if choice == "draw" else "Gained 4 additional mana."
+			var feedback := _build_upkeep_resolution_feedback(
+				"Drew a card." if choice == "draw" else "Gained 4 additional mana."
+			)
 			_continue_after_upkeep_choice(feedback)
 		"tiamat_upkeep_choice":
 			var tiamat_card := game_manager.get_card_by_uid(str(move.get("card_uid", "")))
 			var feedback := "Matriarch Rule returned a slotted creature to hand."
 			if tiamat_card != null:
 				feedback = "Matriarch Rule returned %s to hand." % tiamat_card.card_name
+			feedback = _build_upkeep_resolution_feedback(feedback)
 			_continue_after_upkeep_choice(feedback)
 		"wolf_adolescent_maturation_choice":
 			var feedback := _consume_resolution_feedback()
@@ -17438,7 +17530,10 @@ func _on_match_move_validated(move: Dictionary) -> void:
 				if not _show_next_wolf_adolescent_maturation_prompt():
 					_finish_wolf_adolescent_turn_start_sequence()
 		"humbaba_augury_choice":
-			_apply_prompt_choice_feedback()
+			var feedback := _consume_resolution_feedback()
+			if feedback.strip_edges() != "":
+				action_label.text = feedback
+			update_ui()
 			if not _is_networked_client:
 				_consume_current_humbaba_prompt()
 				call_deferred("_show_next_humbaba_augury_prompt")
@@ -19947,9 +20042,7 @@ func _flush_ui_refresh() -> void:
 	update_ui()
 
 func _try_handle_blot_drag_selection(card: Card) -> bool:
-	if card == null:
-		return false
-	return _try_add_creature_to_blot(card)
+	return _try_handle_blot_prompt_card_input(card)
 
 func _should_prepare_magical_card_on_drop(card: Card, is_drag_prepare: bool = false) -> bool:
 	if card == null:
@@ -19967,6 +20060,8 @@ func _on_card_drag_released(card: Card, drop_pos: Vector2, card_rotated: bool, c
 	if _game_finished:
 		update_ui()
 		return
+	if _try_handle_blot_drag_selection(card):
+		return
 	var priority_drop_allowed := game_manager != null and game_manager.can_card_respond_to_priority(card, game_manager.priority_player)
 	if not priority_drop_allowed and _reject_priority_locked_action():
 		update_ui()
@@ -19977,9 +20072,6 @@ func _on_card_drag_released(card: Card, drop_pos: Vector2, card_rotated: bool, c
 		return
 	if _is_turn_choice_pending():
 		_reject_pre_turn_action()
-		update_ui()
-		return
-	if _try_handle_blot_drag_selection(card):
 		update_ui()
 		return
 	# Sacrifice-by-drag: creature card with sacrifice_cost dropped onto a friendly creature
