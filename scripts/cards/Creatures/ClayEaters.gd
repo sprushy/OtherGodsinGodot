@@ -17,7 +17,7 @@ func _init() -> void:
 	speed = 1
 	resilience = 15
 	strength = 15
-	ability_text = "Geophagia ([b]Activate[/b], Cost 2): Choose a structure. At the end of your turn, destroy it if this card is still on the field."
+	ability_text = "Geophagia ([b]Activate[/b], Cost 2): Choose a structure or Stone creature. At the end of your turn, destroy it if this card is still on the field."
 	flavor_text = ""
 	culture = "Ancient"
 	artist = "Ricardo Zoppello"
@@ -42,6 +42,13 @@ func can_activate(game_manager: GameManager) -> bool:
 		return false
 	return not get_valid_targets(game_manager).is_empty()
 
+func _is_geophagia_target(card: Card) -> bool:
+	if card == null:
+		return false
+	if card.card_type == Card.CardType.STRUCTURE:
+		return true
+	return card.card_type == Card.CardType.CREATURE and card.has_type("Stone")
+
 func get_valid_targets(game_manager: GameManager) -> Array[Card]:
 	var valid_targets: Array[Card] = []
 	if game_manager == null:
@@ -49,7 +56,7 @@ func get_valid_targets(game_manager: GameManager) -> Array[Card]:
 	for player in game_manager.players:
 		for zone in player.frontline_zones + player.reserve_zones:
 			for card in zone.cards:
-				if card.card_type == Card.CardType.STRUCTURE:
+				if _is_geophagia_target(card):
 					valid_targets.append(card)
 	return valid_targets
 
@@ -58,7 +65,7 @@ func activate(game_manager: GameManager, target: Card = null) -> void:
 		return
 	if target == null or target not in get_valid_targets(game_manager):
 		if game_manager != null:
-			game_manager.note_player_feedback("%s fizzles: invalid structure target." % card_name)
+			game_manager.note_player_feedback("%s fizzles: invalid structure or Stone creature target." % card_name)
 		return
 	if game_manager != null and game_manager.is_immune_to_source(target, self):
 		game_manager.note_player_feedback("%s fizzles: %s is immune to creature abilities." % [card_name, target.card_name])
@@ -82,7 +89,7 @@ func on_turn_end(game_manager: GameManager) -> void:
 			continue
 		if target.current_zone == null or not target.current_zone.is_board_zone():
 			continue
-		if target.card_type != Card.CardType.STRUCTURE:
+		if not _is_geophagia_target(target):
 			continue
 		if game_manager != null and game_manager.is_immune_to_source(target, self):
 			game_manager.note_player_feedback("%s survives Geophagia because it is immune to creature abilities." % target.card_name)

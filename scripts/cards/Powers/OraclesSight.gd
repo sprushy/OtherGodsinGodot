@@ -1,7 +1,7 @@
 extends PowerCard
 class_name OraclesSight
 
-const UNLOCK_COST := 3
+const UNLOCK_COST := 2
 const ACTIVATION_COST := 3
 const LOOK_COUNT := 5
 const ART_PATH := "res://images/card_art/powers/OraclesSightEdit.png"

@@ -3984,6 +3984,10 @@ func _start_smoke_mode() -> void:
 		call_deferred("_run_practice_thor_smoke")
 		return
 
+	if role == "card_test_turn2":
+		call_deferred("_run_card_test_turn2_smoke")
+		return
+
 	if role == "resume":
 		var resume_timer := get_tree().create_timer(0.5)
 		resume_timer.timeout.connect(func() -> void:
@@ -4116,6 +4120,70 @@ func _complete_practice_thor_smoke(success: bool, message: String) -> void:
 		_finish_smoke_if_enabled("PASS:%s" % message)
 	else:
 		_fail_smoke_if_enabled(message)
+
+func _run_card_test_turn2_smoke() -> void:
+	var card_test = _show_embedded_game("CardTest")
+	if card_test == null:
+		_fail_smoke_if_enabled("card_test_missing")
+		return
+	show_game()
+	await card_test.start_game()
+	await get_tree().process_frame
+	await get_tree().process_frame
+
+	if not card_test.game_input.submit_action({type = "upkeep_choice", choice = "mana"}):
+		_fail_smoke_if_enabled("card_test_turn1_upkeep_choice_failed")
+		return
+	if not await _wait_for_card_test_turn2_smoke_condition(
+		func() -> bool:
+			return card_test.game_manager.current_player == card_test.player1 \
+				and card_test.game_manager.has_resolved_turn_upkeep() \
+				and card_test.game_manager.action_stack.is_empty(),
+		180
+	):
+		_fail_smoke_if_enabled("card_test_turn1_upkeep_timeout")
+		return
+
+	card_test._do_end_turn()
+	if not await _wait_for_card_test_turn2_smoke_condition(
+		func() -> bool:
+			return card_test.game_manager.current_player == card_test.player2 \
+				and card_test.choice_container.visible,
+		240
+	):
+		_fail_smoke_if_enabled("card_test_turn2_entry_timeout")
+		return
+
+	if not card_test.game_input.submit_action({type = "upkeep_choice", choice = "mana"}):
+		_fail_smoke_if_enabled("card_test_turn2_upkeep_choice_failed")
+		return
+	if not await _wait_for_card_test_turn2_smoke_condition(
+		func() -> bool:
+			return card_test.game_manager.current_player == card_test.player2 \
+				and card_test.game_manager.has_resolved_turn_upkeep() \
+				and card_test.game_manager.action_stack.is_empty() \
+				and not card_test._stack_resolution_paused \
+				and not card_test._executing_stack_action,
+		240
+	):
+		_fail_smoke_if_enabled(
+			"card_test_turn2_stalled stack=%d paused=%s executing=%s label=%s" % [
+				card_test.game_manager.action_stack.size(),
+				str(card_test._stack_resolution_paused),
+				str(card_test._executing_stack_action),
+				str(card_test.action_label.text).replace("\n", " "),
+			]
+		)
+		return
+
+	_finish_smoke_if_enabled("PASS:card_test_turn2")
+
+func _wait_for_card_test_turn2_smoke_condition(predicate: Callable, max_frames: int) -> bool:
+	for _frame in range(max_frames):
+		if predicate.call():
+			return true
+		await get_tree().process_frame
+	return false
 	get_tree().quit()
 
 func _maybe_progress_smoke_from_room_snapshot(room_id: String) -> void:

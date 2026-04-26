@@ -2296,17 +2296,16 @@ func _get_action_log_preview_messages() -> Array[String]:
 
 func _get_action_log_history_messages() -> Array[String]:
 	var history_messages: Array[String] = []
-	var cutoff := maxi(0, _action_log_messages.size() - ACTION_LOG_PREVIEW_COUNT)
-	for i in range(cutoff):
+	for i in range(_action_log_messages.size()):
 		history_messages.append(_action_log_messages[i])
 	return history_messages
 
 func _refresh_action_log_history_button() -> void:
 	if _action_log_history_button == null or not is_instance_valid(_action_log_history_button):
 		return
-	var has_history := _action_log_messages.size() > ACTION_LOG_PREVIEW_COUNT
+	var has_history := not _action_log_messages.is_empty()
 	_action_log_history_button.disabled = not has_history
-	_action_log_history_button.tooltip_text = "Open older log entries" if has_history else "No older log entries yet"
+	_action_log_history_button.tooltip_text = "Open full log history" if has_history else "No log entries yet"
 	_action_log_history_button.modulate = Color(1, 1, 1, 1) if has_history else Color(1, 1, 1, 0.45)
 
 func _toggle_action_log_popup() -> void:
@@ -2316,7 +2315,7 @@ func _toggle_action_log_popup() -> void:
 	_open_action_log_popup()
 
 func _open_action_log_popup() -> void:
-	if _action_log_messages.size() <= ACTION_LOG_PREVIEW_COUNT:
+	if _action_log_messages.is_empty():
 		return
 	_close_action_log_popup()
 
@@ -2391,7 +2390,7 @@ func _refresh_action_log_popup() -> void:
 	if _action_log_popup_view == null or not is_instance_valid(_action_log_popup_view):
 		return
 	var history_messages := _get_action_log_history_messages()
-	_action_log_popup_view.text = "\n".join(history_messages) if not history_messages.is_empty() else "No earlier log entries yet."
+	_action_log_popup_view.text = "\n".join(history_messages) if not history_messages.is_empty() else "No log entries yet."
 	call_deferred("_scroll_action_log_popup_to_bottom")
 
 func _scroll_action_log_popup_to_bottom() -> void:
@@ -5493,7 +5492,9 @@ func _queue_standard_turn_start_priority(feedback_text: String = "") -> void:
 		null,
 		0,
 		resolve_turn_start,
-		game_manager.current_player
+		game_manager.current_player,
+		null,
+		feedback_text
 	)
 
 func _resolve_queued_skoll_turn_start_summon() -> void:
@@ -7264,7 +7265,8 @@ func _queue_priority_event(
 	event_speed: int = 0,
 	resolve_callback: Callable = Callable(),
 	initial_priority_player: Player = null,
-	source_player_override: Player = null
+	source_player_override: Player = null,
+	resolution_text: String = ""
 ) -> void:
 	var action := CardAction.new()
 	action.type = CardAction.Type.EVENT
@@ -7274,6 +7276,7 @@ func _queue_priority_event(
 	action.event_name = event_name
 	action.event_speed = event_speed
 	action.resolve_callback = resolve_callback
+	action.resolution_text = resolution_text
 	var remains_on_stack := match_manager.queue_or_resolve_priority_event(action) if match_manager != null else false
 	if not remains_on_stack:
 		return
@@ -13343,10 +13346,28 @@ func _has_unresolved_priority_state() -> bool:
 			and not game_manager.action_stack.is_empty()
 		)
 
+func _can_auto_resume_paused_stack_resolution() -> bool:
+	if not _stack_resolution_paused or game_manager == null:
+		return false
+	if _has_pending_target_selection():
+		return false
+	if _is_priority_prompt_visible() or _is_intercept_prompt_visible():
+		return false
+	if _has_active_modal_prompt():
+		return false
+	if game_manager.has_pending_doorway_choice() or game_manager.has_pending_return_to_hand_choice():
+		return false
+	return true
+
 func _recover_stalled_priority_state() -> bool:
 	if game_manager == null or match_manager == null:
 		return false
-	if _stack_resolution_paused or _executing_stack_action:
+	if _stack_resolution_paused:
+		if _can_auto_resume_paused_stack_resolution():
+			_resume_after_deferred_resolution(_consume_resolution_feedback(action_label.text))
+			return true
+		return false
+	if _executing_stack_action:
 		return false
 	if _has_pending_target_selection():
 		return false
@@ -17658,6 +17679,15 @@ func _on_match_move_validated(move: Dictionary) -> void:
 				resolve_pending_attack()
 		"play_creature":
 			pass
+		"cast_spell":
+			var queued_spell := game_manager.get_card_by_uid(str(move.get("spell_uid", "")))
+			if queued_spell != null:
+				action_label.text = queued_spell.card_name + " goes on the stack."
+			if not _is_networked_client:
+				if authoritative_priority:
+					_schedule_priority_recovery_check()
+				else:
+					_offer_priority()
 		"priority_pass":
 			# Remote player passed priority; continue the server-side priority loop.
 			if not _is_networked_client and not authoritative_priority:

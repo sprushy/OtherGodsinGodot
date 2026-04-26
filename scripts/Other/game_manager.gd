@@ -217,6 +217,13 @@ func get_feedback_viewer() -> Player:
 		return turn_player
 	return current_player
 
+func _notify_player_god_visual_state_changed(player: Player) -> void:
+	if player == null or player.god_zone == null or player.god_zone.cards.is_empty():
+		return
+	var god := player.god_zone.cards[0]
+	if god != null and god.has_method("_emit_visual_state_changed"):
+		god._emit_visual_state_changed()
+
 func push_effect_source_card(source_card: Card) -> void:
 	_effect_source_card_stack.append(source_card)
 
@@ -689,6 +696,8 @@ func start_turn() -> void:
 	destroyed_this_turn.clear()
 	pending_resurrections.clear()
 	combat_destroy_events_this_turn.clear()
+	for player in players:
+		_notify_player_god_visual_state_changed(player)
 	_temporary_summon_cost_modifiers.clear()
 
 	current_player.reset_creature_actions()
@@ -2343,6 +2352,7 @@ func _combat_kill_routed_deferred(killer: Card, victim: Card, do_void: bool, con
 				"killer": killer,
 				"victim": victim,
 			})
+			_notify_player_god_visual_state_changed(killer_controller)
 		if killer != null and killer_controller != null and victim_controller != killer_controller and victim_counts_as_creature_kill:
 			for zone in killer_controller.frontline_zones + killer_controller.reserve_zones:
 				for card in zone.cards:
@@ -2729,6 +2739,7 @@ func _combat_kill_routed(killer: Card, victim: Card, do_void: bool) -> void:
 				"killer": killer,
 				"victim": victim,
 			})
+			_notify_player_god_visual_state_changed(killer_controller)
 		if killer != null and killer_controller != null and victim_controller != killer_controller and victim_counts_as_creature_kill:
 			for zone in killer_controller.frontline_zones + killer_controller.reserve_zones:
 				for card in zone.cards:
