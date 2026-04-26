@@ -46,6 +46,7 @@ var pending_resurrections: Array[Card] = []
 var combat_destroy_events_this_turn: Array[Dictionary] = []
 var last_hex_resolution_text: String = ""
 var last_player_feedback_text: String = ""
+var _pending_player_feedback_texts: Array[String] = []
 var _upkeep_resolved_turn: int = -1
 var _upkeep_started_turn: int = -1
 var _temporary_summon_cost_modifiers: Array[Dictionary] = []
@@ -188,10 +189,12 @@ func _prune_stale_stack_actions() -> void:
 			consecutive_passes = 0
 
 func note_player_feedback(text: String) -> void:
-	if text.strip_edges() == "":
+	var trimmed_text := text.strip_edges()
+	if trimmed_text == "":
 		return
-	last_player_feedback_text = text
-	print(text)
+	last_player_feedback_text = trimmed_text
+	_pending_player_feedback_texts.append(trimmed_text)
+	print(trimmed_text)
 
 func get_activation_mana_unavailable_text(card: Card = null) -> String:
 	if card != null and str(card.card_name).strip_edges() != "":
@@ -396,8 +399,11 @@ func get_creatures_with_intercepts_this_turn(player: Player, minimum_count: int 
 	return matching_creatures
 
 func consume_player_feedback() -> String:
-	var text := last_player_feedback_text
+	var text := " ".join(_pending_player_feedback_texts)
+	if text.strip_edges() == "":
+		text = last_player_feedback_text
 	last_player_feedback_text = ""
+	_pending_player_feedback_texts.clear()
 	return text
 
 func get_game_result_message(winner: Player = winning_player, loser: Player = losing_player, reason: String = "") -> String:

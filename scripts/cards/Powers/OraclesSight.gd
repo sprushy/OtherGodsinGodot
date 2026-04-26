@@ -6,8 +6,6 @@ const ACTIVATION_COST := 3
 const LOOK_COUNT := 5
 const ART_PATH := "res://images/card_art/powers/OraclesSightEdit.png"
 
-var _pending_unlock_resolution: bool = false
-
 func _init() -> void:
 	super._init()
 	card_name = "Oracle's Sight"
@@ -18,62 +16,50 @@ func _init() -> void:
 	if "Targeting" not in card_types:
 		card_types.append("Targeting")
 	targets = true
-	ability_text = "[b]Unlock[/b] (3): [b]Foresight[/b] - Look at the next 5 cards in your deck; choose one to [b]Prime[/b] and [b]Shelve[/b] the rest."
+	ability_text = "[b]Unlock[/b] (3): [b]Activate[/b] - Pay 3 mana: [b]Foresight[/b] - Look at the next 5 cards in your deck; choose one to [b]Prime[/b] and [b]Shelve[/b] the rest."
 	artist = "Eliot Chan"
 	art_path = ART_PATH
 
-func on_unlock(game_manager: GameManager) -> void:
-	_pending_unlock_resolution = true
-	if game_manager == null or card_owner == null:
-		return
-	var top_cards := get_foresight_cards()
-	if top_cards.is_empty():
-		is_used = true
-		_pending_unlock_resolution = false
-		game_manager.note_player_feedback("%s unlocked, but your deck has no cards to read." % card_name)
-		return
-	var target_uids: Array[String] = []
-	for target in top_cards:
-		if target != null:
-			target_uids.append(target.uid)
-	game_manager.decision_requested.emit(card_owner, "oracles_sight", {
-		"source_uid": uid,
-		"target_uids": target_uids,
-	})
-
 func can_activate(game_manager: GameManager) -> bool:
-	return game_manager != null \
-		and not is_face_down \
-		and not is_muted \
-		and not is_activation_locked(game_manager) \
-		and not is_used \
-		and _pending_unlock_resolution \
-		and card_owner == game_manager.current_player \
-		and not get_foresight_cards().is_empty()
+	return super.can_activate(game_manager) \
+		and can_pay_activation_costs(ACTIVATION_COST, game_manager) \
+		and not get_valid_targets(game_manager).is_empty()
 
 func get_activation_failure_reason(game_manager: GameManager) -> String:
 	if game_manager == null:
-		return card_name + " cannot resolve right now."
+		return card_name + " cannot activate right now."
 	if is_face_down:
 		return card_name + " must be unlocked first."
 	if is_muted:
 		return card_name + " is muted."
 	if is_activation_locked(game_manager):
-		return card_name + " cannot resolve this turn."
-	if is_used:
-		return card_name + " has already resolved."
-	if not _pending_unlock_resolution:
-		return card_name + " has no foresight choice pending."
+		return card_name + " cannot be activated this turn."
 	if card_owner != game_manager.current_player:
 		return "It is not " + card_name + "'s turn to act."
-	if get_foresight_cards().is_empty():
+	var activation_cost := get_activation_mana_cost(ACTIVATION_COST, game_manager)
+	if card_owner == null or card_owner.mana < activation_cost:
+		return card_name + " needs " + str(activation_cost) + " mana."
+	if get_valid_targets(game_manager).is_empty():
 		return card_name + " found no cards to read."
-	return card_name + " cannot resolve right now."
+	return card_name + " cannot activate right now."
+
+func get_activation_cost_hover_data(_game_manager: GameManager = null) -> Dictionary:
+	return {
+		"base_cost": ACTIVATION_COST,
+		"cost_kind": Card.COST_KIND_POWER_ACTIVATION,
+		"label": "Activation Cost",
+	}
+
+func get_valid_targets(_game_manager: GameManager) -> Array[Card]:
+	return get_foresight_cards()
 
 func activate(game_manager: GameManager, target: Card = null) -> void:
 	if not can_activate(game_manager):
 		if game_manager != null:
 			game_manager.note_player_feedback(get_activation_failure_reason(game_manager))
+		return
+	if not pay_activation_costs(ACTIVATION_COST, game_manager):
+		game_manager.note_player_feedback("%s needs %d mana." % [card_name, get_activation_mana_cost(ACTIVATION_COST, game_manager)])
 		return
 	game_manager.note_player_feedback(resolve_foresight_choice(game_manager, target))
 
@@ -85,12 +71,10 @@ func resolve_from_command(game_manager: GameManager, command: Dictionary) -> voi
 	activate(game_manager, chosen_card)
 
 func get_serialized_state() -> Dictionary:
-	return {
-		"pending_unlock_resolution": _pending_unlock_resolution,
-	}
+	return {}
 
-func apply_serialized_state(state: Dictionary) -> void:
-	_pending_unlock_resolution = bool(state.get("pending_unlock_resolution", false))
+func apply_serialized_state(_state: Dictionary) -> void:
+	pass
 
 func get_foresight_cards() -> Array[Card]:
 	var cards: Array[Card] = []
@@ -106,8 +90,6 @@ func get_foresight_cards() -> Array[Card]:
 func resolve_foresight_choice(game_manager: GameManager, chosen_card: Card = null) -> String:
 	var top_cards := get_foresight_cards()
 	if game_manager == null or card_owner == null or top_cards.is_empty():
-		_pending_unlock_resolution = false
-		is_used = true
 		return "%s found no cards to read." % card_name
 
 	var primed_card := chosen_card if chosen_card != null and chosen_card in top_cards else top_cards[0]
@@ -121,9 +103,6 @@ func resolve_foresight_choice(game_manager: GameManager, chosen_card: Card = nul
 	card_owner.deck_zone.cards.insert(0, primed_card)
 	for card in shelved_cards:
 		card_owner.deck_zone.cards.append(card)
-
-	is_used = true
-	_pending_unlock_resolution = false
 
 	var primed_name := primed_card.get_target_log_display_name(game_manager.get_feedback_viewer())
 	if shelved_cards.is_empty():

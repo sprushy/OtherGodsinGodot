@@ -604,18 +604,19 @@ func _schedule_authoritative_stack_top_after_priority() -> void:
 		return
 	_authoritative_stack_resolution_pending = true
 	var resolved_action: CardAction = game_manager.action_stack.back()
+	var resolve_after_passes := game_manager.both_passed()
 	_clear_priority_window_state()
 	var tree = _get_authoritative_resolution_tree()
 	if tree == null:
-		_finish_authoritative_stack_resolution(resolved_action)
+		_finish_authoritative_stack_resolution(resolved_action, resolve_after_passes)
 		return
 	tree.create_timer(AUTHORITATIVE_STACK_ACTION_LINGER_SECONDS).timeout.connect(
 		func() -> void:
-			_finish_authoritative_stack_resolution(resolved_action),
+			_finish_authoritative_stack_resolution(resolved_action, resolve_after_passes),
 		CONNECT_ONE_SHOT
 	)
 
-func _finish_authoritative_stack_resolution(action: CardAction) -> void:
+func _finish_authoritative_stack_resolution(action: CardAction, force_resolve: bool = false) -> void:
 	_authoritative_stack_resolution_pending = false
 	if game_manager == null or action == null:
 		return
@@ -623,9 +624,10 @@ func _finish_authoritative_stack_resolution(action: CardAction) -> void:
 		if not game_manager.action_stack.is_empty():
 			_advance_authoritative_priority()
 		return
-	if not _can_resolve_top_stack_action_now():
+	if not force_resolve and not _can_resolve_top_stack_action_now():
 		_advance_authoritative_priority()
 		return
+	_clear_priority_window_state()
 	resolve_action(action)
 	if not game_manager.action_stack.is_empty():
 		_advance_authoritative_priority()

@@ -526,6 +526,7 @@ func _has_active_modal_prompt() -> bool:
 		or (_hati_prompt_panel != null and is_instance_valid(_hati_prompt_panel)) \
 		or (_skoll_prompt_panel != null and is_instance_valid(_skoll_prompt_panel)) \
 		or (_kur_jara_prompt_panel != null and is_instance_valid(_kur_jara_prompt_panel)) \
+		or (_deucalion_panel != null and is_instance_valid(_deucalion_panel)) \
 		or (_pause_menu_overlay != null and is_instance_valid(_pause_menu_overlay))
 
 func _reject_modal_prompt_action() -> void:
@@ -1291,14 +1292,20 @@ func _finish_wolf_adolescent_turn_start_sequence() -> void:
 	_pending_wolf_adolescent_prompts.clear()
 	_active_wolf_adolescent_prompt = null
 	if _begin_wheel_of_fire_turn_start_sequence(feedback):
+		# Wolf Maturation closes the upkeep-choice UI before the next turn-start
+		# window opens. Force a repaint so End Turn does not stay hidden until
+		# some unrelated later action refreshes the screen.
+		_request_ui_refresh()
 		update_ui()
 		return
 	if _is_networked_client:
 		if feedback.strip_edges() != "":
 			action_label.text = feedback
+		_request_ui_refresh()
 		update_ui()
 		return
 	_queue_standard_turn_start_priority(feedback)
+	_request_ui_refresh()
 
 func _continue_after_upkeep_choice(feedback: String) -> void:
 	if _is_networked_client:
@@ -9224,6 +9231,7 @@ func _try_play_selected_creature_to_zone(zone: Zone) -> void:
 		_pending_creature_play_resolver = Callable()
 		return
 	if selected_card.sacrifice_cost > 0 and not _drag_sacrifice_done:
+		var auto_sacrifice_target: Card = null
 		_sacrifice_pending_card = selected_card
 		_sacrifice_pending_zone = zone
 		_sacrifice_pending_mode = placement_mode
@@ -9236,11 +9244,16 @@ func _try_play_selected_creature_to_zone(zone: Zone) -> void:
 			action_label.text = _get_sacrifice_payment_prompt(_sacrifice_pending_card)
 			_show_sacrifice_payment_prompt(_sacrifice_pending_card, altar)
 			return
+		if zone != null and zone.cards.size() == 1 and _can_use_zone_after_sacrifice(zone, zone.cards[0]):
+			auto_sacrifice_target = zone.cards[0]
 		_awaiting_creature_sacrifice = true
 		selected_card = null
 		placement_mode = ""
 		placement_container.visible = false
-		action_label.text = _get_creature_sacrifice_prompt(_sacrifice_pending_card, _sacrifice_remaining)
+		if auto_sacrifice_target != null:
+			_select_pending_creature_sacrifice(auto_sacrifice_target)
+		else:
+			action_label.text = _get_creature_sacrifice_prompt(_sacrifice_pending_card, _sacrifice_remaining)
 		return
 	_drag_sacrifice_done = false
 	_resolve_pending_creature_play(selected_card, zone, placement_mode)
@@ -12111,12 +12124,41 @@ func _finish_creature_sacrifice_play() -> void:
 	_resolve_pending_creature_play(card, zone, mode)
 	update_ui()
 
+func _continue_pending_creature_sacrifice_payment() -> void:
+	_sacrifice_remaining -= 1
+	if _sacrifice_remaining <= 0:
+		_finish_creature_sacrifice_play()
+	else:
+		action_label.text = _get_creature_sacrifice_prompt(_sacrifice_pending_card, _sacrifice_remaining)
+		update_ui()
+
+func _select_pending_creature_sacrifice(card: Card) -> void:
+	if card.get_controller() == game_manager.current_player and _can_use_card_for_creature_sacrifice(card):
+		_resolve_creature_summon_sacrifice(
+			card,
+			_sacrifice_pending_card,
+			Callable(self, "_continue_pending_creature_sacrifice_payment")
+		)
+	else:
+		action_label.text = "Select one of your sacrificable creatures."
+		update_ui()
+
 func _resolve_creature_summon_sacrifice(sacrificed: Card, summoned_card: Card, continue_callback: Callable = Callable()) -> void:
 	if sacrificed == null:
 		if continue_callback.is_valid():
 			continue_callback.call()
 		return
 	var finish := func() -> void:
+		var paid := not is_instance_valid(sacrificed) \
+			or sacrificed.current_zone == null \
+			or not sacrificed.current_zone.is_board_zone()
+		if not paid:
+			if summoned_card != null:
+				action_label.text = "%s could not be sacrificed for %s." % [sacrificed.card_name, summoned_card.card_name]
+			else:
+				action_label.text = sacrificed.card_name + " could not be sacrificed."
+			update_ui()
+			return
 		if sacrificed.has_method("on_sacrificed_for_summon") and not sacrificed.abilities_suppressed():
 			sacrificed.on_sacrificed_for_summon(game_manager, summoned_card)
 		if continue_callback.is_valid():
@@ -12335,33 +12377,7 @@ func _on_board_card_pressed(card: Card) -> void:
 		return
 
 	if _awaiting_creature_sacrifice:
-		if card.get_controller() == game_manager.current_player and _can_use_card_for_creature_sacrifice(card):
-			_resolve_creature_summon_sacrifice(
-				card,
-				_sacrifice_pending_card,
-				func() -> void:
-					_sacrifice_remaining -= 1
-					if _sacrifice_remaining <= 0:
-						_finish_creature_sacrifice_play()
-					else:
-						action_label.text = _get_creature_sacrifice_prompt(_sacrifice_pending_card, _sacrifice_remaining)
-						update_ui()
-			)
-		else:
-			action_label.text = "Select one of your sacrificable creatures."
-		return
-
-	if _awaiting_creature_sacrifice:
-		if card.get_controller() == game_manager.current_player and _can_use_card_for_creature_sacrifice(card):
-			_resolve_creature_summon_sacrifice(card, _sacrifice_pending_card)
-			_sacrifice_remaining -= 1
-			if _sacrifice_remaining <= 0:
-				_finish_creature_sacrifice_play()
-			else:
-				action_label.text = _get_creature_sacrifice_prompt(_sacrifice_pending_card, _sacrifice_remaining)
-				update_ui()
-		else:
-			action_label.text = "Select one of your sacrificable creatures."
+		_select_pending_creature_sacrifice(card)
 		return
 
 	if _awaiting_altar_void_payment:
@@ -13318,6 +13334,7 @@ func _has_unresolved_priority_state() -> bool:
 		or not _pending_hand_play_events.is_empty()
 	return _is_priority_prompt_visible() \
 		or _is_intercept_prompt_visible() \
+		or _stack_resolution_paused \
 		or _executing_stack_action \
 		or has_deferred_priority_events \
 		or (
@@ -16598,6 +16615,7 @@ func _show_deucalion_prompt(spell: DeucalionsInfants) -> void:
 		action_label.text = "Deucalion's Infants has no structures or golems to affect."
 		update_ui()
 		return
+	action_label.text = "Deucalion's Infants: choose your structures or golems, then confirm to resolve."
 
 	if _deucalion_panel != null and is_instance_valid(_deucalion_panel):
 		_deucalion_panel.queue_free()
