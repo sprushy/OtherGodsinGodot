@@ -1886,6 +1886,7 @@ func _process(_delta: float) -> void:
 	if not is_visible_in_tree():
 		return
 	_sync_turn_activity_timers()
+	_sync_local_priority_recovery()
 	_sync_sacrifice_cursor()
 	_capture_action_log_message()
 	_update_hand_hover_preview()
@@ -2159,6 +2160,28 @@ func _sync_turn_activity_timers() -> void:
 		_set_action_label_text("Move timer expired. Ending turn.")
 		update_ui()
 		call_deferred("_auto_end_turn_after_move_timeout")
+
+func _sync_local_priority_recovery() -> void:
+	if _is_networked_client or match_manager == null:
+		return
+	if match_manager.uses_authoritative_priority_flow():
+		return
+	if _priority_recovery_check_scheduled or _executing_stack_action:
+		return
+	if _stack_resolution_paused:
+		if _has_pending_target_selection() or _has_active_modal_prompt():
+			return
+		if _is_priority_prompt_visible() or _is_intercept_prompt_visible():
+			return
+		_schedule_priority_recovery_check()
+		return
+	if game_manager == null or game_manager.action_stack.is_empty():
+		return
+	if _has_pending_target_selection() or _has_active_modal_prompt():
+		return
+	if _is_priority_prompt_visible() or _is_intercept_prompt_visible():
+		return
+	_schedule_priority_recovery_check()
 
 func _auto_end_turn_after_move_timeout() -> void:
 	if _game_finished or game_manager == null:
@@ -7676,6 +7699,10 @@ func _on_card_summoned(player: Player, card: Card, _from_zone: Zone, to_zone: Zo
 	if match_manager != null and match_manager.uses_authoritative_priority_flow():
 		return
 	if face_down or stealth or card.is_face_down or card.is_prepared or card.is_stealth:
+		# Hidden summons skip the usual priority follow-up, so queue a refresh
+		# after the summon fully resolves. Otherwise End Turn can stay hidden
+		# until a later click happens to repaint the UI.
+		call_deferred("_request_ui_refresh")
 		return
 	if _has_pending_impact_priority_action(card):
 		return
@@ -9230,6 +9257,10 @@ func _resolve_pending_creature_play(card: Card, zone: Zone, mode: String) -> voi
 	else:
 		_do_place_creature(card, zone, mode)
 	_clear_pending_creature_summon_payment_state()
+	# Creature placement can update the board and turn controls across multiple
+	# immediate/deferred steps. Queue one more refresh after the placement has
+	# fully settled so End Turn does not require an extra click to reappear.
+	call_deferred("_request_ui_refresh")
 
 func _can_use_zone_after_sacrifice(zone: Zone, sacrificed_card: Card) -> bool:
 	if zone == null or sacrificed_card == null:
@@ -16847,9 +16878,7 @@ func _queue_deucalion_resolution(spell: DeucalionsInfants) -> void:
 		null,
 		"Deucalion's Infants resolves.",
 		func() -> void:
-			_deucalion_prompt_pending = true
-			_pause_stack_resolution(spell.card_owner)
-			call_deferred("_begin_deucalion_resolution", spell)
+			_begin_deucalion_resolution(spell)
 	)
 
 func _begin_deucalion_resolution(spell: DeucalionsInfants) -> void:

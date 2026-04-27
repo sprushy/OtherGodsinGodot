@@ -310,6 +310,14 @@ func _complete_login_for_peer(
 	auth_mode: String = LobbyProtocolScript.LOGIN_GUEST
 ) -> void:
 	var existing: Dictionary = _get_session_for_peer(peer_id)
+	if not existing.is_empty() and not _session_matches_login_identity(existing, profile_id, account_id):
+		var existing_session_id := str(existing.get("session_id", "")).strip_edges()
+		if not existing_session_id.is_empty():
+			session_id_by_peer.erase(peer_id)
+			existing["peer_id"] = 0
+			existing["connected"] = false
+			sessions_by_id[existing_session_id] = existing
+		existing = {}
 	if existing.is_empty():
 		existing = _find_resumable_session(profile_id, account_id)
 		if existing.is_empty():
@@ -343,6 +351,17 @@ func _complete_login_for_peer(
 		"active_match_info": active_match_info,
 	})
 	_send_room_list_to_peer(peer_id)
+
+func _session_matches_login_identity(session: Dictionary, profile_id: String, account_id: String) -> bool:
+	if session.is_empty():
+		return false
+	var resolved_account_id := account_id.strip_edges()
+	if not resolved_account_id.is_empty():
+		return str(session.get("account_id", "")).strip_edges() == resolved_account_id
+	var resolved_profile_id := profile_id.strip_edges()
+	if resolved_profile_id.is_empty():
+		return false
+	return str(session.get("profile_id", "")).strip_edges() == resolved_profile_id
 
 func _handle_reconnect_request(peer_id: int, payload: Dictionary) -> void:
 	var session_id: String = str(payload.get("session_id", "")).strip_edges()

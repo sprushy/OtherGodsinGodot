@@ -97,6 +97,7 @@ var _logged_in_account_username: String = ""
 var _selected_auth_mode: String = AUTH_MODE_GUEST
 var _selected_account_username: String = ""
 var _selected_account_password: String = ""
+var _account_switch_pending: bool = false
 var _update_check_request: HTTPRequest = null
 var _update_prompt_overlay: Control = null
 var _pending_update_release_version: String = ""
@@ -388,7 +389,16 @@ func _open_multiplayer_screen() -> void:
 func _has_active_lobby_connection() -> bool:
 	return lobby_client != null and is_instance_valid(lobby_client) and lobby_client.is_authenticated()
 
+func _prepare_fresh_lobby_login() -> void:
+	if not _account_switch_pending and not _has_active_lobby_connection():
+		return
+	# A fresh sign-in must not reuse reconnect tokens from the previous account session.
+	_lobby_session_id = ""
+	_lobby_reconnect_token = ""
+
 func _should_reuse_active_lobby_connection(target_lobby_ip: String) -> bool:
+	if _account_switch_pending:
+		return false
 	if not _has_active_lobby_connection():
 		return false
 	if _current_lobby_ip != target_lobby_ip:
@@ -1166,11 +1176,7 @@ func _connect_to_browseable_lobby(connect_status: String) -> void:
 	if _should_reuse_active_lobby_connection(target_lobby_ip):
 		_run_pending_multiplayer_action()
 		return
-	if _has_active_lobby_connection():
-		# A reused connection keeps the old server session alive. Clear resume
-		# tokens before reconnecting so account switches perform a fresh login.
-		_lobby_session_id = ""
-		_lobby_reconnect_token = ""
+	_prepare_fresh_lobby_login()
 
 	_current_lobby_ip = target_lobby_ip
 	_cleanup_lobby_client()
@@ -1211,6 +1217,11 @@ func _maybe_connect_authenticated_lobby(connect_status: String = "Connecting to 
 	_pending_join_room_id = ""
 	_pending_local_lobby_launch_on_connect_failure = false
 	_connect_to_browseable_lobby(connect_status)
+
+func _deferred_authenticated_lobby_connect(connect_status: String = "Connecting to lobby...") -> void:
+	if _account_switch_pending:
+		await get_tree().create_timer(0.15).timeout
+	_maybe_connect_authenticated_lobby(connect_status)
 
 func _run_pending_multiplayer_action() -> void:
 	if lobby_client == null:
@@ -2018,13 +2029,19 @@ func _maybe_show_auth_onboarding() -> void:
 	_show_auth_onboarding()
 
 func _prompt_account_login() -> void:
+	_account_switch_pending = true
+	_set_selected_account_username("")
 	if _local_profile_store != null:
 		_local_profile_store.set_preferred_auth_mode(AUTH_MODE_LOGIN)
 		_local_profile_store.clear_account_password()
 	_set_selected_account_password("")
 	_set_auth_mode(AUTH_MODE_LOGIN)
+	if _auth_onboarding_username_edit != null and is_instance_valid(_auth_onboarding_username_edit):
+		_auth_onboarding_username_edit.text = ""
 	if _password_line_edit != null:
 		_password_line_edit.text = ""
+	if _auth_onboarding_password_edit != null and is_instance_valid(_auth_onboarding_password_edit):
+		_auth_onboarding_password_edit.text = ""
 	if _auth_onboarding_overlay == null or not is_instance_valid(_auth_onboarding_overlay):
 		_show_auth_onboarding()
 	_begin_auth_onboarding_account_flow(AUTH_MODE_LOGIN)
@@ -2059,6 +2076,15 @@ func _get_saved_account_username() -> String:
 		return ""
 	return _local_profile_store.get_last_account_username()
 
+func _get_editable_account_username() -> String:
+	if _auth_onboarding_username_edit != null \
+		and is_instance_valid(_auth_onboarding_username_edit) \
+		and _auth_onboarding_username_edit.visible:
+		return _auth_onboarding_username_edit.text.strip_edges()
+	if player_name_line_edit != null and player_name_line_edit.editable:
+		return player_name_line_edit.text.strip_edges()
+	return ""
+
 func _set_selected_account_username(username: String, sync_field: bool = true) -> void:
 	_selected_account_username = username.strip_edges()
 	if sync_field and player_name_line_edit != null and _selected_auth_mode != AUTH_MODE_GUEST:
@@ -2076,7 +2102,7 @@ func _sync_legacy_auth_fields() -> void:
 				continue
 			_auth_mode_option.select(index)
 			break
-	if player_name_line_edit != null and _selected_auth_mode != AUTH_MODE_GUEST and not _selected_account_username.is_empty():
+	if player_name_line_edit != null and _selected_auth_mode != AUTH_MODE_GUEST:
 		player_name_line_edit.text = _selected_account_username
 	if _password_line_edit != null:
 		_password_line_edit.text = _selected_account_password
@@ -2094,6 +2120,8 @@ func _should_recover_saved_account_identity() -> bool:
 	return not _local_profile_store.find_profile_id_by_account_username(saved_username).is_empty()
 
 func _get_connected_account_username() -> String:
+	if _account_switch_pending:
+		return ""
 	if lobby_client == null:
 		return ""
 	if not lobby_client.is_authenticated():
@@ -2109,6 +2137,8 @@ func _get_connected_account_username() -> String:
 	return ""
 
 func _get_effective_account_username() -> String:
+	if _account_switch_pending:
+		return ""
 	var connected_username := _get_connected_account_username()
 	if not connected_username.is_empty():
 		return connected_username
@@ -2123,11 +2153,12 @@ func _get_preferred_account_username() -> String:
 		return ""
 	if not _selected_account_username.is_empty():
 		return _selected_account_username
+	var editable_username := _get_editable_account_username()
+	if not editable_username.is_empty():
+		return editable_username
 	var saved_username := _get_saved_account_username()
 	if not saved_username.is_empty():
 		return saved_username
-	if player_name_line_edit != null:
-		return player_name_line_edit.text.strip_edges()
 	return ""
 
 func _get_effective_identity_name(default_name: String = "Guest") -> String:
@@ -2149,11 +2180,12 @@ func _get_selected_account_username() -> String:
 		return ""
 	if not _selected_account_username.is_empty():
 		return _selected_account_username
+	var editable_username := _get_editable_account_username()
+	if not editable_username.is_empty():
+		return editable_username
 	var saved_account_username := _get_saved_account_username()
 	if not saved_account_username.is_empty():
 		return saved_account_username
-	if player_name_line_edit != null:
-		return player_name_line_edit.text.strip_edges()
 	return ""
 
 func _get_active_profile_display_name(default_name: String = "Player") -> String:
@@ -2197,6 +2229,7 @@ func _activate_account_profile(
 	return _local_profile_id
 
 func _on_switch_account_pressed() -> void:
+	_account_switch_pending = true
 	_cleanup_lobby(true)
 	_logged_in_account_username = ""
 	_current_profile_summary.clear()
@@ -2448,6 +2481,7 @@ func _set_auth_onboarding_hint(message: String, is_error: bool = false) -> void:
 func _complete_auth_onboarding(auth_mode: String, message: String) -> void:
 	_set_auth_mode(auth_mode)
 	if auth_mode == AUTH_MODE_GUEST:
+		_account_switch_pending = false
 		_apply_guest_display_name("Guest")
 	else:
 		var selected_account_username := _get_selected_account_username()
@@ -2469,7 +2503,7 @@ func _complete_auth_onboarding(auth_mode: String, message: String) -> void:
 		multiplayer_button.grab_focus()
 	_dismiss_auth_onboarding()
 	if auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
-		call_deferred("_maybe_connect_authenticated_lobby", "Signing in to lobby...")
+		call_deferred("_deferred_authenticated_lobby_connect", "Signing in to lobby...")
 
 func _dismiss_auth_onboarding() -> void:
 	if _auth_onboarding_overlay == null:
@@ -2705,6 +2739,7 @@ func _on_connect_pressed() -> void:
 		status_label.text = "Enter a room code before joining."
 		return
 
+	_prepare_fresh_lobby_login()
 	_cleanup_lobby_client()
 	_is_local_lobby_host = false
 	_current_lobby_ip = _get_lobby_ip()
@@ -2752,6 +2787,7 @@ func _connect_local_host_to_dedicated_lobby() -> void:
 			return
 	var wait_seconds := 0.8 if _spawned_lobby_process_id > 0 else 0.25
 	await get_tree().create_timer(wait_seconds).timeout
+	_prepare_fresh_lobby_login()
 	_cleanup_lobby_client()
 	status_label.text = "Connecting to dedicated lobby..."
 	_write_smoke_trace("host_connecting_to_lobby ip=%s port=%d" % [_current_lobby_ip, _get_configured_lobby_port()])
@@ -3307,6 +3343,7 @@ func _capture_logged_in_profile(player_name: String) -> void:
 	_ensure_local_profile_store()
 	if _local_profile_store == null:
 		return
+	_account_switch_pending = false
 	var previous_profile_id := _local_profile_id.strip_edges()
 	var resolved_profile_id := previous_profile_id
 	var resolved_auth_mode := _get_selected_auth_mode()
