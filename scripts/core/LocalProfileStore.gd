@@ -749,8 +749,18 @@ func _read_storage_snapshot(storage_path: String, label: String) -> Dictionary:
 			"data": {},
 			"recovered": false,
 		}
-	var content: String = file.get_as_text()
+	var content_bytes := file.get_buffer(file.get_length())
 	file.close()
+	var decode_result := _decode_utf8_bytes_lossy(content_bytes)
+	var content: String = str(decode_result.get("text", ""))
+	var had_invalid_utf8 := bool(decode_result.get("had_invalid_utf8", false))
+	if had_invalid_utf8:
+		print(
+			"LocalProfileStore: Recovered ",
+			label,
+			" snapshot text from invalid UTF-8 bytes: ",
+			storage_path
+		)
 	if content.strip_edges().is_empty():
 		print("LocalProfileStore: ", label, " snapshot was empty: ", storage_path)
 		return {
@@ -758,7 +768,99 @@ func _read_storage_snapshot(storage_path: String, label: String) -> Dictionary:
 			"data": {},
 			"recovered": false,
 		}
-	return _parse_storage_snapshot_content(content, storage_path, label)
+	var parsed_snapshot := _parse_storage_snapshot_content(content, storage_path, label)
+	if had_invalid_utf8 and bool(parsed_snapshot.get("ok", false)):
+		parsed_snapshot["recovered"] = true
+	return parsed_snapshot
+
+func _decode_utf8_bytes_lossy(content_bytes: PackedByteArray) -> Dictionary:
+	if content_bytes.is_empty():
+		return {
+			"text": "",
+			"had_invalid_utf8": false,
+		}
+	var text := ""
+	var had_invalid_utf8 := false
+	var index := 0
+	if content_bytes.size() >= 3 and (
+		content_bytes[0] == 0xef
+		and content_bytes[1] == 0xbb
+		and content_bytes[2] == 0xbf
+	):
+		index = 3
+	while index < content_bytes.size():
+		var leading_byte := int(content_bytes[index])
+		if leading_byte <= 0x7f:
+			text += char(leading_byte)
+			index += 1
+			continue
+		var sequence_length := _get_utf8_sequence_length(leading_byte)
+		if sequence_length < 2 or index + sequence_length > content_bytes.size():
+			had_invalid_utf8 = true
+			text += char(65533)
+			index += 1
+			continue
+		var codepoint := _decode_utf8_sequence(content_bytes, index, sequence_length)
+		if codepoint < 0:
+			had_invalid_utf8 = true
+			text += char(65533)
+			index += 1
+			continue
+		text += char(codepoint)
+		index += sequence_length
+	return {
+		"text": text,
+		"had_invalid_utf8": had_invalid_utf8,
+	}
+
+func _get_utf8_sequence_length(leading_byte: int) -> int:
+	if (leading_byte & 0xe0) == 0xc0:
+		return 2
+	if (leading_byte & 0xf0) == 0xe0:
+		return 3
+	if (leading_byte & 0xf8) == 0xf0:
+		return 4
+	return -1
+
+func _decode_utf8_sequence(content_bytes: PackedByteArray, start_index: int, sequence_length: int) -> int:
+	var codepoint := 0
+	if sequence_length == 2:
+		var byte_1 := int(content_bytes[start_index + 1])
+		if (byte_1 & 0xc0) != 0x80:
+			return -1
+		codepoint = ((int(content_bytes[start_index]) & 0x1f) << 6) | (byte_1 & 0x3f)
+		if codepoint < 0x80:
+			return -1
+		return codepoint
+	if sequence_length == 3:
+		var byte_1 := int(content_bytes[start_index + 1])
+		var byte_2 := int(content_bytes[start_index + 2])
+		if (byte_1 & 0xc0) != 0x80 or (byte_2 & 0xc0) != 0x80:
+			return -1
+		codepoint = (
+			((int(content_bytes[start_index]) & 0x0f) << 12)
+			| ((byte_1 & 0x3f) << 6)
+			| (byte_2 & 0x3f)
+		)
+		if codepoint < 0x800 or (codepoint >= 0xd800 and codepoint <= 0xdfff):
+			return -1
+		return codepoint
+	if sequence_length == 4:
+		var byte_1 := int(content_bytes[start_index + 1])
+		var byte_2 := int(content_bytes[start_index + 2])
+		var byte_3 := int(content_bytes[start_index + 3])
+		if (byte_1 & 0xc0) != 0x80 or (byte_2 & 0xc0) != 0x80 or (byte_3 & 0xc0) != 0x80:
+			return -1
+		codepoint = (
+			((int(content_bytes[start_index]) & 0x07) << 18)
+			| ((byte_1 & 0x3f) << 12)
+			| ((byte_2 & 0x3f) << 6)
+			| (byte_3 & 0x3f)
+		)
+		if codepoint < 0x10000 or codepoint > 0x10ffff:
+			return -1
+		return codepoint
+	return -1
 
 func _parse_storage_snapshot_content(content: String, storage_path: String, label: String) -> Dictionary:
 	var json := JSON.new()
@@ -921,13 +1023,16 @@ func _ensure_storage_parent_exists(storage_path: String) -> bool:
 	return true
 
 func _write_storage_snapshot(storage_path: String, content: String) -> bool:
+	return _write_storage_snapshot_bytes(storage_path, content.to_utf8_buffer())
+
+func _write_storage_snapshot_bytes(storage_path: String, content_bytes: PackedByteArray) -> bool:
 	if not _ensure_storage_parent_exists(storage_path):
 		return false
 	var file := FileAccess.open(storage_path, FileAccess.WRITE)
 	if file == null:
 		print("LocalProfileStore: Error opening file for write: ", storage_path, " (Error: ", FileAccess.get_open_error(), ")")
 		return false
-	file.store_string(content)
+	file.store_buffer(content_bytes)
 	file.flush()
 	file.close()
 	if not FileAccess.file_exists(storage_path):
@@ -944,9 +1049,9 @@ func _copy_storage_snapshot(source_path: String, target_path: String) -> bool:
 	if source_file == null:
 		print("LocalProfileStore: Error opening source snapshot for read: ", source_path)
 		return false
-	var content: String = source_file.get_as_text()
+	var content_bytes := source_file.get_buffer(source_file.get_length())
 	source_file.close()
-	return _write_storage_snapshot(target_path, content)
+	return _write_storage_snapshot_bytes(target_path, content_bytes)
 
 func _get_profiles() -> Dictionary:
 	var profiles = _data.get("profiles", {})

@@ -239,6 +239,12 @@ func _label_for_move(move: Dictionary, viewer: Player = null) -> String:
 				game_manager.get_card_by_uid(move.get("target_uid", "")),
 				viewer
 			)
+		"activate_divine_caprice":
+			return _label_for_stack_move(
+				game_manager.get_card_by_uid(move.get("power_uid", "")),
+				null,
+				viewer
+			)
 		"activate_card_ability":
 			return _label_for_stack_move(
 				game_manager.get_card_by_uid(move.get("source_uid", "")),

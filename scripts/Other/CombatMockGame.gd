@@ -216,6 +216,7 @@ var _sacrifice_pending_card: Card = null
 var _sacrifice_pending_zone: Zone = null
 var _sacrifice_pending_mode: String = ""
 var _sacrifice_remaining: int = 0
+var _selected_creature_summon_sacrifices: Array[Card] = []
 var _pending_creature_summon_cost_card: Card = null
 var _pending_creature_summon_cost_required: int = 0
 var _pending_creature_summon_cost_paid: int = 0
@@ -4353,8 +4354,11 @@ func _get_power_unlock_cost_label(power: PowerCard) -> String:
 func _complete_power_unlock(power: PowerCard) -> void:
 	if power == null:
 		return
-	if _is_networked_client:
+	if game_input != null:
 		game_input.submit_action({type = "unlock_power", power_uid = power.uid})
+		return
+	if match_manager != null:
+		match_manager.process_command({type = "unlock_power", power_uid = power.uid})
 		return
 	power.unlock(game_manager)
 	_set_action_label_text(power.card_name + " unlocked!")
@@ -4997,7 +5001,7 @@ func _on_divine_caprice_confirm_pressed() -> void:
 	if power == null or plan.is_empty():
 		update_ui()
 		return
-	if _is_networked_client:
+	if game_input != null:
 		var serialized_plan: Array = []
 		for step in plan:
 			serialized_plan.append({
@@ -5238,7 +5242,7 @@ func _resolve_skoll_upkeep_summon(zone: Zone) -> void:
 	selected_card = null
 	placement_mode = ""
 	placement_container.visible = false
-	if _is_networked_client:
+	if game_input != null:
 		game_input.submit_action({
 			type = "skoll_upkeep_summon",
 			skoll_uid = skoll.uid,
@@ -5437,7 +5441,7 @@ func _resolve_hati_moon_hunt(zone: Zone) -> void:
 		summon_mode = Card.CreatureMode.AGGRESSIVE
 	var stealth := mode == "stealth"
 
-	if _is_networked_client:
+	if game_input != null:
 		game_input.submit_action({
 			type = "hati_moon_hunt",
 			hati_uid = hati.uid,
@@ -6301,7 +6305,7 @@ func _queue_magical_action(action_type: int, source_card: Card, target, resoluti
 func _queue_targeted_ability_action(source_card: Card, target: Card, resolve_callback: Callable, resolution_text: String = "") -> void:
 	if source_card == null or target == null:
 		return
-	if _is_networked_client:
+	if game_input != null:
 		game_input.submit_action({type = "activate_card_ability", source_uid = source_card.uid, target_uid = target.uid})
 		return
 	var target_name := _get_target_label(target, game_manager.get_feedback_viewer(), "target")
@@ -6343,7 +6347,7 @@ func _begin_raven_storm_priority_placement(card: Card, triggering_attacker: Card
 func _queue_raven_storm_priority_action(card: Card, triggering_attacker: Card, zone: Zone, summon_mode: Card.CreatureMode) -> bool:
 	if card == null or zone == null or game_manager == null or game_input == null:
 		return false
-	if _is_networked_client:
+	if game_input != null:
 		return game_input.submit_action({
 			type = "play_priority_ability",
 			source_uid = card.uid,
@@ -6500,7 +6504,7 @@ func _try_activate_owned_board_hex(card: Card) -> bool:
 		update_ui()
 		return true
 	selected_card = null
-	if _is_networked_client:
+	if game_input != null:
 		var hex_uid: String = card.get("uid") if "uid" in card else ""
 		game_input.submit_action({type = "activate_prepared_hex", hex_uid = hex_uid})
 		return true
@@ -6533,7 +6537,7 @@ func _try_queue_god_targeted_ability(target: Card) -> bool:
 	var source_god := god_ability_source
 	awaiting_god_ability_target = false
 	god_ability_source = null
-	if _is_networked_client:
+	if game_input != null:
 		var god_uid: String = source_god.get("uid") if "uid" in source_god else ""
 		var target_uid: String = target.get("uid") if target != null and "uid" in target else ""
 		game_input.submit_action({type = "god_ability", god_uid = god_uid, target_uid = target_uid})
@@ -6605,7 +6609,7 @@ func _try_activate_owned_board_spell(card: Card) -> bool:
 	elif card is KeyOfSolomon:
 		_show_kos_sacrifice_prompt(card as KeyOfSolomon)
 	elif card is CircleOfRebirth:
-		if _is_networked_client:
+		if game_input != null:
 			var prepared_spell_uid: String = card.get("uid") if "uid" in card else ""
 			game_input.submit_action({type = "cast_spell", spell_uid = prepared_spell_uid})
 		else:
@@ -6621,7 +6625,7 @@ func _try_activate_owned_board_spell(card: Card) -> bool:
 	elif card is SpellCard and (card as SpellCard).targets and card.has_method("get_valid_targets"):
 		_prompt_generic_spell_target_selection(card as SpellCard)
 	else:
-		if _is_networked_client:
+		if game_input != null:
 			var spell_uid: String = card.get("uid") if "uid" in card else ""
 			game_input.submit_action({type = "cast_spell", spell_uid = spell_uid})
 		else:
@@ -6651,7 +6655,7 @@ func _prompt_generic_spell_target_selection(spell: SpellCard) -> void:
 			update_ui()
 			return
 		selected_card = null
-		if _is_networked_client:
+		if game_input != null:
 			var spell_uid: String = spell.get("uid") if "uid" in spell else ""
 			var target_uid: String = chosen_target.get("uid") if "uid" in chosen_target else ""
 			game_input.submit_action({type = "cast_spell", spell_uid = spell_uid, target_uid = target_uid})
@@ -6702,7 +6706,7 @@ func _queue_power_activation_action(
 	if power == null:
 		update_ui()
 		return false
-	if _is_networked_client:
+	if game_input != null:
 		var target_uid: String = target.uid if target is Card else ""
 		game_input.submit_action({type = "activate_power", power_uid = power.uid, target_uid = target_uid})
 		return true
@@ -7434,7 +7438,7 @@ func _queue_charm_action(charm: CharmCard, triggering_action: CardAction = null,
 		update_ui()
 		return
 	var from_hand: bool = charm.current_zone == charm.card_owner.hand_zone
-	if _is_networked_client:
+	if game_input != null:
 		var charm_target_uid: String = target.uid if target is Card else ""
 		game_input.submit_action({type = "cast_charm", charm_uid = charm.uid, target_uid = charm_target_uid, prepared = not from_hand})
 		selected_card = null
@@ -9168,26 +9172,15 @@ func _execute_drag_sacrifice(zone: Zone) -> void:
 	_drag_sacrifice_card = null
 	_drag_sacrifice_target = null
 	_drag_sacrifice_mode = ""
-	# Sacrifice and summon simultaneously
-	_resolve_creature_summon_sacrifice(
-		sacrificed,
-		card,
-		func() -> void:
-			if card == null:
-				update_ui()
-				return
-			if total_sacrifice_cost > 1:
-				_sacrifice_pending_card = card
-				_sacrifice_pending_zone = zone
-				_sacrifice_pending_mode = mode
-				_sacrifice_remaining = total_sacrifice_cost - 1
-				_awaiting_creature_sacrifice = true
-				_set_action_label_text(_get_creature_sacrifice_prompt(_sacrifice_pending_card, _sacrifice_remaining))
-				update_ui()
-				return
-			_resolve_pending_creature_play(card, zone, mode)
-			update_ui()
-	)
+	if card == null:
+		update_ui()
+		return
+	_sacrifice_pending_card = card
+	_sacrifice_pending_zone = zone
+	_sacrifice_pending_mode = mode
+	_sacrifice_remaining = total_sacrifice_cost
+	_selected_creature_summon_sacrifices.clear()
+	_select_pending_creature_sacrifice(sacrificed)
 
 func _do_place_creature(card: Card, zone: Zone, mode: String) -> void:
 	var summon_mode: Card.CreatureMode = Card.CreatureMode.DEFENSIVE
@@ -9195,7 +9188,14 @@ func _do_place_creature(card: Card, zone: Zone, mode: String) -> void:
 		summon_mode = Card.CreatureMode.AGGRESSIVE
 	var stealth := mode == "stealth"
 	var card_uid: String = card.get("uid") if "uid" in card else ""
-	var sacrifice_paid := card.sacrifice_cost <= 0
+	var sacrifice_uids: Array[String] = []
+	for sacrifice in _selected_creature_summon_sacrifices:
+		if sacrifice != null and is_instance_valid(sacrifice):
+			sacrifice_uids.append(sacrifice.uid)
+	var altar_void_uids: Array[String] = []
+	for target in _altar_void_targets_chosen:
+		if target != null and is_instance_valid(target):
+			altar_void_uids.append(target.uid)
 	var success := game_input.submit_action({
 		type = "play_creature",
 		card_uid = card_uid,
@@ -9204,7 +9204,8 @@ func _do_place_creature(card: Card, zone: Zone, mode: String) -> void:
 		zone_index = zone.zone_index,
 		mode = summon_mode,
 		stealth = stealth,
-		sacrifice_paid = sacrifice_paid,
+		sacrifice_uids = sacrifice_uids,
+		altar_void_uids = altar_void_uids,
 	})
 	if not _is_networked_client:
 		if not success:
@@ -9215,21 +9216,15 @@ func _do_place_creature(card: Card, zone: Zone, mode: String) -> void:
 func _resolve_pending_creature_play(card: Card, zone: Zone, mode: String) -> void:
 	if card == null or zone == null:
 		_pending_creature_play_resolver = Callable()
-		_clear_pending_creature_summon_cost_tracking()
+		_clear_pending_creature_summon_payment_state()
 		return
 	var resolver := _pending_creature_play_resolver
 	_pending_creature_play_resolver = Callable()
-	var orig_cost := card.sacrifice_cost
-	var sacrifice_cost_paid := _has_fully_paid_pending_creature_summon_cost(card, orig_cost)
-	if orig_cost > 0 and sacrifice_cost_paid:
-		card.sacrifice_cost = 0
 	if resolver.is_valid():
 		resolver.call(card, zone, mode)
 	else:
 		_do_place_creature(card, zone, mode)
-	if orig_cost > 0 and sacrifice_cost_paid:
-		card.sacrifice_cost = orig_cost
-	_clear_pending_creature_summon_cost_tracking()
+	_clear_pending_creature_summon_payment_state()
 
 func _can_use_zone_after_sacrifice(zone: Zone, sacrificed_card: Card) -> bool:
 	if zone == null or sacrificed_card == null:
@@ -9253,6 +9248,7 @@ func _try_play_selected_creature_to_zone(zone: Zone) -> void:
 		_sacrifice_pending_zone = zone
 		_sacrifice_pending_mode = placement_mode
 		_sacrifice_remaining = selected_card.sacrifice_cost
+		_selected_creature_summon_sacrifices.clear()
 		_begin_pending_creature_summon_cost_tracking(selected_card)
 		var altar := _get_active_altar_of_dreams(game_manager.current_player)
 		if altar != null and altar.has_enough_valid_void_targets(_sacrifice_pending_card, game_manager):
@@ -9359,7 +9355,7 @@ func _resolve_wolf_master_summon(zone: Zone) -> void:
 		_set_action_label_text("Wolf Master: choose an empty friendly zone.")
 		update_ui()
 		return
-	if _is_networked_client:
+	if game_input != null:
 		var wm_fenrir := _pending_wolf_master_source
 		game_input.submit_action({
 			type = "wolf_master_summon",
@@ -12151,15 +12147,17 @@ func _continue_pending_creature_sacrifice_payment() -> void:
 		update_ui()
 
 func _select_pending_creature_sacrifice(card: Card) -> void:
-	if card.get_controller() == game_manager.current_player and _can_use_card_for_creature_sacrifice(card):
-		_resolve_creature_summon_sacrifice(
-			card,
-			_sacrifice_pending_card,
-			Callable(self, "_continue_pending_creature_sacrifice_payment")
-		)
-	else:
+	if card == null or card.get_controller() != game_manager.current_player or not _can_use_card_for_creature_sacrifice(card):
 		_set_action_label_text("Select one of your sacrificable creatures.")
 		update_ui()
+		return
+	if card in _selected_creature_summon_sacrifices:
+		_set_action_label_text(card.card_name + " has already been chosen.")
+		update_ui()
+		return
+	_selected_creature_summon_sacrifices.append(card)
+	_mark_pending_creature_summon_cost_paid()
+	_continue_pending_creature_sacrifice_payment()
 
 func _resolve_creature_summon_sacrifice(sacrificed: Card, summoned_card: Card, continue_callback: Callable = Callable()) -> void:
 	if sacrificed == null:
@@ -12227,6 +12225,11 @@ func _clear_pending_creature_summon_cost_tracking() -> void:
 	_pending_creature_summon_cost_required = 0
 	_pending_creature_summon_cost_paid = 0
 
+func _clear_pending_creature_summon_payment_state() -> void:
+	_selected_creature_summon_sacrifices.clear()
+	_altar_void_targets_chosen.clear()
+	_clear_pending_creature_summon_cost_tracking()
+
 func _begin_normal_creature_sacrifice_selection() -> void:
 	_hide_sacrifice_payment_prompt()
 	_awaiting_altar_void_payment = false
@@ -12248,20 +12251,13 @@ func _finish_altar_void_play() -> void:
 	var card := _sacrifice_pending_card
 	var zone := _sacrifice_pending_zone
 	var mode := _sacrifice_pending_mode
-	var altar := _altar_pending_power
-	var chosen_targets := _altar_void_targets_chosen.duplicate()
 	_awaiting_altar_void_payment = false
 	_altar_pending_power = null
-	_altar_void_targets_chosen.clear()
 	_sacrifice_pending_card = null
 	_sacrifice_pending_zone = null
 	_sacrifice_pending_mode = ""
 	_sacrifice_remaining = 0
-	if altar == null or card == null or zone == null:
-		update_ui()
-		return
-	if not altar.pay_replacement_cost(card, chosen_targets, game_manager):
-		_set_action_label_text("Altar of Dreams payment failed.")
+	if card == null or zone == null:
 		update_ui()
 		return
 	_mark_pending_creature_summon_cost_paid(card.sacrifice_cost)
@@ -17737,6 +17733,24 @@ func _on_match_move_validated(move: Dictionary) -> void:
 					_schedule_priority_recovery_check()
 				else:
 					_offer_priority()
+		"god_ability":
+			var queued_god := game_manager.get_card_by_uid(str(move.get("god_uid", "")))
+			if queued_god != null:
+				_set_action_label_text(queued_god.card_name + " goes on the stack.")
+			if not _is_networked_client:
+				if authoritative_priority:
+					_schedule_priority_recovery_check()
+				else:
+					_offer_priority()
+		"activate_power", "activate_divine_caprice":
+			var queued_power := game_manager.get_card_by_uid(str(move.get("power_uid", "")))
+			if queued_power != null:
+				_set_action_label_text(queued_power.card_name + " goes on the stack.")
+			if not _is_networked_client:
+				if authoritative_priority:
+					_schedule_priority_recovery_check()
+				else:
+					_offer_priority()
 		"priority_pass":
 			# Remote player passed priority; continue the server-side priority loop.
 			if not _is_networked_client and not authoritative_priority:
@@ -17779,9 +17793,11 @@ func _on_match_move_validated(move: Dictionary) -> void:
 	update_ui()
 
 func _submit_prompt_choice_command(command: Dictionary) -> bool:
-	if game_input == null:
-		return false
-	var submitted := bool(game_input.submit_action(command))
+	var submitted := false
+	if game_input != null:
+		submitted = bool(game_input.submit_action(command))
+	elif match_manager != null:
+		submitted = bool(match_manager.process_command(command))
 	if submitted:
 		_apply_client_prompt_submission_followup(command)
 	return submitted
@@ -18314,7 +18330,7 @@ func _close_turn_start_windows() -> void:
 	_pending_skoll_summon = null
 	_pending_skoll_mode = ""
 	_pending_creature_play_resolver = Callable()
-	_clear_pending_creature_summon_cost_tracking()
+	_clear_pending_creature_summon_payment_state()
 	if game_manager == null or game_manager.current_player == null:
 		return
 	for card in game_manager.current_player.god_zone.cards:
@@ -18329,7 +18345,8 @@ func _close_turn_start_windows() -> void:
 				card.close_turn_start_window()
 
 func _get_end_turn_discard_count() -> int:
-	return maxi(0, game_manager.current_player.hand_zone.get_card_count() - Player.MAX_HAND_SIZE)
+	var staged_discards := _pending_end_turn_discard_uids.size()
+	return maxi(0, game_manager.current_player.hand_zone.get_card_count() - staged_discards - Player.MAX_HAND_SIZE)
 
 func _prompt_end_turn_discards() -> void:
 	var excess := _get_end_turn_discard_count()
@@ -18338,9 +18355,13 @@ func _prompt_end_turn_discards() -> void:
 		return
 	var on_choose_end_turn_discard := func(chosen_card: Card) -> void:
 		_discard_end_turn_card(chosen_card)
+	var display_cards: Array[Card] = []
+	for hand_card in game_manager.current_player.hand_zone.cards:
+		if hand_card != null and hand_card.uid not in _pending_end_turn_discard_uids:
+			display_cards.append(hand_card)
 	_show_card_selection_overlay(
 		"Discard %d card(s) to reach %d cards" % [excess, Player.MAX_HAND_SIZE],
-		game_manager.current_player.hand_zone.cards.duplicate(),
+		display_cards,
 		on_choose_end_turn_discard
 	)
 	_set_action_label_text("Choose %d card(s) to discard before ending your turn." % excess)
@@ -18405,14 +18426,8 @@ func _discard_end_turn_card(card: Card) -> void:
 	if card == null or card.current_zone != game_manager.current_player.hand_zone:
 		_prompt_end_turn_discards()
 		return
-	if _is_networked_client:
-		# Stage discard locally so the count decreases; send all UIDs with "end_turn".
-		game_manager.current_player.hand_zone.cards.erase(card)
+	if card.uid not in _pending_end_turn_discard_uids:
 		_pending_end_turn_discard_uids.append(card.uid)
-		update_ui()
-		_prompt_end_turn_discards()
-		return
-	game_manager.current_player.discard_card(card)
 	update_ui()
 	_prompt_end_turn_discards()
 
@@ -18471,7 +18486,7 @@ func _on_end_turn_button_pressed() -> void:
 	_sacrifice_pending_mode = ""
 	_sacrifice_remaining = 0
 	_pending_creature_play_resolver = Callable()
-	_clear_pending_creature_summon_cost_tracking()
+	_clear_pending_creature_summon_payment_state()
 	_drag_sacrifice_done = false
 	_awaiting_drag_sacrifice_zone = false
 	_drag_sacrifice_card = null
@@ -19992,14 +20007,7 @@ func _show_nusku_well_of_fire_prompt(nusku: NuskuFirebearer, choices: Array[Card
 			}):
 				update_ui()
 				return
-			nusku.card_owner.move_card(chosen_card, nusku.card_owner.hand_zone)
-			var feedback := "Well of Fire milled %d card(s). %s chose %s to return to %s's hand." % [
-				mill_count, opp_name, chosen_card.card_name, nusku.card_owner.player_name
-			]
-			if game_manager != null:
-				game_manager.note_player_feedback(feedback)
-				nusku.notify_power_activated(game_manager, chosen_card)
-			_resume_after_deferred_resolution(feedback)
+			_resume_after_deferred_resolution("Well of Fire choice could not be submitted.")
 	)
 
 var _resurrection_panel: Control = null

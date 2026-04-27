@@ -1323,6 +1323,77 @@ func _get_current_targeting_player() -> Player:
 		return _get_card_controller(anointing_source)
 	return null
 
+func _resolve_cards_by_uids(raw_uids: Array) -> Array[Card]:
+	var cards: Array[Card] = []
+	for raw_uid in raw_uids:
+		var uid := str(raw_uid).strip_edges()
+		if uid == "":
+			continue
+		var card := game_manager.get_card_by_uid(uid)
+		if card != null:
+			cards.append(card)
+	return cards
+
+func _cards_have_unique_uids(cards: Array[Card]) -> bool:
+	var seen := {}
+	for card in cards:
+		if card == null:
+			return false
+		if seen.has(card.uid):
+			return false
+		seen[card.uid] = true
+	return true
+
+func _can_use_creature_for_summon_sacrifice(card: Card, player: Player) -> bool:
+	return card != null \
+		and player != null \
+		and card.card_type == Card.CardType.CREATURE \
+		and not card.is_god \
+		and card.can_be_used_for_creature_sacrifice \
+		and card.get_controller() == player \
+		and card.current_zone != null \
+		and card.current_zone.is_board_zone()
+
+func _get_active_altar_of_dreams(player: Player) -> AltarOfDreams:
+	if player == null:
+		return null
+	for zone in player.power_zones:
+		if zone == null or zone.cards.is_empty():
+			continue
+		var altar := zone.cards[0] as AltarOfDreams
+		if altar != null and not altar.is_face_down:
+			return altar
+	return null
+
+func _resolve_authoritative_creature_summon_sacrifices(
+	sacrifices: Array[Card],
+	summoned_card: Card,
+	on_complete: Callable,
+	index: int = 0
+) -> void:
+	if index >= sacrifices.size():
+		if on_complete.is_valid():
+			on_complete.call()
+		return
+	var sacrificed := sacrifices[index]
+	if not _can_use_creature_for_summon_sacrifice(sacrificed, sacrificed.get_controller() if sacrificed != null else null):
+		move_failed.emit("Selected summon sacrifice is no longer valid.")
+		return
+	var finish := func() -> void:
+		var paid := not is_instance_valid(sacrificed) \
+			or sacrificed.current_zone == null \
+			or not sacrificed.current_zone.is_board_zone()
+		if not paid:
+			move_failed.emit("%s could not be sacrificed for %s." % [
+				sacrificed.card_name if sacrificed != null else "Selected creature",
+				summoned_card.card_name if summoned_card != null else "that summon"
+			])
+			return
+		if sacrificed != null and sacrificed.has_method("on_sacrificed_for_summon") and not sacrificed.abilities_suppressed():
+			sacrificed.on_sacrificed_for_summon(game_manager, summoned_card)
+		_resolve_authoritative_creature_summon_sacrifices(sacrifices, summoned_card, on_complete, index + 1)
+	game_manager.request_send_to_graveyard(sacrificed, finish, false, false)
+
 func _get_required_player_for_command(command: Dictionary) -> Player:
 	match str(command.get("type", "")):
 		"select_attacker":
@@ -1650,28 +1721,70 @@ func _process_command_impl(command: Dictionary) -> bool:
 			var zone := resolve_zone(command)
 			var mode: Card.CreatureMode = int(command.get("mode", Card.CreatureMode.DEFENSIVE)) as Card.CreatureMode
 			var stealth: bool = command.get("stealth", false)
-			var sacrifice_paid: bool = command.get("sacrifice_paid", false)
+			var sacrifice_cards := _resolve_cards_by_uids(command.get("sacrifice_uids", []))
+			var altar_void_cards := _resolve_cards_by_uids(command.get("altar_void_uids", []))
 			if card == null or zone == null:
 				move_failed.emit("play_creature: invalid card or zone")
 				return false
 			var original_sacrifice_cost := card.sacrifice_cost
-			if sacrifice_paid and original_sacrifice_cost > 0:
+			var using_altar_void := not altar_void_cards.is_empty()
+			if using_altar_void and not sacrifice_cards.is_empty():
+				move_failed.emit("Choose either sacrifices or Altar of Dreams targets, not both.")
+				return false
+			if original_sacrifice_cost > 0:
+				if using_altar_void:
+					if altar_void_cards.size() != original_sacrifice_cost or not _cards_have_unique_uids(altar_void_cards):
+						move_failed.emit("%s requires exactly %d unique Altar of Dreams target(s)." % [card.card_name, original_sacrifice_cost])
+						return false
+					var altar := _get_active_altar_of_dreams(acting_player)
+					if altar == null or not altar.can_replace_sacrifice_cost(card, game_manager):
+						move_failed.emit("Altar of Dreams cannot pay %s's summon cost right now." % card.card_name)
+						return false
+					for altar_target in altar_void_cards:
+						if altar_target == null or altar_target.card_type != Card.CardType.CREATURE or not altar_target.is_sleeping:
+							move_failed.emit("Altar of Dreams requires sleeping creature targets.")
+							return false
+				else:
+					if sacrifice_cards.size() != original_sacrifice_cost or not _cards_have_unique_uids(sacrifice_cards):
+						move_failed.emit("%s requires exactly %d unique summon sacrifice(s)." % [card.card_name, original_sacrifice_cost])
+						return false
+					for sacrifice_card in sacrifice_cards:
+						if not _can_use_creature_for_summon_sacrifice(sacrifice_card, acting_player):
+							move_failed.emit("Selected summon sacrifice is invalid for " + card.card_name + ".")
+							return false
+			if original_sacrifice_cost > 0 and (using_altar_void or not sacrifice_cards.is_empty()):
 				card.sacrifice_cost = 0
 			if not game_manager.can_play_card(acting_player, card, zone):
 				card.sacrifice_cost = original_sacrifice_cost
 				move_failed.emit("Cannot play " + card.card_name + "!")
 				return false
-			var success := game_manager.summon_creature_by_effect(
-				acting_player, card, zone,
-				mode, stealth, stealth,
-				null, true, true, true
-			)
 			card.sacrifice_cost = original_sacrifice_cost
-			if not success:
-				move_failed.emit("Summon failed for " + card.card_name)
-				return false
-			move_validated.emit(command)
-			_advance_authoritative_priority_for_pending_summon(card)
+			var finish_creature_play := func() -> void:
+				var summon_original_sacrifice_cost := card.sacrifice_cost
+				if summon_original_sacrifice_cost > 0:
+					card.sacrifice_cost = 0
+				var success := game_manager.summon_creature_by_effect(
+					acting_player, card, zone,
+					mode, stealth, stealth,
+					null, true, true, true
+				)
+				card.sacrifice_cost = summon_original_sacrifice_cost
+				if not success:
+					move_failed.emit("Summon failed for " + card.card_name)
+					return
+				move_validated.emit(command)
+				_advance_authoritative_priority_for_pending_summon(card)
+			if original_sacrifice_cost <= 0:
+				finish_creature_play.call()
+				return true
+			if using_altar_void:
+				var active_altar := _get_active_altar_of_dreams(acting_player)
+				if active_altar == null or not active_altar.pay_replacement_cost(card, altar_void_cards, game_manager):
+					move_failed.emit("Altar of Dreams payment failed for " + card.card_name + ".")
+					return false
+				finish_creature_play.call()
+				return true
+			_resolve_authoritative_creature_summon_sacrifices(sacrifice_cards, card, finish_creature_play)
 			return true
 		"cast_spell":
 			var spell_uid: String = command.get("spell_uid", "")
@@ -1703,10 +1816,13 @@ func _process_command_impl(command: Dictionary) -> bool:
 			if sacrifice_uid != "":
 				var sac_card := game_manager.get_card_by_uid(sacrifice_uid)
 				if sac_card != null:
-					spell.set_meta("pending_sacrifice_choice", sac_card)
+					spell.set_pending_chosen_sacrifices([sac_card])
+			else:
+				spell.clear_pending_chosen_sacrifices()
 
 			if prepared_spell:
 				if not (spell as SpellCard).can_activate_prepared(game_manager, player):
+					spell.clear_pending_chosen_sacrifices()
 					move_failed.emit(
 						game_manager.get_activation_mana_unavailable_text(spell)
 						if game_manager.has_insufficient_activation_mana(spell, true, player)
@@ -1714,6 +1830,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 					)
 					return false
 				if not game_manager.activate_prepared_card(spell, player):
+					spell.clear_pending_chosen_sacrifices()
 					move_failed.emit(
 						game_manager.get_activation_mana_unavailable_text(spell)
 						if game_manager.has_insufficient_activation_mana(spell, true, player)
@@ -1722,10 +1839,12 @@ func _process_command_impl(command: Dictionary) -> bool:
 					return false
 			else:
 				if not game_manager.can_play_card(player, spell, null):
+					spell.clear_pending_chosen_sacrifices()
 					move_failed.emit("Cannot cast " + spell.card_name + "!")
 					return false
 				var mana_required := game_manager.get_card_play_mana_cost(player, spell, false)
 				if not spell.pay_costs_with_mana_cost(player, mana_required, game_manager):
+					spell.clear_pending_chosen_sacrifices()
 					move_failed.emit("Cannot afford " + spell.card_name + "!")
 					return false
 				if mana_required < spell.mana_cost:
@@ -2830,7 +2949,22 @@ func _process_command_impl(command: Dictionary) -> bool:
 			if dc_plan.is_empty():
 				move_failed.emit("activate_divine_caprice: plan is empty or all zones invalid")
 				return false
-			dc.activate(game_manager, dc_plan)
+			if _uses_authoritative_headless_priority_flow():
+				_queue_authoritative_magical_action(
+					CardAction.Type.ABILITY,
+					dc,
+					dc_plan,
+					func() -> void:
+						dc.activate(game_manager, dc_plan)
+				)
+				move_validated.emit(command)
+				_advance_authoritative_priority()
+				return true
+			game_manager.run_with_effect_source(
+				dc,
+				func() -> void:
+					dc.activate(game_manager, dc_plan)
+			)
 			move_validated.emit(command)
 			return true
 		"intercept_decision":

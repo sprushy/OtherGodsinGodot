@@ -257,6 +257,7 @@ var active_buffs: Array[Dictionary] = []
 var active_statuses: Array[Dictionary] = []
 var _was_muted_last_check: bool = false
 var _pending_chosen_discards: Array[Card] = []
+var _pending_chosen_sacrifices: Array[Card] = []
 
 const EXTERNAL_EFFECT_NEGATION_STATUS := "external_effect_negation"
 const ABILITY_NEGATED_STATUS := "ability_negated"
@@ -1325,14 +1326,27 @@ func can_pay_costs_with_mana_cost(player: Player, mana_required: int) -> bool:
 	if player.hand_zone.get_card_count() < shelve_cost:
 		return false
 	
-	# Count creatures on board for sacrifice costs.
-	var creature_count = 0
-	for zone in player.frontline_zones + player.reserve_zones:
-		for card in zone.cards:
-			if card.is_creature_card() and card.can_be_used_for_creature_sacrifice:
-				creature_count += 1
-	if creature_count < sacrifice_cost:
-		return false
+	# Count creatures on board for sacrifice costs, or validate chosen sacrifices.
+	if sacrifice_cost > 0:
+		if _pending_chosen_sacrifices.size() > 0 and _pending_chosen_sacrifices.size() < sacrifice_cost:
+			return false
+		if _pending_chosen_sacrifices.size() >= sacrifice_cost:
+			var seen_sacrifice_uids := {}
+			for i in range(sacrifice_cost):
+				var chosen_sacrifice := _pending_chosen_sacrifices[i]
+				if not _is_valid_pending_sacrifice_choice(chosen_sacrifice, player):
+					return false
+				if seen_sacrifice_uids.has(chosen_sacrifice.uid):
+					return false
+				seen_sacrifice_uids[chosen_sacrifice.uid] = true
+		else:
+			var creature_count = 0
+			for zone in player.frontline_zones + player.reserve_zones:
+				for card in zone.cards:
+					if card.is_creature_card() and card.can_be_used_for_creature_sacrifice:
+						creature_count += 1
+			if creature_count < sacrifice_cost:
+				return false
 	
 	# Check cards available to banish (hand + board)
 	var banishable = player.hand_zone.get_card_count()
@@ -1360,6 +1374,22 @@ func set_pending_chosen_discards(cards: Array[Card]) -> void:
 
 func clear_pending_chosen_discards() -> void:
 	_pending_chosen_discards.clear()
+
+func set_pending_chosen_sacrifices(cards: Array[Card]) -> void:
+	_pending_chosen_sacrifices = cards.duplicate()
+
+func clear_pending_chosen_sacrifices() -> void:
+	_pending_chosen_sacrifices.clear()
+
+func _is_valid_pending_sacrifice_choice(card: Card, player: Player) -> bool:
+	return card != null \
+		and player != null \
+		and card != self \
+		and card.current_zone != null \
+		and card.current_zone.is_board_zone() \
+		and card.get_controller() == player \
+		and card.is_creature_card() \
+		and card.can_be_used_for_creature_sacrifice
 
 func has_pending_chosen_discards_for_cost() -> bool:
 	if discard_cost <= 0:
@@ -1402,6 +1432,16 @@ func pay_costs_with_mana_cost(player: Player, mana_required: int, game_manager: 
 	# Pay sacrifice cost.
 	if sacrifice_cost > 0:
 		for i in range(sacrifice_cost):
+			if _pending_chosen_sacrifices.size() > i:
+				var chosen_sacrifice := _pending_chosen_sacrifices[i]
+				if _is_valid_pending_sacrifice_choice(chosen_sacrifice, player):
+					if game_manager != null:
+						game_manager._send_to_graveyard_with_hook(chosen_sacrifice, false, false)
+					else:
+						player.move_card(chosen_sacrifice, player.graveyard_zone)
+					if chosen_sacrifice.has_method("on_sacrificed_for_summon") and not chosen_sacrifice.abilities_suppressed():
+						chosen_sacrifice.on_sacrificed_for_summon(game_manager, self)
+					continue
 			var creature_found = false
 			for zone in player.frontline_zones + player.reserve_zones:
 				if creature_found:
@@ -1416,6 +1456,7 @@ func pay_costs_with_mana_cost(player: Player, mana_required: int, game_manager: 
 							card.on_sacrificed_for_summon(game_manager, self)
 						creature_found = true
 						break
+	clear_pending_chosen_sacrifices()
 	
 	# Pay shelve cost
 	for i in range(shelve_cost):
