@@ -237,6 +237,7 @@ func _on_game_manager_card_summoned(
 	summon_priority_action.event_name = "summon"
 	summon_priority_action.event_speed = card.get_effective_speed()
 	game_manager.push_to_stack(summon_priority_action)
+	_advance_authoritative_priority_for_pending_card_events(card)
 
 func resolve_action(action: CardAction) -> void:
 	last_resolution_text = ""
@@ -1089,12 +1090,13 @@ func _has_pending_event_priority_action(card: Card, event_name: String) -> bool:
 			return true
 	return false
 
-func _advance_authoritative_priority_for_pending_summon(card: Card) -> void:
+func _advance_authoritative_priority_for_pending_card_events(card: Card) -> void:
 	if not _uses_authoritative_headless_priority_flow() or game_manager == null or card == null:
 		return
 	if _authoritative_stack_resolution_pending or not game_manager.resolving_stack_actions.is_empty():
 		return
-	if not _has_pending_event_priority_action(card, "summon"):
+	if not _has_pending_event_priority_action(card, "summon") \
+			and not _has_pending_event_priority_action(card, "frontline_entry"):
 		return
 	_advance_authoritative_priority()
 
@@ -1767,7 +1769,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 					move_failed.emit("Summon failed for " + card.card_name)
 					return
 				move_validated.emit(command)
-				_advance_authoritative_priority_for_pending_summon(card)
+				_advance_authoritative_priority_for_pending_card_events(card)
 			if original_sacrifice_cost <= 0:
 				finish_creature_play.call()
 				return true
@@ -2111,7 +2113,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 				return false
 			skoll.apply_upkeep_summon_tax(game_manager)
 			move_validated.emit(command)
-			_advance_authoritative_priority_for_pending_summon(skoll)
+			_advance_authoritative_priority_for_pending_card_events(skoll)
 			return true
 		"hati_moon_hunt":
 			var hati_uid: String = command.get("hati_uid", "")
@@ -2143,7 +2145,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 				move_failed.emit("Moon Hunt fizzled.")
 				return false
 			move_validated.emit(command)
-			_advance_authoritative_priority_for_pending_summon(hati)
+			_advance_authoritative_priority_for_pending_card_events(hati)
 			return true
 		"wheel_of_fire_turn_start_choice":
 			var source_uid: String = str(command.get("source_uid", "")).strip_edges()
@@ -2921,7 +2923,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 				move_failed.emit("Wolf Master: summon failed for " + wm_lupine.card_name)
 				return false
 			move_validated.emit(command)
-			_advance_authoritative_priority_for_pending_summon(wm_lupine)
+			_advance_authoritative_priority_for_pending_card_events(wm_lupine)
 			return true
 		"activate_divine_caprice":
 			var dc_uid: String = command.get("power_uid", "")
@@ -3131,7 +3133,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 			# Remove from pending list regardless of choice (or if failed)
 			game_manager.pending_resurrections.erase(card)
 			move_validated.emit(command)
-			_advance_authoritative_priority_for_pending_summon(card)
+			_advance_authoritative_priority_for_pending_card_events(card)
 			if _pending_end_turn_after_resurrection:
 				if _check_for_next_resurrection():
 					return true

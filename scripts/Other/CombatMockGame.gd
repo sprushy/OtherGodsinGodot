@@ -371,6 +371,7 @@ var _context_menu: Control = null
 var _queued_attackers: Array[Card] = []
 var _no_intercept_btn: Button = null
 var _ui_refresh_queued: bool = false
+var _local_ui_refresh_pending: bool = false
 var _power_hover_popup: Control = null
 var _game_finished: bool = false
 var _game_result_presented: bool = false
@@ -1882,10 +1883,47 @@ func _update_center_action_panel_layout() -> void:
 		separator_origin.y + BOARD_SEPARATOR_HEIGHT * 0.5 - _center_action_panel.size.y * 0.5
 	)
 
+func _sync_local_end_turn_button() -> void:
+	if _is_networked_client or _game_finished:
+		return
+	if end_turn_button == null or choice_container == null:
+		return
+	var should_show = not choice_container.visible
+	var changed = end_turn_button.visible != should_show or end_turn_button.disabled != not should_show
+	end_turn_button.visible = should_show
+	end_turn_button.disabled = not should_show
+	if changed and _center_action_panel != null and is_instance_valid(_center_action_panel):
+		call_deferred("_update_center_action_panel_layout")
+
+func _schedule_local_ui_refresh() -> void:
+	if _is_networked_client or _is_real_network_host():
+		call_deferred("_request_ui_refresh")
+		return
+	_local_ui_refresh_pending = true
+
+func _sync_local_scheduled_callbacks() -> void:
+	if _is_networked_client or match_manager == null:
+		return
+	if _local_ui_refresh_pending and not _is_real_network_host():
+		_local_ui_refresh_pending = false
+		_request_ui_refresh()
+	if match_manager.uses_authoritative_priority_flow():
+		return
+	if _deferred_priority_flush_scheduled:
+		_retry_deferred_priority_events()
+	if _priority_recovery_check_scheduled:
+		_run_priority_recovery_check()
+	if _deucalion_prompt_pending and _pending_deucalion_spell != null and _stack_resolution_paused:
+		var has_deucalion_panel := _deucalion_panel != null and is_instance_valid(_deucalion_panel) and _deucalion_panel.visible
+		if not has_deucalion_panel:
+			_begin_deucalion_resolution(_pending_deucalion_spell)
+
 func _process(_delta: float) -> void:
 	if not is_visible_in_tree():
 		return
 	_sync_turn_activity_timers()
+	_sync_local_end_turn_button()
+	_sync_local_scheduled_callbacks()
 	_sync_local_priority_recovery()
 	_sync_sacrifice_cursor()
 	_capture_action_log_message()
@@ -2166,22 +2204,39 @@ func _sync_local_priority_recovery() -> void:
 		return
 	if match_manager.uses_authoritative_priority_flow():
 		return
-	if _priority_recovery_check_scheduled or _executing_stack_action:
+	if _executing_stack_action:
 		return
 	if _stack_resolution_paused:
-		if _has_pending_target_selection() or _has_active_modal_prompt():
-			return
-		if _is_priority_prompt_visible() or _is_intercept_prompt_visible():
-			return
-		_schedule_priority_recovery_check()
+		if _can_auto_resume_paused_stack_resolution():
+			_recover_stalled_priority_state()
 		return
 	if game_manager == null or game_manager.action_stack.is_empty():
 		return
-	if _has_pending_target_selection() or _has_active_modal_prompt():
+	if _has_pending_target_selection():
 		return
 	if _is_priority_prompt_visible() or _is_intercept_prompt_visible():
 		return
-	_schedule_priority_recovery_check()
+	_recover_stalled_priority_state()
+
+func _kick_local_stack_progress() -> void:
+	if _is_networked_client or match_manager == null:
+		return
+	if match_manager.uses_authoritative_priority_flow():
+		_schedule_priority_recovery_check()
+		return
+	if _executing_stack_action:
+		return
+	if _stack_resolution_paused:
+		if _can_auto_resume_paused_stack_resolution():
+			_recover_stalled_priority_state()
+		return
+	if game_manager == null or game_manager.action_stack.is_empty():
+		return
+	if _has_pending_target_selection():
+		return
+	if _is_priority_prompt_visible() or _is_intercept_prompt_visible():
+		return
+	_recover_stalled_priority_state()
 
 func _auto_end_turn_after_move_timeout() -> void:
 	if _game_finished or game_manager == null:
@@ -6324,6 +6379,7 @@ func _queue_magical_action(action_type: int, source_card: Card, target, resoluti
 	var _card_type_label: String = _get_stack_card_type_label(source_card)
 	_set_action_label_text(source_card.card_name + " [" + _card_type_label + "] goes on the stack.")
 	_offer_priority()
+	_kick_local_stack_progress()
 
 func _queue_targeted_ability_action(source_card: Card, target: Card, resolve_callback: Callable, resolution_text: String = "") -> void:
 	if source_card == null or target == null:
@@ -7592,7 +7648,7 @@ func _on_local_player_card_moved(card: Card, from_zone: Zone, to_zone: Zone) -> 
 	_invalidate_cached_board_layouts()
 	var cleared_interaction_refs := _clear_interaction_refs_for_moved_card(card, from_zone, to_zone)
 	if from_zone.is_board_zone() or to_zone.is_board_zone() or cleared_interaction_refs:
-		call_deferred("_request_ui_refresh")
+		_schedule_local_ui_refresh()
 	if _is_networked_client:
 		return
 	if from_zone.zone_type != Zone.ZoneType.HAND:
@@ -7702,7 +7758,8 @@ func _on_card_summoned(player: Player, card: Card, _from_zone: Zone, to_zone: Zo
 		# Hidden summons skip the usual priority follow-up, so queue a refresh
 		# after the summon fully resolves. Otherwise End Turn can stay hidden
 		# until a later click happens to repaint the UI.
-		call_deferred("_request_ui_refresh")
+		_schedule_local_ui_refresh()
+		_kick_local_stack_progress()
 		return
 	if _has_pending_impact_priority_action(card):
 		return
@@ -9260,7 +9317,7 @@ func _resolve_pending_creature_play(card: Card, zone: Zone, mode: String) -> voi
 	# Creature placement can update the board and turn controls across multiple
 	# immediate/deferred steps. Queue one more refresh after the placement has
 	# fully settled so End Turn does not require an extra click to reappear.
-	call_deferred("_request_ui_refresh")
+	_schedule_local_ui_refresh()
 
 func _can_use_zone_after_sacrifice(zone: Zone, sacrificed_card: Card) -> bool:
 	if zone == null or sacrificed_card == null:
@@ -16795,6 +16852,7 @@ func _show_deucalion_prompt(spell: DeucalionsInfants) -> void:
 	add_child(panel)
 	_promote_transient_ui(panel)
 	_deucalion_panel = panel
+	_deucalion_prompt_pending = false
 	panel.anchor_left = 0.5
 	panel.anchor_right = 0.5
 	panel.anchor_top = 0.5
@@ -16855,7 +16913,7 @@ func _queue_deucalion_spell(spell: DeucalionsInfants, friendly_targets: Array[Ca
 	if spell == null:
 		update_ui()
 		return
-	if _is_networked_client:
+	if game_input != null and (_is_networked_client or (match_manager != null and match_manager.uses_authoritative_priority_flow())):
 		var spell_uid: String = spell.get("uid") if "uid" in spell else ""
 		var choices: Array = []
 		for c in friendly_targets:
@@ -16873,17 +16931,26 @@ func _queue_deucalion_resolution(spell: DeucalionsInfants) -> void:
 	if spell == null:
 		update_ui()
 		return
+	if match_manager != null and match_manager.uses_authoritative_priority_flow():
+		_pending_deucalion_spell = spell
+		_deucalion_prompt_pending = true
+		_show_deucalion_prompt(spell)
+		return
 	_queue_hand_spell_with_deferred_resolution(
 		spell,
 		null,
 		"Deucalion's Infants resolves.",
 		func() -> void:
+			_pending_deucalion_spell = spell
+			_deucalion_prompt_pending = true
+			if not _stack_resolution_paused:
+				_pause_stack_resolution(spell.card_owner)
 			_begin_deucalion_resolution(spell)
 	)
 
 func _begin_deucalion_resolution(spell: DeucalionsInfants) -> void:
-	_deucalion_prompt_pending = false
 	if spell == null:
+		_deucalion_prompt_pending = false
 		update_ui()
 		return
 	if not _stack_resolution_paused:
@@ -16898,6 +16965,7 @@ func _begin_deucalion_resolution(spell: DeucalionsInfants) -> void:
 	if friendly_choices.is_empty() and enemy_choices.is_empty() and destroyed_so_far <= 0:
 		spell.resolve_with_choices(game_manager, [], null)
 		_send_used_hand_card_to_graveyard(spell)
+		_deucalion_prompt_pending = false
 		_pending_deucalion_spell = null
 		_resume_after_deferred_resolution(_consume_resolution_feedback("Deucalion's Infants resolved."))
 		return
@@ -17636,6 +17704,20 @@ func _on_match_action_resolved(action: CardAction) -> void:
 		_capture_action_log_message()
 
 	_executing_stack_action = false
+	if action != null \
+			and action.type == CardAction.Type.SPELL \
+			and action.card is DeucalionsInfants \
+			and (_deucalion_prompt_pending or _pending_deucalion_spell == action.card):
+		var deucalion := action.card as DeucalionsInfants
+		var has_deucalion_panel := _deucalion_panel != null and is_instance_valid(_deucalion_panel) and _deucalion_panel.visible
+		if not has_deucalion_panel:
+			_pending_deucalion_spell = deucalion
+			_deucalion_prompt_pending = true
+			if not _stack_resolution_paused:
+				_pause_stack_resolution(deucalion.card_owner)
+			_begin_deucalion_resolution(deucalion)
+			update_ui()
+			return
 	if _stack_resolution_paused:
 		if _humbaba_prompt_paused_resolution \
 				and action != null \
@@ -17756,7 +17838,11 @@ func _on_match_move_validated(move: Dictionary) -> void:
 			if not _is_networked_client and not authoritative_priority:
 				resolve_pending_attack()
 		"play_creature":
-			pass
+			if not _is_networked_client:
+				if authoritative_priority:
+					_schedule_priority_recovery_check()
+				else:
+					_kick_local_stack_progress()
 		"cast_spell":
 			var queued_spell := game_manager.get_card_by_uid(str(move.get("spell_uid", "")))
 			if queued_spell != null:
