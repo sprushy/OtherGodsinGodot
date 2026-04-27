@@ -21,6 +21,7 @@ const AUTH_MODE_GUEST := "guest"
 const AUTH_MODE_LOGIN := "login"
 const AUTH_MODE_REGISTER := "register"
 const SEEK_AUTO_REFRESH_INTERVAL_SECONDS := 3.0
+const FRESH_LOBBY_RECONNECT_DELAY_SECONDS := 0.6
 
 @onready var menu_container = $MenuContainer
 @onready var game_container = $GameContainer
@@ -98,6 +99,8 @@ var _selected_auth_mode: String = AUTH_MODE_GUEST
 var _selected_account_username: String = ""
 var _selected_account_password: String = ""
 var _account_switch_pending: bool = false
+var _account_switch_retry_attempts: int = 0
+var _authenticated_lobby_connect_serial: int = 0
 var _update_check_request: HTTPRequest = null
 var _update_prompt_overlay: Control = null
 var _pending_update_release_version: String = ""
@@ -395,6 +398,16 @@ func _prepare_fresh_lobby_login() -> void:
 	# A fresh sign-in must not reuse reconnect tokens from the previous account session.
 	_lobby_session_id = ""
 	_lobby_reconnect_token = ""
+
+func _cancel_pending_authenticated_lobby_connects() -> void:
+	_authenticated_lobby_connect_serial += 1
+
+func _should_delay_fresh_lobby_connect() -> bool:
+	return lobby_client != null and is_instance_valid(lobby_client)
+
+func _queue_authenticated_lobby_connect(connect_status: String = "Connecting to lobby...") -> void:
+	_authenticated_lobby_connect_serial += 1
+	call_deferred("_deferred_authenticated_lobby_connect", connect_status, _authenticated_lobby_connect_serial)
 
 func _should_reuse_active_lobby_connection(target_lobby_ip: String) -> bool:
 	if _account_switch_pending:
@@ -1167,7 +1180,9 @@ func _on_leave_seek_pressed() -> void:
 	status_label.text = "Leaving seek..."
 	lobby_client.leave_room()
 
-func _connect_to_browseable_lobby(connect_status: String) -> void:
+func _connect_to_browseable_lobby(connect_status: String, connect_serial: int = 0) -> void:
+	if connect_serial > 0 and connect_serial != _authenticated_lobby_connect_serial:
+		return
 	var target_error := _validate_multiplayer_target()
 	if not target_error.is_empty():
 		status_label.text = target_error
@@ -1177,9 +1192,16 @@ func _connect_to_browseable_lobby(connect_status: String) -> void:
 		_run_pending_multiplayer_action()
 		return
 	_prepare_fresh_lobby_login()
-
+	var should_delay_connect := _should_delay_fresh_lobby_connect()
 	_current_lobby_ip = target_lobby_ip
 	_cleanup_lobby_client()
+	_set_connected_server_version("")
+	if should_delay_connect:
+		status_label.text = "Closing previous lobby session..."
+		await get_tree().process_frame
+		await get_tree().create_timer(FRESH_LOBBY_RECONNECT_DELAY_SECONDS).timeout
+		if connect_serial > 0 and connect_serial != _authenticated_lobby_connect_serial:
+			return
 	status_label.text = connect_status
 
 	lobby_client = LobbyClientScript.new()
@@ -1202,7 +1224,9 @@ func _connect_to_browseable_lobby(connect_status: String) -> void:
 	if connect_err != OK:
 		status_label.text = "Could not connect to the lobby."
 
-func _maybe_connect_authenticated_lobby(connect_status: String = "Connecting to lobby...") -> void:
+func _maybe_connect_authenticated_lobby(connect_status: String = "Connecting to lobby...", connect_serial: int = 0) -> void:
+	if connect_serial > 0 and connect_serial != _authenticated_lobby_connect_serial:
+		return
 	if _get_selected_auth_mode() not in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
 		return
 	var auth_error := _validate_auth_inputs()
@@ -1216,12 +1240,16 @@ func _maybe_connect_authenticated_lobby(connect_status: String = "Connecting to 
 	_pending_host_room_creation = false
 	_pending_join_room_id = ""
 	_pending_local_lobby_launch_on_connect_failure = false
-	_connect_to_browseable_lobby(connect_status)
+	_connect_to_browseable_lobby(connect_status, connect_serial)
 
-func _deferred_authenticated_lobby_connect(connect_status: String = "Connecting to lobby...") -> void:
+func _deferred_authenticated_lobby_connect(connect_status: String = "Connecting to lobby...", connect_serial: int = 0) -> void:
+	if connect_serial > 0 and connect_serial != _authenticated_lobby_connect_serial:
+		return
 	if _account_switch_pending:
-		await get_tree().create_timer(0.15).timeout
-	_maybe_connect_authenticated_lobby(connect_status)
+		await get_tree().process_frame
+	if connect_serial > 0 and connect_serial != _authenticated_lobby_connect_serial:
+		return
+	_maybe_connect_authenticated_lobby(connect_status, connect_serial)
 
 func _run_pending_multiplayer_action() -> void:
 	if lobby_client == null:
@@ -2030,6 +2058,8 @@ func _maybe_show_auth_onboarding() -> void:
 
 func _prompt_account_login() -> void:
 	_account_switch_pending = true
+	_account_switch_retry_attempts = 0
+	_cancel_pending_authenticated_lobby_connects()
 	_set_selected_account_username("")
 	if _local_profile_store != null:
 		_local_profile_store.set_preferred_auth_mode(AUTH_MODE_LOGIN)
@@ -2481,7 +2511,9 @@ func _set_auth_onboarding_hint(message: String, is_error: bool = false) -> void:
 func _complete_auth_onboarding(auth_mode: String, message: String) -> void:
 	_set_auth_mode(auth_mode)
 	if auth_mode == AUTH_MODE_GUEST:
+		_cancel_pending_authenticated_lobby_connects()
 		_account_switch_pending = false
+		_account_switch_retry_attempts = 0
 		_apply_guest_display_name("Guest")
 	else:
 		var selected_account_username := _get_selected_account_username()
@@ -2503,7 +2535,7 @@ func _complete_auth_onboarding(auth_mode: String, message: String) -> void:
 		multiplayer_button.grab_focus()
 	_dismiss_auth_onboarding()
 	if auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
-		call_deferred("_deferred_authenticated_lobby_connect", "Signing in to lobby...")
+		_queue_authenticated_lobby_connect("Signing in to lobby...")
 
 func _dismiss_auth_onboarding() -> void:
 	if _auth_onboarding_overlay == null:
@@ -2739,10 +2771,16 @@ func _on_connect_pressed() -> void:
 		status_label.text = "Enter a room code before joining."
 		return
 
+	var should_delay_connect := _should_delay_fresh_lobby_connect()
 	_prepare_fresh_lobby_login()
 	_cleanup_lobby_client()
+	_set_connected_server_version("")
 	_is_local_lobby_host = false
 	_current_lobby_ip = _get_lobby_ip()
+	if should_delay_connect:
+		status_label.text = "Closing previous lobby session..."
+		await get_tree().process_frame
+		await get_tree().create_timer(FRESH_LOBBY_RECONNECT_DELAY_SECONDS).timeout
 	status_label.text = "Connecting to lobby..."
 
 	lobby_client = LobbyClientScript.new()
@@ -2787,8 +2825,14 @@ func _connect_local_host_to_dedicated_lobby() -> void:
 			return
 	var wait_seconds := 0.8 if _spawned_lobby_process_id > 0 else 0.25
 	await get_tree().create_timer(wait_seconds).timeout
+	var should_delay_connect := _should_delay_fresh_lobby_connect()
 	_prepare_fresh_lobby_login()
 	_cleanup_lobby_client()
+	_set_connected_server_version("")
+	if should_delay_connect:
+		status_label.text = "Closing previous lobby session..."
+		await get_tree().process_frame
+		await get_tree().create_timer(FRESH_LOBBY_RECONNECT_DELAY_SECONDS).timeout
 	status_label.text = "Connecting to dedicated lobby..."
 	_write_smoke_trace("host_connecting_to_lobby ip=%s port=%d" % [_current_lobby_ip, _get_configured_lobby_port()])
 	lobby_client = LobbyClientScript.new()
@@ -2865,6 +2909,8 @@ func _on_server_version_updated(version: String) -> void:
 
 func _on_lobby_login_succeeded(session_id: String, reconnect_token: String, player_name: String) -> void:
 	_write_smoke_trace("lobby_login_succeeded session=%s player=%s host=%s" % [session_id, player_name, str(_is_local_lobby_host)])
+	if _retry_account_switch_if_identity_mismatch(player_name):
+		return
 	_set_connected_server_version(lobby_client.current_server_version if lobby_client != null else "")
 	_lobby_session_id = session_id
 	_lobby_reconnect_token = reconnect_token
@@ -2902,6 +2948,8 @@ func _on_lobby_reconnect_succeeded(
 	active_match_info: Dictionary
 ) -> void:
 	_write_smoke_trace("lobby_reconnect_succeeded session=%s player=%s" % [session_id, player_name])
+	if _retry_account_switch_if_identity_mismatch(player_name):
+		return
 	_set_connected_server_version(lobby_client.current_server_version if lobby_client != null else "")
 	_lobby_session_id = session_id
 	_lobby_reconnect_token = reconnect_token
@@ -3344,6 +3392,7 @@ func _capture_logged_in_profile(player_name: String) -> void:
 	if _local_profile_store == null:
 		return
 	_account_switch_pending = false
+	_account_switch_retry_attempts = 0
 	var previous_profile_id := _local_profile_id.strip_edges()
 	var resolved_profile_id := previous_profile_id
 	var resolved_auth_mode := _get_selected_auth_mode()
@@ -3390,6 +3439,29 @@ func _capture_logged_in_profile(player_name: String) -> void:
 	_refresh_profile_summary_from_local_history(_local_profile_id)
 	_update_resume_controls()
 	_refresh_account_identity_label()
+
+func _retry_account_switch_if_identity_mismatch(player_name: String) -> bool:
+	if not _account_switch_pending or lobby_client == null:
+		return false
+	var desired_username := _selected_account_username.strip_edges().to_lower()
+	if desired_username.is_empty():
+		return false
+	var actual_username := str(lobby_client.current_username).strip_edges().to_lower()
+	if actual_username.is_empty():
+		actual_username = player_name.strip_edges().to_lower()
+	if actual_username.is_empty() or actual_username == desired_username:
+		return false
+	if _account_switch_retry_attempts >= 1:
+		return false
+	_account_switch_retry_attempts += 1
+	_write_smoke_trace("account_switch_retry desired=%s actual=%s" % [desired_username, actual_username])
+	_lobby_session_id = ""
+	_lobby_reconnect_token = ""
+	_cleanup_lobby_client()
+	_set_connected_server_version("")
+	status_label.text = "Retrying account switch..."
+	_queue_authenticated_lobby_connect("Retrying account switch...")
+	return true
 
 func _maybe_request_account_decks() -> void:
 	if lobby_client == null:
@@ -4519,7 +4591,7 @@ func _restore_auth_preferences() -> void:
 	_refresh_auth_controls()
 	_refresh_account_identity_label()
 	if auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
-		call_deferred("_maybe_connect_authenticated_lobby", "Restoring lobby session...")
+		_queue_authenticated_lobby_connect("Restoring lobby session...")
 
 func _on_auth_mode_selected(_index: int) -> void:
 	if _auth_mode_option != null and _auth_mode_option.item_count > 0:

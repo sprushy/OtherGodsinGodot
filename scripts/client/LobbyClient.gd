@@ -53,6 +53,7 @@ var _pending_profile_id: String = ""
 var _pending_auth_mode: String = "guest"
 var _pending_password: String = ""
 var _connect_attempt_serial: int = 0
+var _ignore_network_events: bool = false
 
 func _ready() -> void:
 	_ensure_network_manager()
@@ -67,6 +68,7 @@ func connect_to_server(
 	auth_mode: String = "guest",
 	password: String = ""
 ) -> Error:
+	_ignore_network_events = false
 	_is_authenticated = false
 	current_session_id = ""
 	current_reconnect_token = ""
@@ -103,6 +105,8 @@ func connect_to_server(
 	return connect_err
 
 func disconnect_from_server() -> void:
+	_ignore_network_events = true
+	_cancel_connect_attempt_timeout()
 	_is_authenticated = false
 	current_session_id = ""
 	current_reconnect_token = ""
@@ -113,6 +117,12 @@ func disconnect_from_server() -> void:
 	current_room_snapshot = {}
 	current_active_match_info = {}
 	current_preferred_account_deck_id = ""
+	_pending_player_name = "Guest"
+	_pending_session_id = ""
+	_pending_reconnect_token = ""
+	_pending_profile_id = ""
+	_pending_auth_mode = "guest"
+	_pending_password = ""
 	_set_current_server_version("")
 	if network_manager != null:
 		network_manager.disconnect_client()
@@ -263,6 +273,9 @@ func lobby_event(message: Dictionary) -> void:
 
 func _on_connected_to_server() -> void:
 	_cancel_connect_attempt_timeout()
+	if _ignore_network_events:
+		_trace("ignoring connected_to_server after disconnect")
+		return
 	_trace("connected to server")
 	connected_to_lobby.emit()
 	if not _pending_session_id.is_empty() and not _pending_reconnect_token.is_empty():
@@ -292,6 +305,9 @@ func _on_connected_to_server() -> void:
 
 func _on_connection_failed() -> void:
 	_cancel_connect_attempt_timeout()
+	if _ignore_network_events:
+		_trace("ignoring connection_failed after disconnect")
+		return
 	_is_authenticated = false
 	current_session_id = ""
 	current_reconnect_token = ""
@@ -308,6 +324,9 @@ func _on_connection_failed() -> void:
 
 func _on_server_disconnected() -> void:
 	_cancel_connect_attempt_timeout()
+	if _ignore_network_events:
+		_trace("ignoring server_disconnected after disconnect")
+		return
 	_is_authenticated = false
 	current_session_id = ""
 	current_reconnect_token = ""
@@ -365,6 +384,8 @@ func _ensure_network_manager() -> void:
 		network_manager.game_event_received.connect(_on_network_game_event_received)
 
 func _on_network_game_event_received(event_type: String, data: Dictionary) -> void:
+	if _ignore_network_events:
+		return
 	if event_type != LOBBY_EVENT_TYPE:
 		return
 	lobby_event(data)
