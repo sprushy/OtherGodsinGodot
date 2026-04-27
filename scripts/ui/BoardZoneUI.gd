@@ -1097,11 +1097,11 @@ func _make_tiamat_slot_card_preview(slot_card: Card, rect: Rect2, z_order: int) 
 
 	var level_badge := PanelContainer.new()
 	level_badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	level_badge.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
-	level_badge.offset_left = -28
-	level_badge.offset_top = -20
-	level_badge.offset_right = -4
-	level_badge.offset_bottom = -4
+	level_badge.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	level_badge.offset_left = 4
+	level_badge.offset_top = 4
+	level_badge.offset_right = 28
+	level_badge.offset_bottom = 20
 
 	var badge_style := StyleBoxFlat.new()
 	badge_style.bg_color = Color(0.12, 0.09, 0.04, 0.92)
@@ -1115,7 +1115,7 @@ func _make_tiamat_slot_card_preview(slot_card: Card, rect: Rect2, z_order: int) 
 	level_badge.add_theme_stylebox_override("panel", badge_style)
 
 	var level_label := Label.new()
-	level_label.text = str(slot_card.level) if slot_card != null else "?"
+	level_label.text = str(slot_card.get_effective_level()) if slot_card != null else "?"
 	level_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	level_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	level_label.add_theme_font_size_override("font_size", 11)
@@ -1558,6 +1558,8 @@ func _is_card_pending_intercepting_followers_attack(card: Card) -> bool:
 func _is_card_waiting_on_priority(card: Card) -> bool:
 	if card == null or game_manager == null:
 		return false
+	if _is_hidden_board_card_for_priority_visuals(card):
+		return false
 	if game_manager.action_stack.is_empty():
 		return false
 	var top_action: CardAction = game_manager.action_stack.back()
@@ -1605,8 +1607,17 @@ func _is_card_intercepting_followers_attack(card: Card) -> bool:
 			return true
 	return false
 
+func _is_hidden_board_card_for_priority_visuals(card: Card) -> bool:
+	if card == null:
+		return false
+	return card.current_zone != null \
+		and card.current_zone.is_board_zone() \
+		and (card.is_face_down or card.is_stealth or card.is_prepared)
+
 func _is_card_usable_for_priority(card: Card) -> bool:
 	if card == null or game_manager == null:
+		return false
+	if _is_hidden_board_card_for_priority_visuals(card):
 		return false
 	return game_manager.can_card_respond_to_priority(card, game_manager.priority_player)
 

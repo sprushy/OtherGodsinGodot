@@ -1,7 +1,8 @@
-$godot = 'C:\Users\spaul\Downloads\Godot_v4.6.1-stable_win64.exe\Godot_v4.6.1-stable_win64.exe'
-$project = 'C:\Users\spaul\Documents\other-godsin-godot-main'
-$tmp = Join-Path $project 'scripts\tmp'
+$tmp = $PSScriptRoot
 . (Join-Path $tmp 'GodotPortableEnv.ps1')
+$project = Get-GodotProjectRoot
+$godot = Resolve-GodotExecutable
+$tmp = Join-Path $project 'scripts\tmp'
 $null = Set-GodotPortableEnvironment -ProjectRoot $project
 
 function Get-SmokeStatus {

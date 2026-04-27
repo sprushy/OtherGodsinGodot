@@ -7,7 +7,7 @@ func _init() -> void:
 	super._init()
 	card_name = "Spell Demolition"
 	level = 3
-	mana_cost = 2
+	mana_cost = 1
 	speed = 3
 	culture = "Neutral"
 	card_types = ["Destruction", "Magical"]

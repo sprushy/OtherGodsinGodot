@@ -216,6 +216,9 @@ var _sacrifice_pending_card: Card = null
 var _sacrifice_pending_zone: Zone = null
 var _sacrifice_pending_mode: String = ""
 var _sacrifice_remaining: int = 0
+var _pending_creature_summon_cost_card: Card = null
+var _pending_creature_summon_cost_required: int = 0
+var _pending_creature_summon_cost_paid: int = 0
 var _drag_sacrifice_done: bool = false
 var _awaiting_drag_sacrifice_zone: bool = false
 var _drag_sacrifice_card: Card = null
@@ -239,6 +242,7 @@ var _pending_book_of_life_spell: BookOfLife = null
 var _pending_deucalion_spell: DeucalionsInfants = null
 var _pending_deucalion_friendly_targets: Array[Card] = []
 var _deucalion_panel: Control = null
+var _deucalion_prompt_pending: bool = false
 var _overlay_card_selected: Callable = Callable()
 var _pending_absence_spell: Absence = null
 var _pending_absence_target: Card = null
@@ -514,7 +518,7 @@ func _can_activate_before_turn_choice(card: Card) -> bool:
 	return false
 
 func _reject_pre_turn_action() -> void:
-	action_label.text = "Finish resolving upkeep before taking other actions."
+	_set_action_label_text("Finish resolving upkeep before taking other actions.")
 
 func _has_active_modal_prompt() -> bool:
 	return (_zone_overlay != null and is_instance_valid(_zone_overlay)) \
@@ -526,11 +530,12 @@ func _has_active_modal_prompt() -> bool:
 		or (_hati_prompt_panel != null and is_instance_valid(_hati_prompt_panel)) \
 		or (_skoll_prompt_panel != null and is_instance_valid(_skoll_prompt_panel)) \
 		or (_kur_jara_prompt_panel != null and is_instance_valid(_kur_jara_prompt_panel)) \
+		or _deucalion_prompt_pending \
 		or (_deucalion_panel != null and is_instance_valid(_deucalion_panel)) \
 		or (_pause_menu_overlay != null and is_instance_valid(_pause_menu_overlay))
 
 func _reject_modal_prompt_action() -> void:
-	action_label.text = "Finish resolving the current prompt before taking other actions."
+	_set_action_label_text("Finish resolving the current prompt before taking other actions.")
 
 func _promote_transient_ui(control: Control, overlay_z_index: int = TRANSIENT_UI_Z_INDEX) -> void:
 	if control == null:
@@ -819,7 +824,7 @@ func _show_next_mummu_entropy_prompt() -> void:
 	panel.offset_top = -60
 	panel.offset_bottom = 60
 	
-	action_label.text = "Entropy: Choose Prime or Shelve for " + victim.card_name + "."
+	_set_action_label_text("Entropy: Choose Prime or Shelve for " + victim.card_name + ".")
 	update_ui()
 
 func _resolve_mummu_entropy_prompt(choice: String) -> void:
@@ -843,7 +848,7 @@ func _resolve_mummu_entropy_prompt(choice: String) -> void:
 			update_ui()
 			return
 		var feedback := (mummu as MummuActive).resolve_entropy_choice(game_manager, victim, choice)
-		action_label.text = feedback
+		_set_action_label_text(feedback)
 		update_ui()
 		_show_next_mummu_entropy_prompt()
 		return
@@ -951,7 +956,7 @@ func _show_nusku_active_core_flame_prompt(
 	panel.offset_right = 210
 	panel.offset_top = -90
 	panel.offset_bottom = 90
-	action_label.text = "Core Flame: choose how " + card.card_name + " resolves."
+	_set_action_label_text("Core Flame: choose how " + card.card_name + " resolves.")
 	update_ui()
 
 func _resolve_nusku_active_core_flame_prompt(chosen_card: Card = null, decline: bool = false) -> void:
@@ -969,7 +974,7 @@ func _resolve_nusku_active_core_flame_prompt(chosen_card: Card = null, decline: 
 		update_ui()
 		return
 	var feedback := card.resolve_core_flame(game_manager, chosen_card, decline)
-	action_label.text = feedback
+	_set_action_label_text(feedback)
 	update_ui()
 
 func _hide_nusku_active_core_flame_prompt() -> void:
@@ -1002,9 +1007,9 @@ func _resolve_doorway_destination(send_to_abyss: bool) -> void:
 	game_manager.resolve_pending_doorway_choice(send_to_abyss)
 	if structure != null:
 		if send_to_abyss:
-			action_label.text = "%s chooses to send %s to the abyss." % [structure.card_owner.player_name, card.card_name]
+			_set_action_label_text("%s chooses to send %s to the abyss." % [structure.card_owner.player_name, card.card_name])
 		else:
-			action_label.text = "%s chooses to send %s to the graveyard." % [structure.card_owner.player_name, card.card_name]
+			_set_action_label_text("%s chooses to send %s to the graveyard." % [structure.card_owner.player_name, card.card_name])
 	if _stack_resolution_paused and game_manager != null and not game_manager.has_pending_doorway_choice():
 		_resume_after_deferred_resolution(_consume_resolution_feedback(action_label.text))
 	update_ui()
@@ -1137,7 +1142,7 @@ func _queue_sharur_escape_prompt(card: Card, reason: String) -> void:
 	panel.offset_top = -72
 	panel.offset_bottom = 72
 
-	action_label.text = info.text
+	_set_action_label_text(info.text)
 	update_ui()
 
 func _hide_sharur_escape_prompt() -> void:
@@ -1202,7 +1207,7 @@ func _show_wheel_of_fire_turn_start_prompt(card: WheelOfFire) -> void:
 	panel.offset_top = -72
 	panel.offset_bottom = 72
 
-	action_label.text = info.text
+	_set_action_label_text(info.text)
 	update_ui()
 
 func _hide_wheel_of_fire_turn_start_prompt(clear_active: bool = true) -> void:
@@ -1281,7 +1286,7 @@ func _finish_wheel_of_fire_turn_start_sequence() -> void:
 		return
 	if _is_networked_client:
 		if feedback.strip_edges() != "":
-			action_label.text = feedback
+			_set_action_label_text(feedback)
 		update_ui()
 		return
 	_queue_standard_turn_start_priority(feedback)
@@ -1300,7 +1305,7 @@ func _finish_wolf_adolescent_turn_start_sequence() -> void:
 		return
 	if _is_networked_client:
 		if feedback.strip_edges() != "":
-			action_label.text = feedback
+			_set_action_label_text(feedback)
 		_request_ui_refresh()
 		update_ui()
 		return
@@ -1309,7 +1314,7 @@ func _finish_wolf_adolescent_turn_start_sequence() -> void:
 
 func _continue_after_upkeep_choice(feedback: String) -> void:
 	if _is_networked_client:
-		action_label.text = feedback
+		_set_action_label_text(feedback)
 		update_ui()
 		return
 	if _active_wolf_adolescent_prompt != null or not _pending_wolf_adolescent_prompts.is_empty():
@@ -1352,7 +1357,7 @@ func _resolve_sharur_escape_prompt(pay_cost: bool) -> void:
 		_resume_after_deferred_resolution(feedback)
 		return
 	if feedback.strip_edges() != "":
-		action_label.text = feedback
+		_set_action_label_text(feedback)
 	update_ui()
 
 func _on_doorway_choice_requested(structure: DoorwayToTheVoid, card: Card, combat_death: bool, destruction: bool) -> void:
@@ -1568,7 +1573,7 @@ func _show_target_cancel_prompt() -> void:
 	keep_btn.text = "Keep Selecting"
 	keep_btn.pressed.connect(func() -> void:
 		_hide_devour_cancel_prompt()
-		action_label.text = _get_target_keep_selecting_text()
+		_set_action_label_text(_get_target_keep_selecting_text())
 		update_ui()
 	)
 	buttons.add_child(keep_btn)
@@ -1934,7 +1939,7 @@ func _sync_priority_prompt_timeout() -> void:
 	if _now_msec() < _priority_prompt_idle_deadline_msec:
 		return
 	_priority_prompt_timeout_pending = true
-	action_label.text = "Priority timed out. Passing."
+	_set_action_label_text("Priority timed out. Passing.")
 	update_ui()
 	call_deferred("_on_priority_pass_pressed")
 
@@ -2066,12 +2071,12 @@ func _maybe_warn_about_move_timer(remaining_msec: int) -> void:
 		return
 	if remaining_msec <= MOVE_TIMEOUT_CRITICAL_WARNING_MSEC and _move_timer_warning_stage < 2:
 		_move_timer_warning_stage = 2
-		action_label.text = "10 seconds left to act or your turn will end."
+		_set_action_label_text("10 seconds left to act or your turn will end.")
 		update_ui()
 		return
 	if remaining_msec <= MOVE_TIMEOUT_WARNING_MSEC and _move_timer_warning_stage < 1:
 		_move_timer_warning_stage = 1
-		action_label.text = "30 seconds left to act."
+		_set_action_label_text("30 seconds left to act.")
 		update_ui()
 
 func _format_move_timer_clock(remaining_msec: int) -> String:
@@ -2150,7 +2155,7 @@ func _sync_turn_activity_timers() -> void:
 	if _move_timer_running and remaining_msec <= 0 and not _move_timer_timeout_pending:
 		_move_timer_timeout_pending = true
 		_pause_move_timer(now_msec)
-		action_label.text = "Move timer expired. Ending turn."
+		_set_action_label_text("Move timer expired. Ending turn.")
 		update_ui()
 		call_deferred("_auto_end_turn_after_move_timeout")
 
@@ -2256,6 +2261,12 @@ func _update_side_panel_layout() -> void:
 	right_top_spacer.size_flags_vertical = 0
 	right_bottom_spacer.custom_minimum_size.y = 0.0
 	right_bottom_spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
+
+func _set_action_label_text(message, force_log: bool = false) -> void:
+	if action_label == null:
+		return
+	action_label.text = str(message)
+	_capture_action_log_message(force_log)
 
 func _capture_action_log_message(force: bool = false) -> void:
 	if action_label == null:
@@ -2522,7 +2533,7 @@ func start_game(
 		game_manager.feedback_viewer = game_manager.players[0]
 	if _is_networked_client:
 		_awaiting_initial_full_state = true
-		action_label.text = "Joining match. Waiting for server state..."
+		_set_action_label_text("Joining match. Waiting for server state...")
 		update_ui()
 		_update_waiting_overlay()
 		return
@@ -2563,7 +2574,7 @@ func _prepare_for_match_launch(status_message: String = "Connecting to match..."
 	_pending_equip_actor = null
 	_pending_equip_target = null
 	_pending_equip_action = ""
-	action_label.text = status_message
+	_set_action_label_text(status_message)
 	_refresh_turn_label()
 	_refresh_side_stats()
 	_detach_container_children(board_container)
@@ -2723,7 +2734,7 @@ func _restore_turn_choice_after_skoll_prompt() -> void:
 	_clear_skoll_upkeep_summon()
 	_refresh_turn_choice_options()
 	if _is_turn_choice_pending():
-		action_label.text = "Choose an upkeep option."
+		_set_action_label_text("Choose an upkeep option.")
 
 func _can_interact_with_board_during_turn_choice(card: Card = null) -> bool:
 	if _pending_hati_summon != null:
@@ -3038,7 +3049,7 @@ func _sync_blot_sacrifice_prompt_state() -> void:
 		return
 	if _pending_blot_selected_creatures.is_empty():
 		_hide_blot_sacrifice_prompt()
-		action_label.text = "Blot Sacrifice: no more creatures to summon."
+		_set_action_label_text("Blot Sacrifice: no more creatures to summon.")
 		return
 	_on_blot_sacrifice_confirm_pressed()
 
@@ -3098,7 +3109,7 @@ func _get_blot_selection_summary() -> String:
 	]
 
 func _show_blot_hand_selection_feedback() -> void:
-	action_label.text = "Blot Sacrifice: click a green creature in hand."
+	_set_action_label_text("Blot Sacrifice: click a green creature in hand.")
 	update_ui()
 
 func _try_handle_blot_prompt_card_input(card: Card) -> bool:
@@ -3116,31 +3127,31 @@ func _try_add_creature_to_blot(card: Card) -> bool:
 	if card.current_zone != game_manager.current_player.hand_zone:
 		return true
 	if card.card_type != Card.CardType.CREATURE or card.is_god:
-		action_label.text = "Blot Sacrifice: click a green creature in hand."
+		_set_action_label_text("Blot Sacrifice: click a green creature in hand.")
 		update_ui()
 		return true
 
 	_sanitize_blot_selected_creatures()
 	var available_slots: int = spell.get_available_summon_zones().size()
 	if _pending_blot_selected_creatures.size() >= available_slots:
-		action_label.text = "Blot Sacrifice has no remaining summon slots."
+		_set_action_label_text("Blot Sacrifice has no remaining summon slots.")
 		update_ui()
 		return true
 
 	var valid_choices: Array[Card] = _get_blot_valid_choices(spell)
 	if card in _pending_blot_selected_creatures:
 		_pending_blot_selected_creatures.erase(card)
-		action_label.text = card.card_name + " removed from Blot Sacrifice."
+		_set_action_label_text(card.card_name + " removed from Blot Sacrifice.")
 		_show_blot_creature_prompt()
 		update_ui()
 		return true
 	if card not in valid_choices:
-		action_label.text = card.card_name + " is not summonable by Blot Sacrifice right now."
+		_set_action_label_text(card.card_name + " is not summonable by Blot Sacrifice right now.")
 		update_ui()
 		return true
 
 	_pending_blot_selected_creatures.append(card)
-	action_label.text = card.card_name + " added to Blot Sacrifice."
+	_set_action_label_text(card.card_name + " added to Blot Sacrifice.")
 	if _blot_has_more_summonable_creatures(spell):
 		_show_blot_creature_prompt()
 	else:
@@ -4346,7 +4357,7 @@ func _complete_power_unlock(power: PowerCard) -> void:
 		game_input.submit_action({type = "unlock_power", power_uid = power.uid})
 		return
 	power.unlock(game_manager)
-	action_label.text = power.card_name + " unlocked!"
+	_set_action_label_text(power.card_name + " unlocked!")
 	update_ui()
 
 func _is_tiamat_power_slot(zone: Zone) -> bool:
@@ -4556,14 +4567,14 @@ func _on_power_pressed(power: PowerCard) -> void:
 		_cast_targeted_spell(selected_card, power)
 		return
 	if power is DivineCaprice and not power.can_unlock(game_manager) and not power.can_activate(game_manager):
-		action_label.text = _get_activation_unavailable_text(power, power.card_name + " cannot activate right now.")
+		_set_action_label_text(_get_activation_unavailable_text(power, power.card_name + " cannot activate right now."))
 		return
 	if power.can_unlock(game_manager):
 		if power.requires_chosen_hand_discards() and not power.has_pending_chosen_discards_for_cost():
 			var on_confirm_power_unlock := func() -> void:
 				_complete_power_unlock(power)
 			var on_cancel_power_unlock := func() -> void:
-				action_label.text = "Cancelled " + power.card_name + "."
+				_set_action_label_text("Cancelled " + power.card_name + ".")
 				update_ui()
 			_prompt_chosen_hand_discards(
 				power,
@@ -4628,7 +4639,7 @@ func _on_power_pressed(power: PowerCard) -> void:
 		elif power.has_method("get_valid_targets"):
 			var targets: Array = power.get_valid_targets(game_manager)
 			if targets.is_empty():
-				action_label.text = power.card_name + " has no valid targets right now."
+				_set_action_label_text(power.card_name + " has no valid targets right now.")
 				update_ui()
 				return
 			var on_choose_power_target := func(chosen_card: Card) -> void:
@@ -4655,19 +4666,19 @@ func _on_power_pressed(power: PowerCard) -> void:
 			)
 	else:
 		if power.is_face_down:
-			action_label.text = power.get_unlock_failure_reason(game_manager)
+			_set_action_label_text(power.get_unlock_failure_reason(game_manager))
 			return
 		if not power.is_muted and not power.is_activation_locked(game_manager):
-			action_label.text = _get_activation_unavailable_text(power, power.card_name + " cannot activate right now.")
+			_set_action_label_text(_get_activation_unavailable_text(power, power.card_name + " cannot activate right now."))
 			return
 		if power.is_muted:
-			action_label.text = power.card_name + " is muted for " + str(power.mute_turns_remaining) + " more turn(s)."
+			_set_action_label_text(power.card_name + " is muted for " + str(power.mute_turns_remaining) + " more turn(s).")
 		elif power.is_activation_locked(game_manager):
-			action_label.text = power.card_name + " cannot be activated this turn."
+			_set_action_label_text(power.card_name + " cannot be activated this turn.")
 		elif power.is_face_down:
-			action_label.text = power.card_name + " ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â needs " + str(power.mana_cost) + " mana to unlock."
+			_set_action_label_text(power.card_name + " ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â needs " + str(power.mana_cost) + " mana to unlock.")
 		else:
-			action_label.text = power.card_name + " ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â cannot activate right now."
+			_set_action_label_text(power.card_name + " ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â cannot activate right now.")
 
 func _show_breidablik_prompt(power: Breidablik) -> void:
 	_hide_breidablik_prompt()
@@ -4677,7 +4688,7 @@ func _show_breidablik_prompt(power: Breidablik) -> void:
 	var can_store: bool = not power.get_valid_field_priests(game_manager).is_empty()
 	var can_return: bool = power.can_return_priest(game_manager)
 	if not can_store and not can_return:
-		action_label.text = power.card_name + " has no valid Priest action right now."
+		_set_action_label_text(power.card_name + " has no valid Priest action right now.")
 		update_ui()
 		return
 	var on_choose_stored_priest := func(selected_priest: Card) -> void:
@@ -4956,26 +4967,26 @@ func _on_divine_caprice_zone_pressed(zone: Zone) -> void:
 		return
 	if _pending_divine_caprice_selected_zone == null:
 		if not _divine_caprice_source_has_target(zone):
-			action_label.text = _get_divine_caprice_zone_title(zone) + " cannot be moved."
+			_set_action_label_text(_get_divine_caprice_zone_title(zone) + " cannot be moved.")
 			return
 		_pending_divine_caprice_selected_zone = zone
-		action_label.text = power.card_name + ": selected " + _get_divine_caprice_zone_title(zone) + "."
+		_set_action_label_text(power.card_name + ": selected " + _get_divine_caprice_zone_title(zone) + ".")
 		_show_divine_caprice_prompt(power)
 		return
 	if zone == _pending_divine_caprice_selected_zone:
 		_pending_divine_caprice_selected_zone = null
-		action_label.text = power.card_name + ": selection cleared."
+		_set_action_label_text(power.card_name + ": selection cleared.")
 		_show_divine_caprice_prompt(power)
 		return
 	if not _divine_caprice_can_target_zone(_pending_divine_caprice_selected_zone, zone):
-		action_label.text = "Choose another legal friendly board slot for Divine Caprice."
+		_set_action_label_text("Choose another legal friendly board slot for Divine Caprice.")
 		return
 	_pending_divine_caprice_plan.append({
 		"source_zone": _pending_divine_caprice_selected_zone,
 		"target_zone": zone
 	})
 	_apply_divine_caprice_virtual_swap(_pending_divine_caprice_selected_zone, zone)
-	action_label.text = power.card_name + ": planned " + _get_divine_caprice_zone_title(_pending_divine_caprice_selected_zone) + " -> " + _get_divine_caprice_zone_title(zone) + "."
+	_set_action_label_text(power.card_name + ": planned " + _get_divine_caprice_zone_title(_pending_divine_caprice_selected_zone) + " -> " + _get_divine_caprice_zone_title(zone) + ".")
 	_pending_divine_caprice_selected_zone = null
 	_show_divine_caprice_prompt(power)
 
@@ -5007,7 +5018,7 @@ func _on_divine_caprice_confirm_pressed() -> void:
 func _on_divine_caprice_cancel_pressed() -> void:
 	var power := _pending_divine_caprice_power
 	_hide_divine_caprice_prompt()
-	action_label.text = "Cancelled " + (power.card_name if power != null else "Divine Caprice") + "."
+	_set_action_label_text("Cancelled " + (power.card_name if power != null else "Divine Caprice") + ".")
 	update_ui()
 
 func _hide_breidablik_prompt() -> void:
@@ -5025,7 +5036,7 @@ func _show_e2_abzu_prompt(structure: E2Abzu) -> void:
 	var can_return := not void_targets.is_empty()
 	var can_void := not field_targets.is_empty()
 	if not can_return and not can_void:
-		action_label.text = structure.card_name + " has no valid ability targets right now."
+		_set_action_label_text(structure.card_name + " has no valid ability targets right now.")
 		update_ui()
 		return
 
@@ -5201,7 +5212,7 @@ func _show_skoll_prompt(skoll: Skoll) -> void:
 	panel.offset_top = -105
 	panel.offset_bottom = 105
 	_skoll_prompt_panel = panel
-	action_label.text = "Sun Hunt: choose how to summon Skoll."
+	_set_action_label_text("Sun Hunt: choose how to summon Skoll.")
 
 func _begin_skoll_upkeep_summon(skoll: Skoll, mode: String) -> void:
 	if skoll == null or not skoll.can_use_upkeep_summon(game_manager):
@@ -5210,7 +5221,7 @@ func _begin_skoll_upkeep_summon(skoll: Skoll, mode: String) -> void:
 	_hide_skoll_prompt()
 	_pending_skoll_summon = skoll
 	_pending_skoll_mode = mode
-	action_label.text = "Skoll: choose an empty friendly zone to summon in " + mode.to_upper() + "."
+	_set_action_label_text("Skoll: choose an empty friendly zone to summon in " + mode.to_upper() + ".")
 	update_ui()
 
 func _resolve_skoll_upkeep_summon(zone: Zone) -> void:
@@ -5221,7 +5232,7 @@ func _resolve_skoll_upkeep_summon(zone: Zone) -> void:
 		update_ui()
 		return
 	if zone == null or zone.zone_owner != game_manager.current_player or zone.zone_type not in [Zone.ZoneType.FRONTLINE, Zone.ZoneType.RESERVE] or not zone.cards.is_empty():
-		action_label.text = "Skoll: choose an empty friendly zone."
+		_set_action_label_text("Skoll: choose an empty friendly zone.")
 		update_ui()
 		return
 	selected_card = null
@@ -5251,7 +5262,7 @@ func _skip_current_skoll_prompt() -> void:
 
 func _resolve_skoll_upkeep_creature_play(card: Card, zone: Zone, mode: String) -> void:
 	if card == null or zone == null or game_manager == null:
-		action_label.text = "Skoll could not be summoned right now."
+		_set_action_label_text("Skoll could not be summoned right now.")
 		_restore_turn_choice_after_skoll_prompt()
 		return
 	_queued_skoll_turn_start_summon = card as Skoll
@@ -5372,7 +5383,7 @@ func _show_hati_prompt(hati: Hati) -> void:
 	panel.offset_right = 220
 	panel.offset_top = -90
 	panel.offset_bottom = 90
-	action_label.text = "Moon Hunt: choose how to summon Hati."
+	_set_action_label_text("Moon Hunt: choose how to summon Hati.")
 
 func _begin_hati_moon_hunt(hati: Hati, mode: String) -> void:
 	if hati == null or not hati.can_use_moon_hunt_summon(game_manager):
@@ -5382,14 +5393,14 @@ func _begin_hati_moon_hunt(hati: Hati, mode: String) -> void:
 	_pending_hati_summon = hati
 	_pending_hati_mode = mode
 	_pending_hati_sacrifice = null
-	action_label.text = "Hati: choose a friendly creature to sacrifice for Moon Hunt."
+	_set_action_label_text("Hati: choose a friendly creature to sacrifice for Moon Hunt.")
 	update_ui()
 
 func _resolve_hati_prompt_decline() -> void:
 	if _active_hati_prompt != null and is_instance_valid(_active_hati_prompt) and _active_hati_prompt not in _declined_hati_prompts:
 		_declined_hati_prompts.append(_active_hati_prompt)
 	_hide_hati_prompt()
-	action_label.text = "Moon Hunt declined."
+	_set_action_label_text("Moon Hunt declined.")
 	update_ui()
 	_show_next_hati_prompt()
 
@@ -5397,11 +5408,11 @@ func _select_hati_moon_hunt_sacrifice(card: Card) -> void:
 	if _pending_hati_summon == null:
 		return
 	if card == null or not _pending_hati_summon.is_valid_moon_hunt_sacrifice(card):
-		action_label.text = "Hati: choose one of your sacrificable creatures."
+		_set_action_label_text("Hati: choose one of your sacrificable creatures.")
 		update_ui()
 		return
 	_pending_hati_sacrifice = card
-	action_label.text = "Hati: choose an empty friendly zone to summon in " + _pending_hati_mode.to_upper() + "."
+	_set_action_label_text("Hati: choose an empty friendly zone to summon in " + _pending_hati_mode.to_upper() + ".")
 	update_ui()
 
 func _resolve_hati_moon_hunt(zone: Zone) -> void:
@@ -5413,11 +5424,11 @@ func _resolve_hati_moon_hunt(zone: Zone) -> void:
 		update_ui()
 		return
 	if sacrifice_target == null:
-		action_label.text = "Hati: choose a friendly creature to sacrifice first."
+		_set_action_label_text("Hati: choose a friendly creature to sacrifice first.")
 		update_ui()
 		return
 	if zone == null or zone.zone_owner != game_manager.current_player or zone.zone_type not in [Zone.ZoneType.FRONTLINE, Zone.ZoneType.RESERVE] or not zone.cards.is_empty():
-		action_label.text = "Hati: choose an empty friendly zone."
+		_set_action_label_text("Hati: choose an empty friendly zone.")
 		update_ui()
 		return
 
@@ -5437,14 +5448,14 @@ func _resolve_hati_moon_hunt(zone: Zone) -> void:
 			mode = mode
 		})
 		_clear_hati_moon_hunt_state()
-		action_label.text = "Moon Hunt sent. Finishing end turn..."
+		_set_action_label_text("Moon Hunt sent. Finishing end turn...")
 		update_ui()
 		return
 	if not hati.resolve_moon_hunt_summon(game_manager, zone, sacrifice_target, summon_mode, stealth):
-		action_label.text = "Moon Hunt fizzles: Hati could not be summoned."
+		_set_action_label_text("Moon Hunt fizzles: Hati could not be summoned.")
 		update_ui()
 		return
-	action_label.text = "Moon Hunt resolved. Hati was summoned."
+	_set_action_label_text("Moon Hunt resolved. Hati was summoned.")
 
 	_clear_hati_moon_hunt_state()
 	update_ui()
@@ -5466,7 +5477,7 @@ func _queue_skoll_turn_start_priority() -> void:
 	var skoll := _queued_skoll_turn_start_summon
 	if skoll == null or game_manager == null:
 		_clear_queued_skoll_turn_start_summon()
-		action_label.text = "Sun Hunt could not be queued."
+		_set_action_label_text("Sun Hunt could not be queued.")
 		update_ui()
 		return
 	var resolve_sun_hunt := func() -> void:
@@ -5478,14 +5489,14 @@ func _queue_skoll_turn_start_priority() -> void:
 		resolve_sun_hunt,
 		game_manager.current_player
 	)
-	action_label.text = "Sun Hunt chosen. Resolve start-of-turn priority to summon Skoll."
+	_set_action_label_text("Sun Hunt chosen. Resolve start-of-turn priority to summon Skoll.")
 
 func _queue_standard_turn_start_priority(feedback_text: String = "") -> void:
 	if game_manager == null:
 		return
 	var resolve_turn_start := func() -> void:
 		if feedback_text.strip_edges() != "":
-			action_label.text = feedback_text
+			_set_action_label_text(feedback_text)
 			update_ui()
 	_queue_priority_event(
 		"start_turn",
@@ -5503,15 +5514,15 @@ func _resolve_queued_skoll_turn_start_summon() -> void:
 	var mode := _queued_skoll_turn_start_mode
 	_clear_queued_skoll_turn_start_summon()
 	if skoll == null or zone == null or game_manager == null:
-		action_label.text = "Sun Hunt fizzles."
+		_set_action_label_text("Sun Hunt fizzles.")
 		update_ui()
 		return
 	if not skoll.can_use_upkeep_summon(game_manager):
-		action_label.text = "Sun Hunt fizzles: Skoll is no longer available."
+		_set_action_label_text("Sun Hunt fizzles: Skoll is no longer available.")
 		update_ui()
 		return
 	if zone.zone_owner != game_manager.current_player or zone.zone_type not in [Zone.ZoneType.FRONTLINE, Zone.ZoneType.RESERVE] or not zone.cards.is_empty():
-		action_label.text = "Sun Hunt fizzles: the chosen zone is no longer open."
+		_set_action_label_text("Sun Hunt fizzles: the chosen zone is no longer open.")
 		update_ui()
 		return
 	var summon_mode: Card.CreatureMode = Card.CreatureMode.DEFENSIVE
@@ -5530,11 +5541,11 @@ func _resolve_queued_skoll_turn_start_summon() -> void:
 		false
 	)
 	if not success:
-		action_label.text = "Sun Hunt fizzles: Skoll could not be summoned."
+		_set_action_label_text("Sun Hunt fizzles: Skoll could not be summoned.")
 		update_ui()
 		return
 	skoll.apply_upkeep_summon_tax(game_manager)
-	action_label.text = "Sun Hunt resolved. Skoll was summoned, and all other summoning costs 2 additional mana this turn."
+	_set_action_label_text("Sun Hunt resolved. Skoll was summoned, and all other summoning costs 2 additional mana this turn.")
 	update_ui()
 
 func _clear_queued_skoll_turn_start_summon() -> void:
@@ -5551,17 +5562,17 @@ func _on_sun_hunt_button_pressed() -> void:
 	if _game_finished:
 		return
 	if game_manager == null or not game_manager.is_player_in_upkeep_window(game_manager.current_player):
-		action_label.text = "Upkeep has already been resolved."
+		_set_action_label_text("Upkeep has already been resolved.")
 		update_ui()
 		hide_turn_choice()
 		return
 	if _skoll_prompt_panel != null or _pending_skoll_summon != null:
-		action_label.text = "Finish resolving Sun Hunt or cancel it before choosing another upkeep option."
+		_set_action_label_text("Finish resolving Sun Hunt or cancel it before choosing another upkeep option.")
 		return
 	var available_skolls := _get_available_skoll_upkeep_cards()
 	if available_skolls.is_empty():
 		_refresh_turn_choice_options()
-		action_label.text = "Sun Hunt is not available right now."
+		_set_action_label_text("Sun Hunt is not available right now.")
 		update_ui()
 		return
 	_hide_skoll_prompt()
@@ -5583,12 +5594,12 @@ func _on_matriarch_rule_button_pressed() -> void:
 	if _game_finished:
 		return
 	if _skoll_prompt_panel != null or _pending_skoll_summon != null:
-		action_label.text = "Finish resolving Sun Hunt or cancel it before choosing another upkeep option."
+		_set_action_label_text("Finish resolving Sun Hunt or cancel it before choosing another upkeep option.")
 		return
 	var available_cards := _get_available_tiamat_upkeep_cards()
 	if available_cards.is_empty():
 		_refresh_turn_choice_options()
-		action_label.text = "Matriarch Rule is not available right now."
+		_set_action_label_text("Matriarch Rule is not available right now.")
 		update_ui()
 		return
 	if available_cards.size() == 1:
@@ -5597,7 +5608,7 @@ func _on_matriarch_rule_button_pressed() -> void:
 	var on_choose_tiamat_card := func(chosen_card: Card) -> void:
 		_submit_tiamat_upkeep_choice(chosen_card)
 	var on_cancel_tiamat_choice := func() -> void:
-		action_label.text = "Choose an upkeep option."
+		_set_action_label_text("Choose an upkeep option.")
 		update_ui()
 	_show_card_selection_overlay(
 		"Matriarch Rule: choose a slotted creature to add to your hand",
@@ -5605,7 +5616,7 @@ func _on_matriarch_rule_button_pressed() -> void:
 		on_choose_tiamat_card,
 		on_cancel_tiamat_choice
 	)
-	action_label.text = "Matriarch Rule: choose a creature from your power slots to return to hand."
+	_set_action_label_text("Matriarch Rule: choose a creature from your power slots to return to hand.")
 	update_ui()
 
 func _maybe_prompt_breidablik_on_turn_start() -> void:
@@ -5643,11 +5654,11 @@ func _prompt_absence_target_selection() -> void:
 		return
 	var targets := _get_absence_targets()
 	if targets.is_empty():
-		action_label.text = "Absence has no valid targets."
+		_set_action_label_text("Absence has no valid targets.")
 		update_ui()
 		return
 	if not _can_cast_spell_from_current_zone(spell):
-		action_label.text = "Cannot cast " + spell.card_name + "!"
+		_set_action_label_text("Cannot cast " + spell.card_name + "!")
 		update_ui()
 		return
 	var validate_absence_target := func(clicked_card: Card) -> bool:
@@ -5660,7 +5671,7 @@ func _prompt_absence_target_selection() -> void:
 		validate_absence_target,
 		confirm_absence_target
 	)
-	action_label.text = "Absence: click a Power or God Ability to target."
+	_set_action_label_text("Absence: click a Power or God Ability to target.")
 	update_ui()
 
 var _zone_overlay: Control = null
@@ -5695,7 +5706,7 @@ func _create_centered_overlay_panel(overlay: Control, width_ratio: float = 0.90,
 
 func _show_zone_contents(zone_name: String, zone: Zone) -> void:
 	if zone.cards.is_empty():
-		action_label.text = zone_name + " is empty."
+		_set_action_label_text(zone_name + " is empty.")
 		return
 
 	# Dismiss any existing overlay first
@@ -5770,7 +5781,7 @@ func _show_card_selection_overlay(
 	cancel_button_text: String = ""
 ) -> void:
 	if cards.is_empty():
-		action_label.text = title_text + ": no valid cards."
+		_set_action_label_text(title_text + ": no valid cards.")
 		return
 
 	_dismiss_zone_overlay()
@@ -6076,7 +6087,7 @@ func _cancel_pending_target_selection(reason: String) -> bool:
 	if should_fizzle_paid_preview and paid_preview_card != null:
 		_clear_paid_hand_card_preview(paid_preview_card)
 	print(reason)
-	action_label.text = reason
+	_set_action_label_text(reason)
 	update_ui()
 	return true
 
@@ -6139,17 +6150,17 @@ func _handle_invalid_pending_target_click(cancel_reason: String = "") -> bool:
 		if _suppress_next_devour_cancel_prompt:
 			_suppress_next_devour_cancel_prompt = false
 			if cancel_reason.strip_edges() != "":
-				action_label.text = cancel_reason
+				_set_action_label_text(cancel_reason)
 				update_ui()
 			else:
-				action_label.text = _get_pending_target_selection_name() + ": click a valid target."
+				_set_action_label_text(_get_pending_target_selection_name() + ": click a valid target.")
 				update_ui()
 			return true
 		_show_devour_cancel_prompt()
 	elif cancel_reason.strip_edges() != "":
 		_cancel_pending_target_selection(cancel_reason)
 	else:
-		action_label.text = _get_pending_target_selection_name() + ": click a valid target."
+		_set_action_label_text(_get_pending_target_selection_name() + ": click a valid target.")
 		update_ui()
 	return true
 
@@ -6197,7 +6208,7 @@ func _begin_bit_meseri_target_selection(spell: BitMeseri) -> void:
 					continue
 				valid_targets.append(board_card)
 	if valid_targets.is_empty():
-		action_label.text = spell.card_name + " has no valid physical targets right now."
+		_set_action_label_text(spell.card_name + " has no valid physical targets right now.")
 		update_ui()
 		return
 	var validate_targeted_spell := func(clicked_card: Card) -> bool:
@@ -6207,7 +6218,7 @@ func _begin_bit_meseri_target_selection(spell: BitMeseri) -> void:
 	var cancel_targeted_spell := func() -> void:
 		if selected_card == spell:
 			selected_card = null
-		action_label.text = "Cancelled " + spell.card_name + " target selection."
+		_set_action_label_text("Cancelled " + spell.card_name + " target selection.")
 		update_ui()
 	_begin_pending_click_selection(
 		spell.card_name,
@@ -6216,7 +6227,7 @@ func _begin_bit_meseri_target_selection(spell: BitMeseri) -> void:
 		confirm_targeted_spell,
 		cancel_targeted_spell
 	)
-	action_label.text = spell.card_name + ": click a creature, structure, or equipment to void it."
+	_set_action_label_text(spell.card_name + ": click a creature, structure, or equipment to void it.")
 	update_ui()
 
 func _queue_priority_hex_response_with_target(
@@ -6238,7 +6249,7 @@ func _begin_priority_hex_target_selection(
 		return
 	var current_targets := game_manager.get_priority_hex_targets(hex, source_action)
 	if current_targets.is_empty():
-		action_label.text = hex.card_name + " has no valid targets."
+		_set_action_label_text(hex.card_name + " has no valid targets.")
 		update_ui()
 		return
 	if current_targets.size() == 1:
@@ -6249,7 +6260,7 @@ func _begin_priority_hex_target_selection(
 	var confirm_selection := func(clicked_card: Card) -> void:
 		_queue_priority_hex_response_with_target(hex, source_action, clicked_card, target_is_attacker)
 	var cancel_selection := func() -> void:
-		action_label.text = "Cancelled " + hex.card_name + " target selection."
+		_set_action_label_text("Cancelled " + hex.card_name + " target selection.")
 		update_ui()
 		_offer_priority()
 	_begin_pending_click_selection(
@@ -6259,7 +6270,7 @@ func _begin_priority_hex_target_selection(
 		confirm_selection,
 		cancel_selection
 	)
-	action_label.text = hex.card_name + ": click a valid target."
+	_set_action_label_text(hex.card_name + ": click a valid target.")
 	update_ui()
 
 func _queue_magical_action(action_type: int, source_card: Card, target, resolution_text: String, resolve_callback: Callable, display_zone: Zone = null) -> void:
@@ -6284,7 +6295,7 @@ func _queue_magical_action(action_type: int, source_card: Card, target, resoluti
 	_pending_spell_display_zone = null
 	update_ui()
 	var _card_type_label: String = _get_stack_card_type_label(source_card)
-	action_label.text = source_card.card_name + " [" + _card_type_label + "] goes on the stack."
+	_set_action_label_text(source_card.card_name + " [" + _card_type_label + "] goes on the stack.")
 	_offer_priority()
 
 func _queue_targeted_ability_action(source_card: Card, target: Card, resolve_callback: Callable, resolution_text: String = "") -> void:
@@ -6326,7 +6337,7 @@ func _begin_raven_storm_priority_placement(card: Card, triggering_attacker: Card
 		placement_container.visible = true
 	if stealth_mode_btn != null:
 		stealth_mode_btn.visible = false
-	action_label.text = "Raven Storm: choose aggressive or defensive stance, then click an empty friendly zone."
+	_set_action_label_text("Raven Storm: choose aggressive or defensive stance, then click an empty friendly zone.")
 	update_ui()
 
 func _queue_raven_storm_priority_action(card: Card, triggering_attacker: Card, zone: Zone, summon_mode: Card.CreatureMode) -> bool:
@@ -6362,7 +6373,7 @@ func _queue_raven_storm_priority_action(card: Card, triggering_attacker: Card, z
 		card.activate(game_manager, activation_context)
 	_assign_stack_display_zone(action)
 	game_manager.push_to_stack(action)
-	action_label.text = card.card_name + " [Ability] goes on the stack."
+	_set_action_label_text(card.card_name + " [Ability] goes on the stack.")
 	_offer_priority()
 	return true
 
@@ -6372,22 +6383,22 @@ func _resolve_raven_storm_priority_placement(zone: Zone) -> void:
 		_clear_raven_storm_priority_selection()
 		return
 	if placement_mode not in ["aggressive", "defensive"]:
-		action_label.text = "Raven Storm: choose aggressive or defensive stance first."
+		_set_action_label_text("Raven Storm: choose aggressive or defensive stance first.")
 		update_ui()
 		return
 	if zone == null or zone.zone_owner != card.card_owner:
-		action_label.text = "Raven Storm must enter an empty friendly zone."
+		_set_action_label_text("Raven Storm must enter an empty friendly zone.")
 		update_ui()
 		return
 	if zone.zone_type not in [Zone.ZoneType.FRONTLINE, Zone.ZoneType.RESERVE] or not zone.cards.is_empty():
-		action_label.text = "Raven Storm needs an empty frontline or reserve zone."
+		_set_action_label_text("Raven Storm needs an empty frontline or reserve zone.")
 		update_ui()
 		return
 	var summon_mode: Card.CreatureMode = Card.CreatureMode.DEFENSIVE
 	if placement_mode == "aggressive":
 		summon_mode = Card.CreatureMode.AGGRESSIVE
 	if not _queue_raven_storm_priority_action(card, _pending_raven_storm_attacker, zone, summon_mode):
-		action_label.text = "Raven Storm could not be queued right now."
+		_set_action_label_text("Raven Storm could not be queued right now.")
 		update_ui()
 		return
 	_clear_raven_storm_priority_selection()
@@ -6404,14 +6415,14 @@ func _begin_devour_activation(card: Card) -> void:
 		return
 	var targets: Array = card.get_valid_devour_targets(game_manager)
 	if targets.is_empty():
-		action_label.text = card.card_name + " has no valid Devour targets right now."
+		_set_action_label_text(card.card_name + " has no valid Devour targets right now.")
 		update_ui()
 		return
 
 	if targets.size() == 1:
 		var sole_target := targets[0] as Card
 		if sole_target == null:
-			action_label.text = card.card_name + " has no valid Devour targets right now."
+			_set_action_label_text(card.card_name + " has no valid Devour targets right now.")
 			update_ui()
 			return
 		_queue_targeted_ability_action(
@@ -6429,7 +6440,7 @@ func _begin_devour_activation(card: Card) -> void:
 			card.activate(game_manager, chosen_card)
 		_queue_targeted_ability_action(card, chosen_card, resolve_devour)
 	var cancel_devour_target := func() -> void:
-		action_label.text = "Cancelled " + card.card_name + " target selection."
+		_set_action_label_text("Cancelled " + card.card_name + " target selection.")
 		update_ui()
 	_begin_pending_click_selection(
 		card.card_name + ": Devour",
@@ -6438,7 +6449,7 @@ func _begin_devour_activation(card: Card) -> void:
 		confirm_devour_target,
 		cancel_devour_target
 	)
-	action_label.text = "Click a Devour target."
+	_set_action_label_text("Click a Devour target.")
 	update_ui()
 
 func _queue_hex_response_action(
@@ -6450,7 +6461,7 @@ func _queue_hex_response_action(
 	if hex == null or source_action == null:
 		return
 	if hex.is_prepared and not game_manager.activate_prepared_card(hex, hex.card_owner):
-		action_label.text = game_manager.get_activation_mana_unavailable_text(hex) if game_manager.has_insufficient_activation_mana(hex, true, hex.card_owner) else "Cannot afford " + hex.card_name + "!"
+		_set_action_label_text(game_manager.get_activation_mana_unavailable_text(hex) if game_manager.has_insufficient_activation_mana(hex, true, hex.card_owner) else "Cannot afford " + hex.card_name + "!")
 		update_ui()
 		return
 	var ability := CardAction.new()
@@ -6465,9 +6476,9 @@ func _queue_hex_response_action(
 	game_manager.push_to_stack(ability)
 	var displayed_target := chosen_target if chosen_target != null else ability.attacker
 	if displayed_target != null and hex.targets:
-		action_label.text = _get_attack_card_label(hex, hex.card_name) + " is targeting " + _get_target_label(displayed_target, game_manager.get_feedback_viewer(), "target") + "."
+		_set_action_label_text(_get_attack_card_label(hex, hex.card_name) + " is targeting " + _get_target_label(displayed_target, game_manager.get_feedback_viewer(), "target") + ".")
 	else:
-		action_label.text = hex.card_name + " responds!"
+		_set_action_label_text(hex.card_name + " responds!")
 	_offer_priority()
 
 func _is_owned_board_hex(card: Card) -> bool:
@@ -6485,7 +6496,7 @@ func _try_activate_owned_board_hex(card: Card) -> bool:
 		return false
 	var hex := card as HexCard
 	if not hex.can_activate_prepared(game_manager, card.card_owner):
-		action_label.text = game_manager.get_activation_mana_unavailable_text(card) if game_manager.has_insufficient_activation_mana(card, true, card.card_owner) else card.card_name + " is not ready to activate yet."
+		_set_action_label_text(game_manager.get_activation_mana_unavailable_text(card) if game_manager.has_insufficient_activation_mana(card, true, card.card_owner) else card.card_name + " is not ready to activate yet.")
 		update_ui()
 		return true
 	selected_card = null
@@ -6494,7 +6505,7 @@ func _try_activate_owned_board_hex(card: Card) -> bool:
 		game_input.submit_action({type = "activate_prepared_hex", hex_uid = hex_uid})
 		return true
 	if not game_manager.activate_prepared_card(hex, hex.card_owner):
-		action_label.text = game_manager.get_activation_mana_unavailable_text(hex) if game_manager.has_insufficient_activation_mana(hex, true, hex.card_owner) else "Cannot afford " + hex.card_name + "!"
+		_set_action_label_text(game_manager.get_activation_mana_unavailable_text(hex) if game_manager.has_insufficient_activation_mana(hex, true, hex.card_owner) else "Cannot afford " + hex.card_name + "!")
 		update_ui()
 		return true
 	var action := CardAction.new()
@@ -6504,7 +6515,7 @@ func _try_activate_owned_board_hex(card: Card) -> bool:
 	action.resolution_text = hex.card_name + " resolved."
 	_assign_stack_display_zone(action)
 	game_manager.push_to_stack(action)
-	action_label.text = hex.card_name + " goes on the stack."
+	_set_action_label_text(hex.card_name + " goes on the stack.")
 	_offer_priority()
 	return true
 
@@ -6567,15 +6578,15 @@ func _try_activate_owned_board_spell(card: Card) -> bool:
 	if not _is_owned_board_spell(card):
 		return false
 	if _is_card_waiting_on_priority(card):
-		action_label.text = card.card_name + " is already on the stack."
+		_set_action_label_text(card.card_name + " is already on the stack.")
 		update_ui()
 		return true
 	var prepared_spell := _is_prepared_board_spell(card)
 	if not _can_cast_spell_from_current_zone(card):
 		if prepared_spell:
-			action_label.text = game_manager.get_activation_mana_unavailable_text(card) if game_manager.has_insufficient_activation_mana(card, true, card.card_owner) else card.card_name + " is not ready to activate yet."
+			_set_action_label_text(game_manager.get_activation_mana_unavailable_text(card) if game_manager.has_insufficient_activation_mana(card, true, card.card_owner) else card.card_name + " is not ready to activate yet.")
 		else:
-			action_label.text = "Cannot cast " + card.card_name + "!"
+			_set_action_label_text("Cannot cast " + card.card_name + "!")
 		update_ui()
 		return true
 	selected_card = card
@@ -6630,13 +6641,13 @@ func _prompt_generic_spell_target_selection(spell: SpellCard) -> void:
 		return
 	var targets: Array = spell.get_valid_targets(game_manager)
 	if targets.is_empty():
-		action_label.text = spell.card_name + " has no valid targets."
+		_set_action_label_text(spell.card_name + " has no valid targets.")
 		update_ui()
 		return
 	var choose_target := func(chosen_target: Card) -> void:
 		if chosen_target == null:
 			selected_card = null
-			action_label.text = "Cancelled " + spell.card_name + "."
+			_set_action_label_text("Cancelled " + spell.card_name + ".")
 			update_ui()
 			return
 		selected_card = null
@@ -6656,7 +6667,7 @@ func _prompt_generic_spell_target_selection(spell: SpellCard) -> void:
 		)
 	var cancel_target := func() -> void:
 		selected_card = null
-		action_label.text = "Cancelled " + spell.card_name + "."
+		_set_action_label_text("Cancelled " + spell.card_name + ".")
 		update_ui()
 	_show_card_selection_overlay(
 		"Choose a target for " + spell.card_name,
@@ -6700,7 +6711,7 @@ func _queue_power_activation_action(
 			_queue_power_activation_action(power, target, resolution_text, resolve_callback)
 		var on_cancel_activation_cost := func() -> void:
 			power.clear_pending_activation_discards()
-			action_label.text = "Cancelled " + power.card_name + "."
+			_set_action_label_text("Cancelled " + power.card_name + ".")
 			update_ui()
 		_prompt_power_activation_discards(power, on_choose_activation_cost, on_cancel_activation_cost)
 		return true
@@ -6729,7 +6740,7 @@ func _prompt_chosen_hand_discards(card: Card, on_complete: Callable, on_cancel: 
 		discard_choices.erase(already_chosen)
 	if discard_choices.is_empty():
 		card.clear_pending_chosen_discards()
-		action_label.text = "Cannot play " + card.card_name + ": choose another card in hand to discard."
+		_set_action_label_text("Cannot play " + card.card_name + ": choose another card in hand to discard.")
 		update_ui()
 		return true
 	var on_choose_discard := func(selected_discard: Card) -> void:
@@ -6763,7 +6774,7 @@ func _prompt_power_activation_discards(power: PowerCard, on_complete: Callable, 
 		discard_choices.erase(already_chosen)
 	if discard_choices.is_empty():
 		power.clear_pending_activation_discards()
-		action_label.text = "Cannot choose a discard for " + power.card_name + "."
+		_set_action_label_text("Cannot choose a discard for " + power.card_name + ".")
 		update_ui()
 		return false
 
@@ -6794,7 +6805,7 @@ func _prompt_champions_call_shelving(god: GodCard, on_complete: Callable, on_can
 	var max_shelve_count := god.get_champions_call_max_shelve_count(game_manager, manifestation)
 	var has_shelve_choices := max_shelve_count > 0 and not available_choices.is_empty()
 	if required_count > available_choices.size():
-		action_label.text = "Cannot finish Champion's Call for %s: choose another hand card to shelve." % god.card_name
+		_set_action_label_text("Cannot finish Champion's Call for %s: choose another hand card to shelve." % god.card_name)
 		update_ui()
 		if on_cancel.is_valid():
 			on_cancel.call()
@@ -6985,7 +6996,7 @@ func _prompt_champions_call_shelving(god: GodCard, on_complete: Callable, on_can
 	)
 
 	refresh_selection_state.call()
-	action_label.text = "%s: choose hand cards to shelve, then confirm or decline." % god.card_name
+	_set_action_label_text("%s: choose hand cards to shelve, then confirm or decline." % god.card_name)
 	update_ui()
 	return true
 
@@ -6994,7 +7005,7 @@ func _show_champions_call_prompt(god: GodCard) -> void:
 	if god == null or game_manager == null:
 		return
 	if not god.can_use_champions_call(game_manager):
-		action_label.text = god.get_champions_call_failure_reason(game_manager)
+		_set_action_label_text(god.get_champions_call_failure_reason(game_manager))
 		update_ui()
 		return
 	var panel := PanelContainer.new()
@@ -7039,7 +7050,7 @@ func _show_champions_call_prompt(god: GodCard) -> void:
 	decline_btn.text = "Decline"
 	decline_btn.pressed.connect(func() -> void:
 		_hide_champions_call_prompt()
-		action_label.text = "Cancelled " + god.card_name + "."
+		_set_action_label_text("Cancelled " + god.card_name + ".")
 		update_ui()
 	)
 	buttons.add_child(decline_btn)
@@ -7050,7 +7061,7 @@ func _show_champions_call_prompt(god: GodCard) -> void:
 	_promote_transient_ui(panel)
 	panel.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
 	call_deferred("_position_champions_call_prompt", panel, _get_champions_call_prompt_source(god))
-	action_label.text = god.card_name + ": choose whether to use Champion's Call."
+	_set_action_label_text(god.card_name + ": choose whether to use Champion's Call.")
 	update_ui()
 
 func _hide_champions_call_prompt() -> void:
@@ -7130,7 +7141,7 @@ func _begin_champions_call_activation(god: GodCard) -> void:
 	var on_confirm_shelving := func(chosen_shelves: Array[Card]) -> void:
 		_begin_champions_call_placement(god, chosen_shelves)
 	var on_cancel_shelving := func() -> void:
-		action_label.text = "Cancelled " + god.card_name + "."
+		_set_action_label_text("Cancelled " + god.card_name + ".")
 		update_ui()
 	_prompt_champions_call_shelving(god, on_confirm_shelving, on_cancel_shelving)
 
@@ -7145,7 +7156,7 @@ func _begin_champions_call_placement(god: GodCard, chosen_shelves: Array[Card]) 
 		placement_container.visible = true
 	if stealth_mode_btn != null:
 		stealth_mode_btn.visible = false
-	action_label.text = god.card_name + ": choose aggressive or defensive stance, then click an empty friendly zone for its Active God."
+	_set_action_label_text(god.card_name + ": choose aggressive or defensive stance, then click an empty friendly zone for its Active God.")
 	update_ui()
 
 func _clear_champions_call_placement() -> void:
@@ -7165,15 +7176,15 @@ func _resolve_champions_call_placement(zone: Zone) -> void:
 		update_ui()
 		return
 	if placement_mode not in ["aggressive", "defensive"]:
-		action_label.text = "Champion's Call: choose aggressive or defensive stance first."
+		_set_action_label_text("Champion's Call: choose aggressive or defensive stance first.")
 		update_ui()
 		return
 	if zone == null or zone.zone_owner != god.card_owner:
-		action_label.text = "Champion's Call must summon into an empty friendly zone."
+		_set_action_label_text("Champion's Call must summon into an empty friendly zone.")
 		update_ui()
 		return
 	if zone.zone_type not in [Zone.ZoneType.FRONTLINE, Zone.ZoneType.RESERVE] or not zone.cards.is_empty():
-		action_label.text = "Champion's Call needs an empty frontline or reserve zone."
+		_set_action_label_text("Champion's Call needs an empty frontline or reserve zone.")
 		update_ui()
 		return
 	_queue_champions_call_activation(god, _pending_champions_call_shelves, zone, placement_mode)
@@ -7209,16 +7220,16 @@ func _queue_hand_spell_cast(
 		if prepared_spell:
 			if custom_pay_callback.is_valid():
 				if custom_pay_callback.call() != true:
-					action_label.text = "Cannot afford " + spell.card_name + "!"
+					_set_action_label_text("Cannot afford " + spell.card_name + "!")
 					update_ui()
 					return false
 			else:
 				if not (spell as SpellCard).can_activate_prepared(game_manager, spell.card_owner):
-					action_label.text = game_manager.get_activation_mana_unavailable_text(spell) if game_manager.has_insufficient_activation_mana(spell, true, spell.card_owner) else spell.card_name + " cannot activate right now."
+					_set_action_label_text(game_manager.get_activation_mana_unavailable_text(spell) if game_manager.has_insufficient_activation_mana(spell, true, spell.card_owner) else spell.card_name + " cannot activate right now.")
 					update_ui()
 					return false
 				if not game_manager.activate_prepared_card(spell, spell.card_owner):
-					action_label.text = game_manager.get_activation_mana_unavailable_text(spell) if game_manager.has_insufficient_activation_mana(spell, true, spell.card_owner) else "Cannot afford " + spell.card_name + "!"
+					_set_action_label_text(game_manager.get_activation_mana_unavailable_text(spell) if game_manager.has_insufficient_activation_mana(spell, true, spell.card_owner) else "Cannot afford " + spell.card_name + "!")
 					update_ui()
 					return false
 		else:
@@ -7226,7 +7237,7 @@ func _queue_hand_spell_cast(
 				var on_choose_spell_cost := func() -> void:
 					_queue_hand_spell_cast(spell, target, resolution_text, resolve_callback, custom_pay_callback, after_payment_callback)
 				var on_cancel_spell_cost := func() -> void:
-					action_label.text = "Cancelled " + spell.card_name + "."
+					_set_action_label_text("Cancelled " + spell.card_name + ".")
 					update_ui()
 				_prompt_chosen_hand_discards(
 					spell,
@@ -7235,11 +7246,11 @@ func _queue_hand_spell_cast(
 				)
 				return true
 			if not _can_cast_hand_spell(spell):
-				action_label.text = "Cannot cast " + spell.card_name + "!"
+				_set_action_label_text("Cannot cast " + spell.card_name + "!")
 				update_ui()
 				return false
 			if not _pay_hand_card_costs(spell, custom_pay_callback):
-				action_label.text = "Cannot afford " + spell.card_name + "!"
+				_set_action_label_text("Cannot afford " + spell.card_name + "!")
 				update_ui()
 				return false
 		if after_payment_callback.is_valid():
@@ -7283,7 +7294,7 @@ func _queue_priority_event(
 	if match_manager != null and match_manager.uses_authoritative_priority_flow():
 		return
 	update_ui()
-	action_label.text = event_name.replace("_", " ").capitalize() + " window opened."
+	_set_action_label_text(event_name.replace("_", " ").capitalize() + " window opened.")
 	_offer_priority()
 
 func _clear_priority_window_state() -> void:
@@ -7299,7 +7310,7 @@ func _pause_stack_resolution(source_player: Player) -> void:
 func _resume_after_deferred_resolution(feedback_text: String = "") -> void:
 	if not _stack_resolution_paused:
 		if feedback_text.strip_edges() != "":
-			action_label.text = feedback_text
+			_set_action_label_text(feedback_text)
 			update_ui()
 		return
 	var source_player := _pending_post_execute_source_player
@@ -7307,9 +7318,9 @@ func _resume_after_deferred_resolution(feedback_text: String = "") -> void:
 	_pending_post_execute_source_player = null
 	update_ui()
 	if feedback_text.strip_edges() != "":
-		action_label.text = feedback_text
+		_set_action_label_text(feedback_text)
 	else:
-		action_label.text = _consume_resolution_feedback(action_label.text)
+		_set_action_label_text(_consume_resolution_feedback(action_label.text))
 	_flush_deferred_priority_events()
 	_finish_post_execute(source_player)
 
@@ -7334,16 +7345,16 @@ func _queue_hand_spell_with_deferred_resolution(
 		if prepared_spell:
 			if custom_pay_callback.is_valid():
 				if custom_pay_callback.call() != true:
-					action_label.text = "Cannot afford " + spell.card_name + "!"
+					_set_action_label_text("Cannot afford " + spell.card_name + "!")
 					update_ui()
 					return false
 			else:
 				if not (spell as SpellCard).can_activate_prepared(game_manager, spell.card_owner):
-					action_label.text = game_manager.get_activation_mana_unavailable_text(spell) if game_manager.has_insufficient_activation_mana(spell, true, spell.card_owner) else spell.card_name + " cannot activate right now."
+					_set_action_label_text(game_manager.get_activation_mana_unavailable_text(spell) if game_manager.has_insufficient_activation_mana(spell, true, spell.card_owner) else spell.card_name + " cannot activate right now.")
 					update_ui()
 					return false
 				if not game_manager.activate_prepared_card(spell, spell.card_owner):
-					action_label.text = game_manager.get_activation_mana_unavailable_text(spell) if game_manager.has_insufficient_activation_mana(spell, true, spell.card_owner) else "Cannot afford " + spell.card_name + "!"
+					_set_action_label_text(game_manager.get_activation_mana_unavailable_text(spell) if game_manager.has_insufficient_activation_mana(spell, true, spell.card_owner) else "Cannot afford " + spell.card_name + "!")
 					update_ui()
 					return false
 		else:
@@ -7351,7 +7362,7 @@ func _queue_hand_spell_with_deferred_resolution(
 				var on_choose_deferred_spell_cost := func() -> void:
 					_queue_hand_spell_with_deferred_resolution(spell, target, resolution_text, resolve_callback, custom_pay_callback, after_payment_callback)
 				var on_cancel_deferred_spell_cost := func() -> void:
-					action_label.text = "Cancelled " + spell.card_name + "."
+					_set_action_label_text("Cancelled " + spell.card_name + ".")
 					update_ui()
 				_prompt_chosen_hand_discards(
 					spell,
@@ -7360,11 +7371,11 @@ func _queue_hand_spell_with_deferred_resolution(
 				)
 				return true
 			if not _can_cast_hand_spell(spell):
-				action_label.text = "Cannot cast " + spell.card_name + "!"
+				_set_action_label_text("Cannot cast " + spell.card_name + "!")
 				update_ui()
 				return false
 			if not _pay_hand_card_costs(spell, custom_pay_callback):
-				action_label.text = "Cannot afford " + spell.card_name + "!"
+				_set_action_label_text("Cannot afford " + spell.card_name + "!")
 				update_ui()
 				return false
 		if after_payment_callback.is_valid():
@@ -7388,14 +7399,14 @@ func _prompt_charm_target_selection(charm: CharmCard, triggering_action: CardAct
 		return
 	var targets: Array = charm.get_valid_targets(game_manager)
 	if targets.is_empty():
-		action_label.text = charm.card_name + " has no valid targets."
+		_set_action_label_text(charm.card_name + " has no valid targets.")
 		update_ui()
 		return
 	selected_card = charm
 	var resolved_display_zone := _resolve_pending_display_zone(charm, display_zone)
 	var from_hand: bool = charm.current_zone == charm.card_owner.hand_zone
 	if from_hand and not charm.can_activate_from_hand(game_manager, triggering_action):
-		action_label.text = charm.card_name + " cannot be played right now."
+		_set_action_label_text(charm.card_name + " cannot be played right now.")
 		update_ui()
 		return
 	var validate_charm_target := func(clicked_card: Card) -> bool:
@@ -7409,7 +7420,7 @@ func _prompt_charm_target_selection(charm: CharmCard, triggering_action: CardAct
 		validate_charm_target,
 		confirm_charm_target
 	)
-	action_label.text = charm.card_name + ": choosing target. Click a valid card."
+	_set_action_label_text(charm.card_name + ": choosing target. Click a valid card.")
 	update_ui()
 
 func _queue_charm_action(charm: CharmCard, triggering_action: CardAction = null, target: Card = null) -> void:
@@ -7419,7 +7430,7 @@ func _queue_charm_action(charm: CharmCard, triggering_action: CardAction = null,
 	if source_action == null and not game_manager.action_stack.is_empty():
 		source_action = game_manager.action_stack.back()
 	if charm.targets and not charm.is_valid_target(target):
-		action_label.text = charm.card_name + " requires a valid target."
+		_set_action_label_text(charm.card_name + " requires a valid target.")
 		update_ui()
 		return
 	var from_hand: bool = charm.current_zone == charm.card_owner.hand_zone
@@ -7445,22 +7456,22 @@ func _queue_charm_action(charm: CharmCard, triggering_action: CardAction = null,
 		_pending_paid_hand_display_zone_auto = false
 	if from_hand:
 		if not charm.can_activate_from_hand(game_manager, source_action):
-			action_label.text = charm.card_name + " cannot be played right now."
+			_set_action_label_text(charm.card_name + " cannot be played right now.")
 			update_ui()
 			return
 		if _get_paid_hand_card_display_zone(charm) == null:
 			if not charm.pay_costs(charm.card_owner, game_manager):
-				action_label.text = game_manager.get_activation_mana_unavailable_text(charm) if game_manager.has_insufficient_activation_mana(charm, false, charm.card_owner) else "Cannot afford " + charm.card_name + "!"
+				_set_action_label_text(game_manager.get_activation_mana_unavailable_text(charm) if game_manager.has_insufficient_activation_mana(charm, false, charm.card_owner) else "Cannot afford " + charm.card_name + "!")
 				update_ui()
 				return
 			_begin_paid_hand_card_preview(charm, preferred_display_zone)
 	else:
 		if not charm.can_activate_prepared(game_manager, source_action):
-			action_label.text = game_manager.get_activation_mana_unavailable_text(charm) if game_manager.has_insufficient_activation_mana(charm, true, charm.card_owner) else charm.card_name + " is not ready to activate."
+			_set_action_label_text(game_manager.get_activation_mana_unavailable_text(charm) if game_manager.has_insufficient_activation_mana(charm, true, charm.card_owner) else charm.card_name + " is not ready to activate.")
 			update_ui()
 			return
 		if not game_manager.activate_prepared_card(charm, charm.card_owner):
-			action_label.text = game_manager.get_activation_mana_unavailable_text(charm) if game_manager.has_insufficient_activation_mana(charm, true, charm.card_owner) else "Cannot afford " + charm.card_name + "!"
+			_set_action_label_text(game_manager.get_activation_mana_unavailable_text(charm) if game_manager.has_insufficient_activation_mana(charm, true, charm.card_owner) else "Cannot afford " + charm.card_name + "!")
 			update_ui()
 			return
 		preferred_display_zone = charm.current_zone
@@ -7491,9 +7502,9 @@ func _queue_charm_action(charm: CharmCard, triggering_action: CardAction = null,
 	update_ui()
 	if target != null:
 		var stack_target_name := _get_target_label(target, game_manager.get_feedback_viewer(), "target")
-		action_label.text = _get_attack_card_label(charm, charm.card_name) + " is targeting " + stack_target_name + "."
+		_set_action_label_text(_get_attack_card_label(charm, charm.card_name) + " is targeting " + stack_target_name + ".")
 	else:
-		action_label.text = charm.card_name + " [" + _get_stack_card_type_label(charm) + "] goes on the stack."
+		_set_action_label_text(charm.card_name + " [" + _get_stack_card_type_label(charm) + "] goes on the stack.")
 	_offer_priority()
 
 func _place_persistent_charm_on_board(charm: CharmCard, display_zone: Zone = null) -> void:
@@ -7701,7 +7712,7 @@ func _flush_summon_priority_events() -> void:
 	_pending_summon_priority_events.pop_front()
 	var on_resolve := func() -> void:
 		update_ui()
-		action_label.text = card.card_name + " was summoned."
+		_set_action_label_text(card.card_name + " was summoned.")
 		if not _pending_summon_priority_events.is_empty():
 			call_deferred("_flush_summon_priority_events")
 	_queue_priority_event(
@@ -7736,7 +7747,7 @@ func _flush_hand_play_priority_events() -> void:
 		played_card.get_effective_speed(),
 		func() -> void:
 			update_ui()
-			action_label.text = played_card.card_name + " was played from hand."
+			_set_action_label_text(played_card.card_name + " was played from hand.")
 			if not _pending_hand_play_events.is_empty():
 				call_deferred("_flush_hand_play_priority_events")
 	)
@@ -7934,7 +7945,7 @@ func _try_activate_graveyard_hand_proxy(card: Card) -> bool:
 	if game_manager == null:
 		return true
 	if not game_manager.action_stack.is_empty():
-		action_label.text = card.card_name + " cannot return from the graveyard while another action is resolving."
+		_set_action_label_text(card.card_name + " cannot return from the graveyard while another action is resolving.")
 		update_ui()
 		return true
 	if not card.has_method("activate_from_graveyard"):
@@ -7943,7 +7954,7 @@ func _try_activate_graveyard_hand_proxy(card: Card) -> bool:
 	selected_card = null
 	placement_mode = ""
 	placement_container.visible = false
-	action_label.text = feedback
+	_set_action_label_text(feedback)
 	update_ui()
 	return true
 
@@ -8009,7 +8020,7 @@ func _begin_manual_spell_prepare_from_menu(card: Card) -> void:
 	placement_mode = "prepare_spell"
 	if placement_container != null:
 		placement_container.visible = false
-	action_label.text = "Selected spell: " + card.card_name + " - preparation mode on. Click or drag to an empty friendly zone to prepare it face-down."
+	_set_action_label_text("Selected spell: " + card.card_name + " - preparation mode on. Click or drag to an empty friendly zone to prepare it face-down.")
 	update_ui()
 
 func _begin_manual_hex_prepare_from_menu(card: Card) -> void:
@@ -8019,7 +8030,7 @@ func _begin_manual_hex_prepare_from_menu(card: Card) -> void:
 	placement_mode = ""
 	if placement_container != null:
 		placement_container.visible = false
-	action_label.text = "Selected hex: " + card.card_name + " - click an empty friendly zone to prepare it."
+	_set_action_label_text("Selected hex: " + card.card_name + " - click an empty friendly zone to prepare it.")
 	update_ui()
 
 func _begin_manual_charm_prepare_from_menu(card: Card) -> void:
@@ -8029,7 +8040,7 @@ func _begin_manual_charm_prepare_from_menu(card: Card) -> void:
 	placement_mode = "prepare_charm"
 	if placement_container != null:
 		placement_container.visible = false
-	action_label.text = card.card_name + " selected - click an empty friendly zone to prepare it."
+	_set_action_label_text(card.card_name + " selected - click an empty friendly zone to prepare it.")
 	update_ui()
 
 func _handle_spell_cast_menu_action(card: Card) -> void:
@@ -8089,7 +8100,7 @@ func _select_hand_creature_for_placement(card: Card, mode: String) -> void:
 	_select_hand_card(card)
 	placement_mode = mode
 	placement_container.visible = false
-	action_label.text = card.card_name + " selected - click an empty friendly zone to place (" + mode.to_upper() + ")"
+	_set_action_label_text(card.card_name + " selected - click an empty friendly zone to place (" + mode.to_upper() + ")")
 	update_ui()
 
 func _on_hand_card_pressed(card: Card) -> void:
@@ -8110,7 +8121,7 @@ func _on_hand_card_pressed(card: Card) -> void:
 			return
 	if game_manager != null and not game_manager.action_stack.is_empty():
 		var priority_failure_text := _get_priority_response_unavailable_text(card)
-		action_label.text = priority_failure_text if priority_failure_text != "" else card.card_name + " is not a legal priority response."
+		_set_action_label_text(priority_failure_text if priority_failure_text != "" else card.card_name + " is not a legal priority response.")
 		update_ui()
 		return
 	if _has_pending_target_selection():
@@ -8127,13 +8138,13 @@ func _on_hand_card_pressed(card: Card) -> void:
 	if _try_activate_graveyard_hand_proxy(card):
 		return
 	if game_manager != null and game_manager.current_player != null and card.current_zone != game_manager.current_player.hand_zone:
-		action_label.text = card.card_name + " is not playable from this hand right now."
+		_set_action_label_text(card.card_name + " is not playable from this hand right now.")
 		update_ui()
 		return
 	if card is PermanentHexCard:
 		_select_hand_card(card)
 		placement_mode = ""
-		action_label.text = "Selected hex: " + card.card_name + " - click an empty friendly zone to prepare it."
+		_set_action_label_text("Selected hex: " + card.card_name + " - click an empty friendly zone to prepare it.")
 		update_ui()
 		return
 	_select_hand_card(card)
@@ -8141,35 +8152,35 @@ func _on_hand_card_pressed(card: Card) -> void:
 	if card is CharmCard:
 		if (card as CharmCard).must_be_prepared_to_activate:
 			placement_mode = "prepare_charm"
-			action_label.text = card.card_name + " selected - click an empty friendly zone to prepare it."
+			_set_action_label_text(card.card_name + " selected - click an empty friendly zone to prepare it.")
 		else:
-			action_label.text = "Selected charm: " + card.card_name + " - click a zone to play it, right-click for menu, or drag with S/right-click to prepare it."
+			_set_action_label_text("Selected charm: " + card.card_name + " - click a zone to play it, right-click for menu, or drag with S/right-click to prepare it.")
 	elif card.card_type == Card.CardType.SPELL:
 		placement_mode = ""
 		if card is BitMeseri:
 			_begin_bit_meseri_target_selection(card as BitMeseri)
 		elif card is Absence:
-			action_label.text = "Absence - click a Power or God Ability to target it, or drag onto one directly"
+			_set_action_label_text("Absence - click a Power or God Ability to target it, or drag onto one directly")
 		else:
-			action_label.text = "Selected spell: " + card.card_name + " - click a zone to cast it, or drag with S/right-click to prepare it."
+			_set_action_label_text("Selected spell: " + card.card_name + " - click a zone to cast it, or drag with S/right-click to prepare it.")
 	elif card.card_type == Card.CardType.HEX:
 		placement_mode = ""
-		action_label.text = "Selected hex: " + card.card_name + " - click an empty friendly zone to prepare it."
+		_set_action_label_text("Selected hex: " + card.card_name + " - click an empty friendly zone to prepare it.")
 	elif fenrir_hand_ability_available:
-		action_label.text = card.card_name + " selected - right-click for placement options or Wolf Master, or drag to place (S while dragging = stealth)"
+		_set_action_label_text(card.card_name + " selected - right-click for placement options or Wolf Master, or drag to place (S while dragging = stealth)")
 	elif card.card_type == Card.CardType.CREATURE and not card.is_god:
-		action_label.text = card.card_name + " selected ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â right-click for placement options, or drag to place (S while dragging = stealth)"
+		_set_action_label_text(card.card_name + " selected ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â right-click for placement options, or drag to place (S while dragging = stealth)")
 	elif card.is_god:
-		action_label.text = card.card_name + " ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â God card, place in your God slot"
+		_set_action_label_text(card.card_name + " ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â God card, place in your God slot")
 	# --- STRUCTURE UI CHANGE START ---
 	elif card.card_type == Card.CardType.STRUCTURE:
 		# Structures don't need mode selection, but we set placement_mode for the next step to trigger the placement logic
 		placement_mode = "defensive" 
 		placement_container.visible = false 
-		action_label.text = "Selected Structure: " + card.card_name + " - Click an empty zone to place it"
+		_set_action_label_text("Selected Structure: " + card.card_name + " - Click an empty zone to place it")
 	# --- STRUCTURE UI CHANGE END ---
 	else:
-		action_label.text = "Card type not yet supported in this test UI"
+		_set_action_label_text("Card type not yet supported in this test UI")
 
 func _on_hand_card_right_clicked(card: Card) -> void:
 	if _game_finished:
@@ -8307,10 +8318,10 @@ func _toggle_selected_spell_prepare_mode() -> void:
 		return
 	if placement_mode == "prepare_spell":
 		placement_mode = ""
-		action_label.text = "Selected spell: " + selected_card.card_name + " - click a zone to cast it, or drag with S/right-click to prepare it."
+		_set_action_label_text("Selected spell: " + selected_card.card_name + " - click a zone to cast it, or drag with S/right-click to prepare it.")
 	else:
 		placement_mode = "prepare_spell"
-		action_label.text = "Selected spell: " + selected_card.card_name + " - preparation mode on. Click or drag to an empty friendly zone to prepare it face-down."
+		_set_action_label_text("Selected spell: " + selected_card.card_name + " - preparation mode on. Click or drag to an empty friendly zone to prepare it face-down.")
 	update_ui()
 
 func _show_hand_context_menu_panel(panel: Control, card: Card) -> void:
@@ -8356,7 +8367,7 @@ func _cancel_hand_card_context_menu(card: Card) -> void:
 		var vc := hand_vc as VisualCard
 		if vc != null and is_instance_valid(vc):
 			vc.set_highlighted(false)
-	action_label.text = card.card_name + " deselected"
+	_set_action_label_text(card.card_name + " deselected")
 	update_ui()
 
 func _on_aggressive_stance_pressed() -> void:
@@ -8365,9 +8376,9 @@ func _on_aggressive_stance_pressed() -> void:
 		return
 	placement_mode = "aggressive"
 	if _pending_champions_call_god != null:
-		action_label.text = "Champion's Call: aggressive stance selected. Click an empty friendly zone."
+		_set_action_label_text("Champion's Call: aggressive stance selected. Click an empty friendly zone.")
 	else:
-		action_label.text = "Aggressive stance selected - Click empty zone to place"
+		_set_action_label_text("Aggressive stance selected - Click empty zone to place")
 	if _pending_drop_zone != null:
 		_on_empty_zone_pressed(_pending_drop_zone)
 		_pending_drop_zone = null
@@ -8378,9 +8389,9 @@ func _on_defensive_stance_pressed() -> void:
 		return
 	placement_mode = "defensive"
 	if _pending_champions_call_god != null:
-		action_label.text = "Champion's Call: defensive stance selected. Click an empty friendly zone."
+		_set_action_label_text("Champion's Call: defensive stance selected. Click an empty friendly zone.")
 	else:
-		action_label.text = "Defensive stance selected - Click empty zone to place"
+		_set_action_label_text("Defensive stance selected - Click empty zone to place")
 	if _pending_drop_zone != null:
 		_on_empty_zone_pressed(_pending_drop_zone)
 		_pending_drop_zone = null
@@ -8390,7 +8401,7 @@ func _on_stealth_mode_pressed() -> void:
 		_reject_pre_turn_action()
 		return
 	placement_mode = "stealth"
-	action_label.text = "Stealth mode selected - Click empty zone to place"
+	_set_action_label_text("Stealth mode selected - Click empty zone to place")
 	if _pending_drop_zone != null:
 		_on_empty_zone_pressed(_pending_drop_zone)
 		_pending_drop_zone = null
@@ -8423,7 +8434,7 @@ func _on_empty_zone_pressed(zone: Zone) -> void:
 				and zone.zone_owner == game_manager.current_player:
 			_execute_drag_sacrifice(zone)
 		else:
-			action_label.text = "Choose an empty friendly zone to place " + _drag_sacrifice_card.card_name
+			_set_action_label_text("Choose an empty friendly zone to place " + _drag_sacrifice_card.card_name)
 		return
 	if _pending_wolf_master_summon != null:
 		_resolve_wolf_master_summon(zone)
@@ -8447,14 +8458,14 @@ func _on_empty_zone_pressed(zone: Zone) -> void:
 			if game_input.submit_action({type = "creature_move", card_uid = card.uid,
 					player_index = game_manager.players.find(zone.zone_owner),
 					zone_type = zone.zone_type, zone_index = zone.zone_index}):
-				action_label.text = card.card_name + " moved."
+				_set_action_label_text(card.card_name + " moved.")
 				update_ui()
 				return
-		action_label.text = "Invalid move target ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â must be an adjacent empty zone."
+		_set_action_label_text("Invalid move target ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â must be an adjacent empty zone.")
 		update_ui()
 		return
 	if selected_card == null:
-		action_label.text = "Select a card from hand, or choose placement mode for creature first"
+		_set_action_label_text("Select a card from hand, or choose placement mode for creature first")
 		return
 
 	if selected_card is CharmCard:
@@ -8466,13 +8477,13 @@ func _on_empty_zone_pressed(zone: Zone) -> void:
 			if game_input.submit_action({type = "prepare_card", card_uid = preparing_card.uid,
 					player_index = game_manager.players.find(zone.zone_owner),
 					zone_type = zone.zone_type, zone_index = zone.zone_index}):
-				action_label.text = "Prepared Charm: " + preparing_card.card_name + " (face-down)!"
+				_set_action_label_text("Prepared Charm: " + preparing_card.card_name + " (face-down)!")
 				selected_card = null
 				placement_mode = ""
 				placement_container.visible = false
 				update_ui()
 			else:
-				action_label.text = "Cannot prepare " + preparing_card.card_name + "!"
+				_set_action_label_text("Cannot prepare " + preparing_card.card_name + "!")
 		else:
 			if charm.targets:
 				_prompt_charm_target_selection(charm)
@@ -8487,13 +8498,13 @@ func _on_empty_zone_pressed(zone: Zone) -> void:
 			if game_input.submit_action({type = "prepare_card", card_uid = preparing_card.uid,
 					player_index = game_manager.players.find(zone.zone_owner),
 					zone_type = zone.zone_type, zone_index = zone.zone_index}):
-				action_label.text = "Prepared Spell: " + preparing_card.card_name + " (face-down)!"
+				_set_action_label_text("Prepared Spell: " + preparing_card.card_name + " (face-down)!")
 				selected_card = null
 				placement_mode = ""
 				placement_container.visible = false
 				update_ui()
 			else:
-				action_label.text = "Cannot prepare " + preparing_card.card_name + "!"
+				_set_action_label_text("Cannot prepare " + preparing_card.card_name + "!")
 		elif game_manager.can_play_card(game_manager.current_player, selected_card, zone):
 			if selected_card is ApollyonsDemiurge or selected_card.card_name == "Apollyon's Demiurge":
 				_show_demiurge_prompt(selected_card)
@@ -8537,14 +8548,14 @@ func _on_empty_zone_pressed(zone: Zone) -> void:
 							(spell as SpellCard).resolve(game_manager, null)
 					)
 		else:
-			action_label.text = "Cannot cast spell! Not enough resources"
+			_set_action_label_text("Cannot cast spell! Not enough resources")
 	elif selected_card.current_zone == game_manager.current_player.hand_zone \
 			and selected_card.requires_chosen_hand_discards() \
 			and not selected_card.has_pending_chosen_discards_for_cost():
 		var on_choose_hand_discards := func() -> void:
 			_on_empty_zone_pressed(zone)
 		var on_cancel_hand_discards := func() -> void:
-			action_label.text = "Cancelled " + selected_card.card_name + "."
+			_set_action_label_text("Cancelled " + selected_card.card_name + ".")
 			update_ui()
 		_prompt_chosen_hand_discards(
 			selected_card,
@@ -8565,17 +8576,17 @@ func _on_empty_zone_pressed(zone: Zone) -> void:
 					zone_type = zone.zone_type, zone_index = zone.zone_index})
 			var building_power := _get_active_advanced_building_techniques(game_manager.current_player)
 			if building_power != null and building_power.can_offer_structure_bonus(played_structure, game_manager):
-				action_label.text = "Played Structure: " + played_structure.card_name + "! Choose how much mana to spend on Advanced Building Techniques."
+				_set_action_label_text("Played Structure: " + played_structure.card_name + "! Choose how much mana to spend on Advanced Building Techniques.")
 				_show_structure_bonus_prompt(building_power, played_structure)
 			else:
-				action_label.text = "Played Structure: " + played_structure.card_name + "!"
+				_set_action_label_text("Played Structure: " + played_structure.card_name + "!")
 			
 			selected_card = null
 			placement_mode = ""
 			placement_container.visible = false
 			update_ui()
 		else:
-			action_label.text = "Cannot play Structure! Not enough resources."
+			_set_action_label_text("Cannot play Structure! Not enough resources.")
 	# --- STRUCTURE UI CHANGE END ---
 	elif selected_card.card_type == Card.CardType.EQUIPMENT and selected_card.current_zone == game_manager.current_player.hand_zone:
 		if game_manager.can_play_card(game_manager.current_player, selected_card, zone):
@@ -8585,15 +8596,15 @@ func _on_empty_zone_pressed(zone: Zone) -> void:
 					zone_type = zone.zone_type, zone_index = zone.zone_index})
 			var creature_there := zone.get_creature()
 			if creature_there != null:
-				action_label.text = equip_name + " equipped to " + creature_there.card_name + "!"
+				_set_action_label_text(equip_name + " equipped to " + creature_there.card_name + "!")
 			else:
-				action_label.text = "Played " + equip_name + " to zone."
+				_set_action_label_text("Played " + equip_name + " to zone.")
 			selected_card = null
 			placement_mode = ""
 			placement_container.visible = false
 			update_ui()
 		else:
-			action_label.text = "Cannot play " + selected_card.card_name + "! Not enough resources."
+			_set_action_label_text("Cannot play " + selected_card.card_name + "! Not enough resources.")
 	elif selected_card.card_type == Card.CardType.HEX:
 		if _has_pending_click_selection():
 			_clear_pending_click_selection()
@@ -8601,15 +8612,15 @@ func _on_empty_zone_pressed(zone: Zone) -> void:
 		if game_input.submit_action({type = "prepare_card", card_uid = preparing_card.uid,
 				player_index = game_manager.players.find(zone.zone_owner),
 				zone_type = zone.zone_type, zone_index = zone.zone_index}):
-			action_label.text = "Prepared Hex: " + preparing_card.card_name + " (face-down)!"
+			_set_action_label_text("Prepared Hex: " + preparing_card.card_name + " (face-down)!")
 			selected_card = null
 			placement_mode = ""
 			placement_container.visible = false
 			update_ui()
 		else:
-			action_label.text = "Cannot prepare Hex! Not enough resources."
+			_set_action_label_text("Cannot prepare Hex! Not enough resources.")
 	else:
-		action_label.text = "Select a card from hand, or choose placement mode for creature first"
+		_set_action_label_text("Select a card from hand, or choose placement mode for creature first")
 
 func get_resurrectible_cards() -> Array[Card]:
 	var cards: Array[Card] = []
@@ -8637,16 +8648,16 @@ func _on_god_card_pressed(card: Card) -> void:
 	if not card.is_god:
 		return
 	if not card.has_method("can_activate"):
-		action_label.text = card.card_name + " has no activatable ability."
+		_set_action_label_text(card.card_name + " has no activatable ability.")
 		return
 	if card.is_muted:
-		action_label.text = card.card_name + " is muted for " + str(card.mute_turns_remaining) + " more turn(s)."
+		_set_action_label_text(card.card_name + " is muted for " + str(card.mute_turns_remaining) + " more turn(s).")
 		return
 	if choice_container.visible:
-		action_label.text = "You must draw or take mana before activating a god ability."
+		_set_action_label_text("You must draw or take mana before activating a god ability.")
 		return
 	if not card.can_activate(game_manager):
-		action_label.text = _get_activation_unavailable_text(card, card.card_name + "'s ability cannot be activated right now.")
+		_set_action_label_text(_get_activation_unavailable_text(card, card.card_name + "'s ability cannot be activated right now."))
 		return
 	if card is Odin:
 		_begin_odin_runic_knowledge_activation(card as Odin)
@@ -8677,7 +8688,7 @@ func _on_god_card_pressed(card: Card) -> void:
 	elif _god_ability_should_use_selection_overlay(card):
 		var targets: Array = card.get_valid_targets(game_manager)
 		if targets.is_empty():
-			action_label.text = card.card_name + " has no valid targets right now."
+			_set_action_label_text(card.card_name + " has no valid targets right now.")
 			update_ui()
 			return
 		var on_choose_god_overlay_target := func(selected_target: Card) -> void:
@@ -8698,7 +8709,7 @@ func _on_god_card_pressed(card: Card) -> void:
 	else:
 		awaiting_god_ability_target = true
 		god_ability_source = card
-		action_label.text = card.card_name + " - click a valid target."
+		_set_action_label_text(card.card_name + " - click a valid target.")
 		update_ui()
 
 func _on_god_right_clicked(card: Card) -> void:
@@ -8724,11 +8735,11 @@ func _on_god_right_clicked(card: Card) -> void:
 	)
 	if not can_activate_now:
 		if card.is_muted:
-			action_label.text = card.card_name + " is muted for " + str(card.mute_turns_remaining) + " more turn(s)."
+			_set_action_label_text(card.card_name + " is muted for " + str(card.mute_turns_remaining) + " more turn(s).")
 		elif choice_container.visible:
-			action_label.text = "You must draw or take mana before activating a god ability."
+			_set_action_label_text("You must draw or take mana before activating a god ability.")
 		elif card.has_method("can_activate"):
-			action_label.text = _get_activation_unavailable_text(card, card.card_name + "'s ability cannot be activated right now.")
+			_set_action_label_text(_get_activation_unavailable_text(card, card.card_name + "'s ability cannot be activated right now."))
 		return
 
 	var panel := PanelContainer.new()
@@ -8803,7 +8814,7 @@ func _begin_tezcatlipoca_god_activation(card: TezcatlipocaTheSmokingMirror) -> v
 	if card == null or game_manager == null:
 		return
 	if not card.can_activate(game_manager):
-		action_label.text = _get_activation_unavailable_text(card, card.card_name + "'s ability cannot be activated right now.")
+		_set_action_label_text(_get_activation_unavailable_text(card, card.card_name + "'s ability cannot be activated right now."))
 		update_ui()
 		return
 	if card.can_resolve_necoc_yaotl_summon(game_manager):
@@ -8822,13 +8833,13 @@ func _begin_tezcatlipoca_god_activation(card: TezcatlipocaTheSmokingMirror) -> v
 
 	var sacrifices: Array = card.get_valid_targets(game_manager)
 	if sacrifices.is_empty():
-		action_label.text = card.get_activation_failure_reason(game_manager)
+		_set_action_label_text(card.get_activation_failure_reason(game_manager))
 		update_ui()
 		return
 	var on_choose_sacrifice := func(chosen_sacrifice: Card) -> void:
 		if _is_networked_client:
 			game_input.submit_action({type = "god_ability", god_uid = card.uid, target_uid = chosen_sacrifice.uid})
-			action_label.text = "%s is using Necoc Yaotl." % card.card_name
+			_set_action_label_text("%s is using Necoc Yaotl." % card.card_name)
 			update_ui()
 			return
 		var viewer := game_manager.get_feedback_viewer()
@@ -8841,7 +8852,7 @@ func _begin_tezcatlipoca_god_activation(card: TezcatlipocaTheSmokingMirror) -> v
 			"%s offers %s to Necoc Yaotl." % [card.card_name, sacrifice_name]
 		)
 	var on_cancel_sacrifice := func() -> void:
-		action_label.text = "Cancelled " + card.card_name + "."
+		_set_action_label_text("Cancelled " + card.card_name + ".")
 		update_ui()
 	_show_card_selection_overlay(
 		"Choose a creature for Necoc Yaotl",
@@ -8858,7 +8869,7 @@ func _begin_odin_runic_knowledge_activation(card: Odin) -> void:
 		return
 	var offerings: Array[Card] = card.get_valid_runic_knowledge_offerings()
 	if offerings.is_empty():
-		action_label.text = card.get_activation_failure_reason(game_manager)
+		_set_action_label_text(card.get_activation_failure_reason(game_manager))
 		update_ui()
 		return
 	if offerings.size() == 1:
@@ -8867,7 +8878,7 @@ func _begin_odin_runic_knowledge_activation(card: Odin) -> void:
 	var on_choose_offering := func(chosen_card: Card) -> void:
 		_show_odin_runic_knowledge_guess_prompt(card, chosen_card)
 	var on_cancel_offering := func() -> void:
-		action_label.text = "Cancelled " + card.card_name + "."
+		_set_action_label_text("Cancelled " + card.card_name + ".")
 		update_ui()
 	_show_card_selection_overlay(
 		"Choose a Runic or \"of Odin\" card to void for " + card.card_name,
@@ -8875,19 +8886,19 @@ func _begin_odin_runic_knowledge_activation(card: Odin) -> void:
 		on_choose_offering,
 		on_cancel_offering
 	)
-	action_label.text = card.card_name + ": choose a Runic or \"of Odin\" card to void."
+	_set_action_label_text(card.card_name + ": choose a Runic or \"of Odin\" card to void.")
 	update_ui()
 
 func _show_odin_runic_knowledge_guess_prompt(card: Odin, offering_card: Card) -> void:
 	if card == null or offering_card == null or game_manager == null:
 		return
 	if not card.is_valid_runic_knowledge_offering(offering_card):
-		action_label.text = "Runic Knowledge needs a valid Runic or \"of Odin\" offering."
+		_set_action_label_text("Runic Knowledge needs a valid Runic or \"of Odin\" offering.")
 		update_ui()
 		return
 	var deck_names: Array[String] = _get_odin_runic_knowledge_main_deck_names(card.card_owner)
 	if deck_names.is_empty():
-		action_label.text = "Runic Knowledge could not find the names from your main deck list."
+		_set_action_label_text("Runic Knowledge could not find the names from your main deck list.")
 		update_ui()
 		return
 
@@ -9001,19 +9012,19 @@ func _show_odin_runic_knowledge_guess_prompt(card: Odin, offering_card: Card) ->
 	)
 	cancel_btn.pressed.connect(func() -> void:
 		_dismiss_zone_overlay()
-		action_label.text = "Cancelled " + card.card_name + "."
+		_set_action_label_text("Cancelled " + card.card_name + ".")
 		update_ui()
 	)
 	overlay.gui_input.connect(func(event: InputEvent) -> void:
 		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 			_dismiss_zone_overlay()
-			action_label.text = "Cancelled " + card.card_name + "."
+			_set_action_label_text("Cancelled " + card.card_name + ".")
 			update_ui()
 	)
 
 	rebuild_name_list.call("")
 	search.grab_focus()
-	action_label.text = card.card_name + ": name the top card of your deck."
+	_set_action_label_text(card.card_name + ": name the top card of your deck.")
 	update_ui()
 
 func _submit_odin_runic_knowledge_activation(card: Odin, offering_card: Card, named_card_name: String) -> void:
@@ -9021,7 +9032,7 @@ func _submit_odin_runic_knowledge_activation(card: Odin, offering_card: Card, na
 		return
 	var guessed_name := str(named_card_name).strip_edges()
 	if guessed_name.is_empty():
-		action_label.text = "Runic Knowledge needs a card name."
+		_set_action_label_text("Runic Knowledge needs a card name.")
 		update_ui()
 		return
 	if _is_networked_client:
@@ -9033,7 +9044,7 @@ func _submit_odin_runic_knowledge_activation(card: Odin, offering_card: Card, na
 				named_card_name = guessed_name,
 			}
 		})
-		action_label.text = card.card_name + " invokes Runic Knowledge."
+		_set_action_label_text(card.card_name + " invokes Runic Knowledge.")
 		update_ui()
 		return
 	_queue_magical_action(
@@ -9171,7 +9182,7 @@ func _execute_drag_sacrifice(zone: Zone) -> void:
 				_sacrifice_pending_mode = mode
 				_sacrifice_remaining = total_sacrifice_cost - 1
 				_awaiting_creature_sacrifice = true
-				action_label.text = _get_creature_sacrifice_prompt(_sacrifice_pending_card, _sacrifice_remaining)
+				_set_action_label_text(_get_creature_sacrifice_prompt(_sacrifice_pending_card, _sacrifice_remaining))
 				update_ui()
 				return
 			_resolve_pending_creature_play(card, zone, mode)
@@ -9197,25 +9208,28 @@ func _do_place_creature(card: Card, zone: Zone, mode: String) -> void:
 	})
 	if not _is_networked_client:
 		if not success:
-			action_label.text = "Cannot summon " + card.card_name + " right now."
+			_set_action_label_text("Cannot summon " + card.card_name + " right now.")
 			return
-		action_label.text = "A creature was summoned in STEALTH!" if stealth else "Played " + card.card_name + " in " + ("aggressive stance" if mode == "aggressive" else "defensive stance") + "!"
+		_set_action_label_text("A creature was summoned in STEALTH!" if stealth else "Played " + card.card_name + " in " + ("aggressive stance" if mode == "aggressive" else "defensive stance") + "!")
 
 func _resolve_pending_creature_play(card: Card, zone: Zone, mode: String) -> void:
 	if card == null or zone == null:
 		_pending_creature_play_resolver = Callable()
+		_clear_pending_creature_summon_cost_tracking()
 		return
 	var resolver := _pending_creature_play_resolver
 	_pending_creature_play_resolver = Callable()
 	var orig_cost := card.sacrifice_cost
-	if orig_cost > 0:
+	var sacrifice_cost_paid := _has_fully_paid_pending_creature_summon_cost(card, orig_cost)
+	if orig_cost > 0 and sacrifice_cost_paid:
 		card.sacrifice_cost = 0
 	if resolver.is_valid():
 		resolver.call(card, zone, mode)
 	else:
 		_do_place_creature(card, zone, mode)
-	if orig_cost > 0:
+	if orig_cost > 0 and sacrifice_cost_paid:
 		card.sacrifice_cost = orig_cost
+	_clear_pending_creature_summon_cost_tracking()
 
 func _can_use_zone_after_sacrifice(zone: Zone, sacrificed_card: Card) -> bool:
 	if zone == null or sacrificed_card == null:
@@ -9230,7 +9244,7 @@ func _try_play_selected_creature_to_zone(zone: Zone) -> void:
 	if selected_card == null or selected_card.card_type != Card.CardType.CREATURE or placement_mode == "":
 		return
 	if not game_manager.can_play_card(game_manager.current_player, selected_card, zone):
-		action_label.text = "Cannot play card! Not enough resources or already summoned this turn"
+		_set_action_label_text("Cannot play card! Not enough resources or already summoned this turn")
 		_pending_creature_play_resolver = Callable()
 		return
 	if selected_card.sacrifice_cost > 0 and not _drag_sacrifice_done:
@@ -9239,12 +9253,13 @@ func _try_play_selected_creature_to_zone(zone: Zone) -> void:
 		_sacrifice_pending_zone = zone
 		_sacrifice_pending_mode = placement_mode
 		_sacrifice_remaining = selected_card.sacrifice_cost
+		_begin_pending_creature_summon_cost_tracking(selected_card)
 		var altar := _get_active_altar_of_dreams(game_manager.current_player)
 		if altar != null and altar.has_enough_valid_void_targets(_sacrifice_pending_card, game_manager):
 			selected_card = null
 			placement_mode = ""
 			placement_container.visible = false
-			action_label.text = _get_sacrifice_payment_prompt(_sacrifice_pending_card)
+			_set_action_label_text(_get_sacrifice_payment_prompt(_sacrifice_pending_card))
 			_show_sacrifice_payment_prompt(_sacrifice_pending_card, altar)
 			return
 		if zone != null and zone.cards.size() == 1 and _can_use_zone_after_sacrifice(zone, zone.cards[0]):
@@ -9256,7 +9271,7 @@ func _try_play_selected_creature_to_zone(zone: Zone) -> void:
 		if auto_sacrifice_target != null:
 			_select_pending_creature_sacrifice(auto_sacrifice_target)
 		else:
-			action_label.text = _get_creature_sacrifice_prompt(_sacrifice_pending_card, _sacrifice_remaining)
+			_set_action_label_text(_get_creature_sacrifice_prompt(_sacrifice_pending_card, _sacrifice_remaining))
 		return
 	_drag_sacrifice_done = false
 	_resolve_pending_creature_play(selected_card, zone, placement_mode)
@@ -9269,7 +9284,7 @@ func _queue_fenrir_wolf_master(card: Fenrir, mode: String) -> void:
 	if card == null or game_manager == null:
 		return
 	if not card.can_use_hand_ability(game_manager):
-		action_label.text = "Wolf Master cannot be used right now."
+		_set_action_label_text("Wolf Master cannot be used right now.")
 		update_ui()
 		return
 	selected_card = null
@@ -9278,7 +9293,7 @@ func _queue_fenrir_wolf_master(card: Fenrir, mode: String) -> void:
 	if _is_networked_client:
 		var network_lupines := card.get_valid_wolf_master_summons(game_manager)
 		if network_lupines.is_empty():
-			action_label.text = "Wolf Master: no payable Lupines in deck."
+			_set_action_label_text("Wolf Master: no payable Lupines in deck.")
 			update_ui()
 			return
 		_pending_wolf_master_source = card
@@ -9289,7 +9304,7 @@ func _queue_fenrir_wolf_master(card: Fenrir, mode: String) -> void:
 				_begin_wolf_master_summon(network_lupine, mode)
 			var on_cancel_network_lupine := func() -> void:
 				_pending_wolf_master_source = null
-				action_label.text = "Wolf Master cancelled."
+				_set_action_label_text("Wolf Master cancelled.")
 				update_ui()
 			_show_card_selection_overlay(
 				"Choose a Lupine for Wolf Master",
@@ -9299,12 +9314,12 @@ func _queue_fenrir_wolf_master(card: Fenrir, mode: String) -> void:
 			)
 		return
 	if not card.perform_wolf_master_shuffle():
-		action_label.text = "Wolf Master fizzles: " + card.card_name + " could not be shuffled."
+		_set_action_label_text("Wolf Master fizzles: " + card.card_name + " could not be shuffled.")
 		update_ui()
 		return
 	var shuffled_lupines := card.get_valid_wolf_master_summons(game_manager)
 	if shuffled_lupines.is_empty():
-		action_label.text = "Wolf Master fizzles: no payable Lupines are available in the deck."
+		_set_action_label_text("Wolf Master fizzles: no payable Lupines are available in the deck.")
 		update_ui()
 		return
 	_pending_wolf_master_source = card
@@ -9315,7 +9330,7 @@ func _queue_fenrir_wolf_master(card: Fenrir, mode: String) -> void:
 		_begin_wolf_master_summon(shuffled_lupine, mode)
 	var on_cancel_shuffled_lupine := func() -> void:
 		_pending_wolf_master_source = null
-		action_label.text = "Wolf Master cancelled after shuffling " + card.card_name + "."
+		_set_action_label_text("Wolf Master cancelled after shuffling " + card.card_name + ".")
 		update_ui()
 	_show_card_selection_overlay(
 		"Choose a Lupine for Wolf Master",
@@ -9330,7 +9345,7 @@ func _begin_wolf_master_summon(card: Card, mode: String) -> void:
 	selected_card = null
 	placement_mode = ""
 	placement_container.visible = false
-	action_label.text = "Wolf Master: choose an empty friendly zone to summon " + card.card_name + " (" + mode.to_upper() + ")."
+	_set_action_label_text("Wolf Master: choose an empty friendly zone to summon " + card.card_name + " (" + mode.to_upper() + ").")
 	update_ui()
 
 func _resolve_wolf_master_summon(zone: Zone) -> void:
@@ -9341,7 +9356,7 @@ func _resolve_wolf_master_summon(zone: Zone) -> void:
 		update_ui()
 		return
 	if zone == null or zone.zone_owner != game_manager.current_player or zone.zone_type not in [Zone.ZoneType.FRONTLINE, Zone.ZoneType.RESERVE] or not zone.cards.is_empty():
-		action_label.text = "Wolf Master: choose an empty friendly zone."
+		_set_action_label_text("Wolf Master: choose an empty friendly zone.")
 		update_ui()
 		return
 	if _is_networked_client:
@@ -9371,7 +9386,7 @@ func _resolve_wolf_master_summon(zone: Zone) -> void:
 		if selected_card == card:
 			selected_card = null
 		placement_mode = ""
-		action_label.text = "Wolf Master fizzles: " + card.card_name + " could not be summoned."
+		_set_action_label_text("Wolf Master fizzles: " + card.card_name + " could not be summoned.")
 		_clear_wolf_master_summon()
 	update_ui()
 
@@ -9383,7 +9398,7 @@ func _clear_wolf_master_summon() -> void:
 
 func _resolve_wolf_master_creature_play(card: Card, zone: Zone, mode: String) -> void:
 	if card == null or zone == null or game_manager == null:
-		action_label.text = "Wolf Master fizzles: the summon could not be completed."
+		_set_action_label_text("Wolf Master fizzles: the summon could not be completed.")
 		_clear_wolf_master_summon()
 		return
 	var summon_mode: Card.CreatureMode = Card.CreatureMode.DEFENSIVE
@@ -9403,10 +9418,10 @@ func _resolve_wolf_master_creature_play(card: Card, zone: Zone, mode: String) ->
 		true
 	)
 	if not success:
-		action_label.text = "Wolf Master fizzles: " + card.card_name + " could not be summoned."
+		_set_action_label_text("Wolf Master fizzles: " + card.card_name + " could not be summoned.")
 		_clear_wolf_master_summon()
 		return
-	action_label.text = "Wolf Master summoned " + card.card_name + " from the deck!"
+	_set_action_label_text("Wolf Master summoned " + card.card_name + " from the deck!")
 	_clear_wolf_master_summon()
 
 func _queue_blessed_knights_impact_prompt(card: BlessedKnights) -> void:
@@ -9429,7 +9444,7 @@ func _queue_blessed_knights_impact_prompt(card: BlessedKnights) -> void:
 			_show_blessed_knights_prompt(card)
 	game_manager.push_to_stack(action)
 	update_ui()
-	action_label.text = card.card_name + " impact waits on priority."
+	_set_action_label_text(card.card_name + " impact waits on priority.")
 	_offer_priority()
 
 func _queue_tezcatlipoca_active_titlacauan_prompt(card: TezcatlipocaActive) -> void:
@@ -9439,7 +9454,7 @@ func _queue_tezcatlipoca_active_titlacauan_prompt(card: TezcatlipocaActive) -> v
 	if card.get_titlacauan_level_budget() <= 0 or valid_targets.is_empty():
 		var no_target_text := card.resolve_titlacauan_choice(game_manager, [])
 		game_manager.note_player_feedback(no_target_text)
-		action_label.text = _consume_resolution_feedback(no_target_text)
+		_set_action_label_text(_consume_resolution_feedback(no_target_text))
 		update_ui()
 		return
 	var action := CardAction.new()
@@ -9466,7 +9481,7 @@ func _queue_tezcatlipoca_active_titlacauan_prompt(card: TezcatlipocaActive) -> v
 			_show_tezcatlipoca_active_titlacauan_prompt(card, valid_targets)
 	game_manager.push_to_stack(action)
 	update_ui()
-	action_label.text = card.card_name + " impact waits on priority."
+	_set_action_label_text(card.card_name + " impact waits on priority.")
 	_offer_priority()
 
 func _queue_wolf_adolescent_maturation_prompt(card: WolfAdolescent, prompt_targets: Array = []) -> void:
@@ -9482,7 +9497,7 @@ func _queue_wolf_adolescent_maturation_prompt(card: WolfAdolescent, prompt_targe
 	if targets.is_empty():
 		var no_target_text := card.card_name + " matured, but found no level 5 or lower Lupine in the deck."
 		game_manager.note_player_feedback(no_target_text)
-		action_label.text = _consume_resolution_feedback(no_target_text)
+		_set_action_label_text(_consume_resolution_feedback(no_target_text))
 		_queued_wolf_adolescent_prompt_targets.erase(card.uid)
 		update_ui()
 		return
@@ -9508,7 +9523,7 @@ func _show_next_wolf_adolescent_maturation_prompt() -> bool:
 		if targets.is_empty():
 			var no_target_text := wolf.card_name + " matured, but found no level 5 or lower Lupine in the deck."
 			game_manager.note_player_feedback(no_target_text)
-			action_label.text = _consume_resolution_feedback(no_target_text)
+			_set_action_label_text(_consume_resolution_feedback(no_target_text))
 			_queued_wolf_adolescent_prompt_targets.erase(wolf.uid)
 			_pending_wolf_adolescent_prompts.remove_at(0)
 			continue
@@ -9563,7 +9578,7 @@ func _show_wolf_adolescent_maturation_prompt(card: WolfAdolescent, prompt_target
 		var no_target_text := card.card_name + " matured, but found no level 5 or lower Lupine in the deck."
 		card._set_maturation_ready(false)
 		game_manager.note_player_feedback(no_target_text)
-		action_label.text = _consume_resolution_feedback(no_target_text)
+		_set_action_label_text(_consume_resolution_feedback(no_target_text))
 		_consume_current_wolf_adolescent_prompt()
 		if not _show_next_wolf_adolescent_maturation_prompt():
 			_finish_wolf_adolescent_turn_start_sequence()
@@ -9578,7 +9593,7 @@ func _show_wolf_adolescent_maturation_prompt(card: WolfAdolescent, prompt_target
 		}):
 			return
 		var feedback := card.resolve_maturation_choice(game_manager, chosen_card)
-		action_label.text = _consume_resolution_feedback(feedback)
+		_set_action_label_text(_consume_resolution_feedback(feedback))
 		_consume_current_wolf_adolescent_prompt()
 		if not _show_next_wolf_adolescent_maturation_prompt():
 			_finish_wolf_adolescent_turn_start_sequence()
@@ -9591,7 +9606,7 @@ func _show_wolf_adolescent_maturation_prompt(card: WolfAdolescent, prompt_target
 		}):
 			return
 		var feedback := card.resolve_maturation_choice(game_manager, null)
-		action_label.text = _consume_resolution_feedback(feedback)
+		_set_action_label_text(_consume_resolution_feedback(feedback))
 		_consume_current_wolf_adolescent_prompt()
 		if not _show_next_wolf_adolescent_maturation_prompt():
 			_finish_wolf_adolescent_turn_start_sequence()
@@ -9605,7 +9620,7 @@ func _show_wolf_adolescent_maturation_prompt(card: WolfAdolescent, prompt_target
 		"",
 		"Skip"
 	)
-	action_label.text = card.card_name + ": choose a Lupine to summon or skip Maturation."
+	_set_action_label_text(card.card_name + ": choose a Lupine to summon or skip Maturation.")
 	update_ui()
 
 func _queue_durinn_secondborn_impact_prompt(card: DurinnSecondborn, prompt_targets: Array = []) -> void:
@@ -9623,7 +9638,7 @@ func _queue_durinn_secondborn_impact_prompt(card: DurinnSecondborn, prompt_targe
 		if _stack_resolution_paused:
 			_resume_after_deferred_resolution(no_target_text)
 		else:
-			action_label.text = no_target_text
+			_set_action_label_text(no_target_text)
 			update_ui()
 		return
 	if current_targets.size() == 1:
@@ -9637,7 +9652,7 @@ func _queue_durinn_secondborn_impact_prompt(card: DurinnSecondborn, prompt_targe
 		if _stack_resolution_paused:
 			_resume_after_deferred_resolution(auto_text)
 		else:
-			action_label.text = auto_text
+			_set_action_label_text(auto_text)
 			update_ui()
 		return
 	if _executing_stack_action and not _stack_resolution_paused:
@@ -9664,7 +9679,7 @@ func _queue_durinn_secondborn_impact_prompt(card: DurinnSecondborn, prompt_targe
 		on_choose_weapon,
 		on_cancel_weapon
 	)
-	action_label.text = card.card_name + ": choose a weapon to reforge."
+	_set_action_label_text(card.card_name + ": choose a weapon to reforge.")
 	update_ui()
 
 func _queue_first_sage_adapa_impact_prompt(card: FirstSageAdapa) -> void:
@@ -9686,7 +9701,7 @@ func _queue_first_sage_adapa_impact_prompt(card: FirstSageAdapa) -> void:
 			if _stack_resolution_paused:
 				_resume_after_deferred_resolution(no_target_text)
 			else:
-				action_label.text = no_target_text
+				_set_action_label_text(no_target_text)
 				update_ui()
 			return
 		if current_targets.size() == 1:
@@ -9694,7 +9709,7 @@ func _queue_first_sage_adapa_impact_prompt(card: FirstSageAdapa) -> void:
 			if _stack_resolution_paused:
 				_resume_after_deferred_resolution(auto_text)
 			else:
-				action_label.text = auto_text
+				_set_action_label_text(auto_text)
 				update_ui()
 			return
 		_pause_stack_resolution(card.card_owner)
@@ -9711,11 +9726,11 @@ func _queue_first_sage_adapa_impact_prompt(card: FirstSageAdapa) -> void:
 			on_choose_silence_target,
 			on_cancel_silence_target
 		)
-		action_label.text = card.card_name + ": click an opposing power or God ability to silence."
+		_set_action_label_text(card.card_name + ": click an opposing power or God ability to silence.")
 		update_ui()
 	game_manager.push_to_stack(action)
 	update_ui()
-	action_label.text = card.card_name + " impact waits on priority."
+	_set_action_label_text(card.card_name + " impact waits on priority.")
 	_offer_priority()
 
 func _resolve_prompt_targets(valid_targets: Array[Card], prompt_targets: Array = []) -> Array[Card]:
@@ -9759,7 +9774,7 @@ func _show_first_sage_adapa_impact_prompt(card: FirstSageAdapa, prompt_targets: 
 			"target_uid": "",
 		}):
 			return
-		action_label.text = _consume_resolution_feedback("%s found no opposing powers or God abilities to silence." % card.card_name)
+		_set_action_label_text(_consume_resolution_feedback("%s found no opposing powers or God abilities to silence." % card.card_name))
 		update_ui()
 		return
 	if current_targets.size() == 1:
@@ -9769,7 +9784,7 @@ func _show_first_sage_adapa_impact_prompt(card: FirstSageAdapa, prompt_targets: 
 			"target_uid": current_targets[0].uid,
 		}):
 			return
-		action_label.text = _consume_resolution_feedback(card.resolve_silence_divine_impact(game_manager, current_targets[0]))
+		_set_action_label_text(_consume_resolution_feedback(card.resolve_silence_divine_impact(game_manager, current_targets[0])))
 		update_ui()
 		return
 	var on_choose_silence_target := func(clicked_card: Card) -> void:
@@ -9779,7 +9794,7 @@ func _show_first_sage_adapa_impact_prompt(card: FirstSageAdapa, prompt_targets: 
 			"target_uid": clicked_card.uid,
 		}):
 			return
-		action_label.text = _consume_resolution_feedback(card.resolve_silence_divine_impact(game_manager, clicked_card))
+		_set_action_label_text(_consume_resolution_feedback(card.resolve_silence_divine_impact(game_manager, clicked_card)))
 		update_ui()
 	var on_cancel_silence_target := func() -> void:
 		if _submit_prompt_choice_command({
@@ -9788,7 +9803,7 @@ func _show_first_sage_adapa_impact_prompt(card: FirstSageAdapa, prompt_targets: 
 			"target_uid": "",
 		}):
 			return
-		action_label.text = _consume_resolution_feedback(card.card_name + " impact fizzles.")
+		_set_action_label_text(_consume_resolution_feedback(card.card_name + " impact fizzles."))
 		update_ui()
 	var validate_silence_target := func(clicked_card: Card) -> bool:
 		return clicked_card != null and clicked_card in card.get_valid_targets(game_manager)
@@ -9799,7 +9814,7 @@ func _show_first_sage_adapa_impact_prompt(card: FirstSageAdapa, prompt_targets: 
 		on_choose_silence_target,
 		on_cancel_silence_target
 	)
-	action_label.text = card.card_name + ": click an opposing power or God ability to silence."
+	_set_action_label_text(card.card_name + ": click an opposing power or God ability to silence.")
 	update_ui()
 
 func _queue_third_sage_enmedugga_impact_prompt(card) -> void:
@@ -9821,7 +9836,7 @@ func _queue_third_sage_enmedugga_impact_prompt(card) -> void:
 			if _stack_resolution_paused:
 				_resume_after_deferred_resolution(no_target_text)
 			else:
-				action_label.text = no_target_text
+				_set_action_label_text(no_target_text)
 				update_ui()
 			return
 		if current_targets.size() == 1:
@@ -9829,7 +9844,7 @@ func _queue_third_sage_enmedugga_impact_prompt(card) -> void:
 			if _stack_resolution_paused:
 				_resume_after_deferred_resolution(auto_text)
 			else:
-				action_label.text = auto_text
+				_set_action_label_text(auto_text)
 				update_ui()
 			return
 		_pause_stack_resolution(card.card_owner)
@@ -9843,7 +9858,7 @@ func _queue_third_sage_enmedugga_impact_prompt(card) -> void:
 			on_choose_sage,
 			on_cancel_sage
 		)
-	action_label.text = card.card_name + " impact waits on priority."
+	_set_action_label_text(card.card_name + " impact waits on priority.")
 	game_manager.push_to_stack(action)
 	update_ui()
 	_offer_priority()
@@ -9859,7 +9874,7 @@ func _show_third_sage_enmedugga_impact_prompt(card: ThirdSageEnmedugga, prompt_t
 			"target_uid": "",
 		}):
 			return
-		action_label.text = _consume_resolution_feedback("%s found no Mer Sage to bless." % card.card_name)
+		_set_action_label_text(_consume_resolution_feedback("%s found no Mer Sage to bless." % card.card_name))
 		update_ui()
 		return
 	if current_targets.size() == 1:
@@ -9869,7 +9884,7 @@ func _show_third_sage_enmedugga_impact_prompt(card: ThirdSageEnmedugga, prompt_t
 			"target_uid": current_targets[0].uid,
 		}):
 			return
-		action_label.text = _consume_resolution_feedback(card.resolve_good_fortune_impact(game_manager, current_targets[0]))
+		_set_action_label_text(_consume_resolution_feedback(card.resolve_good_fortune_impact(game_manager, current_targets[0])))
 		update_ui()
 		return
 	var on_choose_sage := func(chosen_card: Card) -> void:
@@ -9879,7 +9894,7 @@ func _show_third_sage_enmedugga_impact_prompt(card: ThirdSageEnmedugga, prompt_t
 			"target_uid": chosen_card.uid,
 		}):
 			return
-		action_label.text = _consume_resolution_feedback(card.resolve_good_fortune_impact(game_manager, chosen_card))
+		_set_action_label_text(_consume_resolution_feedback(card.resolve_good_fortune_impact(game_manager, chosen_card)))
 		update_ui()
 	var on_cancel_sage := func() -> void:
 		if _submit_prompt_choice_command({
@@ -9888,7 +9903,7 @@ func _show_third_sage_enmedugga_impact_prompt(card: ThirdSageEnmedugga, prompt_t
 			"target_uid": "",
 		}):
 			return
-		action_label.text = _consume_resolution_feedback(card.card_name + " impact fizzles.")
+		_set_action_label_text(_consume_resolution_feedback(card.card_name + " impact fizzles."))
 		update_ui()
 	_show_card_selection_overlay(
 		"Choose a Mer Sage for " + card.card_name,
@@ -9908,7 +9923,7 @@ func _show_lailoken_reveal_prompt(card: Lailoken, prompt_targets: Array = []) ->
 			"target_uid": "",
 		}):
 			return
-		action_label.text = _consume_resolution_feedback("%s found no prepared magical cards to drain." % card.card_name)
+		_set_action_label_text(_consume_resolution_feedback("%s found no prepared magical cards to drain." % card.card_name))
 		update_ui()
 		return
 	if current_targets.size() == 1:
@@ -9922,7 +9937,7 @@ func _show_lailoken_reveal_prompt(card: Lailoken, prompt_targets: Array = []) ->
 			game_manager,
 			current_targets[0],
 			func(result_text: String) -> void:
-				action_label.text = _consume_resolution_feedback(result_text)
+				_set_action_label_text(_consume_resolution_feedback(result_text))
 				update_ui()
 		)
 		return
@@ -9937,7 +9952,7 @@ func _show_lailoken_reveal_prompt(card: Lailoken, prompt_targets: Array = []) ->
 			game_manager,
 			clicked_card,
 			func(result_text: String) -> void:
-				action_label.text = _consume_resolution_feedback(result_text)
+				_set_action_label_text(_consume_resolution_feedback(result_text))
 				update_ui()
 		)
 	var on_cancel_magic_drain := func() -> void:
@@ -9947,7 +9962,7 @@ func _show_lailoken_reveal_prompt(card: Lailoken, prompt_targets: Array = []) ->
 			"target_uid": "",
 		}):
 			return
-		action_label.text = _consume_resolution_feedback(card.card_name + " reveal fizzles.")
+		_set_action_label_text(_consume_resolution_feedback(card.card_name + " reveal fizzles."))
 		update_ui()
 	var validate_magic_drain_target := func(clicked_card: Card) -> bool:
 		return clicked_card != null and clicked_card in card.get_valid_targets(game_manager)
@@ -9958,7 +9973,7 @@ func _show_lailoken_reveal_prompt(card: Lailoken, prompt_targets: Array = []) ->
 		on_choose_magic_drain,
 		on_cancel_magic_drain
 	)
-	action_label.text = card.card_name + ": click a prepared magical card to destroy."
+	_set_action_label_text(card.card_name + ": click a prepared magical card to destroy.")
 	update_ui()
 
 func _show_masmassu_priest_reveal_prompt(card: MasmassuPriest, prompt_targets: Array = []) -> void:
@@ -9972,7 +9987,7 @@ func _show_masmassu_priest_reveal_prompt(card: MasmassuPriest, prompt_targets: A
 			"target_uid": "",
 		}):
 			return
-		action_label.text = _consume_resolution_feedback("%s found no non-Human creatures to break." % card.card_name)
+		_set_action_label_text(_consume_resolution_feedback("%s found no non-Human creatures to break." % card.card_name))
 		update_ui()
 		return
 	if current_targets.size() == 1:
@@ -9986,7 +10001,7 @@ func _show_masmassu_priest_reveal_prompt(card: MasmassuPriest, prompt_targets: A
 			game_manager,
 			current_targets[0],
 			func(result_text: String) -> void:
-				action_label.text = _consume_resolution_feedback(result_text)
+				_set_action_label_text(_consume_resolution_feedback(result_text))
 				update_ui()
 		)
 		return
@@ -10001,7 +10016,7 @@ func _show_masmassu_priest_reveal_prompt(card: MasmassuPriest, prompt_targets: A
 			game_manager,
 			clicked_card,
 			func(result_text: String) -> void:
-				action_label.text = _consume_resolution_feedback(result_text)
+				_set_action_label_text(_consume_resolution_feedback(result_text))
 				update_ui()
 		)
 	var on_cancel_dalkhu_break := func() -> void:
@@ -10011,7 +10026,7 @@ func _show_masmassu_priest_reveal_prompt(card: MasmassuPriest, prompt_targets: A
 			"target_uid": "",
 		}):
 			return
-		action_label.text = _consume_resolution_feedback(card.card_name + " reveal fizzles.")
+		_set_action_label_text(_consume_resolution_feedback(card.card_name + " reveal fizzles."))
 		update_ui()
 	var validate_dalkhu_break_target := func(clicked_card: Card) -> bool:
 		return clicked_card != null and clicked_card in card.get_valid_targets(game_manager)
@@ -10022,7 +10037,7 @@ func _show_masmassu_priest_reveal_prompt(card: MasmassuPriest, prompt_targets: A
 		on_choose_dalkhu_break,
 		on_cancel_dalkhu_break
 	)
-	action_label.text = card.card_name + ": click a non-Human creature to destroy."
+	_set_action_label_text(card.card_name + ": click a non-Human creature to destroy.")
 	update_ui()
 
 func _queue_lailoken_reveal_prompt(card: Lailoken) -> void:
@@ -10044,7 +10059,7 @@ func _queue_lailoken_reveal_prompt(card: Lailoken) -> void:
 			if _stack_resolution_paused:
 				_resume_after_deferred_resolution(no_target_text)
 			else:
-				action_label.text = no_target_text
+				_set_action_label_text(no_target_text)
 				update_ui()
 			return
 
@@ -10069,11 +10084,11 @@ func _queue_lailoken_reveal_prompt(card: Lailoken) -> void:
 			on_choose_magic_drain,
 			on_cancel_magic_drain
 		)
-		action_label.text = card.card_name + ": click a prepared magical card to destroy."
+		_set_action_label_text(card.card_name + ": click a prepared magical card to destroy.")
 		update_ui()
 	game_manager.push_to_stack(action)
 	update_ui()
-	action_label.text = card.card_name + " reveal waits on priority."
+	_set_action_label_text(card.card_name + " reveal waits on priority.")
 	_offer_priority()
 
 func _queue_masmassu_priest_reveal_prompt(card: MasmassuPriest) -> void:
@@ -10095,7 +10110,7 @@ func _queue_masmassu_priest_reveal_prompt(card: MasmassuPriest) -> void:
 			if _stack_resolution_paused:
 				_resume_after_deferred_resolution(no_target_text)
 			else:
-				action_label.text = no_target_text
+				_set_action_label_text(no_target_text)
 				update_ui()
 			return
 
@@ -10120,11 +10135,11 @@ func _queue_masmassu_priest_reveal_prompt(card: MasmassuPriest) -> void:
 			on_choose_dalkhu_break,
 			on_cancel_dalkhu_break
 		)
-		action_label.text = card.card_name + ": click a non-Human creature to destroy."
+		_set_action_label_text(card.card_name + ": click a non-Human creature to destroy.")
 		update_ui()
 	game_manager.push_to_stack(action)
 	update_ui()
-	action_label.text = card.card_name + " reveal waits on priority."
+	_set_action_label_text(card.card_name + " reveal waits on priority.")
 	_offer_priority()
 
 func _queue_fourth_sage_enmegalamma_impact_prompt(card) -> void:
@@ -10146,7 +10161,7 @@ func _queue_fourth_sage_enmegalamma_impact_prompt(card) -> void:
 			if _stack_resolution_paused:
 				_resume_after_deferred_resolution(no_target_text)
 			else:
-				action_label.text = no_target_text
+				_set_action_label_text(no_target_text)
 				update_ui()
 			return
 		if current_targets.size() == 1:
@@ -10154,7 +10169,7 @@ func _queue_fourth_sage_enmegalamma_impact_prompt(card) -> void:
 			if _stack_resolution_paused:
 				_resume_after_deferred_resolution(auto_text)
 			else:
-				action_label.text = auto_text
+				_set_action_label_text(auto_text)
 				update_ui()
 			return
 		_pause_stack_resolution(card.card_owner)
@@ -10170,7 +10185,7 @@ func _queue_fourth_sage_enmegalamma_impact_prompt(card) -> void:
 		)
 	game_manager.push_to_stack(action)
 	update_ui()
-	action_label.text = card.card_name + " impact waits on priority."
+	_set_action_label_text(card.card_name + " impact waits on priority.")
 	_offer_priority()
 
 func _show_fourth_sage_enmegalamma_impact_prompt(card, prompt_targets: Array = []) -> void:
@@ -10184,7 +10199,7 @@ func _show_fourth_sage_enmegalamma_impact_prompt(card, prompt_targets: Array = [
 			"target_uid": "",
 		}):
 			return
-		action_label.text = _consume_resolution_feedback(card.resolve_search_sage_decline(game_manager))
+		_set_action_label_text(_consume_resolution_feedback(card.resolve_search_sage_decline(game_manager)))
 		update_ui()
 		return
 	if current_targets.size() == 1:
@@ -10194,7 +10209,7 @@ func _show_fourth_sage_enmegalamma_impact_prompt(card, prompt_targets: Array = [
 			"target_uid": current_targets[0].uid,
 		}):
 			return
-		action_label.text = _consume_resolution_feedback(card.resolve_search_sage_impact(game_manager, current_targets[0]))
+		_set_action_label_text(_consume_resolution_feedback(card.resolve_search_sage_impact(game_manager, current_targets[0])))
 		update_ui()
 		return
 	var on_choose_sage := func(chosen_card: Card) -> void:
@@ -10204,7 +10219,7 @@ func _show_fourth_sage_enmegalamma_impact_prompt(card, prompt_targets: Array = [
 			"target_uid": chosen_card.uid,
 		}):
 			return
-		action_label.text = _consume_resolution_feedback(card.resolve_search_sage_impact(game_manager, chosen_card))
+		_set_action_label_text(_consume_resolution_feedback(card.resolve_search_sage_impact(game_manager, chosen_card)))
 		update_ui()
 	var on_cancel_sage := func() -> void:
 		if _submit_prompt_choice_command({
@@ -10213,7 +10228,7 @@ func _show_fourth_sage_enmegalamma_impact_prompt(card, prompt_targets: Array = [
 			"target_uid": "",
 		}):
 			return
-		action_label.text = _consume_resolution_feedback(card.resolve_search_sage_decline(game_manager))
+		_set_action_label_text(_consume_resolution_feedback(card.resolve_search_sage_decline(game_manager)))
 		update_ui()
 	_show_card_selection_overlay(
 		"Choose a Mer Sage for " + card.card_name,
@@ -10241,7 +10256,7 @@ func _queue_sixth_sage_an_enlilda_impact_prompt(card) -> void:
 			if _stack_resolution_paused:
 				_resume_after_deferred_resolution(no_target_text)
 			else:
-				action_label.text = no_target_text
+				_set_action_label_text(no_target_text)
 				update_ui()
 			return
 		_pause_stack_resolution(card.card_owner)
@@ -10259,7 +10274,7 @@ func _queue_sixth_sage_an_enlilda_impact_prompt(card) -> void:
 		)
 	game_manager.push_to_stack(action)
 	update_ui()
-	action_label.text = card.card_name + " impact waits on priority."
+	_set_action_label_text(card.card_name + " impact waits on priority.")
 	_offer_priority()
 
 func _show_sixth_sage_an_enlilda_impact_prompt(card: SixthSageAnEnlilda, prompt_targets: Array = []) -> void:
@@ -10273,7 +10288,7 @@ func _show_sixth_sage_an_enlilda_impact_prompt(card: SixthSageAnEnlilda, prompt_
 			"target_uid": "",
 		}):
 			return
-		action_label.text = _consume_resolution_feedback(card.resolve_no_conjure_home_targets())
+		_set_action_label_text(_consume_resolution_feedback(card.resolve_no_conjure_home_targets()))
 		update_ui()
 		return
 	var on_choose_dwelling := func(chosen_card: Card) -> void:
@@ -10283,7 +10298,7 @@ func _show_sixth_sage_an_enlilda_impact_prompt(card: SixthSageAnEnlilda, prompt_
 			"target_uid": chosen_card.uid,
 		}):
 			return
-		action_label.text = _consume_resolution_feedback(card.resolve_conjure_home_impact(game_manager, chosen_card))
+		_set_action_label_text(_consume_resolution_feedback(card.resolve_conjure_home_impact(game_manager, chosen_card)))
 		update_ui()
 	var on_cancel_dwelling := func() -> void:
 		if _submit_prompt_choice_command({
@@ -10292,7 +10307,7 @@ func _show_sixth_sage_an_enlilda_impact_prompt(card: SixthSageAnEnlilda, prompt_
 			"target_uid": "",
 		}):
 			return
-		action_label.text = _consume_resolution_feedback(card.resolve_conjure_home_decline(game_manager))
+		_set_action_label_text(_consume_resolution_feedback(card.resolve_conjure_home_decline(game_manager)))
 		update_ui()
 	_show_card_selection_overlay(
 		"Choose an Ancient Dwelling for " + card.card_name,
@@ -10325,7 +10340,7 @@ func _queue_terror_impact_prompt(power: Terror, demon: Card) -> void:
 			if _stack_resolution_paused:
 				_resume_after_deferred_resolution(no_target_text)
 			else:
-				action_label.text = no_target_text
+				_set_action_label_text(no_target_text)
 				update_ui()
 			return
 		if current_targets.size() == 1:
@@ -10333,7 +10348,7 @@ func _queue_terror_impact_prompt(power: Terror, demon: Card) -> void:
 			if _stack_resolution_paused:
 				_resume_after_deferred_resolution(auto_text)
 			else:
-				action_label.text = auto_text
+				_set_action_label_text(auto_text)
 				update_ui()
 			return
 		_pause_stack_resolution(demon.get_controller())
@@ -10346,7 +10361,7 @@ func _queue_terror_impact_prompt(power: Terror, demon: Card) -> void:
 		)
 	game_manager.push_to_stack(action)
 	update_ui()
-	action_label.text = demon.card_name + " impact waits on priority."
+	_set_action_label_text(demon.card_name + " impact waits on priority.")
 	_offer_priority()
 
 func _begin_gugalanna_impact_targeting(card: GugalannaBullOfHeaven, prompt_targets: Array = []) -> void:
@@ -10365,7 +10380,7 @@ func _begin_gugalanna_impact_targeting(card: GugalannaBullOfHeaven, prompt_targe
 		if _stack_resolution_paused:
 			_resume_after_deferred_resolution(text)
 		else:
-			action_label.text = text
+			_set_action_label_text(text)
 			update_ui()
 		return
 	if _executing_stack_action and not _stack_resolution_paused:
@@ -10404,7 +10419,7 @@ func _begin_gugalanna_impact_targeting(card: GugalannaBullOfHeaven, prompt_targe
 		confirm_celestial_charge,
 		cancel_celestial_charge
 	)
-	action_label.text = card.card_name + ': click a target (Res 30+, slower Spd) or press Cancel to skip.'
+	_set_action_label_text(card.card_name + ': click a target (Res 30+, slower Spd) or press Cancel to skip.')
 	update_ui()
 
 func _queue_nergal_lion_impact_prompt(card: NergalLion, prompt_targets: Array = []) -> void:
@@ -10416,7 +10431,7 @@ func _queue_nergal_lion_impact_prompt(card: NergalLion, prompt_targets: Array = 
 		if _stack_resolution_paused:
 			_resume_after_deferred_resolution(no_target_text)
 		else:
-			action_label.text = _consume_resolution_feedback(no_target_text)
+			_set_action_label_text(_consume_resolution_feedback(no_target_text))
 			update_ui()
 		return
 	var valid_zones := card.get_valid_immolate_zones()
@@ -10425,7 +10440,7 @@ func _queue_nergal_lion_impact_prompt(card: NergalLion, prompt_targets: Array = 
 		if _stack_resolution_paused:
 			_resume_after_deferred_resolution(no_zone_text)
 		else:
-			action_label.text = _consume_resolution_feedback(no_zone_text)
+			_set_action_label_text(_consume_resolution_feedback(no_zone_text))
 			update_ui()
 		return
 	if current_targets.size() == 1:
@@ -10440,14 +10455,14 @@ func _queue_nergal_lion_impact_prompt(card: NergalLion, prompt_targets: Array = 
 		if _stack_resolution_paused:
 			_resume_after_deferred_resolution(auto_feedback)
 		else:
-			action_label.text = _consume_resolution_feedback(auto_feedback)
+			_set_action_label_text(_consume_resolution_feedback(auto_feedback))
 			update_ui()
 		return
 
 	if _executing_stack_action and not _stack_resolution_paused:
 		_pause_stack_resolution(card.card_owner)
 
-	action_label.text = card.card_name + ": choose a destruction card in your graveyard to immolate."
+	_set_action_label_text(card.card_name + ": choose a destruction card in your graveyard to immolate.")
 	var on_choose_target := func(chosen_card: Card) -> void:
 		var current_valid_targets := card.get_valid_immolate_targets(game_manager)
 		var current_zones := card.get_valid_immolate_zones()
@@ -10469,10 +10484,10 @@ func _queue_nergal_lion_impact_prompt(card: NergalLion, prompt_targets: Array = 
 		if _stack_resolution_paused:
 			_resume_after_deferred_resolution(feedback)
 		else:
-			action_label.text = _consume_resolution_feedback(feedback)
+			_set_action_label_text(_consume_resolution_feedback(feedback))
 			update_ui()
 	var on_cancel_target := func() -> void:
-		action_label.text = card.card_name + " must choose a destruction card to immolate."
+		_set_action_label_text(card.card_name + " must choose a destruction card to immolate.")
 		update_ui()
 		call_deferred("_queue_nergal_lion_impact_prompt", card, prompt_targets)
 	_show_card_selection_overlay(
@@ -10499,7 +10514,7 @@ func _queue_giant_master_architect_impact_prompt(card: GiantMasterArchitect, pro
 		if _stack_resolution_paused:
 			_resume_after_deferred_resolution(no_target_text)
 		else:
-			action_label.text = no_target_text
+			_set_action_label_text(no_target_text)
 			update_ui()
 		return
 	if current_targets.size() == 1:
@@ -10514,7 +10529,7 @@ func _queue_giant_master_architect_impact_prompt(card: GiantMasterArchitect, pro
 		if _stack_resolution_paused:
 			_resume_after_deferred_resolution(auto_text)
 		else:
-			action_label.text = auto_text
+			_set_action_label_text(auto_text)
 			update_ui()
 		return
 	if _executing_stack_action and not _stack_resolution_paused:
@@ -10544,7 +10559,7 @@ func _queue_giant_master_architect_impact_prompt(card: GiantMasterArchitect, pro
 		on_cancel_structure,
 		"giant_master_architect_structure"
 	)
-	action_label.text = card.card_name + ": choose a structure to add to hand."
+	_set_action_label_text(card.card_name + ": choose a structure to add to hand.")
 	update_ui()
 
 func _queue_pai_long_autumn_king_impact_prompt(card: PaiLongAutumnKing, prompt_targets: Array = []) -> void:
@@ -10563,7 +10578,7 @@ func _queue_pai_long_autumn_king_impact_prompt(card: PaiLongAutumnKing, prompt_t
 		if _stack_resolution_paused:
 			_resume_after_deferred_resolution(no_target_text)
 		else:
-			action_label.text = no_target_text
+			_set_action_label_text(no_target_text)
 			update_ui()
 		return
 	if current_targets.size() == 1:
@@ -10578,7 +10593,7 @@ func _queue_pai_long_autumn_king_impact_prompt(card: PaiLongAutumnKing, prompt_t
 		if _stack_resolution_paused:
 			_resume_after_deferred_resolution(auto_text)
 		else:
-			action_label.text = auto_text
+			_set_action_label_text(auto_text)
 			update_ui()
 		return
 	if _executing_stack_action and not _stack_resolution_paused:
@@ -10608,7 +10623,7 @@ func _queue_pai_long_autumn_king_impact_prompt(card: PaiLongAutumnKing, prompt_t
 		on_cancel_weather,
 		"pai_long_autumn_king_weather"
 	)
-	action_label.text = card.card_name + ": choose a Weather charm to add to hand."
+	_set_action_label_text(card.card_name + ": choose a Weather charm to add to hand.")
 	update_ui()
 
 func _queue_humbaba_augury_reading_prompt(card: HumbabaTheTerrible, prompt_targets: Array = []) -> void:
@@ -10664,7 +10679,7 @@ func _queue_rally_the_troops_prompt(card: RallyTheTroops, summoned_card: Card = 
 			if _stack_resolution_paused:
 				_resume_after_deferred_resolution(empty_text)
 			else:
-				action_label.text = empty_text
+				_set_action_label_text(empty_text)
 				update_ui()
 			return
 		var current_targets: Array[Card] = card.get_valid_rally_targets(game_manager)
@@ -10673,7 +10688,7 @@ func _queue_rally_the_troops_prompt(card: RallyTheTroops, summoned_card: Card = 
 			if _stack_resolution_paused:
 				_resume_after_deferred_resolution(no_target_text)
 			else:
-				action_label.text = no_target_text
+				_set_action_label_text(no_target_text)
 				update_ui()
 			return
 		if not _is_player_local(card.card_owner):
@@ -10681,7 +10696,7 @@ func _queue_rally_the_troops_prompt(card: RallyTheTroops, summoned_card: Card = 
 			if _stack_resolution_paused:
 				_resume_after_deferred_resolution(auto_text)
 			else:
-				action_label.text = auto_text
+				_set_action_label_text(auto_text)
 				update_ui()
 			return
 		_pause_stack_resolution(card.card_owner)
@@ -10696,14 +10711,14 @@ func _queue_rally_the_troops_prompt(card: RallyTheTroops, summoned_card: Card = 
 			on_choose_rally,
 			on_cancel_rally
 		)
-		action_label.text = "%s revealed %s. Choose a Warrior to add to hand, or Cancel to shelve them all." % [
+		_set_action_label_text("%s revealed %s. Choose a Warrior to add to hand, or Cancel to shelve them all." % [
 			card.card_name,
 			reveal_summary
-		]
+		])
 		update_ui()
 	game_manager.push_to_stack(action)
 	update_ui()
-	action_label.text = card.card_name + " waits on priority."
+	_set_action_label_text(card.card_name + " waits on priority.")
 	_offer_priority()
 
 func _show_next_oracles_sight_prompt() -> void:
@@ -10724,22 +10739,22 @@ func _show_next_oracles_sight_prompt() -> void:
 			current_targets = card.get_foresight_cards()
 		if current_targets.is_empty():
 			_queued_oracles_sight_prompt_targets.erase(card.uid)
-			action_label.text = card.card_name + " found no cards to read."
+			_set_action_label_text(card.card_name + " found no cards to read.")
 			update_ui()
 			continue
 		if current_targets.size() == 1:
 			_queued_oracles_sight_prompt_targets.erase(card.uid)
 			if _is_networked_client and _is_player_local(card.card_owner):
 				game_input.submit_action({type = "activate_power", power_uid = card.uid, target_uid = current_targets[0].uid})
-				action_label.text = card.card_name + " is priming " + current_targets[0].card_name + "."
+				_set_action_label_text(card.card_name + " is priming " + current_targets[0].card_name + ".")
 				update_ui()
 				continue
-			action_label.text = card.resolve_foresight_choice(game_manager, current_targets[0])
+			_set_action_label_text(card.resolve_foresight_choice(game_manager, current_targets[0]))
 			update_ui()
 			continue
 		if not _is_player_local(card.card_owner):
 			_queued_oracles_sight_prompt_targets.erase(card.uid)
-			action_label.text = card.resolve_foresight_choice(game_manager, current_targets[0])
+			_set_action_label_text(card.resolve_foresight_choice(game_manager, current_targets[0]))
 			update_ui()
 			continue
 		_active_oracles_sight_prompt = card
@@ -10752,11 +10767,11 @@ func _show_next_oracles_sight_prompt() -> void:
 				return
 			if _is_networked_client:
 				game_input.submit_action({type = "activate_power", power_uid = resolved_card.uid, target_uid = chosen_card.uid})
-				action_label.text = resolved_card.card_name + " is priming " + chosen_card.card_name + "."
+				_set_action_label_text(resolved_card.card_name + " is priming " + chosen_card.card_name + ".")
 				update_ui()
 				call_deferred("_show_next_oracles_sight_prompt")
 				return
-			action_label.text = resolved_card.resolve_foresight_choice(game_manager, chosen_card)
+			_set_action_label_text(resolved_card.resolve_foresight_choice(game_manager, chosen_card))
 			update_ui()
 			call_deferred("_show_next_oracles_sight_prompt")
 		var on_cancel_foresight := func() -> void:
@@ -10767,7 +10782,7 @@ func _show_next_oracles_sight_prompt() -> void:
 				return
 			_pending_oracles_sight_prompts.insert(0, resolved_card)
 			if game_manager != null:
-				action_label.text = resolved_card.card_name + " still needs you to choose a card to prime."
+				_set_action_label_text(resolved_card.card_name + " still needs you to choose a card to prime.")
 				update_ui()
 			call_deferred("_show_next_oracles_sight_prompt")
 		_show_card_selection_overlay(
@@ -10776,7 +10791,7 @@ func _show_next_oracles_sight_prompt() -> void:
 			on_choose_foresight,
 			on_cancel_foresight
 		)
-		action_label.text = "%s: choose one of the next %d cards to prime." % [card.card_name, current_targets.size()]
+		_set_action_label_text("%s: choose one of the next %d cards to prime." % [card.card_name, current_targets.size()])
 		update_ui()
 		return
 
@@ -10798,7 +10813,7 @@ func _show_next_tonal_extraction_prompt() -> void:
 			current_targets = card.get_valid_targets(game_manager)
 		if current_targets.is_empty():
 			_queued_tonal_extraction_prompt_targets.erase(card.uid)
-			action_label.text = card.card_name + " found no friendly Shapeshifter to extract."
+			_set_action_label_text(card.card_name + " found no friendly Shapeshifter to extract.")
 			update_ui()
 			continue
 		if current_targets.size() == 1 or not _is_player_local(card.card_owner):
@@ -10823,7 +10838,7 @@ func _show_next_tonal_extraction_prompt() -> void:
 				return
 			_pending_tonal_extraction_prompts.insert(0, resolved_card)
 			if game_manager != null:
-				action_label.text = resolved_card.card_name + " still needs you to choose a Shapeshifter."
+				_set_action_label_text(resolved_card.card_name + " still needs you to choose a Shapeshifter.")
 				update_ui()
 			call_deferred("_show_next_tonal_extraction_prompt")
 		_show_card_selection_overlay(
@@ -10832,7 +10847,7 @@ func _show_next_tonal_extraction_prompt() -> void:
 			on_choose_extraction,
 			on_cancel_extraction
 		)
-		action_label.text = "%s: choose a friendly Shapeshifter to extract." % card.card_name
+		_set_action_label_text("%s: choose a friendly Shapeshifter to extract." % card.card_name)
 		update_ui()
 		return
 
@@ -10841,20 +10856,20 @@ func _resolve_tonal_extraction_prompt(card: TonalExtraction, chosen_target: Card
 		return
 	var current_targets: Array[Card] = card.get_valid_targets(game_manager)
 	if current_targets.is_empty():
-		action_label.text = card.card_name + " found no friendly Shapeshifter to extract."
+		_set_action_label_text(card.card_name + " found no friendly Shapeshifter to extract.")
 		update_ui()
 		return
 	var resolved_target := chosen_target if chosen_target != null and chosen_target in current_targets else current_targets[0]
 	if _is_networked_client:
 		if _is_player_local(card.card_owner):
 			game_input.submit_action({type = "activate_power", power_uid = card.uid, target_uid = resolved_target.uid})
-			action_label.text = card.card_name + " is extracting a Spirit."
+			_set_action_label_text(card.card_name + " is extracting a Spirit.")
 		else:
-			action_label.text = card.card_name + " is waiting for the other player's choice."
+			_set_action_label_text(card.card_name + " is waiting for the other player's choice.")
 		update_ui()
 		return
 	if not card.can_activate(game_manager):
-		action_label.text = card.get_activation_failure_reason(game_manager)
+		_set_action_label_text(card.get_activation_failure_reason(game_manager))
 		update_ui()
 		return
 	game_manager.run_with_effect_source(
@@ -10862,7 +10877,7 @@ func _resolve_tonal_extraction_prompt(card: TonalExtraction, chosen_target: Card
 		func() -> void:
 			card.activate(game_manager, resolved_target)
 	)
-	action_label.text = _consume_resolution_feedback(card.card_name + " extracts a Spirit.")
+	_set_action_label_text(_consume_resolution_feedback(card.card_name + " extracts a Spirit."))
 	update_ui()
 
 func _show_rally_the_troops_prompt(card: RallyTheTroops, summoned_card: Card = null, prompt_targets: Array = []) -> void:
@@ -10877,7 +10892,7 @@ func _show_rally_the_troops_prompt(card: RallyTheTroops, summoned_card: Card = n
 			"target_uid": "",
 		}):
 			return
-		action_label.text = _consume_resolution_feedback(card.resolve_rally_choice(game_manager, null, summoned_card))
+		_set_action_label_text(_consume_resolution_feedback(card.resolve_rally_choice(game_manager, null, summoned_card)))
 		update_ui()
 		return
 	if current_targets.size() == 1:
@@ -10888,7 +10903,7 @@ func _show_rally_the_troops_prompt(card: RallyTheTroops, summoned_card: Card = n
 			"target_uid": current_targets[0].uid,
 		}):
 			return
-		action_label.text = _consume_resolution_feedback(card.resolve_rally_choice(game_manager, current_targets[0], summoned_card))
+		_set_action_label_text(_consume_resolution_feedback(card.resolve_rally_choice(game_manager, current_targets[0], summoned_card)))
 		update_ui()
 		return
 	var reveal_summary := card.get_rally_reveal_summary(game_manager.get_feedback_viewer())
@@ -10900,7 +10915,7 @@ func _show_rally_the_troops_prompt(card: RallyTheTroops, summoned_card: Card = n
 			"target_uid": chosen_card.uid,
 		}):
 			return
-		action_label.text = _consume_resolution_feedback(card.resolve_rally_choice(game_manager, chosen_card, summoned_card))
+		_set_action_label_text(_consume_resolution_feedback(card.resolve_rally_choice(game_manager, chosen_card, summoned_card)))
 		update_ui()
 	var on_cancel_rally := func() -> void:
 		if _submit_prompt_choice_command({
@@ -10910,7 +10925,7 @@ func _show_rally_the_troops_prompt(card: RallyTheTroops, summoned_card: Card = n
 			"target_uid": "",
 		}):
 			return
-		action_label.text = _consume_resolution_feedback(card.resolve_rally_choice(game_manager, null, summoned_card))
+		_set_action_label_text(_consume_resolution_feedback(card.resolve_rally_choice(game_manager, null, summoned_card)))
 		update_ui()
 	_show_card_selection_overlay(
 		"Choose a Warrior for " + card.card_name,
@@ -10918,10 +10933,10 @@ func _show_rally_the_troops_prompt(card: RallyTheTroops, summoned_card: Card = n
 		on_choose_rally,
 		on_cancel_rally
 	)
-	action_label.text = "%s revealed %s. Choose a Warrior to add to hand, or Cancel to shelve them all." % [
+	_set_action_label_text("%s revealed %s. Choose a Warrior to add to hand, or Cancel to shelve them all." % [
 		card.card_name,
 		reveal_summary
-	]
+	])
 	update_ui()
 
 func _show_terror_impact_prompt(power: Terror, demon: Card, prompt_targets: Array = []) -> void:
@@ -10929,10 +10944,10 @@ func _show_terror_impact_prompt(power: Terror, demon: Card, prompt_targets: Arra
 		return
 	var current_targets := _resolve_prompt_targets(power.get_valid_terror_targets(game_manager, demon), prompt_targets)
 	if current_targets.is_empty():
-		action_label.text = _consume_resolution_feedback("%s spread terror through %s, but there was no lower-level enemy creature to return." % [
+		_set_action_label_text(_consume_resolution_feedback("%s spread terror through %s, but there was no lower-level enemy creature to return." % [
 			power.card_name,
 			demon.get_target_log_display_name(game_manager.get_feedback_viewer())
-		])
+		]))
 		update_ui()
 		return
 	if current_targets.size() == 1:
@@ -10943,7 +10958,7 @@ func _show_terror_impact_prompt(power: Terror, demon: Card, prompt_targets: Arra
 			"target_uid": current_targets[0].uid,
 		}):
 			return
-		action_label.text = _consume_resolution_feedback(power.resolve_terror_impact(game_manager, demon, current_targets[0]))
+		_set_action_label_text(_consume_resolution_feedback(power.resolve_terror_impact(game_manager, demon, current_targets[0])))
 		update_ui()
 		return
 	var on_choose_target := func(chosen_card: Card) -> void:
@@ -10954,7 +10969,7 @@ func _show_terror_impact_prompt(power: Terror, demon: Card, prompt_targets: Arra
 			"target_uid": chosen_card.uid,
 		}):
 			return
-		action_label.text = _consume_resolution_feedback(power.resolve_terror_impact(game_manager, demon, chosen_card))
+		_set_action_label_text(_consume_resolution_feedback(power.resolve_terror_impact(game_manager, demon, chosen_card)))
 		update_ui()
 	_show_card_selection_overlay(
 		"Choose a creature for " + demon.card_name + "'s Terror",
@@ -10990,7 +11005,7 @@ func _show_humbaba_augury_feedback(feedback: String) -> void:
 		_humbaba_prompt_paused_resolution = false
 		_resume_after_deferred_resolution(feedback)
 		return
-	action_label.text = feedback
+	_set_action_label_text(feedback)
 	update_ui()
 
 func _finish_humbaba_augury_prompt(feedback: String, consume_active_prompt: bool = false) -> void:
@@ -11036,7 +11051,7 @@ func _show_humbaba_augury_prompt(card: HumbabaTheTerrible, prompt_targets: Array
 		"",
 		"Prime Top Card"
 	)
-	action_label.text = card.card_name + ": choose one of the top cards to prime."
+	_set_action_label_text(card.card_name + ": choose one of the top cards to prime.")
 	update_ui()
 
 func _show_next_humbaba_augury_prompt() -> void:
@@ -11117,12 +11132,12 @@ func _show_next_huginn_perish_prime_prompt() -> void:
 			current_targets = card.get_valid_hex_targets()
 		if current_targets.is_empty():
 			_queued_huginn_prime_prompt_targets.erase(card.uid)
-			action_label.text = "%s perished, but found no hex to prime." % card.card_name
+			_set_action_label_text("%s perished, but found no hex to prime." % card.card_name)
 			update_ui()
 			continue
 		if not _is_player_local(card.card_owner):
 			_queued_huginn_prime_prompt_targets.erase(card.uid)
-			action_label.text = card.resolve_perish_prime_choice(game_manager, current_targets[0])
+			_set_action_label_text(card.resolve_perish_prime_choice(game_manager, current_targets[0]))
 			update_ui()
 			continue
 		_active_huginn_prime_prompt = card
@@ -11140,7 +11155,7 @@ func _show_next_huginn_perish_prime_prompt() -> void:
 			}):
 				update_ui()
 			else:
-				action_label.text = resolved_card.resolve_perish_prime_choice(game_manager, chosen_hex)
+				_set_action_label_text(resolved_card.resolve_perish_prime_choice(game_manager, chosen_hex))
 				update_ui()
 			update_ui()
 			call_deferred("_show_next_huginn_perish_prime_prompt")
@@ -11156,7 +11171,7 @@ func _show_next_huginn_perish_prime_prompt() -> void:
 			on_choose_prime,
 			on_cancel_prime
 		)
-		action_label.text = card.card_name + ": choose a Hex to prime."
+		_set_action_label_text(card.card_name + ": choose a Hex to prime.")
 		update_ui()
 		return
 
@@ -11188,12 +11203,12 @@ func _show_next_muninn_perish_prime_prompt() -> void:
 			current_targets = card.get_valid_charm_targets()
 		if current_targets.is_empty():
 			_queued_muninn_prime_prompt_targets.erase(card.uid)
-			action_label.text = "%s perished, but found no charm to prime." % card.card_name
+			_set_action_label_text("%s perished, but found no charm to prime." % card.card_name)
 			update_ui()
 			continue
 		if not _is_player_local(card.card_owner):
 			_queued_muninn_prime_prompt_targets.erase(card.uid)
-			action_label.text = card.resolve_perish_prime_choice(game_manager, current_targets[0])
+			_set_action_label_text(card.resolve_perish_prime_choice(game_manager, current_targets[0]))
 			update_ui()
 			continue
 		_active_muninn_prime_prompt = card
@@ -11211,7 +11226,7 @@ func _show_next_muninn_perish_prime_prompt() -> void:
 			}):
 				update_ui()
 			else:
-				action_label.text = resolved_card.resolve_perish_prime_choice(game_manager, chosen_charm)
+				_set_action_label_text(resolved_card.resolve_perish_prime_choice(game_manager, chosen_charm))
 				update_ui()
 			update_ui()
 			call_deferred("_show_next_muninn_perish_prime_prompt")
@@ -11227,7 +11242,7 @@ func _show_next_muninn_perish_prime_prompt() -> void:
 			on_choose_prime,
 			on_cancel_prime
 		)
-		action_label.text = card.card_name + ": choose a Charm to prime."
+		_set_action_label_text(card.card_name + ": choose a Charm to prime.")
 		update_ui()
 		return
 
@@ -11260,7 +11275,7 @@ func _resolve_hunting_tactics_prompt(power: HuntingTactics, attacker: Card, prom
 		elif _stack_resolution_paused:
 			_resume_after_deferred_resolution(no_support_text)
 		else:
-			action_label.text = no_support_text
+			_set_action_label_text(no_support_text)
 			update_ui()
 		return
 	if not _is_networked_client and _executing_stack_action and not _stack_resolution_paused:
@@ -11270,7 +11285,7 @@ func _resolve_hunting_tactics_prompt(power: HuntingTactics, attacker: Card, prom
 	if not _is_networked_client and not _is_player_local(attacker.get_controller()):
 		var auto_feedback := power.resolve_combat_support_choice(game_manager, attacker, current_supporters)
 		game_manager.note_player_feedback(auto_feedback)
-		action_label.text = auto_feedback
+		_set_action_label_text(auto_feedback)
 		update_ui()
 		game_manager.resume_deferred_combat()
 		return
@@ -11306,7 +11321,7 @@ func _prompt_hunting_tactics_support_choice() -> void:
 		"",
 		"Done"
 	)
-	action_label.text = "Hunting Tactics: choose Ravens or Lupines to support %s, then press Done." % attacker.card_name
+	_set_action_label_text("Hunting Tactics: choose Ravens or Lupines to support %s, then press Done." % attacker.card_name)
 	update_ui()
 
 func _on_hunting_tactics_supporter_selected(chosen_supporter: Card) -> void:
@@ -11343,7 +11358,7 @@ func _finish_hunting_tactics_prompt(feedback: String) -> void:
 		return
 	if game_manager != null and game_manager.has_deferred_combat_resolution():
 		game_manager.note_player_feedback(feedback)
-		action_label.text = feedback
+		_set_action_label_text(feedback)
 		update_ui()
 		game_manager.resume_deferred_combat()
 		if _stack_resolution_paused:
@@ -11351,7 +11366,7 @@ func _finish_hunting_tactics_prompt(feedback: String) -> void:
 	elif _stack_resolution_paused:
 		_resume_after_deferred_resolution(feedback)
 	else:
-		action_label.text = feedback
+		_set_action_label_text(feedback)
 		update_ui()
 
 func _show_gawain_healing_hands_prompt(card: Gawain, target: Card, status_options: Array = []) -> void:
@@ -11365,7 +11380,7 @@ func _show_gawain_healing_hands_prompt(card: Gawain, target: Card, status_option
 	else:
 		options.assign(status_options)
 	if options.is_empty():
-		action_label.text = card.card_name + ": " + target.card_name + " has no removable effects."
+		_set_action_label_text(card.card_name + ": " + target.card_name + " has no removable effects.")
 		update_ui()
 		return
 	if options.size() == 1:
@@ -11378,7 +11393,7 @@ func _show_gawain_healing_hands_prompt(card: Gawain, target: Card, status_option
 		}):
 			update_ui()
 			return
-		action_label.text = card.resolve_healing_hands_by_index(game_manager, target, int(option.get("index", -1)))
+		_set_action_label_text(card.resolve_healing_hands_by_index(game_manager, target, int(option.get("index", -1))))
 		update_ui()
 		return
 	_pending_gawain = card
@@ -11419,7 +11434,7 @@ func _show_gawain_healing_hands_prompt(card: Gawain, target: Card, status_option
 	panel.offset_right = 230
 	panel.offset_top = -110
 	panel.offset_bottom = 110
-	action_label.text = card.card_name + ": choose which effect Healing Hands removes."
+	_set_action_label_text(card.card_name + ": choose which effect Healing Hands removes.")
 	update_ui()
 
 func _hide_gawain_healing_hands_prompt() -> void:
@@ -11446,7 +11461,7 @@ func _resolve_gawain_healing_hands_option(option: Dictionary) -> void:
 	}):
 		update_ui()
 		return
-	action_label.text = card.resolve_healing_hands_by_index(game_manager, target, status_index)
+	_set_action_label_text(card.resolve_healing_hands_by_index(game_manager, target, status_index))
 	update_ui()
 
 func _resolve_tatzelwurm_dragon_heart_prompt(card: Tatzelwurm, prompt_targets: Array = []) -> void:
@@ -11507,13 +11522,13 @@ func _resolve_tatzelwurm_dragon_heart_prompt(card: Tatzelwurm, prompt_targets: A
 		"",
 		"Cancel"
 	)
-	action_label.text = card.card_name + ": choose a Dragon from your deck to add to hand."
+	_set_action_label_text(card.card_name + ": choose a Dragon from your deck to add to hand.")
 	update_ui()
 
 func _finish_tatzelwurm_dragon_heart_prompt(feedback: String) -> void:
 	if game_manager != null and game_manager.has_deferred_combat_resolution():
 		game_manager.note_player_feedback(feedback)
-		action_label.text = feedback
+		_set_action_label_text(feedback)
 		update_ui()
 		game_manager.resume_deferred_combat()
 		if _stack_resolution_paused:
@@ -11521,7 +11536,7 @@ func _finish_tatzelwurm_dragon_heart_prompt(feedback: String) -> void:
 	elif _stack_resolution_paused:
 		_resume_after_deferred_resolution(feedback)
 	else:
-		action_label.text = feedback
+		_set_action_label_text(feedback)
 		update_ui()
 
 func _clear_hunting_tactics_prompt_state() -> void:
@@ -11600,7 +11615,7 @@ func _finish_harii_jarl_prompt(feedback: String) -> void:
 	if feedback.strip_edges() == "":
 		update_ui()
 		return
-	action_label.text = _consume_resolution_feedback(feedback)
+	_set_action_label_text(_consume_resolution_feedback(feedback))
 	update_ui()
 
 func _queue_gala_tura_destroyed_prompt(card: GalaTura, prompt_targets: Array = []) -> void:
@@ -11612,7 +11627,7 @@ func _queue_gala_tura_destroyed_prompt(card: GalaTura, prompt_targets: Array = [
 		if _stack_resolution_paused:
 			_resume_after_deferred_resolution(no_target_text)
 		else:
-			action_label.text = no_target_text
+			_set_action_label_text(no_target_text)
 			update_ui()
 		return
 	if _executing_stack_action and not _stack_resolution_paused:
@@ -11723,7 +11738,7 @@ func _show_gala_tura_prompt() -> void:
 	panel.offset_top = -160
 	panel.offset_bottom = 160
 
-	action_label.text = "%s: choose up to 3 graveyard creatures to return." % card.card_name
+	_set_action_label_text("%s: choose up to 3 graveyard creatures to return." % card.card_name)
 	update_ui()
 
 func _sanitize_gala_tura_selection() -> void:
@@ -11764,7 +11779,7 @@ func _resolve_gala_tura_prompt(use_selection: bool) -> void:
 	if _stack_resolution_paused:
 		_resume_after_deferred_resolution(feedback)
 	else:
-		action_label.text = feedback
+		_set_action_label_text(feedback)
 		update_ui()
 
 func _queue_kur_jara_tree_of_life_destroy_prompt(card: KurJara) -> void:
@@ -11912,7 +11927,7 @@ func _show_kur_jara_tree_of_life_prompt() -> void:
 	)
 	vbox.add_child(resolve_btn)
 
-	action_label.text = card.card_name + ": choose which friendly creatures Tree of Life destroys."
+	_set_action_label_text(card.card_name + ": choose which friendly creatures Tree of Life destroys.")
 	update_ui()
 
 func _resolve_kur_jara_tree_of_life_prompt() -> void:
@@ -11935,7 +11950,7 @@ func _resolve_kur_jara_tree_of_life_prompt() -> void:
 		return
 	var feedback := card.resolve_tree_of_life_destroy_selection(game_manager, _pending_kur_jara_selected)
 	_hide_kur_jara_tree_of_life_prompt()
-	action_label.text = feedback
+	_set_action_label_text(feedback)
 	update_ui()
 
 func _hide_kur_jara_tree_of_life_prompt() -> void:
@@ -12068,7 +12083,7 @@ func _show_fenrir_devour_prompt(card: Fenrir, prompt_targets: Array = []) -> voi
 			"target_uid": "",
 		}):
 			return
-		action_label.text = "%s found no creature weak enough to devour." % card.card_name
+		_set_action_label_text("%s found no creature weak enough to devour." % card.card_name)
 		update_ui()
 		return
 	if current_targets.size() == 1:
@@ -12080,7 +12095,7 @@ func _show_fenrir_devour_prompt(card: Fenrir, prompt_targets: Array = []) -> voi
 		}):
 			return
 		card.resolve_devour_impact(game_manager, current_targets[0], func(feedback: String) -> void:
-			action_label.text = feedback
+			_set_action_label_text(feedback)
 			update_ui()
 		)
 		return
@@ -12093,7 +12108,7 @@ func _show_fenrir_devour_prompt(card: Fenrir, prompt_targets: Array = []) -> voi
 		}):
 			return
 		card.resolve_devour_impact(game_manager, chosen_card, func(feedback: String) -> void:
-			action_label.text = feedback
+			_set_action_label_text(feedback)
 			update_ui()
 		)
 	var on_cancel_devour_target := func() -> void:
@@ -12104,7 +12119,7 @@ func _show_fenrir_devour_prompt(card: Fenrir, prompt_targets: Array = []) -> voi
 			"target_uid": "",
 		}):
 			return
-		action_label.text = card.card_name + " impact fizzles."
+		_set_action_label_text(card.card_name + " impact fizzles.")
 		update_ui()
 	_show_card_selection_overlay(
 		"Choose a creature to devour for " + card.card_name,
@@ -12112,7 +12127,7 @@ func _show_fenrir_devour_prompt(card: Fenrir, prompt_targets: Array = []) -> voi
 		on_choose_devour_target,
 		on_cancel_devour_target
 	)
-	action_label.text = card.card_name + ": choose a creature to devour."
+	_set_action_label_text(card.card_name + ": choose a creature to devour.")
 	update_ui()
 
 func _finish_creature_sacrifice_play() -> void:
@@ -12132,7 +12147,7 @@ func _continue_pending_creature_sacrifice_payment() -> void:
 	if _sacrifice_remaining <= 0:
 		_finish_creature_sacrifice_play()
 	else:
-		action_label.text = _get_creature_sacrifice_prompt(_sacrifice_pending_card, _sacrifice_remaining)
+		_set_action_label_text(_get_creature_sacrifice_prompt(_sacrifice_pending_card, _sacrifice_remaining))
 		update_ui()
 
 func _select_pending_creature_sacrifice(card: Card) -> void:
@@ -12143,7 +12158,7 @@ func _select_pending_creature_sacrifice(card: Card) -> void:
 			Callable(self, "_continue_pending_creature_sacrifice_payment")
 		)
 	else:
-		action_label.text = "Select one of your sacrificable creatures."
+		_set_action_label_text("Select one of your sacrificable creatures.")
 		update_ui()
 
 func _resolve_creature_summon_sacrifice(sacrificed: Card, summoned_card: Card, continue_callback: Callable = Callable()) -> void:
@@ -12157,11 +12172,12 @@ func _resolve_creature_summon_sacrifice(sacrificed: Card, summoned_card: Card, c
 			or not sacrificed.current_zone.is_board_zone()
 		if not paid:
 			if summoned_card != null:
-				action_label.text = "%s could not be sacrificed for %s." % [sacrificed.card_name, summoned_card.card_name]
+				_set_action_label_text("%s could not be sacrificed for %s." % [sacrificed.card_name, summoned_card.card_name])
 			else:
-				action_label.text = sacrificed.card_name + " could not be sacrificed."
+				_set_action_label_text(sacrificed.card_name + " could not be sacrificed.")
 			update_ui()
 			return
+		_mark_pending_creature_summon_cost_paid()
 		if sacrificed.has_method("on_sacrificed_for_summon") and not sacrificed.abilities_suppressed():
 			sacrificed.on_sacrificed_for_summon(game_manager, summoned_card)
 		if continue_callback.is_valid():
@@ -12185,13 +12201,39 @@ func _get_sacrifice_payment_prompt(card: Card) -> String:
 	var card_name := card.card_name if card != null else "This card"
 	return "%s - sacrifice needed: choose how to pay its sacrifice cost." % card_name
 
+func _begin_pending_creature_summon_cost_tracking(card: Card) -> void:
+	_pending_creature_summon_cost_card = card
+	_pending_creature_summon_cost_required = card.sacrifice_cost if card != null else 0
+	_pending_creature_summon_cost_paid = 0
+
+func _mark_pending_creature_summon_cost_paid(amount: int = 1) -> void:
+	if _pending_creature_summon_cost_card == null or amount <= 0:
+		return
+	_pending_creature_summon_cost_paid = mini(
+		_pending_creature_summon_cost_required,
+		_pending_creature_summon_cost_paid + amount
+	)
+
+func _has_fully_paid_pending_creature_summon_cost(card: Card, required_cost: int) -> bool:
+	if required_cost <= 0:
+		return true
+	return card != null \
+		and card == _pending_creature_summon_cost_card \
+		and _pending_creature_summon_cost_required >= required_cost \
+		and _pending_creature_summon_cost_paid >= required_cost
+
+func _clear_pending_creature_summon_cost_tracking() -> void:
+	_pending_creature_summon_cost_card = null
+	_pending_creature_summon_cost_required = 0
+	_pending_creature_summon_cost_paid = 0
+
 func _begin_normal_creature_sacrifice_selection() -> void:
 	_hide_sacrifice_payment_prompt()
 	_awaiting_altar_void_payment = false
 	_altar_pending_power = null
 	_altar_void_targets_chosen.clear()
 	_awaiting_creature_sacrifice = true
-	action_label.text = _get_creature_sacrifice_prompt(_sacrifice_pending_card, _sacrifice_remaining)
+	_set_action_label_text(_get_creature_sacrifice_prompt(_sacrifice_pending_card, _sacrifice_remaining))
 	update_ui()
 
 func _begin_altar_void_selection() -> void:
@@ -12199,7 +12241,7 @@ func _begin_altar_void_selection() -> void:
 	_awaiting_creature_sacrifice = false
 	_awaiting_altar_void_payment = true
 	_altar_void_targets_chosen.clear()
-	action_label.text = _sacrifice_pending_card.card_name + " - select a sleeping creature to void (" + str(_sacrifice_remaining) + " remaining)"
+	_set_action_label_text(_sacrifice_pending_card.card_name + " - select a sleeping creature to void (" + str(_sacrifice_remaining) + " remaining)")
 	update_ui()
 
 func _finish_altar_void_play() -> void:
@@ -12219,9 +12261,10 @@ func _finish_altar_void_play() -> void:
 		update_ui()
 		return
 	if not altar.pay_replacement_cost(card, chosen_targets, game_manager):
-		action_label.text = "Altar of Dreams payment failed."
+		_set_action_label_text("Altar of Dreams payment failed.")
 		update_ui()
 		return
+	_mark_pending_creature_summon_cost_paid(card.sacrifice_cost)
 	_resolve_pending_creature_play(card, zone, mode)
 	update_ui()
 
@@ -12231,10 +12274,10 @@ func _try_resolve_stupefy_target(card: Card) -> bool:
 	if card.card_type == Card.CardType.CREATURE and card.get_effective_level() <= stupefy_source.get_effective_level():
 		var source_stupefy := stupefy_source
 		if game_manager.is_guardian_protected(card, source_stupefy):
-			action_label.text = card.card_name + " is protected by Guardian!"
+			_set_action_label_text(card.card_name + " is protected by Guardian!")
 			return true
 		if game_manager.is_immune_to_source(card, source_stupefy):
-			action_label.text = card.card_name + " is immune to " + source_stupefy.card_name + "'s creature abilities this turn."
+			_set_action_label_text(card.card_name + " is immune to " + source_stupefy.card_name + "'s creature abilities this turn.")
 			return true
 		var resolve_stupefy_target := func() -> void:
 			source_stupefy.activate(game_manager, card)
@@ -12248,7 +12291,7 @@ func _try_resolve_stupefy_target(card: Card) -> bool:
 		stupefy_source = null
 		update_ui()
 	else:
-		action_label.text = "Invalid target ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â choose a creature of level " + str(stupefy_source.get_effective_level()) + " or lower."
+		_set_action_label_text("Invalid target ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â choose a creature of level " + str(stupefy_source.get_effective_level()) + " or lower.")
 	return true
 
 func _on_board_card_pressed(card: Card) -> void:
@@ -12268,7 +12311,7 @@ func _on_board_card_pressed(card: Card) -> void:
 	if _is_priority_prompt_visible():
 		var priority_failure_text := _get_priority_response_unavailable_text(card)
 		if priority_failure_text != "":
-			action_label.text = priority_failure_text
+			_set_action_label_text(priority_failure_text)
 			update_ui()
 			return
 	if _reject_priority_locked_action():
@@ -12284,7 +12327,7 @@ func _on_board_card_pressed(card: Card) -> void:
 		return
 		
 	if _awaiting_drag_sacrifice_zone:
-		action_label.text = "Choose an empty friendly zone to place " + _drag_sacrifice_card.card_name
+		_set_action_label_text("Choose an empty friendly zone to place " + _drag_sacrifice_card.card_name)
 		if _can_use_zone_after_sacrifice(card.current_zone, card) and card == _drag_sacrifice_target:
 			_execute_drag_sacrifice(card.current_zone)
 		return
@@ -12357,7 +12400,7 @@ func _on_board_card_pressed(card: Card) -> void:
 			else:
 				_queue_charm_action(charm)
 		else:
-			action_label.text = game_manager.get_activation_mana_unavailable_text(charm) if game_manager.has_insufficient_activation_mana(charm, true, charm.card_owner) else charm.card_name + " is not ready to activate yet."
+			_set_action_label_text(game_manager.get_activation_mana_unavailable_text(charm) if game_manager.has_insufficient_activation_mana(charm, true, charm.card_owner) else charm.card_name + " is not ready to activate yet.")
 			update_ui()
 		return
 
@@ -12386,17 +12429,17 @@ func _on_board_card_pressed(card: Card) -> void:
 	if _awaiting_altar_void_payment:
 		if card.card_type == Card.CardType.CREATURE and card.is_sleeping:
 			if card in _altar_void_targets_chosen:
-				action_label.text = card.card_name + " has already been chosen."
+				_set_action_label_text(card.card_name + " has already been chosen.")
 				return
 			_altar_void_targets_chosen.append(card)
 			_sacrifice_remaining -= 1
 			if _sacrifice_remaining <= 0:
 				_finish_altar_void_play()
 			else:
-				action_label.text = _sacrifice_pending_card.card_name + " - select a sleeping creature to void (" + str(_sacrifice_remaining) + " remaining)"
+				_set_action_label_text(_sacrifice_pending_card.card_name + " - select a sleeping creature to void (" + str(_sacrifice_remaining) + " remaining)")
 				update_ui()
 		else:
-			action_label.text = "Select a sleeping creature to void."
+			_set_action_label_text("Select a sleeping creature to void.")
 		return
 
 	# Check if we're selecting a target for a god ability
@@ -12411,7 +12454,7 @@ func _on_board_card_pressed(card: Card) -> void:
 		if empty_zone != null:
 			_on_empty_zone_pressed(empty_zone)
 		else:
-			action_label.text = "No empty zone available to cast " + selected_card.card_name + "!"
+			_set_action_label_text("No empty zone available to cast " + selected_card.card_name + "!")
 		return
 
 	# Check if we're selecting a target for a spell
@@ -12453,24 +12496,24 @@ func _on_board_card_pressed(card: Card) -> void:
 	if _pending_equip_action != "":
 		if card.get_controller() == game_manager.other_player and can_intercept(card, _pending_equip_actor, _pending_equip_target):
 			_remove_no_intercept_button()
-			action_label.text = card.card_name + " intercepts the " + _pending_equip_action + "!"
+			_set_action_label_text(card.card_name + " intercepts the " + _pending_equip_action + "!")
 			resolve_pending_equip_action(card)
 		else:
-			action_label.text = "That creature cannot intercept"
+			_set_action_label_text("That creature cannot intercept")
 		return
 
 	if pending_attack_target != null:
 		if card.get_controller() == game_manager.other_player and can_intercept(card, selected_attacker, pending_attack_target):
 			_remove_no_intercept_button()
 			selected_interceptor = card
-			action_label.text = _get_card_name_safe(card) + " will intercept. Resolve priority to continue."
+			_set_action_label_text(_get_card_name_safe(card) + " will intercept. Resolve priority to continue.")
 			resolve_pending_attack()
 		else:
-			action_label.text = "Cannot use this creature (wrong player, mode, or too slow)"
+			_set_action_label_text("Cannot use this creature (wrong player, mode, or too slow)")
 		return
 	
 	if card.get_controller() != game_manager.current_player:
-		action_label.text = "That's not your card!"
+		_set_action_label_text("That's not your card!")
 		return
 	
 	if card.card_type == Card.CardType.STRUCTURE:
@@ -12478,7 +12521,7 @@ func _on_board_card_pressed(card: Card) -> void:
 			if (card as E2Abzu).can_activate(game_manager):
 				_show_e2_abzu_prompt(card as E2Abzu)
 			else:
-				action_label.text = card.card_name + " has no usable mode right now."
+				_set_action_label_text(card.card_name + " has no usable mode right now.")
 				update_ui()
 			return
 		if card is HildskjalfThroneOfOdin and card.get_controller() == game_manager.current_player:
@@ -12489,7 +12532,7 @@ func _on_board_card_pressed(card: Card) -> void:
 				if (card as AncientPyre).is_frontline():
 					awaiting_pyre_target = true
 					pyre_source = card as AncientPyre
-					action_label.text = "Ancient Pyre: Select a card to reduce Res by 5, or click the enemy god to Convert 5 followers."
+					_set_action_label_text("Ancient Pyre: Select a card to reduce Res by 5, or click the enemy god to Convert 5 followers.")
 				else:
 					if _is_networked_client:
 						game_input.submit_action({type = "activate_card_ability", source_uid = card.uid})
@@ -12502,20 +12545,20 @@ func _on_board_card_pressed(card: Card) -> void:
 							func() -> void:
 								(card as AncientPyre).activate(game_manager)
 						)
-					action_label.text = "Ancient Pyre: Ritual Flame ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â 5 followers converted!"
+					_set_action_label_text("Ancient Pyre: Ritual Flame ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â 5 followers converted!")
 					update_ui()
 			else:
-				action_label.text = "Ancient Pyre cannot activate right now (need 2 mana or no valid targets)."
+				_set_action_label_text("Ancient Pyre cannot activate right now (need 2 mana or no valid targets).")
 		elif card is AnointingStatue and card.get_controller() == game_manager.current_player:
 			awaiting_anointing_target = true
 			anointing_source = card as AnointingStatue
-			action_label.text = "Anointing Statue: Select a creature to cleanse."
+			_set_action_label_text("Anointing Statue: Select a creature to cleanse.")
 		else:
-			action_label.text = card.card_name + " is a structure and cannot attack or move."
+			_set_action_label_text(card.card_name + " is a structure and cannot attack or move.")
 		return
 	
 	if card.card_type != Card.CardType.CREATURE:
-		action_label.text = "That card cannot perform an action."
+		_set_action_label_text("That card cannot perform an action.")
 		return
 
 	if card is EnHeduAnnaScript and card.can_activate(game_manager):
@@ -12531,9 +12574,9 @@ func _on_board_card_pressed(card: Card) -> void:
 		match_manager.select_attacker(card)
 	
 	if match_manager.selected_attacker == card:
-		action_label.text = "Selected attacker: " + _get_attack_card_label(card, "A creature") + " - Click enemy target or followers"
+		_set_action_label_text("Selected attacker: " + _get_attack_card_label(card, "A creature") + " - Click enemy target or followers")
 	elif match_manager.selected_attacker == null:
-		action_label.text = card.card_name + " deselected"
+		_set_action_label_text(card.card_name + " deselected")
 	
 	update_ui()
 
@@ -12560,17 +12603,17 @@ func _on_enemy_card_pressed(target_card: Card) -> void:
 	if _awaiting_altar_void_payment:
 		if target_card.card_type == Card.CardType.CREATURE and target_card.is_sleeping:
 			if target_card in _altar_void_targets_chosen:
-				action_label.text = target_card.card_name + " has already been chosen."
+				_set_action_label_text(target_card.card_name + " has already been chosen.")
 				return
 			_altar_void_targets_chosen.append(target_card)
 			_sacrifice_remaining -= 1
 			if _sacrifice_remaining <= 0:
 				_finish_altar_void_play()
 			else:
-				action_label.text = _sacrifice_pending_card.card_name + " - select a sleeping creature to void (" + str(_sacrifice_remaining) + " remaining)"
+				_set_action_label_text(_sacrifice_pending_card.card_name + " - select a sleeping creature to void (" + str(_sacrifice_remaining) + " remaining)")
 				update_ui()
 		else:
-			action_label.text = "Select a sleeping creature to void."
+			_set_action_label_text("Select a sleeping creature to void.")
 		return
 
 	if awaiting_anointing_target and anointing_source != null:
@@ -12647,7 +12690,7 @@ func _on_enemy_card_pressed(target_card: Card) -> void:
 			and target_card.get_controller() == game_manager.current_player \
 			and not awaiting_spell_target:
 		if not game_manager.can_play_card(game_manager.current_player, selected_card, null):
-			action_label.text = "Cannot cast " + selected_card.card_name + "!"
+			_set_action_label_text("Cannot cast " + selected_card.card_name + "!")
 			return
 		_initiate_blot_with_sacrifice(selected_card, target_card)
 		selected_card = null
@@ -12659,10 +12702,10 @@ func _on_enemy_card_pressed(target_card: Card) -> void:
 			and target_card.get_controller() == game_manager.current_player \
 			and not awaiting_spell_target:
 		if not target_card.has_type("Animal") or not _can_use_card_for_creature_sacrifice(target_card):
-			action_label.text = target_card.card_name + " cannot be sacrificed for Key of Solomon."
+			_set_action_label_text(target_card.card_name + " cannot be sacrificed for Key of Solomon.")
 			return
 		if not _can_cast_hand_spell(selected_card):
-			action_label.text = "Cannot cast " + selected_card.card_name + "!"
+			_set_action_label_text("Cannot cast " + selected_card.card_name + "!")
 			return
 		_initiate_kos_with_sacrifice(selected_card as KeyOfSolomon, target_card)
 		selected_card = null
@@ -12674,7 +12717,7 @@ func _on_enemy_card_pressed(target_card: Card) -> void:
 		if empty_zone != null:
 			_on_empty_zone_pressed(empty_zone)
 		else:
-			action_label.text = "No empty zone available to cast " + selected_card.card_name + "!"
+			_set_action_label_text("No empty zone available to cast " + selected_card.card_name + "!")
 		return
 
 	# Spell targeting takes priority
@@ -12714,10 +12757,10 @@ func _on_enemy_card_pressed(target_card: Card) -> void:
 	if _pending_equip_action != "":
 		if target_card.get_controller() == game_manager.other_player and can_intercept(target_card, _pending_equip_actor, _pending_equip_target):
 			_remove_no_intercept_button()
-			action_label.text = target_card.card_name + " intercepts the " + _pending_equip_action + "!"
+			_set_action_label_text(target_card.card_name + " intercepts the " + _pending_equip_action + "!")
 			resolve_pending_equip_action(target_card)
 		else:
-			action_label.text = "That creature cannot intercept"
+			_set_action_label_text("That creature cannot intercept")
 		return
 
 	# Intercept selection (when an attack is already pending)
@@ -12725,10 +12768,10 @@ func _on_enemy_card_pressed(target_card: Card) -> void:
 		if target_card.get_controller() == game_manager.other_player and can_intercept(target_card, selected_attacker, pending_attack_target):
 			_remove_no_intercept_button()
 			selected_interceptor = target_card
-			action_label.text = _get_card_name_safe(target_card, "An interceptor") + " will intercept. Resolve priority to continue."
+			_set_action_label_text(_get_card_name_safe(target_card, "An interceptor") + " will intercept. Resolve priority to continue.")
 			resolve_pending_attack()
 		else:
-			action_label.text = "This card cannot intercept"
+			_set_action_label_text("This card cannot intercept")
 		return
 
 	# Direct attack target selection
@@ -12742,7 +12785,7 @@ func _on_enemy_card_pressed(target_card: Card) -> void:
 		if attack_target != null:
 			if _is_networked_client:
 				if not _submit_network_attack_request(selected_attacker, attack_target):
-					action_label.text = "Could not send that attack to the server."
+					_set_action_label_text("Could not send that attack to the server.")
 					return
 				selected_attacker = null
 				selected_interceptor = null
@@ -12751,9 +12794,9 @@ func _on_enemy_card_pressed(target_card: Card) -> void:
 			else:
 				match_manager.request_attack(selected_attacker, attack_target)
 		else:
-			action_label.text = "Can only attack creatures or structures"
+			_set_action_label_text("Can only attack creatures or structures")
 	else:
-		action_label.text = "Select your creature first to attack"
+		_set_action_label_text("Select your creature first to attack")
 
 func _on_all_attack_followers_pressed() -> void:
 	if _game_finished:
@@ -12762,10 +12805,10 @@ func _on_all_attack_followers_pressed() -> void:
 		_reject_pre_turn_action()
 		return
 	if game_manager.turn_number <= 1:
-		action_label.text = "Cannot attack on the first turn!"
+		_set_action_label_text("Cannot attack on the first turn!")
 		return
 	if game_manager.attack_restrictions.has(game_manager.current_player):
-		action_label.text = "Cannot attack! Attack restricted this turn."
+		_set_action_label_text("Cannot attack! Attack restricted this turn.")
 		return
 
 	var attackers: Array[Card] = []
@@ -12777,7 +12820,7 @@ func _on_all_attack_followers_pressed() -> void:
 			attackers.append(card)
 
 	if attackers.is_empty():
-		action_label.text = "No eligible frontline creatures available to attack"
+		_set_action_label_text("No eligible frontline creatures available to attack")
 		return
 
 	_queued_attackers = attackers
@@ -12860,7 +12903,7 @@ func _on_creature_right_clicked(card: Card) -> void:
 		equip_entries = _get_reachable_equipment(card)
 
 	if not can_attack and not can_stance and not can_move and not can_activate_creature and equipped_ability_cards.is_empty() and equip_entries.is_empty():
-		action_label.text = card.card_name + " has no available actions this turn."
+		_set_action_label_text(card.card_name + " has no available actions this turn.")
 		return
 
 	var panel := PanelContainer.new()
@@ -12891,7 +12934,7 @@ func _on_creature_right_clicked(card: Card) -> void:
 		btn.pressed.connect(func():
 			_close_context_menu()
 			selected_attacker = card
-			action_label.text = card.card_name + " ready to attack ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â click an enemy creature or zone"
+			_set_action_label_text(card.card_name + " ready to attack ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â click an enemy creature or zone")
 		)
 		vbox.add_child(btn)
 
@@ -12902,7 +12945,7 @@ func _on_creature_right_clicked(card: Card) -> void:
 			_close_context_menu()
 			awaiting_stupefy_target = true
 			stupefy_source = card
-			action_label.text = "Stupefy ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â click an enemy creature of level " + str(card.get_effective_level()) + " or lower"
+			_set_action_label_text("Stupefy ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â click an enemy creature of level " + str(card.get_effective_level()) + " or lower")
 		)
 		vbox.add_child(btn)
 
@@ -12972,7 +13015,7 @@ func _on_creature_right_clicked(card: Card) -> void:
 			var on_choose_creature_target := func(chosen_card: Card) -> void:
 				_queue_context_targeted_ability(card, chosen_card)
 			var on_cancel_creature_target := func() -> void:
-				action_label.text = "Cancelled " + card.card_name + "."
+				_set_action_label_text("Cancelled " + card.card_name + ".")
 				update_ui()
 			btn.pressed.connect(func():
 				_close_context_menu()
@@ -13000,7 +13043,7 @@ func _on_creature_right_clicked(card: Card) -> void:
 				if card.has_method("get_valid_targets"):
 					var targets: Array = card.get_valid_targets(game_manager)
 					if targets.is_empty():
-						action_label.text = card.card_name + " has no valid targets right now."
+						_set_action_label_text(card.card_name + " has no valid targets right now.")
 						update_ui()
 						return
 					_show_card_selection_overlay(
@@ -13032,14 +13075,14 @@ func _on_creature_right_clicked(card: Card) -> void:
 		var on_choose_equipped_target := func(chosen_card: Card) -> void:
 			_queue_context_targeted_ability(equipped_card, chosen_card)
 		var on_cancel_equipped_target := func() -> void:
-			action_label.text = "Cancelled " + equipped_card.card_name + "."
+			_set_action_label_text("Cancelled " + equipped_card.card_name + ".")
 			update_ui()
 		btn.pressed.connect(func():
 			_close_context_menu()
 			if equipped_card.has_method("get_valid_targets"):
 				var targets: Array = equipped_card.get_valid_targets(game_manager)
 				if targets.is_empty():
-					action_label.text = equipped_card.card_name + " has no valid targets right now."
+					_set_action_label_text(equipped_card.card_name + " has no valid targets right now.")
 					update_ui()
 					return
 				_show_card_selection_overlay(
@@ -13071,11 +13114,11 @@ func _on_creature_right_clicked(card: Card) -> void:
 				_close_context_menu()
 				var was_stealth: bool = card.is_stealth
 				if game_input.submit_action({type = "change_mode", card_uid = card.uid, mode = Card.CreatureMode.AGGRESSIVE}):
-					action_label.text = card.card_name + " revealed in aggressive stance."
+					_set_action_label_text(card.card_name + " revealed in aggressive stance.")
 					update_ui()
 					_handle_post_reveal_prompt(card, was_stealth)
 				else:
-					action_label.text = card.card_name + " could not reveal in aggressive stance."
+					_set_action_label_text(card.card_name + " could not reveal in aggressive stance.")
 			)
 			vbox.add_child(reveal_aggressive_btn)
 
@@ -13085,11 +13128,11 @@ func _on_creature_right_clicked(card: Card) -> void:
 				_close_context_menu()
 				var was_stealth: bool = card.is_stealth
 				if game_input.submit_action({type = "change_mode", card_uid = card.uid, mode = Card.CreatureMode.DEFENSIVE}):
-					action_label.text = card.card_name + " revealed in defensive stance."
+					_set_action_label_text(card.card_name + " revealed in defensive stance.")
 					update_ui()
 					_handle_post_reveal_prompt(card, was_stealth)
 				else:
-					action_label.text = card.card_name + " could not reveal in defensive stance."
+					_set_action_label_text(card.card_name + " could not reveal in defensive stance.")
 			)
 			vbox.add_child(reveal_defensive_btn)
 		else:
@@ -13099,7 +13142,7 @@ func _on_creature_right_clicked(card: Card) -> void:
 			btn.pressed.connect(func():
 				_close_context_menu()
 				game_input.submit_action({type = "change_mode", card_uid = card.uid, mode = -1})
-				action_label.text = card.card_name + " changed stance."
+				_set_action_label_text(card.card_name + " changed stance.")
 				update_ui()
 			)
 			vbox.add_child(btn)
@@ -13110,7 +13153,7 @@ func _on_creature_right_clicked(card: Card) -> void:
 		btn.pressed.connect(func():
 			_close_context_menu()
 			_pending_move_card = card
-			action_label.text = card.card_name + " ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â click an adjacent empty zone to move"
+			_set_action_label_text(card.card_name + " ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â click an adjacent empty zone to move")
 		)
 		vbox.add_child(btn)
 
@@ -13136,7 +13179,7 @@ func _on_creature_right_clicked(card: Card) -> void:
 				var result_phrase := " %s " % pick_up_success
 				if not ok:
 					result_phrase = " %s " % pick_up_failure
-				action_label.text = card.card_name + result_phrase + equip.card_name
+				_set_action_label_text(card.card_name + result_phrase + equip.card_name)
 				update_ui()
 			)
 			vbox.add_child(pick_btn)
@@ -13164,7 +13207,7 @@ func _on_creature_right_clicked(card: Card) -> void:
 					check_for_possible_intercepts_for_equip_action()
 				else:
 					var ok := _resolve_equipment_action(card, equip, "destroy")
-					action_label.text = card.card_name + (" destroys " if ok else " failed to destroy ") + equip.card_name
+					_set_action_label_text(card.card_name + (" destroys " if ok else " failed to destroy ") + equip.card_name)
 					update_ui()
 			)
 			vbox.add_child(destroy_btn)
@@ -13204,7 +13247,7 @@ func _begin_nimue_entomb_activation(card: NimueScript) -> void:
 		return
 	var targets: Array[Card] = card.get_valid_entomb_targets(game_manager)
 	if targets.is_empty():
-		action_label.text = card.card_name + " has no creatures to Entomb right now."
+		_set_action_label_text(card.card_name + " has no creatures to Entomb right now.")
 		update_ui()
 		return
 	var validate_entomb_target := func(clicked_card: Card) -> bool:
@@ -13212,7 +13255,7 @@ func _begin_nimue_entomb_activation(card: NimueScript) -> void:
 	var confirm_entomb_target := func(clicked_card: Card) -> void:
 		_queue_context_targeted_ability(card, clicked_card)
 	var cancel_entomb_target := func() -> void:
-		action_label.text = "Cancelled " + card.card_name + "."
+		_set_action_label_text("Cancelled " + card.card_name + ".")
 		update_ui()
 	_begin_pending_click_selection(
 		card.card_name + ": Entomb",
@@ -13221,7 +13264,7 @@ func _begin_nimue_entomb_activation(card: NimueScript) -> void:
 		confirm_entomb_target,
 		cancel_entomb_target
 	)
-	action_label.text = card.card_name + ": click a creature to Entomb."
+	_set_action_label_text(card.card_name + ": click a creature to Entomb.")
 	update_ui()
 
 func _show_nimue_present_prompt(card: NimueScript) -> void:
@@ -13229,13 +13272,13 @@ func _show_nimue_present_prompt(card: NimueScript) -> void:
 		return
 	var targets: Array[Card] = card.get_valid_present_targets(game_manager)
 	if targets.is_empty():
-		action_label.text = card.card_name + " has no Equipment to Present right now."
+		_set_action_label_text(card.card_name + " has no Equipment to Present right now.")
 		update_ui()
 		return
 	var on_choose_present_target := func(chosen_card: Card) -> void:
 		_queue_context_targeted_ability(card, chosen_card)
 	var on_cancel_present_target := func() -> void:
-		action_label.text = "Cancelled " + card.card_name + "."
+		_set_action_label_text("Cancelled " + card.card_name + ".")
 		update_ui()
 	_show_card_selection_overlay(
 		"Choose Equipment for " + card.card_name,
@@ -13243,7 +13286,7 @@ func _show_nimue_present_prompt(card: NimueScript) -> void:
 		on_choose_present_target,
 		on_cancel_present_target
 	)
-	action_label.text = card.card_name + ": choose Equipment in your graveyard to Present."
+	_set_action_label_text(card.card_name + ": choose Equipment in your graveyard to Present.")
 	update_ui()
 
 func _clamp_context_menu_to_viewport(panel: Control, anchor_pos: Vector2) -> void:
@@ -13436,7 +13479,7 @@ func _reject_priority_locked_action(reason: String = "Only legal priority respon
 		feedback = "Resolve the pending %s before ending the turn." % _describe_unresolved_priority_state()
 	if not _is_priority_prompt_visible() and feedback == "Only legal priority responses can be used right now.":
 		feedback = "Resolve the pending %s before continuing." % _describe_unresolved_priority_state()
-	action_label.text = feedback
+	_set_action_label_text(feedback)
 	update_ui()
 	return true
 
@@ -13551,45 +13594,45 @@ func _bdrag_finish(drop_pos: Vector2) -> void:
 		if not _creature_can_move(card):
 			var minor_action_limit := card.get_max_minor_creature_actions_per_turn()
 			if card.is_sleeping:
-				action_label.text = card.card_name + " is Sleeping and cannot move."
+				_set_action_label_text(card.card_name + " is Sleeping and cannot move.")
 			elif not card.get_status_effect("cannot_move").is_empty():
 				var move_status := card.get_status_effect("cannot_move")
-				action_label.text = card.card_name + " cannot move because of " + str(move_status.get("source", "an effect")) + "."
+				_set_action_label_text(card.card_name + " cannot move because of " + str(move_status.get("source", "an effect")) + ".")
 			elif card.summoned_this_turn:
-				action_label.text = card.card_name + " was summoned this turn and cannot move yet."
+				_set_action_label_text(card.card_name + " was summoned this turn and cannot move yet.")
 			elif card.creature_major_action_used:
-				action_label.text = card.card_name + " has already used its major action this turn."
+				_set_action_label_text(card.card_name + " has already used its major action this turn.")
 			elif card.creature_minor_actions_used >= minor_action_limit:
-				action_label.text = "%s has already used %d minor actions this turn." % [card.card_name, minor_action_limit]
+				_set_action_label_text("%s has already used %d minor actions this turn." % [card.card_name, minor_action_limit])
 			else:
-				action_label.text = card.card_name + " cannot move right now."
+				_set_action_label_text(card.card_name + " cannot move right now.")
 			return
 		var controller := card.get_controller()
 		if controller != null and target_zone in controller.get_adjacent_zones(from_zone):
 			if game_input.submit_action({type = "creature_move", card_uid = card.uid,
 					player_index = game_manager.players.find(target_zone.zone_owner),
 					zone_type = target_zone.zone_type, zone_index = target_zone.zone_index}):
-				action_label.text = card.card_name + " moved."
+				_set_action_label_text(card.card_name + " moved.")
 				update_ui()
 		else:
-			action_label.text = "Can only move to an adjacent or diagonal zone."
+			_set_action_label_text("Can only move to an adjacent or diagonal zone.")
 		return
 
 	# Attack guard checks
 	if not match_manager.can_attack(card):
 		var major_minor_limit := card.get_max_minor_creature_actions_before_major()
 		if card.is_sleeping:
-			action_label.text = card.card_name + " is Sleeping and cannot act."
+			_set_action_label_text(card.card_name + " is Sleeping and cannot act.")
 		elif card.creature_major_action_used:
-			action_label.text = card.card_name + " has already used its major action this turn."
+			_set_action_label_text(card.card_name + " has already used its major action this turn.")
 		elif card.creature_minor_actions_used >= major_minor_limit:
-			action_label.text = "%s has already used %d minor actions this turn." % [card.card_name, major_minor_limit]
+			_set_action_label_text("%s has already used %d minor actions this turn." % [card.card_name, major_minor_limit])
 		elif card.creature_mode == Card.CreatureMode.DEFENSIVE:
-			action_label.text = card.card_name + " is in defensive stance and cannot attack."
+			_set_action_label_text(card.card_name + " is in defensive stance and cannot attack.")
 		elif from_zone.zone_type == Zone.ZoneType.RESERVE:
-			action_label.text = card.card_name + " cannot attack from the back row."
+			_set_action_label_text(card.card_name + " cannot attack from the back row.")
 		else:
-			action_label.text = card.card_name + " cannot attack right now."
+			_set_action_label_text(card.card_name + " cannot attack right now.")
 		return
 
 	# Attack followers via God slot
@@ -13611,14 +13654,14 @@ func _bdrag_finish(drop_pos: Vector2) -> void:
 			selected_attacker = card
 			var attack_block := _get_attack_block_reason(card)
 			if attack_block != "":
-				action_label.text = attack_block
+				_set_action_label_text(attack_block)
 				return
 			if not game_manager.can_cards_engage_each_other(card, target_card):
-				action_label.text = _get_card_name_safe(card, "That card") + " cannot engage " + _get_card_name_safe(target_card, "that target") + "."
+				_set_action_label_text(_get_card_name_safe(card, "That card") + " cannot engage " + _get_card_name_safe(target_card, "that target") + ".")
 				return
 			if _is_networked_client:
 				if not _submit_network_attack_request(card, target_card):
-					action_label.text = "Could not send that attack to the server."
+					_set_action_label_text("Could not send that attack to the server.")
 					return
 				selected_attacker = null
 				selected_interceptor = null
@@ -13626,12 +13669,12 @@ func _bdrag_finish(drop_pos: Vector2) -> void:
 				update_ui()
 				return
 			pending_attack_target = target_card
-			action_label.text = _get_attack_card_label(card, "A creature") + " attacking " + _get_card_name_safe(target_card, "an enemy card") + "..."
+			_set_action_label_text(_get_attack_card_label(card, "A creature") + " attacking " + _get_card_name_safe(target_card, "an enemy card") + "...")
 			check_for_possible_intercepts()
 			update_ui()
 			return
 
-	action_label.text = "Invalid drop target."
+	_set_action_label_text("Invalid drop target.")
 
 func _bdrag_cancel() -> void:
 	_bdrag_cleanup()
@@ -13663,18 +13706,18 @@ func _on_attack_followers_pressed() -> void:
 	if selected_attacker:
 		var block := _get_attack_block_reason(selected_attacker)
 		if block != "":
-			action_label.text = block
+			_set_action_label_text(block)
 			return
 		var allied_attackers: Array = []
 		var united_front_partner := _get_declared_attack_partner(selected_attacker)
 		if united_front_partner != null:
 			allied_attackers.append(united_front_partner)
 		if game_manager.is_followers_attack_blocked_by_active_structure(selected_attacker, game_manager.other_player, allied_attackers):
-			action_label.text = _get_attack_card_label(selected_attacker, "That creature") + " cannot attack followers through Palisade."
+			_set_action_label_text(_get_attack_card_label(selected_attacker, "That creature") + " cannot attack followers through Palisade.")
 			return
 		if _is_networked_client:
 			if not _submit_network_attack_request(selected_attacker, game_manager.other_player):
-				action_label.text = "Could not send that attack to the server."
+				_set_action_label_text("Could not send that attack to the server.")
 				return
 			selected_attacker = null
 			selected_interceptor = null
@@ -13685,7 +13728,7 @@ func _on_attack_followers_pressed() -> void:
 		check_for_possible_intercepts()
 		update_ui()
 	else:
-		action_label.text = "Select your creature first to attack"
+		_set_action_label_text("Select your creature first to attack")
 
 func _creature_can_use_equipment_action(card: Card) -> bool:
 	if card != null and card.has_method("can_use_equipment_action"):
@@ -13931,7 +13974,7 @@ func check_for_possible_intercepts() -> void:
 		if possible_interceptors.size() > 0:
 			_broadcast_intercept_offered(possible_interceptors)
 		else:
-			action_label.text = _get_attack_card_label(selected_attacker, "A creature") + " attacking directly - no possible interceptors."
+			_set_action_label_text(_get_attack_card_label(selected_attacker, "A creature") + " attacking directly - no possible interceptors.")
 			resolve_pending_attack()
 		return
 
@@ -13939,10 +13982,10 @@ func check_for_possible_intercepts() -> void:
 		var names = []
 		for card in possible_interceptors:
 			names.append(card.card_name)
-		action_label.text = _get_attack_card_label(selected_attacker, "A creature") + " is attacking. Possible interceptors: " + ", ".join(names) + " - Click one to intercept or click 'No Intercept'"
+		_set_action_label_text(_get_attack_card_label(selected_attacker, "A creature") + " is attacking. Possible interceptors: " + ", ".join(names) + " - Click one to intercept or click 'No Intercept'")
 		show_no_intercept_button()
 	else:
-		action_label.text = _get_attack_card_label(selected_attacker, "A creature") + " attacking directly - no possible interceptors."
+		_set_action_label_text(_get_attack_card_label(selected_attacker, "A creature") + " attacking directly - no possible interceptors.")
 		resolve_pending_attack()
 
 func _broadcast_intercept_offered(possible_interceptors: Array[Card]) -> void:
@@ -13988,17 +14031,17 @@ func _remove_no_intercept_button() -> void:
 
 func _on_no_intercept_pressed() -> void:
 	selected_interceptor = null
-	action_label.text = "No intercept - " + _get_attack_card_label(selected_attacker, "the attacker") + " attack is waiting on priority."
+	_set_action_label_text("No intercept - " + _get_attack_card_label(selected_attacker, "the attacker") + " attack is waiting on priority.")
 	resolve_pending_attack()
 
 func resolve_pending_attack() -> void:
 	_remove_no_intercept_button()
 	if selected_attacker == null:
-		action_label.text = "No attacker is selected."
+		_set_action_label_text("No attacker is selected.")
 		update_ui()
 		return
 	if match_manager != null and not match_manager.can_attack(selected_attacker):
-		action_label.text = match_manager.get_attack_invalid_reason(selected_attacker)
+		_set_action_label_text(match_manager.get_attack_invalid_reason(selected_attacker))
 		selected_attacker = null
 		selected_interceptor = null
 		pending_attack_target = null
@@ -14035,7 +14078,7 @@ func resolve_pending_attack() -> void:
 		declared_target_name = _get_card_name_safe(action.target, "an enemy card")
 	elif action.target is Player:
 		declared_target_name = (action.target as Player).player_name + "'s followers"
-	action_label.text = _get_attack_card_label(action.attacker, "A creature") + " declares an attack on " + declared_target_name + "!"
+	_set_action_label_text(_get_attack_card_label(action.attacker, "A creature") + " declares an attack on " + declared_target_name + "!")
 	_offer_priority()
 
 func check_for_possible_intercepts_for_equip_action() -> void:
@@ -14049,7 +14092,7 @@ func check_for_possible_intercepts_for_equip_action() -> void:
 		var names: Array[String] = []
 		for card in possible:
 			names.append(card.card_name)
-		action_label.text = "Intercept " + _pending_equip_actor.card_name + "'s " + _pending_equip_action + "? Possible interceptors: " + ", ".join(names) + " â€” click one or 'No Intercept'"
+		_set_action_label_text("Intercept " + _pending_equip_actor.card_name + "'s " + _pending_equip_action + "? Possible interceptors: " + ", ".join(names) + " â€” click one or 'No Intercept'")
 		_show_no_intercept_equip_button()
 	else:
 		resolve_pending_equip_action(null)
@@ -14072,17 +14115,17 @@ func resolve_pending_equip_action(interceptor: Card) -> void:
 	if interceptor != null:
 		interceptor.spend_major_creature_action()
 		game_manager.record_interception(interceptor)
-		action_label.text = _get_card_name_safe(interceptor) + " intercepts!"
+		_set_action_label_text(_get_card_name_safe(interceptor) + " intercepts!")
 		game_manager.resolve_combat_with_continuation(actor, interceptor, func() -> void:
 			update_ui()
 		)
 		return
 	if action == "steal":
 		var ok := game_input.submit_action({type = "equip_action", card_uid = actor.uid, equipment_uid = target.uid, action = "steal"})
-		action_label.text = _get_card_name_safe(actor) + " steals " + _get_card_name_safe(target) if ok else game_manager.get_equipment_action_failure_text(actor, target, "steal")
+		_set_action_label_text(_get_card_name_safe(actor) + " steals " + _get_card_name_safe(target) if ok else game_manager.get_equipment_action_failure_text(actor, target, "steal"))
 	elif action == "destroy":
 		var ok := game_input.submit_action({type = "equip_action", card_uid = actor.uid, equipment_uid = target.uid, action = "destroy"})
-		action_label.text = _get_card_name_safe(actor) + " destroys " + _get_card_name_safe(target) if ok else game_manager.get_equipment_action_failure_text(actor, target, "destroy")
+		_set_action_label_text(_get_card_name_safe(actor) + " destroys " + _get_card_name_safe(target) if ok else game_manager.get_equipment_action_failure_text(actor, target, "destroy"))
 	update_ui()
 
 func _offer_priority() -> void:
@@ -14405,7 +14448,7 @@ func _on_priority_response_chosen(card: Card) -> void:
 			)
 			return
 		if has_manual_targets and hex.targets and hex_targets.is_empty():
-			action_label.text = hex.card_name + " has no valid targets."
+			_set_action_label_text(hex.card_name + " has no valid targets.")
 			update_ui()
 			return
 		var chosen_target: Card = hex_targets[0] if not hex_targets.is_empty() else null
@@ -14428,7 +14471,7 @@ func _on_priority_response_chosen(card: Card) -> void:
 				_get_attack_card_label(card, card.card_name) + " is targeting " + _get_target_label(chosen_target, game_manager.get_feedback_viewer(), chosen_target.card_name) + "."
 			)
 		if god_targets.is_empty():
-			action_label.text = card.card_name + " has no valid targets."
+			_set_action_label_text(card.card_name + " has no valid targets.")
 			update_ui()
 			return
 		if god_targets.size() == 1 and god_targets[0] is Card:
@@ -14444,7 +14487,7 @@ func _on_priority_response_chosen(card: Card) -> void:
 		var top: CardAction = game_manager.action_stack.back() as CardAction
 		var targets: Array[Card] = structure.get_priority_field_targets(game_manager, top)
 		if targets.is_empty():
-			action_label.text = structure.card_name + " has no valid fast targets."
+			_set_action_label_text(structure.card_name + " has no valid fast targets.")
 			update_ui()
 			return
 		var on_choose_fast_void_target := func(chosen_card: Card) -> void:
@@ -14470,7 +14513,7 @@ func _on_priority_response_chosen(card: Card) -> void:
 			targets = card.get_valid_targets(game_manager)
 		if card is RavenStorm:
 			if targets.is_empty():
-				action_label.text = card.card_name + " has no valid Sighting trigger."
+				_set_action_label_text(card.card_name + " has no valid Sighting trigger.")
 				update_ui()
 				return
 			if targets.size() == 1 and targets[0] is Card:
@@ -14549,7 +14592,7 @@ func _on_priority_response_chosen(card: Card) -> void:
 		for vc in _hand_visual_cards:
 			vc.set_highlighted(vc.card_data == card)
 		if card is BitMeseri:
-			action_label.text = "BitMeseri - click a creature or structure to void it."
+			_set_action_label_text("BitMeseri - click a creature or structure to void it.")
 			update_ui()
 		elif card is Absence:
 			_prompt_absence_target_selection()
@@ -14605,7 +14648,7 @@ func _finish_post_execute(source_player: Player) -> void:
 			if cancelled_target != null:
 				game_manager._clear_combat_engagement_state(cancelled_target)
 			game_manager.action_stack.pop_back()
-			action_label.text = _get_card_name_safe(next.attacker, "An attacker") + "'s attack was cancelled!"
+			_set_action_label_text(_get_card_name_safe(next.attacker, "An attacker") + "'s attack was cancelled!")
 		else:
 			break
 
@@ -14642,7 +14685,7 @@ func _maybe_prompt_aphrodite_after_combat() -> bool:
 		return true
 	# Local game: show prompt directly
 	_show_aphrodite_prompt(god as AphroditeAreia)
-	action_label.text = god.card_name + " can enslave a creature."
+	_set_action_label_text(god.card_name + " can enslave a creature.")
 	return true
 
 func _get_retreat_opponent(ask_card: Askelladen, attacker: Card, defender: Card) -> Card:
@@ -14931,7 +14974,7 @@ func _show_demiurge_prompt(spell) -> void:
 
 	var max_x: int = spell.get_max_x_value()
 	if max_x <= 0:
-		action_label.text = "Apollyon's Demiurge needs mana and enough cards in deck."
+		_set_action_label_text("Apollyon's Demiurge needs mana and enough cards in deck.")
 		return
 
 	var panel := PanelContainer.new()
@@ -15164,7 +15207,7 @@ func _show_byggvir_reveal_prompt(card: Byggvir, prompt_options: Array = []) -> v
 		card.consume_brewing_reveal_pending()
 	var options: Array[Dictionary] = prompt_options if not prompt_options.is_empty() else card.serialize_brewing_options(game_manager)
 	if options.is_empty():
-		action_label.text = card.card_name + " has no Brewing options on reveal."
+		_set_action_label_text(card.card_name + " has no Brewing options on reveal.")
 		update_ui()
 		return
 	if options.size() == 1:
@@ -15175,7 +15218,7 @@ func _show_byggvir_reveal_prompt(card: Byggvir, prompt_options: Array = []) -> v
 		}):
 			update_ui()
 			return
-		action_label.text = card.resolve_brewing_option_from_payload(game_manager, options[0])
+		_set_action_label_text(card.resolve_brewing_option_from_payload(game_manager, options[0]))
 		update_ui()
 		return
 
@@ -15243,7 +15286,7 @@ func _resolve_byggvir_reveal_option(option: Dictionary) -> void:
 	}):
 		update_ui()
 		return
-	action_label.text = card.resolve_brewing_option_from_payload(game_manager, option)
+	_set_action_label_text(card.resolve_brewing_option_from_payload(game_manager, option))
 	update_ui()
 
 func _handle_post_reveal_prompt(card: Card, was_stealth: bool) -> void:
@@ -15325,13 +15368,13 @@ func _show_mopsus_hand_prompt(card: MopsusScript) -> void:
 	if card == null or game_manager == null:
 		return
 	if not card.can_activate(game_manager):
-		action_label.text = card.card_name + " cannot use Seer right now."
+		_set_action_label_text(card.card_name + " cannot use Seer right now.")
 		update_ui()
 		return
 
 	var targets: Array[Card] = card.get_valid_targets(game_manager)
 	if targets.is_empty():
-		action_label.text = card.card_name + " has no opponent hand cards to inspect."
+		_set_action_label_text(card.card_name + " has no opponent hand cards to inspect.")
 		update_ui()
 		return
 	var required_count = max(1, card.get_required_seer_target_count(game_manager))
@@ -15402,7 +15445,7 @@ func _show_mopsus_hand_prompt(card: MopsusScript) -> void:
 		cancel_btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 		cancel_btn.pressed.connect(func() -> void:
 			_dismiss_zone_overlay()
-			action_label.text = card.card_name + " cancelled Seer."
+			_set_action_label_text(card.card_name + " cancelled Seer.")
 			update_ui()
 		)
 		vbox.add_child(cancel_btn)
@@ -15459,7 +15502,7 @@ func _show_mopsus_hand_prompt(card: MopsusScript) -> void:
 		cancel_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		cancel_btn.pressed.connect(func() -> void:
 			_dismiss_zone_overlay()
-			action_label.text = card.card_name + " cancelled Seer."
+			_set_action_label_text(card.card_name + " cancelled Seer.")
 			update_ui()
 		)
 		action_row.add_child(cancel_btn)
@@ -15468,7 +15511,7 @@ func _show_mopsus_hand_prompt(card: MopsusScript) -> void:
 	overlay.gui_input.connect(func(event: InputEvent) -> void:
 		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 			_dismiss_zone_overlay()
-			action_label.text = card.card_name + " cancelled Seer."
+			_set_action_label_text(card.card_name + " cancelled Seer.")
 			update_ui()
 	)
 
@@ -15477,7 +15520,7 @@ func _resolve_mopsus_hand_choice(card: MopsusScript, targets: Array[Card]) -> vo
 		return
 	var chosen_targets: Array[Card] = card.get_selected_seer_targets(game_manager, targets)
 	if not card.is_valid_seer_selection(game_manager, chosen_targets):
-		action_label.text = "%s needs %d valid hand card(s) for Seer." % [card.card_name, card.get_required_seer_target_count(game_manager)]
+		_set_action_label_text("%s needs %d valid hand card(s) for Seer." % [card.card_name, card.get_required_seer_target_count(game_manager)])
 		update_ui()
 		return
 	if _is_networked_client:
@@ -15485,7 +15528,7 @@ func _resolve_mopsus_hand_choice(card: MopsusScript, targets: Array[Card]) -> vo
 		for target in chosen_targets:
 			target_uids.append(target.uid)
 		game_input.submit_action({type = "activate_card_ability", source_uid = card.uid, option = {target_uids = target_uids}})
-		action_label.text = card.card_name + " is using Seer."
+		_set_action_label_text(card.card_name + " is using Seer.")
 		update_ui()
 		return
 	var resolution_text := "%s peers into %d opponent hand card(s)." % [card.card_name, chosen_targets.size()]
@@ -15564,9 +15607,9 @@ func _show_mopsus_reveal_prompt(card: MopsusScript, targets: Array[Card]) -> voi
 	close_btn.pressed.connect(func() -> void:
 		_dismiss_zone_overlay()
 		if targets.size() == 1 and targets[0] != null:
-			action_label.text = "%s inspected %s." % [card.card_name, targets[0].card_name]
+			_set_action_label_text("%s inspected %s." % [card.card_name, targets[0].card_name])
 		else:
-			action_label.text = "%s inspected %d hand cards." % [card.card_name, targets.size()]
+			_set_action_label_text("%s inspected %d hand cards." % [card.card_name, targets.size()])
 		update_ui()
 	)
 	vbox.add_child(close_btn)
@@ -15727,7 +15770,7 @@ func _resolve_tezcatlipoca_active_titlacauan_prompt(targets: Array[Card]) -> voi
 	if _stack_resolution_paused:
 		_resume_after_deferred_resolution(resolution_text)
 	else:
-		action_label.text = resolution_text
+		_set_action_label_text(resolution_text)
 		update_ui()
 
 func _begin_harii_shaman_activation(card: HariiShamanScript) -> void:
@@ -15735,7 +15778,7 @@ func _begin_harii_shaman_activation(card: HariiShamanScript) -> void:
 		return
 	var targets: Array = card.get_valid_targets(game_manager)
 	if targets.is_empty():
-		action_label.text = card.card_name + " has no valid targets right now."
+		_set_action_label_text(card.card_name + " has no valid targets right now.")
 		update_ui()
 		return
 	var on_choose_harii_shaman_target := func(chosen_card: Card) -> void:
@@ -15750,12 +15793,12 @@ func _begin_winged_lion_activation(card: WingedLionScript) -> void:
 	if card == null or game_manager == null:
 		return
 	if not card.can_activate(game_manager):
-		action_label.text = card.get_activation_failure_reason(game_manager)
+		_set_action_label_text(card.get_activation_failure_reason(game_manager))
 		update_ui()
 		return
 	var targets: Array = card.get_valid_targets(game_manager)
 	if targets.is_empty():
-		action_label.text = card.card_name + " has no other friendly Animal to flank with."
+		_set_action_label_text(card.card_name + " has no other friendly creature to flank with.")
 		update_ui()
 		return
 	if targets.size() == 1:
@@ -15764,15 +15807,15 @@ func _begin_winged_lion_activation(card: WingedLionScript) -> void:
 	var on_choose_partner := func(chosen_partner: Card) -> void:
 		_begin_winged_lion_self_zone_selection(card, chosen_partner)
 	var on_cancel_partner := func() -> void:
-		action_label.text = "Cancelled " + card.card_name + "."
+		_set_action_label_text("Cancelled " + card.card_name + ".")
 		update_ui()
 	_show_card_selection_overlay(
-		"Choose another friendly Animal for " + card.card_name,
+		"Choose another friendly creature for " + card.card_name,
 		targets,
 		on_choose_partner,
 		on_cancel_partner
 	)
-	action_label.text = card.card_name + ": choose another friendly Animal to move."
+	_set_action_label_text(card.card_name + ": choose another friendly creature to move.")
 	update_ui()
 
 func _begin_winged_lion_self_zone_selection(card: WingedLionScript, partner: Card) -> void:
@@ -15780,13 +15823,13 @@ func _begin_winged_lion_self_zone_selection(card: WingedLionScript, partner: Car
 		return
 	var valid_zones := card.get_valid_self_zones(game_manager, partner)
 	if valid_zones.is_empty():
-		action_label.text = card.card_name + " has no legal slot choices right now."
+		_set_action_label_text(card.card_name + " has no legal slot choices right now.")
 		update_ui()
 		return
 	var on_choose_self_zone := func(chosen_zone: Zone) -> void:
 		_begin_winged_lion_partner_zone_selection(card, partner, chosen_zone)
 	var on_cancel_self_zone := func() -> void:
-		action_label.text = "Cancelled " + card.card_name + "."
+		_set_action_label_text("Cancelled " + card.card_name + ".")
 		update_ui()
 	_show_winged_lion_zone_selection_overlay(
 		card.card_name + ": choose Winged Lion's slot",
@@ -15797,7 +15840,7 @@ func _begin_winged_lion_self_zone_selection(card: WingedLionScript, partner: Car
 		card,
 		partner
 	)
-	action_label.text = card.card_name + ": choose Winged Lion's destination."
+	_set_action_label_text(card.card_name + ": choose Winged Lion's destination.")
 	update_ui()
 
 func _begin_winged_lion_partner_zone_selection(card: WingedLionScript, partner: Card, self_zone: Zone) -> void:
@@ -15805,7 +15848,7 @@ func _begin_winged_lion_partner_zone_selection(card: WingedLionScript, partner: 
 		return
 	var valid_zones := card.get_valid_partner_zones(game_manager, partner, self_zone)
 	if valid_zones.is_empty():
-		action_label.text = partner.card_name + " has no legal slot choices right now."
+		_set_action_label_text(partner.card_name + " has no legal slot choices right now.")
 		update_ui()
 		return
 	var on_choose_partner_zone := func(chosen_zone: Zone) -> void:
@@ -15825,7 +15868,7 @@ func _begin_winged_lion_partner_zone_selection(card: WingedLionScript, partner: 
 		partner,
 		self_zone
 	)
-	action_label.text = card.card_name + ": choose %s's destination." % partner.card_name
+	_set_action_label_text(card.card_name + ": choose %s's destination." % partner.card_name)
 	update_ui()
 
 func _show_winged_lion_zone_selection_overlay(
@@ -15839,7 +15882,7 @@ func _show_winged_lion_zone_selection_overlay(
 	selected_self_zone: Zone = null
 ) -> void:
 	if zones.is_empty():
-		action_label.text = title_text + ": no legal slots."
+		_set_action_label_text(title_text + ": no legal slots.")
 		update_ui()
 		return
 
@@ -15881,7 +15924,7 @@ func _show_winged_lion_zone_selection_overlay(
 	vbox.add_child(info)
 
 	var status := Label.new()
-	var partner_name := _get_target_label(partner, game_manager.get_feedback_viewer(), partner.card_name) if partner != null else "the chosen Animal"
+	var partner_name := _get_target_label(partner, game_manager.get_feedback_viewer(), partner.card_name) if partner != null else "the chosen creature"
 	status.text = "Winged Lion: %s | %s: %s" % [
 		_get_divine_caprice_zone_title(card.current_zone),
 		partner_name,
@@ -15945,7 +15988,7 @@ func _queue_winged_lion_activation(card: WingedLionScript, partner: Card, self_z
 	}
 	if _is_networked_client:
 		game_input.submit_action({type = "activate_card_ability", source_uid = card.uid, option = option})
-		action_label.text = "%s is using Flank." % card.card_name
+		_set_action_label_text("%s is using Flank." % card.card_name)
 		update_ui()
 		return
 	var partner_name := _get_target_label(partner, game_manager.get_feedback_viewer(), partner.card_name)
@@ -15963,13 +16006,13 @@ func _show_hildskjalf_prompt(card: HildskjalfThroneOfOdin) -> void:
 	if card == null or game_manager == null:
 		return
 	if not card.can_activate(game_manager):
-		action_label.text = card.get_activation_failure_reason(game_manager)
+		_set_action_label_text(card.get_activation_failure_reason(game_manager))
 		update_ui()
 		return
 
 	var targets: Array = card.get_valid_targets(game_manager)
 	if targets.is_empty():
-		action_label.text = card.card_name + " found no cards to read."
+		_set_action_label_text(card.card_name + " found no cards to read.")
 		update_ui()
 		return
 
@@ -15980,7 +16023,7 @@ func _show_hildskjalf_prompt(card: HildskjalfThroneOfOdin) -> void:
 	var on_choose_target := func(chosen_target: Card) -> void:
 		_resolve_hildskjalf_activation(card, chosen_target)
 	var on_cancel_target := func() -> void:
-		action_label.text = "Cancelled " + card.card_name + "."
+		_set_action_label_text("Cancelled " + card.card_name + ".")
 		update_ui()
 	_show_card_selection_overlay(
 		"Choose a card to prime for " + card.card_name,
@@ -15988,7 +16031,7 @@ func _show_hildskjalf_prompt(card: HildskjalfThroneOfOdin) -> void:
 		on_choose_target,
 		on_cancel_target
 	)
-	action_label.text = "%s: choose one of the top cards from either deck to prime." % card.card_name
+	_set_action_label_text("%s: choose one of the top cards from either deck to prime." % card.card_name)
 	update_ui()
 
 func _resolve_hildskjalf_activation(card: HildskjalfThroneOfOdin, target: Card) -> void:
@@ -15998,7 +16041,7 @@ func _resolve_hildskjalf_activation(card: HildskjalfThroneOfOdin, target: Card) 
 	var option := {"chosen_uid": target.uid}
 	if _is_networked_client:
 		game_input.submit_action({type = "activate_card_ability", source_uid = card.uid, option = option})
-		action_label.text = card.card_name + " reads the high seat."
+		_set_action_label_text(card.card_name + " reads the high seat.")
 		update_ui()
 		return
 	_queue_magical_action(
@@ -16015,18 +16058,18 @@ func _begin_tezcatlipoca_blasphemer_activation(card: TezcatlipocaBlasphemerScrip
 	if card == null or game_manager == null:
 		return
 	if not card.can_activate(game_manager):
-		action_label.text = card.get_activation_failure_reason(game_manager)
+		_set_action_label_text(card.get_activation_failure_reason(game_manager))
 		update_ui()
 		return
 	var sacrifices: Array = card.get_valid_blood_magic_sacrifices()
 	if sacrifices.is_empty():
-		action_label.text = card.card_name + " needs a friendly creature to sacrifice."
+		_set_action_label_text(card.card_name + " needs a friendly creature to sacrifice.")
 		update_ui()
 		return
 	var on_choose_sacrifice := func(chosen_sacrifice: Card) -> void:
 		_begin_tezcatlipoca_blasphemer_target_selection(card, chosen_sacrifice)
 	var on_cancel_sacrifice := func() -> void:
-		action_label.text = "Cancelled " + card.card_name + "."
+		_set_action_label_text("Cancelled " + card.card_name + ".")
 		update_ui()
 	_show_card_selection_overlay(
 		"Choose a creature to sacrifice for " + card.card_name,
@@ -16040,13 +16083,13 @@ func _begin_tezcatlipoca_blasphemer_target_selection(card: TezcatlipocaBlaspheme
 		return
 	var targets: Array = card.get_valid_targets(game_manager)
 	if targets.is_empty():
-		action_label.text = card.card_name + " has no magical cards to destroy."
+		_set_action_label_text(card.card_name + " has no magical cards to destroy.")
 		update_ui()
 		return
 	var on_choose_target := func(chosen_target: Card) -> void:
 		_queue_tezcatlipoca_blasphemer_activation(card, sacrifice, chosen_target)
 	var on_cancel_target := func() -> void:
-		action_label.text = "Cancelled " + card.card_name + "."
+		_set_action_label_text("Cancelled " + card.card_name + ".")
 		update_ui()
 	_show_card_selection_overlay(
 		"Choose a magical card for " + card.card_name,
@@ -16071,7 +16114,7 @@ func _queue_tezcatlipoca_blasphemer_activation(
 				target_uid = target.uid,
 			},
 		})
-		action_label.text = "%s is using Blood Magic." % card.card_name
+		_set_action_label_text("%s is using Blood Magic." % card.card_name)
 		update_ui()
 		return
 	var viewer := game_manager.get_feedback_viewer()
@@ -16292,7 +16335,7 @@ func _resolve_en_hedu_anna_exaltation(option: Dictionary) -> void:
 func _decline_en_hedu_anna_exaltation() -> void:
 	var card := _pending_en_hedu_anna
 	_hide_en_hedu_anna_prompt()
-	action_label.text = (card.card_name if card != null else "En-hedu-anna") + " cancelled Exaltation."
+	_set_action_label_text((card.card_name if card != null else "En-hedu-anna") + " cancelled Exaltation.")
 	update_ui()
 
 func _hide_blessed_knights_prompt() -> void:
@@ -16423,7 +16466,7 @@ func _resolve_blessed_knights_impact(ward_kind: String) -> void:
 	if _stack_resolution_paused:
 		_resume_after_deferred_resolution(resolution_text)
 	else:
-		action_label.text = resolution_text
+		_set_action_label_text(resolution_text)
 		update_ui()
 
 func _hide_absence_mode_prompt() -> void:
@@ -16464,7 +16507,7 @@ func _on_absence_mute_pressed() -> void:
 func _on_absence_cancel_pressed() -> void:
 	_hide_absence_mode_prompt()
 	selected_card = null
-	action_label.text = "Cancelled Absence."
+	_set_action_label_text("Cancelled Absence.")
 	update_ui()
 
 func _hide_aphrodite_prompt() -> void:
@@ -16477,28 +16520,28 @@ func _begin_aphrodite_target_selection(god: AphroditeAreia) -> void:
 	if god == null or game_manager == null:
 		awaiting_god_ability_target = false
 		god_ability_source = null
-		action_label.text = "Violent Delights has no valid targets right now."
+		_set_action_label_text("Violent Delights has no valid targets right now.")
 		update_ui()
 		return
 	var targets: Array[Card] = god.get_valid_enslave_targets(game_manager)
 	if targets.is_empty():
 		awaiting_god_ability_target = false
 		god_ability_source = null
-		action_label.text = god.get_activation_failure_reason(game_manager)
+		_set_action_label_text(god.get_activation_failure_reason(game_manager))
 		update_ui()
 		return
 	awaiting_god_ability_target = false
 	god_ability_source = null
 	var choose_target := func(chosen_target: Card) -> void:
 		if chosen_target == null:
-			action_label.text = "Violent Delights cancelled."
+			_set_action_label_text("Violent Delights cancelled.")
 			update_ui()
 			return
 		if _is_networked_client:
 			var god_uid: String = god.get("uid") if "uid" in god else ""
 			var target_uid: String = chosen_target.get("uid") if chosen_target != null and "uid" in chosen_target else ""
 			game_input.submit_action({type = "god_ability", god_uid = god_uid, target_uid = target_uid})
-			action_label.text = god.card_name + " is targeting " + _get_target_label(chosen_target, game_manager.get_feedback_viewer(), chosen_target.card_name) + "."
+			_set_action_label_text(god.card_name + " is targeting " + _get_target_label(chosen_target, game_manager.get_feedback_viewer(), chosen_target.card_name) + ".")
 			update_ui()
 			return
 		_queue_targeted_ability_action(
@@ -16509,7 +16552,7 @@ func _begin_aphrodite_target_selection(god: AphroditeAreia) -> void:
 			god.card_name + " is targeting " + _get_target_label(chosen_target, game_manager.get_feedback_viewer(), chosen_target.card_name) + "."
 		)
 	var cancel_target_selection := func() -> void:
-		action_label.text = "Violent Delights cancelled."
+		_set_action_label_text("Violent Delights cancelled.")
 		update_ui()
 	_show_card_selection_overlay(
 		"Choose a creature for Violent Delights",
@@ -16517,7 +16560,7 @@ func _begin_aphrodite_target_selection(god: AphroditeAreia) -> void:
 		choose_target,
 		cancel_target_selection
 	)
-	action_label.text = god.card_name + " - Violent Delights: choose an enemy creature to enslave."
+	_set_action_label_text(god.card_name + " - Violent Delights: choose an enemy creature to enslave.")
 	update_ui()
 
 func _on_aphrodite_confirm_pressed(god: AphroditeAreia) -> void:
@@ -16539,7 +16582,7 @@ func _on_aphrodite_decline_pressed() -> void:
 		return
 	awaiting_god_ability_target = false
 	god_ability_source = null
-	action_label.text = "Declined Aphrodite Areia."
+	_set_action_label_text("Declined Aphrodite Areia.")
 	update_ui()
 
 func _hide_demiurge_prompt() -> void:
@@ -16633,10 +16676,10 @@ func _show_deucalion_prompt(spell: DeucalionsInfants) -> void:
 	var destroyed_so_far: int = spell.get_destroyed_structure_or_golem_count_this_turn(game_manager)
 	if friendly_choices.is_empty() and enemy_choices.is_empty() and destroyed_so_far <= 0:
 		_hide_deucalion_prompt()
-		action_label.text = "Deucalion's Infants has no structures or golems to affect."
+		_set_action_label_text("Deucalion's Infants has no structures or golems to affect.")
 		update_ui()
 		return
-	action_label.text = "Deucalion's Infants: choose your structures or golems, then confirm to resolve."
+	_set_action_label_text("Deucalion's Infants: choose your structures or golems, then confirm to resolve.")
 
 	if _deucalion_panel != null and is_instance_valid(_deucalion_panel):
 		_deucalion_panel.queue_free()
@@ -16695,10 +16738,11 @@ func _show_deucalion_prompt(spell: DeucalionsInfants) -> void:
 	for card in friendly_choices:
 		if card in _pending_deucalion_friendly_targets:
 			continue
+		var captured_card := card
 		var add_btn := Button.new()
-		add_btn.text = "Destroy " + card.card_name
+		add_btn.text = "Destroy " + captured_card.card_name
 		add_btn.pressed.connect(func() -> void:
-			_pending_deucalion_friendly_targets.append(card)
+			_pending_deucalion_friendly_targets.append(captured_card)
 			_show_deucalion_prompt(spell)
 		)
 		choices_box.add_child(add_btn)
@@ -16728,6 +16772,7 @@ func _show_deucalion_prompt(spell: DeucalionsInfants) -> void:
 	panel.offset_right = 250
 	panel.offset_top = -120
 	panel.offset_bottom = 120
+	update_ui()
 
 func _sanitize_deucalion_targets() -> void:
 	if _pending_deucalion_spell == null:
@@ -16744,6 +16789,7 @@ func _hide_deucalion_prompt() -> void:
 	if _deucalion_panel != null and is_instance_valid(_deucalion_panel):
 		_deucalion_panel.queue_free()
 	_deucalion_panel = null
+	_deucalion_prompt_pending = false
 	_pending_deucalion_spell = null
 	_pending_deucalion_friendly_targets.clear()
 
@@ -16760,7 +16806,7 @@ func _on_deucalion_confirm_pressed() -> void:
 	if enemy_choices.size() > 1:
 		var opponent := game_manager.get_opponent(spell.card_owner)
 		if opponent != null:
-			action_label.text = opponent.player_name + " chooses which of their structures or golems is destroyed."
+			_set_action_label_text(opponent.player_name + " chooses which of their structures or golems is destroyed.")
 		_show_card_selection_overlay(
 			"Opponent Chooses Which Card Is Destroyed",
 			enemy_choices,
@@ -16801,13 +16847,18 @@ func _queue_deucalion_resolution(spell: DeucalionsInfants) -> void:
 		null,
 		"Deucalion's Infants resolves.",
 		func() -> void:
-			_begin_deucalion_resolution(spell)
+			_deucalion_prompt_pending = true
+			_pause_stack_resolution(spell.card_owner)
+			call_deferred("_begin_deucalion_resolution", spell)
 	)
 
 func _begin_deucalion_resolution(spell: DeucalionsInfants) -> void:
+	_deucalion_prompt_pending = false
 	if spell == null:
 		update_ui()
 		return
+	if not _stack_resolution_paused:
+		_pause_stack_resolution(spell.card_owner)
 	if _pending_deucalion_spell != spell:
 		_pending_deucalion_spell = spell
 		_pending_deucalion_friendly_targets.clear()
@@ -16821,7 +16872,6 @@ func _begin_deucalion_resolution(spell: DeucalionsInfants) -> void:
 		_pending_deucalion_spell = null
 		_resume_after_deferred_resolution(_consume_resolution_feedback("Deucalion's Infants resolved."))
 		return
-	_pause_stack_resolution(spell.card_owner)
 	_show_deucalion_prompt(spell)
 
 func _on_deucalion_cancel_pressed() -> void:
@@ -16837,7 +16887,7 @@ func _on_deucalion_cancel_pressed() -> void:
 		return
 	_hide_deucalion_prompt()
 	selected_card = null
-	action_label.text = "Cancelled Deucalion's Infants."
+	_set_action_label_text("Cancelled Deucalion's Infants.")
 	update_ui()
 
 func _initiate_blot_with_sacrifice(spell, sacrifice_target: Card) -> void:
@@ -16847,11 +16897,11 @@ func _initiate_blot_with_sacrifice(spell, sacrifice_target: Card) -> void:
 		update_ui()
 		return
 	if not _can_use_card_for_creature_sacrifice(sacrifice_target):
-		action_label.text = "Blot Sacrifice requires a sacrificable friendly creature."
+		_set_action_label_text("Blot Sacrifice requires a sacrificable friendly creature.")
 		update_ui()
 		return
 	if not _can_cast_spell_from_current_zone(spell):
-		action_label.text = "Blot Sacrifice cancelled: cannot pay costs."
+		_set_action_label_text("Blot Sacrifice cancelled: cannot pay costs.")
 		update_ui()
 		return
 	var prepared_spell := _is_prepared_board_spell(spell)
@@ -16860,7 +16910,7 @@ func _initiate_blot_with_sacrifice(spell, sacrifice_target: Card) -> void:
 	var paid: bool = game_manager.activate_prepared_card(spell, game_manager.current_player) if prepared_spell else spell.pay_costs(game_manager.current_player, game_manager)
 	spell.sacrifice_cost = orig_creature_cost
 	if not paid:
-		action_label.text = game_manager.get_activation_mana_unavailable_text(spell) if prepared_spell and game_manager.has_insufficient_activation_mana(spell, true, spell.card_owner) else "Cannot cast Blot Sacrifice."
+		_set_action_label_text(game_manager.get_activation_mana_unavailable_text(spell) if prepared_spell and game_manager.has_insufficient_activation_mana(spell, true, spell.card_owner) else "Cannot cast Blot Sacrifice.")
 		update_ui()
 		return
 	var preferred_display_zone: Zone = spell.current_zone if prepared_spell else _resolve_pending_display_zone(spell, null)
@@ -16880,7 +16930,7 @@ func _initiate_blot_with_sacrifice(spell, sacrifice_target: Card) -> void:
 			_execute_top_of_stack()
 			return
 		update_ui()
-		action_label.text = spell.card_name + " [" + _get_stack_card_type_label(spell) + "] goes on the stack."
+		_set_action_label_text(spell.card_name + " [" + _get_stack_card_type_label(spell) + "] goes on the stack.")
 		_offer_priority()
 	)
 
@@ -16936,7 +16986,7 @@ func _show_blot_sacrifice_prompt(spell) -> void:
 			if _can_use_card_for_creature_sacrifice(card):
 				sacrifice_targets.append(card)
 	if sacrifice_targets.is_empty():
-		action_label.text = "Blot Sacrifice needs a friendly creature to sacrifice."
+		_set_action_label_text("Blot Sacrifice needs a friendly creature to sacrifice.")
 		update_ui()
 		return
 	selected_card = spell
@@ -16952,7 +17002,7 @@ func _show_blot_sacrifice_prompt(spell) -> void:
 		validate_blot_target,
 		confirm_blot_target
 	)
-	action_label.text = "Blot Sacrifice: select a friendly creature to sacrifice."
+	_set_action_label_text("Blot Sacrifice: select a friendly creature to sacrifice.")
 	update_ui()
 
 func _show_blot_creature_prompt() -> void:
@@ -16966,13 +17016,13 @@ func _show_blot_creature_prompt() -> void:
 	var valid_choices: Array[Card] = _get_blot_valid_choices(spell)
 	if available_slots <= 0:
 		_hide_blot_sacrifice_prompt()
-		action_label.text = "Blot Sacrifice: no open zone to summon into."
+		_set_action_label_text("Blot Sacrifice: no open zone to summon into.")
 		update_ui()
 		return
 	if _pending_blot_selected_creatures.size() >= available_slots or remaining_levels <= 0:
 		if _pending_blot_selected_creatures.is_empty():
 			_hide_blot_sacrifice_prompt()
-			action_label.text = "Blot Sacrifice: no more creatures to summon."
+			_set_action_label_text("Blot Sacrifice: no more creatures to summon.")
 			update_ui()
 			return
 		_on_blot_sacrifice_confirm_pressed()
@@ -16980,7 +17030,7 @@ func _show_blot_creature_prompt() -> void:
 	if valid_choices.is_empty():
 		if _pending_blot_selected_creatures.is_empty():
 			_hide_blot_sacrifice_prompt()
-			action_label.text = "Blot Sacrifice: no more creatures to summon."
+			_set_action_label_text("Blot Sacrifice: no more creatures to summon.")
 			update_ui()
 			return
 		_on_blot_sacrifice_confirm_pressed()
@@ -17085,11 +17135,11 @@ func _show_kos_sacrifice_prompt(spell: KeyOfSolomon) -> void:
 		return
 	var valid_sacrifices: Array[Card] = spell.get_valid_sacrifices()
 	if valid_sacrifices.is_empty():
-		action_label.text = "Key of Solomon needs a friendly Animal to sacrifice."
+		_set_action_label_text("Key of Solomon needs a friendly Animal to sacrifice.")
 		update_ui()
 		return
 	if spell.get_valid_demon_targets().is_empty():
-		action_label.text = "Key of Solomon needs a Demon in your grave or void."
+		_set_action_label_text("Key of Solomon needs a Demon in your grave or void.")
 		update_ui()
 		return
 	selected_card = spell
@@ -17106,7 +17156,7 @@ func _show_kos_sacrifice_prompt(spell: KeyOfSolomon) -> void:
 		validate_kos_target,
 		confirm_kos_target
 	)
-	action_label.text = "Key of Solomon: select a friendly Animal to sacrifice."
+	_set_action_label_text("Key of Solomon: select a friendly Animal to sacrifice.")
 	update_ui()
 
 func _initiate_kos_with_sacrifice(spell: KeyOfSolomon, sacrifice_target: Card) -> void:
@@ -17115,11 +17165,11 @@ func _initiate_kos_with_sacrifice(spell: KeyOfSolomon, sacrifice_target: Card) -
 		update_ui()
 		return
 	if not _can_use_card_for_creature_sacrifice(sacrifice_target):
-		action_label.text = "Key of Solomon requires a sacrificable friendly Animal."
+		_set_action_label_text("Key of Solomon requires a sacrificable friendly Animal.")
 		update_ui()
 		return
 	if not _can_cast_spell_from_current_zone(spell):
-		action_label.text = "Key of Solomon cancelled: cannot pay costs."
+		_set_action_label_text("Key of Solomon cancelled: cannot pay costs.")
 		update_ui()
 		return
 	var prepared_spell := _is_prepared_board_spell(spell)
@@ -17128,7 +17178,7 @@ func _initiate_kos_with_sacrifice(spell: KeyOfSolomon, sacrifice_target: Card) -
 	var paid: bool = game_manager.activate_prepared_card(spell, game_manager.current_player) if prepared_spell else spell.pay_costs(game_manager.current_player, game_manager)
 	spell.sacrifice_cost = orig_sacrifice_cost
 	if not paid:
-		action_label.text = game_manager.get_activation_mana_unavailable_text(spell) if prepared_spell and game_manager.has_insufficient_activation_mana(spell, true, spell.card_owner) else "Cannot cast Key of Solomon."
+		_set_action_label_text(game_manager.get_activation_mana_unavailable_text(spell) if prepared_spell and game_manager.has_insufficient_activation_mana(spell, true, spell.card_owner) else "Cannot cast Key of Solomon.")
 		update_ui()
 		return
 	_pending_key_of_solomon = spell
@@ -17148,7 +17198,7 @@ func _initiate_kos_with_sacrifice(spell: KeyOfSolomon, sacrifice_target: Card) -
 		game_manager.push_to_stack(action)
 		selected_card = null
 		update_ui()
-		action_label.text = spell.card_name + " [" + _get_stack_card_type_label(spell) + "] goes on the stack."
+		_set_action_label_text(spell.card_name + " [" + _get_stack_card_type_label(spell) + "] goes on the stack.")
 		_offer_priority()
 	)
 
@@ -17193,7 +17243,7 @@ func _prompt_kos_demon_choice() -> void:
 		"",
 		"Done"
 	)
-	action_label.text = "Key of Solomon: choose up to %d Demon(s) from your grave or void." % KeyOfSolomon.MAX_DEMONS_TO_RETURN
+	_set_action_label_text("Key of Solomon: choose up to %d Demon(s) from your grave or void." % KeyOfSolomon.MAX_DEMONS_TO_RETURN)
 	update_ui()
 
 func _on_kos_demon_selected(demon: Card) -> void:
@@ -17220,7 +17270,7 @@ func _finish_kos_resolution(feedback: String) -> void:
 	if _stack_resolution_paused:
 		_resume_after_deferred_resolution(feedback)
 	else:
-		action_label.text = feedback
+		_set_action_label_text(feedback)
 		update_ui()
 
 ## â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -17282,7 +17332,7 @@ func _on_blot_sacrifice_cancel_pressed() -> void:
 		_send_used_hand_card_to_graveyard(spell)
 		_resume_after_deferred_resolution("Blot Sacrifice fizzles.")
 	else:
-		action_label.text = "Cancelled Blot Sacrifice."
+		_set_action_label_text("Cancelled Blot Sacrifice.")
 		update_ui()
 
 func _dismiss_transient_prompts() -> void:
@@ -17363,11 +17413,11 @@ func _on_demiurge_confirm_pressed(spin: SpinBox) -> void:
 		update_ui()
 		return
 	if not _can_cast_spell_from_current_zone(spell):
-		action_label.text = "Cannot cast " + spell.card_name + "!"
+		_set_action_label_text("Cannot cast " + spell.card_name + "!")
 		update_ui()
 		return
 	if not spell.can_cast_with_x(game_manager, x_value):
-		action_label.text = "Apollyon's Demiurge: invalid X cost."
+		_set_action_label_text("Apollyon's Demiurge: invalid X cost.")
 		update_ui()
 		return
 	var pay_demiurge_costs := func() -> bool:
@@ -17419,7 +17469,7 @@ func _on_demiurge_confirm_pressed(spin: SpinBox) -> void:
 
 func _on_demiurge_cancel_pressed() -> void:
 	_hide_demiurge_prompt()
-	action_label.text = "Cancelled Apollyon's Demiurge."
+	_set_action_label_text("Cancelled Apollyon's Demiurge.")
 	update_ui()
 
 func _on_structure_bonus_confirm_pressed(spin: SpinBox) -> void:
@@ -17433,14 +17483,14 @@ func _on_structure_bonus_confirm_pressed(spin: SpinBox) -> void:
 
 	var gained := power.apply_structure_bonus(structure, mana_to_spend, game_manager)
 	if gained > 0:
-		action_label.text = "%s gains %d Res from Advanced Building Techniques." % [structure.card_name, gained]
+		_set_action_label_text("%s gains %d Res from Advanced Building Techniques." % [structure.card_name, gained])
 	else:
-		action_label.text = "No mana spent on Advanced Building Techniques."
+		_set_action_label_text("No mana spent on Advanced Building Techniques.")
 	update_ui()
 
 func _on_structure_bonus_skip_pressed() -> void:
 	_hide_structure_bonus_prompt()
-	action_label.text = "Skipped Advanced Building Techniques."
+	_set_action_label_text("Skipped Advanced Building Techniques.")
 	update_ui()
 
 func _on_retreat_yes() -> void:
@@ -17465,7 +17515,7 @@ func _on_retreat_yes() -> void:
 	_executing_stack_action = false
 	_send_to_deck_bottom(action.attacker)
 	_send_to_deck_bottom(defender)
-	action_label.text = "Tactful Retreat! Both creatures returned to the bottom of their decks."
+	_set_action_label_text("Tactful Retreat! Both creatures returned to the bottom of their decks.")
 	if _stack_resolution_paused:
 		_resume_after_deferred_resolution(action_label.text)
 	else:
@@ -17494,7 +17544,7 @@ func _on_retreat_no() -> void:
 		return
 	if action.attacker == null:
 		_clear_pending_retreat_state()
-		action_label.text = "The attack can no longer continue."
+		_set_action_label_text("The attack can no longer continue.")
 		update_ui()
 		_finish_post_execute(action.source_player)
 		return
@@ -17507,10 +17557,9 @@ func _on_retreat_no() -> void:
 	_clear_pending_retreat_state()
 	game_manager.resolve_combat_with_continuation(action.attacker, defender, func() -> void:
 		if blocked_ask != null:
-			action_label.text = "Asaruludu's Guardian prevented " + _get_card_name_safe(blocked_ask) + "'s Tactful Retreat!"
+			_set_action_label_text("Asaruludu's Guardian prevented " + _get_card_name_safe(blocked_ask) + "'s Tactful Retreat!", true)
 		else:
-			action_label.text = _get_attack_card_label(action.attacker, "The attacker") + " fought " + _get_card_name_safe(defender) + "!"
-		_capture_action_log_message(true)
+			_set_action_label_text(_get_attack_card_label(action.attacker, "The attacker") + " fought " + _get_card_name_safe(defender) + "!", true)
 		action.attacker.spend_major_creature_action()
 		update_ui()
 		_finish_post_execute(action.source_player)
@@ -17552,7 +17601,7 @@ func _execute_top_of_stack() -> void:
 
 func _on_match_action_resolved(action: CardAction) -> void:
 	if match_manager.last_resolution_text != "":
-		action_label.text = _consume_resolution_feedback(match_manager.last_resolution_text)
+		_set_action_label_text(_consume_resolution_feedback(match_manager.last_resolution_text))
 	
 	if action.type == CardAction.Type.EVENT:
 		_capture_action_log_message()
@@ -17597,7 +17646,7 @@ func _on_match_move_validated(move: Dictionary) -> void:
 			var feedback := _consume_resolution_feedback()
 			if feedback.strip_edges() != "":
 				_pending_turn_start_priority_feedback = feedback
-				action_label.text = feedback
+				_set_action_label_text(feedback)
 			_consume_current_wolf_adolescent_prompt()
 			if not _is_networked_client:
 				if not _show_next_wolf_adolescent_maturation_prompt():
@@ -17605,7 +17654,7 @@ func _on_match_move_validated(move: Dictionary) -> void:
 		"humbaba_augury_choice":
 			var feedback := _consume_resolution_feedback()
 			if feedback.strip_edges() != "":
-				action_label.text = feedback
+				_set_action_label_text(feedback)
 			update_ui()
 			if not _is_networked_client:
 				_consume_current_humbaba_prompt()
@@ -17624,7 +17673,7 @@ func _on_match_move_validated(move: Dictionary) -> void:
 			var feedback := _consume_resolution_feedback()
 			if feedback.strip_edges() != "":
 				_pending_turn_start_priority_feedback = feedback
-				action_label.text = feedback
+				_set_action_label_text(feedback)
 			if not _is_networked_client:
 				_consume_current_wheel_of_fire_prompt()
 				if not _show_next_wheel_of_fire_turn_start_prompt():
@@ -17633,12 +17682,12 @@ func _on_match_move_validated(move: Dictionary) -> void:
 			var card := game_manager.get_card_by_uid(str(move.get("source_uid", ""))) as EnHeduAnna
 			var option: Dictionary = move.get("option", {})
 			if card != null:
-				action_label.text = "%s gains %s and cannot attack, be destroyed, or be targeted until the end of the next turn." % [
+				_set_action_label_text("%s gains %s and cannot attack, be destroyed, or be targeted until the end of the next turn." % [
 					card.card_name,
 					card.get_exaltation_option_label(option)
-				]
+				])
 			else:
-				action_label.text = "En-hedu-anna resolved Exaltation."
+				_set_action_label_text("En-hedu-anna resolved Exaltation.")
 		"aphrodite_enslave_choice":
 			var god := game_manager.get_card_by_uid(str(move.get("source_uid", ""))) as AphroditeAreia
 			var confirmed := bool(move.get("confirm", false))
@@ -17648,15 +17697,15 @@ func _on_match_move_validated(move: Dictionary) -> void:
 			else:
 				awaiting_god_ability_target = false
 				god_ability_source = null
-				action_label.text = "Declined Aphrodite Areia."
+				_set_action_label_text("Declined Aphrodite Areia.")
 		"skoll_upkeep_summon":
 			# Skoll already summoned by MatchManager; open standard turn-start priority.
 			if _is_networked_client:
-				action_label.text = "Skoll summoned via Sun Hunt."
+				_set_action_label_text("Skoll summoned via Sun Hunt.")
 			else:
 				_queue_standard_turn_start_priority("Skoll summoned via Sun Hunt.")
 		"hati_moon_hunt":
-			action_label.text = "Moon Hunt resolved. Hati was summoned."
+			_set_action_label_text("Moon Hunt resolved. Hati was summoned.")
 			if _is_networked_client:
 				if not _pending_hati_prompts.is_empty():
 					_show_next_hati_prompt()
@@ -17666,11 +17715,11 @@ func _on_match_move_validated(move: Dictionary) -> void:
 			var attacker: Card = move.get("attacker")
 			var target = move.get("target")
 			if target is Player:
-				action_label.text = _get_attack_card_label(attacker, "A creature") + " attacks " + target.player_name + "'s followers!"
+				_set_action_label_text(_get_attack_card_label(attacker, "A creature") + " attacks " + target.player_name + "'s followers!")
 				if not _is_networked_client and not authoritative_priority:
 					check_for_possible_intercepts()
 			elif target is Card:
-				action_label.text = _get_attack_card_label(attacker, "A creature") + " attacking " + _get_card_name_safe(target, "an enemy card") + "..."
+				_set_action_label_text(_get_attack_card_label(attacker, "A creature") + " attacking " + _get_card_name_safe(target, "an enemy card") + "...")
 				if not _is_networked_client and not authoritative_priority:
 					check_for_possible_intercepts()
 		"intercept_decision":
@@ -17682,7 +17731,7 @@ func _on_match_move_validated(move: Dictionary) -> void:
 		"cast_spell":
 			var queued_spell := game_manager.get_card_by_uid(str(move.get("spell_uid", "")))
 			if queued_spell != null:
-				action_label.text = queued_spell.card_name + " goes on the stack."
+				_set_action_label_text(queued_spell.card_name + " goes on the stack.")
 			if not _is_networked_client:
 				if authoritative_priority:
 					_schedule_priority_recovery_check()
@@ -17702,26 +17751,26 @@ func _on_match_move_validated(move: Dictionary) -> void:
 			# Remote player activated a hex; the ABILITY was already pushed by MatchManager.
 			var phr_hex := game_manager.get_card_by_uid(move.get("hex_uid", ""))
 			if phr_hex != null:
-				action_label.text = phr_hex.card_name + " responds!"
+				_set_action_label_text(phr_hex.card_name + " responds!")
 			if not _is_networked_client and not authoritative_priority:
 				_offer_priority()
 		"activate_prepared_hex":
 			var prepared_hex := game_manager.get_card_by_uid(move.get("hex_uid", ""))
 			if prepared_hex != null:
-				action_label.text = prepared_hex.card_name + " goes on the stack."
+				_set_action_label_text(prepared_hex.card_name + " goes on the stack.")
 			if not _is_networked_client and not authoritative_priority:
 				_offer_priority()
 		"play_charm_response":
 			# Remote player activated a charm; the SPELL was already pushed by MatchManager.
 			var pcr_charm := game_manager.get_card_by_uid(move.get("charm_uid", ""))
 			if pcr_charm != null:
-				action_label.text = pcr_charm.card_name + " responds!"
+				_set_action_label_text(pcr_charm.card_name + " responds!")
 			if not _is_networked_client and not authoritative_priority:
 				_offer_priority()
 		"play_priority_ability":
 			var response_card := game_manager.get_card_by_uid(move.get("source_uid", ""))
 			if response_card != null:
-				action_label.text = response_card.card_name + " responds!"
+				_set_action_label_text(response_card.card_name + " responds!")
 			if not _is_networked_client and not authoritative_priority:
 				_offer_priority()
 		"durinn_secondborn_choice", "first_sage_adapa_choice", "third_sage_enmedugga_choice", "fourth_sage_enmegalamma_choice", "sixth_sage_an_enlilda_choice", "lailoken_reveal_choice", "masmassu_priest_reveal_choice", "rally_the_troops_choice", "terror_impact_choice", "fenrir_devour_choice", "gawain_healing_hands_choice", "tatzelwurm_dragon_heart_choice", "byggvir_reveal_choice", "harii_jarl_impact_choice", "gala_tura_destroyed_choice", "kur_jara_tree_of_life_choice", "hunting_tactics_choice", "foolish_optimism_choice", "blessed_knights_choice", "tezcatlipoca_active_titlacauan_choice", "mummu_entropy_choice", "nusku_active_core_flame_choice", "nusku_well_of_fire_choice":
@@ -17768,7 +17817,7 @@ func _apply_prompt_choice_feedback() -> void:
 		update_ui()
 		return
 	if game_manager != null and game_manager.has_deferred_combat_resolution():
-		action_label.text = feedback
+		_set_action_label_text(feedback)
 		update_ui()
 		game_manager.resume_deferred_combat()
 		if _stack_resolution_paused:
@@ -17777,11 +17826,11 @@ func _apply_prompt_choice_feedback() -> void:
 	if _stack_resolution_paused:
 		_resume_after_deferred_resolution(feedback)
 		return
-	action_label.text = feedback
+	_set_action_label_text(feedback)
 	update_ui()
 
 func _on_match_move_failed(reason: String) -> void:
-	action_label.text = reason
+	_set_action_label_text(reason)
 	update_ui()
 
 func _on_match_ui_interaction(player_index: int, type: String, data: Dictionary) -> void:
@@ -17801,7 +17850,7 @@ func _on_match_ui_interaction(player_index: int, type: String, data: Dictionary)
 			var interceptor_uids = data.get("interceptor_uids", [])
 			var action_message := str(data.get("action_message", "")).strip_edges()
 			if action_message != "":
-				action_label.text = action_message
+				_set_action_label_text(action_message)
 			if _is_networked_client:
 				_restore_network_attack_preview_from_state({
 					"attacker_uid": str(data.get("attacker_uid", "")),
@@ -17841,13 +17890,12 @@ func _on_match_ui_interaction(player_index: int, type: String, data: Dictionary)
 						active_attackers = [action.attacker]
 						
 					if blocked_ask != null:
-						action_label.text = "Asaruludu's Guardian prevented " + _get_card_name_safe(blocked_ask) + "'s Tactful Retreat!"
+						_set_action_label_text("Asaruludu's Guardian prevented " + _get_card_name_safe(blocked_ask) + "'s Tactful Retreat!", true)
 					else:
 						if active_attackers.size() >= 2:
-							action_label.text = _get_attack_card_label(active_attackers[0], "The attacker") + " and " + _get_card_name_safe(active_attackers[1]) + " fought " + _get_card_name_safe(target) + "!"
+							_set_action_label_text(_get_attack_card_label(active_attackers[0], "The attacker") + " and " + _get_card_name_safe(active_attackers[1]) + " fought " + _get_card_name_safe(target) + "!", true)
 						elif not active_attackers.is_empty():
-							action_label.text = _get_attack_card_label(active_attackers[0], "The attacker") + " fought " + _get_card_name_safe(target) + "!"
-					_capture_action_log_message(true)
+							_set_action_label_text(_get_attack_card_label(active_attackers[0], "The attacker") + " fought " + _get_card_name_safe(target) + "!", true)
 					
 					for combatant in active_attackers:
 						combatant.spend_major_creature_action()
@@ -18227,12 +18275,12 @@ func _on_draw_button_pressed() -> void:
 	if _game_finished:
 		return
 	if game_manager == null or not game_manager.is_player_in_upkeep_window(game_manager.current_player):
-		action_label.text = "Upkeep has already been resolved."
+		_set_action_label_text("Upkeep has already been resolved.")
 		update_ui()
 		hide_turn_choice()
 		return
 	if _skoll_prompt_panel != null or _pending_skoll_summon != null:
-		action_label.text = "Finish resolving Sun Hunt or cancel it before choosing another upkeep option."
+		_set_action_label_text("Finish resolving Sun Hunt or cancel it before choosing another upkeep option.")
 		return
 	game_input.submit_action({type = "upkeep_choice", choice = "draw"})
 	_close_turn_start_windows()
@@ -18243,12 +18291,12 @@ func _on_mana_button_pressed() -> void:
 	if _game_finished:
 		return
 	if game_manager == null or not game_manager.is_player_in_upkeep_window(game_manager.current_player):
-		action_label.text = "Upkeep has already been resolved."
+		_set_action_label_text("Upkeep has already been resolved.")
 		update_ui()
 		hide_turn_choice()
 		return
 	if _skoll_prompt_panel != null or _pending_skoll_summon != null:
-		action_label.text = "Finish resolving Sun Hunt or cancel it before choosing another upkeep option."
+		_set_action_label_text("Finish resolving Sun Hunt or cancel it before choosing another upkeep option.")
 		return
 	game_input.submit_action({type = "upkeep_choice", choice = "mana"})
 	_close_turn_start_windows()
@@ -18266,6 +18314,7 @@ func _close_turn_start_windows() -> void:
 	_pending_skoll_summon = null
 	_pending_skoll_mode = ""
 	_pending_creature_play_resolver = Callable()
+	_clear_pending_creature_summon_cost_tracking()
 	if game_manager == null or game_manager.current_player == null:
 		return
 	for card in game_manager.current_player.god_zone.cards:
@@ -18294,7 +18343,7 @@ func _prompt_end_turn_discards() -> void:
 		game_manager.current_player.hand_zone.cards.duplicate(),
 		on_choose_end_turn_discard
 	)
-	action_label.text = "Choose %d card(s) to discard before ending your turn." % excess
+	_set_action_label_text("Choose %d card(s) to discard before ending your turn." % excess)
 
 func _show_ragnarok_discard_prompt(power: Ragnarok, player: Player, hand_limit: int, prompt_cards: Array[Card] = []) -> void:
 	if power == null or player == null or player.hand_zone == null:
@@ -18317,7 +18366,7 @@ func _show_ragnarok_discard_prompt(power: Ragnarok, player: Player, hand_limit: 
 		on_choose_discard,
 		on_cancel
 	)
-	action_label.text = "%s chooses %d discard(s) for Ragnarok." % [player.player_name, excess]
+	_set_action_label_text("%s chooses %d discard(s) for Ragnarok." % [player.player_name, excess])
 
 func _reopen_ragnarok_discard_prompt() -> void:
 	if _pending_ragnarok_power == null or _pending_ragnarok_player == null:
@@ -18422,6 +18471,7 @@ func _on_end_turn_button_pressed() -> void:
 	_sacrifice_pending_mode = ""
 	_sacrifice_remaining = 0
 	_pending_creature_play_resolver = Callable()
+	_clear_pending_creature_summon_cost_tracking()
 	_drag_sacrifice_done = false
 	_awaiting_drag_sacrifice_zone = false
 	_drag_sacrifice_card = null
@@ -18606,9 +18656,8 @@ func _finalize_game_result_ui(result_message: String, winner = null, loser = nul
 	pending_attack_target = null
 	_clear_raven_storm_priority_selection()
 	placement_mode = ""
-	action_label.text = resolved_message
+	_set_action_label_text(resolved_message, not _game_result_presented)
 	if not _game_result_presented:
-		_capture_action_log_message(true)
 		match_session_cleared.emit()
 	update_ui()
 	if _game_result_presented:
@@ -18712,14 +18761,14 @@ func _on_peer_disconnected(_peer_id: int) -> void:
 		return
 	if headless_match_host != null and headless_match_host.match_session != null:
 		_set_match_reconnect_wait(true, "Opponent disconnected. Waiting for reconnect...")
-		action_label.text = _match_reconnect_wait_message
+		_set_action_label_text(_match_reconnect_wait_message)
 		_dismiss_transient_prompts()
 		_hide_priority_prompt()
 		_hide_intercept_prompt()
 		update_ui()
 		return
 	_game_finished = true
-	action_label.text = "Opponent disconnected. Game over."
+	_set_action_label_text("Opponent disconnected. Game over.")
 	_dismiss_transient_prompts()
 	_hide_priority_prompt()
 	_hide_intercept_prompt()
@@ -18746,18 +18795,18 @@ func _apply_network_event(event_type: String, data: Dictionary) -> void:
 			_apply_ui_interaction(data)
 		"match_join_ok":
 			_current_match_info.merge(data, true)
-			action_label.text = "Match authenticated. Waiting for state sync..."
+			_set_action_label_text("Match authenticated. Waiting for state sync...")
 			update_ui()
 			_update_waiting_overlay()
 		"match_connect_retry_started":
 			var attempts_remaining := int(data.get("attempts_remaining", 0))
 			_update_waiting_status(true, "Match server is still starting...")
-			action_label.text = "Match server is still starting... (%d retries left)" % attempts_remaining
+			_set_action_label_text("Match server is still starting... (%d retries left)" % attempts_remaining)
 			update_ui()
 		"match_join_denied":
 			_awaiting_initial_full_state = false
 			_set_match_reconnect_wait(false)
-			action_label.text = str(data.get("reason", "Match authentication failed."))
+			_set_action_label_text(str(data.get("reason", "Match authentication failed.")))
 			match_session_cleared.emit()
 			update_ui()
 			_update_waiting_overlay()
@@ -18770,7 +18819,7 @@ func _apply_network_event(event_type: String, data: Dictionary) -> void:
 			var seconds_remaining := maxi(0, reconnect_deadline - int(Time.get_unix_time_from_system()))
 			var wait_message := "%s disconnected. Waiting up to %ds for reconnect..." % [player_name, seconds_remaining]
 			_set_match_reconnect_wait(true, wait_message)
-			action_label.text = wait_message
+			_set_action_label_text(wait_message)
 			update_ui()
 		"peer_rejoined":
 			var rejoined_idx := int(data.get("player_index", -1))
@@ -18778,25 +18827,25 @@ func _apply_network_event(event_type: String, data: Dictionary) -> void:
 			if rejoined_idx >= 0 and rejoined_idx < game_manager.players.size():
 				rejoined_name = game_manager.players[rejoined_idx].player_name
 			_set_match_reconnect_wait(false)
-			action_label.text = "%s rejoined the match." % rejoined_name
+			_set_action_label_text("%s rejoined the match." % rejoined_name)
 			update_ui()
 		"match_reconnect_started":
 			var attempts_remaining := int(data.get("attempts_remaining", 0))
 			_set_match_reconnect_wait(true, "Connection lost. Reconnecting to match server...")
-			action_label.text = "Connection lost. Reconnecting to match server... (%d retries left)" % attempts_remaining
+			_set_action_label_text("Connection lost. Reconnecting to match server... (%d retries left)" % attempts_remaining)
 			update_ui()
 		"match_reconnect_ok":
 			_current_match_info.merge(data, true)
 			_set_match_reconnect_wait(false)
-			action_label.text = "Reconnected to the match server."
+			_set_action_label_text("Reconnected to the match server.")
 			update_ui()
 		"match_reconnect_failed":
 			_set_match_reconnect_wait(true, "Reconnect failed. You may need to rejoin the match.")
-			action_label.text = str(data.get("reason", "Reconnect failed."))
+			_set_action_label_text(str(data.get("reason", "Reconnect failed.")))
 			update_ui()
 		"server_disconnected":
 			_set_match_reconnect_wait(true, "Disconnected from match server. Reconnect may still be available.")
-			action_label.text = _match_reconnect_wait_message
+			_set_action_label_text(_match_reconnect_wait_message)
 			_dismiss_transient_prompts()
 			_hide_priority_prompt()
 			_hide_intercept_prompt()
@@ -18819,7 +18868,7 @@ func _apply_network_event(event_type: String, data: Dictionary) -> void:
 				_pending_forfeit_return_to_menu = false
 				if not _game_finished:
 					forfeit_button.disabled = false
-			action_label.text = str(data.get("reason", "That move was rejected by the server."))
+			_set_action_label_text(str(data.get("reason", "That move was rejected by the server.")))
 			update_ui()
 		"game_ended":
 			var result_message: String = str(data.get("result_message", "")).strip_edges()
@@ -19231,9 +19280,7 @@ func _apply_full_state(data: Dictionary) -> void:
 	# Show server's action message if any
 	var msg: String = data.get("action_message", "")
 	if msg != "":
-		action_label.text = msg
-		if not (_is_networked_client and bool(state.get("is_game_over", false))):
-			_capture_action_log_message(true)
+		_set_action_label_text(msg, not (_is_networked_client and bool(state.get("is_game_over", false))))
 	if _is_networked_client:
 		_present_game_result_from_state(state, msg)
 
@@ -19438,7 +19485,7 @@ func _apply_priority_offered(data: Dictionary) -> void:
 func _apply_priority_prompt_for_player(player_index: int, data: Dictionary) -> void:
 	var msg: String = data.get("action_message", "")
 	if msg != "":
-		action_label.text = msg
+		_set_action_label_text(msg)
 	if game_manager != null and player_index >= 0 and player_index < game_manager.players.size():
 		game_manager.priority_player = game_manager.players[player_index]
 	_remember_local_priority_prompt_signature()
@@ -19682,7 +19729,7 @@ func _begin_remote_priority_permanent_hex_target_selection(
 			target_is_attacker = target_is_attacker,
 		})
 	var cancel_hex_target := func() -> void:
-		action_label.text = "Cancelled " + hex.card_name + " target selection."
+		_set_action_label_text("Cancelled " + hex.card_name + " target selection.")
 		update_ui()
 		_show_remote_priority_prompt(responses)
 	_begin_pending_click_selection(
@@ -19692,13 +19739,13 @@ func _begin_remote_priority_permanent_hex_target_selection(
 		confirm_hex_target,
 		cancel_hex_target
 	)
-	action_label.text = hex.card_name + ": click a creature to target."
+	_set_action_label_text(hex.card_name + ": click a creature to target.")
 	update_ui()
 
 func _apply_intercept_offered(data: Dictionary) -> void:
 	var msg: String = data.get("action_message", "")
 	if msg != "":
-		action_label.text = msg
+		_set_action_label_text(msg)
 	if _is_networked_client:
 		_restore_network_attack_preview_from_state({
 			"attacker_uid": str(data.get("attacker_uid", "")),
@@ -19851,16 +19898,16 @@ func _on_forfeit_button_pressed() -> void:
 	_clear_wolf_master_summon()
 	var forfeiting_index := _get_local_forfeit_player_index()
 	if forfeiting_index < 0 or game_input == null:
-		action_label.text = "Could not determine which player is forfeiting."
+		_set_action_label_text("Could not determine which player is forfeiting.")
 		update_ui()
 		return
 	_pending_forfeit_return_to_menu = false
 	forfeit_button.disabled = true
-	action_label.text = "Forfeit requested..."
+	_set_action_label_text("Forfeit requested...")
 	if not game_input.submit_action({type = "forfeit", player_index = forfeiting_index}):
 		_pending_forfeit_return_to_menu = false
 		forfeit_button.disabled = false
-		action_label.text = "Could not send the forfeit request."
+		_set_action_label_text("Could not send the forfeit request.")
 	update_ui()
 
 func _do_end_turn() -> void:
@@ -19919,7 +19966,7 @@ func _open_upkeep_choice_window() -> void:
 		_network_upkeep_prompt_player_index = local_idx
 	update_ui()
 	show_turn_choice()
-	action_label.text = "Upkeep for " + game_manager.current_player.player_name + ": choose your upkeep option."
+	_set_action_label_text("Upkeep for " + game_manager.current_player.player_name + ": choose your upkeep option.")
 	_maybe_prompt_turn_start_windows()
 
 func _show_nusku_well_of_fire_prompt(nusku: NuskuFirebearer, choices: Array[Card], mill_count: int) -> void:
@@ -19929,7 +19976,7 @@ func _show_nusku_well_of_fire_prompt(nusku: NuskuFirebearer, choices: Array[Card
 		_pause_stack_resolution(nusku.card_owner)
 	var opponent: Player = game_manager.get_opponent(nusku.card_owner)
 	var opp_name: String = opponent.player_name if opponent != null else "Opponent"
-	action_label.text = "%s: Well of Fire — choose a card to return to %s's hand." % [opp_name, nusku.card_owner.player_name]
+	_set_action_label_text("%s: Well of Fire — choose a card to return to %s's hand." % [opp_name, nusku.card_owner.player_name])
 	_show_card_selection_overlay(
 		"%s: Well of Fire" % opp_name,
 		choices,
@@ -20177,11 +20224,11 @@ func _on_card_drag_released(card: Card, drop_pos: Vector2, card_rotated: bool, c
 				blocked_target = target
 				continue
 			if card.get_effective_speed() == 1 and game_manager.current_player != card.card_owner:
-				action_label.text = card.card_name + " cannot be played right now."
+				_set_action_label_text(card.card_name + " cannot be played right now.")
 				update_ui()
 				return
 			if game_manager.current_player == card.card_owner and game_manager.current_player.has_summoned_this_turn:
-				action_label.text = "You have already summoned a creature this turn."
+				_set_action_label_text("You have already summoned a creature this turn.")
 				update_ui()
 				return
 			# Check only the remaining non-sacrifice costs here. The actual zone choice happens after the sacrifice.
@@ -20190,21 +20237,22 @@ func _on_card_drag_released(card: Card, drop_pos: Vector2, card_rotated: bool, c
 			var affordable := card.can_pay_costs(game_manager.current_player)
 			card.sacrifice_cost = orig
 			if not affordable:
-				action_label.text = "Cannot afford " + card.card_name + "!"
+				_set_action_label_text("Cannot afford " + card.card_name + "!")
 				update_ui()
 				return
+			_begin_pending_creature_summon_cost_tracking(card)
 			_awaiting_drag_sacrifice_zone = true
 			_drag_sacrifice_card = card
 			_drag_sacrifice_target = target
 			_drag_sacrifice_mode = "stealth" if card_stealth else ("defensive" if card_rotated else "aggressive")
-			action_label.text = "Choose an empty friendly zone to summon " + card.card_name + ". " + target.card_name + " will be sacrificed when you place it."
+			_set_action_label_text("Choose an empty friendly zone to summon " + card.card_name + ". " + target.card_name + " will be sacrificed when you place it.")
 			update_ui()
 			return
 		if blocked_target != null:
 			if blocked_target.card_type == Card.CardType.CREATURE and not blocked_target.is_god:
-				action_label.text = blocked_target.card_name + " cannot be sacrificed for " + card.card_name + ". Choose another creature or an empty friendly zone first."
+				_set_action_label_text(blocked_target.card_name + " cannot be sacrificed for " + card.card_name + ". Choose another creature or an empty friendly zone first.")
 			else:
-				action_label.text = "Drop " + card.card_name + " onto a sacrificable friendly creature, or onto an empty friendly zone first."
+				_set_action_label_text("Drop " + card.card_name + " onto a sacrificable friendly creature, or onto an empty friendly zone first.")
 			update_ui()
 			return
 
@@ -20219,7 +20267,7 @@ func _on_card_drag_released(card: Card, drop_pos: Vector2, card_rotated: bool, c
 			if not _can_use_card_for_creature_sacrifice(target_creature):
 				continue
 			if not game_manager.can_play_card(game_manager.current_player, card, null):
-				action_label.text = "Cannot cast " + card.card_name + "!"
+				_set_action_label_text("Cannot cast " + card.card_name + "!")
 				return
 			_initiate_blot_with_sacrifice(card, target_creature)
 			update_ui()
@@ -20236,19 +20284,19 @@ func _on_card_drag_released(card: Card, drop_pos: Vector2, card_rotated: bool, c
 				continue
 			var target_creature: Card = zu.zone.cards[0]
 			if target_creature.card_type != Card.CardType.CREATURE or target_creature.is_god:
-				action_label.text = "Key of Solomon must be dropped onto a friendly Animal or an empty friendly zone."
+				_set_action_label_text("Key of Solomon must be dropped onto a friendly Animal or an empty friendly zone.")
 				update_ui()
 				return
 			if target_creature.get_controller() != game_manager.current_player:
-				action_label.text = "Key of Solomon requires one of your own Animals."
+				_set_action_label_text("Key of Solomon requires one of your own Animals.")
 				update_ui()
 				return
 			if not target_creature.has_type("Animal") or not _can_use_card_for_creature_sacrifice(target_creature):
-				action_label.text = target_creature.card_name + " cannot be sacrificed for Key of Solomon."
+				_set_action_label_text(target_creature.card_name + " cannot be sacrificed for Key of Solomon.")
 				update_ui()
 				return
 			if not _can_cast_hand_spell(card):
-				action_label.text = "Cannot cast " + card.card_name + "!"
+				_set_action_label_text("Cannot cast " + card.card_name + "!")
 				update_ui()
 				return
 			_initiate_kos_with_sacrifice(card as KeyOfSolomon, target_creature)
@@ -20267,7 +20315,7 @@ func _on_card_drag_released(card: Card, drop_pos: Vector2, card_rotated: bool, c
 			if nearest_prepare_zone != null:
 				_on_card_dropped_to_zone(card, nearest_prepare_zone, card_rotated, card_stealth)
 			else:
-				action_label.text = "Choose an empty friendly zone to prepare " + card.card_name + "."
+				_set_action_label_text("Choose an empty friendly zone to prepare " + card.card_name + ".")
 			update_ui()
 			return
 
@@ -20281,7 +20329,7 @@ func _on_card_drag_released(card: Card, drop_pos: Vector2, card_rotated: bool, c
 				if target_zone != null:
 					_on_card_dropped_to_zone(card, target_zone, card_rotated, card_stealth)
 				else:
-					action_label.text = "No empty zone available to place " + card.card_name + "!"
+					_set_action_label_text("No empty zone available to place " + card.card_name + "!")
 				update_ui()
 				return
 
@@ -20367,11 +20415,11 @@ func _on_card_dropped_to_zone(card: Card, zone: Zone, is_rotated: bool = false, 
 	var prepare_on_drop := _should_prepare_magical_card_on_drop(card, is_stealth)
 	if prepare_on_drop:
 		if zone == null or not zone.is_board_zone() or zone.zone_owner != game_manager.current_player or zone.cards.size() > 0:
-			action_label.text = "Choose an empty friendly zone to prepare " + card.card_name + "."
+			_set_action_label_text("Choose an empty friendly zone to prepare " + card.card_name + ".")
 			update_ui()
 			return
 		if not game_manager.can_prepare_card(game_manager.current_player, card, zone):
-			action_label.text = "Cannot prepare " + card.card_name + "!"
+			_set_action_label_text("Cannot prepare " + card.card_name + "!")
 			update_ui()
 			return
 		if _has_pending_click_selection():
@@ -20391,10 +20439,10 @@ func _on_card_dropped_to_zone(card: Card, zone: Zone, is_rotated: bool = false, 
 			elif card.card_type == Card.CardType.SPELL:
 				placement_mode = "prepare_spell"
 			if action_label.text.strip_edges() == "":
-				action_label.text = "Cannot prepare " + card.card_name + "!"
+				_set_action_label_text("Cannot prepare " + card.card_name + "!")
 			update_ui()
 			return
-		action_label.text = "Prepared " + _get_stack_card_type_label(card) + ": " + card.card_name + " (face-down)!"
+		_set_action_label_text("Prepared " + _get_stack_card_type_label(card) + ": " + card.card_name + " (face-down)!")
 		selected_card = null
 		placement_mode = ""
 		placement_container.visible = false
@@ -20408,7 +20456,7 @@ func _on_card_dropped_to_zone(card: Card, zone: Zone, is_rotated: bool = false, 
 		return
 	if card is PermanentHexCard and zone.cards.size() > 0:
 		selected_card = card
-		action_label.text = card.card_name + " must be prepared on an empty friendly zone first."
+		_set_action_label_text(card.card_name + " must be prepared on an empty friendly zone first.")
 		update_ui()
 		return
 	if card is Absence:

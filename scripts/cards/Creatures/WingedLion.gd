@@ -14,7 +14,7 @@ func _init() -> void:
 	resilience = 10
 	strength = 13
 	targets = true
-	ability_text = "[b]Flank[/b] ([b]Activate[/b]): Once per turn, move Winged Lion and another friendly Animal to friendly slots of your choice."
+	ability_text = "[b]Flank[/b] ([b]Activate[/b]): Once per turn, move Winged Lion and another friendly creature to friendly slots of your choice."
 	flavor_text = ""
 	culture = "Ancient"
 	artist = "Putra Kamajaya"
@@ -60,7 +60,7 @@ func get_activation_failure_reason(game_manager: GameManager) -> String:
 	if is_used:
 		return card_name + " has already used Flank this turn."
 	if get_valid_targets(game_manager).is_empty():
-		return card_name + " has no other friendly Animal to flank with."
+		return card_name + " has no other friendly creature to flank with."
 	return card_name + " cannot flank right now."
 
 func get_valid_targets(game_manager: GameManager) -> Array[Card]:
@@ -117,7 +117,7 @@ func resolve_flank(game_manager: GameManager, partner: Card, self_zone: Zone, pa
 	if not can_activate(game_manager):
 		return get_activation_failure_reason(game_manager)
 	if not _is_valid_partner_target(game_manager, partner):
-		return card_name + " needs another friendly Animal to flank with."
+		return card_name + " needs another friendly creature to flank with."
 	if self_zone == null or partner_zone == null:
 		return card_name + " needs two legal destination slots."
 	if self_zone == partner_zone:
@@ -158,8 +158,6 @@ func _is_valid_partner_target_without_plan_check(game_manager: GameManager, card
 	if card.current_zone == null or not card.current_zone.is_board_zone():
 		return false
 	if card.get_controller() != get_controller():
-		return false
-	if not card.has_type("Animal"):
 		return false
 	if not card.get_status_effect("cannot_move").is_empty():
 		return false

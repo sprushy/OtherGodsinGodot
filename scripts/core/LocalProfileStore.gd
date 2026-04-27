@@ -63,13 +63,28 @@ func get_guest_profile_id() -> String:
 func ensure_account_profile(
 	account_username: String,
 	preferred_profile_id: String = "",
-	make_current: bool = true
+	make_current: bool = true,
+	prefer_preferred_profile_id: bool = false
 ) -> Dictionary:
 	_ensure_loaded()
 	var normalized_username := account_username.strip_edges()
 	if normalized_username.is_empty():
 		return ensure_profile(preferred_profile_id, DEFAULT_PROFILE_NAME, make_current)
 	var normalized_key := normalized_username.to_lower()
+	var resolved_preferred_id := preferred_profile_id.strip_edges()
+	if prefer_preferred_profile_id and not resolved_preferred_id.is_empty():
+		var preferred_profile := get_profile(resolved_preferred_id)
+		var preferred_account_username_key := str(
+			preferred_profile.get("account_username_key", "")
+		).strip_edges().to_lower()
+		if preferred_profile.is_empty() or (
+			preferred_account_username_key.is_empty()
+			or preferred_account_username_key == normalized_key
+		):
+			return _remember_account_profile_mapping(
+				normalized_key,
+				ensure_profile(resolved_preferred_id, normalized_username, make_current)
+			)
 	var mapped_profile_id := str(_get_account_profile_id_by_username().get(normalized_key, "")).strip_edges()
 	if not mapped_profile_id.is_empty():
 		var mapped_profile := get_profile(mapped_profile_id)
@@ -78,7 +93,6 @@ func ensure_account_profile(
 				normalized_key,
 				ensure_profile(mapped_profile_id, normalized_username, make_current)
 			)
-	var resolved_preferred_id := preferred_profile_id.strip_edges()
 	if not resolved_preferred_id.is_empty():
 		var preferred_profile := get_profile(resolved_preferred_id)
 		var preferred_account_username_key := str(
@@ -204,7 +218,8 @@ func activate_account_session(
 	preferred_profile_id: String = "",
 	auth_mode: String = AUTH_MODE_LOGIN,
 	password: String = "",
-	persist_password: bool = false
+	persist_password: bool = false,
+	prefer_preferred_profile_id: bool = false
 ) -> Dictionary:
 	_ensure_loaded()
 	var resolved_username := account_username.strip_edges()
@@ -213,7 +228,12 @@ func activate_account_session(
 	var resolved_auth_mode := auth_mode.strip_edges().to_lower()
 	if resolved_auth_mode not in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
 		resolved_auth_mode = AUTH_MODE_LOGIN
-	var profile := ensure_account_profile(resolved_username, preferred_profile_id, true)
+	var profile := ensure_account_profile(
+		resolved_username,
+		preferred_profile_id,
+		true,
+		prefer_preferred_profile_id
+	)
 	var resolved_profile_id := str(profile.get("profile_id", "")).strip_edges()
 	if resolved_profile_id.is_empty():
 		return profile

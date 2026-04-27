@@ -2177,7 +2177,8 @@ func _activate_account_profile(
 	account_username: String,
 	preferred_profile_id: String = "",
 	auth_mode: String = AUTH_MODE_LOGIN,
-	persist_password: bool = false
+	persist_password: bool = false,
+	prefer_preferred_profile_id: bool = false
 ) -> String:
 	_ensure_local_profile_store()
 	var resolved_username := account_username.strip_edges()
@@ -2188,7 +2189,8 @@ func _activate_account_profile(
 		preferred_profile_id,
 		auth_mode,
 		_get_auth_password(),
-		persist_password
+		persist_password,
+		prefer_preferred_profile_id
 	)
 	_set_selected_account_username(resolved_username)
 	_local_profile_id = str(profile.get("profile_id", _local_profile_id)).strip_edges()
@@ -3327,11 +3329,14 @@ func _capture_logged_in_profile(player_name: String) -> void:
 		_account_decks_cache.clear()
 		_logged_in_account_username = resolved_account_username
 		_set_selected_account_username(resolved_account_username)
+		var prefer_connected_profile_id := not resolved_profile_id.is_empty() \
+			and resolved_auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]
 		resolved_profile_id = _activate_account_profile(
 			resolved_account_username,
 			resolved_profile_id,
 			resolved_auth_mode,
-			not _get_auth_password().is_empty()
+			not _get_auth_password().is_empty(),
+			prefer_connected_profile_id
 		)
 		_local_profile_id = resolved_profile_id
 	else:
