@@ -69,6 +69,7 @@ var pending_retreat_guardian_blocked_uids: Array[String] = []
 var pending_humbaba_action: CardAction = null
 var pending_humbaba_target = null
 var pending_humbaba_prompt_uids: Array[String] = []
+var _pending_end_turn_after_resurrection: bool = false
 var _active_command_sender_info: Dictionary = {}
 
 func _init(p_game_manager: GameManager) -> void:
@@ -1637,17 +1638,10 @@ func _process_command_impl(command: Dictionary) -> bool:
 				if et_card != null and et_card.current_zone == acting_player.hand_zone:
 					acting_player.discard_card(et_card)
 			move_validated.emit(command)
-			if _uses_authoritative_headless_priority_flow():
-				_queue_authoritative_priority_event(
-					"end_turn",
-					func() -> void:
-						game_manager.end_turn(),
-					acting_player,
-					acting_player,
-					"End-turn window closed."
-				)
+			if _check_for_next_resurrection():
+				_pending_end_turn_after_resurrection = true
 				return true
-			game_manager.end_turn()
+			_finalize_pending_end_turn(acting_player)
 			return true
 		"upkeep_choice":
 			var upkeep_window_error := _validate_upkeep_choice_window(acting_player)
@@ -3138,8 +3132,11 @@ func _process_command_impl(command: Dictionary) -> bool:
 			game_manager.pending_resurrections.erase(card)
 			move_validated.emit(command)
 			_advance_authoritative_priority_for_pending_summon(card)
-			# CombatMockGame's _on_match_move_validated("resurrection_choice") drives
-			# the next step via _continue_end_turn_sequence(); no need to call it here.
+			if _pending_end_turn_after_resurrection:
+				if _check_for_next_resurrection():
+					return true
+				_pending_end_turn_after_resurrection = false
+				_finalize_pending_end_turn(card.card_owner if card != null else null)
 			return true
 		"return_to_hand_choice":
 			var card_uid := str(command.get("card_uid", "")).strip_edges()
@@ -3253,10 +3250,26 @@ func _clear_pending_retreat_state() -> void:
 	pending_retreat_prompt_uids.clear()
 	pending_retreat_guardian_blocked_uids.clear()
 
-func _check_for_next_resurrection() -> void:
+func _finalize_pending_end_turn(acting_player: Player) -> void:
+	var end_turn_player := acting_player if acting_player != null else game_manager.current_player
+	if end_turn_player == null:
+		return
+	if _uses_authoritative_headless_priority_flow():
+		_queue_authoritative_priority_event(
+			"end_turn",
+			func() -> void:
+				game_manager.end_turn(),
+			end_turn_player,
+			end_turn_player,
+			"End-turn window closed."
+		)
+		return
+	game_manager.end_turn()
+
+func _check_for_next_resurrection() -> bool:
 	# Only relevant if we have pending resurrections
 	if game_manager.pending_resurrections.is_empty():
-		return
+		return false
 		
 	var candidates: Array[Card] = []
 	for card in game_manager.pending_resurrections:
@@ -3268,3 +3281,5 @@ func _check_for_next_resurrection() -> void:
 		var next_card := candidates[0]
 		var player_idx := game_manager.players.find(next_card.card_owner)
 		request_ui_interaction.emit(player_idx, "resurrection", {"card_uid": next_card.uid})
+		return true
+	return false

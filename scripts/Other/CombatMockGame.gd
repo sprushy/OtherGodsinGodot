@@ -7321,10 +7321,15 @@ func _resume_after_deferred_resolution(feedback_text: String = "") -> void:
 	_stack_resolution_paused = false
 	_pending_post_execute_source_player = null
 	update_ui()
-	if feedback_text.strip_edges() != "":
-		_set_action_label_text(feedback_text)
+	var resolved_feedback := feedback_text.strip_edges()
+	if resolved_feedback != "":
+		_set_action_label_text(resolved_feedback)
 	else:
-		_set_action_label_text(_consume_resolution_feedback(action_label.text))
+		resolved_feedback = _consume_resolution_feedback(action_label.text)
+		_set_action_label_text(resolved_feedback)
+	if _is_real_network_host() and match_manager != null and match_manager.uses_authoritative_priority_flow():
+		match_manager.last_resolution_text = resolved_feedback
+		match_manager._request_ui_refresh()
 	_flush_deferred_priority_events()
 	_finish_post_execute(source_player)
 
@@ -12295,6 +12300,29 @@ func _on_board_card_pressed(card: Card) -> void:
 		return
 	if _try_handle_blot_prompt_card_input(card):
 		return
+	if _awaiting_drag_sacrifice_zone:
+		_set_action_label_text("Choose an empty friendly zone to place " + _drag_sacrifice_card.card_name)
+		if _can_use_zone_after_sacrifice(card.current_zone, card) and card == _drag_sacrifice_target:
+			_execute_drag_sacrifice(card.current_zone)
+		return
+	if _awaiting_creature_sacrifice:
+		_select_pending_creature_sacrifice(card)
+		return
+	if _awaiting_altar_void_payment:
+		if card.card_type == Card.CardType.CREATURE and card.is_sleeping:
+			if card in _altar_void_targets_chosen:
+				_set_action_label_text(card.card_name + " has already been chosen.")
+				return
+			_altar_void_targets_chosen.append(card)
+			_sacrifice_remaining -= 1
+			if _sacrifice_remaining <= 0:
+				_finish_altar_void_play()
+			else:
+				_set_action_label_text(_sacrifice_pending_card.card_name + " - select a sleeping creature to void (" + str(_sacrifice_remaining) + " remaining)")
+				update_ui()
+		else:
+			_set_action_label_text("Select a sleeping creature to void.")
+		return
 	if _is_card_usable_for_priority(card):
 		_on_priority_response_chosen(card)
 		return
@@ -12320,12 +12348,6 @@ func _on_board_card_pressed(card: Card) -> void:
 		return
 	
 	if match_manager == null:
-		return
-		
-	if _awaiting_drag_sacrifice_zone:
-		_set_action_label_text("Choose an empty friendly zone to place " + _drag_sacrifice_card.card_name)
-		if _can_use_zone_after_sacrifice(card.current_zone, card) and card == _drag_sacrifice_target:
-			_execute_drag_sacrifice(card.current_zone)
 		return
 
 	if awaiting_pyre_target and pyre_source != null:
@@ -12416,26 +12438,6 @@ func _on_board_card_pressed(card: Card) -> void:
 
 	if _pending_hati_summon != null and _pending_hati_sacrifice == null:
 		_select_hati_moon_hunt_sacrifice(card)
-		return
-
-	if _awaiting_creature_sacrifice:
-		_select_pending_creature_sacrifice(card)
-		return
-
-	if _awaiting_altar_void_payment:
-		if card.card_type == Card.CardType.CREATURE and card.is_sleeping:
-			if card in _altar_void_targets_chosen:
-				_set_action_label_text(card.card_name + " has already been chosen.")
-				return
-			_altar_void_targets_chosen.append(card)
-			_sacrifice_remaining -= 1
-			if _sacrifice_remaining <= 0:
-				_finish_altar_void_play()
-			else:
-				_set_action_label_text(_sacrifice_pending_card.card_name + " - select a sleeping creature to void (" + str(_sacrifice_remaining) + " remaining)")
-				update_ui()
-		else:
-			_set_action_label_text("Select a sleeping creature to void.")
 		return
 
 	# Check if we're selecting a target for a god ability
@@ -14878,6 +14880,8 @@ func _show_sacrifice_payment_prompt(card: Card, altar: AltarOfDreams) -> void:
 func _hide_sacrifice_payment_prompt() -> void:
 	var panel := get_node_or_null("SacrificePaymentPromptPanel")
 	if panel:
+		panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		panel.visible = false
 		panel.queue_free()
 
 func _get_active_advanced_building_techniques(player: Player) -> AdvancedBuildingTechniques:
@@ -17760,7 +17764,8 @@ func _on_match_move_validated(move: Dictionary) -> void:
 				else:
 					_offer_priority()
 		"resurrection_choice":
-			_continue_end_turn_sequence()
+			if not _is_networked_client:
+				_continue_end_turn_sequence()
 		"play_hex_response":
 			# Remote player activated a hex; the ABILITY was already pushed by MatchManager.
 			var phr_hex := game_manager.get_card_by_uid(move.get("hex_uid", ""))
@@ -18543,11 +18548,23 @@ func _can_submit_network_action() -> bool:
 		return false
 	return multiplayer_peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED
 
+func _shutdown_match_client_transport() -> void:
+	if match_client == null:
+		return
+	if match_client.receives_network_events():
+		if match_client.game_event_received.is_connected(_apply_network_event):
+			match_client.game_event_received.disconnect(_apply_network_event)
+		if match_client.peer_disconnected.is_connected(_on_peer_disconnected):
+			match_client.peer_disconnected.disconnect(_on_peer_disconnected)
+	if match_client.has_method("shutdown"):
+		match_client.shutdown()
+
 func _cancel_match_locally(result_message: String) -> void:
 	_pending_forfeit_return_to_menu = false
 	_pending_post_game_return_to_menu = false
 	_awaiting_initial_full_state = false
 	_set_match_reconnect_wait(false)
+	_shutdown_match_client_transport()
 	if network_manager != null and network_manager.has_method("disconnect_client") and not bool(network_manager.get("is_server")):
 		network_manager.disconnect_client()
 	_finalize_game_result_ui(result_message, null, null, false)
@@ -20508,6 +20525,7 @@ func cleanup() -> void:
 	_clear_hati_moon_hunt_state()
 	_clear_skoll_upkeep_summon()
 	_clear_wolf_master_summon()
+	_shutdown_match_client_transport()
 	if network_manager != null:
 		if network_manager.has_method("disconnect_client") and not bool(network_manager.get("is_server")):
 			network_manager.disconnect_client()

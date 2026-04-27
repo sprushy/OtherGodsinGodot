@@ -76,6 +76,31 @@ func is_networked_client() -> bool:
 func receives_network_events() -> bool:
 	return _receives_network_events
 
+func shutdown() -> void:
+	_cancel_connect_attempt_timeout()
+	_reconnect_attempts_remaining = 0
+	_is_reconnecting = false
+	_is_retrying_initial_connect = false
+	_match_join_requested = false
+	_has_authenticated_match = false
+	if not _receives_network_events or network_manager == null:
+		return
+	if network_manager.has_signal("game_event_received") and network_manager.game_event_received.is_connected(_on_game_event_received):
+		network_manager.game_event_received.disconnect(_on_game_event_received)
+	if network_manager.has_signal("peer_disconnected") and network_manager.peer_disconnected.is_connected(_on_peer_disconnected):
+		network_manager.peer_disconnected.disconnect(_on_peer_disconnected)
+	if network_manager.has_signal("connected_to_server") and network_manager.connected_to_server.is_connected(_on_connected_to_server):
+		network_manager.connected_to_server.disconnect(_on_connected_to_server)
+	if network_manager.has_signal("match_join_approved") and network_manager.match_join_approved.is_connected(_on_match_join_approved):
+		network_manager.match_join_approved.disconnect(_on_match_join_approved)
+	if network_manager.has_signal("match_join_denied") and network_manager.match_join_denied.is_connected(_on_match_join_denied):
+		network_manager.match_join_denied.disconnect(_on_match_join_denied)
+	if network_manager.has_signal("server_disconnected") and network_manager.server_disconnected.is_connected(_on_server_disconnected):
+		network_manager.server_disconnected.disconnect(_on_server_disconnected)
+	if network_manager.has_signal("connection_failed") and network_manager.connection_failed.is_connected(_on_connection_failed):
+		network_manager.connection_failed.disconnect(_on_connection_failed)
+	_receives_network_events = false
+
 func get_local_player_index() -> int:
 	if network_manager == null:
 		return 0

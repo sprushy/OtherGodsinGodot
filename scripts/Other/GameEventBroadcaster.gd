@@ -48,14 +48,19 @@ func _on_action_resolved(action: CardAction) -> void:
 	_broadcast_full_state_for_action(action)
 
 func _on_ui_refresh_requested() -> void:
-	if network_manager == null or game_manager == null or game_manager.action_stack.is_empty():
+	if network_manager == null or game_manager == null:
 		return
 	for player_index in network_manager.player_peer_ids:
 		var peer_id: int = network_manager.player_peer_ids[player_index]
 		var viewer := _viewer_for_player_index(player_index)
+		var action_message := ""
+		if not game_manager.action_stack.is_empty():
+			action_message = _label_for_pending_stack_action(game_manager.action_stack.back(), viewer)
+		elif match_manager != null:
+			action_message = str(match_manager.last_resolution_text).strip_edges()
 		var event_data := _build_full_state_event_data(
 			player_index,
-			_label_for_pending_stack_action(game_manager.action_stack.back(), viewer)
+			action_message
 		)
 		if peer_id == 1:
 			network_manager.game_event_received.emit("full_state", event_data)

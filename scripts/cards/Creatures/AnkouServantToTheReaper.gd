@@ -8,8 +8,8 @@ func _init() -> void:
 	card_name = "Ankou, Servant to the Reaper"
 	card_types = ["Monster", "Ghoul", "Triskelion", "Creature"]
 	level = 4
-	mana_cost = 4
-	sacrifice_cost = 0
+	mana_cost = 0
+	sacrifice_cost = 1
 	speed = 2
 	resilience = 17
 	strength = 24
