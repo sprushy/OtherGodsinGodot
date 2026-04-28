@@ -274,7 +274,7 @@ func load_clean_start_scenario() -> void:
 	_open_upkeep_choice_window()
 	action_label.text = (
 		"Clean Start Scenario. Fresh game state with gods, empty boards, simple opening hands, and no seeded powers, summons, or queued effects. "
-		+ "Choose Draw Card or Gain 4 Mana first, then test priority windows from a plain opening turn."
+		+ "Choose Gain 1 Mana + Card or Gain 5 Mana first, then test priority windows from a plain opening turn."
 	)
 	update_ui()
 
@@ -383,7 +383,7 @@ func load_tiamat_ragnarok_scenario() -> void:
 	game_manager.start_turn()
 	_open_upkeep_choice_window()
 	action_label.text = (
-		"Tiamat vs Thor / Ragnarok Scenario. Choose Draw Card, Gain 4 Mana, or Matriarch Rule first.  |  "
+		"Tiamat vs Thor / Ragnarok Scenario. Choose Gain 1 Mana + Card, Gain 5 Mana, or Matriarch Rule first.  |  "
 		+ "Tiamat - your three power slots are filled with face-up Ancient Demons and Dragons. The slot chains should remain over each stack until that slot is emptied into your hand.  |  "
 		+ "Matriarch Rule - choose it on upkeep to add one slotted creature to hand instead of drawing, then repeat on later turns until a slot is empty and its chain disappears.  |  "
 		+ "Thor - Ragnarok is already unlocked on the opposing side, with creatures on both fields so you can fire it immediately and confirm only creatures are destroyed.  |  "
@@ -454,7 +454,7 @@ func load_t_card_scenario() -> void:
 	game_manager.start_turn()
 	_open_upkeep_choice_window()
 	action_label.text = (
-		"T-Range Scenario: Tezcatlipoca Blasphemer through The White Serpent alphabetically. Choose Draw Card or Gain 4 Mana first.  |  "
+		"T-Range Scenario: Tezcatlipoca Blasphemer through The White Serpent alphabetically. Choose Gain 1 Mana + Card or Gain 5 Mana first.  |  "
 		+ "God - Tezcatlipoca, the Smoking Mirror leads P1. Use Nagual's shapeshift on your reserve to gain 1 mana from Tonal Mastery before moving on to the other tests.  |  "
 		+ "Board - Your Tezcatlipoca Blasphemer starts on the frontline with a Brown Bear beside it as sacrifice fodder, while The White Serpent is already face-up in reserve so it can answer enemy targeting.  |  "
 		+ "Blood Magic - Enemy Heroic Stand is already prepared in reserve as the clean magical target for your Tezcatlipoca Blasphemer. Sacrifice your Brown Bear to destroy it. Then pass the turn so the opposing Tezcatlipoca Blasphemer can try to target your prepared Inferno or Deluge, and respond with The White Serpent's Shift Medicine.  |  "
@@ -545,7 +545,7 @@ func load_s_card_scenario() -> void:
 	game_manager.start_turn()
 	_open_upkeep_choice_window()
 	action_label.text = (
-		"S/T Scenario: Sharur through Tablet of Life alphabetically. Choose Draw Card or Gain 4 Mana first.  |  "
+		"S/T Scenario: Sharur through Tablet of Life alphabetically. Choose Gain 1 Mana + Card or Gain 5 Mana first.  |  "
 		+ "Tatzelwurm - A ready Tatzelwurm starts in your second frontline lane with enemy Gudu Priest directly across from it. Attack there first for a clean Dragon Heart trigger, then choose Lindwyrm, Lesser Mushussu, or Jiaolong from your deck. A second Tatzelwurm is also in hand for repeat tests.  |  "
 		+ "Power - Summoned Sap starts unlocked. Because Brown Bear is already on your field, Sulak is slowed by 1; switch Sulak's stance to confirm the aura makes it use up its full turn action.  |  "
 		+ "Hand - Sharur, Storm, and Tablet of Life are ready now. Play Sharur onto Sulak or any valid bearer, cast Storm to destroy the face-up Heavy Snow and silence Gudud Priest while stripping Pegasus of Aerial, and cast Tablet of Life to resurrect Alu or First Sage Adapa from your graveyard with negated abilities.  |  "
@@ -637,7 +637,7 @@ func load_r_card_scenario() -> void:
 	game_manager.start_turn()
 	_open_upkeep_choice_window()
 	action_label.text = (
-		"R-Card Scenario: All cards starting with R, except Robotic Footsoldier. Choose Draw Card or Gain 4 Mana first.  |  "
+		"R-Card Scenario: All cards starting with R, except Robotic Footsoldier. Choose Gain 1 Mana + Card or Gain 5 Mana first.  |  "
 		+ "Powers - Rally the Troops and Ragnarok both start unlocked so you can test recruitment first and the full-board reset afterward.  |  "
 		+ "Board - Rabid Wolf is ready to attack and trigger Raven Storm, while Red Cap must attack this turn or Fresh Blood will destroy it at end of turn.  |  "
 		+ "Hand - Raven Storm, Rabisu, Reed Bow, Runic Shortsword, and Runic Spellbreaker are ready, plus a level-5 Harii Warrior to trigger Rally the Troops immediately.  |  "
@@ -706,7 +706,7 @@ func load_p_card_scenario() -> void:
 	game_manager.start_turn()
 	_open_upkeep_choice_window()
 	action_label.text = (
-		"P-Card Scenario: All cards starting with P. Choose Draw Card or Gain 4 Mana first.  |  "
+		"P-Card Scenario: All cards starting with P. Choose Gain 1 Mana + Card or Gain 5 Mana first.  |  "
 		+ "Power - Palisade is already unlocked, and the open frontline lane in front of your hidden Pictish Beast is reserved for its barrier.  |  "
 		+ "Board - Berserker is live so Pegasus can be mounted immediately, while the hidden Pictish Beast can reveal into Mana Boon with another copy already in your graveyard.  |  "
 		+ "Hand - Pazuzu is ready for Locust Swarm, and the extra Pictish Beast gives you an easy way to grow Mana Boon or provide sacrifice fodder.  |  "
@@ -790,7 +790,7 @@ func load_n_o_card_scenario() -> void:
 	game_manager.start_turn()
 	_open_upkeep_choice_window()
 	action_label.text = (
-		"N/O Scenario: All cards starting with N and O. Choose Draw Card or Gain 4 Mana first.  |  "
+		"N/O Scenario: All cards starting with N and O. Choose Gain 1 Mana + Card or Gain 5 Mana first.  |  "
 		+ "Gods - Odin leads P1 with a ready Runic Knowledge guess, while Nusku leads P2 with a full seven-card Ancient deck to mill.  |  "
 		+ "Powers - Oracle's Sight starts locked so you can unlock it immediately, and Norse Bloodlust is already active for Berserker's first kill.  |  "
 		+ "Board - Berserker, Nagual, and Nimue are live, and Namburbi Apotropaeon is already prepared for the opening turn-start window.  |  "
@@ -859,7 +859,7 @@ func load_m_card_scenario() -> void:
 	game_manager.start_turn()
 	_open_upkeep_choice_window()
 	action_label.text = (
-		"M-Card Scenario: All cards starting with M. Choose Draw Card or Gain 4 Mana first.  |  "
+		"M-Card Scenario: All cards starting with M. Choose Gain 1 Mana + Card or Gain 5 Mana first.  |  "
 		+ "Gods - Mummu leads P1; Thor leads P2 so Entropic Force can be tested right away.  |  "
 		+ "Powers - Mech Factory and Myrkwood are unlocked for immediate token and extra-Animal summon testing.  |  "
 		+ "Board - Muninn, Malinalxochitl Acolyte, and Mopsus are live; Mead of Poetry is already prepared in reserve.  |  "
@@ -929,7 +929,7 @@ func load_pictish_test_scenario() -> void:
 	game_manager.start_turn()
 	_open_upkeep_choice_window()
 	action_label.text = (
-		"Pictish Scenario: Pictish Beast, Manannan mac Lir, Masmassu Priest, and Minotaur Footsoldier. Choose Draw Card or Gain 4 Mana first.  |  "
+		"Pictish Scenario: Pictish Beast, Manannan mac Lir, Masmassu Priest, and Minotaur Footsoldier. Choose Gain 1 Mana + Card or Gain 5 Mana first.  |  "
 		+ "God - Manannan leads P1 so Mists of the Blessed Isles can hide your Triskelion creatures immediately.  |  "
 		+ "Board - Minotaur Footsoldier is live on the frontline, one Pictish Beast is face-up, and another is already hidden in reserve.  |  "
 		+ "Hand - A fresh Pictish Beast, Masmassu Priest, and Muninn are ready on P1, and P2 also has a Muninn for mirror testing.  |  "
@@ -996,7 +996,7 @@ func load_test_scenario_one() -> void:
 	game_manager.record_interception(en_hedu_anna)
 	_open_upkeep_choice_window()
 	action_label.text = (
-		"Scenario 1: Lailoken, Heroic Stand, Kurnugia, and Kur-Jara. Choose Draw Card or Gain 4 Mana first.  |  "
+		"Scenario 1: Lailoken, Heroic Stand, Kurnugia, and Kur-Jara. Choose Gain 1 Mana + Card or Gain 5 Mana first.  |  "
 		+ "Hand - Heroic Stand is already live because En-hedu-anna counts as having intercepted twice this turn.  |  "
 		+ "Hand - Lailoken can reveal into any open lane and drain the prepared enemy Exorcism in reserve.  |  "
 		+ "Power - Kurnugia is unlocked and ready to shelter your Ancient Humans or Mer when they are destroyed or voided.  |  "
@@ -1070,7 +1070,7 @@ func load_sap_ragnarok_scenario() -> void:
 	game_manager.start_turn()
 	_open_upkeep_choice_window()
 	action_label.text = (
-		"Sap / Sap Strength / Ragnarok Scenario. Choose Draw Card or Gain 4 Mana first.  |  "
+		"Sap / Sap Strength / Ragnarok Scenario. Choose Gain 1 Mana + Card or Gain 5 Mana first.  |  "
 		+ "Sap - already prepared in your reserve; summon Rabid Wolf or Berserker from hand to the frontline to watch Sap destroy it on entry. Pass to P2 and let them summon their Brown Bear to test that it fires on the opponent's summons too.  |  "
 		+ "Sap Strength - play it from hand and target any creature on the board to reduce its Str by 10 for the rest of the turn; useful for weakening a strong attacker before combat.  |  "
 		+ "Ragnarok - activate from the unlocked power slot to wipe all frontline and reserve creatures; Odin, Thor, and the Ragnarok power itself should all survive untouched."
@@ -1167,7 +1167,7 @@ func load_v_w_card_scenario() -> void:
 	game_manager.start_turn()
 	_open_upkeep_choice_window()
 	action_label.text = (
-		"V/W Scenario: All V and W cards except Warding Stone. Choose Draw Card or Gain 4 Mana first.  |  "
+		"V/W Scenario: All V and W cards except Warding Stone. Choose Gain 1 Mana + Card or Gain 5 Mana first.  |  "
 		+ "Upkeep - when you choose Draw or Gain Mana, Wolf Cub's Maturation fires automatically: it sends itself to the graveyard and Skoll is summoned from your deck to its reserve lane.  |  "
 		+ "Board - attack Gudud Priest with Wolf Adolescent this turn to earn the kill; on your next P1 upkeep (after choosing Draw or Gain Mana) the Maturation prompt appears and you can send Wolf Adolescent to the grave and summon Hati from your deck.  |  "
 		+ "Warrior Dragon - ready Aerial Ancient on frontline lane 1; attack with it or hold it as a wall.  |  "

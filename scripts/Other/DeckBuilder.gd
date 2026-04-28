@@ -17,7 +17,6 @@ func build_deck(player: Player, selected_cards: Array[Card], special_setup: Dict
 		var god_card: Card = null
 		var power_cards: Array[Card] = []
 		var regular_cards: Array[Card] = []
-		var reserved_active_god: ActiveGodCard = null
 		
 		for card in unique_cards:
 			card.card_owner = player
@@ -30,18 +29,6 @@ func build_deck(player: Player, selected_cards: Array[Card], special_setup: Dict
 		
 		if god_card:
 			player.god_zone.add_card(god_card)
-		
-		var god_template := god_card as GodCard
-		if god_template != null:
-			var drawable_regular_cards: Array[Card] = []
-			for card in regular_cards:
-				var active_god := card as ActiveGodCard
-				if active_god != null and god_template.get_active_god_deck_role(active_god) == GodCard.ACTIVE_GOD_DECK_ROLE_RESERVED:
-					if reserved_active_god == null:
-						reserved_active_god = active_god
-					continue
-				drawable_regular_cards.append(card)
-			regular_cards = drawable_regular_cards
 
 		for i in range(min(power_cards.size(), 3)):
 			player.power_zones[i].add_card(power_cards[i])
@@ -49,9 +36,6 @@ func build_deck(player: Player, selected_cards: Array[Card], special_setup: Dict
 		regular_cards.shuffle()
 		for card in regular_cards:
 			player.deck_zone.add_card(card)
-		if reserved_active_god != null:
-			reserved_active_god.current_zone = null
-			player.reserved_active_god = reserved_active_god
 
 		_apply_special_setup(player, special_setup)
 		

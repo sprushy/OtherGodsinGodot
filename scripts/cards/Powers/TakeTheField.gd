@@ -102,7 +102,7 @@ func _get_manifest_god_name() -> String:
 	return ""
 
 func _peek_manifestation_candidate() -> Card:
-	return _find_manifestation_candidate(false)
+	return _find_manifestation_candidate(true)
 
 func _resolve_manifestation_candidate() -> Card:
 	return _find_manifestation_candidate(true)

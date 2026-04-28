@@ -30,6 +30,7 @@ func get_activation_label() -> String:
 
 func on_impact(game_manager: GameManager) -> void:
 	tactic_counters += IMPACT_TACTIC_COUNTERS
+	_emit_visual_state_changed()
 	if game_manager != null:
 		game_manager.note_player_feedback(
 			"%s enters with %d tactic counters." % [card_name, tactic_counters]
@@ -45,6 +46,7 @@ func on_ally_kill(game_manager: GameManager, killer: Card, victim: Card) -> void
 	if not killer.has_type("Warrior"):
 		return
 	tactic_counters += 1
+	_emit_visual_state_changed()
 	if game_manager != null:
 		game_manager.note_player_feedback(
 			"%s gains a tactic counter from %s destroying %s (now %d)." % [
@@ -115,6 +117,8 @@ func activate(game_manager: GameManager, target: Card = null) -> void:
 		return
 	tactic_counters -= 1
 	target.tactic_counters += 1
+	_emit_visual_state_changed()
+	target._emit_visual_state_changed()
 	if game_manager != null:
 		game_manager.note_player_feedback(
 			"%s moves 1 tactic counter to %s. (%d remaining)" % [
@@ -126,6 +130,16 @@ func activate(game_manager: GameManager, target: Card = null) -> void:
 
 func on_removed(_game_manager: GameManager) -> void:
 	tactic_counters = 0
+	_emit_visual_state_changed()
+
+func get_serialized_state() -> Dictionary:
+	return {
+		"tactic_counters": tactic_counters,
+	}
+
+func apply_serialized_state(state: Dictionary) -> void:
+	tactic_counters = int(state.get("tactic_counters", 0))
+	_emit_visual_state_changed()
 
 func get_effect_summary_lines() -> Array[String]:
 	var lines := super.get_effect_summary_lines()

@@ -21,6 +21,8 @@ enum GamePhase { MULLIGAN, MAIN, COMBAT, END }
 const GAME_END_REASON_DEFEAT := "defeat"
 const GAME_END_REASON_FORFEIT := "forfeit"
 const GOD_DEATH_FOLLOWER_LOSS := 7
+const UPKEEP_DRAW_MANA_GAIN := 1
+const UPKEEP_MANA_GAIN := 5
 
 var players: Array[Player] = []
 var current_player: Player
@@ -682,8 +684,8 @@ func get_opponent(player: Player) -> Player:
 # Turn lifecycle order is intentionally explicit:
 # 1. Officially begin the new turn and increment turn_number.
 # 2. Reset once-per-turn state for the active player.
-# 3. Resolve automatic upkeep with no priority window.
-# 4. Later, when the player chooses Draw Card, Gain 4 Mana, or another upkeep option,
+# 3. Open the upkeep window and resolve upkeep hooks with no priority window.
+# 4. Later, when the player chooses Gain 1 Mana + Card, Gain 5 Mana, or another upkeep option,
 #    mark upkeep complete and then fire turn-start hooks/effects.
 func start_turn() -> void:
 	if is_game_over:
@@ -735,8 +737,6 @@ func _begin_turn_upkeep() -> void:
 				GOD_DEATH_FOLLOWER_LOSS
 			]
 		)
-	else:
-		current_player.gain_mana(1)
 	for card in _get_sorted_upkeep_cards_for_player(current_player, "on_turn_upkeep"):
 		card.on_turn_upkeep(self)
 	var opponent := get_opponent(current_player)
@@ -893,6 +893,7 @@ func player_chooses_draw() -> void:
 	if not is_player_in_upkeep_window(current_player):
 		return
 	_begin_turn_upkeep()
+	_gain_upkeep_choice_mana(UPKEEP_DRAW_MANA_GAIN)
 	current_player.draw_card()
 	_resolve_turn_upkeep()
 
@@ -902,8 +903,22 @@ func player_chooses_mana() -> void:
 	if not is_player_in_upkeep_window(current_player):
 		return
 	_begin_turn_upkeep()
-	current_player.gain_mana(4)
+	_gain_upkeep_choice_mana(UPKEEP_MANA_GAIN)
 	_resolve_turn_upkeep()
+
+func _gain_upkeep_choice_mana(amount: int) -> void:
+	if amount <= 0 or current_player == null or is_player_under_god_death(current_player):
+		return
+	current_player.gain_mana(amount)
+
+func get_upkeep_choice_feedback(choice: String) -> String:
+	var no_upkeep_mana := is_player_under_god_death(current_player)
+	match choice:
+		"draw":
+			return "Drew a card." if no_upkeep_mana else "Gained %d mana and drew a card." % UPKEEP_DRAW_MANA_GAIN
+		"mana":
+			return "No upkeep mana gained." if no_upkeep_mana else "Gained %d mana." % UPKEEP_MANA_GAIN
+	return ""
 
 func player_chooses_upkeep_only() -> void:
 	if is_game_over:

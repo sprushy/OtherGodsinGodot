@@ -138,6 +138,7 @@ static func _serialize_card(card: Card, hidden_mode: int = HIDDEN_MODE_NONE) -> 
 		board_entry_order         = card.board_entry_order,
 		is_god                    = card.is_god,
 		is_power                  = card.is_power,
+		is_publicly_revealed      = card is PowerCard and (card as PowerCard).is_publicly_revealed,
 		is_legendary              = card.is_legendary,
 		is_token                  = card.is_token,
 		art_path                  = card.art_path,
@@ -458,6 +459,8 @@ static func _deserialize_card(cdata: Dictionary) -> Card:
 	card.board_entry_order         = cdata.get("board_entry_order", -1)
 	card.is_god                    = cdata.get("is_god", false)
 	card.is_power                  = cdata.get("is_power", false)
+	if card is PowerCard:
+		(card as PowerCard).is_publicly_revealed = cdata.get("is_publicly_revealed", false)
 	card.is_legendary              = cdata.get("is_legendary", false)
 	card.is_token                  = cdata.get("is_token", false)
 	card.art_path                  = cdata.get("art_path", card.art_path)

@@ -94,8 +94,8 @@ func show_turn_choice() -> void:
 		return
 	choice_container.visible = true
 	choice_intro_label.text = "Choose one:"
-	draw_button.text = "Draw Card"
-	mana_button.text = "Gain 4 Mana"
+	draw_button.text = "Gain 1 Mana + Card"
+	mana_button.text = "Gain 5 Mana"
 	end_turn_button.visible = false
 	draw_button.disabled = false
 	mana_button.disabled = false
@@ -118,7 +118,7 @@ func _on_draw_button_pressed() -> void:
 	game_manager.player_chooses_draw()
 	update_ui()
 	hide_turn_choice()
-	print(game_manager.current_player.player_name + " drew a card")
+	print(game_manager.current_player.player_name + " " + game_manager.get_upkeep_choice_feedback("draw").to_lower())
 
 func _on_mana_button_pressed() -> void:
 	if _game_finished:
@@ -126,7 +126,7 @@ func _on_mana_button_pressed() -> void:
 	game_manager.player_chooses_mana()
 	update_ui()
 	hide_turn_choice()
-	print(game_manager.current_player.player_name + " gained 4 additional mana")
+	print(game_manager.current_player.player_name + " " + game_manager.get_upkeep_choice_feedback("mana").to_lower())
 
 func _on_end_turn_button_pressed() -> void:
 	if _game_finished:

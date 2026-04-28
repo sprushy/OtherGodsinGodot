@@ -71,10 +71,9 @@ func validate_deck(deck_cards: Dictionary, special_setup: Dictionary = {}) -> Di
 		return _result(false, "Deck must contain exactly 1 God.", sanitized_cards)
 	if power_count > MAX_POWERS:
 		return _result(false, "Deck can contain at most %d Powers." % MAX_POWERS, sanitized_cards)
-	var active_god_validation := _validate_active_gods_for_deck(sanitized_cards, god_template)
-	if not bool(active_god_validation.get("is_valid", false)):
-		return _result(false, str(active_god_validation.get("error", "Invalid Active God setup.")), sanitized_cards)
-	regular_count -= int(active_god_validation.get("reserved_active_god_count", 0))
+	var illegal_active_gods := _get_illegal_active_gods_for_deck(sanitized_cards, god_template)
+	if not illegal_active_gods.is_empty():
+		return _result(false, "Active Gods cannot be included this way: %s." % ", ".join(illegal_active_gods), sanitized_cards)
 	if regular_count < MIN_REGULAR_CARDS:
 		return _result(false, "Deck must contain at least %d non-God, non-Power cards." % MIN_REGULAR_CARDS, sanitized_cards)
 
@@ -210,45 +209,20 @@ func _max_copies(card) -> int:
 		return 1
 	if bool(card.is_power):
 		return 1
+	if card is ActiveGodCard:
+		return 1
 	if bool(card.is_legendary):
 		return 1
 	return 3
 
-func _validate_active_gods_for_deck(sanitized_cards: Dictionary, god_template) -> Dictionary:
-	var god_card := god_template as GodCard
-	if god_card == null or god_card.uses_culture_locked_deckbuilding():
-		return {
-			"is_valid": true,
-			"error": "",
-			"reserved_active_god_count": 0,
-		}
+func _get_illegal_active_gods_for_deck(sanitized_cards: Dictionary, god_template) -> PackedStringArray:
 	var illegal_active_gods: PackedStringArray = []
-	var reserved_active_god_count := 0
+	var god_card := god_template as GodCard
 	for card_name in sanitized_cards.keys():
 		var card = _cards_by_name.get(card_name, null)
-		if card is not ActiveGodCard:
-			continue
 		var active_god := card as ActiveGodCard
-		var count := int(sanitized_cards.get(card_name, 0))
-		match god_card.get_active_god_deck_role(active_god):
-			GodCard.ACTIVE_GOD_DECK_ROLE_RESERVED:
-				if count > 1:
-					return {
-						"is_valid": false,
-						"error": "%s can reserve at most 1 copy of its own Active God." % god_card.card_name,
-						"reserved_active_god_count": reserved_active_god_count,
-					}
-				reserved_active_god_count += count
-			_:
-				illegal_active_gods.append(str(active_god.card_name))
-	if illegal_active_gods.is_empty():
-		return {
-			"is_valid": true,
-			"error": "",
-			"reserved_active_god_count": reserved_active_god_count,
-		}
-	return {
-		"is_valid": false,
-		"error": "Non-Patriarch/Matriarch gods cannot include other Active God cards in their deck: %s." % ", ".join(illegal_active_gods),
-		"reserved_active_god_count": reserved_active_god_count,
-	}
+		if active_god == null:
+			continue
+		if god_card == null or god_card.get_active_god_deck_role(active_god) != GodCard.ACTIVE_GOD_DECK_ROLE_ALLOWED:
+			illegal_active_gods.append(str(active_god.card_name))
+	return illegal_active_gods

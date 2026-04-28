@@ -23,16 +23,16 @@ func _run_probe() -> void:
 	player2.gain_mana(3)
 
 	game_manager.start_turn()
-	_assert_state(player1.mana == 5, "start_turn() should not grant the automatic +1 mana before upkeep resolves.")
+	_assert_state(player1.mana == 5, "start_turn() should not grant upkeep mana before upkeep resolves.")
 
 	game_manager.player_chooses_draw()
-	_assert_state(player1.mana == 6, "Choosing the upkeep draw option should grant the automatic +1 mana during upkeep.")
+	_assert_state(player1.mana == 6, "Choosing the upkeep draw option should grant 1 mana during upkeep.")
 
 	game_manager.end_turn()
 	_assert_state(player2.mana == 3, "The next player's start_turn() should also leave mana unchanged until upkeep.")
 
 	game_manager.player_chooses_mana()
-	_assert_state(player2.mana == 8, "Choosing the upkeep mana option should grant +1 mana and then the extra 4 mana.")
+	_assert_state(player2.mana == 8, "Choosing the upkeep mana option should grant 5 mana during upkeep.")
 
 	var moved_callback := Callable(game_manager, "_on_player_card_moved")
 	var defeated_callback := Callable(game_manager, "_on_player_defeated")

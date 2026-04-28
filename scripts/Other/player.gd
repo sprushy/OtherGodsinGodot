@@ -90,7 +90,6 @@ func validate_deck(deck: Array[Card]) -> bool:
 	var god_culture := ""
 	var power_name_counts: Dictionary = {}
 	var god_template: GodCard = null
-	var reserved_active_god_count := 0
 	
 	for card in deck:
 		if card.is_god:
@@ -121,16 +120,9 @@ func validate_deck(deck: Array[Card]) -> bool:
 		if card is ActiveGodCard:
 			if god_template == null:
 				return false
-			match god_template.get_active_god_deck_role(card):
-				GodCard.ACTIVE_GOD_DECK_ROLE_ALLOWED:
-					continue
-				GodCard.ACTIVE_GOD_DECK_ROLE_RESERVED:
-					reserved_active_god_count += 1
-					if reserved_active_god_count > 1:
-						return false
-					continue
-				_:
-					return false
+			if god_template.get_active_god_deck_role(card) != GodCard.ACTIVE_GOD_DECK_ROLE_ALLOWED:
+				return false
+			continue
 		if god_template != null and god_template.uses_culture_locked_deckbuilding():
 			if not god_template.can_include_card_in_culture_locked_deck(card):
 				return false
@@ -138,7 +130,6 @@ func validate_deck(deck: Array[Card]) -> bool:
 			if card.culture != "Neutral" and card.culture != god_culture:
 				return false
 	
-	regular_card_count -= reserved_active_god_count
 	var max_legendaries = int(regular_card_count / 10.0)
 	if legendary_count > max_legendaries:
 		return false

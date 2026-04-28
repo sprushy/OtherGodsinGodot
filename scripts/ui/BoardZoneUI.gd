@@ -6,6 +6,7 @@ const LockedPowerCursor = preload("res://scripts/ui/LockedPowerCursor.gd")
 const DefenseShieldOverlay = preload("res://scripts/ui/DefenseShieldOverlay.gd")
 const BASE_BOARD_Z_INDEX := 0
 const RAISED_BOARD_Z_INDEX := 2
+const GOD_INDICATOR_Z_INDEX := 3
 const HOVER_BOARD_Z_INDEX := 1050
 const POPUP_Z_INDEX := 1100
 
@@ -591,6 +592,8 @@ func _add_power_lock_overlay(overlay: Control, card: Card) -> void:
 		return
 	if card.card_type != Card.CardType.POWER or not card.is_face_down:
 		return
+	if _is_public_power(card) or card.is_temporarily_revealed():
+		return
 	_add_power_lock_texture_overlay(overlay, card)
 
 func _add_playing_aura(overlay: Control) -> void:
@@ -1062,7 +1065,7 @@ func _is_tiamat_power_creature_zone() -> bool:
 	return true
 
 func _get_power_lock_texture(card: Card) -> Texture2D:
-	if card != null and card.card_type == Card.CardType.POWER:
+	if card != null:
 		if str(card.culture).strip_edges() == "Ancient" or card.has_type("Ancient Power"):
 			return ANCIENT_POWER_LOCK_TEXTURE
 	return POWER_LOCK_TEXTURE
@@ -1211,7 +1214,19 @@ func _add_tiamat_power_creature_stack(overlay: Control) -> void:
 		count_badge.add_child(count_label)
 		overlay.add_child(count_badge)
 
-	_add_power_lock_texture_overlay(overlay)
+	if not _is_tiamat_power_creature_stack_revealed():
+		_add_power_lock_texture_overlay(overlay, zone.cards[0])
+
+func _is_tiamat_power_creature_stack_revealed() -> bool:
+	if zone == null:
+		return false
+	var viewer := _get_viewer_player()
+	if owning_player != null and viewer != null and owning_player == viewer:
+		return true
+	for slot_card in zone.cards:
+		if slot_card != null and slot_card.is_temporarily_revealed():
+			return true
+	return false
 
 func _make_debuff_source_preview(entry: Dictionary) -> Control:
 	var source_card := entry.get("source_card", null) as Card
@@ -1650,8 +1665,7 @@ func _should_show_aphrodite_activation_aura(card: Card) -> bool:
 		return false
 	if card is not AphroditeAreia:
 		return false
-	var viewer := _get_viewer_player()
-	if viewer == null or card.get_controller() != viewer:
+	if not _can_show_god_activation_aura(card):
 		return false
 	return card.can_activate(game_manager)
 
@@ -1660,8 +1674,7 @@ func _should_show_nusku_activation_aura(card: Card) -> bool:
 		return false
 	if card is not NuskuFirebearer:
 		return false
-	var viewer := _get_viewer_player()
-	if viewer == null or card.get_controller() != viewer:
+	if not _can_show_god_activation_aura(card):
 		return false
 	return card.can_activate(game_manager)
 
@@ -1686,6 +1699,21 @@ func _get_deckbuilder_god_glow_color(card: Card) -> Color:
 func _has_custom_god_activation_aura(card: Card) -> bool:
 	return card is AphroditeAreia or card is NuskuFirebearer
 
+func _can_show_god_activation_aura(card: Card) -> bool:
+	if card == null or game_manager == null:
+		return false
+	var viewer := _get_viewer_player()
+	if viewer == null or card.get_controller() != viewer:
+		return false
+	var controller := card.get_controller()
+	if controller == null:
+		return false
+	if game_manager.is_player_in_upkeep_window(controller):
+		return false
+	if game_manager.priority_player != null or not game_manager.action_stack.is_empty():
+		return false
+	return true
+
 func _should_show_generic_god_activation_aura(card: Card) -> bool:
 	if card == null or game_manager == null:
 		return false
@@ -1693,8 +1721,7 @@ func _should_show_generic_god_activation_aura(card: Card) -> bool:
 		return false
 	if _has_custom_god_activation_aura(card):
 		return false
-	var viewer := _get_viewer_player()
-	if viewer == null or card.get_controller() != viewer:
+	if not _can_show_god_activation_aura(card):
 		return false
 	if not card.has_method("can_activate"):
 		return false
@@ -1809,6 +1836,7 @@ func _refresh_display() -> void:
 			style.bg_color = Color(0.09, 0.12, 0.16, 0.92)
 			style.border_color = Color(0.82, 0.72, 0.36, 0.96)
 			add_theme_stylebox_override("panel", style)
+			z_index = BASE_BOARD_Z_INDEX
 
 			var tiamat_overlay := Control.new()
 			tiamat_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -1912,17 +1940,36 @@ func _refresh_display() -> void:
 
 		# God slot: show art image filling the zone
 		if zone.zone_type == Zone.ZoneType.GOD_SLOT and card.art_path != "":
+			var show_aphrodite_activation_aura := _should_show_aphrodite_activation_aura(card)
+			var show_nusku_activation_aura := _should_show_nusku_activation_aura(card)
+			var show_generic_god_activation_aura := _should_show_generic_god_activation_aura(card)
+			var show_god_attack_aura := _is_card_attacking_on_stack(card) or _is_card_intercepting_on_stack(card) or _is_card_selected_attacker(card) or _is_card_selected_interceptor(card)
+			var show_god_playing_aura := _should_show_playing_aura(card)
+			var show_god_priority_aura := _is_card_usable_for_priority(card)
+			var show_god_target_aura := _is_card_targeted_on_stack(card) or _is_card_pending_target(card) or _is_card_pending_attack_target(card) or _is_card_attack_candidate(card)
+			var show_god_followers_tint := _is_god_targeted_by_followers_attack(card) or _is_god_pending_followers_attack(card) or _is_god_attack_candidate(card)
+
 			style.bg_color     = Color(0.35, 0.28, 0.04, 0.9)
 			style.border_color = Color(0.9, 0.75, 0.2)
 			for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
 				style.set_border_width(side, 2)
-			if _should_show_aphrodite_activation_aura(card):
+			if show_aphrodite_activation_aura:
 				_apply_aphrodite_activation_style(style)
-			elif _should_show_nusku_activation_aura(card):
+			elif show_nusku_activation_aura:
 				_apply_nusku_activation_style(style)
-			elif _should_show_generic_god_activation_aura(card):
+			elif show_generic_god_activation_aura:
 				_apply_generic_god_activation_style(style, _get_deckbuilder_god_glow_color(card))
 			add_theme_stylebox_override("panel", style)
+			z_index = GOD_INDICATOR_Z_INDEX if (
+				show_aphrodite_activation_aura
+				or show_nusku_activation_aura
+				or show_generic_god_activation_aura
+				or show_god_attack_aura
+				or show_god_playing_aura
+				or show_god_priority_aura
+				or show_god_target_aura
+				or show_god_followers_tint
+			) else BASE_BOARD_Z_INDEX
 			var tex: Texture2D = load(card.art_path)
 			if tex:
 				# Single Control overlay - PanelContainer fills it to the zone size.
@@ -1932,13 +1979,13 @@ func _refresh_display() -> void:
 				god_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				god_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 				add_child(god_overlay)
-				if _is_card_attacking_on_stack(card) or _is_card_intercepting_on_stack(card) or _is_card_selected_attacker(card) or _is_card_selected_interceptor(card):
+				if show_god_attack_aura:
 					_add_attack_aura(god_overlay)
-				if _should_show_playing_aura(card):
+				if show_god_playing_aura:
 					_add_playing_aura(god_overlay)
-				if _is_card_usable_for_priority(card):
+				if show_god_priority_aura:
 					_add_priority_response_aura(god_overlay)
-				if _is_card_targeted_on_stack(card) or _is_card_pending_target(card) or _is_card_pending_attack_target(card) or _is_card_attack_candidate(card):
+				if show_god_target_aura:
 					_add_target_aura(god_overlay)
 					_add_stack_target_indicator(god_overlay)
 
@@ -1949,7 +1996,7 @@ func _refresh_display() -> void:
 				art.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 				art.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				god_overlay.add_child(art)
-				if _is_god_targeted_by_followers_attack(card) or _is_god_pending_followers_attack(card) or _is_god_attack_candidate(card):
+				if show_god_followers_tint:
 					_add_followers_attack_target_tint(god_overlay)
 
 				# VBoxContainer fills overlay via anchors; spacer pushes label to correct edge
@@ -2256,6 +2303,7 @@ func _refresh_display() -> void:
 
 	else:
 		# Empty zone styling - God slot gets gold treatment
+		z_index = BASE_BOARD_Z_INDEX
 		if zone.zone_type == Zone.ZoneType.GOD_SLOT:
 			style.bg_color    = Color(0.35, 0.28, 0.04, 0.7)
 			style.border_color = Color(0.9, 0.75, 0.2)

@@ -144,6 +144,7 @@ var _hand_hover_preview: Control = null
 var _hand_hover_vc: VisualCard = null
 var _hand_hover_preview_card: VisualCard = null
 var _hand_hover_preview_keywords: Control = null
+const _HAND_CONTEXT_MENU_KEEPALIVE_MARGIN := 10.0
 
 const FAN_ROT_MAX     := 12.0   # degrees at the outermost card
 const FAN_ARC_HEIGHT  := 22.0   # px the arc dips at centre
@@ -863,7 +864,7 @@ func _hide_mummu_entropy_prompt() -> void:
 
 func _show_nusku_active_core_flame_prompt(
 	card: NuskuActive,
-	preview_cards: Array = [],
+	_preview_cards: Array = [],
 	recoverable_cards: Array = [],
 	mill_count: int = 0
 ) -> void:
@@ -871,16 +872,15 @@ func _show_nusku_active_core_flame_prompt(
 	if card == null or game_manager == null:
 		return
 	_pending_nusku_active = card
-	_pending_nusku_active_mill_count = mill_count if mill_count > 0 else card.get_core_flame_preview_cards().size()
+	if mill_count > 0:
+		_pending_nusku_active_mill_count = mill_count
+	elif card.card_owner != null and card.card_owner.deck_zone != null:
+		_pending_nusku_active_mill_count = mini(NuskuActive.MILL_COUNT, card.card_owner.deck_zone.cards.size())
+	else:
+		_pending_nusku_active_mill_count = NuskuActive.MILL_COUNT
 	_pending_nusku_active_preview_cards.clear()
-	var resolved_preview_cards: Array = preview_cards if not preview_cards.is_empty() else card.get_core_flame_preview_cards()
-	for preview in resolved_preview_cards:
-		var preview_card := preview as Card
-		if preview_card != null:
-			_pending_nusku_active_preview_cards.append(preview_card)
 	_pending_nusku_active_recoverable_cards.clear()
-	var resolved_recoverable_cards: Array = recoverable_cards if not recoverable_cards.is_empty() else card.get_core_flame_recoverable_cards()
-	for recoverable in resolved_recoverable_cards:
+	for recoverable in recoverable_cards:
 		var recoverable_card := recoverable as Card
 		if recoverable_card != null:
 			_pending_nusku_active_recoverable_cards.append(recoverable_card)
@@ -906,19 +906,12 @@ func _show_nusku_active_core_flame_prompt(
 	vbox.add_child(title)
 
 	var info := Label.new()
-	info.text = "Choose whether to mill %d card(s) for Core Flame." % _pending_nusku_active_mill_count
+	if _pending_nusku_active_recoverable_cards.is_empty():
+		info.text = "Choose whether to mill %d card(s) for Core Flame." % _pending_nusku_active_mill_count
+	else:
+		info.text = "Choose a magical card milled for Core Flame."
 	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	vbox.add_child(info)
-
-	if not _pending_nusku_active_preview_cards.is_empty():
-		var preview_label := Label.new()
-		var preview_names: Array[String] = []
-		for preview_card in _pending_nusku_active_preview_cards:
-			preview_names.append(preview_card.get_target_log_display_name(game_manager.get_feedback_viewer()))
-		preview_label.text = "Top cards: " + ", ".join(preview_names)
-		preview_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		preview_label.add_theme_font_size_override("font_size", 11)
-		vbox.add_child(preview_label)
 
 	var buttons := VBoxContainer.new()
 	buttons.add_theme_constant_override("separation", 6)
@@ -931,22 +924,22 @@ func _show_nusku_active_core_flame_prompt(
 			_resolve_nusku_active_core_flame_prompt(null, false)
 		)
 		buttons.add_child(mill_btn)
+
+		var decline_btn := Button.new()
+		decline_btn.text = "Decline"
+		decline_btn.pressed.connect(func() -> void:
+			_resolve_nusku_active_core_flame_prompt(null, true)
+		)
+		buttons.add_child(decline_btn)
 	else:
 		for recoverable_card in _pending_nusku_active_recoverable_cards:
 			var chosen_card := recoverable_card
 			var btn := Button.new()
-			btn.text = "Mill and take " + chosen_card.card_name
+			btn.text = "Take " + chosen_card.get_target_log_display_name(game_manager.get_feedback_viewer())
 			btn.pressed.connect(func() -> void:
 				_resolve_nusku_active_core_flame_prompt(chosen_card, false)
 			)
 			buttons.add_child(btn)
-
-	var decline_btn := Button.new()
-	decline_btn.text = "Decline"
-	decline_btn.pressed.connect(func() -> void:
-		_resolve_nusku_active_core_flame_prompt(null, true)
-	)
-	buttons.add_child(decline_btn)
 
 	add_child(panel)
 	_promote_transient_ui(panel)
@@ -975,7 +968,10 @@ func _resolve_nusku_active_core_flame_prompt(chosen_card: Card = null, decline: 
 	}):
 		update_ui()
 		return
-	var feedback := card.resolve_core_flame(game_manager, chosen_card, decline)
+	var feedback := card.resolve_from_command(game_manager, {
+		"chosen_uid": chosen_card.uid if chosen_card != null else "",
+		"decline": decline,
+	})
 	_set_action_label_text(feedback)
 	update_ui()
 
@@ -1928,6 +1924,7 @@ func _process(_delta: float) -> void:
 	_sync_sacrifice_cursor()
 	_capture_action_log_message()
 	_update_hand_hover_preview()
+	_update_hand_context_menu_dismissal()
 
 func _now_msec() -> int:
 	return Time.get_ticks_msec()
@@ -2784,8 +2781,8 @@ func _get_available_tiamat_upkeep_cards() -> Array[Card]:
 
 func _refresh_turn_choice_options() -> void:
 	choice_intro_label.text = "Choose one:"
-	draw_button.text = "Draw Card"
-	mana_button.text = "Gain 4 Mana"
+	draw_button.text = "Gain 1 Mana + Card"
+	mana_button.text = "Gain 5 Mana"
 	draw_button.disabled = false
 	mana_button.disabled = false
 	var available_skolls := _get_available_skoll_upkeep_cards()
@@ -3273,6 +3270,29 @@ func _is_hand_context_menu_stale(hand_player: Player) -> bool:
 			return false
 	return true
 
+func _is_hand_context_menu_active() -> bool:
+	return _context_menu != null \
+		and is_instance_valid(_context_menu) \
+		and str(_context_menu.get_meta("context_scope", "")) == "hand_card"
+
+func _get_hand_context_menu_card_uid() -> String:
+	if not _is_hand_context_menu_active():
+		return ""
+	return str(_context_menu.get_meta("context_card_uid", "")).strip_edges()
+
+func _get_hand_context_menu_source_vc() -> VisualCard:
+	var source_uid := _get_hand_context_menu_card_uid()
+	if source_uid == "":
+		return null
+	for hand_vc in _hand_visual_cards:
+		var vc := hand_vc as VisualCard
+		if vc != null \
+				and is_instance_valid(vc) \
+				and vc.card_data != null \
+				and vc.card_data.uid == source_uid:
+			return vc
+	return null
+
 func _invalidate_cached_board_layouts() -> void:
 	_last_board_player = null
 	_last_enemy_player = null
@@ -3749,7 +3769,43 @@ func _find_hand_hover_card_at(global_pos: Vector2) -> VisualCard:
 	if _hand_hover_preview != null and is_instance_valid(_hand_hover_preview):
 		if _hand_hover_preview.get_global_rect().has_point(global_pos):
 			return _hand_hover_vc
+	if _is_hand_context_menu_active() \
+			and _control_global_rect_has_point(_context_menu, global_pos, _HAND_CONTEXT_MENU_KEEPALIVE_MARGIN):
+		return _get_hand_context_menu_source_vc()
 	return null
+
+func _control_global_rect_has_point(control: Control, global_pos: Vector2, margin: float = 0.0) -> bool:
+	if control == null or not is_instance_valid(control) or not control.visible:
+		return false
+	var rect := control.get_global_rect()
+	if margin > 0.0:
+		rect = rect.grow(margin)
+	return rect.has_point(global_pos)
+
+func _is_hand_context_menu_keepalive_point(global_pos: Vector2) -> bool:
+	if not _is_hand_context_menu_active():
+		return false
+	if _control_global_rect_has_point(_context_menu, global_pos, _HAND_CONTEXT_MENU_KEEPALIVE_MARGIN):
+		return true
+	var source_vc := _get_hand_context_menu_source_vc()
+	if source_vc != null and is_instance_valid(source_vc) and source_vc.contains_global_point(global_pos):
+		return true
+	if _control_global_rect_has_point(_hand_hover_preview, global_pos, _HAND_CONTEXT_MENU_KEEPALIVE_MARGIN):
+		return true
+	return false
+
+func _update_hand_context_menu_dismissal() -> void:
+	if not _is_hand_context_menu_active():
+		return
+	if _is_pause_menu_open() or _any_hand_card_interacting():
+		_close_context_menu()
+		return
+	var hand_player := _get_visible_hand_player()
+	if _is_hand_context_menu_stale(hand_player):
+		_close_context_menu()
+		return
+	if not _is_hand_context_menu_keepalive_point(get_global_mouse_position()):
+		_close_context_menu()
 
 func _extract_card_keywords(card: Card) -> Array[String]:
 	var found: Array[String] = []
@@ -5262,7 +5318,7 @@ func _show_skoll_prompt(skoll: Skoll) -> void:
 	vbox.add_child(title)
 
 	var info := Label.new()
-	info.text = "Sun Hunt: summon this Skoll from your hand now? This summon costs no mana and no sacrifice, replaces Draw Card or Gain 4 Mana, and makes all other summoning cost 2 extra mana this turn."
+	info.text = "Sun Hunt: summon this Skoll from your hand now? This summon costs no mana and no sacrifice, replaces Gain 1 Mana + Card or Gain 5 Mana, and makes all other summoning cost 2 extra mana this turn."
 	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	info.add_theme_font_size_override("font_size", 11)
 	vbox.add_child(info)
@@ -8424,7 +8480,7 @@ func _show_hand_context_menu_panel(panel: Control, card: Card) -> void:
 	panel.set_meta("context_card_uid", card.uid if card != null else "")
 	_context_menu = panel
 	add_child(panel)
-	_promote_transient_ui(panel, HOVER_PREVIEW_Z_INDEX + 20)
+	_promote_transient_ui(panel, HAND_OVERLAY_Z_INDEX + 120)
 	panel.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
 	call_deferred("_position_hand_context_menu_panel", panel, card)
 
@@ -8434,7 +8490,9 @@ func _position_hand_context_menu_panel(panel: Control, card: Card) -> void:
 	var viewport_size := get_viewport_rect().size
 	var anchor_pos := get_global_mouse_position()
 	if card != null \
-			and card == _hand_hover_vc \
+			and _hand_hover_vc != null \
+			and is_instance_valid(_hand_hover_vc) \
+			and card == _hand_hover_vc.card_data \
 			and _hand_hover_preview != null \
 			and is_instance_valid(_hand_hover_preview) \
 			and _hand_hover_preview.visible:
@@ -17743,7 +17801,7 @@ func _on_match_move_validated(move: Dictionary) -> void:
 			# so both players can respond to upkeep effects (hexes, charms, etc.).
 			var choice: String = move.get("choice", "")
 			var feedback := _build_upkeep_resolution_feedback(
-				"Drew a card." if choice == "draw" else "Gained 4 additional mana."
+				game_manager.get_upkeep_choice_feedback(choice)
 			)
 			_continue_after_upkeep_choice(feedback)
 		"tiamat_upkeep_choice":
@@ -18325,21 +18383,16 @@ func _on_match_ui_interaction(player_index: int, type: String, data: Dictionary)
 		"nusku_active_core_flame":
 			var card := game_manager.get_card_by_uid(data.get("source_uid", "")) as NuskuActive
 			if card != null:
-				var preview_cards: Array[Card] = []
-				for preview_uid in data.get("preview_uids", []):
-					var preview_card := game_manager.get_card_by_uid(str(preview_uid))
-					if preview_card != null:
-						preview_cards.append(preview_card)
 				var recoverable_cards: Array[Card] = []
-				for recoverable_uid in data.get("recoverable_uids", []):
-					var recoverable_card := game_manager.get_card_by_uid(str(recoverable_uid))
-					if recoverable_card != null:
-						recoverable_cards.append(recoverable_card)
+				for target_uid in data.get("target_uids", []):
+					var target_card := game_manager.get_card_by_uid(str(target_uid))
+					if target_card != null:
+						recoverable_cards.append(target_card)
 				_show_nusku_active_core_flame_prompt(
 					card,
-					preview_cards,
+					[],
 					recoverable_cards,
-					int(data.get("mill_count", preview_cards.size()))
+					int(data.get("mill_count", 0))
 				)
 		"wolf_adolescent_maturation":
 			var card := game_manager.get_card_by_uid(data.get("source_uid", "")) as WolfAdolescent
@@ -19357,21 +19410,16 @@ func _apply_ui_interaction(event_data: Dictionary) -> void:
 		"nusku_active_core_flame":
 			var card := game_manager.get_card_by_uid(payload.get("source_uid", "")) as NuskuActive
 			if card != null:
-				var preview_cards: Array[Card] = []
-				for preview_uid in payload.get("preview_uids", []):
-					var preview_card := game_manager.get_card_by_uid(str(preview_uid))
-					if preview_card != null:
-						preview_cards.append(preview_card)
 				var recoverable_cards: Array[Card] = []
-				for recoverable_uid in payload.get("recoverable_uids", []):
-					var recoverable_card := game_manager.get_card_by_uid(str(recoverable_uid))
-					if recoverable_card != null:
-						recoverable_cards.append(recoverable_card)
+				for target_uid in payload.get("target_uids", []):
+					var target_card := game_manager.get_card_by_uid(str(target_uid))
+					if target_card != null:
+						recoverable_cards.append(target_card)
 				_show_nusku_active_core_flame_prompt(
 					card,
-					preview_cards,
+					[],
 					recoverable_cards,
-					int(payload.get("mill_count", preview_cards.size()))
+					int(payload.get("mill_count", 0))
 				)
 		"wolf_adolescent_maturation":
 			var card := game_manager.get_card_by_uid(payload.get("source_uid", "")) as WolfAdolescent

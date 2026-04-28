@@ -26,6 +26,10 @@ func can_use_god_power(game_manager: GameManager) -> bool:
 		return false
 	if card_owner != game_manager.current_player:
 		return false
+	if game_manager.has_method("has_resolved_turn_upkeep") and not game_manager.has_resolved_turn_upkeep():
+		return false
+	if game_manager.priority_player != null or not game_manager.action_stack.is_empty():
+		return false
 	if game_manager.has_method("can_player_use_powers") and not game_manager.can_player_use_powers(card_owner):
 		return false
 	return true
@@ -70,6 +74,8 @@ func get_active_god_deck_role(active_god: ActiveGodCard) -> String:
 	if active_god == null:
 		return ACTIVE_GOD_DECK_ROLE_ILLEGAL
 	if uses_culture_locked_deckbuilding():
+		if is_own_active_god_card(active_god):
+			return ACTIVE_GOD_DECK_ROLE_RESERVED
 		return ACTIVE_GOD_DECK_ROLE_ALLOWED if can_include_card_in_culture_locked_deck(active_god) else ACTIVE_GOD_DECK_ROLE_ILLEGAL
 	return ACTIVE_GOD_DECK_ROLE_RESERVED if is_own_active_god_card(active_god) else ACTIVE_GOD_DECK_ROLE_ILLEGAL
 

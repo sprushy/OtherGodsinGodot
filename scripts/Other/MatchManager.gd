@@ -1661,7 +1661,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 			move_validated.emit(command)
 			if _uses_authoritative_headless_priority_flow():
 				var choice_feedback := _build_upkeep_resolution_feedback(
-					"Drew a card." if command.get("choice", "") == "draw" else "Gained 4 additional mana."
+					game_manager.get_upkeep_choice_feedback(str(command.get("choice", "")))
 				)
 				_queue_authoritative_priority_event(
 					"start_turn",
@@ -2815,6 +2815,12 @@ func _process_command_impl(command: Dictionary) -> bool:
 			if active_god == null or not active_god.has_method("resolve_from_command"):
 				move_failed.emit("nusku_active_core_flame_choice: active god not found")
 				return false
+			var chosen_uid: String = str(command.get("chosen_uid", command.get("target_uid", ""))).strip_edges()
+			if chosen_uid != "":
+				var nusku_active := active_god as NuskuActive
+				if nusku_active == null or not nusku_active.is_pending_core_flame_choice_uid(chosen_uid):
+					move_failed.emit("nusku_active_core_flame_choice: invalid Core Flame choice")
+					return false
 			active_god.resolve_from_command(game_manager, command)
 			move_validated.emit(command)
 			return true

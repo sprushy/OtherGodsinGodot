@@ -142,7 +142,7 @@ func configure_profile_store(profile_store, profile_id: String, player_name: Str
 		_ensure_local_profile_store()
 		_load_profile_decks()
 		_apply_default_collection_mode()
-		_refresh_grid()
+		_refresh_collection_grid_and_layout()
 		_refresh_profile_labels()
 
 func configure_online_sync(lobby_client) -> void:
@@ -168,7 +168,7 @@ func configure_account_decks(decks: Array, use_remote: bool = false, preferred_d
 	if is_inside_tree():
 		_load_profile_decks()
 		_apply_default_collection_mode()
-		_refresh_grid()
+		_refresh_collection_grid_and_layout()
 		_refresh_profile_labels()
 
 func _make_all_cards() -> Array:
@@ -773,6 +773,9 @@ func _to_search_key(value: String) -> String:
 func _make_card_item(card: Card) -> Control:
 	var root := Control.new()
 	root.custom_minimum_size = _card_size
+	root.size = _card_size
+	root.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	root.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	root.mouse_filter = Control.MOUSE_FILTER_STOP
 	var unavailable_reason := _get_card_unavailable_reason(card)
 	var is_unavailable := not unavailable_reason.is_empty()
@@ -1003,12 +1006,9 @@ func _refresh_deck_panel() -> void:
 		child.queue_free()
 
 	var total := 0
-	var selected_god := _get_selected_god_template() as GodCard
 	for card_name in _deck:
 		var card := _find_template(card_name)
 		if card != null:
-			if _is_reserved_active_god_card_for_god(card, selected_god):
-				continue # Hide own manifestation
 			total += int(_deck[card_name])
 	if _deck_count_lbl != null:
 		_deck_count_lbl.text = "%d cards" % total
@@ -1017,8 +1017,6 @@ func _refresh_deck_panel() -> void:
 	var in_deck_filter := func(c: Card) -> bool:
 		if not _deck.has(c.card_name) or _deck[c.card_name] <= 0:
 			return false
-		if _is_reserved_active_god_card_for_god(c, selected_god):
-			return false # Hide own manifestation
 		return true
 	var in_deck: Array = _all_cards.filter(in_deck_filter)
 	var in_deck_sort := func(a: Card, b: Card) -> bool:
@@ -1044,8 +1042,7 @@ func _refresh_deck_panel() -> void:
 	_refresh_tiamat_panel()
 	_update_validation()
 	_rebuild_filtered_cards_cache()
-	_refresh_grid()
-	_update_count_badges()
+	_refresh_collection_grid_and_layout()
 	_queue_responsive_layout_refresh()
 
 func _refresh_tiamat_panel() -> void:
@@ -1364,17 +1361,6 @@ func _add_to_deck(card: Card) -> void:
 
 		_push_current_deck_undo_state()
 
-		# If switching gods, clear old god's active forms
-		var old_god := _get_selected_god_template()
-		if old_god != null and old_god.card_name != card.card_name:
-			var old_active := _get_active_god_form(old_god)
-			if old_active != null:
-				_deck.erase(old_active.card_name)
-
-		var active_form := _get_active_god_form(card)
-		if active_form != null:
-			_deck[active_form.card_name] = 1
-
 	elif card.is_power and not _can_add_power_to_current_deck(card):
 		return
 	elif not card.is_power:
@@ -1394,13 +1380,6 @@ func _remove_from_deck(card_name: String) -> void:
 		return
 
 	_push_current_deck_undo_state()
-	var card := _find_template(card_name)
-	if card != null and card.is_god:
-		# Removing a god should also remove its matching active form
-		var active_form := _get_active_god_form(card)
-		if active_form != null:
-			_deck.erase(active_form.card_name)
-
 	_deck[card_name] -= 1
 	if _deck[card_name] == 0:
 		_deck.erase(card_name)
@@ -1897,6 +1876,7 @@ func _refresh_saved_deck_gallery(decks: Array[Dictionary]) -> void:
 	_saved_decks_cache.append_array(decks)
 	if _collection_mode == COLLECTION_MODE_SAVED_DECKS:
 		_refresh_grid()
+		_queue_collection_layout_refresh()
 
 func _make_saved_deck_cover(saved_deck: Dictionary) -> Control:
 	var deck_id := str(saved_deck.get("deck_id", "")).strip_edges()
@@ -2250,7 +2230,7 @@ func _update_validation() -> void:
 		var card := _find_template(card_name)
 		if card == null or card.is_god or card.is_power:
 			continue
-		if _is_reserved_active_god_card_for_god(card, selected_god_template):
+		if _is_illegal_active_god_for_god(card, selected_god_template):
 			continue
 		regular_count_summary += cnt
 		if card.is_legendary:
@@ -2302,26 +2282,22 @@ func _legacy_validation_details() -> void:
 			if card.is_legendary:
 				legendary_count += cnt
 
-	if god_template != null:
-		for card_name: String in _deck:
-			var card := _find_template(card_name)
-			if _is_reserved_active_god_card_for_god(card, god_template):
-				var reserved_count := int(_deck.get(card_name, 0))
-				total -= reserved_count
-				regular_count -= reserved_count
-
 	if god_culture != "":
 		for card_name: String in _deck:
 			var card := _find_template(card_name)
 			if card == null or card.is_god:
 				continue
-			if _is_reserved_active_god_card_for_god(card, god_template):
+			if card is ActiveGodCard:
+				if _is_illegal_active_god_for_god(card, god_template):
+					illegal_active_gods.append(card.card_name)
+					var illegal_count := int(_deck.get(card_name, 0))
+					regular_count -= illegal_count
+					if card.is_legendary:
+						legendary_count -= illegal_count
 				continue
 			if god_template != null and god_template.uses_culture_locked_deckbuilding():
 				if not god_template.can_include_card_in_culture_locked_deck(card):
 					invalid_culture_cards.append(card.card_name)
-			elif card is ActiveGodCard:
-				illegal_active_gods.append(card.card_name)
 			elif card.is_power and not _is_power_compatible_with_culture(card, god_culture):
 				invalid_culture_cards.append(card.card_name)
 
@@ -2387,10 +2363,10 @@ func _legacy_validation_details() -> void:
 				lines.append("✗ Slot %d Levels: %d / %d" % [slot_index + 1, slot_total, TiamatScript.MAX_SLOT_LEVEL_TOTAL]); ok = false
 
 	if illegal_active_gods.is_empty():
-		if god_template != null and not god_template.uses_culture_locked_deckbuilding():
-			lines.append("✓ Active Gods: summoned separately")
+		if god_template != null:
+			lines.append("✓ Active Gods: own form excluded")
 	else:
-		lines.append("✗ Active Gods: %s" % ", ".join(illegal_active_gods)); ok = false
+		lines.append("✗ Active Gods: illegal in main deck: %s" % ", ".join(illegal_active_gods)); ok = false
 
 	lines.append("  Total Cards: %d" % total)
 
@@ -2501,8 +2477,7 @@ func _set_filter(new_filter: String) -> void:
 	_current_page = 0
 	_refresh_filter_button_states()
 	_rebuild_filtered_cards_cache()
-	_refresh_grid()
-	_update_count_badges()
+	_refresh_collection_grid_and_layout()
 
 func _set_faction_filter(new_faction: String) -> void:
 	_set_collection_mode(COLLECTION_MODE_CARDS, false)
@@ -2510,8 +2485,7 @@ func _set_faction_filter(new_faction: String) -> void:
 	_current_page = 0
 	_refresh_faction_button_states()
 	_rebuild_filtered_cards_cache()
-	_refresh_grid()
-	_update_count_badges()
+	_refresh_collection_grid_and_layout()
 
 func _set_level_filter(new_filter: String) -> void:
 	_set_collection_mode(COLLECTION_MODE_CARDS, false)
@@ -2519,8 +2493,7 @@ func _set_level_filter(new_filter: String) -> void:
 	_current_page = 0
 	_refresh_level_filter_button_states()
 	_rebuild_filtered_cards_cache()
-	_refresh_grid()
-	_update_count_badges()
+	_refresh_collection_grid_and_layout()
 
 func _set_search_query(new_query: String) -> void:
 	_set_collection_mode(COLLECTION_MODE_CARDS, false)
@@ -2530,16 +2503,14 @@ func _set_search_query(new_query: String) -> void:
 	_search_query = normalized_query
 	_current_page = 0
 	_rebuild_filtered_cards_cache()
-	_refresh_grid()
-	_update_count_badges()
+	_refresh_collection_grid_and_layout()
 
 func _set_collection_rows(rows: int) -> void:
 	if rows == _collection_rows:
 		return
 	_collection_rows = max(1, rows)
 	_current_page = 0
-	_refresh_grid()
-	_queue_collection_layout_refresh()
+	_refresh_collection_grid_and_layout()
 
 func _set_collection_sort(new_sort: String) -> void:
 	if new_sort == _collection_sort:
@@ -2548,10 +2519,17 @@ func _set_collection_sort(new_sort: String) -> void:
 	_collection_sort = new_sort
 	_current_page = 0
 	_rebuild_filtered_cards_cache()
+	_refresh_collection_grid_and_layout()
+
+# helpers
+func _refresh_collection_grid_and_layout() -> void:
 	_refresh_grid()
 	_update_count_badges()
+	if is_instance_valid(_collection_host) and is_instance_valid(_grid) and _collection_host.size.x > 0.0 and _collection_host.size.y > 0.0:
+		_update_collection_layout()
+	else:
+		_queue_collection_layout_refresh()
 
-# ── helpers ────────────────────────────────────────────────────────
 func _show_previous_page() -> void:
 	if _current_page <= 0:
 		return
@@ -2763,48 +2741,11 @@ func _update_collection_layout() -> void:
 
 		var base_card_size := Vector2(max(1.0, base_estimated_width), max(1.0, base_max_card_height))
 		var base_visible_rows := maxi(1, mini(_collection_rows, int(floor((available.y + COLLECTION_GAP) / max(1.0, base_card_size.y + COLLECTION_GAP)))))
-		_page_grid_columns = base_columns
-		_page_visible_collection_rows = base_visible_rows
-
-		var current_page_capacity = max(1, _page_grid_columns * _page_visible_collection_rows)
-		var current_page_start = _current_page * current_page_capacity
-		var current_page_item_count := maxi(0, mini(total_items - current_page_start, current_page_capacity))
-		if current_page_item_count <= 0:
-			current_page_item_count = mini(total_items, current_page_capacity)
-		current_page_item_count = max(1, current_page_item_count)
-
-		if current_page_item_count <= 1:
-			# Keep the chosen card-size preset authoritative for single-result searches
-			# instead of upscaling the lone card to fill the entire finder.
-			next_size = base_card_size
-			columns = base_columns
-			visible_rows = base_visible_rows
-		else:
-			var best_card_size := base_card_size
-			var best_columns := _page_grid_columns
-			var best_rows := maxi(1, mini(_page_visible_collection_rows, int(ceil(current_page_item_count / float(_page_grid_columns)))))
-			var max_candidate_rows := mini(_page_visible_collection_rows, current_page_item_count)
-
-			for candidate_rows in range(1, max_candidate_rows + 1):
-				var candidate_columns := maxi(1, int(ceil(current_page_item_count / float(candidate_rows))))
-				var candidate_width = floor((available.x - COLLECTION_GAP * float(candidate_columns - 1)) / float(candidate_columns))
-				var candidate_height = floor((available.y - COLLECTION_GAP * float(candidate_rows - 1)) / float(candidate_rows))
-				candidate_width = max(candidate_width, 1.0)
-				candidate_height = max(candidate_height, 1.0)
-
-				var height_from_candidate_width = floor(candidate_width / aspect)
-				var final_height = max(1.0, min(candidate_height, height_from_candidate_width))
-				var final_width = max(1.0, floor(final_height * aspect))
-				var candidate_size := Vector2(final_width, final_height)
-
-				if candidate_size.y > best_card_size.y or (candidate_size.y == best_card_size.y and candidate_size.x > best_card_size.x):
-					best_card_size = candidate_size
-					best_columns = candidate_columns
-					best_rows = candidate_rows
-
-			next_size = best_card_size
-			columns = best_columns
-			visible_rows = best_rows
+		next_size = base_card_size
+		columns = base_columns
+		visible_rows = base_visible_rows
+		_page_grid_columns = columns
+		_page_visible_collection_rows = visible_rows
 
 	_grid.custom_minimum_size.y = visible_rows * next_size.y + COLLECTION_GAP * float(visible_rows - 1)
 
@@ -2950,9 +2891,12 @@ func _get_autofill_power_candidates() -> Array[Card]:
 
 func _count_regular_cards_in_current_deck() -> int:
 	var total := 0
+	var god := _get_selected_god_template() as GodCard
 	for card_name: String in _deck:
 		var card := _find_template(card_name)
 		if not _is_regular_card(card):
+			continue
+		if _is_illegal_active_god_for_god(card, god):
 			continue
 		total += int(_deck.get(card_name, 0))
 	return total
@@ -2968,9 +2912,12 @@ func _count_powers_in_current_deck() -> int:
 
 func _count_regular_legendary_cards_in_current_deck() -> int:
 	var total := 0
+	var god := _get_selected_god_template() as GodCard
 	for card_name: String in _deck:
 		var card := _find_template(card_name)
 		if not _is_regular_card(card) or not card.is_legendary:
+			continue
+		if _is_illegal_active_god_for_god(card, god):
 			continue
 		total += int(_deck.get(card_name, 0))
 	return total
@@ -3017,13 +2964,14 @@ func _get_card_unavailable_badge_text(card: Card) -> String:
 	if card == null:
 		return ""
 	var god := _get_selected_god_template() as GodCard
-	if card is ActiveGodCard and god == null:
-		return "Pick God First"
+	if card is ActiveGodCard:
+		if god == null:
+			return "Pick God First"
+		var active_god := card as ActiveGodCard
+		if god.get_active_god_deck_role(active_god) == GodCard.ACTIVE_GOD_DECK_ROLE_ALLOWED:
+			return ""
+		return "Own Active God" if god.is_own_active_god_card(active_god) else "Unavailable"
 	if god != null and not card.is_god and not _is_card_compatible_with_selected_god(card, god):
-		if card is ActiveGodCard:
-			if not god.uses_culture_locked_deckbuilding():
-				return "Needs Patriarch/Matriarch"
-			return "Needs %s God" % god.culture
 		return "Needs %s or Neutral" % god.culture
 	if card.is_god and not _can_add_god_to_current_deck(card):
 		var god_card := card as GodCard
@@ -3034,18 +2982,23 @@ func _get_card_unavailable_reason(card: Card) -> String:
 	if card == null:
 		return ""
 	var god := _get_selected_god_template() as GodCard
-	if card is ActiveGodCard and god == null:
-		return "Unavailable: Choose a Patriarch or Matriarch god before adding Active God forms."
+	if card is ActiveGodCard:
+		if god == null:
+			return "Unavailable: choose a god before adding Active God cards."
+		var active_god := card as ActiveGodCard
+		match god.get_active_god_deck_role(active_god):
+			GodCard.ACTIVE_GOD_DECK_ROLE_ALLOWED:
+				return ""
+			GodCard.ACTIVE_GOD_DECK_ROLE_RESERVED:
+				return "Unavailable: %s summons its own Active God separately; it cannot go in the main deck." % god.get_display_name_for_control()
+			_:
+				if god.uses_culture_locked_deckbuilding():
+					return "Unavailable: %s decks can only include off-god Active Gods from %s or Neutral." % [
+						god.get_display_name_for_control(),
+						god.culture
+					]
+				return "Unavailable: only Patriarch and Matriarch decks can include off-god Active Gods."
 	if god != null and not card.is_god and not _is_card_compatible_with_selected_god(card, god):
-		if card is ActiveGodCard:
-			if god.get_active_god_deck_role(card) == GodCard.ACTIVE_GOD_DECK_ROLE_RESERVED:
-				return "Reserved: %s keeps %s out of the draw pile and accesses it through Take the Field or Champion's Call." % [
-					god.get_display_name_for_control(),
-					card.get_display_name_for_control()
-				]
-			if not god.uses_culture_locked_deckbuilding():
-				return "Unavailable: Only Patriarchs and Matriarchs can include Active God forms in their deck."
-			return "Unavailable: Only %s Active God forms can be included in a %s deck." % [god.culture, god.culture]
 		if god.uses_culture_locked_deckbuilding():
 			return "Unavailable: %s decks can only use %s or Neutral cards. %s is %s." % [
 				god.get_display_name_for_control(),
@@ -3075,10 +3028,9 @@ func _is_card_compatible_with_selected_god(card: Card, god: GodCard) -> bool:
 	if card == null or god == null or card.is_god:
 		return true
 
-	# Check for Active God card compatibility
 	var active_god := card as ActiveGodCard
 	if active_god != null:
-		return god.get_active_god_deck_role(active_god) != GodCard.ACTIVE_GOD_DECK_ROLE_ILLEGAL
+		return god.get_active_god_deck_role(active_god) == GodCard.ACTIVE_GOD_DECK_ROLE_ALLOWED
 
 	if god.uses_culture_locked_deckbuilding():
 		return god.can_include_card_in_culture_locked_deck(card)
@@ -3086,11 +3038,11 @@ func _is_card_compatible_with_selected_god(card: Card, god: GodCard) -> bool:
 		return _is_power_compatible_with_culture(card, god.culture)
 	return true
 
-func _is_reserved_active_god_card_for_god(card: Card, god: GodCard) -> bool:
+func _is_illegal_active_god_for_god(card: Card, god: GodCard) -> bool:
 	var active_god := card as ActiveGodCard
-	return active_god != null \
-		and god != null \
-		and god.get_active_god_deck_role(active_god) == GodCard.ACTIVE_GOD_DECK_ROLE_RESERVED
+	if active_god == null:
+		return false
+	return god == null or god.get_active_god_deck_role(active_god) != GodCard.ACTIVE_GOD_DECK_ROLE_ALLOWED
 
 func _can_add_power_to_current_deck(power: Card) -> bool:
 	var god := _get_selected_god_template() as GodCard
@@ -3142,8 +3094,7 @@ func _apply_guided_collection_view(filter_name: String) -> void:
 	_refresh_faction_button_states()
 	_refresh_level_filter_button_states()
 	_rebuild_filtered_cards_cache()
-	_refresh_grid()
-	_update_count_badges()
+	_refresh_collection_grid_and_layout()
 
 func _focus_god_selection() -> void:
 	_apply_guided_collection_view("Gods")

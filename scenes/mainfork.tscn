@@ -165,15 +165,15 @@ layout_mode = 2
 
 [node name="ChoiceIntroLabel" type="Label" parent="Control/GameContainer/MockGame/MainHBox/LeftPanel/ChoiceContainer" unique_id=1118823497]
 layout_mode = 2
-text = "+1 mana and:"
+text = "Choose one:"
 
 [node name="DrawButton" type="Button" parent="Control/GameContainer/MockGame/MainHBox/LeftPanel/ChoiceContainer" unique_id=1499906774]
 layout_mode = 2
-text = "Draw Card"
+text = "Gain 1 Mana + Card"
 
 [node name="ManaButton" type="Button" parent="Control/GameContainer/MockGame/MainHBox/LeftPanel/ChoiceContainer" unique_id=607444317]
 layout_mode = 2
-text = "Gain 4 Mana"
+text = "Gain 5 Mana"
 
 [node name="PlacementContainer" type="VBoxContainer" parent="Control/GameContainer/MockGame/MainHBox/LeftPanel" unique_id=1080566400]
 layout_mode = 2
@@ -295,15 +295,15 @@ layout_mode = 2
 
 [node name="ChoiceIntroLabel" type="Label" parent="Control/GameContainer/CardTest/MainHBox/LeftPanel/ChoiceContainer" unique_id=2043498698]
 layout_mode = 2
-text = "+1 mana and:"
+text = "Choose one:"
 
 [node name="DrawButton" type="Button" parent="Control/GameContainer/CardTest/MainHBox/LeftPanel/ChoiceContainer" unique_id=-1294967289]
 layout_mode = 2
-text = "Draw Card"
+text = "Gain 1 Mana + Card"
 
 [node name="ManaButton" type="Button" parent="Control/GameContainer/CardTest/MainHBox/LeftPanel/ChoiceContainer" unique_id=-1294967288]
 layout_mode = 2
-text = "Gain 4 Mana"
+text = "Gain 5 Mana"
 
 [node name="PlacementContainer" type="VBoxContainer" parent="Control/GameContainer/CardTest/MainHBox/LeftPanel" unique_id=-1294967287]
 layout_mode = 2

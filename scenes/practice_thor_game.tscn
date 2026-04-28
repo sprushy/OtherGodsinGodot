@@ -37,15 +37,15 @@ layout_mode = 2
 
 [node name="ChoiceIntroLabel" type="Label" parent="./MainHBox/LeftPanel/ChoiceContainer"]
 layout_mode = 2
-text = "+1 mana and:"
+text = "Choose one:"
 
 [node name="DrawButton" type="Button" parent="./MainHBox/LeftPanel/ChoiceContainer"]
 layout_mode = 2
-text = "Draw Card"
+text = "Gain 1 Mana + Card"
 
 [node name="ManaButton" type="Button" parent="./MainHBox/LeftPanel/ChoiceContainer"]
 layout_mode = 2
-text = "Gain 4 Mana"
+text = "Gain 5 Mana"
 
 [node name="PlacementContainer" type="VBoxContainer" parent="./MainHBox/LeftPanel"]
 layout_mode = 2

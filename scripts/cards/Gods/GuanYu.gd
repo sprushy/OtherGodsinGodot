@@ -37,6 +37,7 @@ func on_turn_upkeep(game_manager: GameManager) -> void:
 
 	if my_count > opp_count:
 		tactic_counters += 1
+		_emit_visual_state_changed()
 		game_manager.note_player_feedback(
 			"%s gains a tactic counter from Tactical Break (now %d). Frontline: %d vs %d." % [
 				card_name, tactic_counters, my_count, opp_count
@@ -111,6 +112,18 @@ func activate_from_command(game_manager: GameManager, command: Dictionary) -> vo
 func on_removed(_game_manager: GameManager) -> void:
 	tactic_counters = 0
 	_last_counter_turn = -1
+	_emit_visual_state_changed()
+
+func get_serialized_state() -> Dictionary:
+	return {
+		"tactic_counters": tactic_counters,
+		"last_counter_turn": _last_counter_turn,
+	}
+
+func apply_serialized_state(state: Dictionary) -> void:
+	tactic_counters = int(state.get("tactic_counters", 0))
+	_last_counter_turn = int(state.get("last_counter_turn", -1))
+	_emit_visual_state_changed()
 
 func get_effect_summary_lines() -> Array[String]:
 	var lines: Array[String] = []
@@ -185,6 +198,7 @@ func _activate_tactical_break(game_manager: GameManager, target: Card) -> void:
 		return
 
 	tactic_counters -= TACTIC_COUNTER_COST
+	_emit_visual_state_changed()
 	game_manager.note_player_feedback(
 		"Tactical Break: %s spends %d tactic counters (now %d) to destroy %s." % [
 			card_name, TACTIC_COUNTER_COST, tactic_counters, target.card_name
