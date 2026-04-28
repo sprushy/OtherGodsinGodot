@@ -278,7 +278,7 @@ func _on_connected_to_server() -> void:
 		return
 	_trace("connected to server")
 	connected_to_lobby.emit()
-	if not _pending_session_id.is_empty() and not _pending_reconnect_token.is_empty():
+	if _should_attempt_pending_lobby_reconnect():
 		_send_request(LobbyProtocolScript.REQUEST_RECONNECT_LOBBY, {
 			"session_id": _pending_session_id,
 			"reconnect_token": _pending_reconnect_token,
@@ -302,6 +302,13 @@ func _on_connected_to_server() -> void:
 		"player_name": _pending_player_name,
 		"profile_id": _pending_profile_id,
 	})
+
+func _should_attempt_pending_lobby_reconnect() -> bool:
+	if _pending_session_id.is_empty() or _pending_reconnect_token.is_empty():
+		return false
+	if _pending_auth_mode in ["login", "register"] and not _pending_password.is_empty():
+		return false
+	return true
 
 func _on_connection_failed() -> void:
 	_cancel_connect_attempt_timeout()

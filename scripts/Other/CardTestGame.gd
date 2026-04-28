@@ -222,7 +222,7 @@ func _setup_test_board() -> void:
 
 func load_clean_start_scenario() -> void:
 	_reset_test_match_state()
-	_add_test_god(player1, Odin.new())
+	_add_test_god(player1, GuanYu.new())
 	_add_test_god(player2, Thor.new())
 
 	# Fresh opening hands only: no seeded board, no prepared cards, no active powers.

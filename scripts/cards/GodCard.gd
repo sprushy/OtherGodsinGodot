@@ -82,6 +82,14 @@ func get_active_god_deck_role(active_god: ActiveGodCard) -> String:
 func get_champions_call_candidate(_allow_fallback: bool = true) -> Card:
 	return null
 
+func has_champions_call() -> bool:
+	return ability_text.find("Champion's Call") != -1 or get_champions_call_candidate(false) != null
+
+func should_show_activation_aura(game_manager: GameManager) -> bool:
+	if not has_method("can_activate"):
+		return false
+	return bool(call("can_activate", game_manager))
+
 func get_reserved_active_god_candidate() -> ActiveGodCard:
 	if card_owner == null:
 		return null
@@ -164,6 +172,17 @@ func get_champions_call_selected_cards_from_command(game_manager: GameManager, c
 		if chosen_card != null:
 			selected.append(chosen_card)
 	return selected
+
+func is_champions_call_command(command: Dictionary) -> bool:
+	return command.has("shelve_uids") or command.has("zone_type") or command.has("zone_index") or command.has("mode")
+
+func resolve_champions_call_from_command(game_manager: GameManager, command: Dictionary) -> String:
+	return resolve_champions_call(
+		game_manager,
+		get_champions_call_selected_cards_from_command(game_manager, command),
+		get_champions_call_zone_from_command(command),
+		get_champions_call_mode_from_command(command)
+	)
 
 func resolve_champions_call(
 	game_manager: GameManager,

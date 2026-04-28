@@ -49,6 +49,9 @@ func can_activate(game_manager: GameManager) -> bool:
 		return true
 	return can_use_champions_call(game_manager)
 
+func should_show_activation_aura(game_manager: GameManager) -> bool:
+	return _can_use_tactical_break(game_manager)
+
 func get_activation_failure_reason(game_manager: GameManager) -> String:
 	if _can_use_tactical_break(game_manager):
 		return ""
@@ -92,8 +95,16 @@ func activate_from_command(game_manager: GameManager, command: Dictionary) -> vo
 		return
 	var target_uid := str(command.get("target_uid", ""))
 	var target: Card = game_manager.get_card_by_uid(target_uid) if not target_uid.is_empty() else null
+	if not target_uid.is_empty() and target == null:
+		game_manager.note_player_feedback("Tactical Break fizzles: target not found.")
+		return
 	if target != null:
 		_activate_tactical_break(game_manager, target)
+		return
+	if is_champions_call_command(command):
+		game_manager.note_player_feedback(resolve_champions_call_from_command(game_manager, command))
+		if current_zone != card_owner.god_zone:
+			notify_power_activated(game_manager, null)
 		return
 	if can_use_champions_call(game_manager):
 		game_manager.note_player_feedback(

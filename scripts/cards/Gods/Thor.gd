@@ -19,6 +19,9 @@ func _init() -> void:
 func can_activate(game_manager: GameManager) -> bool:
 	return can_use_champions_call(game_manager)
 
+func should_show_activation_aura(_game_manager: GameManager) -> bool:
+	return false
+
 func get_activation_failure_reason(game_manager: GameManager) -> String:
 	return get_champions_call_failure_reason(game_manager)
 
@@ -34,6 +37,13 @@ func activate(game_manager: GameManager, _target: Card = null) -> void:
 		notify_power_activated(game_manager, null)
 
 func activate_from_command(game_manager: GameManager, command: Dictionary) -> void:
+	if is_champions_call_command(command):
+		var champion_feedback := resolve_champions_call_from_command(game_manager, command)
+		if game_manager != null:
+			game_manager.note_player_feedback(champion_feedback)
+		if current_zone != card_owner.god_zone:
+			notify_power_activated(game_manager, null)
+		return
 	if not can_use_champions_call(game_manager):
 		activate(game_manager, null)
 		return

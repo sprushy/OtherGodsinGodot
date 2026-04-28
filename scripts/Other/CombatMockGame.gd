@@ -4206,6 +4206,7 @@ func _make_god_cluster(zone: Zone, player: Player, is_enemy: bool) -> Control:
 	else:
 		_player_god_zone_ui = god_zone_ui
 		_player_god_zone_ui.card_clicked.connect(_on_god_card_pressed)
+		_player_god_zone_ui.champions_call_clicked.connect(_on_champions_call_badge_pressed)
 		_player_god_zone_ui.god_right_clicked.connect(_on_god_right_clicked)
 
 	return cluster
@@ -6672,7 +6673,7 @@ func _try_queue_god_targeted_ability(target: Card) -> bool:
 	var source_god := god_ability_source
 	awaiting_god_ability_target = false
 	god_ability_source = null
-	if game_input != null:
+	if _is_networked_client or (match_manager != null and match_manager.uses_authoritative_priority_flow()):
 		var god_uid: String = source_god.get("uid") if "uid" in source_god else ""
 		var target_uid: String = target.get("uid") if target != null and "uid" in target else ""
 		game_input.submit_action({type = "god_ability", god_uid = god_uid, target_uid = target_uid})
@@ -7263,16 +7264,21 @@ func _queue_champions_call_activation(god: GodCard, chosen_shelves: Array[Card] 
 		null,
 		god.card_name + " goes on the stack.",
 		func() -> void:
-			if god.has_method("activate_from_command"):
-				god.activate_from_command(game_manager, {
-					"shelve_uids": shelve_uids,
-					"zone_type": zone.zone_type if zone != null else -1,
-					"zone_index": zone.zone_index if zone != null else -1,
-					"mode": mode,
-				})
-			else:
-				god.activate(game_manager, null)
+			_resolve_queued_champions_call(god, shelve_uids, zone, mode)
 	)
+
+func _resolve_queued_champions_call(god: GodCard, shelve_uids: Array[String], zone: Zone, mode: String) -> void:
+	if god == null or game_manager == null:
+		return
+	var selected_shelves: Array[Card] = []
+	for uid in shelve_uids:
+		var shelved_card := game_manager.get_card_by_uid(uid)
+		if shelved_card != null:
+			selected_shelves.append(shelved_card)
+	var feedback := god.resolve_champions_call(game_manager, selected_shelves, zone, mode)
+	game_manager.note_player_feedback(feedback)
+	if god.current_zone != null and god.card_owner != null and god.current_zone != god.card_owner.god_zone:
+		god.notify_power_activated(game_manager, null)
 
 func _begin_champions_call_activation(god: GodCard) -> void:
 	if god == null:
@@ -8862,6 +8868,21 @@ func _on_god_card_pressed(card: Card) -> void:
 		god_ability_source = card
 		_set_action_label_text(card.card_name + " - click a valid target.")
 		update_ui()
+
+func _on_champions_call_badge_pressed(god: GodCard) -> void:
+	if god == null or game_manager == null:
+		return
+	if _has_pending_target_selection():
+		_handle_invalid_pending_target_click()
+		return
+	if choice_container.visible:
+		_set_action_label_text("You must draw or take mana before activating a god ability.")
+		return
+	if not god.can_use_champions_call(game_manager):
+		_set_action_label_text(god.get_champions_call_failure_reason(game_manager))
+		update_ui()
+		return
+	_begin_champions_call_activation(god)
 
 func _on_god_right_clicked(card: Card) -> void:
 	if _game_finished or game_manager == null or card == null or not card.is_god:

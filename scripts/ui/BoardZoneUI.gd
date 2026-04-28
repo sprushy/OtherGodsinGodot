@@ -4,6 +4,7 @@ extends PanelContainer
 const CardDetailContentBuilder = preload("res://scripts/ui/CardDetailContentBuilder.gd")
 const LockedPowerCursor = preload("res://scripts/ui/LockedPowerCursor.gd")
 const DefenseShieldOverlay = preload("res://scripts/ui/DefenseShieldOverlay.gd")
+const CHAMPIONS_CALL_BADGE_TEXTURE := preload("res://images/Champion's Call Horn Badge.png")
 const BASE_BOARD_Z_INDEX := 0
 const RAISED_BOARD_Z_INDEX := 2
 const GOD_INDICATOR_Z_INDEX := 3
@@ -184,6 +185,7 @@ class TargetAura extends Control:
 
 signal zone_clicked(zone: Zone)
 signal card_clicked(card: Card)
+signal champions_call_clicked(card: GodCard)
 signal creature_drag_started(card: Card, from_zone: Zone)
 signal creature_right_clicked(card: Card)
 signal god_right_clicked(card: Card)
@@ -680,6 +682,65 @@ func _apply_generic_god_activation_style(style: StyleBoxFlat, aura_color: Color)
 	style.border_color = aura_color
 	style.shadow_color = aura_color
 	style.shadow_size = max(style.shadow_size, 16)
+
+func _add_champions_call_badge(overlay: Control, card: Card, is_ready: bool) -> void:
+	if overlay == null or card == null:
+		return
+	var god := card as GodCard
+	if god == null:
+		return
+
+	var clickable := not _is_enemy and god.get_controller() == _get_viewer_player()
+	var badge := PanelContainer.new()
+	badge.name = "ChampionsCallBadge"
+	badge.tooltip_text = "Champion's Call"
+	badge.mouse_filter = Control.MOUSE_FILTER_STOP if clickable else Control.MOUSE_FILTER_IGNORE
+	badge.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	badge.z_index = 30
+	badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	badge.offset_left = -46
+	badge.offset_top = 30
+	badge.offset_right = -6
+	badge.offset_bottom = 70
+
+	var badge_style := StyleBoxFlat.new()
+	badge_style.bg_color = Color(0.09, 0.045, 0.015, 0.82)
+	badge_style.border_color = Color(0.92, 0.62, 0.18, 0.82)
+	badge_style.shadow_color = Color(0.05, 0.025, 0.0, 0.58)
+	badge_style.shadow_size = 4
+	if is_ready:
+		badge_style.bg_color = Color(0.20, 0.09, 0.02, 0.94)
+		badge_style.border_color = Color(1.0, 0.78, 0.22, 1.0)
+		badge_style.shadow_color = Color(1.0, 0.62, 0.12, 0.78)
+		badge_style.shadow_size = 12
+	badge_style.corner_radius_top_left = 20
+	badge_style.corner_radius_top_right = 20
+	badge_style.corner_radius_bottom_left = 20
+	badge_style.corner_radius_bottom_right = 20
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		badge_style.set_border_width(side, 2 if is_ready else 1)
+	badge.add_theme_stylebox_override("panel", badge_style)
+
+	var icon := TextureRect.new()
+	icon.texture = CHAMPIONS_CALL_BADGE_TEXTURE
+	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	icon.offset_left = 3
+	icon.offset_top = 3
+	icon.offset_right = -3
+	icon.offset_bottom = -3
+	icon.modulate = Color(1, 1, 1, 1) if is_ready else Color(0.72, 0.72, 0.72, 0.72)
+	badge.add_child(icon)
+
+	if clickable:
+		badge.gui_input.connect(func(event: InputEvent) -> void:
+			if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+				champions_call_clicked.emit(god)
+				accept_event()
+		)
+	overlay.add_child(badge)
 
 func _add_priority_response_aura(overlay: Control) -> void:
 	if overlay == null:
@@ -1725,7 +1786,23 @@ func _should_show_generic_god_activation_aura(card: Card) -> bool:
 		return false
 	if not card.has_method("can_activate"):
 		return false
+	if card.has_method("should_show_activation_aura"):
+		return bool(card.call("should_show_activation_aura", game_manager))
 	return bool(card.call("can_activate", game_manager))
+
+func _should_show_champions_call_badge(card: Card) -> bool:
+	var god := card as GodCard
+	if god == null:
+		return false
+	return god.has_champions_call()
+
+func _should_glow_champions_call_badge(card: Card) -> bool:
+	var god := card as GodCard
+	if god == null or game_manager == null:
+		return false
+	if god.get_controller() != _get_viewer_player():
+		return false
+	return god.can_use_champions_call(game_manager)
 
 func set_preview_card(card: Card) -> void:
 	_preview_card = card
@@ -1943,6 +2020,8 @@ func _refresh_display() -> void:
 			var show_aphrodite_activation_aura := _should_show_aphrodite_activation_aura(card)
 			var show_nusku_activation_aura := _should_show_nusku_activation_aura(card)
 			var show_generic_god_activation_aura := _should_show_generic_god_activation_aura(card)
+			var show_champions_call_badge := _should_show_champions_call_badge(card)
+			var glow_champions_call_badge := _should_glow_champions_call_badge(card)
 			var show_god_attack_aura := _is_card_attacking_on_stack(card) or _is_card_intercepting_on_stack(card) or _is_card_selected_attacker(card) or _is_card_selected_interceptor(card)
 			var show_god_playing_aura := _should_show_playing_aura(card)
 			var show_god_priority_aura := _is_card_usable_for_priority(card)
@@ -1969,6 +2048,7 @@ func _refresh_display() -> void:
 				or show_god_priority_aura
 				or show_god_target_aura
 				or show_god_followers_tint
+				or glow_champions_call_badge
 			) else BASE_BOARD_Z_INDEX
 			var tex: Texture2D = load(card.art_path)
 			if tex:
@@ -2072,6 +2152,9 @@ func _refresh_display() -> void:
 					counter_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 					counter_badge.add_child(counter_lbl)
 					god_overlay.add_child(counter_badge)
+
+				if show_champions_call_badge:
+					_add_champions_call_badge(god_overlay, card, glow_champions_call_badge)
 
 				if card.is_power and card.is_muted and card.mute_turns_remaining > 0:
 					var muted_badge := PanelContainer.new()

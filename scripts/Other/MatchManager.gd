@@ -290,7 +290,8 @@ func _resolve_ability(action: CardAction) -> void:
 				last_resolution_text = hex.card_name + " triggered!"
 	elif action.resolve_callback.is_valid():
 		action.resolve_callback.call()
-		last_resolution_text = action.resolution_text if action.resolution_text != "" else action.card.card_name + " resolved!"
+		var feedback := game_manager.consume_player_feedback() if game_manager != null else ""
+		last_resolution_text = feedback if feedback.strip_edges() != "" else (action.resolution_text if action.resolution_text != "" else action.card.card_name + " resolved!")
 
 func _resolve_spell(action: CardAction) -> void:
 	if action.resolve_callback.is_valid():

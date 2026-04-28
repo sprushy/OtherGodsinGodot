@@ -2471,8 +2471,25 @@ func _submit_auth_onboarding() -> bool:
 		return false
 	_set_selected_account_username(username)
 	_set_selected_account_password(password)
+	_prepare_submitted_account_auth(username)
 	_complete_auth_onboarding(auth_mode, "Account details saved. Open Multiplayer to sign in.")
 	return true
+
+func _prepare_submitted_account_auth(username: String) -> void:
+	var requested_username := username.strip_edges()
+	if requested_username.is_empty():
+		return
+	_cancel_pending_authenticated_lobby_connects()
+	var requested_key := requested_username.to_lower()
+	var connected_key := _get_connected_account_username().strip_edges().to_lower()
+	var logged_key := _logged_in_account_username.strip_edges().to_lower()
+	if connected_key == requested_key and (logged_key.is_empty() or logged_key == requested_key):
+		return
+	_account_switch_pending = true
+	_account_switch_retry_attempts = 0
+	_logged_in_account_username = ""
+	_lobby_session_id = ""
+	_lobby_reconnect_token = ""
 
 func _get_launch_auth_mode() -> String:
 	if _local_profile_store == null:
