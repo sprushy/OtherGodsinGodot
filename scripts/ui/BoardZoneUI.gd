@@ -38,11 +38,18 @@ class BindingHexIndicator extends Control:
 		draw_circle(Vector2(9.0, 9.0), 1.2, Color(0.85, 1.0, 0.98, 0.95))
 
 class TiamatBroodSlotArt extends Control:
+	signal brood_card_clicked(card: Card)
+
 	var cards: Array[Card] = []
 	var textures: Array[Texture2D] = []
+	var selectable: bool = false
+	var _hovered_slice_index: int = -1
 
-	func setup(slot_cards: Array[Card]) -> void:
+	func setup(slot_cards: Array[Card], is_selectable: bool = false) -> void:
 		cards = slot_cards.duplicate()
+		selectable = is_selectable
+		mouse_filter = Control.MOUSE_FILTER_STOP if selectable else Control.MOUSE_FILTER_IGNORE
+		mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND if selectable else Control.CURSOR_ARROW
 		textures.clear()
 		for slot_card in cards:
 			if slot_card == null or slot_card.art_path == "":
@@ -53,7 +60,25 @@ class TiamatBroodSlotArt extends Control:
 		queue_redraw()
 
 	func _ready() -> void:
-		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		mouse_filter = Control.MOUSE_FILTER_STOP if selectable else Control.MOUSE_FILTER_IGNORE
+
+	func _gui_input(event: InputEvent) -> void:
+		if not selectable:
+			return
+		if event is InputEventMouseMotion:
+			_set_hovered_slice_index(_get_slice_index_at_position(event.position))
+		elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+			if event.pressed:
+				var clicked_index := _get_slice_index_at_position(event.position)
+				if clicked_index >= 0 and clicked_index < cards.size():
+					brood_card_clicked.emit(cards[clicked_index])
+					accept_event()
+
+	func _notification(what: int) -> void:
+		if what == NOTIFICATION_MOUSE_ENTER:
+			_set_hovered_slice_index(_get_slice_index_at_position(get_local_mouse_position()))
+		elif what == NOTIFICATION_MOUSE_EXIT:
+			_set_hovered_slice_index(-1)
 
 	func _draw() -> void:
 		var slice_count := textures.size()
@@ -87,6 +112,27 @@ class TiamatBroodSlotArt extends Control:
 				1.5,
 				true
 			)
+		if selectable and _hovered_slice_index >= 0 and _hovered_slice_index < slice_count:
+			var hover_left := size.x * float(_hovered_slice_index) / float(slice_count)
+			var hover_right := size.x * float(_hovered_slice_index + 1) / float(slice_count)
+			var hover_rect := Rect2(Vector2(hover_left, 0.0), Vector2(hover_right - hover_left, size.y))
+			draw_rect(hover_rect, Color(1.0, 0.84, 0.22, 0.12), true)
+			draw_rect(hover_rect.grow(-1.0), Color(1.0, 0.92, 0.36, 0.95), false, 2.2)
+			draw_rect(hover_rect.grow(-4.0), Color(1.0, 0.98, 0.72, 0.66), false, 1.2)
+
+	func _set_hovered_slice_index(index: int) -> void:
+		if _hovered_slice_index == index:
+			return
+		_hovered_slice_index = index
+		queue_redraw()
+
+	func _get_slice_index_at_position(local_position: Vector2) -> int:
+		var slice_count := cards.size()
+		if slice_count <= 0 or size.x <= 0.0 or size.y <= 0.0:
+			return -1
+		if local_position.x < 0.0 or local_position.x > size.x or local_position.y < 0.0 or local_position.y > size.y:
+			return -1
+		return clampi(int(floor(local_position.x / size.x * float(slice_count))), 0, slice_count - 1)
 
 	func _get_cover_source_region(texture_size: Vector2, output_aspect: float) -> Rect2:
 		if texture_size.x <= 0.0 or texture_size.y <= 0.0 or output_aspect <= 0.0:
@@ -1211,6 +1257,15 @@ func _add_power_lock_texture_overlay(overlay: Control, card: Card = null) -> voi
 	lock_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	overlay.add_child(lock_overlay)
 
+func _can_select_tiamat_brood_slot_for_upkeep() -> bool:
+	if game_manager == null or owning_player == null or zone == null:
+		return false
+	if owning_player != game_manager.current_player:
+		return false
+	if zone.zone_type != Zone.ZoneType.POWER_SLOT or zone not in owning_player.power_zones:
+		return false
+	return TIAMAT_GOD_SCRIPT.can_offer_matriarch_rule(game_manager)
+
 func _add_tiamat_brood_slot_art(overlay: Control) -> void:
 	if overlay == null or zone == null or zone.cards.is_empty():
 		return
@@ -1225,7 +1280,10 @@ func _add_tiamat_brood_slot_art(overlay: Control) -> void:
 
 	var brood_art := TiamatBroodSlotArt.new()
 	brood_art.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	brood_art.setup(slot_cards)
+	brood_art.setup(slot_cards, _can_select_tiamat_brood_slot_for_upkeep())
+	brood_art.brood_card_clicked.connect(func(slot_card: Card) -> void:
+		card_clicked.emit(slot_card)
+	)
 	overlay.add_child(brood_art)
 
 	if not _is_tiamat_power_creature_stack_revealed():

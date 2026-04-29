@@ -204,6 +204,9 @@ func _label_for_pending_stack_action(action: CardAction, viewer: Player = null) 
 	return _label_for_resolved_action(action, viewer)
 
 func _label_for_move(move: Dictionary, viewer: Player = null) -> String:
+	var public_log_message := str(move.get("public_log_message", "")).strip_edges()
+	if public_log_message != "":
+		return public_log_message
 	match move.get("type", ""):
 		"attack":
 			var attacker := move.get("attacker", null) as Card

@@ -16,7 +16,7 @@ func _init() -> void:
 	speed = 0
 	strength = 0
 	sacrifice_cost = 0
-	ability_text = "Once per turn, remove all status changes from a creature."
+	ability_text = "Once per turn, remove all status changes from a creature or structure."
 	culture = "Triskelion"
 	art_path = ART_PATH
 
@@ -29,7 +29,7 @@ func can_activate(game_manager: GameManager, target: Card = null) -> bool:
 		return false
 	if target == null:
 		return false
-	if target.card_type != Card.CardType.CREATURE:
+	if target.card_type != Card.CardType.CREATURE and target.card_type != Card.CardType.STRUCTURE:
 		return false
 	return true
 

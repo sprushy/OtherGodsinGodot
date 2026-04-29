@@ -155,7 +155,7 @@ const STACK_ACTION_LINGER_SECONDS := 0.66
 const POST_GAME_RETURN_DELAY_SECONDS := 1.6
 const CARD_PLAY_TIME_BONUS_MSEC := 2000
 const PRIORITY_IDLE_AUTO_PASS_MSEC := 5000
-const MOVE_TIMEOUT_MSEC := 120000
+const MOVE_TIMEOUT_MSEC := 180000
 const MOVE_TIMEOUT_WARNING_MSEC := 30000
 const MOVE_TIMEOUT_CRITICAL_WARNING_MSEC := 10000
 
@@ -4730,6 +4730,13 @@ func _make_power_icon(card: Card, is_enemy: bool, _player: Player, zone: Zone = 
 				_on_power_pressed(captured)
 		)
 	return panel
+
+func _on_power_slot_card_pressed(card: Card) -> void:
+	if _try_submit_tiamat_upkeep_card_from_board(card):
+		return
+	if card is PowerCard:
+		_on_power_pressed(card as PowerCard)
+
 func _on_power_pressed(power: PowerCard) -> void:
 	if _is_card_usable_for_priority(power):
 		_on_priority_response_chosen(power)
@@ -5770,6 +5777,19 @@ func _submit_tiamat_upkeep_choice(chosen_card: Card) -> void:
 	_close_turn_start_windows()
 	update_ui()
 	hide_turn_choice()
+
+func _try_submit_tiamat_upkeep_card_from_board(card: Card) -> bool:
+	if card == null or not _is_turn_choice_pending():
+		return false
+	if not TiamatScript.is_valid_slot_creature(card):
+		return false
+	if card not in _get_available_tiamat_upkeep_cards():
+		return false
+	if _skoll_prompt_panel != null or _pending_skoll_summon != null:
+		_set_action_label_text("Finish resolving Sun Hunt or cancel it before choosing another upkeep option.")
+		return true
+	_submit_tiamat_upkeep_choice(card)
+	return true
 
 func _on_matriarch_rule_button_pressed() -> void:
 	if _game_finished:
@@ -8040,10 +8060,7 @@ func draw_board() -> void:
 		var pzu := BoardZoneUI.new()
 		board_row.add_child(pzu)
 		pzu.setup(power_zone, game_manager, display_player, i, _on_card_dropped_to_zone, false, "power")
-		pzu.card_clicked.connect(func(card: Card) -> void:
-			if card is PowerCard:
-				_on_power_pressed(card as PowerCard)
-		)
+		pzu.card_clicked.connect(_on_power_slot_card_pressed)
 		_board_zone_uis.append(pzu)
 
 	for i in range(display_player.frontline_zones.size()):
@@ -8070,10 +8087,7 @@ func draw_board() -> void:
 	var rpzu := BoardZoneUI.new()
 	reserve_row.add_child(rpzu)
 	rpzu.setup(reserve_power_zone, game_manager, display_player, 2, _on_card_dropped_to_zone, false, "power")
-	rpzu.card_clicked.connect(func(card: Card) -> void:
-		if card is PowerCard:
-			_on_power_pressed(card as PowerCard)
-	)
+	rpzu.card_clicked.connect(_on_power_slot_card_pressed)
 	_board_zone_uis.append(rpzu)
 
 	for i in range(display_player.reserve_zones.size()):
@@ -12529,6 +12543,8 @@ func _try_resolve_stupefy_target(card: Card) -> bool:
 func _on_board_card_pressed(card: Card) -> void:
 	if _game_finished:
 		return
+	if _try_submit_tiamat_upkeep_card_from_board(card):
+		return
 	if _try_handle_blot_prompt_card_input(card):
 		return
 	if _awaiting_drag_sacrifice_zone:
@@ -12781,7 +12797,7 @@ func _on_board_card_pressed(card: Card) -> void:
 		elif card is AnointingStatue and card.get_controller() == game_manager.current_player:
 			awaiting_anointing_target = true
 			anointing_source = card as AnointingStatue
-			_set_action_label_text("Anointing Statue: Select a creature to cleanse.")
+			_set_action_label_text("Anointing Statue: Select a creature or structure to cleanse.")
 		else:
 			_set_action_label_text(card.card_name + " is a structure and cannot attack or move.")
 		return
@@ -17940,9 +17956,12 @@ func _on_match_move_validated(move: Dictionary) -> void:
 			_continue_after_upkeep_choice(feedback)
 		"tiamat_upkeep_choice":
 			var tiamat_card := game_manager.get_card_by_uid(str(move.get("card_uid", "")))
-			var feedback := "Matriarch Rule returned a slotted creature to hand."
-			if tiamat_card != null:
-				feedback = "Matriarch Rule returned %s to hand." % tiamat_card.card_name
+			var feedback := str(move.get("public_log_message", "")).strip_edges()
+			if feedback == "":
+				feedback = "Matriarch Rule returned a slotted creature to hand."
+				if tiamat_card != null:
+					feedback = "Matriarch Rule added %s to hand." % tiamat_card.card_name
+			_set_action_label_text(feedback)
 			feedback = _build_upkeep_resolution_feedback(feedback)
 			_continue_after_upkeep_choice(feedback)
 		"wolf_adolescent_maturation_choice":

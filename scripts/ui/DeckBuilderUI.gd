@@ -1445,9 +1445,23 @@ func _add_random_regular_cards(rng: RandomNumberGenerator, count: int, legendary
 		if candidates.is_empty():
 			break
 		var chosen: Card = candidates[rng.randi_range(0, candidates.size() - 1)]
-		_deck[chosen.card_name] = int(_deck.get(chosen.card_name, 0)) + 1
-		added += 1
+		var copies_to_add := _get_autofill_regular_copy_count(chosen)
+		if copies_to_add <= 0:
+			break
+		_deck[chosen.card_name] = int(_deck.get(chosen.card_name, 0)) + copies_to_add
+		added += copies_to_add
 	return added
+
+func _get_autofill_regular_copy_count(card: Card) -> int:
+	if card == null:
+		return 0
+	var current_count := int(_deck.get(card.card_name, 0))
+	var remaining_copies := maxi(0, _max_copies(card) - current_count)
+	if remaining_copies <= 0:
+		return 0
+	if card.card_name == "Hyena Pack":
+		return remaining_copies
+	return 1
 
 func _add_random_powers(rng: RandomNumberGenerator, count: int) -> int:
 	var added := 0

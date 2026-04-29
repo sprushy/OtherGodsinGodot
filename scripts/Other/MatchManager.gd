@@ -1713,6 +1713,10 @@ func _process_command_impl(command: Dictionary) -> bool:
 			if not TiamatScript.resolve_matriarch_rule(game_manager, tiamat_card):
 				move_failed.emit("Matriarch Rule is not available for that card.")
 				return false
+			command["public_log_message"] = "Matriarch Rule added %s to %s's hand." % [
+				tiamat_card.card_name,
+				game_manager.current_player.player_name
+			]
 			game_manager.player_chooses_upkeep_only()
 			move_validated.emit(command)
 			if _uses_authoritative_headless_priority_flow():
