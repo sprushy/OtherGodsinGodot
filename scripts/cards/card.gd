@@ -989,7 +989,9 @@ func _is_blocked_by_source_immunity(entry: Dictionary) -> bool:
 func _has_raw_enki_hex_immunity() -> bool:
 	if not is_creature_card():
 		return false
-	if not has_type("Mage"):
+	# This is called while filtering effective statuses. Using has_type() here
+	# re-enters status filtering and can recurse when a hex status is added.
+	if "Mage" not in card_types:
 		return false
 	var controller := get_controller()
 	if controller == null:

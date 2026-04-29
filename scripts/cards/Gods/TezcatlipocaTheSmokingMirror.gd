@@ -163,11 +163,10 @@ func resolve_necoc_yaotl_summon(game_manager: GameManager) -> String:
 
 	var manifestation := _get_necoc_yaotl_candidate(true)
 	var summon_zone := _get_champions_call_open_zone()
-	var active_god := manifestation as ActiveGodCard
-	if active_god != null:
-		active_god.set_stored_normal_god(self)
-		if active_god.has_method("receive_necoc_yaotl_sacrifices"):
-			active_god.call("receive_necoc_yaotl_sacrifices", get_necoc_yaotl_sacrifices())
+	if manifestation.has_method("set_stored_normal_god"):
+		manifestation.call("set_stored_normal_god", self)
+	if manifestation.has_method("receive_necoc_yaotl_sacrifices"):
+		manifestation.call("receive_necoc_yaotl_sacrifices", get_necoc_yaotl_sacrifices())
 
 	var summoned := game_manager.summon_creature_by_effect(
 		card_owner,
@@ -188,8 +187,8 @@ func resolve_necoc_yaotl_summon(game_manager: GameManager) -> String:
 	game_manager.remove_card_from_game_with_hook(self)
 	_emit_visual_state_changed()
 	notify_power_activated(game_manager, manifestation)
-	if active_god != null and active_god.has_method("on_impact"):
-		active_god.call("on_impact", game_manager)
+	if manifestation.has_method("on_impact"):
+		manifestation.call("on_impact", game_manager)
 	return "%s summons Tezcatlipoca, Active God through Necoc Yaotl." % card_name
 
 func get_effect_summary_lines() -> Array[String]:

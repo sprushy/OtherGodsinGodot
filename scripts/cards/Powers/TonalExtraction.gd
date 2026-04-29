@@ -147,9 +147,9 @@ func activate(game_manager: GameManager, target: Card = null) -> void:
 	)
 
 func on_any_card_moved(game_manager: GameManager, moved_card: Card, from_zone: Zone, to_zone: Zone) -> void:
-	if _is_cleaning_up or moved_card == null or from_zone == null or to_zone == null:
+	if _is_cleaning_up or moved_card == null or from_zone == null:
 		return
-	if from_zone.is_board_zone() and not to_zone.is_board_zone():
+	if from_zone.is_board_zone() and (to_zone == null or not to_zone.is_board_zone()):
 		if moved_card == _spirit_token:
 			_cleanup_and_relock(game_manager, false)
 		elif moved_card == _bound_shapeshifter:

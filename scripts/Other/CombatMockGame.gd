@@ -336,7 +336,7 @@ var _active_wheel_of_fire_prompt: WheelOfFire = null
 var _pending_wolf_adolescent_prompts: Array[WolfAdolescent] = []
 var _active_wolf_adolescent_prompt: WolfAdolescent = null
 var _queued_wolf_adolescent_prompt_targets: Dictionary = {}
-var _pending_tezcatlipoca_active_prompt: TezcatlipocaActive = null
+var _pending_tezcatlipoca_active_prompt: Card = null
 var _pending_turn_start_priority_feedback: String = ""
 var _breidablik_panel: Control = null
 var _e2_abzu_panel: Control = null
@@ -9158,14 +9158,16 @@ func _begin_tezcatlipoca_god_activation(card: Card) -> void:
 	_set_action_label_text(card.card_name + ": click a friendly creature to sacrifice for Necoc Yaotl.")
 	update_ui()
 
-func _find_tezcatlipoca_active_for_player(player: Player) -> TezcatlipocaActive:
+func _find_tezcatlipoca_active_for_player(player: Player) -> Card:
 	if player == null:
 		return null
 	for zone in player.frontline_zones + player.reserve_zones:
 		for card in zone.cards:
-			var active_tez := card as TezcatlipocaActive
-			if active_tez != null:
-				return active_tez
+			if card != null \
+					and card.card_name == "Tezcatlipoca, Active God" \
+					and card.has_method("get_valid_titlacauan_targets") \
+					and card.has_method("get_titlacauan_level_budget"):
+				return card
 	return null
 
 func _on_god_power_activated(_turn_number: int, _player: Player, _god: Card, _target: Card) -> void:
@@ -9750,12 +9752,14 @@ func _queue_blessed_knights_impact_prompt(card: BlessedKnights) -> void:
 	_set_action_label_text(card.card_name + " impact waits on priority.")
 	_offer_priority()
 
-func _queue_tezcatlipoca_active_titlacauan_prompt(card: TezcatlipocaActive) -> void:
+func _queue_tezcatlipoca_active_titlacauan_prompt(card: Card) -> void:
 	if card == null or game_manager == null:
 		return
-	var valid_targets := card.get_valid_titlacauan_targets(game_manager)
-	if card.get_titlacauan_level_budget() <= 0 or valid_targets.is_empty():
-		var no_target_text := card.resolve_titlacauan_choice(game_manager, [])
+	if not card.has_method("get_valid_titlacauan_targets") or not card.has_method("get_titlacauan_level_budget"):
+		return
+	var valid_targets: Array = card.call("get_valid_titlacauan_targets", game_manager)
+	if int(card.call("get_titlacauan_level_budget")) <= 0 or valid_targets.is_empty():
+		var no_target_text := str(card.call("resolve_titlacauan_choice", game_manager, [])) if card.has_method("resolve_titlacauan_choice") else card.card_name + " found no creatures it could enslave with Titlacauan."
 		game_manager.note_player_feedback(no_target_text)
 		_set_action_label_text(_consume_resolution_feedback(no_target_text))
 		update_ui()
@@ -15967,16 +15971,16 @@ func _show_mopsus_reveal_prompt(card: MopsusScript, targets: Array[Card]) -> voi
 	)
 	vbox.add_child(close_btn)
 
-func _show_tezcatlipoca_active_titlacauan_prompt(card: TezcatlipocaActive, prompt_targets: Array = []) -> void:
+func _show_tezcatlipoca_active_titlacauan_prompt(card: Card, prompt_targets: Array = []) -> void:
 	_hide_tezcatlipoca_active_titlacauan_prompt()
-	if card == null or game_manager == null:
+	if card == null or game_manager == null or not card.has_method("get_valid_titlacauan_targets"):
 		return
 	_pending_tezcatlipoca_active_prompt = card
 	var current_targets: Array[Card] = []
 	if prompt_targets.is_empty():
-		current_targets = card.get_valid_titlacauan_targets(game_manager)
+		current_targets.assign(card.call("get_valid_titlacauan_targets", game_manager))
 	else:
-		var valid_targets := card.get_valid_titlacauan_targets(game_manager)
+		var valid_targets: Array = card.call("get_valid_titlacauan_targets", game_manager)
 		for target in prompt_targets:
 			if target is Card and target in valid_targets:
 				current_targets.append(target)
@@ -16015,7 +16019,8 @@ func _show_tezcatlipoca_active_titlacauan_prompt(card: TezcatlipocaActive, promp
 	vbox.add_child(title)
 
 	var info := Label.new()
-	info.text = "Total chosen levels must stay within %d." % card.get_titlacauan_level_budget()
+	var level_budget := int(card.call("get_titlacauan_level_budget")) if card.has_method("get_titlacauan_level_budget") else 0
+	info.text = "Total chosen levels must stay within %d." % level_budget
 	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	info.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -16045,7 +16050,7 @@ func _show_tezcatlipoca_active_titlacauan_prompt(card: TezcatlipocaActive, promp
 		status.text = "Selected %d target(s), total level %d / %d." % [
 			selected_targets.size(),
 			total_levels,
-			card.get_titlacauan_level_budget()
+			level_budget
 		]
 		for target in current_targets:
 			var btn: Button = button_map.get(target) as Button
@@ -16067,7 +16072,8 @@ func _show_tezcatlipoca_active_titlacauan_prompt(card: TezcatlipocaActive, promp
 				return
 			var preview_targets := selected_targets.duplicate()
 			preview_targets.append(chosen_target)
-			if not card.is_valid_titlacauan_selection(game_manager, preview_targets):
+			if not card.has_method("is_valid_titlacauan_selection") \
+					or not bool(card.call("is_valid_titlacauan_selection", game_manager, preview_targets)):
 				return
 			selected_targets.append(chosen_target)
 			refresh_selection_state.call()
@@ -16119,7 +16125,7 @@ func _resolve_tezcatlipoca_active_titlacauan_prompt(targets: Array[Card]) -> voi
 		"option": {"target_uids": target_uids, "skip": targets.is_empty()},
 	}):
 		return
-	var resolution_text := card.resolve_titlacauan_choice(game_manager, targets, not targets.is_empty())
+	var resolution_text := str(card.call("resolve_titlacauan_choice", game_manager, targets, not targets.is_empty())) if card.has_method("resolve_titlacauan_choice") else card.card_name + " could not resolve Titlacauan."
 	if _stack_resolution_paused:
 		_resume_after_deferred_resolution(resolution_text)
 	else:

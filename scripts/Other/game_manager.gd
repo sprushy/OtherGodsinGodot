@@ -3228,23 +3228,23 @@ func send_to_deck_bottom_with_hook(card: Card) -> void:
 	card.card_owner.move_card(card, card.card_owner.deck_zone)
 
 func _on_player_card_moved(card: Card, from_zone: Zone, to_zone: Zone) -> void:
-	if card == null or from_zone == null or to_zone == null:
+	if card == null or from_zone == null:
 		return
-	if from_zone.is_board_zone() and not to_zone.is_board_zone():
+	if from_zone.is_board_zone() and (to_zone == null or not to_zone.is_board_zone()):
 		card.board_entry_order = -1
-	elif not from_zone.is_board_zone() and to_zone.is_board_zone():
+	elif to_zone != null and not from_zone.is_board_zone() and to_zone.is_board_zone():
 		_ensure_board_entry_order(card)
 	if prepared_hexes.has(card) and (to_zone == null or not to_zone.is_board_zone() or not card.is_prepared):
 		prepared_hexes.erase(card)
 	if prepared_charms.has(card) and (to_zone == null or not to_zone.is_board_zone() or not card.is_prepared):
 		prepared_charms.erase(card)
-	if card.card_type == Card.CardType.CREATURE:
+	if card.card_type == Card.CardType.CREATURE and to_zone != null:
 		if from_zone.zone_type == Zone.ZoneType.ABYSS and to_zone.is_board_zone():
 			_notify_creature_returned_from_void(card)
 		elif to_zone.zone_type == Zone.ZoneType.ABYSS:
 			_notify_creature_sent_to_void(card)
 	_notify_board_cards_of_movement(card, from_zone, to_zone)
-	if to_zone.zone_type == Zone.ZoneType.FRONTLINE:
+	if to_zone != null and to_zone.zone_type == Zone.ZoneType.FRONTLINE:
 		_push_frontline_entry_event(card)
 
 func _push_frontline_entry_event(card: Card) -> void:

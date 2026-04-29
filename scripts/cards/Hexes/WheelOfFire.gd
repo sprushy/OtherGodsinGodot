@@ -31,7 +31,11 @@ func can_attach_to_target(_game_manager: GameManager, target: Card) -> bool:
 		or target.current_zone == target.card_owner.graveyard_zone
 	)
 
-func can_respond_to_action(_action: CardAction) -> bool:
+func can_respond_to_action(action: CardAction) -> bool:
+	if action == null:
+		return false
+	if action.type == CardAction.Type.EVENT and action.event_name in ["start_turn", "end_turn"]:
+		return false
 	return true
 
 func get_priority_targets(game_manager: GameManager, _action: CardAction) -> Array[Card]:
@@ -77,6 +81,8 @@ func on_turn_start(_game_manager: GameManager) -> void:
 func on_global_turn_start(game_manager: GameManager, _starting_player: Player) -> void:
 	_turn_start_advance_window_open = false
 	if game_manager == null or card_owner == null:
+		return
+	if is_prepared or is_face_down:
 		return
 	if not _is_binding_active():
 		_release_self(game_manager)
