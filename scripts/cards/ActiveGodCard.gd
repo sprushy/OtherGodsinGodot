@@ -6,6 +6,7 @@ var stored_normal_god: Card = null
 
 func _init() -> void:
 	super._init()
+	level = 7
 	if "Active God" not in card_types:
 		card_types.append("Active God")
 

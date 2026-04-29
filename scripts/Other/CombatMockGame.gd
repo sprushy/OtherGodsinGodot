@@ -16,6 +16,7 @@ const GiantMasterArchitectCursorSource = preload("res://images/ui/cursors/GiantM
 const HermesCursorSource = preload("res://images/ui/cursors/SpeedHermesCursor.png")
 const GuanYuCursorSource = preload("res://images/ui/cursors/GuanYuCursor.png")
 const AncientPyreCursorSource = preload("res://images/ui/cursors/PyreCursor.png")
+const AnointingStatueCursorSource = preload("res://scripts/Other/Annointing Statue Cursor.png")
 const CardBackTexture = preload("res://images/cardbackAI.png")
 const PromptRouterScript = preload("res://scripts/server/PromptRouter.gd")
 const HeadlessMatchHostScript = preload("res://scripts/server/HeadlessMatchHost.gd")
@@ -405,6 +406,7 @@ var _giant_master_architect_cursor_texture: Texture2D = null
 var _hermes_cursor_texture: Texture2D = null
 var _guan_yu_cursor_texture: Texture2D = null
 var _ancient_pyre_cursor_texture: Texture2D = null
+var _anointing_statue_cursor_texture: Texture2D = null
 var _active_selection_cursor_mode: String = ""
 var _active_selection_cursor_target_height: int = 0
 var _overlay_selection_cursor_mode: String = ""
@@ -415,6 +417,7 @@ var _giant_master_architect_cursor_target_height: int = 0
 var _hermes_cursor_target_height: int = 0
 var _guan_yu_cursor_target_height: int = 0
 var _ancient_pyre_cursor_target_height: int = 0
+var _anointing_statue_cursor_target_height: int = 0
 var _devour_cancel_prompt: Control = null
 var _suppress_next_devour_cancel_prompt: bool = false
 var _pending_end_turn_discard_uids: Array = []
@@ -484,6 +487,8 @@ const GUAN_YU_CURSOR_TARGET_HEIGHT := 96
 const GUAN_YU_CURSOR_HOTSPOT_RATIO := Vector2(0.95, 0.94)
 const ANCIENT_PYRE_CURSOR_TARGET_HEIGHT := 96
 const ANCIENT_PYRE_CURSOR_HOTSPOT_RATIO := Vector2(0.50, 0.12)
+const ANOINTING_STATUE_CURSOR_TARGET_HEIGHT := 96
+const ANOINTING_STATUE_CURSOR_HOTSPOT_RATIO := Vector2(0.50, 0.74)
 const SACRIFICE_CURSOR_SHAPES := [
 	Input.CURSOR_ARROW,
 	Input.CURSOR_POINTING_HAND,
@@ -1470,6 +1475,9 @@ func _is_giant_master_architect_cursor_mode_active() -> bool:
 func _is_ancient_pyre_cursor_mode_active() -> bool:
 	return awaiting_pyre_target and pyre_source != null
 
+func _is_anointing_statue_cursor_mode_active() -> bool:
+	return awaiting_anointing_target and anointing_source != null
+
 func _is_hermes_cursor_mode_active() -> bool:
 	return awaiting_god_ability_target and god_ability_source is Hermes
 
@@ -1605,6 +1613,8 @@ func _get_selection_cursor_mode() -> String:
 		return "guan_yu"
 	if _is_ancient_pyre_cursor_mode_active():
 		return "ancient_pyre"
+	if _is_anointing_statue_cursor_mode_active():
+		return "anointing_statue"
 	if _is_sacrifice_cursor_mode_active():
 		return "sacrifice"
 	if _is_devour_cursor_mode_active():
@@ -1629,6 +1639,8 @@ func _get_cursor_mode_target_height(cursor_mode: String) -> int:
 			return UIArtScaler.get_board_cursor_target_height(GUAN_YU_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 		"ancient_pyre":
 			return UIArtScaler.get_board_cursor_target_height(ANCIENT_PYRE_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+		"anointing_statue":
+			return UIArtScaler.get_board_cursor_target_height(ANOINTING_STATUE_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 	return 0
 
 func _apply_sacrifice_cursor() -> bool:
@@ -1737,6 +1749,22 @@ func _apply_ancient_pyre_cursor() -> bool:
 		Input.set_custom_mouse_cursor(_ancient_pyre_cursor_texture, cursor_shape, hotspot)
 	return true
 
+func _apply_anointing_statue_cursor() -> bool:
+	var target_height := UIArtScaler.get_board_cursor_target_height(ANOINTING_STATUE_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+	if _anointing_statue_cursor_texture == null or _anointing_statue_cursor_target_height != target_height:
+		_anointing_statue_cursor_texture = UIArtScaler.build_cursor_texture(
+			AnointingStatueCursorSource,
+			target_height
+		)
+		_anointing_statue_cursor_target_height = target_height
+	if _anointing_statue_cursor_texture == null:
+		return false
+
+	var hotspot := UIArtScaler.get_cursor_hotspot(_anointing_statue_cursor_texture, ANOINTING_STATUE_CURSOR_HOTSPOT_RATIO)
+	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
+		Input.set_custom_mouse_cursor(_anointing_statue_cursor_texture, cursor_shape, hotspot)
+	return true
+
 func _restore_default_selection_cursor() -> void:
 	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
 		Input.set_custom_mouse_cursor(null, cursor_shape)
@@ -1800,6 +1828,14 @@ func _sync_sacrifice_cursor() -> void:
 	if cursor_mode == "ancient_pyre":
 		if _apply_ancient_pyre_cursor():
 			_active_selection_cursor_mode = "ancient_pyre"
+			_active_selection_cursor_target_height = target_height
+		else:
+			_restore_default_selection_cursor()
+		return
+
+	if cursor_mode == "anointing_statue":
+		if _apply_anointing_statue_cursor():
+			_active_selection_cursor_mode = "anointing_statue"
 			_active_selection_cursor_target_height = target_height
 		else:
 			_restore_default_selection_cursor()
@@ -6208,9 +6244,21 @@ func _get_attack_card_label(card: Card, fallback: String = "Card") -> String:
 	return card.get_display_name()
 
 func _has_pending_target_selection() -> bool:
-	return match_manager != null and match_manager.is_targeting_active()
+	return (match_manager != null and match_manager.is_targeting_active()) \
+		or awaiting_god_ability_target \
+		or awaiting_stupefy_target \
+		or awaiting_pyre_target \
+		or awaiting_anointing_target
 
 func _get_pending_target_selection_name() -> String:
+	if awaiting_pyre_target and pyre_source != null:
+		return pyre_source.card_name + ": Ritual Flame"
+	if awaiting_anointing_target and anointing_source != null:
+		return anointing_source.card_name
+	if awaiting_god_ability_target and god_ability_source != null:
+		return god_ability_source.card_name
+	if awaiting_stupefy_target and stupefy_source != null:
+		return stupefy_source.card_name + ": Stupefy"
 	return match_manager.get_targeting_name() if match_manager != null else "Target selection"
 
 func _cancel_pending_target_selection(reason: String) -> bool:
@@ -6227,12 +6275,22 @@ func _cancel_pending_target_selection(reason: String) -> bool:
 	
 	if match_manager != null:
 		match_manager.cancel_targeting()
+
+	awaiting_god_ability_target = false
+	god_ability_source = null
+	awaiting_stupefy_target = false
+	stupefy_source = null
+	awaiting_pyre_target = false
+	pyre_source = null
+	awaiting_anointing_target = false
+	anointing_source = null
 	
 	selected_card = null
 	if should_fizzle_paid_preview and paid_preview_card != null:
 		_clear_paid_hand_card_preview(paid_preview_card)
 	print(reason)
 	_set_action_label_text(reason)
+	_sync_sacrifice_cursor()
 	update_ui()
 	return true
 
@@ -13501,7 +13559,10 @@ func _input(event: InputEvent) -> void:
 		var mouse_button_event := event as InputEventMouseButton
 		if mouse_button_event.pressed and mouse_button_event.button_index == MOUSE_BUTTON_RIGHT \
 				and _has_pending_target_selection():
-			_show_target_cancel_prompt()
+			if _is_devour_cursor_mode_active():
+				_show_devour_cancel_prompt()
+			else:
+				_cancel_pending_target_selection(_get_pending_target_selection_name() + " cancelled.")
 			get_viewport().set_input_as_handled()
 			return
 		if mouse_button_event.pressed and mouse_button_event.button_index == MOUSE_BUTTON_LEFT \
@@ -13702,7 +13763,10 @@ func _unhandled_input(event: InputEvent) -> void:
 	if not mouse_event.pressed:
 		return
 	if mouse_event.button_index == MOUSE_BUTTON_RIGHT:
-		_show_target_cancel_prompt()
+		if _is_devour_cursor_mode_active():
+			_show_devour_cancel_prompt()
+		else:
+			_cancel_pending_target_selection(_get_pending_target_selection_name() + " cancelled.")
 		get_viewport().set_input_as_handled()
 	elif mouse_event.button_index == MOUSE_BUTTON_LEFT:
 		if _is_devour_cursor_mode_active():

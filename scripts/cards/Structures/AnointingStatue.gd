@@ -31,7 +31,7 @@ func can_activate(game_manager: GameManager, target: Card = null) -> bool:
 		return false
 	if target.card_type != Card.CardType.CREATURE:
 		return false
-	return _has_any_effects(target)
+	return true
 
 func activate(game_manager: GameManager, target: Card = null) -> void:
 	if not can_activate(game_manager, target):
@@ -43,9 +43,6 @@ func activate(game_manager: GameManager, target: Card = null) -> void:
 
 func on_turn_upkeep(_game_manager: GameManager) -> void:
 	cleanse_uses_this_turn = 0
-
-func _has_any_effects(target: Card) -> bool:
-	return not target.active_buffs.is_empty() or not target.active_statuses.is_empty()
 
 func _remove_all_effects(target: Card) -> void:
 	target.clear_all_effects()
