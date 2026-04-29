@@ -11,7 +11,7 @@ func _init() -> void:
 	linked_god_name = LINKED_GOD_NAME
 	card_name = "Tiamat, Active God"
 	card_types = ["Active God", "Divine Manifestation", "God"]
-	level = 13
+	level = 7
 	mana_cost = 13
 	speed = 1
 	resilience = 38

@@ -138,6 +138,7 @@ var _pending_click_selection_source: Card:
 			match_manager.pending_click_selection_source = val
 var auto_priority: bool = true
 var _pending_local_priority_prompt_signature: Dictionary = {}
+var _visible_priority_prompt_signature: Dictionary = {}
 var _fan_container: Control = null
 var _enemy_hand_overlay: Control = null
 var _hand_hover_preview: Control = null
@@ -7720,7 +7721,7 @@ func _on_local_player_card_moved(card: Card, from_zone: Zone, to_zone: Zone) -> 
 		return
 	if from_zone.zone_type != Zone.ZoneType.HAND:
 		return
-	if to_zone.is_board_zone() and card.card_type == Card.CardType.CREATURE:
+	if to_zone.is_board_zone() and card.card_type in [Card.CardType.CREATURE, Card.CardType.STRUCTURE]:
 		return
 	if not _is_in_play_zone(to_zone):
 		return
@@ -7815,7 +7816,7 @@ func _flush_deferred_priority_events() -> void:
 func _on_card_summoned(player: Player, card: Card, _from_zone: Zone, to_zone: Zone, _summon_source: Card, face_down: bool, stealth: bool) -> void:
 	if player == null or card == null or to_zone == null:
 		return
-	if card.card_type != Card.CardType.CREATURE:
+	if card.card_type not in [Card.CardType.CREATURE, Card.CardType.STRUCTURE]:
 		return
 	if _is_networked_client:
 		return
@@ -14383,9 +14384,40 @@ func _consume_duplicate_local_priority_offer() -> bool:
 	if _pending_local_priority_prompt_signature.is_empty():
 		return false
 	var matches := _build_local_priority_prompt_signature() == _pending_local_priority_prompt_signature
-	if not matches:
-		_pending_local_priority_prompt_signature.clear()
+	_pending_local_priority_prompt_signature.clear()
 	return matches
+
+func _build_priority_prompt_payload_signature(player_index: int, data: Dictionary) -> Dictionary:
+	var response_signatures: Array[String] = []
+	for response in data.get("responses", []):
+		if not (response is Dictionary):
+			continue
+		var response_data := response as Dictionary
+		var target_parts: Array[String] = []
+		for target_uid in response_data.get("target_uids", []):
+			target_parts.append(str(target_uid))
+		target_parts.sort()
+		response_signatures.append("%s:%s:%s:%s" % [
+			str(response_data.get("response_type", "")),
+			str(response_data.get("card_uid", "")),
+			str(response_data.get("from_hand", "")),
+			",".join(target_parts),
+		])
+	response_signatures.sort()
+	var signature := {
+		"player_index": player_index,
+		"action_message": str(data.get("action_message", "")),
+		"responses": response_signatures,
+	}
+	if game_manager != null:
+		signature["stack_size"] = game_manager.action_stack.size()
+		if not game_manager.action_stack.is_empty():
+			var top: CardAction = game_manager.action_stack.back()
+			signature["top_type"] = int(top.type)
+			signature["top_event_name"] = top.event_name
+			signature["top_card_uid"] = top.card.uid if top.card != null else ""
+			signature["top_source_index"] = game_manager.players.find(top.source_player)
+	return signature
 
 func _schedule_priority_recovery_check() -> void:
 	if _priority_recovery_check_scheduled:
@@ -14587,6 +14619,7 @@ func _show_priority_prompt(player: Player) -> void:
 
 func _hide_priority_prompt() -> void:
 	_pending_local_priority_prompt_signature.clear()
+	_visible_priority_prompt_signature.clear()
 	_priority_prompt_idle_deadline_msec = 0
 	_priority_prompt_timeout_pending = false
 	var panel = get_node_or_null("PriorityPromptPanel")
@@ -19715,6 +19748,10 @@ func _apply_priority_offered(data: Dictionary) -> void:
 	_apply_priority_prompt_for_player(priority_idx, data)
 
 func _apply_priority_prompt_for_player(player_index: int, data: Dictionary) -> void:
+	var prompt_signature := _build_priority_prompt_payload_signature(player_index, data)
+	if _is_priority_prompt_visible() and prompt_signature == _visible_priority_prompt_signature:
+		return
+	_visible_priority_prompt_signature = prompt_signature
 	var msg: String = data.get("action_message", "")
 	if msg != "":
 		_set_action_label_text(msg)

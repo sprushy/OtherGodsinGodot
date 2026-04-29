@@ -12,7 +12,7 @@ func _init() -> void:
 	linked_god_name = LINKED_GOD_NAME
 	card_name = "Tezcatlipoca, Active God"
 	card_types = ["Active God", "Divine Manifestation", "God", "Targeting"]
-	level = 10
+	level = 7
 	mana_cost = 0
 	speed = 3
 	resilience = 31

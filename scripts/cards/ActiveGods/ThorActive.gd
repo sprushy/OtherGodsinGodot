@@ -10,7 +10,7 @@ func _init() -> void:
 	linked_god_name = LINKED_GOD_NAME
 	card_name = "Thor, Active God"
 	card_types = ["Active God", "Divine Manifestation", "Human", "Warrior"]
-	level = 10
+	level = 7
 	mana_cost = 10
 	speed = 1
 	resilience = 35
