@@ -8,6 +8,8 @@ const CHAMPIONS_CALL_BADGE_TEXTURE := preload("res://images/Champion's Call Horn
 const SMOKING_MIRROR_BADGE_TEXTURE := preload("res://images/Smoking Mirror Icon.png")
 const TEZ_SACRIFICE_BADGE_TEXTURE := preload("res://images/TezSacBadge.png")
 const TEZ_BLOODSTREAK_TEXTURE := preload("res://images/Bloodstreak.png")
+const TEZ_NORMAL_GOD_NAME := "Tezcatlipoca, the Smoking Mirror"
+const TEZ_REQUIRED_SACRIFICES := 4
 const BASE_BOARD_Z_INDEX := 0
 const RAISED_BOARD_Z_INDEX := 2
 const GOD_INDICATOR_Z_INDEX := 3
@@ -302,7 +304,7 @@ class TargetAura extends Control:
 signal zone_clicked(zone: Zone)
 signal card_clicked(card: Card)
 signal champions_call_clicked(card: GodCard)
-signal tez_necoc_yaotl_badge_clicked(card: TezcatlipocaTheSmokingMirror)
+signal tez_necoc_yaotl_badge_clicked(card: Card)
 signal creature_drag_started(card: Card, from_zone: Zone)
 signal creature_right_clicked(card: Card)
 signal god_right_clicked(card: Card)
@@ -321,6 +323,7 @@ var _hide_pending: bool = false
 var _defense_overlay: Control = null
 var _raised_overlay: Control = null  # non-null for DEF or stealth - floats above the zone row
 var _visual_state_card: Card = null
+var _badge_hover_popup: Control = null
 
 const BASE_ZONE_EXTENT := 165.0
 const DROMI_BINDING_NAME := "Dromi"
@@ -859,33 +862,45 @@ func _add_champions_call_badge(overlay: Control, card: Card, is_ready: bool) -> 
 	overlay.add_child(badge)
 
 func _should_show_smoking_mirror_badge(card: Card) -> bool:
-	var tez := card as TezcatlipocaTheSmokingMirror
-	if tez == null:
+	if not _is_tez_necoc_yaotl_card(card):
 		return false
-	return tez.get_necoc_yaotl_sacrifices().size() >= TezcatlipocaTheSmokingMirror.REQUIRED_NECOC_YAOTL_SACRIFICES
+	return _get_tez_necoc_yaotl_sacrifice_count(card) >= TEZ_REQUIRED_SACRIFICES
 
 func _should_show_tez_sacrifice_badge(card: Card) -> bool:
-	var tez := card as TezcatlipocaTheSmokingMirror
-	if tez == null:
+	if not _is_tez_necoc_yaotl_card(card):
 		return false
-	return tez.get_necoc_yaotl_sacrifices().size() < TezcatlipocaTheSmokingMirror.REQUIRED_NECOC_YAOTL_SACRIFICES
+	return _get_tez_necoc_yaotl_sacrifice_count(card) < TEZ_REQUIRED_SACRIFICES
+
+func _is_tez_necoc_yaotl_card(card: Card) -> bool:
+	return card != null \
+		and card.card_name == TEZ_NORMAL_GOD_NAME \
+		and card.has_method("get_necoc_yaotl_sacrifices")
+
+func _get_tez_necoc_yaotl_sacrifice_count(card: Card) -> int:
+	if not _is_tez_necoc_yaotl_card(card):
+		return 0
+	var sacrifices = card.call("get_necoc_yaotl_sacrifices")
+	if sacrifices is Array:
+		return (sacrifices as Array).size()
+	return 0
 
 func _add_smoking_mirror_badge(overlay: Control, card: Card) -> void:
 	if overlay == null or card == null:
 		return
-	var tez := card as TezcatlipocaTheSmokingMirror
-	if tez == null:
+	if not _is_tez_necoc_yaotl_card(card):
 		return
 
-	var clickable := not _is_enemy and tez.get_controller() == _get_viewer_player()
-	var ready := game_manager != null and tez.can_resolve_necoc_yaotl_summon(game_manager)
-	var badge := PanelContainer.new()
+	var clickable := not _is_enemy and card.get_controller() == _get_viewer_player()
+	var ready := game_manager != null \
+		and card.has_method("can_resolve_necoc_yaotl_summon") \
+		and bool(card.call("can_resolve_necoc_yaotl_summon", game_manager))
+	var badge := Control.new()
 	badge.name = "SmokingMirrorBadge"
-	badge.tooltip_text = "Summon Tezcatlipoca, Active God"
-	if not ready and game_manager != null:
-		var failure_reason := tez.get_necoc_yaotl_summon_failure_reason(game_manager)
+	var hover_text := "Summon Tezcatlipoca, Active God"
+	if not ready and game_manager != null and card.has_method("get_necoc_yaotl_summon_failure_reason"):
+		var failure_reason := str(card.call("get_necoc_yaotl_summon_failure_reason", game_manager))
 		if failure_reason != "":
-			badge.tooltip_text = failure_reason
+			hover_text = failure_reason
 	badge.mouse_filter = Control.MOUSE_FILTER_STOP if clickable else Control.MOUSE_FILTER_IGNORE
 	badge.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND if clickable else Control.CURSOR_ARROW
 	badge.z_index = 31
@@ -895,23 +910,8 @@ func _add_smoking_mirror_badge(overlay: Control, card: Card) -> void:
 	badge.offset_right = -4
 	badge.offset_bottom = 62
 
-	var badge_style := StyleBoxFlat.new()
-	badge_style.bg_color = Color(0.06, 0.03, 0.08, 0.86)
-	badge_style.border_color = Color(0.72, 0.38, 1.0, 0.9)
-	badge_style.shadow_color = Color(0.48, 0.12, 0.9, 0.58)
-	badge_style.shadow_size = 8
 	if ready:
-		badge_style.bg_color = Color(0.10, 0.04, 0.14, 0.95)
-		badge_style.border_color = Color(0.90, 0.56, 1.0, 1.0)
-		badge_style.shadow_color = Color(0.72, 0.24, 1.0, 0.78)
-		badge_style.shadow_size = 14
-	badge_style.corner_radius_top_left = 8
-	badge_style.corner_radius_top_right = 8
-	badge_style.corner_radius_bottom_left = 8
-	badge_style.corner_radius_bottom_right = 8
-	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		badge_style.set_border_width(side, 2 if ready else 1)
-	badge.add_theme_stylebox_override("panel", badge_style)
+		_add_badge_image_glow(badge, SMOKING_MIRROR_BADGE_TEXTURE, Color(0.75, 0.24, 1.0, 0.58))
 
 	var icon := TextureRect.new()
 	icon.texture = SMOKING_MIRROR_BADGE_TEXTURE
@@ -919,43 +919,40 @@ func _add_smoking_mirror_badge(overlay: Control, card: Card) -> void:
 	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	icon.offset_left = 2
-	icon.offset_top = 2
-	icon.offset_right = -2
-	icon.offset_bottom = -2
 	icon.modulate = Color(1, 1, 1, 1) if ready else Color(0.78, 0.74, 0.82, 0.86)
 	badge.add_child(icon)
 
 	if clickable:
 		badge.gui_input.connect(func(event: InputEvent) -> void:
 			if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
-				tez_necoc_yaotl_badge_clicked.emit(tez)
+				tez_necoc_yaotl_badge_clicked.emit(card)
 				accept_event()
 		)
+	_connect_badge_hover(badge, hover_text)
 	overlay.add_child(badge)
 
 func _add_tez_sacrifice_badge(overlay: Control, card: Card) -> void:
 	if overlay == null or card == null:
 		return
-	var tez := card as TezcatlipocaTheSmokingMirror
-	if tez == null:
+	if not _is_tez_necoc_yaotl_card(card):
 		return
 
 	var sacrifice_count := mini(
-		tez.get_necoc_yaotl_sacrifices().size(),
-		TezcatlipocaTheSmokingMirror.REQUIRED_NECOC_YAOTL_SACRIFICES
+		_get_tez_necoc_yaotl_sacrifice_count(card),
+		TEZ_REQUIRED_SACRIFICES
 	)
 	var ready := game_manager != null \
-		and sacrifice_count < TezcatlipocaTheSmokingMirror.REQUIRED_NECOC_YAOTL_SACRIFICES \
-		and tez.can_activate(game_manager) \
-		and not tez.get_valid_targets(game_manager).is_empty()
-	var clickable := not _is_enemy and tez.get_controller() == _get_viewer_player()
+		and sacrifice_count < TEZ_REQUIRED_SACRIFICES \
+		and card.has_method("can_activate") \
+		and bool(card.call("can_activate", game_manager)) \
+		and not _get_tez_valid_sacrifices(card).is_empty()
+	var clickable := not _is_enemy and card.get_controller() == _get_viewer_player()
 
-	var badge := PanelContainer.new()
+	var badge := Control.new()
 	badge.name = "TezSacrificeBadge"
-	badge.tooltip_text = "%d/%d sacrifices" % [
+	var hover_text := "%d/%d sacrifices" % [
 		sacrifice_count,
-		TezcatlipocaTheSmokingMirror.REQUIRED_NECOC_YAOTL_SACRIFICES
+		TEZ_REQUIRED_SACRIFICES
 	]
 	badge.mouse_filter = Control.MOUSE_FILTER_STOP if clickable else Control.MOUSE_FILTER_IGNORE
 	badge.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND if clickable else Control.CURSOR_ARROW
@@ -966,23 +963,8 @@ func _add_tez_sacrifice_badge(overlay: Control, card: Card) -> void:
 	badge.offset_right = -4
 	badge.offset_bottom = 62
 
-	var badge_style := StyleBoxFlat.new()
-	badge_style.bg_color = Color(0.08, 0.06, 0.045, 0.88)
-	badge_style.border_color = Color(0.66, 0.40, 0.22, 0.86)
-	badge_style.shadow_color = Color(0.12, 0.04, 0.02, 0.50)
-	badge_style.shadow_size = 6
 	if ready:
-		badge_style.bg_color = Color(0.14, 0.055, 0.035, 0.96)
-		badge_style.border_color = Color(1.0, 0.24, 0.18, 1.0)
-		badge_style.shadow_color = Color(1.0, 0.10, 0.06, 0.82)
-		badge_style.shadow_size = 14
-	badge_style.corner_radius_top_left = 8
-	badge_style.corner_radius_top_right = 8
-	badge_style.corner_radius_bottom_left = 8
-	badge_style.corner_radius_bottom_right = 8
-	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		badge_style.set_border_width(side, 2 if ready else 1)
-	badge.add_theme_stylebox_override("panel", badge_style)
+		_add_badge_image_glow(badge, TEZ_SACRIFICE_BADGE_TEXTURE, Color(1.0, 0.0, 0.0, 0.92), 8.0)
 
 	var icon := TextureRect.new()
 	icon.texture = TEZ_SACRIFICE_BADGE_TEXTURE
@@ -990,10 +972,6 @@ func _add_tez_sacrifice_badge(overlay: Control, card: Card) -> void:
 	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	icon.offset_left = 2
-	icon.offset_top = 2
-	icon.offset_right = -2
-	icon.offset_bottom = -2
 	icon.modulate = Color(1, 1, 1, 1) if ready else Color(0.86, 0.82, 0.76, 0.92)
 	badge.add_child(icon)
 
@@ -1002,18 +980,116 @@ func _add_tez_sacrifice_badge(overlay: Control, card: Card) -> void:
 	if clickable:
 		badge.gui_input.connect(func(event: InputEvent) -> void:
 			if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
-				tez_necoc_yaotl_badge_clicked.emit(tez)
+				tez_necoc_yaotl_badge_clicked.emit(card)
 				accept_event()
 		)
+	_connect_badge_hover(badge, hover_text)
 	overlay.add_child(badge)
+
+func _get_tez_valid_sacrifices(card: Card) -> Array:
+	if game_manager == null or not _is_tez_necoc_yaotl_card(card) or not card.has_method("get_valid_targets"):
+		return []
+	var sacrifices = card.call("get_valid_targets", game_manager)
+	if sacrifices is Array:
+		return sacrifices as Array
+	return []
+
+func _add_badge_image_glow(badge: Control, texture: Texture2D, color: Color, spread: float = 4.0) -> void:
+	if badge == null or texture == null:
+		return
+	var glow := TextureRect.new()
+	glow.texture = texture
+	glow.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	glow.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	glow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	glow.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	glow.offset_left = -spread
+	glow.offset_top = -spread
+	glow.offset_right = spread
+	glow.offset_bottom = spread
+	glow.modulate = color
+	badge.add_child(glow)
+
+func _connect_badge_hover(badge: Control, text: String) -> void:
+	if badge == null:
+		return
+	badge.mouse_entered.connect(func() -> void:
+		_show_badge_hover_popup(badge, text)
+	)
+	badge.mouse_exited.connect(func() -> void:
+		_hide_badge_hover_popup()
+	)
+
+func _show_badge_hover_popup(anchor: Control, text: String) -> void:
+	_hide_badge_hover_popup()
+	if anchor == null or text.strip_edges() == "" or not is_inside_tree() or is_queued_for_deletion():
+		return
+	var tree := get_tree()
+	if tree == null or tree.current_scene == null:
+		return
+
+	var popup_root := Control.new()
+	popup_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	popup_root.top_level = true
+	popup_root.z_as_relative = false
+	popup_root.z_index = POPUP_Z_INDEX + 1
+
+	var popup := PanelContainer.new()
+	popup.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.08, 0.08, 0.14, 0.96)
+	style.border_color = Color(0.5, 0.5, 0.75)
+	style.corner_radius_top_left = 5
+	style.corner_radius_top_right = 5
+	style.corner_radius_bottom_left = 5
+	style.corner_radius_bottom_right = 5
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		style.set_border_width(side, 1)
+	popup.add_theme_stylebox_override("panel", style)
+	popup_root.add_child(popup)
+
+	var label := Label.new()
+	label.text = text
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	label.add_theme_font_size_override("font_size", 12)
+	label.add_theme_color_override("font_color", Color(1.0, 0.95, 0.75))
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	popup.add_child(label)
+
+	_badge_hover_popup = popup_root
+	tree.current_scene.add_child(popup_root)
+	popup_root.move_to_front()
+
+	await get_tree().process_frame
+	if not is_instance_valid(popup_root) or not is_instance_valid(popup) or not is_instance_valid(anchor):
+		return
+	var popup_size := popup.get_combined_minimum_size()
+	popup.size = popup_size
+	popup_root.size = popup_size
+	var anchor_rect := anchor.get_global_rect()
+	var viewport_size := get_viewport_rect().size
+	var popup_pos := Vector2(
+		anchor_rect.position.x + (anchor_rect.size.x - popup_size.x) * 0.5,
+		anchor_rect.position.y - popup_size.y - 6.0
+	)
+	if popup_pos.y < 4.0:
+		popup_pos.y = anchor_rect.end.y + 6.0
+	popup_pos.x = clamp(popup_pos.x, 4.0, viewport_size.x - popup_size.x - 4.0)
+	popup_root.global_position = popup_pos
+
+func _hide_badge_hover_popup() -> void:
+	if _badge_hover_popup != null and is_instance_valid(_badge_hover_popup):
+		_badge_hover_popup.queue_free()
+	_badge_hover_popup = null
 
 func _add_tez_bloodstreaks(badge: Control, sacrifice_count: int) -> void:
 	if badge == null:
 		return
 	var positions := [
-		{"left": 19.0, "right": -19.0},
-		{"left": 6.0, "right": -32.0},
-		{"left": 32.0, "right": -6.0},
+		{"left": 0.0, "right": 0.0},
+		{"left": -16.0, "right": -16.0},
+		{"left": 16.0, "right": 16.0},
 	]
 	for i in range(mini(sacrifice_count, positions.size())):
 		var streak := TextureRect.new()
@@ -1026,8 +1102,8 @@ func _add_tez_bloodstreaks(badge: Control, sacrifice_count: int) -> void:
 		var pos: Dictionary = positions[i]
 		streak.offset_left = float(pos.get("left", 0.0))
 		streak.offset_right = float(pos.get("right", 0.0))
-		streak.offset_top = 5.0
-		streak.offset_bottom = -5.0
+		streak.offset_top = 0.0
+		streak.offset_bottom = 0.0
 		streak.modulate = Color(1.0, 1.0, 1.0, 0.92)
 		badge.add_child(streak)
 
@@ -2095,6 +2171,7 @@ func _refresh_display() -> void:
 	if not is_inside_tree() or is_queued_for_deletion():
 		return
 	_hide_ability_popup()
+	_hide_badge_hover_popup()
 	_defense_overlay = null
 	_raised_overlay = null
 	for child in get_children():
@@ -2666,6 +2743,7 @@ func _notification(what: int) -> void:
 			_hovered = false
 			_hide_pending = false
 			_disconnect_visual_state_card()
+			_hide_badge_hover_popup()
 			_hide_ability_popup()
 		NOTIFICATION_MOUSE_ENTER:
 			_hovered = true

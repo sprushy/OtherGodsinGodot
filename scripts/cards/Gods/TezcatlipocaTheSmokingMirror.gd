@@ -179,7 +179,7 @@ func resolve_necoc_yaotl_summon(game_manager: GameManager) -> String:
 		self,
 		false,
 		false,
-		true
+		false
 	)
 	if not summoned:
 		return card_name + " could not summon its Active God."
@@ -188,6 +188,8 @@ func resolve_necoc_yaotl_summon(game_manager: GameManager) -> String:
 	game_manager.remove_card_from_game_with_hook(self)
 	_emit_visual_state_changed()
 	notify_power_activated(game_manager, manifestation)
+	if active_god != null and active_god.has_method("on_impact"):
+		active_god.call("on_impact", game_manager)
 	return "%s summons Tezcatlipoca, Active God through Necoc Yaotl." % card_name
 
 func get_effect_summary_lines() -> Array[String]:

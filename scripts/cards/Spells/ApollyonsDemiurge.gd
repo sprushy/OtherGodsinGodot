@@ -2,6 +2,8 @@ extends SpellCard
 class_name ApollyonsDemiurge
 
 const ART_PATH := "res://images/card_art/spells/apollyons_demiurge.png"
+const PENDING_CHOICE_UIDS_META := "demiurge_pending_choice_uids"
+const PENDING_MILL_COUNT_META := "demiurge_pending_mill_count"
 
 func _init() -> void:
 	super._init()
@@ -40,8 +42,21 @@ func resolve_from_command(game_manager: GameManager, command: Dictionary) -> voi
 	var x_value: int = command.get("x_value", 0)
 	# resolve_with_x pays x_cost when x_cost_already_paid=false
 	var demon_choices := resolve_with_x(game_manager, x_value, false)
-	if not demon_choices.is_empty():
-		summon_milled_demon(game_manager, demon_choices[0])
+	var viable_choices := get_viable_milled_demon_choices(demon_choices)
+	if viable_choices.size() > 1:
+		_request_milled_demon_choice(game_manager, viable_choices, x_value)
+		if game_manager != null:
+			game_manager.note_player_feedback("Apollyon's Demiurge milled %d card(s). Choose a Demon to summon." % x_value)
+		return
+	if viable_choices.size() == 1:
+		if game_manager != null:
+			game_manager.note_player_feedback(_complete_demiurge_choice(game_manager, viable_choices[0], x_value))
+		return
+	if game_manager != null:
+		if demon_choices.is_empty():
+			game_manager.note_player_feedback("Apollyon's Demiurge milled %d card(s), but no Demon was milled." % x_value)
+		else:
+			game_manager.note_player_feedback("Apollyon's Demiurge found no open zone to summon into.")
 
 func resolve_with_x(game_manager: GameManager, x_value: int, x_cost_already_paid: bool = false) -> Array[Card]:
 	var demon_choices: Array[Card] = []
@@ -87,6 +102,34 @@ func summon_milled_demon(game_manager: GameManager, demon_card: Card) -> bool:
 	print("Apollyon's Demiurge summons " + demon_card.card_name + ".")
 	return true
 
+func get_viable_milled_demon_choices(demon_choices: Array) -> Array[Card]:
+	var viable_choices: Array[Card] = []
+	if _find_summon_zone() == null:
+		return viable_choices
+	for choice in demon_choices:
+		var demon_card := choice as Card
+		if demon_card != null and _is_viable_milled_demon_choice(demon_card):
+			viable_choices.append(demon_card)
+	return viable_choices
+
+func is_pending_demiurge_choice_uid(chosen_uid: String) -> bool:
+	var pending_choice_uids: Array = get_meta(PENDING_CHOICE_UIDS_META, [])
+	return chosen_uid in pending_choice_uids
+
+func resolve_demiurge_choice(game_manager: GameManager, chosen_uid: String) -> String:
+	if game_manager == null:
+		_clear_pending_demiurge_choice()
+		return "Apollyon's Demiurge choice is no longer available."
+	var pending_choice_uids: Array = get_meta(PENDING_CHOICE_UIDS_META, [])
+	if chosen_uid == "" or chosen_uid not in pending_choice_uids:
+		return "Apollyon's Demiurge choice is no longer available."
+	var chosen_card := game_manager.get_card_by_uid(chosen_uid)
+	if chosen_card == null or not _is_viable_milled_demon_choice(chosen_card):
+		_clear_pending_demiurge_choice()
+		return "Apollyon's Demiurge choice is no longer available."
+	var mill_count := int(get_meta(PENDING_MILL_COUNT_META, 0))
+	return _complete_demiurge_choice(game_manager, chosen_card, mill_count)
+
 func _mill_cards(amount: int) -> Array[Card]:
 	var milled: Array[Card] = []
 	for i in range(amount):
@@ -100,6 +143,40 @@ func _mill_cards(amount: int) -> Array[Card]:
 
 func _is_demon(card: Card) -> bool:
 	return card != null and card.card_type == Card.CardType.CREATURE and card.has_type("Demon")
+
+func _is_viable_milled_demon_choice(card: Card) -> bool:
+	return _is_demon(card) and card_owner != null and card.current_zone == card_owner.graveyard_zone
+
+func _request_milled_demon_choice(game_manager: GameManager, demon_choices: Array[Card], mill_count: int) -> void:
+	if game_manager == null:
+		return
+	var choice_uids: Array[String] = []
+	for demon_card in demon_choices:
+		if demon_card != null:
+			choice_uids.append(demon_card.uid)
+	set_meta(PENDING_CHOICE_UIDS_META, choice_uids)
+	set_meta(PENDING_MILL_COUNT_META, mill_count)
+	var prompt_player := get_controller()
+	if prompt_player == null:
+		prompt_player = card_owner
+	if prompt_player == null:
+		return
+	game_manager.decision_requested.emit(prompt_player, "apollyons_demiurge", {
+		"source_uid": uid,
+		"target_uids": choice_uids,
+		"mill_count": mill_count,
+	})
+
+func _complete_demiurge_choice(game_manager: GameManager, demon_card: Card, mill_count: int) -> String:
+	_clear_pending_demiurge_choice()
+	var summoned := summon_milled_demon(game_manager, demon_card)
+	if summoned:
+		return "Apollyon's Demiurge milled %d card(s) and summoned %s." % [mill_count, demon_card.card_name]
+	return "Apollyon's Demiurge found no open zone to summon into."
+
+func _clear_pending_demiurge_choice() -> void:
+	remove_meta(PENDING_CHOICE_UIDS_META)
+	remove_meta(PENDING_MILL_COUNT_META)
 
 func _find_summon_zone() -> Zone:
 	for zone in card_owner.frontline_zones:

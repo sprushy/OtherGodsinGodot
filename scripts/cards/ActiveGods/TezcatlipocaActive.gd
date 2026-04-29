@@ -23,7 +23,7 @@ func _init() -> void:
 	strength = 25
 	culture = "Nahuatl"
 	flavor_text = "Smoke and sacrifice crown the god of night when he walks the field."
-	ability_text = "[b]Shift[/b] ([b]Activate[/b], [b]Minor Action[/b]): Switch between Divine Manifestation, God, Shapeshifter and Animal, Feline, Jaguar, Shapeshifter.\n[b]Jaguar Form[/b] ([b]Passive[/b]): While in Jaguar form, this card's stats become SPD 3 / RES 24 / STR 35.\n[b]The Smoking Mirror[/b] ([b]Passive[/b]): Instead of damaging followers, convert half of those that would have been destroyed.\n[b]Titlacauan[/b] ([b]Impact[/b]): Enslave up to 2 creatures whose total levels are less than or equal to the total levels sacrificed for Necoc Yaotl."
+	ability_text = "[b]Shift[/b] ([b]Activate[/b], [b]Minor Action[/b]): Switch between Divine Manifestation, God, Shapeshifter and Divine Manifestation, God, Animal, Feline, Jaguar, Shapeshifter.\n[b]Jaguar Form[/b] ([b]Passive[/b]): While in Jaguar form, this card's stats become SPD 3 / RES 24 / STR 35.\n[b]The Smoking Mirror[/b] ([b]Passive[/b]): Instead of damaging followers, convert half of those that would have been destroyed.\n[b]Titlacauan[/b] ([b]Impact[/b]): Enslave up to 2 creatures whose total levels are less than or equal to the total levels sacrificed for Necoc Yaotl."
 	artist = "Ricardo Zoppello"
 	art_path = ART_PATH
 	name_at_bottom = true
@@ -278,7 +278,7 @@ func get_hover_detail_lines(_viewer: Player = null) -> Array[String]:
 	return [
 		"[b]Current Form[/b]: %s" % ("Jaguar" if in_jaguar_form else "Divine"),
 		"[b]Divine[/b]: Divine Manifestation, God, Shapeshifter; SPD 2 / RES 37 / STR 25.",
-		"[b]Jaguar[/b]: Animal, Feline, Jaguar, Shapeshifter; SPD 3 / RES 24 / STR 35.",
+		"[b]Jaguar[/b]: Divine Manifestation, God, Animal, Feline, Jaguar, Shapeshifter; SPD 3 / RES 24 / STR 35.",
 		"[b]The Smoking Mirror[/b]: Follower damage converts half that amount instead.",
 	]
 

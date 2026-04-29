@@ -1489,7 +1489,7 @@ func _get_required_player_for_command(command: Dictionary) -> Player:
 			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("hati_uid", ""))))
 		"skoll_upkeep_summon":
 			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("skoll_uid", ""))))
-		"activate_card_ability", "en_hedu_anna_exaltation", "aphrodite_enslave_choice", "blessed_knights_choice", "wolf_adolescent_maturation_choice", "wheel_of_fire_turn_start_choice", "tezcatlipoca_active_titlacauan_choice", "nusku_active_core_flame_choice", "mummu_entropy_choice", "first_sage_adapa_choice", "third_sage_enmedugga_choice", "fourth_sage_enmegalamma_choice", "sixth_sage_an_enlilda_choice", "lailoken_reveal_choice", "masmassu_priest_reveal_choice", "rally_the_troops_choice", "terror_impact_choice", "huginn_perish_prime_choice", "muninn_perish_prime_choice", "fenrir_devour_choice", "harii_jarl_impact_choice", "durinn_secondborn_choice", "kur_jara_tree_of_life_choice", "hunting_tactics_choice", "foolish_optimism_choice", "gugalanna_celestial_charge_choice", "giant_master_architect_choice", "pai_long_autumn_king_choice", "nergal_lion_choice", "gala_tura_destroyed_choice", "gawain_healing_hands_choice", "tatzelwurm_dragon_heart_choice", "byggvir_reveal_choice":
+		"activate_card_ability", "en_hedu_anna_exaltation", "aphrodite_enslave_choice", "blessed_knights_choice", "wolf_adolescent_maturation_choice", "wheel_of_fire_turn_start_choice", "tezcatlipoca_active_titlacauan_choice", "nusku_active_core_flame_choice", "mummu_entropy_choice", "first_sage_adapa_choice", "third_sage_enmedugga_choice", "fourth_sage_enmegalamma_choice", "sixth_sage_an_enlilda_choice", "lailoken_reveal_choice", "masmassu_priest_reveal_choice", "rally_the_troops_choice", "terror_impact_choice", "huginn_perish_prime_choice", "muninn_perish_prime_choice", "fenrir_devour_choice", "harii_jarl_impact_choice", "durinn_secondborn_choice", "kur_jara_tree_of_life_choice", "hunting_tactics_choice", "foolish_optimism_choice", "gugalanna_celestial_charge_choice", "giant_master_architect_choice", "pai_long_autumn_king_choice", "nergal_lion_choice", "gala_tura_destroyed_choice", "gawain_healing_hands_choice", "tatzelwurm_dragon_heart_choice", "byggvir_reveal_choice", "apollyons_demiurge_choice":
 			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("source_uid", ""))))
 		"humbaba_augury_choice":
 			var humbaba := game_manager.get_card_by_uid(str(command.get("source_uid", ""))) as HumbabaTheTerrible
@@ -2921,6 +2921,20 @@ func _process_command_impl(command: Dictionary) -> bool:
 					move_failed.emit("nusku_active_core_flame_choice: invalid Core Flame choice")
 					return false
 			active_god.resolve_from_command(game_manager, command)
+			move_validated.emit(command)
+			return true
+		"apollyons_demiurge_choice":
+			var source_uid: String = command.get("source_uid", "")
+			var spell := game_manager.get_card_by_uid(source_uid) as ApollyonsDemiurge
+			if spell == null:
+				move_failed.emit("apollyons_demiurge_choice: spell not found")
+				return false
+			var chosen_uid: String = str(command.get("target_uid", command.get("chosen_uid", ""))).strip_edges()
+			if chosen_uid == "" or not spell.is_pending_demiurge_choice_uid(chosen_uid):
+				move_failed.emit("apollyons_demiurge_choice: invalid Demon choice")
+				return false
+			var feedback := spell.resolve_demiurge_choice(game_manager, chosen_uid)
+			game_manager.note_player_feedback(feedback)
 			move_validated.emit(command)
 			return true
 		"wolf_adolescent_maturation_choice":

@@ -3188,7 +3188,12 @@ func _is_hati_moon_hunt_sacrifice_selection_active() -> bool:
 	return _pending_hati_summon != null and _pending_hati_sacrifice == null
 
 func _is_tezcatlipoca_necoc_yaotl_selection_active() -> bool:
-	return _has_pending_click_selection() and _pending_click_selection_source is TezcatlipocaTheSmokingMirror
+	return _has_pending_click_selection() and _is_tezcatlipoca_normal_god(_pending_click_selection_source)
+
+func _is_tezcatlipoca_normal_god(card: Card) -> bool:
+	return card != null \
+		and card.card_name == "Tezcatlipoca, the Smoking Mirror" \
+		and card.has_method("get_necoc_yaotl_sacrifices")
 
 func _cancel_blot_sacrifice_target_selection(reason: String) -> bool:
 	if not _is_blot_sacrifice_target_selection_active():
@@ -8905,7 +8910,7 @@ func _on_god_card_pressed(card: Card) -> void:
 	if card is Odin:
 		_begin_odin_runic_knowledge_activation(card as Odin)
 		return
-	if card is TezcatlipocaTheSmokingMirror:
+	if _is_tezcatlipoca_normal_god(card):
 		_set_action_label_text("Use Tezcatlipoca's Necoc Yaotl badge to sacrifice or summon.")
 		update_ui()
 		return
@@ -8971,7 +8976,7 @@ func _on_champions_call_badge_pressed(god: GodCard) -> void:
 		return
 	_begin_champions_call_activation(god)
 
-func _on_tez_necoc_yaotl_badge_pressed(card: TezcatlipocaTheSmokingMirror) -> void:
+func _on_tez_necoc_yaotl_badge_pressed(card: Card) -> void:
 	if card == null or game_manager == null:
 		return
 	if _has_pending_target_selection():
@@ -8995,7 +9000,7 @@ func _on_god_right_clicked(card: Card) -> void:
 		_reject_pre_turn_action()
 		return
 	_close_context_menu()
-	if card is TezcatlipocaTheSmokingMirror and not _is_card_usable_for_priority(card):
+	if _is_tezcatlipoca_normal_god(card) and not _is_card_usable_for_priority(card):
 		_set_action_label_text("Use Tezcatlipoca's Necoc Yaotl badge to sacrifice or summon.")
 		update_ui()
 		return
@@ -9085,14 +9090,14 @@ func _god_ability_should_use_selection_overlay(card: Card) -> bool:
 			return true
 	return false
 
-func _begin_tezcatlipoca_god_activation(card: TezcatlipocaTheSmokingMirror) -> void:
+func _begin_tezcatlipoca_god_activation(card: Card) -> void:
 	if card == null or game_manager == null:
 		return
-	if not card.can_activate(game_manager):
+	if not _is_tezcatlipoca_normal_god(card) or not card.has_method("can_activate") or not bool(card.call("can_activate", game_manager)):
 		_set_action_label_text(_get_activation_unavailable_text(card, card.card_name + "'s ability cannot be activated right now."))
 		update_ui()
 		return
-	if card.can_resolve_necoc_yaotl_summon(game_manager):
+	if card.has_method("can_resolve_necoc_yaotl_summon") and bool(card.call("can_resolve_necoc_yaotl_summon", game_manager)):
 		if _is_networked_client:
 			game_input.submit_action({type = "god_ability", god_uid = card.uid})
 		else:
@@ -9102,17 +9107,29 @@ func _begin_tezcatlipoca_god_activation(card: TezcatlipocaTheSmokingMirror) -> v
 				null,
 				card.card_name + " completes Necoc Yaotl.",
 				func() -> void:
-					card.activate(game_manager, null)
+					var controller := card.get_controller()
+					card.call("activate", game_manager, null)
+					var active_tez := _find_tezcatlipoca_active_for_player(controller)
+					if active_tez != null and not _has_pending_priority_action(active_tez, "tezcatlipoca_active_titlacauan"):
+						_queue_tezcatlipoca_active_titlacauan_prompt(active_tez)
 			)
 		return
 
-	if card.get_valid_targets(game_manager).is_empty():
-		_set_action_label_text(card.get_activation_failure_reason(game_manager))
+	var valid_targets: Array = []
+	if card.has_method("get_valid_targets"):
+		var target_result = card.call("get_valid_targets", game_manager)
+		if target_result is Array:
+			valid_targets = target_result as Array
+	if valid_targets.is_empty():
+		var failure_reason := str(card.call("get_activation_failure_reason", game_manager)) if card.has_method("get_activation_failure_reason") else card.card_name + "'s ability cannot be activated right now."
+		_set_action_label_text(failure_reason)
 		update_ui()
 		return
 
 	var validate_sacrifice := func(chosen_sacrifice: Card) -> bool:
-		return chosen_sacrifice != null and card.is_valid_activation_target(chosen_sacrifice)
+		return chosen_sacrifice != null \
+			and card.has_method("is_valid_activation_target") \
+			and bool(card.call("is_valid_activation_target", chosen_sacrifice))
 	var confirm_sacrifice := func(chosen_sacrifice: Card) -> void:
 		if _is_networked_client:
 			game_input.submit_action({type = "god_ability", god_uid = card.uid, target_uid = chosen_sacrifice.uid})
@@ -9125,7 +9142,7 @@ func _begin_tezcatlipoca_god_activation(card: TezcatlipocaTheSmokingMirror) -> v
 			card,
 			chosen_sacrifice,
 			func() -> void:
-				card.activate(game_manager, chosen_sacrifice),
+				card.call("activate", game_manager, chosen_sacrifice),
 			"%s offers %s to Necoc Yaotl." % [card.card_name, sacrifice_name]
 		)
 	var cancel_sacrifice := func() -> void:
@@ -9140,6 +9157,16 @@ func _begin_tezcatlipoca_god_activation(card: TezcatlipocaTheSmokingMirror) -> v
 	)
 	_set_action_label_text(card.card_name + ": click a friendly creature to sacrifice for Necoc Yaotl.")
 	update_ui()
+
+func _find_tezcatlipoca_active_for_player(player: Player) -> TezcatlipocaActive:
+	if player == null:
+		return null
+	for zone in player.frontline_zones + player.reserve_zones:
+		for card in zone.cards:
+			var active_tez := card as TezcatlipocaActive
+			if active_tez != null:
+				return active_tez
+	return null
 
 func _on_god_power_activated(_turn_number: int, _player: Player, _god: Card, _target: Card) -> void:
 	pass
@@ -17767,11 +17794,16 @@ func _on_demiurge_confirm_pressed(spin: SpinBox) -> void:
 			_send_used_hand_card_to_graveyard(spell)
 			game_manager.note_player_feedback("Apollyon's Demiurge milled %d card(s), but no Demon was milled." % x_value)
 			return
-		if demon_choices.size() == 1:
-			var summoned: bool = spell.summon_milled_demon(game_manager, demon_choices[0])
+		var viable_choices: Array = spell.get_viable_milled_demon_choices(demon_choices)
+		if viable_choices.is_empty():
+			_send_used_hand_card_to_graveyard(spell)
+			game_manager.note_player_feedback("Apollyon's Demiurge found no open zone to summon into.")
+			return
+		if viable_choices.size() == 1:
+			var summoned: bool = spell.summon_milled_demon(game_manager, viable_choices[0])
 			_send_used_hand_card_to_graveyard(spell)
 			game_manager.note_player_feedback(
-				"Apollyon's Demiurge summoned %s." % demon_choices[0].card_name
+				"Apollyon's Demiurge summoned %s." % viable_choices[0].card_name
 				if summoned
 				else "Apollyon's Demiurge found no open zone to summon into."
 			)
@@ -17790,7 +17822,7 @@ func _on_demiurge_confirm_pressed(spin: SpinBox) -> void:
 			_resume_after_deferred_resolution("Apollyon's Demiurge fizzles.")
 		_show_card_selection_overlay(
 			"Choose a Milled Demon to Summon",
-			demon_choices,
+			viable_choices,
 			on_choose_demon,
 			on_cancel_demon
 		)
@@ -17806,6 +17838,30 @@ func _on_demiurge_cancel_pressed() -> void:
 	_hide_demiurge_prompt()
 	_set_action_label_text("Cancelled Apollyon's Demiurge.")
 	update_ui()
+
+func _show_apollyons_demiurge_choice_prompt(spell: ApollyonsDemiurge, choices: Array[Card], mill_count: int) -> void:
+	if spell == null or choices.is_empty() or game_manager == null:
+		return
+	if _executing_stack_action and not _stack_resolution_paused:
+		_pause_stack_resolution(spell.card_owner)
+	_set_action_label_text("Apollyon's Demiurge: choose a milled Demon to summon.")
+	_show_card_selection_overlay(
+		"Choose a Milled Demon to Summon",
+		choices,
+		func(chosen_card: Card) -> void:
+			if chosen_card == null or spell == null or not is_instance_valid(spell):
+				_resume_after_deferred_resolution("Apollyon's Demiurge choice is no longer available.")
+				return
+			if _submit_prompt_choice_command({
+				"type": "apollyons_demiurge_choice",
+				"source_uid": spell.uid,
+				"target_uid": chosen_card.uid,
+				"mill_count": mill_count,
+			}):
+				update_ui()
+				return
+			_resume_after_deferred_resolution("Apollyon's Demiurge choice could not be submitted.")
+	)
 
 func _on_structure_bonus_confirm_pressed(spin: SpinBox) -> void:
 	var power := _pending_structure_bonus_power
@@ -18148,7 +18204,7 @@ func _on_match_move_validated(move: Dictionary) -> void:
 				_set_action_label_text(response_card.card_name + " responds!")
 			if not _is_networked_client and not authoritative_priority:
 				_offer_priority()
-		"durinn_secondborn_choice", "first_sage_adapa_choice", "third_sage_enmedugga_choice", "fourth_sage_enmegalamma_choice", "sixth_sage_an_enlilda_choice", "lailoken_reveal_choice", "masmassu_priest_reveal_choice", "rally_the_troops_choice", "terror_impact_choice", "fenrir_devour_choice", "gawain_healing_hands_choice", "tatzelwurm_dragon_heart_choice", "byggvir_reveal_choice", "harii_jarl_impact_choice", "gala_tura_destroyed_choice", "kur_jara_tree_of_life_choice", "hunting_tactics_choice", "foolish_optimism_choice", "blessed_knights_choice", "tezcatlipoca_active_titlacauan_choice", "mummu_entropy_choice", "nusku_active_core_flame_choice", "nusku_well_of_fire_choice":
+		"durinn_secondborn_choice", "first_sage_adapa_choice", "third_sage_enmedugga_choice", "fourth_sage_enmegalamma_choice", "sixth_sage_an_enlilda_choice", "lailoken_reveal_choice", "masmassu_priest_reveal_choice", "rally_the_troops_choice", "terror_impact_choice", "fenrir_devour_choice", "gawain_healing_hands_choice", "tatzelwurm_dragon_heart_choice", "byggvir_reveal_choice", "harii_jarl_impact_choice", "gala_tura_destroyed_choice", "kur_jara_tree_of_life_choice", "hunting_tactics_choice", "foolish_optimism_choice", "blessed_knights_choice", "tezcatlipoca_active_titlacauan_choice", "mummu_entropy_choice", "nusku_active_core_flame_choice", "nusku_well_of_fire_choice", "apollyons_demiurge_choice":
 			_apply_prompt_choice_feedback()
 			return
 	update_ui()
@@ -18335,6 +18391,15 @@ func _on_match_ui_interaction(player_index: int, type: String, data: Dictionary)
 					if chosen_card != null:
 						choices.append(chosen_card)
 				_show_nusku_well_of_fire_prompt(nusku, choices, int(data.get("mill_count", 0)))
+		"apollyons_demiurge":
+			var spell := game_manager.get_card_by_uid(data.get("source_uid", "")) as ApollyonsDemiurge
+			if spell != null:
+				var choices: Array[Card] = []
+				for target_uid in data.get("target_uids", []):
+					var chosen_card := game_manager.get_card_by_uid(str(target_uid))
+					if chosen_card != null:
+						choices.append(chosen_card)
+				_show_apollyons_demiurge_choice_prompt(spell, choices, int(data.get("mill_count", 0)))
 		"ragnarok_discard":
 			var power := game_manager.get_card_by_uid(data.get("source_uid", "")) as Ragnarok
 			if power != null and player_index >= 0 and player_index < game_manager.players.size():
@@ -19355,6 +19420,15 @@ func _apply_ui_interaction(event_data: Dictionary) -> void:
 					if chosen_card != null:
 						choices.append(chosen_card)
 				_show_nusku_well_of_fire_prompt(nusku, choices, int(payload.get("mill_count", 0)))
+		"apollyons_demiurge":
+			var spell := game_manager.get_card_by_uid(payload.get("source_uid", "")) as ApollyonsDemiurge
+			if spell != null:
+				var choices: Array[Card] = []
+				for target_uid in payload.get("target_uids", []):
+					var chosen_card := game_manager.get_card_by_uid(str(target_uid))
+					if chosen_card != null:
+						choices.append(chosen_card)
+				_show_apollyons_demiurge_choice_prompt(spell, choices, int(payload.get("mill_count", 0)))
 		"ragnarok_discard":
 			var power := game_manager.get_card_by_uid(payload.get("source_uid", "")) as Ragnarok
 			var prompt_player_index := int(event_data.get("player_index", local_idx))

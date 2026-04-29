@@ -431,6 +431,12 @@ func _label_for_move(move: Dictionary, viewer: Player = null) -> String:
 			if nusku != null and chosen != null:
 				return "%s chooses %s for Well of Fire." % [_card_label_for_viewer(nusku, viewer), _card_label_for_viewer(chosen, viewer)]
 			return ("%s resolves Well of Fire." % _card_label_for_viewer(nusku, viewer)) if nusku != null else "Well of Fire resolves."
+		"apollyons_demiurge_choice":
+			var spell := game_manager.get_card_by_uid(move.get("source_uid", ""))
+			var chosen := game_manager.get_card_by_uid(move.get("target_uid", ""))
+			if spell != null and chosen != null:
+				return "%s chooses %s." % [_card_label_for_viewer(spell, viewer), _card_label_for_viewer(chosen, viewer)]
+			return ("%s resolves." % _card_label_for_viewer(spell, viewer)) if spell != null else "Apollyon's Demiurge resolves."
 		"ragnarok_discard_choice":
 			var ragnarok := game_manager.get_card_by_uid(move.get("source_uid", ""))
 			return ("%s forces a discard." % _card_label_for_viewer(ragnarok, viewer)) if ragnarok != null else "Ragnarok forces a discard."
