@@ -63,8 +63,6 @@ func activate(game_manager: GameManager, target: Card = null) -> void:
 	var feedback := resolve_necoc_yaotl_sacrifice(game_manager, target) if target != null else resolve_necoc_yaotl_summon(game_manager)
 	if game_manager != null and feedback.strip_edges() != "":
 		game_manager.note_player_feedback(feedback)
-	if current_zone != card_owner.god_zone:
-		notify_power_activated(game_manager, target)
 
 func activate_from_command(game_manager: GameManager, command: Dictionary) -> void:
 	if game_manager == null:
@@ -122,6 +120,8 @@ func resolve_necoc_yaotl_sacrifice(game_manager: GameManager, target: Card) -> S
 		target.current_zone.remove_card(target)
 	target.current_zone = null
 	necoc_yaotl_sacrifices.append(target)
+	_emit_visual_state_changed()
+	notify_power_activated(game_manager, target)
 
 	return "%s places %s under itself for Necoc Yaotl. (%d/%d)" % [
 		card_name,
@@ -162,6 +162,8 @@ func resolve_necoc_yaotl_summon(game_manager: GameManager) -> String:
 
 	necoc_yaotl_sacrifices.clear()
 	game_manager.remove_card_from_game_with_hook(self)
+	_emit_visual_state_changed()
+	notify_power_activated(game_manager, manifestation)
 	return "%s summons Tezcatlipoca, Active God through Necoc Yaotl." % card_name
 
 func get_effect_summary_lines() -> Array[String]:

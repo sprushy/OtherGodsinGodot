@@ -28,7 +28,15 @@ func can_use_god_power(game_manager: GameManager) -> bool:
 		return false
 	if game_manager.has_method("has_resolved_turn_upkeep") and not game_manager.has_resolved_turn_upkeep():
 		return false
-	if game_manager.priority_player != null or not game_manager.action_stack.is_empty():
+	var resolving_own_action := false
+	for action in game_manager.resolving_stack_actions:
+		if action != null \
+				and action.card == self \
+				and game_manager.action_stack.size() == 1 \
+				and game_manager.action_stack.has(action):
+			resolving_own_action = true
+			break
+	if not resolving_own_action and (game_manager.priority_player != null or not game_manager.action_stack.is_empty()):
 		return false
 	if game_manager.has_method("can_player_use_powers") and not game_manager.can_player_use_powers(card_owner):
 		return false

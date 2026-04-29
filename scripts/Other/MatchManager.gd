@@ -1080,6 +1080,16 @@ func _build_upkeep_resolution_feedback(default_feedback: String) -> String:
 		return resolved_feedback
 	return "%s %s" % [default_feedback, resolved_feedback]
 
+func _has_pending_wheel_of_fire_turn_start_choice(player: Player) -> bool:
+	if game_manager == null or player == null:
+		return false
+	for zone in player.frontline_zones + player.reserve_zones:
+		for card in zone.cards:
+			var wheel := card as WheelOfFire
+			if wheel != null and wheel.can_offer_turn_start_advance(game_manager):
+				return true
+	return false
+
 func _has_pending_impact_priority_action(card: Card) -> bool:
 	if game_manager == null or card == null:
 		return false
@@ -1692,6 +1702,8 @@ func _process_command_impl(command: Dictionary) -> bool:
 				var choice_feedback := _build_upkeep_resolution_feedback(
 					game_manager.get_upkeep_choice_feedback(str(command.get("choice", "")))
 				)
+				if _has_pending_wheel_of_fire_turn_start_choice(game_manager.current_player):
+					return true
 				_queue_authoritative_priority_event(
 					"start_turn",
 					Callable(),
@@ -1723,6 +1735,8 @@ func _process_command_impl(command: Dictionary) -> bool:
 				var tiamat_feedback := _build_upkeep_resolution_feedback(
 					"Matriarch Rule returned %s to hand." % tiamat_card.card_name
 				)
+				if _has_pending_wheel_of_fire_turn_start_choice(game_manager.current_player):
+					return true
 				_queue_authoritative_priority_event(
 					"start_turn",
 					Callable(),
@@ -1951,7 +1965,8 @@ func _process_command_impl(command: Dictionary) -> bool:
 				move_failed.emit("god_ability: god card not found")
 				return false
 			if not god_card.has_method("can_activate") or not god_card.can_activate(game_manager):
-				move_failed.emit(god_card.card_name + "'s ability cannot be activated right now.")
+				var god_failure_reason: String = str(god_card.get_activation_failure_reason(game_manager)) if god_card.has_method("get_activation_failure_reason") else ""
+				move_failed.emit(god_failure_reason if god_failure_reason != "" else god_card.card_name + "'s ability cannot be activated right now.")
 				return false
 			var target: Card = null
 			var target_uid: String = command.get("target_uid", "")

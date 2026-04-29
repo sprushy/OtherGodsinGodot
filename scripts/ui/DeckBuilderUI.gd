@@ -20,6 +20,8 @@ const COLLECTION_GAP  := 8.0
 const PAGE_REPEAT_INTERVAL_MS := 90
 const COLLECTION_MODE_CARDS := "cards"
 const COLLECTION_MODE_SAVED_DECKS := "saved_decks"
+const DECK_SHARE_PREFIX := "OGDECK1:"
+const DECK_SHARE_FORMAT := "OtherGodsDeck"
 const LEVEL_FILTER_ANY := "Any"
 const MAX_DECK_UNDO_STATES := 100
 const MIN_DECK_PANEL_WIDTH := 260.0
@@ -82,6 +84,8 @@ var _saved_decks_view_btn: Button
 var _saved_actions_bar: HBoxContainer
 var _deck_footer_buttons: HFlowContainer
 var _delete_confirm_dialog: ConfirmationDialog
+var _import_deck_dialog: ConfirmationDialog
+var _import_deck_text_edit: TextEdit
 var _search_edit:      LineEdit
 var _tiamat_panel:     PanelContainer
 var _tiamat_hint_lbl:  Label
@@ -210,6 +214,7 @@ func _build_ui() -> void:
 	_build_collection_panel(body)
 	_build_deck_panel(body)
 	_build_delete_confirm_dialog()
+	_build_import_deck_dialog()
 
 func _build_top_bar(parent: Control) -> void:
 	var bar := PanelContainer.new()
@@ -400,6 +405,20 @@ func _build_collection_panel(parent: Control) -> void:
 	save_btn.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	save_btn.pressed.connect(_save_profile_deck)
 	saved_hdr.add_child(save_btn)
+
+	var export_btn := Button.new()
+	export_btn.text = "Export"
+	export_btn.tooltip_text = "Copy a share code for the current deck"
+	export_btn.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	export_btn.pressed.connect(_export_current_deck)
+	saved_hdr.add_child(export_btn)
+
+	var import_btn := Button.new()
+	import_btn.text = "Import"
+	import_btn.tooltip_text = "Paste a shared deck code"
+	import_btn.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	import_btn.pressed.connect(_show_import_deck_dialog)
+	saved_hdr.add_child(import_btn)
 
 	var new_btn := Button.new()
 	new_btn.text = "New Deck"
@@ -680,6 +699,44 @@ func _build_delete_confirm_dialog() -> void:
 	dialog.confirmed.connect(_confirm_delete_saved_deck)
 	add_child(dialog)
 	_delete_confirm_dialog = dialog
+
+func _build_import_deck_dialog() -> void:
+	if _import_deck_dialog != null and is_instance_valid(_import_deck_dialog):
+		return
+	var dialog := ConfirmationDialog.new()
+	dialog.title = "Import Deck"
+	dialog.initial_position = Window.WINDOW_INITIAL_POSITION_CENTER_PRIMARY_SCREEN
+	dialog.exclusive = true
+	dialog.min_size = Vector2i(560, 340)
+	dialog.get_ok_button().text = "Import Deck"
+	dialog.confirmed.connect(_confirm_import_shared_deck)
+	add_child(dialog)
+	_import_deck_dialog = dialog
+
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 12)
+	margin.add_theme_constant_override("margin_top", 10)
+	margin.add_theme_constant_override("margin_right", 12)
+	margin.add_theme_constant_override("margin_bottom", 10)
+	dialog.add_child(margin)
+
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 8)
+	margin.add_child(box)
+
+	var instructions := Label.new()
+	instructions.text = "Paste an Other Gods deck share code below."
+	instructions.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	instructions.add_theme_font_size_override("font_size", 12)
+	instructions.modulate = Color(0.82, 0.84, 0.9)
+	box.add_child(instructions)
+
+	_import_deck_text_edit = TextEdit.new()
+	_import_deck_text_edit.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
+	_import_deck_text_edit.custom_minimum_size = Vector2(520, 220)
+	_import_deck_text_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_import_deck_text_edit.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	box.add_child(_import_deck_text_edit)
 
 # ── collection grid ────────────────────────────────────────────────
 func _refresh_grid() -> void:
@@ -1535,6 +1592,257 @@ func _save_profile_deck() -> void:
 	_load_profile_decks()
 	_set_status_flash("Deck saved for %s." % _active_player_name)
 
+func _export_current_deck() -> void:
+	if _deck.is_empty():
+		_set_status_flash("Nothing to export.")
+		return
+	var deck_name := _deck_name_edit.text if _deck_name_edit != null else ""
+	var shareable_deck := _make_shareable_deck(deck_name, _deck, _get_tiamat_special_setup())
+	_copy_deck_share_code(shareable_deck, "Deck share code copied.")
+
+func _export_saved_deck(deck_id: String) -> void:
+	var saved_deck := _get_saved_deck_by_id(deck_id)
+	if saved_deck.is_empty():
+		_set_status_flash("Saved deck not found.")
+		return
+	var shareable_deck := _make_shareable_deck(
+		str(saved_deck.get("name", LocalProfileStoreScript.DEFAULT_DECK_NAME)),
+		saved_deck.get("cards", {}),
+		saved_deck.get("special_setup", {})
+	)
+	_copy_deck_share_code(shareable_deck, "Saved deck share code copied.")
+
+func _show_import_deck_dialog() -> void:
+	if _import_deck_dialog == null or not is_instance_valid(_import_deck_dialog):
+		_build_import_deck_dialog()
+	if _import_deck_text_edit != null:
+		var clipboard_text := DisplayServer.clipboard_get().strip_edges()
+		_import_deck_text_edit.text = clipboard_text if clipboard_text.begins_with(DECK_SHARE_PREFIX) else ""
+		_import_deck_text_edit.grab_focus()
+	_import_deck_dialog.popup_centered(Vector2i(640, 380))
+
+func _confirm_import_shared_deck() -> void:
+	if _import_deck_text_edit == null:
+		return
+	var decoded := _decode_shared_deck_text(_import_deck_text_edit.text)
+	if not bool(decoded.get("is_valid", false)):
+		_set_status_flash(str(decoded.get("error", "Could not import deck.")))
+		return
+	var imported_deck = decoded.get("deck", {})
+	if not (imported_deck is Dictionary):
+		_set_status_flash("Could not import deck.")
+		return
+	_import_shared_deck(imported_deck as Dictionary)
+
+func _make_shareable_deck(deck_name: String, cards, special_setup) -> Dictionary:
+	var resolved_name := deck_name.strip_edges()
+	if resolved_name.is_empty():
+		resolved_name = LocalProfileStoreScript.DEFAULT_DECK_NAME
+	var payload := {
+		"format": DECK_SHARE_FORMAT,
+		"version": 1,
+		"app_version": str(ProjectSettings.get_setting("application/config/version", "")),
+		"name": resolved_name,
+		"cards": _sanitize_export_cards(cards),
+		"special_setup": _sanitize_export_special_setup(special_setup),
+	}
+	return payload
+
+func _copy_deck_share_code(shareable_deck: Dictionary, status_message: String) -> void:
+	var json_text := JSON.stringify(shareable_deck)
+	var share_code := DECK_SHARE_PREFIX + Marshalls.raw_to_base64(json_text.to_utf8_buffer())
+	DisplayServer.clipboard_set(share_code)
+	_set_status_flash(status_message)
+
+func _decode_shared_deck_text(raw_text: String) -> Dictionary:
+	var clean_text := raw_text.strip_edges()
+	if clean_text.is_empty():
+		return _share_import_error("Paste a deck share code first.")
+
+	var json_text := clean_text
+	if clean_text.begins_with(DECK_SHARE_PREFIX):
+		var encoded := clean_text.substr(DECK_SHARE_PREFIX.length()).strip_edges()
+		encoded = encoded.replace("\n", "").replace("\r", "").replace("\t", "").replace(" ", "")
+		var decoded_bytes := Marshalls.base64_to_raw(encoded)
+		json_text = decoded_bytes.get_string_from_utf8().strip_edges()
+		if json_text.is_empty():
+			return _share_import_error("That deck share code could not be decoded.")
+
+	var parsed = JSON.parse_string(json_text)
+	if not (parsed is Dictionary):
+		return _share_import_error("That deck share code is not valid deck data.")
+
+	var parsed_deck := parsed as Dictionary
+	var format_name := str(parsed_deck.get("format", "")).strip_edges()
+	if not format_name.is_empty() and format_name != DECK_SHARE_FORMAT:
+		return _share_import_error("That deck share code uses an unsupported format.")
+	var version := int(parsed_deck.get("version", 1))
+	if version > 1:
+		return _share_import_error("That deck share code is from a newer version of Other Gods.")
+
+	var cards_result := _sanitize_imported_share_cards(parsed_deck.get("cards", parsed_deck))
+	if not bool(cards_result.get("is_valid", false)):
+		return cards_result
+	var special_result := _sanitize_imported_special_setup(parsed_deck.get("special_setup", {}))
+	if not bool(special_result.get("is_valid", false)):
+		return special_result
+
+	var imported_name := str(parsed_deck.get("name", "Imported Deck")).strip_edges()
+	if imported_name.is_empty():
+		imported_name = "Imported Deck"
+	return {
+		"is_valid": true,
+		"deck": {
+			"name": imported_name,
+			"cards": cards_result.get("cards", {}),
+			"special_setup": special_result.get("special_setup", {}),
+		}
+	}
+
+func _sanitize_export_cards(cards) -> Dictionary:
+	var sanitized: Dictionary = {}
+	if not (cards is Dictionary):
+		return sanitized
+	for raw_card_name in (cards as Dictionary).keys():
+		var card := _resolve_card_template_for_share(str(raw_card_name))
+		var count := int((cards as Dictionary)[raw_card_name])
+		if card == null or count <= 0:
+			continue
+		sanitized[card.card_name] = count
+	return sanitized
+
+func _sanitize_export_special_setup(special_setup) -> Dictionary:
+	if not (special_setup is Dictionary):
+		return {}
+	return TiamatScript.build_special_setup(
+		TiamatScript.get_slot_card_names_from_setup(special_setup)
+	)
+
+func _sanitize_imported_share_cards(cards) -> Dictionary:
+	if not (cards is Dictionary):
+		return _share_import_error("The deck code is missing its card list.")
+	var sanitized: Dictionary = {}
+	for raw_card_name in (cards as Dictionary).keys():
+		var requested_name := str(raw_card_name).strip_edges()
+		var count := int((cards as Dictionary)[raw_card_name])
+		if requested_name.is_empty() or count <= 0:
+			continue
+		var card := _resolve_card_template_for_share(requested_name)
+		if card == null:
+			return _share_import_error("Unknown card in shared deck: %s." % requested_name)
+		var next_count := int(sanitized.get(card.card_name, 0)) + count
+		var max_count := _max_copies(card)
+		if next_count > max_count:
+			return _share_import_error("%s exceeds the copy limit (%d)." % [card.card_name, max_count])
+		sanitized[card.card_name] = next_count
+	if sanitized.is_empty():
+		return _share_import_error("The deck code has no cards.")
+	return {
+		"is_valid": true,
+		"cards": sanitized,
+	}
+
+func _sanitize_imported_special_setup(special_setup) -> Dictionary:
+	if special_setup == null:
+		return {"is_valid": true, "special_setup": {}}
+	if not (special_setup is Dictionary):
+		return _share_import_error("The deck code has invalid special setup data.")
+	var raw_slots := TiamatScript.get_slot_card_names_from_setup(special_setup)
+	var sanitized_slots: Array = [[], [], []]
+	var seen_cards: Dictionary = {}
+	for slot_index in range(mini(raw_slots.size(), TiamatScript.POWER_SLOT_COUNT)):
+		var slot_level_total := 0
+		for raw_card_name in raw_slots[slot_index]:
+			var requested_name := str(raw_card_name).strip_edges()
+			if requested_name.is_empty():
+				continue
+			var card := _resolve_card_template_for_share(requested_name)
+			if card == null:
+				return _share_import_error("Unknown Matriarch slot card: %s." % requested_name)
+			if not TiamatScript.is_valid_slot_creature(card):
+				return _share_import_error("%s is not a valid Matriarch slot creature." % card.card_name)
+			if seen_cards.has(card.card_name):
+				return _share_import_error("Matriarch slot creatures must all be different. %s appears more than once." % card.card_name)
+			seen_cards[card.card_name] = true
+			slot_level_total += int(card.level)
+			if slot_level_total > TiamatScript.MAX_SLOT_LEVEL_TOTAL:
+				return _share_import_error("Matriarch slot %d exceeds %d total levels." % [slot_index + 1, TiamatScript.MAX_SLOT_LEVEL_TOTAL])
+			sanitized_slots[slot_index].append(card.card_name)
+	return {
+		"is_valid": true,
+		"special_setup": TiamatScript.build_special_setup(sanitized_slots),
+	}
+
+func _share_import_error(message: String) -> Dictionary:
+	return {
+		"is_valid": false,
+		"error": message,
+	}
+
+func _resolve_card_template_for_share(card_name: String) -> Card:
+	var exact := _find_template(card_name.strip_edges())
+	if exact != null:
+		return exact
+	var lookup_key := CardCatalogScript.to_lookup_key(card_name)
+	for card: Card in _all_cards:
+		if CardCatalogScript.to_lookup_key(card.card_name) == lookup_key:
+			return card
+		if card.has_method("get_normalized_card_name") and CardCatalogScript.to_lookup_key(card.get_normalized_card_name()) == lookup_key:
+			return card
+		if card.has_method("get_ascii_card_name") and CardCatalogScript.to_lookup_key(card.get_ascii_card_name()) == lookup_key:
+			return card
+	return null
+
+func _import_shared_deck(shared_deck: Dictionary) -> void:
+	var imported_deck := shared_deck.duplicate(true)
+	imported_deck["deck_id"] = _generate_saved_deck_id()
+	var deck_name := str(imported_deck.get("name", "Imported Deck")).strip_edges()
+	if deck_name.is_empty():
+		deck_name = "Imported Deck"
+	imported_deck["name"] = deck_name
+	_push_current_deck_undo_state()
+
+	if _uses_remote_account_decks():
+		_selected_saved_deck_id = str(imported_deck.get("deck_id", "")).strip_edges()
+		if _can_sync_account_decks():
+			_pending_remote_saved_deck_id = _selected_saved_deck_id
+			_remote_account_decks_cache.append(imported_deck.duplicate(true))
+			_online_lobby_client.save_account_deck(
+				deck_name,
+				imported_deck.get("cards", {}),
+				_selected_saved_deck_id,
+				imported_deck.get("special_setup", {})
+			)
+			_apply_saved_deck(imported_deck)
+			_pending_remote_saved_deck_id = _selected_saved_deck_id
+			_set_collection_mode(COLLECTION_MODE_SAVED_DECKS, false)
+			_set_status_flash("Imported %s and started saving it." % deck_name)
+			return
+		_pending_remote_saved_deck_id = ""
+		_apply_saved_deck(imported_deck)
+		_set_collection_mode(COLLECTION_MODE_CARDS, false)
+		_set_status_flash("Imported %s. Connect to the lobby to save it to your account." % deck_name)
+		return
+
+	_ensure_local_profile_store()
+	if _local_profile_store == null:
+		_apply_saved_deck(imported_deck)
+		_set_status_flash("Imported %s." % deck_name)
+		return
+	var saved_deck: Dictionary = _local_profile_store.save_deck(
+		_active_profile_id,
+		deck_name,
+		imported_deck.get("cards", {}),
+		str(imported_deck.get("deck_id", "")),
+		imported_deck.get("special_setup", {})
+	)
+	_selected_saved_deck_id = str(saved_deck.get("deck_id", "")).strip_edges()
+	_pending_remote_saved_deck_id = ""
+	_load_profile_decks()
+	_apply_saved_deck(saved_deck)
+	_set_collection_mode(COLLECTION_MODE_SAVED_DECKS, false)
+	_set_status_flash("Imported %s." % deck_name)
+
 func _load_selected_deck() -> void:
 	if _selected_saved_deck_id.is_empty():
 		return
@@ -1923,7 +2231,7 @@ func _make_saved_deck_cover(saved_deck: Dictionary) -> Control:
 	actions.offset_left = -40
 	actions.offset_right = -6
 	actions.offset_top = 8
-	actions.offset_bottom = 72
+	actions.offset_bottom = 108
 	actions.add_theme_constant_override("separation", 6)
 	actions.visible = false
 	actions.z_index = 10
@@ -1946,6 +2254,23 @@ func _make_saved_deck_cover(saved_deck: Dictionary) -> Control:
 		_queue_saved_deck_actions_visibility_update(cover, actions)
 	)
 	actions.add_child(copy_btn)
+
+	var export_btn := Button.new()
+	export_btn.text = "Ex"
+	export_btn.tooltip_text = "Export Deck"
+	export_btn.custom_minimum_size = Vector2(32, 28)
+	export_btn.focus_mode = Control.FOCUS_NONE
+	_apply_saved_deck_action_button_style(export_btn, Color(0.55, 0.82, 1.0, 1.0))
+	export_btn.pressed.connect(func() -> void:
+		_export_saved_deck(deck_id)
+	)
+	export_btn.mouse_entered.connect(func() -> void:
+		actions.visible = true
+	)
+	export_btn.mouse_exited.connect(func() -> void:
+		_queue_saved_deck_actions_visibility_update(cover, actions)
+	)
+	actions.add_child(export_btn)
 
 	var delete_btn := Button.new()
 	delete_btn.text = "🗑"
@@ -2882,6 +3207,7 @@ func _generate_saved_deck_id() -> String:
 func _max_copies(card: Card) -> int:
 	if card.is_god:       return 1
 	if card.is_power:     return 1
+	if card is ActiveGodCard: return 1
 	if card.is_legendary: return 1
 	return 3
 
