@@ -125,6 +125,29 @@ func get_account(account_id: String) -> Dictionary:
 		return _sanitize_account(existing as Dictionary)
 	return {}
 
+func get_account_by_username(username: String) -> Dictionary:
+	_ensure_loaded()
+	var username_key := _username_key(_normalize_username(username))
+	if username_key.is_empty() or not _account_id_by_username.has(username_key):
+		return {}
+	var account_id := str(_account_id_by_username.get(username_key, "")).strip_edges()
+	if account_id.is_empty():
+		return {}
+	return get_account(account_id)
+
+func get_username_map(account_ids: Array) -> Dictionary:
+	_ensure_loaded()
+	var usernames: Dictionary = {}
+	for raw_account_id in account_ids:
+		var account_id := str(raw_account_id).strip_edges()
+		if account_id.is_empty() or usernames.has(account_id):
+			continue
+		var account := get_account(account_id)
+		var username := str(account.get("username", "")).strip_edges()
+		if not username.is_empty():
+			usernames[account_id] = username
+	return usernames
+
 func get_storage_path_for_debug() -> String:
 	return ProjectSettings.globalize_path(_get_storage_path())
 

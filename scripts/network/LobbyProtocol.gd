@@ -18,6 +18,11 @@ const SAVE_ACCOUNT_DECK := "save_account_deck"
 const DELETE_ACCOUNT_DECK := "delete_account_deck"
 const SET_ACCOUNT_PREFERRED_DECK := "set_account_preferred_deck"
 const REQUEST_PROFILE_SUMMARY := "request_profile_summary"
+const REQUEST_FRIENDS := "request_friends"
+const SEND_FRIEND_REQUEST := "send_friend_request"
+const RESPOND_FRIEND_REQUEST := "respond_friend_request"
+const SEND_DECK_TO_FRIEND := "send_deck_to_friend"
+const RESPOND_DECK_SHARE := "respond_deck_share"
 const REQUEST_RECONNECT_LOBBY := "request_reconnect_lobby"
 
 const HELLO_OK := "hello_ok"
@@ -30,6 +35,7 @@ const ACCOUNT_DECK_LIST := "account_deck_list"
 const ACCOUNT_DECK_SAVED := "account_deck_saved"
 const ACCOUNT_DECK_DELETED := "account_deck_deleted"
 const PROFILE_SUMMARY := "profile_summary"
+const FRIENDS_STATE := "friends_state"
 
 static func make_message(message_type: String, payload: Dictionary = {}) -> Dictionary:
 	return {
@@ -83,6 +89,26 @@ static func validate_request(message: Dictionary) -> String:
 		SET_ACCOUNT_PREFERRED_DECK:
 			if str(payload.get("deck_id", "")).strip_edges().is_empty():
 				return "Missing deck id."
+		SEND_FRIEND_REQUEST:
+			if str(payload.get("username", "")).strip_edges().is_empty():
+				return "Missing friend username."
+		RESPOND_FRIEND_REQUEST:
+			if str(payload.get("request_id", "")).strip_edges().is_empty():
+				return "Missing friend request id."
+			if not payload.has("accept"):
+				return "Missing friend request response."
+		SEND_DECK_TO_FRIEND:
+			if str(payload.get("username", "")).strip_edges().is_empty():
+				return "Missing friend username."
+			if str(payload.get("deck_name", "")).strip_edges().is_empty():
+				return "Missing deck name."
+			if not payload.has("cards") or not (payload.get("cards") is Dictionary):
+				return "Missing deck cards."
+		RESPOND_DECK_SHARE:
+			if str(payload.get("share_id", "")).strip_edges().is_empty():
+				return "Missing deck share id."
+			if not payload.has("accept"):
+				return "Missing deck share response."
 		SET_READY:
 			if not payload.has("is_ready"):
 				return "Missing ready state."
@@ -91,7 +117,7 @@ static func validate_request(message: Dictionary) -> String:
 				return "Missing session id."
 			if str(payload.get("reconnect_token", "")).strip_edges().is_empty():
 				return "Missing reconnect token."
-		CREATE_ROOM, LIST_ROOMS, LEAVE_ROOM, REQUEST_ACCOUNT_DECKS, REQUEST_PROFILE_SUMMARY:
+		CREATE_ROOM, LIST_ROOMS, LEAVE_ROOM, REQUEST_ACCOUNT_DECKS, REQUEST_PROFILE_SUMMARY, REQUEST_FRIENDS:
 			pass
 		_:
 			return "Unknown lobby message type: %s" % message_type

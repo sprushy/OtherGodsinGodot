@@ -129,6 +129,12 @@ var _server_version_label: Label = null
 var _connected_server_version: String = ""
 var _menu_card_templates: Dictionary = {}
 var _menu_card_art_cache: Dictionary = {}
+var _friends_button: Button = null
+var _friends_overlay: Control = null
+var _friends_state: Dictionary = {}
+var _friends_status_label: Label = null
+var _friends_username_edit: LineEdit = null
+var _friends_content_list: VBoxContainer = null
 
 func _ready() -> void:
 	if _is_server_runtime_launch():
@@ -186,6 +192,7 @@ func _ready() -> void:
 	_restore_auth_preferences()
 	_build_profile_summary_controls()
 	_build_account_identity_controls()
+	_build_friends_controls()
 	_build_resume_controls()
 	_build_unranked_seek_controls()
 	_refresh_multiplayer_deck_options()
@@ -2585,8 +2592,12 @@ func _on_deck_builder_pressed() -> void:
 			_uses_server_account_storage(),
 			_get_server_preferred_account_deck_id()
 		)
+	if db.has_method("configure_friends"):
+		db.configure_friends(_get_friend_usernames())
 	if db.has_signal("account_deck_deleted_locally") and not db.account_deck_deleted_locally.is_connected(_on_deck_builder_account_deck_deleted_locally):
 		db.account_deck_deleted_locally.connect(_on_deck_builder_account_deck_deleted_locally)
+	if db.has_signal("send_deck_to_friend_requested") and not db.send_deck_to_friend_requested.is_connected(_on_deck_builder_send_deck_to_friend_requested):
+		db.send_deck_to_friend_requested.connect(_on_deck_builder_send_deck_to_friend_requested)
 	_maybe_request_account_decks()
 	db.back_pressed.connect(func() -> void:
 		db.queue_free()
@@ -2913,6 +2924,8 @@ func _bind_lobby_client_signals() -> void:
 		lobby_client.account_deck_deleted.connect(_on_account_deck_deleted)
 	if not lobby_client.profile_summary_received.is_connected(_on_profile_summary_received):
 		lobby_client.profile_summary_received.connect(_on_profile_summary_received)
+	if lobby_client.has_signal("friends_state_received") and not lobby_client.friends_state_received.is_connected(_on_friends_state_received):
+		lobby_client.friends_state_received.connect(_on_friends_state_received)
 	if not lobby_client.connection_failed.is_connected(_on_lobby_connection_failed):
 		lobby_client.connection_failed.connect(_on_lobby_connection_failed)
 	if not lobby_client.disconnected_from_lobby.is_connected(_on_lobby_disconnected):
@@ -2944,6 +2957,7 @@ func _on_lobby_login_succeeded(session_id: String, reconnect_token: String, play
 	_refresh_profile_summary_label()
 	_maybe_request_account_decks()
 	_maybe_request_profile_summary()
+	_request_friends_state()
 	var resolved_identity_name := _get_effective_identity_name(player_name)
 	player_name_line_edit.text = resolved_identity_name
 	_refresh_open_deck_builder_saved_decks()
@@ -2985,6 +2999,7 @@ func _on_lobby_reconnect_succeeded(
 	_refresh_profile_summary_label()
 	_maybe_request_account_decks()
 	_maybe_request_profile_summary()
+	_request_friends_state()
 	var resolved_identity_name := _get_effective_identity_name(player_name)
 	player_name_line_edit.text = resolved_identity_name
 	_refresh_open_deck_builder_saved_decks()
@@ -3171,6 +3186,7 @@ func _uses_dedicated_match_server(match_info: Dictionary) -> bool:
 func _on_lobby_room_error(message: String) -> void:
 	_write_smoke_trace("lobby_room_error %s" % message)
 	status_label.text = message
+	_set_friends_status(message)
 	if _should_prompt_for_account_recovery(message):
 		_show_auth_recovery_prompt(message)
 	_fail_smoke_if_enabled("ROOM_ERROR:%s" % message)
@@ -3287,6 +3303,9 @@ func _cleanup_lobby(clear_session: bool) -> void:
 		_clear_saved_match_resume()
 		_current_profile_summary.clear()
 		_account_decks_cache.clear()
+		_friends_state.clear()
+		_refresh_friends_button()
+		_refresh_friends_overlay()
 		_refresh_profile_summary_label()
 		_refresh_account_identity_label()
 		status_label.text = "Refresh open seeks or create your own."
@@ -3652,6 +3671,8 @@ func _refresh_open_deck_builder_saved_decks() -> void:
 			_uses_server_account_storage(),
 			_get_server_preferred_account_deck_id()
 		)
+	if deck_builder.has_method("configure_friends"):
+		deck_builder.configure_friends(_get_friend_usernames())
 	if not deck_builder.has_method("reload_saved_decks_from_store"):
 		return
 	deck_builder.reload_saved_decks_from_store()
@@ -3694,12 +3715,335 @@ func _build_account_identity_controls() -> void:
 	_account_identity_label = null
 	_refresh_account_identity_label()
 
+func _build_friends_controls() -> void:
+	if menu_container == null or _friends_button != null:
+		return
+	_friends_button = Button.new()
+	_friends_button.name = "FriendsButton"
+	_friends_button.text = "Friends"
+	_friends_button.pressed.connect(_open_friends_overlay)
+	menu_container.add_child(_friends_button)
+	var insert_index := menu_container.get_children().find(multiplayer_button) + 1
+	if insert_index <= 0:
+		insert_index = menu_container.get_child_count()
+	menu_container.move_child(_friends_button, insert_index)
+	_refresh_friends_button()
+
+func _refresh_friends_button() -> void:
+	if _friends_button == null or not is_instance_valid(_friends_button):
+		return
+	var pending_count := _get_pending_friend_notification_count()
+	_friends_button.text = "Friends (%d)" % pending_count if pending_count > 0 else "Friends"
+	_friends_button.disabled = not _uses_server_account_storage()
+
+func _get_pending_friend_notification_count() -> int:
+	var incoming_requests = _friends_state.get("incoming_requests", [])
+	var incoming_deck_shares = _friends_state.get("incoming_deck_shares", [])
+	var count := 0
+	if incoming_requests is Array:
+		count += (incoming_requests as Array).size()
+	if incoming_deck_shares is Array:
+		count += (incoming_deck_shares as Array).size()
+	return count
+
+func _open_friends_overlay() -> void:
+	if not _uses_server_account_storage():
+		status_label.text = "Log into an account before using friends."
+		return
+	if _friends_overlay != null and is_instance_valid(_friends_overlay):
+		return
+	_friends_overlay = Control.new()
+	_friends_overlay.name = "FriendsOverlay"
+	_friends_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_friends_overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	add_child(_friends_overlay)
+
+	var shade := ColorRect.new()
+	shade.color = Color(0.02, 0.03, 0.06, 0.86)
+	shade.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	shade.mouse_filter = Control.MOUSE_FILTER_STOP
+	_friends_overlay.add_child(shade)
+
+	var outer_margin := MarginContainer.new()
+	outer_margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	outer_margin.add_theme_constant_override("margin_left", 44)
+	outer_margin.add_theme_constant_override("margin_right", 44)
+	outer_margin.add_theme_constant_override("margin_top", 38)
+	outer_margin.add_theme_constant_override("margin_bottom", 38)
+	_friends_overlay.add_child(outer_margin)
+
+	var panel := PanelContainer.new()
+	var panel_style := StyleBoxFlat.new()
+	panel_style.bg_color = Color(0.08, 0.10, 0.16, 0.98)
+	panel_style.border_color = Color(0.48, 0.64, 0.92, 0.95)
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		panel_style.set_border_width(side as Side, 2)
+	panel_style.corner_radius_top_left = 10
+	panel_style.corner_radius_top_right = 10
+	panel_style.corner_radius_bottom_left = 10
+	panel_style.corner_radius_bottom_right = 10
+	panel.add_theme_stylebox_override("panel", panel_style)
+	outer_margin.add_child(panel)
+
+	var inner_margin := MarginContainer.new()
+	inner_margin.add_theme_constant_override("margin_left", 16)
+	inner_margin.add_theme_constant_override("margin_right", 16)
+	inner_margin.add_theme_constant_override("margin_top", 16)
+	inner_margin.add_theme_constant_override("margin_bottom", 16)
+	panel.add_child(inner_margin)
+
+	var content := VBoxContainer.new()
+	content.add_theme_constant_override("separation", 10)
+	inner_margin.add_child(content)
+
+	var header := HBoxContainer.new()
+	header.add_theme_constant_override("separation", 8)
+	content.add_child(header)
+
+	var title := Label.new()
+	title.text = "Friends"
+	title.add_theme_font_size_override("font_size", 24)
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	header.add_child(title)
+
+	var refresh_btn := Button.new()
+	refresh_btn.text = "Refresh"
+	refresh_btn.pressed.connect(_request_friends_state)
+	header.add_child(refresh_btn)
+
+	var close_btn := Button.new()
+	close_btn.text = "Close"
+	close_btn.pressed.connect(_close_friends_overlay)
+	header.add_child(close_btn)
+
+	var add_row := HBoxContainer.new()
+	add_row.add_theme_constant_override("separation", 8)
+	content.add_child(add_row)
+
+	_friends_username_edit = LineEdit.new()
+	_friends_username_edit.placeholder_text = "Username"
+	_friends_username_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	add_row.add_child(_friends_username_edit)
+
+	var add_btn := Button.new()
+	add_btn.text = "Add Friend"
+	add_btn.pressed.connect(_on_send_friend_request_pressed)
+	add_row.add_child(add_btn)
+
+	_friends_status_label = Label.new()
+	_friends_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_friends_status_label.modulate = Color(0.80, 0.86, 0.96)
+	content.add_child(_friends_status_label)
+
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.custom_minimum_size = Vector2(0, 420)
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	content.add_child(scroll)
+
+	_friends_content_list = VBoxContainer.new()
+	_friends_content_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_friends_content_list.add_theme_constant_override("separation", 8)
+	scroll.add_child(_friends_content_list)
+
+	_request_friends_state()
+	_refresh_friends_overlay()
+
+func _close_friends_overlay() -> void:
+	if _friends_overlay == null:
+		return
+	if is_instance_valid(_friends_overlay):
+		_friends_overlay.queue_free()
+	_friends_overlay = null
+	_friends_status_label = null
+	_friends_username_edit = null
+	_friends_content_list = null
+	if _friends_button != null:
+		_friends_button.grab_focus()
+
+func _request_friends_state() -> void:
+	if lobby_client == null or not _uses_server_account_storage():
+		return
+	lobby_client.request_friends()
+
+func _on_send_friend_request_pressed() -> void:
+	if lobby_client == null or _friends_username_edit == null:
+		return
+	var username := _friends_username_edit.text.strip_edges()
+	if username.is_empty():
+		_set_friends_status("Enter a username first.")
+		return
+	lobby_client.send_friend_request(username)
+	_set_friends_status("Friend request sent to %s if that account can receive it." % username)
+
+func _on_friend_request_response_pressed(request_id: String, accept: bool) -> void:
+	if lobby_client == null:
+		return
+	lobby_client.respond_friend_request(request_id, accept)
+	_set_friends_status("Friend request updated.")
+
+func _on_deck_share_response_pressed(share_id: String, accept: bool) -> void:
+	if lobby_client == null:
+		return
+	lobby_client.respond_deck_share(share_id, accept)
+	_set_friends_status("Deck share updated.")
+
+func _on_friends_state_received(state) -> void:
+	if state is Dictionary:
+		_friends_state = (state as Dictionary).duplicate(true)
+	_refresh_friends_button()
+	_refresh_friends_overlay()
+	_refresh_open_deck_builder_saved_decks()
+
+func _refresh_friends_overlay() -> void:
+	if _friends_content_list == null or not is_instance_valid(_friends_content_list):
+		return
+	for child in _friends_content_list.get_children():
+		child.queue_free()
+	var friends = _friends_state.get("friends", [])
+	var incoming_requests = _friends_state.get("incoming_requests", [])
+	var outgoing_requests = _friends_state.get("outgoing_requests", [])
+	var incoming_deck_shares = _friends_state.get("incoming_deck_shares", [])
+	var outgoing_deck_shares = _friends_state.get("outgoing_deck_shares", [])
+	_add_friends_section("Friends", friends, Callable(self, "_make_friend_row"))
+	_add_friends_section("Incoming Requests", incoming_requests, Callable(self, "_make_incoming_friend_request_row"))
+	_add_friends_section("Sent Requests", outgoing_requests, Callable(self, "_make_outgoing_friend_request_row"))
+	_add_friends_section("Decks Sent To You", incoming_deck_shares, Callable(self, "_make_incoming_deck_share_row"))
+	_add_friends_section("Decks You Sent", outgoing_deck_shares, Callable(self, "_make_outgoing_deck_share_row"))
+	if _friends_content_list.get_child_count() == 0:
+		var empty_label := Label.new()
+		empty_label.text = "No friends or pending requests yet."
+		empty_label.modulate = Color(0.78, 0.82, 0.90)
+		_friends_content_list.add_child(empty_label)
+
+func _add_friends_section(title: String, entries, row_factory: Callable) -> void:
+	if _friends_content_list == null or not (entries is Array) or (entries as Array).is_empty():
+		return
+	var header := Label.new()
+	header.text = title
+	header.add_theme_font_size_override("font_size", 17)
+	header.add_theme_color_override("font_color", Color(0.95, 0.84, 0.48))
+	_friends_content_list.add_child(header)
+	for entry in entries:
+		if entry is Dictionary:
+			_friends_content_list.add_child(row_factory.call(entry as Dictionary))
+
+func _make_friend_row(entry: Dictionary) -> Control:
+	return _make_friend_text_row(str(entry.get("username", "Friend")), "Friend")
+
+func _make_outgoing_friend_request_row(entry: Dictionary) -> Control:
+	return _make_friend_text_row(str(entry.get("recipient_username", "Friend")), "Pending")
+
+func _make_outgoing_deck_share_row(entry: Dictionary) -> Control:
+	var deck: Dictionary = entry.get("deck", {}) if entry.get("deck", {}) is Dictionary else {}
+	return _make_friend_text_row(
+		"%s to %s" % [str(deck.get("name", "Deck")), str(entry.get("recipient_username", "Friend"))],
+		"Pending"
+	)
+
+func _make_incoming_friend_request_row(entry: Dictionary) -> Control:
+	var row := _make_friend_row_base()
+	var label := _make_friend_row_label("%s wants to be friends" % str(entry.get("requester_username", "Someone")))
+	row.add_child(label)
+	var accept_btn := Button.new()
+	accept_btn.text = "Accept"
+	accept_btn.pressed.connect(func() -> void:
+		_on_friend_request_response_pressed(str(entry.get("request_id", "")), true)
+	)
+	row.add_child(accept_btn)
+	var reject_btn := Button.new()
+	reject_btn.text = "Reject"
+	reject_btn.pressed.connect(func() -> void:
+		_on_friend_request_response_pressed(str(entry.get("request_id", "")), false)
+	)
+	row.add_child(reject_btn)
+	return row
+
+func _make_incoming_deck_share_row(entry: Dictionary) -> Control:
+	var row := _make_friend_row_base()
+	var deck: Dictionary = entry.get("deck", {}) if entry.get("deck", {}) is Dictionary else {}
+	var label := _make_friend_row_label(
+		"%s sent %s" % [
+			str(entry.get("sender_username", "A friend")),
+			str(deck.get("name", "a deck")),
+		]
+	)
+	row.add_child(label)
+	var accept_btn := Button.new()
+	accept_btn.text = "Accept"
+	accept_btn.pressed.connect(func() -> void:
+		_on_deck_share_response_pressed(str(entry.get("share_id", "")), true)
+	)
+	row.add_child(accept_btn)
+	var reject_btn := Button.new()
+	reject_btn.text = "Reject"
+	reject_btn.pressed.connect(func() -> void:
+		_on_deck_share_response_pressed(str(entry.get("share_id", "")), false)
+	)
+	row.add_child(reject_btn)
+	return row
+
+func _make_friend_text_row(text: String, status: String) -> Control:
+	var row := _make_friend_row_base()
+	row.add_child(_make_friend_row_label(text))
+	var status_label := Label.new()
+	status_label.text = status
+	status_label.modulate = Color(0.76, 0.82, 0.94)
+	status_label.custom_minimum_size.x = 90
+	row.add_child(status_label)
+	return row
+
+func _make_friend_row_base() -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_theme_constant_override("separation", 8)
+	return row
+
+func _make_friend_row_label(text: String) -> Label:
+	var label := Label.new()
+	label.text = text
+	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	return label
+
+func _set_friends_status(message: String) -> void:
+	if _friends_status_label != null and is_instance_valid(_friends_status_label):
+		_friends_status_label.text = message
+
+func _get_friend_usernames() -> PackedStringArray:
+	var usernames := PackedStringArray()
+	var friends = _friends_state.get("friends", [])
+	if not (friends is Array):
+		return usernames
+	for entry in friends:
+		if not (entry is Dictionary):
+			continue
+		var username := str((entry as Dictionary).get("username", "")).strip_edges()
+		if username.is_empty():
+			continue
+		usernames.append(username)
+	return usernames
+
+func _on_deck_builder_send_deck_to_friend_requested(friend_username: String, deck: Dictionary) -> void:
+	if lobby_client == null or not _uses_server_account_storage():
+		return
+	lobby_client.send_deck_to_friend(
+		friend_username,
+		str(deck.get("name", "Deck")),
+		deck.get("cards", {}),
+		deck.get("special_setup", {})
+	)
+	status_label.text = "Sending deck to %s..." % friend_username
+
 func _refresh_account_identity_label() -> void:
 	var active_account_username := _get_effective_account_username()
 	if _logged_in_account_username != active_account_username:
 		_logged_in_account_username = active_account_username
 	if title_label != null:
 		title_label.text = _get_effective_identity_name("Guest")
+	_refresh_friends_button()
 	if _account_identity_label == null:
 		return
 	if not active_account_username.is_empty():

@@ -9,6 +9,7 @@ const NetworkManagerScript = preload("res://scripts/Other/NetworkManager.gd")
 const ProfileStoreScript = preload("res://scripts/server/ProfileStore.gd")
 const AccountStoreScript = preload("res://scripts/server/AccountStore.gd")
 const DeckStoreScript = preload("res://scripts/server/DeckStore.gd")
+const FriendStoreScript = preload("res://scripts/server/FriendStore.gd")
 const DeckValidatorScript = preload("res://scripts/server/DeckValidator.gd")
 const MatchHistoryStoreScript = preload("res://scripts/server/MatchHistoryStore.gd")
 const LOBBY_EVENT_TYPE := "__lobby_event__"
@@ -41,6 +42,7 @@ var network_manager: Node = null
 var profile_store = null
 var account_store = null
 var deck_store = null
+var friend_store = null
 var deck_validator = null
 var match_history_store = null
 
@@ -52,6 +54,7 @@ func _ready() -> void:
 	_ensure_profile_store()
 	_ensure_account_store()
 	_ensure_deck_store()
+	_ensure_friend_store()
 	_ensure_deck_validator()
 	_ensure_match_history_store()
 	_ensure_match_supervisor()
@@ -220,6 +223,16 @@ func _handle_request(peer_id: int, message: Dictionary) -> void:
 			_handle_set_account_preferred_deck(peer_id, payload)
 		LobbyProtocolScript.REQUEST_PROFILE_SUMMARY:
 			_handle_request_profile_summary(peer_id)
+		LobbyProtocolScript.REQUEST_FRIENDS:
+			_handle_request_friends(peer_id)
+		LobbyProtocolScript.SEND_FRIEND_REQUEST:
+			_handle_send_friend_request(peer_id, payload)
+		LobbyProtocolScript.RESPOND_FRIEND_REQUEST:
+			_handle_respond_friend_request(peer_id, payload)
+		LobbyProtocolScript.SEND_DECK_TO_FRIEND:
+			_handle_send_deck_to_friend(peer_id, payload)
+		LobbyProtocolScript.RESPOND_DECK_SHARE:
+			_handle_respond_deck_share(peer_id, payload)
 		LobbyProtocolScript.SET_READY:
 			var ready_session: Dictionary = _get_session_for_peer(peer_id)
 			if ready_session.is_empty():
@@ -517,6 +530,130 @@ func _handle_request_profile_summary(peer_id: int) -> void:
 		_send_error_to_peer(peer_id, "Match history storage is unavailable.")
 		return
 	_send_to_peer(peer_id, LobbyProtocolScript.PROFILE_SUMMARY, match_history_store.get_profile_summary(profile_id))
+
+func _handle_request_friends(peer_id: int) -> void:
+	var session: Dictionary = _get_session_for_peer(peer_id)
+	if session.is_empty():
+		_send_error_to_peer(peer_id, "Join the lobby before requesting friends.")
+		return
+	var account_id := str(session.get("account_id", "")).strip_edges()
+	if account_id.is_empty():
+		_send_error_to_peer(peer_id, "Log into an account before using friends.")
+		return
+	_send_friends_state_to_account(account_id)
+
+func _handle_send_friend_request(peer_id: int, payload: Dictionary) -> void:
+	var session: Dictionary = _get_session_for_peer(peer_id)
+	if session.is_empty():
+		_send_error_to_peer(peer_id, "Join the lobby before adding friends.")
+		return
+	var account_id := str(session.get("account_id", "")).strip_edges()
+	if account_id.is_empty():
+		_send_error_to_peer(peer_id, "Log into an account before adding friends.")
+		return
+	_ensure_account_store()
+	_ensure_friend_store()
+	if account_store == null or friend_store == null:
+		_send_error_to_peer(peer_id, "Friend storage is unavailable.")
+		return
+	var recipient_account: Dictionary = account_store.get_account_by_username(str(payload.get("username", "")))
+	var recipient_account_id := str(recipient_account.get("account_id", "")).strip_edges()
+	if recipient_account_id.is_empty():
+		_send_error_to_peer(peer_id, "That username was not found.")
+		return
+	var result: Dictionary = friend_store.send_friend_request(account_id, recipient_account_id)
+	if not bool(result.get("success", false)):
+		_send_error_to_peer(peer_id, str(result.get("message", "Could not send that friend request.")))
+		return
+	_send_friends_state_to_account(account_id)
+	_send_friends_state_to_account(recipient_account_id)
+
+func _handle_respond_friend_request(peer_id: int, payload: Dictionary) -> void:
+	var session: Dictionary = _get_session_for_peer(peer_id)
+	if session.is_empty():
+		_send_error_to_peer(peer_id, "Join the lobby before responding to friends.")
+		return
+	var account_id := str(session.get("account_id", "")).strip_edges()
+	if account_id.is_empty():
+		_send_error_to_peer(peer_id, "Log into an account before responding to friends.")
+		return
+	_ensure_friend_store()
+	if friend_store == null:
+		_send_error_to_peer(peer_id, "Friend storage is unavailable.")
+		return
+	var result: Dictionary = friend_store.respond_to_friend_request(
+		account_id,
+		str(payload.get("request_id", "")),
+		bool(payload.get("accept", false))
+	)
+	if not bool(result.get("success", false)):
+		_send_error_to_peer(peer_id, str(result.get("message", "Could not update that friend request.")))
+		return
+	var entry: Dictionary = result.get("entry", {})
+	_send_friends_state_to_account(str(entry.get("requester_account_id", "")).strip_edges())
+	_send_friends_state_to_account(str(entry.get("recipient_account_id", "")).strip_edges())
+
+func _handle_send_deck_to_friend(peer_id: int, payload: Dictionary) -> void:
+	var session: Dictionary = _get_session_for_peer(peer_id)
+	if session.is_empty():
+		_send_error_to_peer(peer_id, "Join the lobby before sending decks.")
+		return
+	var account_id := str(session.get("account_id", "")).strip_edges()
+	if account_id.is_empty():
+		_send_error_to_peer(peer_id, "Log into an account before sending decks.")
+		return
+	_ensure_account_store()
+	_ensure_friend_store()
+	if account_store == null or friend_store == null:
+		_send_error_to_peer(peer_id, "Friend storage is unavailable.")
+		return
+	var recipient_account: Dictionary = account_store.get_account_by_username(str(payload.get("username", "")))
+	var recipient_account_id := str(recipient_account.get("account_id", "")).strip_edges()
+	if recipient_account_id.is_empty():
+		_send_error_to_peer(peer_id, "That username was not found.")
+		return
+	var result: Dictionary = friend_store.send_deck_share(
+		account_id,
+		recipient_account_id,
+		str(payload.get("deck_name", "")),
+		payload.get("cards", {}),
+		payload.get("special_setup", {})
+	)
+	if not bool(result.get("success", false)):
+		_send_error_to_peer(peer_id, str(result.get("message", "Could not send that deck.")))
+		return
+	_send_friends_state_to_account(account_id)
+	_send_friends_state_to_account(recipient_account_id)
+
+func _handle_respond_deck_share(peer_id: int, payload: Dictionary) -> void:
+	var session: Dictionary = _get_session_for_peer(peer_id)
+	if session.is_empty():
+		_send_error_to_peer(peer_id, "Join the lobby before responding to deck shares.")
+		return
+	var account_id := str(session.get("account_id", "")).strip_edges()
+	if account_id.is_empty():
+		_send_error_to_peer(peer_id, "Log into an account before responding to deck shares.")
+		return
+	_ensure_friend_store()
+	_ensure_deck_store()
+	if friend_store == null or deck_store == null:
+		_send_error_to_peer(peer_id, "Deck sharing storage is unavailable.")
+		return
+	var result: Dictionary = friend_store.respond_to_deck_share(
+		account_id,
+		str(payload.get("share_id", "")),
+		bool(payload.get("accept", false)),
+		deck_store
+	)
+	if not bool(result.get("success", false)):
+		_send_error_to_peer(peer_id, str(result.get("message", "Could not update that deck share.")))
+		return
+	var saved_deck: Dictionary = result.get("deck", {})
+	if not saved_deck.is_empty():
+		_send_to_peer(peer_id, LobbyProtocolScript.ACCOUNT_DECK_SAVED, {"deck": saved_deck})
+	var entry: Dictionary = result.get("entry", {})
+	_send_friends_state_to_account(str(entry.get("sender_account_id", "")).strip_edges())
+	_send_friends_state_to_account(str(entry.get("recipient_account_id", "")).strip_edges())
 
 func _create_session(
 	player_name: String,
@@ -863,6 +1000,43 @@ func _send_room_list_to_peer(peer_id: int) -> void:
 		"server_version": _get_server_version(),
 	})
 
+func _send_friends_state_to_account(account_id: String) -> void:
+	var resolved_account_id := account_id.strip_edges()
+	if resolved_account_id.is_empty():
+		return
+	_ensure_friend_store()
+	_ensure_account_store()
+	if friend_store == null:
+		return
+	var state: Dictionary = friend_store.get_state(resolved_account_id)
+	var account_ids := _collect_account_ids_from_friends_state(state)
+	if account_store != null:
+		state = friend_store.get_state(resolved_account_id, account_store.get_username_map(account_ids))
+	for session_id_variant in sessions_by_id.keys():
+		var session_id := str(session_id_variant).strip_edges()
+		if session_id.is_empty():
+			continue
+		var session: Dictionary = sessions_by_id.get(session_id, {})
+		if str(session.get("account_id", "")).strip_edges() != resolved_account_id:
+			continue
+		_send_to_session(session_id, LobbyProtocolScript.FRIENDS_STATE, state)
+
+func _collect_account_ids_from_friends_state(state: Dictionary) -> Array:
+	var account_ids: Array = []
+	for list_key in ["friends", "incoming_requests", "outgoing_requests", "incoming_deck_shares", "outgoing_deck_shares"]:
+		var entries = state.get(list_key, [])
+		if not (entries is Array):
+			continue
+		for entry in entries:
+			if not (entry is Dictionary):
+				continue
+			for id_key in ["account_id", "requester_account_id", "recipient_account_id", "sender_account_id"]:
+				var account_id := str((entry as Dictionary).get(id_key, "")).strip_edges()
+				if account_id.is_empty() or account_id in account_ids:
+					continue
+				account_ids.append(account_id)
+	return account_ids
+
 func _build_room_list() -> Array:
 	var rooms: Array = []
 	for room_id in rooms_by_id.keys():
@@ -1101,6 +1275,11 @@ func _ensure_deck_store() -> void:
 	if deck_store != null:
 		return
 	deck_store = DeckStoreScript.new()
+
+func _ensure_friend_store() -> void:
+	if friend_store != null:
+		return
+	friend_store = FriendStoreScript.new()
 
 func _ensure_deck_validator() -> void:
 	if deck_validator != null:

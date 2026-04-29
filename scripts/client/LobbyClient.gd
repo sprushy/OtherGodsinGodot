@@ -25,6 +25,7 @@ signal account_deck_list_received(decks: Array, preferred_deck_id: String)
 signal account_deck_saved(deck: Dictionary)
 signal account_deck_deleted(deck_id: String)
 signal profile_summary_received(summary: Dictionary)
+signal friends_state_received(state: Dictionary)
 signal connection_failed(message: String)
 signal disconnected_from_lobby()
 
@@ -205,6 +206,39 @@ func set_account_preferred_deck(deck_id: String) -> void:
 func request_profile_summary() -> void:
 	_send_request(LobbyProtocolScript.REQUEST_PROFILE_SUMMARY)
 
+func request_friends() -> void:
+	_send_request(LobbyProtocolScript.REQUEST_FRIENDS)
+
+func send_friend_request(username: String) -> void:
+	_send_request(LobbyProtocolScript.SEND_FRIEND_REQUEST, {
+		"username": username.strip_edges(),
+	})
+
+func respond_friend_request(request_id: String, accept: bool) -> void:
+	_send_request(LobbyProtocolScript.RESPOND_FRIEND_REQUEST, {
+		"request_id": request_id.strip_edges(),
+		"accept": accept,
+	})
+
+func send_deck_to_friend(
+	username: String,
+	deck_name: String,
+	cards: Dictionary,
+	special_setup: Dictionary = {}
+) -> void:
+	_send_request(LobbyProtocolScript.SEND_DECK_TO_FRIEND, {
+		"username": username.strip_edges(),
+		"deck_name": deck_name.strip_edges(),
+		"cards": cards.duplicate(true),
+		"special_setup": special_setup.duplicate(true),
+	})
+
+func respond_deck_share(share_id: String, accept: bool) -> void:
+	_send_request(LobbyProtocolScript.RESPOND_DECK_SHARE, {
+		"share_id": share_id.strip_edges(),
+		"accept": accept,
+	})
+
 func lobby_event(message: Dictionary) -> void:
 	var message_type: String = LobbyProtocolScript.get_type(message)
 	var payload: Dictionary = LobbyProtocolScript.get_payload(message)
@@ -270,6 +304,8 @@ func lobby_event(message: Dictionary) -> void:
 			account_deck_deleted.emit(str(payload.get("deck_id", "")))
 		LobbyProtocolScript.PROFILE_SUMMARY:
 			profile_summary_received.emit(payload)
+		LobbyProtocolScript.FRIENDS_STATE:
+			friends_state_received.emit(payload)
 
 func _on_connected_to_server() -> void:
 	_cancel_connect_attempt_timeout()

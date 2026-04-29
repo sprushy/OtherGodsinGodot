@@ -10,6 +10,7 @@ const TiamatScript = preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
 
 signal back_pressed
 signal account_deck_deleted_locally(deck_id: String)
+signal send_deck_to_friend_requested(friend_username: String, deck: Dictionary)
 
 # ── constants ──────────────────────────────────────────────────────
 const CARD_W    := 140
@@ -86,6 +87,8 @@ var _deck_footer_buttons: HFlowContainer
 var _delete_confirm_dialog: ConfirmationDialog
 var _import_deck_dialog: ConfirmationDialog
 var _import_deck_text_edit: TextEdit
+var _send_friend_dialog: ConfirmationDialog
+var _send_friend_option: OptionButton
 var _search_edit:      LineEdit
 var _tiamat_panel:     PanelContainer
 var _tiamat_hint_lbl:  Label
@@ -111,6 +114,7 @@ var _online_lobby_client = null
 var _remote_account_decks_cache: Array[Dictionary] = []
 var _use_remote_account_decks: bool = false
 var _remote_preferred_deck_id: String = ""
+var _friend_usernames := PackedStringArray()
 var _pending_delete_deck_id: String = ""
 var _tiamat_slots: Array = [[], [], []]
 var _tiamat_assignment_slot_index: int = -1
@@ -175,6 +179,11 @@ func configure_account_decks(decks: Array, use_remote: bool = false, preferred_d
 		_refresh_collection_grid_and_layout()
 		_refresh_profile_labels()
 
+func configure_friends(friend_usernames: PackedStringArray) -> void:
+	_friend_usernames = PackedStringArray()
+	for username in friend_usernames:
+		_friend_usernames.append(str(username))
+
 func _make_all_cards() -> Array:
 	return CardCatalogScript.make_all_cards()
 
@@ -215,6 +224,7 @@ func _build_ui() -> void:
 	_build_deck_panel(body)
 	_build_delete_confirm_dialog()
 	_build_import_deck_dialog()
+	_build_send_friend_dialog()
 
 func _build_top_bar(parent: Control) -> void:
 	var bar := PanelContainer.new()
@@ -412,6 +422,13 @@ func _build_collection_panel(parent: Control) -> void:
 	export_btn.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	export_btn.pressed.connect(_export_current_deck)
 	saved_hdr.add_child(export_btn)
+
+	var send_friend_btn := Button.new()
+	send_friend_btn.text = "Send"
+	send_friend_btn.tooltip_text = "Send the current deck to a friend"
+	send_friend_btn.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	send_friend_btn.pressed.connect(_show_send_friend_dialog)
+	saved_hdr.add_child(send_friend_btn)
 
 	var import_btn := Button.new()
 	import_btn.text = "Import"
@@ -737,6 +754,39 @@ func _build_import_deck_dialog() -> void:
 	_import_deck_text_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_import_deck_text_edit.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	box.add_child(_import_deck_text_edit)
+
+func _build_send_friend_dialog() -> void:
+	if _send_friend_dialog != null and is_instance_valid(_send_friend_dialog):
+		return
+	var dialog := ConfirmationDialog.new()
+	dialog.title = "Send Deck"
+	dialog.initial_position = Window.WINDOW_INITIAL_POSITION_CENTER_PRIMARY_SCREEN
+	dialog.exclusive = true
+	dialog.min_size = Vector2i(420, 180)
+	dialog.get_ok_button().text = "Send Deck"
+	dialog.confirmed.connect(_confirm_send_deck_to_friend)
+	add_child(dialog)
+	_send_friend_dialog = dialog
+
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 12)
+	margin.add_theme_constant_override("margin_top", 10)
+	margin.add_theme_constant_override("margin_right", 12)
+	margin.add_theme_constant_override("margin_bottom", 10)
+	dialog.add_child(margin)
+
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 8)
+	margin.add_child(box)
+
+	var instructions := Label.new()
+	instructions.text = "Choose a friend to receive this deck."
+	instructions.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	box.add_child(instructions)
+
+	_send_friend_option = OptionButton.new()
+	_send_friend_option.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	box.add_child(_send_friend_option)
 
 # ── collection grid ────────────────────────────────────────────────
 func _refresh_grid() -> void:
@@ -1599,6 +1649,35 @@ func _export_current_deck() -> void:
 	var deck_name := _deck_name_edit.text if _deck_name_edit != null else ""
 	var shareable_deck := _make_shareable_deck(deck_name, _deck, _get_tiamat_special_setup())
 	_copy_deck_share_code(shareable_deck, "Deck share code copied.")
+
+func _show_send_friend_dialog() -> void:
+	if _deck.is_empty():
+		_set_status_flash("Nothing to send.")
+		return
+	if _friend_usernames.is_empty():
+		_set_status_flash("Add friends from the main menu before sending decks.")
+		return
+	if _send_friend_dialog == null or not is_instance_valid(_send_friend_dialog):
+		_build_send_friend_dialog()
+	if _send_friend_option == null:
+		return
+	_send_friend_option.clear()
+	for username in _friend_usernames:
+		_send_friend_option.add_item(str(username))
+	_send_friend_dialog.popup_centered(Vector2i(420, 180))
+
+func _confirm_send_deck_to_friend() -> void:
+	if _send_friend_option == null or _send_friend_option.item_count <= 0:
+		_set_status_flash("Choose a friend first.")
+		return
+	var friend_username := _send_friend_option.get_item_text(_send_friend_option.selected).strip_edges()
+	if friend_username.is_empty():
+		_set_status_flash("Choose a friend first.")
+		return
+	var deck_name := _deck_name_edit.text if _deck_name_edit != null else ""
+	var shareable_deck := _make_shareable_deck(deck_name, _deck, _get_tiamat_special_setup())
+	send_deck_to_friend_requested.emit(friend_username, shareable_deck)
+	_set_status_flash("Sending deck to %s..." % friend_username)
 
 func _export_saved_deck(deck_id: String) -> void:
 	var saved_deck := _get_saved_deck_by_id(deck_id)
