@@ -455,11 +455,11 @@ func _add_prepared_magical_mana_badge(overlay: Control, card: Card) -> void:
 	var badge := _add_overlay_stat_badge(
 		overlay,
 		"M:%d" % display_cost,
-		Control.PRESET_BOTTOM_LEFT,
+		Control.PRESET_TOP_RIGHT,
+		-66,
 		6,
-		-32,
-		66,
 		-6,
+		28,
 		font_color
 	)
 	var tooltip_lines := _get_prepared_magical_hover_cost_lines(card)

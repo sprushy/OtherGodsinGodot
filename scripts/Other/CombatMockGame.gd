@@ -2781,8 +2781,13 @@ func _get_available_tiamat_upkeep_cards() -> Array[Card]:
 
 func _refresh_turn_choice_options() -> void:
 	choice_intro_label.text = "Choose one:"
-	draw_button.text = "Gain 1 Mana + Card"
-	mana_button.text = "Gain 5 Mana"
+	var draw_mana_gain := GameManager.UPKEEP_DRAW_MANA_GAIN
+	var mana_gain := GameManager.UPKEEP_MANA_GAIN
+	if game_manager != null:
+		draw_mana_gain = game_manager.get_effective_upkeep_mana_gain(draw_mana_gain, game_manager.current_player)
+		mana_gain = game_manager.get_effective_upkeep_mana_gain(mana_gain, game_manager.current_player)
+	draw_button.text = "Gain %d Mana + Card" % draw_mana_gain
+	mana_button.text = "Gain %d Mana" % mana_gain
 	draw_button.disabled = false
 	mana_button.disabled = false
 	var available_skolls := _get_available_skoll_upkeep_cards()
@@ -7547,7 +7552,7 @@ func _queue_hand_spell_with_deferred_resolution(
 func _prompt_charm_target_selection(charm: CharmCard, triggering_action: CardAction = null, display_zone: Zone = null) -> void:
 	if charm == null or game_manager == null:
 		return
-	var targets: Array = charm.get_valid_targets(game_manager)
+	var targets: Array = charm.get_priority_targets(game_manager, triggering_action) if triggering_action != null else charm.get_valid_targets(game_manager)
 	if targets.is_empty():
 		_set_action_label_text(charm.card_name + " has no valid targets.")
 		update_ui()
@@ -7560,7 +7565,7 @@ func _prompt_charm_target_selection(charm: CharmCard, triggering_action: CardAct
 		update_ui()
 		return
 	var validate_charm_target := func(clicked_card: Card) -> bool:
-		return charm.is_valid_target(clicked_card)
+		return clicked_card in targets
 	var confirm_charm_target := func(clicked_card: Card) -> void:
 		spell_waiting_for_display_zone = resolved_display_zone
 		_queue_charm_action(charm, triggering_action, clicked_card)
@@ -13577,6 +13582,7 @@ func _recover_stalled_priority_state() -> bool:
 		return false
 	if _executing_stack_action:
 		return false
+	game_manager.prune_stale_stack_actions()
 	if _has_pending_target_selection():
 		return false
 	if _is_priority_prompt_visible() or _is_intercept_prompt_visible():
@@ -14300,6 +14306,12 @@ func _offer_priority() -> void:
 		match_manager.advance_priority()
 		_schedule_priority_recovery_check()
 		return
+	if game_manager != null:
+		game_manager.prune_stale_stack_actions()
+		if game_manager.action_stack.is_empty():
+			_hide_priority_prompt()
+			update_ui()
+			return
 	if _consume_duplicate_local_priority_offer():
 		_schedule_priority_recovery_check()
 		return
@@ -14413,6 +14425,8 @@ func _get_priority_response_target_uids(card: Card, top: CardAction) -> Array:
 	var targets: Array = []
 	if card is HexCard:
 		targets = game_manager.get_priority_hex_targets(card as HexCard, top)
+	elif card.has_method("get_priority_targets"):
+		targets = card.get_priority_targets(game_manager, top)
 	elif card is CharmCard:
 		targets = (card as CharmCard).get_valid_targets(game_manager)
 	elif card.has_method("get_priority_field_targets"):

@@ -63,6 +63,9 @@ func can_activate_prepared(game_manager: GameManager, triggering_action: CardAct
 func get_valid_targets(_game_manager: GameManager) -> Array[Card]:
 	return []
 
+func get_priority_targets(game_manager: GameManager, _action: CardAction) -> Array[Card]:
+	return get_valid_targets(game_manager)
+
 func is_valid_target(_target: Card) -> bool:
 	return false
 

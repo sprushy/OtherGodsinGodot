@@ -849,6 +849,8 @@ func _get_priority_response_target_uids(card: Card, top: CardAction) -> Array:
 	var targets: Array = []
 	if card is HexCard:
 		targets = game_manager.get_priority_hex_targets(card as HexCard, top)
+	elif card.has_method("get_priority_targets"):
+		targets = card.get_priority_targets(game_manager, top)
 	elif card is CharmCard:
 		targets = (card as CharmCard).get_valid_targets(game_manager)
 	elif card.has_method("get_priority_field_targets"):
@@ -921,12 +923,19 @@ func _build_priority_response_options(responses: Array) -> Array:
 	return response_options
 
 func build_priority_prompt_data(player: Player) -> Dictionary:
+	if game_manager != null:
+		game_manager.prune_stale_stack_actions()
 	if game_manager == null or player == null or game_manager.action_stack.is_empty():
 		return {
 			responses = [],
 			action_message = "",
 		}
 	var responses := game_manager.get_priority_responses(player)
+	if game_manager.action_stack.is_empty():
+		return {
+			responses = [],
+			action_message = "",
+		}
 	return {
 		responses = _build_priority_response_options(responses),
 		action_message = _get_priority_action_message(game_manager.action_stack.back(), player),
@@ -992,6 +1001,7 @@ func _advance_authoritative_priority() -> void:
 		return
 	if _authoritative_stack_resolution_pending:
 		return
+	game_manager.prune_stale_stack_actions()
 	if game_manager.action_stack.is_empty():
 		return
 	var player := game_manager.priority_player

@@ -21,6 +21,7 @@ enum GamePhase { MULLIGAN, MAIN, COMBAT, END }
 const GAME_END_REASON_DEFEAT := "defeat"
 const GAME_END_REASON_FORFEIT := "forfeit"
 const GOD_DEATH_FOLLOWER_LOSS := 7
+const GOD_DEATH_UPKEEP_MANA_PENALTY := 1
 const UPKEEP_DRAW_MANA_GAIN := 1
 const UPKEEP_MANA_GAIN := 5
 
@@ -167,7 +168,17 @@ func _action_is_stale(action: CardAction) -> bool:
 				and action.united_front_partner.current_zone != null \
 				and action.united_front_partner.current_zone.is_board_zone()
 			return not attacker_active and not partner_active
+		CardAction.Type.SPELL, CardAction.Type.ABILITY, CardAction.Type.CHARM:
+			if action.card == null or action.card.current_zone == null:
+				return true
+			if action.card.card_owner == null:
+				return false
+			return action.card.current_zone == action.card.card_owner.graveyard_zone \
+				or action.card.current_zone == action.card.card_owner.abyss_zone
 	return false
+
+func prune_stale_stack_actions() -> void:
+	_prune_stale_stack_actions()
 
 func _prune_stale_stack_actions() -> void:
 	if action_stack.is_empty() and resolving_stack_actions.is_empty():
@@ -175,6 +186,9 @@ func _prune_stale_stack_actions() -> void:
 	var removed_action := false
 	var kept_actions: Array[CardAction] = []
 	for action in action_stack:
+		if action in resolving_stack_actions:
+			kept_actions.append(action)
+			continue
 		if _action_is_stale(action):
 			removed_action = true
 			continue
@@ -497,6 +511,7 @@ func can_interceptor_engage_attacker(interceptor: Card, attacker: Card) -> bool:
 func get_priority_responses(player: Player) -> Array:
 	var responses: Array = []
 	var seen_response_ids: Dictionary = {}
+	_prune_stale_stack_actions()
 	if action_stack.is_empty():
 		return responses
 	for card in player.god_zone.cards:
@@ -526,6 +541,8 @@ func _get_priority_response_targets(card: Card, action: CardAction) -> Array:
 		return []
 	if card is HexCard:
 		return get_priority_hex_targets(card as HexCard, action)
+	if card.has_method("get_priority_targets"):
+		return card.get_priority_targets(self, action)
 	if card.has_method("get_priority_field_targets"):
 		return card.get_priority_field_targets(self, action)
 	if card.has_method("get_valid_targets"):
@@ -732,7 +749,7 @@ func _begin_turn_upkeep() -> void:
 	if is_player_under_god_death(current_player):
 		current_player.lose_followers(GOD_DEATH_FOLLOWER_LOSS)
 		note_player_feedback(
-			"[b]God Death[/b]: %s loses %d followers and gains no upkeep mana." % [
+			"[b]God Death[/b]: %s loses %d followers and gains 1 less upkeep mana." % [
 				current_player.player_name,
 				GOD_DEATH_FOLLOWER_LOSS
 			]
@@ -907,18 +924,29 @@ func player_chooses_mana() -> void:
 	_resolve_turn_upkeep()
 
 func _gain_upkeep_choice_mana(amount: int) -> void:
-	if amount <= 0 or current_player == null or is_player_under_god_death(current_player):
+	if amount <= 0 or current_player == null:
 		return
-	current_player.gain_mana(amount)
+	var effective_amount := get_effective_upkeep_mana_gain(amount, current_player)
+	if effective_amount <= 0:
+		return
+	current_player.gain_mana(effective_amount)
 
 func get_upkeep_choice_feedback(choice: String) -> String:
-	var no_upkeep_mana := is_player_under_god_death(current_player)
 	match choice:
 		"draw":
-			return "Drew a card." if no_upkeep_mana else "Gained %d mana and drew a card." % UPKEEP_DRAW_MANA_GAIN
+			var draw_mana := get_effective_upkeep_mana_gain(UPKEEP_DRAW_MANA_GAIN, current_player)
+			return "Drew a card." if draw_mana <= 0 else "Gained %d mana and drew a card." % draw_mana
 		"mana":
-			return "No upkeep mana gained." if no_upkeep_mana else "Gained %d mana." % UPKEEP_MANA_GAIN
+			var mana_gain := get_effective_upkeep_mana_gain(UPKEEP_MANA_GAIN, current_player)
+			return "No upkeep mana gained." if mana_gain <= 0 else "Gained %d mana." % mana_gain
 	return ""
+
+func get_effective_upkeep_mana_gain(base_amount: int, player: Player = null) -> int:
+	var target_player := player if player != null else current_player
+	var effective_amount := maxi(base_amount, 0)
+	if is_player_under_god_death(target_player):
+		effective_amount = maxi(0, effective_amount - GOD_DEATH_UPKEEP_MANA_PENALTY)
+	return effective_amount
 
 func player_chooses_upkeep_only() -> void:
 	if is_game_over:

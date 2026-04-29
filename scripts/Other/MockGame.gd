@@ -94,8 +94,13 @@ func show_turn_choice() -> void:
 		return
 	choice_container.visible = true
 	choice_intro_label.text = "Choose one:"
-	draw_button.text = "Gain 1 Mana + Card"
-	mana_button.text = "Gain 5 Mana"
+	var draw_mana_gain := GameManager.UPKEEP_DRAW_MANA_GAIN
+	var mana_gain := GameManager.UPKEEP_MANA_GAIN
+	if game_manager != null:
+		draw_mana_gain = game_manager.get_effective_upkeep_mana_gain(draw_mana_gain, game_manager.current_player)
+		mana_gain = game_manager.get_effective_upkeep_mana_gain(mana_gain, game_manager.current_player)
+	draw_button.text = "Gain %d Mana + Card" % draw_mana_gain
+	mana_button.text = "Gain %d Mana" % mana_gain
 	end_turn_button.visible = false
 	draw_button.disabled = false
 	mana_button.disabled = false
