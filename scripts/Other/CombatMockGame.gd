@@ -14344,6 +14344,7 @@ func _offer_priority() -> void:
 		_schedule_priority_recovery_check()
 		return
 
+	_remember_local_priority_prompt_signature()
 	_show_priority_prompt(player)
 	_schedule_priority_recovery_check()
 
@@ -14382,7 +14383,8 @@ func _consume_duplicate_local_priority_offer() -> bool:
 	if _pending_local_priority_prompt_signature.is_empty():
 		return false
 	var matches := _build_local_priority_prompt_signature() == _pending_local_priority_prompt_signature
-	_pending_local_priority_prompt_signature.clear()
+	if not matches:
+		_pending_local_priority_prompt_signature.clear()
 	return matches
 
 func _schedule_priority_recovery_check() -> void:

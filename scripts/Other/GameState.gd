@@ -379,6 +379,7 @@ static func apply_to_manager(data: Dictionary, gm: GameManager) -> void:
 		if not (action_data is Dictionary):
 			continue
 		gm.action_stack.append(CardAction.from_dict(action_data, gm))
+	gm.prune_stale_stack_actions()
 
 static func _apply_zone_cards(zone: Zone, cards_data: Array) -> void:
 	zone.cards.clear()

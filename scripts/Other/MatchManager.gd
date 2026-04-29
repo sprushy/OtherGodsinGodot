@@ -71,6 +71,7 @@ var pending_humbaba_target = null
 var pending_humbaba_prompt_uids: Array[String] = []
 var _pending_end_turn_after_resurrection: bool = false
 var _active_command_sender_info: Dictionary = {}
+var _active_command_type: String = ""
 
 func _init(p_game_manager: GameManager) -> void:
 	game_manager = p_game_manager
@@ -237,6 +238,8 @@ func _on_game_manager_card_summoned(
 	summon_priority_action.event_name = "summon"
 	summon_priority_action.event_speed = card.get_effective_speed()
 	game_manager.push_to_stack(summon_priority_action)
+	if _active_command_advances_summon_priority():
+		return
 	_advance_authoritative_priority_for_pending_card_events(card)
 
 func resolve_action(action: CardAction) -> void:
@@ -268,6 +271,8 @@ func _finalize_resolved_action(action: CardAction) -> void:
 	_remove_resolved_action(action)
 	if game_manager != null and action != null:
 		game_manager.end_stack_action_resolution(action)
+	if game_manager != null:
+		game_manager.prune_stale_stack_actions()
 	action_resolved.emit(action)
 
 func _remove_resolved_action(action: CardAction) -> void:
@@ -1111,6 +1116,15 @@ func _advance_authoritative_priority_for_pending_card_events(card: Card) -> void
 		return
 	_advance_authoritative_priority()
 
+func _active_command_advances_summon_priority() -> bool:
+	return _active_command_type in [
+		"play_creature",
+		"skoll_upkeep_summon",
+		"hati_moon_hunt",
+		"wolf_master_summon",
+		"resurrection_choice",
+	]
+
 func _clear_pending_attack_state() -> void:
 	selected_attacker = null
 	selected_interceptor = null
@@ -1542,18 +1556,22 @@ func _on_move_failed(reason: String) -> void:
 ## Returns true on success, false on failure (failure also emits move_failed).
 func process_command(command: Dictionary, sender_info: Dictionary = {}) -> bool:
 	_active_command_sender_info = sender_info.duplicate(true)
+	_active_command_type = str(command.get("type", ""))
 	var authority_error := _validate_sender_authority(command, sender_info)
 	if not authority_error.is_empty():
 		move_failed.emit(authority_error)
 		_active_command_sender_info.clear()
+		_active_command_type = ""
 		return false
 	var turn_window_error := _validate_turn_action_window(command, sender_info)
 	if not turn_window_error.is_empty():
 		move_failed.emit(turn_window_error)
 		_active_command_sender_info.clear()
+		_active_command_type = ""
 		return false
 	var result := _process_command_impl(command)
 	_active_command_sender_info.clear()
+	_active_command_type = ""
 	return result
 
 func _process_command_impl(command: Dictionary) -> bool:

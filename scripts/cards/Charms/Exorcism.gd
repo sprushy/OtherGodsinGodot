@@ -40,32 +40,6 @@ func is_valid_target(target: Card) -> bool:
 		and target.current_zone.is_board_zone() \
 		and target.get_controller() == card_owner
 
-func get_priority_targets(_game_manager: GameManager, action: CardAction) -> Array[Card]:
-	var valid_targets: Array[Card] = []
-	if action == null:
-		return valid_targets
-	if action.type == CardAction.Type.EVENT and action.event_name in ["start_turn", "end_turn"]:
-		return get_valid_targets(_game_manager)
-	for candidate in [action.target, action.interceptor]:
-		if candidate is Card:
-			var target := candidate as Card
-			if is_valid_target(target) and target not in valid_targets:
-				valid_targets.append(target)
-	return valid_targets
-
-func can_respond_to_action(action: CardAction, game_manager: GameManager = null) -> bool:
-	if action == null:
-		return true
-	if action.type == CardAction.Type.EVENT and action.event_name in ["start_turn", "end_turn"]:
-		return super.can_respond_to_action(action, game_manager)
-	if game_manager == null or action.source_player == null:
-		return false
-	if action.source_player == card_owner:
-		return false
-	if get_priority_targets(game_manager, action).is_empty():
-		return false
-	return super.can_respond_to_action(action, game_manager)
-
 func resolve(game_manager: GameManager, target = null) -> void:
 	if not is_valid_target(target):
 		print(card_name + " requires a friendly creature.")

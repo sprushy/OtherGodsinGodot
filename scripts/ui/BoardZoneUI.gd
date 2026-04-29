@@ -1381,9 +1381,22 @@ func _is_card_targeted_on_stack(card: Card) -> bool:
 	for action in game_manager.action_stack:
 		if action == null:
 			continue
+		if action.type == CardAction.Type.ATTACK and not _is_attack_stack_action_active(action):
+			continue
 		if action.target is Card and action.target == card:
 			return true
 	return false
+
+func _is_attack_stack_action_active(action: CardAction) -> bool:
+	if action == null or action.type != CardAction.Type.ATTACK:
+		return true
+	var attacker_active := action.attacker != null \
+		and action.attacker.current_zone != null \
+		and action.attacker.current_zone.is_board_zone()
+	var partner_active := action.united_front_partner != null \
+		and action.united_front_partner.current_zone != null \
+		and action.united_front_partner.current_zone.is_board_zone()
+	return attacker_active or partner_active
 
 func _get_targeting_scene_root() -> Node:
 	if not is_inside_tree() or is_queued_for_deletion():
