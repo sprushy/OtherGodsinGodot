@@ -135,6 +135,9 @@ var _friends_state: Dictionary = {}
 var _friends_status_label: Label = null
 var _friends_username_edit: LineEdit = null
 var _friends_content_list: VBoxContainer = null
+var _friends_send_deck_dialog: ConfirmationDialog = null
+var _friends_send_deck_option: OptionButton = null
+var _friends_pending_send_username: String = ""
 
 func _ready() -> void:
 	if _is_server_runtime_launch():
@@ -3931,7 +3934,24 @@ func _add_friends_section(title: String, entries, row_factory: Callable) -> void
 			_friends_content_list.add_child(row_factory.call(entry as Dictionary))
 
 func _make_friend_row(entry: Dictionary) -> Control:
-	return _make_friend_text_row(str(entry.get("username", "Friend")), "Friend")
+	var username := str(entry.get("username", "Friend")).strip_edges()
+	if username.is_empty():
+		username = "Friend"
+	var row := _make_friend_row_base()
+	row.add_child(_make_friend_row_label(username))
+	var send_btn := Button.new()
+	send_btn.text = "Send Deck"
+	send_btn.disabled = _get_saved_decks_for_current_identity().is_empty()
+	send_btn.pressed.connect(func() -> void:
+		_show_friend_send_deck_dialog(username)
+	)
+	row.add_child(send_btn)
+	var status_label := Label.new()
+	status_label.text = "Friend"
+	status_label.modulate = Color(0.76, 0.82, 0.94)
+	status_label.custom_minimum_size.x = 90
+	row.add_child(status_label)
+	return row
 
 func _make_outgoing_friend_request_row(entry: Dictionary) -> Control:
 	return _make_friend_text_row(str(entry.get("recipient_username", "Friend")), "Pending")
@@ -4008,6 +4028,74 @@ func _make_friend_row_label(text: String) -> Label:
 	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	return label
 
+func _show_friend_send_deck_dialog(friend_username: String) -> void:
+	if lobby_client == null or not _uses_server_account_storage():
+		_set_friends_status("Log into an account before sending decks.")
+		return
+	var decks := _get_saved_decks_for_current_identity()
+	if decks.is_empty():
+		_maybe_request_account_decks()
+		_set_friends_status("No saved decks found. Save a deck in Deck Builder first.")
+		return
+	_friends_pending_send_username = friend_username.strip_edges()
+	if _friends_pending_send_username.is_empty():
+		return
+	_ensure_friends_send_deck_dialog()
+	if _friends_send_deck_option == null:
+		return
+	_friends_send_deck_option.clear()
+	for saved_deck in decks:
+		var deck_id := str(saved_deck.get("deck_id", "")).strip_edges()
+		if deck_id.is_empty():
+			continue
+		var deck_name := _get_saved_deck_name(saved_deck)
+		var item_index := _friends_send_deck_option.item_count
+		_friends_send_deck_option.add_item(deck_name)
+		_friends_send_deck_option.set_item_metadata(item_index, deck_id)
+	if _friends_send_deck_option.item_count <= 0:
+		_set_friends_status("No saved decks found. Save a deck in Deck Builder first.")
+		return
+	_friends_send_deck_dialog.dialog_text = "Send a deck to %s." % _friends_pending_send_username
+	_friends_send_deck_dialog.popup_centered(Vector2i(440, 170))
+
+func _ensure_friends_send_deck_dialog() -> void:
+	if _friends_send_deck_dialog != null and is_instance_valid(_friends_send_deck_dialog):
+		return
+	var dialog := ConfirmationDialog.new()
+	dialog.title = "Send Deck"
+	dialog.initial_position = Window.WINDOW_INITIAL_POSITION_CENTER_PRIMARY_SCREEN
+	dialog.exclusive = true
+	dialog.min_size = Vector2i(440, 170)
+	dialog.get_ok_button().text = "Send Deck"
+	dialog.confirmed.connect(_confirm_friend_send_deck)
+	add_child(dialog)
+	_friends_send_deck_dialog = dialog
+
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 12)
+	margin.add_theme_constant_override("margin_top", 36)
+	margin.add_theme_constant_override("margin_right", 12)
+	margin.add_theme_constant_override("margin_bottom", 10)
+	dialog.add_child(margin)
+
+	_friends_send_deck_option = OptionButton.new()
+	_friends_send_deck_option.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	margin.add_child(_friends_send_deck_option)
+
+func _confirm_friend_send_deck() -> void:
+	if _friends_send_deck_option == null or _friends_send_deck_option.item_count <= 0:
+		return
+	var metadata = _friends_send_deck_option.get_item_metadata(_friends_send_deck_option.selected)
+	var deck_id := str(metadata).strip_edges()
+	if deck_id.is_empty():
+		return
+	for saved_deck in _get_saved_decks_for_current_identity():
+		if str(saved_deck.get("deck_id", "")).strip_edges() != deck_id:
+			continue
+		_send_deck_to_friend(_friends_pending_send_username, saved_deck)
+		return
+	_set_friends_status("That saved deck was not found.")
+
 func _set_friends_status(message: String) -> void:
 	if _friends_status_label != null and is_instance_valid(_friends_status_label):
 		_friends_status_label.text = message
@@ -4027,6 +4115,9 @@ func _get_friend_usernames() -> PackedStringArray:
 	return usernames
 
 func _on_deck_builder_send_deck_to_friend_requested(friend_username: String, deck: Dictionary) -> void:
+	_send_deck_to_friend(friend_username, deck)
+
+func _send_deck_to_friend(friend_username: String, deck: Dictionary) -> void:
 	if lobby_client == null or not _uses_server_account_storage():
 		return
 	lobby_client.send_deck_to_friend(
@@ -4035,6 +4126,7 @@ func _on_deck_builder_send_deck_to_friend_requested(friend_username: String, dec
 		deck.get("cards", {}),
 		deck.get("special_setup", {})
 	)
+	_set_friends_status("Sending deck to %s..." % friend_username)
 	status_label.text = "Sending deck to %s..." % friend_username
 
 func _refresh_account_identity_label() -> void:

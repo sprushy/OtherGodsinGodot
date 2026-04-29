@@ -7,7 +7,7 @@ const CardCatalogScript = preload("res://scripts/cards/CardCatalog.gd")
 const TiamatScript = preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
 
 const FRIEND_REQUEST_COOLDOWN_SECONDS := 10 * 60
-const DECK_SHARE_COOLDOWN_SECONDS := 5 * 60
+const DECK_SHARE_COOLDOWN_SECONDS := 5
 const MAX_PENDING_FRIEND_REQUESTS_FROM_ACCOUNT := 8
 const MAX_PENDING_DECK_SHARES_FROM_ACCOUNT_TO_RECIPIENT := 3
 

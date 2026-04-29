@@ -4,25 +4,103 @@ class_name TezcatlipocaActive
 const LINKED_GOD_NAME := "Tezcatlipoca, the Smoking Mirror"
 const ART_PATH := "res://images/card_art/gods/TezArt.png"
 const MAX_TITLACAUAN_TARGETS := 2
+const JAGUAR_FORM_SPEED_BONUS := 1
+const JAGUAR_FORM_STRENGTH_BONUS := 10
+const JAGUAR_FORM_RESILIENCE_DELTA := -13
 
 var necoc_yaotl_sacrifices: Array[Card] = []
+var in_jaguar_form: bool = false
 
 func _init() -> void:
 	super._init()
 	linked_god_name = LINKED_GOD_NAME
 	card_name = "Tezcatlipoca, Active God"
-	card_types = ["Active God", "Divine Manifestation", "God", "Targeting"]
+	card_types = _get_divine_form_types()
 	level = 7
 	mana_cost = 0
-	speed = 3
-	resilience = 31
-	strength = 31
+	speed = 2
+	resilience = 37
+	strength = 25
 	culture = "Nahuatl"
 	flavor_text = "Smoke and sacrifice crown the god of night when he walks the field."
-	ability_text = "[b]Titlacauan[/b] ([b]Impact[/b]): Enslave up to 2 creatures whose total levels are less than or equal to the total levels sacrificed for Necoc Yaotl."
+	ability_text = "[b]Shift[/b] ([b]Activate[/b], [b]Minor Action[/b]): Switch between Divine Manifestation, God, Shapeshifter and Animal, Feline, Jaguar, Shapeshifter.\n[b]Jaguar Form[/b] ([b]Passive[/b]): While in Jaguar form, this card's stats become SPD 3 / RES 24 / STR 35.\n[b]The Smoking Mirror[/b] ([b]Passive[/b]): Instead of damaging followers, convert half of those that would have been destroyed.\n[b]Titlacauan[/b] ([b]Impact[/b]): Enslave up to 2 creatures whose total levels are less than or equal to the total levels sacrificed for Necoc Yaotl."
 	artist = "Ricardo Zoppello"
 	art_path = ART_PATH
 	name_at_bottom = true
+
+func get_activation_label() -> String:
+	return "Shift"
+
+func can_activate(game_manager: GameManager) -> bool:
+	if game_manager == null:
+		return false
+	if get_controller() != game_manager.current_player:
+		return false
+	if current_zone == null or not current_zone.is_board_zone():
+		return false
+	if abilities_suppressed():
+		return false
+	if is_shapeshift_locked():
+		return false
+	if is_sleeping:
+		return false
+	return can_take_minor_creature_action()
+
+func get_activation_failure_reason(game_manager: GameManager) -> String:
+	if game_manager == null:
+		return card_name + " cannot shift right now."
+	if get_controller() != game_manager.current_player:
+		return "It is not " + card_name + "'s turn to act."
+	if current_zone == null or not current_zone.is_board_zone():
+		return card_name + " must be on the field to shift."
+	if abilities_suppressed():
+		return card_name + " is suppressed."
+	if is_shapeshift_locked():
+		return card_name + " cannot shift right now."
+	if is_sleeping:
+		return card_name + " is asleep."
+	if not can_take_minor_creature_action():
+		return card_name + " has no minor actions left."
+	return ""
+
+func get_tonal_extraction_spirit_profile() -> Dictionary:
+	return {
+		"card_name": card_name + " Spirit",
+		"level": level,
+		"speed": speed if in_jaguar_form else speed + JAGUAR_FORM_SPEED_BONUS,
+		"resilience": resilience if in_jaguar_form else resilience + JAGUAR_FORM_RESILIENCE_DELTA,
+		"strength": strength if in_jaguar_form else strength + JAGUAR_FORM_STRENGTH_BONUS,
+		"card_types": _get_divine_form_types() if in_jaguar_form else _get_jaguar_form_types(),
+		"culture": culture,
+		"artist": artist,
+		"art_path": art_path,
+	}
+
+func converts_follower_damage_to_conversion(_game_manager: GameManager = null) -> bool:
+	return _passives_are_active()
+
+func get_follower_damage_conversion_amount(amount: int, _game_manager: GameManager = null) -> int:
+	if amount <= 0 or not _passives_are_active():
+		return 0
+	return int(floor(float(amount) / 2.0))
+
+func activate(game_manager: GameManager, _target: Card = null) -> void:
+	if not can_activate(game_manager):
+		if game_manager != null:
+			game_manager.note_player_feedback(get_activation_failure_reason(game_manager))
+		return
+	shift_forms()
+	spend_minor_creature_action()
+	if game_manager != null:
+		game_manager.notify_creature_shapeshifted(self, self)
+		game_manager.note_player_feedback(
+			"%s shifts into %s form." % [card_name, "Jaguar" if in_jaguar_form else "Divine"]
+		)
+
+func shift_forms() -> void:
+	in_jaguar_form = not in_jaguar_form
+	card_types = _get_jaguar_form_types() if in_jaguar_form else _get_divine_form_types()
+	_emit_visual_state_changed()
 
 func receive_necoc_yaotl_sacrifices(cards: Array[Card]) -> void:
 	necoc_yaotl_sacrifices.clear()
@@ -36,6 +114,54 @@ func get_titlacauan_level_budget() -> int:
 		if card != null:
 			total += card.get_effective_level()
 	return total
+
+func get_serialized_state() -> Dictionary:
+	var sacrifice_levels: Array[int] = []
+	for card in necoc_yaotl_sacrifices:
+		if card != null:
+			sacrifice_levels.append(card.get_effective_level())
+	return {
+		"necoc_yaotl_sacrifice_count": sacrifice_levels.size(),
+		"necoc_yaotl_sacrifice_levels": sacrifice_levels,
+		"necoc_yaotl_total_level": get_titlacauan_level_budget(),
+		"in_jaguar_form": in_jaguar_form,
+	}
+
+func apply_serialized_state(state: Dictionary) -> void:
+	necoc_yaotl_sacrifices.clear()
+	if state.is_empty():
+		in_jaguar_form = card_types.has("Jaguar")
+	else:
+		in_jaguar_form = bool(state.get("in_jaguar_form", false))
+	card_types = _get_jaguar_form_types() if in_jaguar_form else _get_divine_form_types()
+	var sacrifice_levels: Array = state.get("necoc_yaotl_sacrifice_levels", [])
+	var sacrifice_count := int(state.get("necoc_yaotl_sacrifice_count", sacrifice_levels.size()))
+	for i in range(sacrifice_count):
+		var placeholder := BaseCard.new()
+		placeholder.card_name = "Necoc Yaotl sacrifice"
+		placeholder.card_type = Card.CardType.CREATURE
+		if i < sacrifice_levels.size():
+			placeholder.level = maxi(1, int(sacrifice_levels[i]))
+		necoc_yaotl_sacrifices.append(placeholder)
+	_emit_visual_state_changed()
+
+func get_effective_speed() -> int:
+	var total := super.get_effective_speed()
+	if in_jaguar_form:
+		total += JAGUAR_FORM_SPEED_BONUS
+	return clampi(total, 1, 7)
+
+func get_effective_strength() -> int:
+	var total := super.get_effective_strength()
+	if in_jaguar_form:
+		total += JAGUAR_FORM_STRENGTH_BONUS
+	return max(0, total)
+
+func get_effective_resilience() -> int:
+	var total := super.get_effective_resilience()
+	if in_jaguar_form:
+		total += JAGUAR_FORM_RESILIENCE_DELTA
+	return max(0, total)
 
 func get_valid_titlacauan_targets(game_manager: GameManager) -> Array[Card]:
 	var valid_targets: Array[Card] = []
@@ -143,9 +269,18 @@ func resolve_titlacauan_choice(game_manager: GameManager, chosen_targets: Array[
 
 func get_effect_summary_lines() -> Array[String]:
 	var lines := super.get_effect_summary_lines()
+	lines.append("Current form: %s" % ("Jaguar" if in_jaguar_form else "Divine"))
 	lines.append("Titlacauan budget: %d" % get_titlacauan_level_budget())
 	lines.append("Necoc Yaotl sacrifices: %d" % necoc_yaotl_sacrifices.size())
 	return lines
+
+func get_hover_detail_lines(_viewer: Player = null) -> Array[String]:
+	return [
+		"[b]Current Form[/b]: %s" % ("Jaguar" if in_jaguar_form else "Divine"),
+		"[b]Divine[/b]: Divine Manifestation, God, Shapeshifter; SPD 2 / RES 37 / STR 25.",
+		"[b]Jaguar[/b]: Animal, Feline, Jaguar, Shapeshifter; SPD 3 / RES 24 / STR 35.",
+		"[b]The Smoking Mirror[/b]: Follower damage converts half that amount instead.",
+	]
 
 func _is_valid_titlacauan_target(game_manager: GameManager, target: Card) -> bool:
 	return target != null \
@@ -157,6 +292,13 @@ func _is_valid_titlacauan_target(game_manager: GameManager, target: Card) -> boo
 		and target.get_controller() != get_controller() \
 		and game_manager.can_enslave_creature(target, get_controller()) \
 		and not game_manager.is_immune_to_source(target, self)
+
+func _passives_are_active() -> bool:
+	return not abilities_suppressed() \
+		and current_zone != null \
+		and current_zone.is_board_zone() \
+		and not is_face_down \
+		and not is_stealth
 
 func _auto_select_titlacauan_targets(valid_targets: Array[Card], budget: int) -> Array[Card]:
 	var sorted_targets := valid_targets.duplicate()
@@ -174,4 +316,25 @@ func _auto_select_titlacauan_targets(valid_targets: Array[Card], budget: int) ->
 		chosen.append(target)
 		remaining_budget -= target_level
 	return chosen
+
+func _get_divine_form_types() -> Array[String]:
+	return [
+		"Active God",
+		"Divine Manifestation",
+		"God",
+		"Shapeshifter",
+		"Targeting",
+	]
+
+func _get_jaguar_form_types() -> Array[String]:
+	return [
+		"Active God",
+		"Divine Manifestation",
+		"God",
+		"Animal",
+		"Feline",
+		"Jaguar",
+		"Shapeshifter",
+		"Targeting",
+	]
 

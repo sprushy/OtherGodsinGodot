@@ -1238,13 +1238,16 @@ func _begin_wheel_of_fire_turn_start_sequence(feedback_text: String = "") -> boo
 	_hide_wheel_of_fire_turn_start_prompt()
 	_pending_wheel_of_fire_prompts.clear()
 	_pending_turn_start_priority_feedback = feedback_text
-	if game_manager == null or game_manager.current_player == null:
+	if game_manager == null:
 		return false
-	for zone in game_manager.current_player.frontline_zones + game_manager.current_player.reserve_zones:
-		for card in zone.cards:
-			var wheel := card as WheelOfFire
-			if wheel != null and wheel.can_offer_turn_start_advance(game_manager):
-				_pending_wheel_of_fire_prompts.append(wheel)
+	for player in game_manager.players:
+		if player == null:
+			continue
+		for zone in player.frontline_zones + player.reserve_zones:
+			for card in zone.cards:
+				var wheel := card as WheelOfFire
+				if wheel != null and wheel.can_offer_turn_start_advance(game_manager):
+					_pending_wheel_of_fire_prompts.append(wheel)
 	return _show_next_wheel_of_fire_turn_start_prompt()
 
 func _show_next_wheel_of_fire_turn_start_prompt() -> bool:
@@ -1254,8 +1257,8 @@ func _show_next_wheel_of_fire_turn_start_prompt() -> bool:
 		if wheel == null or not is_instance_valid(wheel) or not wheel.can_offer_turn_start_advance(game_manager):
 			_pending_wheel_of_fire_prompts.remove_at(0)
 			continue
-		if network_manager != null and network_manager.is_server and not _is_player_local(game_manager.current_player):
-			var player_idx := game_manager.players.find(game_manager.current_player)
+		if network_manager != null and network_manager.is_server and not _is_player_local(wheel.card_owner):
+			var player_idx := game_manager.players.find(wheel.card_owner)
 			match_manager.request_ui_interaction.emit(player_idx, "wheel_of_fire_turn_start", {
 				"source_uid": wheel.uid,
 			})
@@ -1453,7 +1456,8 @@ func _is_sacrifice_cursor_mode_active() -> bool:
 	return _awaiting_creature_sacrifice \
 		or _is_blot_sacrifice_target_selection_active() \
 		or _is_kos_sacrifice_target_selection_active() \
-		or _is_hati_moon_hunt_sacrifice_selection_active()
+		or _is_hati_moon_hunt_sacrifice_selection_active() \
+		or _is_tezcatlipoca_necoc_yaotl_selection_active()
 
 func _is_devour_cursor_mode_active() -> bool:
 	return _has_pending_click_selection() and _get_pending_target_selection_name().contains("Devour")
@@ -3183,6 +3187,9 @@ func _is_kos_sacrifice_target_selection_active() -> bool:
 func _is_hati_moon_hunt_sacrifice_selection_active() -> bool:
 	return _pending_hati_summon != null and _pending_hati_sacrifice == null
 
+func _is_tezcatlipoca_necoc_yaotl_selection_active() -> bool:
+	return _has_pending_click_selection() and _pending_click_selection_source is TezcatlipocaTheSmokingMirror
+
 func _cancel_blot_sacrifice_target_selection(reason: String) -> bool:
 	if not _is_blot_sacrifice_target_selection_active():
 		return false
@@ -4249,6 +4256,7 @@ func _make_god_cluster(zone: Zone, player: Player, is_enemy: bool) -> Control:
 		_player_god_zone_ui = god_zone_ui
 		_player_god_zone_ui.card_clicked.connect(_on_god_card_pressed)
 		_player_god_zone_ui.champions_call_clicked.connect(_on_champions_call_badge_pressed)
+		_player_god_zone_ui.tez_necoc_yaotl_badge_clicked.connect(_on_tez_necoc_yaotl_badge_pressed)
 		_player_god_zone_ui.god_right_clicked.connect(_on_god_right_clicked)
 
 	return cluster
@@ -8898,7 +8906,8 @@ func _on_god_card_pressed(card: Card) -> void:
 		_begin_odin_runic_knowledge_activation(card as Odin)
 		return
 	if card is TezcatlipocaTheSmokingMirror:
-		_begin_tezcatlipoca_god_activation(card as TezcatlipocaTheSmokingMirror)
+		_set_action_label_text("Use Tezcatlipoca's Necoc Yaotl badge to sacrifice or summon.")
+		update_ui()
 		return
 	var champion_god := card as GodCard
 	if champion_god != null and _should_start_champions_call_activation(champion_god):
@@ -8962,6 +8971,18 @@ func _on_champions_call_badge_pressed(god: GodCard) -> void:
 		return
 	_begin_champions_call_activation(god)
 
+func _on_tez_necoc_yaotl_badge_pressed(card: TezcatlipocaTheSmokingMirror) -> void:
+	if card == null or game_manager == null:
+		return
+	if _has_pending_target_selection():
+		_handle_invalid_pending_target_click()
+		return
+	if choice_container.visible:
+		_set_action_label_text("You must draw or take mana before activating a god ability.")
+		update_ui()
+		return
+	_begin_tezcatlipoca_god_activation(card)
+
 func _on_god_right_clicked(card: Card) -> void:
 	if _game_finished or game_manager == null or card == null or not card.is_god:
 		return
@@ -8974,6 +8995,10 @@ func _on_god_right_clicked(card: Card) -> void:
 		_reject_pre_turn_action()
 		return
 	_close_context_menu()
+	if card is TezcatlipocaTheSmokingMirror and not _is_card_usable_for_priority(card):
+		_set_action_label_text("Use Tezcatlipoca's Necoc Yaotl badge to sacrifice or summon.")
+		update_ui()
+		return
 
 	var can_activate_now = _is_card_usable_for_priority(card) or (
 		card.get_controller() == game_manager.current_player
@@ -9081,12 +9106,14 @@ func _begin_tezcatlipoca_god_activation(card: TezcatlipocaTheSmokingMirror) -> v
 			)
 		return
 
-	var sacrifices: Array = card.get_valid_targets(game_manager)
-	if sacrifices.is_empty():
+	if card.get_valid_targets(game_manager).is_empty():
 		_set_action_label_text(card.get_activation_failure_reason(game_manager))
 		update_ui()
 		return
-	var on_choose_sacrifice := func(chosen_sacrifice: Card) -> void:
+
+	var validate_sacrifice := func(chosen_sacrifice: Card) -> bool:
+		return chosen_sacrifice != null and card.is_valid_activation_target(chosen_sacrifice)
+	var confirm_sacrifice := func(chosen_sacrifice: Card) -> void:
 		if _is_networked_client:
 			game_input.submit_action({type = "god_ability", god_uid = card.uid, target_uid = chosen_sacrifice.uid})
 			_set_action_label_text("%s is using Necoc Yaotl." % card.card_name)
@@ -9101,15 +9128,18 @@ func _begin_tezcatlipoca_god_activation(card: TezcatlipocaTheSmokingMirror) -> v
 				card.activate(game_manager, chosen_sacrifice),
 			"%s offers %s to Necoc Yaotl." % [card.card_name, sacrifice_name]
 		)
-	var on_cancel_sacrifice := func() -> void:
+	var cancel_sacrifice := func() -> void:
 		_set_action_label_text("Cancelled " + card.card_name + ".")
 		update_ui()
-	_show_card_selection_overlay(
-		"Choose a creature for Necoc Yaotl",
-		sacrifices,
-		on_choose_sacrifice,
-		on_cancel_sacrifice
+	_begin_pending_click_selection(
+		card.card_name + ": Necoc Yaotl",
+		card,
+		validate_sacrifice,
+		confirm_sacrifice,
+		cancel_sacrifice
 	)
+	_set_action_label_text(card.card_name + ": click a friendly creature to sacrifice for Necoc Yaotl.")
+	update_ui()
 
 func _on_god_power_activated(_turn_number: int, _player: Player, _god: Card, _target: Card) -> void:
 	pass
@@ -18657,18 +18687,21 @@ func _close_turn_start_windows() -> void:
 	_pending_skoll_mode = ""
 	_pending_creature_play_resolver = Callable()
 	_clear_pending_creature_summon_payment_state()
-	if game_manager == null or game_manager.current_player == null:
+	if game_manager == null:
 		return
-	for card in game_manager.current_player.god_zone.cards:
-		if card.has_method("close_turn_start_window"):
-			card.close_turn_start_window()
-	for zone in game_manager.current_player.power_zones + game_manager.current_player.frontline_zones + game_manager.current_player.reserve_zones:
-		for card in zone.cards:
+	for player in game_manager.players:
+		if player == null:
+			continue
+		for card in player.god_zone.cards:
 			if card.has_method("close_turn_start_window"):
-				var wheel := card as WheelOfFire
-				if wheel != null and (wheel == _active_wheel_of_fire_prompt or _pending_wheel_of_fire_prompts.has(wheel)):
-					continue
 				card.close_turn_start_window()
+		for zone in player.power_zones + player.frontline_zones + player.reserve_zones:
+			for card in zone.cards:
+				if card.has_method("close_turn_start_window"):
+					var wheel := card as WheelOfFire
+					if wheel != null and (wheel == _active_wheel_of_fire_prompt or _pending_wheel_of_fire_prompts.has(wheel)):
+						continue
+					card.close_turn_start_window()
 
 func _get_end_turn_discard_count() -> int:
 	var staged_discards := _pending_end_turn_discard_uids.size()

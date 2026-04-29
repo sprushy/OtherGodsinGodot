@@ -1957,19 +1957,12 @@ func resolve_followers_attack(attackers: Array[Card], defending_player: Player) 
 	for combatant in active_attackers:
 		_notify_attack_declared(combatant)
 
-	var converting_attacker: Card = null
-	var converting_strength := 0
-	var normal_strength := 0
+	var follower_damage := 0
 	for combatant in active_attackers:
 		if _source_converts_combat_follower_damage(combatant):
-			if converting_attacker == null:
-				converting_attacker = combatant
-			converting_strength += combatant.get_effective_strength()
+			follower_damage += _apply_combat_follower_damage(combatant, defending_player, combatant.get_effective_strength())
 		else:
-			normal_strength += combatant.get_effective_strength()
-	var follower_damage := 0
-	follower_damage += _apply_combat_follower_damage(null, defending_player, normal_strength)
-	follower_damage += _apply_combat_follower_damage(converting_attacker, defending_player, converting_strength)
+			follower_damage += _apply_combat_follower_damage(null, defending_player, combatant.get_effective_strength())
 
 	if active_attackers.size() >= 2:
 		_notify_after_united_front_combat(active_attackers[0], active_attackers[1], null)
@@ -2606,6 +2599,13 @@ func _source_converts_combat_follower_damage(source_card: Card) -> bool:
 		return false
 	return source_card.converts_follower_damage_to_conversion(self)
 
+func _get_combat_follower_conversion_amount(source_card: Card, amount: int) -> int:
+	if amount <= 0:
+		return 0
+	if source_card != null and source_card.has_method("get_follower_damage_conversion_amount"):
+		return clampi(int(source_card.get_follower_damage_conversion_amount(amount, self)), 0, amount)
+	return amount
+
 func _apply_combat_follower_damage(source_card: Card, damaged_player: Player, amount: int) -> int:
 	if damaged_player == null or amount <= 0:
 		return 0
@@ -2616,7 +2616,10 @@ func _apply_combat_follower_damage(source_card: Card, damaged_player: Player, am
 	if _source_converts_combat_follower_damage(source_card) \
 			and source_controller != null \
 			and source_controller != damaged_player:
-		return convert_followers(damaged_player, source_controller, adjusted_amount)
+		var conversion_amount := _get_combat_follower_conversion_amount(source_card, adjusted_amount)
+		if conversion_amount <= 0:
+			return 0
+		return convert_followers(damaged_player, source_controller, conversion_amount)
 	damaged_player.lose_followers(adjusted_amount)
 	return adjusted_amount
 

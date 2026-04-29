@@ -85,6 +85,30 @@ func get_necoc_yaotl_total_level() -> int:
 			total += card.get_effective_level()
 	return total
 
+func get_serialized_state() -> Dictionary:
+	var sacrifice_levels: Array[int] = []
+	for card in necoc_yaotl_sacrifices:
+		if card != null:
+			sacrifice_levels.append(card.get_effective_level())
+	return {
+		"necoc_yaotl_sacrifice_count": sacrifice_levels.size(),
+		"necoc_yaotl_sacrifice_levels": sacrifice_levels,
+		"necoc_yaotl_total_level": get_necoc_yaotl_total_level(),
+	}
+
+func apply_serialized_state(state: Dictionary) -> void:
+	necoc_yaotl_sacrifices.clear()
+	var sacrifice_levels: Array = state.get("necoc_yaotl_sacrifice_levels", [])
+	var sacrifice_count := int(state.get("necoc_yaotl_sacrifice_count", sacrifice_levels.size()))
+	for i in range(sacrifice_count):
+		var placeholder := BaseCard.new()
+		placeholder.card_name = "Necoc Yaotl sacrifice"
+		placeholder.card_type = Card.CardType.CREATURE
+		if i < sacrifice_levels.size():
+			placeholder.level = maxi(1, int(sacrifice_levels[i]))
+		necoc_yaotl_sacrifices.append(placeholder)
+	_emit_visual_state_changed()
+
 func can_resolve_necoc_yaotl_summon(game_manager: GameManager) -> bool:
 	if not can_use_god_power(game_manager):
 		return false

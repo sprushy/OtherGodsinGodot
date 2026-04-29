@@ -31,9 +31,24 @@ func can_activate(game_manager: GameManager) -> bool:
 		return false
 	if abilities_suppressed():
 		return false
+	if is_shapeshift_locked():
+		return false
 	if is_sleeping:
 		return false
 	return can_take_minor_creature_action()
+
+func get_tonal_extraction_spirit_profile() -> Dictionary:
+	return {
+		"card_name": card_name + " Spirit",
+		"level": level,
+		"speed": speed,
+		"resilience": resilience,
+		"strength": strength,
+		"card_types": _get_human_form_types() if in_bird_form else _get_bird_form_types(),
+		"culture": culture,
+		"artist": artist,
+		"art_path": art_path,
+	}
 
 func activate(game_manager: GameManager, target = null) -> void:
 	var return_to_hand_after_shift := false

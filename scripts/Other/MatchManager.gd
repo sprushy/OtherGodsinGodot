@@ -1080,15 +1080,32 @@ func _build_upkeep_resolution_feedback(default_feedback: String) -> String:
 		return resolved_feedback
 	return "%s %s" % [default_feedback, resolved_feedback]
 
-func _has_pending_wheel_of_fire_turn_start_choice(player: Player) -> bool:
-	if game_manager == null or player == null:
+func _get_pending_wheel_of_fire_turn_start_choices() -> Array[WheelOfFire]:
+	var pending: Array[WheelOfFire] = []
+	if game_manager == null:
+		return pending
+	for player in game_manager.players:
+		if player == null:
+			continue
+		for zone in player.frontline_zones + player.reserve_zones:
+			for card in zone.cards:
+				var wheel := card as WheelOfFire
+				if wheel != null and wheel.can_offer_turn_start_advance(game_manager):
+					pending.append(wheel)
+	return pending
+
+func _has_pending_wheel_of_fire_turn_start_choice() -> bool:
+	return not _get_pending_wheel_of_fire_turn_start_choices().is_empty()
+
+func _emit_next_wheel_of_fire_turn_start_choice() -> bool:
+	var pending := _get_pending_wheel_of_fire_turn_start_choices()
+	if pending.is_empty():
 		return false
-	for zone in player.frontline_zones + player.reserve_zones:
-		for card in zone.cards:
-			var wheel := card as WheelOfFire
-			if wheel != null and wheel.can_offer_turn_start_advance(game_manager):
-				return true
-	return false
+	var wheel := pending[0]
+	_emit_ui_interaction_for_player(wheel.card_owner, "wheel_of_fire_turn_start", {
+		"source_uid": wheel.uid,
+	})
+	return true
 
 func _has_pending_impact_priority_action(card: Card) -> bool:
 	if game_manager == null or card == null:
@@ -1140,6 +1157,14 @@ func _clear_pending_attack_state() -> void:
 	selected_interceptor = null
 	pending_attack_target = null
 
+func _has_unresolved_stack_action_window() -> bool:
+	if game_manager == null:
+		return false
+	game_manager.prune_stale_stack_actions()
+	return _authoritative_stack_resolution_pending \
+		or not game_manager.action_stack.is_empty() \
+		or not game_manager.resolving_stack_actions.is_empty()
+
 func _request_ui_refresh() -> void:
 	ui_refresh_requested.emit()
 
@@ -1186,6 +1211,8 @@ func _start_authoritative_headless_attack() -> void:
 func can_attack(card: Card) -> bool:
 	if card == null or game_manager == null:
 		return false
+	if _has_unresolved_stack_action_window():
+		return false
 		
 	return (
 		card.card_type == Card.CardType.CREATURE
@@ -1205,6 +1232,8 @@ func get_attack_invalid_reason(card: Card) -> String:
 		return "No card selected."
 	if card.card_type != Card.CardType.CREATURE:
 		return "Only creatures can attack."
+	if _has_unresolved_stack_action_window():
+		return "Resolve the pending stack action before attacking."
 	if not card.can_take_major_creature_action():
 		if card.creature_major_action_used:
 			return card.card_name + " has already used its major action this turn."
@@ -1537,8 +1566,18 @@ func _requires_resolved_upkeep(command_type: String) -> bool:
 			return false
 	return true
 
+func _requires_clear_stack_window(command_type: String) -> bool:
+	match command_type:
+		"select_attacker", "request_attack", "play_card", "prepare_card", "play_creature", "creature_move", "equip_action", "change_mode", "end_turn":
+			return true
+		"cast_spell", "activate_prepared_hex", "god_ability", "activate_power", "unlock_power", "activate_divine_caprice", "cast_charm", "activate_card_ability", "en_hedu_anna_exaltation":
+			return true
+	return false
+
 func _validate_turn_action_window(command: Dictionary, sender_info: Dictionary) -> String:
 	var command_type := str(command.get("type", ""))
+	if _requires_clear_stack_window(command_type) and _has_unresolved_stack_action_window():
+		return "Resolve the pending stack action before continuing."
 	var actor := _get_command_actor(sender_info)
 	if actor == null:
 		return ""
@@ -1702,7 +1741,8 @@ func _process_command_impl(command: Dictionary) -> bool:
 				var choice_feedback := _build_upkeep_resolution_feedback(
 					game_manager.get_upkeep_choice_feedback(str(command.get("choice", "")))
 				)
-				if _has_pending_wheel_of_fire_turn_start_choice(game_manager.current_player):
+				if _has_pending_wheel_of_fire_turn_start_choice():
+					_emit_next_wheel_of_fire_turn_start_choice()
 					return true
 				_queue_authoritative_priority_event(
 					"start_turn",
@@ -1735,7 +1775,8 @@ func _process_command_impl(command: Dictionary) -> bool:
 				var tiamat_feedback := _build_upkeep_resolution_feedback(
 					"Matriarch Rule returned %s to hand." % tiamat_card.card_name
 				)
-				if _has_pending_wheel_of_fire_turn_start_choice(game_manager.current_player):
+				if _has_pending_wheel_of_fire_turn_start_choice():
+					_emit_next_wheel_of_fire_turn_start_choice()
 					return true
 				_queue_authoritative_priority_event(
 					"start_turn",
@@ -2208,6 +2249,16 @@ func _process_command_impl(command: Dictionary) -> bool:
 			if feedback.strip_edges() != "":
 				game_manager.note_player_feedback(feedback)
 			move_validated.emit(command)
+			if _uses_authoritative_headless_priority_flow():
+				if _emit_next_wheel_of_fire_turn_start_choice():
+					return true
+				_queue_authoritative_priority_event(
+					"start_turn",
+					Callable(),
+					game_manager.current_player,
+					game_manager.current_player,
+					_build_upkeep_resolution_feedback(feedback)
+				)
 			return true
 		"unlock_power":
 			var up_uid: String = command.get("power_uid", "")

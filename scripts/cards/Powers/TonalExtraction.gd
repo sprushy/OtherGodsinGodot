@@ -153,7 +153,7 @@ func on_any_card_moved(game_manager: GameManager, moved_card: Card, from_zone: Z
 		if moved_card == _spirit_token:
 			_cleanup_and_relock(game_manager, false)
 		elif moved_card == _bound_shapeshifter:
-			_cleanup_and_relock(game_manager, true)
+			_clear_bound_shapeshifter()
 
 func on_removed(game_manager: GameManager) -> void:
 	_cleanup_effect(game_manager, true)
@@ -174,8 +174,7 @@ func _cleanup_effect(game_manager: GameManager, remove_spirit: bool) -> void:
 		return
 	_is_cleaning_up = true
 	_pending_unlock_resolution = false
-	if _bound_shapeshifter != null and is_instance_valid(_bound_shapeshifter):
-		_bound_shapeshifter.remove_status_effects_from_source_card(self, SHAPESHIFT_LOCK_STATUS)
+	_clear_bound_shapeshifter()
 	if remove_spirit and _spirit_token != null and is_instance_valid(_spirit_token):
 		if _spirit_token.current_zone != null and _spirit_token.current_zone.is_board_zone() and _spirit_token.card_owner != null:
 			if game_manager != null:
@@ -185,6 +184,11 @@ func _cleanup_effect(game_manager: GameManager, remove_spirit: bool) -> void:
 	_bound_shapeshifter = null
 	_spirit_token = null
 	_is_cleaning_up = false
+
+func _clear_bound_shapeshifter() -> void:
+	if _bound_shapeshifter != null and is_instance_valid(_bound_shapeshifter):
+		_bound_shapeshifter.remove_status_effects_from_source_card(self, SHAPESHIFT_LOCK_STATUS)
+	_bound_shapeshifter = null
 
 func _is_valid_target(card: Card) -> bool:
 	return card != null \

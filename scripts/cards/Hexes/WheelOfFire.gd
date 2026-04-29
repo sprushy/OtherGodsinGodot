@@ -71,11 +71,12 @@ func on_attached(game_manager: GameManager, target: Card) -> void:
 	_advance_target_step(game_manager, false)
 	print("%s binds %s." % [card_name, target.card_name])
 
-func on_turn_start(game_manager: GameManager) -> void:
+func on_turn_start(_game_manager: GameManager) -> void:
+	pass
+
+func on_global_turn_start(game_manager: GameManager, _starting_player: Player) -> void:
 	_turn_start_advance_window_open = false
 	if game_manager == null or card_owner == null:
-		return
-	if card_owner != game_manager.current_player:
 		return
 	if not _is_binding_active():
 		_release_self(game_manager)
@@ -106,13 +107,16 @@ func on_turn_end(_game_manager: GameManager) -> void:
 	super.on_turn_end(_game_manager)
 	_turn_start_advance_window_open = false
 
+func on_global_turn_end(_game_manager: GameManager, _ending_player: Player) -> void:
+	_turn_start_advance_window_open = false
+
 func close_turn_start_window() -> void:
 	_turn_start_advance_window_open = false
 
 func can_offer_turn_start_advance(game_manager: GameManager) -> bool:
 	if not _turn_start_advance_window_open:
 		return false
-	if game_manager == null or card_owner == null or card_owner != game_manager.current_player:
+	if game_manager == null or card_owner == null:
 		return false
 	if not _is_binding_active() or not _is_active():
 		return false

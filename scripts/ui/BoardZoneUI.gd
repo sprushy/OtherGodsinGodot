@@ -5,6 +5,9 @@ const CardDetailContentBuilder = preload("res://scripts/ui/CardDetailContentBuil
 const LockedPowerCursor = preload("res://scripts/ui/LockedPowerCursor.gd")
 const DefenseShieldOverlay = preload("res://scripts/ui/DefenseShieldOverlay.gd")
 const CHAMPIONS_CALL_BADGE_TEXTURE := preload("res://images/Champion's Call Horn Badge.png")
+const SMOKING_MIRROR_BADGE_TEXTURE := preload("res://images/Smoking Mirror Icon.png")
+const TEZ_SACRIFICE_BADGE_TEXTURE := preload("res://images/TezSacBadge.png")
+const TEZ_BLOODSTREAK_TEXTURE := preload("res://images/Bloodstreak.png")
 const BASE_BOARD_Z_INDEX := 0
 const RAISED_BOARD_Z_INDEX := 2
 const GOD_INDICATOR_Z_INDEX := 3
@@ -299,6 +302,7 @@ class TargetAura extends Control:
 signal zone_clicked(zone: Zone)
 signal card_clicked(card: Card)
 signal champions_call_clicked(card: GodCard)
+signal tez_necoc_yaotl_badge_clicked(card: TezcatlipocaTheSmokingMirror)
 signal creature_drag_started(card: Card, from_zone: Zone)
 signal creature_right_clicked(card: Card)
 signal god_right_clicked(card: Card)
@@ -853,6 +857,179 @@ func _add_champions_call_badge(overlay: Control, card: Card, is_ready: bool) -> 
 				accept_event()
 		)
 	overlay.add_child(badge)
+
+func _should_show_smoking_mirror_badge(card: Card) -> bool:
+	var tez := card as TezcatlipocaTheSmokingMirror
+	if tez == null:
+		return false
+	return tez.get_necoc_yaotl_sacrifices().size() >= TezcatlipocaTheSmokingMirror.REQUIRED_NECOC_YAOTL_SACRIFICES
+
+func _should_show_tez_sacrifice_badge(card: Card) -> bool:
+	var tez := card as TezcatlipocaTheSmokingMirror
+	if tez == null:
+		return false
+	return tez.get_necoc_yaotl_sacrifices().size() < TezcatlipocaTheSmokingMirror.REQUIRED_NECOC_YAOTL_SACRIFICES
+
+func _add_smoking_mirror_badge(overlay: Control, card: Card) -> void:
+	if overlay == null or card == null:
+		return
+	var tez := card as TezcatlipocaTheSmokingMirror
+	if tez == null:
+		return
+
+	var clickable := not _is_enemy and tez.get_controller() == _get_viewer_player()
+	var ready := game_manager != null and tez.can_resolve_necoc_yaotl_summon(game_manager)
+	var badge := PanelContainer.new()
+	badge.name = "SmokingMirrorBadge"
+	badge.tooltip_text = "Summon Tezcatlipoca, Active God"
+	if not ready and game_manager != null:
+		var failure_reason := tez.get_necoc_yaotl_summon_failure_reason(game_manager)
+		if failure_reason != "":
+			badge.tooltip_text = failure_reason
+	badge.mouse_filter = Control.MOUSE_FILTER_STOP if clickable else Control.MOUSE_FILTER_IGNORE
+	badge.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND if clickable else Control.CURSOR_ARROW
+	badge.z_index = 31
+	badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	badge.offset_left = -62
+	badge.offset_top = 4
+	badge.offset_right = -4
+	badge.offset_bottom = 62
+
+	var badge_style := StyleBoxFlat.new()
+	badge_style.bg_color = Color(0.06, 0.03, 0.08, 0.86)
+	badge_style.border_color = Color(0.72, 0.38, 1.0, 0.9)
+	badge_style.shadow_color = Color(0.48, 0.12, 0.9, 0.58)
+	badge_style.shadow_size = 8
+	if ready:
+		badge_style.bg_color = Color(0.10, 0.04, 0.14, 0.95)
+		badge_style.border_color = Color(0.90, 0.56, 1.0, 1.0)
+		badge_style.shadow_color = Color(0.72, 0.24, 1.0, 0.78)
+		badge_style.shadow_size = 14
+	badge_style.corner_radius_top_left = 8
+	badge_style.corner_radius_top_right = 8
+	badge_style.corner_radius_bottom_left = 8
+	badge_style.corner_radius_bottom_right = 8
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		badge_style.set_border_width(side, 2 if ready else 1)
+	badge.add_theme_stylebox_override("panel", badge_style)
+
+	var icon := TextureRect.new()
+	icon.texture = SMOKING_MIRROR_BADGE_TEXTURE
+	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	icon.offset_left = 2
+	icon.offset_top = 2
+	icon.offset_right = -2
+	icon.offset_bottom = -2
+	icon.modulate = Color(1, 1, 1, 1) if ready else Color(0.78, 0.74, 0.82, 0.86)
+	badge.add_child(icon)
+
+	if clickable:
+		badge.gui_input.connect(func(event: InputEvent) -> void:
+			if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+				tez_necoc_yaotl_badge_clicked.emit(tez)
+				accept_event()
+		)
+	overlay.add_child(badge)
+
+func _add_tez_sacrifice_badge(overlay: Control, card: Card) -> void:
+	if overlay == null or card == null:
+		return
+	var tez := card as TezcatlipocaTheSmokingMirror
+	if tez == null:
+		return
+
+	var sacrifice_count := mini(
+		tez.get_necoc_yaotl_sacrifices().size(),
+		TezcatlipocaTheSmokingMirror.REQUIRED_NECOC_YAOTL_SACRIFICES
+	)
+	var ready := game_manager != null \
+		and sacrifice_count < TezcatlipocaTheSmokingMirror.REQUIRED_NECOC_YAOTL_SACRIFICES \
+		and tez.can_activate(game_manager) \
+		and not tez.get_valid_targets(game_manager).is_empty()
+	var clickable := not _is_enemy and tez.get_controller() == _get_viewer_player()
+
+	var badge := PanelContainer.new()
+	badge.name = "TezSacrificeBadge"
+	badge.tooltip_text = "%d/%d sacrifices" % [
+		sacrifice_count,
+		TezcatlipocaTheSmokingMirror.REQUIRED_NECOC_YAOTL_SACRIFICES
+	]
+	badge.mouse_filter = Control.MOUSE_FILTER_STOP if clickable else Control.MOUSE_FILTER_IGNORE
+	badge.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND if clickable else Control.CURSOR_ARROW
+	badge.z_index = 31
+	badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	badge.offset_left = -62
+	badge.offset_top = 4
+	badge.offset_right = -4
+	badge.offset_bottom = 62
+
+	var badge_style := StyleBoxFlat.new()
+	badge_style.bg_color = Color(0.08, 0.06, 0.045, 0.88)
+	badge_style.border_color = Color(0.66, 0.40, 0.22, 0.86)
+	badge_style.shadow_color = Color(0.12, 0.04, 0.02, 0.50)
+	badge_style.shadow_size = 6
+	if ready:
+		badge_style.bg_color = Color(0.14, 0.055, 0.035, 0.96)
+		badge_style.border_color = Color(1.0, 0.24, 0.18, 1.0)
+		badge_style.shadow_color = Color(1.0, 0.10, 0.06, 0.82)
+		badge_style.shadow_size = 14
+	badge_style.corner_radius_top_left = 8
+	badge_style.corner_radius_top_right = 8
+	badge_style.corner_radius_bottom_left = 8
+	badge_style.corner_radius_bottom_right = 8
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		badge_style.set_border_width(side, 2 if ready else 1)
+	badge.add_theme_stylebox_override("panel", badge_style)
+
+	var icon := TextureRect.new()
+	icon.texture = TEZ_SACRIFICE_BADGE_TEXTURE
+	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	icon.offset_left = 2
+	icon.offset_top = 2
+	icon.offset_right = -2
+	icon.offset_bottom = -2
+	icon.modulate = Color(1, 1, 1, 1) if ready else Color(0.86, 0.82, 0.76, 0.92)
+	badge.add_child(icon)
+
+	_add_tez_bloodstreaks(badge, sacrifice_count)
+
+	if clickable:
+		badge.gui_input.connect(func(event: InputEvent) -> void:
+			if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+				tez_necoc_yaotl_badge_clicked.emit(tez)
+				accept_event()
+		)
+	overlay.add_child(badge)
+
+func _add_tez_bloodstreaks(badge: Control, sacrifice_count: int) -> void:
+	if badge == null:
+		return
+	var positions := [
+		{"left": 19.0, "right": -19.0},
+		{"left": 6.0, "right": -32.0},
+		{"left": 32.0, "right": -6.0},
+	]
+	for i in range(mini(sacrifice_count, positions.size())):
+		var streak := TextureRect.new()
+		streak.texture = TEZ_BLOODSTREAK_TEXTURE
+		streak.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+		streak.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		streak.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		streak.z_index = 2
+		streak.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		var pos: Dictionary = positions[i]
+		streak.offset_left = float(pos.get("left", 0.0))
+		streak.offset_right = float(pos.get("right", 0.0))
+		streak.offset_top = 5.0
+		streak.offset_bottom = -5.0
+		streak.modulate = Color(1.0, 1.0, 1.0, 0.92)
+		badge.add_child(streak)
 
 func _add_priority_response_aura(overlay: Control) -> void:
 	if overlay == null:
@@ -1806,6 +1983,8 @@ func _should_show_generic_god_activation_aura(card: Card) -> bool:
 		return false
 	if _has_custom_god_activation_aura(card):
 		return false
+	if card is TezcatlipocaTheSmokingMirror:
+		return false
 	if not _can_show_god_activation_aura(card):
 		return false
 	if not card.has_method("can_activate"):
@@ -2147,7 +2326,11 @@ func _refresh_display() -> void:
 				var _effect_lines: Array[String] = []
 				if card.has_method("get_effect_summary_lines"):
 					_effect_lines = card.get_effect_summary_lines()
-				if not _effect_lines.is_empty():
+				if _should_show_smoking_mirror_badge(card):
+					_add_smoking_mirror_badge(god_overlay, card)
+				elif _should_show_tez_sacrifice_badge(card):
+					_add_tez_sacrifice_badge(god_overlay, card)
+				elif not _effect_lines.is_empty():
 					var counter_badge := PanelContainer.new()
 					counter_badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
 					counter_badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)

@@ -11,7 +11,7 @@ func _init() -> void:
 	mana_cost = 0
 	culture = "Norse"
 	flavor_text = "Thunder echoes across Midgard wherever he walks."
-	ability_text = "Patron of Midguard ([b]Passive[/b]): Friendly Human Warriors gain +3 STR and +3 RES.\n[b]Champion's Call[/b] ([b]Activate[/b]): Summon Thor, Active God. You may [b]Shelve[/b] cards from your hand to pay 4 mana each of its summon cost."
+	ability_text = "Patron of Midguard ([b]Passive[/b]): Friendly Warriors on the field gain +3 STR and +3 RES.\n[b]Champion's Call[/b] ([b]Activate[/b]): Summon Thor, Active God. You may [b]Shelve[/b] cards from your hand to pay 4 mana each of its summon cost."
 	art_path = "res://images/card_art/gods/ThorAIedit.png"
 	name_at_bottom = true
 	artist = "Ricarrdo Zoppello"
@@ -86,11 +86,14 @@ func applies_to(card: Card) -> bool:
 	return (
 		not is_muted
 		and
+		card != null
+		and
 		card.card_type == Card.CardType.CREATURE
 		and card != self
 		and card.card_owner == card_owner
-		and card.has_type("Human")
 		and card.has_type("Warrior")
+		and card.current_zone != null
+		and card.current_zone.is_board_zone()
 	)
 
 func apply_passive_to_board() -> void:
@@ -107,9 +110,17 @@ func apply_passive_to_board() -> void:
 func remove_passive_from_board() -> void:
 	if card_owner == null:
 		return
-	for zone in card_owner.frontline_zones + card_owner.reserve_zones:
+	for zone in _get_passive_cleanup_zones(card_owner):
 		for card in zone.cards:
 			card.clear_buffs_from(PASSIVE_SOURCE)
+
+func _get_passive_cleanup_zones(player: Player) -> Array[Zone]:
+	if player == null:
+		return []
+	return [player.hand_zone, player.deck_zone, player.graveyard_zone, player.abyss_zone, player.god_zone] \
+		+ player.power_zones \
+		+ player.frontline_zones \
+		+ player.reserve_zones
 
 func on_summon(_game_manager: GameManager) -> void:
 	apply_passive_to_board()

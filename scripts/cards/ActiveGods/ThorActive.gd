@@ -17,7 +17,7 @@ func _init() -> void:
 	strength = 40
 	culture = "Norse"
 	flavor_text = "Thor steps onto the field and the human warbands rally around him."
-	ability_text = "[b]Patron's Hand[/b] ([b]Passive[/b]): Can intercept any attack on your followers or Human creatures regardless of position or speed. Other friendly Human creatures gain +5 STR and +5 RES. Follower damage inflicted by this card is halved."
+	ability_text = "[b]Patron's Hand[/b] ([b]Passive[/b]): Can intercept any attack on your followers or Human creatures regardless of position or speed. Other friendly Warriors on the field gain +5 STR and +5 RES. Follower damage inflicted by this card is halved."
 	art_path = ART_PATH
 	name_at_bottom = true
 	artist = "Ricarrdo Zoppello"
@@ -27,7 +27,9 @@ func applies_to(card: Card) -> bool:
 		and card.card_type == Card.CardType.CREATURE \
 		and card != self \
 		and card.get_controller() == get_controller() \
-		and card.has_type("Human")
+		and card.has_type("Warrior") \
+		and card.current_zone != null \
+		and card.current_zone.is_board_zone()
 
 func apply_passive_to_board() -> void:
 	var controller := get_controller()
@@ -51,9 +53,17 @@ func remove_passive_from_board() -> void:
 		controller = card_owner
 	if controller == null:
 		return
-	for zone in controller.frontline_zones + controller.reserve_zones:
+	for zone in _get_passive_cleanup_zones(controller):
 		for card in zone.cards:
 			card.clear_buffs_from(PASSIVE_SOURCE)
+
+func _get_passive_cleanup_zones(player: Player) -> Array[Zone]:
+	if player == null:
+		return []
+	return [player.hand_zone, player.deck_zone, player.graveyard_zone, player.abyss_zone, player.god_zone] \
+		+ player.power_zones \
+		+ player.frontline_zones \
+		+ player.reserve_zones
 
 func can_special_intercept(_game_manager: GameManager, _attacker: Card, protected_target) -> bool:
 	if abilities_suppressed():

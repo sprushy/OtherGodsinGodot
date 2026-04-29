@@ -17,6 +17,8 @@ func _init() -> void:
 # Activates when an enemy creature attacks one of the hex owner's creatures,
 # and the attacker's speed is no greater than this card's speed (3).
 func can_activate(attacker: Card, defender: Card) -> bool:
+	if attacker == null or defender == null:
+		return false
 	if attacker.card_type != Card.CardType.CREATURE:
 		return false
 	if defender.card_type != Card.CardType.CREATURE:

@@ -52,11 +52,9 @@ func _update_spirit_crew_bonus(_game_manager: GameManager) -> void:
 		return
 
 	var other_friendly_spirits := 0
-	for zone in [controller.god_zone] + controller.power_zones + controller.frontline_zones + controller.reserve_zones:
+	for zone in controller.frontline_zones + controller.reserve_zones:
 		for card in zone.cards:
-			if card == self:
-				continue
-			if card.has_type("Spirit"):
+			if _counts_as_other_friendly_spirit(card, controller):
 				other_friendly_spirits += 1
 
 	if other_friendly_spirits > 0:
@@ -69,3 +67,14 @@ func _update_spirit_crew_bonus(_game_manager: GameManager) -> void:
 			controller,
 			"passive"
 		)
+
+func _counts_as_other_friendly_spirit(card: Card, controller: Player) -> bool:
+	return card != null \
+		and card != self \
+		and (uid == "" or card.uid != uid) \
+		and card.card_type == Card.CardType.CREATURE \
+		and not card.is_god \
+		and card.get_controller() == controller \
+		and card.current_zone != null \
+		and card.current_zone.is_board_zone() \
+		and card.has_type("Spirit")
