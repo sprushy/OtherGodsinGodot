@@ -24,6 +24,9 @@ func can_respond_to_action(action: CardAction) -> bool:
 		and action.type == CardAction.Type.EVENT \
 		and action.event_name == "frontline_entry"
 
+func can_respond_to_frontline_entry(action: CardAction) -> bool:
+	return can_respond_to_action(action)
+
 func get_priority_targets(game_manager: GameManager, action: CardAction) -> Array[Card]:
 	if action == null:
 		return []
@@ -55,8 +58,6 @@ func on_activate_action(game_manager: GameManager, action: CardAction) -> void:
 
 func is_valid_target(game_manager: GameManager, target: Card) -> bool:
 	if game_manager == null or target == null:
-		return false
-	if target.card_type != Card.CardType.CREATURE:
 		return false
 	if target.current_zone == null or target.current_zone.zone_type != Zone.ZoneType.FRONTLINE:
 		return false

@@ -158,6 +158,10 @@ func _action_is_stale(action: CardAction) -> bool:
 					or action.card.is_face_down \
 					or action.card.is_stealth \
 					or action.card.is_prepared
+			if action.event_name == "frontline_entry":
+				return action.card == null \
+					or action.card.current_zone == null \
+					or action.card.current_zone.zone_type != Zone.ZoneType.FRONTLINE
 			if action.event_name not in ["start_turn", "end_turn"] and _is_hidden_board_card(action.card):
 				return true
 		CardAction.Type.ATTACK:
@@ -579,6 +583,11 @@ func can_card_respond_to_priority(card: Card, player: Player = null) -> bool:
 	if card.card_type == Card.CardType.SPELL and card.current_zone == card.card_owner.hand_zone and spells_must_be_prepared():
 		return false
 	var top: CardAction = action_stack.back()
+	if top.type == CardAction.Type.EVENT and top.event_name == "frontline_entry":
+		if not card.has_method("can_respond_to_frontline_entry"):
+			return false
+		if not card.can_respond_to_frontline_entry(top):
+			return false
 	var top_speed := top.get_timing_speed()
 	if card is HexCard:
 		if not prepared_hexes.has(card):
@@ -3232,7 +3241,7 @@ func _on_player_card_moved(card: Card, from_zone: Zone, to_zone: Zone) -> void:
 		elif to_zone.zone_type == Zone.ZoneType.ABYSS:
 			_notify_creature_sent_to_void(card)
 	_notify_board_cards_of_movement(card, from_zone, to_zone)
-	if to_zone.zone_type == Zone.ZoneType.FRONTLINE and card.card_type == Card.CardType.CREATURE:
+	if to_zone.zone_type == Zone.ZoneType.FRONTLINE:
 		_push_frontline_entry_event(card)
 
 func _push_frontline_entry_event(card: Card) -> void:

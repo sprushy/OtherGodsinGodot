@@ -14,7 +14,7 @@ func _init() -> void:
 	linked_god_name = LINKED_GOD_NAME
 	card_name = "Nusku, Active God"
 	card_types = ["Active God", "Divine Manifestation", "God"]
-	level = 12
+	level = 7
 	mana_cost = 12
 	speed = 2
 	resilience = 30
