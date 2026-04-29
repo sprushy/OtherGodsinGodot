@@ -3195,6 +3195,13 @@ func _is_tezcatlipoca_normal_god(card: Card) -> bool:
 		and card.card_name == "Tezcatlipoca, the Smoking Mirror" \
 		and card.has_method("get_necoc_yaotl_sacrifices")
 
+func _is_tezcatlipoca_necoc_yaotl_summon(card: Card, summon_source: Card) -> bool:
+	return card != null \
+		and summon_source != null \
+		and summon_source.card_name == "Tezcatlipoca, the Smoking Mirror" \
+		and card.card_name == "Tezcatlipoca, Active God" \
+		and card.has_method("get_valid_titlacauan_targets")
+
 func _cancel_blot_sacrifice_target_selection(reason: String) -> bool:
 	if not _is_blot_sacrifice_target_selection_active():
 		return false
@@ -7904,7 +7911,7 @@ func _flush_deferred_priority_events() -> void:
 	if not _pending_hand_play_events.is_empty():
 		_flush_hand_play_priority_events()
 
-func _on_card_summoned(player: Player, card: Card, _from_zone: Zone, to_zone: Zone, _summon_source: Card, face_down: bool, stealth: bool) -> void:
+func _on_card_summoned(player: Player, card: Card, _from_zone: Zone, to_zone: Zone, summon_source: Card, face_down: bool, stealth: bool) -> void:
 	if player == null or card == null or to_zone == null:
 		return
 	if card.card_type not in [Card.CardType.CREATURE, Card.CardType.STRUCTURE]:
@@ -7919,6 +7926,8 @@ func _on_card_summoned(player: Player, card: Card, _from_zone: Zone, to_zone: Zo
 		# until a later click happens to repaint the UI.
 		_schedule_local_ui_refresh()
 		_kick_local_stack_progress()
+		return
+	if _is_tezcatlipoca_necoc_yaotl_summon(card, summon_source):
 		return
 	if _has_pending_impact_priority_action(card):
 		return

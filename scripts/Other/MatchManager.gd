@@ -212,7 +212,7 @@ func _on_game_manager_card_summoned(
 	card: Card,
 	_from_zone: Zone,
 	to_zone: Zone,
-	_summon_source: Card,
+	summon_source: Card,
 	face_down: bool,
 	stealth: bool
 ) -> void:
@@ -225,6 +225,8 @@ func _on_game_manager_card_summoned(
 	if face_down or stealth or card.is_face_down or card.is_prepared or card.is_stealth:
 		return
 	if card.current_zone != to_zone or not to_zone.is_board_zone():
+		return
+	if _is_tezcatlipoca_necoc_yaotl_summon(card, summon_source):
 		return
 	if _has_pending_impact_priority_action(card):
 		return
@@ -241,6 +243,13 @@ func _on_game_manager_card_summoned(
 	if _active_command_advances_summon_priority():
 		return
 	_advance_authoritative_priority_for_pending_card_events(card)
+
+func _is_tezcatlipoca_necoc_yaotl_summon(card: Card, summon_source: Card) -> bool:
+	return card != null \
+		and summon_source != null \
+		and summon_source.card_name == "Tezcatlipoca, the Smoking Mirror" \
+		and card.card_name == "Tezcatlipoca, Active God" \
+		and card.has_method("get_valid_titlacauan_targets")
 
 func resolve_action(action: CardAction) -> void:
 	last_resolution_text = ""

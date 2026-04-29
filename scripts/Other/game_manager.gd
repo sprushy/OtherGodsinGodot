@@ -3564,36 +3564,30 @@ func _get_active_powers() -> Array[PowerCard]:
 				active_powers.append(power)
 	return active_powers
 
+func _is_face_up_awake_god_for_player(card: Card, player: Player) -> bool:
+	return card != null \
+		and player != null \
+		and card.get_controller() == player \
+		and (card.is_god or card.has_type("Active God")) \
+		and not card.is_face_down \
+		and not card.is_stealth \
+		and not card.is_sleeping
+
 func player_has_normal_god(player: Player) -> bool:
-	return player != null and player.god_zone != null and not player.god_zone.cards.is_empty()
+	if player == null or player.god_zone == null:
+		return false
+	for card in player.god_zone.cards:
+		if _is_face_up_awake_god_for_player(card, player):
+			return true
+	return false
 
 func player_has_face_up_awake_active_god(player: Player) -> bool:
 	if player == null:
 		return false
-	var current_god := player.god_zone.cards[0] as GodCard if player.god_zone != null and not player.god_zone.cards.is_empty() else null
 	for zone in player.frontline_zones + player.reserve_zones:
 		for card in zone.cards:
-			if card == null:
-				continue
-			if not card.has_type("Active God"):
-				continue
-			if card.get_controller() != player:
-				continue
-			if card.is_face_down or card.is_stealth or card.is_sleeping:
-				continue
-			var active_god := card as ActiveGodCard
-			if current_god != null and current_god.uses_culture_locked_deckbuilding():
-				if active_god == null or not current_god.is_own_active_god_card(active_god):
-					continue
-			elif current_god == null:
-				if active_god == null:
-					continue
-				var stored_god := active_god.get_stored_normal_god() as GodCard
-				if stored_god == null:
-					continue
-				if stored_god.uses_culture_locked_deckbuilding() and not stored_god.is_own_active_god_card(active_god):
-					continue
-			return true
+			if _is_face_up_awake_god_for_player(card, player):
+				return true
 	return false
 
 func can_player_use_powers(player: Player) -> bool:

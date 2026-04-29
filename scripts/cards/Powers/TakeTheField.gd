@@ -12,7 +12,7 @@ func _init() -> void:
 	mana_cost = 0
 	card_types = ["Power", "Summon - God", "Manifestation"]
 	flavor_text = ""
-	ability_text = "[b]Unlock[/b]: Pay the summon requirements of a matching [b]Active God[/b] and summon it. When you do, your normal god leaves the field.\n[b]God Death[/b] ([b]Passive[/b]): If you have no normal god and no face-up, awake Active God on the field, you gain 1 less upkeep mana, cannot use powers, and lose 7 followers at upkeep."
+	ability_text = "[b]Unlock[/b]: Pay the summon requirements of a matching [b]Active God[/b] and summon it. When you do, your normal god leaves the field.\n[b]God Death[/b] ([b]Passive[/b]): If you control no face-up, awake God on the field, you gain 1 less upkeep mana, cannot use powers, and lose 7 followers at upkeep."
 	artist = "Ricardo Zoppello"
 	art_path = ART_PATH
 

@@ -57,7 +57,7 @@ const KEYWORD_HINTS = {
 	"Stone Infant": "Token creature with 17 STR, 17 RES, 1 SPD, and the types Token, Human, Stone, and Golem.",
 	"Stone Skin": "This creature cannot be destroyed in combat.",
 	"Terror": "When this card enters the field, return a lower-level opposing creature to its owner's hand.",
-	"God Death": "If you have no normal god and no face-up, awake Active God on the field, you gain 1 less upkeep mana, cannot use powers, and lose 7 followers at upkeep.",
+	"God Death": "If you control no face-up, awake God on the field, you gain 1 less upkeep mana, cannot use powers, and lose 7 followers at upkeep.",
 }
 
 static func _escape_hint_text(text: String) -> String:

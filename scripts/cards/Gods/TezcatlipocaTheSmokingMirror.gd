@@ -140,9 +140,20 @@ func resolve_necoc_yaotl_sacrifice(game_manager: GameManager, target: Card) -> S
 
 	for equipment_card in target.equipment.duplicate():
 		equipment_card.unequip()
-	if target.current_zone != null:
-		target.current_zone.remove_card(target)
+	var from_zone := target.current_zone
+	if from_zone != null:
+		if from_zone.is_board_zone():
+			target.last_board_zone_type = from_zone.zone_type
+			target.last_board_zone_index = from_zone.zone_index
+			if target.has_method("reset_activation_counter"):
+				target.reset_activation_counter()
+			if target.has_method("remove_status_effects_with_flag"):
+				target.remove_status_effects_with_flag("remove_when_leaves_board")
+			target.remove_effects_expiring_after_combat()
+		from_zone.remove_card(target)
 	target.current_zone = null
+	if target.card_owner != null and from_zone != null:
+		target.card_owner.card_moved.emit(target, from_zone, null)
 	necoc_yaotl_sacrifices.append(target)
 	_emit_visual_state_changed()
 	notify_power_activated(game_manager, target)
