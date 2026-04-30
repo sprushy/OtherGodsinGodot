@@ -12,6 +12,7 @@ const WingedLionScript = preload("res://scripts/cards/Creatures/WingedLion.gd")
 const SacrificeCursorSource = preload("res://images/ui/cursors/BloodySacrificeCursor.png")
 const DevourCursorSource = preload("res://images/ui/cursors/BloodyWolfJawsPGN.png")
 const SilenceCursorSource = preload("res://images/SilenceCursorPGN.png")
+const TonalExtractionCursorSource = preload("res://images/ui/cursors/ExtractionCursor.png")
 const GiantMasterArchitectCursorSource = preload("res://images/ui/cursors/GiantMasterArchitectHammerCursor.png")
 const HermesCursorSource = preload("res://images/ui/cursors/SpeedHermesCursor.png")
 const GuanYuCursorSource = preload("res://images/ui/cursors/GuanYuCursor.png")
@@ -281,7 +282,6 @@ var _pending_oracles_sight_prompts: Array[OraclesSight] = []
 var _active_oracles_sight_prompt: OraclesSight = null
 var _queued_oracles_sight_prompt_targets: Dictionary = {}
 var _pending_tonal_extraction_prompts: Array[TonalExtraction] = []
-var _active_tonal_extraction_prompt: TonalExtraction = null
 var _queued_tonal_extraction_prompt_targets: Dictionary = {}
 var _pending_humbaba_prompts: Array[HumbabaTheTerrible] = []
 var _active_humbaba_prompt: HumbabaTheTerrible = null
@@ -404,6 +404,7 @@ var _auto_select_charm_prepare_zones: bool = true
 var _sacrifice_cursor_texture: Texture2D = null
 var _devour_cursor_texture: Texture2D = null
 var _silence_cursor_texture: Texture2D = null
+var _tonal_extraction_cursor_texture: Texture2D = null
 var _giant_master_architect_cursor_texture: Texture2D = null
 var _hermes_cursor_texture: Texture2D = null
 var _guan_yu_cursor_texture: Texture2D = null
@@ -415,6 +416,7 @@ var _overlay_selection_cursor_mode: String = ""
 var _sacrifice_cursor_target_height: int = 0
 var _devour_cursor_target_height: int = 0
 var _silence_cursor_target_height: int = 0
+var _tonal_extraction_cursor_target_height: int = 0
 var _giant_master_architect_cursor_target_height: int = 0
 var _hermes_cursor_target_height: int = 0
 var _guan_yu_cursor_target_height: int = 0
@@ -481,6 +483,8 @@ const DEVOUR_CURSOR_TARGET_HEIGHT := 96
 const DEVOUR_CURSOR_HOTSPOT_RATIO := Vector2(0.50, 0.52)
 const SILENCE_CURSOR_TARGET_HEIGHT := 96
 const SILENCE_CURSOR_HOTSPOT_RATIO := Vector2(0.49, 0.22)
+const TONAL_EXTRACTION_CURSOR_TARGET_HEIGHT := 96
+const TONAL_EXTRACTION_CURSOR_HOTSPOT_RATIO := Vector2(0.50, 0.92)
 const GIANT_MASTER_ARCHITECT_CURSOR_TARGET_HEIGHT := 96
 const GIANT_MASTER_ARCHITECT_CURSOR_HOTSPOT_RATIO := Vector2(0.50, 0.18)
 const HERMES_CURSOR_TARGET_HEIGHT := 96
@@ -1474,15 +1478,18 @@ func _is_devour_cursor_mode_active() -> bool:
 	return _has_pending_click_selection() and _get_pending_target_selection_name().contains("Devour")
 
 func _is_silence_cursor_mode_active() -> bool:
-	if _pending_absence_spell != null:
-		return false
 	if _has_pending_click_selection():
-		return _is_silence_or_mute_targeting_source(_pending_click_selection_source) \
-			and _is_live_silence_targeting_source(_pending_click_selection_source)
+		return _is_silence_or_mute_targeting_source(_pending_click_selection_source)
+	if selected_card is Absence:
+		return _can_cast_spell_from_current_zone(selected_card)
+	if awaiting_god_ability_target and god_ability_source != null:
+		return _is_silence_or_mute_targeting_source(god_ability_source)
 	if awaiting_spell_target and spell_waiting_for_target != null:
-		return _is_silence_or_mute_targeting_source(spell_waiting_for_target) \
-			and _is_live_silence_targeting_source(spell_waiting_for_target)
+		return _is_silence_or_mute_targeting_source(spell_waiting_for_target)
 	return false
+
+func _is_tonal_extraction_cursor_mode_active() -> bool:
+	return _has_pending_click_selection() and _pending_click_selection_source is TonalExtraction
 
 func _is_giant_master_architect_cursor_mode_active() -> bool:
 	return _overlay_selection_cursor_mode == "giant_master_architect_structure"
@@ -1507,12 +1514,12 @@ func _is_silence_or_mute_targeting_source(card: Card) -> bool:
 	var ability_text_value := String(card.ability_text).to_lower()
 	return ability_text_value.contains("silence") or ability_text_value.contains("mute")
 
-func _is_live_silence_targeting_source(card: Card) -> bool:
-	if card == null or card.current_zone == null:
-		return false
-	if card.card_type in [Card.CardType.SPELL, Card.CardType.HEX, Card.CardType.CHARM]:
-		return card.current_zone == card.card_owner.hand_zone or card.current_zone.is_board_zone()
-	return card.current_zone.is_board_zone()
+func _get_selection_cursor_mode_for_source(card: Card) -> String:
+	if card is TonalExtraction:
+		return "tonal_extraction"
+	if _is_silence_or_mute_targeting_source(card):
+		return "silence"
+	return ""
 
 func _hide_devour_cancel_prompt() -> void:
 	if _devour_cancel_prompt != null and is_instance_valid(_devour_cancel_prompt):
@@ -1634,6 +1641,8 @@ func _get_selection_cursor_mode() -> String:
 		return "sacrifice"
 	if _is_devour_cursor_mode_active():
 		return "devour"
+	if _is_tonal_extraction_cursor_mode_active():
+		return "tonal_extraction"
 	if _is_silence_cursor_mode_active():
 		return "silence"
 	return ""
@@ -1644,6 +1653,8 @@ func _get_cursor_mode_target_height(cursor_mode: String) -> int:
 			return UIArtScaler.get_board_cursor_target_height(SACRIFICE_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 		"devour":
 			return UIArtScaler.get_board_cursor_target_height(DEVOUR_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+		"tonal_extraction":
+			return UIArtScaler.get_board_cursor_target_height(TONAL_EXTRACTION_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 		"silence":
 			return UIArtScaler.get_board_cursor_target_height(SILENCE_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 		"giant_master_architect":
@@ -1695,6 +1706,19 @@ func _apply_silence_cursor() -> bool:
 	var hotspot := UIArtScaler.get_cursor_hotspot(_silence_cursor_texture, SILENCE_CURSOR_HOTSPOT_RATIO)
 	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
 		Input.set_custom_mouse_cursor(_silence_cursor_texture, cursor_shape, hotspot)
+	return true
+
+func _apply_tonal_extraction_cursor() -> bool:
+	var target_height := UIArtScaler.get_board_cursor_target_height(TONAL_EXTRACTION_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+	if _tonal_extraction_cursor_texture == null or _tonal_extraction_cursor_target_height != target_height:
+		_tonal_extraction_cursor_texture = UIArtScaler.build_cursor_texture(TonalExtractionCursorSource, target_height)
+		_tonal_extraction_cursor_target_height = target_height
+	if _tonal_extraction_cursor_texture == null:
+		return false
+
+	var hotspot := UIArtScaler.get_cursor_hotspot(_tonal_extraction_cursor_texture, TONAL_EXTRACTION_CURSOR_HOTSPOT_RATIO)
+	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
+		Input.set_custom_mouse_cursor(_tonal_extraction_cursor_texture, cursor_shape, hotspot)
 	return true
 
 func _apply_giant_master_architect_cursor() -> bool:
@@ -1824,6 +1848,14 @@ func _sync_sacrifice_cursor() -> void:
 			_restore_default_selection_cursor()
 		return
 
+	if cursor_mode == "tonal_extraction":
+		if _apply_tonal_extraction_cursor():
+			_active_selection_cursor_mode = "tonal_extraction"
+			_active_selection_cursor_target_height = target_height
+		else:
+			_restore_default_selection_cursor()
+		return
+
 	if cursor_mode == "silence":
 		if _apply_silence_cursor():
 			_active_selection_cursor_mode = "silence"
@@ -1936,6 +1968,7 @@ func _sync_local_end_turn_button() -> void:
 		return
 	if end_turn_button == null or choice_container == null:
 		return
+	_maybe_progress_hidden_frontline_entry_action()
 	var should_show = not choice_container.visible
 	var changed = end_turn_button.visible != should_show or end_turn_button.disabled != not should_show
 	end_turn_button.visible = should_show
@@ -6094,15 +6127,7 @@ func _show_card_selection_overlay(
 			zone_lbl.custom_minimum_size = Vector2(VisualCard.CARD_WIDTH, 0)
 			card_vbox.add_child(zone_lbl)
 
-		var captured: Card = card
-		wrapper.gui_input.connect(func(event: InputEvent) -> void:
-			if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
-				var callback := _overlay_card_selected
-				_overlay_card_dismissed = Callable()
-				_dismiss_zone_overlay()
-				if callback.is_valid():
-					callback.call(captured)
-		)
+		wrapper.gui_input.connect(_on_card_selection_overlay_card_gui_input.bind(card))
 
 	if cancel_button_text.strip_edges() != "" and on_cancel.is_valid():
 		var decline_button := Button.new()
@@ -6123,6 +6148,15 @@ func _show_card_selection_overlay(
 			if dismiss_callback.is_valid():
 				dismiss_callback.call()
 	)
+
+func _on_card_selection_overlay_card_gui_input(event: InputEvent, selected_card: Card) -> void:
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+		accept_event()
+		var callback := _overlay_card_selected
+		_overlay_card_dismissed = Callable()
+		_dismiss_zone_overlay()
+		if callback.is_valid():
+			callback.call(selected_card)
 
 func _build_selection_overlay_card_preview(card: Card) -> Control:
 	if _should_hide_card_in_selection_overlay(card):
@@ -6928,7 +6962,8 @@ func _prompt_generic_spell_target_selection(spell: SpellCard) -> void:
 		"Choose a target for " + spell.card_name,
 		targets,
 		choose_target,
-		cancel_target
+		cancel_target,
+		_get_selection_cursor_mode_for_source(spell)
 	)
 
 func _pay_hand_card_costs(card: Card, custom_pay_callback: Callable = Callable()) -> bool:
@@ -8989,7 +9024,9 @@ func _on_god_card_pressed(card: Card) -> void:
 		_show_card_selection_overlay(
 			"Choose a target for " + card.card_name,
 			targets,
-			on_choose_god_overlay_target
+			on_choose_god_overlay_target,
+			Callable(),
+			_get_selection_cursor_mode_for_source(card)
 		)
 	else:
 		awaiting_god_ability_target = true
@@ -10995,7 +11032,7 @@ func _queue_tonal_extraction_prompt(card: TonalExtraction, prompt_targets: Array
 		return
 	if not prompt_targets.is_empty():
 		_queued_tonal_extraction_prompt_targets[card.uid] = prompt_targets.duplicate()
-	if card == _active_tonal_extraction_prompt or card in _pending_tonal_extraction_prompts:
+	if card in _pending_tonal_extraction_prompts:
 		return
 	_pending_tonal_extraction_prompts.append(card)
 	call_deferred("_show_next_tonal_extraction_prompt")
@@ -11136,7 +11173,7 @@ func _show_next_oracles_sight_prompt() -> void:
 		return
 
 func _show_next_tonal_extraction_prompt() -> void:
-	if _active_tonal_extraction_prompt != null:
+	if _has_pending_click_selection() and _pending_click_selection_source is TonalExtraction:
 		return
 	if game_manager == null:
 		_pending_tonal_extraction_prompts.clear()
@@ -11156,38 +11193,23 @@ func _show_next_tonal_extraction_prompt() -> void:
 			_set_action_label_text(card.card_name + " found no friendly Shapeshifter to extract.")
 			update_ui()
 			continue
-		if current_targets.size() == 1 or not _is_player_local(card.card_owner):
+		if not _is_player_local(card.card_owner):
 			_queued_tonal_extraction_prompt_targets.erase(card.uid)
 			_resolve_tonal_extraction_prompt(card, current_targets[0])
 			continue
-		_active_tonal_extraction_prompt = card
-		var on_choose_extraction := func(chosen_card: Card) -> void:
-			var resolved_card := _active_tonal_extraction_prompt
-			_active_tonal_extraction_prompt = null
-			_queued_tonal_extraction_prompt_targets.erase(card.uid)
-			if resolved_card == null or game_manager == null:
-				call_deferred("_show_next_tonal_extraction_prompt")
-				return
-			_resolve_tonal_extraction_prompt(resolved_card, chosen_card)
+		_queued_tonal_extraction_prompt_targets.erase(card.uid)
+		var validate_extraction_target := func(clicked_card: Card) -> bool:
+			return clicked_card != null and clicked_card in card.get_valid_targets(game_manager)
+		var confirm_extraction_target := func(clicked_card: Card) -> void:
+			_resolve_tonal_extraction_prompt(card, clicked_card)
 			call_deferred("_show_next_tonal_extraction_prompt")
-		var on_cancel_extraction := func() -> void:
-			var resolved_card := _active_tonal_extraction_prompt
-			_active_tonal_extraction_prompt = null
-			if resolved_card == null:
-				call_deferred("_show_next_tonal_extraction_prompt")
-				return
-			_pending_tonal_extraction_prompts.insert(0, resolved_card)
-			if game_manager != null:
-				_set_action_label_text(resolved_card.card_name + " still needs you to choose a Shapeshifter.")
-				update_ui()
-			call_deferred("_show_next_tonal_extraction_prompt")
-		_show_card_selection_overlay(
-			"Choose a Shapeshifter for " + card.card_name,
-			current_targets,
-			on_choose_extraction,
-			on_cancel_extraction
+		_begin_pending_click_selection(
+			card.card_name,
+			card,
+			validate_extraction_target,
+			confirm_extraction_target
 		)
-		_set_action_label_text("%s: choose a friendly Shapeshifter to extract." % card.card_name)
+		_set_action_label_text("%s: click a friendly Shapeshifter to extract." % card.card_name)
 		update_ui()
 		return
 
@@ -11199,7 +11221,21 @@ func _resolve_tonal_extraction_prompt(card: TonalExtraction, chosen_target: Card
 		_set_action_label_text(card.card_name + " found no friendly Shapeshifter to extract.")
 		update_ui()
 		return
-	var resolved_target := chosen_target if chosen_target != null and chosen_target in current_targets else current_targets[0]
+	var resolved_target: Card = null
+	if chosen_target != null:
+		var chosen_uid := str(chosen_target.uid).strip_edges()
+		for target in current_targets:
+			if target == null:
+				continue
+			if target == chosen_target or (chosen_uid != "" and str(target.uid).strip_edges() == chosen_uid):
+				resolved_target = target
+				break
+	if resolved_target == null:
+		if card not in _pending_tonal_extraction_prompts:
+			_pending_tonal_extraction_prompts.insert(0, card)
+		_set_action_label_text(card.card_name + " choice is no longer available. Choose a Shapeshifter again.")
+		update_ui()
+		return
 	if _is_networked_client:
 		if _is_player_local(card.card_owner):
 			game_input.submit_action({type = "activate_power", power_uid = card.uid, target_uid = resolved_target.uid})
@@ -13732,6 +13768,52 @@ func _has_unresolved_priority_state() -> bool:
 			and not game_manager.action_stack.is_empty()
 		)
 
+func _get_hidden_frontline_entry_action() -> CardAction:
+	if game_manager == null:
+		return null
+	game_manager.prune_stale_stack_actions()
+	if game_manager.action_stack.is_empty():
+		return null
+	var top_action: CardAction = game_manager.action_stack.back()
+	if top_action == null:
+		return null
+	if top_action.type != CardAction.Type.EVENT or top_action.event_name != "frontline_entry":
+		return null
+	if top_action.card == null or top_action.card.current_zone == null:
+		return null
+	if top_action.card.current_zone.zone_type != Zone.ZoneType.FRONTLINE:
+		return null
+	if not (top_action.card.is_prepared or top_action.card.is_face_down or top_action.card.is_stealth):
+		return null
+	return top_action
+
+func _maybe_progress_hidden_frontline_entry_action() -> bool:
+	if game_manager == null or match_manager == null:
+		return false
+	if _is_networked_client or _game_finished:
+		return false
+	if _executing_stack_action or _stack_resolution_paused:
+		return false
+	if _has_pending_target_selection() or _is_priority_prompt_visible() or _is_intercept_prompt_visible():
+		return false
+	var top_action := _get_hidden_frontline_entry_action()
+	if top_action == null:
+		return false
+	var first_player := game_manager.priority_player
+	if first_player == null:
+		first_player = top_action.initial_priority_player if top_action.initial_priority_player != null else game_manager.get_opponent(top_action.source_player)
+		game_manager.priority_player = first_player
+	var second_player := game_manager.get_opponent(first_player) if first_player != null else null
+	if match_manager._player_has_priority_prompt_responses(first_player):
+		_show_priority_prompt(first_player)
+		return true
+	if match_manager._player_has_priority_prompt_responses(second_player):
+		game_manager.priority_player = second_player
+		_show_priority_prompt(second_player)
+		return true
+	_execute_top_of_stack()
+	return true
+
 func _can_auto_resume_paused_stack_resolution() -> bool:
 	if not _stack_resolution_paused or game_manager == null:
 		return false
@@ -13829,6 +13911,10 @@ func _describe_unresolved_priority_state() -> String:
 	return "stack action"
 
 func _reject_priority_locked_action(reason: String = "Only legal priority responses can be used right now.") -> bool:
+	if _maybe_progress_hidden_frontline_entry_action():
+		if _has_unresolved_priority_state():
+			return true
+		return false
 	if _recover_stalled_priority_state():
 		if _has_unresolved_priority_state():
 			return true
@@ -14884,7 +14970,9 @@ func _on_priority_response_chosen(card: Card) -> void:
 			_show_card_selection_overlay(
 				"Choose a target for " + hex.card_name,
 				hex_targets,
-				on_choose_priority_hex_target
+				on_choose_priority_hex_target,
+				Callable(),
+				_get_selection_cursor_mode_for_source(hex)
 			)
 			return
 		if has_manual_targets and hex.targets and hex_targets.is_empty():
@@ -14920,7 +15008,9 @@ func _on_priority_response_chosen(card: Card) -> void:
 		_show_card_selection_overlay(
 			"Choose a target for " + card.card_name,
 			god_targets,
-			choose_priority_god_target
+			choose_priority_god_target,
+			Callable(),
+			_get_selection_cursor_mode_for_source(card)
 		)
 	elif card is E2Abzu:
 		var structure := card as E2Abzu
@@ -14991,7 +15081,9 @@ func _on_priority_response_chosen(card: Card) -> void:
 			_show_card_selection_overlay(
 				"Choose a target for " + card.card_name,
 				targets,
-				choose_network_priority_target
+				choose_network_priority_target,
+				Callable(),
+				_get_selection_cursor_mode_for_source(card)
 			)
 			return
 
@@ -15015,7 +15107,9 @@ func _on_priority_response_chosen(card: Card) -> void:
 			_show_card_selection_overlay(
 				"Choose a target for " + card.card_name,
 				targets,
-				choose_local_priority_target
+				choose_local_priority_target,
+				Callable(),
+				_get_selection_cursor_mode_for_source(card)
 			)
 			return
 
@@ -17118,7 +17212,8 @@ func _begin_book_of_life_resolution(spell: BookOfLife) -> void:
 		"Choose a non-Machine creature for Book of Life",
 		valid_creatures,
 		on_choose_creature,
-		on_cancel_creature
+		on_cancel_creature,
+		_get_selection_cursor_mode_for_source(spell)
 	)
 
 func _queue_book_of_life_resolution(spell: BookOfLife) -> void:
@@ -17920,6 +18015,7 @@ func _dismiss_transient_prompts() -> void:
 	_queued_humbaba_prompt_targets.clear()
 	_humbaba_prompt_paused_resolution = false
 	_queued_oracles_sight_prompt_targets.clear()
+	_pending_tonal_extraction_prompts.clear()
 	_queued_tonal_extraction_prompt_targets.clear()
 	if _resurrection_panel and is_instance_valid(_resurrection_panel):
 		_resurrection_panel.queue_free()
@@ -20013,6 +20109,7 @@ func _sync_network_turn_controls() -> void:
 		all_attack_btn.disabled = true
 		return
 	if not _is_networked_client or game_manager == null or network_manager == null or network_manager.local_player_index < 0:
+		_maybe_progress_hidden_frontline_entry_action()
 		end_turn_button.visible = true
 		end_turn_button.disabled = false
 		all_attack_btn.disabled = false
@@ -20249,7 +20346,9 @@ func _show_remote_priority_prompt(responses: Array, action_message: String = "")
 					_show_card_selection_overlay(
 						"Choose a target for " + card_name,
 						target_cards,
-						on_choose_hex_response_target
+						on_choose_hex_response_target,
+						Callable(),
+						_get_selection_cursor_mode_for_source(resp_card)
 					)
 			elif rtype == "charm":
 				var from_hand: bool = response.get("from_hand", false)
@@ -20283,7 +20382,9 @@ func _show_remote_priority_prompt(responses: Array, action_message: String = "")
 					_show_card_selection_overlay(
 						"Choose a target for " + card_name,
 						target_cards,
-						on_choose_charm_response_target
+						on_choose_charm_response_target,
+						Callable(),
+						_get_selection_cursor_mode_for_source(resp_card)
 					)
 			elif rtype == "spell":
 				if target_uids.size() == 1:
@@ -20312,7 +20413,9 @@ func _show_remote_priority_prompt(responses: Array, action_message: String = "")
 					_show_card_selection_overlay(
 						"Choose a target for " + card_name,
 						target_cards,
-						on_choose_spell_response_target
+						on_choose_spell_response_target,
+						Callable(),
+						_get_selection_cursor_mode_for_source(resp_card)
 					)
 			elif rtype == "god" or rtype == "ability":
 				if target_uids.size() == 1:
@@ -20341,7 +20444,9 @@ func _show_remote_priority_prompt(responses: Array, action_message: String = "")
 					_show_card_selection_overlay(
 						"Choose a target for " + card_name,
 						target_cards,
-						on_choose_priority_ability_target
+						on_choose_priority_ability_target,
+						Callable(),
+						_get_selection_cursor_mode_for_source(resp_card)
 					)
 		)
 		vbox.add_child(btn)
@@ -20682,7 +20787,7 @@ var _pending_resurrection_card: Card = null
 func _next_resurrection_prompt() -> void:
 	var card: Card = null
 	while not _resurrection_queue.is_empty():
-		var candidate := _resurrection_queue.pop_front()
+		var candidate = _resurrection_queue.pop_front()
 		if candidate != null \
 				and candidate.card_owner != null \
 				and candidate.card_owner.mana >= 1 \
