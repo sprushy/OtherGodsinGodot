@@ -3273,7 +3273,37 @@ func _push_frontline_entry_event(card: Card) -> void:
 	action.event_name = "frontline_entry"
 	action.card = card
 	action.source_player = card.card_owner
+	if not _has_priority_responses_for_action(action):
+		return
 	push_to_stack(action)
+
+func _has_priority_responses_for_action(action: CardAction) -> bool:
+	if action == null:
+		return false
+	var original_priority_player := priority_player
+	var original_consecutive_passes := consecutive_passes
+	var temporarily_added := false
+	if not action_stack.has(action):
+		action_stack.push_back(action)
+		temporarily_added = true
+
+	var first_player := action.initial_priority_player
+	if first_player == null:
+		first_player = get_opponent(action.source_player)
+	var second_player := get_opponent(first_player) if first_player != null else null
+	var has_responses := false
+	if first_player != null:
+		priority_player = first_player
+		has_responses = not get_priority_responses(first_player).is_empty()
+	if not has_responses and second_player != null:
+		priority_player = second_player
+		has_responses = not get_priority_responses(second_player).is_empty()
+
+	if temporarily_added:
+		action_stack.erase(action)
+	priority_player = original_priority_player
+	consecutive_passes = original_consecutive_passes
+	return has_responses
 
 func _notify_board_cards_of_movement(moved_card: Card, from_zone: Zone, to_zone: Zone) -> void:
 	for player in players:

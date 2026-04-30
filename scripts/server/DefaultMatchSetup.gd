@@ -99,14 +99,14 @@ func build_default_match(game_manager: GameManager) -> Dictionary:
 		"player2": player2,
 	}
 
-func build_empty_match_shell(game_manager: GameManager, player_count: int = 2) -> Dictionary:
+func build_empty_match_shell(game_manager: GameManager, player_count: int = 2, player_names: Array = []) -> Dictionary:
 	if game_manager == null or player_count <= 0:
 		return {}
 
 	var players: Array[Player] = []
 	for player_index in range(player_count):
 		var player := Player.new()
-		player.player_name = "Player %d" % [player_index + 1]
+		player.player_name = _get_indexed_player_name(player_names, player_index)
 		game_manager.players.append(player)
 		players.append(player)
 
@@ -127,8 +127,9 @@ func build_match_from_session_decks(game_manager: GameManager, match_session) ->
 
 	var players: Array[Player] = []
 	for player_index in range(match_session.player_session_ids.size()):
+		var session_id := str(match_session.player_session_ids[player_index]).strip_edges()
 		var player := Player.new()
-		player.player_name = "Player %d" % [player_index + 1]
+		player.player_name = _get_session_player_name(match_session, session_id, player_index)
 		game_manager.players.append(player)
 		players.append(player)
 
@@ -230,3 +231,20 @@ func _get_session_deck_submission(match_session, session_id: String) -> Dictiona
 	if submission is Dictionary:
 		return (submission as Dictionary).duplicate(true)
 	return {}
+
+func _get_session_player_name(match_session, session_id: String, player_index: int) -> String:
+	if match_session != null and match_session.has_method("get_player_display_name"):
+		var display_name := str(match_session.get_player_display_name(session_id, player_index)).strip_edges()
+		if not display_name.is_empty():
+			return display_name
+	return _fallback_player_name(player_index)
+
+func _get_indexed_player_name(player_names: Array, player_index: int) -> String:
+	if player_index >= 0 and player_index < player_names.size():
+		var player_name := str(player_names[player_index]).strip_edges()
+		if not player_name.is_empty():
+			return player_name
+	return _fallback_player_name(player_index)
+
+func _fallback_player_name(player_index: int) -> String:
+	return "Player %d" % [player_index + 1]

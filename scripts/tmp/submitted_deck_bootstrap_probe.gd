@@ -62,6 +62,16 @@ func _initialize() -> void:
 				"cards": player_two_validation.get("cards", {}).duplicate(true),
 				"validation": player_two_validation.duplicate(true),
 			},
+		},
+		{
+			"session_a": {
+				"username": "Ash",
+				"player_name": "Ignored Host Name",
+			},
+			"session_b": {
+				"username": "Ember",
+				"player_name": "Ignored Guest Name",
+			},
 		}
 	)
 
@@ -72,6 +82,20 @@ func _initialize() -> void:
 	var player2: Player = match_players.get("player2", null)
 	if player1 == null or player2 == null:
 		_fail("Submitted deck bootstrap did not return both players.")
+		return
+	if player1.player_name != "Ash" or player2.player_name != "Ember":
+		_fail("Submitted deck bootstrap should use account usernames as player names.")
+		return
+	var match_info: Dictionary = match_session.to_match_info("session_a")
+	var player_names = match_info.get("player_names", [])
+	if not (player_names is Array) or player_names.size() != 2 or str(player_names[0]) != "Ash" or str(player_names[1]) != "Ember":
+		_fail("Match info should expose username-backed player names.")
+		return
+	var ghost_manager := GameManager.new()
+	setup.build_empty_match_shell(ghost_manager, 2)
+	GameState.apply_to_manager(GameState.serialize(game_manager, 0), ghost_manager)
+	if ghost_manager.players[0].player_name != "Ash" or ghost_manager.players[1].player_name != "Ember":
+		_fail("Full-state sync should preserve username-backed player names.")
 		return
 	if player1.god_zone.get_card_count() != 1 or player2.god_zone.get_card_count() != 1:
 		_fail("Submitted deck bootstrap did not place both gods.")

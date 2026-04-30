@@ -70,6 +70,29 @@ func get_player_identity(session_id: String) -> Dictionary:
 		return (identity as Dictionary).duplicate(true)
 	return {}
 
+func get_player_display_name(session_id: String, player_index: int = -1) -> String:
+	var resolved_index := player_index
+	if resolved_index < 0:
+		resolved_index = get_player_index(session_id)
+	var fallback := "Player"
+	if resolved_index >= 0:
+		fallback = "Player %d" % [resolved_index + 1]
+	var identity := get_player_identity(session_id)
+	var username := str(identity.get("username", "")).strip_edges()
+	if not username.is_empty():
+		return username
+	var player_name := str(identity.get("player_name", "")).strip_edges()
+	if not player_name.is_empty():
+		return player_name
+	return fallback
+
+func get_public_player_names() -> Array[String]:
+	var names: Array[String] = []
+	for player_index in range(player_session_ids.size()):
+		var session_id := str(player_session_ids[player_index]).strip_edges()
+		names.append(get_player_display_name(session_id, player_index))
+	return names
+
 func authenticate_join(session_id: String, match_token: String, peer_id: int) -> int:
 	if get_match_token(session_id) != match_token:
 		return -1
@@ -148,6 +171,7 @@ func to_match_info(session_id: String = "") -> Dictionary:
 		"server_ip": server_ip,
 		"match_port": match_port,
 		"player_index": get_player_index(session_id) if not session_id.is_empty() else -1,
+		"player_names": get_public_player_names(),
 		"status": status,
 		"server_mode": server_mode,
 		"is_ranked": is_ranked,

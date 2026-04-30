@@ -55,12 +55,4 @@ func _apply_petrification(card: Card, game_manager: GameManager) -> void:
 	card.add_status_effect(PETRIFIED_STATUS, card_name, self, card_owner)
 
 func can_be_played(game_manager: GameManager, player: Player) -> bool:
-	if not super.can_be_played(game_manager, player):
-		return false
-	for p in game_manager.players:
-		for zone in p.frontline_zones + p.reserve_zones:
-			for card in zone.cards:
-				if _should_petrify(card):
-					return true
-	print(card_name + " has no valid targets.")
-	return false
+	return super.can_be_played(game_manager, player)

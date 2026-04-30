@@ -293,7 +293,7 @@ func _refresh_server_version_label() -> void:
 	if _server_version_label == null or not is_instance_valid(_server_version_label):
 		return
 	if _connected_server_version.is_empty():
-		if _has_active_lobby_connection():
+		if _has_connected_lobby_transport():
 			_server_version_label.text = "Server: version unavailable"
 			return
 		_server_version_label.text = "Server: not connected"
@@ -304,7 +304,15 @@ func _refresh_server_version_overlay_visibility() -> void:
 	if _server_version_label == null or not is_instance_valid(_server_version_label):
 		return
 	var deck_builder := game_container.get_node_or_null("DeckBuilder") if game_container != null else null
-	_server_version_label.visible = not (deck_builder != null and deck_builder.visible)
+	var multiplayer_visible = multiplayer_container != null and multiplayer_container.visible
+	var game_visible = game_container != null and game_container.visible
+	_server_version_label.visible = (
+		menu_container != null
+		and menu_container.visible
+		and not multiplayer_visible
+		and not game_visible
+		and not (deck_builder != null and deck_builder.visible)
+	)
 
 func _process(delta: float) -> void:
 	if _is_auto_updating and _update_download_request != null and is_instance_valid(_update_download_request):
@@ -399,6 +407,9 @@ func _open_multiplayer_screen() -> void:
 
 func _has_active_lobby_connection() -> bool:
 	return lobby_client != null and is_instance_valid(lobby_client) and lobby_client.is_authenticated()
+
+func _has_connected_lobby_transport() -> bool:
+	return lobby_client != null and is_instance_valid(lobby_client) and lobby_client.is_transport_connected()
 
 func _prepare_fresh_lobby_login() -> void:
 	if not _account_switch_pending and not _has_active_lobby_connection():

@@ -47,6 +47,7 @@ static func serialize(gm: GameManager, viewer_player_index: int = -1) -> Diction
 		var hide_hand := viewer != null and i != viewer_player_index
 		var hide_deck := viewer != null and i != viewer_player_index
 		var pdata := {
+			player_name = player.player_name,
 			mana = player.mana,
 			followers = player.followers,
 			deck_count = player.deck_zone.cards.size(),
@@ -338,6 +339,9 @@ static func apply_to_manager(data: Dictionary, gm: GameManager) -> void:
 	for i in mini(players_data.size(), gm.players.size()):
 		var player := gm.players[i]
 		var pdata: Dictionary = players_data[i]
+		var player_name := str(pdata.get("player_name", player.player_name)).strip_edges()
+		if not player_name.is_empty():
+			player.player_name = player_name
 		player.reserved_active_god = null
 		player.mana = pdata.get("mana", 0)
 		player.followers = pdata.get("followers", 100)

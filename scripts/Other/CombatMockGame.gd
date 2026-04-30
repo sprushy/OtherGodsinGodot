@@ -2650,7 +2650,12 @@ func start_game(
 	var default_match_setup = DefaultMatchSetupScript.new()
 	var match_players: Dictionary = {}
 	if _is_networked_client:
-		match_players = default_match_setup.build_empty_match_shell(game_manager)
+		var player_names = match_info.get("player_names", [])
+		match_players = default_match_setup.build_empty_match_shell(
+			game_manager,
+			2,
+			player_names if player_names is Array else []
+		)
 	elif server_match_session != null and not server_match_session.player_decks_by_session.is_empty():
 		match_players = default_match_setup.build_match_from_session_decks(game_manager, server_match_session)
 	if match_players.is_empty():
@@ -16195,7 +16200,9 @@ func _show_tezcatlipoca_active_titlacauan_prompt(card: Card, prompt_targets: Arr
 	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	overlay.add_child(bg)
 
-	var panel := _create_centered_overlay_panel(overlay, 0.5, 0.54)
+	var panel_width := 0.36 if current_targets.size() <= 1 else (0.58 if current_targets.size() <= 3 else 0.76)
+	var panel_height := 0.46 if current_targets.size() <= 2 else 0.62
+	var panel := _create_centered_overlay_panel(overlay, panel_width, panel_height)
 	panel.name = "TezcatlipocaActiveTitlacauanPanel"
 	var vbox := VBoxContainer.new()
 	vbox.add_theme_constant_override("separation", 8)
@@ -16223,21 +16230,64 @@ func _show_tezcatlipoca_active_titlacauan_prompt(card: Card, prompt_targets: Arr
 	status.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vbox.add_child(status)
 
-	var buttons := VBoxContainer.new()
-	buttons.add_theme_constant_override("separation", 6)
-	buttons.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	buttons.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	vbox.add_child(buttons)
-
 	var selected_targets: Array[Card] = []
 	for target in current_targets:
 		if target != null and target.uid in _pending_tezcatlipoca_titlacauan_selected_uids:
 			selected_targets.append(target)
-	var button_map: Dictionary = {}
 	var max_targets := 2
+	var selected_label := Label.new()
+	selected_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	selected_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	selected_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vbox.add_child(selected_label)
+
+	var scroll := ScrollContainer.new()
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.custom_minimum_size = Vector2(0, VisualCard.CARD_HEIGHT + 92)
+	scroll.mouse_filter = Control.MOUSE_FILTER_STOP
+	vbox.add_child(scroll)
+
+	var card_grid := GridContainer.new()
+	card_grid.columns = mini(3, maxi(1, current_targets.size()))
+	card_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	card_grid.add_theme_constant_override("h_separation", 10)
+	card_grid.add_theme_constant_override("v_separation", 10)
+	scroll.add_child(card_grid)
+
+	var button_map: Dictionary = {}
+	var style_map: Dictionary = {}
 	var resolve_btn := Button.new()
 	resolve_btn.text = "Resolve Titlacauan"
 	resolve_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+	var _titlacauan_selection_total := func(targets: Array[Card]) -> int:
+		var total := 0
+		for target in targets:
+			if target != null:
+				total += target.get_effective_level()
+		return total
+
+	var _is_valid_prompt_titlacauan_selection := func(targets: Array[Card]) -> bool:
+		if targets.size() > max_targets:
+			return false
+		var unique_targets: Array[Card] = []
+		for target in targets:
+			if target == null or target in unique_targets or target not in current_targets:
+				return false
+			unique_targets.append(target)
+		return _titlacauan_selection_total.call(unique_targets) <= level_budget
+
+	var _titlacauan_selection_failure_text := func(target: Card, preview_targets: Array[Card]) -> String:
+		if target == null:
+			return "Choose a creature first."
+		if selected_targets.size() >= max_targets and target not in selected_targets:
+			return "You can choose at most %d creatures." % max_targets
+		if _titlacauan_selection_total.call(preview_targets) > level_budget:
+			return "%s would exceed Titlacauan's level budget." % target.card_name
+		return "%s can no longer be selected." % target.card_name
 
 	var sync_persistent_selection := func() -> void:
 		_pending_tezcatlipoca_titlacauan_selected_uids.clear()
@@ -16246,30 +16296,39 @@ func _show_tezcatlipoca_active_titlacauan_prompt(card: Card, prompt_targets: Arr
 				_pending_tezcatlipoca_titlacauan_selected_uids.append(target.uid)
 
 	var refresh_selection_state := func() -> void:
-		var total_levels := 0
-		for target in selected_targets:
-			total_levels += target.get_effective_level()
+		var total_levels := _titlacauan_selection_total.call(selected_targets)
 		var selectable_count := 0
 		for target in current_targets:
 			var btn: Button = button_map.get(target) as Button
 			if btn == null:
 				continue
+			var card_style: StyleBoxFlat = style_map.get(target) as StyleBoxFlat
 			var is_selected := target in selected_targets
 			var preview_targets := selected_targets.duplicate()
 			if not is_selected:
 				preview_targets.append(target)
-			var can_choose := is_selected or (
-				selected_targets.size() < max_targets
-				and card.has_method("is_valid_titlacauan_selection")
-				and bool(card.call("is_valid_titlacauan_selection", game_manager, preview_targets))
-			)
+			var can_choose := is_selected or _is_valid_prompt_titlacauan_selection.call(preview_targets)
 			btn.disabled = not can_choose
 			if can_choose or is_selected:
 				selectable_count += 1
 			var prefix := "Selected" if is_selected else "Choose"
 			if not can_choose and not is_selected:
-				prefix = "Too high"
+				prefix = "Unavailable"
 			btn.text = "%s %s (Lvl %d)" % [prefix, target.card_name, target.get_effective_level()]
+			if card_style != null:
+				card_style.bg_color = Color(0.16, 0.12, 0.08, 0.96) if is_selected else Color(0.08, 0.08, 0.12, 0.94)
+				card_style.border_color = (
+					Color(0.86, 0.72, 0.34, 0.98) if is_selected
+					else (Color(0.56, 0.74, 0.96, 0.78) if can_choose else Color(0.36, 0.36, 0.44, 0.62))
+				)
+		if selected_targets.is_empty():
+			selected_label.text = "Selected: none"
+		else:
+			var selected_names: Array[String] = []
+			for target in selected_targets:
+				if target != null:
+					selected_names.append("%s (Lvl %d)" % [target.card_name, target.get_effective_level()])
+			selected_label.text = "Selected: " + ", ".join(selected_names)
 		if current_targets.is_empty():
 			status.text = "No enemy creatures can currently be enslaved."
 		elif selectable_count <= 0 and selected_targets.is_empty():
@@ -16284,6 +16343,38 @@ func _show_tezcatlipoca_active_titlacauan_prompt(card: Card, prompt_targets: Arr
 
 	for target in current_targets:
 		var chosen_target := target
+		var wrapper := PanelContainer.new()
+		wrapper.custom_minimum_size = Vector2(VisualCard.CARD_WIDTH + 16, 0)
+		var wstyle := StyleBoxFlat.new()
+		wstyle.bg_color = Color(0.08, 0.08, 0.12, 0.94)
+		wstyle.border_color = Color(0.56, 0.74, 0.96, 0.78)
+		wstyle.corner_radius_top_left = 6
+		wstyle.corner_radius_top_right = 6
+		wstyle.corner_radius_bottom_left = 6
+		wstyle.corner_radius_bottom_right = 6
+		for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+			wstyle.set_border_width(side as Side, 2)
+		wrapper.add_theme_stylebox_override("panel", wstyle)
+		card_grid.add_child(wrapper)
+		style_map[target] = wstyle
+
+		var card_vbox := VBoxContainer.new()
+		card_vbox.add_theme_constant_override("separation", 4)
+		wrapper.add_child(card_vbox)
+
+		card_vbox.add_child(_build_selection_overlay_card_preview(target))
+
+		var zone_label_text := _get_card_zone_label(target)
+		if zone_label_text != "":
+			var zone_lbl := Label.new()
+			zone_lbl.text = zone_label_text
+			zone_lbl.add_theme_font_size_override("font_size", 10)
+			zone_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			zone_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			zone_lbl.custom_minimum_size = Vector2(VisualCard.CARD_WIDTH, 0)
+			zone_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			card_vbox.add_child(zone_lbl)
+
 		var btn := Button.new()
 		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		btn.pressed.connect(func() -> void:
@@ -16293,19 +16384,19 @@ func _show_tezcatlipoca_active_titlacauan_prompt(card: Card, prompt_targets: Arr
 				refresh_selection_state.call()
 				return
 			if selected_targets.size() >= max_targets:
+				status.text = "You can choose at most %d creatures." % max_targets
 				return
 			var preview_targets := selected_targets.duplicate()
 			preview_targets.append(chosen_target)
-			if not card.has_method("is_valid_titlacauan_selection") \
-					or not bool(card.call("is_valid_titlacauan_selection", game_manager, preview_targets)):
-				status.text = "%s would exceed Titlacauan's level budget." % chosen_target.card_name
+			if not _is_valid_prompt_titlacauan_selection.call(preview_targets):
+				status.text = _titlacauan_selection_failure_text.call(chosen_target, preview_targets)
 				return
 			selected_targets.append(chosen_target)
 			sync_persistent_selection.call()
 			refresh_selection_state.call()
 		)
 		button_map[target] = btn
-		buttons.add_child(btn)
+		card_vbox.add_child(btn)
 
 	var action_row := HBoxContainer.new()
 	action_row.add_theme_constant_override("separation", 8)
