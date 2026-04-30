@@ -1580,12 +1580,6 @@ func _build_debuff_entry_from_status(card: Card, status: Dictionary) -> Dictiona
 	var status_name := str(status.get("name", ""))
 	if status_name in ["", "sleep", "temporarily_revealed", "blessed_ward", Card.EXTERNAL_EFFECT_NEGATION_STATUS]:
 		return {}
-	if status_name == "cannot_attack":
-		var dromi_source := _get_dromi_binding_source(card)
-		var source_card := status.get("source_card", null) as Card
-		if dromi_source != null and (source_card == dromi_source or str(status.get("source", "")) == DROMI_BINDING_NAME):
-			return {}
-
 	var source_key := _get_debuff_source_key(status)
 	var source_card := status.get("source_card", null) as Card
 	if status_name == "malinalxochitl_poison" or status_name.contains("poison"):
@@ -1594,7 +1588,7 @@ func _build_debuff_entry_from_status(card: Card, status: Dictionary) -> Dictiona
 			"source_card": source_card,
 			"count": 1,
 		}
-	if status_name in ["cannot_attack", "cannot_move", "activation_locked", Card.ABILITY_NEGATED_STATUS]:
+	if status_name in ["cannot_attack", "cannot_intercept", "cannot_move", "activation_locked", Card.ABILITY_NEGATED_STATUS]:
 		return {
 			"key": "source:%s" % source_key,
 			"source_card": source_card,
@@ -2565,7 +2559,6 @@ func _refresh_display() -> void:
 		_add_sleep_affordance(card_overlay, card)
 		if not card.is_stealth or card.get_controller() == board_viewer or card.is_temporarily_revealed():
 			_add_equipment_affordances(card_overlay, card)
-			_add_binding_affordances(card_overlay, card)
 			_add_debuff_affordances(card_overlay, card)
 
 		# VBox fills the zone; spacer pushes the stat label to the bottom

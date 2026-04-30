@@ -14051,17 +14051,6 @@ func _unhandled_input(event: InputEvent) -> void:
 	if _game_finished:
 		return
 	if _pending_tezcatlipoca_active_prompt != null:
-		if not (event is InputEventMouseButton):
-			return
-		var tez_mouse_event := event as InputEventMouseButton
-		if not tez_mouse_event.pressed:
-			return
-		if tez_mouse_event.button_index == MOUSE_BUTTON_RIGHT:
-			_skip_tez_titlacauan_prompt()
-		elif tez_mouse_event.button_index == MOUSE_BUTTON_LEFT:
-			_set_action_label_text("Titlacauan: click an enemy creature to toggle it, or click Tez to confirm.")
-			update_ui()
-		get_viewport().set_input_as_handled()
 		return
 	if not _has_pending_target_selection():
 		return
@@ -16388,6 +16377,8 @@ func _toggle_tez_titlacauan_target(target: Card) -> bool:
 		]
 	)
 	update_ui()
+	if _pending_tezcatlipoca_titlacauan_selected_uids.size() >= TezcatlipocaActive.MAX_TITLACAUAN_TARGETS:
+		_confirm_tez_titlacauan_prompt()
 	return true
 
 func _confirm_tez_titlacauan_prompt() -> bool:
