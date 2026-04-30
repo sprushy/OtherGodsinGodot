@@ -3046,6 +3046,12 @@ func has_pending_return_to_hand_choice() -> bool:
 func get_pending_return_to_hand_card() -> Card:
 	return _pending_return_to_hand_card
 
+func get_pending_doorway_card() -> Card:
+	return _pending_doorway_card
+
+func get_pending_doorway_structure() -> StructureCard:
+	return _pending_doorway_structure
+
 func begin_pending_return_to_hand_choice(
 	card: Card,
 	reason: String,

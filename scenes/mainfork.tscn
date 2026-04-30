@@ -33,10 +33,6 @@ text = "Deck Builder"
 layout_mode = 2
 text = "Rules"
 
-[node name="MockGameButton" type="Button" parent="Control/MenuContainer" unique_id=1094446562]
-layout_mode = 2
-text = "Mock Game"
-
 [node name="CardTestButton" type="Button" parent="Control/MenuContainer" unique_id=-1294967295]
 layout_mode = 2
 text = "Card Test"

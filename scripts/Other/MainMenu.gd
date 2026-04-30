@@ -154,16 +154,10 @@ func _ready() -> void:
 	_hide_embedded_games()
 	_bind_game_signals()
 
-	var mock_btn = $MenuContainer/MockGameButton
 	var deck_btn = $MenuContainer/DeckBuilderButton
 	var rules_btn = $MenuContainer/RulesButton
 	var card_test_btn = $MenuContainer/CardTestButton
 
-	if mock_btn:
-		if OS.is_debug_build():
-			mock_btn.pressed.connect(_on_mock_game_pressed)
-		else:
-			mock_btn.visible = false
 	if deck_btn:
 		deck_btn.pressed.connect(_on_deck_builder_pressed)
 	if rules_btn:
@@ -2730,13 +2724,6 @@ func _format_rules_text(markdown: String) -> String:
 		formatted_lines.append(line)
 	return "\n".join(formatted_lines)
 
-func _on_mock_game_pressed() -> void:
-	_match_launch_queued = false
-	_cleanup_lobby(true)
-	_show_embedded_game("MockGame")
-	show_game()
-	get_node("GameContainer/MockGame").start_game()
-
 func _on_card_test_pressed() -> void:
 	_match_launch_queued = false
 	_cleanup_lobby(true)
@@ -3946,11 +3933,11 @@ func _make_friend_row(entry: Dictionary) -> Control:
 		_show_friend_send_deck_dialog(username)
 	)
 	row.add_child(send_btn)
-	var status_label := Label.new()
-	status_label.text = "Friend"
-	status_label.modulate = Color(0.76, 0.82, 0.94)
-	status_label.custom_minimum_size.x = 90
-	row.add_child(status_label)
+	var friend_status_badge := Label.new()
+	friend_status_badge.text = "Friend"
+	friend_status_badge.modulate = Color(0.76, 0.82, 0.94)
+	friend_status_badge.custom_minimum_size.x = 90
+	row.add_child(friend_status_badge)
 	return row
 
 func _make_outgoing_friend_request_row(entry: Dictionary) -> Control:
@@ -4008,11 +3995,11 @@ func _make_incoming_deck_share_row(entry: Dictionary) -> Control:
 func _make_friend_text_row(text: String, status: String) -> Control:
 	var row := _make_friend_row_base()
 	row.add_child(_make_friend_row_label(text))
-	var status_label := Label.new()
-	status_label.text = status
-	status_label.modulate = Color(0.76, 0.82, 0.94)
-	status_label.custom_minimum_size.x = 90
-	row.add_child(status_label)
+	var row_status_label := Label.new()
+	row_status_label.text = status
+	row_status_label.modulate = Color(0.76, 0.82, 0.94)
+	row_status_label.custom_minimum_size.x = 90
+	row.add_child(row_status_label)
 	return row
 
 func _make_friend_row_base() -> HBoxContainer:
@@ -4795,7 +4782,6 @@ func _wait_for_card_test_turn2_smoke_condition(predicate: Callable, max_frames: 
 			return true
 		await get_tree().process_frame
 	return false
-	get_tree().quit()
 
 func _maybe_progress_smoke_from_room_snapshot(room_id: String) -> void:
 	if _smoke_config.is_empty():

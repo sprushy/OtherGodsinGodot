@@ -337,7 +337,6 @@ var _pending_wolf_adolescent_prompts: Array[WolfAdolescent] = []
 var _active_wolf_adolescent_prompt: WolfAdolescent = null
 var _queued_wolf_adolescent_prompt_targets: Dictionary = {}
 var _pending_tezcatlipoca_active_prompt: Card = null
-var _pending_network_tezcatlipoca_titlacauan_payload: Dictionary = {}
 var _pending_turn_start_priority_feedback: String = ""
 var _breidablik_panel: Control = null
 var _e2_abzu_panel: Control = null
@@ -565,7 +564,7 @@ func _make_pause_menu_style(border_color: Color) -> StyleBoxFlat:
 	style.bg_color = Color(0.07, 0.09, 0.14, 0.97)
 	style.border_color = border_color
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		style.set_border_width(side, 2)
+		style.set_border_width(side as Side, 2)
 	style.corner_radius_top_left = 8
 	style.corner_radius_top_right = 8
 	style.corner_radius_bottom_left = 8
@@ -787,7 +786,7 @@ func _show_next_mummu_entropy_prompt() -> void:
 	style.bg_color = Color(0.05, 0.05, 0.08, 0.97)
 	style.border_color = Color(0.4, 0.4, 0.5, 0.95)
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		style.set_border_width(side, 2)
+		style.set_border_width(side as Side, 2)
 	panel.add_theme_stylebox_override("panel", style)
 	panel.custom_minimum_size = Vector2(320, 0)
 
@@ -899,7 +898,7 @@ func _show_nusku_active_core_flame_prompt(
 	style.bg_color = Color(0.13, 0.06, 0.02, 0.97)
 	style.border_color = Color(0.93, 0.58, 0.18)
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		style.set_border_width(side, 2)
+		style.set_border_width(side as Side, 2)
 	panel.add_theme_stylebox_override("panel", style)
 	panel.custom_minimum_size = Vector2(420, 0)
 
@@ -1009,6 +1008,16 @@ func _resolve_doorway_destination(send_to_abyss: bool) -> void:
 	_hide_doorway_choice_prompt()
 	if card == null or game_manager == null:
 		return
+	if _is_networked_client:
+		if game_input != null and structure != null:
+			game_input.submit_action({
+				"type": "doorway_choice",
+				"structure_uid": structure.uid,
+				"card_uid": card.uid,
+				"send_to_abyss": send_to_abyss,
+			})
+		update_ui()
+		return
 	game_manager.resolve_pending_doorway_choice(send_to_abyss)
 	if structure != null:
 		if send_to_abyss:
@@ -1035,7 +1044,7 @@ func _show_doorway_choice_prompt(structure: DoorwayToTheVoid, card: Card, combat
 	style.bg_color = Color(0.08, 0.07, 0.12, 0.97)
 	style.border_color = Color(0.62, 0.36, 0.82, 0.95)
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		style.set_border_width(side, 2)
+		style.set_border_width(side as Side, 2)
 	panel.add_theme_stylebox_override("panel", style)
 	panel.custom_minimum_size = Vector2(280, 0)
 
@@ -1104,7 +1113,7 @@ func _queue_sharur_escape_prompt(card: Card, reason: String) -> void:
 	style.bg_color = Color(0.13, 0.08, 0.04, 0.97)
 	style.border_color = Color(0.88, 0.68, 0.28, 0.95)
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		style.set_border_width(side, 2)
+		style.set_border_width(side as Side, 2)
 	panel.add_theme_stylebox_override("panel", style)
 	panel.custom_minimum_size = Vector2(420, 0)
 
@@ -1169,7 +1178,7 @@ func _show_wheel_of_fire_turn_start_prompt(card: WheelOfFire) -> void:
 	style.bg_color = Color(0.18, 0.08, 0.04, 0.97)
 	style.border_color = Color(0.92, 0.48, 0.18, 0.95)
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		style.set_border_width(side, 2)
+		style.set_border_width(side as Side, 2)
 	panel.add_theme_stylebox_override("panel", style)
 	panel.custom_minimum_size = Vector2(420, 0)
 
@@ -1548,7 +1557,7 @@ func _show_target_cancel_prompt() -> void:
 	style.corner_radius_bottom_left = 8
 	style.corner_radius_bottom_right = 8
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		style.set_border_width(side, 2)
+		style.set_border_width(side as Side, 2)
 	panel.add_theme_stylebox_override("panel", style)
 	panel.custom_minimum_size = Vector2(320.0, 0.0)
 
@@ -2461,7 +2470,7 @@ func _open_action_log_popup() -> void:
 	style.corner_radius_bottom_left = 8
 	style.corner_radius_bottom_right = 8
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		style.set_border_width(side, 2)
+		style.set_border_width(side as Side, 2)
 	panel.add_theme_stylebox_override("panel", style)
 
 	var vbox := VBoxContainer.new()
@@ -3937,7 +3946,7 @@ func _build_hand_keywords_panel(sections: Array) -> Control:
 	style.bg_color = Color(0.04, 0.04, 0.10, 0.96)
 	style.border_color = Color(0.42, 0.58, 0.88)
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		style.set_border_width(side, 1)
+		style.set_border_width(side as Side, 1)
 	style.corner_radius_top_left = 5
 	style.corner_radius_top_right = 5
 	style.corner_radius_bottom_left = 5
@@ -4059,7 +4068,7 @@ func _make_zone_info_icon(label_text: String, short_label: String, zone: Zone, c
 	style.corner_radius_bottom_left = 8
 	style.corner_radius_bottom_right = 8
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		style.set_border_width(side, 2)
+		style.set_border_width(side as Side, 2)
 	style.bg_color = color.darkened(0.4)
 	style.border_color = color
 	panel.add_theme_stylebox_override("panel", style)
@@ -4196,7 +4205,7 @@ func _make_stats_panel(player: Player, show_mana: bool = true) -> PanelContainer
 	style.bg_color = Color(0.1, 0.1, 0.1, 0.7)
 	style.border_color = Color(0.4, 0.4, 0.4)
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		style.set_border_width(side, 1)
+		style.set_border_width(side as Side, 1)
 	style.corner_radius_top_left = 4
 	style.corner_radius_top_right = 4
 	style.corner_radius_bottom_left = 4
@@ -4314,7 +4323,7 @@ func _add_power_mute_affordance(parent: Control, turns_remaining: int, is_enemy:
 	style.corner_radius_bottom_left = 4
 	style.corner_radius_bottom_right = 4
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		style.set_border_width(side, 1)
+		style.set_border_width(side as Side, 1)
 	badge.add_theme_stylebox_override("panel", style)
 
 	var label := Label.new()
@@ -4341,7 +4350,7 @@ func _show_power_hover_popup(source: Control, text: String, bbcode_text: String 
 	pstyle.corner_radius_bottom_left = 6
 	pstyle.corner_radius_bottom_right = 6
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		pstyle.set_border_width(side, 2)
+		pstyle.set_border_width(side as Side, 2)
 	popup.add_theme_stylebox_override("panel", pstyle)
 	popup.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	popup.z_index = HOVER_PREVIEW_Z_INDEX
@@ -4624,7 +4633,7 @@ func _make_power_icon(card: Card, is_enemy: bool, _player: Player, zone: Zone = 
 	style.corner_radius_bottom_left = 2
 	style.corner_radius_bottom_right = 2
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		style.set_border_width(side, 1)
+		style.set_border_width(side as Side, 1)
 
 	if card == null:
 		style.bg_color     = Color(0.05, 0.05, 0.08, 0.6)
@@ -4911,7 +4920,7 @@ func _show_breidablik_prompt(power: Breidablik) -> void:
 	style.bg_color = Color(0.08, 0.10, 0.18, 0.97)
 	style.border_color = Color(0.45, 0.70, 1.0, 0.95)
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		style.set_border_width(side, 2)
+		style.set_border_width(side as Side, 2)
 	panel.add_theme_stylebox_override("panel", style)
 	panel.z_index = 220
 
@@ -5084,7 +5093,7 @@ func _show_divine_caprice_prompt(power: DivineCaprice) -> void:
 	style.bg_color = Color(0.10, 0.08, 0.16, 0.97)
 	style.border_color = Color(0.92, 0.78, 0.38, 0.95)
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		style.set_border_width(side, 2)
+		style.set_border_width(side as Side, 2)
 	panel.add_theme_stylebox_override("panel", style)
 	panel.z_index = 220
 	panel.anchor_left = 0.5
@@ -5255,7 +5264,7 @@ func _show_e2_abzu_prompt(structure: E2Abzu) -> void:
 	style.bg_color = Color(0.05, 0.11, 0.18, 0.97)
 	style.border_color = Color(0.38, 0.78, 0.92, 0.95)
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		style.set_border_width(side, 2)
+		style.set_border_width(side as Side, 2)
 	panel.add_theme_stylebox_override("panel", style)
 	panel.z_index = 220
 
@@ -5375,7 +5384,7 @@ func _show_skoll_prompt(skoll: Skoll) -> void:
 	style.bg_color = Color(0.12, 0.08, 0.06, 0.97)
 	style.border_color = Color(0.78, 0.58, 0.28, 0.95)
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		style.set_border_width(side, 2)
+		style.set_border_width(side as Side, 2)
 	panel.add_theme_stylebox_override("panel", style)
 	panel.z_index = 220
 
@@ -5545,7 +5554,7 @@ func _show_hati_prompt(hati: Hati) -> void:
 	style.bg_color = Color(0.08, 0.10, 0.14, 0.97)
 	style.border_color = Color(0.68, 0.86, 1.0, 0.95)
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		style.set_border_width(side, 2)
+		style.set_border_width(side as Side, 2)
 	panel.add_theme_stylebox_override("panel", style)
 	panel.custom_minimum_size = Vector2(440, 0)
 
@@ -5907,7 +5916,7 @@ func _create_centered_overlay_panel(overlay: Control, width_ratio: float = 0.90,
 	pstyle.corner_radius_bottom_left = 8
 	pstyle.corner_radius_bottom_right = 8
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		pstyle.set_border_width(side, 2)
+		pstyle.set_border_width(side as Side, 2)
 	pstyle.border_color = Color(0.5, 0.5, 0.75)
 	panel.add_theme_stylebox_override("panel", pstyle)
 	panel.mouse_filter = Control.MOUSE_FILTER_STOP
@@ -6062,7 +6071,7 @@ func _show_card_selection_overlay(
 		wstyle.bg_color = Color(0.0, 0.0, 0.0, 0.0)
 		wstyle.border_color = Color(0.7, 0.8, 1.0, 0.65)
 		for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-			wstyle.set_border_width(side, 1)
+			wstyle.set_border_width(side as Side, 1)
 		wrapper.add_theme_stylebox_override("panel", wstyle)
 		hbox.add_child(wrapper)
 
@@ -6139,7 +6148,7 @@ func _make_hidden_selection_preview(card: Card) -> Control:
 	style.bg_color = Color(0.08, 0.08, 0.12, 1.0)
 	style.border_color = Color(0.72, 0.76, 0.9, 0.9)
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		style.set_border_width(side, 2)
+		style.set_border_width(side as Side, 2)
 	style.corner_radius_top_left = 5
 	style.corner_radius_top_right = 5
 	style.corner_radius_bottom_left = 5
@@ -7162,7 +7171,7 @@ func _prompt_champions_call_shelving(god: GodCard, on_complete: Callable, on_can
 		style.bg_color = Color(0.16, 0.18, 0.26, 0.96) if is_selected else Color(0.06, 0.06, 0.10, 0.90)
 		style.border_color = Color(0.95, 0.78, 0.28, 1.0) if is_selected else Color(0.52, 0.64, 0.92, 0.58)
 		for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-			style.set_border_width(side, 2)
+			style.set_border_width(side as Side, 2)
 		style.corner_radius_top_left = 6
 		style.corner_radius_top_right = 6
 		style.corner_radius_bottom_left = 6
@@ -7261,7 +7270,7 @@ func _show_champions_call_prompt(god: GodCard) -> void:
 	style.bg_color = Color(0.11, 0.09, 0.05, 0.97)
 	style.border_color = Color(0.96, 0.78, 0.28, 0.95)
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		style.set_border_width(side, 2)
+		style.set_border_width(side as Side, 2)
 	panel.add_theme_stylebox_override("panel", style)
 	panel.custom_minimum_size = Vector2(420, 0)
 
@@ -8473,7 +8482,7 @@ func _on_hand_card_right_clicked(card: Card) -> void:
 		magical_style.bg_color = Color(0.1, 0.1, 0.18, 0.97)
 		magical_style.border_color = Color(0.45, 0.82, 0.95) if card is CharmCard else Color(0.78, 0.66, 0.98)
 		for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-			magical_style.set_border_width(side, 2)
+			magical_style.set_border_width(side as Side, 2)
 		magical_style.corner_radius_top_left = 4
 		magical_style.corner_radius_top_right = 4
 		magical_style.corner_radius_bottom_left = 4
@@ -8537,7 +8546,7 @@ func _on_hand_card_right_clicked(card: Card) -> void:
 	style.bg_color = Color(0.1, 0.1, 0.18, 0.97)
 	style.border_color = Color(0.5, 0.7, 1.0)
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		style.set_border_width(side, 2)
+		style.set_border_width(side as Side, 2)
 	style.corner_radius_top_left = 4; style.corner_radius_top_right = 4
 	style.corner_radius_bottom_left = 4; style.corner_radius_bottom_right = 4
 	panel.add_theme_stylebox_override("panel", style)
@@ -9050,7 +9059,7 @@ func _on_god_right_clicked(card: Card) -> void:
 	style.bg_color = Color(0.1, 0.1, 0.18, 0.97)
 	style.border_color = Color(0.9, 0.75, 0.2)
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		style.set_border_width(side, 2)
+		style.set_border_width(side as Side, 2)
 	style.corner_radius_top_left = 4
 	style.corner_radius_top_right = 4
 	style.corner_radius_bottom_left = 4
@@ -11733,7 +11742,7 @@ func _show_gawain_healing_hands_prompt(card: Gawain, target: Card, status_option
 	style.bg_color = Color(0.14, 0.12, 0.08, 0.97)
 	style.border_color = Color(0.95, 0.82, 0.48)
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		style.set_border_width(side, 2)
+		style.set_border_width(side as Side, 2)
 	panel.add_theme_stylebox_override("panel", style)
 	panel.custom_minimum_size = Vector2(460, 0)
 	var vbox := VBoxContainer.new()
@@ -11987,7 +11996,7 @@ func _show_gala_tura_prompt() -> void:
 	style.bg_color = Color(0.10, 0.08, 0.12, 0.97)
 	style.border_color = Color(0.48, 0.82, 0.95, 0.95)
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		style.set_border_width(side, 2)
+		style.set_border_width(side as Side, 2)
 	panel.add_theme_stylebox_override("panel", style)
 	panel.custom_minimum_size = Vector2(420, 0)
 
@@ -12172,7 +12181,7 @@ func _show_kur_jara_tree_of_life_prompt() -> void:
 	style.bg_color = Color(0.09, 0.08, 0.11, 0.98)
 	style.border_color = Color(0.78, 0.72, 0.42, 0.95)
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		style.set_border_width(side, 2)
+		style.set_border_width(side as Side, 2)
 	panel.add_theme_stylebox_override("panel", style)
 
 	var vbox := VBoxContainer.new()
@@ -13239,7 +13248,7 @@ func _on_creature_right_clicked(card: Card) -> void:
 	style.bg_color = Color(0.1, 0.1, 0.18, 0.97)
 	style.border_color = Color(0.5, 0.7, 1.0)
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		style.set_border_width(side, 2)
+		style.set_border_width(side as Side, 2)
 	style.corner_radius_top_left = 4; style.corner_radius_top_right = 4
 	style.corner_radius_bottom_left = 4; style.corner_radius_bottom_right = 4
 	panel.add_theme_stylebox_override("panel", style)
@@ -13705,6 +13714,8 @@ func _is_intercept_prompt_visible() -> bool:
 	return panel != null and panel.visible
 
 func _has_unresolved_priority_state() -> bool:
+	if game_manager != null:
+		game_manager.prune_stale_stack_actions()
 	_prune_stale_deferred_priority_events()
 	var has_deferred_priority_events := not _pending_summon_priority_events.is_empty() \
 		or not _pending_hand_play_events.is_empty()
@@ -13766,6 +13777,8 @@ func _recover_stalled_priority_state() -> bool:
 	return true
 
 func _describe_unresolved_priority_state() -> String:
+	if game_manager != null:
+		game_manager.prune_stale_stack_actions()
 	_prune_stale_deferred_priority_events()
 	if _is_priority_prompt_visible():
 		return "priority response"
@@ -13885,7 +13898,7 @@ func _bdrag_start_ghost() -> void:
 	style.bg_color    = Color(0.13, 0.22, 0.42, 0.85)
 	style.border_color = Color(0.4, 0.65, 1.0)
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		style.set_border_width(side, 2)
+		style.set_border_width(side as Side, 2)
 	style.corner_radius_top_left = 4; style.corner_radius_top_right = 4
 	style.corner_radius_bottom_left = 4; style.corner_radius_bottom_right = 4
 	panel.add_theme_stylebox_override("panel", style)
@@ -14545,6 +14558,9 @@ func _remember_local_priority_prompt_signature() -> void:
 func _consume_duplicate_local_priority_offer() -> bool:
 	if _pending_local_priority_prompt_signature.is_empty():
 		return false
+	if not _is_priority_prompt_visible():
+		_pending_local_priority_prompt_signature.clear()
+		return false
 	var matches := _build_local_priority_prompt_signature() == _pending_local_priority_prompt_signature
 	_pending_local_priority_prompt_signature.clear()
 	return matches
@@ -14586,6 +14602,35 @@ func _schedule_priority_recovery_check() -> void:
 		return
 	_priority_recovery_check_scheduled = true
 	call_deferred("_run_priority_recovery_check")
+
+func _resolve_hidden_frontline_prepare_priority(card_uid: String) -> void:
+	if card_uid.strip_edges() == "":
+		return
+	if game_manager == null or match_manager == null:
+		return
+	if _is_networked_client or _game_finished:
+		return
+	if _executing_stack_action or _stack_resolution_paused:
+		return
+	if _has_pending_target_selection() or _is_priority_prompt_visible() or _is_intercept_prompt_visible():
+		return
+	game_manager.prune_stale_stack_actions()
+	if game_manager.action_stack.is_empty():
+		return
+	var prepared_card := game_manager.get_card_by_uid(card_uid)
+	if prepared_card == null or prepared_card.current_zone == null:
+		return
+	var top_action: CardAction = game_manager.action_stack.back()
+	if top_action == null \
+			or top_action.type != CardAction.Type.EVENT \
+			or top_action.event_name != "frontline_entry" \
+			or top_action.card != prepared_card:
+		return
+	if _stack_action_has_possible_priority_responses(top_action):
+		_offer_priority()
+		update_ui()
+		return
+	_execute_top_of_stack()
 
 func _run_priority_recovery_check() -> void:
 	_priority_recovery_check_scheduled = false
@@ -14711,7 +14756,7 @@ func _show_priority_prompt(player: Player) -> void:
 		style.bg_color = Color(0.08, 0.08, 0.15, 0.95)
 		style.border_color = Color(0.4, 0.7, 1.0)
 		for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-			style.set_border_width(side, 2)
+			style.set_border_width(side as Side, 2)
 		panel.add_theme_stylebox_override("panel", style)
 		panel.custom_minimum_size.x = 220
 		add_child(panel)
@@ -15139,7 +15184,7 @@ func _show_retreat_prompt(ask_card: Askelladen) -> void:
 	style.bg_color = Color(0.08, 0.12, 0.08, 0.97)
 	style.border_color = Color(0.4, 0.9, 0.4)
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		style.set_border_width(side, 2)
+		style.set_border_width(side as Side, 2)
 	panel.add_theme_stylebox_override("panel", style)
 	panel.custom_minimum_size.x = 240
 
@@ -15216,7 +15261,7 @@ func _show_sacrifice_payment_prompt(card: Card, altar: AltarOfDreams) -> void:
 	style.bg_color = Color(0.10, 0.08, 0.14, 0.97)
 	style.border_color = Color(0.72, 0.62, 0.95)
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		style.set_border_width(side, 2)
+		style.set_border_width(side as Side, 2)
 	panel.add_theme_stylebox_override("panel", style)
 	panel.custom_minimum_size = Vector2(300, 0)
 
@@ -15282,7 +15327,7 @@ func _show_structure_bonus_prompt(power: AdvancedBuildingTechniques, structure: 
 	style.bg_color = Color(0.08, 0.10, 0.16, 0.97)
 	style.border_color = Color(0.55, 0.78, 1.0)
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		style.set_border_width(side, 2)
+		style.set_border_width(side as Side, 2)
 	panel.add_theme_stylebox_override("panel", style)
 	panel.custom_minimum_size = Vector2(280, 0)
 
@@ -15361,7 +15406,7 @@ func _show_demiurge_prompt(spell) -> void:
 	style.bg_color = Color(0.12, 0.08, 0.08, 0.97)
 	style.border_color = Color(0.86, 0.58, 0.42)
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		style.set_border_width(side, 2)
+		style.set_border_width(side as Side, 2)
 	panel.add_theme_stylebox_override("panel", style)
 	panel.custom_minimum_size = Vector2(300, 0)
 
@@ -15426,7 +15471,7 @@ func _show_aphrodite_prompt(god: AphroditeAreia) -> void:
 	style.bg_color = Color(0.16, 0.08, 0.12, 0.97)
 	style.border_color = Color(0.92, 0.58, 0.7)
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		style.set_border_width(side, 2)
+		style.set_border_width(side as Side, 2)
 	panel.add_theme_stylebox_override("panel", style)
 	panel.custom_minimum_size = Vector2(320, 0)
 
@@ -15479,7 +15524,7 @@ func _show_absence_mode_prompt(spell: Absence, target: Card) -> void:
 	style.bg_color = Color(0.12, 0.12, 0.12, 0.97)
 	style.border_color = Color(0.82, 0.82, 0.92)
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		style.set_border_width(side, 2)
+		style.set_border_width(side as Side, 2)
 	panel.add_theme_stylebox_override("panel", style)
 	panel.custom_minimum_size = Vector2(340, 0)
 
@@ -15537,7 +15582,7 @@ func _show_blessed_knights_prompt(card: BlessedKnights) -> void:
 	style.bg_color = Color(0.10, 0.12, 0.16, 0.97)
 	style.border_color = Color(0.55, 0.82, 0.98)
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		style.set_border_width(side, 2)
+		style.set_border_width(side as Side, 2)
 	panel.add_theme_stylebox_override("panel", style)
 	panel.custom_minimum_size = Vector2(420, 0)
 
@@ -15609,7 +15654,7 @@ func _show_byggvir_reveal_prompt(card: Byggvir, prompt_options: Array = []) -> v
 	style.bg_color = Color(0.15, 0.10, 0.06, 0.97)
 	style.border_color = Color(0.89, 0.72, 0.42)
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		style.set_border_width(side, 2)
+		style.set_border_width(side as Side, 2)
 	panel.add_theme_stylebox_override("panel", style)
 	panel.custom_minimum_size = Vector2(460, 0)
 
@@ -15687,7 +15732,7 @@ func _show_erlqueens_nightingale_prompt(card: ErlqueensNightingaleScript) -> voi
 	style.bg_color = Color(0.15, 0.11, 0.07, 0.97)
 	style.border_color = Color(0.72, 0.92, 0.62, 0.95)
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		style.set_border_width(side, 2)
+		style.set_border_width(side as Side, 2)
 	panel.add_theme_stylebox_override("panel", style)
 	panel.custom_minimum_size = Vector2(430, 0)
 
@@ -16557,7 +16602,7 @@ func _show_harii_shaman_prompt(card: HariiShamanScript, target: Card) -> void:
 	style.bg_color = Color(0.08, 0.13, 0.09, 0.97)
 	style.border_color = Color(0.67, 0.88, 0.56, 0.95)
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		style.set_border_width(side, 2)
+		style.set_border_width(side as Side, 2)
 	panel.add_theme_stylebox_override("panel", style)
 	panel.custom_minimum_size = Vector2(360, 0)
 
@@ -16673,7 +16718,7 @@ func _show_en_hedu_anna_prompt(card: EnHeduAnnaScript) -> void:
 	style.bg_color = Color(0.15, 0.11, 0.07, 0.97)
 	style.border_color = Color(0.92, 0.80, 0.56, 0.95)
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		style.set_border_width(side, 2)
+		style.set_border_width(side as Side, 2)
 	panel.add_theme_stylebox_override("panel", style)
 	panel.custom_minimum_size = Vector2(470, 0)
 
@@ -16796,7 +16841,7 @@ func _show_next_habrok_breakout_prompt() -> void:
 		style.bg_color = Color(0.12, 0.10, 0.05, 0.97)
 		style.border_color = Color(0.92, 0.80, 0.46, 0.95)
 		for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-			style.set_border_width(side, 2)
+			style.set_border_width(side as Side, 2)
 		panel.add_theme_stylebox_override("panel", style)
 		panel.custom_minimum_size = Vector2(420, 0)
 
@@ -17097,7 +17142,7 @@ func _show_deucalion_prompt(spell: DeucalionsInfants) -> void:
 	style.bg_color = Color(0.11, 0.09, 0.13, 0.97)
 	style.border_color = Color(0.82, 0.70, 0.92)
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		style.set_border_width(side, 2)
+		style.set_border_width(side as Side, 2)
 	panel.add_theme_stylebox_override("panel", style)
 	panel.custom_minimum_size = Vector2(500, 0)
 
@@ -17461,7 +17506,7 @@ func _show_blot_creature_prompt() -> void:
 	style.bg_color = Color(0.08, 0.12, 0.08, 0.96)
 	style.border_color = Color(0.38, 0.82, 0.45)
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		style.set_border_width(side, 2)
+		style.set_border_width(side as Side, 2)
 	style.corner_radius_top_left = 5
 	style.corner_radius_top_right = 5
 	style.corner_radius_bottom_left = 5
@@ -18211,6 +18256,8 @@ func _on_match_move_validated(move: Dictionary) -> void:
 			var prepared_card := game_manager.get_card_by_uid(str(move.get("card_uid", "")))
 			if prepared_card != null and prepared_card.current_zone != null and prepared_card.current_zone.is_board_zone():
 				_schedule_local_ui_refresh()
+				if prepared_card.current_zone.zone_type == Zone.ZoneType.FRONTLINE:
+					call_deferred("_resolve_hidden_frontline_prepare_priority", prepared_card.uid)
 			if not _is_networked_client:
 				if authoritative_priority:
 					_schedule_priority_recovery_check()
@@ -19228,7 +19275,7 @@ func _show_game_result_overlay(result_message: String, winner = null, loser = nu
 	panel_style.bg_color = Color(0.08, 0.10, 0.14, 0.96)
 	panel_style.border_color = Color(0.86, 0.75, 0.44, 0.95)
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		panel_style.set_border_width(side, 2)
+		panel_style.set_border_width(side as Side, 2)
 	panel_style.content_margin_left = 24
 	panel_style.content_margin_right = 24
 	panel_style.content_margin_top = 22
@@ -20045,7 +20092,7 @@ func _show_remote_priority_prompt(responses: Array, action_message: String = "")
 		style.bg_color = Color(0.08, 0.08, 0.15, 0.95)
 		style.border_color = Color(0.4, 0.7, 1.0)
 		for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-			style.set_border_width(side, 2)
+			style.set_border_width(side as Side, 2)
 		panel.add_theme_stylebox_override("panel", style)
 		panel.custom_minimum_size.x = 220
 		add_child(panel)
@@ -20297,7 +20344,7 @@ func _make_intercept_prompt_art(card: Card) -> Control:
 	style.bg_color = Color(0.12, 0.12, 0.18, 0.96)
 	style.border_color = Color(0.88, 0.52, 0.28, 0.95)
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		style.set_border_width(side, 1)
+		style.set_border_width(side as Side, 1)
 	frame.add_theme_stylebox_override("panel", style)
 
 	if card != null and card.art_path != "":
@@ -20322,7 +20369,7 @@ func _show_intercept_prompt(interceptor_uids: Array) -> void:
 		style.bg_color = Color(0.08, 0.08, 0.15, 0.95)
 		style.border_color = Color(0.8, 0.4, 0.2)
 		for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-			style.set_border_width(side, 2)
+			style.set_border_width(side as Side, 2)
 		panel.add_theme_stylebox_override("panel", style)
 		panel.custom_minimum_size.x = 300
 		add_child(panel)

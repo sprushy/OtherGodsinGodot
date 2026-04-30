@@ -13,8 +13,10 @@ const TEZ_REQUIRED_SACRIFICES := 4
 const BASE_BOARD_Z_INDEX := 0
 const RAISED_BOARD_Z_INDEX := 2
 const GOD_INDICATOR_Z_INDEX := 3
-const HOVER_BOARD_Z_INDEX := 1050
-const POPUP_Z_INDEX := 1100
+# Keep hovered board cards above the hand fan overlay, but below the larger
+# transient previews and modal UI promoted by CombatMockGame.
+const HOVER_BOARD_Z_INDEX := 2260
+const POPUP_Z_INDEX := 2290
 
 class StackTargetIndicator extends Control:
 	func _ready() -> void:
@@ -2762,8 +2764,9 @@ func _notification(what: int) -> void:
 			_hide_ability_popup()
 		NOTIFICATION_MOUSE_ENTER:
 			_hovered = true
-			z_index = HOVER_BOARD_Z_INDEX
-			var _c := zone.cards[0] if zone != null and zone.cards.size() > 0 else null
+			var _c := _preview_card if _preview_card != null else (zone.cards[0] if zone != null and zone.cards.size() > 0 else null)
+			if _c != null:
+				z_index = HOVER_BOARD_Z_INDEX
 			var viewer := _get_viewer_player()
 			if _c != null and (not _c.is_face_down or _c.get_controller() == viewer or _is_public_power(_c) or _c.is_temporarily_revealed()):
 				var _delay := 1.0 if (_c.is_god) else 1.5
@@ -2784,6 +2787,8 @@ func _schedule_hide() -> void:
 	_hide_pending = true
 	await get_tree().create_timer(0.15).timeout
 	_hide_pending = false
+	if not is_inside_tree() or is_queued_for_deletion() or get_viewport() == null:
+		return
 	if _pinned:
 		return
 	if _popup and is_instance_valid(_popup):
@@ -2805,6 +2810,8 @@ func _process(_delta: float) -> void:
 	# Failsafe only when not pinned and no hide already pending
 	if _pinned or _hide_pending:
 		return
+	if not is_inside_tree() or is_queued_for_deletion() or get_viewport() == null:
+		return
 	if _popup and is_instance_valid(_popup):
 		var over_zone  := get_global_rect().has_point(get_global_mouse_position())
 		var over_popup := _popup.get_global_rect().has_point(get_global_mouse_position())
@@ -2813,6 +2820,8 @@ func _process(_delta: float) -> void:
 
 func _try_show_popup() -> void:
 	if not _hovered:
+		return
+	if not is_inside_tree() or is_queued_for_deletion() or get_viewport() == null:
 		return
 	if not get_global_rect().has_point(get_global_mouse_position()):
 		return

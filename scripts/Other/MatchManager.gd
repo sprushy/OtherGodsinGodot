@@ -69,6 +69,7 @@ var pending_retreat_guardian_blocked_uids: Array[String] = []
 var pending_humbaba_action: CardAction = null
 var pending_humbaba_target = null
 var pending_humbaba_prompt_uids: Array[String] = []
+var pending_tezcatlipoca_titlacauan_action: CardAction = null
 var _pending_end_turn_after_resurrection: bool = false
 var _active_command_sender_info: Dictionary = {}
 var _active_command_type: String = ""
@@ -114,6 +115,7 @@ func reset_runtime_state() -> void:
 	pending_humbaba_action = null
 	pending_humbaba_target = null
 	pending_humbaba_prompt_uids.clear()
+	pending_tezcatlipoca_titlacauan_action = null
 	_pending_end_turn_after_resurrection = false
 	_active_command_sender_info.clear()
 	_active_command_type = ""
@@ -307,6 +309,7 @@ func resolve_action(action: CardAction) -> void:
 			_resolve_spell(action)
 		CardAction.Type.EVENT:
 			_resolve_event(action)
+			action_completed = pending_tezcatlipoca_titlacauan_action != action
 		CardAction.Type.ATTACK:
 			_resolve_attack(action)
 			action_completed = pending_retreat_action != action and pending_humbaba_action != action
@@ -354,6 +357,11 @@ func _resolve_spell(action: CardAction) -> void:
 
 func _resolve_event(action: CardAction) -> void:
 	if action.resolve_callback.is_valid():
+		if action.event_name == "tezcatlipoca_active_titlacauan":
+			pending_tezcatlipoca_titlacauan_action = action
+			action.resolve_callback.call()
+			last_resolution_text = action.resolution_text
+			return
 		action.resolve_callback.call()
 		last_resolution_text = action.resolution_text if action.resolution_text != "" else action.event_name.replace("_", " ").capitalize() + " passed."
 
@@ -1551,6 +1559,11 @@ func _get_required_player_for_command(command: Dictionary) -> Player:
 			return power.get_pending_discard_player(game_manager) if power != null else null
 		"return_to_hand_choice":
 			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("card_uid", ""))))
+		"doorway_choice":
+			var pending_structure := game_manager.get_pending_doorway_structure()
+			if pending_structure != null:
+				return _get_card_controller(pending_structure)
+			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("structure_uid", ""))))
 		"wolf_master_summon":
 			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("fenrir_uid", ""))))
 		"intercept_decision":
@@ -1611,7 +1624,7 @@ func _requires_resolved_upkeep(command_type: String) -> bool:
 		# These commands are valid while the current player is still inside a
 		# turn-start prompt/upkeep window and should not be blocked by the
 		# generic "resolve upkeep first" guard.
-		"upkeep_choice", "tiamat_upkeep_choice", "skoll_upkeep_summon", "priority_pass", "intercept_decision", "combat_retreat_decision", "play_hex_response", "play_charm_response", "play_priority_ability", "forfeit", "humbaba_augury_choice", "return_to_hand_choice":
+		"upkeep_choice", "tiamat_upkeep_choice", "skoll_upkeep_summon", "priority_pass", "intercept_decision", "combat_retreat_decision", "play_hex_response", "play_charm_response", "play_priority_ability", "forfeit", "humbaba_augury_choice", "return_to_hand_choice", "doorway_choice":
 			return false
 	return true
 
@@ -2978,7 +2991,15 @@ func _process_command_impl(command: Dictionary) -> bool:
 				move_failed.emit("tezcatlipoca_active_titlacauan_choice: active god not found")
 				return false
 			active_god.resolve_from_command(game_manager, command)
+			var feedback := game_manager.consume_player_feedback()
+			if feedback.strip_edges() != "":
+				game_manager.note_player_feedback(feedback)
+				last_resolution_text = feedback
 			move_validated.emit(command)
+			if pending_tezcatlipoca_titlacauan_action != null:
+				var action := pending_tezcatlipoca_titlacauan_action
+				pending_tezcatlipoca_titlacauan_action = null
+				_finalize_resolved_action(action)
 			return true
 		"nusku_active_core_flame_choice":
 			var source_uid: String = command.get("source_uid", "")
@@ -3342,6 +3363,25 @@ func _process_command_impl(command: Dictionary) -> bool:
 				return false
 			if not game_manager.resolve_pending_return_to_hand_choice(bool(command.get("pay_cost", false))):
 				move_failed.emit("return_to_hand_choice: failed to resolve")
+				return false
+			move_validated.emit(command)
+			return true
+		"doorway_choice":
+			var structure_uid := str(command.get("structure_uid", "")).strip_edges()
+			var card_uid := str(command.get("card_uid", "")).strip_edges()
+			var pending_structure := game_manager.get_pending_doorway_structure()
+			var pending_card := game_manager.get_pending_doorway_card()
+			if pending_structure == null or pending_card == null:
+				move_failed.emit("doorway_choice: no pending choice")
+				return false
+			if pending_structure.uid != structure_uid:
+				move_failed.emit("doorway_choice: pending structure does not match")
+				return false
+			if pending_card.uid != card_uid:
+				move_failed.emit("doorway_choice: pending card does not match")
+				return false
+			if not game_manager.resolve_pending_doorway_choice(bool(command.get("send_to_abyss", false))):
+				move_failed.emit("doorway_choice: failed to resolve")
 				return false
 			move_validated.emit(command)
 			return true
