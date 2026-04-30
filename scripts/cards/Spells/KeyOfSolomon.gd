@@ -12,6 +12,7 @@ func _init() -> void:
 	level = 1
 	mana_cost = 1
 	speed = 1
+	sacrifice_cost = 1
 	is_legendary = false
 	ability_text = "[b]Return Grave[/b]/[b]Return Void[/b]: Sacrifice an Animal, add two Demons from your grave or void to your hand."
 	artist = "Lorinda Tomko"
@@ -72,6 +73,17 @@ func resolve_from_command(game_manager: GameManager, command: Dictionary) -> voi
 		if c != null:
 			demons.append(c)
 	_add_demons_to_hand(game_manager, demons)
+
+func _is_valid_pending_sacrifice_choice(card: Card, player: Player) -> bool:
+	return card != null \
+		and player != null \
+		and card != self \
+		and card.current_zone != null \
+		and card.current_zone.is_board_zone() \
+		and card.get_controller() == player \
+		and card.card_type == Card.CardType.CREATURE \
+		and card.has_type("Animal") \
+		and card.can_be_used_for_creature_sacrifice
 
 func _add_demons_to_hand(game_manager: GameManager, chosen_demons: Array[Card]) -> void:
 	if game_manager == null or card_owner == null:

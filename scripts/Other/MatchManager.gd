@@ -73,6 +73,8 @@ var pending_tezcatlipoca_titlacauan_action: CardAction = null
 var _pending_end_turn_after_resurrection: bool = false
 var _active_command_sender_info: Dictionary = {}
 var _active_command_type: String = ""
+var _pending_ui_interactions: Array[Dictionary] = []
+var _next_ui_interaction_id: int = 1
 
 func _init(p_game_manager: GameManager) -> void:
 	game_manager = p_game_manager
@@ -119,6 +121,8 @@ func reset_runtime_state() -> void:
 	_pending_end_turn_after_resurrection = false
 	_active_command_sender_info.clear()
 	_active_command_type = ""
+	_pending_ui_interactions.clear()
+	_next_ui_interaction_id = 1
 	last_resolution_text = ""
 	last_move_failed_reason = ""
 	_authoritative_stack_resolution_pending = false
@@ -225,7 +229,294 @@ func _emit_ui_interaction_for_player(player: Player, type: String, data: Diction
 	var player_idx := game_manager.players.find(player)
 	if player_idx < 0:
 		return
+	_record_pending_ui_interaction(player, type, data)
 	request_ui_interaction.emit(player_idx, type, data)
+
+func emit_ui_interaction_for_player(player: Player, type: String, data: Dictionary) -> void:
+	_emit_ui_interaction_for_player(player, type, data)
+
+func _record_pending_ui_interaction(player: Player, type: String, data: Dictionary) -> void:
+	if player == null or type.strip_edges() == "":
+		return
+	var entry := {
+		"player": player,
+		"type": type,
+		"turn_number": game_manager.turn_number if game_manager != null else -1,
+		"prompt_id": _next_ui_interaction_id,
+		"data": data.duplicate(true),
+	}
+	_next_ui_interaction_id += 1
+	_prune_matching_pending_ui_interactions(entry)
+	_pending_ui_interactions.append(entry)
+	while _pending_ui_interactions.size() > 64:
+		_pending_ui_interactions.remove_at(0)
+
+func _prune_matching_pending_ui_interactions(entry: Dictionary) -> void:
+	for idx in range(_pending_ui_interactions.size() - 1, -1, -1):
+		var existing := _pending_ui_interactions[idx]
+		if str(existing.get("type", "")) != str(entry.get("type", "")):
+			continue
+		if _pending_ui_interaction_has_same_identity(existing, entry):
+			_pending_ui_interactions.remove_at(idx)
+
+func _pending_ui_interaction_has_same_identity(first: Dictionary, second: Dictionary) -> bool:
+	var first_data: Dictionary = first.get("data", {})
+	var second_data: Dictionary = second.get("data", {})
+	var identity_keys := [
+		"source_uid",
+		"card_uid",
+		"victim_uid",
+		"attacker_uid",
+		"demon_uid",
+		"summoned_uid",
+		"structure_uid",
+	]
+	var compared_key := false
+	for key in identity_keys:
+		if not second_data.has(key):
+			continue
+		compared_key = true
+		if str(first_data.get(key, "")) != str(second_data.get(key, "")):
+			return false
+	return compared_key or first.get("player", null) == second.get("player", null)
+
+func _validate_pending_ui_interaction_for_command(command: Dictionary) -> Dictionary:
+	var result := {
+		"error": "",
+		"prompt_id": -1,
+	}
+	var command_type := str(command.get("type", ""))
+	var expected_type := _get_ui_interaction_type_for_command(command_type)
+	if expected_type == "":
+		return result
+	if not (authoritative_match_flow_enabled or network_manager != null):
+		return result
+	var prompt_idx := _find_pending_ui_interaction_index(command, expected_type)
+	if prompt_idx < 0:
+		result["error"] = "%s: no matching server prompt is pending" % command_type
+		return result
+	result["prompt_id"] = int(_pending_ui_interactions[prompt_idx].get("prompt_id", -1))
+	return result
+
+func _consume_pending_ui_interaction_by_id(prompt_id: int) -> void:
+	if prompt_id < 0:
+		return
+	for idx in range(_pending_ui_interactions.size() - 1, -1, -1):
+		if int(_pending_ui_interactions[idx].get("prompt_id", -1)) == prompt_id:
+			_pending_ui_interactions.remove_at(idx)
+			return
+
+func _get_ui_interaction_type_for_command(command_type: String) -> String:
+	match command_type:
+		"aphrodite_enslave_choice":
+			return "aphrodite_enslave"
+		"blessed_knights_choice":
+			return "blessed_knights_ward"
+		"wheel_of_fire_turn_start_choice":
+			return "wheel_of_fire_turn_start"
+		"tezcatlipoca_active_titlacauan_choice":
+			return "tezcatlipoca_active_titlacauan"
+		"nusku_active_core_flame_choice":
+			return "nusku_active_core_flame"
+		"mummu_entropy_choice":
+			return "mummu_entropy"
+		"first_sage_adapa_choice":
+			return "first_sage_adapa_impact"
+		"third_sage_enmedugga_choice":
+			return "third_sage_enmedugga_impact"
+		"fourth_sage_enmegalamma_choice":
+			return "fourth_sage_enmegalamma_impact"
+		"sixth_sage_an_enlilda_choice":
+			return "sixth_sage_an_enlilda_impact"
+		"lailoken_reveal_choice":
+			return "lailoken_reveal"
+		"masmassu_priest_reveal_choice":
+			return "masmassu_priest_reveal"
+		"rally_the_troops_choice":
+			return "rally_the_troops"
+		"terror_impact_choice":
+			return "terror_impact"
+		"huginn_perish_prime_choice":
+			return "huginn_perish_prime"
+		"muninn_perish_prime_choice":
+			return "muninn_perish_prime"
+		"fenrir_devour_choice":
+			return "fenrir_devour_impact"
+		"harii_jarl_impact_choice":
+			return "harii_jarl_impact"
+		"durinn_secondborn_choice":
+			return "durinn_secondborn_impact"
+		"kur_jara_tree_of_life_choice":
+			return "kur_jara_tree_of_life"
+		"hunting_tactics_choice":
+			return "hunting_tactics"
+		"foolish_optimism_choice":
+			return "foolish_optimism"
+		"gugalanna_celestial_charge_choice":
+			return "gugalanna_celestial_charge"
+		"giant_master_architect_choice":
+			return "giant_master_architect_impact"
+		"pai_long_autumn_king_choice":
+			return "pai_long_autumn_king_impact"
+		"nergal_lion_choice":
+			return "nergal_lion_impact"
+		"gala_tura_destroyed_choice":
+			return "gala_tura_destroyed"
+		"gawain_healing_hands_choice":
+			return "gawain_healing_hands"
+		"tatzelwurm_dragon_heart_choice":
+			return "tatzelwurm_dragon_heart"
+		"byggvir_reveal_choice":
+			return "byggvir_reveal"
+		"humbaba_augury_choice":
+			return "humbaba_augury"
+		"ragnarok_discard_choice":
+			return "ragnarok_discard"
+		"return_to_hand_choice":
+			return "return_to_hand_choice"
+		"resurrection_choice":
+			return "resurrection"
+		"nusku_well_of_fire_choice":
+			return "nusku_well_of_fire"
+		"apollyons_demiurge_choice":
+			return "apollyons_demiurge"
+		"wolf_adolescent_maturation_choice":
+			return "wolf_adolescent_maturation"
+	return ""
+
+func _find_pending_ui_interaction_index(command: Dictionary, expected_type: String) -> int:
+	for idx in range(_pending_ui_interactions.size() - 1, -1, -1):
+		var entry := _pending_ui_interactions[idx]
+		if _pending_ui_interaction_matches_command(entry, command, expected_type):
+			return idx
+	return -1
+
+func _pending_ui_interaction_matches_command(entry: Dictionary, command: Dictionary, expected_type: String) -> bool:
+	if str(entry.get("type", "")) != expected_type:
+		return false
+	if game_manager != null and int(entry.get("turn_number", -1)) != game_manager.turn_number:
+		return false
+	var required_player := _get_required_player_for_command(command)
+	if required_player != null and entry.get("player", null) != required_player:
+		return false
+	var data: Dictionary = entry.get("data", {})
+	for key in ["source_uid", "card_uid", "attacker_uid", "demon_uid", "summoned_uid"]:
+		if not data.has(key):
+			continue
+		var command_uid := _get_command_uid_for_prompt_key(command, key)
+		if command_uid == "" or command_uid != str(data.get(key, "")):
+			return false
+	if data.has("victim_uid"):
+		var victim_uid := _get_command_choice_uid(command)
+		if victim_uid == "" or victim_uid != str(data.get("victim_uid", "")):
+			return false
+	if data.has("target_uid"):
+		var target_uid := _get_command_choice_uid(command)
+		if target_uid == "" or target_uid != str(data.get("target_uid", "")):
+			return false
+	if data.has("target_uids") and not _command_choices_are_in_prompt(command, data.get("target_uids", [])):
+		return false
+	if data.has("attacker_uids") and not _command_uid_is_in_prompt_list(command, "attacker_uid", data.get("attacker_uids", [])):
+		return false
+	if data.has("defender_uids") and not _command_uid_is_in_prompt_list(command, "defender_uid", data.get("defender_uids", [])):
+		return false
+	return true
+
+func _get_command_uid_for_prompt_key(command: Dictionary, key: String) -> String:
+	match key:
+		"card_uid":
+			return str(command.get("card_uid", "")).strip_edges()
+		"source_uid":
+			return str(command.get("source_uid", "")).strip_edges()
+		"attacker_uid":
+			return str(command.get("attacker_uid", "")).strip_edges()
+		"demon_uid":
+			return str(command.get("demon_uid", "")).strip_edges()
+		"summoned_uid":
+			return str(command.get("summoned_uid", "")).strip_edges()
+	return str(command.get(key, "")).strip_edges()
+
+func _get_command_choice_uid(command: Dictionary) -> String:
+	for key in ["target_uid", "chosen_uid", "victim_uid"]:
+		var uid := str(command.get(key, "")).strip_edges()
+		if uid != "":
+			return uid
+	return ""
+
+func _command_choices_are_in_prompt(command: Dictionary, prompt_values: Array) -> bool:
+	var allowed_uids := _string_uid_list(prompt_values)
+	var chosen_uids: Array[String] = []
+	for top_array_key in ["target_uids", "chosen_uids"]:
+		if command.has(top_array_key):
+			for raw_uid in command.get(top_array_key, []):
+				var top_array_uid := str(raw_uid).strip_edges()
+				if top_array_uid != "":
+					chosen_uids.append(top_array_uid)
+	var option_data = command.get("option", {})
+	if option_data is Dictionary:
+		var option := option_data as Dictionary
+		for option_array_key in ["target_uids", "chosen_uids"]:
+			if option.has(option_array_key):
+				for raw_uid in option.get(option_array_key, []):
+					var option_array_uid := str(raw_uid).strip_edges()
+					if option_array_uid != "":
+						chosen_uids.append(option_array_uid)
+		for single_key in ["target_uid", "chosen_uid", "victim_uid"]:
+			var option_single_uid := str(option.get(single_key, "")).strip_edges()
+			if option_single_uid != "":
+				chosen_uids.append(option_single_uid)
+	var single_choice := _get_command_choice_uid(command)
+	if single_choice != "":
+		chosen_uids.append(single_choice)
+	for uid in chosen_uids:
+		if uid not in allowed_uids:
+			return false
+	return true
+
+func _command_uid_is_in_prompt_list(command: Dictionary, command_key: String, prompt_values: Array) -> bool:
+	var command_uid := str(command.get(command_key, "")).strip_edges()
+	if command_uid == "":
+		return true
+	return command_uid in _string_uid_list(prompt_values)
+
+func _string_uid_list(values: Array) -> Array[String]:
+	var uids: Array[String] = []
+	for value in values:
+		var uid := str(value).strip_edges()
+		if uid != "":
+			uids.append(uid)
+	return uids
+
+func _validate_end_turn_discards(player: Player, discard_uids: Array) -> Dictionary:
+	var result := {
+		"ok": false,
+		"reason": "end_turn: invalid discard selection",
+		"cards": [],
+	}
+	if player == null or player.hand_zone == null:
+		result["reason"] = "end_turn: player hand not found"
+		return result
+	var required_count := maxi(0, player.hand_zone.get_card_count() - Player.MAX_HAND_SIZE)
+	var selected_cards: Array[Card] = []
+	var seen_uids: Array[String] = []
+	for raw_uid in discard_uids:
+		var discard_uid := str(raw_uid).strip_edges()
+		if discard_uid == "" or discard_uid in seen_uids:
+			result["reason"] = "end_turn: discard choices must be unique hand cards"
+			return result
+		seen_uids.append(discard_uid)
+		var discard_card := game_manager.get_card_by_uid(discard_uid)
+		if discard_card == null or discard_card.current_zone != player.hand_zone:
+			result["reason"] = "end_turn: discard choices must be cards in your hand"
+			return result
+		selected_cards.append(discard_card)
+	if selected_cards.size() != required_count:
+		result["reason"] = "end_turn: discard exactly %d card(s) to reach the hand limit" % required_count
+		return result
+	result["ok"] = true
+	result["reason"] = ""
+	result["cards"] = selected_cards
+	return result
 
 func _queue_decision_priority_event(
 	player: Player,
@@ -576,7 +867,7 @@ func _emit_next_pending_humbaba_prompt() -> bool:
 		for target in prompt_targets:
 			if target != null:
 				target_uids.append(target.uid)
-		request_ui_interaction.emit(player_idx, "humbaba_augury", {
+		_emit_ui_interaction_for_player(prompt_player, "humbaba_augury", {
 			"source_uid": humbaba.uid,
 			"target_uids": target_uids,
 		})
@@ -904,11 +1195,10 @@ func _build_pending_attack_action() -> CardAction:
 	action.halve_follower_damage = selected_attacker != null and selected_attacker.halves_follower_damage_inflicted()
 	return action
 
-func _get_priority_response_target_uids(card: Card, top: CardAction) -> Array:
-	var target_uids: Array = []
-	if card == null:
-		return target_uids
+func _get_priority_response_targets(card: Card, top: CardAction) -> Array:
 	var targets: Array = []
+	if card == null or top == null or game_manager == null:
+		return targets
 	if card is HexCard:
 		targets = game_manager.get_priority_hex_targets(card as HexCard, top)
 	elif card.has_method("get_priority_targets"):
@@ -919,10 +1209,30 @@ func _get_priority_response_target_uids(card: Card, top: CardAction) -> Array:
 		targets = card.get_priority_field_targets(game_manager, top)
 	elif card.has_method("get_valid_targets"):
 		targets = card.get_valid_targets(game_manager)
+	return targets
+
+func _get_priority_response_target_uids(card: Card, top: CardAction) -> Array:
+	var target_uids: Array = []
+	var targets := _get_priority_response_targets(card, top)
 	for target in targets:
 		if target is Card:
 			target_uids.append((target as Card).uid)
 	return target_uids
+
+func _validate_priority_response_target(card: Card, top: CardAction, target: Card, target_uid: String, context: String) -> String:
+	var requested_uid := str(target_uid).strip_edges()
+	var valid_targets := _get_priority_response_targets(card, top)
+	if not requested_uid.is_empty():
+		if target == null:
+			return context + ": target not found"
+		if target not in valid_targets:
+			return context + ": invalid priority target"
+		return ""
+	if card != null and card.targets:
+		if valid_targets.is_empty():
+			return context + ": no valid targets"
+		return context + ": target required"
+	return ""
 
 func _build_priority_response_options(responses: Array) -> Array:
 	var response_options: Array = []
@@ -1536,7 +1846,7 @@ func _get_required_player_for_command(command: Dictionary) -> Player:
 			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("god_uid", ""))))
 		"play_priority_ability":
 			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("source_uid", ""))))
-		"activate_power", "unlock_power", "activate_divine_caprice":
+		"activate_power", "unlock_power", "activate_divine_caprice", "apply_advanced_building_techniques":
 			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("power_uid", ""))))
 		"cast_charm", "play_charm_response":
 			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("charm_uid", ""))))
@@ -1680,7 +1990,16 @@ func process_command(command: Dictionary, sender_info: Dictionary = {}) -> bool:
 		_active_command_sender_info.clear()
 		_active_command_type = ""
 		return false
+	var pending_prompt_validation := _validate_pending_ui_interaction_for_command(command)
+	var pending_prompt_error := str(pending_prompt_validation.get("error", ""))
+	if not pending_prompt_error.is_empty():
+		move_failed.emit(pending_prompt_error)
+		_active_command_sender_info.clear()
+		_active_command_type = ""
+		return false
 	var result := _process_command_impl(command)
+	if result:
+		_consume_pending_ui_interaction_by_id(int(pending_prompt_validation.get("prompt_id", -1)))
 	_active_command_sender_info.clear()
 	_active_command_type = ""
 	return result
@@ -1793,10 +2112,12 @@ func _process_command_impl(command: Dictionary) -> bool:
 				move_failed.emit("It is not your turn.")
 				return false
 			var et_discard_uids: Array = command.get("discard_uids", [])
-			for et_uid in et_discard_uids:
-				var et_card := game_manager.get_card_by_uid(et_uid as String)
-				if et_card != null and et_card.current_zone == acting_player.hand_zone:
-					acting_player.discard_card(et_card)
+			var et_discard_validation := _validate_end_turn_discards(acting_player, et_discard_uids)
+			if not bool(et_discard_validation.get("ok", false)):
+				move_failed.emit(str(et_discard_validation.get("reason", "end_turn: invalid discard selection")))
+				return false
+			for et_card in et_discard_validation.get("cards", []):
+				acting_player.discard_card(et_card)
 			move_validated.emit(command)
 			if _check_for_next_resurrection():
 				_pending_end_turn_after_resurrection = true
@@ -1977,7 +2298,18 @@ func _process_command_impl(command: Dictionary) -> bool:
 			
 			# Set chosen sacrifices
 			var sacrifice_uid: String = command.get("sacrifice_uid", "")
-			if sacrifice_uid != "":
+			if spell.sacrifice_cost > 0:
+				if sacrifice_uid == "":
+					spell.clear_pending_chosen_sacrifices()
+					move_failed.emit("%s requires a chosen sacrifice." % spell.card_name)
+					return false
+				var sac_card := game_manager.get_card_by_uid(sacrifice_uid)
+				if sac_card == null:
+					spell.clear_pending_chosen_sacrifices()
+					move_failed.emit("%s sacrifice target was not found." % spell.card_name)
+					return false
+				spell.set_pending_chosen_sacrifices([sac_card])
+			elif sacrifice_uid != "":
 				var sac_card := game_manager.get_card_by_uid(sacrifice_uid)
 				if sac_card != null:
 					spell.set_pending_chosen_sacrifices([sac_card])
@@ -2365,6 +2697,12 @@ func _process_command_impl(command: Dictionary) -> bool:
 			var aca_target_uid: String = command.get("target_uid", "")
 			if aca_target_uid != "":
 				aca_target = game_manager.get_card_by_uid(aca_target_uid)
+			var aca_option_value = command.get("option", {})
+			var aca_option: Dictionary = aca_option_value if aca_option_value is Dictionary else {}
+			if aca_target == null and not aca_option.is_empty():
+				var nested_target_uid := str(aca_option.get("target_uid", aca_option.get("chosen_uid", ""))).strip_edges()
+				if nested_target_uid != "":
+					aca_target = game_manager.get_card_by_uid(nested_target_uid)
 			var ability_ward_block_reason := game_manager.get_turn_destruction_ward_activation_block_reason(aca_source, aca_target)
 			if ability_ward_block_reason != "":
 				move_failed.emit(ability_ward_block_reason)
@@ -2385,7 +2723,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 						if command.has("return_to_hand"):
 							aca_source.activate(game_manager, {"return_to_hand": bool(command.get("return_to_hand", false))})
 						elif command.has("option"):
-							aca_source.activate(game_manager, command.get("option", {}))
+							aca_source.activate(game_manager, aca_option)
 						elif aca_target != null:
 							aca_source.activate(game_manager, aca_target)
 						else:
@@ -2410,7 +2748,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 						if aca_source.card_type == Card.CardType.CREATURE \
 								and not game_manager.pay_creature_action_mana_cost(aca_source, "activate"):
 							return
-						aca_source.activate(game_manager, command.get("option", {}))
+						aca_source.activate(game_manager, aca_option)
 				)
 			elif aca_target != null:
 				game_manager.run_with_effect_source(
@@ -2439,7 +2777,13 @@ func _process_command_impl(command: Dictionary) -> bool:
 				move_failed.emit("en_hedu_anna_exaltation: card not found")
 				return false
 			var eha_option: Dictionary = command.get("option", {})
-			(eha_card as EnHeduAnna).resolve_exaltation_choice(game_manager, eha_option)
+			var eha := eha_card as EnHeduAnna
+			if not eha.is_valid_exaltation_option(eha_option):
+				move_failed.emit("en_hedu_anna_exaltation: invalid Exaltation bonus")
+				return false
+			var eha_feedback := eha.resolve_exaltation_choice(game_manager, eha_option)
+			if eha_feedback.strip_edges() != "":
+				game_manager.note_player_feedback(eha_feedback)
 			move_validated.emit(command)
 			return true
 		"aphrodite_enslave_choice":
@@ -2981,6 +3325,9 @@ func _process_command_impl(command: Dictionary) -> bool:
 			if card == null:
 				move_failed.emit("blessed_knights_choice: card not found")
 				return false
+			if ward_kind not in card.get_blessed_ward_options():
+				move_failed.emit("blessed_knights_choice: invalid ward choice")
+				return false
 			card.apply_blessed_ward(game_manager, ward_kind)
 			move_validated.emit(command)
 			return true
@@ -3176,9 +3523,21 @@ func _process_command_impl(command: Dictionary) -> bool:
 			move_validated.emit(command)
 			return true
 		"intercept_decision":
-			var int_uid: String = command.get("interceptor_uid", "")
-			var interceptor: Card = game_manager.get_card_by_uid(int_uid) if int_uid != "" else null
-			selected_interceptor = interceptor
+			if selected_attacker == null or pending_attack_target == null:
+				move_failed.emit("intercept_decision: no attack is waiting for interception")
+				return false
+			var int_uid: String = str(command.get("interceptor_uid", "")).strip_edges()
+			if int_uid.is_empty():
+				selected_interceptor = null
+			else:
+				var interceptor: Card = game_manager.get_card_by_uid(int_uid)
+				if interceptor == null:
+					move_failed.emit("intercept_decision: interceptor not found")
+					return false
+				if interceptor not in _get_possible_interceptors(selected_attacker, pending_attack_target):
+					move_failed.emit("intercept_decision: invalid interceptor")
+					return false
+				selected_interceptor = interceptor
 			if _uses_authoritative_headless_attack_flow():
 				_resolve_authoritative_headless_attack()
 			move_validated.emit(command)
@@ -3195,13 +3554,21 @@ func _process_command_impl(command: Dictionary) -> bool:
 				move_failed.emit("play_charm_response: no action on stack")
 				return false
 			var pcr_source: CardAction = game_manager.action_stack.back()
-			var pcr_from_hand: bool = command.get("from_hand", false)
+			var requested_from_hand := bool(command.get("from_hand", false))
+			var pcr_from_hand := pcr_charm.current_zone == pcr_charm.card_owner.hand_zone
+			if requested_from_hand != pcr_from_hand:
+				move_failed.emit("play_charm_response: charm location changed")
+				return false
 			if not game_manager.can_card_respond_to_priority(pcr_charm, pcr_charm.card_owner):
 				move_failed.emit(game_manager.get_activation_mana_unavailable_text(pcr_charm) if game_manager.has_insufficient_activation_mana(pcr_charm, not pcr_from_hand, pcr_charm.card_owner) else "play_charm_response: charm cannot respond right now")
 				return false
 			var pcr_charm_card := pcr_charm as CharmCard
 			var pcr_target_uid: String = command.get("target_uid", "")
 			var pcr_target: Card = game_manager.get_card_by_uid(pcr_target_uid) if pcr_target_uid != "" else null
+			var pcr_target_error := _validate_priority_response_target(pcr_charm_card, pcr_source, pcr_target, pcr_target_uid, "play_charm_response")
+			if not pcr_target_error.is_empty():
+				move_failed.emit(pcr_target_error)
+				return false
 			if pcr_from_hand:
 				if not pcr_charm_card.pay_costs(pcr_charm_card.card_owner, game_manager):
 					move_failed.emit(game_manager.get_activation_mana_unavailable_text(pcr_charm_card) if game_manager.has_insufficient_activation_mana(pcr_charm_card, false, pcr_charm_card.card_owner) else "Cannot afford " + pcr_charm_card.card_name + "!")
@@ -3241,6 +3608,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 			if game_manager.action_stack.is_empty():
 				move_failed.emit("play_priority_ability: no action on stack")
 				return false
+			var pra_source_action: CardAction = game_manager.action_stack.back()
 			if not pra_source.has_method("activate"):
 				move_failed.emit("play_priority_ability: source card has no activatable ability")
 				return false
@@ -3251,6 +3619,10 @@ func _process_command_impl(command: Dictionary) -> bool:
 			var pra_target_uid: String = command.get("target_uid", "")
 			if pra_target_uid != "":
 				pra_target = game_manager.get_card_by_uid(pra_target_uid)
+			var pra_target_error := _validate_priority_response_target(pra_source, pra_source_action, pra_target, pra_target_uid, "play_priority_ability")
+			if not pra_target_error.is_empty():
+				move_failed.emit(pra_target_error)
+				return false
 			var pra_zone: Zone = null
 			if command.has("zone_type"):
 				pra_zone = resolve_zone(command)
@@ -3262,7 +3634,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 			pra_action.source_player = pra_source.card_owner
 			pra_action.card = pra_source
 			pra_action.target = pra_target
-			pra_action.response_to = game_manager.action_stack.back()
+			pra_action.response_to = pra_source_action
 			if pra_zone != null:
 				pra_action.event_data["summon_zone"] = CardAction._zone_to_dict(pra_zone, game_manager)
 			if command.has("mode"):
@@ -3310,37 +3682,55 @@ func _process_command_impl(command: Dictionary) -> bool:
 			if card == null:
 				move_failed.emit("resurrection_choice: card not found")
 				return false
+			if card not in game_manager.pending_resurrections:
+				move_failed.emit("resurrection_choice: no matching resurrection prompt is pending")
+				return false
 			
 			if confirmed:
 				var player := card.card_owner
+				if player == null or player.graveyard_zone == null or card.current_zone != player.graveyard_zone:
+					game_manager.pending_resurrections.erase(card)
+					move_failed.emit("resurrection_choice: card is no longer in its graveyard")
+					return false
 				if player.mana < 1:
 					move_failed.emit("resurrection_choice: not enough mana")
 					return false
-				
+				var resurrection_zone := _get_resurrection_zone_for_card(card)
+				if resurrection_zone == null:
+					game_manager.note_player_feedback("%s cannot resurrect: no empty reserve zone." % card.card_name)
+					game_manager.pending_resurrections.erase(card)
+					move_validated.emit(command)
+					if _pending_end_turn_after_resurrection:
+						if _check_for_next_resurrection():
+							return true
+						_pending_end_turn_after_resurrection = false
+						_finalize_pending_end_turn(player)
+					return true
+
 				player.spend_mana(1)
-				# Find an empty reserve zone, preferring the same column the card died in
-				var preferred_idx: int = card.last_board_zone_index
-				var zones_to_try: Array[Zone] = []
-				if preferred_idx >= 0 and preferred_idx < player.reserve_zones.size():
-					zones_to_try.append(player.reserve_zones[preferred_idx])
-				for zone in player.reserve_zones:
-					if zone not in zones_to_try:
-						zones_to_try.append(zone)
-				
-				var placed := false
-				for zone in zones_to_try:
-					if zone.cards.is_empty():
-						placed = game_manager.summon_creature_by_effect(
-							player, card, zone,
-							Card.CreatureMode.AGGRESSIVE,
-							false, false, null,
-							false, false, false
-						)
-						if placed: break
-				
+				var placed := game_manager.summon_creature_by_effect(
+					player,
+					card,
+					resurrection_zone,
+					Card.CreatureMode.AGGRESSIVE,
+					false,
+					false,
+					null,
+					false,
+					false,
+					false
+				)
 				if not placed:
-					move_failed.emit("resurrection_choice: no empty reserve zone")
-					return false
+					player.gain_mana(1)
+					game_manager.note_player_feedback("%s could not resurrect." % card.card_name)
+					game_manager.pending_resurrections.erase(card)
+					move_validated.emit(command)
+					if _pending_end_turn_after_resurrection:
+						if _check_for_next_resurrection():
+							return true
+						_pending_end_turn_after_resurrection = false
+						_finalize_pending_end_turn(player)
+					return true
 			
 			# Remove from pending list regardless of choice (or if failed)
 			game_manager.pending_resurrections.erase(card)
@@ -3400,8 +3790,12 @@ func _process_command_impl(command: Dictionary) -> bool:
 				return false
 			var phr_target_uid: String = command.get("target_uid", "")
 			var phr_target: Card = game_manager.get_card_by_uid(phr_target_uid) if phr_target_uid != "" else null
-			var phr_target_is_attacker: bool = command.get("target_is_attacker", false)
 			var phr_hex := phr_hex_card as HexCard
+			var phr_target_error := _validate_priority_response_target(phr_hex, phr_source, phr_target, phr_target_uid, "play_hex_response")
+			if not phr_target_error.is_empty():
+				move_failed.emit(phr_target_error)
+				return false
+			var phr_target_is_attacker := not phr_hex.has_method("get_priority_targets") and phr_source.type == CardAction.Type.ATTACK
 			var phr_ability := CardAction.new()
 			phr_ability.type = CardAction.Type.ABILITY
 			phr_ability.source_player = phr_hex.card_owner
@@ -3507,12 +3901,26 @@ func _check_for_next_resurrection() -> bool:
 	var candidates: Array[Card] = []
 	for card in game_manager.pending_resurrections:
 		if card.card_owner.mana >= 1 \
-				and card.current_zone == card.card_owner.graveyard_zone:
+				and card.current_zone == card.card_owner.graveyard_zone \
+				and _get_resurrection_zone_for_card(card) != null:
 			candidates.append(card)
 			
 	if not candidates.is_empty():
 		var next_card := candidates[0]
-		var player_idx := game_manager.players.find(next_card.card_owner)
-		request_ui_interaction.emit(player_idx, "resurrection", {"card_uid": next_card.uid})
+		_emit_ui_interaction_for_player(next_card.card_owner, "resurrection", {"card_uid": next_card.uid})
 		return true
 	return false
+
+func _get_resurrection_zone_for_card(card: Card) -> Zone:
+	if card == null or card.card_owner == null:
+		return null
+	var player := card.card_owner
+	var preferred_idx: int = card.last_board_zone_index
+	if preferred_idx >= 0 and preferred_idx < player.reserve_zones.size():
+		var preferred_zone := player.reserve_zones[preferred_idx]
+		if preferred_zone != null and preferred_zone.cards.is_empty():
+			return preferred_zone
+	for zone in player.reserve_zones:
+		if zone != null and zone.cards.is_empty():
+			return zone
+	return null

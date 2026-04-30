@@ -6,6 +6,7 @@ const ART_PATH := "res://images/card_art/gods/Mummu.png"
 const ENTROPY_PRIME := "prime"
 const ENTROPY_SHELVE := "shelve"
 const RESTORE_DEFERRED_META := "mummu_active_restore_pending"
+const ENTROPY_PENDING_VICTIM_UIDS_META := "mummu_active_pending_entropy_victim_uids"
 
 func _init() -> void:
 	super._init()
@@ -31,6 +32,7 @@ func on_attack_target_destroyed(game_manager: GameManager, victim: Card) -> void
 	if prompt_player == null:
 		prompt_player = card_owner
 	if prompt_player != null:
+		_queue_pending_entropy_victim(victim)
 		game_manager.decision_requested.emit(prompt_player, "mummu_entropy", {
 			"source_uid": uid,
 			"victim_uid": victim.uid,
@@ -42,6 +44,9 @@ func resolve_from_command(game_manager: GameManager, command: Dictionary) -> voi
 	if game_manager == null:
 		return
 	var chosen_uid := str(command.get("chosen_uid", command.get("target_uid", "")))
+	if not _consume_pending_entropy_victim(chosen_uid):
+		game_manager.note_player_feedback("%s entropy choice is no longer available." % card_name)
+		return
 	var target_card: Card = game_manager.get_card_by_uid(chosen_uid) if chosen_uid != "" else null
 	var placement := str(command.get("placement", command.get("keyword", ENTROPY_PRIME))).to_lower()
 	game_manager.note_player_feedback(resolve_entropy_choice(game_manager, target_card, placement))
@@ -92,3 +97,21 @@ func _restore_normal_god_after_leaving_field(game_manager: GameManager) -> void:
 			restored_god.card_name
 		])
 
+func _queue_pending_entropy_victim(victim: Card) -> void:
+	if victim == null:
+		return
+	var pending: Array = get_meta(ENTROPY_PENDING_VICTIM_UIDS_META, [])
+	if victim.uid not in pending:
+		pending.append(victim.uid)
+	set_meta(ENTROPY_PENDING_VICTIM_UIDS_META, pending)
+
+func _consume_pending_entropy_victim(chosen_uid: String) -> bool:
+	var pending: Array = get_meta(ENTROPY_PENDING_VICTIM_UIDS_META, [])
+	if chosen_uid == "" or chosen_uid not in pending:
+		return false
+	pending.erase(chosen_uid)
+	if pending.is_empty():
+		remove_meta(ENTROPY_PENDING_VICTIM_UIDS_META)
+	else:
+		set_meta(ENTROPY_PENDING_VICTIM_UIDS_META, pending)
+	return true

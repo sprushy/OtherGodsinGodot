@@ -4,6 +4,7 @@ class_name NuskuActive
 const LINKED_GOD_NAME := "Nusku, Firebearer"
 const MILL_COUNT := 7
 const ART_PATH := "res://images/card_art/gods/NuskuEdit2.png"
+const CORE_FLAME_INITIAL_PROMPT_PENDING_META := "core_flame_initial_prompt_pending"
 const CORE_FLAME_PENDING_CHOICE_UIDS_META := "core_flame_pending_choice_uids"
 const CORE_FLAME_PENDING_MILL_COUNT_META := "core_flame_pending_mill_count"
 
@@ -28,6 +29,8 @@ func _init() -> void:
 
 func on_summon(_game_manager: GameManager) -> void:
 	_declined_core_flame = false
+	_clear_pending_core_flame_initial_prompt()
+	_clear_pending_core_flame_choice()
 
 func on_impact(game_manager: GameManager) -> void:
 	if game_manager == null or card_owner == null or card_owner.deck_zone == null:
@@ -42,6 +45,7 @@ func on_impact(game_manager: GameManager) -> void:
 	if prompt_player == null:
 		game_manager.note_player_feedback(resolve_core_flame(game_manager))
 		return
+	set_meta(CORE_FLAME_INITIAL_PROMPT_PENDING_META, true)
 	game_manager.decision_requested.emit(prompt_player, "nusku_active_core_flame", {
 		"source_uid": uid,
 		"mill_count": mill_count,
@@ -54,11 +58,15 @@ func resolve_from_command(game_manager: GameManager, command: Dictionary) -> Str
 	var chosen_uid := str(command.get("chosen_uid", command.get("target_uid", ""))).strip_edges()
 	var feedback := ""
 	if decline:
+		if not _consume_pending_core_flame_initial_prompt():
+			return _note_core_flame_feedback(game_manager, "Core Flame choice is no longer available.")
 		_clear_pending_core_flame_choice()
 		feedback = resolve_core_flame(game_manager, null, true)
 	elif chosen_uid != "":
 		feedback = _complete_pending_core_flame_choice(game_manager, chosen_uid)
 	else:
+		if not _consume_pending_core_flame_initial_prompt():
+			return _note_core_flame_feedback(game_manager, "Core Flame choice is no longer available.")
 		feedback = _resolve_core_flame_after_mill(game_manager)
 	if feedback.strip_edges() != "":
 		game_manager.note_player_feedback(feedback)
@@ -189,6 +197,7 @@ func _complete_pending_core_flame_choice(game_manager: GameManager, chosen_uid: 
 
 func _complete_core_flame_choice(game_manager: GameManager, chosen_card: Card, mill_count: int) -> String:
 	_clear_pending_core_flame_choice()
+	_clear_pending_core_flame_initial_prompt()
 	_declined_core_flame = false
 	var feedback := "%s milled %d card(s)." % [card_name, mill_count]
 	if chosen_card != null:
@@ -204,4 +213,18 @@ func _complete_core_flame_choice(game_manager: GameManager, chosen_card: Card, m
 func _clear_pending_core_flame_choice() -> void:
 	remove_meta(CORE_FLAME_PENDING_CHOICE_UIDS_META)
 	remove_meta(CORE_FLAME_PENDING_MILL_COUNT_META)
+
+func _consume_pending_core_flame_initial_prompt() -> bool:
+	if not bool(get_meta(CORE_FLAME_INITIAL_PROMPT_PENDING_META, false)):
+		return false
+	_clear_pending_core_flame_initial_prompt()
+	return true
+
+func _clear_pending_core_flame_initial_prompt() -> void:
+	remove_meta(CORE_FLAME_INITIAL_PROMPT_PENDING_META)
+
+func _note_core_flame_feedback(game_manager: GameManager, feedback: String) -> String:
+	if game_manager != null and feedback.strip_edges() != "":
+		game_manager.note_player_feedback(feedback)
+	return feedback
 

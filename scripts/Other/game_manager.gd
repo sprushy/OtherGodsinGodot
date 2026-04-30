@@ -3071,6 +3071,7 @@ func begin_pending_return_to_hand_choice(
 	_pending_return_to_hand_steal_actor = steal_actor
 	decision_requested.emit(prompt_player, "return_to_hand_choice", {
 		"card": card,
+		"card_uid": card.uid,
 		"reason": reason,
 	})
 	return true

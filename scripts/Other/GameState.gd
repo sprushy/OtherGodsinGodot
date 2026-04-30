@@ -120,6 +120,7 @@ static func _serialize_card(card: Card, hidden_mode: int = HIDDEN_MODE_NONE) -> 
 		script_path               = script_path,
 		card_name                 = card.card_name,
 		card_type                 = card.card_type,
+		level                     = card.level,
 		strength                  = card.strength,
 		resilience                = card.resilience,
 		speed                     = card.speed,
@@ -442,6 +443,7 @@ static func _deserialize_card(cdata: Dictionary) -> Card:
 
 	card.card_name                 = cdata.get("card_name", card.card_name)
 	card.card_type                 = int(cdata.get("card_type", card.card_type)) as Card.CardType
+	card.level                     = cdata.get("level", card.level)
 	card.strength                  = cdata.get("strength", card.strength)
 	card.resilience                = cdata.get("resilience", card.resilience)
 	card.speed                     = cdata.get("speed", card.speed)

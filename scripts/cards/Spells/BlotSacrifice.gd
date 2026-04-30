@@ -63,11 +63,25 @@ func get_valid_hand_creatures(max_total_levels: int = MAX_SUMMON_LEVELS, exclude
 func summon_selected_creatures(game_manager: GameManager, creatures: Array) -> Array[Card]:
 	var summoned: Array[Card] = []
 	var open_zones := get_available_summon_zones()
+	var selected: Array[Card] = []
+	var seen_uids := {}
+	var remaining_levels := MAX_SUMMON_LEVELS
 	for creature in creatures:
 		if open_zones.is_empty():
 			break
-		if creature == null or (creature.current_zone != card_owner.hand_zone and creature not in card_owner.hand_zone.cards):
+		if creature == null or seen_uids.has(creature.uid):
 			continue
+		var valid_choices := get_valid_hand_creatures(remaining_levels, selected)
+		if creature not in valid_choices:
+			continue
+		seen_uids[creature.uid] = true
+		selected.append(creature)
+		remaining_levels -= creature.get_effective_level()
+		if remaining_levels < 0:
+			continue
+	for creature in selected:
+		if open_zones.is_empty():
+			break
 		var zone: Zone = open_zones.pop_front() as Zone
 		if game_manager != null and game_manager.summon_creature_by_effect(
 			card_owner,

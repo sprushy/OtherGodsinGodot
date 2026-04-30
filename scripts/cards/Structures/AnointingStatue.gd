@@ -31,6 +31,8 @@ func can_activate(game_manager: GameManager, target: Card = null) -> bool:
 		return false
 	if target.card_type != Card.CardType.CREATURE and target.card_type != Card.CardType.STRUCTURE:
 		return false
+	if target.current_zone == null or not target.current_zone.is_board_zone():
+		return false
 	return true
 
 func activate(game_manager: GameManager, target: Card = null) -> void:

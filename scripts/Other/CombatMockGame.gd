@@ -337,6 +337,8 @@ var _pending_wolf_adolescent_prompts: Array[WolfAdolescent] = []
 var _active_wolf_adolescent_prompt: WolfAdolescent = null
 var _queued_wolf_adolescent_prompt_targets: Dictionary = {}
 var _pending_tezcatlipoca_active_prompt: Card = null
+var _pending_tezcatlipoca_titlacauan_source_uid: String = ""
+var _pending_tezcatlipoca_titlacauan_selected_uids: Array[String] = []
 var _pending_turn_start_priority_feedback: String = ""
 var _breidablik_panel: Control = null
 var _e2_abzu_panel: Control = null
@@ -1267,9 +1269,8 @@ func _show_next_wheel_of_fire_turn_start_prompt() -> bool:
 		if wheel == null or not is_instance_valid(wheel) or not wheel.can_offer_turn_start_advance(game_manager):
 			_pending_wheel_of_fire_prompts.remove_at(0)
 			continue
-		if network_manager != null and network_manager.is_server and not _is_player_local(wheel.card_owner):
-			var player_idx := game_manager.players.find(wheel.card_owner)
-			match_manager.request_ui_interaction.emit(player_idx, "wheel_of_fire_turn_start", {
+		if network_manager != null and network_manager.is_server:
+			match_manager.emit_ui_interaction_for_player(wheel.card_owner, "wheel_of_fire_turn_start", {
 				"source_uid": wheel.uid,
 			})
 			return true
@@ -7825,6 +7826,11 @@ func _on_local_player_card_moved(card: Card, from_zone: Zone, to_zone: Zone) -> 
 	var cleared_interaction_refs := _clear_interaction_refs_for_moved_card(card, from_zone, to_zone)
 	if from_zone.is_board_zone() or to_zone.is_board_zone() or cleared_interaction_refs:
 		_schedule_local_ui_refresh()
+	if not _is_networked_client \
+			and to_zone.zone_type == Zone.ZoneType.FRONTLINE \
+			and card.current_zone == to_zone \
+			and (card.is_prepared or card.is_face_down or card.is_stealth):
+		call_deferred("_resolve_hidden_frontline_prepare_priority", card.uid)
 	if _is_networked_client:
 		return
 	if from_zone.zone_type != Zone.ZoneType.HAND:
@@ -9772,8 +9778,7 @@ func _queue_blessed_knights_impact_prompt(card: BlessedKnights) -> void:
 		if network_manager != null and network_manager.is_server:
 			if _executing_stack_action and not _stack_resolution_paused:
 				_pause_stack_resolution(card.card_owner)
-			var player_idx := game_manager.players.find(card.card_owner)
-			match_manager.request_ui_interaction.emit(player_idx, "blessed_knights_ward", {"source_uid": card.uid})
+			match_manager.emit_ui_interaction_for_player(card.card_owner, "blessed_knights_ward", {"source_uid": card.uid})
 		else:
 			_pause_stack_resolution(card.card_owner)
 			_show_blessed_knights_prompt(card)
@@ -9804,12 +9809,11 @@ func _queue_tezcatlipoca_active_titlacauan_prompt(card: Card) -> void:
 		if network_manager != null and network_manager.is_server:
 			if _executing_stack_action and not _stack_resolution_paused:
 				_pause_stack_resolution(card.card_owner)
-			var player_idx := game_manager.players.find(card.card_owner)
 			var target_uids: Array[String] = []
 			for target in valid_targets:
 				if target != null:
 					target_uids.append(target.uid)
-			match_manager.request_ui_interaction.emit(player_idx, "tezcatlipoca_active_titlacauan", {
+			match_manager.emit_ui_interaction_for_player(card.card_owner, "tezcatlipoca_active_titlacauan", {
 				"source_uid": card.uid,
 				"target_uids": target_uids,
 			})
@@ -9865,13 +9869,12 @@ func _show_next_wolf_adolescent_maturation_prompt() -> bool:
 			_pending_wolf_adolescent_prompts.remove_at(0)
 			continue
 		_active_wolf_adolescent_prompt = wolf
-		if network_manager != null and network_manager.is_server and not _is_player_local(game_manager.current_player):
-			var player_idx := game_manager.players.find(wolf.card_owner)
+		if network_manager != null and network_manager.is_server:
 			var target_uids: Array[String] = []
 			for target in targets:
 				if target != null:
 					target_uids.append(target.uid)
-			match_manager.request_ui_interaction.emit(player_idx, "wolf_adolescent_maturation", {
+			match_manager.emit_ui_interaction_for_player(wolf.card_owner, "wolf_adolescent_maturation", {
 				"source_uid": wolf.uid,
 				"target_uids": target_uids,
 			})
@@ -11427,13 +11430,12 @@ func _show_next_humbaba_augury_prompt() -> void:
 			continue
 		_active_humbaba_prompt = card
 		var prompt_player := _get_humbaba_augury_prompt_player(card)
-		if network_manager != null and network_manager.is_server and prompt_player != null and not _is_player_local(prompt_player):
-			var player_idx := game_manager.players.find(prompt_player)
+		if network_manager != null and network_manager.is_server and prompt_player != null:
 			var target_uids: Array[String] = []
 			for target in current_targets:
 				if target != null:
 					target_uids.append(target.uid)
-			match_manager.request_ui_interaction.emit(player_idx, "humbaba_augury", {
+			match_manager.emit_ui_interaction_for_player(prompt_player, "humbaba_augury", {
 				"source_uid": card.uid,
 				"target_uids": target_uids,
 			})
@@ -13770,6 +13772,23 @@ func _recover_stalled_priority_state() -> bool:
 	var second_player := game_manager.get_opponent(first_player) if first_player != null else null
 	var first_has_responses := match_manager != null and match_manager._player_has_priority_prompt_responses(first_player)
 	var second_has_responses := match_manager != null and match_manager._player_has_priority_prompt_responses(second_player)
+	var hidden_frontline_entry := top_action.type == CardAction.Type.EVENT \
+		and top_action.event_name == "frontline_entry" \
+		and top_action.card != null \
+		and top_action.card.current_zone != null \
+		and top_action.card.current_zone.zone_type == Zone.ZoneType.FRONTLINE \
+		and (top_action.card.is_prepared or top_action.card.is_face_down or top_action.card.is_stealth)
+	if hidden_frontline_entry:
+		if first_has_responses:
+			game_manager.priority_player = first_player
+			_show_priority_prompt(first_player)
+			return true
+		if second_has_responses:
+			game_manager.priority_player = second_player
+			_show_priority_prompt(second_player)
+			return true
+		_execute_top_of_stack()
+		return true
 	if first_has_responses or second_has_responses:
 		_offer_priority()
 		return true
@@ -15101,8 +15120,7 @@ func _maybe_prompt_aphrodite_after_combat() -> bool:
 		return false
 	if network_manager != null and network_manager.is_server:
 		# Route through request_ui_interaction so GameEventBroadcaster sends it to the right client
-		var player_idx := game_manager.players.find(game_manager.current_player)
-		match_manager.request_ui_interaction.emit(player_idx, "aphrodite_enslave", {"source_uid": god.uid})
+		match_manager.emit_ui_interaction_for_player(game_manager.current_player, "aphrodite_enslave", {"source_uid": god.uid})
 		return true
 	# Local game: show prompt directly
 	_show_aphrodite_prompt(god as AphroditeAreia)
@@ -16041,6 +16059,9 @@ func _show_tezcatlipoca_active_titlacauan_prompt(card: Card, prompt_targets: Arr
 	_hide_tezcatlipoca_active_titlacauan_prompt()
 	if card == null or game_manager == null or not card.has_method("get_valid_titlacauan_targets"):
 		return
+	if _pending_tezcatlipoca_titlacauan_source_uid != "" and _pending_tezcatlipoca_titlacauan_source_uid != card.uid:
+		_pending_tezcatlipoca_titlacauan_selected_uids.clear()
+	_pending_tezcatlipoca_titlacauan_source_uid = card.uid
 	_pending_tezcatlipoca_active_prompt = card
 	var level_budget := int(card.call("get_titlacauan_level_budget")) if card.has_method("get_titlacauan_level_budget") else 0
 	var current_targets: Array[Card] = []
@@ -16057,6 +16078,13 @@ func _show_tezcatlipoca_active_titlacauan_prompt(card: Card, prompt_targets: Arr
 		_set_action_label_text("%s has no Necoc Yaotl levels powering Titlacauan." % card.card_name)
 		update_ui()
 		return
+	var current_target_uids: Array[String] = []
+	for target in current_targets:
+		if target != null:
+			current_target_uids.append(target.uid)
+	for selected_uid in _pending_tezcatlipoca_titlacauan_selected_uids.duplicate():
+		if selected_uid not in current_target_uids:
+			_pending_tezcatlipoca_titlacauan_selected_uids.erase(selected_uid)
 
 	var overlay := Control.new()
 	overlay.name = "TezcatlipocaActiveTitlacauanOverlay"
@@ -16108,11 +16136,20 @@ func _show_tezcatlipoca_active_titlacauan_prompt(card: Card, prompt_targets: Arr
 	vbox.add_child(buttons)
 
 	var selected_targets: Array[Card] = []
+	for target in current_targets:
+		if target != null and target.uid in _pending_tezcatlipoca_titlacauan_selected_uids:
+			selected_targets.append(target)
 	var button_map: Dictionary = {}
 	var max_targets := 2
 	var resolve_btn := Button.new()
 	resolve_btn.text = "Resolve Titlacauan"
 	resolve_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+	var sync_persistent_selection := func() -> void:
+		_pending_tezcatlipoca_titlacauan_selected_uids.clear()
+		for target in selected_targets:
+			if target != null:
+				_pending_tezcatlipoca_titlacauan_selected_uids.append(target.uid)
 
 	var refresh_selection_state := func() -> void:
 		var total_levels := 0
@@ -16158,6 +16195,7 @@ func _show_tezcatlipoca_active_titlacauan_prompt(card: Card, prompt_targets: Arr
 		btn.pressed.connect(func() -> void:
 			if chosen_target in selected_targets:
 				selected_targets.erase(chosen_target)
+				sync_persistent_selection.call()
 				refresh_selection_state.call()
 				return
 			if selected_targets.size() >= max_targets:
@@ -16169,6 +16207,7 @@ func _show_tezcatlipoca_active_titlacauan_prompt(card: Card, prompt_targets: Arr
 				status.text = "%s would exceed Titlacauan's level budget." % chosen_target.card_name
 				return
 			selected_targets.append(chosen_target)
+			sync_persistent_selection.call()
 			refresh_selection_state.call()
 		)
 		button_map[target] = btn
@@ -16212,6 +16251,8 @@ func _resolve_tezcatlipoca_active_titlacauan_prompt(targets: Array[Card]) -> voi
 	for target in targets:
 		if target != null:
 			target_uids.append(target.uid)
+	_pending_tezcatlipoca_titlacauan_source_uid = ""
+	_pending_tezcatlipoca_titlacauan_selected_uids.clear()
 	if _submit_prompt_choice_command({
 		"type": "tezcatlipoca_active_titlacauan_choice",
 		"source_uid": card.uid,
@@ -17633,6 +17674,12 @@ func _initiate_kos_with_sacrifice(spell: KeyOfSolomon, sacrifice_target: Card) -
 		_set_action_label_text("Key of Solomon cancelled: cannot pay costs.")
 		update_ui()
 		return
+	if _is_networked_client:
+		_pending_key_of_solomon = spell
+		_pending_kos_sacrifice = sacrifice_target
+		_pending_kos_selected_demons.clear()
+		_prompt_kos_demon_choice()
+		return
 	var prepared_spell := _is_prepared_board_spell(spell)
 	var orig_sacrifice_cost: int = spell.sacrifice_cost
 	spell.sacrifice_cost = 0
@@ -17717,6 +17764,24 @@ func _on_kos_demon_done() -> void:
 	if spell == null:
 		_finish_kos_resolution("Key of Solomon cannot resolve right now.")
 		return
+	if _is_networked_client:
+		var choices: Array[String] = []
+		for demon in _pending_kos_selected_demons:
+			if demon != null:
+				choices.append(demon.uid)
+		var sacrifice_uid = _pending_kos_sacrifice.uid if _pending_kos_sacrifice != null else ""
+		game_input.submit_action({
+			type = "cast_spell",
+			spell_uid = spell.uid,
+			choices = choices,
+			sacrifice_uid = sacrifice_uid,
+		})
+		_pending_kos_selected_demons.clear()
+		_pending_key_of_solomon = null
+		_pending_kos_sacrifice = null
+		_set_action_label_text("Key of Solomon submitted.")
+		update_ui()
+		return
 	spell.resolve(game_manager, _pending_kos_selected_demons)
 	_send_used_hand_card_to_graveyard(spell)
 	var count: int = _pending_kos_selected_demons.size()
@@ -17800,6 +17865,8 @@ func _dismiss_transient_prompts() -> void:
 	_hide_pause_menu()
 	_hide_devour_cancel_prompt()
 	_dismiss_zone_overlay()
+	_pending_tezcatlipoca_titlacauan_source_uid = ""
+	_pending_tezcatlipoca_titlacauan_selected_uids.clear()
 	_hide_priority_prompt()
 	_hide_retreat_prompt()
 	_hide_hati_prompt()
@@ -18982,7 +19049,8 @@ func _continue_end_turn_sequence() -> void:
 	var candidates: Array[Card] = []
 	for card in game_manager.pending_resurrections:
 		if card.card_owner.mana >= 1 \
-				and card.current_zone == card.card_owner.graveyard_zone:
+				and card.current_zone == card.card_owner.graveyard_zone \
+				and _get_resurrection_zone_for_card(card) != null:
 			candidates.append(card)
 			
 	if candidates.is_empty():
@@ -18996,10 +19064,8 @@ func _continue_end_turn_sequence() -> void:
 	# If server, we might need to ask a remote player
 	if network_manager != null and network_manager.is_server:
 		var card := candidates[0]
-		if not _is_player_local(card.card_owner):
-			var player_idx := game_manager.players.find(card.card_owner)
-			match_manager.request_ui_interaction.emit(player_idx, "resurrection", {"card_uid": card.uid})
-			return
+		match_manager.emit_ui_interaction_for_player(card.card_owner, "resurrection", {"card_uid": card.uid})
+		return
 			
 	_show_resurrection_prompt(candidates)
 
@@ -19465,7 +19531,7 @@ func _apply_ui_interaction(event_data: Dictionary) -> void:
 
 	# Pause stack resolution on the host if a UI interaction arrives mid-action.
 	# (On clients this is a no-op since _executing_stack_action is always false.)
-	if _executing_stack_action and not _stack_resolution_paused:
+	if _executing_stack_action and not _stack_resolution_paused and type != "priority":
 		var p_idx: int = event_data.get("player_index", local_idx)
 		var pause_player: Player = game_manager.players[p_idx] \
 			if p_idx >= 0 and p_idx < game_manager.players.size() \
@@ -20539,10 +20605,24 @@ func _resolve_local_end_turn(command: Dictionary) -> void:
 	if acting_player == null:
 		return
 	var discard_uids: Array = command.get("discard_uids", [])
+	var required_discards := maxi(0, acting_player.hand_zone.get_card_count() - Player.MAX_HAND_SIZE)
+	var selected_discards: Array[Card] = []
+	var seen_discard_uids: Array[String] = []
 	for discard_uid in discard_uids:
-		var discard_card := game_manager.get_card_by_uid(discard_uid as String)
-		if discard_card != null and discard_card.current_zone == acting_player.hand_zone:
-			acting_player.discard_card(discard_card)
+		var uid := str(discard_uid).strip_edges()
+		var discard_card := game_manager.get_card_by_uid(uid)
+		if uid == "" or uid in seen_discard_uids or discard_card == null or discard_card.current_zone != acting_player.hand_zone:
+			_set_action_label_text("Choose valid hand cards to discard before ending your turn.")
+			update_ui()
+			return
+		seen_discard_uids.append(uid)
+		selected_discards.append(discard_card)
+	if selected_discards.size() != required_discards:
+		_set_action_label_text("Discard exactly %d card(s) to reach the hand limit." % required_discards)
+		update_ui()
+		return
+	for discard_card in selected_discards:
+		acting_player.discard_card(discard_card)
 	game_manager.end_turn()
 
 func _open_upkeep_choice_window() -> void:
@@ -20600,10 +20680,19 @@ func _show_resurrection_prompt(candidates: Array[Card]) -> void:
 var _pending_resurrection_card: Card = null
 
 func _next_resurrection_prompt() -> void:
-	if _resurrection_queue.is_empty():
+	var card: Card = null
+	while not _resurrection_queue.is_empty():
+		var candidate := _resurrection_queue.pop_front()
+		if candidate != null \
+				and candidate.card_owner != null \
+				and candidate.card_owner.mana >= 1 \
+				and candidate.current_zone == candidate.card_owner.graveyard_zone \
+				and _get_resurrection_zone_for_card(candidate) != null:
+			card = candidate
+			break
+	if card == null:
 		_do_end_turn()
 		return
-	var card: Card = _resurrection_queue.pop_front()
 	_pending_resurrection_card = card
 	# Build modal panel
 	if _resurrection_panel and is_instance_valid(_resurrection_panel):
@@ -20676,6 +20765,20 @@ func _on_resurrection_no() -> void:
 	
 	if card != null:
 		game_input.submit_action({"type": "resurrection_choice", "card_uid": card.uid, "confirm": false})
+
+func _get_resurrection_zone_for_card(card: Card) -> Zone:
+	if card == null or card.card_owner == null:
+		return null
+	var player := card.card_owner
+	var preferred_idx: int = card.last_board_zone_index
+	if preferred_idx >= 0 and preferred_idx < player.reserve_zones.size():
+		var preferred_zone := player.reserve_zones[preferred_idx]
+		if preferred_zone != null and preferred_zone.cards.is_empty():
+			return preferred_zone
+	for zone in player.reserve_zones:
+		if zone != null and zone.cards.is_empty():
+			return zone
+	return null
 
 func _on_allow_ai_attack() -> void:
 	pass

@@ -28,7 +28,11 @@ func can_activate(game_manager: GameManager) -> bool:
 	return false
 
 func is_valid_activation_target(target: Card) -> bool:
-	return target != null and not target.is_face_down and target.get_controller() == card_owner
+	return target != null \
+		and not target.is_face_down \
+		and target.current_zone != null \
+		and target.current_zone.is_board_zone() \
+		and target.get_controller() == card_owner
 
 func activate(game_manager: GameManager, target: Card) -> void:
 	if not is_valid_activation_target(target):

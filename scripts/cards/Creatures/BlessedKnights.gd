@@ -48,6 +48,9 @@ func get_blessed_ward_label(ward_kind: String) -> String:
 func apply_blessed_ward(game_manager: GameManager, ward_kind: String) -> void:
 	if game_manager == null:
 		return
+	if ward_kind not in get_blessed_ward_options():
+		game_manager.note_player_feedback("%s fizzles: invalid Blessed Ward choice." % card_name)
+		return
 	var controller := get_controller()
 	if controller == null:
 		return

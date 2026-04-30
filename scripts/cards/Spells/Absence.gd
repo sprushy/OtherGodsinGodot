@@ -27,6 +27,12 @@ func resolve_from_command(game_manager: GameManager, command: Dictionary) -> voi
 	if target_uid != "":
 		target = game_manager.get_card_by_uid(target_uid)
 	var mode: String = command.get("mode", "mute")
+	if not _is_valid_power_target(target):
+		if game_manager != null:
+			game_manager.note_player_feedback("Absence fizzles: choose a power or god ability.")
+		return
+	if mode == "relock" and not (target is PowerCard):
+		mode = "mute"
 	apply_to_power(target, mode, game_manager)
 
 func resolve(game_manager: GameManager, target = null) -> void:

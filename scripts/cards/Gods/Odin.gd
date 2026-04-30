@@ -70,7 +70,7 @@ func is_valid_runic_knowledge_offering(card: Card) -> bool:
 		and card.get_controller() == card_owner
 
 func activate(game_manager: GameManager, target = null) -> void:
-	var activation_data := _parse_activation_input(target)
+	var activation_data := _parse_activation_input(game_manager, target)
 	activate_with_data(
 		game_manager,
 		activation_data.get("offering_card", null) as Card,
@@ -130,7 +130,7 @@ func resolve_from_command(game_manager: GameManager, command: Dictionary) -> voi
 	var guessed_name := str(command.get("named_card_name", command.get("guess_name", "")))
 	activate_with_data(game_manager, offering_card, guessed_name)
 
-func _parse_activation_input(target) -> Dictionary:
+func _parse_activation_input(game_manager: GameManager, target) -> Dictionary:
 	var parsed := {
 		"offering_card": null,
 		"named_card_name": "",
@@ -138,6 +138,10 @@ func _parse_activation_input(target) -> Dictionary:
 	if target is Dictionary:
 		var target_dict := target as Dictionary
 		parsed["offering_card"] = target_dict.get("offering_card", target_dict.get("void_card", target_dict.get("tribute_card", null)))
+		if parsed["offering_card"] == null and game_manager != null:
+			var offering_uid := str(target_dict.get("offering_uid", target_dict.get("target_uid", ""))).strip_edges()
+			if offering_uid != "":
+				parsed["offering_card"] = game_manager.get_card_by_uid(offering_uid)
 		parsed["named_card_name"] = str(target_dict.get("named_card_name", target_dict.get("guess_name", target_dict.get("card_name", ""))))
 	return parsed
 

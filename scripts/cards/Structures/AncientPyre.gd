@@ -23,12 +23,17 @@ func can_activate(game_manager: GameManager) -> bool:
 		return false
 	if card_owner.mana < 2:
 		return false
+	var opponent := game_manager.get_opponent(card_owner)
 	if is_frontline():
-		return true
-	return game_manager.get_opponent(card_owner).followers > 0
+		return not get_valid_targets(game_manager).is_empty() or (opponent != null and opponent.followers > 0)
+	return opponent != null and opponent.followers > 0
 
 # target is required when on the frontline; caller is responsible for prompting the player.
 func activate(game_manager: GameManager, target: Card = null) -> void:
+	if not can_activate(game_manager):
+		if game_manager != null:
+			game_manager.note_player_feedback("Ancient Pyre cannot activate right now.")
+		return
 	card_owner.spend_mana(2)
 	var opponent := game_manager.get_opponent(card_owner)
 	if not is_frontline() or (target != null and target.is_god):
@@ -39,8 +44,32 @@ func activate(game_manager: GameManager, target: Card = null) -> void:
 		print("Ancient Pyre: No target selected.")
 		card_owner.gain_mana(2)
 		return
+	if not is_valid_activation_target(target):
+		print("Ancient Pyre: Invalid target.")
+		card_owner.gain_mana(2)
+		return
 	target.add_buff("Ancient Pyre", 0, -5, 0, self, card_owner, "structure_debuff")
 	print("Ancient Pyre: " + target.card_name + " Res reduced by 5 (now " + str(target.get_effective_resilience()) + ").")
 	if target.get_effective_resilience() <= 0:
 		print(target.card_name + " is destroyed by Ancient Pyre!")
 		game_manager.request_send_to_graveyard(target, Callable(), false, true)
+
+func get_valid_targets(game_manager: GameManager) -> Array[Card]:
+	var valid_targets: Array[Card] = []
+	if game_manager == null:
+		return valid_targets
+	for player in game_manager.players:
+		if player == null:
+			continue
+		for zone in player.frontline_zones + player.reserve_zones:
+			for card in zone.cards:
+				if is_valid_activation_target(card):
+					valid_targets.append(card)
+	return valid_targets
+
+func is_valid_activation_target(target: Card) -> bool:
+	return target != null \
+		and target.card_type == Card.CardType.CREATURE \
+		and not target.is_god \
+		and target.current_zone != null \
+		and target.current_zone.is_board_zone()
