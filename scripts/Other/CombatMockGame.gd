@@ -16296,7 +16296,7 @@ func _show_tezcatlipoca_active_titlacauan_prompt(card: Card, prompt_targets: Arr
 				_pending_tezcatlipoca_titlacauan_selected_uids.append(target.uid)
 
 	var refresh_selection_state := func() -> void:
-		var total_levels := _titlacauan_selection_total.call(selected_targets)
+		var total_levels = _titlacauan_selection_total.call(selected_targets)
 		var selectable_count := 0
 		for target in current_targets:
 			var btn: Button = button_map.get(target) as Button
@@ -16307,7 +16307,7 @@ func _show_tezcatlipoca_active_titlacauan_prompt(card: Card, prompt_targets: Arr
 			var preview_targets := selected_targets.duplicate()
 			if not is_selected:
 				preview_targets.append(target)
-			var can_choose := is_selected or _is_valid_prompt_titlacauan_selection.call(preview_targets)
+			var can_choose = is_selected or _is_valid_prompt_titlacauan_selection.call(preview_targets)
 			btn.disabled = not can_choose
 			if can_choose or is_selected:
 				selectable_count += 1
