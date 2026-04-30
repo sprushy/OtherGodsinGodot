@@ -1710,6 +1710,24 @@ func _process_command_impl(command: Dictionary) -> bool:
 			game_manager.play_card(acting_player, card, zone)
 			move_validated.emit(command)
 			return true
+		"apply_advanced_building_techniques":
+			var power_uid := str(command.get("power_uid", "")).strip_edges()
+			var structure_uid := str(command.get("structure_uid", "")).strip_edges()
+			var mana_to_spend := int(command.get("mana_to_spend", 0))
+			var power := game_manager.get_card_by_uid(power_uid) as AdvancedBuildingTechniques
+			var structure := game_manager.get_card_by_uid(structure_uid)
+			if power == null or structure == null:
+				move_failed.emit("Advanced Building Techniques: card not found")
+				return false
+			if acting_player != null and power.card_owner != acting_player:
+				move_failed.emit("Advanced Building Techniques: wrong controller")
+				return false
+			if not power.can_offer_structure_bonus(structure, game_manager):
+				move_failed.emit("Advanced Building Techniques bonus is no longer available.")
+				return false
+			power.apply_structure_bonus(structure, mana_to_spend, game_manager)
+			move_validated.emit(command)
+			return true
 		"prepare_card":
 			var card := game_manager.get_card_by_uid(command.get("card_uid", ""))
 			var zone := resolve_zone(command)

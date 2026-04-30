@@ -228,8 +228,8 @@ var _awaiting_drag_sacrifice_zone: bool = false
 var _drag_sacrifice_card: Card = null
 var _drag_sacrifice_target: Card = null
 var _drag_sacrifice_mode: String = ""
-var _pending_structure_bonus_power: AdvancedBuildingTechniques = null
-var _pending_structure_bonus_structure: Card = null
+var _pending_structure_bonus_power_uid: String = ""
+var _pending_structure_bonus_structure_uid: String = ""
 var _awaiting_altar_void_payment: bool = false
 var _altar_pending_power: AltarOfDreams = null
 var _altar_void_targets_chosen: Array[Card] = []
@@ -15272,8 +15272,8 @@ func _get_active_advanced_building_techniques(player: Player) -> AdvancedBuildin
 
 func _show_structure_bonus_prompt(power: AdvancedBuildingTechniques, structure: Card) -> void:
 	_hide_structure_bonus_prompt()
-	_pending_structure_bonus_power = power
-	_pending_structure_bonus_structure = structure
+	_pending_structure_bonus_power_uid = power.uid if power != null else ""
+	_pending_structure_bonus_structure_uid = structure.uid if structure != null else ""
 
 	var panel := PanelContainer.new()
 	panel.name = "StructureBonusPromptPanel"
@@ -15342,8 +15342,8 @@ func _hide_structure_bonus_prompt() -> void:
 	var panel := get_node_or_null("StructureBonusPromptPanel")
 	if panel:
 		panel.queue_free()
-	_pending_structure_bonus_power = null
-	_pending_structure_bonus_structure = null
+	_pending_structure_bonus_power_uid = ""
+	_pending_structure_bonus_structure_uid = ""
 
 func _show_demiurge_prompt(spell) -> void:
 	_hide_demiurge_prompt()
@@ -17917,18 +17917,25 @@ func _show_apollyons_demiurge_choice_prompt(spell: ApollyonsDemiurge, choices: A
 	)
 
 func _on_structure_bonus_confirm_pressed(spin: SpinBox) -> void:
-	var power := _pending_structure_bonus_power
-	var structure := _pending_structure_bonus_structure
+	var power_uid := _pending_structure_bonus_power_uid
+	var structure_uid := _pending_structure_bonus_structure_uid
 	var mana_to_spend := int(spin.value)
 	_hide_structure_bonus_prompt()
-	if power == null or structure == null:
+	if power_uid == "" or structure_uid == "":
 		update_ui()
 		return
 
-	var gained := power.apply_structure_bonus(structure, mana_to_spend, game_manager)
-	if gained > 0:
+	var structure := game_manager.get_card_by_uid(structure_uid)
+	var submitted := game_input.submit_action({
+		type = "apply_advanced_building_techniques",
+		power_uid = power_uid,
+		structure_uid = structure_uid,
+		mana_to_spend = mana_to_spend,
+	})
+	if submitted and mana_to_spend > 0 and structure != null:
+		var gained := mana_to_spend * AdvancedBuildingTechniques.RESILIENCE_PER_MANA
 		_set_action_label_text("%s gains %d Res from Advanced Building Techniques." % [structure.card_name, gained])
-	else:
+	elif submitted:
 		_set_action_label_text("No mana spent on Advanced Building Techniques.")
 	update_ui()
 

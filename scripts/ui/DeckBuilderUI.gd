@@ -2560,12 +2560,16 @@ func _on_saved_deck_cover_pressed(deck_id: String) -> void:
 	_load_selected_deck()
 
 func _queue_saved_deck_actions_visibility_update(cover: Control, actions: Control) -> void:
-	call_deferred("_update_saved_deck_actions_visibility", cover, actions)
-
-func _update_saved_deck_actions_visibility(cover: Control, actions: Control) -> void:
 	if cover == null or actions == null:
 		return
 	if not is_instance_valid(cover) or not is_instance_valid(actions):
+		return
+	call_deferred("_update_saved_deck_actions_visibility", cover.get_instance_id(), actions.get_instance_id())
+
+func _update_saved_deck_actions_visibility(cover_id: int, actions_id: int) -> void:
+	var cover := instance_from_id(cover_id) as Control
+	var actions := instance_from_id(actions_id) as Control
+	if cover == null or actions == null:
 		return
 	var mouse_position := cover.get_global_mouse_position()
 	var cover_rect := Rect2(cover.global_position, cover.size)
