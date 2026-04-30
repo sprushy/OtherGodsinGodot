@@ -19,7 +19,7 @@ func _init() -> void:
 func on_impact(game_manager: GameManager) -> void:
 	var valid_targets := get_valid_targets(game_manager)
 	if valid_targets.is_empty():
-		var no_target_text := _resolve_no_search_targets()
+		var no_target_text := resolve_no_search_targets()
 		if game_manager != null:
 			game_manager.note_player_feedback(no_target_text)
 		return
@@ -73,7 +73,7 @@ func resolve_search_sage_decline(_game_manager: GameManager) -> String:
 	_shuffle_deck(controller)
 	return "%s searched the deck but took no Sage." % card_name
 
-func _resolve_no_search_targets() -> String:
+func resolve_no_search_targets() -> String:
 	var controller := get_controller()
 	if controller != null:
 		_shuffle_deck(controller)

@@ -25,6 +25,7 @@ func on_kill(game_manager: GameManager, _victim: Card) -> void:
 
 	var deck_copies := get_scavenge_targets()
 	if deck_copies.is_empty():
+		game_manager.note_player_feedback("%s scavenged, but found no packmates in the deck." % card_name)
 		return
 
 	var open_zones := get_available_scavenge_zones()

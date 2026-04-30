@@ -25,9 +25,12 @@ func on_reveal(game_manager: GameManager) -> void:
 		return
 	var options: Array[Dictionary] = get_brewing_options(game_manager)
 	if options.size() == 1:
-		print(resolve_brewing_option(game_manager, options[0]))
+		var feedback := resolve_brewing_option(game_manager, options[0])
+		if feedback.strip_edges() != "":
+			game_manager.note_player_feedback(feedback)
 		return
 	if options.is_empty():
+		game_manager.note_player_feedback("%s found no Brewing option to reveal." % card_name)
 		return
 	brewing_reveal_pending = true
 	game_manager.decision_requested.emit(get_controller(), "byggvir_reveal", {

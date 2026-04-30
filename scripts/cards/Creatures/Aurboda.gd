@@ -19,4 +19,8 @@ func _init() -> void:
 func on_kill(game_manager: GameManager, victim: Card) -> void:
 	var opponent := game_manager.get_opponent(card_owner)
 	game_manager.convert_followers(opponent, card_owner, 7)
-	print("Pierce! " + get_display_name() + " destroyed " + victim.get_display_name() + " - 7 followers converted.")
+	if victim != null:
+		game_manager.note_player_feedback("Pierce! %s destroyed %s and converted 7 followers." % [
+			get_display_name(),
+			victim.get_display_name()
+		])

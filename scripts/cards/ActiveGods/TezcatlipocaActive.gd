@@ -211,7 +211,7 @@ func on_impact(game_manager: GameManager) -> void:
 	if game_manager == null:
 		return
 	var valid_targets := get_valid_titlacauan_targets(game_manager)
-	if get_titlacauan_level_budget() <= 0 or valid_targets.is_empty():
+	if get_titlacauan_level_budget() <= 0:
 		game_manager.note_player_feedback(resolve_titlacauan_choice(game_manager))
 		return
 	var controller := get_controller()

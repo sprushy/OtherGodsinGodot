@@ -153,6 +153,7 @@ func _reset_practice_match_state() -> void:
 	game_manager.pending_resurrections.clear()
 	game_manager.combat_destroy_events_this_turn.clear()
 	game_manager.action_stack.clear()
+	game_manager.resolving_stack_actions.clear()
 	game_manager.consecutive_passes = 0
 	game_manager.priority_player = null
 	game_manager.turn_player = null
@@ -187,6 +188,8 @@ func _reset_practice_match_state() -> void:
 	hide_turn_choice()
 	end_turn_button.visible = false
 	_thor_ai_step_queued = false
+	if match_manager != null:
+		match_manager.reset_runtime_state()
 
 func _reset_player_practice_state(player: Player) -> void:
 	if player == null:

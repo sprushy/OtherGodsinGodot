@@ -187,7 +187,6 @@ func prune_stale_stack_actions() -> void:
 func _prune_stale_stack_actions() -> void:
 	if action_stack.is_empty() and resolving_stack_actions.is_empty():
 		return
-	var removed_action := false
 	var kept_actions: Array[CardAction] = []
 	for action in action_stack:
 		if action in resolving_stack_actions:
@@ -195,19 +194,17 @@ func _prune_stale_stack_actions() -> void:
 			continue
 		if _action_is_stale(action):
 			_cleanup_stale_stack_action(action)
-			removed_action = true
 			continue
 		kept_actions.append(action)
-	if removed_action:
-		action_stack = kept_actions
-		var kept_resolving: Array[CardAction] = []
-		for action in resolving_stack_actions:
-			if action != null and action in action_stack:
-				kept_resolving.append(action)
-		resolving_stack_actions = kept_resolving
-		if action_stack.is_empty():
-			priority_player = null
-			consecutive_passes = 0
+	action_stack = kept_actions
+	var kept_resolving: Array[CardAction] = []
+	for action in resolving_stack_actions:
+		if action != null and action in action_stack:
+			kept_resolving.append(action)
+	resolving_stack_actions = kept_resolving
+	if action_stack.is_empty():
+		priority_player = null
+		consecutive_passes = 0
 
 func _cleanup_stale_stack_action(action: CardAction) -> void:
 	if action == null:

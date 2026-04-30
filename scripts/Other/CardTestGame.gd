@@ -206,6 +206,7 @@ func _reset_test_match_state() -> void:
 	game_manager.pending_resurrections.clear()
 	game_manager.combat_destroy_events_this_turn.clear()
 	game_manager.action_stack.clear()
+	game_manager.resolving_stack_actions.clear()
 	game_manager.consecutive_passes = 0
 	game_manager.priority_player = null
 	game_manager.turn_player = null
@@ -216,6 +217,8 @@ func _reset_test_match_state() -> void:
 	selected_card = null
 	selected_attacker = null
 	selected_interceptor = null
+	if match_manager != null:
+		match_manager.reset_runtime_state()
 
 func _setup_test_board() -> void:
 	load_clean_start_scenario()

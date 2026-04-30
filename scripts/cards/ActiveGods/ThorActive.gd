@@ -58,12 +58,18 @@ func remove_passive_from_board() -> void:
 			card.clear_buffs_from(PASSIVE_SOURCE)
 
 func _get_passive_cleanup_zones(player: Player) -> Array[Zone]:
+	var zones: Array[Zone] = []
 	if player == null:
-		return []
-	return [player.hand_zone, player.deck_zone, player.graveyard_zone, player.abyss_zone, player.god_zone] \
-		+ player.power_zones \
-		+ player.frontline_zones \
-		+ player.reserve_zones
+		return zones
+	zones.append(player.hand_zone)
+	zones.append(player.deck_zone)
+	zones.append(player.graveyard_zone)
+	zones.append(player.abyss_zone)
+	zones.append(player.god_zone)
+	zones.append_array(player.power_zones)
+	zones.append_array(player.frontline_zones)
+	zones.append_array(player.reserve_zones)
+	return zones
 
 func can_special_intercept(_game_manager: GameManager, _attacker: Card, protected_target) -> bool:
 	if abilities_suppressed():

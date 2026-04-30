@@ -18,8 +18,9 @@ func _init() -> void:
 	culture = "Triskelion"
 	art_path = ART_PATH
 
-func on_kill(_game_manager: GameManager, victim: Card) -> void:
+func on_kill(game_manager: GameManager, victim: Card) -> void:
 	if card_owner == null:
 		return
-	print("%s reaped %s in combat. Drawing a card." % [card_name, victim.card_name])
+	if game_manager != null and victim != null:
+		game_manager.note_player_feedback("%s reaped %s in combat and drew a card." % [card_name, victim.card_name])
 	card_owner.draw_card()

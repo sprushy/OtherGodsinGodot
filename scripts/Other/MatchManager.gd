@@ -81,6 +81,46 @@ func _init(p_game_manager: GameManager) -> void:
 	if game_manager != null and not game_manager.card_summoned.is_connected(_on_game_manager_card_summoned):
 		game_manager.card_summoned.connect(_on_game_manager_card_summoned)
 
+func reset_runtime_state() -> void:
+	_clear_targeting_state()
+	pending_paid_hand_card = null
+	pending_paid_hand_display_zone = null
+	pending_paid_hand_display_zone_auto = false
+	pending_spell_display_zone = null
+	awaiting_spell_target = false
+	spell_waiting_for_target = null
+	spell_waiting_for_action = null
+	spell_waiting_for_display_zone = null
+	awaiting_god_ability_target = false
+	god_ability_source = null
+	awaiting_stupefy_target = false
+	stupefy_source = null
+	awaiting_pyre_target = false
+	pyre_source = null
+	awaiting_anointing_target = false
+	anointing_source = null
+	selected_attacker = null
+	pending_attack_target = null
+	selected_interceptor = null
+	pending_blot_sacrifice_target = null
+	pending_blot_selected_creatures.clear()
+	pending_blot_costs_paid = false
+	pending_divine_caprice_power = null
+	pending_divine_caprice_selected_zone = null
+	pending_retreat_action = null
+	pending_retreat_target = null
+	pending_retreat_prompt_uids.clear()
+	pending_retreat_guardian_blocked_uids.clear()
+	pending_humbaba_action = null
+	pending_humbaba_target = null
+	pending_humbaba_prompt_uids.clear()
+	_pending_end_turn_after_resurrection = false
+	_active_command_sender_info.clear()
+	_active_command_type = ""
+	last_resolution_text = ""
+	last_move_failed_reason = ""
+	_authoritative_stack_resolution_pending = false
+
 # --- Targeting Control ---
 
 func start_click_selection(
@@ -2437,7 +2477,12 @@ func _process_command_impl(command: Dictionary) -> bool:
 					valid_targets.append(target_card)
 			var target_uid: String = command.get("target_uid", "")
 			if target_uid == "":
-				game_manager.note_player_feedback(str(sage.call("resolve_search_sage_decline", game_manager)))
+				var feedback := ""
+				if valid_targets.is_empty() and sage.has_method("resolve_no_search_targets"):
+					feedback = str(sage.call("resolve_no_search_targets"))
+				else:
+					feedback = str(sage.call("resolve_search_sage_decline", game_manager))
+				game_manager.note_player_feedback(feedback)
 				move_validated.emit(command)
 				return true
 			var target := game_manager.get_card_by_uid(target_uid)

@@ -8218,6 +8218,20 @@ func _select_hand_card(card: Card) -> void:
 	for vc in _hand_visual_cards:
 		vc.set_highlighted(vc.card_data == card)
 
+func _finalize_prepare_submission(success_text: String, zone: Zone) -> void:
+	_set_action_label_text(success_text)
+	selected_card = null
+	placement_mode = ""
+	if placement_container != null:
+		placement_container.visible = false
+	update_ui()
+	if zone != null and zone.is_board_zone():
+		# Face-down frontline prepares can open a priority window without any
+		# further user input, so advance local stack handling and queue one more
+		# refresh after the board settles.
+		_schedule_local_ui_refresh()
+		_kick_local_stack_progress()
+
 func _get_auto_select_zone_candidates(player: Player) -> Array[Zone]:
 	var zones: Array[Zone] = []
 	if player == null:
@@ -8734,11 +8748,10 @@ func _on_empty_zone_pressed(zone: Zone) -> void:
 			if game_input.submit_action({type = "prepare_card", card_uid = preparing_card.uid,
 					player_index = game_manager.players.find(zone.zone_owner),
 					zone_type = zone.zone_type, zone_index = zone.zone_index}):
-				_set_action_label_text("Prepared Charm: " + preparing_card.card_name + " (face-down)!")
-				selected_card = null
-				placement_mode = ""
-				placement_container.visible = false
-				update_ui()
+				_finalize_prepare_submission(
+					"Prepared Charm: " + preparing_card.card_name + " (face-down)!",
+					zone
+				)
 			else:
 				_set_action_label_text("Cannot prepare " + preparing_card.card_name + "!")
 		else:
@@ -8755,11 +8768,10 @@ func _on_empty_zone_pressed(zone: Zone) -> void:
 			if game_input.submit_action({type = "prepare_card", card_uid = preparing_card.uid,
 					player_index = game_manager.players.find(zone.zone_owner),
 					zone_type = zone.zone_type, zone_index = zone.zone_index}):
-				_set_action_label_text("Prepared Spell: " + preparing_card.card_name + " (face-down)!")
-				selected_card = null
-				placement_mode = ""
-				placement_container.visible = false
-				update_ui()
+				_finalize_prepare_submission(
+					"Prepared Spell: " + preparing_card.card_name + " (face-down)!",
+					zone
+				)
 			else:
 				_set_action_label_text("Cannot prepare " + preparing_card.card_name + "!")
 		elif game_manager.can_play_card(game_manager.current_player, selected_card, zone):
@@ -8869,11 +8881,10 @@ func _on_empty_zone_pressed(zone: Zone) -> void:
 		if game_input.submit_action({type = "prepare_card", card_uid = preparing_card.uid,
 				player_index = game_manager.players.find(zone.zone_owner),
 				zone_type = zone.zone_type, zone_index = zone.zone_index}):
-			_set_action_label_text("Prepared Hex: " + preparing_card.card_name + " (face-down)!")
-			selected_card = null
-			placement_mode = ""
-			placement_container.visible = false
-			update_ui()
+			_finalize_prepare_submission(
+				"Prepared Hex: " + preparing_card.card_name + " (face-down)!",
+				zone
+			)
 		else:
 			_set_action_label_text("Cannot prepare Hex! Not enough resources.")
 	else:
@@ -9766,8 +9777,7 @@ func _queue_tezcatlipoca_active_titlacauan_prompt(card: Card) -> void:
 		return
 	if not card.has_method("get_valid_titlacauan_targets") or not card.has_method("get_titlacauan_level_budget"):
 		return
-	var valid_targets: Array = card.call("get_valid_titlacauan_targets", game_manager)
-	if int(card.call("get_titlacauan_level_budget")) <= 0 or valid_targets.is_empty():
+	if int(card.call("get_titlacauan_level_budget")) <= 0:
 		var no_target_text := str(card.call("resolve_titlacauan_choice", game_manager, [])) if card.has_method("resolve_titlacauan_choice") else card.card_name + " found no creatures it could enslave with Titlacauan."
 		game_manager.note_player_feedback(no_target_text)
 		_set_action_label_text(_consume_resolution_feedback(no_target_text))
@@ -9780,6 +9790,7 @@ func _queue_tezcatlipoca_active_titlacauan_prompt(card: Card) -> void:
 	action.event_name = "tezcatlipoca_active_titlacauan"
 	action.event_speed = 0
 	action.resolve_callback = func() -> void:
+		var valid_targets: Array = card.call("get_valid_titlacauan_targets", game_manager)
 		if network_manager != null and network_manager.is_server:
 			if _executing_stack_action and not _stack_resolution_paused:
 				_pause_stack_resolution(card.card_owner)
@@ -10473,7 +10484,7 @@ func _queue_fourth_sage_enmegalamma_impact_prompt(card) -> void:
 	action.resolve_callback = func() -> void:
 		var current_targets: Array[Card] = card.get_valid_targets(game_manager)
 		if current_targets.is_empty():
-			var no_target_text: String = card.resolve_search_sage_decline(game_manager)
+			var no_target_text: String = card.resolve_no_search_targets()
 			if _stack_resolution_paused:
 				_resume_after_deferred_resolution(no_target_text)
 			else:
@@ -10515,7 +10526,7 @@ func _show_fourth_sage_enmegalamma_impact_prompt(card, prompt_targets: Array = [
 			"target_uid": "",
 		}):
 			return
-		_set_action_label_text(_consume_resolution_feedback(card.resolve_search_sage_decline(game_manager)))
+		_set_action_label_text(_consume_resolution_feedback(card.resolve_no_search_targets()))
 		update_ui()
 		return
 	if current_targets.size() == 1:
@@ -15985,16 +15996,20 @@ func _show_tezcatlipoca_active_titlacauan_prompt(card: Card, prompt_targets: Arr
 	if card == null or game_manager == null or not card.has_method("get_valid_titlacauan_targets"):
 		return
 	_pending_tezcatlipoca_active_prompt = card
+	var level_budget := int(card.call("get_titlacauan_level_budget")) if card.has_method("get_titlacauan_level_budget") else 0
 	var current_targets: Array[Card] = []
+	var live_targets: Array = card.call("get_valid_titlacauan_targets", game_manager)
 	if prompt_targets.is_empty():
-		current_targets.assign(card.call("get_valid_titlacauan_targets", game_manager))
+		current_targets.assign(live_targets)
 	else:
-		var valid_targets: Array = card.call("get_valid_titlacauan_targets", game_manager)
 		for target in prompt_targets:
-			if target is Card and target in valid_targets:
+			if target is Card and target in live_targets:
 				current_targets.append(target)
-	if current_targets.is_empty():
-		_resolve_tezcatlipoca_active_titlacauan_prompt([])
+		if current_targets.is_empty():
+			current_targets.assign(live_targets)
+	if current_targets.is_empty() and level_budget <= 0:
+		_set_action_label_text("%s has no Necoc Yaotl levels powering Titlacauan." % card.card_name)
+		update_ui()
 		return
 
 	var overlay := Control.new()
@@ -16028,7 +16043,6 @@ func _show_tezcatlipoca_active_titlacauan_prompt(card: Card, prompt_targets: Arr
 	vbox.add_child(title)
 
 	var info := Label.new()
-	var level_budget := int(card.call("get_titlacauan_level_budget")) if card.has_method("get_titlacauan_level_budget") else 0
 	info.text = "Total chosen levels must stay within %d." % level_budget
 	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -16037,6 +16051,7 @@ func _show_tezcatlipoca_active_titlacauan_prompt(card: Card, prompt_targets: Arr
 
 	var status := Label.new()
 	status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	status.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vbox.add_child(status)
 
@@ -16048,6 +16063,7 @@ func _show_tezcatlipoca_active_titlacauan_prompt(card: Card, prompt_targets: Arr
 
 	var selected_targets: Array[Card] = []
 	var button_map: Dictionary = {}
+	var max_targets := 2
 	var resolve_btn := Button.new()
 	resolve_btn.text = "Resolve Titlacauan"
 	resolve_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -16056,17 +16072,38 @@ func _show_tezcatlipoca_active_titlacauan_prompt(card: Card, prompt_targets: Arr
 		var total_levels := 0
 		for target in selected_targets:
 			total_levels += target.get_effective_level()
-		status.text = "Selected %d target(s), total level %d / %d." % [
-			selected_targets.size(),
-			total_levels,
-			level_budget
-		]
+		var selectable_count := 0
 		for target in current_targets:
 			var btn: Button = button_map.get(target) as Button
 			if btn == null:
 				continue
-			var prefix := "Unchoose" if target in selected_targets else "Choose"
+			var is_selected := target in selected_targets
+			var preview_targets := selected_targets.duplicate()
+			if not is_selected:
+				preview_targets.append(target)
+			var can_choose := is_selected or (
+				selected_targets.size() < max_targets
+				and card.has_method("is_valid_titlacauan_selection")
+				and bool(card.call("is_valid_titlacauan_selection", game_manager, preview_targets))
+			)
+			btn.disabled = not can_choose
+			if can_choose or is_selected:
+				selectable_count += 1
+			var prefix := "Selected" if is_selected else "Choose"
+			if not can_choose and not is_selected:
+				prefix = "Too high"
 			btn.text = "%s %s (Lvl %d)" % [prefix, target.card_name, target.get_effective_level()]
+		if current_targets.is_empty():
+			status.text = "No enemy creatures can currently be enslaved."
+		elif selectable_count <= 0 and selected_targets.is_empty():
+			status.text = "No listed creature fits the sacrificed level total of %d." % level_budget
+		else:
+			status.text = "Selected %d target(s), total level %d / %d." % [
+				selected_targets.size(),
+				total_levels,
+				level_budget
+			]
+		resolve_btn.disabled = selected_targets.is_empty()
 
 	for target in current_targets:
 		var chosen_target := target
@@ -16077,12 +16114,13 @@ func _show_tezcatlipoca_active_titlacauan_prompt(card: Card, prompt_targets: Arr
 				selected_targets.erase(chosen_target)
 				refresh_selection_state.call()
 				return
-			if selected_targets.size() >= TezcatlipocaActive.MAX_TITLACAUAN_TARGETS:
+			if selected_targets.size() >= max_targets:
 				return
 			var preview_targets := selected_targets.duplicate()
 			preview_targets.append(chosen_target)
 			if not card.has_method("is_valid_titlacauan_selection") \
 					or not bool(card.call("is_valid_titlacauan_selection", game_manager, preview_targets)):
+				status.text = "%s would exceed Titlacauan's level budget." % chosen_target.card_name
 				return
 			selected_targets.append(chosen_target)
 			refresh_selection_state.call()
@@ -20399,7 +20437,7 @@ func _do_end_turn() -> void:
 		return
 	var end_turn_priority_owner := game_manager.current_player
 	var resolve_end_turn := func() -> void:
-		game_input.submit_action(et_cmd)
+		_resolve_local_end_turn(et_cmd)
 		update_ui()
 		if _is_networked_client:
 			return  # Client waits for server to send upkeep_needed
@@ -20423,6 +20461,19 @@ func _do_end_turn() -> void:
 		resolve_end_turn,
 		end_turn_priority_owner
 	)
+
+func _resolve_local_end_turn(command: Dictionary) -> void:
+	if game_manager == null:
+		return
+	var acting_player := game_manager.current_player
+	if acting_player == null:
+		return
+	var discard_uids: Array = command.get("discard_uids", [])
+	for discard_uid in discard_uids:
+		var discard_card := game_manager.get_card_by_uid(discard_uid as String)
+		if discard_card != null and discard_card.current_zone == acting_player.hand_zone:
+			acting_player.discard_card(discard_card)
+	game_manager.end_turn()
 
 func _open_upkeep_choice_window() -> void:
 	if game_manager == null or _game_finished:
@@ -20909,11 +20960,10 @@ func _on_card_dropped_to_zone(card: Card, zone: Zone, is_rotated: bool = false, 
 				_set_action_label_text("Cannot prepare " + card.card_name + "!")
 			update_ui()
 			return
-		_set_action_label_text("Prepared " + _get_stack_card_type_label(card) + ": " + card.card_name + " (face-down)!")
-		selected_card = null
-		placement_mode = ""
-		placement_container.visible = false
-		update_ui()
+		_finalize_prepare_submission(
+			"Prepared " + _get_stack_card_type_label(card) + ": " + card.card_name + " (face-down)!",
+			zone
+		)
 		return
 	if card is BitMeseri:
 		if zone.cards.size() > 0:

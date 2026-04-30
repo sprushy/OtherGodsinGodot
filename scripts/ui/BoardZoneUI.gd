@@ -884,6 +884,20 @@ func _get_tez_necoc_yaotl_sacrifice_count(card: Card) -> int:
 		return (sacrifices as Array).size()
 	return 0
 
+func _get_tez_necoc_yaotl_total_level(card: Card) -> int:
+	if not _is_tez_necoc_yaotl_card(card):
+		return 0
+	if card.has_method("get_necoc_yaotl_total_level"):
+		return int(card.call("get_necoc_yaotl_total_level"))
+	var total := 0
+	var sacrifices = card.call("get_necoc_yaotl_sacrifices")
+	if sacrifices is Array:
+		for sacrifice in sacrifices:
+			var sacrifice_card := sacrifice as Card
+			if sacrifice_card != null:
+				total += sacrifice_card.get_effective_level()
+	return total
+
 func _add_smoking_mirror_badge(overlay: Control, card: Card) -> void:
 	if overlay == null or card == null:
 		return
@@ -954,6 +968,7 @@ func _add_tez_sacrifice_badge(overlay: Control, card: Card) -> void:
 		sacrifice_count,
 		TEZ_REQUIRED_SACRIFICES
 	]
+	hover_text += "\nSacrificed levels: %d" % _get_tez_necoc_yaotl_total_level(card)
 	badge.mouse_filter = Control.MOUSE_FILTER_STOP if clickable else Control.MOUSE_FILTER_IGNORE
 	badge.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND if clickable else Control.CURSOR_ARROW
 	badge.z_index = 31
@@ -1102,8 +1117,8 @@ func _add_tez_bloodstreaks(badge: Control, sacrifice_count: int) -> void:
 		var pos: Dictionary = positions[i]
 		streak.offset_left = float(pos.get("left", 0.0))
 		streak.offset_right = float(pos.get("right", 0.0))
-		streak.offset_top = 0.0
-		streak.offset_bottom = 0.0
+		streak.offset_top = 6.0
+		streak.offset_bottom = -6.0
 		streak.modulate = Color(1.0, 1.0, 1.0, 0.92)
 		badge.add_child(streak)
 
