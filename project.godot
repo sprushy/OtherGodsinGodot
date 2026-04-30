@@ -15,7 +15,7 @@ compatibility/default_parent_skeleton_in_mesh_instance_3d=true
 [application]
 
 config/name="OtherGods"
-config/version="0.2.109"
+config/version="0.2.110"
 run/main_scene="uid://gpaa31rvtxtn"
 config/features=PackedStringArray("4.6", "Forward Plus")
 config/icon="res://images/icon (2).svg"
@@ -28,10 +28,6 @@ window/size/viewport_height=1080
 window/size/mode=2
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
-
-[dotnet]
-
-project/assembly_name="OtherGods"
 
 [editor_plugins]
 

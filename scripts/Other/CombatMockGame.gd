@@ -17,6 +17,7 @@ const GiantMasterArchitectCursorSource = preload("res://images/ui/cursors/GiantM
 const HermesCursorSource = preload("res://images/ui/cursors/SpeedHermesCursor.png")
 const GuanYuCursorSource = preload("res://images/ui/cursors/GuanYuCursor.png")
 const AncientPyreCursorSource = preload("res://images/ui/cursors/PyreCursor.png")
+const TezTitlacauanCursorSource = preload("res://images/ui/cursors/SlaveCollar Cursor.png")
 const AnointingStatueCursorSource = preload("res://scripts/Other/Annointing Statue Cursor.png")
 const CardBackTexture = preload("res://images/cardbackAI.png")
 const PromptRouterScript = preload("res://scripts/server/PromptRouter.gd")
@@ -339,6 +340,7 @@ var _queued_wolf_adolescent_prompt_targets: Dictionary = {}
 var _pending_tezcatlipoca_active_prompt: Card = null
 var _pending_tezcatlipoca_titlacauan_source_uid: String = ""
 var _pending_tezcatlipoca_titlacauan_selected_uids: Array[String] = []
+var _pending_tezcatlipoca_titlacauan_prompt_targets: Array[String] = []
 var _pending_turn_start_priority_feedback: String = ""
 var _breidablik_panel: Control = null
 var _e2_abzu_panel: Control = null
@@ -409,6 +411,7 @@ var _giant_master_architect_cursor_texture: Texture2D = null
 var _hermes_cursor_texture: Texture2D = null
 var _guan_yu_cursor_texture: Texture2D = null
 var _ancient_pyre_cursor_texture: Texture2D = null
+var _tez_titlacauan_cursor_texture: Texture2D = null
 var _anointing_statue_cursor_texture: Texture2D = null
 var _active_selection_cursor_mode: String = ""
 var _active_selection_cursor_target_height: int = 0
@@ -421,8 +424,12 @@ var _giant_master_architect_cursor_target_height: int = 0
 var _hermes_cursor_target_height: int = 0
 var _guan_yu_cursor_target_height: int = 0
 var _ancient_pyre_cursor_target_height: int = 0
+var _tez_titlacauan_cursor_target_height: int = 0
 var _anointing_statue_cursor_target_height: int = 0
 var _devour_cancel_prompt: Control = null
+var _tez_titlacauan_cursor_overlay: Control = null
+var _tez_titlacauan_cursor_budget_label: Label = null
+var _tez_titlacauan_cursor_count_label: Label = null
 var _suppress_next_devour_cancel_prompt: bool = false
 var _pending_end_turn_discard_uids: Array = []
 var _ui_update_pending: bool = false
@@ -493,6 +500,8 @@ const GUAN_YU_CURSOR_TARGET_HEIGHT := 96
 const GUAN_YU_CURSOR_HOTSPOT_RATIO := Vector2(0.95, 0.94)
 const ANCIENT_PYRE_CURSOR_TARGET_HEIGHT := 96
 const ANCIENT_PYRE_CURSOR_HOTSPOT_RATIO := Vector2(0.50, 0.12)
+const TEZ_TITLACAUAN_CURSOR_TARGET_HEIGHT := 108
+const TEZ_TITLACAUAN_CURSOR_HOTSPOT_RATIO := Vector2(0.50, 0.57)
 const ANOINTING_STATUE_CURSOR_TARGET_HEIGHT := 96
 const ANOINTING_STATUE_CURSOR_HOTSPOT_RATIO := Vector2(0.50, 0.74)
 const SACRIFICE_CURSOR_SHAPES := [
@@ -1506,6 +1515,9 @@ func _is_hermes_cursor_mode_active() -> bool:
 func _is_guan_yu_cursor_mode_active() -> bool:
 	return awaiting_god_ability_target and god_ability_source is GuanYu
 
+func _is_tez_titlacauan_cursor_mode_active() -> bool:
+	return _pending_tezcatlipoca_active_prompt != null
+
 func _is_silence_or_mute_targeting_source(card: Card) -> bool:
 	if card == null:
 		return false
@@ -1633,6 +1645,8 @@ func _get_selection_cursor_mode() -> String:
 		return "hermes"
 	if _is_guan_yu_cursor_mode_active():
 		return "guan_yu"
+	if _is_tez_titlacauan_cursor_mode_active():
+		return "tez_titlacauan"
 	if _is_ancient_pyre_cursor_mode_active():
 		return "ancient_pyre"
 	if _is_anointing_statue_cursor_mode_active():
@@ -1663,6 +1677,8 @@ func _get_cursor_mode_target_height(cursor_mode: String) -> int:
 			return UIArtScaler.get_board_cursor_target_height(HERMES_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 		"guan_yu":
 			return UIArtScaler.get_board_cursor_target_height(GUAN_YU_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+		"tez_titlacauan":
+			return UIArtScaler.get_board_cursor_target_height(TEZ_TITLACAUAN_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 		"ancient_pyre":
 			return UIArtScaler.get_board_cursor_target_height(ANCIENT_PYRE_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 		"anointing_statue":
@@ -1788,6 +1804,22 @@ func _apply_ancient_pyre_cursor() -> bool:
 		Input.set_custom_mouse_cursor(_ancient_pyre_cursor_texture, cursor_shape, hotspot)
 	return true
 
+func _apply_tez_titlacauan_cursor() -> bool:
+	var target_height := UIArtScaler.get_board_cursor_target_height(TEZ_TITLACAUAN_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+	if _tez_titlacauan_cursor_texture == null or _tez_titlacauan_cursor_target_height != target_height:
+		_tez_titlacauan_cursor_texture = UIArtScaler.build_cursor_texture(
+			TezTitlacauanCursorSource,
+			target_height
+		)
+		_tez_titlacauan_cursor_target_height = target_height
+	if _tez_titlacauan_cursor_texture == null:
+		return false
+
+	var hotspot := UIArtScaler.get_cursor_hotspot(_tez_titlacauan_cursor_texture, TEZ_TITLACAUAN_CURSOR_HOTSPOT_RATIO)
+	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
+		Input.set_custom_mouse_cursor(_tez_titlacauan_cursor_texture, cursor_shape, hotspot)
+	return true
+
 func _apply_anointing_statue_cursor() -> bool:
 	var target_height := UIArtScaler.get_board_cursor_target_height(ANOINTING_STATUE_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 	if _anointing_statue_cursor_texture == null or _anointing_statue_cursor_target_height != target_height:
@@ -1819,6 +1851,14 @@ func _sync_sacrifice_cursor() -> void:
 	if cursor_mode == "guan_yu":
 		if _apply_guan_yu_cursor():
 			_active_selection_cursor_mode = "guan_yu"
+			_active_selection_cursor_target_height = target_height
+		else:
+			_restore_default_selection_cursor()
+		return
+
+	if cursor_mode == "tez_titlacauan":
+		if _apply_tez_titlacauan_cursor():
+			_active_selection_cursor_mode = "tez_titlacauan"
 			_active_selection_cursor_target_height = target_height
 		else:
 			_restore_default_selection_cursor()
@@ -2010,6 +2050,8 @@ func _process(_delta: float) -> void:
 	_capture_action_log_message()
 	_update_hand_hover_preview()
 	_update_hand_context_menu_dismissal()
+	if has_method("_sync_tez_titlacauan_cursor_overlay"):
+		call("_sync_tez_titlacauan_cursor_overlay")
 
 func _now_msec() -> int:
 	return Time.get_ticks_msec()
@@ -8431,6 +8473,10 @@ func _select_hand_creature_for_placement(card: Card, mode: String) -> void:
 func _on_hand_card_pressed(card: Card) -> void:
 	if _game_finished:
 		return
+	if _pending_tezcatlipoca_active_prompt != null:
+		_set_action_label_text("Finish Titlacauan first. Click enemy creatures, click Tez to confirm, or right-click to skip.")
+		update_ui()
+		return
 	_pending_spell_display_zone = null
 	if _try_handle_blot_prompt_card_input(card):
 		return
@@ -8736,6 +8782,10 @@ func _on_stealth_mode_pressed() -> void:
 func _on_empty_zone_pressed(zone: Zone) -> void:
 	if _game_finished:
 		return
+	if _pending_tezcatlipoca_active_prompt != null:
+		_set_action_label_text("Titlacauan needs enemy creature picks. Click an enemy creature, click Tez to confirm, or right-click to skip.")
+		update_ui()
+		return
 	if _is_blot_selection_active():
 		_show_blot_hand_selection_feedback()
 		return
@@ -8959,6 +9009,13 @@ func _on_god_card_pressed(card: Card) -> void:
 	if _is_card_usable_for_priority(card):
 		_on_priority_response_chosen(card)
 		return
+	if _pending_tezcatlipoca_active_prompt != null:
+		if card == _pending_tezcatlipoca_active_prompt:
+			_confirm_tez_titlacauan_prompt()
+		else:
+			_set_action_label_text("Titlacauan is waiting for enemy creature picks. Click Tez to confirm or right-click to skip.")
+			update_ui()
+		return
 	if _has_pending_target_selection():
 		if _try_handle_pending_click_selection(card):
 			return
@@ -9068,6 +9125,9 @@ func _on_tez_necoc_yaotl_badge_pressed(card: Card) -> void:
 
 func _on_god_right_clicked(card: Card) -> void:
 	if _game_finished or game_manager == null or card == null or not card.is_god:
+		return
+	if _pending_tezcatlipoca_active_prompt != null:
+		_skip_tez_titlacauan_prompt()
 		return
 	if _has_pending_target_selection():
 		_show_target_cancel_prompt()
@@ -12677,6 +12737,10 @@ func _try_resolve_stupefy_target(card: Card) -> bool:
 func _on_board_card_pressed(card: Card) -> void:
 	if _game_finished:
 		return
+	if _pending_tezcatlipoca_active_prompt != null:
+		_set_action_label_text("Titlacauan only enslaves enemy creatures. Click an enemy creature, click Tez to confirm, or right-click to skip.")
+		update_ui()
+		return
 	if _try_submit_tiamat_upkeep_card_from_board(card):
 		return
 	if _try_handle_blot_prompt_card_input(card):
@@ -12962,6 +13026,9 @@ func _on_board_card_pressed(card: Card) -> void:
 func _on_enemy_card_pressed(target_card: Card) -> void:
 	if _game_finished:
 		return
+	if _pending_tezcatlipoca_active_prompt != null:
+		if _toggle_tez_titlacauan_target(target_card):
+			return
 	if _is_card_usable_for_priority(target_card):
 		_on_priority_response_chosen(target_card)
 		return
@@ -13708,6 +13775,11 @@ func _input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
 		var mouse_button_event := event as InputEventMouseButton
 		if mouse_button_event.pressed and mouse_button_event.button_index == MOUSE_BUTTON_RIGHT \
+				and _pending_tezcatlipoca_active_prompt != null:
+			_skip_tez_titlacauan_prompt()
+			get_viewport().set_input_as_handled()
+			return
+		if mouse_button_event.pressed and mouse_button_event.button_index == MOUSE_BUTTON_RIGHT \
 				and _has_pending_target_selection():
 			if _is_devour_cursor_mode_active():
 				_show_devour_cancel_prompt()
@@ -13976,7 +14048,22 @@ func _unhandled_input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 			return
 
-	if _game_finished or not _has_pending_target_selection():
+	if _game_finished:
+		return
+	if _pending_tezcatlipoca_active_prompt != null:
+		if not (event is InputEventMouseButton):
+			return
+		var tez_mouse_event := event as InputEventMouseButton
+		if not tez_mouse_event.pressed:
+			return
+		if tez_mouse_event.button_index == MOUSE_BUTTON_RIGHT:
+			_skip_tez_titlacauan_prompt()
+		elif tez_mouse_event.button_index == MOUSE_BUTTON_LEFT:
+			_set_action_label_text("Titlacauan: click an enemy creature to toggle it, or click Tez to confirm.")
+			update_ui()
+		get_viewport().set_input_as_handled()
+		return
+	if not _has_pending_target_selection():
 		return
 	if not (event is InputEventMouseButton):
 		return
@@ -16162,268 +16249,33 @@ func _show_tezcatlipoca_active_titlacauan_prompt(card: Card, prompt_targets: Arr
 		_pending_tezcatlipoca_titlacauan_selected_uids.clear()
 	_pending_tezcatlipoca_titlacauan_source_uid = card.uid
 	_pending_tezcatlipoca_active_prompt = card
+	_pending_tezcatlipoca_titlacauan_prompt_targets.clear()
 	var level_budget := int(card.call("get_titlacauan_level_budget")) if card.has_method("get_titlacauan_level_budget") else 0
-	var current_targets: Array[Card] = []
-	var live_targets: Array = card.call("get_valid_titlacauan_targets", game_manager)
-	if prompt_targets.is_empty():
-		current_targets.assign(live_targets)
-	else:
-		for target in prompt_targets:
-			if target is Card and target in live_targets:
-				current_targets.append(target)
-		if current_targets.is_empty():
-			current_targets.assign(live_targets)
-	if current_targets.is_empty() and level_budget <= 0:
-		_set_action_label_text("%s has no Necoc Yaotl levels powering Titlacauan." % card.card_name)
-		update_ui()
-		return
-	var current_target_uids: Array[String] = []
+	var current_targets := _get_tez_titlacauan_prompt_targets(card, prompt_targets)
 	for target in current_targets:
 		if target != null:
-			current_target_uids.append(target.uid)
+			_pending_tezcatlipoca_titlacauan_prompt_targets.append(target.uid)
 	for selected_uid in _pending_tezcatlipoca_titlacauan_selected_uids.duplicate():
-		if selected_uid not in current_target_uids:
+		if selected_uid not in _pending_tezcatlipoca_titlacauan_prompt_targets:
 			_pending_tezcatlipoca_titlacauan_selected_uids.erase(selected_uid)
-
-	var overlay := Control.new()
-	overlay.name = "TezcatlipocaActiveTitlacauanOverlay"
-	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
-	overlay.z_index = 300
-	add_child(overlay)
-	_promote_transient_ui(overlay)
-	_zone_overlay = overlay
-
-	var bg := ColorRect.new()
-	bg.color = Color(0.02, 0.02, 0.02, 0.72)
-	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	overlay.add_child(bg)
-
-	var panel_width := 0.36 if current_targets.size() <= 1 else (0.58 if current_targets.size() <= 3 else 0.76)
-	var panel_height := 0.46 if current_targets.size() <= 2 else 0.62
-	var panel := _create_centered_overlay_panel(overlay, panel_width, panel_height)
-	panel.name = "TezcatlipocaActiveTitlacauanPanel"
-	var vbox := VBoxContainer.new()
-	vbox.add_theme_constant_override("separation", 8)
-	vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	vbox.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	panel.add_child(vbox)
-
-	var title := Label.new()
-	title.text = "Choose up to 2 creatures for Titlacauan"
-	title.add_theme_font_size_override("font_size", 15)
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	vbox.add_child(title)
-
-	var info := Label.new()
-	info.text = "Total chosen levels must stay within %d." % level_budget
-	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	info.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	vbox.add_child(info)
-
-	var status := Label.new()
-	status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	status.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	vbox.add_child(status)
-
-	var selected_targets: Array[Card] = []
-	for target in current_targets:
-		if target != null and target.uid in _pending_tezcatlipoca_titlacauan_selected_uids:
-			selected_targets.append(target)
-	var max_targets := 2
-	var selected_label := Label.new()
-	selected_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	selected_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	selected_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	vbox.add_child(selected_label)
-
-	var scroll := ScrollContainer.new()
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
-	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	scroll.custom_minimum_size = Vector2(0, VisualCard.CARD_HEIGHT + 92)
-	scroll.mouse_filter = Control.MOUSE_FILTER_STOP
-	vbox.add_child(scroll)
-
-	var card_grid := GridContainer.new()
-	card_grid.columns = mini(3, maxi(1, current_targets.size()))
-	card_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	card_grid.add_theme_constant_override("h_separation", 10)
-	card_grid.add_theme_constant_override("v_separation", 10)
-	scroll.add_child(card_grid)
-
-	var button_map: Dictionary = {}
-	var style_map: Dictionary = {}
-	var resolve_btn := Button.new()
-	resolve_btn.text = "Resolve Titlacauan"
-	resolve_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-
-	var _titlacauan_selection_total := func(targets: Array[Card]) -> int:
-		var total := 0
-		for target in targets:
-			if target != null:
-				total += target.get_effective_level()
-		return total
-
-	var _is_valid_prompt_titlacauan_selection := func(targets: Array[Card]) -> bool:
-		if targets.size() > max_targets:
-			return false
-		var unique_targets: Array[Card] = []
-		for target in targets:
-			if target == null or target in unique_targets or target not in current_targets:
-				return false
-			unique_targets.append(target)
-		return _titlacauan_selection_total.call(unique_targets) <= level_budget
-
-	var _titlacauan_selection_failure_text := func(target: Card, preview_targets: Array[Card]) -> String:
-		if target == null:
-			return "Choose a creature first."
-		if selected_targets.size() >= max_targets and target not in selected_targets:
-			return "You can choose at most %d creatures." % max_targets
-		if _titlacauan_selection_total.call(preview_targets) > level_budget:
-			return "%s would exceed Titlacauan's level budget." % target.card_name
-		return "%s can no longer be selected." % target.card_name
-
-	var sync_persistent_selection := func() -> void:
-		_pending_tezcatlipoca_titlacauan_selected_uids.clear()
-		for target in selected_targets:
-			if target != null:
-				_pending_tezcatlipoca_titlacauan_selected_uids.append(target.uid)
-
-	var refresh_selection_state := func() -> void:
-		var total_levels = _titlacauan_selection_total.call(selected_targets)
-		var selectable_count := 0
-		for target in current_targets:
-			var btn: Button = button_map.get(target) as Button
-			if btn == null:
-				continue
-			var card_style: StyleBoxFlat = style_map.get(target) as StyleBoxFlat
-			var is_selected := target in selected_targets
-			var preview_targets := selected_targets.duplicate()
-			if not is_selected:
-				preview_targets.append(target)
-			var can_choose = is_selected or _is_valid_prompt_titlacauan_selection.call(preview_targets)
-			btn.disabled = not can_choose
-			if can_choose or is_selected:
-				selectable_count += 1
-			var prefix := "Selected" if is_selected else "Choose"
-			if not can_choose and not is_selected:
-				prefix = "Unavailable"
-			btn.text = "%s %s (Lvl %d)" % [prefix, target.card_name, target.get_effective_level()]
-			if card_style != null:
-				card_style.bg_color = Color(0.16, 0.12, 0.08, 0.96) if is_selected else Color(0.08, 0.08, 0.12, 0.94)
-				card_style.border_color = (
-					Color(0.86, 0.72, 0.34, 0.98) if is_selected
-					else (Color(0.56, 0.74, 0.96, 0.78) if can_choose else Color(0.36, 0.36, 0.44, 0.62))
-				)
-		if selected_targets.is_empty():
-			selected_label.text = "Selected: none"
-		else:
-			var selected_names: Array[String] = []
-			for target in selected_targets:
-				if target != null:
-					selected_names.append("%s (Lvl %d)" % [target.card_name, target.get_effective_level()])
-			selected_label.text = "Selected: " + ", ".join(selected_names)
-		if current_targets.is_empty():
-			status.text = "No enemy creatures can currently be enslaved."
-		elif selectable_count <= 0 and selected_targets.is_empty():
-			status.text = "No listed creature fits the sacrificed level total of %d." % level_budget
-		else:
-			status.text = "Selected %d target(s), total level %d / %d." % [
-				selected_targets.size(),
-				total_levels,
-				level_budget
-			]
-		resolve_btn.disabled = selected_targets.is_empty()
-
-	for target in current_targets:
-		var chosen_target := target
-		var wrapper := PanelContainer.new()
-		wrapper.custom_minimum_size = Vector2(VisualCard.CARD_WIDTH + 16, 0)
-		var wstyle := StyleBoxFlat.new()
-		wstyle.bg_color = Color(0.08, 0.08, 0.12, 0.94)
-		wstyle.border_color = Color(0.56, 0.74, 0.96, 0.78)
-		wstyle.corner_radius_top_left = 6
-		wstyle.corner_radius_top_right = 6
-		wstyle.corner_radius_bottom_left = 6
-		wstyle.corner_radius_bottom_right = 6
-		for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-			wstyle.set_border_width(side as Side, 2)
-		wrapper.add_theme_stylebox_override("panel", wstyle)
-		card_grid.add_child(wrapper)
-		style_map[target] = wstyle
-
-		var card_vbox := VBoxContainer.new()
-		card_vbox.add_theme_constant_override("separation", 4)
-		wrapper.add_child(card_vbox)
-
-		card_vbox.add_child(_build_selection_overlay_card_preview(target))
-
-		var zone_label_text := _get_card_zone_label(target)
-		if zone_label_text != "":
-			var zone_lbl := Label.new()
-			zone_lbl.text = zone_label_text
-			zone_lbl.add_theme_font_size_override("font_size", 10)
-			zone_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-			zone_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-			zone_lbl.custom_minimum_size = Vector2(VisualCard.CARD_WIDTH, 0)
-			zone_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			card_vbox.add_child(zone_lbl)
-
-		var btn := Button.new()
-		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		btn.pressed.connect(func() -> void:
-			if chosen_target in selected_targets:
-				selected_targets.erase(chosen_target)
-				sync_persistent_selection.call()
-				refresh_selection_state.call()
-				return
-			if selected_targets.size() >= max_targets:
-				status.text = "You can choose at most %d creatures." % max_targets
-				return
-			var preview_targets := selected_targets.duplicate()
-			preview_targets.append(chosen_target)
-			if not _is_valid_prompt_titlacauan_selection.call(preview_targets):
-				status.text = _titlacauan_selection_failure_text.call(chosen_target, preview_targets)
-				return
-			selected_targets.append(chosen_target)
-			sync_persistent_selection.call()
-			refresh_selection_state.call()
-		)
-		button_map[target] = btn
-		card_vbox.add_child(btn)
-
-	var action_row := HBoxContainer.new()
-	action_row.add_theme_constant_override("separation", 8)
-	vbox.add_child(action_row)
-
-	resolve_btn.pressed.connect(func() -> void:
-		_resolve_tezcatlipoca_active_titlacauan_prompt(selected_targets.duplicate())
+	if current_targets.is_empty():
+		var no_target_text := "%s found no creatures it could enslave with Titlacauan." % card.card_name
+		if level_budget <= 0:
+			no_target_text = "%s has no Necoc Yaotl levels powering Titlacauan." % card.card_name
+		_resolve_tezcatlipoca_active_titlacauan_prompt([], no_target_text)
+		return
+	_set_action_label_text(
+		"%s: left-click enemy creatures to toggle slaves, click Tez again to confirm, right-click to skip. Level cap %d."
+		% [card.card_name, level_budget]
 	)
-	action_row.add_child(resolve_btn)
-
-	var skip_btn := Button.new()
-	skip_btn.text = "Skip"
-	skip_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	skip_btn.pressed.connect(func() -> void:
-		_resolve_tezcatlipoca_active_titlacauan_prompt([])
-	)
-	action_row.add_child(skip_btn)
-
-	refresh_selection_state.call()
+	update_ui()
 
 func _hide_tezcatlipoca_active_titlacauan_prompt() -> void:
-	if _zone_overlay != null and is_instance_valid(_zone_overlay):
-		_zone_overlay.queue_free()
-	_zone_overlay = null
+	_hide_tez_titlacauan_cursor_overlay()
 	_pending_tezcatlipoca_active_prompt = null
+	_pending_tezcatlipoca_titlacauan_prompt_targets.clear()
 
-func _resolve_tezcatlipoca_active_titlacauan_prompt(targets: Array[Card]) -> void:
+func _resolve_tezcatlipoca_active_titlacauan_prompt(targets: Array[Card], fallback_text: String = "") -> void:
 	var card := _pending_tezcatlipoca_active_prompt
 	_hide_tezcatlipoca_active_titlacauan_prompt()
 	if card == null:
@@ -16444,12 +16296,187 @@ func _resolve_tezcatlipoca_active_titlacauan_prompt(targets: Array[Card]) -> voi
 		"option": {"target_uids": target_uids, "skip": targets.is_empty()},
 	}):
 		return
-	var resolution_text := str(card.call("resolve_titlacauan_choice", game_manager, targets, not targets.is_empty())) if card.has_method("resolve_titlacauan_choice") else card.card_name + " could not resolve Titlacauan."
+	var resolution_text := fallback_text
+	if resolution_text == "":
+		resolution_text = str(card.call("resolve_titlacauan_choice", game_manager, targets, not targets.is_empty())) if card.has_method("resolve_titlacauan_choice") else card.card_name + " could not resolve Titlacauan."
 	if _stack_resolution_paused:
 		_resume_after_deferred_resolution(resolution_text)
 	else:
 		_set_action_label_text(resolution_text)
 		update_ui()
+
+func _get_tez_titlacauan_prompt_targets(card: Card, prompt_targets: Array = []) -> Array[Card]:
+	var current_targets: Array[Card] = []
+	if card == null or game_manager == null or not card.has_method("get_valid_titlacauan_targets"):
+		return current_targets
+	var live_targets: Array = card.call("get_valid_titlacauan_targets", game_manager)
+	if prompt_targets.is_empty():
+		current_targets.assign(live_targets)
+	else:
+		for target in prompt_targets:
+			if target is Card and target in live_targets:
+				current_targets.append(target)
+		if current_targets.is_empty():
+			current_targets.assign(live_targets)
+	return current_targets
+
+func _get_pending_tez_titlacauan_targets() -> Array[Card]:
+	if _pending_tezcatlipoca_active_prompt == null or game_manager == null:
+		return []
+	var prompt_targets: Array[Card] = []
+	var live_targets: Array = _pending_tezcatlipoca_active_prompt.call("get_valid_titlacauan_targets", game_manager)
+	for target_uid in _pending_tezcatlipoca_titlacauan_prompt_targets:
+		var target := game_manager.get_card_by_uid(target_uid)
+		if target != null and target in live_targets:
+			prompt_targets.append(target)
+	if prompt_targets.is_empty():
+		prompt_targets.assign(live_targets)
+	return prompt_targets
+
+func _get_pending_tez_titlacauan_selected_cards() -> Array[Card]:
+	var selected_targets: Array[Card] = []
+	if game_manager == null:
+		return selected_targets
+	for target_uid in _pending_tezcatlipoca_titlacauan_selected_uids:
+		var target := game_manager.get_card_by_uid(target_uid)
+		if target != null:
+			selected_targets.append(target)
+	return selected_targets
+
+func _get_pending_tez_titlacauan_selected_level_total() -> int:
+	var total := 0
+	for target in _get_pending_tez_titlacauan_selected_cards():
+		if target != null:
+			total += target.get_effective_level()
+	return total
+
+func _toggle_tez_titlacauan_target(target: Card) -> bool:
+	var card := _pending_tezcatlipoca_active_prompt
+	if card == null or target == null or game_manager == null:
+		return false
+	var current_targets := _get_pending_tez_titlacauan_targets()
+	if target not in current_targets:
+		_set_action_label_text(target.card_name + " is no longer a valid Titlacauan target.")
+		update_ui()
+		return true
+	if target.uid in _pending_tezcatlipoca_titlacauan_selected_uids:
+		_pending_tezcatlipoca_titlacauan_selected_uids.erase(target.uid)
+		_set_action_label_text("Removed " + target.card_name + " from Titlacauan.")
+		update_ui()
+		return true
+	if _pending_tezcatlipoca_titlacauan_selected_uids.size() >= TezcatlipocaActive.MAX_TITLACAUAN_TARGETS:
+		_set_action_label_text("Titlacauan can enslave at most %d creatures." % TezcatlipocaActive.MAX_TITLACAUAN_TARGETS)
+		update_ui()
+		return true
+	var chosen_targets := _get_pending_tez_titlacauan_selected_cards()
+	chosen_targets.append(target)
+	if not card.call("is_valid_titlacauan_selection", game_manager, chosen_targets):
+		_set_action_label_text("%s would exceed Titlacauan's level capacity." % target.card_name)
+		update_ui()
+		return true
+	_pending_tezcatlipoca_titlacauan_selected_uids.append(target.uid)
+	var current_total := _get_pending_tez_titlacauan_selected_level_total()
+	var level_budget := int(card.call("get_titlacauan_level_budget"))
+	_set_action_label_text(
+		"Titlacauan marked %s. Selected %d/%d, level %d/%d. Click Tez to confirm."
+		% [
+			target.card_name,
+			_pending_tezcatlipoca_titlacauan_selected_uids.size(),
+			TezcatlipocaActive.MAX_TITLACAUAN_TARGETS,
+			current_total,
+			level_budget
+		]
+	)
+	update_ui()
+	return true
+
+func _confirm_tez_titlacauan_prompt() -> bool:
+	if _pending_tezcatlipoca_active_prompt == null:
+		return false
+	_resolve_tezcatlipoca_active_titlacauan_prompt(_get_pending_tez_titlacauan_selected_cards())
+	return true
+
+func _skip_tez_titlacauan_prompt() -> bool:
+	if _pending_tezcatlipoca_active_prompt == null:
+		return false
+	_resolve_tezcatlipoca_active_titlacauan_prompt([])
+	return true
+
+func _show_tez_titlacauan_cursor_overlay() -> void:
+	if _tez_titlacauan_cursor_overlay != null and is_instance_valid(_tez_titlacauan_cursor_overlay):
+		return
+	var overlay := PanelContainer.new()
+	overlay.name = "TezTitlacauanCursorOverlay"
+	overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	overlay.top_level = true
+	overlay.z_index = TRANSIENT_UI_Z_INDEX + 20
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.07, 0.05, 0.02, 0.94)
+	style.border_color = Color(0.83, 0.66, 0.28, 0.98)
+	style.corner_radius_top_left = 7
+	style.corner_radius_top_right = 7
+	style.corner_radius_bottom_left = 7
+	style.corner_radius_bottom_right = 7
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		style.set_border_width(side as Side, 2)
+	overlay.add_theme_stylebox_override("panel", style)
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 2)
+	vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	overlay.add_child(vbox)
+	_tez_titlacauan_cursor_budget_label = Label.new()
+	_tez_titlacauan_cursor_budget_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_tez_titlacauan_cursor_budget_label.add_theme_font_size_override("font_size", 11)
+	_tez_titlacauan_cursor_budget_label.add_theme_color_override("font_color", Color(1.0, 0.92, 0.75))
+	_tez_titlacauan_cursor_budget_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vbox.add_child(_tez_titlacauan_cursor_budget_label)
+	_tez_titlacauan_cursor_count_label = Label.new()
+	_tez_titlacauan_cursor_count_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_tez_titlacauan_cursor_count_label.add_theme_font_size_override("font_size", 11)
+	_tez_titlacauan_cursor_count_label.add_theme_color_override("font_color", Color(0.96, 0.86, 0.64))
+	_tez_titlacauan_cursor_count_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vbox.add_child(_tez_titlacauan_cursor_count_label)
+	add_child(overlay)
+	_promote_transient_ui(overlay)
+	_tez_titlacauan_cursor_overlay = overlay
+
+func _hide_tez_titlacauan_cursor_overlay() -> void:
+	if _tez_titlacauan_cursor_overlay != null and is_instance_valid(_tez_titlacauan_cursor_overlay):
+		_tez_titlacauan_cursor_overlay.queue_free()
+	_tez_titlacauan_cursor_overlay = null
+	_tez_titlacauan_cursor_budget_label = null
+	_tez_titlacauan_cursor_count_label = null
+
+func _sync_tez_titlacauan_cursor_overlay() -> void:
+	if not _is_tez_titlacauan_cursor_mode_active():
+		_hide_tez_titlacauan_cursor_overlay()
+		return
+	var card := _pending_tezcatlipoca_active_prompt
+	if card == null or game_manager == null:
+		_hide_tez_titlacauan_cursor_overlay()
+		return
+	_show_tez_titlacauan_cursor_overlay()
+	if _tez_titlacauan_cursor_overlay == null or not is_instance_valid(_tez_titlacauan_cursor_overlay):
+		return
+	var current_target_uids: Array[String] = []
+	for target in _get_pending_tez_titlacauan_targets():
+		if target != null:
+			current_target_uids.append(target.uid)
+	for selected_uid in _pending_tezcatlipoca_titlacauan_selected_uids.duplicate():
+		if selected_uid not in current_target_uids:
+			_pending_tezcatlipoca_titlacauan_selected_uids.erase(selected_uid)
+	var budget := int(card.call("get_titlacauan_level_budget"))
+	var selected_count := _pending_tezcatlipoca_titlacauan_selected_uids.size()
+	var selected_total := _get_pending_tez_titlacauan_selected_level_total()
+	if _tez_titlacauan_cursor_budget_label != null:
+		_tez_titlacauan_cursor_budget_label.text = "Lvl %d/%d" % [selected_total, budget]
+	if _tez_titlacauan_cursor_count_label != null:
+		_tez_titlacauan_cursor_count_label.text = "%d/%d slaves" % [selected_count, TezcatlipocaActive.MAX_TITLACAUAN_TARGETS]
+	var size := _tez_titlacauan_cursor_overlay.get_combined_minimum_size()
+	if size == Vector2.ZERO:
+		size = Vector2(90.0, 38.0)
+	_tez_titlacauan_cursor_overlay.size = size
+	_tez_titlacauan_cursor_overlay.global_position = get_global_mouse_position() + Vector2(34.0, 20.0)
 
 func _begin_harii_shaman_activation(card: HariiShamanScript) -> void:
 	if card == null or game_manager == null:
@@ -18053,6 +18080,8 @@ func _dismiss_transient_prompts() -> void:
 	_dismiss_zone_overlay()
 	_pending_tezcatlipoca_titlacauan_source_uid = ""
 	_pending_tezcatlipoca_titlacauan_selected_uids.clear()
+	_pending_tezcatlipoca_titlacauan_prompt_targets.clear()
+	_hide_tezcatlipoca_active_titlacauan_prompt()
 	_hide_priority_prompt()
 	_hide_retreat_prompt()
 	_hide_hati_prompt()

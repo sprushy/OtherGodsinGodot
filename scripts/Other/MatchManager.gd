@@ -654,10 +654,17 @@ func _resolve_event(action: CardAction) -> void:
 			last_resolution_text = action.resolution_text
 			return
 		action.resolve_callback.call()
-		var feedback := game_manager.consume_player_feedback() if game_manager != null else ""
-		last_resolution_text = feedback if feedback.strip_edges() != "" else (
-			action.resolution_text if action.resolution_text != "" else action.event_name.replace("_", " ").capitalize() + " passed."
-		)
+	var feedback := game_manager.consume_player_feedback() if game_manager != null else ""
+	if feedback.strip_edges() != "":
+		last_resolution_text = feedback
+		return
+	if action.resolution_text != "":
+		last_resolution_text = action.resolution_text
+		return
+	if action.event_name == "summon" and action.card != null:
+		last_resolution_text = "%s was summoned." % action.card.card_name
+		return
+	last_resolution_text = action.event_name.replace("_", " ").capitalize() + " passed."
 
 func _resolve_attack(action: CardAction) -> void:
 	if action.attacker == null:

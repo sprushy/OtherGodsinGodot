@@ -223,6 +223,13 @@ func _label_for_move(move: Dictionary, viewer: Player = null) -> String:
 		"play_card":
 			var card := game_manager.get_card_by_uid(move.get("card_uid", ""))
 			return ("Played %s." % _card_label_for_viewer(card, viewer)) if card else "Card played."
+		"play_creature":
+			var creature := game_manager.get_card_by_uid(move.get("card_uid", ""))
+			if creature == null:
+				return "Creature summoned."
+			var mode: int = int(move.get("mode", Card.CreatureMode.DEFENSIVE))
+			var stance := "aggressive" if mode == int(Card.CreatureMode.AGGRESSIVE) else "defensive"
+			return "Summoned %s in %s stance." % [_card_label_for_viewer(creature, viewer), stance]
 		"cast_spell":
 			return _label_for_stack_move(
 				game_manager.get_card_by_uid(move.get("spell_uid", "")),
