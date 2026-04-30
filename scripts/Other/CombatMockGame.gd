@@ -337,6 +337,7 @@ var _pending_wolf_adolescent_prompts: Array[WolfAdolescent] = []
 var _active_wolf_adolescent_prompt: WolfAdolescent = null
 var _queued_wolf_adolescent_prompt_targets: Dictionary = {}
 var _pending_tezcatlipoca_active_prompt: Card = null
+var _pending_network_tezcatlipoca_titlacauan_payload: Dictionary = {}
 var _pending_turn_start_priority_feedback: String = ""
 var _breidablik_panel: Control = null
 var _e2_abzu_panel: Control = null
@@ -18051,8 +18052,14 @@ func _execute_top_of_stack() -> void:
 	# The rest is now handled by MatchManager and its callbacks/signals
 
 func _on_match_action_resolved(action: CardAction) -> void:
-	if match_manager.last_resolution_text != "":
-		_set_action_label_text(_consume_resolution_feedback(match_manager.last_resolution_text))
+	var resolution_text := match_manager.last_resolution_text if match_manager != null else ""
+	if _stack_resolution_paused \
+			and action != null \
+			and action.type == CardAction.Type.EVENT \
+			and resolution_text == action.event_name.replace("_", " ").capitalize() + " passed.":
+		resolution_text = ""
+	if resolution_text != "":
+		_set_action_label_text(_consume_resolution_feedback(resolution_text))
 	
 	if action.type == CardAction.Type.EVENT:
 		_capture_action_log_message()
@@ -18200,6 +18207,15 @@ func _on_match_move_validated(move: Dictionary) -> void:
 					_schedule_priority_recovery_check()
 				else:
 					_kick_local_stack_progress()
+		"prepare_card":
+			var prepared_card := game_manager.get_card_by_uid(str(move.get("card_uid", "")))
+			if prepared_card != null and prepared_card.current_zone != null and prepared_card.current_zone.is_board_zone():
+				_schedule_local_ui_refresh()
+			if not _is_networked_client:
+				if authoritative_priority:
+					_schedule_priority_recovery_check()
+				else:
+					_kick_local_stack_progress()
 		"cast_spell":
 			var queued_spell := game_manager.get_card_by_uid(str(move.get("spell_uid", "")))
 			if queued_spell != null:
@@ -18329,9 +18345,8 @@ func _on_match_move_failed(reason: String) -> void:
 func _on_match_ui_interaction(player_index: int, type: String, data: Dictionary) -> void:
 	var target_player := game_manager.players[player_index]
 	
-	if network_manager != null and network_manager.is_server:
-		if _executing_stack_action and not _stack_resolution_paused:
-			_pause_stack_resolution(target_player)
+	if _executing_stack_action and not _stack_resolution_paused and type != "priority":
+		_pause_stack_resolution(target_player)
 			
 	if not _is_player_local(target_player):
 		return
@@ -19889,6 +19904,7 @@ func _sync_network_turn_controls() -> void:
 		end_turn_button.disabled = false
 		all_attack_btn.disabled = false
 		return
+	game_manager.prune_stale_stack_actions()
 	var local_idx: int = network_manager.local_player_index
 	var current_idx: int = game_manager.players.find(game_manager.current_player)
 	var is_local_turn: bool = current_idx == local_idx

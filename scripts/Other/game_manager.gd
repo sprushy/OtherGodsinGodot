@@ -59,6 +59,7 @@ var _pending_doorway_structures: Array[StructureCard] = []
 var _pending_doorway_card: Card = null
 var _pending_doorway_combat_death: bool = false
 var _pending_doorway_destruction: bool = false
+var _pending_doorway_ignore_self_combat_replacement: bool = false
 var _pending_doorway_continue: Callable = Callable()
 var _pending_return_to_hand_card: Card = null
 var _pending_return_to_hand_reason: String = ""
@@ -2958,6 +2959,7 @@ func request_send_to_graveyard(
 		_pending_doorway_card = card
 		_pending_doorway_combat_death = combat_death
 		_pending_doorway_destruction = destruction
+		_pending_doorway_ignore_self_combat_replacement = ignore_self_combat_replacement
 		_pending_doorway_continue = continue_callback
 		doorway_choice_requested.emit(_pending_doorway_structure, card, combat_death, destruction)
 		return false
@@ -3138,19 +3140,30 @@ func resolve_pending_doorway_choice(send_to_abyss: bool) -> bool:
 	var card := _pending_doorway_card
 	var combat_death := _pending_doorway_combat_death
 	var destruction := _pending_doorway_destruction
+	var ignore_self_combat_replacement := _pending_doorway_ignore_self_combat_replacement
 	var continue_callback := _pending_doorway_continue
 	if send_to_abyss:
 		_clear_pending_doorway_choice()
-		var abyss_success := _send_to_graveyard_with_hook_resolved(card, true, combat_death, destruction)
-		if continue_callback.is_valid():
-			continue_callback.call()
+		var abyss_success := _send_to_graveyard_with_hook_resolved(
+			card,
+			true,
+			combat_death,
+			destruction,
+			continue_callback,
+			ignore_self_combat_replacement
+		)
 		return abyss_success
 	if _advance_pending_doorway_choice():
 		return false
 	_clear_pending_doorway_choice()
-	var graveyard_success := _send_to_graveyard_with_hook_resolved(card, false, combat_death, destruction)
-	if continue_callback.is_valid():
-		continue_callback.call()
+	var graveyard_success := _send_to_graveyard_with_hook_resolved(
+		card,
+		false,
+		combat_death,
+		destruction,
+		continue_callback,
+		ignore_self_combat_replacement
+	)
 	return graveyard_success
 
 func _advance_pending_doorway_choice() -> bool:
@@ -3180,6 +3193,7 @@ func _clear_pending_doorway_choice() -> void:
 	_pending_doorway_card = null
 	_pending_doorway_combat_death = false
 	_pending_doorway_destruction = false
+	_pending_doorway_ignore_self_combat_replacement = false
 	_pending_doorway_continue = Callable()
 func banish_card_with_hook(card: Card) -> void:
 	_send_to_abyss_with_hook(card)

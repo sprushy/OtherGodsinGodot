@@ -392,7 +392,7 @@ func _build_collection_panel(parent: Control) -> void:
 
 	var search_edit := LineEdit.new()
 	_search_edit = search_edit
-	search_edit.placeholder_text = "Card names or tags"
+	search_edit.placeholder_text = "Card names, keywords, or tags"
 	search_edit.text = _search_query
 	search_edit.clear_button_enabled = true
 	search_edit.custom_minimum_size = Vector2(420, 28)
@@ -871,6 +871,9 @@ func _matches_search_query(card: Card) -> bool:
 	for card_type: String in card.card_types:
 		if _to_search_key(card_type).contains(search_key):
 			return true
+
+	if _to_search_key(card.ability_text).contains(search_key):
+		return true
 
 	return false
 

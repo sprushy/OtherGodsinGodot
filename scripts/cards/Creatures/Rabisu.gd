@@ -16,7 +16,7 @@ func _init() -> void:
 	speed = 2
 	resilience = 17
 	strength = 17
-	ability_text = "[b]Life Drain[/b] ([b]Impact[/b]): For each sleeping enemy creature on the field, it loses 3 Str and 3 Res, and this card gains 3 Str and 3 Res."
+	ability_text = "[b]Life Drain[/b] ([b]Impact[/b]): [b]Leech[/b] 3 Str and Res from each sleeping creature."
 	flavor_text = ""
 	culture = "Ancient"
 	artist = "Riccardo Zoppello"
@@ -31,7 +31,7 @@ func on_impact(game_manager: GameManager) -> void:
 	var controller := get_controller()
 
 	for player in game_manager.players:
-		if player == null or player == controller:
+		if player == null:
 			continue
 		for zone in player.frontline_zones + player.reserve_zones:
 			for card in zone.cards:
@@ -51,7 +51,7 @@ func on_impact(game_manager: GameManager) -> void:
 				drained_count += 1
 
 	if drained_count <= 0:
-		game_manager.note_player_feedback("%s found no sleeping enemies to drain." % card_name)
+		game_manager.note_player_feedback("%s found no sleeping creatures to drain." % card_name)
 		return
 
 	add_buff(

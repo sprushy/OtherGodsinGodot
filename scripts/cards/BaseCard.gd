@@ -37,6 +37,7 @@ const KEYWORD_HINTS = {
 	"Relock": "Turn an unlocked power face-down again.",
 	"Resurrect": "Return a destroyed card from the graveyard to the field.",
 	"Wake": "Remove Sleep from a creature.",
+	"Leech": "Steal the listed stats from each affected target, reducing them and increasing this card by the same amount.",
 	"Returns": "This card enters the field from the Abyss.",
 	"Search": "Look through your deck for a card, then shuffle.",
 	"Dodge": "This creature cannot be attacked by creatures with lower speed.",
