@@ -173,6 +173,9 @@ func get_champions_call_candidate(_allow_fallback: bool = true) -> Card:
 	manifestation.card_owner = card_owner
 	return manifestation
 
+func can_autofill_take_the_field() -> bool:
+	return false
+
 func _can_use_tactical_break(game_manager: GameManager) -> bool:
 	if not can_use_god_power(game_manager):
 		return false

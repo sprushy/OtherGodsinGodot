@@ -115,6 +115,11 @@ static func _serialize_card(card: Card, hidden_mode: int = HIDDEN_MODE_NONE) -> 
 	var equipped_on_uid := ""
 	if card.equipped_on != null and "uid" in card.equipped_on:
 		equipped_on_uid = card.equipped_on.uid
+	var attached_target_uid := ""
+	if card is PermanentHexCard:
+		var attached_target := (card as PermanentHexCard).attached_target
+		if attached_target != null and "uid" in attached_target:
+			attached_target_uid = attached_target.uid
 
 	return {
 		uid                       = uid,
@@ -148,6 +153,7 @@ static func _serialize_card(card: Card, hidden_mode: int = HIDDEN_MODE_NONE) -> 
 		card_types                = card.card_types.duplicate(),
 		culture                   = card.culture,
 		equipped_on_uid           = equipped_on_uid,
+		attached_target_uid       = attached_target_uid,
 		active_buffs             = _serialize_card_buffs(card),
 		active_statuses           = _serialize_card_statuses(card),
 		serialized_state          = card.get_serialized_state(),
@@ -377,6 +383,7 @@ static func apply_to_manager(data: Dictionary, gm: GameManager) -> void:
 		for j in mini(res_data.size(), player.reserve_zones.size()):
 			_apply_zone_cards(player.reserve_zones[j], res_data[j])
 
+	_restore_card_uid_references(gm)
 	_restore_prepared_cards(data.get("prepared_hexes", []), gm.prepared_hexes, gm)
 	_restore_prepared_cards(data.get("prepared_charms", []), gm.prepared_charms, gm)
 	_restore_combat_destroy_events(data.get("combat_destroy_events_this_turn", []), gm)
@@ -411,6 +418,71 @@ static func _link_equipment_in_zone(zone: Zone) -> void:
 				card.equipped_on = creature
 				if card not in creature.equipment:
 					creature.equipment.append(card)
+
+static func _restore_card_uid_references(gm: GameManager) -> void:
+	var uid_map := _build_card_uid_map(gm)
+	for card_value in uid_map.values():
+		var card := card_value as Card
+		if card == null:
+			continue
+		_restore_effect_uid_references(card.active_buffs, uid_map)
+		_restore_effect_uid_references(card.active_statuses, uid_map)
+		if card is PermanentHexCard and card.has_meta("_attached_target_uid"):
+			var target_uid := str(card.get_meta("_attached_target_uid")).strip_edges()
+			card.remove_meta("_attached_target_uid")
+			if uid_map.has(target_uid):
+				(card as PermanentHexCard).attached_target = uid_map[target_uid] as Card
+		if card.card_type == Card.CardType.EQUIPMENT and card.has_meta("_equipped_on_uid"):
+			var equipped_uid := str(card.get_meta("_equipped_on_uid")).strip_edges()
+			card.remove_meta("_equipped_on_uid")
+			if uid_map.has(equipped_uid):
+				var creature := uid_map[equipped_uid] as Card
+				card.equipped_on = creature
+				if creature != null and card not in creature.equipment:
+					creature.equipment.append(card)
+		card._sync_status_flags()
+
+static func _restore_effect_uid_references(entries: Array, uid_map: Dictionary) -> void:
+	for entry in entries:
+		if not (entry is Dictionary):
+			continue
+		var effect := entry as Dictionary
+		for key in effect.keys():
+			var key_name := str(key)
+			if not key_name.ends_with("_uid"):
+				continue
+			var uid := str(effect.get(key, "")).strip_edges()
+			if uid == "" or not uid_map.has(uid):
+				continue
+			var ref_key := key_name.substr(0, key_name.length() - 4)
+			if not effect.has(ref_key) or effect.get(ref_key, null) == null:
+				effect[ref_key] = uid_map[uid]
+
+static func _build_card_uid_map(gm: GameManager) -> Dictionary:
+	var uid_map := {}
+	for player in gm.players:
+		if player == null:
+			continue
+		for zone in _get_player_card_zones(player):
+			if zone == null:
+				continue
+			for card in zone.cards:
+				if card != null and "uid" in card and card.uid != "":
+					uid_map[card.uid] = card
+	return uid_map
+
+static func _get_player_card_zones(player: Player) -> Array:
+	var zones: Array = [
+		player.hand_zone,
+		player.deck_zone,
+		player.god_zone,
+		player.graveyard_zone,
+		player.abyss_zone,
+	]
+	zones.append_array(player.power_zones)
+	zones.append_array(player.frontline_zones)
+	zones.append_array(player.reserve_zones)
+	return zones
 
 static func _deserialize_card(cdata: Dictionary) -> Card:
 	if cdata.get("hidden", false):
@@ -481,6 +553,9 @@ static func _deserialize_card(cdata: Dictionary) -> Card:
 	var equipped_uid: String = cdata.get("equipped_on_uid", "")
 	if equipped_uid != "":
 		card.set_meta("_equipped_on_uid", equipped_uid)
+	var attached_target_uid: String = cdata.get("attached_target_uid", "")
+	if attached_target_uid != "":
+		card.set_meta("_attached_target_uid", attached_target_uid)
 
 	card.active_buffs.clear()
 	for bdata in cdata.get("active_buffs", []):

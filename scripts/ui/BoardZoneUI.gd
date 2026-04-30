@@ -1455,6 +1455,8 @@ func _get_debuff_affordance_entries(card: Card) -> Array[Dictionary]:
 		_append_debuff_affordance_entry(entries, seen, _build_debuff_entry_from_status(card, status))
 	for buff in card._get_effective_buffs():
 		_append_debuff_affordance_entry(entries, seen, _build_debuff_entry_from_buff(buff))
+	for binding in _get_attached_permanent_hexes(card):
+		_append_debuff_affordance_entry(entries, seen, _build_debuff_entry_from_binding(binding))
 	return entries
 
 func _append_debuff_affordance_entry(entries: Array[Dictionary], seen: Dictionary, entry: Dictionary) -> void:
@@ -1574,11 +1576,31 @@ func _make_debuff_source_preview(entry: Dictionary) -> Control:
 	var source_card := entry.get("source_card", null) as Card
 	return _make_card_art_preview(source_card)
 
+func _build_debuff_entry_from_binding(binding: Card) -> Dictionary:
+	if not (binding is PermanentHexCard):
+		return {}
+	return {
+		"key": "binding:%s" % _get_debuff_source_key({
+			"source_card": binding,
+			"source": binding.card_name,
+		}),
+		"source_card": binding,
+		"count": 1,
+	}
+
+func _is_debuff_status_from_attached_binding(card: Card, status: Dictionary) -> bool:
+	if card == null or status.is_empty():
+		return false
+	var source_card = status.get("source_card", null)
+	return source_card is PermanentHexCard and (source_card as PermanentHexCard).attached_target == card
+
 func _build_debuff_entry_from_status(card: Card, status: Dictionary) -> Dictionary:
 	if card == null or status.is_empty():
 		return {}
 	var status_name := str(status.get("name", ""))
 	if status_name in ["", "sleep", "temporarily_revealed", "blessed_ward", Card.EXTERNAL_EFFECT_NEGATION_STATUS]:
+		return {}
+	if _is_debuff_status_from_attached_binding(card, status):
 		return {}
 	var source_key := _get_debuff_source_key(status)
 	var source_card := status.get("source_card", null) as Card

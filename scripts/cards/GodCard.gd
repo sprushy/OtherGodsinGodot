@@ -87,6 +87,9 @@ func get_active_god_deck_role(active_god: ActiveGodCard) -> String:
 		return ACTIVE_GOD_DECK_ROLE_ALLOWED if can_include_card_in_culture_locked_deck(active_god) else ACTIVE_GOD_DECK_ROLE_ILLEGAL
 	return ACTIVE_GOD_DECK_ROLE_RESERVED if is_own_active_god_card(active_god) else ACTIVE_GOD_DECK_ROLE_ILLEGAL
 
+func can_autofill_take_the_field() -> bool:
+	return true
+
 func get_champions_call_candidate(_allow_fallback: bool = true) -> Card:
 	return null
 

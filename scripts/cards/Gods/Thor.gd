@@ -82,6 +82,9 @@ func get_champions_call_candidate(allow_fallback: bool = true) -> Card:
 		return manifestation
 	return null
 
+func can_autofill_take_the_field() -> bool:
+	return false
+
 func applies_to(card: Card) -> bool:
 	return (
 		not is_muted

@@ -3371,6 +3371,8 @@ func _can_autofill_power_card(card: Card, god: GodCard) -> bool:
 		return false
 	if god == null:
 		return str(card.culture).strip_edges() == "Neutral"
+	if card.card_name == "Take the Field" and not god.can_autofill_take_the_field():
+		return false
 	return _is_card_compatible_with_selected_god(card, god)
 
 func _find_template(card_name: String) -> Card:

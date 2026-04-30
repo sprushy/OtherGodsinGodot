@@ -125,14 +125,24 @@ func _find_manifestation_candidate(allow_fallback: bool) -> Card:
 	return null
 
 func _get_manifest_search_zones() -> Array[Zone]:
+	var zones: Array[Zone] = []
 	if card_owner == null:
-		return []
-	return [
+		return zones
+	for zone in [
 		card_owner.hand_zone,
 		card_owner.deck_zone,
 		card_owner.graveyard_zone,
 		card_owner.abyss_zone,
-	] + card_owner.frontline_zones + card_owner.reserve_zones
+	]:
+		if zone != null:
+			zones.append(zone)
+	for zone in card_owner.frontline_zones:
+		if zone != null:
+			zones.append(zone)
+	for zone in card_owner.reserve_zones:
+		if zone != null:
+			zones.append(zone)
+	return zones
 
 func _matches_manifestation(card: Card, god_name: String) -> bool:
 	var active_god := card as ActiveGodCard

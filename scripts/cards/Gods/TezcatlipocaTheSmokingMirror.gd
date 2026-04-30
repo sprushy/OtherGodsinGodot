@@ -262,3 +262,6 @@ func _get_necoc_yaotl_candidate(allow_fallback: bool = true) -> Card:
 		manifestation.card_owner = card_owner
 		return manifestation
 	return null
+
+func can_autofill_take_the_field() -> bool:
+	return false
