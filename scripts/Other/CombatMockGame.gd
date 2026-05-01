@@ -4553,8 +4553,16 @@ func _show_power_hover_popup(source: Control, text: String, bbcode_text: String 
 func _position_power_hover_popup(popup: Control, source: Control) -> void:
 	if popup == null or not is_instance_valid(popup) or source == null or not is_instance_valid(source):
 		return
-	var pos := source.get_global_rect().position
-	pos.y -= popup.size.y + 6
+	await get_tree().process_frame
+	if popup == null or not is_instance_valid(popup) or source == null or not is_instance_valid(source):
+		return
+	var popup_size := popup.get_combined_minimum_size()
+	popup.size = popup_size
+	var source_rect := source.get_global_rect()
+	var pos := Vector2(
+		source_rect.position.x + (source_rect.size.x - popup_size.x) * 0.5,
+		source_rect.position.y - popup_size.y - 6.0
+	)
 	var vp_size := get_viewport_rect().size
 	pos.x = clamp(pos.x, 4.0, vp_size.x - popup.size.x - 4.0)
 	pos.y = clamp(pos.y, 4.0, vp_size.y - popup.size.y - 4.0)
@@ -8228,6 +8236,8 @@ func _on_card_summoned(player: Player, card: Card, _from_zone: Zone, to_zone: Zo
 		_schedule_local_ui_refresh()
 		_kick_local_stack_progress()
 		return
+	if card.card_type == Card.CardType.STRUCTURE:
+		_maybe_offer_advanced_building_techniques(player, card)
 	if _is_tezcatlipoca_necoc_yaotl_summon(card, summon_source):
 		return
 	if _has_pending_impact_priority_action(card):
@@ -9152,12 +9162,7 @@ func _on_empty_zone_pressed(zone: Zone) -> void:
 			game_input.submit_action({type = "play_card", card_uid = selected_card.uid,
 					player_index = game_manager.players.find(zone.zone_owner),
 					zone_type = zone.zone_type, zone_index = zone.zone_index})
-			var building_power := _get_active_advanced_building_techniques(game_manager.current_player)
-			if building_power != null and building_power.can_offer_structure_bonus(played_structure, game_manager):
-				_set_action_label_text("Played Structure: " + played_structure.card_name + "! Choose how much mana to spend on Advanced Building Techniques.")
-				_show_structure_bonus_prompt(building_power, played_structure)
-			else:
-				_set_action_label_text("Played Structure: " + played_structure.card_name + "!")
+			_set_action_label_text("Played Structure: " + played_structure.card_name + "!")
 			
 			selected_card = null
 			placement_mode = ""
@@ -15712,6 +15717,19 @@ func _get_active_advanced_building_techniques(player: Player) -> AdvancedBuildin
 			return power
 	return null
 
+func _maybe_offer_advanced_building_techniques(player: Player, structure: Card) -> void:
+	if game_manager == null or player == null or structure == null:
+		return
+	if player != game_manager.current_player:
+		return
+	if structure.card_type != Card.CardType.STRUCTURE:
+		return
+	var building_power := _get_active_advanced_building_techniques(player)
+	if building_power == null or not building_power.can_offer_structure_bonus(structure, game_manager):
+		return
+	_set_action_label_text("Played Structure: " + structure.card_name + "! Choose how much mana to spend on Advanced Building Techniques.")
+	_show_structure_bonus_prompt(building_power, structure)
+
 func _show_structure_bonus_prompt(power: AdvancedBuildingTechniques, structure: Card) -> void:
 	_hide_structure_bonus_prompt()
 	_pending_structure_bonus_power_uid = power.uid if power != null else ""
@@ -16912,23 +16930,112 @@ func _show_hildskjalf_prompt(card: HildskjalfThroneOfOdin) -> void:
 		update_ui()
 		return
 
-	var targets: Array = card.get_valid_targets(game_manager)
-	if targets.is_empty():
+	var readable_decks := card.get_readable_deck_owners(game_manager)
+	if readable_decks.is_empty():
 		_set_action_label_text(card.card_name + " found no cards to read.")
 		update_ui()
 		return
 
+	if readable_decks.size() == 1:
+		_show_hildskjalf_deck_prompt(card, readable_decks[0] as Player)
+		return
+
+	_dismiss_zone_overlay()
+
+	var overlay := Control.new()
+	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	overlay.z_index = 300
+	add_child(overlay)
+	_promote_transient_ui(overlay)
+	_zone_overlay = overlay
+
+	var bg := ColorRect.new()
+	bg.color = Color(0.0, 0.0, 0.0, 0.65)
+	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	overlay.add_child(bg)
+
+	var panel := _create_centered_overlay_panel(overlay, 0.38, 0.34)
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 8)
+	vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	vbox.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	panel.add_child(vbox)
+
+	var title := Label.new()
+	title.text = card.card_name
+	title.add_theme_font_size_override("font_size", 15)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vbox.add_child(title)
+
+	var info := Label.new()
+	info.text = "Choose which deck to read."
+	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	info.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vbox.add_child(info)
+
+	var buttons := VBoxContainer.new()
+	buttons.add_theme_constant_override("separation", 6)
+	buttons.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	buttons.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	vbox.add_child(buttons)
+
+	for deck_owner in readable_decks:
+		var owner := deck_owner as Player
+		if owner == null:
+			continue
+		var chosen_owner := owner
+		var btn := Button.new()
+		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		btn.text = "Your deck" if chosen_owner == card.card_owner else "%s's deck" % chosen_owner.player_name
+		btn.pressed.connect(func() -> void:
+			_show_hildskjalf_deck_prompt(card, chosen_owner)
+		)
+		buttons.add_child(btn)
+
+	var cancel_btn := Button.new()
+	cancel_btn.text = "Cancel"
+	cancel_btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	cancel_btn.pressed.connect(func() -> void:
+		_dismiss_zone_overlay()
+		_set_action_label_text("Cancelled " + card.card_name + ".")
+		update_ui()
+	)
+	vbox.add_child(cancel_btn)
+
+	overlay.gui_input.connect(func(event: InputEvent) -> void:
+		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+			_dismiss_zone_overlay()
+			_set_action_label_text("Cancelled " + card.card_name + ".")
+			update_ui()
+	)
+
+	_set_action_label_text("%s: choose which deck to read." % card.card_name)
+	update_ui()
+
+func _show_hildskjalf_deck_prompt(card: HildskjalfThroneOfOdin, deck_owner: Player) -> void:
+	if card == null or deck_owner == null or game_manager == null:
+		update_ui()
+		return
+	var targets: Array[Card] = card.get_top_cards_for_deck_owner(game_manager, deck_owner)
+	if targets.is_empty():
+		_set_action_label_text(card.card_name + " found no cards to read.")
+		update_ui()
+		return
 	if targets.size() == 1:
-		_resolve_hildskjalf_activation(card, targets[0] as Card)
+		_resolve_hildskjalf_activation(card, deck_owner, targets[0])
 		return
 
 	var on_choose_target := func(chosen_target: Card) -> void:
-		_resolve_hildskjalf_activation(card, chosen_target)
+		_resolve_hildskjalf_activation(card, deck_owner, chosen_target)
 	var on_cancel_target := func() -> void:
 		_set_action_label_text("Cancelled " + card.card_name + ".")
 		update_ui()
 	_show_card_selection_overlay(
-		"Choose a card to prime for " + card.card_name,
+		"Choose a card to prime from %s" % ("your deck" if deck_owner == card.card_owner else "%s's deck" % deck_owner.player_name),
 		targets,
 		on_choose_target,
 		on_cancel_target,
@@ -16936,14 +17043,20 @@ func _show_hildskjalf_prompt(card: HildskjalfThroneOfOdin) -> void:
 		"",
 		true
 	)
-	_set_action_label_text("%s: choose one of the top cards from either deck to prime." % card.card_name)
+	_set_action_label_text("%s: choose one of the top cards from %s." % [
+		card.card_name,
+		"your deck" if deck_owner == card.card_owner else "%s's deck" % deck_owner.player_name
+	])
 	update_ui()
 
-func _resolve_hildskjalf_activation(card: HildskjalfThroneOfOdin, target: Card) -> void:
-	if card == null or target == null or game_manager == null:
+func _resolve_hildskjalf_activation(card: HildskjalfThroneOfOdin, deck_owner: Player, target: Card) -> void:
+	if card == null or deck_owner == null or target == null or game_manager == null:
 		update_ui()
 		return
-	var option := {"chosen_uid": target.uid}
+	var option := {
+		"chosen_uid": target.uid,
+		"deck_owner_player_index": game_manager.players.find(deck_owner),
+	}
 	if _is_networked_client:
 		game_input.submit_action({type = "activate_card_ability", source_uid = card.uid, option = option})
 		_set_action_label_text(card.card_name + " reads the high seat.")
@@ -19697,6 +19810,10 @@ func _resolve_game_result_message(result_message: String, winner = null, loser =
 
 func _finalize_game_result_ui(result_message: String, winner = null, loser = null, auto_return: bool = false) -> void:
 	var resolved_message := _resolve_game_result_message(result_message, winner, loser)
+	# Networked match results should remain visible on both clients until each
+	# player explicitly leaves; otherwise a forfeit can pull both players away.
+	if _is_networked_client or _is_real_network_host():
+		auto_return = false
 	_game_finished = true
 	_set_match_reconnect_wait(false)
 	_dismiss_transient_prompts()

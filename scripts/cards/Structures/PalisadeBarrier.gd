@@ -54,18 +54,23 @@ func _is_target_protected_card(defender: Card) -> bool:
 		return false
 	if defender.get_controller() != get_controller():
 		return false
-	match current_zone.zone_type:
-		Zone.ZoneType.FRONTLINE:
-			return defender.current_zone.zone_type == Zone.ZoneType.RESERVE
-		Zone.ZoneType.RESERVE:
-			return false
-		_:
-			return false
+	return _get_zone_depth(defender.current_zone) > _get_zone_depth(current_zone)
 
 func _is_followers_protected(defending_player: Player) -> bool:
 	if defending_player == null or defending_player != get_controller():
 		return false
-	return current_zone != null and current_zone.zone_type == Zone.ZoneType.RESERVE
+	return _get_zone_depth(current_zone) >= 0
+
+func _get_zone_depth(zone: Zone) -> int:
+	if zone == null:
+		return -1
+	match zone.zone_type:
+		Zone.ZoneType.FRONTLINE:
+			return 0
+		Zone.ZoneType.RESERVE:
+			return 1
+		_:
+			return -1
 
 func _all_attackers_are_aerial(attacker: Card, allied_attackers: Array) -> bool:
 	if attacker == null or not attacker.has_type("Aerial"):

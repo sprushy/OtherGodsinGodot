@@ -269,13 +269,13 @@ func _build_server_version_overlay() -> void:
 	var label := Label.new()
 	label.name = "ServerVersionLabel"
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	label.tooltip_text = "Version reported by the connected lobby server."
+	label.tooltip_text = "Versions for the connected lobby server and this client."
 	label.anchor_left = 1.0
 	label.anchor_right = 1.0
 	label.offset_left = -260.0
 	label.offset_top = 10.0
 	label.offset_right = -14.0
-	label.offset_bottom = 34.0
+	label.offset_bottom = 52.0
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	label.add_theme_font_size_override("font_size", 14)
@@ -292,13 +292,16 @@ func _set_connected_server_version(version: String) -> void:
 func _refresh_server_version_label() -> void:
 	if _server_version_label == null or not is_instance_valid(_server_version_label):
 		return
+	var server_text := ""
 	if _connected_server_version.is_empty():
 		if _has_connected_lobby_transport():
-			_server_version_label.text = "Server: version unavailable"
-			return
-		_server_version_label.text = "Server: not connected"
-		return
-	_server_version_label.text = "Server: %s" % _connected_server_version
+			server_text = "Server: version unavailable"
+		else:
+			server_text = "Server: not connected"
+	else:
+		server_text = "Server: %s" % _connected_server_version
+	var client_version := AppReleaseInfoScript.get_current_version()
+	_server_version_label.text = "%s\nClient: %s" % [server_text, client_version]
 
 func _refresh_server_version_overlay_visibility() -> void:
 	if _server_version_label == null or not is_instance_valid(_server_version_label):

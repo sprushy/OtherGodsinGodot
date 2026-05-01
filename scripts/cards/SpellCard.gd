@@ -42,6 +42,13 @@ func can_be_played(game_manager: GameManager, player: Player) -> bool:
 		return false
 	return super.can_be_played(game_manager, player)
 
+func get_play_failure_reason(game_manager: GameManager, player: Player) -> String:
+	if game_manager == null:
+		return super.get_play_failure_reason(game_manager, player)
+	if player != game_manager.current_player:
+		return "Spells can only be cast on your turn."
+	return super.get_play_failure_reason(game_manager, player)
+
 func can_activate_prepared(game_manager: GameManager, player: Player) -> bool:
 	if game_manager == null or player == null:
 		return false

@@ -80,6 +80,14 @@ func can_be_played(game_manager: GameManager, player: Player) -> bool:
 		return false
 	return true
 
+func get_play_failure_reason(game_manager: GameManager, player: Player) -> String:
+	var base_reason := super.get_play_failure_reason(game_manager, player)
+	if not base_reason.is_empty():
+		return base_reason
+	if get_valid_targets(game_manager).is_empty():
+		return card_name + " requires a face-up or revealed magical card."
+	return ""
+
 func _is_face_up_or_revealed(card: Card) -> bool:
 	if card == null:
 		return false

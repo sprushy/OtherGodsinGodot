@@ -92,7 +92,12 @@ static func _viewer_can_read_opponent_deck_with_hildskjalf(gm: GameManager, view
 		return false
 	if gm.current_player != viewer:
 		return false
-	for zone in viewer.power_zones:
+	var zones: Array = []
+	zones.append_array(viewer.frontline_zones)
+	zones.append_array(viewer.reserve_zones)
+	zones.append_array(viewer.power_zones)
+	zones.append(viewer.god_zone)
+	for zone in zones:
 		if zone == null:
 			continue
 		for card in zone.cards:

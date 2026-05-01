@@ -61,6 +61,19 @@ func can_be_played(game_manager: GameManager, player: Player) -> bool:
 	print(card_name + " has no valid targets.")
 	return false
 
+func get_play_failure_reason(game_manager: GameManager, player: Player) -> String:
+	var base_reason := super.get_play_failure_reason(game_manager, player)
+	if not base_reason.is_empty():
+		return base_reason
+	if game_manager == null:
+		return card_name + " cannot be cast right now."
+	for p: Player in game_manager.players:
+		for zone: Zone in p.frontline_zones + p.reserve_zones:
+			for card: Card in zone.cards:
+				if card.card_type == Card.CardType.CREATURE and (card.is_face_down or _should_destroy(card)):
+					return ""
+	return card_name + " has no valid targets."
+
 func _should_destroy(card: Card) -> bool:
 	if card == null:
 		return false

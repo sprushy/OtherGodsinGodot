@@ -85,6 +85,14 @@ func can_be_played(game_manager: GameManager, player: Player) -> bool:
 		return false
 	return not get_valid_targets(game_manager).is_empty()
 
+func get_play_failure_reason(game_manager: GameManager, player: Player) -> String:
+	var base_reason := super.get_play_failure_reason(game_manager, player)
+	if not base_reason.is_empty():
+		return base_reason
+	if get_valid_targets(game_manager).is_empty():
+		return card_name + " has no valid targets."
+	return ""
+
 func _apply_tablet_of_life(creature: Card, game_manager: GameManager) -> void:
 	if creature == null:
 		return

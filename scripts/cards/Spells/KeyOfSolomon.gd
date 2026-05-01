@@ -27,6 +27,16 @@ func can_be_played(game_manager: GameManager, player: Player) -> bool:
 		return false
 	return true
 
+func get_play_failure_reason(game_manager: GameManager, player: Player) -> String:
+	var base_reason := super.get_play_failure_reason(game_manager, player)
+	if not base_reason.is_empty():
+		return base_reason
+	if get_valid_sacrifices().is_empty():
+		return card_name + " requires a friendly Animal to sacrifice."
+	if get_valid_demon_targets().is_empty():
+		return card_name + " has no Demon in your graveyard or abyss to return."
+	return ""
+
 ## Returns friendly Animals on the board that can be sacrificed.
 func get_valid_sacrifices() -> Array[Card]:
 	var cards: Array[Card] = []

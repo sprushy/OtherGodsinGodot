@@ -1147,41 +1147,53 @@ func can_pay_creature_summon_cost(
 	return player.mana >= mana_required
 
 func can_play_card(player: Player, card: Card, target_zone: Zone) -> bool:
+	return get_play_card_failure_reason(player, card, target_zone).is_empty()
+
+func get_play_card_failure_reason(player: Player, card: Card, target_zone: Zone) -> String:
 	_prune_stale_stack_actions()
 	if is_game_over:
-		return false
-	if card == null or not card.can_be_played(self, player):
-		return false
+		return "The game is already over."
+	if player == null:
+		return "No acting player was provided."
+	if card == null:
+		return "The selected card was not found."
 	if player == current_player and not has_resolved_turn_upkeep():
-		return false
+		return "Resolve upkeep before taking other actions."
+	if card.card_type == Card.CardType.SPELL and card.current_zone == player.hand_zone and spells_must_be_prepared():
+		return "Heavy Snow prevents spells from being cast from hand."
+	var card_failure_reason := ""
+	if card.has_method("get_play_failure_reason"):
+		card_failure_reason = str(card.call("get_play_failure_reason", self, player))
+	if not card_failure_reason.is_empty():
+		return card_failure_reason
+	if not card.can_be_played(self, player):
+		return card.card_name + " cannot be played right now."
 	# Check if player can pay costs
 	var mana_required := get_card_play_mana_cost(player, card, false)
 	if not card.can_pay_costs_with_mana_cost(player, mana_required):
 		print("Cannot afford card costs")
-		return false
+		return "Not enough mana."
 
 	# Speed 1 cards can only be played on your turn
 	if card.get_effective_speed() == 1 and player != current_player:
-		return false
-	if card.card_type == Card.CardType.SPELL and card.current_zone == player.hand_zone and spells_must_be_prepared():
-		return false
+		return "Speed 1 cards can only be played on your turn."
 
 	# God and power cards go to special zones
 	if card.is_god and target_zone != player.god_zone:
-		return false
+		return "Choose your God zone."
 	if card.is_power and not card.is_god and target_zone not in player.power_zones:
-		return false
+		return "Choose one of your power zones."
 
 	# Regular cards go to frontline or reserve
 	if not card.is_god and not card.is_power:
 		if target_zone != null:
 			if target_zone not in player.frontline_zones and target_zone not in player.reserve_zones:
-				return false
+				return "Choose a frontline or reserve zone."
 
 	# One creature summon per turn
 	if card.card_type == Card.CardType.CREATURE and player == current_player:
 		if player.has_summoned_this_turn and not _can_use_extra_normal_summon(player, card, target_zone):
-			return false
+			return "You have already used your normal summon for this turn."
 
 	# Equipment zone rules: unequipped equipment cannot share a zone with anything else.
 	if target_zone != null and target_zone.is_board_zone():
@@ -1192,20 +1204,20 @@ func can_play_card(player: Player, card: Card, target_zone: Zone) -> bool:
 			var creature_in_zone := target_zone.get_creature()
 			if has_unequipped:
 				print("Cannot play equipment: zone already has unequipped equipment")
-				return false
+				return "Cannot play equipment: zone already has unequipped equipment"
 			if target_zone.cards.size() > 0 and creature_in_zone == null:
 				print("Cannot play equipment: zone occupied by a non-creature card")
-				return false
+				return "Cannot play equipment: zone occupied by a non-creature card"
 			if creature_in_zone != null and not card.can_equip_to(creature_in_zone):
 				print("Cannot play equipment: target creature is not a valid bearer")
-				return false
+				return "Cannot play equipment: target creature is not a valid bearer"
 		else:
 			# Non-equipment cards cannot enter a zone containing unequipped equipment
 			if unequipped_in_zone.size() > 0:
 				print("Cannot play card: zone contains unequipped equipment")
-				return false
+				return "Cannot play card: zone contains unequipped equipment"
 
-	return true
+	return ""
 
 func get_prepare_card_failure_reason(player: Player, card: Card, target_zone: Zone) -> String:
 	_prune_stale_stack_actions()

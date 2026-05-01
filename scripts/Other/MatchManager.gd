@@ -2046,8 +2046,9 @@ func _process_command_impl(command: Dictionary) -> bool:
 			if card == null:
 				move_failed.emit("play_card: card not found")
 				return false
-			if not game_manager.can_play_card(acting_player, card, zone):
-				move_failed.emit("Cannot play " + card.card_name + "! Not enough resources.")
+			var play_failure_reason := game_manager.get_play_card_failure_reason(acting_player, card, zone)
+			if not play_failure_reason.is_empty():
+				move_failed.emit(play_failure_reason)
 				return false
 			game_manager.play_card(acting_player, card, zone)
 			move_validated.emit(command)
@@ -2249,9 +2250,10 @@ func _process_command_impl(command: Dictionary) -> bool:
 							return false
 			if original_sacrifice_cost > 0 and (using_altar_void or not sacrifice_cards.is_empty()):
 				card.sacrifice_cost = 0
-			if not game_manager.can_play_card(acting_player, card, zone):
+			var play_failure_reason := game_manager.get_play_card_failure_reason(acting_player, card, zone)
+			if not play_failure_reason.is_empty():
 				card.sacrifice_cost = original_sacrifice_cost
-				move_failed.emit("Cannot play " + card.card_name + "!")
+				move_failed.emit(play_failure_reason)
 				return false
 			card.sacrifice_cost = original_sacrifice_cost
 			var finish_creature_play := func() -> void:
@@ -2344,9 +2346,10 @@ func _process_command_impl(command: Dictionary) -> bool:
 					)
 					return false
 			else:
-				if not game_manager.can_play_card(player, spell, null):
+				var play_failure_reason := game_manager.get_play_card_failure_reason(player, spell, null)
+				if not play_failure_reason.is_empty():
 					spell.clear_pending_chosen_sacrifices()
-					move_failed.emit("Cannot cast " + spell.card_name + "!")
+					move_failed.emit(play_failure_reason)
 					return false
 				var mana_required := game_manager.get_card_play_mana_cost(player, spell, false)
 				if not spell.pay_costs_with_mana_cost(player, mana_required, game_manager):

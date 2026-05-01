@@ -10,7 +10,7 @@ func _init() -> void:
 	super._init()
 	card_name = "Gleipnir"
 	is_legendary = true
-	level = 4
+	level = 5
 	mana_cost = 0
 	speed = 4
 	culture = "Norse"

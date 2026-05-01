@@ -40,7 +40,7 @@ func can_activate(game_manager: GameManager) -> bool:
 		return false
 	if uses_this_turn >= USES_PER_TURN:
 		return false
-	return not get_valid_targets(game_manager).is_empty()
+	return not get_readable_deck_owners(game_manager).is_empty()
 
 func get_activation_failure_reason(game_manager: GameManager) -> String:
 	if game_manager == null:
@@ -57,18 +57,34 @@ func get_activation_failure_reason(game_manager: GameManager) -> String:
 		return card_name + " cannot activate this turn."
 	if uses_this_turn >= USES_PER_TURN:
 		return card_name + " has already been used this turn."
-	if get_valid_targets(game_manager).is_empty():
+	if get_readable_deck_owners(game_manager).is_empty():
 		return card_name + " found no cards to read."
 	return card_name + " cannot activate right now."
+
+func get_readable_deck_owners(game_manager: GameManager) -> Array[Player]:
+	var readable_players: Array[Player] = []
+	if game_manager == null:
+		return readable_players
+	for player in [card_owner, game_manager.get_opponent(card_owner)]:
+		if player != null and not _get_top_cards_for_player(player).is_empty():
+			readable_players.append(player)
+	return readable_players
 
 func get_valid_targets(game_manager: GameManager) -> Array[Card]:
 	var valid_targets: Array[Card] = []
 	if game_manager == null:
 		return valid_targets
 
-	for player in [card_owner, game_manager.get_opponent(card_owner)]:
+	for player in get_readable_deck_owners(game_manager):
 		valid_targets.append_array(_get_top_cards_for_player(player))
 	return valid_targets
+
+func get_top_cards_for_deck_owner(game_manager: GameManager, deck_owner: Player) -> Array[Card]:
+	if game_manager == null or deck_owner == null:
+		return []
+	if deck_owner not in get_readable_deck_owners(game_manager):
+		return []
+	return _get_top_cards_for_player(deck_owner)
 
 func activate(game_manager: GameManager, target = null) -> void:
 	if not can_activate(game_manager):
@@ -77,12 +93,13 @@ func activate(game_manager: GameManager, target = null) -> void:
 		return
 
 	var chosen_card := _parse_target(game_manager, target)
-	var valid_targets := get_valid_targets(game_manager)
+	var deck_owner := _parse_deck_owner(game_manager, target)
+	var valid_targets := get_top_cards_for_deck_owner(game_manager, deck_owner) if deck_owner != null else get_valid_targets(game_manager)
 	if chosen_card == null:
 		if valid_targets.size() == 1:
 			chosen_card = valid_targets[0]
 		else:
-			game_manager.note_player_feedback("%s fizzles: choose one of the top cards from either deck." % card_name)
+			game_manager.note_player_feedback("%s fizzles: choose a card from the selected deck." % card_name)
 			return
 	elif chosen_card not in valid_targets:
 		game_manager.note_player_feedback("%s fizzles: that card is no longer a valid choice." % card_name)
@@ -144,6 +161,15 @@ func _parse_target(game_manager: GameManager, target) -> Card:
 		var chosen_uid := str(option.get("chosen_uid", option.get("target_uid", "")))
 		if chosen_uid != "" and game_manager != null:
 			return game_manager.get_card_by_uid(chosen_uid)
+	return null
+
+func _parse_deck_owner(game_manager: GameManager, target) -> Player:
+	if game_manager == null or not (target is Dictionary):
+		return null
+	var option := target as Dictionary
+	var player_index := int(option.get("deck_owner_player_index", -1))
+	if player_index >= 0 and player_index < game_manager.players.size():
+		return game_manager.players[player_index]
 	return null
 
 func _get_top_cards_for_player(player: Player) -> Array[Card]:

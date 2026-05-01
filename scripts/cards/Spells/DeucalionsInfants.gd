@@ -50,6 +50,18 @@ func can_be_played(game_manager: GameManager, player: Player) -> bool:
 		or not get_destroyable_enemy_cards(game_manager).is_empty() \
 		or get_destroyed_structure_or_golem_count_this_turn(game_manager) > 0
 
+func get_play_failure_reason(game_manager: GameManager, player: Player) -> String:
+	var base_reason := super.get_play_failure_reason(game_manager, player)
+	if not base_reason.is_empty():
+		return base_reason
+	if game_manager == null or player == null:
+		return card_name + " cannot be cast right now."
+	if get_destroyable_friendly_cards(game_manager).is_empty() \
+			and get_destroyable_enemy_cards(game_manager).is_empty() \
+			and get_destroyed_structure_or_golem_count_this_turn(game_manager) <= 0:
+		return card_name + " has no valid targets."
+	return ""
+
 func get_destroyable_friendly_cards(game_manager: GameManager) -> Array[Card]:
 	var cards: Array[Card] = []
 	if game_manager == null or card_owner == null:

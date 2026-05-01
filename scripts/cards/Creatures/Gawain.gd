@@ -17,7 +17,7 @@ func _init() -> void:
 	super._init()
 	card_name = "Gawain"
 	card_types = ["Human", "Warrior", "Knight", "Triskelion Creature"]
-	level = 4
+	level = 5
 	mana_cost = 3
 	sacrifice_cost = 0
 	speed = 2

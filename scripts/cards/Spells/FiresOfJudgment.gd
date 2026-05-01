@@ -44,6 +44,16 @@ func can_be_played(game_manager: GameManager, player: Player) -> bool:
 		return false
 	return true
 
+func get_play_failure_reason(game_manager: GameManager, player: Player) -> String:
+	var base_reason := super.get_play_failure_reason(game_manager, player)
+	if not base_reason.is_empty():
+		return base_reason
+	if game_manager == null or player == null:
+		return card_name + " cannot be cast right now."
+	if _get_doomed_cards(game_manager).is_empty():
+		return card_name + " has no valid targets."
+	return ""
+
 func _get_doomed_cards(game_manager: GameManager) -> Array[Card]:
 	var doomed_cards: Array[Card] = []
 	if game_manager == null or card_owner == null:
