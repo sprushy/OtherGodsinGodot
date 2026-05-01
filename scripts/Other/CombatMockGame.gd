@@ -5450,12 +5450,9 @@ func _resolve_breidablik_return_choice(power: Breidablik, selected_priest: Card)
 		return
 	var keep_upkeep_choice_open := game_manager.is_player_in_upkeep_window(game_manager.current_player) \
 		and game_manager.current_player == power.card_owner
-	var returned := false
-	game_manager.run_with_effect_source(
-		power,
-		func() -> void:
-			returned = power.return_priest(game_manager, selected_priest)
-	)
+	game_manager.push_effect_source_card(power)
+	var returned := power.return_priest(game_manager, selected_priest)
+	game_manager.pop_effect_source_card()
 	if not returned:
 		_set_action_label_text(_consume_resolution_feedback(power.card_name + " could not return " + selected_priest.card_name + "."))
 		update_ui()

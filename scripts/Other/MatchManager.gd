@@ -2527,12 +2527,9 @@ func _process_command_impl(command: Dictionary) -> bool:
 						act_target_uid,
 						int(command.get("stored_priest_index", -1))
 					)
-				var returned := false
-				game_manager.run_with_effect_source(
-					power_card,
-					func() -> void:
-						returned = breidablik.return_priest(game_manager, act_target)
-				)
+				game_manager.push_effect_source_card(power_card)
+				var returned := breidablik.return_priest(game_manager, act_target)
+				game_manager.pop_effect_source_card()
 				if not returned:
 					move_failed.emit(power_card.card_name + " could not return that priest.")
 					return false
