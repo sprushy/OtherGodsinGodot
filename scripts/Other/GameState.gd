@@ -132,7 +132,6 @@ static func _serialize_card(card: Card, hidden_mode: int = HIDDEN_MODE_NONE) -> 
 			hidden = true,
 			hidden_mode = HIDDEN_MODE_BOARD,
 			card_type = card.card_type,
-			card_types = card.card_types.duplicate(),
 			is_face_down = card.is_face_down,
 			is_stealth = card.is_stealth,
 			is_prepared = card.is_prepared,
@@ -542,9 +541,6 @@ static func _deserialize_card(cdata: Dictionary) -> Card:
 		placeholder.uid = cdata.get("uid", "")
 		placeholder.card_name = "Hidden card"
 		placeholder.card_type = int(cdata.get("card_type", placeholder.card_type)) as Card.CardType
-		var hidden_card_types = cdata.get("card_types", null)
-		if hidden_card_types is Array:
-			placeholder.card_types = hidden_card_types
 		placeholder.is_face_down = cdata.get("is_face_down", true)
 		placeholder.is_stealth = cdata.get("is_stealth", false)
 		placeholder.is_prepared = cdata.get("is_prepared", false)

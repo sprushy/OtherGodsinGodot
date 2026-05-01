@@ -16,7 +16,7 @@ func _init() -> void:
 	culture = "Neutral"
 	artist = "Lorinda Tomko"
 	art_path = ART_PATH
-	ability_text = "Reveal all face-down creatures. Destroy all non-machine, non-spirit creatures on the field."
+	ability_text = "Reveal all face-down creatures. Destroy all non-spirit creatures on the field."
 
 func resolve(game_manager: GameManager, _target = null) -> void:
 	if game_manager == null:
@@ -66,7 +66,7 @@ func _should_destroy(card: Card) -> bool:
 		return false
 	if card.card_type != Card.CardType.CREATURE:
 		return false
-	if card.has_type("Machine") or card.has_type("Spirit"):
+	if card.has_type("Spirit"):
 		return false
 	return true
 

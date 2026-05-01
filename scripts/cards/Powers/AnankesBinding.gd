@@ -98,6 +98,37 @@ func get_hover_stored_cards(_viewer: Player = null) -> Array[Card]:
 func get_hover_stored_cards_title(_viewer: Player = null) -> String:
 	return "Bound Cards"
 
+func get_serialized_state() -> Dictionary:
+	var state := super.get_serialized_state()
+	var stored_entries: Array[Dictionary] = []
+	for stored_card in stored_cards:
+		if stored_card == null:
+			continue
+		stored_entries.append({
+			"card": GameState.serialize_embedded_card(stored_card),
+		})
+	state["stored_cards"] = stored_entries
+	state["turns_until_return"] = turns_until_return
+	return state
+
+func apply_serialized_state(state: Dictionary) -> void:
+	super.apply_serialized_state(state)
+	stored_cards.clear()
+	turns_until_return = int(state.get("turns_until_return", -1))
+	for entry_value in state.get("stored_cards", []):
+		if not (entry_value is Dictionary):
+			continue
+		var entry := entry_value as Dictionary
+		var card_data = entry.get("card", {})
+		if not (card_data is Dictionary):
+			continue
+		var stored_card := GameState.deserialize_embedded_card(card_data as Dictionary)
+		if stored_card == null:
+			continue
+		stored_card.card_owner = card_owner
+		stored_card.current_zone = null
+		stored_cards.append(stored_card)
+
 func get_hover_detail_lines(viewer: Player = null) -> Array[String]:
 	var details := super.get_hover_detail_lines(viewer)
 	if stored_cards.is_empty():

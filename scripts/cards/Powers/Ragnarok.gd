@@ -1,11 +1,13 @@
 extends PowerCard
 class_name Ragnarok
 
-const UNLOCK_COST := 9
+const UNLOCK_COST := 11
 const HAND_LIMIT := 5
+const RELOCK_TURNS := 7
 const ART_PATH := "res://images/card_art/powers/RagnarokEdit.png"
 
-var _has_activated_on_unlock: bool = false
+var _relock_turns_remaining: int = -1
+var _relock_activation_turn: int = -1
 
 func _init() -> void:
 	super._init()
@@ -16,7 +18,7 @@ func _init() -> void:
 	is_legendary = true
 	card_types = ["Power", "Legendary Destruction", "Universal"]
 	targets = false
-	ability_text = "[b]Unlock[/b] (9): Destroy all creatures on the field; then each player with more than 5 cards discards down to 5. You cannot attack this turn. This only happens once."
+	ability_text = "[b]Unlock[/b] (11): This activates only when you unlock it. Destroy all creatures on the field; then each player with more than 5 cards discards down to 5. You cannot attack this turn. After 7 of your turns, [b]Relock[/b] this."
 	artist = "Riccardo Zoppello"
 	art_path = ART_PATH
 
@@ -24,19 +26,18 @@ func can_activate(_game_manager: GameManager) -> bool:
 	return false
 
 func on_unlock(game_manager: GameManager) -> void:
-	if _has_activated_on_unlock:
-		return
-	_has_activated_on_unlock = true
 	if game_manager != null:
 		game_manager.run_with_effect_source(
 			self,
 			func() -> void:
 				_resolve_ragnarok(game_manager)
 		)
+	else:
+		relock()
 
 func activate(game_manager: GameManager, _target: Card = null) -> void:
 	if game_manager != null:
-		game_manager.note_player_feedback(card_name + " has already resolved.")
+		game_manager.note_player_feedback(card_name + " must be unlocked to resolve.")
 
 func _resolve_ragnarok(game_manager: GameManager) -> void:
 	if game_manager == null:
@@ -181,6 +182,32 @@ func _finish_resolution(game_manager: GameManager, destroyed_count: int, discard
 	]
 	game_manager.note_player_feedback(feedback)
 	print(feedback)
+	_start_relock_countdown(game_manager)
+
+func on_turn_end(game_manager: GameManager) -> void:
+	super.on_turn_end(game_manager)
+	if is_face_down or _relock_turns_remaining <= 0:
+		_clear_relock_countdown()
+		return
+	if game_manager != null and game_manager.turn_number == _relock_activation_turn:
+		return
+	_relock_turns_remaining -= 1
+	if _relock_turns_remaining <= 0:
+		if game_manager != null:
+			game_manager.note_player_feedback("%s relocks." % card_name)
+		relock()
+
+func relock() -> void:
+	_clear_relock_countdown()
+	super.relock()
+
+func _start_relock_countdown(game_manager: GameManager) -> void:
+	_relock_turns_remaining = RELOCK_TURNS
+	_relock_activation_turn = game_manager.turn_number if game_manager != null else -1
+
+func _clear_relock_countdown() -> void:
+	_relock_turns_remaining = -1
+	_relock_activation_turn = -1
 
 func would_destroy_creature_of_player(game_manager: GameManager, protected_player: Player, _chosen_target = null) -> bool:
 	if game_manager == null or protected_player == null:

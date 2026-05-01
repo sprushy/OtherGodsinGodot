@@ -5214,14 +5214,23 @@ func _show_breidablik_prompt(power: Breidablik) -> void:
 			_show_card_selection_overlay(
 				"Choose a Priest to Return",
 				power.get_stored_priests(),
-				on_choose_return_priest
+				on_choose_return_priest,
+				func() -> void:
+					_set_action_label_text("Declined " + power.card_name + ".")
+					update_ui(),
+				"",
+				"Decline"
 			)
 		)
 		vbox.add_child(return_btn)
 
 	var cancel_btn := Button.new()
-	cancel_btn.text = "Cancel"
-	cancel_btn.pressed.connect(_hide_breidablik_prompt)
+	cancel_btn.text = "Decline"
+	cancel_btn.pressed.connect(func() -> void:
+		_hide_breidablik_prompt()
+		_set_action_label_text("Declined " + power.card_name + ".")
+		update_ui()
+	)
 	vbox.add_child(cancel_btn)
 
 	add_child(panel)
@@ -5257,14 +5266,34 @@ func _handle_breidablik_return_choice(power: Breidablik, selected_priest: Card) 
 	if _is_networked_client:
 		game_input.submit_action({type = "activate_power", power_uid = power.uid, target_uid = selected_priest.uid, mode = "return_priest"})
 		return
-	_queue_magical_action(
-		CardAction.Type.ABILITY,
+	_resolve_breidablik_return_choice(power, selected_priest)
+
+func _resolve_breidablik_return_choice(power: Breidablik, selected_priest: Card) -> void:
+	if power == null or selected_priest == null or game_manager == null:
+		return
+	var resolves_upkeep := game_manager.is_player_in_upkeep_window(game_manager.current_player) \
+		and game_manager.current_player == power.card_owner
+	var returned := false
+	game_manager.run_with_effect_source(
 		power,
-		selected_priest,
-		power.card_name + " returns " + selected_priest.card_name + ".",
 		func() -> void:
-			power.return_priest(game_manager, selected_priest)
+			returned = power.return_priest(game_manager, selected_priest)
 	)
+	if not returned:
+		_set_action_label_text(_consume_resolution_feedback(power.card_name + " could not return " + selected_priest.card_name + "."))
+		update_ui()
+		return
+	var feedback := _consume_resolution_feedback(power.card_name + " returned " + selected_priest.card_name + ".")
+	if resolves_upkeep:
+		game_manager.player_chooses_upkeep_only()
+		feedback = _build_upkeep_resolution_feedback(feedback)
+		_close_turn_start_windows()
+		update_ui()
+		hide_turn_choice()
+		_continue_after_upkeep_choice(feedback)
+		return
+	_set_action_label_text(feedback)
+	update_ui()
 
 func _get_divine_caprice_zone_title(zone: Zone) -> String:
 	if zone == null:

@@ -19,7 +19,7 @@ const TEZ_REQUIRED_SACRIFICES := 4
 const TEZ_TONAL_MASTERY_TOKEN_THRESHOLD := 3
 const LEVEL_BADGE_BOTTOM := 24.0
 const BADGE_ROW_GAP := 6.0
-const BADGE_ROW_TOP := LEVEL_BADGE_BOTTOM + BADGE_ROW_GAP
+const BADGE_ROW_TOP := LEVEL_BADGE_BOTTOM + BADGE_ROW_GAP + 31.0
 const TEZ_BADGE_LEFT := -62
 const TEZ_BADGE_RIGHT := -4
 const TEZ_PRIMARY_BADGE_TOP := BADGE_ROW_TOP
@@ -742,7 +742,9 @@ func _add_power_lock_overlay(overlay: Control, card: Card) -> void:
 		return
 	if _is_public_power(card) or card.is_temporarily_revealed():
 		return
-	_add_power_lock_texture_overlay(overlay, card)
+	var viewer := _get_viewer_player()
+	var culture_is_known := viewer != null and card.get_controller() == viewer
+	_add_power_lock_texture_overlay(overlay, card, culture_is_known)
 
 func _add_playing_aura(overlay: Control) -> void:
 	if overlay == null:
@@ -1694,16 +1696,18 @@ func _is_tiamat_power_creature_zone() -> bool:
 			return false
 	return true
 
-func _get_power_lock_texture(card: Card) -> Texture2D:
+func _get_power_lock_texture(card: Card, culture_is_known: bool = true) -> Texture2D:
 	if card != null:
+		if not culture_is_known:
+			return POWER_LOCK_TEXTURE
 		if str(card.culture).strip_edges() == "Ancient" or card.has_type("Ancient Power"):
 			return ANCIENT_POWER_LOCK_TEXTURE
 		if str(card.culture).strip_edges() == "Norse":
 			return NORSE_POWER_LOCK_TEXTURE
 	return POWER_LOCK_TEXTURE
 
-func _add_power_lock_texture_overlay(overlay: Control, card: Card = null) -> void:
-	var power_lock_texture := _get_power_lock_texture(card)
+func _add_power_lock_texture_overlay(overlay: Control, card: Card = null, culture_is_known: bool = true) -> void:
+	var power_lock_texture := _get_power_lock_texture(card, culture_is_known)
 	if overlay == null or power_lock_texture == null:
 		return
 
@@ -1746,7 +1750,10 @@ func _add_tiamat_brood_slot_art(overlay: Control) -> void:
 	overlay.add_child(brood_art)
 
 	if not _is_tiamat_power_creature_stack_revealed():
-		_add_power_lock_texture_overlay(overlay, zone.cards[0])
+		var viewer := _get_viewer_player()
+		var slot_card := zone.cards[0]
+		var culture_is_known := viewer != null and slot_card != null and slot_card.get_controller() == viewer
+		_add_power_lock_texture_overlay(overlay, slot_card, culture_is_known)
 
 func _is_tiamat_power_creature_stack_revealed() -> bool:
 	if zone == null:
@@ -2443,8 +2450,11 @@ func _refresh_display() -> void:
 				or card.is_prepared
 			)
 			var show_revealed_power_art := revealed_face_down_power and card.art_path != ""
-			var tex_path := card.art_path if (show_revealed_power_art or (is_own_hidden_card and card.art_path != "")) else "res://images/cardbackAI.png"
-			var tex: Texture2D = load(tex_path)
+			var tex: Texture2D = null
+			if show_revealed_power_art or (is_own_hidden_card and card.art_path != ""):
+				tex = load(card.art_path)
+			else:
+				tex = load("res://images/cardbackAI.png")
 			if tex:
 				var art := TextureRect.new()
 				art.texture = tex

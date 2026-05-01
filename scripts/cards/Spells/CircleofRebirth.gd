@@ -10,7 +10,7 @@ func _init() -> void:
 	card_types = types
 	
 	level = 4
-	mana_cost = 2
+	mana_cost = 1
 	is_legendary = true
 	speed = 1
 	flavor_text = "Resurrect all animals and plants which were destroyed this turn."

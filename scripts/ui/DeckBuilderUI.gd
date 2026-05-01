@@ -835,7 +835,7 @@ func _matches_filter(card: Card) -> bool:
 		"Gods":      return card.is_god
 		"Active Gods": return card is ActiveGodCard
 		"Powers":    return card.is_power and not card.is_god
-		"Legendaries": return card.is_legendary and not card.is_god and not card.is_power
+		"Legendaries": return card.is_legendary and not card.is_god
 		"Creatures": return card.card_type == Card.CardType.CREATURE and not card.is_god
 		"Equipment": return card.card_type == Card.CardType.EQUIPMENT
 		"Charms":    return card.card_type == Card.CardType.CHARM

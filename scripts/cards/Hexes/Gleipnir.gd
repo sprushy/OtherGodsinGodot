@@ -11,7 +11,7 @@ func _init() -> void:
 	card_name = "Gleipnir"
 	is_legendary = true
 	level = 4
-	mana_cost = 1
+	mana_cost = 0
 	speed = 4
 	culture = "Norse"
 	card_types = ["Hex", "Permanent", "Binding", "Legendary", "Targeting"]

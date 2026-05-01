@@ -115,7 +115,14 @@ func _get_all_players(controller: Player, game_manager: GameManager = null) -> A
 func _get_all_player_zones(player: Player) -> Array[Zone]:
 	if player == null:
 		return []
-	return [player.hand_zone, player.deck_zone, player.graveyard_zone, player.abyss_zone, player.god_zone] \
-		+ player.power_zones \
-		+ player.frontline_zones \
-		+ player.reserve_zones
+	var zones: Array[Zone] = [
+		player.hand_zone,
+		player.deck_zone,
+		player.graveyard_zone,
+		player.abyss_zone,
+		player.god_zone,
+	]
+	zones.append_array(player.power_zones)
+	zones.append_array(player.frontline_zones)
+	zones.append_array(player.reserve_zones)
+	return zones

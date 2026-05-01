@@ -37,6 +37,41 @@ func get_hover_stored_cards(_viewer: Player = null) -> Array[Card]:
 func get_hover_stored_cards_title(_viewer: Player = null) -> String:
 	return "Sheltered Creatures"
 
+func get_serialized_state() -> Dictionary:
+	var state := super.get_serialized_state()
+	var sheltered_entries: Array[Dictionary] = []
+	for card in sheltered_cards:
+		if card == null:
+			continue
+		sheltered_entries.append({
+			"card": GameState.serialize_embedded_card(card),
+			"release_turn": int(_sheltered_release_turns.get(card.uid, -1)),
+			"destination": str(_sheltered_destinations.get(card.uid, "graveyard")),
+		})
+	state["sheltered_cards"] = sheltered_entries
+	return state
+
+func apply_serialized_state(state: Dictionary) -> void:
+	super.apply_serialized_state(state)
+	sheltered_cards.clear()
+	_sheltered_release_turns.clear()
+	_sheltered_destinations.clear()
+	for entry_value in state.get("sheltered_cards", []):
+		if not (entry_value is Dictionary):
+			continue
+		var entry := entry_value as Dictionary
+		var card_data = entry.get("card", {})
+		if not (card_data is Dictionary):
+			continue
+		var sheltered_card := GameState.deserialize_embedded_card(card_data as Dictionary)
+		if sheltered_card == null:
+			continue
+		sheltered_card.card_owner = card_owner
+		sheltered_card.current_zone = null
+		sheltered_cards.append(sheltered_card)
+		_sheltered_release_turns[sheltered_card.uid] = int(entry.get("release_turn", -1))
+		_sheltered_destinations[sheltered_card.uid] = str(entry.get("destination", "graveyard"))
+
 func get_sheltered_cards_for_passive_effects() -> Array[Card]:
 	if not is_effectively_active():
 		return []
