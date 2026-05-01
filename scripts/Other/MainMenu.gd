@@ -1598,6 +1598,11 @@ func _apply_update_and_restart(zip_path: String) -> void:
 		_clear_update_staging_root(staging_root)
 		_on_auto_update_failed("Failed to extract the downloaded update.")
 		return
+	extracted_files = _flatten_staged_update_archive(staging_root, extracted_files)
+	if extracted_files.is_empty():
+		_clear_update_staging_root(staging_root)
+		_on_auto_update_failed("The downloaded update archive had an unexpected layout.")
+		return
 
 	var exe_dir := current_exe.get_base_dir()
 	var current_exe_name := current_exe.get_file()
@@ -1746,6 +1751,47 @@ func _align_staged_windows_build_names(
 		break
 
 	return true
+
+func _flatten_staged_update_archive(staging_root: String, extracted_files: Array[String]) -> Array[String]:
+	if extracted_files.is_empty():
+		return extracted_files
+	var top_level_dirs := {}
+	for relative_path in extracted_files:
+		var normalized_path := relative_path.replace("\\", "/").strip_edges()
+		if normalized_path.is_empty():
+			continue
+		var slash_index := normalized_path.find("/")
+		if slash_index <= 0:
+			return extracted_files
+		top_level_dirs[normalized_path.substr(0, slash_index)] = true
+	if top_level_dirs.size() != 1:
+		return extracted_files
+	var top_level_dir := String(top_level_dirs.keys()[0])
+	if top_level_dir.is_empty():
+		return extracted_files
+
+	var flattened_files: Array[String] = []
+	for relative_path in extracted_files:
+		var normalized_path := relative_path.replace("\\", "/")
+		var prefix := "%s/" % top_level_dir
+		if not normalized_path.begins_with(prefix):
+			return []
+		var flattened_relative := normalized_path.trim_prefix(prefix)
+		if flattened_relative.is_empty():
+			continue
+		var source_path := staging_root.path_join(normalized_path)
+		var destination_path := staging_root.path_join(flattened_relative)
+		if DirAccess.make_dir_recursive_absolute(destination_path.get_base_dir()) != OK:
+			return []
+		if DirAccess.rename_absolute(source_path, destination_path) != OK:
+			return []
+		flattened_files.append(flattened_relative)
+
+	var wrapped_root_path := staging_root.path_join(top_level_dir)
+	if DirAccess.dir_exists_absolute(wrapped_root_path):
+		if not _clear_update_staging_root(wrapped_root_path):
+			return []
+	return flattened_files
 
 func _clear_update_staging_root(path: String) -> bool:
 	if path.is_empty() or not DirAccess.dir_exists_absolute(path):

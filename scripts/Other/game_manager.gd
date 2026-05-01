@@ -620,6 +620,11 @@ func can_card_respond_to_priority(card: Card, player: Player = null) -> bool:
 			return false
 		if not can_pay_prepared_card_activation_cost(card, responding_player):
 			return false
+		var hex_speed := card.get_effective_speed()
+		if hex_speed < 2:
+			return false
+		if top_speed > 0 and hex_speed < top_speed:
+			return false
 		var typed_hex := card as HexCard
 		if typed_hex.has_method("can_respond_after_upkeep") and not typed_hex.can_respond_after_upkeep(self):
 			return false

@@ -17,14 +17,17 @@ const TEZ_TONAL_MASTERY_TEXTURE_PATHS := [
 const TEZ_NORMAL_GOD_NAME := "Tezcatlipoca, the Smoking Mirror"
 const TEZ_REQUIRED_SACRIFICES := 4
 const TEZ_TONAL_MASTERY_TOKEN_THRESHOLD := 3
+const LEVEL_BADGE_BOTTOM := 24.0
+const BADGE_ROW_GAP := 6.0
+const BADGE_ROW_TOP := LEVEL_BADGE_BOTTOM + BADGE_ROW_GAP
 const TEZ_BADGE_LEFT := -62
 const TEZ_BADGE_RIGHT := -4
-const TEZ_PRIMARY_BADGE_TOP := 38
-const TEZ_PRIMARY_BADGE_BOTTOM := 96
+const TEZ_PRIMARY_BADGE_TOP := BADGE_ROW_TOP
+const TEZ_PRIMARY_BADGE_BOTTOM := TEZ_PRIMARY_BADGE_TOP + 58.0
 const TEZ_SECONDARY_BADGE_LEFT := -63
 const TEZ_SECONDARY_BADGE_RIGHT := -3
-const TEZ_SECONDARY_BADGE_TOP := 102
-const TEZ_SECONDARY_BADGE_BOTTOM := 162
+const TEZ_SECONDARY_BADGE_TOP := TEZ_PRIMARY_BADGE_BOTTOM + BADGE_ROW_GAP
+const TEZ_SECONDARY_BADGE_BOTTOM := TEZ_SECONDARY_BADGE_TOP + 60.0
 const BASE_BOARD_Z_INDEX := 0
 const RAISED_BOARD_Z_INDEX := 2
 const GOD_INDICATOR_Z_INDEX := 3
@@ -32,6 +35,9 @@ const GOD_INDICATOR_Z_INDEX := 3
 # transient previews and modal UI promoted by CombatMockGame.
 const HOVER_BOARD_Z_INDEX := 2260
 const POPUP_Z_INDEX := 2290
+
+func _get_badge_row_top() -> float:
+	return BADGE_ROW_TOP
 
 class StackTargetIndicator extends Control:
 	func _ready() -> void:
@@ -352,8 +358,9 @@ const EQUIPMENT_AFFORDANCE_TOP := 28.0
 const DEBUFF_AFFORDANCE_GAP := 4.0
 const DEBUFF_BADGE_SIZE := 22.0
 const FOLLOWERS_ATTACK_RESULT_SECONDS := 0.66
-const POWER_LOCK_TEXTURE := preload("res://images/Norse Power Lock.png")
+const POWER_LOCK_TEXTURE := preload("res://images/Default Power Lock.png")
 const ANCIENT_POWER_LOCK_TEXTURE := preload("res://images/Ancient Power Lock.png")
+const NORSE_POWER_LOCK_TEXTURE := preload("res://images/Norse Power Lock.png")
 const TIAMAT_GOD_SCRIPT := preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
 const KEYWORD_PANEL_GAP := 8.0
 static var _zone_extent: float = BASE_ZONE_EXTENT
@@ -596,9 +603,9 @@ func _add_prepared_magical_mana_badge(overlay: Control, card: Card) -> void:
 		"M:%d" % display_cost,
 		Control.PRESET_TOP_RIGHT,
 		-66,
-		6,
+		_get_badge_row_top(),
 		-6,
-		28,
+		_get_badge_row_top() + 22.0,
 		font_color
 	)
 	var tooltip_lines := _get_prepared_magical_hover_cost_lines(card)
@@ -838,9 +845,9 @@ func _add_champions_call_badge(overlay: Control, card: Card, is_ready: bool) -> 
 	badge.z_index = 30
 	badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
 	badge.offset_left = -46
-	badge.offset_top = 30
+	badge.offset_top = _get_badge_row_top()
 	badge.offset_right = -6
-	badge.offset_bottom = 70
+	badge.offset_bottom = _get_badge_row_top() + 40.0
 
 	var badge_style := StyleBoxFlat.new()
 	badge_style.bg_color = Color(0.09, 0.045, 0.015, 0.82)
@@ -1358,7 +1365,7 @@ func _add_equipment_affordances(overlay: Control, card: Card) -> void:
 	if card.equipment.is_empty():
 		return
 
-	var badge_top := 32.0 if card.is_sleeping else EQUIPMENT_AFFORDANCE_TOP
+	var badge_top := 32.0 if card.is_sleeping else _get_badge_row_top()
 	var badge_left := 6.0
 	for equip in card.equipment:
 		if equip == null:
@@ -1450,7 +1457,7 @@ func _add_binding_affordances(overlay: Control, card: Card) -> void:
 	var dromi_source := _get_dromi_binding_source(card)
 	if dromi_source == null:
 		return
-	var badge_top := 32.0 if card.is_sleeping else 6.0
+	var badge_top := 32.0 if card.is_sleeping else _get_badge_row_top()
 	if not card.equipment.is_empty():
 		badge_top = EQUIPMENT_AFFORDANCE_TOP + EquipmentCard.EQUIPPED_AFFORDANCE_SIZE.y + EQUIPMENT_AFFORDANCE_GAP
 	var art_preview: Control = null
@@ -1474,7 +1481,7 @@ func _add_debuff_affordances(overlay: Control, card: Card) -> void:
 	if entries.is_empty():
 		return
 
-	var badge_top := 32.0 if _is_card_targeted_on_stack(card) else 6.0
+	var badge_top := 32.0 if _is_card_targeted_on_stack(card) else _get_badge_row_top()
 	var badge_right := -6.0
 	for entry in entries:
 		var preview := _make_debuff_source_preview(entry)
@@ -1532,7 +1539,7 @@ func _add_boon_affordances(overlay: Control, card: Card) -> void:
 	if entries.is_empty():
 		return
 
-	var badge_top := 32.0 if card.is_sleeping else 6.0
+	var badge_top := 32.0 if card.is_sleeping else _get_badge_row_top()
 	if not card.equipment.is_empty():
 		badge_top = EQUIPMENT_AFFORDANCE_TOP + EquipmentCard.EQUIPPED_AFFORDANCE_SIZE.y + EQUIPMENT_AFFORDANCE_GAP
 	var badge_left := 6.0
@@ -1691,6 +1698,8 @@ func _get_power_lock_texture(card: Card) -> Texture2D:
 	if card != null:
 		if str(card.culture).strip_edges() == "Ancient" or card.has_type("Ancient Power"):
 			return ANCIENT_POWER_LOCK_TEXTURE
+		if str(card.culture).strip_edges() == "Norse":
+			return NORSE_POWER_LOCK_TEXTURE
 	return POWER_LOCK_TEXTURE
 
 func _add_power_lock_texture_overlay(overlay: Control, card: Card = null) -> void:
@@ -2628,8 +2637,8 @@ func _refresh_display() -> void:
 					counter_badge.grow_vertical = Control.GROW_DIRECTION_END
 					counter_badge.offset_left = -6
 					counter_badge.offset_right = -4
-					counter_badge.offset_top = 4
-					counter_badge.offset_bottom = 26
+					counter_badge.offset_top = _get_badge_row_top()
+					counter_badge.offset_bottom = _get_badge_row_top() + 22.0
 					var counter_style := StyleBoxFlat.new()
 					counter_style.bg_color = Color(0.55, 0.38, 0.04, 0.92)
 					counter_style.border_color = Color(1.0, 0.88, 0.35, 0.95)

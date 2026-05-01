@@ -64,8 +64,9 @@ var _power_lock_overlay: TextureRect = null
 var _defense_shield_overlay: Control = null
 var _level_label: Label = null
 var _stats_label: Label = null
-const _DEFAULT_POWER_LOCK_TEXTURE := preload("res://images/Norse Power Lock.png")
+const _DEFAULT_POWER_LOCK_TEXTURE := preload("res://images/Default Power Lock.png")
 const _ANCIENT_POWER_LOCK_TEXTURE := preload("res://images/Ancient Power Lock.png")
+const _NORSE_POWER_LOCK_TEXTURE := preload("res://images/Norse Power Lock.png")
 
 func setup(
 	p_card: Card,
@@ -141,6 +142,8 @@ func _get_power_lock_texture() -> Texture2D:
 	if card_data != null and card_data.card_type == Card.CardType.POWER:
 		if str(card_data.culture).strip_edges() == "Ancient" or card_data.has_type("Ancient Power"):
 			return _ANCIENT_POWER_LOCK_TEXTURE
+		if str(card_data.culture).strip_edges() == "Norse":
+			return _NORSE_POWER_LOCK_TEXTURE
 	return _DEFAULT_POWER_LOCK_TEXTURE
 
 func _build_art_node() -> TextureRect:
