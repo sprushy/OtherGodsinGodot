@@ -498,8 +498,24 @@ func get_card_by_uid(uid: String) -> Card:
 		for zones in [p.frontline_zones, p.reserve_zones, p.power_zones]:
 			for zone in zones:
 				for c in zone.cards:
-					if c.get("uid") == uid: return c
+					var found_card := _find_card_by_uid_recursive(c, uid)
+					if found_card != null:
+						return found_card
 					
+	return null
+
+func _find_card_by_uid_recursive(card: Card, uid: String) -> Card:
+	if card == null:
+		return null
+	if card.get("uid") == uid:
+		return card
+	for nested_value in card.get_hover_stored_cards():
+		var nested_card := nested_value as Card
+		if nested_card == null:
+			continue
+		var found_card := _find_card_by_uid_recursive(nested_card, uid)
+		if found_card != null:
+			return found_card
 	return null
 
 func can_cards_engage_each_other(attacker: Card, defender: Card) -> bool:

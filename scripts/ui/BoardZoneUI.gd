@@ -19,12 +19,12 @@ const TEZ_REQUIRED_SACRIFICES := 4
 const TEZ_TONAL_MASTERY_TOKEN_THRESHOLD := 3
 const TEZ_BADGE_LEFT := -62
 const TEZ_BADGE_RIGHT := -4
-const TEZ_PRIMARY_BADGE_TOP := 24
-const TEZ_PRIMARY_BADGE_BOTTOM := 82
-const TEZ_SECONDARY_BADGE_LEFT := -64
-const TEZ_SECONDARY_BADGE_RIGHT := -2
-const TEZ_SECONDARY_BADGE_TOP := 88
-const TEZ_SECONDARY_BADGE_BOTTOM := 150
+const TEZ_PRIMARY_BADGE_TOP := 38
+const TEZ_PRIMARY_BADGE_BOTTOM := 96
+const TEZ_SECONDARY_BADGE_LEFT := -63
+const TEZ_SECONDARY_BADGE_RIGHT := -3
+const TEZ_SECONDARY_BADGE_TOP := 102
+const TEZ_SECONDARY_BADGE_BOTTOM := 162
 const BASE_BOARD_Z_INDEX := 0
 const RAISED_BOARD_Z_INDEX := 2
 const GOD_INDICATOR_Z_INDEX := 3
@@ -346,6 +346,7 @@ var _tez_tonal_mastery_texture_cache: Dictionary = {}
 const BASE_ZONE_EXTENT := 165.0
 const DROMI_BINDING_NAME := "Dromi"
 const DROMI_BINDING_HOVER_TEXT := "Cannot attack. Losing 7 followers on opponent's turn start - Dromi"
+const THIRD_SAGE_GOOD_FORTUNE_STATUS := "third_sage_good_fortune"
 const EQUIPMENT_AFFORDANCE_GAP := 4.0
 const DEBUFF_AFFORDANCE_GAP := 4.0
 const DEBUFF_BADGE_SIZE := 22.0
@@ -961,10 +962,6 @@ func _add_tez_tonal_mastery_badge(overlay: Control, card: Card) -> void:
 	badge.offset_right = TEZ_SECONDARY_BADGE_RIGHT
 	badge.offset_bottom = TEZ_SECONDARY_BADGE_BOTTOM
 
-	if token_count > 0:
-		var glow_alpha := 0.26 + (0.12 * float(token_count))
-		_add_badge_image_glow(badge, texture, Color(0.08, 0.7, 1.0, glow_alpha), 5.0)
-
 	var icon := TextureRect.new()
 	icon.texture = texture
 	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
@@ -1526,6 +1523,104 @@ func _add_debuff_affordances(overlay: Control, card: Card) -> void:
 			badge.add_child(count_label)
 
 		badge_right -= DEBUFF_BADGE_SIZE + DEBUFF_AFFORDANCE_GAP
+
+func _add_boon_affordances(overlay: Control, card: Card) -> void:
+	if overlay == null or card == null or card.card_type != Card.CardType.CREATURE or card.is_god:
+		return
+	var entries := _get_boon_affordance_entries(card)
+	if entries.is_empty():
+		return
+
+	var badge_top := 32.0 if card.is_sleeping else 6.0
+	if not card.equipment.is_empty():
+		badge_top += EquipmentCard.EQUIPPED_AFFORDANCE_SIZE.y + EQUIPMENT_AFFORDANCE_GAP
+	var badge_left := 6.0
+	for entry in entries:
+		var preview := _make_debuff_source_preview(entry)
+		if preview == null:
+			var label := Label.new()
+			label.text = str(entry.get("label", "?"))
+			label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+			label.add_theme_font_size_override("font_size", 9)
+			label.add_theme_color_override("font_color", Color(0.95, 1.0, 0.82))
+			label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+			preview = label
+
+		var badge := PanelContainer.new()
+		badge.mouse_filter = Control.MOUSE_FILTER_STOP
+		badge.tooltip_text = str(entry.get("tooltip", "Good Fortune"))
+		badge.set_anchors_preset(Control.PRESET_TOP_LEFT)
+		badge.offset_left = badge_left
+		badge.offset_top = badge_top
+		badge.offset_right = badge_left + DEBUFF_BADGE_SIZE
+		badge.offset_bottom = badge_top + DEBUFF_BADGE_SIZE
+
+		var badge_style := StyleBoxFlat.new()
+		badge_style.bg_color = Color(0.04, 0.18, 0.13, 0.95)
+		badge_style.border_color = Color(0.55, 1.0, 0.76, 0.98)
+		badge_style.shadow_color = Color(0.0, 0.16, 0.08, 0.52)
+		badge_style.shadow_size = 4
+		badge_style.corner_radius_top_left = 11
+		badge_style.corner_radius_top_right = 11
+		badge_style.corner_radius_bottom_left = 11
+		badge_style.corner_radius_bottom_right = 11
+		for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+			badge_style.set_border_width(side, 1)
+		badge.add_theme_stylebox_override("panel", badge_style)
+		overlay.add_child(badge)
+		badge.add_child(preview)
+
+		badge_left += DEBUFF_BADGE_SIZE + DEBUFF_AFFORDANCE_GAP
+
+func _get_boon_affordance_entries(card: Card) -> Array[Dictionary]:
+	var entries: Array[Dictionary] = []
+	if card == null:
+		return entries
+	var seen: Dictionary = {}
+	for status in card.active_statuses:
+		if str(status.get("name", "")) != THIRD_SAGE_GOOD_FORTUNE_STATUS:
+			continue
+		var source_key := _get_debuff_source_key(status)
+		var key := "good_fortune:%s" % source_key
+		var ward_kind := str(status.get("ward_kind", "")).strip_edges()
+		if seen.has(key):
+			var index := int(seen[key])
+			var merged := entries[index]
+			var ward_kinds: Array = merged.get("ward_kinds", [])
+			if ward_kind != "" and ward_kind not in ward_kinds:
+				ward_kinds.append(ward_kind)
+			merged["ward_kinds"] = ward_kinds
+			merged["tooltip"] = _get_good_fortune_tooltip(status, ward_kinds)
+			entries[index] = merged
+			continue
+
+		var initial_ward_kinds: Array = []
+		if ward_kind != "":
+			initial_ward_kinds.append(ward_kind)
+		var entry := {
+			"key": key,
+			"source_card": status.get("source_card", null),
+			"source": status.get("source", "Good Fortune"),
+			"label": "GF",
+			"ward_kinds": initial_ward_kinds,
+			"tooltip": _get_good_fortune_tooltip(status, initial_ward_kinds),
+		}
+		seen[key] = entries.size()
+		entries.append(entry)
+	return entries
+
+func _get_good_fortune_tooltip(status: Dictionary, ward_kinds: Array) -> String:
+	var source := str(status.get("source", "Good Fortune"))
+	var readable_kinds: Array[String] = []
+	for ward_kind in ward_kinds:
+		var readable := str(ward_kind).replace("_", " ").capitalize()
+		if readable != "":
+			readable_kinds.append(readable)
+	if readable_kinds.is_empty():
+		return "Good Fortune from " + source
+	return "Good Fortune vs " + " and ".join(readable_kinds) + " from " + source
 
 func _get_debuff_affordance_entries(card: Card) -> Array[Dictionary]:
 	var entries: Array[Dictionary] = []
@@ -2665,6 +2760,7 @@ func _refresh_display() -> void:
 		_add_sleep_affordance(card_overlay, card)
 		if not card.is_stealth or card.get_controller() == board_viewer or card.is_temporarily_revealed():
 			_add_equipment_affordances(card_overlay, card)
+			_add_boon_affordances(card_overlay, card)
 			_add_debuff_affordances(card_overlay, card)
 
 		# VBox fills the zone; spacer pushes the stat label to the bottom

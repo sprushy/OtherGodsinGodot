@@ -40,6 +40,8 @@ func get_stored_priests() -> Array[Card]:
 	var copy: Array[Card] = []
 	for priest in stored_priests:
 		if priest != null:
+			if priest.card_owner == null:
+				priest.card_owner = card_owner
 			copy.append(priest)
 	return copy
 
@@ -48,6 +50,40 @@ func get_hover_stored_cards(_viewer: Player = null) -> Array[Card]:
 
 func get_hover_stored_cards_title(_viewer: Player = null) -> String:
 	return "Harbored Priests"
+
+func get_serialized_state() -> Dictionary:
+	var state := super.get_serialized_state()
+	var stored_entries: Array[Dictionary] = []
+	for priest in stored_priests:
+		if priest == null:
+			continue
+		stored_entries.append({
+			"card": GameState.serialize_embedded_card(priest),
+			"origin": stored_priest_origins.get(priest, {}).duplicate(true),
+		})
+	state["stored_priests"] = stored_entries
+	state["return_window_open"] = return_window_open
+	return state
+
+func apply_serialized_state(state: Dictionary) -> void:
+	super.apply_serialized_state(state)
+	stored_priests.clear()
+	stored_priest_origins.clear()
+	return_window_open = bool(state.get("return_window_open", false))
+	for entry_value in state.get("stored_priests", []):
+		if not (entry_value is Dictionary):
+			continue
+		var entry := entry_value as Dictionary
+		var priest_data = entry.get("card", {})
+		if not (priest_data is Dictionary):
+			continue
+		var priest := GameState.deserialize_embedded_card(priest_data as Dictionary)
+		if priest == null:
+			continue
+		priest.card_owner = card_owner
+		priest.current_zone = null
+		stored_priests.append(priest)
+		stored_priest_origins[priest] = (entry.get("origin", {}) as Dictionary).duplicate(true)
 
 func can_return_priest(game_manager: GameManager) -> bool:
 	return return_window_open \

@@ -6,6 +6,7 @@ func _init() -> void:
 	card_name = "Tonal Spirit"
 	card_types = ["Token", "Spirit"]
 	is_token = true
+	can_be_used_for_creature_sacrifice = false
 	level = 1
 	mana_cost = 0
 	sacrifice_cost = 0

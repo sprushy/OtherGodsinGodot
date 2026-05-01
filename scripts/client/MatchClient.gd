@@ -148,6 +148,8 @@ func _on_match_join_denied(reason: String) -> void:
 func _on_server_disconnected() -> void:
 	_cancel_connect_attempt_timeout()
 	_match_join_requested = false
+	if _is_reconnecting:
+		return
 	if _try_reconnect():
 		return
 	server_disconnected.emit()
@@ -286,4 +288,19 @@ func _on_game_event_received(event_type: String, data: Dictionary) -> void:
 	game_event_received.emit(event_type, data)
 
 func _on_peer_disconnected(peer_id: int) -> void:
+	if _is_networked_client and requires_match_auth():
+		_match_join_requested = false
+		if _is_reconnecting:
+			return
+		if _has_authenticated_match and _try_reconnect():
+			return
+		if _has_authenticated_match:
+			server_disconnected.emit()
+			game_event_received.emit("server_disconnected", {})
+			return
+		_handle_connection_failure(
+			"Disconnected from the match server before authentication completed.",
+			"Reconnect attempt failed."
+		)
+		return
 	peer_disconnected.emit(peer_id)

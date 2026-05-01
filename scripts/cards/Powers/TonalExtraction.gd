@@ -20,7 +20,7 @@ func _init() -> void:
 	if "Targeting" not in card_types:
 		card_types.append("Targeting")
 	targets = true
-	ability_text = "[b]Unlock[/b] (5): Choose a friendly [b]Shapeshifter[/b]. It loses shapeshift. Summon a [b]Spirit[/b] token with its alternate form's stats and classes. When that Spirit leaves the field, [b]Relock[/b] this card."
+	ability_text = "[b]Unlock[/b] (5): Choose a friendly [b]Shapeshifter[/b]. It loses shapeshift. Summon a [b]Spirit[/b] token with its alternate form's stats and classes. That Spirit cannot be sacrificed. When that Spirit leaves the field, [b]Relock[/b] this card."
 	artist = "Trent Nguyen"
 	art_path = ART_PATH
 

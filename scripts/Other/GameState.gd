@@ -82,6 +82,11 @@ static func _serialize_zone_cards(zone: Zone, viewer: Player = null, hide_hand: 
 		result.append(_serialize_card(card, hidden_mode))
 	return result
 
+static func serialize_embedded_card(card: Card) -> Dictionary:
+	if card == null:
+		return {}
+	return _serialize_card(card, HIDDEN_MODE_NONE)
+
 static func _serialize_card(card: Card, hidden_mode: int = HIDDEN_MODE_NONE) -> Dictionary:
 	var uid: String = card.get("uid") if "uid" in card else ""
 	if hidden_mode == HIDDEN_MODE_HAND:
@@ -467,9 +472,19 @@ static func _build_card_uid_map(gm: GameManager) -> Dictionary:
 			if zone == null:
 				continue
 			for card in zone.cards:
-				if card != null and "uid" in card and card.uid != "":
-					uid_map[card.uid] = card
+				_collect_card_uid_map_entry(card, uid_map)
 	return uid_map
+
+static func _collect_card_uid_map_entry(card: Card, uid_map: Dictionary) -> void:
+	if card == null:
+		return
+	if "uid" in card and card.uid != "":
+		uid_map[card.uid] = card
+	for nested_value in card.get_hover_stored_cards():
+		var nested_card := nested_value as Card
+		if nested_card == null:
+			continue
+		_collect_card_uid_map_entry(nested_card, uid_map)
 
 static func _get_player_card_zones(player: Player) -> Array:
 	var zones: Array = [
@@ -569,6 +584,11 @@ static func _deserialize_card(cdata: Dictionary) -> Card:
 	card.apply_serialized_state(cdata.get("serialized_state", {}))
 
 	return card
+
+static func deserialize_embedded_card(cdata: Dictionary) -> Card:
+	if cdata.is_empty():
+		return null
+	return _deserialize_card(cdata)
 
 static func _restore_prepared_cards(entries: Array, target_map: Dictionary, gm: GameManager) -> void:
 	for entry in entries:
