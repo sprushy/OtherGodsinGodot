@@ -2536,7 +2536,10 @@ func _process_command_impl(command: Dictionary) -> bool:
 				if not returned:
 					move_failed.emit(power_card.card_name + " could not return that priest.")
 					return false
-				game_manager.note_player_feedback("%s returned %s." % [power_card.card_name, act_target.card_name if act_target != null else "that Priest"])
+				command["public_log_message"] = "%s returned %s." % [
+					power_card.card_name,
+					act_target.card_name if act_target != null else "that Priest"
+				]
 			else:
 				if not power_card.can_activate(game_manager):
 					move_failed.emit(power_card.card_name + " cannot activate right now.")

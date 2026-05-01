@@ -450,6 +450,10 @@ var _awaiting_initial_full_state: bool = false
 var _current_match_info: Dictionary = {}
 var _network_upkeep_prompt_turn: int = -1
 var _network_upkeep_prompt_player_index: int = -1
+var _network_breidablik_return_pending: bool = false
+var _network_breidablik_return_power_uid: String = ""
+var _network_breidablik_return_priest_uid: String = ""
+var _network_breidablik_return_priest_index: int = -1
 var _local_match_result_recorded: bool = false
 var _priority_prompt_idle_deadline_msec: int = 0
 var _priority_prompt_timeout_pending: bool = false
@@ -554,6 +558,8 @@ func _is_turn_choice_pending() -> bool:
 	return choice_container.visible
 
 func _can_activate_before_turn_choice(card: Card) -> bool:
+	if _is_network_breidablik_return_pending():
+		return false
 	if card == null:
 		return false
 	if card.get_controller() != game_manager.current_player:
@@ -563,6 +569,9 @@ func _can_activate_before_turn_choice(card: Card) -> bool:
 	return false
 
 func _reject_pre_turn_action() -> void:
+	if _is_network_breidablik_return_pending():
+		_reject_pending_network_breidablik_return_choice()
+		return
 	_set_action_label_text("Finish resolving upkeep before taking other actions.")
 
 func _has_active_modal_prompt() -> bool:
@@ -3086,6 +3095,60 @@ func _refresh_turn_choice_options() -> void:
 		_matriarch_rule_button.text = "Matriarch Rule"
 		_matriarch_rule_button.visible = not available_tiamat_cards.is_empty()
 		_matriarch_rule_button.disabled = available_tiamat_cards.is_empty()
+	if _is_network_breidablik_return_pending():
+		_set_turn_choice_controls_disabled(true)
+
+func _set_turn_choice_controls_disabled(disabled: bool) -> void:
+	if draw_button != null:
+		draw_button.disabled = disabled
+	if mana_button != null:
+		mana_button.disabled = disabled
+	if _sun_hunt_button != null and _sun_hunt_button.visible:
+		_sun_hunt_button.disabled = disabled
+	if _matriarch_rule_button != null and _matriarch_rule_button.visible:
+		_matriarch_rule_button.disabled = disabled
+
+func _is_network_breidablik_return_pending() -> bool:
+	return _is_networked_client and _network_breidablik_return_pending
+
+func _begin_network_breidablik_return_pending(power: Breidablik, priest: Card) -> void:
+	if not _is_networked_client:
+		return
+	_network_breidablik_return_pending = true
+	_network_breidablik_return_power_uid = power.uid if power != null else ""
+	_network_breidablik_return_priest_uid = priest.uid if priest != null else ""
+	_network_breidablik_return_priest_index = power.get_stored_priest_index(priest) if power != null and priest != null else -1
+	_set_turn_choice_controls_disabled(true)
+
+func _clear_network_breidablik_return_pending(refresh_options: bool = true) -> void:
+	var was_pending := _network_breidablik_return_pending
+	_network_breidablik_return_pending = false
+	_network_breidablik_return_power_uid = ""
+	_network_breidablik_return_priest_uid = ""
+	_network_breidablik_return_priest_index = -1
+	if refresh_options and was_pending and choice_container != null and choice_container.visible:
+		_refresh_turn_choice_options()
+
+func _sync_network_breidablik_return_pending_from_state() -> void:
+	if not _is_network_breidablik_return_pending():
+		return
+	if game_manager == null or game_manager.has_resolved_turn_upkeep():
+		_clear_network_breidablik_return_pending(false)
+		return
+	var power := game_manager.get_card_by_uid(_network_breidablik_return_power_uid) as Breidablik
+	if power == null or not power.can_return_priest(game_manager):
+		_clear_network_breidablik_return_pending(false)
+		return
+	var priest := power.get_stored_priest_by_uid_or_index(
+		_network_breidablik_return_priest_uid,
+		_network_breidablik_return_priest_index
+	)
+	if priest == null:
+		_clear_network_breidablik_return_pending(false)
+
+func _reject_pending_network_breidablik_return_choice() -> void:
+	_set_action_label_text("Finish resolving Breidablik before choosing your upkeep option.")
+	update_ui()
 
 func _lock_turn_choice_for_sun_hunt() -> void:
 	choice_intro_label.text = "Choose one:"
@@ -5376,6 +5439,7 @@ func _handle_breidablik_return_choice(power: Breidablik, selected_priest: Card) 
 			stored_priest_index = power.get_stored_priest_index(selected_priest),
 		}
 		if game_input.submit_action(command) and game_manager.is_player_in_upkeep_window(game_manager.current_player):
+			_begin_network_breidablik_return_pending(power, selected_priest)
 			_set_action_label_text(power.card_name + " is returning " + selected_priest.card_name + ".")
 			update_ui()
 		return
@@ -6172,6 +6236,9 @@ func _hide_skoll_prompt() -> void:
 func _on_sun_hunt_button_pressed() -> void:
 	if _game_finished:
 		return
+	if _is_network_breidablik_return_pending():
+		_reject_pending_network_breidablik_return_choice()
+		return
 	if game_manager == null or not game_manager.is_player_in_upkeep_window(game_manager.current_player):
 		_set_action_label_text("Upkeep has already been resolved.")
 		update_ui()
@@ -6196,6 +6263,9 @@ func _on_sun_hunt_button_pressed() -> void:
 func _submit_tiamat_upkeep_choice(chosen_card: Card) -> void:
 	if chosen_card == null:
 		return
+	if _is_network_breidablik_return_pending():
+		_reject_pending_network_breidablik_return_choice()
+		return
 	game_input.submit_action({type = "tiamat_upkeep_choice", card_uid = chosen_card.uid})
 	_close_turn_start_windows()
 	update_ui()
@@ -6216,6 +6286,9 @@ func _try_submit_tiamat_upkeep_card_from_board(card: Card) -> bool:
 
 func _on_matriarch_rule_button_pressed() -> void:
 	if _game_finished:
+		return
+	if _is_network_breidablik_return_pending():
+		_reject_pending_network_breidablik_return_choice()
 		return
 	if _skoll_prompt_panel != null or _pending_skoll_summon != null:
 		_set_action_label_text("Finish resolving Sun Hunt or cancel it before choosing another upkeep option.")
@@ -19009,7 +19082,10 @@ func _on_match_move_validated(move: Dictionary) -> void:
 					_offer_priority()
 		"activate_power", "activate_divine_caprice":
 			if move_type == "activate_power" and str(move.get("mode", "")) == "return_priest":
-				var feedback := _consume_resolution_feedback()
+				_clear_network_breidablik_return_pending(false)
+				var feedback := str(move.get("public_log_message", "")).strip_edges()
+				if feedback == "":
+					feedback = _consume_resolution_feedback()
 				if feedback.strip_edges() == "":
 					feedback = "Breidablik returned a priest."
 				_set_action_label_text(feedback + " Choose your upkeep option.")
@@ -19576,6 +19652,9 @@ func _is_attacker_on_board(attacker: Card, owning_player: Player) -> bool:
 func _on_draw_button_pressed() -> void:
 	if _game_finished:
 		return
+	if _is_network_breidablik_return_pending():
+		_reject_pending_network_breidablik_return_choice()
+		return
 	if game_manager == null or not game_manager.is_player_in_upkeep_window(game_manager.current_player):
 		_set_action_label_text("Upkeep has already been resolved.")
 		update_ui()
@@ -19591,6 +19670,9 @@ func _on_draw_button_pressed() -> void:
 
 func _on_mana_button_pressed() -> void:
 	if _game_finished:
+		return
+	if _is_network_breidablik_return_pending():
+		_reject_pending_network_breidablik_return_choice()
 		return
 	if game_manager == null or not game_manager.is_player_in_upkeep_window(game_manager.current_player):
 		_set_action_label_text("Upkeep has already been resolved.")
@@ -20199,6 +20281,7 @@ func _apply_network_event(event_type: String, data: Dictionary) -> void:
 				_pending_forfeit_return_to_menu = false
 				if not _game_finished:
 					forfeit_button.disabled = false
+			_clear_network_breidablik_return_pending()
 			_set_action_label_text(str(data.get("reason", "That move was rejected by the server.")))
 			update_ui()
 		"game_ended":
@@ -20605,6 +20688,7 @@ func _apply_full_state(data: Dictionary) -> void:
 		# Client: clear stale card refs and rebuild ghost game_manager from server state
 		_clear_network_selection_state()
 		GameState.apply_to_manager(state, game_manager)
+		_sync_network_breidablik_return_pending_from_state()
 		# Set feedback_viewer so client sees their own perspective
 		if network_manager != null and network_manager.local_player_index >= 0:
 			var local_idx: int = network_manager.local_player_index
