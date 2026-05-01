@@ -19,6 +19,8 @@ const GuanYuCursorSource = preload("res://images/ui/cursors/GuanYuCursor.png")
 const AncientPyreCursorSource = preload("res://images/ui/cursors/PyreCursor.png")
 const TezTitlacauanCursorSource = preload("res://images/ui/cursors/SlaveCollar Cursor.png")
 const AnointingStatueCursorSource = preload("res://scripts/Other/Annointing Statue Cursor.png")
+const BREIDABLIK_CURSOR_IMAGE_PATH := "res://images/ui/cursors/Bredilblik Cursor.png"
+const MEAD_CURSOR_IMAGE_PATH := "res://images/ui/cursors/Mead Cursor.png"
 const CardBackTexture = preload("res://images/cardbackAI.png")
 const PromptRouterScript = preload("res://scripts/server/PromptRouter.gd")
 const HeadlessMatchHostScript = preload("res://scripts/server/HeadlessMatchHost.gd")
@@ -414,6 +416,8 @@ var _guan_yu_cursor_texture: Texture2D = null
 var _ancient_pyre_cursor_texture: Texture2D = null
 var _tez_titlacauan_cursor_texture: Texture2D = null
 var _anointing_statue_cursor_texture: Texture2D = null
+var _breidablik_cursor_texture: Texture2D = null
+var _mead_cursor_texture: Texture2D = null
 var _active_selection_cursor_mode: String = ""
 var _active_selection_cursor_target_height: int = 0
 var _overlay_selection_cursor_mode: String = ""
@@ -427,6 +431,8 @@ var _guan_yu_cursor_target_height: int = 0
 var _ancient_pyre_cursor_target_height: int = 0
 var _tez_titlacauan_cursor_target_height: int = 0
 var _anointing_statue_cursor_target_height: int = 0
+var _breidablik_cursor_target_height: int = 0
+var _mead_cursor_target_height: int = 0
 var _devour_cancel_prompt: Control = null
 var _tez_titlacauan_cursor_overlay: Control = null
 var _tez_titlacauan_cursor_budget_label: Label = null
@@ -505,6 +511,10 @@ const TEZ_TITLACAUAN_CURSOR_TARGET_HEIGHT := 108
 const TEZ_TITLACAUAN_CURSOR_HOTSPOT_RATIO := Vector2(0.50, 0.57)
 const ANOINTING_STATUE_CURSOR_TARGET_HEIGHT := 96
 const ANOINTING_STATUE_CURSOR_HOTSPOT_RATIO := Vector2(0.50, 0.74)
+const BREIDABLIK_CURSOR_TARGET_HEIGHT := 108
+const BREIDABLIK_CURSOR_HOTSPOT_RATIO := Vector2(0.50, 0.50)
+const MEAD_CURSOR_TARGET_HEIGHT := 108
+const MEAD_CURSOR_HOTSPOT_RATIO := Vector2(0.05, 0.92)
 const SACRIFICE_CURSOR_SHAPES := [
 	Input.CURSOR_ARROW,
 	Input.CURSOR_POINTING_HAND,
@@ -1487,6 +1497,16 @@ func _is_sacrifice_cursor_mode_active() -> bool:
 func _is_devour_cursor_mode_active() -> bool:
 	return _has_pending_click_selection() and _get_pending_target_selection_name().contains("Devour")
 
+func _is_breidablik_cursor_mode_active() -> bool:
+	return _has_pending_click_selection() \
+		and _pending_click_selection_source is Breidablik \
+		and _get_pending_target_selection_name().contains("Harbor")
+
+func _is_mead_cursor_mode_active() -> bool:
+	return _has_pending_click_selection() \
+		and _pending_click_selection_source is BerserkerMead \
+		and _get_pending_target_selection_name().contains("Berserker Mead")
+
 func _is_silence_cursor_mode_active() -> bool:
 	if _has_pending_click_selection():
 		return _is_silence_or_mute_targeting_source(_pending_click_selection_source)
@@ -1656,6 +1676,10 @@ func _get_selection_cursor_mode() -> String:
 		return "sacrifice"
 	if _is_devour_cursor_mode_active():
 		return "devour"
+	if _is_breidablik_cursor_mode_active():
+		return "breidablik"
+	if _is_mead_cursor_mode_active():
+		return "mead"
 	if _is_tonal_extraction_cursor_mode_active():
 		return "tonal_extraction"
 	if _is_silence_cursor_mode_active():
@@ -1668,6 +1692,10 @@ func _get_cursor_mode_target_height(cursor_mode: String) -> int:
 			return UIArtScaler.get_board_cursor_target_height(SACRIFICE_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 		"devour":
 			return UIArtScaler.get_board_cursor_target_height(DEVOUR_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+		"breidablik":
+			return UIArtScaler.get_board_cursor_target_height(BREIDABLIK_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+		"mead":
+			return UIArtScaler.get_board_cursor_target_height(MEAD_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 		"tonal_extraction":
 			return UIArtScaler.get_board_cursor_target_height(TONAL_EXTRACTION_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 		"silence":
@@ -1710,6 +1738,40 @@ func _apply_devour_cursor() -> bool:
 	var hotspot := UIArtScaler.get_cursor_hotspot(_devour_cursor_texture, DEVOUR_CURSOR_HOTSPOT_RATIO)
 	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
 		Input.set_custom_mouse_cursor(_devour_cursor_texture, cursor_shape, hotspot)
+	return true
+
+func _apply_breidablik_cursor() -> bool:
+	var target_height := UIArtScaler.get_board_cursor_target_height(BREIDABLIK_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+	if _breidablik_cursor_texture == null or _breidablik_cursor_target_height != target_height:
+		var image := Image.load_from_file(ProjectSettings.globalize_path(BREIDABLIK_CURSOR_IMAGE_PATH))
+		if image == null or image.is_empty():
+			return false
+		var source_texture := ImageTexture.create_from_image(image)
+		_breidablik_cursor_texture = UIArtScaler.build_cursor_texture(source_texture, target_height)
+		_breidablik_cursor_target_height = target_height
+	if _breidablik_cursor_texture == null:
+		return false
+
+	var hotspot := UIArtScaler.get_cursor_hotspot(_breidablik_cursor_texture, BREIDABLIK_CURSOR_HOTSPOT_RATIO)
+	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
+		Input.set_custom_mouse_cursor(_breidablik_cursor_texture, cursor_shape, hotspot)
+	return true
+
+func _apply_mead_cursor() -> bool:
+	var target_height := UIArtScaler.get_board_cursor_target_height(MEAD_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+	if _mead_cursor_texture == null or _mead_cursor_target_height != target_height:
+		var image := Image.load_from_file(ProjectSettings.globalize_path(MEAD_CURSOR_IMAGE_PATH))
+		if image == null or image.is_empty():
+			return false
+		var source_texture := ImageTexture.create_from_image(image)
+		_mead_cursor_texture = UIArtScaler.build_cursor_texture(source_texture, target_height)
+		_mead_cursor_target_height = target_height
+	if _mead_cursor_texture == null:
+		return false
+
+	var hotspot := UIArtScaler.get_cursor_hotspot(_mead_cursor_texture, MEAD_CURSOR_HOTSPOT_RATIO)
+	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
+		Input.set_custom_mouse_cursor(_mead_cursor_texture, cursor_shape, hotspot)
 	return true
 
 func _apply_silence_cursor() -> bool:
@@ -1884,6 +1946,22 @@ func _sync_sacrifice_cursor() -> void:
 	if cursor_mode == "devour":
 		if _apply_devour_cursor():
 			_active_selection_cursor_mode = "devour"
+			_active_selection_cursor_target_height = target_height
+		else:
+			_restore_default_selection_cursor()
+		return
+
+	if cursor_mode == "breidablik":
+		if _apply_breidablik_cursor():
+			_active_selection_cursor_mode = "breidablik"
+			_active_selection_cursor_target_height = target_height
+		else:
+			_restore_default_selection_cursor()
+		return
+
+	if cursor_mode == "mead":
+		if _apply_mead_cursor():
+			_active_selection_cursor_mode = "mead"
 			_active_selection_cursor_target_height = target_height
 		else:
 			_restore_default_selection_cursor()
@@ -4944,7 +5022,11 @@ func _on_power_pressed(power: PowerCard) -> void:
 		_complete_power_unlock(power)
 	elif power.can_activate(game_manager):
 		if power is Breidablik:
-			_show_breidablik_prompt(power as Breidablik)
+			var breidablik := power as Breidablik
+			if breidablik.can_return_priest(game_manager):
+				_show_breidablik_prompt(breidablik)
+			else:
+				_begin_breidablik_harbor_selection(breidablik)
 		elif power is DivineCaprice:
 			_show_divine_caprice_prompt(power as DivineCaprice)
 		elif power is AllfathersSacrifice:
@@ -4981,20 +5063,7 @@ func _on_power_pressed(power: PowerCard) -> void:
 			)
 		elif power is BerserkerMead:
 			var mead := power as BerserkerMead
-			var on_choose_mead_target := func(chosen_card: Card) -> void:
-				var resolve_mead := func() -> void:
-					mead.activate(game_manager, chosen_card)
-				_queue_power_activation_action(
-					mead,
-					chosen_card,
-					_get_attack_card_label(mead, mead.card_name) + " is targeting " + _get_target_label(chosen_card, game_manager.get_feedback_viewer(), chosen_card.card_name) + ".",
-					resolve_mead
-				)
-			_show_card_selection_overlay(
-				"Choose a Norse Creature for Berserker Mead",
-				mead.get_valid_targets(game_manager),
-				on_choose_mead_target
-			)
+			_begin_berserker_mead_selection(mead)
 		elif power.has_method("get_valid_targets"):
 			var targets: Array = power.get_valid_targets(game_manager)
 			if targets.is_empty():
@@ -5039,19 +5108,76 @@ func _on_power_pressed(power: PowerCard) -> void:
 		else:
 			_set_action_label_text(power.card_name + " ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â cannot activate right now.")
 
+func _begin_breidablik_harbor_selection(power: Breidablik) -> void:
+	_hide_breidablik_prompt()
+	if power == null or game_manager == null:
+		update_ui()
+		return
+	var valid_targets := power.get_valid_field_priests(game_manager)
+	if valid_targets.is_empty():
+		_set_action_label_text(power.card_name + " has no valid Priest action right now.")
+		update_ui()
+		return
+	var validate_breidablik_target := func(clicked_card: Card) -> bool:
+		return clicked_card != null and clicked_card in power.get_valid_field_priests(game_manager)
+	var confirm_breidablik_target := func(clicked_card: Card) -> void:
+		_handle_breidablik_store_choice(power, clicked_card)
+	var cancel_breidablik_target := func() -> void:
+		_set_action_label_text("Cancelled " + power.card_name + ".")
+		update_ui()
+	_begin_pending_click_selection(
+		power.card_name + ": Harbor",
+		power,
+		validate_breidablik_target,
+		confirm_breidablik_target,
+		cancel_breidablik_target
+	)
+	_set_action_label_text(power.card_name + ": click a friendly Priest to harbor.")
+	update_ui()
+
+func _begin_berserker_mead_selection(power: BerserkerMead) -> void:
+	if power == null or game_manager == null:
+		update_ui()
+		return
+	var valid_targets := power.get_valid_targets(game_manager)
+	if valid_targets.is_empty():
+		_set_action_label_text(power.card_name + " has no valid Norse Creature right now.")
+		update_ui()
+		return
+	var validate_mead_target := func(clicked_card: Card) -> bool:
+		return clicked_card != null and clicked_card in power.get_valid_targets(game_manager)
+	var confirm_mead_target := func(clicked_card: Card) -> void:
+		var resolve_mead := func() -> void:
+			power.activate(game_manager, clicked_card)
+		_queue_power_activation_action(
+			power,
+			clicked_card,
+			_get_attack_card_label(power, power.card_name) + " is targeting " + _get_target_label(clicked_card, game_manager.get_feedback_viewer(), clicked_card.card_name) + ".",
+			resolve_mead
+		)
+	var cancel_mead_target := func() -> void:
+		_set_action_label_text("Cancelled " + power.card_name + ".")
+		update_ui()
+	_begin_pending_click_selection(
+		power.card_name + ": Choose a Norse Creature",
+		power,
+		validate_mead_target,
+		confirm_mead_target,
+		cancel_mead_target
+	)
+	_set_action_label_text(power.card_name + ": click a Norse Creature under level 5.")
+	update_ui()
+
 func _show_breidablik_prompt(power: Breidablik) -> void:
 	_hide_breidablik_prompt()
 	if power == null:
 		update_ui()
 		return
-	var can_store: bool = not power.get_valid_field_priests(game_manager).is_empty()
 	var can_return: bool = power.can_return_priest(game_manager)
-	if not can_store and not can_return:
+	if not can_return:
 		_set_action_label_text(power.card_name + " has no valid Priest action right now.")
 		update_ui()
 		return
-	var on_choose_stored_priest := func(selected_priest: Card) -> void:
-		_handle_breidablik_store_choice(power, selected_priest)
 	var on_choose_return_priest := func(selected_priest: Card) -> void:
 		_handle_breidablik_return_choice(power, selected_priest)
 
@@ -5076,22 +5202,9 @@ func _show_breidablik_prompt(power: Breidablik) -> void:
 	vbox.add_child(title)
 
 	var info := Label.new()
-	info.text = "Choose a Priest action."
+	info.text = "Choose a Priest to return."
 	info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	vbox.add_child(info)
-
-	if can_store:
-		var store_btn := Button.new()
-		store_btn.text = "Shelter Priest"
-		store_btn.pressed.connect(func() -> void:
-			_hide_breidablik_prompt()
-			_show_card_selection_overlay(
-				"Choose a Priest for Breidablik",
-				power.get_valid_field_priests(game_manager),
-				on_choose_stored_priest
-			)
-		)
-		vbox.add_child(store_btn)
 
 	if can_return:
 		var return_btn := Button.new()
@@ -6150,7 +6263,8 @@ func _show_card_selection_overlay(
 	on_selected: Callable,
 	on_cancel: Callable = Callable(),
 	cursor_mode: String = "",
-	cancel_button_text: String = ""
+	cancel_button_text: String = "",
+	reveal_hidden_cards: bool = false
 ) -> void:
 	if cards.is_empty():
 		_set_action_label_text(title_text + ": no valid cards.")
@@ -6221,7 +6335,7 @@ func _show_card_selection_overlay(
 		card_vbox.add_theme_constant_override("separation", 2)
 		wrapper.add_child(card_vbox)
 
-		card_vbox.add_child(_build_selection_overlay_card_preview(card))
+		card_vbox.add_child(_build_selection_overlay_card_preview(card, reveal_hidden_cards))
 
 		var zone_label_text := _get_card_zone_label(card)
 		if zone_label_text != "":
@@ -6265,8 +6379,8 @@ func _on_card_selection_overlay_card_gui_input(event: InputEvent, selected_card:
 		if callback.is_valid():
 			callback.call(selected_card)
 
-func _build_selection_overlay_card_preview(card: Card) -> Control:
-	if _should_hide_card_in_selection_overlay(card):
+func _build_selection_overlay_card_preview(card: Card, reveal_hidden_card: bool = false) -> Control:
+	if not reveal_hidden_card and _should_hide_card_in_selection_overlay(card):
 		return _make_hidden_selection_preview(card)
 	var vc := VisualCard.new()
 	vc.setup(card)
@@ -16788,7 +16902,10 @@ func _show_hildskjalf_prompt(card: HildskjalfThroneOfOdin) -> void:
 		"Choose a card to prime for " + card.card_name,
 		targets,
 		on_choose_target,
-		on_cancel_target
+		on_cancel_target,
+		"",
+		"",
+		true
 	)
 	_set_action_label_text("%s: choose one of the top cards from either deck to prime." % card.card_name)
 	update_ui()

@@ -3171,7 +3171,10 @@ func _process_command_impl(command: Dictionary) -> bool:
 			var valid_targets := card.get_valid_targets(game_manager)
 			var target_uid: String = command.get("target_uid", "")
 			if target_uid == "":
-				game_manager.note_player_feedback(card.resolve_stormcloud_cancel(game_manager))
+				if valid_targets.is_empty():
+					game_manager.note_player_feedback(card.resolve_no_weather_targets())
+				else:
+					game_manager.note_player_feedback(card.resolve_stormcloud_cancel(game_manager))
 				move_validated.emit(command)
 				return true
 			var target := game_manager.get_card_by_uid(target_uid)

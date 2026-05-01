@@ -3275,6 +3275,7 @@ func send_to_deck_bottom_with_hook(card: Card) -> void:
 func _on_player_card_moved(card: Card, from_zone: Zone, to_zone: Zone) -> void:
 	if card == null or from_zone == null:
 		return
+	card.remove_status_effects_with_flag("clear_on_card_move")
 	if from_zone.is_board_zone() and (to_zone == null or not to_zone.is_board_zone()):
 		card.board_entry_order = -1
 	elif to_zone != null and not from_zone.is_board_zone() and to_zone.is_board_zone():

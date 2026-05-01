@@ -342,8 +342,8 @@ func load_tiamat_ragnarok_scenario() -> void:
 	_add_test_tiamat_slot_creature(player1, 2, LesserMushussu.new())
 	_add_test_tiamat_slot_creature(player1, 2, SulakTheUnclean.new())
 
-	# Thor keeps Ragnarok face-up so the opposing reset button is available immediately.
-	_add_test_power(player2, 0, Ragnarok.new(), true)
+	# Thor keeps Ragnarok locked so the opposing reset button fires when unlocked.
+	_add_test_power(player2, 0, Ragnarok.new(), false)
 
 	# Seed both battlefields so Ragnarok has visible payoff once it is activated.
 	_place_test_board_card(player1, player1.frontline_zones[0], GududPriest.new(), Card.CreatureMode.AGGRESSIVE)
@@ -389,7 +389,7 @@ func load_tiamat_ragnarok_scenario() -> void:
 		"Tiamat vs Thor / Ragnarok Scenario. Choose an upkeep option first.  |  "
 		+ "Tiamat - your three power slots are filled with face-up Ancient Demons and Dragons. The slot chains should remain over each stack until that slot is emptied into your hand.  |  "
 		+ "Matriarch Rule - choose it on upkeep to add one slotted creature to hand instead of drawing, then repeat on later turns until a slot is empty and its chain disappears.  |  "
-		+ "Thor - Ragnarok is already unlocked on the opposing side, with creatures on both fields so you can fire it immediately and confirm only creatures are destroyed.  |  "
+		+ "Thor - Ragnarok is locked on the opposing side, with creatures on both fields so you can unlock it and confirm only creatures are destroyed.  |  "
 		+ "Board - Gudud Priest and Brown Bear give Tiamat simple bodies to preserve or sacrifice, while Thor starts with Berserker and Minotaur Footsoldier so the wipe has obvious results."
 	)
 	update_ui()
@@ -563,9 +563,9 @@ func load_r_card_scenario() -> void:
 	_add_test_god(player1, Odin.new())
 	_add_test_god(player2, Thor.new())
 
-	# P1 powers: Rally starts active for the level-5 Warrior summon, and Ragnarok is ready as the reset button.
+	# P1 powers: Rally starts active for the level-5 Warrior summon, and Ragnarok fires when unlocked.
 	_add_test_power(player1, 0, RallyTheTroops.new(), true)
-	_add_test_power(player1, 1, Ragnarok.new(), true)
+	_add_test_power(player1, 1, Ragnarok.new(), false)
 
 	# P1 board: Rabid Wolf can attack immediately to trigger Raven Storm, while Red Cap must attack or perish.
 	var rabid_wolf := RabidWolf.new()
@@ -641,7 +641,7 @@ func load_r_card_scenario() -> void:
 	_open_upkeep_choice_window()
 	action_label.text = (
 		"R-Card Scenario: All cards starting with R, except Robotic Footsoldier. Choose an upkeep option first.  |  "
-		+ "Powers - Rally the Troops and Ragnarok both start unlocked so you can test recruitment first and the full-board reset afterward.  |  "
+		+ "Powers - Rally the Troops starts unlocked, and Ragnarok is locked so you can test recruitment first and the full-board reset when you unlock it afterward.  |  "
 		+ "Board - Rabid Wolf is ready to attack and trigger Raven Storm, while Red Cap must attack this turn or Fresh Blood will destroy it at end of turn.  |  "
 		+ "Hand - Raven Storm, Rabisu, Reed Bow, Runic Shortsword, and Runic Spellbreaker are ready, plus a level-5 Harii Warrior to trigger Rally the Troops immediately.  |  "
 		+ "Deck - Your top three cards are stacked so Rally reveals Ancient Pyre, Red Cap, and Brown Bear, letting you recruit the Red Cap and shelve the rest.  |  "
@@ -1014,8 +1014,8 @@ func load_sap_ragnarok_scenario() -> void:
 	_add_test_god(player1, Odin.new())
 	_add_test_god(player2, Thor.new())
 
-	# P1 power: Ragnarok is unlocked and ready to fire — both gods and this power should survive its activation.
-	_add_test_power(player1, 0, Ragnarok.new(), true)
+	# P1 power: Ragnarok is locked and fires on unlock; both gods and this power should survive its resolution.
+	_add_test_power(player1, 0, Ragnarok.new(), false)
 
 	# P1 board: a loaded frontline and reserve give Ragnarok plenty of targets on both sides.
 	_place_test_board_card(player1, player1.frontline_zones[0], Berserker.new(), Card.CreatureMode.AGGRESSIVE)
@@ -1076,7 +1076,7 @@ func load_sap_ragnarok_scenario() -> void:
 		"Sap / Sap Strength / Ragnarok Scenario. Choose an upkeep option first.  |  "
 		+ "Sap - already prepared in your reserve; summon Rabid Wolf or Berserker from hand to the frontline to watch Sap destroy it on entry. Pass to P2 and let them summon their Brown Bear to test that it fires on the opponent's summons too.  |  "
 		+ "Sap Strength - play it from hand and target any creature on the board to reduce its Str by 10 for the rest of the turn; useful for weakening a strong attacker before combat.  |  "
-		+ "Ragnarok - activate from the unlocked power slot to wipe all frontline and reserve creatures; Odin, Thor, and the Ragnarok power itself should all survive untouched."
+		+ "Ragnarok - unlock it to wipe all frontline and reserve creatures; Odin, Thor, and the Ragnarok power itself should all survive untouched."
 	)
 	update_ui()
 

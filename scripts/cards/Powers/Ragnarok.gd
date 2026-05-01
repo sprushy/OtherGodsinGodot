@@ -5,6 +5,8 @@ const UNLOCK_COST := 9
 const HAND_LIMIT := 5
 const ART_PATH := "res://images/card_art/powers/RagnarokEdit.png"
 
+var _has_activated_on_unlock: bool = false
+
 func _init() -> void:
 	super._init()
 	card_name = "Ragnarok"
@@ -14,16 +16,29 @@ func _init() -> void:
 	is_legendary = true
 	card_types = ["Power", "Legendary Destruction", "Universal"]
 	targets = false
-	ability_text = "[b]Unlock[/b] (9): [b]Activate[/b] - Destroy all creatures on the field; then each player with more than 5 cards discards down to 5. You cannot attack this turn."
+	ability_text = "[b]Unlock[/b] (9): Destroy all creatures on the field; then each player with more than 5 cards discards down to 5. You cannot attack this turn. This only happens once."
 	artist = "Riccardo Zoppello"
 	art_path = ART_PATH
 
-func can_activate(game_manager: GameManager) -> bool:
-	return super.can_activate(game_manager)
+func can_activate(_game_manager: GameManager) -> bool:
+	return false
+
+func on_unlock(game_manager: GameManager) -> void:
+	if _has_activated_on_unlock:
+		return
+	_has_activated_on_unlock = true
+	if game_manager != null:
+		game_manager.run_with_effect_source(
+			self,
+			func() -> void:
+				_resolve_ragnarok(game_manager)
+		)
 
 func activate(game_manager: GameManager, _target: Card = null) -> void:
-	if not can_activate(game_manager):
-		return
+	if game_manager != null:
+		game_manager.note_player_feedback(card_name + " has already resolved.")
+
+func _resolve_ragnarok(game_manager: GameManager) -> void:
 	if game_manager == null:
 		return
 

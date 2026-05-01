@@ -39,6 +39,7 @@ func unlock(game_manager: GameManager) -> void:
 	if game_manager != null and unlock_cost < mana_cost:
 		game_manager.claim_cost_adjustments(self, mana_cost, Card.COST_KIND_POWER_UNLOCK)
 	is_face_down = false
+	remove_status_effects_with_flag("clear_when_hidden_state_ends")
 	is_publicly_revealed = false
 	is_muted = false
 	mute_turns_remaining = 0

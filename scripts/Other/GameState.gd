@@ -46,12 +46,15 @@ static func serialize(gm: GameManager, viewer_player_index: int = -1) -> Diction
 		var player := gm.players[i]
 		var hide_hand := viewer != null and i != viewer_player_index
 		var hide_deck := viewer != null and i != viewer_player_index
+		var deck_cards := _serialize_zone_cards(player.deck_zone, viewer, false)
+		if hide_deck:
+			deck_cards = _serialize_visible_opponent_deck_cards_for_viewer(gm, player, viewer)
 		var pdata := {
 			player_name = player.player_name,
 			mana = player.mana,
 			followers = player.followers,
 			deck_count = player.deck_zone.cards.size(),
-			deck         = [] if hide_deck else _serialize_zone_cards(player.deck_zone, viewer, false),
+			deck         = deck_cards,
 			has_summoned_this_turn = player.has_summoned_this_turn,
 			hand         = _serialize_zone_cards(player.hand_zone, viewer, hide_hand),
 			god_zone     = _serialize_zone_cards(player.god_zone, viewer, false),
@@ -70,6 +73,33 @@ static func serialize(gm: GameManager, viewer_player_index: int = -1) -> Diction
 		data.players.append(pdata)
 
 	return data
+
+static func _serialize_visible_opponent_deck_cards_for_viewer(gm: GameManager, deck_owner: Player, viewer: Player) -> Array:
+	var visible_cards := []
+	if gm == null or deck_owner == null or viewer == null or deck_owner == viewer:
+		return visible_cards
+	if not _viewer_can_read_opponent_deck_with_hildskjalf(gm, viewer):
+		return visible_cards
+	var reveal_count := mini(HildskjalfThroneOfOdin.LOOK_COUNT, deck_owner.deck_zone.cards.size())
+	for i in range(reveal_count):
+		var card := deck_owner.deck_zone.cards[i] as Card
+		if card != null:
+			visible_cards.append(_serialize_card(card, HIDDEN_MODE_NONE))
+	return visible_cards
+
+static func _viewer_can_read_opponent_deck_with_hildskjalf(gm: GameManager, viewer: Player) -> bool:
+	if gm == null or viewer == null:
+		return false
+	if gm.current_player != viewer:
+		return false
+	for zone in viewer.power_zones:
+		if zone == null:
+			continue
+		for card in zone.cards:
+			var throne := card as HildskjalfThroneOfOdin
+			if throne != null and throne.can_activate(gm):
+				return true
+	return false
 
 static func _serialize_zone_cards(zone: Zone, viewer: Player = null, hide_hand: bool = false) -> Array:
 	var result := []
@@ -363,8 +393,15 @@ static func apply_to_manager(data: Dictionary, gm: GameManager) -> void:
 		player.deck_zone.cards.clear()
 		if not dk_cards.is_empty():
 			_apply_zone_cards(player.deck_zone, dk_cards)
+			if dk_count > player.deck_zone.cards.size():
+				for _k in range(dk_count - player.deck_zone.cards.size()):
+					var ph := BaseCard.new()
+					ph.is_face_down = true
+					ph.current_zone = player.deck_zone
+					ph.card_owner = player
+					player.deck_zone.cards.append(ph)
 		elif dk_count >= 0:
-			for _k in dk_count:
+			for _k in range(dk_count):
 				var ph := BaseCard.new()
 				ph.is_face_down = true
 				ph.current_zone = player.deck_zone

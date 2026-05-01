@@ -348,6 +348,7 @@ const DROMI_BINDING_NAME := "Dromi"
 const DROMI_BINDING_HOVER_TEXT := "Cannot attack. Losing 7 followers on opponent's turn start - Dromi"
 const THIRD_SAGE_GOOD_FORTUNE_STATUS := "third_sage_good_fortune"
 const EQUIPMENT_AFFORDANCE_GAP := 4.0
+const EQUIPMENT_AFFORDANCE_TOP := 28.0
 const DEBUFF_AFFORDANCE_GAP := 4.0
 const DEBUFF_BADGE_SIZE := 22.0
 const FOLLOWERS_ATTACK_RESULT_SECONDS := 0.66
@@ -1357,7 +1358,7 @@ func _add_equipment_affordances(overlay: Control, card: Card) -> void:
 	if card.equipment.is_empty():
 		return
 
-	var badge_top := 32.0 if card.is_sleeping else 6.0
+	var badge_top := 32.0 if card.is_sleeping else EQUIPMENT_AFFORDANCE_TOP
 	var badge_left := 6.0
 	for equip in card.equipment:
 		if equip == null:
@@ -1451,7 +1452,7 @@ func _add_binding_affordances(overlay: Control, card: Card) -> void:
 		return
 	var badge_top := 32.0 if card.is_sleeping else 6.0
 	if not card.equipment.is_empty():
-		badge_top += EquipmentCard.EQUIPPED_AFFORDANCE_SIZE.y + EQUIPMENT_AFFORDANCE_GAP
+		badge_top = EQUIPMENT_AFFORDANCE_TOP + EquipmentCard.EQUIPPED_AFFORDANCE_SIZE.y + EQUIPMENT_AFFORDANCE_GAP
 	var art_preview: Control = null
 	if dromi_source != card:
 		art_preview = _make_card_art_preview(dromi_source)
@@ -1533,7 +1534,7 @@ func _add_boon_affordances(overlay: Control, card: Card) -> void:
 
 	var badge_top := 32.0 if card.is_sleeping else 6.0
 	if not card.equipment.is_empty():
-		badge_top += EquipmentCard.EQUIPPED_AFFORDANCE_SIZE.y + EQUIPMENT_AFFORDANCE_GAP
+		badge_top = EQUIPMENT_AFFORDANCE_TOP + EquipmentCard.EQUIPPED_AFFORDANCE_SIZE.y + EQUIPMENT_AFFORDANCE_GAP
 	var badge_left := 6.0
 	for entry in entries:
 		var preview := _make_debuff_source_preview(entry)

@@ -1086,6 +1086,7 @@ func reveal(game_manager: GameManager = null) -> void:
 	var was_hidden: bool = is_face_down or is_stealth
 	is_face_down = false
 	is_stealth = false
+	remove_status_effects_with_flag("clear_when_hidden_state_ends")
 	# Reveal triggers whenever a card becomes visible from a hidden state,
 	# even if that same card was revealed earlier and later became hidden again.
 	if was_hidden and game_manager != null and not abilities_suppressed():

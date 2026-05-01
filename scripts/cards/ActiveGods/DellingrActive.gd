@@ -80,7 +80,7 @@ func _is_hidden_board_card(card: Card) -> bool:
 	return card.is_stealth or hidden_face_down
 
 func _reveal_without_triggering_reveal_ability(target: Card, game_manager: GameManager) -> void:
-	if target == null:
+	if target == null or game_manager == null:
 		return
 	target.remove_status_effects_by_name("temporarily_revealed")
 	target.add_status_effect(
@@ -88,7 +88,10 @@ func _reveal_without_triggering_reveal_ability(target: Card, game_manager: GameM
 		REVEAL_SOURCE,
 		self,
 		card_owner,
-		{}
+		{
+			"clear_on_card_move": true,
+			"clear_when_hidden_state_ends": true,
+		}
 	)
 	if game_manager.has_method("notify_card_revealed_by_effect"):
 		game_manager.notify_card_revealed_by_effect(target, self)
