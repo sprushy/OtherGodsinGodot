@@ -152,6 +152,8 @@ var _hand_hover_preview: Control = null
 var _hand_hover_vc: VisualCard = null
 var _hand_hover_preview_card: VisualCard = null
 var _hand_hover_preview_keywords: Control = null
+var _action_log_shell: Control = null
+var _turn_choice_gap: Control = null
 const _HAND_CONTEXT_MENU_KEEPALIVE_MARGIN := 10.0
 
 const FAN_ROT_MAX     := 12.0   # degrees at the outermost card
@@ -524,6 +526,12 @@ const SACRIFICE_CURSOR_SHAPES := [
 ]
 const ACTION_LOG_MIN_WIDTH := 200.0
 const ACTION_LOG_PREVIEW_HEIGHT := 144.0
+const ACTION_LOG_PREVIEW_HEIGHT_RATIO := 0.32
+const ACTION_LOG_MAX_HEIGHT := 360.0
+const ACTION_LOG_COMPACT_FULL_VIEWPORT_HEIGHT := 960.0
+const ACTION_LOG_COMPACT_VIEWPORT_HEIGHT := 720.0
+const ACTION_LOG_COMPACT_HEIGHT_RATIO := 0.22
+const ACTION_LOG_COMPACT_MAX_HEIGHT := 210.0
 const ACTION_LOG_FONT_SIZE := 14
 const ACTION_LOG_LINE_SEPARATION := 5
 const ACTION_LOG_POPUP_WIDTH := 420.0
@@ -2463,7 +2471,7 @@ func _setup_action_log() -> void:
 	log_box.name = "ActionLogBox"
 	log_box.add_theme_constant_override("separation", 4)
 	log_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	log_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	log_box.size_flags_vertical = 0
 
 	var header := HBoxContainer.new()
 	header.add_theme_constant_override("separation", 4)
@@ -2496,7 +2504,7 @@ func _setup_action_log() -> void:
 	log_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	log_text.custom_minimum_size = Vector2(ACTION_LOG_MIN_WIDTH, ACTION_LOG_PREVIEW_HEIGHT)
 	log_text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	log_text.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	log_text.size_flags_vertical = 0
 	log_text.add_theme_font_size_override("normal_font_size", ACTION_LOG_FONT_SIZE)
 	log_text.add_theme_constant_override("line_separation", ACTION_LOG_LINE_SEPARATION)
 	log_text.selection_enabled = true
@@ -2505,17 +2513,20 @@ func _setup_action_log() -> void:
 	var log_shell := MarginContainer.new()
 	log_shell.name = "ActionLogShell"
 	log_shell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	log_shell.size_flags_vertical = 0
 	log_shell.custom_minimum_size.x = ACTION_LOG_MIN_WIDTH + ACTION_LOG_LEFT_INSET
 	log_shell.add_theme_constant_override("margin_left", ACTION_LOG_LEFT_INSET)
 	log_shell.add_child(log_box)
 	action_parent.add_child(log_shell)
 	action_parent.move_child(log_shell, action_parent.get_children().find(action_label) + 1)
+	_action_log_shell = log_shell
 
 	var choice_gap := Control.new()
 	choice_gap.name = "TurnChoiceGap"
 	choice_gap.custom_minimum_size = Vector2(0.0, TURN_CHOICE_TOP_GAP)
 	action_parent.add_child(choice_gap)
 	action_parent.move_child(choice_gap, action_parent.get_children().find(log_shell) + 1)
+	_turn_choice_gap = choice_gap
 
 	_action_log_view = log_text
 	_action_log_history_button = history_button
@@ -2554,6 +2565,53 @@ func _set_left_control_width(control: Control, width: float) -> void:
 		return
 	control.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	control.custom_minimum_size.x = width
+
+func _get_action_log_preview_height(viewport_height: float) -> float:
+	var height_ratio := ACTION_LOG_PREVIEW_HEIGHT_RATIO
+	var max_height := ACTION_LOG_MAX_HEIGHT
+	if choice_container != null and choice_container.visible:
+		var compact_range := ACTION_LOG_COMPACT_FULL_VIEWPORT_HEIGHT - ACTION_LOG_COMPACT_VIEWPORT_HEIGHT
+		var compact_blend := clampf(
+			(ACTION_LOG_COMPACT_FULL_VIEWPORT_HEIGHT - viewport_height) / compact_range,
+			0.0,
+			1.0
+		)
+		height_ratio = lerpf(ACTION_LOG_PREVIEW_HEIGHT_RATIO, ACTION_LOG_COMPACT_HEIGHT_RATIO, compact_blend)
+		max_height = lerpf(ACTION_LOG_MAX_HEIGHT, ACTION_LOG_COMPACT_MAX_HEIGHT, compact_blend)
+	return clampf(floor(viewport_height * height_ratio), ACTION_LOG_PREVIEW_HEIGHT, max_height)
+
+func _get_action_log_shell_height(log_box: Control, log_height: float) -> float:
+	var shell_height := log_height
+	if log_box == null:
+		return shell_height
+	var visible_children := 0
+	for child in log_box.get_children():
+		var child_control := child as Control
+		if child_control == null or not child_control.visible:
+			continue
+		visible_children += 1
+		if child_control != _action_log_view:
+			shell_height += child_control.get_combined_minimum_size().y
+	if visible_children > 1 and log_box is BoxContainer:
+		shell_height += float((log_box as BoxContainer).get_theme_constant("separation")) * float(visible_children - 1)
+	return shell_height
+
+func _sync_turn_choice_vertical_order() -> void:
+	if left_panel == null or action_label == null or choice_container == null:
+		return
+	if _action_log_shell == null or _turn_choice_gap == null:
+		return
+	var action_index := left_panel.get_children().find(action_label)
+	if action_index < 0:
+		return
+	if choice_container.visible:
+		left_panel.move_child(_turn_choice_gap, action_index + 1)
+		left_panel.move_child(choice_container, action_index + 2)
+		left_panel.move_child(_action_log_shell, action_index + 3)
+	else:
+		left_panel.move_child(_action_log_shell, action_index + 1)
+		left_panel.move_child(_turn_choice_gap, action_index + 2)
+		left_panel.move_child(choice_container, action_index + 3)
 
 func _set_action_label_text(message, force_log: bool = false) -> void:
 	if action_label == null:
@@ -2943,6 +3001,7 @@ func show_turn_choice() -> void:
 	choice_container.visible = true
 	end_turn_button.visible = false
 	_refresh_turn_choice_options()
+	_update_match_side_panel_layout()
 	placement_container.visible = false
 
 	for vc in _hand_visual_cards:
@@ -2955,6 +3014,7 @@ func hide_turn_choice() -> void:
 	end_turn_button.visible = true
 	_hide_sun_hunt_button()
 	_hide_matriarch_rule_button()
+	_update_match_side_panel_layout()
 
 	for vc in _hand_visual_cards:
 		vc.set_disabled(false)
@@ -3156,9 +3216,11 @@ func _apply_board_horizontal_offset() -> void:
 func _update_match_side_panel_layout() -> void:
 	if left_panel == null or right_panel == null:
 		return
-	var viewport_height := size.y
+	var viewport_size := size
+	var viewport_height := viewport_size.y
 	if viewport_height <= 0.0:
 		return
+	_sync_turn_choice_vertical_order()
 
 	var left_width := maxf(LEFT_PANEL_MIN_WIDTH + BOARD_RIGHT_NUDGE, left_panel.size.x)
 	var right_width := 0.0 if not right_panel.visible else RIGHT_PANEL_MIN_WIDTH
@@ -3194,12 +3256,16 @@ func _update_match_side_panel_layout() -> void:
 		_auto_priority_toggle.custom_minimum_size.x = AUTO_PRIORITY_TOGGLE_WIDTH
 
 	if _action_log_view != null and is_instance_valid(_action_log_view):
-		var log_height := clampf(floor(viewport_height * 0.32), ACTION_LOG_PREVIEW_HEIGHT, 360.0)
+		var log_height := _get_action_log_preview_height(viewport_height)
 		_action_log_view.custom_minimum_size = Vector2(left_log_width, log_height)
 		var log_box := _action_log_view.get_parent() as Control
 		if log_box != null:
+			var log_shell_height := _get_action_log_shell_height(log_box, log_height)
+			log_box.custom_minimum_size.y = log_shell_height
 			var log_shell := log_box.get_parent() as Control
 			_set_left_control_width(log_shell, left_width)
+			if log_shell != null:
+				log_shell.custom_minimum_size.y = log_shell_height
 
 func _get_zone_ui_for_zone(zone: Zone) -> BoardZoneUI:
 	if zone == null:
@@ -5302,14 +5368,23 @@ func _handle_breidablik_return_choice(power: Breidablik, selected_priest: Card) 
 	if power == null or selected_priest == null:
 		return
 	if _is_networked_client:
-		game_input.submit_action({type = "activate_power", power_uid = power.uid, target_uid = selected_priest.uid, mode = "return_priest"})
+		var command := {
+			type = "activate_power",
+			power_uid = power.uid,
+			target_uid = selected_priest.uid,
+			mode = "return_priest",
+			stored_priest_index = power.get_stored_priest_index(selected_priest),
+		}
+		if game_input.submit_action(command) and game_manager.is_player_in_upkeep_window(game_manager.current_player):
+			_set_action_label_text(power.card_name + " is returning " + selected_priest.card_name + ".")
+			update_ui()
 		return
 	_resolve_breidablik_return_choice(power, selected_priest)
 
 func _resolve_breidablik_return_choice(power: Breidablik, selected_priest: Card) -> void:
 	if power == null or selected_priest == null or game_manager == null:
 		return
-	var resolves_upkeep := game_manager.is_player_in_upkeep_window(game_manager.current_player) \
+	var keep_upkeep_choice_open := game_manager.is_player_in_upkeep_window(game_manager.current_player) \
 		and game_manager.current_player == power.card_owner
 	var returned := false
 	game_manager.run_with_effect_source(
@@ -5322,13 +5397,10 @@ func _resolve_breidablik_return_choice(power: Breidablik, selected_priest: Card)
 		update_ui()
 		return
 	var feedback := _consume_resolution_feedback(power.card_name + " returned " + selected_priest.card_name + ".")
-	if resolves_upkeep:
-		game_manager.player_chooses_upkeep_only()
-		feedback = _build_upkeep_resolution_feedback(feedback)
-		_close_turn_start_windows()
+	if keep_upkeep_choice_open:
+		_set_action_label_text(feedback + " Choose your upkeep option.")
+		show_turn_choice()
 		update_ui()
-		hide_turn_choice()
-		_continue_after_upkeep_choice(feedback)
 		return
 	_set_action_label_text(feedback)
 	update_ui()
@@ -18936,6 +19008,15 @@ func _on_match_move_validated(move: Dictionary) -> void:
 				else:
 					_offer_priority()
 		"activate_power", "activate_divine_caprice":
+			if move_type == "activate_power" and str(move.get("mode", "")) == "return_priest":
+				var feedback := _consume_resolution_feedback()
+				if feedback.strip_edges() == "":
+					feedback = "Breidablik returned a priest."
+				_set_action_label_text(feedback + " Choose your upkeep option.")
+				if game_manager != null and game_manager.is_player_in_upkeep_window(game_manager.current_player):
+					show_turn_choice()
+				update_ui()
+				return
 			var queued_power := game_manager.get_card_by_uid(str(move.get("power_uid", "")))
 			if queued_power != null:
 				_set_action_label_text(queued_power.card_name + " goes on the stack.")
@@ -19884,6 +19965,7 @@ func _finalize_game_result_ui(result_message: String, winner = null, loser = nul
 	_hide_intercept_prompt()
 	_update_waiting_status(false)
 	choice_container.visible = false
+	_update_match_side_panel_layout()
 	end_turn_button.visible = false
 	placement_container.visible = false
 	draw_button.disabled = true
@@ -20605,6 +20687,7 @@ func _sync_network_turn_entry_ui_from_state() -> void:
 	var current_idx: int = game_manager.players.find(game_manager.current_player)
 	if current_idx != local_idx:
 		choice_container.visible = false
+		_update_match_side_panel_layout()
 		end_turn_button.visible = false
 		end_turn_button.disabled = true
 		all_attack_btn.disabled = true

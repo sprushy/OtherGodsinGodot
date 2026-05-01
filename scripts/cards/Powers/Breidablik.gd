@@ -123,6 +123,25 @@ func return_priest(game_manager: GameManager, priest: Card) -> bool:
 	_emit_visual_state_changed()
 	return true
 
+func get_stored_priest_index(priest: Card) -> int:
+	if priest == null:
+		return -1
+	for index in range(stored_priests.size()):
+		var stored_priest := stored_priests[index]
+		if stored_priest == priest or (stored_priest != null and stored_priest.uid == priest.uid):
+			return index
+	return -1
+
+func get_stored_priest_by_uid_or_index(priest_uid: String, priest_index: int = -1) -> Card:
+	var cleaned_uid := priest_uid.strip_edges()
+	if cleaned_uid != "":
+		for stored_priest in stored_priests:
+			if stored_priest != null and stored_priest.uid == cleaned_uid:
+				return stored_priest
+	if priest_index >= 0 and priest_index < stored_priests.size():
+		return stored_priests[priest_index]
+	return null
+
 func on_turn_upkeep(_game_manager: GameManager) -> void:
 	return_window_open = not stored_priests.is_empty()
 

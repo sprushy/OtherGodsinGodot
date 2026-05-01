@@ -2522,6 +2522,11 @@ func _process_command_impl(command: Dictionary) -> bool:
 				if not breidablik.can_return_priest(game_manager):
 					move_failed.emit(power_card.card_name + " cannot return a priest right now.")
 					return false
+				if act_target == null:
+					act_target = breidablik.get_stored_priest_by_uid_or_index(
+						act_target_uid,
+						int(command.get("stored_priest_index", -1))
+					)
 				var returned := false
 				game_manager.run_with_effect_source(
 					power_card,
@@ -2532,8 +2537,6 @@ func _process_command_impl(command: Dictionary) -> bool:
 					move_failed.emit(power_card.card_name + " could not return that priest.")
 					return false
 				game_manager.note_player_feedback("%s returned %s." % [power_card.card_name, act_target.card_name if act_target != null else "that Priest"])
-				if game_manager.is_player_in_upkeep_window(acting_player):
-					game_manager.player_chooses_upkeep_only()
 			else:
 				if not power_card.can_activate(game_manager):
 					move_failed.emit(power_card.card_name + " cannot activate right now.")
