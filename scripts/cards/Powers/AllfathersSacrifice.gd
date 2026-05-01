@@ -21,6 +21,16 @@ func can_activate(game_manager: GameManager) -> bool:
 		and card_owner.followers >= FOLLOWER_COST \
 		and not get_spell_cards_in_deck().is_empty()
 
+func get_activation_failure_reason(game_manager: GameManager) -> String:
+	var base_reason := super.get_activation_failure_reason(game_manager)
+	if game_manager == null:
+		return base_reason
+	if card_owner == null or card_owner.followers < FOLLOWER_COST:
+		return card_name + " needs " + str(FOLLOWER_COST) + " followers."
+	if get_spell_cards_in_deck().is_empty():
+		return card_name + " could not find a spell in your deck."
+	return base_reason
+
 func get_spell_cards_in_deck() -> Array[Card]:
 	var spells: Array[Card] = []
 	for card in card_owner.deck_zone.cards:
@@ -28,7 +38,11 @@ func get_spell_cards_in_deck() -> Array[Card]:
 			spells.append(card)
 	return spells
 
-func activate(_game_manager: GameManager, target: Card = null) -> void:
+func activate(game_manager: GameManager, target: Card = null) -> void:
+	if not can_activate(game_manager):
+		if game_manager != null:
+			game_manager.note_player_feedback(get_activation_failure_reason(game_manager))
+		return
 	var player := card_owner
 	if target == null or target.card_type != Card.CardType.SPELL or target.current_zone != player.deck_zone:
 		print(card_name + ": Invalid spell choice.")

@@ -2837,7 +2837,12 @@ func _show_preview(card: Card) -> void:
 
 	var stat_parts: PackedStringArray = []
 	if card.card_type == Card.CardType.CREATURE and not card.is_god:
-		stat_parts.append("STR:%d  RES:%d  SPD:%d" % [card.strength, card.resilience, card.speed])
+		stat_parts.append("LVL:%d  STR:%d  RES:%d  SPD:%d" % [
+			card.get_effective_level(),
+			card.strength,
+			card.resilience,
+			card.speed
+		])
 	elif card.card_type == Card.CardType.STRUCTURE:
 		stat_parts.append("RES:%d" % card.resilience)
 	elif card.card_type == Card.CardType.EQUIPMENT:

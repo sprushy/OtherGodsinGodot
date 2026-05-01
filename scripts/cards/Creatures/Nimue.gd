@@ -9,8 +9,8 @@ func _init() -> void:
 	mana_cost = 5
 	sacrifice_cost = 0
 	speed = 2
-	strength = 0
-	resilience = 35
+	strength = 5
+	resilience = 36
 	targets = true
 	ability_text = "[b]Entomb[/b] ([b]Major Action[/b]): Pay mana equal to a creature's Lvl to [b]Shelve[/b] it.\n[b]Present[/b] ([b]Major Action[/b]): Put an Equipment card from your graveyard onto the field."
 	flavor_text = ""

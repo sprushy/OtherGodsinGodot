@@ -1968,7 +1968,10 @@ func _get_command_actor(sender_info: Dictionary) -> Player:
 	var sender_player := _resolve_sender_player(sender_info)
 	return sender_player if sender_player != null else game_manager.current_player
 
-func _requires_resolved_upkeep(command_type: String) -> bool:
+func _requires_resolved_upkeep(command: Dictionary) -> bool:
+	var command_type := str(command.get("type", ""))
+	if command_type == "activate_power" and str(command.get("mode", "")) == "return_priest":
+		return false
 	match command_type:
 		# These commands are valid while the current player is still inside a
 		# turn-start prompt/upkeep window and should not be blocked by the
@@ -1992,7 +1995,7 @@ func _validate_turn_action_window(command: Dictionary, sender_info: Dictionary) 
 	var actor := _get_command_actor(sender_info)
 	if actor == null:
 		return ""
-	if _requires_resolved_upkeep(command_type) and actor == game_manager.current_player and not game_manager.has_resolved_turn_upkeep():
+	if _requires_resolved_upkeep(command) and actor == game_manager.current_player and not game_manager.has_resolved_turn_upkeep():
 		return "Resolve upkeep before taking other actions."
 	return ""
 

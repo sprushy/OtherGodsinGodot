@@ -236,6 +236,7 @@ var _drag_sacrifice_target: Card = null
 var _drag_sacrifice_mode: String = ""
 var _pending_structure_bonus_power_uid: String = ""
 var _pending_structure_bonus_structure_uid: String = ""
+var _pending_advanced_building_techniques_prompt_data: Dictionary = {}
 var _awaiting_altar_void_payment: bool = false
 var _altar_pending_power: AltarOfDreams = null
 var _altar_void_targets_chosen: Array[Card] = []
@@ -486,7 +487,7 @@ const PREFERRED_BOARD_ZONE_EXTENT := UIArtScaler.DEFAULT_BOARD_ART_REFERENCE_EXT
 const HAND_OVERLAY_SIDE_PADDING := 18.0
 const HAND_OVERLAY_BOTTOM_PADDING := -2.0
 const HAND_OVERLAY_Z_INDEX := HOVER_PREVIEW_Z_INDEX + 5
-const LEFT_PANEL_MIN_WIDTH := 136.0
+const LEFT_PANEL_MIN_WIDTH := 220.0
 const BOARD_RIGHT_NUDGE := 10.0
 const BOARD_HORIZONTAL_OFFSET := -2.0
 const ENEMY_BOARD_STRETCH_RATIO := 0.82
@@ -521,10 +522,10 @@ const SACRIFICE_CURSOR_SHAPES := [
 	Input.CURSOR_POINTING_HAND,
 	Input.CURSOR_HELP,
 ]
-const ACTION_LOG_MIN_WIDTH := 126.0
-const ACTION_LOG_PREVIEW_HEIGHT := 92.0
-const ACTION_LOG_FONT_SIZE := 11
-const ACTION_LOG_LINE_SEPARATION := 4
+const ACTION_LOG_MIN_WIDTH := 200.0
+const ACTION_LOG_PREVIEW_HEIGHT := 144.0
+const ACTION_LOG_FONT_SIZE := 14
+const ACTION_LOG_LINE_SEPARATION := 5
 const ACTION_LOG_POPUP_WIDTH := 420.0
 const ACTION_LOG_POPUP_HEIGHT := 320.0
 const ACTION_LOG_LEFT_INSET := 6
@@ -2466,6 +2467,7 @@ func _setup_action_log() -> void:
 
 	var header := HBoxContainer.new()
 	header.add_theme_constant_override("separation", 4)
+	header.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	log_box.add_child(header)
 
 	var log_title := Label.new()
@@ -2503,6 +2505,7 @@ func _setup_action_log() -> void:
 	var log_shell := MarginContainer.new()
 	log_shell.name = "ActionLogShell"
 	log_shell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	log_shell.custom_minimum_size.x = ACTION_LOG_MIN_WIDTH + ACTION_LOG_LEFT_INSET
 	log_shell.add_theme_constant_override("margin_left", ACTION_LOG_LEFT_INSET)
 	log_shell.add_child(log_box)
 	action_parent.add_child(log_shell)
@@ -2545,6 +2548,12 @@ func _update_side_panel_layout() -> void:
 	right_top_spacer.size_flags_vertical = 0
 	right_bottom_spacer.custom_minimum_size.y = 0.0
 	right_bottom_spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
+
+func _set_left_control_width(control: Control, width: float) -> void:
+	if control == null:
+		return
+	control.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	control.custom_minimum_size.x = width
 
 func _set_action_label_text(message, force_log: bool = false) -> void:
 	if action_label == null:
@@ -3151,13 +3160,28 @@ func _update_match_side_panel_layout() -> void:
 	if viewport_height <= 0.0:
 		return
 
-	var left_width := LEFT_PANEL_MIN_WIDTH + BOARD_RIGHT_NUDGE
+	var left_width := maxf(LEFT_PANEL_MIN_WIDTH + BOARD_RIGHT_NUDGE, left_panel.size.x)
 	var right_width := 0.0 if not right_panel.visible else RIGHT_PANEL_MIN_WIDTH
+	var left_log_width := maxf(ACTION_LOG_MIN_WIDTH, left_width - ACTION_LOG_LEFT_INSET)
 
 	left_panel.custom_minimum_size.x = left_width
 	right_panel.custom_minimum_size.x = right_width
 	if action_label != null:
-		action_label.custom_minimum_size.x = ACTION_LOG_MIN_WIDTH
+		action_label.custom_minimum_size.x = left_log_width
+	_set_left_control_width(choice_container, left_width)
+	_set_left_control_width(choice_intro_label, left_width)
+	_set_left_control_width(draw_button, left_width)
+	_set_left_control_width(mana_button, left_width)
+	_set_left_control_width(_sun_hunt_button, left_width)
+	_set_left_control_width(_matriarch_rule_button, left_width)
+	_set_left_control_width(placement_container, left_width)
+	_set_left_control_width(aggressive_stance_btn, left_width)
+	_set_left_control_width(defensive_stance_btn, left_width)
+	_set_left_control_width(stealth_mode_btn, left_width)
+	for child in choice_container.get_children():
+		_set_left_control_width(child as Control, left_width)
+	for child in placement_container.get_children():
+		_set_left_control_width(child as Control, left_width)
 
 	if turn_label != null and turn_label.get_parent() == right_panel:
 		turn_label.custom_minimum_size.x = right_width - 4.0
@@ -3170,8 +3194,12 @@ func _update_match_side_panel_layout() -> void:
 		_auto_priority_toggle.custom_minimum_size.x = AUTO_PRIORITY_TOGGLE_WIDTH
 
 	if _action_log_view != null and is_instance_valid(_action_log_view):
-		var log_height := clampf(floor(viewport_height * 0.22), ACTION_LOG_PREVIEW_HEIGHT, 248.0)
-		_action_log_view.custom_minimum_size = Vector2(ACTION_LOG_MIN_WIDTH, log_height)
+		var log_height := clampf(floor(viewport_height * 0.32), ACTION_LOG_PREVIEW_HEIGHT, 360.0)
+		_action_log_view.custom_minimum_size = Vector2(left_log_width, log_height)
+		var log_box := _action_log_view.get_parent() as Control
+		if log_box != null:
+			var log_shell := log_box.get_parent() as Control
+			_set_left_control_width(log_shell, left_width)
 
 func _get_zone_ui_for_zone(zone: Zone) -> BoardZoneUI:
 	if zone == null:
@@ -15736,14 +15764,28 @@ func _maybe_offer_advanced_building_techniques(player: Player, structure: Card) 
 func _show_advanced_building_techniques_prompt_from_data(data: Dictionary) -> void:
 	if game_manager == null:
 		return
-	var building_power := game_manager.get_card_by_uid(str(data.get("power_uid", ""))) as AdvancedBuildingTechniques
-	var structure := game_manager.get_card_by_uid(str(data.get("structure_uid", "")))
+	var power_uid := str(data.get("power_uid", "")).strip_edges()
+	var structure_uid := str(data.get("structure_uid", "")).strip_edges()
+	if power_uid == "" or structure_uid == "":
+		_pending_advanced_building_techniques_prompt_data.clear()
+		return
+	var building_power := game_manager.get_card_by_uid(power_uid) as AdvancedBuildingTechniques
+	var structure := game_manager.get_card_by_uid(structure_uid)
 	if building_power == null or structure == null:
+		_pending_advanced_building_techniques_prompt_data = data.duplicate(true)
 		return
 	if not building_power.can_offer_structure_bonus(structure, game_manager):
+		_pending_advanced_building_techniques_prompt_data.clear()
 		return
+	_pending_advanced_building_techniques_prompt_data.clear()
 	_set_action_label_text("Played Structure: " + structure.card_name + "! Choose how much mana to spend on Advanced Building Techniques.")
 	_show_structure_bonus_prompt(building_power, structure)
+
+func _retry_pending_advanced_building_techniques_prompt() -> void:
+	if _pending_advanced_building_techniques_prompt_data.is_empty():
+		return
+	var prompt_data := _pending_advanced_building_techniques_prompt_data.duplicate(true)
+	_show_advanced_building_techniques_prompt_from_data(prompt_data)
 
 func _show_structure_bonus_prompt(power: AdvancedBuildingTechniques, structure: Card) -> void:
 	_hide_structure_bonus_prompt()
@@ -18419,6 +18461,7 @@ func _dismiss_transient_prompts() -> void:
 	_hide_doorway_choice_prompt()
 	_hide_sacrifice_payment_prompt()
 	_hide_structure_bonus_prompt()
+	_pending_advanced_building_techniques_prompt_data.clear()
 	_hide_demiurge_prompt()
 	_pending_book_of_life_spell = null
 	_hide_absence_mode_prompt()
@@ -20497,6 +20540,7 @@ func _apply_full_state(data: Dictionary) -> void:
 		_present_game_result_from_state(state, msg)
 
 	update_ui()
+	_retry_pending_advanced_building_techniques_prompt()
 	_restore_priority_prompt_from_authoritative_state()
 	_update_waiting_overlay()
 
