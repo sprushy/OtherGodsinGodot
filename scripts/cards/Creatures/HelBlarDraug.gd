@@ -10,7 +10,7 @@ func _init() -> void:
 	super._init()
 	card_name = "Hel-blar Draug"
 	card_types = ["Undead", "Draug", "Mage", "Battlemage", "Norse Creature"]
-	level = 1
+	level = 2
 	mana_cost = 0
 	sacrifice_cost = 0
 	speed = 1

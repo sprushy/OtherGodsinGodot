@@ -33,6 +33,7 @@ const UIArtScaler = preload("res://scripts/ui/UIArtScaler.gd")
 const CardDetailContentBuilder = preload("res://scripts/ui/CardDetailContentBuilder.gd")
 
 signal forfeit_requested
+signal return_to_menu_requested
 signal match_session_cleared
 
 var player1: Player
@@ -672,7 +673,7 @@ func _show_pause_menu() -> void:
 	menu_vbox.add_child(menu_title)
 
 	var menu_info := Label.new()
-	menu_info.text = "Press Escape again to resume."
+	menu_info.text = "Press Escape again to forfeit."
 	menu_info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	menu_info.add_theme_color_override("font_color", Color(0.80, 0.85, 0.92))
 	menu_vbox.add_child(menu_info)
@@ -1499,8 +1500,7 @@ func _is_devour_cursor_mode_active() -> bool:
 
 func _is_breidablik_cursor_mode_active() -> bool:
 	return _has_pending_click_selection() \
-		and _pending_click_selection_source is Breidablik \
-		and _get_pending_target_selection_name().contains("Harbor")
+		and _pending_click_selection_source is Breidablik
 
 func _is_mead_cursor_mode_active() -> bool:
 	return _has_pending_click_selection() \
@@ -1548,6 +1548,8 @@ func _is_silence_or_mute_targeting_source(card: Card) -> bool:
 	return ability_text_value.contains("silence") or ability_text_value.contains("mute")
 
 func _get_selection_cursor_mode_for_source(card: Card) -> String:
+	if card is Breidablik:
+		return "breidablik"
 	if card is TonalExtraction:
 		return "tonal_extraction"
 	if _is_silence_or_mute_targeting_source(card):
@@ -5226,7 +5228,7 @@ func _show_breidablik_prompt(power: Breidablik) -> void:
 				func() -> void:
 					_set_action_label_text("Declined " + power.card_name + ".")
 					update_ui(),
-				"",
+				"breidablik",
 				"Decline"
 			)
 		)
@@ -14229,6 +14231,7 @@ func _try_handle_escape_key(event: InputEvent) -> bool:
 		return true
 	if _is_pause_menu_open():
 		_hide_pause_menu()
+		_on_forfeit_button_pressed()
 		get_viewport().set_input_as_handled()
 		return true
 	if not _game_finished and (_game_result_overlay == null or not is_instance_valid(_game_result_overlay)):
@@ -15726,6 +15729,18 @@ func _maybe_offer_advanced_building_techniques(player: Player, structure: Card) 
 		return
 	var building_power := _get_active_advanced_building_techniques(player)
 	if building_power == null or not building_power.can_offer_structure_bonus(structure, game_manager):
+		return
+	_set_action_label_text("Played Structure: " + structure.card_name + "! Choose how much mana to spend on Advanced Building Techniques.")
+	_show_structure_bonus_prompt(building_power, structure)
+
+func _show_advanced_building_techniques_prompt_from_data(data: Dictionary) -> void:
+	if game_manager == null:
+		return
+	var building_power := game_manager.get_card_by_uid(str(data.get("power_uid", ""))) as AdvancedBuildingTechniques
+	var structure := game_manager.get_card_by_uid(str(data.get("structure_uid", "")))
+	if building_power == null or structure == null:
+		return
+	if not building_power.can_offer_structure_bonus(structure, game_manager):
 		return
 	_set_action_label_text("Played Structure: " + structure.card_name + "! Choose how much mana to spend on Advanced Building Techniques.")
 	_show_structure_bonus_prompt(building_power, structure)
@@ -19003,6 +19018,8 @@ func _on_match_ui_interaction(player_index: int, type: String, data: Dictionary)
 	match type:
 		"priority":
 			_apply_priority_prompt_for_player(player_index, data)
+		"advanced_building_techniques":
+			_show_advanced_building_techniques_prompt_from_data(data)
 		"intercept":
 			var interceptor_uids = data.get("interceptor_uids", [])
 			var action_message := str(data.get("action_message", "")).strip_edges()
@@ -19677,6 +19694,9 @@ func _get_local_forfeit_player_index() -> int:
 func _emit_forfeit_requested() -> void:
 	forfeit_requested.emit()
 
+func _emit_return_to_menu_requested() -> void:
+	return_to_menu_requested.emit()
+
 func _can_submit_network_action() -> bool:
 	if not _is_networked_client:
 		return true
@@ -19720,14 +19740,14 @@ func _schedule_post_game_return_to_menu(force_return: bool = false) -> void:
 	var tree := get_tree()
 	if tree == null:
 		_pending_post_game_return_to_menu = false
-		_emit_forfeit_requested()
+		_emit_return_to_menu_requested()
 		return
 	var timer := tree.create_timer(POST_GAME_RETURN_DELAY_SECONDS)
 	timer.timeout.connect(func() -> void:
 		if not _pending_post_game_return_to_menu:
 			return
 		_pending_post_game_return_to_menu = false
-		_emit_forfeit_requested()
+		_emit_return_to_menu_requested()
 	)
 
 func _restore_corner_action_button() -> void:
@@ -19796,7 +19816,7 @@ func _on_game_result_back_to_menu_pressed() -> void:
 	_pending_post_game_return_to_menu = false
 	_hide_game_result_overlay()
 	_hide_corner_action_button()
-	_emit_forfeit_requested()
+	_emit_return_to_menu_requested()
 
 func _resolve_game_result_message(result_message: String, winner = null, loser = null) -> String:
 	var resolved_message := result_message.strip_edges()
@@ -19844,6 +19864,8 @@ func _finalize_game_result_ui(result_message: String, winner = null, loser = nul
 	_show_game_result_overlay(resolved_message, winner, loser, auto_return)
 	_pending_forfeit_return_to_menu = false
 	_schedule_post_game_return_to_menu(auto_return)
+	if _is_networked_client:
+		_shutdown_match_client_transport()
 
 func _present_game_result_from_state(state: Dictionary, action_message: String) -> void:
 	if _game_result_presented or not bool(state.get("is_game_over", false)) or game_manager == null:
@@ -20086,6 +20108,8 @@ func _apply_ui_interaction(event_data: Dictionary) -> void:
 	match type:
 		"priority":
 			_apply_priority_prompt_for_player(int(event_data.get("player_index", local_idx)), payload)
+		"advanced_building_techniques":
+			_show_advanced_building_techniques_prompt_from_data(payload)
 		"intercept":
 			_apply_intercept_offered(payload)
 		"combat_retreat":

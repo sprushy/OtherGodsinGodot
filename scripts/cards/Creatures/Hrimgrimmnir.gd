@@ -5,7 +5,7 @@ func _init() -> void:
 	super._init()
 	card_name = "Hrimgrimmnir"
 	card_types = ["Giant", "Ice", "Norse Creature"]
-	level = 1
+	level = 2
 	mana_cost = 0
 	sacrifice_cost = 0
 	speed = 1

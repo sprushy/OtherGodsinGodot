@@ -269,6 +269,7 @@ func _pending_ui_interaction_has_same_identity(first: Dictionary, second: Dictio
 		"attacker_uid",
 		"demon_uid",
 		"summoned_uid",
+		"power_uid",
 		"structure_uid",
 	]
 	var compared_key := false
@@ -382,6 +383,8 @@ func _get_ui_interaction_type_for_command(command_type: String) -> String:
 			return "apollyons_demiurge"
 		"wolf_adolescent_maturation_choice":
 			return "wolf_adolescent_maturation"
+		"apply_advanced_building_techniques":
+			return "advanced_building_techniques"
 	return ""
 
 func _find_pending_ui_interaction_index(command: Dictionary, expected_type: String) -> int:
@@ -400,7 +403,7 @@ func _pending_ui_interaction_matches_command(entry: Dictionary, command: Diction
 	if required_player != null and entry.get("player", null) != required_player:
 		return false
 	var data: Dictionary = entry.get("data", {})
-	for key in ["source_uid", "card_uid", "attacker_uid", "demon_uid", "summoned_uid"]:
+	for key in ["source_uid", "card_uid", "attacker_uid", "demon_uid", "summoned_uid", "power_uid", "structure_uid"]:
 		if not data.has(key):
 			continue
 		var command_uid := _get_command_uid_for_prompt_key(command, key)
@@ -559,6 +562,8 @@ func _on_game_manager_card_summoned(
 		return
 	if card.current_zone != to_zone or not to_zone.is_board_zone():
 		return
+	if card.card_type == Card.CardType.STRUCTURE:
+		_maybe_emit_advanced_building_techniques_prompt(player, card)
 	if _is_tezcatlipoca_necoc_yaotl_summon(card, summon_source):
 		return
 	if _has_pending_impact_priority_action(card):
@@ -576,6 +581,30 @@ func _on_game_manager_card_summoned(
 	if _active_command_advances_summon_priority():
 		return
 	_advance_authoritative_priority_for_pending_card_events(card)
+
+func _maybe_emit_advanced_building_techniques_prompt(player: Player, structure: Card) -> void:
+	if game_manager == null or player == null or structure == null:
+		return
+	if structure.card_type != Card.CardType.STRUCTURE:
+		return
+	var building_power := _get_active_advanced_building_techniques(player)
+	if building_power == null or not building_power.can_offer_structure_bonus(structure, game_manager):
+		return
+	_emit_ui_interaction_for_player(player, "advanced_building_techniques", {
+		"power_uid": building_power.uid,
+		"structure_uid": structure.uid,
+	})
+
+func _get_active_advanced_building_techniques(player: Player) -> AdvancedBuildingTechniques:
+	if player == null:
+		return null
+	for zone in player.power_zones:
+		if zone.cards.is_empty():
+			continue
+		var power := zone.cards[0] as AdvancedBuildingTechniques
+		if power != null and not power.is_face_down:
+			return power
+	return null
 
 func _is_tezcatlipoca_necoc_yaotl_summon(card: Card, summon_source: Card) -> bool:
 	return card != null \

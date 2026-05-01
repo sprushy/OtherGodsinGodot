@@ -562,8 +562,9 @@ func _build_deck_panel(parent: Control) -> void:
 	_prev_type.text = ""
 	_prev_type.add_theme_font_size_override("font_size", 13)
 	_prev_type.modulate = Color(0.7, 0.85, 1.0)
-	_prev_type.autowrap_mode = TextServer.AUTOWRAP_OFF
-	_prev_type.clip_text = true
+	_prev_type.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_prev_type.clip_text = false
+	_prev_type.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
 	var details_scroll := ScrollContainer.new()
 	details_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -2829,7 +2830,7 @@ func _show_preview(card: Card) -> void:
 	if card.culture != "":
 		type_parts.append(card.culture)
 	if card.card_types.size() > 0:
-		type_parts.append("/".join(Array(card.card_types)))
+		type_parts.append(" / ".join(Array(card.card_types)))
 	_prev_type.text = " · ".join(type_parts)
 	_prev_type.tooltip_text = _prev_type.text
 	_prev_type.add_theme_color_override("font_color", _get_type_color(card))

@@ -7,7 +7,7 @@ func _init() -> void:
 	super._init()
 	card_name = "Byggvir"
 	card_types = ["Human", "Servant"]
-	level = 2
+	level = 1
 	mana_cost = 0
 	speed = 2
 	resilience = 10

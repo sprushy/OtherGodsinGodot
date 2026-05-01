@@ -138,6 +138,7 @@ var _friends_content_list: VBoxContainer = null
 var _friends_send_deck_dialog: ConfirmationDialog = null
 var _friends_send_deck_option: OptionButton = null
 var _friends_pending_send_username: String = ""
+var _close_confirm_overlay: Control = null
 
 func _ready() -> void:
 	if _is_server_runtime_launch():
@@ -210,6 +211,10 @@ func _bind_game_signals() -> void:
 			var callback := Callable(self, "_on_game_forfeit_requested")
 			if not game.forfeit_requested.is_connected(callback):
 				game.forfeit_requested.connect(callback)
+		if game != null and game.has_signal("return_to_menu_requested"):
+			var return_callback := Callable(self, "_on_game_return_to_menu_requested")
+			if not game.return_to_menu_requested.is_connected(return_callback):
+				game.return_to_menu_requested.connect(return_callback)
 		if game != null and game.has_signal("match_session_cleared"):
 			var clear_callback := Callable(self, "_on_match_session_cleared")
 			if not game.match_session_cleared.is_connected(clear_callback):
@@ -337,14 +342,18 @@ func _process(delta: float) -> void:
 	_queue_room_list_refresh(false)
 
 func _input(event: InputEvent) -> void:
-	if _deck_picker_popup == null or not is_instance_valid(_deck_picker_popup) or not _deck_picker_popup.visible:
-		return
 	if event is InputEventKey:
 		var key_event := event as InputEventKey
 		if key_event.pressed and key_event.keycode == KEY_ESCAPE:
-			_hide_multiplayer_deck_popup()
-			get_viewport().set_input_as_handled()
-			return
+			if _deck_picker_popup != null and is_instance_valid(_deck_picker_popup) and _deck_picker_popup.visible:
+				_hide_multiplayer_deck_popup()
+				get_viewport().set_input_as_handled()
+				return
+			if _handle_escape_navigation():
+				get_viewport().set_input_as_handled()
+				return
+	if _deck_picker_popup == null or not is_instance_valid(_deck_picker_popup) or not _deck_picker_popup.visible:
+		return
 	if event is InputEventMouseButton:
 		var mouse_event := event as InputEventMouseButton
 		if not mouse_event.pressed:
@@ -356,6 +365,114 @@ func _input(event: InputEvent) -> void:
 		if popup_rect.has_point(mouse_event.position) or button_rect.has_point(mouse_event.position):
 			return
 		_hide_multiplayer_deck_popup()
+
+func _handle_escape_navigation() -> bool:
+	if _close_confirm_overlay != null and is_instance_valid(_close_confirm_overlay):
+		_close_program()
+		return true
+	if _rules_overlay != null and is_instance_valid(_rules_overlay):
+		_close_rules_overlay()
+		show_menu()
+		return true
+	if _friends_overlay != null and is_instance_valid(_friends_overlay):
+		_close_friends_overlay()
+		show_menu()
+		return true
+	var deck_builder := game_container.get_node_or_null("DeckBuilder") if game_container != null else null
+	if deck_builder != null and bool(deck_builder.visible):
+		_return_to_menu()
+		return true
+	if menu_container != null and menu_container.visible and multiplayer_container != null and not multiplayer_container.visible:
+		_open_close_confirm_overlay()
+		return true
+	return false
+
+func _open_close_confirm_overlay() -> void:
+	if _close_confirm_overlay != null and is_instance_valid(_close_confirm_overlay):
+		return
+	_close_confirm_overlay = Control.new()
+	_close_confirm_overlay.name = "CloseConfirmOverlay"
+	_close_confirm_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_close_confirm_overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	add_child(_close_confirm_overlay)
+
+	var shade := ColorRect.new()
+	shade.color = Color(0.02, 0.03, 0.06, 0.82)
+	shade.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	shade.mouse_filter = Control.MOUSE_FILTER_STOP
+	_close_confirm_overlay.add_child(shade)
+
+	var panel := PanelContainer.new()
+	panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	panel.custom_minimum_size = Vector2(360, 0)
+	panel.anchor_left = 0.5
+	panel.anchor_right = 0.5
+	panel.anchor_top = 0.5
+	panel.anchor_bottom = 0.5
+	panel.position = Vector2(-180, -110)
+	var panel_style := StyleBoxFlat.new()
+	panel_style.bg_color = Color(0.08, 0.10, 0.16, 0.98)
+	panel_style.border_color = Color(0.88, 0.44, 0.40, 0.95)
+	panel_style.corner_radius_top_left = 12
+	panel_style.corner_radius_top_right = 12
+	panel_style.corner_radius_bottom_left = 12
+	panel_style.corner_radius_bottom_right = 12
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		panel_style.set_border_width(side as Side, 2)
+	panel.add_theme_stylebox_override("panel", panel_style)
+	_close_confirm_overlay.add_child(panel)
+
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 18)
+	margin.add_theme_constant_override("margin_right", 18)
+	margin.add_theme_constant_override("margin_top", 18)
+	margin.add_theme_constant_override("margin_bottom", 18)
+	panel.add_child(margin)
+
+	var content := VBoxContainer.new()
+	content.add_theme_constant_override("separation", 12)
+	margin.add_child(content)
+
+	var title := Label.new()
+	title.text = "Close Other Gods?"
+	title.add_theme_font_size_override("font_size", 24)
+	content.add_child(title)
+
+	var body := Label.new()
+	body.text = "Press Escape again or click Close to exit the program."
+	body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	body.modulate = Color(0.82, 0.87, 0.95)
+	content.add_child(body)
+
+	var actions := HBoxContainer.new()
+	actions.alignment = BoxContainer.ALIGNMENT_END
+	actions.add_theme_constant_override("separation", 8)
+	content.add_child(actions)
+
+	var cancel_btn := Button.new()
+	cancel_btn.text = "Cancel"
+	cancel_btn.custom_minimum_size = Vector2(110, 38)
+	cancel_btn.pressed.connect(_close_close_confirm_overlay)
+	actions.add_child(cancel_btn)
+
+	var close_btn := Button.new()
+	close_btn.text = "Close"
+	close_btn.custom_minimum_size = Vector2(110, 38)
+	close_btn.pressed.connect(_close_program)
+	actions.add_child(close_btn)
+
+	cancel_btn.grab_focus()
+
+func _close_close_confirm_overlay() -> void:
+	if _close_confirm_overlay == null:
+		return
+	if is_instance_valid(_close_confirm_overlay):
+		_close_confirm_overlay.queue_free()
+	_close_confirm_overlay = null
+
+func _close_program() -> void:
+	_close_close_confirm_overlay()
+	get_tree().quit()
 
 func show_menu() -> void:
 	menu_container.visible = true
@@ -3286,6 +3403,9 @@ func _on_back_to_menu_pressed() -> void:
 	_return_to_menu()
 
 func _on_game_forfeit_requested() -> void:
+	_return_to_menu()
+
+func _on_game_return_to_menu_requested() -> void:
 	_return_to_menu()
 
 func _return_to_menu() -> void:

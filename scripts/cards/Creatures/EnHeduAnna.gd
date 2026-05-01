@@ -10,7 +10,7 @@ func _init() -> void:
 	super._init()
 	card_name = "En-hedu-anna"
 	card_types = ["Human", "Mage", "Priest", "Ancient Creature"]
-	level = 2
+	level = 4
 	mana_cost = 2
 	speed = 1
 	resilience = 12

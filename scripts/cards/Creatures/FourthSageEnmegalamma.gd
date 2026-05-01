@@ -4,12 +4,12 @@ func _init() -> void:
 	super._init()
 	card_name = "Fourth Sage Enmegalamma"
 	card_types = ["Mer", "Mage", "Priest", "Sage", "Ancient Creature"]
-	level = 3
+	level = 2
 	mana_cost = 0
 	sacrifice_cost = 0
 	speed = 1
 	resilience = 15
-	strength = 15
+	strength = 14
 	ability_text = "[b]Search[/b] Sage ([b]Impact[/b]): You may add a Mer Sage from your deck to your hand except for another copy of this card."
 	flavor_text = ""
 	culture = "Ancient"

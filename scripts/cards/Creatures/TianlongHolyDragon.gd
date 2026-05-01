@@ -7,7 +7,7 @@ func _init() -> void:
 	super._init()
 	card_name = "Tianlong, Holy Dragon"
 	card_types = ["Dragon", "Long", "Aerial", "Tian Creature"]
-	level = 2
+	level = 5
 	mana_cost = 2
 	sacrifice_cost = 0
 	speed = 2

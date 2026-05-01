@@ -5,7 +5,7 @@ func _init() -> void:
 	super._init()
 	card_name = "Edimmu"
 	card_types = ["Spirit", "Ghost", "Ancient Creature"]
-	level = 2
+	level = 1
 	mana_cost = 0
 	speed = 1
 	resilience = 5

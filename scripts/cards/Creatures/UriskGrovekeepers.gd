@@ -10,11 +10,11 @@ func _init() -> void:
 	card_name = "Urisk Grovekeepers"
 	card_types = ["Hybrid", "Satyr", "Warrior", "Triskelion Creature"]
 	level = 5
-	mana_cost = 5
+	mana_cost = 4
 	sacrifice_cost = 0
 	speed = 2
-	resilience = 27
-	strength = 29
+	resilience = 30
+	strength = 28
 	ability_text = "[b]Forest Ward[/b] ([b]Passive[/b]): Can intercept in aggressive stance for Animal, Plant, and Nature cards with reach 2, and gets +1 SPD while intercepting for those cards."
 	flavor_text = ""
 	culture = "Triskelion"

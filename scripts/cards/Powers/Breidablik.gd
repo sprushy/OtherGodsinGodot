@@ -103,21 +103,22 @@ func activate(game_manager: GameManager, target: Card = null) -> void:
 func return_priest(game_manager: GameManager, priest: Card) -> bool:
 	if not can_return_priest(game_manager):
 		return false
-	if priest == null or priest not in stored_priests:
+	var stored_priest := _resolve_stored_priest_reference(priest)
+	if stored_priest == null:
 		return false
-	var zone: Zone = _get_best_return_zone(priest)
+	var zone: Zone = _get_best_return_zone(stored_priest)
 	if zone == null:
 		return false
 	if not spend_activation_mana(RETURN_MANA_COST, game_manager):
 		return false
-	stored_priests.erase(priest)
-	stored_priest_origins.erase(priest)
-	zone.add_card(priest)
-	priest.is_face_down = false
-	priest.is_stealth = false
-	priest.wake_up()
-	priest.reset_creature_action_state()
-	priest.summoned_this_turn = false
+	stored_priests.erase(stored_priest)
+	stored_priest_origins.erase(stored_priest)
+	zone.add_card(stored_priest)
+	stored_priest.is_face_down = false
+	stored_priest.is_stealth = false
+	stored_priest.wake_up()
+	stored_priest.reset_creature_action_state()
+	stored_priest.summoned_this_turn = false
 	return_window_open = false
 	_emit_visual_state_changed()
 	return true
@@ -191,6 +192,16 @@ func _return_all_stored_priests() -> void:
 	stored_priests = unresolved
 	return_window_open = false
 	_emit_visual_state_changed()
+
+func _resolve_stored_priest_reference(priest: Card) -> Card:
+	if priest == null:
+		return null
+	if priest in stored_priests:
+		return priest
+	for stored_priest in stored_priests:
+		if stored_priest != null and stored_priest.uid == priest.uid:
+			return stored_priest
+	return null
 
 func _get_open_field_zones() -> Array[Zone]:
 	var open_zones: Array[Zone] = []

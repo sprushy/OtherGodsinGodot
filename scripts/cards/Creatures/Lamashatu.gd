@@ -21,7 +21,7 @@ func _init() -> void:
 	resilience = 26
 	strength = 23
 	targets = true
-	ability_text = "[b]Suckle[/b] ([b]Activate[/b]): Once per turn, choose another friendly Demon or Animal. It gains +1 Lvl, +1 Spd, +5 Str, and +5 Res until end of turn."
+	ability_text = "[b]Suckle[/b] ([b]Activate[/b]): Once per turn, choose another friendly Demon or Animal. It gains +1 Lvl, +1 Spd, +5 Str, and +5 Res."
 	flavor_text = ""
 	culture = "Ancient"
 	artist = "Ricardo Zoppello"
@@ -85,15 +85,12 @@ func activate(game_manager: GameManager, target: Card = null) -> void:
 		self,
 		card_owner,
 		"suckle",
-		{
-			"lvl": SUCKLE_LEVEL_BONUS,
-			"expires_turn": game_manager.turn_number,
-		}
+		{"lvl": SUCKLE_LEVEL_BONUS}
 	)
 	is_used = true
 	if game_manager != null:
 		game_manager.note_player_feedback(
-			"%s suckles %s, granting +1 Lvl, +1 Spd, +5 Str, and +5 Res until end of turn." % [
+			"%s suckles %s, granting +1 Lvl, +1 Spd, +5 Str, and +5 Res." % [
 				card_name,
 				target.get_target_log_display_name(game_manager.get_feedback_viewer()),
 			]
