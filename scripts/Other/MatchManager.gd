@@ -2838,6 +2838,10 @@ func _process_command_impl(command: Dictionary) -> bool:
 			var valid_targets := sage.get_valid_targets(game_manager)
 			var target_uid: String = command.get("target_uid", "")
 			if target_uid == "":
+				if valid_targets.size() == 1 and valid_targets[0] == sage:
+					game_manager.note_player_feedback(sage.resolve_good_fortune_impact(game_manager, sage))
+					move_validated.emit(command)
+					return true
 				var feedback := "%s found no Mer Sage to bless." % sage.card_name if valid_targets.is_empty() else sage.card_name + " impact fizzles."
 				game_manager.note_player_feedback(feedback)
 				move_validated.emit(command)

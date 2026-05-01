@@ -2919,9 +2919,11 @@ func _refresh_turn_choice_options() -> void:
 	var draw_mana_gain := GameManager.UPKEEP_DRAW_MANA_GAIN
 	var mana_gain := GameManager.UPKEEP_MANA_GAIN
 	if game_manager != null:
+		draw_mana_gain = game_manager.get_base_upkeep_draw_mana_gain()
+		mana_gain = game_manager.get_base_upkeep_mana_gain()
 		draw_mana_gain = game_manager.get_effective_upkeep_mana_gain(draw_mana_gain, game_manager.current_player)
 		mana_gain = game_manager.get_effective_upkeep_mana_gain(mana_gain, game_manager.current_player)
-	draw_button.text = "Gain %d Mana + Card" % draw_mana_gain
+	draw_button.text = "Draw a Card" if draw_mana_gain <= 0 else "Gain %d Mana + Card" % draw_mana_gain
 	mana_button.text = "Gain %d Mana" % mana_gain
 	draw_button.disabled = false
 	mana_button.disabled = false
@@ -5537,7 +5539,7 @@ func _show_skoll_prompt(skoll: Skoll) -> void:
 	vbox.add_child(title)
 
 	var info := Label.new()
-	info.text = "Sun Hunt: summon this Skoll from your hand now? This summon costs no mana and no sacrifice, replaces Gain 1 Mana + Card or Gain 5 Mana, and makes all other summoning cost 2 extra mana this turn."
+	info.text = "Sun Hunt: summon this Skoll from your hand now? This summon costs no mana and no sacrifice, replaces your other upkeep options, and makes all other summoning cost 2 extra mana this turn."
 	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	info.add_theme_font_size_override("font_size", 11)
 	vbox.add_child(info)

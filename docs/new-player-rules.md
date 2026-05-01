@@ -8,7 +8,7 @@ The game is won when you reduce your opponent's **Followers** to 0.
 
 You start the game with **100 Followers**. They act as your life total. When your Followers reach 0, you are defeated. Followers can be lost when your God is attacked directly, or through the results of combat.
 
-**Mana** is used to play cards, unlock Powers, and activate abilities. During your Upkeep phase, you choose between gaining 5 Mana or gaining 1 Mana and drawing 1 card.
+**Mana** is used to play cards, unlock Powers, and activate abilities. During your Upkeep phase, you choose between gaining 5 Mana or gaining 1 Mana and drawing 1 card. On the very first turn of the game, the upkeep options are gaining 4 Mana or drawing 1 card.
 
 ## 2. Deck Construction Rules
 
@@ -53,7 +53,7 @@ Each player uses the following zones:
 
 ### A. Upkeep Phase
 
-At the start of your turn, once-per-turn actions are reset. You must then choose one of the following Upkeep options: gain **5 Mana**, gain **1 Mana and draw 1 card**, or use another available upkeep option.
+At the start of your turn, once-per-turn actions are reset. You must then choose one of the following Upkeep options: gain **5 Mana**, gain **1 Mana and draw 1 card**, or use another available upkeep option. On the very first turn of the game, the basic options are gain **4 Mana** or draw **1 card**.
 
 ### B. Main Phase
 

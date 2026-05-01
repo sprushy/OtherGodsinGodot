@@ -14,7 +14,7 @@ func _init() -> void:
 	speed = 2
 	resilience = 29
 	strength = 30
-	ability_text = "Sun Hunt ([b]Upkeep[/b]): You may skip your other upkeep options to summon this from your hand without paying its cost. Until end of turn, all other summons cost 2 more."
+	ability_text = "Sun Hunt ([b]Upkeep[/b], after the first turn): You may skip your other upkeep options to summon this from your hand without paying its cost. Until end of turn, all other summons cost 2 more."
 	culture = "Norse"
 	artist = "Riccardo Zoppello"
 	art_path = ART_PATH
@@ -25,6 +25,8 @@ func can_use_upkeep_summon(game_manager: GameManager) -> bool:
 	if game_manager.current_player != card_owner:
 		return false
 	if not game_manager.is_player_in_upkeep_window(card_owner):
+		return false
+	if game_manager.is_first_game_turn():
 		return false
 	if current_zone != card_owner.hand_zone:
 		return false

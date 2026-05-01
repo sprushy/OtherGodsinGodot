@@ -51,6 +51,8 @@ func get_valid_targets(game_manager: GameManager) -> Array[Card]:
 			for card in zone.cards:
 				if _is_valid_good_fortune_target(card):
 					valid_targets.append(card)
+	if _is_valid_good_fortune_target(self) and self not in valid_targets:
+		valid_targets.append(self)
 	return valid_targets
 
 func resolve_good_fortune_impact(game_manager: GameManager, target: Card) -> String:

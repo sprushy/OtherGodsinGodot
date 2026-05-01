@@ -24,6 +24,8 @@ const GOD_DEATH_FOLLOWER_LOSS := 7
 const GOD_DEATH_UPKEEP_MANA_PENALTY := 1
 const UPKEEP_DRAW_MANA_GAIN := 1
 const UPKEEP_MANA_GAIN := 5
+const FIRST_TURN_UPKEEP_DRAW_MANA_GAIN := 0
+const FIRST_TURN_UPKEEP_MANA_GAIN := 4
 
 var players: Array[Player] = []
 var current_player: Player
@@ -721,7 +723,7 @@ func get_opponent(player: Player) -> Player:
 # 1. Officially begin the new turn and increment turn_number.
 # 2. Reset once-per-turn state for the active player.
 # 3. Open the upkeep window and resolve upkeep hooks with no priority window.
-# 4. Later, when the player chooses Gain 1 Mana + Card, Gain 5 Mana, or another upkeep option,
+# 4. Later, when the player chooses a mana/card upkeep option or another upkeep option,
 #    mark upkeep complete and then fire turn-start hooks/effects.
 func start_turn() -> void:
 	if is_game_over:
@@ -764,7 +766,6 @@ func _begin_turn_upkeep() -> void:
 	if _upkeep_started_turn == turn_number:
 		return
 	_upkeep_started_turn = turn_number
-	turn_upkeep_started.emit(turn_number, current_player)
 	if is_player_under_god_death(current_player):
 		current_player.lose_followers(GOD_DEATH_FOLLOWER_LOSS)
 		note_player_feedback(
@@ -779,6 +780,7 @@ func _begin_turn_upkeep() -> void:
 	if opponent != null:
 		for card in _get_sorted_upkeep_cards_for_player(opponent, "on_opponent_turn_upkeep"):
 			card.on_opponent_turn_upkeep(self, current_player)
+	turn_upkeep_started.emit(turn_number, current_player)
 
 func _resolve_turn_upkeep() -> void:
 	if _upkeep_resolved_turn == turn_number:
@@ -929,7 +931,7 @@ func player_chooses_draw() -> void:
 	if not is_player_in_upkeep_window(current_player):
 		return
 	_begin_turn_upkeep()
-	_gain_upkeep_choice_mana(UPKEEP_DRAW_MANA_GAIN)
+	_gain_upkeep_choice_mana(get_base_upkeep_draw_mana_gain())
 	current_player.draw_card()
 	_resolve_turn_upkeep()
 
@@ -939,7 +941,7 @@ func player_chooses_mana() -> void:
 	if not is_player_in_upkeep_window(current_player):
 		return
 	_begin_turn_upkeep()
-	_gain_upkeep_choice_mana(UPKEEP_MANA_GAIN)
+	_gain_upkeep_choice_mana(get_base_upkeep_mana_gain())
 	_resolve_turn_upkeep()
 
 func _gain_upkeep_choice_mana(amount: int) -> void:
@@ -953,12 +955,21 @@ func _gain_upkeep_choice_mana(amount: int) -> void:
 func get_upkeep_choice_feedback(choice: String) -> String:
 	match choice:
 		"draw":
-			var draw_mana := get_effective_upkeep_mana_gain(UPKEEP_DRAW_MANA_GAIN, current_player)
+			var draw_mana := get_effective_upkeep_mana_gain(get_base_upkeep_draw_mana_gain(), current_player)
 			return "Drew a card." if draw_mana <= 0 else "Gained %d mana and drew a card." % draw_mana
 		"mana":
-			var mana_gain := get_effective_upkeep_mana_gain(UPKEEP_MANA_GAIN, current_player)
+			var mana_gain := get_effective_upkeep_mana_gain(get_base_upkeep_mana_gain(), current_player)
 			return "No upkeep mana gained." if mana_gain <= 0 else "Gained %d mana." % mana_gain
 	return ""
+
+func is_first_game_turn() -> bool:
+	return turn_number == 1
+
+func get_base_upkeep_draw_mana_gain() -> int:
+	return FIRST_TURN_UPKEEP_DRAW_MANA_GAIN if is_first_game_turn() else UPKEEP_DRAW_MANA_GAIN
+
+func get_base_upkeep_mana_gain() -> int:
+	return FIRST_TURN_UPKEEP_MANA_GAIN if is_first_game_turn() else UPKEEP_MANA_GAIN
 
 func get_effective_upkeep_mana_gain(base_amount: int, player: Player = null) -> int:
 	var target_player := player if player != null else current_player

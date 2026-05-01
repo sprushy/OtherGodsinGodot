@@ -17,6 +17,14 @@ const TEZ_TONAL_MASTERY_TEXTURE_PATHS := [
 const TEZ_NORMAL_GOD_NAME := "Tezcatlipoca, the Smoking Mirror"
 const TEZ_REQUIRED_SACRIFICES := 4
 const TEZ_TONAL_MASTERY_TOKEN_THRESHOLD := 3
+const TEZ_BADGE_LEFT := -62
+const TEZ_BADGE_RIGHT := -4
+const TEZ_PRIMARY_BADGE_TOP := 24
+const TEZ_PRIMARY_BADGE_BOTTOM := 82
+const TEZ_SECONDARY_BADGE_LEFT := -64
+const TEZ_SECONDARY_BADGE_RIGHT := -2
+const TEZ_SECONDARY_BADGE_TOP := 88
+const TEZ_SECONDARY_BADGE_BOTTOM := 150
 const BASE_BOARD_Z_INDEX := 0
 const RAISED_BOARD_Z_INDEX := 2
 const GOD_INDICATOR_Z_INDEX := 3
@@ -947,11 +955,11 @@ func _add_tez_tonal_mastery_badge(overlay: Control, card: Card) -> void:
 	badge.mouse_filter = Control.MOUSE_FILTER_PASS
 	badge.mouse_default_cursor_shape = Control.CURSOR_ARROW
 	badge.z_index = 31
-	badge.set_anchors_preset(Control.PRESET_TOP_LEFT)
-	badge.offset_left = 6
-	badge.offset_top = 44
-	badge.offset_right = 42
-	badge.offset_bottom = 80
+	badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	badge.offset_left = TEZ_SECONDARY_BADGE_LEFT
+	badge.offset_top = TEZ_SECONDARY_BADGE_TOP
+	badge.offset_right = TEZ_SECONDARY_BADGE_RIGHT
+	badge.offset_bottom = TEZ_SECONDARY_BADGE_BOTTOM
 
 	if token_count > 0:
 		var glow_alpha := 0.26 + (0.12 * float(token_count))
@@ -995,10 +1003,10 @@ func _add_smoking_mirror_badge(overlay: Control, card: Card) -> void:
 	badge.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND if clickable else Control.CURSOR_ARROW
 	badge.z_index = 31
 	badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	badge.offset_left = -62
-	badge.offset_top = 4
-	badge.offset_right = -4
-	badge.offset_bottom = 62
+	badge.offset_left = TEZ_BADGE_LEFT
+	badge.offset_top = TEZ_PRIMARY_BADGE_TOP
+	badge.offset_right = TEZ_BADGE_RIGHT
+	badge.offset_bottom = TEZ_PRIMARY_BADGE_BOTTOM
 
 	if ready:
 		_add_badge_image_glow(badge, SMOKING_MIRROR_BADGE_TEXTURE, Color(0.75, 0.24, 1.0, 0.58))
@@ -1049,10 +1057,10 @@ func _add_tez_sacrifice_badge(overlay: Control, card: Card) -> void:
 	badge.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND if clickable else Control.CURSOR_ARROW
 	badge.z_index = 31
 	badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	badge.offset_left = -62
-	badge.offset_top = 4
-	badge.offset_right = -4
-	badge.offset_bottom = 62
+	badge.offset_left = TEZ_BADGE_LEFT
+	badge.offset_top = TEZ_PRIMARY_BADGE_TOP
+	badge.offset_right = TEZ_BADGE_RIGHT
+	badge.offset_bottom = TEZ_PRIMARY_BADGE_BOTTOM
 
 	if ready:
 		_add_badge_image_glow(badge, TEZ_SACRIFICE_BADGE_TEXTURE, Color(1.0, 0.0, 0.0, 0.92), 8.0)

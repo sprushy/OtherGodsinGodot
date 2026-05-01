@@ -360,8 +360,13 @@ func _handle_thor_upkeep() -> void:
 	})
 
 func _choose_thor_upkeep_option() -> String:
-	var best_now := _get_best_affordable_thor_hand_creature(GameManager.UPKEEP_DRAW_MANA_GAIN)
-	var best_with_bonus := _get_best_affordable_thor_hand_creature(GameManager.UPKEEP_MANA_GAIN)
+	var draw_mana_gain := GameManager.UPKEEP_DRAW_MANA_GAIN
+	var mana_gain := GameManager.UPKEEP_MANA_GAIN
+	if game_manager != null:
+		draw_mana_gain = game_manager.get_base_upkeep_draw_mana_gain()
+		mana_gain = game_manager.get_base_upkeep_mana_gain()
+	var best_now := _get_best_affordable_thor_hand_creature(draw_mana_gain)
+	var best_with_bonus := _get_best_affordable_thor_hand_creature(mana_gain)
 	if best_with_bonus != null and _is_projected_creature_better(best_with_bonus, best_now):
 		return "mana"
 	if best_now == null and best_with_bonus != null:
