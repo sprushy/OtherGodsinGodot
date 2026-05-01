@@ -46,3 +46,20 @@ func restore_stored_normal_god() -> Card:
 	restored_god.is_face_down = false
 	restored_god.is_stealth = false
 	return restored_god
+
+func get_serialized_state() -> Dictionary:
+	var state := super.get_serialized_state()
+	if stored_normal_god != null:
+		state["stored_normal_god"] = GameState.serialize_embedded_card(stored_normal_god)
+	return state
+
+func apply_serialized_state(state: Dictionary) -> void:
+	super.apply_serialized_state(state)
+	stored_normal_god = null
+	var stored_god_data = state.get("stored_normal_god", {})
+	if not (stored_god_data is Dictionary):
+		return
+	stored_normal_god = GameState.deserialize_embedded_card(stored_god_data as Dictionary)
+	if stored_normal_god != null:
+		stored_normal_god.card_owner = card_owner
+		stored_normal_god.current_zone = null

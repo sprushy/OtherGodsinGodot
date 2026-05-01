@@ -133,11 +133,12 @@ func on_removed(_game_manager: GameManager) -> void:
 	_emit_visual_state_changed()
 
 func get_serialized_state() -> Dictionary:
-	return {
-		"tactic_counters": tactic_counters,
-	}
+	var state := super.get_serialized_state()
+	state["tactic_counters"] = tactic_counters
+	return state
 
 func apply_serialized_state(state: Dictionary) -> void:
+	super.apply_serialized_state(state)
 	tactic_counters = int(state.get("tactic_counters", 0))
 	_emit_visual_state_changed()
 

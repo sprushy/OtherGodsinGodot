@@ -129,33 +129,41 @@ func get_hover_stored_cards_title(_viewer: Player = null) -> String:
 	return "Necoc Yaotl Sacrifices"
 
 func get_serialized_state() -> Dictionary:
-	var sacrifice_levels: Array[int] = []
+	var state := super.get_serialized_state()
+	var stored_sacrifices: Array[Dictionary] = []
 	for card in necoc_yaotl_sacrifices:
-		if card != null:
-			sacrifice_levels.append(card.get_effective_level())
-	return {
-		"necoc_yaotl_sacrifice_count": sacrifice_levels.size(),
-		"necoc_yaotl_sacrifice_levels": sacrifice_levels,
-		"necoc_yaotl_total_level": get_titlacauan_level_budget(),
-		"in_jaguar_form": in_jaguar_form,
-	}
+		if card == null:
+			continue
+		stored_sacrifices.append({
+			"card": GameState.serialize_embedded_card(card),
+		})
+	state["necoc_yaotl_sacrifices"] = stored_sacrifices
+	state["necoc_yaotl_sacrifice_count"] = stored_sacrifices.size()
+	state["necoc_yaotl_total_level"] = get_titlacauan_level_budget()
+	state["in_jaguar_form"] = in_jaguar_form
+	return state
 
 func apply_serialized_state(state: Dictionary) -> void:
+	super.apply_serialized_state(state)
 	necoc_yaotl_sacrifices.clear()
 	if state.is_empty():
 		in_jaguar_form = card_types.has("Jaguar")
 	else:
 		in_jaguar_form = bool(state.get("in_jaguar_form", false))
 	card_types = _get_jaguar_form_types() if in_jaguar_form else _get_divine_form_types()
-	var sacrifice_levels: Array = state.get("necoc_yaotl_sacrifice_levels", [])
-	var sacrifice_count := int(state.get("necoc_yaotl_sacrifice_count", sacrifice_levels.size()))
-	for i in range(sacrifice_count):
-		var placeholder := BaseCard.new()
-		placeholder.card_name = "Necoc Yaotl sacrifice"
-		placeholder.card_type = Card.CardType.CREATURE
-		if i < sacrifice_levels.size():
-			placeholder.level = maxi(1, int(sacrifice_levels[i]))
-		necoc_yaotl_sacrifices.append(placeholder)
+	for entry_value in state.get("necoc_yaotl_sacrifices", []):
+		if not (entry_value is Dictionary):
+			continue
+		var entry := entry_value as Dictionary
+		var card_data = entry.get("card", {})
+		if not (card_data is Dictionary):
+			continue
+		var stored_card := GameState.deserialize_embedded_card(card_data as Dictionary)
+		if stored_card == null:
+			continue
+		stored_card.card_owner = card_owner
+		stored_card.current_zone = null
+		necoc_yaotl_sacrifices.append(stored_card)
 	_emit_visual_state_changed()
 
 func get_effective_speed() -> int:

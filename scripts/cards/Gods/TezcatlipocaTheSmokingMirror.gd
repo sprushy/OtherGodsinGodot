@@ -97,29 +97,36 @@ func get_tonal_mastery_token_count() -> int:
 	return clampi(tonal_mastery_tokens, 0, TONAL_MASTERY_TOKEN_THRESHOLD)
 
 func get_serialized_state() -> Dictionary:
-	var sacrifice_levels: Array[int] = []
+	var stored_sacrifices: Array[Dictionary] = []
 	for card in necoc_yaotl_sacrifices:
-		if card != null:
-			sacrifice_levels.append(card.get_effective_level())
+		if card == null:
+			continue
+		stored_sacrifices.append({
+			"card": GameState.serialize_embedded_card(card),
+		})
 	return {
 		"tonal_mastery_tokens": get_tonal_mastery_token_count(),
-		"necoc_yaotl_sacrifice_count": sacrifice_levels.size(),
-		"necoc_yaotl_sacrifice_levels": sacrifice_levels,
+		"necoc_yaotl_sacrifices": stored_sacrifices,
+		"necoc_yaotl_sacrifice_count": stored_sacrifices.size(),
 		"necoc_yaotl_total_level": get_necoc_yaotl_total_level(),
 	}
 
 func apply_serialized_state(state: Dictionary) -> void:
 	tonal_mastery_tokens = clampi(int(state.get("tonal_mastery_tokens", 0)), 0, TONAL_MASTERY_TOKEN_THRESHOLD)
 	necoc_yaotl_sacrifices.clear()
-	var sacrifice_levels: Array = state.get("necoc_yaotl_sacrifice_levels", [])
-	var sacrifice_count := int(state.get("necoc_yaotl_sacrifice_count", sacrifice_levels.size()))
-	for i in range(sacrifice_count):
-		var placeholder := BaseCard.new()
-		placeholder.card_name = "Necoc Yaotl sacrifice"
-		placeholder.card_type = Card.CardType.CREATURE
-		if i < sacrifice_levels.size():
-			placeholder.level = maxi(1, int(sacrifice_levels[i]))
-		necoc_yaotl_sacrifices.append(placeholder)
+	for entry_value in state.get("necoc_yaotl_sacrifices", []):
+		if not (entry_value is Dictionary):
+			continue
+		var entry := entry_value as Dictionary
+		var card_data = entry.get("card", {})
+		if not (card_data is Dictionary):
+			continue
+		var stored_card := GameState.deserialize_embedded_card(card_data as Dictionary)
+		if stored_card == null:
+			continue
+		stored_card.card_owner = card_owner
+		stored_card.current_zone = null
+		necoc_yaotl_sacrifices.append(stored_card)
 	_emit_visual_state_changed()
 
 func can_resolve_necoc_yaotl_summon(game_manager: GameManager) -> bool:
