@@ -8,8 +8,15 @@ const CHAMPIONS_CALL_BADGE_TEXTURE := preload("res://images/Champion's Call Horn
 const SMOKING_MIRROR_BADGE_TEXTURE := preload("res://images/Smoking Mirror Icon.png")
 const TEZ_SACRIFICE_BADGE_TEXTURE := preload("res://images/TezSacBadge.png")
 const TEZ_BLOODSTREAK_TEXTURE := preload("res://images/Bloodstreak.png")
+const TEZ_TONAL_MASTERY_TEXTURE_PATHS := [
+	"res://images/TezTonalMastery0.png",
+	"res://images/TezTonalMastery1.png",
+	"res://images/TezTonalMastery2.png",
+	"res://images/TezTonalMastery3.png",
+]
 const TEZ_NORMAL_GOD_NAME := "Tezcatlipoca, the Smoking Mirror"
 const TEZ_REQUIRED_SACRIFICES := 4
+const TEZ_TONAL_MASTERY_TOKEN_THRESHOLD := 3
 const BASE_BOARD_Z_INDEX := 0
 const RAISED_BOARD_Z_INDEX := 2
 const GOD_INDICATOR_Z_INDEX := 3
@@ -326,6 +333,7 @@ var _defense_overlay: Control = null
 var _raised_overlay: Control = null  # non-null for DEF or stealth - floats above the zone row
 var _visual_state_card: Card = null
 var _badge_hover_popup: Control = null
+var _tez_tonal_mastery_texture_cache: Dictionary = {}
 
 const BASE_ZONE_EXTENT := 165.0
 const DROMI_BINDING_NAME := "Dromi"
@@ -878,6 +886,31 @@ func _is_tez_necoc_yaotl_card(card: Card) -> bool:
 		and card.card_name == TEZ_NORMAL_GOD_NAME \
 		and card.has_method("get_necoc_yaotl_sacrifices")
 
+func _is_tez_tonal_mastery_card(card: Card) -> bool:
+	return card != null \
+		and card.card_name == TEZ_NORMAL_GOD_NAME \
+		and card.has_method("get_tonal_mastery_token_count")
+
+func _get_tez_tonal_mastery_token_count(card: Card) -> int:
+	if not _is_tez_tonal_mastery_card(card):
+		return 0
+	return clampi(int(card.call("get_tonal_mastery_token_count")), 0, TEZ_TONAL_MASTERY_TOKEN_THRESHOLD)
+
+func _get_tez_tonal_mastery_texture(card: Card) -> Texture2D:
+	var token_count := clampi(_get_tez_tonal_mastery_token_count(card), 0, TEZ_TONAL_MASTERY_TEXTURE_PATHS.size() - 1)
+	var texture_path := str(TEZ_TONAL_MASTERY_TEXTURE_PATHS[token_count])
+	if _tez_tonal_mastery_texture_cache.has(texture_path):
+		return _tez_tonal_mastery_texture_cache[texture_path] as Texture2D
+	var absolute_path := ProjectSettings.globalize_path(texture_path)
+	if not FileAccess.file_exists(absolute_path):
+		return null
+	var image := Image.load_from_file(absolute_path)
+	if image == null or image.is_empty():
+		return null
+	var texture := ImageTexture.create_from_image(image)
+	_tez_tonal_mastery_texture_cache[texture_path] = texture
+	return texture
+
 func _get_tez_necoc_yaotl_sacrifice_count(card: Card) -> int:
 	if not _is_tez_necoc_yaotl_card(card):
 		return 0
@@ -899,6 +932,47 @@ func _get_tez_necoc_yaotl_total_level(card: Card) -> int:
 			if sacrifice_card != null:
 				total += sacrifice_card.get_effective_level()
 	return total
+
+func _add_tez_tonal_mastery_badge(overlay: Control, card: Card) -> void:
+	if overlay == null or card == null or not _is_tez_tonal_mastery_card(card):
+		return
+
+	var token_count := _get_tez_tonal_mastery_token_count(card)
+	var texture := _get_tez_tonal_mastery_texture(card)
+	if texture == null:
+		return
+
+	var badge := Control.new()
+	badge.name = "TezTonalMasteryBadge"
+	badge.mouse_filter = Control.MOUSE_FILTER_PASS
+	badge.mouse_default_cursor_shape = Control.CURSOR_ARROW
+	badge.z_index = 31
+	badge.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	badge.offset_left = 6
+	badge.offset_top = 44
+	badge.offset_right = 42
+	badge.offset_bottom = 80
+
+	if token_count > 0:
+		var glow_alpha := 0.26 + (0.12 * float(token_count))
+		_add_badge_image_glow(badge, texture, Color(0.08, 0.7, 1.0, glow_alpha), 5.0)
+
+	var icon := TextureRect.new()
+	icon.texture = texture
+	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	badge.add_child(icon)
+
+	_connect_badge_hover(
+		badge,
+		"Tonal Mastery: %d/%d tokens\nAt 3 tokens, gain 2 mana and reset." % [
+			token_count,
+			TEZ_TONAL_MASTERY_TOKEN_THRESHOLD
+		]
+	)
+	overlay.add_child(badge)
 
 func _add_smoking_mirror_badge(overlay: Control, card: Card) -> void:
 	if overlay == null or card == null:
@@ -2436,6 +2510,8 @@ func _refresh_display() -> void:
 				var _effect_lines: Array[String] = []
 				if card.has_method("get_effect_summary_lines"):
 					_effect_lines = card.get_effect_summary_lines()
+				if _is_tez_tonal_mastery_card(card):
+					_add_tez_tonal_mastery_badge(god_overlay, card)
 				if _should_show_smoking_mirror_badge(card):
 					_add_smoking_mirror_badge(god_overlay, card)
 				elif _should_show_tez_sacrifice_badge(card):

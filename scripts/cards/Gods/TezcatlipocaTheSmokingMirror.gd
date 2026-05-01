@@ -1,12 +1,14 @@
 extends GodCard
 class_name TezcatlipocaTheSmokingMirror
 
-const MANA_GAIN := 1
+const TONAL_MASTERY_TOKEN_THRESHOLD := 3
+const TONAL_MASTERY_MANA_GAIN := 2
 const ART_PATH := "res://images/card_art/gods/TezArt.png"
 const REQUIRED_NECOC_YAOTL_SACRIFICES := 4
 const TEZCATLIPOCA_ACTIVE_SCRIPT := preload("res://scripts/cards/ActiveGods/TezcatlipocaActive.gd")
 
 var necoc_yaotl_sacrifices: Array[Card] = []
+var tonal_mastery_tokens: int = 0
 
 func _init() -> void:
 	super._init()
@@ -18,7 +20,7 @@ func _init() -> void:
 	culture = "Nahuatl"
 	targets = true
 	flavor_text = ""
-	ability_text = "Tonal Mastery ([b]Passive[/b]): Every time a creature shapeshifts, gain 1 mana.\nNecoc Yaotl ([b]Activate[/b]): Sacrifice a friendly creature and place it under this card. Once you have done this 4 times, summon Tezcatlipoca, Active God."
+	ability_text = "Tonal Mastery ([b]Passive[/b]): Every time a creature shapeshifts, gain 1 Tonal Mastery token. At 3 tokens, clear them and gain 2 mana.\nNecoc Yaotl ([b]Activate[/b]): Sacrifice a friendly creature and place it under this card. Once you have done this 4 times, summon Tezcatlipoca, Active God."
 	artist = "Ricardo Zoppello"
 	art_path = ART_PATH
 	name_at_bottom = true
@@ -85,18 +87,29 @@ func get_necoc_yaotl_total_level() -> int:
 			total += card.get_effective_level()
 	return total
 
+func get_hover_stored_cards(_viewer: Player = null) -> Array[Card]:
+	return get_necoc_yaotl_sacrifices()
+
+func get_hover_stored_cards_title(_viewer: Player = null) -> String:
+	return "Necoc Yaotl Sacrifices"
+
+func get_tonal_mastery_token_count() -> int:
+	return clampi(tonal_mastery_tokens, 0, TONAL_MASTERY_TOKEN_THRESHOLD)
+
 func get_serialized_state() -> Dictionary:
 	var sacrifice_levels: Array[int] = []
 	for card in necoc_yaotl_sacrifices:
 		if card != null:
 			sacrifice_levels.append(card.get_effective_level())
 	return {
+		"tonal_mastery_tokens": get_tonal_mastery_token_count(),
 		"necoc_yaotl_sacrifice_count": sacrifice_levels.size(),
 		"necoc_yaotl_sacrifice_levels": sacrifice_levels,
 		"necoc_yaotl_total_level": get_necoc_yaotl_total_level(),
 	}
 
 func apply_serialized_state(state: Dictionary) -> void:
+	tonal_mastery_tokens = clampi(int(state.get("tonal_mastery_tokens", 0)), 0, TONAL_MASTERY_TOKEN_THRESHOLD)
 	necoc_yaotl_sacrifices.clear()
 	var sacrifice_levels: Array = state.get("necoc_yaotl_sacrifice_levels", [])
 	var sacrifice_count := int(state.get("necoc_yaotl_sacrifice_count", sacrifice_levels.size()))
@@ -204,6 +217,7 @@ func resolve_necoc_yaotl_summon(game_manager: GameManager) -> String:
 
 func get_effect_summary_lines() -> Array[String]:
 	var lines: Array[String] = []
+	lines.append("Tonal Mastery: %d / %d" % [get_tonal_mastery_token_count(), TONAL_MASTERY_TOKEN_THRESHOLD])
 	lines.append("Necoc Yaotl sacrifices: %d / %d" % [necoc_yaotl_sacrifices.size(), REQUIRED_NECOC_YAOTL_SACRIFICES])
 	lines.append("Stored levels: %d" % get_necoc_yaotl_total_level())
 	return lines
@@ -212,19 +226,38 @@ func on_creature_shapeshifted(game_manager: GameManager, creature: Card, _source
 	if game_manager == null or creature == null or card_owner == null or is_muted:
 		return
 
-	var mana_before := card_owner.mana
-	card_owner.gain_mana(MANA_GAIN)
-	var mana_gained := card_owner.mana - mana_before
-	if mana_gained <= 0:
-		return
-
-	game_manager.note_player_feedback(
-		"%s gains %d mana from Tonal Mastery after %s shapeshifts." % [
-			card_name,
-			mana_gained,
-			creature.get_target_log_display_name(game_manager.get_feedback_viewer())
-		]
-	)
+	tonal_mastery_tokens = mini(tonal_mastery_tokens + 1, TONAL_MASTERY_TOKEN_THRESHOLD)
+	var creature_name := creature.get_target_log_display_name(game_manager.get_feedback_viewer())
+	if tonal_mastery_tokens >= TONAL_MASTERY_TOKEN_THRESHOLD:
+		tonal_mastery_tokens = 0
+		var mana_before := card_owner.mana
+		card_owner.gain_mana(TONAL_MASTERY_MANA_GAIN)
+		var mana_gained := card_owner.mana - mana_before
+		if mana_gained > 0:
+			game_manager.note_player_feedback(
+				"%s completes Tonal Mastery after %s shapeshifts, clears its tokens, and gains %d mana." % [
+					card_name,
+					creature_name,
+					mana_gained
+				]
+			)
+		else:
+			game_manager.note_player_feedback(
+				"%s completes Tonal Mastery after %s shapeshifts and clears its tokens." % [
+					card_name,
+					creature_name
+				]
+			)
+	else:
+		game_manager.note_player_feedback(
+			"%s gains a Tonal Mastery token (%d/%d) after %s shapeshifts." % [
+				card_name,
+				tonal_mastery_tokens,
+				TONAL_MASTERY_TOKEN_THRESHOLD,
+				creature_name
+			]
+		)
+	_emit_visual_state_changed()
 	notify_power_activated(game_manager, creature)
 
 func _has_completed_necoc_yaotl() -> bool:
@@ -264,4 +297,4 @@ func _get_necoc_yaotl_candidate(allow_fallback: bool = true) -> Card:
 	return null
 
 func can_autofill_take_the_field() -> bool:
-	return false
+	return true

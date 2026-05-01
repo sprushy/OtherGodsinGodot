@@ -5,6 +5,7 @@ const LobbyProtocolScript = preload("res://scripts/network/LobbyProtocol.gd")
 const AppReleaseInfoScript = preload("res://scripts/client/AppReleaseInfo.gd")
 const LobbyRoomScript = preload("res://scripts/server/LobbyRoom.gd")
 const MatchSupervisorScript = preload("res://scripts/server/MatchSupervisor.gd")
+const MatchSessionScript = preload("res://scripts/server/MatchSession.gd")
 const NetworkManagerScript = preload("res://scripts/Other/NetworkManager.gd")
 const ProfileStoreScript = preload("res://scripts/server/ProfileStore.gd")
 const AccountStoreScript = preload("res://scripts/server/AccountStore.gd")
@@ -767,7 +768,11 @@ func _reclaim_session_for_peer(
 func _create_room_for_session(session_id: String, is_ranked: bool = true) -> LobbyRoom:
 	var existing_room_id: String = str(room_id_by_session.get(session_id, ""))
 	if not existing_room_id.is_empty() and rooms_by_id.has(existing_room_id):
-		return rooms_by_id[existing_room_id]
+		var existing_room: LobbyRoom = rooms_by_id[existing_room_id]
+		if existing_room.status == LobbyRoomScript.STATUS_IN_MATCH:
+			_abandon_match_room(existing_room)
+		else:
+			return existing_room
 	_prune_excess_open_seeks_for_session(session_id)
 
 	var room_id: String = _generate_room_code()
@@ -795,6 +800,16 @@ func _join_room_for_session(session_id: String, room_id: String) -> void:
 		if current_room_id == normalized_room_id:
 			_broadcast_room_snapshot(rooms_by_id[normalized_room_id])
 			return
+		if rooms_by_id.has(current_room_id):
+			var current_room: LobbyRoom = rooms_by_id[current_room_id]
+			if current_room.status == LobbyRoomScript.STATUS_IN_MATCH:
+				_abandon_match_room(current_room)
+			else:
+				_send_error_to_session(session_id, "Leave your current room before joining a new one.")
+				return
+		else:
+			room_id_by_session.erase(session_id)
+	if room_id_by_session.has(session_id):
 		_send_error_to_session(session_id, "Leave your current room before joining a new one.")
 		return
 
@@ -819,6 +834,10 @@ func _leave_room_for_session(session_id: String) -> void:
 		return
 
 	var room: LobbyRoom = rooms_by_id[room_id]
+	if room.status == LobbyRoomScript.STATUS_IN_MATCH:
+		_abandon_match_room(room)
+		_broadcast_room_lists()
+		return
 	room.remove_member(session_id)
 	room_id_by_session.erase(session_id)
 
@@ -1096,6 +1115,16 @@ func _close_room(room_id: String, message: String = "") -> void:
 			local_room_snapshot_updated.emit({})
 		if not message.strip_edges().is_empty():
 			_send_error_to_session(session_id, message)
+
+func _abandon_match_room(room: LobbyRoom) -> void:
+	if room == null:
+		return
+	var room_id := str(room.room_id).strip_edges()
+	var match_id := str(room.assigned_match_id).strip_edges()
+	if not match_id.is_empty() and match_supervisor != null and match_supervisor.get_match(match_id) != null:
+		match_supervisor.close_match(match_id, MatchSessionScript.STATUS_ABANDONED, true)
+	if not room_id.is_empty() and rooms_by_id.has(room_id):
+		_close_room(room_id)
 
 func _get_seek_owner_key_for_session(session_id: String) -> String:
 	var session: Dictionary = sessions_by_id.get(session_id, {})

@@ -2967,12 +2967,17 @@ func _on_lobby_login_succeeded(session_id: String, reconnect_token: String, play
 	if lobby_client != null:
 		active_match_info = lobby_client.current_active_match_info.duplicate(true)
 	if not active_match_info.is_empty():
-		if not _should_suppress_active_match_auto_resume(active_match_info):
+		if _has_pending_new_seek_action():
+			_abandon_current_lobby_match()
+			_clear_saved_match_resume()
+		elif not _should_suppress_active_match_auto_resume(active_match_info):
 			_save_active_match_resume(active_match_info)
 			status_label.text = "Signed in as %s. Rejoining your active match..." % resolved_identity_name
 			call_deferred("_resume_active_match_from_lobby", active_match_info)
 			return
-		_clear_saved_match_resume()
+		else:
+			_abandon_current_lobby_match()
+			_clear_saved_match_resume()
 	if not _get_saved_active_match().is_empty():
 		_clear_saved_match_resume()
 	status_label.text = "Signed in as %s." % resolved_identity_name
@@ -3006,12 +3011,17 @@ func _on_lobby_reconnect_succeeded(
 	_refresh_open_deck_builder_saved_decks()
 	_update_resume_controls()
 	if not active_match_info.is_empty():
-		if not _should_suppress_active_match_auto_resume(active_match_info):
+		if _has_pending_new_seek_action():
+			_abandon_current_lobby_match()
+			_clear_saved_match_resume()
+		elif not _should_suppress_active_match_auto_resume(active_match_info):
 			_save_active_match_resume(active_match_info)
 			status_label.text = "Lobby session restored. Rejoining your active match..."
 			call_deferred("_resume_active_match_from_lobby", active_match_info)
 			return
-		_clear_saved_match_resume()
+		else:
+			_abandon_current_lobby_match()
+			_clear_saved_match_resume()
 	if not _get_saved_active_match().is_empty():
 		_clear_saved_match_resume()
 	if _pending_host_room_creation:
@@ -3067,7 +3077,8 @@ func _apply_room_snapshot(snapshot: Dictionary) -> void:
 	if room_status == "in_match" and not _match_launch_queued and lobby_client != null:
 		var active_match_info: Dictionary = lobby_client.current_active_match_info.duplicate(true)
 		if not active_match_info.is_empty() and str(active_match_info.get("room_id", "")).strip_edges() == room_id:
-			if _should_suppress_active_match_auto_resume(active_match_info):
+			if _has_pending_new_seek_action() or _should_suppress_active_match_auto_resume(active_match_info):
+				_abandon_current_lobby_match()
 				_clear_saved_match_resume()
 				return
 			_save_active_match_resume(active_match_info)
@@ -3275,6 +3286,17 @@ func _should_suppress_active_match_auto_resume(active_match_info: Dictionary) ->
 	if not _suppressed_active_match_room_id.is_empty() and room_id == _suppressed_active_match_room_id:
 		return true
 	return false
+
+func _has_pending_new_seek_action() -> bool:
+	return _pending_host_room_creation or not _pending_join_room_id.is_empty()
+
+func _abandon_current_lobby_match() -> void:
+	if lobby_client == null:
+		return
+	if lobby_client.current_active_match_info.is_empty():
+		return
+	lobby_client.leave_room()
+	lobby_client.current_active_match_info.clear()
 
 func _cleanup_lobby(clear_session: bool) -> void:
 	_cleanup_lobby_client()

@@ -28,6 +28,7 @@ const MatchHistoryStoreScript = preload("res://scripts/server/MatchHistoryStore.
 const MatchSessionScript = preload("res://scripts/server/MatchSession.gd")
 const TiamatScript = preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
 const UIArtScaler = preload("res://scripts/ui/UIArtScaler.gd")
+const CardDetailContentBuilder = preload("res://scripts/ui/CardDetailContentBuilder.gd")
 
 signal forfeit_requested
 signal match_session_cleared
@@ -2658,6 +2659,8 @@ func start_game(
 		server_port
 	)
 	game_input = match_client.get_game_input()
+	if game_input != null and game_input.has_signal("submission_rejected"):
+		game_input.submission_rejected.connect(_on_game_input_submission_rejected)
 	_is_networked_client = match_client.is_networked_client()
 	if match_manager != null:
 		# Real hosted matches use the server as the source of truth for priority
@@ -4417,7 +4420,7 @@ func _add_power_mute_affordance(parent: Control, turns_remaining: int, is_enemy:
 	badge.add_child(label)
 	parent.add_child(badge)
 
-func _show_power_hover_popup(source: Control, text: String, bbcode_text: String = "") -> void:
+func _show_power_hover_popup(source: Control, text: String, bbcode_text: String = "", card: Card = null) -> void:
 	if text.strip_edges() == "":
 		return
 	_hide_power_hover_popup()
@@ -4436,6 +4439,11 @@ func _show_power_hover_popup(source: Control, text: String, bbcode_text: String 
 	popup.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	popup.z_index = HOVER_PREVIEW_Z_INDEX
 
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 6)
+	vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	popup.add_child(vbox)
+
 	var label := RichTextLabel.new()
 	label.bbcode_enabled = true
 	label.fit_content = true
@@ -4447,7 +4455,11 @@ func _show_power_hover_popup(source: Control, text: String, bbcode_text: String 
 	label.add_theme_color_override("default_color", Color(1.0, 0.95, 0.98))
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	label.text = bbcode_text if bbcode_text.strip_edges() != "" else text
-	popup.add_child(label)
+	vbox.add_child(label)
+
+	if card != null:
+		var hover_viewer := game_manager.get_feedback_viewer() if game_manager != null else null
+		CardDetailContentBuilder._add_hover_stored_card_section(vbox, card, hover_viewer, 220.0)
 
 	var tree := get_tree()
 	if tree == null or tree.current_scene == null:
@@ -4703,6 +4715,49 @@ func _get_tiamat_slot_hover_bbcode(zone: Zone) -> String:
 	sections.append("Slot level: %d / %d" % [total_level, TiamatThePrimordial.MAX_SLOT_LEVEL_TOTAL])
 	return "\n\n".join(sections)
 
+func _add_power_under_level_badge(panel: Control, card: Card) -> void:
+	if panel == null or card == null:
+		return
+	var viewer := game_manager.get_feedback_viewer() if game_manager != null else null
+	var stored_cards := card.get_hover_stored_cards(viewer)
+	if stored_cards.is_empty():
+		return
+	var total_level := card.get_hover_stored_cards_total_level(viewer)
+	if total_level <= 0:
+		return
+
+	var badge := PanelContainer.new()
+	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	badge.offset_left = -34
+	badge.offset_top = 2
+	badge.offset_right = -2
+	badge.offset_bottom = 18
+	badge.z_index = 4
+
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.06, 0.11, 0.18, 0.94)
+	style.border_color = Color(0.92, 0.78, 0.28, 0.96)
+	style.corner_radius_top_left = 4
+	style.corner_radius_top_right = 4
+	style.corner_radius_bottom_left = 4
+	style.corner_radius_bottom_right = 4
+	style.content_margin_left = 3
+	style.content_margin_right = 3
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		style.set_border_width(side as Side, 1)
+	badge.add_theme_stylebox_override("panel", style)
+
+	var label := Label.new()
+	label.text = "LV:%d" % total_level
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	label.add_theme_font_size_override("font_size", 8)
+	label.add_theme_color_override("font_color", Color(1.0, 0.94, 0.56))
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	badge.add_child(label)
+	panel.add_child(badge)
+
 func _make_power_icon(card: Card, is_enemy: bool, _player: Player, zone: Zone = null) -> Control:
 	var panel := PanelContainer.new()
 	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -4742,7 +4797,7 @@ func _make_power_icon(card: Card, is_enemy: bool, _player: Player, zone: Zone = 
 		panel.tooltip_text = get_plain.call()
 		panel.mouse_entered.connect(func() -> void:
 			panel.tooltip_text = get_plain.call()
-			_show_power_hover_popup(panel, panel.tooltip_text, get_bbcode.call())
+			_show_power_hover_popup(panel, panel.tooltip_text, get_bbcode.call(), card)
 		)
 		panel.mouse_exited.connect(func() -> void:
 			_hide_power_hover_popup()
@@ -4792,6 +4847,8 @@ func _make_power_icon(card: Card, is_enemy: bool, _player: Player, zone: Zone = 
 		panel.add_child(enemy_lbl)
 		if enemy_power != null and enemy_power.is_muted and enemy_power.mute_turns_remaining > 0 and label_text != "?":
 			_add_power_mute_affordance(panel, enemy_power.mute_turns_remaining, true)
+		if can_show_hover:
+			_add_power_under_level_badge(panel, card)
 		return panel
 
 	var is_unlocked := not card.is_face_down
@@ -4827,6 +4884,7 @@ func _make_power_icon(card: Card, is_enemy: bool, _player: Player, zone: Zone = 
 	panel.add_child(lbl)
 	if power != null and power.is_muted and power.mute_turns_remaining > 0:
 		_add_power_mute_affordance(panel, power.mute_turns_remaining, false)
+	_add_power_under_level_badge(panel, card)
 
 	var can_target_with_god: bool = awaiting_god_ability_target \
 		and god_ability_source != null \
@@ -15919,7 +15977,20 @@ func _show_erlqueens_nightingale_prompt(card: ErlqueensNightingaleScript) -> voi
 
 	_pending_erlqueens_nightingale = card
 
-	var panel := PanelContainer.new()
+	var overlay := Control.new()
+	overlay.name = "ErlqueensNightingalePromptOverlay"
+	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	add_child(overlay)
+	_promote_transient_ui(overlay, TRANSIENT_UI_Z_INDEX + 120)
+
+	var bg := ColorRect.new()
+	bg.color = Color(0.0, 0.0, 0.0, 0.55)
+	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	overlay.add_child(bg)
+
+	var panel := _create_centered_overlay_panel(overlay, 0.34, 0.24)
 	panel.name = "ErlqueensNightingalePromptPanel"
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color(0.15, 0.11, 0.07, 0.97)
@@ -15927,57 +15998,47 @@ func _show_erlqueens_nightingale_prompt(card: ErlqueensNightingaleScript) -> voi
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
 		style.set_border_width(side as Side, 2)
 	panel.add_theme_stylebox_override("panel", style)
-	panel.custom_minimum_size = Vector2(430, 0)
 
 	var vbox := VBoxContainer.new()
 	vbox.add_theme_constant_override("separation", 8)
+	vbox.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	vbox.offset_left = 18
+	vbox.offset_top = 18
+	vbox.offset_right = -18
+	vbox.offset_bottom = -18
 	panel.add_child(vbox)
 
 	var title := Label.new()
 	title.text = card.card_name
 	title.add_theme_font_size_override("font_size", 14)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	vbox.add_child(title)
 
 	var info := Label.new()
-	info.text = "Shift this card, then choose whether it returns to your hand."
+	info.text = "Return this card to your hand after it shifts?"
 	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	vbox.add_child(info)
 
-	var shift_only_btn := Button.new()
-	shift_only_btn.text = "Shift Only"
-	shift_only_btn.pressed.connect(func() -> void:
-		_resolve_erlqueens_nightingale_shift(false)
-	)
-	vbox.add_child(shift_only_btn)
-
-	var shift_return_btn := Button.new()
-	shift_return_btn.text = "Shift and Return to Hand"
-	shift_return_btn.disabled = not card.can_return_to_hand_after_shift()
-	shift_return_btn.pressed.connect(func() -> void:
+	var return_btn := Button.new()
+	return_btn.text = "Return to Hand"
+	return_btn.disabled = not card.can_return_to_hand_after_shift()
+	return_btn.pressed.connect(func() -> void:
 		_resolve_erlqueens_nightingale_shift(true)
 	)
-	vbox.add_child(shift_return_btn)
+	vbox.add_child(return_btn)
 
-	var cancel_btn := Button.new()
-	cancel_btn.text = "Cancel"
-	cancel_btn.pressed.connect(_hide_erlqueens_nightingale_prompt)
-	vbox.add_child(cancel_btn)
-
-	add_child(panel)
-	_promote_transient_ui(panel)
-	panel.anchor_left = 0.5
-	panel.anchor_right = 0.5
-	panel.anchor_top = 0.5
-	panel.anchor_bottom = 0.5
-	panel.offset_left = -215
-	panel.offset_right = 215
-	panel.offset_top = -90
-	panel.offset_bottom = 90
+	var decline_btn := Button.new()
+	decline_btn.text = "Decline"
+	decline_btn.pressed.connect(func() -> void:
+		_resolve_erlqueens_nightingale_shift(false)
+	)
+	vbox.add_child(decline_btn)
 
 func _hide_erlqueens_nightingale_prompt() -> void:
-	var panel := get_node_or_null("ErlqueensNightingalePromptPanel")
-	if panel:
-		panel.queue_free()
+	var overlay := get_node_or_null("ErlqueensNightingalePromptOverlay")
+	if overlay:
+		overlay.queue_free()
 	_pending_erlqueens_nightingale = null
 
 func _show_mopsus_hand_prompt(card: MopsusScript) -> void:
@@ -18663,6 +18724,12 @@ func _on_match_move_failed(reason: String) -> void:
 	_set_action_label_text(reason)
 	update_ui()
 
+func _on_game_input_submission_rejected(reason: String) -> void:
+	if reason.strip_edges().is_empty():
+		return
+	_set_action_label_text(reason)
+	update_ui()
+
 func _on_match_ui_interaction(player_index: int, type: String, data: Dictionary) -> void:
 	var target_player := game_manager.players[player_index]
 	
@@ -19628,6 +19695,7 @@ func _apply_network_event(event_type: String, data: Dictionary) -> void:
 		"match_join_denied",
 		"peer_left",
 		"peer_rejoined",
+		"match_abandoned",
 		"match_reconnect_started",
 		"match_reconnect_ok",
 		"match_reconnect_failed",
@@ -19675,6 +19743,11 @@ func _apply_network_event(event_type: String, data: Dictionary) -> void:
 			_set_match_reconnect_wait(false)
 			_set_action_label_text("%s rejoined the match." % rejoined_name)
 			update_ui()
+		"match_abandoned":
+			var reason := str(data.get("reason", "Match abandoned.")).strip_edges()
+			if reason.is_empty():
+				reason = "Match abandoned."
+			_cancel_match_locally(reason)
 		"match_reconnect_started":
 			var attempts_remaining := int(data.get("attempts_remaining", 0))
 			_set_match_reconnect_wait(true, "Connection lost. Reconnecting to match server...")

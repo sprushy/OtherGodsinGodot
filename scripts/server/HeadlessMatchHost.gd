@@ -71,7 +71,7 @@ func setup_transport(
 		match_manager.network_manager = network_manager
 		match_manager.authoritative_match_flow_enabled = is_host
 		network_manager.command_received.connect(func(command: Dictionary, sender_info: Dictionary) -> void:
-			match_manager.process_command(command, sender_info)
+			match_manager.process_command(command, _resolve_command_sender_info(sender_info))
 		)
 
 	if is_host or is_client:
@@ -97,6 +97,24 @@ func should_receive_network_events() -> bool:
 
 func is_networked_client() -> bool:
 	return _is_client
+
+func _resolve_command_sender_info(sender_info: Dictionary) -> Dictionary:
+	if sender_info.is_empty() or network_manager == null:
+		return sender_info
+	if int(sender_info.get("player_index", -1)) >= 0:
+		return sender_info
+	if match_session == null or not match_session.has_method("get_player_index_for_peer"):
+		return sender_info
+	var peer_id := int(sender_info.get("peer_id", -1))
+	if peer_id <= 0:
+		return sender_info
+	var player_index := int(match_session.get_player_index_for_peer(peer_id))
+	if player_index < 0:
+		return sender_info
+	network_manager.player_peer_ids[player_index] = peer_id
+	var resolved_info := sender_info.duplicate(true)
+	resolved_info["player_index"] = player_index
+	return resolved_info
 
 func _on_peer_connected(peer_id: int) -> void:
 	network_manager.assign_peer_to_player(peer_id, 1)

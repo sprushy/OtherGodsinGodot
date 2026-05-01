@@ -458,7 +458,7 @@ func load_t_card_scenario() -> void:
 	_open_upkeep_choice_window()
 	action_label.text = (
 		"T-Range Scenario: Tezcatlipoca Blasphemer through The White Serpent alphabetically. Choose Gain 1 Mana + Card or Gain 5 Mana first.  |  "
-		+ "God - Tezcatlipoca, the Smoking Mirror leads P1. Use Nagual's shapeshift on your reserve to gain 1 mana from Tonal Mastery before moving on to the other tests.  |  "
+		+ "God - Tezcatlipoca, the Smoking Mirror leads P1. Use Nagual's shapeshift on your reserve to start building Tonal Mastery tokens before moving on to the other tests.  |  "
 		+ "Board - Your Tezcatlipoca Blasphemer starts on the frontline with a Brown Bear beside it as sacrifice fodder, while The White Serpent is already face-up in reserve so it can answer enemy targeting.  |  "
 		+ "Blood Magic - Enemy Heroic Stand is already prepared in reserve as the clean magical target for your Tezcatlipoca Blasphemer. Sacrifice your Brown Bear to destroy it. Then pass the turn so the opposing Tezcatlipoca Blasphemer can try to target your prepared Inferno or Deluge, and respond with The White Serpent's Shift Medicine.  |  "
 		+ "Prepared - The Inferno and The Deluge are already prepared on your side. Let P2 declare an attack to trigger The Inferno and burn down its frontline, then have P2 summon the Brown Bear from hand when you are ready for The Deluge to wipe all physical cards.  |  "

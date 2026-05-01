@@ -47,6 +47,7 @@ func activate(game_manager: GameManager, chosen_card: Card = null) -> void:
 	card_owner.deck_zone.cards.shuffle()
 	stored_cards.append(chosen_card)
 	turns_until_return = RETURN_DELAY_TURNS
+	_emit_visual_state_changed()
 	print(card_name + ": " + chosen_card.card_name + " was placed under this card. Deck shuffled.")
 
 func on_turn_end(_game_manager: GameManager) -> void:
@@ -56,6 +57,7 @@ func on_turn_end(_game_manager: GameManager) -> void:
 		return
 
 	turns_until_return -= 1
+	_emit_visual_state_changed()
 	if turns_until_return <= 0:
 		_return_stored_cards_to_top_of_deck(_game_manager)
 		turns_until_return = -1
@@ -68,6 +70,7 @@ func on_deck_shuffled() -> void:
 	stored_cards.clear()
 	card_owner.deck_zone.cards.shuffle()
 	turns_until_return = -1
+	_emit_visual_state_changed()
 	print(card_name + ": Stored cards were shuffled back into the deck.")
 
 func _return_stored_cards_to_top_of_deck(game_manager: GameManager = null) -> void:
@@ -83,6 +86,17 @@ func _return_stored_cards_to_top_of_deck(game_manager: GameManager = null) -> vo
 		var card_label := "card" if primed_names.size() == 1 else "cards"
 		game_manager.note_player_feedback("%s primed %s %s." % [card_name, card_label, primed_label])
 	stored_cards.clear()
+	_emit_visual_state_changed()
+
+func get_hover_stored_cards(_viewer: Player = null) -> Array[Card]:
+	var cards: Array[Card] = []
+	for stored_card in stored_cards:
+		if stored_card != null:
+			cards.append(stored_card)
+	return cards
+
+func get_hover_stored_cards_title(_viewer: Player = null) -> String:
+	return "Bound Cards"
 
 func get_hover_detail_lines(viewer: Player = null) -> Array[String]:
 	var details := super.get_hover_detail_lines(viewer)

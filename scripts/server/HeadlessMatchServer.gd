@@ -6,6 +6,8 @@ const HeadlessMatchHostScript = preload("res://scripts/server/HeadlessMatchHost.
 const MatchSessionScript = preload("res://scripts/server/MatchSession.gd")
 const DefaultMatchSetupScript = preload("res://scripts/server/DefaultMatchSetup.gd")
 const MatchHistoryStoreScript = preload("res://scripts/server/MatchHistoryStore.gd")
+const INITIAL_JOIN_TIMEOUT_SECONDS := 120
+const ABANDONED_MATCH_SHUTDOWN_DELAY_SECONDS := 0.25
 
 signal startup_succeeded(match_id: String, port: int)
 signal startup_failed(message: String)
@@ -21,6 +23,11 @@ var match_session = null
 var _default_match_setup = DefaultMatchSetupScript.new()
 var _match_history_store = MatchHistoryStoreScript.new()
 var _match_started: bool = false
+var _initial_join_deadline_unix: int = 0
+var _abandoned_shutdown_started: bool = false
+
+func _process(_delta: float) -> void:
+	_shutdown_if_match_was_abandoned()
 
 func start_from_config(config: Dictionary) -> Error:
 	var config_error: String = _validate_config(config)
@@ -32,6 +39,7 @@ func start_from_config(config: Dictionary) -> Error:
 	if match_session == null:
 		startup_failed.emit("Failed to rebuild match session from launch config.")
 		return ERR_INVALID_DATA
+	_initial_join_deadline_unix = int(Time.get_unix_time_from_system()) + INITIAL_JOIN_TIMEOUT_SECONDS
 
 	game_manager = GameManager.new()
 	match_manager = MatchManager.new(game_manager)
@@ -93,6 +101,7 @@ func maybe_start_match_if_ready() -> bool:
 	if network_manager == null or network_manager.player_peer_ids.size() < match_session.player_session_ids.size():
 		return false
 	_match_started = true
+	_initial_join_deadline_unix = 0
 	game_manager.start_turn()
 	return true
 
@@ -147,11 +156,42 @@ func _validate_config(config: Dictionary) -> String:
 	return ""
 
 func _on_game_ended(_winner: Player, _loser: Player) -> void:
+	_abandoned_shutdown_started = true
 	_record_match_result(_winner, _loser)
 	var tree := get_tree()
 	if tree == null:
 		return
 	var shutdown_timer := tree.create_timer(1.0)
+	shutdown_timer.timeout.connect(func() -> void:
+		if get_tree() != null:
+			get_tree().quit()
+	)
+
+func _shutdown_if_match_was_abandoned() -> void:
+	if _abandoned_shutdown_started or match_session == null:
+		return
+	var now_unix := int(Time.get_unix_time_from_system())
+	if match_session.has_reconnect_timed_out(now_unix):
+		_shutdown_abandoned_match("Reconnect window expired.")
+		return
+	if not _match_started \
+			and _initial_join_deadline_unix > 0 \
+			and now_unix >= _initial_join_deadline_unix \
+			and not match_session.all_players_connected():
+		_shutdown_abandoned_match("Players did not join the match server in time.")
+
+func _shutdown_abandoned_match(reason: String) -> void:
+	if _abandoned_shutdown_started:
+		return
+	_abandoned_shutdown_started = true
+	if match_session != null:
+		match_session.mark_abandoned()
+	if network_manager != null:
+		network_manager.broadcast_event_to_all("match_abandoned", {"reason": reason})
+	var tree := get_tree()
+	if tree == null:
+		return
+	var shutdown_timer := tree.create_timer(ABANDONED_MATCH_SHUTDOWN_DELAY_SECONDS)
 	shutdown_timer.timeout.connect(func() -> void:
 		if get_tree() != null:
 			get_tree().quit()

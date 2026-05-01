@@ -61,6 +61,12 @@ func mark_abandoned() -> void:
 func get_player_index(session_id: String) -> int:
 	return player_session_ids.find(session_id)
 
+func get_player_index_for_peer(peer_id: int) -> int:
+	var session_id := str(session_id_by_peer.get(peer_id, "")).strip_edges()
+	if session_id.is_empty():
+		return -1
+	return get_player_index(session_id)
+
 func get_match_token(session_id: String) -> String:
 	return str(player_match_tokens.get(session_id, ""))
 

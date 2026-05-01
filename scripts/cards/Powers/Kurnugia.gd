@@ -31,6 +31,12 @@ func get_hover_detail_lines(viewer: Player = null) -> Array[String]:
 		lines.append("- %s -> %s" % [card.get_target_log_display_name(viewer), return_destination])
 	return lines
 
+func get_hover_stored_cards(_viewer: Player = null) -> Array[Card]:
+	return _get_sheltered_cards()
+
+func get_hover_stored_cards_title(_viewer: Player = null) -> String:
+	return "Sheltered Creatures"
+
 func get_sheltered_cards_for_passive_effects() -> Array[Card]:
 	if not is_effectively_active():
 		return []
@@ -68,6 +74,7 @@ func _shelter_card(game_manager: GameManager, card: Card, holding_zone: Zone, wa
 	sheltered_cards.append(card)
 	_sheltered_destinations[card.uid] = "abyss" if was_voided else "graveyard"
 	_sheltered_release_turns[card.uid] = game_manager.turn_number
+	_emit_visual_state_changed()
 
 	var origin := "the Abyss" if was_voided else "the graveyard"
 	game_manager.note_player_feedback(
@@ -133,6 +140,8 @@ func _release_expired_cards(game_manager: GameManager) -> void:
 				card.card_name, "the Abyss" if dest == "abyss" else "the graveyard"
 			]
 		)
+
+	_emit_visual_state_changed()
 
 func _get_sheltered_cards() -> Array[Card]:
 	var live_cards: Array[Card] = []

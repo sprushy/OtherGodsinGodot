@@ -4,6 +4,7 @@ class_name TezcatlipocaActive
 const LINKED_GOD_NAME := "Tezcatlipoca, the Smoking Mirror"
 const ART_PATH := "res://images/card_art/gods/TezArt.png"
 const MAX_TITLACAUAN_TARGETS := 2
+const NORMAL_SUMMON_SACRIFICE_COST := 4
 const JAGUAR_FORM_SPEED_BONUS := 1
 const JAGUAR_FORM_STRENGTH_BONUS := 10
 const JAGUAR_FORM_RESILIENCE_DELTA := -13
@@ -18,6 +19,7 @@ func _init() -> void:
 	card_types = _get_divine_form_types()
 	level = 7
 	mana_cost = 0
+	sacrifice_cost = NORMAL_SUMMON_SACRIFICE_COST
 	speed = 2
 	resilience = 37
 	strength = 25
@@ -107,6 +109,7 @@ func receive_necoc_yaotl_sacrifices(cards: Array[Card]) -> void:
 	for card in cards:
 		if card != null:
 			necoc_yaotl_sacrifices.append(card)
+	_emit_visual_state_changed()
 
 func get_titlacauan_level_budget() -> int:
 	var total := 0
@@ -114,6 +117,16 @@ func get_titlacauan_level_budget() -> int:
 		if card != null:
 			total += card.get_effective_level()
 	return total
+
+func get_hover_stored_cards(_viewer: Player = null) -> Array[Card]:
+	var stored: Array[Card] = []
+	for card in necoc_yaotl_sacrifices:
+		if card != null:
+			stored.append(card)
+	return stored
+
+func get_hover_stored_cards_title(_viewer: Player = null) -> String:
+	return "Necoc Yaotl Sacrifices"
 
 func get_serialized_state() -> Dictionary:
 	var sacrifice_levels: Array[int] = []

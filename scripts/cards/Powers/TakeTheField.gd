@@ -87,6 +87,9 @@ func _get_current_normal_god() -> Card:
 		return null
 	return card_owner.god_zone.cards[0]
 
+func _get_current_normal_god_card() -> GodCard:
+	return _get_current_normal_god() as GodCard
+
 func _get_manifest_god_name() -> String:
 	var normal_god := _get_current_normal_god()
 	if normal_god != null:
@@ -112,6 +115,10 @@ func _find_manifestation_candidate(allow_fallback: bool) -> Card:
 	if god_name.is_empty():
 		return null
 
+	var reserved_manifestation := _get_reserved_manifestation_candidate(god_name)
+	if reserved_manifestation != null:
+		return reserved_manifestation
+
 	for zone in _get_manifest_search_zones():
 		for card in zone.cards:
 			if not _matches_manifestation(card, god_name):
@@ -120,7 +127,7 @@ func _find_manifestation_candidate(allow_fallback: bool) -> Card:
 				return null
 			return card
 
-	if allow_fallback:
+	if allow_fallback and _can_autofill_manifestation():
 		return _build_manifestation_fallback(god_name)
 	return null
 
@@ -147,6 +154,21 @@ func _get_manifest_search_zones() -> Array[Zone]:
 func _matches_manifestation(card: Card, god_name: String) -> bool:
 	var active_god := card as ActiveGodCard
 	return active_god != null and active_god.get_linked_god_name() == god_name
+
+func _get_reserved_manifestation_candidate(god_name: String) -> Card:
+	var normal_god := _get_current_normal_god_card()
+	if normal_god == null:
+		return null
+	var reserved_manifestation := normal_god.get_reserved_active_god_candidate()
+	if reserved_manifestation == null or reserved_manifestation.get_linked_god_name() != god_name:
+		return null
+	return reserved_manifestation
+
+func _can_autofill_manifestation() -> bool:
+	var normal_god := _get_current_normal_god_card()
+	if normal_god == null:
+		return true
+	return normal_god.can_autofill_take_the_field()
 
 func _build_manifestation_fallback(god_name: String) -> Card:
 	if god_name.is_empty():

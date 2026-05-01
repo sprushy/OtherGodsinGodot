@@ -725,6 +725,19 @@ func claim_cost_adjustment(
 func get_hover_detail_lines(_viewer: Player = null) -> Array[String]:
 	return []
 
+func get_hover_stored_cards(_viewer: Player = null) -> Array[Card]:
+	return []
+
+func get_hover_stored_cards_title(_viewer: Player = null) -> String:
+	return "Cards under this card"
+
+func get_hover_stored_cards_total_level(_viewer: Player = null) -> int:
+	var total := 0
+	for stored_card in get_hover_stored_cards(_viewer):
+		if stored_card != null:
+			total += stored_card.get_effective_level()
+	return total
+
 func get_equipment_summary_lines() -> Array[String]:
 	var lines: Array[String] = []
 	for equip in equipment:

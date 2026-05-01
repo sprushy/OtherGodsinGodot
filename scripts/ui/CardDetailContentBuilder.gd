@@ -115,6 +115,8 @@ static func build_visual_hover_body(card: Card, viewer: Player, config: Dictiona
 		)
 		vbox.add_child(detail_lbl)
 
+	_add_hover_stored_card_section(vbox, card, viewer, content_width)
+
 	return scroll
 
 static func build_board_popup_body(card: Card, viewer: Player, config: Dictionary = {}) -> Control:
@@ -295,6 +297,9 @@ static func build_board_popup_body(card: Card, viewer: Player, config: Dictionar
 	if hover_detail_lines.size() > 0 and not is_hidden_card:
 		vbox.add_child(_make_rich_text("\n".join(hover_detail_lines), 13, Color(0.66, 0.97, 0.93)))
 
+	if not is_hidden_card:
+		_add_hover_stored_card_section(vbox, card, viewer, _BOARD_POPUP_WIDTH)
+
 	if card.flavor_text != "" and not is_hidden_card:
 		vbox.add_child(_make_label(card.flavor_text, 13, Color(0.55, 0.55, 0.55), true))
 
@@ -392,6 +397,88 @@ static func _build_board_creature_tooltips(card: Card) -> Array[String]:
 		if breakdown != "":
 			tooltip_lines.append(stat_info[0] + ":\n" + breakdown)
 	return tooltip_lines
+
+static func _add_hover_stored_card_section(vbox: VBoxContainer, card: Card, viewer: Player, width: float) -> void:
+	if vbox == null or card == null:
+		return
+	var stored_cards := card.get_hover_stored_cards(viewer)
+	if stored_cards.is_empty():
+		return
+	var title := card.get_hover_stored_cards_title(viewer)
+	var total_level := card.get_hover_stored_cards_total_level(viewer)
+	vbox.add_child(_make_separator(Color(0.3, 0.28, 0.5)))
+	var title_text := title
+	if total_level > 0:
+		title_text += " - Levels: %d" % total_level
+	vbox.add_child(_make_label(title_text, 13, Color(1.0, 0.88, 0.48), true))
+	for stored_card in stored_cards:
+		if stored_card != null:
+			vbox.add_child(_make_stored_card_preview(stored_card, viewer, width))
+
+static func _make_stored_card_preview(card: Card, viewer: Player, width: float) -> Control:
+	var panel := PanelContainer.new()
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.custom_minimum_size = Vector2(width, 0.0)
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.05, 0.07, 0.12, 0.92)
+	style.border_color = Color(0.36, 0.48, 0.72, 0.85)
+	style.corner_radius_top_left = 4
+	style.corner_radius_top_right = 4
+	style.corner_radius_bottom_left = 4
+	style.corner_radius_bottom_right = 4
+	style.content_margin_left = 5
+	style.content_margin_right = 5
+	style.content_margin_top = 4
+	style.content_margin_bottom = 4
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		style.set_border_width(side, 1)
+	panel.add_theme_stylebox_override("panel", style)
+
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 6)
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_child(row)
+
+	if card.art_path != "":
+		var tex := load(card.art_path) as Texture2D
+		if tex != null:
+			var art := TextureRect.new()
+			art.texture = tex
+			art.custom_minimum_size = Vector2(40, 54)
+			art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+			art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			art.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			row.add_child(art)
+
+	var info := VBoxContainer.new()
+	info.add_theme_constant_override("separation", 2)
+	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	info.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(info)
+
+	info.add_child(_make_label(card.get_display_name_for_control(), 12, Color(1.0, 0.95, 0.76), true))
+	var meta_parts: Array[String] = []
+	if not card.is_god and card.get_effective_level() > 0:
+		meta_parts.append("Lv %d" % card.get_effective_level())
+	if card.card_type == Card.CardType.CREATURE:
+		meta_parts.append("STR %d" % card.get_effective_strength())
+		meta_parts.append("RES %d" % card.get_effective_resilience())
+		meta_parts.append("SPD %d" % card.get_effective_speed())
+	elif card.card_type == Card.CardType.STRUCTURE:
+		meta_parts.append("RES %d" % card.get_effective_resilience())
+	elif card.get_effective_speed() > 0:
+		meta_parts.append("SPD %d" % card.get_effective_speed())
+	if not meta_parts.is_empty():
+		info.add_child(_make_label("  |  ".join(meta_parts), 11, Color(0.72, 0.84, 0.95), true))
+
+	var summary := card.get_inline_ability_summary()
+	if summary == "":
+		var effect_lines := card.get_effect_summary_lines()
+		if not effect_lines.is_empty():
+			summary = " | ".join(effect_lines)
+	if summary != "":
+		info.add_child(_make_label(summary, 11, Color(0.82, 0.86, 0.94), true))
+	return panel
 
 static func _make_vbox(width: float, separation: int) -> VBoxContainer:
 	var vbox := VBoxContainer.new()

@@ -39,8 +39,15 @@ func get_valid_field_priests(_game_manager: GameManager) -> Array[Card]:
 func get_stored_priests() -> Array[Card]:
 	var copy: Array[Card] = []
 	for priest in stored_priests:
-		copy.append(priest)
+		if priest != null:
+			copy.append(priest)
 	return copy
+
+func get_hover_stored_cards(_viewer: Player = null) -> Array[Card]:
+	return get_stored_priests()
+
+func get_hover_stored_cards_title(_viewer: Player = null) -> String:
+	return "Harbored Priests"
 
 func can_return_priest(game_manager: GameManager) -> bool:
 	return return_window_open \
@@ -76,14 +83,18 @@ func return_priest(game_manager: GameManager, priest: Card) -> bool:
 	priest.reset_creature_action_state()
 	priest.summoned_this_turn = false
 	return_window_open = false
+	_emit_visual_state_changed()
 	return true
 
 func on_turn_upkeep(_game_manager: GameManager) -> void:
 	return_window_open = not stored_priests.is_empty()
 
 func on_turn_end(_game_manager: GameManager) -> void:
+	var was_effectively_active := not is_face_down and not abilities_suppressed()
 	super.on_turn_end(_game_manager)
 	return_window_open = false
+	if not was_effectively_active:
+		return
 	if stored_priests.is_empty():
 		return
 	var total_levels: int = 0
@@ -121,6 +132,7 @@ func _store_priest(priest: Card) -> void:
 		equipment_card.unequip()
 	priest.current_zone.remove_card(priest)
 	stored_priests.append(priest)
+	_emit_visual_state_changed()
 
 func _return_all_stored_priests() -> void:
 	if stored_priests.is_empty():
@@ -142,6 +154,7 @@ func _return_all_stored_priests() -> void:
 		priest.summoned_this_turn = false
 	stored_priests = unresolved
 	return_window_open = false
+	_emit_visual_state_changed()
 
 func _get_open_field_zones() -> Array[Zone]:
 	var open_zones: Array[Zone] = []

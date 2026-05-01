@@ -25,12 +25,22 @@ func _is_transport_connected() -> bool:
 		return false
 	return multiplayer_peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED
 
+func _has_player_assignment() -> bool:
+	if network_manager == null:
+		return false
+	return int(network_manager.local_player_index) >= 0
+
+func _reject_submission(reason: String) -> bool:
+	push_warning("NetworkedGameInput: %s" % reason)
+	submission_rejected.emit(reason)
+	return false
+
 func submit_action(command: Dictionary) -> bool:
 	if network_manager == null:
-		push_error("NetworkedGameInput: no network_manager set")
-		return false
+		return _reject_submission("No match connection is available.")
 	if not _is_transport_connected():
-		push_warning("NetworkedGameInput: cannot send %s while disconnected" % str(command.get("type", command)))
-		return false
+		return _reject_submission("Disconnected from match server. Reconnect may still be available.")
+	if not _has_player_assignment():
+		return _reject_submission("Reconnecting to match server. Please wait for match authentication.")
 	network_manager.request_action(command)
 	return true
