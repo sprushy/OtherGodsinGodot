@@ -5140,7 +5140,7 @@ func _make_power_icon(card: Card, is_enemy: bool, _player: Player, zone: Zone = 
 	var is_unlocked := not card.is_face_down
 	var activatable := power != null and power.can_activate(game_manager)
 	var can_unlock_now := power != null and power.can_unlock(game_manager)
-	var ready_glow := power != null and power.has_method("is_ui_ready") and power.is_ui_ready(game_manager)
+	var ready_glow: bool = power != null and power.has_method("is_ui_ready") and power.is_ui_ready(game_manager)
 
 	if ready_glow:
 		style.bg_color = Color(0.19, 0.06, 0.07, 0.94)
