@@ -566,7 +566,7 @@ func _handle_send_friend_request(peer_id: int, payload: Dictionary) -> void:
 	var recipient_account: Dictionary = account_store.get_account_by_username(str(payload.get("username", "")))
 	var recipient_account_id := str(recipient_account.get("account_id", "")).strip_edges()
 	if recipient_account_id.is_empty():
-		_send_error_to_peer(peer_id, "That username was not found.")
+		_send_error_to_peer(peer_id, "That account username was not found. Friends only works with registered accounts.")
 		return
 	var result: Dictionary = friend_store.send_friend_request(account_id, recipient_account_id)
 	if not bool(result.get("success", false)):
@@ -617,7 +617,7 @@ func _handle_send_deck_to_friend(peer_id: int, payload: Dictionary) -> void:
 	var recipient_account: Dictionary = account_store.get_account_by_username(str(payload.get("username", "")))
 	var recipient_account_id := str(recipient_account.get("account_id", "")).strip_edges()
 	if recipient_account_id.is_empty():
-		_send_error_to_peer(peer_id, "That username was not found.")
+		_send_error_to_peer(peer_id, "That account username was not found. Friends only works with registered accounts.")
 		return
 	var result: Dictionary = friend_store.send_deck_share(
 		account_id,

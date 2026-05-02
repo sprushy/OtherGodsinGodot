@@ -22,8 +22,6 @@ func _init() -> void:
 func on_impact(game_manager: GameManager) -> void:
 	var valid_targets := get_valid_warband_targets(game_manager)
 	if valid_targets.is_empty():
-		if game_manager != null:
-			game_manager.note_player_feedback("%s found no other Harii in hand that can be summoned." % card_name)
 		return
 	var target_uids: Array[String] = []
 	for target in valid_targets:

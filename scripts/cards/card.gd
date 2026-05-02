@@ -219,7 +219,14 @@ func get_cost_shorthand(mana_override: int = -1, force_show_mana: bool = false) 
 # Creature stats
 @export var strength: int = 0
 @export var resilience: int = 0
-@export var creature_mode: CreatureMode = CreatureMode.DEFENSIVE
+@export var creature_mode: CreatureMode = CreatureMode.DEFENSIVE:
+	set(value):
+		if _creature_mode == value:
+			return
+		_creature_mode = value
+		_emit_visual_state_changed()
+	get:
+		return _creature_mode
 
 # Equipment modifiers
 @export var strength_modifier: int = 0
@@ -258,6 +265,7 @@ var active_statuses: Array[Dictionary] = []
 var _was_muted_last_check: bool = false
 var _pending_chosen_discards: Array[Card] = []
 var _pending_chosen_sacrifices: Array[Card] = []
+var _creature_mode: CreatureMode = CreatureMode.DEFENSIVE
 
 const EXTERNAL_EFFECT_NEGATION_STATUS := "external_effect_negation"
 const ABILITY_NEGATED_STATUS := "ability_negated"

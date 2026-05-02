@@ -19286,6 +19286,7 @@ func _on_match_ui_interaction(player_index: int, type: String, data: Dictionary)
 		"combat_retreat":
 			var action: CardAction = data["action"]
 			var target = data.get("target")
+			var requested_askelladen_uid := str(data.get("askelladen_uid", "")).strip_edges()
 			if target == null:
 				var target_uid: String = data.get("target_uid", "")
 				target = game_manager.get_card_by_uid(target_uid)
@@ -19293,7 +19294,16 @@ func _on_match_ui_interaction(player_index: int, type: String, data: Dictionary)
 					var p_idx: int = data.get("target_player_index", -1)
 					if p_idx >= 0 and p_idx < game_manager.players.size():
 						target = game_manager.players[p_idx]
-						
+			if (_is_networked_client or _is_real_network_host()) and not requested_askelladen_uid.is_empty():
+				var requested_ask := game_manager.get_card_by_uid(requested_askelladen_uid) as Askelladen
+				if requested_ask != null:
+					_pending_retreat_action = action
+					_pending_retreat_target = target
+					_pending_retreat_prompts = [requested_ask]
+					_pending_retreat_guardian_blocked = []
+					_show_retreat_prompt(requested_ask)
+					return
+
 			var retreat_prompts := _get_retreating_askelladens(action.attacker, target, action.source_player)
 			if not retreat_prompts.is_empty():
 				_pending_retreat_action = action
@@ -20383,7 +20393,11 @@ func _apply_ui_interaction(event_data: Dictionary) -> void:
 				var p_idx: int = payload.get("target_player_index", -1)
 				if p_idx >= 0 and p_idx < game_manager.players.size():
 					target = game_manager.players[p_idx]
-			_on_match_ui_interaction(local_idx, type, {"action": action, "target": target})
+			_on_match_ui_interaction(local_idx, type, {
+				"action": action,
+				"target": target,
+				"askelladen_uid": str(payload.get("askelladen_uid", "")),
+			})
 		"doorway_choice":
 			var structure_uid: String = payload.get("structure_uid", "")
 			var card_uid: String = payload.get("card_uid", "")

@@ -1962,6 +1962,8 @@ func _validate_sender_authority(command: Dictionary, sender_info: Dictionary) ->
 	if required_player == null:
 		return ""
 	if sender_player != required_player:
+		if str(command.get("type", "")) == "combat_retreat_decision":
+			return "Waiting for %s to decide Tactful Retreat." % required_player.player_name
 		return "Unauthorized command: that action belongs to %s." % required_player.player_name
 	return ""
 
@@ -3097,6 +3099,9 @@ func _process_command_impl(command: Dictionary) -> bool:
 				if chosen_cards.size() > HariiJarl.MAX_WARBAND_SUMMONS:
 					move_failed.emit("harii_jarl_impact_choice: too many Harii selected")
 					return false
+			if chosen_cards.is_empty() and valid_targets.is_empty():
+				move_validated.emit(command)
+				return true
 			game_manager.note_player_feedback(jarl.resolve_warband_impact(game_manager, chosen_cards))
 			move_validated.emit(command)
 			return true

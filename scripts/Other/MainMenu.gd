@@ -2,6 +2,7 @@ extends Control
 
 const LobbyProtocolScript = preload("res://scripts/network/LobbyProtocol.gd")
 const LobbyServerScript = preload("res://scripts/server/LobbyServer.gd")
+const AccountStoreScript = preload("res://scripts/server/AccountStore.gd")
 const LobbyClientScript = preload("res://scripts/client/LobbyClient.gd")
 const AppReleaseInfoScript = preload("res://scripts/client/AppReleaseInfo.gd")
 const DeckCatalogUtilsScript = preload("res://scripts/core/DeckCatalogUtils.gd")
@@ -2597,6 +2598,9 @@ func _show_auth_onboarding() -> void:
 	_auth_onboarding_username_edit.placeholder_text = "Account username"
 	_auth_onboarding_username_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_auth_onboarding_username_edit.visible = false
+	_auth_onboarding_username_edit.text_changed.connect(func(_new_text: String) -> void:
+		_refresh_auth_onboarding_form_state()
+	)
 	_auth_onboarding_username_edit.text_submitted.connect(func(_text: String) -> void:
 		_submit_auth_onboarding()
 	)
@@ -2607,6 +2611,9 @@ func _show_auth_onboarding() -> void:
 	_auth_onboarding_password_edit.secret = true
 	_auth_onboarding_password_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_auth_onboarding_password_edit.visible = false
+	_auth_onboarding_password_edit.text_changed.connect(func(_new_text: String) -> void:
+		_refresh_auth_onboarding_form_state()
+	)
 	_auth_onboarding_password_edit.text_submitted.connect(func(_text: String) -> void:
 		_submit_auth_onboarding()
 	)
@@ -2636,14 +2643,18 @@ func _show_auth_onboarding() -> void:
 		if _auth_onboarding_password_edit != null:
 			_auth_onboarding_password_edit.visible = false
 			_auth_onboarding_password_edit.text = ""
-		if _auth_onboarding_continue_button != null:
-			_auth_onboarding_continue_button.visible = false
+	if _auth_onboarding_continue_button != null:
+		_auth_onboarding_continue_button.visible = false
+	_refresh_auth_onboarding_form_state()
 
 func _begin_auth_onboarding_account_flow(auth_mode: String) -> void:
 	if auth_mode not in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
 		auth_mode = AUTH_MODE_LOGIN
 	_auth_onboarding_selected_mode = auth_mode
-	_set_auth_onboarding_hint("")
+	if auth_mode == AUTH_MODE_REGISTER:
+		_set_auth_onboarding_hint("New account passwords must be at least %d characters." % _get_account_min_password_length())
+	else:
+		_set_auth_onboarding_hint("")
 	if _auth_onboarding_username_edit != null:
 		_auth_onboarding_username_edit.visible = true
 		if _auth_onboarding_username_edit.text.strip_edges().is_empty():
@@ -2662,6 +2673,7 @@ func _begin_auth_onboarding_account_flow(auth_mode: String) -> void:
 	if _auth_onboarding_continue_button != null:
 		_auth_onboarding_continue_button.visible = true
 		_auth_onboarding_continue_button.text = "Create Account" if auth_mode == AUTH_MODE_REGISTER else "Login"
+	_refresh_auth_onboarding_form_state()
 	if _auth_onboarding_username_edit != null and _auth_onboarding_username_edit.text.strip_edges().is_empty():
 		_auth_onboarding_username_edit.grab_focus()
 	elif _auth_onboarding_password_edit != null:
@@ -2690,6 +2702,12 @@ func _submit_auth_onboarding() -> bool:
 		return false
 	if password.is_empty():
 		_set_auth_onboarding_hint("Enter an account password to continue.", true)
+		if _auth_onboarding_password_edit != null:
+			_auth_onboarding_password_edit.grab_focus()
+		return false
+	var credential_error := _validate_account_auth_details(auth_mode, username, password)
+	if not credential_error.is_empty():
+		_set_auth_onboarding_hint(credential_error, true)
 		if _auth_onboarding_password_edit != null:
 			_auth_onboarding_password_edit.grab_focus()
 		return false
@@ -2748,6 +2766,39 @@ func _set_auth_onboarding_hint(message: String, is_error: bool = false) -> void:
 	_auth_onboarding_mode_hint_label.visible = not message.is_empty()
 	_auth_onboarding_mode_hint_label.text = message
 	_auth_onboarding_mode_hint_label.modulate = Color(1.0, 0.72, 0.72) if is_error else Color(0.76, 0.80, 0.92)
+
+func _refresh_auth_onboarding_form_state() -> void:
+	var auth_mode := _auth_onboarding_selected_mode
+	var min_password_length := _get_account_min_password_length()
+	if _auth_onboarding_password_edit != null:
+		_auth_onboarding_password_edit.placeholder_text = "Account password (min %d characters)" % min_password_length if auth_mode == AUTH_MODE_REGISTER else "Account password"
+	if _auth_onboarding_continue_button == null:
+		return
+	if auth_mode not in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
+		_auth_onboarding_continue_button.disabled = true
+		return
+	var username := _auth_onboarding_username_edit.text.strip_edges() if _auth_onboarding_username_edit != null else ""
+	var password := _auth_onboarding_password_edit.text if _auth_onboarding_password_edit != null else ""
+	var can_submit := not username.is_empty() and not password.is_empty()
+	if auth_mode == AUTH_MODE_REGISTER:
+		can_submit = can_submit and password.strip_edges().length() >= min_password_length
+		if not can_submit and not username.is_empty() and not password.is_empty():
+			_set_auth_onboarding_hint("Passwords for new accounts must be at least %d characters." % min_password_length, true)
+		elif _auth_onboarding_mode_hint_label != null and _auth_onboarding_mode_hint_label.visible \
+				and str(_auth_onboarding_mode_hint_label.text).begins_with("Passwords for new accounts must be at least "):
+			_set_auth_onboarding_hint("")
+	_auth_onboarding_continue_button.disabled = not can_submit
+
+func _get_account_min_password_length() -> int:
+	return int(AccountStoreScript.MIN_PASSWORD_LENGTH)
+
+func _validate_account_auth_details(auth_mode: String, username: String, password: String) -> String:
+	if auth_mode != AUTH_MODE_REGISTER:
+		return ""
+	var min_password_length := _get_account_min_password_length()
+	if password.strip_edges().length() < min_password_length:
+		return "Passwords for new accounts must be at least %d characters." % min_password_length
+	return ""
 
 func _complete_auth_onboarding(auth_mode: String, message: String) -> void:
 	_set_auth_mode(auth_mode)
@@ -3971,6 +4022,7 @@ func _refresh_friends_button() -> void:
 	var pending_count := _get_pending_friend_notification_count()
 	_friends_button.text = "Friends (%d)" % pending_count if pending_count > 0 else "Friends"
 	_friends_button.disabled = not _uses_server_account_storage()
+	_friends_button.tooltip_text = "" if _uses_server_account_storage() else "Log into or create an account to use friends. Guest names are not searchable."
 
 func _get_pending_friend_notification_count() -> int:
 	var incoming_requests = _friends_state.get("incoming_requests", [])
@@ -3984,7 +4036,7 @@ func _get_pending_friend_notification_count() -> int:
 
 func _open_friends_overlay() -> void:
 	if not _uses_server_account_storage():
-		status_label.text = "Log into an account before using friends."
+		status_label.text = "Log into or create an account before using friends. Guest names are not searchable."
 		return
 	if _friends_overlay != null and is_instance_valid(_friends_overlay):
 		return
@@ -4066,6 +4118,12 @@ func _open_friends_overlay() -> void:
 	add_btn.pressed.connect(_on_send_friend_request_pressed)
 	add_row.add_child(add_btn)
 
+	var account_hint := Label.new()
+	account_hint.text = "Friends uses registered account usernames. Guest names will not appear here."
+	account_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	account_hint.modulate = Color(0.72, 0.78, 0.90)
+	content.add_child(account_hint)
+
 	_friends_status_label = Label.new()
 	_friends_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_friends_status_label.modulate = Color(0.80, 0.86, 0.96)
@@ -4112,7 +4170,7 @@ func _on_send_friend_request_pressed() -> void:
 		_set_friends_status("Enter a username first.")
 		return
 	lobby_client.send_friend_request(username)
-	_set_friends_status("Friend request sent to %s if that account can receive it." % username)
+	_set_friends_status("Looking up account username %s..." % username)
 
 func _on_friend_request_response_pressed(request_id: String, accept: bool) -> void:
 	if lobby_client == null:
@@ -5386,8 +5444,12 @@ func _validate_auth_inputs() -> String:
 	var username: String = _get_preferred_account_username()
 	if username.is_empty():
 		return "Enter an account username first."
-	if _get_auth_password().is_empty():
+	var password := _get_auth_password()
+	if password.is_empty():
 		return "Enter your account password first."
+	var credential_error := _validate_account_auth_details(auth_mode, username, password)
+	if not credential_error.is_empty():
+		return credential_error
 	return ""
 
 func _get_auth_password() -> String:
