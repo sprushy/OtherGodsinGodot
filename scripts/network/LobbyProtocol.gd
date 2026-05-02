@@ -10,6 +10,7 @@ const REGISTER_ACCOUNT := "register_account"
 const CREATE_ROOM := "create_room"
 const LIST_ROOMS := "list_rooms"
 const JOIN_ROOM := "join_room"
+const OBSERVE_ROOM := "observe_room"
 const LEAVE_ROOM := "leave_room"
 const SET_READY := "set_ready"
 const SELECT_DECK := "select_deck"
@@ -69,6 +70,9 @@ static func validate_request(message: Dictionary) -> String:
 			if str(payload.get("password", "")).strip_edges().is_empty():
 				return "Missing password."
 		JOIN_ROOM:
+			if str(payload.get("room_id", "")).strip_edges().is_empty():
+				return "Missing room code."
+		OBSERVE_ROOM:
 			if str(payload.get("room_id", "")).strip_edges().is_empty():
 				return "Missing room code."
 		SELECT_DECK:

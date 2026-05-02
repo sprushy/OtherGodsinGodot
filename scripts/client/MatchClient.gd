@@ -107,7 +107,11 @@ func get_local_player_index() -> int:
 	return network_manager.local_player_index
 
 func requires_match_auth() -> bool:
-	return _is_networked_client and not _match_info.is_empty() and str(_match_info.get("match_token", "")).strip_edges() != ""
+	if not _is_networked_client or _match_info.is_empty():
+		return false
+	if bool(_match_info.get("observer_mode", false)):
+		return str(_match_info.get("match_id", "")).strip_edges() != ""
+	return str(_match_info.get("match_token", "")).strip_edges() != ""
 
 func _on_connected_to_server() -> void:
 	_cancel_connect_attempt_timeout()
@@ -241,6 +245,7 @@ func _submit_match_join_request() -> void:
 		"match_id": str(_match_info.get("match_id", "")),
 		"session_id": str(_match_info.get("session_id", "")),
 		"match_token": str(_match_info.get("match_token", "")),
+		"observer_mode": bool(_match_info.get("observer_mode", false)),
 	})
 
 func _try_submit_match_join_if_already_connected() -> void:

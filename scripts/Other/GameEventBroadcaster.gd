@@ -66,6 +66,8 @@ func _on_ui_refresh_requested() -> void:
 			network_manager.game_event_received.emit("full_state", event_data)
 		else:
 			network_manager.broadcast_event_to_peer(peer_id, "full_state", event_data)
+	for peer_id in network_manager.spectator_peer_ids:
+		network_manager.broadcast_event_to_peer(int(peer_id), "full_state", _build_full_state_event_data(GameState.SPECTATOR_VIEWER_INDEX, "Watching live match."))
 
 func _on_turn_upkeep_started(_turn_number: int, player: Player) -> void:
 	if network_manager == null:
@@ -138,6 +140,8 @@ func _broadcast_full_state(action_message: String) -> void:
 			network_manager.game_event_received.emit("full_state", event_data)
 		else:
 			network_manager.broadcast_event_to_peer(peer_id, "full_state", event_data)
+	for peer_id in network_manager.spectator_peer_ids:
+		network_manager.broadcast_event_to_peer(int(peer_id), "full_state", _build_full_state_event_data(GameState.SPECTATOR_VIEWER_INDEX, action_message))
 
 func _broadcast_full_state_for_move(move: Dictionary) -> void:
 	if network_manager == null:
@@ -152,6 +156,15 @@ func _broadcast_full_state_for_move(move: Dictionary) -> void:
 			network_manager.game_event_received.emit("full_state", event_data)
 		else:
 			network_manager.broadcast_event_to_peer(peer_id, "full_state", event_data)
+	for peer_id in network_manager.spectator_peer_ids:
+		network_manager.broadcast_event_to_peer(
+			int(peer_id),
+			"full_state",
+			_build_full_state_event_data(
+				GameState.SPECTATOR_VIEWER_INDEX,
+				_label_for_move(move, _viewer_for_player_index(GameState.SPECTATOR_VIEWER_INDEX))
+			)
+		)
 
 func _broadcast_full_state_for_action(action: CardAction) -> void:
 	if network_manager == null:
@@ -167,6 +180,15 @@ func _broadcast_full_state_for_action(action: CardAction) -> void:
 			network_manager.game_event_received.emit("full_state", event_data)
 		else:
 			network_manager.broadcast_event_to_peer(peer_id, "full_state", event_data)
+	for peer_id in network_manager.spectator_peer_ids:
+		network_manager.broadcast_event_to_peer(
+			int(peer_id),
+			"full_state",
+			_build_full_state_event_data(
+				GameState.SPECTATOR_VIEWER_INDEX,
+				_label_for_resolved_action(action, _viewer_for_player_index(GameState.SPECTATOR_VIEWER_INDEX))
+			)
+		)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -178,7 +200,7 @@ func _build_full_state_event_data(player_index: int, action_message: String) -> 
 		action_message = action_message,
 	}
 	var attack_preview := _serialize_pending_attack_preview()
-	if not attack_preview.is_empty():
+	if player_index >= 0 and not attack_preview.is_empty():
 		event_data["pending_attack_preview"] = attack_preview
 	return event_data
 
@@ -518,6 +540,8 @@ func _label_for_stack_move(card: Card, target = null, viewer: Player = null) -> 
 func _viewer_for_player_index(player_index: int) -> Player:
 	if game_manager == null:
 		return null
+	if player_index == GameState.SPECTATOR_VIEWER_INDEX:
+		return Player.new()
 	if player_index < 0 or player_index >= game_manager.players.size():
 		return null
 	return game_manager.players[player_index]

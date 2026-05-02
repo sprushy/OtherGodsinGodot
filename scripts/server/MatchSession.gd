@@ -27,6 +27,7 @@ var player_identity_by_session: Dictionary = {}
 var session_id_by_peer: Dictionary = {}
 var peer_id_by_session: Dictionary = {}
 var disconnected_sessions: Dictionary = {}
+var spectator_peer_ids: Array[int] = []
 
 var _rng := RandomNumberGenerator.new()
 
@@ -121,6 +122,9 @@ func authenticate_join(session_id: String, match_token: String, peer_id: int) ->
 	return player_index
 
 func note_peer_disconnected(peer_id: int) -> Dictionary:
+	if spectator_peer_ids.has(peer_id):
+		spectator_peer_ids.erase(peer_id)
+		return {}
 	var session_id := str(session_id_by_peer.get(peer_id, ""))
 	if session_id.is_empty():
 		return {}
@@ -138,6 +142,17 @@ func note_peer_disconnected(peer_id: int) -> Dictionary:
 
 func clear_peer(peer_id: int) -> void:
 	note_peer_disconnected(peer_id)
+
+func add_spectator_peer(peer_id: int) -> void:
+	if peer_id <= 0 or spectator_peer_ids.has(peer_id):
+		return
+	spectator_peer_ids.append(peer_id)
+
+func is_spectator_peer(peer_id: int) -> bool:
+	return spectator_peer_ids.has(peer_id)
+
+func get_spectator_peer_ids() -> Array[int]:
+	return spectator_peer_ids.duplicate()
 
 func is_waiting_for_reconnect() -> bool:
 	return not disconnected_sessions.is_empty()
@@ -191,6 +206,12 @@ func to_match_info(session_id: String = "") -> Dictionary:
 		match_info["selected_deck_cards"] = selected_deck.get("cards", {})
 	match_info["reconnect_window_seconds"] = reconnect_window_seconds
 	match_info["waiting_for_reconnect"] = is_waiting_for_reconnect()
+	return match_info
+
+func to_spectator_match_info() -> Dictionary:
+	var match_info := to_match_info("")
+	match_info["observer_mode"] = true
+	match_info["player_index"] = -1
 	return match_info
 
 func to_launch_config() -> Dictionary:

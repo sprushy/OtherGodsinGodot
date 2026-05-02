@@ -25,6 +25,7 @@ var use_current_scene_relative_path: bool = false
 ## Maps player_index (0/1) to their ENet peer_id.
 ## Player 0 = host (peer_id 1), Player 1 = first remote client.
 var player_peer_ids: Dictionary = {}
+var spectator_peer_ids: Array[int] = []
 
 ## The local player index on this machine (-1 until assigned).
 var local_player_index: int = -1
@@ -101,6 +102,7 @@ func disconnect_client() -> void:
 	is_server = false
 	local_player_index = -1
 	player_peer_ids.clear()
+	spectator_peer_ids.clear()
 	last_server_error = OK
 
 func reconnect_client(address: String = "", port: int = -1) -> Error:
@@ -191,8 +193,12 @@ func assign_peer_to_player(target_peer_id: int, player_index: int) -> void:
 func approve_match_join(target_peer_id: int, player_index: int, match_info: Dictionary = {}) -> void:
 	if not is_server:
 		return
-	player_peer_ids[player_index] = target_peer_id
-	rpc_id(target_peer_id, "set_local_player_index", player_index)
+	if player_index >= 0:
+		player_peer_ids[player_index] = target_peer_id
+		spectator_peer_ids.erase(target_peer_id)
+		rpc_id(target_peer_id, "set_local_player_index", player_index)
+	else:
+		register_spectator_peer(target_peer_id)
 	rpc_id(target_peer_id, "notify_match_join_approved", match_info)
 
 func deny_match_join(target_peer_id: int, reason: String) -> void:
@@ -201,6 +207,7 @@ func deny_match_join(target_peer_id: int, reason: String) -> void:
 	rpc_id(target_peer_id, "notify_match_join_denied", reason)
 
 func unassign_peer(peer_id: int) -> void:
+	spectator_peer_ids.erase(peer_id)
 	for player_index in player_peer_ids.keys():
 		if int(player_peer_ids[player_index]) != peer_id:
 			continue
@@ -214,6 +221,14 @@ func get_player_index_for_peer(peer_id: int) -> int:
 		if int(player_peer_ids[player_index]) == peer_id:
 			return int(player_index)
 	return -1
+
+func register_spectator_peer(peer_id: int) -> void:
+	if peer_id <= 0 or spectator_peer_ids.has(peer_id):
+		return
+	spectator_peer_ids.append(peer_id)
+
+func is_spectator_peer(peer_id: int) -> bool:
+	return spectator_peer_ids.has(peer_id)
 
 func _build_sender_info(peer_id: int) -> Dictionary:
 	return {

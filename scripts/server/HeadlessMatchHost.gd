@@ -131,10 +131,20 @@ func _on_match_join_requested(join_request: Dictionary, sender_info: Dictionary)
 	if peer_id <= 0:
 		return
 	var match_id := str(join_request.get("match_id", "")).strip_edges()
+	var observer_mode := bool(join_request.get("observer_mode", false))
 	var session_id := str(join_request.get("session_id", "")).strip_edges()
 	var match_token := str(join_request.get("match_token", "")).strip_edges()
 	if match_id != str(match_session.match_id):
 		network_manager.deny_match_join(peer_id, "That match ID is no longer valid.")
+		return
+	if observer_mode:
+		match_session.add_spectator_peer(peer_id)
+		network_manager.approve_match_join(peer_id, -1, match_session.to_spectator_match_info())
+		var spectator_state := GameState.serialize(game_manager, GameState.SPECTATOR_VIEWER_INDEX)
+		network_manager.broadcast_event_to_peer(peer_id, "full_state", {
+			state = spectator_state,
+			action_message = "Observing live match.",
+		})
 		return
 	var was_reconnect: bool = match_session.is_session_waiting_for_reconnect(session_id)
 	var player_index := int(match_session.authenticate_join(session_id, match_token, peer_id))
@@ -175,3 +185,5 @@ func _broadcast_match_event(event_type: String, data: Dictionary) -> void:
 		if peer_id == 1:
 			continue
 		network_manager.broadcast_event_to_peer(peer_id, event_type, data)
+	for peer_id in network_manager.spectator_peer_ids:
+		network_manager.broadcast_event_to_peer(int(peer_id), event_type, data)

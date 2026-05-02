@@ -497,10 +497,10 @@ func _add_sleep_affordance(overlay: Control, card: Card) -> void:
 
 	var badge := PanelContainer.new()
 	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	badge.set_anchors_preset(Control.PRESET_TOP_LEFT)
-	badge.offset_left = 6
+	badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	badge.offset_left = -78
 	badge.offset_top = 6
-	badge.offset_right = 78
+	badge.offset_right = -6
 	badge.offset_bottom = 28
 
 	var style := StyleBoxFlat.new()

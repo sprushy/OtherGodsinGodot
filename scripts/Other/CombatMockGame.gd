@@ -46,6 +46,8 @@ var headless_match_host = null
 var prompt_router = null
 var match_client = null
 var _is_networked_client: bool = false
+var _is_observer_mode: bool = false
+var _observer_feedback_viewer: Player = null
 var selected_card: Card = null
 var selected_attacker: Card:
 	get:
@@ -2834,6 +2836,8 @@ func start_game(
 	_hide_game_result_overlay()
 	_local_match_result_recorded = false
 	_current_match_info = match_info.duplicate(true)
+	_is_observer_mode = bool(match_info.get("observer_mode", false))
+	_observer_feedback_viewer = Player.new() if _is_observer_mode else null
 	_restore_corner_action_button()
 	
 	game_manager = GameManager.new()
@@ -2974,6 +2978,8 @@ func _prepare_for_match_launch(status_message: String = "Connecting to match..."
 	_enemy_god_zone_ui = null
 	player1 = null
 	player2 = null
+	_is_observer_mode = false
+	_observer_feedback_viewer = null
 	selected_card = null
 	_pending_drop_zone = null
 	_pending_move_card = null
@@ -19914,6 +19920,8 @@ func _on_end_turn_button_pressed() -> void:
 # ---------------------------------------------------------------------------
 
 func _is_player_local(player: Player) -> bool:
+	if _is_observer_mode:
+		return false
 	if not _is_networked_client and not _is_real_network_host():
 		return true
 	if network_manager == null:
@@ -19924,6 +19932,8 @@ func _is_player_local(player: Player) -> bool:
 	return idx == network_manager.local_player_index
 
 func _get_local_forfeit_player_index() -> int:
+	if _is_observer_mode:
+		return -1
 	if network_manager != null and network_manager.local_player_index >= 0:
 		return network_manager.local_player_index
 	if game_manager == null or game_manager.players.is_empty():
@@ -20006,8 +20016,8 @@ func _restore_corner_action_button() -> void:
 	if _forfeit_button_default_text == "":
 		_forfeit_button_default_text = forfeit_button.text
 	_promote_transient_ui(forfeit_button, TRANSIENT_UI_Z_INDEX + 100)
-	forfeit_button.text = _forfeit_button_default_text
-	forfeit_button.tooltip_text = ""
+	forfeit_button.text = "Leave Match" if _is_observer_mode else _forfeit_button_default_text
+	forfeit_button.tooltip_text = "Leave the live match and return to the menu." if _is_observer_mode else ""
 	forfeit_button.disabled = false
 	forfeit_button.visible = true
 
@@ -20738,6 +20748,10 @@ func _apply_full_state(data: Dictionary) -> void:
 			var local_idx: int = network_manager.local_player_index
 			if local_idx < game_manager.players.size():
 				game_manager.feedback_viewer = game_manager.players[local_idx]
+		elif _is_observer_mode:
+			if _observer_feedback_viewer == null:
+				_observer_feedback_viewer = Player.new()
+			game_manager.feedback_viewer = _observer_feedback_viewer
 		_restore_network_attack_preview_from_state(data.get("pending_attack_preview", {}))
 		_awaiting_initial_full_state = false
 		_sync_network_turn_entry_ui_from_state()
@@ -20809,7 +20823,13 @@ func _restore_priority_prompt_from_authoritative_state() -> void:
 func _sync_network_turn_entry_ui_from_state() -> void:
 	if not _is_networked_client or game_manager == null or network_manager == null:
 		return
-	if _game_finished or network_manager.local_player_index < 0:
+	if _game_finished or _is_observer_mode or network_manager.local_player_index < 0:
+		choice_container.visible = false
+		_update_match_side_panel_layout()
+		end_turn_button.visible = false
+		end_turn_button.disabled = true
+		all_attack_btn.disabled = true
+		_close_turn_start_windows()
 		return
 	var local_idx: int = network_manager.local_player_index
 	var current_idx: int = game_manager.players.find(game_manager.current_player)
@@ -20832,6 +20852,12 @@ func _sync_network_turn_controls() -> void:
 	if end_turn_button == null or all_attack_btn == null or choice_container == null:
 		return
 	if _game_finished:
+		end_turn_button.visible = false
+		end_turn_button.disabled = true
+		all_attack_btn.disabled = true
+		return
+	if _is_observer_mode:
+		choice_container.visible = false
 		end_turn_button.visible = false
 		end_turn_button.disabled = true
 		all_attack_btn.disabled = true
@@ -21350,6 +21376,10 @@ func _clear_network_selection_state() -> void:
 func _on_forfeit_button_pressed() -> void:
 	if _game_finished:
 		_on_game_result_back_to_menu_pressed()
+		return
+	if _is_observer_mode:
+		_cancel_match_locally("Stopped observing.")
+		_emit_return_to_menu_requested()
 		return
 	if _is_networked_client and not _can_submit_network_action():
 		var cancel_message := "Match canceled."

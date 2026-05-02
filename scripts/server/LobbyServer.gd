@@ -197,6 +197,12 @@ func _handle_request(peer_id: int, message: Dictionary) -> void:
 				_send_error_to_peer(peer_id, "Join the lobby before entering a room.")
 				return
 			_join_room_for_session(str(join_session.get("session_id", "")), str(payload.get("room_id", "")))
+		LobbyProtocolScript.OBSERVE_ROOM:
+			var observe_session: Dictionary = _get_session_for_peer(peer_id)
+			if observe_session.is_empty():
+				_send_error_to_peer(peer_id, "Join the lobby before observing a match.")
+				return
+			_observe_room_for_session(str(observe_session.get("session_id", "")), str(payload.get("room_id", "")))
 		LobbyProtocolScript.LEAVE_ROOM:
 			var leave_session: Dictionary = _get_session_for_peer(peer_id)
 			if leave_session.is_empty():
@@ -827,6 +833,34 @@ func _join_room_for_session(session_id: String, room_id: String) -> void:
 
 	room_id_by_session[session_id] = normalized_room_id
 	_emit_room_updates(room)
+
+func _observe_room_for_session(session_id: String, room_id: String) -> void:
+	var normalized_room_id: String = room_id.strip_edges().to_upper()
+	if normalized_room_id.is_empty():
+		_send_error_to_session(session_id, "Enter a room code first.")
+		return
+	if room_id_by_session.has(session_id):
+		_send_error_to_session(session_id, "Leave your current seek before observing another match.")
+		return
+	if not rooms_by_id.has(normalized_room_id):
+		_send_error_to_session(session_id, "Room %s was not found." % normalized_room_id)
+		return
+	var room: LobbyRoom = rooms_by_id[normalized_room_id]
+	if room.status != LobbyRoomScript.STATUS_IN_MATCH:
+		_send_error_to_session(session_id, "Room %s is not currently in a live match." % normalized_room_id)
+		return
+	if match_supervisor == null:
+		_send_error_to_session(session_id, "Match supervisor is unavailable.")
+		return
+	var match_id := str(room.assigned_match_id).strip_edges()
+	if match_id.is_empty():
+		_send_error_to_session(session_id, "That room does not have an active match yet.")
+		return
+	var match_session = match_supervisor.get_match(match_id)
+	if match_session == null:
+		_send_error_to_session(session_id, "That live match is no longer available to observe.")
+		return
+	_send_to_session(session_id, LobbyProtocolScript.MATCH_ASSIGNED, match_session.to_spectator_match_info())
 
 func _leave_room_for_session(session_id: String) -> void:
 	var room_id: String = str(room_id_by_session.get(session_id, ""))

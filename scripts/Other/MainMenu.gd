@@ -53,6 +53,7 @@ var _lobby_session_id: String = ""
 var _lobby_reconnect_token: String = ""
 var _pending_join_room_code: String = ""
 var _pending_join_room_id: String = ""
+var _pending_observe_room_id: String = ""
 var _current_lobby_ip: String = ""
 var _is_local_lobby_host: bool = false
 var _match_launch_queued: bool = false
@@ -522,6 +523,7 @@ func _open_multiplayer_screen() -> void:
 		return
 	_pending_host_room_creation = false
 	_pending_join_room_id = ""
+	_pending_observe_room_id = ""
 	_pending_local_lobby_launch_on_connect_failure = false
 	_connect_to_browseable_lobby("Connecting to lobby...")
 
@@ -1169,10 +1171,11 @@ func _refresh_seek_list() -> void:
 		var host_name := str(room.get("host_name", "Host")).strip_edges()
 		var member_count := int(room.get("member_count", 0))
 		var max_players := int(room.get("max_players", 2))
-		var status := str(room.get("status", "waiting")).capitalize()
+		var room_status := str(room.get("status", "waiting")).strip_edges().to_lower()
+		var status := "Live" if room_status == LobbyRoomScript.STATUS_IN_MATCH else room_status.capitalize()
 		var rank_tag := "" if bool(room.get("is_ranked", true)) else "[Unranked]  "
 		seek_list.add_item("%s%s  %d/%d  %s" % [rank_tag, host_name, member_count, max_players, status])
-		seek_list.set_item_metadata(seek_list.get_item_count() - 1, room_id)
+		seek_list.set_item_metadata(seek_list.get_item_count() - 1, room.duplicate(true))
 
 func _refresh_multiplayer_action_state() -> void:
 	var has_legal_deck := not _get_selected_multiplayer_deck().is_empty()
@@ -1224,11 +1227,19 @@ func _on_seek_item_clicked(index: int, _at_position: Vector2, _mouse_button_inde
 	if not _current_room_snapshot.is_empty():
 		status_label.text = "Leave your current seek before joining another."
 		return
+	var room_entry = seek_list.get_item_metadata(index)
+	if not (room_entry is Dictionary):
+		return
+	var room_data := room_entry as Dictionary
+	var room_status := str(room_data.get("status", "")).strip_edges().to_lower()
+	var room_id := str(room_data.get("room_id", "")).strip_edges()
+	if room_id.is_empty():
+		return
+	if room_status == LobbyRoomScript.STATUS_IN_MATCH:
+		_on_observe_match_requested(room_id)
+		return
 	if _get_selected_multiplayer_deck().is_empty():
 		status_label.text = "Choose a saved legal deck before joining a seek."
-		return
-	var room_id := str(seek_list.get_item_metadata(index)).strip_edges()
-	if room_id.is_empty():
 		return
 	_on_join_seek_requested(room_id)
 
@@ -1265,6 +1276,7 @@ func _on_create_seek_pressed() -> void:
 	_pending_host_room_creation = true
 	_pending_room_is_ranked = true
 	_pending_join_room_id = ""
+	_pending_observe_room_id = ""
 	_pending_local_lobby_launch_on_connect_failure = false
 	multiplayer_container.visible = true
 	_connect_to_browseable_lobby("Connecting to lobby...")
@@ -1287,6 +1299,7 @@ func _on_create_unranked_seek_pressed() -> void:
 	_pending_host_room_creation = true
 	_pending_room_is_ranked = false
 	_pending_join_room_id = ""
+	_pending_observe_room_id = ""
 	_pending_local_lobby_launch_on_connect_failure = false
 	multiplayer_container.visible = true
 	_connect_to_browseable_lobby("Connecting to lobby...")
@@ -1308,9 +1321,30 @@ func _on_join_seek_requested(room_id: String) -> void:
 		return
 	_pending_host_room_creation = false
 	_pending_join_room_id = room_id.strip_edges().to_upper()
+	_pending_observe_room_id = ""
 	_pending_local_lobby_launch_on_connect_failure = false
 	multiplayer_container.visible = true
 	_connect_to_browseable_lobby("Connecting to lobby...")
+
+func _on_observe_match_requested(room_id: String) -> void:
+	var target_error := _validate_multiplayer_target()
+	if not target_error.is_empty():
+		status_label.text = target_error
+		return
+	var auth_error := _validate_auth_inputs()
+	if not auth_error.is_empty():
+		status_label.text = auth_error
+		return
+	if not _current_room_snapshot.is_empty():
+		status_label.text = "Leave your current seek before observing another match."
+		return
+	_pending_host_room_creation = false
+	_pending_join_room_id = ""
+	_pending_observe_room_id = room_id.strip_edges().to_upper()
+	_pending_local_lobby_launch_on_connect_failure = false
+	room_code_line_edit.text = room_id.strip_edges().to_upper()
+	multiplayer_container.visible = true
+	_connect_to_browseable_lobby("Connecting to live match...")
 
 func _on_leave_seek_pressed() -> void:
 	if lobby_client == null:
@@ -1378,6 +1412,7 @@ func _maybe_connect_authenticated_lobby(connect_status: String = "Connecting to 
 		return
 	_pending_host_room_creation = false
 	_pending_join_room_id = ""
+	_pending_observe_room_id = ""
 	_pending_local_lobby_launch_on_connect_failure = false
 	_connect_to_browseable_lobby(connect_status, connect_serial)
 
@@ -1406,6 +1441,12 @@ func _run_pending_multiplayer_action() -> void:
 		_pending_join_room_id = ""
 		status_label.text = "Joining seek %s..." % room_id
 		lobby_client.join_room(room_id)
+		return
+	if not _pending_observe_room_id.is_empty():
+		var observe_room_id := _pending_observe_room_id
+		_pending_observe_room_id = ""
+		status_label.text = "Observing match %s..." % observe_room_id
+		lobby_client.observe_room(observe_room_id)
 		return
 	_queue_room_list_refresh()
 
@@ -1515,13 +1556,13 @@ func _should_prompt_for_update(latest_version: String) -> bool:
 	var current_version := AppReleaseInfoScript.get_current_version()
 	if AppReleaseInfoScript.compare_versions(current_version, latest_version) >= 0:
 		return false
-	if _local_profile_store == null:
-		return true
-	var dismissed_version: String = str(_local_profile_store.get_dismissed_release_version()).strip_edges()
-	if not dismissed_version.is_empty() and AppReleaseInfoScript.compare_versions(current_version, dismissed_version) >= 0:
-		_local_profile_store.remember_dismissed_release_version("")
-		dismissed_version = ""
-	return dismissed_version != latest_version
+	if _local_profile_store != null:
+		var dismissed_version: String = str(_local_profile_store.get_dismissed_release_version()).strip_edges()
+		if not dismissed_version.is_empty():
+			# "Later" is only meant to dismiss the prompt for the current session.
+			# Clear any persisted dismissal so the update is offered again on next open.
+			_local_profile_store.remember_dismissed_release_version("")
+	return true
 
 func _show_update_prompt(latest_version: String, release_url: String, download_url: String = "") -> void:
 	if _update_prompt_overlay != null and is_instance_valid(_update_prompt_overlay):
@@ -1637,8 +1678,6 @@ func _dismiss_update_prompt() -> void:
 	_pending_update_release_url = AppReleaseInfoScript.RELEASES_PAGE_URL
 
 func _on_update_prompt_later_pressed() -> void:
-	if _local_profile_store != null and not _pending_update_release_version.is_empty():
-		_local_profile_store.remember_dismissed_release_version(_pending_update_release_version)
 	_dismiss_update_prompt()
 	_complete_startup_prompts()
 
@@ -3308,7 +3347,11 @@ func _on_remote_match_assigned(match_info: Dictionary) -> void:
 	_write_smoke_trace("remote_match_assigned match=%s" % str(match_info.get("match_id", "")))
 	var match_ip := str(match_info.get("server_ip", _current_lobby_ip))
 	var match_port := int(match_info.get("match_port", _get_configured_match_port()))
-	status_label.text = "Match found. Connecting to %s..." % match_ip
+	status_label.text = (
+		"Live match found. Connecting to %s..." % match_ip
+		if bool(match_info.get("observer_mode", false))
+		else "Match found. Connecting to %s..." % match_ip
+	)
 	_write_smoke_result("MATCH_ASSIGNED_CLIENT:%s" % str(match_info))
 	_cleanup_lobby(false)
 	call_deferred("_launch_assigned_match", false, match_ip, match_port, match_info)
@@ -3457,7 +3500,7 @@ func _should_suppress_active_match_auto_resume(active_match_info: Dictionary) ->
 	return false
 
 func _has_pending_new_seek_action() -> bool:
-	return _pending_host_room_creation or not _pending_join_room_id.is_empty()
+	return _pending_host_room_creation or not _pending_join_room_id.is_empty() or not _pending_observe_room_id.is_empty()
 
 func _abandon_current_lobby_match() -> void:
 	if lobby_client == null:
@@ -3488,6 +3531,7 @@ func _cleanup_lobby(clear_session: bool) -> void:
 		_lobby_reconnect_token = ""
 		_pending_join_room_code = ""
 		_pending_join_room_id = ""
+		_pending_observe_room_id = ""
 		_current_lobby_ip = ""
 		_is_local_lobby_host = false
 		room_code_line_edit.text = ""
@@ -4593,6 +4637,8 @@ func _clear_saved_lobby_resume() -> void:
 
 func _save_active_match_resume(match_info: Dictionary) -> void:
 	if _local_profile_store == null or _local_profile_id.is_empty() or match_info.is_empty():
+		return
+	if bool(match_info.get("observer_mode", false)):
 		return
 	_local_profile_store.remember_active_match(_local_profile_id, match_info)
 	_update_resume_controls()

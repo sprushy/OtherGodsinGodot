@@ -5,6 +5,7 @@ class_name GameState
 const HIDDEN_MODE_NONE := 0
 const HIDDEN_MODE_HAND := 1
 const HIDDEN_MODE_BOARD := 2
+const SPECTATOR_VIEWER_INDEX := -2
 
 # Serializes and deserializes full game state for network transmission.
 # Used by GameEventBroadcaster (server side) and CombatMockGame (client side).
@@ -20,7 +21,9 @@ const HIDDEN_MODE_BOARD := 2
 ## Pass -1 to include all hands unmasked (server-internal use only).
 static func serialize(gm: GameManager, viewer_player_index: int = -1) -> Dictionary:
 	var viewer: Player = null
-	if viewer_player_index >= 0 and viewer_player_index < gm.players.size():
+	if viewer_player_index == SPECTATOR_VIEWER_INDEX:
+		viewer = Player.new()
+	elif viewer_player_index >= 0 and viewer_player_index < gm.players.size():
 		viewer = gm.players[viewer_player_index]
 	var data := {
 		turn_number = gm.turn_number,
