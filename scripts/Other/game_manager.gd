@@ -2186,20 +2186,24 @@ func resolve_combat(attacker: Card, defender: Card, continue_callback: Callable 
 				print("	" + defender.card_name + " destroyed!")
 				_combat_kill(attacker, defender)
 			elif attacker_str_vs_res < defender_res_real:
+				# Followers convert using the defender's full resilience, with Giant's Disdain reducing only the opposing attack stat.
+				var diff_damage: int = _adjust_combat_follower_damage(maxi(0, defender_res_real - attacker_str_for_conversion))
+				var diff_gain: int = defender_res_real - attacker_str_vs_res
+				print("	" + str(diff_damage) + " followers convert to " + defender_controller.player_name)
+				attacker_controller.lose_followers(diff_damage)
+				defender_controller.gain_followers(diff_damage)
+				if diff_gain != diff_damage:
+					print("\t(disdain adjusted conversion from %d to %d)" % [diff_gain, diff_damage])
 				if _ferocious_defence_triggers(defender, attacker_str_vs_res):
 					print("	Ferocious Defence! " + attacker.card_name + " destroyed!")
 					_combat_kill(defender, attacker)
-				else:
-					# Followers convert using the defender's full resilience, with Giant's Disdain reducing only the opposing attack stat.
-					var diff_damage: int = _adjust_combat_follower_damage(maxi(0, defender_res_real - attacker_str_for_conversion))
-					var diff_gain: int = defender_res_real - attacker_str_vs_res
-					print("	" + str(diff_damage) + " followers convert to " + defender_controller.player_name)
-					attacker_controller.lose_followers(diff_damage)
-					defender_controller.gain_followers(diff_damage)
-					if diff_gain != diff_damage:
-						print("\t(disdain adjusted conversion from %d to %d)" % [diff_gain, diff_damage])
 			else:
-				print("	Exact match - no effect")
+				if _ferocious_defence_triggers(defender, attacker_str_vs_res):
+					print("	Exact match - no follower conversion")
+					print("	Ferocious Defence! " + attacker.card_name + " destroyed!")
+					_combat_kill(defender, attacker)
+				else:
+					print("	Exact match - no effect")
 	elif defender.card_type == Card.CardType.EQUIPMENT and defender.equipped_on == null:
 		print("	Equipment destroyed!")
 		_combat_kill(attacker, defender)
@@ -2300,17 +2304,22 @@ func resolve_united_front_combat(attacker: Card, partner: Card, defender: Card) 
 				print("	%s destroyed!" % defender.card_name)
 				_combat_kill(primary, defender)
 			elif attacker_str_vs_res < defender_res_real:
+				var diff_damage: int = _adjust_combat_follower_damage(maxi(0, defender_res_real - attacker_str_for_conversion))
+				print("	%d followers convert to %s" % [diff_damage, defender_controller.player_name])
+				attacker_controller.lose_followers(diff_damage)
+				defender_controller.gain_followers(diff_damage)
 				if _ferocious_defence_triggers(defender, attacker_str_vs_res):
 					print("	Ferocious Defence! United Front attackers destroyed!")
 					_combat_kill(defender, primary)
 					_combat_kill(defender, support)
-				else:
-					var diff_damage: int = _adjust_combat_follower_damage(maxi(0, defender_res_real - attacker_str_for_conversion))
-					print("	%d followers convert to %s" % [diff_damage, defender_controller.player_name])
-					attacker_controller.lose_followers(diff_damage)
-					defender_controller.gain_followers(diff_damage)
 			else:
-				print("	Exact match - no effect")
+				if _ferocious_defence_triggers(defender, attacker_str_vs_res):
+					print("	Exact match - no follower conversion")
+					print("	Ferocious Defence! United Front attackers destroyed!")
+					_combat_kill(defender, primary)
+					_combat_kill(defender, support)
+				else:
+					print("	Exact match - no effect")
 	elif defender.card_type == Card.CardType.EQUIPMENT and defender.equipped_on == null:
 		print("	Equipment destroyed!")
 		_combat_kill(primary, defender)
@@ -2414,13 +2423,17 @@ func resolve_combat_with_continuation(
 				print("	" + defender.card_name + " destroyed!")
 				return _combat_kill_deferred(attacker, defender, finish)
 			if attacker_str_vs_res < defender_res_real:
-				if _ferocious_defence_triggers(defender, attacker_str_vs_res):
-					print("	Ferocious Defence! " + attacker.card_name + " destroyed!")
-					return _combat_kill_deferred(defender, attacker, finish)
 				var diff_damage: int = _adjust_combat_follower_damage(maxi(0, defender_res_real - attacker_str_for_conversion))
 				print("	" + str(diff_damage) + " followers convert to " + defender_controller.player_name)
 				attacker_controller.lose_followers(diff_damage)
 				defender_controller.gain_followers(diff_damage)
+				if _ferocious_defence_triggers(defender, attacker_str_vs_res):
+					print("	Ferocious Defence! " + attacker.card_name + " destroyed!")
+					return _combat_kill_deferred(defender, attacker, finish)
+			elif _ferocious_defence_triggers(defender, attacker_str_vs_res):
+				print("	Exact match - no follower conversion")
+				print("	Ferocious Defence! " + attacker.card_name + " destroyed!")
+				return _combat_kill_deferred(defender, attacker, finish)
 		elif defender.card_type == Card.CardType.EQUIPMENT and defender.equipped_on == null:
 			print("	Equipment destroyed!")
 			return _combat_kill_deferred(attacker, defender, finish)
@@ -3769,7 +3782,7 @@ func _ferocious_defence_triggers(defender: Card, opposing_strength: int) -> bool
 		return false
 	if defender.creature_mode != Card.CreatureMode.DEFENSIVE:
 		return false
-	return _has_ferocious_defence(defender.get_controller()) and defender.get_effective_resilience() > opposing_strength
+	return _has_ferocious_defence(defender.get_controller()) and defender.get_effective_resilience() >= opposing_strength
 
 func _get_active_structures() -> Array[StructureCard]:
 	var active_structures: Array[StructureCard] = []

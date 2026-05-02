@@ -10,7 +10,7 @@ func _init() -> void:
 	mana_cost = UNLOCK_COST
 	culture = "Neutral"
 	card_types = ["Power", "Creature Buff"]
-	ability_text = "Friendly creatures in defensive stance destroy creatures they are in combat with if their RES is higher than the opposing creature's STR."
+	ability_text = "Friendly creatures in defensive stance destroy creatures they are in combat with if their RES is higher than or equal to the opposing creature's STR."
 	art_path = ART_PATH
 
 func on_unlock(_game_manager: GameManager) -> void:

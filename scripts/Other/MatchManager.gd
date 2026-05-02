@@ -1545,7 +1545,8 @@ func _advance_authoritative_priority_for_pending_card_events(card: Card) -> void
 	if _authoritative_stack_resolution_pending or not game_manager.resolving_stack_actions.is_empty():
 		return
 	if not _has_pending_event_priority_action(card, "summon") \
-			and not _has_pending_event_priority_action(card, "frontline_entry"):
+			and not _has_pending_event_priority_action(card, "frontline_entry") \
+			and not _has_pending_impact_priority_action(card):
 		return
 	_advance_authoritative_priority()
 

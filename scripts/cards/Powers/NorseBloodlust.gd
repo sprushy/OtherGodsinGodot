@@ -5,6 +5,7 @@ const UNLOCK_COST := 5
 const ART_PATH := "res://images/card_art/powers/NorseBloodlustEdit.png"
 
 var _bloodlust_spent_turn: int = -1
+var _bloodlust_ready_announcement_turn: int = -1
 
 func _init() -> void:
 	super._init()
@@ -20,6 +21,39 @@ func _init() -> void:
 func on_global_turn_start(_game_manager: GameManager, starting_player: Player) -> void:
 	if starting_player == card_owner:
 		_bloodlust_spent_turn = -1
+		_bloodlust_ready_announcement_turn = -1
+
+func can_activate(_game_manager: GameManager) -> bool:
+	return false
+
+func get_activation_failure_reason(game_manager: GameManager) -> String:
+	if is_face_down:
+		return super.get_activation_failure_reason(game_manager)
+	if is_muted:
+		return card_name + " is muted."
+	if is_activation_locked(game_manager):
+		return card_name + " cannot be activated this turn."
+	if game_manager != null and _bloodlust_spent_turn != game_manager.turn_number and _has_ready_bloodlust_trigger(game_manager):
+		return "%s is passive. Summon a Lupine or Warrior from your hand to use Bloodlust." % card_name
+	return "%s is passive and only becomes ready after a friendly Norse Warrior destroys a creature in combat." % card_name
+
+func on_creature_after_combat(game_manager: GameManager, attacker: Card, defender: Card) -> void:
+	if game_manager == null or card_owner == null:
+		return
+	if game_manager.current_player != card_owner:
+		return
+	if _bloodlust_spent_turn == game_manager.turn_number:
+		return
+	if _bloodlust_ready_announcement_turn == game_manager.turn_number:
+		return
+	if attacker == null and defender == null:
+		return
+	if not _has_ready_bloodlust_trigger(game_manager):
+		return
+	_bloodlust_ready_announcement_turn = game_manager.turn_number
+	game_manager.note_player_feedback(
+		"%s is ready. You may summon a Lupine or Warrior from your hand this turn and pay its summon cost." % card_name
+	)
 
 func can_grant_extra_normal_summon(
 	player: Player,
@@ -78,6 +112,9 @@ func get_hover_detail_lines(viewer: Player = null) -> Array[String]:
 	lines.append("Bloodlust summon ready." if _is_bloodlust_ready_now() else "No Bloodlust summon ready.")
 	return lines
 
+func is_ui_ready(game_manager: GameManager) -> bool:
+	return _is_bloodlust_ready_with_game_manager(game_manager)
+
 func _can_use_bloodlust(player: Player, game_manager: GameManager) -> bool:
 	return is_effectively_active() \
 		and player != null \
@@ -123,7 +160,11 @@ func _is_bloodlust_ready_now() -> bool:
 		return false
 	var gm = scene.get("game_manager")
 	if gm is GameManager:
-		return is_effectively_active() \
-			and _bloodlust_spent_turn != (gm as GameManager).turn_number \
-			and _has_ready_bloodlust_trigger(gm as GameManager)
+		return _is_bloodlust_ready_with_game_manager(gm as GameManager)
 	return false
+
+func _is_bloodlust_ready_with_game_manager(game_manager: GameManager) -> bool:
+	return game_manager != null \
+		and is_effectively_active() \
+		and _bloodlust_spent_turn != game_manager.turn_number \
+		and _has_ready_bloodlust_trigger(game_manager)

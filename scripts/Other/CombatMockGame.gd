@@ -16,6 +16,7 @@ const TonalExtractionCursorSource = preload("res://images/ui/cursors/ExtractionC
 const GiantMasterArchitectCursorSource = preload("res://images/ui/cursors/GiantMasterArchitectHammerCursor.png")
 const HermesCursorSource = preload("res://images/ui/cursors/SpeedHermesCursor.png")
 const GuanYuCursorSource = preload("res://images/ui/cursors/GuanYuCursor.png")
+const GoodFortuneCursorSource = preload("res://images/ui/cursors/Mermaid Tail Cursor.png")
 const AncientPyreCursorSource = preload("res://images/ui/cursors/PyreCursor.png")
 const TezTitlacauanCursorSource = preload("res://images/ui/cursors/SlaveCollar Cursor.png")
 const AnointingStatueCursorSource = preload("res://scripts/Other/Annointing Statue Cursor.png")
@@ -417,6 +418,7 @@ var _tonal_extraction_cursor_texture: Texture2D = null
 var _giant_master_architect_cursor_texture: Texture2D = null
 var _hermes_cursor_texture: Texture2D = null
 var _guan_yu_cursor_texture: Texture2D = null
+var _good_fortune_cursor_texture: Texture2D = null
 var _ancient_pyre_cursor_texture: Texture2D = null
 var _tez_titlacauan_cursor_texture: Texture2D = null
 var _anointing_statue_cursor_texture: Texture2D = null
@@ -432,6 +434,7 @@ var _tonal_extraction_cursor_target_height: int = 0
 var _giant_master_architect_cursor_target_height: int = 0
 var _hermes_cursor_target_height: int = 0
 var _guan_yu_cursor_target_height: int = 0
+var _good_fortune_cursor_target_height: int = 0
 var _ancient_pyre_cursor_target_height: int = 0
 var _tez_titlacauan_cursor_target_height: int = 0
 var _anointing_statue_cursor_target_height: int = 0
@@ -513,6 +516,8 @@ const HERMES_CURSOR_TARGET_HEIGHT := 96
 const HERMES_CURSOR_HOTSPOT_RATIO := Vector2(0.10, 0.88)
 const GUAN_YU_CURSOR_TARGET_HEIGHT := 96
 const GUAN_YU_CURSOR_HOTSPOT_RATIO := Vector2(0.95, 0.94)
+const GOOD_FORTUNE_CURSOR_TARGET_HEIGHT := 108
+const GOOD_FORTUNE_CURSOR_HOTSPOT_RATIO := Vector2(0.50, 0.79)
 const ANCIENT_PYRE_CURSOR_TARGET_HEIGHT := 96
 const ANCIENT_PYRE_CURSOR_HOTSPOT_RATIO := Vector2(0.50, 0.12)
 const TEZ_TITLACAUAN_CURSOR_TARGET_HEIGHT := 108
@@ -1554,6 +1559,10 @@ func _is_hermes_cursor_mode_active() -> bool:
 func _is_guan_yu_cursor_mode_active() -> bool:
 	return awaiting_god_ability_target and god_ability_source is GuanYu
 
+func _is_good_fortune_cursor_mode_active() -> bool:
+	return _overlay_selection_cursor_mode == "good_fortune" \
+		or (_has_pending_click_selection() and _pending_click_selection_source is ThirdSageEnmedugga)
+
 func _is_tez_titlacauan_cursor_mode_active() -> bool:
 	return _pending_tezcatlipoca_active_prompt != null
 
@@ -1570,6 +1579,8 @@ func _get_selection_cursor_mode_for_source(card: Card) -> String:
 		return "breidablik"
 	if card is TonalExtraction:
 		return "tonal_extraction"
+	if card is ThirdSageEnmedugga:
+		return "good_fortune"
 	if _is_silence_or_mute_targeting_source(card):
 		return "silence"
 	return ""
@@ -1686,6 +1697,8 @@ func _get_selection_cursor_mode() -> String:
 		return "hermes"
 	if _is_guan_yu_cursor_mode_active():
 		return "guan_yu"
+	if _is_good_fortune_cursor_mode_active():
+		return "good_fortune"
 	if _is_tez_titlacauan_cursor_mode_active():
 		return "tez_titlacauan"
 	if _is_ancient_pyre_cursor_mode_active():
@@ -1726,6 +1739,8 @@ func _get_cursor_mode_target_height(cursor_mode: String) -> int:
 			return UIArtScaler.get_board_cursor_target_height(HERMES_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 		"guan_yu":
 			return UIArtScaler.get_board_cursor_target_height(GUAN_YU_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+		"good_fortune":
+			return UIArtScaler.get_board_cursor_target_height(GOOD_FORTUNE_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 		"tez_titlacauan":
 			return UIArtScaler.get_board_cursor_target_height(TEZ_TITLACAUAN_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 		"ancient_pyre":
@@ -1871,6 +1886,22 @@ func _apply_guan_yu_cursor() -> bool:
 		Input.set_custom_mouse_cursor(_guan_yu_cursor_texture, cursor_shape, hotspot)
 	return true
 
+func _apply_good_fortune_cursor() -> bool:
+	var target_height := UIArtScaler.get_board_cursor_target_height(GOOD_FORTUNE_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+	if _good_fortune_cursor_texture == null or _good_fortune_cursor_target_height != target_height:
+		_good_fortune_cursor_texture = UIArtScaler.build_cursor_texture(
+			GoodFortuneCursorSource,
+			target_height
+		)
+		_good_fortune_cursor_target_height = target_height
+	if _good_fortune_cursor_texture == null:
+		return false
+
+	var hotspot := UIArtScaler.get_cursor_hotspot(_good_fortune_cursor_texture, GOOD_FORTUNE_CURSOR_HOTSPOT_RATIO)
+	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
+		Input.set_custom_mouse_cursor(_good_fortune_cursor_texture, cursor_shape, hotspot)
+	return true
+
 func _apply_ancient_pyre_cursor() -> bool:
 	var target_height := UIArtScaler.get_board_cursor_target_height(ANCIENT_PYRE_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 	if _ancient_pyre_cursor_texture == null or _ancient_pyre_cursor_target_height != target_height:
@@ -1934,6 +1965,14 @@ func _sync_sacrifice_cursor() -> void:
 	if cursor_mode == "guan_yu":
 		if _apply_guan_yu_cursor():
 			_active_selection_cursor_mode = "guan_yu"
+			_active_selection_cursor_target_height = target_height
+		else:
+			_restore_default_selection_cursor()
+		return
+
+	if cursor_mode == "good_fortune":
+		if _apply_good_fortune_cursor():
+			_active_selection_cursor_mode = "good_fortune"
 			_active_selection_cursor_target_height = target_height
 		else:
 			_restore_default_selection_cursor()
@@ -5101,8 +5140,14 @@ func _make_power_icon(card: Card, is_enemy: bool, _player: Player, zone: Zone = 
 	var is_unlocked := not card.is_face_down
 	var activatable := power != null and power.can_activate(game_manager)
 	var can_unlock_now := power != null and power.can_unlock(game_manager)
+	var ready_glow := power != null and power.has_method("is_ui_ready") and power.is_ui_ready(game_manager)
 
-	if is_unlocked and activatable:
+	if ready_glow:
+		style.bg_color = Color(0.19, 0.06, 0.07, 0.94)
+		style.border_color = Color(1.0, 0.34, 0.28, 0.98)
+		style.shadow_color = Color(1.0, 0.12, 0.08, 0.82)
+		style.shadow_size = 14
+	elif is_unlocked and activatable:
 		style.bg_color = Color(0.18, 0.14, 0.06, 0.92)
 		style.border_color = Color(0.95, 0.78, 0.2)
 	elif is_unlocked:
@@ -5138,7 +5183,7 @@ func _make_power_icon(card: Card, is_enemy: bool, _player: Player, zone: Zone = 
 		and god_ability_source.has_method("is_valid_activation_target") \
 		and god_ability_source.is_valid_activation_target(card)
 
-	if can_unlock_now or activatable or can_target_with_god:
+	if can_unlock_now or activatable or ready_glow or can_target_with_god:
 		panel.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 		var captured := card as PowerCard
 		panel.gui_input.connect(func(event: InputEvent) -> void:
@@ -10678,7 +10723,8 @@ func _queue_third_sage_enmedugga_impact_prompt(card) -> void:
 			"Choose a Mer Sage for " + card.card_name,
 			current_targets,
 			on_choose_sage,
-			on_cancel_sage
+			on_cancel_sage,
+			_get_selection_cursor_mode_for_source(card)
 		)
 	_set_action_label_text(card.card_name + " impact waits on priority.")
 	game_manager.push_to_stack(action)
@@ -10731,7 +10777,8 @@ func _show_third_sage_enmedugga_impact_prompt(card: ThirdSageEnmedugga, prompt_t
 		"Choose a Mer Sage for " + card.card_name,
 		current_targets,
 		on_choose_sage,
-		on_cancel_sage
+		on_cancel_sage,
+		_get_selection_cursor_mode_for_source(card)
 	)
 
 func _show_lailoken_reveal_prompt(card: Lailoken, prompt_targets: Array = []) -> void:
