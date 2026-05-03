@@ -201,6 +201,15 @@ func move_card(card: Card, to_zone: Zone) -> void:
 		and destination_zone != null
 		and not destination_zone.is_board_zone()
 	)
+	var leaving_board := (
+		from_zone != null
+		and from_zone.is_board_zone()
+		and destination_zone != null
+		and not destination_zone.is_board_zone()
+	)
+
+	if leaving_board:
+		card.process_board_leave_hooks(game_manager)
 	
 	if creature_left_board:
 		detached_equipment.assign(card.equipment.duplicate())
@@ -230,6 +239,8 @@ func move_card(card: Card, to_zone: Zone) -> void:
 	if from_zone:
 		from_zone.remove_card(card)
 	destination_zone.add_card(card)
+	if destination_zone.is_board_zone():
+		card.reset_board_leave_hooks()
 	card_moved.emit(card, from_zone, destination_zone)
 
 	if creature_left_board and from_zone != null:

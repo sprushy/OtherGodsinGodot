@@ -58,7 +58,10 @@ func setup_transport(
 	transport_root.add_child(network_manager)
 
 	if is_host:
-		network_manager.create_server(server_port, assign_local_host_player)
+		if server_port <= 0:
+			_configure_in_process_authority(assign_local_host_player)
+		else:
+			network_manager.create_server(server_port, assign_local_host_player)
 	elif is_client:
 		network_manager.create_client(server_ip, server_port)
 	else:
@@ -79,6 +82,17 @@ func setup_transport(
 		network_manager.peer_disconnected.connect(_on_peer_disconnected)
 
 	return network_manager
+
+func _configure_in_process_authority(assign_local_host_player: bool) -> void:
+	if network_manager == null:
+		return
+	network_manager.is_server = true
+	network_manager.last_server_error = OK
+	network_manager.local_player_index = 0 if assign_local_host_player else -1
+	network_manager.player_peer_ids.clear()
+	network_manager.spectator_peer_ids.clear()
+	if assign_local_host_player:
+		network_manager.player_peer_ids[0] = 1
 
 func enable_authoritative_broadcasts() -> void:
 	if network_manager == null or not _is_host or game_manager == null or match_manager == null:

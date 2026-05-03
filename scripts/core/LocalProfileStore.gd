@@ -209,7 +209,7 @@ func activate_guest_session(display_name: String = DEFAULT_PROFILE_NAME) -> Dict
 	if resolved_display_name.is_empty():
 		resolved_display_name = DEFAULT_PROFILE_NAME
 	var profile := ensure_guest_profile(resolved_display_name, true)
-	_data["preferred_auth_mode"] = AUTH_MODE_GUEST
+	_data["preferred_auth_mode"] = AUTH_MODE_LOGIN
 	_save()
 	return get_profile(str(profile.get("profile_id", "")))
 
@@ -489,16 +489,16 @@ func mark_account_decks_deleted(profile_id: String, deck_ids: Array) -> void:
 
 func get_preferred_auth_mode() -> String:
 	_ensure_loaded()
-	var mode := str(_data.get("preferred_auth_mode", AUTH_MODE_GUEST)).strip_edges().to_lower()
-	if mode in [AUTH_MODE_GUEST, AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
+	var mode := str(_data.get("preferred_auth_mode", AUTH_MODE_LOGIN)).strip_edges().to_lower()
+	if mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
 		return mode
-	return AUTH_MODE_GUEST
+	return AUTH_MODE_LOGIN
 
 func set_preferred_auth_mode(auth_mode: String) -> void:
 	_ensure_loaded()
 	var resolved_mode := auth_mode.strip_edges().to_lower()
-	if not resolved_mode in [AUTH_MODE_GUEST, AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
-		resolved_mode = AUTH_MODE_GUEST
+	if not resolved_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
+		resolved_mode = AUTH_MODE_LOGIN
 	_data["preferred_auth_mode"] = resolved_mode
 	_save()
 
@@ -546,15 +546,15 @@ func remember_lobby_resume(
 	lobby_ip: String,
 	lobby_port: int,
 	username: String = "",
-	auth_mode: String = AUTH_MODE_GUEST
+	auth_mode: String = AUTH_MODE_LOGIN
 ) -> Dictionary:
 	_ensure_loaded()
 	var resolved_profile_id := _resolve_profile_id(profile_id)
 	if resolved_profile_id.is_empty():
 		return {}
 	var resolved_auth_mode := auth_mode.strip_edges().to_lower()
-	if resolved_auth_mode not in [AUTH_MODE_GUEST, AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
-		resolved_auth_mode = AUTH_MODE_GUEST
+	if resolved_auth_mode not in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
+		resolved_auth_mode = AUTH_MODE_LOGIN
 	var resume_entry := {
 		"profile_id": resolved_profile_id,
 		"session_id": session_id.strip_edges(),
@@ -663,7 +663,7 @@ func _ensure_loaded() -> void:
 		"last_selected_deck_by_profile": {},
 		"lobby_resume_by_profile": {},
 		"active_match_by_profile": {},
-		"preferred_auth_mode": AUTH_MODE_GUEST,
+		"preferred_auth_mode": AUTH_MODE_LOGIN,
 		"last_account_username": "",
 		"last_account_password": "",
 		DISMISSED_RELEASE_VERSION_KEY: "",

@@ -266,6 +266,7 @@ var _was_muted_last_check: bool = false
 var _pending_chosen_discards: Array[Card] = []
 var _pending_chosen_sacrifices: Array[Card] = []
 var _creature_mode: CreatureMode = CreatureMode.DEFENSIVE
+var _board_leave_hooks_processed: bool = false
 
 const EXTERNAL_EFFECT_NEGATION_STATUS := "external_effect_negation"
 const ABILITY_NEGATED_STATUS := "ability_negated"
@@ -509,6 +510,23 @@ func abilities_suppressed() -> bool:
 		or is_muted \
 		or has_status_effect(ABILITY_NEGATED_STATUS) \
 		or _abilities_disabled_by_hidden_state()
+
+func post_field_abilities_suppressed() -> bool:
+	# Silence and generic ability negation only apply while the card remains in play.
+	# Use this gate for hooks that fire as the card leaves the field or from the graveyard.
+	return is_enslaved() \
+		or is_petrified() \
+		or _abilities_disabled_by_hidden_state()
+
+func process_board_leave_hooks(game_manager: GameManager = null) -> void:
+	if _board_leave_hooks_processed:
+		return
+	_board_leave_hooks_processed = true
+	if has_method("on_removed") and not post_field_abilities_suppressed():
+		call("on_removed", game_manager)
+
+func reset_board_leave_hooks() -> void:
+	_board_leave_hooks_processed = false
 
 func _abilities_disabled_by_hidden_state() -> bool:
 	return card_type == CardType.CREATURE and is_stealth
@@ -1463,7 +1481,7 @@ func pay_costs_with_mana_cost(player: Player, mana_required: int, game_manager: 
 						game_manager._send_to_graveyard_with_hook(chosen_sacrifice, false, false)
 					else:
 						player.move_card(chosen_sacrifice, player.graveyard_zone)
-					if chosen_sacrifice.has_method("on_sacrificed_for_summon") and not chosen_sacrifice.abilities_suppressed():
+					if chosen_sacrifice.has_method("on_sacrificed_for_summon") and not chosen_sacrifice.post_field_abilities_suppressed():
 						chosen_sacrifice.on_sacrificed_for_summon(game_manager, self)
 					continue
 			var creature_found = false
@@ -1476,7 +1494,7 @@ func pay_costs_with_mana_cost(player: Player, mana_required: int, game_manager: 
 							game_manager._send_to_graveyard_with_hook(card, false, false)
 						else:
 							player.move_card(card, player.graveyard_zone)
-						if card.has_method("on_sacrificed_for_summon") and not card.abilities_suppressed():
+						if card.has_method("on_sacrificed_for_summon") and not card.post_field_abilities_suppressed():
 							card.on_sacrificed_for_summon(game_manager, self)
 						creature_found = true
 						break

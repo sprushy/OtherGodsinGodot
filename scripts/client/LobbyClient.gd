@@ -31,11 +31,11 @@ signal disconnected_from_lobby()
 
 var current_session_id: String = ""
 var current_reconnect_token: String = ""
-var current_player_name: String = "Guest"
+var current_player_name: String = "Player"
 var current_profile_id: String = ""
 var current_account_id: String = ""
 var current_username: String = ""
-var current_auth_mode: String = "guest"
+var current_auth_mode: String = "login"
 var current_server_version: String = ""
 var current_active_match_info: Dictionary = {}
 var current_room_snapshot: Dictionary = {}
@@ -47,11 +47,11 @@ var use_default_multiplayer: bool = false
 var network_manager: Node = null
 var _is_authenticated: bool = false
 
-var _pending_player_name: String = "Guest"
+var _pending_player_name: String = "Player"
 var _pending_session_id: String = ""
 var _pending_reconnect_token: String = ""
 var _pending_profile_id: String = ""
-var _pending_auth_mode: String = "guest"
+var _pending_auth_mode: String = "login"
 var _pending_password: String = ""
 var _connect_attempt_serial: int = 0
 var _ignore_network_events: bool = false
@@ -61,12 +61,12 @@ func _ready() -> void:
 
 func connect_to_server(
 	address: String,
-	player_name: String = "Guest",
+	player_name: String = "Player",
 	session_id: String = "",
 	reconnect_token: String = "",
 	port: int = LobbyProtocolScript.PORT,
 	profile_id: String = "",
-	auth_mode: String = "guest",
+	auth_mode: String = "login",
 	password: String = ""
 ) -> Error:
 	_ignore_network_events = false
@@ -76,20 +76,20 @@ func connect_to_server(
 	current_profile_id = ""
 	current_account_id = ""
 	current_username = ""
-	current_auth_mode = "guest"
+	current_auth_mode = "login"
 	current_room_snapshot = {}
 	current_active_match_info = {}
 	current_preferred_account_deck_id = ""
 	_set_current_server_version("")
 	_pending_player_name = player_name.strip_edges()
 	if _pending_player_name.is_empty():
-		_pending_player_name = "Guest"
+		_pending_player_name = "Player"
 	_pending_session_id = session_id.strip_edges()
 	_pending_reconnect_token = reconnect_token.strip_edges()
 	_pending_profile_id = profile_id.strip_edges()
 	_pending_auth_mode = auth_mode.strip_edges().to_lower()
-	if not _pending_auth_mode in ["guest", "login", "register"]:
-		_pending_auth_mode = "guest"
+	if not _pending_auth_mode in ["login", "register"]:
+		_pending_auth_mode = "login"
 	_pending_password = password
 
 	var connect_address: String = address.strip_edges()
@@ -114,15 +114,15 @@ func disconnect_from_server() -> void:
 	current_profile_id = ""
 	current_account_id = ""
 	current_username = ""
-	current_auth_mode = "guest"
+	current_auth_mode = "login"
 	current_room_snapshot = {}
 	current_active_match_info = {}
 	current_preferred_account_deck_id = ""
-	_pending_player_name = "Guest"
+	_pending_player_name = "Player"
 	_pending_session_id = ""
 	_pending_reconnect_token = ""
 	_pending_profile_id = ""
-	_pending_auth_mode = "guest"
+	_pending_auth_mode = "login"
 	_pending_password = ""
 	_set_current_server_version("")
 	if network_manager != null:
@@ -337,9 +337,9 @@ func _on_connected_to_server() -> void:
 		})
 		return
 
-	_send_request(LobbyProtocolScript.LOGIN_GUEST, {
-		"player_name": _pending_player_name,
-		"profile_id": _pending_profile_id,
+	_send_request(LobbyProtocolScript.LOGIN_ACCOUNT, {
+		"username": _pending_player_name,
+		"password": _pending_password,
 	})
 
 func _should_attempt_pending_lobby_reconnect() -> bool:
@@ -360,7 +360,7 @@ func _on_connection_failed() -> void:
 	current_profile_id = ""
 	current_account_id = ""
 	current_username = ""
-	current_auth_mode = "guest"
+	current_auth_mode = "login"
 	current_room_snapshot = {}
 	current_active_match_info = {}
 	current_preferred_account_deck_id = ""
@@ -379,7 +379,7 @@ func _on_server_disconnected() -> void:
 	current_profile_id = ""
 	current_account_id = ""
 	current_username = ""
-	current_auth_mode = "guest"
+	current_auth_mode = "login"
 	current_room_snapshot = {}
 	current_active_match_info = {}
 	current_preferred_account_deck_id = ""

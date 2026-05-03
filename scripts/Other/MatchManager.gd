@@ -1442,10 +1442,14 @@ func queue_or_resolve_priority_event(action: CardAction) -> bool:
 		return false
 	game_manager.push_to_stack(action)
 	var first_player: Player = game_manager.priority_player
+	if first_player == null:
+		first_player = action.initial_priority_player if action.initial_priority_player != null else game_manager.get_opponent(action.source_player)
 	var second_player: Player = game_manager.get_opponent(first_player) if first_player != null else null
 	var first_has_responses: bool = _player_has_priority_prompt_responses(first_player)
 	var second_has_responses: bool = _player_has_priority_prompt_responses(second_player)
 	if first_has_responses or second_has_responses:
+		if game_manager.priority_player == null:
+			game_manager.priority_player = first_player
 		if _uses_authoritative_headless_priority_flow():
 			_advance_authoritative_priority()
 		return true
@@ -1571,6 +1575,12 @@ func _has_unresolved_stack_action_window() -> bool:
 	return _authoritative_stack_resolution_pending \
 		or not game_manager.action_stack.is_empty() \
 		or not game_manager.resolving_stack_actions.is_empty()
+
+func has_unresolved_stack_action_window() -> bool:
+	return _has_unresolved_stack_action_window()
+
+func is_authoritative_stack_resolution_pending() -> bool:
+	return _authoritative_stack_resolution_pending
 
 func _request_ui_refresh() -> void:
 	ui_refresh_requested.emit()

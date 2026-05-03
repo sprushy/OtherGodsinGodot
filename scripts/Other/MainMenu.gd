@@ -82,7 +82,7 @@ var _current_profile_summary: Dictionary = {}
 var _profile_summary_expanded: bool = false
 var _account_decks_cache: Array[Dictionary] = []
 var _auth_onboarding_overlay: Control = null
-var _auth_onboarding_selected_mode: String = AUTH_MODE_GUEST
+var _auth_onboarding_selected_mode: String = AUTH_MODE_LOGIN
 var _auth_onboarding_mode_hint_label: Label = null
 var _auth_onboarding_username_edit: LineEdit = null
 var _auth_onboarding_password_edit: LineEdit = null
@@ -101,7 +101,7 @@ var _bug_report_file_dialog: FileDialog = null
 var _bug_report_selected_screenshot_path: String = ""
 var _account_identity_label: Label = null
 var _logged_in_account_username: String = ""
-var _selected_auth_mode: String = AUTH_MODE_GUEST
+var _selected_auth_mode: String = AUTH_MODE_LOGIN
 var _selected_account_username: String = ""
 var _selected_account_password: String = ""
 var _account_switch_pending: bool = false
@@ -561,15 +561,15 @@ func _should_reuse_active_lobby_connection(target_lobby_ip: String) -> bool:
 	var desired_auth_mode := _get_selected_auth_mode()
 	var connected_auth_mode := _normalize_auth_mode(
 		str(lobby_client.current_auth_mode) if lobby_client != null else "",
-		AUTH_MODE_GUEST
+		AUTH_MODE_LOGIN
 	)
-	if desired_auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
-		var desired_username := _get_preferred_account_username().strip_edges().to_lower()
-		var connected_username := _get_connected_account_username().strip_edges().to_lower()
-		return not desired_username.is_empty() \
-			and connected_auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER] \
-			and connected_username == desired_username
-	return desired_auth_mode == AUTH_MODE_GUEST and connected_auth_mode == AUTH_MODE_GUEST
+	if desired_auth_mode not in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
+		return false
+	var desired_username := _get_preferred_account_username().strip_edges().to_lower()
+	var connected_username := _get_connected_account_username().strip_edges().to_lower()
+	return not desired_username.is_empty() \
+		and connected_auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER] \
+		and connected_username == desired_username
 
 func _build_menu_card_template_cache() -> void:
 	_menu_card_templates.clear()
@@ -1387,7 +1387,7 @@ func _connect_to_browseable_lobby(connect_status: String, connect_serial: int = 
 
 	var connect_err: Error = lobby_client.connect_to_server(
 		_current_lobby_ip,
-		_get_lobby_login_name("Guest"),
+		_get_lobby_login_name("Player"),
 		_lobby_session_id,
 		_lobby_reconnect_token,
 		_get_configured_lobby_port(),
@@ -2314,11 +2314,11 @@ func _get_server_preferred_account_deck_id() -> String:
 		return ""
 	return str(lobby_client.current_preferred_account_deck_id).strip_edges()
 
-func _normalize_auth_mode(auth_mode: String, fallback_mode: String = AUTH_MODE_GUEST) -> String:
+func _normalize_auth_mode(auth_mode: String, fallback_mode: String = AUTH_MODE_LOGIN) -> String:
 	var resolved_auth_mode := auth_mode.strip_edges().to_lower()
 	match resolved_auth_mode:
 		AUTH_MODE_GUEST, LobbyProtocolScript.LOGIN_GUEST:
-			return AUTH_MODE_GUEST
+			return fallback_mode
 		AUTH_MODE_LOGIN, LobbyProtocolScript.LOGIN_ACCOUNT:
 			return AUTH_MODE_LOGIN
 		AUTH_MODE_REGISTER, LobbyProtocolScript.REGISTER_ACCOUNT:
@@ -2342,7 +2342,7 @@ func _get_editable_account_username() -> String:
 
 func _set_selected_account_username(username: String, sync_field: bool = true) -> void:
 	_selected_account_username = username.strip_edges()
-	if sync_field and player_name_line_edit != null and _selected_auth_mode != AUTH_MODE_GUEST:
+	if sync_field and player_name_line_edit != null:
 		player_name_line_edit.text = _selected_account_username
 
 func _set_selected_account_password(password: String, sync_field: bool = true) -> void:
@@ -2357,7 +2357,7 @@ func _sync_legacy_auth_fields() -> void:
 				continue
 			_auth_mode_option.select(index)
 			break
-	if player_name_line_edit != null and _selected_auth_mode != AUTH_MODE_GUEST:
+	if player_name_line_edit != null:
 		player_name_line_edit.text = _selected_account_username
 	if _password_line_edit != null:
 		_password_line_edit.text = _selected_account_password
@@ -2416,18 +2416,18 @@ func _get_preferred_account_username() -> String:
 		return saved_username
 	return ""
 
-func _get_effective_identity_name(default_name: String = "Guest") -> String:
+func _get_effective_identity_name(default_name: String = "Player") -> String:
 	var account_username := _get_effective_account_username()
 	if not account_username.is_empty():
 		return account_username
 	var fallback_name := default_name.strip_edges()
 	if fallback_name.is_empty():
-		fallback_name = "Guest"
+		fallback_name = "Player"
 	if _get_selected_auth_mode() in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
 		var selected_account_username := _get_selected_account_username()
 		if not selected_account_username.is_empty():
 			return selected_account_username
-	return _get_preferred_guest_display_name(fallback_name)
+	return fallback_name
 
 func _get_selected_account_username() -> String:
 	var auth_mode := _get_selected_auth_mode()
@@ -2494,7 +2494,7 @@ func _on_switch_account_pressed() -> void:
 	_prompt_account_login()
 
 func _show_auth_onboarding() -> void:
-	_auth_onboarding_selected_mode = AUTH_MODE_GUEST
+	_auth_onboarding_selected_mode = AUTH_MODE_LOGIN
 	_auth_onboarding_overlay = Control.new()
 	_auth_onboarding_overlay.name = "AuthOnboardingOverlay"
 	_auth_onboarding_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -2575,17 +2575,6 @@ func _show_auth_onboarding() -> void:
 	)
 	button_column.add_child(register_btn)
 
-	var guest_btn := Button.new()
-	guest_btn.text = "Continue as Guest"
-	guest_btn.custom_minimum_size = Vector2(0, 40)
-	guest_btn.pressed.connect(func() -> void:
-		_complete_auth_onboarding(
-			AUTH_MODE_GUEST,
-			"Guest mode selected. Open Multiplayer whenever you're ready."
-		)
-	)
-	button_column.add_child(guest_btn)
-
 	_auth_onboarding_mode_hint_label = Label.new()
 	_auth_onboarding_mode_hint_label.text = ""
 	_auth_onboarding_mode_hint_label.visible = false
@@ -2633,18 +2622,7 @@ func _show_auth_onboarding() -> void:
 	continue_row.add_child(_auth_onboarding_continue_button)
 
 	var launch_auth_mode := _get_launch_auth_mode()
-	if launch_auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
-		_begin_auth_onboarding_account_flow(launch_auth_mode)
-	else:
-		_set_auth_onboarding_hint("")
-		if _auth_onboarding_username_edit != null:
-			_auth_onboarding_username_edit.visible = false
-			_auth_onboarding_username_edit.text = ""
-		if _auth_onboarding_password_edit != null:
-			_auth_onboarding_password_edit.visible = false
-			_auth_onboarding_password_edit.text = ""
-	if _auth_onboarding_continue_button != null:
-		_auth_onboarding_continue_button.visible = false
+	_begin_auth_onboarding_account_flow(launch_auth_mode)
 	_refresh_auth_onboarding_form_state()
 
 func _begin_auth_onboarding_account_flow(auth_mode: String) -> void:
@@ -2681,12 +2659,6 @@ func _begin_auth_onboarding_account_flow(auth_mode: String) -> void:
 
 func _submit_auth_onboarding() -> bool:
 	var auth_mode := _auth_onboarding_selected_mode
-	if auth_mode == AUTH_MODE_GUEST:
-		_complete_auth_onboarding(
-			AUTH_MODE_GUEST,
-			"Guest mode selected. Open Multiplayer whenever you're ready."
-		)
-		return true
 	if auth_mode not in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
 		return false
 	var username := ""
@@ -2735,16 +2707,14 @@ func _prepare_submitted_account_auth(username: String) -> void:
 
 func _get_launch_auth_mode() -> String:
 	if _local_profile_store == null:
-		return AUTH_MODE_GUEST
+		return AUTH_MODE_LOGIN
 	var preferred_auth_mode: String = _local_profile_store.get_preferred_auth_mode()
 	if preferred_auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
 		return preferred_auth_mode
-	if preferred_auth_mode == AUTH_MODE_GUEST and _should_recover_saved_account_identity():
-		return AUTH_MODE_LOGIN
 	var saved_username: String = _get_saved_account_username()
 	if not saved_username.is_empty():
 		return AUTH_MODE_LOGIN
-	return AUTH_MODE_GUEST
+	return AUTH_MODE_LOGIN
 
 func _should_prompt_for_account_recovery(message: String) -> bool:
 	if _is_account_logged_in():
@@ -2758,7 +2728,7 @@ func _should_prompt_for_account_recovery(message: String) -> bool:
 func _show_auth_recovery_prompt(message: String) -> void:
 	_maybe_show_auth_onboarding()
 	_begin_auth_onboarding_account_flow(AUTH_MODE_LOGIN)
-	_set_auth_onboarding_hint("%s Use Continue as Guest if this server doesn't know this account yet." % message, true)
+	_set_auth_onboarding_hint(message, true)
 
 func _set_auth_onboarding_hint(message: String, is_error: bool = false) -> void:
 	if _auth_onboarding_mode_hint_label == null:
@@ -2802,23 +2772,16 @@ func _validate_account_auth_details(auth_mode: String, username: String, passwor
 
 func _complete_auth_onboarding(auth_mode: String, message: String) -> void:
 	_set_auth_mode(auth_mode)
-	if auth_mode == AUTH_MODE_GUEST:
-		_cancel_pending_authenticated_lobby_connects()
-		_account_switch_pending = false
-		_account_switch_retry_attempts = 0
-		_apply_guest_display_name("Guest")
-	else:
-		var selected_account_username := _get_selected_account_username()
-		if not selected_account_username.is_empty():
-			_activate_account_profile(selected_account_username, "", auth_mode, true)
+	var selected_account_username := _get_selected_account_username()
+	if not selected_account_username.is_empty():
+		_activate_account_profile(selected_account_username, "", auth_mode, true)
 	multiplayer_container.visible = false
 	ready_button.visible = false
 	status_label.text = message
 	show_menu()
 	_refresh_open_deck_builder_saved_decks()
-	if auth_mode != AUTH_MODE_GUEST:
-		_current_profile_summary.clear()
-		_refresh_profile_summary_label()
+	_current_profile_summary.clear()
+	_refresh_profile_summary_label()
 	_refresh_profile_summary_from_local_history(_local_profile_id)
 	_update_resume_controls()
 	_refresh_account_identity_label()
@@ -3081,7 +3044,7 @@ func _on_connect_pressed() -> void:
 
 	var connect_err: Error = lobby_client.connect_to_server(
 		_current_lobby_ip,
-		_get_lobby_login_name("Guest"),
+		_get_lobby_login_name("Player"),
 		_lobby_session_id,
 		_lobby_reconnect_token,
 		_get_configured_lobby_port(),
@@ -3795,11 +3758,9 @@ func _capture_logged_in_profile(player_name: String) -> void:
 	else:
 		_logged_in_account_username = ""
 		_account_decks_cache.clear()
-		resolved_auth_mode = AUTH_MODE_GUEST
-		var guest_profile: Dictionary = _local_profile_store.activate_guest_session("Guest")
-		_local_profile_id = str(guest_profile.get("profile_id", resolved_profile_id)).strip_edges()
+		resolved_auth_mode = AUTH_MODE_LOGIN
 		if player_name_line_edit != null:
-			player_name_line_edit.text = str(guest_profile.get("display_name", "Guest")).strip_edges()
+			player_name_line_edit.text = ""
 	_selected_multiplayer_deck_id = ""
 	_set_auth_mode(resolved_auth_mode)
 	_refresh_open_deck_builder_saved_decks()
@@ -4618,24 +4579,11 @@ func _build_unranked_seek_controls() -> void:
 func _restore_saved_resume_state() -> void:
 	_update_resume_controls()
 	_refresh_profile_summary_label()
-	if _get_selected_auth_mode() != AUTH_MODE_GUEST:
-		return
-	var saved_match := _get_saved_active_match_for_profile(_local_profile_id)
-	var saved_lobby_resume := _get_saved_lobby_resume_for_profile(_local_profile_id)
-	if saved_match.is_empty() or saved_lobby_resume.is_empty():
-		return
-	multiplayer_container.visible = false
-	ready_button.visible = false
-	status_label.text = "A live match can be resumed from this device."
 
 func _update_resume_controls() -> void:
-	if _resume_match_button == null or _local_profile_store == null:
+	if _resume_match_button == null:
 		return
-	var has_resume := false
-	if _get_selected_auth_mode() == AUTH_MODE_GUEST:
-		has_resume = not _get_saved_active_match_for_profile(_local_profile_id).is_empty() \
-			and not _get_saved_lobby_resume_for_profile(_local_profile_id).is_empty()
-	_resume_match_button.visible = has_resume
+	_resume_match_button.visible = false
 
 func _get_saved_lobby_resume() -> Dictionary:
 	if _local_profile_store == null:
@@ -4742,7 +4690,7 @@ func _on_resume_match_pressed() -> void:
 		str(saved_lobby_resume.get("reconnect_token", "")),
 		int(saved_lobby_resume.get("lobby_port", _get_configured_lobby_port())),
 		_local_profile_id,
-		_normalize_auth_mode(str(saved_lobby_resume.get("auth_mode", AUTH_MODE_GUEST)), AUTH_MODE_GUEST),
+		_normalize_auth_mode(str(saved_lobby_resume.get("auth_mode", AUTH_MODE_LOGIN)), AUTH_MODE_LOGIN),
 		""
 	)
 	if connect_err != OK:
@@ -4859,9 +4807,9 @@ func _start_smoke_mode() -> void:
 
 	ip_line_edit.text = str(_smoke_config.get("ip", "127.0.0.1"))
 	_set_selected_account_username(str(_smoke_config.get("player_name", "Smoke%s" % role.capitalize())))
-	var smoke_auth_mode: String = str(_smoke_config.get("auth_mode", AUTH_MODE_GUEST)).strip_edges().to_lower()
-	if smoke_auth_mode not in [AUTH_MODE_GUEST, AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
-		smoke_auth_mode = AUTH_MODE_GUEST
+	var smoke_auth_mode: String = str(_smoke_config.get("auth_mode", AUTH_MODE_LOGIN)).strip_edges().to_lower()
+	if smoke_auth_mode not in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
+		smoke_auth_mode = AUTH_MODE_LOGIN
 	_set_auth_mode(smoke_auth_mode)
 	_set_selected_account_password(str(_smoke_config.get("password", "")))
 
@@ -4942,7 +4890,9 @@ func _run_practice_thor_smoke() -> void:
 		_complete_practice_thor_smoke(false, "practice_thor_player_one_upkeep_timeout")
 		return
 
-	practice_game._do_end_turn()
+	if not practice_game.game_input.submit_action({type = "end_turn", discard_uids = []}):
+		_complete_practice_thor_smoke(false, "practice_thor_end_turn_failed")
+		return
 	if not await _wait_for_practice_thor_smoke_condition(
 		func() -> bool:
 			return practice_game.game_manager.current_player == practice_game.player1 \
@@ -4975,6 +4925,12 @@ func _get_practice_thor_smoke_setup_error(practice_game) -> String:
 		return "practice_thor_players_missing"
 	if practice_game.player2.player_name != "Thor":
 		return "practice_thor_wrong_name"
+	if practice_game.match_manager == null or not practice_game.match_manager.authoritative_match_flow_enabled:
+		return "practice_thor_not_authoritative"
+	if practice_game.network_manager == null or not bool(practice_game.network_manager.get("is_server")):
+		return "practice_thor_not_server"
+	if practice_game.get("_thor_bot") == null:
+		return "practice_thor_bot_missing"
 	if practice_game.player2.god_zone.cards.size() != 1 or not (practice_game.player2.god_zone.cards[0] is Thor):
 		return "practice_thor_wrong_god"
 	if practice_game.game_manager.current_player != practice_game.player1:
@@ -5117,7 +5073,7 @@ func _parse_smoke_config(args: Array) -> Dictionary:
 		"role": str(config.get("smoke_role", "")),
 		"ip": str(config.get("smoke_ip", "127.0.0.1")),
 		"player_name": str(config.get("smoke_name", "")),
-		"auth_mode": str(config.get("smoke_auth_mode", AUTH_MODE_GUEST)),
+		"auth_mode": str(config.get("smoke_auth_mode", AUTH_MODE_LOGIN)),
 		"password": str(config.get("smoke_password", "")),
 		"room_file": str(config.get("smoke_room_file", "")),
 		"result_file": str(config.get("smoke_result_file", "")),
@@ -5328,12 +5284,10 @@ func _build_auth_controls() -> void:
 		_auth_mode_option = OptionButton.new()
 		_auth_mode_option.name = "AuthModeOption"
 		_auth_mode_option.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		_auth_mode_option.add_item("Guest")
-		_auth_mode_option.set_item_metadata(0, AUTH_MODE_GUEST)
 		_auth_mode_option.add_item("Login")
-		_auth_mode_option.set_item_metadata(1, AUTH_MODE_LOGIN)
+		_auth_mode_option.set_item_metadata(0, AUTH_MODE_LOGIN)
 		_auth_mode_option.add_item("Register")
-		_auth_mode_option.set_item_metadata(2, AUTH_MODE_REGISTER)
+		_auth_mode_option.set_item_metadata(1, AUTH_MODE_REGISTER)
 		_auth_mode_option.item_selected.connect(_on_auth_mode_selected)
 		multiplayer_container.add_child(_auth_mode_option)
 		var auth_insert_index := multiplayer_container.get_children().find(player_name_line_edit) + 1
@@ -5364,19 +5318,13 @@ func _build_auth_controls() -> void:
 func _restore_auth_preferences() -> void:
 	if _local_profile_store == null:
 		return
-	var auth_mode: String = _normalize_auth_mode(_local_profile_store.get_preferred_auth_mode(), AUTH_MODE_GUEST)
+	var auth_mode: String = _normalize_auth_mode(_local_profile_store.get_preferred_auth_mode(), AUTH_MODE_LOGIN)
 	var saved_username := _get_saved_account_username()
-	if auth_mode == AUTH_MODE_GUEST and _should_recover_saved_account_identity():
-		auth_mode = AUTH_MODE_LOGIN
-		_local_profile_store.set_preferred_auth_mode(auth_mode)
 	_set_selected_account_username(saved_username)
 	_set_selected_account_password(_local_profile_store.get_last_account_password())
 	_set_auth_mode(auth_mode)
-	if auth_mode != AUTH_MODE_GUEST:
-		if not saved_username.is_empty():
-			_activate_account_profile(saved_username, "", auth_mode, false)
-	else:
-		_apply_guest_display_name("Guest")
+	if not saved_username.is_empty():
+		_activate_account_profile(saved_username, "", auth_mode, false)
 	_refresh_auth_controls()
 	_refresh_account_identity_label()
 	if auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
@@ -5385,29 +5333,26 @@ func _restore_auth_preferences() -> void:
 func _on_auth_mode_selected(_index: int) -> void:
 	if _auth_mode_option != null and _auth_mode_option.item_count > 0:
 		var metadata = _auth_mode_option.get_item_metadata(_auth_mode_option.selected)
-		_selected_auth_mode = _normalize_auth_mode(str(metadata), AUTH_MODE_GUEST)
+		_selected_auth_mode = _normalize_auth_mode(str(metadata), AUTH_MODE_LOGIN)
 	_refresh_auth_controls()
 	if _local_profile_store == null:
 		return
 	var auth_mode := _get_selected_auth_mode()
-	if auth_mode != AUTH_MODE_GUEST:
-		var preferred_account_username := _get_preferred_account_username()
-		if not preferred_account_username.is_empty():
-			_set_selected_account_username(preferred_account_username)
-			_activate_account_profile(preferred_account_username, "", auth_mode, false)
-		elif _local_profile_store != null:
-			_local_profile_store.set_preferred_auth_mode(auth_mode)
-		if _get_auth_password().is_empty():
-			_set_selected_account_password(_local_profile_store.get_last_account_password())
-	else:
-		_apply_guest_display_name("Guest")
+	var preferred_account_username := _get_preferred_account_username()
+	if not preferred_account_username.is_empty():
+		_set_selected_account_username(preferred_account_username)
+		_activate_account_profile(preferred_account_username, "", auth_mode, false)
+	elif _local_profile_store != null:
+		_local_profile_store.set_preferred_auth_mode(auth_mode)
+	if _get_auth_password().is_empty():
+		_set_selected_account_password(_local_profile_store.get_last_account_password())
 	_refresh_open_deck_builder_saved_decks()
 	_refresh_profile_summary_from_local_history(_local_profile_id)
 	_update_resume_controls()
 	_refresh_account_identity_label()
 
 func _set_auth_mode(auth_mode: String) -> void:
-	_selected_auth_mode = _normalize_auth_mode(auth_mode, AUTH_MODE_GUEST)
+	_selected_auth_mode = _normalize_auth_mode(auth_mode, AUTH_MODE_LOGIN)
 	if _auth_mode_option == null:
 		_refresh_auth_controls()
 		return
@@ -5425,7 +5370,7 @@ func _refresh_auth_controls() -> void:
 	var auth_mode := _get_selected_auth_mode()
 	var signed_in_account := _is_account_logged_in()
 	if player_name_line_edit != null:
-		player_name_line_edit.placeholder_text = "Player name" if auth_mode == AUTH_MODE_GUEST else "Account username"
+		player_name_line_edit.placeholder_text = "Account username"
 		player_name_line_edit.editable = not signed_in_account
 		player_name_line_edit.visible = false
 	if _password_line_edit != null:
@@ -5438,8 +5383,6 @@ func _refresh_auth_controls() -> void:
 func _validate_auth_inputs() -> String:
 	var auth_mode: String = _get_selected_auth_mode()
 	if _is_account_logged_in():
-		return ""
-	if auth_mode == AUTH_MODE_GUEST:
 		return ""
 	var username: String = _get_preferred_account_username()
 	if username.is_empty():
@@ -5472,8 +5415,5 @@ func _get_lobby_login_name(default_name: String) -> String:
 				not _get_auth_password().is_empty()
 			)
 			return preferred_account_username
-	if auth_mode == AUTH_MODE_GUEST:
-		var guest_name := _get_preferred_guest_display_name(default_name)
-		return _remember_local_profile(guest_name)
 	var player_name := _get_player_name(default_name)
 	return player_name

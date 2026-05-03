@@ -177,7 +177,7 @@ func _handle_request(peer_id: int, message: Dictionary) -> void:
 
 	match message_type:
 		LobbyProtocolScript.LOGIN_GUEST:
-			_handle_login_guest(peer_id, payload)
+			_send_error_to_peer(peer_id, "Guest sign-in is no longer supported.")
 		LobbyProtocolScript.LOGIN_ACCOUNT:
 			_handle_login_account(peer_id, payload)
 		LobbyProtocolScript.REGISTER_ACCOUNT:
@@ -327,7 +327,7 @@ func _complete_login_for_peer(
 	profile_id: String,
 	account_id: String = "",
 	username: String = "",
-	auth_mode: String = LobbyProtocolScript.LOGIN_GUEST
+	auth_mode: String = LobbyProtocolScript.LOGIN_ACCOUNT
 ) -> void:
 	var existing: Dictionary = _get_session_for_peer(peer_id)
 	if not existing.is_empty() and not _session_matches_login_identity(existing, profile_id, account_id):
@@ -365,7 +365,7 @@ func _complete_login_for_peer(
 		"profile_id": str(existing.get("profile_id", "")),
 		"account_id": str(existing.get("account_id", "")),
 		"username": str(existing.get("username", "")),
-		"auth_mode": str(existing.get("auth_mode", LobbyProtocolScript.LOGIN_GUEST)),
+		"auth_mode": str(existing.get("auth_mode", LobbyProtocolScript.LOGIN_ACCOUNT)),
 		"server_version": _get_server_version(),
 		"room": room_snapshot,
 		"active_match_info": active_match_info,
@@ -422,7 +422,7 @@ func _handle_reconnect_request(peer_id: int, payload: Dictionary) -> void:
 		"profile_id": str(session.get("profile_id", "")),
 		"account_id": str(session.get("account_id", "")),
 		"username": str(session.get("username", "")),
-		"auth_mode": str(session.get("auth_mode", LobbyProtocolScript.LOGIN_GUEST)),
+		"auth_mode": str(session.get("auth_mode", LobbyProtocolScript.LOGIN_ACCOUNT)),
 		"server_version": _get_server_version(),
 		"room": room_snapshot,
 		"active_match_info": active_match_info,
@@ -669,7 +669,7 @@ func _create_session(
 	profile_id: String = "",
 	account_id: String = "",
 	username: String = "",
-	auth_mode: String = LobbyProtocolScript.LOGIN_GUEST
+	auth_mode: String = LobbyProtocolScript.LOGIN_ACCOUNT
 ) -> Dictionary:
 	var clean_name: String = player_name.strip_edges()
 	if clean_name.is_empty():

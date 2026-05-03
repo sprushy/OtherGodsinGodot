@@ -7,6 +7,8 @@
 extends BaseCard
 class_name PowerCard
 
+const PowerUnlockSoundPlayer = preload("res://scripts/audio/PowerUnlockSoundPlayer.gd")
+
 var is_publicly_revealed: bool = false
 var _pending_activation_discards: Array[Card] = []
 
@@ -44,6 +46,7 @@ func unlock(game_manager: GameManager) -> void:
 	is_muted = false
 	mute_turns_remaining = 0
 	_mute_applied_owner_turn_number = -1
+	PowerUnlockSoundPlayer.play_sequence()
 	on_unlock(game_manager)
 
 # Called immediately when the power is flipped face-up.

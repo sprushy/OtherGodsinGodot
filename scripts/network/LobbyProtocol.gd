@@ -62,8 +62,7 @@ static func validate_request(message: Dictionary) -> String:
 
 	match message_type:
 		LOGIN_GUEST:
-			if str(payload.get("player_name", "")).strip_edges().is_empty():
-				return "Missing player name."
+			return "Guest sign-in is no longer supported."
 		LOGIN_ACCOUNT, REGISTER_ACCOUNT:
 			if str(payload.get("username", "")).strip_edges().is_empty():
 				return "Missing username."

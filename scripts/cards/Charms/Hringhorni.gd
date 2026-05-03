@@ -10,15 +10,19 @@ func _init() -> void:
 	mana_cost = 0
 	speed = 3
 	flavor_text = ""
-	ability_text = "Activate when one of your Warriors is destroyed; summon a Norse Warrior of the same level or lower from your deck."
+	ability_text = "Activate when one of your Norse Warriors is destroyed; summon a Norse Warrior of the same level or lower from your deck."
 	artist = "Tim Nguyen"
 	art_path = "res://images/card_art/charms/HringhorniEdit.png"
 
 func can_activate_from_hand(game_manager: GameManager, triggering_action: CardAction = null) -> bool:
-	return super.can_activate_from_hand(game_manager, triggering_action)
+	if not super.can_activate_from_hand(game_manager, triggering_action):
+		return false
+	return _has_destroyed_friendly_norse_warrior(game_manager)
 
 func can_activate_prepared(game_manager: GameManager, triggering_action: CardAction = null) -> bool:
-	return super.can_activate_prepared(game_manager, triggering_action)
+	if not super.can_activate_prepared(game_manager, triggering_action):
+		return false
+	return _has_destroyed_friendly_norse_warrior(game_manager)
 
 func resolve(game_manager: GameManager, _target = null) -> void:
 	if game_manager == null or card_owner == null:
@@ -75,7 +79,11 @@ func _is_valid_destroyed_warrior(card: Card) -> bool:
 	return card != null \
 		and card.card_type == Card.CardType.CREATURE \
 		and card.card_owner == card_owner \
-		and card.has_type("Warrior")
+		and card.has_type("Warrior") \
+		and (card.has_type("Norse Creature") or card.culture == "Norse")
+
+func _has_destroyed_friendly_norse_warrior(game_manager: GameManager) -> bool:
+	return get_destroyed_warrior_level_cap(game_manager) >= 0
 
 func _is_valid_recruit(card: Card, max_level: int) -> bool:
 	return card != null \

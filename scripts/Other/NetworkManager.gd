@@ -166,11 +166,18 @@ func broadcast_event(event_type: String, data: Dictionary) -> void:
 func broadcast_event_to_all(event_type: String, data: Dictionary) -> void:
 	if not is_server:
 		return
+	if not _has_active_multiplayer_peer():
+		return
 	rpc("broadcast_event", event_type, data)
 
 ## Server sends an event to one specific peer only (for hand privacy).
 func broadcast_event_to_peer(target_peer_id: int, event_type: String, data: Dictionary) -> void:
 	if not is_server:
+		return
+	if target_peer_id == 1:
+		game_event_received.emit(event_type, data)
+		return
+	if not _has_active_multiplayer_peer():
 		return
 	rpc_id(target_peer_id, "broadcast_event", event_type, data)
 
@@ -252,6 +259,10 @@ func _ensure_multiplayer_api() -> MultiplayerAPI:
 			target_path = active_scene.get_path_to(self)
 	get_tree().set_multiplayer(fallback_api, target_path)
 	return multiplayer
+
+func _has_active_multiplayer_peer() -> bool:
+	var api := _ensure_multiplayer_api()
+	return api != null and api.multiplayer_peer != null
 
 func _trace(message: String) -> void:
 	if trace_file_path.is_empty():

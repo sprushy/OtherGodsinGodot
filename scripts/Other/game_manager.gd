@@ -2488,9 +2488,8 @@ func _combat_kill_routed_deferred(
 		if victim.current_zone and victim.current_zone.is_board_zone():
 			victim.last_board_zone_type  = victim.current_zone.zone_type
 			victim.last_board_zone_index = victim.current_zone.zone_index
-		if victim.has_method("on_removed") and not victim.abilities_suppressed():
-			victim.on_removed(self)
-		if victim.has_method("on_death") and not victim.abilities_suppressed():
+		victim.process_board_leave_hooks(self)
+		if victim.has_method("on_death") and not victim.post_field_abilities_suppressed():
 			victim.on_death(self)
 		died_this_turn.append(victim)
 		destroyed_this_turn.append(victim)
@@ -2887,9 +2886,8 @@ func _combat_kill_routed(killer: Card, victim: Card, do_void: bool, suppress_all
 		if victim.current_zone and victim.current_zone.is_board_zone():
 			victim.last_board_zone_type  = victim.current_zone.zone_type
 			victim.last_board_zone_index = victim.current_zone.zone_index
-		if victim.has_method("on_removed") and not victim.abilities_suppressed():
-			victim.on_removed(self)
-		if victim.has_method("on_death") and not victim.abilities_suppressed():
+		victim.process_board_leave_hooks(self)
+		if victim.has_method("on_death") and not victim.post_field_abilities_suppressed():
 			victim.on_death(self)
 		died_this_turn.append(victim)
 		for equip in victim.equipment.duplicate():
@@ -3063,9 +3061,8 @@ func _send_to_graveyard_with_hook_resolved(
 			and not _is_watchbeast_active():
 		replacement_zone = card.get_self_graveyard_replacement_zone(self, combat_death, destruction, send_to_abyss)
 
-	if card.has_method("on_removed") and not card.abilities_suppressed():
-		card.on_removed(self)
-	if combat_death and card.has_method("on_death") and not card.abilities_suppressed():
+	card.process_board_leave_hooks(self)
+	if combat_death and card.has_method("on_death") and not card.post_field_abilities_suppressed():
 		card.on_death(self)
 
 	died_this_turn.append(card)
@@ -3284,22 +3281,19 @@ func remove_card_from_game_with_hook(card: Card) -> void:
 		if card.has_method("remove_status_effects_with_flag"):
 			card.remove_status_effects_with_flag("remove_when_leaves_board")
 		card.remove_effects_expiring_after_combat()
-	if card.has_method("on_removed") and not card.abilities_suppressed():
-		card.on_removed(self)
+	card.process_board_leave_hooks(self)
 	from_zone.remove_card(card)
 	card.board_entry_order = -1
 	if card.card_owner != null:
 		card.card_owner.card_moved.emit(card, from_zone, null)
 
 func _send_to_abyss_with_hook(card: Card) -> void:
-	if card.has_method("on_removed") and not card.abilities_suppressed():
-		card.on_removed(self)
+	card.process_board_leave_hooks(self)
 	card.card_owner.move_card(card, card.card_owner.abyss_zone)
 
 func send_to_deck_bottom_with_hook(card: Card) -> void:
 	if card.current_zone != null and card.current_zone.is_board_zone():
-		if card.has_method("on_removed") and not card.abilities_suppressed():
-			card.on_removed(self)
+		card.process_board_leave_hooks(self)
 	card.card_owner.move_card(card, card.card_owner.deck_zone)
 
 func _on_player_card_moved(card: Card, from_zone: Zone, to_zone: Zone) -> void:

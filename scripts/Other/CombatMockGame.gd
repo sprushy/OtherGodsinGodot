@@ -2144,7 +2144,7 @@ func _update_center_action_panel_layout() -> void:
 	)
 
 func _sync_local_end_turn_button() -> void:
-	if _is_networked_client or _game_finished:
+	if _uses_authoritative_turn_ui() or _game_finished:
 		return
 	if end_turn_button == null or choice_container == null:
 		return
@@ -2892,18 +2892,7 @@ func start_game(
 
 	await get_tree().process_frame
 	var default_match_setup = DefaultMatchSetupScript.new()
-	var match_players: Dictionary = {}
-	if _is_networked_client:
-		var player_names = match_info.get("player_names", [])
-		match_players = default_match_setup.build_empty_match_shell(
-			game_manager,
-			2,
-			player_names if player_names is Array else []
-		)
-	elif server_match_session != null and not server_match_session.player_decks_by_session.is_empty():
-		match_players = default_match_setup.build_match_from_session_decks(game_manager, server_match_session)
-	if match_players.is_empty():
-		match_players = default_match_setup.build_default_match(game_manager)
+	var match_players: Dictionary = _build_initial_match_players(default_match_setup, server_match_session, match_info)
 	player1 = match_players.get("player1", null)
 	player2 = match_players.get("player2", null)
 	if not game_manager.doorway_choice_requested.is_connected(_on_doorway_choice_requested):
@@ -2950,6 +2939,21 @@ func start_game(
 	game_manager.start_turn()
 	update_ui()
 	_open_upkeep_choice_window()
+
+func _build_initial_match_players(default_match_setup, server_match_session = null, match_info: Dictionary = {}) -> Dictionary:
+	var match_players: Dictionary = {}
+	if _is_networked_client:
+		var player_names = match_info.get("player_names", [])
+		match_players = default_match_setup.build_empty_match_shell(
+			game_manager,
+			2,
+			player_names if player_names is Array else []
+		)
+	elif server_match_session != null and not server_match_session.player_decks_by_session.is_empty():
+		match_players = default_match_setup.build_match_from_session_decks(game_manager, server_match_session)
+	if match_players.is_empty():
+		match_players = default_match_setup.build_default_match(game_manager)
+	return match_players
 
 func _prepare_for_match_launch(status_message: String = "Connecting to match...") -> void:
 	_set_match_reconnect_wait(false)
@@ -13053,7 +13057,7 @@ func _resolve_creature_summon_sacrifice(sacrificed: Card, summoned_card: Card, c
 			update_ui()
 			return
 		_mark_pending_creature_summon_cost_paid()
-		if sacrificed.has_method("on_sacrificed_for_summon") and not sacrificed.abilities_suppressed():
+		if sacrificed.has_method("on_sacrificed_for_summon") and not sacrificed.post_field_abilities_suppressed():
 			sacrificed.on_sacrificed_for_summon(game_manager, summoned_card)
 		if continue_callback.is_valid():
 			continue_callback.call()
@@ -15455,8 +15459,8 @@ func _hide_priority_prompt() -> void:
 
 func _on_priority_pass_pressed() -> void:
 	_hide_priority_prompt()
-	if match_manager != null and match_manager.uses_authoritative_priority_flow() and game_input != null:
-		game_input.submit_action({type = "priority_pass"})
+	if match_manager != null and match_manager.uses_authoritative_priority_flow():
+		_submit_authoritative_priority_command({type = "priority_pass"})
 		return
 	if _is_networked_client:
 		network_manager.request_action({type = "priority_pass"})
@@ -15467,8 +15471,138 @@ func _on_priority_pass_pressed() -> void:
 	else:
 		_offer_priority()
 
+func _submit_authoritative_priority_command(command: Dictionary) -> bool:
+	if network_manager != null and bool(network_manager.get("is_server")):
+		network_manager.request_action(command)
+		return true
+	if game_input != null:
+		return game_input.submit_action(command)
+	return false
+
+func _try_submit_authoritative_priority_response(card: Card) -> bool:
+	if match_manager == null or not match_manager.uses_authoritative_priority_flow():
+		return false
+	if game_manager == null or game_manager.action_stack.is_empty() or card == null:
+		return false
+	var top: CardAction = game_manager.action_stack.back()
+	if card is HexCard:
+		var hex := card as HexCard
+		var has_manual_targets := hex.has_method("get_priority_targets") or top.type == CardAction.Type.ATTACK
+		var targets: Array = game_manager.get_priority_hex_targets(hex, top) if has_manual_targets else []
+		var target_is_attacker := not hex.has_method("get_priority_targets") and top.type == CardAction.Type.ATTACK
+		var submit_hex_response := func(target_uid: String = "") -> void:
+			_submit_authoritative_priority_command({
+				type = "play_hex_response",
+				hex_uid = hex.uid,
+				target_uid = target_uid,
+				target_is_attacker = target_is_attacker,
+			})
+		if has_manual_targets and hex.targets and targets.is_empty():
+			_set_action_label_text(hex.card_name + " has no valid targets.")
+			update_ui()
+			return true
+		if hex.targets and targets.size() > 1:
+			var choose_hex_target := func(chosen_card: Card) -> void:
+				submit_hex_response.call(chosen_card.uid)
+			_show_card_selection_overlay(
+				"Choose a target for " + hex.card_name,
+				targets,
+				choose_hex_target,
+				Callable(),
+				_get_selection_cursor_mode_for_source(hex)
+			)
+			return true
+		submit_hex_response.call((targets[0] as Card).uid if not targets.is_empty() and targets[0] is Card else "")
+		return true
+	if card is CharmCard:
+		var charm := card as CharmCard
+		var targets: Array = charm.get_priority_targets(game_manager, top) if charm.targets else []
+		var from_hand := charm.current_zone == charm.card_owner.hand_zone
+		var submit_charm_response := func(target_uid: String = "") -> void:
+			_submit_authoritative_priority_command({
+				type = "play_charm_response",
+				charm_uid = charm.uid,
+				target_uid = target_uid,
+				from_hand = from_hand,
+			})
+		if charm.targets and targets.is_empty():
+			_set_action_label_text(charm.card_name + " has no valid targets.")
+			update_ui()
+			return true
+		if charm.targets and targets.size() > 1:
+			var choose_charm_target := func(chosen_card: Card) -> void:
+				submit_charm_response.call(chosen_card.uid)
+			_show_card_selection_overlay(
+				"Choose a target for " + charm.card_name,
+				targets,
+				choose_charm_target,
+				Callable(),
+				_get_selection_cursor_mode_for_source(charm)
+			)
+			return true
+		submit_charm_response.call((targets[0] as Card).uid if not targets.is_empty() and targets[0] is Card else "")
+		return true
+	if card is SpellCard:
+		var spell := card as SpellCard
+		var targets: Array = spell.get_valid_targets(game_manager) if spell.targets and spell.has_method("get_valid_targets") else []
+		var submit_spell_response := func(target_uid: String = "") -> void:
+			_submit_authoritative_priority_command({
+				type = "cast_spell",
+				spell_uid = spell.uid,
+				target_uid = target_uid,
+			})
+		if spell.targets and targets.is_empty():
+			_set_action_label_text(spell.card_name + " has no valid targets.")
+			update_ui()
+			return true
+		if spell.targets and targets.size() > 1:
+			var choose_spell_target := func(chosen_card: Card) -> void:
+				submit_spell_response.call(chosen_card.uid)
+			_show_card_selection_overlay(
+				"Choose a target for " + spell.card_name,
+				targets,
+				choose_spell_target,
+				Callable(),
+				_get_selection_cursor_mode_for_source(spell)
+			)
+			return true
+		submit_spell_response.call((targets[0] as Card).uid if not targets.is_empty() and targets[0] is Card else "")
+		return true
+	if card.is_god or (card.has_method("can_respond_to_priority_action") and card.has_method("activate")):
+		var targets: Array = []
+		if card.has_method("get_priority_field_targets"):
+			targets = card.get_priority_field_targets(game_manager, top)
+		elif card.has_method("get_valid_targets"):
+			targets = card.get_valid_targets(game_manager)
+		var submit_ability_response := func(target_uid: String = "") -> void:
+			_submit_authoritative_priority_command({
+				type = "play_priority_ability",
+				source_uid = card.uid,
+				target_uid = target_uid,
+			})
+		if bool(card.get("targets")) and targets.is_empty():
+			_set_action_label_text(card.card_name + " has no valid targets.")
+			update_ui()
+			return true
+		if targets.size() > 1:
+			var choose_ability_target := func(chosen_card: Card) -> void:
+				submit_ability_response.call(chosen_card.uid)
+			_show_card_selection_overlay(
+				"Choose a target for " + card.card_name,
+				targets,
+				choose_ability_target,
+				Callable(),
+				_get_selection_cursor_mode_for_source(card)
+			)
+			return true
+		submit_ability_response.call((targets[0] as Card).uid if not targets.is_empty() and targets[0] is Card else "")
+		return true
+	return false
+
 func _on_priority_response_chosen(card: Card) -> void:
 	_hide_priority_prompt()
+	if _try_submit_authoritative_priority_response(card):
+		return
 
 	if card is HexCard:
 		var top: CardAction = game_manager.action_stack.back()
@@ -18992,6 +19126,9 @@ func _on_match_move_validated(move: Dictionary) -> void:
 	var move_type := str(move.get("type", ""))
 	if _is_card_play_move_type(move_type):
 		_grant_local_move_timer_bonus(CARD_PLAY_TIME_BONUS_MSEC)
+	if authoritative_priority and move_type in ["upkeep_choice", "tiamat_upkeep_choice", "skoll_upkeep_summon"]:
+		update_ui()
+		return
 	match move_type:
 		"upkeep_choice":
 			# Client resolved upkeep; server must open the turn-start priority window
@@ -19941,6 +20078,18 @@ func _is_player_local(player: Player) -> bool:
 	var idx := game_manager.players.find(player)
 	return idx == network_manager.local_player_index
 
+func _uses_authoritative_turn_ui() -> bool:
+	if _is_networked_client or _is_real_network_host():
+		return true
+	if uses_authoritative_match_flow():
+		return true
+	return match_manager != null and match_manager.uses_authoritative_priority_flow()
+
+func _has_authoritative_local_player_view() -> bool:
+	return _uses_authoritative_turn_ui() \
+		and network_manager != null \
+		and network_manager.local_player_index >= 0
+
 func _get_local_forfeit_player_index() -> int:
 	if _is_observer_mode:
 		return -1
@@ -20768,7 +20917,7 @@ func _apply_full_state(data: Dictionary) -> void:
 			game_manager.feedback_viewer = _observer_feedback_viewer
 		_restore_network_attack_preview_from_state(data.get("pending_attack_preview", {}))
 		_awaiting_initial_full_state = false
-		_sync_network_turn_entry_ui_from_state()
+	_sync_network_turn_entry_ui_from_state()
 	# Host has the live authoritative game_manager â€” no zone rebuild needed.
 	# Show server's action message if any
 	var msg: String = data.get("action_message", "")
@@ -20835,9 +20984,9 @@ func _restore_priority_prompt_from_authoritative_state() -> void:
 	_apply_priority_prompt_for_player(local_idx, prompt_data)
 
 func _sync_network_turn_entry_ui_from_state() -> void:
-	if not _is_networked_client or game_manager == null or network_manager == null:
+	if not _uses_authoritative_turn_ui() or game_manager == null or network_manager == null:
 		return
-	if _game_finished or _is_observer_mode or network_manager.local_player_index < 0:
+	if _game_finished or _is_observer_mode or not _has_authoritative_local_player_view():
 		choice_container.visible = false
 		_update_match_side_panel_layout()
 		end_turn_button.visible = false
@@ -20876,11 +21025,18 @@ func _sync_network_turn_controls() -> void:
 		end_turn_button.disabled = true
 		all_attack_btn.disabled = true
 		return
-	if not _is_networked_client or game_manager == null or network_manager == null or network_manager.local_player_index < 0:
+	if not _uses_authoritative_turn_ui():
 		_maybe_progress_hidden_frontline_entry_action()
 		end_turn_button.visible = true
 		end_turn_button.disabled = false
 		all_attack_btn.disabled = false
+		return
+	if game_manager == null or not _has_authoritative_local_player_view():
+		choice_container.visible = false
+		end_turn_button.visible = false
+		end_turn_button.disabled = true
+		all_attack_btn.disabled = true
+		_close_turn_start_windows()
 		return
 	game_manager.prune_stale_stack_actions()
 	var local_idx: int = network_manager.local_player_index
@@ -21003,7 +21159,7 @@ func _apply_priority_prompt_for_player(player_index: int, data: Dictionary) -> v
 		game_manager.priority_player = game_manager.players[player_index]
 	_remember_local_priority_prompt_signature()
 	_update_waiting_status(false)
-	if _is_networked_client:
+	if _is_networked_client or (match_manager != null and match_manager.uses_authoritative_priority_flow() and network_manager != null):
 		var responses: Array = data.get("responses", [])
 		if auto_priority and responses.is_empty():
 			_hide_priority_prompt()
@@ -21444,7 +21600,7 @@ func _do_end_turn() -> void:
 	if not _pending_end_turn_discard_uids.is_empty():
 		et_cmd["discard_uids"] = _pending_end_turn_discard_uids.duplicate()
 		_pending_end_turn_discard_uids.clear()
-	if _is_networked_client:
+	if (_is_networked_client or uses_authoritative_match_flow()) and game_input != null:
 		game_input.submit_action(et_cmd)
 		update_ui()
 		return
@@ -21507,7 +21663,9 @@ func _open_upkeep_choice_window() -> void:
 		return
 	if not game_manager.is_player_in_upkeep_window(game_manager.current_player):
 		return
-	if _is_networked_client and network_manager != null:
+	if _uses_authoritative_turn_ui():
+		if not _has_authoritative_local_player_view():
+			return
 		var local_idx: int = network_manager.local_player_index
 		var current_idx: int = game_manager.players.find(game_manager.current_player)
 		if local_idx < 0 or current_idx != local_idx or not game_manager.is_player_in_upkeep_window(game_manager.current_player):
