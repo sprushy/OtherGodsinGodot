@@ -603,9 +603,9 @@ func _add_prepared_magical_mana_badge(overlay: Control, card: Card) -> void:
 		"M:%d" % display_cost,
 		Control.PRESET_TOP_RIGHT,
 		-66,
-		_get_badge_row_top(),
+		6,
 		-6,
-		_get_badge_row_top() + 22.0,
+		28.0,
 		font_color
 	)
 	var tooltip_lines := _get_prepared_magical_hover_cost_lines(card)
@@ -735,6 +735,98 @@ func _add_hidden_creature_stat_badge(
 		hidden_badge.tooltip_text = hidden_breakdown
 		hidden_badge.mouse_filter = Control.MOUSE_FILTER_STOP
 
+func _get_power_status_cost_text(card: Card) -> String:
+	if not (card is PowerCard):
+		return ""
+	var power_card := card as PowerCard
+	if power_card.is_face_down:
+		var viewer := _get_viewer_player()
+		if viewer == null or power_card.get_controller() != viewer:
+			return ""
+		return "Unlock %s" % power_card.get_cost_shorthand(power_card.get_unlock_mana_cost(game_manager), true)
+
+	var activation_cost := _get_power_activation_mana_cost(power_card)
+	if activation_cost <= 0:
+		return ""
+	return "M:%d" % activation_cost
+
+func _get_power_activation_mana_cost(power_card: PowerCard) -> int:
+	var hover_data: Dictionary = power_card.get_activation_cost_hover_data(game_manager)
+	if not hover_data.is_empty():
+		var base_cost: int = int(hover_data.get("base_cost", 0))
+		if base_cost > 0:
+			return power_card.get_activation_mana_cost(base_cost, game_manager)
+
+	if power_card.ability_text.find("[b]Activate[/b]") == -1:
+		return 0
+
+	var regex := RegEx.new()
+	if regex.compile("(?i)pay\\s+(\\d+)\\s+mana") != OK:
+		return 0
+	var result := regex.search(power_card.get_display_ability_text(game_manager))
+	if result == null:
+		return 0
+	var parsed_cost := int(result.get_string(1))
+	return maxi(parsed_cost, 0)
+
+func _add_power_cost_badge(overlay: Control, card: Card) -> void:
+	if overlay == null or card == null:
+		return
+	var badge_text := _get_power_status_cost_text(card)
+	if badge_text == "":
+		return
+	if not is_instance_valid(overlay) or overlay.is_queued_for_deletion():
+		return
+
+	if not card.is_face_down:
+		var badge := _add_overlay_stat_badge(
+			overlay,
+			badge_text,
+			Control.PRESET_TOP_RIGHT,
+			-66,
+			6,
+			-6,
+			28.0,
+			Color(0.78, 1.0, 0.82)
+		)
+		if badge != null:
+			badge.tooltip_text = "Activation Cost: %d" % _get_power_activation_mana_cost(card as PowerCard)
+			badge.mouse_filter = Control.MOUSE_FILTER_STOP
+		return
+
+	var badge := PanelContainer.new()
+	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	badge.set_anchors_preset(Control.PRESET_CENTER)
+	badge.offset_left = -34
+	badge.offset_top = 32
+	badge.offset_right = 34
+	badge.offset_bottom = 52
+
+	var badge_style := StyleBoxFlat.new()
+	badge_style.bg_color = Color(0.08, 0.08, 0.08, 0.9)
+	badge_style.border_color = Color(1.0, 0.86, 0.42, 0.96)
+	badge_style.corner_radius_top_left = 6
+	badge_style.corner_radius_top_right = 6
+	badge_style.corner_radius_bottom_left = 6
+	badge_style.corner_radius_bottom_right = 6
+	badge_style.content_margin_left = 5
+	badge_style.content_margin_right = 5
+	badge_style.content_margin_top = 2
+	badge_style.content_margin_bottom = 2
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		badge_style.set_border_width(side, 1)
+	badge.add_theme_stylebox_override("panel", badge_style)
+
+	var label := Label.new()
+	label.text = badge_text
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	label.add_theme_font_size_override("font_size", 9)
+	label.add_theme_color_override("font_color", Color(1.0, 0.95, 0.72))
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	badge.add_child(label)
+	overlay.add_child(badge)
+
 func _add_power_lock_overlay(overlay: Control, card: Card) -> void:
 	if overlay == null or card == null:
 		return
@@ -745,6 +837,7 @@ func _add_power_lock_overlay(overlay: Control, card: Card) -> void:
 	var viewer := _get_viewer_player()
 	var culture_is_known := viewer != null and card.get_controller() == viewer
 	_add_power_lock_texture_overlay(overlay, card, culture_is_known)
+	_add_power_cost_badge(overlay, card)
 
 func _add_playing_aura(overlay: Control) -> void:
 	if overlay == null:
@@ -2776,6 +2869,8 @@ func _refresh_display() -> void:
 			DefenseShieldOverlay.ensure_on(card_overlay, shield_layout, shield_scale)
 		_add_level_badge(card_overlay, card, Control.PRESET_TOP_LEFT, 6, 6, 54, 24)
 		_add_prepared_magical_mana_badge(card_overlay, card)
+		if card.is_power:
+			_add_power_cost_badge(card_overlay, card)
 
 		_add_sleep_affordance(card_overlay, card)
 		if not card.is_stealth or card.get_controller() == board_viewer or card.is_temporarily_revealed():

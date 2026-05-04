@@ -7921,8 +7921,7 @@ func _begin_champions_call_activation(god: GodCard) -> void:
 	var on_confirm_shelving := func(chosen_shelves: Array[Card]) -> void:
 		_begin_champions_call_placement(god, chosen_shelves)
 	var on_cancel_shelving := func() -> void:
-		_set_action_label_text("Cancelled " + god.card_name + ".")
-		update_ui()
+		_cancel_champions_call_flow("Cancelled " + god.card_name + ".")
 	_prompt_champions_call_shelving(god, on_confirm_shelving, on_cancel_shelving)
 
 func _begin_champions_call_placement(god: GodCard, chosen_shelves: Array[Card]) -> void:
@@ -7948,6 +7947,15 @@ func _clear_champions_call_placement() -> void:
 	if stealth_mode_btn != null:
 		stealth_mode_btn.visible = true
 		stealth_mode_btn.disabled = false
+
+func _cancel_champions_call_flow(feedback: String = "") -> void:
+	_dismiss_zone_overlay()
+	_hide_champions_call_prompt()
+	_clear_champions_call_placement()
+	_pending_drop_zone = null
+	if feedback != "":
+		_set_action_label_text(feedback)
+	update_ui()
 
 func _resolve_champions_call_placement(zone: Zone) -> void:
 	var god := _pending_champions_call_god
@@ -8902,6 +8910,8 @@ func _handle_charm_prepare_menu_action(card: Card) -> void:
 	_begin_manual_charm_prepare_from_menu(card)
 
 func _select_hand_creature_for_placement(card: Card, mode: String) -> void:
+	if _pending_champions_call_god != null:
+		_clear_champions_call_placement()
 	_pending_spell_display_zone = null
 	_pending_move_card = null
 	_select_hand_card(card)
