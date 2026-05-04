@@ -85,6 +85,7 @@ const CARD_SCRIPT_PATHS := [
 	"res://scripts/cards/Creatures/HariiJarl.gd",
 	"res://scripts/cards/Creatures/HariiShaman.gd",
 	"res://scripts/cards/Creatures/HariiWarrior.gd",
+	"res://scripts/cards/Creatures/ValkyrieWarrior.gd",
 	"res://scripts/cards/Creatures/Hati.gd",
 	"res://scripts/cards/Creatures/HelBlarDraug.gd",
 	"res://scripts/cards/Creatures/Hrimgrimmnir.gd",

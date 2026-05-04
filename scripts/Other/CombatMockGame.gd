@@ -7076,7 +7076,12 @@ func _queue_targeted_ability_action(source_card: Card, target: Card, resolve_cal
 	if source_card == null or target == null:
 		return
 	if game_input != null:
-		game_input.submit_action({type = "activate_card_ability", source_uid = source_card.uid, target_uid = target.uid})
+		if source_card.is_god:
+			game_input.submit_action({type = "god_ability", god_uid = source_card.uid, target_uid = target.uid})
+		elif source_card is PowerCard:
+			game_input.submit_action({type = "activate_power", power_uid = source_card.uid, target_uid = target.uid})
+		else:
+			game_input.submit_action({type = "activate_card_ability", source_uid = source_card.uid, target_uid = target.uid})
 		return
 	var target_name := _get_target_label(target, game_manager.get_feedback_viewer(), "target")
 	var queued_text := resolution_text if resolution_text != "" else _get_attack_card_label(source_card, source_card.card_name) + " is targeting " + target_name + "."

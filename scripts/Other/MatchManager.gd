@@ -2483,6 +2483,12 @@ func _process_command_impl(command: Dictionary) -> bool:
 			var target_uid: String = command.get("target_uid", "")
 			if target_uid != "":
 				target = game_manager.get_card_by_uid(target_uid)
+			if god_card.targets and target == null:
+				move_failed.emit("god_ability: target card not found")
+				return false
+			if target != null and god_card.has_method("is_valid_activation_target") and not god_card.is_valid_activation_target(target):
+				move_failed.emit("god_ability: invalid target")
+				return false
 			var god_ward_block_reason := game_manager.get_turn_destruction_ward_activation_block_reason(god_card, target)
 			if god_ward_block_reason != "":
 				move_failed.emit(god_ward_block_reason)

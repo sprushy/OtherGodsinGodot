@@ -12,7 +12,7 @@ const DeckValidatorScript = preload("res://scripts/server/DeckValidator.gd")
 const MatchHistoryStoreScript = preload("res://scripts/server/MatchHistoryStore.gd")
 const MatchSessionScript = preload("res://scripts/server/MatchSession.gd")
 const LobbyRoomScript = preload("res://scripts/server/LobbyRoom.gd")
-const PracticeThorScene = preload("res://scenes/practice_thor_game.tscn")
+const PRACTICE_THOR_SCENE_PATH := "res://scenes/practice_thor_game.tscn"
 const DEDICATED_LOBBY_ENTRY_SCRIPT_PATH := "res://scripts/server/DedicatedLobbyServerMain.gd"
 const DEDICATED_SERVER_EXPORT_RELATIVE_PATH := "res://.exports/server/OtherGodsServer.exe"
 const DEFAULT_LOBBY_HOST_SETTING := "application/config/default_lobby_host"
@@ -206,6 +206,9 @@ func _ready() -> void:
 	else:
 		call_deferred("_begin_startup_prompts")
 
+func _is_practice_thor_enabled() -> bool:
+	return OS.is_debug_build()
+
 func _bind_game_signals() -> void:
 	for node_name in _get_embedded_game_node_names():
 		var game = get_node_or_null("GameContainer/" + node_name)
@@ -225,16 +228,21 @@ func _bind_game_signals() -> void:
 func _ensure_practice_thor_entry() -> void:
 	if game_container == null or menu_container == null:
 		return
+	var practice_button = menu_container.get_node_or_null("PracticeThorButton")
+	if not _is_practice_thor_enabled():
+		if practice_button != null:
+			practice_button.visible = false
+		return
 	var practice_game = game_container.get_node_or_null("PracticeThor")
-	if practice_game == null and PracticeThorScene != null:
-		var practice_instance := PracticeThorScene.instantiate()
+	if practice_game == null:
+		var practice_scene := load(PRACTICE_THOR_SCENE_PATH)
+		var practice_instance = practice_scene.instantiate() if practice_scene is PackedScene else null
 		if practice_instance != null:
 			practice_instance.name = "PracticeThor"
 			if practice_instance is Control:
 				practice_instance.visible = false
 			game_container.add_child(practice_instance)
 			practice_game = practice_instance
-	var practice_button = menu_container.get_node_or_null("PracticeThorButton")
 	if practice_button == null:
 		practice_button = Button.new()
 		practice_button.name = "PracticeThorButton"
@@ -249,7 +257,10 @@ func _ensure_practice_thor_entry() -> void:
 			practice_button.pressed.connect(_on_practice_thor_pressed)
 
 func _get_embedded_game_node_names() -> Array[String]:
-	return ["MockGame", "CardTest", "PracticeThor"]
+	var node_names: Array[String] = ["MockGame", "CardTest"]
+	if _is_practice_thor_enabled():
+		node_names.append("PracticeThor")
+	return node_names
 
 func _hide_embedded_games() -> void:
 	for node_name in _get_embedded_game_node_names():
@@ -310,10 +321,20 @@ func _refresh_server_version_label() -> void:
 	var client_version := AppReleaseInfoScript.get_current_version()
 	_server_version_label.text = "%s\nClient: %s" % [server_text, client_version]
 
+func _is_deck_builder_open() -> bool:
+	if game_container == null:
+		return false
+	var deck_builder := game_container.get_node_or_null("DeckBuilder")
+	return (
+		deck_builder != null
+		and is_instance_valid(deck_builder)
+		and not deck_builder.is_queued_for_deletion()
+		and bool(deck_builder.visible)
+	)
+
 func _refresh_server_version_overlay_visibility() -> void:
 	if _server_version_label == null or not is_instance_valid(_server_version_label):
 		return
-	var deck_builder := game_container.get_node_or_null("DeckBuilder") if game_container != null else null
 	var multiplayer_visible = multiplayer_container != null and multiplayer_container.visible
 	var game_visible = game_container != null and game_container.visible
 	_server_version_label.visible = (
@@ -321,7 +342,7 @@ func _refresh_server_version_overlay_visibility() -> void:
 		and menu_container.visible
 		and not multiplayer_visible
 		and not game_visible
-		and not (deck_builder != null and deck_builder.visible)
+		and not _is_deck_builder_open()
 	)
 
 func _process(delta: float) -> void:
@@ -380,8 +401,7 @@ func _handle_escape_navigation() -> bool:
 		_close_friends_overlay()
 		show_menu()
 		return true
-	var deck_builder := game_container.get_node_or_null("DeckBuilder") if game_container != null else null
-	if deck_builder != null and bool(deck_builder.visible):
+	if _is_deck_builder_open():
 		_return_to_menu()
 		return true
 	if menu_container != null and menu_container.visible and multiplayer_container != null and not multiplayer_container.visible:
@@ -2963,6 +2983,8 @@ func _on_card_test_pressed() -> void:
 	await card_test.start_game()
 
 func _on_practice_thor_pressed() -> void:
+	if not _is_practice_thor_enabled():
+		return
 	_refresh_multiplayer_deck_options()
 	var selected_practice_deck := _get_selected_multiplayer_deck()
 	_match_launch_queued = false
