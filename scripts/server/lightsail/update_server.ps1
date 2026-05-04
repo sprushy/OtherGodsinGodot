@@ -2,16 +2,37 @@ $ErrorActionPreference = "Stop"
 $Root = "C:\OtherGodsServer"
 $PreferredExe = Join-Path $Root "OtherGodsServer.exe"
 $LegacyExe = Join-Path $Root "ClaudeOtherGodsServer.exe"
+$StartupScript = Join-Path $Root "start_server.ps1"
 $Exe  = if (Test-Path -LiteralPath $PreferredExe) { $PreferredExe } elseif (Test-Path -LiteralPath $LegacyExe) { $LegacyExe } else { $PreferredExe }
 $Zip  = Join-Path $Root "OtherGodsServer-windows.zip"
 $VersionFile = Join-Path $Root "release_version.txt"
 $Log  = Join-Path $Root "updater.log"
+$LifecycleMutexName = "Global\OtherGodsServerLifecycle"
 
 function Write-Log($m) {
     Add-Content -LiteralPath $Log -Value ("{0} {1}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $m)
 }
 
+function Ensure-ServerRunning {
+    if (-not (Test-Path -LiteralPath $StartupScript)) {
+        throw "Startup script not found at $StartupScript"
+    }
+    & $StartupScript -SkipMutex
+}
+
+$mutex = New-Object System.Threading.Mutex($false, $LifecycleMutexName)
+$acquiredMutex = $false
 try {
+    try {
+        $acquiredMutex = $mutex.WaitOne(0)
+    } catch [System.Threading.AbandonedMutexException] {
+        $acquiredMutex = $true
+    }
+    if (-not $acquiredMutex) {
+        Write-Log "Update: skipped because another lifecycle action is already running."
+        return
+    }
+
     $headers = @{ "User-Agent" = "OtherGodsUpdater" }
     $release = Invoke-RestMethod -Headers $headers -Uri "https://api.github.com/repos/sprushy/OtherGodsinGodot/releases/latest"
     $latest = [string]$release.tag_name
@@ -26,11 +47,17 @@ try {
 
     $current = if (Test-Path -LiteralPath $VersionFile) { (Get-Content -LiteralPath $VersionFile -Raw).Trim() } else { "" }
 
-    if ($current -eq $latest) { Write-Log "Already on $current."; return }
+    if ($current -eq $latest) {
+        Write-Log "Already on $current. Verifying server health."
+        Ensure-ServerRunning
+        return
+    }
 
     Write-Log "Updating from '$current' to '$latest'"
     Stop-Process -Name OtherGodsServer -Force -ErrorAction SilentlyContinue
+    Stop-Process -Name OtherGodsServer_console -Force -ErrorAction SilentlyContinue
     Stop-Process -Name ClaudeOtherGodsServer -Force -ErrorAction SilentlyContinue
+    Stop-Process -Name ClaudeOtherGodsServer_console -Force -ErrorAction SilentlyContinue
     Start-Sleep -Seconds 2
     Remove-Item -LiteralPath $Zip -Force -ErrorAction SilentlyContinue
 
@@ -58,10 +85,15 @@ try {
     if ((Test-Path -LiteralPath $LegacyPck) -and (Test-Path -LiteralPath (Join-Path $Root "OtherGodsServer.pck"))) {
         Remove-Item -LiteralPath $LegacyPck -Force -ErrorAction SilentlyContinue
     }
-    Start-Process -FilePath $Exe -WorkingDirectory $Root
+    Ensure-ServerRunning
     Set-Content -LiteralPath $VersionFile -Value $latest -NoNewline
     Write-Log "Updated to $latest and restarted."
 } catch {
     Write-Log "ERROR: $($_.Exception.Message)"
     throw
+} finally {
+    if ($acquiredMutex) {
+        $mutex.ReleaseMutex() | Out-Null
+    }
+    $mutex.Dispose()
 }

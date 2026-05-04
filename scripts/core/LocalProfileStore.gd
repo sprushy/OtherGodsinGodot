@@ -72,68 +72,22 @@ func ensure_account_profile(
 		return ensure_profile(preferred_profile_id, DEFAULT_PROFILE_NAME, make_current)
 	var normalized_key := normalized_username.to_lower()
 	var resolved_preferred_id := preferred_profile_id.strip_edges()
-	if prefer_preferred_profile_id and not resolved_preferred_id.is_empty():
-		var preferred_profile := get_profile(resolved_preferred_id)
-		var preferred_account_username_key := str(
-			preferred_profile.get("account_username_key", "")
-		).strip_edges().to_lower()
-		if preferred_profile.is_empty() or (
-			preferred_account_username_key.is_empty()
-			or preferred_account_username_key == normalized_key
-		):
-			return _remember_account_profile_mapping(
-				normalized_key,
-				ensure_profile(resolved_preferred_id, normalized_username, make_current)
-			)
-	var mapped_profile_id := str(_get_account_profile_id_by_username().get(normalized_key, "")).strip_edges()
-	if not mapped_profile_id.is_empty():
-		var mapped_profile := get_profile(mapped_profile_id)
-		if not mapped_profile.is_empty():
-			return _remember_account_profile_mapping(
-				normalized_key,
-				ensure_profile(mapped_profile_id, normalized_username, make_current)
-			)
-	if not resolved_preferred_id.is_empty():
-		var preferred_profile := get_profile(resolved_preferred_id)
-		var preferred_account_username_key := str(
-			preferred_profile.get("account_username_key", "")
-		).strip_edges().to_lower()
-		if not preferred_profile.is_empty() and (
-			preferred_account_username_key.is_empty()
-			or preferred_account_username_key == normalized_key
-		):
-			return _remember_account_profile_mapping(
-				normalized_key,
-				ensure_profile(resolved_preferred_id, normalized_username, make_current)
-			)
-	var matched_profile_id := find_profile_id_by_account_username(normalized_username)
+	var matched_profile_id := _find_best_account_profile_id(
+		normalized_username,
+		resolved_preferred_id,
+		prefer_preferred_profile_id
+	)
 	if not matched_profile_id.is_empty():
 		return _remember_account_profile_mapping(
 			normalized_key,
 			ensure_profile(matched_profile_id, normalized_username, make_current)
 		)
-	var created_profile := ensure_profile(resolved_preferred_id, normalized_username, make_current)
+	var created_profile := ensure_profile("", normalized_username, make_current)
 	return _remember_account_profile_mapping(normalized_key, created_profile)
 
 func find_profile_id_by_account_username(account_username: String) -> String:
 	_ensure_loaded()
-	var normalized_username := account_username.strip_edges().to_lower()
-	if normalized_username.is_empty():
-		return ""
-	var mapped_profile_id := str(_get_account_profile_id_by_username().get(normalized_username, "")).strip_edges()
-	if not mapped_profile_id.is_empty():
-		var mapped_profile := get_profile(mapped_profile_id)
-		if not mapped_profile.is_empty():
-			return mapped_profile_id
-	var profiles := _get_profiles()
-	for profile_id in profiles.keys():
-		var profile = profiles.get(profile_id, {})
-		if not (profile is Dictionary):
-			continue
-		var stored_username := str((profile as Dictionary).get("account_username_key", "")).strip_edges().to_lower()
-		if stored_username == normalized_username:
-			return str(profile_id)
-	return find_profile_id_by_display_name(normalized_username)
+	return _find_best_account_profile_id(account_username)
 
 func find_profile_id_by_display_name(display_name: String) -> String:
 	_ensure_loaded()
@@ -671,12 +625,16 @@ func _ensure_loaded() -> void:
 	var primary_snapshot: Dictionary = _read_storage_snapshot(STORAGE_PATH, "primary")
 	if _merge_storage_snapshot(primary_snapshot):
 		_try_migrate_legacy_storage_over_placeholder_data()
+		var repaired_primary_mappings := _repair_account_profile_mappings()
 		if bool(primary_snapshot.get("recovered", false)):
 			print("LocalProfileStore: Repairing malformed primary snapshot.")
 			_save(true)
 			if not FileAccess.file_exists(STORAGE_BACKUP_PATH):
 				_copy_storage_snapshot(STORAGE_PATH, STORAGE_BACKUP_PATH)
 			return
+		if repaired_primary_mappings:
+			print("LocalProfileStore: Repairing account profile mappings in primary snapshot.")
+			_save()
 		if not FileAccess.file_exists(STORAGE_BACKUP_PATH):
 			_copy_storage_snapshot(STORAGE_PATH, STORAGE_BACKUP_PATH)
 		return
@@ -684,6 +642,7 @@ func _ensure_loaded() -> void:
 	var temp_snapshot: Dictionary = _read_storage_snapshot(STORAGE_TEMP_PATH, "temp")
 	if _merge_storage_snapshot(temp_snapshot):
 		_try_migrate_legacy_storage_over_placeholder_data()
+		_repair_account_profile_mappings()
 		print("LocalProfileStore: Restoring profile data from temp snapshot.")
 		_save(true)
 		return
@@ -691,12 +650,14 @@ func _ensure_loaded() -> void:
 	var backup_snapshot: Dictionary = _read_storage_snapshot(STORAGE_BACKUP_PATH, "backup")
 	if _merge_storage_snapshot(backup_snapshot):
 		_try_migrate_legacy_storage_over_placeholder_data()
+		_repair_account_profile_mappings()
 		print("LocalProfileStore: Restoring profile data from backup snapshot.")
 		_save(true)
 		return
 
 	var legacy_snapshot: Dictionary = _read_legacy_storage_snapshot()
 	if _merge_storage_snapshot(legacy_snapshot):
+		_repair_account_profile_mappings()
 		print("LocalProfileStore: Migrating profile data from legacy app storage.")
 		_save(true)
 
@@ -1077,6 +1038,185 @@ func _remember_account_profile_mapping(account_username_key: String, profile: Di
 	_data["account_profile_id_by_username"] = mappings
 	_save()
 	return profile.duplicate(true)
+
+func _find_best_account_profile_id(
+	account_username: String,
+	preferred_profile_id: String = "",
+	prefer_preferred_profile_id: bool = false
+) -> String:
+	var normalized_username := account_username.strip_edges()
+	var normalized_key := normalized_username.to_lower()
+	if normalized_key.is_empty():
+		return ""
+
+	var resolved_preferred_id := preferred_profile_id.strip_edges()
+	var mapped_profile_id := str(_get_account_profile_id_by_username().get(normalized_key, "")).strip_edges()
+	var profiles := _get_profiles()
+	var candidate_ids: Array[String] = []
+	var seen_candidate_ids: Dictionary = {}
+
+	if not mapped_profile_id.is_empty():
+		_append_account_profile_candidate(candidate_ids, seen_candidate_ids, mapped_profile_id)
+	if not resolved_preferred_id.is_empty():
+		_append_account_profile_candidate(candidate_ids, seen_candidate_ids, resolved_preferred_id)
+	for profile_id_variant in profiles.keys():
+		var profile_id := str(profile_id_variant).strip_edges()
+		if profile_id.is_empty():
+			continue
+		var profile = profiles.get(profile_id, {})
+		if not (profile is Dictionary):
+			continue
+		if not _profile_matches_account_username(profile as Dictionary, normalized_key):
+			continue
+		_append_account_profile_candidate(candidate_ids, seen_candidate_ids, profile_id)
+	for profile_id_variant in profiles.keys():
+		var profile_id := str(profile_id_variant).strip_edges()
+		if profile_id.is_empty():
+			continue
+		var profile = profiles.get(profile_id, {})
+		if not (profile is Dictionary):
+			continue
+		if str((profile as Dictionary).get("display_name", "")).strip_edges().to_lower() != normalized_key:
+			continue
+		_append_account_profile_candidate(candidate_ids, seen_candidate_ids, profile_id)
+
+	var best_profile_id := ""
+	var best_score := -1
+	var best_last_seen := -1
+	for candidate_profile_id in candidate_ids:
+		var candidate_profile = get_profile(candidate_profile_id)
+		if candidate_profile.is_empty():
+			continue
+		var score := _score_account_profile_candidate(
+			candidate_profile_id,
+			candidate_profile,
+			normalized_key,
+			normalized_username,
+			mapped_profile_id,
+			resolved_preferred_id,
+			prefer_preferred_profile_id
+		)
+		var last_seen := int(candidate_profile.get("last_seen_unix", 0))
+		if score > best_score or (score == best_score and last_seen > best_last_seen):
+			best_score = score
+			best_last_seen = last_seen
+			best_profile_id = candidate_profile_id
+	return best_profile_id
+
+func _append_account_profile_candidate(candidate_ids: Array[String], seen_candidate_ids: Dictionary, profile_id: String) -> void:
+	var resolved_profile_id := profile_id.strip_edges()
+	if resolved_profile_id.is_empty() or seen_candidate_ids.has(resolved_profile_id):
+		return
+	seen_candidate_ids[resolved_profile_id] = true
+	candidate_ids.append(resolved_profile_id)
+
+func _profile_matches_account_username(profile: Dictionary, normalized_key: String) -> bool:
+	if profile.is_empty() or normalized_key.is_empty():
+		return false
+	var stored_username_key := str(profile.get("account_username_key", "")).strip_edges().to_lower()
+	if not stored_username_key.is_empty():
+		return stored_username_key == normalized_key
+	return str(profile.get("display_name", "")).strip_edges().to_lower() == normalized_key
+
+func _score_account_profile_candidate(
+	profile_id: String,
+	profile: Dictionary,
+	normalized_key: String,
+	normalized_username: String,
+	mapped_profile_id: String,
+	preferred_profile_id: String,
+	prefer_preferred_profile_id: bool
+) -> int:
+	if profile.is_empty():
+		return -1
+	var score := 0
+	var stored_username_key := str(profile.get("account_username_key", "")).strip_edges().to_lower()
+	if stored_username_key == normalized_key:
+		score += 1000
+	elif not stored_username_key.is_empty():
+		score -= 2000
+	var display_name := str(profile.get("display_name", "")).strip_edges()
+	if display_name.to_lower() == normalized_key:
+		score += 150
+	elif display_name == normalized_username:
+		score += 125
+	if profile_id == mapped_profile_id:
+		score += 10
+	if profile_id == preferred_profile_id:
+		score += 40 if prefer_preferred_profile_id else 15
+	score += mini(_get_saved_deck_count_for_profile(profile_id), 50) * 5
+	score += mini(_get_synced_account_deck_count_for_profile(profile_id), 50) * 2
+	if _has_lobby_resume_for_profile(profile_id):
+		score += 25
+	if _has_active_match_for_profile(profile_id):
+		score += 25
+	return score
+
+func _get_saved_deck_count_for_profile(profile_id: String) -> int:
+	return _get_deck_bucket(profile_id.strip_edges(), false).size()
+
+func _get_synced_account_deck_count_for_profile(profile_id: String) -> int:
+	var synced_by_profile := _get_synced_account_deck_ids_by_profile()
+	var synced_bucket = synced_by_profile.get(profile_id.strip_edges(), {})
+	if synced_bucket is Dictionary:
+		return (synced_bucket as Dictionary).size()
+	return 0
+
+func _has_lobby_resume_for_profile(profile_id: String) -> bool:
+	var resume_by_profile := _get_lobby_resume_by_profile()
+	var resume = resume_by_profile.get(profile_id.strip_edges(), {})
+	return resume is Dictionary and not (resume as Dictionary).is_empty()
+
+func _has_active_match_for_profile(profile_id: String) -> bool:
+	var active_by_profile := _get_active_match_by_profile()
+	var active = active_by_profile.get(profile_id.strip_edges(), {})
+	return active is Dictionary and not (active as Dictionary).is_empty()
+
+func _repair_account_profile_mappings() -> bool:
+	var changed := false
+	var account_mappings := _get_account_profile_id_by_username()
+	var profiles := _get_profiles()
+	var normalized_usernames: Dictionary = {}
+
+	for raw_username_key in account_mappings.keys():
+		var normalized_key := str(raw_username_key).strip_edges().to_lower()
+		if normalized_key.is_empty():
+			continue
+		normalized_usernames[normalized_key] = true
+	for profile in profiles.values():
+		if not (profile is Dictionary):
+			continue
+		var stored_username_key := str((profile as Dictionary).get("account_username_key", "")).strip_edges().to_lower()
+		if stored_username_key.is_empty():
+			continue
+		normalized_usernames[stored_username_key] = true
+
+	for normalized_username_key in normalized_usernames.keys():
+		var best_profile_id := _find_best_account_profile_id(str(normalized_username_key))
+		if best_profile_id.is_empty():
+			continue
+		if str(account_mappings.get(normalized_username_key, "")).strip_edges() == best_profile_id:
+			continue
+		account_mappings[normalized_username_key] = best_profile_id
+		changed = true
+
+	if changed:
+		_data["account_profile_id_by_username"] = account_mappings
+
+	var current_profile_id := str(_data.get("current_profile_id", "")).strip_edges()
+	if current_profile_id.is_empty():
+		return changed
+	var current_profile := get_profile(current_profile_id)
+	if current_profile.is_empty():
+		return changed
+	var current_username_key := str(current_profile.get("account_username_key", "")).strip_edges().to_lower()
+	if current_username_key.is_empty():
+		return changed
+	var repaired_current_profile_id := str(account_mappings.get(current_username_key, "")).strip_edges()
+	if repaired_current_profile_id.is_empty() or repaired_current_profile_id == current_profile_id:
+		return changed
+	_data["current_profile_id"] = repaired_current_profile_id
+	return true
 
 func _get_decks_by_profile() -> Dictionary:
 	var decks_by_profile = _data.get("decks_by_profile", {})
