@@ -77,6 +77,25 @@ func activate(_game_manager: GameManager, _target: Card = null) -> void:
 func get_unlock_mana_cost(game_manager: GameManager = null) -> int:
 	return get_adjusted_mana_cost(mana_cost, Card.COST_KIND_POWER_UNLOCK, game_manager)
 
+func get_unlock_display_mana_cost(game_manager: GameManager = null) -> int:
+	return get_unlock_mana_cost(game_manager)
+
+func get_unlock_display_cost_shorthand(
+	game_manager: GameManager = null,
+	force_show_mana: bool = false
+) -> String:
+	return get_cost_shorthand(get_unlock_display_mana_cost(game_manager), force_show_mana)
+
+func get_unlock_display_cost_lines(game_manager: GameManager = null) -> Array[String]:
+	var lines: Array[String] = []
+	var unlock_cost := get_unlock_display_mana_cost(game_manager)
+	lines.append("Unlock Cost: %d" % unlock_cost)
+	if discard_cost > 0:
+		lines.append("Discard: %d" % discard_cost)
+	for breakdown_line in get_cost_adjustment_lines(mana_cost, Card.COST_KIND_POWER_UNLOCK, game_manager):
+		lines.append(breakdown_line)
+	return lines
+
 func get_activation_mana_cost(base_cost: int, game_manager: GameManager = null) -> int:
 	return get_adjusted_mana_cost(base_cost, Card.COST_KIND_POWER_ACTIVATION, game_manager)
 

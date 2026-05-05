@@ -419,13 +419,7 @@ func _get_power_hover_cost_lines(power: PowerCard) -> Array[String]:
 		return lines
 
 	if power.is_face_down:
-		var unlock_cost := power.get_unlock_mana_cost(game_manager)
-		lines.append("Unlock Cost: %d" % unlock_cost)
-		if power.discard_cost > 0:
-			lines.append("Discard: %d" % power.discard_cost)
-		for breakdown_line in power.get_cost_adjustment_lines(power.mana_cost, Card.COST_KIND_POWER_UNLOCK, game_manager):
-			lines.append(breakdown_line)
-		return lines
+		return power.get_unlock_display_cost_lines(game_manager)
 
 	var hover_data: Dictionary = power.get_activation_cost_hover_data(game_manager)
 	if hover_data.is_empty():
@@ -698,43 +692,6 @@ func _add_level_badge(
 		badge.mouse_filter = Control.MOUSE_FILTER_STOP
 	return badge
 
-func _add_hidden_creature_stat_badge(
-	overlay: Control,
-	card: Card,
-	is_def: bool,
-	eff_str: int,
-	_eff_res: int
-) -> void:
-	if overlay == null or card == null or not is_def:
-		return
-	var hidden_stat := "str"
-	var hidden_base := card.strength
-	var hidden_eff := eff_str
-	if hidden_eff == hidden_base:
-		return
-
-	var hidden_label := "STR:%d" % hidden_eff
-	var hidden_font_color := Color(0.92, 0.97, 1.0)
-	if hidden_eff > hidden_base:
-		hidden_font_color = Color(0.4, 1.0, 0.4)
-	elif hidden_eff < hidden_base:
-		hidden_font_color = Color(1.0, 0.35, 0.35)
-
-	var hidden_badge := _add_overlay_stat_badge(
-		overlay,
-		hidden_label,
-		Control.PRESET_BOTTOM_LEFT,
-		6,
-		-58,
-		74,
-		-32,
-		hidden_font_color
-	)
-	var hidden_breakdown := card.get_full_stat_breakdown(hidden_stat)
-	if hidden_badge != null and hidden_breakdown != "":
-		hidden_badge.tooltip_text = hidden_breakdown
-		hidden_badge.mouse_filter = Control.MOUSE_FILTER_STOP
-
 func _get_power_status_cost_text(card: Card) -> String:
 	if not (card is PowerCard):
 		return ""
@@ -743,7 +700,10 @@ func _get_power_status_cost_text(card: Card) -> String:
 		var viewer := _get_viewer_player()
 		if viewer == null or power_card.get_controller() != viewer:
 			return ""
-		return "Unlock %s" % power_card.get_cost_shorthand(power_card.get_unlock_mana_cost(game_manager), true)
+		var unlock_cost_text: String = power_card.get_unlock_display_cost_shorthand(game_manager, true)
+		if unlock_cost_text.is_empty():
+			return "Unlock Free"
+		return "Unlock %s" % unlock_cost_text
 
 	var activation_cost := _get_power_activation_mana_cost(power_card)
 	if activation_cost <= 0:
@@ -2938,8 +2898,6 @@ func _refresh_display() -> void:
 			if right_badge != null and spd_breakdown != "":
 				right_badge.tooltip_text = spd_breakdown
 				right_badge.mouse_filter = Control.MOUSE_FILTER_STOP
-
-			_add_hidden_creature_stat_badge(card_overlay, card, is_def, eff_str, eff_res)
 
 		elif card.card_type == Card.CardType.STRUCTURE:
 			var eff_res_s := card.get_effective_resilience()

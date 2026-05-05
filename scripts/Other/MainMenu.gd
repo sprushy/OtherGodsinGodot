@@ -5202,8 +5202,7 @@ func _launch_dedicated_lobby_server() -> int:
 	var lobby_server_log_file := str(_smoke_config.get("lobby_server_log_file", "")).strip_edges()
 	if not lobby_server_log_file.is_empty():
 		args.append_array(["--log-file", lobby_server_log_file])
-	if not OS.has_feature("template"):
-		args.append("--editor")
+	# Keep the dedicated lobby in a plain headless runtime instead of editor mode.
 	args.append_array([
 		"--path",
 		project_path,

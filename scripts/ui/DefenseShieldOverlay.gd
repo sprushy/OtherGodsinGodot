@@ -10,11 +10,12 @@ const STEALTH_VIEW_SIZE_MULTIPLIER := 1.30
 const CORNER_WIDTH_RATIO := 0.46
 const CORNER_MAX_HEIGHT_RATIO := 0.70
 const CORNER_MARGIN_RATIO := 0.025
-const STAT_WIDTH_RATIO := 0.34
-const STAT_MAX_HEIGHT_RATIO := 0.56
+const STAT_WIDTH_RATIO := 0.46
+const STAT_MAX_HEIGHT_RATIO := 0.72
 const STAT_BADGE_LEFT := 6.0
 const STAT_BADGE_WIDTH := 60.0
-const STAT_BOTTOM_MARGIN := 8.0
+const STAT_BOTTOM_EXTENSION_RATIO := 0.34
+const STAT_MIN_EXTENSION := 18.0
 
 var _layout_mode: int = LAYOUT_CORNER
 var _size_multiplier: float = 1.0
@@ -122,14 +123,11 @@ func _layout_to_parent() -> void:
 	size = shield_size
 	match _layout_mode:
 		LAYOUT_STAT_UNDER:
-			var badge_left := clampf(
-				STAT_BADGE_LEFT + (STAT_BADGE_WIDTH - shield_size.x) * 0.5,
-				2.0,
-				maxf(2.0, parent_size.x - shield_size.x - 2.0)
-			)
+			var badge_left := STAT_BADGE_LEFT + (STAT_BADGE_WIDTH - shield_size.x) * 0.5
+			var bottom_extension := maxf(STAT_MIN_EXTENSION, shield_size.y * STAT_BOTTOM_EXTENSION_RATIO)
 			position = Vector2(
 				badge_left,
-				maxf(0.0, parent_size.y - shield_size.y - STAT_BOTTOM_MARGIN)
+				parent_size.y - shield_size.y + bottom_extension
 			)
 		LAYOUT_CENTER:
 			position = (parent_size - shield_size) * 0.5

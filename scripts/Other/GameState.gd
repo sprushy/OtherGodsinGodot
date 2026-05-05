@@ -125,6 +125,42 @@ static func serialize_embedded_card(card: Card) -> Dictionary:
 		return {}
 	return _serialize_card(card, HIDDEN_MODE_NONE)
 
+static func sanitize_network_value(value, game_manager: GameManager = null):
+	if value == null:
+		return null
+	if value is bool or value is int or value is float or value is String:
+		return value
+	if value is Card:
+		return {
+			"kind": "card_ref",
+			"uid": value.get("uid") if "uid" in value else "",
+		}
+	if value is Player:
+		return {
+			"kind": "player_ref",
+			"player_index": value.get_index(game_manager) if game_manager != null else -1,
+		}
+	if value is Zone:
+		return {
+			"kind": "zone_ref",
+			"zone": CardAction._zone_to_dict(value as Zone, game_manager),
+		}
+	if value is CardAction:
+		return (value as CardAction).to_dict(game_manager)
+	if value is Array:
+		var sanitized_items: Array = []
+		for entry in value:
+			sanitized_items.append(sanitize_network_value(entry, game_manager))
+		return sanitized_items
+	if value is Dictionary:
+		var sanitized_dict := {}
+		for key in value.keys():
+			sanitized_dict[key] = sanitize_network_value(value[key], game_manager)
+		return sanitized_dict
+	if value is Object:
+		return null
+	return value
+
 static func _serialize_card(card: Card, hidden_mode: int = HIDDEN_MODE_NONE) -> Dictionary:
 	var uid: String = card.get("uid") if "uid" in card else ""
 	if hidden_mode == HIDDEN_MODE_HAND:
@@ -198,7 +234,7 @@ static func _serialize_card(card: Card, hidden_mode: int = HIDDEN_MODE_NONE) -> 
 		attached_target_uid       = attached_target_uid,
 		active_buffs             = _serialize_card_buffs(card),
 		active_statuses           = _serialize_card_statuses(card),
-		serialized_state          = card.get_serialized_state(),
+		serialized_state          = sanitize_network_value(card.get_serialized_state(), null),
 	}
 
 static func _serialize_card_buffs(card: Card) -> Array:

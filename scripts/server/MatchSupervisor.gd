@@ -142,8 +142,7 @@ func _launch_dedicated_match(session) -> bool:
 			"match_config=%s" % config_path,
 		])
 	else:
-		if not OS.has_feature("template"):
-			args.append("--editor")
+		# Launch as a plain headless script runtime so debug/editor sessions stay isolated.
 		args.append_array([
 			"--path",
 			project_path,

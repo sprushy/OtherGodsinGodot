@@ -355,6 +355,8 @@ func _get_ui_interaction_type_for_command(command_type: String) -> String:
 			return "foolish_optimism"
 		"gugalanna_celestial_charge_choice":
 			return "gugalanna_celestial_charge"
+		"freyja_active_open_sessrumnir_choice":
+			return "freyja_active_open_sessrumnir"
 		"giant_master_architect_choice":
 			return "giant_master_architect_impact"
 		"pai_long_autumn_king_choice":
@@ -1906,7 +1908,7 @@ func _get_required_player_for_command(command: Dictionary) -> Player:
 			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("hati_uid", ""))))
 		"skoll_upkeep_summon":
 			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("skoll_uid", ""))))
-		"activate_card_ability", "en_hedu_anna_exaltation", "aphrodite_enslave_choice", "blessed_knights_choice", "wolf_adolescent_maturation_choice", "wheel_of_fire_turn_start_choice", "tezcatlipoca_active_titlacauan_choice", "nusku_active_core_flame_choice", "mummu_entropy_choice", "first_sage_adapa_choice", "third_sage_enmedugga_choice", "fourth_sage_enmegalamma_choice", "sixth_sage_an_enlilda_choice", "lailoken_reveal_choice", "masmassu_priest_reveal_choice", "rally_the_troops_choice", "terror_impact_choice", "huginn_perish_prime_choice", "muninn_perish_prime_choice", "fenrir_devour_choice", "harii_jarl_impact_choice", "durinn_secondborn_choice", "kur_jara_tree_of_life_choice", "hunting_tactics_choice", "foolish_optimism_choice", "gugalanna_celestial_charge_choice", "giant_master_architect_choice", "pai_long_autumn_king_choice", "nergal_lion_choice", "gala_tura_destroyed_choice", "gawain_healing_hands_choice", "tatzelwurm_dragon_heart_choice", "byggvir_reveal_choice", "apollyons_demiurge_choice":
+		"activate_card_ability", "en_hedu_anna_exaltation", "aphrodite_enslave_choice", "blessed_knights_choice", "wolf_adolescent_maturation_choice", "wheel_of_fire_turn_start_choice", "tezcatlipoca_active_titlacauan_choice", "nusku_active_core_flame_choice", "mummu_entropy_choice", "first_sage_adapa_choice", "third_sage_enmedugga_choice", "fourth_sage_enmegalamma_choice", "sixth_sage_an_enlilda_choice", "lailoken_reveal_choice", "masmassu_priest_reveal_choice", "rally_the_troops_choice", "terror_impact_choice", "huginn_perish_prime_choice", "muninn_perish_prime_choice", "fenrir_devour_choice", "harii_jarl_impact_choice", "durinn_secondborn_choice", "kur_jara_tree_of_life_choice", "hunting_tactics_choice", "foolish_optimism_choice", "gugalanna_celestial_charge_choice", "freyja_active_open_sessrumnir_choice", "giant_master_architect_choice", "pai_long_autumn_king_choice", "nergal_lion_choice", "gala_tura_destroyed_choice", "gawain_healing_hands_choice", "tatzelwurm_dragon_heart_choice", "byggvir_reveal_choice", "apollyons_demiurge_choice":
 			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("source_uid", ""))))
 		"humbaba_augury_choice":
 			var humbaba := game_manager.get_card_by_uid(str(command.get("source_uid", ""))) as HumbabaTheTerrible
@@ -3197,6 +3199,30 @@ func _process_command_impl(command: Dictionary) -> bool:
 				move_failed.emit("gugalanna_celestial_charge_choice: invalid target")
 				return false
 			card.apply_celestial_charge(game_manager, target)
+			move_validated.emit(command)
+			return true
+		"freyja_active_open_sessrumnir_choice":
+			var source_uid: String = command.get("source_uid", "")
+			var active_god := game_manager.get_card_by_uid(source_uid) as FreyjaActive
+			if active_god == null:
+				move_failed.emit("freyja_active_open_sessrumnir_choice: active god not found")
+				return false
+			var option: Dictionary = command.get("option", {})
+			var selection_data = option if not option.is_empty() else command
+			var chosen_targets := active_god.get_selected_open_sessrumnir_targets(game_manager, selection_data)
+			var raw_choices: Array = []
+			if selection_data is Dictionary:
+				raw_choices = selection_data.get("target_uids", [])
+			elif selection_data is Array:
+				raw_choices = selection_data
+			if chosen_targets.size() != raw_choices.size():
+				move_failed.emit("freyja_active_open_sessrumnir_choice: invalid target")
+				return false
+			var skip_choice := bool(option.get("skip", command.get("skip", false)))
+			if not skip_choice and not active_god.is_valid_open_sessrumnir_selection(game_manager, chosen_targets):
+				move_failed.emit("freyja_active_open_sessrumnir_choice: invalid selection")
+				return false
+			active_god.resolve_from_command(game_manager, command)
 			move_validated.emit(command)
 			return true
 		"giant_master_architect_choice":

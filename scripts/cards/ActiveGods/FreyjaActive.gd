@@ -9,7 +9,7 @@ func _init() -> void:
 	super._init()
 	linked_god_name = LINKED_GOD_NAME
 	card_name = "Freyja, Active God"
-	card_types = ["Active God", "Divine Manifestation", "God"]
+	card_types = ["Active God", "Divine Manifestation", "God", "Targeting"]
 	level = 7
 	mana_cost = 11
 	speed = 3
@@ -17,59 +17,34 @@ func _init() -> void:
 	strength = 28
 	culture = "Norse"
 	flavor_text = "Sessrumnir opens and the fallen march once more, but only until dawn returns."
-	ability_text = "[b]Open Sessrumnir[/b] ([b]Impact[/b]): Summon up to half the Norse Warriors in your grave; they are destroyed at the start of your next turn."
+	ability_text = "[b]Open Sessrumnir[/b] ([b]Impact[/b]): Summon a minimum of 1, up to half the Norse Warriors in your grave; they are destroyed at the start of your next turn."
 	art_path = ART_PATH
 	name_at_bottom = true
 	artist = "Ricardo Zoppello"
 
 func on_impact(game_manager: GameManager) -> void:
-	if game_manager == null or card_owner == null or card_owner.graveyard_zone == null:
+	if game_manager == null:
 		return
-	var valid_targets := _get_valid_graveyard_targets()
-	if valid_targets.is_empty():
-		game_manager.note_player_feedback("%s finds no Norse Warriors to call from the graveyard." % card_name)
+	var controller := get_controller()
+	if controller == null:
+		game_manager.note_player_feedback(resolve_open_sessrumnir_choice(game_manager))
 		return
-
-	var summon_limit := mini(_get_open_summon_zone_count(), int(floor(float(valid_targets.size()) / 2.0)))
-	if summon_limit <= 0:
-		game_manager.note_player_feedback("%s needs open summon lanes to call the slain." % card_name)
+	var valid_targets := get_valid_open_sessrumnir_targets(game_manager)
+	var summon_limit := get_open_sessrumnir_summon_limit(game_manager)
+	if valid_targets.is_empty() or summon_limit <= 0:
+		game_manager.note_player_feedback(resolve_open_sessrumnir_choice(game_manager))
 		return
-
-	var summoned_names: Array[String] = []
-	for i in range(summon_limit):
-		var target := valid_targets[i]
-		if target == null or target.current_zone != card_owner.graveyard_zone:
-			continue
-		var summon_zone := _get_best_summon_zone(target)
-		if summon_zone == null:
-			continue
-		var summoned := game_manager.summon_creature_by_effect(
-			card_owner,
-			target,
-			summon_zone,
-			Card.CreatureMode.AGGRESSIVE,
-			false,
-			false,
-			self,
-			false,
-			false,
-			true
-		)
-		if not summoned:
-			continue
-		_mark_for_next_turn_destruction(target, game_manager)
-		summoned_names.append(target.card_name)
-
-	if summoned_names.is_empty():
-		game_manager.note_player_feedback("%s could not summon any Norse Warriors." % card_name)
-		return
-
-	game_manager.note_player_feedback(
-		"%s summons %s from the graveyard. They will be destroyed at the start of your next turn." % [
-			card_name,
-			", ".join(summoned_names)
-		]
-	)
+	var target_uids: Array[String] = []
+	for target in valid_targets:
+		if target != null:
+			target_uids.append(target.uid)
+	game_manager.decision_requested.emit(controller, "freyja_active_open_sessrumnir", {
+		"source_uid": uid,
+		"target_uids": target_uids,
+		"summon_limit": summon_limit,
+		"queue_with_priority": true,
+		"event_name": "freyja_active_open_sessrumnir",
+	})
 
 func on_turn_start(game_manager: GameManager) -> void:
 	if game_manager == null or game_manager.current_player != card_owner:
@@ -99,6 +74,115 @@ func _get_valid_graveyard_targets() -> Array[Card]:
 		if _is_valid_target(card):
 			valid_targets.append(card)
 	return valid_targets
+
+func get_valid_open_sessrumnir_targets(_game_manager: GameManager = null) -> Array[Card]:
+	return _get_valid_graveyard_targets()
+
+func get_open_sessrumnir_summon_limit(_game_manager: GameManager = null) -> int:
+	var valid_targets := _get_valid_graveyard_targets()
+	if valid_targets.is_empty():
+		return 0
+	var desired_count := maxi(1, int(floor(float(valid_targets.size()) / 2.0)))
+	return mini(_get_open_summon_zone_count(), mini(valid_targets.size(), desired_count))
+
+func get_selected_open_sessrumnir_targets(game_manager: GameManager, target_data) -> Array[Card]:
+	var selected: Array[Card] = []
+	var raw_choices: Array = []
+	if target_data is Array:
+		raw_choices = target_data
+	elif target_data is Dictionary:
+		raw_choices = target_data.get("target_uids", [])
+	var valid_targets := get_valid_open_sessrumnir_targets(game_manager)
+	for entry in raw_choices:
+		var card: Card = null
+		if entry is Card:
+			card = entry as Card
+		elif game_manager != null:
+			card = game_manager.get_card_by_uid(str(entry))
+		if card == null or card in selected or card not in valid_targets:
+			continue
+		selected.append(card)
+	return selected
+
+func is_valid_open_sessrumnir_selection(game_manager: GameManager, chosen_targets: Array[Card]) -> bool:
+	var summon_limit := get_open_sessrumnir_summon_limit(game_manager)
+	if chosen_targets.size() > summon_limit:
+		return false
+	var valid_targets := get_valid_open_sessrumnir_targets(game_manager)
+	var seen: Dictionary = {}
+	for target in chosen_targets:
+		if target == null or target not in valid_targets:
+			return false
+		if seen.has(target.uid):
+			return false
+		seen[target.uid] = true
+	return true
+
+func resolve_from_command(game_manager: GameManager, command: Dictionary) -> void:
+	if game_manager == null:
+		return
+	var option: Dictionary = command.get("option", {})
+	var skip_choice := bool(option.get("skip", command.get("skip", false)))
+	var chosen_targets := get_selected_open_sessrumnir_targets(game_manager, option if not option.is_empty() else command)
+	game_manager.note_player_feedback(resolve_open_sessrumnir_choice(game_manager, chosen_targets, not skip_choice))
+
+func resolve_open_sessrumnir_choice(
+		game_manager: GameManager,
+		chosen_targets: Array[Card] = [],
+		auto_select_if_empty: bool = true
+) -> String:
+	if game_manager == null:
+		return card_name + " cannot open Sessrumnir right now."
+	if card_owner == null or card_owner.graveyard_zone == null:
+		return card_name + " has no graveyard to call from."
+	var valid_targets := get_valid_open_sessrumnir_targets(game_manager)
+	if valid_targets.is_empty():
+		return "%s finds no Norse Warriors to call from the graveyard." % card_name
+	var summon_limit := get_open_sessrumnir_summon_limit(game_manager)
+	if summon_limit <= 0:
+		return "%s needs open summon lanes to call the slain." % card_name
+
+	var resolved_targets := chosen_targets.duplicate()
+	if resolved_targets.is_empty():
+		if auto_select_if_empty:
+			for i in range(mini(summon_limit, valid_targets.size())):
+				resolved_targets.append(valid_targets[i])
+	elif not is_valid_open_sessrumnir_selection(game_manager, resolved_targets):
+		return "%s needs a valid Open Sessrumnir selection." % card_name
+
+	if resolved_targets.is_empty():
+		return "%s chooses no targets for Open Sessrumnir." % card_name
+
+	var summoned_names: Array[String] = []
+	for target in resolved_targets:
+		if target == null or target.current_zone != card_owner.graveyard_zone:
+			continue
+		var summon_zone := _get_best_summon_zone(target)
+		if summon_zone == null:
+			continue
+		var summoned := game_manager.summon_creature_by_effect(
+			card_owner,
+			target,
+			summon_zone,
+			Card.CreatureMode.AGGRESSIVE,
+			false,
+			false,
+			self,
+			false,
+			false,
+			true
+		)
+		if not summoned:
+			continue
+		_mark_for_next_turn_destruction(target, game_manager)
+		summoned_names.append(target.card_name)
+
+	if summoned_names.is_empty():
+		return "%s could not summon any chosen Norse Warriors." % card_name
+	return "%s summons %s from the graveyard. They will be destroyed at the start of your next turn." % [
+		card_name,
+		", ".join(summoned_names)
+	]
 
 func _is_valid_target(target: Card) -> bool:
 	return target != null \

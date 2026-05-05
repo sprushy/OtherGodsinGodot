@@ -795,12 +795,18 @@ func _begin_turn_upkeep() -> void:
 				GOD_DEATH_FOLLOWER_LOSS
 			]
 		)
+		if is_game_over:
+			return
 	for card in _get_sorted_upkeep_cards_for_player(current_player, "on_turn_upkeep"):
 		card.on_turn_upkeep(self)
+		if is_game_over:
+			return
 	var opponent := get_opponent(current_player)
 	if opponent != null:
 		for card in _get_sorted_upkeep_cards_for_player(opponent, "on_opponent_turn_upkeep"):
 			card.on_opponent_turn_upkeep(self, current_player)
+			if is_game_over:
+				return
 	turn_upkeep_started.emit(turn_number, current_player)
 
 func _resolve_turn_upkeep() -> void:
@@ -2005,7 +2011,11 @@ func resolve_followers_attack(attackers: Array[Card], defending_player: Player) 
 			follower_damage += _apply_combat_follower_damage(combatant, defending_player, combatant.get_effective_strength())
 		else:
 			follower_damage += _apply_combat_follower_damage(null, defending_player, combatant.get_effective_strength())
+		if is_game_over:
+			break
 
+	if is_game_over:
+		return follower_damage
 	if active_attackers.size() >= 2:
 		_notify_after_united_front_combat(active_attackers[0], active_attackers[1], null)
 	else:

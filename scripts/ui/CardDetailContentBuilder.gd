@@ -89,7 +89,7 @@ static func build_visual_hover_body(card: Card, viewer: Player, config: Dictiona
 		summon_cost_lbl.custom_minimum_size = Vector2(210.0, 0.0)
 		vbox.add_child(summon_cost_lbl)
 
-	if card.ability_text != "" or card.flavor_text != "":
+	if card.ability_text != "" or card.should_show_flavor_text_in_hover():
 		vbox.add_child(_make_separator(Color(0.3, 0.3, 0.5)))
 
 	if card.ability_text != "":
@@ -101,7 +101,7 @@ static func build_visual_hover_body(card: Card, viewer: Player, config: Dictiona
 		)
 		vbox.add_child(ability_lbl)
 
-	if card.flavor_text != "":
+	if card.should_show_flavor_text_in_hover():
 		vbox.add_child(_make_label(card.flavor_text, 14, Color(0.6, 0.6, 0.6), true))
 
 	var hover_details := card.get_hover_detail_lines(viewer)
@@ -300,7 +300,7 @@ static func build_board_popup_body(card: Card, viewer: Player, config: Dictionar
 	if not is_hidden_card:
 		_add_hover_stored_card_section(vbox, card, viewer, _BOARD_POPUP_WIDTH)
 
-	if card.flavor_text != "" and not is_hidden_card:
+	if card.should_show_flavor_text_in_hover() and not is_hidden_card:
 		vbox.add_child(_make_label(card.flavor_text, 13, Color(0.55, 0.55, 0.55), true))
 
 	return vbox

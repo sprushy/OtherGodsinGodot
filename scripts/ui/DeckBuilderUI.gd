@@ -2863,7 +2863,7 @@ func _show_preview(card: Card) -> void:
 	var preview_body := ""
 	if card.ability_text != "":
 		preview_body = BaseCard.apply_keyword_hints(card.ability_text)
-	if card.flavor_text != "":
+	if card.should_show_flavor_text_in_hover():
 		var escaped_flavor := _escape_preview_bbcode_text(card.flavor_text)
 		if not preview_body.is_empty():
 			preview_body += "\n\n[color=#7f7f89][i]%s[/i][/color]" % escaped_flavor

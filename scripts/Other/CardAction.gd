@@ -63,7 +63,7 @@ func to_dict(game_manager: GameManager) -> Dictionary:
 		# Event specific
 		"event_name": event_name,
 		"event_speed": event_speed,
-		"event_data": event_data,
+		"event_data": GameState.sanitize_network_value(event_data, game_manager),
 		"display_zone": _zone_to_dict(display_zone, game_manager)
 	}
 	

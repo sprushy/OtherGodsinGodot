@@ -710,7 +710,7 @@ func _show_preview(card: Card) -> void:
 	_prev_stats.text = "  ".join(stat_parts)
 
 	_prev_ability.text = BaseCard.apply_keyword_hints(card.ability_text) if card.ability_text != "" else ""
-	_prev_flavor.text  = card.flavor_text  if card.flavor_text  != "" else ""
+	_prev_flavor.text  = card.flavor_text if card.should_show_flavor_text_in_hover() else ""
 
 # ── filter ─────────────────────────────────────────────────────────
 func _set_filter(new_filter: String) -> void:

@@ -44,6 +44,9 @@ signal visual_state_changed()
 var _art_path: String = ""
 var _exhausted_art_path: String = ""
 
+func should_show_flavor_text_in_hover() -> bool:
+	return flavor_text != "" and ability_text == ""
+
 const CARD_NAME_MOJIBAKE_FIXES := {
 	"AurboÃƒÂ°a": "Aurboða",
 	"AurboÃ°a": "Aurboða"

@@ -22,8 +22,8 @@ func serialize_prompt_data(data: Dictionary) -> Dictionary:
 				player_index = game_manager.players.find(value)
 			serialized[key + "_player_index"] = player_index
 			serialized.erase(key)
-		elif value is CardAction:
-			serialized[key] = value.to_dict(game_manager)
+		else:
+			serialized[key] = GameState.sanitize_network_value(value, game_manager)
 	return serialized
 
 func build_prompt_envelope(player_index: int, prompt_type: String, data: Dictionary) -> Dictionary:

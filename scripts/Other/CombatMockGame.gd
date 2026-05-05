@@ -22,6 +22,8 @@ const TezTitlacauanCursorSource = preload("res://images/ui/cursors/SlaveCollar C
 const AnointingStatueCursorSource = preload("res://scripts/Other/Annointing Statue Cursor.png")
 const BREIDABLIK_CURSOR_IMAGE_PATH := "res://images/ui/cursors/Bredilblik Cursor.png"
 const MEAD_CURSOR_IMAGE_PATH := "res://images/ui/cursors/Mead Cursor.png"
+const FREYJA_TABBY_CURSOR_IMAGE_PATH := "res://images/ui/cursors/TabbyCatCursor.png"
+const FREYJA_BLACK_CURSOR_IMAGE_PATH := "res://images/ui/cursors/BlackCatCursor.png"
 const CardBackTexture = preload("res://images/cardbackAI.png")
 const PromptRouterScript = preload("res://scripts/server/PromptRouter.gd")
 const HeadlessMatchHostScript = preload("res://scripts/server/HeadlessMatchHost.gd")
@@ -351,6 +353,10 @@ var _pending_tezcatlipoca_active_prompt: Card = null
 var _pending_tezcatlipoca_titlacauan_source_uid: String = ""
 var _pending_tezcatlipoca_titlacauan_selected_uids: Array[String] = []
 var _pending_tezcatlipoca_titlacauan_prompt_targets: Array[String] = []
+var _pending_freyja_active_prompt: FreyjaActive = null
+var _pending_freyja_active_source_uid: String = ""
+var _pending_freyja_active_selected_uids: Array[String] = []
+var _pending_freyja_active_prompt_targets: Array[String] = []
 var _pending_turn_start_priority_feedback: String = ""
 var _breidablik_panel: Control = null
 var _e2_abzu_panel: Control = null
@@ -426,6 +432,8 @@ var _tez_titlacauan_cursor_texture: Texture2D = null
 var _anointing_statue_cursor_texture: Texture2D = null
 var _breidablik_cursor_texture: Texture2D = null
 var _mead_cursor_texture: Texture2D = null
+var _freyja_tabby_cursor_texture: Texture2D = null
+var _freyja_black_cursor_texture: Texture2D = null
 var _active_selection_cursor_mode: String = ""
 var _active_selection_cursor_target_height: int = 0
 var _overlay_selection_cursor_mode: String = ""
@@ -442,6 +450,8 @@ var _tez_titlacauan_cursor_target_height: int = 0
 var _anointing_statue_cursor_target_height: int = 0
 var _breidablik_cursor_target_height: int = 0
 var _mead_cursor_target_height: int = 0
+var _freyja_tabby_cursor_target_height: int = 0
+var _freyja_black_cursor_target_height: int = 0
 var _devour_cancel_prompt: Control = null
 var _tez_titlacauan_cursor_overlay: Control = null
 var _tez_titlacauan_cursor_budget_label: Label = null
@@ -530,6 +540,10 @@ const BREIDABLIK_CURSOR_TARGET_HEIGHT := 108
 const BREIDABLIK_CURSOR_HOTSPOT_RATIO := Vector2(0.50, 0.50)
 const MEAD_CURSOR_TARGET_HEIGHT := 108
 const MEAD_CURSOR_HOTSPOT_RATIO := Vector2(0.05, 0.92)
+const FREYJA_TABBY_CURSOR_TARGET_HEIGHT := 108
+const FREYJA_TABBY_CURSOR_HOTSPOT_RATIO := Vector2(0.06, 0.77)
+const FREYJA_BLACK_CURSOR_TARGET_HEIGHT := 108
+const FREYJA_BLACK_CURSOR_HOTSPOT_RATIO := Vector2(0.94, 0.55)
 const SACRIFICE_CURSOR_SHAPES := [
 	Input.CURSOR_ARROW,
 	Input.CURSOR_POINTING_HAND,
@@ -1532,6 +1546,24 @@ func _is_mead_cursor_mode_active() -> bool:
 		and _pending_click_selection_source is BerserkerMead \
 		and _get_pending_target_selection_name().contains("Berserker Mead")
 
+func _is_freyja_tabby_cursor_mode_active() -> bool:
+	return (_has_pending_click_selection() and _pending_click_selection_source is Freyja) \
+		or (awaiting_god_ability_target and god_ability_source is Freyja)
+
+func _is_freyja_active_prompt_open() -> bool:
+	return _pending_freyja_active_prompt != null
+
+func _get_freyja_active_cursor_mode() -> String:
+	if not _is_freyja_active_prompt_open():
+		return ""
+	return "freyja_black" if _pending_freyja_active_selected_uids.size() % 2 == 0 else "freyja_tabby"
+
+func _is_freyja_active_black_cursor_mode_active() -> bool:
+	return _get_freyja_active_cursor_mode() == "freyja_black"
+
+func _is_freyja_active_tabby_cursor_mode_active() -> bool:
+	return _get_freyja_active_cursor_mode() == "freyja_tabby"
+
 func _is_silence_cursor_mode_active() -> bool:
 	if _has_pending_click_selection():
 		return _is_silence_or_mute_targeting_source(_pending_click_selection_source)
@@ -1577,6 +1609,8 @@ func _is_silence_or_mute_targeting_source(card: Card) -> bool:
 	return ability_text_value.contains("silence") or ability_text_value.contains("mute")
 
 func _get_selection_cursor_mode_for_source(card: Card) -> String:
+	if card is Freyja:
+		return "freyja_tabby"
 	if card is Breidablik:
 		return "breidablik"
 	if card is TonalExtraction:
@@ -1693,6 +1727,10 @@ func _position_devour_cancel_prompt() -> void:
 	_devour_cancel_prompt.global_position = (viewport_size - prompt_size) * 0.5
 
 func _get_selection_cursor_mode() -> String:
+	if _is_freyja_active_black_cursor_mode_active():
+		return "freyja_black"
+	if _is_freyja_active_tabby_cursor_mode_active():
+		return "freyja_tabby"
 	if _is_giant_master_architect_cursor_mode_active():
 		return "giant_master_architect"
 	if _is_hermes_cursor_mode_active():
@@ -1715,6 +1753,8 @@ func _get_selection_cursor_mode() -> String:
 		return "breidablik"
 	if _is_mead_cursor_mode_active():
 		return "mead"
+	if _is_freyja_tabby_cursor_mode_active():
+		return "freyja_tabby"
 	if _is_tonal_extraction_cursor_mode_active():
 		return "tonal_extraction"
 	if _is_silence_cursor_mode_active():
@@ -1731,6 +1771,10 @@ func _get_cursor_mode_target_height(cursor_mode: String) -> int:
 			return UIArtScaler.get_board_cursor_target_height(BREIDABLIK_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 		"mead":
 			return UIArtScaler.get_board_cursor_target_height(MEAD_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+		"freyja_tabby":
+			return UIArtScaler.get_board_cursor_target_height(FREYJA_TABBY_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+		"freyja_black":
+			return UIArtScaler.get_board_cursor_target_height(FREYJA_BLACK_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 		"tonal_extraction":
 			return UIArtScaler.get_board_cursor_target_height(TONAL_EXTRACTION_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 		"silence":
@@ -1809,6 +1853,40 @@ func _apply_mead_cursor() -> bool:
 	var hotspot := UIArtScaler.get_cursor_hotspot(_mead_cursor_texture, MEAD_CURSOR_HOTSPOT_RATIO)
 	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
 		Input.set_custom_mouse_cursor(_mead_cursor_texture, cursor_shape, hotspot)
+	return true
+
+func _apply_freyja_tabby_cursor() -> bool:
+	var target_height := UIArtScaler.get_board_cursor_target_height(FREYJA_TABBY_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+	if _freyja_tabby_cursor_texture == null or _freyja_tabby_cursor_target_height != target_height:
+		var image := Image.load_from_file(ProjectSettings.globalize_path(FREYJA_TABBY_CURSOR_IMAGE_PATH))
+		if image == null or image.is_empty():
+			return false
+		var source_texture := ImageTexture.create_from_image(image)
+		_freyja_tabby_cursor_texture = UIArtScaler.build_cursor_texture(source_texture, target_height)
+		_freyja_tabby_cursor_target_height = target_height
+	if _freyja_tabby_cursor_texture == null:
+		return false
+
+	var hotspot := UIArtScaler.get_cursor_hotspot(_freyja_tabby_cursor_texture, FREYJA_TABBY_CURSOR_HOTSPOT_RATIO)
+	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
+		Input.set_custom_mouse_cursor(_freyja_tabby_cursor_texture, cursor_shape, hotspot)
+	return true
+
+func _apply_freyja_black_cursor() -> bool:
+	var target_height := UIArtScaler.get_board_cursor_target_height(FREYJA_BLACK_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+	if _freyja_black_cursor_texture == null or _freyja_black_cursor_target_height != target_height:
+		var image := Image.load_from_file(ProjectSettings.globalize_path(FREYJA_BLACK_CURSOR_IMAGE_PATH))
+		if image == null or image.is_empty():
+			return false
+		var source_texture := ImageTexture.create_from_image(image)
+		_freyja_black_cursor_texture = UIArtScaler.build_cursor_texture(source_texture, target_height)
+		_freyja_black_cursor_target_height = target_height
+	if _freyja_black_cursor_texture == null:
+		return false
+
+	var hotspot := UIArtScaler.get_cursor_hotspot(_freyja_black_cursor_texture, FREYJA_BLACK_CURSOR_HOTSPOT_RATIO)
+	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
+		Input.set_custom_mouse_cursor(_freyja_black_cursor_texture, cursor_shape, hotspot)
 	return true
 
 func _apply_silence_cursor() -> bool:
@@ -2023,6 +2101,22 @@ func _sync_sacrifice_cursor() -> void:
 	if cursor_mode == "mead":
 		if _apply_mead_cursor():
 			_active_selection_cursor_mode = "mead"
+			_active_selection_cursor_target_height = target_height
+		else:
+			_restore_default_selection_cursor()
+		return
+
+	if cursor_mode == "freyja_tabby":
+		if _apply_freyja_tabby_cursor():
+			_active_selection_cursor_mode = "freyja_tabby"
+			_active_selection_cursor_target_height = target_height
+		else:
+			_restore_default_selection_cursor()
+		return
+
+	if cursor_mode == "freyja_black":
+		if _apply_freyja_black_cursor():
+			_active_selection_cursor_mode = "freyja_black"
 			_active_selection_cursor_target_height = target_height
 		else:
 			_restore_default_selection_cursor()
@@ -3907,7 +4001,41 @@ func _get_graveyard_hand_proxy_cards(hand_player: Player) -> Array[Card]:
 			continue
 		if card.can_show_graveyard_hand_proxy(game_manager):
 			cards.append(card)
+	for card in _get_pending_freyja_graveyard_proxy_targets(hand_player):
+		if card != null and card not in cards:
+			cards.append(card)
 	return cards
+
+func _get_pending_freyja_graveyard_proxy_targets(hand_player: Player) -> Array[Card]:
+	var cards: Array[Card] = []
+	if hand_player == null or hand_player.graveyard_zone == null or game_manager == null:
+		return cards
+	if _has_pending_click_selection() and _pending_click_selection_source is Freyja:
+		var freyja := _pending_click_selection_source as Freyja
+		if freyja != null and freyja.card_owner == hand_player:
+			for target in freyja.get_valid_targets(game_manager):
+				if target != null and target.current_zone == hand_player.graveyard_zone:
+					cards.append(target)
+	if awaiting_god_ability_target and god_ability_source is Freyja:
+		var freyja_god := god_ability_source as Freyja
+		if freyja_god != null and freyja_god.card_owner == hand_player:
+			for target in freyja_god.get_valid_targets(game_manager):
+				if target != null and target.current_zone == hand_player.graveyard_zone and target not in cards:
+					cards.append(target)
+	if _pending_freyja_active_prompt != null and _pending_freyja_active_prompt.card_owner == hand_player:
+		for target in _get_pending_freyja_active_targets():
+			if target != null and target not in cards:
+				cards.append(target)
+	return cards
+
+func _is_freyja_power_target_selection_active(hand_player: Player) -> bool:
+	return hand_player != null \
+		and awaiting_god_ability_target \
+		and god_ability_source is Freyja \
+		and (god_ability_source as Freyja).card_owner == hand_player
+
+func _is_freyja_active_selected_card(card: Card) -> bool:
+	return card != null and card.uid in _pending_freyja_active_selected_uids
 
 func _is_graveyard_hand_proxy(card: Card) -> bool:
 	return card != null \
@@ -3942,6 +4070,7 @@ func draw_hand() -> void:
 	var blot_valid_choices: Array[Card] = []
 	if _is_blot_selection_active():
 		blot_valid_choices = _get_blot_valid_choices(_pending_blot_spell)
+	var freyja_power_targeting := _is_freyja_power_target_selection_active(hand_player)
 
 	_fan_container = Control.new()
 	_fan_container.name = "HandOverlay"
@@ -3968,6 +4097,8 @@ func draw_hand() -> void:
 		vc.set_priority_response_available(_is_card_usable_for_priority(card))
 		vc.set_blot_summon_state(card in blot_valid_choices, card in _pending_blot_selected_creatures)
 		vc.set_hand_mode(true)
+		if freyja_power_targeting:
+			vc.set_disabled(true)
 		vc.hand_hovered.connect(_on_hand_card_hover_started)
 		vc.hand_unhovered.connect(_on_hand_card_hover_ended)
 		vc.card_clicked.connect(_on_hand_card_pressed)
@@ -3992,6 +4123,8 @@ func draw_hand() -> void:
 		vc.card_clicked.connect(_on_hand_card_pressed)
 		vc.card_right_clicked.connect(_on_hand_card_right_clicked)
 		vc.card_drag_released.connect(_on_card_drag_released)
+		if _is_freyja_active_selected_card(card):
+			vc.set_highlighted(true)
 		_hand_visual_cards.append(vc)
 
 	if _hand_visual_cards.is_empty():
@@ -4942,10 +5075,10 @@ func _get_power_activation_cost_hover_bbcode_lines(power: PowerCard) -> Array[St
 func _get_power_unlock_cost_label(power: PowerCard) -> String:
 	if power == null:
 		return ""
-	var unlock_mana_cost := power.get_unlock_mana_cost(game_manager) if game_manager != null else power.mana_cost
-	if unlock_mana_cost <= 0 and not power.has_additional_costs():
+	var unlock_cost_text: String = power.get_unlock_display_cost_shorthand(game_manager)
+	if unlock_cost_text.is_empty():
 		return "Free"
-	return power.get_cost_shorthand(unlock_mana_cost)
+	return unlock_cost_text
 
 func _complete_power_unlock(power: PowerCard) -> void:
 	if power == null:
@@ -5211,6 +5344,10 @@ func _on_power_slot_card_pressed(card: Card) -> void:
 func _on_power_pressed(power: PowerCard) -> void:
 	if _is_card_usable_for_priority(power):
 		_on_priority_response_chosen(power)
+		return
+	if _pending_freyja_active_prompt != null:
+		_set_action_label_text("Open Sessrumnir is waiting for graveyard picks. Click a Norse Warrior in your graveyard, click Freyja to confirm, or right-click to skip.")
+		update_ui()
 		return
 	if _has_pending_target_selection():
 		if _try_handle_pending_click_selection(power):
@@ -8928,6 +9065,12 @@ func _select_hand_creature_for_placement(card: Card, mode: String) -> void:
 func _on_hand_card_pressed(card: Card) -> void:
 	if _game_finished:
 		return
+	if _pending_freyja_active_prompt != null:
+		if _toggle_freyja_active_target(card):
+			return
+		_set_action_label_text("Open Sessrumnir only selects Norse Warriors from your graveyard. Click Freyja to confirm or right-click to skip.")
+		update_ui()
+		return
 	if _pending_tezcatlipoca_active_prompt != null:
 		_set_action_label_text("Finish Titlacauan first. Click enemy creatures, click Tez to confirm, or right-click to skip.")
 		update_ui()
@@ -8951,12 +9094,22 @@ func _on_hand_card_pressed(card: Card) -> void:
 		update_ui()
 		return
 	if _has_pending_target_selection():
-		_cancel_pending_target_selection(
-			_get_pending_target_selection_name()
-			+ " cancelled: "
-			+ card.card_name
-			+ " is not a valid target."
-		)
+		if awaiting_god_ability_target and god_ability_source is Freyja:
+			if _try_queue_god_targeted_ability(card):
+				return
+			_handle_invalid_pending_target_click()
+			return
+		if _try_handle_pending_click_selection(card):
+			return
+		if _pending_click_selection_source is Freyja:
+			_handle_invalid_pending_target_click(_get_pending_click_invalid_reason(card))
+		else:
+			_cancel_pending_target_selection(
+				_get_pending_target_selection_name()
+				+ " cancelled: "
+				+ card.card_name
+				+ " is not a valid target."
+			)
 		return
 	if _is_turn_choice_pending():
 		_reject_pre_turn_action()
@@ -9010,6 +9163,9 @@ func _on_hand_card_pressed(card: Card) -> void:
 
 func _on_hand_card_right_clicked(card: Card) -> void:
 	if _game_finished:
+		return
+	if _pending_freyja_active_prompt != null:
+		_skip_freyja_active_prompt()
 		return
 	if _reject_priority_locked_action():
 		return
@@ -9237,6 +9393,10 @@ func _on_stealth_mode_pressed() -> void:
 func _on_empty_zone_pressed(zone: Zone) -> void:
 	if _game_finished:
 		return
+	if _pending_freyja_active_prompt != null:
+		_set_action_label_text("Open Sessrumnir needs graveyard picks. Click a Norse Warrior in your graveyard, click Freyja to confirm, or right-click to skip.")
+		update_ui()
+		return
 	if _pending_tezcatlipoca_active_prompt != null:
 		_set_action_label_text("Titlacauan needs enemy creature picks. Click an enemy creature, click Tez to confirm, or right-click to skip.")
 		update_ui()
@@ -9459,6 +9619,13 @@ func _on_god_card_pressed(card: Card) -> void:
 	if _is_card_usable_for_priority(card):
 		_on_priority_response_chosen(card)
 		return
+	if _pending_freyja_active_prompt != null:
+		if card == _pending_freyja_active_prompt:
+			_confirm_freyja_active_prompt()
+		else:
+			_set_action_label_text("Open Sessrumnir is waiting for graveyard picks. Click Freyja to confirm or right-click to skip.")
+			update_ui()
+		return
 	if _pending_tezcatlipoca_active_prompt != null:
 		if card == _pending_tezcatlipoca_active_prompt:
 			_confirm_tez_titlacauan_prompt()
@@ -9576,6 +9743,9 @@ func _on_tez_necoc_yaotl_badge_pressed(card: Card) -> void:
 func _on_god_right_clicked(card: Card) -> void:
 	if _game_finished or game_manager == null or card == null or not card.is_god:
 		return
+	if _pending_freyja_active_prompt != null:
+		_skip_freyja_active_prompt()
+		return
 	if _pending_tezcatlipoca_active_prompt != null:
 		_skip_tez_titlacauan_prompt()
 		return
@@ -9666,6 +9836,8 @@ func _on_god_right_clicked(card: Card) -> void:
 
 func _god_ability_should_use_selection_overlay(card: Card) -> bool:
 	if card == null or game_manager == null or not card.has_method("get_valid_targets"):
+		return false
+	if card is Freyja:
 		return false
 	var targets: Array = card.get_valid_targets(game_manager)
 	if targets.is_empty():
@@ -13189,6 +13361,10 @@ func _try_resolve_stupefy_target(card: Card) -> bool:
 func _on_board_card_pressed(card: Card) -> void:
 	if _game_finished:
 		return
+	if _pending_freyja_active_prompt != null:
+		_set_action_label_text("Open Sessrumnir only selects Norse Warriors from your graveyard. Click Freyja to confirm or right-click to skip.")
+		update_ui()
+		return
 	if _pending_tezcatlipoca_active_prompt != null:
 		_set_action_label_text("Titlacauan only enslaves enemy creatures. Click an enemy creature, click Tez to confirm, or right-click to skip.")
 		update_ui()
@@ -13477,6 +13653,10 @@ func _on_board_card_pressed(card: Card) -> void:
 
 func _on_enemy_card_pressed(target_card: Card) -> void:
 	if _game_finished:
+		return
+	if _pending_freyja_active_prompt != null:
+		_set_action_label_text("Open Sessrumnir only selects Norse Warriors from your graveyard. Click Freyja to confirm or right-click to skip.")
+		update_ui()
 		return
 	if _pending_tezcatlipoca_active_prompt != null:
 		if _toggle_tez_titlacauan_target(target_card):
@@ -14227,6 +14407,11 @@ func _input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
 		var mouse_button_event := event as InputEventMouseButton
 		if mouse_button_event.pressed and mouse_button_event.button_index == MOUSE_BUTTON_RIGHT \
+				and _pending_freyja_active_prompt != null:
+			_skip_freyja_active_prompt()
+			get_viewport().set_input_as_handled()
+			return
+		if mouse_button_event.pressed and mouse_button_event.button_index == MOUSE_BUTTON_RIGHT \
 				and _pending_tezcatlipoca_active_prompt != null:
 			_skip_tez_titlacauan_prompt()
 			get_viewport().set_input_as_handled()
@@ -14502,6 +14687,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			return
 
 	if _game_finished:
+		return
+	if _pending_freyja_active_prompt != null:
 		return
 	if _pending_tezcatlipoca_active_prompt != null:
 		return
@@ -16855,6 +17042,155 @@ func _show_mopsus_reveal_prompt(card: MopsusScript, targets: Array[Card]) -> voi
 	)
 	vbox.add_child(close_btn)
 
+func _show_freyja_active_prompt(card: FreyjaActive, prompt_targets: Array = []) -> void:
+	_hide_freyja_active_prompt()
+	if card == null or game_manager == null:
+		return
+	if _pending_freyja_active_source_uid != "" and _pending_freyja_active_source_uid != card.uid:
+		_pending_freyja_active_selected_uids.clear()
+	_pending_freyja_active_source_uid = card.uid
+	_pending_freyja_active_prompt = card
+	_pending_freyja_active_prompt_targets.clear()
+	var summon_limit := card.get_open_sessrumnir_summon_limit(game_manager)
+	var current_targets := _get_freyja_active_prompt_targets(card, prompt_targets)
+	for target in current_targets:
+		if target != null:
+			_pending_freyja_active_prompt_targets.append(target.uid)
+	for selected_uid in _pending_freyja_active_selected_uids.duplicate():
+		if selected_uid not in _pending_freyja_active_prompt_targets:
+			_pending_freyja_active_selected_uids.erase(selected_uid)
+	if current_targets.is_empty() or summon_limit <= 0:
+		_resolve_freyja_active_prompt([], card.resolve_open_sessrumnir_choice(game_manager, [], true))
+		return
+	_set_action_label_text(
+		"%s: left-click Norse Warriors in your graveyard to mark them, click Freyja again to confirm, right-click to skip. Up to %d."
+		% [card.card_name, summon_limit]
+	)
+	update_ui()
+
+func _hide_freyja_active_prompt() -> void:
+	_pending_freyja_active_prompt = null
+	_pending_freyja_active_prompt_targets.clear()
+
+func _resolve_freyja_active_prompt(targets: Array[Card], fallback_text: String = "") -> void:
+	var card := _pending_freyja_active_prompt
+	_hide_freyja_active_prompt()
+	if card == null:
+		if _stack_resolution_paused:
+			_resume_after_deferred_resolution()
+		else:
+			update_ui()
+		return
+	var target_uids: Array[String] = []
+	for target in targets:
+		if target != null:
+			target_uids.append(target.uid)
+	_pending_freyja_active_source_uid = ""
+	_pending_freyja_active_selected_uids.clear()
+	if _submit_prompt_choice_command({
+		"type": "freyja_active_open_sessrumnir_choice",
+		"source_uid": card.uid,
+		"option": {"target_uids": target_uids, "skip": targets.is_empty()},
+	}):
+		return
+	var resolution_text := fallback_text
+	if resolution_text == "":
+		resolution_text = card.resolve_open_sessrumnir_choice(game_manager, targets, not targets.is_empty())
+	if _stack_resolution_paused:
+		_resume_after_deferred_resolution(resolution_text)
+	else:
+		_set_action_label_text(resolution_text)
+		update_ui()
+
+func _get_freyja_active_prompt_targets(card: FreyjaActive, prompt_targets: Array = []) -> Array[Card]:
+	var current_targets: Array[Card] = []
+	if card == null or game_manager == null:
+		return current_targets
+	var live_targets := card.get_valid_open_sessrumnir_targets(game_manager)
+	if prompt_targets.is_empty():
+		current_targets.assign(live_targets)
+	else:
+		for target in prompt_targets:
+			if target is Card and target in live_targets:
+				current_targets.append(target)
+		if current_targets.is_empty():
+			current_targets.assign(live_targets)
+	return current_targets
+
+func _get_pending_freyja_active_targets() -> Array[Card]:
+	if _pending_freyja_active_prompt == null or game_manager == null:
+		return []
+	var prompt_targets: Array[Card] = []
+	var live_targets := _pending_freyja_active_prompt.get_valid_open_sessrumnir_targets(game_manager)
+	for target_uid in _pending_freyja_active_prompt_targets:
+		var target := game_manager.get_card_by_uid(target_uid)
+		if target != null and target in live_targets:
+			prompt_targets.append(target)
+	if prompt_targets.is_empty():
+		prompt_targets.assign(live_targets)
+	return prompt_targets
+
+func _get_pending_freyja_active_selected_cards() -> Array[Card]:
+	var selected_targets: Array[Card] = []
+	if game_manager == null:
+		return selected_targets
+	for target_uid in _pending_freyja_active_selected_uids:
+		var target := game_manager.get_card_by_uid(target_uid)
+		if target != null:
+			selected_targets.append(target)
+	return selected_targets
+
+func _toggle_freyja_active_target(target: Card) -> bool:
+	var card := _pending_freyja_active_prompt
+	if card == null or target == null or game_manager == null:
+		return false
+	var current_targets := _get_pending_freyja_active_targets()
+	if target not in current_targets:
+		_set_action_label_text(target.card_name + " is no longer a valid Open Sessrumnir target.")
+		update_ui()
+		return true
+	if target.uid in _pending_freyja_active_selected_uids:
+		_pending_freyja_active_selected_uids.erase(target.uid)
+		_set_action_label_text("Removed " + target.card_name + " from Open Sessrumnir.")
+		update_ui()
+		return true
+	var summon_limit := card.get_open_sessrumnir_summon_limit(game_manager)
+	if _pending_freyja_active_selected_uids.size() >= summon_limit:
+		_set_action_label_text("Open Sessrumnir can return at most %d creatures." % summon_limit)
+		update_ui()
+		return true
+	var chosen_targets := _get_pending_freyja_active_selected_cards()
+	chosen_targets.append(target)
+	if not card.is_valid_open_sessrumnir_selection(game_manager, chosen_targets):
+		_set_action_label_text(target.card_name + " is no longer a valid Open Sessrumnir target.")
+		update_ui()
+		return true
+	_pending_freyja_active_selected_uids.append(target.uid)
+	_set_action_label_text(
+		"Open Sessrumnir marked %s. Selected %d/%d. Click Freyja to confirm."
+		% [
+			target.card_name,
+			_pending_freyja_active_selected_uids.size(),
+			summon_limit
+		]
+	)
+	update_ui()
+	if _pending_freyja_active_selected_uids.size() >= summon_limit:
+		_confirm_freyja_active_prompt()
+	return true
+
+func _confirm_freyja_active_prompt() -> bool:
+	if _pending_freyja_active_prompt == null:
+		return false
+	_resolve_freyja_active_prompt(_get_pending_freyja_active_selected_cards())
+	return true
+
+func _skip_freyja_active_prompt() -> bool:
+	if _pending_freyja_active_prompt == null:
+		return false
+	_resolve_freyja_active_prompt([])
+	return true
+
 func _show_tezcatlipoca_active_titlacauan_prompt(card: Card, prompt_targets: Array = []) -> void:
 	_hide_tezcatlipoca_active_titlacauan_prompt()
 	if card == null or game_manager == null or not card.has_method("get_valid_titlacauan_targets"):
@@ -18792,6 +19128,10 @@ func _dismiss_transient_prompts() -> void:
 	_hide_pause_menu()
 	_hide_devour_cancel_prompt()
 	_dismiss_zone_overlay()
+	_pending_freyja_active_source_uid = ""
+	_pending_freyja_active_selected_uids.clear()
+	_pending_freyja_active_prompt_targets.clear()
+	_hide_freyja_active_prompt()
 	_pending_tezcatlipoca_titlacauan_source_uid = ""
 	_pending_tezcatlipoca_titlacauan_selected_uids.clear()
 	_pending_tezcatlipoca_titlacauan_prompt_targets.clear()
@@ -19340,7 +19680,7 @@ func _on_match_move_validated(move: Dictionary) -> void:
 				_set_action_label_text(response_card.card_name + " responds!")
 			if not _is_networked_client and not authoritative_priority:
 				_offer_priority()
-		"durinn_secondborn_choice", "first_sage_adapa_choice", "third_sage_enmedugga_choice", "fourth_sage_enmegalamma_choice", "sixth_sage_an_enlilda_choice", "lailoken_reveal_choice", "masmassu_priest_reveal_choice", "rally_the_troops_choice", "terror_impact_choice", "fenrir_devour_choice", "gawain_healing_hands_choice", "tatzelwurm_dragon_heart_choice", "byggvir_reveal_choice", "harii_jarl_impact_choice", "gala_tura_destroyed_choice", "kur_jara_tree_of_life_choice", "hunting_tactics_choice", "foolish_optimism_choice", "blessed_knights_choice", "tezcatlipoca_active_titlacauan_choice", "mummu_entropy_choice", "nusku_active_core_flame_choice", "nusku_well_of_fire_choice", "apollyons_demiurge_choice":
+		"durinn_secondborn_choice", "first_sage_adapa_choice", "third_sage_enmedugga_choice", "fourth_sage_enmegalamma_choice", "sixth_sage_an_enlilda_choice", "lailoken_reveal_choice", "masmassu_priest_reveal_choice", "rally_the_troops_choice", "terror_impact_choice", "fenrir_devour_choice", "gawain_healing_hands_choice", "tatzelwurm_dragon_heart_choice", "byggvir_reveal_choice", "harii_jarl_impact_choice", "gala_tura_destroyed_choice", "kur_jara_tree_of_life_choice", "hunting_tactics_choice", "foolish_optimism_choice", "blessed_knights_choice", "tezcatlipoca_active_titlacauan_choice", "freyja_active_open_sessrumnir_choice", "mummu_entropy_choice", "nusku_active_core_flame_choice", "nusku_well_of_fire_choice", "apollyons_demiurge_choice":
 			_apply_prompt_choice_feedback()
 			return
 	update_ui()
@@ -19576,6 +19916,15 @@ func _on_match_ui_interaction(player_index: int, type: String, data: Dictionary)
 					if target_card != null:
 						prompt_targets.append(target_card)
 				_begin_gugalanna_impact_targeting(card, prompt_targets)
+		"freyja_active_open_sessrumnir":
+			var card := game_manager.get_card_by_uid(data.get("source_uid", "")) as FreyjaActive
+			if card != null:
+				var prompt_targets: Array[Card] = []
+				for target_uid in data.get("target_uids", []):
+					var target_card := game_manager.get_card_by_uid(str(target_uid))
+					if target_card != null:
+						prompt_targets.append(target_card)
+				_show_freyja_active_prompt(card, prompt_targets)
 		"giant_master_architect_impact":
 			var card := game_manager.get_card_by_uid(data.get("source_uid", "")) as GiantMasterArchitect
 			if card != null:
@@ -20650,6 +20999,15 @@ func _apply_ui_interaction(event_data: Dictionary) -> void:
 					if target_card != null:
 						prompt_targets.append(target_card)
 				_begin_gugalanna_impact_targeting(card, prompt_targets)
+		"freyja_active_open_sessrumnir":
+			var card := game_manager.get_card_by_uid(payload.get("source_uid", "")) as FreyjaActive
+			if card != null:
+				var prompt_targets: Array[Card] = []
+				for target_uid in payload.get("target_uids", []):
+					var target_card := game_manager.get_card_by_uid(str(target_uid))
+					if target_card != null:
+						prompt_targets.append(target_card)
+				_show_freyja_active_prompt(card, prompt_targets)
 		"giant_master_architect_impact":
 			var card := game_manager.get_card_by_uid(payload.get("source_uid", "")) as GiantMasterArchitect
 			if card != null:

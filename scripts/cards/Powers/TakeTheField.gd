@@ -38,6 +38,47 @@ func get_unlock_failure_reason(game_manager: GameManager) -> String:
 		return card_name + " needs an open lane for your Active God."
 	return card_name + " cannot pay that Active God's summon cost right now."
 
+func get_unlock_display_mana_cost(game_manager: GameManager = null) -> int:
+	var manifestation := _peek_manifestation_candidate()
+	if manifestation == null:
+		return super.get_unlock_display_mana_cost(game_manager)
+	if game_manager == null or card_owner == null:
+		return manifestation.mana_cost
+	return game_manager.get_creature_summon_mana_cost(card_owner, manifestation, self, false)
+
+func get_unlock_display_cost_shorthand(
+	game_manager: GameManager = null,
+	force_show_mana: bool = false
+) -> String:
+	var manifestation := _peek_manifestation_candidate()
+	if manifestation == null:
+		return super.get_unlock_display_cost_shorthand(game_manager, force_show_mana)
+	var display_mana_cost := get_unlock_display_mana_cost(game_manager)
+	var should_force_show_mana := force_show_mana and display_mana_cost > 0
+	return manifestation.get_cost_shorthand(display_mana_cost, should_force_show_mana)
+
+func get_unlock_display_cost_lines(game_manager: GameManager = null) -> Array[String]:
+	var manifestation := _peek_manifestation_candidate()
+	if manifestation == null:
+		return super.get_unlock_display_cost_lines(game_manager)
+
+	var lines: Array[String] = []
+	var unlock_cost_text := get_unlock_display_cost_shorthand(game_manager)
+	if unlock_cost_text.is_empty():
+		unlock_cost_text = "Free"
+	lines.append("Unlock Cost: %s" % unlock_cost_text)
+
+	if game_manager != null and card_owner != null:
+		for breakdown_line in manifestation.get_cost_adjustment_lines(
+			manifestation.mana_cost,
+			Card.COST_KIND_CREATURE_SUMMON,
+			game_manager,
+			{"player": card_owner, "summon_source": self}
+		):
+			lines.append(breakdown_line)
+
+	return lines
+
 func on_unlock(game_manager: GameManager) -> void:
 	if game_manager == null or card_owner == null:
 		relock()
