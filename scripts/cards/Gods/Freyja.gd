@@ -8,7 +8,7 @@ const SPIRIT_GRANT_STATUS := "freyja_spirit_grant"
 func _init() -> void:
 	super._init()
 	card_name = "Freyja"
-	card_types = ["War", "Sex", "Sorcery", "Death"]
+	card_types = ["War", "Sex", "Sorcery", "Death", "God", "Divine Manifestation"]
 	if "Targeting" not in card_types:
 		card_types.append("Targeting")
 	mana_cost = 0

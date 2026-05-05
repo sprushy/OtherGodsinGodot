@@ -692,6 +692,32 @@ func _add_level_badge(
 		badge.mouse_filter = Control.MOUSE_FILTER_STOP
 	return badge
 
+func _add_token_badge(
+	overlay: Control,
+	card: Card,
+	anchor_preset: int,
+	left: float,
+	top: float,
+	right: float,
+	bottom: float
+) -> PanelContainer:
+	if overlay == null or card == null or not card.is_token or card.card_type != Card.CardType.CREATURE:
+		return null
+	var badge := _add_overlay_stat_badge(
+		overlay,
+		"TOKEN",
+		anchor_preset,
+		left,
+		top,
+		right,
+		bottom,
+		Color(0.84, 0.95, 1.0)
+	)
+	if badge != null:
+		badge.tooltip_text = "Token Creature"
+		badge.mouse_filter = Control.MOUSE_FILTER_STOP
+	return badge
+
 func _get_power_status_cost_text(card: Card) -> String:
 	if not (card is PowerCard):
 		return ""
@@ -2828,6 +2854,7 @@ func _refresh_display() -> void:
 			var shield_scale := DefenseShieldOverlay.STEALTH_VIEW_SIZE_MULTIPLIER if shield_layout == DefenseShieldOverlay.LAYOUT_CENTER else 1.0
 			DefenseShieldOverlay.ensure_on(card_overlay, shield_layout, shield_scale)
 		_add_level_badge(card_overlay, card, Control.PRESET_TOP_LEFT, 6, 6, 54, 24)
+		_add_token_badge(card_overlay, card, Control.PRESET_TOP_LEFT, 6, 28, 66, 46)
 		_add_prepared_magical_mana_badge(card_overlay, card)
 		if card.is_power:
 			_add_power_cost_badge(card_overlay, card)

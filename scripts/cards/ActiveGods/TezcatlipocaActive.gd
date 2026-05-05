@@ -25,7 +25,7 @@ func _init() -> void:
 	strength = 25
 	culture = "Nahuatl"
 	flavor_text = "Smoke and sacrifice crown the god of night when he walks the field."
-	ability_text = "[b]Shift[/b] ([b]Activate[/b], [b]Minor Action[/b]): Switch between Divine Manifestation, God, Shapeshifter and Divine Manifestation, God, Animal, Feline, Jaguar, Shapeshifter.\n[b]Jaguar Form[/b] ([b]Passive[/b]): While in Jaguar form, this card's stats become SPD 3 / RES 24 / STR 35.\n[b]The Smoking Mirror[/b] ([b]Passive[/b]): Instead of damaging followers, convert half of those that would have been destroyed.\n[b]Titlacauan[/b] ([b]Impact[/b]): Enslave up to 2 creatures whose total levels are less than or equal to the total levels sacrificed for Necoc Yaotl."
+	ability_text = "[b]Shift[/b] ([b]Activate[/b], [b]Minor Action[/b], once per turn): Switch between Divine Manifestation, God, Shapeshifter and Divine Manifestation, God, Animal, Feline, Jaguar, Shapeshifter.\n[b]Jaguar Form[/b] ([b]Passive[/b]): While in Jaguar form, this card's stats become SPD 3 / RES 24 / STR 35.\n[b]The Smoking Mirror[/b] ([b]Passive[/b]): Instead of damaging followers, convert half of those that would have been destroyed.\n[b]Titlacauan[/b] ([b]Impact[/b]): Enslave up to 2 creatures whose total levels are less than or equal to the total levels sacrificed for Necoc Yaotl."
 	artist = "Ricardo Zoppello"
 	art_path = ART_PATH
 	name_at_bottom = true
@@ -46,7 +46,7 @@ func can_activate(game_manager: GameManager) -> bool:
 		return false
 	if is_sleeping:
 		return false
-	return can_take_minor_creature_action()
+	return can_take_minor_creature_action() and can_use_shift_ability_this_turn()
 
 func get_activation_failure_reason(game_manager: GameManager) -> String:
 	if game_manager == null:
@@ -63,6 +63,8 @@ func get_activation_failure_reason(game_manager: GameManager) -> String:
 		return card_name + " is asleep."
 	if not can_take_minor_creature_action():
 		return card_name + " has no minor actions left."
+	if not can_use_shift_ability_this_turn():
+		return card_name + " has already shifted this turn."
 	return ""
 
 func get_tonal_extraction_spirit_profile() -> Dictionary:
@@ -93,6 +95,7 @@ func activate(game_manager: GameManager, _target: Card = null) -> void:
 		return
 	shift_forms()
 	spend_minor_creature_action()
+	spend_shift_ability_use()
 	if game_manager != null:
 		game_manager.notify_creature_shapeshifted(self, self)
 		game_manager.note_player_feedback(

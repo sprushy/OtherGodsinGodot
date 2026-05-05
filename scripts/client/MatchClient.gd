@@ -26,6 +26,7 @@ var _is_retrying_initial_connect: bool = false
 var _match_join_requested: bool = false
 var _has_authenticated_match: bool = false
 var _connect_attempt_serial: int = 0
+var _match_completed: bool = false
 
 func _init(
 	p_match_manager: MatchManager,
@@ -83,6 +84,7 @@ func shutdown() -> void:
 	_is_retrying_initial_connect = false
 	_match_join_requested = false
 	_has_authenticated_match = false
+	_match_completed = false
 	if not _receives_network_events or network_manager == null:
 		return
 	if network_manager.has_signal("game_event_received") and network_manager.game_event_received.is_connected(_on_game_event_received):
@@ -152,6 +154,8 @@ func _on_match_join_denied(reason: String) -> void:
 func _on_server_disconnected() -> void:
 	_cancel_connect_attempt_timeout()
 	_match_join_requested = false
+	if _match_completed:
+		return
 	if _is_reconnecting:
 		return
 	if _try_reconnect():
@@ -179,6 +183,10 @@ func _on_connect_attempt_timeout() -> void:
 func _handle_connection_failure(initial_reason: String, reconnect_reason: String) -> void:
 	_cancel_connect_attempt_timeout()
 	_match_join_requested = false
+	if _match_completed:
+		_is_reconnecting = false
+		_is_retrying_initial_connect = false
+		return
 	if _has_authenticated_match and _is_reconnecting:
 		_is_reconnecting = false
 		if _try_reconnect():
@@ -201,7 +209,7 @@ func _handle_connection_failure(initial_reason: String, reconnect_reason: String
 	game_event_received.emit("match_join_denied", {"reason": initial_reason})
 
 func _try_reconnect() -> bool:
-	if not requires_match_auth() or network_manager == null:
+	if _match_completed or not requires_match_auth() or network_manager == null:
 		return false
 	if _reconnect_attempts_remaining <= 0:
 		return false
@@ -290,11 +298,19 @@ func _cancel_connect_attempt_timeout() -> void:
 	_connect_attempt_serial += 1
 
 func _on_game_event_received(event_type: String, data: Dictionary) -> void:
+	if event_type == "game_ended":
+		_match_completed = true
+	elif event_type == "full_state":
+		var state = data.get("state", {})
+		if state is Dictionary and bool((state as Dictionary).get("is_game_over", false)):
+			_match_completed = true
 	game_event_received.emit(event_type, data)
 
 func _on_peer_disconnected(peer_id: int) -> void:
 	if _is_networked_client and requires_match_auth():
 		_match_join_requested = false
+		if _match_completed:
+			return
 		if _is_reconnecting:
 			return
 		if _has_authenticated_match and _try_reconnect():

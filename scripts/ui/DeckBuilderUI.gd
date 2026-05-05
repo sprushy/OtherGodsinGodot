@@ -1523,7 +1523,8 @@ func _autofill_deck_to_minimum() -> void:
 	var undo_history_size_before := _deck_undo_history.size()
 	_push_current_deck_undo_state()
 	var regular_added := 0
-	regular_added += _add_random_regular_cards(rng, legendary_cards_needed, true)
+	regular_added += _add_preferred_autofill_regular_cards(rng, mini(cards_needed, 7))
+	regular_added += _add_random_regular_cards(rng, mini(legendary_cards_needed, cards_needed - regular_added), true)
 	regular_added += _add_random_regular_cards(rng, cards_needed - regular_added, false)
 	var powers_added := _add_random_powers(rng, powers_needed)
 	var added_count := regular_added + powers_added
@@ -1557,6 +1558,20 @@ func _add_random_regular_cards(rng: RandomNumberGenerator, count: int, legendary
 			break
 		var chosen: Card = candidates[rng.randi_range(0, candidates.size() - 1)]
 		var copies_to_add := _get_autofill_regular_copy_count(chosen)
+		if copies_to_add <= 0:
+			break
+		_deck[chosen.card_name] = int(_deck.get(chosen.card_name, 0)) + copies_to_add
+		added += copies_to_add
+	return added
+
+func _add_preferred_autofill_regular_cards(rng: RandomNumberGenerator, count: int) -> int:
+	var added := 0
+	while added < count:
+		var candidates := _get_preferred_autofill_regular_candidates()
+		if candidates.is_empty():
+			break
+		var chosen: Card = candidates[rng.randi_range(0, candidates.size() - 1)]
+		var copies_to_add := mini(_get_autofill_regular_copy_count(chosen), count - added)
 		if copies_to_add <= 0:
 			break
 		_deck[chosen.card_name] = int(_deck.get(chosen.card_name, 0)) + copies_to_add
@@ -3311,6 +3326,33 @@ func _get_autofill_candidates(legendary_only: bool) -> Array[Card]:
 			continue
 		candidates.append(card)
 	return candidates
+
+func _get_preferred_autofill_regular_candidates() -> Array[Card]:
+	var candidates: Array[Card] = []
+	var god := _get_selected_god_template() as GodCard
+	if god == null:
+		return candidates
+	for card: Card in _all_cards:
+		if not _is_regular_card(card):
+			continue
+		if int(_deck.get(card.card_name, 0)) >= _max_copies(card):
+			continue
+		if not _is_card_compatible_with_selected_god(card, god):
+			continue
+		if _is_preferred_autofill_card_for_god(card, god):
+			candidates.append(card)
+	return candidates
+
+func _is_preferred_autofill_card_for_god(card: Card, god: GodCard) -> bool:
+	if card == null or god == null:
+		return false
+	match god.card_name:
+		"Thor", "Freyja":
+			return card.has_type("Warrior") and (card.has_type("Norse Creature") or card.culture == "Norse")
+		"Tezcatlipoca, the Smoking Mirror":
+			return card.has_type("Shapeshifter")
+		_:
+			return false
 
 func _get_autofill_power_candidates() -> Array[Card]:
 	var candidates: Array[Card] = []

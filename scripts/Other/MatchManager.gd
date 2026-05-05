@@ -619,6 +619,7 @@ func resolve_action(action: CardAction) -> void:
 	last_resolution_text = ""
 	var pushed_effect_source := false
 	var action_completed := true
+	var destroyed_count_before := game_manager.destroyed_this_turn.size() if game_manager != null else 0
 	if game_manager != null and action != null and action.card != null:
 		game_manager.push_effect_source_card(action.card)
 		pushed_effect_source = true
@@ -639,7 +640,27 @@ func resolve_action(action: CardAction) -> void:
 		game_manager.pop_effect_source_card()
 	if not action_completed:
 		return
+	_queue_destroyed_priority_events(destroyed_count_before, action)
 	_finalize_resolved_action(action)
+
+func _queue_destroyed_priority_events(start_index: int, resolved_action: CardAction) -> void:
+	if game_manager == null:
+		return
+	for i in range(maxi(0, start_index), game_manager.destroyed_this_turn.size()):
+		var destroyed_card := game_manager.destroyed_this_turn[i]
+		if destroyed_card == null or destroyed_card.card_type != Card.CardType.CREATURE:
+			continue
+		if _has_pending_event_priority_action(destroyed_card, "destroyed"):
+			continue
+		var destroyed_action := CardAction.new()
+		destroyed_action.type = CardAction.Type.EVENT
+		destroyed_action.source_player = destroyed_card.card_owner if destroyed_card.card_owner != null else (resolved_action.source_player if resolved_action != null else game_manager.current_player)
+		destroyed_action.initial_priority_player = destroyed_card.card_owner
+		destroyed_action.card = destroyed_card
+		destroyed_action.event_name = "destroyed"
+		destroyed_action.event_speed = 0
+		destroyed_action.resolution_text = "%s was destroyed." % destroyed_card.card_name
+		game_manager.push_to_stack(destroyed_action)
 
 func _finalize_resolved_action(action: CardAction) -> void:
 	_remove_resolved_action(action)
@@ -1384,6 +1405,8 @@ func _get_priority_action_message(top: CardAction, viewer: Player = null) -> Str
 				return "Start-of-turn priority window."
 			if top.event_name == "end_turn":
 				return "End-of-turn priority window."
+			if top.event_name == "destroyed" and top.card != null:
+				return _get_action_label(top.card, viewer) + " was destroyed - you may respond!"
 			if top.event_name == "summon" and top.card != null:
 				return _get_action_label(top.card, viewer) + " was summoned - you may respond!"
 			if top.event_name == "hand_play" and top.card != null:

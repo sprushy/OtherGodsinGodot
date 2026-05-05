@@ -220,6 +220,10 @@ func _bind_game_signals() -> void:
 			var return_callback := Callable(self, "_on_game_return_to_menu_requested")
 			if not game.return_to_menu_requested.is_connected(return_callback):
 				game.return_to_menu_requested.connect(return_callback)
+		if game != null and game.has_signal("leave_match_requested"):
+			var leave_callback := Callable(self, "_on_game_leave_match_requested")
+			if not game.leave_match_requested.is_connected(leave_callback):
+				game.leave_match_requested.connect(leave_callback)
 		if game != null and game.has_signal("match_session_cleared"):
 			var clear_callback := Callable(self, "_on_match_session_cleared")
 			if not game.match_session_cleared.is_connected(clear_callback):
@@ -3484,7 +3488,18 @@ func _on_back_to_menu_pressed() -> void:
 func _on_game_forfeit_requested() -> void:
 	_return_to_menu()
 
+func _on_game_leave_match_requested() -> void:
+	_return_to_menu()
+
 func _on_game_return_to_menu_requested() -> void:
+	var active_game = _get_active_embedded_game()
+	if active_game != null:
+		var reconnect_waiting := bool(active_game.get("_match_reconnect_waiting"))
+		var awaiting_initial_state := bool(active_game.get("_awaiting_initial_full_state"))
+		var game_finished := bool(active_game.get("_game_finished"))
+		var networked_client := bool(active_game.get("_is_networked_client"))
+		if networked_client and not game_finished and (reconnect_waiting or awaiting_initial_state):
+			return
 	_return_to_menu()
 
 func _return_to_menu() -> void:
@@ -3520,6 +3535,13 @@ func _suppress_active_match_auto_resume_from_embedded_games() -> void:
 		_suppressed_active_match_room_id = room_id
 		_suppress_active_match_resume_until_msec = Time.get_ticks_msec() + int(ACTIVE_MATCH_AUTO_RESUME_SUPPRESS_SECONDS * 1000.0)
 		return
+
+func _get_active_embedded_game() -> Node:
+	for node_name in _get_embedded_game_node_names():
+		var game = get_node_or_null("GameContainer/" + node_name)
+		if game != null and bool(game.get("visible")):
+			return game
+	return null
 
 func _should_suppress_active_match_auto_resume(active_match_info: Dictionary) -> bool:
 	if Time.get_ticks_msec() > _suppress_active_match_resume_until_msec:
@@ -4858,6 +4880,10 @@ func _start_smoke_mode() -> void:
 		call_deferred("_run_practice_thor_smoke")
 		return
 
+	if role == "practice_thor_summon":
+		call_deferred("_run_practice_thor_summon_smoke")
+		return
+
 	if role == "card_test_turn2":
 		call_deferred("_run_card_test_turn2_smoke")
 		return
@@ -5002,6 +5028,168 @@ func _complete_practice_thor_smoke(success: bool, message: String) -> void:
 		_finish_smoke_if_enabled("PASS:%s" % message)
 	else:
 		_fail_smoke_if_enabled(message)
+
+func _run_practice_thor_summon_smoke() -> void:
+	_write_smoke_trace("practice_thor_summon:start")
+	var practice_game = _show_embedded_game("PracticeThor")
+	if practice_game == null:
+		_fail_smoke_if_enabled("practice_thor_summon_missing")
+		return
+	show_game()
+	practice_game.set_player_practice_deck({})
+	await practice_game.start_game()
+	await get_tree().process_frame
+	await get_tree().process_frame
+	_write_smoke_trace("practice_thor_summon:started_game")
+
+	var setup_error := _get_practice_thor_smoke_setup_error(practice_game)
+	if not setup_error.is_empty():
+		_fail_smoke_if_enabled("practice_thor_summon_setup_%s" % setup_error)
+		return
+	_write_smoke_trace("practice_thor_summon:setup_ok")
+
+	if not practice_game.game_input.submit_action({type = "upkeep_choice", choice = "draw"}):
+		_fail_smoke_if_enabled("practice_thor_summon_upkeep_choice_failed")
+		return
+	if not await _wait_for_practice_thor_smoke_condition(
+		func() -> bool:
+			return practice_game.game_manager.current_player == practice_game.player1 \
+				and practice_game.game_manager.has_resolved_turn_upkeep() \
+				and practice_game.game_manager.action_stack.is_empty(),
+		180
+	):
+		_fail_smoke_if_enabled("practice_thor_summon_player_one_upkeep_timeout")
+		return
+	_write_smoke_trace("practice_thor_summon:turn1_upkeep_ok")
+
+	if not practice_game.game_input.submit_action({type = "end_turn", discard_uids = []}):
+		_fail_smoke_if_enabled("practice_thor_summon_end_turn_failed")
+		return
+	if not await _wait_for_practice_thor_smoke_condition(
+		func() -> bool:
+			return practice_game.game_manager.current_player == practice_game.player1 \
+				and practice_game.game_manager.turn_number >= 3 \
+				and practice_game.game_manager.action_stack.is_empty(),
+		400
+	):
+		_fail_smoke_if_enabled("practice_thor_summon_turn_timeout")
+		return
+	_write_smoke_trace("practice_thor_summon:turn3_entry_ok")
+
+	if not practice_game.game_input.submit_action({type = "upkeep_choice", choice = "mana"}):
+		_fail_smoke_if_enabled("practice_thor_summon_turn3_upkeep_choice_failed")
+		return
+	if not await _wait_for_practice_thor_smoke_condition(
+		func() -> bool:
+			return practice_game.game_manager.current_player == practice_game.player1 \
+				and practice_game.game_manager.turn_number >= 3 \
+				and practice_game.game_manager.has_resolved_turn_upkeep() \
+				and practice_game.game_manager.action_stack.is_empty(),
+		240
+	):
+		_fail_smoke_if_enabled("practice_thor_summon_turn3_upkeep_timeout")
+		return
+	_write_smoke_trace("practice_thor_summon:turn3_upkeep_ok mana=%d hand=%s" % [
+		practice_game.player1.mana,
+		_describe_smoke_hand(practice_game.player1),
+	])
+
+	var summon_zone := _find_first_open_smoke_summon_zone(practice_game.player1)
+	var summon_card := _find_first_playable_smoke_creature(practice_game.game_manager, practice_game.player1, summon_zone)
+	if summon_zone != null and summon_card == null:
+		var seeded_card := BrownBear.new()
+		seeded_card.card_owner = practice_game.player1
+		practice_game.player1.hand_zone.add_card(seeded_card)
+		summon_card = _find_first_playable_smoke_creature(practice_game.game_manager, practice_game.player1, summon_zone)
+	if summon_zone == null or summon_card == null:
+		_fail_smoke_if_enabled("practice_thor_summon_no_playable_creature hand=%s mana=%d" % [
+			_describe_smoke_hand(practice_game.player1),
+			practice_game.player1.mana,
+		])
+		return
+	_write_smoke_trace("practice_thor_summon:selected card=%s zone=%d mana=%d" % [
+		summon_card.card_name,
+		summon_zone.zone_index,
+		practice_game.player1.mana,
+	])
+
+	if not practice_game.game_input.submit_action({
+		type = "play_creature",
+		card_uid = summon_card.uid,
+		player_index = practice_game.game_manager.players.find(practice_game.player1),
+		zone_type = summon_zone.zone_type,
+		zone_index = summon_zone.zone_index,
+		mode = Card.CreatureMode.AGGRESSIVE,
+		stealth = false,
+		sacrifice_uids = [],
+		altar_void_uids = [],
+	}):
+		_fail_smoke_if_enabled("practice_thor_summon_submit_failed card=%s hand=%s mana=%d" % [
+			summon_card.card_name,
+			_describe_smoke_hand(practice_game.player1),
+			practice_game.player1.mana,
+		])
+		return
+	_write_smoke_trace("practice_thor_summon:submitted card=%s zone=%d" % [
+		summon_card.card_name,
+		summon_zone.zone_index,
+	])
+
+	if not await _wait_for_practice_thor_smoke_condition(
+		func() -> bool:
+			return summon_card.current_zone == summon_zone \
+				and practice_game.game_manager.current_player == practice_game.player1 \
+				and practice_game.game_manager.action_stack.is_empty() \
+				and not practice_game._stack_resolution_paused \
+				and not practice_game._executing_stack_action,
+		300
+	):
+		var top_action: CardAction = practice_game.game_manager.action_stack.back() if not practice_game.game_manager.action_stack.is_empty() else null
+		var top_label := "none"
+		if top_action != null:
+			top_label = "%s:%s" % [str(top_action.type), str(top_action.event_name)]
+		_fail_smoke_if_enabled("practice_thor_summon_stalled card=%s zone=%d stack=%d top=%s paused=%s executing=%s label=%s" % [
+			summon_card.card_name,
+			summon_zone.zone_index,
+			practice_game.game_manager.action_stack.size(),
+			top_label,
+			str(practice_game._stack_resolution_paused),
+			str(practice_game._executing_stack_action),
+			str(practice_game.action_label.text).replace("\n", " "),
+		])
+		return
+
+	_finish_smoke_if_enabled("PASS:practice_thor_summon")
+
+func _find_first_open_smoke_summon_zone(player: Player) -> Zone:
+	if player == null:
+		return null
+	for zone in player.frontline_zones:
+		if zone != null and zone.cards.is_empty():
+			return zone
+	for zone in player.reserve_zones:
+		if zone != null and zone.cards.is_empty():
+			return zone
+	return null
+
+func _find_first_playable_smoke_creature(game_manager: GameManager, player: Player, zone: Zone) -> Card:
+	if game_manager == null or player == null or zone == null:
+		return null
+	for card in player.hand_zone.cards:
+		if card != null \
+				and card.card_type == Card.CardType.CREATURE \
+				and game_manager.can_play_card(player, card, zone):
+			return card
+	return null
+
+func _describe_smoke_hand(player: Player) -> String:
+	if player == null or player.hand_zone == null:
+		return ""
+	var names: Array[String] = []
+	for card in player.hand_zone.cards:
+		if card != null:
+			names.append(card.card_name)
+	return ",".join(names)
 
 func _run_card_test_turn2_smoke() -> void:
 	var card_test = _show_embedded_game("CardTest")

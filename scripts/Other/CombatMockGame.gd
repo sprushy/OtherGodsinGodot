@@ -20,6 +20,7 @@ const GoodFortuneCursorSource = preload("res://images/ui/cursors/Mermaid Tail Cu
 const AncientPyreCursorSource = preload("res://images/ui/cursors/PyreCursor.png")
 const TezTitlacauanCursorSource = preload("res://images/ui/cursors/SlaveCollar Cursor.png")
 const AnointingStatueCursorSource = preload("res://scripts/Other/Annointing Statue Cursor.png")
+const HARII_JARL_CURSOR_IMAGE_PATH := "res://images/ui/cursors/HariiJarlCursor.png"
 const BREIDABLIK_CURSOR_IMAGE_PATH := "res://images/ui/cursors/Bredilblik Cursor.png"
 const MEAD_CURSOR_IMAGE_PATH := "res://images/ui/cursors/Mead Cursor.png"
 const FREYJA_TABBY_CURSOR_IMAGE_PATH := "res://images/ui/cursors/TabbyCatCursor.png"
@@ -37,6 +38,7 @@ const CardDetailContentBuilder = preload("res://scripts/ui/CardDetailContentBuil
 
 signal forfeit_requested
 signal return_to_menu_requested
+signal leave_match_requested
 signal match_session_cleared
 
 var player1: Player
@@ -393,6 +395,7 @@ var _pending_equip_action: String = ""  # "steal" or "destroy"
 var _context_menu: Control = null
 var _queued_attackers: Array[Card] = []
 var _no_intercept_btn: Button = null
+var _visible_intercept_prompt_signature: Dictionary = {}
 var _ui_refresh_queued: bool = false
 var _local_ui_refresh_pending: bool = false
 var _power_hover_popup: Control = null
@@ -430,6 +433,7 @@ var _good_fortune_cursor_texture: Texture2D = null
 var _ancient_pyre_cursor_texture: Texture2D = null
 var _tez_titlacauan_cursor_texture: Texture2D = null
 var _anointing_statue_cursor_texture: Texture2D = null
+var _harii_jarl_cursor_texture: Texture2D = null
 var _breidablik_cursor_texture: Texture2D = null
 var _mead_cursor_texture: Texture2D = null
 var _freyja_tabby_cursor_texture: Texture2D = null
@@ -448,6 +452,7 @@ var _good_fortune_cursor_target_height: int = 0
 var _ancient_pyre_cursor_target_height: int = 0
 var _tez_titlacauan_cursor_target_height: int = 0
 var _anointing_statue_cursor_target_height: int = 0
+var _harii_jarl_cursor_target_height: int = 0
 var _breidablik_cursor_target_height: int = 0
 var _mead_cursor_target_height: int = 0
 var _freyja_tabby_cursor_target_height: int = 0
@@ -536,6 +541,8 @@ const TEZ_TITLACAUAN_CURSOR_TARGET_HEIGHT := 108
 const TEZ_TITLACAUAN_CURSOR_HOTSPOT_RATIO := Vector2(0.50, 0.57)
 const ANOINTING_STATUE_CURSOR_TARGET_HEIGHT := 96
 const ANOINTING_STATUE_CURSOR_HOTSPOT_RATIO := Vector2(0.50, 0.74)
+const HARII_JARL_CURSOR_TARGET_HEIGHT := 108
+const HARII_JARL_CURSOR_HOTSPOT_RATIO := Vector2(0.50, 0.18)
 const BREIDABLIK_CURSOR_TARGET_HEIGHT := 108
 const BREIDABLIK_CURSOR_HOTSPOT_RATIO := Vector2(0.50, 0.50)
 const MEAD_CURSOR_TARGET_HEIGHT := 108
@@ -1546,9 +1553,16 @@ func _is_mead_cursor_mode_active() -> bool:
 		and _pending_click_selection_source is BerserkerMead \
 		and _get_pending_target_selection_name().contains("Berserker Mead")
 
+func _is_freyja_normal_god(card: Card) -> bool:
+	return card != null \
+		and card.is_god \
+		and card.card_name == "Freyja" \
+		and card.has_method("get_valid_targets") \
+		and card.has_method("is_valid_activation_target")
+
 func _is_freyja_tabby_cursor_mode_active() -> bool:
-	return (_has_pending_click_selection() and _pending_click_selection_source is Freyja) \
-		or (awaiting_god_ability_target and god_ability_source is Freyja)
+	return (_has_pending_click_selection() and _is_freyja_normal_god(_pending_click_selection_source)) \
+		or (awaiting_god_ability_target and _is_freyja_normal_god(god_ability_source))
 
 func _is_freyja_active_prompt_open() -> bool:
 	return _pending_freyja_active_prompt != null
@@ -1597,6 +1611,9 @@ func _is_good_fortune_cursor_mode_active() -> bool:
 	return _overlay_selection_cursor_mode == "good_fortune" \
 		or (_has_pending_click_selection() and _pending_click_selection_source is ThirdSageEnmedugga)
 
+func _is_harii_jarl_cursor_mode_active() -> bool:
+	return _has_pending_click_selection() and _pending_click_selection_source is HariiJarl
+
 func _is_tez_titlacauan_cursor_mode_active() -> bool:
 	return _pending_tezcatlipoca_active_prompt != null
 
@@ -1609,8 +1626,10 @@ func _is_silence_or_mute_targeting_source(card: Card) -> bool:
 	return ability_text_value.contains("silence") or ability_text_value.contains("mute")
 
 func _get_selection_cursor_mode_for_source(card: Card) -> String:
-	if card is Freyja:
+	if _is_freyja_normal_god(card):
 		return "freyja_tabby"
+	if card is HariiJarl:
+		return "harii_jarl"
 	if card is Breidablik:
 		return "breidablik"
 	if card is TonalExtraction:
@@ -1739,6 +1758,8 @@ func _get_selection_cursor_mode() -> String:
 		return "guan_yu"
 	if _is_good_fortune_cursor_mode_active():
 		return "good_fortune"
+	if _is_harii_jarl_cursor_mode_active():
+		return "harii_jarl"
 	if _is_tez_titlacauan_cursor_mode_active():
 		return "tez_titlacauan"
 	if _is_ancient_pyre_cursor_mode_active():
@@ -1787,6 +1808,8 @@ func _get_cursor_mode_target_height(cursor_mode: String) -> int:
 			return UIArtScaler.get_board_cursor_target_height(GUAN_YU_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 		"good_fortune":
 			return UIArtScaler.get_board_cursor_target_height(GOOD_FORTUNE_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+		"harii_jarl":
+			return UIArtScaler.get_board_cursor_target_height(HARII_JARL_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 		"tez_titlacauan":
 			return UIArtScaler.get_board_cursor_target_height(TEZ_TITLACAUAN_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 		"ancient_pyre":
@@ -1836,6 +1859,23 @@ func _apply_breidablik_cursor() -> bool:
 	var hotspot := UIArtScaler.get_cursor_hotspot(_breidablik_cursor_texture, BREIDABLIK_CURSOR_HOTSPOT_RATIO)
 	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
 		Input.set_custom_mouse_cursor(_breidablik_cursor_texture, cursor_shape, hotspot)
+	return true
+
+func _apply_harii_jarl_cursor() -> bool:
+	var target_height := UIArtScaler.get_board_cursor_target_height(HARII_JARL_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+	if _harii_jarl_cursor_texture == null or _harii_jarl_cursor_target_height != target_height:
+		var image := Image.load_from_file(ProjectSettings.globalize_path(HARII_JARL_CURSOR_IMAGE_PATH))
+		if image == null or image.is_empty():
+			return false
+		var source_texture := ImageTexture.create_from_image(image)
+		_harii_jarl_cursor_texture = UIArtScaler.build_cursor_texture(source_texture, target_height)
+		_harii_jarl_cursor_target_height = target_height
+	if _harii_jarl_cursor_texture == null:
+		return false
+
+	var hotspot := UIArtScaler.get_cursor_hotspot(_harii_jarl_cursor_texture, HARII_JARL_CURSOR_HOTSPOT_RATIO)
+	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
+		Input.set_custom_mouse_cursor(_harii_jarl_cursor_texture, cursor_shape, hotspot)
 	return true
 
 func _apply_mead_cursor() -> bool:
@@ -2053,6 +2093,14 @@ func _sync_sacrifice_cursor() -> void:
 	if cursor_mode == "good_fortune":
 		if _apply_good_fortune_cursor():
 			_active_selection_cursor_mode = "good_fortune"
+			_active_selection_cursor_target_height = target_height
+		else:
+			_restore_default_selection_cursor()
+		return
+
+	if cursor_mode == "harii_jarl":
+		if _apply_harii_jarl_cursor():
+			_active_selection_cursor_mode = "harii_jarl"
 			_active_selection_cursor_target_height = target_height
 		else:
 			_restore_default_selection_cursor()
@@ -3336,6 +3384,7 @@ func _do_update_ui() -> void:
 	if game_manager == null:
 		return
 	_hide_power_hover_popup()
+	_sanitize_transient_card_references()
 	_sync_blot_sacrifice_prompt_state()
 	_capture_action_log_message()
 	_update_board_zone_extent()
@@ -3354,6 +3403,26 @@ func _do_update_ui() -> void:
 	_refresh_zone_info_icons()
 	_sync_network_turn_controls()
 	_sync_stack_zone_previews()
+
+func _is_live_board_card(card: Card) -> bool:
+	return card != null and card.current_zone != null and card.current_zone.is_board_zone()
+
+func _sanitize_transient_card_references() -> void:
+	if selected_card != null and selected_card.current_zone == null:
+		selected_card = null
+	if _pending_move_card != null and _pending_move_card.current_zone == null:
+		_pending_move_card = null
+	if _pending_equip_actor != null and not _is_live_board_card(_pending_equip_actor):
+		_pending_equip_actor = null
+	if _pending_equip_target != null and not _is_live_board_card(_pending_equip_target):
+		_pending_equip_target = null
+		_pending_equip_action = ""
+	if selected_attacker != null and not _is_live_board_card(selected_attacker):
+		selected_attacker = null
+	if selected_interceptor != null and not _is_live_board_card(selected_interceptor):
+		selected_interceptor = null
+	if pending_attack_target is Card and not _is_live_board_card(pending_attack_target):
+		pending_attack_target = null
 
 func _get_board_zone_extent_target() -> float:
 	var base_extent := BoardZoneUI.get_base_zone_extent()
@@ -4010,14 +4079,14 @@ func _get_pending_freyja_graveyard_proxy_targets(hand_player: Player) -> Array[C
 	var cards: Array[Card] = []
 	if hand_player == null or hand_player.graveyard_zone == null or game_manager == null:
 		return cards
-	if _has_pending_click_selection() and _pending_click_selection_source is Freyja:
-		var freyja := _pending_click_selection_source as Freyja
+	if _has_pending_click_selection() and _is_freyja_normal_god(_pending_click_selection_source):
+		var freyja := _pending_click_selection_source
 		if freyja != null and freyja.card_owner == hand_player:
 			for target in freyja.get_valid_targets(game_manager):
 				if target != null and target.current_zone == hand_player.graveyard_zone:
 					cards.append(target)
-	if awaiting_god_ability_target and god_ability_source is Freyja:
-		var freyja_god := god_ability_source as Freyja
+	if awaiting_god_ability_target and _is_freyja_normal_god(god_ability_source):
+		var freyja_god := god_ability_source
 		if freyja_god != null and freyja_god.card_owner == hand_player:
 			for target in freyja_god.get_valid_targets(game_manager):
 				if target != null and target.current_zone == hand_player.graveyard_zone and target not in cards:
@@ -4031,8 +4100,8 @@ func _get_pending_freyja_graveyard_proxy_targets(hand_player: Player) -> Array[C
 func _is_freyja_power_target_selection_active(hand_player: Player) -> bool:
 	return hand_player != null \
 		and awaiting_god_ability_target \
-		and god_ability_source is Freyja \
-		and (god_ability_source as Freyja).card_owner == hand_player
+		and _is_freyja_normal_god(god_ability_source) \
+		and god_ability_source.card_owner == hand_player
 
 func _is_freyja_active_selected_card(card: Card) -> bool:
 	return card != null and card.uid in _pending_freyja_active_selected_uids
@@ -9094,14 +9163,14 @@ func _on_hand_card_pressed(card: Card) -> void:
 		update_ui()
 		return
 	if _has_pending_target_selection():
-		if awaiting_god_ability_target and god_ability_source is Freyja:
+		if awaiting_god_ability_target and _is_freyja_normal_god(god_ability_source):
 			if _try_queue_god_targeted_ability(card):
 				return
 			_handle_invalid_pending_target_click()
 			return
 		if _try_handle_pending_click_selection(card):
 			return
-		if _pending_click_selection_source is Freyja:
+		if _is_freyja_normal_god(_pending_click_selection_source):
 			_handle_invalid_pending_target_click(_get_pending_click_invalid_reason(card))
 		else:
 			_cancel_pending_target_selection(
@@ -9837,7 +9906,7 @@ func _on_god_right_clicked(card: Card) -> void:
 func _god_ability_should_use_selection_overlay(card: Card) -> bool:
 	if card == null or game_manager == null or not card.has_method("get_valid_targets"):
 		return false
-	if card is Freyja:
+	if _is_freyja_normal_god(card):
 		return false
 	var targets: Array = card.get_valid_targets(game_manager)
 	if targets.is_empty():
@@ -12317,7 +12386,9 @@ func _show_harii_jarl_impact_prompt(card: HariiJarl, prompt_targets: Array = [])
 		_queued_harii_jarl_prompt_targets[card.uid] = prompt_targets.duplicate()
 	_pending_harii_jarl = card
 	_pending_harii_jarl_choices.clear()
-	_prompt_harii_jarl_next_choice()
+	if _executing_stack_action and not _stack_resolution_paused:
+		_pause_stack_resolution(card.get_controller())
+	_begin_harii_jarl_click_selection()
 
 func _resolve_hunting_tactics_prompt(power: HuntingTactics, attacker: Card, prompt_targets: Array = []) -> void:
 	if power == null or attacker == null or game_manager == null:
@@ -12631,16 +12702,7 @@ func _prompt_harii_jarl_next_choice() -> void:
 	if remaining_targets.is_empty():
 		_resolve_harii_jarl_prompt_selection(card)
 		return
-	var choice_number := _pending_harii_jarl_choices.size() + 1
-	var title_text := "Choose Harii %d of %d for %s" % [choice_number, max_summons, card.card_name]
-	_show_card_selection_overlay(
-		title_text,
-		remaining_targets,
-		Callable(self, "_on_harii_jarl_target_selected"),
-		Callable(self, "_on_harii_jarl_selection_cancel"),
-		"",
-		"Decline"
-	)
+	_begin_harii_jarl_click_selection()
 
 func _on_harii_jarl_target_selected(chosen_target: Card) -> void:
 	if chosen_target != null and chosen_target not in _pending_harii_jarl_choices:
@@ -12680,6 +12742,48 @@ func _finish_harii_jarl_prompt(feedback: String) -> void:
 		update_ui()
 		return
 	_set_action_label_text(_consume_resolution_feedback(feedback))
+	update_ui()
+
+func _begin_harii_jarl_click_selection() -> void:
+	var card := _pending_harii_jarl
+	if card == null or game_manager == null:
+		_finish_harii_jarl_prompt("Harii Jarl cannot resolve Warband right now.")
+		return
+	var current_targets := _resolve_prompt_targets(
+		card.get_valid_warband_targets(game_manager),
+		_queued_harii_jarl_prompt_targets.get(card.uid, [])
+	)
+	var remaining_targets: Array[Card] = []
+	for target in current_targets:
+		if target != null and target not in _pending_harii_jarl_choices:
+			remaining_targets.append(target)
+	if remaining_targets.is_empty() or _pending_harii_jarl_choices.size() >= HariiJarl.MAX_WARBAND_SUMMONS:
+		_resolve_harii_jarl_prompt_selection(card)
+		return
+	if remaining_targets.size() == 1:
+		_on_harii_jarl_target_selected(remaining_targets[0])
+		return
+	var validate_harii_target := func(clicked_card: Card) -> bool:
+		return clicked_card != null and clicked_card in remaining_targets
+	var confirm_harii_target := func(chosen_card: Card) -> void:
+		_on_harii_jarl_target_selected(chosen_card)
+	var cancel_harii_target := func() -> void:
+		_on_harii_jarl_selection_cancel()
+	_begin_pending_click_selection(
+		card.card_name,
+		card,
+		validate_harii_target,
+		confirm_harii_target,
+		cancel_harii_target
+	)
+	var choice_number := _pending_harii_jarl_choices.size() + 1
+	_set_action_label_text(
+		"%s: click Harii %d of %d from your hand, or right-click to finish." % [
+			card.card_name,
+			choice_number,
+			HariiJarl.MAX_WARBAND_SUMMONS
+		]
+	)
 	update_ui()
 
 func _queue_gala_tura_destroyed_prompt(card: GalaTura, prompt_targets: Array = []) -> void:
@@ -16043,7 +16147,14 @@ func _finish_post_execute(source_player: Player) -> void:
 
 	if not game_manager.action_stack.is_empty():
 		game_manager.consecutive_passes = 0
-		game_manager.priority_player = game_manager.get_opponent(source_player)
+		var next_priority_player: Player = null
+		if source_player != null:
+			next_priority_player = game_manager.get_opponent(source_player)
+		if next_priority_player == null:
+			var next_action: CardAction = game_manager.action_stack.back()
+			if next_action != null:
+				next_priority_player = next_action.initial_priority_player if next_action.initial_priority_player != null else game_manager.get_opponent(next_action.source_player)
+		game_manager.priority_player = next_priority_player
 		_offer_priority()
 	elif not _queued_attackers.is_empty():
 		_advance_attack_queue.call_deferred()
@@ -16549,7 +16660,7 @@ func _show_absence_mode_prompt(spell: Absence, target: Card) -> void:
 
 	if target is PowerCard:
 		var relock_btn := Button.new()
-		relock_btn.text = "Flip Down"
+		relock_btn.text = "Relock"
 		relock_btn.pressed.connect(_on_absence_relock_pressed)
 		buttons.add_child(relock_btn)
 
@@ -19137,6 +19248,7 @@ func _dismiss_transient_prompts() -> void:
 	_pending_tezcatlipoca_titlacauan_prompt_targets.clear()
 	_hide_tezcatlipoca_active_titlacauan_prompt()
 	_hide_priority_prompt()
+	_hide_intercept_prompt()
 	_hide_retreat_prompt()
 	_hide_hati_prompt()
 	_hide_kur_jara_tree_of_life_prompt()
@@ -19583,14 +19695,18 @@ func _on_match_move_validated(move: Dictionary) -> void:
 				_set_action_label_text(_get_attack_card_label(attacker, "A creature") + " attacking " + _get_card_name_safe(target, "an enemy card") + "...")
 				if not _is_networked_client and not authoritative_priority:
 					check_for_possible_intercepts()
+			if not _is_networked_client and authoritative_priority:
+				_request_ui_refresh()
 		"intercept_decision":
 			# selected_interceptor was set by MatchManager; proceed to resolve the attack.
 			if not _is_networked_client and not authoritative_priority:
 				resolve_pending_attack()
+			elif not _is_networked_client and authoritative_priority:
+				_request_ui_refresh()
 		"play_creature":
 			if not _is_networked_client:
 				if authoritative_priority:
-					_schedule_priority_recovery_check()
+					_request_ui_refresh()
 				else:
 					_kick_local_stack_progress()
 		"prepare_card":
@@ -19661,6 +19777,8 @@ func _on_match_move_validated(move: Dictionary) -> void:
 				_set_action_label_text(phr_hex.card_name + " responds!")
 			if not _is_networked_client and not authoritative_priority:
 				_offer_priority()
+			elif not _is_networked_client and authoritative_priority:
+				_request_ui_refresh()
 		"activate_prepared_hex":
 			var prepared_hex := game_manager.get_card_by_uid(move.get("hex_uid", ""))
 			if prepared_hex != null:
@@ -19674,12 +19792,16 @@ func _on_match_move_validated(move: Dictionary) -> void:
 				_set_action_label_text(pcr_charm.card_name + " responds!")
 			if not _is_networked_client and not authoritative_priority:
 				_offer_priority()
+			elif not _is_networked_client and authoritative_priority:
+				_request_ui_refresh()
 		"play_priority_ability":
 			var response_card := game_manager.get_card_by_uid(move.get("source_uid", ""))
 			if response_card != null:
 				_set_action_label_text(response_card.card_name + " responds!")
 			if not _is_networked_client and not authoritative_priority:
 				_offer_priority()
+			elif not _is_networked_client and authoritative_priority:
+				_request_ui_refresh()
 		"durinn_secondborn_choice", "first_sage_adapa_choice", "third_sage_enmedugga_choice", "fourth_sage_enmegalamma_choice", "sixth_sage_an_enlilda_choice", "lailoken_reveal_choice", "masmassu_priest_reveal_choice", "rally_the_troops_choice", "terror_impact_choice", "fenrir_devour_choice", "gawain_healing_hands_choice", "tatzelwurm_dragon_heart_choice", "byggvir_reveal_choice", "harii_jarl_impact_choice", "gala_tura_destroyed_choice", "kur_jara_tree_of_life_choice", "hunting_tactics_choice", "foolish_optimism_choice", "blessed_knights_choice", "tezcatlipoca_active_titlacauan_choice", "freyja_active_open_sessrumnir_choice", "mummu_entropy_choice", "nusku_active_core_flame_choice", "nusku_well_of_fire_choice", "apollyons_demiurge_choice":
 			_apply_prompt_choice_feedback()
 			return
@@ -20205,6 +20327,8 @@ func _find_nearest_empty_friendly_zone(drop_pos: Vector2) -> Zone:
 	return best_zone
 
 func _is_attacker_on_board(attacker: Card, owning_player: Player) -> bool:
+	if attacker == null or owning_player == null:
+		return false
 	for z in owning_player.frontline_zones + owning_player.reserve_zones:
 		if attacker in z.cards:
 			return true
@@ -20477,6 +20601,9 @@ func _get_local_forfeit_player_index() -> int:
 func _emit_forfeit_requested() -> void:
 	forfeit_requested.emit()
 
+func _emit_leave_match_requested() -> void:
+	leave_match_requested.emit()
+
 func _emit_return_to_menu_requested() -> void:
 	return_to_menu_requested.emit()
 
@@ -20599,7 +20726,7 @@ func _on_game_result_back_to_menu_pressed() -> void:
 	_pending_post_game_return_to_menu = false
 	_hide_game_result_overlay()
 	_hide_corner_action_button()
-	_emit_return_to_menu_requested()
+	_emit_leave_match_requested()
 
 func _resolve_game_result_message(result_message: String, winner = null, loser = null) -> String:
 	var resolved_message := result_message.strip_edges()
@@ -20773,6 +20900,8 @@ func _apply_network_event(event_type: String, data: Dictionary) -> void:
 		"server_disconnected"
 	]:
 		return
+	if _should_ignore_local_host_network_event(event_type):
+		return
 	match event_type:
 		"full_state":
 			_apply_full_state(data)
@@ -20875,6 +21004,15 @@ func _apply_network_event(event_type: String, data: Dictionary) -> void:
 					loser = game_manager.get_opponent(winner)
 			var should_return_to_menu := _pending_forfeit_return_to_menu
 			_finalize_game_result_ui(result_message, winner, loser, should_return_to_menu)
+
+func _should_ignore_local_host_network_event(event_type: String) -> bool:
+	if not _is_real_network_host():
+		return false
+	return event_type in [
+		"turn_started",
+		"upkeep_needed",
+		"game_ended",
+	]
 
 func _apply_ui_interaction(event_data: Dictionary) -> void:
 	var type: String = event_data.get("type", "")
@@ -21295,7 +21433,12 @@ func _apply_full_state(data: Dictionary) -> void:
 	# Show server's action message if any
 	var msg: String = data.get("action_message", "")
 	if msg != "":
-		_set_action_label_text(msg, not (_is_networked_client and bool(state.get("is_game_over", false))))
+		var force_log_from_state := true
+		if _is_real_network_host():
+			force_log_from_state = false
+		elif _is_networked_client and bool(state.get("is_game_over", false)):
+			force_log_from_state = false
+		_set_action_label_text(msg, force_log_from_state)
 	if _is_networked_client:
 		_present_game_result_from_state(state, msg)
 
@@ -21796,6 +21939,21 @@ func _apply_intercept_offered(data: Dictionary) -> void:
 	var msg: String = data.get("action_message", "")
 	if msg != "":
 		_set_action_label_text(msg)
+	var prompt_signature := {
+		"attacker_uid": str(data.get("attacker_uid", "")),
+		"target_uid": str(data.get("target_uid", "")),
+		"target_player_index": int(data.get("target_player_index", -1)),
+		"interceptor_uids": Array(data.get("interceptor_uids", [])).duplicate(true),
+	}
+	if _is_intercept_prompt_visible() and prompt_signature == _visible_intercept_prompt_signature:
+		if _is_networked_client:
+			_restore_network_attack_preview_from_state({
+				"attacker_uid": str(data.get("attacker_uid", "")),
+				"target_uid": str(data.get("target_uid", "")),
+				"target_player_index": int(data.get("target_player_index", -1)),
+			})
+			update_ui()
+		return
 	if _is_networked_client:
 		_restore_network_attack_preview_from_state({
 			"attacker_uid": str(data.get("attacker_uid", "")),
@@ -21803,7 +21961,7 @@ func _apply_intercept_offered(data: Dictionary) -> void:
 			"target_player_index": int(data.get("target_player_index", -1)),
 		})
 		update_ui()
-	_show_intercept_prompt(data.get("interceptor_uids", []))
+	_show_intercept_prompt(data.get("interceptor_uids", []), prompt_signature)
 
 func _make_intercept_prompt_art(card: Card) -> Control:
 	var frame := PanelContainer.new()
@@ -21828,7 +21986,7 @@ func _make_intercept_prompt_art(card: Card) -> Control:
 
 	return frame
 
-func _show_intercept_prompt(interceptor_uids: Array) -> void:
+func _show_intercept_prompt(interceptor_uids: Array, prompt_signature: Dictionary = {}) -> void:
 	var panel = get_node_or_null("InterceptPromptPanel")
 	if panel == null:
 		panel = PanelContainer.new()
@@ -21892,10 +22050,12 @@ func _show_intercept_prompt(interceptor_uids: Array) -> void:
 		)
 		row.add_child(btn)
 
+	_visible_intercept_prompt_signature = prompt_signature.duplicate(true)
 	_promote_transient_ui(panel)
 	panel.show()
 
 func _hide_intercept_prompt() -> void:
+	_visible_intercept_prompt_signature.clear()
 	var panel = get_node_or_null("InterceptPromptPanel")
 	if panel:
 		panel.hide()
@@ -21922,7 +22082,7 @@ func _on_forfeit_button_pressed() -> void:
 		return
 	if _is_observer_mode:
 		_cancel_match_locally("Stopped observing.")
-		_emit_return_to_menu_requested()
+		_emit_leave_match_requested()
 		return
 	if _is_networked_client and not _can_submit_network_action():
 		var cancel_message := "Match canceled."
@@ -22340,10 +22500,15 @@ func _on_card_drag_released(card: Card, drop_pos: Vector2, card_rotated: bool, c
 				update_ui()
 				return
 			_begin_pending_creature_summon_cost_tracking(card)
-			_awaiting_drag_sacrifice_zone = true
 			_drag_sacrifice_card = card
 			_drag_sacrifice_target = target
 			_drag_sacrifice_mode = "stealth" if card_stealth else ("defensive" if card_rotated else "aggressive")
+			# Match the click flow: if sacrificing this creature opens a legal summon zone,
+			# resolve immediately instead of forcing an extra confirmation click.
+			if _can_use_zone_after_sacrifice(zu.zone, target):
+				_execute_drag_sacrifice(zu.zone)
+				return
+			_awaiting_drag_sacrifice_zone = true
 			_set_action_label_text("Choose an empty friendly zone to summon " + card.card_name + ". " + target.card_name + " will be sacrificed when you place it.")
 			update_ui()
 			return

@@ -26,7 +26,11 @@ func resolve(game_manager: GameManager, _target = null) -> void:
 	var revealed_count := 0
 	for player: Player in game_manager.players:
 		for zone: Zone in player.frontline_zones + player.reserve_zones:
-			for card: Card in zone.cards:
+			if zone == null:
+				continue
+			for card: Card in zone.cards.duplicate():
+				if card == null:
+					continue
 				if card.card_type != Card.CardType.CREATURE:
 					continue
 				all_creatures.append(card)
@@ -38,7 +42,10 @@ func resolve(game_manager: GameManager, _target = null) -> void:
 
 	var doomed_creatures: Array[Card] = []
 	for creature in all_creatures:
-		if _should_destroy(creature):
+		if creature != null \
+				and creature.current_zone != null \
+				and creature.current_zone.is_board_zone() \
+				and _should_destroy(creature):
 			doomed_creatures.append(creature)
 
 	if doomed_creatures.is_empty() and revealed_count == 0:
@@ -46,7 +53,8 @@ func resolve(game_manager: GameManager, _target = null) -> void:
 		return
 
 	for creature in doomed_creatures:
-		game_manager.request_send_to_graveyard(creature, Callable(), false, true)
+		if creature != null and creature.current_zone != null and creature.current_zone.is_board_zone():
+			game_manager.request_send_to_graveyard(creature, Callable(), false, true)
 
 	print(card_name + " revealed " + str(revealed_count) + " face-down creature(s) and destroyed " + str(doomed_creatures.size()) + " creature(s).")
 
@@ -55,7 +63,11 @@ func can_be_played(game_manager: GameManager, player: Player) -> bool:
 		return false
 	for p: Player in game_manager.players:
 		for zone: Zone in p.frontline_zones + p.reserve_zones:
-			for card: Card in zone.cards:
+			if zone == null:
+				continue
+			for card: Card in zone.cards.duplicate():
+				if card == null:
+					continue
 				if card.card_type == Card.CardType.CREATURE and (card.is_face_down or _should_destroy(card)):
 					return true
 	print(card_name + " has no valid targets.")
@@ -69,7 +81,11 @@ func get_play_failure_reason(game_manager: GameManager, player: Player) -> Strin
 		return card_name + " cannot be cast right now."
 	for p: Player in game_manager.players:
 		for zone: Zone in p.frontline_zones + p.reserve_zones:
-			for card: Card in zone.cards:
+			if zone == null:
+				continue
+			for card: Card in zone.cards.duplicate():
+				if card == null:
+					continue
 				if card.card_type == Card.CardType.CREATURE and (card.is_face_down or _should_destroy(card)):
 					return ""
 	return card_name + " has no valid targets."
@@ -87,7 +103,9 @@ func would_destroy_creature_of_player(_game_manager: GameManager, protected_play
 	if protected_player == null:
 		return false
 	for zone in protected_player.frontline_zones + protected_player.reserve_zones:
-		for card in zone.cards:
+		if zone == null:
+			continue
+		for card in zone.cards.duplicate():
 			if card != null and _should_destroy(card):
 				return true
 	return false

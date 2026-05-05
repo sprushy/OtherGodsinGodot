@@ -13,7 +13,7 @@ func _init() -> void:
 	resilience = 16
 	strength = 22
 	sacrifice_cost = 0
-	ability_text = "[b]Shift[/b] ([b]Activate[/b], [b]Minor Action[/b]): Switch this card between Dragon, Animal, Piscine, Aqueous and Human, Aqueous, Shapeshifter."
+	ability_text = "[b]Shift[/b] ([b]Activate[/b], [b]Minor Action[/b], once per turn): Switch this card between Dragon, Animal, Piscine, Aqueous and Human, Aqueous, Shapeshifter."
 	flavor_text = ""
 	culture = "Tian"
 	artist = "Riccardo Zoppello"
@@ -35,7 +35,7 @@ func can_activate(game_manager: GameManager) -> bool:
 		return false
 	if is_sleeping:
 		return false
-	return can_take_minor_creature_action()
+	return can_take_minor_creature_action() and can_use_shift_ability_this_turn()
 
 func get_tonal_extraction_spirit_profile() -> Dictionary:
 	return {
@@ -55,6 +55,7 @@ func activate(game_manager: GameManager, _target: Card = null) -> void:
 		return
 	shift_forms()
 	spend_minor_creature_action()
+	spend_shift_ability_use()
 	if game_manager != null:
 		game_manager.notify_creature_shapeshifted(self, self)
 		var form_label := "Human, Aqueous, Shapeshifter" if in_human_form else "Dragon, Animal, Piscine, Aqueous"

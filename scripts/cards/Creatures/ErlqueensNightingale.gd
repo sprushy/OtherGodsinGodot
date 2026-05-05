@@ -13,7 +13,7 @@ func _init() -> void:
 	resilience = 10
 	strength = 13
 	sacrifice_cost = 0
-	ability_text = "[b]Shift[/b] ([b]Activate[/b], [b]Minor Action[/b]): Switch this card between Human, Servant, Mage, Witch and Animal, Avian, Aerial. When this card shifts, you may return it to your hand."
+	ability_text = "[b]Shift[/b] ([b]Activate[/b], [b]Minor Action[/b], once per turn): Switch this card between Human, Servant, Mage, Witch and Animal, Avian, Aerial. When this card shifts, you may return it to your hand."
 	flavor_text = ""
 	culture = "Norse"
 	artist = "Jessica Kings Via Tcg-Maker"
@@ -35,7 +35,7 @@ func can_activate(game_manager: GameManager) -> bool:
 		return false
 	if is_sleeping:
 		return false
-	return can_take_minor_creature_action()
+	return can_take_minor_creature_action() and can_use_shift_ability_this_turn()
 
 func get_tonal_extraction_spirit_profile() -> Dictionary:
 	return {
@@ -58,6 +58,7 @@ func activate(game_manager: GameManager, target = null) -> void:
 		return
 	shift_forms()
 	spend_minor_creature_action()
+	spend_shift_ability_use()
 	if return_to_hand_after_shift and card_owner != null:
 		card_owner.move_card(self, card_owner.hand_zone)
 	if game_manager != null:

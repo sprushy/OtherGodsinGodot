@@ -250,6 +250,7 @@ var has_moved_this_turn: bool = false
 var has_attacked_this_turn: bool = false
 var creature_major_action_used: bool = false
 var creature_minor_actions_used: int = 0
+var creature_shift_used_this_turn: bool = false
 var is_sleeping: bool = false
 var sleeping_from: Card = null
 var equipped_on: Card = null
@@ -1311,6 +1312,7 @@ func reset_creature_action_state() -> void:
 	has_attacked_this_turn = false
 	creature_major_action_used = false
 	creature_minor_actions_used = 0
+	creature_shift_used_this_turn = false
 
 func get_max_minor_creature_actions_per_turn() -> int:
 	return 2
@@ -1339,6 +1341,12 @@ func spend_minor_creature_action(marked_as_move: bool = false) -> void:
 		has_moved_this_turn = true
 	if creature_minor_actions_used >= get_max_minor_creature_actions_per_turn():
 		has_acted_this_turn = true
+
+func can_use_shift_ability_this_turn() -> bool:
+	return not creature_shift_used_this_turn
+
+func spend_shift_ability_use() -> void:
+	creature_shift_used_this_turn = true
 
 func mark_attacked_this_turn() -> void:
 	has_attacked_this_turn = true

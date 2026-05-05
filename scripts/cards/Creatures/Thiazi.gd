@@ -18,7 +18,7 @@ func _init() -> void:
 	speed = 1
 	resilience = 26
 	strength = 24
-	ability_text = "[b]Shift[/b] ([b]Activate[/b], [b]Minor Action[/b]): Switch this card between Giant, Mage, Shapeshifter and Animal, Mage, Avian, Aerial.\n[b]Animal Form[/b] ([b]Passive[/b]): While in Animal form, this card's stats become SPD 3 / RES 15 / STR 27."
+	ability_text = "[b]Shift[/b] ([b]Activate[/b], [b]Minor Action[/b], once per turn): Switch this card between Giant, Mage, Shapeshifter and Animal, Mage, Avian, Aerial.\n[b]Animal Form[/b] ([b]Passive[/b]): While in Animal form, this card's stats become SPD 3 / RES 15 / STR 27."
 	flavor_text = ""
 	culture = "Norse"
 	artist = "Lorinda Tomko"
@@ -40,7 +40,7 @@ func can_activate(game_manager: GameManager) -> bool:
 		return false
 	if is_sleeping:
 		return false
-	return can_take_minor_creature_action()
+	return can_take_minor_creature_action() and can_use_shift_ability_this_turn()
 
 func get_tonal_extraction_spirit_profile() -> Dictionary:
 	return {
@@ -60,6 +60,7 @@ func activate(game_manager: GameManager, _target: Card = null) -> void:
 		return
 	shift_forms()
 	spend_minor_creature_action()
+	spend_shift_ability_use()
 	if game_manager != null:
 		game_manager.notify_creature_shapeshifted(self, self)
 		game_manager.note_player_feedback("%s shifts into %s." % [card_name, _get_current_form_label()])

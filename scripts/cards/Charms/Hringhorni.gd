@@ -24,6 +24,11 @@ func can_activate_prepared(game_manager: GameManager, triggering_action: CardAct
 		return false
 	return _has_destroyed_friendly_norse_warrior(game_manager)
 
+func can_respond_to_action(action: CardAction, game_manager: GameManager = null) -> bool:
+	if action != null and action.type == CardAction.Type.EVENT and action.event_name == "destroyed":
+		return _is_valid_destroyed_warrior(action.card)
+	return super.can_respond_to_action(action, game_manager)
+
 func resolve(game_manager: GameManager, _target = null) -> void:
 	if game_manager == null or card_owner == null:
 		return

@@ -639,7 +639,9 @@ static func _deserialize_card(cdata: Dictionary) -> Card:
 	card.culture                   = cdata.get("culture", card.culture)
 	var ct = cdata.get("card_types", null)
 	if ct is Array:
-		card.card_types = ct
+		card.card_types.clear()
+		for type_name in ct:
+			card.card_types.append(str(type_name))
 
 	# Store equipped_on_uid in meta for the second-pass linking step
 	var equipped_uid: String = cdata.get("equipped_on_uid", "")

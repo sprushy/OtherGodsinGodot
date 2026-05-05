@@ -16,7 +16,7 @@ func _init() -> void:
 	speed = 2
 	resilience = 26
 	strength = 26
-	ability_text = "[b]Shift[/b] ([b]Activate[/b], [b]Minor Action[/b]): Switch between Human, Mage, Shapeshifter and Animal, Anguine, Shapeshifter.\nMedicine ([b]Activate[/b], [b]Spd[/b] 2): Negate enemy effects targeting your cards until end of turn."
+	ability_text = "[b]Shift[/b] ([b]Activate[/b], [b]Minor Action[/b], once per turn): Switch between Human, Mage, Shapeshifter and Animal, Anguine, Shapeshifter.\nMedicine ([b]Activate[/b], [b]Spd[/b] 2): Negate enemy effects targeting your cards until end of turn."
 	flavor_text = ""
 	culture = "Tian"
 	artist = "Ricardo Zoppello"
@@ -32,6 +32,7 @@ func can_activate_shift(game_manager: GameManager) -> bool:
 	return _can_use_base_creature_action(game_manager) \
 		and not is_shapeshift_locked() \
 		and can_take_minor_creature_action() \
+		and can_use_shift_ability_this_turn() \
 		and get_controller() == game_manager.current_player
 
 func can_activate_medicine(game_manager: GameManager) -> bool:
@@ -119,6 +120,7 @@ func _activate_shift(game_manager: GameManager) -> void:
 
 	shift_forms()
 	spend_minor_creature_action()
+	spend_shift_ability_use()
 	game_manager.notify_creature_shapeshifted(self, self)
 	game_manager.note_player_feedback(
 		"%s shifts into %s form." % [card_name, "Serpent" if in_serpent_form else "Human"]

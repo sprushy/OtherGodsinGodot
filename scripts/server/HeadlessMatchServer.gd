@@ -8,6 +8,7 @@ const DefaultMatchSetupScript = preload("res://scripts/server/DefaultMatchSetup.
 const MatchHistoryStoreScript = preload("res://scripts/server/MatchHistoryStore.gd")
 const INITIAL_JOIN_TIMEOUT_SECONDS := 120
 const ABANDONED_MATCH_SHUTDOWN_DELAY_SECONDS := 0.25
+const GAME_END_SHUTDOWN_DELAY_SECONDS := 3.0
 
 signal startup_succeeded(match_id: String, port: int)
 signal startup_failed(message: String)
@@ -157,11 +158,13 @@ func _validate_config(config: Dictionary) -> String:
 
 func _on_game_ended(_winner: Player, _loser: Player) -> void:
 	_abandoned_shutdown_started = true
+	if match_session != null:
+		match_session.mark_finished()
 	_record_match_result(_winner, _loser)
 	var tree := get_tree()
 	if tree == null:
 		return
-	var shutdown_timer := tree.create_timer(1.0)
+	var shutdown_timer := tree.create_timer(GAME_END_SHUTDOWN_DELAY_SECONDS)
 	shutdown_timer.timeout.connect(func() -> void:
 		if get_tree() != null:
 			get_tree().quit()

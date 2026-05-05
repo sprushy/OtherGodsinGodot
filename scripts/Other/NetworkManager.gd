@@ -168,6 +168,8 @@ func broadcast_event_to_all(event_type: String, data: Dictionary) -> void:
 		return
 	if not _has_active_multiplayer_peer():
 		return
+	if not _has_remote_broadcast_recipients():
+		return
 	rpc("broadcast_event", event_type, data)
 
 ## Server sends an event to one specific peer only (for hand privacy).
@@ -263,6 +265,12 @@ func _ensure_multiplayer_api() -> MultiplayerAPI:
 func _has_active_multiplayer_peer() -> bool:
 	var api := _ensure_multiplayer_api()
 	return api != null and api.multiplayer_peer != null
+
+func _has_remote_broadcast_recipients() -> bool:
+	for player_index in player_peer_ids.keys():
+		if int(player_peer_ids[player_index]) > 1:
+			return true
+	return not spectator_peer_ids.is_empty()
 
 func _trace(message: String) -> void:
 	if trace_file_path.is_empty():

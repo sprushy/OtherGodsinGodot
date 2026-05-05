@@ -13,7 +13,7 @@ func _init() -> void:
 	resilience = 10
 	strength = 10
 	sacrifice_cost = 0
-	ability_text = "Brewing (reveal): Flip over a Mead power, activate a Mead power, or return a Mead card from your graveyard to your hand."
+	ability_text = "Brewing (reveal): Unlock a Mead power, activate a Mead power, or return a Mead card from your graveyard to your hand."
 	flavor_text = ""
 	culture = "Norse"
 	artist = "Tim Nguyen"
@@ -86,7 +86,7 @@ func get_brewing_option_label(option: Dictionary) -> String:
 	match kind:
 		"flip":
 			var power: Card = option.get("power", null) as Card
-			return "Flip %s face up" % (power.card_name if power != null else "Mead power")
+			return "Unlock %s" % (power.card_name if power != null else "Mead power")
 		"activate":
 			var power: Card = option.get("power", null) as Card
 			return "Activate %s" % (power.card_name if power != null else "Mead power")
@@ -109,13 +109,13 @@ func resolve_brewing_option(game_manager: GameManager, option: Dictionary) -> St
 		"flip":
 			var power: PowerCard = option.get("power", null) as PowerCard
 			if power == null:
-				return card_name + " had no Mead power to flip."
+				return card_name + " had no Mead power to unlock."
 			power.is_face_down = false
 			power.is_publicly_revealed = false
 			power.is_muted = false
 			power.mute_turns_remaining = 0
 			power.on_unlock(game_manager)
-			return "%s reveals and flips %s face up." % [card_name, power.card_name]
+			return "%s reveals and unlocks %s." % [card_name, power.card_name]
 		"activate":
 			var power: PowerCard = option.get("power", null) as PowerCard
 			if power == null:

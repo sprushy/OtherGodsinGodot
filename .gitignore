@@ -10,3 +10,4 @@ server_upload/
 # Claude Code
 .claude/
 CLAUDE.md
+.codex_tmp/
