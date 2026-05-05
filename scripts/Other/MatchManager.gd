@@ -659,7 +659,10 @@ func _queue_destroyed_priority_events(start_index: int, resolved_action: CardAct
 		destroyed_action.card = destroyed_card
 		destroyed_action.event_name = "destroyed"
 		destroyed_action.event_speed = 0
-		destroyed_action.resolution_text = "%s was destroyed." % destroyed_card.card_name
+		if destroyed_card.current_zone != null and destroyed_card.current_zone.is_board_zone():
+			destroyed_action.resolution_text = "%s survived combat." % destroyed_card.card_name
+		else:
+			destroyed_action.resolution_text = "%s was destroyed." % destroyed_card.card_name
 		game_manager.push_to_stack(destroyed_action)
 
 func _finalize_resolved_action(action: CardAction) -> void:

@@ -43,7 +43,7 @@ func on_impact(game_manager: GameManager) -> void:
 		"target_uids": target_uids,
 		"summon_limit": summon_limit,
 		"queue_with_priority": true,
-		"event_name": "freyja_active_open_sessrumnir",
+		"event_name": "freyja_active_open_sessrumnir_impact",
 	})
 
 func on_turn_start(game_manager: GameManager) -> void:

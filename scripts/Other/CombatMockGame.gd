@@ -246,6 +246,7 @@ var _drag_sacrifice_mode: String = ""
 var _pending_structure_bonus_power_uid: String = ""
 var _pending_structure_bonus_structure_uid: String = ""
 var _pending_advanced_building_techniques_prompt_data: Dictionary = {}
+var _pending_freyja_active_prompt_data: Dictionary = {}
 var _awaiting_altar_void_payment: bool = false
 var _altar_pending_power: AltarOfDreams = null
 var _altar_void_targets_chosen: Array[Card] = []
@@ -1565,7 +1566,7 @@ func _is_freyja_tabby_cursor_mode_active() -> bool:
 		or (awaiting_god_ability_target and _is_freyja_normal_god(god_ability_source))
 
 func _is_freyja_active_prompt_open() -> bool:
-	return _pending_freyja_active_prompt != null
+	return _get_pending_freyja_active_card() != null
 
 func _get_freyja_active_cursor_mode() -> String:
 	if not _is_freyja_active_prompt_open():
@@ -9688,8 +9689,9 @@ func _on_god_card_pressed(card: Card) -> void:
 	if _is_card_usable_for_priority(card):
 		_on_priority_response_chosen(card)
 		return
-	if _pending_freyja_active_prompt != null:
-		if card == _pending_freyja_active_prompt:
+	var pending_freyja := _get_pending_freyja_active_card()
+	if pending_freyja != null:
+		if card == pending_freyja:
 			_confirm_freyja_active_prompt()
 		else:
 			_set_action_label_text("Open Sessrumnir is waiting for graveyard picks. Click Freyja to confirm or right-click to skip.")
@@ -16429,6 +16431,31 @@ func _retry_pending_advanced_building_techniques_prompt() -> void:
 	var prompt_data := _pending_advanced_building_techniques_prompt_data.duplicate(true)
 	_show_advanced_building_techniques_prompt_from_data(prompt_data)
 
+func _show_freyja_active_prompt_from_data(data: Dictionary) -> void:
+	if game_manager == null:
+		return
+	var source_uid := str(data.get("source_uid", "")).strip_edges()
+	if source_uid == "":
+		_pending_freyja_active_prompt_data.clear()
+		return
+	var card := game_manager.get_card_by_uid(source_uid) as FreyjaActive
+	if card == null:
+		_pending_freyja_active_prompt_data = data.duplicate(true)
+		return
+	var prompt_targets: Array[Card] = []
+	for target_uid in data.get("target_uids", []):
+		var target_card := game_manager.get_card_by_uid(str(target_uid))
+		if target_card != null:
+			prompt_targets.append(target_card)
+	_pending_freyja_active_prompt_data.clear()
+	_show_freyja_active_prompt(card, prompt_targets)
+
+func _retry_pending_freyja_active_prompt() -> void:
+	if _pending_freyja_active_prompt_data.is_empty():
+		return
+	var prompt_data := _pending_freyja_active_prompt_data.duplicate(true)
+	_show_freyja_active_prompt_from_data(prompt_data)
+
 func _show_structure_bonus_prompt(power: AdvancedBuildingTechniques, structure: Card) -> void:
 	_hide_structure_bonus_prompt()
 	_pending_structure_bonus_power_uid = power.uid if power != null else ""
@@ -17179,12 +17206,22 @@ func _show_freyja_active_prompt(card: FreyjaActive, prompt_targets: Array = []) 
 	)
 	update_ui()
 
+func _get_pending_freyja_active_card() -> FreyjaActive:
+	if game_manager == null:
+		return null
+	if _pending_freyja_active_source_uid != "":
+		var live_card := game_manager.get_card_by_uid(_pending_freyja_active_source_uid) as FreyjaActive
+		if live_card != null:
+			_pending_freyja_active_prompt = live_card
+			return live_card
+	return _pending_freyja_active_prompt
+
 func _hide_freyja_active_prompt() -> void:
 	_pending_freyja_active_prompt = null
 	_pending_freyja_active_prompt_targets.clear()
 
 func _resolve_freyja_active_prompt(targets: Array[Card], fallback_text: String = "") -> void:
-	var card := _pending_freyja_active_prompt
+	var card := _get_pending_freyja_active_card()
 	_hide_freyja_active_prompt()
 	if card == null:
 		if _stack_resolution_paused:
@@ -17229,10 +17266,11 @@ func _get_freyja_active_prompt_targets(card: FreyjaActive, prompt_targets: Array
 	return current_targets
 
 func _get_pending_freyja_active_targets() -> Array[Card]:
-	if _pending_freyja_active_prompt == null or game_manager == null:
+	var card := _get_pending_freyja_active_card()
+	if card == null or game_manager == null:
 		return []
 	var prompt_targets: Array[Card] = []
-	var live_targets := _pending_freyja_active_prompt.get_valid_open_sessrumnir_targets(game_manager)
+	var live_targets := card.get_valid_open_sessrumnir_targets(game_manager)
 	for target_uid in _pending_freyja_active_prompt_targets:
 		var target := game_manager.get_card_by_uid(target_uid)
 		if target != null and target in live_targets:
@@ -17252,7 +17290,7 @@ func _get_pending_freyja_active_selected_cards() -> Array[Card]:
 	return selected_targets
 
 func _toggle_freyja_active_target(target: Card) -> bool:
-	var card := _pending_freyja_active_prompt
+	var card := _get_pending_freyja_active_card()
 	if card == null or target == null or game_manager == null:
 		return false
 	var current_targets := _get_pending_freyja_active_targets()
@@ -17291,13 +17329,13 @@ func _toggle_freyja_active_target(target: Card) -> bool:
 	return true
 
 func _confirm_freyja_active_prompt() -> bool:
-	if _pending_freyja_active_prompt == null:
+	if _get_pending_freyja_active_card() == null:
 		return false
 	_resolve_freyja_active_prompt(_get_pending_freyja_active_selected_cards())
 	return true
 
 func _skip_freyja_active_prompt() -> bool:
-	if _pending_freyja_active_prompt == null:
+	if _get_pending_freyja_active_card() == null:
 		return false
 	_resolve_freyja_active_prompt([])
 	return true
@@ -19239,6 +19277,7 @@ func _dismiss_transient_prompts() -> void:
 	_hide_pause_menu()
 	_hide_devour_cancel_prompt()
 	_dismiss_zone_overlay()
+	_pending_freyja_active_prompt_data.clear()
 	_pending_freyja_active_source_uid = ""
 	_pending_freyja_active_selected_uids.clear()
 	_pending_freyja_active_prompt_targets.clear()
@@ -20039,14 +20078,7 @@ func _on_match_ui_interaction(player_index: int, type: String, data: Dictionary)
 						prompt_targets.append(target_card)
 				_begin_gugalanna_impact_targeting(card, prompt_targets)
 		"freyja_active_open_sessrumnir":
-			var card := game_manager.get_card_by_uid(data.get("source_uid", "")) as FreyjaActive
-			if card != null:
-				var prompt_targets: Array[Card] = []
-				for target_uid in data.get("target_uids", []):
-					var target_card := game_manager.get_card_by_uid(str(target_uid))
-					if target_card != null:
-						prompt_targets.append(target_card)
-				_show_freyja_active_prompt(card, prompt_targets)
+			_show_freyja_active_prompt_from_data(data)
 		"giant_master_architect_impact":
 			var card := game_manager.get_card_by_uid(data.get("source_uid", "")) as GiantMasterArchitect
 			if card != null:
@@ -21138,14 +21170,7 @@ func _apply_ui_interaction(event_data: Dictionary) -> void:
 						prompt_targets.append(target_card)
 				_begin_gugalanna_impact_targeting(card, prompt_targets)
 		"freyja_active_open_sessrumnir":
-			var card := game_manager.get_card_by_uid(payload.get("source_uid", "")) as FreyjaActive
-			if card != null:
-				var prompt_targets: Array[Card] = []
-				for target_uid in payload.get("target_uids", []):
-					var target_card := game_manager.get_card_by_uid(str(target_uid))
-					if target_card != null:
-						prompt_targets.append(target_card)
-				_show_freyja_active_prompt(card, prompt_targets)
+			_show_freyja_active_prompt_from_data(payload)
 		"giant_master_architect_impact":
 			var card := game_manager.get_card_by_uid(payload.get("source_uid", "")) as GiantMasterArchitect
 			if card != null:
@@ -21444,6 +21469,7 @@ func _apply_full_state(data: Dictionary) -> void:
 
 	update_ui()
 	_retry_pending_advanced_building_techniques_prompt()
+	_retry_pending_freyja_active_prompt()
 	_restore_priority_prompt_from_authoritative_state()
 	_update_waiting_overlay()
 
