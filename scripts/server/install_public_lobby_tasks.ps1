@@ -23,7 +23,8 @@ if (-not (Test-Path -LiteralPath $UpdateScript)) {
 }
 
 $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -RunLevel Highest
-$settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 10) -StartWhenAvailable
+$settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Hours 1) -StartWhenAvailable
+$repetitionDuration = New-TimeSpan -Days 9999
 
 $startAction = New-ScheduledTaskAction -Execute $PowerShellExe `
     -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$StartScript`""
@@ -35,6 +36,7 @@ Register-ScheduledTask -TaskName $StartupTaskName `
 $updateAction = New-ScheduledTaskAction -Execute $PowerShellExe `
     -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$UpdateScript`""
 $updateTrigger = New-ScheduledTaskTrigger -RepetitionInterval (New-TimeSpan -Minutes $UpdateIntervalMinutes) `
+    -RepetitionDuration $repetitionDuration `
     -Once -At "00:00"
 Register-ScheduledTask -TaskName $UpdateTaskName `
     -Action $updateAction -Trigger $updateTrigger `

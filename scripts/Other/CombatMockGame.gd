@@ -16768,7 +16768,9 @@ func _show_byggvir_reveal_prompt(card: Byggvir, prompt_options: Array = []) -> v
 		return
 	if not prompt_options.is_empty():
 		card.consume_brewing_reveal_pending()
-	var options: Array[Dictionary] = prompt_options if not prompt_options.is_empty() else card.serialize_brewing_options(game_manager)
+	var options: Array[Dictionary] = _normalize_dictionary_prompt_options(
+		prompt_options if not prompt_options.is_empty() else card.serialize_brewing_options(game_manager)
+	)
 	if options.is_empty():
 		_set_action_label_text(card.card_name + " has no Brewing options on reveal.")
 		update_ui()
@@ -16828,6 +16830,13 @@ func _show_byggvir_reveal_prompt(card: Byggvir, prompt_options: Array = []) -> v
 	panel.offset_right = 230
 	panel.offset_top = -100
 	panel.offset_bottom = 100
+
+func _normalize_dictionary_prompt_options(raw_options: Array) -> Array[Dictionary]:
+	var normalized_options: Array[Dictionary] = []
+	for raw_option in raw_options:
+		if raw_option is Dictionary:
+			normalized_options.append((raw_option as Dictionary).duplicate(true))
+	return normalized_options
 
 func _hide_byggvir_reveal_prompt() -> void:
 	var panel := get_node_or_null("ByggvirPromptPanel")

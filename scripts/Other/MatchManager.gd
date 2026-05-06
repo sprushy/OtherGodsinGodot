@@ -309,6 +309,8 @@ func _consume_pending_ui_interaction_by_id(prompt_id: int) -> void:
 
 func _get_ui_interaction_type_for_command(command_type: String) -> String:
 	match command_type:
+		"intercept_decision":
+			return "intercept"
 		"aphrodite_enslave_choice":
 			return "aphrodite_enslave"
 		"blessed_knights_choice":
@@ -404,6 +406,8 @@ func _pending_ui_interaction_matches_command(entry: Dictionary, command: Diction
 	var required_player := _get_required_player_for_command(command)
 	if required_player != null and entry.get("player", null) != required_player:
 		return false
+	if expected_type == "intercept":
+		return _pending_intercept_prompt_matches_command(entry, command)
 	var data: Dictionary = entry.get("data", {})
 	for key in ["source_uid", "card_uid", "attacker_uid", "demon_uid", "summoned_uid", "power_uid", "structure_uid"]:
 		if not data.has(key):
@@ -425,6 +429,36 @@ func _pending_ui_interaction_matches_command(entry: Dictionary, command: Diction
 		return false
 	if data.has("defender_uids") and not _command_uid_is_in_prompt_list(command, "defender_uid", data.get("defender_uids", [])):
 		return false
+	return true
+
+func _pending_intercept_prompt_matches_command(entry: Dictionary, command: Dictionary) -> bool:
+	if selected_attacker == null or pending_attack_target == null:
+		return false
+	var data: Dictionary = entry.get("data", {})
+	var expected_attacker_uid := str(data.get("attacker_uid", "")).strip_edges()
+	if expected_attacker_uid != "" and expected_attacker_uid != selected_attacker.uid:
+		return false
+	if pending_attack_target is Card:
+		var pending_target := pending_attack_target as Card
+		var expected_target_uid := str(data.get("target_uid", "")).strip_edges()
+		if expected_target_uid != "" and expected_target_uid != pending_target.uid:
+			return false
+		if data.has("target_player_index"):
+			var target_player_idx := game_manager.players.find(pending_target.get_controller()) if game_manager != null else -1
+			if int(data.get("target_player_index", -1)) != target_player_idx:
+				return false
+	elif pending_attack_target is Player:
+		var pending_target_player := pending_attack_target as Player
+		var pending_target_player_idx := game_manager.players.find(pending_target_player) if game_manager != null else -1
+		if data.has("target_player_index") and int(data.get("target_player_index", -1)) != pending_target_player_idx:
+			return false
+		var expected_target_uid := str(data.get("target_uid", "")).strip_edges()
+		if expected_target_uid != "" and expected_target_uid != str(pending_target_player_idx):
+			return false
+	var interceptor_uid := str(command.get("interceptor_uid", "")).strip_edges()
+	if interceptor_uid != "" and data.has("interceptor_uids"):
+		if interceptor_uid not in _string_uid_list(data.get("interceptor_uids", [])):
+			return false
 	return true
 
 func _get_command_uid_for_prompt_key(command: Dictionary, key: String) -> String:
@@ -1644,7 +1678,7 @@ func _start_authoritative_headless_attack() -> void:
 	for interceptor in possible_interceptors:
 		interceptor_uids.append(interceptor.uid)
 	var attacker_name := _get_action_label(selected_attacker, defender) if selected_attacker != null else "A creature"
-	request_ui_interaction.emit(defender_idx, "intercept", {
+	_emit_ui_interaction_for_player(defender, "intercept", {
 		"interceptor_uids": interceptor_uids,
 		"attacker": selected_attacker,
 		"target": pending_attack_target,

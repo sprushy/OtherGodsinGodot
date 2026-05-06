@@ -8,6 +8,7 @@ $Zip  = Join-Path $Root "OtherGodsServer-windows.zip"
 $VersionFile = Join-Path $Root "release_version.txt"
 $Log  = Join-Path $Root "updater.log"
 $LifecycleMutexName = "Global\OtherGodsServerLifecycle"
+$LifecycleMutexWaitSeconds = 90
 
 function Write-Log($m) {
     Add-Content -LiteralPath $Log -Value ("{0} {1}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $m)
@@ -20,22 +21,109 @@ function Ensure-ServerRunning {
     & $StartupScript -SkipMutex
 }
 
+function Normalize-Version {
+    param(
+        [string]$Value
+    )
+
+    $normalized = $Value.Trim()
+    if (-not $normalized) {
+        return ""
+    }
+    if ($normalized.StartsWith("refs/tags/")) {
+        $normalized = $normalized.Substring(10)
+    }
+    if ($normalized -notmatch '^[vV]' -and $normalized -match '^\d+(\.\d+)*$') {
+        $normalized = "v$normalized"
+    }
+    return $normalized.ToLowerInvariant()
+}
+
+function Get-VersionParts {
+    param(
+        [string]$Version
+    )
+
+    $normalized = Normalize-Version $Version
+    if (-not $normalized) {
+        return @()
+    }
+
+    if ($normalized.StartsWith("v")) {
+        $normalized = $normalized.Substring(1)
+    }
+
+    $segments = $normalized.Split('.', [System.StringSplitOptions]::RemoveEmptyEntries)
+    $parts = @()
+    foreach ($segment in $segments) {
+        if ($segment -notmatch '^\d+$') {
+            return @()
+        }
+        $parts += [int]$segment
+    }
+    return $parts
+}
+
+function Compare-Version {
+    param(
+        [string]$Left,
+        [string]$Right
+    )
+
+    $leftParts = Get-VersionParts $Left
+    $rightParts = Get-VersionParts $Right
+    $maxCount = [Math]::Max($leftParts.Count, $rightParts.Count)
+    for ($index = 0; $index -lt $maxCount; $index++) {
+        $leftValue = if ($index -lt $leftParts.Count) { $leftParts[$index] } else { 0 }
+        $rightValue = if ($index -lt $rightParts.Count) { $rightParts[$index] } else { 0 }
+        if ($leftValue -lt $rightValue) {
+            return -1
+        }
+        if ($leftValue -gt $rightValue) {
+            return 1
+        }
+    }
+    return 0
+}
+
+function Get-Current-Version {
+    if (Test-Path -LiteralPath $VersionFile) {
+        return Normalize-Version ((Get-Content -LiteralPath $VersionFile -Raw).Trim())
+    }
+
+    if (Test-Path -LiteralPath $Exe) {
+        $versionInfo = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($Exe)
+        if ($versionInfo.ProductVersion) {
+            return Normalize-Version $versionInfo.ProductVersion
+        }
+        if ($versionInfo.FileVersion) {
+            return Normalize-Version $versionInfo.FileVersion
+        }
+    }
+
+    return ""
+}
+
 $mutex = New-Object System.Threading.Mutex($false, $LifecycleMutexName)
 $acquiredMutex = $false
 try {
     try {
-        $acquiredMutex = $mutex.WaitOne(0)
+        Write-Log "Update: waiting for lifecycle mutex for up to $LifecycleMutexWaitSeconds seconds."
+        $acquiredMutex = $mutex.WaitOne([TimeSpan]::FromSeconds($LifecycleMutexWaitSeconds))
     } catch [System.Threading.AbandonedMutexException] {
         $acquiredMutex = $true
     }
     if (-not $acquiredMutex) {
-        Write-Log "Update: skipped because another lifecycle action is already running."
+        Write-Log "Update: skipped because another lifecycle action is still running after waiting $LifecycleMutexWaitSeconds seconds."
         return
     }
 
     $headers = @{ "User-Agent" = "OtherGodsUpdater" }
     $release = Invoke-RestMethod -Headers $headers -Uri "https://api.github.com/repos/sprushy/OtherGodsinGodot/releases/latest"
-    $latest = [string]$release.tag_name
+    $latest = Normalize-Version ([string]$release.tag_name)
+    if (-not $latest) {
+        throw "Latest release did not include a usable tag name."
+    }
     $asset = $null
     foreach ($assetNameCandidate in @("OtherGodsServer-windows.zip", "ClaudeOtherGodsServer-windows.zip")) {
         $asset = @($release.assets) | Where-Object { $_.name -eq $assetNameCandidate } | Select-Object -First 1
@@ -45,9 +133,10 @@ try {
     }
     if ($null -eq $asset) { throw "No compatible Windows server asset found in the latest release." }
 
-    $current = if (Test-Path -LiteralPath $VersionFile) { (Get-Content -LiteralPath $VersionFile -Raw).Trim() } else { "" }
+    $current = Get-Current-Version
+    Write-Log "Update: current='$current' latest='$latest'"
 
-    if ($current -eq $latest) {
+    if ($current -and (Compare-Version $current $latest) -ge 0) {
         Write-Log "Already on $current. Verifying server health."
         Ensure-ServerRunning
         return

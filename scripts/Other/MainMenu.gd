@@ -4884,6 +4884,18 @@ func _start_smoke_mode() -> void:
 		call_deferred("_run_practice_thor_summon_smoke")
 		return
 
+	if role == "practice_thor_intercept":
+		call_deferred("_run_practice_thor_intercept_smoke")
+		return
+
+	if role == "practice_thor_divine_lightning":
+		call_deferred("_run_practice_thor_divine_lightning_smoke")
+		return
+
+	if role == "practice_thor_byggvir":
+		call_deferred("_run_practice_thor_byggvir_smoke")
+		return
+
 	if role == "card_test_turn2":
 		call_deferred("_run_card_test_turn2_smoke")
 		return
@@ -5161,6 +5173,230 @@ func _run_practice_thor_summon_smoke() -> void:
 
 	_finish_smoke_if_enabled("PASS:practice_thor_summon")
 
+func _run_practice_thor_intercept_smoke() -> void:
+	_write_smoke_trace("practice_thor_intercept:start")
+	var practice_game = _show_embedded_game("PracticeThor")
+	if practice_game == null:
+		_fail_smoke_if_enabled("practice_thor_intercept_missing")
+		return
+	show_game()
+	practice_game.set_player_practice_deck({})
+	await practice_game.start_game()
+	await get_tree().process_frame
+	await get_tree().process_frame
+	_write_smoke_trace("practice_thor_intercept:started_game")
+
+	var setup_error := _get_practice_thor_smoke_setup_error(practice_game)
+	if not setup_error.is_empty():
+		_fail_smoke_if_enabled("practice_thor_intercept_setup_%s" % setup_error)
+		return
+
+	if not practice_game.game_input.submit_action({type = "upkeep_choice", choice = "draw"}):
+		_fail_smoke_if_enabled("practice_thor_intercept_upkeep_choice_failed")
+		return
+	if not await _wait_for_practice_thor_smoke_condition(
+		func() -> bool:
+			return practice_game.game_manager.current_player == practice_game.player1 \
+				and practice_game.game_manager.has_resolved_turn_upkeep() \
+				and practice_game.game_manager.action_stack.is_empty(),
+		180
+	):
+		_fail_smoke_if_enabled("practice_thor_intercept_upkeep_timeout")
+		return
+
+	practice_game.game_manager.current_player = practice_game.player2
+	practice_game.game_manager.turn_number = 2
+	practice_game.game_manager._upkeep_started_turn = 2
+	practice_game.game_manager._upkeep_resolved_turn = 2
+
+	var attacker_zone := _find_first_open_smoke_frontline_zone(practice_game.player2)
+	var interceptor_zone := _find_first_open_smoke_frontline_zone(practice_game.player1)
+	if attacker_zone == null or interceptor_zone == null:
+		_fail_smoke_if_enabled("practice_thor_intercept_missing_frontline_zone")
+		return
+
+	var attacker := BrownBear.new()
+	attacker.card_owner = practice_game.player2
+	attacker.creature_mode = Card.CreatureMode.AGGRESSIVE
+	attacker.is_sleeping = false
+	attacker_zone.add_card(attacker)
+
+	var interceptor := BrownBear.new()
+	interceptor.card_owner = practice_game.player1
+	interceptor.creature_mode = Card.CreatureMode.DEFENSIVE
+	interceptor.is_sleeping = false
+	interceptor_zone.add_card(interceptor)
+
+	await get_tree().process_frame
+	await get_tree().process_frame
+	practice_game.update_ui()
+
+	if not practice_game.match_manager.can_attack(attacker):
+		_fail_smoke_if_enabled("practice_thor_intercept_attacker_invalid:%s" % practice_game.match_manager.get_attack_invalid_reason(attacker))
+		return
+	if interceptor not in practice_game.match_manager._get_possible_interceptors(attacker, practice_game.player1):
+		_fail_smoke_if_enabled("practice_thor_intercept_no_interceptor")
+		return
+
+	practice_game.match_manager.last_move_failed_reason = ""
+	practice_game.match_manager.request_attack(attacker, practice_game.player1)
+	if not await _wait_for_practice_thor_smoke_condition(
+		func() -> bool:
+			return _is_smoke_intercept_prompt_visible(practice_game) \
+				and _count_pending_smoke_prompts_of_type(practice_game.match_manager, "intercept") == 1,
+		120
+	):
+		_fail_smoke_if_enabled("practice_thor_intercept_prompt_missing reason=%s pending=%d" % [
+			practice_game.match_manager.last_move_failed_reason,
+			_count_pending_smoke_prompts_of_type(practice_game.match_manager, "intercept"),
+		])
+		return
+	_write_smoke_trace("practice_thor_intercept:prompt_visible")
+
+	var validation: Dictionary = practice_game.match_manager._validate_pending_ui_interaction_for_command({
+		type = "intercept_decision",
+		interceptor_uid = interceptor.uid,
+	})
+	var validation_error := str(validation.get("error", ""))
+	if not validation_error.is_empty():
+		_fail_smoke_if_enabled("practice_thor_intercept_validation_failed:%s" % validation_error)
+		return
+	var prompt_id := int(validation.get("prompt_id", -1))
+	if prompt_id < 0:
+		_fail_smoke_if_enabled("practice_thor_intercept_missing_prompt_id")
+		return
+	practice_game._hide_intercept_prompt()
+	practice_game.match_manager._consume_pending_ui_interaction_by_id(prompt_id)
+	if not await _wait_for_practice_thor_smoke_condition(
+		func() -> bool:
+			return not _is_smoke_intercept_prompt_visible(practice_game) \
+				and _count_pending_smoke_prompts_of_type(practice_game.match_manager, "intercept") == 0,
+		30
+	):
+		_fail_smoke_if_enabled("practice_thor_intercept_consumption_stuck prompt_id=%d pending=%d visible=%s" % [
+			prompt_id,
+			_count_pending_smoke_prompts_of_type(practice_game.match_manager, "intercept"),
+			str(_is_smoke_intercept_prompt_visible(practice_game)),
+		])
+		return
+	_write_smoke_trace("practice_thor_intercept:consumed prompt_id=%d" % prompt_id)
+
+	_finish_smoke_if_enabled("PASS:practice_thor_intercept")
+
+func _run_practice_thor_divine_lightning_smoke() -> void:
+	_write_smoke_trace("practice_thor_divine_lightning:start")
+	var practice_game = _show_embedded_game("PracticeThor")
+	if practice_game == null:
+		_fail_smoke_if_enabled("practice_thor_divine_lightning_missing")
+		return
+	show_game()
+	practice_game.set_player_practice_deck({})
+	await practice_game.start_game()
+	await get_tree().process_frame
+	await get_tree().process_frame
+	_write_smoke_trace("practice_thor_divine_lightning:started_game")
+
+	var setup_error := _get_practice_thor_smoke_setup_error(practice_game)
+	if not setup_error.is_empty():
+		_fail_smoke_if_enabled("practice_thor_divine_lightning_setup_%s" % setup_error)
+		return
+
+	var thor_bot: ThorPracticeBot = practice_game.get("_thor_bot") as ThorPracticeBot
+	if thor_bot == null:
+		_fail_smoke_if_enabled("practice_thor_divine_lightning_bot_missing")
+		return
+
+	var divine_lightning := thor_bot._find_hand_divine_lightning()
+	if divine_lightning == null:
+		divine_lightning = DivineLightning.new()
+		divine_lightning.card_owner = practice_game.player2
+		practice_game.player2.hand_zone.add_card(divine_lightning)
+
+	var target_zone := _find_first_open_smoke_summon_zone(practice_game.player1)
+	if target_zone == null:
+		_fail_smoke_if_enabled("practice_thor_divine_lightning_target_zone_missing")
+		return
+	var target := Hringhorni.new()
+	target.card_owner = practice_game.player1
+	target_zone.add_card(target)
+
+	var top_action := CardAction.new()
+	top_action.type = CardAction.Type.EVENT
+	top_action.event_name = "smoke_priority"
+	top_action.source_player = practice_game.player1
+	top_action.initial_priority_player = practice_game.player2
+	top_action.card = target
+	practice_game.game_manager.action_stack.append(top_action)
+	practice_game.game_manager.priority_player = practice_game.player2
+
+	await get_tree().process_frame
+
+	var smoke_targets: Array[Card] = divine_lightning.get_priority_targets(practice_game.game_manager, top_action)
+	if smoke_targets.is_empty():
+		_fail_smoke_if_enabled("practice_thor_divine_lightning_no_targets")
+		return
+
+	var submitted := thor_bot._submit_priority_response(divine_lightning)
+	_write_smoke_trace("practice_thor_divine_lightning:submit_result=%s target=%s" % [str(submitted), target.uid])
+
+	_finish_smoke_if_enabled("PASS:practice_thor_divine_lightning")
+
+func _run_practice_thor_byggvir_smoke() -> void:
+	_write_smoke_trace("practice_thor_byggvir:start")
+	var practice_game = _show_embedded_game("PracticeThor")
+	if practice_game == null:
+		_fail_smoke_if_enabled("practice_thor_byggvir_missing")
+		return
+	show_game()
+	practice_game.set_player_practice_deck({})
+	await practice_game.start_game()
+	await get_tree().process_frame
+	await get_tree().process_frame
+	_write_smoke_trace("practice_thor_byggvir:started_game")
+
+	var setup_error := _get_practice_thor_smoke_setup_error(practice_game)
+	if not setup_error.is_empty():
+		_fail_smoke_if_enabled("practice_thor_byggvir_setup_%s" % setup_error)
+		return
+
+	var byggvir := Byggvir.new()
+	byggvir.card_owner = practice_game.player1
+	var raw_options: Array = [
+		{
+			"kind": "flip",
+			"label": "Unlock Mead of Poetry",
+			"power_uid": "smoke_power_uid",
+		},
+		{
+			"kind": "return",
+			"label": "Return Mead of Poetry to hand",
+			"card_uid": "smoke_card_uid",
+		},
+	]
+
+	practice_game._show_byggvir_reveal_prompt(byggvir, raw_options)
+	await get_tree().process_frame
+
+	var panel: Control = practice_game.get_node_or_null("ByggvirPromptPanel") as Control
+	var pending_options = practice_game.get("_pending_byggvir_options")
+	if panel == null or not panel.visible:
+		_fail_smoke_if_enabled("practice_thor_byggvir_prompt_missing")
+		return
+	if not (pending_options is Array) or (pending_options as Array).size() != 2:
+		_fail_smoke_if_enabled("practice_thor_byggvir_options_missing")
+		return
+	_write_smoke_trace("practice_thor_byggvir:prompt_visible options=%d" % (pending_options as Array).size())
+
+	_finish_smoke_if_enabled("PASS:practice_thor_byggvir")
+
+func _find_first_open_smoke_frontline_zone(player: Player) -> Zone:
+	if player == null:
+		return null
+	for zone in player.frontline_zones:
+		if zone != null and zone.cards.is_empty():
+			return zone
+	return null
+
 func _find_first_open_smoke_summon_zone(player: Player) -> Zone:
 	if player == null:
 		return null
@@ -5190,6 +5426,24 @@ func _describe_smoke_hand(player: Player) -> String:
 		if card != null:
 			names.append(card.card_name)
 	return ",".join(names)
+
+func _is_smoke_intercept_prompt_visible(practice_game) -> bool:
+	if practice_game == null:
+		return false
+	var panel: Control = practice_game.get_node_or_null("InterceptPromptPanel") as Control
+	return panel != null and panel.visible
+
+func _count_pending_smoke_prompts_of_type(match_manager: MatchManager, prompt_type: String) -> int:
+	if match_manager == null:
+		return 0
+	var pending_prompts = match_manager.get("_pending_ui_interactions")
+	if not (pending_prompts is Array):
+		return 0
+	var count := 0
+	for entry in pending_prompts:
+		if entry is Dictionary and str((entry as Dictionary).get("type", "")) == prompt_type:
+			count += 1
+	return count
 
 func _run_card_test_turn2_smoke() -> void:
 	var card_test = _show_embedded_game("CardTest")

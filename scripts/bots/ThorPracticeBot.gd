@@ -248,7 +248,9 @@ func _submit_priority_response(card: Card) -> bool:
 		})
 	if card is CharmCard:
 		var charm := card as CharmCard
-		var targets := charm.get_priority_targets(game_manager, top_action) if charm.targets else []
+		var targets: Array[Card] = []
+		if charm.targets:
+			targets = charm.get_priority_targets(game_manager, top_action)
 		var target_uid := _first_target_uid(targets)
 		if charm.targets and target_uid.is_empty():
 			return false
