@@ -4911,6 +4911,10 @@ func _start_smoke_mode() -> void:
 		call_deferred("_run_practice_thor_fuzz_smoke")
 		return
 
+	if role == "ranked_timeout_upkeep":
+		call_deferred("_run_ranked_timeout_upkeep_smoke")
+		return
+
 	if role == "card_test_turn2":
 		call_deferred("_run_card_test_turn2_smoke")
 		return
@@ -5267,6 +5271,19 @@ func _run_practice_thor_intercept_smoke() -> void:
 		])
 		return
 	_write_smoke_trace("practice_thor_intercept:prompt_visible")
+	var pending_intercept_prompt: Dictionary = {}
+	for idx in range(practice_game.match_manager._pending_ui_interactions.size() - 1, -1, -1):
+		var entry: Dictionary = practice_game.match_manager._pending_ui_interactions[idx]
+		if str(entry.get("type", "")) == "intercept":
+			pending_intercept_prompt = entry
+			break
+	var intercept_prompt_data: Dictionary = pending_intercept_prompt.get("data", {})
+	if str(intercept_prompt_data.get("attacker_uid", "")) != attacker.uid:
+		_fail_smoke_if_enabled("practice_thor_intercept_missing_attacker_uid")
+		return
+	if str(intercept_prompt_data.get("target_uid", "")) != str(practice_game.game_manager.players.find(practice_game.player1)):
+		_fail_smoke_if_enabled("practice_thor_intercept_missing_target_uid")
+		return
 
 	var validation: Dictionary = practice_game.match_manager._validate_pending_ui_interaction_for_command({
 		type = "intercept_decision",
@@ -5469,6 +5486,73 @@ func _run_practice_thor_fuzz_smoke() -> void:
 		thor_wins,
 		base_seed,
 	])
+
+func _run_ranked_timeout_upkeep_smoke() -> void:
+	_write_smoke_trace("ranked_timeout_upkeep:start")
+	var mock_game = _show_embedded_game("MockGame")
+	if mock_game == null:
+		_fail_smoke_if_enabled("ranked_timeout_upkeep_missing")
+		return
+	show_game()
+	var deck_factory := PracticeAutofillDeckFactoryScript.new()
+	var host_session_id := "ranked_timeout_host"
+	var guest_session_id := "ranked_timeout_guest"
+	var match_session := MatchSessionScript.new(
+		"ranked-timeout-smoke",
+		"ranked-timeout-room",
+		"127.0.0.1",
+		0,
+		[host_session_id, guest_session_id],
+		{
+			host_session_id: deck_factory.build_random_deck(70101, "Thor"),
+			guest_session_id: deck_factory.build_random_deck(70102, "Thor"),
+		},
+		{
+			host_session_id: {"player_name": "Smoke Host"},
+			guest_session_id: {"player_name": "Smoke Guest"},
+		}
+	)
+	match_session.is_ranked = true
+	match_session.server_mode = MatchSessionScript.SERVER_MODE_IN_PROCESS_HOST
+	match_session.mark_active()
+	var match_info := match_session.to_match_info(host_session_id)
+	if mock_game.has_method("_prepare_for_match_launch"):
+		mock_game._prepare_for_match_launch("Connecting to match...")
+	mock_game.start_game(true, false, "127.0.0.1", 0, match_info, match_session)
+	if not await _wait_for_practice_thor_smoke_condition(
+		func() -> bool:
+			return mock_game.game_manager != null \
+				and mock_game.player1 != null \
+				and mock_game.player2 != null \
+				and mock_game.game_manager.current_player == mock_game.player1 \
+				and not mock_game.game_manager.has_resolved_turn_upkeep() \
+				and bool(mock_game._current_match_info.get("is_ranked", false)),
+		120
+	):
+		_fail_smoke_if_enabled("ranked_timeout_upkeep_setup_failed")
+		return
+	mock_game._move_timer_remaining_msec = 0
+	mock_game._move_timer_turn_number = mock_game.game_manager.turn_number
+	mock_game._move_timer_player_index = mock_game.game_manager.players.find(mock_game.game_manager.current_player)
+	mock_game._move_timer_active_started_msec = mock_game._now_msec()
+	mock_game._move_timer_running = true
+	mock_game._move_timer_timeout_pending = false
+	mock_game._sync_turn_activity_timers()
+	if not await _wait_for_practice_thor_smoke_condition(
+		func() -> bool:
+			return mock_game.game_manager != null \
+				and mock_game.game_manager.current_player == mock_game.player2 \
+				and mock_game.game_manager.turn_number == 2,
+		240
+	):
+		_fail_smoke_if_enabled("ranked_timeout_upkeep_turn_not_passed current=%d turn=%d upkeep=%s label=%s" % [
+			mock_game.game_manager.players.find(mock_game.game_manager.current_player) if mock_game.game_manager != null else -1,
+			mock_game.game_manager.turn_number if mock_game.game_manager != null else -1,
+			str(mock_game.game_manager.has_resolved_turn_upkeep() if mock_game.game_manager != null else false),
+			str(mock_game.action_label.text if mock_game.action_label != null else ""),
+		])
+		return
+	_finish_smoke_if_enabled("PASS:ranked_timeout_upkeep")
 
 func _run_single_practice_thor_fuzz_game(
 	practice_game,
@@ -5802,6 +5886,7 @@ func _should_ignore_lobby_failure_for_smoke() -> bool:
 		"practice_thor_divine_lightning",
 		"practice_thor_byggvir",
 		"practice_thor_fuzz",
+		"ranked_timeout_upkeep",
 		"card_test_turn2",
 	]
 

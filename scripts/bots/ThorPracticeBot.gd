@@ -106,6 +106,8 @@ func _on_match_ui_interaction(prompt_player_index: int, type: String, data: Dict
 			_queue_step()
 		"intercept":
 			_submit_intercept_decision("")
+		"harii_jarl_impact":
+			_handle_harii_jarl_impact_prompt(data)
 		"combat_retreat":
 			_handle_combat_retreat_prompt(data)
 		"nusku_well_of_fire":
@@ -228,6 +230,9 @@ func _choose_priority_response() -> Card:
 		for response_card in responses:
 			if response_card is MeadOfPoetry and top_action.target == response_card:
 				return response_card
+		var best_vision := _find_best_priority_vision_response(responses, top_action)
+		if not best_vision.is_empty():
+			return best_vision.get("card", null)
 	if _should_activate_prepared_mead_for_enki():
 		for response_card in responses:
 			if response_card is MeadOfPoetry:
@@ -243,7 +248,12 @@ func _submit_priority_response(card: Card) -> bool:
 	var top_action: CardAction = game_manager.action_stack.back()
 	if card is HexCard:
 		var targets := game_manager.get_priority_hex_targets(card as HexCard, top_action)
-		var target_uid := _choose_target_uid_for_source(card, targets)
+		var target_uid := ""
+		if card is VisionOfOdin:
+			var chosen_target := _choose_best_priority_vision_target(card as VisionOfOdin, top_action, targets)
+			target_uid = chosen_target.uid if chosen_target != null else ""
+		else:
+			target_uid = _choose_target_uid_for_source(card, targets)
 		if bool(card.get("targets")) and target_uid.is_empty():
 			return false
 		return _submit_action({
@@ -305,6 +315,8 @@ func _take_main_phase_action() -> bool:
 	if _try_switch_to_aggressive_mode():
 		return true
 	if _try_attack():
+		return true
+	if _try_switch_to_defensive_mode():
 		return true
 	return false
 
@@ -368,9 +380,15 @@ func _try_activate_best_god_ability() -> bool:
 
 	var champions_call_score := _score_champions_call_activation(god)
 	if champions_call_score >= 2200:
+		var summon_zone := _get_first_open_summon_zone(bot_player)
+		var manifestation := god.get_champions_call_candidate(true)
+		var summon_mode := _choose_creature_summon_mode(manifestation)
 		return _submit_action({
 			"type": "god_ability",
 			"god_uid": god.uid,
+			"zone_type": summon_zone.zone_type if summon_zone != null else -1,
+			"zone_index": summon_zone.zone_index if summon_zone != null else -1,
+			"mode": "aggressive" if summon_mode == Card.CreatureMode.AGGRESSIVE else "defensive",
 			"shelve_uids": [],
 		})
 	return false
@@ -398,7 +416,7 @@ func _try_summon_best_creature() -> bool:
 	var creature := _get_best_affordable_hand_creature(0, zone)
 	if creature == null:
 		return false
-	return _submit_play_creature(creature, zone, Card.CreatureMode.AGGRESSIVE)
+	return _submit_play_creature(creature, zone, _choose_creature_summon_mode(creature))
 
 func _try_summon_askelladen_answer() -> bool:
 	if game_manager == null or bot_player.has_summoned_this_turn:
@@ -513,6 +531,16 @@ func _try_switch_to_aggressive_mode() -> bool:
 		"mode": Card.CreatureMode.AGGRESSIVE,
 	})
 
+func _try_switch_to_defensive_mode() -> bool:
+	var creature := _get_best_defensive_mode_switch_candidate()
+	if creature == null:
+		return false
+	return _submit_action({
+		"type": "change_mode",
+		"card_uid": creature.uid,
+		"mode": Card.CreatureMode.DEFENSIVE,
+	})
+
 func _try_attack() -> bool:
 	var attackers := _get_attack_ready_creatures()
 	if attackers.is_empty():
@@ -533,6 +561,9 @@ func _try_attack() -> bool:
 	var stealth_attack := _get_best_stealth_attack(attackers, opposing_creatures)
 	if not stealth_attack.is_empty():
 		return _submit_attack(stealth_attack.get("attacker", null), stealth_attack.get("target", null))
+	var safe_followers_attack := _get_best_safe_followers_attack(attackers)
+	if not safe_followers_attack.is_empty():
+		return _submit_attack(safe_followers_attack.get("attacker", null), opponent)
 	return false
 
 func _finish_turn() -> void:
@@ -575,14 +606,20 @@ func _get_hand_value(card: Card) -> int:
 		return 100
 	if card is MeadOfPoetry:
 		return 90
+	if card is VisionOfOdin:
+		return 85
 	if card is DivineLightning:
 		return 80
 	if card is Askelladen:
-		return 75
+		return 78
+	if card is HariiJarl:
+		return 72
 	if card is FallOfTheMighty:
 		return 70
 	if card is VoidShield:
 		return 60
+	if card is HariiFransiscan:
+		return 58
 	if card is HariiWarrior:
 		return 50
 	if card is BrownBear:
@@ -601,6 +638,26 @@ func _handle_combat_retreat_prompt(data: Dictionary) -> void:
 		"type": "combat_retreat_decision",
 		"askelladen_uid": askelladen.uid if askelladen != null else "",
 		"retreat": use_retreat,
+	})
+
+func _handle_harii_jarl_impact_prompt(data: Dictionary) -> void:
+	var jarl := game_manager.get_card_by_uid(str(data.get("source_uid", ""))) as HariiJarl
+	if jarl == null:
+		return
+	var prompt_targets: Array[Card] = []
+	for target_uid in data.get("target_uids", []):
+		var target := game_manager.get_card_by_uid(str(target_uid))
+		if target != null:
+			prompt_targets.append(target)
+	var chosen_cards := _choose_harii_jarl_warband_targets(jarl, prompt_targets)
+	var chosen_uids: Array[String] = []
+	for chosen_card in chosen_cards:
+		if chosen_card != null:
+			chosen_uids.append(chosen_card.uid)
+	_submit_action({
+		"type": "harii_jarl_impact_choice",
+		"source_uid": jarl.uid,
+		"chosen_uids": chosen_uids,
 	})
 
 func _handle_nusku_well_of_fire_prompt(data: Dictionary) -> void:
@@ -670,6 +727,9 @@ func _submit_prepare_card(card: Card, zone: Zone) -> bool:
 func _submit_play_creature(card: Card, zone: Zone, mode: Card.CreatureMode) -> bool:
 	if card == null or zone == null:
 		return false
+	var payment_plan := _build_creature_summon_payment_plan(card, bot_player.mana)
+	if not bool(payment_plan.get("ok", false)):
+		return false
 	return _submit_action({
 		"type": "play_creature",
 		"card_uid": card.uid,
@@ -678,8 +738,8 @@ func _submit_play_creature(card: Card, zone: Zone, mode: Card.CreatureMode) -> b
 		"zone_index": zone.zone_index,
 		"mode": mode,
 		"stealth": false,
-		"sacrifice_uids": [],
-		"altar_void_uids": [],
+		"sacrifice_uids": payment_plan.get("sacrifice_uids", []),
+		"altar_void_uids": payment_plan.get("altar_void_uids", []),
 	})
 
 func _submit_cast_charm(charm: CharmCard, target: Card = null, prepared: bool = false) -> bool:
@@ -724,12 +784,15 @@ func _get_best_affordable_hand_creature(extra_mana: int, preferred_zone: Zone = 
 	if zone == null:
 		return null
 	var best_creature: Card = null
+	var best_score := -1000000
 	var available_mana := bot_player.mana + extra_mana
 	for card in bot_player.hand_zone.cards:
-		if not _can_evaluate_creature_play(card, zone, available_mana):
+		var play_score := _score_creature_play(card, zone, available_mana)
+		if play_score <= -1000000:
 			continue
-		if _is_projected_creature_better(card, best_creature):
+		if best_creature == null or play_score > best_score or (play_score == best_score and _is_projected_creature_better(card, best_creature)):
 			best_creature = card
+			best_score = play_score
 	return best_creature
 
 func _can_evaluate_creature_play(card: Card, zone: Zone, available_mana: int) -> bool:
@@ -739,10 +802,7 @@ func _can_evaluate_creature_play(card: Card, zone: Zone, available_mana: int) ->
 		return false
 	if zone.zone_owner != bot_player or not zone.cards.is_empty():
 		return false
-	var mana_cost := _get_play_cost(card, false)
-	if available_mana < mana_cost:
-		return false
-	return card.can_pay_costs_with_mana_cost(bot_player, mana_cost)
+	return bool(_build_creature_summon_payment_plan(card, available_mana).get("ok", false))
 
 func _pick_best_board_creature(cards: Array[Card]) -> Card:
 	var best_card: Card = null
@@ -828,31 +888,37 @@ func _get_best_askelladen_attack(attackers: Array[Card], opposing_creatures: Arr
 
 func _get_best_askelladen_target_for(askelladen: Askelladen, opposing_creatures: Array[Card]) -> Card:
 	var best_target: Card = null
+	var best_score := 2400
 	for creature in opposing_creatures:
 		if not _can_attack_creature(askelladen, creature):
 			continue
-		if not _should_use_askelladen_retreat(askelladen, creature):
+		var score := _score_askelladen_bounce_target(creature)
+		if _can_clear_creature_without_askelladen(creature):
+			score -= 1800
+		if score < best_score:
 			continue
-		if best_target == null or _is_board_creature_better(creature, best_target):
+		if best_target == null or score > best_score or (score == best_score and _is_board_creature_better(creature, best_target)):
 			best_target = creature
+			best_score = score
 	return best_target
 
 func _get_best_standard_attack(attackers: Array[Card], opposing_creatures: Array[Card]) -> Dictionary:
 	var best_attack := {}
 	for attacker in attackers:
 		for target in opposing_creatures:
-			if not _can_attack_creature(attacker, target):
-				continue
-			var target_threshold := maxi(target.get_effective_strength(), target.get_effective_resilience())
-			if attacker.get_effective_strength() <= target_threshold:
+			var attack_score := _score_standard_attack_plan(attacker, target)
+			if attack_score <= -1000000:
 				continue
 			if best_attack.is_empty():
-				best_attack = {"attacker": attacker, "target": target}
+				best_attack = {"attacker": attacker, "target": target, "score": attack_score}
 				continue
 			var current_attacker: Card = best_attack.get("attacker", null)
 			var current_target: Card = best_attack.get("target", null)
-			if _is_attack_plan_better(attacker, target, current_attacker, current_target):
-				best_attack = {"attacker": attacker, "target": target}
+			var current_score := int(best_attack.get("score", -1000000))
+			if attack_score > current_score or (attack_score == current_score and _is_attack_plan_better(attacker, target, current_attacker, current_target)):
+				best_attack = {"attacker": attacker, "target": target, "score": attack_score}
+	if not best_attack.is_empty():
+		best_attack.erase("score")
 	return best_attack
 
 func _is_attack_plan_better(candidate_attacker: Card, candidate_target: Card, current_attacker: Card, current_target: Card) -> bool:
@@ -873,6 +939,77 @@ func _can_attack_creature(attacker: Card, target: Card) -> bool:
 		and target.current_zone != null \
 		and target.current_zone.is_board_zone() \
 		and game_manager.can_cards_engage_each_other(attacker, target)
+
+func _would_destroy_target_in_battle(attacker: Card, target: Card) -> bool:
+	if attacker == null or target == null:
+		return false
+	if _is_stone_monkey(target) and not attacker.can_destroy_combat_protected_creatures(target):
+		return false
+	return attacker.get_effective_strength() >= target.get_effective_resilience()
+
+func _would_attacker_survive_battle(attacker: Card, target: Card) -> bool:
+	if attacker == null or target == null:
+		return false
+	return attacker.get_effective_resilience() > target.get_effective_strength()
+
+func _is_askelladen(card: Card) -> bool:
+	return card is Askelladen
+
+func _is_stone_monkey(card: Card) -> bool:
+	return card is StoneMonkey
+
+func _is_reasonable_askelladen_trade(attacker: Card, target: Card) -> bool:
+	if attacker == null or target == null:
+		return false
+	if attacker is ActiveGodCard:
+		return false
+	if not _would_destroy_target_in_battle(attacker, target):
+		return false
+	return _score_projected_card(attacker) <= _score_projected_card(target) + 800
+
+func _is_attack_target_tactically_bad(attacker: Card, target: Card) -> bool:
+	if attacker == null or target == null:
+		return true
+	if _is_stone_monkey(target) and not attacker.can_destroy_combat_protected_creatures(target):
+		return true
+	if not _is_askelladen(target):
+		return false
+	if attacker.get_effective_speed() > target.get_effective_speed():
+		return false
+	return not _is_reasonable_askelladen_trade(attacker, target)
+
+func _is_clean_creature_kill(attacker: Card, target: Card) -> bool:
+	if not _can_attack_creature(attacker, target):
+		return false
+	if _is_attack_target_tactically_bad(attacker, target):
+		return false
+	if not _would_destroy_target_in_battle(attacker, target):
+		return false
+	if _is_askelladen(target) and attacker.get_effective_speed() <= target.get_effective_speed():
+		return _is_reasonable_askelladen_trade(attacker, target)
+	return _would_attacker_survive_battle(attacker, target)
+
+func _score_standard_attack_plan(attacker: Card, target: Card) -> int:
+	if not _can_attack_creature(attacker, target):
+		return -1000000
+	if _is_attack_target_tactically_bad(attacker, target):
+		return -1000000
+	if not _would_destroy_target_in_battle(attacker, target):
+		return -1000000
+	var score := _score_enemy_target(target) * 12
+	if _is_askelladen(target):
+		score -= attacker.get_effective_strength() * 40
+		score -= _score_projected_card(attacker) / 4
+		if attacker.get_effective_speed() > target.get_effective_speed():
+			score += 1400
+		else:
+			score += 500
+	elif _would_attacker_survive_battle(attacker, target):
+		score += 2400
+	else:
+		score -= 1800
+	score += attacker.get_effective_speed() * 30
+	return score
 
 func _can_kill_with_all_attackers(attackers: Array[Card]) -> bool:
 	if opponent == null:
@@ -898,6 +1035,41 @@ func _get_best_stealth_attack(attackers: Array[Card], opposing_creatures: Array[
 		return {}
 	return {"attacker": best_attacker, "target": best_target}
 
+func _get_best_safe_followers_attack(attackers: Array[Card]) -> Dictionary:
+	if opponent == null or game_manager == null or match_manager == null:
+		return {}
+	var best_attacker: Card = null
+	var best_score := -1000000
+	for attacker in attackers:
+		if attacker == null or not _can_attack_followers_safely(attacker):
+			continue
+		var score := _score_followers_attack(attacker)
+		if best_attacker == null or score > best_score:
+			best_attacker = attacker
+			best_score = score
+	if best_attacker == null:
+		return {}
+	return {"attacker": best_attacker}
+
+func _can_attack_followers_safely(attacker: Card) -> bool:
+	if attacker == null or opponent == null or game_manager == null or match_manager == null:
+		return false
+	if game_manager.is_followers_attack_blocked_by_active_structure(attacker, opponent, []):
+		return false
+	return match_manager._get_possible_interceptors(attacker, opponent).is_empty()
+
+func _score_followers_attack(attacker: Card) -> int:
+	if attacker == null or opponent == null:
+		return -1000000
+	var score := attacker.get_effective_strength() * 140 + attacker.get_effective_speed() * 25
+	if attacker.get_effective_strength() >= opponent.followers:
+		score += 3000
+	if opponent.followers <= attacker.get_effective_strength() * 2:
+		score += 1200
+	if attacker.is_stealth:
+		score += 400
+	return score
+
 func _get_best_mode_switch_candidate() -> Card:
 	if bot_player == null or game_manager == null:
 		return null
@@ -912,6 +1084,20 @@ func _get_best_mode_switch_candidate() -> Card:
 				best_creature = creature
 	return best_creature
 
+func _get_best_defensive_mode_switch_candidate() -> Card:
+	if bot_player == null or game_manager == null:
+		return null
+	var opposing_creatures := _get_board_creatures(opponent)
+	var best_creature: Card = null
+	var best_score := -1
+	for zone in bot_player.frontline_zones:
+		for creature in zone.cards:
+			var score := _get_defensive_mode_switch_score(creature, opposing_creatures)
+			if score > best_score:
+				best_score = score
+				best_creature = creature
+	return best_creature
+
 func _get_mode_switch_score(creature: Card, opposing_creatures: Array[Card]) -> int:
 	if creature == null or creature.card_type != Card.CardType.CREATURE:
 		return -1
@@ -919,14 +1105,40 @@ func _get_mode_switch_score(creature: Card, opposing_creatures: Array[Card]) -> 
 		return -1
 	if not creature.can_take_minor_creature_action():
 		return -1
-	var score := creature.get_effective_strength() * 100 + creature.get_effective_resilience() * 10 + creature.get_effective_speed()
 	if creature is Askelladen and _get_best_askelladen_target_for(creature as Askelladen, opposing_creatures) != null:
-		score += 1000000
-	elif opposing_creatures.is_empty():
-		score += 500000
-	elif creature.get_effective_strength() > _get_highest_opposing_strength_or_resilience(opposing_creatures):
-		score += 400000
-	return score
+		return 1000000 + creature.get_effective_strength() * 100
+	if opposing_creatures.is_empty():
+		return 500000 + _score_followers_attack(creature)
+	var best_attack_score := -1000000
+	for target in opposing_creatures:
+		best_attack_score = maxi(best_attack_score, _score_standard_attack_plan(creature, target))
+	if best_attack_score <= -1000000:
+		return -1
+	return 300000 + best_attack_score
+
+func _get_defensive_mode_switch_score(creature: Card, opposing_creatures: Array[Card]) -> int:
+	if creature == null or creature.card_type != Card.CardType.CREATURE:
+		return -1
+	if creature.creature_mode != Card.CreatureMode.AGGRESSIVE:
+		return -1
+	if not creature.can_take_minor_creature_action():
+		return -1
+	if creature.can_take_major_creature_action():
+		for target in opposing_creatures:
+			if _score_standard_attack_plan(creature, target) > -1000000:
+				return -1
+		if opposing_creatures.is_empty() and _can_attack_followers_safely(creature):
+			return -1
+	var best_threat := 0
+	for enemy in opposing_creatures:
+		if not _can_attack_creature(enemy, creature):
+			continue
+		if enemy.get_effective_strength() < creature.get_effective_resilience():
+			continue
+		best_threat = maxi(best_threat, _score_projected_card(enemy))
+	if best_threat <= 0:
+		return -1
+	return best_threat + creature.get_effective_resilience() * 25
 
 func _find_hand_enki() -> EnkiLordOfEridu:
 	for card in bot_player.hand_zone.cards:
@@ -1024,21 +1236,25 @@ func _get_highest_opposing_strength_or_resilience(cards: Array[Card]) -> int:
 
 func _get_askelladen_problem_creature() -> Card:
 	var best_target: Card = null
+	var best_score := 2400
 	var sample_askelladen := Askelladen.new()
 	sample_askelladen.card_owner = bot_player
 	for creature in _get_board_creatures(opponent):
 		if creature == null or not _can_askelladen_retreat(sample_askelladen, creature):
 			continue
+		var score := _score_askelladen_bounce_target(creature)
 		if _can_clear_creature_without_askelladen(creature):
+			score -= 1800
+		if score < best_score:
 			continue
-		if best_target == null or _is_board_creature_better(creature, best_target):
+		if best_target == null or score > best_score or (score == best_score and _is_board_creature_better(creature, best_target)):
 			best_target = creature
+			best_score = score
 	return best_target
 
 func _can_clear_creature_without_askelladen(target: Card) -> bool:
 	if target == null or target.card_type != Card.CardType.CREATURE:
 		return true
-	var threshold := maxi(target.get_effective_strength(), target.get_effective_resilience())
 	for creature in _get_board_creatures(bot_player):
 		if creature == null or creature is Askelladen:
 			continue
@@ -1048,7 +1264,7 @@ func _can_clear_creature_without_askelladen(target: Card) -> bool:
 			continue
 		if creature.creature_mode != Card.CreatureMode.AGGRESSIVE and not creature.can_take_minor_creature_action():
 			continue
-		if creature.get_effective_strength() > threshold:
+		if _is_clean_creature_kill(creature, target):
 			return true
 	var summon_zone := _get_first_open_summon_zone(bot_player)
 	if summon_zone != null:
@@ -1057,7 +1273,7 @@ func _can_clear_creature_without_askelladen(target: Card) -> bool:
 				continue
 			if not _can_evaluate_creature_play(card, summon_zone, bot_player.mana):
 				continue
-			if _get_projected_strength(card) > threshold:
+			if _card_can_answer_target_after_summon(card, target):
 				return true
 	var divine_lightning := _find_hand_divine_lightning()
 	if divine_lightning != null and target.is_magical_card() and divine_lightning.can_activate_from_hand(game_manager):
@@ -1126,7 +1342,10 @@ func _should_use_askelladen_retreat(ask_card: Askelladen, other_card: Card) -> b
 		return false
 	if not _can_askelladen_retreat(ask_card, other_card):
 		return false
-	return not _can_clear_creature_without_askelladen(other_card)
+	var score := _score_askelladen_bounce_target(other_card)
+	if _can_clear_creature_without_askelladen(other_card):
+		score -= 1800
+	return score >= 2400
 
 func _can_askelladen_retreat(ask_card: Askelladen, other_card: Card) -> bool:
 	if ask_card == null or other_card == null:
@@ -1253,19 +1472,261 @@ func _score_champions_call_activation(god: GodCard) -> int:
 	var manifestation := god.get_champions_call_candidate(true)
 	if manifestation == null:
 		return -1000000
+	var opposing_creatures := _get_board_creatures(opponent)
+	var summon_mode := _choose_creature_summon_mode(manifestation, opposing_creatures)
+	var clean_kill_count := _count_clean_attack_targets_for(manifestation, opposing_creatures)
 	var score := _score_projected_card(manifestation)
 	var shelve_count := god.get_champions_call_required_shelve_count(game_manager)
-	score -= shelve_count * 1800
-	if _board_creature_count(bot_player) == 0:
-		score += 1500
+	score -= shelve_count * 2000
+	if opposing_creatures.is_empty():
+		score += 1800
+	elif clean_kill_count > 0:
+		score += 900 + clean_kill_count * 550
+	else:
+		score -= 2200
+	if summon_mode == Card.CreatureMode.DEFENSIVE:
+		score -= 1700
+	if game_manager != null and game_manager.turn_number <= 2 and summon_mode == Card.CreatureMode.DEFENSIVE and clean_kill_count == 0:
+		score -= 1200
+	if _board_creature_count(bot_player) == 0 and opposing_creatures.is_empty():
+		score += 600
 	if _board_creature_count(bot_player) < _board_creature_count(opponent):
-		score += 1200
+		score += 800
+	score += _count_other_friendly_warriors() * 250
 	var best_hand := _get_best_affordable_hand_creature(0)
 	if best_hand == null:
-		score += 700
+		score += 600
 	else:
-		score -= int(_score_projected_card(best_hand) * 0.6)
+		score -= int(_score_projected_card(best_hand) * 0.9)
 	return score
+
+func _choose_creature_summon_mode(card: Card, opposing_creatures: Array[Card] = []) -> Card.CreatureMode:
+	if card == null or card.card_type != Card.CardType.CREATURE:
+		return Card.CreatureMode.DEFENSIVE
+	var resolved_opposing := opposing_creatures
+	if resolved_opposing.is_empty() and opponent != null:
+		resolved_opposing = _get_board_creatures(opponent)
+	if resolved_opposing.is_empty():
+		return Card.CreatureMode.AGGRESSIVE
+	if _count_clean_attack_targets_for(card, resolved_opposing) > 0:
+		return Card.CreatureMode.AGGRESSIVE
+	if _is_projected_creature_strongest_on_board(card, resolved_opposing):
+		return Card.CreatureMode.AGGRESSIVE
+	return Card.CreatureMode.DEFENSIVE
+
+func _count_clean_attack_targets_for(attacker: Card, opposing_creatures: Array[Card]) -> int:
+	var count := 0
+	for target in opposing_creatures:
+		if _is_clean_creature_kill(attacker, target):
+			count += 1
+	return count
+
+func _is_projected_creature_strongest_on_board(card: Card, opposing_creatures: Array[Card]) -> bool:
+	if card == null:
+		return false
+	var projected_strength := _get_projected_strength(card)
+	var projected_resilience := _get_projected_resilience(card)
+	var projected_speed := card.get_effective_speed()
+	var strongest_seen := false
+	for enemy in opposing_creatures:
+		if enemy == null:
+			continue
+		strongest_seen = true
+		var enemy_strength := enemy.get_effective_strength()
+		var enemy_resilience := enemy.get_effective_resilience()
+		var enemy_speed := enemy.get_effective_speed()
+		if projected_strength < enemy_strength:
+			return false
+		if projected_strength == enemy_strength and projected_resilience < enemy_resilience:
+			return false
+		if projected_strength == enemy_strength and projected_resilience == enemy_resilience and projected_speed < enemy_speed:
+			return false
+	return strongest_seen
+
+func _count_other_friendly_warriors() -> int:
+	var count := 0
+	for creature in _get_board_creatures(bot_player):
+		if creature != null and creature.has_type("Warrior"):
+			count += 1
+	return count
+
+func _find_best_priority_vision_response(responses: Array, top_action: CardAction) -> Dictionary:
+	if top_action == null or top_action.type != CardAction.Type.ATTACK:
+		return {}
+	var best_card: VisionOfOdin = null
+	var best_target: Card = null
+	var best_score := 2200
+	for response_card in responses:
+		var vision := response_card as VisionOfOdin
+		if vision == null:
+			continue
+		var targets := game_manager.get_priority_hex_targets(vision, top_action)
+		var target := _choose_best_priority_vision_target(vision, top_action, targets)
+		if target == null:
+			continue
+		var score := _score_vision_of_odin_priority_target(vision, top_action, target)
+		if best_card == null or score > best_score:
+			best_card = vision
+			best_target = target
+			best_score = score
+	if best_card == null:
+		return {}
+	return {"card": best_card, "target": best_target, "score": best_score}
+
+func _choose_best_priority_vision_target(vision: VisionOfOdin, top_action: CardAction, targets: Array) -> Card:
+	var best_target: Card = null
+	var best_score := 2200
+	for raw_target in targets:
+		var target := raw_target as Card
+		if target == null:
+			continue
+		var score := _score_vision_of_odin_priority_target(vision, top_action, target)
+		if best_target == null or score > best_score:
+			best_target = target
+			best_score = score
+	return best_target
+
+func _score_vision_of_odin_priority_target(_vision: VisionOfOdin, top_action: CardAction, target: Card) -> int:
+	if top_action == null or top_action.type != CardAction.Type.ATTACK or target == null:
+		return -1000000
+	var attacker := top_action.attacker
+	var defender := _get_attack_defender_card(top_action)
+	var target_is_friendly_norse := target.card_owner == bot_player and _is_norse_creature(target)
+	var target_is_enemy_non_norse := target.card_owner == opponent and not _is_norse_creature(target)
+	if not target_is_friendly_norse and not target_is_enemy_non_norse:
+		return -1000000
+	if target != attacker and target != defender:
+		return -1000000
+	var score := 0
+	if defender == null:
+		if target == attacker and target_is_enemy_non_norse and attacker.get_controller() == opponent:
+			score += 800 + VisionOfOdin.STR_SWING * 140
+			if bot_player != null and bot_player.followers <= attacker.get_effective_strength() and bot_player.followers > attacker.get_effective_strength() - VisionOfOdin.STR_SWING:
+				score += 3200
+		elif target == attacker and target_is_friendly_norse and attacker.get_controller() == bot_player:
+			score += 500 + VisionOfOdin.STR_SWING * 120
+			if opponent != null and opponent.followers > attacker.get_effective_strength() and opponent.followers <= attacker.get_effective_strength() + VisionOfOdin.STR_SWING:
+				score += 2600
+		return score if score > 0 else -1000000
+	if target == attacker:
+		if attacker.get_controller() == bot_player and target_is_friendly_norse:
+			if attacker.get_effective_strength() < defender.get_effective_resilience() and attacker.get_effective_strength() + VisionOfOdin.STR_SWING >= defender.get_effective_resilience():
+				score += 3600
+			if defender is Askelladen and attacker.get_effective_speed() <= defender.get_effective_speed() and attacker.get_effective_speed() + VisionOfOdin.SPEED_SWING > defender.get_effective_speed():
+				score += 2600
+		elif attacker.get_controller() == opponent and target_is_enemy_non_norse:
+			if attacker.get_effective_strength() >= defender.get_effective_resilience() and attacker.get_effective_strength() - VisionOfOdin.STR_SWING < defender.get_effective_resilience():
+				score += 3600
+			if attacker is Askelladen and defender.get_effective_speed() <= attacker.get_effective_speed() and defender.get_effective_speed() > attacker.get_effective_speed() - VisionOfOdin.SPEED_SWING:
+				score += 2600
+	if target == defender:
+		if defender.get_controller() == bot_player and target_is_friendly_norse:
+			if defender.get_effective_strength() < attacker.get_effective_resilience() and defender.get_effective_strength() + VisionOfOdin.STR_SWING >= attacker.get_effective_resilience():
+				score += 3600
+			if defender is Askelladen and attacker.get_effective_speed() > defender.get_effective_speed() and attacker.get_effective_speed() <= defender.get_effective_speed() + VisionOfOdin.SPEED_SWING:
+				score += 2600
+		elif defender.get_controller() == opponent and target_is_enemy_non_norse:
+			if defender.get_effective_strength() >= attacker.get_effective_resilience() and defender.get_effective_strength() - VisionOfOdin.STR_SWING < attacker.get_effective_resilience():
+				score += 3600
+			if defender is Askelladen and attacker.get_effective_speed() <= defender.get_effective_speed() and attacker.get_effective_speed() > defender.get_effective_speed() - VisionOfOdin.SPEED_SWING:
+				score += 2600
+	return score if score > 0 else -1000000
+
+func _get_attack_defender_card(action: CardAction) -> Card:
+	if action == null:
+		return null
+	if action.interceptor != null:
+		return action.interceptor
+	return action.target as Card
+
+func _is_norse_creature(card: Card) -> bool:
+	return card != null and card.card_type == Card.CardType.CREATURE and (card.has_type("Norse Creature") or str(card.culture).strip_edges() == "Norse")
+
+func _choose_harii_jarl_warband_targets(jarl: HariiJarl, prompt_targets: Array[Card]) -> Array[Card]:
+	var targets := prompt_targets if not prompt_targets.is_empty() else jarl.get_valid_warband_targets(game_manager)
+	var ranked_targets: Array[Dictionary] = []
+	for target in targets:
+		if target == null:
+			continue
+		ranked_targets.append({
+			"card": target,
+			"score": _score_harii_jarl_warband_target(target),
+		})
+	ranked_targets.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		var score_a := int(a.get("score", -1000000))
+		var score_b := int(b.get("score", -1000000))
+		if score_a != score_b:
+			return score_a > score_b
+		return _get_card_order_index(a.get("card", null)) < _get_card_order_index(b.get("card", null))
+	)
+	var chosen: Array[Card] = []
+	for entry in ranked_targets:
+		var card := entry.get("card", null) as Card
+		if card == null:
+			continue
+		chosen.append(card)
+		if chosen.size() >= HariiJarl.MAX_WARBAND_SUMMONS:
+			break
+	return chosen
+
+func _score_harii_jarl_warband_target(card: Card) -> int:
+	var score := _score_projected_card(card)
+	score += _count_clean_attack_targets_for(card, _get_board_creatures(opponent)) * 1400
+	if card is HariiFransiscan:
+		score += 600
+	return score
+
+func _estimate_harii_jarl_warband_value(jarl: HariiJarl) -> int:
+	if jarl == null or bot_player == null:
+		return 0
+	var open_zones_after_jarl := maxi(0, _get_board_open_zone_count(bot_player) - 1)
+	if open_zones_after_jarl <= 0:
+		return 0
+	var valid_targets := jarl.get_valid_warband_targets(game_manager)
+	if valid_targets.is_empty():
+		return 0
+	var scored_targets: Array[int] = []
+	for target in valid_targets:
+		scored_targets.append(_score_harii_jarl_warband_target(target))
+	scored_targets.sort()
+	scored_targets.reverse()
+	var score := 0
+	var summon_count := mini(mini(open_zones_after_jarl, HariiJarl.MAX_WARBAND_SUMMONS), scored_targets.size())
+	for index in range(summon_count):
+		score += int(scored_targets[index]) / 2
+	return score
+
+func _get_board_open_zone_count(player: Player) -> int:
+	var count := 0
+	if player == null:
+		return count
+	for zone in player.frontline_zones + player.reserve_zones:
+		if zone != null and zone.cards.is_empty():
+			count += 1
+	return count
+
+func _score_askelladen_bounce_target(target: Card) -> int:
+	if target == null:
+		return -1000000
+	var score := _score_enemy_target(target)
+	if target is ActiveGodCard:
+		score += 2200
+	if _is_stone_monkey(target):
+		score += 2600
+	if target.get_effective_strength() >= 20 or target.get_effective_resilience() >= 20:
+		score += 900
+	if target.has_type("Guardian"):
+		score += 500
+	return score
+
+func _card_can_answer_target_after_summon(card: Card, target: Card) -> bool:
+	if card == null or target == null or card.card_type != Card.CardType.CREATURE:
+		return false
+	if _is_stone_monkey(target) and not card.can_destroy_combat_protected_creatures(target):
+		return false
+	if _is_askelladen(target) and card.get_effective_speed() <= target.get_effective_speed():
+		return card.get_effective_strength() >= target.get_effective_resilience() and not (card is ActiveGodCard)
+	return card.get_effective_strength() >= target.get_effective_resilience() and card.get_effective_resilience() > target.get_effective_strength()
 
 func _choose_best_target_for_source(source: Card, targets: Array) -> Card:
 	var best_target: Card = null
@@ -1376,6 +1837,8 @@ func _score_projected_card(card: Card) -> int:
 		var score := _get_projected_strength(card) * 100 + _get_projected_resilience(card) * 10 + card.get_effective_speed()
 		if card.has_type("Warrior"):
 			score += 150
+		if card is HariiFransiscan:
+			score += 250
 		return score
 	return _get_hand_value(card) * 100
 
@@ -1405,3 +1868,230 @@ func _get_play_cost(card: Card, prepared: bool) -> int:
 func _can_afford_hand_card(card: Card, prepared: bool) -> bool:
 	var mana_cost := _get_play_cost(card, prepared)
 	return card != null and card.can_pay_costs_with_mana_cost(bot_player, mana_cost)
+
+func _score_creature_play(card: Card, zone: Zone, available_mana: int) -> int:
+	if card == null or zone == null or bot_player == null:
+		return -1000000
+	if card.card_type != Card.CardType.CREATURE or card.current_zone != bot_player.hand_zone:
+		return -1000000
+	if zone.zone_owner != bot_player or not zone.cards.is_empty():
+		return -1000000
+	var mana_cost := _get_play_cost(card, false)
+	var payment_plan := _build_creature_summon_payment_plan(card, available_mana)
+	if not bool(payment_plan.get("ok", false)):
+		return -1000000
+	var score := _score_projected_card(card)
+	score -= mana_cost * 120
+	score -= int(payment_plan.get("penalty", 0))
+	if card is Askelladen and _get_askelladen_problem_creature() != null:
+		score += 1600
+	if card is HariiFransiscan:
+		score += 500
+	if card is HariiJarl:
+		score += _estimate_harii_jarl_warband_value(card as HariiJarl)
+	return score
+
+func _build_creature_summon_payment_plan(card: Card, available_mana: int = -1) -> Dictionary:
+	var result := {
+		"ok": false,
+		"sacrifice_cards": [],
+		"sacrifice_uids": [],
+		"altar_void_cards": [],
+		"altar_void_uids": [],
+		"penalty": 0,
+	}
+	if card == null or bot_player == null or game_manager == null:
+		return result
+	if card.card_type != Card.CardType.CREATURE or card.current_zone != bot_player.hand_zone:
+		return result
+	var mana_cost := _get_play_cost(card, false)
+	var available := bot_player.mana if available_mana < 0 else available_mana
+	if available < mana_cost:
+		return result
+	if card.sacrifice_cost <= 0:
+		if _validate_creature_summon_payment_plan(card, mana_cost, [], []):
+			result["ok"] = true
+		return result
+
+	var direct_plan := _choose_direct_summon_sacrifice_plan(card.sacrifice_cost)
+	var altar_plan := _choose_altar_of_dreams_plan(card)
+	var chosen_plan := {}
+	if not altar_plan.is_empty() and not direct_plan.is_empty():
+		chosen_plan = altar_plan if int(altar_plan.get("penalty", 1000000)) <= int(direct_plan.get("penalty", 1000000)) else direct_plan
+	elif not altar_plan.is_empty():
+		chosen_plan = altar_plan
+	else:
+		chosen_plan = direct_plan
+	if chosen_plan.is_empty():
+		return result
+
+	var sacrifice_cards: Array[Card] = []
+	for raw_sacrifice in chosen_plan.get("sacrifice_cards", []):
+		var sacrifice := raw_sacrifice as Card
+		if sacrifice != null:
+			sacrifice_cards.append(sacrifice)
+	var altar_void_cards: Array[Card] = []
+	for raw_target in chosen_plan.get("altar_void_cards", []):
+		var altar_target := raw_target as Card
+		if altar_target != null:
+			altar_void_cards.append(altar_target)
+	if not _validate_creature_summon_payment_plan(card, mana_cost, sacrifice_cards, altar_void_cards):
+		return result
+	result["ok"] = true
+	result["sacrifice_cards"] = sacrifice_cards
+	result["altar_void_cards"] = altar_void_cards
+	result["penalty"] = int(chosen_plan.get("penalty", 0))
+	var sacrifice_uids: Array[String] = []
+	for sacrifice in sacrifice_cards:
+		if sacrifice != null:
+			sacrifice_uids.append(sacrifice.uid)
+	result["sacrifice_uids"] = sacrifice_uids
+	var altar_void_uids: Array[String] = []
+	for target in altar_void_cards:
+		if target != null:
+			altar_void_uids.append(target.uid)
+	result["altar_void_uids"] = altar_void_uids
+	return result
+
+func _validate_creature_summon_payment_plan(card: Card, mana_cost: int, sacrifice_cards: Array[Card], altar_void_cards: Array[Card]) -> bool:
+	if card == null or bot_player == null:
+		return false
+	var original_sacrifice_cost := card.sacrifice_cost
+	card.clear_pending_chosen_sacrifices()
+	if not altar_void_cards.is_empty():
+		card.sacrifice_cost = 0
+	else:
+		card.set_pending_chosen_sacrifices(sacrifice_cards)
+	var ok := card.can_pay_costs_with_mana_cost(bot_player, mana_cost)
+	card.sacrifice_cost = original_sacrifice_cost
+	card.clear_pending_chosen_sacrifices()
+	return ok
+
+func _choose_direct_summon_sacrifice_plan(required: int) -> Dictionary:
+	if required <= 0:
+		return {"sacrifice_cards": [], "altar_void_cards": [], "penalty": 0}
+	var candidates := _get_valid_summon_sacrifice_candidates()
+	if candidates.size() < required:
+		return {}
+	var chosen := _choose_lowest_summon_sacrifice_cards(candidates, required)
+	if chosen.size() != required:
+		return {}
+	var penalty := 0
+	for card in chosen:
+		penalty += _score_summon_sacrifice_candidate(card)
+	return {
+		"sacrifice_cards": chosen,
+		"altar_void_cards": [],
+		"penalty": penalty,
+	}
+
+func _choose_altar_of_dreams_plan(card: Card) -> Dictionary:
+	var altar := _get_active_altar_of_dreams_for_bot()
+	if altar == null or card == null or not altar.can_replace_sacrifice_cost(card, game_manager):
+		return {}
+	var required := card.sacrifice_cost
+	var valid_targets := altar.get_valid_void_targets(game_manager)
+	if valid_targets.size() < required:
+		return {}
+	var chosen := _choose_lowest_altar_void_cards(valid_targets, required)
+	if chosen.size() != required:
+		return {}
+	var penalty := 0
+	for target in chosen:
+		penalty += _score_altar_void_target(target)
+	return {
+		"sacrifice_cards": [],
+		"altar_void_cards": chosen,
+		"penalty": penalty,
+	}
+
+func _get_valid_summon_sacrifice_candidates() -> Array[Card]:
+	var candidates: Array[Card] = []
+	if bot_player == null:
+		return candidates
+	for zone in bot_player.frontline_zones + bot_player.reserve_zones:
+		for card in zone.cards:
+			if card != null \
+				and card.card_type == Card.CardType.CREATURE \
+				and not card.is_god \
+				and card.can_be_used_for_creature_sacrifice \
+				and card.get_controller() == bot_player \
+				and card.current_zone != null \
+				and card.current_zone.is_board_zone():
+				candidates.append(card)
+	return candidates
+
+func _get_active_altar_of_dreams_for_bot() -> AltarOfDreams:
+	for power in _get_player_powers():
+		var altar := power as AltarOfDreams
+		if altar != null and not altar.is_face_down:
+			return altar
+	return null
+
+func _choose_lowest_summon_sacrifice_cards(candidates: Array[Card], required: int) -> Array[Card]:
+	return _choose_lowest_scored_cards(candidates, required, "sacrifice")
+
+func _choose_lowest_altar_void_cards(candidates: Array[Card], required: int) -> Array[Card]:
+	return _choose_lowest_scored_cards(candidates, required, "altar")
+
+func _choose_lowest_scored_cards(candidates: Array[Card], required: int, score_mode: String) -> Array[Card]:
+	var chosen: Array[Card] = []
+	var used_uids := {}
+	for _i in range(required):
+		var best_card: Card = null
+		var best_score := 1000000000
+		for candidate in candidates:
+			if candidate == null or used_uids.has(candidate.uid):
+				continue
+			var candidate_score := _score_lowest_selection_candidate(candidate, score_mode)
+			if best_card == null or candidate_score < best_score or (candidate_score == best_score and _get_card_order_index(candidate) < _get_card_order_index(best_card)):
+				best_card = candidate
+				best_score = candidate_score
+		if best_card == null:
+			return []
+		chosen.append(best_card)
+		used_uids[best_card.uid] = true
+	return chosen
+
+func _score_lowest_selection_candidate(card: Card, score_mode: String) -> int:
+	match score_mode:
+		"altar":
+			return _score_altar_void_target(card)
+		_:
+			return _score_summon_sacrifice_candidate(card)
+
+func _score_summon_sacrifice_candidate(card: Card) -> int:
+	if card == null:
+		return 1000000
+	var score := _score_projected_card(card)
+	if card.is_sleeping:
+		score -= 900
+	if card.creature_mode == Card.CreatureMode.DEFENSIVE:
+		score -= 250
+	if not card.can_take_major_creature_action():
+		score -= 300
+	if card.current_zone != null and card.current_zone.zone_type == Zone.ZoneType.RESERVE:
+		score -= 150
+	if card is Askelladen:
+		score += 2500
+	if card is EnkiLordOfEridu:
+		score += 2200
+	if card.has_type("Guardian"):
+		score += 500
+	return score
+
+func _score_altar_void_target(card: Card) -> int:
+	if card == null:
+		return 1000000
+	if card.card_owner == opponent:
+		return -1500 - _score_enemy_target(card)
+	var score := _score_friendly_target(card)
+	if card.is_sleeping:
+		score -= 900
+	if card.current_zone != null and card.current_zone.zone_type == Zone.ZoneType.RESERVE:
+		score -= 150
+	if card is Askelladen:
+		score += 2500
+	if card is EnkiLordOfEridu:
+		score += 2200
+	return score

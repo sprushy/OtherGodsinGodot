@@ -271,6 +271,8 @@ func _pending_ui_interaction_has_same_identity(first: Dictionary, second: Dictio
 		"card_uid",
 		"victim_uid",
 		"attacker_uid",
+		"target_uid",
+		"target_player_index",
 		"demon_uid",
 		"summoned_uid",
 		"power_uid",
@@ -1162,7 +1164,22 @@ func _has_remote_authoritative_recipients() -> bool:
 	var spectator_ids = network_manager.get("spectator_peer_ids")
 	return spectator_ids is Array and not (spectator_ids as Array).is_empty()
 
-func _should_linger_authoritative_stack_resolution() -> bool:
+func _stack_action_should_linger_for_visibility(action: CardAction) -> bool:
+	if action == null:
+		return false
+	if bool(action.event_data.get("linger_for_visibility", false)):
+		return true
+	if action.type == CardAction.Type.ATTACK:
+		return true
+	if action.type not in [CardAction.Type.SPELL, CardAction.Type.ABILITY, CardAction.Type.CHARM]:
+		return false
+	if action.target != null:
+		return true
+	return action.card != null and action.card.has_method("is_magical_card") and action.card.is_magical_card()
+
+func _should_linger_authoritative_stack_resolution(action: CardAction = null) -> bool:
+	if _stack_action_should_linger_for_visibility(action):
+		return true
 	if network_manager == null:
 		return false
 	if allow_immediate_local_authoritative_stack_resolution and not _has_remote_authoritative_recipients():
@@ -1179,7 +1196,7 @@ func _schedule_authoritative_stack_top_after_priority() -> void:
 	var resolved_action: CardAction = game_manager.action_stack.back()
 	var resolve_after_passes := game_manager.both_passed()
 	_clear_priority_window_state()
-	if not _should_linger_authoritative_stack_resolution():
+	if not _should_linger_authoritative_stack_resolution(resolved_action):
 		_finish_authoritative_stack_resolution(resolved_action, resolve_after_passes)
 		return
 	var tree = _get_authoritative_resolution_tree()
@@ -1310,6 +1327,7 @@ func _queue_authoritative_magical_action(
 	action.response_to = response_to
 	action.resolve_callback = resolve_callback
 	action.resolution_text = resolution_text if resolution_text != "" else _build_authoritative_resolution_text(action_type, source_card, target)
+	action.event_data["linger_for_visibility"] = true
 	_assign_stack_display_zone(action, preferred_display_zone)
 	game_manager.push_to_stack(action)
 
@@ -1801,12 +1819,22 @@ func _start_authoritative_headless_attack() -> void:
 	for interceptor in possible_interceptors:
 		interceptor_uids.append(interceptor.uid)
 	var attacker_name := _get_action_label(selected_attacker, defender) if selected_attacker != null else "A creature"
-	_emit_ui_interaction_for_player(defender, "intercept", {
+	var prompt_data := {
 		"interceptor_uids": interceptor_uids,
-		"attacker": selected_attacker,
-		"target": pending_attack_target,
+		"attacker_uid": selected_attacker.uid if selected_attacker != null else "",
+		"target_uid": "",
+		"target_player_index": -1,
 		"action_message": attacker_name + " is attacking - intercept or allow?"
-	})
+	}
+	if pending_attack_target is Card:
+		var target_card := pending_attack_target as Card
+		prompt_data["target_uid"] = target_card.uid
+		prompt_data["target_player_index"] = game_manager.players.find(target_card.get_controller()) if game_manager != null else -1
+	elif pending_attack_target is Player:
+		var target_player_idx := game_manager.players.find(pending_attack_target) if game_manager != null else -1
+		prompt_data["target_player_index"] = target_player_idx
+		prompt_data["target_uid"] = str(target_player_idx)
+	_emit_ui_interaction_for_player(defender, "intercept", prompt_data)
 
 # --- Attack Management ---
 
@@ -2375,6 +2403,8 @@ func _process_command_impl(command: Dictionary) -> bool:
 					game_manager.player_chooses_draw()
 				"mana":
 					game_manager.player_chooses_mana()
+				"skip":
+					game_manager.player_chooses_upkeep_only()
 				_:
 					move_failed.emit("upkeep_choice: unknown choice '" + str(command.get("choice")) + "'")
 					return false

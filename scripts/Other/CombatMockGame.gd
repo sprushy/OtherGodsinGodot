@@ -170,6 +170,7 @@ const STACK_ACTION_LINGER_SECONDS := 0.66
 const POST_GAME_RETURN_DELAY_SECONDS := 1.6
 const CARD_PLAY_TIME_BONUS_MSEC := 2000
 const PRIORITY_IDLE_AUTO_PASS_MSEC := 5000
+const UNRANKED_PRIORITY_IDLE_AUTO_PASS_MSEC := PRIORITY_IDLE_AUTO_PASS_MSEC * 2
 const MOVE_TIMEOUT_MSEC := 180000
 const MOVE_TIMEOUT_WARNING_MSEC := 30000
 const MOVE_TIMEOUT_CRITICAL_WARNING_MSEC := 10000
@@ -486,6 +487,9 @@ var _move_timer_running: bool = false
 var _move_timer_warning_stage: int = 0
 var _move_timer_timeout_pending: bool = false
 var _move_timer_last_display_seconds: int = -1
+var _pending_ranked_timeout_turn_pass: bool = false
+var _pending_ranked_timeout_upkeep_skip_turn: int = -1
+var _pending_ranked_timeout_priority_pass_turn: int = -1
 
 const TRANSIENT_UI_Z_INDEX := 2200
 const HOVER_PREVIEW_Z_INDEX := TRANSIENT_UI_Z_INDEX + 50
@@ -2350,6 +2354,26 @@ func _reset_turn_activity_timers() -> void:
 	_move_timer_warning_stage = 0
 	_move_timer_timeout_pending = false
 	_move_timer_last_display_seconds = -1
+	_pending_ranked_timeout_turn_pass = false
+	_pending_ranked_timeout_upkeep_skip_turn = -1
+	_pending_ranked_timeout_priority_pass_turn = -1
+
+func _uses_extended_priority_idle_window() -> bool:
+	if self is PracticeThorGame:
+		return true
+	if headless_match_host != null and headless_match_host.match_session != null:
+		return not headless_match_host.match_session.is_ranked
+	if _current_match_info.has("is_ranked"):
+		return not bool(_current_match_info.get("is_ranked", true))
+	return false
+
+func _get_priority_idle_auto_pass_msec() -> int:
+	if _uses_extended_priority_idle_window():
+		return UNRANKED_PRIORITY_IDLE_AUTO_PASS_MSEC
+	return PRIORITY_IDLE_AUTO_PASS_MSEC
+
+func _get_priority_idle_auto_pass_hint_text() -> String:
+	return "Auto-passes after %ds of inactivity." % int(_get_priority_idle_auto_pass_msec() / 1000)
 
 func _note_priority_prompt_input_activity(event: InputEvent) -> void:
 	if not auto_priority or not _is_priority_prompt_visible():
@@ -2370,7 +2394,7 @@ func _arm_priority_prompt_timeout() -> void:
 		_priority_prompt_idle_deadline_msec = 0
 		_priority_prompt_timeout_pending = false
 		return
-	_priority_prompt_idle_deadline_msec = _now_msec() + PRIORITY_IDLE_AUTO_PASS_MSEC
+	_priority_prompt_idle_deadline_msec = _now_msec() + _get_priority_idle_auto_pass_msec()
 	_priority_prompt_timeout_pending = false
 
 func _sync_priority_prompt_timeout() -> void:
@@ -2563,6 +2587,9 @@ func _sync_turn_activity_timers() -> void:
 	var now_msec := _now_msec()
 	var context := _get_local_move_timer_context()
 	if context.is_empty():
+		_pending_ranked_timeout_turn_pass = false
+		_pending_ranked_timeout_upkeep_skip_turn = -1
+		_pending_ranked_timeout_priority_pass_turn = -1
 		if _move_timer_running:
 			_pause_move_timer(now_msec)
 		if _move_timer_turn_number != -1 or _move_timer_last_display_seconds != -1:
@@ -2577,6 +2604,7 @@ func _sync_turn_activity_timers() -> void:
 			_refresh_turn_label()
 			_refresh_visible_stat_panels()
 		return
+	_continue_pending_ranked_timeout_turn_pass()
 	var turn_number := int(context.get("turn_number", -1))
 	var player_index := int(context.get("player_index", -1))
 	if turn_number != _move_timer_turn_number or player_index != _move_timer_player_index:
@@ -2650,7 +2678,71 @@ func _auto_end_turn_after_move_timeout() -> void:
 		return
 	if _get_local_move_timer_context().is_empty():
 		return
+	if _should_force_ranked_timeout_turn_pass() \
+			and game_manager.current_player != null \
+			and game_manager.is_player_in_upkeep_window(game_manager.current_player):
+		_pending_ranked_timeout_turn_pass = true
+		_continue_pending_ranked_timeout_turn_pass()
+		return
 	_on_end_turn_button_pressed()
+
+func _should_force_ranked_timeout_turn_pass() -> bool:
+	if not (_is_networked_client or _is_real_network_host()):
+		return false
+	return bool(_current_match_info.get("is_ranked", false))
+
+func _continue_pending_ranked_timeout_turn_pass() -> void:
+	if not _pending_ranked_timeout_turn_pass:
+		return
+	if _game_finished or game_manager == null or not _should_force_ranked_timeout_turn_pass():
+		_pending_ranked_timeout_turn_pass = false
+		_pending_ranked_timeout_upkeep_skip_turn = -1
+		_pending_ranked_timeout_priority_pass_turn = -1
+		return
+	if _get_local_move_timer_context().is_empty():
+		_pending_ranked_timeout_turn_pass = false
+		_pending_ranked_timeout_upkeep_skip_turn = -1
+		_pending_ranked_timeout_priority_pass_turn = -1
+		return
+	var current_player := game_manager.current_player
+	if current_player == null:
+		_pending_ranked_timeout_turn_pass = false
+		_pending_ranked_timeout_upkeep_skip_turn = -1
+		_pending_ranked_timeout_priority_pass_turn = -1
+		return
+	if game_manager.is_player_in_upkeep_window(current_player):
+		if _pending_ranked_timeout_upkeep_skip_turn == game_manager.turn_number:
+			return
+		var submitted := true
+		if game_input == null:
+			game_manager.player_chooses_upkeep_only()
+		else:
+			submitted = game_input.submit_action({type = "upkeep_choice", choice = "skip"})
+		if not submitted:
+			_pending_ranked_timeout_turn_pass = false
+			_pending_ranked_timeout_upkeep_skip_turn = -1
+			_pending_ranked_timeout_priority_pass_turn = -1
+			return
+		_pending_ranked_timeout_upkeep_skip_turn = game_manager.turn_number
+		_set_action_label_text("Move timer expired. Skipping upkeep and ending turn.")
+		update_ui()
+		return
+	_pending_ranked_timeout_upkeep_skip_turn = -1
+	if _is_priority_prompt_visible():
+		if _pending_ranked_timeout_priority_pass_turn == game_manager.turn_number:
+			return
+		_pending_ranked_timeout_priority_pass_turn = game_manager.turn_number
+		_set_action_label_text("Move timer expired. Passing priority.")
+		update_ui()
+		call_deferred("_on_priority_pass_pressed")
+		return
+	_pending_ranked_timeout_priority_pass_turn = -1
+	if _has_unresolved_priority_state():
+		return
+	_pending_ranked_timeout_turn_pass = false
+	_pending_ranked_timeout_upkeep_skip_turn = -1
+	_pending_ranked_timeout_priority_pass_turn = -1
+	_do_end_turn()
 
 func _setup_action_log() -> void:
 	if action_label == null:
@@ -7020,6 +7112,23 @@ func _get_attack_card_label(card: Card, fallback: String = "Card") -> String:
 		return owner_player.player_name + "'s " + card.get_display_name()
 	return card.get_display_name()
 
+func _get_target_card_from_command(command: Dictionary, key: String = "target_uid") -> Card:
+	if game_manager == null:
+		return null
+	var target_uid := str(command.get(key, "")).strip_edges()
+	if target_uid.is_empty():
+		return null
+	return game_manager.get_card_by_uid(target_uid)
+
+func _get_queued_stack_activation_label(source_card: Card, target: Card = null) -> String:
+	if source_card == null:
+		return ""
+	if target != null:
+		var viewer := game_manager.get_feedback_viewer() if game_manager != null else null
+		var target_name := _get_target_label(target, viewer, target.card_name)
+		return _get_attack_card_label(source_card, source_card.card_name) + " is targeting " + target_name + "."
+	return source_card.card_name + " [" + _get_stack_card_type_label(source_card) + "] goes on the stack."
+
 func _has_pending_target_selection() -> bool:
 	return (match_manager != null and match_manager.is_targeting_active()) \
 		or awaiting_god_ability_target \
@@ -7263,6 +7372,7 @@ func _queue_magical_action(action_type: int, source_card: Card, target, resoluti
 		action.response_to = game_manager.action_stack.back()
 	action.resolve_callback = resolve_callback
 	action.resolution_text = resolution_text
+	action.event_data["linger_for_visibility"] = true
 	action.display_zone = display_zone
 	_assign_stack_display_zone(action)
 	game_manager.push_to_stack(action)
@@ -7274,8 +7384,8 @@ func _queue_magical_action(action_type: int, source_card: Card, target, resoluti
 	spell_waiting_for_display_zone = null
 	_pending_spell_display_zone = null
 	update_ui()
-	var _card_type_label: String = _get_stack_card_type_label(source_card)
-	_set_action_label_text(source_card.card_name + " [" + _card_type_label + "] goes on the stack.")
+	var target_card: Card = target if target is Card else null
+	_set_action_label_text(_get_queued_stack_activation_label(source_card, target_card))
 	_offer_priority()
 	_kick_local_stack_progress()
 
@@ -8493,6 +8603,7 @@ func _queue_charm_action(charm: CharmCard, triggering_action: CardAction = null,
 		action.resolution_text = charm.card_name + " resolved."
 	action.resolve_callback = func() -> void:
 		_resolve_charm_action(charm, target, action.display_zone)
+	action.event_data["linger_for_visibility"] = true
 	action.display_zone = _get_paid_hand_card_display_zone(charm)
 	if action.display_zone == null:
 		action.display_zone = preferred_display_zone
@@ -15568,6 +15679,17 @@ func _run_priority_recovery_check() -> void:
 	_priority_recovery_check_scheduled = false
 	_recover_stalled_priority_state()
 
+func _stack_action_should_linger_for_visibility(action: CardAction) -> bool:
+	if action == null:
+		return false
+	if bool(action.event_data.get("linger_for_visibility", false)):
+		return true
+	if action.type not in [CardAction.Type.SPELL, CardAction.Type.ABILITY, CardAction.Type.CHARM]:
+		return false
+	if action.target != null:
+		return true
+	return action.card != null and action.card.has_method("is_magical_card") and action.card.is_magical_card()
+
 func _stack_action_has_possible_priority_responses(action: CardAction = null) -> bool:
 	if game_manager == null or match_manager == null or game_manager.action_stack.is_empty():
 		return false
@@ -15747,7 +15869,7 @@ func _show_priority_prompt(player: Player) -> void:
 		lbl.text += " (no responses)"
 	if auto_priority:
 		var hint := Label.new()
-		hint.text = "Auto-passes after 5s of inactivity."
+		hint.text = _get_priority_idle_auto_pass_hint_text()
 		hint.add_theme_font_size_override("font_size", 10)
 		hint.modulate = Color(0.82, 0.86, 0.96, 0.9)
 		vbox.add_child(hint)
@@ -19580,8 +19702,9 @@ func _execute_top_of_stack() -> void:
 	var should_linger := action != null and action.type in [
 		CardAction.Type.SPELL,
 		CardAction.Type.ABILITY,
+		CardAction.Type.CHARM,
 		CardAction.Type.ATTACK
-	] and _stack_action_has_possible_priority_responses(action)
+	] and (_stack_action_has_possible_priority_responses(action) or _stack_action_should_linger_for_visibility(action))
 	if should_linger:
 		update_ui()
 		await get_tree().create_timer(STACK_ACTION_LINGER_SECONDS).timeout
@@ -19771,7 +19894,7 @@ func _on_match_move_validated(move: Dictionary) -> void:
 		"cast_spell":
 			var queued_spell := game_manager.get_card_by_uid(str(move.get("spell_uid", "")))
 			if queued_spell != null:
-				_set_action_label_text(queued_spell.card_name + " goes on the stack.")
+				_set_action_label_text(_get_queued_stack_activation_label(queued_spell, _get_target_card_from_command(move)))
 			if not _is_networked_client:
 				if authoritative_priority:
 					_schedule_priority_recovery_check()
@@ -19780,7 +19903,7 @@ func _on_match_move_validated(move: Dictionary) -> void:
 		"god_ability":
 			var queued_god := game_manager.get_card_by_uid(str(move.get("god_uid", "")))
 			if queued_god != null:
-				_set_action_label_text(queued_god.card_name + " goes on the stack.")
+				_set_action_label_text(_get_queued_stack_activation_label(queued_god, _get_target_card_from_command(move)))
 			if not _is_networked_client:
 				if authoritative_priority:
 					_schedule_priority_recovery_check()
@@ -19801,7 +19924,30 @@ func _on_match_move_validated(move: Dictionary) -> void:
 				return
 			var queued_power := game_manager.get_card_by_uid(str(move.get("power_uid", "")))
 			if queued_power != null:
-				_set_action_label_text(queued_power.card_name + " goes on the stack.")
+				_set_action_label_text(_get_queued_stack_activation_label(queued_power, _get_target_card_from_command(move)))
+			if not _is_networked_client:
+				if authoritative_priority:
+					_schedule_priority_recovery_check()
+				else:
+					_offer_priority()
+		"cast_charm":
+			var queued_charm := game_manager.get_card_by_uid(str(move.get("charm_uid", "")))
+			if queued_charm != null:
+				_set_action_label_text(_get_queued_stack_activation_label(queued_charm, _get_target_card_from_command(move)))
+			if not _is_networked_client:
+				if authoritative_priority:
+					_schedule_priority_recovery_check()
+				else:
+					_offer_priority()
+		"activate_card_ability":
+			var queued_ability_card := game_manager.get_card_by_uid(str(move.get("source_uid", "")))
+			var queued_ability_target := _get_target_card_from_command(move)
+			if queued_ability_target == null:
+				var option_value = move.get("option", {})
+				if option_value is Dictionary:
+					queued_ability_target = _get_target_card_from_command(option_value as Dictionary)
+			if queued_ability_card != null:
+				_set_action_label_text(_get_queued_stack_activation_label(queued_ability_card, queued_ability_target))
 			if not _is_networked_client:
 				if authoritative_priority:
 					_schedule_priority_recovery_check()
@@ -19830,7 +19976,7 @@ func _on_match_move_validated(move: Dictionary) -> void:
 		"activate_prepared_hex":
 			var prepared_hex := game_manager.get_card_by_uid(move.get("hex_uid", ""))
 			if prepared_hex != null:
-				_set_action_label_text(prepared_hex.card_name + " goes on the stack.")
+				_set_action_label_text(_get_queued_stack_activation_label(prepared_hex, _get_target_card_from_command(move)))
 			if not _is_networked_client and not authoritative_priority:
 				_offer_priority()
 		"play_charm_response":
@@ -19933,18 +20079,7 @@ func _on_match_ui_interaction(player_index: int, type: String, data: Dictionary)
 		"advanced_building_techniques":
 			_show_advanced_building_techniques_prompt_from_data(data)
 		"intercept":
-			var interceptor_uids = data.get("interceptor_uids", [])
-			var action_message := str(data.get("action_message", "")).strip_edges()
-			if action_message != "":
-				_set_action_label_text(action_message)
-			if _is_networked_client:
-				_restore_network_attack_preview_from_state({
-					"attacker_uid": str(data.get("attacker_uid", "")),
-					"target_uid": str(data.get("target_uid", "")),
-					"target_player_index": int(data.get("target_player_index", -1)),
-				})
-				update_ui()
-			_show_intercept_prompt(interceptor_uids)
+			_apply_intercept_offered(data)
 		"combat_retreat":
 			var action: CardAction = data["action"]
 			var target = data.get("target")
@@ -21538,6 +21673,9 @@ func _sync_network_turn_entry_ui_from_state() -> void:
 	if not _uses_authoritative_turn_ui() or game_manager == null or network_manager == null:
 		return
 	if _game_finished or _is_observer_mode or not _has_authoritative_local_player_view():
+		_pending_ranked_timeout_turn_pass = false
+		_pending_ranked_timeout_upkeep_skip_turn = -1
+		_pending_ranked_timeout_priority_pass_turn = -1
 		choice_container.visible = false
 		_update_match_side_panel_layout()
 		end_turn_button.visible = false
@@ -21548,6 +21686,9 @@ func _sync_network_turn_entry_ui_from_state() -> void:
 	var local_idx: int = network_manager.local_player_index
 	var current_idx: int = game_manager.players.find(game_manager.current_player)
 	if current_idx != local_idx:
+		_pending_ranked_timeout_turn_pass = false
+		_pending_ranked_timeout_upkeep_skip_turn = -1
+		_pending_ranked_timeout_priority_pass_turn = -1
 		choice_container.visible = false
 		_update_match_side_panel_layout()
 		end_turn_button.visible = false
@@ -21561,6 +21702,7 @@ func _sync_network_turn_entry_ui_from_state() -> void:
 		show_turn_choice()
 		if _network_upkeep_prompt_turn != game_manager.turn_number or _network_upkeep_prompt_player_index != local_idx:
 			call_deferred("_open_upkeep_choice_window")
+	_continue_pending_ranked_timeout_turn_pass()
 
 func _sync_network_turn_controls() -> void:
 	if end_turn_button == null or all_attack_btn == null or choice_container == null:
@@ -21930,7 +22072,7 @@ func _show_remote_priority_prompt(responses: Array, action_message: String = "")
 		lbl.text += " (no responses)"
 	if auto_priority:
 		var hint := Label.new()
-		hint.text = "Auto-passes after 5s of inactivity."
+		hint.text = _get_priority_idle_auto_pass_hint_text()
 		hint.add_theme_font_size_override("font_size", 10)
 		hint.modulate = Color(0.82, 0.86, 0.96, 0.9)
 		vbox.add_child(hint)

@@ -987,6 +987,8 @@ func get_upkeep_choice_feedback(choice: String) -> String:
 		"mana":
 			var mana_gain := get_effective_upkeep_mana_gain(get_base_upkeep_mana_gain(), current_player)
 			return "No upkeep mana gained." if mana_gain <= 0 else "Gained %d mana." % mana_gain
+		"skip":
+			return "Skipped upkeep choice."
 	return ""
 
 func is_first_game_turn() -> bool:
