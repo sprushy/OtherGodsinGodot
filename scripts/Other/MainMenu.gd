@@ -211,7 +211,7 @@ func _ready() -> void:
 		call_deferred("_begin_startup_prompts")
 
 func _is_practice_thor_enabled() -> bool:
-	return OS.is_debug_build()
+	return true
 
 func _bind_game_signals() -> void:
 	for node_name in _get_embedded_game_node_names():
