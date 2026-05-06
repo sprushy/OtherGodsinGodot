@@ -216,6 +216,11 @@ func _handle_priority() -> void:
 		return
 	_submit_action({"type": "priority_pass"})
 
+func _find_player_god() -> GodCard:
+	if bot_player == null or bot_player.god_zone == null or bot_player.god_zone.cards.is_empty():
+		return null
+	return bot_player.god_zone.cards[0] as GodCard
+
 func _choose_priority_response() -> Card:
 	var responses := game_manager.get_priority_responses(bot_player)
 	var top_action: CardAction = game_manager.action_stack.back() if not game_manager.action_stack.is_empty() else null
@@ -238,7 +243,7 @@ func _submit_priority_response(card: Card) -> bool:
 	var top_action: CardAction = game_manager.action_stack.back()
 	if card is HexCard:
 		var targets := game_manager.get_priority_hex_targets(card as HexCard, top_action)
-		var target_uid := _first_target_uid(targets)
+		var target_uid := _choose_target_uid_for_source(card, targets)
 		if bool(card.get("targets")) and target_uid.is_empty():
 			return false
 		return _submit_action({
@@ -251,7 +256,7 @@ func _submit_priority_response(card: Card) -> bool:
 		var targets: Array[Card] = []
 		if charm.targets:
 			targets = charm.get_priority_targets(game_manager, top_action)
-		var target_uid := _first_target_uid(targets)
+		var target_uid := _choose_target_uid_for_source(card, targets)
 		if charm.targets and target_uid.is_empty():
 			return false
 		return _submit_action({
@@ -266,7 +271,7 @@ func _submit_priority_response(card: Card) -> bool:
 			targets = card.get_priority_field_targets(game_manager, top_action)
 		elif card.has_method("get_valid_targets"):
 			targets = card.get_valid_targets(game_manager)
-		var target_uid := _first_target_uid(targets)
+		var target_uid := _choose_target_uid_for_source(card, targets)
 		if bool(card.get("targets")) and target_uid.is_empty():
 			return false
 		return _submit_action({
@@ -279,17 +284,19 @@ func _submit_priority_response(card: Card) -> bool:
 func _take_main_phase_action() -> bool:
 	if _try_activate_mead_for_enki():
 		return true
+	if _try_activate_best_god_ability():
+		return true
 	if _try_summon_askelladen_answer():
+		return true
+	if _try_unlock_best_power():
+		return true
+	if _try_activate_best_power():
 		return true
 	if _try_summon_best_creature():
 		return true
 	if _try_cast_divine_lightning():
 		return true
 	if _try_cast_fall_of_the_mighty():
-		return true
-	if _try_unlock_call_of_the_valkyrie():
-		return true
-	if _try_activate_call_of_the_valkyrie():
 		return true
 	if _try_prepare_void_shield():
 		return true
@@ -306,6 +313,67 @@ func _try_activate_mead_for_enki() -> bool:
 	if mead == null or not _should_activate_prepared_mead_for_enki():
 		return false
 	return _submit_cast_charm(mead, null, true)
+
+func _try_activate_best_god_ability() -> bool:
+	var god := _find_player_god()
+	if god == null or not god.has_method("can_activate") or not god.can_activate(game_manager):
+		return false
+
+	if god is GuanYu:
+		var guan_yu := god as GuanYu
+		if guan_yu.has_method("_can_use_tactical_break") and bool(guan_yu.call("_can_use_tactical_break", game_manager)):
+			var tactical_target := _choose_best_enemy_target_for_source(guan_yu, guan_yu.get_valid_targets(game_manager))
+			if tactical_target != null:
+				return _submit_action({
+					"type": "god_ability",
+					"god_uid": guan_yu.uid,
+					"target_uid": tactical_target.uid,
+				})
+	if god is Freyja:
+		var freyja := god as Freyja
+		var revived_target := _choose_best_friendly_graveyard_target_for_source(freyja, freyja.get_valid_targets(game_manager))
+		if revived_target != null:
+			return _submit_action({
+				"type": "god_ability",
+				"god_uid": freyja.uid,
+				"target_uid": revived_target.uid,
+			})
+	if god is Hermes:
+		var hermes := god as Hermes
+		var speed_target := _choose_best_friendly_board_target_for_source(hermes, hermes.get_valid_targets(game_manager))
+		if speed_target != null and _score_friendly_target(speed_target) >= 2400:
+			return _submit_action({
+				"type": "god_ability",
+				"god_uid": hermes.uid,
+				"target_uid": speed_target.uid,
+			})
+	if god is DellingrTheDayspring:
+		var dellingr := god as DellingrTheDayspring
+		var reveal_target := _choose_best_enemy_target_for_source(dellingr, dellingr.get_valid_targets(game_manager))
+		if reveal_target != null:
+			return _submit_action({
+				"type": "god_ability",
+				"god_uid": dellingr.uid,
+				"target_uid": reveal_target.uid,
+			})
+	if god is AphroditeAreia:
+		var aphrodite := god as AphroditeAreia
+		var enthrall_target := _choose_best_enemy_target_for_source(aphrodite, aphrodite.get_valid_targets(game_manager))
+		if enthrall_target != null:
+			return _submit_action({
+				"type": "god_ability",
+				"god_uid": aphrodite.uid,
+				"target_uid": enthrall_target.uid,
+			})
+
+	var champions_call_score := _score_champions_call_activation(god)
+	if champions_call_score >= 2200:
+		return _submit_action({
+			"type": "god_ability",
+			"god_uid": god.uid,
+			"shelve_uids": [],
+		})
+	return false
 
 func _should_activate_prepared_mead_for_enki() -> bool:
 	if game_manager == null or game_manager.current_player != bot_player:
@@ -389,31 +457,51 @@ func _try_prepare_mead_of_poetry() -> bool:
 		return false
 	return _submit_prepare_card(mead, zone)
 
-func _try_unlock_call_of_the_valkyrie() -> bool:
-	var call := _find_call_of_the_valkyrie()
-	if call == null or not call.is_face_down:
-		return false
-	if not _should_use_call_of_the_valkyrie():
+func _try_unlock_best_power() -> bool:
+	var best_power: PowerCard = null
+	var best_score := -1000000
+	for power in _get_player_powers():
+		if power == null or not power.is_face_down or not power.can_unlock(game_manager):
+			continue
+		if not _can_use_generic_power_command(power):
+			continue
+		var score := _score_power_unlock(power)
+		if score > best_score:
+			best_score = score
+			best_power = power
+	if best_power == null or best_score < 900:
 		return false
 	return _submit_action({
 		"type": "unlock_power",
-		"power_uid": call.uid,
+		"power_uid": best_power.uid,
 	})
 
-func _try_activate_call_of_the_valkyrie() -> bool:
-	var call := _find_call_of_the_valkyrie()
-	if call == null or call.is_face_down:
+func _try_activate_best_power() -> bool:
+	var best_power: PowerCard = null
+	var best_target: Card = null
+	var best_score := -1000000
+	for power in _get_player_powers():
+		if power == null or power.is_face_down or not power.can_activate(game_manager):
+			continue
+		if not _can_use_generic_power_command(power):
+			continue
+		var chosen_target: Card = null
+		if power.has_method("get_valid_targets"):
+			chosen_target = _choose_best_target_for_source(power, power.get_valid_targets(game_manager))
+		var score := _score_power_activation(power, chosen_target)
+		if score > best_score:
+			best_score = score
+			best_power = power
+			best_target = chosen_target
+	if best_power == null or best_score < 1200:
 		return false
-	if not _should_use_call_of_the_valkyrie():
-		return false
-	var target := _choose_call_of_the_valkyrie_target(call)
-	if target == null or not call.can_activate(game_manager):
-		return false
-	return _submit_action({
+	var command := {
 		"type": "activate_power",
-		"power_uid": call.uid,
-		"target_uid": target.uid,
-	})
+		"power_uid": best_power.uid,
+	}
+	if best_target != null:
+		command["target_uid"] = best_target.uid
+	return _submit_action(command)
 
 func _try_switch_to_aggressive_mode() -> bool:
 	var creature := _get_best_mode_switch_candidate()
@@ -985,11 +1073,21 @@ func _can_clear_creature_without_askelladen(target: Card) -> bool:
 	return false
 
 func _should_use_call_of_the_valkyrie() -> bool:
-	if bot_player == null:
+	var call := _find_call_of_the_valkyrie()
+	if bot_player == null or call == null:
+		return false
+	var target := _choose_call_of_the_valkyrie_target(call)
+	if target == null:
 		return false
 	if _needs_askelladen_support():
 		return true
-	return bot_player.hand_zone.cards.is_empty() and _choose_call_of_the_valkyrie_target(_find_call_of_the_valkyrie()) != null
+	if bot_player.hand_zone.cards.is_empty():
+		return true
+	if _get_best_affordable_hand_creature(0) == null:
+		return true
+	if _board_creature_count(bot_player) < _board_creature_count(opponent):
+		return true
+	return _score_call_of_the_valkyrie_target(target) >= 2600 and bot_player.hand_zone.cards.size() <= 3
 
 func _needs_askelladen_support() -> bool:
 	if _get_askelladen_problem_creature() == null:
@@ -1011,11 +1109,7 @@ func _choose_call_of_the_valkyrie_target(call: CallOfTheValkyrie) -> Card:
 		for target in valid_targets:
 			if target is Askelladen:
 				return target
-	var best_target: Card = null
-	for target in valid_targets:
-		if best_target == null or _is_projected_creature_better(target, best_target):
-			best_target = target
-	return best_target
+	return _choose_best_target_for_source(call, valid_targets)
 
 func _find_graveyard_askelladen() -> Askelladen:
 	if bot_player == null:
@@ -1096,6 +1190,197 @@ func _get_first_open_reserve_zone(player: Player) -> Zone:
 		if zone.cards.is_empty():
 			return zone
 	return null
+
+func _get_player_powers() -> Array[PowerCard]:
+	var powers: Array[PowerCard] = []
+	if bot_player == null:
+		return powers
+	for zone in bot_player.power_zones:
+		for card in zone.cards:
+			var power := card as PowerCard
+			if power != null:
+				powers.append(power)
+	return powers
+
+func _can_use_generic_power_command(power: PowerCard) -> bool:
+	return power != null and not (power is Breidablik) and not (power is DivineCaprice)
+
+func _score_power_unlock(power: PowerCard) -> int:
+	if power == null:
+		return -1000000
+	if power is CallOfTheValkyrie:
+		var target := _choose_call_of_the_valkyrie_target(power as CallOfTheValkyrie)
+		if target == null or not _should_use_call_of_the_valkyrie():
+			return -1000000
+		return 1800 + _score_call_of_the_valkyrie_target(target) - power.get_unlock_mana_cost(game_manager) * 140
+	var score := -power.get_unlock_mana_cost(game_manager) * 140
+	var best_target: Card = null
+	if power.has_method("get_valid_targets"):
+		best_target = _choose_best_target_for_source(power, power.get_valid_targets(game_manager))
+	if best_target != null:
+		score += 1200 + int(_score_activation_target(power, best_target) / 10)
+	if _get_best_affordable_hand_creature(0) == null:
+		score += 500
+	if bot_player != null and bot_player.hand_zone != null and bot_player.hand_zone.cards.size() <= 2:
+		score += 250
+	return score
+
+func _score_power_activation(power: PowerCard, target: Card = null) -> int:
+	if power == null:
+		return -1000000
+	if power is CallOfTheValkyrie:
+		if target == null or not _should_use_call_of_the_valkyrie():
+			return -1000000
+		return 2200 + _score_call_of_the_valkyrie_target(target)
+	if power.targets:
+		if target == null:
+			return -1000000
+		return 1000 + _score_activation_target(power, target)
+	if _should_activate_untargeted_power(power):
+		return 1400
+	return -1000000
+
+func _should_activate_untargeted_power(power: PowerCard) -> bool:
+	if power == null:
+		return false
+	if _get_best_affordable_hand_creature(0) == null:
+		return true
+	return bot_player != null and bot_player.hand_zone != null and bot_player.hand_zone.cards.size() <= 1
+
+func _score_champions_call_activation(god: GodCard) -> int:
+	if god == null or not god.has_method("can_use_champions_call") or not god.can_use_champions_call(game_manager):
+		return -1000000
+	var manifestation := god.get_champions_call_candidate(true)
+	if manifestation == null:
+		return -1000000
+	var score := _score_projected_card(manifestation)
+	var shelve_count := god.get_champions_call_required_shelve_count(game_manager)
+	score -= shelve_count * 1800
+	if _board_creature_count(bot_player) == 0:
+		score += 1500
+	if _board_creature_count(bot_player) < _board_creature_count(opponent):
+		score += 1200
+	var best_hand := _get_best_affordable_hand_creature(0)
+	if best_hand == null:
+		score += 700
+	else:
+		score -= int(_score_projected_card(best_hand) * 0.6)
+	return score
+
+func _choose_best_target_for_source(source: Card, targets: Array) -> Card:
+	var best_target: Card = null
+	var best_score := -1000000
+	for raw_target in targets:
+		var target := raw_target as Card
+		if target == null:
+			continue
+		var score := _score_activation_target(source, target)
+		if best_target == null or score > best_score:
+			best_target = target
+			best_score = score
+	return best_target
+
+func _choose_best_enemy_target_for_source(source: Card, targets: Array) -> Card:
+	var best_target: Card = null
+	var best_score := -1000000
+	for raw_target in targets:
+		var target := raw_target as Card
+		if target == null or target.card_owner != opponent:
+			continue
+		var score := _score_enemy_target(target)
+		if best_target == null or score > best_score:
+			best_target = target
+			best_score = score
+	return best_target
+
+func _choose_best_friendly_board_target_for_source(source: Card, targets: Array) -> Card:
+	var best_target: Card = null
+	var best_score := -1000000
+	for raw_target in targets:
+		var target := raw_target as Card
+		if target == null or target.card_owner != bot_player:
+			continue
+		if target.current_zone == null or not target.current_zone.is_board_zone():
+			continue
+		var score := _score_friendly_target(target)
+		if best_target == null or score > best_score:
+			best_target = target
+			best_score = score
+	return best_target
+
+func _choose_best_friendly_graveyard_target_for_source(source: Card, targets: Array) -> Card:
+	var best_target: Card = null
+	var best_score := -1000000
+	for raw_target in targets:
+		var target := raw_target as Card
+		if target == null or target.card_owner != bot_player:
+			continue
+		if target.current_zone != bot_player.graveyard_zone:
+			continue
+		var score := _score_graveyard_target(target)
+		if best_target == null or score > best_score:
+			best_target = target
+			best_score = score
+	return best_target
+
+func _choose_target_uid_for_source(source: Card, targets: Array) -> String:
+	var best_target := _choose_best_target_for_source(source, targets)
+	return best_target.uid if best_target != null else ""
+
+func _score_activation_target(source: Card, target: Card) -> int:
+	if target == null:
+		return -1000000
+	if target.card_owner == bot_player and target.current_zone == bot_player.graveyard_zone:
+		return 45000 + _score_graveyard_target(target)
+	if target.card_owner == opponent:
+		return 50000 + _score_enemy_target(target)
+	if target.card_owner == bot_player:
+		return 20000 + _score_friendly_target(target)
+	if source is CallOfTheValkyrie:
+		return _score_call_of_the_valkyrie_target(target)
+	return _score_projected_card(target)
+
+func _score_call_of_the_valkyrie_target(target: Card) -> int:
+	return _score_graveyard_target(target) + 400
+
+func _score_graveyard_target(target: Card) -> int:
+	var score := _score_projected_card(target)
+	if target is Askelladen and _get_askelladen_problem_creature() != null:
+		score += 3000
+	if target != null and target.has_type("Warrior"):
+		score += 500
+	return score
+
+func _score_enemy_target(target: Card) -> int:
+	var score := _score_projected_card(target)
+	if target.is_magical_card():
+		score += 1200
+	if target.is_prepared:
+		score += 800
+	if target.has_type("Guardian"):
+		score += 500
+	if target.has_type("Stealth"):
+		score += 350
+	return score
+
+func _score_friendly_target(target: Card) -> int:
+	var score := _score_projected_card(target)
+	if target.card_type == Card.CardType.CREATURE and not target.is_sleeping and target.can_take_major_creature_action():
+		score += 500
+	return score
+
+func _score_projected_card(card: Card) -> int:
+	if card == null:
+		return -1000000
+	if card.card_type == Card.CardType.CREATURE:
+		var score := _get_projected_strength(card) * 100 + _get_projected_resilience(card) * 10 + card.get_effective_speed()
+		if card.has_type("Warrior"):
+			score += 150
+		return score
+	return _get_hand_value(card) * 100
+
+func _board_creature_count(player: Player) -> int:
+	return _get_board_creatures(player).size()
 
 func _get_card_order_index(card: Card) -> int:
 	if card == null or card.current_zone == null:

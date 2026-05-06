@@ -7,12 +7,16 @@ const BotGameInputScript = preload("res://scripts/bots/BotGameInput.gd")
 const PRACTICE_AUTHORITY_PORT := 0
 
 var _player_practice_deck: Dictionary = {}
+var _thor_practice_deck: Dictionary = {}
 var _practice_match_setup = PracticeMatchSetupScript.new()
 var _thor_bot = null
 var _practice_deck_name: String = ""
 
 func set_player_practice_deck(saved_deck: Dictionary) -> void:
 	_player_practice_deck = saved_deck.duplicate(true)
+
+func set_thor_practice_deck(saved_deck: Dictionary) -> void:
+	_thor_practice_deck = saved_deck.duplicate(true)
 
 func start_game(
 	is_host: bool = false,
@@ -33,7 +37,7 @@ func start_game(
 		_thor_bot.poll()
 
 func _build_initial_match_players(_default_match_setup, _server_match_session = null, _match_info: Dictionary = {}) -> Dictionary:
-	var result := _practice_match_setup.build_thor_practice_match(game_manager, _player_practice_deck)
+	var result := _practice_match_setup.build_thor_practice_match(game_manager, _player_practice_deck, _thor_practice_deck)
 	_practice_deck_name = str(result.get("player_deck_name", ""))
 	return result
 

@@ -9,6 +9,9 @@ const DeckCatalogUtilsScript = preload("res://scripts/core/DeckCatalogUtils.gd")
 const LocalProfileStoreScript = preload("res://scripts/core/LocalProfileStore.gd")
 const CardCatalogScript = preload("res://scripts/cards/CardCatalog.gd")
 const DeckValidatorScript = preload("res://scripts/server/DeckValidator.gd")
+const PracticeAutofillDeckFactoryScript = preload("res://scripts/server/PracticeAutofillDeckFactory.gd")
+const PracticeFuzzPlayerBotScript = preload("res://scripts/bots/PracticeFuzzPlayerBot.gd")
+const BotGameInputScript = preload("res://scripts/bots/BotGameInput.gd")
 const MatchHistoryStoreScript = preload("res://scripts/server/MatchHistoryStore.gd")
 const MatchSessionScript = preload("res://scripts/server/MatchSession.gd")
 const LobbyRoomScript = preload("res://scripts/server/LobbyRoom.gd")
@@ -46,6 +49,7 @@ const ACTIVE_MATCH_AUTO_RESUME_SUPPRESS_SECONDS := 10.0
 @onready var status_label = $MenuContainer/MultiplayerContainer/StatusLabel
 
 var _smoke_config: Dictionary = {}
+var _smoke_finished: bool = false
 var lobby_server: LobbyServer = null
 var lobby_client: LobbyClient = null
 var _current_room_snapshot: Dictionary = {}
@@ -3467,6 +3471,8 @@ func _on_lobby_connection_failed(message: String) -> void:
 	_logged_in_account_username = ""
 	_refresh_account_identity_label()
 	status_label.text = message
+	if _should_ignore_lobby_failure_for_smoke():
+		return
 	_fail_smoke_if_enabled("CONNECTION_FAILED:%s" % message)
 
 func _on_lobby_disconnected() -> void:
@@ -3480,6 +3486,8 @@ func _on_lobby_disconnected() -> void:
 	_refresh_account_identity_label()
 	_clear_current_seek_state()
 	status_label.text = "Lobby connection lost. Refresh open seeks to reconnect."
+	if _should_ignore_lobby_failure_for_smoke():
+		return
 	_fail_smoke_if_enabled("DISCONNECTED_FROM_LOBBY")
 
 func _on_back_to_menu_pressed() -> void:
@@ -4848,6 +4856,7 @@ func _start_smoke_mode() -> void:
 	var role := str(_smoke_config.get("role", "")).to_lower()
 	if role.is_empty():
 		return
+	_smoke_finished = false
 
 	ip_line_edit.text = str(_smoke_config.get("ip", "127.0.0.1"))
 	_set_selected_account_username(str(_smoke_config.get("player_name", "Smoke%s" % role.capitalize())))
@@ -4860,6 +4869,8 @@ func _start_smoke_mode() -> void:
 	var timeout_seconds := float(_smoke_config.get("timeout", 25.0))
 	var timeout_timer := get_tree().create_timer(timeout_seconds)
 	timeout_timer.timeout.connect(func() -> void:
+		if _smoke_finished:
+			return
 		_fail_smoke_if_enabled("TIMEOUT")
 	)
 
@@ -4894,6 +4905,10 @@ func _start_smoke_mode() -> void:
 
 	if role == "practice_thor_byggvir":
 		call_deferred("_run_practice_thor_byggvir_smoke")
+		return
+
+	if role == "practice_thor_fuzz":
+		call_deferred("_run_practice_thor_fuzz_smoke")
 		return
 
 	if role == "card_test_turn2":
@@ -5389,6 +5404,263 @@ func _run_practice_thor_byggvir_smoke() -> void:
 
 	_finish_smoke_if_enabled("PASS:practice_thor_byggvir")
 
+func _run_practice_thor_fuzz_smoke() -> void:
+	_write_smoke_trace("practice_thor_fuzz:start")
+	var practice_game = _show_embedded_game("PracticeThor")
+	if practice_game == null:
+		_fail_smoke_if_enabled("practice_thor_fuzz_missing")
+		return
+	show_game()
+	var deck_factory := PracticeAutofillDeckFactoryScript.new()
+	var total_games := maxi(1, int(_smoke_config.get("games", 20)))
+	var base_seed := int(_smoke_config.get("seed", 1337))
+	var stall_frames := maxi(60, int(_smoke_config.get("stall_frames", 360)))
+	var match_frames := maxi(stall_frames + 60, int(_smoke_config.get("match_frames", 2400)))
+	var player_wins := 0
+	var thor_wins := 0
+	for game_index in range(total_games):
+		var player_seed := base_seed + game_index * 2
+		var thor_seed := base_seed + game_index * 2 + 1
+		var player_deck := deck_factory.build_random_deck(player_seed)
+		if player_deck.is_empty():
+			_fail_smoke_if_enabled("practice_thor_fuzz_player_deck_failed index=%d seed=%d" % [game_index, player_seed])
+			return
+		var thor_deck := deck_factory.build_random_deck(thor_seed, "Thor")
+		if thor_deck.is_empty():
+			_fail_smoke_if_enabled("practice_thor_fuzz_thor_deck_failed index=%d seed=%d" % [game_index, thor_seed])
+			return
+		_write_smoke_trace("practice_thor_fuzz:match=%d player_seed=%d thor_seed=%d player_god=%s thor_god=%s" % [
+			game_index,
+			player_seed,
+			thor_seed,
+			str(player_deck.get("god_name", "")),
+			str(thor_deck.get("god_name", "")),
+		])
+		var match_result := await _run_single_practice_thor_fuzz_game(
+			practice_game,
+			player_deck,
+			thor_deck,
+			game_index,
+			player_seed,
+			thor_seed,
+			stall_frames,
+			match_frames
+		)
+		if not bool(match_result.get("ok", false)):
+			if practice_game.has_method("cleanup"):
+				practice_game.cleanup()
+			await get_tree().process_frame
+			await get_tree().process_frame
+			_fail_smoke_if_enabled(str(match_result.get("message", "practice_thor_fuzz_match_failed")))
+			return
+		var winner_name := str(match_result.get("winner", "")).strip_edges()
+		if winner_name == "Player 1":
+			player_wins += 1
+		elif winner_name == "Thor":
+			thor_wins += 1
+	if practice_game.has_method("cleanup"):
+		practice_game.cleanup()
+	await get_tree().process_frame
+	await get_tree().process_frame
+	_write_smoke_trace("practice_thor_fuzz:complete games=%d player_wins=%d thor_wins=%d" % [total_games, player_wins, thor_wins])
+	_finish_smoke_if_enabled("PASS:practice_thor_fuzz games=%d player_wins=%d thor_wins=%d seed=%d" % [
+		total_games,
+		player_wins,
+		thor_wins,
+		base_seed,
+	])
+
+func _run_single_practice_thor_fuzz_game(
+	practice_game,
+	player_deck: Dictionary,
+	thor_deck: Dictionary,
+	game_index: int,
+	player_seed: int,
+	thor_seed: int,
+	stall_frames: int,
+	match_frames: int
+) -> Dictionary:
+	if practice_game == null:
+		return {"ok": false, "message": "practice_thor_fuzz_missing_game"}
+	if practice_game.has_method("cleanup"):
+		practice_game.cleanup()
+	await get_tree().process_frame
+	await get_tree().process_frame
+	practice_game.set_player_practice_deck(player_deck)
+	if practice_game.has_method("set_thor_practice_deck"):
+		practice_game.set_thor_practice_deck(thor_deck)
+	await practice_game.start_game()
+	await get_tree().process_frame
+	await get_tree().process_frame
+	var setup_error := _get_practice_thor_fuzz_setup_error(practice_game)
+	if not setup_error.is_empty():
+		return {
+			"ok": false,
+			"message": "practice_thor_fuzz_setup_%s index=%d player_seed=%d thor_seed=%d" % [
+				setup_error,
+				game_index,
+				player_seed,
+				thor_seed,
+			],
+		}
+	var player_bot := PracticeFuzzPlayerBotScript.new()
+	var player_bot_input := BotGameInputScript.new(practice_game.match_manager, 0)
+	player_bot.attach(practice_game.game_manager, practice_game.match_manager, player_bot_input, 0)
+	player_bot.poll()
+	var validated_trace := func(command: Dictionary) -> void:
+		_write_smoke_trace("practice_thor_fuzz:validated index=%d type=%s current=%d turn=%d" % [
+			game_index,
+			str(command.get("type", "")),
+			practice_game.game_manager.players.find(practice_game.game_manager.current_player) if practice_game.game_manager != null else -1,
+			practice_game.game_manager.turn_number if practice_game.game_manager != null else -1,
+		])
+	var failed_trace := func(reason: String) -> void:
+		_write_smoke_trace("practice_thor_fuzz:move_failed index=%d reason=%s" % [game_index, reason])
+	if not practice_game.match_manager.move_validated.is_connected(validated_trace):
+		practice_game.match_manager.move_validated.connect(validated_trace)
+	if not practice_game.match_manager.move_failed.is_connected(failed_trace):
+		practice_game.match_manager.move_failed.connect(failed_trace)
+	var last_snapshot := _build_practice_thor_fuzz_snapshot(practice_game)
+	var unchanged_frames := 0
+	for frame_index in range(match_frames):
+		if practice_game.game_manager != null and practice_game.game_manager.is_game_over:
+			if practice_game.match_manager.move_validated.is_connected(validated_trace):
+				practice_game.match_manager.move_validated.disconnect(validated_trace)
+			if practice_game.match_manager.move_failed.is_connected(failed_trace):
+				practice_game.match_manager.move_failed.disconnect(failed_trace)
+			player_bot.detach()
+			var winner_name := _get_practice_thor_fuzz_winner_name(practice_game)
+			_write_smoke_trace("practice_thor_fuzz:match=%d winner=%s frames=%d turn=%d" % [
+				game_index,
+				winner_name,
+				frame_index,
+				practice_game.game_manager.turn_number if practice_game.game_manager != null else -1,
+			])
+			return {"ok": true, "winner": winner_name}
+		await get_tree().process_frame
+		var snapshot := _build_practice_thor_fuzz_snapshot(practice_game)
+		if snapshot == last_snapshot:
+			unchanged_frames += 1
+		else:
+			last_snapshot = snapshot
+			unchanged_frames = 0
+		if unchanged_frames >= stall_frames:
+			if practice_game.match_manager.move_validated.is_connected(validated_trace):
+				practice_game.match_manager.move_validated.disconnect(validated_trace)
+			if practice_game.match_manager.move_failed.is_connected(failed_trace):
+				practice_game.match_manager.move_failed.disconnect(failed_trace)
+			player_bot.detach()
+			_write_smoke_trace("practice_thor_fuzz:stall index=%d player_seed=%d thor_seed=%d state=%s" % [
+				game_index,
+				player_seed,
+				thor_seed,
+				snapshot,
+			])
+			_write_smoke_trace("practice_thor_fuzz:player_deck=%s" % JSON.stringify(player_deck))
+			_write_smoke_trace("practice_thor_fuzz:thor_deck=%s" % JSON.stringify(thor_deck))
+			return {
+				"ok": false,
+				"message": "practice_thor_fuzz_stall index=%d player_seed=%d thor_seed=%d" % [
+					game_index,
+					player_seed,
+					thor_seed,
+				],
+			}
+	if practice_game.match_manager.move_validated.is_connected(validated_trace):
+		practice_game.match_manager.move_validated.disconnect(validated_trace)
+	if practice_game.match_manager.move_failed.is_connected(failed_trace):
+		practice_game.match_manager.move_failed.disconnect(failed_trace)
+	player_bot.detach()
+	_write_smoke_trace("practice_thor_fuzz:timeout index=%d player_seed=%d thor_seed=%d state=%s" % [
+		game_index,
+		player_seed,
+		thor_seed,
+		last_snapshot,
+	])
+	_write_smoke_trace("practice_thor_fuzz:player_deck=%s" % JSON.stringify(player_deck))
+	_write_smoke_trace("practice_thor_fuzz:thor_deck=%s" % JSON.stringify(thor_deck))
+	return {
+		"ok": false,
+		"message": "practice_thor_fuzz_timeout index=%d player_seed=%d thor_seed=%d" % [
+			game_index,
+			player_seed,
+			thor_seed,
+		],
+	}
+
+func _get_practice_thor_fuzz_setup_error(practice_game) -> String:
+	if practice_game == null:
+		return "missing"
+	if practice_game.player1 == null or practice_game.player2 == null:
+		return "players_missing"
+	if practice_game.match_manager == null or not practice_game.match_manager.authoritative_match_flow_enabled:
+		return "not_authoritative"
+	if practice_game.network_manager == null or not bool(practice_game.network_manager.get("is_server")):
+		return "not_server"
+	if practice_game.get("_thor_bot") == null:
+		return "thor_bot_missing"
+	if practice_game.player2.player_name != "Thor":
+		return "wrong_enemy_name"
+	if practice_game.game_manager == null:
+		return "game_manager_missing"
+	return ""
+
+func _get_practice_thor_fuzz_winner_name(practice_game) -> String:
+	if practice_game == null or practice_game.player1 == null or practice_game.player2 == null:
+		return ""
+	if practice_game.player1.is_defeated and not practice_game.player2.is_defeated:
+		return "Thor"
+	if practice_game.player2.is_defeated and not practice_game.player1.is_defeated:
+		return "Player 1"
+	if practice_game.player1.followers > practice_game.player2.followers:
+		return "Player 1"
+	if practice_game.player2.followers > practice_game.player1.followers:
+		return "Thor"
+	return "draw"
+
+func _build_practice_thor_fuzz_snapshot(practice_game) -> String:
+	if practice_game == null or practice_game.game_manager == null:
+		return "missing"
+	var game_manager: GameManager = practice_game.game_manager
+	var match_manager: MatchManager = practice_game.match_manager
+	var player1: Player = practice_game.player1
+	var player2: Player = practice_game.player2
+	var snapshot := {
+		"turn": game_manager.turn_number,
+		"current_player": game_manager.players.find(game_manager.current_player),
+		"priority_player": game_manager.players.find(game_manager.priority_player),
+		"upkeep_resolved": game_manager.has_resolved_turn_upkeep(),
+		"stack": game_manager.action_stack.size(),
+		"resolving": game_manager.resolving_stack_actions.size(),
+		"pending_prompts": _count_pending_smoke_prompts(match_manager),
+		"p1_followers": player1.followers if player1 != null else -1,
+		"p2_followers": player2.followers if player2 != null else -1,
+		"p1_mana": player1.mana if player1 != null else -1,
+		"p2_mana": player2.mana if player2 != null else -1,
+		"p1_hand": player1.hand_zone.cards.size() if player1 != null and player1.hand_zone != null else -1,
+		"p2_hand": player2.hand_zone.cards.size() if player2 != null and player2.hand_zone != null else -1,
+		"p1_deck": player1.deck_zone.cards.size() if player1 != null and player1.deck_zone != null else -1,
+		"p2_deck": player2.deck_zone.cards.size() if player2 != null and player2.deck_zone != null else -1,
+		"p1_board": _count_board_cards_for_player(player1),
+		"p2_board": _count_board_cards_for_player(player2),
+	}
+	return JSON.stringify(snapshot)
+
+func _count_pending_smoke_prompts(match_manager: MatchManager) -> int:
+	if match_manager == null:
+		return 0
+	var pending_prompts = match_manager.get("_pending_ui_interactions")
+	return (pending_prompts as Array).size() if pending_prompts is Array else 0
+
+func _count_board_cards_for_player(player: Player) -> int:
+	if player == null:
+		return 0
+	var total := 0
+	for zone in player.frontline_zones + player.reserve_zones:
+		if zone != null:
+			total += zone.cards.size()
+	return total
+
 func _find_first_open_smoke_frontline_zone(player: Player) -> Zone:
 	if player == null:
 		return null
@@ -5519,6 +5791,20 @@ func _maybe_progress_smoke_from_room_snapshot(room_id: String) -> void:
 		if expected_room.is_empty() or room_id != expected_room:
 			return
 
+func _should_ignore_lobby_failure_for_smoke() -> bool:
+	if _smoke_config.is_empty():
+		return false
+	var role := str(_smoke_config.get("role", "")).to_lower()
+	return role in [
+		"practice_thor",
+		"practice_thor_summon",
+		"practice_thor_intercept",
+		"practice_thor_divine_lightning",
+		"practice_thor_byggvir",
+		"practice_thor_fuzz",
+		"card_test_turn2",
+	]
+
 func _parse_smoke_config(args: Array) -> Dictionary:
 	var config: Dictionary = {}
 	for raw_arg in args:
@@ -5549,6 +5835,10 @@ func _parse_smoke_config(args: Array) -> Dictionary:
 		"timeout": float(str(config.get("smoke_timeout", "25")).to_float()),
 		"lobby_port": int(str(config.get("smoke_lobby_port", str(LobbyProtocolScript.PORT))).to_int()),
 		"match_port": int(str(config.get("smoke_match_port", str(LobbyProtocolScript.MATCH_PORT))).to_int()),
+		"games": int(str(config.get("smoke_games", "20")).to_int()),
+		"seed": int(str(config.get("smoke_seed", "1337")).to_int()),
+		"stall_frames": int(str(config.get("smoke_stall_frames", "360")).to_int()),
+		"match_frames": int(str(config.get("smoke_match_frames", "2400")).to_int()),
 	}
 
 func _write_smoke_room_code(room_code: String) -> void:
@@ -5622,12 +5912,19 @@ func _write_smoke_lobby_pid(pid: int) -> void:
 func _finish_smoke_if_enabled(message: String) -> void:
 	if _smoke_config.is_empty():
 		return
-	_write_smoke_result(message)
+	_complete_smoke_if_enabled(message)
 
 func _fail_smoke_if_enabled(message: String) -> void:
 	if _smoke_config.is_empty():
 		return
-	_write_smoke_result("FAIL:%s" % message)
+	_complete_smoke_if_enabled("FAIL:%s" % message)
+
+func _complete_smoke_if_enabled(message: String) -> void:
+	if _smoke_finished:
+		return
+	_smoke_finished = true
+	_write_smoke_result(message)
+	call_deferred("_close_program")
 
 func _launch_dedicated_lobby_server() -> int:
 	var project_path := ProjectSettings.globalize_path("res://")

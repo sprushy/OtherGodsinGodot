@@ -6,6 +6,8 @@ class_name MatchManager
 # decoupling game rules from the UI.
 
 const TiamatScript = preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
+const DEFERRED_DESTROYED_EVENTS_NONE := 0
+const DEFERRED_DESTROYED_EVENTS_QUEUE := 1
 
 signal targeting_started(source: Card, target_type: String)
 signal targeting_ended()
@@ -16,6 +18,7 @@ var game_manager: GameManager
 var game_state: GameState
 var network_manager: Node = null # Set this if in multiplayer mode
 var authoritative_match_flow_enabled: bool = false
+var allow_immediate_local_authoritative_stack_resolution: bool = false
 
 # Targeting State (moved from CombatMockGame)
 var pending_click_selection_name: String = ""
@@ -126,6 +129,7 @@ func reset_runtime_state() -> void:
 	last_resolution_text = ""
 	last_move_failed_reason = ""
 	_authoritative_stack_resolution_pending = false
+	allow_immediate_local_authoritative_stack_resolution = false
 
 # --- Targeting Control ---
 
@@ -654,6 +658,8 @@ func resolve_action(action: CardAction) -> void:
 	var pushed_effect_source := false
 	var action_completed := true
 	var destroyed_count_before := game_manager.destroyed_this_turn.size() if game_manager != null else 0
+	if action != null and not action.event_data.has("destroyed_count_before"):
+		action.event_data["destroyed_count_before"] = destroyed_count_before
 	if game_manager != null and action != null and action.card != null:
 		game_manager.push_effect_source_card(action.card)
 		pushed_effect_source = true
@@ -667,12 +673,33 @@ func resolve_action(action: CardAction) -> void:
 		CardAction.Type.EVENT:
 			_resolve_event(action)
 			action_completed = pending_tezcatlipoca_titlacauan_action != action
+			if not action_completed:
+				_mark_deferred_authoritative_action(
+					action,
+					"tezcatlipoca_active_titlacauan_choice",
+					DEFERRED_DESTROYED_EVENTS_NONE
+				)
 		CardAction.Type.ATTACK:
 			_resolve_attack(action)
 			action_completed = pending_retreat_action != action and pending_humbaba_action != action
+			if not action_completed:
+				if pending_retreat_action == action:
+					_mark_deferred_authoritative_action(
+						action,
+						"combat_retreat_decision",
+						DEFERRED_DESTROYED_EVENTS_QUEUE
+					)
+				elif pending_humbaba_action == action:
+					_mark_deferred_authoritative_action(
+						action,
+						"humbaba_augury_choice",
+						DEFERRED_DESTROYED_EVENTS_QUEUE
+					)
 	if game_manager != null and pushed_effect_source:
 		game_manager.pop_effect_source_card()
 	if not action_completed:
+		if _uses_authoritative_headless_priority_flow() and not _has_deferred_authoritative_action_metadata(action):
+			printerr("MatchManager: paused authoritative action is missing deferred completion metadata: %s" % _get_action_debug_label(action))
 		return
 	_queue_destroyed_priority_events(destroyed_count_before, action)
 	_finalize_resolved_action(action)
@@ -707,6 +734,57 @@ func _finalize_resolved_action(action: CardAction) -> void:
 		game_manager.prune_stale_stack_actions()
 	action_resolved.emit(action)
 
+func _mark_deferred_authoritative_action(action: CardAction, completion_command_type: String, destroyed_event_mode: int) -> void:
+	if action == null:
+		return
+	action.event_data["deferred_authoritative_completion_command"] = completion_command_type
+	action.event_data["deferred_authoritative_destroyed_event_mode"] = destroyed_event_mode
+
+func _has_deferred_authoritative_action_metadata(action: CardAction) -> bool:
+	return action != null and action.event_data.has("deferred_authoritative_completion_command")
+
+func _clear_deferred_authoritative_action_metadata(action: CardAction) -> void:
+	if action == null:
+		return
+	action.event_data.erase("deferred_authoritative_completion_command")
+	action.event_data.erase("deferred_authoritative_destroyed_event_mode")
+
+func _get_deferred_authoritative_destroyed_event_mode(action: CardAction, completion_command_type: String) -> int:
+	if action == null:
+		return DEFERRED_DESTROYED_EVENTS_NONE
+	var expected_command_type := str(action.event_data.get("deferred_authoritative_completion_command", "")).strip_edges()
+	if expected_command_type.is_empty():
+		printerr("MatchManager: deferred authoritative action completed without stored metadata: %s" % _get_action_debug_label(action))
+		return DEFERRED_DESTROYED_EVENTS_NONE
+	if not completion_command_type.is_empty() and completion_command_type != expected_command_type:
+		printerr("MatchManager: deferred authoritative action completed via %s but expected %s for %s" % [
+			completion_command_type,
+			expected_command_type,
+			_get_action_debug_label(action),
+		])
+	return int(action.event_data.get("deferred_authoritative_destroyed_event_mode", DEFERRED_DESTROYED_EVENTS_NONE))
+
+func _get_action_debug_label(action: CardAction) -> String:
+	if action == null:
+		return "<null action>"
+	if action.card != null:
+		return "%s uid=%s type=%s" % [action.card.card_name, str(action.card.uid), str(action.type)]
+	if action.event_name != "":
+		return "%s type=%s" % [action.event_name, str(action.type)]
+	return "type=%s" % str(action.type)
+
+func _complete_deferred_authoritative_action(action: CardAction, completion_command_type: String) -> void:
+	if action == null:
+		return
+	var destroyed_event_mode := _get_deferred_authoritative_destroyed_event_mode(action, completion_command_type)
+	_clear_deferred_authoritative_action_metadata(action)
+	if destroyed_event_mode == DEFERRED_DESTROYED_EVENTS_QUEUE:
+		var destroyed_start_index := int(action.event_data.get("destroyed_count_before", game_manager.destroyed_this_turn.size() if game_manager != null else 0))
+		_queue_destroyed_priority_events(destroyed_start_index, action)
+	_finalize_resolved_action(action)
+	if _uses_authoritative_headless_priority_flow() and game_manager != null and not game_manager.action_stack.is_empty():
+		_advance_authoritative_priority()
+
 func _remove_resolved_action(action: CardAction) -> void:
 	if action == null or game_manager == null:
 		return
@@ -739,6 +817,11 @@ func _resolve_event(action: CardAction) -> void:
 	if action.resolve_callback.is_valid():
 		if action.event_name == "tezcatlipoca_active_titlacauan":
 			pending_tezcatlipoca_titlacauan_action = action
+			_mark_deferred_authoritative_action(
+				action,
+				"tezcatlipoca_active_titlacauan_choice",
+				DEFERRED_DESTROYED_EVENTS_NONE
+			)
 			action.resolve_callback.call()
 			last_resolution_text = action.resolution_text
 			return
@@ -801,6 +884,11 @@ func _resolve_attack(action: CardAction) -> void:
 				if prompt != null:
 					pending_retreat_prompt_uids.append(str(prompt.uid))
 			pending_retreat_guardian_blocked_uids = _get_guardian_blocked_retreat_candidate_uids(action.attacker, actual_target)
+			_mark_deferred_authoritative_action(
+				action,
+				"combat_retreat_decision",
+				DEFERRED_DESTROYED_EVENTS_QUEUE
+			)
 			var target_player: Player = _get_card_controller(retreat_prompts[0])
 			var player_idx := game_manager.players.find(target_player)
 			request_ui_interaction.emit(player_idx, "combat_retreat", {
@@ -812,6 +900,11 @@ func _resolve_attack(action: CardAction) -> void:
 		pending_humbaba_action = action
 		pending_humbaba_target = actual_target
 		pending_humbaba_prompt_uids = _get_humbaba_prompt_uids_for_attack(action, actual_target)
+		_mark_deferred_authoritative_action(
+			action,
+			"humbaba_augury_choice",
+			DEFERRED_DESTROYED_EVENTS_QUEUE
+		)
 		if _emit_next_pending_humbaba_prompt():
 			return
 		_clear_pending_humbaba_state()
@@ -822,6 +915,11 @@ func _resolve_attack(action: CardAction) -> void:
 		pending_humbaba_action = action
 		pending_humbaba_target = actual_target
 		pending_humbaba_prompt_uids = _get_humbaba_prompt_uids_for_attack(action, actual_target)
+		_mark_deferred_authoritative_action(
+			action,
+			"humbaba_augury_choice",
+			DEFERRED_DESTROYED_EVENTS_QUEUE
+		)
 		if _emit_next_pending_humbaba_prompt():
 			return
 		_clear_pending_humbaba_state()
@@ -1051,6 +1149,26 @@ func _get_authoritative_resolution_tree():
 		return network_manager.get_tree()
 	return null
 
+func _has_remote_authoritative_recipients() -> bool:
+	if network_manager == null:
+		return false
+	if network_manager.has_method("_has_remote_broadcast_recipients"):
+		return bool(network_manager.call("_has_remote_broadcast_recipients"))
+	var player_peer_map = network_manager.get("player_peer_ids")
+	if player_peer_map is Dictionary:
+		for peer_id in (player_peer_map as Dictionary).values():
+			if int(peer_id) > 1:
+				return true
+	var spectator_ids = network_manager.get("spectator_peer_ids")
+	return spectator_ids is Array and not (spectator_ids as Array).is_empty()
+
+func _should_linger_authoritative_stack_resolution() -> bool:
+	if network_manager == null:
+		return false
+	if allow_immediate_local_authoritative_stack_resolution and not _has_remote_authoritative_recipients():
+		return false
+	return true
+
 func _schedule_authoritative_stack_top_after_priority() -> void:
 	if _authoritative_stack_resolution_pending:
 		return
@@ -1061,6 +1179,9 @@ func _schedule_authoritative_stack_top_after_priority() -> void:
 	var resolved_action: CardAction = game_manager.action_stack.back()
 	var resolve_after_passes := game_manager.both_passed()
 	_clear_priority_window_state()
+	if not _should_linger_authoritative_stack_resolution():
+		_finish_authoritative_stack_resolution(resolved_action, resolve_after_passes)
+		return
 	var tree = _get_authoritative_resolution_tree()
 	if tree == null:
 		_finish_authoritative_stack_resolution(resolved_action, resolve_after_passes)
@@ -1084,6 +1205,8 @@ func _finish_authoritative_stack_resolution(action: CardAction, force_resolve: b
 		return
 	_clear_priority_window_state()
 	resolve_action(action)
+	if action in game_manager.resolving_stack_actions:
+		return
 	if not game_manager.action_stack.is_empty():
 		_advance_authoritative_priority()
 
@@ -2545,7 +2668,8 @@ func _process_command_impl(command: Dictionary) -> bool:
 			var target_uid: String = command.get("target_uid", "")
 			if target_uid != "":
 				target = game_manager.get_card_by_uid(target_uid)
-			if god_card.targets and target == null:
+			var is_champions_call_command: bool = god_card.has_method("is_champions_call_command") and god_card.is_champions_call_command(command)
+			if god_card.targets and target == null and not is_champions_call_command:
 				move_failed.emit("god_ability: target card not found")
 				return false
 			if target != null and god_card.has_method("is_valid_activation_target") and not god_card.is_valid_activation_target(target):
@@ -3505,7 +3629,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 			if pending_tezcatlipoca_titlacauan_action != null:
 				var action := pending_tezcatlipoca_titlacauan_action
 				pending_tezcatlipoca_titlacauan_action = null
-				_finalize_resolved_action(action)
+				_complete_deferred_authoritative_action(action, "tezcatlipoca_active_titlacauan_choice")
 			return true
 		"nusku_active_core_flame_choice":
 			var source_uid: String = command.get("source_uid", "")
@@ -3593,7 +3717,14 @@ func _process_command_impl(command: Dictionary) -> bool:
 					return true
 				_clear_pending_humbaba_state()
 				_continue_pending_humbaba_attack_resolution(action, pending_target)
-				_finalize_resolved_action(action)
+				if pending_retreat_action == action:
+					_mark_deferred_authoritative_action(
+						action,
+						"combat_retreat_decision",
+						DEFERRED_DESTROYED_EVENTS_QUEUE
+					)
+					return true
+				_complete_deferred_authoritative_action(action, "humbaba_augury_choice")
 			return true
 		"mummu_entropy_choice":
 			var source_uid: String = command.get("source_uid", "")
@@ -3994,7 +4125,7 @@ func _process_combat_retreat_decision(command: Dictionary) -> bool:
 		game_manager.send_to_deck_bottom_with_hook(target)
 		last_resolution_text = "Tactful Retreat! Both creatures returned to the bottom of their decks."
 		_clear_pending_retreat_state()
-		_finalize_resolved_action(action)
+		_complete_deferred_authoritative_action(action, "combat_retreat_decision")
 		return true
 	if not pending_retreat_prompt_uids.is_empty():
 		var next_prompt := _get_pending_retreat_prompt()
@@ -4013,7 +4144,7 @@ func _process_combat_retreat_decision(command: Dictionary) -> bool:
 	_finish_creature_combat(action, target)
 	if blocked_ask != null:
 		last_resolution_text = "Asaruludu's Guardian prevented %s's Tactful Retreat!" % blocked_ask.card_name
-	_finalize_resolved_action(action)
+	_complete_deferred_authoritative_action(action, "combat_retreat_decision")
 	return true
 
 func _get_pending_retreat_prompt() -> Askelladen:

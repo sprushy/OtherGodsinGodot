@@ -4,7 +4,11 @@ class_name PracticeMatchSetup
 const DeckBuilderScript = preload("res://scripts/Other/DeckBuilder.gd")
 const CardCatalogScript = preload("res://scripts/cards/CardCatalog.gd")
 
-func build_thor_practice_match(game_manager: GameManager, player_practice_deck: Dictionary = {}) -> Dictionary:
+func build_thor_practice_match(
+	game_manager: GameManager,
+	player_practice_deck: Dictionary = {},
+	thor_practice_deck: Dictionary = {}
+) -> Dictionary:
 	if game_manager == null:
 		return {}
 
@@ -18,10 +22,11 @@ func build_thor_practice_match(game_manager: GameManager, player_practice_deck: 
 	game_manager.players.append(player2)
 
 	var player_deck_name := _load_player_practice_deck(player1, player_practice_deck)
-	_add_practice_god(player2, Thor.new(), game_manager)
-	_add_practice_power(player2, 0, CallOfTheValkyrie.new())
-	for card in build_thor_practice_deck():
-		_add_practice_deck_card(player2, card)
+	if not _try_load_saved_player_practice_deck(player2, thor_practice_deck):
+		_add_practice_god(player2, Thor.new(), game_manager)
+		_add_practice_power(player2, 0, CallOfTheValkyrie.new())
+		for card in build_thor_practice_deck():
+			_add_practice_deck_card(player2, card)
 
 	game_manager.setup_game()
 	_apply_opening_state(game_manager, player1, player2)
