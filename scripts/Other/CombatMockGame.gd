@@ -8716,7 +8716,13 @@ func _schedule_deferred_priority_flush() -> void:
 	if _deferred_priority_flush_scheduled:
 		return
 	_deferred_priority_flush_scheduled = true
-	call_deferred("_retry_deferred_priority_events")
+	var tree := get_tree()
+	if tree == null:
+		_deferred_priority_flush_scheduled = false
+		return
+	var retry_callable := Callable(self, "_retry_deferred_priority_events")
+	if not tree.process_frame.is_connected(retry_callable):
+		tree.process_frame.connect(retry_callable, CONNECT_ONE_SHOT)
 
 func _should_retry_deferred_priority_flush() -> bool:
 	return game_manager != null \
