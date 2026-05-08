@@ -40,7 +40,8 @@ func _boot_lobby_runtime(launch_args: Dictionary) -> void:
 	lobby_server.allow_in_process_match_fallback = false
 	lobby_server.use_default_multiplayer = true
 	lobby_server.trace_file_path = trace_file_path
-	add_child(lobby_server)
+	var lobby_parent := _resolve_lobby_runtime_parent()
+	lobby_parent.add_child(lobby_server)
 	_server_node = lobby_server
 
 	lobby_server.status_changed.connect(func(message: String) -> void:
@@ -55,6 +56,24 @@ func _boot_lobby_runtime(launch_args: Dictionary) -> void:
 
 	print("ServerRuntimeBootstrap: dedicated lobby ready on %s:%d" % [advertised_host, lobby_port])
 	_write_ready_file(ready_file_path)
+
+func _resolve_lobby_runtime_parent() -> Node:
+	var parent_node := get_parent()
+	if parent_node != null and parent_node.name == "Main3D":
+		return parent_node
+	var tree := get_tree()
+	if tree == null:
+		return self
+	var root := tree.get_root()
+	if root == null:
+		return self
+	var existing_main_3d := root.get_node_or_null("Main3D")
+	if existing_main_3d != null:
+		return existing_main_3d
+	var main_3d_mount := Node.new()
+	main_3d_mount.name = "Main3D"
+	root.add_child(main_3d_mount)
+	return main_3d_mount
 
 func _boot_match_runtime(launch_args: Dictionary) -> void:
 	var config_path: String = str(launch_args.get("match_config", "")).strip_edges()
