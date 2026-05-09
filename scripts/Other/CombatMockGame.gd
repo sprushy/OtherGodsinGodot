@@ -1492,12 +1492,10 @@ func _layout_board_art_background() -> void:
 func _get_board_floor_texture() -> Texture2D:
 	if _board_floor_texture != null:
 		return _board_floor_texture
-	var image := Image.new()
-	var err := image.load(BOARD_FLOOR_TEXTURE_PATH)
-	if err != OK:
-		push_warning("CombatMockGame: failed to load board texture %s (%s)" % [BOARD_FLOOR_TEXTURE_PATH, error_string(err)])
+	_board_floor_texture = load(BOARD_FLOOR_TEXTURE_PATH) as Texture2D
+	if _board_floor_texture == null:
+		push_warning("CombatMockGame: failed to load board texture %s" % BOARD_FLOOR_TEXTURE_PATH)
 		return null
-	_board_floor_texture = ImageTexture.create_from_image(image)
 	return _board_floor_texture
 
 func _ready() -> void:
