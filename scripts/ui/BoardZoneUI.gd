@@ -8,7 +8,19 @@ const CHAMPIONS_CALL_BADGE_TEXTURE := preload("res://images/Champion's Call Horn
 const SMOKING_MIRROR_BADGE_TEXTURE := preload("res://images/Smoking Mirror Icon.png")
 const TEZ_SACRIFICE_BADGE_TEXTURE := preload("res://images/TezSacBadge.png")
 const TEZ_BLOODSTREAK_TEXTURE := preload("res://images/Bloodstreak.png")
-const BOARD_ZONE_SLAB_TEXTURE_PATH := "res://images/board/stone_zone_slab.png"
+const BOARD_ZONE_SLAB_TEXTURE_PATHS := [
+	"res://images/board/stone_zone_slab.png",
+	"res://images/board/slot_tile_1.png",
+	"res://images/board/slot_tile_2.png",
+	"res://images/board/slot_tile_3.png",
+	"res://images/board/slot_tile_4.png",
+	"res://images/board/slot_tile_5.png",
+	"res://images/board/slot_tile_6.png",
+	"res://images/board/slot_tile_7.png",
+	"res://images/board/slot_tile_8.png",
+	"res://images/board/slot_tile_9.png",
+]
+const BOARD_ZONE_ROW_TILE_COUNT := 5
 const TEZ_TONAL_MASTERY_TEXTURE_PATHS := [
 	"res://images/TezTonalMastery0.png",
 	"res://images/TezTonalMastery1.png",
@@ -369,7 +381,7 @@ static var _zone_extent: float = BASE_ZONE_EXTENT
 var _row_label: String = ""
 var _followers_attack_result_text: String = ""
 var _followers_attack_result_sequence: int = 0
-static var _board_zone_slab_texture: Texture2D = null
+static var _board_zone_slab_textures: Array[Texture2D] = []
 
 static func get_base_zone_extent() -> float:
 	return BASE_ZONE_EXTENT
@@ -2471,17 +2483,39 @@ func _get_minimum_size() -> Vector2:
 	return get_zone_size()
 
 static func _load_png_texture(path: String) -> Texture2D:
-	var image := Image.new()
-	var err := image.load(path)
-	if err != OK:
-		push_warning("BoardZoneUI: failed to load board texture %s (%s)" % [path, error_string(err)])
+	var texture := load(path) as Texture2D
+	if texture == null:
+		push_warning("BoardZoneUI: failed to load board texture %s" % path)
 		return null
-	return ImageTexture.create_from_image(image)
+	return texture
 
-static func _get_board_zone_slab_texture() -> Texture2D:
-	if _board_zone_slab_texture == null:
-		_board_zone_slab_texture = _load_png_texture(BOARD_ZONE_SLAB_TEXTURE_PATH)
-	return _board_zone_slab_texture
+static func _get_board_zone_slab_textures() -> Array[Texture2D]:
+	if _board_zone_slab_textures.is_empty():
+		for texture_path in BOARD_ZONE_SLAB_TEXTURE_PATHS:
+			var texture := _load_png_texture(texture_path)
+			if texture != null:
+				_board_zone_slab_textures.append(texture)
+	return _board_zone_slab_textures
+
+func _get_board_zone_slab_texture() -> Texture2D:
+	var slab_textures := _get_board_zone_slab_textures()
+	if slab_textures.is_empty():
+		return null
+
+	if zone != null and zone.zone_type in [Zone.ZoneType.FRONTLINE, Zone.ZoneType.RESERVE]:
+		var board_slot_index := zone_index
+		if zone.zone_index >= 0:
+			board_slot_index = zone.zone_index
+		if zone.zone_type == Zone.ZoneType.RESERVE:
+			board_slot_index += BOARD_ZONE_ROW_TILE_COUNT
+		return slab_textures[posmod(board_slot_index, slab_textures.size())]
+
+	var variant_seed := zone_index
+	if zone != null:
+		variant_seed += int(zone.zone_type) * 13
+	if _is_enemy:
+		variant_seed += 7
+	return slab_textures[posmod(variant_seed, slab_textures.size())]
 
 func _get_empty_zone_slab_tint() -> Color:
 	if zone == null:

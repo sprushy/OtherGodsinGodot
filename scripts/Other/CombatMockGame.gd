@@ -1089,7 +1089,7 @@ func _resolve_doorway_destination(send_to_abyss: bool) -> void:
 	_hide_doorway_choice_prompt()
 	if card == null or game_manager == null:
 		return
-	if _is_networked_client:
+	if _should_submit_ui_action_command():
 		if game_input != null and structure != null:
 			game_input.submit_action({
 				"type": "doorway_choice",
@@ -1439,7 +1439,7 @@ func _resolve_sharur_escape_prompt(pay_cost: bool) -> void:
 	if game_manager == null:
 		update_ui()
 		return
-	if _is_networked_client:
+	if _should_submit_ui_action_command():
 		if game_input != null and card != null:
 			game_input.submit_action({
 				"type": "return_to_hand_choice",
@@ -5806,7 +5806,7 @@ func _show_breidablik_prompt(power: Breidablik) -> void:
 func _handle_breidablik_store_choice(power: Breidablik, selected_priest: Card) -> void:
 	if power == null or selected_priest == null:
 		return
-	if _is_networked_client:
+	if _should_submit_ui_action_command():
 		game_input.submit_action({type = "activate_power", power_uid = power.uid, target_uid = selected_priest.uid})
 		return
 	_queue_magical_action(
@@ -5821,7 +5821,7 @@ func _handle_breidablik_store_choice(power: Breidablik, selected_priest: Card) -
 func _handle_breidablik_return_choice(power: Breidablik, selected_priest: Card) -> void:
 	if power == null or selected_priest == null:
 		return
-	if _is_networked_client:
+	if _should_submit_ui_action_command():
 		var command := {
 			type = "activate_power",
 			power_uid = power.uid,
@@ -7666,7 +7666,7 @@ func _try_queue_god_targeted_ability(target: Card) -> bool:
 	var source_god := god_ability_source
 	awaiting_god_ability_target = false
 	god_ability_source = null
-	if _is_networked_client or (match_manager != null and match_manager.uses_authoritative_priority_flow()):
+	if _should_submit_ui_action_command():
 		var god_uid: String = source_god.get("uid") if "uid" in source_god else ""
 		var target_uid: String = target.get("uid") if target != null and "uid" in target else ""
 		game_input.submit_action({type = "god_ability", god_uid = god_uid, target_uid = target_uid})
@@ -8241,7 +8241,7 @@ func _queue_champions_call_activation(god: GodCard, chosen_shelves: Array[Card] 
 	for card in chosen_shelves:
 		if card != null and "uid" in card:
 			shelve_uids.append(card.uid)
-	if _is_networked_client:
+	if _should_submit_ui_action_command():
 		var god_uid: String = god.get("uid") if "uid" in god else ""
 		game_input.submit_action({
 			type = "god_ability",
@@ -9792,7 +9792,7 @@ func _on_empty_zone_pressed(zone: Zone) -> void:
 			elif selected_card is Absence:
 				_prompt_absence_target_selection()
 			elif selected_card is CircleOfRebirth:
-				if _is_networked_client:
+				if _should_submit_ui_action_command():
 					game_input.submit_action({type = "cast_spell", spell_uid = selected_card.uid})
 				else:
 					var resurrect_count := get_resurrectible_cards().size()
@@ -9809,7 +9809,7 @@ func _on_empty_zone_pressed(zone: Zone) -> void:
 						and (selected_card as SpellCard).targets \
 						and selected_card.has_method("get_valid_targets"):
 					_prompt_generic_spell_target_selection(selected_card as SpellCard)
-				elif _is_networked_client:
+				elif _should_submit_ui_action_command():
 					game_input.submit_action({type = "cast_spell", spell_uid = selected_card.uid})
 				else:
 					var spell := selected_card
@@ -9953,7 +9953,7 @@ func _on_god_card_pressed(card: Card) -> void:
 		_show_champions_call_prompt(champion_god)
 		return
 	if not card.targets:
-		if _is_networked_client:
+		if _should_submit_ui_action_command():
 			var god_uid: String = card.get("uid") if "uid" in card else ""
 			game_input.submit_action({type = "god_ability", god_uid = god_uid})
 		else:
@@ -9975,7 +9975,7 @@ func _on_god_card_pressed(card: Card) -> void:
 			update_ui()
 			return
 		var on_choose_god_overlay_target := func(selected_target: Card) -> void:
-			if _is_networked_client:
+			if _should_submit_ui_action_command():
 				var god_uid: String = card.get("uid") if "uid" in card else ""
 				var target_uid: String = selected_target.get("uid") if "uid" in selected_target else ""
 				game_input.submit_action({type = "god_ability", god_uid = god_uid, target_uid = target_uid})
@@ -10142,7 +10142,7 @@ func _begin_tezcatlipoca_god_activation(card: Card) -> void:
 		update_ui()
 		return
 	if card.has_method("can_resolve_necoc_yaotl_summon") and bool(card.call("can_resolve_necoc_yaotl_summon", game_manager)):
-		if _is_networked_client:
+		if _should_submit_ui_action_command():
 			game_input.submit_action({type = "god_ability", god_uid = card.uid})
 		else:
 			_queue_magical_action(
@@ -10175,7 +10175,7 @@ func _begin_tezcatlipoca_god_activation(card: Card) -> void:
 			and card.has_method("is_valid_activation_target") \
 			and bool(card.call("is_valid_activation_target", chosen_sacrifice))
 	var confirm_sacrifice := func(chosen_sacrifice: Card) -> void:
-		if _is_networked_client:
+		if _should_submit_ui_action_command():
 			game_input.submit_action({type = "god_ability", god_uid = card.uid, target_uid = chosen_sacrifice.uid})
 			_set_action_label_text("%s is using Necoc Yaotl." % card.card_name)
 			update_ui()
@@ -10388,7 +10388,7 @@ func _submit_odin_runic_knowledge_activation(card: Odin, offering_card: Card, na
 		_set_action_label_text("Runic Knowledge needs a card name.")
 		update_ui()
 		return
-	if _is_networked_client:
+	if _should_submit_ui_action_command():
 		game_input.submit_action({
 			type = "activate_card_ability",
 			source_uid = card.uid,
@@ -10639,7 +10639,7 @@ func _queue_fenrir_wolf_master(card: Fenrir, mode: String) -> void:
 	selected_card = null
 	placement_mode = ""
 	placement_container.visible = false
-	if _is_networked_client:
+	if _should_submit_ui_action_command():
 		var network_lupines := card.get_valid_wolf_master_summons(game_manager)
 		if network_lupines.is_empty():
 			_set_action_label_text("Wolf Master: no payable Lupines in deck.")
@@ -11719,7 +11719,7 @@ func _begin_gugalanna_impact_targeting(card: GugalannaBullOfHeaven, prompt_targe
 		return
 	var current_targets := _resolve_prompt_targets(card.get_valid_impact_targets(game_manager), prompt_targets)
 	if current_targets.is_empty():
-		if _is_networked_client:
+		if _should_submit_ui_action_command():
 			game_input.submit_action({
 				"type": "gugalanna_celestial_charge_choice",
 				"source_uid": card.uid,
@@ -11738,7 +11738,7 @@ func _begin_gugalanna_impact_targeting(card: GugalannaBullOfHeaven, prompt_targe
 	var validate_celestial_charge := func(clicked_card: Card) -> bool:
 		return clicked_card != null and clicked_card in current_targets
 	var confirm_celestial_charge := func(clicked_card: Card) -> void:
-		if _is_networked_client:
+		if _should_submit_ui_action_command():
 			game_input.submit_action({
 				"type": "gugalanna_celestial_charge_choice",
 				"source_uid": card.uid,
@@ -11752,7 +11752,7 @@ func _begin_gugalanna_impact_targeting(card: GugalannaBullOfHeaven, prompt_targe
 			]
 		)
 	var cancel_celestial_charge := func() -> void:
-		if _is_networked_client:
+		if _should_submit_ui_action_command():
 			game_input.submit_action({
 				"type": "gugalanna_celestial_charge_choice",
 				"source_uid": card.uid,
@@ -11794,7 +11794,7 @@ func _queue_nergal_lion_impact_prompt(card: NergalLion, prompt_targets: Array = 
 			update_ui()
 		return
 	if current_targets.size() == 1:
-		if _is_networked_client:
+		if _should_submit_ui_action_command():
 			game_input.submit_action({
 				"type": "nergal_lion_choice",
 				"source_uid": card.uid,
@@ -11822,7 +11822,7 @@ func _queue_nergal_lion_impact_prompt(card: NergalLion, prompt_targets: Array = 
 		elif current_zones.is_empty():
 			feedback = card.card_name + " has no open field zone for Immolate."
 		else:
-			if _is_networked_client:
+			if _should_submit_ui_action_command():
 				game_input.submit_action({
 					"type": "nergal_lion_choice",
 					"source_uid": card.uid,
@@ -11853,7 +11853,7 @@ func _queue_giant_master_architect_impact_prompt(card: GiantMasterArchitect, pro
 		return
 	var current_targets := _resolve_prompt_targets(card.get_valid_targets(game_manager), prompt_targets)
 	if current_targets.is_empty():
-		if _is_networked_client:
+		if _should_submit_ui_action_command():
 			game_input.submit_action({
 				"type": "giant_master_architect_choice",
 				"source_uid": card.uid,
@@ -11868,7 +11868,7 @@ func _queue_giant_master_architect_impact_prompt(card: GiantMasterArchitect, pro
 			update_ui()
 		return
 	if current_targets.size() == 1:
-		if _is_networked_client:
+		if _should_submit_ui_action_command():
 			game_input.submit_action({
 				"type": "giant_master_architect_choice",
 				"source_uid": card.uid,
@@ -11885,7 +11885,7 @@ func _queue_giant_master_architect_impact_prompt(card: GiantMasterArchitect, pro
 	if _executing_stack_action and not _stack_resolution_paused:
 		_pause_stack_resolution(card.card_owner)
 	var on_choose_structure := func(chosen_card: Card) -> void:
-		if _is_networked_client:
+		if _should_submit_ui_action_command():
 			game_input.submit_action({
 				"type": "giant_master_architect_choice",
 				"source_uid": card.uid,
@@ -11894,7 +11894,7 @@ func _queue_giant_master_architect_impact_prompt(card: GiantMasterArchitect, pro
 			return
 		_resume_after_deferred_resolution(card.resolve_master_plan_impact(game_manager, chosen_card))
 	var on_cancel_structure := func() -> void:
-		if _is_networked_client:
+		if _should_submit_ui_action_command():
 			game_input.submit_action({
 				"type": "giant_master_architect_choice",
 				"source_uid": card.uid,
@@ -11917,7 +11917,7 @@ func _queue_pai_long_autumn_king_impact_prompt(card: PaiLongAutumnKing, prompt_t
 		return
 	var current_targets := _resolve_prompt_targets(card.get_valid_targets(game_manager), prompt_targets)
 	if current_targets.is_empty():
-		if _is_networked_client:
+		if _should_submit_ui_action_command():
 			game_input.submit_action({
 				"type": "pai_long_autumn_king_choice",
 				"source_uid": card.uid,
@@ -11932,7 +11932,7 @@ func _queue_pai_long_autumn_king_impact_prompt(card: PaiLongAutumnKing, prompt_t
 			update_ui()
 		return
 	if current_targets.size() == 1:
-		if _is_networked_client:
+		if _should_submit_ui_action_command():
 			game_input.submit_action({
 				"type": "pai_long_autumn_king_choice",
 				"source_uid": card.uid,
@@ -11949,7 +11949,7 @@ func _queue_pai_long_autumn_king_impact_prompt(card: PaiLongAutumnKing, prompt_t
 	if _executing_stack_action and not _stack_resolution_paused:
 		_pause_stack_resolution(card.card_owner)
 	var on_choose_weather := func(chosen_card: Card) -> void:
-		if _is_networked_client:
+		if _should_submit_ui_action_command():
 			game_input.submit_action({
 				"type": "pai_long_autumn_king_choice",
 				"source_uid": card.uid,
@@ -11958,7 +11958,7 @@ func _queue_pai_long_autumn_king_impact_prompt(card: PaiLongAutumnKing, prompt_t
 			return
 		_resume_after_deferred_resolution(card.resolve_stormcloud_impact(game_manager, chosen_card))
 	var on_cancel_weather := func() -> void:
-		if _is_networked_client:
+		if _should_submit_ui_action_command():
 			game_input.submit_action({
 				"type": "pai_long_autumn_king_choice",
 				"source_uid": card.uid,
@@ -12094,7 +12094,7 @@ func _show_next_oracles_sight_prompt() -> void:
 			continue
 		if current_targets.size() == 1:
 			_queued_oracles_sight_prompt_targets.erase(card.uid)
-			if _is_networked_client and _is_player_local(card.card_owner):
+			if _should_submit_ui_action_command() and _is_player_local(card.card_owner):
 				game_input.submit_action({type = "activate_power", power_uid = card.uid, target_uid = current_targets[0].uid})
 				_set_action_label_text(card.card_name + " is priming " + current_targets[0].card_name + ".")
 				update_ui()
@@ -12115,7 +12115,7 @@ func _show_next_oracles_sight_prompt() -> void:
 			if resolved_card == null or game_manager == null:
 				call_deferred("_show_next_oracles_sight_prompt")
 				return
-			if _is_networked_client:
+			if _should_submit_ui_action_command():
 				game_input.submit_action({type = "activate_power", power_uid = resolved_card.uid, target_uid = chosen_card.uid})
 				_set_action_label_text(resolved_card.card_name + " is priming " + chosen_card.card_name + ".")
 				update_ui()
@@ -12209,7 +12209,7 @@ func _resolve_tonal_extraction_prompt(card: TonalExtraction, chosen_target: Card
 		_set_action_label_text(card.card_name + " choice is no longer available. Choose a Shapeshifter again.")
 		update_ui()
 		return
-	if _is_networked_client:
+	if _should_submit_ui_action_command():
 		if _is_player_local(card.card_owner):
 			game_input.submit_action({type = "activate_power", power_uid = card.uid, target_uid = resolved_target.uid})
 			_set_action_label_text(card.card_name + " is extracting a Spirit.")
@@ -13924,7 +13924,7 @@ func _on_board_card_pressed(card: Card) -> void:
 					pyre_source = card as AncientPyre
 					_set_action_label_text("Ancient Pyre: Select a card to reduce Res by 5, or click the enemy god to Convert 5 followers.")
 				else:
-					if _is_networked_client:
+					if _should_submit_ui_action_command():
 						game_input.submit_action({type = "activate_card_ability", source_uid = card.uid})
 					else:
 						_queue_magical_action(
@@ -13955,7 +13955,7 @@ func _on_board_card_pressed(card: Card) -> void:
 		_show_en_hedu_anna_prompt(card as EnHeduAnnaScript)
 		return
 
-	if _is_networked_client:
+	if _should_submit_ui_action_command():
 		game_input.submit_action({
 			"type": "select_attacker",
 			"card_uid": card.get("uid")
@@ -14224,10 +14224,7 @@ func _on_all_attack_followers_pressed() -> void:
 	_advance_attack_queue()
 
 func _should_submit_attack_via_game_input() -> bool:
-	return game_input != null and (
-		_is_networked_client
-		or (match_manager != null and match_manager.uses_authoritative_priority_flow())
-	)
+	return _should_submit_ui_action_command()
 
 func _submit_attack_request(attacker: Card, target) -> bool:
 	if not _should_submit_attack_via_game_input() or attacker == null:
@@ -14378,7 +14375,7 @@ func _on_creature_right_clicked(card: Card) -> void:
 				shift_btn.text = "Shift"
 				shift_btn.pressed.connect(func() -> void:
 					_close_context_menu()
-					if _is_networked_client:
+					if _should_submit_ui_action_command():
 						game_input.submit_action({type = "activate_card_ability", source_uid = card.uid, option = {ability = "shift"}})
 					else:
 						_queue_magical_action(
@@ -14397,7 +14394,7 @@ func _on_creature_right_clicked(card: Card) -> void:
 				medicine_btn.text = "Medicine"
 				medicine_btn.pressed.connect(func() -> void:
 					_close_context_menu()
-					if _is_networked_client:
+					if _should_submit_ui_action_command():
 						game_input.submit_action({type = "activate_card_ability", source_uid = card.uid, option = {ability = "medicine"}})
 					else:
 						_queue_magical_action(
@@ -14456,7 +14453,7 @@ func _on_creature_right_clicked(card: Card) -> void:
 						on_cancel_creature_target
 					)
 				else:
-					if _is_networked_client:
+					if _should_submit_ui_action_command():
 						game_input.submit_action({type = "activate_card_ability", source_uid = card.uid})
 					else:
 						_queue_magical_action(
@@ -14495,7 +14492,7 @@ func _on_creature_right_clicked(card: Card) -> void:
 					on_cancel_equipped_target
 				)
 			else:
-				if _is_networked_client:
+				if _should_submit_ui_action_command():
 					game_input.submit_action({type = "activate_card_ability", source_uid = equipped_card.uid})
 				else:
 					_queue_magical_action(
@@ -16353,7 +16350,7 @@ func _on_priority_response_chosen(card: Card) -> void:
 		elif card is KeyOfSolomon:
 			_show_kos_sacrifice_prompt(card as KeyOfSolomon)
 		elif card is CircleOfRebirth:
-			if _is_networked_client:
+			if _should_submit_ui_action_command():
 				var spell_uid: String = card.get("uid") if "uid" in card else ""
 				game_input.submit_action({type = "cast_spell", spell_uid = spell_uid})
 			else:
@@ -16369,7 +16366,7 @@ func _on_priority_response_chosen(card: Card) -> void:
 		else:
 			if card.targets and card.has_method("get_valid_targets"):
 				_prompt_generic_spell_target_selection(card)
-			elif _is_networked_client:
+			elif _should_submit_ui_action_command():
 				var spell_uid: String = card.get("uid") if "uid" in card else ""
 				game_input.submit_action({type = "cast_spell", spell_uid = spell_uid})
 			else:
@@ -17353,7 +17350,7 @@ func _resolve_mopsus_hand_choice(card: MopsusScript, targets: Array[Card]) -> vo
 		_set_action_label_text("%s needs %d valid hand card(s) for Seer." % [card.card_name, card.get_required_seer_target_count(game_manager)])
 		update_ui()
 		return
-	if _is_networked_client:
+	if _should_submit_ui_action_command():
 		var target_uids: Array[String] = []
 		for target in chosen_targets:
 			target_uids.append(target.uid)
@@ -18056,7 +18053,7 @@ func _queue_winged_lion_activation(card: WingedLionScript, partner: Card, self_z
 		"self_zone": MatchManager.zone_to_dict(self_zone, game_manager),
 		"partner_zone": MatchManager.zone_to_dict(partner_zone, game_manager),
 	}
-	if _is_networked_client:
+	if _should_submit_ui_action_command():
 		game_input.submit_action({type = "activate_card_ability", source_uid = card.uid, option = option})
 		_set_action_label_text("%s is using Flank." % card.card_name)
 		update_ui()
@@ -18207,7 +18204,7 @@ func _resolve_hildskjalf_activation(card: HildskjalfThroneOfOdin, deck_owner: Pl
 		"chosen_uid": target.uid,
 		"deck_owner_player_index": game_manager.players.find(deck_owner),
 	}
-	if _is_networked_client:
+	if _should_submit_ui_action_command():
 		game_input.submit_action({type = "activate_card_ability", source_uid = card.uid, option = option})
 		_set_action_label_text(card.card_name + " reads the high seat.")
 		update_ui()
@@ -18273,7 +18270,7 @@ func _queue_tezcatlipoca_blasphemer_activation(
 ) -> void:
 	if card == null or sacrifice == null or target == null or game_manager == null:
 		return
-	if _is_networked_client:
+	if _should_submit_ui_action_command():
 		game_input.submit_action({
 			type = "activate_card_ability",
 			source_uid = card.uid,
@@ -18385,7 +18382,7 @@ func _resolve_harii_shaman_activation(card: HariiShamanScript, target: Card, ani
 	var resolution_text := "%s is transforming %s." % [_get_attack_card_label(card, card.card_name), target_label]
 	if animal_subtype != "":
 		resolution_text = "%s is transforming %s into %s." % [_get_attack_card_label(card, card.card_name), target_label, animal_subtype]
-	if _is_networked_client:
+	if _should_submit_ui_action_command():
 		game_input.submit_action({type = "activate_card_ability", source_uid = card.uid, option = option})
 		return
 	_queue_magical_action(
@@ -18404,7 +18401,7 @@ func _resolve_erlqueens_nightingale_shift(return_to_hand_after_shift: bool) -> v
 	if card == null:
 		update_ui()
 		return
-	if _is_networked_client:
+	if _should_submit_ui_action_command():
 		game_input.submit_action({type = "activate_card_ability", source_uid = card.uid, return_to_hand = return_to_hand_after_shift})
 		return
 	_queue_magical_action(
@@ -18614,6 +18611,17 @@ func _resolve_habrok_breakout_prompt(do_breakout: bool) -> void:
 	var card: HabrokParagonOfHawks = _pending_habrok_breakout
 	_hide_habrok_breakout_prompt()
 	if card != null and is_instance_valid(card):
+		if _should_submit_ui_action_command():
+			var submitted := game_input.submit_action({
+				"type": "habrok_breakout_choice",
+				"source_uid": card.uid,
+				"do_breakout": do_breakout,
+			})
+			update_ui()
+			if not submitted:
+				_set_action_label_text("Breakout is no longer available.")
+			_show_next_habrok_breakout_prompt()
+			return
 		card.resolve_breakout_choice(game_manager, do_breakout)
 	update_ui()
 	_show_next_habrok_breakout_prompt()
@@ -18651,7 +18659,7 @@ func _resolve_absence_with_mode(mode: String) -> void:
 	if spell == null or target == null:
 		update_ui()
 		return
-	if _is_networked_client:
+	if _should_submit_ui_action_command():
 		var spell_uid: String = spell.get("uid") if "uid" in spell else ""
 		var target_uid: String = target.get("uid") if "uid" in target else ""
 		game_input.submit_action({type = "cast_spell", spell_uid = spell_uid, target_uid = target_uid, mode = mode})
@@ -18705,7 +18713,7 @@ func _begin_aphrodite_target_selection(god: AphroditeAreia) -> void:
 			_set_action_label_text("Violent Delights cancelled.")
 			update_ui()
 			return
-		if _is_networked_client:
+		if _should_submit_ui_action_command():
 			var god_uid: String = god.get("uid") if "uid" in god else ""
 			var target_uid: String = chosen_target.get("uid") if chosen_target != null and "uid" in chosen_target else ""
 			game_input.submit_action({type = "god_ability", god_uid = god_uid, target_uid = target_uid})
@@ -18763,7 +18771,7 @@ func _show_book_of_life_prompt(spell: BookOfLife) -> void:
 	if spell == null:
 		update_ui()
 		return
-	if _is_networked_client:
+	if _should_submit_ui_action_command():
 		_begin_book_of_life_resolution(spell)
 		return
 	_queue_hand_spell_with_deferred_resolution(
@@ -18783,7 +18791,7 @@ func _begin_book_of_life_resolution(spell: BookOfLife) -> void:
 	if valid_creatures.is_empty():
 		_resolve_book_of_life(null)
 		return
-	if not _is_networked_client:
+	if not _should_submit_ui_action_command():
 		_pause_stack_resolution(spell.card_owner)
 	var on_choose_creature := func(selected_creature: Card) -> void:
 		_resolve_book_of_life(selected_creature)
@@ -18817,7 +18825,7 @@ func _resolve_book_of_life(chosen: Card) -> void:
 	if spell == null:
 		update_ui()
 		return
-	if _is_networked_client:
+	if _should_submit_ui_action_command():
 		var spell_uid: String = spell.get("uid") if "uid" in spell else ""
 		var target_uid := ""
 		if chosen != null and "uid" in chosen:
@@ -18994,7 +19002,7 @@ func _queue_deucalion_spell(spell: DeucalionsInfants, friendly_targets: Array[Ca
 	if spell == null:
 		update_ui()
 		return
-	if game_input != null and (_is_networked_client or (match_manager != null and match_manager.uses_authoritative_priority_flow())):
+	if _should_submit_ui_action_command():
 		var spell_uid: String = spell.get("uid") if "uid" in spell else ""
 		var choices: Array = []
 		for c in friendly_targets:
@@ -19350,7 +19358,7 @@ func _initiate_kos_with_sacrifice(spell: KeyOfSolomon, sacrifice_target: Card) -
 		_set_action_label_text("Key of Solomon cancelled: cannot pay costs.")
 		update_ui()
 		return
-	if _is_networked_client:
+	if _should_submit_ui_action_command():
 		_pending_key_of_solomon = spell
 		_pending_kos_sacrifice = sacrifice_target
 		_pending_kos_selected_demons.clear()
@@ -19440,7 +19448,7 @@ func _on_kos_demon_done() -> void:
 	if spell == null:
 		_finish_kos_resolution("Key of Solomon cannot resolve right now.")
 		return
-	if _is_networked_client:
+	if _should_submit_ui_action_command():
 		var choices: Array[String] = []
 		for demon in _pending_kos_selected_demons:
 			if demon != null:
@@ -19496,7 +19504,7 @@ func _on_blot_sacrifice_confirm_pressed() -> void:
 	var chosen_creatures := _pending_blot_selected_creatures.duplicate()
 	_hide_blot_sacrifice_prompt()
 
-	if _is_networked_client and spell != null and costs_paid:
+	if _should_submit_ui_action_command() and spell != null and costs_paid:
 		var spell_uid: String = spell.get("uid") if "uid" in spell else ""
 		var choices: Array = []
 		for c in chosen_creatures:
@@ -19619,7 +19627,7 @@ func _on_demiurge_confirm_pressed(spin: SpinBox) -> void:
 	if spell == null:
 		update_ui()
 		return
-	if _is_networked_client:
+	if _should_submit_ui_action_command():
 		var spell_uid: String = spell.get("uid") if "uid" in spell else ""
 		game_input.submit_action({type = "cast_spell", spell_uid = spell_uid, x_value = x_value})
 		return
@@ -20088,7 +20096,10 @@ func _on_match_move_validated(move: Dictionary) -> void:
 					_offer_priority()
 		"priority_pass":
 			# Remote player passed priority; continue the server-side priority loop.
-			if not _is_networked_client and not authoritative_priority:
+			if not _is_networked_client and authoritative_priority:
+				_request_ui_refresh()
+				return
+			if not _is_networked_client:
 				game_manager.pass_priority()
 				if game_manager.both_passed():
 					_execute_top_of_stack()
@@ -20129,7 +20140,7 @@ func _on_match_move_validated(move: Dictionary) -> void:
 				_offer_priority()
 			elif not _is_networked_client and authoritative_priority:
 				_request_ui_refresh()
-		"durinn_secondborn_choice", "first_sage_adapa_choice", "third_sage_enmedugga_choice", "fourth_sage_enmegalamma_choice", "sixth_sage_an_enlilda_choice", "lailoken_reveal_choice", "masmassu_priest_reveal_choice", "rally_the_troops_choice", "terror_impact_choice", "fenrir_devour_choice", "gawain_healing_hands_choice", "tatzelwurm_dragon_heart_choice", "byggvir_reveal_choice", "harii_jarl_impact_choice", "gala_tura_destroyed_choice", "kur_jara_tree_of_life_choice", "hunting_tactics_choice", "foolish_optimism_choice", "blessed_knights_choice", "tezcatlipoca_active_titlacauan_choice", "freyja_active_open_sessrumnir_choice", "mummu_entropy_choice", "nusku_active_core_flame_choice", "nusku_well_of_fire_choice", "apollyons_demiurge_choice":
+		"durinn_secondborn_choice", "first_sage_adapa_choice", "third_sage_enmedugga_choice", "fourth_sage_enmegalamma_choice", "sixth_sage_an_enlilda_choice", "lailoken_reveal_choice", "masmassu_priest_reveal_choice", "rally_the_troops_choice", "terror_impact_choice", "fenrir_devour_choice", "gawain_healing_hands_choice", "tatzelwurm_dragon_heart_choice", "byggvir_reveal_choice", "harii_jarl_impact_choice", "gala_tura_destroyed_choice", "kur_jara_tree_of_life_choice", "hunting_tactics_choice", "foolish_optimism_choice", "blessed_knights_choice", "tezcatlipoca_active_titlacauan_choice", "freyja_active_open_sessrumnir_choice", "mummu_entropy_choice", "nusku_active_core_flame_choice", "nusku_well_of_fire_choice", "apollyons_demiurge_choice", "habrok_breakout_choice":
 			_apply_prompt_choice_feedback()
 			return
 	update_ui()
@@ -20881,6 +20892,13 @@ func _uses_authoritative_turn_ui() -> bool:
 	if uses_authoritative_match_flow():
 		return true
 	return match_manager != null and match_manager.uses_authoritative_priority_flow()
+
+func _should_submit_ui_action_command() -> bool:
+	return game_input != null \
+		and (
+			_is_networked_client \
+			or (match_manager != null and match_manager.uses_authoritative_priority_flow())
+		)
 
 func _has_authoritative_local_player_view() -> bool:
 	return _uses_authoritative_turn_ui() \
@@ -22942,7 +22960,7 @@ func _on_card_drag_released(card: Card, drop_pos: Vector2, card_rotated: bool, c
 func _cast_targeted_spell(spell: Card, target: Card) -> void:
 	if _has_pending_click_selection():
 		_clear_pending_click_selection()
-	if _is_networked_client:
+	if _should_submit_ui_action_command():
 		var spell_uid: String = spell.get("uid") if "uid" in spell else ""
 		var target_uid: String = target.get("uid") if target != null and "uid" in target else ""
 		var cmd := {type = "cast_spell", spell_uid = spell_uid, target_uid = target_uid}

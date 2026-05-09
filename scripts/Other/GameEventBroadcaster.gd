@@ -509,6 +509,9 @@ func _label_for_move(move: Dictionary, viewer: Player = null) -> String:
 		"return_to_hand_choice":
 			var return_card := game_manager.get_card_by_uid(str(move.get("card_uid", "")))
 			return ("Resolved %s's escape choice." % _card_label_for_viewer(return_card, viewer)) if return_card else "Resolved a return-to-hand choice."
+		"habrok_breakout_choice":
+			var habrok := game_manager.get_card_by_uid(str(move.get("source_uid", "")))
+			return ("%s resolved Breakout." % _card_label_for_viewer(habrok, viewer)) if habrok else "Breakout resolved."
 		"end_turn":
 			return "Turn ended."
 	return ""
