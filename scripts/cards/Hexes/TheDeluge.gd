@@ -41,35 +41,39 @@ func on_activate_action(game_manager: GameManager, action: CardAction) -> void:
 		triggering_name = triggering_card.get_target_log_display_name(game_manager.get_feedback_viewer())
 
 	var doomed_cards := _get_doomed_cards(game_manager)
-	var destroyed_count := 0
 	var immune_count := 0
+	var destroyable_cards: Array[Card] = []
 	for doomed_card in doomed_cards:
 		if doomed_card == null or doomed_card.current_zone == null or not doomed_card.current_zone.is_board_zone():
 			continue
 		if game_manager.is_immune_to_source(doomed_card, self):
 			immune_count += 1
 			continue
-		if game_manager.request_send_to_graveyard(doomed_card, Callable(), false, true):
-			destroyed_count += 1
-
-	var feedback := ""
-	if destroyed_count > 0:
-		feedback = "%s triggered when %s was summoned and destroyed %d physical card(s)." % [
-			card_name,
-			triggering_name,
-			destroyed_count,
-		]
-	else:
-		feedback = "%s triggered when %s was summoned, but no physical cards were destroyed." % [
-			card_name,
-			triggering_name,
-		]
-	if immune_count > 0:
-		feedback += " %d card(s) were immune." % immune_count
-	game_manager.note_player_feedback(feedback)
-
-	if card_owner != null:
-		card_owner.move_card(self, card_owner.graveyard_zone)
+		destroyable_cards.append(doomed_card)
+	var on_destroy_complete := func(destroyed_count) -> void:
+		var feedback := ""
+		if destroyed_count > 0:
+			feedback = "%s triggered when %s was summoned and destroyed %d physical card(s)." % [
+				card_name,
+				triggering_name,
+				destroyed_count,
+			]
+		else:
+			feedback = "%s triggered when %s was summoned, but no physical cards were destroyed." % [
+				card_name,
+				triggering_name,
+			]
+		if immune_count > 0:
+			feedback += " %d card(s) were immune." % immune_count
+		game_manager.note_player_feedback(feedback)
+		if card_owner != null:
+			card_owner.move_card(self, card_owner.graveyard_zone)
+	game_manager.request_send_cards_to_graveyard(
+		destroyable_cards,
+		on_destroy_complete,
+		false,
+		true
+	)
 
 func _get_triggering_card(action: CardAction) -> Card:
 	if action == null:

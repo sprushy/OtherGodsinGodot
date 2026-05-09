@@ -9,6 +9,12 @@ var bot_player: Player = null
 var opponent: Player = null
 
 const RETRY_POLL_DELAY_SECONDS := 0.15
+const CALL_VALKYRIE_DESPERATION_TARGET_SCORE := 3000
+const CALL_VALKYRIE_DEFAULT_TARGET_SCORE := 3600
+const CALL_VALKYRIE_PREMIUM_TARGET_SCORE := 3900
+const CALL_VALKYRIE_LOW_HAND_LIMIT := 2
+const CALL_VALKYRIE_SMALL_UPGRADE_MARGIN := 200
+const CALL_VALKYRIE_LARGE_UPGRADE_MARGIN := 500
 
 var _active: bool = false
 var _step_queued: bool = false
@@ -928,6 +934,10 @@ func _is_attack_plan_better(candidate_attacker: Card, candidate_target: Card, cu
 		return true
 	if _is_board_creature_better(current_target, candidate_target):
 		return false
+	var candidate_attacker_score := _score_projected_card(candidate_attacker)
+	var current_attacker_score := _score_projected_card(current_attacker)
+	if candidate_attacker_score != current_attacker_score:
+		return candidate_attacker_score < current_attacker_score
 	return _is_board_creature_better(candidate_attacker, current_attacker)
 
 func _can_attack_creature(attacker: Card, target: Card) -> bool:
@@ -940,17 +950,46 @@ func _can_attack_creature(attacker: Card, target: Card) -> bool:
 		and target.current_zone.is_board_zone() \
 		and game_manager.can_cards_engage_each_other(attacker, target)
 
+func _get_attack_strength_against_defense(attacker: Card) -> int:
+	if attacker == null:
+		return 0
+	var total := attacker.get_effective_strength()
+	for equip in attacker.equipment:
+		if equip is EquipmentCard:
+			total += equip.get_bonus_strength_vs_defense(attacker)
+	return total
+
+func _defender_has_ferocious_defence(target: Card, opposing_strength: int) -> bool:
+	if target == null or game_manager == null:
+		return false
+	if target.card_type != Card.CardType.CREATURE:
+		return false
+	if target.creature_mode != Card.CreatureMode.DEFENSIVE:
+		return false
+	if not game_manager.has_method("_has_ferocious_defence"):
+		return false
+	return game_manager._has_ferocious_defence(target.get_controller()) \
+		and target.get_effective_resilience() >= opposing_strength
+
 func _would_destroy_target_in_battle(attacker: Card, target: Card) -> bool:
 	if attacker == null or target == null:
 		return false
 	if _is_stone_monkey(target) and not attacker.can_destroy_combat_protected_creatures(target):
 		return false
-	return attacker.get_effective_strength() >= target.get_effective_resilience()
+	if target.is_petrified() or target.card_type == Card.CardType.STRUCTURE:
+		return attacker.get_effective_strength() > target.get_effective_resilience()
+	if target.creature_mode == Card.CreatureMode.AGGRESSIVE:
+		return attacker.get_effective_strength() >= target.get_effective_strength()
+	return _get_attack_strength_against_defense(attacker) > target.get_effective_resilience()
 
 func _would_attacker_survive_battle(attacker: Card, target: Card) -> bool:
 	if attacker == null or target == null:
 		return false
-	return attacker.get_effective_resilience() > target.get_effective_strength()
+	if target.is_petrified() or target.card_type == Card.CardType.STRUCTURE:
+		return true
+	if target.creature_mode == Card.CreatureMode.AGGRESSIVE:
+		return attacker.get_effective_strength() > target.get_effective_strength()
+	return not _defender_has_ferocious_defence(target, _get_attack_strength_against_defense(attacker))
 
 func _is_askelladen(card: Card) -> bool:
 	return card is Askelladen
@@ -1296,14 +1335,8 @@ func _should_use_call_of_the_valkyrie() -> bool:
 	if target == null:
 		return false
 	if _needs_askelladen_support():
-		return true
-	if bot_player.hand_zone.cards.is_empty():
-		return true
-	if _get_best_affordable_hand_creature(0) == null:
-		return true
-	if _board_creature_count(bot_player) < _board_creature_count(opponent):
-		return true
-	return _score_call_of_the_valkyrie_target(target) >= 2600 and bot_player.hand_zone.cards.size() <= 3
+		return target is Askelladen
+	return _is_call_of_the_valkyrie_target_worth_priming(call, target)
 
 func _needs_askelladen_support() -> bool:
 	if _get_askelladen_problem_creature() == null:
@@ -1325,7 +1358,121 @@ func _choose_call_of_the_valkyrie_target(call: CallOfTheValkyrie) -> Card:
 		for target in valid_targets:
 			if target is Askelladen:
 				return target
-	return _choose_best_target_for_source(call, valid_targets)
+	var useful_target := _choose_best_call_of_the_valkyrie_target(call, valid_targets, true)
+	if useful_target != null:
+		return useful_target
+	return _choose_best_call_of_the_valkyrie_target(call, valid_targets, false)
+
+func _choose_best_call_of_the_valkyrie_target(call: CallOfTheValkyrie, valid_targets: Array[Card], require_useful: bool) -> Card:
+	var best_target: Card = null
+	var best_score := -1000000
+	for target in valid_targets:
+		if target == null:
+			continue
+		if require_useful and not _is_call_of_the_valkyrie_target_worth_priming(call, target):
+			continue
+		var score := _score_call_of_the_valkyrie_target(target)
+		if _call_of_the_valkyrie_target_answers_board(target):
+			score += 500
+		if _can_play_call_of_the_valkyrie_target_after_next_draw(call, target):
+			score += 300
+		if best_target == null or score > best_score or (score == best_score and _get_card_order_index(target) < _get_card_order_index(best_target)):
+			best_target = target
+			best_score = score
+	return best_target
+
+func _is_call_of_the_valkyrie_target_worth_priming(call: CallOfTheValkyrie, target: Card) -> bool:
+	if bot_player == null or game_manager == null or target == null:
+		return false
+	if target is Askelladen and _needs_askelladen_support():
+		return true
+	if not _can_play_call_of_the_valkyrie_target_after_next_draw(call, target):
+		return false
+
+	var target_score := _score_call_of_the_valkyrie_target(target)
+	var best_hand := _get_best_affordable_hand_creature(0)
+	if best_hand == null:
+		return target_score >= CALL_VALKYRIE_DESPERATION_TARGET_SCORE
+	if _call_of_the_valkyrie_activation_would_block_hand_play(call, best_hand):
+		return false
+
+	var target_play_score := _score_projected_card(target)
+	var best_hand_score := _score_projected_card(best_hand)
+	var target_is_clear_upgrade := target_play_score >= best_hand_score + CALL_VALKYRIE_SMALL_UPGRADE_MARGIN
+	if _call_of_the_valkyrie_target_answers_board(target):
+		return target_score >= CALL_VALKYRIE_DESPERATION_TARGET_SCORE and target_is_clear_upgrade
+	if _board_creature_count(bot_player) < _board_creature_count(opponent):
+		return target_score >= CALL_VALKYRIE_DEFAULT_TARGET_SCORE and target_is_clear_upgrade
+	var hand_size := bot_player.hand_zone.cards.size() if bot_player.hand_zone != null else 0
+	if hand_size <= CALL_VALKYRIE_LOW_HAND_LIMIT:
+		return target_score >= CALL_VALKYRIE_PREMIUM_TARGET_SCORE \
+			and target_play_score >= best_hand_score + CALL_VALKYRIE_LARGE_UPGRADE_MARGIN
+	return false
+
+func _can_play_call_of_the_valkyrie_target_after_next_draw(call: CallOfTheValkyrie, target: Card) -> bool:
+	if bot_player == null or game_manager == null or call == null or target == null:
+		return false
+	if target.card_type != Card.CardType.CREATURE:
+		return false
+	if _get_first_open_summon_zone(bot_player) == null:
+		return false
+	var projected_mana := _get_call_of_the_valkyrie_projected_draw_mana(call)
+	if projected_mana < _get_play_cost(target, false):
+		return false
+	return _can_pay_projected_additional_costs(target)
+
+func _get_call_of_the_valkyrie_projected_draw_mana(call: CallOfTheValkyrie) -> int:
+	if bot_player == null or game_manager == null or call == null:
+		return 0
+	var projected_mana := bot_player.mana
+	if call.is_face_down:
+		projected_mana -= call.get_unlock_mana_cost(game_manager)
+	projected_mana -= call.get_activation_mana_cost(CallOfTheValkyrie.ACTIVATION_COST, game_manager)
+	projected_mana += game_manager.get_effective_upkeep_mana_gain(game_manager.get_base_upkeep_draw_mana_gain(), bot_player)
+	return projected_mana
+
+func _can_pay_projected_additional_costs(card: Card) -> bool:
+	if card == null or bot_player == null:
+		return false
+	if card.discard_cost > 0 and bot_player.hand_zone.cards.size() < card.discard_cost:
+		return false
+	if card.shelve_cost > 0 and bot_player.hand_zone.cards.size() < card.shelve_cost:
+		return false
+	if card.sacrifice_cost > 0 and _get_valid_summon_sacrifice_candidates().size() < card.sacrifice_cost:
+		return false
+	if card.banish_cost > 0 and _get_projected_banishable_card_count() < card.banish_cost:
+		return false
+	return true
+
+func _get_projected_banishable_card_count() -> int:
+	if bot_player == null:
+		return 0
+	var count := bot_player.hand_zone.cards.size()
+	for zone in bot_player.frontline_zones + bot_player.reserve_zones:
+		count += zone.cards.size()
+	return count
+
+func _call_of_the_valkyrie_activation_would_block_hand_play(call: CallOfTheValkyrie, best_hand: Card) -> bool:
+	if call == null or best_hand == null or bot_player == null:
+		return false
+	var committed_mana := call.get_activation_mana_cost(CallOfTheValkyrie.ACTIVATION_COST, game_manager)
+	if call.is_face_down:
+		committed_mana += call.get_unlock_mana_cost(game_manager)
+	if committed_mana <= 0:
+		return false
+	var zone := _get_first_open_summon_zone(bot_player)
+	if zone == null:
+		return false
+	return _score_creature_play(best_hand, zone, bot_player.mana) > -1000000 \
+		and _score_creature_play(best_hand, zone, bot_player.mana - committed_mana) <= -1000000
+
+func _call_of_the_valkyrie_target_answers_board(target: Card) -> bool:
+	if target == null:
+		return false
+	if target is Askelladen and _get_askelladen_problem_creature() != null:
+		return true
+	var opposing_creatures := _get_board_creatures(opponent)
+	return not opposing_creatures.is_empty() and _count_clean_attack_targets_for(target, opposing_creatures) > 0
 
 func _find_graveyard_askelladen() -> Askelladen:
 	if bot_player == null:

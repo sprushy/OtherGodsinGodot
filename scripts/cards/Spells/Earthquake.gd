@@ -28,9 +28,14 @@ func resolve(game_manager: GameManager, _target = null) -> void:
 	if doomed_cards.is_empty():
 		print("Earthquake found no structures or face-up non-aerial machines to destroy.")
 		return
-	for doomed_card in doomed_cards:
-		game_manager.request_send_to_graveyard(doomed_card, Callable(), false, true)
-	print("Earthquake destroys all structures and face-up non-aerial machines on the field.")
+	var on_destroy_complete := func(_destroyed_count) -> void:
+		print("Earthquake destroys all structures and face-up non-aerial machines on the field.")
+	game_manager.request_send_cards_to_graveyard(
+		doomed_cards,
+		on_destroy_complete,
+		false,
+		true
+	)
 
 func _is_doomed_card(card: Card) -> bool:
 	if card == null:

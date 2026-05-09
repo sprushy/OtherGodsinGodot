@@ -560,7 +560,7 @@ func get_priority_responses(player: Player) -> Array:
 	return responses
 
 func _append_unique_priority_response(responses: Array, seen_response_ids: Dictionary, card: Card, player: Player) -> void:
-	if card == null or not can_card_respond_to_priority(card, player):
+	if card == null or not is_instance_valid(card) or not can_card_respond_to_priority(card, player):
 		return
 	var card_id := card.get_instance_id()
 	if seen_response_ids.has(card_id):
@@ -569,7 +569,7 @@ func _append_unique_priority_response(responses: Array, seen_response_ids: Dicti
 	responses.append(card)
 
 func _get_priority_response_targets(card: Card, action: CardAction) -> Array:
-	if card == null:
+	if card == null or not is_instance_valid(card):
 		return []
 	if card is HexCard:
 		return get_priority_hex_targets(card as HexCard, action)
@@ -589,7 +589,7 @@ func _priority_response_has_required_targets(card: Card, action: CardAction) -> 
 	return not _get_priority_response_targets(card, action).is_empty()
 
 func can_card_respond_to_priority(card: Card, player: Player = null) -> bool:
-	if card == null or action_stack.is_empty():
+	if card == null or not is_instance_valid(card) or action_stack.is_empty():
 		return false
 	var responding_player := player if player != null else priority_player
 	if responding_player == null or card.card_owner != responding_player:
@@ -3038,6 +3038,82 @@ func request_send_to_graveyard(
 		continue_callback,
 		ignore_self_combat_replacement
 	)
+
+func request_send_cards_to_graveyard(
+	cards: Array[Card],
+	completion_callback: Callable = Callable(),
+	combat_death: bool = false,
+	destruction: bool = false,
+	ignore_self_combat_replacement: bool = false,
+	card_index: int = 0,
+	destroyed_count: int = 0
+) -> void:
+	var working_queue: Array[Card] = []
+	if card_index == 0 and not cards.is_empty():
+		var seen_card_ids: Dictionary = {}
+		for queued_card in cards:
+			if queued_card == null or not is_instance_valid(queued_card):
+				continue
+			var queued_card_id := queued_card.get_instance_id()
+			if seen_card_ids.has(queued_card_id):
+				continue
+			seen_card_ids[queued_card_id] = true
+			working_queue.append(queued_card)
+	else:
+		working_queue = cards.duplicate()
+	if working_queue.is_empty():
+		if completion_callback.is_valid():
+			completion_callback.call(destroyed_count)
+		return
+	var card = working_queue.pop_front()
+	if card == null or not is_instance_valid(card):
+		request_send_cards_to_graveyard(
+			working_queue,
+			completion_callback,
+			combat_death,
+			destruction,
+			ignore_self_combat_replacement,
+			1,
+			destroyed_count
+		)
+		return
+	if card.current_zone == null:
+		request_send_cards_to_graveyard(
+			working_queue,
+			completion_callback,
+			combat_death,
+			destruction,
+			ignore_self_combat_replacement,
+			1,
+			destroyed_count
+		)
+		return
+	var on_continue := func() -> void:
+		var next_destroyed_count := destroyed_count
+		if _counts_as_destroyed_destination(card):
+			next_destroyed_count += 1
+		request_send_cards_to_graveyard(
+			working_queue,
+			completion_callback,
+			combat_death,
+			destruction,
+			ignore_self_combat_replacement,
+			1,
+			next_destroyed_count
+		)
+	request_send_to_graveyard(
+		card,
+		on_continue,
+		combat_death,
+		destruction,
+		ignore_self_combat_replacement
+	)
+
+func _counts_as_destroyed_destination(card: Card) -> bool:
+	if card == null or not is_instance_valid(card) or card.card_owner == null or card.current_zone == null:
+		return false
+	return card.current_zone == card.card_owner.graveyard_zone \
+		or card.current_zone == card.card_owner.abyss_zone
 
 func _send_to_graveyard_with_hook_resolved(
 	card: Card,

@@ -26,6 +26,7 @@ const MEAD_CURSOR_IMAGE_PATH := "res://images/ui/cursors/Mead Cursor.png"
 const FREYJA_TABBY_CURSOR_IMAGE_PATH := "res://images/ui/cursors/TabbyCatCursor.png"
 const FREYJA_BLACK_CURSOR_IMAGE_PATH := "res://images/ui/cursors/BlackCatCursor.png"
 const CardBackTexture = preload("res://images/cardbackAI.png")
+const BOARD_FLOOR_TEXTURE_PATH := "res://images/board/moss_stone_floor_albedo.png"
 const PromptRouterScript = preload("res://scripts/server/PromptRouter.gd")
 const HeadlessMatchHostScript = preload("res://scripts/server/HeadlessMatchHost.gd")
 const MatchClientScript = preload("res://scripts/client/MatchClient.gd")
@@ -160,6 +161,8 @@ var _hand_hover_vc: VisualCard = null
 var _hand_hover_preview_card: VisualCard = null
 var _hand_hover_preview_keywords: Control = null
 var _action_log_shell: Control = null
+var _board_art_background: TextureRect = null
+var _board_floor_texture: Texture2D = null
 var _turn_choice_gap: Control = null
 const _HAND_CONTEXT_MENU_KEEPALIVE_MARGIN := 10.0
 
@@ -1464,8 +1467,42 @@ func _on_doorway_choice_requested(structure: DoorwayToTheVoid, card: Card, comba
 	if _is_player_local(target_player):
 		_show_doorway_choice_prompt(structure, card, combat_death, destruction)
 
+func _ensure_board_art_background() -> void:
+	if _board_art_background != null and is_instance_valid(_board_art_background):
+		return
+	_board_art_background = TextureRect.new()
+	_board_art_background.name = "BoardArtBackground"
+	_board_art_background.texture = _get_board_floor_texture()
+	_board_art_background.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	_board_art_background.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_board_art_background.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_board_art_background.modulate = Color(0.78, 0.80, 0.74, 1.0)
+	_board_art_background.z_as_relative = false
+	_board_art_background.z_index = -100
+	_board_art_background.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	add_child(_board_art_background)
+	move_child(_board_art_background, 0)
+	_layout_board_art_background()
+
+func _layout_board_art_background() -> void:
+	if _board_art_background == null or not is_instance_valid(_board_art_background):
+		return
+	_board_art_background.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+func _get_board_floor_texture() -> Texture2D:
+	if _board_floor_texture != null:
+		return _board_floor_texture
+	var image := Image.new()
+	var err := image.load(BOARD_FLOOR_TEXTURE_PATH)
+	if err != OK:
+		push_warning("CombatMockGame: failed to load board texture %s (%s)" % [BOARD_FLOOR_TEXTURE_PATH, error_string(err)])
+		return null
+	_board_floor_texture = ImageTexture.create_from_image(image)
+	return _board_floor_texture
+
 func _ready() -> void:
 	add_to_group("combat_mock_game")
+	_ensure_board_art_background()
 	choice_container.visible = false
 	end_turn_button.visible = false
 	placement_container.visible = false
@@ -1495,6 +1532,7 @@ func _ready() -> void:
 	forfeit_button.offset_right = -2.0
 	forfeit_button.mouse_filter = Control.MOUSE_FILTER_STOP
 	_promote_transient_ui(forfeit_button, TRANSIENT_UI_Z_INDEX + 100)
+	resized.connect(_layout_board_art_background)
 
 	draw_button.pressed.connect(_on_draw_button_pressed)
 	mana_button.pressed.connect(_on_mana_button_pressed)
@@ -5044,11 +5082,10 @@ func _show_power_hover_popup(source: Control, text: String, bbcode_text: String 
 		var hover_viewer := game_manager.get_feedback_viewer() if game_manager != null else null
 		CardDetailContentBuilder._add_hover_stored_card_section(vbox, card, hover_viewer, 220.0)
 
-	var tree := get_tree()
-	if tree == null or tree.current_scene == null:
+	if not is_inside_tree() or is_queued_for_deletion():
 		return
 	popup.top_level = true
-	tree.current_scene.add_child(popup)
+	add_child(popup)
 	_promote_transient_ui(popup, HOVER_PREVIEW_Z_INDEX)
 	_power_hover_popup = popup
 	call_deferred("_position_power_hover_popup", popup, source)
@@ -8524,6 +8561,33 @@ func _prompt_charm_target_selection(charm: CharmCard, triggering_action: CardAct
 		_set_action_label_text(charm.card_name + " cannot be played right now.")
 		update_ui()
 		return
+	if _should_prompt_charm_targets_in_overlay(targets):
+		if targets.size() == 1 and targets[0] is Card:
+			spell_waiting_for_display_zone = resolved_display_zone
+			_queue_charm_action(charm, triggering_action, targets[0] as Card)
+			return
+		var choose_overlay_target := func(chosen_target: Card) -> void:
+			spell_waiting_for_display_zone = resolved_display_zone
+			_queue_charm_action(charm, triggering_action, chosen_target)
+		var cancel_overlay_target := func() -> void:
+			selected_card = null
+			spell_waiting_for_target = null
+			spell_waiting_for_action = null
+			spell_waiting_for_display_zone = null
+			_set_action_label_text("Cancelled " + charm.card_name + " target selection.")
+			update_ui()
+		_show_card_selection_overlay(
+			"Choose a target for " + charm.card_name,
+			targets,
+			choose_overlay_target,
+			cancel_overlay_target,
+			"",
+			"Cancel",
+			_should_reveal_charm_target_cards(charm, targets)
+		)
+		_set_action_label_text(charm.card_name + ": choose a valid target.")
+		update_ui()
+		return
 	var validate_charm_target := func(clicked_card: Card) -> bool:
 		return clicked_card in targets
 	var confirm_charm_target := func(clicked_card: Card) -> void:
@@ -8537,6 +8601,38 @@ func _prompt_charm_target_selection(charm: CharmCard, triggering_action: CardAct
 	)
 	_set_action_label_text(charm.card_name + ": choosing target. Click a valid card.")
 	update_ui()
+
+func _should_prompt_charm_targets_in_overlay(targets: Array) -> bool:
+	for target in targets:
+		if not (target is Card):
+			return true
+		var target_card := target as Card
+		if target_card == null or not is_instance_valid(target_card):
+			return true
+		if target_card.current_zone == null:
+			return true
+		if target_card.current_zone.zone_type in [
+			Zone.ZoneType.DECK,
+			Zone.ZoneType.GRAVEYARD,
+			Zone.ZoneType.ABYSS,
+		]:
+			return true
+	return false
+
+func _should_reveal_charm_target_cards(charm: CharmCard, targets: Array) -> bool:
+	if charm == null:
+		return false
+	for target in targets:
+		if not (target is Card):
+			continue
+		var target_card := target as Card
+		if target_card == null or not is_instance_valid(target_card):
+			continue
+		if target_card.current_zone == null:
+			continue
+		if target_card.current_zone.zone_type == Zone.ZoneType.DECK and target_card.card_owner == charm.card_owner:
+			return true
+	return false
 
 func _queue_charm_action(charm: CharmCard, triggering_action: CardAction = null, target: Card = null) -> void:
 	if charm == null or game_manager == null:
@@ -14084,9 +14180,9 @@ func _on_enemy_card_pressed(target_card: Card) -> void:
 			attack_target = target_card
 		
 		if attack_target != null:
-			if _is_networked_client:
-				if not _submit_network_attack_request(selected_attacker, attack_target):
-					_set_action_label_text("Could not send that attack to the server.")
+			if _should_submit_attack_via_game_input():
+				if not _submit_attack_request(selected_attacker, attack_target):
+					_set_action_label_text("Could not submit that attack.")
 					return
 				selected_attacker = null
 				selected_interceptor = null
@@ -14127,8 +14223,14 @@ func _on_all_attack_followers_pressed() -> void:
 	_queued_attackers = attackers
 	_advance_attack_queue()
 
-func _submit_network_attack_request(attacker: Card, target) -> bool:
-	if not _is_networked_client or attacker == null:
+func _should_submit_attack_via_game_input() -> bool:
+	return game_input != null and (
+		_is_networked_client
+		or (match_manager != null and match_manager.uses_authoritative_priority_flow())
+	)
+
+func _submit_attack_request(attacker: Card, target) -> bool:
+	if not _should_submit_attack_via_game_input() or attacker == null:
 		return false
 	var target_id := ""
 	if target is Player:
@@ -14152,8 +14254,8 @@ func _advance_attack_queue() -> void:
 		if not match_manager.can_attack(attacker):
 			continue
 		# Set up exactly like a manual attack targeting followers
-		if _is_networked_client:
-			if _submit_network_attack_request(attacker, game_manager.other_player):
+		if _should_submit_attack_via_game_input():
+			if _submit_attack_request(attacker, game_manager.other_player):
 				_queued_attackers.clear()
 				return
 			continue
@@ -14663,7 +14765,7 @@ func _input(event: InputEvent) -> void:
 		if _bdrag_ghost == null:
 			_bdrag_start_ghost()
 		else:
-			_bdrag_ghost.global_position = get_global_mouse_position() - BoardZoneUI.get_zone_size() / 2.0
+			_position_bdrag_ghost()
 		get_viewport().set_input_as_handled()
 	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and not event.pressed:
 		if _bdrag_ghost != null:
@@ -14958,12 +15060,37 @@ func _bdrag_start_ghost() -> void:
 	if not _bdrag_card.is_god:
 		var ml := Label.new(); ml.text = "DEF" if _bdrag_card.creature_mode == Card.CreatureMode.DEFENSIVE else "AGG"; ml.add_theme_font_size_override("font_size", 13); vbox.add_child(ml)
 		var sl := Label.new(); sl.text = "STR:%d RES:%d SPD:%d" % [_bdrag_card.get_effective_strength(), _bdrag_card.get_effective_resilience(), _bdrag_card.get_effective_speed()]; sl.add_theme_font_size_override("font_size", 12); vbox.add_child(sl)
-	var tree := get_tree()
-	if tree == null or tree.current_scene == null:
+	var floating_parent := _get_floating_drag_parent()
+	if floating_parent == null:
 		return
 	_bdrag_ghost = panel
-	tree.current_scene.add_child(_bdrag_ghost)
-	_bdrag_ghost.global_position = get_global_mouse_position() - zone_size / 2.0
+	floating_parent.add_child(_bdrag_ghost)
+	_position_bdrag_ghost()
+
+func _position_bdrag_ghost() -> void:
+	if _bdrag_ghost == null or not is_instance_valid(_bdrag_ghost):
+		return
+	var ghost_size := BoardZoneUI.get_zone_size()
+	var target_pos := get_global_mouse_position() - ghost_size / 2.0
+	var viewport_size := get_viewport_rect().size
+	_bdrag_ghost.global_position = Vector2(
+		clampf(target_pos.x, 4.0, maxf(4.0, viewport_size.x - ghost_size.x - 4.0)),
+		clampf(target_pos.y, 4.0, maxf(4.0, viewport_size.y - ghost_size.y - 4.0))
+	)
+
+func _get_floating_drag_parent() -> Node:
+	var node: Node = self
+	while node != null:
+		if node is CanvasLayer:
+			return node
+		node = node.get_parent()
+	var viewport := get_viewport()
+	if viewport != null:
+		return viewport
+	var tree := get_tree()
+	if tree != null:
+		return tree.current_scene
+	return null
 
 func _bdrag_finish(drop_pos: Vector2) -> void:
 	var card := _bdrag_card
@@ -15055,9 +15182,9 @@ func _bdrag_finish(drop_pos: Vector2) -> void:
 			if not game_manager.can_cards_engage_each_other(card, target_card):
 				_set_action_label_text(_get_card_name_safe(card, "That card") + " cannot engage " + _get_card_name_safe(target_card, "that target") + ".")
 				return
-			if _is_networked_client:
-				if not _submit_network_attack_request(card, target_card):
-					_set_action_label_text("Could not send that attack to the server.")
+			if _should_submit_attack_via_game_input():
+				if not _submit_attack_request(card, target_card):
+					_set_action_label_text("Could not submit that attack.")
 					return
 				selected_attacker = null
 				selected_interceptor = null
@@ -15111,9 +15238,9 @@ func _on_attack_followers_pressed() -> void:
 		if game_manager.is_followers_attack_blocked_by_active_structure(selected_attacker, game_manager.other_player, allied_attackers):
 			_set_action_label_text(_get_attack_card_label(selected_attacker, "That creature") + " cannot attack followers through Palisade.")
 			return
-		if _is_networked_client:
-			if not _submit_network_attack_request(selected_attacker, game_manager.other_player):
-				_set_action_label_text("Could not send that attack to the server.")
+		if _should_submit_attack_via_game_input():
+			if not _submit_attack_request(selected_attacker, game_manager.other_player):
+				_set_action_label_text("Could not submit that attack.")
 				return
 			selected_attacker = null
 			selected_interceptor = null

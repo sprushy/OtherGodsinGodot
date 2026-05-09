@@ -685,11 +685,8 @@ func _refresh_drag_defense_shield_overlay() -> void:
 		DefenseShieldOverlay.remove_from(ghost_inner)
 
 func _build_rotation_ghost(from_angle: float) -> Control:
-	var tree := get_tree()
-	if tree == null:
-		return null
-	var scene_root := tree.current_scene
-	if scene_root == null:
+	var floating_parent := _get_floating_parent()
+	if floating_parent == null:
 		return null
 	var ghost := duplicate(0) as Control
 	ghost.top_level = true
@@ -712,7 +709,7 @@ func _build_rotation_ghost(from_angle: float) -> Control:
 	# Add to tree BEFORE setting global_position — Control.global_position
 	# only resolves correctly once the node is in the scene tree.
 	var card_global_pos := global_position
-	scene_root.add_child(ghost)
+	floating_parent.add_child(ghost)
 	ghost.move_to_front()
 	ghost.global_position = card_global_pos
 	return ghost
@@ -787,7 +784,62 @@ func _update_ghost_position() -> void:
 	var half := _drag_ghost_pivot                    # = size / 2 at build time
 	var rotated_half := Vector2(c * half.x - s * half.y,
 								s * half.x + c * half.y)
-	_drag_ghost.global_position = get_viewport().get_mouse_position() - rotated_half
+	_drag_ghost.global_position = _clamp_drag_ghost_position(
+		get_viewport().get_mouse_position() - rotated_half
+	)
+
+func _clamp_drag_ghost_position(target_pos: Vector2) -> Vector2:
+	if _drag_ghost == null or not is_instance_valid(_drag_ghost):
+		return target_pos
+	var viewport_size := get_viewport().get_visible_rect().size
+	var ghost_size := _drag_ghost.size
+	if ghost_size.x <= 0.0 or ghost_size.y <= 0.0:
+		ghost_size = _drag_ghost.get_combined_minimum_size()
+	var rect := _get_drag_ghost_bounds(target_pos, ghost_size)
+	var padding := 4.0
+	var correction := Vector2.ZERO
+	if rect.position.x < padding:
+		correction.x = padding - rect.position.x
+	elif rect.end.x > viewport_size.x - padding:
+		correction.x = viewport_size.x - padding - rect.end.x
+	if rect.position.y < padding:
+		correction.y = padding - rect.position.y
+	elif rect.end.y > viewport_size.y - padding:
+		correction.y = viewport_size.y - padding - rect.end.y
+	return target_pos + correction
+
+func _get_drag_ghost_bounds(target_pos: Vector2, ghost_size: Vector2) -> Rect2:
+	var theta := deg_to_rad(_drag_ghost.rotation_degrees)
+	var c := cos(theta)
+	var s := sin(theta)
+	var points := [
+		Vector2.ZERO,
+		Vector2(ghost_size.x, 0.0),
+		Vector2(0.0, ghost_size.y),
+		ghost_size,
+	]
+	var min_point := Vector2(INF, INF)
+	var max_point := Vector2(-INF, -INF)
+	for point in points:
+		var rotated := Vector2(c * point.x - s * point.y, s * point.x + c * point.y)
+		var global_point := target_pos + rotated
+		min_point = min_point.min(global_point)
+		max_point = max_point.max(global_point)
+	return Rect2(min_point, max_point - min_point)
+
+func _get_floating_parent() -> Node:
+	var node: Node = self
+	while node != null:
+		if node is CanvasLayer:
+			return node
+		node = node.get_parent()
+	var viewport := get_viewport()
+	if viewport != null:
+		return viewport
+	var tree := get_tree()
+	if tree != null:
+		return tree.current_scene
+	return null
 
 func _process(delta: float) -> void:
 	if not _dragging or not (_drag_ghost and is_instance_valid(_drag_ghost)):
@@ -810,20 +862,20 @@ func _start_drag() -> void:
 		_inner.rotation_degrees = 0.0
 		_inner.pivot_offset = size / 2.0
 	var tree := get_tree()
-	if tree == null or tree.current_scene == null:
+	var floating_parent := _get_floating_parent()
+	if tree == null or floating_parent == null:
 		return
 	_dragging = true
 	_drag_ghost = _build_drag_ghost()
 	_drag_target_rotation = _drag_ghost.rotation_degrees  # already at correct angle
 	# Reparent to scene root so the hand HBox collapses the gap,
 	# but the node stays in the tree so _input() keeps firing.
-	var scene_root := tree.current_scene
 	_drag_parent = get_parent()
 	_drag_index = get_index()
 	_drag_parent.remove_child(self)
-	scene_root.add_child(self)
+	floating_parent.add_child(self)
 	visible = false
-	scene_root.add_child(_drag_ghost)
+	floating_parent.add_child(_drag_ghost)
 	_drag_ghost.move_to_front()
 	_update_ghost_position()
 
@@ -871,11 +923,8 @@ func _finish_drag() -> void:
 	card_drag_released.emit(card_data, drop_pos, is_rotated, was_stealth)
 
 func _show_hover_panel() -> void:
-	var tree := get_tree()
-	if tree == null:
-		return
-	var scene_root := tree.current_scene
-	if scene_root == null:
+	var floating_parent := _get_floating_parent()
+	if floating_parent == null:
 		return
 
 	var panel := PanelContainer.new()
@@ -906,7 +955,7 @@ func _show_hover_panel() -> void:
 		}
 	))
 
-	scene_root.add_child(panel)
+	floating_parent.add_child(panel)
 	panel.move_to_front()
 	var vp_size := get_viewport().get_visible_rect().size
 	panel.size = Vector2(_HOVER_PANEL_WIDTH, minf(_HOVER_PANEL_MAX_HEIGHT, vp_size.y - 8.0))

@@ -61,6 +61,7 @@ func on_unmuted(game_manager: GameManager) -> void:
 func _destroy_face_up_weather_charms(game_manager: GameManager) -> void:
 	if game_manager == null:
 		return
+	var doomed_cards: Array[Card] = []
 	for player in game_manager.players:
 		for zone in player.frontline_zones + player.reserve_zones:
 			for card in zone.cards.duplicate():
@@ -70,7 +71,8 @@ func _destroy_face_up_weather_charms(game_manager: GameManager) -> void:
 					continue
 				if card.is_face_down or not card.has_type("Weather"):
 					continue
-				game_manager.request_send_to_graveyard(card)
+				doomed_cards.append(card)
+	game_manager.request_send_cards_to_graveyard(doomed_cards)
 
 func _refresh_weather_lock(game_manager: GameManager) -> void:
 	if game_manager == null:

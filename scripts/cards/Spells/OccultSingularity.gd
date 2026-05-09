@@ -28,15 +28,16 @@ func resolve(game_manager: GameManager, _target = null) -> void:
 		game_manager.note_player_feedback(no_targets_feedback)
 		print(no_targets_feedback)
 		return
-
-	var destroyed_count := 0
-	for doomed_card in doomed_cards:
-		if game_manager.request_send_to_graveyard(doomed_card, Callable(), false, true):
-			destroyed_count += 1
-
-	var feedback := "%s destroyed %d magical card(s) on the field." % [card_name, destroyed_count]
-	game_manager.note_player_feedback(feedback)
-	print(feedback)
+	var on_destroy_complete := func(destroyed_count) -> void:
+		var feedback := "%s destroyed %d magical card(s) on the field." % [card_name, destroyed_count]
+		game_manager.note_player_feedback(feedback)
+		print(feedback)
+	game_manager.request_send_cards_to_graveyard(
+		doomed_cards,
+		on_destroy_complete,
+		false,
+		true
+	)
 
 func can_be_played(game_manager: GameManager, player: Player) -> bool:
 	if not super.can_be_played(game_manager, player):
@@ -61,6 +62,8 @@ func _get_doomed_cards(game_manager: GameManager) -> Array[Card]:
 	for player: Player in game_manager.players:
 		for zone: Zone in player.frontline_zones + player.reserve_zones:
 			for card: Card in zone.cards:
+				if card == self:
+					continue
 				if _is_doomed_card(card):
 					doomed_cards.append(card)
 	return doomed_cards

@@ -4919,6 +4919,10 @@ func _start_smoke_mode() -> void:
 		call_deferred("_run_card_test_turn2_smoke")
 		return
 
+	if role == "card_test_occult_singularity":
+		call_deferred("_run_card_test_occult_singularity_smoke")
+		return
+
 	if role == "resume":
 		var resume_timer := get_tree().create_timer(0.5)
 		resume_timer.timeout.connect(func() -> void:
@@ -5774,6 +5778,29 @@ func _find_first_playable_smoke_creature(game_manager: GameManager, player: Play
 			return card
 	return null
 
+func _find_smoke_hand_card_by_name(player: Player, expected_name: String) -> Card:
+	if player == null or player.hand_zone == null:
+		return null
+	for card in player.hand_zone.cards:
+		if card != null and card.card_name == expected_name:
+			return card
+	return null
+
+func _count_smoke_board_magical_cards(game_manager: GameManager) -> int:
+	if game_manager == null:
+		return 0
+	var count := 0
+	for player: Player in game_manager.players:
+		if player == null:
+			continue
+		for zone: Zone in player.frontline_zones + player.reserve_zones:
+			if zone == null:
+				continue
+			for card: Card in zone.cards:
+				if card != null and card.current_zone == zone and card.is_magical_card():
+					count += 1
+	return count
+
 func _describe_smoke_hand(player: Player) -> String:
 	if player == null or player.hand_zone == null:
 		return ""
@@ -5858,6 +5885,70 @@ func _run_card_test_turn2_smoke() -> void:
 
 	_finish_smoke_if_enabled("PASS:card_test_turn2")
 
+func _run_card_test_occult_singularity_smoke() -> void:
+	var card_test = _show_embedded_game("CardTest")
+	if card_test == null:
+		_fail_smoke_if_enabled("card_test_missing")
+		return
+	show_game()
+	await card_test.start_game()
+	card_test.load_n_o_card_scenario()
+	await get_tree().process_frame
+	await get_tree().process_frame
+
+	if not card_test.game_input.submit_action({type = "upkeep_choice", choice = "mana"}):
+		_fail_smoke_if_enabled("card_test_occult_singularity_upkeep_choice_failed")
+		return
+	if not await _wait_for_card_test_turn2_smoke_condition(
+		func() -> bool:
+			return card_test.game_manager.current_player == card_test.player1 \
+				and card_test.game_manager.has_resolved_turn_upkeep() \
+				and card_test.game_manager.action_stack.is_empty(),
+		180
+	):
+		_fail_smoke_if_enabled("card_test_occult_singularity_upkeep_timeout")
+		return
+
+	var occult := _find_smoke_hand_card_by_name(card_test.player1, "Occult Singularity")
+	if occult == null:
+		_fail_smoke_if_enabled("card_test_occult_singularity_missing_spell")
+		return
+	var magical_before := _count_smoke_board_magical_cards(card_test.game_manager)
+	if magical_before < 2:
+		_fail_smoke_if_enabled("card_test_occult_singularity_missing_targets count=%d" % magical_before)
+		return
+	card_test.match_manager.authoritative_match_flow_enabled = true
+	if not card_test.game_input.submit_action({type = "cast_spell", spell_uid = occult.uid}):
+		_fail_smoke_if_enabled("card_test_occult_singularity_cast_failed")
+		return
+	if not await _wait_for_card_test_turn2_smoke_condition(
+		func() -> bool:
+			return card_test.game_manager.action_stack.is_empty() \
+				and not card_test._stack_resolution_paused \
+				and not card_test._executing_stack_action \
+				and not card_test.game_manager.has_pending_doorway_choice() \
+				and not card_test.game_manager.has_pending_return_to_hand_choice(),
+		240
+	):
+		_fail_smoke_if_enabled(
+			"card_test_occult_singularity_stalled stack=%d paused=%s executing=%s doorway=%s return=%s label=%s" % [
+				card_test.game_manager.action_stack.size(),
+				str(card_test._stack_resolution_paused),
+				str(card_test._executing_stack_action),
+				str(card_test.game_manager.has_pending_doorway_choice()),
+				str(card_test.game_manager.has_pending_return_to_hand_choice()),
+				str(card_test.action_label.text).replace("\n", " "),
+			]
+		)
+		return
+
+	var magical_after := _count_smoke_board_magical_cards(card_test.game_manager)
+	if magical_after >= magical_before:
+		_fail_smoke_if_enabled("card_test_occult_singularity_no_change before=%d after=%d" % [magical_before, magical_after])
+		return
+
+	_finish_smoke_if_enabled("PASS:card_test_occult_singularity before=%d after=%d" % [magical_before, magical_after])
+
 func _wait_for_card_test_turn2_smoke_condition(predicate: Callable, max_frames: int) -> bool:
 	for _frame in range(max_frames):
 		if predicate.call():
@@ -5888,6 +5979,7 @@ func _should_ignore_lobby_failure_for_smoke() -> bool:
 		"practice_thor_fuzz",
 		"ranked_timeout_upkeep",
 		"card_test_turn2",
+		"card_test_occult_singularity",
 	]
 
 func _parse_smoke_config(args: Array) -> Dictionary:

@@ -54,36 +54,41 @@ func on_activate_action(game_manager: GameManager, action: CardAction) -> void:
 		return
 
 	var doomed_cards := _get_frontline_cards(game_manager, attacking_player)
-	var destroyed_count := 0
 	var immune_count := 0
+	var destroyable_cards: Array[Card] = []
 	for doomed_card in doomed_cards:
 		if doomed_card == null or doomed_card.current_zone == null or not doomed_card.current_zone.is_board_zone():
 			continue
 		if game_manager.is_immune_to_source(doomed_card, self):
 			immune_count += 1
 			continue
-		if game_manager.request_send_to_graveyard(doomed_card, Callable(), false, true):
-			destroyed_count += 1
+		destroyable_cards.append(doomed_card)
 
 	var attacking_name := attacking_player.player_name if attacking_player.player_name != "" else "the attacking player"
-	var feedback := ""
-	if destroyed_count > 0:
-		feedback = "%s triggered and destroyed %d card(s) on %s's frontline." % [
-			card_name,
-			destroyed_count,
-			attacking_name,
-		]
-	else:
-		feedback = "%s triggered, but no cards on %s's frontline were destroyed." % [
-			card_name,
-			attacking_name,
-		]
-	if immune_count > 0:
-		feedback += " %d card(s) were immune." % immune_count
-	game_manager.note_player_feedback(feedback)
-
-	if card_owner != null:
-		card_owner.move_card(self, card_owner.graveyard_zone)
+	var on_destroy_complete := func(destroyed_count) -> void:
+		var feedback := ""
+		if destroyed_count > 0:
+			feedback = "%s triggered and destroyed %d card(s) on %s's frontline." % [
+				card_name,
+				destroyed_count,
+				attacking_name,
+			]
+		else:
+			feedback = "%s triggered, but no cards on %s's frontline were destroyed." % [
+				card_name,
+				attacking_name,
+			]
+		if immune_count > 0:
+			feedback += " %d card(s) were immune." % immune_count
+		game_manager.note_player_feedback(feedback)
+		if card_owner != null:
+			card_owner.move_card(self, card_owner.graveyard_zone)
+	game_manager.request_send_cards_to_graveyard(
+		destroyable_cards,
+		on_destroy_complete,
+		false,
+		true
+	)
 
 func _get_attacking_player(action: CardAction) -> Player:
 	if action == null:

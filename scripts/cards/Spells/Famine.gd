@@ -51,12 +51,14 @@ func resolve(game_manager: GameManager, _target = null) -> void:
 	if doomed_creatures.is_empty() and revealed_count == 0:
 		print(card_name + " found no creatures to destroy.")
 		return
-
-	for creature in doomed_creatures:
-		if creature != null and creature.current_zone != null and creature.current_zone.is_board_zone():
-			game_manager.request_send_to_graveyard(creature, Callable(), false, true)
-
-	print(card_name + " revealed " + str(revealed_count) + " face-down creature(s) and destroyed " + str(doomed_creatures.size()) + " creature(s).")
+	var on_destroy_complete := func(destroyed_count) -> void:
+		print(card_name + " revealed " + str(revealed_count) + " face-down creature(s) and destroyed " + str(destroyed_count) + " creature(s).")
+	game_manager.request_send_cards_to_graveyard(
+		doomed_creatures,
+		on_destroy_complete,
+		false,
+		true
+	)
 
 func can_be_played(game_manager: GameManager, player: Player) -> bool:
 	if not super.can_be_played(game_manager, player):

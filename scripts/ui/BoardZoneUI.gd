@@ -8,6 +8,7 @@ const CHAMPIONS_CALL_BADGE_TEXTURE := preload("res://images/Champion's Call Horn
 const SMOKING_MIRROR_BADGE_TEXTURE := preload("res://images/Smoking Mirror Icon.png")
 const TEZ_SACRIFICE_BADGE_TEXTURE := preload("res://images/TezSacBadge.png")
 const TEZ_BLOODSTREAK_TEXTURE := preload("res://images/Bloodstreak.png")
+const BOARD_ZONE_SLAB_TEXTURE_PATH := "res://images/board/stone_zone_slab.png"
 const TEZ_TONAL_MASTERY_TEXTURE_PATHS := [
 	"res://images/TezTonalMastery0.png",
 	"res://images/TezTonalMastery1.png",
@@ -368,6 +369,7 @@ static var _zone_extent: float = BASE_ZONE_EXTENT
 var _row_label: String = ""
 var _followers_attack_result_text: String = ""
 var _followers_attack_result_sequence: int = 0
+static var _board_zone_slab_texture: Texture2D = null
 
 static func get_base_zone_extent() -> float:
 	return BASE_ZONE_EXTENT
@@ -1209,8 +1211,8 @@ func _show_badge_hover_popup(anchor: Control, text: String) -> void:
 	_hide_badge_hover_popup()
 	if anchor == null or text.strip_edges() == "" or not is_inside_tree() or is_queued_for_deletion():
 		return
-	var tree := get_tree()
-	if tree == null or tree.current_scene == null:
+	var floating_parent := _get_floating_popup_parent()
+	if floating_parent == null:
 		return
 
 	var popup_root := Control.new()
@@ -1243,7 +1245,7 @@ func _show_badge_hover_popup(anchor: Control, text: String) -> void:
 	popup.add_child(label)
 
 	_badge_hover_popup = popup_root
-	tree.current_scene.add_child(popup_root)
+	floating_parent.add_child(popup_root)
 	popup_root.move_to_front()
 
 	await get_tree().process_frame
@@ -1986,6 +1988,25 @@ func _get_targeting_scene_root() -> Node:
 			return candidate as Node
 	return tree.current_scene
 
+func _get_floating_popup_parent() -> Node:
+	var node: Node = self
+	while node != null:
+		if node is CanvasLayer:
+			return node
+		if node.is_in_group("combat_mock_game"):
+			return node
+		node = node.get_parent()
+	var tree := get_tree()
+	if tree == null:
+		return null
+	for candidate in tree.get_nodes_in_group("combat_mock_game"):
+		if candidate is Node and is_instance_valid(candidate):
+			return candidate as Node
+	var viewport := get_viewport()
+	if viewport != null:
+		return viewport
+	return tree.current_scene
+
 func _get_targeting_match_manager(scene_root: Node) -> MatchManager:
 	if scene_root == null:
 		return null
@@ -2448,6 +2469,75 @@ func get_visual_anchor_global() -> Vector2:
 
 func _get_minimum_size() -> Vector2:
 	return get_zone_size()
+
+static func _load_png_texture(path: String) -> Texture2D:
+	var image := Image.new()
+	var err := image.load(path)
+	if err != OK:
+		push_warning("BoardZoneUI: failed to load board texture %s (%s)" % [path, error_string(err)])
+		return null
+	return ImageTexture.create_from_image(image)
+
+static func _get_board_zone_slab_texture() -> Texture2D:
+	if _board_zone_slab_texture == null:
+		_board_zone_slab_texture = _load_png_texture(BOARD_ZONE_SLAB_TEXTURE_PATH)
+	return _board_zone_slab_texture
+
+func _get_empty_zone_slab_tint() -> Color:
+	if zone == null:
+		return Color(1.0, 1.0, 1.0, 0.9)
+	if zone.zone_type == Zone.ZoneType.GOD_SLOT:
+		return Color(1.08, 0.98, 0.72, 0.96)
+	if zone.zone_type == Zone.ZoneType.POWER_SLOT:
+		return Color(1.02, 0.98, 0.88, 0.9)
+	return Color(1.0, 1.0, 1.0, 0.88)
+
+func _add_empty_zone_slab_label(parent: Control) -> void:
+	if not _should_show_empty_zone_label():
+		return
+	var lbl := Label.new()
+	lbl.text = _row_label if _row_label != "" else str(zone_index + 1)
+	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	lbl.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	lbl.custom_minimum_size = get_zone_size()
+	lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	lbl.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	lbl.add_theme_font_size_override("font_size", 22)
+	lbl.add_theme_color_override("font_color", Color(0.96, 1.0, 0.85, 0.98))
+	lbl.add_theme_color_override("font_shadow_color", Color(0.03, 0.045, 0.025, 0.95))
+	lbl.add_theme_constant_override("shadow_offset_x", 2)
+	lbl.add_theme_constant_override("shadow_offset_y", 2)
+	lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	parent.add_child(lbl)
+
+func _should_show_empty_zone_label() -> bool:
+	if not _hovered:
+		return false
+	if zone == null or not zone.cards.is_empty():
+		return false
+	return true
+
+func _add_empty_zone_slab() -> void:
+	add_theme_stylebox_override("panel", StyleBoxEmpty.new())
+	var overlay := Control.new()
+	overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	overlay.custom_minimum_size = get_zone_size()
+	overlay.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	overlay.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	add_child(overlay)
+
+	var slab := TextureRect.new()
+	slab.texture = _get_board_zone_slab_texture()
+	slab.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	slab.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	slab.modulate = _get_empty_zone_slab_tint()
+	slab.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	slab.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	overlay.add_child(slab)
+
+	_add_empty_zone_slab_label(overlay)
 
 func _refresh_mouse_cursor_shape(card: Card = null) -> void:
 	if card != null and card.card_type == Card.CardType.POWER and card.is_face_down:
@@ -2981,28 +3071,8 @@ func _refresh_display() -> void:
 		z_index = _get_resting_z_index()
 
 	else:
-		# Empty zone styling - God slot gets gold treatment
 		z_index = BASE_BOARD_Z_INDEX
-		if zone.zone_type == Zone.ZoneType.GOD_SLOT:
-			style.bg_color    = Color(0.35, 0.28, 0.04, 0.7)
-			style.border_color = Color(0.9, 0.75, 0.2)
-			for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-				style.set_border_width(side, 2)
-		else:
-			style.bg_color    = Color(0.07, 0.12, 0.07, 0.55)
-			style.border_color = Color(0.22, 0.35, 0.22, 0.7)
-			for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-				style.set_border_width(side, 1)
-		add_theme_stylebox_override("panel", style)
-
-		var lbl := Label.new()
-		lbl.text = _row_label if _row_label != "" else str(zone_index + 1)
-		lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		lbl.vertical_alignment   = VERTICAL_ALIGNMENT_CENTER
-		lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		lbl.size_flags_vertical   = Control.SIZE_EXPAND_FILL
-		lbl.modulate.a = 0.4
-		add_child(lbl)
+		_add_empty_zone_slab()
 
 func _is_draggable_creature() -> bool:
 	if zone.cards.size() == 0:
@@ -3062,6 +3132,8 @@ func _notification(what: int) -> void:
 			var _c := _preview_card if _preview_card != null else (zone.cards[0] if zone != null and zone.cards.size() > 0 else null)
 			if _c != null:
 				z_index = HOVER_BOARD_Z_INDEX
+			elif zone != null and zone.cards.is_empty():
+				_refresh_display()
 			var viewer := _get_viewer_player()
 			if _c != null and (not _c.is_face_down or _c.get_controller() == viewer or _is_public_power(_c) or _c.is_temporarily_revealed()):
 				var _delay := 1.0 if (_c.is_god) else 1.5
@@ -3072,6 +3144,8 @@ func _notification(what: int) -> void:
 		NOTIFICATION_MOUSE_EXIT:
 			_hovered = false
 			z_index = _get_resting_z_index()
+			if zone != null and zone.cards.is_empty():
+				_refresh_display()
 			_schedule_hide()
 
 func _schedule_hide() -> void:
@@ -3130,11 +3204,8 @@ func _show_ability_popup() -> void:
 	if not is_inside_tree() or is_queued_for_deletion():
 		return
 	var card := zone.cards[0]
-	var tree := get_tree()
-	if tree == null:
-		return
-	var scene_root := tree.current_scene
-	if scene_root == null:
+	var floating_parent := _get_floating_popup_parent()
+	if floating_parent == null:
 		return
 
 	var popup_root := Control.new()
@@ -3228,7 +3299,7 @@ func _show_ability_popup() -> void:
 			popup_root.add_child(keywords_panel)
 
 	_popup = popup_root
-	scene_root.add_child(popup_root)
+	floating_parent.add_child(popup_root)
 	popup_root.move_to_front()
 
 	await get_tree().process_frame

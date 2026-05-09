@@ -24,15 +24,16 @@ func resolve(game_manager: GameManager, _target = null) -> void:
 	if doomed_cards.is_empty():
 		print(card_name + " found no face-up enemy permanents to destroy.")
 		return
-
-	var destroyed_count := 0
-	for doomed_card in doomed_cards:
-		if game_manager.request_send_to_graveyard(doomed_card, Callable(), false, true):
-			destroyed_count += 1
-
-	var feedback := "%s destroyed %d face-up enemy permanent(s)." % [card_name, destroyed_count]
-	game_manager.note_player_feedback(feedback)
-	print(feedback)
+	var on_destroy_complete := func(destroyed_count) -> void:
+		var feedback := "%s destroyed %d face-up enemy permanent(s)." % [card_name, destroyed_count]
+		game_manager.note_player_feedback(feedback)
+		print(feedback)
+	game_manager.request_send_cards_to_graveyard(
+		doomed_cards,
+		on_destroy_complete,
+		false,
+		true
+	)
 
 func can_be_played(game_manager: GameManager, player: Player) -> bool:
 	if not super.can_be_played(game_manager, player):

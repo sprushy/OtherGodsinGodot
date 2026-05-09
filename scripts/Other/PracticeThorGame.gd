@@ -31,6 +31,10 @@ func start_game(
 	var practice_info := match_info.duplicate(true)
 	_add_selected_deck_info(practice_info)
 	await super.start_game(true, false, server_ip, PRACTICE_AUTHORITY_PORT, practice_info, null)
+	if match_manager != null:
+		# Keep local Thor practice on the same paced authoritative stack timing as multiplayer.
+		# Immediate in-process resolution has been fragile around chained destroyed/priority events.
+		match_manager.allow_immediate_local_authoritative_stack_resolution = false
 	_attach_thor_bot()
 	_show_practice_intro()
 	if _thor_bot != null:

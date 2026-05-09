@@ -659,6 +659,8 @@ func resolve_action(action: CardAction) -> void:
 	last_resolution_text = ""
 	var pushed_effect_source := false
 	var action_completed := true
+	var deferred_completion_command_type := ""
+	var deferred_destroyed_event_mode := DEFERRED_DESTROYED_EVENTS_NONE
 	var destroyed_count_before := game_manager.destroyed_this_turn.size() if game_manager != null else 0
 	if action != null and not action.event_data.has("destroyed_count_before"):
 		action.event_data["destroyed_count_before"] = destroyed_count_before
@@ -676,30 +678,32 @@ func resolve_action(action: CardAction) -> void:
 			_resolve_event(action)
 			action_completed = pending_tezcatlipoca_titlacauan_action != action
 			if not action_completed:
-				_mark_deferred_authoritative_action(
-					action,
-					"tezcatlipoca_active_titlacauan_choice",
-					DEFERRED_DESTROYED_EVENTS_NONE
-				)
+				deferred_completion_command_type = "tezcatlipoca_active_titlacauan_choice"
+				deferred_destroyed_event_mode = DEFERRED_DESTROYED_EVENTS_NONE
 		CardAction.Type.ATTACK:
 			_resolve_attack(action)
 			action_completed = pending_retreat_action != action and pending_humbaba_action != action
 			if not action_completed:
 				if pending_retreat_action == action:
-					_mark_deferred_authoritative_action(
-						action,
-						"combat_retreat_decision",
-						DEFERRED_DESTROYED_EVENTS_QUEUE
-					)
+					deferred_completion_command_type = "combat_retreat_decision"
+					deferred_destroyed_event_mode = DEFERRED_DESTROYED_EVENTS_QUEUE
 				elif pending_humbaba_action == action:
-					_mark_deferred_authoritative_action(
-						action,
-						"humbaba_augury_choice",
-						DEFERRED_DESTROYED_EVENTS_QUEUE
-					)
+					deferred_completion_command_type = "humbaba_augury_choice"
+					deferred_destroyed_event_mode = DEFERRED_DESTROYED_EVENTS_QUEUE
+	if action_completed and game_manager != null:
+		deferred_completion_command_type = _get_pending_authoritative_graveyard_prompt_command_type()
+		if not deferred_completion_command_type.is_empty():
+			action_completed = false
+			deferred_destroyed_event_mode = DEFERRED_DESTROYED_EVENTS_QUEUE
 	if game_manager != null and pushed_effect_source:
 		game_manager.pop_effect_source_card()
 	if not action_completed:
+		if not deferred_completion_command_type.is_empty():
+			_mark_deferred_authoritative_action(
+				action,
+				deferred_completion_command_type,
+				deferred_destroyed_event_mode
+			)
 		if _uses_authoritative_headless_priority_flow() and not _has_deferred_authoritative_action_metadata(action):
 			printerr("MatchManager: paused authoritative action is missing deferred completion metadata: %s" % _get_action_debug_label(action))
 		return
@@ -786,6 +790,42 @@ func _complete_deferred_authoritative_action(action: CardAction, completion_comm
 	_finalize_resolved_action(action)
 	if _uses_authoritative_headless_priority_flow() and game_manager != null and not game_manager.action_stack.is_empty():
 		_advance_authoritative_priority()
+
+func _get_pending_authoritative_graveyard_prompt_command_type() -> String:
+	if game_manager == null:
+		return ""
+	if game_manager.has_pending_doorway_choice():
+		return "doorway_choice"
+	if game_manager.has_pending_return_to_hand_choice():
+		return "return_to_hand_choice"
+	return ""
+
+func _find_pending_deferred_authoritative_action(command_types: Array[String]) -> CardAction:
+	if game_manager == null:
+		return null
+	for i in range(game_manager.action_stack.size() - 1, -1, -1):
+		var action := game_manager.action_stack[i]
+		if action == null:
+			continue
+		var expected_command_type := str(action.event_data.get("deferred_authoritative_completion_command", "")).strip_edges()
+		if expected_command_type in command_types:
+			return action
+	return null
+
+func _continue_pending_authoritative_graveyard_prompt_action() -> void:
+	var action := _find_pending_deferred_authoritative_action(["doorway_choice", "return_to_hand_choice"])
+	if action == null:
+		return
+	var pending_command_type := _get_pending_authoritative_graveyard_prompt_command_type()
+	if not pending_command_type.is_empty():
+		var destroyed_event_mode := int(action.event_data.get(
+			"deferred_authoritative_destroyed_event_mode",
+			DEFERRED_DESTROYED_EVENTS_QUEUE
+		))
+		_mark_deferred_authoritative_action(action, pending_command_type, destroyed_event_mode)
+		return
+	var completion_command_type := str(action.event_data.get("deferred_authoritative_completion_command", "")).strip_edges()
+	_complete_deferred_authoritative_action(action, completion_command_type)
 
 func _remove_resolved_action(action: CardAction) -> void:
 	if action == null or game_manager == null:
@@ -4075,6 +4115,8 @@ func _process_command_impl(command: Dictionary) -> bool:
 				move_failed.emit("return_to_hand_choice: failed to resolve")
 				return false
 			move_validated.emit(command)
+			if _uses_authoritative_headless_priority_flow():
+				_continue_pending_authoritative_graveyard_prompt_action()
 			return true
 		"doorway_choice":
 			var structure_uid := str(command.get("structure_uid", "")).strip_edges()
@@ -4094,6 +4136,8 @@ func _process_command_impl(command: Dictionary) -> bool:
 				move_failed.emit("doorway_choice: failed to resolve")
 				return false
 			move_validated.emit(command)
+			if _uses_authoritative_headless_priority_flow():
+				_continue_pending_authoritative_graveyard_prompt_action()
 			return true
 		"play_hex_response":
 			var phr_hex_uid: String = command.get("hex_uid", "")

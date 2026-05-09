@@ -69,13 +69,16 @@ func resolve(game_manager: GameManager, _target = null) -> void:
 	print("Maximum strength found: " + str(max_strength))
 	
 	var doomed_creatures := get_strongest_creatures(game_manager)
-
-	var destroyed_count: int = 0
 	for creature: Card in doomed_creatures:
 		print("Destroying " + creature.card_name + " (STR: " + str(max_strength) + ")")
-		if game_manager.request_send_to_graveyard(creature, Callable(), false, true):
-			destroyed_count += 1
-	print("Fall of the Mighty destroyed " + str(destroyed_count) + " mighty creature(s)!")
+	var on_destroy_complete := func(destroyed_count) -> void:
+		print("Fall of the Mighty destroyed " + str(destroyed_count) + " mighty creature(s)!")
+	game_manager.request_send_cards_to_graveyard(
+		doomed_creatures,
+		on_destroy_complete,
+		false,
+		true
+	)
 
 func would_destroy_creature_of_player(game_manager: GameManager, protected_player: Player, _chosen_target = null) -> bool:
 	if game_manager == null or protected_player == null:
