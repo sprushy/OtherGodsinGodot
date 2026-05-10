@@ -20,7 +20,7 @@ func start_game(
 	server_match_session = null
 ) -> void:
 	await super.start_game(is_host, is_client, server_ip, server_port, match_info, server_match_session)
-	load_clean_start_scenario()
+	load_badge_test_scenario()
 
 func update_ui() -> void:
 	_sync_test_priority_control()
@@ -221,7 +221,66 @@ func _reset_test_match_state() -> void:
 		match_manager.reset_runtime_state()
 
 func _setup_test_board() -> void:
-	load_clean_start_scenario()
+	load_badge_test_scenario()
+
+func load_badge_test_scenario() -> void:
+	_reset_test_match_state()
+	_add_test_god(player1, Odin.new())
+	_add_test_god(player2, Thor.new())
+
+	var badge_attacker: Card = HariiWarrior.new()
+	_place_test_board_card(player1, player1.frontline_zones[2], badge_attacker, Card.CreatureMode.AGGRESSIVE)
+	_place_test_board_card(player1, player1.reserve_zones[2], BrownBear.new(), Card.CreatureMode.DEFENSIVE)
+
+	# Enemy targets cover each target badge type while keeping the board easy to scan.
+	_place_test_board_card(player2, player2.frontline_zones[0], BrownBear.new(), Card.CreatureMode.AGGRESSIVE)
+	_place_test_board_card(player2, player2.frontline_zones[1], MinotaurFootsoldier.new(), Card.CreatureMode.DEFENSIVE)
+	_place_test_board_permanent(player2, player2.frontline_zones[2], BeardedAxe.new())
+	_place_test_board_permanent(player2, player2.frontline_zones[3], WardingStone.new())
+	_place_test_board_permanent(player2, player2.reserve_zones[2], RunicShortsword.new())
+
+	_add_test_hand_card(player1, HeroicStand.new())
+	_add_test_hand_card(player1, FallOfTheMighty.new())
+	_add_test_hand_card(player1, Berserker.new())
+	_add_test_deck_card(player1, BrownBear.new())
+	_add_test_deck_card(player1, MinotaurFootsoldier.new())
+
+	_add_test_hand_card(player2, DivineLightning.new())
+	_add_test_hand_card(player2, HeroicStand.new())
+	_add_test_deck_card(player2, BrownBear.new())
+	_add_test_deck_card(player2, Berserker.new())
+
+	player1.spend_mana(player1.mana)
+	player1.gain_mana(12)
+	player2.spend_mana(player2.mana)
+	player2.gain_mana(12)
+	player1.followers = 100
+	player2.followers = 100
+	player1.followers_changed.emit(player1.followers)
+	player2.followers_changed.emit(player2.followers)
+	player1.has_summoned_this_turn = false
+	player2.has_summoned_this_turn = false
+
+	game_manager.current_player = player1
+	game_manager.other_player = player2
+	game_manager.feedback_viewer = player1
+	player1.is_turn_player = true
+	player2.is_turn_player = false
+	selected_card = null
+	selected_interceptor = null
+	_test_turn_owner = player1
+	_test_turn_opponent = player2
+	game_manager.turn_number = 1
+	game_manager.start_turn()
+	_open_upkeep_choice_window()
+	selected_attacker = badge_attacker
+	action_label.text = (
+		"Badge Test Scenario. Harii Warrior starts selected on turn 2 so target badges render immediately. "
+		+ "Choose Mana first to make the actions live, then reselect Harii Warrior if the selection is cleared. "
+		+ "Brown Bear should show the aggressive target badge, Minotaur Footsoldier and Warding Stone should show the break target badge, and Bearded Axe should show the break badge plus the steal glove centered together. "
+		+ "Runic Shortsword in reserve gives a second legal enemy equipment steal target for checking the paired badge spacing on a lower row."
+	)
+	update_ui()
 
 func load_clean_start_scenario() -> void:
 	_reset_test_match_state()

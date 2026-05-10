@@ -921,6 +921,8 @@ func remove_effects_from_player(player: Player) -> void:
 		_emit_visual_state_changed()
 
 func apply_sleep(source_card: Card) -> void:
+	if card_type == CardType.CREATURE and current_zone != null and current_zone.is_board_zone():
+		creature_mode = CreatureMode.DEFENSIVE
 	remove_status_effects_by_name("sleep")
 	add_status_effect("sleep", source_card.card_name if source_card != null else "Sleep", source_card, source_card.card_owner if source_card != null else null)
 
@@ -1214,6 +1216,9 @@ func can_receive_equipment() -> bool:
 		and not is_face_down \
 		and not is_stealth
 
+func on_equip(_creature: Card) -> void:
+	pass
+
 func can_equip_to(creature: Card) -> bool:
 	return creature != null and creature.can_receive_equipment()
 
@@ -1236,6 +1241,10 @@ func equip_to(creature: Card) -> bool:
 	
 	equipped_on = creature
 	creature.equipment.append(self)
+	on_equip(creature)
+	if creature.has_method("on_equip"):
+		creature.on_equip(self)
+	_emit_visual_state_changed()
 	creature._emit_visual_state_changed()
 	return true
 
@@ -1244,6 +1253,7 @@ func unequip() -> void:
 		var previous_bearer := equipped_on
 		equipped_on.equipment.erase(self)
 		equipped_on = null
+		_emit_visual_state_changed()
 		previous_bearer._emit_visual_state_changed()
 
 # Incorporeal keyword — shared engagement logic.

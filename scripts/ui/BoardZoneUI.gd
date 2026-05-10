@@ -8,6 +8,13 @@ const CHAMPIONS_CALL_BADGE_TEXTURE := preload("res://images/Champion's Call Horn
 const SMOKING_MIRROR_BADGE_TEXTURE := preload("res://images/Smoking Mirror Icon.png")
 const TEZ_SACRIFICE_BADGE_TEXTURE := preload("res://images/TezSacBadge.png")
 const TEZ_BLOODSTREAK_TEXTURE := preload("res://images/Bloodstreak.png")
+const AGGRESSIVE_ATTACK_TARGET_TEXTURE := preload("res://images/ui/attack_targets/AggressiveAttackTarget.png")
+const RES_ATTACK_TARGET_TEXTURE := preload("res://images/ui/attack_targets/ResAttackTarget.png")
+const DESTROY_ATTACK_TARGET_TEXTURE := preload("res://images/ui/attack_targets/BrokenSword.png")
+const STEAL_ATTACK_TARGET_TEXTURE := preload("res://images/ui/attack_targets/StealGlove.png")
+const FOLLOWERS_ATTACK_TARGET_TEXTURE := preload("res://images/ui/attack_targets/FollowerAttack.png")
+const MOVE_STRAIGHT_INDICATOR_TEXTURE := preload("res://images/ui/move_arrows/ArrowIndicator.png")
+const MOVE_DIAGONAL_INDICATOR_TEXTURE := preload("res://images/ui/move_arrows/AngleArrow.png")
 const BOARD_ZONE_SLAB_TEXTURE_PATHS := [
 	"res://images/board/stone_zone_slab.png",
 	"res://images/board/slot_tile_1.png",
@@ -339,6 +346,7 @@ class TargetAura extends Control:
 
 signal zone_clicked(zone: Zone)
 signal card_clicked(card: Card)
+signal equipment_target_action_clicked(card: Card, action: String)
 signal champions_call_clicked(card: GodCard)
 signal tez_necoc_yaotl_badge_clicked(card: Card)
 signal creature_drag_started(card: Card, from_zone: Zone)
@@ -356,6 +364,10 @@ var _preview_card: Card = null
 var _hovered: bool = false
 var _pinned: bool = false
 var _hide_pending: bool = false
+var _move_indicator_active: bool = false
+var _move_indicator_direction: Vector2 = Vector2.ZERO
+var _move_indicator_source_center: Vector2 = Vector2.ZERO
+var _move_indicator_target_center: Vector2 = Vector2.ZERO
 var _defense_overlay: Control = null
 var _raised_overlay: Control = null  # non-null for DEF or stealth - floats above the zone row
 var _visual_state_card: Card = null
@@ -370,7 +382,11 @@ const EQUIPMENT_AFFORDANCE_GAP := 4.0
 const EQUIPMENT_AFFORDANCE_TOP := 28.0
 const DEBUFF_AFFORDANCE_GAP := 4.0
 const DEBUFF_BADGE_SIZE := 22.0
+const ATTACK_TARGET_ICON_SIZE := 74.0
+const TARGET_ICON_PAD := 5.0
+const TARGET_ICON_GROUP_GAP := 8.0
 const FOLLOWERS_ATTACK_RESULT_SECONDS := 0.66
+const MOVE_INDICATOR_WIDTH := 104.0
 const POWER_LOCK_TEXTURE := preload("res://images/Default Power Lock.png")
 const ANCIENT_POWER_LOCK_TEXTURE := preload("res://images/Ancient Power Lock.png")
 const NORSE_POWER_LOCK_TEXTURE := preload("res://images/Norse Power Lock.png")
@@ -575,7 +591,7 @@ func _add_speed_badge(overlay: Control, card: Card) -> void:
 	label.text = "SPD:%d" % eff_spd
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	label.add_theme_font_size_override("font_size", 12)
+	label.add_theme_font_size_override("font_size", 14)
 	label.add_theme_color_override("font_color", Color(0.92, 0.97, 1.0))
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	if eff_spd > card.speed:
@@ -1251,7 +1267,7 @@ func _show_badge_hover_popup(anchor: Control, text: String) -> void:
 	label.text = text
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	label.add_theme_font_size_override("font_size", 12)
+	label.add_theme_font_size_override("font_size", 14)
 	label.add_theme_color_override("font_color", Color(1.0, 0.95, 0.75))
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	popup.add_child(label)
@@ -1398,12 +1414,12 @@ func _add_stack_target_indicator(overlay: Control) -> void:
 
 	var marker := StackTargetIndicator.new()
 	marker.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	marker.z_index = 4
-	marker.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	marker.offset_left = -28
-	marker.offset_top = 6
-	marker.offset_right = -6
-	marker.offset_bottom = 28
+	marker.z_index = 32
+	marker.set_anchors_preset(Control.PRESET_CENTER)
+	marker.offset_left = -11
+	marker.offset_top = -11
+	marker.offset_right = 11
+	marker.offset_bottom = 11
 	overlay.add_child(marker)
 
 func _add_target_aura(overlay: Control) -> void:
@@ -1414,6 +1430,204 @@ func _add_target_aura(overlay: Control) -> void:
 	aura.z_index = 3
 	aura.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	overlay.add_child(aura)
+
+func _uses_res_attack_target_icon(card: Card) -> bool:
+	if card == null:
+		return false
+	if card.card_type == Card.CardType.STRUCTURE:
+		return true
+	if card.card_type == Card.CardType.EQUIPMENT:
+		return true
+	if card.card_type == Card.CardType.CREATURE:
+		return card.creature_mode == Card.CreatureMode.DEFENSIVE or card.is_petrified()
+	return false
+
+func _get_attack_target_texture(card: Card) -> Texture2D:
+	if card == null:
+		return null
+	if card.card_type == Card.CardType.EQUIPMENT:
+		return DESTROY_ATTACK_TARGET_TEXTURE
+	return RES_ATTACK_TARGET_TEXTURE if _uses_res_attack_target_icon(card) else AGGRESSIVE_ATTACK_TARGET_TEXTURE
+
+func _get_attack_target_hover_text(card: Card) -> String:
+	if card == null:
+		return ""
+	if card.card_type == Card.CardType.EQUIPMENT:
+		return "Destroy"
+	return "Attack"
+
+func _get_card_target_icon_entries(card: Card) -> Array[Dictionary]:
+	var entries: Array[Dictionary] = []
+	if _is_card_attack_candidate(card):
+		var texture := _get_attack_target_texture(card)
+		if texture != null:
+			entries.append({
+				"texture": texture,
+				"border_color": Color(1.0, 0.32, 0.18, 0.92),
+				"hover_text": _get_attack_target_hover_text(card),
+				"action": "",
+			})
+	var equipment_action_entry := _get_equipment_target_action_icon_entry(card)
+	if not equipment_action_entry.is_empty():
+		entries.append(equipment_action_entry)
+	return entries
+
+func _add_attack_target_icon(overlay: Control, card: Card) -> void:
+	if overlay == null:
+		return
+	var entries := _get_card_target_icon_entries(card)
+	if entries.is_empty():
+		return
+	_add_centered_target_icon_group(overlay, entries, card)
+
+func _get_equipment_target_action_icon_entry(card: Card) -> Dictionary:
+	if card == null or card.card_type != Card.CardType.EQUIPMENT or card.equipped_on != null:
+		return {}
+	if game_manager == null:
+		return {}
+	var scene_root := _get_targeting_scene_root()
+	if scene_root == null:
+		return {}
+	var actor := _get_selected_attacker(scene_root)
+	if actor == null or actor == card:
+		return {}
+	var equipment_entry := _get_reachable_equipment_entry(scene_root, actor, card)
+	if equipment_entry.is_empty():
+		return {}
+	var is_enemy := bool(equipment_entry.get("is_enemy", false))
+	return {
+		"texture": STEAL_ATTACK_TARGET_TEXTURE,
+		"border_color": Color(1.0, 0.74, 0.34, 0.95) if is_enemy else Color(0.44, 0.96, 0.58, 0.95),
+		"hover_text": "Steal" if is_enemy else "Pick Up",
+		"action": "steal" if is_enemy else "pick_up",
+	}
+
+func _add_followers_attack_target_icon(overlay: Control) -> void:
+	if overlay == null or FOLLOWERS_ATTACK_TARGET_TEXTURE == null:
+		return
+	var entries: Array[Dictionary] = [{
+		"texture": FOLLOWERS_ATTACK_TARGET_TEXTURE,
+		"border_color": Color(1.0, 0.32, 0.18, 0.92),
+		"hover_text": "Attack",
+		"action": "",
+	}]
+	_add_centered_target_icon_group(overlay, entries, null)
+
+func _has_card_target_icon_candidate(card: Card) -> bool:
+	return not _get_card_target_icon_entries(card).is_empty()
+
+func _is_card_equipment_action_candidate(card: Card) -> bool:
+	return not _get_equipment_target_action_icon_entry(card).is_empty()
+
+func _get_reachable_equipment_entry(scene_root: Node, actor: Card, equipment: Card) -> Dictionary:
+	if scene_root == null or actor == null or equipment == null or not scene_root.has_method("_get_reachable_equipment"):
+		return {}
+	var entries = scene_root.call("_get_reachable_equipment", actor)
+	if not (entries is Array):
+		return {}
+	for entry in entries:
+		if not (entry is Dictionary):
+			continue
+		var dict: Dictionary = entry
+		if dict.get("equipment", null) != equipment:
+			continue
+		if not bool(dict.get("allow_pick_up", true)):
+			return {}
+		if scene_root.has_method("_can_pick_up_equipment_entry"):
+			var is_enemy := bool(dict.get("is_enemy", false))
+			if not bool(scene_root.call("_can_pick_up_equipment_entry", actor, is_enemy)):
+				return {}
+		return dict
+	return {}
+
+func _should_show_steal_target_icon(card: Card) -> bool:
+	var entry := _get_equipment_target_action_icon_entry(card)
+	return not entry.is_empty() and str(entry.get("hover_text", "")) == "Steal"
+
+func _has_steal_action_entry(scene_root: Node, actor: Card, equipment: Card) -> bool:
+	var entry := _get_reachable_equipment_entry(scene_root, actor, equipment)
+	return not entry.is_empty() and bool(entry.get("is_enemy", false))
+
+func _add_centered_target_icon_group(overlay: Control, entries: Array[Dictionary], card: Card = null) -> void:
+	if overlay == null or entries.is_empty():
+		return
+	var icon_size := minf(ATTACK_TARGET_ICON_SIZE, maxf(56.0, minf(size.x, size.y) * 0.48))
+	var badge_size := icon_size + TARGET_ICON_PAD * 2.0
+	var group_width := badge_size * entries.size() + TARGET_ICON_GROUP_GAP * maxi(0, entries.size() - 1)
+
+	var group := Control.new()
+	group.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	group.z_index = 32
+	group.set_anchors_preset(Control.PRESET_CENTER)
+	group.offset_left = -group_width * 0.5
+	group.offset_top = -badge_size * 0.5
+	group.offset_right = group_width * 0.5
+	group.offset_bottom = badge_size * 0.5
+	overlay.add_child(group)
+
+	var left := 0.0
+	for entry in entries:
+		var entry_texture := entry.get("texture", null) as Texture2D
+		if entry_texture == null:
+			continue
+		var border_color: Color = entry.get("border_color", Color(1.0, 0.85, 0.4, 0.92))
+		var hover_text := str(entry.get("hover_text", ""))
+		var action := str(entry.get("action", ""))
+		var badge := _make_target_icon_badge(
+			entry_texture,
+			border_color,
+			icon_size,
+			badge_size,
+			hover_text,
+			action,
+			card
+		)
+		badge.set_anchors_preset(Control.PRESET_TOP_LEFT)
+		badge.offset_left = left
+		badge.offset_top = 0.0
+		badge.offset_right = left + badge_size
+		badge.offset_bottom = badge_size
+		group.add_child(badge)
+		left += badge_size + TARGET_ICON_GROUP_GAP
+
+func _make_target_icon_badge(texture: Texture2D, border_color: Color, icon_size: float, badge_size: float, hover_text: String = "", action: String = "", target_card: Card = null) -> PanelContainer:
+	var badge := PanelContainer.new()
+	badge.mouse_filter = Control.MOUSE_FILTER_STOP if action.strip_edges() != "" else (Control.MOUSE_FILTER_PASS if hover_text.strip_edges() != "" else Control.MOUSE_FILTER_IGNORE)
+	badge.custom_minimum_size = Vector2(badge_size, badge_size)
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.02, 0.025, 0.03, 0.66)
+	style.border_color = border_color
+	style.corner_radius_top_left = 8
+	style.corner_radius_top_right = 8
+	style.corner_radius_bottom_left = 8
+	style.corner_radius_bottom_right = 8
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		style.set_border_width(side, 2)
+	badge.add_theme_stylebox_override("panel", style)
+
+	var icon := TextureRect.new()
+	icon.texture = texture
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	icon.modulate = Color(1.0, 1.0, 1.0, 0.96)
+	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	icon.offset_left = TARGET_ICON_PAD
+	icon.offset_top = TARGET_ICON_PAD
+	icon.offset_right = -TARGET_ICON_PAD
+	icon.offset_bottom = -TARGET_ICON_PAD
+	icon.custom_minimum_size = Vector2(icon_size, icon_size)
+	badge.add_child(icon)
+	if hover_text.strip_edges() != "":
+		_connect_badge_hover(badge, hover_text)
+	if action.strip_edges() != "" and target_card != null:
+		badge.gui_input.connect(func(event: InputEvent) -> void:
+			if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+				equipment_target_action_clicked.emit(target_card, action)
+				accept_event()
+		)
+
+	return badge
 
 func _add_equipment_indicator_badge(
 	overlay: Control,
@@ -2208,6 +2422,13 @@ func _is_card_pending_attack_target(card: Card) -> bool:
 	var pending_target = _get_pending_attack_target(scene_root)
 	return pending_target is Card and pending_target == card
 
+func _is_attack_target_card_type(card: Card) -> bool:
+	if card == null:
+		return false
+	if card.card_type == Card.CardType.CREATURE or card.card_type == Card.CardType.STRUCTURE:
+		return true
+	return card.card_type == Card.CardType.EQUIPMENT and card.equipped_on == null
+
 func _is_card_attack_candidate(card: Card) -> bool:
 	if card == null or game_manager == null:
 		return false
@@ -2219,7 +2440,9 @@ func _is_card_attack_candidate(card: Card) -> bool:
 	var attacker := _get_selected_attacker(scene_root)
 	if attacker == null or attacker == card or card.get_controller() == attacker.get_controller():
 		return false
-	return (card.card_type == Card.CardType.CREATURE or card.card_type == Card.CardType.STRUCTURE) \
+	if card.current_zone == null or not card.current_zone.is_board_zone():
+		return false
+	return _is_attack_target_card_type(card) \
 		and game_manager.can_cards_engage_each_other(attacker, card)
 
 func _can_selected_attacker_hit_followers(scene_root: Node) -> bool:
@@ -2577,7 +2800,76 @@ func _refresh_mouse_cursor_shape(card: Card = null) -> void:
 	if card != null and card.card_type == Card.CardType.POWER and card.is_face_down:
 		mouse_default_cursor_shape = LockedPowerCursor.get_control_cursor_shape(Control.CURSOR_ARROW)
 		return
+	if card != null and (_has_card_target_icon_candidate(card) or _is_god_attack_candidate(card)):
+		mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+		return
 	mouse_default_cursor_shape = Control.CURSOR_ARROW
+
+func set_move_indicator_path(source_center: Vector2, target_center: Vector2) -> void:
+	var direction := target_center - source_center
+	if direction == Vector2.ZERO:
+		clear_move_indicator()
+		return
+	if _move_indicator_active \
+			and _move_indicator_source_center.is_equal_approx(source_center) \
+			and _move_indicator_target_center.is_equal_approx(target_center):
+		return
+	_move_indicator_active = true
+	_move_indicator_direction = direction.normalized()
+	_move_indicator_source_center = source_center
+	_move_indicator_target_center = target_center
+	_refresh_display()
+
+func clear_move_indicator() -> void:
+	if not _move_indicator_active and _move_indicator_direction == Vector2.ZERO:
+		return
+	_move_indicator_active = false
+	_move_indicator_direction = Vector2.ZERO
+	_move_indicator_source_center = Vector2.ZERO
+	_move_indicator_target_center = Vector2.ZERO
+	_refresh_display()
+
+func _add_move_indicator_overlay() -> void:
+	if not _move_indicator_active or _move_indicator_direction == Vector2.ZERO:
+		return
+	if zone == null or not zone.cards.is_empty():
+		return
+
+	var path_length := _move_indicator_source_center.distance_to(_move_indicator_target_center)
+	if path_length <= 0.0:
+		return
+	var path_midpoint := (_move_indicator_source_center + _move_indicator_target_center) * 0.5
+	var local_midpoint := path_midpoint - global_position
+	var is_straight := absf(_move_indicator_direction.x) <= 0.01 or absf(_move_indicator_direction.y) <= 0.01
+	var indicator_size := Vector2.ZERO
+	var base_direction := Vector2.UP
+	if is_straight:
+		var indicator_width := minf(MOVE_INDICATOR_WIDTH, maxf(64.0, path_length * 0.62))
+		indicator_size = Vector2(indicator_width, path_length)
+	else:
+		var diagonal_side := path_length / sqrt(2.0)
+		indicator_size = Vector2(diagonal_side, diagonal_side)
+		base_direction = Vector2(1.0, -1.0).normalized()
+
+	var path_overlay := Control.new()
+	path_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	path_overlay.clip_contents = false
+	path_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	add_child(path_overlay)
+
+	var indicator := TextureRect.new()
+	indicator.texture = MOVE_STRAIGHT_INDICATOR_TEXTURE if is_straight else MOVE_DIAGONAL_INDICATOR_TEXTURE
+	if indicator.texture == null:
+		return
+	indicator.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	indicator.stretch_mode = TextureRect.STRETCH_SCALE
+	indicator.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	indicator.position = local_midpoint - indicator_size * 0.5
+	indicator.size = indicator_size
+	indicator.pivot_offset = indicator_size * 0.5
+	indicator.rotation = base_direction.angle_to(_move_indicator_direction)
+	indicator.modulate = Color(1.0, 1.0, 1.0, 0.98)
+	path_overlay.add_child(indicator)
 
 func setup(p_zone: Zone, p_gm: GameManager, p_player: Player, idx: int,
 		drop_cb: Callable, is_enemy: bool = false, row_label: String = "") -> void:
@@ -2713,9 +3005,15 @@ func _refresh_display() -> void:
 				_add_prepared_magical_mana_badge(fd_overlay, card)
 			if _is_card_attacking_on_stack(card) or _is_card_intercepting_on_stack(card) or _is_card_selected_attacker(card) or _is_card_selected_interceptor(card):
 				_add_attack_aura(fd_overlay)
-			if _is_card_targeted_on_stack(card) or _is_card_pending_target(card) or _is_card_pending_attack_target(card) or _is_card_attack_candidate(card):
-				_add_target_aura(fd_overlay)
-				_add_stack_target_indicator(fd_overlay)
+			var is_face_down_attack_candidate := _is_card_attack_candidate(card)
+			var is_face_down_target_icon_candidate := _has_card_target_icon_candidate(card)
+			if _is_card_targeted_on_stack(card) or _is_card_pending_target(card) or _is_card_pending_attack_target(card) or is_face_down_target_icon_candidate:
+				if is_face_down_attack_candidate or _is_card_targeted_on_stack(card) or _is_card_pending_target(card) or _is_card_pending_attack_target(card):
+					_add_target_aura(fd_overlay)
+				if is_face_down_target_icon_candidate:
+					_add_attack_target_icon(fd_overlay, card)
+				else:
+					_add_stack_target_indicator(fd_overlay)
 			var _fd_is_def := card.card_type == Card.CardType.CREATURE and (
 				card.creature_mode == Card.CreatureMode.DEFENSIVE
 				or card.is_stealth
@@ -2739,7 +3037,7 @@ func _refresh_display() -> void:
 			var show_god_playing_aura := _should_show_playing_aura(card)
 			var show_god_priority_aura := _is_card_usable_for_priority(card)
 			var show_god_target_aura := _is_card_targeted_on_stack(card) or _is_card_pending_target(card) or _is_card_pending_attack_target(card) or _is_card_attack_candidate(card)
-			var show_god_followers_tint := _is_god_targeted_by_followers_attack(card) or _is_god_pending_followers_attack(card) or _is_god_attack_candidate(card)
+			var show_god_followers_target_icon := _is_god_targeted_by_followers_attack(card) or _is_god_pending_followers_attack(card) or _is_god_attack_candidate(card)
 
 			style.bg_color     = Color(0.35, 0.28, 0.04, 0.9)
 			style.border_color = Color(0.9, 0.75, 0.2)
@@ -2760,7 +3058,7 @@ func _refresh_display() -> void:
 				or show_god_playing_aura
 				or show_god_priority_aura
 				or show_god_target_aura
-				or show_god_followers_tint
+				or show_god_followers_target_icon
 				or glow_champions_call_badge
 			) else BASE_BOARD_Z_INDEX
 			var tex: Texture2D = load(card.art_path)
@@ -2789,8 +3087,8 @@ func _refresh_display() -> void:
 				art.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 				art.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				god_overlay.add_child(art)
-				if show_god_followers_tint:
-					_add_followers_attack_target_tint(god_overlay)
+				if show_god_followers_target_icon:
+					_add_followers_attack_target_icon(god_overlay)
 
 				# VBoxContainer fills overlay via anchors; spacer pushes label to correct edge
 				var name_vbox := VBoxContainer.new()
@@ -2934,9 +3232,15 @@ func _refresh_display() -> void:
 			_add_playing_aura(card_overlay)
 		if _is_card_usable_for_priority(card):
 			_add_priority_response_aura(card_overlay)
-		if _is_card_targeted_on_stack(card) or _is_card_pending_target(card) or _is_card_pending_attack_target(card) or _is_card_attack_candidate(card):
-			_add_target_aura(card_overlay)
-			_add_stack_target_indicator(card_overlay)
+		var is_attack_candidate := _is_card_attack_candidate(card)
+		var is_target_icon_candidate := _has_card_target_icon_candidate(card)
+		if _is_card_targeted_on_stack(card) or _is_card_pending_target(card) or _is_card_pending_attack_target(card) or is_target_icon_candidate:
+			if is_attack_candidate or _is_card_targeted_on_stack(card) or _is_card_pending_target(card) or _is_card_pending_attack_target(card):
+				_add_target_aura(card_overlay)
+			if is_target_icon_candidate:
+				_add_attack_target_icon(card_overlay, card)
+			else:
+				_add_stack_target_indicator(card_overlay)
 		if _is_card_intercepting_followers_attack(card) or _is_card_pending_intercepting_followers_attack(card):
 			_add_followers_attack_target_tint(card_overlay)
 
@@ -3107,6 +3411,8 @@ func _refresh_display() -> void:
 	else:
 		z_index = BASE_BOARD_Z_INDEX
 		_add_empty_zone_slab()
+
+	_add_move_indicator_overlay()
 
 func _is_draggable_creature() -> bool:
 	if zone.cards.size() == 0:

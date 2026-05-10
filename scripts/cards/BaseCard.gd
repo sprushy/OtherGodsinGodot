@@ -19,7 +19,7 @@ func _generate_uid() -> String:
 const KEYWORD_HINTS = {
 	"Void": "Send this card to the Abyss - removed from the game.",
 	"Immortal": "This card cannot be destroyed.",
-	"Sleep": "This creature cannot take any actions while asleep.",
+	"Sleep": "This creature cannot take any actions while asleep and is put into defensive stance.",
 	"Mute": "A muted power cannot be unlocked or activated until the mute expires.",
 	"Shelve": "Send this card to the bottom of its owner's deck.",
 	"Convert": "Move followers from the opponent to you - they switch sides.",

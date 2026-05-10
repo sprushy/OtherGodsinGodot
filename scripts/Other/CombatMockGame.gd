@@ -394,6 +394,8 @@ var _bdrag_ghost: Control = null
 
 # Right-click context menu state
 var _pending_move_card: Card = null
+var _indicated_move_card: Card = null
+var _move_indicator_path_overlays: Array[Control] = []
 var _pending_equip_actor: Card = null
 var _pending_equip_target: Card = null
 var _pending_equip_action: String = ""  # "steal" or "destroy"
@@ -404,6 +406,12 @@ var _visible_intercept_prompt_signature: Dictionary = {}
 var _ui_refresh_queued: bool = false
 var _local_ui_refresh_pending: bool = false
 var _power_hover_popup: Control = null
+const MOVE_ARROW_STRAIGHT_START_FRACTION := 0.41
+const MOVE_ARROW_DIAGONAL_START_FRACTION := 0.34
+const MOVE_ARROW_STRAIGHT_TARGET_OVERSHOOT_FRACTION := 0.08
+const MOVE_ARROW_DIAGONAL_TARGET_OVERSHOOT_FRACTION := 0.14
+const MOVE_ARROW_STRAIGHT_MIN_WIDTH := 154.0
+const MOVE_ARROW_STRAIGHT_MAX_WIDTH := 212.0
 var _game_finished: bool = false
 var _game_result_presented: bool = false
 var _pending_forfeit_return_to_menu: bool = false
@@ -3258,6 +3266,7 @@ func _prepare_for_match_launch(status_message: String = "Connecting to match..."
 	selected_card = null
 	_pending_drop_zone = null
 	_pending_move_card = null
+	_indicated_move_card = null
 	_pending_equip_actor = null
 	_pending_equip_target = null
 	_pending_equip_action = ""
@@ -3527,6 +3536,7 @@ func _do_update_ui() -> void:
 	draw_hand()
 	draw_board()
 	draw_enemy_board()
+	_refresh_move_indicators()
 	draw_enemy_hand_overlay()
 	_refresh_visible_stat_panels()
 	_refresh_zone_info_icons()
@@ -3539,8 +3549,12 @@ func _is_live_board_card(card: Card) -> bool:
 func _sanitize_transient_card_references() -> void:
 	if selected_card != null and selected_card.current_zone == null:
 		selected_card = null
+	if selected_card != null:
+		_indicated_move_card = null
 	if _pending_move_card != null and _pending_move_card.current_zone == null:
 		_pending_move_card = null
+	if _indicated_move_card != null and not _can_show_move_indicators_for_card(_indicated_move_card):
+		_indicated_move_card = null
 	if _pending_equip_actor != null and not _is_live_board_card(_pending_equip_actor):
 		_pending_equip_actor = null
 	if _pending_equip_target != null and not _is_live_board_card(_pending_equip_target):
@@ -9061,6 +9075,7 @@ func draw_board() -> void:
 		zu.setup(zone, game_manager, display_player, i, _on_card_dropped_to_zone, false, "front line")
 		zu.zone_clicked.connect(_on_empty_zone_pressed)
 		zu.card_clicked.connect(_on_board_card_pressed)
+		zu.equipment_target_action_clicked.connect(_on_equipment_target_action_clicked)
 		zu.creature_drag_started.connect(_on_creature_drag_started)
 		zu.creature_right_clicked.connect(_on_creature_right_clicked)
 		_board_zone_uis.append(zu)
@@ -9088,6 +9103,7 @@ func draw_board() -> void:
 		zu.setup(zone, game_manager, display_player, i, _on_card_dropped_to_zone, false, "reserve line")
 		zu.zone_clicked.connect(_on_empty_zone_pressed)
 		zu.card_clicked.connect(_on_board_card_pressed)
+		zu.equipment_target_action_clicked.connect(_on_equipment_target_action_clicked)
 		zu.creature_drag_started.connect(_on_creature_drag_started)
 		zu.creature_right_clicked.connect(_on_creature_right_clicked)
 		_board_zone_uis.append(zu)
@@ -9135,6 +9151,7 @@ func draw_enemy_board() -> void:
 		enemy_reserve_row.add_child(zu)
 		zu.setup(zone, game_manager, enemy_player, i, _on_card_dropped_to_zone, true, "reserve line")
 		zu.card_clicked.connect(_on_enemy_card_pressed)
+		zu.equipment_target_action_clicked.connect(_on_equipment_target_action_clicked)
 		_enemy_zone_uis.append(zu)
 
 	enemy_reserve_row.add_child(_make_zone_info_icon("Abyss", "AB", enemy_player.abyss_zone, Color(0.6, 0.1, 0.6)))
@@ -9159,6 +9176,7 @@ func draw_enemy_board() -> void:
 		enemy_row.add_child(zu)
 		zu.setup(zone, game_manager, enemy_player, i, _on_card_dropped_to_zone, true, "front line")
 		zu.card_clicked.connect(_on_enemy_card_pressed)
+		zu.equipment_target_action_clicked.connect(_on_equipment_target_action_clicked)
 		_enemy_zone_uis.append(zu)
 
 	enemy_row.add_child(_make_zone_info_icon("Grave", "GY", enemy_player.graveyard_zone, Color(0.3, 0.5, 0.3)))
@@ -9242,6 +9260,7 @@ func _try_auto_resolve_hand_card_to_zone(
 	if card == null or zone == null:
 		return false
 	_pending_move_card = null
+	_indicated_move_card = null
 	_pending_drop_zone = null
 	_select_hand_card(card)
 	placement_mode = new_placement_mode
@@ -9395,6 +9414,7 @@ func _on_hand_card_pressed(card: Card) -> void:
 	if _is_turn_choice_pending():
 		_reject_pre_turn_action()
 		return
+	_indicated_move_card = null
 	if _try_activate_graveyard_hand_proxy(card):
 		return
 	if game_manager != null and game_manager.current_player != null and card.current_zone != game_manager.current_player.hand_zone:
@@ -9737,6 +9757,19 @@ func _on_empty_zone_pressed(zone: Zone) -> void:
 		_set_action_label_text("Invalid move target ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â must be an adjacent empty zone.")
 		update_ui()
 		return
+	if _indicated_move_card != null and selected_card == null:
+		var move_card := _indicated_move_card
+		if zone.cards.size() == 0 and zone in _get_adjacent_empty_move_zones(move_card):
+			if game_input.submit_action({type = "creature_move", card_uid = move_card.uid,
+					player_index = game_manager.players.find(zone.zone_owner),
+					zone_type = zone.zone_type, zone_index = zone.zone_index}):
+				_indicated_move_card = null
+				_set_action_label_text(move_card.card_name + " moved.")
+				update_ui()
+				return
+		_set_action_label_text("Invalid move target - click one of the indicated adjacent empty zones.")
+		update_ui()
+		return
 	if selected_card == null:
 		_set_action_label_text("Select a card from hand, or choose placement mode for creature first")
 		return
@@ -9923,6 +9956,7 @@ func _on_god_card_pressed(card: Card) -> void:
 	if selected_card is Absence and card.is_god:
 		_cast_targeted_spell(selected_card, card)
 		return
+	_indicated_move_card = null
 	if _try_queue_god_targeted_ability(card):
 		return
 	if not card.is_god:
@@ -13739,6 +13773,7 @@ func _on_board_card_pressed(card: Card) -> void:
 	
 	if match_manager == null:
 		return
+	_indicated_move_card = null
 
 	if awaiting_pyre_target and pyre_source != null:
 		var source_pyre := pyre_source
@@ -13946,6 +13981,7 @@ func _on_board_card_pressed(card: Card) -> void:
 		return
 	
 	if card.card_type != Card.CardType.CREATURE:
+		_indicated_move_card = null
 		_set_action_label_text("That card cannot perform an action.")
 		return
 
@@ -13960,9 +13996,17 @@ func _on_board_card_pressed(card: Card) -> void:
 		})
 	else:
 		match_manager.select_attacker(card)
+
+	var can_show_move_arrows := _can_show_move_indicators_for_card(card)
+	if can_show_move_arrows:
+		_indicated_move_card = card
+	else:
+		_indicated_move_card = null
 	
 	if match_manager.selected_attacker == card:
 		_set_action_label_text("Selected attacker: " + _get_attack_card_label(card, "A creature") + " - Click enemy target or followers")
+	elif can_show_move_arrows:
+		_set_action_label_text(card.card_name + " - click an indicated adjacent empty zone to move.")
 	elif match_manager.selected_attacker == null:
 		_set_action_label_text(card.card_name + " deselected")
 	
@@ -14174,10 +14218,11 @@ func _on_enemy_card_pressed(target_card: Card) -> void:
 		var attack_target = null
 		if target_card.is_god:
 			attack_target = target_card.card_owner
-		elif target_card.card_type == Card.CardType.CREATURE or target_card.card_type == Card.CardType.STRUCTURE:
+		elif _is_direct_attack_target_card(target_card):
 			attack_target = target_card
 		
 		if attack_target != null:
+			_indicated_move_card = null
 			if _should_submit_attack_via_game_input():
 				if not _submit_attack_request(selected_attacker, attack_target):
 					_set_action_label_text("Could not submit that attack.")
@@ -14189,9 +14234,55 @@ func _on_enemy_card_pressed(target_card: Card) -> void:
 			else:
 				match_manager.request_attack(selected_attacker, attack_target)
 		else:
-			_set_action_label_text("Can only attack creatures or structures")
+			_set_action_label_text("Can only attack creatures, structures, or unequipped equipment")
 	else:
 		_set_action_label_text("Select your creature first to attack")
+
+func _on_equipment_target_action_clicked(target_card: Card, action: String) -> void:
+	if _game_finished or target_card == null or action.strip_edges() == "":
+		return
+	if _reject_priority_locked_action():
+		return
+	if _has_active_modal_prompt():
+		_reject_modal_prompt_action()
+		return
+	if _is_turn_choice_pending():
+		_reject_pre_turn_action()
+		return
+	if selected_attacker == null:
+		_set_action_label_text("Select your creature first.")
+		return
+	if target_card.card_type != Card.CardType.EQUIPMENT:
+		_set_action_label_text("That target is not equipment.")
+		return
+	match action:
+		"pick_up":
+			var ok := _resolve_equipment_action(selected_attacker, target_card, "pick_up")
+			_set_action_label_text(_get_card_name_safe(selected_attacker) + " picks up " + _get_card_name_safe(target_card) if ok else game_manager.get_equipment_action_failure_text(selected_attacker, target_card, "pick_up"))
+			if ok:
+				_indicated_move_card = null
+				selected_attacker = null
+			update_ui()
+		"steal":
+			_pending_equip_actor = selected_attacker
+			_pending_equip_target = target_card
+			_pending_equip_action = "steal"
+			_indicated_move_card = null
+			check_for_possible_intercepts_for_equip_action()
+		"destroy":
+			if target_card.get_controller() == game_manager.current_player:
+				var local_ok := _resolve_equipment_action(selected_attacker, target_card, "destroy")
+				_set_action_label_text(_get_card_name_safe(selected_attacker) + " destroys " + _get_card_name_safe(target_card) if local_ok else game_manager.get_equipment_action_failure_text(selected_attacker, target_card, "destroy"))
+				if local_ok:
+					_indicated_move_card = null
+					selected_attacker = null
+				update_ui()
+				return
+			_pending_equip_actor = selected_attacker
+			_pending_equip_target = target_card
+			_pending_equip_action = "destroy"
+			_indicated_move_card = null
+			check_for_possible_intercepts_for_equip_action()
 
 func _on_all_attack_followers_pressed() -> void:
 	if _game_finished:
@@ -14223,6 +14314,13 @@ func _on_all_attack_followers_pressed() -> void:
 
 func _should_submit_attack_via_game_input() -> bool:
 	return _should_submit_ui_action_command()
+
+func _is_direct_attack_target_card(card: Card) -> bool:
+	if card == null:
+		return false
+	if card.card_type == Card.CardType.CREATURE or card.card_type == Card.CardType.STRUCTURE:
+		return true
+	return card.card_type == Card.CardType.EQUIPMENT and card.equipped_on == null
 
 func _submit_attack_request(attacker: Card, target) -> bool:
 	if not _should_submit_attack_via_game_input() or attacker == null:
@@ -14271,6 +14369,7 @@ func _on_creature_right_clicked(card: Card) -> void:
 		return
 	_close_context_menu()
 	_pending_move_card = null
+	_indicated_move_card = null
 
 	# Build list of legal actions
 	var can_attack  := match_manager.can_attack(card)
@@ -15165,10 +15264,10 @@ func _bdrag_finish(drop_pos: Vector2) -> void:
 		_on_attack_followers_pressed()
 		return
 
-	# Attack creature or structure
+	# Attack creature, structure, or unequipped equipment
 	if target_zu._is_enemy and target_zone.cards.size() > 0:
 		var target_card := target_zone.cards[0]
-		if target_card.card_type == Card.CardType.CREATURE or target_card.card_type == Card.CardType.STRUCTURE:
+		if _is_direct_attack_target_card(target_card):
 			selected_attacker = card
 			var attack_block := _get_attack_block_reason(card)
 			if attack_block != "":
@@ -15358,6 +15457,130 @@ func _can_destroy_equipment_entry(card: Card, is_enemy: bool) -> bool:
 	if card.has_method("can_destroy_equipment_action"):
 		return card.can_destroy_equipment_action(game_manager, is_enemy)
 	return card.can_take_major_creature_action()
+
+func _can_show_move_indicators_for_card(card: Card) -> bool:
+	return (
+		card != null
+		and card.card_type == Card.CardType.CREATURE
+		and not card.is_god
+		and game_manager != null
+		and card.get_controller() == game_manager.current_player
+		and _creature_can_move(card)
+		and not _get_adjacent_empty_move_zones(card).is_empty()
+	)
+
+func _get_adjacent_empty_move_zones(card: Card) -> Array[Zone]:
+	var empty_zones: Array[Zone] = []
+	if card == null or card.current_zone == null:
+		return empty_zones
+	var controller := card.get_controller()
+	if controller == null:
+		return empty_zones
+	for candidate in controller.get_adjacent_zones(card.current_zone):
+		if candidate == null:
+			continue
+		if not candidate.cards.is_empty():
+			continue
+		if candidate.get_equipment().size() > 0:
+			continue
+		empty_zones.append(candidate)
+	return empty_zones
+
+func _get_board_zone_ui_for_zone(zone: Zone) -> BoardZoneUI:
+	if zone == null:
+		return null
+	for zu in _board_zone_uis:
+		if zu != null and is_instance_valid(zu) and zu.zone == zone:
+			return zu
+	return null
+
+func _clear_move_indicator_path_overlays() -> void:
+	for overlay in _move_indicator_path_overlays:
+		if overlay != null and is_instance_valid(overlay):
+			overlay.queue_free()
+	_move_indicator_path_overlays.clear()
+
+func _clear_zone_move_indicators() -> void:
+	for zu in _board_zone_uis:
+		if zu != null and is_instance_valid(zu):
+			zu.clear_move_indicator()
+
+func _add_move_indicator_path_overlay(source_zone_ui: BoardZoneUI, target_zone_ui: BoardZoneUI) -> void:
+	if source_zone_ui == null or target_zone_ui == null:
+		return
+	if not is_instance_valid(source_zone_ui) or not is_instance_valid(target_zone_ui):
+		return
+
+	var source_center := source_zone_ui.get_global_rect().get_center()
+	var target_rect := target_zone_ui.get_global_rect()
+	var target_center := target_rect.get_center()
+	var full_direction := target_center - source_center
+	var full_length := full_direction.length()
+	if full_length <= 0.0:
+		return
+
+	var normalized_direction := full_direction / full_length
+	var is_straight := absf(normalized_direction.x) <= 0.01 or absf(normalized_direction.y) <= 0.01
+	var start_fraction := MOVE_ARROW_STRAIGHT_START_FRACTION if is_straight else MOVE_ARROW_DIAGONAL_START_FRACTION
+	var path_start := source_center + normalized_direction * (full_length * start_fraction)
+	var overshoot_fraction := MOVE_ARROW_STRAIGHT_TARGET_OVERSHOOT_FRACTION if is_straight else MOVE_ARROW_DIAGONAL_TARGET_OVERSHOOT_FRACTION
+	var target_overshoot := minf(target_rect.size.x, target_rect.size.y) * overshoot_fraction
+	var path_end := target_center + normalized_direction * target_overshoot
+	var path_direction := path_end - path_start
+	var path_length := path_direction.length()
+	if path_length <= 0.0:
+		return
+	normalized_direction = path_direction / path_length
+	var indicator_size := Vector2.ZERO
+	var base_direction := Vector2.UP
+	var texture := BoardZoneUI.MOVE_STRAIGHT_INDICATOR_TEXTURE
+	if is_straight:
+		var indicator_width := clampf(
+			path_length * 0.73,
+			MOVE_ARROW_STRAIGHT_MIN_WIDTH,
+			MOVE_ARROW_STRAIGHT_MAX_WIDTH
+		)
+		indicator_size = Vector2(indicator_width, path_length)
+	else:
+		var diagonal_side := path_length / sqrt(2.0) * 1.0
+		indicator_size = Vector2(diagonal_side, diagonal_side)
+		base_direction = Vector2(1.0, -1.0).normalized()
+		texture = BoardZoneUI.MOVE_DIAGONAL_INDICATOR_TEXTURE
+
+	if texture == null:
+		return
+
+	var floating_parent := _get_floating_drag_parent()
+	if floating_parent == null:
+		return
+
+	var indicator := TextureRect.new()
+	indicator.texture = texture
+	indicator.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	indicator.stretch_mode = TextureRect.STRETCH_SCALE
+	indicator.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	indicator.z_as_relative = false
+	indicator.z_index = 1250
+	indicator.size = indicator_size
+	indicator.pivot_offset = indicator_size * 0.5
+	indicator.global_position = (path_start + path_end) * 0.5 - indicator_size * 0.5
+	indicator.rotation = base_direction.angle_to(normalized_direction)
+	indicator.modulate = Color(1.0, 1.0, 1.0, 0.98)
+	floating_parent.add_child(indicator)
+	_move_indicator_path_overlays.append(indicator)
+
+func _refresh_move_indicators() -> void:
+	_clear_move_indicator_path_overlays()
+	_clear_zone_move_indicators()
+	if _can_show_move_indicators_for_card(_indicated_move_card):
+		var source_zone_ui := _get_board_zone_ui_for_zone(_indicated_move_card.current_zone)
+		for target_zone in _get_adjacent_empty_move_zones(_indicated_move_card):
+			_add_move_indicator_path_overlay(
+				source_zone_ui,
+				_get_board_zone_ui_for_zone(target_zone)
+			)
+	else:
+		_indicated_move_card = null
 
 func _creature_can_move(card: Card) -> bool:
 	return (
@@ -20843,6 +21066,7 @@ func _on_end_turn_button_pressed() -> void:
 	_dismiss_transient_prompts()
 	_close_context_menu()
 	_pending_move_card = null
+	_indicated_move_card = null
 	_queued_attackers.clear()
 	selected_card = null
 	selected_attacker = null
@@ -22424,6 +22648,7 @@ func _on_forfeit_button_pressed() -> void:
 	_dismiss_transient_prompts()
 	_close_context_menu()
 	_pending_move_card = null
+	_indicated_move_card = null
 	_pending_equip_actor = null
 	_pending_equip_target = null
 	_pending_equip_action = ""
