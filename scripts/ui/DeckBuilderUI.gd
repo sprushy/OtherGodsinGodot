@@ -31,6 +31,7 @@ const NARROW_DECK_PANEL_WIDTH := 300.0
 const COMPACT_PREVIEW_WIDTH_THRESHOLD := 300.0
 const STACKED_LAYOUT_WIDTH_THRESHOLD := 900.0
 const DESKTOP_LAYOUT_BOTTOM_CLEARANCE := 44.0
+const DECK_SCROLLBAR_CONTENT_CLEARANCE := 32
 const DECK_SCROLL_BUTTON_STEP_MIN := 96.0
 const DECK_SCROLL_BUTTON_STEP_RATIO := 0.72
 const CARD_VIEW_PRESETS := [
@@ -721,10 +722,15 @@ func _build_deck_panel(parent: Control) -> void:
 	_apply_deckbuilder_scrollbar_style(deck_scroll, true)
 	panel.add_child(deck_scroll)
 
+	var deck_scroll_content := MarginContainer.new()
+	deck_scroll_content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	deck_scroll_content.add_theme_constant_override("margin_right", DECK_SCROLLBAR_CONTENT_CLEARANCE)
+	deck_scroll.add_child(deck_scroll_content)
+
 	_deck_list = VBoxContainer.new()
 	_deck_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_deck_list.add_theme_constant_override("separation", 4)
-	deck_scroll.add_child(_deck_list)
+	deck_scroll_content.add_child(_deck_list)
 
 	var deck_scroll_nav := HBoxContainer.new()
 	_deck_scroll_nav_bar = deck_scroll_nav
