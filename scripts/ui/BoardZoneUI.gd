@@ -398,6 +398,7 @@ var _row_label: String = ""
 var _followers_attack_result_text: String = ""
 var _followers_attack_result_sequence: int = 0
 static var _board_zone_slab_textures: Array[Texture2D] = []
+static var _board_zone_slot_texture_indices: Array[int] = []
 
 static func get_base_zone_extent() -> float:
 	return BASE_ZONE_EXTENT
@@ -2720,18 +2721,37 @@ static func _get_board_zone_slab_textures() -> Array[Texture2D]:
 				_board_zone_slab_textures.append(texture)
 	return _board_zone_slab_textures
 
+static func _get_board_zone_slot_texture_indices() -> Array[int]:
+	var slab_textures := _get_board_zone_slab_textures()
+	if slab_textures.is_empty():
+		return []
+	if _board_zone_slot_texture_indices.size() != slab_textures.size():
+		_board_zone_slot_texture_indices.clear()
+		for texture_index in range(slab_textures.size()):
+			_board_zone_slot_texture_indices.append(texture_index)
+		var rng := RandomNumberGenerator.new()
+		rng.randomize()
+		for index in range(_board_zone_slot_texture_indices.size() - 1, 0, -1):
+			var swap_index := rng.randi_range(0, index)
+			var current_value := _board_zone_slot_texture_indices[index]
+			_board_zone_slot_texture_indices[index] = _board_zone_slot_texture_indices[swap_index]
+			_board_zone_slot_texture_indices[swap_index] = current_value
+	return _board_zone_slot_texture_indices
+
 func _get_board_zone_slab_texture() -> Texture2D:
 	var slab_textures := _get_board_zone_slab_textures()
 	if slab_textures.is_empty():
 		return null
 
 	if zone != null and zone.zone_type in [Zone.ZoneType.FRONTLINE, Zone.ZoneType.RESERVE]:
+		var slot_texture_indices := _get_board_zone_slot_texture_indices()
 		var board_slot_index := zone_index
 		if zone.zone_index >= 0:
 			board_slot_index = zone.zone_index
 		if zone.zone_type == Zone.ZoneType.RESERVE:
 			board_slot_index += BOARD_ZONE_ROW_TILE_COUNT
-		return slab_textures[posmod(board_slot_index, slab_textures.size())]
+		var texture_index := slot_texture_indices[posmod(board_slot_index, slot_texture_indices.size())]
+		return slab_textures[texture_index]
 
 	var variant_seed := zone_index
 	if zone != null:

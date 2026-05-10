@@ -31,6 +31,8 @@ const NARROW_DECK_PANEL_WIDTH := 300.0
 const COMPACT_PREVIEW_WIDTH_THRESHOLD := 300.0
 const STACKED_LAYOUT_WIDTH_THRESHOLD := 900.0
 const DESKTOP_LAYOUT_BOTTOM_CLEARANCE := 44.0
+const DECK_SCROLL_BUTTON_STEP_MIN := 96.0
+const DECK_SCROLL_BUTTON_STEP_RATIO := 0.72
 const CARD_VIEW_PRESETS := [
 	{"label": "Tiny", "rows": 5},
 	{"label": "Small", "rows": 4},
@@ -83,6 +85,9 @@ var _deck_name_edit:   LineEdit
 var _saved_decks_option: OptionButton
 var _saved_decks_view_btn: Button
 var _saved_actions_bar: HBoxContainer
+var _deck_scroll_nav_bar: HBoxContainer
+var _deck_scroll_up_btn: Button
+var _deck_scroll_down_btn: Button
 var _deck_footer_buttons: HFlowContainer
 var _delete_confirm_dialog: ConfirmationDialog
 var _import_deck_dialog: ConfirmationDialog
@@ -123,6 +128,56 @@ var _deck_undo_history: Array[Dictionary] = []
 
 func _escape_preview_bbcode_text(text: String) -> String:
 	return text.replace("[", "[lb]").replace("]", "[rb]")
+
+func _apply_deckbuilder_scrollbar_style(scroll: ScrollContainer, force_visible: bool = false) -> void:
+	if scroll == null:
+		return
+	if force_visible:
+		scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_SHOW_ALWAYS
+
+	var bar := scroll.get_v_scroll_bar()
+	if not is_instance_valid(bar):
+		return
+
+	bar.custom_minimum_size.x = 18.0
+	bar.mouse_filter = Control.MOUSE_FILTER_STOP
+	bar.add_theme_constant_override("scroll_width", 18)
+	bar.add_theme_constant_override("scroll_border", 2)
+
+	var track := StyleBoxFlat.new()
+	track.bg_color = Color(0.035, 0.040, 0.060, 0.94)
+	track.border_color = Color(0.18, 0.20, 0.30, 0.95)
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		track.set_border_width(side as Side, 1)
+	track.corner_radius_top_left = 8
+	track.corner_radius_top_right = 8
+	track.corner_radius_bottom_left = 8
+	track.corner_radius_bottom_right = 8
+	bar.add_theme_stylebox_override("scroll", track)
+	bar.add_theme_stylebox_override("scroll_focus", track)
+
+	var grabber := StyleBoxFlat.new()
+	grabber.bg_color = Color(0.72, 0.66, 0.40, 0.98)
+	grabber.border_color = Color(0.98, 0.88, 0.52, 1.0)
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		grabber.set_border_width(side as Side, 1)
+	grabber.corner_radius_top_left = 8
+	grabber.corner_radius_top_right = 8
+	grabber.corner_radius_bottom_left = 8
+	grabber.corner_radius_bottom_right = 8
+	bar.add_theme_stylebox_override("grabber", grabber)
+
+	var grabber_highlight := grabber.duplicate() as StyleBoxFlat
+	grabber_highlight.bg_color = Color(0.88, 0.78, 0.45, 1.0)
+	bar.add_theme_stylebox_override("grabber_highlight", grabber_highlight)
+
+	var grabber_pressed := grabber.duplicate() as StyleBoxFlat
+	grabber_pressed.bg_color = Color(1.0, 0.84, 0.44, 1.0)
+	bar.add_theme_stylebox_override("grabber_pressed", grabber_pressed)
+
+	bar.value_changed.connect(func(_value: float) -> void:
+		_update_deck_scroll_nav_buttons()
+	)
 
 # ── init ───────────────────────────────────────────────────────────
 func _ready() -> void:
@@ -210,6 +265,7 @@ func _build_ui() -> void:
 	body_scroll.clip_contents = true
 	body_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	body_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	_apply_deckbuilder_scrollbar_style(body_scroll)
 	root.add_child(body_scroll)
 
 	var body := GridContainer.new()
@@ -662,12 +718,35 @@ func _build_deck_panel(parent: Control) -> void:
 	deck_scroll.custom_minimum_size.y = 280
 	deck_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	deck_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	_apply_deckbuilder_scrollbar_style(deck_scroll, true)
 	panel.add_child(deck_scroll)
 
 	_deck_list = VBoxContainer.new()
 	_deck_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_deck_list.add_theme_constant_override("separation", 4)
 	deck_scroll.add_child(_deck_list)
+
+	var deck_scroll_nav := HBoxContainer.new()
+	_deck_scroll_nav_bar = deck_scroll_nav
+	deck_scroll_nav.add_theme_constant_override("separation", 6)
+	deck_scroll_nav.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	panel.add_child(deck_scroll_nav)
+
+	_deck_scroll_up_btn = Button.new()
+	_deck_scroll_up_btn.text = "Scroll Up"
+	_deck_scroll_up_btn.tooltip_text = "Scroll the deckbuilder upward"
+	_deck_scroll_up_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_deck_scroll_up_btn.custom_minimum_size.y = 28
+	_deck_scroll_up_btn.pressed.connect(func() -> void: _scroll_deckbuilder_by(-1.0))
+	deck_scroll_nav.add_child(_deck_scroll_up_btn)
+
+	_deck_scroll_down_btn = Button.new()
+	_deck_scroll_down_btn.text = "Scroll Down"
+	_deck_scroll_down_btn.tooltip_text = "Scroll the deckbuilder downward"
+	_deck_scroll_down_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_deck_scroll_down_btn.custom_minimum_size.y = 28
+	_deck_scroll_down_btn.pressed.connect(func() -> void: _scroll_deckbuilder_by(1.0))
+	deck_scroll_nav.add_child(_deck_scroll_down_btn)
 
 
 	# ── validation status ────────────────────────────────
@@ -1155,6 +1234,7 @@ func _refresh_deck_panel() -> void:
 	_rebuild_filtered_cards_cache()
 	_refresh_collection_grid_and_layout()
 	_queue_responsive_layout_refresh()
+	call_deferred("_update_deck_scroll_nav_buttons")
 
 func _refresh_tiamat_panel() -> void:
 	if _tiamat_panel == null or _tiamat_rows == null or _tiamat_hint_lbl == null:
@@ -1296,6 +1376,48 @@ func _make_deck_row(card: Card) -> Control:
 	row.mouse_entered.connect(func() -> void: _show_preview(card))
 
 	return row
+
+func _get_scroll_container_max_scroll(scroll: ScrollContainer) -> float:
+	if not is_instance_valid(scroll):
+		return 0.0
+	var bar := scroll.get_v_scroll_bar()
+	if not is_instance_valid(bar):
+		return 0.0
+	return maxf(0.0, float(bar.max_value) - float(bar.page))
+
+func _can_scroll_container_in_direction(scroll: ScrollContainer, direction: float) -> bool:
+	var max_scroll := _get_scroll_container_max_scroll(scroll)
+	if max_scroll <= 1.0:
+		return false
+	var current := clampf(float(scroll.scroll_vertical), 0.0, max_scroll)
+	if direction < 0.0:
+		return current > 1.0
+	return current < max_scroll - 1.0
+
+func _get_deckbuilder_scroll_target(direction: float) -> ScrollContainer:
+	if _can_scroll_container_in_direction(_deck_scroll, direction):
+		return _deck_scroll
+	if _can_scroll_container_in_direction(_body_scroll, direction):
+		return _body_scroll
+	return null
+
+func _scroll_deckbuilder_by(direction: float) -> void:
+	var target := _get_deckbuilder_scroll_target(direction)
+	if target == null:
+		_update_deck_scroll_nav_buttons()
+		return
+
+	var max_scroll := _get_scroll_container_max_scroll(target)
+	var scroll_step := maxf(DECK_SCROLL_BUTTON_STEP_MIN, target.size.y * DECK_SCROLL_BUTTON_STEP_RATIO)
+	var next_scroll := clampf(float(target.scroll_vertical) + direction * scroll_step, 0.0, max_scroll)
+	target.scroll_vertical = int(round(next_scroll))
+	_update_deck_scroll_nav_buttons()
+
+func _update_deck_scroll_nav_buttons() -> void:
+	if not is_instance_valid(_deck_scroll_up_btn) or not is_instance_valid(_deck_scroll_down_btn):
+		return
+	_deck_scroll_up_btn.disabled = _get_deckbuilder_scroll_target(-1.0) == null
+	_deck_scroll_down_btn.disabled = _get_deckbuilder_scroll_target(1.0) == null
 
 func _handle_collection_card_add(card: Card) -> void:
 	if _try_assign_card_to_tiamat_slot(card):
@@ -3051,7 +3173,7 @@ func _update_responsive_layout() -> void:
 	_body_grid.custom_minimum_size.y = column_available_height * (2.0 if use_stacked_layout else 1.0)
 	if is_instance_valid(_body_scroll):
 		_body_scroll.custom_minimum_size.y = 0.0
-		_body_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO if use_stacked_layout else ScrollContainer.SCROLL_MODE_DISABLED
+		_body_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 		_body_scroll.scroll_vertical = 0
 
 	var target_panel_width := clampf(floor(viewport_width * 0.34), MIN_DECK_PANEL_WIDTH, MAX_DECK_PANEL_WIDTH)
@@ -3118,6 +3240,7 @@ func _update_responsive_layout() -> void:
 		fixed_deck_panel_height += maxf(0.0, float(visible_child_count - 1)) * deck_panel_separation
 		var deck_scroll_height := maxf(72.0, column_available_height - fixed_deck_panel_height)
 		_deck_scroll.custom_minimum_size.y = deck_scroll_height
+		call_deferred("_update_deck_scroll_nav_buttons")
 
 	if is_instance_valid(_prev_page_btn):
 		var page_button_width := 96.0 if viewport_width < 1100.0 else 120.0
