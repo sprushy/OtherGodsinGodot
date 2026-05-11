@@ -3056,8 +3056,14 @@ func _refresh_display() -> void:
 			var show_god_attack_aura := _is_card_attacking_on_stack(card) or _is_card_intercepting_on_stack(card) or _is_card_selected_attacker(card) or _is_card_selected_interceptor(card)
 			var show_god_playing_aura := _should_show_playing_aura(card)
 			var show_god_priority_aura := _is_card_usable_for_priority(card)
-			var show_god_target_aura := _is_card_targeted_on_stack(card) or _is_card_pending_target(card) or _is_card_pending_attack_target(card) or _is_card_attack_candidate(card)
-			var show_god_followers_target_icon := _is_god_targeted_by_followers_attack(card) or _is_god_pending_followers_attack(card) or _is_god_attack_candidate(card)
+			var show_god_target_aura := _is_card_targeted_on_stack(card) \
+				or _is_card_pending_target(card) \
+				or _is_card_pending_attack_target(card) \
+				or _is_god_targeted_by_followers_attack(card) \
+				or _is_god_pending_followers_attack(card)
+			var show_god_followers_target_icon := _is_god_targeted_by_followers_attack(card) \
+				or _is_god_pending_followers_attack(card) \
+				or _is_god_attack_candidate(card)
 
 			style.bg_color     = Color(0.35, 0.28, 0.04, 0.9)
 			style.border_color = Color(0.9, 0.75, 0.2)

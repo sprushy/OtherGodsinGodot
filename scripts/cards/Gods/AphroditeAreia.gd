@@ -13,7 +13,8 @@ func _init() -> void:
 	mana_cost = 0
 	culture = "Olympic"
 	targets = true
-	flavor_text = "Love and slaughter walk hand in hand."
+	# flavor_text = "Love and slaughter walk hand in hand."
+	flavor_text = ""
 	ability_text = "Violent Delights (5 mana): If you destroyed an opponent's creature in combat this turn, [b]Enslave[/b] a creature."
 	art_path = ART_PATH
 	artist = "Ricarrdo Zoppello"

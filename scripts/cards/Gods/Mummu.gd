@@ -10,7 +10,8 @@ func _init() -> void:
 	mana_cost = 0
 	culture = "Ancient"
 	targets = true
-	flavor_text = "Before the world was shaped, he stirred in the depths."
+	# flavor_text = "Before the world was shaped, he stirred in the depths."
+	flavor_text = ""
 	ability_text = "Entropic Force (Speed 1, [b]Activate[/b]): [b]Shelve[/b] a face-up card you control. Gain mana equal to its level - 1."
 	art_path = "res://images/card_art/gods/Mummu.png"
 	artist = "Ricarrdo Zoppello"

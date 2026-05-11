@@ -15,7 +15,8 @@ func _init() -> void:
 	speed = 1
 	is_legendary = false
 	sacrifice_cost = 0
-	flavor_text = "From ruin and flame, the demon rises."
+	# flavor_text = "From ruin and flame, the demon rises."
+	flavor_text = ""
 	art_path = ART_PATH
 	ability_text = "Pay X mana and [b]Mill[/b] X cards; summon one Demon milled this way."
 

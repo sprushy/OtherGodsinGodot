@@ -24,7 +24,8 @@ func _init() -> void:
 	resilience = 37
 	strength = 25
 	culture = "Nahuatl"
-	flavor_text = "Smoke and sacrifice crown the god of night when he walks the field."
+	# flavor_text = "Smoke and sacrifice crown the god of night when he walks the field."
+	flavor_text = ""
 	ability_text = "[b]Shift[/b] ([b]Activate[/b], [b]Minor Action[/b], once per turn): Switch between Divine Manifestation, God, Shapeshifter and Divine Manifestation, God, Animal, Feline, Jaguar, Shapeshifter.\n[b]Jaguar Form[/b] ([b]Passive[/b]): While in Jaguar form, this card's stats become SPD 3 / RES 24 / STR 35.\n[b]The Smoking Mirror[/b] ([b]Passive[/b]): Instead of damaging followers, convert half of those that would have been destroyed.\n[b]Titlacauan[/b] ([b]Impact[/b]): Enslave up to 2 creatures whose total levels are less than or equal to the total levels sacrificed for Necoc Yaotl."
 	artist = "Ricardo Zoppello"
 	art_path = ART_PATH

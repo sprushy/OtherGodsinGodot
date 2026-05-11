@@ -16,7 +16,8 @@ func _init() -> void:
 	resilience = 35
 	strength = 40
 	culture = "Norse"
-	flavor_text = "Thor steps onto the field and the human warbands rally around him."
+	# flavor_text = "Thor steps onto the field and the human warbands rally around him."
+	flavor_text = ""
 	ability_text = "[b]Patron's Hand[/b] ([b]Passive[/b]): Can intercept any attack on your followers or Human creatures regardless of position or speed. Other friendly Warriors on the field gain +5 STR and +5 RES. Follower damage inflicted by this card is halved."
 	art_path = ART_PATH
 	name_at_bottom = true

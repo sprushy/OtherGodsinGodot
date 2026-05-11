@@ -12,7 +12,8 @@ func _init() -> void:
 	card_types = ["Matriarch", "Bi-Aspected", "Chaos", "Sea"]
 	mana_cost = 0
 	culture = "Ancient"
-	flavor_text = "The mother of monsters keeps her broods waiting in the deep."
+	# flavor_text = "The mother of monsters keeps her broods waiting in the deep."
+	flavor_text = ""
 	ability_text = "Mother of Demons: You may use [b]Brood Slots[/b] instead of powers. Each one may hold different face-up Ancient Demons or Dragons with total levels up to 6.\nMatriarch Rule: Starting on turn 1, you may add one of those cards to your hand instead of drawing."
 	art_path = "res://images/card_art/gods/TiamatEdit.png"
 	artist = "Riccardo Zoppello"

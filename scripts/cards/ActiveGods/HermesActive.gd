@@ -15,7 +15,8 @@ func _init() -> void:
 	resilience = 18
 	strength = 21
 	culture = "Olympic"
-	flavor_text = "Hermes slips past slower foes before they can even bring a strike to bear."
+	# flavor_text = "Hermes slips past slower foes before they can even bring a strike to bear."
+	flavor_text = ""
 	ability_text = "[b]Wingfoot[/b] ([b]Passive[/b]): Slower creatures cannot attack Hermes."
 	art_path = ART_PATH
 	name_at_bottom = true

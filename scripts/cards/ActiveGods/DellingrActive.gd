@@ -16,7 +16,8 @@ func _init() -> void:
 	resilience = 32
 	strength = 30
 	culture = "Norse"
-	flavor_text = "Dellingr's radiance strips away every shadow and leaves hostile magic dormant."
+	# flavor_text = "Dellingr's radiance strips away every shadow and leaves hostile magic dormant."
+	flavor_text = ""
 	ability_text = "Radiate ([b]Impact[/b]): Reveal all opponent face-down and in-hand cards. Magical cards revealed this way cannot be activated this turn. If a revealed card has [b]Reveal[/b], you may decline to resolve it."
 	art_path = ART_PATH
 	name_at_bottom = true

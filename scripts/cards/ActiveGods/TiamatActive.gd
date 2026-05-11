@@ -17,7 +17,8 @@ func _init() -> void:
 	resilience = 38
 	strength = 37
 	culture = "Ancient"
-	flavor_text = "Tiamat births horrors at her arrival and again at her fall."
+	# flavor_text = "Tiamat births horrors at her arrival and again at her fall."
+	flavor_text = ""
 	ability_text = "[b]Birth[/b] ([b]Impact[/b]): Summon a level 4 or lower Demon or Dragon from your hand.\n[b]Death[/b] ([b]Fatality[/b]): Summon a level 6 or lower Demon or Dragon from your hand."
 	art_path = ART_PATH
 	name_at_bottom = true

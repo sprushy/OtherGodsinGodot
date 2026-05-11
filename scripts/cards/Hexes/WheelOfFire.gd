@@ -198,15 +198,35 @@ func _get_next_zone_for_target(target: Card) -> Zone:
 		var controller := target.get_controller()
 		if controller == null:
 			return null
-		var reserve_zone := controller.reserve_zones[current_zone.zone_index]
-		if not reserve_zone.cards.is_empty():
-			return null
-		return reserve_zone
+		return _get_nearest_legal_reserve_zone(controller, current_zone.zone_index)
 	if current_zone.zone_type == Zone.ZoneType.RESERVE:
 		return target.card_owner.graveyard_zone
 	if current_zone == target.card_owner.graveyard_zone:
 		return target.card_owner.abyss_zone
 	return null
+
+func _get_nearest_legal_reserve_zone(controller: Player, center_index: int) -> Zone:
+	if controller == null or controller.reserve_zones.is_empty():
+		return null
+	var clamped_center := clampi(center_index, 0, controller.reserve_zones.size() - 1)
+	for zone in _reserve_zones_by_distance(controller, clamped_center):
+		if zone != null and zone.cards.is_empty():
+			return zone
+	return null
+
+func _reserve_zones_by_distance(controller: Player, center_index: int) -> Array[Zone]:
+	var zones: Array[Zone] = []
+	if controller == null:
+		return zones
+	zones.append(controller.reserve_zones[center_index])
+	for distance in range(1, controller.reserve_zones.size()):
+		var low := center_index - distance
+		var high := center_index + distance
+		if low >= 0:
+			zones.append(controller.reserve_zones[low])
+		if high < controller.reserve_zones.size():
+			zones.append(controller.reserve_zones[high])
+	return zones
 
 func _get_movement_text(from_zone: Zone, to_zone: Zone) -> String:
 	if from_zone == null or to_zone == null:

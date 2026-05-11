@@ -17,7 +17,8 @@ func _init() -> void:
 	mana_cost = 3
 	speed = 1
 	is_legendary = false
-	flavor_text = "Cast into the depths of the abyss, never to return."
+	# flavor_text = "Cast into the depths of the abyss, never to return."
+	flavor_text = ""
 	culture = "Ancient"
 	art_path = "res://images/card_art/spells/BitMeseriFireflyAI.png"
 	artist = "Lorinda Tomko"

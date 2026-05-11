@@ -19,7 +19,8 @@ func _init() -> void:
 	resilience = 30
 	strength = 35
 	culture = "Ancient"
-	flavor_text = "Awakened entropy devours the field, then sinks back beneath creation."
+	# flavor_text = "Awakened entropy devours the field, then sinks back beneath creation."
+	flavor_text = ""
 	ability_text = "[b]Entropy[/b] ([b]Passive[/b]): Choose to [b]Prime[/b] or [b]Shelve[/b] any card destroyed by Mummu. When this card leaves the field, reactivate your god card."
 	art_path = ART_PATH
 	name_at_bottom = true

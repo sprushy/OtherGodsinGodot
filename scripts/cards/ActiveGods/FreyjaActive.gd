@@ -16,7 +16,8 @@ func _init() -> void:
 	resilience = 25
 	strength = 28
 	culture = "Norse"
-	flavor_text = "Sessrumnir opens and the fallen march once more, but only until dawn returns."
+	# flavor_text = "Sessrumnir opens and the fallen march once more, but only until dawn returns."
+	flavor_text = ""
 	ability_text = "[b]Open Sessrumnir[/b] ([b]Impact[/b]): Summon a minimum of 1, up to half the Norse Warriors in your grave; they are destroyed at the start of your next turn."
 	art_path = ART_PATH
 	name_at_bottom = true

@@ -17,7 +17,8 @@ func _init() -> void:
 	is_legendary = false
 	sacrifice_cost = 0
 	targets = true
-	flavor_text = "Silence the divine, if only for a while."
+	# flavor_text = "Silence the divine, if only for a while."
+	flavor_text = ""
 	art_path = ART_PATH
 	ability_text = "[b]Relock[/b] a power, or [b]Mute[/b] a power for 3 of its owner's turns. Face-down powers are revealed first."
 

@@ -16,7 +16,9 @@ func _init() -> void:
 	
 	sacrifice_cost = 0
 	
-	flavor_text = "Destroy the strongest creature(s) on the field."
+	# flavor_text = "Destroy the strongest creature(s) on the field."
+	
+	flavor_text = ""
 	culture = "Neutral"
 	art_path = "res://images/card_art/spells/fall_of_the_mighty.jpg"
 	ability_text = "Destroy all non-stealthed creatures on the field with the highest strength."

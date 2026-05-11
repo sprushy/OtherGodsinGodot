@@ -14,7 +14,8 @@ func _init() -> void:
 	mana_cost = 0
 	culture = "Norse"
 	targets = true
-	flavor_text = "The slain do not always stay dead when Freyja calls them back."
+	# flavor_text = "The slain do not always stay dead when Freyja calls them back."
+	flavor_text = ""
 	ability_text = "Receiver of the Slain ([b]Activate[/b], 5 mana): Summon a Norse Warrior from your graveyard. It gains Spirit and is destroyed at the start of your next turn. This ability costs 1 less for each Valkyrie card you have in play."
 	art_path = "res://images/card_art/gods/FrejyaAndCatsAieditSquare.png"
 	artist = "Ricardo Zoppello"

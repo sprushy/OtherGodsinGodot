@@ -12,7 +12,8 @@ func _init() -> void:
 	resilience = 25
 	strength = 24
 	ability_text = "[b]Dodge[/b]: Cannot be attacked by slower creatures."
-	flavor_text = "Forged by Dwarven smiths for the God Freyr, Gullinbursti can run through air and water and moves faster than any horse."
+	# flavor_text = "Forged by Dwarven smiths for the God Freyr, Gullinbursti can run through air and water and moves faster than any horse."
+	flavor_text = ""
 	culture = "Norse"
 	artist = "Lorinda Tomko"
 	art_path = "res://images/card_art/creatures/gullinbursti.png"

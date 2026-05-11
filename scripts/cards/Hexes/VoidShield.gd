@@ -7,7 +7,8 @@ func _init() -> void:
 	speed = 3
 	mana_cost = 0
 	ability_text = "When an opponent's creature attacks one of yours, [b]Void[/b] it."
-	flavor_text = "What reaches for the living may be swallowed by the void."
+	# flavor_text = "What reaches for the living may be swallowed by the void."
+	flavor_text = ""
 	culture = "Ancient"
 	card_types = ["Targeting"]
 	art_path = "res://images/card_art/hexes/VoidShield.jpg"

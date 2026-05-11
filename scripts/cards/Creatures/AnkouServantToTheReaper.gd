@@ -13,7 +13,8 @@ func _init() -> void:
 	speed = 2
 	resilience = 17
 	strength = 24
-	flavor_text = "Where Ankou walks, the dead are counted."
+	# flavor_text = "Where Ankou walks, the dead are counted."
+	flavor_text = ""
 	ability_text = "Reap: [b]Slay[/b]: Draw a card."
 	culture = "Triskelion"
 	art_path = ART_PATH

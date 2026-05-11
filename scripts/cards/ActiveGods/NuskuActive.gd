@@ -21,7 +21,8 @@ func _init() -> void:
 	resilience = 30
 	strength = 33
 	culture = "Ancient"
-	flavor_text = "Nusku's fire offers revelation now or judgment later."
+	# flavor_text = "Nusku's fire offers revelation now or judgment later."
+	flavor_text = ""
 	ability_text = "Core Flame ([b]Impact[/b]): You may [b]Mill[/b] 7. Add a magical card milled this way to your hand.\nCelestial Light ([b]Fatality[/b]): If you declined Core Flame, [b]Convert[/b] followers equal to your graveyard size."
 	art_path = ART_PATH
 	name_at_bottom = true

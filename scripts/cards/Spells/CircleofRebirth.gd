@@ -13,7 +13,8 @@ func _init() -> void:
 	mana_cost = 1
 	is_legendary = true
 	speed = 1
-	flavor_text = "Resurrect all animals and plants which were destroyed this turn."
+	# flavor_text = "Resurrect all animals and plants which were destroyed this turn."
+	flavor_text = ""
 	culture = "Triskelion"
 	art_path = "res://images/card_art/spells/Circle of Rebirth cut.png"
 	ability_text = "Resurrect all Animal and Plant creatures destroyed this turn."

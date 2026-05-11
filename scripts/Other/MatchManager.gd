@@ -8,6 +8,8 @@ class_name MatchManager
 const TiamatScript = preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
 const DEFERRED_DESTROYED_EVENTS_NONE := 0
 const DEFERRED_DESTROYED_EVENTS_QUEUE := 1
+const AUTHORITATIVE_FLOW_LOG_PREFIX := "[OG server flow]"
+const AUTHORITATIVE_FLOW_CHECK_DELAY_SECONDS := 1.0
 
 signal targeting_started(source: Card, target_type: String)
 signal targeting_ended()
@@ -778,6 +780,179 @@ func _get_action_debug_label(action: CardAction) -> String:
 	if action.event_name != "":
 		return "%s type=%s" % [action.event_name, str(action.type)]
 	return "type=%s" % str(action.type)
+
+func _get_player_debug_label(player: Player) -> String:
+	if player == null:
+		return "<none>"
+	var player_idx := game_manager.players.find(player) if game_manager != null else -1
+	return "%s[%d]" % [player.player_name, player_idx]
+
+func _get_card_debug_label(card: Card) -> String:
+	if card == null:
+		return "<none>"
+	var zone_label := "no-zone"
+	if card.current_zone != null:
+		zone_label = "%s:%d" % [str(card.current_zone.zone_type), int(card.current_zone.zone_index)]
+	return "%s(uid=%s owner=%s zone=%s)" % [
+		card.card_name,
+		str(card.uid),
+		_get_player_debug_label(card.get_controller()),
+		zone_label,
+	]
+
+func _get_target_debug_label(target) -> String:
+	if target is Card:
+		return _get_card_debug_label(target as Card)
+	if target is Player:
+		return _get_player_debug_label(target as Player)
+	if target == null:
+		return "<none>"
+	return str(target)
+
+func _get_action_debug_summary(action: CardAction) -> String:
+	if action == null:
+		return "<null>"
+	var type_names := CardAction.Type.keys()
+	var type_label := str(action.type)
+	if int(action.type) >= 0 and int(action.type) < type_names.size():
+		type_label = str(type_names[int(action.type)])
+	var parts: Array[String] = []
+	parts.append("type=%s" % type_label)
+	if action.event_name != "":
+		parts.append("event=%s" % action.event_name)
+	if action.card != null:
+		parts.append("card=%s" % _get_card_debug_label(action.card))
+	if action.attacker != null:
+		parts.append("attacker=%s" % _get_card_debug_label(action.attacker))
+	if action.united_front_partner != null:
+		parts.append("partner=%s" % _get_card_debug_label(action.united_front_partner))
+	if action.interceptor != null:
+		parts.append("interceptor=%s" % _get_card_debug_label(action.interceptor))
+	if action.target != null:
+		parts.append("target=%s" % _get_target_debug_label(action.target))
+	parts.append("source=%s" % _get_player_debug_label(action.source_player))
+	parts.append("initial_priority=%s" % _get_player_debug_label(action.initial_priority_player))
+	if action.event_data.has("deferred_authoritative_completion_command"):
+		parts.append("deferred=%s" % str(action.event_data.get("deferred_authoritative_completion_command", "")))
+	return " ".join(parts)
+
+func _get_pending_ui_debug_summary(limit: int = 5) -> String:
+	if _pending_ui_interactions.is_empty():
+		return "<none>"
+	var items: Array[String] = []
+	var start_idx := maxi(0, _pending_ui_interactions.size() - limit)
+	for idx in range(start_idx, _pending_ui_interactions.size()):
+		var entry: Dictionary = _pending_ui_interactions[idx]
+		var data: Dictionary = entry.get("data", {})
+		var prompt_player := entry.get("player", null) as Player
+		items.append("#%d %s player=%s source=%s target=%s target_uids=%s" % [
+			int(entry.get("prompt_id", -1)),
+			str(entry.get("type", "")),
+			_get_player_debug_label(prompt_player),
+			str(data.get("source_uid", "")),
+			str(data.get("target_uid", "")),
+			str(data.get("target_uids", [])),
+		])
+	return "; ".join(items)
+
+func _log_authoritative_flow_state(context: String) -> void:
+	if game_manager == null or not _uses_authoritative_headless_priority_flow():
+		return
+	print("%s %s turn=%d current=%s priority=%s passes=%d stack=%d resolving=%d pending_resolution=%s pending_ui=%d" % [
+		AUTHORITATIVE_FLOW_LOG_PREFIX,
+		context,
+		game_manager.turn_number,
+		_get_player_debug_label(game_manager.current_player),
+		_get_player_debug_label(game_manager.priority_player),
+		game_manager.consecutive_passes,
+		game_manager.action_stack.size(),
+		game_manager.resolving_stack_actions.size(),
+		str(_authoritative_stack_resolution_pending),
+		_pending_ui_interactions.size(),
+	])
+	for idx in range(game_manager.action_stack.size()):
+		print("%s   stack[%d] %s" % [
+			AUTHORITATIVE_FLOW_LOG_PREFIX,
+			idx,
+			_get_action_debug_summary(game_manager.action_stack[idx]),
+		])
+	for idx in range(game_manager.resolving_stack_actions.size()):
+		print("%s   resolving[%d] %s" % [
+			AUTHORITATIVE_FLOW_LOG_PREFIX,
+			idx,
+			_get_action_debug_summary(game_manager.resolving_stack_actions[idx]),
+		])
+	if pending_humbaba_action != null:
+		print("%s   pending_humbaba action=%s target=%s prompts=%s" % [
+			AUTHORITATIVE_FLOW_LOG_PREFIX,
+			_get_action_debug_summary(pending_humbaba_action),
+			_get_target_debug_label(pending_humbaba_target),
+			str(pending_humbaba_prompt_uids),
+		])
+	if pending_retreat_action != null:
+		print("%s   pending_retreat action=%s target=%s prompts=%s" % [
+			AUTHORITATIVE_FLOW_LOG_PREFIX,
+			_get_action_debug_summary(pending_retreat_action),
+			_get_target_debug_label(pending_retreat_target),
+			str(pending_retreat_prompt_uids),
+		])
+	if pending_tezcatlipoca_titlacauan_action != null:
+		print("%s   pending_tezcatlipoca action=%s" % [
+			AUTHORITATIVE_FLOW_LOG_PREFIX,
+			_get_action_debug_summary(pending_tezcatlipoca_titlacauan_action),
+		])
+	print("%s   pending_ui %s" % [
+		AUTHORITATIVE_FLOW_LOG_PREFIX,
+		_get_pending_ui_debug_summary(),
+	])
+
+func _log_authoritative_flow_checkpoint(context: String, action: CardAction = null, target = null) -> void:
+	if game_manager == null or not _uses_authoritative_headless_priority_flow():
+		return
+	print("%s checkpoint=%s action=%s target=%s stack=%d resolving=%d pending_resolution=%s pending_humbaba=%s priority=%s pending_ui=%d" % [
+		AUTHORITATIVE_FLOW_LOG_PREFIX,
+		context,
+		_get_action_debug_label(action),
+		_get_target_debug_label(target),
+		game_manager.action_stack.size(),
+		game_manager.resolving_stack_actions.size(),
+		str(_authoritative_stack_resolution_pending),
+		str(pending_humbaba_action != null),
+		_get_player_debug_label(game_manager.priority_player),
+		_pending_ui_interactions.size(),
+	])
+
+func _schedule_authoritative_deferred_action_check(context: String, action: CardAction, target = null) -> void:
+	if game_manager == null or not _uses_authoritative_headless_priority_flow():
+		return
+	var tree = _get_authoritative_resolution_tree()
+	if tree == null:
+		_check_authoritative_deferred_action_cleared(context, action, target)
+		return
+	tree.create_timer(AUTHORITATIVE_FLOW_CHECK_DELAY_SECONDS).timeout.connect(
+		func() -> void:
+			_check_authoritative_deferred_action_cleared(context, action, target),
+		CONNECT_ONE_SHOT
+	)
+
+func _check_authoritative_deferred_action_cleared(context: String, action: CardAction, target = null) -> void:
+	if game_manager == null or not _uses_authoritative_headless_priority_flow():
+		return
+	var action_still_present := action != null \
+		and (game_manager.action_stack.has(action) or action in game_manager.resolving_stack_actions)
+	var still_waiting_on_prompt := action != null \
+		and (pending_humbaba_action == action or pending_retreat_action == action or pending_tezcatlipoca_titlacauan_action == action)
+	var follower_attack_left_stack_locked := target is Player and not game_manager.action_stack.is_empty()
+	if action_still_present or still_waiting_on_prompt or follower_attack_left_stack_locked:
+		_log_authoritative_flow_state("%s unresolved after %.1fs" % [
+			context,
+			AUTHORITATIVE_FLOW_CHECK_DELAY_SECONDS,
+		])
+		return
+	_log_authoritative_flow_checkpoint("%s clear after %.1fs" % [
+		context,
+		AUTHORITATIVE_FLOW_CHECK_DELAY_SECONDS,
+	], action, target)
 
 func _complete_deferred_authoritative_action(action: CardAction, completion_command_type: String) -> void:
 	if action == null:
@@ -2294,6 +2469,11 @@ func process_command(command: Dictionary, sender_info: Dictionary = {}) -> bool:
 		return false
 	var turn_window_error := _validate_turn_action_window(command, sender_info)
 	if not turn_window_error.is_empty():
+		if _uses_authoritative_headless_priority_flow() and _requires_clear_stack_window(_active_command_type):
+			_log_authoritative_flow_state("command_rejected %s: %s" % [
+				_active_command_type,
+				turn_window_error,
+			])
 		move_failed.emit(turn_window_error)
 		_active_command_sender_info.clear()
 		_active_command_type = ""
@@ -3789,13 +3969,13 @@ func _process_command_impl(command: Dictionary) -> bool:
 			var feedback := humbaba.resolve_augury_reading(game_manager, target)
 			if feedback.strip_edges() != "":
 				game_manager.note_player_feedback(feedback)
-			move_validated.emit(command)
 			if pending_humbaba_action != null:
 				var action := pending_humbaba_action
 				var pending_target = pending_humbaba_target
 				if not pending_humbaba_prompt_uids.is_empty():
 					pending_humbaba_prompt_uids.remove_at(0)
 				if _emit_next_pending_humbaba_prompt():
+					move_validated.emit(command)
 					return true
 				_clear_pending_humbaba_state()
 				_continue_pending_humbaba_attack_resolution(action, pending_target)
@@ -3805,8 +3985,18 @@ func _process_command_impl(command: Dictionary) -> bool:
 						"combat_retreat_decision",
 						DEFERRED_DESTROYED_EVENTS_QUEUE
 					)
+					move_validated.emit(command)
 					return true
 				_complete_deferred_authoritative_action(action, "humbaba_augury_choice")
+				if pending_target is Player:
+					_schedule_authoritative_deferred_action_check(
+						"humbaba_followers_after_augury",
+						action,
+						pending_target
+					)
+				move_validated.emit(command)
+				return true
+			move_validated.emit(command)
 			return true
 		"mummu_entropy_choice":
 			var source_uid: String = command.get("source_uid", "")
