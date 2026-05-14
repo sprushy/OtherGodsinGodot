@@ -100,7 +100,7 @@ static func build_visual_hover_body(card: Card, viewer: Player, config: Dictiona
 
 	if card.ability_text != "":
 		var ability_lbl := _make_rich_text(
-			BaseCard.apply_keyword_hints(card.ability_text),
+			BaseCard.apply_keyword_hints(BaseCard.apply_action_cost_symbols(card.ability_text, card)),
 			17,
 			Color(0.9, 0.85, 1.0),
 			210.0
@@ -358,7 +358,7 @@ static func build_board_popup_body(card: Card, viewer: Player, config: Dictionar
 	if card.ability_text != "" and not is_hidden_card:
 		var display_ability_text := (card as PowerCard).get_display_ability_bbcode_text(game_manager) if card is PowerCard else card.ability_text
 		vbox.add_child(_make_rich_text(
-			BaseCard.apply_keyword_hints(display_ability_text),
+			BaseCard.apply_keyword_hints(BaseCard.apply_action_cost_symbols(display_ability_text, card)),
 			13,
 			Color(0.9, 0.85, 1.0)
 		))

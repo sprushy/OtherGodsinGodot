@@ -55,7 +55,7 @@ func get_tonal_extraction_spirit_profile() -> Dictionary:
 		"art_path": art_path,
 	}
 
-func activate(game_manager: GameManager, _target: Card = null) -> void:
+func activate(game_manager: GameManager, _target = null) -> void:
 	if not can_activate(game_manager):
 		return
 	shift_forms()

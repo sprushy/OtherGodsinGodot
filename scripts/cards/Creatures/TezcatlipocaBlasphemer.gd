@@ -38,8 +38,6 @@ func can_activate(game_manager: GameManager) -> bool:
 		return false
 	if is_sleeping:
 		return false
-	if not can_take_major_creature_action():
-		return false
 	if get_valid_blood_magic_sacrifices().is_empty():
 		return false
 	return not get_valid_targets(game_manager).is_empty()
@@ -59,8 +57,6 @@ func get_activation_failure_reason(game_manager: GameManager) -> String:
 		return card_name + " cannot activate this turn."
 	if is_sleeping:
 		return card_name + " is asleep."
-	if not can_take_major_creature_action():
-		return card_name + " has already used its major action."
 	if get_valid_blood_magic_sacrifices().is_empty():
 		return card_name + " needs a friendly creature to sacrifice."
 	if get_valid_targets(game_manager).is_empty():
@@ -147,8 +143,6 @@ func _continue_blood_magic_after_sacrifice(
 		else:
 			game_manager.note_player_feedback("%s could not sacrifice %s for Blood Magic." % [card_name, sacrifice_name])
 		return
-
-	spend_major_creature_action()
 
 	var valid_targets := get_valid_targets(game_manager)
 	if target == null or target not in valid_targets:

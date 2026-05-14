@@ -37,7 +37,6 @@ func can_activate_shift(game_manager: GameManager) -> bool:
 
 func can_activate_medicine(game_manager: GameManager) -> bool:
 	return _can_use_base_creature_action(game_manager) \
-		and can_take_major_creature_action() \
 		and get_controller() == game_manager.current_player
 
 func get_activation_failure_reason(game_manager: GameManager) -> String:
@@ -140,7 +139,6 @@ func _activate_medicine(game_manager: GameManager) -> void:
 		game_manager.note_player_feedback(card_name + " has no controller for Medicine.")
 		return
 
-	spend_major_creature_action()
 	game_manager.grant_turn_opponent_targeting_immunity(controller, self, game_manager.turn_number)
 	game_manager.note_player_feedback(
 		"%s uses Medicine. Opponent cards targeting %s's cards are negated until end of turn." % [

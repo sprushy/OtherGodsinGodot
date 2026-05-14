@@ -4,6 +4,7 @@ extends PanelContainer
 const CardDetailContentBuilder = preload("res://scripts/ui/CardDetailContentBuilder.gd")
 const LockedPowerCursor = preload("res://scripts/ui/LockedPowerCursor.gd")
 const DefenseShieldOverlay = preload("res://scripts/ui/DefenseShieldOverlay.gd")
+const MINOR_ACTION_SYMBOL_TEXTURE := preload("res://images/ui/MinorActionSymbol.png")
 
 signal card_clicked(card: Card)
 signal card_right_clicked(card: Card)
@@ -114,6 +115,16 @@ func _compute_natural_height() -> float:
 		h += float(est_lines) * 18.0 + 12.0
 	return h
 
+func _compute_compact_height() -> float:
+	var h := 26.0  # name + mana row
+	if card_data.art_path != "":
+		var tex: Texture2D = load(card_data.art_path)
+		if tex:
+			h += _card_width * float(tex.get_height()) / float(tex.get_width())
+	if not card_data.is_god:
+		h += 22.0  # stats / speed / resilience row
+	return h
+
 func _sync_minimum_height() -> void:
 	var measured_h := maxf(float(_card_height), _compute_natural_height())
 	if _inner != null and is_instance_valid(_inner):
@@ -205,6 +216,35 @@ func _make_level_label() -> Label:
 	_level_label = level_lbl
 	return level_lbl
 
+func _make_cost_node(cost_text: String, display_mana_cost: int) -> Control:
+	var cost_lbl := Label.new()
+	cost_lbl.text = cost_text
+	cost_lbl.add_theme_font_size_override("font_size", 17)
+	cost_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	if display_mana_cost > card_data.mana_cost:
+		cost_lbl.add_theme_color_override("font_color", Color(1.0, 0.65, 0.65))
+	elif display_mana_cost < card_data.mana_cost:
+		cost_lbl.add_theme_color_override("font_color", Color(0.65, 1.0, 0.7))
+	cost_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	if card_data.card_type != Card.CardType.CREATURE:
+		return cost_lbl
+
+	var cost_row := HBoxContainer.new()
+	cost_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	cost_row.add_theme_constant_override("separation", 2)
+	cost_row.alignment = BoxContainer.ALIGNMENT_END
+	cost_row.size_flags_horizontal = Control.SIZE_SHRINK_END
+	var icon := TextureRect.new()
+	icon.texture = MINOR_ACTION_SYMBOL_TEXTURE
+	icon.custom_minimum_size = Vector2(18.0, 18.0)
+	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	cost_row.add_child(icon)
+	cost_row.add_child(cost_lbl)
+	return cost_row
+
 func _bind_visual_state() -> void:
 	if card_data == null:
 		return
@@ -287,17 +327,8 @@ func _populate_vbox(vbox: VBoxContainer) -> void:
 
 	var display_mana_cost := _get_display_mana_cost()
 	var cost_text := card_data.get_cost_shorthand(display_mana_cost)
-	if cost_text != "":
-		var cost_lbl := Label.new()
-		cost_lbl.text = cost_text
-		cost_lbl.add_theme_font_size_override("font_size", 17)
-		cost_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-		if display_mana_cost > card_data.mana_cost:
-			cost_lbl.add_theme_color_override("font_color", Color(1.0, 0.65, 0.65))
-		elif display_mana_cost < card_data.mana_cost:
-			cost_lbl.add_theme_color_override("font_color", Color(0.65, 1.0, 0.7))
-		cost_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		top_row.add_child(cost_lbl)
+	if cost_text != "" or card_data.card_type == Card.CardType.CREATURE:
+		top_row.add_child(_make_cost_node(cost_text, display_mana_cost))
 
 	var art := _build_art_node()
 	if art:
@@ -325,7 +356,7 @@ func _populate_vbox(vbox: VBoxContainer) -> void:
 	if card_data.ability_text != "":
 		var ability_lbl := RichTextLabel.new()
 		ability_lbl.bbcode_enabled = true
-		ability_lbl.text = BaseCard.apply_keyword_hints(card_data.ability_text)
+		ability_lbl.text = BaseCard.apply_keyword_hints(BaseCard.apply_action_cost_symbols(card_data.ability_text, card_data))
 		ability_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		ability_lbl.fit_content = true
 		ability_lbl.add_theme_font_size_override("normal_font_size", 14)
@@ -383,9 +414,7 @@ func _build_content() -> void:
 	call_deferred("_sync_minimum_height")
 	call_deferred("_layout_power_lock_overlay")
 
-func _apply_card_style() -> void:
-	if _inner == null:
-		return
+func _make_card_style() -> StyleBoxFlat:
 	var style := StyleBoxFlat.new()
 	style.corner_radius_top_left = 5
 	style.corner_radius_top_right = 5
@@ -439,8 +468,12 @@ func _apply_card_style() -> void:
 		style.border_color = Color(0.82, 0.96, 1.0, 0.92)
 		style.shadow_color = Color(0.62, 0.88, 1.0, 0.32)
 		style.shadow_size = max(style.shadow_size, 12)
+	return style
 
-	_inner.add_theme_stylebox_override("panel", style)
+func _apply_card_style() -> void:
+	if _inner == null:
+		return
+	_inner.add_theme_stylebox_override("panel", _make_card_style())
 	_inner.self_modulate = Color(0.92, 0.98, 1.0, 0.82) if _ghostly_hand_proxy else Color.WHITE
 
 func _refresh_disabled_visual_state() -> void:
@@ -877,6 +910,8 @@ func _start_drag() -> void:
 	visible = false
 	floating_parent.add_child(_drag_ghost)
 	_drag_ghost.move_to_front()
+	_recompact_drag_ghost()
+	call_deferred("_recompact_drag_ghost")
 	_update_ghost_position()
 
 func _build_drag_ghost() -> Control:
@@ -889,7 +924,6 @@ func _build_drag_ghost() -> Control:
 	var sz := size
 	if sz.y == 0:
 		sz = get_combined_minimum_size()
-	_drag_ghost_pivot = sz / 2.0
 	ghost.pivot_offset = Vector2.ZERO   # centering is handled in _update_ghost_position
 	# Consolidate _inner's rotation onto the ghost outer so the whole ghost
 	# can be rotated cleanly during drag (ghost is at scene root, no Container).
@@ -899,11 +933,53 @@ func _build_drag_ghost() -> Control:
 		if ghost_inner:
 			ghost_inner.rotation_degrees = 0.0
 			ghost_inner.pivot_offset = Vector2.ZERO
+			_compact_drag_ghost(ghost, ghost_inner)
+			sz = ghost.size
+	_drag_ghost_pivot = sz / 2.0
 	_drag_ghost = ghost
 	_set_drag_prepare_preview(_drag_stealth and _can_toggle_drag_prepare())
 	_refresh_drag_defense_shield_overlay()
 	_drag_ghost = null
 	return ghost
+
+func _compact_drag_ghost(ghost: Control, ghost_inner: Control) -> void:
+	_remove_drag_ghost_rules_text(ghost)
+	var compact_size := Vector2(float(_card_width), _compute_compact_height())
+	ghost.clip_contents = true
+	ghost.custom_minimum_size = compact_size
+	ghost.size = compact_size
+	ghost_inner.clip_contents = true
+	ghost_inner.custom_minimum_size = compact_size
+	ghost_inner.size = compact_size
+	if ghost_inner.get_child_count() > 0:
+		var content := ghost_inner.get_child(0) as Control
+		if content != null:
+			content.clip_contents = true
+			content.custom_minimum_size = compact_size
+			content.size = compact_size
+			content.update_minimum_size()
+	ghost_inner.update_minimum_size()
+	ghost.update_minimum_size()
+
+func _recompact_drag_ghost() -> void:
+	if not (_drag_ghost and is_instance_valid(_drag_ghost)):
+		return
+	var ghost_inner := _drag_ghost.get_child(0) as Control
+	if ghost_inner == null:
+		return
+	_compact_drag_ghost(_drag_ghost, ghost_inner)
+	_drag_ghost_pivot = _drag_ghost.size / 2.0
+	_update_ghost_position()
+
+func _remove_drag_ghost_rules_text(node: Node) -> void:
+	if node is RichTextLabel:
+		var parent := node.get_parent()
+		if parent != null:
+			parent.remove_child(node)
+		node.queue_free()
+		return
+	for child in node.get_children().duplicate():
+		_remove_drag_ghost_rules_text(child)
 
 func _finish_drag() -> void:
 	_dragging = false

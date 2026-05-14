@@ -55,6 +55,7 @@ func resolve(game_manager: GameManager, target = null) -> void:
 		game_manager.note_player_feedback(card_name + " fizzles: no open summon lane.")
 		return
 
+	# Tablet-resurrected creatures enter with negated abilities, so they must not fire Impact.
 	var summoned := game_manager.summon_creature_by_effect(
 		card_owner,
 		creature,
@@ -65,7 +66,7 @@ func resolve(game_manager: GameManager, target = null) -> void:
 		self,
 		false,
 		false,
-		true
+		false
 	)
 	if not summoned:
 		game_manager.note_player_feedback(card_name + " fizzles: " + creature.card_name + " could not be resurrected.")

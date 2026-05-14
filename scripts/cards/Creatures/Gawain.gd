@@ -95,8 +95,6 @@ func can_activate(game_manager: GameManager) -> bool:
 		return false
 	if is_sleeping:
 		return false
-	if not can_take_minor_creature_action():
-		return false
 	var controller := get_controller()
 	if controller == null or controller.mana < 2:
 		return false
@@ -186,8 +184,6 @@ func _resolve_healing_hands(game_manager: GameManager, target: Card, status: Dic
 		target.remove_status_effects_from_source_card(source_card, status_name)
 	else:
 		target.remove_status_effects_by_name(status_name)
-
-	spend_minor_creature_action()
 
 	if game_manager != null:
 		var viewer := game_manager.get_feedback_viewer()

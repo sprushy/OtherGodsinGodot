@@ -19,7 +19,7 @@ func _init() -> void:
 	culture = "Ancient"
 	artist = "Ricardo Zoppello"
 	art_path = "res://images/card_art/creatures/EnHeduAnnaAIEdit.png"
-	ability_text = "Exaltation ([b]Activate[/b]): If your God's power activated this turn while En-hedu-anna was face-up, gain +7 RES, +7 STR, or +1 SPD. Until the end of the next turn, En-hedu-anna can't attack, be destroyed, or be targeted."
+	ability_text = "Exaltation ([b]Major Action[/b]): If your God's power activated this turn while En-hedu-anna was face-up, gain +7 RES, +7 STR, or +1 SPD. Until the end of the next turn, En-hedu-anna can't attack, be destroyed, or be targeted."
 
 func on_friendly_god_power_activated(game_manager: GameManager, _god: Card, _target: Card = null) -> void:
 	if not _was_face_up_on_field_when_god_power_activated(game_manager):

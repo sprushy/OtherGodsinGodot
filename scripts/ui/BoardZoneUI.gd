@@ -15,6 +15,8 @@ const STEAL_ATTACK_TARGET_TEXTURE := preload("res://images/ui/attack_targets/Ste
 const FOLLOWERS_ATTACK_TARGET_TEXTURE := preload("res://images/ui/attack_targets/FollowerAttack.png")
 const MOVE_STRAIGHT_INDICATOR_TEXTURE := preload("res://images/ui/move_arrows/ArrowIndicator.png")
 const MOVE_DIAGONAL_INDICATOR_TEXTURE := preload("res://images/ui/move_arrows/AngleArrow.png")
+const MINOR_ACTION_SYMBOL_TEXTURE := preload("res://images/ui/MinorActionSymbol.png")
+const MAJOR_ACTION_SYMBOL_TEXTURE := preload("res://images/ui/MajorActionSymbol.png")
 const BOARD_ZONE_SLAB_TEXTURE_PATHS := [
 	"res://images/board/stone_zone_slab.png",
 	"res://images/board/slot_tile_1.png",
@@ -2950,7 +2952,7 @@ func _refresh_display() -> void:
 			and card.is_stealth \
 			and (card.get_controller() == face_down_viewer or card.is_temporarily_revealed())
 		var is_stack_magical_preview := game_manager != null \
-			and card.is_magical_card()
+			and card.is_magical_card() \
 			and game_manager._has_pending_stack_action_for_card(card)
 
 		# Face-down cards: own stealth creatures that are visible to the viewer use the normal
@@ -3232,6 +3234,7 @@ func _refresh_display() -> void:
 					muted_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 					muted_badge.add_child(muted_lbl)
 					god_overlay.add_child(muted_badge)
+				_add_creature_action_symbols(god_overlay, card)
 				_add_followers_attack_result_label(god_overlay)
 			return
 
@@ -3435,6 +3438,7 @@ func _refresh_display() -> void:
 			muted_badge.add_child(muted_lbl)
 			card_overlay.add_child(muted_badge)
 
+		_add_creature_action_symbols(card_overlay, card)
 		_defense_overlay = card_overlay if shows_defense_shield else null
 		_raised_overlay  = card_overlay if (shows_defense_shield or card.is_stealth) else null
 		z_index = _get_resting_z_index()
@@ -3444,6 +3448,81 @@ func _refresh_display() -> void:
 		_add_empty_zone_slab()
 
 	_add_move_indicator_overlay()
+
+func _add_creature_action_symbols(overlay: Control, card: Card) -> void:
+	if overlay == null or card == null or card.card_type != Card.CardType.CREATURE:
+		return
+	var viewer := _get_viewer_player()
+	var can_view_stealth := not card.is_stealth or card.get_controller() == viewer or card.is_temporarily_revealed()
+	if card.is_face_down or card.is_prepared or not can_view_stealth:
+		return
+
+	var symbols: Array[Dictionary] = []
+	var max_minor := maxi(0, card.get_max_minor_creature_actions_per_turn())
+	if max_minor > 0:
+		var base_minor_capacity := mini(Card.DEFAULT_MINOR_CREATURE_ACTIONS_PER_TURN, max_minor)
+		symbols.append({
+			"kind": Card.ACTION_COST_MINOR,
+			"used": card.creature_minor_actions_used >= base_minor_capacity,
+			"tooltip": "Minor actions: %d/%d" % [mini(card.creature_minor_actions_used, max_minor), max_minor],
+		})
+		var extra_minor_count := maxi(0, max_minor - Card.DEFAULT_MINOR_CREATURE_ACTIONS_PER_TURN)
+		for i in range(extra_minor_count):
+			var threshold := Card.DEFAULT_MINOR_CREATURE_ACTIONS_PER_TURN + i + 1
+			symbols.append({
+				"kind": Card.ACTION_COST_MINOR,
+				"used": card.creature_minor_actions_used >= threshold,
+				"tooltip": "Additional minor action %d" % (i + 1),
+			})
+	symbols.append({
+		"kind": Card.ACTION_COST_MAJOR,
+		"used": card.creature_major_action_used,
+		"tooltip": "Major action used" if card.creature_major_action_used else "Major action available",
+	})
+	if symbols.is_empty():
+		return
+
+	var icon_size := 22.0
+	var gap := 3.0
+	var total_width := icon_size * float(symbols.size()) + gap * float(maxi(0, symbols.size() - 1))
+	var row := HBoxContainer.new()
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_theme_constant_override("separation", int(gap))
+	row.anchor_left = 0.5
+	row.anchor_right = 0.5
+	row.anchor_top = 1.0
+	row.anchor_bottom = 1.0
+	row.offset_left = -total_width * 0.5
+	row.offset_right = total_width * 0.5
+	row.offset_top = -32.0
+	row.offset_bottom = -8.0
+	overlay.add_child(row)
+
+	for symbol in symbols:
+		var kind := str(symbol.get("kind", Card.ACTION_COST_NONE))
+		var used := bool(symbol.get("used", false))
+		var slot := PanelContainer.new()
+		slot.mouse_filter = Control.MOUSE_FILTER_STOP
+		slot.custom_minimum_size = Vector2(icon_size, icon_size)
+		slot.tooltip_text = str(symbol.get("tooltip", ""))
+		var style := StyleBoxFlat.new()
+		style.bg_color = Color(0, 0, 0, 0)
+		style.corner_radius_top_left = 3
+		style.corner_radius_top_right = 3
+		style.corner_radius_bottom_left = 3
+		style.corner_radius_bottom_right = 3
+		for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+			style.set_border_width(side, 1 if used else 0)
+		style.border_color = Color(0.68, 0.68, 0.68, 0.95)
+		slot.add_theme_stylebox_override("panel", style)
+		var icon := TextureRect.new()
+		icon.texture = MINOR_ACTION_SYMBOL_TEXTURE if kind == Card.ACTION_COST_MINOR else MAJOR_ACTION_SYMBOL_TEXTURE
+		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		icon.modulate = Color(0.6, 0.6, 0.6, 0.34) if used else Color.WHITE
+		icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		slot.add_child(icon)
+		row.add_child(slot)
 
 func _is_draggable_creature() -> bool:
 	if zone.cards.size() == 0:

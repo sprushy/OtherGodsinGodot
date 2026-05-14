@@ -1085,7 +1085,7 @@ func _resolve_attack(action: CardAction) -> void:
 		# If the target left the board before the attack resolved (e.g. Gungnir destroyed it),
 		# the attack fizzles — attacker still spends their action.
 		if actual_target.current_zone == null or not actual_target.current_zone.is_board_zone():
-			action.attacker.spend_major_creature_action()
+			action.attacker.spend_attack_creature_action()
 			game_manager._clear_combat_engagement_state(actual_target)
 			last_resolution_text = action.attacker.card_name + "'s attack fizzles — target is no longer on the board."
 			return
@@ -1149,7 +1149,7 @@ func _finish_followers_attack(action: CardAction, defending_player: Player) -> v
 	if active_attackers.is_empty():
 		return
 	for combatant in active_attackers:
-		combatant.spend_major_creature_action()
+		combatant.spend_attack_creature_action()
 		combatant.mark_attacked_this_turn()
 	game_manager.set_temporary_combat_follower_damage_halved(action.halve_follower_damage)
 	var follower_damage := game_manager.resolve_followers_attack(active_attackers, defending_player)
@@ -1173,7 +1173,7 @@ func _finish_creature_combat(action: CardAction, target: Card) -> void:
 		elif attacker.current_zone != null and attacker.current_zone.is_board_zone():
 			active = [attacker]
 		for combatant in active:
-			combatant.spend_major_creature_action()
+			combatant.spend_attack_creature_action()
 			combatant.mark_attacked_this_turn()
 		if active.size() >= 2:
 			last_resolution_text = active[0].card_name + " and " + active[1].card_name + " fought " + target.card_name + "!"
@@ -1294,7 +1294,7 @@ func _continue_pending_humbaba_attack_resolution(action: CardAction, actual_targ
 	if actual_target is Card:
 		var target_card := actual_target as Card
 		if target_card.current_zone == null or not target_card.current_zone.is_board_zone():
-			action.attacker.spend_major_creature_action()
+			action.attacker.spend_attack_creature_action()
 			game_manager._clear_combat_engagement_state(target_card)
 			last_resolution_text = action.attacker.card_name + "'s attack fizzles â€” target is no longer on the board."
 			return
@@ -3198,6 +3198,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 				aca_target = game_manager.get_card_by_uid(aca_target_uid)
 			var aca_option_value = command.get("option", {})
 			var aca_option: Dictionary = aca_option_value if aca_option_value is Dictionary else {}
+			var aca_has_option := command.has("option") and not aca_option.is_empty()
 			if aca_target == null and not aca_option.is_empty():
 				var nested_target_uid := str(aca_option.get("target_uid", aca_option.get("chosen_uid", ""))).strip_edges()
 				if nested_target_uid != "":
@@ -3221,7 +3222,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 							return
 						if command.has("return_to_hand"):
 							aca_source.activate(game_manager, {"return_to_hand": bool(command.get("return_to_hand", false))})
-						elif command.has("option"):
+						elif aca_has_option:
 							aca_source.activate(game_manager, aca_option)
 						elif aca_target != null:
 							aca_source.activate(game_manager, aca_target)
@@ -3240,7 +3241,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 							return
 						aca_source.activate(game_manager, {"return_to_hand": bool(command.get("return_to_hand", false))})
 				)
-			elif command.has("option"):
+			elif aca_has_option:
 				game_manager.run_with_effect_source(
 					aca_source,
 					func() -> void:

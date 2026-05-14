@@ -278,6 +278,12 @@ const COST_KIND_POWER_UNLOCK := "power_unlock"
 const COST_KIND_POWER_ACTIVATION := "power_activation"
 const COST_KIND_CREATURE_SUMMON := "creature_summon"
 const COST_KIND_HAND_PLAY := "hand_play"
+const ACTION_COST_NONE := ""
+const ACTION_COST_MINOR := "minor"
+const ACTION_COST_MAJOR := "major"
+const DEFAULT_MINOR_CREATURE_ACTIONS_PER_TURN := 1
+const MINOR_ACTION_SYMBOL_PATH := "res://images/ui/MinorActionSymbol.png"
+const MAJOR_ACTION_SYMBOL_PATH := "res://images/ui/MajorActionSymbol.png"
 
 func get_controller() -> Player:
 	if current_zone != null and current_zone.is_board_zone() and current_zone.zone_owner != null:
@@ -1328,7 +1334,7 @@ func reset_creature_action_state() -> void:
 	creature_shift_used_this_turn = false
 
 func get_max_minor_creature_actions_per_turn() -> int:
-	return 2
+	return DEFAULT_MINOR_CREATURE_ACTIONS_PER_TURN
 
 func get_max_minor_creature_actions_before_major() -> int:
 	return get_max_minor_creature_actions_per_turn()
@@ -1337,23 +1343,62 @@ func can_take_minor_creature_action_after_major() -> bool:
 	return false
 
 func can_take_major_creature_action() -> bool:
-	return not creature_major_action_used and creature_minor_actions_used < get_max_minor_creature_actions_before_major()
+	return not creature_major_action_used
+
+func does_attack_exhaust_minor_creature_actions() -> bool:
+	return true
 
 func can_take_minor_creature_action() -> bool:
+	return can_take_minor_creature_action_spending_minor() or can_take_minor_creature_action_spending_major()
+
+func can_take_minor_creature_action_spending_minor() -> bool:
 	if creature_major_action_used:
 		return can_take_minor_creature_action_after_major() and creature_minor_actions_used < get_max_minor_creature_actions_per_turn()
 	return creature_minor_actions_used < get_max_minor_creature_actions_per_turn()
+
+func can_take_minor_creature_action_spending_major() -> bool:
+	return not creature_major_action_used and creature_minor_actions_used >= get_max_minor_creature_actions_per_turn()
+
+func get_effective_minor_action_cost_kind() -> String:
+	if can_take_minor_creature_action_spending_minor():
+		return ACTION_COST_MINOR
+	if can_take_minor_creature_action_spending_major():
+		return ACTION_COST_MAJOR
+	return ACTION_COST_MINOR
 
 func spend_major_creature_action() -> void:
 	creature_major_action_used = true
 	has_acted_this_turn = true
 
+func spend_attack_creature_action() -> void:
+	spend_major_creature_action()
+	if does_attack_exhaust_minor_creature_actions():
+		creature_minor_actions_used = maxi(creature_minor_actions_used, get_max_minor_creature_actions_per_turn())
+
 func spend_minor_creature_action(marked_as_move: bool = false) -> void:
-	creature_minor_actions_used += 1
+	if can_take_minor_creature_action_spending_minor():
+		creature_minor_actions_used += 1
+	elif can_take_minor_creature_action_spending_major():
+		creature_major_action_used = true
+		has_acted_this_turn = true
 	if marked_as_move:
 		has_moved_this_turn = true
 	if creature_minor_actions_used >= get_max_minor_creature_actions_per_turn():
 		has_acted_this_turn = true
+
+static func get_action_symbol_path(action_cost_kind: String) -> String:
+	match action_cost_kind:
+		ACTION_COST_MINOR:
+			return MINOR_ACTION_SYMBOL_PATH
+		ACTION_COST_MAJOR:
+			return MAJOR_ACTION_SYMBOL_PATH
+	return ""
+
+static func get_action_symbol_bbcode(action_cost_kind: String, size: int = 18) -> String:
+	var path := get_action_symbol_path(action_cost_kind)
+	if path == "":
+		return ""
+	return "[img=%dx%d]%s[/img] " % [size, size, path]
 
 func can_use_shift_ability_this_turn() -> bool:
 	return not creature_shift_used_this_turn

@@ -27,7 +27,8 @@ const KEYWORD_HINTS = {
 	"Mill": "Put a card from the top of a deck into the graveyard.",
 	"Reach": "This creature can intercept for targets one row further forward than normal.",
 	"Passive": "This effect is always active while this card remains in play.",
-	"Impact": "This effect triggers when this card enters the field.",
+	"Impact": "This effect triggers when this card enters the field from your hand, unless it has Universal Impact.",
+	"Universal Impact": "This Impact also triggers when this card enters the field from zones other than your hand.",
 	"Imbue": "Weapons equipped from your hand gain an added effect.",
 	"Reveal": "This ability activates when this card becomes visible, such as when it exits stealth or is turned face-up.",
 	"Destroyed": "This effect triggers when this creature is destroyed.",
@@ -48,7 +49,7 @@ const KEYWORD_HINTS = {
 	"Frontlined": "This effect applies while this card is in the frontline.",
 	"Upkeep": "This effect happens during upkeep at the beginning of your turn.",
 	"Harbor": "Place a qualifying card under this card. Harbored cards are not on the field until returned.",
-	"Shift": "Switch this card between its listed forms. If Shift is marked as a Minor Action, it spends one minor action. If the card says once per turn, it can shift only once that turn.",
+	"Shift": "Switch this card between its listed forms.",
 	"Incorporeal": "Can only be engaged by Spirits or faster Mages. Can only engage Spirits or slower Mages.",
 	"Slay": "This effect triggers when this card destroys another creature in combat.",
 	"Slain": "This card was destroyed in combat.",
@@ -72,6 +73,50 @@ static func apply_keyword_hints(text: String) -> String:
 		result = result.replace("[b]" + keyword + "[/b]",
 			"[hint=\"" + hint_text + "\"][b]" + keyword + "[/b][/hint]")
 	return result
+
+static func apply_action_cost_symbols(text: String, card = null) -> String:
+	if text.strip_edges() == "":
+		return text
+	var lines := text.split("\n", true)
+	var decorated: Array[String] = []
+	for raw_line in lines:
+		var line := str(raw_line)
+		var cost_kind := _get_action_cost_kind_for_ability_line(line, card)
+		if cost_kind != "" and not line.begins_with("[img="):
+			line = _get_action_symbol_bbcode(cost_kind, 18) + line
+		decorated.append(line)
+	return "\n".join(decorated)
+
+static func _get_action_cost_kind_for_ability_line(line: String, card = null) -> String:
+	var lower_line := line.to_lower()
+	if _line_declares_action_cost(lower_line, "minor"):
+		if card != null and card.has_method("get_effective_minor_action_cost_kind"):
+			return card.get_effective_minor_action_cost_kind()
+		return "minor"
+	if _line_declares_action_cost(lower_line, "major"):
+		return "major"
+	return ""
+
+static func _line_declares_action_cost(lower_line: String, action_kind: String) -> bool:
+	var action_text := action_kind + " action"
+	if lower_line.contains("[b]" + action_text + "[/b]"):
+		return true
+	if lower_line.contains("(" + action_text) or lower_line.contains(", " + action_text):
+		return true
+	if action_kind == "major" and lower_line.contains("use this card's major action"):
+		return true
+	return false
+
+static func _get_action_symbol_bbcode(action_cost_kind: String, size: int = 18) -> String:
+	var path := ""
+	match action_cost_kind:
+		"minor":
+			path = "res://images/ui/MinorActionSymbol.png"
+		"major":
+			path = "res://images/ui/MajorActionSymbol.png"
+	if path == "":
+		return ""
+	return "[img=%dx%d]%s[/img] " % [size, size, path]
 
 # Common hooks all cards can use
 func on_play(_game_manager: GameManager, _target = null) -> void:
@@ -104,6 +149,14 @@ func on_enter_zone(_zone: Zone) -> void:
 
 func on_leave_zone(_zone: Zone) -> void:
 	pass
+
+func has_universal_impact() -> bool:
+	return false
+
+func should_trigger_impact_from_zone(from_zone: Zone) -> bool:
+	if has_universal_impact():
+		return true
+	return from_zone != null and from_zone.zone_type == Zone.ZoneType.HAND
 
 func get_self_graveyard_replacement_zone(
 	_game_manager: GameManager,

@@ -15213,8 +15213,6 @@ func _bdrag_finish(drop_pos: Vector2) -> void:
 			elif not card.get_status_effect("cannot_move").is_empty():
 				var move_status := card.get_status_effect("cannot_move")
 				_set_action_label_text(card.card_name + " cannot move because of " + str(move_status.get("source", "an effect")) + ".")
-			elif card.summoned_this_turn:
-				_set_action_label_text(card.card_name + " was summoned this turn and cannot move yet.")
 			elif card.creature_major_action_used:
 				_set_action_label_text(card.card_name + " has already used its major action this turn.")
 			elif card.creature_minor_actions_used >= minor_action_limit:
@@ -15585,7 +15583,6 @@ func _creature_can_move(card: Card) -> bool:
 		card.card_type == Card.CardType.CREATURE
 		and card.can_take_minor_creature_action()
 		and card.get_status_effect("cannot_move").is_empty()
-		and not card.summoned_this_turn
 		and not card.is_sleeping
 	)
 
@@ -15593,7 +15590,6 @@ func _creature_can_change_stance(card: Card) -> bool:
 	return (
 		card.card_type == Card.CardType.CREATURE
 		and card.can_take_minor_creature_action()
-		and not card.summoned_this_turn
 		and not card.is_sleeping
 	)
 
@@ -20037,7 +20033,7 @@ func _on_retreat_no() -> void:
 			_set_action_label_text("Asaruludu's Guardian prevented " + _get_card_name_safe(blocked_ask) + "'s Tactful Retreat!", true)
 		else:
 			_set_action_label_text(_get_attack_card_label(action.attacker, "The attacker") + " fought " + _get_card_name_safe(defender) + "!", true)
-		action.attacker.spend_major_creature_action()
+		action.attacker.spend_attack_creature_action()
 		update_ui()
 		_finish_post_execute(action.source_player)
 	)
@@ -20492,7 +20488,7 @@ func _on_match_ui_interaction(player_index: int, type: String, data: Dictionary)
 							_set_action_label_text(_get_attack_card_label(active_attackers[0], "The attacker") + " fought " + _get_card_name_safe(target) + "!", true)
 					
 					for combatant in active_attackers:
-						combatant.spend_major_creature_action()
+						combatant.spend_attack_creature_action()
 						combatant.mark_attacked_this_turn()
 						
 					update_ui()

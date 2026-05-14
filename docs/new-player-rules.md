@@ -59,7 +59,7 @@ At the start of your turn, once-per-turn actions are reset. You must then choose
 
 During your Main Phase, you may take actions in any order as long as you can pay the costs. You can play cards from your hand, unlock a face-down Power, or use activated abilities from your unlocked Powers, God, or Creatures.
 
-You may only perform one normal Creature summon per turn. Hexes, Charms, and other eligible cards can also be played face-down into an empty Frontline or Reserve slot to prepare them.
+You may only perform one normal Creature summon per turn. A normal Creature summon spends one Minor Action from the summoned Creature. Hexes, Charms, and other eligible cards can also be played face-down into an empty Frontline or Reserve slot to prepare them.
 
 ### C. Combat Phase
 
@@ -71,9 +71,9 @@ Turn-ending effects resolve, and play passes to the opponent.
 
 ## 6. Creature Actions and Movement
 
-Creatures **do not** have summoning sickness. They can attack, move, or change modes on the turn they are played if they are otherwise eligible to do so.
+Creatures **do not** have summoning sickness. They can attack, move, change modes, or use abilities on the turn they are played if they are otherwise eligible to do so.
 
-Each Creature can take a maximum of two Minor Actions per turn. Minor Actions include moving to an adjacent empty zone, changing mode, or picking up an unequipped Equipment card from an adjacent zone.
+Each Creature can take a maximum of one Minor Action per turn unless an ability grants more. Minor Actions include moving to an adjacent empty zone, changing mode, or picking up an unequipped Equipment card from an adjacent zone.
 
 Each Creature can take a maximum of one Major Action per turn. Major Actions include declaring an attack, destroying an unequipped enemy Equipment card, or activating a major ability on the Creature.
 

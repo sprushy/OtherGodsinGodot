@@ -13,7 +13,7 @@ func _init() -> void:
 	speed = 1
 	resilience = 16
 	strength = 19
-	ability_text = "Stupefy: Use this card's action to put an equal- or lower-level creature to [b]Sleep[/b] while Alu remains on the field."
+	ability_text = "Stupefy ([b]Major Action[/b]): Put an equal- or lower-level creature to [b]Sleep[/b] while Alu remains on the field."
 	flavor_text = ""
 	culture = "Ancient"
 	art_path = "res://images/card_art/creatures/alu.jpg"

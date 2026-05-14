@@ -775,7 +775,6 @@ func start_turn() -> void:
 		else:
 			print(current_player.player_name + " still cannot attack (" + str(attack_restrictions[current_player].turns) + " turns left)")
 	
-	# Clear summoning sickness
 	for zone in current_player.frontline_zones + current_player.reserve_zones:
 		for card in zone.cards:
 			if card.card_type == Card.CardType.CREATURE:
@@ -1312,10 +1311,12 @@ func play_card(player: Player, card: Card, target_zone: Zone, prepared: bool = f
 
 		# Mark summoned
 		if card.card_type == Card.CardType.CREATURE:
+			card.reset_creature_action_state()
+			card.spend_minor_creature_action()
 			player.has_summoned_this_turn = true
 			if used_extra_normal_summon:
 				_consume_extra_normal_summon(player, card, target_zone)
-			card.summoned_this_turn = true	# Track summoning sickness for movement/mode change
+			card.summoned_this_turn = true
 			# Apply any active god passives to the newly placed creature
 			_apply_god_passives_to_card(player, card)
 
@@ -1487,6 +1488,8 @@ func summon_creature_by_effect(
 		resolved_mode = Card.CreatureMode.DEFENSIVE
 	card.creature_mode = resolved_mode
 	card.reset_creature_action_state()
+	if consume_turn_summon:
+		card.spend_minor_creature_action()
 	card.summoned_this_turn = true
 	if consume_turn_summon:
 		player.has_summoned_this_turn = true
@@ -1515,7 +1518,13 @@ func _trigger_board_summon(
 		return
 	if card.has_method("on_summon"):
 		card.on_summon(self)
-	if not face_down and trigger_impact and card.has_method("on_impact"):
+	var should_trigger_impact := false
+	if not face_down and trigger_impact:
+		if card.has_method("should_trigger_impact_from_zone"):
+			should_trigger_impact = card.should_trigger_impact_from_zone(from_zone)
+		else:
+			should_trigger_impact = from_zone != null and from_zone.zone_type == Zone.ZoneType.HAND
+	if should_trigger_impact and card.has_method("on_impact"):
 		card.on_impact(self)
 	card_summoned.emit(player, card, from_zone, target_zone, summon_source, face_down, stealth)
 	_notify_powers_of_creature_summon(player, card, from_zone, target_zone, summon_source, face_down, stealth)
@@ -1600,8 +1609,6 @@ func creature_move(creature: Card, target_zone: Zone) -> bool:
 	if creature.card_type != Card.CardType.CREATURE:
 		return false
 	
-	if creature.summoned_this_turn:
-		return false
 	if not creature.get_status_effect("cannot_move").is_empty():
 		return false
 	
@@ -1633,9 +1640,6 @@ func creature_change_mode(creature: Card, target_mode: int = -1) -> bool:
 	if is_game_over:
 		return false
 	if creature.card_type != Card.CardType.CREATURE:
-		return false
-	
-	if creature.summoned_this_turn:
 		return false
 	
 	if not creature.can_take_minor_creature_action():
@@ -1975,11 +1979,11 @@ func creature_attack(attacker: Card, target) -> void:
 	if attacker.has_method("get_united_front_partner_for_attack"):
 		united_front_partner = attacker.get_united_front_partner_for_attack(self)
 	
-	attacker.spend_major_creature_action()
+	attacker.spend_attack_creature_action()
 	attacker.mark_attacked_this_turn()
 	if united_front_partner != null:
 		united_front_partner.reveal_from_stealth(self)
-		united_front_partner.spend_major_creature_action()
+		united_front_partner.spend_attack_creature_action()
 		united_front_partner.mark_attacked_this_turn()
 	
 	if target is Card:
