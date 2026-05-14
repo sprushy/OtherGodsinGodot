@@ -945,7 +945,7 @@ func _show_hover_panel() -> void:
 	style.content_margin_top = 8
 	style.content_margin_bottom = 8
 	panel.add_theme_stylebox_override("panel", style)
-	panel.add_child(CardDetailContentBuilder.build_visual_hover_body(
+	var hover_body := CardDetailContentBuilder.build_visual_hover_body(
 		card_data,
 		_hover_viewer,
 		{
@@ -953,9 +953,16 @@ func _show_hover_panel() -> void:
 			"display_mana_cost": _get_display_mana_cost(),
 			"display_cost_adjustment_lines": _display_cost_adjustment_lines
 		}
-	))
+	)
+	panel.add_child(hover_body)
 
 	floating_parent.add_child(panel)
+	if hover_body is ScrollContainer:
+		var hover_scroll := hover_body as ScrollContainer
+		CardDetailContentBuilder.apply_deckbuilder_scrollbar_style(hover_scroll, true)
+		hover_scroll.ready.connect(func() -> void:
+			CardDetailContentBuilder.apply_deckbuilder_scrollbar_style(hover_scroll, true)
+		, CONNECT_ONE_SHOT)
 	panel.move_to_front()
 	var vp_size := get_viewport().get_visible_rect().size
 	panel.size = Vector2(_HOVER_PANEL_WIDTH, minf(_HOVER_PANEL_MAX_HEIGHT, vp_size.y - 8.0))

@@ -590,12 +590,18 @@ func _build_deck_panel(parent: Control) -> void:
 	details_scroll.custom_minimum_size.y = 0
 	details_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	details_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	CardDetailContentBuilder.apply_deckbuilder_scrollbar_style(details_scroll, true)
 	prev_text.add_child(details_scroll)
+
+	var details_scroll_content := MarginContainer.new()
+	details_scroll_content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	details_scroll_content.add_theme_constant_override("margin_right", DECK_SCROLLBAR_CONTENT_CLEARANCE)
+	details_scroll.add_child(details_scroll_content)
 
 	var details_box := VBoxContainer.new()
 	details_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	details_box.add_theme_constant_override("separation", 5)
-	details_scroll.add_child(details_box)
+	details_scroll_content.add_child(details_box)
 
 	details_box.add_child(_prev_type)
 

@@ -4,6 +4,7 @@ extends RefCounted
 const _BULLET_SEPARATOR := " | "
 const _BOARD_POPUP_WIDTH := 210.0
 const _KEYWORD_PANEL_WIDTH := 210.0
+const _DECKBUILDER_SCROLLBAR_CONTENT_CLEARANCE := 32.0
 
 static func build_visual_hover_body(card: Card, viewer: Player, config: Dictionary = {}) -> Control:
 	var content_width := float(config.get("content_width", 300.0))
@@ -17,8 +18,12 @@ static func build_visual_hover_body(card: Card, viewer: Player, config: Dictiona
 	scroll.custom_minimum_size = Vector2(content_width, 0.0)
 	apply_deckbuilder_scrollbar_style(scroll, true)
 
-	var vbox := _make_vbox(content_width, 4)
-	scroll.add_child(vbox)
+	var content_margin := MarginContainer.new()
+	content_margin.add_theme_constant_override("margin_right", int(_DECKBUILDER_SCROLLBAR_CONTENT_CLEARANCE))
+	scroll.add_child(content_margin)
+
+	var vbox := _make_vbox(content_width - _DECKBUILDER_SCROLLBAR_CONTENT_CLEARANCE, 4)
+	content_margin.add_child(vbox)
 
 	var name_lbl := _make_label(
 		card.get_display_name_for_control(),

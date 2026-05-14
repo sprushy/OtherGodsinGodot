@@ -2949,9 +2949,9 @@ func _refresh_display() -> void:
 		var can_render_stealth_creature_normally := card.card_type == Card.CardType.CREATURE \
 			and card.is_stealth \
 			and (card.get_controller() == face_down_viewer or card.is_temporarily_revealed())
-		var is_stack_magical_preview := _preview_card == card \
-			and _is_card_waiting_on_priority(card) \
+		var is_stack_magical_preview := game_manager != null \
 			and card.is_magical_card()
+			and game_manager._has_pending_stack_action_for_card(card)
 
 		# Face-down cards: own stealth creatures that are visible to the viewer use the normal
 		# renderer below so they keep their full stats and defensive shield placement.

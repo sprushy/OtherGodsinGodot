@@ -383,6 +383,9 @@ func get_display_name_for_control(control: Control = null, prefer_ascii: bool = 
 func is_hidden_from_viewer(viewer: Player = null) -> bool:
 	if viewer == null:
 		return false
+	var owner_game_manager := card_owner.game_manager if card_owner != null else null
+	if owner_game_manager != null and is_magical_card() and owner_game_manager._has_pending_stack_action_for_card(self):
+		return false
 	var controller := get_controller()
 	var publicly_revealed_power := self is PowerCard and (self as PowerCard).is_publicly_revealed
 	var hidden_face_down := (is_face_down or is_prepared) and not publicly_revealed_power
