@@ -15,7 +15,7 @@ static func build_visual_hover_body(card: Card, viewer: Player, config: Dictiona
 	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_SHOW_ALWAYS
 	scroll.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	scroll.custom_minimum_size = Vector2(content_width, 0.0)
-	_apply_hover_scrollbar_style(scroll)
+	apply_deckbuilder_scrollbar_style(scroll, true)
 
 	var vbox := _make_vbox(content_width, 4)
 	scroll.add_child(vbox)
@@ -120,9 +120,11 @@ static func build_visual_hover_body(card: Card, viewer: Player, config: Dictiona
 
 	return scroll
 
-static func _apply_hover_scrollbar_style(scroll: ScrollContainer) -> void:
+static func apply_deckbuilder_scrollbar_style(scroll: ScrollContainer, force_visible: bool = false) -> void:
 	if scroll == null:
 		return
+	if force_visible:
+		scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_SHOW_ALWAYS
 
 	var bar := scroll.get_v_scroll_bar()
 	if not is_instance_valid(bar):

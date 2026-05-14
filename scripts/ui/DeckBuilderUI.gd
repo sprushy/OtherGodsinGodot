@@ -131,50 +131,11 @@ func _escape_preview_bbcode_text(text: String) -> String:
 	return text.replace("[", "[lb]").replace("]", "[rb]")
 
 func _apply_deckbuilder_scrollbar_style(scroll: ScrollContainer, force_visible: bool = false) -> void:
-	if scroll == null:
-		return
-	if force_visible:
-		scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_SHOW_ALWAYS
+	CardDetailContentBuilder.apply_deckbuilder_scrollbar_style(scroll, force_visible)
 
 	var bar := scroll.get_v_scroll_bar()
 	if not is_instance_valid(bar):
 		return
-
-	bar.custom_minimum_size.x = 18.0
-	bar.mouse_filter = Control.MOUSE_FILTER_STOP
-	bar.add_theme_constant_override("scroll_width", 18)
-	bar.add_theme_constant_override("scroll_border", 2)
-
-	var track := StyleBoxFlat.new()
-	track.bg_color = Color(0.035, 0.040, 0.060, 0.94)
-	track.border_color = Color(0.18, 0.20, 0.30, 0.95)
-	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		track.set_border_width(side as Side, 1)
-	track.corner_radius_top_left = 8
-	track.corner_radius_top_right = 8
-	track.corner_radius_bottom_left = 8
-	track.corner_radius_bottom_right = 8
-	bar.add_theme_stylebox_override("scroll", track)
-	bar.add_theme_stylebox_override("scroll_focus", track)
-
-	var grabber := StyleBoxFlat.new()
-	grabber.bg_color = Color(0.72, 0.66, 0.40, 0.98)
-	grabber.border_color = Color(0.98, 0.88, 0.52, 1.0)
-	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		grabber.set_border_width(side as Side, 1)
-	grabber.corner_radius_top_left = 8
-	grabber.corner_radius_top_right = 8
-	grabber.corner_radius_bottom_left = 8
-	grabber.corner_radius_bottom_right = 8
-	bar.add_theme_stylebox_override("grabber", grabber)
-
-	var grabber_highlight := grabber.duplicate() as StyleBoxFlat
-	grabber_highlight.bg_color = Color(0.88, 0.78, 0.45, 1.0)
-	bar.add_theme_stylebox_override("grabber_highlight", grabber_highlight)
-
-	var grabber_pressed := grabber.duplicate() as StyleBoxFlat
-	grabber_pressed.bg_color = Color(1.0, 0.84, 0.44, 1.0)
-	bar.add_theme_stylebox_override("grabber_pressed", grabber_pressed)
 
 	bar.value_changed.connect(func(_value: float) -> void:
 		_update_deck_scroll_nav_buttons()
