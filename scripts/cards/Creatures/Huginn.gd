@@ -23,7 +23,7 @@ func on_removed(game_manager: GameManager) -> void:
 func _resolve_perish_prime(game_manager: GameManager) -> void:
 	if game_manager == null or card_owner == null or card_owner.deck_zone == null:
 		return
-	if current_zone != card_owner.graveyard_zone:
+	if not did_perish():
 		return
 	var valid_hexes := get_valid_hex_targets()
 	if valid_hexes.is_empty():

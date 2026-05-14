@@ -20,7 +20,7 @@ var launch_config_path: String = ""
 var process_id: int = 0
 var process_launch_error: String = ""
 var reconnect_deadline_unix: int = 0
-var reconnect_window_seconds: int = 30
+var reconnect_window_seconds: int = 90
 var player_match_tokens: Dictionary = {}
 var player_decks_by_session: Dictionary = {}
 var player_identity_by_session: Dictionary = {}
@@ -254,7 +254,7 @@ static func from_launch_config(config: Dictionary) -> MatchSession:
 	session.status = str(config.get("status", STATUS_STARTING))
 	session.server_mode = str(config.get("server_mode", SERVER_MODE_IN_PROCESS_HOST))
 	session.is_ranked = bool(config.get("is_ranked", true))
-	session.reconnect_window_seconds = int(config.get("reconnect_window_seconds", 30))
+	session.reconnect_window_seconds = int(config.get("reconnect_window_seconds", 90))
 	var configured_tokens = config.get("player_match_tokens", {})
 	if configured_tokens is Dictionary:
 		session.player_match_tokens = (configured_tokens as Dictionary).duplicate(true)

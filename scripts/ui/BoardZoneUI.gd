@@ -2949,10 +2949,15 @@ func _refresh_display() -> void:
 		var can_render_stealth_creature_normally := card.card_type == Card.CardType.CREATURE \
 			and card.is_stealth \
 			and (card.get_controller() == face_down_viewer or card.is_temporarily_revealed())
+		var is_stack_magical_preview := _preview_card == card \
+			and _is_card_waiting_on_priority(card) \
+			and card.is_magical_card()
 
 		# Face-down cards: own stealth creatures that are visible to the viewer use the normal
 		# renderer below so they keep their full stats and defensive shield placement.
-		if card.is_face_down and not can_render_stealth_creature_normally:
+		# Played magical cards on the stack should also render with their art instead of
+		# briefly inheriting hidden board-card visuals from their source state.
+		if card.is_face_down and not can_render_stealth_creature_normally and not is_stack_magical_preview:
 			add_theme_stylebox_override("panel", StyleBoxEmpty.new())
 			var fd_overlay := Control.new()
 			fd_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE

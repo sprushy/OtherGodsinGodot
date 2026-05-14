@@ -12,9 +12,10 @@ static func build_visual_hover_body(card: Card, viewer: Player, config: Dictiona
 
 	var scroll := ScrollContainer.new()
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_SHOW_ALWAYS
 	scroll.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	scroll.custom_minimum_size = Vector2(content_width, 0.0)
+	_apply_hover_scrollbar_style(scroll)
 
 	var vbox := _make_vbox(content_width, 4)
 	scroll.add_child(vbox)
@@ -118,6 +119,50 @@ static func build_visual_hover_body(card: Card, viewer: Player, config: Dictiona
 	_add_hover_stored_card_section(vbox, card, viewer, content_width)
 
 	return scroll
+
+static func _apply_hover_scrollbar_style(scroll: ScrollContainer) -> void:
+	if scroll == null:
+		return
+
+	var bar := scroll.get_v_scroll_bar()
+	if not is_instance_valid(bar):
+		return
+
+	bar.custom_minimum_size.x = 18.0
+	bar.mouse_filter = Control.MOUSE_FILTER_STOP
+	bar.add_theme_constant_override("scroll_width", 18)
+	bar.add_theme_constant_override("scroll_border", 2)
+
+	var track := StyleBoxFlat.new()
+	track.bg_color = Color(0.035, 0.040, 0.060, 0.94)
+	track.border_color = Color(0.18, 0.20, 0.30, 0.95)
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		track.set_border_width(side as Side, 1)
+	track.corner_radius_top_left = 8
+	track.corner_radius_top_right = 8
+	track.corner_radius_bottom_left = 8
+	track.corner_radius_bottom_right = 8
+	bar.add_theme_stylebox_override("scroll", track)
+	bar.add_theme_stylebox_override("scroll_focus", track)
+
+	var grabber := StyleBoxFlat.new()
+	grabber.bg_color = Color(0.72, 0.66, 0.40, 0.98)
+	grabber.border_color = Color(0.98, 0.88, 0.52, 1.0)
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		grabber.set_border_width(side as Side, 1)
+	grabber.corner_radius_top_left = 8
+	grabber.corner_radius_top_right = 8
+	grabber.corner_radius_bottom_left = 8
+	grabber.corner_radius_bottom_right = 8
+	bar.add_theme_stylebox_override("grabber", grabber)
+
+	var grabber_highlight := grabber.duplicate() as StyleBoxFlat
+	grabber_highlight.bg_color = Color(0.88, 0.78, 0.45, 1.0)
+	bar.add_theme_stylebox_override("grabber_highlight", grabber_highlight)
+
+	var grabber_pressed := grabber.duplicate() as StyleBoxFlat
+	grabber_pressed.bg_color = Color(1.0, 0.84, 0.44, 1.0)
+	bar.add_theme_stylebox_override("grabber_pressed", grabber_pressed)
 
 static func build_board_popup_body(card: Card, viewer: Player, config: Dictionary = {}) -> Control:
 	var is_hidden_card := bool(config.get("is_hidden_card", false))

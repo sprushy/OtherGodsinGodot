@@ -3178,6 +3178,11 @@ func _send_to_graveyard_with_hook_resolved(
 		card.card_owner.move_card(card, card.card_owner.abyss_zone)
 	else:
 		card.card_owner.move_card(card, card.card_owner.graveyard_zone)
+		card.set_last_graveyard_entry_flags(
+			card.last_board_zone_type >= 0,
+			destruction or combat_death,
+			combat_death
+		)
 	if continue_callback.is_valid():
 		continue_callback.call()
 	return true
