@@ -12456,16 +12456,14 @@ func _show_next_humbaba_augury_prompt() -> void:
 		else:
 			current_targets = card.get_augury_cards(game_manager)
 		if current_targets.is_empty():
-			var was_paused := _stack_resolution_paused
 			_show_humbaba_augury_feedback(card.card_name + " found no cards to read.")
-			if was_paused:
+			if _stack_resolution_paused:
 				call_deferred("_show_next_humbaba_augury_prompt")
 				return
 			continue
 		if current_targets.size() == 1:
-			var was_paused := _stack_resolution_paused
 			_show_humbaba_augury_feedback(card.resolve_augury_reading(game_manager, current_targets[0]))
-			if was_paused:
+			if _stack_resolution_paused:
 				call_deferred("_show_next_humbaba_augury_prompt")
 				return
 			continue
@@ -12511,27 +12509,15 @@ func _show_next_huginn_perish_prime_prompt() -> void:
 		else:
 			current_targets = card.get_valid_hex_targets()
 		if current_targets.is_empty():
-			var was_paused := _stack_resolution_paused
 			_queued_huginn_prime_prompt_targets.erase(card.uid)
-			var no_target_text := "%s perished, but found no hex to prime." % card.card_name
-			if was_paused:
-				_resume_after_deferred_resolution(no_target_text)
-			else:
-				_set_action_label_text(no_target_text)
-				update_ui()
+			_set_action_label_text("%s perished, but found no hex to prime." % card.card_name)
+			update_ui()
 			continue
 		if not _is_player_local(card.card_owner):
-			var was_paused := _stack_resolution_paused
 			_queued_huginn_prime_prompt_targets.erase(card.uid)
-			var auto_feedback := card.resolve_perish_prime_choice(game_manager, current_targets[0])
-			if was_paused:
-				_resume_after_deferred_resolution(auto_feedback)
-			else:
-				_set_action_label_text(auto_feedback)
-				update_ui()
+			_set_action_label_text(card.resolve_perish_prime_choice(game_manager, current_targets[0]))
+			update_ui()
 			continue
-		if _executing_stack_action and not _stack_resolution_paused:
-			_pause_stack_resolution(card.card_owner)
 		_active_huginn_prime_prompt = card
 		var on_choose_prime := func(chosen_hex: Card) -> void:
 			var resolved_card := _active_huginn_prime_prompt
@@ -12594,27 +12580,15 @@ func _show_next_muninn_perish_prime_prompt() -> void:
 		else:
 			current_targets = card.get_valid_charm_targets()
 		if current_targets.is_empty():
-			var was_paused := _stack_resolution_paused
 			_queued_muninn_prime_prompt_targets.erase(card.uid)
-			var no_target_text := "%s perished, but found no charm to prime." % card.card_name
-			if was_paused:
-				_resume_after_deferred_resolution(no_target_text)
-			else:
-				_set_action_label_text(no_target_text)
-				update_ui()
+			_set_action_label_text("%s perished, but found no charm to prime." % card.card_name)
+			update_ui()
 			continue
 		if not _is_player_local(card.card_owner):
-			var was_paused := _stack_resolution_paused
 			_queued_muninn_prime_prompt_targets.erase(card.uid)
-			var auto_feedback := card.resolve_perish_prime_choice(game_manager, current_targets[0])
-			if was_paused:
-				_resume_after_deferred_resolution(auto_feedback)
-			else:
-				_set_action_label_text(auto_feedback)
-				update_ui()
+			_set_action_label_text(card.resolve_perish_prime_choice(game_manager, current_targets[0]))
+			update_ui()
 			continue
-		if _executing_stack_action and not _stack_resolution_paused:
-			_pause_stack_resolution(card.card_owner)
 		_active_muninn_prime_prompt = card
 		var on_choose_prime := func(chosen_charm: Card) -> void:
 			var resolved_card := _active_muninn_prime_prompt

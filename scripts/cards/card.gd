@@ -243,9 +243,6 @@ var is_prepared: bool = false
 # Tracks the last board position so Circle of Rebirth can auto-resurrect.
 var last_board_zone_type: int = -1   # Zone.ZoneType value; -1 = never placed
 var last_board_zone_index: int = int(Player.BOARD_LANE_COUNT / 2.0)   # default centre column
-var last_graveyard_entry_from_field: bool = false
-var last_graveyard_entry_was_destruction: bool = false
-var last_graveyard_entry_was_combat_death: bool = false
 var is_face_down: bool = false
 var is_stealth: bool = false
 var has_acted_this_turn: bool = false
@@ -567,21 +564,6 @@ func _append_unique_passive_card(passive_cards: Array[Card], seen_cards: Diction
 
 func is_creature_card() -> bool:
 	return card_type == CardType.CREATURE
-
-func clear_last_graveyard_entry_flags() -> void:
-	last_graveyard_entry_from_field = false
-	last_graveyard_entry_was_destruction = false
-	last_graveyard_entry_was_combat_death = false
-
-func set_last_graveyard_entry_flags(from_field: bool, destruction: bool, combat_death: bool) -> void:
-	last_graveyard_entry_from_field = from_field
-	last_graveyard_entry_was_destruction = destruction
-	last_graveyard_entry_was_combat_death = combat_death
-
-func did_perish() -> bool:
-	return current_zone == card_owner.graveyard_zone \
-		and last_graveyard_entry_from_field \
-		and last_graveyard_entry_was_destruction
 
 func get_effective_speed() -> int:
 	var base_speed = speed

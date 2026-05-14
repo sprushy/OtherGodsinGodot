@@ -136,8 +136,10 @@ static func _apply_hover_scrollbar_style(scroll: ScrollContainer) -> void:
 	var track := StyleBoxFlat.new()
 	track.bg_color = Color(0.035, 0.040, 0.060, 0.94)
 	track.border_color = Color(0.18, 0.20, 0.30, 0.95)
-	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		track.set_border_width(side as Side, 1)
+	track.set_border_width(SIDE_LEFT, 1)
+	track.set_border_width(SIDE_RIGHT, 1)
+	track.set_border_width(SIDE_TOP, 1)
+	track.set_border_width(SIDE_BOTTOM, 1)
 	track.corner_radius_top_left = 8
 	track.corner_radius_top_right = 8
 	track.corner_radius_bottom_left = 8
@@ -148,19 +150,41 @@ static func _apply_hover_scrollbar_style(scroll: ScrollContainer) -> void:
 	var grabber := StyleBoxFlat.new()
 	grabber.bg_color = Color(0.72, 0.66, 0.40, 0.98)
 	grabber.border_color = Color(0.98, 0.88, 0.52, 1.0)
-	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		grabber.set_border_width(side as Side, 1)
+	grabber.set_border_width(SIDE_LEFT, 1)
+	grabber.set_border_width(SIDE_RIGHT, 1)
+	grabber.set_border_width(SIDE_TOP, 1)
+	grabber.set_border_width(SIDE_BOTTOM, 1)
 	grabber.corner_radius_top_left = 8
 	grabber.corner_radius_top_right = 8
 	grabber.corner_radius_bottom_left = 8
 	grabber.corner_radius_bottom_right = 8
 	bar.add_theme_stylebox_override("grabber", grabber)
 
-	var grabber_highlight := grabber.duplicate() as StyleBoxFlat
+	var grabber_highlight := StyleBoxFlat.new()
+	grabber_highlight.bg_color = grabber.bg_color
+	grabber_highlight.border_color = grabber.border_color
+	grabber_highlight.set_border_width(SIDE_LEFT, 1)
+	grabber_highlight.set_border_width(SIDE_RIGHT, 1)
+	grabber_highlight.set_border_width(SIDE_TOP, 1)
+	grabber_highlight.set_border_width(SIDE_BOTTOM, 1)
+	grabber_highlight.corner_radius_top_left = 8
+	grabber_highlight.corner_radius_top_right = 8
+	grabber_highlight.corner_radius_bottom_left = 8
+	grabber_highlight.corner_radius_bottom_right = 8
 	grabber_highlight.bg_color = Color(0.88, 0.78, 0.45, 1.0)
 	bar.add_theme_stylebox_override("grabber_highlight", grabber_highlight)
 
-	var grabber_pressed := grabber.duplicate() as StyleBoxFlat
+	var grabber_pressed := StyleBoxFlat.new()
+	grabber_pressed.bg_color = grabber.bg_color
+	grabber_pressed.border_color = grabber.border_color
+	grabber_pressed.set_border_width(SIDE_LEFT, 1)
+	grabber_pressed.set_border_width(SIDE_RIGHT, 1)
+	grabber_pressed.set_border_width(SIDE_TOP, 1)
+	grabber_pressed.set_border_width(SIDE_BOTTOM, 1)
+	grabber_pressed.corner_radius_top_left = 8
+	grabber_pressed.corner_radius_top_right = 8
+	grabber_pressed.corner_radius_bottom_left = 8
+	grabber_pressed.corner_radius_bottom_right = 8
 	grabber_pressed.bg_color = Color(1.0, 0.84, 0.44, 1.0)
 	bar.add_theme_stylebox_override("grabber_pressed", grabber_pressed)
 

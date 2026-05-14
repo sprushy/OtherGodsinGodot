@@ -184,8 +184,6 @@ func game_over() -> void:
 func move_card(card: Card, to_zone: Zone) -> void:
 	var from_zone = card.current_zone
 	var destination_zone := _resolve_destination_zone(card, from_zone, to_zone)
-	if card != null:
-		card.clear_last_graveyard_entry_flags()
 	var detached_equipment: Array[Card] = []
 	if card != null and card == reserved_active_god and destination_zone != null:
 		reserved_active_god = null

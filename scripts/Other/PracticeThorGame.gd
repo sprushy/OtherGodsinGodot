@@ -1,4 +1,4 @@
-extends CombatMockGame
+extends "res://scripts/Other/CombatMockGame.gd"
 class_name PracticeThorGame
 
 const PracticeMatchSetupScript = preload("res://scripts/server/PracticeMatchSetup.gd")

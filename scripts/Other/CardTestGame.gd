@@ -1,4 +1,4 @@
-extends CombatMockGame
+extends "res://scripts/Other/CombatMockGame.gd"
 class_name CardTestGame
 
 const SharurTheFlyingMaceScript := preload("res://scripts/cards/Equipment/SharurTheFlyingMace.gd")
