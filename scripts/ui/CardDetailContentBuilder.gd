@@ -1,6 +1,7 @@
 class_name CardDetailContentBuilder
 extends RefCounted
 
+const LevelSymbolRow = preload("res://scripts/ui/LevelSymbolRow.gd")
 const _BULLET_SEPARATOR := " | "
 const _BOARD_POPUP_WIDTH := 210.0
 const _KEYWORD_PANEL_WIDTH := 210.0
@@ -44,8 +45,9 @@ static func build_visual_hover_body(card: Card, viewer: Player, config: Dictiona
 
 	var meta_parts: Array[String] = []
 	if not card.is_god and card.get_effective_level() > 0:
-		meta_parts.append("Level " + str(card.get_effective_level()))
-	meta_parts.append("Mana: " + str(display_mana_cost))
+		vbox.add_child(_make_level_symbol_row(card, 13.0))
+	if display_mana_cost > 0:
+		meta_parts.append("Mana: " + str(display_mana_cost))
 	if card.culture != "":
 		meta_parts.append(card.culture)
 	if not meta_parts.is_empty():
@@ -256,19 +258,7 @@ static func build_board_popup_body(card: Card, viewer: Player, config: Dictionar
 			))
 
 	if not is_hidden_card and not card.is_god:
-		var level_lbl := _make_label("Level %d" % card.get_effective_level(), 13, Color(0.7, 0.7, 0.7))
-		var level_breakdown := card.get_buff_tooltip("lvl")
-		if card.get_effective_level() > card.level:
-			level_lbl.modulate = Color(0.4, 1.0, 0.4)
-			if level_breakdown != "":
-				level_lbl.tooltip_text = "LVL:\n" + level_breakdown
-				level_lbl.mouse_filter = Control.MOUSE_FILTER_STOP
-		elif card.get_effective_level() < card.level:
-			level_lbl.modulate = Color(1.0, 0.35, 0.35)
-			if level_breakdown != "":
-				level_lbl.tooltip_text = "LVL:\n" + level_breakdown
-				level_lbl.mouse_filter = Control.MOUSE_FILTER_STOP
-		vbox.add_child(level_lbl)
+		vbox.add_child(_make_level_symbol_row(card, 13.0))
 
 	if card.card_type == Card.CardType.CREATURE and not card.is_god:
 		if not is_hidden_card:
@@ -534,8 +524,6 @@ static func _make_stored_card_preview(card: Card, viewer: Player, width: float) 
 
 	info.add_child(_make_label(card.get_display_name_for_control(), 12, Color(1.0, 0.95, 0.76), true))
 	var meta_parts: Array[String] = []
-	if not card.is_god and card.get_effective_level() > 0:
-		meta_parts.append("Lv %d" % card.get_effective_level())
 	if card.card_type == Card.CardType.CREATURE:
 		meta_parts.append("STR %d" % card.get_effective_strength())
 		meta_parts.append("RES %d" % card.get_effective_resilience())
@@ -544,8 +532,15 @@ static func _make_stored_card_preview(card: Card, viewer: Player, width: float) 
 		meta_parts.append("RES %d" % card.get_effective_resilience())
 	elif card.get_effective_speed() > 0:
 		meta_parts.append("SPD %d" % card.get_effective_speed())
-	if not meta_parts.is_empty():
-		info.add_child(_make_label("  |  ".join(meta_parts), 11, Color(0.72, 0.84, 0.95), true))
+	if not meta_parts.is_empty() or (not card.is_god and card.get_effective_level() > 0):
+		var meta_row := HBoxContainer.new()
+		meta_row.add_theme_constant_override("separation", 5)
+		meta_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		if not card.is_god and card.get_effective_level() > 0:
+			meta_row.add_child(_make_level_symbol_row(card, 10.0))
+		if not meta_parts.is_empty():
+			meta_row.add_child(_make_label("  |  ".join(meta_parts), 11, Color(0.72, 0.84, 0.95), true))
+		info.add_child(meta_row)
 
 	var summary := card.get_inline_ability_summary()
 	if summary == "":
@@ -562,6 +557,25 @@ static func _make_vbox(width: float, separation: int) -> VBoxContainer:
 	vbox.add_theme_constant_override("separation", separation)
 	vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return vbox
+
+static func _get_level_symbol_color(card: Card) -> Color:
+	var effective_level := card.get_effective_level()
+	if effective_level > card.level:
+		return Color(0.4, 1.0, 0.4)
+	if effective_level < card.level:
+		return Color(1.0, 0.35, 0.35)
+	return Color(1.0, 0.96, 0.78)
+
+static func _make_level_symbol_row(card: Card, symbol_size: float) -> Control:
+	var row: Control = LevelSymbolRow.new()
+	row.setup(card.get_effective_level(), symbol_size, _get_level_symbol_color(card))
+	var level_breakdown := card.get_buff_tooltip("lvl")
+	if level_breakdown != "":
+		row.tooltip_text = "LVL:\n" + level_breakdown
+		row.mouse_filter = Control.MOUSE_FILTER_STOP
+	else:
+		row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return row
 
 static func _make_label(
 	text: String,

@@ -111,7 +111,11 @@ static func _replace_mana_shorthand_symbols(text: String, icon_size: int) -> Str
 	var cursor := 0
 	for match_result in matches:
 		result += text.substr(cursor, match_result.get_start() - cursor)
-		result += match_result.get_string(1) + match_result.get_string(2) + " " + get_mana_symbol_bbcode(icon_size)
+		var amount := int(match_result.get_string(2))
+		if amount > 0:
+			result += match_result.get_string(1) + match_result.get_string(2) + " " + get_mana_symbol_bbcode(icon_size)
+		else:
+			result += match_result.get_string(0)
 		cursor = match_result.get_end()
 	result += text.substr(cursor)
 	return result
@@ -162,7 +166,11 @@ static func _replace_labeled_mana_costs(text: String, icon_size: int) -> String:
 	var cursor := 0
 	for match_result in matches:
 		result += text.substr(cursor, match_result.get_start() - cursor)
-		result += match_result.get_string(1) + match_result.get_string(2) + " " + get_mana_symbol_bbcode(icon_size)
+		var amount := int(match_result.get_string(2))
+		if amount > 0:
+			result += match_result.get_string(1) + match_result.get_string(2) + " " + get_mana_symbol_bbcode(icon_size)
+		else:
+			result += match_result.get_string(0)
 		cursor = match_result.get_end()
 	result += text.substr(cursor)
 	return result

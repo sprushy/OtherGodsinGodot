@@ -2,7 +2,7 @@ extends GodCard
 class_name TezcatlipocaTheSmokingMirror
 
 const TONAL_MASTERY_TOKEN_THRESHOLD := 3
-const TONAL_MASTERY_MANA_GAIN := 2
+const TONAL_MASTERY_MANA_GAIN := 3
 const ART_PATH := "res://images/card_art/gods/TezArt.png"
 const REQUIRED_NECOC_YAOTL_SACRIFICES := 4
 const TEZCATLIPOCA_ACTIVE_SCRIPT := preload("res://scripts/cards/ActiveGods/TezcatlipocaActive.gd")

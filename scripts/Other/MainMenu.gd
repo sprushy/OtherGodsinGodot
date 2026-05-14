@@ -120,6 +120,7 @@ var _update_download_request: HTTPRequest = null
 var _update_now_button: Button = null
 var _update_download_status_label: Label = null
 var _is_auto_updating: bool = false
+var _automatic_update_required: bool = false
 var _startup_prompt_gate_open: bool = false
 var _rules_overlay: Control = null
 var _seek_auto_refresh_elapsed: float = 0.0
@@ -1565,10 +1566,7 @@ func _on_update_check_request_completed(
 		release_url = AppReleaseInfoScript.RELEASES_PAGE_URL
 	var download_url := ""
 	var assets: Array = payload.get("assets", [])
-	var windows_asset_names := PackedStringArray([
-		"OtherGods-windows.zip",
-		"ClaudeOtherGods-windows.zip",
-	])
+	var windows_asset_names := AppReleaseInfoScript.WINDOWS_ASSET_NAMES
 	for asset_name in windows_asset_names:
 		for asset in assets:
 			if str(asset.get("name", "")) != asset_name:
@@ -1577,7 +1575,7 @@ func _on_update_check_request_completed(
 			break
 		if not download_url.is_empty():
 			break
-	_show_update_prompt(latest_version, release_url, download_url)
+	_begin_required_update(latest_version, release_url, download_url)
 
 func _should_prompt_for_update(latest_version: String) -> bool:
 	if not AppReleaseInfoScript.is_release_version(latest_version):
@@ -1593,12 +1591,25 @@ func _should_prompt_for_update(latest_version: String) -> bool:
 			_local_profile_store.remember_dismissed_release_version("")
 	return true
 
-func _show_update_prompt(latest_version: String, release_url: String, download_url: String = "") -> void:
+func _begin_required_update(latest_version: String, release_url: String, download_url: String = "") -> void:
+	if not download_url.is_empty() and OS.get_name() == "Windows":
+		_show_update_prompt(latest_version, release_url, download_url, true)
+		call_deferred("_on_update_prompt_auto_update_pressed")
+		return
+	var open_error := OS.shell_open(release_url)
+	if open_error == OK:
+		status_label.text = "Opened the latest release page for %s." % latest_version
+	else:
+		status_label.text = "Update %s is available, but the release page could not be opened automatically." % latest_version
+	_complete_startup_prompts()
+
+func _show_update_prompt(latest_version: String, release_url: String, download_url: String = "", auto_update: bool = false) -> void:
 	if _update_prompt_overlay != null and is_instance_valid(_update_prompt_overlay):
 		return
 	_pending_update_release_version = latest_version
 	_pending_update_release_url = release_url
 	_pending_update_download_url = download_url
+	_automatic_update_required = auto_update
 
 	_update_prompt_overlay = Control.new()
 	_update_prompt_overlay.name = "UpdatePromptOverlay"
@@ -1644,14 +1655,17 @@ func _show_update_prompt(latest_version: String, release_url: String, download_u
 	margin.add_child(content)
 
 	var title := Label.new()
-	title.text = "Update Available"
+	title.text = "Updating Other Gods" if auto_update else "Update Available"
 	title.add_theme_font_size_override("font_size", 22)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	content.add_child(title)
 
 	var current_version := AppReleaseInfoScript.get_current_version()
 	var body_label := Label.new()
-	body_label.text = "You're running %s, and the latest release is %s." % [current_version, latest_version]
+	if auto_update:
+		body_label.text = "You're running %s. Installing %s now." % [current_version, latest_version]
+	else:
+		body_label.text = "You're running %s, and the latest release is %s." % [current_version, latest_version]
 	body_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	body_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	content.add_child(body_label)
@@ -1661,25 +1675,28 @@ func _show_update_prompt(latest_version: String, release_url: String, download_u
 	button_row.add_theme_constant_override("separation", 8)
 	content.add_child(button_row)
 
-	var later_button := Button.new()
-	later_button.text = "Later"
-	later_button.custom_minimum_size = Vector2(110, 38)
-	later_button.pressed.connect(_on_update_prompt_later_pressed)
-	button_row.add_child(later_button)
+	if not auto_update:
+		var later_button := Button.new()
+		later_button.text = "Later"
+		later_button.custom_minimum_size = Vector2(110, 38)
+		later_button.pressed.connect(_on_update_prompt_later_pressed)
+		button_row.add_child(later_button)
 
 	var update_button := Button.new()
 	update_button.text = "Open Download Page"
 	update_button.custom_minimum_size = Vector2(180, 38)
 	update_button.pressed.connect(_on_update_prompt_open_pressed)
-	button_row.add_child(update_button)
+	if not auto_update:
+		button_row.add_child(update_button)
 
 	if not download_url.is_empty() and OS.get_name() == "Windows":
-		var auto_button := Button.new()
-		auto_button.text = "Update Now"
-		auto_button.custom_minimum_size = Vector2(130, 38)
-		auto_button.pressed.connect(_on_update_prompt_auto_update_pressed)
-		button_row.add_child(auto_button)
-		_update_now_button = auto_button
+		if not auto_update:
+			var auto_button := Button.new()
+			auto_button.text = "Update Now"
+			auto_button.custom_minimum_size = Vector2(130, 38)
+			auto_button.pressed.connect(_on_update_prompt_auto_update_pressed)
+			button_row.add_child(auto_button)
+			_update_now_button = auto_button
 
 		var progress_label := Label.new()
 		progress_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -1687,9 +1704,12 @@ func _show_update_prompt(latest_version: String, release_url: String, download_u
 		content.add_child(progress_label)
 		_update_download_status_label = progress_label
 
-		auto_button.grab_focus()
-	else:
+		if not auto_update and _update_now_button != null:
+			_update_now_button.grab_focus()
+	elif not auto_update:
 		update_button.grab_focus()
+	if auto_update:
+		button_row.visible = false
 
 func _dismiss_update_prompt() -> void:
 	if _update_download_request != null and is_instance_valid(_update_download_request):
@@ -1700,6 +1720,7 @@ func _dismiss_update_prompt() -> void:
 	_update_now_button = null
 	_update_download_status_label = null
 	_pending_update_download_url = ""
+	_automatic_update_required = false
 	if _update_prompt_overlay != null and is_instance_valid(_update_prompt_overlay):
 		_update_prompt_overlay.queue_free()
 	_update_prompt_overlay = null
@@ -1860,6 +1881,13 @@ func _apply_update_and_restart(zip_path: String) -> void:
 
 func _on_auto_update_failed(message: String) -> void:
 	_is_auto_updating = false
+	if _automatic_update_required:
+		if _update_download_status_label != null and is_instance_valid(_update_download_status_label):
+			_update_download_status_label.text = "%s Opening the release page..." % message
+		OS.shell_open(_pending_update_release_url)
+		_dismiss_update_prompt()
+		_complete_startup_prompts()
+		return
 	if _update_now_button != null and is_instance_valid(_update_now_button):
 		_update_now_button.disabled = false
 	if _update_download_status_label != null and is_instance_valid(_update_download_status_label):

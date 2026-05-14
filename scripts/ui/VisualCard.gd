@@ -4,6 +4,7 @@ extends PanelContainer
 const CardDetailContentBuilder = preload("res://scripts/ui/CardDetailContentBuilder.gd")
 const LockedPowerCursor = preload("res://scripts/ui/LockedPowerCursor.gd")
 const DefenseShieldOverlay = preload("res://scripts/ui/DefenseShieldOverlay.gd")
+const LevelSymbolRow = preload("res://scripts/ui/LevelSymbolRow.gd")
 const MINOR_ACTION_SYMBOL_TEXTURE := preload("res://images/ui/MinorActionSymbol.png")
 const MAJOR_ACTION_SYMBOL_TEXTURE := preload("res://images/ui/MajorActionSymbol.png")
 const MANA_ORB_TEXTURE := preload("res://images/ui/ManaOrb.png")
@@ -66,7 +67,7 @@ var _art_rect: TextureRect = null
 var _disabled_overlay: ColorRect = null
 var _power_lock_overlay: TextureRect = null
 var _defense_shield_overlay: Control = null
-var _level_label: Label = null
+var _level_label = null
 var _stats_label: Label = null
 const _DEFAULT_POWER_LOCK_TEXTURE := preload("res://images/Default Power Lock.png")
 const _ANCIENT_POWER_LOCK_TEXTURE := preload("res://images/Ancient Power Lock.png")
@@ -130,8 +131,6 @@ func _compute_compact_height() -> float:
 
 func _sync_minimum_height() -> void:
 	var measured_h := maxf(float(_card_height), _compute_natural_height())
-	if _inner != null and is_instance_valid(_inner):
-		measured_h = maxf(measured_h, _inner.get_combined_minimum_size().y)
 	custom_minimum_size = Vector2(_card_width, measured_h)
 
 func _should_show_power_lock_overlay() -> bool:
@@ -188,29 +187,31 @@ func _on_art_updated(new_path: String) -> void:
 
 func _make_name_label() -> Label:
 	var name_lbl := Label.new()
-	name_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	name_lbl.autowrap_mode = TextServer.AUTOWRAP_OFF
+	name_lbl.clip_text = true
+	name_lbl.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	name_lbl.add_theme_font_size_override("font_size", 15)
 	name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	name_lbl.custom_minimum_size = Vector2(_card_width - 8, 0)
+	name_lbl.custom_minimum_size = Vector2(maxf(48.0, float(_card_width) - 112.0), 0.0)
 	name_lbl.text = card_data.get_display_name_for_control(name_lbl)
 	name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return name_lbl
 
-func _make_level_label() -> Label:
+func _get_level_symbol_color(effective_level: int) -> Color:
+	if effective_level > card_data.level:
+		return Color(0.4, 1.0, 0.4)
+	if effective_level < card_data.level:
+		return Color(1.0, 0.35, 0.35)
+	return Color(1.0, 0.96, 0.78)
+
+func _make_level_label() -> Control:
 	if card_data == null or card_data.is_god:
 		return null
-	var level_lbl := Label.new()
 	var effective_level := card_data.get_effective_level()
-	level_lbl.text = "LV %d" % effective_level
-	level_lbl.add_theme_font_size_override("font_size", 13)
-	level_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	var level_lbl := LevelSymbolRow.new()
+	level_lbl.setup(effective_level, 10.0, _get_level_symbol_color(effective_level))
+	level_lbl.size_flags_horizontal = Control.SIZE_SHRINK_END
 	var level_breakdown := card_data.get_buff_tooltip("lvl")
-	if effective_level > card_data.level:
-		level_lbl.add_theme_color_override("font_color", Color(0.4, 1.0, 0.4))
-	elif effective_level < card_data.level:
-		level_lbl.add_theme_color_override("font_color", Color(1.0, 0.35, 0.35))
-	else:
-		level_lbl.add_theme_color_override("font_color", Color(0.95, 0.9, 0.65))
 	if level_breakdown != "":
 		level_lbl.tooltip_text = "LVL:\n" + level_breakdown
 		level_lbl.mouse_filter = Control.MOUSE_FILTER_STOP
@@ -321,14 +322,8 @@ func _refresh_dynamic_labels() -> void:
 		return
 	if _level_label != null and is_instance_valid(_level_label):
 		var effective_level := card_data.get_effective_level()
-		_level_label.text = "LV %d" % effective_level
+		_level_label.setup(effective_level, 10.0, _get_level_symbol_color(effective_level))
 		var level_breakdown := card_data.get_buff_tooltip("lvl")
-		if effective_level > card_data.level:
-			_level_label.add_theme_color_override("font_color", Color(0.4, 1.0, 0.4))
-		elif effective_level < card_data.level:
-			_level_label.add_theme_color_override("font_color", Color(1.0, 0.35, 0.35))
-		else:
-			_level_label.add_theme_color_override("font_color", Color(0.95, 0.9, 0.65))
 		if level_breakdown != "":
 			_level_label.tooltip_text = "LVL:\n" + level_breakdown
 			_level_label.mouse_filter = Control.MOUSE_FILTER_STOP
@@ -375,12 +370,13 @@ func _on_card_visual_state_changed() -> void:
 func _populate_vbox(vbox: VBoxContainer) -> void:
 	var top_row := HBoxContainer.new()
 	top_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	top_row.custom_minimum_size = Vector2(_card_width, 0.0)
 	vbox.add_child(top_row)
 
 	if not card_data.name_at_bottom:
 		top_row.add_child(_make_name_label())
 
-	var level_lbl := _make_level_label()
+	var level_lbl: Control = _make_level_label()
 	if level_lbl != null:
 		top_row.add_child(level_lbl)
 

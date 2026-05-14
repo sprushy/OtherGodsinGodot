@@ -269,6 +269,7 @@ var active_statuses: Array[Dictionary] = []
 var _was_muted_last_check: bool = false
 var _pending_chosen_discards: Array[Card] = []
 var _pending_chosen_sacrifices: Array[Card] = []
+var _pending_action_point_spend_visual_kinds: Array[String] = []
 var _creature_mode: CreatureMode = CreatureMode.DEFENSIVE
 var _board_leave_hooks_processed: bool = false
 
@@ -1326,12 +1327,20 @@ func _has_equipped_evasive() -> bool:
 	return false
 
 func reset_creature_action_state() -> void:
+	var changed := has_acted_this_turn \
+		or has_moved_this_turn \
+		or has_attacked_this_turn \
+		or creature_major_action_used \
+		or creature_minor_actions_used != 0 \
+		or creature_shift_used_this_turn
 	has_acted_this_turn = false
 	has_moved_this_turn = false
 	has_attacked_this_turn = false
 	creature_major_action_used = false
 	creature_minor_actions_used = 0
 	creature_shift_used_this_turn = false
+	if changed:
+		_emit_visual_state_changed()
 
 func get_max_minor_creature_actions_per_turn() -> int:
 	return DEFAULT_MINOR_CREATURE_ACTIONS_PER_TURN
@@ -1375,16 +1384,32 @@ static func get_creature_summon_action_cost_kinds(stealth: bool = false) -> Arra
 	return kinds
 
 func spend_major_creature_action() -> void:
+	var old_major_used := creature_major_action_used
+	var changed := not creature_major_action_used or not has_acted_this_turn
 	creature_major_action_used = true
 	has_acted_this_turn = true
+	if not old_major_used and creature_major_action_used:
+		_note_action_point_spend_visual(ACTION_COST_MAJOR)
+	if changed:
+		_emit_visual_state_changed()
 
 func spend_attack_creature_action() -> void:
+	var old_attacked := has_attacked_this_turn
+	var old_minor_actions := creature_minor_actions_used
 	spend_major_creature_action()
 	has_attacked_this_turn = true
 	if does_attack_exhaust_minor_creature_actions():
 		creature_minor_actions_used = maxi(creature_minor_actions_used, get_max_minor_creature_actions_per_turn())
+		for _i in range(maxi(0, creature_minor_actions_used - old_minor_actions)):
+			_note_action_point_spend_visual(ACTION_COST_MINOR)
+	if has_attacked_this_turn != old_attacked or creature_minor_actions_used != old_minor_actions:
+		_emit_visual_state_changed()
 
 func spend_minor_creature_action(marked_as_move: bool = false) -> void:
+	var old_minor_actions := creature_minor_actions_used
+	var old_major_used := creature_major_action_used
+	var old_acted := has_acted_this_turn
+	var old_moved := has_moved_this_turn
 	if can_take_minor_creature_action_spending_minor():
 		creature_minor_actions_used += 1
 	elif can_take_minor_creature_action_spending_major():
@@ -1394,11 +1419,32 @@ func spend_minor_creature_action(marked_as_move: bool = false) -> void:
 		has_moved_this_turn = true
 	if creature_minor_actions_used >= get_max_minor_creature_actions_per_turn():
 		has_acted_this_turn = true
+	if creature_minor_actions_used > old_minor_actions:
+		for _i in range(creature_minor_actions_used - old_minor_actions):
+			_note_action_point_spend_visual(ACTION_COST_MINOR)
+	if not old_major_used and creature_major_action_used:
+		_note_action_point_spend_visual(ACTION_COST_MAJOR)
+	if creature_minor_actions_used != old_minor_actions \
+			or creature_major_action_used != old_major_used \
+			or has_acted_this_turn != old_acted \
+			or has_moved_this_turn != old_moved:
+		_emit_visual_state_changed()
 
 func spend_creature_summon_actions(stealth: bool = false) -> void:
 	spend_minor_creature_action()
 	if stealth:
 		spend_major_creature_action()
+
+func _note_action_point_spend_visual(action_cost_kind: String) -> void:
+	if action_cost_kind == ACTION_COST_NONE:
+		return
+	_pending_action_point_spend_visual_kinds.append(action_cost_kind)
+
+func peek_action_point_spend_visual_kinds() -> Array[String]:
+	return _pending_action_point_spend_visual_kinds.duplicate()
+
+func clear_action_point_spend_visual_kinds() -> void:
+	_pending_action_point_spend_visual_kinds.clear()
 
 static func get_action_symbol_path(action_cost_kind: String) -> String:
 	match action_cost_kind:

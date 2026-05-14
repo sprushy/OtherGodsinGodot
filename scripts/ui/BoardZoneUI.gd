@@ -4,6 +4,8 @@ extends PanelContainer
 const CardDetailContentBuilder = preload("res://scripts/ui/CardDetailContentBuilder.gd")
 const LockedPowerCursor = preload("res://scripts/ui/LockedPowerCursor.gd")
 const DefenseShieldOverlay = preload("res://scripts/ui/DefenseShieldOverlay.gd")
+const AggressiveSwordOverlay = preload("res://scripts/ui/AggressiveSwordOverlay.gd")
+const LevelSymbolRow = preload("res://scripts/ui/LevelSymbolRow.gd")
 const CHAMPIONS_CALL_BADGE_TEXTURE := preload("res://images/Champion's Call Horn Badge.png")
 const SMOKING_MIRROR_BADGE_TEXTURE := preload("res://images/Smoking Mirror Icon.png")
 const TEZ_SACRIFICE_BADGE_TEXTURE := preload("res://images/TezSacBadge.png")
@@ -391,14 +393,21 @@ const TARGET_ICON_GROUP_GAP := 8.0
 const ACTION_COST_MARKER_HEIGHT := 18.0
 const ACTION_COST_MARKER_ACTION_WIDTH := 34.0
 const ACTION_COST_MARKER_MANA_WIDTH := 60.0
+const ACTION_COST_MARKER_GROUP := "action_cost_markers"
 const FOLLOWERS_ATTACK_RESULT_SECONDS := 0.66
 const MOVE_INDICATOR_WIDTH := 104.0
+const HOVER_CARD_OPTIONS_ALPHA := 0.56
+const ACTION_POINT_BURST_Z_INDEX := 2400
+const ACTION_POINT_BURST_PARTICLE_COUNT := 22
+const ACTION_POINT_BURST_DURATION := 0.68
+const ACTION_POINT_BURST_RADIUS := 54.0
 const POWER_LOCK_TEXTURE := preload("res://images/Default Power Lock.png")
 const ANCIENT_POWER_LOCK_TEXTURE := preload("res://images/Ancient Power Lock.png")
 const NORSE_POWER_LOCK_TEXTURE := preload("res://images/Norse Power Lock.png")
 const TIAMAT_GOD_SCRIPT := preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
 const KEYWORD_PANEL_GAP := 8.0
 static var _zone_extent: float = BASE_ZONE_EXTENT
+static var _creature_action_symbol_state_by_card_uid: Dictionary = {}
 
 var _row_label: String = ""
 var _followers_attack_result_text: String = ""
@@ -417,6 +426,251 @@ static func get_zone_size() -> Vector2:
 
 static func set_zone_extent(extent: float) -> void:
 	_zone_extent = max(BASE_ZONE_EXTENT, floor(extent))
+
+static func get_action_point_card_uid(card: Card) -> String:
+	if card == null:
+		return ""
+	var uid := str(card.uid).strip_edges()
+	if uid != "":
+		return uid
+	return str(card.get_instance_id())
+
+static func get_creature_action_symbol_entries(card: Card) -> Array[Dictionary]:
+	var symbols: Array[Dictionary] = []
+	if card == null or card.card_type != Card.CardType.CREATURE:
+		return symbols
+
+	var max_minor := maxi(0, card.get_max_minor_creature_actions_per_turn())
+	if max_minor > 0:
+		var base_minor_capacity := mini(Card.DEFAULT_MINOR_CREATURE_ACTIONS_PER_TURN, max_minor)
+		symbols.append({
+			"key": "minor_0",
+			"kind": Card.ACTION_COST_MINOR,
+			"used": card.creature_minor_actions_used >= base_minor_capacity,
+			"tooltip": "Minor actions: %d/%d" % [mini(card.creature_minor_actions_used, max_minor), max_minor],
+		})
+		var extra_minor_count := maxi(0, max_minor - Card.DEFAULT_MINOR_CREATURE_ACTIONS_PER_TURN)
+		for i in range(extra_minor_count):
+			var threshold := Card.DEFAULT_MINOR_CREATURE_ACTIONS_PER_TURN + i + 1
+			symbols.append({
+				"key": "minor_%d" % threshold,
+				"kind": Card.ACTION_COST_MINOR,
+				"used": card.creature_minor_actions_used >= threshold,
+				"tooltip": "Additional minor action %d" % (i + 1),
+			})
+	symbols.append({
+		"key": "major",
+		"kind": Card.ACTION_COST_MAJOR,
+		"used": card.creature_major_action_used,
+		"tooltip": "Major action used" if card.creature_major_action_used else "Major action available",
+	})
+	return symbols
+
+static func get_creature_action_symbol_state(card: Card) -> Dictionary:
+	var state := {}
+	for symbol in get_creature_action_symbol_entries(card):
+		var key := str(symbol.get("key", ""))
+		if key == "":
+			continue
+		state[key] = {
+			"kind": str(symbol.get("kind", Card.ACTION_COST_NONE)),
+			"used": bool(symbol.get("used", false)),
+		}
+	return state
+
+static func get_spent_action_kinds(previous_state: Dictionary, current_state: Dictionary) -> Array[String]:
+	var spent: Array[String] = []
+	for key in current_state.keys():
+		if not previous_state.has(key):
+			continue
+		var previous_entry = previous_state.get(key, {})
+		var current_entry = current_state.get(key, {})
+		if not (previous_entry is Dictionary) or not (current_entry is Dictionary):
+			continue
+		if bool((previous_entry as Dictionary).get("used", false)):
+			continue
+		if not bool((current_entry as Dictionary).get("used", false)):
+			continue
+		var kind := str((current_entry as Dictionary).get("kind", Card.ACTION_COST_NONE))
+		if kind != Card.ACTION_COST_NONE:
+			spent.append(kind)
+	return spent
+
+static func get_pending_action_point_spend_visual_kinds(card: Card) -> Array[String]:
+	if card == null or not card.has_method("peek_action_point_spend_visual_kinds"):
+		return []
+	var raw_kinds = card.call("peek_action_point_spend_visual_kinds")
+	var kinds: Array[String] = []
+	if not (raw_kinds is Array):
+		return kinds
+	for raw_kind in raw_kinds:
+		var kind := str(raw_kind)
+		if kind != Card.ACTION_COST_NONE:
+			kinds.append(kind)
+	return kinds
+
+static func clear_pending_action_point_spend_visual_kinds(card: Card) -> void:
+	if card != null and card.has_method("clear_action_point_spend_visual_kinds"):
+		card.call("clear_action_point_spend_visual_kinds")
+
+static func _get_action_point_texture(action_cost_kind: String) -> Texture2D:
+	match action_cost_kind:
+		Card.ACTION_COST_MINOR:
+			return MINOR_ACTION_SYMBOL_TEXTURE
+		Card.ACTION_COST_MAJOR:
+			return MAJOR_ACTION_SYMBOL_TEXTURE
+	return null
+
+static func _get_action_point_burst_color(action_cost_kind: String) -> Color:
+	match action_cost_kind:
+		Card.ACTION_COST_MINOR:
+			return Color(0.58, 0.95, 1.0, 0.96)
+		Card.ACTION_COST_MAJOR:
+			return Color(1.0, 0.78, 0.28, 0.98)
+	return Color(1.0, 0.92, 0.62, 0.96)
+
+static func _expand_action_cost_entry_kinds(action_cost_entries: Array) -> Array[String]:
+	var kinds: Array[String] = []
+	for raw_entry in action_cost_entries:
+		if not (raw_entry is Dictionary):
+			continue
+		var entry := raw_entry as Dictionary
+		var kind := str(entry.get("kind", Card.ACTION_COST_NONE))
+		var amount := maxi(0, int(entry.get("amount", 0)))
+		if kind == Card.ACTION_COST_NONE:
+			continue
+		for _i in range(amount):
+			kinds.append(kind)
+	return kinds
+
+static func register_action_cost_marker_for_kinds(marker: Control, actor: Card, kinds: Array) -> void:
+	if marker == null or actor == null:
+		return
+	var actor_uid := get_action_point_card_uid(actor)
+	if actor_uid == "":
+		return
+	var clean_kinds: Array[String] = []
+	for raw_kind in kinds:
+		var kind := str(raw_kind)
+		if kind == Card.ACTION_COST_NONE or kind in clean_kinds:
+			continue
+		clean_kinds.append(kind)
+	if clean_kinds.is_empty():
+		return
+	marker.set_meta("action_cost_actor_uid", actor_uid)
+	marker.set_meta("action_cost_kinds", clean_kinds)
+	marker.add_to_group(ACTION_COST_MARKER_GROUP)
+
+static func register_action_cost_marker(marker: Control, actor: Card, action_cost_entries: Array) -> void:
+	register_action_cost_marker_for_kinds(marker, actor, _expand_action_cost_entry_kinds(action_cost_entries))
+
+static func spawn_action_point_spend_effect(parent: Node, global_center: Vector2, action_cost_kind: String, source_size: float = 22.0) -> void:
+	if parent == null or not is_instance_valid(parent):
+		return
+	if not parent.is_inside_tree():
+		return
+	var texture := _get_action_point_texture(action_cost_kind)
+	if texture == null:
+		return
+
+	var burst := Control.new()
+	burst.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	burst.top_level = true
+	burst.z_as_relative = false
+	burst.z_index = ACTION_POINT_BURST_Z_INDEX
+	burst.size = Vector2.ZERO
+	parent.add_child(burst)
+	burst.global_position = global_center
+
+	var color := _get_action_point_burst_color(action_cost_kind)
+	var major_burst := action_cost_kind == Card.ACTION_COST_MAJOR
+	var duration := ACTION_POINT_BURST_DURATION * (1.12 if major_burst else 1.0)
+	var radius := ACTION_POINT_BURST_RADIUS * (1.16 if major_burst else 1.0)
+	var particle_count := ACTION_POINT_BURST_PARTICLE_COUNT + (8 if major_burst else 0)
+	var icon_size := maxf(14.0, source_size) * (1.12 if major_burst else 1.0)
+	var core := TextureRect.new()
+	core.texture = texture
+	core.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	core.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	core.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	core.size = Vector2(icon_size, icon_size)
+	core.position = -core.size * 0.5
+	core.pivot_offset = core.size * 0.5
+	core.modulate = Color(1.0, 1.0, 1.0, 0.98)
+	burst.add_child(core)
+
+	var ring_size := maxf(icon_size + 8.0, 28.0)
+	var ring := Panel.new()
+	ring.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ring.size = Vector2(ring_size, ring_size)
+	ring.position = -ring.size * 0.5
+	ring.pivot_offset = ring.size * 0.5
+	ring.modulate = Color(1.0, 1.0, 1.0, 0.9)
+	var ring_style := StyleBoxFlat.new()
+	ring_style.bg_color = Color(0, 0, 0, 0)
+	ring_style.border_color = color
+	ring_style.corner_radius_top_left = int(ceil(ring_size * 0.5))
+	ring_style.corner_radius_top_right = int(ceil(ring_size * 0.5))
+	ring_style.corner_radius_bottom_left = int(ceil(ring_size * 0.5))
+	ring_style.corner_radius_bottom_right = int(ceil(ring_size * 0.5))
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		ring_style.set_border_width(side, 2 if major_burst else 1)
+	ring.add_theme_stylebox_override("panel", ring_style)
+	burst.add_child(ring)
+
+	var tween := burst.create_tween()
+	tween.set_parallel(true)
+	tween.tween_property(core, "scale", Vector2(1.9, 1.9), duration * 0.74).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tween.tween_property(core, "rotation", 0.35 if major_burst else -0.22, duration).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	tween.tween_property(core, "modulate:a", 0.0, duration).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+	tween.tween_property(ring, "scale", Vector2(2.35, 2.35), duration).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tween.tween_property(ring, "modulate:a", 0.0, duration).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+
+	for i in range(particle_count):
+		var dot_size := 3.0 + float(i % 4)
+		var dot := Panel.new()
+		dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		dot.size = Vector2(dot_size, dot_size)
+		dot.position = -dot.size * 0.5
+		dot.pivot_offset = dot.size * 0.5
+		dot.modulate = Color(1.0, 1.0, 1.0, 0.94)
+		var dot_style := StyleBoxFlat.new()
+		dot_style.bg_color = color
+		dot_style.corner_radius_top_left = int(ceil(dot_size))
+		dot_style.corner_radius_top_right = int(ceil(dot_size))
+		dot_style.corner_radius_bottom_left = int(ceil(dot_size))
+		dot_style.corner_radius_bottom_right = int(ceil(dot_size))
+		dot.add_theme_stylebox_override("panel", dot_style)
+		burst.add_child(dot)
+
+		var angle := TAU * (float(i) / float(particle_count)) + (0.18 if i % 2 == 0 else -0.12)
+		var distance := radius * (0.66 + 0.075 * float(i % 5))
+		var target_pos := Vector2(cos(angle), sin(angle)) * distance - dot.size * 0.5
+		tween.tween_property(dot, "position", target_pos, duration).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+		tween.tween_property(dot, "scale", Vector2(0.12, 0.12), duration).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+		tween.tween_property(dot, "modulate:a", 0.0, duration).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+
+		if i % 2 == 0:
+			var ray := ColorRect.new()
+			ray.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			ray.color = color
+			ray.size = Vector2(2.0, 10.0 + float(i % 3) * 3.0)
+			ray.position = -ray.size * 0.5
+			ray.pivot_offset = ray.size * 0.5
+			ray.rotation = angle
+			ray.modulate = Color(1.0, 1.0, 1.0, 0.88)
+			burst.add_child(ray)
+
+			var ray_distance := distance * 0.72
+			var ray_target := Vector2(cos(angle), sin(angle)) * ray_distance - ray.size * 0.5
+			tween.tween_property(ray, "position", ray_target, duration * 0.86).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+			tween.tween_property(ray, "scale", Vector2(0.18, 1.55), duration * 0.5).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+			tween.tween_property(ray, "modulate:a", 0.0, duration).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+
+	tween.finished.connect(func() -> void:
+		if is_instance_valid(burst):
+			burst.queue_free()
+	)
 
 func _get_viewer_player() -> Player:
 	if game_manager == null:
@@ -507,8 +761,9 @@ func _get_prepared_magical_hover_cost_lines(card: Card) -> Array[String]:
 		return lines
 
 	var current_cost := _get_prepared_magical_display_mana_cost(card)
-	if current_cost > 0 or card.mana_cost > 0:
-		lines.append("Activation Cost: %d" % current_cost)
+	var cost_parts := card.get_cost_shorthand_parts(current_cost)
+	if not cost_parts.is_empty():
+		lines.append("Activation Cost: " + " ".join(cost_parts))
 
 	var paying_player := _get_prepared_magical_cost_player(card)
 	if paying_player != null:
@@ -521,6 +776,16 @@ func _get_prepared_magical_hover_cost_lines(card: Card) -> Array[String]:
 			lines.append(breakdown_line)
 
 	return lines
+
+func _get_prepared_magical_cost_badge_width(cost_parts: Array[String]) -> float:
+	var width := 48.0
+	for part in cost_parts:
+		var part_text := str(part)
+		if part_text.ends_with("M") and part_text.length() > 1:
+			width += 14.0
+		else:
+			width += 17.0 + float(maxi(0, part_text.length() - 2)) * 5.0
+	return clampf(width, 60.0, 116.0)
 
 func _add_sleep_affordance(overlay: Control, card: Card) -> void:
 	if card == null or not card.is_sleeping:
@@ -620,7 +885,8 @@ func _add_prepared_magical_mana_badge(overlay: Control, card: Card) -> void:
 		return
 
 	var display_cost := _get_prepared_magical_display_mana_cost(card)
-	if display_cost <= 0 and card.mana_cost <= 0:
+	var cost_parts := card.get_cost_shorthand_parts(display_cost)
+	if cost_parts.is_empty():
 		return
 
 	var font_color := Color(0.92, 0.97, 1.0)
@@ -629,17 +895,22 @@ func _add_prepared_magical_mana_badge(overlay: Control, card: Card) -> void:
 	elif display_cost < card.mana_cost:
 		font_color = Color(0.65, 1.0, 0.72)
 
-	var badge := _add_overlay_mana_badge(
-		overlay,
-		"",
-		display_cost,
-		Control.PRESET_TOP_RIGHT,
-		-66,
-		6,
-		-6,
-		28.0,
-		font_color
-	)
+	var badge := _make_empty_field_badge()
+	badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	var badge_width := _get_prepared_magical_cost_badge_width(cost_parts)
+	badge.offset_left = -badge_width
+	badge.offset_top = 6
+	badge.offset_right = -6
+	badge.offset_bottom = 28.0
+
+	var row := HBoxContainer.new()
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	row.add_theme_constant_override("separation", 2)
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	badge.add_child(row)
+	_populate_cost_text_row(row, " ".join(cost_parts), 12, font_color, 13.0)
+	overlay.add_child(badge)
+
 	var tooltip_lines := _get_prepared_magical_hover_cost_lines(card)
 	if badge != null and not tooltip_lines.is_empty():
 		badge.tooltip_text = "\n".join(tooltip_lines)
@@ -801,27 +1072,31 @@ func _add_level_badge(
 	anchor_preset: int,
 	left: float,
 	top: float,
-	right: float,
+	_right: float,
 	bottom: float
 ) -> PanelContainer:
 	if overlay == null or card == null or card.is_god or card.is_power:
 		return null
 	var effective_level := card.get_effective_level()
-	var font_color := Color(1.0, 0.96, 0.78)
+	var symbol_color := Color(1.0, 0.96, 0.78)
 	if effective_level > card.level:
-		font_color = Color(0.4, 1.0, 0.4)
+		symbol_color = Color(0.4, 1.0, 0.4)
 	elif effective_level < card.level:
-		font_color = Color(1.0, 0.35, 0.35)
-	var badge := _add_overlay_stat_badge(
-		overlay,
-		"LV:%d" % effective_level,
-		anchor_preset,
-		left,
-		top,
-		right,
-		bottom,
-		font_color
-	)
+		symbol_color = Color(1.0, 0.35, 0.35)
+
+	var symbol_size := maxf(6.0, bottom - top - 4.0)
+	var badge_width := symbol_size * float(effective_level) + 10.0
+	var badge := _make_empty_field_badge()
+	badge.set_anchors_preset(anchor_preset)
+	badge.offset_left = left
+	badge.offset_top = top
+	badge.offset_right = left + badge_width
+	badge.offset_bottom = bottom
+	var row := LevelSymbolRow.new()
+	row.setup(effective_level, symbol_size, symbol_color)
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	badge.add_child(row)
+	overlay.add_child(badge)
 	var breakdown := card.get_full_stat_breakdown("lvl")
 	if badge != null and breakdown != "":
 		badge.tooltip_text = breakdown
@@ -1451,6 +1726,7 @@ func _add_priority_response_aura(overlay: Control) -> void:
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
 		ring_style.set_border_width(side, 2)
 	ring.add_theme_stylebox_override("panel", ring_style)
+	_fade_card_option_visual(ring)
 	overlay.add_child(ring)
 
 func _add_attack_aura(overlay: Control) -> void:
@@ -1461,6 +1737,7 @@ func _add_attack_aura(overlay: Control) -> void:
 	aura.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	aura.z_index = 20
 	aura.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_fade_card_option_visual(aura)
 	overlay.add_child(aura)
 
 func _add_followers_attack_target_tint(overlay: Control) -> void:
@@ -1471,6 +1748,7 @@ func _add_followers_attack_target_tint(overlay: Control) -> void:
 	glow.color = Color(0.92, 0.10, 0.08, 0.22)
 	glow.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	glow.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_fade_card_option_visual(glow)
 	overlay.add_child(glow)
 
 	var ring := PanelContainer.new()
@@ -1493,6 +1771,7 @@ func _add_followers_attack_target_tint(overlay: Control) -> void:
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
 		ring_style.set_border_width(side, 2)
 	ring.add_theme_stylebox_override("panel", ring_style)
+	_fade_card_option_visual(ring)
 	overlay.add_child(ring)
 
 func _add_followers_attack_result_label(overlay: Control) -> void:
@@ -1525,6 +1804,7 @@ func _add_stack_target_indicator(overlay: Control) -> void:
 	marker.offset_top = -11
 	marker.offset_right = 11
 	marker.offset_bottom = 11
+	_fade_card_option_visual(marker)
 	overlay.add_child(marker)
 
 func _add_target_aura(overlay: Control) -> void:
@@ -1534,6 +1814,7 @@ func _add_target_aura(overlay: Control) -> void:
 	var aura := TargetAura.new()
 	aura.z_index = 3
 	aura.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_fade_card_option_visual(aura)
 	overlay.add_child(aura)
 
 func _uses_res_attack_target_icon(card: Card) -> bool:
@@ -1571,6 +1852,7 @@ func _get_card_target_icon_entries(card: Card) -> Array[Dictionary]:
 			var action_name := "destroy equipment" if card.card_type == Card.CardType.EQUIPMENT else "attack"
 			var action_cost_entries := _get_attack_action_cost_entries(actor) if action_name == "attack" else _make_action_cost_entries(Card.ACTION_COST_MAJOR)
 			entries.append({
+				"actor": actor,
 				"texture": texture,
 				"border_color": Color(1.0, 0.32, 0.18, 0.92),
 				"hover_text": _get_attack_target_hover_text(card),
@@ -1612,6 +1894,7 @@ func _get_equipment_target_action_icon_entry(card: Card) -> Dictionary:
 	if not is_enemy and pick_up_label == "Mount":
 		action_name = "mount"
 	return {
+		"actor": actor,
 		"texture": STEAL_ATTACK_TARGET_TEXTURE,
 		"border_color": Color(1.0, 0.74, 0.34, 0.95) if is_enemy else Color(0.44, 0.96, 0.58, 0.95),
 		"hover_text": "Steal" if is_enemy else pick_up_label,
@@ -1626,6 +1909,7 @@ func _add_followers_attack_target_icon(overlay: Control) -> void:
 	var scene_root := _get_targeting_scene_root()
 	var actor := _get_selected_attacker(scene_root)
 	var entries: Array[Dictionary] = [{
+		"actor": actor,
 		"texture": FOLLOWERS_ATTACK_TARGET_TEXTURE,
 		"border_color": Color(1.0, 0.32, 0.18, 0.92),
 		"hover_text": "Attack",
@@ -1764,7 +2048,7 @@ func _add_cost_amount_icon(row: HBoxContainer, amount_text: String, texture: Tex
 	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_child(icon)
 
-func _add_action_cost_marker(parent: Control, action_cost_entries: Array[Dictionary], mana_cost: int = 0) -> void:
+func _add_action_cost_marker(parent: Control, action_cost_entries: Array[Dictionary], mana_cost: int = 0, actor: Card = null) -> void:
 	if parent == null or action_cost_entries.is_empty():
 		return
 	var marker_size := _get_action_cost_marker_size(action_cost_entries, mana_cost)
@@ -1810,6 +2094,7 @@ func _add_action_cost_marker(parent: Control, action_cost_entries: Array[Diction
 		_add_cost_amount_icon(row, str(mana_cost), MANA_ORB_TEXTURE)
 
 	parent.add_child(marker)
+	BoardZoneUI.register_action_cost_marker(marker, actor, action_cost_entries)
 
 func _add_centered_target_icon_group(overlay: Control, entries: Array[Dictionary], card: Card = null) -> void:
 	if overlay == null or entries.is_empty():
@@ -1826,6 +2111,7 @@ func _add_centered_target_icon_group(overlay: Control, entries: Array[Dictionary
 	group.offset_top = -badge_size * 0.5
 	group.offset_right = group_width * 0.5
 	group.offset_bottom = badge_size * 0.5
+	_fade_card_option_visual(group)
 	overlay.add_child(group)
 
 	var left := 0.0
@@ -1845,6 +2131,7 @@ func _add_centered_target_icon_group(overlay: Control, entries: Array[Dictionary
 		if action_cost_entries.is_empty():
 			action_cost_entries = _make_action_cost_entries(str(entry.get("action_cost_kind", Card.ACTION_COST_NONE)))
 		var action_mana_cost := maxi(0, int(entry.get("action_mana_cost", 0)))
+		var actor := entry.get("actor", null) as Card
 		var badge := _make_target_icon_badge(
 			entry_texture,
 			border_color,
@@ -1853,6 +2140,7 @@ func _add_centered_target_icon_group(overlay: Control, entries: Array[Dictionary
 			hover_text,
 			action,
 			card,
+			actor,
 			action_cost_entries,
 			action_mana_cost
 		)
@@ -1872,11 +2160,13 @@ func _make_target_icon_badge(
 	hover_text: String = "",
 	action: String = "",
 	target_card: Card = null,
+	actor: Card = null,
 	action_cost_entries: Array[Dictionary] = [],
 	action_mana_cost: int = 0
 ) -> Control:
 	var badge := Control.new()
-	badge.mouse_filter = Control.MOUSE_FILTER_STOP if action.strip_edges() != "" else (Control.MOUSE_FILTER_PASS if hover_text.strip_edges() != "" else Control.MOUSE_FILTER_IGNORE)
+	var preview_only := _is_hover_card_options_preview_active()
+	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE if preview_only else (Control.MOUSE_FILTER_STOP if action.strip_edges() != "" else (Control.MOUSE_FILTER_PASS if hover_text.strip_edges() != "" else Control.MOUSE_FILTER_IGNORE))
 	badge.custom_minimum_size = Vector2(badge_size, badge_size)
 
 	var background := Panel.new()
@@ -1907,10 +2197,10 @@ func _make_target_icon_badge(
 	icon.offset_bottom = -TARGET_ICON_PAD
 	icon.custom_minimum_size = Vector2(icon_size, icon_size)
 	badge.add_child(icon)
-	_add_action_cost_marker(badge, action_cost_entries, action_mana_cost)
-	if hover_text.strip_edges() != "":
+	_add_action_cost_marker(badge, action_cost_entries, action_mana_cost, actor)
+	if hover_text.strip_edges() != "" and not preview_only:
 		_connect_badge_hover(badge, _with_action_cost_hover_text(hover_text, action_cost_entries, action_mana_cost))
-	if action.strip_edges() != "" and target_card != null:
+	if action.strip_edges() != "" and target_card != null and not preview_only:
 		badge.gui_input.connect(func(event: InputEvent) -> void:
 			if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 				equipment_target_action_clicked.emit(target_card, action)
@@ -2504,7 +2794,54 @@ func _get_targeting_scene_root() -> Node:
 			return candidate as Node
 	return tree.current_scene
 
+func _get_hover_card_options_card(scene_root: Node = null) -> Card:
+	var root := scene_root if scene_root != null else _get_targeting_scene_root()
+	if root == null or not root.has_method("_get_hover_card_options_card"):
+		return null
+	var preview = root.call("_get_hover_card_options_card")
+	if preview is Card:
+		return preview as Card
+	return null
+
+func _get_hover_card_options_attacker(scene_root: Node = null) -> Card:
+	var root := scene_root if scene_root != null else _get_targeting_scene_root()
+	if root == null:
+		return null
+	if root.has_method("_get_hover_card_options_attacker"):
+		var preview_attacker = root.call("_get_hover_card_options_attacker")
+		if preview_attacker is Card:
+			return preview_attacker as Card
+		return null
+	return _get_hover_card_options_card(root)
+
+func _is_hover_card_options_preview_active() -> bool:
+	var scene_root := _get_targeting_scene_root()
+	if scene_root == null or not scene_root.has_method("_is_hover_card_options_preview_active"):
+		return false
+	return bool(scene_root.call("_is_hover_card_options_preview_active"))
+
+func _get_card_option_visual_alpha() -> float:
+	return HOVER_CARD_OPTIONS_ALPHA if _is_hover_card_options_preview_active() else 1.0
+
+func _fade_card_option_visual(control: CanvasItem) -> void:
+	if control == null:
+		return
+	var alpha := _get_card_option_visual_alpha()
+	if alpha >= 0.99:
+		return
+	var current := control.modulate
+	current.a *= alpha
+	control.modulate = current
+
+func _notify_hover_card_options_changed(card: Card) -> void:
+	var scene_root := _get_targeting_scene_root()
+	if scene_root == null or not scene_root.has_method("_set_hover_card_options_card"):
+		return
+	scene_root.call("_set_hover_card_options_card", card)
+
 func _get_floating_popup_parent() -> Node:
+	if not is_inside_tree() or is_queued_for_deletion():
+		return null
 	var node: Node = self
 	while node != null:
 		if node is CanvasLayer:
@@ -2658,6 +2995,9 @@ func _get_selected_attacker(scene_root: Node) -> Card:
 	var attacker = scene_root.get("selected_attacker")
 	if attacker is Card:
 		return attacker as Card
+	var hover_options_card := _get_hover_card_options_attacker(scene_root)
+	if hover_options_card != null:
+		return hover_options_card
 	return null
 
 func _get_selected_interceptor(scene_root: Node) -> Card:
@@ -3109,6 +3449,9 @@ func _refresh_mouse_cursor_shape(card: Card = null) -> void:
 	if card != null and card.card_type == Card.CardType.POWER and card.is_face_down:
 		mouse_default_cursor_shape = LockedPowerCursor.get_control_cursor_shape(Control.CURSOR_ARROW)
 		return
+	if _is_hover_card_options_preview_active():
+		mouse_default_cursor_shape = Control.CURSOR_ARROW
+		return
 	if card != null and (_has_card_target_icon_candidate(card) or _is_god_attack_candidate(card)):
 		mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 		return
@@ -3527,6 +3870,7 @@ func _refresh_display() -> void:
 
 		var is_def_creature := card.card_type == Card.CardType.CREATURE and card.creature_mode == Card.CreatureMode.DEFENSIVE
 		var shows_defense_shield := card.card_type == Card.CardType.CREATURE and (is_def_creature or card.is_stealth)
+		var shows_aggressive_sword := card.card_type == Card.CardType.CREATURE and card.creature_mode == Card.CreatureMode.AGGRESSIVE and not card.is_stealth
 		match card.card_type:
 			Card.CardType.CREATURE:
 				style.bg_color    = Color(0.13, 0.22, 0.42)
@@ -3602,6 +3946,8 @@ func _refresh_display() -> void:
 				shield_layout = DefenseShieldOverlay.LAYOUT_CENTER
 			var shield_scale := DefenseShieldOverlay.STEALTH_VIEW_SIZE_MULTIPLIER if shield_layout == DefenseShieldOverlay.LAYOUT_CENTER else 1.0
 			DefenseShieldOverlay.ensure_on(card_overlay, shield_layout, shield_scale)
+		elif shows_aggressive_sword:
+			AggressiveSwordOverlay.ensure_on(card_overlay, AggressiveSwordOverlay.LAYOUT_STAT_UNDER)
 		_add_level_badge(card_overlay, card, Control.PRESET_TOP_LEFT, 6, 6, 54, 24)
 		_add_token_badge(card_overlay, card, Control.PRESET_TOP_LEFT, 6, 28, 66, 46)
 		_add_prepared_magical_mana_badge(card_overlay, card)
@@ -3744,37 +4090,32 @@ func _add_creature_action_symbols(overlay: Control, card: Card) -> void:
 	if card.is_face_down or card.is_prepared or not can_view_stealth:
 		return
 
-	var symbols: Array[Dictionary] = []
-	var max_minor := maxi(0, card.get_max_minor_creature_actions_per_turn())
-	if max_minor > 0:
-		var base_minor_capacity := mini(Card.DEFAULT_MINOR_CREATURE_ACTIONS_PER_TURN, max_minor)
-		symbols.append({
-			"kind": Card.ACTION_COST_MINOR,
-			"used": card.creature_minor_actions_used >= base_minor_capacity,
-			"tooltip": "Minor actions: %d/%d" % [mini(card.creature_minor_actions_used, max_minor), max_minor],
-		})
-		var extra_minor_count := maxi(0, max_minor - Card.DEFAULT_MINOR_CREATURE_ACTIONS_PER_TURN)
-		for i in range(extra_minor_count):
-			var threshold := Card.DEFAULT_MINOR_CREATURE_ACTIONS_PER_TURN + i + 1
-			symbols.append({
-				"kind": Card.ACTION_COST_MINOR,
-				"used": card.creature_minor_actions_used >= threshold,
-				"tooltip": "Additional minor action %d" % (i + 1),
-			})
-	symbols.append({
-		"kind": Card.ACTION_COST_MAJOR,
-		"used": card.creature_major_action_used,
-		"tooltip": "Major action used" if card.creature_major_action_used else "Major action available",
-	})
+	var symbols := BoardZoneUI.get_creature_action_symbol_entries(card)
 	if symbols.is_empty():
+		return
+
+	var card_uid := BoardZoneUI.get_action_point_card_uid(card)
+	var current_state := BoardZoneUI.get_creature_action_symbol_state(card)
+	var previous_state = _creature_action_symbol_state_by_card_uid.get(card_uid, {})
+	var spent_kinds: Array[String] = []
+	if previous_state is Dictionary:
+		spent_kinds = BoardZoneUI.get_spent_action_kinds(previous_state as Dictionary, current_state)
+	_creature_action_symbol_state_by_card_uid[card_uid] = current_state
+	var pending_spend_kinds := BoardZoneUI.get_pending_action_point_spend_visual_kinds(card)
+
+	var has_visible_symbol := false
+	for symbol in symbols:
+		if not bool(symbol.get("used", false)):
+			has_visible_symbol = true
+			break
+	if not has_visible_symbol and spent_kinds.is_empty() and pending_spend_kinds.is_empty():
 		return
 
 	var icon_size := 22.0
 	var gap := 3.0
 	var total_width := icon_size * float(symbols.size()) + gap * float(maxi(0, symbols.size() - 1))
-	var row := HBoxContainer.new()
+	var row := Control.new()
 	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	row.add_theme_constant_override("separation", int(gap))
 	row.anchor_left = 0.5
 	row.anchor_right = 0.5
 	row.anchor_top = 1.0
@@ -3783,14 +4124,45 @@ func _add_creature_action_symbols(overlay: Control, card: Card) -> void:
 	row.offset_right = total_width * 0.5
 	row.offset_top = -32.0
 	row.offset_bottom = -8.0
+	row.custom_minimum_size = Vector2(total_width, icon_size)
+	row.size = Vector2(total_width, icon_size)
 	overlay.add_child(row)
 
-	for symbol in symbols:
+	var zone_rect := get_global_rect()
+	var row_global_origin := Vector2(
+		zone_rect.position.x + zone_rect.size.x * 0.5 - total_width * 0.5,
+		zone_rect.position.y + zone_rect.size.y - 32.0
+	)
+	var burst_requests: Array[Dictionary] = []
+	for symbol_index in range(symbols.size()):
+		var symbol := symbols[symbol_index] as Dictionary
 		var kind := str(symbol.get("kind", Card.ACTION_COST_NONE))
 		var used := bool(symbol.get("used", false))
+		var key := str(symbol.get("key", ""))
+		var left := float(symbol_index) * (icon_size + gap)
+		if used:
+			var should_burst := false
+			if previous_state is Dictionary and (previous_state as Dictionary).has(key):
+				var previous_entry = (previous_state as Dictionary).get(key, {})
+				if previous_entry is Dictionary and not bool((previous_entry as Dictionary).get("used", false)):
+					should_burst = true
+			if kind in pending_spend_kinds:
+				should_burst = true
+				pending_spend_kinds.erase(kind)
+			if should_burst:
+				burst_requests.append({
+					"kind": kind,
+					"center": row_global_origin + Vector2(left + icon_size * 0.5, icon_size * 0.5),
+				})
+			continue
 		var slot := PanelContainer.new()
 		slot.mouse_filter = Control.MOUSE_FILTER_STOP
 		slot.custom_minimum_size = Vector2(icon_size, icon_size)
+		slot.set_anchors_preset(Control.PRESET_TOP_LEFT)
+		slot.offset_left = left
+		slot.offset_top = 0.0
+		slot.offset_right = left + icon_size
+		slot.offset_bottom = icon_size
 		slot.tooltip_text = str(symbol.get("tooltip", ""))
 		var style := StyleBoxFlat.new()
 		style.bg_color = Color(0, 0, 0, 0)
@@ -3799,17 +4171,38 @@ func _add_creature_action_symbols(overlay: Control, card: Card) -> void:
 		style.corner_radius_bottom_left = 3
 		style.corner_radius_bottom_right = 3
 		for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-			style.set_border_width(side, 1 if used else 0)
+			style.set_border_width(side, 0)
 		style.border_color = Color(0.68, 0.68, 0.68, 0.95)
 		slot.add_theme_stylebox_override("panel", style)
 		var icon := TextureRect.new()
 		icon.texture = MINOR_ACTION_SYMBOL_TEXTURE if kind == Card.ACTION_COST_MINOR else MAJOR_ACTION_SYMBOL_TEXTURE
 		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-		icon.modulate = Color(0.6, 0.6, 0.6, 0.34) if used else Color.WHITE
+		icon.modulate = Color.WHITE
 		icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		slot.add_child(icon)
 		row.add_child(slot)
+
+	if not burst_requests.is_empty():
+		BoardZoneUI.clear_pending_action_point_spend_visual_kinds(card)
+		call_deferred("_play_creature_action_symbol_spend_bursts", burst_requests, icon_size)
+
+func _play_creature_action_symbol_spend_bursts(burst_requests: Array, icon_size: float) -> void:
+	if not is_inside_tree() or is_queued_for_deletion():
+		return
+	var parent := _get_floating_popup_parent()
+	if parent == null:
+		return
+	for raw_request in burst_requests:
+		if not (raw_request is Dictionary):
+			continue
+		var request := raw_request as Dictionary
+		var kind := str(request.get("kind", Card.ACTION_COST_NONE))
+		var center = request.get("center", Vector2.ZERO)
+		if not (center is Vector2):
+			continue
+		var center_vec: Vector2 = center
+		BoardZoneUI.spawn_action_point_spend_effect(parent, center_vec, kind, icon_size)
 
 func _is_draggable_creature() -> bool:
 	if zone.cards.size() == 0:
@@ -3868,6 +4261,8 @@ func _notification(what: int) -> void:
 			_hovered = true
 			var _c := _preview_card if _preview_card != null else (zone.cards[0] if zone != null and zone.cards.size() > 0 else null)
 			if _c != null:
+				_notify_hover_card_options_changed(_c)
+			if _c != null:
 				z_index = HOVER_BOARD_Z_INDEX
 			elif zone != null and zone.cards.is_empty():
 				_refresh_display()
@@ -3880,6 +4275,7 @@ func _notification(what: int) -> void:
 					)
 		NOTIFICATION_MOUSE_EXIT:
 			_hovered = false
+			_notify_hover_card_options_changed(null)
 			z_index = _get_resting_z_index()
 			if zone != null and zone.cards.is_empty():
 				_refresh_display()

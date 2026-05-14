@@ -36,6 +36,7 @@ const MatchSessionScript = preload("res://scripts/server/MatchSession.gd")
 const TiamatScript = preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
 const UIArtScaler = preload("res://scripts/ui/UIArtScaler.gd")
 const CardDetailContentBuilder = preload("res://scripts/ui/CardDetailContentBuilder.gd")
+const LevelSymbolRow = preload("res://scripts/ui/LevelSymbolRow.gd")
 const MINOR_ACTION_SYMBOL_TEXTURE = preload("res://images/ui/MinorActionSymbol.png")
 const MAJOR_ACTION_SYMBOL_TEXTURE = preload("res://images/ui/MajorActionSymbol.png")
 
@@ -408,12 +409,16 @@ var _visible_intercept_prompt_signature: Dictionary = {}
 var _ui_refresh_queued: bool = false
 var _local_ui_refresh_pending: bool = false
 var _power_hover_popup: Control = null
-const MOVE_ARROW_STRAIGHT_START_FRACTION := 0.41
-const MOVE_ARROW_DIAGONAL_START_FRACTION := 0.34
+const MOVE_ARROW_STRAIGHT_START_FRACTION := 0.4
+const MOVE_ARROW_DIAGONAL_START_FRACTION := 0.38
 const MOVE_ARROW_STRAIGHT_TARGET_OVERSHOOT_FRACTION := 0.08
-const MOVE_ARROW_DIAGONAL_TARGET_OVERSHOOT_FRACTION := 0.14
+const MOVE_ARROW_DIAGONAL_TARGET_OVERSHOOT_FRACTION := 0.08
 const MOVE_ARROW_STRAIGHT_MIN_WIDTH := 154.0
 const MOVE_ARROW_STRAIGHT_MAX_WIDTH := 212.0
+const MOVE_ARROW_WIDTH_ZONE_FRACTION := 1.08
+const HOVER_MOVE_ARROW_ALPHA := 0.68
+const HOVER_MOVE_ARROW_COST_ALPHA := 0.68
+const MOVE_ARROW_DIAGONAL_LENGTH_SCALE := 0.88
 var _game_finished: bool = false
 var _game_result_presented: bool = false
 var _pending_forfeit_return_to_menu: bool = false
@@ -438,6 +443,9 @@ var _auto_select_spell_prepare_zones: bool = true
 var _auto_select_hex_prepare_zones: bool = true
 var _auto_select_charm_play_zones: bool = true
 var _auto_select_charm_prepare_zones: bool = true
+var _hover_show_card_options: bool = true
+var _hover_card_options_card: Card = null
+var _action_point_state_by_card_uid: Dictionary = {}
 var _sacrifice_cursor_texture: Texture2D = null
 var _devour_cursor_texture: Texture2D = null
 var _silence_cursor_texture: Texture2D = null
@@ -676,6 +684,13 @@ func _make_auto_zone_toggle(label_text: String, initial_state: bool, toggle_call
 		toggle.toggled.connect(toggle_callback)
 	return toggle
 
+func _make_settings_section_label(label_text: String) -> Label:
+	var label := Label.new()
+	label.text = label_text
+	label.add_theme_font_size_override("font_size", 15)
+	label.add_theme_color_override("font_color", Color(0.96, 0.92, 0.68))
+	return label
+
 func _show_pause_menu_page() -> void:
 	if _pause_menu_panel != null and is_instance_valid(_pause_menu_panel):
 		_pause_menu_panel.show()
@@ -774,8 +789,8 @@ func _show_pause_menu() -> void:
 	settings_panel.anchor_bottom = 0.5
 	settings_panel.offset_left = -280
 	settings_panel.offset_right = 280
-	settings_panel.offset_top = -210
-	settings_panel.offset_bottom = 210
+	settings_panel.offset_top = -240
+	settings_panel.offset_bottom = 240
 	overlay.add_child(settings_panel)
 	_settings_menu_panel = settings_panel
 
@@ -795,6 +810,8 @@ func _show_pause_menu() -> void:
 	settings_info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	settings_info.add_theme_color_override("font_color", Color(0.80, 0.85, 0.92))
 	settings_vbox.add_child(settings_info)
+
+	settings_vbox.add_child(_make_settings_section_label("Placement"))
 
 	settings_vbox.add_child(_make_auto_zone_toggle(
 		"Auto-select spell play zones",
@@ -825,6 +842,18 @@ func _show_pause_menu() -> void:
 		_auto_select_charm_prepare_zones,
 		func(pressed: bool) -> void:
 			_auto_select_charm_prepare_zones = pressed
+	))
+
+	settings_vbox.add_child(_make_settings_section_label("Visual"))
+	settings_vbox.add_child(_make_auto_zone_toggle(
+		"Hover show card options",
+		_hover_show_card_options,
+		func(pressed: bool) -> void:
+			_hover_show_card_options = pressed
+			if not _hover_show_card_options:
+				_set_hover_card_options_card(null)
+			else:
+				_refresh_card_option_preview_visuals()
 	))
 
 	var settings_buttons := HBoxContainer.new()
@@ -3513,6 +3542,163 @@ func _can_interact_with_board_during_turn_choice(card: Card = null) -> bool:
 		return true
 	return false
 
+func _has_blocking_card_options_state() -> bool:
+	return selected_card != null \
+		or selected_attacker != null \
+		or pending_attack_target != null \
+		or _pending_move_card != null \
+		or _pending_equip_action != "" \
+		or _has_pending_target_selection() \
+		or _has_active_modal_prompt() \
+		or _is_turn_choice_pending() \
+		or _has_unresolved_priority_state()
+
+func _can_preview_attacker_options(card: Card) -> bool:
+	if card == null or match_manager == null:
+		return false
+	if card.card_type != Card.CardType.CREATURE or card.is_god:
+		return false
+	if match_manager.can_attack(card):
+		return true
+	if _creature_can_use_equipment_action(card):
+		return not _get_reachable_equipment(card).is_empty()
+	return false
+
+func _can_preview_hover_card_options(card: Card) -> bool:
+	if not _hover_show_card_options:
+		return false
+	if card == null or game_manager == null:
+		return false
+	if _has_blocking_card_options_state():
+		return false
+	if card.current_zone == null or not card.current_zone.is_board_zone():
+		return false
+	if card.get_controller() != game_manager.current_player:
+		return false
+	if card.card_type != Card.CardType.CREATURE or card.is_god:
+		return false
+	if _can_preview_attacker_options(card):
+		return true
+	if _can_show_move_indicators_for_card(card):
+		return true
+	if _creature_can_change_stance(card):
+		return true
+	if card.has_method("can_activate") and card.has_method("activate") and card.can_activate(game_manager):
+		return true
+	return false
+
+func _get_hover_card_options_card() -> Card:
+	return _hover_card_options_card if _can_preview_hover_card_options(_hover_card_options_card) else null
+
+func _get_hover_card_options_attacker() -> Card:
+	var card := _get_hover_card_options_card()
+	if card == null:
+		return null
+	return card if _can_preview_attacker_options(card) else null
+
+func _is_hover_card_options_preview_active() -> bool:
+	return _get_hover_card_options_card() != null
+
+func _refresh_card_option_preview_visuals() -> void:
+	if game_manager == null:
+		return
+	draw_board()
+	draw_enemy_board()
+	_refresh_move_indicators()
+
+func _set_hover_card_options_card(card: Card) -> void:
+	var next_card := card if _can_preview_hover_card_options(card) else null
+	if _hover_card_options_card == next_card:
+		return
+	_hover_card_options_card = next_card
+	_refresh_card_option_preview_visuals()
+
+func _get_action_point_feedback_cards() -> Array[Card]:
+	var cards: Array[Card] = []
+	if game_manager == null:
+		return cards
+	for player in game_manager.players:
+		if player == null:
+			continue
+		var zones: Array = []
+		zones.append(player.god_zone)
+		zones.append_array(player.frontline_zones)
+		zones.append_array(player.reserve_zones)
+		for zone in zones:
+			if zone == null:
+				continue
+			for card in zone.cards:
+				if card is Card and (card as Card).card_type == Card.CardType.CREATURE:
+					cards.append(card as Card)
+	return cards
+
+func _sync_action_point_spend_feedback_before_redraw() -> void:
+	var next_state_by_uid := {}
+	for card in _get_action_point_feedback_cards():
+		var card_uid := BoardZoneUI.get_action_point_card_uid(card)
+		if card_uid == "":
+			continue
+		var current_state := BoardZoneUI.get_creature_action_symbol_state(card)
+		if current_state.is_empty():
+			continue
+		var previous_state = _action_point_state_by_card_uid.get(card_uid, {})
+		var spent_kinds: Array[String] = []
+		if previous_state is Dictionary:
+			spent_kinds = BoardZoneUI.get_spent_action_kinds(previous_state as Dictionary, current_state)
+		for pending_kind in BoardZoneUI.get_pending_action_point_spend_visual_kinds(card):
+			if not (pending_kind in spent_kinds):
+				spent_kinds.append(pending_kind)
+		if not spent_kinds.is_empty():
+			_play_registered_action_cost_marker_bursts(card_uid, spent_kinds)
+		next_state_by_uid[card_uid] = current_state
+	_action_point_state_by_card_uid = next_state_by_uid
+
+func _marker_kinds_include(raw_kinds, action_cost_kind: String) -> bool:
+	if not (raw_kinds is Array):
+		return false
+	for raw_kind in raw_kinds:
+		if str(raw_kind) == action_cost_kind:
+			return true
+	return false
+
+func _play_registered_action_cost_marker_bursts(actor_uid: String, spent_kinds: Array[String]) -> void:
+	if actor_uid == "" or spent_kinds.is_empty():
+		return
+	var tree := get_tree()
+	if tree == null:
+		return
+	var best_marker_by_kind := {}
+	var mouse_position := get_global_mouse_position()
+	for node in tree.get_nodes_in_group(BoardZoneUI.ACTION_COST_MARKER_GROUP):
+		var marker := node as Control
+		if marker == null or not is_instance_valid(marker) or marker.is_queued_for_deletion():
+			continue
+		if str(marker.get_meta("action_cost_actor_uid", "")) != actor_uid:
+			continue
+		var raw_kinds = marker.get_meta("action_cost_kinds", [])
+		for spent_kind in spent_kinds:
+			if not _marker_kinds_include(raw_kinds, spent_kind):
+				continue
+			var center := marker.get_global_rect().get_center()
+			var distance := center.distance_squared_to(mouse_position)
+			var current_best = best_marker_by_kind.get(spent_kind, {})
+			if not (current_best is Dictionary) or (current_best as Dictionary).is_empty() or distance < float((current_best as Dictionary).get("distance", 999999999.0)):
+				best_marker_by_kind[spent_kind] = {
+					"center": center,
+					"distance": distance,
+				}
+	var parent := _get_floating_drag_parent()
+	if parent == null:
+		return
+	for spent_kind in best_marker_by_kind.keys():
+		var entry = best_marker_by_kind[spent_kind]
+		if not (entry is Dictionary):
+			continue
+		var center = (entry as Dictionary).get("center", Vector2.ZERO)
+		if center is Vector2:
+			var center_vec: Vector2 = center
+			BoardZoneUI.spawn_action_point_spend_effect(parent, center_vec, str(spent_kind), 20.0)
+
 func update_ui() -> void:
 	if game_manager == null:
 		return
@@ -3538,6 +3724,7 @@ func _do_update_ui() -> void:
 		_refresh_turn_label()
 		return
 
+	_sync_action_point_spend_feedback_before_redraw()
 	_refresh_turn_label()
 
 	draw_hand()
@@ -3562,6 +3749,8 @@ func _sanitize_transient_card_references() -> void:
 		_pending_move_card = null
 	if _indicated_move_card != null and not _can_show_move_indicators_for_card(_indicated_move_card):
 		_indicated_move_card = null
+	if _hover_card_options_card != null and not _can_preview_hover_card_options(_hover_card_options_card):
+		_hover_card_options_card = null
 	if _pending_equip_actor != null and not _is_live_board_card(_pending_equip_actor):
 		_pending_equip_actor = null
 	if _pending_equip_target != null and not _is_live_board_card(_pending_equip_target):
@@ -5376,10 +5565,12 @@ func _add_power_under_level_badge(panel: Control, card: Card) -> void:
 	var badge := PanelContainer.new()
 	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	badge.offset_left = -34
+	var symbol_size := 11.0
+	var badge_width := symbol_size * float(total_level) + 6.0
+	badge.offset_left = -badge_width - 2.0
 	badge.offset_top = 2
 	badge.offset_right = -2
-	badge.offset_bottom = 18
+	badge.offset_bottom = 17
 	badge.z_index = 4
 
 	var style := StyleBoxFlat.new()
@@ -5395,14 +5586,10 @@ func _add_power_under_level_badge(panel: Control, card: Card) -> void:
 		style.set_border_width(side as Side, 1)
 	badge.add_theme_stylebox_override("panel", style)
 
-	var label := Label.new()
-	label.text = "LV:%d" % total_level
-	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	label.add_theme_font_size_override("font_size", 8)
-	label.add_theme_color_override("font_color", Color(1.0, 0.94, 0.56))
-	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	badge.add_child(label)
+	var row := LevelSymbolRow.new()
+	row.setup(total_level, symbol_size, Color(1.0, 0.94, 0.56))
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	badge.add_child(row)
 	panel.add_child(badge)
 
 func _make_power_icon(card: Card, is_enemy: bool, _player: Player, zone: Zone = null) -> Control:
@@ -15534,7 +15721,7 @@ func _clear_zone_move_indicators() -> void:
 		if zu != null and is_instance_valid(zu):
 			zu.clear_move_indicator()
 
-func _add_move_indicator_path_overlay(source_zone_ui: BoardZoneUI, target_zone_ui: BoardZoneUI) -> void:
+func _add_move_indicator_path_overlay(source_zone_ui: BoardZoneUI, target_zone_ui: BoardZoneUI, preview_only: bool = false) -> void:
 	if source_zone_ui == null or target_zone_ui == null:
 		return
 	if not is_instance_valid(source_zone_ui) or not is_instance_valid(target_zone_ui):
@@ -15560,21 +15747,16 @@ func _add_move_indicator_path_overlay(source_zone_ui: BoardZoneUI, target_zone_u
 	if path_length <= 0.0:
 		return
 	normalized_direction = path_direction / path_length
-	var indicator_size := Vector2.ZERO
 	var base_direction := Vector2.UP
 	var texture := BoardZoneUI.MOVE_STRAIGHT_INDICATOR_TEXTURE
-	if is_straight:
-		var indicator_width := clampf(
-			path_length * 0.73,
-			MOVE_ARROW_STRAIGHT_MIN_WIDTH,
-			MOVE_ARROW_STRAIGHT_MAX_WIDTH
-		)
-		indicator_size = Vector2(indicator_width, path_length)
-	else:
-		var diagonal_side := path_length / sqrt(2.0) * 1.0
-		indicator_size = Vector2(diagonal_side, diagonal_side)
-		base_direction = Vector2(1.0, -1.0).normalized()
-		texture = BoardZoneUI.MOVE_DIAGONAL_INDICATOR_TEXTURE
+	var zone_width_basis := minf(source_zone_ui.get_global_rect().size.x, target_rect.size.x)
+	var indicator_width := clampf(
+		zone_width_basis * MOVE_ARROW_WIDTH_ZONE_FRACTION,
+		MOVE_ARROW_STRAIGHT_MIN_WIDTH,
+		MOVE_ARROW_STRAIGHT_MAX_WIDTH
+	)
+	var indicator_length := path_length if is_straight else path_length * MOVE_ARROW_DIAGONAL_LENGTH_SCALE
+	var indicator_size := Vector2(indicator_width, indicator_length)
 
 	if texture == null:
 		return
@@ -15592,29 +15774,33 @@ func _add_move_indicator_path_overlay(source_zone_ui: BoardZoneUI, target_zone_u
 	indicator.z_index = 1250
 	indicator.size = indicator_size
 	indicator.pivot_offset = indicator_size * 0.5
-	indicator.global_position = (path_start + path_end) * 0.5 - indicator_size * 0.5
+	var visual_midpoint := (path_start + path_end) * 0.5
+	indicator.global_position = visual_midpoint - indicator_size * 0.5
 	indicator.rotation = base_direction.angle_to(normalized_direction)
-	indicator.modulate = Color(1.0, 1.0, 1.0, 0.98)
+	indicator.modulate = Color(1.0, 1.0, 1.0, HOVER_MOVE_ARROW_ALPHA if preview_only else 0.98)
 	floating_parent.add_child(indicator)
 	_move_indicator_path_overlays.append(indicator)
 	_add_move_indicator_action_cost_marker(
 		floating_parent,
 		(path_start + path_end) * 0.5,
 		_get_move_indicator_action_cost_kind(),
-		_get_move_indicator_mana_cost()
+		_get_move_indicator_mana_cost(),
+		preview_only
 	)
 
 func _get_move_indicator_action_cost_kind() -> String:
-	if _indicated_move_card != null and _indicated_move_card.has_method("get_effective_minor_action_cost_kind"):
-		return str(_indicated_move_card.call("get_effective_minor_action_cost_kind"))
+	var indicator_card := _get_move_indicator_card()
+	if indicator_card != null and indicator_card.has_method("get_effective_minor_action_cost_kind"):
+		return str(indicator_card.call("get_effective_minor_action_cost_kind"))
 	return Card.ACTION_COST_MINOR
 
 func _get_move_indicator_mana_cost() -> int:
-	if _indicated_move_card == null or game_manager == null:
+	var indicator_card := _get_move_indicator_card()
+	if indicator_card == null or game_manager == null:
 		return 0
 	if not game_manager.has_method("get_creature_action_mana_cost"):
 		return 0
-	return maxi(0, int(game_manager.call("get_creature_action_mana_cost", _indicated_move_card, "move")))
+	return maxi(0, int(game_manager.call("get_creature_action_mana_cost", indicator_card, "move")))
 
 func _get_move_indicator_action_cost_texture(action_cost_kind: String) -> Texture2D:
 	match action_cost_kind:
@@ -15650,7 +15836,7 @@ func _get_move_indicator_action_cost_marker_size(mana_cost: int = 0) -> Vector2:
 		BoardZoneUI.ACTION_COST_MARKER_HEIGHT
 	)
 
-func _add_move_indicator_action_cost_marker(parent: Node, center: Vector2, action_cost_kind: String, mana_cost: int = 0) -> void:
+func _add_move_indicator_action_cost_marker(parent: Node, center: Vector2, action_cost_kind: String, mana_cost: int = 0, preview_only: bool = false) -> void:
 	var texture := _get_move_indicator_action_cost_texture(action_cost_kind)
 	if parent == null or texture == null:
 		return
@@ -15661,6 +15847,7 @@ func _add_move_indicator_action_cost_marker(parent: Node, center: Vector2, actio
 	marker.z_index = 1260
 	marker.custom_minimum_size = marker_size
 	marker.size = marker_size
+	marker.modulate = Color(1.0, 1.0, 1.0, HOVER_MOVE_ARROW_COST_ALPHA if preview_only else 1.0)
 
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color(0.02, 0.025, 0.03, 0.9)
@@ -15689,17 +15876,29 @@ func _add_move_indicator_action_cost_marker(parent: Node, center: Vector2, actio
 
 	parent.add_child(marker)
 	marker.global_position = center - marker.size * 0.5
+	BoardZoneUI.register_action_cost_marker_for_kinds(marker, _get_move_indicator_card(), [action_cost_kind])
 	_move_indicator_path_overlays.append(marker)
+
+func _get_move_indicator_card() -> Card:
+	if _can_show_move_indicators_for_card(_indicated_move_card):
+		return _indicated_move_card
+	var hover_card := _get_hover_card_options_card()
+	if _can_show_move_indicators_for_card(hover_card):
+		return hover_card
+	return null
 
 func _refresh_move_indicators() -> void:
 	_clear_move_indicator_path_overlays()
 	_clear_zone_move_indicators()
-	if _can_show_move_indicators_for_card(_indicated_move_card):
-		var source_zone_ui := _get_board_zone_ui_for_zone(_indicated_move_card.current_zone)
-		for target_zone in _get_adjacent_empty_move_zones(_indicated_move_card):
+	var indicator_card := _get_move_indicator_card()
+	if indicator_card != null:
+		var preview_only := indicator_card != _indicated_move_card
+		var source_zone_ui := _get_board_zone_ui_for_zone(indicator_card.current_zone)
+		for target_zone in _get_adjacent_empty_move_zones(indicator_card):
 			_add_move_indicator_path_overlay(
 				source_zone_ui,
-				_get_board_zone_ui_for_zone(target_zone)
+				_get_board_zone_ui_for_zone(target_zone),
+				preview_only
 			)
 	else:
 		_indicated_move_card = null
