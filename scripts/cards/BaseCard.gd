@@ -77,7 +77,8 @@ static func apply_keyword_hints(text: String) -> String:
 static func apply_action_cost_symbols(text: String, card = null) -> String:
 	if text.strip_edges() == "":
 		return text
-	var lines := text.split("\n", true)
+	var mana_decorated := apply_mana_cost_symbols(text, 14)
+	var lines := mana_decorated.split("\n", true)
 	var decorated: Array[String] = []
 	for raw_line in lines:
 		var line := str(raw_line)
@@ -86,6 +87,85 @@ static func apply_action_cost_symbols(text: String, card = null) -> String:
 			line = _get_action_symbol_bbcode(cost_kind, 18) + line
 		decorated.append(line)
 	return "\n".join(decorated)
+
+static func apply_mana_cost_symbols(text: String, icon_size: int = 14) -> String:
+	if text.strip_edges() == "":
+		return text
+	var decorated := _replace_mana_shorthand_symbols(text, icon_size)
+	decorated = _replace_pay_mana_phrases(decorated, icon_size)
+	decorated = _replace_pay_variable_mana_phrases(decorated, icon_size)
+	decorated = _replace_labeled_mana_costs(decorated, icon_size)
+	return decorated
+
+static func get_mana_symbol_bbcode(size: int = 14) -> String:
+	return "[img=%dx%d]res://images/ui/ManaOrb.png[/img]" % [size, size]
+
+static func _replace_mana_shorthand_symbols(text: String, icon_size: int) -> String:
+	var regex := RegEx.new()
+	if regex.compile("(^|[^A-Za-z0-9])([0-9]+)M\\b") != OK:
+		return text
+	var matches := regex.search_all(text)
+	if matches.is_empty():
+		return text
+	var result := ""
+	var cursor := 0
+	for match_result in matches:
+		result += text.substr(cursor, match_result.get_start() - cursor)
+		result += match_result.get_string(1) + match_result.get_string(2) + " " + get_mana_symbol_bbcode(icon_size)
+		cursor = match_result.get_end()
+	result += text.substr(cursor)
+	return result
+
+static func _replace_pay_mana_phrases(text: String, icon_size: int) -> String:
+	var regex := RegEx.new()
+	if regex.compile("(?i)(\\bpay\\s+)([0-9]+|X)(\\s+(?:additional\\s+|graveyard\\s+)?)(mana\\b)") != OK:
+		return text
+	var matches := regex.search_all(text)
+	if matches.is_empty():
+		return text
+	var result := ""
+	var cursor := 0
+	for match_result in matches:
+		result += text.substr(cursor, match_result.get_start() - cursor)
+		result += match_result.get_string(1) \
+			+ match_result.get_string(2) \
+			+ match_result.get_string(3) \
+			+ get_mana_symbol_bbcode(icon_size)
+		cursor = match_result.get_end()
+	result += text.substr(cursor)
+	return result
+
+static func _replace_pay_variable_mana_phrases(text: String, icon_size: int) -> String:
+	var regex := RegEx.new()
+	if regex.compile("(?i)(\\bpay\\s+)(mana\\b)") != OK:
+		return text
+	var matches := regex.search_all(text)
+	if matches.is_empty():
+		return text
+	var result := ""
+	var cursor := 0
+	for match_result in matches:
+		result += text.substr(cursor, match_result.get_start() - cursor)
+		result += match_result.get_string(1) + get_mana_symbol_bbcode(icon_size)
+		cursor = match_result.get_end()
+	result += text.substr(cursor)
+	return result
+
+static func _replace_labeled_mana_costs(text: String, icon_size: int) -> String:
+	var regex := RegEx.new()
+	if regex.compile("(?i)(\\b(?:mana|activation cost|unlock cost):\\s*)([0-9]+)\\b") != OK:
+		return text
+	var matches := regex.search_all(text)
+	if matches.is_empty():
+		return text
+	var result := ""
+	var cursor := 0
+	for match_result in matches:
+		result += text.substr(cursor, match_result.get_start() - cursor)
+		result += match_result.get_string(1) + match_result.get_string(2) + " " + get_mana_symbol_bbcode(icon_size)
+		cursor = match_result.get_end()
+	result += text.substr(cursor)
+	return result
 
 static func _get_action_cost_kind_for_ability_line(line: String, card = null) -> String:
 	var lower_line := line.to_lower()

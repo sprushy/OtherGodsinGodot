@@ -36,6 +36,8 @@ const MatchSessionScript = preload("res://scripts/server/MatchSession.gd")
 const TiamatScript = preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
 const UIArtScaler = preload("res://scripts/ui/UIArtScaler.gd")
 const CardDetailContentBuilder = preload("res://scripts/ui/CardDetailContentBuilder.gd")
+const MINOR_ACTION_SYMBOL_TEXTURE = preload("res://images/ui/MinorActionSymbol.png")
+const MAJOR_ACTION_SYMBOL_TEXTURE = preload("res://images/ui/MajorActionSymbol.png")
 
 signal forfeit_requested
 signal return_to_menu_requested
@@ -422,6 +424,7 @@ var _action_log_view: RichTextLabel = null
 var _action_log_history_button: Button = null
 var _action_log_messages: Array[String] = []
 var _last_logged_action_text: String = ""
+var _action_label_log_suppressed: bool = false
 var _action_log_popup: PanelContainer = null
 var _action_log_popup_view: RichTextLabel = null
 var _center_action_panel: VBoxContainer = null
@@ -2942,14 +2945,18 @@ func _sync_turn_choice_vertical_order() -> void:
 		left_panel.move_child(_turn_choice_gap, action_index + 2)
 		left_panel.move_child(choice_container, action_index + 3)
 
-func _set_action_label_text(message, force_log: bool = false) -> void:
+func _set_action_label_text(message, force_log: bool = false, record_log: bool = true) -> void:
 	if action_label == null:
 		return
 	action_label.text = str(message)
-	_capture_action_log_message(force_log)
+	_action_label_log_suppressed = not record_log
+	if record_log:
+		_capture_action_log_message(force_log)
 
 func _capture_action_log_message(force: bool = false) -> void:
 	if action_label == null:
+		return
+	if _action_label_log_suppressed:
 		return
 	var message = action_label.text.strip_edges()
 	if message == "":
@@ -6042,15 +6049,15 @@ func _on_divine_caprice_zone_pressed(zone: Zone) -> void:
 		return
 	if _pending_divine_caprice_selected_zone == null:
 		if not _divine_caprice_source_has_target(zone):
-			_set_action_label_text(_get_divine_caprice_zone_title(zone) + " cannot be moved.")
+			_set_action_label_text(_get_divine_caprice_zone_title(zone) + " cannot be moved.", false, false)
 			return
 		_pending_divine_caprice_selected_zone = zone
-		_set_action_label_text(power.card_name + ": selected " + _get_divine_caprice_zone_title(zone) + ".")
+		_set_action_label_text(power.card_name + ": selected " + _get_divine_caprice_zone_title(zone) + ".", false, false)
 		_show_divine_caprice_prompt(power)
 		return
 	if zone == _pending_divine_caprice_selected_zone:
 		_pending_divine_caprice_selected_zone = null
-		_set_action_label_text(power.card_name + ": selection cleared.")
+		_set_action_label_text(power.card_name + ": selection cleared.", false, false)
 		_show_divine_caprice_prompt(power)
 		return
 	if not _divine_caprice_can_target_zone(_pending_divine_caprice_selected_zone, zone):
@@ -6061,7 +6068,7 @@ func _on_divine_caprice_zone_pressed(zone: Zone) -> void:
 		"target_zone": zone
 	})
 	_apply_divine_caprice_virtual_swap(_pending_divine_caprice_selected_zone, zone)
-	_set_action_label_text(power.card_name + ": planned " + _get_divine_caprice_zone_title(_pending_divine_caprice_selected_zone) + " -> " + _get_divine_caprice_zone_title(zone) + ".")
+	_set_action_label_text(power.card_name + ": planned " + _get_divine_caprice_zone_title(_pending_divine_caprice_selected_zone) + " -> " + _get_divine_caprice_zone_title(zone) + ".", false, false)
 	_pending_divine_caprice_selected_zone = null
 	_show_divine_caprice_prompt(power)
 
@@ -9462,6 +9469,35 @@ func _on_hand_card_pressed(card: Card) -> void:
 	else:
 		_set_action_label_text("Card type not yet supported in this test UI")
 
+func _make_context_action_symbol(action_kind: String, icon_size: float = 18.0) -> TextureRect:
+	var icon := TextureRect.new()
+	icon.texture = MAJOR_ACTION_SYMBOL_TEXTURE if action_kind == Card.ACTION_COST_MAJOR else MINOR_ACTION_SYMBOL_TEXTURE
+	icon.custom_minimum_size = Vector2(icon_size, icon_size)
+	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return icon
+
+func _add_hand_creature_summon_option(vbox: VBoxContainer, label: String, mode: String, pressed_callback: Callable) -> void:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 4)
+	row.mouse_filter = Control.MOUSE_FILTER_PASS
+
+	var icon_row := HBoxContainer.new()
+	icon_row.add_theme_constant_override("separation", 1)
+	icon_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	icon_row.custom_minimum_size = Vector2(38.0, 0.0)
+	for action_kind in Card.get_creature_summon_action_cost_kinds(mode == "stealth"):
+		icon_row.add_child(_make_context_action_symbol(action_kind, 18.0))
+	row.add_child(icon_row)
+
+	var btn := Button.new()
+	btn.text = label
+	btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	btn.pressed.connect(pressed_callback)
+	row.add_child(btn)
+	vbox.add_child(row)
+
 func _on_hand_card_right_clicked(card: Card) -> void:
 	if _game_finished:
 		return
@@ -9567,14 +9603,11 @@ func _on_hand_card_right_clicked(card: Card) -> void:
 	vbox.add_child(title)
 
 	for entry in [["Play in Aggressive Stance", "aggressive"], ["Play in Defensive Stance", "defensive"], ["Play in Stealth Mode (face-down)", "stealth"]]:
-		var btn := Button.new()
-		btn.text = entry[0]
 		var mode: String = entry[1]
-		btn.pressed.connect(func():
+		_add_hand_creature_summon_option(vbox, str(entry[0]), mode, func():
 			_close_context_menu()
 			_select_hand_creature_for_placement(card, mode)
 		)
-		vbox.add_child(btn)
 
 	if card is Fenrir and (card as Fenrir).can_use_hand_ability(game_manager):
 		for entry in [["Wolf Master in Aggressive Stance", "aggressive"], ["Wolf Master in Defensive Stance", "defensive"], ["Wolf Master in Stealth Mode", "stealth"]]:
@@ -15564,6 +15597,99 @@ func _add_move_indicator_path_overlay(source_zone_ui: BoardZoneUI, target_zone_u
 	indicator.modulate = Color(1.0, 1.0, 1.0, 0.98)
 	floating_parent.add_child(indicator)
 	_move_indicator_path_overlays.append(indicator)
+	_add_move_indicator_action_cost_marker(
+		floating_parent,
+		(path_start + path_end) * 0.5,
+		_get_move_indicator_action_cost_kind(),
+		_get_move_indicator_mana_cost()
+	)
+
+func _get_move_indicator_action_cost_kind() -> String:
+	if _indicated_move_card != null and _indicated_move_card.has_method("get_effective_minor_action_cost_kind"):
+		return str(_indicated_move_card.call("get_effective_minor_action_cost_kind"))
+	return Card.ACTION_COST_MINOR
+
+func _get_move_indicator_mana_cost() -> int:
+	if _indicated_move_card == null or game_manager == null:
+		return 0
+	if not game_manager.has_method("get_creature_action_mana_cost"):
+		return 0
+	return maxi(0, int(game_manager.call("get_creature_action_mana_cost", _indicated_move_card, "move")))
+
+func _get_move_indicator_action_cost_texture(action_cost_kind: String) -> Texture2D:
+	match action_cost_kind:
+		Card.ACTION_COST_MINOR:
+			return BoardZoneUI.MINOR_ACTION_SYMBOL_TEXTURE
+		Card.ACTION_COST_MAJOR:
+			return BoardZoneUI.MAJOR_ACTION_SYMBOL_TEXTURE
+	return null
+
+func _add_move_indicator_cost_amount_icon(row: HBoxContainer, amount_text: String, texture: Texture2D) -> void:
+	if row == null or texture == null:
+		return
+	var amount := Label.new()
+	amount.text = amount_text
+	amount.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	amount.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	amount.add_theme_font_size_override("font_size", 11)
+	amount.add_theme_color_override("font_color", Color(1.0, 0.96, 0.78))
+	amount.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(amount)
+
+	var icon := TextureRect.new()
+	icon.texture = texture
+	icon.custom_minimum_size = Vector2(13.0, 13.0)
+	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(icon)
+
+func _get_move_indicator_action_cost_marker_size(mana_cost: int = 0) -> Vector2:
+	return Vector2(
+		BoardZoneUI.ACTION_COST_MARKER_MANA_WIDTH if mana_cost > 0 else BoardZoneUI.ACTION_COST_MARKER_ACTION_WIDTH,
+		BoardZoneUI.ACTION_COST_MARKER_HEIGHT
+	)
+
+func _add_move_indicator_action_cost_marker(parent: Node, center: Vector2, action_cost_kind: String, mana_cost: int = 0) -> void:
+	var texture := _get_move_indicator_action_cost_texture(action_cost_kind)
+	if parent == null or texture == null:
+		return
+	var marker_size := _get_move_indicator_action_cost_marker_size(mana_cost)
+	var marker := PanelContainer.new()
+	marker.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	marker.z_as_relative = false
+	marker.z_index = 1260
+	marker.custom_minimum_size = marker_size
+	marker.size = marker_size
+
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.02, 0.025, 0.03, 0.9)
+	style.border_color = Color(1.0, 0.93, 0.62, 0.98)
+	style.corner_radius_top_left = 6
+	style.corner_radius_top_right = 6
+	style.corner_radius_bottom_left = 6
+	style.corner_radius_bottom_right = 6
+	style.content_margin_left = 4
+	style.content_margin_right = 4
+	style.content_margin_top = 2
+	style.content_margin_bottom = 2
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		style.set_border_width(side, 1)
+	marker.add_theme_stylebox_override("panel", style)
+
+	var row := HBoxContainer.new()
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	row.add_theme_constant_override("separation", 2)
+	marker.add_child(row)
+
+	_add_move_indicator_cost_amount_icon(row, "1", texture)
+	if mana_cost > 0:
+		_add_move_indicator_cost_amount_icon(row, str(mana_cost), BoardZoneUI.MANA_ORB_TEXTURE)
+
+	parent.add_child(marker)
+	marker.global_position = center - marker.size * 0.5
+	_move_indicator_path_overlays.append(marker)
 
 func _refresh_move_indicators() -> void:
 	_clear_move_indicator_path_overlays()

@@ -5,6 +5,8 @@ const CardDetailContentBuilder = preload("res://scripts/ui/CardDetailContentBuil
 const LockedPowerCursor = preload("res://scripts/ui/LockedPowerCursor.gd")
 const DefenseShieldOverlay = preload("res://scripts/ui/DefenseShieldOverlay.gd")
 const MINOR_ACTION_SYMBOL_TEXTURE := preload("res://images/ui/MinorActionSymbol.png")
+const MAJOR_ACTION_SYMBOL_TEXTURE := preload("res://images/ui/MajorActionSymbol.png")
+const MANA_ORB_TEXTURE := preload("res://images/ui/ManaOrb.png")
 
 signal card_clicked(card: Card)
 signal card_right_clicked(card: Card)
@@ -28,6 +30,7 @@ var _drag_ghost_pivot: Vector2 = Vector2.ZERO
 var _drag_target_rotation: float = 0.0
 var _drag_stealth: bool = false
 const _DRAG_PREPARE_OVERLAY_NAME := "DragPrepareOverlay"
+const _SUMMON_ACTION_ICON_ROW_NAME := "SummonActionCostIcons"
 const _FLOATING_GHOST_Z_INDEX := 1300
 const _DRAG_ROT_SPEED: float = 600.0  # degrees per second (90° in 0.15 s)
 var _base_z_index: int = 0
@@ -216,34 +219,90 @@ func _make_level_label() -> Label:
 	_level_label = level_lbl
 	return level_lbl
 
-func _make_cost_node(cost_text: String, display_mana_cost: int) -> Control:
-	var cost_lbl := Label.new()
-	cost_lbl.text = cost_text
-	cost_lbl.add_theme_font_size_override("font_size", 17)
-	cost_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+func _make_cost_number_label(text: String, display_mana_cost: int = -1) -> Label:
+	var label := Label.new()
+	label.text = text
+	label.add_theme_font_size_override("font_size", 17)
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	if display_mana_cost > card_data.mana_cost:
-		cost_lbl.add_theme_color_override("font_color", Color(1.0, 0.65, 0.65))
+		label.add_theme_color_override("font_color", Color(1.0, 0.65, 0.65))
 	elif display_mana_cost < card_data.mana_cost:
-		cost_lbl.add_theme_color_override("font_color", Color(0.65, 1.0, 0.7))
-	cost_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		label.add_theme_color_override("font_color", Color(0.65, 1.0, 0.7))
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return label
 
-	if card_data.card_type != Card.CardType.CREATURE:
-		return cost_lbl
+func _make_mana_orb_icon(icon_size: float = 17.0) -> TextureRect:
+	var icon := TextureRect.new()
+	icon.texture = MANA_ORB_TEXTURE
+	icon.custom_minimum_size = Vector2(icon_size, icon_size)
+	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return icon
 
+func _make_cost_node(cost_text: String, display_mana_cost: int) -> Control:
 	var cost_row := HBoxContainer.new()
 	cost_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	cost_row.add_theme_constant_override("separation", 2)
 	cost_row.alignment = BoxContainer.ALIGNMENT_END
 	cost_row.size_flags_horizontal = Control.SIZE_SHRINK_END
+	if card_data.card_type == Card.CardType.CREATURE:
+		var icon_row := HBoxContainer.new()
+		icon_row.name = _SUMMON_ACTION_ICON_ROW_NAME
+		icon_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		icon_row.add_theme_constant_override("separation", 1)
+		_populate_summon_action_icon_row(icon_row, Card.get_creature_summon_action_cost_kinds(false), 18.0)
+		cost_row.add_child(icon_row)
+
+	if display_mana_cost > 0:
+		cost_row.add_child(_make_cost_number_label(str(display_mana_cost), display_mana_cost))
+		cost_row.add_child(_make_mana_orb_icon(17.0))
+	for part in card_data.get_cost_shorthand_parts(0):
+		cost_row.add_child(_make_cost_number_label(part))
+	if cost_row.get_child_count() == 0:
+		cost_row.add_child(_make_cost_number_label(cost_text, display_mana_cost))
+	return cost_row
+
+func _make_summon_action_icon(action_kind: String, icon_size: float = 18.0) -> TextureRect:
 	var icon := TextureRect.new()
-	icon.texture = MINOR_ACTION_SYMBOL_TEXTURE
-	icon.custom_minimum_size = Vector2(18.0, 18.0)
+	icon.texture = MAJOR_ACTION_SYMBOL_TEXTURE if action_kind == Card.ACTION_COST_MAJOR else MINOR_ACTION_SYMBOL_TEXTURE
+	icon.custom_minimum_size = Vector2(icon_size, icon_size)
 	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	cost_row.add_child(icon)
-	cost_row.add_child(cost_lbl)
-	return cost_row
+	return icon
+
+func _populate_summon_action_icon_row(icon_row: HBoxContainer, action_kinds: Array[String], icon_size: float = 18.0) -> void:
+	if icon_row == null:
+		return
+	for child in icon_row.get_children():
+		icon_row.remove_child(child)
+		child.queue_free()
+	for action_kind in action_kinds:
+		icon_row.add_child(_make_summon_action_icon(action_kind, icon_size))
+
+func _find_descendant_by_name(root: Node, target_name: String) -> Node:
+	if root == null:
+		return null
+	if root.name == target_name:
+		return root
+	for child in root.get_children():
+		var found := _find_descendant_by_name(child, target_name)
+		if found != null:
+			return found
+	return null
+
+func _refresh_drag_summon_action_cost_preview() -> void:
+	if not (_drag_ghost and is_instance_valid(_drag_ghost)):
+		return
+	var icon_row := _find_descendant_by_name(_drag_ghost, _SUMMON_ACTION_ICON_ROW_NAME) as HBoxContainer
+	if icon_row == null:
+		return
+	_populate_summon_action_icon_row(
+		icon_row,
+		Card.get_creature_summon_action_cost_kinds(_drag_stealth),
+		18.0
+	)
 
 func _bind_visual_state() -> void:
 	if card_data == null:
@@ -796,6 +855,7 @@ func _input(event: InputEvent) -> void:
 				_toggle_rotation()
 			else:
 				_refresh_drag_defense_shield_overlay()
+			_refresh_drag_summon_action_cost_preview()
 			get_viewport().set_input_as_handled()
 
 func _update_ghost_position() -> void:
@@ -939,6 +999,7 @@ func _build_drag_ghost() -> Control:
 	_drag_ghost = ghost
 	_set_drag_prepare_preview(_drag_stealth and _can_toggle_drag_prepare())
 	_refresh_drag_defense_shield_overlay()
+	_refresh_drag_summon_action_cost_preview()
 	_drag_ghost = null
 	return ghost
 

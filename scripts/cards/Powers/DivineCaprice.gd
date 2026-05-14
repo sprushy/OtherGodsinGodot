@@ -109,6 +109,7 @@ func has_reposition_targets() -> bool:
 
 func apply_reposition_plan(plan: Array) -> int:
 	var moved_steps := 0
+	var moved_cards: Array[Card] = []
 	if card_owner == null:
 		return moved_steps
 	for step in plan:
@@ -118,11 +119,16 @@ func apply_reposition_plan(plan: Array) -> int:
 		var target_zone: Zone = step.get("target_zone", null) as Zone
 		if not can_reposition_between(source_zone, target_zone):
 			continue
-		_swap_zone_contents(source_zone, target_zone)
+		for moved_card in _swap_zone_contents(source_zone, target_zone):
+			if moved_card != null and not moved_cards.has(moved_card):
+				moved_cards.append(moved_card)
 		moved_steps += 1
+	if moved_steps > 0:
+		_reset_ambiguous_revealed_cards(moved_cards)
 	return moved_steps
 
-func _swap_zone_contents(source_zone: Zone, target_zone: Zone) -> void:
+func _swap_zone_contents(source_zone: Zone, target_zone: Zone) -> Array[Card]:
+	var moved_cards: Array[Card] = []
 	var source_cards: Array[Card] = []
 	for card in source_zone.cards:
 		if card is Card:
@@ -138,6 +144,35 @@ func _swap_zone_contents(source_zone: Zone, target_zone: Zone) -> void:
 	for card in target_cards:
 		source_zone.add_card(card)
 		card.card_owner.card_moved.emit(card, target_zone, source_zone)
+		moved_cards.append(card)
 	for card in source_cards:
 		target_zone.add_card(card)
 		card.card_owner.card_moved.emit(card, source_zone, target_zone)
+		moved_cards.append(card)
+	return moved_cards
+
+func _reset_ambiguous_revealed_cards(moved_cards: Array[Card]) -> void:
+	var reveal_group_counts: Dictionary = {}
+	for card in moved_cards:
+		var group_key := _get_reveal_anonymity_group(card)
+		if group_key == "":
+			continue
+		reveal_group_counts[group_key] = int(reveal_group_counts.get(group_key, 0)) + 1
+
+	for card in moved_cards:
+		if card == null or not card.is_temporarily_revealed():
+			continue
+		var group_key := _get_reveal_anonymity_group(card)
+		if group_key != "" and int(reveal_group_counts.get(group_key, 0)) > 1:
+			card.remove_status_effects_by_name("temporarily_revealed")
+
+func _get_reveal_anonymity_group(card: Card) -> String:
+	if card == null or card.current_zone == null or not card.current_zone.is_board_zone():
+		return ""
+	if card.is_stealth and card.card_type == Card.CardType.CREATURE:
+		return "stealth_creature"
+	if card.is_prepared:
+		return "prepared_" + str(card.card_type)
+	if card.is_face_down:
+		return "face_down_" + str(card.card_type)
+	return ""

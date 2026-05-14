@@ -17,6 +17,7 @@ const MOVE_STRAIGHT_INDICATOR_TEXTURE := preload("res://images/ui/move_arrows/Ar
 const MOVE_DIAGONAL_INDICATOR_TEXTURE := preload("res://images/ui/move_arrows/AngleArrow.png")
 const MINOR_ACTION_SYMBOL_TEXTURE := preload("res://images/ui/MinorActionSymbol.png")
 const MAJOR_ACTION_SYMBOL_TEXTURE := preload("res://images/ui/MajorActionSymbol.png")
+const MANA_ORB_TEXTURE := preload("res://images/ui/ManaOrb.png")
 const BOARD_ZONE_SLAB_TEXTURE_PATHS := [
 	"res://images/board/stone_zone_slab.png",
 	"res://images/board/slot_tile_1.png",
@@ -387,6 +388,9 @@ const DEBUFF_BADGE_SIZE := 22.0
 const ATTACK_TARGET_ICON_SIZE := 74.0
 const TARGET_ICON_PAD := 5.0
 const TARGET_ICON_GROUP_GAP := 8.0
+const ACTION_COST_MARKER_HEIGHT := 18.0
+const ACTION_COST_MARKER_ACTION_WIDTH := 34.0
+const ACTION_COST_MARKER_MANA_WIDTH := 60.0
 const FOLLOWERS_ATTACK_RESULT_SECONDS := 0.66
 const MOVE_INDICATOR_WIDTH := 104.0
 const POWER_LOCK_TEXTURE := preload("res://images/Default Power Lock.png")
@@ -625,9 +629,10 @@ func _add_prepared_magical_mana_badge(overlay: Control, card: Card) -> void:
 	elif display_cost < card.mana_cost:
 		font_color = Color(0.65, 1.0, 0.72)
 
-	var badge := _add_overlay_stat_badge(
+	var badge := _add_overlay_mana_badge(
 		overlay,
-		"M:%d" % display_cost,
+		"",
+		display_cost,
 		Control.PRESET_TOP_RIGHT,
 		-66,
 		6,
@@ -671,6 +676,82 @@ func _make_field_stat_badge(text: String, font_size: int = 15, font_color: Color
 
 	return badge
 
+func _make_field_mana_badge(
+	prefix: String,
+	mana_cost: int,
+	font_size: int = 12,
+	font_color: Color = Color(0.92, 0.97, 1.0),
+	icon_size: float = 13.0
+) -> PanelContainer:
+	var badge := _make_empty_field_badge()
+	var row := HBoxContainer.new()
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	row.add_theme_constant_override("separation", 2)
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	badge.add_child(row)
+	if prefix != "":
+		row.add_child(_make_field_badge_label(prefix, font_size, font_color))
+	row.add_child(_make_field_badge_label(str(mana_cost), font_size, font_color))
+	row.add_child(_make_field_mana_icon(icon_size))
+	return badge
+
+func _make_empty_field_badge() -> PanelContainer:
+	var badge := PanelContainer.new()
+	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	badge.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.08, 0.12, 0.24, 0.9)
+	style.border_color = Color(0.62, 0.8, 1.0, 0.95)
+	style.corner_radius_top_left = 6
+	style.corner_radius_top_right = 6
+	style.corner_radius_bottom_left = 6
+	style.corner_radius_bottom_right = 6
+	style.content_margin_left = 5
+	style.content_margin_right = 5
+	style.content_margin_top = 2
+	style.content_margin_bottom = 2
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		style.set_border_width(side, 1)
+	badge.add_theme_stylebox_override("panel", style)
+	return badge
+
+func _make_field_badge_label(text: String, font_size: int, font_color: Color) -> Label:
+	var label := Label.new()
+	label.text = text
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	label.add_theme_font_size_override("font_size", font_size)
+	label.add_theme_color_override("font_color", font_color)
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return label
+
+func _make_field_mana_icon(icon_size: float) -> TextureRect:
+	var icon := TextureRect.new()
+	icon.texture = MANA_ORB_TEXTURE
+	icon.custom_minimum_size = Vector2(icon_size, icon_size)
+	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return icon
+
+func _populate_cost_text_row(
+	row: HBoxContainer,
+	cost_text: String,
+	font_size: int,
+	font_color: Color,
+	icon_size: float
+) -> void:
+	if row == null:
+		return
+	for raw_part in cost_text.split(" ", false):
+		var part := str(raw_part)
+		if part.ends_with("M") and part.length() > 1:
+			row.add_child(_make_field_badge_label(part.substr(0, part.length() - 1), font_size, font_color))
+			row.add_child(_make_field_mana_icon(icon_size))
+		else:
+			row.add_child(_make_field_badge_label(part, font_size, font_color))
+
 func _add_overlay_stat_badge(
 	overlay: Control,
 	text: String,
@@ -684,6 +765,28 @@ func _add_overlay_stat_badge(
 	if overlay == null or not is_instance_valid(overlay) or overlay.is_queued_for_deletion():
 		return null
 	var badge := _make_field_stat_badge(text, 12, font_color)
+	badge.set_anchors_preset(anchor_preset)
+	badge.offset_left = left
+	badge.offset_top = top
+	badge.offset_right = right
+	badge.offset_bottom = bottom
+	overlay.add_child(badge)
+	return badge
+
+func _add_overlay_mana_badge(
+	overlay: Control,
+	prefix: String,
+	mana_cost: int,
+	anchor_preset: int,
+	left: float,
+	top: float,
+	right: float,
+	bottom: float,
+	font_color: Color = Color(0.92, 0.97, 1.0)
+) -> PanelContainer:
+	if overlay == null or not is_instance_valid(overlay) or overlay.is_queued_for_deletion():
+		return null
+	var badge := _make_field_mana_badge(prefix, mana_cost, 12, font_color, 13.0)
 	badge.set_anchors_preset(anchor_preset)
 	badge.offset_left = left
 	badge.offset_top = top
@@ -798,9 +901,10 @@ func _add_power_cost_badge(overlay: Control, card: Card) -> void:
 		return
 
 	if not card.is_face_down:
-		var badge := _add_overlay_stat_badge(
+		var badge := _add_overlay_mana_badge(
 			overlay,
-			badge_text,
+			"",
+			_get_power_activation_mana_cost(card as PowerCard),
 			Control.PRESET_TOP_RIGHT,
 			-66,
 			6,
@@ -836,14 +940,12 @@ func _add_power_cost_badge(overlay: Control, card: Card) -> void:
 		badge_style.set_border_width(side, 1)
 	badge.add_theme_stylebox_override("panel", badge_style)
 
-	var label := Label.new()
-	label.text = badge_text
-	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	label.add_theme_font_size_override("font_size", 9)
-	label.add_theme_color_override("font_color", Color(1.0, 0.95, 0.72))
-	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	badge.add_child(label)
+	var row := HBoxContainer.new()
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	row.add_theme_constant_override("separation", 1)
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	badge.add_child(row)
+	_populate_cost_text_row(row, badge_text, 9, Color(1.0, 0.95, 0.72), 10.0)
 	overlay.add_child(badge)
 
 func _add_power_lock_overlay(overlay: Control, card: Card) -> void:
@@ -1464,11 +1566,17 @@ func _get_card_target_icon_entries(card: Card) -> Array[Dictionary]:
 	if _is_card_attack_candidate(card):
 		var texture := _get_attack_target_texture(card)
 		if texture != null:
+			var scene_root := _get_targeting_scene_root()
+			var actor := _get_selected_attacker(scene_root)
+			var action_name := "destroy equipment" if card.card_type == Card.CardType.EQUIPMENT else "attack"
+			var action_cost_entries := _get_attack_action_cost_entries(actor) if action_name == "attack" else _make_action_cost_entries(Card.ACTION_COST_MAJOR)
 			entries.append({
 				"texture": texture,
 				"border_color": Color(1.0, 0.32, 0.18, 0.92),
 				"hover_text": _get_attack_target_hover_text(card),
 				"action": "",
+				"action_cost_entries": action_cost_entries,
+				"action_mana_cost": _get_creature_action_mana_cost(actor, action_name),
 			})
 	var equipment_action_entry := _get_equipment_target_action_icon_entry(card)
 	if not equipment_action_entry.is_empty():
@@ -1498,21 +1606,32 @@ func _get_equipment_target_action_icon_entry(card: Card) -> Dictionary:
 	if equipment_entry.is_empty():
 		return {}
 	var is_enemy := bool(equipment_entry.get("is_enemy", false))
+	var action_cost_kind := Card.ACTION_COST_MAJOR if is_enemy else _get_minor_action_cost_kind_for_card(actor)
+	var pick_up_label := str(equipment_entry.get("pick_up_label", "Pick Up"))
+	var action_name := "pick up equipment"
+	if not is_enemy and pick_up_label == "Mount":
+		action_name = "mount"
 	return {
 		"texture": STEAL_ATTACK_TARGET_TEXTURE,
 		"border_color": Color(1.0, 0.74, 0.34, 0.95) if is_enemy else Color(0.44, 0.96, 0.58, 0.95),
-		"hover_text": "Steal" if is_enemy else "Pick Up",
+		"hover_text": "Steal" if is_enemy else pick_up_label,
 		"action": "steal" if is_enemy else "pick_up",
+		"action_cost_entries": _make_action_cost_entries(action_cost_kind),
+		"action_mana_cost": _get_creature_action_mana_cost(actor, action_name),
 	}
 
 func _add_followers_attack_target_icon(overlay: Control) -> void:
 	if overlay == null or FOLLOWERS_ATTACK_TARGET_TEXTURE == null:
 		return
+	var scene_root := _get_targeting_scene_root()
+	var actor := _get_selected_attacker(scene_root)
 	var entries: Array[Dictionary] = [{
 		"texture": FOLLOWERS_ATTACK_TARGET_TEXTURE,
 		"border_color": Color(1.0, 0.32, 0.18, 0.92),
 		"hover_text": "Attack",
 		"action": "",
+		"action_cost_entries": _get_attack_action_cost_entries(actor),
+		"action_mana_cost": _get_creature_action_mana_cost(actor, "attack"),
 	}]
 	_add_centered_target_icon_group(overlay, entries, null)
 
@@ -1551,6 +1670,147 @@ func _has_steal_action_entry(scene_root: Node, actor: Card, equipment: Card) -> 
 	var entry := _get_reachable_equipment_entry(scene_root, actor, equipment)
 	return not entry.is_empty() and bool(entry.get("is_enemy", false))
 
+func _get_minor_action_cost_kind_for_card(card: Card) -> String:
+	if card == null:
+		return Card.ACTION_COST_MINOR
+	if card.has_method("get_effective_minor_action_cost_kind"):
+		return str(card.call("get_effective_minor_action_cost_kind"))
+	return Card.ACTION_COST_MINOR
+
+func _get_creature_action_mana_cost(card: Card, action_name: String = "") -> int:
+	if card == null or game_manager == null:
+		return 0
+	if not game_manager.has_method("get_creature_action_mana_cost"):
+		return 0
+	return maxi(0, int(game_manager.call("get_creature_action_mana_cost", card, action_name)))
+
+func _make_action_cost_entries(action_cost_kind: String, amount: int = 1) -> Array[Dictionary]:
+	var entries: Array[Dictionary] = []
+	if action_cost_kind == Card.ACTION_COST_NONE or amount <= 0:
+		return entries
+	entries.append({
+		"kind": action_cost_kind,
+		"amount": amount,
+	})
+	return entries
+
+func _get_attack_action_cost_entries(card: Card) -> Array[Dictionary]:
+	var entries := _make_action_cost_entries(Card.ACTION_COST_MAJOR)
+	if card == null:
+		return entries
+	var exhausts_minor := false
+	if card.has_method("does_attack_exhaust_minor_creature_actions"):
+		exhausts_minor = bool(card.call("does_attack_exhaust_minor_creature_actions"))
+	if not exhausts_minor:
+		return entries
+	var minor_count := Card.DEFAULT_MINOR_CREATURE_ACTIONS_PER_TURN
+	if card.has_method("get_max_minor_creature_actions_per_turn"):
+		minor_count = maxi(0, int(card.call("get_max_minor_creature_actions_per_turn")))
+	entries.append_array(_make_action_cost_entries(Card.ACTION_COST_MINOR, minor_count))
+	return entries
+
+func _get_action_cost_marker_texture(action_cost_kind: String) -> Texture2D:
+	match action_cost_kind:
+		Card.ACTION_COST_MINOR:
+			return MINOR_ACTION_SYMBOL_TEXTURE
+		Card.ACTION_COST_MAJOR:
+			return MAJOR_ACTION_SYMBOL_TEXTURE
+	return null
+
+func _get_action_cost_entry_label(entry: Dictionary) -> String:
+	var action_cost_kind := str(entry.get("kind", Card.ACTION_COST_NONE))
+	var amount := maxi(0, int(entry.get("amount", 0)))
+	match action_cost_kind:
+		Card.ACTION_COST_MINOR:
+			return "%d minor %s" % [amount, "action" if amount == 1 else "actions"]
+		Card.ACTION_COST_MAJOR:
+			return "%d major %s" % [amount, "action" if amount == 1 else "actions"]
+	return ""
+
+func _with_action_cost_hover_text(hover_text: String, action_cost_entries: Array[Dictionary], mana_cost: int = 0) -> String:
+	var cost_parts: Array[String] = []
+	for entry in action_cost_entries:
+		var action_cost_label := _get_action_cost_entry_label(entry)
+		if action_cost_label != "":
+			cost_parts.append(action_cost_label)
+	if mana_cost > 0:
+		cost_parts.append("%d mana" % mana_cost)
+	if cost_parts.is_empty():
+		return hover_text
+	return hover_text + "\nCost: " + ", ".join(cost_parts)
+
+func _get_action_cost_marker_size(action_cost_entries: Array[Dictionary], mana_cost: int = 0) -> Vector2:
+	var cost_pair_count := action_cost_entries.size() + (1 if mana_cost > 0 else 0)
+	var width := ACTION_COST_MARKER_ACTION_WIDTH + maxf(0.0, float(cost_pair_count - 1) * 24.0)
+	return Vector2(width, ACTION_COST_MARKER_HEIGHT)
+
+func _add_cost_amount_icon(row: HBoxContainer, amount_text: String, texture: Texture2D) -> void:
+	if row == null or texture == null:
+		return
+	var amount := Label.new()
+	amount.text = amount_text
+	amount.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	amount.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	amount.add_theme_font_size_override("font_size", 11)
+	amount.add_theme_color_override("font_color", Color(1.0, 0.96, 0.78))
+	amount.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(amount)
+
+	var icon := TextureRect.new()
+	icon.texture = texture
+	icon.custom_minimum_size = Vector2(13.0, 13.0)
+	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(icon)
+
+func _add_action_cost_marker(parent: Control, action_cost_entries: Array[Dictionary], mana_cost: int = 0) -> void:
+	if parent == null or action_cost_entries.is_empty():
+		return
+	var marker_size := _get_action_cost_marker_size(action_cost_entries, mana_cost)
+	var marker := PanelContainer.new()
+	marker.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	marker.z_index = 4
+	marker.custom_minimum_size = marker_size
+	marker.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
+	marker.offset_left = -marker_size.x - 3.0
+	marker.offset_top = -marker_size.y - 3.0
+	marker.offset_right = -3.0
+	marker.offset_bottom = -3.0
+
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.02, 0.025, 0.03, 0.88)
+	style.border_color = Color(1.0, 0.93, 0.62, 0.96)
+	style.corner_radius_top_left = 6
+	style.corner_radius_top_right = 6
+	style.corner_radius_bottom_left = 6
+	style.corner_radius_bottom_right = 6
+	style.content_margin_left = 4
+	style.content_margin_right = 4
+	style.content_margin_top = 2
+	style.content_margin_bottom = 2
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		style.set_border_width(side, 1)
+	marker.add_theme_stylebox_override("panel", style)
+
+	var row := HBoxContainer.new()
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	row.add_theme_constant_override("separation", 2)
+	marker.add_child(row)
+
+	for entry in action_cost_entries:
+		var action_cost_kind := str(entry.get("kind", Card.ACTION_COST_NONE))
+		var texture := _get_action_cost_marker_texture(action_cost_kind)
+		var amount := maxi(0, int(entry.get("amount", 0)))
+		if texture == null or amount <= 0:
+			continue
+		_add_cost_amount_icon(row, str(amount), texture)
+	if mana_cost > 0:
+		_add_cost_amount_icon(row, str(mana_cost), MANA_ORB_TEXTURE)
+
+	parent.add_child(marker)
+
 func _add_centered_target_icon_group(overlay: Control, entries: Array[Dictionary], card: Card = null) -> void:
 	if overlay == null or entries.is_empty():
 		return
@@ -1576,6 +1836,15 @@ func _add_centered_target_icon_group(overlay: Control, entries: Array[Dictionary
 		var border_color: Color = entry.get("border_color", Color(1.0, 0.85, 0.4, 0.92))
 		var hover_text := str(entry.get("hover_text", ""))
 		var action := str(entry.get("action", ""))
+		var action_cost_entries: Array[Dictionary] = []
+		var raw_action_cost_entries = entry.get("action_cost_entries", [])
+		if raw_action_cost_entries is Array:
+			for raw_entry in raw_action_cost_entries:
+				if raw_entry is Dictionary:
+					action_cost_entries.append(raw_entry as Dictionary)
+		if action_cost_entries.is_empty():
+			action_cost_entries = _make_action_cost_entries(str(entry.get("action_cost_kind", Card.ACTION_COST_NONE)))
+		var action_mana_cost := maxi(0, int(entry.get("action_mana_cost", 0)))
 		var badge := _make_target_icon_badge(
 			entry_texture,
 			border_color,
@@ -1583,7 +1852,9 @@ func _add_centered_target_icon_group(overlay: Control, entries: Array[Dictionary
 			badge_size,
 			hover_text,
 			action,
-			card
+			card,
+			action_cost_entries,
+			action_mana_cost
 		)
 		badge.set_anchors_preset(Control.PRESET_TOP_LEFT)
 		badge.offset_left = left
@@ -1593,10 +1864,24 @@ func _add_centered_target_icon_group(overlay: Control, entries: Array[Dictionary
 		group.add_child(badge)
 		left += badge_size + TARGET_ICON_GROUP_GAP
 
-func _make_target_icon_badge(texture: Texture2D, border_color: Color, icon_size: float, badge_size: float, hover_text: String = "", action: String = "", target_card: Card = null) -> PanelContainer:
-	var badge := PanelContainer.new()
+func _make_target_icon_badge(
+	texture: Texture2D,
+	border_color: Color,
+	icon_size: float,
+	badge_size: float,
+	hover_text: String = "",
+	action: String = "",
+	target_card: Card = null,
+	action_cost_entries: Array[Dictionary] = [],
+	action_mana_cost: int = 0
+) -> Control:
+	var badge := Control.new()
 	badge.mouse_filter = Control.MOUSE_FILTER_STOP if action.strip_edges() != "" else (Control.MOUSE_FILTER_PASS if hover_text.strip_edges() != "" else Control.MOUSE_FILTER_IGNORE)
 	badge.custom_minimum_size = Vector2(badge_size, badge_size)
+
+	var background := Panel.new()
+	background.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	background.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color(0.02, 0.025, 0.03, 0.66)
 	style.border_color = border_color
@@ -1606,7 +1891,8 @@ func _make_target_icon_badge(texture: Texture2D, border_color: Color, icon_size:
 	style.corner_radius_bottom_right = 8
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
 		style.set_border_width(side, 2)
-	badge.add_theme_stylebox_override("panel", style)
+	background.add_theme_stylebox_override("panel", style)
+	badge.add_child(background)
 
 	var icon := TextureRect.new()
 	icon.texture = texture
@@ -1621,8 +1907,9 @@ func _make_target_icon_badge(texture: Texture2D, border_color: Color, icon_size:
 	icon.offset_bottom = -TARGET_ICON_PAD
 	icon.custom_minimum_size = Vector2(icon_size, icon_size)
 	badge.add_child(icon)
+	_add_action_cost_marker(badge, action_cost_entries, action_mana_cost)
 	if hover_text.strip_edges() != "":
-		_connect_badge_hover(badge, hover_text)
+		_connect_badge_hover(badge, _with_action_cost_hover_text(hover_text, action_cost_entries, action_mana_cost))
 	if action.strip_edges() != "" and target_card != null:
 		badge.gui_input.connect(func(event: InputEvent) -> void:
 			if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:

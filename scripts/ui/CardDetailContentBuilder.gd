@@ -49,7 +49,7 @@ static func build_visual_hover_body(card: Card, viewer: Player, config: Dictiona
 	if card.culture != "":
 		meta_parts.append(card.culture)
 	if not meta_parts.is_empty():
-		var meta_lbl := _make_label("  |  ".join(meta_parts), 14, Color(0.65, 0.65, 0.65), false)
+		var meta_lbl := _make_rich_text(BaseCard.apply_mana_cost_symbols("  |  ".join(meta_parts), 14), 14, Color(0.65, 0.65, 0.65))
 		vbox.add_child(meta_lbl)
 
 	match card.card_type:
@@ -79,8 +79,8 @@ static func build_visual_hover_body(card: Card, viewer: Player, config: Dictiona
 			vbox.add_child(_make_label("Speed: %d" % card.speed, 16))
 
 	if card.has_additional_costs():
-		vbox.add_child(_make_label(
-			"Extra Costs: " + " ".join(card.get_cost_shorthand_parts(0)),
+		vbox.add_child(_make_rich_text(
+			BaseCard.apply_mana_cost_symbols("Extra Costs: " + " ".join(card.get_cost_shorthand_parts(0)), 14),
 			14,
 			Color(1.0, 0.6, 0.4)
 		))
@@ -364,10 +364,10 @@ static func build_board_popup_body(card: Card, viewer: Player, config: Dictionar
 		))
 
 	if cost_lines.size() > 0 and not is_hidden_card:
-		vbox.add_child(_make_label("\n".join(cost_lines), 12, Color(0.78, 0.9, 1.0), true))
+		vbox.add_child(_make_rich_text(BaseCard.apply_mana_cost_symbols("\n".join(cost_lines), 12), 12, Color(0.78, 0.9, 1.0)))
 
 	if power_cost_lines.size() > 0 and not is_hidden_card:
-		vbox.add_child(_make_label("\n".join(power_cost_lines), 12, Color(1.0, 0.84, 0.62), true))
+		vbox.add_child(_make_rich_text(BaseCard.apply_mana_cost_symbols("\n".join(power_cost_lines), 12), 12, Color(1.0, 0.84, 0.62)))
 
 	var hover_detail_lines := card.get_hover_detail_lines(viewer)
 	if hover_detail_lines.size() > 0 and not is_hidden_card:

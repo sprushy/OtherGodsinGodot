@@ -7,6 +7,7 @@ const LocalProfileStoreScript = preload("res://scripts/core/LocalProfileStore.gd
 const DeckCatalogUtilsScript = preload("res://scripts/core/DeckCatalogUtils.gd")
 const CardCatalogScript = preload("res://scripts/cards/CardCatalog.gd")
 const TiamatScript = preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
+const MANA_ORB_TEXTURE := preload("res://images/ui/ManaOrb.png")
 
 signal back_pressed
 signal account_deck_deleted_locally(deck_id: String)
@@ -34,6 +35,10 @@ const DESKTOP_LAYOUT_BOTTOM_CLEARANCE := 44.0
 const DECK_SCROLLBAR_CONTENT_CLEARANCE := 32
 const DECK_SCROLL_BUTTON_STEP_MIN := 96.0
 const DECK_SCROLL_BUTTON_STEP_RATIO := 0.72
+const COLLECTION_ADD_FOOTER_HEIGHT := 30.0
+const COLLECTION_DRAG_THRESHOLD := 8.0
+const COLLECTION_GRID_TOP_INSET := 16.0
+const COLLECTION_SELECTED_CARD_Z_INDEX := 100
 const CARD_VIEW_PRESETS := [
 	{"label": "Tiny", "rows": 5},
 	{"label": "Small", "rows": 4},
@@ -106,7 +111,7 @@ var _level_filter_buttons: Dictionary = {}
 var _prev_art:         TextureRect
 var _prev_name:        Label
 var _prev_type:        Label
-var _prev_stats:       Label
+var _prev_stats:       RichTextLabel
 var _prev_ability:     RichTextLabel
 var _prev_flavor:      Label
 # per-card count badge in collection (card_name -> Label)
@@ -126,6 +131,14 @@ var _tiamat_slots: Array = [[], [], []]
 var _tiamat_assignment_slot_index: int = -1
 var _deck_id_rng := RandomNumberGenerator.new()
 var _deck_undo_history: Array[Dictionary] = []
+var _collection_card_roots: Dictionary = {}
+var _selected_collection_card_name: String = ""
+var _collection_drag_card: Card = null
+var _collection_drag_start_pos: Vector2 = Vector2.ZERO
+var _collection_drag_active: bool = false
+var _collection_drag_was_selected: bool = false
+var _collection_drag_offset: Vector2 = Vector2.ZERO
+var _collection_drag_ghost: Control = null
 
 func _escape_preview_bbcode_text(text: String) -> String:
 	return text.replace("[", "[lb]").replace("]", "[rb]")
@@ -155,7 +168,7 @@ func _ready() -> void:
 	_apply_default_collection_mode()
 	_refresh_grid()
 	_queue_collection_layout_refresh()
-	_refresh_deck_panel()
+	_refresh_deck_panel(true, false)
 
 func configure_profile_store(profile_store, profile_id: String, player_name: String = "") -> void:
 	_local_profile_store = profile_store
@@ -470,12 +483,13 @@ func _build_collection_panel(parent: Control) -> void:
 	_collection_host = Control.new()
 	_collection_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_collection_host.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_collection_host.clip_contents = true
+	_collection_host.clip_contents = false
 	_collection_host.resized.connect(_queue_collection_layout_refresh)
 	content.add_child(_collection_host)
 
 	_grid = HFlowContainer.new()
 	_grid.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_grid.offset_top = COLLECTION_GRID_TOP_INSET
 	_grid.add_theme_constant_override("h_separation", int(COLLECTION_GAP))
 	_grid.add_theme_constant_override("v_separation", int(COLLECTION_GAP))
 	_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -605,9 +619,13 @@ func _build_deck_panel(parent: Control) -> void:
 
 	details_box.add_child(_prev_type)
 
-	_prev_stats = Label.new()
+	_prev_stats = RichTextLabel.new()
+	_prev_stats.bbcode_enabled = true
 	_prev_stats.text = ""
-	_prev_stats.add_theme_font_size_override("font_size", 16)
+	_prev_stats.fit_content = true
+	_prev_stats.scroll_active = false
+	_prev_stats.add_theme_font_size_override("normal_font_size", 16)
+	_prev_stats.add_theme_color_override("default_color", Color.WHITE)
 	details_box.add_child(_prev_stats)
 
 	_prev_ability = RichTextLabel.new()
@@ -844,6 +862,7 @@ func _build_send_friend_dialog() -> void:
 # ── collection grid ────────────────────────────────────────────────
 func _refresh_grid() -> void:
 	_count_badges.clear()
+	_collection_card_roots.clear()
 	for child in _grid.get_children():
 		child.queue_free()
 
@@ -940,12 +959,48 @@ func _make_card_item(card: Card) -> Control:
 	root.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	root.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	root.mouse_filter = Control.MOUSE_FILTER_STOP
+	_collection_card_roots[card.card_name] = root
 	var unavailable_reason := _get_card_unavailable_reason(card)
 	var is_unavailable := not unavailable_reason.is_empty()
 	if is_unavailable:
 		root.tooltip_text = unavailable_reason
 		root.mouse_default_cursor_shape = Control.CURSOR_FORBIDDEN
 	var unavailable_badge_text := _get_card_unavailable_badge_text(card)
+
+	var selection_backlight := Panel.new()
+	selection_backlight.name = "SelectionBacklight"
+	selection_backlight.visible = false
+	selection_backlight.anchor_left = 0
+	selection_backlight.anchor_right = 1
+	selection_backlight.anchor_top = 0
+	selection_backlight.anchor_bottom = 1
+	selection_backlight.offset_left = -4
+	selection_backlight.offset_right = 4
+	selection_backlight.offset_top = -4
+	selection_backlight.offset_bottom = -COLLECTION_ADD_FOOTER_HEIGHT + 4
+	selection_backlight.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var backlight_style := StyleBoxFlat.new()
+	backlight_style.bg_color = Color(1.0, 0.86, 0.22, 0.18)
+	backlight_style.border_color = Color(1.0, 0.86, 0.22, 0.0)
+	backlight_style.shadow_color = Color(1.0, 0.82, 0.28, 0.85)
+	backlight_style.shadow_size = 22
+	backlight_style.shadow_offset = Vector2.ZERO
+	backlight_style.corner_radius_top_left = 5
+	backlight_style.corner_radius_top_right = 5
+	backlight_style.corner_radius_bottom_left = 5
+	backlight_style.corner_radius_bottom_right = 5
+	selection_backlight.add_theme_stylebox_override("panel", backlight_style)
+	root.add_child(selection_backlight)
+
+	var card_body := Control.new()
+	card_body.name = "CardBody"
+	card_body.anchor_left = 0
+	card_body.anchor_right = 1
+	card_body.anchor_top = 0
+	card_body.anchor_bottom = 1
+	card_body.offset_bottom = -COLLECTION_ADD_FOOTER_HEIGHT
+	card_body.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(card_body)
 
 	# Border / background
 	var bg := Panel.new()
@@ -960,7 +1015,7 @@ func _make_card_item(card: Card) -> Control:
 	sty.corner_radius_top_left    = 4; sty.corner_radius_top_right    = 4
 	sty.corner_radius_bottom_left = 4; sty.corner_radius_bottom_right = 4
 	bg.add_theme_stylebox_override("panel", sty)
-	root.add_child(bg)
+	card_body.add_child(bg)
 
 	# Art
 	if card.art_path != "":
@@ -972,7 +1027,7 @@ func _make_card_item(card: Card) -> Control:
 			art.expand_mode  = TextureRect.EXPAND_IGNORE_SIZE
 			art.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 			art.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			root.add_child(art)
+			card_body.add_child(art)
 
 	# Name bar (bottom 22%)
 	var name_bg := ColorRect.new()
@@ -981,7 +1036,6 @@ func _make_card_item(card: Card) -> Control:
 	name_bg.anchor_top  = 1; name_bg.anchor_bottom = 1
 	name_bg.offset_top  = -42; name_bg.offset_bottom = 0
 	name_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	root.add_child(name_bg)
 
 	var name_lbl := Label.new()
 	name_lbl.add_theme_font_size_override("font_size", 13)
@@ -993,7 +1047,8 @@ func _make_card_item(card: Card) -> Control:
 	name_lbl.offset_top   = -42; name_lbl.offset_bottom = 0
 	name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	name_lbl.text = card.get_display_name_for_control(name_lbl)
-	root.add_child(name_lbl)
+	card_body.add_child(name_bg)
+	card_body.add_child(name_lbl)
 
 	# Type badge (top-left)
 	var type_lbl := Label.new()
@@ -1003,34 +1058,11 @@ func _make_card_item(card: Card) -> Control:
 	type_lbl.anchor_left  = 0; type_lbl.anchor_top  = 0
 	type_lbl.offset_left  = 4; type_lbl.offset_top  = 4
 	type_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	root.add_child(type_lbl)
+	card_body.add_child(type_lbl)
 
 	# Cost badge (top-right)
 	if card.has_listed_play_costs():
-		var cost_text := card.get_cost_shorthand()
-		var badge_width := maxi(22, 12 + cost_text.length() * 6)
-		var mana_bg := ColorRect.new()
-		mana_bg.color = Color(0.1, 0.25, 0.55, 0.85)
-		mana_bg.custom_minimum_size = Vector2(badge_width, 22)
-		mana_bg.anchor_right  = 1; mana_bg.anchor_left  = 1
-		mana_bg.anchor_top    = 0; mana_bg.anchor_bottom = 0
-		mana_bg.offset_left   = -badge_width - 2; mana_bg.offset_right  = -2
-		mana_bg.offset_top    = 2;   mana_bg.offset_bottom = 24
-		mana_bg.mouse_filter  = Control.MOUSE_FILTER_IGNORE
-		root.add_child(mana_bg)
-
-		var mana_lbl := Label.new()
-		mana_lbl.text = cost_text
-		mana_lbl.add_theme_font_size_override("font_size", 10 if cost_text.length() > 3 else 11)
-		mana_lbl.add_theme_color_override("font_color", Color(0.6, 0.9, 1.0))
-		mana_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		mana_lbl.vertical_alignment   = VERTICAL_ALIGNMENT_CENTER
-		mana_lbl.anchor_right  = 1; mana_lbl.anchor_left  = 1
-		mana_lbl.anchor_top    = 0; mana_lbl.anchor_bottom = 0
-		mana_lbl.offset_left   = -badge_width - 2; mana_lbl.offset_right  = -2
-		mana_lbl.offset_top    = 2;   mana_lbl.offset_bottom = 24
-		mana_lbl.mouse_filter  = Control.MOUSE_FILTER_IGNORE
-		root.add_child(mana_lbl)
+		card_body.add_child(_make_collection_cost_badge(card))
 
 	# Count badge (bottom-right, overlaid on name bar)
 	var count_lbl := Label.new()
@@ -1043,7 +1075,7 @@ func _make_card_item(card: Card) -> Control:
 	count_lbl.offset_top    = -38; count_lbl.offset_bottom = -2
 	count_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	count_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	root.add_child(count_lbl)
+	card_body.add_child(count_lbl)
 	_count_badges[card.card_name] = count_lbl
 
 	# Dim overlay (filled when at max copies)
@@ -1052,14 +1084,41 @@ func _make_card_item(card: Card) -> Control:
 	dim.color = Color(0.0, 0.0, 0.0, 0.0)
 	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	root.add_child(dim)
+	card_body.add_child(dim)
 
 	var unavailable_overlay := ColorRect.new()
 	unavailable_overlay.name = "UnavailableOverlay"
 	unavailable_overlay.color = Color(0.05, 0.0, 0.0, 0.62) if is_unavailable else Color(0.0, 0.0, 0.0, 0.0)
 	unavailable_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	unavailable_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	root.add_child(unavailable_overlay)
+	card_body.add_child(unavailable_overlay)
+
+	var selection_dim := ColorRect.new()
+	selection_dim.name = "SelectionDimOverlay"
+	selection_dim.color = Color(0.0, 0.0, 0.0, 0.0)
+	selection_dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	selection_dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	card_body.add_child(selection_dim)
+
+	var selection_glow := Panel.new()
+	selection_glow.name = "SelectionGlow"
+	selection_glow.visible = false
+	selection_glow.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	selection_glow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var glow_style := StyleBoxFlat.new()
+	glow_style.bg_color = Color(1.0, 1.0, 1.0, 0.0)
+	glow_style.border_color = Color(1.0, 0.94, 0.62, 1.0)
+	glow_style.shadow_color = Color(1.0, 1.0, 1.0, 0.0)
+	glow_style.shadow_size = 0
+	glow_style.shadow_offset = Vector2.ZERO
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		glow_style.set_border_width(side as Side, 2)
+	glow_style.corner_radius_top_left = 5
+	glow_style.corner_radius_top_right = 5
+	glow_style.corner_radius_bottom_left = 5
+	glow_style.corner_radius_bottom_right = 5
+	selection_glow.add_theme_stylebox_override("panel", glow_style)
+	card_body.add_child(selection_glow)
 
 	var unavailable_mark := Label.new()
 	unavailable_mark.name = "UnavailableMark"
@@ -1074,7 +1133,7 @@ func _make_card_item(card: Card) -> Control:
 	unavailable_mark.add_theme_constant_override("shadow_offset_y", 2)
 	unavailable_mark.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	unavailable_mark.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	root.add_child(unavailable_mark)
+	card_body.add_child(unavailable_mark)
 
 	if is_unavailable and not unavailable_badge_text.is_empty():
 		var unavailable_band := ColorRect.new()
@@ -1089,7 +1148,7 @@ func _make_card_item(card: Card) -> Control:
 		unavailable_band.offset_top = -74
 		unavailable_band.offset_bottom = -44
 		unavailable_band.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		root.add_child(unavailable_band)
+		card_body.add_child(unavailable_band)
 
 		var unavailable_reason_lbl := Label.new()
 		unavailable_reason_lbl.name = "UnavailableReasonLabel"
@@ -1108,7 +1167,7 @@ func _make_card_item(card: Card) -> Control:
 		unavailable_reason_lbl.offset_top = -74
 		unavailable_reason_lbl.offset_bottom = -44
 		unavailable_reason_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		root.add_child(unavailable_reason_lbl)
+		card_body.add_child(unavailable_reason_lbl)
 
 	# Active God tag
 	if card.is_god:
@@ -1143,28 +1202,348 @@ func _make_card_item(card: Card) -> Control:
 			tag_lbl.add_theme_font_size_override("font_size", 8)
 			tag_lbl.add_theme_color_override("font_color", Color(0.9, 1.0, 0.9))
 			active_tag.add_child(tag_lbl)
-			root.add_child(active_tag)
+			card_body.add_child(active_tag)
 			
 			active_tag.mouse_entered.connect(func() -> void: _show_preview(active_candidate))
 			active_tag.mouse_exited.connect(func() -> void: _show_preview(card))
 
+	var minus_btn := Button.new()
+	minus_btn.name = "SelectionRemoveButton"
+	minus_btn.text = "-"
+	minus_btn.tooltip_text = "Remove selected card from deck"
+	minus_btn.visible = false
+	minus_btn.disabled = true
+	minus_btn.anchor_left = 0.5
+	minus_btn.anchor_right = 0.5
+	minus_btn.anchor_top = 1
+	minus_btn.anchor_bottom = 1
+	minus_btn.offset_left = -40
+	minus_btn.offset_right = -4
+	minus_btn.offset_top = -28
+	minus_btn.offset_bottom = -4
+	minus_btn.custom_minimum_size = Vector2(36, 24)
+	minus_btn.pressed.connect(func() -> void:
+		_remove_from_deck(card.card_name)
+		_update_collection_selection_visuals()
+	)
+	root.add_child(minus_btn)
+
+	var add_btn := Button.new()
+	add_btn.name = "SelectionAddButton"
+	add_btn.text = "+"
+	add_btn.tooltip_text = "Add selected card to deck"
+	add_btn.visible = false
+	add_btn.disabled = true
+	add_btn.anchor_left = 0.5
+	add_btn.anchor_right = 0.5
+	add_btn.anchor_top = 1
+	add_btn.anchor_bottom = 1
+	add_btn.offset_left = -18
+	add_btn.offset_right = 18
+	add_btn.offset_top = -28
+	add_btn.offset_bottom = -4
+	add_btn.custom_minimum_size = Vector2(36, 24)
+	add_btn.pressed.connect(func() -> void:
+		_handle_collection_card_confirm_add(card)
+	)
+	root.add_child(add_btn)
+
+	var back_btn := Button.new()
+	back_btn.name = "SelectionBackButton"
+	back_btn.text = "Back"
+	back_btn.tooltip_text = "Return deckbuilder to normal view"
+	back_btn.visible = false
+	back_btn.anchor_left = 0.5
+	back_btn.anchor_right = 0.5
+	back_btn.anchor_top = 1
+	back_btn.anchor_bottom = 1
+	back_btn.offset_left = 8
+	back_btn.offset_right = 56
+	back_btn.offset_top = -28
+	back_btn.offset_bottom = -4
+	back_btn.custom_minimum_size = Vector2(48, 24)
+	back_btn.pressed.connect(func() -> void:
+		_clear_selected_collection_card()
+	)
+	root.add_child(back_btn)
+
 	# Input
 	root.gui_input.connect(func(ev: InputEvent) -> void:
 		if ev is InputEventMouseButton and ev.pressed:
+			if ev.button_index == MOUSE_BUTTON_RIGHT and not _selected_collection_card_name.is_empty():
+				_clear_selected_collection_card()
+				get_viewport().set_input_as_handled()
+				return
+			if ev.button_index == MOUSE_BUTTON_LEFT \
+					and not _selected_collection_card_name.is_empty() \
+					and _selected_collection_card_name != card.card_name:
+				_clear_selected_collection_card()
 			if ev.button_index == MOUSE_BUTTON_LEFT:
 				if is_unavailable:
 					_set_status_flash(unavailable_reason)
+					get_viewport().set_input_as_handled()
 					return
-				_handle_collection_card_add(card)
+				_handle_collection_card_primary_press(card, ev.global_position)
+				get_viewport().set_input_as_handled()
 			elif ev.button_index == MOUSE_BUTTON_RIGHT:
 				_remove_from_deck(card.card_name)
+				get_viewport().set_input_as_handled()
 	)
 	root.mouse_entered.connect(func() -> void: _show_preview(card))
+	_update_collection_card_selection_visual(root, card)
 
 	return root
 
+func _make_collection_cost_badge(card: Card) -> PanelContainer:
+	var cost_parts := card.get_cost_shorthand_parts(0)
+	var badge_width := 18
+	if card.mana_cost > 0:
+		badge_width += 25
+	for part in cost_parts:
+		badge_width += 6 + part.length() * 6
+	badge_width = maxi(22, badge_width)
+
+	var badge := PanelContainer.new()
+	badge.custom_minimum_size = Vector2(badge_width, 22)
+	badge.anchor_right  = 1; badge.anchor_left  = 1
+	badge.anchor_top    = 0; badge.anchor_bottom = 0
+	badge.offset_left   = -badge_width - 2; badge.offset_right  = -2
+	badge.offset_top    = 2;   badge.offset_bottom = 24
+	badge.mouse_filter  = Control.MOUSE_FILTER_IGNORE
+
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.1, 0.25, 0.55, 0.85)
+	style.content_margin_left = 4
+	style.content_margin_right = 4
+	style.content_margin_top = 1
+	style.content_margin_bottom = 1
+	badge.add_theme_stylebox_override("panel", style)
+
+	var row := HBoxContainer.new()
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	row.add_theme_constant_override("separation", 1)
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	badge.add_child(row)
+
+	if card.mana_cost > 0:
+		row.add_child(_make_collection_cost_label(str(card.mana_cost)))
+		row.add_child(_make_collection_mana_icon(14.0))
+	for part in cost_parts:
+		row.add_child(_make_collection_cost_label(part))
+	return badge
+
+func _make_collection_cost_label(text: String) -> Label:
+	var label := Label.new()
+	label.text = text
+	label.add_theme_font_size_override("font_size", 10 if text.length() > 3 else 11)
+	label.add_theme_color_override("font_color", Color(0.6, 0.9, 1.0))
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return label
+
+func _make_collection_mana_icon(icon_size: float) -> TextureRect:
+	var icon := TextureRect.new()
+	icon.texture = MANA_ORB_TEXTURE
+	icon.custom_minimum_size = Vector2(icon_size, icon_size)
+	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return icon
+
+func _handle_collection_card_primary_press(card: Card, global_position: Vector2) -> void:
+	_begin_collection_card_drag(card, global_position, _selected_collection_card_name == card.card_name)
+
+func _select_collection_card(card: Card) -> void:
+	if card == null:
+		return
+	_selected_collection_card_name = card.card_name
+	_collection_drag_card = null
+	_collection_drag_active = false
+	_collection_drag_was_selected = false
+	_cleanup_collection_card_drag_ghost()
+	_show_preview(card, true)
+	_update_collection_selection_visuals()
+
+func _clear_selected_collection_card() -> void:
+	if _selected_collection_card_name.is_empty():
+		return
+	_selected_collection_card_name = ""
+	_collection_drag_card = null
+	_collection_drag_active = false
+	_collection_drag_was_selected = false
+	_cleanup_collection_card_drag_ghost()
+	_update_collection_selection_visuals()
+
+func _begin_collection_card_drag(card: Card, global_position: Vector2, was_selected: bool) -> void:
+	_collection_drag_card = card
+	_collection_drag_start_pos = global_position
+	_collection_drag_active = false
+	_collection_drag_was_selected = was_selected
+	var root := _collection_card_roots.get(card.card_name, null) as Control
+	if is_instance_valid(root):
+		_collection_drag_offset = global_position - root.global_position
+	else:
+		_collection_drag_offset = _card_size / 2.0
+
+func _finish_collection_card_drag(global_position: Vector2) -> void:
+	var card := _collection_drag_card
+	var was_dragging := _collection_drag_active
+	var was_selected := _collection_drag_was_selected
+	_collection_drag_card = null
+	_collection_drag_active = false
+	_collection_drag_was_selected = false
+	_cleanup_collection_card_drag_ghost()
+	if card == null:
+		return
+	if was_dragging:
+		if _is_point_in_decklist(global_position):
+			_handle_collection_card_add(card)
+			_update_collection_selection_visuals()
+		return
+	if was_selected:
+		_handle_collection_card_confirm_add(card)
+	else:
+		_select_collection_card(card)
+
+func _ensure_collection_card_drag_ghost(global_position: Vector2) -> void:
+	if _collection_drag_card == null:
+		return
+	if is_instance_valid(_collection_drag_ghost):
+		_update_collection_card_drag_ghost_position(global_position)
+		return
+
+	var root := _collection_card_roots.get(_collection_drag_card.card_name, null) as Control
+	var ghost := Control.new()
+	ghost.name = "CollectionCardDragGhost"
+	ghost.top_level = true
+	ghost.z_index = 10000
+	ghost.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ghost.custom_minimum_size = _card_size
+	ghost.size = _card_size
+	ghost.modulate = Color(1.0, 1.0, 1.0, 0.88)
+
+	if is_instance_valid(root):
+		var source_body := root.get_node_or_null("CardBody") as Control
+		if source_body != null:
+			var body_copy := source_body.duplicate(0) as Control
+			if body_copy != null:
+				body_copy.mouse_filter = Control.MOUSE_FILTER_IGNORE
+				body_copy.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+				ghost.add_child(body_copy)
+
+	if ghost.get_child_count() == 0:
+		var fallback := Panel.new()
+		fallback.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		fallback.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var style := StyleBoxFlat.new()
+		style.bg_color = Color(0.10, 0.11, 0.16, 0.92)
+		style.border_color = Color(0.95, 0.82, 0.38, 1.0)
+		for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+			style.set_border_width(side as Side, 2)
+		fallback.add_theme_stylebox_override("panel", style)
+		ghost.add_child(fallback)
+
+		var label := Label.new()
+		label.text = _collection_drag_card.get_display_name_for_control(label)
+		label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		ghost.add_child(label)
+
+	add_child(ghost)
+	_collection_drag_ghost = ghost
+	_update_collection_card_drag_ghost_position(global_position)
+
+func _update_collection_card_drag_ghost_position(global_position: Vector2) -> void:
+	if not is_instance_valid(_collection_drag_ghost):
+		return
+	_collection_drag_ghost.global_position = global_position - _collection_drag_offset
+
+func _cleanup_collection_card_drag_ghost() -> void:
+	if is_instance_valid(_collection_drag_ghost):
+		_collection_drag_ghost.queue_free()
+	_collection_drag_ghost = null
+
+func _handle_collection_card_confirm_add(card: Card) -> void:
+	if card == null:
+		return
+	if _selected_collection_card_name != card.card_name:
+		_select_collection_card(card)
+		return
+	_handle_collection_card_add(card)
+	_update_collection_selection_visuals()
+
+func _is_point_in_decklist(global_position: Vector2) -> bool:
+	if is_instance_valid(_deck_panel) and _deck_panel.get_global_rect().has_point(global_position):
+		return true
+	if is_instance_valid(_deck_scroll) and _deck_scroll.get_global_rect().has_point(global_position):
+		return true
+	if is_instance_valid(_deck_list) and _deck_list.get_global_rect().has_point(global_position):
+		return true
+	return false
+
+func _update_collection_selection_visuals() -> void:
+	for card_name: String in _collection_card_roots:
+		var root := _collection_card_roots[card_name] as Control
+		if not is_instance_valid(root):
+			continue
+		var card := _find_template(card_name)
+		if card != null:
+			_update_collection_card_selection_visual(root, card)
+
+func _update_collection_card_selection_visual(root: Control, card: Card) -> void:
+	if not is_instance_valid(root) or card == null:
+		return
+	var selected := _selected_collection_card_name == card.card_name
+	var has_selection := not _selected_collection_card_name.is_empty()
+	var is_clickable := _get_card_unavailable_reason(card).is_empty()
+	var deck_count := int(_deck.get(card.card_name, 0))
+	var at_max := deck_count >= _max_copies(card)
+	var can_remove := selected and deck_count > 0
+	root.z_index = COLLECTION_SELECTED_CARD_Z_INDEX if selected else 0
+	var card_body := root.get_node_or_null("CardBody")
+	if card_body is Control:
+		var selection_dim := (card_body as Control).get_node_or_null("SelectionDimOverlay")
+		if selection_dim is ColorRect:
+			(selection_dim as ColorRect).color = Color(0.0, 0.0, 0.0, 0.42) if has_selection and is_clickable and not selected else Color(0.0, 0.0, 0.0, 0.0)
+		var selection_glow := (card_body as Control).get_node_or_null("SelectionGlow")
+		if selection_glow is Panel:
+			(selection_glow as Panel).visible = selected
+	var selection_backlight := root.get_node_or_null("SelectionBacklight")
+	if selection_backlight is Panel:
+		(selection_backlight as Panel).visible = selected
+	var minus_btn := root.get_node_or_null("SelectionRemoveButton")
+	if minus_btn is Button:
+		(minus_btn as Button).visible = can_remove
+		(minus_btn as Button).disabled = not can_remove
+		(minus_btn as Button).offset_left = -60
+		(minus_btn as Button).offset_right = -24
+	var add_btn := root.get_node_or_null("SelectionAddButton")
+	if add_btn is Button:
+		(add_btn as Button).visible = selected
+		(add_btn as Button).disabled = not selected or not is_clickable or at_max
+		if can_remove:
+			(add_btn as Button).offset_left = -20
+			(add_btn as Button).offset_right = 16
+		else:
+			(add_btn as Button).offset_left = -44
+			(add_btn as Button).offset_right = -8
+	var back_btn := root.get_node_or_null("SelectionBackButton")
+	if back_btn is Button:
+		(back_btn as Button).visible = selected
+		(back_btn as Button).disabled = not selected
+		if can_remove:
+			(back_btn as Button).offset_left = 20
+			(back_btn as Button).offset_right = 68
+		else:
+			(back_btn as Button).offset_left = 0
+			(back_btn as Button).offset_right = 48
+
 # ── deck panel refresh ─────────────────────────────────────────────
-func _refresh_deck_panel() -> void:
+func _refresh_deck_panel(rebuild_collection: bool = false, refresh_layout: bool = false) -> void:
 	for child in _deck_list.get_children():
 		child.queue_free()
 
@@ -1204,9 +1583,12 @@ func _refresh_deck_panel() -> void:
 
 	_refresh_tiamat_panel()
 	_update_validation()
-	_rebuild_filtered_cards_cache()
-	_refresh_collection_grid_and_layout()
-	_queue_responsive_layout_refresh()
+	if rebuild_collection:
+		_rebuild_filtered_cards_cache()
+		_refresh_grid()
+	_update_count_badges()
+	if refresh_layout:
+		_queue_responsive_layout_refresh()
 	call_deferred("_update_deck_scroll_nav_buttons")
 
 func _refresh_tiamat_panel() -> void:
@@ -1254,7 +1636,7 @@ func _refresh_tiamat_panel() -> void:
 		select_btn.disabled = not _deck_uses_tiamat()
 		select_btn.pressed.connect(func() -> void:
 			_tiamat_assignment_slot_index = -1 if _tiamat_assignment_slot_index == slot_index else slot_index
-			_refresh_deck_panel()
+			_refresh_deck_panel(false, false)
 		)
 		header.add_child(select_btn)
 
@@ -1266,7 +1648,7 @@ func _refresh_tiamat_panel() -> void:
 			_tiamat_slots[slot_index].clear()
 			if _tiamat_assignment_slot_index == slot_index and _tiamat_slots[slot_index].is_empty():
 				_tiamat_assignment_slot_index = -1
-			_refresh_deck_panel()
+			_refresh_deck_panel(false, false)
 		)
 		header.add_child(clear_btn)
 
@@ -1467,7 +1849,7 @@ func _try_assign_card_to_tiamat_slot(card: Card) -> bool:
 		return true
 	_push_current_deck_undo_state()
 	_tiamat_slots[_tiamat_assignment_slot_index].append(card.card_name)
-	_refresh_deck_panel()
+	_refresh_deck_panel(false, false)
 	_set_status_flash("%s assigned to Matriarch slot %d." % [card.card_name, _tiamat_assignment_slot_index + 1])
 	return true
 
@@ -1480,7 +1862,7 @@ func _remove_tiamat_slot_card(slot_index: int, card_name: String) -> void:
 	)
 	if _tiamat_assignment_slot_index == slot_index and _tiamat_slots[slot_index].is_empty():
 		_tiamat_assignment_slot_index = -1
-	_refresh_deck_panel()
+	_refresh_deck_panel(false, false)
 
 func _make_deck_undo_state() -> Dictionary:
 	return {
@@ -1519,7 +1901,7 @@ func _restore_deck_undo_state(state: Dictionary) -> void:
 		_deck_name_edit.text = str(state.get("deck_name", LocalProfileStoreScript.DEFAULT_DECK_NAME))
 	_select_saved_deck(_selected_saved_deck_id)
 	_refresh_saved_deck_gallery(_get_saved_decks())
-	_refresh_deck_panel()
+	_refresh_deck_panel(true, false)
 
 func _undo_last_deck_change() -> bool:
 	if _deck_undo_history.is_empty():
@@ -1577,7 +1959,7 @@ func _add_to_deck(card: Card) -> void:
 	_deck[card.card_name] = current + 1
 	if card.is_god and not TiamatScript.is_tiamat_god(card):
 		_clear_tiamat_slots()
-	_refresh_deck_panel()
+	_refresh_deck_panel(_deck_change_needs_collection_rebuild(card), false)
 	if card.is_god:
 		_focus_power_selection()
 
@@ -1585,13 +1967,23 @@ func _remove_from_deck(card_name: String) -> void:
 	if not _deck.has(card_name) or _deck[card_name] <= 0:
 		return
 
+	var removed_card := _find_template(card_name)
 	_push_current_deck_undo_state()
 	_deck[card_name] -= 1
 	if _deck[card_name] == 0:
 		_deck.erase(card_name)
 	if not _deck_uses_tiamat():
 		_clear_tiamat_slots()
-	_refresh_deck_panel()
+	_refresh_deck_panel(_deck_change_needs_collection_rebuild(removed_card), false)
+
+func _deck_change_needs_collection_rebuild(card: Card) -> bool:
+	if card == null:
+		return false
+	if card.is_god or card is ActiveGodCard:
+		return true
+	if _get_selected_god_template() == null:
+		return true
+	return false
 
 func _clear_deck() -> void:
 	if _deck.is_empty() and not _has_any_tiamat_slot_cards():
@@ -1599,7 +1991,7 @@ func _clear_deck() -> void:
 	_push_current_deck_undo_state()
 	_deck.clear()
 	_clear_tiamat_slots()
-	_refresh_deck_panel()
+	_refresh_deck_panel(true, false)
 
 func _autofill_deck_to_minimum() -> void:
 	var current_regular_count := _count_regular_cards_in_current_deck()
@@ -1630,7 +2022,7 @@ func _autofill_deck_to_minimum() -> void:
 		_set_status_flash("No legal cards were available to auto-fill this deck.")
 		return
 
-	_refresh_deck_panel()
+	_refresh_deck_panel(true, false)
 	if regular_added < cards_needed:
 		_set_status_flash(
 			"Auto-filled %d regular cards and %d powers, but there were not enough legal cards to reach %d regular cards."
@@ -2220,7 +2612,7 @@ func _new_deck() -> void:
 	_select_saved_deck("")
 	_refresh_saved_deck_gallery(_get_saved_decks())
 	_focus_god_selection()
-	_refresh_deck_panel()
+	_refresh_deck_panel(true, false)
 	_set_status_flash("Started a new deck.")
 
 func _on_saved_deck_selected(index: int) -> void:
@@ -2384,7 +2776,7 @@ func _apply_saved_deck(saved_deck: Dictionary) -> void:
 	_remember_selected_saved_deck(_selected_saved_deck_id)
 	_select_saved_deck(_selected_saved_deck_id)
 	_refresh_saved_deck_gallery(_get_saved_decks())
-	_refresh_deck_panel()
+	_refresh_deck_panel(true, false)
 
 func _refresh_saved_deck_gallery(decks: Array[Dictionary]) -> void:
 	_saved_decks_cache.clear()
@@ -2926,9 +3318,12 @@ func _update_count_badges() -> void:
 			var dim_node := card_root.get_node_or_null("DimOverlay")
 			if dim_node is ColorRect:
 				dim_node.color = Color(0.0, 0.0, 0.0, 0.5) if is_max else Color(0.0, 0.0, 0.0, 0.0)
+	_update_collection_selection_visuals()
 
 # ── preview ────────────────────────────────────────────────────────
-func _show_preview(card: Card) -> void:
+func _show_preview(card: Card, force: bool = false) -> void:
+	if not force and not _selected_collection_card_name.is_empty() and card != null and card.card_name != _selected_collection_card_name:
+		return
 	if card.art_path != "":
 		_prev_art.texture = _get_card_art_texture(card.art_path)
 	else:
@@ -2967,7 +3362,7 @@ func _show_preview(card: Card) -> void:
 	elif card.card_type in [Card.CardType.SPELL, Card.CardType.HEX, Card.CardType.CHARM]:
 		stat_parts.append("SPD:%d" % card.speed)
 	if card.has_listed_play_costs():
-		stat_parts.append("Cost: " + card.get_cost_shorthand())
+		stat_parts.append("Cost: " + BaseCard.apply_mana_cost_symbols(card.get_cost_shorthand(), 14))
 	_prev_stats.text = "  ".join(stat_parts)
 
 	var preview_body := ""
@@ -2987,6 +3382,9 @@ func _show_preview(card: Card) -> void:
 func _input(event: InputEvent) -> void:
 	if not visible:
 		return
+	if _try_handle_collection_card_drag_input(event):
+		get_viewport().set_input_as_handled()
+		return
 	if event is not InputEventKey:
 		return
 	var key_event := event as InputEventKey
@@ -3001,6 +3399,13 @@ func _input(event: InputEvent) -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if not visible:
 		return
+	if event is InputEventMouseButton:
+		var mouse_event := event as InputEventMouseButton
+		if mouse_event.pressed \
+				and (mouse_event.button_index == MOUSE_BUTTON_LEFT or mouse_event.button_index == MOUSE_BUTTON_RIGHT) \
+				and _selected_collection_card_name != "":
+			_clear_selected_collection_card()
+		return
 	if event is not InputEventKey:
 		return
 	var key_event := event as InputEventKey
@@ -3012,7 +3417,26 @@ func _unhandled_input(event: InputEvent) -> void:
 	if _try_handle_page_key(key_event.keycode, key_event.echo):
 		get_viewport().set_input_as_handled()
 
+func _try_handle_collection_card_drag_input(event: InputEvent) -> bool:
+	if _collection_drag_card == null:
+		return false
+	if event is InputEventMouseMotion:
+		var motion := event as InputEventMouseMotion
+		if motion.global_position.distance_to(_collection_drag_start_pos) >= COLLECTION_DRAG_THRESHOLD:
+			_collection_drag_active = true
+		if _collection_drag_active:
+			_ensure_collection_card_drag_ghost(motion.global_position)
+			return true
+		return false
+	if event is InputEventMouseButton:
+		var mouse_event := event as InputEventMouseButton
+		if mouse_event.button_index == MOUSE_BUTTON_LEFT and not mouse_event.pressed:
+			_finish_collection_card_drag(mouse_event.global_position)
+			return true
+	return false
+
 func _set_filter(new_filter: String) -> void:
+	_clear_selected_collection_card()
 	_set_collection_mode(COLLECTION_MODE_CARDS, false)
 	_filter = new_filter
 	_current_page = 0
@@ -3021,6 +3445,7 @@ func _set_filter(new_filter: String) -> void:
 	_refresh_collection_grid_and_layout()
 
 func _set_faction_filter(new_faction: String) -> void:
+	_clear_selected_collection_card()
 	_set_collection_mode(COLLECTION_MODE_CARDS, false)
 	_faction_filter = new_faction
 	_current_page = 0
@@ -3029,6 +3454,7 @@ func _set_faction_filter(new_faction: String) -> void:
 	_refresh_collection_grid_and_layout()
 
 func _set_level_filter(new_filter: String) -> void:
+	_clear_selected_collection_card()
 	_set_collection_mode(COLLECTION_MODE_CARDS, false)
 	_level_filter = new_filter
 	_current_page = 0
@@ -3037,6 +3463,7 @@ func _set_level_filter(new_filter: String) -> void:
 	_refresh_collection_grid_and_layout()
 
 func _set_search_query(new_query: String) -> void:
+	_clear_selected_collection_card()
 	_set_collection_mode(COLLECTION_MODE_CARDS, false)
 	var normalized_query := new_query.strip_edges()
 	if normalized_query == _search_query:
@@ -3049,6 +3476,7 @@ func _set_search_query(new_query: String) -> void:
 func _set_collection_rows(rows: int) -> void:
 	if rows == _collection_rows:
 		return
+	_clear_selected_collection_card()
 	_collection_rows = max(1, rows)
 	_current_page = 0
 	_refresh_collection_grid_and_layout()
@@ -3056,6 +3484,7 @@ func _set_collection_rows(rows: int) -> void:
 func _set_collection_sort(new_sort: String) -> void:
 	if new_sort == _collection_sort:
 		return
+	_clear_selected_collection_card()
 	_set_collection_mode(COLLECTION_MODE_CARDS, false)
 	_collection_sort = new_sort
 	_current_page = 0
@@ -3074,6 +3503,7 @@ func _refresh_collection_grid_and_layout() -> void:
 func _show_previous_page() -> void:
 	if _current_page <= 0:
 		return
+	_clear_selected_collection_card()
 	_current_page -= 1
 	_refresh_grid()
 
@@ -3081,6 +3511,7 @@ func _show_next_page() -> void:
 	var total_pages := _page_count(_current_grid_total())
 	if _current_page >= total_pages - 1:
 		return
+	_clear_selected_collection_card()
 	_current_page += 1
 	_refresh_grid()
 
@@ -3227,6 +3658,7 @@ func _update_collection_layout() -> void:
 		return
 
 	var available: Vector2 = _collection_host.size
+	available.y = maxf(1.0, available.y - COLLECTION_GRID_TOP_INSET)
 	if available.x <= 0.0 or available.y <= 0.0:
 		return
 
@@ -3268,18 +3700,20 @@ func _update_collection_layout() -> void:
 		_page_grid_columns = columns
 		_page_visible_collection_rows = visible_rows
 	else:
+		var footer_height := COLLECTION_ADD_FOOTER_HEIGHT
 		var base_max_card_height = floor((available.y - COLLECTION_GAP * float(_collection_rows - 1)) / float(_collection_rows))
-		base_max_card_height = max(base_max_card_height, 1.0)
-		var base_estimated_width = floor(base_max_card_height * aspect)
+		base_max_card_height = max(base_max_card_height, footer_height + 1.0)
+		var base_visual_height = maxf(1.0, base_max_card_height - footer_height)
+		var base_estimated_width = floor(base_visual_height * aspect)
 		var base_columns = max(1, int(floor((available.x + COLLECTION_GAP) / max(1.0, base_estimated_width + COLLECTION_GAP))))
 		var base_width_limited = floor((available.x - COLLECTION_GAP * float(base_columns - 1)) / float(base_columns))
-		var base_height_from_width = floor(base_width_limited / aspect)
+		var base_height_from_width = floor(base_width_limited / aspect) + footer_height
 
 		if base_height_from_width < base_max_card_height:
 			base_max_card_height = base_height_from_width
 			base_estimated_width = base_width_limited
 		else:
-			base_estimated_width = floor(base_max_card_height * aspect)
+			base_estimated_width = floor(maxf(1.0, base_max_card_height - footer_height) * aspect)
 
 		var base_card_size := Vector2(max(1.0, base_estimated_width), max(1.0, base_max_card_height))
 		var base_visible_rows := maxi(1, mini(_collection_rows, int(floor((available.y + COLLECTION_GAP) / max(1.0, base_card_size.y + COLLECTION_GAP)))))
@@ -3376,6 +3810,7 @@ func _set_collection_mode(mode: String, reset_page: bool = true) -> void:
 		_refresh_saved_decks_view_button()
 		_queue_collection_layout_refresh()
 		return
+	_clear_selected_collection_card()
 	_collection_mode = mode
 	if reset_page:
 		_current_page = 0

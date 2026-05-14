@@ -1312,7 +1312,7 @@ func play_card(player: Player, card: Card, target_zone: Zone, prepared: bool = f
 		# Mark summoned
 		if card.card_type == Card.CardType.CREATURE:
 			card.reset_creature_action_state()
-			card.spend_minor_creature_action()
+			card.spend_creature_summon_actions()
 			player.has_summoned_this_turn = true
 			if used_extra_normal_summon:
 				_consume_extra_normal_summon(player, card, target_zone)
@@ -1489,7 +1489,7 @@ func summon_creature_by_effect(
 	card.creature_mode = resolved_mode
 	card.reset_creature_action_state()
 	if consume_turn_summon:
-		card.spend_minor_creature_action()
+		card.spend_creature_summon_actions(stealth)
 	card.summoned_this_turn = true
 	if consume_turn_summon:
 		player.has_summoned_this_turn = true

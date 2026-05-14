@@ -1346,14 +1346,16 @@ func can_take_major_creature_action() -> bool:
 	return not creature_major_action_used
 
 func does_attack_exhaust_minor_creature_actions() -> bool:
-	return true
+	return false
 
 func can_take_minor_creature_action() -> bool:
 	return can_take_minor_creature_action_spending_minor() or can_take_minor_creature_action_spending_major()
 
 func can_take_minor_creature_action_spending_minor() -> bool:
 	if creature_major_action_used:
-		return can_take_minor_creature_action_after_major() and creature_minor_actions_used < get_max_minor_creature_actions_per_turn()
+		var major_action_was_attack := has_attacked_this_turn and not does_attack_exhaust_minor_creature_actions()
+		return (major_action_was_attack or can_take_minor_creature_action_after_major()) \
+			and creature_minor_actions_used < get_max_minor_creature_actions_per_turn()
 	return creature_minor_actions_used < get_max_minor_creature_actions_per_turn()
 
 func can_take_minor_creature_action_spending_major() -> bool:
@@ -1366,12 +1368,19 @@ func get_effective_minor_action_cost_kind() -> String:
 		return ACTION_COST_MAJOR
 	return ACTION_COST_MINOR
 
+static func get_creature_summon_action_cost_kinds(stealth: bool = false) -> Array[String]:
+	var kinds: Array[String] = [ACTION_COST_MINOR]
+	if stealth:
+		kinds.append(ACTION_COST_MAJOR)
+	return kinds
+
 func spend_major_creature_action() -> void:
 	creature_major_action_used = true
 	has_acted_this_turn = true
 
 func spend_attack_creature_action() -> void:
 	spend_major_creature_action()
+	has_attacked_this_turn = true
 	if does_attack_exhaust_minor_creature_actions():
 		creature_minor_actions_used = maxi(creature_minor_actions_used, get_max_minor_creature_actions_per_turn())
 
@@ -1385,6 +1394,11 @@ func spend_minor_creature_action(marked_as_move: bool = false) -> void:
 		has_moved_this_turn = true
 	if creature_minor_actions_used >= get_max_minor_creature_actions_per_turn():
 		has_acted_this_turn = true
+
+func spend_creature_summon_actions(stealth: bool = false) -> void:
+	spend_minor_creature_action()
+	if stealth:
+		spend_major_creature_action()
 
 static func get_action_symbol_path(action_cost_kind: String) -> String:
 	match action_cost_kind:
