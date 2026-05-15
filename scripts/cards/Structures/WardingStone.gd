@@ -32,8 +32,8 @@ func on_summon(game_manager: GameManager) -> void:
 	# Identify the restricted player
 	var restricted_player: Player = _get_restricted_player(game_manager)
 
-	# Apply the restriction for 2 full turns
-	game_manager.apply_attack_restriction(restricted_player, 3, self)
+	# Apply the restriction for the opponent's next 2 turns.
+	game_manager.apply_attack_restriction(restricted_player, 2, self)
 	print("Warding Stone summoned by " + card_owner.player_name + "! " + restricted_player.player_name + "'s attacks restricted for 2 turns.")
 
 # Ability: Triggers when the structure is removed from the board (called by _send_to_graveyard_with_hook)

@@ -235,6 +235,8 @@ func _emit_ui_interaction_for_player(player: Player, type: String, data: Diction
 	var player_idx := game_manager.players.find(player)
 	if player_idx < 0:
 		return
+	if type == "intercept" and _has_duplicate_pending_ui_interaction(player, type, data):
+		return
 	_record_pending_ui_interaction(player, type, data)
 	request_ui_interaction.emit(player_idx, type, data)
 
@@ -256,6 +258,19 @@ func _record_pending_ui_interaction(player: Player, type: String, data: Dictiona
 	_pending_ui_interactions.append(entry)
 	while _pending_ui_interactions.size() > 64:
 		_pending_ui_interactions.remove_at(0)
+
+func _has_duplicate_pending_ui_interaction(player: Player, type: String, data: Dictionary) -> bool:
+	for existing in _pending_ui_interactions:
+		if existing.get("player", null) != player:
+			continue
+		if str(existing.get("type", "")) != type:
+			continue
+		if game_manager != null and int(existing.get("turn_number", -1)) != game_manager.turn_number:
+			continue
+		var existing_data: Dictionary = existing.get("data", {})
+		if existing_data == data:
+			return true
+	return false
 
 func _prune_matching_pending_ui_interactions(entry: Dictionary) -> void:
 	for idx in range(_pending_ui_interactions.size() - 1, -1, -1):
@@ -2133,6 +2148,9 @@ func select_attacker(card: Card) -> void:
 func request_attack(attacker, target) -> void:
 	var attacker_card: Card = attacker if attacker is Card else game_manager.get_card_by_uid(str(attacker))
 	var target_obj = target
+	if pending_attack_target != null:
+		move_failed.emit("Resolve the pending attack before declaring another attack.")
+		return
 	
 	if target is String:
 		target_obj = null

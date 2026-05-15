@@ -763,18 +763,6 @@ func start_turn() -> void:
 
 	current_player.reset_creature_actions()
 	
-	# Reduce attack restrictions (for the player whose turn is starting)
-	if attack_restrictions.has(current_player):
-		attack_restrictions[current_player].turns -= 1
-		if attack_restrictions[current_player].turns <= 0:
-			var source_card: Card = attack_restrictions[current_player].source
-			attack_restrictions.erase(current_player)
-			print(current_player.player_name + " can now attack again!")
-			if source_card != null:
-				source_card.switch_to_exhausted_art()
-		else:
-			print(current_player.player_name + " still cannot attack (" + str(attack_restrictions[current_player].turns) + " turns left)")
-	
 	for zone in current_player.frontline_zones + current_player.reserve_zones:
 		for card in zone.cards:
 			if card.card_type == Card.CardType.CREATURE:
@@ -2702,6 +2690,19 @@ func remove_attack_restriction(player: Player) -> void:
 		attack_restrictions.erase(player)
 		print(player.player_name + " attack restriction removed!")
 
+func _advance_attack_restriction_turn(player: Player) -> void:
+	if player == null or not attack_restrictions.has(player):
+		return
+	attack_restrictions[player].turns -= 1
+	if attack_restrictions[player].turns <= 0:
+		var source_card: Card = attack_restrictions[player].source
+		attack_restrictions.erase(player)
+		print(player.player_name + " can now attack again!")
+		if source_card != null:
+			source_card.switch_to_exhausted_art()
+	else:
+		print(player.player_name + " still cannot attack (" + str(attack_restrictions[player].turns) + " turns left)")
+
 # Turn lifecycle order is intentionally explicit:
 # 1. Fire controller turn-end hooks for the ending player's permanents.
 # 2. Fire global turn-end hooks for all permanents.
@@ -2721,6 +2722,7 @@ func end_turn() -> void:
 	_clear_expired_turn_destruction_wards(turn_number)
 	_clear_expired_turn_follower_loss_preventions(turn_number)
 	_clear_expired_turn_opponent_targeting_immunities(turn_number)
+	_advance_attack_restriction_turn(ending_player)
 	
 	# Swap players for the next turn
 	var temp = current_player

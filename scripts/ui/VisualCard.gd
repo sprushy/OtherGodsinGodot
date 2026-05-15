@@ -4,6 +4,7 @@ extends PanelContainer
 const CardDetailContentBuilder = preload("res://scripts/ui/CardDetailContentBuilder.gd")
 const LockedPowerCursor = preload("res://scripts/ui/LockedPowerCursor.gd")
 const DefenseShieldOverlay = preload("res://scripts/ui/DefenseShieldOverlay.gd")
+const BoardZoneUI = preload("res://scripts/ui/BoardZoneUI.gd")
 const LevelSymbolRow = preload("res://scripts/ui/LevelSymbolRow.gd")
 const MINOR_ACTION_SYMBOL_TEXTURE := preload("res://images/ui/MinorActionSymbol.png")
 const MAJOR_ACTION_SYMBOL_TEXTURE := preload("res://images/ui/MajorActionSymbol.png")
@@ -378,6 +379,8 @@ func _refresh_drag_summon_action_cost_preview() -> void:
 func _refresh_drag_ghost_level_preview() -> void:
 	if not (_drag_ghost and is_instance_valid(_drag_ghost)):
 		return
+	if _drag_ghost is BoardZoneUI:
+		return
 	var existing_overlay := _drag_ghost.get_node_or_null(_DRAG_LEVEL_OVERLAY_NAME)
 	if existing_overlay != null:
 		_drag_ghost.remove_child(existing_overlay)
@@ -456,10 +459,63 @@ func _apply_stats_label_state(target_label: Label, preview_rotated: bool, previe
 func _refresh_drag_stats_preview() -> void:
 	if not (_drag_ghost and is_instance_valid(_drag_ghost)):
 		return
-	var ghost_stats_label := _find_descendant_by_name(_drag_ghost, _STATS_LABEL_NAME) as Label
-	if ghost_stats_label == null:
+	if _drag_ghost is BoardZoneUI:
 		return
-	_apply_stats_label_state(ghost_stats_label, is_rotated, _drag_stealth)
+	var labels := _find_drag_stats_labels(_drag_ghost)
+	for ghost_stats_label in labels:
+		_apply_stats_label_state(ghost_stats_label, is_rotated, _drag_stealth)
+
+func _find_drag_stats_labels(root: Node) -> Array[Label]:
+	var labels: Array[Label] = []
+	if root == null:
+		return labels
+	if root is Label:
+		var label := root as Label
+		if label.name == _STATS_LABEL_NAME or label.text.begins_with("STR:") or label.text.begins_with("DEF ") or label.text.begins_with("RES:"):
+			labels.append(label)
+	for child in root.get_children():
+		labels.append_array(_find_drag_stats_labels(child))
+	return labels
+
+func _refresh_drag_summon_preview() -> void:
+	if _drag_ghost is BoardZoneUI:
+		_refresh_drag_board_summon_preview()
+		return
+	_refresh_drag_stats_preview()
+	_refresh_drag_summon_action_cost_preview()
+
+func _refresh_drag_board_summon_preview() -> void:
+	var board_ghost := _drag_ghost as BoardZoneUI
+	if board_ghost == null or not is_instance_valid(board_ghost):
+		return
+	if card_data == null or card_data.card_type != Card.CardType.CREATURE:
+		board_ghost.set_preview_card(null)
+		return
+
+	var preview_card := card_data.duplicate(true) as Card
+	if preview_card == null:
+		return
+	preview_card.card_owner = card_data.card_owner
+	preview_card.is_prepared = false
+	preview_card.is_face_down = _drag_stealth
+	preview_card.is_stealth = _drag_stealth
+	preview_card.creature_mode = Card.CreatureMode.DEFENSIVE if (is_rotated or _drag_stealth) else Card.CreatureMode.AGGRESSIVE
+	preview_card.summoned_this_turn = true
+
+	var preview_zone := Zone.new()
+	preview_zone.zone_type = Zone.ZoneType.FRONTLINE
+	preview_zone.zone_index = 0
+	preview_zone.zone_owner = card_data.card_owner
+	preview_zone.cards.clear()
+	preview_zone.cards.append(preview_card)
+	preview_card.current_zone = preview_zone
+
+	board_ghost.zone = preview_zone
+	board_ghost.owning_player = card_data.card_owner
+	board_ghost.viewer_override = _hover_viewer if _hover_viewer != null else card_data.card_owner
+	board_ghost.zone_index = 0
+	board_ghost.set_preview_card(preview_card)
+	board_ghost.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 func _on_card_visual_state_changed() -> void:
 	_refresh_dynamic_labels()
@@ -892,25 +948,25 @@ func _toggle_rotation() -> void:
 		_inner.rotation_degrees = 0.0
 		_inner.pivot_offset = size / 2.0
 	_refresh_defense_shield_overlay()
-	_refresh_drag_defense_shield_overlay()
 	_refresh_dynamic_labels()
 
-func _should_show_drag_defense_shield() -> bool:
-	return card_data != null \
-		and card_data.card_type == Card.CardType.CREATURE \
-		and (is_rotated or _drag_stealth)
+func apply_creature_drag_defensive_preview() -> bool:
+	if card_data == null or card_data.card_type != Card.CardType.CREATURE or not _dragging:
+		return false
+	_drag_stealth = false
+	if not is_rotated:
+		_toggle_rotation()
+	_refresh_drag_summon_preview()
+	return true
 
-func _refresh_drag_defense_shield_overlay() -> void:
-	if not (_drag_ghost and is_instance_valid(_drag_ghost)):
-		return
-	var ghost_inner := _drag_ghost.get_child(0) as Control
-	if ghost_inner == null:
-		return
-	if _should_show_drag_defense_shield():
-		var shield_scale := DefenseShieldOverlay.STEALTH_VIEW_SIZE_MULTIPLIER if _drag_stealth else 1.0
-		DefenseShieldOverlay.ensure_on(ghost_inner, DefenseShieldOverlay.LAYOUT_CENTER, shield_scale)
-	else:
-		DefenseShieldOverlay.remove_from(ghost_inner)
+func apply_creature_drag_stealth_preview() -> bool:
+	if card_data == null or card_data.card_type != Card.CardType.CREATURE or not _dragging:
+		return false
+	_drag_stealth = true
+	if not is_rotated:
+		_toggle_rotation()
+	_refresh_drag_summon_preview()
+	return true
 
 func _build_rotation_ghost(from_angle: float) -> Control:
 	var floating_parent := _get_floating_parent()
@@ -977,24 +1033,16 @@ func _input(event: InputEvent) -> void:
 				_set_drag_prepare_preview(_drag_stealth)
 				_refresh_drag_stats_preview()
 			elif card_data.card_type == Card.CardType.CREATURE:
-				_toggle_rotation()
+				apply_creature_drag_defensive_preview()
 			get_viewport().set_input_as_handled()
-	elif event is InputEventKey and event.pressed and _dragging:
+	elif event is InputEventKey and event.pressed and not event.echo and _dragging:
 		if event.keycode == KEY_S and _can_toggle_drag_prepare():
 			_drag_stealth = not _drag_stealth
 			_set_drag_prepare_preview(_drag_stealth)
 			_refresh_drag_stats_preview()
 			get_viewport().set_input_as_handled()
 		elif event.keycode == KEY_S and card_data.card_type == Card.CardType.CREATURE:
-			_drag_stealth = not _drag_stealth
-			if _drag_stealth and not is_rotated:
-				_toggle_rotation()
-			elif not _drag_stealth and is_rotated:
-				_toggle_rotation()
-			else:
-				_refresh_drag_defense_shield_overlay()
-				_refresh_drag_stats_preview()
-			_refresh_drag_summon_action_cost_preview()
+			apply_creature_drag_stealth_preview()
 			get_viewport().set_input_as_handled()
 
 func _update_ghost_position() -> void:
@@ -1074,7 +1122,10 @@ func _get_floating_parent() -> Node:
 	return null
 
 func _process(delta: float) -> void:
-	if not _dragging or not (_drag_ghost and is_instance_valid(_drag_ghost)):
+	if not _dragging:
+		return
+	_sync_creature_drag_preview_from_input_state()
+	if not (_drag_ghost and is_instance_valid(_drag_ghost)):
 		return
 	# Advance rotation toward target in the same tick as the position update so
 	# they are never one frame out of step (which caused the wobble when a tween
@@ -1084,6 +1135,14 @@ func _process(delta: float) -> void:
 		var step := _DRAG_ROT_SPEED * delta
 		_drag_ghost.rotation_degrees = move_toward(cur, _drag_target_rotation, step)
 	_update_ghost_position()
+
+func _sync_creature_drag_preview_from_input_state() -> void:
+	if card_data == null or card_data.card_type != Card.CardType.CREATURE:
+		return
+	if Input.is_key_pressed(KEY_S):
+		apply_creature_drag_stealth_preview()
+	elif Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
+		apply_creature_drag_defensive_preview()
 
 func _start_drag() -> void:
 	_hide_hover_panel()
@@ -1107,13 +1166,16 @@ func _start_drag() -> void:
 	_drag_parent.remove_child(self)
 	floating_parent.add_child(self)
 	visible = false
-	floating_parent.add_child(_drag_ghost)
-	_drag_ghost.move_to_front()
-	_recompact_drag_ghost()
-	call_deferred("_recompact_drag_ghost")
-	_update_ghost_position()
+	if _drag_ghost != null and is_instance_valid(_drag_ghost):
+		floating_parent.add_child(_drag_ghost)
+		_drag_ghost.move_to_front()
+		_recompact_drag_ghost()
+		call_deferred("_recompact_drag_ghost")
+		_update_ghost_position()
 
 func _build_drag_ghost() -> Control:
+	if card_data != null and card_data.card_type == Card.CardType.CREATURE:
+		return _build_creature_board_drag_ghost()
 	var ghost := duplicate(0) as Control
 	ghost.top_level = true
 	ghost.z_index = _FLOATING_GHOST_Z_INDEX
@@ -1137,10 +1199,23 @@ func _build_drag_ghost() -> Control:
 	_drag_ghost_pivot = sz / 2.0
 	_drag_ghost = ghost
 	_set_drag_prepare_preview(_drag_stealth and _can_toggle_drag_prepare())
-	_refresh_drag_defense_shield_overlay()
+	_refresh_drag_summon_preview()
 	_refresh_drag_ghost_level_preview()
-	_refresh_drag_summon_action_cost_preview()
 	_drag_ghost = null
+	return ghost
+
+func _build_creature_board_drag_ghost() -> Control:
+	var ghost := BoardZoneUI.new()
+	ghost.top_level = true
+	ghost.z_index = _FLOATING_GHOST_Z_INDEX
+	ghost.z_as_relative = false
+	ghost.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ghost.viewer_override = _hover_viewer if _hover_viewer != null else card_data.card_owner
+	ghost.custom_minimum_size = BoardZoneUI.get_zone_size()
+	ghost.size = BoardZoneUI.get_zone_size()
+	ghost.pivot_offset = Vector2.ZERO
+	ghost.rotation_degrees = 0.0
+	_drag_ghost_pivot = ghost.size / 2.0
 	return ghost
 
 func _compact_drag_ghost(ghost: Control, ghost_inner: Control) -> void:
@@ -1165,12 +1240,18 @@ func _compact_drag_ghost(ghost: Control, ghost_inner: Control) -> void:
 func _recompact_drag_ghost() -> void:
 	if not (_drag_ghost and is_instance_valid(_drag_ghost)):
 		return
+	if _drag_ghost is BoardZoneUI:
+		_drag_ghost_pivot = _drag_ghost.size / 2.0
+		_refresh_drag_summon_preview()
+		_update_ghost_position()
+		return
 	var ghost_inner := _drag_ghost.get_child(0) as Control
 	if ghost_inner == null:
 		return
 	_compact_drag_ghost(_drag_ghost, ghost_inner)
 	_drag_ghost_pivot = _drag_ghost.size / 2.0
 	_refresh_drag_ghost_level_preview()
+	_refresh_drag_summon_preview()
 	_update_ghost_position()
 
 func _remove_drag_ghost_rules_text(node: Node) -> void:

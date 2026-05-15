@@ -37,6 +37,7 @@ const TiamatScript = preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
 const UIArtScaler = preload("res://scripts/ui/UIArtScaler.gd")
 const CardDetailContentBuilder = preload("res://scripts/ui/CardDetailContentBuilder.gd")
 const LevelSymbolRow = preload("res://scripts/ui/LevelSymbolRow.gd")
+const DefenseShieldOverlay = preload("res://scripts/ui/DefenseShieldOverlay.gd")
 const MINOR_ACTION_SYMBOL_TEXTURE = preload("res://images/ui/MinorActionSymbol.png")
 const MAJOR_ACTION_SYMBOL_TEXTURE = preload("res://images/ui/MajorActionSymbol.png")
 
@@ -183,6 +184,9 @@ const UNRANKED_PRIORITY_IDLE_AUTO_PASS_MSEC := PRIORITY_IDLE_AUTO_PASS_MSEC * 2
 const MOVE_TIMEOUT_MSEC := 180000
 const MOVE_TIMEOUT_WARNING_MSEC := 30000
 const MOVE_TIMEOUT_CRITICAL_WARNING_MSEC := 10000
+const ACTION_LOG_SCROLL_BOTTOM_TOLERANCE := 4.0
+const ACTION_LOG_TURN_BREAK_FONT_SIZE := 18
+const ACTION_LOG_TURN_BREAK_COLOR := "#d9c58a"
 
 @onready var choice_container = $MainHBox/LeftPanel/ChoiceContainer
 @onready var choice_intro_label = $MainHBox/LeftPanel/ChoiceContainer/ChoiceIntroLabel
@@ -397,6 +401,8 @@ var _bdrag_card: Card = null
 var _bdrag_from_zone: Zone = null
 var _bdrag_active: bool = false
 var _bdrag_ghost: Control = null
+var _bdrag_preview_defensive: bool = false
+var _bdrag_preview_stealth: bool = false
 
 # Right-click context menu state
 var _pending_move_card: Card = null
@@ -2416,8 +2422,17 @@ func _process(_delta: float) -> void:
 	_capture_action_log_message()
 	_update_hand_hover_preview()
 	_update_hand_context_menu_dismissal()
+	_sync_board_creature_drag_preview_from_input_state()
 	if has_method("_sync_tez_titlacauan_cursor_overlay"):
 		call("_sync_tez_titlacauan_cursor_overlay")
+
+func _sync_board_creature_drag_preview_from_input_state() -> void:
+	if not _bdrag_active:
+		return
+	if Input.is_key_pressed(KEY_S):
+		_bdrag_set_preview_mode(true, true)
+	elif Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
+		_bdrag_set_preview_mode(true, false)
 
 func _now_msec() -> int:
 	return Time.get_ticks_msec()
@@ -2875,7 +2890,7 @@ func _setup_action_log() -> void:
 
 	var log_text := RichTextLabel.new()
 	log_text.name = "ActionLogText"
-	log_text.bbcode_enabled = false
+	log_text.bbcode_enabled = true
 	log_text.fit_content = false
 	log_text.scroll_active = true
 	log_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -3017,9 +3032,11 @@ func _capture_action_log_message(force: bool = false) -> void:
 func _refresh_action_log() -> void:
 	if _action_log_view == null or not is_instance_valid(_action_log_view):
 		return
+	var should_scroll_to_bottom := _should_keep_action_log_scrolled_to_bottom(_action_log_view)
 	var preview_messages := _get_action_log_preview_messages()
-	_action_log_view.text = "\n".join(preview_messages) if not preview_messages.is_empty() else "No actions yet."
-	call_deferred("_scroll_action_log_preview_to_bottom")
+	_action_log_view.text = _format_action_log_messages_for_display(preview_messages) if not preview_messages.is_empty() else "No actions yet."
+	if should_scroll_to_bottom:
+		call_deferred("_scroll_action_log_preview_to_bottom")
 	_refresh_action_log_history_button()
 	_refresh_action_log_popup()
 
@@ -3102,7 +3119,7 @@ func _open_action_log_popup() -> void:
 
 	var history_view := RichTextLabel.new()
 	history_view.name = "ActionLogPopupText"
-	history_view.bbcode_enabled = false
+	history_view.bbcode_enabled = true
 	history_view.fit_content = false
 	history_view.scroll_active = true
 	history_view.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -3128,13 +3145,49 @@ func _open_action_log_popup() -> void:
 	_action_log_popup = panel
 	_action_log_popup_view = history_view
 	_refresh_action_log_popup()
+	call_deferred("_scroll_action_log_popup_to_bottom")
 
 func _refresh_action_log_popup() -> void:
 	if _action_log_popup_view == null or not is_instance_valid(_action_log_popup_view):
 		return
+	var should_scroll_to_bottom := _should_keep_action_log_scrolled_to_bottom(_action_log_popup_view)
 	var history_messages := _get_action_log_history_messages()
-	_action_log_popup_view.text = "\n".join(history_messages) if not history_messages.is_empty() else "No log entries yet."
-	call_deferred("_scroll_action_log_popup_to_bottom")
+	_action_log_popup_view.text = _format_action_log_messages_for_display(history_messages) if not history_messages.is_empty() else "No log entries yet."
+	if should_scroll_to_bottom:
+		call_deferred("_scroll_action_log_popup_to_bottom")
+
+func _format_action_log_messages_for_display(messages: Array[String]) -> String:
+	var formatted_messages: Array[String] = []
+	for message in messages:
+		formatted_messages.append(_format_action_log_message_for_display(message))
+	return "\n".join(formatted_messages)
+
+func _format_action_log_message_for_display(message: String) -> String:
+	var escaped_message := _escape_action_log_bbcode(message)
+	if _is_turn_announcement_log_message(message):
+		return "[center][color=%s][font_size=%d][b]%s[/b][/font_size][/color][/center]" % [
+			ACTION_LOG_TURN_BREAK_COLOR,
+			ACTION_LOG_TURN_BREAK_FONT_SIZE,
+			escaped_message
+		]
+	return escaped_message
+
+func _is_turn_announcement_log_message(message: String) -> bool:
+	return message.begins_with("Turn ") and message.contains("—") and message.ends_with("'s turn.")
+
+func _escape_action_log_bbcode(message: String) -> String:
+	return message.replace("[", "[lb]").replace("]", "[rb]")
+
+func _should_keep_action_log_scrolled_to_bottom(log_view: RichTextLabel) -> bool:
+	if log_view == null or not is_instance_valid(log_view):
+		return false
+	var bar := log_view.get_v_scroll_bar()
+	if bar == null:
+		return true
+	var hidden_range := bar.max_value - bar.page
+	if hidden_range <= 0.0:
+		return true
+	return bar.value >= hidden_range - ACTION_LOG_SCROLL_BOTTOM_TOLERANCE
 
 func _scroll_action_log_popup_to_bottom() -> void:
 	if _action_log_popup_view == null or not is_instance_valid(_action_log_popup_view):
@@ -5212,6 +5265,7 @@ func _make_god_cluster(zone: Zone, player: Player, is_enemy: bool) -> Control:
 	if is_enemy:
 		_enemy_god_zone_ui = god_zone_ui
 		_enemy_god_zone_ui.card_clicked.connect(_on_enemy_card_pressed)
+		_enemy_god_zone_ui.zone_clicked.connect(_on_enemy_god_zone_pressed)
 	else:
 		_player_god_zone_ui = god_zone_ui
 		_player_god_zone_ui.card_clicked.connect(_on_god_card_pressed)
@@ -10021,6 +10075,43 @@ func _on_stealth_mode_pressed() -> void:
 		_on_empty_zone_pressed(_pending_drop_zone)
 		_pending_drop_zone = null
 
+func _try_resolve_pyre_convert_from_enemy_god_zone(zone: Zone) -> bool:
+	if not awaiting_pyre_target or pyre_source == null or game_manager == null or zone == null:
+		return false
+	var source_pyre := pyre_source
+	var opponent := game_manager.get_opponent(source_pyre.card_owner)
+	if opponent == null or zone != opponent.god_zone:
+		return false
+	if opponent.followers <= 0 or not source_pyre.can_activate(game_manager):
+		_cancel_pending_target_selection(source_pyre.card_name + " cannot convert followers right now.")
+		return true
+	var option := {mode = "convert"}
+	awaiting_pyre_target = false
+	pyre_source = null
+	if _should_submit_ui_action_command():
+		game_input.submit_action({
+			type = "activate_card_ability",
+			source_uid = source_pyre.uid,
+			option = option,
+		})
+	else:
+		_queue_magical_action(
+			CardAction.Type.ABILITY,
+			source_pyre,
+			opponent,
+			source_pyre.card_name + ": Ritual Flame - 5 followers converted!",
+			func() -> void:
+				source_pyre.activate(game_manager, option)
+		)
+	update_ui()
+	return true
+
+func _on_enemy_god_zone_pressed(zone: Zone) -> void:
+	if _try_resolve_pyre_convert_from_enemy_god_zone(zone):
+		return
+	if _has_pending_target_selection():
+		_on_empty_zone_pressed(zone)
+
 func _on_empty_zone_pressed(zone: Zone) -> void:
 	if _game_finished:
 		return
@@ -14098,6 +14189,8 @@ func _on_board_card_pressed(card: Card) -> void:
 		else:
 			_set_action_label_text("Select a sleeping creature to void.")
 		return
+	if _try_submit_visible_interceptor_card(card):
+		return
 	if _is_card_usable_for_priority(card):
 		_on_priority_response_chosen(card)
 		return
@@ -14381,6 +14474,8 @@ func _on_enemy_card_pressed(target_card: Card) -> void:
 			return
 		_suppress_next_devour_cancel_prompt = _pending_click_selection_source is Fenrir
 		_handle_invalid_pending_target_click(_get_pending_click_invalid_reason(target_card))
+		return
+	if _try_submit_visible_interceptor_card(target_card):
 		return
 	if _reject_non_priority_action_if_blocked():
 		return
@@ -15167,12 +15262,16 @@ func _on_creature_drag_started(card: Card, from_zone: Zone) -> void:
 	_bdrag_card = card
 	_bdrag_from_zone = from_zone
 	_bdrag_active = true
+	_bdrag_preview_defensive = card.creature_mode == Card.CreatureMode.DEFENSIVE
+	_bdrag_preview_stealth = false
 
 func _input(event: InputEvent) -> void:
 	if not is_visible_in_tree():
 		return
 	_note_priority_prompt_input_activity(event)
 	if _try_handle_escape_key(event):
+		return
+	if _try_handle_hand_creature_drag_preview_modifier(event):
 		return
 	if event is InputEventMouseButton:
 		var mouse_button_event := event as InputEventMouseButton
@@ -15203,6 +15302,19 @@ func _input(event: InputEvent) -> void:
 
 	if not _bdrag_active:
 		return
+	if event is InputEventMouseButton \
+			and event.button_index == MOUSE_BUTTON_RIGHT \
+			and event.pressed:
+		_bdrag_set_preview_mode(true, false)
+		get_viewport().set_input_as_handled()
+		return
+	if event is InputEventKey \
+			and event.pressed \
+			and not event.echo \
+			and event.keycode == KEY_S:
+		_bdrag_set_preview_mode(true, true)
+		get_viewport().set_input_as_handled()
+		return
 	if event is InputEventMouseMotion:
 		if not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
 			_bdrag_cancel()
@@ -15221,6 +15333,27 @@ func _input(event: InputEvent) -> void:
 				_on_board_card_pressed(_bdrag_card)
 		_bdrag_cleanup()
 		get_viewport().set_input_as_handled()
+
+func _try_handle_hand_creature_drag_preview_modifier(event: InputEvent) -> bool:
+	var apply_defensive := false
+	var apply_stealth := false
+	if event is InputEventMouseButton:
+		var mouse_button_event := event as InputEventMouseButton
+		apply_defensive = mouse_button_event.pressed and mouse_button_event.button_index == MOUSE_BUTTON_RIGHT
+	elif event is InputEventKey:
+		var key_event := event as InputEventKey
+		apply_stealth = key_event.pressed and not key_event.echo and key_event.keycode == KEY_S
+	if not apply_defensive and not apply_stealth:
+		return false
+	for hand_vc in _hand_visual_cards:
+		var vc := hand_vc as VisualCard
+		if vc == null or not is_instance_valid(vc):
+			continue
+		var handled := vc.apply_creature_drag_stealth_preview() if apply_stealth else vc.apply_creature_drag_defensive_preview()
+		if handled:
+			get_viewport().set_input_as_handled()
+			return true
+	return false
 
 func _maybe_show_devour_cancel_prompt_after_invalid_click() -> void:
 	if not _has_pending_target_selection() or not _is_devour_cursor_mode_active():
@@ -15486,6 +15619,36 @@ func _unhandled_input(event: InputEvent) -> void:
 		_cancel_pending_target_selection(_get_pending_target_selection_name() + " cancelled: clicked off the board.")
 		get_viewport().set_input_as_handled()
 
+func _bdrag_get_preview_mode_label() -> String:
+	if _bdrag_preview_stealth:
+		return "STEALTH"
+	return "DEF" if _bdrag_preview_defensive else "AGG"
+
+func _bdrag_get_preview_stats_label() -> String:
+	if _bdrag_card == null:
+		return ""
+	if _bdrag_preview_defensive or _bdrag_preview_stealth:
+		return "RES:%d SPD:%d" % [
+			_bdrag_card.get_effective_resilience(),
+			_bdrag_card.get_effective_speed()
+		]
+	return "STR:%d RES:%d SPD:%d" % [
+		_bdrag_card.get_effective_strength(),
+		_bdrag_card.get_effective_resilience(),
+		_bdrag_card.get_effective_speed()
+	]
+
+func _bdrag_set_preview_mode(defensive: bool, stealth: bool) -> void:
+	var next_defensive := defensive or stealth
+	if _bdrag_preview_defensive == next_defensive and _bdrag_preview_stealth == stealth:
+		return
+	_bdrag_preview_defensive = next_defensive
+	_bdrag_preview_stealth = stealth
+	if _bdrag_ghost != null and is_instance_valid(_bdrag_ghost):
+		_bdrag_ghost.queue_free()
+		_bdrag_ghost = null
+		_bdrag_start_ghost()
+
 func _bdrag_start_ghost() -> void:
 	var zone_size := BoardZoneUI.get_zone_size()
 	var panel := PanelContainer.new()
@@ -15494,8 +15657,8 @@ func _bdrag_start_ghost() -> void:
 	panel.z_index = 100
 	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var style := StyleBoxFlat.new()
-	style.bg_color    = Color(0.13, 0.22, 0.42, 0.85)
-	style.border_color = Color(0.4, 0.65, 1.0)
+	style.bg_color = Color(0.04, 0.07, 0.14, 0.88) if _bdrag_preview_stealth else Color(0.13, 0.22, 0.42, 0.85)
+	style.border_color = Color(0.62, 0.8, 1.0) if _bdrag_preview_stealth else Color(0.4, 0.65, 1.0)
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
 		style.set_border_width(side as Side, 2)
 	style.corner_radius_top_left = 4; style.corner_radius_top_right = 4
@@ -15506,8 +15669,19 @@ func _bdrag_start_ghost() -> void:
 	panel.add_child(vbox)
 	var nl := Label.new(); nl.text = _bdrag_card.card_name; nl.add_theme_font_size_override("font_size", 14); vbox.add_child(nl)
 	if not _bdrag_card.is_god:
-		var ml := Label.new(); ml.text = "DEF" if _bdrag_card.creature_mode == Card.CreatureMode.DEFENSIVE else "AGG"; ml.add_theme_font_size_override("font_size", 13); vbox.add_child(ml)
-		var sl := Label.new(); sl.text = "STR:%d RES:%d SPD:%d" % [_bdrag_card.get_effective_strength(), _bdrag_card.get_effective_resilience(), _bdrag_card.get_effective_speed()]; sl.add_theme_font_size_override("font_size", 12); vbox.add_child(sl)
+		var ml := Label.new(); ml.text = _bdrag_get_preview_mode_label(); ml.add_theme_font_size_override("font_size", 13); vbox.add_child(ml)
+		var sl := Label.new(); sl.text = _bdrag_get_preview_stats_label(); sl.add_theme_font_size_override("font_size", 12); vbox.add_child(sl)
+		if _bdrag_preview_stealth:
+			var haze := ColorRect.new()
+			haze.color = Color(0.02, 0.04, 0.11, 0.34)
+			haze.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			haze.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+			panel.add_child(haze)
+		if _bdrag_preview_defensive or _bdrag_preview_stealth:
+			var shield_scale := DefenseShieldOverlay.STEALTH_VIEW_SIZE_MULTIPLIER if _bdrag_preview_stealth else 1.0
+			var shield := DefenseShieldOverlay.ensure_on(panel, DefenseShieldOverlay.LAYOUT_CENTER, shield_scale)
+			if shield != null and is_instance_valid(shield):
+				shield.move_to_front()
 	var floating_parent := _get_floating_drag_parent()
 	if floating_parent == null:
 		return
@@ -15652,6 +15826,8 @@ func _bdrag_cleanup() -> void:
 	_bdrag_active = false
 	_bdrag_card = null
 	_bdrag_from_zone = null
+	_bdrag_preview_defensive = false
+	_bdrag_preview_stealth = false
 	if _bdrag_ghost and is_instance_valid(_bdrag_ghost):
 		_bdrag_ghost.queue_free()
 	_bdrag_ghost = null
@@ -22610,6 +22786,8 @@ func _apply_full_state(data: Dictionary) -> void:
 			game_manager.feedback_viewer = _observer_feedback_viewer
 		_restore_network_attack_preview_from_state(data.get("pending_attack_preview", {}))
 		_awaiting_initial_full_state = false
+	if _is_networked_client and _is_intercept_prompt_visible() and match_manager != null and match_manager.pending_attack_target == null:
+		_hide_intercept_prompt()
 	_refresh_pending_priority_response_target_selection_from_state()
 	_refresh_pending_priority_response_submission_from_state()
 	_sync_network_turn_entry_ui_from_state()
@@ -22662,19 +22840,26 @@ func _restore_priority_prompt_from_authoritative_state() -> void:
 		return
 	if not match_manager.uses_authoritative_priority_flow():
 		return
-	if game_manager.action_stack.is_empty():
-		return
-	if _is_priority_prompt_visible() or _is_intercept_prompt_visible():
-		return
-	if _game_finished:
-		return
 	var local_idx := -1
 	if network_manager != null:
 		local_idx = network_manager.local_player_index
 	if local_idx < 0 or local_idx >= game_manager.players.size():
+		if _is_priority_prompt_visible():
+			_hide_priority_prompt()
 		return
 	var local_player: Player = game_manager.players[local_idx]
-	if local_player == null or game_manager.priority_player != local_player:
+	var should_have_priority_prompt := not _game_finished \
+		and not game_manager.action_stack.is_empty() \
+		and game_manager.priority_player == local_player
+	if not should_have_priority_prompt:
+		if _is_priority_prompt_visible():
+			_hide_priority_prompt()
+		return
+	if local_player == null:
+		if _is_priority_prompt_visible():
+			_hide_priority_prompt()
+		return
+	if _is_priority_prompt_visible() or _is_intercept_prompt_visible():
 		return
 	var prompt_data := match_manager.build_priority_prompt_data(local_player)
 	if prompt_data.is_empty():
@@ -22754,7 +22939,8 @@ func _sync_network_turn_controls() -> void:
 	end_turn_button.visible = is_local_turn and not choice_container.visible and not stack_locked
 	end_turn_button.disabled = not end_turn_button.visible
 	all_attack_btn.disabled = not is_local_turn or choice_container.visible or stack_locked
-	if not is_local_turn:
+	var has_pending_attack_choice := selected_attacker != null and pending_attack_target != null
+	if not is_local_turn and not has_pending_attack_choice:
 		selected_attacker = null
 		pending_attack_target = null
 
@@ -23164,9 +23350,43 @@ func _apply_intercept_offered(data: Dictionary) -> void:
 		update_ui()
 	_show_intercept_prompt(data.get("interceptor_uids", []), prompt_signature)
 
+func _get_visible_intercept_prompt_uids() -> Array[String]:
+	var uids: Array[String] = []
+	for raw_uid in _visible_intercept_prompt_signature.get("interceptor_uids", []):
+		var uid := str(raw_uid).strip_edges()
+		if uid != "":
+			uids.append(uid)
+	return uids
+
+func _submit_visible_intercept_choice(interceptor_uid: String) -> bool:
+	if not _is_intercept_prompt_visible():
+		return false
+	var uid := interceptor_uid.strip_edges()
+	if uid != "" and uid not in _get_visible_intercept_prompt_uids():
+		return false
+	_hide_intercept_prompt()
+	var command := {
+		type = "intercept_decision",
+		interceptor_uid = uid,
+	}
+	if game_input != null:
+		return game_input.submit_action(command)
+	if network_manager != null:
+		network_manager.request_action(command)
+		return true
+	if match_manager != null:
+		return match_manager.process_command(command)
+	return false
+
+func _try_submit_visible_interceptor_card(card: Card) -> bool:
+	if card == null:
+		return false
+	return _submit_visible_intercept_choice(str(card.uid))
+
 func _make_intercept_prompt_art(card: Card) -> Control:
 	var frame := PanelContainer.new()
 	frame.custom_minimum_size = Vector2(44, 44)
+	frame.mouse_filter = Control.MOUSE_FILTER_STOP
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color(0.12, 0.12, 0.18, 0.96)
 	style.border_color = Color(0.88, 0.52, 0.28, 0.95)
@@ -23224,8 +23444,7 @@ func _show_intercept_prompt(interceptor_uids: Array, prompt_signature: Dictionar
 	var no_btn := Button.new()
 	no_btn.text = "No Intercept"
 	no_btn.pressed.connect(func() -> void:
-		_hide_intercept_prompt()
-		network_manager.request_action({type = "intercept_decision", interceptor_uid = ""})
+		_submit_visible_intercept_choice("")
 	)
 	vbox.add_child(no_btn)
 
@@ -23240,14 +23459,19 @@ func _show_intercept_prompt(interceptor_uids: Array, prompt_signature: Dictionar
 		vbox.add_child(row)
 
 		var art_frame := _make_intercept_prompt_art(card)
+		art_frame.gui_input.connect(func(event: InputEvent) -> void:
+			if event is InputEventMouseButton \
+					and event.button_index == MOUSE_BUTTON_LEFT \
+					and event.pressed:
+				_submit_visible_intercept_choice(captured_interceptor_uid)
+		)
 		row.add_child(art_frame)
 
 		var btn := Button.new()
 		btn.text = "Intercept: " + card_name
 		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		btn.pressed.connect(func() -> void:
-			_hide_intercept_prompt()
-			network_manager.request_action({type = "intercept_decision", interceptor_uid = captured_interceptor_uid})
+			_submit_visible_intercept_choice(captured_interceptor_uid)
 		)
 		row.add_child(btn)
 

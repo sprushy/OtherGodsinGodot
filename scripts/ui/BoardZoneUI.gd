@@ -381,6 +381,7 @@ var _drop_callback: Callable
 var _is_enemy: bool = false
 var _popup: Control = null
 var _preview_card: Card = null
+var viewer_override: Player = null
 var _hovered: bool = false
 var _pinned: bool = false
 var _hide_pending: bool = false
@@ -714,6 +715,8 @@ static func spawn_action_point_spend_effect(parent: Node, global_center: Vector2
 	)
 
 func _get_viewer_player() -> Player:
+	if viewer_override != null:
+		return viewer_override
 	if game_manager == null:
 		return null
 	return game_manager.get_feedback_viewer()
@@ -4198,7 +4201,7 @@ func _refresh_display() -> void:
 		_add_creature_action_symbols(card_overlay, card)
 		_add_stance_switch_symbol(card_overlay, card)
 		_defense_overlay = card_overlay if shows_defense_shield else null
-		_raised_overlay  = card_overlay if (shows_defense_shield or card.is_stealth) else null
+		_raised_overlay  = card_overlay if card.is_stealth else null
 		z_index = _get_resting_z_index()
 
 	else:
@@ -4229,15 +4232,19 @@ func _add_creature_action_symbols(overlay: Control, card: Card) -> void:
 		spent_kinds = BoardZoneUI.get_spent_action_kinds(previous_state as Dictionary, current_state)
 	_creature_action_symbol_state_by_card_uid[card_uid] = current_state
 	var pending_spend_kinds := BoardZoneUI.get_pending_action_point_spend_visual_kinds(card)
+	var has_spend_effect := not spent_kinds.is_empty() or not pending_spend_kinds.is_empty()
 
 	var has_visible_symbol := false
 	for symbol in symbols:
 		if not bool(symbol.get("used", false)):
 			has_visible_symbol = true
 			break
-	if not has_visible_symbol and spent_kinds.is_empty() and pending_spend_kinds.is_empty():
+	if not _hovered and not has_spend_effect:
+		return
+	if not has_visible_symbol and not has_spend_effect:
 		return
 
+	var should_render_static_icons := _hovered
 	var icon_size := 22.0
 	var gap := 3.0
 	var total_width := icon_size * float(symbols.size()) + gap * float(maxi(0, symbols.size() - 1))
@@ -4281,6 +4288,8 @@ func _add_creature_action_symbols(overlay: Control, card: Card) -> void:
 					"kind": kind,
 					"center": row_global_origin + Vector2(left + icon_size * 0.5, icon_size * 0.5),
 				})
+			continue
+		if not should_render_static_icons:
 			continue
 		var slot := PanelContainer.new()
 		slot.mouse_filter = Control.MOUSE_FILTER_STOP

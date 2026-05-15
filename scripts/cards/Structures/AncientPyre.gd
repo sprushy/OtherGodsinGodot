@@ -28,31 +28,37 @@ func can_activate(game_manager: GameManager) -> bool:
 		return not get_valid_targets(game_manager).is_empty() or (opponent != null and opponent.followers > 0)
 	return opponent != null and opponent.followers > 0
 
-# target is required when on the frontline; caller is responsible for prompting the player.
-func activate(game_manager: GameManager, target: Card = null) -> void:
+# target is required when on the frontline unless the caller explicitly chooses Convert.
+func activate(game_manager: GameManager, target = null) -> void:
 	if not can_activate(game_manager):
 		if game_manager != null:
 			game_manager.note_player_feedback("Ancient Pyre cannot activate right now.")
 		return
+	var force_convert := false
+	var target_card: Card = null
+	if target is Dictionary:
+		force_convert = str((target as Dictionary).get("mode", "")).strip_edges() == "convert"
+	elif target is Card:
+		target_card = target as Card
 	card_owner.spend_mana(2)
 	var opponent := game_manager.get_opponent(card_owner)
-	if not is_frontline() or (target != null and target.is_god):
+	if force_convert or not is_frontline() or (target_card != null and target_card.is_god):
 		game_manager.convert_followers(opponent, card_owner, 5)
 		print("Ancient Pyre: Ritual Flame converts 5 followers from " + opponent.player_name + ".")
 		return
-	if target == null:
+	if target_card == null:
 		print("Ancient Pyre: No target selected.")
 		card_owner.gain_mana(2)
 		return
-	if not is_valid_activation_target(target):
+	if not is_valid_activation_target(target_card):
 		print("Ancient Pyre: Invalid target.")
 		card_owner.gain_mana(2)
 		return
-	target.add_buff("Ancient Pyre", 0, -5, 0, self, card_owner, "structure_debuff")
-	print("Ancient Pyre: " + target.card_name + " Res reduced by 5 (now " + str(target.get_effective_resilience()) + ").")
-	if target.get_effective_resilience() <= 0:
-		print(target.card_name + " is destroyed by Ancient Pyre!")
-		game_manager.request_send_to_graveyard(target, Callable(), false, true)
+	target_card.add_buff("Ancient Pyre", 0, -5, 0, self, card_owner, "structure_debuff")
+	print("Ancient Pyre: " + target_card.card_name + " Res reduced by 5 (now " + str(target_card.get_effective_resilience()) + ").")
+	if target_card.get_effective_resilience() <= 0:
+		print(target_card.card_name + " is destroyed by Ancient Pyre!")
+		game_manager.request_send_to_graveyard(target_card, Callable(), false, true)
 
 func get_valid_targets(game_manager: GameManager) -> Array[Card]:
 	var valid_targets: Array[Card] = []

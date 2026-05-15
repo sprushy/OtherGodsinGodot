@@ -15,6 +15,8 @@ const BotGameInputScript = preload("res://scripts/bots/BotGameInput.gd")
 const MatchHistoryStoreScript = preload("res://scripts/server/MatchHistoryStore.gd")
 const MatchSessionScript = preload("res://scripts/server/MatchSession.gd")
 const LobbyRoomScript = preload("res://scripts/server/LobbyRoom.gd")
+const STARTUP_SPLASH_IMAGE_PATH := "res://images/ui/splash/other_gods_splash.png"
+const STARTUP_MUSIC_PATH := "res://audio/relaxingtime-relaxing-music-119247.mp3"
 const PRACTICE_THOR_SCENE_PATH := "res://scenes/practice_thor_game.tscn"
 const DEDICATED_LOBBY_ENTRY_SCRIPT_PATH := "res://scripts/server/DedicatedLobbyServerMain.gd"
 const DEDICATED_SERVER_EXPORT_RELATIVE_PATH := "res://.exports/server/OtherGodsServer.exe"
@@ -27,6 +29,7 @@ const AUTH_MODE_REGISTER := "register"
 const SEEK_AUTO_REFRESH_INTERVAL_SECONDS := 3.0
 const FRESH_LOBBY_RECONNECT_DELAY_SECONDS := 0.6
 const ACTIVE_MATCH_AUTO_RESUME_SUPPRESS_SECONDS := 10.0
+const STARTUP_MENU_FADE_SECONDS := 3.0
 
 @onready var menu_container = $MenuContainer
 @onready var game_container = $GameContainer
@@ -148,10 +151,16 @@ var _friends_send_deck_dialog: ConfirmationDialog = null
 var _friends_send_deck_option: OptionButton = null
 var _friends_pending_send_username: String = ""
 var _close_confirm_overlay: Control = null
+var _startup_splash_background: TextureRect = null
+var _startup_music_player: AudioStreamPlayer = null
+var _startup_menu_fade_started: bool = false
 
 func _ready() -> void:
 	if _is_server_runtime_launch():
 		return
+	_ensure_startup_splash_background()
+	_ensure_startup_music()
+	_prepare_startup_menu_fade()
 	_fit_to_viewport()
 	_build_server_version_overlay()
 	get_viewport().size_changed.connect(_fit_to_viewport)
@@ -206,12 +215,93 @@ func _ready() -> void:
 	_refresh_seek_list()
 	_refresh_multiplayer_action_state()
 	_restore_saved_resume_state()
-	show_menu()
 	_smoke_config = _parse_smoke_config(OS.get_cmdline_user_args())
+	show_menu()
 	if not _smoke_config.is_empty():
+		if menu_container != null:
+			menu_container.modulate.a = 1.0
 		call_deferred("_start_smoke_mode")
 	else:
+		_begin_startup_menu_fade()
 		call_deferred("_begin_startup_prompts")
+
+func _ensure_startup_splash_background() -> void:
+	if _startup_splash_background != null and is_instance_valid(_startup_splash_background):
+		return
+	var splash_texture := _load_startup_splash_texture()
+	if splash_texture == null:
+		return
+	var background := TextureRect.new()
+	background.name = "StartupSplashBackground"
+	background.texture = splash_texture
+	background.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	background.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	background.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	background.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	add_child(background)
+	move_child(background, 0)
+	_startup_splash_background = background
+
+func _ensure_startup_music() -> void:
+	if _startup_music_player != null and is_instance_valid(_startup_music_player):
+		if not _startup_music_player.playing:
+			_startup_music_player.play()
+		return
+	var player := AudioStreamPlayer.new()
+	player.name = "StartupMusicPlayer"
+	var music_stream := _load_startup_music_stream()
+	if music_stream == null:
+		return
+	player.stream = music_stream
+	player.autoplay = true
+	add_child(player)
+	_startup_music_player = player
+	player.play()
+
+func _load_startup_splash_texture() -> Texture2D:
+	if ResourceLoader.exists(STARTUP_SPLASH_IMAGE_PATH):
+		var imported_resource := load(STARTUP_SPLASH_IMAGE_PATH)
+		if imported_resource is Texture2D:
+			return imported_resource as Texture2D
+	var image := Image.new()
+	var error := image.load(STARTUP_SPLASH_IMAGE_PATH)
+	if error != OK:
+		push_warning("Could not load startup splash image: %s" % STARTUP_SPLASH_IMAGE_PATH)
+		return null
+	return ImageTexture.create_from_image(image)
+
+func _load_startup_music_stream() -> AudioStream:
+	if ResourceLoader.exists(STARTUP_MUSIC_PATH):
+		var imported_resource := load(STARTUP_MUSIC_PATH)
+		if imported_resource is AudioStream:
+			var imported_stream := (imported_resource as AudioStream).duplicate()
+			if imported_stream is AudioStreamMP3:
+				(imported_stream as AudioStreamMP3).loop = true
+			return imported_stream
+	if not FileAccess.file_exists(STARTUP_MUSIC_PATH):
+		push_warning("Could not find startup music: %s" % STARTUP_MUSIC_PATH)
+		return null
+	var bytes := FileAccess.get_file_as_bytes(STARTUP_MUSIC_PATH)
+	if bytes.is_empty():
+		push_warning("Could not read startup music: %s" % STARTUP_MUSIC_PATH)
+		return null
+	var stream := AudioStreamMP3.new()
+	stream.data = bytes
+	stream.loop = true
+	return stream
+
+func _prepare_startup_menu_fade() -> void:
+	if menu_container == null:
+		return
+	menu_container.modulate.a = 0.0
+
+func _begin_startup_menu_fade() -> void:
+	if _startup_menu_fade_started or menu_container == null:
+		return
+	_startup_menu_fade_started = true
+	menu_container.modulate.a = 0.0
+	var tween := create_tween()
+	tween.tween_property(menu_container, "modulate:a", 1.0, STARTUP_MENU_FADE_SECONDS).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
 
 func _is_practice_thor_enabled() -> bool:
 	return true
@@ -5323,6 +5413,7 @@ func _run_practice_thor_intercept_smoke() -> void:
 	if not setup_error.is_empty():
 		_fail_smoke_if_enabled("practice_thor_intercept_setup_%s" % setup_error)
 		return
+	practice_game._shutdown_thor_bot()
 
 	if not practice_game.game_input.submit_action({type = "upkeep_choice", choice = "draw"}):
 		_fail_smoke_if_enabled("practice_thor_intercept_upkeep_choice_failed")
@@ -5348,13 +5439,13 @@ func _run_practice_thor_intercept_smoke() -> void:
 		_fail_smoke_if_enabled("practice_thor_intercept_missing_frontline_zone")
 		return
 
-	var attacker := BrownBear.new()
+	var attacker := HariiWarrior.new()
 	attacker.card_owner = practice_game.player2
 	attacker.creature_mode = Card.CreatureMode.AGGRESSIVE
 	attacker.is_sleeping = false
 	attacker_zone.add_card(attacker)
 
-	var interceptor := BrownBear.new()
+	var interceptor := StoneMonkey.new()
 	interceptor.card_owner = practice_game.player1
 	interceptor.creature_mode = Card.CreatureMode.DEFENSIVE
 	interceptor.is_sleeping = false
@@ -5399,20 +5490,56 @@ func _run_practice_thor_intercept_smoke() -> void:
 		_fail_smoke_if_enabled("practice_thor_intercept_missing_target_uid")
 		return
 
+	var prompt_id_before_duplicate := int(pending_intercept_prompt.get("prompt_id", -1))
+	var next_prompt_id_before_duplicate := int(practice_game.match_manager.get("_next_ui_interaction_id"))
+	practice_game.match_manager.emit_ui_interaction_for_player(
+		pending_intercept_prompt.get("player", practice_game.player1),
+		"intercept",
+		intercept_prompt_data
+	)
+	await get_tree().process_frame
+	if _count_pending_smoke_prompts_of_type(practice_game.match_manager, "intercept") != 1:
+		_fail_smoke_if_enabled("practice_thor_intercept_duplicate_prompt_count")
+		return
+	var duplicate_check_prompt: Dictionary = {}
+	for idx in range(practice_game.match_manager._pending_ui_interactions.size() - 1, -1, -1):
+		var entry: Dictionary = practice_game.match_manager._pending_ui_interactions[idx]
+		if str(entry.get("type", "")) == "intercept":
+			duplicate_check_prompt = entry
+			break
+	if int(duplicate_check_prompt.get("prompt_id", -1)) != prompt_id_before_duplicate \
+			or int(practice_game.match_manager.get("_next_ui_interaction_id")) != next_prompt_id_before_duplicate:
+		_fail_smoke_if_enabled("practice_thor_intercept_duplicate_prompt_reoffered")
+		return
+	_write_smoke_trace("practice_thor_intercept:duplicate_offer_suppressed prompt_id=%d" % prompt_id_before_duplicate)
+
 	var validation: Dictionary = practice_game.match_manager._validate_pending_ui_interaction_for_command({
 		type = "intercept_decision",
 		interceptor_uid = interceptor.uid,
 	})
 	var validation_error := str(validation.get("error", ""))
 	if not validation_error.is_empty():
-		_fail_smoke_if_enabled("practice_thor_intercept_validation_failed:%s" % validation_error)
+		var selected_uid: String = practice_game.match_manager.selected_attacker.uid if practice_game.match_manager.selected_attacker != null else "<none>"
+		var pending_target = practice_game.match_manager.pending_attack_target
+		var pending_target_label := "<none>"
+		if pending_target is Card:
+			pending_target_label = "card:%s" % (pending_target as Card).uid
+		elif pending_target is Player:
+			pending_target_label = "player:%d" % practice_game.game_manager.players.find(pending_target)
+		_fail_smoke_if_enabled("practice_thor_intercept_validation_failed:%s selected=%s pending=%s pending_ui=%s" % [
+			validation_error,
+			selected_uid,
+			pending_target_label,
+			practice_game.match_manager._get_pending_ui_debug_summary(),
+		])
 		return
 	var prompt_id := int(validation.get("prompt_id", -1))
 	if prompt_id < 0:
 		_fail_smoke_if_enabled("practice_thor_intercept_missing_prompt_id")
 		return
-	practice_game._hide_intercept_prompt()
-	practice_game.match_manager._consume_pending_ui_interaction_by_id(prompt_id)
+	if not practice_game._try_submit_visible_interceptor_card(interceptor):
+		_fail_smoke_if_enabled("practice_thor_intercept_card_click_submit_failed")
+		return
 	if not await _wait_for_practice_thor_smoke_condition(
 		func() -> bool:
 			return not _is_smoke_intercept_prompt_visible(practice_game) \
@@ -5425,7 +5552,45 @@ func _run_practice_thor_intercept_smoke() -> void:
 			str(_is_smoke_intercept_prompt_visible(practice_game)),
 		])
 		return
-	_write_smoke_trace("practice_thor_intercept:consumed prompt_id=%d" % prompt_id)
+	if practice_game.game_manager.action_stack.is_empty():
+		_fail_smoke_if_enabled("practice_thor_intercept_no_attack_on_stack")
+		return
+	var attack_action: CardAction = practice_game.game_manager.action_stack.back()
+	if attack_action == null or attack_action.type != CardAction.Type.ATTACK:
+		_fail_smoke_if_enabled("practice_thor_intercept_wrong_stack_action")
+		return
+	if attack_action.interceptor != interceptor:
+		_fail_smoke_if_enabled("practice_thor_intercept_wrong_interceptor")
+		return
+	_write_smoke_trace("practice_thor_intercept:accepted prompt_id=%d interceptor=%s" % [prompt_id, interceptor.uid])
+	if not await _wait_for_practice_thor_smoke_condition(
+		func() -> bool:
+			return practice_game.game_manager.action_stack.is_empty() \
+				and not practice_game.match_manager.is_authoritative_stack_resolution_pending(),
+		1200
+	):
+		var stuck_action: CardAction = practice_game.game_manager.action_stack.back() if not practice_game.game_manager.action_stack.is_empty() else null
+		var stuck_summary: String = practice_game.match_manager._get_action_debug_summary(stuck_action) if stuck_action != null else "<none>"
+		_fail_smoke_if_enabled("practice_thor_intercept_resolution_stuck stack=%d pending=%s label=%s" % [
+			practice_game.game_manager.action_stack.size(),
+			str(practice_game.match_manager.is_authoritative_stack_resolution_pending()),
+			str(practice_game.action_label.text).replace("\n", " ") + " action=" + stuck_summary,
+		])
+		return
+	if not attacker.creature_major_action_used or not attacker.has_attacked_this_turn:
+		_fail_smoke_if_enabled("practice_thor_intercept_attacker_action_not_spent")
+		return
+	if interceptor.current_zone == null or not interceptor.current_zone.is_board_zone():
+		_fail_smoke_if_enabled("practice_thor_intercept_stone_monkey_left_board")
+		return
+	if _is_smoke_intercept_prompt_visible(practice_game) \
+			or _count_pending_smoke_prompts_of_type(practice_game.match_manager, "intercept") != 0:
+		_fail_smoke_if_enabled("practice_thor_intercept_prompt_returned")
+		return
+	_write_smoke_trace("practice_thor_intercept:resolved attacker_spent=%s interceptor_zone=%d" % [
+		str(attacker.creature_major_action_used),
+		interceptor.current_zone.zone_index,
+	])
 
 	_finish_smoke_if_enabled("PASS:practice_thor_intercept")
 
