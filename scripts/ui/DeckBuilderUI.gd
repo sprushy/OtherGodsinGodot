@@ -141,6 +141,7 @@ var _collection_drag_active: bool = false
 var _collection_drag_was_selected: bool = false
 var _collection_drag_offset: Vector2 = Vector2.ZERO
 var _collection_drag_ghost: Control = null
+var _show_collection_card_overlays: bool = false
 
 func _escape_preview_bbcode_text(text: String) -> String:
 	return text.replace("[", "[lb]").replace("]", "[rb]")
@@ -368,6 +369,13 @@ func _add_card_view_controls(parent: Control) -> void:
 		var captured_rows: int = int(preset["rows"])
 		btn.pressed.connect(func() -> void: _set_collection_rows(captured_rows))
 		parent.add_child(btn)
+
+	var overlay_toggle := CheckBox.new()
+	overlay_toggle.text = "Always Show Overlays"
+	overlay_toggle.button_pressed = _show_collection_card_overlays
+	overlay_toggle.custom_minimum_size = Vector2(164, 28)
+	overlay_toggle.toggled.connect(_set_show_collection_card_overlays)
+	parent.add_child(overlay_toggle)
 
 func _build_collection_panel(parent: Control) -> void:
 	var panel := PanelContainer.new()
@@ -955,12 +963,12 @@ func _matches_search_query(card: Card) -> bool:
 
 	return false
 
-func _get_card_stat_summary_parts(card: Card, include_cost: bool = true) -> Array[String]:
+func _get_card_stat_summary_parts(card: Card, include_level: bool = true, include_cost: bool = true) -> Array[String]:
 	var stat_parts: Array[String] = []
 	if card == null:
 		return stat_parts
 
-	if not card.is_god and card.level > 0:
+	if include_level and not card.is_god and card.level > 0:
 		stat_parts.append("LVL:%d" % card.level)
 
 	if card.card_type == Card.CardType.CREATURE and not card.is_god:
@@ -984,26 +992,127 @@ func _get_card_stat_summary_parts(card: Card, include_cost: bool = true) -> Arra
 
 	return stat_parts
 
-func _get_collection_hover_stats_text(card: Card) -> String:
-	var stat_parts := _get_card_stat_summary_parts(card, false)
-	if stat_parts.is_empty():
-		return ""
-	if stat_parts.size() <= 2:
-		return "  ".join(stat_parts)
-	var split_index := int(ceil(float(stat_parts.size()) / 2.0))
-	return "  ".join(stat_parts.slice(0, split_index)) + "\n" + "  ".join(stat_parts.slice(split_index))
+func _make_collection_hover_stat_label(text: String, alignment: HorizontalAlignment) -> Label:
+	var label := Label.new()
+	label.text = text
+	label.horizontal_alignment = alignment
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	label.add_theme_font_size_override("font_size", 11)
+	label.add_theme_color_override("font_color", Color(1.0, 0.96, 0.78))
+	label.add_theme_color_override("font_shadow_color", Color(0.0, 0.0, 0.0, 0.82))
+	label.add_theme_constant_override("shadow_offset_x", 1)
+	label.add_theme_constant_override("shadow_offset_y", 1)
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return label
+
+func _make_collection_hover_stat_box(text: String) -> Control:
+	if text == "":
+		var spacer := Control.new()
+		spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		return spacer
+
+	var box := PanelContainer.new()
+	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var box_style := StyleBoxFlat.new()
+	box_style.bg_color = Color(0.03, 0.05, 0.09, 0.92)
+	box_style.border_color = Color(0.92, 0.84, 0.52, 0.95)
+	box_style.corner_radius_top_left = 4
+	box_style.corner_radius_top_right = 4
+	box_style.corner_radius_bottom_left = 4
+	box_style.corner_radius_bottom_right = 4
+	box_style.content_margin_left = 4
+	box_style.content_margin_right = 4
+	box_style.content_margin_top = 2
+	box_style.content_margin_bottom = 2
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		box_style.set_border_width(side as Side, 1)
+	box.add_theme_stylebox_override("panel", box_style)
+	box.add_child(_make_collection_hover_stat_label(text, HORIZONTAL_ALIGNMENT_CENTER))
+	return box
+
+func _make_collection_hover_level_badge(card: Card) -> Control:
+	var badge := _make_level_badge(card, 14.0, false)
+	if badge == null:
+		return null
+	badge.name = "HoverLevelBadge"
+	badge.visible = false
+	badge.anchor_left = 0
+	badge.anchor_right = 0
+	badge.anchor_top = 0
+	badge.anchor_bottom = 0
+	badge.offset_left = 0
+	badge.offset_top = 0
+	badge.offset_right = badge.offset_left + badge.custom_minimum_size.x
+	badge.offset_bottom = badge.offset_top + badge.custom_minimum_size.y
+	return badge
+
+func _make_collection_hover_stats_strip(card: Card) -> Control:
+	if card == null:
+		return null
+
+	var left_text := ""
+	var center_text := ""
+	var right_text := ""
+	match card.card_type:
+		Card.CardType.CREATURE:
+			if not card.is_god:
+				left_text = "STR:%d" % card.strength
+				center_text = "RES:%d" % card.resilience
+				right_text = "SPD:%d" % card.speed
+		Card.CardType.STRUCTURE:
+			center_text = "RES:%d" % card.resilience
+		Card.CardType.SPELL, Card.CardType.HEX, Card.CardType.CHARM:
+			right_text = "SPD:%d" % card.speed
+		Card.CardType.EQUIPMENT:
+			if card.strength_modifier != 0:
+				left_text = "STR %+d" % card.strength_modifier
+			if card.resilience_modifier != 0:
+				center_text = "RES %+d" % card.resilience_modifier
+			if card.speed_modifier != 0:
+				right_text = "SPD %+d" % card.speed_modifier
+
+	if left_text == "" and center_text == "" and right_text == "":
+		return null
+
+	var strip := PanelContainer.new()
+	strip.name = "HoverStatsStrip"
+	strip.visible = false
+	strip.anchor_left = 0
+	strip.anchor_right = 1
+	strip.anchor_top = 1
+	strip.anchor_bottom = 1
+	strip.offset_left = 6
+	strip.offset_right = -6
+	strip.offset_top = -64
+	strip.offset_bottom = -42
+	strip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	strip.add_theme_stylebox_override("panel", StyleBoxEmpty.new())
+
+	var row := HBoxContainer.new()
+	row.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	row.add_theme_constant_override("separation", 4)
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	strip.add_child(row)
+	row.add_child(_make_collection_hover_stat_box(left_text))
+	row.add_child(_make_collection_hover_stat_box(center_text))
+	row.add_child(_make_collection_hover_stat_box(right_text))
+	return strip
 
 func _to_search_key(value: String) -> String:
 	return CardCatalogScript.to_lookup_key(str(value))
 
 func _make_level_badge(card: Card, symbol_size: float = 12.0, compact: bool = false) -> Control:
-	if card == null or card.is_god:
+	if card == null:
 		return null
+	var visible_level := maxi(1, int(card.level))
 	var badge := PanelContainer.new()
 	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var horizontal_padding := 6.0 if compact else 8.0
 	var vertical_padding := 4.0 if compact else 5.0
-	badge.custom_minimum_size = Vector2(symbol_size * float(card.level) + horizontal_padding * 2.0, symbol_size + vertical_padding * 2.0)
+	badge.custom_minimum_size = Vector2(symbol_size * float(visible_level) + horizontal_padding * 2.0, symbol_size + vertical_padding * 2.0)
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color(0.06, 0.08, 0.14, 0.92)
 	style.border_color = Color(0.72, 0.84, 1.0, 0.96)
@@ -1018,7 +1127,7 @@ func _make_level_badge(card: Card, symbol_size: float = 12.0, compact: bool = fa
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
 		style.set_border_width(side, 1)
 	badge.add_theme_stylebox_override("panel", style)
-	badge.tooltip_text = "Level: %d" % card.level
+	badge.tooltip_text = "Level: %d" % card.level if int(card.level) > 0 else "Culture: %s" % str(card.culture)
 
 	var center := CenterContainer.new()
 	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -1027,7 +1136,7 @@ func _make_level_badge(card: Card, symbol_size: float = 12.0, compact: bool = fa
 
 	var symbols := LevelSymbolRow.new()
 	symbols.setup(
-		card.level,
+		visible_level,
 		symbol_size,
 		Color(1.0, 0.96, 0.78),
 		LevelSymbolRow.get_symbol_texture_for_card(card)
@@ -1051,8 +1160,8 @@ func _refresh_preview_level_badge(card: Card) -> void:
 	badge.anchor_right = 0
 	badge.anchor_top = 0
 	badge.anchor_bottom = 0
-	badge.offset_left = 6
-	badge.offset_top = 6
+	badge.offset_left = 0
+	badge.offset_top = -badge.custom_minimum_size.y * 0.5
 	badge.offset_right = badge.offset_left + badge.custom_minimum_size.x
 	badge.offset_bottom = badge.offset_top + badge.custom_minimum_size.y
 	_prev_art.add_child(badge)
@@ -1157,6 +1266,7 @@ func _make_card_item(card: Card) -> Control:
 
 	# Type badge (top-left)
 	var type_lbl := Label.new()
+	type_lbl.name = "TypeLabel"
 	type_lbl.text = _get_type_label(card)
 	type_lbl.add_theme_font_size_override("font_size", 10)
 	type_lbl.add_theme_color_override("font_color", tc)
@@ -1169,43 +1279,13 @@ func _make_card_item(card: Card) -> Control:
 	if card.has_listed_play_costs():
 		card_body.add_child(_make_collection_cost_badge(card))
 
-	var hover_stats_band := PanelContainer.new()
-	hover_stats_band.name = "HoverStatsBand"
-	hover_stats_band.visible = false
-	hover_stats_band.anchor_left = 0
-	hover_stats_band.anchor_right = 1
-	hover_stats_band.anchor_top = 1
-	hover_stats_band.anchor_bottom = 1
-	hover_stats_band.offset_left = 6
-	hover_stats_band.offset_right = -6
-	hover_stats_band.offset_top = -76
-	hover_stats_band.offset_bottom = -44
-	hover_stats_band.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var hover_stats_style := StyleBoxFlat.new()
-	hover_stats_style.bg_color = Color(0.03, 0.05, 0.09, 0.90)
-	hover_stats_style.border_color = Color(0.92, 0.84, 0.52, 0.95)
-	hover_stats_style.corner_radius_top_left = 4
-	hover_stats_style.corner_radius_top_right = 4
-	hover_stats_style.corner_radius_bottom_left = 4
-	hover_stats_style.corner_radius_bottom_right = 4
-	hover_stats_style.content_margin_left = 4
-	hover_stats_style.content_margin_right = 4
-	hover_stats_style.content_margin_top = 3
-	hover_stats_style.content_margin_bottom = 3
-	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		hover_stats_style.set_border_width(side as Side, 1)
-	hover_stats_band.add_theme_stylebox_override("panel", hover_stats_style)
-	var hover_stats_label := Label.new()
-	hover_stats_label.name = "HoverStatsLabel"
-	hover_stats_label.text = _get_collection_hover_stats_text(card)
-	hover_stats_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	hover_stats_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	hover_stats_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	hover_stats_label.add_theme_font_size_override("font_size", 10)
-	hover_stats_label.add_theme_color_override("font_color", Color(1.0, 0.96, 0.78))
-	hover_stats_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	hover_stats_band.add_child(hover_stats_label)
-	card_body.add_child(hover_stats_band)
+	var hover_level_badge := _make_collection_hover_level_badge(card)
+	if hover_level_badge != null:
+		card_body.add_child(hover_level_badge)
+
+	var hover_stats_strip := _make_collection_hover_stats_strip(card)
+	if hover_stats_strip != null:
+		card_body.add_child(hover_stats_strip)
 
 	# Count badge (bottom-right, overlaid on name bar)
 	var count_lbl := Label.new()
@@ -1436,12 +1516,12 @@ func _make_card_item(card: Card) -> Control:
 	)
 	root.mouse_entered.connect(func() -> void:
 		_show_preview(card)
-		if hover_stats_label.text != "":
-			hover_stats_band.visible = true
+		_set_collection_card_overlay_state(root, true)
 	)
 	root.mouse_exited.connect(func() -> void:
-		hover_stats_band.visible = false
+		_set_collection_card_overlay_state(root, false)
 	)
+	_set_collection_card_overlay_state(root, false)
 	_update_collection_card_selection_visual(root, card)
 
 	return root
@@ -1709,6 +1789,30 @@ func _update_collection_card_selection_visual(root: Control, card: Card) -> void
 			(back_btn as Button).offset_right = 48
 
 # ── deck panel refresh ─────────────────────────────────────────────
+func _set_collection_card_overlay_state(root: Control, hovered: bool) -> void:
+	if root == null or not is_instance_valid(root):
+		return
+	var overlays_visible := hovered or _show_collection_card_overlays
+	var type_node := root.find_child("TypeLabel", true, false)
+	if type_node is Control:
+		(type_node as Control).visible = not overlays_visible
+	var hover_level_badge := root.find_child("HoverLevelBadge", true, false)
+	if hover_level_badge is Control:
+		(hover_level_badge as Control).visible = overlays_visible
+	var hover_stats_strip := root.find_child("HoverStatsStrip", true, false)
+	if hover_stats_strip is Control:
+		(hover_stats_strip as Control).visible = overlays_visible
+
+func _set_show_collection_card_overlays(enabled: bool) -> void:
+	if _show_collection_card_overlays == enabled:
+		return
+	_show_collection_card_overlays = enabled
+	for root in _collection_card_roots.values():
+		if root is Control and is_instance_valid(root):
+			var control_root := root as Control
+			var hovered := control_root.get_global_rect().has_point(get_viewport().get_mouse_position())
+			_set_collection_card_overlay_state(control_root, hovered)
+
 func _refresh_deck_panel(rebuild_collection: bool = false, refresh_layout: bool = false) -> void:
 	for child in _deck_list.get_children():
 		child.queue_free()
@@ -3536,7 +3640,7 @@ func _show_preview(card: Card, force: bool = false) -> void:
 	_prev_type.tooltip_text = _prev_type.text
 	_prev_type.add_theme_color_override("font_color", _get_type_color(card))
 
-	var stat_parts := _get_card_stat_summary_parts(card)
+	var stat_parts := _get_card_stat_summary_parts(card, false, true)
 	_prev_stats.text = "  ".join(stat_parts)
 
 	var preview_body := ""

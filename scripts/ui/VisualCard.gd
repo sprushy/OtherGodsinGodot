@@ -72,7 +72,7 @@ var _disabled_overlay: ColorRect = null
 var _power_lock_overlay: TextureRect = null
 var _defense_shield_overlay: Control = null
 var _level_tag: PanelContainer = null
-var _level_label = null
+var _level_label: Control = null
 var _stats_label: Label = null
 const _DEFAULT_POWER_LOCK_TEXTURE := preload("res://images/Default Power Lock.png")
 const _ANCIENT_POWER_LOCK_TEXTURE := preload("res://images/Ancient Power Lock.png")
@@ -221,22 +221,46 @@ func _refresh_level_tag_tooltip() -> void:
 	_level_tag.tooltip_text = "\n".join(tooltip_lines)
 	_level_tag.mouse_filter = Control.MOUSE_FILTER_STOP
 
-func _apply_level_badge_state(level_tag: PanelContainer, level_label: LevelSymbolRow) -> void:
-	if level_tag == null or level_label == null or card_data == null:
+func _apply_level_badge_state(level_tag: PanelContainer) -> void:
+	if level_tag == null or card_data == null:
 		return
 	var effective_level := card_data.get_effective_level()
 	var tag_size := Vector2(_LEVEL_SYMBOL_SIZE * float(effective_level) + 10.0, _LEVEL_SYMBOL_SIZE + 8.0)
-	level_label.setup(
-		effective_level,
-		_LEVEL_SYMBOL_SIZE,
-		_get_level_symbol_color(effective_level),
-		LevelSymbolRow.get_symbol_texture_for_card(card_data)
-	)
 	level_tag.custom_minimum_size = tag_size
 	level_tag.size = tag_size
 	level_tag.update_minimum_size()
-	level_label.update_minimum_size()
-	level_label.queue_redraw()
+
+func _populate_level_badge(level_tag: PanelContainer, track_instance: bool = true) -> void:
+	if level_tag == null or card_data == null:
+		return
+	for child in level_tag.get_children():
+		level_tag.remove_child(child)
+		child.queue_free()
+	var effective_level := card_data.get_effective_level()
+	var texture := LevelSymbolRow.get_symbol_texture_for_card(card_data)
+	var color := _get_level_symbol_color(effective_level)
+	var center := CenterContainer.new()
+	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	level_tag.add_child(center)
+	var row := HBoxContainer.new()
+	row.name = _LEVEL_SYMBOL_ROW_NAME
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	row.add_theme_constant_override("separation", 0)
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	center.add_child(row)
+	for _i in range(effective_level):
+		var icon := TextureRect.new()
+		icon.texture = texture
+		icon.modulate = color
+		icon.custom_minimum_size = Vector2(_LEVEL_SYMBOL_SIZE, _LEVEL_SYMBOL_SIZE)
+		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		row.add_child(icon)
+	if track_instance:
+		_level_label = row
+	_apply_level_badge_state(level_tag)
 
 func _make_level_label(track_instance: bool = true) -> Control:
 	if card_data == null or card_data.is_god:
@@ -260,26 +284,9 @@ func _make_level_label(track_instance: bool = true) -> Control:
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
 		style.set_border_width(side, 1)
 	tag.add_theme_stylebox_override("panel", style)
-	var center := CenterContainer.new()
-	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	tag.add_child(center)
-	var level_lbl := LevelSymbolRow.new()
-	level_lbl.name = _LEVEL_SYMBOL_ROW_NAME
-	level_lbl.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	level_lbl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	level_lbl.setup(
-		effective_level,
-		_LEVEL_SYMBOL_SIZE,
-		_get_level_symbol_color(effective_level),
-		LevelSymbolRow.get_symbol_texture_for_card(card_data)
-	)
-	level_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	center.add_child(level_lbl)
-	_apply_level_badge_state(tag, level_lbl)
+	_populate_level_badge(tag, track_instance)
 	if track_instance:
 		_level_tag = tag
-		_level_label = level_lbl
 		_refresh_level_tag_tooltip()
 	return tag
 
@@ -382,20 +389,7 @@ func _refresh_drag_ghost_level_preview() -> void:
 		return
 	level_tag.visible = true
 	level_tag.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	for child in level_tag.get_children():
-		level_tag.remove_child(child)
-		child.queue_free()
-	var center := CenterContainer.new()
-	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	level_tag.add_child(center)
-	var level_label := LevelSymbolRow.new()
-	level_label.name = _LEVEL_SYMBOL_ROW_NAME
-	level_label.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	level_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	level_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	center.add_child(level_label)
-	_apply_level_badge_state(level_tag, level_label)
+	_populate_level_badge(level_tag, false)
 
 func _bind_visual_state() -> void:
 	if card_data == null:
@@ -413,7 +407,7 @@ func _refresh_dynamic_labels() -> void:
 	if card_data == null:
 		return
 	if _level_label != null and is_instance_valid(_level_label):
-		_apply_level_badge_state(_level_tag, _level_label)
+		_populate_level_badge(_level_tag)
 		_refresh_level_tag_tooltip()
 	_refresh_drag_ghost_level_preview()
 	if _stats_label == null or not is_instance_valid(_stats_label):

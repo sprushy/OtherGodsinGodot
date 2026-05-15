@@ -2717,6 +2717,19 @@ func _sync_local_priority_recovery() -> void:
 	if _is_networked_client or match_manager == null:
 		return
 	if match_manager.uses_authoritative_priority_flow():
+		if _executing_stack_action:
+			return
+		if _stack_resolution_paused:
+			if _can_auto_resume_paused_stack_resolution():
+				_schedule_priority_recovery_check()
+			return
+		if game_manager == null or game_manager.action_stack.is_empty():
+			return
+		if _has_pending_target_selection():
+			return
+		if _is_priority_prompt_visible() or _is_intercept_prompt_visible():
+			return
+		_schedule_priority_recovery_check()
 		return
 	if _executing_stack_action:
 		return
@@ -15315,6 +15328,9 @@ func _recover_stalled_priority_state() -> bool:
 		return false
 	if game_manager.action_stack.is_empty():
 		return false
+	if match_manager.uses_authoritative_priority_flow():
+		match_manager.advance_priority()
+		return true
 	var top_action: CardAction = game_manager.action_stack.back()
 	if top_action == null:
 		return false
@@ -20919,13 +20935,15 @@ func _on_match_move_validated(move: Dictionary) -> void:
 				_continue_end_turn_sequence()
 		"play_hex_response":
 			# Remote player activated a hex; the ABILITY was already pushed by MatchManager.
+			_clear_pending_priority_response_target_selection()
+			_clear_pending_priority_response_submission()
 			var phr_hex := game_manager.get_card_by_uid(move.get("hex_uid", ""))
 			if phr_hex != null:
 				_set_action_label_text(phr_hex.card_name + " responds!")
 			if not _is_networked_client and not authoritative_priority:
 				_offer_priority()
 			elif not _is_networked_client and authoritative_priority:
-				_request_ui_refresh()
+				_schedule_priority_recovery_check()
 		"activate_prepared_hex":
 			var prepared_hex := game_manager.get_card_by_uid(move.get("hex_uid", ""))
 			if prepared_hex != null:
@@ -20934,21 +20952,25 @@ func _on_match_move_validated(move: Dictionary) -> void:
 				_offer_priority()
 		"play_charm_response":
 			# Remote player activated a charm; the SPELL was already pushed by MatchManager.
+			_clear_pending_priority_response_target_selection()
+			_clear_pending_priority_response_submission()
 			var pcr_charm := game_manager.get_card_by_uid(move.get("charm_uid", ""))
 			if pcr_charm != null:
 				_set_action_label_text(pcr_charm.card_name + " responds!")
 			if not _is_networked_client and not authoritative_priority:
 				_offer_priority()
 			elif not _is_networked_client and authoritative_priority:
-				_request_ui_refresh()
+				_schedule_priority_recovery_check()
 		"play_priority_ability":
+			_clear_pending_priority_response_target_selection()
+			_clear_pending_priority_response_submission()
 			var response_card := game_manager.get_card_by_uid(move.get("source_uid", ""))
 			if response_card != null:
 				_set_action_label_text(response_card.card_name + " responds!")
 			if not _is_networked_client and not authoritative_priority:
 				_offer_priority()
 			elif not _is_networked_client and authoritative_priority:
-				_request_ui_refresh()
+				_schedule_priority_recovery_check()
 		"durinn_secondborn_choice", "first_sage_adapa_choice", "third_sage_enmedugga_choice", "fourth_sage_enmegalamma_choice", "sixth_sage_an_enlilda_choice", "lailoken_reveal_choice", "masmassu_priest_reveal_choice", "rally_the_troops_choice", "terror_impact_choice", "fenrir_devour_choice", "gawain_healing_hands_choice", "tatzelwurm_dragon_heart_choice", "byggvir_reveal_choice", "harii_jarl_impact_choice", "gala_tura_destroyed_choice", "kur_jara_tree_of_life_choice", "hunting_tactics_choice", "foolish_optimism_choice", "blessed_knights_choice", "tezcatlipoca_active_titlacauan_choice", "freyja_active_open_sessrumnir_choice", "mummu_entropy_choice", "nusku_active_core_flame_choice", "nusku_well_of_fire_choice", "apollyons_demiurge_choice", "habrok_breakout_choice":
 			_apply_prompt_choice_feedback()
 			return

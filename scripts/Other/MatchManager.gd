@@ -741,6 +741,23 @@ func _finalize_resolved_action(action: CardAction) -> void:
 	if game_manager != null:
 		game_manager.prune_stale_stack_actions()
 	action_resolved.emit(action)
+	_continue_authoritative_stack_after_resolution()
+
+func _continue_authoritative_stack_after_resolution() -> void:
+	# Keep continuation centralized so direct and deferred resolution paths both drain the stack.
+	if not _uses_authoritative_headless_priority_flow():
+		return
+	if game_manager == null:
+		return
+	if not game_manager.resolving_stack_actions.is_empty():
+		return
+	_authoritative_stack_resolution_pending = false
+	game_manager.prune_stale_stack_actions()
+	if game_manager.action_stack.is_empty():
+		_clear_priority_window_state()
+		return
+	_clear_priority_window_state()
+	_advance_authoritative_priority()
 
 func _mark_deferred_authoritative_action(action: CardAction, completion_command_type: String, destroyed_event_mode: int) -> void:
 	if action == null:
@@ -963,8 +980,6 @@ func _complete_deferred_authoritative_action(action: CardAction, completion_comm
 		var destroyed_start_index := int(action.event_data.get("destroyed_count_before", game_manager.destroyed_this_turn.size() if game_manager != null else 0))
 		_queue_destroyed_priority_events(destroyed_start_index, action)
 	_finalize_resolved_action(action)
-	if _uses_authoritative_headless_priority_flow() and game_manager != null and not game_manager.action_stack.is_empty():
-		_advance_authoritative_priority()
 
 func _get_pending_authoritative_graveyard_prompt_command_type() -> String:
 	if game_manager == null:
@@ -1439,8 +1454,6 @@ func _finish_authoritative_stack_resolution(action: CardAction, force_resolve: b
 	resolve_action(action)
 	if action in game_manager.resolving_stack_actions:
 		return
-	if not game_manager.action_stack.is_empty():
-		_advance_authoritative_priority()
 
 func _get_action_label(card: Card, viewer: Player = null) -> String:
 	return card.get_log_display_name(viewer) if card != null else "Card"
