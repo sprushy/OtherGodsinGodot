@@ -448,6 +448,15 @@ func get_preferred_auth_mode() -> String:
 		return mode
 	return AUTH_MODE_LOGIN
 
+func get_allow_friend_observers_to_see_cards() -> bool:
+	_ensure_loaded()
+	return bool(_data.get("allow_friend_observers_to_see_cards", true))
+
+func set_allow_friend_observers_to_see_cards(allowed: bool) -> void:
+	_ensure_loaded()
+	_data["allow_friend_observers_to_see_cards"] = allowed
+	_save()
+
 func set_preferred_auth_mode(auth_mode: String) -> void:
 	_ensure_loaded()
 	var resolved_mode := auth_mode.strip_edges().to_lower()
@@ -618,6 +627,7 @@ func _ensure_loaded() -> void:
 		"lobby_resume_by_profile": {},
 		"active_match_by_profile": {},
 		"preferred_auth_mode": AUTH_MODE_LOGIN,
+		"allow_friend_observers_to_see_cards": true,
 		"last_account_username": "",
 		"last_account_password": "",
 		DISMISSED_RELEASE_VERSION_KEY: "",

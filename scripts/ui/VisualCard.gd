@@ -32,6 +32,10 @@ var _drag_target_rotation: float = 0.0
 var _drag_stealth: bool = false
 const _DRAG_PREPARE_OVERLAY_NAME := "DragPrepareOverlay"
 const _SUMMON_ACTION_ICON_ROW_NAME := "SummonActionCostIcons"
+const _LEVEL_TAG_NAME := "LevelTag"
+const _LEVEL_SYMBOL_ROW_NAME := "LevelSymbolRow"
+const _DRAG_LEVEL_OVERLAY_NAME := "DragLevelOverlay"
+const _STATS_LABEL_NAME := "StatsLabel"
 const _FLOATING_GHOST_Z_INDEX := 1300
 const _DRAG_ROT_SPEED: float = 600.0  # degrees per second (90° in 0.15 s)
 var _base_z_index: int = 0
@@ -67,11 +71,14 @@ var _art_rect: TextureRect = null
 var _disabled_overlay: ColorRect = null
 var _power_lock_overlay: TextureRect = null
 var _defense_shield_overlay: Control = null
+var _level_tag: PanelContainer = null
 var _level_label = null
 var _stats_label: Label = null
 const _DEFAULT_POWER_LOCK_TEXTURE := preload("res://images/Default Power Lock.png")
 const _ANCIENT_POWER_LOCK_TEXTURE := preload("res://images/Ancient Power Lock.png")
 const _NORSE_POWER_LOCK_TEXTURE := preload("res://images/Norse Power Lock.png")
+const _MANA_ORB_ICON_SIZE := 18.0
+const _LEVEL_SYMBOL_SIZE := 19.0
 
 func setup(
 	p_card: Card,
@@ -192,7 +199,7 @@ func _make_name_label() -> Label:
 	name_lbl.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	name_lbl.add_theme_font_size_override("font_size", 15)
 	name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	name_lbl.custom_minimum_size = Vector2(maxf(48.0, float(_card_width) - 112.0), 0.0)
+	name_lbl.custom_minimum_size = Vector2(maxf(36.0, float(_card_width) - 132.0), 0.0)
 	name_lbl.text = card_data.get_display_name_for_control(name_lbl)
 	name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return name_lbl
@@ -204,21 +211,77 @@ func _get_level_symbol_color(effective_level: int) -> Color:
 		return Color(1.0, 0.35, 0.35)
 	return Color(1.0, 0.96, 0.78)
 
-func _make_level_label() -> Control:
+func _refresh_level_tag_tooltip() -> void:
+	if _level_tag == null or not is_instance_valid(_level_tag) or card_data == null:
+		return
+	var tooltip_lines := PackedStringArray(["Level: %d" % card_data.get_effective_level()])
+	var level_breakdown := card_data.get_buff_tooltip("lvl")
+	if level_breakdown != "":
+		tooltip_lines.append("LVL:\n" + level_breakdown)
+	_level_tag.tooltip_text = "\n".join(tooltip_lines)
+	_level_tag.mouse_filter = Control.MOUSE_FILTER_STOP
+
+func _apply_level_badge_state(level_tag: PanelContainer, level_label: LevelSymbolRow) -> void:
+	if level_tag == null or level_label == null or card_data == null:
+		return
+	var effective_level := card_data.get_effective_level()
+	var tag_size := Vector2(_LEVEL_SYMBOL_SIZE * float(effective_level) + 10.0, _LEVEL_SYMBOL_SIZE + 8.0)
+	level_label.setup(
+		effective_level,
+		_LEVEL_SYMBOL_SIZE,
+		_get_level_symbol_color(effective_level),
+		LevelSymbolRow.get_symbol_texture_for_card(card_data)
+	)
+	level_tag.custom_minimum_size = tag_size
+	level_tag.size = tag_size
+	level_tag.update_minimum_size()
+	level_label.update_minimum_size()
+	level_label.queue_redraw()
+
+func _make_level_label(track_instance: bool = true) -> Control:
 	if card_data == null or card_data.is_god:
 		return null
 	var effective_level := card_data.get_effective_level()
+	var tag := PanelContainer.new()
+	tag.name = _LEVEL_TAG_NAME
+	tag.mouse_filter = Control.MOUSE_FILTER_STOP
+	tag.custom_minimum_size = Vector2(_LEVEL_SYMBOL_SIZE * float(effective_level) + 10.0, _LEVEL_SYMBOL_SIZE + 8.0)
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.06, 0.08, 0.14, 0.94)
+	style.border_color = Color(0.72, 0.84, 1.0, 0.98)
+	style.corner_radius_top_left = 6
+	style.corner_radius_top_right = 6
+	style.corner_radius_bottom_left = 6
+	style.corner_radius_bottom_right = 6
+	style.content_margin_left = 4
+	style.content_margin_right = 4
+	style.content_margin_top = 3
+	style.content_margin_bottom = 3
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		style.set_border_width(side, 1)
+	tag.add_theme_stylebox_override("panel", style)
+	var center := CenterContainer.new()
+	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	tag.add_child(center)
 	var level_lbl := LevelSymbolRow.new()
-	level_lbl.setup(effective_level, 10.0, _get_level_symbol_color(effective_level))
-	level_lbl.size_flags_horizontal = Control.SIZE_SHRINK_END
-	var level_breakdown := card_data.get_buff_tooltip("lvl")
-	if level_breakdown != "":
-		level_lbl.tooltip_text = "LVL:\n" + level_breakdown
-		level_lbl.mouse_filter = Control.MOUSE_FILTER_STOP
-	else:
-		level_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_level_label = level_lbl
-	return level_lbl
+	level_lbl.name = _LEVEL_SYMBOL_ROW_NAME
+	level_lbl.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	level_lbl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	level_lbl.setup(
+		effective_level,
+		_LEVEL_SYMBOL_SIZE,
+		_get_level_symbol_color(effective_level),
+		LevelSymbolRow.get_symbol_texture_for_card(card_data)
+	)
+	level_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	center.add_child(level_lbl)
+	_apply_level_badge_state(tag, level_lbl)
+	if track_instance:
+		_level_tag = tag
+		_level_label = level_lbl
+		_refresh_level_tag_tooltip()
+	return tag
 
 func _make_cost_number_label(text: String, display_mana_cost: int = -1) -> Label:
 	var label := Label.new()
@@ -232,7 +295,7 @@ func _make_cost_number_label(text: String, display_mana_cost: int = -1) -> Label
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return label
 
-func _make_mana_orb_icon(icon_size: float = 17.0) -> TextureRect:
+func _make_mana_orb_icon(icon_size: float = _MANA_ORB_ICON_SIZE) -> TextureRect:
 	var icon := TextureRect.new()
 	icon.texture = MANA_ORB_TEXTURE
 	icon.custom_minimum_size = Vector2(icon_size, icon_size)
@@ -257,7 +320,7 @@ func _make_cost_node(cost_text: String, display_mana_cost: int) -> Control:
 
 	if display_mana_cost > 0:
 		cost_row.add_child(_make_cost_number_label(str(display_mana_cost), display_mana_cost))
-		cost_row.add_child(_make_mana_orb_icon(17.0))
+		cost_row.add_child(_make_mana_orb_icon(_MANA_ORB_ICON_SIZE))
 	for part in card_data.get_cost_shorthand_parts(0):
 		cost_row.add_child(_make_cost_number_label(part))
 	if cost_row.get_child_count() == 0:
@@ -305,6 +368,35 @@ func _refresh_drag_summon_action_cost_preview() -> void:
 		18.0
 	)
 
+func _refresh_drag_ghost_level_preview() -> void:
+	if not (_drag_ghost and is_instance_valid(_drag_ghost)):
+		return
+	var existing_overlay := _drag_ghost.get_node_or_null(_DRAG_LEVEL_OVERLAY_NAME)
+	if existing_overlay != null:
+		_drag_ghost.remove_child(existing_overlay)
+		existing_overlay.queue_free()
+	if card_data == null or card_data.is_god:
+		return
+	var level_tag := _find_descendant_by_name(_drag_ghost, _LEVEL_TAG_NAME) as PanelContainer
+	if level_tag == null:
+		return
+	level_tag.visible = true
+	level_tag.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	for child in level_tag.get_children():
+		level_tag.remove_child(child)
+		child.queue_free()
+	var center := CenterContainer.new()
+	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	level_tag.add_child(center)
+	var level_label := LevelSymbolRow.new()
+	level_label.name = _LEVEL_SYMBOL_ROW_NAME
+	level_label.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	level_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	level_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	center.add_child(level_label)
+	_apply_level_badge_state(level_tag, level_label)
+
 func _bind_visual_state() -> void:
 	if card_data == null:
 		return
@@ -321,44 +413,59 @@ func _refresh_dynamic_labels() -> void:
 	if card_data == null:
 		return
 	if _level_label != null and is_instance_valid(_level_label):
-		var effective_level := card_data.get_effective_level()
-		_level_label.setup(effective_level, 10.0, _get_level_symbol_color(effective_level))
-		var level_breakdown := card_data.get_buff_tooltip("lvl")
-		if level_breakdown != "":
-			_level_label.tooltip_text = "LVL:\n" + level_breakdown
-			_level_label.mouse_filter = Control.MOUSE_FILTER_STOP
-		else:
-			_level_label.tooltip_text = ""
-			_level_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_apply_level_badge_state(_level_tag, _level_label)
+		_refresh_level_tag_tooltip()
+	_refresh_drag_ghost_level_preview()
 	if _stats_label == null or not is_instance_valid(_stats_label):
+		return
+	_apply_stats_label_state(_stats_label, is_rotated, false)
+	_refresh_drag_stats_preview()
+
+func _apply_stats_label_state(target_label: Label, preview_rotated: bool, preview_stealth: bool) -> void:
+	if target_label == null or not is_instance_valid(target_label) or card_data == null:
 		return
 	match card_data.card_type:
 		Card.CardType.CREATURE:
-			_stats_label.text = "STR:%d RES:%d SPD:%d" % [
-				card_data.get_effective_strength(),
-				card_data.get_effective_resilience(),
-				card_data.get_effective_speed()
-			]
+			var defensive_preview := preview_rotated or preview_stealth
+			if defensive_preview:
+				target_label.text = "DEF RES:%d SPD:%d" % [
+					card_data.get_effective_resilience(),
+					card_data.get_effective_speed()
+				]
+			else:
+				target_label.text = "STR:%d RES:%d SPD:%d" % [
+					card_data.get_effective_strength(),
+					card_data.get_effective_resilience(),
+					card_data.get_effective_speed()
+				]
 			var creature_tooltips: Array[String] = []
 			for stat_info in [["STR", "str"], ["RES", "res"], ["SPD", "spd"]]:
 				var breakdown := card_data.get_full_stat_breakdown(stat_info[1])
 				if breakdown != "":
 					creature_tooltips.append(stat_info[0] + ":\n" + breakdown)
-			_stats_label.tooltip_text = "\n\n".join(creature_tooltips)
-			_stats_label.mouse_filter = Control.MOUSE_FILTER_STOP if not creature_tooltips.is_empty() else Control.MOUSE_FILTER_IGNORE
+			target_label.tooltip_text = "\n\n".join(creature_tooltips)
+			target_label.mouse_filter = Control.MOUSE_FILTER_STOP if not creature_tooltips.is_empty() else Control.MOUSE_FILTER_IGNORE
 		Card.CardType.STRUCTURE:
-			_stats_label.text = "RES:%d" % card_data.get_effective_resilience()
+			target_label.text = "RES:%d" % card_data.get_effective_resilience()
 			var structure_breakdown := card_data.get_full_stat_breakdown("res")
-			_stats_label.tooltip_text = "RES:\n" + structure_breakdown if structure_breakdown != "" else ""
-			_stats_label.mouse_filter = Control.MOUSE_FILTER_STOP if structure_breakdown != "" else Control.MOUSE_FILTER_IGNORE
+			target_label.tooltip_text = "RES:\n" + structure_breakdown if structure_breakdown != "" else ""
+			target_label.mouse_filter = Control.MOUSE_FILTER_STOP if structure_breakdown != "" else Control.MOUSE_FILTER_IGNORE
 		Card.CardType.SPELL, Card.CardType.HEX, Card.CardType.CHARM:
-			_stats_label.text = "SPD:%d" % card_data.get_effective_speed()
+			target_label.text = "SPD:%d" % card_data.get_effective_speed()
 			var speed_breakdown := card_data.get_full_stat_breakdown("spd")
-			_stats_label.tooltip_text = "SPD:\n" + speed_breakdown if speed_breakdown != "" else ""
-			_stats_label.mouse_filter = Control.MOUSE_FILTER_STOP if speed_breakdown != "" else Control.MOUSE_FILTER_IGNORE
+			target_label.tooltip_text = "SPD:\n" + speed_breakdown if speed_breakdown != "" else ""
+			target_label.mouse_filter = Control.MOUSE_FILTER_STOP if speed_breakdown != "" else Control.MOUSE_FILTER_IGNORE
 		_:
-			_stats_label.tooltip_text = ""
-			_stats_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			target_label.tooltip_text = ""
+			target_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+func _refresh_drag_stats_preview() -> void:
+	if not (_drag_ghost and is_instance_valid(_drag_ghost)):
+		return
+	var ghost_stats_label := _find_descendant_by_name(_drag_ghost, _STATS_LABEL_NAME) as Label
+	if ghost_stats_label == null:
+		return
+	_apply_stats_label_state(ghost_stats_label, is_rotated, _drag_stealth)
 
 func _on_card_visual_state_changed() -> void:
 	_refresh_dynamic_labels()
@@ -366,6 +473,27 @@ func _on_card_visual_state_changed() -> void:
 	if _hover_panel != null and is_instance_valid(_hover_panel):
 		_hide_hover_panel()
 		_show_hover_panel()
+
+func _build_art_container(art: TextureRect) -> Control:
+	if art == null:
+		return null
+	var holder := Control.new()
+	holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	holder.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	holder.custom_minimum_size = art.custom_minimum_size
+	art.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	holder.add_child(art)
+	if _hand_mode:
+		return holder
+	var level_tag := _make_level_label()
+	if level_tag != null:
+		level_tag.set_anchors_preset(Control.PRESET_TOP_LEFT)
+		level_tag.offset_left = 6
+		level_tag.offset_top = -8
+		level_tag.offset_right = level_tag.offset_left + level_tag.custom_minimum_size.x
+		level_tag.offset_bottom = level_tag.offset_top + level_tag.custom_minimum_size.y
+		holder.add_child(level_tag)
+	return holder
 
 func _populate_vbox(vbox: VBoxContainer) -> void:
 	var top_row := HBoxContainer.new()
@@ -376,9 +504,11 @@ func _populate_vbox(vbox: VBoxContainer) -> void:
 	if not card_data.name_at_bottom:
 		top_row.add_child(_make_name_label())
 
-	var level_lbl: Control = _make_level_label()
-	if level_lbl != null:
-		top_row.add_child(level_lbl)
+	var level_lbl: Control = null
+	if _hand_mode:
+		level_lbl = _make_level_label()
+		if level_lbl != null:
+			top_row.add_child(level_lbl)
 
 	var display_mana_cost := _get_display_mana_cost()
 	var cost_text := card_data.get_cost_shorthand(display_mana_cost)
@@ -387,23 +517,31 @@ func _populate_vbox(vbox: VBoxContainer) -> void:
 
 	var art := _build_art_node()
 	if art:
-		vbox.add_child(art)
+		vbox.add_child(_build_art_container(art))
+	elif card_data != null and not card_data.name_at_bottom:
+		if level_lbl == null:
+			level_lbl = _make_level_label()
+		if level_lbl != null:
+			top_row.add_child(level_lbl)
 
 	match card_data.card_type:
 		Card.CardType.GOD:
 			pass
 		Card.CardType.CREATURE:
 			var stats_lbl := Label.new()
+			stats_lbl.name = _STATS_LABEL_NAME
 			stats_lbl.add_theme_font_size_override("font_size", 19)
 			_stats_label = stats_lbl
 			vbox.add_child(stats_lbl)
 		Card.CardType.STRUCTURE:
 			var res_lbl := Label.new()
+			res_lbl.name = _STATS_LABEL_NAME
 			res_lbl.add_theme_font_size_override("font_size", 16)
 			_stats_label = res_lbl
 			vbox.add_child(res_lbl)
 		Card.CardType.SPELL, Card.CardType.HEX, Card.CardType.CHARM:
 			var spd_lbl := Label.new()
+			spd_lbl.name = _STATS_LABEL_NAME
 			spd_lbl.add_theme_font_size_override("font_size", 16)
 			_stats_label = spd_lbl
 			vbox.add_child(spd_lbl)
@@ -432,6 +570,7 @@ func _populate_vbox(vbox: VBoxContainer) -> void:
 		vbox.add_child(_make_name_label())
 
 func _build_content() -> void:
+	_level_tag = null
 	_level_label = null
 	_stats_label = null
 	# Outer (self) is a transparent layout-only shell — the HBoxContainer
@@ -593,9 +732,15 @@ func set_hover_viewer(viewer: Player) -> void:
 	_hover_viewer = viewer
 
 func set_hand_mode(enabled: bool) -> void:
+	if _hand_mode == enabled:
+		if not enabled:
+			_hand_hover_hit_rect = Rect2()
+		return
 	_hand_mode = enabled
 	if not enabled:
 		_hand_hover_hit_rect = Rect2()
+	if card_data != null:
+		_build_content()
 
 func set_hand_hover_hit_rect(rect: Rect2) -> void:
 	_hand_hover_hit_rect = rect
@@ -754,6 +899,7 @@ func _toggle_rotation() -> void:
 		_inner.pivot_offset = size / 2.0
 	_refresh_defense_shield_overlay()
 	_refresh_drag_defense_shield_overlay()
+	_refresh_dynamic_labels()
 
 func _should_show_drag_defense_shield() -> bool:
 	return card_data != null \
@@ -835,6 +981,7 @@ func _input(event: InputEvent) -> void:
 			if _can_toggle_drag_prepare():
 				_drag_stealth = not _drag_stealth
 				_set_drag_prepare_preview(_drag_stealth)
+				_refresh_drag_stats_preview()
 			elif card_data.card_type == Card.CardType.CREATURE:
 				_toggle_rotation()
 			get_viewport().set_input_as_handled()
@@ -842,6 +989,7 @@ func _input(event: InputEvent) -> void:
 		if event.keycode == KEY_S and _can_toggle_drag_prepare():
 			_drag_stealth = not _drag_stealth
 			_set_drag_prepare_preview(_drag_stealth)
+			_refresh_drag_stats_preview()
 			get_viewport().set_input_as_handled()
 		elif event.keycode == KEY_S and card_data.card_type == Card.CardType.CREATURE:
 			_drag_stealth = not _drag_stealth
@@ -851,6 +999,7 @@ func _input(event: InputEvent) -> void:
 				_toggle_rotation()
 			else:
 				_refresh_drag_defense_shield_overlay()
+				_refresh_drag_stats_preview()
 			_refresh_drag_summon_action_cost_preview()
 			get_viewport().set_input_as_handled()
 
@@ -995,6 +1144,7 @@ func _build_drag_ghost() -> Control:
 	_drag_ghost = ghost
 	_set_drag_prepare_preview(_drag_stealth and _can_toggle_drag_prepare())
 	_refresh_drag_defense_shield_overlay()
+	_refresh_drag_ghost_level_preview()
 	_refresh_drag_summon_action_cost_preview()
 	_drag_ghost = null
 	return ghost
@@ -1026,6 +1176,7 @@ func _recompact_drag_ghost() -> void:
 		return
 	_compact_drag_ghost(_drag_ghost, ghost_inner)
 	_drag_ghost_pivot = _drag_ghost.size / 2.0
+	_refresh_drag_ghost_level_preview()
 	_update_ghost_position()
 
 func _remove_drag_ghost_rules_text(node: Node) -> void:

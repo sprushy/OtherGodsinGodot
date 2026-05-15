@@ -20,7 +20,7 @@ func _init() -> void:
 	culture = "Nahuatl"
 	targets = true
 	flavor_text = ""
-	ability_text = "Tonal Mastery ([b]Passive[/b]): Every time a creature shapeshifts, gain 1 Tonal Mastery token. At 3 tokens, clear them and gain 2 mana.\nNecoc Yaotl ([b]Activate[/b]): Sacrifice a friendly creature and place it under this card. Once you have done this 4 times, summon Tezcatlipoca, Active God."
+	ability_text = "Tonal Mastery ([b]Passive[/b]): Every time a creature shapeshifts, gain 1 Tonal Mastery token. At 3 tokens, clear them and gain 3 mana.\nNecoc Yaotl ([b]Activate[/b]): Sacrifice a friendly creature and place it under this card. Once you have done this 4 times, summon Tezcatlipoca, Active God."
 	artist = "Ricardo Zoppello"
 	art_path = ART_PATH
 	name_at_bottom = true

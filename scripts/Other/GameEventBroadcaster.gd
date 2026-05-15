@@ -67,7 +67,15 @@ func _on_ui_refresh_requested() -> void:
 		else:
 			network_manager.broadcast_event_to_peer(peer_id, "full_state", event_data)
 	for peer_id in network_manager.spectator_peer_ids:
-		network_manager.broadcast_event_to_peer(int(peer_id), "full_state", _build_full_state_event_data(GameState.SPECTATOR_VIEWER_INDEX, "Watching live match."))
+		network_manager.broadcast_event_to_peer(
+			int(peer_id),
+			"full_state",
+			_build_full_state_event_data(
+				GameState.SPECTATOR_VIEWER_INDEX,
+				"Watching live match.",
+				network_manager.get_spectator_visible_player_indices(int(peer_id))
+			)
+		)
 
 func _on_turn_upkeep_started(_turn_number: int, player: Player) -> void:
 	if network_manager == null:
@@ -141,7 +149,15 @@ func _broadcast_full_state(action_message: String) -> void:
 		else:
 			network_manager.broadcast_event_to_peer(peer_id, "full_state", event_data)
 	for peer_id in network_manager.spectator_peer_ids:
-		network_manager.broadcast_event_to_peer(int(peer_id), "full_state", _build_full_state_event_data(GameState.SPECTATOR_VIEWER_INDEX, action_message))
+		network_manager.broadcast_event_to_peer(
+			int(peer_id),
+			"full_state",
+			_build_full_state_event_data(
+				GameState.SPECTATOR_VIEWER_INDEX,
+				action_message,
+				network_manager.get_spectator_visible_player_indices(int(peer_id))
+			)
+		)
 
 func _broadcast_full_state_for_move(move: Dictionary) -> void:
 	if network_manager == null:
@@ -162,7 +178,8 @@ func _broadcast_full_state_for_move(move: Dictionary) -> void:
 			"full_state",
 			_build_full_state_event_data(
 				GameState.SPECTATOR_VIEWER_INDEX,
-				_label_for_move(move, _viewer_for_player_index(GameState.SPECTATOR_VIEWER_INDEX))
+				_label_for_move(move, _viewer_for_player_index(GameState.SPECTATOR_VIEWER_INDEX)),
+				network_manager.get_spectator_visible_player_indices(int(peer_id))
 			)
 		)
 
@@ -186,7 +203,8 @@ func _broadcast_full_state_for_action(action: CardAction) -> void:
 			"full_state",
 			_build_full_state_event_data(
 				GameState.SPECTATOR_VIEWER_INDEX,
-				_label_for_resolved_action(action, _viewer_for_player_index(GameState.SPECTATOR_VIEWER_INDEX))
+				_label_for_resolved_action(action, _viewer_for_player_index(GameState.SPECTATOR_VIEWER_INDEX)),
+				network_manager.get_spectator_visible_player_indices(int(peer_id))
 			)
 		)
 
@@ -194,9 +212,9 @@ func _broadcast_full_state_for_action(action: CardAction) -> void:
 # Helpers
 # ---------------------------------------------------------------------------
 
-func _build_full_state_event_data(player_index: int, action_message: String) -> Dictionary:
+func _build_full_state_event_data(player_index: int, action_message: String, visible_player_indices: Array = []) -> Dictionary:
 	var event_data := {
-		state = GameState.serialize(game_manager, player_index),
+		state = GameState.serialize(game_manager, player_index, visible_player_indices),
 		action_message = action_message,
 	}
 	var attack_preview := _serialize_pending_attack_preview()

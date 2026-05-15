@@ -28,6 +28,7 @@ var session_id_by_peer: Dictionary = {}
 var peer_id_by_session: Dictionary = {}
 var disconnected_sessions: Dictionary = {}
 var spectator_peer_ids: Array[int] = []
+var spectator_visible_player_indices_by_session: Dictionary = {}
 
 var _rng := RandomNumberGenerator.new()
 
@@ -154,6 +155,33 @@ func is_spectator_peer(peer_id: int) -> bool:
 func get_spectator_peer_ids() -> Array[int]:
 	return spectator_peer_ids.duplicate()
 
+func set_spectator_visible_player_indices(session_id: String, player_indices: Array) -> void:
+	var resolved_session_id := session_id.strip_edges()
+	if resolved_session_id.is_empty():
+		return
+	var sanitized: Array[int] = []
+	for raw_index in player_indices:
+		var player_index := int(raw_index)
+		if player_index < 0 or player_index >= player_session_ids.size() or player_index in sanitized:
+			continue
+		sanitized.append(player_index)
+	spectator_visible_player_indices_by_session[resolved_session_id] = sanitized
+
+func get_spectator_visible_player_indices(session_id: String) -> Array[int]:
+	var resolved_session_id := session_id.strip_edges()
+	if resolved_session_id.is_empty():
+		return []
+	var stored = spectator_visible_player_indices_by_session.get(resolved_session_id, [])
+	var output: Array[int] = []
+	if not (stored is Array):
+		return output
+	for raw_index in stored:
+		var player_index := int(raw_index)
+		if player_index < 0 or player_index >= player_session_ids.size() or player_index in output:
+			continue
+		output.append(player_index)
+	return output
+
 func is_waiting_for_reconnect() -> bool:
 	return not disconnected_sessions.is_empty()
 
@@ -208,10 +236,11 @@ func to_match_info(session_id: String = "") -> Dictionary:
 	match_info["waiting_for_reconnect"] = is_waiting_for_reconnect()
 	return match_info
 
-func to_spectator_match_info() -> Dictionary:
+func to_spectator_match_info(observer_session_id: String = "") -> Dictionary:
 	var match_info := to_match_info("")
 	match_info["observer_mode"] = true
 	match_info["player_index"] = -1
+	match_info["observer_session_id"] = observer_session_id.strip_edges()
 	return match_info
 
 func to_launch_config() -> Dictionary:
@@ -228,6 +257,7 @@ func to_launch_config() -> Dictionary:
 		"player_match_tokens": player_match_tokens.duplicate(true),
 		"player_decks_by_session": player_decks_by_session.duplicate(true),
 		"player_identity_by_session": player_identity_by_session.duplicate(true),
+		"spectator_visible_player_indices_by_session": spectator_visible_player_indices_by_session.duplicate(true),
 	}
 
 func mark_process_launched(p_process_id: int, p_launch_config_path: String) -> void:
@@ -258,6 +288,9 @@ static func from_launch_config(config: Dictionary) -> MatchSession:
 	var configured_tokens = config.get("player_match_tokens", {})
 	if configured_tokens is Dictionary:
 		session.player_match_tokens = (configured_tokens as Dictionary).duplicate(true)
+	var configured_spectator_visibility = config.get("spectator_visible_player_indices_by_session", {})
+	if configured_spectator_visibility is Dictionary:
+		session.spectator_visible_player_indices_by_session = (configured_spectator_visibility as Dictionary).duplicate(true)
 	session._ensure_player_match_tokens()
 	return session
 

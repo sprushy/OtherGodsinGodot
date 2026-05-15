@@ -210,7 +210,7 @@ signal action_resolved(action: CardAction)
 signal request_ui_interaction(player_index: int, type: String, data: Dictionary)
 signal ui_refresh_requested()
 
-const AUTHORITATIVE_STACK_ACTION_LINGER_SECONDS := 0.66
+const AUTHORITATIVE_STACK_ACTION_LINGER_SECONDS := 1.2
 
 var last_resolution_text: String = ""
 var last_move_failed_reason: String = ""
@@ -2453,6 +2453,41 @@ func _on_move_failed(reason: String) -> void:
 	last_move_failed_reason = reason
 	_send_rejection_to_sender(_active_command_sender_info, reason)
 
+func _get_move_play_failure_reason(card: Card, player: Player, target_zone: Zone = null) -> String:
+	if card != null and game_manager != null:
+		var reason := game_manager.get_play_card_failure_reason(player, card, target_zone)
+		if reason.strip_edges() != "":
+			return reason
+	return ("%s play was rejected without a rules reason." % card.card_name) if card != null else "This play was rejected without a rules reason."
+
+func _get_move_activation_failure_reason(card: Card, prepared: bool = false, player: Player = null) -> String:
+	if card == null:
+		return "Activation was rejected without a rules reason."
+	var acting_player := player
+	if acting_player == null:
+		acting_player = card.card_owner
+	if game_manager != null and game_manager.has_insufficient_activation_mana(card, prepared, acting_player):
+		return game_manager.get_activation_mana_unavailable_text(card)
+	if prepared and game_manager != null:
+		var play_reason := game_manager.get_play_card_failure_reason(acting_player, card, null)
+		if play_reason.strip_edges() != "":
+			return play_reason
+	if card.has_method("get_activation_failure_reason"):
+		var activation_reason := str(card.call("get_activation_failure_reason", game_manager))
+		if activation_reason.strip_edges() != "":
+			return activation_reason
+	return "%s activation was rejected without a rules reason." % card.card_name
+
+func _get_move_cost_payment_failure_reason(card: Card, prepared: bool = false, player: Player = null) -> String:
+	if card == null:
+		return "Cost payment failed."
+	var acting_player := player
+	if acting_player == null:
+		acting_player = card.card_owner
+	if game_manager != null and game_manager.has_insufficient_activation_mana(card, prepared, acting_player):
+		return game_manager.get_activation_mana_unavailable_text(card)
+	return "%s cost payment failed." % card.card_name
+
 # --- Network Command Support ---
 
 ## Entry point for commands from the network.
@@ -2811,19 +2846,11 @@ func _process_command_impl(command: Dictionary) -> bool:
 			if prepared_spell:
 				if not (spell as SpellCard).can_activate_prepared(game_manager, player):
 					spell.clear_pending_chosen_sacrifices()
-					move_failed.emit(
-						game_manager.get_activation_mana_unavailable_text(spell)
-						if game_manager.has_insufficient_activation_mana(spell, true, player)
-						else spell.card_name + " cannot activate right now."
-					)
+					move_failed.emit(_get_move_activation_failure_reason(spell, true, player))
 					return false
 				if not game_manager.activate_prepared_card(spell, player):
 					spell.clear_pending_chosen_sacrifices()
-					move_failed.emit(
-						game_manager.get_activation_mana_unavailable_text(spell)
-						if game_manager.has_insufficient_activation_mana(spell, true, player)
-						else "Cannot afford " + spell.card_name + "!"
-					)
+					move_failed.emit(_get_move_cost_payment_failure_reason(spell, true, player))
 					return false
 			else:
 				var play_failure_reason := game_manager.get_play_card_failure_reason(player, spell, null)
@@ -2834,7 +2861,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 				var mana_required := game_manager.get_card_play_mana_cost(player, spell, false)
 				if not spell.pay_costs_with_mana_cost(player, mana_required, game_manager):
 					spell.clear_pending_chosen_sacrifices()
-					move_failed.emit("Cannot afford " + spell.card_name + "!")
+					move_failed.emit(_get_move_cost_payment_failure_reason(spell, false, player))
 					return false
 				if mana_required < spell.mana_cost:
 					game_manager.claim_cost_adjustments(
@@ -2860,8 +2887,8 @@ func _process_command_impl(command: Dictionary) -> bool:
 					"",
 					preferred_display_zone
 				)
-				move_validated.emit(command)
 				_advance_authoritative_priority()
+				move_validated.emit(command)
 				return true
 			game_manager.notify_spell_played(player, spell)
 			game_manager.run_with_effect_source(
@@ -2881,18 +2908,10 @@ func _process_command_impl(command: Dictionary) -> bool:
 				return false
 			var hex := hex_card as HexCard
 			if not hex.can_activate_prepared(game_manager, acting_player):
-				move_failed.emit(
-					game_manager.get_activation_mana_unavailable_text(hex)
-					if game_manager.has_insufficient_activation_mana(hex, true, acting_player)
-					else hex.card_name + " cannot activate right now."
-				)
+				move_failed.emit(_get_move_activation_failure_reason(hex, true, acting_player))
 				return false
 			if not game_manager.activate_prepared_card(hex, acting_player):
-				move_failed.emit(
-					game_manager.get_activation_mana_unavailable_text(hex)
-					if game_manager.has_insufficient_activation_mana(hex, true, acting_player)
-					else "Cannot afford " + hex.card_name + "!"
-				)
+				move_failed.emit(_get_move_cost_payment_failure_reason(hex, true, acting_player))
 				return false
 			var hex_action := CardAction.new()
 			hex_action.type = CardAction.Type.ABILITY
@@ -2900,9 +2919,9 @@ func _process_command_impl(command: Dictionary) -> bool:
 			hex_action.card = hex
 			hex_action.resolution_text = hex.card_name + " resolved."
 			game_manager.push_to_stack(hex_action)
-			move_validated.emit(command)
 			if _uses_authoritative_headless_priority_flow():
 				_advance_authoritative_priority()
+			move_validated.emit(command)
 			return true
 		"god_ability":
 			var god_uid: String = command.get("god_uid", "")
@@ -2912,7 +2931,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 				return false
 			if not god_card.has_method("can_activate") or not god_card.can_activate(game_manager):
 				var god_failure_reason: String = str(god_card.get_activation_failure_reason(game_manager)) if god_card.has_method("get_activation_failure_reason") else ""
-				move_failed.emit(god_failure_reason if god_failure_reason != "" else god_card.card_name + "'s ability cannot be activated right now.")
+				move_failed.emit(god_failure_reason if god_failure_reason != "" else god_card.card_name + " activation was rejected without a rules reason.")
 				return false
 			var target: Card = null
 			var target_uid: String = command.get("target_uid", "")
@@ -2940,8 +2959,8 @@ func _process_command_impl(command: Dictionary) -> bool:
 						else:
 							god_card.activate(game_manager, target)
 				)
-				move_validated.emit(command)
 				_advance_authoritative_priority()
+				move_validated.emit(command)
 				return true
 			if god_card.has_method("activate"):
 				game_manager.run_with_effect_source(
@@ -2994,7 +3013,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 				]
 			else:
 				if not power_card.can_activate(game_manager):
-					move_failed.emit(power_card.card_name + " cannot activate right now.")
+					move_failed.emit(_get_move_activation_failure_reason(power_card, false, power_card.card_owner))
 					return false
 				if _uses_authoritative_headless_priority_flow():
 					_queue_authoritative_magical_action(
@@ -3004,8 +3023,8 @@ func _process_command_impl(command: Dictionary) -> bool:
 						func() -> void:
 							power_card.activate(game_manager, act_target)
 					)
-					move_validated.emit(command)
 					_advance_authoritative_priority()
+					move_validated.emit(command)
 					return true
 				game_manager.run_with_effect_source(
 					power_card,
@@ -3033,17 +3052,17 @@ func _process_command_impl(command: Dictionary) -> bool:
 			var charm_source_action: CardAction = game_manager.action_stack.back() if not game_manager.action_stack.is_empty() else null
 			if charm_prepared:
 				if not charm_card.can_activate_prepared(game_manager, charm_source_action):
-					move_failed.emit(game_manager.get_activation_mana_unavailable_text(charm_card) if game_manager.has_insufficient_activation_mana(charm_card, true, charm_card.card_owner) else charm_card.card_name + " cannot activate right now.")
+					move_failed.emit(_get_move_activation_failure_reason(charm_card, true, charm_card.card_owner))
 					return false
 				if not game_manager.activate_prepared_card(charm_card, charm_card.card_owner):
-					move_failed.emit(game_manager.get_activation_mana_unavailable_text(charm_card) if game_manager.has_insufficient_activation_mana(charm_card, true, charm_card.card_owner) else "Cannot afford " + charm_card.card_name + "!")
+					move_failed.emit(_get_move_cost_payment_failure_reason(charm_card, true, charm_card.card_owner))
 					return false
 			else:
 				if not charm_card.can_activate_from_hand(game_manager, charm_source_action):
-					move_failed.emit(charm_card.card_name + " cannot be played right now.")
+					move_failed.emit(_get_move_play_failure_reason(charm_card, charm_card.card_owner, null))
 					return false
 				if not charm_card.pay_costs(charm_card.card_owner, game_manager):
-					move_failed.emit(game_manager.get_activation_mana_unavailable_text(charm_card) if game_manager.has_insufficient_activation_mana(charm_card, false, charm_card.card_owner) else "Cannot afford " + charm_card.card_name + "!")
+					move_failed.emit(_get_move_cost_payment_failure_reason(charm_card, false, charm_card.card_owner))
 					return false
 			if _uses_authoritative_headless_priority_flow():
 				var preferred_display_zone: Zone = charm_card.current_zone if charm_prepared else (charm_target.current_zone if charm_target != null and charm_target.current_zone != null and charm_target.current_zone.is_board_zone() else null)
@@ -3063,8 +3082,8 @@ func _process_command_impl(command: Dictionary) -> bool:
 					preferred_display_zone,
 					charm_source_action
 				)
-				move_validated.emit(command)
 				_advance_authoritative_priority()
+				move_validated.emit(command)
 				return true
 			game_manager.run_with_effect_source(
 				charm_card,
@@ -4055,7 +4074,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 				return false
 			var dc := dc_card as DivineCaprice
 			if not dc.can_activate(game_manager):
-				move_failed.emit(dc.card_name + " cannot activate right now.")
+				move_failed.emit(_get_move_activation_failure_reason(dc, false, dc.card_owner))
 				return false
 			var raw_plan: Array = command.get("plan", [])
 			var dc_plan: Array = []
@@ -4075,8 +4094,8 @@ func _process_command_impl(command: Dictionary) -> bool:
 					func() -> void:
 						dc.activate(game_manager, dc_plan)
 				)
-				move_validated.emit(command)
 				_advance_authoritative_priority()
+				move_validated.emit(command)
 				return true
 			game_manager.run_with_effect_source(
 				dc,
@@ -4123,7 +4142,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 				move_failed.emit("play_charm_response: charm location changed")
 				return false
 			if not game_manager.can_card_respond_to_priority(pcr_charm, pcr_charm.card_owner):
-				move_failed.emit(game_manager.get_activation_mana_unavailable_text(pcr_charm) if game_manager.has_insufficient_activation_mana(pcr_charm, not pcr_from_hand, pcr_charm.card_owner) else "play_charm_response: charm cannot respond right now")
+				move_failed.emit(_get_move_activation_failure_reason(pcr_charm, not pcr_from_hand, pcr_charm.card_owner))
 				return false
 			var pcr_charm_card := pcr_charm as CharmCard
 			var pcr_target_uid: String = command.get("target_uid", "")
@@ -4134,11 +4153,11 @@ func _process_command_impl(command: Dictionary) -> bool:
 				return false
 			if pcr_from_hand:
 				if not pcr_charm_card.pay_costs(pcr_charm_card.card_owner, game_manager):
-					move_failed.emit(game_manager.get_activation_mana_unavailable_text(pcr_charm_card) if game_manager.has_insufficient_activation_mana(pcr_charm_card, false, pcr_charm_card.card_owner) else "Cannot afford " + pcr_charm_card.card_name + "!")
+					move_failed.emit(_get_move_cost_payment_failure_reason(pcr_charm_card, false, pcr_charm_card.card_owner))
 					return false
 			else:
 				if not game_manager.activate_prepared_card(pcr_charm, pcr_charm.card_owner):
-					move_failed.emit(game_manager.get_activation_mana_unavailable_text(pcr_charm_card) if game_manager.has_insufficient_activation_mana(pcr_charm_card, true, pcr_charm_card.card_owner) else "Cannot afford " + pcr_charm_card.card_name + "!")
+					move_failed.emit(_get_move_cost_payment_failure_reason(pcr_charm_card, true, pcr_charm_card.card_owner))
 					return false
 			var pcr_action := CardAction.new()
 			pcr_action.type = CardAction.Type.SPELL
@@ -4158,9 +4177,9 @@ func _process_command_impl(command: Dictionary) -> bool:
 				pcr_target.current_zone if pcr_target != null and pcr_target.current_zone != null and pcr_target.current_zone.is_board_zone() else null
 			)
 			game_manager.push_to_stack(pcr_action)
-			move_validated.emit(command)
 			if _uses_authoritative_headless_priority_flow():
 				_advance_authoritative_priority()
+			move_validated.emit(command)
 			return true
 		"play_priority_ability":
 			var pra_source_uid: String = command.get("source_uid", "")
@@ -4214,20 +4233,24 @@ func _process_command_impl(command: Dictionary) -> bool:
 							activation_context["summon_zone"] = resolved_zone
 					if pra_action.event_data.has("summon_mode"):
 						activation_context["summon_mode"] = int(pra_action.event_data.get("summon_mode", Card.CreatureMode.DEFENSIVE))
-					pra_source.activate(game_manager, activation_context)
+					if not activation_context.is_empty():
+						pra_source.activate(game_manager, activation_context)
+					elif pra_target != null:
+						pra_source.activate(game_manager, pra_target)
+					else:
+						pra_source.activate(game_manager)
 				elif pra_target != null:
 					pra_source.activate(game_manager, pra_target)
 				else:
 					pra_source.activate(game_manager)
 			game_manager.push_to_stack(pra_action)
-			move_validated.emit(command)
 			if _uses_authoritative_headless_priority_flow():
 				_advance_authoritative_priority()
+			move_validated.emit(command)
 			return true
 		"priority_pass":
 			if _uses_authoritative_headless_priority_flow():
 				game_manager.pass_priority()
-				move_validated.emit(command)
 				if game_manager.both_passed():
 					if not game_manager.action_stack.is_empty():
 						_schedule_authoritative_stack_top_after_priority()
@@ -4235,6 +4258,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 						_clear_priority_window_state()
 				else:
 					_advance_authoritative_priority()
+				move_validated.emit(command)
 				return true
 			move_validated.emit(command)
 			return true
@@ -4353,7 +4377,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 				return false
 			var phr_source: CardAction = game_manager.action_stack.back()
 			if not game_manager.can_card_respond_to_priority(phr_hex_card, phr_hex_card.card_owner):
-				move_failed.emit(game_manager.get_activation_mana_unavailable_text(phr_hex_card) if game_manager.has_insufficient_activation_mana(phr_hex_card, true, phr_hex_card.card_owner) else "play_hex_response: hex cannot respond right now")
+				move_failed.emit(_get_move_activation_failure_reason(phr_hex_card, true, phr_hex_card.card_owner))
 				return false
 			var phr_target_uid: String = command.get("target_uid", "")
 			var phr_target: Card = game_manager.get_card_by_uid(phr_target_uid) if phr_target_uid != "" else null
@@ -4372,12 +4396,12 @@ func _process_command_impl(command: Dictionary) -> bool:
 			phr_ability.interceptor = phr_source.interceptor
 			phr_ability.target = phr_target if not phr_target_is_attacker and phr_target != null else phr_source.target
 			if not game_manager.activate_prepared_card(phr_hex_card, phr_hex_card.card_owner):
-				move_failed.emit(game_manager.get_activation_mana_unavailable_text(phr_hex) if game_manager.has_insufficient_activation_mana(phr_hex, true, phr_hex.card_owner) else "Cannot afford " + phr_hex.card_name + "!")
+				move_failed.emit(_get_move_cost_payment_failure_reason(phr_hex, true, phr_hex.card_owner))
 				return false
 			game_manager.push_to_stack(phr_ability)
-			move_validated.emit(command)
 			if _uses_authoritative_headless_priority_flow():
 				_advance_authoritative_priority()
+			move_validated.emit(command)
 			return true
 	move_failed.emit("Unknown command type: " + str(command.get("type")))
 	return false

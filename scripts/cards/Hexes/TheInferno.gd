@@ -28,17 +28,19 @@ func can_respond_to_action(action: CardAction) -> bool:
 		return false
 	if attacker.get_controller() == card_owner:
 		return false
+	var attacking_player := _get_attacking_player(action)
+	if attacking_player == null or _get_frontline_cards(attacking_player).is_empty():
+		return false
 	return attacker.get_effective_speed() <= get_effective_speed()
 
-func get_priority_targets(game_manager: GameManager, action: CardAction) -> Array[Card]:
-	if not can_respond_to_action(action):
-		return []
-	var attacking_player := _get_attacking_player(action)
-	if attacking_player == null:
-		return []
-	if _get_frontline_cards(game_manager, attacking_player).is_empty():
-		return []
-	return [action.attacker]
+func can_activate(attacker: Card, _defender: Card) -> bool:
+	if attacker == null or attacker.card_type != Card.CardType.CREATURE:
+		return false
+	if attacker.current_zone == null or not attacker.current_zone.is_board_zone():
+		return false
+	if attacker.get_controller() == card_owner:
+		return false
+	return attacker.get_effective_speed() <= get_effective_speed()
 
 func on_activate_action(game_manager: GameManager, action: CardAction) -> void:
 	if game_manager == null:
@@ -53,7 +55,7 @@ func on_activate_action(game_manager: GameManager, action: CardAction) -> void:
 			card_owner.move_card(self, card_owner.graveyard_zone)
 		return
 
-	var doomed_cards := _get_frontline_cards(game_manager, attacking_player)
+	var doomed_cards := _get_frontline_cards(attacking_player)
 	var immune_count := 0
 	var destroyable_cards: Array[Card] = []
 	for doomed_card in doomed_cards:
@@ -101,9 +103,9 @@ func _get_attacking_player(action: CardAction) -> Player:
 		return attacker.get_controller()
 	return source_action.source_player
 
-func _get_frontline_cards(game_manager: GameManager, player: Player) -> Array[Card]:
+func _get_frontline_cards(player: Player) -> Array[Card]:
 	var doomed_cards: Array[Card] = []
-	if game_manager == null or player == null:
+	if player == null:
 		return doomed_cards
 	for zone in player.frontline_zones:
 		if zone == null:

@@ -59,6 +59,8 @@ var _lobby_reconnect_token: String = ""
 var _pending_join_room_code: String = ""
 var _pending_join_room_id: String = ""
 var _pending_observe_room_id: String = ""
+var _pending_rematch_room_id: String = ""
+var _pending_rematch_ready_submitted: bool = false
 var _current_lobby_ip: String = ""
 var _is_local_lobby_host: bool = false
 var _match_launch_queued: bool = false
@@ -229,6 +231,10 @@ func _bind_game_signals() -> void:
 			var leave_callback := Callable(self, "_on_game_leave_match_requested")
 			if not game.leave_match_requested.is_connected(leave_callback):
 				game.leave_match_requested.connect(leave_callback)
+		if game != null and game.has_signal("rematch_requested"):
+			var rematch_callback := Callable(self, "_on_game_rematch_requested")
+			if not game.rematch_requested.is_connected(rematch_callback):
+				game.rematch_requested.connect(rematch_callback)
 		if game != null and game.has_signal("match_session_cleared"):
 			var clear_callback := Callable(self, "_on_match_session_cleared")
 			if not game.match_session_cleared.is_connected(clear_callback):
@@ -525,7 +531,7 @@ func _on_multiplayer_pressed() -> void:
 func _on_multiplayer_back_pressed() -> void:
 	multiplayer_container.visible = false
 	_hide_multiplayer_deck_popup()
-	status_label.text = "Refresh open seeks or create your own."
+	status_label.text = "Refresh seeks to join a room or watch a live match."
 	_refresh_seek_list()
 	_refresh_multiplayer_action_state()
 
@@ -1193,7 +1199,7 @@ func _refresh_seek_list() -> void:
 		return
 	seek_list.clear()
 	if _open_seek_rooms.is_empty():
-		seek_list.add_item("No open seeks right now.")
+		seek_list.add_item("No open seeks or live matches right now.")
 		seek_list.set_item_disabled(0, true)
 		return
 	for room in _open_seek_rooms:
@@ -1204,7 +1210,8 @@ func _refresh_seek_list() -> void:
 		var room_status := str(room.get("status", "waiting")).strip_edges().to_lower()
 		var status := "Live" if room_status == LobbyRoomScript.STATUS_IN_MATCH else room_status.capitalize()
 		var rank_tag := "" if bool(room.get("is_ranked", true)) else "[Unranked]  "
-		seek_list.add_item("%s%s  %d/%d  %s" % [rank_tag, host_name, member_count, max_players, status])
+		var action_hint := "  Click to Observe" if room_status == LobbyRoomScript.STATUS_IN_MATCH else "  Click to Join"
+		seek_list.add_item("%s%s  %d/%d  %s%s" % [rank_tag, host_name, member_count, max_players, status, action_hint])
 		seek_list.set_item_metadata(seek_list.get_item_count() - 1, room.duplicate(true))
 
 func _refresh_multiplayer_action_state() -> void:
@@ -1246,7 +1253,7 @@ func _queue_room_list_refresh(show_status: bool = true) -> void:
 		return
 	_seek_list_request_pending = true
 	if show_status:
-		status_label.text = "Refreshing open seeks..."
+		status_label.text = "Refreshing seeks and live matches..."
 	lobby_client.list_rooms()
 
 func _on_seek_item_clicked(index: int, _at_position: Vector2, _mouse_button_index: int) -> void:
@@ -1486,12 +1493,13 @@ func _is_local_lobby_target(host: String) -> bool:
 
 func _clear_current_seek_state() -> void:
 	_current_room_snapshot.clear()
+	_pending_rematch_ready_submitted = false
 	ready_button.visible = false
 	leave_seek_button.visible = false
 	_last_submitted_lobby_room_id = ""
 	_last_submitted_lobby_deck_id = ""
 	_last_submitted_lobby_deck_hash = ""
-	status_label.text = "Refresh open seeks or create your own."
+	status_label.text = "Refresh seeks to join a room or watch a live match."
 	_refresh_multiplayer_action_state()
 
 func _is_server_runtime_launch() -> bool:
@@ -3324,9 +3332,8 @@ func _on_lobby_room_list_updated(rooms: Array) -> void:
 		var entry: Dictionary = (room as Dictionary).duplicate(true)
 		if str(entry.get("room_id", "")).strip_edges() == current_room_id:
 			current_room_still_visible = true
-		if int(entry.get("member_count", 0)) >= int(entry.get("max_players", 2)):
-			continue
-		if str(entry.get("status", "")).strip_edges().to_lower() == "in_match":
+		var room_status := str(entry.get("status", "")).strip_edges().to_lower()
+		if room_status != LobbyRoomScript.STATUS_IN_MATCH and int(entry.get("member_count", 0)) >= int(entry.get("max_players", 2)):
 			continue
 		_open_seek_rooms.append(entry)
 	if not current_room_id.is_empty() and not current_room_still_visible:
@@ -3334,9 +3341,9 @@ func _on_lobby_room_list_updated(rooms: Array) -> void:
 	_refresh_seek_list()
 	if _current_room_snapshot.is_empty():
 		if _open_seek_rooms.is_empty():
-			status_label.text = "No open seeks right now. Create one to start a match."
+			status_label.text = "No open seeks or live matches right now. Create one to start a match."
 		else:
-			status_label.text = "Click an open seek to join, or create your own."
+			status_label.text = "Click a seek to join, or click a Live room to observe."
 	_refresh_multiplayer_action_state()
 
 func _on_lobby_room_snapshot_updated(snapshot: Dictionary) -> void:
@@ -3354,6 +3361,9 @@ func _apply_room_snapshot(snapshot: Dictionary) -> void:
 	if room_status == "in_match" and not _match_launch_queued and lobby_client != null:
 		var active_match_info: Dictionary = lobby_client.current_active_match_info.duplicate(true)
 		if not active_match_info.is_empty() and str(active_match_info.get("room_id", "")).strip_edges() == room_id:
+			if room_id == _pending_rematch_room_id and _should_suppress_active_match_auto_resume(active_match_info):
+				status_label.text = "Waiting for the finished match to close so the rematch can start..."
+				return
 			if _has_pending_new_seek_action() or _should_suppress_active_match_auto_resume(active_match_info):
 				_abandon_current_lobby_match()
 				_clear_saved_match_resume()
@@ -3365,6 +3375,7 @@ func _apply_room_snapshot(snapshot: Dictionary) -> void:
 	room_code_line_edit.text = room_id
 	_write_smoke_room_code(room_id)
 	_maybe_submit_current_profile_deck(room_id, snapshot)
+	_maybe_submit_rematch_ready(room_id, snapshot)
 	ready_button.visible = false
 	leave_seek_button.visible = true
 
@@ -3401,9 +3412,46 @@ func _apply_room_snapshot(snapshot: Dictionary) -> void:
 	_refresh_multiplayer_action_state()
 	_maybe_progress_smoke_from_room_snapshot(room_id)
 
+func _maybe_submit_rematch_ready(room_id: String, snapshot: Dictionary) -> void:
+	if _pending_rematch_room_id.is_empty():
+		return
+	if room_id != _pending_rematch_room_id:
+		return
+	if lobby_client == null:
+		return
+	var room_status := str(snapshot.get("status", "")).strip_edges().to_lower()
+	if room_status == LobbyRoomScript.STATUS_IN_MATCH:
+		return
+	var local_member := _get_room_member_snapshot(snapshot, _lobby_session_id)
+	if local_member.is_empty():
+		return
+	if bool(local_member.get("is_ready", false)):
+		_pending_rematch_ready_submitted = false
+		status_label.text = "Rematch offered. Waiting for your opponent to accept."
+		return
+	if not bool(local_member.get("has_valid_deck", false)):
+		_pending_rematch_ready_submitted = false
+		status_label.text = "Choose a valid deck to offer the rematch."
+		return
+	if _pending_rematch_ready_submitted:
+		return
+	_pending_rematch_ready_submitted = true
+	status_label.text = "Offering rematch..."
+	lobby_client.set_ready(true)
+
+func _get_room_member_snapshot(snapshot: Dictionary, session_id: String) -> Dictionary:
+	if session_id.is_empty():
+		return {}
+	for member in snapshot.get("members", []):
+		if str(member.get("session_id", "")) == session_id and member is Dictionary:
+			return (member as Dictionary).duplicate(true)
+	return {}
+
 func _on_local_match_assigned(match_info: Dictionary) -> void:
 	if _match_launch_queued:
 		return
+	_pending_rematch_room_id = ""
+	_pending_rematch_ready_submitted = false
 	_match_launch_queued = true
 	_save_active_match_resume(match_info)
 	_write_smoke_trace("local_match_assigned match=%s" % str(match_info.get("match_id", "")))
@@ -3414,6 +3462,8 @@ func _on_local_match_assigned(match_info: Dictionary) -> void:
 func _on_remote_match_assigned(match_info: Dictionary) -> void:
 	if _match_launch_queued:
 		return
+	_pending_rematch_room_id = ""
+	_pending_rematch_ready_submitted = false
 	_match_launch_queued = true
 	_save_active_match_resume(match_info)
 	_write_smoke_trace("remote_match_assigned match=%s" % str(match_info.get("match_id", "")))
@@ -3513,7 +3563,7 @@ func _on_lobby_disconnected() -> void:
 		return
 	_refresh_account_identity_label()
 	_clear_current_seek_state()
-	status_label.text = "Lobby connection lost. Refresh open seeks to reconnect."
+	status_label.text = "Lobby connection lost. Refresh seeks to reconnect."
 	if _should_ignore_lobby_failure_for_smoke():
 		return
 	_fail_smoke_if_enabled("DISCONNECTED_FROM_LOBBY")
@@ -3527,6 +3577,21 @@ func _on_game_forfeit_requested() -> void:
 func _on_game_leave_match_requested() -> void:
 	_return_to_menu()
 
+func _on_game_rematch_requested() -> void:
+	var active_game = _get_active_embedded_game()
+	var match_info: Dictionary = {}
+	if active_game != null:
+		var active_match_info = active_game.get("_current_match_info")
+		if active_match_info is Dictionary:
+			match_info = (active_match_info as Dictionary).duplicate(true)
+	var room_id := str(match_info.get("room_id", "")).strip_edges()
+	if room_id.is_empty():
+		_return_to_menu()
+		return
+	_pending_rematch_room_id = room_id
+	_pending_rematch_ready_submitted = false
+	_return_to_lobby_for_rematch()
+
 func _on_game_return_to_menu_requested() -> void:
 	var active_game = _get_active_embedded_game()
 	if active_game != null:
@@ -3538,7 +3603,24 @@ func _on_game_return_to_menu_requested() -> void:
 			return
 	_return_to_menu()
 
+func _return_to_lobby_for_rematch() -> void:
+	_suppress_active_match_auto_resume_from_embedded_games()
+	show_menu()
+	_match_launch_queued = false
+	_cleanup_lobby(false)
+	for node_name in _get_embedded_game_node_names():
+		var game = get_node_or_null("GameContainer/" + node_name)
+		if game and game.has_method("cleanup"):
+			game.cleanup()
+	_clear_saved_match_resume()
+	_refresh_server_version_overlay_visibility()
+	multiplayer_container.visible = true
+	status_label.text = "Reconnecting to lobby for rematch..."
+	_maybe_connect_authenticated_lobby("Reconnecting to lobby for rematch...")
+
 func _return_to_menu() -> void:
+	_pending_rematch_room_id = ""
+	_pending_rematch_ready_submitted = false
 	_suppress_active_match_auto_resume_from_embedded_games()
 	show_menu()
 	_match_launch_queued = false
@@ -3638,7 +3720,7 @@ func _cleanup_lobby(clear_session: bool) -> void:
 		_refresh_friends_overlay()
 		_refresh_profile_summary_label()
 		_refresh_account_identity_label()
-		status_label.text = "Refresh open seeks or create your own."
+		status_label.text = "Refresh seeks to join a room or watch a live match."
 	_update_resume_controls()
 	_refresh_multiplayer_action_state()
 

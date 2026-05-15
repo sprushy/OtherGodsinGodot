@@ -1217,7 +1217,8 @@ func load_v_w_card_scenario() -> void:
 	_place_test_prepared_card(player1, player1.reserve_zones[2], VoidShield.new())
 	_place_test_prepared_card(player1, player1.reserve_zones[3], VisionOfOdin.new())
 
-	# P1 hand: Wild Magic shelves Brown Bear then Lailoken before landing on Heroic Stand;
+	# P1 hand: Wild Magic shelves Brown Bear then Lailoken before landing on Heroic Stand,
+	# preparing it revealed in your first open reserve slot;
 	# Vision of Tartarus hits any board creature for -6 Str / -6 Res (two Void creatures primed);
 	# Wheel of Fire permanently binds the enemy Minotaur and can push it back again each turn.
 	_add_test_hand_card(player1, WildMagic.new())
@@ -1287,7 +1288,7 @@ func load_v_w_card_scenario() -> void:
 		+ "Board - attack Gudud Priest with Wolf Adolescent this turn to earn the kill; on your next P1 upkeep (after choosing Draw or Gain Mana) the Maturation prompt appears and you can send Wolf Adolescent to the grave and summon Hati from your deck.  |  "
 		+ "Warrior Dragon - ready Aerial Ancient on frontline lane 1; attack with it or hold it as a wall.  |  "
 		+ "White Stag - in reserve, aggressive; let it attack into something that can kill it to trigger Hunter's Mark and hand your opponent 2 mana.  |  "
-		+ "Hand - Wild Magic shelves Brown Bear then Lailoken from the top of your deck before landing on Heroic Stand and adding it to hand. Vision of Tartarus hits any board creature for -6 Str / -6 Res (two creatures are already banished in your Abyss). Wheel of Fire binds the enemy Minotaur Footsoldier, pushes it back one row on cast, then lets you pay 1 mana at the start of your turn to push it further again.  |  "
+		+ "Hand - Wild Magic shelves Brown Bear then Lailoken from the top of your deck before landing on Heroic Stand and preparing it revealed in your first open reserve slot. Vision of Tartarus hits any board creature for -6 Str / -6 Res (two creatures are already banished in your Abyss). Wheel of Fire binds the enemy Minotaur Footsoldier, pushes it back one row on cast, then lets you pay 1 mana at the start of your turn to push it further again.  |  "
 		+ "Prepared - pass to P2 and let the aggressive Brown Bear declare an attack on your creature: Void Shield intercepts and banishes the attacker. Vision of Odin is also prepared; respond to any action, target a non-Norse creature for -7 Str / -1 Spd, or target Wolf Adolescent (Norse) for +7 Str / +1 Spd instead.  |  "
 		+ "Power - Walk of the Sage is unlocked; pay 2 mana to Void Lailoken or Nimue (both Mages) from your deck."
 	)

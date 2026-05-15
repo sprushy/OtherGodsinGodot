@@ -41,7 +41,7 @@ func get_activation_failure_reason(_game_manager: GameManager) -> String:
 func can_respond_to_priority_action(action: CardAction, game_manager: GameManager) -> bool:
 	return _can_respond_to_attack_action(action, game_manager, true)
 
-func activate(game_manager: GameManager, _target: Card = null) -> void:
+func activate(game_manager: GameManager, _activation_data = null) -> void:
 	var attack_action := _get_relevant_attack_action(game_manager)
 	if not _can_respond_to_attack_action(attack_action, game_manager, false):
 		if game_manager != null:

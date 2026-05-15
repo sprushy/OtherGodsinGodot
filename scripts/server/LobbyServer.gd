@@ -1390,15 +1390,16 @@ func _on_network_command_received(command: Dictionary, sender_info: Dictionary) 
 	_trace("received request %s from peer %d" % [LobbyProtocolScript.get_type(command), peer_id])
 	_handle_request(peer_id, command)
 
-func _on_match_closed(match_id: String, room_id: String, _final_status: String) -> void:
+func _on_match_closed(match_id: String, room_id: String, final_status: String) -> void:
 	if room_id.is_empty() or not rooms_by_id.has(room_id):
 		return
 	var room: LobbyRoom = rooms_by_id[room_id]
 	if room.assigned_match_id != match_id:
 		return
-	# A finished match should retire its originating seek. Leaving the room
-	# alive here causes reconnect/login to reclaim the old seek and blocks the
-	# player from joining a fresh one after returning to the menu.
+	if final_status == MatchSessionScript.STATUS_FINISHED:
+		room.reset_after_match()
+		_emit_room_updates(room)
+		return
 	_close_room(room_id)
 	_broadcast_room_lists()
 

@@ -37,6 +37,7 @@ var current_account_id: String = ""
 var current_username: String = ""
 var current_auth_mode: String = "login"
 var current_server_version: String = ""
+var current_allow_friend_observers_to_see_cards: bool = true
 var current_active_match_info: Dictionary = {}
 var current_room_snapshot: Dictionary = {}
 var current_preferred_account_deck_id: String = ""
@@ -77,6 +78,7 @@ func connect_to_server(
 	current_account_id = ""
 	current_username = ""
 	current_auth_mode = "login"
+	current_allow_friend_observers_to_see_cards = true
 	current_room_snapshot = {}
 	current_active_match_info = {}
 	current_preferred_account_deck_id = ""
@@ -115,6 +117,7 @@ func disconnect_from_server() -> void:
 	current_account_id = ""
 	current_username = ""
 	current_auth_mode = "login"
+	current_allow_friend_observers_to_see_cards = true
 	current_room_snapshot = {}
 	current_active_match_info = {}
 	current_preferred_account_deck_id = ""
@@ -206,6 +209,12 @@ func set_account_preferred_deck(deck_id: String) -> void:
 		"deck_id": current_preferred_account_deck_id,
 	})
 
+func set_allow_friend_observers_to_see_cards(allowed: bool) -> void:
+	current_allow_friend_observers_to_see_cards = allowed
+	_send_request(LobbyProtocolScript.SET_OBSERVER_FRIEND_CARD_VISIBILITY, {
+		"allow_friend_observers_to_see_cards": allowed,
+	})
+
 func request_profile_summary() -> void:
 	_send_request(LobbyProtocolScript.REQUEST_PROFILE_SUMMARY)
 
@@ -258,6 +267,7 @@ func lobby_event(message: Dictionary) -> void:
 			current_account_id = str(payload.get("account_id", ""))
 			current_username = str(payload.get("username", current_player_name))
 			current_auth_mode = str(payload.get("auth_mode", _pending_auth_mode))
+			current_allow_friend_observers_to_see_cards = bool(payload.get("allow_friend_observers_to_see_cards", true))
 			var hello_room = payload.get("room", {})
 			current_room_snapshot = hello_room.duplicate(true) if hello_room is Dictionary else {}
 			var hello_active_match = payload.get("active_match_info", {})
@@ -274,6 +284,7 @@ func lobby_event(message: Dictionary) -> void:
 			current_account_id = str(payload.get("account_id", ""))
 			current_username = str(payload.get("username", current_player_name))
 			current_auth_mode = str(payload.get("auth_mode", _pending_auth_mode))
+			current_allow_friend_observers_to_see_cards = bool(payload.get("allow_friend_observers_to_see_cards", true))
 			var room = payload.get("room", {})
 			current_room_snapshot = room.duplicate(true) if room is Dictionary else {}
 			var active_match = payload.get("active_match_info", {})

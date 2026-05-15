@@ -26,6 +26,7 @@ var use_current_scene_relative_path: bool = false
 ## Player 0 = host (peer_id 1), Player 1 = first remote client.
 var player_peer_ids: Dictionary = {}
 var spectator_peer_ids: Array[int] = []
+var spectator_visible_player_indices_by_peer: Dictionary = {}
 
 ## The local player index on this machine (-1 until assigned).
 var local_player_index: int = -1
@@ -103,6 +104,7 @@ func disconnect_client() -> void:
 	local_player_index = -1
 	player_peer_ids.clear()
 	spectator_peer_ids.clear()
+	spectator_visible_player_indices_by_peer.clear()
 	last_server_error = OK
 
 func reconnect_client(address: String = "", port: int = -1) -> Error:
@@ -217,6 +219,7 @@ func deny_match_join(target_peer_id: int, reason: String) -> void:
 
 func unassign_peer(peer_id: int) -> void:
 	spectator_peer_ids.erase(peer_id)
+	spectator_visible_player_indices_by_peer.erase(peer_id)
 	for player_index in player_peer_ids.keys():
 		if int(player_peer_ids[player_index]) != peer_id:
 			continue
@@ -235,6 +238,29 @@ func register_spectator_peer(peer_id: int) -> void:
 	if peer_id <= 0 or spectator_peer_ids.has(peer_id):
 		return
 	spectator_peer_ids.append(peer_id)
+
+func set_spectator_visible_player_indices(peer_id: int, player_indices: Array) -> void:
+	if peer_id <= 0:
+		return
+	var sanitized: Array[int] = []
+	for raw_index in player_indices:
+		var player_index := int(raw_index)
+		if player_index < 0 or player_index in sanitized:
+			continue
+		sanitized.append(player_index)
+	spectator_visible_player_indices_by_peer[peer_id] = sanitized
+
+func get_spectator_visible_player_indices(peer_id: int) -> Array[int]:
+	var stored = spectator_visible_player_indices_by_peer.get(peer_id, [])
+	var output: Array[int] = []
+	if not (stored is Array):
+		return output
+	for raw_index in stored:
+		var player_index := int(raw_index)
+		if player_index < 0 or player_index in output:
+			continue
+		output.append(player_index)
+	return output
 
 func is_spectator_peer(peer_id: int) -> bool:
 	return spectator_peer_ids.has(peer_id)

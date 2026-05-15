@@ -568,13 +568,18 @@ static func _get_level_symbol_color(card: Card) -> Color:
 
 static func _make_level_symbol_row(card: Card, symbol_size: float) -> Control:
 	var row: Control = LevelSymbolRow.new()
-	row.setup(card.get_effective_level(), symbol_size, _get_level_symbol_color(card))
+	row.setup(
+		card.get_effective_level(),
+		symbol_size,
+		_get_level_symbol_color(card),
+		LevelSymbolRow.get_symbol_texture_for_card(card)
+	)
+	var tooltip_lines := PackedStringArray(["Level: %d" % card.get_effective_level()])
 	var level_breakdown := card.get_buff_tooltip("lvl")
 	if level_breakdown != "":
-		row.tooltip_text = "LVL:\n" + level_breakdown
-		row.mouse_filter = Control.MOUSE_FILTER_STOP
-	else:
-		row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		tooltip_lines.append("LVL:\n" + level_breakdown)
+	row.tooltip_text = "\n".join(tooltip_lines)
+	row.mouse_filter = Control.MOUSE_FILTER_STOP
 	return row
 
 static func _make_label(

@@ -155,9 +155,12 @@ func _on_match_join_requested(join_request: Dictionary, sender_info: Dictionary)
 		network_manager.deny_match_join(peer_id, "That match ID is no longer valid.")
 		return
 	if observer_mode:
+		var observer_session_id := str(join_request.get("observer_session_id", "")).strip_edges()
+		var visible_player_indices: Array[int] = match_session.get_spectator_visible_player_indices(observer_session_id)
 		match_session.add_spectator_peer(peer_id)
+		network_manager.set_spectator_visible_player_indices(peer_id, visible_player_indices)
 		network_manager.approve_match_join(peer_id, -1, match_session.to_spectator_match_info())
-		var spectator_state := GameState.serialize(game_manager, GameState.SPECTATOR_VIEWER_INDEX)
+		var spectator_state := GameState.serialize(game_manager, GameState.SPECTATOR_VIEWER_INDEX, visible_player_indices)
 		network_manager.broadcast_event_to_peer(peer_id, "full_state", {
 			state = spectator_state,
 			action_message = "Observing live match.",

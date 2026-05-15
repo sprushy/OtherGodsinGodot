@@ -20,6 +20,8 @@ const MOVE_DIAGONAL_INDICATOR_TEXTURE := preload("res://images/ui/move_arrows/An
 const MINOR_ACTION_SYMBOL_TEXTURE := preload("res://images/ui/MinorActionSymbol.png")
 const MAJOR_ACTION_SYMBOL_TEXTURE := preload("res://images/ui/MajorActionSymbol.png")
 const MANA_ORB_TEXTURE := preload("res://images/ui/ManaOrb.png")
+const SWITCH_TO_AGGRESSIVE_SYMBOL_TEXTURE := preload("res://images/ui/SwitchToAggressiveSymbol.png")
+const SWITCH_TO_DEFENSIVE_SYMBOL_TEXTURE := preload("res://images/ui/SwitchToDefensiveSymbol.png")
 const BOARD_ZONE_SLAB_TEXTURE_PATHS := [
 	"res://images/board/stone_zone_slab.png",
 	"res://images/board/slot_tile_1.png",
@@ -42,7 +44,8 @@ const TEZ_TONAL_MASTERY_TEXTURE_PATHS := [
 const TEZ_NORMAL_GOD_NAME := "Tezcatlipoca, the Smoking Mirror"
 const TEZ_REQUIRED_SACRIFICES := 4
 const TEZ_TONAL_MASTERY_TOKEN_THRESHOLD := 3
-const LEVEL_BADGE_BOTTOM := 24.0
+const LEVEL_BADGE_TOP := -12.0
+const LEVEL_BADGE_BOTTOM := 12.0
 const BADGE_ROW_GAP := 6.0
 const BADGE_ROW_TOP := LEVEL_BADGE_BOTTOM + BADGE_ROW_GAP + 31.0
 const TEZ_BADGE_LEFT := -62
@@ -63,6 +66,17 @@ const POPUP_Z_INDEX := 2290
 
 func _get_badge_row_top() -> float:
 	return BADGE_ROW_TOP
+
+func _get_left_affordance_row_top(card: Card) -> float:
+	if card == null:
+		return _get_badge_row_top()
+	return 32.0 if card.is_sleeping else _get_badge_row_top()
+
+func _get_secondary_left_affordance_row_top(card: Card) -> float:
+	var badge_top := _get_left_affordance_row_top(card)
+	if card != null and not card.equipment.is_empty():
+		return badge_top + EquipmentCard.EQUIPPED_AFFORDANCE_SIZE.y + EQUIPMENT_AFFORDANCE_GAP
+	return badge_top
 
 class StackTargetIndicator extends Control:
 	func _ready() -> void:
@@ -354,6 +368,7 @@ signal card_clicked(card: Card)
 signal equipment_target_action_clicked(card: Card, action: String)
 signal champions_call_clicked(card: GodCard)
 signal tez_necoc_yaotl_badge_clicked(card: Card)
+signal creature_stance_switch_clicked(card: Card, target_mode: int)
 signal creature_drag_started(card: Card, from_zone: Zone)
 signal creature_right_clicked(card: Card)
 signal god_right_clicked(card: Card)
@@ -465,6 +480,32 @@ static func get_creature_action_symbol_entries(card: Card) -> Array[Dictionary]:
 		"tooltip": "Major action used" if card.creature_major_action_used else "Major action available",
 	})
 	return symbols
+
+static func get_creature_action_symbol_hover_text(symbol: Dictionary, card: Card) -> String:
+	if card == null:
+		return ""
+	var kind := str(symbol.get("kind", Card.ACTION_COST_NONE))
+	match kind:
+		Card.ACTION_COST_MINOR:
+			var max_minor := maxi(0, card.get_max_minor_creature_actions_per_turn())
+			var used_minor := mini(card.creature_minor_actions_used, max_minor)
+			var remaining_minor := maxi(0, max_minor - used_minor)
+			var lines := [
+				"Minor Action Point",
+				"%s has %d of %d minor action point(s) remaining this turn." % [card.card_name, remaining_minor, max_minor],
+				"Minor actions are used for moving, changing mode, picking up nearby equipment, and some abilities.",
+			]
+			return "\n".join(lines)
+		Card.ACTION_COST_MAJOR:
+			var lines := [
+				"Major Action Point",
+				"%s has already spent its major action point this turn." % card.card_name,
+				"Major actions are used for attacking, destroying enemy equipment, and major creature abilities.",
+			]
+			if not card.creature_major_action_used:
+				lines[1] = "%s still has its major action point this turn." % card.card_name
+			return "\n".join(lines)
+	return str(symbol.get("tooltip", ""))
 
 static func get_creature_action_symbol_state(card: Card) -> Dictionary:
 	var state := {}
@@ -1093,13 +1134,21 @@ func _add_level_badge(
 	badge.offset_right = left + badge_width
 	badge.offset_bottom = bottom
 	var row := LevelSymbolRow.new()
-	row.setup(effective_level, symbol_size, symbol_color)
+	row.setup(
+		effective_level,
+		symbol_size,
+		symbol_color,
+		LevelSymbolRow.get_symbol_texture_for_card(card)
+	)
 	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	badge.add_child(row)
 	overlay.add_child(badge)
+	var tooltip_lines := PackedStringArray(["Level: %d" % effective_level])
 	var breakdown := card.get_full_stat_breakdown("lvl")
-	if badge != null and breakdown != "":
-		badge.tooltip_text = breakdown
+	if breakdown != "":
+		tooltip_lines.append("LVL:\n" + breakdown)
+	if badge != null:
+		badge.tooltip_text = "\n".join(tooltip_lines)
 		badge.mouse_filter = Control.MOUSE_FILTER_STOP
 	return badge
 
@@ -1471,7 +1520,7 @@ func _add_tez_tonal_mastery_badge(overlay: Control, card: Card) -> void:
 
 	_connect_badge_hover(
 		badge,
-		"Tonal Mastery: %d/%d tokens\nAt 3 tokens, gain 2 mana and reset." % [
+		"Tonal Mastery: %d/%d tokens\nAt 3 tokens, gain 3 mana and reset." % [
 			token_count,
 			TEZ_TONAL_MASTERY_TOKEN_THRESHOLD
 		]
@@ -2254,7 +2303,7 @@ func _add_equipment_affordances(overlay: Control, card: Card) -> void:
 	if card.equipment.is_empty():
 		return
 
-	var badge_top := 32.0 if card.is_sleeping else _get_badge_row_top()
+	var badge_top := _get_left_affordance_row_top(card)
 	var badge_left := 6.0
 	for equip in card.equipment:
 		if equip == null:
@@ -2346,9 +2395,7 @@ func _add_binding_affordances(overlay: Control, card: Card) -> void:
 	var dromi_source := _get_dromi_binding_source(card)
 	if dromi_source == null:
 		return
-	var badge_top := 32.0 if card.is_sleeping else _get_badge_row_top()
-	if not card.equipment.is_empty():
-		badge_top = EQUIPMENT_AFFORDANCE_TOP + EquipmentCard.EQUIPPED_AFFORDANCE_SIZE.y + EQUIPMENT_AFFORDANCE_GAP
+	var badge_top := _get_secondary_left_affordance_row_top(card)
 	var art_preview: Control = null
 	if dromi_source != card:
 		art_preview = _make_card_art_preview(dromi_source)
@@ -2428,9 +2475,7 @@ func _add_boon_affordances(overlay: Control, card: Card) -> void:
 	if entries.is_empty():
 		return
 
-	var badge_top := 32.0 if card.is_sleeping else _get_badge_row_top()
-	if not card.equipment.is_empty():
-		badge_top = EQUIPMENT_AFFORDANCE_TOP + EquipmentCard.EQUIPPED_AFFORDANCE_SIZE.y + EQUIPMENT_AFFORDANCE_GAP
+	var badge_top := _get_secondary_left_affordance_row_top(card)
 	var badge_left := 6.0
 	for entry in entries:
 		var preview := _make_debuff_source_preview(entry)
@@ -2532,6 +2577,84 @@ func _get_debuff_affordance_entries(card: Card) -> Array[Dictionary]:
 	for binding in _get_attached_permanent_hexes(card):
 		_append_debuff_affordance_entry(entries, seen, _build_debuff_entry_from_binding(binding))
 	return entries
+
+func _is_card_soft_selected(card: Card) -> bool:
+	if card == null:
+		return false
+	var scene_root := _get_targeting_scene_root()
+	if scene_root == null:
+		return false
+	var selected = scene_root.get("selected_card")
+	return selected is Card and selected == card
+
+func _get_explicit_selected_attacker(scene_root: Node) -> Card:
+	if scene_root == null:
+		return null
+	var targeting_match_manager := _get_targeting_match_manager(scene_root)
+	if targeting_match_manager != null and targeting_match_manager.selected_attacker is Card:
+		return targeting_match_manager.selected_attacker as Card
+	var attacker = scene_root.get("selected_attacker")
+	if attacker is Card:
+		return attacker as Card
+	return null
+
+func _is_card_click_selected(card: Card) -> bool:
+	if card == null:
+		return false
+	if _is_card_soft_selected(card):
+		return true
+	var scene_root := _get_targeting_scene_root()
+	if scene_root == null:
+		return false
+	if _get_explicit_selected_attacker(scene_root) == card:
+		return true
+	var indicated_move_card = scene_root.get("_indicated_move_card")
+	return indicated_move_card is Card and indicated_move_card == card
+
+func _should_show_creature_action_symbols(card: Card) -> bool:
+	if card == null:
+		return false
+	if _hovered or _pinned:
+		return true
+	if _is_card_selected_attacker(card) or _is_card_selected_interceptor(card):
+		return true
+	if _is_card_pending_selection_source(card) or _is_card_pending_target(card) or _is_card_pending_attack_target(card):
+		return true
+	if _is_card_soft_selected(card):
+		return true
+	return _get_hover_card_options_card() == card
+
+func _should_show_stance_switch_symbol(card: Card) -> bool:
+	if card == null or game_manager == null:
+		return false
+	if _is_enemy:
+		return false
+	if card.card_type != Card.CardType.CREATURE or card.is_god:
+		return false
+	if card.is_face_down or card.is_prepared or card.is_stealth:
+		return false
+	if card.current_zone == null or not card.current_zone.is_board_zone():
+		return false
+	if card.get_controller() != game_manager.current_player:
+		return false
+	if not card.can_take_minor_creature_action() or card.is_sleeping:
+		return false
+	return _is_card_click_selected(card)
+
+func _get_stance_switch_hover_text(card: Card, target_mode: int) -> String:
+	if card == null:
+		return ""
+	var target_label := "aggressive" if target_mode == Card.CreatureMode.AGGRESSIVE else "defensive"
+	var lines := [
+		"Switch Stance",
+		"Click to switch %s to %s stance." % [card.card_name, target_label],
+		"Uses a minor action point.",
+	]
+	if game_manager != null:
+		var mana_cost := game_manager.get_creature_action_mana_cost(card, "change stance")
+		if mana_cost > 0:
+			lines.append("Also costs %d mana." % mana_cost)
+	return "\n".join(lines)
 
 func _append_debuff_affordance_entry(entries: Array[Dictionary], seen: Dictionary, entry: Dictionary) -> void:
 	if entry.is_empty():
@@ -3865,6 +3988,7 @@ func _refresh_display() -> void:
 					muted_badge.add_child(muted_lbl)
 					god_overlay.add_child(muted_badge)
 				_add_creature_action_symbols(god_overlay, card)
+				_add_stance_switch_symbol(god_overlay, card)
 				_add_followers_attack_result_label(god_overlay)
 			return
 
@@ -3948,7 +4072,7 @@ func _refresh_display() -> void:
 			DefenseShieldOverlay.ensure_on(card_overlay, shield_layout, shield_scale)
 		elif shows_aggressive_sword:
 			AggressiveSwordOverlay.ensure_on(card_overlay, AggressiveSwordOverlay.LAYOUT_STAT_UNDER)
-		_add_level_badge(card_overlay, card, Control.PRESET_TOP_LEFT, 6, 6, 54, 24)
+		_add_level_badge(card_overlay, card, Control.PRESET_TOP_LEFT, 6, LEVEL_BADGE_TOP, 54, LEVEL_BADGE_BOTTOM)
 		_add_token_badge(card_overlay, card, Control.PRESET_TOP_LEFT, 6, 28, 66, 46)
 		_add_prepared_magical_mana_badge(card_overlay, card)
 		if card.is_power:
@@ -4072,6 +4196,7 @@ func _refresh_display() -> void:
 			card_overlay.add_child(muted_badge)
 
 		_add_creature_action_symbols(card_overlay, card)
+		_add_stance_switch_symbol(card_overlay, card)
 		_defense_overlay = card_overlay if shows_defense_shield else null
 		_raised_overlay  = card_overlay if (shows_defense_shield or card.is_stealth) else null
 		z_index = _get_resting_z_index()
@@ -4088,6 +4213,8 @@ func _add_creature_action_symbols(overlay: Control, card: Card) -> void:
 	var viewer := _get_viewer_player()
 	var can_view_stealth := not card.is_stealth or card.get_controller() == viewer or card.is_temporarily_revealed()
 	if card.is_face_down or card.is_prepared or not can_view_stealth:
+		return
+	if not _should_show_creature_action_symbols(card):
 		return
 
 	var symbols := BoardZoneUI.get_creature_action_symbol_entries(card)
@@ -4163,7 +4290,8 @@ func _add_creature_action_symbols(overlay: Control, card: Card) -> void:
 		slot.offset_top = 0.0
 		slot.offset_right = left + icon_size
 		slot.offset_bottom = icon_size
-		slot.tooltip_text = str(symbol.get("tooltip", ""))
+		var hover_text := BoardZoneUI.get_creature_action_symbol_hover_text(symbol, card)
+		slot.tooltip_text = hover_text
 		var style := StyleBoxFlat.new()
 		style.bg_color = Color(0, 0, 0, 0)
 		style.corner_radius_top_left = 3
@@ -4181,11 +4309,71 @@ func _add_creature_action_symbols(overlay: Control, card: Card) -> void:
 		icon.modulate = Color.WHITE
 		icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		slot.add_child(icon)
+		_connect_badge_hover(slot, hover_text)
 		row.add_child(slot)
 
 	if not burst_requests.is_empty():
 		BoardZoneUI.clear_pending_action_point_spend_visual_kinds(card)
-		call_deferred("_play_creature_action_symbol_spend_bursts", burst_requests, icon_size)
+		# Deferred burst effects can outlive the board cell during destructive stack
+		# resolution. Keep the action symbols accurate and skip the flourish.
+
+func _add_stance_switch_symbol(overlay: Control, card: Card) -> void:
+	if overlay == null or card == null:
+		return
+	if not _should_show_stance_switch_symbol(card):
+		return
+
+	var target_mode := Card.CreatureMode.AGGRESSIVE if card.creature_mode == Card.CreatureMode.DEFENSIVE else Card.CreatureMode.DEFENSIVE
+	var texture := SWITCH_TO_AGGRESSIVE_SYMBOL_TEXTURE if target_mode == Card.CreatureMode.AGGRESSIVE else SWITCH_TO_DEFENSIVE_SYMBOL_TEXTURE
+	if texture == null:
+		return
+
+	var badge := PanelContainer.new()
+	badge.mouse_filter = Control.MOUSE_FILTER_STOP
+	badge.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	badge.tooltip_text = _get_stance_switch_hover_text(card, target_mode)
+	badge.anchor_left = 0.0
+	badge.anchor_right = 0.0
+	badge.anchor_top = 1.0
+	badge.anchor_bottom = 1.0
+	badge.offset_left = 4.0
+	badge.offset_top = -102.0
+	badge.offset_right = 68.0
+	badge.offset_bottom = -38.0
+
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.07, 0.10, 0.16, 0.94)
+	style.border_color = Color(0.84, 0.88, 0.96, 0.98)
+	style.shadow_color = Color(0.02, 0.02, 0.03, 0.42)
+	style.shadow_size = 4
+	style.corner_radius_top_left = 8
+	style.corner_radius_top_right = 8
+	style.corner_radius_bottom_left = 8
+	style.corner_radius_bottom_right = 8
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		style.set_border_width(side, 1)
+	badge.add_theme_stylebox_override("panel", style)
+
+	var icon := TextureRect.new()
+	icon.texture = texture
+	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	icon.offset_left = 4.0
+	icon.offset_top = 4.0
+	icon.offset_right = -4.0
+	icon.offset_bottom = -4.0
+	badge.add_child(icon)
+
+	var hover_text := badge.tooltip_text
+	_connect_badge_hover(badge, hover_text)
+	badge.gui_input.connect(func(event: InputEvent) -> void:
+		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+			creature_stance_switch_clicked.emit(card, target_mode)
+			accept_event()
+	)
+	overlay.add_child(badge)
 
 func _play_creature_action_symbol_spend_bursts(burst_requests: Array, icon_size: float) -> void:
 	if not is_inside_tree() or is_queued_for_deletion():
@@ -4262,6 +4450,7 @@ func _notification(what: int) -> void:
 			var _c := _preview_card if _preview_card != null else (zone.cards[0] if zone != null and zone.cards.size() > 0 else null)
 			if _c != null:
 				_notify_hover_card_options_changed(_c)
+				_refresh_display()
 			if _c != null:
 				z_index = HOVER_BOARD_Z_INDEX
 			elif zone != null and zone.cards.is_empty():
@@ -4278,6 +4467,8 @@ func _notification(what: int) -> void:
 			_notify_hover_card_options_changed(null)
 			z_index = _get_resting_z_index()
 			if zone != null and zone.cards.is_empty():
+				_refresh_display()
+			elif zone != null and not zone.cards.is_empty():
 				_refresh_display()
 			_schedule_hide()
 

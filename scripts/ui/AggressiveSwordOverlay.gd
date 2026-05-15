@@ -1,6 +1,6 @@
 extends RefCounted
 
-const SWORD_TEXTURE := preload("res://images/AggressiveSwordOverlay.png")
+const SWORD_TEXTURE_PATH := "res://images/AggressiveSwordOverlay.png"
 const OVERLAY_NAME := "AggressiveSwordOverlay"
 const LAYOUT_CORNER := 0
 const LAYOUT_STAT_UNDER := 1
@@ -15,8 +15,20 @@ const STAT_BADGE_WIDTH := 60.0
 const STAT_BOTTOM_EXTENSION_RATIO := 0.34
 const STAT_MIN_EXTENSION := 18.0
 
+static var _sword_texture: Texture2D = null
+static var _sword_texture_loaded := false
+
+static func _get_sword_texture() -> Texture2D:
+	if not _sword_texture_loaded:
+		_sword_texture_loaded = true
+		_sword_texture = load(SWORD_TEXTURE_PATH) as Texture2D
+	return _sword_texture
+
 static func ensure_on(parent: Control, p_layout_kind: int = LAYOUT_CORNER, p_size_multiplier: float = 1.0) -> Control:
 	if parent == null or not is_instance_valid(parent):
+		return null
+	var texture := _get_sword_texture()
+	if texture == null:
 		return null
 	var existing := parent.get_node_or_null(OVERLAY_NAME) as Control
 	if existing != null:
@@ -32,7 +44,7 @@ static func ensure_on(parent: Control, p_layout_kind: int = LAYOUT_CORNER, p_siz
 
 	var sword := TextureRect.new()
 	sword.name = "SwordImage"
-	sword.texture = SWORD_TEXTURE
+	sword.texture = texture
 	sword.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	sword.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	sword.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -62,10 +74,13 @@ static func _configure_container(container: Control, p_layout_kind: int, p_size_
 	callable.call_deferred()
 
 static func _compute_sword_size(parent_size: Vector2, width_ratio: float, max_height_ratio: float, size_multiplier: float) -> Vector2:
-	var texture_size := SWORD_TEXTURE.get_size()
+	var texture := _get_sword_texture()
+	if texture == null:
+		return Vector2.ZERO
+	var texture_size: Vector2 = texture.get_size()
 	if texture_size.x <= 0.0 or texture_size.y <= 0.0:
 		return Vector2.ZERO
-	var aspect := texture_size.x / texture_size.y
+	var aspect: float = texture_size.x / texture_size.y
 	var scaled_width_ratio := width_ratio * size_multiplier
 	var scaled_max_height_ratio := max_height_ratio * size_multiplier
 	var sword_size := Vector2(parent_size.x * scaled_width_ratio, parent_size.x * scaled_width_ratio / aspect)

@@ -7,6 +7,7 @@ const LocalProfileStoreScript = preload("res://scripts/core/LocalProfileStore.gd
 const DeckCatalogUtilsScript = preload("res://scripts/core/DeckCatalogUtils.gd")
 const CardCatalogScript = preload("res://scripts/cards/CardCatalog.gd")
 const TiamatScript = preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
+const LevelSymbolRow = preload("res://scripts/ui/LevelSymbolRow.gd")
 const MANA_ORB_TEXTURE := preload("res://images/ui/ManaOrb.png")
 
 signal back_pressed
@@ -83,6 +84,7 @@ var _deck_panel:       VBoxContainer
 var _preview_outer:    PanelContainer
 var _preview_layout:   HBoxContainer
 var _preview_text_box: VBoxContainer
+var _preview_details_scroll: ScrollContainer
 var _deck_list:        VBoxContainer
 var _deck_count_lbl:   Label
 var _validation_lbl:   Label
@@ -241,6 +243,7 @@ func _build_ui() -> void:
 	body_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	body_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 	_apply_deckbuilder_scrollbar_style(body_scroll)
+	body_scroll.gui_input.connect(_on_deckbuilder_scroll_gui_input)
 	root.add_child(body_scroll)
 
 	var body := GridContainer.new()
@@ -599,12 +602,14 @@ func _build_deck_panel(parent: Control) -> void:
 	_prev_type.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
 	var details_scroll := ScrollContainer.new()
+	_preview_details_scroll = details_scroll
 	details_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	details_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	details_scroll.custom_minimum_size.y = 0
 	details_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	details_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 	CardDetailContentBuilder.apply_deckbuilder_scrollbar_style(details_scroll, true)
+	details_scroll.gui_input.connect(_on_deckbuilder_scroll_gui_input)
 	prev_text.add_child(details_scroll)
 
 	var details_scroll_content := MarginContainer.new()
@@ -705,6 +710,7 @@ func _build_deck_panel(parent: Control) -> void:
 	deck_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	deck_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 	_apply_deckbuilder_scrollbar_style(deck_scroll, true)
+	deck_scroll.gui_input.connect(_on_deckbuilder_scroll_gui_input)
 	panel.add_child(deck_scroll)
 
 	var deck_scroll_content := MarginContainer.new()
@@ -949,8 +955,107 @@ func _matches_search_query(card: Card) -> bool:
 
 	return false
 
+func _get_card_stat_summary_parts(card: Card, include_cost: bool = true) -> Array[String]:
+	var stat_parts: Array[String] = []
+	if card == null:
+		return stat_parts
+
+	if not card.is_god and card.level > 0:
+		stat_parts.append("LVL:%d" % card.level)
+
+	if card.card_type == Card.CardType.CREATURE and not card.is_god:
+		stat_parts.append("STR:%d" % card.strength)
+		stat_parts.append("RES:%d" % card.resilience)
+		stat_parts.append("SPD:%d" % card.speed)
+	elif card.card_type == Card.CardType.STRUCTURE:
+		stat_parts.append("RES:%d" % card.resilience)
+	elif card.card_type == Card.CardType.EQUIPMENT:
+		if card.strength_modifier != 0:
+			stat_parts.append("STR %+d" % card.strength_modifier)
+		if card.resilience_modifier != 0:
+			stat_parts.append("RES %+d" % card.resilience_modifier)
+		if card.speed_modifier != 0:
+			stat_parts.append("SPD %+d" % card.speed_modifier)
+	elif card.card_type in [Card.CardType.SPELL, Card.CardType.HEX, Card.CardType.CHARM]:
+		stat_parts.append("SPD:%d" % card.speed)
+
+	if include_cost and card.has_listed_play_costs():
+		stat_parts.append("Cost: " + BaseCard.apply_mana_cost_symbols(card.get_cost_shorthand(), 14))
+
+	return stat_parts
+
+func _get_collection_hover_stats_text(card: Card) -> String:
+	var stat_parts := _get_card_stat_summary_parts(card, false)
+	if stat_parts.is_empty():
+		return ""
+	if stat_parts.size() <= 2:
+		return "  ".join(stat_parts)
+	var split_index := int(ceil(float(stat_parts.size()) / 2.0))
+	return "  ".join(stat_parts.slice(0, split_index)) + "\n" + "  ".join(stat_parts.slice(split_index))
+
 func _to_search_key(value: String) -> String:
 	return CardCatalogScript.to_lookup_key(str(value))
+
+func _make_level_badge(card: Card, symbol_size: float = 12.0, compact: bool = false) -> Control:
+	if card == null or card.is_god:
+		return null
+	var badge := PanelContainer.new()
+	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var horizontal_padding := 6.0 if compact else 8.0
+	var vertical_padding := 4.0 if compact else 5.0
+	badge.custom_minimum_size = Vector2(symbol_size * float(card.level) + horizontal_padding * 2.0, symbol_size + vertical_padding * 2.0)
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.06, 0.08, 0.14, 0.92)
+	style.border_color = Color(0.72, 0.84, 1.0, 0.96)
+	style.corner_radius_top_left = 6
+	style.corner_radius_top_right = 6
+	style.corner_radius_bottom_left = 6
+	style.corner_radius_bottom_right = 6
+	style.content_margin_left = horizontal_padding
+	style.content_margin_right = horizontal_padding
+	style.content_margin_top = vertical_padding
+	style.content_margin_bottom = vertical_padding
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		style.set_border_width(side, 1)
+	badge.add_theme_stylebox_override("panel", style)
+	badge.tooltip_text = "Level: %d" % card.level
+
+	var center := CenterContainer.new()
+	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	badge.add_child(center)
+
+	var symbols := LevelSymbolRow.new()
+	symbols.setup(
+		card.level,
+		symbol_size,
+		Color(1.0, 0.96, 0.78),
+		LevelSymbolRow.get_symbol_texture_for_card(card)
+	)
+	symbols.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	center.add_child(symbols)
+	return badge
+
+func _refresh_preview_level_badge(card: Card) -> void:
+	if _prev_art == null or not is_instance_valid(_prev_art):
+		return
+	for child in _prev_art.get_children():
+		if child != null and child.name == "PreviewLevelBadge":
+			_prev_art.remove_child(child)
+			child.queue_free()
+	var badge := _make_level_badge(card, 12.0, false)
+	if badge == null:
+		return
+	badge.name = "PreviewLevelBadge"
+	badge.anchor_left = 0
+	badge.anchor_right = 0
+	badge.anchor_top = 0
+	badge.anchor_bottom = 0
+	badge.offset_left = 6
+	badge.offset_top = 6
+	badge.offset_right = badge.offset_left + badge.custom_minimum_size.x
+	badge.offset_bottom = badge.offset_top + badge.custom_minimum_size.y
+	_prev_art.add_child(badge)
 
 func _make_card_item(card: Card) -> Control:
 	var root := Control.new()
@@ -1063,6 +1168,44 @@ func _make_card_item(card: Card) -> Control:
 	# Cost badge (top-right)
 	if card.has_listed_play_costs():
 		card_body.add_child(_make_collection_cost_badge(card))
+
+	var hover_stats_band := PanelContainer.new()
+	hover_stats_band.name = "HoverStatsBand"
+	hover_stats_band.visible = false
+	hover_stats_band.anchor_left = 0
+	hover_stats_band.anchor_right = 1
+	hover_stats_band.anchor_top = 1
+	hover_stats_band.anchor_bottom = 1
+	hover_stats_band.offset_left = 6
+	hover_stats_band.offset_right = -6
+	hover_stats_band.offset_top = -76
+	hover_stats_band.offset_bottom = -44
+	hover_stats_band.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var hover_stats_style := StyleBoxFlat.new()
+	hover_stats_style.bg_color = Color(0.03, 0.05, 0.09, 0.90)
+	hover_stats_style.border_color = Color(0.92, 0.84, 0.52, 0.95)
+	hover_stats_style.corner_radius_top_left = 4
+	hover_stats_style.corner_radius_top_right = 4
+	hover_stats_style.corner_radius_bottom_left = 4
+	hover_stats_style.corner_radius_bottom_right = 4
+	hover_stats_style.content_margin_left = 4
+	hover_stats_style.content_margin_right = 4
+	hover_stats_style.content_margin_top = 3
+	hover_stats_style.content_margin_bottom = 3
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		hover_stats_style.set_border_width(side as Side, 1)
+	hover_stats_band.add_theme_stylebox_override("panel", hover_stats_style)
+	var hover_stats_label := Label.new()
+	hover_stats_label.name = "HoverStatsLabel"
+	hover_stats_label.text = _get_collection_hover_stats_text(card)
+	hover_stats_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hover_stats_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	hover_stats_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	hover_stats_label.add_theme_font_size_override("font_size", 10)
+	hover_stats_label.add_theme_color_override("font_color", Color(1.0, 0.96, 0.78))
+	hover_stats_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hover_stats_band.add_child(hover_stats_label)
+	card_body.add_child(hover_stats_band)
 
 	# Count badge (bottom-right, overlaid on name bar)
 	var count_lbl := Label.new()
@@ -1278,6 +1421,8 @@ func _make_card_item(card: Card) -> Control:
 					and not _selected_collection_card_name.is_empty() \
 					and _selected_collection_card_name != card.card_name:
 				_clear_selected_collection_card()
+				get_viewport().set_input_as_handled()
+				return
 			if ev.button_index == MOUSE_BUTTON_LEFT:
 				if is_unavailable:
 					_set_status_flash(unavailable_reason)
@@ -1289,7 +1434,14 @@ func _make_card_item(card: Card) -> Control:
 				_remove_from_deck(card.card_name)
 				get_viewport().set_input_as_handled()
 	)
-	root.mouse_entered.connect(func() -> void: _show_preview(card))
+	root.mouse_entered.connect(func() -> void:
+		_show_preview(card)
+		if hover_stats_label.text != "":
+			hover_stats_band.visible = true
+	)
+	root.mouse_exited.connect(func() -> void:
+		hover_stats_band.visible = false
+	)
 	_update_collection_card_selection_visual(root, card)
 
 	return root
@@ -1374,6 +1526,20 @@ func _clear_selected_collection_card() -> void:
 	_collection_drag_was_selected = false
 	_cleanup_collection_card_drag_ghost()
 	_update_collection_selection_visuals()
+
+func _get_selected_collection_card_root() -> Control:
+	if _selected_collection_card_name.is_empty():
+		return null
+	var root := _collection_card_roots.get(_selected_collection_card_name, null) as Control
+	if not is_instance_valid(root):
+		return null
+	return root
+
+func _should_clear_selection_for_left_click(global_position: Vector2) -> bool:
+	var selected_root := _get_selected_collection_card_root()
+	if selected_root == null:
+		return true
+	return not Rect2(selected_root.global_position, selected_root.size).has_point(global_position)
 
 func _begin_collection_card_drag(card: Card, global_position: Vector2, was_selected: bool) -> void:
 	_collection_drag_card = card
@@ -1756,16 +1922,45 @@ func _get_deckbuilder_scroll_target(direction: float) -> ScrollContainer:
 		return _body_scroll
 	return null
 
+func _scroll_container_by(scroll: ScrollContainer, direction: float) -> void:
+	if scroll == null:
+		return
+	var max_scroll := _get_scroll_container_max_scroll(scroll)
+	var scroll_step := maxf(DECK_SCROLL_BUTTON_STEP_MIN, scroll.size.y * DECK_SCROLL_BUTTON_STEP_RATIO)
+	var next_scroll := clampf(float(scroll.scroll_vertical) + direction * scroll_step, 0.0, max_scroll)
+	scroll.scroll_vertical = int(round(next_scroll))
+
+func _handle_deckbuilder_wheel_button(button_index: MouseButton) -> bool:
+	if button_index != MOUSE_BUTTON_WHEEL_UP and button_index != MOUSE_BUTTON_WHEEL_DOWN:
+		return false
+	var direction := -1.0 if button_index == MOUSE_BUTTON_WHEEL_UP else 1.0
+	if not _selected_collection_card_name.is_empty():
+		if _can_scroll_container_in_direction(_preview_details_scroll, direction):
+			_scroll_container_by(_preview_details_scroll, direction)
+		_update_deck_scroll_nav_buttons()
+		return true
+	if _can_scroll_container_in_direction(_deck_scroll, direction):
+		_scroll_container_by(_deck_scroll, direction)
+		_update_deck_scroll_nav_buttons()
+		return true
+	return false
+
+func _on_deckbuilder_scroll_gui_input(event: InputEvent) -> void:
+	if event is not InputEventMouseButton:
+		return
+	var mouse_event := event as InputEventMouseButton
+	if not mouse_event.pressed:
+		return
+	if _handle_deckbuilder_wheel_button(mouse_event.button_index):
+		get_viewport().set_input_as_handled()
+
 func _scroll_deckbuilder_by(direction: float) -> void:
 	var target := _get_deckbuilder_scroll_target(direction)
 	if target == null:
 		_update_deck_scroll_nav_buttons()
 		return
 
-	var max_scroll := _get_scroll_container_max_scroll(target)
-	var scroll_step := maxf(DECK_SCROLL_BUTTON_STEP_MIN, target.size.y * DECK_SCROLL_BUTTON_STEP_RATIO)
-	var next_scroll := clampf(float(target.scroll_vertical) + direction * scroll_step, 0.0, max_scroll)
-	target.scroll_vertical = int(round(next_scroll))
+	_scroll_container_by(target, direction)
 	_update_deck_scroll_nav_buttons()
 
 func _update_deck_scroll_nav_buttons() -> void:
@@ -3328,6 +3523,7 @@ func _show_preview(card: Card, force: bool = false) -> void:
 		_prev_art.texture = _get_card_art_texture(card.art_path)
 	else:
 		_prev_art.texture = null
+	_refresh_preview_level_badge(card)
 
 	_prev_name.text = card.get_display_name_for_control(_prev_name)
 
@@ -3340,29 +3536,7 @@ func _show_preview(card: Card, force: bool = false) -> void:
 	_prev_type.tooltip_text = _prev_type.text
 	_prev_type.add_theme_color_override("font_color", _get_type_color(card))
 
-	var stat_parts: PackedStringArray = []
-	if card.card_type == Card.CardType.CREATURE and not card.is_god:
-		stat_parts.append("LVL:%d  STR:%d  RES:%d  SPD:%d" % [
-			card.get_effective_level(),
-			card.strength,
-			card.resilience,
-			card.speed
-		])
-	elif card.card_type == Card.CardType.STRUCTURE:
-		stat_parts.append("RES:%d" % card.resilience)
-	elif card.card_type == Card.CardType.EQUIPMENT:
-		var equip_parts: PackedStringArray = []
-		if card.strength_modifier != 0:
-			equip_parts.append("STR %+d" % card.strength_modifier)
-		if card.resilience_modifier != 0:
-			equip_parts.append("RES %+d" % card.resilience_modifier)
-		if card.speed_modifier != 0:
-			equip_parts.append("SPD %+d" % card.speed_modifier)
-		stat_parts.append("  ".join(equip_parts))
-	elif card.card_type in [Card.CardType.SPELL, Card.CardType.HEX, Card.CardType.CHARM]:
-		stat_parts.append("SPD:%d" % card.speed)
-	if card.has_listed_play_costs():
-		stat_parts.append("Cost: " + BaseCard.apply_mana_cost_symbols(card.get_cost_shorthand(), 14))
+	var stat_parts := _get_card_stat_summary_parts(card)
 	_prev_stats.text = "  ".join(stat_parts)
 
 	var preview_body := ""
@@ -3385,6 +3559,18 @@ func _input(event: InputEvent) -> void:
 	if _try_handle_collection_card_drag_input(event):
 		get_viewport().set_input_as_handled()
 		return
+	if event is InputEventMouseButton:
+		var mouse_event := event as InputEventMouseButton
+		if mouse_event.pressed and not _selected_collection_card_name.is_empty():
+			if mouse_event.button_index == MOUSE_BUTTON_RIGHT:
+				_clear_selected_collection_card()
+				get_viewport().set_input_as_handled()
+				return
+			if mouse_event.button_index == MOUSE_BUTTON_LEFT \
+					and _should_clear_selection_for_left_click(mouse_event.global_position):
+				_clear_selected_collection_card()
+				get_viewport().set_input_as_handled()
+				return
 	if event is not InputEventKey:
 		return
 	var key_event := event as InputEventKey
@@ -3401,6 +3587,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if event is InputEventMouseButton:
 		var mouse_event := event as InputEventMouseButton
+		if mouse_event.pressed and _handle_deckbuilder_wheel_button(mouse_event.button_index):
+			get_viewport().set_input_as_handled()
+			return
 		if mouse_event.pressed \
 				and (mouse_event.button_index == MOUSE_BUTTON_LEFT or mouse_event.button_index == MOUSE_BUTTON_RIGHT) \
 				and _selected_collection_card_name != "":

@@ -18,6 +18,7 @@ const REQUEST_ACCOUNT_DECKS := "request_account_decks"
 const SAVE_ACCOUNT_DECK := "save_account_deck"
 const DELETE_ACCOUNT_DECK := "delete_account_deck"
 const SET_ACCOUNT_PREFERRED_DECK := "set_account_preferred_deck"
+const SET_OBSERVER_FRIEND_CARD_VISIBILITY := "set_observer_friend_card_visibility"
 const REQUEST_PROFILE_SUMMARY := "request_profile_summary"
 const REQUEST_FRIENDS := "request_friends"
 const SEND_FRIEND_REQUEST := "send_friend_request"
@@ -92,6 +93,9 @@ static func validate_request(message: Dictionary) -> String:
 		SET_ACCOUNT_PREFERRED_DECK:
 			if str(payload.get("deck_id", "")).strip_edges().is_empty():
 				return "Missing deck id."
+		SET_OBSERVER_FRIEND_CARD_VISIBILITY:
+			if not payload.has("allow_friend_observers_to_see_cards"):
+				return "Missing observe visibility setting."
 		SEND_FRIEND_REQUEST:
 			if str(payload.get("username", "")).strip_edges().is_empty():
 				return "Missing friend username."

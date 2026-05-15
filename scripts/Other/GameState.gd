@@ -19,8 +19,11 @@ const SPECTATOR_VIEWER_INDEX := -2
 ## the opponent's hand is sent as hidden placeholders, and opponent hidden
 ## board cards are masked down to public board-facing state only.
 ## Pass -1 to include all hands unmasked (server-internal use only).
-static func serialize(gm: GameManager, viewer_player_index: int = -1) -> Dictionary:
+static func serialize(gm: GameManager, viewer_player_index: int = -1, visible_player_indices: Array = []) -> Dictionary:
 	var viewer: Player = null
+	var visible_lookup: Dictionary = {}
+	for raw_index in visible_player_indices:
+		visible_lookup[int(raw_index)] = true
 	if viewer_player_index == SPECTATOR_VIEWER_INDEX:
 		viewer = Player.new()
 	elif viewer_player_index >= 0 and viewer_player_index < gm.players.size():
@@ -47,9 +50,10 @@ static func serialize(gm: GameManager, viewer_player_index: int = -1) -> Diction
 
 	for i in gm.players.size():
 		var player := gm.players[i]
-		var hide_hand := viewer != null and i != viewer_player_index
-		var hide_deck := viewer != null and i != viewer_player_index
-		var deck_cards := _serialize_zone_cards(player.deck_zone, viewer, false)
+		var reveal_private_cards := i == viewer_player_index or bool(visible_lookup.get(i, false))
+		var hide_hand := viewer != null and not reveal_private_cards
+		var hide_deck := viewer != null and not reveal_private_cards
+		var deck_cards := _serialize_zone_cards(player.deck_zone, viewer, false, reveal_private_cards)
 		if hide_deck:
 			deck_cards = _serialize_visible_opponent_deck_cards_for_viewer(gm, player, viewer)
 		var pdata := {
@@ -59,8 +63,8 @@ static func serialize(gm: GameManager, viewer_player_index: int = -1) -> Diction
 			deck_count = player.deck_zone.cards.size(),
 			deck         = deck_cards,
 			has_summoned_this_turn = player.has_summoned_this_turn,
-			hand         = _serialize_zone_cards(player.hand_zone, viewer, hide_hand),
-			god_zone     = _serialize_zone_cards(player.god_zone, viewer, false),
+			hand         = _serialize_zone_cards(player.hand_zone, viewer, hide_hand, reveal_private_cards),
+			god_zone     = _serialize_zone_cards(player.god_zone, viewer, false, reveal_private_cards),
 			power_zones  = [] as Array,
 			frontline_zones = [] as Array,
 			reserve_zones   = [] as Array,
@@ -68,11 +72,11 @@ static func serialize(gm: GameManager, viewer_player_index: int = -1) -> Diction
 			abyss        = _serialize_zone_cards(player.abyss_zone, viewer, false),
 		}
 		for z in player.power_zones:
-			pdata.power_zones.append(_serialize_zone_cards(z, viewer, false))
+			pdata.power_zones.append(_serialize_zone_cards(z, viewer, false, reveal_private_cards))
 		for z in player.frontline_zones:
-			pdata.frontline_zones.append(_serialize_zone_cards(z, viewer, false))
+			pdata.frontline_zones.append(_serialize_zone_cards(z, viewer, false, reveal_private_cards))
 		for z in player.reserve_zones:
-			pdata.reserve_zones.append(_serialize_zone_cards(z, viewer, false))
+			pdata.reserve_zones.append(_serialize_zone_cards(z, viewer, false, reveal_private_cards))
 		data.players.append(pdata)
 
 	return data
@@ -109,13 +113,13 @@ static func _viewer_can_read_opponent_deck_with_hildskjalf(gm: GameManager, view
 				return true
 	return false
 
-static func _serialize_zone_cards(zone: Zone, viewer: Player = null, hide_hand: bool = false) -> Array:
+static func _serialize_zone_cards(zone: Zone, viewer: Player = null, hide_hand: bool = false, reveal_private_cards: bool = false) -> Array:
 	var result := []
 	for card in zone.cards:
 		var hidden_mode := HIDDEN_MODE_NONE
 		if hide_hand:
 			hidden_mode = HIDDEN_MODE_HAND
-		elif viewer != null and zone.zone_type in [Zone.ZoneType.FRONTLINE, Zone.ZoneType.RESERVE, Zone.ZoneType.POWER_SLOT, Zone.ZoneType.GOD_SLOT] and card.is_hidden_from_viewer(viewer):
+		elif not reveal_private_cards and viewer != null and zone.zone_type in [Zone.ZoneType.FRONTLINE, Zone.ZoneType.RESERVE, Zone.ZoneType.POWER_SLOT, Zone.ZoneType.GOD_SLOT] and card.is_hidden_from_viewer(viewer):
 			hidden_mode = HIDDEN_MODE_BOARD
 		result.append(_serialize_card(card, hidden_mode))
 	return result

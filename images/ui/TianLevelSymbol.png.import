@@ -2,12 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://cbsl1iiey0p07"
-valid=false
+uid="uid://i86vrgsvpkmg"
+path="res://.godot/imported/TianLevelSymbol.png-f39fcce99cb6cbaf501263bc8abe9a32.ctex"
+metadata={
+"vram_texture": false
+}
 
 [deps]
 
-source_file="res://images/ui/LevelSymbol.jpg"
+source_file="res://images/ui/TianLevelSymbol.png"
+dest_files=["res://.godot/imported/TianLevelSymbol.png-f39fcce99cb6cbaf501263bc8abe9a32.ctex"]
 
 [params]
 

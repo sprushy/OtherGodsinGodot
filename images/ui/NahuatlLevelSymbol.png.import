@@ -2,12 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://cbsl1iiey0p07"
-valid=false
+uid="uid://c5qvp04u4255t"
+path="res://.godot/imported/NahuatlLevelSymbol.png-6ba70bf962a1df7cfb097498134ec3c7.ctex"
+metadata={
+"vram_texture": false
+}
 
 [deps]
 
-source_file="res://images/ui/LevelSymbol.jpg"
+source_file="res://images/ui/NahuatlLevelSymbol.png"
+dest_files=["res://.godot/imported/NahuatlLevelSymbol.png-6ba70bf962a1df7cfb097498134ec3c7.ctex"]
 
 [params]
 

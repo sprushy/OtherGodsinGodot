@@ -12,7 +12,7 @@ func _init() -> void:
 	mana_cost = 0
 	speed = 1
 	flavor_text = ""
-	ability_text = "[b]Shelve[/b] cards off the top of your deck until you draw a magical card, add that card to your hand."
+	ability_text = "[b]Shelve[/b] cards off the top of your deck until you draw a magical card, prepare that card revealed."
 	artist = "CC0"
 	art_path = ART_PATH
 	targets = false
@@ -46,7 +46,7 @@ func resolve(game_manager: GameManager, _target = null) -> void:
 
 	if found_card == null:
 		if shelved_cards.is_empty():
-			game_manager.note_player_feedback("%s found no magical card to draw." % card_name)
+			game_manager.note_player_feedback("%s found no magical card to prepare." % card_name)
 			return
 		game_manager.note_player_feedback("%s shelved %s and found no magical card." % [
 			card_name,
@@ -54,28 +54,56 @@ func resolve(game_manager: GameManager, _target = null) -> void:
 		])
 		return
 
-	controller.move_card(found_card, controller.hand_zone)
-	if found_card.current_zone != controller.hand_zone:
-		game_manager.note_player_feedback("%s found %s, but it could not be added to hand." % [
+	var prepare_zone := _find_prepare_zone(controller)
+	if prepare_zone == null:
+		game_manager.note_player_feedback("%s found a magical card, but %s had no open zone to prepare it." % [
 			card_name,
-			found_card.get_target_log_display_name(viewer)
-		])
-		return
-	found_card.card_owner = controller
-
-	if shelved_cards.is_empty():
-		game_manager.note_player_feedback("%s added %s from the top of the deck to %s's hand." % [
-			card_name,
-			found_card.get_target_log_display_name(viewer),
 			controller.player_name
 		])
 		return
 
-	game_manager.note_player_feedback("%s shelved %s, then added %s to %s's hand." % [
+	found_card.card_owner = controller
+	found_card.is_prepared = true
+	found_card.is_face_down = true
+	found_card.is_stealth = false
+	found_card.remove_status_effects_by_name("temporarily_revealed")
+	found_card.add_status_effect(
+		"temporarily_revealed",
+		card_name,
+		self,
+		controller,
+		{
+			"clear_on_card_move": true,
+			"clear_when_hidden_state_ends": true,
+		}
+	)
+	controller.move_card(found_card, prepare_zone)
+	if found_card.current_zone != prepare_zone:
+		found_card.is_prepared = false
+		found_card.is_face_down = false
+		found_card.is_stealth = false
+		found_card.remove_status_effects_by_name("temporarily_revealed")
+		game_manager.note_player_feedback("%s found a magical card, but it could not be prepared." % card_name)
+		return
+
+	if found_card.card_type == Card.CardType.HEX:
+		game_manager.prepared_hexes[found_card] = game_manager.turn_number
+	elif found_card is CharmCard:
+		game_manager.prepared_charms[found_card] = game_manager.turn_number
+
+	if shelved_cards.is_empty():
+		game_manager.note_player_feedback("%s prepared %s revealed in %s." % [
+			card_name,
+			found_card.card_name,
+			_target_zone_label(prepare_zone, controller)
+		])
+		return
+
+	game_manager.note_player_feedback("%s shelved %s, then prepared %s revealed in %s." % [
 		card_name,
 		_join_card_names(shelved_cards, viewer),
-		found_card.get_target_log_display_name(viewer),
-		controller.player_name
+		found_card.card_name,
+		_target_zone_label(prepare_zone, controller)
 	])
 
 func _join_card_names(cards: Array[Card], viewer: Player = null) -> String:
@@ -84,3 +112,27 @@ func _join_card_names(cards: Array[Card], viewer: Player = null) -> String:
 		if card != null:
 			names.append(card.get_target_log_display_name(viewer))
 	return ", ".join(names)
+
+func _find_prepare_zone(controller: Player) -> Zone:
+	if controller == null:
+		return null
+	for zone in controller.reserve_zones:
+		if _can_prepare_into_zone(zone):
+			return zone
+	for zone in controller.frontline_zones:
+		if _can_prepare_into_zone(zone):
+			return zone
+	return null
+
+func _can_prepare_into_zone(zone: Zone) -> bool:
+	return zone != null and zone.cards.is_empty() and zone.get_equipment().is_empty()
+
+func _target_zone_label(zone: Zone, controller: Player) -> String:
+	if zone == null or controller == null:
+		return "the field"
+	var lane_number := zone.zone_index + 1
+	if zone in controller.frontline_zones:
+		return "%s's Front Line %d" % [controller.player_name, lane_number]
+	if zone in controller.reserve_zones:
+		return "%s's Reserve %d" % [controller.player_name, lane_number]
+	return "the field"

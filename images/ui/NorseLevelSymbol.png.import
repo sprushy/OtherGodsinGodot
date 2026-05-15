@@ -2,12 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://cbsl1iiey0p07"
-valid=false
+uid="uid://b8dsf1kk41iu"
+path="res://.godot/imported/NorseLevelSymbol.png-5c53da495d4df8deb40e3ae11d9c7221.ctex"
+metadata={
+"vram_texture": false
+}
 
 [deps]
 
-source_file="res://images/ui/LevelSymbol.jpg"
+source_file="res://images/ui/NorseLevelSymbol.png"
+dest_files=["res://.godot/imported/NorseLevelSymbol.png-5c53da495d4df8deb40e3ae11d9c7221.ctex"]
 
 [params]
 

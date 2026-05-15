@@ -2,12 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://cbsl1iiey0p07"
-valid=false
+uid="uid://ctqkxb5i5pfob"
+path="res://.godot/imported/SwitchToDefensiveSymbol.png-51dde2af859f3a7adb7e9b469a1a1786.ctex"
+metadata={
+"vram_texture": false
+}
 
 [deps]
 
-source_file="res://images/ui/LevelSymbol.jpg"
+source_file="res://images/ui/SwitchToDefensiveSymbol.png"
+dest_files=["res://.godot/imported/SwitchToDefensiveSymbol.png-51dde2af859f3a7adb7e9b469a1a1786.ctex"]
 
 [params]
 

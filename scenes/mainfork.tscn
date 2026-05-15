@@ -92,7 +92,7 @@ text = "Create Seek"
 
 [node name="OpenSeeksLabel" type="Label" parent="Control/MenuContainer/MultiplayerContainer" unique_id=780342706]
 layout_mode = 2
-text = "Open Seeks"
+text = "Seeks And Live Matches"
 
 [node name="SeekList" type="ItemList" parent="Control/MenuContainer/MultiplayerContainer" unique_id=254099637]
 custom_minimum_size = Vector2(0, 180)
@@ -110,7 +110,7 @@ text = "Ready"
 
 [node name="StatusLabel" type="Label" parent="Control/MenuContainer/MultiplayerContainer" unique_id=157483099]
 layout_mode = 2
-text = "Refresh open seeks or create your own."
+text = "Refresh seeks to join a room or watch a live match."
 autowrap_mode = 3
 
 [node name="RoomCodeLineEdit" type="LineEdit" parent="Control/MenuContainer/MultiplayerContainer" unique_id=157483097]

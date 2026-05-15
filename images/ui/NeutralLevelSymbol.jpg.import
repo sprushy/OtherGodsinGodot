@@ -2,12 +2,12 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://cbsl1iiey0p07"
+uid="uid://d1xnq0n0g7x5m"
 valid=false
 
 [deps]
 
-source_file="res://images/ui/LevelSymbol.jpg"
+source_file="res://images/ui/NeutralLevelSymbol.jpg"
 
 [params]
 

@@ -83,6 +83,19 @@ func get_preferred_deck_id_for_account(account_id: String) -> String:
 		return ""
 	return str((profile as Dictionary).get("preferred_deck_id", "")).strip_edges()
 
+func get_allow_friend_observers_to_see_cards_for_account(account_id: String) -> bool:
+	_ensure_loaded()
+	var resolved_account_id := account_id.strip_edges()
+	if resolved_account_id.is_empty():
+		return true
+	var profile_id := str(_profile_id_by_account_id.get(resolved_account_id, "")).strip_edges()
+	if profile_id.is_empty():
+		return true
+	var profile = _profiles_by_id.get(profile_id, {})
+	if not (profile is Dictionary):
+		return true
+	return bool((profile as Dictionary).get("allow_friend_observers_to_see_cards", true))
+
 func set_preferred_deck_id_for_account(account_id: String, deck_id: String) -> void:
 	_ensure_loaded()
 	var resolved_account_id := account_id.strip_edges()
@@ -96,6 +109,22 @@ func set_preferred_deck_id_for_account(account_id: String, deck_id: String) -> v
 		return
 	var updated_profile := (profile as Dictionary).duplicate(true)
 	updated_profile["preferred_deck_id"] = deck_id.strip_edges()
+	_profiles_by_id[profile_id] = updated_profile
+	_save()
+
+func set_allow_friend_observers_to_see_cards_for_account(account_id: String, allowed: bool) -> void:
+	_ensure_loaded()
+	var resolved_account_id := account_id.strip_edges()
+	if resolved_account_id.is_empty():
+		return
+	var profile_id := str(_profile_id_by_account_id.get(resolved_account_id, "")).strip_edges()
+	if profile_id.is_empty():
+		return
+	var profile = _profiles_by_id.get(profile_id, {})
+	if not (profile is Dictionary):
+		return
+	var updated_profile := (profile as Dictionary).duplicate(true)
+	updated_profile["allow_friend_observers_to_see_cards"] = allowed
 	_profiles_by_id[profile_id] = updated_profile
 	_save()
 

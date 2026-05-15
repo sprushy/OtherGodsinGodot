@@ -2,12 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://cbsl1iiey0p07"
-valid=false
+uid="uid://d2t66467nnhlj"
+path="res://.godot/imported/SwitchToAggressiveSymbol.png-e9bf142e915fc7bfb2098a9058a9ecb4.ctex"
+metadata={
+"vram_texture": false
+}
 
 [deps]
 
-source_file="res://images/ui/LevelSymbol.jpg"
+source_file="res://images/ui/SwitchToAggressiveSymbol.png"
+dest_files=["res://.godot/imported/SwitchToAggressiveSymbol.png-e9bf142e915fc7bfb2098a9058a9ecb4.ctex"]
 
 [params]
 

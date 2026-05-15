@@ -2,12 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://cbsl1iiey0p07"
-valid=false
+uid="uid://dlr7xro8va05p"
+path="res://.godot/imported/AncientLevelSymbol.jpg-2b356a0907a1cdd595d6bdf79f603798.ctex"
+metadata={
+"vram_texture": false
+}
 
 [deps]
 
-source_file="res://images/ui/LevelSymbol.jpg"
+source_file="res://images/ui/AncientLevelSymbol.jpg"
+dest_files=["res://.godot/imported/AncientLevelSymbol.jpg-2b356a0907a1cdd595d6bdf79f603798.ctex"]
 
 [params]
 

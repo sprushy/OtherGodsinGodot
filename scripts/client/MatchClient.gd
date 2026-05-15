@@ -254,6 +254,7 @@ func _submit_match_join_request() -> void:
 		"session_id": str(_match_info.get("session_id", "")),
 		"match_token": str(_match_info.get("match_token", "")),
 		"observer_mode": bool(_match_info.get("observer_mode", false)),
+		"observer_session_id": str(_match_info.get("observer_session_id", "")),
 	})
 
 func _try_submit_match_join_if_already_connected() -> void:
