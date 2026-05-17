@@ -1491,7 +1491,7 @@ func _build_authoritative_resolution_text(action_type: int, source_card: Card, t
 func _find_available_stack_display_zone(player: Player) -> Zone:
 	if player == null:
 		return null
-	for zone in player.frontline_zones + player.reserve_zones:
+	for zone in player.reserve_zones + player.frontline_zones:
 		if zone.cards.size() > 0:
 			continue
 		var already_reserved := false
@@ -1517,13 +1517,26 @@ func _can_use_stack_display_zone(zone: Zone, player: Player) -> bool:
 			return false
 	return true
 
+func _can_use_requested_stack_display_zone(zone: Zone, player: Player, card: Card) -> bool:
+	if zone == null or player == null or card == null:
+		return false
+	if not zone.is_board_zone():
+		return false
+	if card.current_zone == zone:
+		return true
+	if zone.zone_owner != player or not zone.cards.is_empty():
+		return false
+	for action in game_manager.action_stack:
+		if action != null and action.display_zone == zone:
+			return false
+	return true
+
 func _assign_stack_display_zone(action: CardAction, preferred_zone: Zone = null) -> void:
 	if action == null or action.card == null or action.source_player == null:
 		return
-	if preferred_zone != null and _can_use_stack_display_zone(preferred_zone, action.source_player):
+	if preferred_zone != null and _can_use_requested_stack_display_zone(preferred_zone, action.source_player, action.card):
 		action.display_zone = preferred_zone
-		if not action.card.goes_to_graveyard_after_use():
-			return
+		return
 	if not action.card.goes_to_graveyard_after_use():
 		return
 	if action.card.current_zone != null and action.card.current_zone.is_board_zone():
@@ -2243,9 +2256,7 @@ func _resolve_command_display_zone(command: Dictionary, source_player: Player) -
 	if not (zone_dict is Dictionary):
 		return null
 	var zone := resolve_zone(zone_dict as Dictionary)
-	if _can_use_stack_display_zone(zone, source_player):
-		return zone
-	return null
+	return zone if zone != null and zone.is_board_zone() else null
 
 func _resolve_sender_player(sender_info: Dictionary) -> Player:
 	if sender_info.is_empty():
@@ -2913,8 +2924,6 @@ func _process_command_impl(command: Dictionary) -> bool:
 			if _uses_authoritative_headless_priority_flow():
 				var spell_command_display_zone := _resolve_command_display_zone(command, player)
 				var preferred_display_zone: Zone = spell.current_zone if prepared_spell else spell_command_display_zone
-				if preferred_display_zone == null and spell_target != null and spell_target.current_zone != null and spell_target.current_zone.is_board_zone():
-					preferred_display_zone = spell_target.current_zone
 				var spell_resolve := func() -> void:
 					game_manager.notify_spell_played(player, spell)
 					(spell as SpellCard).resolve_from_command(game_manager, command)
@@ -3108,8 +3117,6 @@ func _process_command_impl(command: Dictionary) -> bool:
 			if _uses_authoritative_headless_priority_flow():
 				var charm_command_display_zone := _resolve_command_display_zone(command, charm_card.card_owner)
 				var preferred_display_zone: Zone = charm_card.current_zone if charm_prepared else charm_command_display_zone
-				if preferred_display_zone == null and charm_target != null and charm_target.current_zone != null and charm_target.current_zone.is_board_zone():
-					preferred_display_zone = charm_target.current_zone
 				var charm_resolve := func() -> void:
 					_place_persistent_charm_on_board(charm_card, preferred_display_zone)
 					charm_card.resolve(game_manager, charm_target)
@@ -3133,7 +3140,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 				charm_card,
 				func() -> void:
 					var charm_immediate_display_zone := _resolve_command_display_zone(command, charm_card.card_owner)
-					_place_persistent_charm_on_board(charm_card, charm_immediate_display_zone if charm_immediate_display_zone != null else (charm_target.current_zone if charm_target != null else null))
+					_place_persistent_charm_on_board(charm_card, charm_immediate_display_zone)
 					charm_card.resolve(game_manager, charm_target)
 			)
 			if charm_card.goes_to_graveyard_after_use() \

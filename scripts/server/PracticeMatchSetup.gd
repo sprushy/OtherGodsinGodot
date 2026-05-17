@@ -4,6 +4,11 @@ class_name PracticeMatchSetup
 const DeckBuilderScript = preload("res://scripts/Other/DeckBuilder.gd")
 const CardCatalogScript = preload("res://scripts/cards/CardCatalog.gd")
 
+var _rng := RandomNumberGenerator.new()
+
+func _init() -> void:
+	_rng.randomize()
+
 func build_thor_practice_match(
 	game_manager: GameManager,
 	player_practice_deck: Dictionary = {},
@@ -25,7 +30,9 @@ func build_thor_practice_match(
 	if not _try_load_saved_player_practice_deck(player2, thor_practice_deck):
 		_add_practice_god(player2, Thor.new(), game_manager)
 		_add_practice_power(player2, 0, CallOfTheValkyrie.new())
-		for card in build_thor_practice_deck():
+		var thor_deck := build_thor_practice_deck()
+		_shuffle_cards(thor_deck)
+		for card in thor_deck:
 			_add_practice_deck_card(player2, card)
 
 	game_manager.setup_game()
@@ -145,6 +152,13 @@ func _add_practice_power(player: Player, slot_index: int, power: PowerCard, unlo
 	else:
 		power.relock()
 	player.power_zones[slot_index].add_card(power)
+
+func _shuffle_cards(cards: Array[Card]) -> void:
+	for index in range(cards.size() - 1, 0, -1):
+		var swap_index := _rng.randi_range(0, index)
+		var temp := cards[index]
+		cards[index] = cards[swap_index]
+		cards[swap_index] = temp
 
 func _create_default_player_deck(player: Player) -> void:
 	var deck: Array[Card] = []

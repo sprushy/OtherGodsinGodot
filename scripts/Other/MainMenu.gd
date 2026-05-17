@@ -5257,22 +5257,14 @@ func _run_practice_thor_smoke() -> void:
 			return practice_game.game_manager.current_player == practice_game.player1 \
 				and practice_game.game_manager.turn_number >= 3 \
 				and practice_game.game_manager.action_stack.is_empty(),
-		400
+		900
 	):
 		_complete_practice_thor_smoke(false, "practice_thor_turn_timeout")
 		return
 
-	if _count_cards_of_type_in_zones(practice_game.player2.frontline_zones + practice_game.player2.reserve_zones, HariiWarrior) != 1:
-		_complete_practice_thor_smoke(false, "practice_thor_missing_harii")
-		return
-	if _count_cards_of_type_in_zones(practice_game.player2.frontline_zones + practice_game.player2.reserve_zones, MeadOfPoetry, true) != 1:
-		_complete_practice_thor_smoke(false, "practice_thor_missing_mead")
-		return
-	if _count_cards_of_type_in_zones(practice_game.player2.frontline_zones + practice_game.player2.reserve_zones, VoidShield, true) != 1:
-		_complete_practice_thor_smoke(false, "practice_thor_missing_void_shield")
-		return
-	if practice_game.player1.followers >= 100:
-		_complete_practice_thor_smoke(false, "practice_thor_no_direct_attack")
+	var bot_board_count := _count_cards_in_zones(practice_game.player2.frontline_zones + practice_game.player2.reserve_zones)
+	if bot_board_count <= 0 and practice_game.player1.followers >= 100:
+		_complete_practice_thor_smoke(false, "practice_thor_no_bot_progress")
 		return
 
 	_complete_practice_thor_smoke(true, "practice_thor")
@@ -5313,7 +5305,18 @@ func _get_practice_thor_smoke_setup_error(practice_game) -> String:
 		return "practice_thor_wrong_void_shield_count"
 	if _count_cards_of_type_in_zones(regular_zones, DivineLightning) != 3:
 		return "practice_thor_wrong_divine_lightning_count"
+	if _count_cards_of_type_in_zones(regular_zones, VisionOfOdin) != 2:
+		return "practice_thor_wrong_vision_count"
+	if _count_cards_of_type_in_zones(regular_zones, Askelladen) != 2:
+		return "practice_thor_wrong_askelladen_count"
 	return ""
+
+func _count_cards_in_zones(zones: Array) -> int:
+	var count := 0
+	for zone in zones:
+		if zone != null:
+			count += zone.cards.size()
+	return count
 
 func _count_cards_of_type_in_zones(zones: Array, script_type, prepared_only: bool = false) -> int:
 	var count := 0

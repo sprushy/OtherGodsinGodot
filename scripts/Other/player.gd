@@ -228,6 +228,7 @@ func move_card(card: Card, to_zone: Zone) -> void:
 		if card.has_method("remove_status_effects_with_flag"):
 			card.remove_status_effects_with_flag("remove_when_leaves_board")
 		card.remove_effects_expiring_after_combat()
+		card.clear_board_leave_state()
 
 	if card.is_token and (destination_zone == null or not destination_zone.is_board_zone()):
 		card.remove_effects_expiring_after_combat()

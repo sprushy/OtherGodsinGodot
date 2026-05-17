@@ -947,6 +947,9 @@ func clear_all_effects() -> void:
 	if had_changes:
 		_emit_visual_state_changed()
 
+func clear_board_leave_state() -> void:
+	clear_all_effects()
+
 func _sync_status_flags() -> void:
 	var sleep_status: Dictionary = {}
 	for status in _get_effective_statuses():

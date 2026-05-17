@@ -3862,7 +3862,6 @@ func _do_update_ui() -> void:
 		_refresh_turn_label()
 		return
 
-	_sync_action_point_spend_feedback_before_redraw()
 	_refresh_turn_label()
 
 	draw_hand()
@@ -4067,7 +4066,7 @@ func _sync_stack_zone_previews() -> void:
 func _find_available_stack_display_zone(player: Player) -> Zone:
 	if player == null:
 		return null
-	for zone in player.frontline_zones + player.reserve_zones:
+	for zone in player.reserve_zones + player.frontline_zones:
 		if zone.cards.size() > 0:
 			continue
 		var already_reserved := false
@@ -4083,7 +4082,7 @@ func _get_available_stack_display_zones(player: Player) -> Array[Zone]:
 	var zones: Array[Zone] = []
 	if player == null:
 		return zones
-	for zone in player.frontline_zones + player.reserve_zones:
+	for zone in player.reserve_zones + player.frontline_zones:
 		if zone.cards.size() > 0:
 			continue
 		var already_reserved := false
@@ -4130,6 +4129,26 @@ func _can_use_stack_display_zone(zone: Zone, player: Player) -> bool:
 			return false
 	return true
 
+func _can_use_requested_stack_display_zone(zone: Zone, player: Player, card: Card) -> bool:
+	if zone == null or player == null or card == null:
+		return false
+	if not zone.is_board_zone():
+		return false
+	if card.current_zone == zone:
+		return true
+	if zone.zone_owner != player or not zone.cards.is_empty():
+		return false
+	for action in game_manager.action_stack:
+		if action != null and action.display_zone == zone:
+			return false
+	return true
+
+func _get_drop_play_display_zone(card: Card, zone: Zone) -> Zone:
+	var source_player := card.card_owner if card != null and card.card_owner != null else game_manager.current_player
+	if _can_use_requested_stack_display_zone(zone, source_player, card):
+		return zone
+	return card.current_zone if card != null and card.current_zone != null and card.current_zone.is_board_zone() else null
+
 func _resolve_stack_display_zone(source_card: Card, source_player: Player) -> Zone:
 	if source_card != null and source_card.current_zone != null and source_card.current_zone.is_board_zone():
 		return source_card.current_zone
@@ -4147,7 +4166,7 @@ func _assign_stack_display_zone(action: CardAction) -> void:
 func _resolve_pending_display_zone(card: Card, preferred_zone: Zone = null) -> Zone:
 	var source_player := card.card_owner if card != null and card.card_owner != null else game_manager.current_player
 	if preferred_zone != null and preferred_zone.is_board_zone():
-		if _can_use_stack_display_zone(preferred_zone, source_player):
+		if _can_use_requested_stack_display_zone(preferred_zone, source_player, card):
 			return preferred_zone
 		var nearest_zone := _find_nearest_stack_display_zone(source_player, preferred_zone)
 		if nearest_zone != null:
@@ -8993,7 +9012,7 @@ func _prompt_charm_target_selection(charm: CharmCard, triggering_action: CardAct
 		update_ui()
 		return
 	selected_card = charm
-	var resolved_display_zone := _resolve_pending_display_zone(charm, display_zone)
+	var requested_display_zone := _get_drop_play_display_zone(charm, display_zone) if display_zone != null else _pending_spell_display_zone
 	var from_hand: bool = charm.current_zone == charm.card_owner.hand_zone
 	if from_hand and not charm.can_activate_from_hand(game_manager, triggering_action):
 		_set_action_label_text(_get_play_card_unavailable_text(charm, null))
@@ -9001,11 +9020,11 @@ func _prompt_charm_target_selection(charm: CharmCard, triggering_action: CardAct
 		return
 	if _should_prompt_charm_targets_in_overlay(targets):
 		if targets.size() == 1 and targets[0] is Card:
-			spell_waiting_for_display_zone = resolved_display_zone
+			spell_waiting_for_display_zone = requested_display_zone
 			_queue_charm_action(charm, triggering_action, targets[0] as Card)
 			return
 		var choose_overlay_target := func(chosen_target: Card) -> void:
-			spell_waiting_for_display_zone = resolved_display_zone
+			spell_waiting_for_display_zone = requested_display_zone
 			_queue_charm_action(charm, triggering_action, chosen_target)
 		var cancel_overlay_target := func() -> void:
 			selected_card = null
@@ -9029,7 +9048,7 @@ func _prompt_charm_target_selection(charm: CharmCard, triggering_action: CardAct
 	var validate_charm_target := func(clicked_card: Card) -> bool:
 		return clicked_card in targets
 	var confirm_charm_target := func(clicked_card: Card) -> void:
-		spell_waiting_for_display_zone = resolved_display_zone
+		spell_waiting_for_display_zone = requested_display_zone
 		_queue_charm_action(charm, triggering_action, clicked_card)
 	_begin_pending_click_selection(
 		charm.card_name,
@@ -9088,12 +9107,6 @@ func _queue_charm_action(charm: CharmCard, triggering_action: CardAction = null,
 		preferred_display_zone = _resolve_pending_display_zone(charm, spell_waiting_for_display_zone)
 	elif preferred_display_zone == null and _pending_spell_display_zone != null:
 		preferred_display_zone = _resolve_pending_display_zone(charm, _pending_spell_display_zone)
-	elif preferred_display_zone == null and target is Card and (target as Card).current_zone != null:
-		preferred_display_zone = _resolve_pending_display_zone(charm, (target as Card).current_zone)
-	if from_hand and _pending_paid_hand_card == charm and _pending_paid_hand_display_zone_auto and target is Card and (target as Card).current_zone != null:
-		preferred_display_zone = _resolve_pending_display_zone(charm, (target as Card).current_zone)
-		_pending_paid_hand_display_zone = preferred_display_zone
-		_pending_paid_hand_display_zone_auto = false
 	if game_input != null:
 		var charm_target_uid: String = target.uid if target is Card else ""
 		var charm_command := {
@@ -9102,7 +9115,7 @@ func _queue_charm_action(charm: CharmCard, triggering_action: CardAction = null,
 			target_uid = charm_target_uid,
 			prepared = not from_hand
 		}
-		_add_display_zone_to_command(charm_command, preferred_display_zone)
+		_add_display_zone_to_command(charm_command)
 		game_input.submit_action(charm_command)
 		selected_card = null
 		awaiting_spell_target = false
@@ -24189,7 +24202,7 @@ func _on_card_dropped_to_zone(card: Card, zone: Zone, is_rotated: bool = false, 
 	var priority_drop_allowed := game_manager != null and game_manager.can_card_respond_to_priority(card, game_manager.priority_player)
 	if not priority_drop_allowed and _reject_non_priority_action_if_blocked():
 		return
-	_pending_spell_display_zone = zone
+	_pending_spell_display_zone = _get_drop_play_display_zone(card, zone)
 	var prepare_on_drop := _should_prepare_magical_card_on_drop(card, is_stealth)
 	if prepare_on_drop:
 		if zone == null or not zone.is_board_zone() or zone.zone_owner != game_manager.current_player or zone.cards.size() > 0:

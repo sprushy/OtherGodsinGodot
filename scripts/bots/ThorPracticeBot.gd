@@ -15,6 +15,9 @@ const CALL_VALKYRIE_PREMIUM_TARGET_SCORE := 3900
 const CALL_VALKYRIE_LOW_HAND_LIMIT := 2
 const CALL_VALKYRIE_SMALL_UPGRADE_MARGIN := 200
 const CALL_VALKYRIE_LARGE_UPGRADE_MARGIN := 500
+const ECON_CARD_VALUE := 5000
+const ECON_MANA_VALUE := 1000
+const ECON_FOLLOWERS_PER_CARD := 25
 
 var _active: bool = false
 var _step_queued: bool = false
@@ -314,6 +317,8 @@ func _take_main_phase_action() -> bool:
 		return true
 	if _try_cast_fall_of_the_mighty():
 		return true
+	if _try_prepare_vision_of_odin():
+		return true
 	if _try_prepare_void_shield():
 		return true
 	if _try_prepare_mead_of_poetry():
@@ -471,6 +476,15 @@ func _try_prepare_void_shield() -> bool:
 	if zone == null:
 		return false
 	return _submit_prepare_card(void_shield, zone)
+
+func _try_prepare_vision_of_odin() -> bool:
+	var vision := _find_hand_unprepared_vision_of_odin()
+	if vision == null:
+		return false
+	var zone := _get_first_open_reserve_zone(bot_player)
+	if zone == null:
+		return false
+	return _submit_prepare_card(vision, zone)
 
 func _try_prepare_mead_of_poetry() -> bool:
 	var mead := _find_hand_unprepared_mead()
@@ -1203,6 +1217,12 @@ func _find_hand_fall_of_the_mighty() -> FallOfTheMighty:
 			return card as FallOfTheMighty
 	return null
 
+func _find_hand_unprepared_vision_of_odin() -> VisionOfOdin:
+	for card in bot_player.hand_zone.cards:
+		if card is VisionOfOdin:
+			return card as VisionOfOdin
+	return null
+
 func _find_hand_void_shield() -> VoidShield:
 	for card in bot_player.hand_zone.cards:
 		if card is VoidShield:
@@ -1659,7 +1679,32 @@ func _choose_creature_summon_mode(card: Card, opposing_creatures: Array[Card] = 
 		return Card.CreatureMode.AGGRESSIVE
 	if _is_projected_creature_strongest_on_board(card, resolved_opposing):
 		return Card.CreatureMode.AGGRESSIVE
+	if _should_summon_as_aggressive_into_defensive_wall(card, resolved_opposing):
+		return Card.CreatureMode.AGGRESSIVE
 	return Card.CreatureMode.DEFENSIVE
+
+func _should_summon_as_aggressive_into_defensive_wall(card: Card, opposing_creatures: Array[Card]) -> bool:
+	if card == null or opposing_creatures.is_empty():
+		return false
+	var has_defensive_wall := false
+	for enemy in opposing_creatures:
+		if enemy == null:
+			continue
+		if enemy.creature_mode == Card.CreatureMode.DEFENSIVE and not _would_destroy_target_in_battle(card, enemy):
+			has_defensive_wall = true
+			break
+	if not has_defensive_wall:
+		return false
+	var projected_strength := _get_projected_strength(card)
+	var projected_resilience := _get_projected_resilience(card)
+	if projected_resilience > projected_strength:
+		return false
+	for enemy in opposing_creatures:
+		if enemy == null or not _can_attack_creature(enemy, card):
+			continue
+		if enemy.get_effective_strength() >= projected_resilience and enemy.get_effective_strength() < projected_strength:
+			return true
+	return projected_resilience <= maxi(1, projected_strength / 2)
 
 func _count_clean_attack_targets_for(attacker: Card, opposing_creatures: Array[Card]) -> int:
 	var count := 0
@@ -1702,7 +1747,7 @@ func _find_best_priority_vision_response(responses: Array, top_action: CardActio
 		return {}
 	var best_card: VisionOfOdin = null
 	var best_target: Card = null
-	var best_score := 2200
+	var best_score := 0
 	for response_card in responses:
 		var vision := response_card as VisionOfOdin
 		if vision == null:
@@ -1722,7 +1767,7 @@ func _find_best_priority_vision_response(responses: Array, top_action: CardActio
 
 func _choose_best_priority_vision_target(vision: VisionOfOdin, top_action: CardAction, targets: Array) -> Card:
 	var best_target: Card = null
-	var best_score := 2200
+	var best_score := 0
 	for raw_target in targets:
 		var target := raw_target as Card
 		if target == null:
@@ -1744,7 +1789,7 @@ func _score_vision_of_odin_priority_target(_vision: VisionOfOdin, top_action: Ca
 		return -1000000
 	if target != attacker and target != defender:
 		return -1000000
-	var score := 0
+	var score := _score_vision_economic_swing(_vision, top_action, target, target_is_friendly_norse)
 	if defender == null:
 		if target == attacker and target_is_enemy_non_norse and attacker.get_controller() == opponent:
 			score += 800 + VisionOfOdin.STR_SWING * 140
@@ -1778,6 +1823,148 @@ func _score_vision_of_odin_priority_target(_vision: VisionOfOdin, top_action: Ca
 			if defender is Askelladen and attacker.get_effective_speed() <= defender.get_effective_speed() and attacker.get_effective_speed() > defender.get_effective_speed() - VisionOfOdin.SPEED_SWING:
 				score += 2600
 	return score if score > 0 else -1000000
+
+func _score_vision_economic_swing(vision: VisionOfOdin, action: CardAction, target: Card, target_is_buffed: bool) -> int:
+	if action == null or target == null:
+		return -1000000
+	var str_delta := VisionOfOdin.STR_SWING if target_is_buffed else -VisionOfOdin.STR_SWING
+	var speed_delta := VisionOfOdin.SPEED_SWING if target_is_buffed else -VisionOfOdin.SPEED_SWING
+	var before := _estimate_attack_economy(action, null, 0, 0)
+	var after := _estimate_attack_economy(action, target, str_delta, speed_delta)
+	var score := _score_attack_economy(after) - _score_attack_economy(before)
+	score -= ECON_CARD_VALUE
+	if vision != null and game_manager != null and bot_player != null:
+		score -= game_manager.get_prepared_card_activation_mana_cost(bot_player, vision) * ECON_MANA_VALUE
+	return score
+
+func _estimate_attack_economy(action: CardAction, modified_card: Card, str_delta: int, _speed_delta: int) -> Dictionary:
+	var result := {
+		"bot_cards_lost": 0,
+		"opponent_cards_lost": 0,
+		"bot_followers_lost": 0,
+		"opponent_followers_lost": 0,
+		"bot_wins": false,
+		"opponent_wins": false,
+	}
+	if action == null or action.attacker == null:
+		return result
+	var attacker := action.attacker
+	var defender := _get_attack_defender_card(action)
+	var attacker_strength := _get_vision_adjusted_strength(attacker, modified_card, str_delta)
+	if defender == null:
+		_add_follower_loss_to_economy(result, _get_attack_defending_player(action, defender), attacker_strength)
+		return result
+	if defender.is_god:
+		_add_follower_loss_to_economy(result, defender.get_controller(), attacker_strength)
+		return result
+	if defender.is_petrified() or defender.card_type == Card.CardType.STRUCTURE:
+		if _get_vision_adjusted_strength_vs_defense(attacker, modified_card, str_delta) > defender.get_effective_resilience():
+			_add_destroyed_card_to_economy(result, defender)
+		return result
+	if defender.card_type != Card.CardType.CREATURE:
+		return result
+	if defender.creature_mode == Card.CreatureMode.AGGRESSIVE:
+		var defender_strength := _get_vision_adjusted_strength(defender, modified_card, str_delta)
+		if attacker_strength > defender_strength:
+			_add_destroyed_card_to_economy(result, defender)
+			_add_follower_loss_to_economy(result, defender.get_controller(), attacker_strength - defender_strength)
+		elif defender_strength > attacker_strength:
+			_add_destroyed_card_to_economy(result, attacker)
+			_add_follower_loss_to_economy(result, attacker.get_controller(), defender_strength - attacker_strength)
+		else:
+			_add_destroyed_card_to_economy(result, attacker)
+			_add_destroyed_card_to_economy(result, defender)
+		return result
+
+	var attack_strength_vs_defense := _get_vision_adjusted_strength_vs_defense(attacker, modified_card, str_delta)
+	var defender_resilience := defender.get_effective_resilience()
+	if attack_strength_vs_defense > defender_resilience:
+		_add_destroyed_card_to_economy(result, defender)
+	elif attack_strength_vs_defense < defender_resilience:
+		_add_follower_loss_to_economy(result, attacker.get_controller(), defender_resilience - attack_strength_vs_defense)
+		if _defender_has_ferocious_defence(defender, attack_strength_vs_defense):
+			_add_destroyed_card_to_economy(result, attacker)
+	elif _defender_has_ferocious_defence(defender, attack_strength_vs_defense):
+		_add_destroyed_card_to_economy(result, attacker)
+	return result
+
+func _score_attack_economy(result: Dictionary) -> int:
+	var score := int(result.get("opponent_cards_lost", 0)) - int(result.get("bot_cards_lost", 0))
+	score += _score_follower_loss(opponent, int(result.get("opponent_followers_lost", 0)))
+	score -= _score_follower_loss(bot_player, int(result.get("bot_followers_lost", 0)))
+	if bool(result.get("bot_wins", false)):
+		score += ECON_CARD_VALUE * 20
+	if bool(result.get("opponent_wins", false)):
+		score -= ECON_CARD_VALUE * 20
+	return score
+
+func _add_destroyed_card_to_economy(result: Dictionary, card: Card) -> void:
+	if card == null:
+		return
+	var value := _get_card_economic_value(card)
+	if card.get_controller() == bot_player:
+		result["bot_cards_lost"] = int(result.get("bot_cards_lost", 0)) + value
+	elif card.get_controller() == opponent:
+		result["opponent_cards_lost"] = int(result.get("opponent_cards_lost", 0)) + value
+
+func _add_follower_loss_to_economy(result: Dictionary, player: Player, amount: int) -> void:
+	if player == null or amount <= 0:
+		return
+	var actual_loss := mini(amount, player.followers)
+	if player == bot_player:
+		result["bot_followers_lost"] = int(result.get("bot_followers_lost", 0)) + actual_loss
+		if actual_loss >= player.followers:
+			result["opponent_wins"] = true
+	elif player == opponent:
+		result["opponent_followers_lost"] = int(result.get("opponent_followers_lost", 0)) + actual_loss
+		if actual_loss >= player.followers:
+			result["bot_wins"] = true
+
+func _get_attack_defending_player(action: CardAction, defender: Card) -> Player:
+	if defender != null:
+		return defender.get_controller()
+	if action != null and action.target is Player:
+		return action.target as Player
+	if action != null and action.attacker != null:
+		return game_manager.get_opponent(action.attacker.get_controller()) if game_manager != null else null
+	return null
+
+func _get_vision_adjusted_strength(card: Card, modified_card: Card, str_delta: int) -> int:
+	if card == null:
+		return 0
+	var strength := card.get_effective_strength()
+	if card == modified_card:
+		strength += str_delta
+	return maxi(0, strength)
+
+func _get_vision_adjusted_strength_vs_defense(card: Card, modified_card: Card, str_delta: int) -> int:
+	if card == null:
+		return 0
+	var strength := _get_attack_strength_against_defense(card)
+	if card == modified_card:
+		strength += str_delta
+	return maxi(0, strength)
+
+func _get_card_economic_value(card: Card) -> int:
+	if card == null:
+		return 0
+	return ECON_CARD_VALUE + maxi(0, int(_score_projected_card(card) / 2))
+
+func _score_follower_loss(player: Player, amount: int) -> int:
+	if player == null or amount <= 0:
+		return 0
+	if amount >= player.followers:
+		return ECON_CARD_VALUE * 20
+	var base_per_follower := int(ECON_CARD_VALUE / ECON_FOLLOWERS_PER_CARD)
+	var score := 0
+	for index in range(amount):
+		var followers_after_loss := maxi(0, player.followers - index - 1)
+		var pressure := 1.0
+		if followers_after_loss < 50:
+			var danger := float(50 - followers_after_loss) / 50.0
+			pressure += pow(danger, 2.0) * 3.0
+		score += int(round(float(base_per_follower) * pressure))
+	return score
 
 func _get_attack_defender_card(action: CardAction) -> Card:
 	if action == null:

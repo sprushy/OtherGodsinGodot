@@ -3376,6 +3376,8 @@ func remove_card_from_game_with_hook(card: Card) -> void:
 			card.remove_status_effects_with_flag("remove_when_leaves_board")
 		card.remove_effects_expiring_after_combat()
 	card.process_board_leave_hooks(self)
+	if from_zone.is_board_zone():
+		card.clear_board_leave_state()
 	from_zone.remove_card(card)
 	card.board_entry_order = -1
 	if card.card_owner != null:

@@ -632,10 +632,10 @@ static func spawn_action_point_spend_effect(parent: Node, global_center: Vector2
 
 	var color := _get_action_point_burst_color(action_cost_kind)
 	var major_burst := action_cost_kind == Card.ACTION_COST_MAJOR
-	var duration := ACTION_POINT_BURST_DURATION * (1.12 if major_burst else 1.0)
-	var radius := ACTION_POINT_BURST_RADIUS * (1.16 if major_burst else 1.0)
-	var particle_count := ACTION_POINT_BURST_PARTICLE_COUNT + (8 if major_burst else 0)
-	var icon_size := maxf(14.0, source_size) * (1.12 if major_burst else 1.0)
+	var duration := ACTION_POINT_BURST_DURATION * (1.45 if major_burst else 1.0)
+	var radius := ACTION_POINT_BURST_RADIUS * (1.28 if major_burst else 1.0)
+	var particle_count := ACTION_POINT_BURST_PARTICLE_COUNT + (18 if major_burst else 0)
+	var icon_size := maxf(14.0, source_size) * (1.18 if major_burst else 1.0)
 	var core := TextureRect.new()
 	core.texture = texture
 	core.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -4218,9 +4218,6 @@ func _add_creature_action_symbols(overlay: Control, card: Card) -> void:
 	var can_view_stealth := not card.is_stealth or card.get_controller() == viewer or card.is_temporarily_revealed()
 	if card.is_face_down or card.is_prepared or not can_view_stealth:
 		return
-	if not _should_show_creature_action_symbols(card):
-		return
-
 	var symbols := BoardZoneUI.get_creature_action_symbol_entries(card)
 	if symbols.is_empty():
 		return
@@ -4240,12 +4237,12 @@ func _add_creature_action_symbols(overlay: Control, card: Card) -> void:
 		if not bool(symbol.get("used", false)):
 			has_visible_symbol = true
 			break
-	if not _hovered and not has_spend_effect:
+	var should_render_static_icons := _hovered and _should_show_creature_action_symbols(card)
+	if not should_render_static_icons and not has_spend_effect:
 		return
 	if not has_visible_symbol and not has_spend_effect:
 		return
 
-	var should_render_static_icons := _hovered
 	var icon_size := 22.0
 	var gap := 3.0
 	var total_width := icon_size * float(symbols.size()) + gap * float(maxi(0, symbols.size() - 1))
@@ -4324,8 +4321,7 @@ func _add_creature_action_symbols(overlay: Control, card: Card) -> void:
 
 	if not burst_requests.is_empty():
 		BoardZoneUI.clear_pending_action_point_spend_visual_kinds(card)
-		# Deferred burst effects can outlive the board cell during destructive stack
-		# resolution. Keep the action symbols accurate and skip the flourish.
+		call_deferred("_play_creature_action_symbol_spend_bursts", burst_requests, icon_size)
 
 func _add_stance_switch_symbol(overlay: Control, card: Card) -> void:
 	if overlay == null or card == null:
