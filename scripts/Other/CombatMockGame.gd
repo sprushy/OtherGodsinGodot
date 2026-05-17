@@ -27,6 +27,7 @@ const FREYJA_TABBY_CURSOR_IMAGE_PATH := "res://images/ui/cursors/TabbyCatCursor.
 const FREYJA_BLACK_CURSOR_IMAGE_PATH := "res://images/ui/cursors/BlackCatCursor.png"
 const CardBackTexture = preload("res://images/cardbackAI.png")
 const BOARD_FLOOR_TEXTURE_PATH := "res://images/board/moss_stone_floor_albedo.png"
+const BOARD_SPLASH_TEXTURE_PATH := "res://images/ui/splash/other_gods_splash.png"
 const PromptRouterScript = preload("res://scripts/server/PromptRouter.gd")
 const HeadlessMatchHostScript = preload("res://scripts/server/HeadlessMatchHost.gd")
 const MatchClientScript = preload("res://scripts/client/MatchClient.gd")
@@ -170,6 +171,7 @@ var _hand_hover_preview_keywords: Control = null
 var _action_log_shell: Control = null
 var _board_art_background: TextureRect = null
 var _board_floor_texture: Texture2D = null
+var _board_splash_texture: Texture2D = null
 var _turn_choice_gap: Control = null
 const _HAND_CONTEXT_MENU_KEEPALIVE_MARGIN := 10.0
 
@@ -447,11 +449,13 @@ var _auto_priority_toggle: CheckButton = null
 var _pause_menu_overlay: Control = null
 var _pause_menu_panel: PanelContainer = null
 var _settings_menu_panel: PanelContainer = null
+var _music_mute_settings_toggle: CheckButton = null
 var _auto_select_spell_play_zones: bool = true
 var _auto_select_spell_prepare_zones: bool = true
 var _auto_select_hex_prepare_zones: bool = true
 var _auto_select_charm_play_zones: bool = true
 var _auto_select_charm_prepare_zones: bool = true
+var _use_splash_board_background: bool = false
 var _hover_show_card_options: bool = true
 var _hover_card_options_card: Card = null
 var _action_point_state_by_card_uid: Dictionary = {}
@@ -700,6 +704,29 @@ func _make_settings_section_label(label_text: String) -> Label:
 	label.add_theme_color_override("font_color", Color(0.96, 0.92, 0.68))
 	return label
 
+func _get_music_controller() -> Node:
+	if not is_inside_tree():
+		return null
+	return get_tree().get_first_node_in_group("music_controls")
+
+func _is_music_muted() -> bool:
+	var music_controller := _get_music_controller()
+	if music_controller != null and music_controller.has_method("is_music_muted"):
+		return bool(music_controller.call("is_music_muted"))
+	return false
+
+func _set_music_muted(muted: bool) -> void:
+	var music_controller := _get_music_controller()
+	if music_controller != null and music_controller.has_method("set_music_muted"):
+		music_controller.call("set_music_muted", muted)
+		return
+	_on_music_mute_changed(muted)
+
+func _on_music_mute_changed(muted: bool) -> void:
+	if _music_mute_settings_toggle == null or not is_instance_valid(_music_mute_settings_toggle):
+		return
+	_music_mute_settings_toggle.set_pressed_no_signal(muted)
+
 func _show_pause_menu_page() -> void:
 	if _pause_menu_panel != null and is_instance_valid(_pause_menu_panel):
 		_pause_menu_panel.show()
@@ -718,6 +745,7 @@ func _hide_pause_menu() -> void:
 	_pause_menu_overlay = null
 	_pause_menu_panel = null
 	_settings_menu_panel = null
+	_music_mute_settings_toggle = null
 
 func _show_pause_menu() -> void:
 	if _is_pause_menu_open():
@@ -798,8 +826,8 @@ func _show_pause_menu() -> void:
 	settings_panel.anchor_bottom = 0.5
 	settings_panel.offset_left = -280
 	settings_panel.offset_right = 280
-	settings_panel.offset_top = -240
-	settings_panel.offset_bottom = 240
+	settings_panel.offset_top = -310
+	settings_panel.offset_bottom = 310
 	overlay.add_child(settings_panel)
 	_settings_menu_panel = settings_panel
 
@@ -853,7 +881,23 @@ func _show_pause_menu() -> void:
 			_auto_select_charm_prepare_zones = pressed
 	))
 
+	settings_vbox.add_child(_make_settings_section_label("Audio"))
+	_music_mute_settings_toggle = _make_auto_zone_toggle(
+		"Mute music",
+		_is_music_muted(),
+		func(pressed: bool) -> void:
+			_set_music_muted(pressed)
+	)
+	settings_vbox.add_child(_music_mute_settings_toggle)
+
 	settings_vbox.add_child(_make_settings_section_label("Visual"))
+	settings_vbox.add_child(_make_auto_zone_toggle(
+		"Use splash image board background",
+		_use_splash_board_background,
+		func(pressed: bool) -> void:
+			_use_splash_board_background = pressed
+			_apply_board_art_background_texture()
+	))
 	settings_vbox.add_child(_make_auto_zone_toggle(
 		"Hover show card options",
 		_hover_show_card_options,
@@ -1518,19 +1562,18 @@ func _on_doorway_choice_requested(structure: DoorwayToTheVoid, card: Card, comba
 
 func _ensure_board_art_background() -> void:
 	if _board_art_background != null and is_instance_valid(_board_art_background):
+		_apply_board_art_background_texture()
 		return
 	_board_art_background = TextureRect.new()
 	_board_art_background.name = "BoardArtBackground"
-	_board_art_background.texture = _get_board_floor_texture()
 	_board_art_background.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 	_board_art_background.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	_board_art_background.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_board_art_background.modulate = Color(0.78, 0.80, 0.74, 1.0)
-	_board_art_background.z_as_relative = false
-	_board_art_background.z_index = -100
 	_board_art_background.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	add_child(_board_art_background)
 	move_child(_board_art_background, 0)
+	_apply_board_art_background_texture()
 	_layout_board_art_background()
 
 func _layout_board_art_background() -> void:
@@ -1547,8 +1590,34 @@ func _get_board_floor_texture() -> Texture2D:
 		return null
 	return _board_floor_texture
 
+func _get_board_splash_texture() -> Texture2D:
+	if _board_splash_texture != null:
+		return _board_splash_texture
+	_board_splash_texture = load(BOARD_SPLASH_TEXTURE_PATH) as Texture2D
+	if _board_splash_texture == null:
+		push_warning("CombatMockGame: failed to load board splash texture %s" % BOARD_SPLASH_TEXTURE_PATH)
+		return null
+	return _board_splash_texture
+
+func _get_board_art_background_texture() -> Texture2D:
+	if _use_splash_board_background:
+		var splash_texture := _get_board_splash_texture()
+		if splash_texture != null:
+			return splash_texture
+	return _get_board_floor_texture()
+
+func _apply_board_art_background_texture() -> void:
+	if _board_art_background == null or not is_instance_valid(_board_art_background):
+		return
+	_board_art_background.texture = _get_board_art_background_texture()
+	if _use_splash_board_background:
+		_board_art_background.modulate = Color(1, 1, 1, 1)
+	else:
+		_board_art_background.modulate = Color(0.78, 0.80, 0.74, 1.0)
+
 func _ready() -> void:
 	add_to_group("combat_mock_game")
+	add_to_group("music_mute_observers")
 	_ensure_board_art_background()
 	choice_container.visible = false
 	end_turn_button.visible = false
@@ -4086,6 +4155,17 @@ func _resolve_pending_display_zone(card: Card, preferred_zone: Zone = null) -> Z
 	if card != null and card.current_zone != null and card.current_zone.is_board_zone() and card.current_zone.zone_owner == source_player:
 		return card.current_zone
 	return _find_available_stack_display_zone(source_player)
+
+func _add_display_zone_to_command(command: Dictionary, display_zone: Zone = null) -> Dictionary:
+	var command_zone := display_zone
+	if command_zone == null and _pending_spell_display_zone != null:
+		command_zone = _pending_spell_display_zone
+	if command_zone == null and spell_waiting_for_display_zone != null:
+		command_zone = spell_waiting_for_display_zone
+	if command_zone == null or game_manager == null or command_zone.zone_owner == null:
+		return command
+	command["display_zone"] = MatchManager.zone_to_dict(command_zone, game_manager)
+	return command
 
 func _begin_paid_hand_card_preview(card: Card, preferred_zone: Zone = null) -> Zone:
 	if card == null:
@@ -8098,7 +8178,7 @@ func _try_activate_owned_board_spell(card: Card) -> bool:
 	elif card is CircleOfRebirth:
 		if game_input != null:
 			var prepared_spell_uid: String = card.get("uid") if "uid" in card else ""
-			game_input.submit_action({type = "cast_spell", spell_uid = prepared_spell_uid})
+			game_input.submit_action(_add_display_zone_to_command({type = "cast_spell", spell_uid = prepared_spell_uid}))
 		else:
 			var board_spell := card
 			var resurrect_count := get_resurrectible_cards().size()
@@ -8114,7 +8194,7 @@ func _try_activate_owned_board_spell(card: Card) -> bool:
 	else:
 		if game_input != null:
 			var spell_uid: String = card.get("uid") if "uid" in card else ""
-			game_input.submit_action({type = "cast_spell", spell_uid = spell_uid})
+			game_input.submit_action(_add_display_zone_to_command({type = "cast_spell", spell_uid = spell_uid}))
 		else:
 			var board_spell := card
 			_queue_hand_spell_cast(
@@ -8145,7 +8225,7 @@ func _prompt_generic_spell_target_selection(spell: SpellCard) -> void:
 		if game_input != null:
 			var spell_uid: String = spell.get("uid") if "uid" in spell else ""
 			var target_uid: String = chosen_target.get("uid") if "uid" in chosen_target else ""
-			game_input.submit_action({type = "cast_spell", spell_uid = spell_uid, target_uid = target_uid})
+			game_input.submit_action(_add_display_zone_to_command({type = "cast_spell", spell_uid = spell_uid, target_uid = target_uid}))
 			return
 		var target_label := _get_target_label(chosen_target, game_manager.get_feedback_viewer(), "target")
 		var source_label := _get_attack_card_label(spell, spell.card_name)
@@ -9003,15 +9083,6 @@ func _queue_charm_action(charm: CharmCard, triggering_action: CardAction = null,
 		update_ui()
 		return
 	var from_hand: bool = charm.current_zone == charm.card_owner.hand_zone
-	if game_input != null:
-		var charm_target_uid: String = target.uid if target is Card else ""
-		game_input.submit_action({type = "cast_charm", charm_uid = charm.uid, target_uid = charm_target_uid, prepared = not from_hand})
-		selected_card = null
-		awaiting_spell_target = false
-		spell_waiting_for_target = null
-		spell_waiting_for_action = null
-		spell_waiting_for_display_zone = null
-		return
 	var preferred_display_zone: Zone = _get_paid_hand_card_display_zone(charm)
 	if preferred_display_zone == null and spell_waiting_for_display_zone != null:
 		preferred_display_zone = _resolve_pending_display_zone(charm, spell_waiting_for_display_zone)
@@ -9023,6 +9094,22 @@ func _queue_charm_action(charm: CharmCard, triggering_action: CardAction = null,
 		preferred_display_zone = _resolve_pending_display_zone(charm, (target as Card).current_zone)
 		_pending_paid_hand_display_zone = preferred_display_zone
 		_pending_paid_hand_display_zone_auto = false
+	if game_input != null:
+		var charm_target_uid: String = target.uid if target is Card else ""
+		var charm_command := {
+			type = "cast_charm",
+			charm_uid = charm.uid,
+			target_uid = charm_target_uid,
+			prepared = not from_hand
+		}
+		_add_display_zone_to_command(charm_command, preferred_display_zone)
+		game_input.submit_action(charm_command)
+		selected_card = null
+		awaiting_spell_target = false
+		spell_waiting_for_target = null
+		spell_waiting_for_action = null
+		spell_waiting_for_display_zone = null
+		return
 	if from_hand:
 		if not charm.can_activate_from_hand(game_manager, source_action):
 			_set_action_label_text(_get_play_card_unavailable_text(charm, null))
@@ -10245,7 +10332,7 @@ func _on_empty_zone_pressed(zone: Zone) -> void:
 				_prompt_absence_target_selection()
 			elif selected_card is CircleOfRebirth:
 				if _should_submit_ui_action_command():
-					game_input.submit_action({type = "cast_spell", spell_uid = selected_card.uid})
+					game_input.submit_action(_add_display_zone_to_command({type = "cast_spell", spell_uid = selected_card.uid}, zone))
 				else:
 					var resurrect_count := get_resurrectible_cards().size()
 					var spell := selected_card
@@ -10262,7 +10349,7 @@ func _on_empty_zone_pressed(zone: Zone) -> void:
 						and selected_card.has_method("get_valid_targets"):
 					_prompt_generic_spell_target_selection(selected_card as SpellCard)
 				elif _should_submit_ui_action_command():
-					game_input.submit_action({type = "cast_spell", spell_uid = selected_card.uid})
+					game_input.submit_action(_add_display_zone_to_command({type = "cast_spell", spell_uid = selected_card.uid}, zone))
 				else:
 					var spell := selected_card
 					_queue_hand_spell_cast(
@@ -17346,7 +17433,7 @@ func _on_priority_response_chosen(card: Card) -> void:
 		elif card is CircleOfRebirth:
 			if _should_submit_ui_action_command():
 				var spell_uid: String = card.get("uid") if "uid" in card else ""
-				game_input.submit_action({type = "cast_spell", spell_uid = spell_uid})
+				game_input.submit_action(_add_display_zone_to_command({type = "cast_spell", spell_uid = spell_uid}))
 			else:
 				var resurrect_count := get_resurrectible_cards().size()
 				var spell := card
@@ -17362,7 +17449,7 @@ func _on_priority_response_chosen(card: Card) -> void:
 				_prompt_generic_spell_target_selection(card)
 			elif _should_submit_ui_action_command():
 				var spell_uid: String = card.get("uid") if "uid" in card else ""
-				game_input.submit_action({type = "cast_spell", spell_uid = spell_uid})
+				game_input.submit_action(_add_display_zone_to_command({type = "cast_spell", spell_uid = spell_uid}))
 			else:
 				var spell := card
 				_queue_hand_spell_cast(
@@ -19656,7 +19743,7 @@ func _resolve_absence_with_mode(mode: String) -> void:
 	if _should_submit_ui_action_command():
 		var spell_uid: String = spell.get("uid") if "uid" in spell else ""
 		var target_uid: String = target.get("uid") if "uid" in target else ""
-		game_input.submit_action({type = "cast_spell", spell_uid = spell_uid, target_uid = target_uid, mode = mode})
+		game_input.submit_action(_add_display_zone_to_command({type = "cast_spell", spell_uid = spell_uid, target_uid = target_uid, mode = mode}))
 		return
 	var target_label := _get_target_label(target, game_manager.get_feedback_viewer(), "target")
 	var source_label := _get_attack_card_label(spell, spell.card_name)
@@ -19826,7 +19913,7 @@ func _resolve_book_of_life(chosen: Card) -> void:
 		var target_uid := ""
 		if chosen != null and "uid" in chosen:
 			target_uid = chosen.get("uid")
-		game_input.submit_action({type = "cast_spell", spell_uid = spell_uid, target_uid = target_uid})
+		game_input.submit_action(_add_display_zone_to_command({type = "cast_spell", spell_uid = spell_uid, target_uid = target_uid}))
 		return
 	var resolution_text := "Book of Life gained 10 followers."
 	if chosen != null:
@@ -20005,7 +20092,7 @@ func _queue_deucalion_spell(spell: DeucalionsInfants, friendly_targets: Array[Ca
 			if c != null and "uid" in c:
 				choices.append(c.uid)
 		var enemy_uid: String = enemy_target.get("uid") if enemy_target != null and "uid" in enemy_target else ""
-		game_input.submit_action({type = "cast_spell", spell_uid = spell_uid, choices = choices, enemy_target_uid = enemy_uid})
+		game_input.submit_action(_add_display_zone_to_command({type = "cast_spell", spell_uid = spell_uid, choices = choices, enemy_target_uid = enemy_uid}))
 		return
 	spell.resolve_with_choices(game_manager, friendly_targets, enemy_target, func() -> void:
 		_send_used_hand_card_to_graveyard(spell)
@@ -20450,12 +20537,12 @@ func _on_kos_demon_done() -> void:
 			if demon != null:
 				choices.append(demon.uid)
 		var sacrifice_uid = _pending_kos_sacrifice.uid if _pending_kos_sacrifice != null else ""
-		game_input.submit_action({
+		game_input.submit_action(_add_display_zone_to_command({
 			type = "cast_spell",
 			spell_uid = spell.uid,
 			choices = choices,
 			sacrifice_uid = sacrifice_uid,
-		})
+		}))
 		_pending_kos_selected_demons.clear()
 		_pending_key_of_solomon = null
 		_pending_kos_sacrifice = null
@@ -20508,7 +20595,7 @@ func _on_blot_sacrifice_confirm_pressed() -> void:
 				choices.append(c.uid)
 		# Include the sacrifice target UID so server knows which creature to sacrifice
 		var sac_uid: String = sacrifice_target.get("uid") if sacrifice_target != null and "uid" in sacrifice_target else ""
-		game_input.submit_action({type = "cast_spell", spell_uid = spell_uid, choices = choices, sacrifice_uid = sac_uid})
+		game_input.submit_action(_add_display_zone_to_command({type = "cast_spell", spell_uid = spell_uid, choices = choices, sacrifice_uid = sac_uid}))
 		return
 	if spell == null or sacrifice_target == null:
 		update_ui()
@@ -20625,7 +20712,7 @@ func _on_demiurge_confirm_pressed(spin: SpinBox) -> void:
 		return
 	if _should_submit_ui_action_command():
 		var spell_uid: String = spell.get("uid") if "uid" in spell else ""
-		game_input.submit_action({type = "cast_spell", spell_uid = spell_uid, x_value = x_value})
+		game_input.submit_action(_add_display_zone_to_command({type = "cast_spell", spell_uid = spell_uid, x_value = x_value}))
 		return
 	if spell == null:
 		update_ui()
@@ -24062,6 +24149,7 @@ func _cast_targeted_spell(spell: Card, target: Card) -> void:
 		var spell_uid: String = spell.get("uid") if "uid" in spell else ""
 		var target_uid: String = target.get("uid") if target != null and "uid" in target else ""
 		var cmd := {type = "cast_spell", spell_uid = spell_uid, target_uid = target_uid}
+		_add_display_zone_to_command(cmd)
 		if spell is Absence and target != null and (target.is_god or not (target is PowerCard) or (target as PowerCard).is_face_down):
 			cmd["mode"] = "mute"
 		# For unlocked powers, _show_absence_mode_prompt will add the mode

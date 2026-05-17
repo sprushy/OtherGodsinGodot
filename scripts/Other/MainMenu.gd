@@ -17,6 +17,9 @@ const MatchSessionScript = preload("res://scripts/server/MatchSession.gd")
 const LobbyRoomScript = preload("res://scripts/server/LobbyRoom.gd")
 const STARTUP_SPLASH_IMAGE_PATH := "res://images/ui/splash/other_gods_splash.png"
 const STARTUP_MUSIC_PATH := "res://audio/relaxingtime-relaxing-music-119247.mp3"
+const USER_SETTINGS_PATH := "user://settings.cfg"
+const AUDIO_SETTINGS_SECTION := "audio"
+const MUSIC_MUTED_KEY := "music_muted"
 const PRACTICE_THOR_SCENE_PATH := "res://scenes/practice_thor_game.tscn"
 const DEDICATED_LOBBY_ENTRY_SCRIPT_PATH := "res://scripts/server/DedicatedLobbyServerMain.gd"
 const DEDICATED_SERVER_EXPORT_RELATIVE_PATH := "res://.exports/server/OtherGodsServer.exe"
@@ -153,16 +156,21 @@ var _friends_pending_send_username: String = ""
 var _close_confirm_overlay: Control = null
 var _startup_splash_background: TextureRect = null
 var _startup_music_player: AudioStreamPlayer = null
+var _music_mute_button: Button = null
+var _music_muted: bool = false
 var _startup_menu_fade_started: bool = false
 
 func _ready() -> void:
 	if _is_server_runtime_launch():
 		return
+	add_to_group("music_controls")
+	_load_audio_preferences()
 	_ensure_startup_splash_background()
 	_ensure_startup_music()
 	_prepare_startup_menu_fade()
 	_fit_to_viewport()
 	_build_server_version_overlay()
+	_build_music_mute_button()
 	get_viewport().size_changed.connect(_fit_to_viewport)
 	if ip_line_edit != null:
 		ip_line_edit.visible = true
@@ -244,8 +252,9 @@ func _ensure_startup_splash_background() -> void:
 
 func _ensure_startup_music() -> void:
 	if _startup_music_player != null and is_instance_valid(_startup_music_player):
-		if not _startup_music_player.playing:
+		if not _music_muted and not _startup_music_player.playing:
 			_startup_music_player.play()
+		_apply_music_mute_state()
 		return
 	var player := AudioStreamPlayer.new()
 	player.name = "StartupMusicPlayer"
@@ -253,10 +262,10 @@ func _ensure_startup_music() -> void:
 	if music_stream == null:
 		return
 	player.stream = music_stream
-	player.autoplay = true
+	player.autoplay = false
 	add_child(player)
 	_startup_music_player = player
-	player.play()
+	_apply_music_mute_state()
 
 func _load_startup_splash_texture() -> Texture2D:
 	if ResourceLoader.exists(STARTUP_SPLASH_IMAGE_PATH):
@@ -289,6 +298,73 @@ func _load_startup_music_stream() -> AudioStream:
 	stream.data = bytes
 	stream.loop = true
 	return stream
+
+func _load_audio_preferences() -> void:
+	var config := ConfigFile.new()
+	if config.load(USER_SETTINGS_PATH) != OK:
+		_music_muted = false
+		return
+	_music_muted = bool(config.get_value(AUDIO_SETTINGS_SECTION, MUSIC_MUTED_KEY, false))
+
+func _save_audio_preferences() -> void:
+	var config := ConfigFile.new()
+	config.load(USER_SETTINGS_PATH)
+	config.set_value(AUDIO_SETTINGS_SECTION, MUSIC_MUTED_KEY, _music_muted)
+	var error := config.save(USER_SETTINGS_PATH)
+	if error != OK:
+		push_warning("Could not save audio settings: %s" % str(error))
+
+func is_music_muted() -> bool:
+	return _music_muted
+
+func set_music_muted(muted: bool) -> void:
+	if _music_muted == muted:
+		_apply_music_mute_state()
+		return
+	_music_muted = muted
+	_apply_music_mute_state()
+	_save_audio_preferences()
+
+func toggle_music_mute() -> void:
+	set_music_muted(not _music_muted)
+
+func _apply_music_mute_state() -> void:
+	if _startup_music_player != null and is_instance_valid(_startup_music_player):
+		if _music_muted:
+			_startup_music_player.stream_paused = true
+		else:
+			if not _startup_music_player.playing:
+				_startup_music_player.play()
+			_startup_music_player.stream_paused = false
+	_refresh_music_mute_button()
+	if is_inside_tree():
+		get_tree().call_group("music_mute_observers", "_on_music_mute_changed", _music_muted)
+
+func _build_music_mute_button() -> void:
+	if _music_mute_button != null and is_instance_valid(_music_mute_button):
+		_refresh_music_mute_button()
+		return
+	var button := Button.new()
+	button.name = "MusicMuteButton"
+	button.tooltip_text = "Toggle background music."
+	button.custom_minimum_size = Vector2(146.0, 28.0)
+	button.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
+	button.offset_left = -266.0
+	button.offset_top = -60.0
+	button.offset_right = -120.0
+	button.offset_bottom = -32.0
+	button.z_index = 2100
+	button.mouse_filter = Control.MOUSE_FILTER_STOP
+	button.pressed.connect(toggle_music_mute)
+	add_child(button)
+	_music_mute_button = button
+	_refresh_music_mute_button()
+
+func _refresh_music_mute_button() -> void:
+	if _music_mute_button == null or not is_instance_valid(_music_mute_button):
+		return
+	_music_mute_button.text = "Music Muted" if _music_muted else "Mute Music"
+	_music_mute_button.modulate = Color(0.78, 0.86, 0.92, 0.96) if _music_muted else Color(1, 1, 1, 0.96)
 
 func _prepare_startup_menu_fade() -> void:
 	if menu_container == null:

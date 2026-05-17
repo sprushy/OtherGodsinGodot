@@ -2238,6 +2238,15 @@ func resolve_zone(zone_dict: Dictionary) -> Zone:
 				return player.reserve_zones[zone_idx]
 	return null
 
+func _resolve_command_display_zone(command: Dictionary, source_player: Player) -> Zone:
+	var zone_dict = command.get("display_zone", {})
+	if not (zone_dict is Dictionary):
+		return null
+	var zone := resolve_zone(zone_dict as Dictionary)
+	if _can_use_stack_display_zone(zone, source_player):
+		return zone
+	return null
+
 func _resolve_sender_player(sender_info: Dictionary) -> Player:
 	if sender_info.is_empty():
 		return null
@@ -2902,9 +2911,10 @@ func _process_command_impl(command: Dictionary) -> bool:
 						{"player": player, "prepared": false}
 					)
 			if _uses_authoritative_headless_priority_flow():
-				var preferred_display_zone: Zone = spell.current_zone if prepared_spell else (
-					spell_target.current_zone if spell_target != null and spell_target.current_zone != null and spell_target.current_zone.is_board_zone() else null
-				)
+				var spell_command_display_zone := _resolve_command_display_zone(command, player)
+				var preferred_display_zone: Zone = spell.current_zone if prepared_spell else spell_command_display_zone
+				if preferred_display_zone == null and spell_target != null and spell_target.current_zone != null and spell_target.current_zone.is_board_zone():
+					preferred_display_zone = spell_target.current_zone
 				var spell_resolve := func() -> void:
 					game_manager.notify_spell_played(player, spell)
 					(spell as SpellCard).resolve_from_command(game_manager, command)
@@ -3096,7 +3106,10 @@ func _process_command_impl(command: Dictionary) -> bool:
 					move_failed.emit(_get_move_cost_payment_failure_reason(charm_card, false, charm_card.card_owner))
 					return false
 			if _uses_authoritative_headless_priority_flow():
-				var preferred_display_zone: Zone = charm_card.current_zone if charm_prepared else (charm_target.current_zone if charm_target != null and charm_target.current_zone != null and charm_target.current_zone.is_board_zone() else null)
+				var charm_command_display_zone := _resolve_command_display_zone(command, charm_card.card_owner)
+				var preferred_display_zone: Zone = charm_card.current_zone if charm_prepared else charm_command_display_zone
+				if preferred_display_zone == null and charm_target != null and charm_target.current_zone != null and charm_target.current_zone.is_board_zone():
+					preferred_display_zone = charm_target.current_zone
 				var charm_resolve := func() -> void:
 					_place_persistent_charm_on_board(charm_card, preferred_display_zone)
 					charm_card.resolve(game_manager, charm_target)
@@ -3119,7 +3132,8 @@ func _process_command_impl(command: Dictionary) -> bool:
 			game_manager.run_with_effect_source(
 				charm_card,
 				func() -> void:
-					_place_persistent_charm_on_board(charm_card, charm_target.current_zone if charm_target != null else null)
+					var charm_immediate_display_zone := _resolve_command_display_zone(command, charm_card.card_owner)
+					_place_persistent_charm_on_board(charm_card, charm_immediate_display_zone if charm_immediate_display_zone != null else (charm_target.current_zone if charm_target != null else null))
 					charm_card.resolve(game_manager, charm_target)
 			)
 			if charm_card.goes_to_graveyard_after_use() \

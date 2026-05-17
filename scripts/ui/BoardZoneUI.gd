@@ -406,6 +406,12 @@ const DEBUFF_BADGE_SIZE := 22.0
 const ATTACK_TARGET_ICON_SIZE := 74.0
 const TARGET_ICON_PAD := 5.0
 const TARGET_ICON_GROUP_GAP := 8.0
+const STANCE_SWITCH_BADGE_SIZE := 64.0
+const STANCE_SWITCH_ICON_LEFT := 3.0
+const STANCE_SWITCH_ICON_TOP := -4.0
+const STANCE_SWITCH_ICON_SIZE := 58.0
+const STANCE_SWITCH_COST_ROW_WIDTH := 34.0
+const STANCE_SWITCH_COST_ROW_HEIGHT := 18.0
 const ACTION_COST_MARKER_HEIGHT := 18.0
 const ACTION_COST_MARKER_ACTION_WIDTH := 34.0
 const ACTION_COST_MARKER_MANA_WIDTH := 60.0
@@ -2651,12 +2657,7 @@ func _get_stance_switch_hover_text(card: Card, target_mode: int) -> String:
 	var lines := [
 		"Switch Stance",
 		"Click to switch %s to %s stance." % [card.card_name, target_label],
-		"Uses a minor action point.",
 	]
-	if game_manager != null:
-		var mana_cost := game_manager.get_creature_action_mana_cost(card, "change stance")
-		if mana_cost > 0:
-			lines.append("Also costs %d mana." % mana_cost)
 	return "\n".join(lines)
 
 func _append_debuff_affordance_entry(entries: Array[Dictionary], seen: Dictionary, entry: Dictionary) -> void:
@@ -4337,19 +4338,29 @@ func _add_stance_switch_symbol(overlay: Control, card: Card) -> void:
 	if texture == null:
 		return
 
-	var badge := PanelContainer.new()
+	var badge := Control.new()
+	var action_cost_entries := _make_action_cost_entries(_get_minor_action_cost_kind_for_card(card))
+	var action_mana_cost := _get_creature_action_mana_cost(card, "change stance")
+	var hover_text := _with_action_cost_hover_text(
+		_get_stance_switch_hover_text(card, target_mode),
+		action_cost_entries,
+		action_mana_cost
+	)
 	badge.mouse_filter = Control.MOUSE_FILTER_STOP
 	badge.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-	badge.tooltip_text = _get_stance_switch_hover_text(card, target_mode)
+	badge.tooltip_text = hover_text
 	badge.anchor_left = 0.0
 	badge.anchor_right = 0.0
 	badge.anchor_top = 1.0
 	badge.anchor_bottom = 1.0
 	badge.offset_left = 4.0
 	badge.offset_top = -102.0
-	badge.offset_right = 68.0
+	badge.offset_right = 4.0 + STANCE_SWITCH_BADGE_SIZE
 	badge.offset_bottom = -38.0
 
+	var background := Panel.new()
+	background.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	background.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color(0.07, 0.10, 0.16, 0.94)
 	style.border_color = Color(0.84, 0.88, 0.96, 0.98)
@@ -4361,21 +4372,40 @@ func _add_stance_switch_symbol(overlay: Control, card: Card) -> void:
 	style.corner_radius_bottom_right = 8
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
 		style.set_border_width(side, 1)
-	badge.add_theme_stylebox_override("panel", style)
+	background.add_theme_stylebox_override("panel", style)
+	badge.add_child(background)
 
 	var icon := TextureRect.new()
 	icon.texture = texture
 	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	icon.offset_left = 4.0
-	icon.offset_top = 4.0
-	icon.offset_right = -4.0
-	icon.offset_bottom = -4.0
+	icon.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	icon.offset_left = STANCE_SWITCH_ICON_LEFT
+	icon.offset_top = STANCE_SWITCH_ICON_TOP
+	icon.offset_right = STANCE_SWITCH_ICON_LEFT + STANCE_SWITCH_ICON_SIZE
+	icon.offset_bottom = STANCE_SWITCH_ICON_TOP + STANCE_SWITCH_ICON_SIZE
 	badge.add_child(icon)
 
-	var hover_text := badge.tooltip_text
+	var cost_row := HBoxContainer.new()
+	cost_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	cost_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	cost_row.add_theme_constant_override("separation", 2)
+	cost_row.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	cost_row.offset_left = (STANCE_SWITCH_BADGE_SIZE - STANCE_SWITCH_COST_ROW_WIDTH) * 0.5
+	cost_row.offset_top = STANCE_SWITCH_BADGE_SIZE - STANCE_SWITCH_COST_ROW_HEIGHT - 2.0
+	cost_row.offset_right = cost_row.offset_left + STANCE_SWITCH_COST_ROW_WIDTH
+	cost_row.offset_bottom = STANCE_SWITCH_BADGE_SIZE
+	for entry in action_cost_entries:
+		var action_cost_kind := str(entry.get("kind", Card.ACTION_COST_NONE))
+		var action_texture := _get_action_cost_marker_texture(action_cost_kind)
+		var amount := maxi(0, int(entry.get("amount", 0)))
+		if action_texture == null or amount <= 0:
+			continue
+		_add_cost_amount_icon(cost_row, str(amount), action_texture)
+	badge.add_child(cost_row)
+	BoardZoneUI.register_action_cost_marker(cost_row, card, action_cost_entries)
+
 	_connect_badge_hover(badge, hover_text)
 	badge.gui_input.connect(func(event: InputEvent) -> void:
 		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
