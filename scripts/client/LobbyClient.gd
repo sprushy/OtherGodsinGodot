@@ -58,6 +58,7 @@ var _pending_auth_mode: String = "login"
 var _pending_password: String = ""
 var _connect_attempt_serial: int = 0
 var _initial_auth_attempt_serial: int = 0
+var _transport_connected_signal_received: bool = false
 var _ignore_network_events: bool = false
 
 func _ready() -> void:
@@ -74,6 +75,7 @@ func connect_to_server(
 	password: String = ""
 ) -> Error:
 	_cancel_initial_auth_request()
+	_transport_connected_signal_received = false
 	_ignore_network_events = false
 	_is_authenticated = false
 	current_session_id = ""
@@ -115,6 +117,7 @@ func disconnect_from_server() -> void:
 	_ignore_network_events = true
 	_cancel_connect_attempt_timeout()
 	_cancel_initial_auth_request()
+	_transport_connected_signal_received = false
 	_is_authenticated = false
 	current_session_id = ""
 	current_reconnect_token = ""
@@ -137,6 +140,8 @@ func disconnect_from_server() -> void:
 		network_manager.disconnect_client()
 
 func is_transport_connected() -> bool:
+	if _transport_connected_signal_received and not _ignore_network_events:
+		return true
 	if network_manager == null:
 		return false
 	var multiplayer_api: MultiplayerAPI = network_manager.multiplayer
@@ -331,6 +336,7 @@ func _on_connected_to_server() -> void:
 	if _ignore_network_events:
 		_trace("ignoring connected_to_server after disconnect")
 		return
+	_transport_connected_signal_received = true
 	_trace("connected to server")
 	connected_to_lobby.emit()
 	_begin_initial_auth_request()
@@ -400,6 +406,7 @@ func _should_attempt_pending_lobby_reconnect() -> bool:
 func _on_connection_failed() -> void:
 	_cancel_connect_attempt_timeout()
 	_cancel_initial_auth_request()
+	_transport_connected_signal_received = false
 	if _ignore_network_events:
 		_trace("ignoring connection_failed after disconnect")
 		return
@@ -420,6 +427,7 @@ func _on_connection_failed() -> void:
 func _on_server_disconnected() -> void:
 	_cancel_connect_attempt_timeout()
 	_cancel_initial_auth_request()
+	_transport_connected_signal_received = false
 	if _ignore_network_events:
 		_trace("ignoring server_disconnected after disconnect")
 		return
