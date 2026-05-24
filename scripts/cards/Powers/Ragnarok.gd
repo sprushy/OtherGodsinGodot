@@ -117,14 +117,14 @@ func get_pending_discard_player(game_manager: GameManager) -> Player:
 	return null
 
 func get_pending_discard_targets(game_manager: GameManager) -> Array[Card]:
-	var targets: Array[Card] = []
+	var discard_targets: Array[Card] = []
 	var player := get_pending_discard_player(game_manager)
 	if player == null or player.hand_zone == null:
-		return targets
+		return discard_targets
 	for card in player.hand_zone.cards:
 		if card != null:
-			targets.append(card)
-	return targets
+			discard_targets.append(card)
+	return discard_targets
 
 func resolve_discard_choice(game_manager: GameManager, chosen_card: Card) -> void:
 	var player := get_pending_discard_player(game_manager)

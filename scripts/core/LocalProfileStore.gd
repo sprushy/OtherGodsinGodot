@@ -379,19 +379,19 @@ func mark_account_decks_synced(profile_id: String, deck_ids: Array) -> void:
 	var deleted_lookup: Dictionary = {}
 	if deleted_bucket is Dictionary:
 		deleted_lookup = (deleted_bucket as Dictionary).duplicate(true)
-	var changed := false
+	var bucket_changed := false
 	for raw_deck_id in deck_ids:
 		var deck_id := str(raw_deck_id).strip_edges()
 		if deck_id.is_empty():
 			continue
 		if deleted_lookup.has(deck_id):
 			deleted_lookup.erase(deck_id)
-			changed = true
+			bucket_changed = true
 		if bucket.has(deck_id):
 			continue
 		bucket[deck_id] = true
-		changed = true
-	if not changed:
+		bucket_changed = true
+	if not bucket_changed:
 		return
 	synced_by_profile[resolved_profile_id] = bucket
 	_data["synced_account_deck_ids_by_profile"] = synced_by_profile
@@ -428,14 +428,14 @@ func mark_account_decks_deleted(profile_id: String, deck_ids: Array) -> void:
 	var bucket: Dictionary = {}
 	if deleted_bucket is Dictionary:
 		bucket = (deleted_bucket as Dictionary).duplicate(true)
-	var changed := false
+	var bucket_changed := false
 	for raw_deck_id in deck_ids:
 		var deck_id := str(raw_deck_id).strip_edges()
 		if deck_id.is_empty() or bucket.has(deck_id):
 			continue
 		bucket[deck_id] = true
-		changed = true
-	if not changed:
+		bucket_changed = true
+	if not bucket_changed:
 		return
 	deleted_by_profile[resolved_profile_id] = bucket
 	_data["deleted_account_deck_ids_by_profile"] = deleted_by_profile
@@ -1183,7 +1183,7 @@ func _has_active_match_for_profile(profile_id: String) -> bool:
 	return active is Dictionary and not (active as Dictionary).is_empty()
 
 func _repair_account_profile_mappings() -> bool:
-	var changed := false
+	var mappings_changed := false
 	var account_mappings := _get_account_profile_id_by_username()
 	var profiles := _get_profiles()
 	var normalized_usernames: Dictionary = {}
@@ -1208,23 +1208,23 @@ func _repair_account_profile_mappings() -> bool:
 		if str(account_mappings.get(normalized_username_key, "")).strip_edges() == best_profile_id:
 			continue
 		account_mappings[normalized_username_key] = best_profile_id
-		changed = true
+		mappings_changed = true
 
-	if changed:
+	if mappings_changed:
 		_data["account_profile_id_by_username"] = account_mappings
 
 	var current_profile_id := str(_data.get("current_profile_id", "")).strip_edges()
 	if current_profile_id.is_empty():
-		return changed
+		return mappings_changed
 	var current_profile := get_profile(current_profile_id)
 	if current_profile.is_empty():
-		return changed
+		return mappings_changed
 	var current_username_key := str(current_profile.get("account_username_key", "")).strip_edges().to_lower()
 	if current_username_key.is_empty():
-		return changed
+		return mappings_changed
 	var repaired_current_profile_id := str(account_mappings.get(current_username_key, "")).strip_edges()
 	if repaired_current_profile_id.is_empty() or repaired_current_profile_id == current_profile_id:
-		return changed
+		return mappings_changed
 	_data["current_profile_id"] = repaired_current_profile_id
 	return true
 

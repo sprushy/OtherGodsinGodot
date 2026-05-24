@@ -1052,7 +1052,7 @@ func _score_standard_attack_plan(attacker: Card, target: Card) -> int:
 	var score := _score_enemy_target(target) * 12
 	if _is_askelladen(target):
 		score -= attacker.get_effective_strength() * 40
-		score -= _score_projected_card(attacker) / 4
+		score -= int(float(_score_projected_card(attacker)) / 4.0)
 		if attacker.get_effective_speed() > target.get_effective_speed():
 			score += 1400
 		else:
@@ -1348,15 +1348,15 @@ func _can_clear_creature_without_askelladen(target: Card) -> bool:
 	return false
 
 func _should_use_call_of_the_valkyrie() -> bool:
-	var call := _find_call_of_the_valkyrie()
-	if bot_player == null or call == null:
+	var valkyrie_call := _find_call_of_the_valkyrie()
+	if bot_player == null or valkyrie_call == null:
 		return false
-	var target := _choose_call_of_the_valkyrie_target(call)
+	var target := _choose_call_of_the_valkyrie_target(valkyrie_call)
 	if target == null:
 		return false
 	if _needs_askelladen_support():
 		return target is Askelladen
-	return _is_call_of_the_valkyrie_target_worth_priming(call, target)
+	return _is_call_of_the_valkyrie_target_worth_priming(valkyrie_call, target)
 
 func _needs_askelladen_support() -> bool:
 	if _get_askelladen_problem_creature() == null:
@@ -1368,52 +1368,52 @@ func _needs_askelladen_support() -> bool:
 			return false
 	return _find_graveyard_askelladen() != null
 
-func _choose_call_of_the_valkyrie_target(call: CallOfTheValkyrie) -> Card:
-	if call == null:
+func _choose_call_of_the_valkyrie_target(valkyrie_call: CallOfTheValkyrie) -> Card:
+	if valkyrie_call == null:
 		return null
-	var valid_targets := call.get_valid_targets(game_manager)
+	var valid_targets := valkyrie_call.get_valid_targets(game_manager)
 	if valid_targets.is_empty():
 		return null
 	if _needs_askelladen_support():
 		for target in valid_targets:
 			if target is Askelladen:
 				return target
-	var useful_target := _choose_best_call_of_the_valkyrie_target(call, valid_targets, true)
+	var useful_target := _choose_best_call_of_the_valkyrie_target(valkyrie_call, valid_targets, true)
 	if useful_target != null:
 		return useful_target
-	return _choose_best_call_of_the_valkyrie_target(call, valid_targets, false)
+	return _choose_best_call_of_the_valkyrie_target(valkyrie_call, valid_targets, false)
 
-func _choose_best_call_of_the_valkyrie_target(call: CallOfTheValkyrie, valid_targets: Array[Card], require_useful: bool) -> Card:
+func _choose_best_call_of_the_valkyrie_target(valkyrie_call: CallOfTheValkyrie, valid_targets: Array[Card], require_useful: bool) -> Card:
 	var best_target: Card = null
 	var best_score := -1000000
 	for target in valid_targets:
 		if target == null:
 			continue
-		if require_useful and not _is_call_of_the_valkyrie_target_worth_priming(call, target):
+		if require_useful and not _is_call_of_the_valkyrie_target_worth_priming(valkyrie_call, target):
 			continue
 		var score := _score_call_of_the_valkyrie_target(target)
 		if _call_of_the_valkyrie_target_answers_board(target):
 			score += 500
-		if _can_play_call_of_the_valkyrie_target_after_next_draw(call, target):
+		if _can_play_call_of_the_valkyrie_target_after_next_draw(valkyrie_call, target):
 			score += 300
 		if best_target == null or score > best_score or (score == best_score and _get_card_order_index(target) < _get_card_order_index(best_target)):
 			best_target = target
 			best_score = score
 	return best_target
 
-func _is_call_of_the_valkyrie_target_worth_priming(call: CallOfTheValkyrie, target: Card) -> bool:
+func _is_call_of_the_valkyrie_target_worth_priming(valkyrie_call: CallOfTheValkyrie, target: Card) -> bool:
 	if bot_player == null or game_manager == null or target == null:
 		return false
 	if target is Askelladen and _needs_askelladen_support():
 		return true
-	if not _can_play_call_of_the_valkyrie_target_after_next_draw(call, target):
+	if not _can_play_call_of_the_valkyrie_target_after_next_draw(valkyrie_call, target):
 		return false
 
 	var target_score := _score_call_of_the_valkyrie_target(target)
 	var best_hand := _get_best_affordable_hand_creature(0)
 	if best_hand == null:
 		return target_score >= CALL_VALKYRIE_DESPERATION_TARGET_SCORE
-	if _call_of_the_valkyrie_activation_would_block_hand_play(call, best_hand):
+	if _call_of_the_valkyrie_activation_would_block_hand_play(valkyrie_call, best_hand):
 		return false
 
 	var target_play_score := _score_projected_card(target)
@@ -1429,25 +1429,25 @@ func _is_call_of_the_valkyrie_target_worth_priming(call: CallOfTheValkyrie, targ
 			and target_play_score >= best_hand_score + CALL_VALKYRIE_LARGE_UPGRADE_MARGIN
 	return false
 
-func _can_play_call_of_the_valkyrie_target_after_next_draw(call: CallOfTheValkyrie, target: Card) -> bool:
-	if bot_player == null or game_manager == null or call == null or target == null:
+func _can_play_call_of_the_valkyrie_target_after_next_draw(valkyrie_call: CallOfTheValkyrie, target: Card) -> bool:
+	if bot_player == null or game_manager == null or valkyrie_call == null or target == null:
 		return false
 	if target.card_type != Card.CardType.CREATURE:
 		return false
 	if _get_first_open_summon_zone(bot_player) == null:
 		return false
-	var projected_mana := _get_call_of_the_valkyrie_projected_draw_mana(call)
+	var projected_mana := _get_call_of_the_valkyrie_projected_draw_mana(valkyrie_call)
 	if projected_mana < _get_play_cost(target, false):
 		return false
 	return _can_pay_projected_additional_costs(target)
 
-func _get_call_of_the_valkyrie_projected_draw_mana(call: CallOfTheValkyrie) -> int:
-	if bot_player == null or game_manager == null or call == null:
+func _get_call_of_the_valkyrie_projected_draw_mana(valkyrie_call: CallOfTheValkyrie) -> int:
+	if bot_player == null or game_manager == null or valkyrie_call == null:
 		return 0
 	var projected_mana := bot_player.mana
-	if call.is_face_down:
-		projected_mana -= call.get_unlock_mana_cost(game_manager)
-	projected_mana -= call.get_activation_mana_cost(CallOfTheValkyrie.ACTIVATION_COST, game_manager)
+	if valkyrie_call.is_face_down:
+		projected_mana -= valkyrie_call.get_unlock_mana_cost(game_manager)
+	projected_mana -= valkyrie_call.get_activation_mana_cost(CallOfTheValkyrie.ACTIVATION_COST, game_manager)
 	projected_mana += game_manager.get_effective_upkeep_mana_gain(game_manager.get_base_upkeep_draw_mana_gain(), bot_player)
 	return projected_mana
 
@@ -1472,12 +1472,12 @@ func _get_projected_banishable_card_count() -> int:
 		count += zone.cards.size()
 	return count
 
-func _call_of_the_valkyrie_activation_would_block_hand_play(call: CallOfTheValkyrie, best_hand: Card) -> bool:
-	if call == null or best_hand == null or bot_player == null:
+func _call_of_the_valkyrie_activation_would_block_hand_play(valkyrie_call: CallOfTheValkyrie, best_hand: Card) -> bool:
+	if valkyrie_call == null or best_hand == null or bot_player == null:
 		return false
-	var committed_mana := call.get_activation_mana_cost(CallOfTheValkyrie.ACTIVATION_COST, game_manager)
-	if call.is_face_down:
-		committed_mana += call.get_unlock_mana_cost(game_manager)
+	var committed_mana := valkyrie_call.get_activation_mana_cost(CallOfTheValkyrie.ACTIVATION_COST, game_manager)
+	if valkyrie_call.is_face_down:
+		committed_mana += valkyrie_call.get_unlock_mana_cost(game_manager)
 	if committed_mana <= 0:
 		return false
 	var zone := _get_first_open_summon_zone(bot_player)
@@ -1604,7 +1604,7 @@ func _score_power_unlock(power: PowerCard) -> int:
 	if power.has_method("get_valid_targets"):
 		best_target = _choose_best_target_for_source(power, power.get_valid_targets(game_manager))
 	if best_target != null:
-		score += 1200 + int(_score_activation_target(power, best_target) / 10)
+		score += 1200 + int(float(_score_activation_target(power, best_target)) / 10.0)
 	if _get_best_affordable_hand_creature(0) == null:
 		score += 500
 	if bot_player != null and bot_player.hand_zone != null and bot_player.hand_zone.cards.size() <= 2:
@@ -1704,7 +1704,7 @@ func _should_summon_as_aggressive_into_defensive_wall(card: Card, opposing_creat
 			continue
 		if enemy.get_effective_strength() >= projected_resilience and enemy.get_effective_strength() < projected_strength:
 			return true
-	return projected_resilience <= maxi(1, projected_strength / 2)
+	return projected_resilience <= maxi(1, int(float(projected_strength) / 2.0))
 
 func _count_clean_attack_targets_for(attacker: Card, opposing_creatures: Array[Card]) -> int:
 	var count := 0
@@ -1948,14 +1948,14 @@ func _get_vision_adjusted_strength_vs_defense(card: Card, modified_card: Card, s
 func _get_card_economic_value(card: Card) -> int:
 	if card == null:
 		return 0
-	return ECON_CARD_VALUE + maxi(0, int(_score_projected_card(card) / 2))
+	return ECON_CARD_VALUE + maxi(0, int(float(_score_projected_card(card)) / 2.0))
 
 func _score_follower_loss(player: Player, amount: int) -> int:
 	if player == null or amount <= 0:
 		return 0
 	if amount >= player.followers:
 		return ECON_CARD_VALUE * 20
-	var base_per_follower := int(ECON_CARD_VALUE / ECON_FOLLOWERS_PER_CARD)
+	var base_per_follower := int(float(ECON_CARD_VALUE) / float(ECON_FOLLOWERS_PER_CARD))
 	var score := 0
 	for index in range(amount):
 		var followers_after_loss := maxi(0, player.followers - index - 1)
@@ -2027,7 +2027,7 @@ func _estimate_harii_jarl_warband_value(jarl: HariiJarl) -> int:
 	var score := 0
 	var summon_count := mini(mini(open_zones_after_jarl, HariiJarl.MAX_WARBAND_SUMMONS), scored_targets.size())
 	for index in range(summon_count):
-		score += int(scored_targets[index]) / 2
+		score += int(float(int(scored_targets[index])) / 2.0)
 	return score
 
 func _get_board_open_zone_count(player: Player) -> int:
@@ -2075,7 +2075,7 @@ func _choose_best_target_for_source(source: Card, targets: Array) -> Card:
 			best_score = score
 	return best_target
 
-func _choose_best_enemy_target_for_source(source: Card, targets: Array) -> Card:
+func _choose_best_enemy_target_for_source(_source: Card, targets: Array) -> Card:
 	var best_target: Card = null
 	var best_score := -1000000
 	for raw_target in targets:
@@ -2088,7 +2088,7 @@ func _choose_best_enemy_target_for_source(source: Card, targets: Array) -> Card:
 			best_score = score
 	return best_target
 
-func _choose_best_friendly_board_target_for_source(source: Card, targets: Array) -> Card:
+func _choose_best_friendly_board_target_for_source(_source: Card, targets: Array) -> Card:
 	var best_target: Card = null
 	var best_score := -1000000
 	for raw_target in targets:
@@ -2103,7 +2103,7 @@ func _choose_best_friendly_board_target_for_source(source: Card, targets: Array)
 			best_score = score
 	return best_target
 
-func _choose_best_friendly_graveyard_target_for_source(source: Card, targets: Array) -> Card:
+func _choose_best_friendly_graveyard_target_for_source(_source: Card, targets: Array) -> Card:
 	var best_target: Card = null
 	var best_score := -1000000
 	for raw_target in targets:

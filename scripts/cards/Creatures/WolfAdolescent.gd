@@ -89,33 +89,46 @@ func resolve_maturation_choice(game_manager: GameManager, target: Card) -> Strin
 		return card_name + " has no controller for Maturation."
 
 	var target_zone := current_zone
-	var result := ""
+	var result := {"text": ""}
 	_set_maturation_ready(false)
-	game_manager.request_send_to_graveyard(self, func() -> void:
-		if target_zone == null or not target_zone.cards.is_empty():
-			result = "%s matured, but there was no open lane for %s." % [
-				card_name,
-				target.card_name
-			]
-			return
-		var summoned := game_manager.summon_creature_without_cost(
-			controller,
-			target,
-			target_zone,
-			Card.CreatureMode.AGGRESSIVE
-		)
-		if summoned:
-			result = "%s matures into %s from the deck." % [
-				card_name,
-				target.card_name
-			]
-		else:
-			result = "%s matured, but %s could not be summoned." % [
-				card_name,
-				target.card_name
-			]
-	, false, false)
-	return result if result.strip_edges() != "" else "%s could not mature." % card_name
+	game_manager.request_send_to_graveyard(
+		self,
+		Callable(self, "_finish_maturation_choice_after_graveyard").bind(game_manager, controller, target, target_zone, result),
+		false,
+		false
+	)
+	var result_text := str(result.get("text", ""))
+	return result_text if result_text.strip_edges() != "" else "%s could not mature." % card_name
+
+func _finish_maturation_choice_after_graveyard(
+	game_manager: GameManager,
+	controller: Player,
+	target: Card,
+	target_zone: Zone,
+	result: Dictionary
+) -> void:
+	if target_zone == null or not target_zone.cards.is_empty():
+		result["text"] = "%s matured, but there was no open lane for %s." % [
+			card_name,
+			target.card_name if target != null else "the chosen Lupine"
+		]
+		return
+	var summoned := game_manager.summon_creature_without_cost(
+		controller,
+		target,
+		target_zone,
+		Card.CreatureMode.AGGRESSIVE
+	)
+	if summoned:
+		result["text"] = "%s matures into %s from the deck." % [
+			card_name,
+			target.card_name
+		]
+	else:
+		result["text"] = "%s matured, but %s could not be summoned." % [
+			card_name,
+			target.card_name if target != null else "the chosen Lupine"
+		]
 
 func get_valid_maturation_targets() -> Array[Card]:
 	var valid_targets: Array[Card] = []

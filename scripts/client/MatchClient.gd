@@ -289,14 +289,15 @@ func _arm_connect_attempt_timeout() -> void:
 	_connect_attempt_serial += 1
 	var expected_serial := _connect_attempt_serial
 	var timeout_timer := tree.create_timer(CONNECT_ATTEMPT_TIMEOUT_SECONDS)
-	timeout_timer.timeout.connect(func() -> void:
-		if expected_serial != _connect_attempt_serial:
-			return
-		_on_connect_attempt_timeout()
-	)
+	timeout_timer.timeout.connect(Callable(self, "_on_connect_attempt_timer_timeout").bind(expected_serial))
 
 func _cancel_connect_attempt_timeout() -> void:
 	_connect_attempt_serial += 1
+
+func _on_connect_attempt_timer_timeout(expected_serial: int) -> void:
+	if expected_serial != _connect_attempt_serial:
+		return
+	_on_connect_attempt_timeout()
 
 func _on_game_event_received(event_type: String, data: Dictionary) -> void:
 	if event_type == "game_ended":

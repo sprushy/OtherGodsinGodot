@@ -1330,7 +1330,7 @@ func _has_equipped_evasive() -> bool:
 	return false
 
 func reset_creature_action_state() -> void:
-	var changed := has_acted_this_turn \
+	var action_state_changed := has_acted_this_turn \
 		or has_moved_this_turn \
 		or has_attacked_this_turn \
 		or creature_major_action_used \
@@ -1342,7 +1342,7 @@ func reset_creature_action_state() -> void:
 	creature_major_action_used = false
 	creature_minor_actions_used = 0
 	creature_shift_used_this_turn = false
-	if changed:
+	if action_state_changed:
 		_emit_visual_state_changed()
 
 func get_max_minor_creature_actions_per_turn() -> int:
@@ -1388,12 +1388,12 @@ static func get_creature_summon_action_cost_kinds(stealth: bool = false) -> Arra
 
 func spend_major_creature_action() -> void:
 	var old_major_used := creature_major_action_used
-	var changed := not creature_major_action_used or not has_acted_this_turn
+	var action_state_changed := not creature_major_action_used or not has_acted_this_turn
 	creature_major_action_used = true
 	has_acted_this_turn = true
 	if not old_major_used and creature_major_action_used:
 		_note_action_point_spend_visual(ACTION_COST_MAJOR)
-	if changed:
+	if action_state_changed:
 		_emit_visual_state_changed()
 
 func spend_attack_creature_action() -> void:

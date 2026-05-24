@@ -20,7 +20,7 @@ func start_game(
 	server_match_session = null
 ) -> void:
 	await super.start_game(is_host, is_client, server_ip, server_port, match_info, server_match_session)
-	load_harii_jarl_test_scenario()
+	load_e2_abzu_badge_test_scenario()
 
 func update_ui() -> void:
 	_sync_test_priority_control()
@@ -69,6 +69,10 @@ func _add_test_deck_card(player: Player, card: Card) -> void:
 func _add_test_graveyard_card(player: Player, card: Card) -> void:
 	card.card_owner = player
 	player.graveyard_zone.add_card(card)
+
+func _add_test_abyss_card(player: Player, card: Card) -> void:
+	card.card_owner = player
+	player.abyss_zone.add_card(card)
 
 func _add_test_power(player: Player, slot_index: int, power: PowerCard, unlocked: bool = false) -> void:
 	if player == null or power == null:
@@ -221,7 +225,83 @@ func _reset_test_match_state() -> void:
 		match_manager.reset_runtime_state()
 
 func _setup_test_board() -> void:
-	load_harii_jarl_test_scenario()
+	load_e2_abzu_badge_test_scenario()
+
+func load_e2_abzu_badge_test_scenario() -> void:
+	_reset_test_match_state()
+	_add_test_god(player1, Odin.new())
+	_add_test_god(player2, Thor.new())
+
+	var e2_abzu := E2Abzu.new()
+	_place_test_board_permanent(player1, player1.reserve_zones[2], e2_abzu)
+
+	var field_mer_mage := EnkiLordOfEridu.new()
+	_place_test_board_card(player1, player1.frontline_zones[1], field_mer_mage, Card.CreatureMode.DEFENSIVE)
+
+	var void_mer_mage := FirstSageAdapa.new()
+	_add_test_abyss_card(player1, void_mer_mage)
+
+	_place_test_board_card(player1, player1.frontline_zones[0], Berserker.new(), Card.CreatureMode.AGGRESSIVE)
+	_place_test_board_card(player1, player1.frontline_zones[2], HariiShaman.new(), Card.CreatureMode.DEFENSIVE)
+	_place_test_board_card(player1, player1.frontline_zones[3], GududPriest.new(), Card.CreatureMode.DEFENSIVE)
+	_place_test_board_card(player1, player1.frontline_zones[4], ClayEaters.new(), Card.CreatureMode.DEFENSIVE)
+
+	var nimue := Nimue.new()
+	_place_test_board_card(player1, player1.reserve_zones[0], nimue, Card.CreatureMode.DEFENSIVE)
+	_place_test_board_card(player1, player1.reserve_zones[1], Gawain.new(), Card.CreatureMode.DEFENSIVE)
+
+	var en_hedu_anna := EnHeduAnna.new()
+	_place_test_board_card(player1, player1.reserve_zones[3], en_hedu_anna, Card.CreatureMode.DEFENSIVE)
+
+	var shift_creature := Jiaolong.new()
+	_place_test_board_card(player1, player1.reserve_zones[4], shift_creature, Card.CreatureMode.DEFENSIVE)
+
+	_place_test_board_card(player2, player2.frontline_zones[1], MinotaurFootsoldier.new(), Card.CreatureMode.DEFENSIVE)
+	_place_test_board_card(player2, player2.frontline_zones[2], Alu.new(), Card.CreatureMode.DEFENSIVE)
+	_place_test_board_card(player2, player2.frontline_zones[3], Lindwyrm.new(), Card.CreatureMode.DEFENSIVE)
+	_place_test_board_card(player2, player2.reserve_zones[1], BrownBear.new(), Card.CreatureMode.AGGRESSIVE)
+	_place_test_board_card(player2, player2.reserve_zones[2], Mopsus.new(), Card.CreatureMode.DEFENSIVE)
+
+	_add_test_hand_card(player1, HeroicStand.new())
+	_add_test_hand_card(player1, BrownBear.new())
+	_add_test_graveyard_card(player1, RunicShortsword.new())
+	_add_test_deck_card(player1, GududPriest.new())
+	_add_test_deck_card(player1, ClayEaters.new())
+
+	_add_test_hand_card(player2, DivineLightning.new())
+	_add_test_deck_card(player2, Berserker.new())
+
+	player1.spend_mana(player1.mana)
+	player1.gain_mana(10)
+	player2.spend_mana(player2.mana)
+	player2.gain_mana(8)
+	player1.followers = 100
+	player2.followers = 100
+	player1.followers_changed.emit(player1.followers)
+	player2.followers_changed.emit(player2.followers)
+	player1.has_summoned_this_turn = false
+	player2.has_summoned_this_turn = false
+
+	game_manager.current_player = player1
+	game_manager.other_player = player2
+	game_manager.feedback_viewer = player1
+	player1.is_turn_player = true
+	player2.is_turn_player = false
+	selected_card = null
+	selected_attacker = null
+	selected_interceptor = null
+	_test_turn_owner = player1
+	_test_turn_opponent = player2
+	game_manager.turn_number = 1
+	game_manager.start_turn()
+	_open_upkeep_choice_window()
+	action_label.text = (
+		"Ability Badge Test Scenario. Choose Mana first, then inspect the larger badges across both boards. "
+		+ "Odin, Thor, E2-abzu, Nimue, Berserker, Harii Shaman, Gudu Priest, Clay-Eaters, Gawain, En-hedu-anna, and Jiaolong are all visible. "
+		+ "E2-abzu's top badge returns First Sage Adapa from your Void; the lower badge sends Enki, Lord of Eridu to the Void until end of turn. "
+		+ "Nimue can Entomb enemy creatures or Present Runic Shortsword from your graveyard."
+	)
+	update_ui()
 
 func load_harii_jarl_test_scenario() -> void:
 	_reset_test_match_state()

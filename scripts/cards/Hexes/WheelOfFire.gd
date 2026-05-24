@@ -193,15 +193,15 @@ func _advance_target_step(game_manager: GameManager, pay_cost: bool, emit_feedba
 func _get_next_zone_for_target(target: Card) -> Zone:
 	if target == null or target.current_zone == null:
 		return null
-	var current_zone := target.current_zone
-	if current_zone.zone_type == Zone.ZoneType.FRONTLINE:
+	var target_zone := target.current_zone
+	if target_zone.zone_type == Zone.ZoneType.FRONTLINE:
 		var controller := target.get_controller()
 		if controller == null:
 			return null
-		return _get_nearest_legal_reserve_zone(controller, current_zone.zone_index)
-	if current_zone.zone_type == Zone.ZoneType.RESERVE:
+		return _get_nearest_legal_reserve_zone(controller, target_zone.zone_index)
+	if target_zone.zone_type == Zone.ZoneType.RESERVE:
 		return target.card_owner.graveyard_zone
-	if current_zone == target.card_owner.graveyard_zone:
+	if target_zone == target.card_owner.graveyard_zone:
 		return target.card_owner.abyss_zone
 	return null
 

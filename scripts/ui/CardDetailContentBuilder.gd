@@ -1,7 +1,7 @@
 class_name CardDetailContentBuilder
 extends RefCounted
 
-const LevelSymbolRow = preload("res://scripts/ui/LevelSymbolRow.gd")
+const LevelSymbolRowScript = preload("res://scripts/ui/LevelSymbolRow.gd")
 const _BULLET_SEPARATOR := " | "
 const _BOARD_POPUP_WIDTH := 210.0
 const _KEYWORD_PANEL_WIDTH := 210.0
@@ -481,7 +481,7 @@ static func _add_hover_stored_card_section(vbox: VBoxContainer, card: Card, view
 		if stored_card != null:
 			vbox.add_child(_make_stored_card_preview(stored_card, viewer, width))
 
-static func _make_stored_card_preview(card: Card, viewer: Player, width: float) -> Control:
+static func _make_stored_card_preview(card: Card, _viewer: Player, width: float) -> Control:
 	var panel := PanelContainer.new()
 	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	panel.custom_minimum_size = Vector2(width, 0.0)
@@ -567,12 +567,12 @@ static func _get_level_symbol_color(card: Card) -> Color:
 	return Color(1.0, 0.96, 0.78)
 
 static func _make_level_symbol_row(card: Card, symbol_size: float) -> Control:
-	var row: Control = LevelSymbolRow.new()
+	var row: Control = LevelSymbolRowScript.new()
 	row.setup(
 		card.get_effective_level(),
 		symbol_size,
 		_get_level_symbol_color(card),
-		LevelSymbolRow.get_symbol_texture_for_card(card)
+		LevelSymbolRowScript.get_symbol_texture_for_card(card)
 	)
 	var tooltip_lines := PackedStringArray(["Level: %d" % card.get_effective_level()])
 	var level_breakdown := card.get_buff_tooltip("lvl")
@@ -586,13 +586,13 @@ static func _make_label(
 	text: String,
 	font_size: int,
 	font_color: Color = Color.WHITE,
-	wrap: bool = false
+	enable_wrap: bool = false
 ) -> Label:
 	var label := Label.new()
 	label.text = text
 	label.add_theme_font_size_override("font_size", font_size)
 	label.add_theme_color_override("font_color", font_color)
-	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART if wrap else TextServer.AUTOWRAP_OFF
+	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART if enable_wrap else TextServer.AUTOWRAP_OFF
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return label
 

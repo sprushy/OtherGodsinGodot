@@ -6,7 +6,8 @@ const CardCatalogScript = preload("res://scripts/cards/CardCatalog.gd")
 const TiamatScript = preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
 
 func build_deck(player: Player, selected_cards: Array[Card], special_setup: Dictionary = {}) -> bool:
-	if player.validate_deck(selected_cards):
+	var validation := player.get_deck_validation(selected_cards, special_setup)
+	if bool(validation.get("is_valid", false)):
 		var unique_cards: Array[Card] = []
 		for card in selected_cards:
 			unique_cards.append(card.duplicate(true))
@@ -37,7 +38,8 @@ func build_deck(player: Player, selected_cards: Array[Card], special_setup: Dict
 		for card in regular_cards:
 			player.deck_zone.add_card(card)
 
-		_apply_special_setup(player, special_setup)
+		var validated_special_setup: Dictionary = validation.get("special_setup", special_setup)
+		_apply_special_setup(player, validated_special_setup)
 		
 		return true
 	return false

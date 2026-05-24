@@ -1,5 +1,4 @@
 extends Control
-class_name CombatMockGame
 
 const EnHeduAnnaScript = preload("res://scripts/cards/Creatures/EnHeduAnna.gd")
 const HariiShamanScript = preload("res://scripts/cards/Creatures/HariiShaman.gd")
@@ -35,10 +34,10 @@ const DefaultMatchSetupScript = preload("res://scripts/server/DefaultMatchSetup.
 const MatchHistoryStoreScript = preload("res://scripts/server/MatchHistoryStore.gd")
 const MatchSessionScript = preload("res://scripts/server/MatchSession.gd")
 const TiamatScript = preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
-const UIArtScaler = preload("res://scripts/ui/UIArtScaler.gd")
-const CardDetailContentBuilder = preload("res://scripts/ui/CardDetailContentBuilder.gd")
-const LevelSymbolRow = preload("res://scripts/ui/LevelSymbolRow.gd")
-const DefenseShieldOverlay = preload("res://scripts/ui/DefenseShieldOverlay.gd")
+const UIArtScalerScript = preload("res://scripts/ui/UIArtScaler.gd")
+const CardDetailContentBuilderScript = preload("res://scripts/ui/CardDetailContentBuilder.gd")
+const LevelSymbolRowScript = preload("res://scripts/ui/LevelSymbolRow.gd")
+const DefenseShieldOverlayScript = preload("res://scripts/ui/DefenseShieldOverlay.gd")
 const MINOR_ACTION_SYMBOL_TEXTURE = preload("res://images/ui/MinorActionSymbol.png")
 const MAJOR_ACTION_SYMBOL_TEXTURE = preload("res://images/ui/MajorActionSymbol.png")
 
@@ -549,7 +548,7 @@ const ENEMY_HAND_CARD_SPACING := 74.0
 const ENEMY_HAND_PEEK_ROTATION := 8.0
 const ENEMY_HAND_OVERLAY_SIDE_PADDING := 76.0
 const ENEMY_HAND_OVERLAY_TOP_PADDING := -2.0
-const PREFERRED_BOARD_ZONE_EXTENT := UIArtScaler.DEFAULT_BOARD_ART_REFERENCE_EXTENT
+const PREFERRED_BOARD_ZONE_EXTENT := UIArtScalerScript.DEFAULT_BOARD_ART_REFERENCE_EXTENT
 const HAND_OVERLAY_SIDE_PADDING := 18.0
 const HAND_OVERLAY_BOTTOM_PADDING := -2.0
 const HAND_OVERLAY_Z_INDEX := HOVER_PREVIEW_Z_INDEX + 5
@@ -739,6 +738,10 @@ func _show_pause_settings_menu() -> void:
 	if _settings_menu_panel != null and is_instance_valid(_settings_menu_panel):
 		_settings_menu_panel.show()
 
+func _on_pause_forfeit_pressed() -> void:
+	_hide_pause_menu()
+	_on_forfeit_button_pressed()
+
 func _hide_pause_menu() -> void:
 	if _pause_menu_overlay != null and is_instance_valid(_pause_menu_overlay):
 		_pause_menu_overlay.queue_free()
@@ -810,10 +813,7 @@ func _show_pause_menu() -> void:
 	var forfeit_btn := Button.new()
 	forfeit_btn.text = "Forfeit"
 	forfeit_btn.custom_minimum_size = Vector2(0, 38)
-	forfeit_btn.pressed.connect(func() -> void:
-		_hide_pause_menu()
-		_on_forfeit_button_pressed()
-	)
+	forfeit_btn.pressed.connect(_on_pause_forfeit_pressed)
 	menu_vbox.add_child(forfeit_btn)
 
 	var settings_panel := PanelContainer.new()
@@ -1100,25 +1100,19 @@ func _show_nusku_active_core_flame_prompt(
 	if _pending_nusku_active_recoverable_cards.is_empty():
 		var mill_btn := Button.new()
 		mill_btn.text = "Mill %d" % _pending_nusku_active_mill_count
-		mill_btn.pressed.connect(func() -> void:
-			_resolve_nusku_active_core_flame_prompt(null, false)
-		)
+		mill_btn.pressed.connect(_on_nusku_active_core_flame_mill_pressed)
 		buttons.add_child(mill_btn)
 
 		var decline_btn := Button.new()
 		decline_btn.text = "Decline"
-		decline_btn.pressed.connect(func() -> void:
-			_resolve_nusku_active_core_flame_prompt(null, true)
-		)
+		decline_btn.pressed.connect(_on_nusku_active_core_flame_decline_pressed)
 		buttons.add_child(decline_btn)
 	else:
 		for recoverable_card in _pending_nusku_active_recoverable_cards:
 			var chosen_card := recoverable_card
 			var btn := Button.new()
 			btn.text = "Take " + chosen_card.get_target_log_display_name(game_manager.get_feedback_viewer())
-			btn.pressed.connect(func() -> void:
-				_resolve_nusku_active_core_flame_prompt(chosen_card, false)
-			)
+			btn.pressed.connect(Callable(self, "_on_nusku_active_core_flame_take_pressed").bind(chosen_card.uid))
 			buttons.add_child(btn)
 
 	add_child(panel)
@@ -1133,6 +1127,21 @@ func _show_nusku_active_core_flame_prompt(
 	panel.offset_bottom = 90
 	_set_action_label_text("Core Flame: choose how " + card.card_name + " resolves.")
 	update_ui()
+
+func _on_nusku_active_core_flame_mill_pressed() -> void:
+	_resolve_nusku_active_core_flame_prompt(null, false)
+
+func _on_nusku_active_core_flame_decline_pressed() -> void:
+	_resolve_nusku_active_core_flame_prompt(null, true)
+
+func _on_nusku_active_core_flame_take_pressed(card_uid: String) -> void:
+	_resolve_nusku_active_core_flame_prompt(_get_pending_nusku_active_recoverable_card(card_uid), false)
+
+func _get_pending_nusku_active_recoverable_card(card_uid: String) -> Card:
+	for recoverable_card in _pending_nusku_active_recoverable_cards:
+		if recoverable_card != null and recoverable_card.uid == card_uid:
+			return recoverable_card
+	return null
 
 func _resolve_nusku_active_core_flame_prompt(chosen_card: Card = null, decline: bool = false) -> void:
 	var card := _pending_nusku_active
@@ -1241,12 +1250,12 @@ func _show_doorway_choice_prompt(structure: DoorwayToTheVoid, card: Card, combat
 
 	var grave_btn := Button.new()
 	grave_btn.text = "Graveyard"
-	grave_btn.pressed.connect(func() -> void: _resolve_doorway_destination(false))
+	grave_btn.pressed.connect(_resolve_doorway_destination.bind(false))
 	buttons.add_child(grave_btn)
 
 	var abyss_btn := Button.new()
 	abyss_btn.text = "Abyss"
-	abyss_btn.pressed.connect(func() -> void: _resolve_doorway_destination(true))
+	abyss_btn.pressed.connect(_resolve_doorway_destination.bind(true))
 	buttons.add_child(abyss_btn)
 
 	add_child(panel)
@@ -1671,7 +1680,7 @@ func _ready() -> void:
 	_auto_priority_toggle.offset_top = -28.0
 	_auto_priority_toggle.offset_right = -16.0
 	_auto_priority_toggle.offset_bottom = -2.0
-	_auto_priority_toggle.toggled.connect(func(on: bool) -> void: auto_priority = on)
+	_auto_priority_toggle.toggled.connect(_on_auto_priority_toggled)
 	add_child(_auto_priority_toggle)
 	_setup_center_action_panel()
 	if not board_container.resized.is_connected(_on_board_layout_resized):
@@ -1944,180 +1953,180 @@ func _get_selection_cursor_mode() -> String:
 func _get_cursor_mode_target_height(cursor_mode: String) -> int:
 	match cursor_mode:
 		"sacrifice":
-			return UIArtScaler.get_board_cursor_target_height(SACRIFICE_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+			return UIArtScalerScript.get_board_cursor_target_height(SACRIFICE_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 		"devour":
-			return UIArtScaler.get_board_cursor_target_height(DEVOUR_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+			return UIArtScalerScript.get_board_cursor_target_height(DEVOUR_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 		"breidablik":
-			return UIArtScaler.get_board_cursor_target_height(BREIDABLIK_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+			return UIArtScalerScript.get_board_cursor_target_height(BREIDABLIK_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 		"mead":
-			return UIArtScaler.get_board_cursor_target_height(MEAD_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+			return UIArtScalerScript.get_board_cursor_target_height(MEAD_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 		"freyja_tabby":
-			return UIArtScaler.get_board_cursor_target_height(FREYJA_TABBY_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+			return UIArtScalerScript.get_board_cursor_target_height(FREYJA_TABBY_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 		"freyja_black":
-			return UIArtScaler.get_board_cursor_target_height(FREYJA_BLACK_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+			return UIArtScalerScript.get_board_cursor_target_height(FREYJA_BLACK_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 		"tonal_extraction":
-			return UIArtScaler.get_board_cursor_target_height(TONAL_EXTRACTION_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+			return UIArtScalerScript.get_board_cursor_target_height(TONAL_EXTRACTION_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 		"silence":
-			return UIArtScaler.get_board_cursor_target_height(SILENCE_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+			return UIArtScalerScript.get_board_cursor_target_height(SILENCE_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 		"giant_master_architect":
-			return UIArtScaler.get_board_cursor_target_height(GIANT_MASTER_ARCHITECT_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+			return UIArtScalerScript.get_board_cursor_target_height(GIANT_MASTER_ARCHITECT_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 		"hermes":
-			return UIArtScaler.get_board_cursor_target_height(HERMES_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+			return UIArtScalerScript.get_board_cursor_target_height(HERMES_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 		"guan_yu":
-			return UIArtScaler.get_board_cursor_target_height(GUAN_YU_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+			return UIArtScalerScript.get_board_cursor_target_height(GUAN_YU_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 		"good_fortune":
-			return UIArtScaler.get_board_cursor_target_height(GOOD_FORTUNE_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+			return UIArtScalerScript.get_board_cursor_target_height(GOOD_FORTUNE_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 		"harii_jarl":
-			return UIArtScaler.get_board_cursor_target_height(HARII_JARL_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+			return UIArtScalerScript.get_board_cursor_target_height(HARII_JARL_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 		"tez_titlacauan":
-			return UIArtScaler.get_board_cursor_target_height(TEZ_TITLACAUAN_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+			return UIArtScalerScript.get_board_cursor_target_height(TEZ_TITLACAUAN_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 		"ancient_pyre":
-			return UIArtScaler.get_board_cursor_target_height(ANCIENT_PYRE_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+			return UIArtScalerScript.get_board_cursor_target_height(ANCIENT_PYRE_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 		"anointing_statue":
-			return UIArtScaler.get_board_cursor_target_height(ANOINTING_STATUE_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+			return UIArtScalerScript.get_board_cursor_target_height(ANOINTING_STATUE_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 	return 0
 
 func _apply_sacrifice_cursor() -> bool:
-	var target_height := UIArtScaler.get_board_cursor_target_height(SACRIFICE_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+	var target_height := UIArtScalerScript.get_board_cursor_target_height(SACRIFICE_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 	if _sacrifice_cursor_texture == null or _sacrifice_cursor_target_height != target_height:
-		_sacrifice_cursor_texture = UIArtScaler.build_cursor_texture(SacrificeCursorSource, target_height)
+		_sacrifice_cursor_texture = UIArtScalerScript.build_cursor_texture(SacrificeCursorSource, target_height)
 		_sacrifice_cursor_target_height = target_height
 	if _sacrifice_cursor_texture == null:
 		return false
 
-	var hotspot := UIArtScaler.get_cursor_hotspot(_sacrifice_cursor_texture, SACRIFICE_CURSOR_HOTSPOT_RATIO)
+	var hotspot := UIArtScalerScript.get_cursor_hotspot(_sacrifice_cursor_texture, SACRIFICE_CURSOR_HOTSPOT_RATIO)
 	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
 		Input.set_custom_mouse_cursor(_sacrifice_cursor_texture, cursor_shape, hotspot)
 	return true
 
 func _apply_devour_cursor() -> bool:
-	var target_height := UIArtScaler.get_board_cursor_target_height(DEVOUR_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+	var target_height := UIArtScalerScript.get_board_cursor_target_height(DEVOUR_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 	if _devour_cursor_texture == null or _devour_cursor_target_height != target_height:
-		_devour_cursor_texture = UIArtScaler.build_cursor_texture(DevourCursorSource, target_height)
+		_devour_cursor_texture = UIArtScalerScript.build_cursor_texture(DevourCursorSource, target_height)
 		_devour_cursor_target_height = target_height
 	if _devour_cursor_texture == null:
 		return false
 
-	var hotspot := UIArtScaler.get_cursor_hotspot(_devour_cursor_texture, DEVOUR_CURSOR_HOTSPOT_RATIO)
+	var hotspot := UIArtScalerScript.get_cursor_hotspot(_devour_cursor_texture, DEVOUR_CURSOR_HOTSPOT_RATIO)
 	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
 		Input.set_custom_mouse_cursor(_devour_cursor_texture, cursor_shape, hotspot)
 	return true
 
 func _apply_breidablik_cursor() -> bool:
-	var target_height := UIArtScaler.get_board_cursor_target_height(BREIDABLIK_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+	var target_height := UIArtScalerScript.get_board_cursor_target_height(BREIDABLIK_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 	if _breidablik_cursor_texture == null or _breidablik_cursor_target_height != target_height:
 		var image := Image.load_from_file(ProjectSettings.globalize_path(BREIDABLIK_CURSOR_IMAGE_PATH))
 		if image == null or image.is_empty():
 			return false
 		var source_texture := ImageTexture.create_from_image(image)
-		_breidablik_cursor_texture = UIArtScaler.build_cursor_texture(source_texture, target_height)
+		_breidablik_cursor_texture = UIArtScalerScript.build_cursor_texture(source_texture, target_height)
 		_breidablik_cursor_target_height = target_height
 	if _breidablik_cursor_texture == null:
 		return false
 
-	var hotspot := UIArtScaler.get_cursor_hotspot(_breidablik_cursor_texture, BREIDABLIK_CURSOR_HOTSPOT_RATIO)
+	var hotspot := UIArtScalerScript.get_cursor_hotspot(_breidablik_cursor_texture, BREIDABLIK_CURSOR_HOTSPOT_RATIO)
 	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
 		Input.set_custom_mouse_cursor(_breidablik_cursor_texture, cursor_shape, hotspot)
 	return true
 
 func _apply_harii_jarl_cursor() -> bool:
-	var target_height := UIArtScaler.get_board_cursor_target_height(HARII_JARL_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+	var target_height := UIArtScalerScript.get_board_cursor_target_height(HARII_JARL_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 	if _harii_jarl_cursor_texture == null or _harii_jarl_cursor_target_height != target_height:
 		var image := Image.load_from_file(ProjectSettings.globalize_path(HARII_JARL_CURSOR_IMAGE_PATH))
 		if image == null or image.is_empty():
 			return false
 		var source_texture := ImageTexture.create_from_image(image)
-		_harii_jarl_cursor_texture = UIArtScaler.build_cursor_texture(source_texture, target_height)
+		_harii_jarl_cursor_texture = UIArtScalerScript.build_cursor_texture(source_texture, target_height)
 		_harii_jarl_cursor_target_height = target_height
 	if _harii_jarl_cursor_texture == null:
 		return false
 
-	var hotspot := UIArtScaler.get_cursor_hotspot(_harii_jarl_cursor_texture, HARII_JARL_CURSOR_HOTSPOT_RATIO)
+	var hotspot := UIArtScalerScript.get_cursor_hotspot(_harii_jarl_cursor_texture, HARII_JARL_CURSOR_HOTSPOT_RATIO)
 	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
 		Input.set_custom_mouse_cursor(_harii_jarl_cursor_texture, cursor_shape, hotspot)
 	return true
 
 func _apply_mead_cursor() -> bool:
-	var target_height := UIArtScaler.get_board_cursor_target_height(MEAD_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+	var target_height := UIArtScalerScript.get_board_cursor_target_height(MEAD_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 	if _mead_cursor_texture == null or _mead_cursor_target_height != target_height:
 		var image := Image.load_from_file(ProjectSettings.globalize_path(MEAD_CURSOR_IMAGE_PATH))
 		if image == null or image.is_empty():
 			return false
 		var source_texture := ImageTexture.create_from_image(image)
-		_mead_cursor_texture = UIArtScaler.build_cursor_texture(source_texture, target_height)
+		_mead_cursor_texture = UIArtScalerScript.build_cursor_texture(source_texture, target_height)
 		_mead_cursor_target_height = target_height
 	if _mead_cursor_texture == null:
 		return false
 
-	var hotspot := UIArtScaler.get_cursor_hotspot(_mead_cursor_texture, MEAD_CURSOR_HOTSPOT_RATIO)
+	var hotspot := UIArtScalerScript.get_cursor_hotspot(_mead_cursor_texture, MEAD_CURSOR_HOTSPOT_RATIO)
 	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
 		Input.set_custom_mouse_cursor(_mead_cursor_texture, cursor_shape, hotspot)
 	return true
 
 func _apply_freyja_tabby_cursor() -> bool:
-	var target_height := UIArtScaler.get_board_cursor_target_height(FREYJA_TABBY_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+	var target_height := UIArtScalerScript.get_board_cursor_target_height(FREYJA_TABBY_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 	if _freyja_tabby_cursor_texture == null or _freyja_tabby_cursor_target_height != target_height:
 		var image := Image.load_from_file(ProjectSettings.globalize_path(FREYJA_TABBY_CURSOR_IMAGE_PATH))
 		if image == null or image.is_empty():
 			return false
 		var source_texture := ImageTexture.create_from_image(image)
-		_freyja_tabby_cursor_texture = UIArtScaler.build_cursor_texture(source_texture, target_height)
+		_freyja_tabby_cursor_texture = UIArtScalerScript.build_cursor_texture(source_texture, target_height)
 		_freyja_tabby_cursor_target_height = target_height
 	if _freyja_tabby_cursor_texture == null:
 		return false
 
-	var hotspot := UIArtScaler.get_cursor_hotspot(_freyja_tabby_cursor_texture, FREYJA_TABBY_CURSOR_HOTSPOT_RATIO)
+	var hotspot := UIArtScalerScript.get_cursor_hotspot(_freyja_tabby_cursor_texture, FREYJA_TABBY_CURSOR_HOTSPOT_RATIO)
 	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
 		Input.set_custom_mouse_cursor(_freyja_tabby_cursor_texture, cursor_shape, hotspot)
 	return true
 
 func _apply_freyja_black_cursor() -> bool:
-	var target_height := UIArtScaler.get_board_cursor_target_height(FREYJA_BLACK_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+	var target_height := UIArtScalerScript.get_board_cursor_target_height(FREYJA_BLACK_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 	if _freyja_black_cursor_texture == null or _freyja_black_cursor_target_height != target_height:
 		var image := Image.load_from_file(ProjectSettings.globalize_path(FREYJA_BLACK_CURSOR_IMAGE_PATH))
 		if image == null or image.is_empty():
 			return false
 		var source_texture := ImageTexture.create_from_image(image)
-		_freyja_black_cursor_texture = UIArtScaler.build_cursor_texture(source_texture, target_height)
+		_freyja_black_cursor_texture = UIArtScalerScript.build_cursor_texture(source_texture, target_height)
 		_freyja_black_cursor_target_height = target_height
 	if _freyja_black_cursor_texture == null:
 		return false
 
-	var hotspot := UIArtScaler.get_cursor_hotspot(_freyja_black_cursor_texture, FREYJA_BLACK_CURSOR_HOTSPOT_RATIO)
+	var hotspot := UIArtScalerScript.get_cursor_hotspot(_freyja_black_cursor_texture, FREYJA_BLACK_CURSOR_HOTSPOT_RATIO)
 	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
 		Input.set_custom_mouse_cursor(_freyja_black_cursor_texture, cursor_shape, hotspot)
 	return true
 
 func _apply_silence_cursor() -> bool:
-	var target_height := UIArtScaler.get_board_cursor_target_height(SILENCE_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+	var target_height := UIArtScalerScript.get_board_cursor_target_height(SILENCE_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 	if _silence_cursor_texture == null or _silence_cursor_target_height != target_height:
-		_silence_cursor_texture = UIArtScaler.build_cursor_texture(SilenceCursorSource, target_height)
+		_silence_cursor_texture = UIArtScalerScript.build_cursor_texture(SilenceCursorSource, target_height)
 		_silence_cursor_target_height = target_height
 	if _silence_cursor_texture == null:
 		return false
 
-	var hotspot := UIArtScaler.get_cursor_hotspot(_silence_cursor_texture, SILENCE_CURSOR_HOTSPOT_RATIO)
+	var hotspot := UIArtScalerScript.get_cursor_hotspot(_silence_cursor_texture, SILENCE_CURSOR_HOTSPOT_RATIO)
 	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
 		Input.set_custom_mouse_cursor(_silence_cursor_texture, cursor_shape, hotspot)
 	return true
 
 func _apply_tonal_extraction_cursor() -> bool:
-	var target_height := UIArtScaler.get_board_cursor_target_height(TONAL_EXTRACTION_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+	var target_height := UIArtScalerScript.get_board_cursor_target_height(TONAL_EXTRACTION_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 	if _tonal_extraction_cursor_texture == null or _tonal_extraction_cursor_target_height != target_height:
-		_tonal_extraction_cursor_texture = UIArtScaler.build_cursor_texture(TonalExtractionCursorSource, target_height)
+		_tonal_extraction_cursor_texture = UIArtScalerScript.build_cursor_texture(TonalExtractionCursorSource, target_height)
 		_tonal_extraction_cursor_target_height = target_height
 	if _tonal_extraction_cursor_texture == null:
 		return false
 
-	var hotspot := UIArtScaler.get_cursor_hotspot(_tonal_extraction_cursor_texture, TONAL_EXTRACTION_CURSOR_HOTSPOT_RATIO)
+	var hotspot := UIArtScalerScript.get_cursor_hotspot(_tonal_extraction_cursor_texture, TONAL_EXTRACTION_CURSOR_HOTSPOT_RATIO)
 	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
 		Input.set_custom_mouse_cursor(_tonal_extraction_cursor_texture, cursor_shape, hotspot)
 	return true
 
 func _apply_giant_master_architect_cursor() -> bool:
-	var target_height := UIArtScaler.get_board_cursor_target_height(GIANT_MASTER_ARCHITECT_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+	var target_height := UIArtScalerScript.get_board_cursor_target_height(GIANT_MASTER_ARCHITECT_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 	if _giant_master_architect_cursor_texture == null or _giant_master_architect_cursor_target_height != target_height:
-		_giant_master_architect_cursor_texture = UIArtScaler.build_cursor_texture(
+		_giant_master_architect_cursor_texture = UIArtScalerScript.build_cursor_texture(
 			GiantMasterArchitectCursorSource,
 			target_height
 		)
@@ -2125,7 +2134,7 @@ func _apply_giant_master_architect_cursor() -> bool:
 	if _giant_master_architect_cursor_texture == null:
 		return false
 
-	var hotspot := UIArtScaler.get_cursor_hotspot(
+	var hotspot := UIArtScalerScript.get_cursor_hotspot(
 		_giant_master_architect_cursor_texture,
 		GIANT_MASTER_ARCHITECT_CURSOR_HOTSPOT_RATIO
 	)
@@ -2134,9 +2143,9 @@ func _apply_giant_master_architect_cursor() -> bool:
 	return true
 
 func _apply_hermes_cursor() -> bool:
-	var target_height := UIArtScaler.get_board_cursor_target_height(HERMES_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+	var target_height := UIArtScalerScript.get_board_cursor_target_height(HERMES_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 	if _hermes_cursor_texture == null or _hermes_cursor_target_height != target_height:
-		_hermes_cursor_texture = UIArtScaler.build_cursor_texture(
+		_hermes_cursor_texture = UIArtScalerScript.build_cursor_texture(
 			HermesCursorSource,
 			target_height
 		)
@@ -2144,15 +2153,15 @@ func _apply_hermes_cursor() -> bool:
 	if _hermes_cursor_texture == null:
 		return false
 
-	var hotspot := UIArtScaler.get_cursor_hotspot(_hermes_cursor_texture, HERMES_CURSOR_HOTSPOT_RATIO)
+	var hotspot := UIArtScalerScript.get_cursor_hotspot(_hermes_cursor_texture, HERMES_CURSOR_HOTSPOT_RATIO)
 	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
 		Input.set_custom_mouse_cursor(_hermes_cursor_texture, cursor_shape, hotspot)
 	return true
 
 func _apply_guan_yu_cursor() -> bool:
-	var target_height := UIArtScaler.get_board_cursor_target_height(GUAN_YU_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+	var target_height := UIArtScalerScript.get_board_cursor_target_height(GUAN_YU_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 	if _guan_yu_cursor_texture == null or _guan_yu_cursor_target_height != target_height:
-		_guan_yu_cursor_texture = UIArtScaler.build_cursor_texture(
+		_guan_yu_cursor_texture = UIArtScalerScript.build_cursor_texture(
 			GuanYuCursorSource,
 			target_height
 		)
@@ -2160,15 +2169,15 @@ func _apply_guan_yu_cursor() -> bool:
 	if _guan_yu_cursor_texture == null:
 		return false
 
-	var hotspot := UIArtScaler.get_cursor_hotspot(_guan_yu_cursor_texture, GUAN_YU_CURSOR_HOTSPOT_RATIO)
+	var hotspot := UIArtScalerScript.get_cursor_hotspot(_guan_yu_cursor_texture, GUAN_YU_CURSOR_HOTSPOT_RATIO)
 	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
 		Input.set_custom_mouse_cursor(_guan_yu_cursor_texture, cursor_shape, hotspot)
 	return true
 
 func _apply_good_fortune_cursor() -> bool:
-	var target_height := UIArtScaler.get_board_cursor_target_height(GOOD_FORTUNE_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+	var target_height := UIArtScalerScript.get_board_cursor_target_height(GOOD_FORTUNE_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 	if _good_fortune_cursor_texture == null or _good_fortune_cursor_target_height != target_height:
-		_good_fortune_cursor_texture = UIArtScaler.build_cursor_texture(
+		_good_fortune_cursor_texture = UIArtScalerScript.build_cursor_texture(
 			GoodFortuneCursorSource,
 			target_height
 		)
@@ -2176,15 +2185,15 @@ func _apply_good_fortune_cursor() -> bool:
 	if _good_fortune_cursor_texture == null:
 		return false
 
-	var hotspot := UIArtScaler.get_cursor_hotspot(_good_fortune_cursor_texture, GOOD_FORTUNE_CURSOR_HOTSPOT_RATIO)
+	var hotspot := UIArtScalerScript.get_cursor_hotspot(_good_fortune_cursor_texture, GOOD_FORTUNE_CURSOR_HOTSPOT_RATIO)
 	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
 		Input.set_custom_mouse_cursor(_good_fortune_cursor_texture, cursor_shape, hotspot)
 	return true
 
 func _apply_ancient_pyre_cursor() -> bool:
-	var target_height := UIArtScaler.get_board_cursor_target_height(ANCIENT_PYRE_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+	var target_height := UIArtScalerScript.get_board_cursor_target_height(ANCIENT_PYRE_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 	if _ancient_pyre_cursor_texture == null or _ancient_pyre_cursor_target_height != target_height:
-		_ancient_pyre_cursor_texture = UIArtScaler.build_cursor_texture(
+		_ancient_pyre_cursor_texture = UIArtScalerScript.build_cursor_texture(
 			AncientPyreCursorSource,
 			target_height
 		)
@@ -2192,15 +2201,15 @@ func _apply_ancient_pyre_cursor() -> bool:
 	if _ancient_pyre_cursor_texture == null:
 		return false
 
-	var hotspot := UIArtScaler.get_cursor_hotspot(_ancient_pyre_cursor_texture, ANCIENT_PYRE_CURSOR_HOTSPOT_RATIO)
+	var hotspot := UIArtScalerScript.get_cursor_hotspot(_ancient_pyre_cursor_texture, ANCIENT_PYRE_CURSOR_HOTSPOT_RATIO)
 	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
 		Input.set_custom_mouse_cursor(_ancient_pyre_cursor_texture, cursor_shape, hotspot)
 	return true
 
 func _apply_tez_titlacauan_cursor() -> bool:
-	var target_height := UIArtScaler.get_board_cursor_target_height(TEZ_TITLACAUAN_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+	var target_height := UIArtScalerScript.get_board_cursor_target_height(TEZ_TITLACAUAN_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 	if _tez_titlacauan_cursor_texture == null or _tez_titlacauan_cursor_target_height != target_height:
-		_tez_titlacauan_cursor_texture = UIArtScaler.build_cursor_texture(
+		_tez_titlacauan_cursor_texture = UIArtScalerScript.build_cursor_texture(
 			TezTitlacauanCursorSource,
 			target_height
 		)
@@ -2208,15 +2217,15 @@ func _apply_tez_titlacauan_cursor() -> bool:
 	if _tez_titlacauan_cursor_texture == null:
 		return false
 
-	var hotspot := UIArtScaler.get_cursor_hotspot(_tez_titlacauan_cursor_texture, TEZ_TITLACAUAN_CURSOR_HOTSPOT_RATIO)
+	var hotspot := UIArtScalerScript.get_cursor_hotspot(_tez_titlacauan_cursor_texture, TEZ_TITLACAUAN_CURSOR_HOTSPOT_RATIO)
 	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
 		Input.set_custom_mouse_cursor(_tez_titlacauan_cursor_texture, cursor_shape, hotspot)
 	return true
 
 func _apply_anointing_statue_cursor() -> bool:
-	var target_height := UIArtScaler.get_board_cursor_target_height(ANOINTING_STATUE_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+	var target_height := UIArtScalerScript.get_board_cursor_target_height(ANOINTING_STATUE_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 	if _anointing_statue_cursor_texture == null or _anointing_statue_cursor_target_height != target_height:
-		_anointing_statue_cursor_texture = UIArtScaler.build_cursor_texture(
+		_anointing_statue_cursor_texture = UIArtScalerScript.build_cursor_texture(
 			AnointingStatueCursorSource,
 			target_height
 		)
@@ -2224,7 +2233,7 @@ func _apply_anointing_statue_cursor() -> bool:
 	if _anointing_statue_cursor_texture == null:
 		return false
 
-	var hotspot := UIArtScaler.get_cursor_hotspot(_anointing_statue_cursor_texture, ANOINTING_STATUE_CURSOR_HOTSPOT_RATIO)
+	var hotspot := UIArtScalerScript.get_cursor_hotspot(_anointing_statue_cursor_texture, ANOINTING_STATUE_CURSOR_HOTSPOT_RATIO)
 	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
 		Input.set_custom_mouse_cursor(_anointing_statue_cursor_texture, cursor_shape, hotspot)
 	return true
@@ -2451,10 +2460,10 @@ func _sync_local_end_turn_button() -> void:
 		return
 	_maybe_progress_hidden_frontline_entry_action()
 	var should_show = not choice_container.visible
-	var changed = end_turn_button.visible != should_show or end_turn_button.disabled != not should_show
+	var turn_button_changed = end_turn_button.visible != should_show or end_turn_button.disabled != not should_show
 	end_turn_button.visible = should_show
 	end_turn_button.disabled = not should_show
-	if changed and _center_action_panel != null and is_instance_valid(_center_action_panel):
+	if turn_button_changed and _center_action_panel != null and is_instance_valid(_center_action_panel):
 		call_deferred("_update_center_action_panel_layout")
 
 func _schedule_local_ui_refresh() -> void:
@@ -2536,7 +2545,7 @@ func _get_priority_idle_auto_pass_msec() -> int:
 	return PRIORITY_IDLE_AUTO_PASS_MSEC
 
 func _get_priority_idle_auto_pass_hint_text() -> String:
-	return "Auto-passes after %ds of inactivity." % int(_get_priority_idle_auto_pass_msec() / 1000)
+	return "Auto-passes after %ds of inactivity." % int(float(_get_priority_idle_auto_pass_msec()) / 1000.0)
 
 func _note_priority_prompt_input_activity(event: InputEvent) -> void:
 	if not auto_priority or not _is_priority_prompt_visible():
@@ -2715,7 +2724,7 @@ func _maybe_warn_about_move_timer(remaining_msec: int) -> void:
 
 func _format_move_timer_clock(remaining_msec: int) -> String:
 	var total_seconds := int(ceil(float(maxi(0, remaining_msec)) / 1000.0))
-	var minutes := total_seconds / 60
+	var minutes := int(total_seconds / 60.0)
 	var seconds := total_seconds % 60
 	return "%d:%02d" % [minutes, seconds]
 
@@ -3334,14 +3343,8 @@ func start_game(
 	match_manager.move_validated.connect(_on_match_move_validated)
 	match_manager.move_failed.connect(_on_match_move_failed)
 	match_manager.ui_refresh_requested.connect(_request_ui_refresh)
-	match_manager.targeting_started.connect(func(_source: Card, _target_type: String) -> void:
-		_hide_devour_cancel_prompt()
-		_sync_sacrifice_cursor()
-	)
-	match_manager.targeting_ended.connect(func() -> void:
-		_hide_devour_cancel_prompt()
-		_sync_sacrifice_cursor()
-	)
+	match_manager.targeting_started.connect(_on_match_targeting_started)
+	match_manager.targeting_ended.connect(_on_match_targeting_ended)
 
 	await get_tree().process_frame
 	var default_match_setup = DefaultMatchSetupScript.new()
@@ -3955,6 +3958,17 @@ func _on_board_layout_resized() -> void:
 		return
 	if not is_equal_approx(_get_board_zone_extent_target(), BoardZoneUI.get_zone_extent()):
 		_request_ui_refresh()
+
+func _on_auto_priority_toggled(on: bool) -> void:
+	auto_priority = on
+
+func _on_match_targeting_started(_source: Card, _target_type: String) -> void:
+	_hide_devour_cancel_prompt()
+	_sync_sacrifice_cursor()
+
+func _on_match_targeting_ended() -> void:
+	_hide_devour_cancel_prompt()
+	_sync_sacrifice_cursor()
 
 func _apply_board_horizontal_offset() -> void:
 	if enemy_board_container != null:
@@ -5186,12 +5200,18 @@ func _make_zone_info_icon(label_text: String, short_label: String, zone: Zone, c
 
 	panel.mouse_filter = Control.MOUSE_FILTER_STOP
 	panel.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-	panel.gui_input.connect(func(event: InputEvent):
-		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
-			_show_zone_contents(label_text, zone)
-	)
+	panel.gui_input.connect(_on_zone_info_icon_gui_input.bind(label_text, CardAction._zone_to_dict(zone, game_manager)))
 
 	return panel
+
+func _on_zone_info_icon_gui_input(event: InputEvent, label_text: String, zone_dict: Dictionary) -> void:
+	if not (event is InputEventMouseButton):
+		return
+	if event.button_index != MOUSE_BUTTON_LEFT or not event.pressed:
+		return
+	var zone := CardAction._dict_to_zone(zone_dict, game_manager)
+	if zone != null:
+		_show_zone_contents(label_text, zone)
 
 func _refresh_zone_info_icons() -> void:
 	for child in find_children("ZoneInfoIcon", "PanelContainer", true, false):
@@ -5466,7 +5486,7 @@ func _show_power_hover_popup(source: Control, text: String, bbcode_text: String 
 
 	if card != null:
 		var hover_viewer := game_manager.get_feedback_viewer() if game_manager != null else null
-		CardDetailContentBuilder._add_hover_stored_card_section(vbox, card, hover_viewer, 220.0)
+		CardDetailContentBuilderScript._add_hover_stored_card_section(vbox, card, hover_viewer, 220.0)
 
 	if not is_inside_tree() or is_queued_for_deletion():
 		return
@@ -5764,12 +5784,12 @@ func _add_power_under_level_badge(panel: Control, card: Card) -> void:
 		style.set_border_width(side as Side, 1)
 	badge.add_theme_stylebox_override("panel", style)
 
-	var row := LevelSymbolRow.new()
+	var row := LevelSymbolRowScript.new()
 	row.setup(
 		total_level,
 		symbol_size,
 		Color(1.0, 0.94, 0.56),
-		LevelSymbolRow.get_symbol_texture_for_card(stored_cards[0])
+		LevelSymbolRowScript.get_symbol_texture_for_card(stored_cards[0])
 	)
 	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	badge.add_child(row)
@@ -5807,18 +5827,10 @@ func _make_power_icon(card: Card, is_enemy: bool, _player: Player, zone: Zone = 
 	var is_tiamat_slot := _is_tiamat_power_slot(zone)
 	var can_show_hover := is_tiamat_slot or not (is_enemy and card.is_face_down and not ((power != null and power.is_publicly_revealed) or card.is_temporarily_revealed()))
 	if can_show_hover:
-		var get_plain := func() -> String:
-			return _get_tiamat_slot_hover_text(zone) if _is_tiamat_power_slot(zone) else _get_power_hover_text(card)
-		var get_bbcode := func() -> String:
-			return _get_tiamat_slot_hover_bbcode(zone) if _is_tiamat_power_slot(zone) else _get_power_hover_bbcode(card)
-		panel.tooltip_text = get_plain.call()
-		panel.mouse_entered.connect(func() -> void:
-			panel.tooltip_text = get_plain.call()
-			_show_power_hover_popup(panel, panel.tooltip_text, get_bbcode.call(), card)
-		)
-		panel.mouse_exited.connect(func() -> void:
-			_hide_power_hover_popup()
-		)
+		var hover_zone_dict := CardAction._zone_to_dict(zone, game_manager)
+		panel.tooltip_text = _get_power_icon_hover_text(card.uid, hover_zone_dict)
+		panel.mouse_entered.connect(_on_power_icon_mouse_entered.bind(panel.get_instance_id(), card.uid, hover_zone_dict))
+		panel.mouse_exited.connect(_hide_power_hover_popup)
 		panel.mouse_default_cursor_shape = Control.CURSOR_HELP
 
 	var label_text := ""
@@ -5916,12 +5928,50 @@ func _make_power_icon(card: Card, is_enemy: bool, _player: Player, zone: Zone = 
 
 	if can_unlock_now or activatable or ready_glow or can_target_with_god:
 		panel.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-		var captured := card as PowerCard
-		panel.gui_input.connect(func(event: InputEvent) -> void:
-			if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
-				_on_power_pressed(captured)
-		)
+		panel.gui_input.connect(_on_power_icon_gui_input.bind(card.uid))
 	return panel
+
+func _get_power_icon_hover_text(card_uid: String, zone_dict: Dictionary) -> String:
+	var zone := CardAction._dict_to_zone(zone_dict, game_manager)
+	if _is_tiamat_power_slot(zone):
+		return _get_tiamat_slot_hover_text(zone)
+	var card := game_manager.get_card_by_uid(card_uid) if game_manager != null and card_uid != "" else null
+	return _get_power_hover_text(card)
+
+func _get_power_icon_hover_bbcode(card_uid: String, zone_dict: Dictionary) -> String:
+	var zone := CardAction._dict_to_zone(zone_dict, game_manager)
+	if _is_tiamat_power_slot(zone):
+		return _get_tiamat_slot_hover_bbcode(zone)
+	var card := game_manager.get_card_by_uid(card_uid) if game_manager != null and card_uid != "" else null
+	return _get_power_hover_bbcode(card)
+
+func _get_control_from_instance_id(instance_id: int) -> Control:
+	var obj := instance_from_id(instance_id)
+	if obj == null or not (obj is Control):
+		return null
+	var control := obj as Control
+	if not is_instance_valid(control) or control.is_queued_for_deletion():
+		return null
+	return control
+
+func _on_power_icon_mouse_entered(panel_instance_id: int, card_uid: String, zone_dict: Dictionary) -> void:
+	var panel := _get_control_from_instance_id(panel_instance_id)
+	if panel == null:
+		return
+	var text := _get_power_icon_hover_text(card_uid, zone_dict)
+	var bbcode_text := _get_power_icon_hover_bbcode(card_uid, zone_dict)
+	var card := game_manager.get_card_by_uid(card_uid) if game_manager != null and card_uid != "" else null
+	panel.tooltip_text = text
+	_show_power_hover_popup(panel, text, bbcode_text, card)
+
+func _on_power_icon_gui_input(event: InputEvent, card_uid: String) -> void:
+	if not (event is InputEventMouseButton):
+		return
+	if event.button_index != MOUSE_BUTTON_LEFT or not event.pressed:
+		return
+	var power := game_manager.get_card_by_uid(card_uid) as PowerCard if game_manager != null and card_uid != "" else null
+	if power != null:
+		_on_power_pressed(power)
 
 func _on_power_slot_card_pressed(card: Card) -> void:
 	if _try_submit_tiamat_upkeep_card_from_board(card):
@@ -7240,11 +7290,8 @@ func _show_zone_contents(zone_name: String, zone: Zone) -> void:
 		vc.set_disabled(true, false)
 		hbox.add_child(vc)
 
-	# Clicking anywhere on the overlay closes it
-	overlay.gui_input.connect(func(event: InputEvent) -> void:
-		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
-			_dismiss_zone_overlay()
-	)
+	# Clicking anywhere on the overlay closes it.
+	overlay.gui_input.connect(_on_zone_overlay_background_gui_input)
 
 func _show_card_selection_overlay(
 	title_text: String,
@@ -7343,30 +7390,33 @@ func _show_card_selection_overlay(
 		var decline_button := Button.new()
 		decline_button.text = cancel_button_text
 		decline_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-		decline_button.pressed.connect(func() -> void:
-			var dismiss_callback := _overlay_card_dismissed
-			_dismiss_zone_overlay()
-			if dismiss_callback.is_valid():
-				dismiss_callback.call()
-		)
+		decline_button.pressed.connect(_on_card_selection_overlay_cancel_pressed)
 		vbox.add_child(decline_button)
 
-	overlay.gui_input.connect(func(event: InputEvent) -> void:
-		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
-			var dismiss_callback := _overlay_card_dismissed
-			_dismiss_zone_overlay()
-			if dismiss_callback.is_valid():
-				dismiss_callback.call()
-	)
+	overlay.gui_input.connect(_on_card_selection_overlay_background_gui_input)
 
-func _on_card_selection_overlay_card_gui_input(event: InputEvent, selected_card: Card) -> void:
+func _on_zone_overlay_background_gui_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+		_dismiss_zone_overlay()
+
+func _on_card_selection_overlay_cancel_pressed() -> void:
+	var dismiss_callback := _overlay_card_dismissed
+	_dismiss_zone_overlay()
+	if dismiss_callback.is_valid():
+		dismiss_callback.call()
+
+func _on_card_selection_overlay_background_gui_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+		_on_card_selection_overlay_cancel_pressed()
+
+func _on_card_selection_overlay_card_gui_input(event: InputEvent, overlay_card: Card) -> void:
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 		accept_event()
 		var callback := _overlay_card_selected
 		_overlay_card_dismissed = Callable()
 		_dismiss_zone_overlay()
 		if callback.is_valid():
-			callback.call(selected_card)
+			callback.call(overlay_card)
 
 func _build_selection_overlay_card_preview(card: Card, reveal_hidden_card: bool = false) -> Control:
 	if not reveal_hidden_card and _should_hide_card_in_selection_overlay(card):
@@ -7383,7 +7433,7 @@ func _should_hide_card_in_selection_overlay(card: Card) -> bool:
 	var viewer := game_manager.get_feedback_viewer() if game_manager != null else null
 	return card.is_hidden_from_viewer(viewer)
 
-func _make_hidden_selection_preview(card: Card) -> Control:
+func _make_hidden_selection_preview(_card: Card) -> Control:
 	const CARD_BACK := "res://images/cardbackAI.png"
 	var panel := PanelContainer.new()
 	panel.custom_minimum_size = Vector2(VisualCard.CARD_WIDTH, VisualCard.CARD_HEIGHT)
@@ -7854,7 +7904,7 @@ func _begin_priority_hex_target_selection(
 	_set_action_label_text(hex.card_name + ": click a valid target.")
 	update_ui()
 
-func _queue_magical_action(action_type: int, source_card: Card, target, resolution_text: String, resolve_callback: Callable, display_zone: Zone = null) -> void:
+func _queue_magical_action(action_type: CardAction.Type, source_card: Card, target, resolution_text: String, resolve_callback: Callable, display_zone: Zone = null) -> void:
 	var action := CardAction.new()
 	action.type = action_type
 	action.source_player = source_card.card_owner if source_card != null and source_card.card_owner != null else game_manager.current_player
@@ -7881,10 +7931,77 @@ func _queue_magical_action(action_type: int, source_card: Card, target, resoluti
 	_offer_priority()
 	_kick_local_stack_progress()
 
+func _resolve_card_ability_by_uid(card_uid: String, option: Dictionary = {}) -> void:
+	if game_manager == null or card_uid.strip_edges() == "":
+		return
+	var source_card := game_manager.get_card_by_uid(card_uid)
+	if source_card == null:
+		return
+	_activate_card_with_optional_payload(source_card, null, option)
+
+func _activate_card_with_optional_payload(source_card: Card, target: Card = null, option: Dictionary = {}) -> void:
+	if source_card == null or not source_card.has_method("activate"):
+		return
+	if option.is_empty():
+		if target != null:
+			source_card.activate(game_manager, target)
+		else:
+			source_card.activate(game_manager)
+		return
+	if _activation_accepts_dictionary_payload(source_card):
+		source_card.activate(game_manager, option)
+		return
+	if target != null:
+		source_card.activate(game_manager, target)
+	else:
+		source_card.activate(game_manager)
+
+func _activation_accepts_dictionary_payload(source_card: Card) -> bool:
+	if source_card == null:
+		return false
+	for method_info in source_card.get_method_list():
+		if str(method_info.get("name", "")) != "activate":
+			continue
+		var args: Array = method_info.get("args", [])
+		if args.size() < 2:
+			return false
+		var payload_arg: Dictionary = args[1]
+		var payload_type := int(payload_arg.get("type", TYPE_NIL))
+		return payload_type == TYPE_NIL or payload_type == TYPE_DICTIONARY
+	return false
+
+func _submit_or_queue_card_ability_by_uid(card_uid: String, option: Dictionary = {}, resolution_text_override: String = "") -> void:
+	if game_manager == null or card_uid.strip_edges() == "":
+		return
+	var source_card := game_manager.get_card_by_uid(card_uid)
+	if source_card == null:
+		return
+	if _should_submit_ui_action_command():
+		var command := {type = "activate_card_ability", source_uid = card_uid}
+		if not option.is_empty():
+			command["option"] = option
+		game_input.submit_action(command)
+		return
+	var resolution_text := resolution_text_override if resolution_text_override != "" else source_card.card_name + " activated!"
+	_queue_magical_action(
+		CardAction.Type.ABILITY,
+		source_card,
+		null,
+		resolution_text,
+		Callable(self, "_resolve_card_ability_by_uid").bind(card_uid, option)
+	)
+
 func _queue_targeted_ability_action(source_card: Card, target: Card, resolve_callback: Callable, resolution_text: String = "") -> void:
 	if source_card == null or target == null:
 		return
 	if game_input != null:
+		var should_submit_priority_ability := game_manager != null \
+			and not game_manager.action_stack.is_empty() \
+			and source_card.has_method("can_respond_to_priority_action") \
+			and game_manager.can_card_respond_to_priority(source_card, source_card.card_owner)
+		if should_submit_priority_ability:
+			game_input.submit_action({type = "play_priority_ability", source_uid = source_card.uid, target_uid = target.uid})
+			return
 		if source_card.is_god:
 			game_input.submit_action({type = "god_ability", god_uid = source_card.uid, target_uid = target.uid})
 		elif source_card is PowerCard:
@@ -8005,20 +8122,6 @@ func _begin_devour_activation(card: Card) -> void:
 	if targets.is_empty():
 		_set_action_label_text(card.card_name + " has no valid Devour targets right now.")
 		update_ui()
-		return
-
-	if targets.size() == 1:
-		var sole_target := targets[0] as Card
-		if sole_target == null:
-			_set_action_label_text(card.card_name + " has no valid Devour targets right now.")
-			update_ui()
-			return
-		_queue_targeted_ability_action(
-			card,
-			sole_target,
-			func() -> void:
-				card.activate(game_manager, sole_target)
-		)
 		return
 
 	var validate_devour_target := func(clicked_card: Card) -> bool:
@@ -8566,13 +8669,13 @@ func _prompt_champions_call_shelving(god: GodCard, on_complete: Callable, on_can
 			card_name.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			card_vbox.add_child(card_name)
 
-			var selected_card := card
+			var target_card := card
 			wrapper.gui_input.connect(func(event: InputEvent) -> void:
 				if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
-					if selected_card in selected_targets:
-						selected_targets.erase(selected_card)
+					if target_card in selected_targets:
+						selected_targets.erase(target_card)
 					elif selected_targets.size() < max_shelve_count:
-						selected_targets.append(selected_card)
+						selected_targets.append(target_card)
 					refresh_selection_state.call()
 			)
 	vbox.move_child(action_row, vbox.get_child_count() - 1)
@@ -9206,23 +9309,23 @@ func _resolve_charm_action(charm: CharmCard, target: Card = null, display_zone: 
 func _clear_interaction_refs_for_moved_card(card: Card, from_zone: Zone, to_zone: Zone) -> bool:
 	if card == null:
 		return false
-	var changed := false
+	var interaction_refs_changed := false
 	if selected_card == card:
 		selected_card = null
 		placement_mode = ""
-		changed = true
+		interaction_refs_changed = true
 	var card_left_board := from_zone != null and from_zone.is_board_zone() and (to_zone == null or not to_zone.is_board_zone())
 	if card_left_board:
 		if selected_attacker == card:
 			selected_attacker = null
-			changed = true
+			interaction_refs_changed = true
 		if selected_interceptor == card:
 			selected_interceptor = null
-			changed = true
+			interaction_refs_changed = true
 		if pending_attack_target == card:
 			pending_attack_target = null
-			changed = true
-	return changed
+			interaction_refs_changed = true
+	return interaction_refs_changed
 
 func _on_local_player_card_moved(card: Card, from_zone: Zone, to_zone: Zone) -> void:
 	if card == null or from_zone == null or to_zone == null:
@@ -9522,6 +9625,9 @@ func draw_board() -> void:
 		zu.zone_clicked.connect(_on_empty_zone_pressed)
 		zu.card_clicked.connect(_on_board_card_pressed)
 		zu.creature_stance_switch_clicked.connect(_on_creature_stance_switch_clicked)
+		zu.creature_ability_badge_clicked.connect(_on_creature_ability_badge_clicked)
+		zu.e2_abzu_badge_clicked.connect(_on_e2_abzu_badge_clicked)
+		zu.nimue_badge_clicked.connect(_on_nimue_badge_clicked)
 		zu.equipment_target_action_clicked.connect(_on_equipment_target_action_clicked)
 		zu.creature_drag_started.connect(_on_creature_drag_started)
 		zu.creature_right_clicked.connect(_on_creature_right_clicked)
@@ -9551,6 +9657,9 @@ func draw_board() -> void:
 		zu.zone_clicked.connect(_on_empty_zone_pressed)
 		zu.card_clicked.connect(_on_board_card_pressed)
 		zu.creature_stance_switch_clicked.connect(_on_creature_stance_switch_clicked)
+		zu.creature_ability_badge_clicked.connect(_on_creature_ability_badge_clicked)
+		zu.e2_abzu_badge_clicked.connect(_on_e2_abzu_badge_clicked)
+		zu.nimue_badge_clicked.connect(_on_nimue_badge_clicked)
 		zu.equipment_target_action_clicked.connect(_on_equipment_target_action_clicked)
 		zu.creature_drag_started.connect(_on_creature_drag_started)
 		zu.creature_right_clicked.connect(_on_creature_right_clicked)
@@ -9678,24 +9787,24 @@ func _get_auto_select_zone_candidates(player: Player) -> Array[Zone]:
 func _find_preferred_auto_prepare_zone(card: Card) -> Zone:
 	if card == null or game_manager == null:
 		return null
-	var owner := card.card_owner if card.card_owner != null else game_manager.current_player
-	if owner == null:
+	var card_owner: Player = card.card_owner if card.card_owner != null else game_manager.current_player
+	if card_owner == null:
 		return null
-	for zone in _get_auto_select_zone_candidates(owner):
+	for zone in _get_auto_select_zone_candidates(card_owner):
 		if zone == null or not zone.is_board_zone() or not zone.cards.is_empty():
 			continue
-		if game_manager.can_prepare_card(owner, card, zone):
+		if game_manager.can_prepare_card(card_owner, card, zone):
 			return zone
 	return null
 
 func _find_preferred_auto_display_zone(card: Card) -> Zone:
 	if card == null or game_manager == null:
 		return null
-	var owner := card.card_owner if card.card_owner != null else game_manager.current_player
-	if owner == null:
+	var card_owner: Player = card.card_owner if card.card_owner != null else game_manager.current_player
+	if card_owner == null:
 		return null
-	for zone in _get_auto_select_zone_candidates(owner):
-		if _can_use_stack_display_zone(zone, owner):
+	for zone in _get_auto_select_zone_candidates(card_owner):
+		if _can_use_stack_display_zone(zone, card_owner):
 			return zone
 	return null
 
@@ -10577,6 +10686,135 @@ func _on_tez_necoc_yaotl_badge_pressed(card: Card) -> void:
 		return
 	_begin_tezcatlipoca_god_activation(card)
 
+func _on_e2_abzu_badge_clicked(card: Card, mode: String) -> void:
+	if _game_finished or game_manager == null or not (card is E2Abzu):
+		return
+	if _has_pending_target_selection():
+		_show_target_cancel_prompt()
+		return
+	if _has_active_modal_prompt():
+		_reject_modal_prompt_action()
+		return
+	if _is_turn_choice_pending():
+		_reject_pre_turn_action()
+		return
+	var structure := card as E2Abzu
+	if structure.get_controller() == null:
+		return
+
+	if mode == "return":
+		if _reject_non_priority_action_if_blocked():
+			return
+		if structure.get_controller() != game_manager.current_player:
+			_set_action_label_text(structure.card_name + " cannot return from the Void right now.")
+			update_ui()
+			return
+		var void_targets := structure.get_valid_void_targets(game_manager)
+		if void_targets.is_empty():
+			_set_action_label_text(structure.card_name + " has no returnable Mer Mage in the Void right now.")
+			update_ui()
+			return
+		var on_choose_void_return := func(chosen_card: Card) -> void:
+			_queue_e2_abzu_targeted_activation(structure, chosen_card)
+		var on_cancel_void_return := func() -> void:
+			_set_action_label_text("Cancelled " + structure.card_name + ".")
+			update_ui()
+		_show_card_selection_overlay(
+			"Choose a Mer Mage in your Void",
+			void_targets,
+			on_choose_void_return,
+			on_cancel_void_return
+		)
+		return
+
+	if mode == "void":
+		var top: CardAction = null
+		if not game_manager.action_stack.is_empty():
+			top = game_manager.action_stack.back() as CardAction
+		var can_fast_void := top != null and structure.can_respond_to_priority_action(top, game_manager)
+		if can_fast_void:
+			var fast_targets: Array[Card] = structure.get_priority_field_targets(game_manager, top)
+			if fast_targets.is_empty():
+				_set_action_label_text(structure.card_name + " has no valid fast targets.")
+				update_ui()
+				return
+			var on_choose_fast_void_target := func(chosen_card: Card) -> void:
+				var on_fast_void_activate := func() -> void:
+					structure.activate(game_manager, chosen_card)
+				_queue_targeted_ability_action(
+					structure,
+					chosen_card,
+					on_fast_void_activate,
+					structure.card_name + " fast-voids " + _get_target_label(chosen_card, game_manager.get_feedback_viewer(), chosen_card.card_name) + "."
+				)
+			var on_cancel_fast_void := func() -> void:
+				_set_action_label_text("Cancelled " + structure.card_name + ".")
+				update_ui()
+			_show_card_selection_overlay(
+				"Choose a friendly Mer Mage to Void with " + structure.card_name,
+				fast_targets,
+				on_choose_fast_void_target,
+				on_cancel_fast_void
+			)
+			return
+		if _reject_non_priority_action_if_blocked():
+			return
+		if structure.get_controller() != game_manager.current_player:
+			_set_action_label_text(structure.card_name + " cannot send a Mer Mage to the Void right now.")
+			update_ui()
+			return
+		var field_targets := structure.get_valid_field_targets(game_manager)
+		if field_targets.is_empty():
+			_set_action_label_text(structure.card_name + " has no friendly Mer Mage to Void right now.")
+			update_ui()
+			return
+		var on_choose_field_void := func(chosen_card: Card) -> void:
+			_queue_e2_abzu_targeted_activation(structure, chosen_card)
+		var on_cancel_field_void := func() -> void:
+			_set_action_label_text("Cancelled " + structure.card_name + ".")
+			update_ui()
+		_show_card_selection_overlay(
+			"Choose a friendly Mer Mage on the field",
+			field_targets,
+			on_choose_field_void,
+			on_cancel_field_void
+		)
+		return
+
+func _on_nimue_badge_clicked(card: Card, mode: String) -> void:
+	if _game_finished or game_manager == null or not (card is NimueScript):
+		return
+	if _has_pending_target_selection():
+		_show_target_cancel_prompt()
+		return
+	if _reject_non_priority_action_if_blocked():
+		return
+	if _has_active_modal_prompt():
+		_reject_modal_prompt_action()
+		return
+	if _is_turn_choice_pending():
+		_reject_pre_turn_action()
+		return
+	var nimue := card as NimueScript
+	if nimue.get_controller() != game_manager.current_player:
+		_set_action_label_text(nimue.card_name + " cannot activate right now.")
+		update_ui()
+		return
+
+	match mode:
+		"entomb":
+			if not nimue.can_activate_entomb(game_manager):
+				_set_action_label_text(nimue.card_name + " has no creatures to Entomb right now.")
+				update_ui()
+				return
+			_begin_nimue_entomb_activation(nimue)
+		"present":
+			if not nimue.can_activate_present(game_manager):
+				_set_action_label_text(nimue.card_name + " has no Equipment to Present right now.")
+				update_ui()
+				return
+			_show_nimue_present_prompt(nimue)
+
 func _on_god_right_clicked(card: Card) -> void:
 	if _game_finished or game_manager == null or card == null or not card.is_god:
 		return
@@ -10885,7 +11123,8 @@ func _show_odin_runic_knowledge_guess_prompt(card: Odin, offering_card: Card) ->
 	var rebuild_name_list := func(filter_text: String) -> void:
 		for child in list_vbox.get_children():
 			child.queue_free()
-		filtered_names = _filter_odin_runic_knowledge_name_options(deck_names, filter_text)
+		filtered_names.clear()
+		filtered_names.append_array(_filter_odin_runic_knowledge_name_options(deck_names, filter_text))
 		results_label.text = "Matching cards: %d" % filtered_names.size()
 		if filtered_names.is_empty():
 			var empty_label := Label.new()
@@ -14228,7 +14467,7 @@ func _try_resolve_stupefy_target(card: Card) -> bool:
 		_set_action_label_text("Invalid target ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â choose a creature of level " + str(stupefy_source.get_effective_level()) + " or lower.")
 	return true
 
-func _on_creature_stance_switch_clicked(card: Card, target_mode: int) -> void:
+func _on_creature_stance_switch_clicked(card: Card, target_mode: Card.CreatureMode) -> void:
 	if _game_finished or card == null or game_manager == null:
 		return
 	if _reject_non_priority_action_if_blocked():
@@ -14249,6 +14488,145 @@ func _on_creature_stance_switch_clicked(card: Card, target_mode: int) -> void:
 		_set_action_label_text(card.card_name + " switched to " + target_mode_name + " stance.")
 	else:
 		_set_action_label_text(card.card_name + " could not switch stance right now.")
+	update_ui()
+
+func _on_creature_ability_badge_clicked(card: Card) -> void:
+	if _game_finished or card == null or game_manager == null:
+		return
+	if _has_pending_target_selection():
+		_show_target_cancel_prompt()
+		return
+	if _reject_non_priority_action_if_blocked():
+		return
+	if _has_active_modal_prompt():
+		_reject_modal_prompt_action()
+		return
+	if _is_turn_choice_pending():
+		_reject_pre_turn_action()
+		return
+	if card.get_controller() != game_manager.current_player:
+		_set_action_label_text(card.card_name + " cannot activate right now.")
+		update_ui()
+		return
+	if not card.has_method("can_activate") or not card.has_method("activate"):
+		_set_action_label_text(card.card_name + " has no activatable ability.")
+		update_ui()
+		return
+	if not card.can_activate(game_manager):
+		var failure_text := _get_activation_unavailable_text(card, card.card_name + " cannot activate right now.")
+		_set_action_label_text(failure_text)
+		update_ui()
+		return
+
+	if card is EnHeduAnnaScript:
+		_show_en_hedu_anna_prompt(card as EnHeduAnnaScript)
+		return
+	if card is HariiShamanScript:
+		_begin_harii_shaman_activation(card as HariiShamanScript)
+		return
+	if card is WingedLionScript:
+		_begin_winged_lion_activation(card as WingedLionScript)
+		return
+	if card is ErlqueensNightingaleScript:
+		_show_erlqueens_nightingale_prompt(card as ErlqueensNightingaleScript)
+		return
+	if card is MopsusScript:
+		_show_mopsus_hand_prompt(card as MopsusScript)
+		return
+	if card is TezcatlipocaBlasphemerScript:
+		_begin_tezcatlipoca_blasphemer_activation(card as TezcatlipocaBlasphemerScript)
+		return
+	if _uses_devour_click_selection(card):
+		_begin_devour_activation(card)
+		return
+	if card.has_method("get_valid_targets"):
+		var targets: Array = card.get_valid_targets(game_manager)
+		if targets.is_empty():
+			_set_action_label_text(card.card_name + " has no valid targets right now.")
+			update_ui()
+			return
+		var on_choose_creature_target := func(chosen_card: Card) -> void:
+			_queue_context_targeted_ability(card, chosen_card)
+		var on_cancel_creature_target := func() -> void:
+			_set_action_label_text("Cancelled " + card.card_name + ".")
+			update_ui()
+		_show_card_selection_overlay(
+			"Choose a target for " + card.card_name,
+			targets,
+			on_choose_creature_target,
+			on_cancel_creature_target
+		)
+		return
+	_submit_or_queue_card_ability_by_uid(card.uid)
+	update_ui()
+
+func _on_context_card_ability_option_pressed(card_uid: String, ability: String) -> void:
+	_close_context_menu()
+	if game_manager == null or card_uid.strip_edges() == "":
+		return
+	var source_card := game_manager.get_card_by_uid(card_uid)
+	if source_card == null:
+		update_ui()
+		return
+	var option := {ability = ability}
+	if _should_submit_ui_action_command():
+		game_input.submit_action({type = "activate_card_ability", source_uid = card_uid, option = option})
+	else:
+		_submit_or_queue_card_ability_by_uid(
+			card_uid,
+			option,
+			source_card.card_name + (" shifts!" if ability == "shift" else " uses Medicine!")
+		)
+	update_ui()
+
+func _on_context_creature_ability_pressed(card_uid: String) -> void:
+	_close_context_menu()
+	if game_manager == null or card_uid.strip_edges() == "":
+		return
+	var card := game_manager.get_card_by_uid(card_uid)
+	if card == null:
+		update_ui()
+		return
+	if card is EnHeduAnnaScript:
+		_show_en_hedu_anna_prompt(card as EnHeduAnnaScript)
+		return
+	if card is HariiShamanScript:
+		_begin_harii_shaman_activation(card as HariiShamanScript)
+		return
+	if card is WingedLionScript:
+		_begin_winged_lion_activation(card as WingedLionScript)
+		return
+	if card is ErlqueensNightingaleScript:
+		_show_erlqueens_nightingale_prompt(card as ErlqueensNightingaleScript)
+		return
+	if card is MopsusScript:
+		_show_mopsus_hand_prompt(card as MopsusScript)
+		return
+	if card is TezcatlipocaBlasphemerScript:
+		_begin_tezcatlipoca_blasphemer_activation(card as TezcatlipocaBlasphemerScript)
+		return
+	if _uses_devour_click_selection(card):
+		_begin_devour_activation(card)
+		return
+	if card.has_method("get_valid_targets"):
+		var targets: Array = card.get_valid_targets(game_manager)
+		if targets.is_empty():
+			_set_action_label_text(card.card_name + " has no valid targets right now.")
+			update_ui()
+			return
+		var on_choose_creature_target := func(chosen_card: Card) -> void:
+			_queue_context_targeted_ability(card, chosen_card)
+		var on_cancel_creature_target := func() -> void:
+			_set_action_label_text("Cancelled " + card.card_name + ".")
+			update_ui()
+		_show_card_selection_overlay(
+			"Choose a target for " + card.card_name,
+			targets,
+			on_choose_creature_target,
+			on_cancel_creature_target
+		)
+		return
+	_submit_or_queue_card_ability_by_uid(card.uid)
 	update_ui()
 
 func _on_board_card_pressed(card: Card) -> void:
@@ -14974,22 +15352,13 @@ func _on_creature_right_clicked(card: Card) -> void:
 	if can_attack:
 		var btn := Button.new()
 		btn.text = "Attack"
-		btn.pressed.connect(func():
-			_close_context_menu()
-			selected_attacker = card
-			_set_action_label_text(card.card_name + " ready to attack ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â click an enemy creature or zone")
-		)
+		btn.pressed.connect(Callable(self, "_on_context_attack_pressed").bind(card.uid))
 		vbox.add_child(btn)
 
 	if can_stupefy:
 		var btn := Button.new()
 		btn.text = "Stupefy"
-		btn.pressed.connect(func():
-			_close_context_menu()
-			awaiting_stupefy_target = true
-			stupefy_source = card
-			_set_action_label_text("Stupefy ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â click an enemy creature of level " + str(card.get_effective_level()) + " or lower")
-		)
+		btn.pressed.connect(Callable(self, "_on_context_stupefy_pressed").bind(card.uid))
 		vbox.add_child(btn)
 
 	if can_activate_creature:
@@ -14998,116 +15367,30 @@ func _on_creature_right_clicked(card: Card) -> void:
 			if nimue.can_activate_entomb(game_manager):
 				var entomb_btn := Button.new()
 				entomb_btn.text = "Entomb"
-				entomb_btn.pressed.connect(func() -> void:
-					_close_context_menu()
-					_begin_nimue_entomb_activation(nimue)
-				)
+				entomb_btn.pressed.connect(Callable(self, "_on_context_nimue_entomb_pressed").bind(nimue.uid))
 				vbox.add_child(entomb_btn)
 			if nimue.can_activate_present(game_manager):
 				var present_btn := Button.new()
 				present_btn.text = "Present"
-				present_btn.pressed.connect(func() -> void:
-					_close_context_menu()
-					_show_nimue_present_prompt(nimue)
-				)
+				present_btn.pressed.connect(Callable(self, "_on_context_nimue_present_pressed").bind(nimue.uid))
 				vbox.add_child(present_btn)
 		elif card is TheWhiteSerpentScript:
 			var white_serpent := card as TheWhiteSerpentScript
 			if white_serpent.can_activate_shift(game_manager):
 				var shift_btn := Button.new()
 				shift_btn.text = "Shift"
-				shift_btn.pressed.connect(func() -> void:
-					_close_context_menu()
-					if _should_submit_ui_action_command():
-						game_input.submit_action({type = "activate_card_ability", source_uid = card.uid, option = {ability = "shift"}})
-					else:
-						_queue_magical_action(
-							CardAction.Type.ABILITY,
-							card,
-							null,
-							card.card_name + " shifts!",
-							func() -> void:
-								card.activate(game_manager, {ability = "shift"})
-						)
-					update_ui()
-				)
+				shift_btn.pressed.connect(Callable(self, "_on_context_card_ability_option_pressed").bind(white_serpent.uid, "shift"))
 				vbox.add_child(shift_btn)
 			if white_serpent.can_activate_medicine(game_manager):
 				var medicine_btn := Button.new()
 				medicine_btn.text = "Medicine"
-				medicine_btn.pressed.connect(func() -> void:
-					_close_context_menu()
-					if _should_submit_ui_action_command():
-						game_input.submit_action({type = "activate_card_ability", source_uid = card.uid, option = {ability = "medicine"}})
-					else:
-						_queue_magical_action(
-							CardAction.Type.ABILITY,
-							card,
-							null,
-							card.card_name + " uses Medicine!",
-							func() -> void:
-								card.activate(game_manager, {ability = "medicine"})
-						)
-					update_ui()
-				)
+				medicine_btn.pressed.connect(Callable(self, "_on_context_card_ability_option_pressed").bind(white_serpent.uid, "medicine"))
 				vbox.add_child(medicine_btn)
 		else:
 			var btn := Button.new()
 			var card_activation_label: String = card.get_activation_label() if card.has_method("get_activation_label") else "Activate Ability"
 			btn.text = card_activation_label
-			var on_choose_creature_target := func(chosen_card: Card) -> void:
-				_queue_context_targeted_ability(card, chosen_card)
-			var on_cancel_creature_target := func() -> void:
-				_set_action_label_text("Cancelled " + card.card_name + ".")
-				update_ui()
-			btn.pressed.connect(func():
-				_close_context_menu()
-				if card is EnHeduAnnaScript:
-					_show_en_hedu_anna_prompt(card as EnHeduAnnaScript)
-					return
-				if card is HariiShamanScript:
-					_begin_harii_shaman_activation(card as HariiShamanScript)
-					return
-				if card is WingedLionScript:
-					_begin_winged_lion_activation(card as WingedLionScript)
-					return
-				if card is ErlqueensNightingaleScript:
-					_show_erlqueens_nightingale_prompt(card as ErlqueensNightingaleScript)
-					return
-				if card is MopsusScript:
-					_show_mopsus_hand_prompt(card as MopsusScript)
-					return
-				if card is TezcatlipocaBlasphemerScript:
-					_begin_tezcatlipoca_blasphemer_activation(card as TezcatlipocaBlasphemerScript)
-					return
-				if _uses_devour_click_selection(card):
-					_begin_devour_activation(card)
-					return
-				if card.has_method("get_valid_targets"):
-					var targets: Array = card.get_valid_targets(game_manager)
-					if targets.is_empty():
-						_set_action_label_text(card.card_name + " has no valid targets right now.")
-						update_ui()
-						return
-					_show_card_selection_overlay(
-						"Choose a target for " + card.card_name,
-						targets,
-						on_choose_creature_target,
-						on_cancel_creature_target
-					)
-				else:
-					if _should_submit_ui_action_command():
-						game_input.submit_action({type = "activate_card_ability", source_uid = card.uid})
-					else:
-						_queue_magical_action(
-							CardAction.Type.ABILITY,
-							card,
-							null,
-							card.card_name + " activated!",
-							func() -> void:
-								card.activate(game_manager)
-						)
-			)
+			btn.pressed.connect(Callable(self, "_on_context_creature_ability_pressed").bind(card.uid))
 			vbox.add_child(btn)
 
 	for equip in equipped_ability_cards:
@@ -15115,89 +15398,31 @@ func _on_creature_right_clicked(card: Card) -> void:
 		var btn := Button.new()
 		var activation_label: String = equipped_card.get_activation_label() if equipped_card.has_method("get_activation_label") else "Activate Ability"
 		btn.text = "%s: %s" % [equipped_card.card_name, activation_label]
-		var on_choose_equipped_target := func(chosen_card: Card) -> void:
-			_queue_context_targeted_ability(equipped_card, chosen_card)
-		var on_cancel_equipped_target := func() -> void:
-			_set_action_label_text("Cancelled " + equipped_card.card_name + ".")
-			update_ui()
-		btn.pressed.connect(func():
-			_close_context_menu()
-			if equipped_card.has_method("get_valid_targets"):
-				var targets: Array = equipped_card.get_valid_targets(game_manager)
-				if targets.is_empty():
-					_set_action_label_text(equipped_card.card_name + " has no valid targets right now.")
-					update_ui()
-					return
-				_show_card_selection_overlay(
-					"Choose a target for " + equipped_card.card_name,
-					targets,
-					on_choose_equipped_target,
-					on_cancel_equipped_target
-				)
-			else:
-				if _should_submit_ui_action_command():
-					game_input.submit_action({type = "activate_card_ability", source_uid = equipped_card.uid})
-				else:
-					_queue_magical_action(
-						CardAction.Type.ABILITY,
-						equipped_card,
-						null,
-						equipped_card.card_name + " activated!",
-						func() -> void:
-							equipped_card.activate(game_manager)
-					)
-		)
+		btn.pressed.connect(Callable(self, "_on_context_equipped_ability_pressed").bind(equipped_card.uid))
 		vbox.add_child(btn)
 
 	if can_stance:
 		if card.is_stealth:
 			var reveal_aggressive_btn := Button.new()
 			reveal_aggressive_btn.text = "Reveal in Aggressive Stance"
-			reveal_aggressive_btn.pressed.connect(func():
-				_close_context_menu()
-				var was_stealth: bool = card.is_stealth
-				if game_input.submit_action({type = "change_mode", card_uid = card.uid, mode = Card.CreatureMode.AGGRESSIVE}):
-					_set_action_label_text(card.card_name + " revealed in aggressive stance.")
-					update_ui()
-					_handle_post_reveal_prompt(card, was_stealth)
-				else:
-					_set_action_label_text(card.card_name + " could not reveal in aggressive stance.")
-			)
+			reveal_aggressive_btn.pressed.connect(Callable(self, "_on_context_reveal_stance_pressed").bind(card.uid, Card.CreatureMode.AGGRESSIVE))
 			vbox.add_child(reveal_aggressive_btn)
 
 			var reveal_defensive_btn := Button.new()
 			reveal_defensive_btn.text = "Reveal in Defensive Stance"
-			reveal_defensive_btn.pressed.connect(func():
-				_close_context_menu()
-				var was_stealth: bool = card.is_stealth
-				if game_input.submit_action({type = "change_mode", card_uid = card.uid, mode = Card.CreatureMode.DEFENSIVE}):
-					_set_action_label_text(card.card_name + " revealed in defensive stance.")
-					update_ui()
-					_handle_post_reveal_prompt(card, was_stealth)
-				else:
-					_set_action_label_text(card.card_name + " could not reveal in defensive stance.")
-			)
+			reveal_defensive_btn.pressed.connect(Callable(self, "_on_context_reveal_stance_pressed").bind(card.uid, Card.CreatureMode.DEFENSIVE))
 			vbox.add_child(reveal_defensive_btn)
 		else:
 			var mode_name := "Switch to Defensive Stance" if card.creature_mode == Card.CreatureMode.AGGRESSIVE else "Switch to Aggressive Stance"
 			var btn := Button.new()
 			btn.text = mode_name
-			btn.pressed.connect(func():
-				_close_context_menu()
-				game_input.submit_action({type = "change_mode", card_uid = card.uid, mode = -1})
-				_set_action_label_text(card.card_name + " changed stance.")
-				update_ui()
-			)
+			btn.pressed.connect(Callable(self, "_on_context_change_stance_pressed").bind(card.uid))
 			vbox.add_child(btn)
 
 	if can_move:
 		var btn := Button.new()
 		btn.text = "Move"
-		btn.pressed.connect(func():
-			_close_context_menu()
-			_pending_move_card = card
-			_set_action_label_text(card.card_name + " ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â click an adjacent empty zone to move")
-		)
+		btn.pressed.connect(Callable(self, "_on_context_move_pressed").bind(card.uid))
 		vbox.add_child(btn)
 
 	for entry in equip_entries:
@@ -15216,43 +15441,21 @@ func _on_creature_right_clicked(card: Card) -> void:
 		if not is_enemy and can_pick_up_this_entry:
 			var pick_btn := Button.new()
 			pick_btn.text = "%s: %s [%s %s]" % [pick_up_label, equip.card_name, owner_label, loc]
-			pick_btn.pressed.connect(func():
-				_close_context_menu()
-				var ok := game_input.submit_action({type = "equip_action", card_uid = card.uid, equipment_uid = equip.uid, action = "pick_up"})
-				var result_phrase := " %s " % pick_up_success
-				if not ok:
-					result_phrase = " %s " % pick_up_failure
-				_set_action_label_text(card.card_name + result_phrase + equip.card_name)
-				update_ui()
-			)
+			pick_btn.pressed.connect(Callable(self, "_on_context_pick_up_equipment_pressed").bind(card.uid, equip.uid, pick_up_success, pick_up_failure))
 			vbox.add_child(pick_btn)
 		elif is_enemy and can_pick_up_this_entry:
 			var steal_btn := Button.new()
 			steal_btn.text = "Steal: %s [%s %s%s]" % [equip.card_name, owner_label, loc, range_label]
-			steal_btn.pressed.connect(func():
-				_close_context_menu()
-				_pending_equip_actor = card
-				_pending_equip_target = equip
-				_pending_equip_action = "steal"
-				check_for_possible_intercepts_for_equip_action()
-			)
+			steal_btn.pressed.connect(Callable(self, "_on_context_begin_interceptable_equipment_pressed").bind(card.uid, equip.uid, "steal"))
 			vbox.add_child(steal_btn)
 
 		if can_break_this_entry:
 			var destroy_btn := Button.new()
 			destroy_btn.text = "Destroy: %s [%s %s%s]" % [equip.card_name, owner_label, loc, range_label]
-			destroy_btn.pressed.connect(func():
-				_close_context_menu()
-				if is_enemy:
-					_pending_equip_actor = card
-					_pending_equip_target = equip
-					_pending_equip_action = "destroy"
-					check_for_possible_intercepts_for_equip_action()
-				else:
-					var ok := _resolve_equipment_action(card, equip, "destroy")
-					_set_action_label_text(card.card_name + (" destroys " if ok else " failed to destroy ") + equip.card_name)
-					update_ui()
-			)
+			if is_enemy:
+				destroy_btn.pressed.connect(Callable(self, "_on_context_begin_interceptable_equipment_pressed").bind(card.uid, equip.uid, "destroy"))
+			else:
+				destroy_btn.pressed.connect(Callable(self, "_on_context_destroy_own_equipment_pressed").bind(card.uid, equip.uid))
 			vbox.add_child(destroy_btn)
 
 	var cancel := Button.new()
@@ -15281,9 +15484,165 @@ func _queue_context_targeted_ability(source_card: Card, chosen_card: Card) -> vo
 	_queue_targeted_ability_action(
 		source_card,
 		chosen_card,
-		func() -> void:
-			source_card.activate(game_manager, chosen_card)
+		Callable(self, "_resolve_targeted_card_ability_by_uid").bind(source_card.uid, chosen_card.uid)
 	)
+
+func _resolve_targeted_card_ability_by_uid(source_uid: String, target_uid: String) -> void:
+	if game_manager == null or source_uid.strip_edges() == "" or target_uid.strip_edges() == "":
+		return
+	var source_card := game_manager.get_card_by_uid(source_uid)
+	var target_card := game_manager.get_card_by_uid(target_uid)
+	if source_card == null or target_card == null:
+		return
+	source_card.activate(game_manager, target_card)
+
+func _get_context_card_by_uid(card_uid: String) -> Card:
+	if game_manager == null or card_uid.strip_edges() == "":
+		return null
+	return game_manager.get_card_by_uid(card_uid)
+
+func _on_context_attack_pressed(card_uid: String) -> void:
+	_close_context_menu()
+	var card := _get_context_card_by_uid(card_uid)
+	if card == null:
+		update_ui()
+		return
+	selected_attacker = card
+	_set_action_label_text(card.card_name + " ready to attack - click an enemy creature or zone")
+
+func _on_context_stupefy_pressed(card_uid: String) -> void:
+	_close_context_menu()
+	var card := _get_context_card_by_uid(card_uid)
+	if card == null:
+		update_ui()
+		return
+	awaiting_stupefy_target = true
+	stupefy_source = card
+	_set_action_label_text("Stupefy - click an enemy creature of level " + str(card.get_effective_level()) + " or lower")
+
+func _on_context_nimue_entomb_pressed(card_uid: String) -> void:
+	_close_context_menu()
+	var card := _get_context_card_by_uid(card_uid) as NimueScript
+	if card == null:
+		update_ui()
+		return
+	_begin_nimue_entomb_activation(card)
+
+func _on_context_nimue_present_pressed(card_uid: String) -> void:
+	_close_context_menu()
+	var card := _get_context_card_by_uid(card_uid) as NimueScript
+	if card == null:
+		update_ui()
+		return
+	_show_nimue_present_prompt(card)
+
+func _on_context_equipped_ability_pressed(equipment_uid: String) -> void:
+	_close_context_menu()
+	var equipped_card := _get_context_card_by_uid(equipment_uid)
+	if equipped_card == null:
+		update_ui()
+		return
+	if equipped_card.has_method("get_valid_targets"):
+		var targets: Array = equipped_card.get_valid_targets(game_manager)
+		if targets.is_empty():
+			_set_action_label_text(equipped_card.card_name + " has no valid targets right now.")
+			update_ui()
+			return
+		_show_card_selection_overlay(
+			"Choose a target for " + equipped_card.card_name,
+			targets,
+			Callable(self, "_on_context_equipped_ability_target_chosen").bind(equipment_uid),
+			Callable(self, "_on_context_equipped_ability_cancelled").bind(equipment_uid)
+		)
+	else:
+		_submit_or_queue_card_ability_by_uid(equipment_uid, {}, equipped_card.card_name + " activated!")
+	update_ui()
+
+func _on_context_equipped_ability_target_chosen(chosen_card: Card, equipment_uid: String) -> void:
+	var equipped_card := _get_context_card_by_uid(equipment_uid)
+	if equipped_card == null or chosen_card == null:
+		update_ui()
+		return
+	_queue_context_targeted_ability(equipped_card, chosen_card)
+
+func _on_context_equipped_ability_cancelled(equipment_uid: String) -> void:
+	var equipped_card := _get_context_card_by_uid(equipment_uid)
+	var card_name := equipped_card.card_name if equipped_card != null else "ability"
+	_set_action_label_text("Cancelled " + card_name + ".")
+	update_ui()
+
+func _on_context_reveal_stance_pressed(card_uid: String, target_mode_value: int) -> void:
+	_close_context_menu()
+	var card := _get_context_card_by_uid(card_uid)
+	if card == null:
+		update_ui()
+		return
+	var target_mode: Card.CreatureMode = target_mode_value as Card.CreatureMode
+	var target_mode_name := "aggressive" if target_mode == Card.CreatureMode.AGGRESSIVE else "defensive"
+	var was_stealth: bool = card.is_stealth
+	if game_input.submit_action({type = "change_mode", card_uid = card.uid, mode = target_mode}):
+		_set_action_label_text(card.card_name + " revealed in " + target_mode_name + " stance.")
+		update_ui()
+		_handle_post_reveal_prompt(card, was_stealth)
+	else:
+		_set_action_label_text(card.card_name + " could not reveal in " + target_mode_name + " stance.")
+
+func _on_context_change_stance_pressed(card_uid: String) -> void:
+	_close_context_menu()
+	var card := _get_context_card_by_uid(card_uid)
+	if card == null:
+		update_ui()
+		return
+	var target_mode: Card.CreatureMode = Card.CreatureMode.DEFENSIVE if card.creature_mode == Card.CreatureMode.AGGRESSIVE else Card.CreatureMode.AGGRESSIVE
+	game_input.submit_action({type = "change_mode", card_uid = card.uid, mode = target_mode})
+	_set_action_label_text(card.card_name + " changed stance.")
+	update_ui()
+
+func _on_context_move_pressed(card_uid: String) -> void:
+	_close_context_menu()
+	var card := _get_context_card_by_uid(card_uid)
+	if card == null:
+		update_ui()
+		return
+	_pending_move_card = card
+	_set_action_label_text(card.card_name + " - click an adjacent empty zone to move")
+
+func _on_context_pick_up_equipment_pressed(card_uid: String, equipment_uid: String, pick_up_success: String, pick_up_failure: String) -> void:
+	_close_context_menu()
+	var card := _get_context_card_by_uid(card_uid)
+	var equip := _get_context_card_by_uid(equipment_uid)
+	if card == null or equip == null:
+		update_ui()
+		return
+	var ok := game_input.submit_action({type = "equip_action", card_uid = card.uid, equipment_uid = equip.uid, action = "pick_up"})
+	var result_phrase := " %s " % pick_up_success
+	if not ok:
+		result_phrase = " %s " % pick_up_failure
+	_set_action_label_text(card.card_name + result_phrase + equip.card_name)
+	update_ui()
+
+func _on_context_begin_interceptable_equipment_pressed(card_uid: String, equipment_uid: String, action_name: String) -> void:
+	_close_context_menu()
+	var card := _get_context_card_by_uid(card_uid)
+	var equip := _get_context_card_by_uid(equipment_uid)
+	if card == null or equip == null:
+		update_ui()
+		return
+	_pending_equip_actor = card
+	_pending_equip_target = equip
+	_pending_equip_action = action_name
+	check_for_possible_intercepts_for_equip_action()
+
+func _on_context_destroy_own_equipment_pressed(card_uid: String, equipment_uid: String) -> void:
+	_close_context_menu()
+	var card := _get_context_card_by_uid(card_uid)
+	var equip := _get_context_card_by_uid(equipment_uid)
+	if card == null or equip == null:
+		update_ui()
+		return
+	var ok := _resolve_equipment_action(card, equip, "destroy")
+	_set_action_label_text(card.card_name + (" destroys " if ok else " failed to destroy ") + equip.card_name)
+	update_ui()
 
 func _begin_nimue_entomb_activation(card: NimueScript) -> void:
 	if card == null or game_manager == null:
@@ -15778,8 +16137,8 @@ func _bdrag_start_ghost() -> void:
 			haze.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 			panel.add_child(haze)
 		if _bdrag_preview_defensive or _bdrag_preview_stealth:
-			var shield_scale := DefenseShieldOverlay.STEALTH_VIEW_SIZE_MULTIPLIER if _bdrag_preview_stealth else 1.0
-			var shield := DefenseShieldOverlay.ensure_on(panel, DefenseShieldOverlay.LAYOUT_CENTER, shield_scale)
+			var shield_scale := DefenseShieldOverlayScript.STEALTH_VIEW_SIZE_MULTIPLIER if _bdrag_preview_stealth else 1.0
+			var shield := DefenseShieldOverlayScript.ensure_on(panel, DefenseShieldOverlayScript.LAYOUT_CENTER, shield_scale)
 			if shield != null and is_instance_valid(shield):
 				shield.move_to_front()
 	var floating_parent := _get_floating_drag_parent()
@@ -18267,16 +18626,12 @@ func _show_erlqueens_nightingale_prompt(card: ErlqueensNightingaleScript) -> voi
 	var return_btn := Button.new()
 	return_btn.text = "Return to Hand"
 	return_btn.disabled = not card.can_return_to_hand_after_shift()
-	return_btn.pressed.connect(func() -> void:
-		_resolve_erlqueens_nightingale_shift(true)
-	)
+	return_btn.pressed.connect(Callable(self, "_on_erlqueens_nightingale_return_pressed"))
 	vbox.add_child(return_btn)
 
 	var decline_btn := Button.new()
 	decline_btn.text = "Decline"
-	decline_btn.pressed.connect(func() -> void:
-		_resolve_erlqueens_nightingale_shift(false)
-	)
+	decline_btn.pressed.connect(Callable(self, "_on_erlqueens_nightingale_decline_pressed"))
 	vbox.add_child(decline_btn)
 
 func _hide_erlqueens_nightingale_prompt() -> void:
@@ -18284,6 +18639,12 @@ func _hide_erlqueens_nightingale_prompt() -> void:
 	if overlay:
 		overlay.queue_free()
 	_pending_erlqueens_nightingale = null
+
+func _on_erlqueens_nightingale_return_pressed() -> void:
+	_resolve_erlqueens_nightingale_shift(true)
+
+func _on_erlqueens_nightingale_decline_pressed() -> void:
+	_resolve_erlqueens_nightingale_shift(false)
 
 func _show_mopsus_hand_prompt(card: MopsusScript) -> void:
 	if card == null or game_manager == null:
@@ -18928,10 +19289,10 @@ func _sync_tez_titlacauan_cursor_overlay() -> void:
 		_tez_titlacauan_cursor_budget_label.text = "Lvl %d/%d" % [selected_total, budget]
 	if _tez_titlacauan_cursor_count_label != null:
 		_tez_titlacauan_cursor_count_label.text = "%d/%d slaves" % [selected_count, TezcatlipocaActive.MAX_TITLACAUAN_TARGETS]
-	var size := _tez_titlacauan_cursor_overlay.get_combined_minimum_size()
-	if size == Vector2.ZERO:
-		size = Vector2(90.0, 38.0)
-	_tez_titlacauan_cursor_overlay.size = size
+	var overlay_size := _tez_titlacauan_cursor_overlay.get_combined_minimum_size()
+	if overlay_size == Vector2.ZERO:
+		overlay_size = Vector2(90.0, 38.0)
+	_tez_titlacauan_cursor_overlay.size = overlay_size
 	_tez_titlacauan_cursor_overlay.global_position = get_global_mouse_position() + Vector2(34.0, 20.0)
 
 func _begin_harii_shaman_activation(card: HariiShamanScript) -> void:
@@ -19225,10 +19586,10 @@ func _show_hildskjalf_prompt(card: HildskjalfThroneOfOdin) -> void:
 	vbox.add_child(buttons)
 
 	for deck_owner in readable_decks:
-		var owner := deck_owner as Player
-		if owner == null:
+		var readable_deck_owner := deck_owner as Player
+		if readable_deck_owner == null:
 			continue
-		var chosen_owner := owner
+		var chosen_owner := readable_deck_owner
 		var btn := Button.new()
 		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		btn.text = "Your deck" if chosen_owner == card.card_owner else "%s's deck" % chosen_owner.player_name
@@ -19496,15 +19857,16 @@ func _resolve_erlqueens_nightingale_shift(return_to_hand_after_shift: bool) -> v
 		update_ui()
 		return
 	if _should_submit_ui_action_command():
-		game_input.submit_action({type = "activate_card_ability", source_uid = card.uid, return_to_hand = return_to_hand_after_shift})
+		game_input.submit_action({
+			type = "activate_card_ability",
+			source_uid = card.uid,
+			option = {return_to_hand = return_to_hand_after_shift}
+		})
 		return
-	_queue_magical_action(
-		CardAction.Type.ABILITY,
-		card,
-		{"return_to_hand": return_to_hand_after_shift},
-		card.card_name + " activated!",
-		func() -> void:
-			card.activate(game_manager, {"return_to_hand": return_to_hand_after_shift})
+	_submit_or_queue_card_ability_by_uid(
+		card.uid,
+		{return_to_hand = return_to_hand_after_shift},
+		card.card_name + " activated!"
 	)
 	update_ui()
 
@@ -22095,12 +22457,13 @@ func _schedule_post_game_return_to_menu(force_return: bool = false) -> void:
 		_emit_return_to_menu_requested()
 		return
 	var timer := tree.create_timer(POST_GAME_RETURN_DELAY_SECONDS)
-	timer.timeout.connect(func() -> void:
-		if not _pending_post_game_return_to_menu:
-			return
-		_pending_post_game_return_to_menu = false
-		_emit_return_to_menu_requested()
-	)
+	timer.timeout.connect(Callable(self, "_on_post_game_return_timer_timeout"))
+
+func _on_post_game_return_timer_timeout() -> void:
+	if not _pending_post_game_return_to_menu:
+		return
+	_pending_post_game_return_to_menu = false
+	_emit_return_to_menu_requested()
 
 func _restore_corner_action_button() -> void:
 	if forfeit_button == null:

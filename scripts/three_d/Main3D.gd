@@ -61,13 +61,13 @@ func _build_environment() -> void:
 	_three_d_world.add_child(world_environment)
 
 func _build_table() -> void:
-	var floor := _make_box(
+	var floor_mesh := _make_box(
 		"StoneFloor",
 		Vector3(26.0, 0.16, 18.0),
 		Vector3(0.0, -3.05, -1.0),
 		Color(0.09, 0.10, 0.115)
 	)
-	_three_d_world.add_child(floor)
+	_three_d_world.add_child(floor_mesh)
 
 	var table := _make_box(
 		"GameTable",
@@ -214,13 +214,17 @@ func _refresh_display_mode() -> void:
 func _is_game_instance_in_correct_parent() -> bool:
 	if _game_instance == null or not is_instance_valid(_game_instance):
 		return true
-	var expected_parent: Node = _flat_canvas_layer if _is_flat_2d_mode else _game_viewport
+	var expected_parent: Node = _flat_canvas_layer
+	if not _is_flat_2d_mode:
+		expected_parent = _game_viewport
 	return _game_instance.get_parent() == expected_parent
 
 func _reparent_game_instance_for_display_mode() -> void:
 	if _game_instance == null or not is_instance_valid(_game_instance):
 		return
-	var target_parent: Node = _flat_canvas_layer if _is_flat_2d_mode else _game_viewport
+	var target_parent: Node = _flat_canvas_layer
+	if not _is_flat_2d_mode:
+		target_parent = _game_viewport
 	if target_parent == null or _game_instance.get_parent() == target_parent:
 		return
 	_game_instance.reparent(target_parent)

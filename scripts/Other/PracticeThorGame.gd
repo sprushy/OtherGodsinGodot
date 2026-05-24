@@ -19,12 +19,12 @@ func set_thor_practice_deck(saved_deck: Dictionary) -> void:
 	_thor_practice_deck = saved_deck.duplicate(true)
 
 func start_game(
-	is_host: bool = false,
-	is_client: bool = false,
+	_is_host: bool = false,
+	_is_client: bool = false,
 	server_ip: String = "127.0.0.1",
-	server_port: int = 12345,
+	_server_port: int = 12345,
 	match_info: Dictionary = {},
-	server_match_session = null
+	_server_match_session = null
 ) -> void:
 	_shutdown_thor_bot()
 	_practice_deck_name = ""

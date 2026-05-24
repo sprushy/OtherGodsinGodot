@@ -2,6 +2,7 @@ extends RefCounted
 class_name ProfileStore
 
 const ServerPathsScript = preload("res://scripts/server/ServerPaths.gd")
+const JsonStoreScript = preload("res://scripts/server/JsonStore.gd")
 const DEFAULT_PLAYER_NAME := "Guest"
 
 var _profiles_by_id: Dictionary = {}
@@ -138,13 +139,9 @@ func _ensure_loaded() -> void:
 	var storage_path: String = _get_storage_path()
 	if not FileAccess.file_exists(storage_path):
 		return
-	var file := FileAccess.open(storage_path, FileAccess.READ)
-	if file == null:
-		return
-	var parsed = JSON.parse_string(file.get_as_text())
-	file.close()
-	if parsed is Dictionary:
-		_profiles_by_id = (parsed as Dictionary).duplicate(true)
+	var parsed := JsonStoreScript.load_dictionary(storage_path, {}, "ProfileStore")
+	if not parsed.is_empty():
+		_profiles_by_id = parsed.duplicate(true)
 	for profile_id in _profiles_by_id.keys():
 		var profile = _profiles_by_id[profile_id]
 		if not (profile is Dictionary):
@@ -158,15 +155,7 @@ func _ensure_loaded() -> void:
 
 func _save() -> void:
 	var storage_path: String = _get_storage_path()
-	var parent_dir := storage_path.get_base_dir()
-	if not parent_dir.is_empty():
-		DirAccess.make_dir_recursive_absolute(parent_dir)
-	var file := FileAccess.open(storage_path, FileAccess.WRITE)
-	if file == null:
-		return
-	file.store_string(JSON.stringify(_profiles_by_id, "\t"))
-	file.flush()
-	file.close()
+	JsonStoreScript.save_json(storage_path, _profiles_by_id, "ProfileStore")
 
 func _get_storage_path() -> String:
 	return ServerPathsScript.get_server_data_file_path("profiles.json")

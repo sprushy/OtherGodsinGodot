@@ -39,9 +39,9 @@ static func sanitize_slot_card_names(raw_slots) -> Array:
 			var raw_slot = raw_slots[slot_index]
 			if raw_slot is Array:
 				for raw_card_name in raw_slot:
-					var card_name := str(raw_card_name).strip_edges()
-					if not card_name.is_empty():
-						clean_slot.append(card_name)
+					var slot_card_name := str(raw_card_name).strip_edges()
+					if not slot_card_name.is_empty():
+						clean_slot.append(slot_card_name)
 		sanitized.append(clean_slot)
 	return sanitized
 

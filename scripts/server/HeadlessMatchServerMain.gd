@@ -1,6 +1,7 @@
 extends SceneTree
 
 const HeadlessMatchServerScript = preload("res://scripts/server/HeadlessMatchServer.gd")
+const JsonStoreScript = preload("res://scripts/server/JsonStore.gd")
 
 var _server = null
 
@@ -50,12 +51,4 @@ func _parse_user_args(args: PackedStringArray) -> Dictionary:
 	return parsed
 
 func _load_launch_config(config_path: String) -> Dictionary:
-	if not FileAccess.file_exists(config_path):
-		return {}
-	var file := FileAccess.open(config_path, FileAccess.READ)
-	if file == null:
-		return {}
-	var parsed = JSON.parse_string(file.get_as_text())
-	if parsed is Dictionary:
-		return parsed
-	return {}
+	return JsonStoreScript.load_dictionary(config_path, {}, "HeadlessMatchServerMain")

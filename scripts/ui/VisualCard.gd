@@ -1,11 +1,11 @@
 class_name VisualCard
 extends PanelContainer
 
-const CardDetailContentBuilder = preload("res://scripts/ui/CardDetailContentBuilder.gd")
-const LockedPowerCursor = preload("res://scripts/ui/LockedPowerCursor.gd")
-const DefenseShieldOverlay = preload("res://scripts/ui/DefenseShieldOverlay.gd")
-const BoardZoneUI = preload("res://scripts/ui/BoardZoneUI.gd")
-const LevelSymbolRow = preload("res://scripts/ui/LevelSymbolRow.gd")
+const CardDetailContentBuilderScript = preload("res://scripts/ui/CardDetailContentBuilder.gd")
+const LockedPowerCursorScript = preload("res://scripts/ui/LockedPowerCursor.gd")
+const DefenseShieldOverlayScript = preload("res://scripts/ui/DefenseShieldOverlay.gd")
+const BoardZoneUIScript = preload("res://scripts/ui/BoardZoneUI.gd")
+const LevelSymbolRowScript = preload("res://scripts/ui/LevelSymbolRow.gd")
 const MINOR_ACTION_SYMBOL_TEXTURE := preload("res://images/ui/MinorActionSymbol.png")
 const MAJOR_ACTION_SYMBOL_TEXTURE := preload("res://images/ui/MajorActionSymbol.png")
 const MANA_ORB_TEXTURE := preload("res://images/ui/ManaOrb.png")
@@ -238,7 +238,7 @@ func _populate_level_badge(level_tag: PanelContainer, track_instance: bool = tru
 		level_tag.remove_child(child)
 		child.queue_free()
 	var effective_level := card_data.get_effective_level()
-	var texture := LevelSymbolRow.get_symbol_texture_for_card(card_data)
+	var texture := LevelSymbolRowScript.get_symbol_texture_for_card(card_data)
 	var color := _get_level_symbol_color(effective_level)
 	var center := CenterContainer.new()
 	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -754,9 +754,9 @@ func _refresh_defense_shield_overlay() -> void:
 		_defense_shield_overlay = null
 		return
 	if is_rotated:
-		_defense_shield_overlay = DefenseShieldOverlay.ensure_on(_inner, DefenseShieldOverlay.LAYOUT_CENTER)
+		_defense_shield_overlay = DefenseShieldOverlayScript.ensure_on(_inner, DefenseShieldOverlayScript.LAYOUT_CENTER)
 	else:
-		DefenseShieldOverlay.remove_from(_inner)
+		DefenseShieldOverlayScript.remove_from(_inner)
 		_defense_shield_overlay = null
 
 func set_disabled(value: bool, dim_visuals: bool = true) -> void:
@@ -800,7 +800,7 @@ func _refresh_mouse_filter() -> void:
 
 func _refresh_mouse_cursor_shape() -> void:
 	if _should_show_power_lock_overlay():
-		mouse_default_cursor_shape = LockedPowerCursor.get_control_cursor_shape(Control.CURSOR_POINTING_HAND)
+		mouse_default_cursor_shape = LockedPowerCursorScript.get_control_cursor_shape(Control.CURSOR_POINTING_HAND as Control.CursorShape)
 		return
 	mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 
@@ -1205,14 +1205,14 @@ func _build_drag_ghost() -> Control:
 	return ghost
 
 func _build_creature_board_drag_ghost() -> Control:
-	var ghost := BoardZoneUI.new()
+	var ghost := BoardZoneUIScript.new()
 	ghost.top_level = true
 	ghost.z_index = _FLOATING_GHOST_Z_INDEX
 	ghost.z_as_relative = false
 	ghost.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	ghost.viewer_override = _hover_viewer if _hover_viewer != null else card_data.card_owner
-	ghost.custom_minimum_size = BoardZoneUI.get_zone_size()
-	ghost.size = BoardZoneUI.get_zone_size()
+	ghost.custom_minimum_size = BoardZoneUIScript.get_zone_size()
+	ghost.size = BoardZoneUIScript.get_zone_size()
 	ghost.pivot_offset = Vector2.ZERO
 	ghost.rotation_degrees = 0.0
 	_drag_ghost_pivot = ghost.size / 2.0
@@ -1304,7 +1304,7 @@ func _show_hover_panel() -> void:
 	style.content_margin_top = 8
 	style.content_margin_bottom = 8
 	panel.add_theme_stylebox_override("panel", style)
-	var hover_body := CardDetailContentBuilder.build_visual_hover_body(
+	var hover_body := CardDetailContentBuilderScript.build_visual_hover_body(
 		card_data,
 		_hover_viewer,
 		{
@@ -1318,10 +1318,8 @@ func _show_hover_panel() -> void:
 	floating_parent.add_child(panel)
 	if hover_body is ScrollContainer:
 		var hover_scroll := hover_body as ScrollContainer
-		CardDetailContentBuilder.apply_deckbuilder_scrollbar_style(hover_scroll, true)
-		hover_scroll.ready.connect(func() -> void:
-			CardDetailContentBuilder.apply_deckbuilder_scrollbar_style(hover_scroll, true)
-		, CONNECT_ONE_SHOT)
+		CardDetailContentBuilderScript.apply_deckbuilder_scrollbar_style(hover_scroll, true)
+		hover_scroll.ready.connect(Callable(self, "_apply_hover_scrollbar_style").bind(hover_scroll), CONNECT_ONE_SHOT)
 	panel.move_to_front()
 	var vp_size := get_viewport().get_visible_rect().size
 	panel.size = Vector2(_HOVER_PANEL_WIDTH, minf(_HOVER_PANEL_MAX_HEIGHT, vp_size.y - 8.0))
@@ -1335,6 +1333,11 @@ func _show_hover_panel() -> void:
 	panel.global_position = Vector2(px, py)
 
 	_hover_panel = panel
+
+func _apply_hover_scrollbar_style(scroll: ScrollContainer) -> void:
+	if scroll == null or not is_instance_valid(scroll):
+		return
+	CardDetailContentBuilderScript.apply_deckbuilder_scrollbar_style(scroll, true)
 
 func _hide_hover_panel() -> void:
 	if _hover_panel and is_instance_valid(_hover_panel):

@@ -241,20 +241,21 @@ const CARD_SCRIPT_PATHS := [
 ]
 
 static var _cached_all_cards: Array[Card] = []
+static var _cached_card_templates_by_alias: Dictionary = {}
 
 static func make_all_cards() -> Array[Card]:
 	if not _cached_all_cards.is_empty():
-		var duplicates: Array[Card] = []
-		for card in _cached_all_cards:
-			duplicates.append(card.duplicate(true))
-		return duplicates
+		return _duplicate_cached_cards()
 	
 	var discovered_cards: Array[Card] = []
 	_discover_cards_from_registry(discovered_cards)
 	
 	_cached_all_cards = discovered_cards
+	_rebuild_card_alias_cache()
 	
-	# Return duplicates so the caller doesn't modify the cache
+	return _duplicate_cached_cards()
+
+static func _duplicate_cached_cards() -> Array[Card]:
 	var duplicates: Array[Card] = []
 	for card in _cached_all_cards:
 		duplicates.append(card.duplicate(true))
@@ -288,19 +289,14 @@ static func instantiate_card_by_name(card_name: String) -> Card:
 	# Ensure cache is populated
 	if _cached_all_cards.is_empty():
 		make_all_cards()
-		
-	var requested_lookup_key: String = to_lookup_key(requested_name)
-	for template in _cached_all_cards:
-		if template == null:
-			continue
-		if _matches_card_name(template, requested_name):
-			return template.duplicate(true)
-		if requested_lookup_key == to_lookup_key(str(template.card_name)):
-			return template.duplicate(true)
-		if template.has_method("get_normalized_card_name") and requested_lookup_key == to_lookup_key(str(template.get_normalized_card_name())):
-			return template.duplicate(true)
-		if template.has_method("get_ascii_card_name") and requested_lookup_key == to_lookup_key(str(template.get_ascii_card_name())):
-			return template.duplicate(true)
+	if _cached_card_templates_by_alias.is_empty():
+		_rebuild_card_alias_cache()
+
+	var template = _cached_card_templates_by_alias.get(requested_name, null)
+	if template == null:
+		template = _cached_card_templates_by_alias.get(to_lookup_key(requested_name), null)
+	if template is Card:
+		return (template as Card).duplicate(true)
 	return null
 
 static func make_cards_from_counts(card_counts: Dictionary) -> Array[Card]:
@@ -316,16 +312,33 @@ static func make_cards_from_counts(card_counts: Dictionary) -> Array[Card]:
 				cards.append(card)
 	return cards
 
-static func _matches_card_name(card: Card, requested_name: String) -> bool:
+static func _rebuild_card_alias_cache() -> void:
+	_cached_card_templates_by_alias.clear()
+	for template in _cached_all_cards:
+		if template == null:
+			continue
+		for alias in _get_card_name_aliases(template):
+			_register_card_alias(alias, template)
+			_register_card_alias(to_lookup_key(alias), template)
+
+static func _get_card_name_aliases(card: Card) -> Array[String]:
+	var aliases: Array[String] = []
 	if card == null:
-		return false
-	if str(card.card_name) == requested_name:
-		return true
-	if card.has_method("get_normalized_card_name") and str(card.get_normalized_card_name()) == requested_name:
-		return true
-	if card.has_method("get_ascii_card_name") and str(card.get_ascii_card_name()) == requested_name:
-		return true
-	return false
+		return aliases
+	aliases.append(str(card.card_name))
+	if card.has_method("get_normalized_card_name"):
+		aliases.append(str(card.get_normalized_card_name()))
+	if card.has_method("get_ascii_card_name"):
+		aliases.append(str(card.get_ascii_card_name()))
+	return aliases
+
+static func _register_card_alias(alias: String, template: Card) -> void:
+	var clean_alias := str(alias).strip_edges()
+	if clean_alias.is_empty():
+		return
+	if _cached_card_templates_by_alias.has(clean_alias):
+		return
+	_cached_card_templates_by_alias[clean_alias] = template
 
 static func to_lookup_key(card_name: String) -> String:
 	var normalized_name: String = str(card_name).strip_edges().to_lower()

@@ -284,8 +284,6 @@ func _load_startup_music_stream() -> AudioStream:
 		var imported_resource := load(STARTUP_MUSIC_PATH)
 		if imported_resource is AudioStream:
 			var imported_stream := (imported_resource as AudioStream).duplicate()
-			if imported_stream is AudioStreamMP3:
-				(imported_stream as AudioStreamMP3).loop = true
 			return imported_stream
 	if not FileAccess.file_exists(STARTUP_MUSIC_PATH):
 		push_warning("Could not find startup music: %s" % STARTUP_MUSIC_PATH)
@@ -296,7 +294,6 @@ func _load_startup_music_stream() -> AudioStream:
 		return null
 	var stream := AudioStreamMP3.new()
 	stream.data = bytes
-	stream.loop = true
 	return stream
 
 func _load_audio_preferences() -> void:
@@ -1325,9 +1322,9 @@ func _update_multiplayer_deck_hint() -> void:
 				_multiplayer_deck_summary_art.texture = null
 				_multiplayer_deck_summary_art.modulate = Color(1.0, 1.0, 1.0, 0.28)
 		else:
-			var deck_name := str(selected_entry.get("deck_name", "Deck"))
+			var summary_deck_name := str(selected_entry.get("deck_name", "Deck"))
 			var is_legal := bool(selected_entry.get("is_legal", false))
-			_multiplayer_deck_summary_name_label.text = deck_name if is_legal else "%s (Unavailable)" % deck_name
+			_multiplayer_deck_summary_name_label.text = summary_deck_name if is_legal else "%s (Unavailable)" % summary_deck_name
 			var god_card: Card = _get_saved_deck_god_template(selected_entry.get("saved_deck", {}) as Dictionary)
 			if _multiplayer_deck_summary_god_label != null:
 				_multiplayer_deck_summary_god_label.text = god_card.get_display_name_for_control() if god_card != null else ""
@@ -1369,7 +1366,6 @@ func _refresh_seek_list() -> void:
 		seek_list.set_item_disabled(0, true)
 		return
 	for room in _open_seek_rooms:
-		var room_id := str(room.get("room_id", "")).strip_edges()
 		var host_name := str(room.get("host_name", "Host")).strip_edges()
 		var member_count := int(room.get("member_count", 0))
 		var max_players := int(room.get("max_players", 2))
@@ -2992,7 +2988,7 @@ func _refresh_auth_onboarding_form_state() -> void:
 func _get_account_min_password_length() -> int:
 	return int(AccountStoreScript.MIN_PASSWORD_LENGTH)
 
-func _validate_account_auth_details(auth_mode: String, username: String, password: String) -> String:
+func _validate_account_auth_details(auth_mode: String, _username: String, password: String) -> String:
 	if auth_mode != AUTH_MODE_REGISTER:
 		return ""
 	var min_password_length := _get_account_min_password_length()
@@ -3303,9 +3299,7 @@ func _connect_local_host_to_dedicated_lobby() -> void:
 		var ready_file := str(_smoke_config.get("lobby_ready_file", "")).strip_edges()
 		if not ready_file.is_empty() and not FileAccess.file_exists(ready_file):
 			var ready_wait_timer := get_tree().create_timer(0.5)
-			ready_wait_timer.timeout.connect(func() -> void:
-				_connect_local_host_to_dedicated_lobby()
-			)
+			ready_wait_timer.timeout.connect(Callable(self, "_connect_local_host_to_dedicated_lobby"))
 			return
 	var wait_seconds := 0.8 if _spawned_lobby_process_id > 0 else 0.25
 	await get_tree().create_timer(wait_seconds).timeout
@@ -5144,11 +5138,7 @@ func _start_smoke_mode() -> void:
 
 	var timeout_seconds := float(_smoke_config.get("timeout", 25.0))
 	var timeout_timer := get_tree().create_timer(timeout_seconds)
-	timeout_timer.timeout.connect(func() -> void:
-		if _smoke_finished:
-			return
-		_fail_smoke_if_enabled("TIMEOUT")
-	)
+	timeout_timer.timeout.connect(Callable(self, "_on_smoke_timeout_timer_timeout"))
 
 	if role == "host":
 		_on_host_game_pressed()
@@ -5201,19 +5191,23 @@ func _start_smoke_mode() -> void:
 
 	if role == "resume":
 		var resume_timer := get_tree().create_timer(0.5)
-		resume_timer.timeout.connect(func() -> void:
-			_on_resume_match_pressed()
-		)
+		resume_timer.timeout.connect(Callable(self, "_on_resume_match_pressed"))
 
 func _wait_for_smoke_room_code() -> void:
 	var timer := get_tree().create_timer(0.5)
-	timer.timeout.connect(func() -> void:
-		var room_code := _read_smoke_room_code()
-		if room_code.is_empty():
-			_wait_for_smoke_room_code()
-			return
-		_join_smoke_room(room_code)
-	)
+	timer.timeout.connect(Callable(self, "_on_smoke_room_code_timer_timeout"))
+
+func _on_smoke_timeout_timer_timeout() -> void:
+	if _smoke_finished:
+		return
+	_fail_smoke_if_enabled("TIMEOUT")
+
+func _on_smoke_room_code_timer_timeout() -> void:
+	var room_code := _read_smoke_room_code()
+	if room_code.is_empty():
+		_wait_for_smoke_room_code()
+		return
+	_join_smoke_room(room_code)
 
 func _join_smoke_room(room_code: String) -> void:
 	room_code_line_edit.text = room_code
@@ -6552,9 +6546,7 @@ func _queue_host_lobby_retry(message: String) -> void:
 		return
 	status_label.text = "%s Retrying..." % message
 	var timer := get_tree().create_timer(0.75)
-	timer.timeout.connect(func() -> void:
-		_connect_local_host_to_dedicated_lobby()
-	)
+	timer.timeout.connect(Callable(self, "_connect_local_host_to_dedicated_lobby"))
 
 func _on_aggressive_stance_btn_pressed() -> void:
 	pass
@@ -6658,7 +6650,6 @@ func _get_selected_auth_mode() -> String:
 	return _selected_auth_mode
 
 func _refresh_auth_controls() -> void:
-	var auth_mode := _get_selected_auth_mode()
 	var signed_in_account := _is_account_logged_in()
 	if player_name_line_edit != null:
 		player_name_line_edit.placeholder_text = "Account username"

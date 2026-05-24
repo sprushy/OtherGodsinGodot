@@ -20,12 +20,12 @@ const STAT_MIN_EXTENSION := 18.0
 var _layout_mode: int = LAYOUT_CORNER
 var _size_multiplier: float = 1.0
 
-static func ensure_on(parent: Control, layout_mode: int = LAYOUT_CORNER, size_multiplier: float = 1.0) -> Control:
+static func ensure_on(parent: Control, shield_layout_mode: int = LAYOUT_CORNER, size_multiplier: float = 1.0) -> Control:
 	if parent == null or not is_instance_valid(parent):
 		return null
 	var existing := parent.get_node_or_null(OVERLAY_NAME) as Control
 	if existing != null:
-		_configure_container(existing, layout_mode, size_multiplier)
+		_configure_container(existing, shield_layout_mode, size_multiplier)
 		return existing
 
 	var container := Control.new()
@@ -38,7 +38,7 @@ static func ensure_on(parent: Control, layout_mode: int = LAYOUT_CORNER, size_mu
 	var shield := DefenseShieldOverlay.new()
 	shield.name = "ShieldImage"
 	container.add_child(shield)
-	_configure_container(container, layout_mode, size_multiplier)
+	_configure_container(container, shield_layout_mode, size_multiplier)
 	return container
 
 static func remove_from(parent: Control) -> void:
@@ -48,12 +48,12 @@ static func remove_from(parent: Control) -> void:
 	if existing != null:
 		existing.queue_free()
 
-static func _configure_container(container: Control, layout_mode: int, size_multiplier: float) -> void:
+static func _configure_container(container: Control, shield_layout_mode: int, size_multiplier: float) -> void:
 	if container == null or not is_instance_valid(container):
 		return
 	var shield := container.get_node_or_null("ShieldImage") as DefenseShieldOverlay
 	if shield != null:
-		shield.set_layout_mode(layout_mode, size_multiplier)
+		shield.set_layout_mode(shield_layout_mode, size_multiplier)
 
 func _init() -> void:
 	texture = SHIELD_TEXTURE
@@ -61,8 +61,8 @@ func _init() -> void:
 	expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 
-func set_layout_mode(layout_mode: int, size_multiplier: float = 1.0) -> void:
-	_layout_mode = layout_mode
+func set_layout_mode(shield_layout_mode: int, size_multiplier: float = 1.0) -> void:
+	_layout_mode = shield_layout_mode
 	_size_multiplier = maxf(0.01, size_multiplier)
 	_layout_to_parent()
 	call_deferred("_layout_to_parent")

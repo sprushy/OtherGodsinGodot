@@ -7,6 +7,7 @@ class_name GameInput
 ## Swap LocalGameInput for NetworkedGameInput to route actions over the network.
 ## The command dict format mirrors MatchManager.process_command().
 
+@warning_ignore("unused_signal")
 signal submission_rejected(reason: String)
 
 func submit_action(_command: Dictionary) -> bool:

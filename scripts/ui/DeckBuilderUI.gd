@@ -7,7 +7,7 @@ const LocalProfileStoreScript = preload("res://scripts/core/LocalProfileStore.gd
 const DeckCatalogUtilsScript = preload("res://scripts/core/DeckCatalogUtils.gd")
 const CardCatalogScript = preload("res://scripts/cards/CardCatalog.gd")
 const TiamatScript = preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
-const LevelSymbolRow = preload("res://scripts/ui/LevelSymbolRow.gd")
+const LevelSymbolRowScript = preload("res://scripts/ui/LevelSymbolRow.gd")
 const MANA_ORB_TEXTURE := preload("res://images/ui/ManaOrb.png")
 
 signal back_pressed
@@ -1134,12 +1134,12 @@ func _make_level_badge(card: Card, symbol_size: float = 12.0, compact: bool = fa
 	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	badge.add_child(center)
 
-	var symbols := LevelSymbolRow.new()
+	var symbols := LevelSymbolRowScript.new()
 	symbols.setup(
 		visible_level,
 		symbol_size,
 		Color(1.0, 0.96, 0.78),
-		LevelSymbolRow.get_symbol_texture_for_card(card)
+		LevelSymbolRowScript.get_symbol_texture_for_card(card)
 	)
 	symbols.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	center.add_child(symbols)
@@ -1583,8 +1583,8 @@ func _make_collection_mana_icon(icon_size: float) -> TextureRect:
 	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return icon
 
-func _handle_collection_card_primary_press(card: Card, global_position: Vector2) -> void:
-	_begin_collection_card_drag(card, global_position, _selected_collection_card_name == card.card_name)
+func _handle_collection_card_primary_press(card: Card, mouse_global_position: Vector2) -> void:
+	_begin_collection_card_drag(card, mouse_global_position, _selected_collection_card_name == card.card_name)
 
 func _select_collection_card(card: Card) -> void:
 	if card == null:
@@ -1615,24 +1615,24 @@ func _get_selected_collection_card_root() -> Control:
 		return null
 	return root
 
-func _should_clear_selection_for_left_click(global_position: Vector2) -> bool:
+func _should_clear_selection_for_left_click(mouse_global_position: Vector2) -> bool:
 	var selected_root := _get_selected_collection_card_root()
 	if selected_root == null:
 		return true
-	return not Rect2(selected_root.global_position, selected_root.size).has_point(global_position)
+	return not Rect2(selected_root.global_position, selected_root.size).has_point(mouse_global_position)
 
-func _begin_collection_card_drag(card: Card, global_position: Vector2, was_selected: bool) -> void:
+func _begin_collection_card_drag(card: Card, mouse_global_position: Vector2, was_selected: bool) -> void:
 	_collection_drag_card = card
-	_collection_drag_start_pos = global_position
+	_collection_drag_start_pos = mouse_global_position
 	_collection_drag_active = false
 	_collection_drag_was_selected = was_selected
 	var root := _collection_card_roots.get(card.card_name, null) as Control
 	if is_instance_valid(root):
-		_collection_drag_offset = global_position - root.global_position
+		_collection_drag_offset = mouse_global_position - root.global_position
 	else:
 		_collection_drag_offset = _card_size / 2.0
 
-func _finish_collection_card_drag(global_position: Vector2) -> void:
+func _finish_collection_card_drag(mouse_global_position: Vector2) -> void:
 	var card := _collection_drag_card
 	var was_dragging := _collection_drag_active
 	var was_selected := _collection_drag_was_selected
@@ -1643,7 +1643,7 @@ func _finish_collection_card_drag(global_position: Vector2) -> void:
 	if card == null:
 		return
 	if was_dragging:
-		if _is_point_in_decklist(global_position):
+		if _is_point_in_decklist(mouse_global_position):
 			_handle_collection_card_add(card)
 			_update_collection_selection_visuals()
 		return
@@ -1652,11 +1652,11 @@ func _finish_collection_card_drag(global_position: Vector2) -> void:
 	else:
 		_select_collection_card(card)
 
-func _ensure_collection_card_drag_ghost(global_position: Vector2) -> void:
+func _ensure_collection_card_drag_ghost(mouse_global_position: Vector2) -> void:
 	if _collection_drag_card == null:
 		return
 	if is_instance_valid(_collection_drag_ghost):
-		_update_collection_card_drag_ghost_position(global_position)
+		_update_collection_card_drag_ghost_position(mouse_global_position)
 		return
 
 	var root := _collection_card_roots.get(_collection_drag_card.card_name, null) as Control
@@ -1701,12 +1701,12 @@ func _ensure_collection_card_drag_ghost(global_position: Vector2) -> void:
 
 	add_child(ghost)
 	_collection_drag_ghost = ghost
-	_update_collection_card_drag_ghost_position(global_position)
+	_update_collection_card_drag_ghost_position(mouse_global_position)
 
-func _update_collection_card_drag_ghost_position(global_position: Vector2) -> void:
+func _update_collection_card_drag_ghost_position(mouse_global_position: Vector2) -> void:
 	if not is_instance_valid(_collection_drag_ghost):
 		return
-	_collection_drag_ghost.global_position = global_position - _collection_drag_offset
+	_collection_drag_ghost.global_position = mouse_global_position - _collection_drag_offset
 
 func _cleanup_collection_card_drag_ghost() -> void:
 	if is_instance_valid(_collection_drag_ghost):
@@ -1722,12 +1722,12 @@ func _handle_collection_card_confirm_add(card: Card) -> void:
 	_handle_collection_card_add(card)
 	_update_collection_selection_visuals()
 
-func _is_point_in_decklist(global_position: Vector2) -> bool:
-	if is_instance_valid(_deck_panel) and _deck_panel.get_global_rect().has_point(global_position):
+func _is_point_in_decklist(mouse_global_position: Vector2) -> bool:
+	if is_instance_valid(_deck_panel) and _deck_panel.get_global_rect().has_point(mouse_global_position):
 		return true
-	if is_instance_valid(_deck_scroll) and _deck_scroll.get_global_rect().has_point(global_position):
+	if is_instance_valid(_deck_scroll) and _deck_scroll.get_global_rect().has_point(mouse_global_position):
 		return true
-	if is_instance_valid(_deck_list) and _deck_list.get_global_rect().has_point(global_position):
+	if is_instance_valid(_deck_list) and _deck_list.get_global_rect().has_point(mouse_global_position):
 		return true
 	return false
 
@@ -2397,9 +2397,7 @@ func _save_deck() -> void:
 		print("DeckBuilder: saved to user://saved_deck.json")
 		# Flash save button text feedback
 		_validation_lbl.text = "✓ Deck saved!\n" + _validation_lbl.text
-		get_tree().create_timer(2.0).timeout.connect(
-			func() -> void: if is_instance_valid(_validation_lbl): _update_validation()
-		)
+		get_tree().create_timer(2.0).timeout.connect(Callable(self, "_update_validation_if_ready"))
 	else:
 		print("DeckBuilder: save failed.")
 
@@ -3441,11 +3439,11 @@ func _set_status_flash(message: String) -> void:
 	if _validation_lbl == null:
 		return
 	_validation_lbl.text = "%s\n%s" % [message, _validation_lbl.text]
-	get_tree().create_timer(2.0).timeout.connect(
-		func() -> void:
-			if is_instance_valid(_validation_lbl):
-				_update_validation()
-	)
+	get_tree().create_timer(2.0).timeout.connect(Callable(self, "_update_validation_if_ready"))
+
+func _update_validation_if_ready() -> void:
+	if is_instance_valid(_validation_lbl):
+		_update_validation()
 
 func _update_validation() -> void:
 	var regular_count_summary := 0

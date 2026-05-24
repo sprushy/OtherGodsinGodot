@@ -2,6 +2,7 @@ extends RefCounted
 class_name DeckStore
 
 const ServerPathsScript = preload("res://scripts/server/ServerPaths.gd")
+const JsonStoreScript = preload("res://scripts/server/JsonStore.gd")
 const CardCatalogScript = preload("res://scripts/cards/CardCatalog.gd")
 const TiamatScript = preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
 const DEFAULT_DECK_NAME := "Default Deck"
@@ -65,6 +66,7 @@ func save_deck(
 	if clean_name.is_empty():
 		clean_name = DEFAULT_DECK_NAME
 
+	var previous_decks_by_account_id := _decks_by_account_id.duplicate(true)
 	var now_unix := int(Time.get_unix_time_from_system())
 	var deck_entry: Dictionary = deck_bucket.get(resolved_deck_id, {
 		"deck_id": resolved_deck_id,
@@ -79,7 +81,9 @@ func save_deck(
 	deck_entry["updated_unix"] = now_unix
 	deck_bucket[resolved_deck_id] = deck_entry
 	_decks_by_account_id[resolved_account_id] = deck_bucket
-	_save()
+	if not _save():
+		_decks_by_account_id = previous_decks_by_account_id
+		return {"success": false, "message": "Could not save deck storage.", "deck": {}}
 	return {"success": true, "message": "", "deck": deck_entry.duplicate(true)}
 
 func delete_deck(account_id: String, deck_id: String) -> Dictionary:
@@ -91,9 +95,12 @@ func delete_deck(account_id: String, deck_id: String) -> Dictionary:
 	var deck_bucket: Dictionary = _get_deck_bucket(resolved_account_id)
 	if not deck_bucket.has(resolved_deck_id):
 		return {"success": false, "message": "That saved deck was not found.", "deck_id": resolved_deck_id}
+	var previous_decks_by_account_id := _decks_by_account_id.duplicate(true)
 	deck_bucket.erase(resolved_deck_id)
 	_decks_by_account_id[resolved_account_id] = deck_bucket
-	_save()
+	if not _save():
+		_decks_by_account_id = previous_decks_by_account_id
+		return {"success": false, "message": "Could not save deck storage.", "deck_id": resolved_deck_id}
 	return {"success": true, "message": "", "deck_id": resolved_deck_id}
 
 func _ensure_loaded() -> void:
@@ -104,31 +111,18 @@ func _ensure_loaded() -> void:
 	var storage_path: String = _get_storage_path()
 	if not FileAccess.file_exists(storage_path):
 		return
-	var file := FileAccess.open(storage_path, FileAccess.READ)
-	if file == null:
+	var root := JsonStoreScript.load_dictionary(storage_path, {}, "DeckStore")
+	if root.is_empty():
 		return
-	var parsed = JSON.parse_string(file.get_as_text())
-	file.close()
-	if not (parsed is Dictionary):
-		return
-	var root := parsed as Dictionary
 	var stored_decks = root.get("decks_by_account_id", {})
 	if stored_decks is Dictionary:
 		_decks_by_account_id = (stored_decks as Dictionary).duplicate(true)
 
-func _save() -> void:
+func _save() -> bool:
 	var storage_path: String = _get_storage_path()
-	var parent_dir := storage_path.get_base_dir()
-	if not parent_dir.is_empty():
-		DirAccess.make_dir_recursive_absolute(parent_dir)
-	var file := FileAccess.open(storage_path, FileAccess.WRITE)
-	if file == null:
-		return
-	file.store_string(JSON.stringify({
+	return JsonStoreScript.save_json(storage_path, {
 		"decks_by_account_id": _decks_by_account_id,
-	}, "\t"))
-	file.flush()
-	file.close()
+	}, "DeckStore")
 
 func _sanitize_cards(cards: Dictionary) -> Dictionary:
 	var sanitized: Dictionary = {}

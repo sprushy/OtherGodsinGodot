@@ -2,6 +2,7 @@ extends RefCounted
 class_name FriendStore
 
 const ServerPathsScript = preload("res://scripts/server/ServerPaths.gd")
+const JsonStoreScript = preload("res://scripts/server/JsonStore.gd")
 const DeckStoreScript = preload("res://scripts/server/DeckStore.gd")
 const CardCatalogScript = preload("res://scripts/cards/CardCatalog.gd")
 const TiamatScript = preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
@@ -112,7 +113,9 @@ func send_friend_request(
 		"updated_unix": now_unix,
 	}
 	_friend_requests_by_id[request_id] = request
-	_save()
+	if not _save():
+		_friend_requests_by_id.erase(request_id)
+		return _result(false, "Could not save friend request storage.")
 	return _result(true, "", request)
 
 func respond_to_friend_request(account_id: String, request_id: String, accept: bool) -> Dictionary:
@@ -128,6 +131,8 @@ func respond_to_friend_request(account_id: String, request_id: String, accept: b
 		return _result(false, "That friend request is no longer pending.")
 	if str(request.get("recipient_account_id", "")).strip_edges() != resolved_account_id:
 		return _result(false, "Only the recipient can respond to this request.")
+	var previous_requests_by_id := _friend_requests_by_id.duplicate(true)
+	var previous_friends_by_account_id := _friends_by_account_id.duplicate(true)
 	request["status"] = "accepted" if accept else "rejected"
 	request["updated_unix"] = int(Time.get_unix_time_from_system())
 	_friend_requests_by_id[resolved_request_id] = request
@@ -136,7 +141,10 @@ func respond_to_friend_request(account_id: String, request_id: String, accept: b
 			str(request.get("requester_account_id", "")).strip_edges(),
 			str(request.get("recipient_account_id", "")).strip_edges()
 		)
-	_save()
+	if not _save():
+		_friend_requests_by_id = previous_requests_by_id
+		_friends_by_account_id = previous_friends_by_account_id
+		return _result(false, "Could not save friend request response.")
 	return _result(true, "", request)
 
 func send_deck_share(
@@ -183,7 +191,9 @@ func send_deck_share(
 		"updated_unix": now_unix,
 	}
 	_deck_shares_by_id[share_id] = share
-	_save()
+	if not _save():
+		_deck_shares_by_id.erase(share_id)
+		return _result(false, "Could not save deck share storage.")
 	return _result(true, "", share)
 
 func respond_to_deck_share(
@@ -205,6 +215,7 @@ func respond_to_deck_share(
 	if str(share.get("recipient_account_id", "")).strip_edges() != resolved_account_id:
 		return _result(false, "Only the recipient can respond to this deck.")
 	var saved_deck: Dictionary = {}
+	var previous_deck_shares_by_id := _deck_shares_by_id.duplicate(true)
 	if accept:
 		if deck_store == null:
 			return _result(false, "Deck storage is unavailable.")
@@ -224,7 +235,13 @@ func respond_to_deck_share(
 	share["status"] = "accepted" if accept else "rejected"
 	share["updated_unix"] = int(Time.get_unix_time_from_system())
 	_deck_shares_by_id[resolved_share_id] = share
-	_save()
+	if not _save():
+		_deck_shares_by_id = previous_deck_shares_by_id
+		if accept and deck_store != null and deck_store.has_method("delete_deck"):
+			var saved_deck_id := str(saved_deck.get("deck_id", "")).strip_edges()
+			if not saved_deck_id.is_empty():
+				deck_store.delete_deck(resolved_account_id, saved_deck_id)
+		return _result(false, "Could not save deck share response.")
 	return {
 		"success": true,
 		"message": "",
@@ -250,14 +267,9 @@ func _ensure_loaded() -> void:
 	var storage_path := _get_storage_path()
 	if not FileAccess.file_exists(storage_path):
 		return
-	var file := FileAccess.open(storage_path, FileAccess.READ)
-	if file == null:
+	var root := JsonStoreScript.load_dictionary(storage_path, {}, "FriendStore")
+	if root.is_empty():
 		return
-	var parsed = JSON.parse_string(file.get_as_text())
-	file.close()
-	if not (parsed is Dictionary):
-		return
-	var root := parsed as Dictionary
 	var friends = root.get("friends_by_account_id", {})
 	if friends is Dictionary:
 		_friends_by_account_id = (friends as Dictionary).duplicate(true)
@@ -268,21 +280,13 @@ func _ensure_loaded() -> void:
 	if shares is Dictionary:
 		_deck_shares_by_id = (shares as Dictionary).duplicate(true)
 
-func _save() -> void:
+func _save() -> bool:
 	var storage_path := _get_storage_path()
-	var parent_dir := storage_path.get_base_dir()
-	if not parent_dir.is_empty():
-		DirAccess.make_dir_recursive_absolute(parent_dir)
-	var file := FileAccess.open(storage_path, FileAccess.WRITE)
-	if file == null:
-		return
-	file.store_string(JSON.stringify({
+	return JsonStoreScript.save_json(storage_path, {
 		"friends_by_account_id": _friends_by_account_id,
 		"friend_requests_by_id": _friend_requests_by_id,
 		"deck_shares_by_id": _deck_shares_by_id,
-	}, "\t"))
-	file.flush()
-	file.close()
+	}, "FriendStore")
 
 func _empty_state() -> Dictionary:
 	return {

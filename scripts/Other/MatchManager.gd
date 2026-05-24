@@ -6,6 +6,7 @@ class_name MatchManager
 # decoupling game rules from the UI.
 
 const TiamatScript = preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
+const MatchCommandRegistryScript = preload("res://scripts/Other/MatchCommandRegistry.gd")
 const DEFERRED_DESTROYED_EVENTS_NONE := 0
 const DEFERRED_DESTROYED_EVENTS_QUEUE := 1
 const AUTHORITATIVE_FLOW_LOG_PREFIX := "[OG server flow]"
@@ -206,6 +207,61 @@ func get_targeting_name() -> String:
 		return spell_waiting_for_target.card_name
 	return "Target selection"
 
+func _execute_activate_card_ability_command(
+	source_uid: String,
+	target_uid: String,
+	option: Dictionary,
+	has_option: bool,
+	has_return_to_hand: bool,
+	return_to_hand: bool
+) -> void:
+	if game_manager == null or source_uid.strip_edges() == "":
+		return
+	var source_card := game_manager.get_card_by_uid(source_uid)
+	if source_card == null or not source_card.has_method("activate"):
+		return
+	if source_card.card_type == Card.CardType.CREATURE \
+			and not game_manager.pay_creature_action_mana_cost(source_card, "activate"):
+		return
+	if has_return_to_hand:
+		source_card.activate(game_manager, {"return_to_hand": return_to_hand})
+		return
+	var target_card: Card = null
+	if target_uid.strip_edges() != "":
+		target_card = game_manager.get_card_by_uid(target_uid)
+	_activate_card_with_optional_payload(source_card, target_card, option if has_option else {})
+
+func _activate_card_with_optional_payload(source_card: Card, target: Card = null, option: Dictionary = {}) -> void:
+	if source_card == null or not source_card.has_method("activate"):
+		return
+	if option.is_empty():
+		if target != null:
+			source_card.activate(game_manager, target)
+		else:
+			source_card.activate(game_manager)
+		return
+	if _activation_accepts_dictionary_payload(source_card):
+		source_card.activate(game_manager, option)
+		return
+	if target != null:
+		source_card.activate(game_manager, target)
+	else:
+		source_card.activate(game_manager)
+
+func _activation_accepts_dictionary_payload(source_card: Card) -> bool:
+	if source_card == null:
+		return false
+	for method_info in source_card.get_method_list():
+		if str(method_info.get("name", "")) != "activate":
+			continue
+		var args: Array = method_info.get("args", [])
+		if args.size() < 2:
+			return false
+		var payload_arg: Dictionary = args[1]
+		var payload_type := int(payload_arg.get("type", TYPE_NIL))
+		return payload_type == TYPE_NIL or payload_type == TYPE_DICTIONARY
+	return false
+
 signal action_resolved(action: CardAction)
 signal request_ui_interaction(player_index: int, type: String, data: Dictionary)
 signal ui_refresh_requested()
@@ -331,88 +387,7 @@ func _consume_pending_ui_interaction_by_id(prompt_id: int) -> void:
 			return
 
 func _get_ui_interaction_type_for_command(command_type: String) -> String:
-	match command_type:
-		"intercept_decision":
-			return "intercept"
-		"aphrodite_enslave_choice":
-			return "aphrodite_enslave"
-		"blessed_knights_choice":
-			return "blessed_knights_ward"
-		"wheel_of_fire_turn_start_choice":
-			return "wheel_of_fire_turn_start"
-		"tezcatlipoca_active_titlacauan_choice":
-			return "tezcatlipoca_active_titlacauan"
-		"nusku_active_core_flame_choice":
-			return "nusku_active_core_flame"
-		"mummu_entropy_choice":
-			return "mummu_entropy"
-		"first_sage_adapa_choice":
-			return "first_sage_adapa_impact"
-		"third_sage_enmedugga_choice":
-			return "third_sage_enmedugga_impact"
-		"fourth_sage_enmegalamma_choice":
-			return "fourth_sage_enmegalamma_impact"
-		"sixth_sage_an_enlilda_choice":
-			return "sixth_sage_an_enlilda_impact"
-		"lailoken_reveal_choice":
-			return "lailoken_reveal"
-		"masmassu_priest_reveal_choice":
-			return "masmassu_priest_reveal"
-		"rally_the_troops_choice":
-			return "rally_the_troops"
-		"terror_impact_choice":
-			return "terror_impact"
-		"huginn_perish_prime_choice":
-			return "huginn_perish_prime"
-		"muninn_perish_prime_choice":
-			return "muninn_perish_prime"
-		"fenrir_devour_choice":
-			return "fenrir_devour_impact"
-		"harii_jarl_impact_choice":
-			return "harii_jarl_impact"
-		"durinn_secondborn_choice":
-			return "durinn_secondborn_impact"
-		"kur_jara_tree_of_life_choice":
-			return "kur_jara_tree_of_life"
-		"hunting_tactics_choice":
-			return "hunting_tactics"
-		"foolish_optimism_choice":
-			return "foolish_optimism"
-		"gugalanna_celestial_charge_choice":
-			return "gugalanna_celestial_charge"
-		"freyja_active_open_sessrumnir_choice":
-			return "freyja_active_open_sessrumnir"
-		"giant_master_architect_choice":
-			return "giant_master_architect_impact"
-		"pai_long_autumn_king_choice":
-			return "pai_long_autumn_king_impact"
-		"nergal_lion_choice":
-			return "nergal_lion_impact"
-		"gala_tura_destroyed_choice":
-			return "gala_tura_destroyed"
-		"gawain_healing_hands_choice":
-			return "gawain_healing_hands"
-		"tatzelwurm_dragon_heart_choice":
-			return "tatzelwurm_dragon_heart"
-		"byggvir_reveal_choice":
-			return "byggvir_reveal"
-		"humbaba_augury_choice":
-			return "humbaba_augury"
-		"ragnarok_discard_choice":
-			return "ragnarok_discard"
-		"return_to_hand_choice":
-			return "return_to_hand_choice"
-		"resurrection_choice":
-			return "resurrection"
-		"nusku_well_of_fire_choice":
-			return "nusku_well_of_fire"
-		"apollyons_demiurge_choice":
-			return "apollyons_demiurge"
-		"wolf_adolescent_maturation_choice":
-			return "wolf_adolescent_maturation"
-		"apply_advanced_building_techniques":
-			return "advanced_building_techniques"
-	return ""
+	return MatchCommandRegistryScript.get_ui_interaction_type(command_type)
 
 func _find_pending_ui_interaction_index(command: Dictionary, expected_type: String) -> int:
 	for idx in range(_pending_ui_interactions.size() - 1, -1, -1):
@@ -1576,7 +1551,7 @@ func _queue_authoritative_magical_action(
 	if game_manager == null or source_card == null:
 		return
 	var action := CardAction.new()
-	action.type = action_type
+	action.type = action_type as CardAction.Type
 	action.source_player = source_card.card_owner if source_card.card_owner != null else game_manager.current_player
 	action.card = source_card
 	action.target = target
@@ -2251,7 +2226,7 @@ func resolve_zone(zone_dict: Dictionary) -> Zone:
 				return player.reserve_zones[zone_idx]
 	return null
 
-func _resolve_command_display_zone(command: Dictionary, source_player: Player) -> Zone:
+func _resolve_command_display_zone(command: Dictionary, _source_player: Player) -> Zone:
 	var zone_dict = command.get("display_zone", {})
 	if not (zone_dict is Dictionary):
 		return null
@@ -2358,80 +2333,7 @@ func _resolve_authoritative_creature_summon_sacrifices(
 	game_manager.request_send_to_graveyard(sacrificed, finish, false, false)
 
 func _get_required_player_for_command(command: Dictionary) -> Player:
-	match str(command.get("type", "")):
-		"select_attacker":
-			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("card_uid", ""))))
-		"request_attack":
-			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("attacker_uid", ""))))
-		"cancel_targeting", "confirm_click_selection":
-			return _get_current_targeting_player()
-		"play_card", "prepare_card", "play_creature", "creature_move", "change_mode", "equip_action":
-			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("card_uid", ""))))
-		"cast_spell":
-			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("spell_uid", ""))))
-		"activate_prepared_hex":
-			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("hex_uid", ""))))
-		"god_ability":
-			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("god_uid", ""))))
-		"play_priority_ability":
-			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("source_uid", ""))))
-		"activate_power", "unlock_power", "activate_divine_caprice", "apply_advanced_building_techniques":
-			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("power_uid", ""))))
-		"cast_charm", "play_charm_response":
-			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("charm_uid", ""))))
-		"play_hex_response":
-			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("hex_uid", ""))))
-		"hati_moon_hunt":
-			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("hati_uid", ""))))
-		"skoll_upkeep_summon":
-			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("skoll_uid", ""))))
-		"activate_card_ability", "en_hedu_anna_exaltation", "aphrodite_enslave_choice", "blessed_knights_choice", "wolf_adolescent_maturation_choice", "wheel_of_fire_turn_start_choice", "tezcatlipoca_active_titlacauan_choice", "nusku_active_core_flame_choice", "mummu_entropy_choice", "first_sage_adapa_choice", "third_sage_enmedugga_choice", "fourth_sage_enmegalamma_choice", "sixth_sage_an_enlilda_choice", "lailoken_reveal_choice", "masmassu_priest_reveal_choice", "rally_the_troops_choice", "terror_impact_choice", "huginn_perish_prime_choice", "muninn_perish_prime_choice", "fenrir_devour_choice", "harii_jarl_impact_choice", "durinn_secondborn_choice", "kur_jara_tree_of_life_choice", "hunting_tactics_choice", "foolish_optimism_choice", "gugalanna_celestial_charge_choice", "freyja_active_open_sessrumnir_choice", "giant_master_architect_choice", "pai_long_autumn_king_choice", "nergal_lion_choice", "gala_tura_destroyed_choice", "gawain_healing_hands_choice", "tatzelwurm_dragon_heart_choice", "byggvir_reveal_choice", "apollyons_demiurge_choice", "habrok_breakout_choice":
-			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("source_uid", ""))))
-		"humbaba_augury_choice":
-			var humbaba := game_manager.get_card_by_uid(str(command.get("source_uid", ""))) as HumbabaTheTerrible
-			return game_manager.get_opponent(humbaba.get_controller()) if humbaba != null else null
-		"nusku_well_of_fire_choice":
-			var nusku := game_manager.get_card_by_uid(str(command.get("source_uid", ""))) as NuskuFirebearer
-			return game_manager.get_opponent(nusku.get_controller()) if nusku != null else null
-		"ragnarok_discard_choice":
-			var power := game_manager.get_card_by_uid(str(command.get("source_uid", ""))) as Ragnarok
-			return power.get_pending_discard_player(game_manager) if power != null else null
-		"return_to_hand_choice":
-			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("card_uid", ""))))
-		"doorway_choice":
-			var pending_structure := game_manager.get_pending_doorway_structure()
-			if pending_structure != null:
-				return _get_card_controller(pending_structure)
-			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("structure_uid", ""))))
-		"wolf_master_summon":
-			return _get_card_controller(game_manager.get_card_by_uid(str(command.get("fenrir_uid", ""))))
-		"intercept_decision":
-			var interceptor_uid := str(command.get("interceptor_uid", ""))
-			if not interceptor_uid.is_empty():
-				return _get_card_controller(game_manager.get_card_by_uid(interceptor_uid))
-			if pending_attack_target is Card:
-				return _get_card_controller(pending_attack_target)
-			if pending_attack_target is Player:
-				return pending_attack_target
-			return game_manager.other_player
-		"combat_retreat_decision":
-			var askelladen_uid := str(command.get("askelladen_uid", "")).strip_edges()
-			if not askelladen_uid.is_empty():
-				return _get_card_controller(game_manager.get_card_by_uid(askelladen_uid))
-			return _get_pending_retreat_prompt_player()
-		"resurrection_choice":
-			var resurrect_card := game_manager.get_card_by_uid(str(command.get("card_uid", "")))
-			return resurrect_card.card_owner if resurrect_card != null else null
-		"priority_pass":
-			return game_manager.priority_player if game_manager.priority_player != null else game_manager.current_player
-		"forfeit":
-			var forfeiting_index := int(command.get("player_index", -1))
-			if forfeiting_index >= 0 and forfeiting_index < game_manager.players.size():
-				return game_manager.players[forfeiting_index]
-			return null
-		"upkeep_choice", "tiamat_upkeep_choice", "end_turn":
-			return game_manager.current_player
-	return null
+	return MatchCommandRegistryScript.get_required_player(command, game_manager, self)
 
 func _send_rejection_to_sender(sender_info: Dictionary, reason: String) -> void:
 	if sender_info.is_empty() or network_manager == null or not network_manager.is_server:
@@ -2461,24 +2363,10 @@ func _get_command_actor(sender_info: Dictionary) -> Player:
 	return sender_player if sender_player != null else game_manager.current_player
 
 func _requires_resolved_upkeep(command: Dictionary) -> bool:
-	var command_type := str(command.get("type", ""))
-	if command_type == "activate_power" and str(command.get("mode", "")) == "return_priest":
-		return false
-	match command_type:
-		# These commands are valid while the current player is still inside a
-		# turn-start prompt/upkeep window and should not be blocked by the
-		# generic "resolve upkeep first" guard.
-		"upkeep_choice", "tiamat_upkeep_choice", "skoll_upkeep_summon", "priority_pass", "intercept_decision", "combat_retreat_decision", "play_hex_response", "play_charm_response", "play_priority_ability", "forfeit", "humbaba_augury_choice", "return_to_hand_choice", "doorway_choice":
-			return false
-	return true
+	return MatchCommandRegistryScript.requires_resolved_upkeep(command)
 
 func _requires_clear_stack_window(command_type: String) -> bool:
-	match command_type:
-		"select_attacker", "request_attack", "play_card", "prepare_card", "play_creature", "creature_move", "equip_action", "change_mode", "end_turn":
-			return true
-		"cast_spell", "activate_prepared_hex", "god_ability", "activate_power", "unlock_power", "activate_divine_caprice", "cast_charm", "activate_card_ability", "en_hedu_anna_exaltation":
-			return true
-	return false
+	return MatchCommandRegistryScript.requires_clear_stack_window(command_type)
 
 func _validate_turn_action_window(command: Dictionary, sender_info: Dictionary) -> String:
 	var command_type := str(command.get("type", ""))
@@ -2547,6 +2435,11 @@ func _get_move_cost_payment_failure_reason(card: Card, prepared: bool = false, p
 func process_command(command: Dictionary, sender_info: Dictionary = {}) -> bool:
 	_active_command_sender_info = sender_info.duplicate(true)
 	_active_command_type = str(command.get("type", ""))
+	if not MatchCommandRegistryScript.is_known_command_type(_active_command_type):
+		move_failed.emit("Unknown command type: " + str(command.get("type")))
+		_active_command_sender_info.clear()
+		_active_command_type = ""
+		return false
 	var authority_error := _validate_sender_authority(command, sender_info)
 	if not authority_error.is_empty():
 		move_failed.emit(authority_error)
@@ -2676,7 +2569,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 			if card == null:
 				move_failed.emit("change_mode: card not found")
 				return false
-			var mode: Card.CreatureMode = int(command.get("mode", -1)) as Card.CreatureMode
+			var mode = command.get("mode", -1)
 			if not game_manager.creature_change_mode(card, mode):
 				move_failed.emit("Cannot change mode for " + card.card_name)
 				return false
@@ -3274,6 +3167,9 @@ func _process_command_impl(command: Dictionary) -> bool:
 				var nested_target_uid := str(aca_option.get("target_uid", aca_option.get("chosen_uid", ""))).strip_edges()
 				if nested_target_uid != "":
 					aca_target = game_manager.get_card_by_uid(nested_target_uid)
+			var aca_resolve_target_uid = aca_target.uid if aca_target != null else ""
+			var aca_has_return_to_hand := command.has("return_to_hand")
+			var aca_return_to_hand := bool(command.get("return_to_hand", false))
 			var ability_ward_block_reason := game_manager.get_turn_destruction_ward_activation_block_reason(aca_source, aca_target)
 			if ability_ward_block_reason != "":
 				move_failed.emit(ability_ward_block_reason)
@@ -3287,58 +3183,29 @@ func _process_command_impl(command: Dictionary) -> bool:
 					CardAction.Type.ABILITY,
 					aca_source,
 					aca_target,
-					func() -> void:
-						if aca_source.card_type == Card.CardType.CREATURE \
-								and not game_manager.pay_creature_action_mana_cost(aca_source, "activate"):
-							return
-						if command.has("return_to_hand"):
-							aca_source.activate(game_manager, {"return_to_hand": bool(command.get("return_to_hand", false))})
-						elif aca_has_option:
-							aca_source.activate(game_manager, aca_option)
-						elif aca_target != null:
-							aca_source.activate(game_manager, aca_target)
-						else:
-							aca_source.activate(game_manager)
+					Callable(self, "_execute_activate_card_ability_command").bind(
+						aca_source_uid,
+						aca_resolve_target_uid,
+						aca_option,
+						aca_has_option,
+						aca_has_return_to_hand,
+						aca_return_to_hand
+					)
 				)
 				move_validated.emit(command)
 				_advance_authoritative_priority()
 				return true
-			if command.has("return_to_hand"):
-				game_manager.run_with_effect_source(
-					aca_source,
-					func() -> void:
-						if aca_source.card_type == Card.CardType.CREATURE \
-								and not game_manager.pay_creature_action_mana_cost(aca_source, "activate"):
-							return
-						aca_source.activate(game_manager, {"return_to_hand": bool(command.get("return_to_hand", false))})
+			game_manager.run_with_effect_source(
+				aca_source,
+				Callable(self, "_execute_activate_card_ability_command").bind(
+					aca_source_uid,
+					aca_resolve_target_uid,
+					aca_option,
+					aca_has_option,
+					aca_has_return_to_hand,
+					aca_return_to_hand
 				)
-			elif aca_has_option:
-				game_manager.run_with_effect_source(
-					aca_source,
-					func() -> void:
-						if aca_source.card_type == Card.CardType.CREATURE \
-								and not game_manager.pay_creature_action_mana_cost(aca_source, "activate"):
-							return
-						aca_source.activate(game_manager, aca_option)
-				)
-			elif aca_target != null:
-				game_manager.run_with_effect_source(
-					aca_source,
-					func() -> void:
-						if aca_source.card_type == Card.CardType.CREATURE \
-								and not game_manager.pay_creature_action_mana_cost(aca_source, "activate"):
-							return
-						aca_source.activate(game_manager, aca_target)
-				)
-			else:
-				game_manager.run_with_effect_source(
-					aca_source,
-					func() -> void:
-						if aca_source.card_type == Card.CardType.CREATURE \
-								and not game_manager.pay_creature_action_mana_cost(aca_source, "activate"):
-							return
-						aca_source.activate(game_manager)
-				)
+			)
 			move_validated.emit(command)
 			return true
 		"en_hedu_anna_exaltation":
@@ -4274,7 +4141,8 @@ func _process_command_impl(command: Dictionary) -> bool:
 			if command.has("mode"):
 				pra_action.event_data["summon_mode"] = int(command.get("mode", Card.CreatureMode.DEFENSIVE))
 			pra_action.resolve_callback = func() -> void:
-				if not pra_action.event_data.is_empty():
+				var uses_activation_context := pra_action.event_data.has("summon_zone") or pra_action.event_data.has("summon_mode")
+				if uses_activation_context:
 					var activation_context: Dictionary = {}
 					if pra_target != null:
 						activation_context["triggering_attacker"] = pra_target

@@ -78,7 +78,7 @@ func start_from_config(config: Dictionary) -> Error:
 		startup_failed.emit("Failed to create the dedicated match transport.")
 		return ERR_CANT_CREATE
 
-	var transport_err: int = int(network_manager.get("last_server_error"))
+	var transport_err: Error = network_manager.get("last_server_error") as Error
 	if transport_err != OK:
 		startup_failed.emit("Dedicated match transport failed to bind port %d." % match_session.match_port)
 		return transport_err
@@ -165,10 +165,7 @@ func _on_game_ended(_winner: Player, _loser: Player) -> void:
 	if tree == null:
 		return
 	var shutdown_timer := tree.create_timer(GAME_END_SHUTDOWN_DELAY_SECONDS)
-	shutdown_timer.timeout.connect(func() -> void:
-		if get_tree() != null:
-			get_tree().quit()
-	)
+	shutdown_timer.timeout.connect(Callable(tree, "quit"))
 
 func _shutdown_if_match_was_abandoned() -> void:
 	if _abandoned_shutdown_started or match_session == null:
@@ -195,10 +192,7 @@ func _shutdown_abandoned_match(reason: String) -> void:
 	if tree == null:
 		return
 	var shutdown_timer := tree.create_timer(ABANDONED_MATCH_SHUTDOWN_DELAY_SECONDS)
-	shutdown_timer.timeout.connect(func() -> void:
-		if get_tree() != null:
-			get_tree().quit()
-	)
+	shutdown_timer.timeout.connect(Callable(tree, "quit"))
 
 func _record_match_result(winner: Player, loser: Player) -> void:
 	if match_session == null or game_manager == null or winner == null or loser == null:
@@ -209,13 +203,15 @@ func _record_match_result(winner: Player, loser: Player) -> void:
 	var loser_index: int = game_manager.players.find(loser)
 	if winner_index < 0 or loser_index < 0:
 		return
-	_match_history_store.record_completed_match(
+	var record_result: Dictionary = _match_history_store.record_completed_match(
 		match_session,
 		winner_index,
 		loser_index,
 		_get_player_god_name(winner),
 		_get_player_god_name(loser)
 	)
+	if not bool(record_result.get("success", false)):
+		push_warning("HeadlessMatchServer: failed to record match result: %s" % str(record_result.get("message", "Unknown error.")))
 
 func _get_player_god_name(player: Player) -> String:
 	if player == null or player.god_zone == null or player.god_zone.cards.is_empty():

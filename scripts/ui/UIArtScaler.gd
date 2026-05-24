@@ -1,7 +1,7 @@
 extends RefCounted
 class_name UIArtScaler
 
-const BoardZoneUI = preload("res://scripts/ui/BoardZoneUI.gd")
+const BoardZoneUIScript = preload("res://scripts/ui/BoardZoneUI.gd")
 
 const DEFAULT_BOARD_ART_REFERENCE_EXTENT := 196.0
 const DEFAULT_CURSOR_MAX_HEIGHT := 192
@@ -19,7 +19,7 @@ static func get_window_scale_factor() -> float:
 	return maxf(0.01, minf(width_ratio, height_ratio))
 
 static func get_board_art_scale(reference_extent: float = DEFAULT_BOARD_ART_REFERENCE_EXTENT) -> float:
-	var zone_extent := BoardZoneUI.get_zone_extent()
+	var zone_extent := BoardZoneUIScript.get_zone_extent()
 	return maxf(0.01, zone_extent / maxf(1.0, reference_extent))
 
 static func get_cursor_target_height(
@@ -69,8 +69,8 @@ static func build_cursor_texture(source_texture: Texture2D, target_height_limit:
 static func get_cursor_hotspot(texture: Texture2D, hotspot_ratio: Vector2) -> Vector2:
 	if texture == null:
 		return Vector2.ZERO
-	var size := texture.get_size()
+	var texture_size := texture.get_size()
 	return Vector2(
-		clampf(size.x * hotspot_ratio.x, 0.0, maxf(0.0, size.x - 1.0)),
-		clampf(size.y * hotspot_ratio.y, 0.0, maxf(0.0, size.y - 1.0))
+		clampf(texture_size.x * hotspot_ratio.x, 0.0, maxf(0.0, texture_size.x - 1.0)),
+		clampf(texture_size.y * hotspot_ratio.y, 0.0, maxf(0.0, texture_size.y - 1.0))
 	)

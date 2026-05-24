@@ -1624,7 +1624,7 @@ func creature_move(creature: Card, target_zone: Zone) -> bool:
 	
 	return false
 
-func creature_change_mode(creature: Card, target_mode: int = -1) -> bool:
+func creature_change_mode(creature: Card, target_mode = -1) -> bool:
 	if is_game_over:
 		return false
 	if creature.card_type != Card.CardType.CREATURE:
@@ -1637,11 +1637,11 @@ func creature_change_mode(creature: Card, target_mode: int = -1) -> bool:
 	if not pay_creature_action_mana_cost(creature, "change stance"):
 		return false
 	
-	var requested_mode: int = target_mode
+	var requested_mode := int(target_mode)
 	var old_mode: Card.CreatureMode = creature.creature_mode
 	creature.reveal_from_stealth(self)
 	if requested_mode == Card.CreatureMode.AGGRESSIVE or requested_mode == Card.CreatureMode.DEFENSIVE:
-		creature.creature_mode = requested_mode as Card.CreatureMode
+		creature.creature_mode = int(requested_mode) as Card.CreatureMode
 	elif creature.creature_mode == Card.CreatureMode.AGGRESSIVE:
 		creature.creature_mode = Card.CreatureMode.DEFENSIVE
 	else:

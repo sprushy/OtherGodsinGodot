@@ -2,6 +2,7 @@ extends RefCounted
 class_name MatchHistoryStore
 
 const ServerPathsScript = preload("res://scripts/server/ServerPaths.gd")
+const JsonStoreScript = preload("res://scripts/server/JsonStore.gd")
 const DEFAULT_STORAGE_FILE_NAME := "match_history.json"
 
 var _storage_file_name: String = DEFAULT_STORAGE_FILE_NAME
@@ -46,6 +47,8 @@ func record_completed_match(
 	if player_entries.is_empty():
 		return {"success": false, "message": "The match had no player entries to record.", "entry": {}}
 
+	var previous_matches_by_id := _matches_by_id.duplicate(true)
+	var previous_history_ids_by_profile_id := _history_ids_by_profile_id.duplicate(true)
 	var now_unix: int = int(Time.get_unix_time_from_system())
 	var entry := {
 		"match_id": match_id,
@@ -66,7 +69,10 @@ func record_completed_match(
 			updated_history_ids.append(match_id)
 			_history_ids_by_profile_id[profile_id] = updated_history_ids
 
-	_save()
+	if not _save():
+		_matches_by_id = previous_matches_by_id
+		_history_ids_by_profile_id = previous_history_ids_by_profile_id
+		return {"success": false, "message": "Could not save match history.", "entry": {}}
 	return {"success": true, "message": "", "entry": entry.duplicate(true)}
 
 func get_profile_summary(profile_id: String, recent_limit: int = 5) -> Dictionary:
@@ -266,14 +272,9 @@ func _ensure_loaded() -> void:
 	var storage_path: String = _get_storage_path()
 	if not FileAccess.file_exists(storage_path):
 		return
-	var file := FileAccess.open(storage_path, FileAccess.READ)
-	if file == null:
+	var root := JsonStoreScript.load_dictionary(storage_path, {}, "MatchHistoryStore")
+	if root.is_empty():
 		return
-	var parsed = JSON.parse_string(file.get_as_text())
-	file.close()
-	if not (parsed is Dictionary):
-		return
-	var root: Dictionary = parsed as Dictionary
 	var stored_matches = root.get("matches_by_id", {})
 	var stored_history_ids = root.get("history_ids_by_profile_id", {})
 	if stored_matches is Dictionary:
@@ -281,20 +282,12 @@ func _ensure_loaded() -> void:
 	if stored_history_ids is Dictionary:
 		_history_ids_by_profile_id = (stored_history_ids as Dictionary).duplicate(true)
 
-func _save() -> void:
+func _save() -> bool:
 	var storage_path: String = _get_storage_path()
-	var parent_dir := storage_path.get_base_dir()
-	if not parent_dir.is_empty():
-		DirAccess.make_dir_recursive_absolute(parent_dir)
-	var file := FileAccess.open(storage_path, FileAccess.WRITE)
-	if file == null:
-		return
-	file.store_string(JSON.stringify({
+	return JsonStoreScript.save_json(storage_path, {
 		"matches_by_id": _matches_by_id,
 		"history_ids_by_profile_id": _history_ids_by_profile_id,
-	}, "\t"))
-	file.flush()
-	file.close()
+	}, "MatchHistoryStore")
 
 func _get_storage_path() -> String:
 	return ServerPathsScript.get_server_data_file_path(_storage_file_name)

@@ -4,6 +4,7 @@ class_name Player
 
 const MAX_HAND_SIZE := 7
 const BOARD_LANE_COUNT := 5
+const DeckValidatorScript = preload("res://scripts/server/DeckValidator.gd")
 
 signal mana_changed(new_mana: int)
 signal followers_changed(new_followers: int)
@@ -32,10 +33,10 @@ var power_zones: Array[Zone] = []
 var frontline_zones: Array[Zone] = []
 var reserve_zones: Array[Zone] = []
 
-func get_index(game_manager: GameManager = null) -> int:
-	if game_manager == null:
+func get_index(manager: GameManager = null) -> int:
+	if manager == null:
 		return -1
-	return game_manager.players.find(self)
+	return manager.players.find(self)
 
 func _init() -> void:
 	_initialize_zones()
@@ -82,59 +83,13 @@ func _initialize_zones() -> void:
 		reserve.zone_owner = self
 		reserve_zones.append(reserve)
 
-func validate_deck(deck: Array[Card]) -> bool:
-	var legendary_count = 0
-	var god_count = 0
-	var power_count = 0
-	var regular_card_count = 0
-	var god_culture := ""
-	var power_name_counts: Dictionary = {}
-	var god_template: GodCard = null
-	
-	for card in deck:
-		if card.is_god:
-			god_count += 1
-			god_culture = card.culture
-			god_template = card as GodCard
-		elif card.is_power:
-			power_count += 1
-			var power_name := str(card.card_name)
-			power_name_counts[power_name] = int(power_name_counts.get(power_name, 0)) + 1
-		else:
-			regular_card_count += 1
-			if card.is_legendary:
-				legendary_count += 1
-	
-	if god_count != 1:
-		return false
-	if power_count > 3:
-		return false
-	if regular_card_count < 35:
-		return false
-	for count in power_name_counts.values():
-		if int(count) > 1:
-			return false
-	for card in deck:
-		if card.is_god:
-			continue
-		if card is ActiveGodCard:
-			if god_template == null:
-				return false
-			if god_template.get_active_god_deck_role(card) != GodCard.ACTIVE_GOD_DECK_ROLE_ALLOWED:
-				return false
-			continue
-		if god_template != null and god_template.uses_culture_locked_deckbuilding():
-			if not god_template.can_include_card_in_culture_locked_deck(card):
-				return false
-		elif card.is_power and not card.is_god:
-			if card.culture != "Neutral" and card.culture != god_culture:
-				return false
-	
-	var max_legendaries = int(regular_card_count / 10.0)
-	if legendary_count > max_legendaries:
-		return false
-	
-	return true
+func validate_deck(deck: Array[Card], special_setup: Dictionary = {}) -> bool:
+	var validation := get_deck_validation(deck, special_setup)
+	return bool(validation.get("is_valid", false))
+
+func get_deck_validation(deck: Array[Card], special_setup: Dictionary = {}) -> Dictionary:
+	var validator = DeckValidatorScript.new()
+	return validator.validate_card_array(deck, special_setup)
 
 func gain_mana(amount: int) -> void:
 	if amount > 0 and game_manager != null and not game_manager.can_player_gain_mana_now(self):

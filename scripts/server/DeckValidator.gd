@@ -6,9 +6,20 @@ const TiamatScript = preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
 const MIN_REGULAR_CARDS := 35
 const MAX_POWERS := 3
 
+static var _shared_cards_by_name: Dictionary = {}
+
 var _cards_by_name: Dictionary = {}
 
 func _init() -> void:
+	_cards_by_name = _get_shared_cards_by_name()
+
+static func _get_shared_cards_by_name() -> Dictionary:
+	if _shared_cards_by_name.is_empty():
+		_shared_cards_by_name = _build_cards_by_name()
+	return _shared_cards_by_name
+
+static func _build_cards_by_name() -> Dictionary:
+	var cards_by_name: Dictionary = {}
 	for card in CardCatalogScript.make_all_cards():
 		if card == null:
 			continue
@@ -26,7 +37,8 @@ func _init() -> void:
 			var clean_alias: String = str(alias).strip_edges()
 			if clean_alias.is_empty():
 				continue
-			_cards_by_name[clean_alias] = card
+			cards_by_name[clean_alias] = card
+	return cards_by_name
 
 func validate_deck(deck_cards: Dictionary, special_setup: Dictionary = {}) -> Dictionary:
 	var sanitized_cards: Dictionary = {}
@@ -118,6 +130,20 @@ func validate_deck(deck_cards: Dictionary, special_setup: Dictionary = {}) -> Di
 		"god_culture": god_culture,
 		"special_setup": validated_special_setup.get("special_setup", {}),
 	})
+
+func validate_card_array(deck: Array[Card], special_setup: Dictionary = {}) -> Dictionary:
+	return validate_deck(cards_to_counts(deck), special_setup)
+
+static func cards_to_counts(deck: Array[Card]) -> Dictionary:
+	var counts: Dictionary = {}
+	for card in deck:
+		if card == null:
+			continue
+		var card_name := str(card.card_name).strip_edges()
+		if card_name.is_empty():
+			continue
+		counts[card_name] = int(counts.get(card_name, 0)) + 1
+	return counts
 
 func _validate_special_setup(special_setup: Dictionary, god_template, power_count: int) -> Dictionary:
 	var sanitized_slots := TiamatScript.get_slot_card_names_from_setup(special_setup)

@@ -2,6 +2,7 @@ extends RefCounted
 class_name AccountStore
 
 const ServerPathsScript = preload("res://scripts/server/ServerPaths.gd")
+const JsonStoreScript = preload("res://scripts/server/JsonStore.gd")
 const MIN_USERNAME_LENGTH := 3
 const MAX_USERNAME_LENGTH := 24
 const MIN_PASSWORD_LENGTH := 8
@@ -45,7 +46,10 @@ func register_account(username: String, password: String) -> Dictionary:
 	}
 	_accounts_by_id[account_id] = account
 	_account_id_by_username[username_key] = account_id
-	_save()
+	if not _save():
+		_accounts_by_id.erase(account_id)
+		_account_id_by_username.erase(username_key)
+		return _result(false, "Could not save account storage.")
 	print(
 		"AccountStore: registered account username=%s account_id=%s storage=%s total_accounts=%d" % [
 			normalized_username,
@@ -106,9 +110,12 @@ func login_account(username: String, password: String) -> Dictionary:
 			]
 		)
 		return _result(false, "Incorrect password.")
+	var previous_account := account.duplicate(true)
 	account["last_seen_unix"] = int(Time.get_unix_time_from_system())
 	_accounts_by_id[account_id] = account
-	_save()
+	if not _save():
+		_accounts_by_id[account_id] = previous_account
+		return _result(false, "Could not update account storage.")
 	print(
 		"AccountStore: login succeeded username=%s account_id=%s storage=%s" % [
 			normalized_username,
@@ -167,16 +174,10 @@ func _ensure_loaded() -> void:
 	if not FileAccess.file_exists(storage_path):
 		print("AccountStore: no account storage file found at %s" % storage_global_path)
 		return
-	var file := FileAccess.open(storage_path, FileAccess.READ)
-	if file == null:
-		print("AccountStore: failed to open account storage file at %s" % storage_global_path)
-		return
-	var parsed = JSON.parse_string(file.get_as_text())
-	file.close()
-	if not (parsed is Dictionary):
+	var root := JsonStoreScript.load_dictionary(storage_path, {}, "AccountStore")
+	if root.is_empty():
 		print("AccountStore: account storage file was not a Dictionary payload at %s" % storage_global_path)
 		return
-	var root := parsed as Dictionary
 	var extracted_payload := _extract_accounts_payload(root)
 	_accounts_by_id = extracted_payload.get("accounts_by_id", {})
 	_rebuild_account_username_index()
@@ -189,20 +190,12 @@ func _ensure_loaded() -> void:
 	if bool(extracted_payload.get("migration_dirty", false)):
 		_save()
 
-func _save() -> void:
+func _save() -> bool:
 	var storage_path: String = _get_storage_path()
-	var parent_dir := storage_path.get_base_dir()
-	if not parent_dir.is_empty():
-		DirAccess.make_dir_recursive_absolute(parent_dir)
-	var file := FileAccess.open(storage_path, FileAccess.WRITE)
-	if file == null:
-		return
-	file.store_string(JSON.stringify({
+	return JsonStoreScript.save_json(storage_path, {
 		"accounts_by_id": _accounts_by_id,
 		"account_id_by_username": _account_id_by_username,
-	}, "\t"))
-	file.flush()
-	file.close()
+	}, "AccountStore")
 
 func _result(success: bool, message: String, account: Dictionary = {}) -> Dictionary:
 	return {

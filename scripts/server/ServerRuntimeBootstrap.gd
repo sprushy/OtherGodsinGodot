@@ -2,6 +2,7 @@ extends Node2D
 
 const LobbyServerScript = preload("res://scripts/server/LobbyServer.gd")
 const HeadlessMatchServerScript = preload("res://scripts/server/HeadlessMatchServer.gd")
+const JsonStoreScript = preload("res://scripts/server/JsonStore.gd")
 const DEFAULT_LOBBY_HOST_SETTING := "application/config/default_lobby_host"
 
 var _server_node: Node = null
@@ -131,12 +132,4 @@ func _parse_user_args(args: PackedStringArray) -> Dictionary:
 	return parsed
 
 func _load_launch_config(config_path: String) -> Dictionary:
-	if config_path.is_empty() or not FileAccess.file_exists(config_path):
-		return {}
-	var file := FileAccess.open(config_path, FileAccess.READ)
-	if file == null:
-		return {}
-	var parsed = JSON.parse_string(file.get_as_text())
-	if parsed is Dictionary:
-		return parsed
-	return {}
+	return JsonStoreScript.load_dictionary(config_path, {}, "ServerRuntimeBootstrap")

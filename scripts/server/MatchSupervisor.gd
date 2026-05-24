@@ -3,6 +3,7 @@ class_name MatchSupervisor
 
 const MatchSessionScript = preload("res://scripts/server/MatchSession.gd")
 const ServerPathsScript = preload("res://scripts/server/ServerPaths.gd")
+const JsonStoreScript = preload("res://scripts/server/JsonStore.gd")
 const HEADLESS_ENTRY_SCRIPT_PATH := "res://scripts/server/HeadlessMatchServerMain.gd"
 const DEDICATED_SERVER_EXPORT_RELATIVE_PATH := "res://.exports/server/OtherGodsServer.exe"
 
@@ -154,6 +155,7 @@ func _launch_dedicated_match(session) -> bool:
 	var pid := OS.create_process(godot_executable_path, args, false)
 	if pid <= 0:
 		session.mark_process_launch_failed("OS.create_process failed for the dedicated headless match server.")
+		_cleanup_launch_config_path(config_path)
 		return false
 
 	session.mark_process_launched(pid, config_path)
@@ -165,11 +167,8 @@ func _write_launch_config(session) -> String:
 	if mkdir_err != OK and mkdir_err != ERR_ALREADY_EXISTS:
 		return ""
 	var config_path := base_dir.path_join("%s.json" % str(session.match_id))
-	var file := FileAccess.open(config_path, FileAccess.WRITE)
-	if file == null:
+	if not JsonStoreScript.save_json(config_path, session.to_launch_config(), "MatchSupervisor"):
 		return ""
-	file.store_string(JSON.stringify(session.to_launch_config(), "\t"))
-	file.close()
 	return config_path
 
 func _refresh_active_matches() -> void:
@@ -209,9 +208,17 @@ func _cleanup_launch_config(session) -> void:
 	if session == null:
 		return
 	var config_path := str(session.launch_config_path).strip_edges()
-	if config_path.is_empty() or not FileAccess.file_exists(config_path):
+	if config_path.is_empty():
 		return
-	DirAccess.remove_absolute(config_path)
+	_cleanup_launch_config_path(config_path)
+
+func _cleanup_launch_config_path(config_path: String) -> void:
+	var resolved_path := config_path.strip_edges()
+	if resolved_path.is_empty():
+		return
+	for path in [resolved_path, "%s.tmp" % resolved_path, "%s.bak" % resolved_path]:
+		if FileAccess.file_exists(path):
+			DirAccess.remove_absolute(path)
 
 func _resolve_headless_executable_path(executable_path: String) -> String:
 	var normalized_path := executable_path.strip_edges()

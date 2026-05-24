@@ -42,5 +42,9 @@ func submit_action(command: Dictionary) -> bool:
 		return _reject_submission("Disconnected from match server. Reconnect may still be available.")
 	if not _has_player_assignment():
 		return _reject_submission("Reconnecting to match server. Please wait for match authentication.")
+	if network_manager.has_method("get_command_payload_rejection_reason"):
+		var rejection_reason := str(network_manager.get_command_payload_rejection_reason(command))
+		if not rejection_reason.is_empty():
+			return _reject_submission(rejection_reason)
 	network_manager.request_action(command)
 	return true
