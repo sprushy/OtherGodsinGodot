@@ -6,6 +6,8 @@ const AppReleaseInfoScript = preload("res://scripts/client/AppReleaseInfo.gd")
 const NetworkManagerScript = preload("res://scripts/Other/NetworkManager.gd")
 const LOBBY_EVENT_TYPE := "__lobby_event__"
 const CONNECT_ATTEMPT_TIMEOUT_SECONDS := 5.0
+const INITIAL_AUTH_RETRY_INTERVAL_SECONDS := 0.1
+const INITIAL_AUTH_MAX_ATTEMPTS := 30
 
 signal connected_to_lobby()
 signal server_version_updated(version: String)
@@ -55,6 +57,7 @@ var _pending_profile_id: String = ""
 var _pending_auth_mode: String = "login"
 var _pending_password: String = ""
 var _connect_attempt_serial: int = 0
+var _initial_auth_attempt_serial: int = 0
 var _ignore_network_events: bool = false
 
 func _ready() -> void:
@@ -70,6 +73,7 @@ func connect_to_server(
 	auth_mode: String = "login",
 	password: String = ""
 ) -> Error:
+	_cancel_initial_auth_request()
 	_ignore_network_events = false
 	_is_authenticated = false
 	current_session_id = ""
@@ -110,6 +114,7 @@ func connect_to_server(
 func disconnect_from_server() -> void:
 	_ignore_network_events = true
 	_cancel_connect_attempt_timeout()
+	_cancel_initial_auth_request()
 	_is_authenticated = false
 	current_session_id = ""
 	current_reconnect_token = ""
@@ -328,6 +333,38 @@ func _on_connected_to_server() -> void:
 		return
 	_trace("connected to server")
 	connected_to_lobby.emit()
+	_begin_initial_auth_request()
+
+func _begin_initial_auth_request() -> void:
+	_initial_auth_attempt_serial += 1
+	call_deferred("_try_send_initial_auth_request", _initial_auth_attempt_serial, 1)
+
+func _cancel_initial_auth_request() -> void:
+	_initial_auth_attempt_serial += 1
+
+func _try_send_initial_auth_request(expected_serial: int, attempt: int) -> void:
+	if expected_serial != _initial_auth_attempt_serial:
+		return
+	if _ignore_network_events:
+		return
+	if not is_transport_connected():
+		if attempt >= INITIAL_AUTH_MAX_ATTEMPTS:
+			_trace("initial auth request timed out waiting for connected transport")
+			disconnect_from_server()
+			connection_failed.emit("The lobby connection timed out.")
+			return
+		var tree := get_tree()
+		if tree == null:
+			connection_failed.emit("The lobby connection failed.")
+			return
+		var retry_timer := tree.create_timer(INITIAL_AUTH_RETRY_INTERVAL_SECONDS)
+		retry_timer.timeout.connect(
+			Callable(self, "_try_send_initial_auth_request").bind(expected_serial, attempt + 1)
+		)
+		return
+	_send_initial_auth_request()
+
+func _send_initial_auth_request() -> void:
 	if _should_attempt_pending_lobby_reconnect():
 		_send_request(LobbyProtocolScript.REQUEST_RECONNECT_LOBBY, {
 			"session_id": _pending_session_id,
@@ -362,6 +399,7 @@ func _should_attempt_pending_lobby_reconnect() -> bool:
 
 func _on_connection_failed() -> void:
 	_cancel_connect_attempt_timeout()
+	_cancel_initial_auth_request()
 	if _ignore_network_events:
 		_trace("ignoring connection_failed after disconnect")
 		return
@@ -381,6 +419,7 @@ func _on_connection_failed() -> void:
 
 func _on_server_disconnected() -> void:
 	_cancel_connect_attempt_timeout()
+	_cancel_initial_auth_request()
 	if _ignore_network_events:
 		_trace("ignoring server_disconnected after disconnect")
 		return

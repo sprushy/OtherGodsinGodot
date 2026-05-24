@@ -52,9 +52,11 @@ func _ready() -> void:
 	api.server_disconnected.connect(_on_server_disconnected)
 
 func _on_peer_connected(id: int) -> void:
+	_trace("peer_connected %d" % id)
 	peer_connected.emit(id)
 
 func _on_peer_disconnected(id: int) -> void:
+	_trace("peer_disconnected %d" % id)
 	peer_disconnected.emit(id)
 
 func _on_connected_to_server() -> void:
