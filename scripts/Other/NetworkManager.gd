@@ -152,8 +152,10 @@ func request_action(command: Dictionary) -> void:
 	if is_server:
 		command_received.emit(command, _build_sender_info(1))
 	else:
-		_trace("sending request_action %s" % str(command.get("type", command)))
-		rpc_id(1, "send_command", command)
+		_trace("broadcasting request_action %s" % str(command.get("type", command)))
+		var rpc_err := rpc("send_command", command)
+		if rpc_err != OK:
+			_trace("request_action broadcast failed: %d" % rpc_err)
 
 @rpc("any_peer", "call_remote", "reliable")
 func request_match_join(join_request: Dictionary) -> void:

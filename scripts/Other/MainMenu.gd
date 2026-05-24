@@ -3923,11 +3923,13 @@ func _cleanup_dedicated_lobby_mount_if_unused() -> void:
 	pass
 
 func _configure_lobby_client_trace(client: LobbyClient) -> void:
-	if client == null or _smoke_config.is_empty():
+	if client == null:
 		return
-	var trace_file := str(_smoke_config.get("trace_file", "")).strip_edges()
+	var trace_file := ""
+	if not _smoke_config.is_empty():
+		trace_file = str(_smoke_config.get("trace_file", "")).strip_edges()
 	if trace_file.is_empty():
-		return
+		trace_file = "user://logs/lobby-client.trace.log"
 	client.trace_file_path = trace_file
 
 func _is_local_player_ready() -> bool:
