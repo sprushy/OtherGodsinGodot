@@ -31,6 +31,7 @@ var last_client_port: int = 12345
 var last_server_error: int = OK
 var trace_file_path: String = ""
 var use_current_scene_relative_path: bool = false
+var validate_match_command_types: bool = true
 
 ## Maps player_index (0/1) to their ENet peer_id.
 ## Player 0 = host (peer_id 1), Player 1 = first remote client.
@@ -319,7 +320,7 @@ func get_command_payload_rejection_reason(command: Dictionary) -> String:
 		return "Command type is required."
 	if command_type.length() > MAX_COMMAND_TYPE_LENGTH:
 		return "Command type is too long."
-	if not MatchCommandRegistryScript.is_known_command_type(command_type):
+	if validate_match_command_types and not MatchCommandRegistryScript.is_known_command_type(command_type):
 		return "Unknown command type: %s" % command_type
 	return ""
 

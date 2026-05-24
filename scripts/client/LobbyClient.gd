@@ -477,6 +477,7 @@ func _ensure_network_manager() -> void:
 	network_manager.name = "LobbyTransport"
 	network_manager.trace_file_path = trace_file_path
 	network_manager.use_current_scene_relative_path = true
+	network_manager.validate_match_command_types = false
 	add_child(network_manager)
 	if not network_manager.connected_to_server.is_connected(_on_connected_to_server):
 		network_manager.connected_to_server.connect(_on_connected_to_server)
