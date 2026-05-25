@@ -40,6 +40,19 @@ const LevelSymbolRowScript = preload("res://scripts/ui/LevelSymbolRow.gd")
 const DefenseShieldOverlayScript = preload("res://scripts/ui/DefenseShieldOverlay.gd")
 const MINOR_ACTION_SYMBOL_TEXTURE = preload("res://images/ui/MinorActionSymbol.png")
 const MAJOR_ACTION_SYMBOL_TEXTURE = preload("res://images/ui/MajorActionSymbol.png")
+const USER_SETTINGS_PATH := "user://settings.cfg"
+const AUDIO_SETTINGS_SECTION := "audio"
+const COMBAT_SETTINGS_SECTION := "combat"
+const MUSIC_MUTED_KEY := "music_muted"
+const AUTO_PRIORITY_KEY := "auto_priority"
+const AUTO_SELECT_SPELL_PLAY_ZONES_KEY := "auto_select_spell_play_zones"
+const AUTO_SELECT_SPELL_PREPARE_ZONES_KEY := "auto_select_spell_prepare_zones"
+const AUTO_SELECT_HEX_PREPARE_ZONES_KEY := "auto_select_hex_prepare_zones"
+const AUTO_SELECT_CHARM_PLAY_ZONES_KEY := "auto_select_charm_play_zones"
+const AUTO_SELECT_CHARM_PREPARE_ZONES_KEY := "auto_select_charm_prepare_zones"
+const USE_SPLASH_BOARD_BACKGROUND_KEY := "use_splash_board_background"
+const HOVER_SHOW_CARD_OPTIONS_KEY := "hover_show_card_options"
+const ALWAYS_SHOW_ABILITY_BADGES_KEY := "always_show_ability_badges"
 
 signal forfeit_requested
 signal return_to_menu_requested
@@ -163,6 +176,7 @@ var _pending_priority_response_submission: Dictionary = {}
 var _pending_priority_response_target_selection: Dictionary = {}
 var _fan_container: Control = null
 var _enemy_hand_overlay: Control = null
+var _mopsus_revealed_enemy_hand_uids: Array[String] = []
 var _hand_hover_preview: Control = null
 var _hand_hover_vc: VisualCard = null
 var _hand_hover_preview_card: VisualCard = null
@@ -456,6 +470,7 @@ var _auto_select_charm_play_zones: bool = true
 var _auto_select_charm_prepare_zones: bool = true
 var _use_splash_board_background: bool = false
 var _hover_show_card_options: bool = true
+var _always_show_ability_badges: bool = false
 var _hover_card_options_card: Card = null
 var _action_point_state_by_card_uid: Dictionary = {}
 var _sacrifice_cursor_texture: Texture2D = null
@@ -703,6 +718,89 @@ func _make_settings_section_label(label_text: String) -> Label:
 	label.add_theme_color_override("font_color", Color(0.96, 0.92, 0.68))
 	return label
 
+func _read_config_bool(config: ConfigFile, section: String, key: String, default_value: bool) -> bool:
+	var value = config.get_value(section, key, default_value)
+	if value is bool:
+		return value
+	if value is String:
+		var text := str(value).strip_edges().to_lower()
+		if text in ["true", "1", "yes", "on"]:
+			return true
+		if text in ["false", "0", "no", "off"]:
+			return false
+	return default_value
+
+func _load_user_settings() -> void:
+	var config := ConfigFile.new()
+	if config.load(USER_SETTINGS_PATH) != OK:
+		return
+	auto_priority = _read_config_bool(config, COMBAT_SETTINGS_SECTION, AUTO_PRIORITY_KEY, auto_priority)
+	_auto_select_spell_play_zones = _read_config_bool(config, COMBAT_SETTINGS_SECTION, AUTO_SELECT_SPELL_PLAY_ZONES_KEY, _auto_select_spell_play_zones)
+	_auto_select_spell_prepare_zones = _read_config_bool(config, COMBAT_SETTINGS_SECTION, AUTO_SELECT_SPELL_PREPARE_ZONES_KEY, _auto_select_spell_prepare_zones)
+	_auto_select_hex_prepare_zones = _read_config_bool(config, COMBAT_SETTINGS_SECTION, AUTO_SELECT_HEX_PREPARE_ZONES_KEY, _auto_select_hex_prepare_zones)
+	_auto_select_charm_play_zones = _read_config_bool(config, COMBAT_SETTINGS_SECTION, AUTO_SELECT_CHARM_PLAY_ZONES_KEY, _auto_select_charm_play_zones)
+	_auto_select_charm_prepare_zones = _read_config_bool(config, COMBAT_SETTINGS_SECTION, AUTO_SELECT_CHARM_PREPARE_ZONES_KEY, _auto_select_charm_prepare_zones)
+	_use_splash_board_background = _read_config_bool(config, COMBAT_SETTINGS_SECTION, USE_SPLASH_BOARD_BACKGROUND_KEY, _use_splash_board_background)
+	_hover_show_card_options = _read_config_bool(config, COMBAT_SETTINGS_SECTION, HOVER_SHOW_CARD_OPTIONS_KEY, _hover_show_card_options)
+	_always_show_ability_badges = _read_config_bool(config, COMBAT_SETTINGS_SECTION, ALWAYS_SHOW_ABILITY_BADGES_KEY, _always_show_ability_badges)
+
+func _get_saved_bool_setting(section: String, key: String, default_value: bool) -> bool:
+	var config := ConfigFile.new()
+	if config.load(USER_SETTINGS_PATH) != OK:
+		return default_value
+	return _read_config_bool(config, section, key, default_value)
+
+func _save_bool_setting(section: String, key: String, value: bool) -> void:
+	var config := ConfigFile.new()
+	config.load(USER_SETTINGS_PATH)
+	config.set_value(section, key, value)
+	var error := config.save(USER_SETTINGS_PATH)
+	if error != OK:
+		push_warning("Could not save user setting %s/%s: %s" % [section, key, str(error)])
+
+func _save_combat_bool_setting(key: String, value: bool) -> void:
+	_save_bool_setting(COMBAT_SETTINGS_SECTION, key, value)
+
+func _set_auto_select_spell_play_zones(pressed: bool) -> void:
+	_auto_select_spell_play_zones = pressed
+	_save_combat_bool_setting(AUTO_SELECT_SPELL_PLAY_ZONES_KEY, pressed)
+
+func _set_auto_select_spell_prepare_zones(pressed: bool) -> void:
+	_auto_select_spell_prepare_zones = pressed
+	_save_combat_bool_setting(AUTO_SELECT_SPELL_PREPARE_ZONES_KEY, pressed)
+
+func _set_auto_select_hex_prepare_zones(pressed: bool) -> void:
+	_auto_select_hex_prepare_zones = pressed
+	_save_combat_bool_setting(AUTO_SELECT_HEX_PREPARE_ZONES_KEY, pressed)
+
+func _set_auto_select_charm_play_zones(pressed: bool) -> void:
+	_auto_select_charm_play_zones = pressed
+	_save_combat_bool_setting(AUTO_SELECT_CHARM_PLAY_ZONES_KEY, pressed)
+
+func _set_auto_select_charm_prepare_zones(pressed: bool) -> void:
+	_auto_select_charm_prepare_zones = pressed
+	_save_combat_bool_setting(AUTO_SELECT_CHARM_PREPARE_ZONES_KEY, pressed)
+
+func _set_use_splash_board_background(pressed: bool) -> void:
+	_use_splash_board_background = pressed
+	_save_combat_bool_setting(USE_SPLASH_BOARD_BACKGROUND_KEY, pressed)
+	_apply_board_art_background_texture()
+
+func _set_hover_show_card_options(pressed: bool) -> void:
+	_hover_show_card_options = pressed
+	_save_combat_bool_setting(HOVER_SHOW_CARD_OPTIONS_KEY, pressed)
+	if not _hover_show_card_options:
+		_set_hover_card_options_card(null)
+	else:
+		_refresh_card_option_preview_visuals()
+
+func _set_always_show_ability_badges(pressed: bool) -> void:
+	_always_show_ability_badges = pressed
+	_save_combat_bool_setting(ALWAYS_SHOW_ABILITY_BADGES_KEY, pressed)
+	BoardZoneUI.set_always_show_ability_badges(pressed)
+	draw_board()
+	draw_enemy_board()
+
 func _get_music_controller() -> Node:
 	if not is_inside_tree():
 		return null
@@ -712,13 +810,14 @@ func _is_music_muted() -> bool:
 	var music_controller := _get_music_controller()
 	if music_controller != null and music_controller.has_method("is_music_muted"):
 		return bool(music_controller.call("is_music_muted"))
-	return false
+	return _get_saved_bool_setting(AUDIO_SETTINGS_SECTION, MUSIC_MUTED_KEY, false)
 
 func _set_music_muted(muted: bool) -> void:
 	var music_controller := _get_music_controller()
 	if music_controller != null and music_controller.has_method("set_music_muted"):
 		music_controller.call("set_music_muted", muted)
 		return
+	_save_bool_setting(AUDIO_SETTINGS_SECTION, MUSIC_MUTED_KEY, muted)
 	_on_music_mute_changed(muted)
 
 func _on_music_mute_changed(muted: bool) -> void:
@@ -854,31 +953,31 @@ func _show_pause_menu() -> void:
 		"Auto-select spell play zones",
 		_auto_select_spell_play_zones,
 		func(pressed: bool) -> void:
-			_auto_select_spell_play_zones = pressed
+			_set_auto_select_spell_play_zones(pressed)
 	))
 	settings_vbox.add_child(_make_auto_zone_toggle(
 		"Auto-select spell prepare zones",
 		_auto_select_spell_prepare_zones,
 		func(pressed: bool) -> void:
-			_auto_select_spell_prepare_zones = pressed
+			_set_auto_select_spell_prepare_zones(pressed)
 	))
 	settings_vbox.add_child(_make_auto_zone_toggle(
 		"Auto-select hex prepare zones",
 		_auto_select_hex_prepare_zones,
 		func(pressed: bool) -> void:
-			_auto_select_hex_prepare_zones = pressed
+			_set_auto_select_hex_prepare_zones(pressed)
 	))
 	settings_vbox.add_child(_make_auto_zone_toggle(
 		"Auto-select charm play zones",
 		_auto_select_charm_play_zones,
 		func(pressed: bool) -> void:
-			_auto_select_charm_play_zones = pressed
+			_set_auto_select_charm_play_zones(pressed)
 	))
 	settings_vbox.add_child(_make_auto_zone_toggle(
 		"Auto-select charm prepare zones",
 		_auto_select_charm_prepare_zones,
 		func(pressed: bool) -> void:
-			_auto_select_charm_prepare_zones = pressed
+			_set_auto_select_charm_prepare_zones(pressed)
 	))
 
 	settings_vbox.add_child(_make_settings_section_label("Audio"))
@@ -895,18 +994,19 @@ func _show_pause_menu() -> void:
 		"Use splash image board background",
 		_use_splash_board_background,
 		func(pressed: bool) -> void:
-			_use_splash_board_background = pressed
-			_apply_board_art_background_texture()
+			_set_use_splash_board_background(pressed)
 	))
 	settings_vbox.add_child(_make_auto_zone_toggle(
 		"Hover show card options",
 		_hover_show_card_options,
 		func(pressed: bool) -> void:
-			_hover_show_card_options = pressed
-			if not _hover_show_card_options:
-				_set_hover_card_options_card(null)
-			else:
-				_refresh_card_option_preview_visuals()
+			_set_hover_show_card_options(pressed)
+	))
+	settings_vbox.add_child(_make_auto_zone_toggle(
+		"Always show ability badges",
+		_always_show_ability_badges,
+		func(pressed: bool) -> void:
+			_set_always_show_ability_badges(pressed)
 	))
 
 	var settings_buttons := HBoxContainer.new()
@@ -1627,6 +1727,8 @@ func _apply_board_art_background_texture() -> void:
 func _ready() -> void:
 	add_to_group("combat_mock_game")
 	add_to_group("music_mute_observers")
+	_load_user_settings()
+	BoardZoneUI.set_always_show_ability_badges(_always_show_ability_badges)
 	_ensure_board_art_background()
 	choice_container.visible = false
 	end_turn_button.visible = false
@@ -3961,6 +4063,7 @@ func _on_board_layout_resized() -> void:
 
 func _on_auto_priority_toggled(on: bool) -> void:
 	auto_priority = on
+	_save_combat_bool_setting(AUTO_PRIORITY_KEY, on)
 
 func _on_match_targeting_started(_source: Card, _target_type: String) -> void:
 	_hide_devour_cancel_prompt()
@@ -4483,6 +4586,7 @@ func draw_enemy_hand_overlay() -> void:
 	var peek_count := _get_enemy_hand_overlay_card_count(enemy_player)
 	if peek_count <= 0:
 		return
+	_prune_mopsus_revealed_enemy_hand_cards()
 
 	_enemy_hand_overlay = Control.new()
 	_enemy_hand_overlay.name = "EnemyHandOverlay"
@@ -4492,24 +4596,102 @@ func draw_enemy_hand_overlay() -> void:
 	_enemy_hand_overlay.z_index = TRANSIENT_UI_Z_INDEX - 20
 	add_child(_enemy_hand_overlay)
 
-	for _i in range(peek_count):
-		var card_back := TextureRect.new()
-		card_back.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		card_back.texture = CardBackTexture
-		card_back.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-		card_back.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		card_back.size = Vector2(ENEMY_HAND_CARD_WIDTH, ENEMY_HAND_CARD_HEIGHT)
-		card_back.pivot_offset = card_back.size * 0.5
-		_enemy_hand_overlay.add_child(card_back)
+	var display_cards := _get_enemy_hand_overlay_display_cards(enemy_player)
+	for display_card in display_cards:
+		var hand_card := display_card as Card
+		_enemy_hand_overlay.add_child(_make_enemy_hand_overlay_card(hand_card))
 
 	call_deferred("_layout_enemy_hand_overlay")
+
+func _get_enemy_hand_overlay_display_cards(enemy_player: Player) -> Array[Card]:
+	var display_cards: Array[Card] = []
+	if enemy_player == null or enemy_player.hand_zone == null:
+		return display_cards
+	for card in enemy_player.hand_zone.cards:
+		if card == null:
+			continue
+		if display_cards.size() < ENEMY_HAND_PEEK_MAX_CARDS:
+			display_cards.append(card)
+			continue
+		if card.uid in _mopsus_revealed_enemy_hand_uids and card not in display_cards:
+			display_cards.append(card)
+	return display_cards
+
+func _make_enemy_hand_overlay_card(card: Card) -> Control:
+	if card != null and card.uid in _mopsus_revealed_enemy_hand_uids:
+		return _make_enemy_hand_overlay_revealed_card(card)
+	var card_back := TextureRect.new()
+	card_back.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	card_back.texture = CardBackTexture
+	card_back.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	card_back.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	card_back.size = Vector2(ENEMY_HAND_CARD_WIDTH, ENEMY_HAND_CARD_HEIGHT)
+	card_back.pivot_offset = card_back.size * 0.5
+	return card_back
+
+func _make_enemy_hand_overlay_revealed_card(card: Card) -> Control:
+	var panel := PanelContainer.new()
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.custom_minimum_size = Vector2(ENEMY_HAND_CARD_WIDTH, ENEMY_HAND_CARD_HEIGHT)
+	panel.size = Vector2(ENEMY_HAND_CARD_WIDTH, ENEMY_HAND_CARD_HEIGHT)
+
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.08, 0.09, 0.14, 1.0)
+	style.border_color = Color(0.95, 0.78, 0.34, 0.98)
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		style.set_border_width(side as Side, 2)
+	style.corner_radius_top_left = 5
+	style.corner_radius_top_right = 5
+	style.corner_radius_bottom_left = 5
+	style.corner_radius_bottom_right = 5
+	panel.add_theme_stylebox_override("panel", style)
+
+	var face := Control.new()
+	face.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	face.custom_minimum_size = Vector2(ENEMY_HAND_CARD_WIDTH, ENEMY_HAND_CARD_HEIGHT)
+	panel.add_child(face)
+
+	var art := TextureRect.new()
+	var tex: Texture2D = null
+	if card != null and card.art_path != "":
+		tex = load(card.art_path) as Texture2D
+	art.texture = tex if tex != null else CardBackTexture
+	art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	art.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	art.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	face.add_child(art)
+
+	var name_bg := ColorRect.new()
+	name_bg.color = Color(0.03, 0.04, 0.07, 0.82)
+	name_bg.anchor_left = 0.0
+	name_bg.anchor_right = 1.0
+	name_bg.anchor_top = 1.0
+	name_bg.anchor_bottom = 1.0
+	name_bg.offset_left = 0.0
+	name_bg.offset_right = 0.0
+	name_bg.offset_top = -30.0
+	name_bg.offset_bottom = 0.0
+	name_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	face.add_child(name_bg)
+
+	var name_label := Label.new()
+	name_label.text = card.card_name if card != null else "Revealed"
+	name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	name_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	name_label.add_theme_font_size_override("font_size", 15)
+	name_label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	name_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	name_bg.add_child(name_label)
+	return panel
 
 func _layout_enemy_hand_overlay() -> void:
 	if _enemy_hand_overlay == null or not is_instance_valid(_enemy_hand_overlay):
 		return
 	var enemy_player := _get_display_opponent()
 	var cards := _enemy_hand_overlay.get_children()
-	var n := mini(cards.size(), _get_enemy_hand_overlay_card_count(enemy_player))
+	var n := cards.size()
 	if n <= 0:
 		return
 	var overlay_rect := _get_enemy_hand_overlay_rect()
@@ -4520,9 +4702,10 @@ func _layout_enemy_hand_overlay() -> void:
 	var total_span: float = spacing * float(n - 1)
 	var start_x: float = (container_w - total_span) * 0.5
 	for i in range(n):
-		var card_back := cards[i] as TextureRect
+		var card_back := cards[i] as Control
 		if card_back == null:
 			continue
+		card_back.size = Vector2(ENEMY_HAND_CARD_WIDTH, ENEMY_HAND_CARD_HEIGHT)
 		var t := 0.0 if n == 1 else (float(i) / float(n - 1)) * 2.0 - 1.0
 		var cx: float = start_x + float(i) * spacing
 		card_back.position = Vector2(
@@ -5884,8 +6067,14 @@ func _make_power_icon(card: Card, is_enemy: bool, _player: Player, zone: Zone = 
 	var activatable := power != null and power.can_activate(game_manager)
 	var can_unlock_now := power != null and power.can_unlock(game_manager)
 	var ready_glow: bool = power != null and power.has_method("is_ui_ready") and power.is_ui_ready(game_manager)
+	var priority_response_available := _is_card_usable_for_priority(card)
 
-	if ready_glow:
+	if priority_response_available:
+		style.bg_color = Color(0.07, 0.16, 0.09, 0.94)
+		style.border_color = Color(0.55, 1.0, 0.62, 0.98)
+		style.shadow_color = Color(0.28, 0.95, 0.38, 0.74)
+		style.shadow_size = 14
+	elif ready_glow:
 		style.bg_color = Color(0.19, 0.06, 0.07, 0.94)
 		style.border_color = Color(1.0, 0.34, 0.28, 0.98)
 		style.shadow_color = Color(1.0, 0.12, 0.08, 0.82)
@@ -5926,7 +6115,7 @@ func _make_power_icon(card: Card, is_enemy: bool, _player: Player, zone: Zone = 
 		and god_ability_source.has_method("is_valid_activation_target") \
 		and god_ability_source.is_valid_activation_target(card)
 
-	if can_unlock_now or activatable or ready_glow or can_target_with_god:
+	if can_unlock_now or activatable or ready_glow or can_target_with_god or priority_response_available:
 		panel.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 		panel.gui_input.connect(_on_power_icon_gui_input.bind(card.uid))
 	return panel
@@ -10589,6 +10778,16 @@ func _on_god_card_pressed(card: Card) -> void:
 	_indicated_move_card = null
 	if _try_queue_god_targeted_ability(card):
 		return
+
+	if selected_card != null \
+			and selected_card != card \
+			and card.get_controller() == game_manager.current_player \
+			and card.current_zone != null \
+			and card.current_zone.is_board_zone() \
+			and not awaiting_spell_target:
+		selected_card = null
+		placement_mode = ""
+		placement_container.visible = false
 	if not card.is_god:
 		return
 	if not card.has_method("can_activate"):
@@ -14793,6 +14992,16 @@ func _on_board_card_pressed(card: Card) -> void:
 
 	# Non-targeted spell selected ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â clicking any zone (occupied or not) casts it
 	# from the nearest available empty zone on the player's side.
+	if selected_card != null \
+			and selected_card != card \
+			and card.get_controller() == game_manager.current_player \
+			and card.current_zone != null \
+			and card.current_zone.is_board_zone() \
+			and not awaiting_spell_target:
+		selected_card = null
+		placement_mode = ""
+		placement_container.visible = false
+
 	if selected_card != null and selected_card.card_type == Card.CardType.SPELL \
 			and not awaiting_spell_target:
 		var empty_zone := _find_empty_player_zone()
@@ -18704,98 +18913,253 @@ func _show_mopsus_hand_prompt(card: MopsusScript) -> void:
 	info.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vbox.add_child(info)
 
-	var buttons := VBoxContainer.new()
-	buttons.add_theme_constant_override("separation", 6)
-	buttons.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	buttons.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	vbox.add_child(buttons)
-	if required_count == 1:
-		for i in range(targets.size()):
-			var target := targets[i]
-			var chosen_target := target
-			var btn := Button.new()
-			btn.text = "Hand Card %d" % (i + 1)
-			btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			btn.pressed.connect(func() -> void:
-				_dismiss_zone_overlay()
-				_resolve_mopsus_hand_choice(card, [chosen_target])
-			)
-			buttons.add_child(btn)
+	var status := Label.new()
+	status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	status.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vbox.add_child(status)
 
-		var cancel_btn := Button.new()
-		cancel_btn.text = "Cancel"
-		cancel_btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-		cancel_btn.pressed.connect(func() -> void:
-			_dismiss_zone_overlay()
-			_set_action_label_text(card.card_name + " cancelled Seer.")
-			update_ui()
-		)
-		vbox.add_child(cancel_btn)
-	else:
-		var selected_targets: Array[Card] = []
-		var status := Label.new()
-		status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		status.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		vbox.add_child(status)
+	var scroll := ScrollContainer.new()
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.custom_minimum_size = Vector2(0, 190)
+	scroll.mouse_filter = Control.MOUSE_FILTER_STOP
+	vbox.add_child(scroll)
 
-		var button_map: Dictionary = {}
-		var confirm_btn := Button.new()
-		confirm_btn.text = "Inspect Selected Cards"
-		confirm_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var grid := GridContainer.new()
+	grid.columns = mini(4, maxi(1, targets.size()))
+	grid.add_theme_constant_override("h_separation", 12)
+	grid.add_theme_constant_override("v_separation", 12)
+	grid.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	grid.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	scroll.add_child(grid)
 
-		var refresh_selection_state := func() -> void:
-			status.text = "Selected %d of %d hand cards." % [selected_targets.size(), required_count]
-			confirm_btn.disabled = selected_targets.size() != required_count
-			for i in range(targets.size()):
-				var target := targets[i]
-				var btn: Button = button_map.get(target) as Button
-				if btn == null:
-					continue
-				var prefix := "Unchoose" if target in selected_targets else "Choose"
-				btn.text = "%s Hand Card %d" % [prefix, i + 1]
+	var cancel_btn := Button.new()
+	cancel_btn.text = "Cancel"
+	cancel_btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 
-		for i in range(targets.size()):
-			var target := targets[i]
-			var chosen_target := target
-			var btn := Button.new()
-			btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			btn.pressed.connect(func() -> void:
-				if chosen_target in selected_targets:
-					selected_targets.erase(chosen_target)
-				elif selected_targets.size() < required_count:
-					selected_targets.append(chosen_target)
-				refresh_selection_state.call()
-			)
-			button_map[target] = btn
-			buttons.add_child(btn)
+	var prompt_state := {
+		"source": card,
+		"overlay": overlay,
+		"targets": targets.duplicate(),
+		"selected": [],
+		"required": required_count,
+		"locked": false,
+		"status": status,
+		"cancel_btn": cancel_btn,
+		"tiles": {},
+	}
 
-		var action_row := HBoxContainer.new()
-		action_row.add_theme_constant_override("separation", 8)
-		vbox.add_child(action_row)
+	for i in range(targets.size()):
+		var target: Card = targets[i]
+		if target == null:
+			continue
+		var tile := _make_mopsus_hand_choice_tile(i + 1)
+		grid.add_child(tile)
+		var tiles: Dictionary = prompt_state.get("tiles", {})
+		tiles[str(target.uid)] = tile
+		prompt_state["tiles"] = tiles
+		tile.gui_input.connect(_on_mopsus_hand_choice_tile_gui_input.bind(card, target, tile, prompt_state))
 
-		confirm_btn.pressed.connect(func() -> void:
-			_dismiss_zone_overlay()
-			_resolve_mopsus_hand_choice(card, selected_targets.duplicate())
-		)
-		action_row.add_child(confirm_btn)
-
-		var cancel_btn := Button.new()
-		cancel_btn.text = "Cancel"
-		cancel_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		cancel_btn.pressed.connect(func() -> void:
-			_dismiss_zone_overlay()
-			_set_action_label_text(card.card_name + " cancelled Seer.")
-			update_ui()
-		)
-		action_row.add_child(cancel_btn)
-		refresh_selection_state.call()
+	cancel_btn.pressed.connect(func() -> void:
+		_dismiss_zone_overlay()
+		_set_action_label_text(card.card_name + " cancelled Seer.")
+		update_ui()
+	)
+	vbox.add_child(cancel_btn)
+	_refresh_mopsus_hand_choice_state(prompt_state)
 
 	overlay.gui_input.connect(func(event: InputEvent) -> void:
 		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
-			_dismiss_zone_overlay()
-			_set_action_label_text(card.card_name + " cancelled Seer.")
-			update_ui()
+			if not bool(prompt_state.get("locked", false)) and (prompt_state.get("selected", []) as Array).is_empty():
+				_dismiss_zone_overlay()
+				_set_action_label_text(card.card_name + " cancelled Seer.")
+				update_ui()
 	)
+
+func _make_mopsus_hand_choice_tile(card_index: int) -> PanelContainer:
+	var tile := PanelContainer.new()
+	tile.custom_minimum_size = Vector2(166, 152)
+	tile.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	tile.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	tile.mouse_filter = Control.MOUSE_FILTER_STOP
+	tile.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	_style_mopsus_hand_choice_tile(tile, false, false)
+
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 6)
+	margin.add_theme_constant_override("margin_right", 6)
+	margin.add_theme_constant_override("margin_top", 6)
+	margin.add_theme_constant_override("margin_bottom", 6)
+	margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	tile.add_child(margin)
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 5)
+	vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	margin.add_child(vbox)
+
+	var art := TextureRect.new()
+	art.texture = CardBackTexture
+	art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	art.custom_minimum_size = Vector2(150, 100)
+	art.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	art.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vbox.add_child(art)
+
+	var label := Label.new()
+	label.text = "Hand Card %d" % card_index
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.add_theme_font_size_override("font_size", 12)
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vbox.add_child(label)
+	return tile
+
+func _make_mopsus_revealed_hand_choice_tile(card: Card) -> Control:
+	var vc := VisualCard.new()
+	vc.setup(card)
+	vc.set_hover_viewer(game_manager.get_feedback_viewer())
+	vc.set_hover_preview_when_disabled(true)
+	vc.set_disabled(true, false)
+	return vc
+
+func _on_mopsus_hand_choice_tile_gui_input(
+	event: InputEvent,
+	source: MopsusScript,
+	target: Card,
+	tile: PanelContainer,
+	state: Dictionary
+) -> void:
+	if not (event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed):
+		return
+	accept_event()
+	if source == null or target == null or bool(state.get("locked", false)):
+		return
+	var selected: Array = state.get("selected", [])
+	var required_count := int(state.get("required", 1))
+	if target in selected or selected.size() >= required_count:
+		return
+	selected.append(target)
+	state["selected"] = selected
+	_flip_mopsus_hand_choice_tile_to_revealed(tile, target)
+	_refresh_mopsus_hand_choice_state(state)
+	if selected.size() >= required_count:
+		_finish_mopsus_hand_choice_after_reveal(state)
+
+func _refresh_mopsus_hand_choice_state(state: Dictionary) -> void:
+	var selected: Array = state.get("selected", [])
+	var required_count := int(state.get("required", 1))
+	var locked := bool(state.get("locked", false))
+	var status := state.get("status") as Label
+	if status != null and is_instance_valid(status):
+		if locked:
+			status.text = "Revealing selected hand card%s..." % ("" if selected.size() == 1 else "s")
+		else:
+			status.text = "Selected %d of %d. Revealed picks are locked." % [selected.size(), required_count]
+	var cancel_btn := state.get("cancel_btn") as Button
+	if cancel_btn != null and is_instance_valid(cancel_btn):
+		cancel_btn.disabled = locked or not selected.is_empty()
+	var tiles: Dictionary = state.get("tiles", {})
+	var targets: Array = state.get("targets", [])
+	for raw_target in targets:
+		var target := raw_target as Card
+		if target == null:
+			continue
+		var tile := tiles.get(str(target.uid)) as PanelContainer
+		if tile == null or not is_instance_valid(tile):
+			continue
+		var is_selected := target in selected
+		var is_disabled := locked or (selected.size() >= required_count and not is_selected)
+		_style_mopsus_hand_choice_tile(tile, is_selected, is_disabled)
+
+func _style_mopsus_hand_choice_tile(tile: PanelContainer, selected: bool, disabled: bool) -> void:
+	if tile == null:
+		return
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.05, 0.06, 0.11, 1.0)
+	style.border_color = Color(0.95, 0.78, 0.34, 0.98) if selected else Color(0.62, 0.68, 0.86, 0.88)
+	if disabled and not selected:
+		style.border_color = Color(0.32, 0.35, 0.45, 0.5)
+		style.bg_color = Color(0.03, 0.035, 0.055, 0.85)
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		style.set_border_width(side as Side, 3 if selected else 2)
+	style.corner_radius_top_left = 6
+	style.corner_radius_top_right = 6
+	style.corner_radius_bottom_left = 6
+	style.corner_radius_bottom_right = 6
+	tile.add_theme_stylebox_override("panel", style)
+	tile.mouse_default_cursor_shape = Control.CURSOR_ARROW if disabled else Control.CURSOR_POINTING_HAND
+
+func _flip_mopsus_hand_choice_tile_to_revealed(tile: PanelContainer, card: Card) -> void:
+	if tile == null or not is_instance_valid(tile) or card == null:
+		return
+	var old_child := tile.get_child(0) as Control if tile.get_child_count() > 0 else null
+	var revealed := _make_mopsus_revealed_hand_choice_tile(card)
+	revealed.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	revealed.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	if old_child == null:
+		tile.add_child(revealed)
+		return
+	old_child.pivot_offset = old_child.size * 0.5
+	var tween := create_tween()
+	tween.tween_property(old_child, "scale:x", 0.0, 0.11)
+	tween.tween_callback(func() -> void:
+		if tile == null or not is_instance_valid(tile):
+			return
+		_detach_container_children(tile)
+		revealed.scale.x = 0.0
+		tile.add_child(revealed)
+		revealed.pivot_offset = revealed.size * 0.5
+	)
+	tween.tween_property(revealed, "scale:x", 1.0, 0.13)
+
+func _finish_mopsus_hand_choice_after_reveal(state: Dictionary) -> void:
+	if bool(state.get("locked", false)):
+		return
+	state["locked"] = true
+	_refresh_mopsus_hand_choice_state(state)
+	var source := state.get("source") as MopsusScript
+	var overlay := state.get("overlay") as Control
+	var chosen_targets: Array[Card] = []
+	var selected: Array = state.get("selected", [])
+	for raw_target in selected:
+		var target := raw_target as Card
+		if target != null:
+			chosen_targets.append(target)
+	get_tree().create_timer(0.55).timeout.connect(func() -> void:
+		if overlay != null and is_instance_valid(overlay) and _zone_overlay == overlay:
+			_dismiss_zone_overlay()
+			_resolve_mopsus_hand_choice(source, chosen_targets)
+	)
+
+func _remember_mopsus_revealed_enemy_hand_cards(targets: Array[Card]) -> void:
+	for target in targets:
+		if target == null:
+			continue
+		if target.current_zone == null or target.current_zone.zone_type != Zone.ZoneType.HAND:
+			continue
+		if target.uid not in _mopsus_revealed_enemy_hand_uids:
+			_mopsus_revealed_enemy_hand_uids.append(target.uid)
+	_prune_mopsus_revealed_enemy_hand_cards()
+
+func _prune_mopsus_revealed_enemy_hand_cards() -> void:
+	if game_manager == null:
+		_mopsus_revealed_enemy_hand_uids.clear()
+		return
+	var live_hand_uids: Array[String] = []
+	for player in game_manager.players:
+		if player == null or player.hand_zone == null:
+			continue
+		for hand_card in player.hand_zone.cards:
+			var card := hand_card as Card
+			if card != null:
+				live_hand_uids.append(card.uid)
+	for uid in _mopsus_revealed_enemy_hand_uids.duplicate():
+		if uid not in live_hand_uids:
+			_mopsus_revealed_enemy_hand_uids.erase(uid)
 
 func _resolve_mopsus_hand_choice(card: MopsusScript, targets: Array[Card]) -> void:
 	if card == null or game_manager == null:
@@ -18805,6 +19169,7 @@ func _resolve_mopsus_hand_choice(card: MopsusScript, targets: Array[Card]) -> vo
 		_set_action_label_text("%s needs %d valid hand card(s) for Seer." % [card.card_name, card.get_required_seer_target_count(game_manager)])
 		update_ui()
 		return
+	_remember_mopsus_revealed_enemy_hand_cards(chosen_targets)
 	if _should_submit_ui_action_command():
 		var target_uids: Array[String] = []
 		for target in chosen_targets:
@@ -18822,7 +19187,12 @@ func _resolve_mopsus_hand_choice(card: MopsusScript, targets: Array[Card]) -> vo
 		var still_valid := card.can_activate(game_manager) and card.is_valid_seer_selection(game_manager, preview_targets)
 		card.activate(game_manager, {target_uids = preview_target_uids})
 		if still_valid:
-			_show_mopsus_reveal_prompt(card, preview_targets)
+			_remember_mopsus_revealed_enemy_hand_cards(preview_targets)
+			if preview_targets.size() == 1 and preview_targets[0] != null:
+				_set_action_label_text("%s revealed %s in hand." % [card.card_name, preview_targets[0].card_name])
+			else:
+				_set_action_label_text("%s revealed %d hand cards." % [card.card_name, preview_targets.size()])
+			update_ui()
 	_queue_magical_action(
 		CardAction.Type.ABILITY,
 		card,
@@ -18831,70 +19201,6 @@ func _resolve_mopsus_hand_choice(card: MopsusScript, targets: Array[Card]) -> vo
 		resolve_callback,
 		null
 	)
-
-func _show_mopsus_reveal_prompt(card: MopsusScript, targets: Array[Card]) -> void:
-	if card == null or game_manager == null or targets.is_empty():
-		return
-	_dismiss_zone_overlay()
-
-	var overlay := Control.new()
-	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
-	overlay.z_index = 300
-	add_child(overlay)
-	_promote_transient_ui(overlay)
-	_zone_overlay = overlay
-
-	var bg := ColorRect.new()
-	bg.color = Color(0.0, 0.0, 0.0, 0.65)
-	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	overlay.add_child(bg)
-
-	var panel_width := 0.36 if targets.size() == 1 else 0.64
-	var panel_height := 0.54 if targets.size() <= 3 else 0.68
-	var panel := _create_centered_overlay_panel(overlay, panel_width, panel_height)
-	var vbox := VBoxContainer.new()
-	vbox.add_theme_constant_override("separation", 8)
-	vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	vbox.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	panel.add_child(vbox)
-
-	var title := Label.new()
-	title.text = "%s saw %d card(s):" % [card.card_name, targets.size()]
-	title.add_theme_font_size_override("font_size", 15)
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	vbox.add_child(title)
-
-	var card_grid := GridContainer.new()
-	card_grid.columns = mini(3, maxi(1, targets.size()))
-	card_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	card_grid.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	vbox.add_child(card_grid)
-
-	for target in targets:
-		if target == null:
-			continue
-		var vc := VisualCard.new()
-		vc.setup(target)
-		vc.set_hover_viewer(game_manager.get_feedback_viewer())
-		vc.set_hover_preview_when_disabled(true)
-		vc.set_disabled(true, false)
-		card_grid.add_child(vc)
-
-	var close_btn := Button.new()
-	close_btn.text = "Close"
-	close_btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	close_btn.pressed.connect(func() -> void:
-		_dismiss_zone_overlay()
-		if targets.size() == 1 and targets[0] != null:
-			_set_action_label_text("%s inspected %s." % [card.card_name, targets[0].card_name])
-		else:
-			_set_action_label_text("%s inspected %d hand cards." % [card.card_name, targets.size()])
-		update_ui()
-	)
-	vbox.add_child(close_btn)
 
 func _show_freyja_active_prompt(card: FreyjaActive, prompt_targets: Array = []) -> void:
 	_hide_freyja_active_prompt()

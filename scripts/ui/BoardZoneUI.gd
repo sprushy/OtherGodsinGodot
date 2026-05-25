@@ -68,7 +68,7 @@ const LEVEL_BADGE_TOP := -12.0
 const LEVEL_BADGE_BOTTOM := 12.0
 const BADGE_ROW_GAP := 6.0
 const BADGE_ROW_TOP := LEVEL_BADGE_BOTTOM + BADGE_ROW_GAP + 31.0
-const GOD_ABILITY_BADGE_TOP_OFFSET := -10.0
+const GOD_ABILITY_BADGE_TOP_OFFSET := -22.0
 const TEZ_BADGE_LEFT := -62
 const TEZ_BADGE_RIGHT := -4
 const TEZ_PRIMARY_BADGE_TOP := BADGE_ROW_TOP
@@ -407,8 +407,10 @@ var _popup: Control = null
 var _preview_card: Card = null
 var viewer_override: Player = null
 var _hovered: bool = false
+var _badge_hovered: bool = false
 var _pinned: bool = false
 var _hide_pending: bool = false
+var _hover_exit_refresh_pending: bool = false
 var _move_indicator_active: bool = false
 var _move_indicator_direction: Vector2 = Vector2.ZERO
 var _move_indicator_source_center: Vector2 = Vector2.ZERO
@@ -427,9 +429,10 @@ const EQUIPMENT_AFFORDANCE_GAP := 4.0
 const EQUIPMENT_AFFORDANCE_TOP := 28.0
 const DEBUFF_AFFORDANCE_GAP := 4.0
 const DEBUFF_BADGE_SIZE := 22.0
-const ABILITY_BADGE_SIZE := 72.0
+const ABILITY_BADGE_SIZE := 96.0
 const CREATURE_ABILITY_BADGE_SIZE := ABILITY_BADGE_SIZE
-const CREATURE_ABILITY_BADGE_TOP_OFFSET := -41.0
+const CREATURE_ABILITY_BADGE_TOP_OFFSET := -23.0
+const E2_ABZU_BADGE_ICON_INSET := 10.0
 const ATTACK_TARGET_ICON_SIZE := 74.0
 const TARGET_ICON_PAD := 5.0
 const TARGET_ICON_GROUP_GAP := 8.0
@@ -455,8 +458,14 @@ const ANCIENT_POWER_LOCK_TEXTURE := preload("res://images/Ancient Power Lock.png
 const NORSE_POWER_LOCK_TEXTURE := preload("res://images/Norse Power Lock.png")
 const TIAMAT_GOD_SCRIPT := preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
 const KEYWORD_PANEL_GAP := 8.0
+const USER_SETTINGS_PATH := "user://settings.cfg"
+const COMBAT_SETTINGS_SECTION := "combat"
+const ALWAYS_SHOW_ABILITY_BADGES_KEY := "always_show_ability_badges"
 static var _zone_extent: float = BASE_ZONE_EXTENT
 static var _creature_action_symbol_state_by_card_uid: Dictionary = {}
+static var _always_show_ability_badges: bool = false
+static var _always_show_ability_badges_loaded: bool = false
+static var _active_affordance_hover_owner_id: int = 0
 
 var _row_label: String = ""
 var _followers_attack_result_text: String = ""
@@ -475,6 +484,30 @@ static func get_zone_size() -> Vector2:
 
 static func set_zone_extent(extent: float) -> void:
 	_zone_extent = max(BASE_ZONE_EXTENT, floor(extent))
+
+static func set_always_show_ability_badges(enabled: bool) -> void:
+	_always_show_ability_badges = enabled
+	_always_show_ability_badges_loaded = true
+
+static func get_always_show_ability_badges() -> bool:
+	if not _always_show_ability_badges_loaded:
+		_load_always_show_ability_badges_setting()
+	return _always_show_ability_badges
+
+static func _load_always_show_ability_badges_setting() -> void:
+	_always_show_ability_badges_loaded = true
+	var config := ConfigFile.new()
+	if config.load(USER_SETTINGS_PATH) != OK:
+		return
+	var value = config.get_value(COMBAT_SETTINGS_SECTION, ALWAYS_SHOW_ABILITY_BADGES_KEY, _always_show_ability_badges)
+	if value is bool:
+		_always_show_ability_badges = value
+	elif value is String:
+		var text := str(value).strip_edges().to_lower()
+		if text in ["true", "1", "yes", "on"]:
+			_always_show_ability_badges = true
+		elif text in ["false", "0", "no", "off"]:
+			_always_show_ability_badges = false
 
 static func get_action_point_card_uid(card: Card) -> String:
 	if card == null:
@@ -1519,7 +1552,9 @@ func _add_champions_call_badge(overlay: Control, card: Card, is_ready: bool) -> 
 
 	var clickable := not _is_enemy and god.get_controller() == _get_viewer_player()
 	var god_uid := BoardZoneUI.get_action_point_card_uid(god)
-	var badge := PanelContainer.new()
+	if not _should_show_ability_badge_control(god, is_ready, clickable):
+		return
+	var badge := Control.new()
 	badge.name = "ChampionsCallBadge"
 	badge.tooltip_text = "Champion's Call"
 	badge.mouse_filter = Control.MOUSE_FILTER_STOP if clickable else Control.MOUSE_FILTER_IGNORE
@@ -1532,34 +1567,12 @@ func _add_champions_call_badge(overlay: Control, card: Card, is_ready: bool) -> 
 	badge.offset_right = -6
 	badge.offset_bottom = badge_top + ABILITY_BADGE_SIZE
 
-	var badge_style := StyleBoxFlat.new()
-	badge_style.bg_color = Color(0.09, 0.045, 0.015, 0.82)
-	badge_style.border_color = Color(0.92, 0.62, 0.18, 0.82)
-	badge_style.shadow_color = Color(0.05, 0.025, 0.0, 0.58)
-	badge_style.shadow_size = 4
-	if is_ready:
-		badge_style.bg_color = Color(0.20, 0.09, 0.02, 0.94)
-		badge_style.border_color = Color(1.0, 0.78, 0.22, 1.0)
-		badge_style.shadow_color = Color(1.0, 0.62, 0.12, 0.78)
-		badge_style.shadow_size = 12
-	badge_style.corner_radius_top_left = 20
-	badge_style.corner_radius_top_right = 20
-	badge_style.corner_radius_bottom_left = 20
-	badge_style.corner_radius_bottom_right = 20
-	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		badge_style.set_border_width(side, 2 if is_ready else 1)
-	badge.add_theme_stylebox_override("panel", badge_style)
-
 	var icon := TextureRect.new()
 	icon.texture = CHAMPIONS_CALL_BADGE_TEXTURE
 	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	icon.offset_left = 3
-	icon.offset_top = 3
-	icon.offset_right = -3
-	icon.offset_bottom = -3
 	icon.modulate = Color(1, 1, 1, 1) if is_ready else Color(0.72, 0.72, 0.72, 0.72)
 	badge.add_child(icon)
 
@@ -1637,6 +1650,8 @@ func _add_tez_tonal_mastery_badge(overlay: Control, card: Card) -> void:
 	var texture := _get_tez_tonal_mastery_texture(card)
 	if texture == null:
 		return
+	if not _should_show_ability_badge_control(card, false, false):
+		return
 
 	var badge := Control.new()
 	badge.name = "TezTonalMasteryBadge"
@@ -1677,6 +1692,8 @@ func _add_smoking_mirror_badge(overlay: Control, card: Card) -> void:
 	var badge_ready := game_manager != null \
 		and card.has_method("can_resolve_necoc_yaotl_summon") \
 		and bool(card.call("can_resolve_necoc_yaotl_summon", game_manager))
+	if not _should_show_ability_badge_control(card, badge_ready, clickable):
+		return
 	var badge := Control.new()
 	badge.name = "SmokingMirrorBadge"
 	var hover_text := "Summon Tezcatlipoca, Active God"
@@ -1692,9 +1709,6 @@ func _add_smoking_mirror_badge(overlay: Control, card: Card) -> void:
 	badge.offset_top = TEZ_PRIMARY_BADGE_TOP
 	badge.offset_right = TEZ_BADGE_RIGHT
 	badge.offset_bottom = TEZ_PRIMARY_BADGE_BOTTOM
-
-	if badge_ready:
-		_add_badge_image_glow(badge, SMOKING_MIRROR_BADGE_TEXTURE, Color(0.75, 0.24, 1.0, 0.58))
 
 	var icon := TextureRect.new()
 	icon.texture = SMOKING_MIRROR_BADGE_TEXTURE
@@ -1727,6 +1741,8 @@ func _add_tez_sacrifice_badge(overlay: Control, card: Card) -> void:
 		and bool(card.call("can_activate", game_manager)) \
 		and not _get_tez_valid_sacrifices(card).is_empty()
 	var clickable := not _is_enemy and card.get_controller() == _get_viewer_player()
+	if not _should_show_ability_badge_control(card, badge_ready, clickable):
+		return
 
 	var badge := Control.new()
 	badge.name = "TezSacrificeBadge"
@@ -1743,9 +1759,6 @@ func _add_tez_sacrifice_badge(overlay: Control, card: Card) -> void:
 	badge.offset_top = TEZ_PRIMARY_BADGE_TOP
 	badge.offset_right = TEZ_BADGE_RIGHT
 	badge.offset_bottom = TEZ_PRIMARY_BADGE_BOTTOM
-
-	if badge_ready:
-		_add_badge_image_glow(badge, TEZ_SACRIFICE_BADGE_TEXTURE, Color(1.0, 0.0, 0.0, 0.92), 8.0)
 
 	var icon := TextureRect.new()
 	icon.texture = TEZ_SACRIFICE_BADGE_TEXTURE
@@ -1871,6 +1884,8 @@ func _add_e2_abzu_mode_badge(
 ) -> void:
 	if overlay == null or texture == null or hover_text.strip_edges() == "":
 		return
+	if not _should_show_ability_badge_control(card, badge_ready, clickable):
+		return
 	var badge_right := _get_creature_ability_badge_right(card)
 	var badge := Control.new()
 	badge.name = "E2AbzuBadge_%s" % mode
@@ -1883,15 +1898,16 @@ func _add_e2_abzu_mode_badge(
 	badge.offset_right = badge_right
 	badge.offset_bottom = top + CREATURE_ABILITY_BADGE_SIZE
 
-	if badge_ready:
-		_add_badge_image_glow(badge, texture, Color(0.30, 0.72, 1.0, 0.42), 6.0)
-
 	var icon := TextureRect.new()
 	icon.texture = texture
 	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	icon.offset_left = E2_ABZU_BADGE_ICON_INSET
+	icon.offset_top = E2_ABZU_BADGE_ICON_INSET
+	icon.offset_right = -E2_ABZU_BADGE_ICON_INSET
+	icon.offset_bottom = -E2_ABZU_BADGE_ICON_INSET
 	icon.modulate = Color(1, 1, 1, 1) if badge_ready else Color(0.78, 0.82, 0.88, 0.88)
 	badge.add_child(icon)
 
@@ -1968,6 +1984,8 @@ func _add_nimue_mode_badge(
 ) -> void:
 	if overlay == null or texture == null or hover_text.strip_edges() == "":
 		return
+	if not _should_show_ability_badge_control(card, badge_ready, clickable):
+		return
 	var badge_right := _get_creature_ability_badge_right(card)
 	var badge := Control.new()
 	badge.name = "NimueBadge_%s" % mode
@@ -1979,9 +1997,6 @@ func _add_nimue_mode_badge(
 	badge.offset_top = top
 	badge.offset_right = badge_right
 	badge.offset_bottom = top + CREATURE_ABILITY_BADGE_SIZE
-
-	if badge_ready:
-		_add_badge_image_glow(badge, texture, Color(0.30, 0.72, 1.0, 0.42), 6.0)
 
 	var icon := TextureRect.new()
 	icon.texture = texture
@@ -2046,11 +2061,16 @@ func _add_creature_ability_badge(overlay: Control, card: Card) -> void:
 
 	var clickable := not _is_enemy and card.get_controller() == viewer
 	var card_uid := BoardZoneUI.get_action_point_card_uid(card)
-	var badge_ready = clickable \
-		and game_manager != null \
-		and card.has_method("can_activate") \
-		and card.has_method("activate") \
-		and card.can_activate(game_manager)
+	var badge_ready = clickable and (
+		_is_card_usable_for_priority(card) if _is_priority_badge_filter_active() else (
+			game_manager != null
+			and card.has_method("can_activate")
+			and card.has_method("activate")
+			and card.can_activate(game_manager)
+		)
+	)
+	if not _should_show_ability_badge_control(card, badge_ready, clickable):
+		return
 	var hover_text := _get_creature_ability_badge_hover_text(card)
 	var badge_right := _get_creature_ability_badge_right(card)
 	var badge_top := _get_badge_row_top() + CREATURE_ABILITY_BADGE_TOP_OFFSET
@@ -2066,9 +2086,6 @@ func _add_creature_ability_badge(overlay: Control, card: Card) -> void:
 	badge.offset_right = badge_right
 	badge.offset_bottom = badge_top + CREATURE_ABILITY_BADGE_SIZE
 
-	if badge_ready:
-		_add_badge_image_glow(badge, texture, Color(1.0, 0.78, 0.22, 0.46), 6.0)
-
 	var icon := TextureRect.new()
 	icon.texture = texture
 	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
@@ -2077,27 +2094,6 @@ func _add_creature_ability_badge(overlay: Control, card: Card) -> void:
 	icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	icon.modulate = Color(1, 1, 1, 1) if badge_ready else Color(0.82, 0.82, 0.86, 0.9)
 	badge.add_child(icon)
-
-	var mana_cost := _get_creature_ability_badge_mana_cost(card)
-	if mana_cost > 0:
-		var cost_badge := _make_field_mana_badge("", mana_cost, 12, Color(1.0, 0.96, 0.78), 12.0)
-		var cost_size := cost_badge.get_combined_minimum_size()
-		var cost_gap := 4.0
-		var cost_top := badge_top + (CREATURE_ABILITY_BADGE_SIZE - cost_size.y) * 0.5
-		cost_badge.name = "CreatureAbilityManaCostBadge"
-		cost_badge.mouse_filter = Control.MOUSE_FILTER_STOP if hover_text.strip_edges() != "" else Control.MOUSE_FILTER_IGNORE
-		cost_badge.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND if clickable else Control.CURSOR_ARROW
-		cost_badge.modulate = Color(1, 1, 1, 1) if badge_ready else Color(0.82, 0.82, 0.86, 0.9)
-		cost_badge.z_index = 31
-		cost_badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-		cost_badge.offset_left = badge.offset_left - cost_gap - cost_size.x
-		cost_badge.offset_top = cost_top
-		cost_badge.offset_right = badge.offset_left - cost_gap
-		cost_badge.offset_bottom = cost_top + cost_size.y
-		if clickable and card_uid != "":
-			_connect_badge_click_action(cost_badge, "creature_ability", card_uid)
-		_connect_badge_hover(cost_badge, hover_text)
-		overlay.add_child(cost_badge)
 
 	if clickable and card_uid != "":
 		_connect_badge_click_action(badge, "creature_ability", card_uid)
@@ -2112,11 +2108,16 @@ func _add_god_custom_ability_badge(overlay: Control, card: Card) -> void:
 		return
 	var viewer := _get_viewer_player()
 	var clickable := not _is_enemy and card.get_controller() == viewer
-	var badge_ready = clickable \
-		and game_manager != null \
-		and card.has_method("can_activate") \
-		and card.has_method("activate") \
-		and card.can_activate(game_manager)
+	var badge_ready = clickable and (
+		_is_card_usable_for_priority(card) if _is_priority_badge_filter_active() else (
+			game_manager != null
+			and card.has_method("can_activate")
+			and card.has_method("activate")
+			and card.can_activate(game_manager)
+		)
+	)
+	if not _should_show_ability_badge_control(card, badge_ready, clickable):
+		return
 	var hover_text := _get_creature_ability_badge_hover_text(card)
 
 	var badge := Control.new()
@@ -2130,9 +2131,6 @@ func _add_god_custom_ability_badge(overlay: Control, card: Card) -> void:
 	badge.offset_top = badge_top
 	badge.offset_right = -6
 	badge.offset_bottom = badge_top + ABILITY_BADGE_SIZE
-
-	if badge_ready:
-		_add_badge_image_glow(badge, texture, Color(1.0, 0.72, 0.24, 0.46), 6.0)
 
 	var icon := TextureRect.new()
 	icon.texture = texture
@@ -2181,6 +2179,10 @@ func _connect_badge_hover(badge_control: Control, text: String) -> void:
 	badge_control.mouse_exited.connect(Callable(self, "_on_badge_mouse_exited"))
 
 func _on_badge_mouse_entered() -> void:
+	_badge_hovered = true
+	_hovered = true
+	_active_affordance_hover_owner_id = get_instance_id()
+	_hide_ability_popup()
 	var hovered_control := get_viewport().gui_get_hovered_control()
 	var badge_control := hovered_control
 	while badge_control != null and not badge_control.has_meta("hover_badge_text"):
@@ -2190,7 +2192,38 @@ func _on_badge_mouse_entered() -> void:
 	_show_badge_hover_popup(badge_control, str(badge_control.get_meta("hover_badge_text", "")))
 
 func _on_badge_mouse_exited() -> void:
+	_badge_hovered = false
 	_hide_badge_hover_popup()
+	_schedule_hover_exit_refresh()
+
+func _is_mouse_over_owned_badge() -> bool:
+	if get_viewport() == null:
+		return false
+	var hovered_control := get_viewport().gui_get_hovered_control()
+	var control := hovered_control
+	while control != null:
+		if control == self:
+			return hovered_control != null and _has_badge_hover_ancestor(hovered_control)
+		control = control.get_parent() as Control
+	return false
+
+func _has_badge_hover_ancestor(control: Control) -> bool:
+	var current := control
+	while current != null:
+		if current.has_meta("hover_badge_text"):
+			return true
+		if current == self:
+			return false
+		current = current.get_parent() as Control
+	return false
+
+func _is_mouse_in_affordance_hover_area() -> bool:
+	if get_viewport() == null:
+		return false
+	if _active_affordance_hover_owner_id != get_instance_id():
+		return false
+	var hover_rect := get_global_rect().grow(ABILITY_BADGE_SIZE + 18.0)
+	return hover_rect.has_point(get_global_mouse_position())
 
 func _on_popup_mouse_exited() -> void:
 	if not _pinned:
@@ -3829,9 +3862,12 @@ func _is_card_intercepting_followers_attack(card: Card) -> bool:
 func _is_hidden_board_card_for_priority_visuals(card: Card) -> bool:
 	if card == null:
 		return false
-	return card.current_zone != null \
-		and card.current_zone.is_board_zone() \
-		and (card.is_face_down or card.is_stealth or card.is_prepared)
+	if card.current_zone == null or not card.current_zone.is_board_zone():
+		return false
+	if not (card.is_face_down or card.is_stealth or card.is_prepared):
+		return false
+	var viewer := _get_viewer_player()
+	return card.get_controller() != viewer and not card.is_temporarily_revealed()
 
 func _is_card_usable_for_priority(card: Card) -> bool:
 	if card == null or game_manager == null:
@@ -3927,6 +3963,25 @@ func _should_glow_champions_call_badge(card: Card) -> bool:
 	if god.get_controller() != _get_viewer_player():
 		return false
 	return god.can_use_champions_call(game_manager)
+
+func _is_viewer_priority_player() -> bool:
+	if game_manager == null or game_manager.action_stack.is_empty():
+		return false
+	return game_manager.priority_player != null and game_manager.priority_player == _get_viewer_player()
+
+func _is_priority_badge_filter_active() -> bool:
+	return game_manager != null and (game_manager.priority_player != null or not game_manager.action_stack.is_empty())
+
+func _should_show_ability_badge_control(card: Card, badge_ready: bool = false, clickable: bool = false) -> bool:
+	if BoardZoneUI.get_always_show_ability_badges():
+		return true
+	if _is_priority_badge_filter_active():
+		return clickable and badge_ready and _is_card_usable_for_priority(card)
+	if _hovered or _badge_hovered or _is_mouse_in_affordance_hover_area():
+		return true
+	if _is_card_click_selected(card):
+		return true
+	return clickable and badge_ready and _is_viewer_priority_player()
 
 func set_preview_card(card: Card) -> void:
 	_preview_card = card
@@ -4315,6 +4370,8 @@ func _refresh_display() -> void:
 				_add_prepared_magical_mana_badge(fd_overlay, card)
 			if _is_card_attacking_on_stack(card) or _is_card_intercepting_on_stack(card) or _is_card_selected_attacker(card) or _is_card_selected_interceptor(card):
 				_add_attack_aura(fd_overlay)
+			if _is_card_usable_for_priority(card):
+				_add_priority_response_aura(fd_overlay)
 			var is_face_down_attack_candidate := _is_card_attack_candidate(card)
 			var is_face_down_target_icon_candidate := _has_card_target_icon_candidate(card)
 			if _is_card_targeted_on_stack(card) or _is_card_pending_target(card) or _is_card_pending_attack_target(card) or is_face_down_target_icon_candidate:
@@ -5001,14 +5058,19 @@ func _gui_input(event: InputEvent) -> void:
 func _notification(what: int) -> void:
 	match what:
 		NOTIFICATION_EXIT_TREE:
+			if _active_affordance_hover_owner_id == get_instance_id():
+				_active_affordance_hover_owner_id = 0
 			_pinned = false
 			_hovered = false
+			_badge_hovered = false
 			_hide_pending = false
+			_hover_exit_refresh_pending = false
 			_disconnect_visual_state_card()
 			_hide_badge_hover_popup()
 			_hide_ability_popup()
 		NOTIFICATION_MOUSE_ENTER:
 			_hovered = true
+			_active_affordance_hover_owner_id = get_instance_id()
 			var _c := _preview_card if _preview_card != null else (zone.cards[0] if zone != null and zone.cards.size() > 0 else null)
 			if _c != null:
 				_notify_hover_card_options_changed(_c)
@@ -5023,14 +5085,37 @@ func _notification(what: int) -> void:
 				if is_inside_tree() and not is_queued_for_deletion():
 					get_tree().create_timer(_delay).timeout.connect(Callable(self, "_try_show_popup"))
 		NOTIFICATION_MOUSE_EXIT:
+			if _badge_hovered or _is_mouse_over_owned_badge() or _is_mouse_in_affordance_hover_area():
+				_hovered = true
+				_schedule_hover_exit_refresh()
+				return
 			_hovered = false
+			_badge_hovered = false
 			_notify_hover_card_options_changed(null)
 			z_index = _get_resting_z_index()
 			if zone != null and zone.cards.is_empty():
 				_refresh_display()
 			elif zone != null and not zone.cards.is_empty():
-				_refresh_display()
+				_schedule_hover_exit_refresh()
 			_schedule_hide()
+
+func _schedule_hover_exit_refresh() -> void:
+	if _hover_exit_refresh_pending:
+		return
+	if not is_inside_tree() or is_queued_for_deletion():
+		return
+	_hover_exit_refresh_pending = true
+	await get_tree().create_timer(0.06).timeout
+	_hover_exit_refresh_pending = false
+	if not is_inside_tree() or is_queued_for_deletion() or get_viewport() == null:
+		return
+	if _hovered or _badge_hovered or _is_mouse_over_owned_badge():
+		return
+	if get_global_rect().has_point(get_global_mouse_position()) or _is_mouse_in_affordance_hover_area():
+		_hovered = true
+		_schedule_hover_exit_refresh()
+		return
+	_refresh_display()
 
 func _schedule_hide() -> void:
 	if _pinned or _hide_pending:
@@ -5047,6 +5132,8 @@ func _schedule_hide() -> void:
 	if _popup and is_instance_valid(_popup):
 		if _popup.get_global_rect().has_point(get_global_mouse_position()):
 			return  # Mouse is over the popup
+	if _badge_hovered or _is_mouse_over_owned_badge() or _is_mouse_in_affordance_hover_area():
+		return  # Mouse is over an affordance extending outside the zone
 	if get_global_rect().has_point(get_global_mouse_position()):
 		return  # Mouse returned to zone
 	_hide_ability_popup()
@@ -5065,14 +5152,23 @@ func _process(_delta: float) -> void:
 		return
 	if not is_inside_tree() or is_queued_for_deletion() or get_viewport() == null:
 		return
+	if _hovered and not _badge_hovered and not _is_mouse_over_owned_badge() and not _is_mouse_in_affordance_hover_area():
+		_hovered = false
+		_notify_hover_card_options_changed(null)
+		z_index = _get_resting_z_index()
+		_refresh_display()
+		return
 	if _popup and is_instance_valid(_popup):
 		var over_zone  := get_global_rect().has_point(get_global_mouse_position())
 		var over_popup := _popup.get_global_rect().has_point(get_global_mouse_position())
-		if not over_zone and not over_popup:
+		var over_badge := _badge_hovered or _is_mouse_over_owned_badge() or _is_mouse_in_affordance_hover_area()
+		if not over_zone and not over_popup and not over_badge:
 			_schedule_hide()
 
 func _try_show_popup() -> void:
 	if not _hovered:
+		return
+	if _badge_hovered or _is_mouse_over_owned_badge() or not get_global_rect().has_point(get_global_mouse_position()):
 		return
 	if not is_inside_tree() or is_queued_for_deletion() or get_viewport() == null:
 		return
