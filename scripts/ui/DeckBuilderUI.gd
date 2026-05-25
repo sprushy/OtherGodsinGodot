@@ -2371,7 +2371,7 @@ func _get_autofill_regular_copy_count(card: Card) -> int:
 	var remaining_copies := maxi(0, _max_copies(card) - current_count)
 	if remaining_copies <= 0:
 		return 0
-	if card.card_name == "Hyena Pack":
+	if card.card_name == "Hyena Pack" or card.card_name == "Pictish Beast":
 		return remaining_copies
 	return 1
 
