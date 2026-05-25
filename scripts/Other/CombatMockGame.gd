@@ -4689,7 +4689,6 @@ func _make_enemy_hand_overlay_revealed_card(card: Card) -> Control:
 func _layout_enemy_hand_overlay() -> void:
 	if _enemy_hand_overlay == null or not is_instance_valid(_enemy_hand_overlay):
 		return
-	var enemy_player := _get_display_opponent()
 	var cards := _enemy_hand_overlay.get_children()
 	var n := cards.size()
 	if n <= 0:

@@ -6,6 +6,8 @@ const ServerPathsScript = preload("res://scripts/server/ServerPaths.gd")
 const JsonStoreScript = preload("res://scripts/server/JsonStore.gd")
 const HEADLESS_ENTRY_SCRIPT_PATH := "res://scripts/server/HeadlessMatchServerMain.gd"
 const DEDICATED_SERVER_EXPORT_RELATIVE_PATH := "res://.exports/server/OtherGodsServer.exe"
+const MATCH_STATUS_FILE_STALE_SECONDS := 20
+const MATCH_STATUS_FILE_STARTUP_GRACE_SECONDS := 150
 
 signal match_created(match_session)
 signal match_closed(match_id: String, room_id: String, final_status: String)
@@ -167,6 +169,7 @@ func _write_launch_config(session) -> String:
 	if mkdir_err != OK and mkdir_err != ERR_ALREADY_EXISTS:
 		return ""
 	var config_path := base_dir.path_join("%s.json" % str(session.match_id))
+	session.status_file_path = _get_status_file_path_for_match(str(session.match_id))
 	if not JsonStoreScript.save_json(config_path, session.to_launch_config(), "MatchSupervisor"):
 		return ""
 	return config_path
@@ -179,11 +182,15 @@ func _refresh_active_matches() -> void:
 		var session = active_matches.get(match_id, null)
 		if session == null or not session.is_dedicated_headless():
 			continue
+		var status_close_reason := _get_status_file_close_reason(session, now_unix)
+		if not status_close_reason.is_empty():
+			close_match(str(match_id), status_close_reason, status_close_reason != MatchSessionScript.STATUS_FINISHED)
+			continue
 		if session.has_reconnect_timed_out(now_unix):
 			close_match(str(match_id), MatchSessionScript.STATUS_ABANDONED, true)
 			continue
 		if session.has_spawned_process() and not OS.is_process_running(int(session.process_id)):
-			close_match(str(match_id), MatchSessionScript.STATUS_FINISHED, false)
+			close_match(str(match_id), MatchSessionScript.STATUS_ABANDONED, false)
 
 func _apply_final_status(session, final_status: String) -> void:
 	match final_status:
@@ -208,9 +215,11 @@ func _cleanup_launch_config(session) -> void:
 	if session == null:
 		return
 	var config_path := str(session.launch_config_path).strip_edges()
-	if config_path.is_empty():
-		return
-	_cleanup_launch_config_path(config_path)
+	if not config_path.is_empty():
+		_cleanup_launch_config_path(config_path)
+	var status_file_path := str(session.status_file_path).strip_edges()
+	if not status_file_path.is_empty():
+		_cleanup_launch_config_path(status_file_path)
 
 func _cleanup_launch_config_path(config_path: String) -> void:
 	var resolved_path := config_path.strip_edges()
@@ -219,6 +228,36 @@ func _cleanup_launch_config_path(config_path: String) -> void:
 	for path in [resolved_path, "%s.tmp" % resolved_path, "%s.bak" % resolved_path]:
 		if FileAccess.file_exists(path):
 			DirAccess.remove_absolute(path)
+
+func _get_status_file_path_for_match(match_id: String) -> String:
+	var resolved_match_id := match_id.strip_edges()
+	if resolved_match_id.is_empty():
+		return ""
+	return ServerPathsScript.get_dedicated_matches_dir().path_join("%s.status.json" % resolved_match_id)
+
+func _get_status_file_close_reason(session, now_unix: int) -> String:
+	if session == null:
+		return MatchSessionScript.STATUS_ABANDONED
+	var status_path := str(session.status_file_path).strip_edges()
+	if status_path.is_empty():
+		return ""
+	if not FileAccess.file_exists(status_path):
+		var created_unix := int(session.created_unix)
+		if created_unix > 0 and now_unix - created_unix >= MATCH_STATUS_FILE_STARTUP_GRACE_SECONDS:
+			return MatchSessionScript.STATUS_ABANDONED
+		return ""
+	var status_data := JsonStoreScript.load_dictionary(status_path, {}, "MatchSupervisor")
+	if status_data.is_empty():
+		return ""
+	var status := str(status_data.get("status", "")).strip_edges()
+	if status == MatchSessionScript.STATUS_FINISHED:
+		return MatchSessionScript.STATUS_FINISHED
+	if status == MatchSessionScript.STATUS_ABANDONED:
+		return MatchSessionScript.STATUS_ABANDONED
+	var heartbeat_unix := int(status_data.get("heartbeat_unix", 0))
+	if heartbeat_unix > 0 and now_unix - heartbeat_unix >= MATCH_STATUS_FILE_STALE_SECONDS:
+		return MatchSessionScript.STATUS_ABANDONED
+	return ""
 
 func _resolve_headless_executable_path(executable_path: String) -> String:
 	var normalized_path := executable_path.strip_edges()

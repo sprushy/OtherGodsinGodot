@@ -568,7 +568,7 @@ func _populate_vbox(vbox: VBoxContainer) -> void:
 	var art := _build_art_node()
 	if art:
 		vbox.add_child(_build_art_container(art))
-	elif card_data != null and not card_data.name_at_bottom:
+	elif card_data != null and not card_data.name_at_bottom and not _hand_mode:
 		if level_lbl == null:
 			level_lbl = _make_level_label()
 		if level_lbl != null:
@@ -620,9 +620,17 @@ func _populate_vbox(vbox: VBoxContainer) -> void:
 		vbox.add_child(_make_name_label())
 
 func _build_content() -> void:
+	for child in get_children():
+		remove_child(child)
+		child.queue_free()
 	_level_tag = null
 	_level_label = null
 	_stats_label = null
+	_inner = null
+	_art_rect = null
+	_disabled_overlay = null
+	_power_lock_overlay = null
+	_defense_shield_overlay = null
 	# Outer (self) is a transparent layout-only shell — the HBoxContainer
 	# manages it, but rotation never touches it, preventing re-sort cascades.
 	var empty_style := StyleBoxEmpty.new()

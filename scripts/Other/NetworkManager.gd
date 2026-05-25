@@ -343,7 +343,7 @@ func _build_sender_info(peer_id: int) -> Dictionary:
 	}
 
 func _ensure_multiplayer_api() -> MultiplayerAPI:
-	if multiplayer != null:
+	if multiplayer != null and not use_current_scene_relative_path:
 		return multiplayer
 	if get_tree() == null:
 		return null

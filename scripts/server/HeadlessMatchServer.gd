@@ -6,9 +6,11 @@ const HeadlessMatchHostScript = preload("res://scripts/server/HeadlessMatchHost.
 const MatchSessionScript = preload("res://scripts/server/MatchSession.gd")
 const DefaultMatchSetupScript = preload("res://scripts/server/DefaultMatchSetup.gd")
 const MatchHistoryStoreScript = preload("res://scripts/server/MatchHistoryStore.gd")
+const JsonStoreScript = preload("res://scripts/server/JsonStore.gd")
 const INITIAL_JOIN_TIMEOUT_SECONDS := 120
 const ABANDONED_MATCH_SHUTDOWN_DELAY_SECONDS := 0.25
 const GAME_END_SHUTDOWN_DELAY_SECONDS := 3.0
+const STATUS_HEARTBEAT_INTERVAL_SECONDS := 1.0
 
 signal startup_succeeded(match_id: String, port: int)
 signal startup_failed(message: String)
@@ -26,8 +28,14 @@ var _match_history_store = MatchHistoryStoreScript.new()
 var _match_started: bool = false
 var _initial_join_deadline_unix: int = 0
 var _abandoned_shutdown_started: bool = false
+var _status_heartbeat_elapsed: float = 0.0
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
+	if not _abandoned_shutdown_started:
+		_status_heartbeat_elapsed += delta
+		if _status_heartbeat_elapsed >= STATUS_HEARTBEAT_INTERVAL_SECONDS:
+			_status_heartbeat_elapsed = 0.0
+			_write_status_file()
 	_shutdown_if_match_was_abandoned()
 
 func start_from_config(config: Dictionary) -> Error:
@@ -40,6 +48,7 @@ func start_from_config(config: Dictionary) -> Error:
 	if match_session == null:
 		startup_failed.emit("Failed to rebuild match session from launch config.")
 		return ERR_INVALID_DATA
+	_write_status_file(MatchSessionScript.STATUS_STARTING)
 	_initial_join_deadline_unix = int(Time.get_unix_time_from_system()) + INITIAL_JOIN_TIMEOUT_SECONDS
 
 	game_manager = GameManager.new()
@@ -88,6 +97,7 @@ func start_from_config(config: Dictionary) -> Error:
 	if not game_manager.game_ended.is_connected(_on_game_ended):
 		game_manager.game_ended.connect(_on_game_ended)
 
+	_write_status_file(MatchSessionScript.STATUS_ACTIVE)
 	startup_succeeded.emit(match_session.match_id, match_session.match_port)
 	return OK
 
@@ -160,6 +170,7 @@ func _on_game_ended(_winner: Player, _loser: Player) -> void:
 	_abandoned_shutdown_started = true
 	if match_session != null:
 		match_session.mark_finished()
+	_write_status_file(MatchSessionScript.STATUS_FINISHED)
 	_record_match_result(_winner, _loser)
 	var tree := get_tree()
 	if tree == null:
@@ -186,6 +197,7 @@ func _shutdown_abandoned_match(reason: String) -> void:
 	_abandoned_shutdown_started = true
 	if match_session != null:
 		match_session.mark_abandoned()
+	_write_status_file(MatchSessionScript.STATUS_ABANDONED, reason)
 	if network_manager != null:
 		network_manager.broadcast_event_to_all("match_abandoned", {"reason": reason})
 	var tree := get_tree()
@@ -212,6 +224,35 @@ func _record_match_result(winner: Player, loser: Player) -> void:
 	)
 	if not bool(record_result.get("success", false)):
 		push_warning("HeadlessMatchServer: failed to record match result: %s" % str(record_result.get("message", "Unknown error.")))
+
+func _write_status_file(status_override: String = "", reason: String = "") -> void:
+	if match_session == null:
+		return
+	var status_path := str(match_session.status_file_path).strip_edges()
+	if status_path.is_empty():
+		return
+	var status := status_override.strip_edges()
+	if status.is_empty():
+		status = str(match_session.status).strip_edges()
+	var status_dir := status_path.get_base_dir()
+	if not status_dir.is_empty():
+		var mkdir_err := DirAccess.make_dir_recursive_absolute(status_dir)
+		if mkdir_err != OK and mkdir_err != ERR_ALREADY_EXISTS:
+			return
+	var payload := {
+		"match_id": str(match_session.match_id),
+		"room_id": str(match_session.room_id),
+		"status": status,
+		"heartbeat_unix": int(Time.get_unix_time_from_system()),
+		"match_started": _match_started,
+		"all_players_connected": match_session.all_players_connected(),
+		"waiting_for_reconnect": match_session.is_waiting_for_reconnect(),
+		"reconnect_deadline_unix": int(match_session.reconnect_deadline_unix),
+	}
+	var clean_reason := reason.strip_edges()
+	if not clean_reason.is_empty():
+		payload["reason"] = clean_reason
+	JsonStoreScript.save_json(status_path, payload, "HeadlessMatchServer")
 
 func _get_player_god_name(player: Player) -> String:
 	if player == null or player.god_zone == null or player.god_zone.cards.is_empty():

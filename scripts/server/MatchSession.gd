@@ -17,10 +17,12 @@ var status: String = STATUS_STARTING
 var server_mode: String = SERVER_MODE_IN_PROCESS_HOST
 var is_ranked: bool = true
 var launch_config_path: String = ""
+var status_file_path: String = ""
 var process_id: int = 0
 var process_launch_error: String = ""
 var reconnect_deadline_unix: int = 0
 var reconnect_window_seconds: int = 90
+var created_unix: int = 0
 var player_match_tokens: Dictionary = {}
 var player_decks_by_session: Dictionary = {}
 var player_identity_by_session: Dictionary = {}
@@ -49,6 +51,7 @@ func _init(
 	player_session_ids = p_player_session_ids.duplicate()
 	player_decks_by_session = p_player_decks_by_session.duplicate(true)
 	player_identity_by_session = p_player_identity_by_session.duplicate(true)
+	created_unix = int(Time.get_unix_time_from_system())
 	_ensure_player_match_tokens()
 
 func mark_active() -> void:
@@ -212,6 +215,7 @@ func has_reconnect_timed_out(now_unix: int = -1) -> bool:
 func clear_process_tracking() -> void:
 	process_id = 0
 	launch_config_path = ""
+	status_file_path = ""
 
 func to_match_info(session_id: String = "") -> Dictionary:
 	var match_info := {
@@ -254,6 +258,8 @@ func to_launch_config() -> Dictionary:
 		"server_mode": server_mode,
 		"is_ranked": is_ranked,
 		"reconnect_window_seconds": reconnect_window_seconds,
+		"created_unix": created_unix,
+		"status_file_path": status_file_path,
 		"player_match_tokens": player_match_tokens.duplicate(true),
 		"player_decks_by_session": player_decks_by_session.duplicate(true),
 		"player_identity_by_session": player_identity_by_session.duplicate(true),
@@ -285,6 +291,8 @@ static func from_launch_config(config: Dictionary) -> MatchSession:
 	session.server_mode = str(config.get("server_mode", SERVER_MODE_IN_PROCESS_HOST))
 	session.is_ranked = bool(config.get("is_ranked", true))
 	session.reconnect_window_seconds = int(config.get("reconnect_window_seconds", 90))
+	session.created_unix = int(config.get("created_unix", session.created_unix))
+	session.status_file_path = str(config.get("status_file_path", "")).strip_edges()
 	var configured_tokens = config.get("player_match_tokens", {})
 	if configured_tokens is Dictionary:
 		session.player_match_tokens = (configured_tokens as Dictionary).duplicate(true)

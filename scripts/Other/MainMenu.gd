@@ -129,6 +129,7 @@ var _update_now_button: Button = null
 var _update_download_status_label: Label = null
 var _is_auto_updating: bool = false
 var _automatic_update_required: bool = false
+var _server_version_update_check_requested: bool = false
 var _startup_prompt_gate_open: bool = false
 var _rules_overlay: Control = null
 var _seek_auto_refresh_elapsed: float = 0.0
@@ -484,6 +485,7 @@ func _build_server_version_overlay() -> void:
 func _set_connected_server_version(version: String) -> void:
 	_connected_server_version = AppReleaseInfoScript.normalize_version(version)
 	_refresh_server_version_label()
+	_maybe_check_for_server_required_update(_connected_server_version)
 
 func _refresh_server_version_label() -> void:
 	if _server_version_label == null or not is_instance_valid(_server_version_label):
@@ -1692,6 +1694,21 @@ func _should_check_for_updates() -> bool:
 	if not _smoke_config.is_empty():
 		return false
 	return AppReleaseInfoScript.is_release_version(AppReleaseInfoScript.get_current_version())
+
+func _maybe_check_for_server_required_update(server_version: String) -> void:
+	if server_version.is_empty() or _server_version_update_check_requested:
+		return
+	if _is_auto_updating or (_update_prompt_overlay != null and is_instance_valid(_update_prompt_overlay)):
+		return
+	if not AppReleaseInfoScript.is_release_version(server_version):
+		return
+	var current_version := AppReleaseInfoScript.get_current_version()
+	if AppReleaseInfoScript.compare_versions(current_version, server_version) >= 0:
+		return
+	_server_version_update_check_requested = true
+	if status_label != null:
+		status_label.text = "Server is running %s. Checking for update..." % server_version
+	_start_update_check()
 
 func _ensure_update_check_request() -> void:
 	if _update_check_request != null and is_instance_valid(_update_check_request):

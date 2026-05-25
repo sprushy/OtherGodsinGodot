@@ -22,7 +22,16 @@ jobs:
         env:
           BUILD_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}
         run: |
-          ((Get-Content project.godot) -replace '^config/version=.*$', "config/version=`"$env:BUILD_VERSION`"") | Set-Content project.godot
+          $resourceVersion = $env:BUILD_VERSION -replace '^v', ''
+          if ($resourceVersion -notmatch '^\d+(\.\d+){1,3}$') {
+            $resourceVersion = '0.0.0'
+          }
+          $projectContent = Get-Content project.godot -Raw
+          $projectContent = $projectContent -replace '(?m)^config/version=.*$', "config/version=`"$env:BUILD_VERSION`""
+          Set-Content project.godot $projectContent -NoNewline
+          $exportContent = Get-Content export_presets.cfg -Raw
+          $exportContent = $exportContent -replace '(?m)^(application/(?:file_version|product_version|short_version|version)=)".*"$', "`${1}`"$resourceVersion`""
+          Set-Content export_presets.cfg $exportContent -NoNewline
 
       - name: Setup Godot
         uses: chickensoft-games/setup-godot@v2
@@ -72,7 +81,16 @@ jobs:
         env:
           BUILD_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}
         run: |
-          ((Get-Content project.godot) -replace '^config/version=.*$', "config/version=`"$env:BUILD_VERSION`"") | Set-Content project.godot
+          $resourceVersion = $env:BUILD_VERSION -replace '^v', ''
+          if ($resourceVersion -notmatch '^\d+(\.\d+){1,3}$') {
+            $resourceVersion = '0.0.0'
+          }
+          $projectContent = Get-Content project.godot -Raw
+          $projectContent = $projectContent -replace '(?m)^config/version=.*$', "config/version=`"$env:BUILD_VERSION`""
+          Set-Content project.godot $projectContent -NoNewline
+          $exportContent = Get-Content export_presets.cfg -Raw
+          $exportContent = $exportContent -replace '(?m)^(application/(?:file_version|product_version|short_version|version)=)".*"$', "`${1}`"$resourceVersion`""
+          Set-Content export_presets.cfg $exportContent -NoNewline
 
       - name: Setup Godot
         uses: chickensoft-games/setup-godot@v2
