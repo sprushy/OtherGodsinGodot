@@ -32,6 +32,7 @@ var last_server_error: int = OK
 var trace_file_path: String = ""
 var use_current_scene_relative_path: bool = false
 var validate_match_command_types: bool = true
+var _managed_multiplayer_api: MultiplayerAPI = null
 
 ## Maps player_index (0/1) to their ENet peer_id.
 ## Player 0 = host (peer_id 1), Player 1 = first remote client.
@@ -343,20 +344,19 @@ func _build_sender_info(peer_id: int) -> Dictionary:
 	}
 
 func _ensure_multiplayer_api() -> MultiplayerAPI:
+	if use_current_scene_relative_path and _managed_multiplayer_api != null:
+		return _managed_multiplayer_api
 	if multiplayer != null and not use_current_scene_relative_path:
 		return multiplayer
-	if get_tree() == null:
+	if get_tree() == null or not is_inside_tree():
 		return null
 	var fallback_api := MultiplayerAPI.create_default_interface()
 	var target_path: NodePath = get_path()
-	if use_current_scene_relative_path and get_tree().current_scene != null:
-		var active_scene: Node = get_tree().current_scene
-		if active_scene == self:
-			target_path = NodePath(".")
-		elif active_scene.is_ancestor_of(self):
-			target_path = active_scene.get_path_to(self)
 	get_tree().set_multiplayer(fallback_api, target_path)
-	return multiplayer
+	if use_current_scene_relative_path:
+		_managed_multiplayer_api = fallback_api
+		return _managed_multiplayer_api
+	return multiplayer if multiplayer != null else fallback_api
 
 func _has_active_multiplayer_peer() -> bool:
 	var api := _ensure_multiplayer_api()

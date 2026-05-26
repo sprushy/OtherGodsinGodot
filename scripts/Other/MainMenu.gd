@@ -492,8 +492,10 @@ func _refresh_server_version_label() -> void:
 		return
 	var server_text := ""
 	if _connected_server_version.is_empty():
-		if _has_connected_lobby_transport():
+		if _has_active_lobby_connection():
 			server_text = "Server: version unavailable"
+		elif _has_connected_lobby_transport():
+			server_text = "Server: signing in..."
 		else:
 			server_text = "Server: not connected"
 	else:

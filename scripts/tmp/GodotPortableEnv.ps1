@@ -57,6 +57,17 @@ function Resolve-GodotExecutable {
     }
     $resolved = $resolved | Select-Object -Unique
 
+    $expectedVersion = ''
+    try {
+        $projectRoot = Get-GodotProjectRoot
+        $versionFile = Join-Path $projectRoot '.godot-version'
+        if (Test-Path -LiteralPath $versionFile) {
+            $expectedVersion = (Get-Content -LiteralPath $versionFile -Raw).Trim()
+        }
+    } catch {
+    }
+
+    $matchingExpectedVersion = @()
     $preferred = @()
     foreach ($path in $resolved) {
         $versionText = ''
@@ -67,7 +78,14 @@ function Resolve-GodotExecutable {
         if ($path -match 'mono' -or $versionText -match 'mono') {
             continue
         }
+        if (-not [string]::IsNullOrWhiteSpace($expectedVersion) -and $versionText -match [regex]::Escape($expectedVersion)) {
+            $matchingExpectedVersion += $path
+            continue
+        }
         $preferred += $path
+    }
+    if ($matchingExpectedVersion.Count -gt 0) {
+        return $matchingExpectedVersion[0]
     }
     if ($preferred.Count -gt 0) {
         return $preferred[0]

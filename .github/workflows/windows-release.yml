@@ -17,6 +17,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Load Godot version
+        shell: pwsh
+        run: |
+          $version = (Get-Content .godot-version -Raw).Trim()
+          if (-not $version) {
+            throw ".godot-version is empty."
+          }
+          "GODOT_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
+
       - name: Stamp build version
         shell: pwsh
         env:
@@ -36,7 +45,7 @@ jobs:
       - name: Setup Godot
         uses: chickensoft-games/setup-godot@v2
         with:
-          version: 4.6.1
+          version: ${{ env.GODOT_VERSION }}
           use-dotnet: false
           include-templates: true
 
@@ -76,6 +85,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Load Godot version
+        shell: pwsh
+        run: |
+          $version = (Get-Content .godot-version -Raw).Trim()
+          if (-not $version) {
+            throw ".godot-version is empty."
+          }
+          "GODOT_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
+
       - name: Stamp build version
         shell: pwsh
         env:
@@ -95,7 +113,7 @@ jobs:
       - name: Setup Godot
         uses: chickensoft-games/setup-godot@v2
         with:
-          version: 4.6.1
+          version: ${{ env.GODOT_VERSION }}
           use-dotnet: false
           include-templates: true
 

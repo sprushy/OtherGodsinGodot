@@ -8,6 +8,7 @@ const LOBBY_EVENT_TYPE := "__lobby_event__"
 const CONNECT_ATTEMPT_TIMEOUT_SECONDS := 5.0
 const INITIAL_AUTH_RETRY_INTERVAL_SECONDS := 0.1
 const INITIAL_AUTH_MAX_ATTEMPTS := 30
+const AUTH_RESPONSE_TIMEOUT_SECONDS := 8.0
 
 signal connected_to_lobby()
 signal server_version_updated(version: String)
@@ -58,6 +59,7 @@ var _pending_auth_mode: String = "login"
 var _pending_password: String = ""
 var _connect_attempt_serial: int = 0
 var _initial_auth_attempt_serial: int = 0
+var _auth_response_serial: int = 0
 var _transport_connected_signal_received: bool = false
 var _ignore_network_events: bool = false
 
@@ -75,6 +77,7 @@ func connect_to_server(
 	password: String = ""
 ) -> Error:
 	_cancel_initial_auth_request()
+	_cancel_auth_response_timeout()
 	_transport_connected_signal_received = false
 	_ignore_network_events = false
 	_is_authenticated = false
@@ -117,6 +120,7 @@ func disconnect_from_server() -> void:
 	_ignore_network_events = true
 	_cancel_connect_attempt_timeout()
 	_cancel_initial_auth_request()
+	_cancel_auth_response_timeout()
 	_transport_connected_signal_received = false
 	_is_authenticated = false
 	current_session_id = ""
@@ -268,6 +272,8 @@ func lobby_event(message: Dictionary) -> void:
 
 	match message_type:
 		LobbyProtocolScript.HELLO_OK:
+			_cancel_initial_auth_request()
+			_cancel_auth_response_timeout()
 			_is_authenticated = true
 			_set_current_server_version(str(payload.get("server_version", "")))
 			current_session_id = str(payload.get("session_id", ""))
@@ -285,6 +291,8 @@ func lobby_event(message: Dictionary) -> void:
 			current_preferred_account_deck_id = ""
 			login_succeeded.emit(current_session_id, current_reconnect_token, current_player_name)
 		LobbyProtocolScript.LOBBY_RECONNECT_OK:
+			_cancel_initial_auth_request()
+			_cancel_auth_response_timeout()
 			_is_authenticated = true
 			_set_current_server_version(str(payload.get("server_version", "")))
 			current_session_id = str(payload.get("session_id", ""))
@@ -315,6 +323,9 @@ func lobby_event(message: Dictionary) -> void:
 			current_room_snapshot = payload.duplicate(true)
 			room_snapshot_updated.emit(payload)
 		LobbyProtocolScript.ROOM_ERROR:
+			if not _is_authenticated:
+				_cancel_initial_auth_request()
+				_cancel_auth_response_timeout()
 			room_error.emit(str(payload.get("message", "Unknown lobby error.")))
 		LobbyProtocolScript.MATCH_ASSIGNED:
 			current_active_match_info = payload.duplicate(true)
@@ -348,6 +359,29 @@ func _begin_initial_auth_request() -> void:
 func _cancel_initial_auth_request() -> void:
 	_initial_auth_attempt_serial += 1
 
+func _arm_auth_response_timeout() -> void:
+	var tree := get_tree()
+	if tree == null:
+		return
+	_auth_response_serial += 1
+	var expected_serial := _auth_response_serial
+	var timeout_timer := tree.create_timer(AUTH_RESPONSE_TIMEOUT_SECONDS)
+	timeout_timer.timeout.connect(Callable(self, "_on_auth_response_timeout").bind(expected_serial))
+
+func _cancel_auth_response_timeout() -> void:
+	_auth_response_serial += 1
+
+func _on_auth_response_timeout(expected_serial: int) -> void:
+	if expected_serial != _auth_response_serial:
+		return
+	if _is_authenticated or _ignore_network_events:
+		return
+	if not is_transport_connected():
+		return
+	_trace("auth response timed out")
+	disconnect_from_server()
+	connection_failed.emit("The lobby sign-in timed out.")
+
 func _try_send_initial_auth_request(expected_serial: int, attempt: int) -> void:
 	if expected_serial != _initial_auth_attempt_serial:
 		return
@@ -376,6 +410,7 @@ func _send_initial_auth_request() -> void:
 			"session_id": _pending_session_id,
 			"reconnect_token": _pending_reconnect_token,
 		})
+		_arm_auth_response_timeout()
 		return
 
 	if _pending_auth_mode == "register":
@@ -383,18 +418,21 @@ func _send_initial_auth_request() -> void:
 			"username": _pending_player_name,
 			"password": _pending_password,
 		})
+		_arm_auth_response_timeout()
 		return
 	if _pending_auth_mode == "login":
 		_send_request(LobbyProtocolScript.LOGIN_ACCOUNT, {
 			"username": _pending_player_name,
 			"password": _pending_password,
 		})
+		_arm_auth_response_timeout()
 		return
 
 	_send_request(LobbyProtocolScript.LOGIN_ACCOUNT, {
 		"username": _pending_player_name,
 		"password": _pending_password,
 	})
+	_arm_auth_response_timeout()
 
 func _should_attempt_pending_lobby_reconnect() -> bool:
 	if _pending_session_id.is_empty() or _pending_reconnect_token.is_empty():
@@ -406,6 +444,7 @@ func _should_attempt_pending_lobby_reconnect() -> bool:
 func _on_connection_failed() -> void:
 	_cancel_connect_attempt_timeout()
 	_cancel_initial_auth_request()
+	_cancel_auth_response_timeout()
 	_transport_connected_signal_received = false
 	if _ignore_network_events:
 		_trace("ignoring connection_failed after disconnect")
@@ -427,6 +466,7 @@ func _on_connection_failed() -> void:
 func _on_server_disconnected() -> void:
 	_cancel_connect_attempt_timeout()
 	_cancel_initial_auth_request()
+	_cancel_auth_response_timeout()
 	_transport_connected_signal_received = false
 	if _ignore_network_events:
 		_trace("ignoring server_disconnected after disconnect")
