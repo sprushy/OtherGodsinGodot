@@ -11,6 +11,12 @@ const CHAMPIONS_CALL_BADGE_TEXTURE := preload("res://images/Champion's Call Horn
 const SMOKING_MIRROR_BADGE_TEXTURE := preload("res://images/Smoking Mirror Icon.png")
 const TEZ_SACRIFICE_BADGE_TEXTURE := preload("res://images/TezSacBadge.png")
 const BERSERKER_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/BerserkerRageBadge.png")
+const BEYLA_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/BeylaReviveBadge.png")
+const ROBOTIC_FOOTSOLDIER_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/RoboticFootsoldierUnitedFrontBadge.png")
+const SEVENTH_SAGE_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/SeventhSageImbueAllyBadge.png")
+const TEZCATLIPOCA_BLASPHEMER_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/TezcatlipocaBlasphemerBloodMagicBadge.png")
+const WHITE_SERPENT_MEDICINE_BADGE_TEXTURE := preload("res://images/ability_badges/WhiteSerpentMedicineBadge.png")
+const WINGED_LION_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/WingedLionFlankBadge.png")
 const ALU_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/AluStupefyBadge.png")
 const CLAY_EATERS_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/ClayEatersGeophagiaBadge.png")
 const EN_HEDU_ANNA_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/EnHeduAnnaExaltationBadge.png")
@@ -80,6 +86,7 @@ const TEZ_SECONDARY_BADGE_BOTTOM := TEZ_SECONDARY_BADGE_TOP + 60.0
 const BASE_BOARD_Z_INDEX := 0
 const RAISED_BOARD_Z_INDEX := 2
 const GOD_INDICATOR_Z_INDEX := 3
+const PRIORITY_RESPONSE_GLOW_COLOR := Color(0.28, 0.92, 0.50, 0.95)
 # Keep hovered board cards above the hand fan overlay, but below the larger
 # transient previews and modal UI promoted by CombatMockGame.
 const HOVER_BOARD_Z_INDEX := 2260
@@ -384,6 +391,79 @@ class TargetAura extends Control:
 			var angle := lerpf(from_angle, to_angle, t)
 			points.append(center + Vector2(cos(angle), sin(angle)) * radius)
 
+class PriorityResponseAura extends Control:
+	const _ARC_STEPS := 8
+
+	func _ready() -> void:
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		queue_redraw()
+
+	func _draw() -> void:
+		var outer_rect := Rect2(Vector2(4.0, 4.0), size - Vector2(8.0, 8.0))
+		if outer_rect.size.x <= 0.0 or outer_rect.size.y <= 0.0:
+			return
+
+		_draw_rounded_outline(outer_rect, 10.0, Color(0.28, 0.92, 0.50, 0.10), 16.0)
+		_draw_rounded_outline(outer_rect, 10.0, Color(0.28, 0.92, 0.50, 0.20), 10.0)
+		_draw_rounded_outline(outer_rect, 10.0, Color(0.28, 0.92, 0.50, 0.34), 5.0)
+		_draw_rounded_outline(outer_rect, 10.0, Color(0.28, 0.92, 0.50, 0.98), 2.6)
+
+		var inner_rect := outer_rect.grow(-6.0)
+		if inner_rect.size.x > 0.0 and inner_rect.size.y > 0.0:
+			_draw_rounded_outline(inner_rect, 7.0, Color(0.74, 1.0, 0.78, 0.66), 1.2)
+
+	func _draw_rounded_outline(rect: Rect2, radius: float, color: Color, width: float) -> void:
+		var points := _build_rounded_rect_points(rect, radius)
+		if points.size() >= 2:
+			draw_polyline(points, color, width, true)
+
+	func _build_rounded_rect_points(rect: Rect2, radius: float) -> PackedVector2Array:
+		var clamped_radius := minf(radius, minf(rect.size.x * 0.5, rect.size.y * 0.5))
+		var points := PackedVector2Array()
+		points.append(rect.position + Vector2(clamped_radius, 0.0))
+		_append_arc(
+			points,
+			rect.position + Vector2(rect.size.x - clamped_radius, clamped_radius),
+			-PI * 0.5,
+			0.0,
+			clamped_radius
+		)
+		_append_arc(
+			points,
+			rect.position + Vector2(rect.size.x - clamped_radius, rect.size.y - clamped_radius),
+			0.0,
+			PI * 0.5,
+			clamped_radius
+		)
+		_append_arc(
+			points,
+			rect.position + Vector2(clamped_radius, rect.size.y - clamped_radius),
+			PI * 0.5,
+			PI,
+			clamped_radius
+		)
+		_append_arc(
+			points,
+			rect.position + Vector2(clamped_radius, clamped_radius),
+			PI,
+			PI * 1.5,
+			clamped_radius
+		)
+		points.append(points[0])
+		return points
+
+	func _append_arc(
+		points: PackedVector2Array,
+		center: Vector2,
+		from_angle: float,
+		to_angle: float,
+		radius: float
+	) -> void:
+		for step in range(1, _ARC_STEPS + 1):
+			var t := float(step) / float(_ARC_STEPS)
+			var angle := lerpf(from_angle, to_angle, t)
+			points.append(center + Vector2(cos(angle), sin(angle)) * radius)
+
 signal zone_clicked(zone: Zone)
 signal card_clicked(card: Card)
 signal equipment_target_action_clicked(card: Card, action: String)
@@ -391,6 +471,7 @@ signal champions_call_clicked(card: GodCard)
 signal tez_necoc_yaotl_badge_clicked(card: Card)
 signal creature_stance_switch_clicked(card: Card, target_mode: Card.CreatureMode)
 signal creature_ability_badge_clicked(card: Card)
+signal creature_ability_option_badge_clicked(card: Card, ability: String)
 signal e2_abzu_badge_clicked(card: Card, mode: String)
 signal nimue_badge_clicked(card: Card, mode: String)
 signal creature_drag_started(card: Card, from_zone: Zone)
@@ -533,6 +614,11 @@ func _emit_creature_ability_badge_clicked_for_uid(card_uid: String) -> void:
 	if resolved_card != null:
 		creature_ability_badge_clicked.emit(resolved_card)
 
+func _emit_creature_ability_option_badge_clicked_for_uid(card_uid: String, ability: String) -> void:
+	var resolved_card := _find_zone_card_by_uid(card_uid)
+	if resolved_card != null:
+		creature_ability_option_badge_clicked.emit(resolved_card, ability)
+
 func _emit_e2_abzu_badge_clicked_for_uid(card_uid: String, mode: String) -> void:
 	var resolved_card := _find_zone_card_by_uid(card_uid)
 	if resolved_card != null:
@@ -602,6 +688,8 @@ func _on_badge_gui_input(event: InputEvent) -> void:
 			_emit_nimue_badge_clicked_for_uid(card_uid, str(extra_value))
 		"creature_ability":
 			_emit_creature_ability_badge_clicked_for_uid(card_uid)
+		"creature_ability_option":
+			_emit_creature_ability_option_badge_clicked_for_uid(card_uid, str(extra_value))
 		"card_clicked":
 			_emit_card_clicked_for_uid(card_uid)
 		"equipment_target":
@@ -1543,6 +1631,13 @@ func _apply_generic_god_activation_style(style: StyleBoxFlat, aura_color: Color)
 	style.shadow_color = aura_color
 	style.shadow_size = max(style.shadow_size, 16)
 
+func _apply_priority_response_style(style: StyleBoxFlat) -> void:
+	if style == null:
+		return
+	style.border_color = PRIORITY_RESPONSE_GLOW_COLOR
+	style.shadow_color = PRIORITY_RESPONSE_GLOW_COLOR
+	style.shadow_size = max(style.shadow_size, 16)
+
 func _add_champions_call_badge(overlay: Control, card: Card, is_ready: bool) -> void:
 	if overlay == null or card == null:
 		return
@@ -1783,6 +1878,16 @@ func _get_creature_ability_badge_texture(card: Card) -> Texture2D:
 		return SHIFT_ABILITY_BADGE_TEXTURE
 	if card.card_name == "Berserker":
 		return BERSERKER_ABILITY_BADGE_TEXTURE
+	if card.card_name == "Beyla":
+		return BEYLA_ABILITY_BADGE_TEXTURE
+	if card.card_name == "Robotic Footsoldier":
+		return ROBOTIC_FOOTSOLDIER_ABILITY_BADGE_TEXTURE
+	if card.card_name == "Seventh Sage Utuabzu":
+		return SEVENTH_SAGE_ABILITY_BADGE_TEXTURE
+	if card.card_name == "Tezcatlipoca Blasphemer":
+		return TEZCATLIPOCA_BLASPHEMER_ABILITY_BADGE_TEXTURE
+	if card.card_name == "Winged Lion":
+		return WINGED_LION_ABILITY_BADGE_TEXTURE
 	if card.card_name == "Alu":
 		return ALU_ABILITY_BADGE_TEXTURE
 	if card.card_name == "Clay-Eaters":
@@ -2047,6 +2152,62 @@ func _add_nimue_badges(overlay: Control, card: Card) -> void:
 		_get_nimue_badge_hover_text("present"),
 		clickable
 	)
+
+func _add_white_serpent_medicine_badge(overlay: Control, card: Card) -> void:
+	if overlay == null or not (card is TheWhiteSerpent):
+		return
+	var serpent := card as TheWhiteSerpent
+	var viewer := _get_viewer_player()
+	var can_view_stealth := not card.is_stealth or card.get_controller() == viewer or card.is_temporarily_revealed()
+	if card.is_face_down or card.is_prepared or not can_view_stealth:
+		return
+
+	var clickable := not _is_enemy and card.get_controller() == viewer
+	var badge_ready := clickable and (
+		_is_card_usable_for_priority(card) if _is_priority_badge_filter_active() else (
+			game_manager != null and serpent.can_activate_medicine(game_manager)
+		)
+	)
+	if not _should_show_ability_badge_control(card, badge_ready, clickable):
+		return
+
+	var badge_right := _get_creature_ability_badge_right(card)
+	var badge_top := _get_badge_row_top() + CREATURE_ABILITY_BADGE_TOP_OFFSET + CREATURE_ABILITY_BADGE_SIZE + 4.0
+	var badge := Control.new()
+	badge.name = "WhiteSerpentMedicineBadge"
+	badge.mouse_filter = Control.MOUSE_FILTER_STOP
+	badge.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND if clickable else Control.CURSOR_ARROW
+	badge.z_index = 31
+	badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	badge.offset_left = badge_right - CREATURE_ABILITY_BADGE_SIZE
+	badge.offset_top = badge_top
+	badge.offset_right = badge_right
+	badge.offset_bottom = badge_top + CREATURE_ABILITY_BADGE_SIZE
+
+	var icon := TextureRect.new()
+	icon.texture = WHITE_SERPENT_MEDICINE_BADGE_TEXTURE
+	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	icon.modulate = Color(1, 1, 1, 1) if badge_ready else Color(0.82, 0.82, 0.86, 0.9)
+	badge.add_child(icon)
+
+	if clickable:
+		_connect_badge_click_action(
+			badge,
+			"creature_ability_option",
+			BoardZoneUI.get_action_point_card_uid(card),
+			"medicine"
+		)
+	_connect_badge_hover(
+		badge,
+		BaseCardScript.apply_keyword_hints(BaseCardScript.apply_action_cost_symbols(
+			"Medicine ([b]Activate[/b], [b]Spd[/b] 2): Negate enemy effects targeting your cards until end of turn.",
+			card
+		))
+	)
+	overlay.add_child(badge)
 
 func _add_creature_ability_badge(overlay: Control, card: Card) -> void:
 	if overlay == null or card == null or card.card_type != Card.CardType.CREATURE or card.is_god:
@@ -2325,28 +2486,12 @@ func _add_priority_response_aura(overlay: Control) -> void:
 	if overlay == null:
 		return
 
-	var ring := PanelContainer.new()
-	ring.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	ring.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	ring.offset_left = 9
-	ring.offset_top = 9
-	ring.offset_right = -9
-	ring.offset_bottom = -9
-
-	var ring_style := StyleBoxFlat.new()
-	ring_style.bg_color = Color(0, 0, 0, 0)
-	ring_style.border_color = Color(0.5, 1.0, 0.58, 0.92)
-	ring_style.shadow_color = Color(0.28, 0.95, 0.38, 0.55)
-	ring_style.shadow_size = 8
-	ring_style.corner_radius_top_left = 8
-	ring_style.corner_radius_top_right = 8
-	ring_style.corner_radius_bottom_left = 8
-	ring_style.corner_radius_bottom_right = 8
-	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		ring_style.set_border_width(side, 2)
-	ring.add_theme_stylebox_override("panel", ring_style)
-	_fade_card_option_visual(ring)
-	overlay.add_child(ring)
+	var aura := PriorityResponseAura.new()
+	aura.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	aura.z_index = 20
+	aura.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_fade_card_option_visual(aura)
+	overlay.add_child(aura)
 
 func _add_attack_aura(overlay: Control) -> void:
 	if overlay == null:
@@ -3904,7 +4049,7 @@ func _get_deckbuilder_god_glow_color(card: Card) -> Color:
 		"Triskelion":
 			return Color(0.25, 0.56, 1.0, 0.95)
 		"Norse":
-			return Color(0.28, 0.92, 0.50, 0.95)
+			return PRIORITY_RESPONSE_GLOW_COLOR
 		"Ancient":
 			return Color(0.02, 0.02, 0.02, 0.95)
 		"Tian":
@@ -4422,6 +4567,8 @@ func _refresh_display() -> void:
 				_apply_nusku_activation_style(style)
 			elif show_generic_god_activation_aura:
 				_apply_generic_god_activation_style(style, _get_deckbuilder_god_glow_color(card))
+			if show_god_priority_aura:
+				_apply_priority_response_style(style)
 			add_theme_stylebox_override("panel", style)
 			z_index = GOD_INDICATOR_Z_INDEX if (
 				show_aphrodite_activation_aura
@@ -4447,8 +4594,6 @@ func _refresh_display() -> void:
 					_add_attack_aura(god_overlay)
 				if show_god_playing_aura:
 					_add_playing_aura(god_overlay)
-				if show_god_priority_aura:
-					_add_priority_response_aura(god_overlay)
 				if show_god_target_aura:
 					_add_target_aura(god_overlay)
 					_add_stack_target_indicator(god_overlay)
@@ -4583,19 +4728,20 @@ func _refresh_display() -> void:
 		var is_def_creature := card.card_type == Card.CardType.CREATURE and card.creature_mode == Card.CreatureMode.DEFENSIVE
 		var shows_defense_shield := card.card_type == Card.CardType.CREATURE and (is_def_creature or card.is_stealth)
 		var shows_aggressive_sword := card.card_type == Card.CardType.CREATURE and card.creature_mode == Card.CreatureMode.AGGRESSIVE and not card.is_stealth
+		var show_card_priority_aura := _is_card_usable_for_priority(card)
 		match card.card_type:
 			Card.CardType.CREATURE:
 				style.bg_color    = Color(0.13, 0.22, 0.42)
 				style.border_color = Color(0.4, 0.65, 1.0)
-				add_theme_stylebox_override("panel", style)
 			Card.CardType.STRUCTURE:
 				style.bg_color    = Color(0.28, 0.18, 0.08)
 				style.border_color = Color(0.75, 0.55, 0.3)
-				add_theme_stylebox_override("panel", style)
 			_:
 				style.bg_color    = Color(0.18, 0.18, 0.18)
 				style.border_color = Color(0.5, 0.5, 0.5)
-				add_theme_stylebox_override("panel", style)
+		if show_card_priority_aura:
+			_apply_priority_response_style(style)
+		add_theme_stylebox_override("panel", style)
 
 		var board_viewer := _get_viewer_player()
 		var can_view_stealth_details := card.get_controller() == board_viewer or card.is_temporarily_revealed()
@@ -4607,8 +4753,6 @@ func _refresh_display() -> void:
 			_add_attack_aura(card_overlay)
 		if _should_show_playing_aura(card):
 			_add_playing_aura(card_overlay)
-		if _is_card_usable_for_priority(card):
-			_add_priority_response_aura(card_overlay)
 		var is_attack_candidate := _is_card_attack_candidate(card)
 		var is_target_icon_candidate := _has_card_target_icon_candidate(card)
 		if _is_card_targeted_on_stack(card) or _is_card_pending_target(card) or _is_card_pending_attack_target(card) or is_target_icon_candidate:
@@ -4673,6 +4817,7 @@ func _refresh_display() -> void:
 			_add_boon_affordances(card_overlay, card)
 			_add_debuff_affordances(card_overlay, card)
 			_add_nimue_badges(card_overlay, card)
+			_add_white_serpent_medicine_badge(card_overlay, card)
 			_add_creature_ability_badge(card_overlay, card)
 
 		# VBox fills the zone; spacer pushes the stat label to the bottom

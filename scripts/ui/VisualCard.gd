@@ -9,6 +9,7 @@ const LevelSymbolRowScript = preload("res://scripts/ui/LevelSymbolRow.gd")
 const MINOR_ACTION_SYMBOL_TEXTURE := preload("res://images/ui/MinorActionSymbol.png")
 const MAJOR_ACTION_SYMBOL_TEXTURE := preload("res://images/ui/MajorActionSymbol.png")
 const MANA_ORB_TEXTURE := preload("res://images/ui/ManaOrb.png")
+const PRIORITY_RESPONSE_GLOW_COLOR := Color(0.28, 0.92, 0.50, 0.95)
 
 signal card_clicked(card: Card)
 signal card_right_clicked(card: Card)
@@ -703,10 +704,10 @@ func _make_card_style() -> StyleBoxFlat:
 		style.shadow_color = Color(1.0, 0.82, 0.2, 0.7)
 		style.shadow_size = 12
 	if _priority_response_available:
-		style.shadow_color = Color(0.34, 0.95, 0.42, 0.58)
-		style.shadow_size = max(style.shadow_size, 7)
+		style.shadow_color = PRIORITY_RESPONSE_GLOW_COLOR
+		style.shadow_size = max(style.shadow_size, 16)
 		if not _waiting_on_priority:
-			style.border_color = Color(0.55, 1.0, 0.62, 0.96)
+			style.border_color = PRIORITY_RESPONSE_GLOW_COLOR
 	if _blot_summonable:
 		style.border_color = Color(0.45, 1.0, 0.52, 0.98)
 		style.shadow_color = Color(0.25, 0.95, 0.4, 0.72)

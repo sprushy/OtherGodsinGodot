@@ -121,7 +121,99 @@ jobs:
         run: |
           mkdir -p .exports/macos dist
           godot --headless --path . --export-release "macOS" .exports/macos/OtherGods-macos.zip
-          cp .exports/macos/OtherGods-macos.zip dist/OtherGods-macos.zip
+
+      - name: Configure macOS Developer ID certificate
+        shell: bash
+        env:
+          MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_CODESIGN_IDENTITY: ${{ secrets.MACOS_CODESIGN_IDENTITY }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${MACOS_CERTIFICATE_P12_BASE64}" ]; then
+            echo "MACOS_SIGN_IDENTITY=-" >> "$GITHUB_ENV"
+            echo "No Developer ID certificate configured; using ad-hoc signing."
+            exit 0
+          fi
+
+          if [ -z "${MACOS_CERTIFICATE_PASSWORD}" ]; then
+            echo "MACOS_CERTIFICATE_PASSWORD is required when MACOS_CERTIFICATE_P12_BASE64 is set." >&2
+            exit 1
+          fi
+
+          keychain_password="$(openssl rand -hex 16)"
+          keychain_path="$RUNNER_TEMP/othergods-signing.keychain-db"
+          certificate_path="$RUNNER_TEMP/othergods-certificate.p12"
+
+          echo "${MACOS_CERTIFICATE_P12_BASE64}" | base64 --decode > "$certificate_path"
+          security create-keychain -p "$keychain_password" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$keychain_password" "$keychain_path"
+          security import "$certificate_path" -P "${MACOS_CERTIFICATE_PASSWORD}" -A -t cert -f pkcs12 -k "$keychain_path" -T /usr/bin/codesign
+          security list-keychains -d user -s "$keychain_path" $(security list-keychains -d user | sed 's/"//g')
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain_path"
+
+          if [ -z "${MACOS_CODESIGN_IDENTITY}" ]; then
+            MACOS_CODESIGN_IDENTITY="$(security find-identity -v -p codesigning "$keychain_path" | awk -F '"' '/Developer ID Application/ { print $2; exit }')"
+          fi
+          if [ -z "${MACOS_CODESIGN_IDENTITY}" ]; then
+            echo "Could not find a Developer ID Application signing identity." >&2
+            exit 1
+          fi
+
+          echo "MACOS_SIGN_IDENTITY=${MACOS_CODESIGN_IDENTITY}" >> "$GITHUB_ENV"
+          echo "MACOS_KEYCHAIN_PATH=${keychain_path}" >> "$GITHUB_ENV"
+
+      - name: Sign and package macOS build
+        shell: bash
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+
+          rm -rf .exports/macos/unpacked dist/OtherGods-macos.zip
+          mkdir -p .exports/macos/unpacked dist
+          ditto -x -k .exports/macos/OtherGods-macos.zip .exports/macos/unpacked
+
+          app_path="$(find .exports/macos/unpacked -maxdepth 1 -name "*.app" -print -quit)"
+          if [ -z "${app_path}" ]; then
+            echo "No .app bundle found in macOS export." >&2
+            exit 1
+          fi
+
+          if [ "${MACOS_SIGN_IDENTITY}" = "-" ]; then
+            codesign --force --deep --sign - "$app_path"
+          else
+            codesign --force --deep --options runtime --timestamp --sign "${MACOS_SIGN_IDENTITY}" "$app_path"
+          fi
+          codesign --verify --deep --strict --verbose=2 "$app_path"
+
+          if [ "${MACOS_SIGN_IDENTITY}" != "-" ] && [ -n "${APPLE_ID}" ] && [ -n "${APPLE_APP_PASSWORD}" ] && [ -n "${APPLE_TEAM_ID}" ]; then
+            notary_zip=".exports/macos/OtherGods-macos-notary.zip"
+            ditto -c -k --keepParent "$app_path" "$notary_zip"
+            xcrun notarytool submit "$notary_zip" \
+              --apple-id "${APPLE_ID}" \
+              --password "${APPLE_APP_PASSWORD}" \
+              --team-id "${APPLE_TEAM_ID}" \
+              --wait
+            xcrun stapler staple "$app_path"
+            spctl --assess --type execute --verbose=4 "$app_path"
+          elif [ "${MACOS_SIGN_IDENTITY}" != "-" ]; then
+            echo "Developer ID signing is configured, but notarization secrets are missing; packaging signed but unnotarized app."
+          else
+            echo "Packaged ad-hoc signed app. Users may still need Finder Open Anyway unless Developer ID notarization is configured."
+          fi
+
+          ditto -c -k --keepParent "$app_path" dist/OtherGods-macos.zip
+
+      - name: Upload macOS workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: OtherGods-macos
+          path: dist/OtherGods-macos.zip
 
       - name: Publish GitHub release assets
         if: startsWith(github.ref, 'refs/tags/')

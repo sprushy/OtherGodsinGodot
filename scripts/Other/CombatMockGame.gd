@@ -9814,6 +9814,7 @@ func draw_board() -> void:
 		zu.card_clicked.connect(_on_board_card_pressed)
 		zu.creature_stance_switch_clicked.connect(_on_creature_stance_switch_clicked)
 		zu.creature_ability_badge_clicked.connect(_on_creature_ability_badge_clicked)
+		zu.creature_ability_option_badge_clicked.connect(_on_creature_ability_option_badge_clicked)
 		zu.e2_abzu_badge_clicked.connect(_on_e2_abzu_badge_clicked)
 		zu.nimue_badge_clicked.connect(_on_nimue_badge_clicked)
 		zu.equipment_target_action_clicked.connect(_on_equipment_target_action_clicked)
@@ -9846,6 +9847,7 @@ func draw_board() -> void:
 		zu.card_clicked.connect(_on_board_card_pressed)
 		zu.creature_stance_switch_clicked.connect(_on_creature_stance_switch_clicked)
 		zu.creature_ability_badge_clicked.connect(_on_creature_ability_badge_clicked)
+		zu.creature_ability_option_badge_clicked.connect(_on_creature_ability_option_badge_clicked)
 		zu.e2_abzu_badge_clicked.connect(_on_e2_abzu_badge_clicked)
 		zu.nimue_badge_clicked.connect(_on_nimue_badge_clicked)
 		zu.equipment_target_action_clicked.connect(_on_equipment_target_action_clicked)
@@ -14758,12 +14760,43 @@ func _on_creature_ability_badge_clicked(card: Card) -> void:
 	_submit_or_queue_card_ability_by_uid(card.uid)
 	update_ui()
 
+func _on_creature_ability_option_badge_clicked(card: Card, ability: String) -> void:
+	if _game_finished or card == null or game_manager == null:
+		return
+	if _is_card_usable_for_priority(card):
+		_on_priority_response_chosen(card)
+		return
+	if _has_pending_target_selection():
+		_show_target_cancel_prompt()
+		return
+	if _reject_non_priority_action_if_blocked():
+		return
+	if _has_active_modal_prompt():
+		_reject_modal_prompt_action()
+		return
+	if _is_turn_choice_pending():
+		_reject_pre_turn_action()
+		return
+	_on_context_card_ability_option_pressed(card.uid, ability)
+
 func _on_context_card_ability_option_pressed(card_uid: String, ability: String) -> void:
 	_close_context_menu()
 	if game_manager == null or card_uid.strip_edges() == "":
 		return
 	var source_card := game_manager.get_card_by_uid(card_uid)
 	if source_card == null:
+		update_ui()
+		return
+	if ability == "shift" and source_card.has_method("can_activate_shift") and not source_card.can_activate_shift(game_manager):
+		_set_action_label_text(_get_activation_unavailable_text(source_card, source_card.card_name + " cannot shift right now."))
+		update_ui()
+		return
+	if ability == "medicine" and source_card.has_method("can_activate_medicine") and not source_card.can_activate_medicine(game_manager):
+		_set_action_label_text(_get_activation_unavailable_text(source_card, source_card.card_name + " cannot use Medicine right now."))
+		update_ui()
+		return
+	if ability not in ["shift", "medicine"] and source_card.has_method("can_activate") and not source_card.can_activate(game_manager):
+		_set_action_label_text(_get_activation_unavailable_text(source_card, source_card.card_name + " cannot activate right now."))
 		update_ui()
 		return
 	var option := {ability = ability}
@@ -14783,6 +14816,14 @@ func _on_context_creature_ability_pressed(card_uid: String) -> void:
 		return
 	var card := game_manager.get_card_by_uid(card_uid)
 	if card == null:
+		update_ui()
+		return
+	if not card.has_method("can_activate") or not card.has_method("activate"):
+		_set_action_label_text(card.card_name + " has no activatable ability.")
+		update_ui()
+		return
+	if not card.can_activate(game_manager):
+		_set_action_label_text(_get_activation_unavailable_text(card, card.card_name + " cannot activate right now."))
 		update_ui()
 		return
 	if card is EnHeduAnnaScript:
@@ -22997,7 +23038,7 @@ func _can_offer_lobby_rematch() -> bool:
 		return false
 	if str(_current_match_info.get("room_id", "")).strip_edges().is_empty():
 		return false
-	return str(_current_match_info.get("server_mode", "")).strip_edges() == MatchSessionScript.SERVER_MODE_DEDICATED_HEADLESS
+	return not str(_current_match_info.get("match_id", "")).strip_edges().is_empty()
 
 func _on_peer_disconnected(_peer_id: int) -> void:
 	if _game_finished:

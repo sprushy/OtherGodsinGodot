@@ -95,6 +95,7 @@ static func apply_mana_cost_symbols(text: String, icon_size: int = 14) -> String
 	decorated = _replace_pay_mana_phrases(decorated, icon_size)
 	decorated = _replace_pay_variable_mana_phrases(decorated, icon_size)
 	decorated = _replace_labeled_mana_costs(decorated, icon_size)
+	decorated = _replace_numeric_mana_phrases(decorated, icon_size)
 	return decorated
 
 static func get_mana_symbol_bbcode(size: int = 14) -> String:
@@ -171,6 +172,24 @@ static func _replace_labeled_mana_costs(text: String, icon_size: int) -> String:
 			result += match_result.get_string(1) + match_result.get_string(2) + " " + get_mana_symbol_bbcode(icon_size)
 		else:
 			result += match_result.get_string(0)
+		cursor = match_result.get_end()
+	result += text.substr(cursor)
+	return result
+
+static func _replace_numeric_mana_phrases(text: String, icon_size: int) -> String:
+	var regex := RegEx.new()
+	if regex.compile("(?i)(\\b[0-9]+|\\bX)(\\s+(?:additional\\s+|graveyard\\s+)?)(mana\\b)") != OK:
+		return text
+	var matches := regex.search_all(text)
+	if matches.is_empty():
+		return text
+	var result := ""
+	var cursor := 0
+	for match_result in matches:
+		result += text.substr(cursor, match_result.get_start() - cursor)
+		result += match_result.get_string(1) \
+			+ match_result.get_string(2) \
+			+ get_mana_symbol_bbcode(icon_size)
 		cursor = match_result.get_end()
 	result += text.substr(cursor)
 	return result
