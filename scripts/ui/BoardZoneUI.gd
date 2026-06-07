@@ -1032,7 +1032,8 @@ func _get_power_hover_cost_lines(power: PowerCard) -> Array[String]:
 	var metadata: Dictionary = hover_data.get("metadata", {})
 	var label: String = str(hover_data.get("label", "Activation Cost"))
 	var current_cost := power.get_adjusted_mana_cost(base_cost, cost_kind, game_manager, metadata)
-	lines.append("%s: %d" % [label, current_cost])
+	if power.should_include_activation_cost_summary_line(game_manager):
+		lines.append("%s: %d" % [label, current_cost])
 	for breakdown_line in power.get_cost_adjustment_lines(base_cost, cost_kind, game_manager, metadata):
 		lines.append(breakdown_line)
 	for extra_line in hover_data.get("extra_lines", []):

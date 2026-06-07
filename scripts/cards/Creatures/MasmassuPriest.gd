@@ -16,7 +16,7 @@ func _init() -> void:
 	resilience = 3
 	strength = 12
 	targets = true
-	ability_text = "[b]Dalkhu Break[/b] ([b]Reveal[/b]): Destroy a non-Human creature."
+	ability_text = "[b]Dalkhu Break[/b] ([b]Reveal[/b]): Destroy any creature."
 	flavor_text = ""
 	culture = "Ancient"
 	artist = "Ricardo Zoppello"
@@ -27,7 +27,7 @@ func on_reveal(game_manager: GameManager) -> void:
 		return
 	var valid_targets := get_valid_targets(game_manager)
 	if valid_targets.is_empty():
-		game_manager.note_player_feedback("%s found no non-Human creatures to break." % card_name)
+		game_manager.note_player_feedback("%s found no creatures to break." % card_name)
 		return
 	var controller := get_controller()
 	if controller == null:
@@ -73,7 +73,7 @@ func begin_dalkhu_break_reveal(
 
 	var valid_targets := get_valid_targets(game_manager)
 	if target == null or target not in valid_targets:
-		finish.call(card_name + " found no valid non-Human creature to destroy.")
+		finish.call(card_name + " found no valid creature to destroy.")
 		return
 	if game_manager.is_immune_to_source(target, self):
 		finish.call(
@@ -105,5 +105,4 @@ func _is_valid_dalkhu_break_target(target: Card) -> bool:
 		and target.card_type == Card.CardType.CREATURE \
 		and not target.is_god \
 		and target.current_zone != null \
-		and target.current_zone.is_board_zone() \
-		and not target.has_type("Human")
+		and target.current_zone.is_board_zone()

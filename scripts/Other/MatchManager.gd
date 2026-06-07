@@ -3372,7 +3372,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 			var valid_targets := priest.get_valid_targets(game_manager)
 			var target_uid: String = command.get("target_uid", "")
 			if target_uid == "":
-				var feedback := "%s found no non-Human creatures to break." % priest.card_name if valid_targets.is_empty() else priest.card_name + " reveal fizzles."
+				var feedback := "%s found no creatures to break." % priest.card_name if valid_targets.is_empty() else priest.card_name + " reveal fizzles."
 				game_manager.note_player_feedback(feedback)
 				move_validated.emit(command)
 				return true

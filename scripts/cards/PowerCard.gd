@@ -86,10 +86,17 @@ func get_unlock_display_cost_shorthand(
 ) -> String:
 	return get_cost_shorthand(get_unlock_display_mana_cost(game_manager), force_show_mana)
 
+func should_include_unlock_cost_summary_line(game_manager: GameManager = null) -> bool:
+	var unlock_cost := get_unlock_display_mana_cost(game_manager)
+	if unlock_cost <= 0:
+		return true
+	return not _mentions_inline_unlock_mana_cost(get_display_ability_text(game_manager).to_lower(), unlock_cost)
+
 func get_unlock_display_cost_lines(game_manager: GameManager = null) -> Array[String]:
 	var lines: Array[String] = []
 	var unlock_cost := get_unlock_display_mana_cost(game_manager)
-	lines.append("Unlock Cost: %d" % unlock_cost)
+	if should_include_unlock_cost_summary_line(game_manager):
+		lines.append("Unlock Cost: %d" % unlock_cost)
 	if discard_cost > 0:
 		lines.append("Discard: %d" % discard_cost)
 	for breakdown_line in get_cost_adjustment_lines(mana_cost, Card.COST_KIND_POWER_UNLOCK, game_manager):
@@ -184,6 +191,15 @@ func get_unlock_cost_adjustment_lines(game_manager: GameManager = null) -> Array
 func get_activation_cost_hover_data(_game_manager: GameManager = null) -> Dictionary:
 	return {}
 
+func should_include_activation_cost_summary_line(game_manager: GameManager = null) -> bool:
+	var cost_data := _get_display_ability_cost_data(game_manager)
+	if cost_data.is_empty():
+		return true
+	var current_cost: int = int(cost_data.get("current_cost", 0))
+	if current_cost <= 0:
+		return false
+	return not _mentions_inline_activation_mana_cost(get_display_ability_text(game_manager).to_lower(), current_cost)
+
 func _get_display_ability_cost_data(game_manager: GameManager = null) -> Dictionary:
 	if ability_text == "" or game_manager == null:
 		return {}
@@ -250,6 +266,18 @@ func get_display_ability_bbcode_text(game_manager: GameManager = null) -> String
 		capitalized_replacement,
 		lowercase_replacement
 	)
+
+func _mentions_inline_unlock_mana_cost(display_text: String, mana_amount: int) -> bool:
+	if display_text == "" or mana_amount <= 0:
+		return false
+	return display_text.contains("[b]unlock[/b] (%d" % mana_amount)
+
+func _mentions_inline_activation_mana_cost(display_text: String, mana_amount: int) -> bool:
+	if display_text == "" or mana_amount <= 0:
+		return false
+	return display_text.contains("pay %d mana" % mana_amount) \
+		or display_text.contains("(%d mana" % mana_amount) \
+		or display_text.contains(", %d mana" % mana_amount)
 
 func get_unlock_failure_reason(game_manager: GameManager) -> String:
 	if game_manager == null:

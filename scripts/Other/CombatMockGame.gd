@@ -24,6 +24,19 @@ const BREIDABLIK_CURSOR_IMAGE_PATH := "res://images/ui/cursors/Bredilblik Cursor
 const MEAD_CURSOR_IMAGE_PATH := "res://images/ui/cursors/Mead Cursor.png"
 const FREYJA_TABBY_CURSOR_IMAGE_PATH := "res://images/ui/cursors/TabbyCatCursor.png"
 const FREYJA_BLACK_CURSOR_IMAGE_PATH := "res://images/ui/cursors/BlackCatCursor.png"
+const E2_ABZU_CURSOR_IMAGE_PATH := "res://images/ui/cursors/TempleCursor.png"
+const TERROR_CURSOR_IMAGE_PATH := "res://images/ui/cursors/TerrorCursor.png"
+const RAVEN_STORM_CURSOR_IMAGE_PATH := "res://images/ui/cursors/RavenCursor.png"
+const FIRE_AND_GOLD_CURSOR_IMAGE_PATH := "res://images/ui/cursors/FireGoldCursor.png"
+const DEUCALIONS_INFANTS_CURSOR_IMAGE_PATH := "res://images/ui/cursors/DeucalionsCursor.png"
+const APHRODITE_CURSOR_IMAGE_PATH := "res://images/ui/cursors/AphroditeCursor.png"
+const GAMBANTEINN_CURSOR_IMAGE_PATH := "res://images/ui/cursors/GambanteinnCursor.png"
+const DIVINE_LIGHTNING_CURSOR_IMAGE_PATH := "res://images/ui/cursors/DivineLightningCursor.png"
+const NIMUE_ENTOMB_CURSOR_IMAGE_PATH := "res://images/ui/cursors/NimueEntombCursor.png"
+const VOID_CURSOR_IMAGE_PATH := "res://images/ui/cursors/VoidCursor.png"
+const RUNIC_SPELLBREAKER_CURSOR_IMAGE_PATH := "res://images/ui/cursors/RunicSpellbreakerCursor.png"
+const LAILOKEN_CURSOR_IMAGE_PATH := "res://images/ui/cursors/LailokenCursor.png"
+const MASMASSU_PRIEST_CURSOR_IMAGE_PATH := "res://images/ui/cursors/MasmassauPriestCursor.png"
 const CardBackTexture = preload("res://images/cardbackAI.png")
 const BOARD_FLOOR_TEXTURE_PATH := "res://images/board/moss_stone_floor_albedo.png"
 const BOARD_SPLASH_TEXTURE_PATH := "res://images/ui/splash/other_gods_splash.png"
@@ -489,6 +502,19 @@ var _breidablik_cursor_texture: Texture2D = null
 var _mead_cursor_texture: Texture2D = null
 var _freyja_tabby_cursor_texture: Texture2D = null
 var _freyja_black_cursor_texture: Texture2D = null
+var _e2_abzu_cursor_texture: Texture2D = null
+var _terror_cursor_texture: Texture2D = null
+var _raven_storm_cursor_texture: Texture2D = null
+var _fire_and_gold_cursor_texture: Texture2D = null
+var _deucalions_infants_cursor_texture: Texture2D = null
+var _aphrodite_cursor_texture: Texture2D = null
+var _gambanteinn_cursor_texture: Texture2D = null
+var _divine_lightning_cursor_texture: Texture2D = null
+var _nimue_entomb_cursor_texture: Texture2D = null
+var _void_cursor_texture: Texture2D = null
+var _runic_spellbreaker_cursor_texture: Texture2D = null
+var _lailoken_cursor_texture: Texture2D = null
+var _masmassu_priest_cursor_texture: Texture2D = null
 var _active_selection_cursor_mode: String = ""
 var _active_selection_cursor_target_height: int = 0
 var _overlay_selection_cursor_mode: String = ""
@@ -508,6 +534,19 @@ var _breidablik_cursor_target_height: int = 0
 var _mead_cursor_target_height: int = 0
 var _freyja_tabby_cursor_target_height: int = 0
 var _freyja_black_cursor_target_height: int = 0
+var _e2_abzu_cursor_target_height: int = 0
+var _terror_cursor_target_height: int = 0
+var _raven_storm_cursor_target_height: int = 0
+var _fire_and_gold_cursor_target_height: int = 0
+var _deucalions_infants_cursor_target_height: int = 0
+var _aphrodite_cursor_target_height: int = 0
+var _gambanteinn_cursor_target_height: int = 0
+var _divine_lightning_cursor_target_height: int = 0
+var _nimue_entomb_cursor_target_height: int = 0
+var _void_cursor_target_height: int = 0
+var _runic_spellbreaker_cursor_target_height: int = 0
+var _lailoken_cursor_target_height: int = 0
+var _masmassu_priest_cursor_target_height: int = 0
 var _devour_cancel_prompt: Control = null
 var _tez_titlacauan_cursor_overlay: Control = null
 var _tez_titlacauan_cursor_budget_label: Label = null
@@ -605,6 +644,32 @@ const FREYJA_TABBY_CURSOR_TARGET_HEIGHT := 108
 const FREYJA_TABBY_CURSOR_HOTSPOT_RATIO := Vector2(0.06, 0.77)
 const FREYJA_BLACK_CURSOR_TARGET_HEIGHT := 108
 const FREYJA_BLACK_CURSOR_HOTSPOT_RATIO := Vector2(0.94, 0.55)
+const E2_ABZU_CURSOR_TARGET_HEIGHT := 108
+const E2_ABZU_CURSOR_HOTSPOT_RATIO := Vector2(0.50, 0.54)
+const TERROR_CURSOR_TARGET_HEIGHT := 108
+const TERROR_CURSOR_HOTSPOT_RATIO := Vector2(0.50, 0.88)
+const RAVEN_STORM_CURSOR_TARGET_HEIGHT := 108
+const RAVEN_STORM_CURSOR_HOTSPOT_RATIO := Vector2(0.76, 0.72)
+const FIRE_AND_GOLD_CURSOR_TARGET_HEIGHT := 108
+const FIRE_AND_GOLD_CURSOR_HOTSPOT_RATIO := Vector2(0.96, 0.95)
+const DEUCALIONS_INFANTS_CURSOR_TARGET_HEIGHT := 108
+const DEUCALIONS_INFANTS_CURSOR_HOTSPOT_RATIO := Vector2(0.50, 0.82)
+const APHRODITE_CURSOR_TARGET_HEIGHT := 108
+const APHRODITE_CURSOR_HOTSPOT_RATIO := Vector2(0.50, 0.84)
+const GAMBANTEINN_CURSOR_TARGET_HEIGHT := 108
+const GAMBANTEINN_CURSOR_HOTSPOT_RATIO := Vector2(0.10, 0.88)
+const DIVINE_LIGHTNING_CURSOR_TARGET_HEIGHT := 108
+const DIVINE_LIGHTNING_CURSOR_HOTSPOT_RATIO := Vector2(0.53, 0.55)
+const NIMUE_ENTOMB_CURSOR_TARGET_HEIGHT := 108
+const NIMUE_ENTOMB_CURSOR_HOTSPOT_RATIO := Vector2(0.48, 0.52)
+const VOID_CURSOR_TARGET_HEIGHT := 108
+const VOID_CURSOR_HOTSPOT_RATIO := Vector2(0.10, 0.18)
+const RUNIC_SPELLBREAKER_CURSOR_TARGET_HEIGHT := 108
+const RUNIC_SPELLBREAKER_CURSOR_HOTSPOT_RATIO := Vector2(0.87, 0.88)
+const LAILOKEN_CURSOR_TARGET_HEIGHT := 108
+const LAILOKEN_CURSOR_HOTSPOT_RATIO := Vector2(0.78, 0.36)
+const MASMASSU_PRIEST_CURSOR_TARGET_HEIGHT := 108
+const MASMASSU_PRIEST_CURSOR_HOTSPOT_RATIO := Vector2(0.50, 0.78)
 const SACRIFICE_CURSOR_SHAPES := [
 	Input.CURSOR_ARROW,
 	Input.CURSOR_POINTING_HAND,
@@ -1805,23 +1870,29 @@ func _exit_tree() -> void:
 	_restore_default_selection_cursor()
 
 func _is_sacrifice_cursor_mode_active() -> bool:
-	return _awaiting_creature_sacrifice \
+	return _has_overlay_selection_cursor_mode("sacrifice") \
+		or _awaiting_creature_sacrifice \
 		or _is_blot_sacrifice_target_selection_active() \
 		or _is_kos_sacrifice_target_selection_active() \
 		or _is_hati_moon_hunt_sacrifice_selection_active() \
 		or _is_tezcatlipoca_necoc_yaotl_selection_active()
 
 func _is_devour_cursor_mode_active() -> bool:
-	return _has_pending_click_selection() and _get_pending_target_selection_name().contains("Devour")
+	return _has_overlay_selection_cursor_mode("devour") \
+		or (_has_pending_click_selection() and _get_pending_target_selection_name().contains("Devour"))
 
 func _is_breidablik_cursor_mode_active() -> bool:
-	return _has_pending_click_selection() \
+	return _has_overlay_selection_cursor_mode("breidablik") \
+		or (_has_pending_click_selection() \
 		and _pending_click_selection_source is Breidablik
+	)
 
 func _is_mead_cursor_mode_active() -> bool:
-	return _has_pending_click_selection() \
+	return _has_overlay_selection_cursor_mode("mead") \
+		or (_has_pending_click_selection() \
 		and _pending_click_selection_source is BerserkerMead \
 		and _get_pending_target_selection_name().contains("Berserker Mead")
+	)
 
 func _is_freyja_normal_god(card: Card) -> bool:
 	return card != null \
@@ -1831,7 +1902,8 @@ func _is_freyja_normal_god(card: Card) -> bool:
 		and card.has_method("is_valid_activation_target")
 
 func _is_freyja_tabby_cursor_mode_active() -> bool:
-	return (_has_pending_click_selection() and _is_freyja_normal_god(_pending_click_selection_source)) \
+	return _has_overlay_selection_cursor_mode("freyja_tabby") \
+		or (_has_pending_click_selection() and _is_freyja_normal_god(_pending_click_selection_source)) \
 		or (awaiting_god_ability_target and _is_freyja_normal_god(god_ability_source))
 
 func _is_freyja_active_prompt_open() -> bool:
@@ -1849,10 +1921,14 @@ func _is_freyja_active_tabby_cursor_mode_active() -> bool:
 	return _get_freyja_active_cursor_mode() == "freyja_tabby"
 
 func _is_silence_cursor_mode_active() -> bool:
+	if _has_overlay_selection_cursor_mode("silence"):
+		return true
 	if _has_pending_click_selection():
 		return _is_silence_or_mute_targeting_source(_pending_click_selection_source)
 	if selected_card is Absence:
 		return _can_cast_spell_from_current_zone(selected_card)
+	if awaiting_stupefy_target and stupefy_source != null:
+		return true
 	if awaiting_god_ability_target and god_ability_source != null:
 		return _is_silence_or_mute_targeting_source(god_ability_source)
 	if awaiting_spell_target and spell_waiting_for_target != null:
@@ -1860,32 +1936,42 @@ func _is_silence_cursor_mode_active() -> bool:
 	return false
 
 func _is_tonal_extraction_cursor_mode_active() -> bool:
-	return _has_pending_click_selection() and _pending_click_selection_source is TonalExtraction
+	return _has_overlay_selection_cursor_mode("tonal_extraction") \
+		or (_has_pending_click_selection() and _pending_click_selection_source is TonalExtraction)
 
 func _is_giant_master_architect_cursor_mode_active() -> bool:
 	return _overlay_selection_cursor_mode == "giant_master_architect_structure"
 
 func _is_ancient_pyre_cursor_mode_active() -> bool:
-	return awaiting_pyre_target and pyre_source != null
+	return _has_overlay_selection_cursor_mode("ancient_pyre") \
+		or (awaiting_pyre_target and pyre_source != null)
 
 func _is_anointing_statue_cursor_mode_active() -> bool:
-	return awaiting_anointing_target and anointing_source != null
+	return _has_overlay_selection_cursor_mode("anointing_statue") \
+		or (awaiting_anointing_target and anointing_source != null)
 
 func _is_hermes_cursor_mode_active() -> bool:
-	return awaiting_god_ability_target and god_ability_source is Hermes
+	return _has_overlay_selection_cursor_mode("hermes") \
+		or (awaiting_god_ability_target and god_ability_source is Hermes)
 
 func _is_guan_yu_cursor_mode_active() -> bool:
-	return awaiting_god_ability_target and god_ability_source is GuanYu
+	return _has_overlay_selection_cursor_mode("guan_yu") \
+		or (awaiting_god_ability_target and god_ability_source is GuanYu)
 
 func _is_good_fortune_cursor_mode_active() -> bool:
-	return _overlay_selection_cursor_mode == "good_fortune" \
+	return _has_overlay_selection_cursor_mode("good_fortune") \
 		or (_has_pending_click_selection() and _pending_click_selection_source is ThirdSageEnmedugga)
 
 func _is_harii_jarl_cursor_mode_active() -> bool:
-	return _has_pending_click_selection() and _pending_click_selection_source is HariiJarl
+	return _has_overlay_selection_cursor_mode("harii_jarl") \
+		or (_has_pending_click_selection() and _pending_click_selection_source is HariiJarl)
 
 func _is_tez_titlacauan_cursor_mode_active() -> bool:
-	return _pending_tezcatlipoca_active_prompt != null
+	return _has_overlay_selection_cursor_mode("tez_titlacauan") \
+		or _pending_tezcatlipoca_active_prompt != null
+
+func _has_overlay_selection_cursor_mode(cursor_mode: String) -> bool:
+	return cursor_mode.strip_edges() != "" and _overlay_selection_cursor_mode == cursor_mode
 
 func _is_silence_or_mute_targeting_source(card: Card) -> bool:
 	if card == null:
@@ -1894,6 +1980,26 @@ func _is_silence_or_mute_targeting_source(card: Card) -> bool:
 		return true
 	var ability_text_value := String(card.ability_text).to_lower()
 	return ability_text_value.contains("silence") or ability_text_value.contains("mute")
+
+func _is_support_selection_cursor_source(card: Card) -> bool:
+	return card is Exorcism \
+		or card is FifaTheMagicalArrow \
+		or card is Gawain \
+		or card is GududPriest \
+		or card is HariiShamanScript \
+		or card is Lamashatu \
+		or card is SeventhSageUtuabzu
+
+func _is_hostile_selection_cursor_source(card: Card) -> bool:
+	return card is AphroditeAreia \
+		or card is BitMeseri \
+		or card is DivineLightning \
+		or card is Gambanteinn \
+		or card is GugalannaBullOfHeaven \
+		or card is Lailoken \
+		or card is MasmassuPriest \
+		or card is NimueScript \
+		or card is RunicSpellbreaker
 
 func _get_selection_cursor_mode_for_source(card: Card) -> String:
 	if _is_freyja_normal_god(card):
@@ -1906,6 +2012,42 @@ func _get_selection_cursor_mode_for_source(card: Card) -> String:
 		return "tonal_extraction"
 	if card is ThirdSageEnmedugga:
 		return "good_fortune"
+	if card is E2Abzu:
+		return "e2_abzu"
+	if card is AphroditeAreia:
+		return "aphrodite"
+	if card is DeucalionsInfants:
+		return "deucalions_infants"
+	if card is FireAndGold:
+		return "fire_and_gold"
+	if card is BitMeseri:
+		return "void"
+	if card is Fenrir:
+		return "devour"
+	if card is GuanYu:
+		return "guan_yu"
+	if card is RavenStorm:
+		return "raven_storm"
+	if card is DivineLightning:
+		return "divine_lightning"
+	if card is Gambanteinn:
+		return "gambanteinn"
+	if card is Lailoken:
+		return "lailoken"
+	if card is MasmassuPriest:
+		return "masmassu_priest"
+	if card is NimueScript:
+		return "nimue_entomb"
+	if card is RunicSpellbreaker:
+		return "runic_spellbreaker"
+	if card is Terror:
+		return "terror"
+	if card is WingedLionScript:
+		return "hermes"
+	if _is_support_selection_cursor_source(card):
+		return "good_fortune"
+	if _is_hostile_selection_cursor_source(card):
+		return "silence"
 	if _is_silence_or_mute_targeting_source(card):
 		return "silence"
 	return ""
@@ -2024,6 +2166,32 @@ func _position_devour_cancel_prompt() -> void:
 	_devour_cancel_prompt.global_position = (viewport_size - prompt_size) * 0.5
 
 func _get_selection_cursor_mode() -> String:
+	if _has_overlay_selection_cursor_mode("e2_abzu"):
+		return "e2_abzu"
+	if _has_overlay_selection_cursor_mode("terror"):
+		return "terror"
+	if _has_overlay_selection_cursor_mode("raven_storm"):
+		return "raven_storm"
+	if _has_overlay_selection_cursor_mode("fire_and_gold"):
+		return "fire_and_gold"
+	if _has_overlay_selection_cursor_mode("deucalions_infants"):
+		return "deucalions_infants"
+	if _has_overlay_selection_cursor_mode("aphrodite"):
+		return "aphrodite"
+	if _has_overlay_selection_cursor_mode("gambanteinn"):
+		return "gambanteinn"
+	if _has_overlay_selection_cursor_mode("divine_lightning"):
+		return "divine_lightning"
+	if _has_overlay_selection_cursor_mode("nimue_entomb"):
+		return "nimue_entomb"
+	if _has_overlay_selection_cursor_mode("void"):
+		return "void"
+	if _has_overlay_selection_cursor_mode("runic_spellbreaker"):
+		return "runic_spellbreaker"
+	if _has_overlay_selection_cursor_mode("lailoken"):
+		return "lailoken"
+	if _has_overlay_selection_cursor_mode("masmassu_priest"):
+		return "masmassu_priest"
 	if _is_freyja_active_black_cursor_mode_active():
 		return "freyja_black"
 	if _is_freyja_active_tabby_cursor_mode_active():
@@ -2074,6 +2242,32 @@ func _get_cursor_mode_target_height(cursor_mode: String) -> int:
 			return UIArtScalerScript.get_board_cursor_target_height(FREYJA_TABBY_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 		"freyja_black":
 			return UIArtScalerScript.get_board_cursor_target_height(FREYJA_BLACK_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+		"e2_abzu":
+			return UIArtScalerScript.get_board_cursor_target_height(E2_ABZU_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+		"terror":
+			return UIArtScalerScript.get_board_cursor_target_height(TERROR_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+		"raven_storm":
+			return UIArtScalerScript.get_board_cursor_target_height(RAVEN_STORM_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+		"fire_and_gold":
+			return UIArtScalerScript.get_board_cursor_target_height(FIRE_AND_GOLD_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+		"deucalions_infants":
+			return UIArtScalerScript.get_board_cursor_target_height(DEUCALIONS_INFANTS_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+		"aphrodite":
+			return UIArtScalerScript.get_board_cursor_target_height(APHRODITE_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+		"gambanteinn":
+			return UIArtScalerScript.get_board_cursor_target_height(GAMBANTEINN_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+		"divine_lightning":
+			return UIArtScalerScript.get_board_cursor_target_height(DIVINE_LIGHTNING_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+		"nimue_entomb":
+			return UIArtScalerScript.get_board_cursor_target_height(NIMUE_ENTOMB_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+		"void":
+			return UIArtScalerScript.get_board_cursor_target_height(VOID_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+		"runic_spellbreaker":
+			return UIArtScalerScript.get_board_cursor_target_height(RUNIC_SPELLBREAKER_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+		"lailoken":
+			return UIArtScalerScript.get_board_cursor_target_height(LAILOKEN_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+		"masmassu_priest":
+			return UIArtScalerScript.get_board_cursor_target_height(MASMASSU_PRIEST_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 		"tonal_extraction":
 			return UIArtScalerScript.get_board_cursor_target_height(TONAL_EXTRACTION_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 		"silence":
@@ -2121,6 +2315,13 @@ func _apply_devour_cursor() -> bool:
 	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
 		Input.set_custom_mouse_cursor(_devour_cursor_texture, cursor_shape, hotspot)
 	return true
+
+func _load_cursor_texture_from_image_path(image_path: String, target_height: int) -> Texture2D:
+	var image := Image.load_from_file(ProjectSettings.globalize_path(image_path))
+	if image == null or image.is_empty():
+		return null
+	var source_texture := ImageTexture.create_from_image(image)
+	return UIArtScalerScript.build_cursor_texture(source_texture, target_height)
 
 func _apply_breidablik_cursor() -> bool:
 	var target_height := UIArtScalerScript.get_board_cursor_target_height(BREIDABLIK_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
@@ -2316,6 +2517,175 @@ func _apply_ancient_pyre_cursor() -> bool:
 		Input.set_custom_mouse_cursor(_ancient_pyre_cursor_texture, cursor_shape, hotspot)
 	return true
 
+func _apply_e2_abzu_cursor() -> bool:
+	var target_height := UIArtScalerScript.get_board_cursor_target_height(E2_ABZU_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+	if _e2_abzu_cursor_texture == null or _e2_abzu_cursor_target_height != target_height:
+		_e2_abzu_cursor_texture = _load_cursor_texture_from_image_path(E2_ABZU_CURSOR_IMAGE_PATH, target_height)
+		_e2_abzu_cursor_target_height = target_height
+	if _e2_abzu_cursor_texture == null:
+		return false
+
+	var hotspot := UIArtScalerScript.get_cursor_hotspot(_e2_abzu_cursor_texture, E2_ABZU_CURSOR_HOTSPOT_RATIO)
+	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
+		Input.set_custom_mouse_cursor(_e2_abzu_cursor_texture, cursor_shape, hotspot)
+	return true
+
+func _apply_terror_cursor() -> bool:
+	var target_height := UIArtScalerScript.get_board_cursor_target_height(TERROR_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+	if _terror_cursor_texture == null or _terror_cursor_target_height != target_height:
+		_terror_cursor_texture = _load_cursor_texture_from_image_path(TERROR_CURSOR_IMAGE_PATH, target_height)
+		_terror_cursor_target_height = target_height
+	if _terror_cursor_texture == null:
+		return false
+
+	var hotspot := UIArtScalerScript.get_cursor_hotspot(_terror_cursor_texture, TERROR_CURSOR_HOTSPOT_RATIO)
+	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
+		Input.set_custom_mouse_cursor(_terror_cursor_texture, cursor_shape, hotspot)
+	return true
+
+func _apply_raven_storm_cursor() -> bool:
+	var target_height := UIArtScalerScript.get_board_cursor_target_height(RAVEN_STORM_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+	if _raven_storm_cursor_texture == null or _raven_storm_cursor_target_height != target_height:
+		_raven_storm_cursor_texture = _load_cursor_texture_from_image_path(RAVEN_STORM_CURSOR_IMAGE_PATH, target_height)
+		_raven_storm_cursor_target_height = target_height
+	if _raven_storm_cursor_texture == null:
+		return false
+
+	var hotspot := UIArtScalerScript.get_cursor_hotspot(_raven_storm_cursor_texture, RAVEN_STORM_CURSOR_HOTSPOT_RATIO)
+	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
+		Input.set_custom_mouse_cursor(_raven_storm_cursor_texture, cursor_shape, hotspot)
+	return true
+
+func _apply_fire_and_gold_cursor() -> bool:
+	var target_height := UIArtScalerScript.get_board_cursor_target_height(FIRE_AND_GOLD_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+	if _fire_and_gold_cursor_texture == null or _fire_and_gold_cursor_target_height != target_height:
+		_fire_and_gold_cursor_texture = _load_cursor_texture_from_image_path(FIRE_AND_GOLD_CURSOR_IMAGE_PATH, target_height)
+		_fire_and_gold_cursor_target_height = target_height
+	if _fire_and_gold_cursor_texture == null:
+		return false
+
+	var hotspot := UIArtScalerScript.get_cursor_hotspot(_fire_and_gold_cursor_texture, FIRE_AND_GOLD_CURSOR_HOTSPOT_RATIO)
+	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
+		Input.set_custom_mouse_cursor(_fire_and_gold_cursor_texture, cursor_shape, hotspot)
+	return true
+
+func _apply_deucalions_infants_cursor() -> bool:
+	var target_height := UIArtScalerScript.get_board_cursor_target_height(DEUCALIONS_INFANTS_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+	if _deucalions_infants_cursor_texture == null or _deucalions_infants_cursor_target_height != target_height:
+		_deucalions_infants_cursor_texture = _load_cursor_texture_from_image_path(DEUCALIONS_INFANTS_CURSOR_IMAGE_PATH, target_height)
+		_deucalions_infants_cursor_target_height = target_height
+	if _deucalions_infants_cursor_texture == null:
+		return false
+
+	var hotspot := UIArtScalerScript.get_cursor_hotspot(_deucalions_infants_cursor_texture, DEUCALIONS_INFANTS_CURSOR_HOTSPOT_RATIO)
+	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
+		Input.set_custom_mouse_cursor(_deucalions_infants_cursor_texture, cursor_shape, hotspot)
+	return true
+
+func _apply_aphrodite_cursor() -> bool:
+	var target_height := UIArtScalerScript.get_board_cursor_target_height(APHRODITE_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+	if _aphrodite_cursor_texture == null or _aphrodite_cursor_target_height != target_height:
+		_aphrodite_cursor_texture = _load_cursor_texture_from_image_path(APHRODITE_CURSOR_IMAGE_PATH, target_height)
+		_aphrodite_cursor_target_height = target_height
+	if _aphrodite_cursor_texture == null:
+		return false
+
+	var hotspot := UIArtScalerScript.get_cursor_hotspot(_aphrodite_cursor_texture, APHRODITE_CURSOR_HOTSPOT_RATIO)
+	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
+		Input.set_custom_mouse_cursor(_aphrodite_cursor_texture, cursor_shape, hotspot)
+	return true
+
+func _apply_gambanteinn_cursor() -> bool:
+	var target_height := UIArtScalerScript.get_board_cursor_target_height(GAMBANTEINN_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+	if _gambanteinn_cursor_texture == null or _gambanteinn_cursor_target_height != target_height:
+		_gambanteinn_cursor_texture = _load_cursor_texture_from_image_path(GAMBANTEINN_CURSOR_IMAGE_PATH, target_height)
+		_gambanteinn_cursor_target_height = target_height
+	if _gambanteinn_cursor_texture == null:
+		return false
+
+	var hotspot := UIArtScalerScript.get_cursor_hotspot(_gambanteinn_cursor_texture, GAMBANTEINN_CURSOR_HOTSPOT_RATIO)
+	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
+		Input.set_custom_mouse_cursor(_gambanteinn_cursor_texture, cursor_shape, hotspot)
+	return true
+
+func _apply_divine_lightning_cursor() -> bool:
+	var target_height := UIArtScalerScript.get_board_cursor_target_height(DIVINE_LIGHTNING_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+	if _divine_lightning_cursor_texture == null or _divine_lightning_cursor_target_height != target_height:
+		_divine_lightning_cursor_texture = _load_cursor_texture_from_image_path(DIVINE_LIGHTNING_CURSOR_IMAGE_PATH, target_height)
+		_divine_lightning_cursor_target_height = target_height
+	if _divine_lightning_cursor_texture == null:
+		return false
+
+	var hotspot := UIArtScalerScript.get_cursor_hotspot(_divine_lightning_cursor_texture, DIVINE_LIGHTNING_CURSOR_HOTSPOT_RATIO)
+	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
+		Input.set_custom_mouse_cursor(_divine_lightning_cursor_texture, cursor_shape, hotspot)
+	return true
+
+func _apply_nimue_entomb_cursor() -> bool:
+	var target_height := UIArtScalerScript.get_board_cursor_target_height(NIMUE_ENTOMB_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+	if _nimue_entomb_cursor_texture == null or _nimue_entomb_cursor_target_height != target_height:
+		_nimue_entomb_cursor_texture = _load_cursor_texture_from_image_path(NIMUE_ENTOMB_CURSOR_IMAGE_PATH, target_height)
+		_nimue_entomb_cursor_target_height = target_height
+	if _nimue_entomb_cursor_texture == null:
+		return false
+
+	var hotspot := UIArtScalerScript.get_cursor_hotspot(_nimue_entomb_cursor_texture, NIMUE_ENTOMB_CURSOR_HOTSPOT_RATIO)
+	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
+		Input.set_custom_mouse_cursor(_nimue_entomb_cursor_texture, cursor_shape, hotspot)
+	return true
+
+func _apply_void_cursor() -> bool:
+	var target_height := UIArtScalerScript.get_board_cursor_target_height(VOID_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+	if _void_cursor_texture == null or _void_cursor_target_height != target_height:
+		_void_cursor_texture = _load_cursor_texture_from_image_path(VOID_CURSOR_IMAGE_PATH, target_height)
+		_void_cursor_target_height = target_height
+	if _void_cursor_texture == null:
+		return false
+
+	var hotspot := UIArtScalerScript.get_cursor_hotspot(_void_cursor_texture, VOID_CURSOR_HOTSPOT_RATIO)
+	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
+		Input.set_custom_mouse_cursor(_void_cursor_texture, cursor_shape, hotspot)
+	return true
+
+func _apply_runic_spellbreaker_cursor() -> bool:
+	var target_height := UIArtScalerScript.get_board_cursor_target_height(RUNIC_SPELLBREAKER_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+	if _runic_spellbreaker_cursor_texture == null or _runic_spellbreaker_cursor_target_height != target_height:
+		_runic_spellbreaker_cursor_texture = _load_cursor_texture_from_image_path(RUNIC_SPELLBREAKER_CURSOR_IMAGE_PATH, target_height)
+		_runic_spellbreaker_cursor_target_height = target_height
+	if _runic_spellbreaker_cursor_texture == null:
+		return false
+
+	var hotspot := UIArtScalerScript.get_cursor_hotspot(_runic_spellbreaker_cursor_texture, RUNIC_SPELLBREAKER_CURSOR_HOTSPOT_RATIO)
+	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
+		Input.set_custom_mouse_cursor(_runic_spellbreaker_cursor_texture, cursor_shape, hotspot)
+	return true
+
+func _apply_lailoken_cursor() -> bool:
+	var target_height := UIArtScalerScript.get_board_cursor_target_height(LAILOKEN_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+	if _lailoken_cursor_texture == null or _lailoken_cursor_target_height != target_height:
+		_lailoken_cursor_texture = _load_cursor_texture_from_image_path(LAILOKEN_CURSOR_IMAGE_PATH, target_height)
+		_lailoken_cursor_target_height = target_height
+	if _lailoken_cursor_texture == null:
+		return false
+
+	var hotspot := UIArtScalerScript.get_cursor_hotspot(_lailoken_cursor_texture, LAILOKEN_CURSOR_HOTSPOT_RATIO)
+	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
+		Input.set_custom_mouse_cursor(_lailoken_cursor_texture, cursor_shape, hotspot)
+	return true
+
+func _apply_masmassu_priest_cursor() -> bool:
+	var target_height := UIArtScalerScript.get_board_cursor_target_height(MASMASSU_PRIEST_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+	if _masmassu_priest_cursor_texture == null or _masmassu_priest_cursor_target_height != target_height:
+		_masmassu_priest_cursor_texture = _load_cursor_texture_from_image_path(MASMASSU_PRIEST_CURSOR_IMAGE_PATH, target_height)
+		_masmassu_priest_cursor_target_height = target_height
+	if _masmassu_priest_cursor_texture == null:
+		return false
+
+	var hotspot := UIArtScalerScript.get_cursor_hotspot(_masmassu_priest_cursor_texture, MASMASSU_PRIEST_CURSOR_HOTSPOT_RATIO)
+	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
+		Input.set_custom_mouse_cursor(_masmassu_priest_cursor_texture, cursor_shape, hotspot)
+	return true
+
 func _apply_tez_titlacauan_cursor() -> bool:
 	var target_height := UIArtScalerScript.get_board_cursor_target_height(TEZ_TITLACAUAN_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 	if _tez_titlacauan_cursor_texture == null or _tez_titlacauan_cursor_target_height != target_height:
@@ -2371,6 +2741,110 @@ func _sync_sacrifice_cursor() -> void:
 	if cursor_mode == "good_fortune":
 		if _apply_good_fortune_cursor():
 			_active_selection_cursor_mode = "good_fortune"
+			_active_selection_cursor_target_height = target_height
+		else:
+			_restore_default_selection_cursor()
+		return
+
+	if cursor_mode == "e2_abzu":
+		if _apply_e2_abzu_cursor():
+			_active_selection_cursor_mode = "e2_abzu"
+			_active_selection_cursor_target_height = target_height
+		else:
+			_restore_default_selection_cursor()
+		return
+
+	if cursor_mode == "terror":
+		if _apply_terror_cursor():
+			_active_selection_cursor_mode = "terror"
+			_active_selection_cursor_target_height = target_height
+		else:
+			_restore_default_selection_cursor()
+		return
+
+	if cursor_mode == "raven_storm":
+		if _apply_raven_storm_cursor():
+			_active_selection_cursor_mode = "raven_storm"
+			_active_selection_cursor_target_height = target_height
+		else:
+			_restore_default_selection_cursor()
+		return
+
+	if cursor_mode == "fire_and_gold":
+		if _apply_fire_and_gold_cursor():
+			_active_selection_cursor_mode = "fire_and_gold"
+			_active_selection_cursor_target_height = target_height
+		else:
+			_restore_default_selection_cursor()
+		return
+
+	if cursor_mode == "deucalions_infants":
+		if _apply_deucalions_infants_cursor():
+			_active_selection_cursor_mode = "deucalions_infants"
+			_active_selection_cursor_target_height = target_height
+		else:
+			_restore_default_selection_cursor()
+		return
+
+	if cursor_mode == "aphrodite":
+		if _apply_aphrodite_cursor():
+			_active_selection_cursor_mode = "aphrodite"
+			_active_selection_cursor_target_height = target_height
+		else:
+			_restore_default_selection_cursor()
+		return
+
+	if cursor_mode == "gambanteinn":
+		if _apply_gambanteinn_cursor():
+			_active_selection_cursor_mode = "gambanteinn"
+			_active_selection_cursor_target_height = target_height
+		else:
+			_restore_default_selection_cursor()
+		return
+
+	if cursor_mode == "divine_lightning":
+		if _apply_divine_lightning_cursor():
+			_active_selection_cursor_mode = "divine_lightning"
+			_active_selection_cursor_target_height = target_height
+		else:
+			_restore_default_selection_cursor()
+		return
+
+	if cursor_mode == "nimue_entomb":
+		if _apply_nimue_entomb_cursor():
+			_active_selection_cursor_mode = "nimue_entomb"
+			_active_selection_cursor_target_height = target_height
+		else:
+			_restore_default_selection_cursor()
+		return
+
+	if cursor_mode == "void":
+		if _apply_void_cursor():
+			_active_selection_cursor_mode = "void"
+			_active_selection_cursor_target_height = target_height
+		else:
+			_restore_default_selection_cursor()
+		return
+
+	if cursor_mode == "runic_spellbreaker":
+		if _apply_runic_spellbreaker_cursor():
+			_active_selection_cursor_mode = "runic_spellbreaker"
+			_active_selection_cursor_target_height = target_height
+		else:
+			_restore_default_selection_cursor()
+		return
+
+	if cursor_mode == "lailoken":
+		if _apply_lailoken_cursor():
+			_active_selection_cursor_mode = "lailoken"
+			_active_selection_cursor_target_height = target_height
+		else:
+			_restore_default_selection_cursor()
+		return
+
+	if cursor_mode == "masmassu_priest":
+		if _apply_masmassu_priest_cursor():
+			_active_selection_cursor_mode = "masmassu_priest"
 			_active_selection_cursor_target_height = target_height
 		else:
 			_restore_default_selection_cursor()
@@ -5770,13 +6244,15 @@ func _get_card_cost_hover_lines(
 	cost_kind: String,
 	metadata: Dictionary = {},
 	extra_lines: Array[String] = [],
-	cost_label: String = "Cost"
+	cost_label: String = "Cost",
+	include_primary_line: bool = true
 ) -> Array[String]:
 	var lines: Array[String] = []
 	if card == null or game_manager == null:
 		return lines
 	var current_cost := card.get_adjusted_mana_cost(base_cost, cost_kind, game_manager, metadata)
-	lines.append("%s: %d" % [cost_label, current_cost])
+	if include_primary_line:
+		lines.append("%s: %d" % [cost_label, current_cost])
 	lines.append_array(card.get_cost_adjustment_lines(base_cost, cost_kind, game_manager, metadata))
 	for extra_line in extra_lines:
 		if extra_line.strip_edges() != "":
@@ -5789,7 +6265,8 @@ func _get_card_cost_hover_bbcode_lines(
 	cost_kind: String,
 	metadata: Dictionary = {},
 	extra_lines: Array[String] = [],
-	cost_label: String = "Cost"
+	cost_label: String = "Cost",
+	include_primary_line: bool = true
 ) -> Array[String]:
 	var lines: Array[String] = []
 	if card == null or game_manager == null:
@@ -5800,7 +6277,8 @@ func _get_card_cost_hover_bbcode_lines(
 		cost_line = "[color=#66ff66]%s[/color]" % cost_line
 	elif current_cost > base_cost:
 		cost_line = "[color=#ff6666]%s[/color]" % cost_line
-	lines.append(cost_line)
+	if include_primary_line:
+		lines.append(cost_line)
 	for breakdown_line in card.get_cost_adjustment_lines(base_cost, cost_kind, game_manager, metadata):
 		lines.append(breakdown_line)
 	for extra_line in extra_lines:
@@ -5820,7 +6298,8 @@ func _get_power_cost_hover_lines(power: PowerCard) -> Array[String]:
 		Card.COST_KIND_POWER_UNLOCK,
 		{},
 		extra_lines,
-		"Unlock Cost"
+		"Unlock Cost",
+		power.should_include_unlock_cost_summary_line(game_manager)
 	)
 
 func _get_power_cost_hover_bbcode_lines(power: PowerCard) -> Array[String]:
@@ -5835,7 +6314,8 @@ func _get_power_cost_hover_bbcode_lines(power: PowerCard) -> Array[String]:
 		Card.COST_KIND_POWER_UNLOCK,
 		{},
 		extra_lines,
-		"Unlock Cost"
+		"Unlock Cost",
+		power.should_include_unlock_cost_summary_line(game_manager)
 	)
 
 func _get_power_activation_cost_hover_lines(power: PowerCard) -> Array[String]:
@@ -5851,7 +6331,15 @@ func _get_power_activation_cost_hover_lines(power: PowerCard) -> Array[String]:
 	for line in hover_data.get("extra_lines", []):
 		extra_lines.append(str(line))
 	var cost_label := str(hover_data.get("label", "Activation Cost"))
-	return _get_card_cost_hover_lines(power, base_cost, cost_kind, metadata, extra_lines, cost_label)
+	return _get_card_cost_hover_lines(
+		power,
+		base_cost,
+		cost_kind,
+		metadata,
+		extra_lines,
+		cost_label,
+		power.should_include_activation_cost_summary_line(game_manager)
+	)
 
 func _get_power_activation_cost_hover_bbcode_lines(power: PowerCard) -> Array[String]:
 	if power == null or game_manager == null or power.is_face_down:
@@ -5866,7 +6354,15 @@ func _get_power_activation_cost_hover_bbcode_lines(power: PowerCard) -> Array[St
 	for line in hover_data.get("extra_lines", []):
 		extra_lines.append(str(line))
 	var cost_label := str(hover_data.get("label", "Activation Cost"))
-	return _get_card_cost_hover_bbcode_lines(power, base_cost, cost_kind, metadata, extra_lines, cost_label)
+	return _get_card_cost_hover_bbcode_lines(
+		power,
+		base_cost,
+		cost_kind,
+		metadata,
+		extra_lines,
+		cost_label,
+		power.should_include_activation_cost_summary_line(game_manager)
+	)
 
 func _get_power_unlock_cost_label(power: PowerCard) -> String:
 	if power == null:
@@ -6279,7 +6775,9 @@ func _on_power_pressed(power: PowerCard) -> void:
 			_show_card_selection_overlay(
 				"Choose a target for " + power.card_name,
 				targets,
-				on_choose_power_target
+				on_choose_power_target,
+				Callable(),
+				_get_selection_cursor_mode_for_source(power)
 			)
 		else:
 			_queue_power_activation_action(
@@ -10968,7 +11466,8 @@ func _on_god_ability_badge_clicked(card: Card) -> void:
 		"Choose a card for Tactical Break",
 		targets,
 		on_choose_tactical_break_target,
-		on_cancel_tactical_break
+		on_cancel_tactical_break,
+		_get_selection_cursor_mode_for_source(card)
 	)
 
 func _on_champions_call_badge_pressed(god: GodCard) -> void:
@@ -11066,7 +11565,8 @@ func _on_e2_abzu_badge_clicked(card: Card, mode: String) -> void:
 				"Choose a friendly Mer Mage to Void with " + structure.card_name,
 				fast_targets,
 				on_choose_fast_void_target,
-				on_cancel_fast_void
+				on_cancel_fast_void,
+				_get_selection_cursor_mode_for_source(structure)
 			)
 			return
 		if _reject_non_priority_action_if_blocked():
@@ -11089,7 +11589,8 @@ func _on_e2_abzu_badge_clicked(card: Card, mode: String) -> void:
 			"Choose a friendly Mer Mage on the field",
 			field_targets,
 			on_choose_field_void,
-			on_cancel_field_void
+			on_cancel_field_void,
+			_get_selection_cursor_mode_for_source(structure)
 		)
 		return
 
@@ -12441,7 +12942,7 @@ func _show_masmassu_priest_reveal_prompt(card: MasmassuPriest, prompt_targets: A
 			"target_uid": "",
 		}):
 			return
-		_set_action_label_text(_consume_resolution_feedback("%s found no non-Human creatures to break." % card.card_name))
+		_set_action_label_text(_consume_resolution_feedback("%s found no creatures to break." % card.card_name))
 		update_ui()
 		return
 	if current_targets.size() == 1:
@@ -12491,7 +12992,7 @@ func _show_masmassu_priest_reveal_prompt(card: MasmassuPriest, prompt_targets: A
 		on_choose_dalkhu_break,
 		on_cancel_dalkhu_break
 	)
-	_set_action_label_text(card.card_name + ": click a non-Human creature to destroy.")
+	_set_action_label_text(card.card_name + ": click a creature to destroy.")
 	update_ui()
 
 func _queue_lailoken_reveal_prompt(card: Lailoken) -> void:
@@ -12560,7 +13061,7 @@ func _queue_masmassu_priest_reveal_prompt(card: MasmassuPriest) -> void:
 	action.resolve_callback = func() -> void:
 		var current_targets: Array = card.get_valid_targets(game_manager)
 		if current_targets.is_empty():
-			var no_target_text := card.card_name + " found no non-Human creatures to break."
+			var no_target_text := card.card_name + " found no creatures to break."
 			if _stack_resolution_paused:
 				_resume_after_deferred_resolution(no_target_text)
 			else:
@@ -12589,7 +13090,7 @@ func _queue_masmassu_priest_reveal_prompt(card: MasmassuPriest) -> void:
 			on_choose_dalkhu_break,
 			on_cancel_dalkhu_break
 		)
-		_set_action_label_text(card.card_name + ": click a non-Human creature to destroy.")
+		_set_action_label_text(card.card_name + ": click a creature to destroy.")
 		update_ui()
 	game_manager.push_to_stack(action)
 	update_ui()
@@ -12811,7 +13312,9 @@ func _queue_terror_impact_prompt(power: Terror, demon: Card) -> void:
 		_show_card_selection_overlay(
 			"Choose a creature for " + demon.card_name + "'s Terror",
 			current_targets,
-			on_choose_target
+			on_choose_target,
+			Callable(),
+			_get_selection_cursor_mode_for_source(power)
 		)
 	game_manager.push_to_stack(action)
 	update_ui()
@@ -13427,7 +13930,9 @@ func _show_terror_impact_prompt(power: Terror, demon: Card, prompt_targets: Arra
 	_show_card_selection_overlay(
 		"Choose a creature for " + demon.card_name + "'s Terror",
 		current_targets,
-		on_choose_target
+		on_choose_target,
+		Callable(),
+		_get_selection_cursor_mode_for_source(power)
 	)
 	update_ui()
 
@@ -14610,7 +15115,8 @@ func _show_fenrir_devour_prompt(card: Fenrir, prompt_targets: Array = []) -> voi
 		"Choose a creature to devour for " + card.card_name,
 		current_targets,
 		on_choose_devour_target,
-		on_cancel_devour_target
+		on_cancel_devour_target,
+		_get_selection_cursor_mode_for_source(card)
 	)
 	_set_action_label_text(card.card_name + ": choose a creature to devour.")
 	update_ui()
@@ -14886,7 +15392,8 @@ func _on_creature_ability_badge_clicked(card: Card) -> void:
 			"Choose a target for " + card.card_name,
 			targets,
 			on_choose_creature_target,
-			on_cancel_creature_target
+			on_cancel_creature_target,
+			_get_selection_cursor_mode_for_source(card)
 		)
 		return
 	_submit_or_queue_card_ability_by_uid(card.uid)
@@ -14994,7 +15501,8 @@ func _on_context_creature_ability_pressed(card_uid: String) -> void:
 			"Choose a target for " + card.card_name,
 			targets,
 			on_choose_creature_target,
-			on_cancel_creature_target
+			on_cancel_creature_target,
+			_get_selection_cursor_mode_for_source(card)
 		)
 		return
 	_submit_or_queue_card_ability_by_uid(card.uid)
@@ -15933,7 +16441,8 @@ func _on_context_equipped_ability_pressed(equipment_uid: String) -> void:
 			"Choose a target for " + equipped_card.card_name,
 			targets,
 			Callable(self, "_on_context_equipped_ability_target_chosen").bind(equipment_uid),
-			Callable(self, "_on_context_equipped_ability_cancelled").bind(equipment_uid)
+			Callable(self, "_on_context_equipped_ability_cancelled").bind(equipment_uid),
+			_get_selection_cursor_mode_for_source(equipped_card)
 		)
 	else:
 		_submit_or_queue_card_ability_by_uid(equipment_uid, {}, equipped_card.card_name + " activated!")
@@ -16067,7 +16576,8 @@ func _show_nimue_present_prompt(card: NimueScript) -> void:
 		"Choose Equipment for " + card.card_name,
 		targets,
 		on_choose_present_target,
-		on_cancel_present_target
+		on_cancel_present_target,
+		"good_fortune"
 	)
 	_set_action_label_text(card.card_name + ": choose Equipment in your graveyard to Present.")
 	update_ui()
@@ -18079,7 +18589,9 @@ func _on_priority_response_chosen(card: Card) -> void:
 		_show_card_selection_overlay(
 			"Choose a friendly Mer Mage to Void with " + structure.card_name,
 			targets,
-			on_choose_fast_void_target
+			on_choose_fast_void_target,
+			Callable(),
+			_get_selection_cursor_mode_for_source(structure)
 		)
 	elif card != null and card.has_method("can_respond_to_priority_action") and card.has_method("activate"):
 		var top: CardAction = game_manager.action_stack.back() as CardAction
@@ -18101,7 +18613,9 @@ func _on_priority_response_chosen(card: Card) -> void:
 			_show_card_selection_overlay(
 				"Choose the attacker for " + card.card_name,
 				targets,
-				choose_raven_storm_attacker
+				choose_raven_storm_attacker,
+				Callable(),
+				_get_selection_cursor_mode_for_source(card)
 			)
 			return
 
@@ -19790,7 +20304,9 @@ func _begin_harii_shaman_activation(card: HariiShamanScript) -> void:
 	_show_card_selection_overlay(
 		"Choose a target for " + card.card_name,
 		targets,
-		on_choose_harii_shaman_target
+		on_choose_harii_shaman_target,
+		Callable(),
+		_get_selection_cursor_mode_for_source(card)
 	)
 
 func _begin_winged_lion_activation(card: WingedLionScript) -> void:
@@ -19817,7 +20333,8 @@ func _begin_winged_lion_activation(card: WingedLionScript) -> void:
 		"Choose another friendly creature for " + card.card_name,
 		targets,
 		on_choose_partner,
-		on_cancel_partner
+		on_cancel_partner,
+		_get_selection_cursor_mode_for_source(card)
 	)
 	_set_action_label_text(card.card_name + ": choose another friendly creature to move.")
 	update_ui()
@@ -20177,7 +20694,8 @@ func _begin_tezcatlipoca_blasphemer_activation(card: TezcatlipocaBlasphemerScrip
 		"Choose a creature to sacrifice for " + card.card_name,
 		sacrifices,
 		on_choose_sacrifice,
-		on_cancel_sacrifice
+		on_cancel_sacrifice,
+		"sacrifice"
 	)
 
 func _begin_tezcatlipoca_blasphemer_target_selection(card: TezcatlipocaBlasphemerScript, sacrifice: Card) -> void:
@@ -20197,7 +20715,8 @@ func _begin_tezcatlipoca_blasphemer_target_selection(card: TezcatlipocaBlaspheme
 		"Choose a magical card for " + card.card_name,
 		targets,
 		on_choose_target,
-		on_cancel_target
+		on_cancel_target,
+		"silence"
 	)
 
 func _queue_tezcatlipoca_blasphemer_activation(
@@ -20672,7 +21191,8 @@ func _begin_aphrodite_target_selection(god: AphroditeAreia) -> void:
 		"Choose a creature for Violent Delights",
 		targets,
 		choose_target,
-		cancel_target_selection
+		cancel_target_selection,
+		_get_selection_cursor_mode_for_source(god)
 	)
 	_set_action_label_text(god.card_name + " - Violent Delights: choose an enemy creature to enslave.")
 	update_ui()
@@ -20925,11 +21445,14 @@ func _on_deucalion_confirm_pressed() -> void:
 		var opponent := game_manager.get_opponent(spell.card_owner)
 		if opponent != null:
 			_set_action_label_text(opponent.player_name + " chooses which of their structures or golems is destroyed.")
+		var on_choose_enemy := func(selected_enemy: Card) -> void:
+			_queue_deucalion_spell(spell, friendly_targets, selected_enemy)
 		_show_card_selection_overlay(
 			"Opponent Chooses Which Card Is Destroyed",
 			enemy_choices,
-			func(selected_enemy: Card) -> void:
-				_queue_deucalion_spell(spell, friendly_targets, selected_enemy)
+			on_choose_enemy,
+			Callable(),
+			_get_selection_cursor_mode_for_source(spell)
 		)
 		return
 
