@@ -10,6 +10,14 @@ const LevelSymbolRowScript = preload("res://scripts/ui/LevelSymbolRow.gd")
 const CHAMPIONS_CALL_BADGE_TEXTURE := preload("res://images/Champion's Call Horn Badge.png")
 const SMOKING_MIRROR_BADGE_TEXTURE := preload("res://images/Smoking Mirror Icon.png")
 const TEZ_SACRIFICE_BADGE_TEXTURE := preload("res://images/TezSacBadge.png")
+const APHRODITE_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/AphroditeViolentDelightsBadge.png")
+const DELLINGR_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/DellingrRevealingLightBadge.png")
+const FREYJA_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/FreyjaReceiverOfTheSlainBadge.png")
+const GUAN_YU_TACTICAL_BREAK_BADGE_TEXTURE := preload("res://images/ability_badges/GuanYuTacticalBreakBadge.png")
+const HERMES_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/HermesBadge.png")
+const MANNAN_MAC_LIR_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/MannanBadge.png")
+const MUMMU_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/MummuBadge.png")
+const NUSKU_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/NuskuBadge.png")
 const BERSERKER_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/BerserkerRageBadge.png")
 const BEYLA_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/BeylaReviveBadge.png")
 const ROBOTIC_FOOTSOLDIER_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/RoboticFootsoldierUnitedFrontBadge.png")
@@ -18,8 +26,11 @@ const TEZCATLIPOCA_BLASPHEMER_ABILITY_BADGE_TEXTURE := preload("res://images/abi
 const WHITE_SERPENT_MEDICINE_BADGE_TEXTURE := preload("res://images/ability_badges/WhiteSerpentMedicineBadge.png")
 const WINGED_LION_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/WingedLionFlankBadge.png")
 const ALU_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/AluStupefyBadge.png")
+const ANCIENT_PYRE_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/AncientPyreBadge.png")
+const ANOINTING_STATUE_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/AnointingStatueBadge.png")
 const CLAY_EATERS_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/ClayEatersGeophagiaBadge.png")
 const EN_HEDU_ANNA_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/EnHeduAnnaExaltationBadge.png")
+const GAMBANTEINN_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/GambanteinnBadge.png")
 const GAWAIN_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/GawainHealingHandsBadge.png")
 const GUDU_PRIEST_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/GuduPriestBadge.png")
 const HARII_SHAMAN_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/HariiShamanBadge.png")
@@ -31,6 +42,7 @@ const MOPSUS_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/Mopsu
 const NIMUE_ENTOMB_BADGE_TEXTURE := preload("res://images/ability_badges/NimueEntombBadge.png")
 const NIMUE_PRESENT_BADGE_TEXTURE := preload("res://images/ability_badges/NimuePresentBadge.png")
 const SHIFT_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/ShiftAbilityBadge.png")
+const THRONE_OF_ODIN_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/ThroneofOdinBadge.png")
 const GUAN_YU_MANOEUVRE_BADGE_TEXTURE := preload("res://images/ability_badges/GuanYuManeuverBadge.png")
 const ODIN_RUNIC_KNOWLEDGE_BADGE_TEXTURE := preload("res://images/ability_badges/OdinRunicKnowledgeBadge.png")
 const E2_ABZU_RETURN_BADGE_TEXTURE := preload("res://images/ability_badges/E2AbzuReturnBadge.png")
@@ -61,11 +73,11 @@ const BOARD_ZONE_SLAB_TEXTURE_PATHS := [
 	"res://images/board/slot_tile_9.png",
 ]
 const BOARD_ZONE_ROW_TILE_COUNT := 5
-const TEZ_TONAL_MASTERY_TEXTURE_PATHS := [
-	"res://images/TezTonalMastery0.png",
-	"res://images/TezTonalMastery1.png",
-	"res://images/TezTonalMastery2.png",
-	"res://images/TezTonalMastery3.png",
+const TEZ_TONAL_MASTERY_TEXTURES := [
+	preload("res://images/TezTonalMastery0.png"),
+	preload("res://images/TezTonalMastery1.png"),
+	preload("res://images/TezTonalMastery2.png"),
+	preload("res://images/TezTonalMastery3.png"),
 ]
 const TEZ_NORMAL_GOD_NAME := "Tezcatlipoca, the Smoking Mirror"
 const TEZ_REQUIRED_SACRIFICES := 4
@@ -468,6 +480,7 @@ signal zone_clicked(zone: Zone)
 signal card_clicked(card: Card)
 signal equipment_target_action_clicked(card: Card, action: String)
 signal champions_call_clicked(card: GodCard)
+signal god_ability_badge_clicked(card: Card)
 signal tez_necoc_yaotl_badge_clicked(card: Card)
 signal creature_stance_switch_clicked(card: Card, target_mode: Card.CreatureMode)
 signal creature_ability_badge_clicked(card: Card)
@@ -500,7 +513,6 @@ var _defense_overlay: Control = null
 var _raised_overlay: Control = null  # non-null for DEF or stealth - floats above the zone row
 var _visual_state_card: Card = null
 var _badge_hover_popup: Control = null
-var _tez_tonal_mastery_texture_cache: Dictionary = {}
 
 const BASE_ZONE_EXTENT := 165.0
 const DROMI_BINDING_NAME := "Dromi"
@@ -510,7 +522,7 @@ const EQUIPMENT_AFFORDANCE_GAP := 4.0
 const EQUIPMENT_AFFORDANCE_TOP := 28.0
 const DEBUFF_AFFORDANCE_GAP := 4.0
 const DEBUFF_BADGE_SIZE := 22.0
-const ABILITY_BADGE_SIZE := 96.0
+const ABILITY_BADGE_SIZE := 76.8
 const CREATURE_ABILITY_BADGE_SIZE := ABILITY_BADGE_SIZE
 const CREATURE_ABILITY_BADGE_TOP_OFFSET := -23.0
 const E2_ABZU_BADGE_ICON_INSET := 10.0
@@ -639,6 +651,11 @@ func _emit_champions_call_clicked_for_uid(card_uid: String) -> void:
 	if resolved_card != null:
 		champions_call_clicked.emit(resolved_card)
 
+func _emit_god_ability_badge_clicked_for_uid(card_uid: String) -> void:
+	var resolved_card := _find_zone_card_by_uid(card_uid)
+	if resolved_card != null:
+		god_ability_badge_clicked.emit(resolved_card)
+
 func _emit_tez_necoc_yaotl_badge_clicked_for_uid(card_uid: String) -> void:
 	var resolved_card := _find_zone_card_by_uid(card_uid)
 	if resolved_card != null:
@@ -680,6 +697,8 @@ func _on_badge_gui_input(event: InputEvent) -> void:
 	match action_name:
 		"champions_call":
 			_emit_champions_call_clicked_for_uid(card_uid)
+		"god_ability":
+			_emit_god_ability_badge_clicked_for_uid(card_uid)
 		"tez_necoc_yaotl":
 			_emit_tez_necoc_yaotl_badge_clicked_for_uid(card_uid)
 		"e2_abzu":
@@ -1701,19 +1720,8 @@ func _get_tez_tonal_mastery_token_count(card: Card) -> int:
 	return clampi(int(card.call("get_tonal_mastery_token_count")), 0, TEZ_TONAL_MASTERY_TOKEN_THRESHOLD)
 
 func _get_tez_tonal_mastery_texture(card: Card) -> Texture2D:
-	var token_count := clampi(_get_tez_tonal_mastery_token_count(card), 0, TEZ_TONAL_MASTERY_TEXTURE_PATHS.size() - 1)
-	var texture_path := str(TEZ_TONAL_MASTERY_TEXTURE_PATHS[token_count])
-	if _tez_tonal_mastery_texture_cache.has(texture_path):
-		return _tez_tonal_mastery_texture_cache[texture_path] as Texture2D
-	var absolute_path := ProjectSettings.globalize_path(texture_path)
-	if not FileAccess.file_exists(absolute_path):
-		return null
-	var image := Image.load_from_file(absolute_path)
-	if image == null or image.is_empty():
-		return null
-	var texture := ImageTexture.create_from_image(image)
-	_tez_tonal_mastery_texture_cache[texture_path] = texture
-	return texture
+	var token_count := clampi(_get_tez_tonal_mastery_token_count(card), 0, TEZ_TONAL_MASTERY_TEXTURES.size() - 1)
+	return TEZ_TONAL_MASTERY_TEXTURES[token_count] as Texture2D
 
 func _get_tez_necoc_yaotl_sacrifice_count(card: Card) -> int:
 	if not _is_tez_necoc_yaotl_card(card):
@@ -1744,8 +1752,6 @@ func _add_tez_tonal_mastery_badge(overlay: Control, card: Card) -> void:
 	var token_count := _get_tez_tonal_mastery_token_count(card)
 	var texture := _get_tez_tonal_mastery_texture(card)
 	if texture == null:
-		return
-	if not _should_show_ability_badge_control(card, false, false):
 		return
 
 	var badge := Control.new()
@@ -1915,11 +1921,58 @@ func _get_creature_ability_badge_texture(card: Card) -> Texture2D:
 func _get_god_custom_ability_badge_texture(card: Card) -> Texture2D:
 	if card == null:
 		return null
+	if card.card_name == "Aphrodite Areia":
+		var cropped_texture := AtlasTexture.new()
+		cropped_texture.atlas = APHRODITE_ABILITY_BADGE_TEXTURE
+		cropped_texture.region = Rect2(87, 20, 850, 850)
+		return cropped_texture
+	if card.card_name == "Dellingr, the Dayspring":
+		return DELLINGR_ABILITY_BADGE_TEXTURE
+	if card.card_name == "Freyja":
+		return FREYJA_ABILITY_BADGE_TEXTURE
+	if card.card_name == "Guan Yu":
+		return GUAN_YU_TACTICAL_BREAK_BADGE_TEXTURE
 	if card.card_name == "Guan Yu, Active God":
 		return GUAN_YU_MANOEUVRE_BADGE_TEXTURE
+	if card.card_name == "Hermes":
+		return HERMES_ABILITY_BADGE_TEXTURE
 	if card.card_name == "Odin, the Allfather":
 		return ODIN_RUNIC_KNOWLEDGE_BADGE_TEXTURE
+	if card.card_name == "Mummu, The One Who Has Awoken" or card.card_name == "Mummu, Active God":
+		return MUMMU_ABILITY_BADGE_TEXTURE
+	if card.card_name == "Nusku, Firebearer" or card.card_name == "Nusku, Active God":
+		return NUSKU_ABILITY_BADGE_TEXTURE
+	if CardCatalog.to_lookup_key(card.card_name) in ["manannnmaclir", "manannanmaclir"]:
+		return MANNAN_MAC_LIR_ABILITY_BADGE_TEXTURE
 	return null
+
+func _get_board_card_custom_ability_badge_texture(card: Card) -> Texture2D:
+	if card == null:
+		return null
+	if card.card_name == "Ancient Pyre":
+		return ANCIENT_PYRE_ABILITY_BADGE_TEXTURE
+	if card.card_name == "Anointing Statue":
+		return ANOINTING_STATUE_ABILITY_BADGE_TEXTURE
+	if card.card_name == "Hildskjalf: Throne of Odin":
+		return THRONE_OF_ODIN_ABILITY_BADGE_TEXTURE
+	if card.card_name == "Gambanteinn":
+		return GAMBANTEINN_ABILITY_BADGE_TEXTURE
+	return null
+
+func _can_show_board_card_custom_ability_badge_as_ready(card: Card) -> bool:
+	if card == null or game_manager == null:
+		return false
+	if card is AnointingStatue:
+		var statue := card as AnointingStatue
+		for player in game_manager.players:
+			if player == null:
+				continue
+			for zone in player.frontline_zones + player.reserve_zones:
+				for target in zone.cards:
+					if statue.can_activate(game_manager, target):
+						return true
+		return false
+	return card.has_method("can_activate") and card.has_method("activate") and card.can_activate(game_manager)
 
 func _get_creature_ability_badge_mana_cost(card: Card) -> int:
 	if card == null:
@@ -2261,6 +2314,55 @@ func _add_creature_ability_badge(overlay: Control, card: Card) -> void:
 	_connect_badge_hover(badge, hover_text)
 	overlay.add_child(badge)
 
+func _add_board_card_custom_ability_badge(overlay: Control, card: Card) -> void:
+	if overlay == null or card == null:
+		return
+	if card.card_type != Card.CardType.STRUCTURE and card.card_type != Card.CardType.EQUIPMENT:
+		return
+	var texture := _get_board_card_custom_ability_badge_texture(card)
+	if texture == null:
+		return
+	var viewer := _get_viewer_player()
+	var can_view_stealth := not card.is_stealth or card.get_controller() == viewer or card.is_temporarily_revealed()
+	if card.is_face_down or card.is_prepared or not can_view_stealth:
+		return
+
+	var clickable := not _is_enemy and card.get_controller() == viewer
+	var card_uid := BoardZoneUI.get_action_point_card_uid(card)
+	var badge_ready = clickable and (
+		_is_card_usable_for_priority(card) if _is_priority_badge_filter_active() else _can_show_board_card_custom_ability_badge_as_ready(card)
+	)
+	if not _should_show_ability_badge_control(card, badge_ready, clickable):
+		return
+	var hover_text := _get_creature_ability_badge_hover_text(card)
+	var badge_right := _get_creature_ability_badge_right(card)
+	var badge_top := _get_badge_row_top() + CREATURE_ABILITY_BADGE_TOP_OFFSET
+
+	var badge := Control.new()
+	badge.name = "BoardCardCustomAbilityBadge"
+	badge.mouse_filter = Control.MOUSE_FILTER_STOP if hover_text.strip_edges() != "" else Control.MOUSE_FILTER_IGNORE
+	badge.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND if clickable else Control.CURSOR_ARROW
+	badge.z_index = 31
+	badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	badge.offset_left = badge_right - CREATURE_ABILITY_BADGE_SIZE
+	badge.offset_top = badge_top
+	badge.offset_right = badge_right
+	badge.offset_bottom = badge_top + CREATURE_ABILITY_BADGE_SIZE
+
+	var icon := TextureRect.new()
+	icon.texture = texture
+	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	icon.modulate = Color(1, 1, 1, 1) if badge_ready else Color(0.82, 0.82, 0.86, 0.9)
+	badge.add_child(icon)
+
+	if clickable and card_uid != "":
+		_connect_badge_click_action(badge, "creature_ability", card_uid)
+	_connect_badge_hover(badge, hover_text)
+	overlay.add_child(badge)
+
 func _add_god_custom_ability_badge(overlay: Control, card: Card) -> void:
 	if overlay == null or card == null or not card.is_god:
 		return
@@ -2277,6 +2379,11 @@ func _add_god_custom_ability_badge(overlay: Control, card: Card) -> void:
 			and card.can_activate(game_manager)
 		)
 	)
+	if card.card_name == "Guan Yu" and not _is_priority_badge_filter_active():
+		badge_ready = clickable \
+			and game_manager != null \
+			and card.has_method("_can_use_tactical_break") \
+			and bool(card.call("_can_use_tactical_break", game_manager))
 	if not _should_show_ability_badge_control(card, badge_ready, clickable):
 		return
 	var hover_text := _get_creature_ability_badge_hover_text(card)
@@ -2288,6 +2395,8 @@ func _add_god_custom_ability_badge(overlay: Control, card: Card) -> void:
 	badge.z_index = 31
 	badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
 	var badge_top := _get_badge_row_top() + 26.0 + GOD_ABILITY_BADGE_TOP_OFFSET
+	if card.card_name == "Guan Yu":
+		badge_top = _get_badge_row_top() + GOD_ABILITY_BADGE_TOP_OFFSET + ABILITY_BADGE_SIZE + 4.0
 	badge.offset_left = -6.0 - ABILITY_BADGE_SIZE
 	badge.offset_top = badge_top
 	badge.offset_right = -6
@@ -2304,7 +2413,7 @@ func _add_god_custom_ability_badge(overlay: Control, card: Card) -> void:
 
 	var card_uid := BoardZoneUI.get_action_point_card_uid(card)
 	if clickable:
-		_connect_badge_click_action(badge, "card_clicked", card_uid)
+		_connect_badge_click_action(badge, "god_ability", card_uid)
 	_connect_badge_hover(badge, hover_text)
 	overlay.add_child(badge)
 
@@ -4819,6 +4928,7 @@ func _refresh_display() -> void:
 			_add_nimue_badges(card_overlay, card)
 			_add_white_serpent_medicine_badge(card_overlay, card)
 			_add_creature_ability_badge(card_overlay, card)
+			_add_board_card_custom_ability_badge(card_overlay, card)
 
 		# VBox fills the zone; spacer pushes the stat label to the bottom
 		var vbox := VBoxContainer.new()

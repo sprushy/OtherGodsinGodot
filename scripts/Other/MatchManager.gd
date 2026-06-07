@@ -3144,6 +3144,14 @@ func _process_command_impl(command: Dictionary) -> bool:
 			if not up_card.can_unlock(game_manager):
 				move_failed.emit(up_card.card_name + " cannot be unlocked right now.")
 				return false
+			var unlock_target_uid := str(command.get("target_uid", "")).strip_edges()
+			if up_card is TonalExtraction and not unlock_target_uid.is_empty():
+				var tonal_card := up_card as TonalExtraction
+				var unlock_target := game_manager.get_card_by_uid(unlock_target_uid)
+				if unlock_target == null or unlock_target not in tonal_card.get_valid_targets(game_manager):
+					move_failed.emit("unlock_power: invalid Tonal Extraction target")
+					return false
+				tonal_card.set_pending_unlock_target_uid(unlock_target_uid)
 			up_card.unlock(game_manager)
 			move_validated.emit(command)
 			return true

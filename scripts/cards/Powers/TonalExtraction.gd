@@ -6,6 +6,7 @@ const SHAPESHIFT_LOCK_STATUS := "tonal_extraction_no_shift"
 const ART_PATH := "res://images/card_art/powers/TonalExtractionEdit.png"
 
 var _pending_unlock_resolution: bool = false
+var _pending_unlock_target_uid: String = ""
 var _bound_shapeshifter: Card = null
 var _spirit_token: Card = null
 var _is_cleaning_up: bool = false
@@ -57,6 +58,14 @@ func on_unlock(game_manager: GameManager) -> void:
 		return
 	if card_owner == null:
 		return
+	var queued_target := _consume_pending_unlock_target(valid_targets)
+	if queued_target != null:
+		game_manager.run_with_effect_source(
+			self,
+			func() -> void:
+				activate(game_manager, queued_target)
+		)
+		return
 	var target_uids: Array[String] = []
 	for target in valid_targets:
 		if target != null:
@@ -65,6 +74,9 @@ func on_unlock(game_manager: GameManager) -> void:
 		"source_uid": uid,
 		"target_uids": target_uids,
 	})
+
+func set_pending_unlock_target_uid(target_uid: String) -> void:
+	_pending_unlock_target_uid = target_uid.strip_edges()
 
 func can_activate(game_manager: GameManager) -> bool:
 	return super.can_activate(game_manager) \
@@ -216,6 +228,16 @@ func _build_spirit_profile(target: Card) -> Dictionary:
 		types.append("Spirit")
 	profile["card_types"] = types
 	return profile
+
+func _consume_pending_unlock_target(valid_targets: Array[Card]) -> Card:
+	var target_uid := _pending_unlock_target_uid
+	_pending_unlock_target_uid = ""
+	if target_uid.is_empty():
+		return null
+	for target in valid_targets:
+		if target != null and target.uid == target_uid:
+			return target
+	return null
 
 func _find_open_summon_zone() -> Zone:
 	if card_owner == null:

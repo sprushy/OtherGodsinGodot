@@ -33,6 +33,11 @@ const SEEK_AUTO_REFRESH_INTERVAL_SECONDS := 3.0
 const FRESH_LOBBY_RECONNECT_DELAY_SECONDS := 0.6
 const ACTIVE_MATCH_AUTO_RESUME_SUPPRESS_SECONDS := 10.0
 const STARTUP_MENU_FADE_SECONDS := 3.0
+const UPDATE_CHECK_TIMEOUT_SECONDS := 15.0
+const UPDATE_CHECK_RETRY_DELAY_SECONDS := 1.0
+const UPDATE_CHECK_MAX_ATTEMPTS := 2
+const UPDATE_LOG_PATH := "user://update.log"
+const BYTES_PER_MIB := 1048576.0
 
 @onready var menu_container = $MenuContainer
 @onready var game_container = $GameContainer
@@ -124,12 +129,20 @@ var _update_prompt_overlay: Control = null
 var _pending_update_release_version: String = ""
 var _pending_update_release_url: String = AppReleaseInfoScript.RELEASES_PAGE_URL
 var _pending_update_download_url: String = ""
+var _pending_update_download_size: int = 0
 var _update_download_request: HTTPRequest = null
 var _update_now_button: Button = null
 var _update_download_status_label: Label = null
 var _is_auto_updating: bool = false
 var _automatic_update_required: bool = false
 var _server_version_update_check_requested: bool = false
+var _lobby_failure_update_check_requested: bool = false
+var _update_check_in_flight: bool = false
+var _update_check_attempt: int = 0
+var _update_check_retry_serial: int = 0
+var _update_check_no_update_status: String = ""
+var _update_check_failure_status: String = ""
+var _last_logged_update_percent: int = -10
 var _startup_prompt_gate_open: bool = false
 var _rules_overlay: Control = null
 var _seek_auto_refresh_elapsed: float = 0.0
@@ -529,14 +542,7 @@ func _refresh_server_version_overlay_visibility() -> void:
 
 func _process(delta: float) -> void:
 	if _is_auto_updating and _update_download_request != null and is_instance_valid(_update_download_request):
-		if _update_download_status_label != null and is_instance_valid(_update_download_status_label):
-			var total := _update_download_request.get_body_size()
-			var downloaded := _update_download_request.get_downloaded_bytes()
-			if total > 0:
-				var percent := int(float(downloaded) / float(total) * 100.0)
-				_update_download_status_label.text = "Downloading... %d%%" % percent
-			else:
-				_update_download_status_label.text = "Downloading... %.1f MB" % (float(downloaded) / 1048576.0)
+		_refresh_update_download_progress()
 	if not _should_auto_refresh_seeks():
 		_seek_auto_refresh_elapsed = 0.0
 		return
@@ -545,6 +551,39 @@ func _process(delta: float) -> void:
 		return
 	_seek_auto_refresh_elapsed = 0.0
 	_queue_room_list_refresh(false)
+
+func _refresh_update_download_progress() -> void:
+	if _update_download_status_label == null or not is_instance_valid(_update_download_status_label):
+		return
+	var downloaded := _update_download_request.get_downloaded_bytes()
+	var total := _update_download_request.get_body_size()
+	if total <= 0:
+		total = _pending_update_download_size
+	var version_text := _pending_update_release_version
+	if version_text.is_empty():
+		version_text = "the latest version"
+	if total > 0:
+		var percent := clampi(int(float(downloaded) / float(total) * 100.0), 0, 100)
+		_update_download_status_label.text = (
+			"Downloading %s: %d%% (%.1f / %.1f MB).\n"
+			+ "Keep Other Gods open until it restarts."
+		) % [
+			version_text,
+			percent,
+			float(downloaded) / BYTES_PER_MIB,
+			float(total) / BYTES_PER_MIB,
+		]
+		if percent >= _last_logged_update_percent + 10 or percent == 100:
+			_last_logged_update_percent = percent
+			_write_update_log(
+				"download_progress version=%s percent=%d bytes=%d total=%d"
+				% [version_text, percent, downloaded, total]
+			)
+	else:
+		_update_download_status_label.text = (
+			"Downloading %s: %.1f MB received.\n"
+			+ "Keep Other Gods open until it restarts."
+		) % [version_text, float(downloaded) / BYTES_PER_MIB]
 
 func _input(event: InputEvent) -> void:
 	if event is InputEventKey:
@@ -1693,11 +1732,19 @@ func _complete_startup_prompts() -> void:
 	_maybe_show_auth_onboarding()
 
 func _should_check_for_updates() -> bool:
-	if not _smoke_config.is_empty():
+	if not _release_updates_enabled():
 		return false
 	return AppReleaseInfoScript.is_release_version(AppReleaseInfoScript.get_current_version())
 
+func _release_updates_enabled() -> bool:
+	return not OS.is_debug_build() \
+		and not Engine.is_editor_hint() \
+		and _smoke_config.is_empty() \
+		and not _is_server_runtime_launch()
+
 func _maybe_check_for_server_required_update(server_version: String) -> void:
+	if not _release_updates_enabled():
+		return
 	if server_version.is_empty() or _server_version_update_check_requested:
 		return
 	if _is_auto_updating or (_update_prompt_overlay != null and is_instance_valid(_update_prompt_overlay)):
@@ -1710,19 +1757,51 @@ func _maybe_check_for_server_required_update(server_version: String) -> void:
 	_server_version_update_check_requested = true
 	if status_label != null:
 		status_label.text = "Server is running %s. Checking for update..." % server_version
-	_start_update_check()
+	_start_update_check(
+		"Server requires %s, but no matching public release was found." % server_version,
+		"Server requires %s, but public releases could not be checked." % server_version
+	)
 
 func _ensure_update_check_request() -> void:
 	if _update_check_request != null and is_instance_valid(_update_check_request):
 		return
 	_update_check_request = HTTPRequest.new()
 	_update_check_request.name = "LatestReleaseRequest"
-	_update_check_request.timeout = 5.0
+	_update_check_request.timeout = UPDATE_CHECK_TIMEOUT_SECONDS
+	_update_check_request.use_threads = true
 	_update_check_request.request_completed.connect(_on_update_check_request_completed)
 	add_child(_update_check_request)
 
-func _start_update_check() -> void:
+func _start_update_check(
+	no_update_status: String = "",
+	failure_status: String = "",
+	reset_attempts: bool = true
+) -> void:
+	if not _release_updates_enabled():
+		_finish_update_check_without_update()
+		return
+	if _update_check_in_flight:
+		if not no_update_status.is_empty():
+			_update_check_no_update_status = no_update_status
+		if not failure_status.is_empty():
+			_update_check_failure_status = failure_status
+		return
+	if reset_attempts:
+		_update_check_attempt = 0
+	if not no_update_status.is_empty():
+		_update_check_no_update_status = no_update_status
+	if not failure_status.is_empty():
+		_update_check_failure_status = failure_status
+	_begin_update_check_attempt()
+
+func _begin_update_check_attempt() -> void:
 	_ensure_update_check_request()
+	_update_check_attempt += 1
+	_update_check_in_flight = true
+	_write_update_log(
+		"release_check_started attempt=%d current=%s"
+		% [_update_check_attempt, AppReleaseInfoScript.get_current_version()]
+	)
 	var headers := PackedStringArray([
 		"Accept: application/vnd.github+json",
 		"User-Agent: OtherGods",
@@ -1730,7 +1809,47 @@ func _start_update_check() -> void:
 	])
 	var request_error := _update_check_request.request(AppReleaseInfoScript.RELEASES_API_URL, headers)
 	if request_error != OK:
-		_complete_startup_prompts()
+		_update_check_in_flight = false
+		_handle_update_check_failure("request_start_error=%d" % request_error)
+
+func _handle_update_check_failure(reason: String) -> void:
+	_write_update_log(
+		"release_check_failed attempt=%d reason=%s"
+		% [_update_check_attempt, reason]
+	)
+	if _update_check_attempt < UPDATE_CHECK_MAX_ATTEMPTS:
+		var tree := get_tree()
+		if tree != null:
+			_update_check_retry_serial += 1
+			var expected_serial := _update_check_retry_serial
+			var retry_timer := tree.create_timer(UPDATE_CHECK_RETRY_DELAY_SECONDS)
+			retry_timer.timeout.connect(
+				Callable(self, "_retry_update_check").bind(expected_serial)
+			)
+			return
+	var failure_status := ""
+	if not _update_check_failure_status.is_empty():
+		failure_status = _update_check_failure_status
+	_finish_update_check_without_update(failure_status)
+
+func _retry_update_check(expected_serial: int) -> void:
+	if expected_serial != _update_check_retry_serial:
+		return
+	if _update_check_in_flight or _is_auto_updating:
+		return
+	_begin_update_check_attempt()
+
+func _finish_update_check_without_update(status_override: String = "") -> void:
+	_update_check_in_flight = false
+	_update_check_retry_serial += 1
+	var resolved_status := status_override
+	if resolved_status.is_empty():
+		resolved_status = _update_check_no_update_status
+	_update_check_no_update_status = ""
+	_update_check_failure_status = ""
+	if not resolved_status.is_empty() and status_label != null:
+		status_label.text = resolved_status
+	_complete_startup_prompts()
 
 func _on_update_check_request_completed(
 	result: int,
@@ -1738,22 +1857,31 @@ func _on_update_check_request_completed(
 	_headers: PackedStringArray,
 	body: PackedByteArray
 ) -> void:
+	_update_check_in_flight = false
+	_update_check_retry_serial += 1
 	if result != HTTPRequest.RESULT_SUCCESS or response_code < 200 or response_code >= 300:
-		_complete_startup_prompts()
+		_handle_update_check_failure(
+			"result=%d response_code=%d" % [result, response_code]
+		)
 		return
 	var parsed = JSON.parse_string(body.get_string_from_utf8())
 	if not (parsed is Dictionary):
-		_complete_startup_prompts()
+		_handle_update_check_failure("invalid_json")
 		return
 	var payload := parsed as Dictionary
 	var latest_version := AppReleaseInfoScript.normalize_version(str(payload.get("tag_name", "")))
+	_write_update_log(
+		"release_check_completed current=%s latest=%s"
+		% [AppReleaseInfoScript.get_current_version(), latest_version]
+	)
 	if not _should_prompt_for_update(latest_version):
-		_complete_startup_prompts()
+		_finish_update_check_without_update()
 		return
 	var release_url := str(payload.get("html_url", AppReleaseInfoScript.RELEASES_PAGE_URL)).strip_edges()
 	if release_url.is_empty():
 		release_url = AppReleaseInfoScript.RELEASES_PAGE_URL
 	var download_url := ""
+	var download_size := 0
 	var assets: Array = payload.get("assets", [])
 	var windows_asset_names := AppReleaseInfoScript.WINDOWS_ASSET_NAMES
 	for asset_name in windows_asset_names:
@@ -1761,10 +1889,13 @@ func _on_update_check_request_completed(
 			if str(asset.get("name", "")) != asset_name:
 				continue
 			download_url = str(asset.get("browser_download_url", "")).strip_edges()
+			download_size = int(asset.get("size", 0))
 			break
 		if not download_url.is_empty():
 			break
-	_begin_required_update(latest_version, release_url, download_url)
+	_update_check_no_update_status = ""
+	_update_check_failure_status = ""
+	_begin_required_update(latest_version, release_url, download_url, download_size)
 
 func _should_prompt_for_update(latest_version: String) -> bool:
 	if not AppReleaseInfoScript.is_release_version(latest_version):
@@ -1780,9 +1911,21 @@ func _should_prompt_for_update(latest_version: String) -> bool:
 			_local_profile_store.remember_dismissed_release_version("")
 	return true
 
-func _begin_required_update(latest_version: String, release_url: String, download_url: String = "") -> void:
+func _begin_required_update(
+	latest_version: String,
+	release_url: String,
+	download_url: String = "",
+	download_size: int = 0
+) -> void:
+	if not _release_updates_enabled():
+		_complete_startup_prompts()
+		return
+	_write_update_log(
+		"update_required current=%s latest=%s download_bytes=%d"
+		% [AppReleaseInfoScript.get_current_version(), latest_version, download_size]
+	)
 	if not download_url.is_empty() and OS.get_name() == "Windows":
-		_show_update_prompt(latest_version, release_url, download_url, true)
+		_show_update_prompt(latest_version, release_url, download_url, true, download_size)
 		call_deferred("_on_update_prompt_auto_update_pressed")
 		return
 	var open_error := OS.shell_open(release_url)
@@ -1792,12 +1935,19 @@ func _begin_required_update(latest_version: String, release_url: String, downloa
 		status_label.text = "Update %s is available, but the release page could not be opened automatically." % latest_version
 	_complete_startup_prompts()
 
-func _show_update_prompt(latest_version: String, release_url: String, download_url: String = "", auto_update: bool = false) -> void:
+func _show_update_prompt(
+	latest_version: String,
+	release_url: String,
+	download_url: String = "",
+	auto_update: bool = false,
+	download_size: int = 0
+) -> void:
 	if _update_prompt_overlay != null and is_instance_valid(_update_prompt_overlay):
 		return
 	_pending_update_release_version = latest_version
 	_pending_update_release_url = release_url
 	_pending_update_download_url = download_url
+	_pending_update_download_size = download_size
 	_automatic_update_required = auto_update
 
 	_update_prompt_overlay = Control.new()
@@ -1852,7 +2002,13 @@ func _show_update_prompt(latest_version: String, release_url: String, download_u
 	var current_version := AppReleaseInfoScript.get_current_version()
 	var body_label := Label.new()
 	if auto_update:
-		body_label.text = "You're running %s. Installing %s now." % [current_version, latest_version]
+		var size_message := ""
+		if download_size > 0:
+			size_message = " The download is %.1f MB." % (float(download_size) / BYTES_PER_MIB)
+		body_label.text = (
+			"You're running %s. Installing %s now.%s\n"
+			+ "Keep Other Gods open; it will restart automatically."
+		) % [current_version, latest_version, size_message]
 	else:
 		body_label.text = "You're running %s, and the latest release is %s." % [current_version, latest_version]
 	body_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -1889,6 +2045,8 @@ func _show_update_prompt(latest_version: String, release_url: String, download_u
 
 		var progress_label := Label.new()
 		progress_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		progress_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		progress_label.custom_minimum_size = Vector2(420, 44)
 		progress_label.visible = false
 		content.add_child(progress_label)
 		_update_download_status_label = progress_label
@@ -1909,6 +2067,8 @@ func _dismiss_update_prompt() -> void:
 	_update_now_button = null
 	_update_download_status_label = null
 	_pending_update_download_url = ""
+	_pending_update_download_size = 0
+	_last_logged_update_percent = -10
 	_automatic_update_required = false
 	if _update_prompt_overlay != null and is_instance_valid(_update_prompt_overlay):
 		_update_prompt_overlay.queue_free()
@@ -1933,13 +2093,26 @@ func _on_update_prompt_open_pressed() -> void:
 	_complete_startup_prompts()
 
 func _on_update_prompt_auto_update_pressed() -> void:
+	if not _release_updates_enabled():
+		_dismiss_update_prompt()
+		_complete_startup_prompts()
+		return
 	if _is_auto_updating:
 		return
 	_is_auto_updating = true
+	_last_logged_update_percent = -10
 	if _update_now_button != null and is_instance_valid(_update_now_button):
 		_update_now_button.disabled = true
 	if _update_download_status_label != null and is_instance_valid(_update_download_status_label):
-		_update_download_status_label.text = "Downloading..."
+		var size_message := ""
+		if _pending_update_download_size > 0:
+			size_message = " (%.1f MB)" % (
+				float(_pending_update_download_size) / BYTES_PER_MIB
+			)
+		_update_download_status_label.text = (
+			"Starting %s%s download...\nKeep Other Gods open until it restarts."
+			% [_pending_update_release_version, size_message]
+		)
 		_update_download_status_label.visible = true
 
 	var zip_path := OS.get_user_data_dir() + "/update_download.zip"
@@ -1950,11 +2123,24 @@ func _on_update_prompt_auto_update_pressed() -> void:
 	_update_download_request.name = "UpdateDownloadRequest"
 	_update_download_request.download_file = zip_path
 	_update_download_request.use_threads = true
+	_update_download_request.timeout = 0.0
 	_update_download_request.request_completed.connect(_on_auto_update_download_completed.bind(zip_path))
 	add_child(_update_download_request)
+	_write_update_log(
+		"download_started version=%s expected_bytes=%d url=%s"
+		% [
+			_pending_update_release_version,
+			_pending_update_download_size,
+			_pending_update_download_url,
+		]
+	)
 
-	if _update_download_request.request(_pending_update_download_url) != OK:
-		_on_auto_update_failed("Failed to start download.")
+	var request_error := _update_download_request.request(
+		_pending_update_download_url,
+		PackedStringArray(["User-Agent: OtherGods"])
+	)
+	if request_error != OK:
+		_on_auto_update_failed("Failed to start download (%d)." % request_error)
 
 func _on_auto_update_download_completed(
 	result: int,
@@ -1963,14 +2149,43 @@ func _on_auto_update_download_completed(
 	_body: PackedByteArray,
 	zip_path: String
 ) -> void:
+	var downloaded_size := _get_file_size(zip_path)
+	_write_update_log(
+		"download_completed result=%d response_code=%d bytes=%d expected_bytes=%d"
+		% [result, response_code, downloaded_size, _pending_update_download_size]
+	)
 	if result != HTTPRequest.RESULT_SUCCESS or response_code < 200 or response_code >= 300:
 		_on_auto_update_failed("Download failed (HTTP %d)." % response_code)
+		return
+	if downloaded_size <= 0:
+		_on_auto_update_failed("The downloaded update was empty.")
+		return
+	if (
+		_pending_update_download_size > 0
+		and downloaded_size != _pending_update_download_size
+	):
+		_on_auto_update_failed(
+			"Download was incomplete (%.1f of %.1f MB)."
+			% [
+				float(downloaded_size) / BYTES_PER_MIB,
+				float(_pending_update_download_size) / BYTES_PER_MIB,
+			]
+		)
 		return
 	_apply_update_and_restart(zip_path)
 
 func _apply_update_and_restart(zip_path: String) -> void:
+	if not _release_updates_enabled():
+		_is_auto_updating = false
+		_dismiss_update_prompt()
+		_complete_startup_prompts()
+		return
 	if _update_download_status_label != null and is_instance_valid(_update_download_status_label):
 		_update_download_status_label.text = "Applying update..."
+	_write_update_log(
+		"apply_started version=%s archive=%s"
+		% [_pending_update_release_version, zip_path]
+	)
 
 	var current_exe := OS.get_executable_path()
 	if current_exe.is_empty():
@@ -2066,10 +2281,18 @@ func _apply_update_and_restart(zip_path: String) -> void:
 	if updater_pid == -1:
 		_on_auto_update_failed("Failed to launch the updater.")
 		return
+	_write_update_log(
+		"updater_launched version=%s pid=%d target=%s"
+		% [_pending_update_release_version, updater_pid, target_exe_path]
+	)
 	get_tree().quit()
 
 func _on_auto_update_failed(message: String) -> void:
 	_is_auto_updating = false
+	_write_update_log(
+		"update_failed version=%s message=%s"
+		% [_pending_update_release_version, message]
+	)
 	if _automatic_update_required:
 		if _update_download_status_label != null and is_instance_valid(_update_download_status_label):
 			_update_download_status_label.text = "%s Opening the release page..." % message
@@ -2081,6 +2304,26 @@ func _on_auto_update_failed(message: String) -> void:
 		_update_now_button.disabled = false
 	if _update_download_status_label != null and is_instance_valid(_update_download_status_label):
 		_update_download_status_label.text = message
+
+func _get_file_size(path: String) -> int:
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		return -1
+	var size := file.get_length()
+	file.close()
+	return size
+
+func _write_update_log(message: String) -> void:
+	var timestamp := Time.get_datetime_string_from_system()
+	var file := FileAccess.open(UPDATE_LOG_PATH, FileAccess.READ_WRITE)
+	if file == null:
+		file = FileAccess.open(UPDATE_LOG_PATH, FileAccess.WRITE)
+	if file == null:
+		return
+	file.seek_end()
+	file.store_line("%s %s" % [timestamp, message])
+	file.flush()
+	file.close()
 
 func _extract_update_archive_to_staging(zip: ZIPReader, staging_root: String) -> Array[String]:
 	var extracted_files: Array[String] = []
@@ -3410,6 +3653,7 @@ func _on_lobby_login_succeeded(session_id: String, reconnect_token: String, play
 	_write_smoke_trace("lobby_login_succeeded session=%s player=%s host=%s" % [session_id, player_name, str(_is_local_lobby_host)])
 	if _retry_account_switch_if_identity_mismatch(player_name):
 		return
+	_lobby_failure_update_check_requested = false
 	_set_connected_server_version(lobby_client.current_server_version if lobby_client != null else "")
 	_lobby_session_id = session_id
 	_lobby_reconnect_token = reconnect_token
@@ -3457,6 +3701,7 @@ func _on_lobby_reconnect_succeeded(
 	_write_smoke_trace("lobby_reconnect_succeeded session=%s player=%s" % [session_id, player_name])
 	if _retry_account_switch_if_identity_mismatch(player_name):
 		return
+	_lobby_failure_update_check_requested = false
 	_set_connected_server_version(lobby_client.current_server_version if lobby_client != null else "")
 	_lobby_session_id = session_id
 	_lobby_reconnect_token = reconnect_token
@@ -3728,6 +3973,7 @@ func _on_lobby_connection_failed(message: String) -> void:
 	_logged_in_account_username = ""
 	_refresh_account_identity_label()
 	status_label.text = message
+	_maybe_check_for_update_after_lobby_failure(message)
 	if _should_ignore_lobby_failure_for_smoke():
 		return
 	_fail_smoke_if_enabled("CONNECTION_FAILED:%s" % message)
@@ -3742,10 +3988,29 @@ func _on_lobby_disconnected() -> void:
 		return
 	_refresh_account_identity_label()
 	_clear_current_seek_state()
-	status_label.text = "Lobby connection lost. Refresh seeks to reconnect."
+	var message := "Lobby connection lost. Refresh seeks to reconnect."
+	status_label.text = message
+	_maybe_check_for_update_after_lobby_failure(message)
 	if _should_ignore_lobby_failure_for_smoke():
 		return
 	_fail_smoke_if_enabled("DISCONNECTED_FROM_LOBBY")
+
+func _maybe_check_for_update_after_lobby_failure(message: String) -> void:
+	if not _release_updates_enabled():
+		return
+	if _lobby_failure_update_check_requested or not _smoke_config.is_empty():
+		return
+	if _is_auto_updating or (_update_prompt_overlay != null and is_instance_valid(_update_prompt_overlay)):
+		return
+	if not AppReleaseInfoScript.is_release_version(AppReleaseInfoScript.get_current_version()):
+		return
+	_lobby_failure_update_check_requested = true
+	if status_label != null:
+		status_label.text = "%s Checking for a required update..." % message
+	_start_update_check(
+		"%s No newer public release was found." % message,
+		"%s Public releases could not be checked." % message
+	)
 
 func _on_back_to_menu_pressed() -> void:
 	_return_to_menu()

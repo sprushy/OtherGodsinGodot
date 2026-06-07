@@ -1982,6 +1982,7 @@ func _show_target_cancel_prompt() -> void:
 	var confirm_btn := Button.new()
 	confirm_btn.text = "Confirm"
 	confirm_btn.pressed.connect(func() -> void:
+		get_viewport().set_input_as_handled()
 		_hide_devour_cancel_prompt()
 		_cancel_pending_target_selection(_get_pending_target_selection_name() + " cancelled.")
 	)
@@ -1990,9 +1991,9 @@ func _show_target_cancel_prompt() -> void:
 	var keep_btn := Button.new()
 	keep_btn.text = "Keep Selecting"
 	keep_btn.pressed.connect(func() -> void:
+		get_viewport().set_input_as_handled()
 		_hide_devour_cancel_prompt()
-		_set_action_label_text(_get_target_keep_selecting_text())
-		update_ui()
+		call_deferred("_resume_target_selection_after_cancel_prompt")
 	)
 	buttons.add_child(keep_btn)
 
@@ -2004,6 +2005,13 @@ func _show_target_cancel_prompt() -> void:
 
 func _show_devour_cancel_prompt() -> void:
 	_show_target_cancel_prompt()
+
+func _resume_target_selection_after_cancel_prompt() -> void:
+	if not _has_pending_target_selection():
+		return
+	_set_action_label_text(_get_target_keep_selecting_text())
+	_sync_sacrifice_cursor()
+	update_ui()
 
 func _position_devour_cancel_prompt() -> void:
 	if _devour_cancel_prompt == null or not is_instance_valid(_devour_cancel_prompt):
@@ -5571,6 +5579,7 @@ func _make_god_cluster(zone: Zone, player: Player, is_enemy: bool) -> Control:
 		_player_god_zone_ui = god_zone_ui
 		_player_god_zone_ui.card_clicked.connect(_on_god_card_pressed)
 		_player_god_zone_ui.champions_call_clicked.connect(_on_champions_call_badge_pressed)
+		_player_god_zone_ui.god_ability_badge_clicked.connect(_on_god_ability_badge_clicked)
 		_player_god_zone_ui.tez_necoc_yaotl_badge_clicked.connect(_on_tez_necoc_yaotl_badge_pressed)
 		_player_god_zone_ui.god_right_clicked.connect(_on_god_right_clicked)
 
@@ -6192,6 +6201,9 @@ func _on_power_pressed(power: PowerCard) -> void:
 		_set_action_label_text(_get_activation_unavailable_text(power, power.card_name + " cannot activate right now."))
 		return
 	if power.can_unlock(game_manager):
+		if power is TonalExtraction:
+			_begin_tonal_extraction_unlock_selection(power as TonalExtraction)
+			return
 		if power.requires_chosen_hand_discards() and not power.has_pending_chosen_discards_for_cost():
 			var on_confirm_power_unlock := func() -> void:
 				_complete_power_unlock(power)
@@ -6292,6 +6304,51 @@ func _on_power_pressed(power: PowerCard) -> void:
 			_set_action_label_text(power.card_name + " ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â needs " + str(power.mana_cost) + " mana to unlock.")
 		else:
 			_set_action_label_text(power.card_name + " ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â cannot activate right now.")
+
+func _begin_tonal_extraction_unlock_selection(power: TonalExtraction) -> void:
+	if power == null or game_manager == null:
+		return
+	var targets: Array = power.get_valid_targets(game_manager)
+	if targets.is_empty():
+		_set_action_label_text(power.get_unlock_failure_reason(game_manager))
+		update_ui()
+		return
+	var validate_extraction_unlock_target := func(clicked_card: Card) -> bool:
+		return clicked_card != null and clicked_card in power.get_valid_targets(game_manager)
+	var confirm_extraction_unlock_target := func(clicked_card: Card) -> void:
+		_complete_power_unlock_with_target(power, clicked_card)
+	var cancel_extraction_unlock_target := func() -> void:
+		_set_action_label_text("Cancelled " + power.card_name + ".")
+		update_ui()
+	_begin_pending_click_selection(
+		power.card_name,
+		power,
+		validate_extraction_unlock_target,
+		confirm_extraction_unlock_target,
+		cancel_extraction_unlock_target
+	)
+	_set_action_label_text("%s: click a friendly Shapeshifter to extract." % power.card_name)
+	update_ui()
+
+func _complete_power_unlock_with_target(power: PowerCard, target: Card) -> void:
+	if power == null:
+		return
+	var command := {
+		type = "unlock_power",
+		power_uid = power.uid,
+		target_uid = target.uid if target != null else "",
+	}
+	if game_input != null:
+		game_input.submit_action(command)
+		return
+	if match_manager != null:
+		match_manager.process_command(command)
+		return
+	if power is TonalExtraction and target != null:
+		(power as TonalExtraction).set_pending_unlock_target_uid(target.uid)
+	power.unlock(game_manager)
+	_set_action_label_text(power.card_name + " unlocked!")
+	update_ui()
 
 func _begin_breidablik_harbor_selection(power: Breidablik) -> void:
 	_hide_breidablik_prompt()
@@ -7965,6 +8022,10 @@ func _has_pending_click_selection() -> bool:
 func _handle_invalid_pending_target_click(cancel_reason: String = "") -> bool:
 	if not _has_pending_target_selection():
 		return false
+	if _pending_click_selection_source is TonalExtraction:
+		_set_action_label_text(_get_pending_target_selection_name() + ": click a friendly Shapeshifter to extract.")
+		update_ui()
+		return true
 	if _is_devour_cursor_mode_active():
 		if _suppress_next_devour_cancel_prompt:
 			_suppress_next_devour_cancel_prompt = false
@@ -10158,7 +10219,8 @@ func _on_hand_card_pressed(card: Card) -> void:
 			return
 		if _try_handle_pending_click_selection(card):
 			return
-		if _is_freyja_normal_god(_pending_click_selection_source):
+		if _is_freyja_normal_god(_pending_click_selection_source) \
+				or _pending_click_selection_source is TonalExtraction:
 			_handle_invalid_pending_target_click(_get_pending_click_invalid_reason(card))
 		else:
 			_cancel_pending_target_selection(
@@ -10556,6 +10618,9 @@ func _on_empty_zone_pressed(zone: Zone) -> void:
 		if _is_devour_cursor_mode_active():
 			_show_devour_cancel_prompt()
 			return
+		if _pending_click_selection_source is TonalExtraction:
+			_handle_invalid_pending_target_click()
+			return
 		_cancel_pending_target_selection(
 			_get_pending_target_selection_name()
 			+ " cancelled: clicked an empty zone."
@@ -10858,6 +10923,53 @@ func _on_god_card_pressed(card: Card) -> void:
 		god_ability_source = card
 		_set_action_label_text(card.card_name + " - click a valid target.")
 		update_ui()
+
+func _on_god_ability_badge_clicked(card: Card) -> void:
+	if card == null or card.card_name != "Guan Yu":
+		_on_god_card_pressed(card)
+		return
+	if _game_finished or game_manager == null:
+		return
+	if _has_pending_target_selection():
+		_show_target_cancel_prompt()
+		return
+	if _reject_non_priority_action_if_blocked():
+		return
+	if _is_turn_choice_pending():
+		_reject_pre_turn_action()
+		return
+	if not card.has_method("_can_use_tactical_break") or not bool(card.call("_can_use_tactical_break", game_manager)):
+		var reason := "Tactical Break cannot be activated right now."
+		if card.has_method("_get_tactical_break_failure_reason"):
+			reason = str(card.call("_get_tactical_break_failure_reason", game_manager))
+		_set_action_label_text(reason)
+		update_ui()
+		return
+
+	var targets: Array = card.get_valid_targets(game_manager)
+	var on_choose_tactical_break_target := func(selected_target: Card) -> void:
+		if _should_submit_ui_action_command():
+			game_input.submit_action({
+				type = "god_ability",
+				god_uid = card.uid,
+				target_uid = selected_target.uid,
+			})
+		else:
+			_queue_targeted_ability_action(
+				card,
+				selected_target,
+				func() -> void:
+					card.activate(game_manager, selected_target)
+			)
+	var on_cancel_tactical_break := func() -> void:
+		_set_action_label_text("Cancelled Tactical Break.")
+		update_ui()
+	_show_card_selection_overlay(
+		"Choose a card for Tactical Break",
+		targets,
+		on_choose_tactical_break_target,
+		on_cancel_tactical_break
+	)
 
 func _on_champions_call_badge_pressed(god: GodCard) -> void:
 	if god == null or game_manager == null:
@@ -14712,9 +14824,29 @@ func _on_creature_ability_badge_clicked(card: Card) -> void:
 		_set_action_label_text(card.card_name + " has no activatable ability.")
 		update_ui()
 		return
+	if card is AnointingStatue:
+		awaiting_anointing_target = true
+		anointing_source = card as AnointingStatue
+		_set_action_label_text("Anointing Statue: Select a creature or structure to cleanse.")
+		update_ui()
+		return
 	if not card.can_activate(game_manager):
 		var failure_text := _get_activation_unavailable_text(card, card.card_name + " cannot activate right now.")
 		_set_action_label_text(failure_text)
+		update_ui()
+		return
+	if card is HildskjalfThroneOfOdin:
+		_show_hildskjalf_prompt(card as HildskjalfThroneOfOdin)
+		return
+	if card is AncientPyre:
+		if (card as AncientPyre).is_frontline():
+			awaiting_pyre_target = true
+			pyre_source = card as AncientPyre
+			_set_action_label_text("Ancient Pyre: Select a card to reduce Res by 5, or click the enemy god to Convert 5 followers.")
+			update_ui()
+			return
+		_submit_or_queue_card_ability_by_uid(card.uid, {}, "Ancient Pyre activated!")
+		_set_action_label_text("Ancient Pyre: Ritual Flame - 5 followers converted!")
 		update_ui()
 		return
 
@@ -16322,6 +16454,10 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif mouse_event.button_index == MOUSE_BUTTON_LEFT:
 		if _is_devour_cursor_mode_active():
 			_show_devour_cancel_prompt()
+			get_viewport().set_input_as_handled()
+			return
+		if _pending_click_selection_source is TonalExtraction:
+			_handle_invalid_pending_target_click()
 			get_viewport().set_input_as_handled()
 			return
 		_cancel_pending_target_selection(_get_pending_target_selection_name() + " cancelled: clicked off the board.")
