@@ -83,6 +83,7 @@ func _boot_match_runtime(launch_args: Dictionary) -> void:
 		push_error("ServerRuntimeBootstrap: failed to load match config %s" % config_path)
 		get_tree().quit(1)
 		return
+	config["_launch_config_path"] = config_path
 
 	var match_server = HeadlessMatchServerScript.new()
 	match_server.name = "HeadlessMatchServer"

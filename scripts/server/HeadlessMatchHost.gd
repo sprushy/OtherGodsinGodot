@@ -5,6 +5,7 @@ class_name HeadlessMatchHost
 ## This keeps server responsibilities out of CombatMockGame's UI bootstrap.
 
 const PromptRouterScript = preload("res://scripts/server/PromptRouter.gd")
+const JsonStoreScript = preload("res://scripts/server/JsonStore.gd")
 const NETWORK_MANAGER_NODE_NAME := "MatchNetworkManager"
 
 signal game_event_received(event_type: String, data: Dictionary)
@@ -76,15 +77,27 @@ func setup_transport(
 		match_manager.allow_immediate_local_authoritative_stack_resolution = is_host \
 			and server_port <= 0 \
 			and match_session == null
-		network_manager.command_received.connect(func(command: Dictionary, sender_info: Dictionary) -> void:
-			match_manager.process_command(command, _resolve_command_sender_info(sender_info))
-		)
+		network_manager.command_received.connect(_on_command_received)
 
 	if is_host or is_client:
 		network_manager.game_event_received.connect(_on_game_event_received)
 		network_manager.peer_disconnected.connect(_on_peer_disconnected)
 
 	return network_manager
+
+func _on_command_received(command: Dictionary, sender_info: Dictionary) -> void:
+	if match_manager == null:
+		return
+	if match_session != null \
+			and match_session.is_waiting_for_reconnect() \
+			and str(command.get("type", "")).strip_edges() != "forfeit":
+		if network_manager != null:
+			network_manager.reject_command(
+				int(sender_info.get("peer_id", -1)),
+				"Match paused while a player reconnects."
+			)
+		return
+	match_manager.process_command(command, _resolve_command_sender_info(sender_info))
 
 func _configure_in_process_authority(assign_local_host_player: bool) -> void:
 	if network_manager == null:
@@ -156,10 +169,11 @@ func _on_match_join_requested(join_request: Dictionary, sender_info: Dictionary)
 		return
 	if observer_mode:
 		var observer_session_id := str(join_request.get("observer_session_id", "")).strip_edges()
+		_refresh_spectator_visibility_from_launch_config()
 		var visible_player_indices: Array[int] = match_session.get_spectator_visible_player_indices(observer_session_id)
 		match_session.add_spectator_peer(peer_id)
 		network_manager.set_spectator_visible_player_indices(peer_id, visible_player_indices)
-		network_manager.approve_match_join(peer_id, -1, match_session.to_spectator_match_info())
+		network_manager.approve_match_join(peer_id, -1, match_session.to_spectator_match_info(observer_session_id))
 		var spectator_state := GameState.serialize(game_manager, GameState.SPECTATOR_VIEWER_INDEX, visible_player_indices)
 		network_manager.broadcast_event_to_peer(peer_id, "full_state", {
 			state = spectator_state,
@@ -184,6 +198,17 @@ func _on_match_join_requested(join_request: Dictionary, sender_info: Dictionary)
 		state = state,
 		action_message = "Connected! Syncing game state.",
 	})
+
+func _refresh_spectator_visibility_from_launch_config() -> void:
+	if match_session == null:
+		return
+	var config_path := str(match_session.launch_config_path).strip_edges()
+	if config_path.is_empty():
+		return
+	var config := JsonStoreScript.load_dictionary(config_path, {}, "HeadlessMatchHost")
+	var configured_visibility = config.get("spectator_visible_player_indices_by_session", {})
+	if configured_visibility is Dictionary:
+		match_session.spectator_visible_player_indices_by_session = (configured_visibility as Dictionary).duplicate(true)
 
 func _on_game_event_received(event_type: String, data: Dictionary) -> void:
 	game_event_received.emit(event_type, data)

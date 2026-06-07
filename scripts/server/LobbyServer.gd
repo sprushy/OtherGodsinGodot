@@ -16,6 +16,7 @@ const MatchHistoryStoreScript = preload("res://scripts/server/MatchHistoryStore.
 const LOBBY_EVENT_TYPE := "__lobby_event__"
 const SEEK_TIMEOUT_SECONDS := 30 * 60
 const SEEK_TIMEOUT_CHECK_INTERVAL_SECONDS := 5.0
+const ROOM_MEMBER_RECONNECT_GRACE_SECONDS := 5 * 60
 
 signal local_room_snapshot_updated(snapshot: Dictionary)
 signal room_list_updated(rooms: Array)
@@ -70,6 +71,7 @@ func _process(delta: float) -> void:
 		return
 	_seek_timeout_check_elapsed = 0.0
 	_expire_stale_seeks()
+	_expire_disconnected_room_members()
 
 func start_server(p_advertised_host: String = "127.0.0.1", port: int = LobbyProtocolScript.PORT, p_match_port: int = LobbyProtocolScript.MATCH_PORT) -> Error:
 	if is_listening:
@@ -228,6 +230,8 @@ func _handle_request(peer_id: int, message: Dictionary) -> void:
 			_handle_delete_account_deck(peer_id, payload)
 		LobbyProtocolScript.SET_ACCOUNT_PREFERRED_DECK:
 			_handle_set_account_preferred_deck(peer_id, payload)
+		LobbyProtocolScript.SET_OBSERVER_FRIEND_CARD_VISIBILITY:
+			_handle_set_observer_friend_card_visibility(peer_id, payload)
 		LobbyProtocolScript.REQUEST_PROFILE_SUMMARY:
 			_handle_request_profile_summary(peer_id)
 		LobbyProtocolScript.REQUEST_FRIENDS:
@@ -366,11 +370,17 @@ func _complete_login_for_peer(
 		"account_id": str(existing.get("account_id", "")),
 		"username": str(existing.get("username", "")),
 		"auth_mode": str(existing.get("auth_mode", LobbyProtocolScript.LOGIN_ACCOUNT)),
+		"allow_friend_observers_to_see_cards": _get_allow_friend_observers_to_see_cards(existing),
 		"server_version": _get_server_version(),
 		"room": room_snapshot,
 		"active_match_info": active_match_info,
 	})
+	if not room_id.is_empty() and rooms_by_id.has(room_id):
+		var restored_room: LobbyRoom = rooms_by_id[room_id]
+		_broadcast_room_snapshot(restored_room)
 	_send_room_list_to_peer(peer_id)
+	if not room_id.is_empty() and rooms_by_id.has(room_id):
+		_try_assign_match(rooms_by_id[room_id])
 
 func _session_matches_login_identity(session: Dictionary, profile_id: String, account_id: String) -> bool:
 	if session.is_empty():
@@ -401,19 +411,18 @@ func _handle_reconnect_request(peer_id: int, payload: Dictionary) -> void:
 
 	session["peer_id"] = peer_id
 	session["connected"] = true
+	session["room_disconnected_since_unix"] = 0
 	sessions_by_id[session_id] = session
 	session_id_by_peer[peer_id] = session_id
 
 	var room_snapshot: Dictionary = {}
 	var active_match_info: Dictionary = {}
+	var restored_room: LobbyRoom = null
 	var room_id: String = str(room_id_by_session.get(session_id, ""))
 	if not room_id.is_empty() and rooms_by_id.has(room_id):
-		var room: LobbyRoom = rooms_by_id[room_id]
-		room_snapshot = room.to_snapshot(sessions_by_id)
-		active_match_info = _build_active_match_info_for_session(session_id, room)
-		_broadcast_room_snapshot(room)
-	else:
-		_send_room_list_to_peer(peer_id)
+		restored_room = rooms_by_id[room_id]
+		room_snapshot = restored_room.to_snapshot(sessions_by_id)
+		active_match_info = _build_active_match_info_for_session(session_id, restored_room)
 
 	_send_to_peer(peer_id, LobbyProtocolScript.LOBBY_RECONNECT_OK, {
 		"session_id": session_id,
@@ -423,10 +432,16 @@ func _handle_reconnect_request(peer_id: int, payload: Dictionary) -> void:
 		"account_id": str(session.get("account_id", "")),
 		"username": str(session.get("username", "")),
 		"auth_mode": str(session.get("auth_mode", LobbyProtocolScript.LOGIN_ACCOUNT)),
+		"allow_friend_observers_to_see_cards": _get_allow_friend_observers_to_see_cards(session),
 		"server_version": _get_server_version(),
 		"room": room_snapshot,
 		"active_match_info": active_match_info,
 	})
+	if restored_room != null:
+		_broadcast_room_snapshot(restored_room)
+	_send_room_list_to_peer(peer_id)
+	if restored_room != null and rooms_by_id.has(room_id):
+		_try_assign_match(rooms_by_id[room_id])
 
 func _handle_request_account_decks(peer_id: int) -> void:
 	var session: Dictionary = _get_session_for_peer(peer_id)
@@ -522,6 +537,24 @@ func _handle_set_account_preferred_deck(peer_id: int, payload: Dictionary) -> vo
 		_send_error_to_peer(peer_id, "That saved deck was not found.")
 		return
 	profile_store.set_preferred_deck_id_for_account(account_id, deck_id)
+
+func _handle_set_observer_friend_card_visibility(peer_id: int, payload: Dictionary) -> void:
+	var session: Dictionary = _get_session_for_peer(peer_id)
+	if session.is_empty():
+		_send_error_to_peer(peer_id, "Join the lobby before changing observer privacy.")
+		return
+	var account_id := str(session.get("account_id", "")).strip_edges()
+	if account_id.is_empty():
+		_send_error_to_peer(peer_id, "Log into an account before changing observer privacy.")
+		return
+	_ensure_profile_store()
+	if profile_store == null:
+		_send_error_to_peer(peer_id, "Profile storage is unavailable.")
+		return
+	profile_store.set_allow_friend_observers_to_see_cards_for_account(
+		account_id,
+		bool(payload.get("allow_friend_observers_to_see_cards", true))
+	)
 
 func _handle_request_profile_summary(peer_id: int) -> void:
 	var session: Dictionary = _get_session_for_peer(peer_id)
@@ -690,6 +723,7 @@ func _create_session(
 		"auth_mode": auth_mode,
 		"peer_id": peer_id,
 		"connected": true,
+		"room_disconnected_since_unix": 0,
 		"is_local": is_local,
 	}
 	sessions_by_id[session_id] = session
@@ -766,6 +800,7 @@ func _reclaim_session_for_peer(
 	session["auth_mode"] = auth_mode
 	session["peer_id"] = peer_id
 	session["connected"] = true
+	session["room_disconnected_since_unix"] = 0
 	sessions_by_id[session_id] = session
 	if peer_id > 0:
 		session_id_by_peer[peer_id] = session_id
@@ -776,9 +811,8 @@ func _create_room_for_session(session_id: String, is_ranked: bool = true) -> Lob
 	if not existing_room_id.is_empty() and rooms_by_id.has(existing_room_id):
 		var existing_room: LobbyRoom = rooms_by_id[existing_room_id]
 		if existing_room.status == LobbyRoomScript.STATUS_IN_MATCH:
-			_abandon_match_room(existing_room)
-		else:
-			return existing_room
+			_send_error_to_session(session_id, "Finish or forfeit your active match before creating a new seek.")
+		return existing_room
 	_prune_excess_open_seeks_for_session(session_id)
 
 	var room_id: String = _generate_room_code()
@@ -809,10 +843,10 @@ func _join_room_for_session(session_id: String, room_id: String) -> void:
 		if rooms_by_id.has(current_room_id):
 			var current_room: LobbyRoom = rooms_by_id[current_room_id]
 			if current_room.status == LobbyRoomScript.STATUS_IN_MATCH:
-				_abandon_match_room(current_room)
-			else:
-				_send_error_to_session(session_id, "Leave your current room before joining a new one.")
+				_send_error_to_session(session_id, "Finish or forfeit your active match before joining another seek.")
 				return
+			_send_error_to_session(session_id, "Leave your current room before joining a new one.")
+			return
 		else:
 			room_id_by_session.erase(session_id)
 	if room_id_by_session.has(session_id):
@@ -822,6 +856,9 @@ func _join_room_for_session(session_id: String, room_id: String) -> void:
 	var room: LobbyRoom = rooms_by_id[normalized_room_id]
 	if room.status == LobbyRoomScript.STATUS_IN_MATCH:
 		_send_error_to_session(session_id, "Room %s is already in a match." % normalized_room_id)
+		return
+	if room.is_waiting_for_opponent() and not _room_has_connected_member(room):
+		_send_error_to_session(session_id, "Room %s is unavailable until its host reconnects." % normalized_room_id)
 		return
 	if room.is_full():
 		_send_error_to_session(session_id, "Room %s is already full." % normalized_room_id)
@@ -860,7 +897,9 @@ func _observe_room_for_session(session_id: String, room_id: String) -> void:
 	if match_session == null:
 		_send_error_to_session(session_id, "That live match is no longer available to observe.")
 		return
-	_send_to_session(session_id, LobbyProtocolScript.MATCH_ASSIGNED, match_session.to_spectator_match_info())
+	var visible_player_indices := _get_friend_visible_player_indices(session_id, match_session.player_session_ids)
+	match_supervisor.set_spectator_visible_player_indices(match_id, session_id, visible_player_indices)
+	_send_to_session(session_id, LobbyProtocolScript.MATCH_ASSIGNED, match_session.to_spectator_match_info(session_id))
 
 func _leave_room_for_session(session_id: String) -> void:
 	var room_id: String = str(room_id_by_session.get(session_id, ""))
@@ -869,11 +908,22 @@ func _leave_room_for_session(session_id: String) -> void:
 
 	var room: LobbyRoom = rooms_by_id[room_id]
 	if room.status == LobbyRoomScript.STATUS_IN_MATCH:
-		_abandon_match_room(room)
-		_broadcast_room_lists()
-		return
+		var match_id := str(room.assigned_match_id).strip_edges()
+		if not match_id.is_empty() and match_supervisor != null:
+			# The game can report its result before the lobby's next status poll.
+			# Refresh now so leaving the result screen cannot erase the rematch seek.
+			match_supervisor.refresh_match_status(match_id)
+		room_id = str(room_id_by_session.get(session_id, ""))
+		if room_id.is_empty() or not rooms_by_id.has(room_id):
+			return
+		room = rooms_by_id[room_id]
+		if room.status == LobbyRoomScript.STATUS_IN_MATCH:
+			_abandon_match_room(room)
+			_broadcast_room_lists()
+			return
 	room.remove_member(session_id)
 	room_id_by_session.erase(session_id)
+	_notify_session_room_cleared(session_id)
 
 	if room.is_empty():
 		rooms_by_id.erase(room_id)
@@ -902,8 +952,7 @@ func _set_ready_for_session(session_id: String, is_ready: bool) -> void:
 		return
 
 	_emit_room_updates(room)
-	if room.can_start() and room.status != LobbyRoomScript.STATUS_IN_MATCH:
-		_assign_match(room)
+	_try_assign_match(room)
 
 func _assign_match(room: LobbyRoom) -> void:
 	_ensure_match_supervisor()
@@ -929,11 +978,13 @@ func _assign_match(room: LobbyRoom) -> void:
 			"player_name": str(session.get("player_name", "Guest")),
 		}
 
+	var spectator_visibility := _build_spectator_visibility_by_session(room.members)
 	var match_session = match_supervisor.create_match(
 		room.room_id,
 		room.members,
 		player_decks_by_session,
 		player_identity_by_session,
+		spectator_visibility,
 		room.is_ranked
 	)
 	if match_session == null:
@@ -954,6 +1005,75 @@ func _assign_match(room: LobbyRoom) -> void:
 	_emit_room_updates(room)
 	if not local_match_info.is_empty():
 		call_deferred("_emit_local_match_assigned", local_match_info)
+
+func _try_assign_match(room: LobbyRoom) -> void:
+	if room == null or room.status == LobbyRoomScript.STATUS_IN_MATCH or not room.can_start():
+		return
+	if not _room_has_all_members_connected(room):
+		return
+	_assign_match(room)
+
+func _room_has_connected_member(room: LobbyRoom) -> bool:
+	if room == null:
+		return false
+	for session_id in room.members:
+		var session: Dictionary = sessions_by_id.get(session_id, {})
+		if bool(session.get("connected", false)):
+			return true
+	return false
+
+func _room_has_all_members_connected(room: LobbyRoom) -> bool:
+	if room == null or room.members.is_empty():
+		return false
+	for session_id in room.members:
+		var session: Dictionary = sessions_by_id.get(session_id, {})
+		if session.is_empty() or not bool(session.get("connected", false)):
+			return false
+	return true
+
+func _build_spectator_visibility_by_session(player_session_ids: Array) -> Dictionary:
+	var visibility_by_session: Dictionary = {}
+	for session_id_variant in sessions_by_id.keys():
+		var observer_session_id := str(session_id_variant).strip_edges()
+		if observer_session_id.is_empty():
+			continue
+		visibility_by_session[observer_session_id] = _get_friend_visible_player_indices(
+			observer_session_id,
+			player_session_ids
+		)
+	return visibility_by_session
+
+func _get_friend_visible_player_indices(observer_session_id: String, player_session_ids: Array) -> Array[int]:
+	var visible_player_indices: Array[int] = []
+	var observer_session: Dictionary = sessions_by_id.get(observer_session_id, {})
+	var observer_account_id := str(observer_session.get("account_id", "")).strip_edges()
+	if observer_account_id.is_empty():
+		return visible_player_indices
+	_ensure_friend_store()
+	_ensure_profile_store()
+	if friend_store == null or profile_store == null:
+		return visible_player_indices
+	for player_index in range(player_session_ids.size()):
+		var player_session_id := str(player_session_ids[player_index]).strip_edges()
+		var player_session: Dictionary = sessions_by_id.get(player_session_id, {})
+		var player_account_id := str(player_session.get("account_id", "")).strip_edges()
+		if player_account_id.is_empty():
+			continue
+		if not friend_store.are_friends(observer_account_id, player_account_id):
+			continue
+		if not profile_store.get_allow_friend_observers_to_see_cards_for_account(player_account_id):
+			continue
+		visible_player_indices.append(player_index)
+	return visible_player_indices
+
+func _get_allow_friend_observers_to_see_cards(session: Dictionary) -> bool:
+	var account_id := str(session.get("account_id", "")).strip_edges()
+	if account_id.is_empty():
+		return true
+	_ensure_profile_store()
+	if profile_store == null:
+		return true
+	return profile_store.get_allow_friend_observers_to_see_cards_for_account(account_id)
 
 func _emit_room_updates(room: LobbyRoom) -> void:
 	_broadcast_room_snapshot(room)
@@ -1027,8 +1147,8 @@ func _submit_deck_for_session(
 	var deck_is_valid := bool(validation.get("is_valid", false))
 	room.set_ready(session_id, deck_is_valid)
 	_emit_room_updates(room)
-	if deck_is_valid and room.can_start() and room.status != LobbyRoomScript.STATUS_IN_MATCH:
-		_assign_match(room)
+	if deck_is_valid:
+		_try_assign_match(room)
 
 func _broadcast_room_snapshot(room: LobbyRoom) -> void:
 	var snapshot: Dictionary = room.to_snapshot(sessions_by_id)
@@ -1093,7 +1213,10 @@ func _collect_account_ids_from_friends_state(state: Dictionary) -> Array:
 func _build_room_list() -> Array:
 	var rooms: Array = []
 	for room_id in rooms_by_id.keys():
-		rooms.append(rooms_by_id[room_id].to_room_list_entry(sessions_by_id))
+		var room: LobbyRoom = rooms_by_id[room_id]
+		if room.status != LobbyRoomScript.STATUS_IN_MATCH and not _room_has_connected_member(room):
+			continue
+		rooms.append(room.to_room_list_entry(sessions_by_id))
 	return rooms
 
 func _expire_stale_seeks() -> void:
@@ -1114,6 +1237,46 @@ func _expire_stale_seeks() -> void:
 			"Seek %s expired after 30 minutes of waiting for an opponent." % room_id
 		)
 	_broadcast_room_lists()
+
+func _expire_disconnected_room_members() -> void:
+	var now_unix := int(Time.get_unix_time_from_system())
+	var expired_by_room: Dictionary = {}
+	for room_id_variant in rooms_by_id.keys():
+		var room_id := str(room_id_variant)
+		var room: LobbyRoom = rooms_by_id.get(room_id, null)
+		if room == null or room.status == LobbyRoomScript.STATUS_IN_MATCH:
+			continue
+		var expired_sessions: Array[String] = []
+		for session_id in room.members:
+			var session: Dictionary = sessions_by_id.get(session_id, {})
+			if session.is_empty() or bool(session.get("connected", false)):
+				continue
+			var disconnected_since := int(session.get("room_disconnected_since_unix", 0))
+			if disconnected_since <= 0:
+				continue
+			if now_unix - disconnected_since >= ROOM_MEMBER_RECONNECT_GRACE_SECONDS:
+				expired_sessions.append(session_id)
+		if not expired_sessions.is_empty():
+			expired_by_room[room_id] = expired_sessions
+	for room_id_variant in expired_by_room.keys():
+		var room_id := str(room_id_variant)
+		if not rooms_by_id.has(room_id):
+			continue
+		var room: LobbyRoom = rooms_by_id[room_id]
+		for session_id in expired_by_room[room_id]:
+			room.remove_member(session_id)
+			if str(room_id_by_session.get(session_id, "")) == room_id:
+				room_id_by_session.erase(session_id)
+			var session: Dictionary = sessions_by_id.get(session_id, {})
+			if not session.is_empty():
+				session["room_disconnected_since_unix"] = 0
+				sessions_by_id[session_id] = session
+		if room.is_empty():
+			rooms_by_id.erase(room_id)
+			continue
+		_broadcast_room_snapshot(room)
+	if not expired_by_room.is_empty():
+		_broadcast_room_lists()
 
 func _prune_excess_open_seeks_for_session(session_id: String) -> void:
 	var seek_owner_key := _get_seek_owner_key_for_session(session_id)
@@ -1145,10 +1308,15 @@ func _close_room(room_id: String, message: String = "") -> void:
 	for session_id in affected_sessions:
 		if str(room_id_by_session.get(session_id, "")) == room_id:
 			room_id_by_session.erase(session_id)
-		if session_id == local_session_id:
-			local_room_snapshot_updated.emit({})
+		_notify_session_room_cleared(session_id)
 		if not message.strip_edges().is_empty():
 			_send_error_to_session(session_id, message)
+
+func _notify_session_room_cleared(session_id: String) -> void:
+	if session_id == local_session_id:
+		local_room_snapshot_updated.emit({})
+		return
+	_send_to_session(session_id, LobbyProtocolScript.ROOM_SNAPSHOT, {})
 
 func _abandon_match_room(room: LobbyRoom) -> void:
 	if room == null:
@@ -1263,7 +1431,11 @@ func _on_peer_disconnected(peer_id: int) -> void:
 	if not room_id.is_empty() and rooms_by_id.has(room_id):
 		var room: LobbyRoom = rooms_by_id[room_id]
 		if room.status == LobbyRoomScript.STATUS_IN_MATCH:
+			session["room_disconnected_since_unix"] = 0
+			sessions_by_id[session_id] = session
 			return
+		session["room_disconnected_since_unix"] = int(Time.get_unix_time_from_system())
+		sessions_by_id[session_id] = session
 		_broadcast_room_snapshot(room)
 	_broadcast_room_lists()
 
@@ -1399,6 +1571,13 @@ func _on_match_closed(match_id: String, room_id: String, final_status: String) -
 		return
 	if final_status == MatchSessionScript.STATUS_FINISHED:
 		room.reset_after_match()
+		var now_unix := int(Time.get_unix_time_from_system())
+		for session_id in room.members:
+			var session: Dictionary = sessions_by_id.get(session_id, {})
+			if session.is_empty() or bool(session.get("connected", false)):
+				continue
+			session["room_disconnected_since_unix"] = now_unix
+			sessions_by_id[session_id] = session
 		_emit_room_updates(room)
 		return
 	_close_room(room_id)

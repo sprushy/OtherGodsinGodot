@@ -261,6 +261,9 @@ func deny_match_join(target_peer_id: int, reason: String) -> void:
 		return
 	rpc_id(target_peer_id, "notify_match_join_denied", reason)
 
+func reject_command(peer_id: int, reason: String) -> void:
+	_reject_command_payload(peer_id, reason)
+
 func unassign_peer(peer_id: int) -> void:
 	spectator_peer_ids.erase(peer_id)
 	spectator_visible_player_indices_by_peer.erase(peer_id)

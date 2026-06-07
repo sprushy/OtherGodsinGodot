@@ -55,6 +55,7 @@ func create_match(
 	player_session_ids: Array[String],
 	player_decks_by_session: Dictionary = {},
 	player_identity_by_session: Dictionary = {},
+	spectator_visible_player_indices_by_session: Dictionary = {},
 	is_ranked: bool = true
 ):
 	last_create_match_error = ""
@@ -73,6 +74,7 @@ func create_match(
 		player_decks_by_session,
 		player_identity_by_session
 	)
+	session.spectator_visible_player_indices_by_session = spectator_visible_player_indices_by_session.duplicate(true)
 	session.is_ranked = is_ranked
 	session.mark_active()
 	if use_dedicated_headless and _launch_dedicated_match(session):
@@ -88,6 +90,24 @@ func create_match(
 
 func get_match(match_id: String):
 	return active_matches.get(match_id, null)
+
+func set_spectator_visible_player_indices(match_id: String, session_id: String, player_indices: Array) -> void:
+	var session = active_matches.get(match_id.strip_edges(), null)
+	if session == null:
+		return
+	session.set_spectator_visible_player_indices(session_id, player_indices)
+	if not session.is_dedicated_headless():
+		return
+	var config_path := str(session.launch_config_path).strip_edges()
+	if config_path.is_empty():
+		return
+	JsonStoreScript.save_json(config_path, session.to_launch_config(), "MatchSupervisor")
+
+func refresh_match_status(match_id: String) -> void:
+	var resolved_match_id := match_id.strip_edges()
+	if resolved_match_id.is_empty() or not active_matches.has(resolved_match_id):
+		return
+	_refresh_match(resolved_match_id, int(Time.get_unix_time_from_system()))
 
 func close_match(
 	match_id: String,
@@ -179,18 +199,21 @@ func _refresh_active_matches() -> void:
 		return
 	var now_unix := int(Time.get_unix_time_from_system())
 	for match_id in active_matches.keys().duplicate():
-		var session = active_matches.get(match_id, null)
-		if session == null or not session.is_dedicated_headless():
-			continue
-		var status_close_reason := _get_status_file_close_reason(session, now_unix)
-		if not status_close_reason.is_empty():
-			close_match(str(match_id), status_close_reason, status_close_reason != MatchSessionScript.STATUS_FINISHED)
-			continue
-		if session.has_reconnect_timed_out(now_unix):
-			close_match(str(match_id), MatchSessionScript.STATUS_ABANDONED, true)
-			continue
-		if session.has_spawned_process() and not OS.is_process_running(int(session.process_id)):
-			close_match(str(match_id), MatchSessionScript.STATUS_ABANDONED, false)
+		_refresh_match(str(match_id), now_unix)
+
+func _refresh_match(match_id: String, now_unix: int) -> void:
+	var session = active_matches.get(match_id, null)
+	if session == null or not session.is_dedicated_headless():
+		return
+	var status_close_reason := _get_status_file_close_reason(session, now_unix)
+	if not status_close_reason.is_empty():
+		close_match(match_id, status_close_reason, status_close_reason != MatchSessionScript.STATUS_FINISHED)
+		return
+	if session.has_reconnect_timed_out(now_unix):
+		close_match(match_id, MatchSessionScript.STATUS_ABANDONED, true)
+		return
+	if session.has_spawned_process() and not OS.is_process_running(int(session.process_id)):
+		close_match(match_id, MatchSessionScript.STATUS_ABANDONED, false)
 
 func _apply_final_status(session, final_status: String) -> void:
 	match final_status:

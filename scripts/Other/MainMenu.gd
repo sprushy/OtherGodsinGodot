@@ -72,6 +72,7 @@ var _pending_join_room_id: String = ""
 var _pending_observe_room_id: String = ""
 var _pending_rematch_room_id: String = ""
 var _pending_rematch_ready_submitted: bool = false
+var _pending_leave_room_id: String = ""
 var _current_lobby_ip: String = ""
 var _is_local_lobby_host: bool = false
 var _match_launch_queued: bool = false
@@ -164,6 +165,7 @@ var _friends_state: Dictionary = {}
 var _friends_status_label: Label = null
 var _friends_username_edit: LineEdit = null
 var _friends_content_list: VBoxContainer = null
+var _friend_observer_card_visibility_toggle: CheckButton = null
 var _friends_send_deck_dialog: ConfirmationDialog = null
 var _friends_send_deck_option: OptionButton = null
 var _friends_pending_send_username: String = ""
@@ -3654,6 +3656,7 @@ func _on_lobby_login_succeeded(session_id: String, reconnect_token: String, play
 	if _retry_account_switch_if_identity_mismatch(player_name):
 		return
 	_lobby_failure_update_check_requested = false
+	_sync_friend_observer_card_visibility()
 	_set_connected_server_version(lobby_client.current_server_version if lobby_client != null else "")
 	_lobby_session_id = session_id
 	_lobby_reconnect_token = reconnect_token
@@ -3672,12 +3675,24 @@ func _on_lobby_login_succeeded(session_id: String, reconnect_token: String, play
 	_refresh_open_deck_builder_saved_decks()
 	_update_resume_controls()
 	var active_match_info: Dictionary = {}
+	var restored_room: Dictionary = {}
 	if lobby_client != null:
 		active_match_info = lobby_client.current_active_match_info.duplicate(true)
+		restored_room = lobby_client.current_room_snapshot.duplicate(true)
+	if _maybe_leave_pending_room(restored_room, active_match_info):
+		return
 	if not active_match_info.is_empty():
 		if _has_pending_new_seek_action():
-			_abandon_current_lobby_match()
-			_clear_saved_match_resume()
+			_clear_pending_new_seek_actions()
+			_save_active_match_resume(active_match_info)
+			status_label.text = "Your active match is still running. Rejoining it instead of opening another seek."
+			call_deferred("_resume_active_match_from_lobby", active_match_info)
+			return
+		elif _should_wait_for_rematch_close(active_match_info):
+			if not restored_room.is_empty():
+				_apply_room_snapshot(restored_room)
+			status_label.text = "Waiting for the finished match to close so the rematch can start..."
+			return
 		elif not _should_suppress_active_match_auto_resume(active_match_info):
 			_save_active_match_resume(active_match_info)
 			status_label.text = "Signed in as %s. Rejoining your active match..." % resolved_identity_name
@@ -3688,6 +3703,10 @@ func _on_lobby_login_succeeded(session_id: String, reconnect_token: String, play
 			_clear_saved_match_resume()
 	if not _get_saved_active_match().is_empty():
 		_clear_saved_match_resume()
+	if not restored_room.is_empty():
+		_clear_pending_new_seek_actions()
+		_apply_room_snapshot(restored_room)
+		return
 	status_label.text = "Signed in as %s." % resolved_identity_name
 	_run_pending_multiplayer_action()
 
@@ -3702,6 +3721,7 @@ func _on_lobby_reconnect_succeeded(
 	if _retry_account_switch_if_identity_mismatch(player_name):
 		return
 	_lobby_failure_update_check_requested = false
+	_sync_friend_observer_card_visibility()
 	_set_connected_server_version(lobby_client.current_server_version if lobby_client != null else "")
 	_lobby_session_id = session_id
 	_lobby_reconnect_token = reconnect_token
@@ -3719,10 +3739,20 @@ func _on_lobby_reconnect_succeeded(
 	player_name_line_edit.text = resolved_identity_name
 	_refresh_open_deck_builder_saved_decks()
 	_update_resume_controls()
+	if _maybe_leave_pending_room(room, active_match_info):
+		return
 	if not active_match_info.is_empty():
 		if _has_pending_new_seek_action():
-			_abandon_current_lobby_match()
-			_clear_saved_match_resume()
+			_clear_pending_new_seek_actions()
+			_save_active_match_resume(active_match_info)
+			status_label.text = "Your active match is still running. Rejoining it instead of opening another seek."
+			call_deferred("_resume_active_match_from_lobby", active_match_info)
+			return
+		elif _should_wait_for_rematch_close(active_match_info):
+			if not room.is_empty():
+				_apply_room_snapshot(room)
+			status_label.text = "Waiting for the finished match to close so the rematch can start..."
+			return
 		elif not _should_suppress_active_match_auto_resume(active_match_info):
 			_save_active_match_resume(active_match_info)
 			status_label.text = "Lobby session restored. Rejoining your active match..."
@@ -3742,8 +3772,8 @@ func _on_lobby_reconnect_succeeded(
 		status_label.text = "Lobby session restored."
 		_run_pending_multiplayer_action()
 		return
+	_clear_pending_new_seek_actions()
 	_apply_room_snapshot(room)
-	status_label.text = "Lobby session restored."
 
 func _on_lobby_room_list_updated(rooms: Array) -> void:
 	_seek_list_request_pending = false
@@ -3780,12 +3810,13 @@ func _apply_room_snapshot(snapshot: Dictionary) -> void:
 	_current_room_snapshot = snapshot.duplicate(true)
 	var room_id := str(snapshot.get("room_id", "")).strip_edges()
 	if room_id.is_empty():
+		_clear_current_seek_state()
 		return
 	var room_status := str(snapshot.get("status", "")).strip_edges().to_lower()
 	if room_status == "in_match" and not _match_launch_queued and lobby_client != null:
 		var active_match_info: Dictionary = lobby_client.current_active_match_info.duplicate(true)
 		if not active_match_info.is_empty() and str(active_match_info.get("room_id", "")).strip_edges() == room_id:
-			if room_id == _pending_rematch_room_id and _should_suppress_active_match_auto_resume(active_match_info):
+			if room_id == _pending_rematch_room_id:
 				status_label.text = "Waiting for the finished match to close so the rematch can start..."
 				return
 			if _has_pending_new_seek_action() or _should_suppress_active_match_auto_resume(active_match_info):
@@ -3805,10 +3836,13 @@ func _apply_room_snapshot(snapshot: Dictionary) -> void:
 
 	var member_lines: Array[String] = []
 	var local_member: Dictionary = {}
+	var has_disconnected_member := false
 	for member in snapshot.get("members", []):
 		var player_name := str(member.get("player_name", "Guest"))
 		var ready_text := "ready" if bool(member.get("is_ready", false)) else "waiting"
 		var connect_text := "online" if bool(member.get("is_connected", false)) else "offline"
+		if not bool(member.get("is_connected", false)):
+			has_disconnected_member = true
 		var host_text := " (host)" if bool(member.get("is_host", false)) else ""
 		var deck_text := "deck ok" if bool(member.get("has_valid_deck", false)) else "deck missing"
 		var selected_deck_name := str(member.get("selected_deck_name", "")).strip_edges()
@@ -3820,7 +3854,10 @@ func _apply_room_snapshot(snapshot: Dictionary) -> void:
 
 	var guidance := "Waiting for another player to join your seek."
 	if int(snapshot.get("member_count", 0)) >= int(snapshot.get("max_players", 2)):
-		guidance = "Both players are here. Launching automatically once both decks are valid."
+		if has_disconnected_member:
+			guidance = "Waiting for the disconnected player to return before launching."
+		else:
+			guidance = "Both players are here. Launching automatically once both decks are valid."
 	var local_deck_message := ""
 	var deck_error := str(local_member.get("deck_error", "")).strip_edges()
 	if not deck_error.is_empty():
@@ -4022,6 +4059,7 @@ func _on_game_leave_match_requested() -> void:
 	_return_to_menu()
 
 func _on_game_rematch_requested() -> void:
+	_pending_leave_room_id = ""
 	var active_game = _get_active_embedded_game()
 	var match_info: Dictionary = {}
 	if active_game != null:
@@ -4048,6 +4086,7 @@ func _on_game_return_to_menu_requested() -> void:
 	_return_to_menu()
 
 func _return_to_lobby_for_rematch() -> void:
+	_pending_leave_room_id = ""
 	_suppress_active_match_auto_resume_from_embedded_games()
 	show_menu()
 	_match_launch_queued = false
@@ -4063,12 +4102,14 @@ func _return_to_lobby_for_rematch() -> void:
 	_maybe_connect_authenticated_lobby("Reconnecting to lobby for rematch...")
 
 func _return_to_menu() -> void:
+	var room_to_leave := _get_active_match_room_id()
 	_pending_rematch_room_id = ""
 	_pending_rematch_ready_submitted = false
 	_suppress_active_match_auto_resume_from_embedded_games()
 	show_menu()
 	_match_launch_queued = false
 	_cleanup_lobby(true)
+	_pending_leave_room_id = room_to_leave
 	for node_name in _get_embedded_game_node_names():
 		var game = get_node_or_null("GameContainer/" + node_name)
 		if game and game.has_method("cleanup"):
@@ -4122,6 +4163,47 @@ func _should_suppress_active_match_auto_resume(active_match_info: Dictionary) ->
 func _has_pending_new_seek_action() -> bool:
 	return _pending_host_room_creation or not _pending_join_room_id.is_empty() or not _pending_observe_room_id.is_empty()
 
+func _clear_pending_new_seek_actions() -> void:
+	_pending_host_room_creation = false
+	_pending_room_is_ranked = true
+	_pending_join_room_id = ""
+	_pending_observe_room_id = ""
+	_pending_local_lobby_launch_on_connect_failure = false
+
+func _should_wait_for_rematch_close(active_match_info: Dictionary) -> bool:
+	if _pending_rematch_room_id.is_empty() or active_match_info.is_empty():
+		return false
+	return str(active_match_info.get("room_id", "")).strip_edges() == _pending_rematch_room_id
+
+func _maybe_leave_pending_room(room: Dictionary, active_match_info: Dictionary) -> bool:
+	if _pending_leave_room_id.is_empty():
+		return false
+	var restored_room_id := str(room.get("room_id", "")).strip_edges()
+	if restored_room_id.is_empty():
+		restored_room_id = str(active_match_info.get("room_id", "")).strip_edges()
+	if restored_room_id != _pending_leave_room_id:
+		_pending_leave_room_id = ""
+		return false
+	_pending_leave_room_id = ""
+	_clear_pending_new_seek_actions()
+	_clear_current_seek_state()
+	_clear_saved_match_resume()
+	if lobby_client != null:
+		lobby_client.current_room_snapshot.clear()
+		lobby_client.current_active_match_info.clear()
+		lobby_client.leave_room()
+	status_label.text = "Leaving the finished match room..."
+	return true
+
+func _get_active_match_room_id() -> String:
+	var active_game = _get_active_embedded_game()
+	if active_game == null:
+		return str(_current_room_snapshot.get("room_id", "")).strip_edges()
+	var match_info = active_game.get("_current_match_info")
+	if match_info is Dictionary:
+		return str((match_info as Dictionary).get("room_id", "")).strip_edges()
+	return str(_current_room_snapshot.get("room_id", "")).strip_edges()
+
 func _abandon_current_lobby_match() -> void:
 	if lobby_client == null:
 		return
@@ -4142,6 +4224,7 @@ func _cleanup_lobby(clear_session: bool) -> void:
 	if clear_session:
 		_match_launch_queued = false
 		_pending_host_room_creation = false
+		_pending_leave_room_id = ""
 		_pending_local_lobby_launch_on_connect_failure = false
 		_dedicated_lobby_connect_attempts_remaining = 0
 		_last_submitted_lobby_room_id = ""
@@ -4350,6 +4433,8 @@ func _capture_logged_in_profile(player_name: String) -> void:
 	if resolved_account_username.is_empty() and resolved_auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
 		resolved_account_username = _get_preferred_account_username()
 	if not resolved_account_username.is_empty():
+		if resolved_auth_mode == AUTH_MODE_REGISTER:
+			resolved_auth_mode = AUTH_MODE_LOGIN
 		_account_decks_cache.clear()
 		_logged_in_account_username = resolved_account_username
 		_set_selected_account_username(resolved_account_username)
@@ -4693,6 +4778,17 @@ func _open_friends_overlay() -> void:
 	account_hint.modulate = Color(0.72, 0.78, 0.90)
 	content.add_child(account_hint)
 
+	_friend_observer_card_visibility_toggle = CheckButton.new()
+	_friend_observer_card_visibility_toggle.text = "Allow friends observing my matches to see my cards"
+	_friend_observer_card_visibility_toggle.tooltip_text = "On by default. This only reveals cards to observers whose accounts are on your friends list."
+	_friend_observer_card_visibility_toggle.button_pressed = (
+		lobby_client.current_allow_friend_observers_to_see_cards
+		if lobby_client != null
+		else true
+	)
+	_friend_observer_card_visibility_toggle.toggled.connect(_on_friend_observer_card_visibility_toggled)
+	content.add_child(_friend_observer_card_visibility_toggle)
+
 	_friends_status_label = Label.new()
 	_friends_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_friends_status_label.modulate = Color(0.80, 0.86, 0.96)
@@ -4723,6 +4819,7 @@ func _close_friends_overlay() -> void:
 	_friends_status_label = null
 	_friends_username_edit = null
 	_friends_content_list = null
+	_friend_observer_card_visibility_toggle = null
 	if _friends_button != null:
 		_friends_button.grab_focus()
 
@@ -4759,6 +4856,21 @@ func _on_friends_state_received(state) -> void:
 	_refresh_friends_button()
 	_refresh_friends_overlay()
 	_refresh_open_deck_builder_saved_decks()
+
+func _on_friend_observer_card_visibility_toggled(allowed: bool) -> void:
+	if _local_profile_store != null:
+		_local_profile_store.set_allow_friend_observers_to_see_cards(allowed)
+	if lobby_client != null and _uses_server_account_storage():
+		lobby_client.set_allow_friend_observers_to_see_cards(allowed)
+
+func _sync_friend_observer_card_visibility() -> void:
+	if lobby_client == null:
+		return
+	var allowed := lobby_client.current_allow_friend_observers_to_see_cards
+	if _local_profile_store != null:
+		_local_profile_store.set_allow_friend_observers_to_see_cards(allowed)
+	if _friend_observer_card_visibility_toggle != null:
+		_friend_observer_card_visibility_toggle.set_pressed_no_signal(allowed)
 
 func _refresh_friends_overlay() -> void:
 	if _friends_content_list == null or not is_instance_valid(_friends_content_list):

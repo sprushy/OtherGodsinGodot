@@ -62,6 +62,7 @@ var _initial_auth_attempt_serial: int = 0
 var _auth_response_serial: int = 0
 var _transport_connected_signal_received: bool = false
 var _ignore_network_events: bool = false
+var _reconnect_fallback_attempted: bool = false
 
 func _ready() -> void:
 	_ensure_network_manager()
@@ -80,6 +81,7 @@ func connect_to_server(
 	_cancel_auth_response_timeout()
 	_transport_connected_signal_received = false
 	_ignore_network_events = false
+	_reconnect_fallback_attempted = false
 	_is_authenticated = false
 	current_session_id = ""
 	current_reconnect_token = ""
@@ -139,6 +141,7 @@ func disconnect_from_server() -> void:
 	_pending_profile_id = ""
 	_pending_auth_mode = "login"
 	_pending_password = ""
+	_reconnect_fallback_attempted = false
 	_set_current_server_version("")
 	if network_manager != null:
 		network_manager.disconnect_client()
@@ -326,6 +329,8 @@ func lobby_event(message: Dictionary) -> void:
 			if not _is_authenticated:
 				_cancel_initial_auth_request()
 				_cancel_auth_response_timeout()
+				if _try_fallback_to_password_login():
+					return
 			room_error.emit(str(payload.get("message", "Unknown lobby error.")))
 		LobbyProtocolScript.MATCH_ASSIGNED:
 			current_active_match_info = payload.duplicate(true)
@@ -437,8 +442,20 @@ func _send_initial_auth_request() -> void:
 func _should_attempt_pending_lobby_reconnect() -> bool:
 	if _pending_session_id.is_empty() or _pending_reconnect_token.is_empty():
 		return false
-	if _pending_auth_mode in ["login", "register"] and not _pending_password.is_empty():
+	return true
+
+func _try_fallback_to_password_login() -> bool:
+	if _reconnect_fallback_attempted \
+		or _pending_session_id.is_empty() \
+		or _pending_reconnect_token.is_empty() \
+		or _pending_password.is_empty():
 		return false
+	_reconnect_fallback_attempted = true
+	_pending_session_id = ""
+	_pending_reconnect_token = ""
+	# A reconnect token can only belong to an account that already exists.
+	_pending_auth_mode = "login"
+	_send_initial_auth_request()
 	return true
 
 func _on_connection_failed() -> void:

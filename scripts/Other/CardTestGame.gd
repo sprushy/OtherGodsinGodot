@@ -918,7 +918,7 @@ func load_n_o_card_scenario() -> void:
 	_add_test_power(player1, 0, OraclesSight.new(), false)
 	_add_test_power(player1, 1, NorseBloodlust.new(), true)
 
-	# P1 board: live N-creatures plus a prepared Namburbi for the opening turn-start window.
+	# P1 board: live N-creatures plus a prepared Namburbi for a defensive combat/destruction response.
 	_place_test_board_card(player1, player1.frontline_zones[0], Berserker.new(), Card.CreatureMode.AGGRESSIVE)
 	_place_test_board_card(player1, player1.frontline_zones[1], Nagual.new(), Card.CreatureMode.AGGRESSIVE)
 	_place_test_board_card(player1, player1.reserve_zones[0], Nimue.new(), Card.CreatureMode.DEFENSIVE)
@@ -988,7 +988,7 @@ func load_n_o_card_scenario() -> void:
 		"N/O Scenario: All cards starting with N and O. Choose an upkeep option first.  |  "
 		+ "Gods - Odin leads P1 with a ready Runic Knowledge guess, while Nusku leads P2 with a full seven-card Ancient deck to mill.  |  "
 		+ "Powers - Oracle's Sight starts locked so you can unlock it immediately, and Norse Bloodlust is already active for Berserker's first kill.  |  "
-		+ "Board - Berserker, Nagual, and Nimue are live, and Namburbi Apotropaeon is already prepared for the opening turn-start window.  |  "
+		+ "Board - Berserker, Nagual, and Nimue are live, and Namburbi Apotropaeon is already prepared as a defensive combat/destruction response.  |  "
 		+ "Hand - Nergal Lion, Occult Singularity, Gungnir, Harii Warrior, and Runic Shortsword cover the remaining N/O cards and Bloodlust follow-up.  |  "
 		+ "Graveyard - Runic Shortsword lets Nimue use Present, and Earthquake gives Nergal Lion a destruction spell to immolate.  |  "
 		+ "Opponent - Brown Bears and a Minotaur Footsoldier give you clean combat and Entomb targets before passing to Nusku for Well of Fire."

@@ -293,6 +293,7 @@ static func from_launch_config(config: Dictionary) -> MatchSession:
 	session.reconnect_window_seconds = int(config.get("reconnect_window_seconds", 90))
 	session.created_unix = int(config.get("created_unix", session.created_unix))
 	session.status_file_path = str(config.get("status_file_path", "")).strip_edges()
+	session.launch_config_path = str(config.get("_launch_config_path", "")).strip_edges()
 	var configured_tokens = config.get("player_match_tokens", {})
 	if configured_tokens is Dictionary:
 		session.player_match_tokens = (configured_tokens as Dictionary).duplicate(true)
@@ -337,4 +338,6 @@ func _generate_token(length: int) -> String:
 func _refresh_reconnect_deadline() -> void:
 	reconnect_deadline_unix = 0
 	for session_id in disconnected_sessions.keys():
-		reconnect_deadline_unix = maxi(reconnect_deadline_unix, int(disconnected_sessions[session_id]))
+		var session_deadline := int(disconnected_sessions[session_id])
+		if reconnect_deadline_unix == 0 or session_deadline < reconnect_deadline_unix:
+			reconnect_deadline_unix = session_deadline

@@ -604,6 +604,11 @@ func can_card_respond_to_priority(card: Card, player: Player = null) -> bool:
 			return false
 		if not card.can_respond_to_frontline_entry(top):
 			return false
+	if top.type == CardAction.Type.EVENT and top.event_name == "destroyed":
+		if not card.has_method("can_respond_to_destroyed_event"):
+			return false
+		if not card.can_respond_to_destroyed_event(top, self):
+			return false
 	var top_speed := top.get_timing_speed()
 	if card is HexCard:
 		if not prepared_hexes.has(card):

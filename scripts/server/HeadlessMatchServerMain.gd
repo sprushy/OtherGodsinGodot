@@ -18,6 +18,7 @@ func _initialize() -> void:
 		push_error("HeadlessMatchServerMain: failed to load launch config %s" % config_path)
 		quit(1)
 		return
+	config["_launch_config_path"] = config_path
 
 	call_deferred("_boot_server", config)
 
