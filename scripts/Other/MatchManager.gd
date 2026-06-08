@@ -73,7 +73,9 @@ var pending_retreat_guardian_blocked_uids: Array[String] = []
 var pending_humbaba_action: CardAction = null
 var pending_humbaba_target = null
 var pending_humbaba_prompt_uids: Array[String] = []
+var pending_combat_reveal_linger_action: CardAction = null
 var pending_tezcatlipoca_titlacauan_action: CardAction = null
+var _board_leaving_activation_linger_pending: bool = false
 var _pending_end_turn_after_resurrection: bool = false
 var _active_command_sender_info: Dictionary = {}
 var _active_command_type: String = ""
@@ -121,7 +123,9 @@ func reset_runtime_state() -> void:
 	pending_humbaba_action = null
 	pending_humbaba_target = null
 	pending_humbaba_prompt_uids.clear()
+	pending_combat_reveal_linger_action = null
 	pending_tezcatlipoca_titlacauan_action = null
+	_board_leaving_activation_linger_pending = false
 	_pending_end_turn_after_resurrection = false
 	_active_command_sender_info.clear()
 	_active_command_type = ""
@@ -670,12 +674,16 @@ func resolve_action(action: CardAction) -> void:
 				deferred_completion_command_type = "tezcatlipoca_active_titlacauan_choice"
 		CardAction.Type.ATTACK:
 			_resolve_attack(action)
-			action_completed = pending_retreat_action != action and pending_humbaba_action != action
+			action_completed = pending_retreat_action != action \
+				and pending_humbaba_action != action \
+				and pending_combat_reveal_linger_action != action
 			if not action_completed:
 				if pending_retreat_action == action:
 					deferred_completion_command_type = "combat_retreat_decision"
 				elif pending_humbaba_action == action:
 					deferred_completion_command_type = "humbaba_augury_choice"
+				elif pending_combat_reveal_linger_action == action:
+					deferred_completion_command_type = "combat_reveal_linger"
 	if action_completed and game_manager != null:
 		deferred_completion_command_type = _get_pending_authoritative_graveyard_prompt_command_type()
 		if not deferred_completion_command_type.is_empty():
@@ -1137,6 +1145,59 @@ func _finish_followers_attack(action: CardAction, defending_player: Player) -> v
 ## Headless combat resolution (no retreat dialog needed).
 ## Called by _resolve_attack when no Askelladen can retreat.
 func _finish_creature_combat(action: CardAction, target: Card) -> void:
+	if _begin_combat_reveal_linger(action, target):
+		return
+	_resolve_creature_combat_now(action, target)
+
+func _begin_combat_reveal_linger(action: CardAction, target: Card) -> bool:
+	if action == null or target == null or pending_combat_reveal_linger_action != null:
+		return false
+	var reveal_cards: Array[Card] = []
+	for combatant in [action.attacker, action.united_front_partner, target]:
+		if combatant != null and combatant.is_stealth:
+			reveal_cards.append(combatant)
+	if reveal_cards.is_empty():
+		return false
+	var tree = _get_authoritative_resolution_tree()
+	if tree == null:
+		return false
+	for combatant in reveal_cards:
+		combatant.reveal_from_stealth(game_manager)
+	pending_combat_reveal_linger_action = action
+	_mark_deferred_authoritative_action(action, "combat_reveal_linger")
+	last_resolution_text = "%s revealed before combat." % _format_card_name_list(reveal_cards)
+	_request_ui_refresh()
+	tree.create_timer(AUTHORITATIVE_STACK_ACTION_LINGER_SECONDS).timeout.connect(
+		func() -> void:
+			if pending_combat_reveal_linger_action != action:
+				return
+			pending_combat_reveal_linger_action = null
+			_resolve_creature_combat_now(
+				action,
+				target,
+				func() -> void:
+					_complete_deferred_authoritative_action(action, "combat_reveal_linger")
+			),
+		CONNECT_ONE_SHOT
+	)
+	return true
+
+func _format_card_name_list(cards: Array[Card]) -> String:
+	var names: Array[String] = []
+	for card in cards:
+		if card != null:
+			names.append(card.card_name)
+	if names.size() <= 1:
+		return names[0] if not names.is_empty() else "A card"
+	if names.size() == 2:
+		return "%s and %s" % [names[0], names[1]]
+	return "%s, and %s" % [", ".join(names.slice(0, names.size() - 1)), names.back()]
+
+func _resolve_creature_combat_now(
+	action: CardAction,
+	target: Card,
+	completion_callback: Callable = Callable()
+) -> void:
 	var attacker := action.attacker
 	var partner := action.united_front_partner
 
@@ -1153,6 +1214,25 @@ func _finish_creature_combat(action: CardAction, target: Card) -> void:
 			last_resolution_text = active[0].card_name + " and " + active[1].card_name + " fought " + target.card_name + "!"
 		elif not active.is_empty():
 			last_resolution_text = active[0].card_name + " fought " + target.card_name + "!"
+		if completion_callback.is_valid():
+			completion_callback.call()
+
+	if target.current_zone == null or not target.current_zone.is_board_zone():
+		last_resolution_text = attacker.card_name + "'s attack fizzles - target is no longer on the board."
+		if completion_callback.is_valid():
+			completion_callback.call()
+		return
+	var attacker_on_board := attacker != null \
+		and attacker.current_zone != null \
+		and attacker.current_zone.is_board_zone()
+	var partner_on_board := partner != null \
+		and partner.current_zone != null \
+		and partner.current_zone.is_board_zone()
+	if not attacker_on_board and not partner_on_board:
+		last_resolution_text = "The attack fizzles - no attacker remains on the board."
+		if completion_callback.is_valid():
+			completion_callback.call()
+		return
 		
 	if partner != null:
 		game_manager.set_temporary_combat_follower_damage_halved(action.halve_follower_damage)
@@ -1975,12 +2055,46 @@ func _has_unresolved_stack_action_window() -> bool:
 	if game_manager == null:
 		return false
 	game_manager.prune_stale_stack_actions()
-	return _authoritative_stack_resolution_pending \
+	return _board_leaving_activation_linger_pending \
+		or _authoritative_stack_resolution_pending \
 		or not game_manager.action_stack.is_empty() \
 		or not game_manager.resolving_stack_actions.is_empty()
 
+func _defer_board_leaving_activation(
+	source_card: Card,
+	action_text: String,
+	resolve_callback: Callable
+) -> bool:
+	if source_card == null \
+			or source_card.current_zone == null \
+			or not source_card.current_zone.is_board_zone() \
+			or not resolve_callback.is_valid():
+		return false
+	var tree = _get_authoritative_resolution_tree()
+	if tree == null:
+		return false
+	_board_leaving_activation_linger_pending = true
+	last_resolution_text = action_text
+	_request_ui_refresh()
+	tree.create_timer(AUTHORITATIVE_STACK_ACTION_LINGER_SECONDS).timeout.connect(
+		func() -> void:
+			resolve_callback.call()
+			_board_leaving_activation_linger_pending = false
+			var feedback := game_manager.consume_player_feedback() if game_manager != null else ""
+			if not feedback.strip_edges().is_empty():
+				last_resolution_text = feedback
+			_request_ui_refresh(),
+		CONNECT_ONE_SHOT
+	)
+	return true
+
 func has_unresolved_stack_action_window() -> bool:
 	return _has_unresolved_stack_action_window()
+
+func is_visual_linger_pending() -> bool:
+	return _board_leaving_activation_linger_pending \
+		or pending_combat_reveal_linger_action != null \
+		or _authoritative_stack_resolution_pending
 
 func is_authoritative_stack_resolution_pending() -> bool:
 	return _authoritative_stack_resolution_pending
@@ -3303,6 +3417,14 @@ func _process_command_impl(command: Dictionary) -> bool:
 			if target == null or target not in valid_targets:
 				move_failed.emit("sixth_sage_an_enlilda_choice: invalid Ancient Dwelling target")
 				return false
+			if _defer_board_leaving_activation(
+				sage,
+				"%s activates Conjure Home." % sage.card_name,
+				func() -> void:
+					game_manager.note_player_feedback(sage.resolve_conjure_home_impact(game_manager, target))
+			):
+				move_validated.emit(command)
+				return true
 			game_manager.note_player_feedback(sage.resolve_conjure_home_impact(game_manager, target))
 			move_validated.emit(command)
 			return true
@@ -3548,6 +3670,14 @@ func _process_command_impl(command: Dictionary) -> bool:
 			if target != null and target not in valid_targets:
 				move_failed.emit("gugalanna_celestial_charge_choice: invalid target")
 				return false
+			if target != null and _defer_board_leaving_activation(
+				card,
+				"%s activates Celestial Charge." % card.card_name,
+				func() -> void:
+					card.apply_celestial_charge(game_manager, target)
+			):
+				move_validated.emit(command)
+				return true
 			card.apply_celestial_charge(game_manager, target)
 			move_validated.emit(command)
 			return true
@@ -3835,7 +3965,16 @@ func _process_command_impl(command: Dictionary) -> bool:
 			if not habrok.can_trigger_breakout(game_manager, game_manager.current_player):
 				move_failed.emit("habrok_breakout_choice: Breakout is no longer available")
 				return false
-			habrok.resolve_breakout_choice(game_manager, bool(command.get("do_breakout", false)))
+			var do_breakout := bool(command.get("do_breakout", false))
+			if do_breakout and _defer_board_leaving_activation(
+				habrok,
+				"%s activates Breakout." % habrok.card_name,
+				func() -> void:
+					habrok.resolve_breakout_choice(game_manager, true)
+			):
+				move_validated.emit(command)
+				return true
+			habrok.resolve_breakout_choice(game_manager, do_breakout)
 			move_validated.emit(command)
 			return true
 		"wolf_adolescent_maturation_choice":

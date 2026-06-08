@@ -5,6 +5,7 @@ const ServerPathsScript = preload("res://scripts/server/ServerPaths.gd")
 const JsonStoreScript = preload("res://scripts/server/JsonStore.gd")
 const CardCatalogScript = preload("res://scripts/cards/CardCatalog.gd")
 const TiamatScript = preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
+const CardArtVariantsScript = preload("res://scripts/core/CardArtVariants.gd")
 const DEFAULT_DECK_NAME := "Default Deck"
 
 var _decks_by_account_id: Dictionary = {}
@@ -140,9 +141,7 @@ func _sanitize_cards(cards: Dictionary) -> Dictionary:
 func _sanitize_special_setup(special_setup: Dictionary) -> Dictionary:
 	if special_setup == null or special_setup.is_empty():
 		return {}
-	return TiamatScript.build_special_setup(
-		TiamatScript.get_slot_card_names_from_setup(special_setup)
-	)
+	return CardArtVariantsScript.sanitize_special_setup(special_setup)
 
 func _get_deck_bucket(account_id: String) -> Dictionary:
 	var deck_bucket = _decks_by_account_id.get(account_id, {})

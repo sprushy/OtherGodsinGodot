@@ -2,6 +2,7 @@ extends CreatureCard
 class_name TianlongHolyDragon
 
 const ART_PATH := "res://images/card_art/creatures/TianLongEdit.png"
+const ALT_ART_PATH := "res://images/card_art/creatures/tianlong_holy_dragon_alt.jpg"
 
 func _init() -> void:
 	super._init()
@@ -18,6 +19,7 @@ func _init() -> void:
 	culture = "Tian"
 	artist = "Ricardo Zoppello"
 	art_path = ART_PATH
+	art_variants = [ART_PATH, ALT_ART_PATH]
 
 func can_special_intercept(_game_manager: GameManager, _attacker: Card, protected_target) -> bool:
 	if not _heavens_guard_is_active():

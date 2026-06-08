@@ -1,26 +1,22 @@
 extends CreatureCard
-class_name MasmassuPriest
+class_name Grindylow
 
-const ART_PATH := "res://images/card_art/creatures/MasmassuPriest.png"
-const DEMON_SPIRIT_MANA_GAIN := 1
+const ART_PATH := "res://images/card_art/creatures/grindylow.png"
 
 func _init() -> void:
 	super._init()
-	card_name = "Ma" + char(353) + "ma" + char(353) + char(353) + "u Priest"
-	card_types = ["Human", "Mage", "Priest", "Ancient Creature"]
-	if "Targeting" not in card_types:
-		card_types.append("Targeting")
+	card_name = "Grindylow"
+	card_types = ["Aqueous", "Fairy", "Triskelion Creature"]
 	level = 2
 	mana_cost = 0
 	sacrifice_cost = 0
-	speed = 1
-	resilience = 3
-	strength = 12
-	targets = true
-	ability_text = "[b]Dalkhu Break[/b] ([b]Reveal[/b]): Destroy any creature. If this targets a Demon or Spirit, gain 1 mana."
+	speed = 2
+	resilience = 12
+	strength = 15
+	ability_text = "Drown Below ([b]Reveal[/b]): Destroy any creature."
 	flavor_text = ""
-	culture = "Ancient"
-	artist = "Ricardo Zoppello"
+	culture = "Triskelion"
+	artist = "User provided art"
 	art_path = ART_PATH
 
 func on_reveal(game_manager: GameManager) -> void:
@@ -28,7 +24,7 @@ func on_reveal(game_manager: GameManager) -> void:
 		return
 	var valid_targets := get_valid_targets(game_manager)
 	if valid_targets.is_empty():
-		game_manager.note_player_feedback("%s found no creatures to break." % card_name)
+		game_manager.note_player_feedback("%s found no creatures to drown." % card_name)
 		return
 	var controller := get_controller()
 	if controller == null:
@@ -53,7 +49,7 @@ func get_valid_targets(game_manager: GameManager) -> Array[Card]:
 			continue
 		for zone in player.frontline_zones + player.reserve_zones:
 			for card in zone.cards:
-				if _is_valid_dalkhu_break_target(card):
+				if _is_valid_drown_below_target(card):
 					valid_targets.append(card)
 	return valid_targets
 
@@ -69,7 +65,7 @@ func begin_dalkhu_break_reveal(
 			game_manager.note_player_feedback(result_text)
 
 	if game_manager == null:
-		finish.call(card_name + " cannot resolve Dalkhu Break right now.")
+		finish.call(card_name + " cannot resolve Drown Below right now.")
 		return
 
 	var valid_targets := get_valid_targets(game_manager)
@@ -87,22 +83,12 @@ func begin_dalkhu_break_reveal(
 
 	var viewer := game_manager.get_feedback_viewer()
 	var target_name := target.get_target_log_display_name(viewer)
-	var gained_bonus_mana := false
-	if card_owner != null and (target.has_type("Demon") or target.has_type("Spirit")):
-		card_owner.gain_mana(DEMON_SPIRIT_MANA_GAIN)
-		gained_bonus_mana = true
 	var on_destroy_complete := func() -> void:
 		var destroyed := target.current_zone == null or not target.current_zone.is_board_zone()
 		if not destroyed:
-			if gained_bonus_mana:
-				finish.call("%s failed to destroy %s with Dalkhu Break, but gained %d mana from targeting a Demon or Spirit." % [card_name, target_name, DEMON_SPIRIT_MANA_GAIN])
-			else:
-				finish.call("%s failed to destroy %s with Dalkhu Break." % [card_name, target_name])
+			finish.call("%s failed to destroy %s with Drown Below." % [card_name, target_name])
 			return
-		if gained_bonus_mana:
-			finish.call("%s destroyed %s with Dalkhu Break and gained %d mana from targeting a Demon or Spirit." % [card_name, target_name, DEMON_SPIRIT_MANA_GAIN])
-		else:
-			finish.call("%s destroyed %s with Dalkhu Break." % [card_name, target_name])
+		finish.call("%s destroyed %s with Drown Below." % [card_name, target_name])
 	game_manager.request_send_to_graveyard(
 		target,
 		on_destroy_complete,
@@ -110,7 +96,7 @@ func begin_dalkhu_break_reveal(
 		true
 	)
 
-func _is_valid_dalkhu_break_target(target: Card) -> bool:
+func _is_valid_drown_below_target(target: Card) -> bool:
 	return target != null \
 		and target != self \
 		and target.card_type == Card.CardType.CREATURE \

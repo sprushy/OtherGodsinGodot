@@ -4,13 +4,17 @@ class_name DeckBuilder
 
 const CardCatalogScript = preload("res://scripts/cards/CardCatalog.gd")
 const TiamatScript = preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
+const CardArtVariantsScript = preload("res://scripts/core/CardArtVariants.gd")
 
 func build_deck(player: Player, selected_cards: Array[Card], special_setup: Dictionary = {}) -> bool:
 	var validation := player.get_deck_validation(selected_cards, special_setup)
 	if bool(validation.get("is_valid", false)):
+		var validated_special_setup: Dictionary = validation.get("special_setup", special_setup)
 		var unique_cards: Array[Card] = []
 		for card in selected_cards:
-			unique_cards.append(card.duplicate(true))
+			var deck_card := card.duplicate(true)
+			CardArtVariantsScript.apply_to_card(deck_card, validated_special_setup)
+			unique_cards.append(deck_card)
 			
 		player.current_deck = unique_cards.duplicate()
 		player.reserved_active_god = null
@@ -38,7 +42,6 @@ func build_deck(player: Player, selected_cards: Array[Card], special_setup: Dict
 		for card in regular_cards:
 			player.deck_zone.add_card(card)
 
-		var validated_special_setup: Dictionary = validation.get("special_setup", special_setup)
 		_apply_special_setup(player, validated_special_setup)
 		
 		return true
@@ -74,6 +77,7 @@ func _apply_special_setup(player: Player, special_setup: Dictionary) -> void:
 			var card := CardCatalogScript.instantiate_card_by_name(card_name)
 			if card == null:
 				continue
+			CardArtVariantsScript.apply_to_card(card, special_setup)
 			card.card_owner = player
 			card.is_face_down = false
 			card.is_stealth = false

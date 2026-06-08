@@ -206,5 +206,12 @@ static func compute_deck_hash(deck_name: String, deck_cards: Dictionary, special
 			slot_rows.sort()
 			if not slot_rows.is_empty():
 				special_rows.append("slot%d=%s" % [slot_index + 1, ",".join(slot_rows)])
+	var art_variants = special_setup.get("art_variants", {})
+	if art_variants is Dictionary:
+		for raw_card_name in (art_variants as Dictionary).keys():
+			var card_name := str(raw_card_name).strip_edges()
+			var variant_index := int((art_variants as Dictionary)[raw_card_name])
+			if not card_name.is_empty() and variant_index > 0:
+				special_rows.append("art:%s=%d" % [card_name, variant_index])
 	special_rows.sort()
 	return "%s|%s|%s" % [deck_name.strip_edges(), "|".join(card_rows), "|".join(special_rows)]

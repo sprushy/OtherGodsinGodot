@@ -6,6 +6,7 @@ const JsonStoreScript = preload("res://scripts/server/JsonStore.gd")
 const DeckStoreScript = preload("res://scripts/server/DeckStore.gd")
 const CardCatalogScript = preload("res://scripts/cards/CardCatalog.gd")
 const TiamatScript = preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
+const CardArtVariantsScript = preload("res://scripts/core/CardArtVariants.gd")
 
 const FRIEND_REQUEST_COOLDOWN_SECONDS := 10 * 60
 const DECK_SHARE_COOLDOWN_SECONDS := 5
@@ -408,9 +409,7 @@ func _sanitize_cards(cards) -> Dictionary:
 func _sanitize_special_setup(special_setup) -> Dictionary:
 	if not (special_setup is Dictionary) or (special_setup as Dictionary).is_empty():
 		return {}
-	return TiamatScript.build_special_setup(
-		TiamatScript.get_slot_card_names_from_setup(special_setup as Dictionary)
-	)
+	return CardArtVariantsScript.sanitize_special_setup(special_setup)
 
 func _get_username(account_id: String, username_by_account_id: Dictionary) -> String:
 	var username := str(username_by_account_id.get(account_id, "")).strip_edges()

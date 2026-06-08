@@ -2,6 +2,7 @@ extends CreatureCard
 class_name StoneMonkey
 
 const ART_PATH := "res://images/card_art/creatures/StoneMonkeyArt.png"
+const ALT_ART_PATH := "res://images/card_art/creatures/stone_monkey_alt.png"
 
 func _init() -> void:
 	super._init()
@@ -18,6 +19,7 @@ func _init() -> void:
 	culture = "Tian"
 	artist = ""
 	art_path = ART_PATH
+	art_variants = [ART_PATH, ALT_ART_PATH]
 
 func get_self_graveyard_replacement_zone(
 	_game_manager: GameManager,

@@ -3,6 +3,7 @@ class_name LocalProfileStore
 
 const TiamatScript = preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
 const DeckCatalogUtilsScript = preload("res://scripts/core/DeckCatalogUtils.gd")
+const CardArtVariantsScript = preload("res://scripts/core/CardArtVariants.gd")
 
 const STORAGE_PATH := "user://player_profiles.json"
 const STORAGE_TEMP_PATH := "user://player_profiles.json.tmp"
@@ -1291,9 +1292,7 @@ func _sanitize_cards(cards: Dictionary) -> Dictionary:
 func _sanitize_special_setup(special_setup: Dictionary) -> Dictionary:
 	if special_setup == null or special_setup.is_empty():
 		return {}
-	return TiamatScript.build_special_setup(
-		TiamatScript.get_slot_card_names_from_setup(special_setup)
-	)
+	return CardArtVariantsScript.sanitize_special_setup(special_setup)
 
 func _normalize_saved_deck(saved_deck: Dictionary) -> Dictionary:
 	var now_unix := int(Time.get_unix_time_from_system())

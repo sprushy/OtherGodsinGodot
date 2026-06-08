@@ -2,7 +2,8 @@ extends ActiveGodCard
 class_name TezcatlipocaActive
 
 const LINKED_GOD_NAME := "Tezcatlipoca, the Smoking Mirror"
-const ART_PATH := "res://images/card_art/gods/TezArt.png"
+const DIVINE_FORM_ART_PATH := "res://images/card_art/gods/TezArt.png"
+const JAGUAR_FORM_ART_PATH := "res://images/card_art/gods/TezJaguarForm.png"
 const MAX_TITLACAUAN_TARGETS := 2
 const NORMAL_SUMMON_SACRIFICE_COST := 4
 const JAGUAR_FORM_SPEED_BONUS := 1
@@ -10,13 +11,13 @@ const JAGUAR_FORM_STRENGTH_BONUS := 10
 const JAGUAR_FORM_RESILIENCE_DELTA := -13
 
 var necoc_yaotl_sacrifices: Array[Card] = []
-var in_jaguar_form: bool = false
+var in_jaguar_form: bool = true
 
 func _init() -> void:
 	super._init()
 	linked_god_name = LINKED_GOD_NAME
 	card_name = "Tezcatlipoca, Active God"
-	card_types = _get_divine_form_types()
+	card_types = _get_jaguar_form_types()
 	level = 7
 	mana_cost = 0
 	sacrifice_cost = NORMAL_SUMMON_SACRIFICE_COST
@@ -28,7 +29,7 @@ func _init() -> void:
 	flavor_text = ""
 	ability_text = "[b]Shift[/b] ([b]Activate[/b], [b]Minor Action[/b], once per turn): Switch between Divine Manifestation, God, Shapeshifter and Divine Manifestation, God, Animal, Feline, Jaguar, Shapeshifter.\n[b]Jaguar Form[/b] ([b]Passive[/b]): While in Jaguar form, this card's stats become SPD 3 / RES 24 / STR 35.\n[b]The Smoking Mirror[/b] ([b]Passive[/b]): Instead of damaging followers, convert half of those that would have been destroyed.\n[b]Titlacauan[/b] ([b]Impact[/b]): Enslave up to 2 creatures whose total levels are less than or equal to the total levels sacrificed for Necoc Yaotl."
 	artist = "Ricardo Zoppello"
-	art_path = ART_PATH
+	art_path = JAGUAR_FORM_ART_PATH
 	name_at_bottom = true
 
 func get_activation_label() -> String:
@@ -89,23 +90,35 @@ func get_follower_damage_conversion_amount(amount: int, _game_manager: GameManag
 		return 0
 	return int(floor(float(amount) / 2.0))
 
-func activate(game_manager: GameManager, _target: Card = null) -> void:
+func activate(game_manager: GameManager, _target = null) -> void:
 	if not can_activate(game_manager):
 		if game_manager != null:
 			game_manager.note_player_feedback(get_activation_failure_reason(game_manager))
 		return
+	var return_to_normal_god := false
+	if _target is Dictionary:
+		var option := _target as Dictionary
+		return_to_normal_god = bool(option.get("return_to_normal_god", false))
+	return_to_normal_god = return_to_normal_god and can_return_to_normal_god_form_after_shift()
 	shift_forms()
 	spend_minor_creature_action()
 	spend_shift_ability_use()
 	if game_manager != null:
 		game_manager.notify_creature_shapeshifted(self, self)
+		if return_to_normal_god and _return_to_normal_god_form(game_manager):
+			var restored_name := linked_god_name if linked_god_name != "" else "its normal god form"
+			game_manager.note_player_feedback(
+				"%s shifts into Divine form and returns to %s." % [card_name, restored_name]
+			)
+			return
 		game_manager.note_player_feedback(
 			"%s shifts into %s form." % [card_name, "Jaguar" if in_jaguar_form else "Divine"]
 		)
 
 func shift_forms() -> void:
 	in_jaguar_form = not in_jaguar_form
-	card_types = _get_jaguar_form_types() if in_jaguar_form else _get_divine_form_types()
+	_sync_form_presentation()
+	art_updated.emit(art_path)
 	_emit_visual_state_changed()
 
 func receive_necoc_yaotl_sacrifices(cards: Array[Card]) -> void:
@@ -152,9 +165,11 @@ func apply_serialized_state(state: Dictionary) -> void:
 	necoc_yaotl_sacrifices.clear()
 	if state.is_empty():
 		in_jaguar_form = card_types.has("Jaguar")
+	elif state.has("in_jaguar_form"):
+		in_jaguar_form = bool(state.get("in_jaguar_form"))
 	else:
-		in_jaguar_form = bool(state.get("in_jaguar_form", false))
-	card_types = _get_jaguar_form_types() if in_jaguar_form else _get_divine_form_types()
+		in_jaguar_form = card_types.has("Jaguar")
+	_sync_form_presentation()
 	for entry_value in state.get("necoc_yaotl_sacrifices", []):
 		if not (entry_value is Dictionary):
 			continue
@@ -169,6 +184,10 @@ func apply_serialized_state(state: Dictionary) -> void:
 		stored_card.current_zone = null
 		necoc_yaotl_sacrifices.append(stored_card)
 	_emit_visual_state_changed()
+
+func _sync_form_presentation() -> void:
+	card_types = _get_jaguar_form_types() if in_jaguar_form else _get_divine_form_types()
+	art_path = JAGUAR_FORM_ART_PATH if in_jaguar_form else DIVINE_FORM_ART_PATH
 
 func get_effective_speed() -> int:
 	var total := super.get_effective_speed()
@@ -299,6 +318,13 @@ func get_effect_summary_lines() -> Array[String]:
 	lines.append("Necoc Yaotl sacrifices: %d" % necoc_yaotl_sacrifices.size())
 	return lines
 
+func can_return_to_normal_god_form_after_shift() -> bool:
+	return in_jaguar_form \
+		and stored_normal_god != null \
+		and card_owner != null \
+		and card_owner.god_zone != null \
+		and card_owner.god_zone.cards.is_empty()
+
 func get_hover_detail_lines(_viewer: Player = null) -> Array[String]:
 	return [
 		"[b]Current Form[/b]: %s" % ("Jaguar" if in_jaguar_form else "Divine"),
@@ -324,6 +350,13 @@ func _passives_are_active() -> bool:
 		and current_zone.is_board_zone() \
 		and not is_face_down \
 		and not is_stealth
+
+func _return_to_normal_god_form(game_manager: GameManager) -> bool:
+	if game_manager == null or not can_return_to_normal_god_form_after_shift():
+		return false
+	card_owner.reserved_active_god = self
+	game_manager.remove_card_from_game_with_hook(self)
+	return restore_stored_normal_god() != null
 
 func _auto_select_titlacauan_targets(valid_targets: Array[Card], budget: int) -> Array[Card]:
 	var sorted_targets := valid_targets.duplicate()

@@ -2,6 +2,7 @@ extends CreatureCard
 class_name TheWhiteSerpent
 
 const ART_PATH := "res://images/card_art/creatures/TheWhiteSerpentEdit.png"
+const ALT_ART_PATH := "res://images/card_art/creatures/the_white_serpent_alt.jpg"
 const MEDICINE_SPEED := 2
 
 var in_serpent_form: bool = false
@@ -21,6 +22,7 @@ func _init() -> void:
 	culture = "Tian"
 	artist = "Ricardo Zoppello"
 	art_path = ART_PATH
+	art_variants = [ART_PATH, ALT_ART_PATH]
 
 func get_activation_label() -> String:
 	return "Shift"

@@ -382,6 +382,7 @@ var _kur_jara_prompt_panel: Control = null
 var _habrok_breakout_prompt_panel: Control = null
 var _champions_call_prompt_panel: Control = null
 var _sharur_escape_prompt_panel: Control = null
+var _tezcatlipoca_shift_prompt_panel: Control = null
 var _wheel_of_fire_prompt_panel: Control = null
 var _nusku_active_core_flame_panel: Control = null
 var _pending_gala_tura: Card = null
@@ -394,6 +395,7 @@ var _active_wheel_of_fire_prompt: WheelOfFire = null
 var _pending_wolf_adolescent_prompts: Array[WolfAdolescent] = []
 var _active_wolf_adolescent_prompt: WolfAdolescent = null
 var _queued_wolf_adolescent_prompt_targets: Dictionary = {}
+var _pending_tezcatlipoca_shift_card: Card = null
 var _pending_tezcatlipoca_active_prompt: Card = null
 var _pending_tezcatlipoca_titlacauan_source_uid: String = ""
 var _pending_tezcatlipoca_titlacauan_selected_uids: Array[String] = []
@@ -423,6 +425,8 @@ var _pending_doorway_combat_death: bool = false
 var _pending_doorway_destruction: bool = false
 var _pending_doorway_continue: Callable = Callable()
 var _executing_stack_action: bool = false
+var _visual_linger_depth: int = 0
+var _visual_linger_input_blocker: Control = null
 
 # Board-creature drag state (managed here for reliability)
 var _bdrag_card: Card = null
@@ -727,6 +731,7 @@ func _has_active_modal_prompt() -> bool:
 		or (_resurrection_panel != null and is_instance_valid(_resurrection_panel)) \
 		or (_champions_call_prompt_panel != null and is_instance_valid(_champions_call_prompt_panel)) \
 		or (_sharur_escape_prompt_panel != null and is_instance_valid(_sharur_escape_prompt_panel)) \
+		or (_tezcatlipoca_shift_prompt_panel != null and is_instance_valid(_tezcatlipoca_shift_prompt_panel)) \
 		or (_wheel_of_fire_prompt_panel != null and is_instance_valid(_wheel_of_fire_prompt_panel)) \
 		or (_hati_prompt_panel != null and is_instance_valid(_hati_prompt_panel)) \
 		or (_skoll_prompt_panel != null and is_instance_valid(_skoll_prompt_panel)) \
@@ -4427,6 +4432,7 @@ func _play_registered_action_cost_marker_bursts(actor_uid: String, spent_kinds: 
 func update_ui() -> void:
 	if game_manager == null:
 		return
+	_sync_visual_linger_input_blocker()
 	if _is_networked_client or _is_real_network_host():
 		if _ui_update_pending:
 			return
@@ -4439,6 +4445,7 @@ func _do_update_ui() -> void:
 	_ui_update_pending = false
 	if game_manager == null:
 		return
+	_sync_visual_linger_input_blocker()
 	_hide_power_hover_popup()
 	_sanitize_transient_card_references()
 	_sync_blot_sacrifice_prompt_state()
@@ -8476,6 +8483,48 @@ func _reject_non_priority_action_if_blocked() -> bool:
 	update_ui()
 	return true
 
+func _is_visual_linger_active() -> bool:
+	if _visual_linger_depth > 0:
+		return true
+	return match_manager != null \
+		and match_manager.has_method("is_visual_linger_pending") \
+		and bool(match_manager.call("is_visual_linger_pending"))
+
+func _sync_visual_linger_input_blocker() -> void:
+	var should_block := _is_visual_linger_active()
+	if should_block:
+		if _visual_linger_input_blocker == null or not is_instance_valid(_visual_linger_input_blocker):
+			_visual_linger_input_blocker = Control.new()
+			_visual_linger_input_blocker.name = "VisualLingerInputBlocker"
+			_visual_linger_input_blocker.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+			_visual_linger_input_blocker.mouse_filter = Control.MOUSE_FILTER_STOP
+			add_child(_visual_linger_input_blocker)
+			_promote_transient_ui(_visual_linger_input_blocker, TRANSIENT_UI_Z_INDEX + 1000)
+		return
+	if _visual_linger_input_blocker != null and is_instance_valid(_visual_linger_input_blocker):
+		_visual_linger_input_blocker.queue_free()
+	_visual_linger_input_blocker = null
+
+func _begin_visual_linger() -> void:
+	_visual_linger_depth += 1
+	_sync_visual_linger_input_blocker()
+
+func _end_visual_linger() -> void:
+	_visual_linger_depth = maxi(0, _visual_linger_depth - 1)
+	_sync_visual_linger_input_blocker()
+
+func _await_visual_linger() -> void:
+	_begin_visual_linger()
+	await get_tree().create_timer(STACK_ACTION_LINGER_SECONDS).timeout
+	_end_visual_linger()
+
+func _reject_badge_click_while_locked(card: Card, permits_priority_response: bool = false) -> bool:
+	if _is_visual_linger_active():
+		return true
+	if permits_priority_response and _is_card_usable_for_priority(card):
+		return false
+	return _reject_non_priority_action_if_blocked()
+
 func _get_card_payment_failure_text(card: Card, prepared: bool = false) -> String:
 	if card != null and game_manager != null and game_manager.has_insufficient_activation_mana(card, prepared, card.card_owner):
 		return game_manager.get_activation_mana_unavailable_text(card)
@@ -11423,6 +11472,8 @@ func _on_god_card_pressed(card: Card) -> void:
 		update_ui()
 
 func _on_god_ability_badge_clicked(card: Card) -> void:
+	if _reject_badge_click_while_locked(card, true):
+		return
 	if card == null or card.card_name != "Guan Yu":
 		_on_god_card_pressed(card)
 		return
@@ -11473,6 +11524,8 @@ func _on_god_ability_badge_clicked(card: Card) -> void:
 func _on_champions_call_badge_pressed(god: GodCard) -> void:
 	if god == null or game_manager == null:
 		return
+	if _reject_badge_click_while_locked(god):
+		return
 	if _has_pending_target_selection():
 		_handle_invalid_pending_target_click()
 		return
@@ -11488,6 +11541,8 @@ func _on_champions_call_badge_pressed(god: GodCard) -> void:
 func _on_tez_necoc_yaotl_badge_pressed(card: Card) -> void:
 	if card == null or game_manager == null:
 		return
+	if _reject_badge_click_while_locked(card):
+		return
 	if _has_pending_target_selection():
 		_handle_invalid_pending_target_click()
 		return
@@ -11499,6 +11554,8 @@ func _on_tez_necoc_yaotl_badge_pressed(card: Card) -> void:
 
 func _on_e2_abzu_badge_clicked(card: Card, mode: String) -> void:
 	if _game_finished or game_manager == null or not (card is E2Abzu):
+		return
+	if _reject_badge_click_while_locked(card, mode == "void"):
 		return
 	if _has_pending_target_selection():
 		_show_target_cancel_prompt()
@@ -11596,6 +11653,8 @@ func _on_e2_abzu_badge_clicked(card: Card, mode: String) -> void:
 
 func _on_nimue_badge_clicked(card: Card, mode: String) -> void:
 	if _game_finished or game_manager == null or not (card is NimueScript):
+		return
+	if _reject_badge_click_while_locked(card):
 		return
 	if _has_pending_target_selection():
 		_show_target_cancel_prompt()
@@ -13216,6 +13275,10 @@ func _queue_sixth_sage_an_enlilda_impact_prompt(card) -> void:
 			return
 		_pause_stack_resolution(card.card_owner)
 		var on_choose_dwelling := func(chosen_card: Card) -> void:
+			await _linger_before_board_leaving_activation(
+				card,
+				"%s activates Conjure Home." % card.card_name
+			)
 			_resume_after_deferred_resolution(card.resolve_conjure_home_impact(game_manager, chosen_card))
 		var on_cancel_dwelling := func() -> void:
 			_resume_after_deferred_resolution(card.resolve_conjure_home_decline(game_manager))
@@ -13253,6 +13316,10 @@ func _show_sixth_sage_an_enlilda_impact_prompt(card: SixthSageAnEnlilda, prompt_
 			"target_uid": chosen_card.uid,
 		}):
 			return
+		await _linger_before_board_leaving_activation(
+			card,
+			"%s activates Conjure Home." % card.card_name
+		)
 		_set_action_label_text(_consume_resolution_feedback(card.resolve_conjure_home_impact(game_manager, chosen_card)))
 		update_ui()
 	var on_cancel_dwelling := func() -> void:
@@ -13352,6 +13419,10 @@ func _begin_gugalanna_impact_targeting(card: GugalannaBullOfHeaven, prompt_targe
 				"target_uid": clicked_card.uid if clicked_card != null else "",
 			})
 			return
+		await _linger_before_board_leaving_activation(
+			card,
+			"%s activates Celestial Charge." % card.card_name
+		)
 		card.apply_celestial_charge(game_manager, clicked_card)
 		_resume_after_deferred_resolution(
 			"Celestial Charge: %s destroys %s. %s returns to hand." % [
@@ -15288,7 +15359,7 @@ func _try_resolve_stupefy_target(card: Card) -> bool:
 func _on_creature_stance_switch_clicked(card: Card, target_mode: Card.CreatureMode) -> void:
 	if _game_finished or card == null or game_manager == null:
 		return
-	if _reject_non_priority_action_if_blocked():
+	if _reject_badge_click_while_locked(card):
 		return
 	if _has_active_modal_prompt():
 		_reject_modal_prompt_action()
@@ -15311,10 +15382,14 @@ func _on_creature_stance_switch_clicked(card: Card, target_mode: Card.CreatureMo
 func _on_creature_ability_badge_clicked(card: Card) -> void:
 	if _game_finished or card == null or game_manager == null:
 		return
+	var permits_priority_response := not (card is TheWhiteSerpent)
+	if _reject_badge_click_while_locked(card, permits_priority_response):
+		return
+	if permits_priority_response and _is_card_usable_for_priority(card):
+		_on_priority_response_chosen(card)
+		return
 	if _has_pending_target_selection():
 		_show_target_cancel_prompt()
-		return
-	if _reject_non_priority_action_if_blocked():
 		return
 	if _has_active_modal_prompt():
 		_reject_modal_prompt_action()
@@ -15368,6 +15443,11 @@ func _on_creature_ability_badge_clicked(card: Card) -> void:
 	if card is ErlqueensNightingaleScript:
 		_show_erlqueens_nightingale_prompt(card as ErlqueensNightingaleScript)
 		return
+	if card.card_name == "Tezcatlipoca, Active God" \
+			and card.has_method("can_return_to_normal_god_form_after_shift") \
+			and bool(card.call("can_return_to_normal_god_form_after_shift")):
+		_show_tezcatlipoca_shift_prompt(card)
+		return
 	if card is MopsusScript:
 		_show_mopsus_hand_prompt(card as MopsusScript)
 		return
@@ -15402,7 +15482,10 @@ func _on_creature_ability_badge_clicked(card: Card) -> void:
 func _on_creature_ability_option_badge_clicked(card: Card, ability: String) -> void:
 	if _game_finished or card == null or game_manager == null:
 		return
-	if _is_card_usable_for_priority(card):
+	if _is_visual_linger_active():
+		return
+	var permits_priority_response := card is TheWhiteSerpent and ability == "medicine"
+	if permits_priority_response and _is_card_usable_for_priority(card):
 		_on_priority_response_chosen(card)
 		return
 	if _has_pending_target_selection():
@@ -16054,7 +16137,7 @@ func _on_enemy_card_pressed(target_card: Card) -> void:
 func _on_equipment_target_action_clicked(target_card: Card, action: String) -> void:
 	if _game_finished or target_card == null or action.strip_edges() == "":
 		return
-	if _reject_non_priority_action_if_blocked():
+	if _reject_badge_click_while_locked(target_card):
 		return
 	if _has_active_modal_prompt():
 		_reject_modal_prompt_action()
@@ -16618,6 +16701,9 @@ func _on_creature_drag_started(card: Card, from_zone: Zone) -> void:
 func _input(event: InputEvent) -> void:
 	if not is_visible_in_tree():
 		return
+	if _is_visual_linger_active():
+		get_viewport().set_input_as_handled()
+		return
 	_note_priority_prompt_input_activity(event)
 	if _try_handle_escape_key(event):
 		return
@@ -16925,6 +17011,9 @@ func _try_handle_escape_key(event: InputEvent) -> bool:
 
 func _unhandled_input(event: InputEvent) -> void:
 	if not is_visible_in_tree():
+		return
+	if _is_visual_linger_active():
+		get_viewport().set_input_as_handled()
 		return
 	if event is InputEventKey:
 		var key_event := event as InputEventKey
@@ -17842,6 +17931,7 @@ func resolve_pending_equip_action(interceptor: Card) -> void:
 		interceptor.spend_major_creature_action()
 		game_manager.record_interception(interceptor)
 		_set_action_label_text(_get_card_name_safe(interceptor) + " intercepts!")
+		await _linger_for_combat_reveals([actor, interceptor])
 		game_manager.resolve_combat_with_continuation(actor, interceptor, func() -> void:
 			update_ui()
 		)
@@ -19545,6 +19635,106 @@ func _on_erlqueens_nightingale_return_pressed() -> void:
 func _on_erlqueens_nightingale_decline_pressed() -> void:
 	_resolve_erlqueens_nightingale_shift(false)
 
+func _show_tezcatlipoca_shift_prompt(card: Card) -> void:
+	_hide_tezcatlipoca_shift_prompt()
+	if game_manager == null or card == null:
+		return
+	if not card.has_method("can_activate") or not bool(card.call("can_activate", game_manager)):
+		update_ui()
+		return
+	if not card.has_method("can_return_to_normal_god_form_after_shift") \
+			or not bool(card.call("can_return_to_normal_god_form_after_shift")):
+		_submit_or_queue_card_ability_by_uid(card.uid)
+		update_ui()
+		return
+
+	_pending_tezcatlipoca_shift_card = card
+
+	var overlay := Control.new()
+	overlay.name = "TezcatlipocaShiftPromptOverlay"
+	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	add_child(overlay)
+	_promote_transient_ui(overlay, TRANSIENT_UI_Z_INDEX + 120)
+	_tezcatlipoca_shift_prompt_panel = overlay
+
+	var bg := ColorRect.new()
+	bg.color = Color(0.0, 0.0, 0.0, 0.55)
+	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	overlay.add_child(bg)
+
+	var panel := _create_centered_overlay_panel(overlay, 0.36, 0.28)
+	panel.name = "TezcatlipocaShiftPromptPanel"
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.11, 0.08, 0.06, 0.97)
+	style.border_color = Color(0.83, 0.76, 0.45, 0.95)
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		style.set_border_width(side as Side, 2)
+	panel.add_theme_stylebox_override("panel", style)
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 8)
+	vbox.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	vbox.offset_left = 18
+	vbox.offset_top = 18
+	vbox.offset_right = -18
+	vbox.offset_bottom = -18
+	panel.add_child(vbox)
+
+	var title := Label.new()
+	title.text = card.card_name
+	title.add_theme_font_size_override("font_size", 14)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	vbox.add_child(title)
+
+	var info := Label.new()
+	info.text = "Shift into Divine form only, or return to Tezcatlipoca, the Smoking Mirror?"
+	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	vbox.add_child(info)
+
+	var shift_btn := Button.new()
+	shift_btn.text = "Shift Only"
+	shift_btn.pressed.connect(Callable(self, "_on_tezcatlipoca_shift_prompt_choice").bind(false))
+	vbox.add_child(shift_btn)
+
+	var return_btn := Button.new()
+	return_btn.text = "Return to Normal God"
+	return_btn.pressed.connect(Callable(self, "_on_tezcatlipoca_shift_prompt_choice").bind(true))
+	vbox.add_child(return_btn)
+
+	var cancel_btn := Button.new()
+	cancel_btn.text = "Cancel"
+	cancel_btn.pressed.connect(Callable(self, "_hide_tezcatlipoca_shift_prompt"))
+	vbox.add_child(cancel_btn)
+
+func _hide_tezcatlipoca_shift_prompt() -> void:
+	if _tezcatlipoca_shift_prompt_panel != null and is_instance_valid(_tezcatlipoca_shift_prompt_panel):
+		_tezcatlipoca_shift_prompt_panel.queue_free()
+	_tezcatlipoca_shift_prompt_panel = null
+	_pending_tezcatlipoca_shift_card = null
+
+func _on_tezcatlipoca_shift_prompt_choice(return_to_normal_god: bool) -> void:
+	var card := _pending_tezcatlipoca_shift_card
+	_hide_tezcatlipoca_shift_prompt()
+	if card == null:
+		update_ui()
+		return
+	if _should_submit_ui_action_command():
+		game_input.submit_action({
+			type = "activate_card_ability",
+			source_uid = card.uid,
+			option = {return_to_normal_god = return_to_normal_god}
+		})
+		return
+	_submit_or_queue_card_ability_by_uid(
+		card.uid,
+		{return_to_normal_god = return_to_normal_god},
+		card.card_name + " activated!"
+	)
+	update_ui()
+
 func _show_mopsus_hand_prompt(card: MopsusScript) -> void:
 	if card == null or game_manager == null:
 		return
@@ -21079,6 +21269,11 @@ func _resolve_habrok_breakout_prompt(do_breakout: bool) -> void:
 				_set_action_label_text("Breakout is no longer available.")
 			_show_next_habrok_breakout_prompt()
 			return
+		if do_breakout:
+			await _linger_before_board_leaving_activation(
+				card,
+				"%s activates Breakout." % card.card_name
+			)
 		card.resolve_breakout_choice(game_manager, do_breakout)
 	update_ui()
 	_show_next_habrok_breakout_prompt()
@@ -22242,6 +22437,29 @@ func _on_retreat_yes() -> void:
 	else:
 		update_ui()
 
+func _linger_for_combat_reveals(combatants: Array) -> void:
+	var revealed_cards: Array[Card] = []
+	for combatant in combatants:
+		if combatant is Card and combatant.is_stealth and combatant not in revealed_cards:
+			revealed_cards.append(combatant)
+	if revealed_cards.is_empty():
+		return
+	for combatant in revealed_cards:
+		combatant.reveal_from_stealth(game_manager)
+	var names: Array[String] = []
+	for combatant in revealed_cards:
+		names.append(combatant.card_name)
+	_set_action_label_text("%s revealed before combat." % " and ".join(names))
+	update_ui()
+	await _await_visual_linger()
+
+func _linger_before_board_leaving_activation(card: Card, action_text: String) -> void:
+	if card == null or card.current_zone == null or not card.current_zone.is_board_zone():
+		return
+	_set_action_label_text(action_text)
+	update_ui()
+	await _await_visual_linger()
+
 func _on_retreat_no() -> void:
 	if (_is_networked_client or _is_real_network_host()) and game_input != null:
 		var ask_card := _pending_retreat_prompts[0] if not _pending_retreat_prompts.is_empty() else null
@@ -22276,6 +22494,7 @@ func _on_retreat_no() -> void:
 	if not _pending_retreat_guardian_blocked.is_empty():
 		blocked_ask = _pending_retreat_guardian_blocked[0]
 	_clear_pending_retreat_state()
+	await _linger_for_combat_reveals([action.attacker, defender])
 	game_manager.resolve_combat_with_continuation(action.attacker, defender, func() -> void:
 		if blocked_ask != null:
 			_set_action_label_text("Asaruludu's Guardian prevented " + _get_card_name_safe(blocked_ask) + "'s Tactful Retreat!", true)
@@ -22311,7 +22530,7 @@ func _execute_top_of_stack() -> void:
 	] and (_stack_action_has_possible_priority_responses(action) or _stack_action_should_linger_for_visibility(action))
 	if should_linger:
 		update_ui()
-		await get_tree().create_timer(STACK_ACTION_LINGER_SECONDS).timeout
+		await _await_visual_linger()
 		if game_manager == null or action == null or not game_manager.action_stack.has(action):
 			_executing_stack_action = false
 			update_ui()
@@ -22761,6 +22980,11 @@ func _on_match_ui_interaction(player_index: int, type: String, data: Dictionary)
 						_finish_post_execute(action.source_player)
 				
 				_executing_stack_action = false
+				await _linger_for_combat_reveals([
+					action.attacker,
+					action.united_front_partner,
+					target,
+				])
 				if action.united_front_partner != null:
 					game_manager.resolve_united_front_combat(action.attacker, action.united_front_partner, target)
 					finish_attack.call()

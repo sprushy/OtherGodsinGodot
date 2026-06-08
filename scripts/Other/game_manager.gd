@@ -55,6 +55,7 @@ var _pending_player_feedback_texts: Array[String] = []
 var _upkeep_resolved_turn: int = -1
 var _upkeep_started_turn: int = -1
 var _temporary_summon_cost_modifiers: Array[Dictionary] = []
+var _temporary_control_effects: Array[Dictionary] = []
 var _next_board_entry_order: int = 0
 var _pending_doorway_structure: StructureCard = null
 var _pending_doorway_structures: Array[StructureCard] = []
@@ -2814,7 +2815,39 @@ func _notify_global_turn_end(ending_player: Player) -> void:
 	for card in _get_all_turn_event_cards():
 		if card.has_method("on_global_turn_end"):
 			card.on_global_turn_end(self, ending_player)
+	_resolve_temporary_control_effects(ending_player)
 	_resolve_destroy_at_turn_end_statuses()
+
+func _resolve_temporary_control_effects(ending_player: Player) -> void:
+	if _temporary_control_effects.is_empty():
+		return
+	var remaining_entries: Array[Dictionary] = []
+	for entry in _temporary_control_effects:
+		if int(entry.get("return_turn_number", -1)) != turn_number:
+			remaining_entries.append(entry)
+			continue
+		if entry.get("ending_player") != ending_player:
+			remaining_entries.append(entry)
+			continue
+		var creature := entry.get("creature") as Card
+		var previous_controller := entry.get("previous_controller") as Player
+		if creature == null or not is_instance_valid(creature):
+			continue
+		if previous_controller == null or not is_instance_valid(previous_controller):
+			continue
+		if creature.current_zone == null or not creature.current_zone.is_board_zone():
+			continue
+		var return_zone := _find_enslave_destination(
+			previous_controller,
+			int(entry.get("previous_zone_type", Zone.ZoneType.FRONTLINE)),
+			int(entry.get("previous_zone_index", 0))
+		)
+		if return_zone == null:
+			creature.card_owner.move_card(creature, creature.card_owner.hand_zone)
+			continue
+		previous_controller.move_card(creature, return_zone)
+		creature.reveal_from_stealth(self)
+	_temporary_control_effects = remaining_entries
 
 func notify_god_power_activated(player: Player, god: Card, target: Card = null) -> void:
 	if player == null or god == null:
@@ -2992,6 +3025,39 @@ func enslave_creature(creature: Card, new_controller: Player) -> bool:
 	var destination := _find_enslave_destination(new_controller, creature.current_zone.zone_type, creature.current_zone.zone_index)
 	if destination == null:
 		return false
+	new_controller.move_card(creature, destination)
+	creature.reveal_from_stealth(self)
+	return true
+
+func grant_temporary_control_of_creature(
+	creature: Card,
+	new_controller: Player,
+	source_card: Card = null,
+	return_turn_number: int = -1,
+	ending_player: Player = null
+) -> bool:
+	if creature == null or new_controller == null:
+		return false
+	var previous_controller := creature.get_controller()
+	if previous_controller == null or previous_controller == new_controller:
+		return false
+	if not can_enslave_creature(creature, new_controller):
+		return false
+	var destination := _find_enslave_destination(new_controller, creature.current_zone.zone_type, creature.current_zone.zone_index)
+	if destination == null:
+		return false
+	_temporary_control_effects = _temporary_control_effects.filter(func(entry: Dictionary) -> bool:
+		return entry.get("creature") != creature
+	)
+	_temporary_control_effects.append({
+		"creature": creature,
+		"previous_controller": previous_controller,
+		"previous_zone_type": creature.current_zone.zone_type,
+		"previous_zone_index": creature.current_zone.zone_index,
+		"return_turn_number": turn_number if return_turn_number < 0 else return_turn_number,
+		"ending_player": current_player if ending_player == null else ending_player,
+		"source_card": source_card,
+	})
 	new_controller.move_card(creature, destination)
 	creature.reveal_from_stealth(self)
 	return true
@@ -3538,6 +3604,14 @@ func _notify_powers_of_creature_summon(
 	for power in _get_active_powers():
 		if power != null and power.has_method("on_creature_summoned"):
 			power.on_creature_summoned(player, card, from_zone, to_zone, summon_source, face_down, stealth, self)
+	for event_card in _get_all_turn_event_cards():
+		if event_card == null or event_card is PowerCard:
+			continue
+		if not event_card.has_method("on_creature_summoned"):
+			continue
+		if event_card.abilities_suppressed():
+			continue
+		event_card.on_creature_summoned(player, card, from_zone, to_zone, summon_source, face_down, stealth, self)
 
 func _can_use_extra_normal_summon(player: Player, card: Card, target_zone: Zone) -> bool:
 	if player == null or card == null:

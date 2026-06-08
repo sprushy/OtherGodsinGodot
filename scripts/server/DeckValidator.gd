@@ -3,6 +3,7 @@ class_name DeckValidator
 
 const CardCatalogScript = preload("res://scripts/cards/CardCatalog.gd")
 const TiamatScript = preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
+const CardArtVariantsScript = preload("res://scripts/core/CardArtVariants.gd")
 const MIN_REGULAR_CARDS := 35
 const MAX_POWERS := 3
 
@@ -169,21 +170,21 @@ func _validate_special_setup(special_setup: Dictionary, god_template, power_coun
 				return {
 					"is_valid": false,
 					"error": "Unknown Tiamat slot card: %s." % requested_name,
-					"special_setup": TiamatScript.build_special_setup(canonical_slots),
+					"special_setup": _build_validated_special_setup(canonical_slots, special_setup),
 				}
 			var card = _cards_by_name[resolved_key]
 			if not TiamatScript.is_valid_slot_creature(card):
 				return {
 					"is_valid": false,
 					"error": "%s is not a valid Tiamat slot creature." % str(card.card_name),
-					"special_setup": TiamatScript.build_special_setup(canonical_slots),
+					"special_setup": _build_validated_special_setup(canonical_slots, special_setup),
 				}
 			var canonical_name := str(card.card_name)
 			if seen_card_names.has(canonical_name):
 				return {
 					"is_valid": false,
 					"error": "Tiamat slot creatures must all be different. %s was chosen more than once." % canonical_name,
-					"special_setup": TiamatScript.build_special_setup(canonical_slots),
+					"special_setup": _build_validated_special_setup(canonical_slots, special_setup),
 				}
 			seen_card_names[canonical_name] = true
 			slot_level_total += int(card.level)
@@ -192,19 +193,23 @@ func _validate_special_setup(special_setup: Dictionary, god_template, power_coun
 			return {
 				"is_valid": false,
 				"error": "Tiamat slot %d exceeds %d total levels." % [slot_index + 1, TiamatScript.MAX_SLOT_LEVEL_TOTAL],
-				"special_setup": TiamatScript.build_special_setup(canonical_slots),
+				"special_setup": _build_validated_special_setup(canonical_slots, special_setup),
 			}
 		canonical_slots.append(canonical_slot)
 		if canonical_slots.size() >= TiamatScript.POWER_SLOT_COUNT:
 			break
 
 	if occupied_slot_count <= 0:
-		return {"is_valid": true, "error": "", "special_setup": {}}
+		return {
+			"is_valid": true,
+			"error": "",
+			"special_setup": _build_validated_special_setup(canonical_slots, special_setup),
+		}
 	if not TiamatScript.is_tiamat_god(god_template):
 		return {
 			"is_valid": false,
 			"error": "Only Tiamat can use Matriarch Rule slot creatures.",
-			"special_setup": TiamatScript.build_special_setup(canonical_slots),
+			"special_setup": _build_validated_special_setup(canonical_slots, special_setup),
 		}
 	if power_count + occupied_slot_count > MAX_POWERS:
 		return {
@@ -213,13 +218,19 @@ func _validate_special_setup(special_setup: Dictionary, god_template, power_coun
 				power_count + occupied_slot_count,
 				MAX_POWERS
 			],
-			"special_setup": TiamatScript.build_special_setup(canonical_slots),
+			"special_setup": _build_validated_special_setup(canonical_slots, special_setup),
 		}
 	return {
 		"is_valid": true,
 		"error": "",
-		"special_setup": TiamatScript.build_special_setup(canonical_slots),
+		"special_setup": _build_validated_special_setup(canonical_slots, special_setup),
 	}
+
+func _build_validated_special_setup(tiamat_slots: Array, raw_special_setup: Dictionary) -> Dictionary:
+	return CardArtVariantsScript.build_special_setup(
+		tiamat_slots,
+		CardArtVariantsScript.get_selections_from_setup(raw_special_setup)
+	)
 
 func _result(is_valid: bool, error_message: String, sanitized_cards: Dictionary, extra: Dictionary = {}) -> Dictionary:
 	var output := {

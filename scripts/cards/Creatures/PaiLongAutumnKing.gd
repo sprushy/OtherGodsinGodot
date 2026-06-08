@@ -6,7 +6,7 @@ const ART_PATH := "res://images/card_art/creatures/TheDragonKingEdit.png"
 func _init() -> void:
 	super._init()
 	card_name = "Pai Long, Autumn King"
-	card_types = ["Dragon", "Long", "Mage", "Aerial", "Tian Creature"]
+	card_types = ["Dragon", "Long", "Mage", "King", "Aerial", "Tian Creature"]
 	level = 6
 	mana_cost = 9
 	sacrifice_cost = 0

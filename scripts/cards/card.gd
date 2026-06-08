@@ -28,6 +28,7 @@ enum CreatureMode { AGGRESSIVE, DEFENSIVE }
 		_art_path = resolve_art_path(value)
 	get:
 		return _art_path
+@export var art_variants: Array[String] = []
 @export var artist: String = ""
 @export var paragon_of_champions: String = ""  # Name of the champion type this god is patron of; empty if not a paragon
 @export var name_at_bottom: bool = false  # If true, card name is rendered at the bottom instead of the top
@@ -175,6 +176,24 @@ static func resolve_art_path(raw_path: String) -> String:
 		seen[resolved_path] = true
 		resolved_path = str(ART_PATH_REDIRECTS[resolved_path]).strip_edges()
 	return resolved_path
+
+func get_art_variant_paths() -> Array[String]:
+	var variants: Array[String] = []
+	for raw_path in art_variants:
+		var resolved_path := resolve_art_path(raw_path)
+		if not resolved_path.is_empty() and resolved_path not in variants:
+			variants.append(resolved_path)
+	if variants.is_empty() and not art_path.is_empty():
+		variants.append(art_path)
+	return variants
+
+func set_art_variant(variant_index: int) -> bool:
+	var variants := get_art_variant_paths()
+	if variant_index < 0 or variant_index >= variants.size():
+		return false
+	art_path = variants[variant_index]
+	art_updated.emit(art_path)
+	return true
 
 func switch_to_exhausted_art() -> void:
 	if exhausted_art_path != "":

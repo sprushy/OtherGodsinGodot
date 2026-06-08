@@ -7,6 +7,7 @@ const LocalProfileStoreScript = preload("res://scripts/core/LocalProfileStore.gd
 const DeckCatalogUtilsScript = preload("res://scripts/core/DeckCatalogUtils.gd")
 const CardCatalogScript = preload("res://scripts/cards/CardCatalog.gd")
 const TiamatScript = preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
+const CardArtVariantsScript = preload("res://scripts/core/CardArtVariants.gd")
 const LevelSymbolRowScript = preload("res://scripts/ui/LevelSymbolRow.gd")
 const MANA_ORB_TEXTURE := preload("res://images/ui/ManaOrb.png")
 
@@ -130,6 +131,8 @@ var _remote_preferred_deck_id: String = ""
 var _friend_usernames := PackedStringArray()
 var _pending_delete_deck_id: String = ""
 var _tiamat_slots: Array = [[], [], []]
+var _art_variant_selections: Dictionary = {}
+var _preview_card_name: String = ""
 var _tiamat_assignment_slot_index: int = -1
 var _deck_id_rng := RandomNumberGenerator.new()
 var _deck_undo_history: Array[Dictionary] = []
@@ -1232,8 +1235,9 @@ func _make_card_item(card: Card) -> Control:
 	card_body.add_child(bg)
 
 	# Art
-	if card.art_path != "":
-		var tex := _get_card_art_texture(card.art_path)
+	var selected_art_path := _get_selected_art_path(card)
+	if selected_art_path != "":
+		var tex := _get_card_art_texture(selected_art_path)
 		if tex:
 			var art := TextureRect.new()
 			art.texture      = tex
@@ -1342,6 +1346,32 @@ func _make_card_item(card: Card) -> Control:
 	glow_style.corner_radius_bottom_right = 5
 	selection_glow.add_theme_stylebox_override("panel", glow_style)
 	card_body.add_child(selection_glow)
+
+	var art_variants := card.get_art_variant_paths()
+	if art_variants.size() > 1:
+		var art_variant_index := clampi(
+			int(_art_variant_selections.get(card.card_name, 0)),
+			0,
+			art_variants.size() - 1
+		)
+		var art_btn := Button.new()
+		art_btn.name = "ArtVariantButton"
+		art_btn.text = "🖌"
+		art_btn.tooltip_text = "Switch art (%d/%d)" % [art_variant_index + 1, art_variants.size()]
+		art_btn.anchor_left = 1
+		art_btn.anchor_right = 1
+		art_btn.anchor_top = 1
+		art_btn.anchor_bottom = 1
+		art_btn.offset_left = -34
+		art_btn.offset_right = -6
+		art_btn.offset_top = -COLLECTION_ADD_FOOTER_HEIGHT - 34
+		art_btn.offset_bottom = -COLLECTION_ADD_FOOTER_HEIGHT - 6
+		art_btn.custom_minimum_size = Vector2(28, 28)
+		art_btn.add_theme_font_size_override("font_size", 15)
+		art_btn.pressed.connect(func() -> void:
+			_cycle_card_art(card)
+		)
+		root.add_child(art_btn)
 
 	var unavailable_mark := Label.new()
 	unavailable_mark.name = "UnavailableMark"
@@ -2087,8 +2117,8 @@ func _has_any_tiamat_slot_cards() -> bool:
 			return true
 	return false
 
-func _get_tiamat_special_setup() -> Dictionary:
-	return TiamatScript.build_special_setup(_tiamat_slots)
+func _get_deck_special_setup() -> Dictionary:
+	return CardArtVariantsScript.build_special_setup(_tiamat_slots, _art_variant_selections)
 
 func _clear_tiamat_slots() -> void:
 	_tiamat_slots = [[], [], []]
@@ -2167,6 +2197,7 @@ func _make_deck_undo_state() -> Dictionary:
 	return {
 		"deck": _deck.duplicate(true),
 		"tiamat_slots": _tiamat_slots.duplicate(true),
+		"art_variant_selections": _art_variant_selections.duplicate(true),
 		"deck_name": _deck_name_edit.text if _deck_name_edit != null else "",
 		"selected_saved_deck_id": _selected_saved_deck_id,
 		"pending_remote_saved_deck_id": _pending_remote_saved_deck_id,
@@ -2176,6 +2207,7 @@ func _deck_undo_states_equal(a: Dictionary, b: Dictionary) -> bool:
 	return (
 		a.get("deck", {}) == b.get("deck", {})
 		and a.get("tiamat_slots", []) == b.get("tiamat_slots", [])
+		and a.get("art_variant_selections", {}) == b.get("art_variant_selections", {})
 		and str(a.get("deck_name", "")) == str(b.get("deck_name", ""))
 		and str(a.get("selected_saved_deck_id", "")) == str(b.get("selected_saved_deck_id", ""))
 		and str(a.get("pending_remote_saved_deck_id", "")) == str(b.get("pending_remote_saved_deck_id", ""))
@@ -2194,6 +2226,7 @@ func _push_current_deck_undo_state() -> void:
 func _restore_deck_undo_state(state: Dictionary) -> void:
 	_deck = (state.get("deck", {}) as Dictionary).duplicate(true)
 	_tiamat_slots = (state.get("tiamat_slots", []) as Array).duplicate(true)
+	_art_variant_selections = (state.get("art_variant_selections", {}) as Dictionary).duplicate(true)
 	_selected_saved_deck_id = str(state.get("selected_saved_deck_id", "")).strip_edges()
 	_pending_remote_saved_deck_id = str(state.get("pending_remote_saved_deck_id", "")).strip_edges()
 	if _deck_name_edit != null:
@@ -2290,6 +2323,7 @@ func _clear_deck() -> void:
 	_push_current_deck_undo_state()
 	_deck.clear()
 	_clear_tiamat_slots()
+	_art_variant_selections.clear()
 	_refresh_deck_panel(true, false)
 
 func _autofill_deck_to_minimum() -> void:
@@ -2423,7 +2457,7 @@ func _save_profile_deck() -> void:
 			resolved_name,
 			_deck,
 			_selected_saved_deck_id,
-			_get_tiamat_special_setup()
+			_get_deck_special_setup()
 		)
 		_set_status_flash("Saving deck for %s..." % _active_player_name)
 		return
@@ -2436,7 +2470,7 @@ func _save_profile_deck() -> void:
 		deck_name,
 		_deck,
 		_selected_saved_deck_id,
-		_get_tiamat_special_setup()
+		_get_deck_special_setup()
 	)
 	_pending_remote_saved_deck_id = ""
 	_selected_saved_deck_id = str(saved_deck.get("deck_id", _selected_saved_deck_id)).strip_edges()
@@ -2450,7 +2484,7 @@ func _export_current_deck() -> void:
 		_set_status_flash("Nothing to export.")
 		return
 	var deck_name := _deck_name_edit.text if _deck_name_edit != null else ""
-	var shareable_deck := _make_shareable_deck(deck_name, _deck, _get_tiamat_special_setup())
+	var shareable_deck := _make_shareable_deck(deck_name, _deck, _get_deck_special_setup())
 	_copy_deck_share_code(shareable_deck, "Deck share code copied.")
 
 func _show_send_friend_dialog() -> void:
@@ -2478,7 +2512,7 @@ func _confirm_send_deck_to_friend() -> void:
 		_set_status_flash("Choose a friend first.")
 		return
 	var deck_name := _deck_name_edit.text if _deck_name_edit != null else ""
-	var shareable_deck := _make_shareable_deck(deck_name, _deck, _get_tiamat_special_setup())
+	var shareable_deck := _make_shareable_deck(deck_name, _deck, _get_deck_special_setup())
 	send_deck_to_friend_requested.emit(friend_username, shareable_deck)
 	_set_status_flash("Sending deck to %s..." % friend_username)
 
@@ -2594,11 +2628,7 @@ func _sanitize_export_cards(cards) -> Dictionary:
 	return sanitized
 
 func _sanitize_export_special_setup(special_setup) -> Dictionary:
-	if not (special_setup is Dictionary):
-		return {}
-	return TiamatScript.build_special_setup(
-		TiamatScript.get_slot_card_names_from_setup(special_setup)
-	)
+	return CardArtVariantsScript.sanitize_special_setup(special_setup)
 
 func _sanitize_imported_share_cards(cards) -> Dictionary:
 	if not (cards is Dictionary):
@@ -2652,7 +2682,10 @@ func _sanitize_imported_special_setup(special_setup) -> Dictionary:
 			sanitized_slots[slot_index].append(card.card_name)
 	return {
 		"is_valid": true,
-		"special_setup": TiamatScript.build_special_setup(sanitized_slots),
+		"special_setup": CardArtVariantsScript.build_special_setup(
+			sanitized_slots,
+			CardArtVariantsScript.get_selections_from_setup(special_setup)
+		),
 	}
 
 func _share_import_error(message: String) -> Dictionary:
@@ -2902,6 +2935,7 @@ func _new_deck() -> void:
 	_selected_saved_deck_id = ""
 	_deck.clear()
 	_clear_tiamat_slots()
+	_art_variant_selections.clear()
 	if _deck_name_edit != null:
 		_deck_name_edit.text = LocalProfileStoreScript.DEFAULT_DECK_NAME
 		_deck_name_edit.grab_focus()
@@ -3067,7 +3101,9 @@ func _apply_saved_deck(saved_deck: Dictionary) -> void:
 			var count := int((cards as Dictionary)[raw_card_name])
 			if count > 0:
 				_deck[str(raw_card_name)] = count
-	_tiamat_slots = TiamatScript.get_slot_card_names_from_setup(saved_deck.get("special_setup", {}))
+	var special_setup = saved_deck.get("special_setup", {})
+	_tiamat_slots = TiamatScript.get_slot_card_names_from_setup(special_setup)
+	_art_variant_selections = CardArtVariantsScript.get_selections_from_setup(special_setup)
 	if not _deck_uses_tiamat():
 		_clear_tiamat_slots()
 	_remember_selected_saved_deck(_selected_saved_deck_id)
@@ -3621,8 +3657,10 @@ func _update_count_badges() -> void:
 func _show_preview(card: Card, force: bool = false) -> void:
 	if not force and not _selected_collection_card_name.is_empty() and card != null and card.card_name != _selected_collection_card_name:
 		return
-	if card.art_path != "":
-		_prev_art.texture = _get_card_art_texture(card.art_path)
+	_preview_card_name = card.card_name
+	var preview_art_path := _get_selected_art_path(card)
+	if preview_art_path != "":
+		_prev_art.texture = _get_card_art_texture(preview_art_path)
 	else:
 		_prev_art.texture = null
 	_refresh_preview_level_badge(card)
@@ -3653,6 +3691,29 @@ func _show_preview(card: Card, force: bool = false) -> void:
 	_prev_ability.text = preview_body
 	_prev_ability.custom_minimum_size.y = 64 if not preview_body.is_empty() else 0
 	_prev_flavor.text = ""
+
+func _get_selected_art_path(card: Card) -> String:
+	if card == null:
+		return ""
+	var variants := card.get_art_variant_paths()
+	var variant_index := int(_art_variant_selections.get(card.card_name, 0))
+	if variant_index >= 0 and variant_index < variants.size():
+		return variants[variant_index]
+	return card.art_path
+
+func _cycle_card_art(card: Card) -> void:
+	var variants := card.get_art_variant_paths()
+	if variants.size() <= 1:
+		return
+	_push_current_deck_undo_state()
+	var next_index := (int(_art_variant_selections.get(card.card_name, 0)) + 1) % variants.size()
+	if next_index == 0:
+		_art_variant_selections.erase(card.card_name)
+	else:
+		_art_variant_selections[card.card_name] = next_index
+	_refresh_grid()
+	if _preview_card_name == card.card_name:
+		_show_preview(card, true)
 
 # ── filter ─────────────────────────────────────────────────────────
 func _input(event: InputEvent) -> void:
