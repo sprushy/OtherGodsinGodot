@@ -7,9 +7,13 @@ const RELEASES_API_URL := "https://api.github.com/repos/sprushy/OtherGodsinGodot
 const RELEASES_PAGE_URL := "https://github.com/sprushy/OtherGodsinGodot/releases/latest"
 const WINDOWS_ASSET_NAME := "OtherGods-windows.zip"
 const LEGACY_WINDOWS_ASSET_NAME := "ClaudeOtherGods-windows.zip"
+const MACOS_ASSET_NAME := "OtherGods-macos.zip"
 const WINDOWS_ASSET_NAMES = [
 	WINDOWS_ASSET_NAME,
 	LEGACY_WINDOWS_ASSET_NAME,
+]
+const MACOS_ASSET_NAMES = [
+	MACOS_ASSET_NAME,
 ]
 const PREFERRED_WINDOWS_EXECUTABLE_NAME := "OtherGods.exe"
 
@@ -44,6 +48,15 @@ static func compare_versions(left: String, right: String) -> int:
 			continue
 		return -1 if left_value < right_value else 1
 	return 0
+
+static func get_asset_names_for_platform(platform_name: String) -> Array:
+	match platform_name:
+		"Windows":
+			return WINDOWS_ASSET_NAMES
+		"macOS":
+			return MACOS_ASSET_NAMES
+		_:
+			return []
 
 static func parse_semver(value: String) -> Array[int]:
 	var normalized := normalize_version(value)

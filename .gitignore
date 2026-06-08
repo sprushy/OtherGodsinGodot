@@ -6,6 +6,7 @@
 scripts/tmp/
 .release/
 server_upload/
+addons/macos_sparkle/bin/
 
 # Claude Code
 .claude/

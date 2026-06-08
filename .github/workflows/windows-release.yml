@@ -80,6 +80,8 @@ jobs:
 
   export-macos:
     runs-on: macos-latest
+    env:
+      SPARKLE_VERSION: "2.9.2"
 
     steps:
       - name: Checkout
@@ -116,6 +118,54 @@ jobs:
           version: ${{ env.GODOT_VERSION }}
           use-dotnet: false
           include-templates: true
+
+      - name: Build Sparkle GDExtension
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 -m pip install scons
+
+          godot_cpp_dir="$RUNNER_TEMP/godot-cpp"
+          sparkle_root="$RUNNER_TEMP/sparkle"
+          rm -rf "$godot_cpp_dir" "$sparkle_root"
+
+          git clone --depth 1 https://github.com/godotengine/godot-cpp.git "$godot_cpp_dir"
+
+          mkdir -p "$sparkle_root"
+          curl --fail --location \
+            "https://github.com/sparkle-project/Sparkle/releases/download/${SPARKLE_VERSION}/Sparkle-${SPARKLE_VERSION}.tar.xz" \
+            --output "$RUNNER_TEMP/Sparkle-${SPARKLE_VERSION}.tar.xz"
+          tar -xf "$RUNNER_TEMP/Sparkle-${SPARKLE_VERSION}.tar.xz" -C "$sparkle_root"
+
+          sparkle_framework="$(find "$sparkle_root" -name Sparkle.framework -type d -print -quit)"
+          if [ -z "$sparkle_framework" ]; then
+            echo "Sparkle.framework was not found in the downloaded release." >&2
+            exit 1
+          fi
+
+          for architecture in x86_64 arm64; do
+            python3 -m SCons -C native/macos_sparkle \
+              platform=macos \
+              "arch=$architecture" \
+              target=template_release \
+              "api_version=${GODOT_VERSION%.*}" \
+              "godot_cpp_dir=$godot_cpp_dir" \
+              "sparkle_framework_dir=$(dirname "$sparkle_framework")"
+          done
+
+          bridge_path="addons/macos_sparkle/bin/libmacos_sparkle.macos.universal.dylib"
+          lipo -create \
+            addons/macos_sparkle/bin/libmacos_sparkle.macos.x86_64.dylib \
+            addons/macos_sparkle/bin/libmacos_sparkle.macos.arm64.dylib \
+            -output "$bridge_path"
+          if [ ! -f "$bridge_path" ]; then
+            echo "Sparkle GDExtension was not produced at $bridge_path." >&2
+            exit 1
+          fi
+
+          echo "SPARKLE_ROOT=$sparkle_root" >> "$GITHUB_ENV"
+          echo "SPARKLE_FRAMEWORK_PATH=$sparkle_framework" >> "$GITHUB_ENV"
 
       - name: Export macOS build
         run: |
@@ -171,6 +221,10 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          SPARKLE_PUBLIC_ED_KEY: ${{ secrets.SPARKLE_PUBLIC_ED_KEY }}
+          SPARKLE_PRIVATE_ED_KEY: ${{ secrets.SPARKLE_PRIVATE_ED_KEY }}
         run: |
           set -euo pipefail
 
@@ -182,6 +236,52 @@ jobs:
           if [ -z "${app_path}" ]; then
             echo "No .app bundle found in macOS export." >&2
             exit 1
+          fi
+
+          is_tag_release=false
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            is_tag_release=true
+          fi
+          if [ "$is_tag_release" = true ]; then
+            missing_secrets=()
+            for secret_name in \
+              MACOS_CERTIFICATE_P12_BASE64 \
+              MACOS_CERTIFICATE_PASSWORD \
+              APPLE_ID \
+              APPLE_APP_PASSWORD \
+              APPLE_TEAM_ID \
+              SPARKLE_PUBLIC_ED_KEY \
+              SPARKLE_PRIVATE_ED_KEY
+            do
+              if [ -z "${!secret_name:-}" ]; then
+                missing_secrets+=("$secret_name")
+              fi
+            done
+            if [ "${#missing_secrets[@]}" -ne 0 ]; then
+              echo "Signed macOS auto-update releases require: ${missing_secrets[*]}" >&2
+              exit 1
+            fi
+          fi
+
+          mkdir -p "$app_path/Contents/Frameworks"
+          ditto "$SPARKLE_FRAMEWORK_PATH" "$app_path/Contents/Frameworks/Sparkle.framework"
+
+          bundled_bridge="$(find "$app_path" -name libmacos_sparkle.macos.universal.dylib -type f -print -quit)"
+          if [ -z "$bundled_bridge" ]; then
+            echo "The exported app does not contain the Sparkle GDExtension." >&2
+            exit 1
+          fi
+          lipo -verify_arch x86_64 arm64 "$bundled_bridge"
+          otool -L "$bundled_bridge"
+
+          plist_path="$app_path/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c \
+            "Add :SUFeedURL string https://github.com/sprushy/OtherGodsinGodot/releases/latest/download/appcast.xml" \
+            "$plist_path"
+          /usr/libexec/PlistBuddy -c "Add :SUEnableAutomaticChecks bool true" "$plist_path"
+          /usr/libexec/PlistBuddy -c "Add :SUScheduledCheckInterval integer 86400" "$plist_path"
+          if [ -n "${SPARKLE_PUBLIC_ED_KEY}" ]; then
+            /usr/libexec/PlistBuddy -c "Add :SUPublicEDKey string ${SPARKLE_PUBLIC_ED_KEY}" "$plist_path"
           fi
 
           if [ "${MACOS_SIGN_IDENTITY}" = "-" ]; then
@@ -209,14 +309,53 @@ jobs:
 
           ditto -c -k --keepParent "$app_path" dist/OtherGods-macos.zip
 
+          if [ "$is_tag_release" = true ]; then
+            private_key_path="$RUNNER_TEMP/sparkle_private_key"
+            printf '%s' "$SPARKLE_PRIVATE_ED_KEY" > "$private_key_path"
+            chmod 600 "$private_key_path"
+
+            signature="$("$SPARKLE_ROOT/bin/sign_update" \
+              --ed-key-file "$private_key_path" \
+              dist/OtherGods-macos.zip)"
+            release_version="${GITHUB_REF_NAME#v}"
+            release_url="https://github.com/sprushy/OtherGodsinGodot/releases/download/${GITHUB_REF_NAME}/OtherGods-macos.zip"
+            publication_date="$(LC_ALL=C date -R)"
+
+            cat > dist/appcast.xml <<EOF
+          <?xml version="1.0" encoding="utf-8"?>
+          <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+            <channel>
+              <title>Other Gods Updates</title>
+              <link>https://github.com/sprushy/OtherGodsinGodot/releases</link>
+              <description>Other Gods macOS releases</description>
+              <language>en</language>
+              <item>
+                <title>${GITHUB_REF_NAME}</title>
+                <pubDate>${publication_date}</pubDate>
+                <sparkle:minimumSystemVersion>11.0</sparkle:minimumSystemVersion>
+                <enclosure
+                  url="${release_url}"
+                  sparkle:version="${release_version}"
+                  sparkle:shortVersionString="${release_version}"
+                  ${signature}
+                  type="application/octet-stream" />
+              </item>
+            </channel>
+          </rss>
+          EOF
+
       - name: Upload macOS workflow artifact
         uses: actions/upload-artifact@v4
         with:
           name: OtherGods-macos
-          path: dist/OtherGods-macos.zip
+          path: |
+            dist/OtherGods-macos.zip
+            dist/appcast.xml
 
       - name: Publish GitHub release assets
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/OtherGods-macos.zip
+          files: |
+            dist/OtherGods-macos.zip
+            dist/appcast.xml

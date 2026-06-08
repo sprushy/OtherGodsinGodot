@@ -1,0 +1,34 @@
+#!/usr/bin/env python
+
+from SCons.Script import ARGUMENTS, Default, Glob, SConscript
+
+godot_cpp_dir = ARGUMENTS.get("godot_cpp_dir", "")
+if not godot_cpp_dir:
+    raise RuntimeError("godot_cpp_dir must point to a godot-cpp checkout")
+
+env = SConscript(godot_cpp_dir + "/SConstruct")
+
+sparkle_framework_dir = ARGUMENTS.get("sparkle_framework_dir", "")
+if not sparkle_framework_dir:
+    raise RuntimeError("sparkle_framework_dir must point to the directory containing Sparkle.framework")
+
+env.Append(
+    CPPPATH=["src"],
+    CXXFLAGS=["-fobjc-arc", "-F" + sparkle_framework_dir],
+    LINKFLAGS=[
+        "-F" + sparkle_framework_dir,
+        "-framework",
+        "Sparkle",
+        "-framework",
+        "Cocoa",
+        "-Wl,-rpath,@loader_path",
+    ],
+)
+
+sources = Glob("src/*.cpp") + Glob("src/*.mm")
+library = env.SharedLibrary(
+    "../../addons/macos_sparkle/bin/macos_sparkle.macos." + env["arch"],
+    source=sources,
+)
+
+Default(library)

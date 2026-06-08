@@ -1,0 +1,9 @@
+[configuration]
+
+entry_symbol = "macos_sparkle_library_init"
+compatibility_minimum = "4.6"
+reloadable = false
+
+[libraries]
+
+macos.release = "res://addons/macos_sparkle/bin/libmacos_sparkle.macos.universal.dylib"

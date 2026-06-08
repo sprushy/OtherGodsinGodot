@@ -72,6 +72,7 @@ var _pending_return_to_hand_steal_actor: Card = null
 var _temporary_combat_follower_damage_halved: bool = false
 var _combat_resolution_deferred: bool = false
 var _deferred_combat_resume: Callable = Callable()
+var _committed_combat_snapshots: Dictionary = {}
 
 const INTERCEPT_COUNT_TURN_META := "intercept_count_turn"
 const INTERCEPT_COUNT_VALUE_META := "intercept_count_value"
@@ -2343,6 +2344,8 @@ func resolve_combat_with_continuation(
 ) -> bool:
 	if attacker == null or defender == null:
 		return false
+	if has_committed_combat_snapshot(attacker, defender):
+		return _resolve_committed_combat_snapshot(attacker, defender, continue_callback)
 	if interceptor_initiates:
 		if defender.has_method("can_engage") and not defender.can_engage(attacker):
 			print(defender.card_name + " cannot intercept " + attacker.card_name + ".")
@@ -2452,6 +2455,133 @@ func resolve_combat_with_continuation(
 	_combat_resolution_deferred = false
 	_deferred_combat_resume = Callable()
 	return continue_resolution.call()
+
+func capture_committed_combat_snapshot(attacker: Card, defender: Card) -> void:
+	if attacker == null or defender == null:
+		return
+	var snapshot_key := _get_committed_combat_snapshot_key(attacker, defender)
+	if _committed_combat_snapshots.has(snapshot_key):
+		return
+	_begin_declared_combat(attacker, defender)
+	_notify_attack_declared(attacker, defender)
+	if defender.has_method("on_defend") and not defender.abilities_suppressed():
+		defender.on_defend(self, attacker)
+	var attacker_str: int = attacker.get_effective_strength()
+	var defender_str: int = defender.get_effective_strength()
+	var defender_res: int = defender.get_effective_resilience()
+	var vs_defense_bonus := 0
+	for equip in attacker.equipment:
+		if equip is EquipmentCard:
+			vs_defense_bonus += equip.get_bonus_strength_vs_defense(attacker)
+	_committed_combat_snapshots[snapshot_key] = {
+		"attacker": attacker,
+		"defender": defender,
+		"attacker_controller": attacker.get_controller(),
+		"defender_controller": defender.get_controller(),
+		"attacker_str": attacker_str,
+		"attacker_str_for_damage": _get_giants_disdain_damage_stat(attacker, [defender], attacker_str),
+		"attacker_str_vs_res": attacker_str + vs_defense_bonus,
+		"attacker_str_for_conversion": _get_giants_disdain_damage_stat(attacker, [defender], attacker_str) + vs_defense_bonus,
+		"defender_str": defender_str,
+		"defender_str_for_damage": _get_giants_disdain_damage_stat(defender, [attacker], defender_str),
+		"defender_res": defender_res,
+		"defender_mode": defender.creature_mode,
+		"defender_type": defender.card_type,
+		"defender_is_god": defender.is_god,
+		"defender_is_petrified": defender.is_petrified(),
+		"ferocious_defence": _ferocious_defence_triggers(defender, attacker_str + vs_defense_bonus),
+	}
+
+func has_committed_combat_snapshot(attacker: Card, defender: Card) -> bool:
+	if attacker == null or defender == null:
+		return false
+	return _committed_combat_snapshots.has(_get_committed_combat_snapshot_key(attacker, defender))
+
+func _get_committed_combat_snapshot_key(attacker: Card, defender: Card) -> String:
+	return "%d:%d" % [attacker.get_instance_id(), defender.get_instance_id()]
+
+func _resolve_committed_combat_snapshot(
+	attacker: Card,
+	defender: Card,
+	continue_callback: Callable = Callable()
+) -> bool:
+	var snapshot_key := _get_committed_combat_snapshot_key(attacker, defender)
+	var snapshot: Dictionary = _committed_combat_snapshots.get(snapshot_key, {})
+	_committed_combat_snapshots.erase(snapshot_key)
+	if snapshot.is_empty():
+		return false
+	var attacker_controller: Player = snapshot.get("attacker_controller", null)
+	var defender_controller: Player = snapshot.get("defender_controller", null)
+	var finish := func() -> void:
+		_notify_after_combat(attacker, defender)
+		_clear_combat_engagement_state(defender)
+		if continue_callback.is_valid():
+			continue_callback.call()
+	var kill_if_present := func(killer: Card, victim: Card, next: Callable) -> void:
+		if victim == null or victim.current_zone == null or not victim.current_zone.is_board_zone():
+			next.call()
+			return
+		_combat_kill_deferred(killer, victim, next)
+	var attacker_str := int(snapshot.get("attacker_str", 0))
+	if bool(snapshot.get("defender_is_god", false)):
+		_apply_combat_follower_damage(attacker, defender_controller, attacker_str)
+		_notify_opponent_attacks_followers(attacker, defender_controller)
+		finish.call()
+		return true
+	var defender_type := int(snapshot.get("defender_type", Card.CardType.CREATURE))
+	if bool(snapshot.get("defender_is_petrified", false)) or defender_type == Card.CardType.STRUCTURE:
+		if attacker_str > int(snapshot.get("defender_res", 0)):
+			kill_if_present.call(attacker, defender, finish)
+		else:
+			finish.call()
+		return true
+	if defender_type == Card.CardType.CREATURE:
+		if int(snapshot.get("defender_mode", Card.CreatureMode.AGGRESSIVE)) == Card.CreatureMode.AGGRESSIVE:
+			var defender_str := int(snapshot.get("defender_str", 0))
+			if attacker_str > defender_str:
+				_apply_combat_follower_damage(
+					attacker,
+					defender_controller,
+					attacker_str - int(snapshot.get("defender_str_for_damage", defender_str))
+				)
+				kill_if_present.call(attacker, defender, finish)
+				return true
+			if defender_str > attacker_str:
+				_apply_combat_follower_damage(
+					defender,
+					attacker_controller,
+					defender_str - int(snapshot.get("attacker_str_for_damage", attacker_str))
+				)
+				kill_if_present.call(defender, attacker, finish)
+				return true
+			var kills: Array[Dictionary] = []
+			if attacker.current_zone != null and attacker.current_zone.is_board_zone():
+				kills.append({"killer": defender, "victim": attacker})
+			if defender.current_zone != null and defender.current_zone.is_board_zone():
+				kills.append({"killer": attacker, "victim": defender})
+			_combat_kill_sequence_deferred(kills, finish)
+			return true
+		var attacker_str_vs_res := int(snapshot.get("attacker_str_vs_res", attacker_str))
+		var defender_res := int(snapshot.get("defender_res", 0))
+		if attacker_str_vs_res > defender_res:
+			kill_if_present.call(attacker, defender, finish)
+			return true
+		if attacker_str_vs_res < defender_res:
+			var converted := _adjust_combat_follower_damage(
+				maxi(0, defender_res - int(snapshot.get("attacker_str_for_conversion", attacker_str_vs_res)))
+			)
+			attacker_controller.lose_followers(converted)
+			defender_controller.gain_followers(converted)
+		if bool(snapshot.get("ferocious_defence", false)):
+			kill_if_present.call(defender, attacker, finish)
+		else:
+			finish.call()
+		return true
+	if defender_type == Card.CardType.EQUIPMENT and defender.equipped_on == null:
+		kill_if_present.call(attacker, defender, finish)
+		return true
+	finish.call()
+	return true
 
 func _combat_kill_deferred(killer: Card, victim: Card, continue_callback: Callable = Callable()) -> bool:
 	return _combat_kill_routed_deferred(killer, victim, _should_class_rend(killer, victim), continue_callback)

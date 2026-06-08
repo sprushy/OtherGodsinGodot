@@ -8,7 +8,7 @@ const STR_PER_LEVEL := 7
 func _init() -> void:
 	super._init()
 	card_name = "Gilgamesh"
-	card_types = ["Human", "Warrior", "Ancient Creature"]
+	card_types = ["Human", "Warrior", "King", "Ancient Creature"]
 	level = 3
 	is_legendary = true
 	mana_cost = 0

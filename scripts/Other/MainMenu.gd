@@ -136,6 +136,7 @@ var _update_now_button: Button = null
 var _update_download_status_label: Label = null
 var _is_auto_updating: bool = false
 var _automatic_update_required: bool = false
+var _macos_sparkle_bridge: Object = null
 var _server_version_update_check_requested: bool = false
 var _lobby_failure_update_check_requested: bool = false
 var _update_check_in_flight: bool = false
@@ -1725,6 +1726,7 @@ func _is_server_runtime_launch() -> bool:
 
 func _begin_startup_prompts() -> void:
 	_startup_prompt_gate_open = true
+	_ensure_macos_sparkle_bridge()
 	if _should_check_for_updates():
 		_start_update_check()
 		return
@@ -1888,8 +1890,8 @@ func _on_update_check_request_completed(
 	var download_url := ""
 	var download_size := 0
 	var assets: Array = payload.get("assets", [])
-	var windows_asset_names := AppReleaseInfoScript.WINDOWS_ASSET_NAMES
-	for asset_name in windows_asset_names:
+	var platform_asset_names := AppReleaseInfoScript.get_asset_names_for_platform(OS.get_name())
+	for asset_name in platform_asset_names:
 		for asset in assets:
 			if str(asset.get("name", "")) != asset_name:
 				continue
@@ -1933,12 +1935,38 @@ func _begin_required_update(
 		_show_update_prompt(latest_version, release_url, download_url, true, download_size)
 		call_deferred("_on_update_prompt_auto_update_pressed")
 		return
+	if OS.get_name() == "macOS" and _start_macos_sparkle_update(latest_version):
+		_complete_startup_prompts()
+		return
 	var open_error := OS.shell_open(release_url)
 	if open_error == OK:
 		status_label.text = "Opened the latest release page for %s." % latest_version
 	else:
 		status_label.text = "Update %s is available, but the release page could not be opened automatically." % latest_version
 	_complete_startup_prompts()
+
+func _start_macos_sparkle_update(latest_version: String) -> bool:
+	if not _ensure_macos_sparkle_bridge():
+		_write_update_log("sparkle_unavailable latest=%s" % latest_version)
+		return false
+	if _macos_sparkle_bridge == null or not _macos_sparkle_bridge.has_method("check_for_updates"):
+		_write_update_log("sparkle_bridge_invalid latest=%s" % latest_version)
+		return false
+	_write_update_log("sparkle_check_started latest=%s" % latest_version)
+	if status_label != null:
+		status_label.text = "Opening the macOS updater for %s..." % latest_version
+	_macos_sparkle_bridge.call("check_for_updates")
+	return true
+
+func _ensure_macos_sparkle_bridge() -> bool:
+	if OS.get_name() != "macOS" or not _release_updates_enabled():
+		return false
+	if _macos_sparkle_bridge != null:
+		return true
+	if not ClassDB.class_exists("MacSparkleBridge"):
+		return false
+	_macos_sparkle_bridge = ClassDB.instantiate("MacSparkleBridge")
+	return _macos_sparkle_bridge != null
 
 func _show_update_prompt(
 	latest_version: String,

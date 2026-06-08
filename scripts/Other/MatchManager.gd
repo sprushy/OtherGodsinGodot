@@ -1192,6 +1192,8 @@ func _begin_combat_reveal_linger(action: CardAction, target: Card) -> bool:
 		return false
 	for combatant in reveal_cards:
 		combatant.reveal_from_stealth(game_manager)
+	if action.united_front_partner == null:
+		game_manager.capture_committed_combat_snapshot(action.attacker, target)
 	pending_combat_reveal_linger_action = action
 	_mark_deferred_authoritative_action(action, "combat_reveal_linger")
 	last_resolution_text = "%s revealed before combat." % _format_card_name_list(reveal_cards)
@@ -1200,16 +1202,50 @@ func _begin_combat_reveal_linger(action: CardAction, target: Card) -> bool:
 		func() -> void:
 			if pending_combat_reveal_linger_action != action:
 				return
-			pending_combat_reveal_linger_action = null
-			_resolve_creature_combat_now(
-				action,
-				target,
-				func() -> void:
-					_complete_deferred_authoritative_action(action, "combat_reveal_linger")
-			),
+			if _has_pending_combat_reveal_interaction(action):
+				return
+			_resume_pending_combat_reveal(action, target),
 		CONNECT_ONE_SHOT
 	)
 	return true
+
+func _has_pending_combat_reveal_interaction(action: CardAction) -> bool:
+	if action == null:
+		return false
+	var combatant_uids: Array[String] = []
+	for combatant in [action.attacker, action.united_front_partner, action.target, action.interceptor]:
+		if combatant is Card and combatant.uid not in combatant_uids:
+			combatant_uids.append(combatant.uid)
+	for entry in _pending_ui_interactions:
+		var interaction_type := str(entry.get("type", ""))
+		if interaction_type not in ["lailoken_reveal", "masmassu_priest_reveal"]:
+			continue
+		var data: Dictionary = entry.get("data", {})
+		if str(data.get("source_uid", "")) in combatant_uids:
+			return true
+	return false
+
+func _resume_pending_combat_reveal(action: CardAction, target: Card) -> void:
+	if action == null or target == null or pending_combat_reveal_linger_action != action:
+		return
+	pending_combat_reveal_linger_action = null
+	_resolve_creature_combat_now(
+		action,
+		target,
+		func() -> void:
+			_complete_deferred_authoritative_action(action, "combat_reveal_linger")
+	)
+
+func _resume_combat_reveal_after_source_choice(source_card: Card) -> void:
+	var action := pending_combat_reveal_linger_action
+	if action == null or source_card == null:
+		return
+	var target: Card = action.interceptor if action.interceptor != null else action.target as Card
+	if not (target is Card):
+		return
+	if source_card not in [action.attacker, action.united_front_partner, target]:
+		return
+	_resume_pending_combat_reveal(action, target)
 
 func _format_card_name_list(cards: Array[Card]) -> String:
 	var names: Array[String] = []
@@ -1229,6 +1265,8 @@ func _resolve_creature_combat_now(
 ) -> void:
 	var attacker := action.attacker
 	var partner := action.united_front_partner
+	var has_committed_snapshot := partner == null \
+		and game_manager.has_committed_combat_snapshot(attacker, target)
 
 	var finish := func() -> void:
 		var active: Array[Card] = []
@@ -1246,7 +1284,7 @@ func _resolve_creature_combat_now(
 		if completion_callback.is_valid():
 			completion_callback.call()
 
-	if target.current_zone == null or not target.current_zone.is_board_zone():
+	if not has_committed_snapshot and (target.current_zone == null or not target.current_zone.is_board_zone()):
 		last_resolution_text = attacker.card_name + "'s attack fizzles - target is no longer on the board."
 		if completion_callback.is_valid():
 			completion_callback.call()
@@ -1257,7 +1295,7 @@ func _resolve_creature_combat_now(
 	var partner_on_board := partner != null \
 		and partner.current_zone != null \
 		and partner.current_zone.is_board_zone()
-	if not attacker_on_board and not partner_on_board:
+	if not has_committed_snapshot and not attacker_on_board and not partner_on_board:
 		last_resolution_text = "The attack fizzles - no attacker remains on the board."
 		if completion_callback.is_valid():
 			completion_callback.call()
@@ -3473,6 +3511,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 					pending_action.resolution_text = feedback
 					last_resolution_text = feedback
 					_complete_deferred_authoritative_action(pending_action, "lailoken_reveal_choice")
+				_resume_combat_reveal_after_source_choice(lailoken)
 				move_validated.emit(command)
 				return true
 			var target := game_manager.get_card_by_uid(target_uid)
@@ -3490,6 +3529,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 							last_resolution_text = result_text
 					if pending_action != null:
 						_complete_deferred_authoritative_action(pending_action, "lailoken_reveal_choice")
+					_resume_combat_reveal_after_source_choice(lailoken)
 			)
 			move_validated.emit(command)
 			return true
@@ -3510,6 +3550,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 					pending_action.resolution_text = feedback
 					last_resolution_text = feedback
 					_complete_deferred_authoritative_action(pending_action, "masmassu_priest_reveal_choice")
+				_resume_combat_reveal_after_source_choice(priest)
 				move_validated.emit(command)
 				return true
 			var target := game_manager.get_card_by_uid(target_uid)
@@ -3527,6 +3568,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 							last_resolution_text = result_text
 					if pending_action != null:
 						_complete_deferred_authoritative_action(pending_action, "masmassu_priest_reveal_choice")
+					_resume_combat_reveal_after_source_choice(priest)
 			)
 			move_validated.emit(command)
 			return true

@@ -12942,19 +12942,22 @@ func _show_lailoken_reveal_prompt(card: Lailoken, prompt_targets: Array = []) ->
 		update_ui()
 		return
 	if current_targets.size() == 1:
-		if _submit_prompt_choice_command({
-			"type": "lailoken_reveal_choice",
-			"source_uid": card.uid,
-			"target_uid": current_targets[0].uid,
-		}):
-			return
-		card.begin_magic_drain_reveal(
-			game_manager,
-			current_targets[0],
-			func(result_text: String) -> void:
-				_set_action_label_text(_consume_resolution_feedback(result_text))
-				update_ui()
-		)
+		var target: Card = current_targets[0]
+		var resolve_single_target := func() -> void:
+			if _submit_prompt_choice_command({
+				"type": "lailoken_reveal_choice",
+				"source_uid": card.uid,
+				"target_uid": target.uid,
+			}):
+				return
+			card.begin_magic_drain_reveal(
+				game_manager,
+				target,
+				func(result_text: String) -> void:
+					_set_action_label_text(_consume_resolution_feedback(result_text))
+					update_ui()
+			)
+		resolve_single_target.call_deferred()
 		return
 	var on_choose_magic_drain := func(clicked_card: Card) -> void:
 		if _submit_prompt_choice_command({
@@ -13006,19 +13009,22 @@ func _show_masmassu_priest_reveal_prompt(card, prompt_targets: Array = []) -> vo
 		update_ui()
 		return
 	if current_targets.size() == 1:
-		if _submit_prompt_choice_command({
-			"type": "masmassu_priest_reveal_choice",
-			"source_uid": card.uid,
-			"target_uid": current_targets[0].uid,
-		}):
-			return
-		card.begin_dalkhu_break_reveal(
-			game_manager,
-			current_targets[0],
-			func(result_text: String) -> void:
-				_set_action_label_text(_consume_resolution_feedback(result_text))
-				update_ui()
-		)
+		var target: Card = current_targets[0]
+		var resolve_single_target := func() -> void:
+			if _submit_prompt_choice_command({
+				"type": "masmassu_priest_reveal_choice",
+				"source_uid": card.uid,
+				"target_uid": target.uid,
+			}):
+				return
+			card.begin_dalkhu_break_reveal(
+				game_manager,
+				target,
+				func(result_text: String) -> void:
+					_set_action_label_text(_consume_resolution_feedback(result_text))
+					update_ui()
+			)
+		resolve_single_target.call_deferred()
 		return
 	var on_choose_dalkhu_break := func(clicked_card: Card) -> void:
 		if _submit_prompt_choice_command({
@@ -22445,14 +22451,26 @@ func _linger_for_combat_reveals(combatants: Array) -> void:
 			revealed_cards.append(combatant)
 	if revealed_cards.is_empty():
 		return
+	var committed_combatants: Array[Card] = []
+	for combatant in combatants:
+		if combatant is Card and combatant not in committed_combatants:
+			committed_combatants.append(combatant)
 	for combatant in revealed_cards:
 		combatant.reveal_from_stealth(game_manager)
+	if committed_combatants.size() == 2:
+		game_manager.capture_committed_combat_snapshot(
+			committed_combatants[0],
+			committed_combatants[1]
+		)
 	var names: Array[String] = []
 	for combatant in revealed_cards:
 		names.append(combatant.card_name)
 	_set_action_label_text("%s revealed before combat." % " and ".join(names))
 	update_ui()
 	await _await_visual_linger()
+	while _has_pending_click_selection() \
+			and match_manager.pending_click_selection_source in committed_combatants:
+		await get_tree().process_frame
 
 func _linger_before_board_leaving_activation(card: Card, action_text: String) -> void:
 	if card == null or card.current_zone == null or not card.current_zone.is_board_zone():
