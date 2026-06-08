@@ -42,6 +42,7 @@ func on_reveal(game_manager: GameManager) -> void:
 		"target_uids": target_uids,
 		"queue_with_priority": true,
 		"event_name": "masmassu_priest_reveal",
+		"completion_command_type": "masmassu_priest_reveal_choice",
 	})
 
 func get_valid_targets(game_manager: GameManager) -> Array[Card]:

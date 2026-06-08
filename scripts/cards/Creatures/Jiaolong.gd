@@ -1,6 +1,9 @@
 extends CreatureCard
 class_name Jiaolong
 
+const ART_PATH := "res://images/card_art/creatures/Jiaolong.jpg"
+const ALT_ART_PATH := "res://images/card_art/creatures/jiaolong_alt.png"
+
 var in_human_form: bool = false
 
 func _init() -> void:
@@ -17,7 +20,8 @@ func _init() -> void:
 	flavor_text = ""
 	culture = "Tian"
 	artist = "Riccardo Zoppello"
-	art_path = "res://images/card_art/creatures/Jiaolong.jpg"
+	art_path = ART_PATH
+	art_variants = [ART_PATH, ALT_ART_PATH]
 
 func get_activation_label() -> String:
 	return "Shift"

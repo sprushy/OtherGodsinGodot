@@ -2001,6 +2001,7 @@ func _is_hostile_selection_cursor_source(card: Card) -> bool:
 		or card is DivineLightning \
 		or card is Gambanteinn \
 		or card is GugalannaBullOfHeaven \
+		or card is Grindylow \
 		or card is Lailoken \
 		or card is MasmassuPriest \
 		or card is NimueScript \
@@ -2039,7 +2040,7 @@ func _get_selection_cursor_mode_for_source(card: Card) -> String:
 		return "gambanteinn"
 	if card is Lailoken:
 		return "lailoken"
-	if card is MasmassuPriest:
+	if card is MasmassuPriest or card is Grindylow:
 		return "masmassu_priest"
 	if card is NimueScript:
 		return "nimue_entomb"
@@ -12990,7 +12991,7 @@ func _show_lailoken_reveal_prompt(card: Lailoken, prompt_targets: Array = []) ->
 	_set_action_label_text(card.card_name + ": click a prepared magical card to destroy.")
 	update_ui()
 
-func _show_masmassu_priest_reveal_prompt(card: MasmassuPriest, prompt_targets: Array = []) -> void:
+func _show_masmassu_priest_reveal_prompt(card, prompt_targets: Array = []) -> void:
 	if card == null or game_manager == null:
 		return
 	var current_targets := _resolve_prompt_targets(card.get_valid_targets(game_manager), prompt_targets)
@@ -13105,7 +13106,7 @@ func _queue_lailoken_reveal_prompt(card: Lailoken) -> void:
 	_set_action_label_text(card.card_name + " reveal waits on priority.")
 	_offer_priority()
 
-func _queue_masmassu_priest_reveal_prompt(card: MasmassuPriest) -> void:
+func _queue_masmassu_priest_reveal_prompt(card) -> void:
 	if card == null or game_manager == null:
 		return
 	var targets: Array = card.get_valid_targets(game_manager)
@@ -13120,7 +13121,7 @@ func _queue_masmassu_priest_reveal_prompt(card: MasmassuPriest) -> void:
 	action.resolve_callback = func() -> void:
 		var current_targets: Array = card.get_valid_targets(game_manager)
 		if current_targets.is_empty():
-			var no_target_text := card.card_name + " found no creatures to break."
+			var no_target_text: String = card.card_name + " found no creatures to break."
 			if _stack_resolution_paused:
 				_resume_after_deferred_resolution(no_target_text)
 			else:
@@ -23188,8 +23189,8 @@ func _on_match_ui_interaction(player_index: int, type: String, data: Dictionary)
 						prompt_targets.append(target_card)
 				_show_lailoken_reveal_prompt(card, prompt_targets)
 		"masmassu_priest_reveal":
-			var card := game_manager.get_card_by_uid(data.get("source_uid", "")) as MasmassuPriest
-			if card != null:
+			var card = game_manager.get_card_by_uid(data.get("source_uid", ""))
+			if card is MasmassuPriest or card is Grindylow:
 				var prompt_targets: Array[Card] = []
 				for target_uid in data.get("target_uids", []):
 					var target_card := game_manager.get_card_by_uid(str(target_uid))
@@ -24315,8 +24316,8 @@ func _apply_ui_interaction(event_data: Dictionary) -> void:
 						prompt_targets.append(target_card)
 				_show_lailoken_reveal_prompt(card, prompt_targets)
 		"masmassu_priest_reveal":
-			var card := game_manager.get_card_by_uid(payload.get("source_uid", "")) as MasmassuPriest
-			if card != null:
+			var card = game_manager.get_card_by_uid(payload.get("source_uid", ""))
+			if card is MasmassuPriest or card is Grindylow:
 				var prompt_targets: Array[Card] = []
 				for target_uid in payload.get("target_uids", []):
 					var target_card := game_manager.get_card_by_uid(str(target_uid))

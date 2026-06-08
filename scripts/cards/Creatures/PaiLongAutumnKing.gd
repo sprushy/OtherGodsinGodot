@@ -2,6 +2,7 @@ extends CreatureCard
 class_name PaiLongAutumnKing
 
 const ART_PATH := "res://images/card_art/creatures/TheDragonKingEdit.png"
+const ALT_ART_PATH := "res://images/card_art/creatures/pai_long_autumn_king_alt.png"
 
 func _init() -> void:
 	super._init()
@@ -18,6 +19,7 @@ func _init() -> void:
 	culture = "Tian"
 	artist = "David Revoy"
 	art_path = ART_PATH
+	art_variants = [ART_PATH, ALT_ART_PATH]
 
 func on_impact(game_manager: GameManager) -> void:
 	var valid_targets := get_valid_targets(game_manager)

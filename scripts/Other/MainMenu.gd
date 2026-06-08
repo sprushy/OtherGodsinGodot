@@ -378,6 +378,7 @@ func _refresh_music_mute_button() -> void:
 		return
 	_music_mute_button.text = "Music Muted" if _music_muted else "Mute Music"
 	_music_mute_button.modulate = Color(0.78, 0.86, 0.92, 0.96) if _music_muted else Color(1, 1, 1, 0.96)
+	_music_mute_button.visible = not _is_deck_builder_open()
 
 func _prepare_startup_menu_fade() -> void:
 	if menu_container == null:
@@ -726,12 +727,14 @@ func show_menu() -> void:
 	_refresh_multiplayer_deck_options()
 	_refresh_multiplayer_action_state()
 	_refresh_server_version_overlay_visibility()
+	_refresh_music_mute_button()
 
 func show_game() -> void:
 	menu_container.visible = false
 	game_container.visible = true
 	_hide_multiplayer_deck_popup()
 	_refresh_server_version_overlay_visibility()
+	_refresh_music_mute_button()
 
 func _on_multiplayer_pressed() -> void:
 	_open_multiplayer_screen()
@@ -2229,57 +2232,112 @@ func _apply_update_and_restart(zip_path: String) -> void:
 		_on_auto_update_failed("The downloaded update didn't contain a usable app build.")
 		return
 
-	var batch_dir := OS.get_user_data_dir() + "/self_update_runner"
-	if not _clear_update_staging_root(batch_dir):
+	var runner_dir := OS.get_user_data_dir() + "/self_update_runner"
+	if not _clear_update_staging_root(runner_dir):
 		_on_auto_update_failed("Couldn't clear the updater runner folder.")
 		return
-	if DirAccess.make_dir_recursive_absolute(batch_dir) != OK:
+	if DirAccess.make_dir_recursive_absolute(runner_dir) != OK:
 		_on_auto_update_failed("Couldn't create the updater runner folder.")
 		return
 
-	var current_exe_win := current_exe.replace("/", "\\")
 	var target_exe_path := exe_dir.path_join(target_exe_name)
-	var target_exe_win := target_exe_path.replace("/", "\\")
-	var current_pck_win := exe_dir.path_join("%s.pck" % current_exe_name.get_basename()).replace("/", "\\")
-	var target_pck_win := exe_dir.path_join("%s.pck" % target_exe_name.get_basename()).replace("/", "\\")
-	var exe_dir_win := exe_dir.replace("/", "\\")
-	var staging_root_win := staging_root.replace("/", "\\")
-	var bat_path := batch_dir + "/updater.bat"
-	var bat_path_win := bat_path.replace("/", "\\")
-	var bat_content := (
-		"@echo off\r\n"
-		+ "setlocal\r\n"
-		+ "set retry_count=0\r\n"
-		+ ":copy_retry\r\n"
-		+ "timeout /t 1 /nobreak >nul\r\n"
-		+ "xcopy /E /I /Y \"" + staging_root_win + "\\*\" \"" + exe_dir_win + "\\\" >nul\r\n"
-		+ "if %errorlevel% lss 4 goto copy_ok\r\n"
-		+ "set /a retry_count+=1\r\n"
-		+ "if %retry_count% lss 15 goto copy_retry\r\n"
-		+ "if %errorlevel% geq 4 goto copy_failed\r\n"
-		+ ":copy_ok\r\n"
-		+ "if /I not \"" + current_exe_win + "\"==\"" + target_exe_win + "\" del /f /q \"" + current_exe_win + "\" 2>nul\r\n"
-		+ "if /I not \"" + current_pck_win + "\"==\"" + target_pck_win + "\" del /f /q \"" + current_pck_win + "\" 2>nul\r\n"
-		+ "start \"\" \"" + target_exe_win + "\"\r\n"
-		+ "rd /s /q \"" + staging_root_win + "\"\r\n"
-		+ "rd /s /q \"" + batch_dir.replace("/", "\\") + "\" 2>nul\r\n"
-		+ "(goto) 2>nul & del \"%~f0\"\r\n"
-		+ "exit /b 0\r\n"
-		+ ":copy_failed\r\n"
-		+ "start \"\" \"" + current_exe_win + "\"\r\n"
-		+ "(goto) 2>nul & del \"%~f0\"\r\n"
-		+ "exit /b 1\r\n"
+	var staged_target_exe_path := staging_root.path_join(target_exe_name)
+	var current_pck_path := exe_dir.path_join("%s.pck" % current_exe_name.get_basename())
+	var target_pck_path := exe_dir.path_join("%s.pck" % target_exe_name.get_basename())
+	var powershell_path := "C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
+	var script_path := runner_dir.path_join("updater.ps1")
+	var update_log_path := ProjectSettings.globalize_path(UPDATE_LOG_PATH)
+	var script_content := (
+		"param([switch]$Elevated)\r\n"
+		+ "$ErrorActionPreference = 'Stop'\r\n"
+		+ "$sourceDir = " + _powershell_string_literal(staging_root) + "\r\n"
+		+ "$targetDir = " + _powershell_string_literal(exe_dir) + "\r\n"
+		+ "$currentExe = " + _powershell_string_literal(current_exe) + "\r\n"
+		+ "$targetExe = " + _powershell_string_literal(target_exe_path) + "\r\n"
+		+ "$stagedTargetExe = " + _powershell_string_literal(staged_target_exe_path) + "\r\n"
+		+ "$currentPck = " + _powershell_string_literal(current_pck_path) + "\r\n"
+		+ "$targetPck = " + _powershell_string_literal(target_pck_path) + "\r\n"
+		+ "$logPath = " + _powershell_string_literal(update_log_path) + "\r\n"
+		+ "$powershellPath = " + _powershell_string_literal(powershell_path) + "\r\n"
+		+ "$gamePid = " + str(OS.get_process_id()) + "\r\n"
+		+ "function Write-UpdateLog([string]$message) {\r\n"
+		+ "    try {\r\n"
+		+ "        Add-Content -LiteralPath $logPath -Value (('{0} {1}' -f (Get-Date -Format 'yyyy-MM-ddTHH:mm:ss'), $message)) -Encoding UTF8\r\n"
+		+ "    } catch {}\r\n"
+		+ "}\r\n"
+		+ "function Start-AvailableClient {\r\n"
+		+ "    $restartExe = if (Test-Path -LiteralPath $currentExe) { $currentExe } else { $targetExe }\r\n"
+		+ "    if (Test-Path -LiteralPath $restartExe) {\r\n"
+		+ "        Start-Process -FilePath $restartExe -WorkingDirectory $targetDir\r\n"
+		+ "    }\r\n"
+		+ "}\r\n"
+		+ "Write-UpdateLog ('runner_started elevated={0} target={1}' -f $Elevated.IsPresent, $targetExe)\r\n"
+		+ "try { Wait-Process -Id $gamePid -ErrorAction SilentlyContinue } catch {}\r\n"
+		+ "$copySucceeded = $false\r\n"
+		+ "$lastCopyError = ''\r\n"
+		+ "$needsElevation = $false\r\n"
+		+ "for ($attempt = 1; $attempt -le 15; $attempt++) {\r\n"
+		+ "    try {\r\n"
+		+ "        Get-ChildItem -LiteralPath $sourceDir -Force | Copy-Item -Destination $targetDir -Recurse -Force -ErrorAction Stop\r\n"
+		+ "        if (-not (Test-Path -LiteralPath $targetExe)) { throw 'Updated executable is missing after copy.' }\r\n"
+		+ "        $sourceHash = (Get-FileHash -LiteralPath $stagedTargetExe -Algorithm SHA256).Hash\r\n"
+		+ "        $targetHash = (Get-FileHash -LiteralPath $targetExe -Algorithm SHA256).Hash\r\n"
+		+ "        if ($sourceHash -ne $targetHash) { throw 'Updated executable did not pass hash verification.' }\r\n"
+		+ "        $copySucceeded = $true\r\n"
+		+ "        Write-UpdateLog ('copy_verified attempt={0} elevated={1}' -f $attempt, $Elevated.IsPresent)\r\n"
+		+ "        break\r\n"
+		+ "    } catch {\r\n"
+		+ "        $lastCopyError = $_.Exception.Message\r\n"
+		+ "        Write-UpdateLog ('copy_attempt_failed attempt={0} elevated={1} error={2}' -f $attempt, $Elevated.IsPresent, $lastCopyError)\r\n"
+		+ "        if (-not $Elevated.IsPresent -and ($_.Exception -is [System.UnauthorizedAccessException] -or $_.FullyQualifiedErrorId -match 'UnauthorizedAccess')) {\r\n"
+		+ "            $needsElevation = $true\r\n"
+		+ "            break\r\n"
+		+ "        }\r\n"
+		+ "        Start-Sleep -Seconds 1\r\n"
+		+ "    }\r\n"
+		+ "}\r\n"
+		+ "if (-not $copySucceeded -and -not $Elevated.IsPresent) {\r\n"
+		+ "    Write-UpdateLog ('requesting_elevation permission_error={0}' -f $needsElevation)\r\n"
+		+ "    try {\r\n"
+		+ "        $escapedScriptPath = $MyInvocation.MyCommand.Path.Replace('\"', '\"\"')\r\n"
+		+ "        $elevatedArgs = '-NoProfile -ExecutionPolicy Bypass -File \"{0}\" -Elevated' -f $escapedScriptPath\r\n"
+		+ "        Start-Process -FilePath $powershellPath -ArgumentList $elevatedArgs -Verb RunAs -WindowStyle Hidden -ErrorAction Stop\r\n"
+		+ "        exit 0\r\n"
+		+ "    } catch {\r\n"
+		+ "        Write-UpdateLog ('elevation_failed error={0}' -f $_.Exception.Message)\r\n"
+		+ "        Start-AvailableClient\r\n"
+		+ "        exit 1\r\n"
+		+ "    }\r\n"
+		+ "}\r\n"
+		+ "if (-not $copySucceeded) {\r\n"
+		+ "    Write-UpdateLog ('update_failed_after_elevation error={0}' -f $lastCopyError)\r\n"
+		+ "    Start-AvailableClient\r\n"
+		+ "    exit 1\r\n"
+		+ "}\r\n"
+		+ "if ($currentExe -ne $targetExe -and (Test-Path -LiteralPath $currentExe)) {\r\n"
+		+ "    Remove-Item -LiteralPath $currentExe -Force -ErrorAction SilentlyContinue\r\n"
+		+ "}\r\n"
+		+ "if ($currentPck -ne $targetPck -and (Test-Path -LiteralPath $currentPck)) {\r\n"
+		+ "    Remove-Item -LiteralPath $currentPck -Force -ErrorAction SilentlyContinue\r\n"
+		+ "}\r\n"
+		+ "Start-Process -FilePath $targetExe -WorkingDirectory $targetDir\r\n"
+		+ "Write-UpdateLog 'update_complete restart_started'\r\n"
+		+ "Remove-Item -LiteralPath $sourceDir -Recurse -Force -ErrorAction SilentlyContinue\r\n"
+		+ "exit 0\r\n"
 	)
-	var bat_file := FileAccess.open(bat_path, FileAccess.WRITE)
-	if bat_file == null:
+	var script_file := FileAccess.open(script_path, FileAccess.WRITE)
+	if script_file == null:
 		_on_auto_update_failed("Failed to write updater script.")
 		return
-	bat_file.store_string(bat_content)
-	bat_file.close()
+	script_file.store_string(script_content)
+	script_file.close()
 
 	if _update_download_status_label != null and is_instance_valid(_update_download_status_label):
 		_update_download_status_label.text = "Restarting to finish update..."
-	var updater_pid := OS.create_process("C:/Windows/System32/cmd.exe", ["/c", bat_path_win])
+	var updater_pid := OS.create_process(
+		powershell_path,
+		["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script_path]
+	)
 	if updater_pid == -1:
 		_on_auto_update_failed("Failed to launch the updater.")
 		return
@@ -2288,6 +2346,9 @@ func _apply_update_and_restart(zip_path: String) -> void:
 		% [_pending_update_release_version, updater_pid, target_exe_path]
 	)
 	get_tree().quit()
+
+func _powershell_string_literal(value: String) -> String:
+	return "'%s'" % value.replace("'", "''")
 
 func _on_auto_update_failed(message: String) -> void:
 	_is_auto_updating = false

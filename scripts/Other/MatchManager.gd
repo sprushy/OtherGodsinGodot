@@ -282,8 +282,17 @@ func _on_game_manager_decision_requested(player: Player, type: String, data: Dic
 		interaction_data.erase("queue_with_priority")
 		var source_card := game_manager.get_card_by_uid(str(interaction_data.get("source_uid", "")))
 		var event_name := str(interaction_data.get("event_name", type)).strip_edges()
+		var completion_command_type := str(interaction_data.get("completion_command_type", "")).strip_edges()
 		interaction_data.erase("event_name")
-		_queue_decision_priority_event(player, source_card, event_name if event_name != "" else type, type, interaction_data)
+		interaction_data.erase("completion_command_type")
+		_queue_decision_priority_event(
+			player,
+			source_card,
+			event_name if event_name != "" else type,
+			type,
+			interaction_data,
+			completion_command_type
+		)
 		return
 	_emit_ui_interaction_for_player(player, type, interaction_data)
 
@@ -562,7 +571,8 @@ func _queue_decision_priority_event(
 	source_card: Card,
 	event_name: String,
 	interaction_type: String,
-	interaction_data: Dictionary
+	interaction_data: Dictionary,
+	completion_command_type: String = ""
 ) -> void:
 	if game_manager == null or player == null:
 		return
@@ -575,6 +585,8 @@ func _queue_decision_priority_event(
 	action.event_speed = 0
 	action.resolve_callback = func() -> void:
 		_emit_ui_interaction_for_player(player, interaction_type, interaction_data)
+	if not completion_command_type.is_empty():
+		_mark_deferred_authoritative_action(action, completion_command_type)
 	var remains_on_stack := queue_or_resolve_priority_event(action)
 	if not remains_on_stack:
 		return
@@ -672,6 +684,9 @@ func resolve_action(action: CardAction) -> void:
 			action_completed = pending_tezcatlipoca_titlacauan_action != action
 			if not action_completed:
 				deferred_completion_command_type = "tezcatlipoca_active_titlacauan_choice"
+			elif _has_deferred_authoritative_action_metadata(action):
+				action_completed = false
+				deferred_completion_command_type = str(action.event_data.get("deferred_authoritative_completion_command", ""))
 		CardAction.Type.ATTACK:
 			_resolve_attack(action)
 			action_completed = pending_retreat_action != action \
@@ -977,6 +992,17 @@ func _find_pending_deferred_authoritative_action(command_types: Array[String]) -
 			return action
 	return null
 
+func _find_pending_deferred_action_for_source(command_type: String, source_card: Card) -> CardAction:
+	if game_manager == null or source_card == null:
+		return null
+	for i in range(game_manager.action_stack.size() - 1, -1, -1):
+		var action := game_manager.action_stack[i]
+		if action == null or action.card != source_card:
+			continue
+		if str(action.event_data.get("deferred_authoritative_completion_command", "")).strip_edges() == command_type:
+			return action
+	return null
+
 func _continue_pending_authoritative_graveyard_prompt_action() -> void:
 	var action := _find_pending_deferred_authoritative_action(["doorway_choice", "return_to_hand_choice"])
 	if action == null:
@@ -1034,6 +1060,9 @@ func _resolve_event(action: CardAction) -> void:
 		return
 	if action.resolution_text != "":
 		last_resolution_text = action.resolution_text
+		return
+	if _has_deferred_authoritative_action_metadata(action):
+		last_resolution_text = ""
 		return
 	if action.event_name == "summon" and action.card != null:
 		last_resolution_text = "%s was summoned." % action.card.card_name
@@ -3434,11 +3463,16 @@ func _process_command_impl(command: Dictionary) -> bool:
 			if lailoken == null:
 				move_failed.emit("lailoken_reveal_choice: card not found")
 				return false
+			var pending_action := _find_pending_deferred_action_for_source("lailoken_reveal_choice", lailoken)
 			var valid_targets := lailoken.get_valid_targets(game_manager)
 			var target_uid: String = command.get("target_uid", "")
 			if target_uid == "":
 				var feedback := "%s found no prepared magical cards to drain." % lailoken.card_name if valid_targets.is_empty() else lailoken.card_name + " reveal fizzles."
 				game_manager.note_player_feedback(feedback)
+				if pending_action != null:
+					pending_action.resolution_text = feedback
+					last_resolution_text = feedback
+					_complete_deferred_authoritative_action(pending_action, "lailoken_reveal_choice")
 				move_validated.emit(command)
 				return true
 			var target := game_manager.get_card_by_uid(target_uid)
@@ -3451,20 +3485,31 @@ func _process_command_impl(command: Dictionary) -> bool:
 				func(result_text: String) -> void:
 					if result_text.strip_edges() != "":
 						game_manager.note_player_feedback(result_text)
+						if pending_action != null:
+							pending_action.resolution_text = result_text
+							last_resolution_text = result_text
+					if pending_action != null:
+						_complete_deferred_authoritative_action(pending_action, "lailoken_reveal_choice")
 			)
 			move_validated.emit(command)
 			return true
 		"masmassu_priest_reveal_choice":
 			var source_uid: String = command.get("source_uid", "")
-			var priest := game_manager.get_card_by_uid(source_uid) as MasmassuPriest
-			if priest == null:
+			var priest = game_manager.get_card_by_uid(source_uid)
+			if priest is not MasmassuPriest and priest is not Grindylow:
 				move_failed.emit("masmassu_priest_reveal_choice: card not found")
 				return false
-			var valid_targets := priest.get_valid_targets(game_manager)
+			var pending_action := _find_pending_deferred_action_for_source("masmassu_priest_reveal_choice", priest)
+			var valid_targets: Array = priest.get_valid_targets(game_manager)
 			var target_uid: String = command.get("target_uid", "")
 			if target_uid == "":
-				var feedback := "%s found no creatures to break." % priest.card_name if valid_targets.is_empty() else priest.card_name + " reveal fizzles."
+				var no_target_feedback: String = "%s found no creatures to drown." % priest.card_name if priest is Grindylow else "%s found no creatures to break." % priest.card_name
+				var feedback: String = no_target_feedback if valid_targets.is_empty() else priest.card_name + " reveal fizzles."
 				game_manager.note_player_feedback(feedback)
+				if pending_action != null:
+					pending_action.resolution_text = feedback
+					last_resolution_text = feedback
+					_complete_deferred_authoritative_action(pending_action, "masmassu_priest_reveal_choice")
 				move_validated.emit(command)
 				return true
 			var target := game_manager.get_card_by_uid(target_uid)
@@ -3477,6 +3522,11 @@ func _process_command_impl(command: Dictionary) -> bool:
 				func(result_text: String) -> void:
 					if result_text.strip_edges() != "":
 						game_manager.note_player_feedback(result_text)
+						if pending_action != null:
+							pending_action.resolution_text = result_text
+							last_resolution_text = result_text
+					if pending_action != null:
+						_complete_deferred_authoritative_action(pending_action, "masmassu_priest_reveal_choice")
 			)
 			move_validated.emit(command)
 			return true

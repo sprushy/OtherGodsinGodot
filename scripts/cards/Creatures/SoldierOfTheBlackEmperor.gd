@@ -1,6 +1,9 @@
 extends CreatureCard
 class_name SoldierOfTheBlackEmperor
 
+const ART_PATH := "res://images/card_art/creatures/Heidi, the black dragon(print).jpg"
+const ALT_ART_PATH := "res://images/card_art/creatures/soldier_of_the_black_emperor_alt.png"
+
 func _init() -> void:
 	super._init()
 	card_name = "Soldier of the Black Emperor"
@@ -15,4 +18,5 @@ func _init() -> void:
 	flavor_text = "In the falling days of Shang, the Black Emperor and his kin were called upon to lead the twelve heavenly legions into battle against the demon king."
 	culture = "Tian"
 	artist = "Riccardo Zoppello"
-	art_path = "res://images/card_art/creatures/Heidi, the black dragon(print).jpg"
+	art_path = ART_PATH
+	art_variants = [ART_PATH, ALT_ART_PATH]

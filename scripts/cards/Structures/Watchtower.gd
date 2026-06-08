@@ -2,6 +2,7 @@ extends StructureCard
 class_name Watchtower
 
 const ART_PATH := "res://images/card_art/structures/watchtower.png"
+const ALT_ART_PATH := "res://images/card_art/structures/watchtower_alt.png"
 
 var tactic_counters: int = 0
 
@@ -19,6 +20,7 @@ func _init() -> void:
 	culture = "Tian"
 	artist = "User provided art"
 	art_path = ART_PATH
+	art_variants = [ART_PATH, ALT_ART_PATH]
 	ability_text = "Whenever an opposing creature enters the field, put 1 tactic counter on this.\nScout ([b]Activate[/b]): Remove 1 tactic counter: reveal a target opposing hidden card on the field."
 
 func get_activation_label() -> String:

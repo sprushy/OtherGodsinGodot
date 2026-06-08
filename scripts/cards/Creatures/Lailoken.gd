@@ -40,6 +40,7 @@ func on_reveal(game_manager: GameManager) -> void:
 		"target_uids": target_uids,
 		"queue_with_priority": true,
 		"event_name": "lailoken_reveal",
+		"completion_command_type": "lailoken_reveal_choice",
 	})
 
 func get_valid_targets(game_manager: GameManager) -> Array[Card]:
