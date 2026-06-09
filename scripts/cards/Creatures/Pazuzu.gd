@@ -3,6 +3,7 @@ class_name Pazuzu
 
 const ART_PATH := "res://images/card_art/creatures/PazuzuEdit.png"
 const MANA_DRAIN := 2
+const LocustSwarmSoundPlayer = preload("res://scripts/audio/LocustSwarmSoundPlayer.gd")
 
 func _init() -> void:
 	super._init()
@@ -53,6 +54,10 @@ func _drain_opponent_mana(game_manager: GameManager, ability_name: String) -> St
 			ability_name,
 			opponent.player_name
 		]
+
+	# Play locust swarm sound effect
+	LocustSwarmSoundPlayer.play_sound()
+
 	return "%s triggers %s and reduces %s's mana by %d." % [
 		card_name,
 		ability_name,

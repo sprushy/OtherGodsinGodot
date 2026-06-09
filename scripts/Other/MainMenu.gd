@@ -37,6 +37,7 @@ const UPDATE_CHECK_TIMEOUT_SECONDS := 15.0
 const UPDATE_CHECK_RETRY_DELAY_SECONDS := 1.0
 const UPDATE_CHECK_MAX_ATTEMPTS := 2
 const UPDATE_LOG_PATH := "user://update.log"
+const UPDATE_FAILURE_MARKER_PATH := "user://update_failure.txt"
 const BYTES_PER_MIB := 1048576.0
 
 @onready var menu_container = $MenuContainer
@@ -133,6 +134,8 @@ var _pending_update_download_url: String = ""
 var _pending_update_download_size: int = 0
 var _update_download_request: HTTPRequest = null
 var _update_now_button: Button = null
+var _update_open_button: Button = null
+var _update_button_row: HBoxContainer = null
 var _update_download_status_label: Label = null
 var _is_auto_updating: bool = false
 var _automatic_update_required: bool = false
@@ -1932,6 +1935,9 @@ func _begin_required_update(
 		% [AppReleaseInfoScript.get_current_version(), latest_version, download_size]
 	)
 	if not download_url.is_empty() and OS.get_name() == "Windows":
+		if _consume_pending_windows_update_failure(latest_version, release_url):
+			_complete_startup_prompts()
+			return
 		_show_update_prompt(latest_version, release_url, download_url, true, download_size)
 		call_deferred("_on_update_prompt_auto_update_pressed")
 		return
@@ -2052,6 +2058,7 @@ func _show_update_prompt(
 	button_row.alignment = BoxContainer.ALIGNMENT_END
 	button_row.add_theme_constant_override("separation", 8)
 	content.add_child(button_row)
+	_update_button_row = button_row
 
 	if not auto_update:
 		var later_button := Button.new()
@@ -2064,11 +2071,11 @@ func _show_update_prompt(
 	update_button.text = "Open Download Page"
 	update_button.custom_minimum_size = Vector2(180, 38)
 	update_button.pressed.connect(_on_update_prompt_open_pressed)
-	if not auto_update:
-		button_row.add_child(update_button)
+	button_row.add_child(update_button)
+	_update_open_button = update_button
 
-	if not download_url.is_empty() and OS.get_name() == "Windows":
-		if not auto_update:
+	if (not download_url.is_empty() and OS.get_name() == "Windows") or auto_update:
+		if not auto_update and not download_url.is_empty():
 			var auto_button := Button.new()
 			auto_button.text = "Update Now"
 			auto_button.custom_minimum_size = Vector2(130, 38)
@@ -2098,6 +2105,8 @@ func _dismiss_update_prompt() -> void:
 	_update_download_request = null
 	_is_auto_updating = false
 	_update_now_button = null
+	_update_open_button = null
+	_update_button_row = null
 	_update_download_status_label = null
 	_pending_update_download_url = ""
 	_pending_update_download_size = 0
@@ -2275,6 +2284,7 @@ func _apply_update_and_restart(zip_path: String) -> void:
 	var powershell_path := "C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
 	var script_path := runner_dir.path_join("updater.ps1")
 	var update_log_path := ProjectSettings.globalize_path(UPDATE_LOG_PATH)
+	var failure_marker_path := ProjectSettings.globalize_path(UPDATE_FAILURE_MARKER_PATH)
 	var script_content := (
 		"param([switch]$Elevated)\r\n"
 		+ "$ErrorActionPreference = 'Stop'\r\n"
@@ -2286,12 +2296,16 @@ func _apply_update_and_restart(zip_path: String) -> void:
 		+ "$currentPck = " + _powershell_string_literal(current_pck_path) + "\r\n"
 		+ "$targetPck = " + _powershell_string_literal(target_pck_path) + "\r\n"
 		+ "$logPath = " + _powershell_string_literal(update_log_path) + "\r\n"
+		+ "$failureMarkerPath = " + _powershell_string_literal(failure_marker_path) + "\r\n"
 		+ "$powershellPath = " + _powershell_string_literal(powershell_path) + "\r\n"
 		+ "$gamePid = " + str(OS.get_process_id()) + "\r\n"
 		+ "function Write-UpdateLog([string]$message) {\r\n"
 		+ "    try {\r\n"
 		+ "        Add-Content -LiteralPath $logPath -Value (('{0} {1}' -f (Get-Date -Format 'yyyy-MM-ddTHH:mm:ss'), $message)) -Encoding UTF8\r\n"
 		+ "    } catch {}\r\n"
+		+ "}\r\n"
+		+ "function Write-UpdateFailure([string]$message) {\r\n"
+		+ "    try { Set-Content -LiteralPath $failureMarkerPath -Value $message -Encoding UTF8 } catch {}\r\n"
 		+ "}\r\n"
 		+ "function Start-AvailableClient {\r\n"
 		+ "    $restartExe = if (Test-Path -LiteralPath $currentExe) { $currentExe } else { $targetExe }\r\n"
@@ -2332,13 +2346,17 @@ func _apply_update_and_restart(zip_path: String) -> void:
 		+ "        Start-Process -FilePath $powershellPath -ArgumentList $elevatedArgs -Verb RunAs -WindowStyle Hidden -ErrorAction Stop\r\n"
 		+ "        exit 0\r\n"
 		+ "    } catch {\r\n"
+		+ "        $failureMessage = 'Windows blocked the updater elevation prompt or PowerShell runner: {0}' -f $_.Exception.Message\r\n"
 		+ "        Write-UpdateLog ('elevation_failed error={0}' -f $_.Exception.Message)\r\n"
+		+ "        Write-UpdateFailure $failureMessage\r\n"
 		+ "        Start-AvailableClient\r\n"
 		+ "        exit 1\r\n"
 		+ "    }\r\n"
 		+ "}\r\n"
 		+ "if (-not $copySucceeded) {\r\n"
+		+ "    $failureMessage = 'Windows security or permissions blocked replacing the app files: {0}' -f $lastCopyError\r\n"
 		+ "    Write-UpdateLog ('update_failed_after_elevation error={0}' -f $lastCopyError)\r\n"
+		+ "    Write-UpdateFailure $failureMessage\r\n"
 		+ "    Start-AvailableClient\r\n"
 		+ "    exit 1\r\n"
 		+ "}\r\n"
@@ -2350,6 +2368,7 @@ func _apply_update_and_restart(zip_path: String) -> void:
 		+ "}\r\n"
 		+ "Start-Process -FilePath $targetExe -WorkingDirectory $targetDir\r\n"
 		+ "Write-UpdateLog 'update_complete restart_started'\r\n"
+		+ "Remove-Item -LiteralPath $failureMarkerPath -Force -ErrorAction SilentlyContinue\r\n"
 		+ "Remove-Item -LiteralPath $sourceDir -Recurse -Force -ErrorAction SilentlyContinue\r\n"
 		+ "exit 0\r\n"
 	)
@@ -2359,6 +2378,11 @@ func _apply_update_and_restart(zip_path: String) -> void:
 		return
 	script_file.store_string(script_content)
 	script_file.close()
+
+	var preflight_failure := _run_windows_updater_preflight(powershell_path, runner_dir)
+	if not preflight_failure.is_empty():
+		_on_auto_update_failed(preflight_failure)
+		return
 
 	if _update_download_status_label != null and is_instance_valid(_update_download_status_label):
 		_update_download_status_label.text = "Restarting to finish update..."
@@ -2375,6 +2399,104 @@ func _apply_update_and_restart(zip_path: String) -> void:
 	)
 	get_tree().quit()
 
+func _run_windows_updater_preflight(powershell_path: String, runner_dir: String) -> String:
+	if not FileAccess.file_exists(powershell_path):
+		_write_update_log("updater_preflight_failed reason=powershell_missing path=%s" % powershell_path)
+		return (
+			"Automatic update could not start because Windows PowerShell was not found. "
+			+ "Install the update manually from the release page."
+		)
+	var marker_path := runner_dir.path_join("preflight.ok")
+	var preflight_path := runner_dir.path_join("preflight.ps1")
+	if FileAccess.file_exists(marker_path):
+		DirAccess.remove_absolute(marker_path)
+	var preflight_file := FileAccess.open(preflight_path, FileAccess.WRITE)
+	if preflight_file == null:
+		_write_update_log("updater_preflight_failed reason=preflight_write_failed")
+		return (
+			"Automatic update could not write its Windows updater preflight script. "
+			+ "A security setting or antivirus may be blocking app updates."
+		)
+	preflight_file.store_string(
+		"$ErrorActionPreference = 'Stop'\r\n"
+		+ "Set-Content -LiteralPath "
+		+ _powershell_string_literal(marker_path)
+		+ " -Value 'ok' -Encoding ASCII\r\n"
+	)
+	preflight_file.close()
+
+	var output: Array = []
+	var exit_code := OS.execute(
+		powershell_path,
+		["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", preflight_path],
+		output,
+		true,
+		false
+	)
+	var marker_written := FileAccess.file_exists(marker_path)
+	DirAccess.remove_absolute(preflight_path)
+	if marker_written:
+		DirAccess.remove_absolute(marker_path)
+	if exit_code == 0 and marker_written:
+		_write_update_log("updater_preflight_ok")
+		return ""
+
+	var output_text := _join_process_output(output)
+	_write_update_log(
+		"updater_preflight_failed exit_code=%d marker=%s output=%s"
+		% [exit_code, str(marker_written), output_text]
+	)
+	var detail := ""
+	if not output_text.is_empty():
+		detail = " Windows reported: %s" % output_text.left(220)
+	return (
+		"Automatic update could not run its Windows PowerShell updater.%s "
+		+ "This is usually caused by Windows security policy, antivirus, Smart App Control, "
+		+ "Controlled Folder Access, AppLocker, or a managed work/school PC. "
+		+ "Install manually from the release page or allow Other Gods and PowerShell to run the updater."
+	) % detail
+
+func _consume_pending_windows_update_failure(latest_version: String, release_url: String) -> bool:
+	if OS.get_name() != "Windows" or not FileAccess.file_exists(UPDATE_FAILURE_MARKER_PATH):
+		return false
+	var file := FileAccess.open(UPDATE_FAILURE_MARKER_PATH, FileAccess.READ)
+	var message := ""
+	if file != null:
+		message = file.get_as_text().strip_edges()
+		file.close()
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(UPDATE_FAILURE_MARKER_PATH))
+	if message.is_empty():
+		message = "The previous automatic update attempt failed after the app restarted."
+	_write_update_log(
+		"previous_update_failure latest=%s message=%s" % [latest_version, message]
+	)
+	_show_update_prompt(latest_version, release_url, "", true, 0)
+	_present_windows_update_fallback(message)
+	return true
+
+func _present_windows_update_fallback(message: String) -> void:
+	var fallback_message := (
+		"%s\n\n"
+		+ "The latest release page has been opened. If this PC uses antivirus, "
+		+ "Smart App Control, Controlled Folder Access, AppLocker, or work/school device policy, "
+		+ "allow Other Gods and Windows PowerShell or install the update manually."
+	) % message
+	if status_label != null:
+		status_label.text = message
+	if _update_button_row != null and is_instance_valid(_update_button_row):
+		_update_button_row.visible = true
+	if _update_open_button != null and is_instance_valid(_update_open_button):
+		_update_open_button.visible = true
+		_update_open_button.disabled = false
+		_update_open_button.grab_focus()
+	if _update_now_button != null and is_instance_valid(_update_now_button):
+		_update_now_button.disabled = false
+	if _update_download_status_label != null and is_instance_valid(_update_download_status_label):
+		_update_download_status_label.text = fallback_message
+		_update_download_status_label.visible = true
+	OS.shell_open(_pending_update_release_url)
+	_complete_startup_prompts()
+
 func _powershell_string_literal(value: String) -> String:
 	return "'%s'" % value.replace("'", "''")
 
@@ -2385,16 +2507,19 @@ func _on_auto_update_failed(message: String) -> void:
 		% [_pending_update_release_version, message]
 	)
 	if _automatic_update_required:
-		if _update_download_status_label != null and is_instance_valid(_update_download_status_label):
-			_update_download_status_label.text = "%s Opening the release page..." % message
-		OS.shell_open(_pending_update_release_url)
-		_dismiss_update_prompt()
-		_complete_startup_prompts()
+		_automatic_update_required = false
+		_present_windows_update_fallback(message)
 		return
 	if _update_now_button != null and is_instance_valid(_update_now_button):
 		_update_now_button.disabled = false
 	if _update_download_status_label != null and is_instance_valid(_update_download_status_label):
 		_update_download_status_label.text = message
+
+func _join_process_output(output: Array) -> String:
+	var parts: Array[String] = []
+	for entry in output:
+		parts.append(str(entry))
+	return " ".join(parts).replace("\r", " ").replace("\n", " ").strip_edges()
 
 func _get_file_size(path: String) -> int:
 	var file := FileAccess.open(path, FileAccess.READ)

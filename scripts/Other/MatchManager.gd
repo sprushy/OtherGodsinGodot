@@ -941,7 +941,12 @@ func _check_authoritative_deferred_action_cleared(context: String, action: CardA
 	var action_still_present := action != null \
 		and (game_manager.action_stack.has(action) or action in game_manager.resolving_stack_actions)
 	var still_waiting_on_prompt := action != null \
-		and (pending_humbaba_action == action or pending_retreat_action == action or pending_tezcatlipoca_titlacauan_action == action)
+		and (
+			pending_humbaba_action == action
+			or pending_retreat_action == action
+			or pending_combat_reveal_linger_action == action
+			or pending_tezcatlipoca_titlacauan_action == action
+		)
 	var follower_attack_left_stack_locked := target is Player and not game_manager.action_stack.is_empty()
 	if action_still_present or still_waiting_on_prompt or follower_attack_left_stack_locked:
 		_log_authoritative_flow_state("%s unresolved after %.1fs" % [
@@ -2124,6 +2129,10 @@ func _has_unresolved_stack_action_window() -> bool:
 	game_manager.prune_stale_stack_actions()
 	return _board_leaving_activation_linger_pending \
 		or _authoritative_stack_resolution_pending \
+		or pending_combat_reveal_linger_action != null \
+		or pending_humbaba_action != null \
+		or pending_retreat_action != null \
+		or pending_tezcatlipoca_titlacauan_action != null \
 		or not game_manager.action_stack.is_empty() \
 		or not game_manager.resolving_stack_actions.is_empty()
 
@@ -4130,6 +4139,13 @@ func _process_command_impl(command: Dictionary) -> bool:
 					_mark_deferred_authoritative_action(
 						action,
 						"combat_retreat_decision"
+					)
+					move_validated.emit(command)
+					return true
+				if pending_combat_reveal_linger_action == action:
+					_mark_deferred_authoritative_action(
+						action,
+						"combat_reveal_linger"
 					)
 					move_validated.emit(command)
 					return true
