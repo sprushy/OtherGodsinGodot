@@ -11363,9 +11363,6 @@ func get_resurrectible_cards() -> Array[Card]:
 	return cards
 
 func _on_god_card_pressed(card: Card) -> void:
-	if _is_card_usable_for_priority(card):
-		_on_priority_response_chosen(card)
-		return
 	var pending_freyja := _get_pending_freyja_active_card()
 	if pending_freyja != null:
 		if card == pending_freyja:
@@ -11385,6 +11382,9 @@ func _on_god_card_pressed(card: Card) -> void:
 		if _try_handle_pending_click_selection(card):
 			return
 		_handle_invalid_pending_target_click()
+		return
+	if _is_card_usable_for_priority(card):
+		_on_priority_response_chosen(card)
 		return
 	if selected_card is Absence and card.is_god:
 		_cast_targeted_spell(selected_card, card)
@@ -15636,16 +15636,16 @@ func _on_board_card_pressed(card: Card) -> void:
 		else:
 			_set_action_label_text("Select a sleeping creature to void.")
 		return
-	if _try_submit_visible_interceptor_card(card):
-		return
-	if _is_card_usable_for_priority(card):
-		_on_priority_response_chosen(card)
-		return
 	if _has_pending_click_selection():
 		if _try_handle_pending_click_selection(card):
 			return
 		_suppress_next_devour_cancel_prompt = _pending_click_selection_source is Fenrir
 		_handle_invalid_pending_target_click(_get_pending_click_invalid_reason(card))
+		return
+	if _try_submit_visible_interceptor_card(card):
+		return
+	if _is_card_usable_for_priority(card):
+		_on_priority_response_chosen(card)
 		return
 	if _is_priority_prompt_visible():
 		var priority_failure_text := _get_priority_response_unavailable_text(card)
@@ -15837,7 +15837,10 @@ func _on_board_card_pressed(card: Card) -> void:
 		return
 	
 	if card.get_controller() != game_manager.current_player:
-		_set_action_label_text("That's not your card!")
+		if card.get_controller() == game_manager.get_feedback_viewer():
+			_set_action_label_text("It's not your turn!")
+		else:
+			_set_action_label_text("That's not your card!")
 		return
 	
 	if card.card_type == Card.CardType.STRUCTURE:
@@ -15923,14 +15926,14 @@ func _on_enemy_card_pressed(target_card: Card) -> void:
 	if _pending_tezcatlipoca_active_prompt != null:
 		if _toggle_tez_titlacauan_target(target_card):
 			return
-	if _is_card_usable_for_priority(target_card):
-		_on_priority_response_chosen(target_card)
-		return
 	if _has_pending_click_selection():
 		if _try_handle_pending_click_selection(target_card):
 			return
 		_suppress_next_devour_cancel_prompt = _pending_click_selection_source is Fenrir
 		_handle_invalid_pending_target_click(_get_pending_click_invalid_reason(target_card))
+		return
+	if _is_card_usable_for_priority(target_card):
+		_on_priority_response_chosen(target_card)
 		return
 	if _try_submit_visible_interceptor_card(target_card):
 		return
@@ -16561,6 +16564,9 @@ func _on_context_reveal_stance_pressed(card_uid: String, target_mode_value: int)
 	var target_mode_name := "aggressive" if target_mode == Card.CreatureMode.AGGRESSIVE else "defensive"
 	var was_stealth: bool = card.is_stealth
 	if game_input.submit_action({type = "change_mode", card_uid = card.uid, mode = target_mode}):
+		if _has_pending_click_selection():
+			update_ui()
+			return
 		_set_action_label_text(card.card_name + " revealed in " + target_mode_name + " stance.")
 		update_ui()
 		_handle_post_reveal_prompt(card, was_stealth)
@@ -16575,6 +16581,9 @@ func _on_context_change_stance_pressed(card_uid: String) -> void:
 		return
 	var target_mode: Card.CreatureMode = Card.CreatureMode.DEFENSIVE if card.creature_mode == Card.CreatureMode.AGGRESSIVE else Card.CreatureMode.AGGRESSIVE
 	game_input.submit_action({type = "change_mode", card_uid = card.uid, mode = target_mode})
+	if _has_pending_click_selection():
+		update_ui()
+		return
 	_set_action_label_text(card.card_name + " changed stance.")
 	update_ui()
 
