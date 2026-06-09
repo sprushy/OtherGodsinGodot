@@ -13046,24 +13046,6 @@ func _show_masmassu_priest_reveal_prompt(card, prompt_targets: Array = []) -> vo
 		_set_action_label_text(_consume_resolution_feedback(no_target_text))
 		update_ui()
 		return
-	if current_targets.size() == 1:
-		var target: Card = current_targets[0]
-		var resolve_single_target := func() -> void:
-			if _submit_prompt_choice_command({
-				"type": "masmassu_priest_reveal_choice",
-				"source_uid": card.uid,
-				"target_uid": target.uid,
-			}):
-				return
-			card.begin_dalkhu_break_reveal(
-				game_manager,
-				target,
-				func(result_text: String) -> void:
-					_set_action_label_text(_consume_resolution_feedback(result_text))
-					update_ui()
-			)
-		resolve_single_target.call_deferred()
-		return
 	var on_choose_dalkhu_break := func(clicked_card: Card) -> void:
 		if _submit_prompt_choice_command({
 			"type": "masmassu_priest_reveal_choice",
@@ -13165,7 +13147,7 @@ func _queue_masmassu_priest_reveal_prompt(card) -> void:
 	action.resolve_callback = func() -> void:
 		var current_targets: Array = card.get_valid_targets(game_manager)
 		if current_targets.is_empty():
-			var no_target_text: String = card.card_name + " found no creatures to break."
+			var no_target_text: String = "%s found no creatures to drown." % card.card_name if card is Grindylow else card.card_name + " found no creatures to break."
 			if _stack_resolution_paused:
 				_resume_after_deferred_resolution(no_target_text)
 			else:
@@ -16648,7 +16630,10 @@ func _on_context_change_stance_pressed(card_uid: String) -> void:
 		_handle_invalid_pending_target_click()
 		return
 	var target_mode: Card.CreatureMode = Card.CreatureMode.DEFENSIVE if card.creature_mode == Card.CreatureMode.AGGRESSIVE else Card.CreatureMode.AGGRESSIVE
-	game_input.submit_action({type = "change_mode", card_uid = card.uid, mode = target_mode})
+	if not game_input.submit_action({type = "change_mode", card_uid = card.uid, mode = target_mode}):
+		_set_action_label_text(card.card_name + " could not change stance right now.")
+		update_ui()
+		return
 	if _has_pending_click_selection():
 		update_ui()
 		return
