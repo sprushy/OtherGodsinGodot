@@ -75,11 +75,13 @@ var pending_humbaba_target = null
 var pending_humbaba_prompt_uids: Array[String] = []
 var pending_combat_reveal_linger_action: CardAction = null
 var _combat_reveal_decision_depth: int = 0
+var _combat_reveal_wait_generation: int = 0
 var pending_tezcatlipoca_titlacauan_action: CardAction = null
 var _board_leaving_activation_linger_pending: bool = false
 var _pending_end_turn_after_resurrection: bool = false
 var _active_command_sender_info: Dictionary = {}
 var _active_command_type: String = ""
+var _resolving_priority_choice_command: bool = false
 var _pending_ui_interactions: Array[Dictionary] = []
 var _next_ui_interaction_id: int = 1
 
@@ -126,11 +128,13 @@ func reset_runtime_state() -> void:
 	pending_humbaba_prompt_uids.clear()
 	pending_combat_reveal_linger_action = null
 	_combat_reveal_decision_depth = 0
+	_combat_reveal_wait_generation = 0
 	pending_tezcatlipoca_titlacauan_action = null
 	_board_leaving_activation_linger_pending = false
 	_pending_end_turn_after_resurrection = false
 	_active_command_sender_info.clear()
 	_active_command_type = ""
+	_resolving_priority_choice_command = false
 	_pending_ui_interactions.clear()
 	_next_ui_interaction_id = 1
 	last_resolution_text = ""
@@ -186,15 +190,37 @@ func cancel_targeting() -> void:
 	if click_cancel_callback.is_valid():
 		click_cancel_callback.call()
 
+func _resolve_live_click_selection_target(target):
+	if game_manager == null or not (target is Card):
+		return target
+	var target_card := target as Card
+	var target_uid := str(target_card.uid).strip_edges()
+	if target_uid == "":
+		return target
+	var live_target := game_manager.get_card_by_uid(target_uid)
+	return live_target if live_target != null else target
+
+func _is_card_in_targets_by_uid(candidate: Card, valid_targets: Array) -> bool:
+	if candidate == null:
+		return false
+	var candidate_uid := str(candidate.uid).strip_edges()
+	for valid_target in valid_targets:
+		if valid_target == candidate:
+			return true
+		if valid_target is Card and candidate_uid != "" and str(valid_target.uid).strip_edges() == candidate_uid:
+			return true
+	return false
+
 func confirm_click_selection(target) -> void:
-	if not pending_click_selection_validator.call(target):
+	var resolved_target = _resolve_live_click_selection_target(target)
+	if not pending_click_selection_validator.call(resolved_target):
 		move_failed.emit("Invalid target for " + pending_click_selection_name)
 		return
 		
 	var confirm_callback = pending_click_selection_confirm
 	_clear_targeting_state()
 	if confirm_callback.is_valid():
-		confirm_callback.call(target)
+		confirm_callback.call(resolved_target)
 
 func get_targeting_name() -> String:
 	if pending_click_selection_confirm.is_valid():
@@ -287,7 +313,10 @@ func _on_game_manager_decision_requested(player: Player, type: String, data: Dic
 		var completion_command_type := str(interaction_data.get("completion_command_type", "")).strip_edges()
 		interaction_data.erase("event_name")
 		interaction_data.erase("completion_command_type")
-		if _combat_reveal_decision_depth > 0:
+		if _should_collect_choice_before_priority(type, completion_command_type):
+			interaction_data["_queue_priority_after_choice"] = true
+			interaction_data["_priority_event_name"] = event_name if event_name != "" else type
+			interaction_data["_priority_completion_command_type"] = completion_command_type
 			_emit_ui_interaction_for_player(player, type, interaction_data)
 			return
 		_queue_decision_priority_event(
@@ -593,9 +622,81 @@ func _queue_decision_priority_event(
 		_emit_ui_interaction_for_player(player, interaction_type, interaction_data)
 	if not completion_command_type.is_empty():
 		_mark_deferred_authoritative_action(action, completion_command_type)
-	var remains_on_stack := queue_or_resolve_priority_event(action)
+	var remains_on_stack: bool = queue_or_resolve_priority_event(action)
 	if not remains_on_stack:
 		return
+
+func _should_collect_choice_before_priority(interaction_type: String, completion_command_type: String) -> bool:
+	return _is_reveal_interaction_type(interaction_type) and not completion_command_type.strip_edges().is_empty()
+
+func _get_priority_after_choice_prompt_data(command: Dictionary) -> Dictionary:
+	if _resolving_priority_choice_command:
+		return {}
+	var command_type := str(command.get("type", "")).strip_edges()
+	var expected_type := _get_ui_interaction_type_for_command(command_type)
+	if expected_type == "":
+		return {}
+	var prompt_idx := _find_pending_ui_interaction_index(command, expected_type)
+	if prompt_idx < 0:
+		return {}
+	var entry: Dictionary = _pending_ui_interactions[prompt_idx]
+	var data: Dictionary = entry.get("data", {})
+	if not bool(data.get("_queue_priority_after_choice", false)):
+		return {}
+	return data.duplicate(true)
+
+func _queue_choice_command_as_priority_event(command: Dictionary, source_card: Card) -> bool:
+	if game_manager == null or source_card == null:
+		return false
+	var prompt_data := _get_priority_after_choice_prompt_data(command)
+	if prompt_data.is_empty():
+		return false
+	var event_name := str(prompt_data.get("_priority_event_name", "")).strip_edges()
+	if event_name == "":
+		event_name = _get_ui_interaction_type_for_command(str(command.get("type", "")))
+	var completion_command_type := str(prompt_data.get("_priority_completion_command_type", "")).strip_edges()
+	if completion_command_type == "":
+		return false
+	var queued_command := command.duplicate(true)
+	var action := CardAction.new()
+	action.type = CardAction.Type.EVENT
+	action.source_player = source_card.card_owner if source_card.card_owner != null else game_manager.current_player
+	action.initial_priority_player = game_manager.get_opponent(action.source_player) if action.source_player != null else null
+	action.card = source_card
+	action.event_name = event_name
+	action.event_speed = source_card.get_effective_speed()
+	action.event_data = prompt_data.duplicate(true)
+	action.event_data["queued_choice_command"] = queued_command
+	action.event_data["force_priority_window"] = true
+	var target_uid := _get_command_choice_uid(command)
+	if target_uid != "":
+		action.target = game_manager.get_card_by_uid(target_uid)
+	action.resolve_callback = func() -> void:
+		_execute_queued_priority_choice_command(queued_command, action, completion_command_type)
+	_mark_deferred_authoritative_action(action, completion_command_type)
+	queue_or_resolve_priority_event(action)
+	return true
+
+func _execute_queued_priority_choice_command(command: Dictionary, action: CardAction, completion_command_type: String) -> void:
+	var previous_resolving := _resolving_priority_choice_command
+	var previous_command_type := _active_command_type
+	_resolving_priority_choice_command = true
+	_active_command_type = str(command.get("type", "")).strip_edges()
+	var resolved := _process_command_impl(command)
+	if not resolved:
+		var feedback := last_move_failed_reason.strip_edges()
+		if feedback == "":
+			feedback = "%s could not resolve." % _active_command_type
+		game_manager.note_player_feedback(feedback)
+		if action != null:
+			action.resolution_text = feedback
+			_clear_deferred_authoritative_action_metadata(action)
+	elif action != null and _has_deferred_authoritative_action_metadata(action):
+		var pending_graveyard_prompt := _get_pending_authoritative_graveyard_prompt_command_type()
+		if pending_graveyard_prompt.is_empty():
+			_complete_deferred_authoritative_action(action, completion_command_type)
+	_resolving_priority_choice_command = previous_resolving
+	_active_command_type = previous_command_type
 
 func _on_game_manager_card_summoned(
 	player: Player,
@@ -705,12 +806,18 @@ func resolve_action(action: CardAction) -> void:
 					deferred_completion_command_type = "humbaba_augury_choice"
 				elif pending_combat_reveal_linger_action == action:
 					deferred_completion_command_type = "combat_reveal_linger"
+	var action_finalized_during_resolution := false
+	if game_manager != null and action != null:
+		action_finalized_during_resolution = not game_manager.action_stack.has(action) \
+			and not game_manager.resolving_stack_actions.has(action)
 	if action_completed and game_manager != null:
 		deferred_completion_command_type = _get_pending_authoritative_graveyard_prompt_command_type()
 		if not deferred_completion_command_type.is_empty():
 			action_completed = false
 	if game_manager != null and pushed_effect_source:
 		game_manager.pop_effect_source_card()
+	if action_finalized_during_resolution:
+		return
 	if not action_completed:
 		if not deferred_completion_command_type.is_empty():
 			_mark_deferred_authoritative_action(action, deferred_completion_command_type)
@@ -755,15 +862,31 @@ func _continue_authoritative_stack_after_resolution() -> void:
 		return
 	if game_manager == null:
 		return
-	if not game_manager.resolving_stack_actions.is_empty():
+	if _has_blocking_stack_resolution_for_continuation():
 		return
 	_authoritative_stack_resolution_pending = false
 	game_manager.prune_stale_stack_actions()
 	if game_manager.action_stack.is_empty():
 		_clear_priority_window_state()
 		return
+	if pending_combat_reveal_linger_action != null \
+			and game_manager.action_stack.back() == pending_combat_reveal_linger_action:
+		_clear_priority_window_state()
+		return
 	_clear_priority_window_state()
 	_advance_authoritative_priority()
+
+func _has_blocking_stack_resolution_for_continuation() -> bool:
+	if game_manager == null or game_manager.resolving_stack_actions.is_empty():
+		return false
+	if pending_combat_reveal_linger_action == null:
+		return true
+	for resolving_action in game_manager.resolving_stack_actions:
+		if resolving_action != pending_combat_reveal_linger_action:
+			return true
+	if game_manager.action_stack.is_empty():
+		return true
+	return game_manager.action_stack.back() == pending_combat_reveal_linger_action
 
 func _mark_deferred_authoritative_action(action: CardAction, completion_command_type: String) -> void:
 	if action == null:
@@ -864,7 +987,7 @@ func _get_pending_ui_debug_summary(limit: int = 5) -> String:
 func _has_pending_reveal_target_ui_interaction() -> bool:
 	for entry in _pending_ui_interactions:
 		var interaction_type := str(entry.get("type", ""))
-		if interaction_type in ["lailoken_reveal", "masmassu_priest_reveal"]:
+		if _is_reveal_interaction_type(interaction_type):
 			return true
 	return false
 
@@ -872,10 +995,13 @@ func get_pending_reveal_target_ui_interactions() -> Array[Dictionary]:
 	var interactions: Array[Dictionary] = []
 	for entry in _pending_ui_interactions:
 		var interaction_type := str(entry.get("type", ""))
-		if interaction_type not in ["lailoken_reveal", "masmassu_priest_reveal"]:
+		if not _is_reveal_interaction_type(interaction_type):
 			continue
 		interactions.append(entry.duplicate(true))
 	return interactions
+
+func _is_reveal_interaction_type(interaction_type: String) -> bool:
+	return interaction_type.strip_edges().to_lower().contains("reveal")
 
 func _log_authoritative_flow_state(context: String) -> void:
 	if game_manager == null or not _uses_authoritative_headless_priority_flow():
@@ -1208,56 +1334,99 @@ func _finish_creature_combat(action: CardAction, target: Card) -> void:
 func _begin_combat_reveal_linger(action: CardAction, target: Card) -> bool:
 	if action == null or target == null or pending_combat_reveal_linger_action != null:
 		return false
+
 	var reveal_cards: Array[Card] = []
 	for combatant in [action.attacker, action.united_front_partner, target]:
 		if combatant != null and combatant.is_stealth:
 			reveal_cards.append(combatant)
+
 	if reveal_cards.is_empty():
 		return false
+
 	var tree = _get_authoritative_resolution_tree()
 	if tree == null:
 		return false
+
+	pending_combat_reveal_linger_action = action
+	_mark_deferred_authoritative_action(action, "combat_reveal_linger")
+
 	_combat_reveal_decision_depth += 1
 	for combatant in reveal_cards:
 		combatant.reveal_from_stealth(game_manager)
 	_combat_reveal_decision_depth = maxi(0, _combat_reveal_decision_depth - 1)
+
 	if action.united_front_partner == null:
 		game_manager.capture_committed_combat_snapshot(action.attacker, target)
-	pending_combat_reveal_linger_action = action
-	_mark_deferred_authoritative_action(action, "combat_reveal_linger")
+
 	last_resolution_text = "%s revealed before combat." % _format_card_name_list(reveal_cards)
 	_request_ui_refresh()
+
+	_combat_reveal_wait_generation += 1
+	_wait_for_combat_reveal_interactions_then_resume(action, target, _combat_reveal_wait_generation)
+
+	return true
+
+func _wait_for_combat_reveal_interactions_then_resume(action: CardAction, target: Card, wait_generation: int) -> void:
+	var tree = _get_authoritative_resolution_tree()
+
+	if pending_combat_reveal_linger_action != action or wait_generation != _combat_reveal_wait_generation:
+		return
+
+	if tree == null:
+		if not _has_pending_combat_reveal_interaction(action):
+			_resume_pending_combat_reveal(action, target)
+		return
+
 	tree.create_timer(AUTHORITATIVE_STACK_ACTION_LINGER_SECONDS).timeout.connect(
 		func() -> void:
-			if pending_combat_reveal_linger_action != action:
+			if pending_combat_reveal_linger_action != action or wait_generation != _combat_reveal_wait_generation:
 				return
+
 			if _has_pending_combat_reveal_interaction(action):
+				_wait_for_combat_reveal_interactions_then_resume(action, target, wait_generation)
 				return
+
 			_resume_pending_combat_reveal(action, target),
 		CONNECT_ONE_SHOT
 	)
-	return true
 
 func _has_pending_combat_reveal_interaction(action: CardAction) -> bool:
-	if action == null:
+	if action == null or game_manager == null:
 		return false
+	for stack_action in game_manager.action_stack:
+		if stack_action != null and stack_action != action:
+			return true
 	var combatant_uids: Array[String] = []
 	for combatant in [action.attacker, action.united_front_partner, action.target, action.interceptor]:
 		if combatant is Card and combatant.uid not in combatant_uids:
 			combatant_uids.append(combatant.uid)
+	for stack_action in game_manager.action_stack:
+		if stack_action == null or not (stack_action is CardAction):
+			continue
+		var typed_action := stack_action as CardAction
+		if typed_action.type != CardAction.Type.EVENT:
+			continue
+		if not _is_reveal_event_name(typed_action.event_name):
+			continue
+		if typed_action.card != null and typed_action.card.uid in combatant_uids:
+			return true
 	for entry in _pending_ui_interactions:
 		var interaction_type := str(entry.get("type", ""))
-		if interaction_type not in ["lailoken_reveal", "masmassu_priest_reveal"]:
+		if not _is_reveal_interaction_type(interaction_type):
 			continue
 		var data: Dictionary = entry.get("data", {})
 		if str(data.get("source_uid", "")) in combatant_uids:
 			return true
 	return false
 
+func _is_reveal_event_name(event_name: String) -> bool:
+	return event_name.strip_edges().to_lower().contains("reveal")
+
 func _resume_pending_combat_reveal(action: CardAction, target: Card) -> void:
 	if action == null or target == null or pending_combat_reveal_linger_action != action:
 		return
 	pending_combat_reveal_linger_action = null
+	_combat_reveal_wait_generation += 1
 	_resolve_creature_combat_now(
 		action,
 		target,
@@ -1414,19 +1583,19 @@ func _emit_next_pending_humbaba_prompt() -> bool:
 		humbaba.queue_augury_trigger_suppression()
 		var prompt_targets := humbaba.get_augury_cards(game_manager)
 		if prompt_targets.is_empty():
-			game_manager.note_player_feedback("%s found no cards to read." % humbaba.card_name)
+			_pause_pending_humbaba_after_auto_resolution("%s found no cards to read." % humbaba.card_name)
 			pending_humbaba_prompt_uids.remove_at(0)
-			continue
+			return true
 		var prompt_player := game_manager.get_opponent(humbaba.get_controller())
 		if prompt_targets.size() == 1 or prompt_player == null:
-			game_manager.note_player_feedback(humbaba.resolve_augury_reading(game_manager, prompt_targets[0]))
+			_pause_pending_humbaba_after_auto_resolution(humbaba.resolve_augury_reading(game_manager, prompt_targets[0]))
 			pending_humbaba_prompt_uids.remove_at(0)
-			continue
+			return true
 		var player_idx := game_manager.players.find(prompt_player)
 		if player_idx < 0:
-			game_manager.note_player_feedback(humbaba.resolve_augury_reading(game_manager, prompt_targets[0]))
+			_pause_pending_humbaba_after_auto_resolution(humbaba.resolve_augury_reading(game_manager, prompt_targets[0]))
 			pending_humbaba_prompt_uids.remove_at(0)
-			continue
+			return true
 		var target_uids: Array[String] = []
 		for target in prompt_targets:
 			if target != null:
@@ -1437,6 +1606,44 @@ func _emit_next_pending_humbaba_prompt() -> bool:
 		})
 		return true
 	return false
+
+func _pause_pending_humbaba_after_auto_resolution(feedback: String) -> void:
+	if game_manager == null:
+		return
+	var resolved_feedback := feedback.strip_edges()
+	if resolved_feedback != "":
+		game_manager.note_player_feedback(resolved_feedback)
+		last_resolution_text = resolved_feedback
+		_request_ui_refresh()
+	_schedule_pending_humbaba_auto_resume()
+
+func _schedule_pending_humbaba_auto_resume() -> void:
+	var action := pending_humbaba_action
+	var target = pending_humbaba_target
+	var tree = _get_authoritative_resolution_tree()
+	if tree == null:
+		call_deferred("_resume_pending_humbaba_after_auto_resolution", action, target)
+		return
+	tree.create_timer(AUTHORITATIVE_STACK_ACTION_LINGER_SECONDS).timeout.connect(
+		func() -> void:
+			_resume_pending_humbaba_after_auto_resolution(action, target),
+		CONNECT_ONE_SHOT
+	)
+
+func _resume_pending_humbaba_after_auto_resolution(action: CardAction, actual_target) -> void:
+	if action == null or pending_humbaba_action != action:
+		return
+	if _emit_next_pending_humbaba_prompt():
+		return
+	_clear_pending_humbaba_state()
+	_continue_pending_humbaba_attack_resolution(action, actual_target)
+	if pending_retreat_action == action:
+		_mark_deferred_authoritative_action(action, "combat_retreat_decision")
+		return
+	if pending_combat_reveal_linger_action == action:
+		_mark_deferred_authoritative_action(action, "combat_reveal_linger")
+		return
+	_complete_deferred_authoritative_action(action, "humbaba_augury_choice")
 
 func _continue_pending_humbaba_attack_resolution(action: CardAction, actual_target) -> void:
 	if action == null:
@@ -1495,11 +1702,16 @@ func _can_resolve_top_stack_action_now() -> bool:
 	var top_action: CardAction = game_manager.action_stack.back()
 	if top_action == null:
 		return true
+	if _action_requires_explicit_priority_window(top_action):
+		return false
 	var first_player := game_manager.priority_player
 	if first_player == null:
 		first_player = top_action.initial_priority_player if top_action.initial_priority_player != null else game_manager.get_opponent(top_action.source_player)
 	var second_player := game_manager.get_opponent(first_player) if first_player != null else null
 	return not _player_has_priority_prompt_responses(first_player) and not _player_has_priority_prompt_responses(second_player)
+
+func _action_requires_explicit_priority_window(action: CardAction) -> bool:
+	return action != null and bool(action.event_data.get("force_priority_window", false))
 
 func _resolve_authoritative_stack_top_after_priority() -> void:
 	if game_manager == null or game_manager.action_stack.is_empty():
@@ -1841,7 +2053,7 @@ func _validate_priority_response_target(card: Card, top: CardAction, target: Car
 	if not requested_uid.is_empty():
 		if target == null:
 			return context + ": target not found"
-		if target not in valid_targets:
+		if not _is_card_in_targets_by_uid(target, valid_targets):
 			return context + ": invalid priority target"
 		return ""
 	if card != null and card.targets:
@@ -2003,7 +2215,9 @@ func _advance_authoritative_priority() -> void:
 		return
 	var prompt_data := build_priority_prompt_data(player)
 	var prompt_responses: Array = prompt_data.get("responses", [])
-	if prompt_responses.is_empty():
+	var top_action: CardAction = game_manager.action_stack.back()
+	var force_priority_window := _action_requires_explicit_priority_window(top_action)
+	if prompt_responses.is_empty() and not force_priority_window:
 		game_manager.pass_priority()
 		if game_manager.both_passed():
 			if game_manager.action_stack.is_empty():
@@ -2026,7 +2240,7 @@ func queue_or_resolve_priority_event(action: CardAction) -> bool:
 	var second_player: Player = game_manager.get_opponent(first_player) if first_player != null else null
 	var first_has_responses: bool = _player_has_priority_prompt_responses(first_player)
 	var second_has_responses: bool = _player_has_priority_prompt_responses(second_player)
-	if first_has_responses or second_has_responses:
+	if first_has_responses or second_has_responses or _action_requires_explicit_priority_window(action):
 		if game_manager.priority_player == null:
 			game_manager.priority_player = first_player
 		if _uses_authoritative_headless_priority_flow():
@@ -2569,6 +2783,38 @@ func _validate_turn_action_window(command: Dictionary, sender_info: Dictionary) 
 		return "Resolve upkeep before taking other actions."
 	return ""
 
+func _should_turn_action_decline_priority(command: Dictionary, sender_info: Dictionary) -> bool:
+	if game_manager == null or not _uses_authoritative_headless_priority_flow():
+		return false
+	var command_type := str(command.get("type", ""))
+	if not _requires_clear_stack_window(command_type):
+		return false
+	if is_targeting_active() or _has_pending_reveal_target_ui_interaction():
+		return false
+	if game_manager.action_stack.is_empty():
+		return false
+	if _authoritative_stack_resolution_pending or not game_manager.resolving_stack_actions.is_empty():
+		return false
+	var actor := _get_command_actor(sender_info)
+	return actor != null \
+		and actor == game_manager.current_player \
+		and actor == game_manager.priority_player
+
+func _decline_priority_for_turn_action(command: Dictionary, sender_info: Dictionary) -> bool:
+	if not _should_turn_action_decline_priority(command, sender_info):
+		return false
+	game_manager.pass_priority()
+	move_validated.emit({type = "priority_pass"})
+	if game_manager.both_passed():
+		if game_manager.action_stack.is_empty():
+			_clear_priority_window_state()
+		else:
+			_resolve_authoritative_stack_top_after_priority()
+	else:
+		_advance_authoritative_priority()
+	_request_ui_refresh()
+	return _has_unresolved_stack_action_window()
+
 func _validate_upkeep_choice_window(actor: Player) -> String:
 	if game_manager == null or actor == null:
 		return ""
@@ -2636,6 +2882,10 @@ func process_command(command: Dictionary, sender_info: Dictionary = {}) -> bool:
 		_active_command_sender_info.clear()
 		_active_command_type = ""
 		return false
+	if _decline_priority_for_turn_action(command, sender_info):
+		_active_command_sender_info.clear()
+		_active_command_type = ""
+		return true
 	var turn_window_error := _validate_turn_action_window(command, sender_info)
 	if not turn_window_error.is_empty():
 		if _uses_authoritative_headless_priority_flow() and _requires_clear_stack_window(_active_command_type):
@@ -2654,9 +2904,10 @@ func process_command(command: Dictionary, sender_info: Dictionary = {}) -> bool:
 		_active_command_sender_info.clear()
 		_active_command_type = ""
 		return false
+	var pending_prompt_id := int(pending_prompt_validation.get("prompt_id", -1))
 	var result := _process_command_impl(command)
 	if result:
-		_consume_pending_ui_interaction_by_id(int(pending_prompt_validation.get("prompt_id", -1)))
+		_consume_pending_ui_interaction_by_id(pending_prompt_id)
 	_active_command_sender_info.clear()
 	_active_command_type = ""
 	return result
@@ -3570,9 +3821,12 @@ func _process_command_impl(command: Dictionary) -> bool:
 				move_validated.emit(command)
 				return true
 			var target := game_manager.get_card_by_uid(target_uid)
-			if target == null or target not in valid_targets:
+			if not _is_card_in_targets_by_uid(target, valid_targets):
 				move_failed.emit("lailoken_reveal_choice: invalid magical target")
 				return false
+			if _queue_choice_command_as_priority_event(command, lailoken):
+				move_validated.emit(command)
+				return true
 			lailoken.begin_magic_drain_reveal(
 				game_manager,
 				target,
@@ -3591,7 +3845,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 		"masmassu_priest_reveal_choice":
 			var source_uid: String = command.get("source_uid", "")
 			var priest = game_manager.get_card_by_uid(source_uid)
-			if priest is not MasmassuPriest and priest is not Grindylow:
+			if not (priest is MasmassuPriest) and not (priest is Grindylow):
 				move_failed.emit("masmassu_priest_reveal_choice: card not found")
 				return false
 			var pending_action := _find_pending_deferred_action_for_source("masmassu_priest_reveal_choice", priest)
@@ -3609,9 +3863,12 @@ func _process_command_impl(command: Dictionary) -> bool:
 				move_validated.emit(command)
 				return true
 			var target := game_manager.get_card_by_uid(target_uid)
-			if target == null or target not in valid_targets:
+			if not _is_card_in_targets_by_uid(target, valid_targets):
 				move_failed.emit("masmassu_priest_reveal_choice: invalid creature target")
 				return false
+			if _queue_choice_command_as_priority_event(command, priest):
+				move_validated.emit(command)
+				return true
 			priest.begin_dalkhu_break_reveal(
 				game_manager,
 				target,
@@ -3982,6 +4239,9 @@ func _process_command_impl(command: Dictionary) -> bool:
 			if matched.is_empty():
 				move_failed.emit("byggvir_reveal_choice: invalid Brewing option")
 				return false
+			if _queue_choice_command_as_priority_event(command, card):
+				move_validated.emit(command)
+				return true
 			game_manager.note_player_feedback(card.resolve_brewing_option(game_manager, matched))
 			move_validated.emit(command)
 			return true

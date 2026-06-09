@@ -74,7 +74,8 @@ func begin_dalkhu_break_reveal(
 		return
 
 	var valid_targets := get_valid_targets(game_manager)
-	if target == null or target not in valid_targets:
+	target = _resolve_valid_target(target, valid_targets)
+	if target == null:
 		finish.call(card_name + " found no valid creature to destroy.")
 		return
 	if game_manager.is_immune_to_source(target, self):
@@ -117,3 +118,14 @@ func _is_valid_dalkhu_break_target(target: Card) -> bool:
 		and not target.is_god \
 		and target.current_zone != null \
 		and target.current_zone.is_board_zone()
+
+func _resolve_valid_target(target: Card, valid_targets: Array) -> Card:
+	if target == null:
+		return null
+	var target_uid := str(target.uid).strip_edges()
+	for valid_target in valid_targets:
+		if valid_target == target:
+			return valid_target
+		if valid_target is Card and target_uid != "" and str(valid_target.uid).strip_edges() == target_uid:
+			return valid_target
+	return null

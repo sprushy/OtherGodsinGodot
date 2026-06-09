@@ -51,7 +51,9 @@ Read this first on a fresh thread, then inspect the files relevant to the user's
 
 ## Verification
 
-Use targeted Godot probes or smoke runs when possible. The helper script resolves `godot.exe`, sets portable Godot appdata under `.godot_portable`, and disables the MCP plugin:
+Prefer existing smoke runs only when they are already maintained and clearly relevant. Do not create new ad hoc Godot probe scripts for gameplay debugging unless the user explicitly asks; the user prefers to test these interactions manually because local probes have been inconsistent.
+
+The helper script resolves `godot.exe`, sets portable Godot appdata under `.godot_portable`, and disables the MCP plugin:
 
 ```powershell
 powershell.exe -ExecutionPolicy Bypass -File scripts\tmp\run_practice_smoke.ps1 -Role practice_thor
@@ -85,7 +87,7 @@ CI export presets are `Windows Desktop`, `Windows Dedicated Server`, and `macOS`
 - Prefer small, targeted edits. This project has large controller files, so avoid broad cleanups mixed with behavior changes.
 - Use Godot `res://` paths in GDScript/resources.
 - Preserve Godot's tab-indented GDScript style in existing files.
-- Do not hand-edit `.godot/` cache files. Treat `scripts/tmp` as probe/smoke territory and avoid committing new logs unless the user asked for evidence artifacts.
+- Do not hand-edit `.godot/` cache files. Treat `scripts/tmp` as smoke/scratch territory and avoid adding new probe scripts or committing new logs unless the user asked for evidence artifacts.
 - If touching networking, remember the server sends personalized full-state snapshots for privacy. Do not replace that with a shared snapshot unless hand privacy/hidden board privacy is handled.
 - If touching prompts or priority, inspect both `GameManager` and `MatchManager`; many UI prompts are now serialized through `PromptRouter`/`GameEventBroadcaster`, but older UI paths still exist in `CombatMockGame.gd`.
 - If touching deck/card availability, update both catalog/deck validation paths and any relevant deck-builder UI assumptions.

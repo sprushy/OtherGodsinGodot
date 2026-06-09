@@ -36,6 +36,9 @@ func on_reveal(game_manager: GameManager) -> void:
 	game_manager.decision_requested.emit(get_controller(), "byggvir_reveal", {
 		"source_uid": uid,
 		"options": serialize_brewing_options(game_manager),
+		"queue_with_priority": true,
+		"event_name": "byggvir_reveal",
+		"completion_command_type": "byggvir_reveal_choice",
 	})
 
 func get_brewing_options(game_manager: GameManager) -> Array[Dictionary]:

@@ -20,7 +20,7 @@ func start_game(
 	server_match_session = null
 ) -> void:
 	await super.start_game(is_host, is_client, server_ip, server_port, match_info, server_match_session)
-	load_e2_abzu_badge_test_scenario()
+	load_featured_card_test_scenario()
 
 func update_ui() -> void:
 	_sync_test_priority_control()
@@ -225,56 +225,51 @@ func _reset_test_match_state() -> void:
 		match_manager.reset_runtime_state()
 
 func _setup_test_board() -> void:
-	load_e2_abzu_badge_test_scenario()
+	load_featured_card_test_scenario()
 
-func load_e2_abzu_badge_test_scenario() -> void:
+func load_featured_card_test_scenario() -> void:
 	_reset_test_match_state()
 	_add_test_god(player1, Odin.new())
 	_add_test_god(player2, Thor.new())
 
-	var e2_abzu := E2Abzu.new()
-	_place_test_board_permanent(player1, player1.reserve_zones[2], e2_abzu)
+	# Friendly board: two cheap bodies cover the sacrifice cost on Afanc and Pazuzu
+	# while keeping plenty of open lanes for reveals and impact testing.
+	_place_test_board_card(player1, player1.frontline_zones[0], BrownBear.new(), Card.CreatureMode.AGGRESSIVE)
+	_place_test_board_card(player1, player1.reserve_zones[0], PictishBeast.new(), Card.CreatureMode.DEFENSIVE)
 
-	var field_mer_mage := EnkiLordOfEridu.new()
-	_place_test_board_card(player1, player1.frontline_zones[1], field_mer_mage, Card.CreatureMode.DEFENSIVE)
+	# Load the requested cards directly into hand for immediate testing.
+	_add_test_hand_card(player1, Lailoken.new())
+	_add_test_hand_card(player1, Grindylow.new())
+	_add_test_hand_card(player1, MasmassuPriest.new())
+	_add_test_hand_card(player1, Afanc.new())
+	_add_test_hand_card(player1, Pazuzu.new())
+	_add_test_hand_card(player1, HumbabaTheTerrible.new())
 
-	var void_mer_mage := FirstSageAdapa.new()
-	_add_test_abyss_card(player1, void_mer_mage)
+	# Small deterministic deck keeps draw/upkeep simple if the scenario runs longer.
+	_add_test_deck_card(player1, BrownBear.new())
+	_add_test_deck_card(player1, PictishBeast.new())
+	_add_test_deck_card(player1, TheWhiteSerpent.new())
+	_add_test_deck_card(player1, HeroicStand.new())
 
-	_place_test_board_card(player1, player1.frontline_zones[0], Berserker.new(), Card.CreatureMode.AGGRESSIVE)
-	_place_test_board_card(player1, player1.frontline_zones[2], HariiShaman.new(), Card.CreatureMode.DEFENSIVE)
-	_place_test_board_card(player1, player1.frontline_zones[3], GududPriest.new(), Card.CreatureMode.DEFENSIVE)
-	_place_test_board_card(player1, player1.frontline_zones[4], ClayEaters.new(), Card.CreatureMode.DEFENSIVE)
-
-	var nimue := Nimue.new()
-	_place_test_board_card(player1, player1.reserve_zones[0], nimue, Card.CreatureMode.DEFENSIVE)
-	_place_test_board_card(player1, player1.reserve_zones[1], Gawain.new(), Card.CreatureMode.DEFENSIVE)
-
-	var en_hedu_anna := EnHeduAnna.new()
-	_place_test_board_card(player1, player1.reserve_zones[3], en_hedu_anna, Card.CreatureMode.DEFENSIVE)
-
-	var shift_creature := Jiaolong.new()
-	_place_test_board_card(player1, player1.reserve_zones[4], shift_creature, Card.CreatureMode.DEFENSIVE)
-
-	_place_test_board_card(player2, player2.frontline_zones[1], MinotaurFootsoldier.new(), Card.CreatureMode.DEFENSIVE)
-	_place_test_board_card(player2, player2.frontline_zones[2], Alu.new(), Card.CreatureMode.DEFENSIVE)
-	_place_test_board_card(player2, player2.frontline_zones[3], Lindwyrm.new(), Card.CreatureMode.DEFENSIVE)
-	_place_test_board_card(player2, player2.reserve_zones[1], BrownBear.new(), Card.CreatureMode.AGGRESSIVE)
-	_place_test_board_card(player2, player2.reserve_zones[2], Mopsus.new(), Card.CreatureMode.DEFENSIVE)
-
-	_add_test_hand_card(player1, HeroicStand.new())
-	_add_test_hand_card(player1, BrownBear.new())
-	_add_test_graveyard_card(player1, RunicShortsword.new())
-	_add_test_deck_card(player1, GududPriest.new())
-	_add_test_deck_card(player1, ClayEaters.new())
+	# Opponent board gives each featured card a clean target:
+	# Exorcism for Lailoken, multiple creatures for Grindylow and Afanc,
+	# and Alu as a Demon for Masmassu Priest's mana rider.
+	_place_test_board_card(player2, player2.frontline_zones[0], BrownBear.new(), Card.CreatureMode.DEFENSIVE)
+	_place_test_board_card(player2, player2.frontline_zones[1], Alu.new(), Card.CreatureMode.DEFENSIVE)
+	_place_test_board_card(player2, player2.reserve_zones[0], MinotaurFootsoldier.new(), Card.CreatureMode.DEFENSIVE)
+	_place_test_prepared_card(player2, player2.reserve_zones[1], Exorcism.new())
 
 	_add_test_hand_card(player2, DivineLightning.new())
+	_add_test_hand_card(player2, HeroicStand.new())
+	_add_test_hand_card(player2, HumbabaTheTerrible.new())
+	_add_test_deck_card(player2, BrownBear.new())
 	_add_test_deck_card(player2, Berserker.new())
+	_add_test_deck_card(player2, TheWhiteSerpent.new())
 
 	player1.spend_mana(player1.mana)
-	player1.gain_mana(10)
+	player1.gain_mana(12)
 	player2.spend_mana(player2.mana)
-	player2.gain_mana(8)
+	player2.gain_mana(10)
 	player1.followers = 100
 	player2.followers = 100
 	player1.followers_changed.emit(player1.followers)
@@ -296,10 +291,11 @@ func load_e2_abzu_badge_test_scenario() -> void:
 	game_manager.start_turn()
 	_open_upkeep_choice_window()
 	action_label.text = (
-		"Ability Badge Test Scenario. Choose Mana first, then inspect the larger badges across both boards. "
-		+ "Odin, Thor, E2-abzu, Nimue, Berserker, Harii Shaman, Gudu Priest, Clay-Eaters, Gawain, En-hedu-anna, and Jiaolong are all visible. "
-		+ "E2-abzu's top badge returns First Sage Adapa from your Void; the lower badge sends Enki, Lord of Eridu to the Void until end of turn. "
-		+ "Nimue can Entomb enemy creatures or Present Runic Shortsword from your graveyard."
+		"Featured Card Test Scenario. Choose Mana first.  |  "
+		+ "Hand - Lailoken, Grindylow, Ma" + char(353) + "ma" + char(353) + char(353) + "u Priest, Afanc, Pazuzu, and Humbaba the Terrible are all ready on P1, and P2 also has a Humbaba for mirror testing.  |  "
+		+ "Board - Brown Bear and Pictish Beast give you easy sacrifice fodder for Afanc and Pazuzu while leaving most lanes open.  |  "
+		+ "Opponent - Exorcism is already prepared for Lailoken to drain, Alu is a Demon for Ma" + char(353) + "ma" + char(353) + char(353) + "u Priest's bonus mana, and the extra creatures give Grindylow and Afanc clean reveal targets.  |  "
+		+ "Mana - P2 starts at 10 mana so Pazuzu can show both its impact drain and the next-turn passive drain."
 	)
 	update_ui()
 
