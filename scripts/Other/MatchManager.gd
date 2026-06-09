@@ -74,6 +74,7 @@ var pending_humbaba_action: CardAction = null
 var pending_humbaba_target = null
 var pending_humbaba_prompt_uids: Array[String] = []
 var pending_combat_reveal_linger_action: CardAction = null
+var _combat_reveal_decision_depth: int = 0
 var pending_tezcatlipoca_titlacauan_action: CardAction = null
 var _board_leaving_activation_linger_pending: bool = false
 var _pending_end_turn_after_resurrection: bool = false
@@ -124,6 +125,7 @@ func reset_runtime_state() -> void:
 	pending_humbaba_target = null
 	pending_humbaba_prompt_uids.clear()
 	pending_combat_reveal_linger_action = null
+	_combat_reveal_decision_depth = 0
 	pending_tezcatlipoca_titlacauan_action = null
 	_board_leaving_activation_linger_pending = false
 	_pending_end_turn_after_resurrection = false
@@ -285,6 +287,9 @@ func _on_game_manager_decision_requested(player: Player, type: String, data: Dic
 		var completion_command_type := str(interaction_data.get("completion_command_type", "")).strip_edges()
 		interaction_data.erase("event_name")
 		interaction_data.erase("completion_command_type")
+		if _combat_reveal_decision_depth > 0:
+			_emit_ui_interaction_for_player(player, type, interaction_data)
+			return
 		_queue_decision_priority_event(
 			player,
 			source_card,
@@ -582,7 +587,8 @@ func _queue_decision_priority_event(
 	action.initial_priority_player = game_manager.get_opponent(action.source_player) if action.source_player != null else null
 	action.card = source_card
 	action.event_name = event_name
-	action.event_speed = 0
+	action.event_speed = source_card.get_effective_speed() if source_card != null else 0
+	action.event_data = interaction_data.duplicate(true)
 	action.resolve_callback = func() -> void:
 		_emit_ui_interaction_for_player(player, interaction_type, interaction_data)
 	if not completion_command_type.is_empty():
@@ -1211,8 +1217,10 @@ func _begin_combat_reveal_linger(action: CardAction, target: Card) -> bool:
 	var tree = _get_authoritative_resolution_tree()
 	if tree == null:
 		return false
+	_combat_reveal_decision_depth += 1
 	for combatant in reveal_cards:
 		combatant.reveal_from_stealth(game_manager)
+	_combat_reveal_decision_depth = maxi(0, _combat_reveal_decision_depth - 1)
 	if action.united_front_partner == null:
 		game_manager.capture_committed_combat_snapshot(action.attacker, target)
 	pending_combat_reveal_linger_action = action

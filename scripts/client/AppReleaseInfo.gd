@@ -5,6 +5,8 @@ const VERSION_PROJECT_SETTING := "application/config/version"
 const UNKNOWN_VERSION := "dev"
 const RELEASES_API_URL := "https://api.github.com/repos/sprushy/OtherGodsinGodot/releases/latest"
 const RELEASES_PAGE_URL := "https://github.com/sprushy/OtherGodsinGodot/releases/latest"
+const RELEASE_TAG_PAGE_URL_TEMPLATE := "https://github.com/sprushy/OtherGodsinGodot/releases/tag/%s"
+const RELEASE_DOWNLOAD_URL_TEMPLATE := "https://github.com/sprushy/OtherGodsinGodot/releases/download/%s/%s"
 const WINDOWS_ASSET_NAME := "OtherGods-windows.zip"
 const LEGACY_WINDOWS_ASSET_NAME := "ClaudeOtherGods-windows.zip"
 const MACOS_ASSET_NAME := "OtherGods-macos.zip"
@@ -57,6 +59,18 @@ static func get_asset_names_for_platform(platform_name: String) -> Array:
 			return MACOS_ASSET_NAMES
 		_:
 			return []
+
+static func get_release_page_url_for_version(version: String) -> String:
+	var normalized := normalize_version(version)
+	if not is_release_version(normalized):
+		return RELEASES_PAGE_URL
+	return RELEASE_TAG_PAGE_URL_TEMPLATE % normalized
+
+static func get_download_url_for_version(version: String, asset_name: String) -> String:
+	var normalized := normalize_version(version)
+	if not is_release_version(normalized) or asset_name.strip_edges().is_empty():
+		return ""
+	return RELEASE_DOWNLOAD_URL_TEMPLATE % [normalized, asset_name.strip_edges()]
 
 static func parse_semver(value: String) -> Array[int]:
 	var normalized := normalize_version(value)

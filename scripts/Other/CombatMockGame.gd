@@ -37,6 +37,7 @@ const VOID_CURSOR_IMAGE_PATH := "res://images/ui/cursors/VoidCursor.png"
 const RUNIC_SPELLBREAKER_CURSOR_IMAGE_PATH := "res://images/ui/cursors/RunicSpellbreakerCursor.png"
 const LAILOKEN_CURSOR_IMAGE_PATH := "res://images/ui/cursors/LailokenCursor.png"
 const MASMASSU_PRIEST_CURSOR_IMAGE_PATH := "res://images/ui/cursors/MasmassauPriestCursor.png"
+const GRINDYLOW_DROWN_CURSOR_IMAGE_PATH := "res://images/ui/cursors/DrownCursor.png"
 const CardBackTexture = preload("res://images/cardbackAI.png")
 const BOARD_FLOOR_TEXTURE_PATH := "res://images/board/moss_stone_floor_albedo.png"
 const BOARD_SPLASH_TEXTURE_PATH := "res://images/ui/splash/other_gods_splash.png"
@@ -519,6 +520,7 @@ var _void_cursor_texture: Texture2D = null
 var _runic_spellbreaker_cursor_texture: Texture2D = null
 var _lailoken_cursor_texture: Texture2D = null
 var _masmassu_priest_cursor_texture: Texture2D = null
+var _grindylow_drown_cursor_texture: Texture2D = null
 var _active_selection_cursor_mode: String = ""
 var _active_selection_cursor_target_height: int = 0
 var _overlay_selection_cursor_mode: String = ""
@@ -551,6 +553,7 @@ var _void_cursor_target_height: int = 0
 var _runic_spellbreaker_cursor_target_height: int = 0
 var _lailoken_cursor_target_height: int = 0
 var _masmassu_priest_cursor_target_height: int = 0
+var _grindylow_drown_cursor_target_height: int = 0
 var _devour_cancel_prompt: Control = null
 var _tez_titlacauan_cursor_overlay: Control = null
 var _tez_titlacauan_cursor_budget_label: Label = null
@@ -674,6 +677,8 @@ const LAILOKEN_CURSOR_TARGET_HEIGHT := 108
 const LAILOKEN_CURSOR_HOTSPOT_RATIO := Vector2(0.78, 0.36)
 const MASMASSU_PRIEST_CURSOR_TARGET_HEIGHT := 108
 const MASMASSU_PRIEST_CURSOR_HOTSPOT_RATIO := Vector2(0.50, 0.78)
+const GRINDYLOW_DROWN_CURSOR_TARGET_HEIGHT := 108
+const GRINDYLOW_DROWN_CURSOR_HOTSPOT_RATIO := Vector2(0.18, 0.04)
 const SACRIFICE_CURSOR_SHAPES := [
 	Input.CURSOR_ARROW,
 	Input.CURSOR_POINTING_HAND,
@@ -2040,7 +2045,9 @@ func _get_selection_cursor_mode_for_source(card: Card) -> String:
 		return "gambanteinn"
 	if card is Lailoken:
 		return "lailoken"
-	if card is MasmassuPriest or card is Grindylow:
+	if card is Grindylow:
+		return "grindylow_drown"
+	if card is MasmassuPriest:
 		return "masmassu_priest"
 	if card is NimueScript:
 		return "nimue_entomb"
@@ -2198,6 +2205,8 @@ func _get_selection_cursor_mode() -> String:
 		return "lailoken"
 	if _has_overlay_selection_cursor_mode("masmassu_priest"):
 		return "masmassu_priest"
+	if _has_overlay_selection_cursor_mode("grindylow_drown"):
+		return "grindylow_drown"
 	if _is_freyja_active_black_cursor_mode_active():
 		return "freyja_black"
 	if _is_freyja_active_tabby_cursor_mode_active():
@@ -2232,6 +2241,8 @@ func _get_selection_cursor_mode() -> String:
 		return "tonal_extraction"
 	if _is_silence_cursor_mode_active():
 		return "silence"
+	if _has_pending_click_selection():
+		return _get_selection_cursor_mode_for_source(_pending_click_selection_source)
 	return ""
 
 func _get_cursor_mode_target_height(cursor_mode: String) -> int:
@@ -2274,6 +2285,8 @@ func _get_cursor_mode_target_height(cursor_mode: String) -> int:
 			return UIArtScalerScript.get_board_cursor_target_height(LAILOKEN_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 		"masmassu_priest":
 			return UIArtScalerScript.get_board_cursor_target_height(MASMASSU_PRIEST_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+		"grindylow_drown":
+			return UIArtScalerScript.get_board_cursor_target_height(GRINDYLOW_DROWN_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 		"tonal_extraction":
 			return UIArtScalerScript.get_board_cursor_target_height(TONAL_EXTRACTION_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 		"silence":
@@ -2692,6 +2705,19 @@ func _apply_masmassu_priest_cursor() -> bool:
 		Input.set_custom_mouse_cursor(_masmassu_priest_cursor_texture, cursor_shape, hotspot)
 	return true
 
+func _apply_grindylow_drown_cursor() -> bool:
+	var target_height := UIArtScalerScript.get_board_cursor_target_height(GRINDYLOW_DROWN_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+	if _grindylow_drown_cursor_texture == null or _grindylow_drown_cursor_target_height != target_height:
+		_grindylow_drown_cursor_texture = _load_cursor_texture_from_image_path(GRINDYLOW_DROWN_CURSOR_IMAGE_PATH, target_height)
+		_grindylow_drown_cursor_target_height = target_height
+	if _grindylow_drown_cursor_texture == null:
+		return false
+
+	var hotspot := UIArtScalerScript.get_cursor_hotspot(_grindylow_drown_cursor_texture, GRINDYLOW_DROWN_CURSOR_HOTSPOT_RATIO)
+	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
+		Input.set_custom_mouse_cursor(_grindylow_drown_cursor_texture, cursor_shape, hotspot)
+	return true
+
 func _apply_tez_titlacauan_cursor() -> bool:
 	var target_height := UIArtScalerScript.get_board_cursor_target_height(TEZ_TITLACAUAN_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 	if _tez_titlacauan_cursor_texture == null or _tez_titlacauan_cursor_target_height != target_height:
@@ -2851,6 +2877,14 @@ func _sync_sacrifice_cursor() -> void:
 	if cursor_mode == "masmassu_priest":
 		if _apply_masmassu_priest_cursor():
 			_active_selection_cursor_mode = "masmassu_priest"
+			_active_selection_cursor_target_height = target_height
+		else:
+			_restore_default_selection_cursor()
+		return
+
+	if cursor_mode == "grindylow_drown":
+		if _apply_grindylow_drown_cursor():
+			_active_selection_cursor_mode = "grindylow_drown"
 			_active_selection_cursor_target_height = target_height
 		else:
 			_restore_default_selection_cursor()
@@ -12967,7 +13001,12 @@ func _show_third_sage_enmedugga_impact_prompt(card: ThirdSageEnmedugga, prompt_t
 func _show_lailoken_reveal_prompt(card: Lailoken, prompt_targets: Array = []) -> void:
 	if card == null or game_manager == null:
 		return
-	var current_targets := _resolve_prompt_targets(card.get_valid_targets(game_manager), prompt_targets)
+	var current_targets: Array[Card] = _resolve_prompt_targets(card.get_valid_targets(game_manager), prompt_targets)
+	var source_uid := str(card.uid).strip_edges()
+	var resolve_lailoken := func() -> Lailoken:
+		if game_manager == null or source_uid == "":
+			return null
+		return game_manager.get_card_by_uid(source_uid) as Lailoken
 	if current_targets.is_empty():
 		if _submit_prompt_choice_command({
 			"type": "lailoken_reveal_choice",
@@ -12980,16 +13019,21 @@ func _show_lailoken_reveal_prompt(card: Lailoken, prompt_targets: Array = []) ->
 		return
 	if current_targets.size() == 1:
 		var target: Card = current_targets[0]
+		var target_uid: String = str(target.uid).strip_edges()
 		var resolve_single_target := func() -> void:
+			var current_card: Lailoken = resolve_lailoken.call()
+			var current_target: Card = game_manager.get_card_by_uid(target_uid) if game_manager != null else null
+			if current_card == null or current_target == null:
+				return
 			if _submit_prompt_choice_command({
 				"type": "lailoken_reveal_choice",
-				"source_uid": card.uid,
-				"target_uid": target.uid,
+				"source_uid": current_card.uid,
+				"target_uid": current_target.uid,
 			}):
 				return
-			card.begin_magic_drain_reveal(
+			current_card.begin_magic_drain_reveal(
 				game_manager,
-				target,
+				current_target,
 				func(result_text: String) -> void:
 					_set_action_label_text(_consume_resolution_feedback(result_text))
 					update_ui()
@@ -12997,13 +13041,16 @@ func _show_lailoken_reveal_prompt(card: Lailoken, prompt_targets: Array = []) ->
 		resolve_single_target.call_deferred()
 		return
 	var on_choose_magic_drain := func(clicked_card: Card) -> void:
+		var current_card: Lailoken = resolve_lailoken.call()
+		if current_card == null or clicked_card == null:
+			return
 		if _submit_prompt_choice_command({
 			"type": "lailoken_reveal_choice",
-			"source_uid": card.uid,
+			"source_uid": current_card.uid,
 			"target_uid": clicked_card.uid,
 		}):
 			return
-		card.begin_magic_drain_reveal(
+		current_card.begin_magic_drain_reveal(
 			game_manager,
 			clicked_card,
 			func(result_text: String) -> void:
@@ -13011,16 +13058,19 @@ func _show_lailoken_reveal_prompt(card: Lailoken, prompt_targets: Array = []) ->
 				update_ui()
 		)
 	var on_cancel_magic_drain := func() -> void:
+		var current_card: Lailoken = resolve_lailoken.call()
+		var current_name: String = current_card.card_name if current_card != null else card.card_name
 		if _submit_prompt_choice_command({
 			"type": "lailoken_reveal_choice",
-			"source_uid": card.uid,
+			"source_uid": source_uid,
 			"target_uid": "",
 		}):
 			return
-		_set_action_label_text(_consume_resolution_feedback(card.card_name + " reveal fizzles."))
+		_set_action_label_text(_consume_resolution_feedback(current_name + " reveal fizzles."))
 		update_ui()
 	var validate_magic_drain_target := func(clicked_card: Card) -> bool:
-		return clicked_card != null and clicked_card in card.get_valid_targets(game_manager)
+		var current_card: Lailoken = resolve_lailoken.call()
+		return current_card != null and clicked_card != null and clicked_card in current_card.get_valid_targets(game_manager)
 	_begin_pending_click_selection(
 		card.card_name,
 		card,
@@ -13035,6 +13085,14 @@ func _show_masmassu_priest_reveal_prompt(card, prompt_targets: Array = []) -> vo
 	if card == null or game_manager == null:
 		return
 	var current_targets: Array[Card] = card.get_valid_targets(game_manager)
+	var source_uid := str(card.uid).strip_edges()
+	var resolve_reveal_source := func() -> Card:
+		if game_manager == null or source_uid == "":
+			return null
+		var current_card: Card = game_manager.get_card_by_uid(source_uid)
+		if current_card is MasmassuPriest or current_card is Grindylow:
+			return current_card
+		return null
 	if current_targets.is_empty():
 		if _submit_prompt_choice_command({
 			"type": "masmassu_priest_reveal_choice",
@@ -13042,18 +13100,21 @@ func _show_masmassu_priest_reveal_prompt(card, prompt_targets: Array = []) -> vo
 			"target_uid": "",
 		}):
 			return
-		var no_target_text := "%s found no creatures to drown." % card.card_name if card is Grindylow else "%s found no creatures to break." % card.card_name
+		var no_target_text: String = "%s found no creatures to drown." % card.card_name if card is Grindylow else "%s found no creatures to break." % card.card_name
 		_set_action_label_text(_consume_resolution_feedback(no_target_text))
 		update_ui()
 		return
 	var on_choose_dalkhu_break := func(clicked_card: Card) -> void:
+		var current_card: Card = resolve_reveal_source.call()
+		if current_card == null or clicked_card == null:
+			return
 		if _submit_prompt_choice_command({
 			"type": "masmassu_priest_reveal_choice",
-			"source_uid": card.uid,
+			"source_uid": current_card.uid,
 			"target_uid": clicked_card.uid,
 		}):
 			return
-		card.begin_dalkhu_break_reveal(
+		current_card.begin_dalkhu_break_reveal(
 			game_manager,
 			clicked_card,
 			func(result_text: String) -> void:
@@ -13061,16 +13122,19 @@ func _show_masmassu_priest_reveal_prompt(card, prompt_targets: Array = []) -> vo
 				update_ui()
 		)
 	var on_cancel_dalkhu_break := func() -> void:
+		var current_card: Card = resolve_reveal_source.call()
+		var current_name: String = current_card.card_name if current_card != null else card.card_name
 		if _submit_prompt_choice_command({
 			"type": "masmassu_priest_reveal_choice",
-			"source_uid": card.uid,
+			"source_uid": source_uid,
 			"target_uid": "",
 		}):
 			return
-		_set_action_label_text(_consume_resolution_feedback(card.card_name + " reveal fizzles."))
+		_set_action_label_text(_consume_resolution_feedback(current_name + " reveal fizzles."))
 		update_ui()
 	var validate_dalkhu_break_target := func(clicked_card: Card) -> bool:
-		return clicked_card != null and clicked_card in card.get_valid_targets(game_manager)
+		var current_card: Card = resolve_reveal_source.call()
+		return current_card != null and clicked_card != null and clicked_card in current_card.get_valid_targets(game_manager)
 	_begin_pending_click_selection(
 		card.card_name,
 		card,
@@ -13087,12 +13151,17 @@ func _queue_lailoken_reveal_prompt(card: Lailoken) -> void:
 	var targets: Array = card.get_valid_targets(game_manager)
 	if targets.is_empty():
 		return
+	var target_uids: Array[String] = []
+	for target in targets:
+		if target != null:
+			target_uids.append(target.uid)
 	var action := CardAction.new()
 	action.type = CardAction.Type.EVENT
 	action.source_player = card.card_owner
 	action.card = card
 	action.event_name = "lailoken_reveal"
-	action.event_speed = 0
+	action.event_speed = card.get_effective_speed()
+	action.event_data["target_uids"] = target_uids
 	action.resolve_callback = func() -> void:
 		var current_targets: Array = card.get_valid_targets(game_manager)
 		if current_targets.is_empty():
@@ -13138,12 +13207,17 @@ func _queue_masmassu_priest_reveal_prompt(card) -> void:
 	var targets: Array = card.get_valid_targets(game_manager)
 	if targets.is_empty():
 		return
+	var target_uids: Array[String] = []
+	for target in targets:
+		if target != null:
+			target_uids.append(target.uid)
 	var action := CardAction.new()
 	action.type = CardAction.Type.EVENT
 	action.source_player = card.card_owner
 	action.card = card
 	action.event_name = "masmassu_priest_reveal"
-	action.event_speed = 0
+	action.event_speed = card.get_effective_speed()
+	action.event_data["target_uids"] = target_uids
 	action.resolve_callback = func() -> void:
 		var current_targets: Array = card.get_valid_targets(game_manager)
 		if current_targets.is_empty():
@@ -24578,9 +24652,13 @@ func _apply_full_state(data: Dictionary) -> void:
 		_present_game_result_from_state(state, msg)
 
 	update_ui()
+	var restored_reveal_prompt := _ensure_pending_reveal_click_selection()
+	if restored_reveal_prompt and _is_priority_prompt_visible():
+		_hide_priority_prompt()
 	_retry_pending_advanced_building_techniques_prompt()
 	_retry_pending_freyja_active_prompt()
-	_restore_priority_prompt_from_authoritative_state()
+	if not restored_reveal_prompt:
+		_restore_priority_prompt_from_authoritative_state()
 	_update_waiting_overlay()
 
 func _restore_network_attack_preview_from_state(preview_data: Dictionary) -> void:
@@ -24612,6 +24690,10 @@ func _restore_priority_prompt_from_authoritative_state() -> void:
 	if match_manager == null or game_manager == null:
 		return
 	if not match_manager.uses_authoritative_priority_flow():
+		return
+	if _has_pending_click_selection() or match_manager.get_pending_reveal_target_ui_interactions().size() > 0:
+		if _is_priority_prompt_visible():
+			_hide_priority_prompt()
 		return
 	var local_idx := -1
 	if network_manager != null:

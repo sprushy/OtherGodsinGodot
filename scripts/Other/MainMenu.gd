@@ -1768,6 +1768,17 @@ func _maybe_check_for_server_required_update(server_version: String) -> void:
 	_server_version_update_check_requested = true
 	if status_label != null:
 		status_label.text = "Server is running %s. Checking for update..." % server_version
+	if OS.get_name() == "Windows":
+		_begin_required_update(
+			server_version,
+			AppReleaseInfoScript.get_release_page_url_for_version(server_version),
+			AppReleaseInfoScript.get_download_url_for_version(
+				server_version,
+				AppReleaseInfoScript.WINDOWS_ASSET_NAME
+			),
+			0
+		)
+		return
 	_start_update_check(
 		"Server requires %s, but no matching public release was found." % server_version,
 		"Server requires %s, but public releases could not be checked." % server_version

@@ -1,7 +1,7 @@
 extends GodCard
 class_name ManannanMacLir
 
-const ACTIVATION_COST := 1
+const ACTIVATION_COST := 2
 const ACTIVATION_MODE := Card.CreatureMode.DEFENSIVE
 
 func _init() -> void:

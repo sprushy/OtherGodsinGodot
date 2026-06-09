@@ -60,7 +60,7 @@ func can_respond_to_priority_action(action: CardAction, game_manager: GameManage
 		return false
 	if get_controller() != game_manager.priority_player:
 		return false
-	return _action_targets_friendly_card(action)
+	return _action_targets_friendly_card(action, game_manager)
 
 func activate(game_manager: GameManager, activation_data = null) -> void:
 	if game_manager == null:
@@ -177,7 +177,7 @@ func _resolve_requested_ability(activation_data) -> String:
 		return str((activation_data as Dictionary).get("ability", "")).to_lower()
 	return ""
 
-func _action_targets_friendly_card(action: CardAction) -> bool:
+func _action_targets_friendly_card(action: CardAction, game_manager: GameManager) -> bool:
 	if action == null or action.card == null:
 		return false
 	var controller := get_controller()
@@ -188,15 +188,9 @@ func _action_targets_friendly_card(action: CardAction) -> bool:
 		source_controller = action.card.card_owner
 	if source_controller == null or source_controller == controller:
 		return false
-	if action.target is Card:
-		var target_card := action.target as Card
-		return _is_friendly_card_target(target_card, controller)
-	if action.target is Array:
-		for entry in action.target:
-			var target_card := entry as Card
-			if _is_friendly_card_target(target_card, controller):
-				return true
-	return false
+	if _target_value_contains_friendly_card(action.target, controller, game_manager):
+		return true
+	return _target_value_contains_friendly_card(action.event_data, controller, game_manager)
 
 func _is_friendly_card_target(target: Card, controller: Player) -> bool:
 	if target == null or controller == null:
@@ -205,6 +199,22 @@ func _is_friendly_card_target(target: Card, controller: Player) -> bool:
 	if target_controller == null:
 		target_controller = target.card_owner
 	return target_controller == controller
+
+func _target_value_contains_friendly_card(value, controller: Player, game_manager: GameManager) -> bool:
+	if value is Card:
+		return _is_friendly_card_target(value as Card, controller)
+	if value is String and game_manager != null:
+		var target_card := game_manager.get_card_by_uid(str(value))
+		return _is_friendly_card_target(target_card, controller)
+	if value is Array:
+		for entry in value:
+			if _target_value_contains_friendly_card(entry, controller, game_manager):
+				return true
+	elif value is Dictionary:
+		for entry in (value as Dictionary).values():
+			if _target_value_contains_friendly_card(entry, controller, game_manager):
+				return true
+	return false
 
 func _get_human_form_types() -> Array[String]:
 	return [
