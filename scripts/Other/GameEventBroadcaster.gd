@@ -352,7 +352,11 @@ func _label_for_move(move: Dictionary, viewer: Player = null) -> String:
 			var priest := game_manager.get_card_by_uid(move.get("source_uid", ""))
 			var chosen := game_manager.get_card_by_uid(move.get("target_uid", ""))
 			if priest != null and chosen != null:
+				if priest is Grindylow:
+					return "%s drowns %s." % [_card_label_for_viewer(priest, viewer), _card_label_for_viewer(chosen, viewer)]
 				return "%s breaks %s." % [_card_label_for_viewer(priest, viewer), _card_label_for_viewer(chosen, viewer)]
+			if priest is Grindylow:
+				return "%s resolves Drown Below." % _card_label_for_viewer(priest, viewer)
 			return ("%s resolves Dalkhu Break." % _card_label_for_viewer(priest, viewer)) if priest != null else "Dalkhu Break resolves."
 		"rally_the_troops_choice":
 			var rally := game_manager.get_card_by_uid(move.get("source_uid", ""))

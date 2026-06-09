@@ -42,7 +42,7 @@ func activate(game_manager: GameManager, target = null) -> void:
 		target_card = target as Card
 	card_owner.spend_mana(2)
 	var opponent := game_manager.get_opponent(card_owner)
-	if force_convert or not is_frontline() or (target_card != null and target_card.is_god):
+	if force_convert or not is_frontline() or is_valid_convert_target(target_card, game_manager):
 		game_manager.convert_followers(opponent, card_owner, 5)
 		print("Ancient Pyre: Ritual Flame converts 5 followers from " + opponent.player_name + ".")
 		return
@@ -79,3 +79,16 @@ func is_valid_activation_target(target: Card) -> bool:
 		and not target.is_god \
 		and target.current_zone != null \
 		and target.current_zone.is_board_zone()
+
+func is_valid_convert_target(target: Card, game_manager: GameManager) -> bool:
+	if target == null or game_manager == null or not target.is_god:
+		return false
+	if target.current_zone == null or target.current_zone.zone_type != Zone.ZoneType.GOD_SLOT:
+		return false
+	var opponent := game_manager.get_opponent(card_owner)
+	return opponent != null \
+		and target.current_zone == opponent.god_zone \
+		and opponent.followers > 0
+
+func is_valid_card_selection_target(target: Card, game_manager: GameManager) -> bool:
+	return is_valid_activation_target(target) or is_valid_convert_target(target, game_manager)

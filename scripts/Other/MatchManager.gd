@@ -3364,6 +3364,21 @@ func _process_command_impl(command: Dictionary) -> bool:
 			if ability_ward_block_reason != "":
 				move_failed.emit(ability_ward_block_reason)
 				return false
+			if aca_source is AncientPyre:
+				var aca_pyre := aca_source as AncientPyre
+				var pyre_mode := str(aca_option.get("mode", "")).strip_edges()
+				if pyre_mode == "convert":
+					var pyre_opponent := game_manager.get_opponent(aca_pyre.card_owner)
+					if pyre_opponent == null or pyre_opponent.followers <= 0 or not aca_pyre.can_activate(game_manager):
+						move_failed.emit("activate_card_ability: Ancient Pyre cannot convert right now")
+						return false
+				elif aca_pyre.is_frontline():
+					if aca_target == null or not aca_pyre.is_valid_card_selection_target(aca_target, game_manager):
+						move_failed.emit("activate_card_ability: invalid Ancient Pyre target")
+						return false
+				elif aca_target != null:
+					move_failed.emit("activate_card_ability: Ancient Pyre does not use a card target from reserve")
+					return false
 			if aca_source.card_type == Card.CardType.CREATURE \
 					and not game_manager.can_pay_creature_action_mana_cost(aca_source, "activate"):
 				move_failed.emit(aca_source.card_name + " needs 1 mana to activate while Wheel of Fire is attached.")

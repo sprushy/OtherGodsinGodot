@@ -3893,7 +3893,12 @@ func _is_card_pending_target(card: Card) -> bool:
 		return pending_validator.call(card) == true
 
 	if scene_root.get("awaiting_pyre_target") == true:
-		return true
+		var pyre_source = scene_root.get("pyre_source")
+		if pyre_source != null and pyre_source.has_method("is_valid_card_selection_target"):
+			return pyre_source.is_valid_card_selection_target(card, game_manager)
+		return pyre_source != null \
+			and pyre_source.has_method("is_valid_activation_target") \
+			and pyre_source.is_valid_activation_target(card)
 
 	if scene_root.get("awaiting_anointing_target") == true:
 		var anointing_source = scene_root.get("anointing_source")

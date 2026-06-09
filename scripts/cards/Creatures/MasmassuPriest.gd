@@ -113,7 +113,6 @@ func begin_dalkhu_break_reveal(
 
 func _is_valid_dalkhu_break_target(target: Card) -> bool:
 	return target != null \
-		and target != self \
 		and target.card_type == Card.CardType.CREATURE \
 		and not target.is_god \
 		and target.current_zone != null \

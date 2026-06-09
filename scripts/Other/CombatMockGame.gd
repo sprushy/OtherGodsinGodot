@@ -11113,6 +11113,13 @@ func _on_stealth_mode_pressed() -> void:
 		_on_empty_zone_pressed(_pending_drop_zone)
 		_pending_drop_zone = null
 
+func _is_valid_pyre_card_selection_target(source_pyre: AncientPyre, target_card: Card) -> bool:
+	if source_pyre == null or target_card == null:
+		return false
+	if source_pyre.has_method("is_valid_card_selection_target"):
+		return source_pyre.is_valid_card_selection_target(target_card, game_manager)
+	return source_pyre.is_valid_activation_target(target_card)
+
 func _try_resolve_pyre_convert_from_enemy_god_zone(zone: Zone) -> bool:
 	if not awaiting_pyre_target or pyre_source == null or game_manager == null or zone == null:
 		return false
@@ -13027,7 +13034,7 @@ func _show_lailoken_reveal_prompt(card: Lailoken, prompt_targets: Array = []) ->
 func _show_masmassu_priest_reveal_prompt(card, prompt_targets: Array = []) -> void:
 	if card == null or game_manager == null:
 		return
-	var current_targets := _resolve_prompt_targets(card.get_valid_targets(game_manager), prompt_targets)
+	var current_targets: Array[Card] = card.get_valid_targets(game_manager)
 	if current_targets.is_empty():
 		if _submit_prompt_choice_command({
 			"type": "masmassu_priest_reveal_choice",
@@ -13035,7 +13042,8 @@ func _show_masmassu_priest_reveal_prompt(card, prompt_targets: Array = []) -> vo
 			"target_uid": "",
 		}):
 			return
-		_set_action_label_text(_consume_resolution_feedback("%s found no creatures to break." % card.card_name))
+		var no_target_text := "%s found no creatures to drown." % card.card_name if card is Grindylow else "%s found no creatures to break." % card.card_name
+		_set_action_label_text(_consume_resolution_feedback(no_target_text))
 		update_ui()
 		return
 	if current_targets.size() == 1:
@@ -15702,6 +15710,14 @@ func _on_board_card_pressed(card: Card) -> void:
 
 	if awaiting_pyre_target and pyre_source != null:
 		var source_pyre := pyre_source
+		if not _is_valid_pyre_card_selection_target(source_pyre, card):
+			_cancel_pending_target_selection(
+				source_pyre.card_name
+				+ " cancelled: invalid target "
+				+ _get_card_name_safe(card, "selected")
+				+ "."
+			)
+			return
 		var resolve_pyre_target := func() -> void:
 			source_pyre.activate(game_manager, card)
 		_queue_targeted_ability_action(
@@ -16027,6 +16043,17 @@ func _on_enemy_card_pressed(target_card: Card) -> void:
 		return
 	if awaiting_pyre_target and pyre_source != null:
 		var source_pyre := pyre_source
+		if not _is_valid_pyre_card_selection_target(source_pyre, target_card):
+			_cancel_pending_target_selection(
+				source_pyre.card_name
+				+ " cancelled: invalid target "
+				+ _get_card_name_safe(target_card, "selected")
+				+ "."
+			)
+			return
+		if source_pyre.has_method("is_valid_convert_target") and source_pyre.is_valid_convert_target(target_card, game_manager):
+			_try_resolve_pyre_convert_from_enemy_god_zone(target_card.current_zone)
+			return
 		var resolve_board_pyre := func() -> void:
 			source_pyre.activate(game_manager, target_card)
 		_queue_targeted_ability_action(
