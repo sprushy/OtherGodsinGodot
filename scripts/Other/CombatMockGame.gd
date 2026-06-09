@@ -8616,6 +8616,35 @@ func _try_handle_pending_click_selection(clicked_card: Card) -> bool:
 	match_manager.confirm_click_selection(clicked_card)
 	return true
 
+func _ensure_pending_reveal_click_selection() -> bool:
+	if _has_pending_click_selection() or match_manager == null or game_manager == null:
+		return _has_pending_click_selection()
+	if not match_manager.has_method("get_pending_reveal_target_ui_interactions"):
+		return false
+	var interactions: Array = match_manager.call("get_pending_reveal_target_ui_interactions")
+	for entry_value in interactions:
+		if not (entry_value is Dictionary):
+			continue
+		var entry: Dictionary = entry_value
+		var interaction_type := str(entry.get("type", ""))
+		var data: Dictionary = entry.get("data", {})
+		var card := game_manager.get_card_by_uid(str(data.get("source_uid", "")))
+		var prompt_targets: Array[Card] = []
+		for target_uid in data.get("target_uids", []):
+			var target_card := game_manager.get_card_by_uid(str(target_uid))
+			if target_card != null:
+				prompt_targets.append(target_card)
+		match interaction_type:
+			"lailoken_reveal":
+				if card is Lailoken:
+					_show_lailoken_reveal_prompt(card as Lailoken, prompt_targets)
+			"masmassu_priest_reveal":
+				if card is MasmassuPriest or card is Grindylow:
+					_show_masmassu_priest_reveal_prompt(card, prompt_targets)
+		if _has_pending_click_selection():
+			return true
+	return false
+
 func _begin_bit_meseri_target_selection(spell: BitMeseri) -> void:
 	if spell == null or game_manager == null:
 		return
@@ -11378,6 +11407,7 @@ func _on_god_card_pressed(card: Card) -> void:
 			_set_action_label_text("Titlacauan is waiting for enemy creature picks. Click Tez to confirm or right-click to skip.")
 			update_ui()
 		return
+	_ensure_pending_reveal_click_selection()
 	if _has_pending_target_selection():
 		if _try_handle_pending_click_selection(card):
 			return
@@ -15368,6 +15398,9 @@ func _on_creature_stance_switch_clicked(card: Card, target_mode: Card.CreatureMo
 		return
 	if _reject_badge_click_while_locked(card):
 		return
+	if _has_pending_target_selection():
+		_handle_invalid_pending_target_click()
+		return
 	if _has_active_modal_prompt():
 		_reject_modal_prompt_action()
 		return
@@ -15636,6 +15669,7 @@ func _on_board_card_pressed(card: Card) -> void:
 		else:
 			_set_action_label_text("Select a sleeping creature to void.")
 		return
+	_ensure_pending_reveal_click_selection()
 	if _has_pending_click_selection():
 		if _try_handle_pending_click_selection(card):
 			return
@@ -15926,6 +15960,7 @@ func _on_enemy_card_pressed(target_card: Card) -> void:
 	if _pending_tezcatlipoca_active_prompt != null:
 		if _toggle_tez_titlacauan_target(target_card):
 			return
+	_ensure_pending_reveal_click_selection()
 	if _has_pending_click_selection():
 		if _try_handle_pending_click_selection(target_card):
 			return
@@ -16560,6 +16595,9 @@ func _on_context_reveal_stance_pressed(card_uid: String, target_mode_value: int)
 	if card == null:
 		update_ui()
 		return
+	if _has_pending_target_selection():
+		_handle_invalid_pending_target_click()
+		return
 	var target_mode: Card.CreatureMode = target_mode_value as Card.CreatureMode
 	var target_mode_name := "aggressive" if target_mode == Card.CreatureMode.AGGRESSIVE else "defensive"
 	var was_stealth: bool = card.is_stealth
@@ -16578,6 +16616,9 @@ func _on_context_change_stance_pressed(card_uid: String) -> void:
 	var card := _get_context_card_by_uid(card_uid)
 	if card == null:
 		update_ui()
+		return
+	if _has_pending_target_selection():
+		_handle_invalid_pending_target_click()
 		return
 	var target_mode: Card.CreatureMode = Card.CreatureMode.DEFENSIVE if card.creature_mode == Card.CreatureMode.AGGRESSIVE else Card.CreatureMode.AGGRESSIVE
 	game_input.submit_action({type = "change_mode", card_uid = card.uid, mode = target_mode})

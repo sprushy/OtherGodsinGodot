@@ -38,6 +38,7 @@ const UPDATE_CHECK_RETRY_DELAY_SECONDS := 1.0
 const UPDATE_CHECK_MAX_ATTEMPTS := 2
 const UPDATE_LOG_PATH := "user://update.log"
 const UPDATE_FAILURE_MARKER_PATH := "user://update_failure.txt"
+const MACOS_SPARKLE_EXTENSION_PATH := "res://addons/macos_sparkle/macos_sparkle.gdextension"
 const BYTES_PER_MIB := 1048576.0
 
 @onready var menu_container = $MenuContainer
@@ -1967,12 +1968,30 @@ func _start_macos_sparkle_update(latest_version: String) -> bool:
 func _ensure_macos_sparkle_bridge() -> bool:
 	if OS.get_name() != "macOS" or not _release_updates_enabled():
 		return false
+	if not _ensure_macos_sparkle_extension_loaded():
+		return false
 	if _macos_sparkle_bridge != null:
 		return true
 	if not ClassDB.class_exists("MacSparkleBridge"):
 		return false
 	_macos_sparkle_bridge = ClassDB.instantiate("MacSparkleBridge")
 	return _macos_sparkle_bridge != null
+
+func _ensure_macos_sparkle_extension_loaded() -> bool:
+	var extension_path := ProjectSettings.globalize_path(MACOS_SPARKLE_EXTENSION_PATH)
+	if GDExtensionManager.is_extension_loaded(extension_path):
+		return true
+	var load_status := GDExtensionManager.load_extension(extension_path)
+	if load_status in [
+		GDExtensionManager.LOAD_STATUS_OK,
+		GDExtensionManager.LOAD_STATUS_ALREADY_LOADED,
+	]:
+		return true
+	_write_update_log(
+		"sparkle_extension_load_failed status=%s path=%s"
+		% [str(load_status), extension_path]
+	)
+	return false
 
 func _show_update_prompt(
 	latest_version: String,

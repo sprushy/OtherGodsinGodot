@@ -855,6 +855,22 @@ func _get_pending_ui_debug_summary(limit: int = 5) -> String:
 		])
 	return "; ".join(items)
 
+func _has_pending_reveal_target_ui_interaction() -> bool:
+	for entry in _pending_ui_interactions:
+		var interaction_type := str(entry.get("type", ""))
+		if interaction_type in ["lailoken_reveal", "masmassu_priest_reveal"]:
+			return true
+	return false
+
+func get_pending_reveal_target_ui_interactions() -> Array[Dictionary]:
+	var interactions: Array[Dictionary] = []
+	for entry in _pending_ui_interactions:
+		var interaction_type := str(entry.get("type", ""))
+		if interaction_type not in ["lailoken_reveal", "masmassu_priest_reveal"]:
+			continue
+		interactions.append(entry.duplicate(true))
+	return interactions
+
 func _log_authoritative_flow_state(context: String) -> void:
 	if game_manager == null or not _uses_authoritative_headless_priority_flow():
 		return
@@ -2231,6 +2247,8 @@ func _start_authoritative_headless_attack() -> void:
 func can_attack(card: Card) -> bool:
 	if card == null or game_manager == null:
 		return false
+	if is_targeting_active() or _has_pending_reveal_target_ui_interaction():
+		return false
 	if _has_unresolved_stack_action_window():
 		return false
 		
@@ -2252,6 +2270,8 @@ func get_attack_invalid_reason(card: Card) -> String:
 		return "No card selected."
 	if card.card_type != Card.CardType.CREATURE:
 		return "Only creatures can attack."
+	if is_targeting_active() or _has_pending_reveal_target_ui_interaction():
+		return "Choose a target for %s before attacking." % get_targeting_name()
 	if _has_unresolved_stack_action_window():
 		return "Resolve the pending stack action before attacking."
 	if not card.can_take_major_creature_action():
@@ -2529,8 +2549,11 @@ func _requires_clear_stack_window(command_type: String) -> bool:
 
 func _validate_turn_action_window(command: Dictionary, sender_info: Dictionary) -> String:
 	var command_type := str(command.get("type", ""))
-	if _requires_clear_stack_window(command_type) and _has_unresolved_stack_action_window():
-		return "Resolve the pending stack action before continuing."
+	if _requires_clear_stack_window(command_type):
+		if is_targeting_active() or _has_pending_reveal_target_ui_interaction():
+			return "Choose a target for %s before continuing." % get_targeting_name()
+		if _has_unresolved_stack_action_window():
+			return "Resolve the pending stack action before continuing."
 	var actor := _get_command_actor(sender_info)
 	if actor == null:
 		return ""
