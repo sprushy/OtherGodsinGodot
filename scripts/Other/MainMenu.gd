@@ -16,6 +16,9 @@ const MatchHistoryStoreScript = preload("res://scripts/server/MatchHistoryStore.
 const MatchSessionScript = preload("res://scripts/server/MatchSession.gd")
 const LobbyRoomScript = preload("res://scripts/server/LobbyRoom.gd")
 const STARTUP_SPLASH_IMAGE_PATH := "res://images/ui/splash/other_gods_splash.png"
+const STARTUP_SPLASH_SLICE_COUNT := 14
+const STARTUP_SPLASH_SLIDE_SECONDS := 1.15
+const STARTUP_SPLASH_SLICE_STAGGER_SECONDS := 0.045
 const STARTUP_MUSIC_PATH := "res://audio/relaxingtime-relaxing-music-119247.mp3"
 const USER_SETTINGS_PATH := "user://settings.cfg"
 const AUDIO_SETTINGS_SECTION := "audio"
@@ -175,11 +178,15 @@ var _friends_send_deck_dialog: ConfirmationDialog = null
 var _friends_send_deck_option: OptionButton = null
 var _friends_pending_send_username: String = ""
 var _close_confirm_overlay: Control = null
-var _startup_splash_background: TextureRect = null
+var _startup_splash_background: Control = null
+var _startup_splash_texture: Texture2D = null
+var _startup_splash_slices: Array[TextureRect] = []
 var _startup_music_player: AudioStreamPlayer = null
 var _music_mute_button: Button = null
 var _music_muted: bool = false
 var _startup_menu_fade_started: bool = false
+var _startup_splash_animation_started: bool = false
+var _startup_splash_animation_finished: bool = false
 
 func _ready() -> void:
 	if _is_server_runtime_launch():
@@ -257,19 +264,34 @@ func _ready() -> void:
 func _ensure_startup_splash_background() -> void:
 	if _startup_splash_background != null and is_instance_valid(_startup_splash_background):
 		return
-	var splash_texture := _load_startup_splash_texture()
-	if splash_texture == null:
+	_startup_splash_texture = _load_startup_splash_texture()
+	if _startup_splash_texture == null:
 		return
-	var background := TextureRect.new()
+	var background := Control.new()
 	background.name = "StartupSplashBackground"
-	background.texture = splash_texture
-	background.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-	background.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	background.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	background.clip_contents = true
 	background.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	var fill := ColorRect.new()
+	fill.name = "BackgroundFill"
+	fill.color = Color(0.03, 0.03, 0.05, 1.0)
+	fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	fill.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	background.add_child(fill)
+	_startup_splash_slices.clear()
+	for slice_index in range(STARTUP_SPLASH_SLICE_COUNT):
+		var slice := TextureRect.new()
+		slice.name = "SplashSlice%d" % slice_index
+		slice.texture = _make_startup_splash_slice_texture(_startup_splash_texture, slice_index)
+		slice.stretch_mode = TextureRect.STRETCH_SCALE
+		slice.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		slice.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		background.add_child(slice)
+		_startup_splash_slices.append(slice)
 	add_child(background)
 	move_child(background, 0)
 	_startup_splash_background = background
+	_layout_startup_splash_background()
 
 func _ensure_startup_music() -> void:
 	if _startup_music_player != null and is_instance_valid(_startup_music_player):
@@ -299,6 +321,82 @@ func _load_startup_splash_texture() -> Texture2D:
 		push_warning("Could not load startup splash image: %s" % STARTUP_SPLASH_IMAGE_PATH)
 		return null
 	return ImageTexture.create_from_image(image)
+
+func _make_startup_splash_slice_texture(splash_texture: Texture2D, slice_index: int) -> Texture2D:
+	if splash_texture == null:
+		return null
+	var slice_count := maxi(1, STARTUP_SPLASH_SLICE_COUNT)
+	var texture_size := splash_texture.get_size()
+	var left := texture_size.x * float(slice_index) / float(slice_count)
+	var right := texture_size.x * float(slice_index + 1) / float(slice_count)
+	var atlas := AtlasTexture.new()
+	atlas.atlas = splash_texture
+	atlas.region = Rect2(Vector2(left, 0.0), Vector2(right - left, texture_size.y))
+	return atlas
+
+func _layout_startup_splash_background(force_entry_offsets: bool = false) -> void:
+	if _startup_splash_background == null or not is_instance_valid(_startup_splash_background):
+		return
+	_startup_splash_background.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	if _startup_splash_texture == null:
+		return
+	var draw_rect := _get_startup_splash_draw_rect(_startup_splash_texture.get_size(), size)
+	var slice_count := maxi(1, _startup_splash_slices.size())
+	var use_entry_offsets := force_entry_offsets or (_startup_splash_animation_started and not _startup_splash_animation_finished)
+	for slice_index in range(_startup_splash_slices.size()):
+		var slice := _startup_splash_slices[slice_index]
+		if slice == null or not is_instance_valid(slice):
+			continue
+		var left := draw_rect.position.x + draw_rect.size.x * float(slice_index) / float(slice_count)
+		var right := draw_rect.position.x + draw_rect.size.x * float(slice_index + 1) / float(slice_count)
+		var target_position := Vector2(left, draw_rect.position.y)
+		var target_size := Vector2(right - left, draw_rect.size.y)
+		slice.size = target_size
+		slice.set_meta("target_position", target_position)
+		if use_entry_offsets:
+			slice.position = Vector2(target_position.x, _get_startup_splash_entry_y(target_position, target_size, slice_index))
+		else:
+			slice.position = target_position
+
+func _get_startup_splash_draw_rect(texture_size: Vector2, available_size: Vector2) -> Rect2:
+	if texture_size.x <= 0.0 or texture_size.y <= 0.0 or available_size.x <= 0.0 or available_size.y <= 0.0:
+		return Rect2(Vector2.ZERO, available_size)
+	var scale := maxf(available_size.x / texture_size.x, available_size.y / texture_size.y)
+	var scaled_size := texture_size * scale
+	return Rect2((available_size - scaled_size) * 0.5, scaled_size)
+
+func _get_startup_splash_entry_y(target_position: Vector2, target_size: Vector2, slice_index: int) -> float:
+	if slice_index % 2 == 0:
+		return target_position.y - target_size.y
+	return target_position.y + target_size.y
+
+func _begin_startup_splash_animation() -> void:
+	if _startup_splash_animation_started:
+		return
+	if _startup_splash_background == null or not is_instance_valid(_startup_splash_background):
+		return
+	if _startup_splash_slices.is_empty():
+		return
+	_startup_splash_animation_started = true
+	_startup_splash_animation_finished = false
+	_layout_startup_splash_background(true)
+	var tween := create_tween()
+	for slice_index in range(_startup_splash_slices.size()):
+		var slice := _startup_splash_slices[slice_index]
+		if slice == null or not is_instance_valid(slice):
+			continue
+		var target_position: Vector2 = slice.get_meta("target_position", slice.position)
+		tween.parallel().tween_property(
+			slice,
+			"position:y",
+			target_position.y,
+			STARTUP_SPLASH_SLIDE_SECONDS
+		).set_delay(float(slice_index) * STARTUP_SPLASH_SLICE_STAGGER_SECONDS).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	tween.finished.connect(Callable(self, "_on_startup_splash_animation_finished"))
+
+func _on_startup_splash_animation_finished() -> void:
+	_startup_splash_animation_finished = true
+	_layout_startup_splash_background(false)
 
 func _load_startup_music_stream() -> AudioStream:
 	if ResourceLoader.exists(STARTUP_MUSIC_PATH):
@@ -394,6 +492,7 @@ func _begin_startup_menu_fade() -> void:
 	if _startup_menu_fade_started or menu_container == null:
 		return
 	_startup_menu_fade_started = true
+	_begin_startup_splash_animation()
 	menu_container.modulate.a = 0.0
 	var tween := create_tween()
 	tween.tween_property(menu_container, "modulate:a", 1.0, STARTUP_MENU_FADE_SECONDS).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
@@ -478,6 +577,7 @@ func _show_embedded_game(node_name: String) -> Node:
 func _fit_to_viewport() -> void:
 	position = Vector2.ZERO
 	size = get_viewport().get_visible_rect().size
+	_layout_startup_splash_background()
 	if _deck_picker_popup != null and is_instance_valid(_deck_picker_popup) and _deck_picker_popup.visible:
 		_position_multiplayer_deck_popup()
 

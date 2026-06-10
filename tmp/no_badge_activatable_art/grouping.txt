@@ -1,0 +1,59 @@
+needs_badge
+Allfathers Sacrifice - Copy.jpg
+Alu - Copy.jpg
+Alu.jpg
+Ancient Pyre - Copy.jpg
+Anointing Statue - Copy.png
+Berserker.jpg
+Beyla.png
+Breidablik.jpg
+Clay-Eaters.jpg
+E2-abzu.jpg
+En-hedu-anna.png
+Erlqueens Nightingale.png
+Gawain.png
+Guan Yu Active God.png
+Gudu Priest.jpg
+Harii Shaman.png
+Isimud.jpg
+Jiaolong.jpg
+Kur-Jara.jpg
+Lamashatu.png
+Lindwyrm.png
+manifest.txt
+Mopsus.png
+Nagual.png
+Nimue.png
+Odin the Allfather.jpg
+Robotic Footsoldier.jpg
+Seventh Sage Utuabzu.png
+Tezcatlipoca Active God.png
+Tezcatlipoca Blasphemer.png
+The White Serpent.png
+Thiazi.png
+Winged Lion.png
+
+cursor_only
+Allfathers Sacrifice.jpg
+Anankes Binding.jpg
+Ancient Pyre.jpg
+Anointing Statue.png
+Aphrodite Areia.png
+Berserker Mead.jpg
+Call of the Valkyrie.png
+Dellingr the Dayspring.jpg
+Divine Caprice.png
+Fire and Gold.png
+Freyja.png
+Gambanteinn.png
+Hermes.png
+Hildskjalf Throne of Odin.png
+Manannan mac Lir.png
+manifest.txt
+Mech Factory.jpg
+Mummu The One Who Has Awoken.png
+Nusku Firebearer.png
+Oracles Sight.png
+Palisade.png
+Tonal Extraction.png
+Walk of the Sage.jpg

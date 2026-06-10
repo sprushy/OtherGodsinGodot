@@ -119,6 +119,13 @@ static func from_dict(dict: Dictionary, game_manager: GameManager) -> CardAction
 	action.event_speed = dict.get("event_speed", 0)
 	action.event_data = dict.get("event_data", {})
 	action.display_zone = _dict_to_zone(dict.get("display_zone", {}), game_manager)
+	var visible_card_data = dict.get("visible_card", null)
+	if visible_card_data is Dictionary and not (visible_card_data as Dictionary).is_empty():
+		var visible_card := GameState.deserialize_embedded_card(visible_card_data as Dictionary)
+		if visible_card != null:
+			visible_card.card_owner = action.source_player
+			visible_card.current_zone = action.display_zone
+			action.card = visible_card
 	
 	return action
 

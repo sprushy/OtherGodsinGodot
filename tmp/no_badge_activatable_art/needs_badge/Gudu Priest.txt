@@ -1,0 +1,1 @@
+﻿[b]Creature Ward[/b] ([b]Activate[/b], Spd3): Once per turn, choose a creature. Remove creature-applied effects from it. For the remainder of the turn it is unaffected by creature abilities.

@@ -1,0 +1,2 @@
+﻿Patriarch Rule
+Runic Knowledge ([b]Activate[/b]): [b]Void[/b] a Runic or an \"of Odin\" card from your hand, field, or grave. Name the top card of your deck and reveal it; if you are correct, draw it. If not, lose 15 followers and [b]Shelve[/b] it.

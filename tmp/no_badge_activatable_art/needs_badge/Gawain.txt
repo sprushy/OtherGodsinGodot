@@ -1,0 +1,2 @@
+﻿Sun Blessing ([b]Passive[/b]): During your turn, this creature's base STR and RES are tripled until your first attack resolves or your turn ends.
+Healing Hands (2 mana): Remove a negative effect from a friendly creature.

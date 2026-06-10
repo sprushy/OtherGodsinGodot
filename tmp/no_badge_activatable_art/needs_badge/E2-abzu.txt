@@ -1,0 +1,2 @@
+﻿([b]Activate[/b], 3 mana): Add a Mer Mage from your [b]Void[/b] to your hand with level less than your mana count.
+([b]Activate[/b], 2 mana, [b]Spd[/b] 3): [b]Void[/b] a friendly Mer Mage from the field until end of turn.

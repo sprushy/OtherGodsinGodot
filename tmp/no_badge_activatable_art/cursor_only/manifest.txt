@@ -1,0 +1,22 @@
+Allfathers Sacrifice|images/card_art/powers/allfathers_sacrifice.jpg
+Anankes Binding|images/card_art/powers/anankes_binding.jpg
+Ancient Pyre|images/card_art/structures/ancient_pyre.jpg
+Anointing Statue|images/card_art/structures/anointing_statue.png
+Aphrodite Areia|images/card_art/gods/aphrodite_areia.png
+Berserker Mead|images/card_art/powers/poetmead.jpg
+Call of the Valkyrie|images/card_art/powers/CalloftheValkyrieAIEdit.png
+Dellingr the Dayspring|images/card_art/gods/Dellingr(web).jpg
+Divine Caprice|images/card_art/powers/DivineCapriceAIEdit.png
+Fire and Gold|images/card_art/powers/FireandGoldAIEdit.png
+Freyja|images/card_art/gods/FrejyaAndCatsAieditSquare.png
+Gambanteinn|images/card_art/equipment/gambanteinn_ai_edit.png
+Hermes|images/card_art/gods/HermesEdit.png
+Hildskjalf Throne of Odin|images/card_art/structures/ThroneodOdinEdit.png
+Manannan mac Lir|images/card_art/gods/MannanMacLirEdit.png
+Mech Factory|images/card_art/powers/Mech_Factory.jpg
+Mummu The One Who Has Awoken|images/card_art/gods/Mummu.png
+Nusku Firebearer|images/card_art/gods/NuskuEdit2.png
+Oracles Sight|images/card_art/powers/OraclesSightEdit.png
+Palisade|images/card_art/structures/PalisadeArtEdit.png
+Tonal Extraction|images/card_art/powers/TonalExtractionEdit.png
+Walk of the Sage|images/card_art/powers/Walk of the Sage(web).jpg

@@ -1,0 +1,1 @@
+﻿[b]Berserker Rage[/b] (Once per turn, 1 mana): This turn gain 10 Str and [b]Immortal[/b]. After any attack, sleep until the start of your next turn.

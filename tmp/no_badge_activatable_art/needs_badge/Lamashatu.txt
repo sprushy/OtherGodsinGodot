@@ -1,0 +1,1 @@
+﻿[b]Suckle[/b] ([b]Activate[/b]): Once per turn, choose another friendly Demon or Animal. It gains +1 Lvl, +1 Spd, +5 Str, and +5 Res.

@@ -333,6 +333,8 @@ static func _serialize_action_stack(action_stack: Array, gm: GameManager, viewer
 		if gm != null and action in gm.resolving_stack_actions:
 			continue
 		var serialized := (action as CardAction).to_dict(gm)
+		if action.card != null and action.card.is_magical_card():
+			serialized["visible_card"] = _serialize_card(action.card, HIDDEN_MODE_NONE)
 		serialized["resolution_text"] = _serialize_action_resolution_text(action as CardAction, viewer)
 		result.append(serialized)
 	return result

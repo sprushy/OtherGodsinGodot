@@ -1,0 +1,2 @@
+﻿[b]Shift[/b] ([b]Activate[/b], [b]Minor Action[/b], once per turn): Switch this card between Giant, Mage, Shapeshifter and Animal, Mage, Avian, Aerial.
+[b]Animal Form[/b] ([b]Passive[/b]): While in Animal form, this card's stats become SPD 3 / RES 15 / STR 27.

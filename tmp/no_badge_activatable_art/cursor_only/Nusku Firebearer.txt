@@ -1,0 +1,1 @@
+﻿Well of Fire (%d mana, [b]Activate[/b]): [b]Mill[/b] 7 cards; if there are Ancient Charms or Spells among them, your opponent chooses one and adds it to your hand.

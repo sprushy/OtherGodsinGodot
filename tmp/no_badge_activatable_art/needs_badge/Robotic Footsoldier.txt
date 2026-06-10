@@ -1,0 +1,1 @@
+﻿United Front: Can attack with another Machine, using their combined STR at the lower SPD.

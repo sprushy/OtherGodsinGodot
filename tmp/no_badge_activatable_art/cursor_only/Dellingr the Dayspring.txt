@@ -1,0 +1,1 @@
+﻿Revealing Light (%d mana, [b]Activate[/b]): Reveal an opponent's card until the end of the turn; if it is magical, it cannot be activated this turn.

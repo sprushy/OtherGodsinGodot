@@ -786,6 +786,8 @@ func resolve_action(action: CardAction) -> void:
 			_resolve_ability(action)
 		CardAction.Type.SPELL:
 			_resolve_spell(action)
+		CardAction.Type.CHARM:
+			_resolve_spell(action)
 		CardAction.Type.EVENT:
 			_resolve_event(action)
 			action_completed = pending_tezcatlipoca_titlacauan_action != action
@@ -1711,7 +1713,9 @@ func _can_resolve_top_stack_action_now() -> bool:
 	return not _player_has_priority_prompt_responses(first_player) and not _player_has_priority_prompt_responses(second_player)
 
 func _action_requires_explicit_priority_window(action: CardAction) -> bool:
-	return action != null and bool(action.event_data.get("force_priority_window", false))
+	return action != null \
+		and bool(action.event_data.get("force_priority_window", false)) \
+		and not bool(action.event_data.get("priority_window_offered", false))
 
 func _resolve_authoritative_stack_top_after_priority() -> void:
 	if game_manager == null or game_manager.action_stack.is_empty():
@@ -2227,6 +2231,8 @@ func _advance_authoritative_priority() -> void:
 		else:
 			_advance_authoritative_priority()
 		return
+	if force_priority_window and top_action != null:
+		top_action.event_data["priority_window_offered"] = true
 	var player_idx := game_manager.players.find(player)
 	request_ui_interaction.emit(player_idx, "priority", prompt_data)
 
@@ -4608,7 +4614,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 					move_failed.emit(_get_move_cost_payment_failure_reason(pcr_charm_card, true, pcr_charm_card.card_owner))
 					return false
 			var pcr_action := CardAction.new()
-			pcr_action.type = CardAction.Type.SPELL
+			pcr_action.type = CardAction.Type.CHARM
 			pcr_action.source_player = pcr_charm_card.card_owner
 			pcr_action.card = pcr_charm
 			pcr_action.target = pcr_target

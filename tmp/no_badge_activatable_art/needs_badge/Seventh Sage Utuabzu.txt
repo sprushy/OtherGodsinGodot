@@ -1,0 +1,2 @@
+﻿[b]Channel Ally[/b] ([b]Impact[/b]): Choose another allied Ancient Sage on the field or in the [b]Void[/b] and activate its impact effect.
+[b]Imbue Ally[/b] ([b]Activate[/b], 2 Mana): Choose another allied Ancient Sage on the field and activate its impact effect if it hasn't activated this turn.

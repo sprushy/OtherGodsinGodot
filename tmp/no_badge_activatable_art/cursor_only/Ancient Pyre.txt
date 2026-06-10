@@ -1,0 +1,1 @@
+﻿Ritual Flame ([b]Activate[/b], Cost 2): [b]Convert[/b] 5. [b]Frontlined[/b]: You may instead reduce a creature's Res by 5; if it reaches 0, destroy it.

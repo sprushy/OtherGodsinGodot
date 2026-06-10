@@ -1,0 +1,3 @@
+﻿Tree of Life ([b]Activate[/b]): Choose a Divine or Priest in your graveyard and send this to the grave.
+After 2 of your turns, [b]Resurrect[/b] both to your reserve line.
+Then destroy a friendly creature for each level the chosen card exceeds this one by.

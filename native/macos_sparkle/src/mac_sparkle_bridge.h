@@ -6,7 +6,7 @@
 namespace godot {
 
 class MacSparkleBridge : public RefCounted {
-    GDCLASS(MacSparkleBridge, RefCounted)
+    GDCLASS(MacSparkleBridge, RefCounted);
 
 protected:
     static void _bind_methods();

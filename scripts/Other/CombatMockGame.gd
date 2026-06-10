@@ -3471,18 +3471,80 @@ func _kick_local_stack_progress() -> void:
 		_schedule_priority_recovery_check()
 		return
 	if _executing_stack_action:
+		if _try_resolve_top_nested_response_action():
+			return
+		_set_action_label_text("Priority recovery waiting: stack is executing.")
+		update_ui()
 		return
 	if _stack_resolution_paused:
 		if _can_auto_resume_paused_stack_resolution():
 			_recover_stalled_priority_state()
+		else:
+			_set_action_label_text("Priority recovery waiting: stack resolution is paused.")
+			update_ui()
 		return
 	if game_manager == null or game_manager.action_stack.is_empty():
 		return
 	if _has_pending_target_selection():
+		_set_action_label_text("Priority recovery waiting: target selection is still pending.")
+		update_ui()
 		return
 	if _is_priority_prompt_visible() or _is_intercept_prompt_visible():
+		_set_action_label_text("Priority recovery waiting: prompt is still visible.")
+		update_ui()
 		return
+	_set_action_label_text(_get_local_stack_recovery_debug_text())
+	update_ui()
 	_recover_stalled_priority_state()
+
+func _get_local_stack_recovery_debug_text() -> String:
+	if game_manager == null:
+		return "Priority recovery: no game manager."
+	if game_manager.action_stack.is_empty():
+		return "Priority recovery: stack empty."
+	var top_action: CardAction = game_manager.action_stack.back()
+	var top_label := "unknown"
+	if top_action != null:
+		top_label = _get_action_type_debug_name(top_action)
+		if top_action.card != null:
+			top_label += ":" + top_action.card.card_name
+		elif top_action.event_name != "":
+			top_label += ":" + top_action.event_name
+	var priority_name := game_manager.priority_player.player_name if game_manager.priority_player != null else "none"
+	var response_count := game_manager.get_priority_responses(game_manager.priority_player).size() if game_manager.priority_player != null else 0
+	return "Priority recovery: top=%s passes=%d priority=%s responses=%d stack=%d" % [
+		top_label,
+		game_manager.consecutive_passes,
+		priority_name,
+		response_count,
+		game_manager.action_stack.size(),
+	]
+
+func _get_action_type_debug_name(action: CardAction) -> String:
+	if action == null:
+		return "null"
+	match action.type:
+		CardAction.Type.ATTACK:
+			return "ATTACK"
+		CardAction.Type.SPELL:
+			return "SPELL"
+		CardAction.Type.ABILITY:
+			return "ABILITY"
+		CardAction.Type.EVENT:
+			return "EVENT"
+		CardAction.Type.CHARM:
+			return "CHARM"
+	return str(action.type)
+
+func _try_resolve_top_nested_response_action() -> bool:
+	if game_manager == null or game_manager.action_stack.is_empty():
+		return false
+	var top_action: CardAction = game_manager.action_stack.back()
+	if top_action == null or top_action.response_to == null:
+		return false
+	if top_action.type == CardAction.Type.CHARM:
+		return _try_resolve_local_charm_response_action(top_action)
+	return false
 
 func _auto_end_turn_after_move_timeout() -> void:
 	if _game_finished or game_manager == null:
@@ -8049,6 +8111,7 @@ func _show_zone_contents(zone_name: String, zone: Zone) -> void:
 	add_child(overlay)
 	_promote_transient_ui(overlay)
 	_zone_overlay = overlay
+	_sync_visual_linger_input_blocker()
 
 	var bg := ColorRect.new()
 	bg.color = Color(0.0, 0.0, 0.0, 0.65)
@@ -8290,6 +8353,7 @@ func _dismiss_zone_overlay() -> void:
 	_overlay_card_dismissed = Callable()
 	_overlay_selection_cursor_mode = ""
 	_sync_sacrifice_cursor()
+	_sync_visual_linger_input_blocker()
 
 func _get_card_zone_label(card: Card) -> String:
 	if card == null or card.current_zone == null:
@@ -8590,6 +8654,8 @@ func _reject_non_priority_action_if_blocked() -> bool:
 	return true
 
 func _is_visual_linger_active() -> bool:
+	if _is_priority_prompt_visible() or _is_intercept_prompt_visible() or _has_active_modal_prompt():
+		return false
 	if _visual_linger_depth > 0:
 		return true
 	if _has_pending_click_selection():
@@ -8607,7 +8673,7 @@ func _sync_visual_linger_input_blocker() -> void:
 			_visual_linger_input_blocker.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 			_visual_linger_input_blocker.mouse_filter = Control.MOUSE_FILTER_STOP
 			add_child(_visual_linger_input_blocker)
-			_promote_transient_ui(_visual_linger_input_blocker, TRANSIENT_UI_Z_INDEX + 1000)
+		_promote_transient_ui(_visual_linger_input_blocker, TRANSIENT_UI_Z_INDEX - 10)
 		return
 	if _visual_linger_input_blocker != null and is_instance_valid(_visual_linger_input_blocker):
 		_visual_linger_input_blocker.queue_free()
@@ -10082,7 +10148,7 @@ func _prompt_charm_target_selection(charm: CharmCard, triggering_action: CardAct
 			targets,
 			choose_overlay_target,
 			cancel_overlay_target,
-			"",
+			_get_selection_cursor_mode_for_source(charm),
 			"Cancel",
 			_should_reveal_charm_target_cards(charm, targets)
 		)
@@ -10100,6 +10166,7 @@ func _prompt_charm_target_selection(charm: CharmCard, triggering_action: CardAct
 		validate_charm_target,
 		confirm_charm_target
 	)
+	_sync_sacrifice_cursor()
 	_set_action_label_text(charm.card_name + ": choosing target. Click a valid card.")
 	update_ui()
 
@@ -10153,6 +10220,23 @@ func _queue_charm_action(charm: CharmCard, triggering_action: CardAction = null,
 		preferred_display_zone = _resolve_pending_display_zone(charm, _pending_spell_display_zone)
 	if game_input != null:
 		var charm_target_uid: String = target.uid if target is Card else ""
+		if source_action != null and not game_manager.action_stack.is_empty():
+			var submitted_response := game_input.submit_action({
+				type = "play_charm_response",
+				charm_uid = charm.uid,
+				target_uid = charm_target_uid,
+				from_hand = from_hand,
+			})
+			if submitted_response:
+				selected_card = null
+				awaiting_spell_target = false
+				spell_waiting_for_target = null
+				spell_waiting_for_action = null
+				spell_waiting_for_display_zone = null
+			else:
+				_set_action_label_text("Could not submit " + charm.card_name + ".")
+				update_ui()
+			return
 		var charm_command := {
 			type = "cast_charm",
 			charm_uid = charm.uid,
@@ -17100,11 +17184,11 @@ func _maybe_show_devour_cancel_prompt_after_invalid_click() -> void:
 
 func _is_priority_prompt_visible() -> bool:
 	var panel = get_node_or_null("PriorityPromptPanel")
-	return panel != null and panel.visible
+	return panel != null and panel.visible and panel.is_visible_in_tree()
 
 func _is_intercept_prompt_visible() -> bool:
 	var panel = get_node_or_null("InterceptPromptPanel")
-	return panel != null and panel.visible
+	return panel != null and panel.visible and panel.is_visible_in_tree()
 
 func _has_unresolved_priority_state() -> bool:
 	if game_manager != null:
@@ -18597,7 +18681,9 @@ func _stack_action_should_linger_for_visibility(action: CardAction) -> bool:
 	return action.card != null and action.card.has_method("is_magical_card") and action.card.is_magical_card()
 
 func _stack_action_requires_explicit_priority_window(action: CardAction) -> bool:
-	return action != null and bool(action.event_data.get("force_priority_window", false))
+	return action != null \
+		and bool(action.event_data.get("force_priority_window", false)) \
+		and not bool(action.event_data.get("priority_window_offered", false))
 
 func _stack_action_has_possible_priority_responses(action: CardAction = null) -> bool:
 	if game_manager == null or match_manager == null or game_manager.action_stack.is_empty():
@@ -18713,6 +18799,10 @@ func _get_priority_prompt_action_message(viewer: Player = null) -> String:
 	return str(prompt_data.get("action_message", "")).strip_edges()
 
 func _show_priority_prompt(player: Player) -> void:
+	if game_manager != null and not game_manager.action_stack.is_empty():
+		var prompted_action: CardAction = game_manager.action_stack.back()
+		if prompted_action != null and bool(prompted_action.event_data.get("force_priority_window", false)):
+			prompted_action.event_data["priority_window_offered"] = true
 	var panel = get_node_or_null("PriorityPromptPanel")
 	if panel == null:
 		panel = PanelContainer.new()
@@ -18772,6 +18862,7 @@ func _show_priority_prompt(player: Player) -> void:
 		var btn := Button.new()
 		btn.text = "Use " + response.card_name
 		btn.pressed.connect(func() -> void:
+			_set_action_label_text("Selected " + response.card_name + " from priority.")
 			_on_priority_response_chosen(response)
 		)
 		vbox.add_child(btn)
@@ -18787,6 +18878,7 @@ func _show_priority_prompt(player: Player) -> void:
 
 	_promote_transient_ui(panel)
 	panel.show()
+	_sync_visual_linger_input_blocker()
 	_arm_priority_prompt_timeout()
 
 func _hide_priority_prompt() -> void:
@@ -18797,6 +18889,7 @@ func _hide_priority_prompt() -> void:
 	var panel = get_node_or_null("PriorityPromptPanel")
 	if panel:
 		panel.hide()
+	_sync_visual_linger_input_blocker()
 
 func _on_priority_pass_pressed() -> void:
 	_hide_priority_prompt()
@@ -18819,6 +18912,53 @@ func _submit_authoritative_priority_command(command: Dictionary) -> bool:
 		network_manager.request_action(command)
 		return true
 	return false
+
+func _show_priority_response_submit_failure(card: Card) -> void:
+	var card_name := card.card_name if card != null else "response"
+	_set_action_label_text("Could not submit " + card_name + ".")
+	update_ui()
+
+func _begin_authoritative_priority_charm_target_selection(
+	charm: CharmCard,
+	source_action: CardAction,
+	targets: Array,
+	from_hand: bool
+) -> void:
+	if charm == null or source_action == null:
+		return
+	if targets.is_empty():
+		_set_action_label_text(charm.card_name + " has no valid targets.")
+		update_ui()
+		return
+	var validate_charm_response_target := func(clicked_card: Card) -> bool:
+		return _is_card_in_targets_by_uid(_resolve_live_prompt_target(clicked_card), targets)
+	var confirm_charm_response_target := func(clicked_card: Card) -> void:
+		var chosen_target := _resolve_live_prompt_target(clicked_card)
+		if chosen_target == null:
+			_show_priority_response_submit_failure(charm)
+			return
+		var submitted := _submit_authoritative_priority_command({
+			type = "play_charm_response",
+			charm_uid = charm.uid,
+			target_uid = chosen_target.uid,
+			from_hand = from_hand,
+		})
+		if not submitted:
+			_show_priority_response_submit_failure(charm)
+	var cancel_charm_response_target := func() -> void:
+		_set_action_label_text("Cancelled " + charm.card_name + " target selection.")
+		update_ui()
+		_offer_priority()
+	_begin_pending_click_selection(
+		charm.card_name,
+		charm,
+		validate_charm_response_target,
+		confirm_charm_response_target,
+		cancel_charm_response_target
+	)
+	_sync_sacrifice_cursor()
+	_set_action_label_text(charm.card_name + ": click a friendly creature to protect.")
+	update_ui()
 
 func _try_submit_authoritative_priority_response(card: Card) -> bool:
 	if match_manager == null or not match_manager.uses_authoritative_priority_flow():
@@ -18860,26 +19000,20 @@ func _try_submit_authoritative_priority_response(card: Card) -> bool:
 		var targets: Array = charm.get_priority_targets(game_manager, top) if charm.targets else []
 		var from_hand := charm.current_zone == charm.card_owner.hand_zone
 		var submit_charm_response := func(target_uid: String = "") -> void:
-			_submit_authoritative_priority_command({
+			var submitted := _submit_authoritative_priority_command({
 				type = "play_charm_response",
 				charm_uid = charm.uid,
 				target_uid = target_uid,
 				from_hand = from_hand,
 			})
+			if not submitted:
+				_show_priority_response_submit_failure(charm)
 		if charm.targets and targets.is_empty():
 			_set_action_label_text(charm.card_name + " has no valid targets.")
 			update_ui()
 			return true
-		if charm.targets and targets.size() > 1:
-			var choose_charm_target := func(chosen_card: Card) -> void:
-				submit_charm_response.call(chosen_card.uid)
-			_show_card_selection_overlay(
-				"Choose a target for " + charm.card_name,
-				targets,
-				choose_charm_target,
-				Callable(),
-				_get_selection_cursor_mode_for_source(charm)
-			)
+		if charm.targets:
+			_begin_authoritative_priority_charm_target_selection(charm, top, targets, from_hand)
 			return true
 		submit_charm_response.call((targets[0] as Card).uid if not targets.is_empty() and targets[0] is Card else "")
 		return true
@@ -22863,6 +22997,8 @@ func _on_retreat_no() -> void:
 func _execute_top_of_stack() -> void:
 	_hide_priority_prompt()
 	if _executing_stack_action:
+		if _try_resolve_top_nested_response_action():
+			return
 		return
 	if game_manager.action_stack.is_empty():
 		update_ui()
@@ -22877,12 +23013,13 @@ func _execute_top_of_stack() -> void:
 
 	_executing_stack_action = true
 	var action: CardAction = game_manager.action_stack.back()
+	var skip_linger_for_response := action != null and action.response_to != null
 	var should_linger := action != null and action.type in [
 		CardAction.Type.SPELL,
 		CardAction.Type.ABILITY,
 		CardAction.Type.CHARM,
 		CardAction.Type.ATTACK
-	] and (_stack_action_has_possible_priority_responses(action) or _stack_action_should_linger_for_visibility(action))
+	] and not skip_linger_for_response and (_stack_action_has_possible_priority_responses(action) or _stack_action_should_linger_for_visibility(action))
 	if should_linger:
 		update_ui()
 		await _await_visual_linger()
@@ -22892,8 +23029,35 @@ func _execute_top_of_stack() -> void:
 			return
 
 	_clear_priority_window_state()
+	if _try_resolve_local_charm_response_action(action):
+		return
 	match_manager.resolve_action(action)
 	# The rest is now handled by MatchManager and its callbacks/signals
+
+func _try_resolve_local_charm_response_action(action: CardAction) -> bool:
+	if action == null \
+			or action.response_to == null \
+			or action.type != CardAction.Type.CHARM \
+			or not action.resolve_callback.is_valid():
+		return false
+	var pushed_effect_source := false
+	if game_manager != null and action.card != null:
+		game_manager.push_effect_source_card(action.card)
+		pushed_effect_source = true
+	action.resolve_callback.call()
+	if game_manager != null and pushed_effect_source:
+		game_manager.pop_effect_source_card()
+	if game_manager != null:
+		if action in game_manager.action_stack:
+			game_manager.action_stack.erase(action)
+		if action in game_manager.resolving_stack_actions:
+			game_manager.end_stack_action_resolution(action)
+	if match_manager != null and game_manager != null:
+		var feedback := game_manager.consume_player_feedback()
+		match_manager.last_resolution_text = feedback if feedback.strip_edges() != "" else (action.card.card_name + " resolved." if action.card != null else "Response resolved.")
+	_on_match_action_resolved(action)
+	call_deferred("_kick_local_stack_progress")
+	return true
 
 func _on_match_action_resolved(action: CardAction) -> void:
 	var authoritative_priority: bool = match_manager != null and match_manager.uses_authoritative_priority_flow()
@@ -23176,6 +23340,8 @@ func _on_match_move_validated(move: Dictionary) -> void:
 				_set_action_label_text(pcr_charm.card_name + " responds!")
 			if not _is_networked_client and not authoritative_priority:
 				_offer_priority()
+				_kick_local_stack_progress()
+				call_deferred("_kick_local_stack_progress")
 			elif not _is_networked_client and authoritative_priority:
 				_schedule_priority_recovery_check()
 		"play_priority_ability":
@@ -25196,6 +25362,7 @@ func _show_remote_priority_prompt(responses: Array, action_message: String = "")
 		var btn := Button.new()
 		btn.text = "Use " + card_name
 		btn.pressed.connect(func() -> void:
+			_set_action_label_text("Selected " + card_name + " from priority.")
 			_hide_priority_prompt()
 			if rtype == "hex":
 				var target_is_attacker: bool = response.get("target_is_attacker", false)
@@ -25243,14 +25410,7 @@ func _show_remote_priority_prompt(responses: Array, action_message: String = "")
 					)
 			elif rtype == "charm":
 				var from_hand: bool = response.get("from_hand", false)
-				if target_uids.size() == 1:
-					_request_network_priority_response({
-						type = "play_charm_response",
-						charm_uid = card_uid,
-						target_uid = target_uids[0],
-						from_hand = from_hand,
-					}, resp_card, response)
-				elif target_uids.is_empty():
+				if target_uids.is_empty():
 					_request_network_priority_response({
 						type = "play_charm_response",
 						charm_uid = card_uid,
@@ -25270,6 +25430,7 @@ func _show_remote_priority_prompt(responses: Array, action_message: String = "")
 							target_uid = chosen_card.uid,
 							from_hand = from_hand,
 						}, resp_card, response)
+					_mark_priority_response_target_selection_pending(resp_card, response)
 					_show_card_selection_overlay(
 						"Choose a target for " + card_name,
 						target_cards,
@@ -25353,6 +25514,7 @@ func _show_remote_priority_prompt(responses: Array, action_message: String = "")
 
 	_promote_transient_ui(panel)
 	panel.show()
+	_sync_visual_linger_input_blocker()
 	_arm_priority_prompt_timeout()
 
 func _begin_remote_priority_permanent_hex_target_selection(

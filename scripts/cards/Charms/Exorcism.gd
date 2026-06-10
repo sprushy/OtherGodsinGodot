@@ -78,6 +78,7 @@ func _destroy_opponent_targeters(game_manager: GameManager, target: Card) -> Arr
 	var opponent := game_manager.get_opponent(card_owner)
 	if opponent == null:
 		return destroyed
+	var target_uid := str(target.uid).strip_edges()
 
 	for action in game_manager.action_stack.duplicate():
 		var source_card = action.card
@@ -85,7 +86,7 @@ func _destroy_opponent_targeters(game_manager: GameManager, target: Card) -> Arr
 			continue
 		if source_card.card_owner != opponent:
 			continue
-		if not _action_targets_card(action, target):
+		if not _action_targets_card(action, target, target_uid):
 			continue
 		if action in game_manager.action_stack:
 			game_manager.action_stack.erase(action)
@@ -99,7 +100,7 @@ func _destroy_opponent_targeters(game_manager: GameManager, target: Card) -> Arr
 			if not (card is PermanentHexCard):
 				continue
 			var attached_hex := card as PermanentHexCard
-			if attached_hex.attached_target != target:
+			if not _same_card(attached_hex.attached_target, target, target_uid):
 				continue
 			if game_manager.request_send_to_graveyard(attached_hex, Callable(), false, true):
 				if attached_hex not in destroyed:
@@ -107,11 +108,28 @@ func _destroy_opponent_targeters(game_manager: GameManager, target: Card) -> Arr
 
 	return destroyed
 
-func _action_targets_card(action: CardAction, target: Card) -> bool:
+func _action_targets_card(action: CardAction, target: Card, target_uid: String = "") -> bool:
 	if action == null or target == null:
 		return false
-	if action.target == target:
+	if _same_card(action.target, target, target_uid):
 		return true
-	if action.interceptor == target:
+	if _same_card(action.interceptor, target, target_uid):
 		return true
+	if _same_card(action.attacker, target, target_uid):
+		return true
+	var queued_command = action.event_data.get("queued_choice_command", {})
+	if queued_command is Dictionary:
+		for key in ["target_uid", "chosen_uid", "victim_uid"]:
+			var queued_uid := str((queued_command as Dictionary).get(key, "")).strip_edges()
+			if queued_uid != "" and queued_uid == target_uid:
+				return true
 	return false
+
+func _same_card(candidate, target: Card, target_uid: String = "") -> bool:
+	if not (candidate is Card) or target == null:
+		return false
+	var candidate_card := candidate as Card
+	if candidate_card == target:
+		return true
+	var resolved_target_uid := target_uid if target_uid != "" else str(target.uid).strip_edges()
+	return resolved_target_uid != "" and str(candidate_card.uid).strip_edges() == resolved_target_uid

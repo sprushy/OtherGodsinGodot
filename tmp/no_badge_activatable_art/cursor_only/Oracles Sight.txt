@@ -1,0 +1,1 @@
+﻿[b]Unlock[/b] (3): [b]Activate[/b] - Pay 3 mana: [b]Foresight[/b] - Look at the next 5 cards in your deck; choose one to [b]Prime[/b] and [b]Shelve[/b] the rest.
