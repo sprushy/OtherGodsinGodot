@@ -357,6 +357,7 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - export-windows
+      - export-macos
 
     steps:
       - name: Download Windows artifacts
@@ -365,9 +366,23 @@ jobs:
           name: OtherGods-windows
           path: dist/windows
 
+      - name: Download macOS zip artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: OtherGods-macos
+          path: dist/macos
+
+      - name: Download macOS appcast artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: OtherGods-macos-appcast
+          path: dist/macos
+
       - name: Publish GitHub release assets
         uses: softprops/action-gh-release@v2
         with:
           files: |
             dist/windows/OtherGods-windows.zip
             dist/windows/OtherGodsServer-windows.zip
+            dist/macos/OtherGods-macos.zip
+            dist/macos/appcast.xml
