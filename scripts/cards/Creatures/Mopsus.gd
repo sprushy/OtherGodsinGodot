@@ -115,7 +115,11 @@ func activate(game_manager: GameManager, target = null) -> void:
 			{"clear_on_card_move": true}
 		)
 	if game_manager != null:
-		game_manager.note_player_feedback("%s reveals %d opponent hand card(s)." % [card_name, selected_targets.size()])
+		var revealed_names: Array[String] = []
+		for selected_card in selected_targets:
+			if selected_card != null:
+				revealed_names.append(selected_card.get_display_name())
+		game_manager.note_player_feedback("%s reveals %s in the opponent's hand." % [card_name, ", ".join(revealed_names)])
 
 func _count_friendly_board_avians() -> int:
 	var controller := get_controller()

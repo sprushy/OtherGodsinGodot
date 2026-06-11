@@ -193,6 +193,10 @@ var _pending_reveal_auto_submit_keys: Dictionary = {}
 var _fan_container: Control = null
 var _enemy_hand_overlay: Control = null
 var _enemy_hand_visual_cards: Array = []   # Array[VisualCard]
+var _pending_mopsus_source_uid: String = ""
+var _pending_mopsus_selected_uids: Array[String] = []
+var _pending_mopsus_required_count: int = 0
+var _pending_mopsus_flip_uid: String = ""
 var _hand_hover_preview: Control = null
 var _hand_hover_vc: VisualCard = null
 var _hand_hover_preview_card: VisualCard = null
@@ -5208,6 +5212,7 @@ func _get_enemy_hand_overlay_rect() -> Rect2:
 
 func draw_enemy_hand_overlay() -> void:
 	_enemy_hand_visual_cards.clear()
+	_refresh_mopsus_hand_selection_state()
 	if _enemy_hand_overlay != null and is_instance_valid(_enemy_hand_overlay):
 		if _enemy_hand_overlay.get_parent() == self:
 			remove_child(_enemy_hand_overlay)
@@ -5231,6 +5236,7 @@ func draw_enemy_hand_overlay() -> void:
 	for display_card in display_cards:
 		var hand_card := display_card as Card
 		_enemy_hand_overlay.add_child(_make_enemy_hand_overlay_card(hand_card))
+	_pending_mopsus_flip_uid = ""
 
 	call_deferred("_layout_enemy_hand_overlay")
 
@@ -5241,6 +5247,9 @@ func _get_enemy_hand_overlay_display_cards(enemy_player: Player) -> Array[Card]:
 	for card in enemy_player.hand_zone.cards:
 		if card == null:
 			continue
+		if _is_mopsus_hand_selection_active():
+			display_cards.append(card)
+			continue
 		if display_cards.size() < ENEMY_HAND_PEEK_MAX_CARDS:
 			display_cards.append(card)
 			continue
@@ -5249,8 +5258,19 @@ func _get_enemy_hand_overlay_display_cards(enemy_player: Player) -> Array[Card]:
 	return display_cards
 
 func _make_enemy_hand_overlay_card(card: Card) -> Control:
-	if _is_enemy_hand_card_revealed(card):
-		return _make_enemy_hand_overlay_revealed_card(card)
+	var selectable := _is_mopsus_hand_selection_target(card)
+	var selected: bool = card != null and card.uid in _pending_mopsus_selected_uids
+	if _is_enemy_hand_card_revealed(card) or selected:
+		var revealed_card := _make_enemy_hand_overlay_revealed_card(card)
+		if selectable or selected:
+			revealed_card.modulate = Color(0.72, 1.3, 0.72, 1.0)
+		if selectable:
+			revealed_card.gui_input.connect(_on_mopsus_enemy_hand_card_gui_input.bind(card, revealed_card))
+		if card != null and card.uid == _pending_mopsus_flip_uid:
+			revealed_card.set_meta("mopsus_flip_in", true)
+		return revealed_card
+	if selectable:
+		return _make_mopsus_selectable_enemy_hand_card_back(card)
 	var card_back := TextureRect.new()
 	card_back.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	card_back.texture = CardBackTexture
@@ -5259,6 +5279,38 @@ func _make_enemy_hand_overlay_card(card: Card) -> Control:
 	card_back.size = Vector2(ENEMY_HAND_CARD_WIDTH, ENEMY_HAND_CARD_HEIGHT)
 	card_back.pivot_offset = card_back.size * 0.5
 	return card_back
+
+func _make_mopsus_selectable_enemy_hand_card_back(card: Card) -> Control:
+	var panel := PanelContainer.new()
+	panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	panel.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	panel.size = Vector2(ENEMY_HAND_CARD_WIDTH, ENEMY_HAND_CARD_HEIGHT)
+	panel.pivot_offset = panel.size * 0.5
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.04, 0.18, 0.08, 0.96)
+	style.border_color = Color(0.35, 1.0, 0.48, 1.0)
+	style.shadow_color = Color(0.18, 1.0, 0.32, 0.78)
+	style.shadow_size = 12
+	style.corner_radius_top_left = 5
+	style.corner_radius_top_right = 5
+	style.corner_radius_bottom_left = 5
+	style.corner_radius_bottom_right = 5
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		style.set_border_width(side, 3)
+	panel.add_theme_stylebox_override("panel", style)
+	var card_back := TextureRect.new()
+	card_back.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	card_back.texture = CardBackTexture
+	card_back.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	card_back.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	card_back.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	card_back.offset_left = 3.0
+	card_back.offset_top = 3.0
+	card_back.offset_right = -3.0
+	card_back.offset_bottom = -3.0
+	panel.add_child(card_back)
+	panel.gui_input.connect(_on_mopsus_enemy_hand_card_gui_input.bind(card, panel))
+	return panel
 
 func _is_enemy_hand_card_revealed(card: Card) -> bool:
 	return card != null and card.is_revealed_in_hand()
@@ -5301,6 +5353,78 @@ func _layout_enemy_hand_overlay() -> void:
 			-ENEMY_HAND_CARD_HEIGHT + ENEMY_HAND_DOCK_HEIGHT - 2.0 - absf(t) * 5.0
 		)
 		card_back.rotation_degrees = -t * ENEMY_HAND_PEEK_ROTATION
+		if card_back.has_meta("mopsus_flip_in"):
+			card_back.remove_meta("mopsus_flip_in")
+			card_back.scale.x = 0.0
+			create_tween().tween_property(card_back, "scale:x", 1.0, 0.13)
+
+func _is_mopsus_hand_selection_active() -> bool:
+	return _pending_mopsus_source_uid != "" and _pending_mopsus_required_count > 0
+
+func _get_pending_mopsus_source() -> MopsusScript:
+	if game_manager == null or _pending_mopsus_source_uid == "":
+		return null
+	return game_manager.get_card_by_uid(_pending_mopsus_source_uid) as MopsusScript
+
+func _is_mopsus_hand_selection_target(card: Card) -> bool:
+	if card == null or not _is_mopsus_hand_selection_active():
+		return false
+	if card.uid in _pending_mopsus_selected_uids:
+		return false
+	var source := _get_pending_mopsus_source()
+	return source != null and card in source.get_valid_targets(game_manager)
+
+func _clear_mopsus_hand_selection() -> void:
+	_pending_mopsus_source_uid = ""
+	_pending_mopsus_selected_uids.clear()
+	_pending_mopsus_required_count = 0
+	_pending_mopsus_flip_uid = ""
+
+func _refresh_mopsus_hand_selection_state() -> void:
+	if not _is_mopsus_hand_selection_active():
+		return
+	var source := _get_pending_mopsus_source()
+	if source == null:
+		_clear_mopsus_hand_selection()
+		return
+	if _pending_mopsus_selected_uids.size() >= _pending_mopsus_required_count and not source.can_activate(game_manager):
+		_clear_mopsus_hand_selection()
+
+func _on_mopsus_enemy_hand_card_gui_input(event: InputEvent, card: Card, card_control: Control) -> void:
+	if not (event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed):
+		return
+	accept_event()
+	if not _is_mopsus_hand_selection_target(card):
+		return
+	card_control.pivot_offset = card_control.size * 0.5
+	var tween := create_tween()
+	tween.tween_property(card_control, "scale:x", 0.0, 0.11)
+	tween.tween_callback(_select_mopsus_enemy_hand_card.bind(card))
+
+func _select_mopsus_enemy_hand_card(card: Card) -> void:
+	if not _is_mopsus_hand_selection_target(card):
+		return
+	_pending_mopsus_selected_uids.append(card.uid)
+	_pending_mopsus_flip_uid = card.uid
+	var source := _get_pending_mopsus_source()
+	var selected_cards: Array[Card] = []
+	if source != null:
+		for uid in _pending_mopsus_selected_uids:
+			var selected_card := game_manager.get_card_by_uid(uid)
+			if selected_card != null:
+				selected_cards.append(selected_card)
+	draw_enemy_hand_overlay()
+	if source == null:
+		_clear_mopsus_hand_selection()
+		update_ui()
+		return
+	if selected_cards.size() >= _pending_mopsus_required_count:
+		_resolve_mopsus_hand_choice(source, selected_cards)
+	else:
+		_set_action_label_text("%s: choose %d more highlighted opponent hand card(s)." % [
+			source.card_name,
+			_pending_mopsus_required_count - selected_cards.size(),
+		])
 
 func _get_hand_overlay_rect() -> Rect2:
 	if center_panel == null:
@@ -5591,7 +5715,9 @@ func _show_hand_hover_preview(vc: VisualCard) -> void:
 	preview.add_child(large_vc)
 	var enemy_hand_hover := vc in _enemy_hand_visual_cards
 	var display_mana_cost := card.mana_cost if enemy_hand_hover else _get_hand_card_display_mana_cost(card)
-	var cost_adjustment_lines: Array[String] = [] if enemy_hand_hover else _get_hand_card_cost_adjustment_lines(card)
+	var cost_adjustment_lines: Array[String] = []
+	if not enemy_hand_hover:
+		cost_adjustment_lines = _get_hand_card_cost_adjustment_lines(card)
 	large_vc.setup(card, 255, 0, display_mana_cost, cost_adjustment_lines)
 	large_vc.set_hand_mode(true)
 	large_vc.set_disabled(true, false)
@@ -8468,9 +8594,12 @@ func _has_pending_target_selection() -> bool:
 		or awaiting_god_ability_target \
 		or awaiting_stupefy_target \
 		or awaiting_pyre_target \
-		or awaiting_anointing_target
+		or awaiting_anointing_target \
+		or _is_mopsus_hand_selection_active()
 
 func _get_pending_target_selection_name() -> String:
+	if _is_mopsus_hand_selection_active():
+		return "Mopsus: Seer"
 	if awaiting_pyre_target and pyre_source != null:
 		return pyre_source.card_name + ": Ritual Flame"
 	if awaiting_anointing_target and anointing_source != null:
@@ -8504,6 +8633,7 @@ func _cancel_pending_target_selection(reason: String) -> bool:
 	pyre_source = null
 	awaiting_anointing_target = false
 	anointing_source = null
+	_clear_mopsus_hand_selection()
 	
 	selected_card = null
 	if should_fizzle_paid_preview and paid_preview_card != null:
@@ -20247,115 +20377,14 @@ func _show_mopsus_hand_prompt(card: MopsusScript) -> void:
 		_set_action_label_text(card.card_name + " has no opponent hand cards to inspect.")
 		update_ui()
 		return
-	var required_count = max(1, card.get_required_seer_target_count(game_manager))
-	var avian_bonus := maxi(0, card.get_seer_reveal_count(game_manager) - 1)
-
-	_dismiss_zone_overlay()
-
-	var overlay := Control.new()
-	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
-	overlay.z_index = 300
-	add_child(overlay)
-	_promote_transient_ui(overlay)
-	_zone_overlay = overlay
-
-	var bg := ColorRect.new()
-	bg.color = Color(0.0, 0.0, 0.0, 0.65)
-	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	overlay.add_child(bg)
-
-	var panel_width := 0.44 if required_count == 1 else 0.52
-	var panel_height := 0.42 if required_count == 1 else 0.56
-	var panel := _create_centered_overlay_panel(overlay, panel_width, panel_height)
-	var vbox := VBoxContainer.new()
-	vbox.add_theme_constant_override("separation", 8)
-	vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	vbox.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	panel.add_child(vbox)
-
-	var title := Label.new()
-	title.text = "Choose one opponent hand card to inspect" if required_count == 1 else "Choose %d opponent hand cards to inspect" % required_count
-	title.add_theme_font_size_override("font_size", 15)
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	vbox.add_child(title)
-
-	var info := Label.new()
-	if required_count == 1:
-		info.text = "Seer reveals the card you choose."
-	else:
-		info.text = "Seer reveals %d cards this turn: 1 base plus %d from friendly Avians on your board." % [required_count, avian_bonus]
-	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	info.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	vbox.add_child(info)
-
-	var status := Label.new()
-	status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	status.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	vbox.add_child(status)
-
-	var scroll := ScrollContainer.new()
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
-	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
-	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	scroll.custom_minimum_size = Vector2(0, 190)
-	scroll.mouse_filter = Control.MOUSE_FILTER_STOP
-	vbox.add_child(scroll)
-
-	var grid := GridContainer.new()
-	grid.columns = mini(4, maxi(1, targets.size()))
-	grid.add_theme_constant_override("h_separation", 12)
-	grid.add_theme_constant_override("v_separation", 12)
-	grid.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	grid.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	scroll.add_child(grid)
-
-	var cancel_btn := Button.new()
-	cancel_btn.text = "Cancel"
-	cancel_btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-
-	var prompt_state := {
-		"source": card,
-		"overlay": overlay,
-		"targets": targets.duplicate(),
-		"selected": [],
-		"required": required_count,
-		"locked": false,
-		"status": status,
-		"cancel_btn": cancel_btn,
-		"tiles": {},
-	}
-
-	for i in range(targets.size()):
-		var target: Card = targets[i]
-		if target == null:
-			continue
-		var tile := _make_mopsus_hand_choice_tile(i + 1)
-		grid.add_child(tile)
-		var tiles: Dictionary = prompt_state.get("tiles", {})
-		tiles[str(target.uid)] = tile
-		prompt_state["tiles"] = tiles
-		tile.gui_input.connect(_on_mopsus_hand_choice_tile_gui_input.bind(card, target, tile, prompt_state))
-
-	cancel_btn.pressed.connect(func() -> void:
-		_dismiss_zone_overlay()
-		_set_action_label_text(card.card_name + " cancelled Seer.")
-		update_ui()
-	)
-	vbox.add_child(cancel_btn)
-	_refresh_mopsus_hand_choice_state(prompt_state)
-
-	overlay.gui_input.connect(func(event: InputEvent) -> void:
-		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
-			if not bool(prompt_state.get("locked", false)) and (prompt_state.get("selected", []) as Array).is_empty():
-				_dismiss_zone_overlay()
-				_set_action_label_text(card.card_name + " cancelled Seer.")
-				update_ui()
-	)
+	_clear_mopsus_hand_selection()
+	_pending_mopsus_source_uid = card.uid
+	_pending_mopsus_required_count = max(1, card.get_required_seer_target_count(game_manager))
+	_set_action_label_text("%s: click %d highlighted opponent hand card(s) to reveal them." % [
+		card.card_name,
+		_pending_mopsus_required_count,
+	])
+	update_ui()
 
 func _make_mopsus_hand_choice_tile(card_index: int) -> PanelContainer:
 	var tile := PanelContainer.new()
@@ -20530,7 +20559,11 @@ func _resolve_mopsus_hand_choice(card: MopsusScript, targets: Array[Card]) -> vo
 		_set_action_label_text(card.card_name + " is using Seer.")
 		update_ui()
 		return
-	var resolution_text := "%s peers into %d opponent hand card(s)." % [card.card_name, chosen_targets.size()]
+	var revealed_names: Array[String] = []
+	for target in chosen_targets:
+		if target != null:
+			revealed_names.append(target.get_display_name())
+	var resolution_text := "%s reveals %s in the opponent's hand." % [card.card_name, ", ".join(revealed_names)]
 	var preview_targets: Array[Card] = chosen_targets.duplicate()
 	var preview_target_uids: Array[String] = []
 	for target in preview_targets:
@@ -20539,10 +20572,7 @@ func _resolve_mopsus_hand_choice(card: MopsusScript, targets: Array[Card]) -> vo
 		var still_valid := card.can_activate(game_manager) and card.is_valid_seer_selection(game_manager, preview_targets)
 		card.activate(game_manager, {target_uids = preview_target_uids})
 		if still_valid:
-			if preview_targets.size() == 1 and preview_targets[0] != null:
-				_set_action_label_text("%s revealed %s in hand." % [card.card_name, preview_targets[0].card_name])
-			else:
-				_set_action_label_text("%s revealed %d hand cards." % [card.card_name, preview_targets.size()])
+			_set_action_label_text(resolution_text)
 			update_ui()
 	_queue_magical_action(
 		CardAction.Type.ABILITY,
@@ -25255,8 +25285,8 @@ func _update_waiting_overlay() -> void:
 	var current_priority_player := game_manager.priority_player
 	var priority_idx := game_manager.players.find(current_priority_player)
 	
-	# The authoritative priority player is the source of truth. The local client
-	# cannot always determine whether an opponent has a legal hidden response.
+	# Only show this after the server has offered the opponent a real prompt.
+	# Transient priority players may be auto-passed without seeing one.
 	if _should_show_opponent_priority_waiting(current_priority_player, priority_idx, local_idx):
 		_update_waiting_status(true, "Opponent has priority...")
 		return
@@ -25279,7 +25309,10 @@ func _should_show_opponent_priority_waiting(priority_player: Player, priority_id
 		return false
 	if priority_idx == -1 or priority_idx == local_idx:
 		return false
-	return true
+	var top_action := game_manager.action_stack.back() as CardAction
+	if top_action == null:
+		return false
+	return int(top_action.event_data.get("priority_prompt_offered_player_index", -1)) == priority_idx
 
 func _set_match_reconnect_wait(is_waiting: bool, message: String = "Waiting for opponent to reconnect...") -> void:
 	_match_reconnect_waiting = is_waiting

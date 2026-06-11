@@ -6,10 +6,12 @@ const LockedPowerCursorScript = preload("res://scripts/ui/LockedPowerCursor.gd")
 const DefenseShieldOverlayScript = preload("res://scripts/ui/DefenseShieldOverlay.gd")
 const BoardZoneUIScript = preload("res://scripts/ui/BoardZoneUI.gd")
 const LevelSymbolRowScript = preload("res://scripts/ui/LevelSymbolRow.gd")
+const DebuffBadgeScript = preload("res://scripts/ui/DebuffBadge.gd")
 const MINOR_ACTION_SYMBOL_TEXTURE := preload("res://images/ui/MinorActionSymbol.png")
 const MAJOR_ACTION_SYMBOL_TEXTURE := preload("res://images/ui/MajorActionSymbol.png")
 const MANA_ORB_TEXTURE := preload("res://images/ui/ManaOrb.png")
 const REVEALED_HAND_BADGE_TEXTURE := preload("res://images/ability_badges/MopsusBadge.png")
+const DEBUFF_BADGE_SIZE := DebuffBadgeScript.SIZE
 const PRIORITY_RESPONSE_GLOW_COLOR := Color(0.28, 0.92, 0.50, 0.95)
 
 signal card_clicked(card: Card)
@@ -674,39 +676,29 @@ func _add_revealed_hand_badge() -> void:
 		return
 	if card_data.current_zone == null or card_data.current_zone.zone_type != Zone.ZoneType.HAND:
 		return
-	var badge := PanelContainer.new()
-	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var overlay := Control.new()
+	overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_inner.add_child(overlay)
+
+	var preview := TextureRect.new()
+	preview.texture = REVEALED_HAND_BADGE_TEXTURE
+	preview.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	preview.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	preview.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	preview.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	preview.offset_left = 2.0
+	preview.offset_top = 2.0
+	preview.offset_right = -2.0
+	preview.offset_bottom = -2.0
+
+	var badge := DebuffBadgeScript.create(preview)
 	badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	badge.offset_left = -32.0
-	badge.offset_top = 6.0
+	badge.offset_left = -6.0 - DEBUFF_BADGE_SIZE
+	badge.offset_top = 32.0
 	badge.offset_right = -6.0
-	badge.offset_bottom = 32.0
-
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.18, 0.02, 0.02, 0.96)
-	style.border_color = Color(1.0, 0.28, 0.24, 0.98)
-	style.shadow_color = Color(0.28, 0.02, 0.02, 0.52)
-	style.shadow_size = 4
-	style.corner_radius_top_left = 11
-	style.corner_radius_top_right = 11
-	style.corner_radius_bottom_left = 11
-	style.corner_radius_bottom_right = 11
-	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		style.set_border_width(side, 1)
-	badge.add_theme_stylebox_override("panel", style)
-	_inner.add_child(badge)
-
-	var icon := TextureRect.new()
-	icon.texture = REVEALED_HAND_BADGE_TEXTURE
-	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	icon.offset_left = 2.0
-	icon.offset_top = 2.0
-	icon.offset_right = -2.0
-	icon.offset_bottom = -2.0
-	badge.add_child(icon)
+	badge.offset_bottom = 32.0 + DEBUFF_BADGE_SIZE
+	overlay.add_child(badge)
 
 func _make_card_style() -> StyleBoxFlat:
 	var style := StyleBoxFlat.new()

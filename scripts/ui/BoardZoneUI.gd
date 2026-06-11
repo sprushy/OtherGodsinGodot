@@ -7,6 +7,7 @@ const LockedPowerCursorScript = preload("res://scripts/ui/LockedPowerCursor.gd")
 const DefenseShieldOverlayScript = preload("res://scripts/ui/DefenseShieldOverlay.gd")
 const AggressiveSwordOverlay = preload("res://scripts/ui/AggressiveSwordOverlay.gd")
 const LevelSymbolRowScript = preload("res://scripts/ui/LevelSymbolRow.gd")
+const DebuffBadgeScript = preload("res://scripts/ui/DebuffBadge.gd")
 const CHAMPIONS_CALL_BADGE_TEXTURE := preload("res://images/Champion's Call Horn Badge.png")
 const SMOKING_MIRROR_BADGE_TEXTURE := preload("res://images/Smoking Mirror Icon.png")
 const TEZ_SACRIFICE_BADGE_TEXTURE := preload("res://images/TezSacBadge.png")
@@ -521,8 +522,8 @@ const DROMI_BINDING_HOVER_TEXT := "Cannot attack. Losing 7 followers on opponent
 const THIRD_SAGE_GOOD_FORTUNE_STATUS := "third_sage_good_fortune"
 const EQUIPMENT_AFFORDANCE_GAP := 4.0
 const EQUIPMENT_AFFORDANCE_TOP := 28.0
-const DEBUFF_AFFORDANCE_GAP := 4.0
-const DEBUFF_BADGE_SIZE := 22.0
+const DEBUFF_AFFORDANCE_GAP := DebuffBadgeScript.GAP
+const DEBUFF_BADGE_SIZE := DebuffBadgeScript.SIZE
 const ABILITY_BADGE_SIZE := 76.8
 const CREATURE_ABILITY_BADGE_SIZE := ABILITY_BADGE_SIZE
 const CREATURE_ABILITY_BADGE_TOP_OFFSET := -23.0
@@ -3271,48 +3272,13 @@ func _add_debuff_affordances(overlay: Control, card: Card) -> void:
 		var preview := _make_debuff_source_preview(entry)
 		if preview == null:
 			continue
-		var badge := PanelContainer.new()
-		badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var badge := DebuffBadgeScript.create(preview, int(entry.get("count", 1)))
 		badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
 		badge.offset_left = badge_right - DEBUFF_BADGE_SIZE
 		badge.offset_top = badge_top
 		badge.offset_right = badge_right
 		badge.offset_bottom = badge_top + DEBUFF_BADGE_SIZE
-
-		var badge_style := StyleBoxFlat.new()
-		badge_style.bg_color = Color(0.18, 0.02, 0.02, 0.95)
-		badge_style.border_color = Color(1.0, 0.28, 0.24, 0.98)
-		badge_style.shadow_color = Color(0.28, 0.02, 0.02, 0.52)
-		badge_style.shadow_size = 4
-		badge_style.corner_radius_top_left = 11
-		badge_style.corner_radius_top_right = 11
-		badge_style.corner_radius_bottom_left = 11
-		badge_style.corner_radius_bottom_right = 11
-		for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-			badge_style.set_border_width(side, 1)
-		badge.add_theme_stylebox_override("panel", badge_style)
 		overlay.add_child(badge)
-
-		badge.add_child(preview)
-
-		var count := int(entry.get("count", 1))
-		if count > 1:
-			var count_label := Label.new()
-			count_label.text = str(count)
-			count_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-			count_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-			count_label.add_theme_font_size_override("font_size", 9)
-			count_label.add_theme_color_override("font_color", Color(1.0, 0.94, 0.94))
-			count_label.add_theme_color_override("font_shadow_color", Color(0.22, 0.0, 0.0, 0.9))
-			count_label.add_theme_constant_override("shadow_offset_x", 1)
-			count_label.add_theme_constant_override("shadow_offset_y", 1)
-			count_label.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
-			count_label.offset_left = -10
-			count_label.offset_top = -10
-			count_label.offset_right = 0
-			count_label.offset_bottom = 0
-			count_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			badge.add_child(count_label)
 
 		badge_right -= DEBUFF_BADGE_SIZE + DEBUFF_AFFORDANCE_GAP
 

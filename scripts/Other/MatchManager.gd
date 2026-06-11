@@ -2291,8 +2291,10 @@ func _advance_authoritative_priority() -> void:
 	var player_idx := game_manager.players.find(player)
 	if player_idx < 0:
 		return
-	if force_priority_window and top_action != null:
-		top_action.event_data["priority_window_offered"] = true
+	if top_action != null:
+		top_action.event_data["priority_prompt_offered_player_index"] = player_idx
+		if force_priority_window:
+			top_action.event_data["priority_window_offered"] = true
 	request_ui_interaction.emit(player_idx, "priority", prompt_data)
 
 func queue_or_resolve_priority_event(action: CardAction) -> bool:

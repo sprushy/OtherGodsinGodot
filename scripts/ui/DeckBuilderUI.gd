@@ -99,6 +99,7 @@ var _deck_scroll_up_btn: Button
 var _deck_scroll_down_btn: Button
 var _deck_footer_buttons: HFlowContainer
 var _delete_confirm_dialog: ConfirmationDialog
+var _exit_confirm_dialog: ConfirmationDialog
 var _import_deck_dialog: ConfirmationDialog
 var _import_deck_text_edit: TextEdit
 var _send_friend_dialog: ConfirmationDialog
@@ -145,6 +146,7 @@ var _collection_drag_was_selected: bool = false
 var _collection_drag_offset: Vector2 = Vector2.ZERO
 var _collection_drag_ghost: Control = null
 var _show_collection_card_overlays: bool = false
+var _saved_deck_state: Dictionary = {}
 
 func _escape_preview_bbcode_text(text: String) -> String:
 	return text.replace("[", "[lb]").replace("]", "[rb]")
@@ -175,6 +177,7 @@ func _ready() -> void:
 	_refresh_grid()
 	_queue_collection_layout_refresh()
 	_refresh_deck_panel(true, false)
+	_mark_current_deck_saved()
 
 func configure_profile_store(profile_store, profile_id: String, player_name: String = "") -> void:
 	_local_profile_store = profile_store
@@ -261,6 +264,7 @@ func _build_ui() -> void:
 	_build_collection_panel(body)
 	_build_deck_panel(body)
 	_build_delete_confirm_dialog()
+	_build_exit_confirm_dialog()
 	_build_import_deck_dialog()
 	_build_send_friend_dialog()
 
@@ -318,7 +322,7 @@ func _build_top_bar(parent: Control) -> void:
 	var back_btn := Button.new()
 	back_btn.text = "← Menu"
 	back_btn.custom_minimum_size = Vector2(90, 32)
-	back_btn.pressed.connect(func() -> void: back_pressed.emit())
+	back_btn.pressed.connect(request_exit)
 	inner.add_child(back_btn)
 
 	var pad_r := Control.new()
@@ -804,6 +808,43 @@ func _build_delete_confirm_dialog() -> void:
 	dialog.confirmed.connect(_confirm_delete_saved_deck)
 	add_child(dialog)
 	_delete_confirm_dialog = dialog
+
+func _build_exit_confirm_dialog() -> void:
+	if _exit_confirm_dialog != null and is_instance_valid(_exit_confirm_dialog):
+		return
+	var dialog := ConfirmationDialog.new()
+	dialog.title = "Save Deck Before Exiting?"
+	dialog.dialog_text = "This deck has unsaved changes. Save them before returning to the menu?"
+	dialog.initial_position = Window.WINDOW_INITIAL_POSITION_CENTER_PRIMARY_SCREEN
+	dialog.exclusive = true
+	dialog.get_ok_button().text = "Save and Exit"
+	dialog.add_button("Discard", true, "discard")
+	dialog.confirmed.connect(_save_and_exit)
+	dialog.custom_action.connect(func(action: StringName) -> void:
+		if action == &"discard":
+			dialog.hide()
+			back_pressed.emit()
+	)
+	add_child(dialog)
+	_exit_confirm_dialog = dialog
+
+func request_exit() -> void:
+	if not _has_unsaved_deck_changes():
+		back_pressed.emit()
+		return
+	_build_exit_confirm_dialog()
+	_exit_confirm_dialog.popup_centered()
+
+func _save_and_exit() -> void:
+	if _deck.is_empty():
+		_set_status_flash("Nothing to save. Discard the empty deck or keep editing.")
+		return
+	if _uses_remote_account_decks() and not _can_sync_account_decks():
+		_set_status_flash("Connect to the lobby to save account decks.")
+		return
+	_save_profile_deck()
+	_mark_current_deck_saved()
+	back_pressed.emit()
 
 func _build_import_deck_dialog() -> void:
 	if _import_deck_dialog != null and is_instance_valid(_import_deck_dialog):
@@ -2213,6 +2254,20 @@ func _deck_undo_states_equal(a: Dictionary, b: Dictionary) -> bool:
 		and str(a.get("pending_remote_saved_deck_id", "")) == str(b.get("pending_remote_saved_deck_id", ""))
 	)
 
+func _make_saved_deck_state() -> Dictionary:
+	return {
+		"deck": _deck.duplicate(true),
+		"tiamat_slots": _tiamat_slots.duplicate(true),
+		"art_variant_selections": _art_variant_selections.duplicate(true),
+		"deck_name": _deck_name_edit.text if _deck_name_edit != null else "",
+	}
+
+func _mark_current_deck_saved() -> void:
+	_saved_deck_state = _make_saved_deck_state()
+
+func _has_unsaved_deck_changes() -> bool:
+	return _saved_deck_state != _make_saved_deck_state()
+
 func _push_current_deck_undo_state() -> void:
 	var snapshot := _make_deck_undo_state()
 	if not _deck_undo_history.is_empty():
@@ -2459,6 +2514,7 @@ func _save_profile_deck() -> void:
 			_selected_saved_deck_id,
 			_get_deck_special_setup()
 		)
+		_mark_current_deck_saved()
 		_set_status_flash("Saving deck for %s..." % _active_player_name)
 		return
 	_ensure_local_profile_store()
@@ -2477,6 +2533,7 @@ func _save_profile_deck() -> void:
 	if _deck_name_edit != null:
 		_deck_name_edit.text = str(saved_deck.get("name", _deck_name_edit.text))
 	_load_profile_decks()
+	_mark_current_deck_saved()
 	_set_status_flash("Deck saved for %s." % _active_player_name)
 
 func _export_current_deck() -> void:
@@ -3110,6 +3167,7 @@ func _apply_saved_deck(saved_deck: Dictionary) -> void:
 	_select_saved_deck(_selected_saved_deck_id)
 	_refresh_saved_deck_gallery(_get_saved_decks())
 	_refresh_deck_panel(true, false)
+	_mark_current_deck_saved()
 
 func _refresh_saved_deck_gallery(decks: Array[Dictionary]) -> void:
 	_saved_decks_cache.clear()

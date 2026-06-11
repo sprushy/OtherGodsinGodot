@@ -731,7 +731,11 @@ func _handle_escape_navigation() -> bool:
 		show_menu()
 		return true
 	if _is_deck_builder_open():
-		_return_to_menu()
+		var deck_builder := game_container.get_node_or_null("DeckBuilder")
+		if deck_builder != null and deck_builder.has_method("request_exit"):
+			deck_builder.request_exit()
+		else:
+			_return_to_menu()
 		return true
 	if menu_container != null and menu_container.visible and multiplayer_container != null and not multiplayer_container.visible:
 		_open_close_confirm_overlay()
