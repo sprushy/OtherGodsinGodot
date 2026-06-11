@@ -26,6 +26,7 @@ var _is_retrying_initial_connect: bool = false
 var _match_join_requested: bool = false
 var _has_authenticated_match: bool = false
 var _connect_attempt_serial: int = 0
+var _reconnect_attempt_serial: int = 0
 var _match_completed: bool = false
 
 func _init(
@@ -79,6 +80,7 @@ func receives_network_events() -> bool:
 
 func shutdown() -> void:
 	_cancel_connect_attempt_timeout()
+	_reconnect_attempt_serial += 1
 	_reconnect_attempts_remaining = 0
 	_is_reconnecting = false
 	_is_retrying_initial_connect = false
@@ -122,6 +124,7 @@ func _on_connected_to_server() -> void:
 
 func _on_match_join_approved(match_info: Dictionary) -> void:
 	_cancel_connect_attempt_timeout()
+	_reconnect_attempt_serial += 1
 	var was_reconnecting := _is_reconnecting
 	_match_info.merge(match_info, true)
 	_is_reconnecting = false
@@ -141,6 +144,7 @@ func _on_match_join_approved(match_info: Dictionary) -> void:
 
 func _on_match_join_denied(reason: String) -> void:
 	_cancel_connect_attempt_timeout()
+	_reconnect_attempt_serial += 1
 	var was_reconnecting := _is_reconnecting
 	_is_reconnecting = false
 	_is_retrying_initial_connect = false
@@ -218,15 +222,29 @@ func _try_reconnect() -> bool:
 	game_event_received.emit("match_reconnect_started", {
 		"attempts_remaining": _reconnect_attempts_remaining,
 	})
+	_reconnect_attempt_serial += 1
+	var expected_serial := _reconnect_attempt_serial
+	call_deferred("_perform_reconnect", expected_serial)
+	return true
+
+func _perform_reconnect(expected_serial: int) -> void:
+	if expected_serial != _reconnect_attempt_serial or not _is_reconnecting:
+		return
+	if _match_completed or network_manager == null:
+		_is_reconnecting = false
+		return
 	var reconnect_err: Error = network_manager.reconnect_client(_server_ip, _server_port)
 	if reconnect_err == OK:
 		_arm_connect_attempt_timeout()
-		return true
+		return
 	_is_reconnecting = false
 	game_event_received.emit("match_reconnect_failed", {
 		"reason": "Reconnect attempt failed.",
 	})
-	return false
+	_handle_connection_failure(
+		"Could not connect to the match server.",
+		"Reconnect attempt failed."
+	)
 
 func _try_initial_connect_retry() -> bool:
 	if not requires_match_auth() or network_manager == null:
@@ -238,12 +256,26 @@ func _try_initial_connect_retry() -> bool:
 	game_event_received.emit("match_connect_retry_started", {
 		"attempts_remaining": _reconnect_attempts_remaining,
 	})
+	_reconnect_attempt_serial += 1
+	var expected_serial := _reconnect_attempt_serial
+	call_deferred("_perform_initial_connect_retry", expected_serial)
+	return true
+
+func _perform_initial_connect_retry(expected_serial: int) -> void:
+	if expected_serial != _reconnect_attempt_serial or not _is_retrying_initial_connect:
+		return
+	if _match_completed or network_manager == null:
+		_is_retrying_initial_connect = false
+		return
 	var reconnect_err: Error = network_manager.reconnect_client(_server_ip, _server_port)
 	if reconnect_err == OK:
 		_arm_connect_attempt_timeout()
-		return true
+		return
 	_is_retrying_initial_connect = false
-	return false
+	_handle_connection_failure(
+		"Could not connect to the match server.",
+		"Reconnect attempt failed."
+	)
 
 func _submit_match_join_request() -> void:
 	if not requires_match_auth() or network_manager == null or _match_join_requested:

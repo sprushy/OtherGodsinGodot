@@ -16,7 +16,7 @@ func _init() -> void:
 	if "Targeting" not in card_types:
 		card_types.append("Targeting")
 	targets = true
-	ability_text = "[b]Unlock[/b] (3): [b]Activate[/b] - Pay 3 mana: [b]Foresight[/b] - Look at the next 5 cards in your deck; choose one to [b]Prime[/b] and [b]Shelve[/b] the rest."
+	ability_text = "[b]Unlock[/b] (%d): [b]Activate[/b] - Pay %d mana: [b]Foresight[/b] - Look at the next %d cards in your deck; choose one to [b]Prime[/b] and [b]Shelve[/b] the rest." % [UNLOCK_COST, ACTIVATION_COST, LOOK_COUNT]
 	artist = "Eliot Chan"
 	art_path = ART_PATH
 

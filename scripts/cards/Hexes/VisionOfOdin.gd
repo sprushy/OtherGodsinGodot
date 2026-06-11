@@ -98,4 +98,4 @@ func is_valid_target(game_manager: GameManager, target: Card) -> bool:
 	return true
 
 func _is_norse_creature(target: Card) -> bool:
-	return target != null and (target.has_type("Norse Creature") or target.culture == "Norse")
+	return target != null and target.culture == "Norse"

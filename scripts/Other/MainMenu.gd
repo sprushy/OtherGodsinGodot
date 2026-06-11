@@ -1525,7 +1525,9 @@ func _refresh_seek_list() -> void:
 		var room_status := str(room.get("status", "waiting")).strip_edges().to_lower()
 		var status := "Live" if room_status == LobbyRoomScript.STATUS_IN_MATCH else room_status.capitalize()
 		var rank_tag := "" if bool(room.get("is_ranked", true)) else "[Unranked]  "
-		var action_hint := "  Click to Observe" if room_status == LobbyRoomScript.STATUS_IN_MATCH else "  Click to Join"
+		var action_hint := "  Click to Join"
+		if room_status == LobbyRoomScript.STATUS_IN_MATCH:
+			action_hint = "  Click to Rejoin" if bool(room.get("viewer_can_rejoin", false)) else "  Click to Observe"
 		seek_list.add_item("%s%s  %d/%d  %s%s" % [rank_tag, host_name, member_count, max_players, status, action_hint])
 		seek_list.set_item_metadata(seek_list.get_item_count() - 1, room.duplicate(true))
 
@@ -1576,9 +1578,6 @@ func _on_seek_item_clicked(index: int, _at_position: Vector2, _mouse_button_inde
 		return
 	if seek_list.is_item_disabled(index):
 		return
-	if not _current_room_snapshot.is_empty():
-		status_label.text = "Leave your current seek before joining another."
-		return
 	var room_entry = seek_list.get_item_metadata(index)
 	if not (room_entry is Dictionary):
 		return
@@ -1587,7 +1586,18 @@ func _on_seek_item_clicked(index: int, _at_position: Vector2, _mouse_button_inde
 	var room_id := str(room_data.get("room_id", "")).strip_edges()
 	if room_id.is_empty():
 		return
+	var can_rejoin := bool(room_data.get("viewer_can_rejoin", false))
+	if not _current_room_snapshot.is_empty() and not can_rejoin:
+		status_label.text = (
+			"Leave your current seek before observing another match."
+			if room_status == LobbyRoomScript.STATUS_IN_MATCH
+			else "Leave your current seek before joining another."
+		)
+		return
 	if room_status == LobbyRoomScript.STATUS_IN_MATCH:
+		if can_rejoin:
+			_on_rejoin_match_requested(room_id)
+			return
 		_on_observe_match_requested(room_id)
 		return
 	if _get_selected_multiplayer_deck().is_empty():
@@ -1697,6 +1707,23 @@ func _on_observe_match_requested(room_id: String) -> void:
 	room_code_line_edit.text = room_id.strip_edges().to_upper()
 	multiplayer_container.visible = true
 	_connect_to_browseable_lobby("Connecting to live match...")
+
+func _on_rejoin_match_requested(room_id: String) -> void:
+	var target_error := _validate_multiplayer_target()
+	if not target_error.is_empty():
+		status_label.text = target_error
+		return
+	var auth_error := _validate_auth_inputs()
+	if not auth_error.is_empty():
+		status_label.text = auth_error
+		return
+	_pending_host_room_creation = false
+	_pending_join_room_id = ""
+	_pending_observe_room_id = room_id.strip_edges().to_upper()
+	_pending_local_lobby_launch_on_connect_failure = false
+	room_code_line_edit.text = room_id.strip_edges().to_upper()
+	multiplayer_container.visible = true
+	_connect_to_browseable_lobby("Rejoining live match...")
 
 func _on_leave_seek_pressed() -> void:
 	if lobby_client == null:
@@ -4140,6 +4167,8 @@ func _on_lobby_room_list_updated(rooms: Array) -> void:
 	if _current_room_snapshot.is_empty():
 		if _open_seek_rooms.is_empty():
 			status_label.text = "No open seeks or live matches right now. Create one to start a match."
+		elif _open_seek_rooms.any(func(room: Dictionary) -> bool: return bool(room.get("viewer_can_rejoin", false))):
+			status_label.text = "Your live match is available to rejoin."
 		else:
 			status_label.text = "Click a seek to join, or click a Live room to observe."
 	_refresh_multiplayer_action_state()

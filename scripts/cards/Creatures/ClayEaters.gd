@@ -17,7 +17,7 @@ func _init() -> void:
 	speed = 1
 	resilience = 15
 	strength = 15
-	ability_text = "Geophagia ([b]Activate[/b], Cost 2): Choose a structure or Stone creature. At the end of your turn, destroy it if this card is still on the field."
+	ability_text = "Geophagia ([b]Activate[/b], Cost %d): Choose a structure or Stone creature. At the end of your turn, destroy it if this card is still on the field." % GEOPHAGIA_COST
 	flavor_text = ""
 	culture = "Ancient"
 	artist = "Ricardo Zoppello"

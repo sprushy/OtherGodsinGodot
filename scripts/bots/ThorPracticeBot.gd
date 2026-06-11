@@ -1974,7 +1974,7 @@ func _get_attack_defender_card(action: CardAction) -> Card:
 	return action.target as Card
 
 func _is_norse_creature(card: Card) -> bool:
-	return card != null and card.card_type == Card.CardType.CREATURE and (card.has_type("Norse Creature") or str(card.culture).strip_edges() == "Norse")
+	return card != null and card.card_type == Card.CardType.CREATURE and str(card.culture).strip_edges() == "Norse"
 
 func _choose_harii_jarl_warband_targets(jarl: HariiJarl, prompt_targets: Array[Card]) -> Array[Card]:
 	var targets := prompt_targets if not prompt_targets.is_empty() else jarl.get_valid_warband_targets(game_manager)

@@ -138,7 +138,7 @@ func _is_norse_human_warrior(card: Card) -> bool:
 		and card.get_controller() == card_owner \
 		and card.has_type("Human") \
 		and card.has_type("Warrior") \
-		and (card.has_type("Norse Creature") or card.culture == "Norse")
+		and card.culture == "Norse"
 
 func _get_friendly_ravens(attacker: Card) -> Array[Card]:
 	var supporters: Array[Card] = []

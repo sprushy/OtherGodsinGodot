@@ -20,7 +20,7 @@ func _init() -> void:
 	culture = "Olympic"
 	targets = true
 	flavor_text = ""
-	ability_text = "Deceptive Speed (2 mana, Spd 7): Once per turn increase a creature's Spd by 3 until the end of the turn."
+	ability_text = "Deceptive Speed (%d mana, Spd %d): Once per turn increase a creature's Spd by %d until the end of the turn." % [ACTIVATION_COST, ACTIVATION_SPEED, SPEED_BONUS]
 	artist = "Ricardo Zoppello"
 	art_path = "res://images/card_art/gods/HermesEdit.png"
 	name_at_bottom = true

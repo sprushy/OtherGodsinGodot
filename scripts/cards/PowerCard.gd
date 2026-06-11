@@ -214,7 +214,10 @@ func _get_display_ability_cost_data(game_manager: GameManager = null) -> Diction
 
 	var cost_kind: String = str(hover_data.get("cost_kind", Card.COST_KIND_POWER_ACTIVATION))
 	var metadata: Dictionary = hover_data.get("metadata", {})
-	var current_cost := get_adjusted_mana_cost(base_cost, cost_kind, game_manager, metadata)
+	var current_cost := int(hover_data.get(
+		"current_cost",
+		get_adjusted_mana_cost(base_cost, cost_kind, game_manager, metadata)
+	))
 	return {
 		"base_cost": base_cost,
 		"current_cost": current_cost,
@@ -223,49 +226,53 @@ func _get_display_ability_cost_data(game_manager: GameManager = null) -> Diction
 func _replace_display_ability_cost_text(
 	text: String,
 	base_cost: int,
-	capitalized_replacement: String,
-	lowercase_replacement: String
+	replacement_amount: String
 ) -> String:
 	var updated_text := text
-	updated_text = updated_text.replace("Pay %d mana" % base_cost, capitalized_replacement)
-	updated_text = updated_text.replace("pay %d mana" % base_cost, lowercase_replacement)
+	updated_text = updated_text.replace("Pay %d mana" % base_cost, "Pay " + replacement_amount)
+	updated_text = updated_text.replace("pay %d mana" % base_cost, "pay " + replacement_amount)
+	updated_text = updated_text.replace("(%d mana" % base_cost, "(" + replacement_amount)
+	updated_text = updated_text.replace(", %d mana" % base_cost, ", " + replacement_amount)
 	return updated_text
+
+func _replace_display_unlock_cost_text(text: String, replacement_amount: String) -> String:
+	var regex := RegEx.new()
+	if regex.compile("(\\[b\\]Unlock\\[/b\\]\\s*\\()\\d+(\\))") != OK:
+		return text
+	return regex.sub(text, "$1" + replacement_amount + "$2", true)
 
 func get_display_ability_text(game_manager: GameManager = null) -> String:
 	var cost_data: Dictionary = _get_display_ability_cost_data(game_manager)
-	if cost_data.is_empty():
-		return ability_text
-
-	var base_cost: int = int(cost_data.get("base_cost", 0))
-	var current_cost: int = int(cost_data.get("current_cost", base_cost))
-	return _replace_display_ability_cost_text(
-		ability_text,
-		base_cost,
-		"Pay %d mana" % current_cost,
-		"pay %d mana" % current_cost
-	)
+	var display_text := ability_text
+	if not cost_data.is_empty():
+		var base_cost: int = int(cost_data.get("base_cost", 0))
+		var current_cost: int = int(cost_data.get("current_cost", base_cost))
+		display_text = _replace_display_ability_cost_text(display_text, base_cost, "%d mana" % current_cost)
+	if game_manager != null:
+		display_text = _replace_display_unlock_cost_text(display_text, str(get_unlock_display_mana_cost(game_manager)))
+	return display_text
 
 func get_display_ability_bbcode_text(game_manager: GameManager = null) -> String:
 	var cost_data: Dictionary = _get_display_ability_cost_data(game_manager)
-	if cost_data.is_empty():
-		return ability_text
-
-	var base_cost: int = int(cost_data.get("base_cost", 0))
-	var current_cost: int = int(cost_data.get("current_cost", base_cost))
-	var capitalized_replacement := "Pay %d mana" % current_cost
-	var lowercase_replacement := "pay %d mana" % current_cost
-	if current_cost < base_cost:
-		capitalized_replacement = "[color=#66ff66]%s[/color]" % capitalized_replacement
-		lowercase_replacement = "[color=#66ff66]%s[/color]" % lowercase_replacement
-	elif current_cost > base_cost:
-		capitalized_replacement = "[color=#ff6666]%s[/color]" % capitalized_replacement
-		lowercase_replacement = "[color=#ff6666]%s[/color]" % lowercase_replacement
-	return _replace_display_ability_cost_text(
-		ability_text,
-		base_cost,
-		capitalized_replacement,
-		lowercase_replacement
-	)
+	var display_text := ability_text
+	if not cost_data.is_empty():
+		var base_cost: int = int(cost_data.get("base_cost", 0))
+		var current_cost: int = int(cost_data.get("current_cost", base_cost))
+		var replacement_amount := "%d mana" % current_cost
+		if current_cost < base_cost:
+			replacement_amount = "[color=#66ff66]%s[/color]" % replacement_amount
+		elif current_cost > base_cost:
+			replacement_amount = "[color=#ff6666]%s[/color]" % replacement_amount
+		display_text = _replace_display_ability_cost_text(display_text, base_cost, replacement_amount)
+	if game_manager != null:
+		var unlock_cost := get_unlock_display_mana_cost(game_manager)
+		var unlock_replacement := str(unlock_cost)
+		if unlock_cost < mana_cost:
+			unlock_replacement = "[color=#66ff66]%s[/color]" % unlock_replacement
+		elif unlock_cost > mana_cost:
+			unlock_replacement = "[color=#ff6666]%s[/color]" % unlock_replacement
+		display_text = _replace_display_unlock_cost_text(display_text, unlock_replacement)
+	return display_text
 
 func _mentions_inline_unlock_mana_cost(display_text: String, mana_amount: int) -> bool:
 	if display_text == "" or mana_amount <= 0:

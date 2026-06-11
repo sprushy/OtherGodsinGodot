@@ -3020,7 +3020,7 @@ func is_guardian_protected(target: Card, source: Card = null) -> bool:
 		return false
 	if not (current_phase == GamePhase.COMBAT or current_player == target_controller):
 		return false
-	if not target.has_type("Ancient Creature"):
+	if target.culture != "Ancient":
 		return false
 	for zone in target_controller.frontline_zones + target_controller.reserve_zones:
 		for card in zone.cards:

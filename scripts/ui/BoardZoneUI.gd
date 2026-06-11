@@ -1450,6 +1450,31 @@ func _add_token_badge(
 		badge.mouse_filter = Control.MOUSE_FILTER_STOP
 	return badge
 
+func _add_turn_countdown_badge(overlay: Control, card: Card) -> void:
+	if overlay == null or card == null or not card.has_method("get_turn_countdown_badge_text"):
+		return
+	var badge_text := str(card.call("get_turn_countdown_badge_text", game_manager)).strip_edges()
+	if badge_text == "":
+		return
+	var badge := _add_overlay_stat_badge(
+		overlay,
+		badge_text,
+		Control.PRESET_TOP_RIGHT,
+		-48,
+		6,
+		-6,
+		28,
+		Color(1.0, 0.88, 0.48)
+	)
+	if badge == null:
+		return
+	var hover_text := ""
+	if card.has_method("get_turn_countdown_badge_hover_text"):
+		hover_text = str(card.call("get_turn_countdown_badge_hover_text", game_manager)).strip_edges()
+	if hover_text != "":
+		badge.mouse_filter = Control.MOUSE_FILTER_STOP
+		_connect_badge_hover(badge, hover_text)
+
 func _get_power_status_cost_text(card: Card) -> String:
 	if not (card is PowerCard):
 		return ""
@@ -4922,6 +4947,7 @@ func _refresh_display() -> void:
 			AggressiveSwordOverlay.ensure_on(card_overlay, AggressiveSwordOverlay.LAYOUT_STAT_UNDER)
 		_add_level_badge(card_overlay, card, Control.PRESET_TOP_LEFT, 6, LEVEL_BADGE_TOP, 54, LEVEL_BADGE_BOTTOM)
 		_add_token_badge(card_overlay, card, Control.PRESET_TOP_LEFT, 6, 28, 66, 46)
+		_add_turn_countdown_badge(card_overlay, card)
 		_add_prepared_magical_mana_badge(card_overlay, card)
 		if card.is_power:
 			_add_power_cost_badge(card_overlay, card)

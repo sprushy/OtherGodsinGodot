@@ -117,7 +117,7 @@ static func _serialize_zone_cards(zone: Zone, viewer: Player = null, hide_hand: 
 	var result := []
 	for card in zone.cards:
 		var hidden_mode := HIDDEN_MODE_NONE
-		if hide_hand:
+		if hide_hand and not card.is_revealed_in_hand():
 			hidden_mode = HIDDEN_MODE_HAND
 		elif not reveal_private_cards and viewer != null and zone.zone_type in [Zone.ZoneType.FRONTLINE, Zone.ZoneType.RESERVE, Zone.ZoneType.POWER_SLOT, Zone.ZoneType.GOD_SLOT] and card.is_hidden_from_viewer(viewer):
 			hidden_mode = HIDDEN_MODE_BOARD
@@ -408,6 +408,7 @@ static func apply_to_manager(data: Dictionary, gm: GameManager) -> void:
 			gm.attack_restrictions[gm.players[p_idx]] = {
 				turns = entry.get("turns", 0),
 				source = null,
+				source_uid = str(entry.get("source_uid", "")),
 			}
 
 	gm.turn_follower_loss_preventions.clear()
@@ -475,6 +476,7 @@ static func apply_to_manager(data: Dictionary, gm: GameManager) -> void:
 			_apply_zone_cards(player.reserve_zones[j], res_data[j])
 
 	_restore_card_uid_references(gm)
+	_restore_attack_restriction_sources(gm)
 	_restore_prepared_cards(data.get("prepared_hexes", []), gm.prepared_hexes, gm)
 	_restore_prepared_cards(data.get("prepared_charms", []), gm.prepared_charms, gm)
 	_restore_combat_destroy_events(data.get("combat_destroy_events_this_turn", []), gm)
@@ -532,6 +534,15 @@ static func _restore_card_uid_references(gm: GameManager) -> void:
 				if creature != null and card not in creature.equipment:
 					creature.equipment.append(card)
 		card._sync_status_flags()
+
+static func _restore_attack_restriction_sources(gm: GameManager) -> void:
+	var uid_map := _build_card_uid_map(gm)
+	for player in gm.attack_restrictions:
+		var restriction: Dictionary = gm.attack_restrictions[player]
+		var source_uid := str(restriction.get("source_uid", "")).strip_edges()
+		restriction.erase("source_uid")
+		if source_uid != "" and uid_map.has(source_uid):
+			restriction.source = uid_map[source_uid]
 
 static func _restore_effect_uid_references(entries: Array, uid_map: Dictionary) -> void:
 	for entry in entries:

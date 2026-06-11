@@ -14,7 +14,7 @@ func _init() -> void:
 	speed = 3
 	strength_modifier = 9
 	is_legendary = true
-	ability_text = "Can be equipped to Ancient creatures, Warriors, and Demons. Gain 9 Str. If this unequipped card is on the field, equip to a friendly Ancient Warrior or Demon (Spd 3). If Sharur would be destroyed or stolen, you may pay 4 mana and return it to your hand instead (Spd 3)."
+	ability_text = "Can be equipped to Ancient creatures, Warriors, and Demons. Gain %d Str. If this unequipped card is on the field, equip to a friendly Ancient Warrior or Demon (Spd %d). If Sharur would be destroyed or stolen, you may pay %d mana and return it to your hand instead (Spd %d)." % [strength_modifier, speed, RETURN_TO_HAND_COST, speed]
 	flavor_text = ""
 	artist = "Lorinda Tomko"
 	art_path = ART_PATH
@@ -115,7 +115,7 @@ func get_effect_summary_lines() -> Array[String]:
 
 func _is_valid_bearer(creature: Card) -> bool:
 	return creature != null and (
-		creature.has_type("Ancient Creature")
+		creature.culture == "Ancient"
 		or creature.has_type("Warrior")
 		or creature.has_type("Demon")
 	)

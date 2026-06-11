@@ -39,7 +39,7 @@ func is_valid_target(target: Card) -> bool:
 		and target.current_zone == card_owner.graveyard_zone \
 		and target.card_type == Card.CardType.CREATURE \
 		and not target.is_god \
-		and target.has_type("Ancient Creature") \
+		and target.culture == "Ancient" \
 		and _get_best_summon_zone(target) != null
 
 func resolve(game_manager: GameManager, target = null) -> void:

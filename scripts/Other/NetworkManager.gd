@@ -33,6 +33,7 @@ var trace_file_path: String = ""
 var use_current_scene_relative_path: bool = false
 var validate_match_command_types: bool = true
 var _managed_multiplayer_api: MultiplayerAPI = null
+var _suppress_disconnect_events_until_msec: int = 0
 
 ## Maps player_index (0/1) to their ENet peer_id.
 ## Player 0 = host (peer_id 1), Player 1 = first remote client.
@@ -58,6 +59,9 @@ func _on_peer_connected(id: int) -> void:
 	peer_connected.emit(id)
 
 func _on_peer_disconnected(id: int) -> void:
+	if _should_suppress_disconnect_event():
+		_trace("ignoring stale peer_disconnected %d during transport replacement" % id)
+		return
 	_trace("peer_disconnected %d" % id)
 	peer_disconnected.emit(id)
 
@@ -70,6 +74,9 @@ func _on_connection_failed() -> void:
 	connection_failed.emit()
 
 func _on_server_disconnected() -> void:
+	if _should_suppress_disconnect_event():
+		_trace("ignoring stale server_disconnected during transport replacement")
+		return
 	_trace("server_disconnected")
 	server_disconnected.emit()
 
@@ -107,7 +114,9 @@ func create_client(address: String = "127.0.0.1", port: int = 12345) -> Error:
 		_trace("client connecting to %s:%d path=%s" % [address, port, str(get_path())])
 	return err
 
-func disconnect_client() -> void:
+func disconnect_client(suppress_disconnect_events: bool = true) -> void:
+	if suppress_disconnect_events:
+		_suppress_disconnect_events_until_msec = Time.get_ticks_msec() + 1000
 	var api := _ensure_multiplayer_api()
 	if api != null and api.multiplayer_peer != null:
 		api.multiplayer_peer = null
@@ -128,6 +137,10 @@ func reconnect_client(address: String = "", port: int = -1) -> Error:
 	var connect_port := port if port > 0 else last_client_port
 	disconnect_client()
 	return create_client(connect_address, connect_port)
+
+func _should_suppress_disconnect_event() -> bool:
+	return _suppress_disconnect_events_until_msec > 0 \
+		and Time.get_ticks_msec() <= _suppress_disconnect_events_until_msec
 
 # ---------------------------------------------------------------------------
 # Client → server: submit a player action

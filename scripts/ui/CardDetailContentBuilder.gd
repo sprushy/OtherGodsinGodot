@@ -11,6 +11,7 @@ static func build_visual_hover_body(card: Card, viewer: Player, config: Dictiona
 	var content_width := float(config.get("content_width", 300.0))
 	var display_mana_cost := int(config.get("display_mana_cost", card.mana_cost))
 	var display_cost_adjustment_lines: Array[String] = _to_string_array(config.get("display_cost_adjustment_lines", []))
+	var game_manager = config.get("game_manager", card.card_owner.game_manager if card.card_owner != null else null)
 
 	var scroll := ScrollContainer.new()
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -102,7 +103,7 @@ static func build_visual_hover_body(card: Card, viewer: Player, config: Dictiona
 
 	if card.ability_text != "":
 		var ability_lbl := _make_rich_text(
-			BaseCard.apply_keyword_hints(BaseCard.apply_action_cost_symbols(card.ability_text, card)),
+			BaseCard.apply_keyword_hints(BaseCard.apply_action_cost_symbols(card.get_display_ability_bbcode_text(game_manager), card)),
 			17,
 			Color(0.9, 0.85, 1.0),
 			210.0
@@ -346,7 +347,7 @@ static func build_board_popup_body(card: Card, viewer: Player, config: Dictionar
 		vbox.add_child(spd_lbl)
 
 	if card.ability_text != "" and not is_hidden_card:
-		var display_ability_text := (card as PowerCard).get_display_ability_bbcode_text(game_manager) if card is PowerCard else card.ability_text
+		var display_ability_text := card.get_display_ability_bbcode_text(game_manager)
 		vbox.add_child(_make_rich_text(
 			BaseCard.apply_keyword_hints(BaseCard.apply_action_cost_symbols(display_ability_text, card)),
 			13,

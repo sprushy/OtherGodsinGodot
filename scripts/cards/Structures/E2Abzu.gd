@@ -23,7 +23,7 @@ func _init() -> void:
 	artist = "Ricardo Zoppello"
 	name_at_bottom = true
 	art_path = ART_PATH
-	ability_text = "([b]Activate[/b], 3 mana): Add a Mer Mage from your [b]Void[/b] to your hand with level less than your mana count.\n([b]Activate[/b], 2 mana, [b]Spd[/b] 3): [b]Void[/b] a friendly Mer Mage from the field until end of turn."
+	ability_text = "([b]Activate[/b], %d mana): Add a Mer Mage from your [b]Void[/b] to your hand with level less than your mana count.\n([b]Activate[/b], %d mana, [b]Spd[/b] %d): [b]Void[/b] a friendly Mer Mage from the field until end of turn." % [RETURN_TO_HAND_COST, VOID_AND_RETURN_COST, VOID_RESPONSE_SPEED]
 
 func can_activate(game_manager: GameManager) -> bool:
 	if game_manager == null:

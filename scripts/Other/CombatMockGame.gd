@@ -192,7 +192,7 @@ var _pending_empty_priority_auto_pass_signature: Dictionary = {}
 var _pending_reveal_auto_submit_keys: Dictionary = {}
 var _fan_container: Control = null
 var _enemy_hand_overlay: Control = null
-var _mopsus_revealed_enemy_hand_uids: Array[String] = []
+var _enemy_hand_visual_cards: Array = []   # Array[VisualCard]
 var _hand_hover_preview: Control = null
 var _hand_hover_vc: VisualCard = null
 var _hand_hover_preview_card: VisualCard = null
@@ -5207,6 +5207,7 @@ func _get_enemy_hand_overlay_rect() -> Rect2:
 	return Rect2(Vector2(overlay_x, overlay_y), Vector2(overlay_width, ENEMY_HAND_DOCK_HEIGHT))
 
 func draw_enemy_hand_overlay() -> void:
+	_enemy_hand_visual_cards.clear()
 	if _enemy_hand_overlay != null and is_instance_valid(_enemy_hand_overlay):
 		if _enemy_hand_overlay.get_parent() == self:
 			remove_child(_enemy_hand_overlay)
@@ -5217,7 +5218,6 @@ func draw_enemy_hand_overlay() -> void:
 	var peek_count := _get_enemy_hand_overlay_card_count(enemy_player)
 	if peek_count <= 0:
 		return
-	_prune_mopsus_revealed_enemy_hand_cards()
 
 	_enemy_hand_overlay = Control.new()
 	_enemy_hand_overlay.name = "EnemyHandOverlay"
@@ -5244,12 +5244,12 @@ func _get_enemy_hand_overlay_display_cards(enemy_player: Player) -> Array[Card]:
 		if display_cards.size() < ENEMY_HAND_PEEK_MAX_CARDS:
 			display_cards.append(card)
 			continue
-		if card.uid in _mopsus_revealed_enemy_hand_uids and card not in display_cards:
+		if card.is_revealed_in_hand() and card not in display_cards:
 			display_cards.append(card)
 	return display_cards
 
 func _make_enemy_hand_overlay_card(card: Card) -> Control:
-	if card != null and card.uid in _mopsus_revealed_enemy_hand_uids:
+	if _is_enemy_hand_card_revealed(card):
 		return _make_enemy_hand_overlay_revealed_card(card)
 	var card_back := TextureRect.new()
 	card_back.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -5260,62 +5260,20 @@ func _make_enemy_hand_overlay_card(card: Card) -> Control:
 	card_back.pivot_offset = card_back.size * 0.5
 	return card_back
 
+func _is_enemy_hand_card_revealed(card: Card) -> bool:
+	return card != null and card.is_revealed_in_hand()
+
 func _make_enemy_hand_overlay_revealed_card(card: Card) -> Control:
-	var panel := PanelContainer.new()
-	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	panel.custom_minimum_size = Vector2(ENEMY_HAND_CARD_WIDTH, ENEMY_HAND_CARD_HEIGHT)
-	panel.size = Vector2(ENEMY_HAND_CARD_WIDTH, ENEMY_HAND_CARD_HEIGHT)
-
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.08, 0.09, 0.14, 1.0)
-	style.border_color = Color(0.95, 0.78, 0.34, 0.98)
-	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		style.set_border_width(side as Side, 2)
-	style.corner_radius_top_left = 5
-	style.corner_radius_top_right = 5
-	style.corner_radius_bottom_left = 5
-	style.corner_radius_bottom_right = 5
-	panel.add_theme_stylebox_override("panel", style)
-
-	var face := Control.new()
-	face.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	face.custom_minimum_size = Vector2(ENEMY_HAND_CARD_WIDTH, ENEMY_HAND_CARD_HEIGHT)
-	panel.add_child(face)
-
-	var art := TextureRect.new()
-	var tex: Texture2D = null
-	if card != null and card.art_path != "":
-		tex = load(card.art_path) as Texture2D
-	art.texture = tex if tex != null else CardBackTexture
-	art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-	art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	art.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	art.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	face.add_child(art)
-
-	var name_bg := ColorRect.new()
-	name_bg.color = Color(0.03, 0.04, 0.07, 0.82)
-	name_bg.anchor_left = 0.0
-	name_bg.anchor_right = 1.0
-	name_bg.anchor_top = 1.0
-	name_bg.anchor_bottom = 1.0
-	name_bg.offset_left = 0.0
-	name_bg.offset_right = 0.0
-	name_bg.offset_top = -30.0
-	name_bg.offset_bottom = 0.0
-	name_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	face.add_child(name_bg)
-
-	var name_label := Label.new()
-	name_label.text = card.card_name if card != null else "Revealed"
-	name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	name_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	name_label.add_theme_font_size_override("font_size", 15)
-	name_label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	name_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	name_bg.add_child(name_label)
-	return panel
+	var vc := VisualCard.new()
+	vc.setup(card, int(ENEMY_HAND_CARD_WIDTH), 0)
+	vc.set_hover_viewer(game_manager.get_feedback_viewer())
+	vc.set_hand_mode(true)
+	vc.set_hover_preview_when_disabled(true)
+	vc.set_disabled(true, false)
+	vc.hand_hovered.connect(_on_hand_card_hover_started)
+	vc.hand_unhovered.connect(_on_hand_card_hover_ended)
+	_enemy_hand_visual_cards.append(vc)
+	return vc
 
 func _layout_enemy_hand_overlay() -> void:
 	if _enemy_hand_overlay == null or not is_instance_valid(_enemy_hand_overlay):
@@ -5631,9 +5589,10 @@ func _show_hand_hover_preview(vc: VisualCard) -> void:
 	var large_vc := VisualCard.new()
 	large_vc.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	preview.add_child(large_vc)
-	large_vc.setup(card, 255, 0,
-		_get_hand_card_display_mana_cost(card),
-		_get_hand_card_cost_adjustment_lines(card))
+	var enemy_hand_hover := vc in _enemy_hand_visual_cards
+	var display_mana_cost := card.mana_cost if enemy_hand_hover else _get_hand_card_display_mana_cost(card)
+	var cost_adjustment_lines: Array[String] = [] if enemy_hand_hover else _get_hand_card_cost_adjustment_lines(card)
+	large_vc.setup(card, 255, 0, display_mana_cost, cost_adjustment_lines)
 	large_vc.set_hand_mode(true)
 	large_vc.set_disabled(true, false)
 
@@ -5690,7 +5649,7 @@ func _position_hand_hover_preview() -> void:
 		keywords_panel.size = keywords_sz
 	var desired_px := card_cx - (large_vc.position.x + card_sz.x * 0.5)
 	var px := clampf(desired_px, 4.0, maxf(4.0, vp_size.x - preview_sz.x - 4.0))
-	var py := maxf(0.0, vp_size.y - preview_sz.y)
+	var py := 4.0 if vc in _enemy_hand_visual_cards else maxf(0.0, vp_size.y - preview_sz.y)
 	preview.global_position = Vector2(px, py)
 	preview.visible = true
 
@@ -5719,7 +5678,7 @@ func _on_hand_hover_preview_gui_input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 
 func _update_hand_hover_preview() -> void:
-	if _fan_container == null or not is_instance_valid(_fan_container) or _hand_visual_cards.is_empty():
+	if _hand_visual_cards.is_empty() and _enemy_hand_visual_cards.is_empty():
 		_hide_hand_hover_preview()
 		return
 	if _is_pause_menu_open():
@@ -5739,15 +5698,16 @@ func _update_hand_hover_preview() -> void:
 		_position_hand_hover_preview()
 
 func _any_hand_card_interacting() -> bool:
-	for hand_vc in _hand_visual_cards:
+	for hand_vc in _hand_visual_cards + _enemy_hand_visual_cards:
 		var vc := hand_vc as VisualCard
 		if vc != null and is_instance_valid(vc) and vc.is_hand_interacting():
 			return true
 	return false
 
 func _find_hand_hover_card_at(global_pos: Vector2) -> VisualCard:
-	for i in range(_hand_visual_cards.size() - 1, -1, -1):
-		var vc: VisualCard = _hand_visual_cards[i]
+	var hover_cards := _hand_visual_cards + _enemy_hand_visual_cards
+	for i in range(hover_cards.size() - 1, -1, -1):
+		var vc: VisualCard = hover_cards[i]
 		if vc != null \
 				and is_instance_valid(vc) \
 				and vc.visible \
@@ -9612,10 +9572,11 @@ func _prompt_champions_call_shelving(god: GodCard, on_complete: Callable, on_can
 			current_mana
 		]
 	elif required_count > 0:
-		info.text = "Summon %s. Choose at least %d and up to %d hand card(s) to shelve. Each shelved card pays 4 mana toward the %d-cost summon. Current mana: %d." % [
+		info.text = "Summon %s. Choose at least %d and up to %d hand card(s) to shelve. Each shelved card pays %d mana toward the %d-cost summon. Current mana: %d." % [
 			manifestation_name,
 			required_count,
 			max_shelve_count,
+			GodCard.CHAMPIONS_CALL_SHELVE_MANA_VALUE,
 			mana_required,
 			current_mana
 		]
@@ -11399,7 +11360,7 @@ func _try_resolve_pyre_convert_from_enemy_god_zone(zone: Zone) -> bool:
 			CardAction.Type.ABILITY,
 			source_pyre,
 			opponent,
-			source_pyre.card_name + ": Ritual Flame - 5 followers converted!",
+			source_pyre.card_name + ": Ritual Flame - %d followers converted!" % AncientPyre.EFFECT_AMOUNT,
 			func() -> void:
 				source_pyre.activate(game_manager, option)
 		)
@@ -15820,7 +15781,7 @@ func _on_creature_ability_badge_clicked(card: Card) -> void:
 			update_ui()
 			return
 		_submit_or_queue_card_ability_by_uid(card.uid, {}, "Ancient Pyre activated!")
-		_set_action_label_text("Ancient Pyre: Ritual Flame - 5 followers converted!")
+		_set_action_label_text("Ancient Pyre: Ritual Flame - %d followers converted!" % AncientPyre.EFFECT_AMOUNT)
 		update_ui()
 		return
 
@@ -16274,7 +16235,7 @@ func _on_board_card_pressed(card: Card) -> void:
 					_set_action_label_text("Ancient Pyre: Ritual Flame ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â 5 followers converted!")
 					update_ui()
 			else:
-				_set_action_label_text("Ancient Pyre cannot activate right now (need 2 mana or no valid targets).")
+				_set_action_label_text("Ancient Pyre cannot activate right now (need %d mana or no valid targets)." % AncientPyre.ACTIVATION_COST)
 		elif card is AnointingStatue and card.get_controller() == game_manager.current_player:
 			awaiting_anointing_target = true
 			anointing_source = card as AnointingStatue
@@ -20553,32 +20514,6 @@ func _finish_mopsus_hand_choice_after_reveal(state: Dictionary) -> void:
 			_resolve_mopsus_hand_choice(source, chosen_targets)
 	)
 
-func _remember_mopsus_revealed_enemy_hand_cards(targets: Array[Card]) -> void:
-	for target in targets:
-		if target == null:
-			continue
-		if target.current_zone == null or target.current_zone.zone_type != Zone.ZoneType.HAND:
-			continue
-		if target.uid not in _mopsus_revealed_enemy_hand_uids:
-			_mopsus_revealed_enemy_hand_uids.append(target.uid)
-	_prune_mopsus_revealed_enemy_hand_cards()
-
-func _prune_mopsus_revealed_enemy_hand_cards() -> void:
-	if game_manager == null:
-		_mopsus_revealed_enemy_hand_uids.clear()
-		return
-	var live_hand_uids: Array[String] = []
-	for player in game_manager.players:
-		if player == null or player.hand_zone == null:
-			continue
-		for hand_card in player.hand_zone.cards:
-			var card := hand_card as Card
-			if card != null:
-				live_hand_uids.append(card.uid)
-	for uid in _mopsus_revealed_enemy_hand_uids.duplicate():
-		if uid not in live_hand_uids:
-			_mopsus_revealed_enemy_hand_uids.erase(uid)
-
 func _resolve_mopsus_hand_choice(card: MopsusScript, targets: Array[Card]) -> void:
 	if card == null or game_manager == null:
 		return
@@ -20587,7 +20522,6 @@ func _resolve_mopsus_hand_choice(card: MopsusScript, targets: Array[Card]) -> vo
 		_set_action_label_text("%s needs %d valid hand card(s) for Seer." % [card.card_name, card.get_required_seer_target_count(game_manager)])
 		update_ui()
 		return
-	_remember_mopsus_revealed_enemy_hand_cards(chosen_targets)
 	if _should_submit_ui_action_command():
 		var target_uids: Array[String] = []
 		for target in chosen_targets:
@@ -20605,7 +20539,6 @@ func _resolve_mopsus_hand_choice(card: MopsusScript, targets: Array[Card]) -> vo
 		var still_valid := card.can_activate(game_manager) and card.is_valid_seer_selection(game_manager, preview_targets)
 		card.activate(game_manager, {target_uids = preview_target_uids})
 		if still_valid:
-			_remember_mopsus_revealed_enemy_hand_cards(preview_targets)
 			if preview_targets.size() == 1 and preview_targets[0] != null:
 				_set_action_label_text("%s revealed %s in hand." % [card.card_name, preview_targets[0].card_name])
 			else:
@@ -24132,7 +24065,7 @@ func _continue_end_turn_sequence() -> void:
 	# Check for Again-Walker resurrections before committing end turn
 	var candidates: Array[Card] = []
 	for card in game_manager.pending_resurrections:
-		if card.card_owner.mana >= 1 \
+		if card.card_owner.mana >= AgainWalker.RESURRECTION_COST \
 				and card.current_zone == card.card_owner.graveyard_zone \
 				and _get_resurrection_zone_for_card(card) != null:
 			candidates.append(card)
@@ -25322,8 +25255,8 @@ func _update_waiting_overlay() -> void:
 	var current_priority_player := game_manager.priority_player
 	var priority_idx := game_manager.players.find(current_priority_player)
 	
-	# Only show opponent-priority waiting when there is an actual response choice.
-	# Auto-passed no-response windows can exist for a frame during state sync.
+	# The authoritative priority player is the source of truth. The local client
+	# cannot always determine whether an opponent has a legal hidden response.
 	if _should_show_opponent_priority_waiting(current_priority_player, priority_idx, local_idx):
 		_update_waiting_status(true, "Opponent has priority...")
 		return
@@ -25346,7 +25279,7 @@ func _should_show_opponent_priority_waiting(priority_player: Player, priority_id
 		return false
 	if priority_idx == -1 or priority_idx == local_idx:
 		return false
-	return match_manager != null and match_manager._player_has_priority_prompt_responses(priority_player)
+	return true
 
 func _set_match_reconnect_wait(is_waiting: bool, message: String = "Waiting for opponent to reconnect...") -> void:
 	_match_reconnect_waiting = is_waiting
@@ -25993,7 +25926,7 @@ func _next_resurrection_prompt() -> void:
 		var candidate = _resurrection_queue.pop_front()
 		if candidate != null \
 				and candidate.card_owner != null \
-				and candidate.card_owner.mana >= 1 \
+				and candidate.card_owner.mana >= AgainWalker.RESURRECTION_COST \
 				and candidate.current_zone == candidate.card_owner.graveyard_zone \
 				and _get_resurrection_zone_for_card(candidate) != null:
 			card = candidate
@@ -26030,7 +25963,7 @@ func _next_resurrection_prompt() -> void:
 	vbox.add_child(title)
 
 	var body := Label.new()
-	body.text = card.card_owner.player_name + ": pay 1 mana to resurrect in your reserve line?"
+	body.text = "%s: pay %d mana to resurrect in your reserve line?" % [card.card_owner.player_name, AgainWalker.RESURRECTION_COST]
 	body.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	vbox.add_child(body)

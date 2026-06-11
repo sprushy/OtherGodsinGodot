@@ -222,7 +222,7 @@ func _is_preferred_card_for_god(card: Card, god: GodCard) -> bool:
 		return false
 	match god.card_name:
 		"Thor", "Freyja":
-			return card.has_type("Warrior") and (card.has_type("Norse Creature") or card.culture == "Norse")
+			return card.has_type("Warrior") and card.culture == "Norse"
 		"Tezcatlipoca, the Smoking Mirror":
 			return card.has_type("Shapeshifter")
 		_:

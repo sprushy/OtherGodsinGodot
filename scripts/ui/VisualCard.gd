@@ -9,6 +9,7 @@ const LevelSymbolRowScript = preload("res://scripts/ui/LevelSymbolRow.gd")
 const MINOR_ACTION_SYMBOL_TEXTURE := preload("res://images/ui/MinorActionSymbol.png")
 const MAJOR_ACTION_SYMBOL_TEXTURE := preload("res://images/ui/MajorActionSymbol.png")
 const MANA_ORB_TEXTURE := preload("res://images/ui/ManaOrb.png")
+const REVEALED_HAND_BADGE_TEXTURE := preload("res://images/ability_badges/MopsusBadge.png")
 const PRIORITY_RESPONSE_GLOW_COLOR := Color(0.28, 0.92, 0.50, 0.95)
 
 signal card_clicked(card: Card)
@@ -660,12 +661,52 @@ func _build_content() -> void:
 	_disabled_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_inner.add_child(_disabled_overlay)
 
+	_add_revealed_hand_badge()
 	_refresh_power_lock_overlay()
 	_refresh_defense_shield_overlay()
 	_refresh_disabled_visual_state()
 	_refresh_dynamic_labels()
 	call_deferred("_sync_minimum_height")
 	call_deferred("_layout_power_lock_overlay")
+
+func _add_revealed_hand_badge() -> void:
+	if _inner == null or card_data == null or not card_data.is_revealed_in_hand():
+		return
+	if card_data.current_zone == null or card_data.current_zone.zone_type != Zone.ZoneType.HAND:
+		return
+	var badge := PanelContainer.new()
+	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	badge.offset_left = -32.0
+	badge.offset_top = 6.0
+	badge.offset_right = -6.0
+	badge.offset_bottom = 32.0
+
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.18, 0.02, 0.02, 0.96)
+	style.border_color = Color(1.0, 0.28, 0.24, 0.98)
+	style.shadow_color = Color(0.28, 0.02, 0.02, 0.52)
+	style.shadow_size = 4
+	style.corner_radius_top_left = 11
+	style.corner_radius_top_right = 11
+	style.corner_radius_bottom_left = 11
+	style.corner_radius_bottom_right = 11
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		style.set_border_width(side, 1)
+	badge.add_theme_stylebox_override("panel", style)
+	_inner.add_child(badge)
+
+	var icon := TextureRect.new()
+	icon.texture = REVEALED_HAND_BADGE_TEXTURE
+	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	icon.offset_left = 2.0
+	icon.offset_top = 2.0
+	icon.offset_right = -2.0
+	icon.offset_bottom = -2.0
+	badge.add_child(icon)
 
 func _make_card_style() -> StyleBoxFlat:
 	var style := StyleBoxFlat.new()

@@ -12,7 +12,7 @@ func _init() -> void:
 	culture = "Norse"
 	# flavor_text = "Thunder echoes across Midgard wherever he walks."
 	flavor_text = ""
-	ability_text = "Patron of Midguard ([b]Passive[/b]): Friendly Human Warriors on the field gain +3 STR and +3 RES.\n[b]Champion's Call[/b] ([b]Activate[/b]): Summon Thor, Active God. You may [b]Shelve[/b] cards from your hand to pay 4 mana each of its summon cost."
+	ability_text = "Patron of Midguard ([b]Passive[/b]): Friendly Human Warriors on the field gain +3 STR and +3 RES.\n[b]Champion's Call[/b] ([b]Activate[/b]): Summon Thor, Active God. You may [b]Shelve[/b] cards from your hand to pay %d mana each of its summon cost." % CHAMPIONS_CALL_SHELVE_MANA_VALUE
 	art_path = "res://images/card_art/gods/ThorAIedit.png"
 	name_at_bottom = true
 	artist = "Ricarrdo Zoppello"

@@ -191,7 +191,7 @@ func _is_valid_target(target: Card) -> bool:
 		and target.card_type == Card.CardType.CREATURE \
 		and not target.is_god \
 		and target.has_type("Warrior") \
-		and (target.has_type("Norse Creature") or target.culture == "Norse") \
+		and target.culture == "Norse" \
 		and _get_best_summon_zone(target) != null
 
 func _mark_for_next_turn_destruction(creature: Card, game_manager: GameManager) -> void:

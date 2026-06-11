@@ -86,7 +86,7 @@ func is_valid_target(target: Card) -> bool:
 		and target.card_type == Card.CardType.CREATURE \
 		and not target.is_god \
 		and target.has_type("Warrior") \
-		and (target.has_type("Norse Creature") or target.culture == "Norse")
+		and target.culture == "Norse"
 
 func get_valid_recruits(game_manager: GameManager) -> Array[Card]:
 	return _get_valid_recruits_for_level_cap(game_manager, get_destroyed_warrior_level_cap(game_manager))
@@ -119,7 +119,7 @@ func _is_valid_destroyed_warrior(card: Card) -> bool:
 		and card.card_type == Card.CardType.CREATURE \
 		and card.card_owner == card_owner \
 		and card.has_type("Warrior") \
-		and (card.has_type("Norse Creature") or card.culture == "Norse")
+		and card.culture == "Norse"
 
 func _has_destroyed_friendly_norse_warrior(game_manager: GameManager) -> bool:
 	return get_destroyed_warrior_level_cap(game_manager) >= 0
@@ -131,7 +131,7 @@ func _is_valid_recruit(card: Card, max_level: int) -> bool:
 		and card.card_type == Card.CardType.CREATURE \
 		and not card.is_god \
 		and card.has_type("Warrior") \
-		and (card.has_type("Norse Creature") or card.culture == "Norse") \
+		and card.culture == "Norse" \
 		and card.get_effective_level() <= max_level
 
 func _find_open_summon_zone() -> Zone:

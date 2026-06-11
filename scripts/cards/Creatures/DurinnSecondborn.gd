@@ -13,7 +13,7 @@ func _init() -> void:
 	speed = 1
 	resilience = 5
 	strength = 14
-	ability_text = "Reforge ([b]Impact[/b], 2 mana): Add a Weapon from either graveyard to your hand."
+	ability_text = "Reforge ([b]Impact[/b], %d mana): Add a Weapon from either graveyard to your hand." % REFORGE_COST
 	flavor_text = ""
 	culture = "Norse"
 	artist = "Lorinda Tomko"

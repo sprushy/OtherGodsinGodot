@@ -142,7 +142,7 @@ func _is_valid_sighting_attacker(card: Card) -> bool:
 		return true
 	return card.has_type("Human") \
 		and card.has_type("Warrior") \
-		and (card.has_type("Norse Creature") or card.culture == "Norse")
+		and card.culture == "Norse"
 
 func _get_open_summon_zones() -> Array[Zone]:
 	var open_zones: Array[Zone] = []

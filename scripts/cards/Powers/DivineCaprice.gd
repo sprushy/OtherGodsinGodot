@@ -12,7 +12,7 @@ func _init() -> void:
 	level = 0
 	mana_cost = UNLOCK_COST
 	card_types = ["Repositioning"]
-	ability_text = "[b]Unlock[/b] (1): [b]Activate[/b] (2 mana) - Move your cards to different legal slots."
+	ability_text = "[b]Unlock[/b] (%d): [b]Activate[/b] (%d mana) - Move your cards to different legal slots." % [UNLOCK_COST, ACTIVATION_COST]
 	artist = "Riccardo Zoppello"
 	art_path = "res://images/card_art/powers/DivineCapriceAIEdit.png"
 
@@ -46,6 +46,13 @@ func get_activation_failure_reason(game_manager: GameManager) -> String:
 
 func pay_activation_cost(game_manager: GameManager) -> bool:
 	return spend_activation_mana(ACTIVATION_COST, game_manager)
+
+func get_activation_cost_hover_data(_game_manager: GameManager = null) -> Dictionary:
+	return {
+		"base_cost": ACTIVATION_COST,
+		"cost_kind": Card.COST_KIND_POWER_ACTIVATION,
+		"label": "Activation Cost",
+	}
 
 func activate(game_manager: GameManager, target = null) -> void:
 	if not can_activate(game_manager):

@@ -744,9 +744,17 @@ func _find_resumable_session(profile_id: String, account_id: String) -> Dictiona
 		if not (existing is Dictionary):
 			continue
 		var session := existing as Dictionary
-		if bool(session.get("is_local", false)) or bool(session.get("connected", false)):
+		if bool(session.get("is_local", false)):
 			continue
 		var score := _get_resumable_session_score(session, resolved_profile_id, resolved_account_id)
+		if score < 0:
+			continue
+		if bool(session.get("connected", false)):
+			# Abruptly closed clients can remain marked connected until ENet times out.
+			# An authenticated account login must still reclaim its active match.
+			if resolved_account_id.is_empty() or _build_active_match_info_for_session(session_id).is_empty():
+				continue
+			score += 1000
 		if score <= best_score:
 			continue
 		best_score = score
@@ -775,6 +783,29 @@ func _get_resumable_session_score(session: Dictionary, profile_id: String, accou
 	if not str(room_id_by_session.get(session_id, "")).strip_edges().is_empty():
 		return identity_score + 10
 	return identity_score
+
+func _get_matching_participant_session_id(session_id: String, participant_session_ids: Array) -> String:
+	var session: Dictionary = sessions_by_id.get(session_id, {})
+	if session.is_empty():
+		return ""
+	var account_id := str(session.get("account_id", "")).strip_edges()
+	var profile_id := str(session.get("profile_id", "")).strip_edges()
+	if account_id.is_empty() and profile_id.is_empty():
+		return ""
+	for participant_session_id_variant in participant_session_ids:
+		var participant_session_id := str(participant_session_id_variant).strip_edges()
+		if participant_session_id.is_empty():
+			continue
+		var participant: Dictionary = sessions_by_id.get(participant_session_id, {})
+		if participant.is_empty():
+			continue
+		if not account_id.is_empty() and str(participant.get("account_id", "")).strip_edges() == account_id:
+			return participant_session_id
+		if account_id.is_empty() \
+			and not profile_id.is_empty() \
+			and str(participant.get("profile_id", "")).strip_edges() == profile_id:
+			return participant_session_id
+	return ""
 
 func _reclaim_session_for_peer(
 	session: Dictionary,
@@ -877,8 +908,12 @@ func _observe_room_for_session(session_id: String, room_id: String) -> void:
 		_send_error_to_session(session_id, "Enter a room code first.")
 		return
 	if room_id_by_session.has(session_id):
-		_send_error_to_session(session_id, "Leave your current seek before observing another match.")
-		return
+		var current_room_id := str(room_id_by_session.get(session_id, "")).strip_edges().to_upper()
+		if current_room_id != normalized_room_id \
+			or not rooms_by_id.has(current_room_id) \
+			or rooms_by_id[current_room_id].status != LobbyRoomScript.STATUS_IN_MATCH:
+			_send_error_to_session(session_id, "Leave your current seek before observing another match.")
+			return
 	if not rooms_by_id.has(normalized_room_id):
 		_send_error_to_session(session_id, "Room %s was not found." % normalized_room_id)
 		return
@@ -896,6 +931,10 @@ func _observe_room_for_session(session_id: String, room_id: String) -> void:
 	var match_session = match_supervisor.get_match(match_id)
 	if match_session == null:
 		_send_error_to_session(session_id, "That live match is no longer available to observe.")
+		return
+	var participant_session_id := _get_matching_participant_session_id(session_id, match_session.player_session_ids)
+	if not participant_session_id.is_empty():
+		_send_to_session(session_id, LobbyProtocolScript.MATCH_ASSIGNED, match_session.to_match_info(participant_session_id))
 		return
 	var visible_player_indices := _get_friend_visible_player_indices(session_id, match_session.player_session_ids)
 	match_supervisor.set_spectator_visible_player_indices(match_id, session_id, visible_player_indices)
@@ -1159,17 +1198,18 @@ func _broadcast_room_snapshot(room: LobbyRoom) -> void:
 			local_room_snapshot_updated.emit(snapshot)
 
 func _broadcast_room_lists() -> void:
-	var rooms: Array = _build_room_list()
 	for peer_id in session_id_by_peer.keys():
+		var session_id := str(session_id_by_peer.get(peer_id, "")).strip_edges()
 		_send_to_peer(int(peer_id), LobbyProtocolScript.ROOM_LIST, {
-			"rooms": rooms,
+			"rooms": _build_room_list(session_id),
 			"server_version": _get_server_version(),
 		})
-	room_list_updated.emit(rooms)
+	room_list_updated.emit(_build_room_list(local_session_id))
 
 func _send_room_list_to_peer(peer_id: int) -> void:
+	var session_id := str(session_id_by_peer.get(peer_id, "")).strip_edges()
 	_send_to_peer(peer_id, LobbyProtocolScript.ROOM_LIST, {
-		"rooms": _build_room_list(),
+		"rooms": _build_room_list(session_id),
 		"server_version": _get_server_version(),
 	})
 
@@ -1210,13 +1250,18 @@ func _collect_account_ids_from_friends_state(state: Dictionary) -> Array:
 				account_ids.append(account_id)
 	return account_ids
 
-func _build_room_list() -> Array:
+func _build_room_list(viewer_session_id: String = "") -> Array:
 	var rooms: Array = []
 	for room_id in rooms_by_id.keys():
 		var room: LobbyRoom = rooms_by_id[room_id]
 		if room.status != LobbyRoomScript.STATUS_IN_MATCH and not _room_has_connected_member(room):
 			continue
-		rooms.append(room.to_room_list_entry(sessions_by_id))
+		var entry := room.to_room_list_entry(sessions_by_id)
+		entry["viewer_can_rejoin"] = (
+			room.status == LobbyRoomScript.STATUS_IN_MATCH
+			and not _get_matching_participant_session_id(viewer_session_id, room.members).is_empty()
+		)
+		rooms.append(entry)
 	return rooms
 
 func _expire_stale_seeks() -> void:

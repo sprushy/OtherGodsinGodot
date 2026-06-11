@@ -15,7 +15,7 @@ func _init() -> void:
 	if "Targeting" not in card_types:
 		card_types.append("Targeting")
 	targets = true
-	ability_text = "[b]Unlock[/b] (1): [b]Activate[/b] - Pay 2 mana: [b]Void[/b] a Mage from your deck."
+	ability_text = "[b]Unlock[/b] (%d): [b]Activate[/b] - Pay %d mana: [b]Void[/b] a Mage from your deck." % [UNLOCK_COST, ACTIVATION_COST]
 	flavor_text = ""
 	artist = "Ricardo Zoppello"
 	art_path = ART_PATH

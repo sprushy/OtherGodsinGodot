@@ -15,15 +15,12 @@ func _init() -> void:
 	level = 0
 	mana_cost = UNLOCK_COST
 	card_types = ["Constructs", "Summon Creature", "Factory"]
-	ability_text = "[b]Unlock[/b] (3): [b]Activate[/b] - Pay 3 mana to summon an unsacrificable [b]Combat Mech[/b] token with LV2, SPD 1, RES 18, and STR 18. Activate only twice per turn."
+	ability_text = "[b]Unlock[/b] (%d): [b]Activate[/b] - Pay %d mana to summon an unsacrificable [b]Combat Mech[/b] token with LV2, SPD 1, RES 18, and STR 18. Activate only twice per turn." % [UNLOCK_COST, ACTIVATION_COST]
 	artist = "Stanley Vay"
 	art_path = ART_PATH
 
 func can_activate(game_manager: GameManager) -> bool:
-	var summon_tax := 0
-	if game_manager != null:
-		var preview_token := CombatMech.new()
-		summon_tax = game_manager.get_creature_summon_mana_cost(card_owner, preview_token, self, true)
+	var summon_tax := _get_summon_tax(game_manager)
 	return not is_face_down \
 		and not is_muted \
 		and not is_activation_locked(game_manager) \
@@ -67,6 +64,14 @@ func activate(game_manager: GameManager, _target: Card = null) -> void:
 			]
 		)
 
+func get_activation_cost_hover_data(game_manager: GameManager = null) -> Dictionary:
+	return {
+		"base_cost": ACTIVATION_COST,
+		"current_cost": get_activation_mana_cost(ACTIVATION_COST, game_manager) + _get_summon_tax(game_manager),
+		"cost_kind": Card.COST_KIND_POWER_ACTIVATION,
+		"label": "Activation Cost",
+	}
+
 func on_turn_upkeep(_game_manager: GameManager) -> void:
 	activations_this_turn = 0
 
@@ -80,3 +85,9 @@ func _find_open_summon_zone() -> Zone:
 		if zone.cards.is_empty():
 			return zone
 	return null
+
+func _get_summon_tax(game_manager: GameManager) -> int:
+	if game_manager == null:
+		return 0
+	var preview_token := CombatMech.new()
+	return game_manager.get_creature_summon_mana_cost(card_owner, preview_token, self, true)

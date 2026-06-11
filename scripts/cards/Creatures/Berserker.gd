@@ -17,7 +17,7 @@ func _init() -> void:
 	resilience = 10
 	strength = 17
 	sacrifice_cost = 0
-	ability_text = "[b]Berserker Rage[/b] (Once per turn, 1 mana): This turn gain 10 Str and [b]Immortal[/b]. After any attack, sleep until the start of your next turn."
+	ability_text = "[b]Berserker Rage[/b] (Once per turn, %d mana): This turn gain %d Str and [b]Immortal[/b]. After any attack, sleep until the start of your next turn." % [RAGE_ACTIVATION_COST, RAGE_STR_BONUS]
 	culture = "Norse"
 	artist = "Ricardo Zoppello"
 	art_path = "res://images/card_art/creatures/Berserker's Steele(web).jpg"

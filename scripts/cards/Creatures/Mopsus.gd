@@ -16,7 +16,7 @@ func _init() -> void:
 	resilience = 11
 	strength = 21
 	targets = true
-	ability_text = "[b]Seer[/b] ([b]Activate[/b], [b]Minor Action[/b]): Look at one of your opponent's hand cards, plus one more for each friendly Avian on the board."
+	ability_text = "[b]Seer[/b] ([b]Activate[/b], [b]Minor Action[/b]): Reveal one of your opponent's hand cards, plus one more for each friendly Avian on the board. They remain revealed while in hand."
 	flavor_text = ""
 	culture = "Olympic"
 	artist = "Ricardo Zoppello"
@@ -104,8 +104,18 @@ func activate(game_manager: GameManager, target = null) -> void:
 			game_manager.note_player_feedback("%s fizzles: choose %d card(s) in your opponent's hand." % [card_name, required_count])
 		return
 	spend_minor_creature_action()
+	for selected_card in selected_targets:
+		if selected_card == null or selected_card.is_revealed_in_hand():
+			continue
+		selected_card.add_status_effect(
+			"revealed_in_hand",
+			card_name,
+			self,
+			get_controller(),
+			{"clear_on_card_move": true}
+		)
 	if game_manager != null:
-		game_manager.note_player_feedback("%s peers into %d opponent hand card(s)." % [card_name, selected_targets.size()])
+		game_manager.note_player_feedback("%s reveals %d opponent hand card(s)." % [card_name, selected_targets.size()])
 
 func _count_friendly_board_avians() -> int:
 	var controller := get_controller()

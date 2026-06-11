@@ -48,6 +48,12 @@ var _exhausted_art_path: String = ""
 func should_show_flavor_text_in_hover() -> bool:
 	return flavor_text != "" and ability_text == ""
 
+func get_display_ability_text(_game_manager: GameManager = null) -> String:
+	return ability_text
+
+func get_display_ability_bbcode_text(game_manager: GameManager = null) -> String:
+	return get_display_ability_text(game_manager)
+
 const CARD_NAME_MOJIBAKE_FIXES := {
 	"AurboÃƒÂ°a": "Aurboða",
 	"AurboÃ°a": "Aurboða"
@@ -481,6 +487,9 @@ func is_petrified() -> bool:
 func is_temporarily_revealed() -> bool:
 	return has_status_effect("temporarily_revealed")
 
+func is_revealed_in_hand() -> bool:
+	return has_status_effect("revealed_in_hand")
+
 func temporarily_reveal_until_end_of_turn(
 	current_turn: int,
 	source: String,
@@ -703,6 +712,9 @@ func get_effect_summary_lines() -> Array[String]:
 			continue
 		if raw_status_name == "temporarily_revealed":
 			lines.append("Revealed until end of turn by " + str(status.get("source", "?")))
+			continue
+		if raw_status_name == "revealed_in_hand":
+			lines.append("Revealed while in hand by " + str(status.get("source", "?")))
 			continue
 		if raw_status_name == "activation_locked":
 			lines.append("Cannot activate this turn from " + str(status.get("source", "?")))

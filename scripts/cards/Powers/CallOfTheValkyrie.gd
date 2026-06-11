@@ -2,7 +2,7 @@ extends PowerCard
 class_name CallOfTheValkyrie
 
 const UNLOCK_COST := 3
-const ACTIVATION_COST := 1
+const ACTIVATION_COST := 2
 const ART_PATH := "res://images/card_art/powers/CalloftheValkyrieAIEdit.png"
 
 func _init() -> void:
@@ -15,7 +15,7 @@ func _init() -> void:
 	if "Targeting" not in card_types:
 		card_types.append("Targeting")
 	targets = true
-	ability_text = "[b]Unlock[/b] (3): [b]Activate[/b] - Pay 1 mana to [b]Prime[/b] a Norse Warrior from your graveyard."
+	ability_text = "[b]Unlock[/b] (%d): [b]Activate[/b] - Pay %d mana to [b]Prime[/b] a Norse Warrior from your graveyard." % [UNLOCK_COST, ACTIVATION_COST]
 	artist = "Riccardo Zoppello"
 	art_path = ART_PATH
 
@@ -50,9 +50,16 @@ func activate(game_manager: GameManager, target: Card = null) -> void:
 	card_owner.deck_zone.cards.insert(0, target)
 	print("%s: Primed %s from the graveyard." % [card_name, target.card_name])
 
+func get_activation_cost_hover_data(_game_manager: GameManager = null) -> Dictionary:
+	return {
+		"base_cost": ACTIVATION_COST,
+		"cost_kind": Card.COST_KIND_POWER_ACTIVATION,
+		"label": "Activation Cost",
+	}
+
 func _is_valid_target(card: Card) -> bool:
 	return card != null \
 		and card.current_zone == card_owner.graveyard_zone \
 		and card.card_type == Card.CardType.CREATURE \
-		and card.has_type("Norse Creature") \
+		and card.culture == "Norse" \
 		and card.has_type("Warrior")

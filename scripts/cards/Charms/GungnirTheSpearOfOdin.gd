@@ -68,7 +68,7 @@ func _is_norse_warrior(card: Card) -> bool:
 		return false
 	if not card.has_type("Warrior"):
 		return false
-	return card.has_type("Norse Creature") or card.culture == "Norse"
+	return card.culture == "Norse"
 
 func _get_combat_target(action: CardAction) -> Card:
 	if action == null:

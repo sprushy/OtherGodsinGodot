@@ -197,7 +197,7 @@ func _is_qualifying_card(card: Card) -> bool:
 func _is_ancient_human(card: Card) -> bool:
 	return card != null \
 		and card.has_type("Human") \
-		and card.has_type("Ancient Creature")
+		and card.culture == "Ancient"
 
 func _is_mer(card: Card) -> bool:
 	return card != null and card.has_type("Mer")

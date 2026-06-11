@@ -149,6 +149,54 @@ func _initialize() -> void:
 		push_error("phase2_lobby_probe: creating a seek implicitly abandoned an active match")
 		quit(1)
 		return
+	server.sessions_by_id["READY_HOST"]["account_id"] = "account-host"
+	var reclaimed_active_session: Dictionary = server._find_resumable_session("", "account-host")
+	if str(reclaimed_active_session.get("session_id", "")) != "READY_HOST":
+		push_error("phase2_lobby_probe: authenticated login did not reclaim a still-connected active match session")
+		quit(1)
+		return
+	server.sessions_by_id["DUPLICATE_HOST"] = {
+		"session_id": "DUPLICATE_HOST",
+		"account_id": "account-host",
+		"connected": true,
+		"peer_id": 99,
+		"is_local": false,
+	}
+	server.sessions_by_id["OUTSIDER"] = {
+		"session_id": "OUTSIDER",
+		"account_id": "account-outsider",
+		"connected": true,
+		"peer_id": 100,
+		"is_local": false,
+	}
+	var matched_participant_session_id := server._get_matching_participant_session_id(
+		"DUPLICATE_HOST",
+		connected_room.members
+	)
+	if matched_participant_session_id != "READY_HOST":
+		push_error("phase2_lobby_probe: self-observe fallback did not resolve the active player session")
+		quit(1)
+		return
+	var participant_room_list := server._build_room_list("DUPLICATE_HOST")
+	var observer_room_list := server._build_room_list("OUTSIDER")
+	var participant_room_entry: Dictionary = {}
+	var observer_room_entry: Dictionary = {}
+	for room_entry in participant_room_list:
+		if str(room_entry.get("room_id", "")) == connected_room.room_id:
+			participant_room_entry = room_entry
+			break
+	for room_entry in observer_room_list:
+		if str(room_entry.get("room_id", "")) == connected_room.room_id:
+			observer_room_entry = room_entry
+			break
+	if participant_room_entry.is_empty() or not bool(participant_room_entry.get("viewer_can_rejoin", false)):
+		push_error("phase2_lobby_probe: active player room list did not advertise rejoin")
+		quit(1)
+		return
+	if observer_room_entry.is_empty() or bool(observer_room_entry.get("viewer_can_rejoin", false)):
+		push_error("phase2_lobby_probe: non-participant room list incorrectly advertised rejoin")
+		quit(1)
+		return
 
 	var offline_room = room_script.new("OFFLINE", "OFFLINE_HOST")
 	offline_room.add_member("OFFLINE_HOST")

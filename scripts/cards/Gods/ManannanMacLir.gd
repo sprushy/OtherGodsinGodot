@@ -12,7 +12,7 @@ func _init() -> void:
 	culture = "Triskelion"
 	targets = false
 	flavor_text = ""
-	ability_text = "Mists of the Blessed Isles ([b]Activate[/b], 1 mana): Put all your Triskelion creatures into stealth stance."
+	ability_text = "Mists of the Blessed Isles ([b]Activate[/b], %d mana): Put all your Triskelion creatures into stealth stance." % ACTIVATION_COST
 	artist = "Ricardo Zoppello"
 	art_path = "res://images/card_art/gods/MannanMacLirEdit.png"
 	paragon_of_champions = "Sea"
@@ -86,11 +86,7 @@ func is_valid_activation_target(target: Card, game_manager: GameManager = null) 
 	return game_manager == null or not game_manager.is_immune_to_source(target, self)
 
 func _is_triskelion_creature(card: Card) -> bool:
-	return card != null and (
-		card.culture == "Triskelion"
-		or card.has_type("Triskelion")
-		or card.has_type("Triskelion Creature")
-	)
+	return card != null and card.culture == "Triskelion"
 
 func _apply_stealth_stance(creature: Card) -> void:
 	if creature == null:

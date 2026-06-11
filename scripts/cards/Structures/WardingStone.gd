@@ -7,6 +7,41 @@ func _get_restricted_player(game_manager: GameManager) -> Player:
 	# Use the GameManager's dedicated function to find the opponent of this card's owner
 	return game_manager.get_opponent(card_owner)
 
+func get_attack_restriction_turns_remaining(game_manager: GameManager = null) -> int:
+	var gm := game_manager
+	if gm == null and card_owner != null:
+		gm = card_owner.game_manager
+	if gm == null or current_zone == null or not current_zone.is_board_zone():
+		return 0
+	var restricted_player := _get_restricted_player(gm)
+	if restricted_player == null or not gm.attack_restrictions.has(restricted_player):
+		return 0
+	var restriction: Dictionary = gm.attack_restrictions[restricted_player]
+	var source: Card = restriction.get("source", null)
+	if source != null and source != self:
+		return 0
+	return maxi(0, int(restriction.get("turns", 0)))
+
+func get_turn_countdown_badge_text(game_manager: GameManager = null) -> String:
+	var turns_remaining := get_attack_restriction_turns_remaining(game_manager)
+	return "%dT" % turns_remaining if turns_remaining > 0 else ""
+
+func get_turn_countdown_badge_hover_text(game_manager: GameManager = null) -> String:
+	var turns_remaining := get_attack_restriction_turns_remaining(game_manager)
+	if turns_remaining <= 0:
+		return ""
+	return "Opponent cannot attack for %d more turn%s." % [
+		turns_remaining,
+		"" if turns_remaining == 1 else "s",
+	]
+
+func get_hover_detail_lines(viewer: Player = null) -> Array[String]:
+	var lines := super.get_hover_detail_lines(viewer)
+	var turns_remaining := get_attack_restriction_turns_remaining()
+	if turns_remaining > 0:
+		lines.append("[b]Opponent turns remaining:[/b] %d" % turns_remaining)
+	return lines
+
 func _init() -> void:
 	super._init()
 	card_name = "Warding Stone"

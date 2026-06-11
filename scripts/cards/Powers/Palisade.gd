@@ -15,7 +15,7 @@ func _init() -> void:
 	card_types = ["Power", "Construct", "Summon Structure", "Defense"]
 	targets = false
 	flavor_text = ""
-	ability_text = "[b]Unlock[/b] (1): [b]Activate[/b] - Pay 4 mana to add a LV3, 25 RES Palisade structure to the field. Cards and followers on the line behind it cannot be attacked except by Aerial creatures."
+	ability_text = "[b]Unlock[/b] (%d): [b]Activate[/b] - Pay %d mana to add a LV3, 25 RES Palisade structure to the field. Cards and followers on the line behind it cannot be attacked except by Aerial creatures." % [UNLOCK_COST, ACTIVATION_COST]
 	artist = "Lorinda Tomko"
 	art_path = ART_PATH
 
@@ -71,6 +71,14 @@ func activate(game_manager: GameManager, _target: Card = null) -> void:
 		return
 
 	game_manager.note_player_feedback("%s adds a Palisade to the field." % card_name)
+
+func get_activation_cost_hover_data(game_manager: GameManager = null) -> Dictionary:
+	return {
+		"base_cost": ACTIVATION_COST,
+		"current_cost": get_activation_mana_cost(ACTIVATION_COST, game_manager) + _get_summon_tax(game_manager),
+		"cost_kind": Card.COST_KIND_POWER_ACTIVATION,
+		"label": "Activation Cost",
+	}
 
 func _find_open_summon_zone() -> Zone:
 	if card_owner == null:

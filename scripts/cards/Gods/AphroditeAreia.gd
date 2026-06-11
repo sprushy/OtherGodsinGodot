@@ -15,7 +15,7 @@ func _init() -> void:
 	targets = true
 	# flavor_text = "Love and slaughter walk hand in hand."
 	flavor_text = ""
-	ability_text = "Violent Delights (5 mana): If you destroyed an opponent's creature in combat this turn, [b]Enslave[/b] a creature."
+	ability_text = "Violent Delights (%d mana): If you destroyed an opponent's creature in combat this turn, [b]Enslave[/b] a creature." % ACTIVATION_COST
 	art_path = ART_PATH
 	artist = "Ricarrdo Zoppello"
 	name_at_bottom = true

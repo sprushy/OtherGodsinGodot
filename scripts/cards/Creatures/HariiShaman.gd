@@ -170,7 +170,7 @@ func _can_transform_target_to_animal(target: Card) -> bool:
 		and target.current_zone.is_board_zone() \
 		and target.get_controller() == get_controller() \
 		and target.has_type(WARRIOR_TYPE) \
-		and target.has_type(NORSE_TYPE) \
+		and target.culture == "Norse" \
 		and not target.has_type(ANIMAL_TYPE)
 
 func _can_restore_target(target: Card) -> bool:

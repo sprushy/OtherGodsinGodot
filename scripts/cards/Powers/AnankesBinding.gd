@@ -15,7 +15,7 @@ func _init() -> void:
 	mana_cost = UNLOCK_COST
 	culture = "Olympic"
 	card_types = ["Power", "Fate Manipulation"]
-	ability_text = "Pay 3 mana: [b]Search[/b] a card and place it under this card. At the end of your second turn after activation, [b]Prime[/b] it."
+	ability_text = "Pay %d mana: [b]Search[/b] a card and place it under this card. At the end of your second turn after activation, [b]Prime[/b] it." % ACTIVATION_COST
 	art_path = ART_PATH
 
 func on_unlock(_game_manager: GameManager) -> void:

@@ -4,6 +4,7 @@ class_name GodCard
 const ACTIVE_GOD_DECK_ROLE_ALLOWED := "allowed"
 const ACTIVE_GOD_DECK_ROLE_RESERVED := "reserved"
 const ACTIVE_GOD_DECK_ROLE_ILLEGAL := "illegal"
+const CHAMPIONS_CALL_SHELVE_MANA_VALUE := 4
 
 func _init() -> void:
 	super._init()
@@ -147,7 +148,7 @@ func get_champions_call_required_shelve_count(game_manager: GameManager) -> int:
 	var shortfall := maxi(0, mana_required - card_owner.mana)
 	if shortfall <= 0:
 		return 0
-	return int(ceili(float(shortfall) / 4.0))
+	return int(ceili(float(shortfall) / float(CHAMPIONS_CALL_SHELVE_MANA_VALUE)))
 
 func get_champions_call_max_shelve_count(game_manager: GameManager, manifestation: Card = null) -> int:
 	if game_manager == null or card_owner == null:
@@ -159,7 +160,7 @@ func get_champions_call_max_shelve_count(game_manager: GameManager, manifestatio
 	if mana_required <= 0:
 		return 0
 	var available_choices := _get_champions_call_shelvable_hand_cards(resolved_manifestation).size()
-	return mini(available_choices, int(ceili(float(mana_required) / 4.0)))
+	return mini(available_choices, int(ceili(float(mana_required) / float(CHAMPIONS_CALL_SHELVE_MANA_VALUE))))
 
 func get_champions_call_shelvable_hand_cards(manifestation: Card = null) -> Array[Card]:
 	var resolved_manifestation := manifestation if manifestation != null else get_champions_call_candidate(true)
@@ -223,7 +224,7 @@ func resolve_champions_call(
 	var shelved_cards := _get_champions_call_cards_to_shelve(mana_required, manifestation, chosen_shelved_cards)
 	if shelved_cards.size() < get_champions_call_required_shelve_count(game_manager):
 		return card_name + " needs a valid Champion's Call hand selection."
-	var reduced_mana := maxi(0, mana_required - (shelved_cards.size() * 4))
+	var reduced_mana := maxi(0, mana_required - (shelved_cards.size() * CHAMPIONS_CALL_SHELVE_MANA_VALUE))
 	for card in shelved_cards:
 		game_manager.send_to_deck_bottom_with_hook(card)
 
@@ -267,13 +268,13 @@ func _can_pay_champions_call_cost(game_manager: GameManager, manifestation: Card
 	if game_manager == null or card_owner == null or manifestation == null:
 		return false
 	var mana_required := game_manager.get_creature_summon_mana_cost(card_owner, manifestation, self, false)
-	var available_shelving := _get_champions_call_shelvable_hand_cards(manifestation).size() * 4
+	var available_shelving := _get_champions_call_shelvable_hand_cards(manifestation).size() * CHAMPIONS_CALL_SHELVE_MANA_VALUE
 	return card_owner.mana + available_shelving >= mana_required
 
 func _get_champions_call_cards_to_shelve(mana_required: int, manifestation: Card = null, chosen_cards: Array[Card] = []) -> Array[Card]:
 	var chosen: Array[Card] = []
 	var valid_choices := _get_champions_call_shelvable_hand_cards(manifestation)
-	var max_shelve_count := mini(valid_choices.size(), int(ceili(float(maxi(0, mana_required)) / 4.0)))
+	var max_shelve_count := mini(valid_choices.size(), int(ceili(float(maxi(0, mana_required)) / float(CHAMPIONS_CALL_SHELVE_MANA_VALUE))))
 	var shortfall := maxi(0, mana_required - (card_owner.mana if card_owner != null else 0))
 	if not chosen_cards.is_empty():
 		var unique_choices: Array[Card] = []

@@ -15,7 +15,7 @@ func _init() -> void:
 	culture = "Tian"
 	targets = true
 	flavor_text = ""
-	ability_text = "Tactical Break ([b]Upkeep[/b]/[b]Activate[/b]): If you control more frontline creatures than your opponent, gain 1 tactic counter. Remove 4 tactic counters: destroy a card.\n[b]Champion's Call[/b] ([b]Activate[/b]): Summon Guan Yu, Active God. You may [b]Shelve[/b] cards from your hand to pay 4 mana each."
+	ability_text = "Tactical Break ([b]Upkeep[/b]/[b]Activate[/b]): If you control more frontline creatures than your opponent, gain 1 tactic counter. Remove %d tactic counters: destroy a card.\n[b]Champion's Call[/b] ([b]Activate[/b]): Summon Guan Yu, Active God. You may [b]Shelve[/b] cards from your hand to pay %d mana each." % [TACTIC_COUNTER_COST, CHAMPIONS_CALL_SHELVE_MANA_VALUE]
 	art_path = "res://images/card_art/gods/guan_yu.png"
 	artist = "Ricarrdo Zoppello"
 	name_at_bottom = true

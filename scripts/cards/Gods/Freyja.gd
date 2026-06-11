@@ -16,7 +16,7 @@ func _init() -> void:
 	targets = true
 	# flavor_text = "The slain do not always stay dead when Freyja calls them back."
 	flavor_text = ""
-	ability_text = "Receiver of the Slain ([b]Activate[/b], 5 mana): Summon a Norse Warrior from your graveyard. It gains Spirit and is destroyed at the start of your next turn. This ability costs 1 less for each Valkyrie card you have in play."
+	ability_text = "Receiver of the Slain ([b]Activate[/b], %d mana): Summon a Norse Warrior from your graveyard. It gains Spirit and is destroyed at the start of your next turn. This ability costs 1 less for each Valkyrie card you have in play." % BASE_ACTIVATION_COST
 	art_path = "res://images/card_art/gods/FrejyaAndCatsAieditSquare.png"
 	artist = "Ricardo Zoppello"
 	name_at_bottom = true
@@ -62,7 +62,7 @@ func is_valid_activation_target(target: Card) -> bool:
 		and target.card_type == Card.CardType.CREATURE \
 		and not target.is_god \
 		and target.has_type("Warrior") \
-		and (target.has_type("Norse Creature") or target.culture == "Norse") \
+		and target.culture == "Norse" \
 		and _get_best_summon_zone(target) != null
 
 func activate(game_manager: GameManager, target: Card = null) -> void:
@@ -139,6 +139,22 @@ func on_any_card_moved(_game_manager: GameManager, moved_card: Card, from_zone: 
 
 func get_activation_mana_cost(_game_manager: GameManager = null) -> int:
 	return maxi(0, BASE_ACTIVATION_COST - _count_friendly_valkyries_in_play())
+
+func get_display_ability_text(game_manager: GameManager = null) -> String:
+	return _replace_display_activation_cost(ability_text, get_activation_mana_cost(game_manager))
+
+func get_display_ability_bbcode_text(game_manager: GameManager = null) -> String:
+	var activation_cost := get_activation_mana_cost(game_manager)
+	var replacement := "%d mana" % activation_cost
+	if activation_cost < BASE_ACTIVATION_COST:
+		replacement = "[color=#66ff66]%s[/color]" % replacement
+	elif activation_cost > BASE_ACTIVATION_COST:
+		replacement = "[color=#ff6666]%s[/color]" % replacement
+	return _replace_display_activation_cost(ability_text, activation_cost, replacement)
+
+func _replace_display_activation_cost(text: String, activation_cost: int, replacement: String = "") -> String:
+	var display_cost := replacement if replacement != "" else "%d mana" % activation_cost
+	return text.replace(", %d mana" % BASE_ACTIVATION_COST, ", " + display_cost)
 
 func _apply_receiver_of_the_slain(creature: Card, game_manager: GameManager) -> void:
 	if creature == null:

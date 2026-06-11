@@ -73,6 +73,7 @@ jobs:
   export-macos:
     runs-on: macos-latest
     env:
+      GODOT_CPP_REF: "3a7edf0ea34fac0623ef3013d60362e9d01654d2"
       SPARKLE_VERSION: "2.9.2"
 
     steps:
@@ -114,7 +115,7 @@ jobs:
       - name: Build Sparkle GDExtension
         shell: bash
         run: |
-          set -euo pipefail
+          set -euxo pipefail
 
           scons_venv="$RUNNER_TEMP/scons-venv"
           python3 -m venv "$scons_venv"
@@ -122,10 +123,17 @@ jobs:
           "$scons_venv/bin/python" -m pip install scons
 
           godot_cpp_dir="$RUNNER_TEMP/godot-cpp"
+          godot_cpp_archive="$RUNNER_TEMP/godot-cpp-${GODOT_CPP_REF}.tar.gz"
+          godot_cpp_extract_dir="$RUNNER_TEMP/godot-cpp-${GODOT_CPP_REF}"
           sparkle_root="$RUNNER_TEMP/sparkle"
-          rm -rf "$godot_cpp_dir" "$sparkle_root"
+          rm -rf "$godot_cpp_dir" "$godot_cpp_extract_dir" "$sparkle_root"
 
-          git clone --depth 1 https://github.com/godotengine/godot-cpp.git "$godot_cpp_dir"
+          curl --fail --location \
+            "https://github.com/godotengine/godot-cpp/archive/${GODOT_CPP_REF}.tar.gz" \
+            --output "$godot_cpp_archive"
+          tar -xzf "$godot_cpp_archive" -C "$RUNNER_TEMP"
+          mv "$godot_cpp_extract_dir" "$godot_cpp_dir"
+          test -f "$godot_cpp_dir/SConstruct"
 
           mkdir -p "$sparkle_root"
           curl --fail --location \
@@ -139,25 +147,23 @@ jobs:
             exit 1
           fi
 
-          for architecture in x86_64 arm64; do
-            "$scons_venv/bin/python" -m SCons -C native/macos_sparkle \
-              platform=macos \
-              "arch=$architecture" \
-              target=template_release \
-              "api_version=${GODOT_VERSION%.*}" \
-              "godot_cpp_dir=$godot_cpp_dir" \
-              "sparkle_framework_dir=$(dirname "$sparkle_framework")"
-          done
-
           bridge_path="addons/macos_sparkle/bin/libmacos_sparkle.macos.universal.dylib"
-          lipo -create \
-            addons/macos_sparkle/bin/libmacos_sparkle.macos.x86_64.dylib \
-            addons/macos_sparkle/bin/libmacos_sparkle.macos.arm64.dylib \
-            -output "$bridge_path"
+          "$scons_venv/bin/python" -m SCons -C native/macos_sparkle \
+            -j2 \
+            platform=macos \
+            arch=universal \
+            target=template_release \
+            macos_deployment_target=11.0 \
+            "api_version=${GODOT_VERSION%.*}" \
+            "godot_cpp_dir=$godot_cpp_dir" \
+            "sparkle_framework_dir=$(dirname "$sparkle_framework")"
+
+          find addons/macos_sparkle/bin -maxdepth 1 -type f -print
           if [ ! -f "$bridge_path" ]; then
             echo "Sparkle GDExtension was not produced at $bridge_path." >&2
             exit 1
           fi
+          lipo -verify_arch x86_64 arm64 "$bridge_path"
 
           echo "SPARKLE_ROOT=$sparkle_root" >> "$GITHUB_ENV"
           echo "SPARKLE_FRAMEWORK_PATH=$sparkle_framework" >> "$GITHUB_ENV"
@@ -379,6 +385,13 @@ jobs:
         with:
           name: OtherGods-macos-appcast
           path: dist/macos
+
+      - name: Report missing macOS assets
+        if: ${{ needs.export-macos.result != 'success' }}
+        run: |
+          echo "::warning::Publishing Windows assets without macOS assets because export-macos finished with '${{ needs.export-macos.result }}'."
+          echo "## macOS assets were not published" >> "$GITHUB_STEP_SUMMARY"
+          echo "The export-macos job finished with \`${{ needs.export-macos.result }}\`; this release contains Windows assets only." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Publish GitHub release assets
         uses: softprops/action-gh-release@v2

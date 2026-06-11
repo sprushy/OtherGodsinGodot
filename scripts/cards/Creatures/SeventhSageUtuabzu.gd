@@ -16,7 +16,7 @@ func _init() -> void:
 	resilience = 27
 	strength = 14
 	targets = true
-	ability_text = "[b]Channel Ally[/b] ([b]Impact[/b]): Choose another allied Ancient Sage on the field or in the [b]Void[/b] and activate its impact effect.\n[b]Imbue Ally[/b] ([b]Activate[/b], 2 Mana): Choose another allied Ancient Sage on the field and activate its impact effect if it hasn't activated this turn."
+	ability_text = "[b]Channel Ally[/b] ([b]Impact[/b]): Choose another allied Ancient Sage on the field or in the [b]Void[/b] and activate its impact effect.\n[b]Imbue Ally[/b] ([b]Activate[/b], %d Mana): Choose another allied Ancient Sage on the field and activate its impact effect if it hasn't activated this turn." % IMBUE_ALLY_COST
 	flavor_text = ""
 	culture = "Ancient"
 	artist = "Ricardo Tamoo"
@@ -150,7 +150,7 @@ func _is_valid_allied_sage_target(card: Card) -> bool:
 		return false
 	if card.card_type != Card.CardType.CREATURE:
 		return false
-	if not card.has_type("Ancient Creature"):
+	if card.culture != "Ancient":
 		return false
 	if not card.has_type("Sage"):
 		return false

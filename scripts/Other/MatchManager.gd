@@ -313,6 +313,9 @@ func _on_game_manager_decision_requested(player: Player, type: String, data: Dic
 		var completion_command_type := str(interaction_data.get("completion_command_type", "")).strip_edges()
 		interaction_data.erase("event_name")
 		interaction_data.erase("completion_command_type")
+		if _combat_reveal_decision_depth > 0:
+			_emit_ui_interaction_for_player(player, type, interaction_data)
+			return
 		if interaction_data.has("resolve_method"):
 			_queue_method_priority_event(
 				player,
@@ -2862,18 +2865,31 @@ func _should_turn_action_decline_priority(command: Dictionary, sender_info: Dict
 		and actor == game_manager.current_player \
 		and actor == game_manager.priority_player
 
+func _complete_turn_action_priority_decline(actor: Player) -> void:
+	if game_manager == null or game_manager.action_stack.is_empty():
+		_clear_priority_window_state()
+		return
+	if game_manager.both_passed():
+		_resolve_authoritative_stack_top_after_priority()
+		return
+	var waiting_player := game_manager.priority_player
+	var top_action: CardAction = game_manager.action_stack.back()
+	if waiting_player != null \
+			and waiting_player != actor \
+			and not _action_requires_explicit_priority_window(top_action) \
+			and not _player_has_priority_prompt_responses(waiting_player):
+		game_manager.pass_priority()
+		_resolve_authoritative_stack_top_after_priority()
+		return
+	_advance_authoritative_priority()
+
 func _decline_priority_for_turn_action(command: Dictionary, sender_info: Dictionary) -> bool:
 	if not _should_turn_action_decline_priority(command, sender_info):
 		return false
+	var actor := _get_command_actor(sender_info)
 	game_manager.pass_priority()
 	move_validated.emit({type = "priority_pass"})
-	if game_manager.both_passed():
-		if game_manager.action_stack.is_empty():
-			_clear_priority_window_state()
-		else:
-			_resolve_authoritative_stack_top_after_priority()
-	else:
-		_advance_authoritative_priority()
+	_complete_turn_action_priority_decline(actor)
 	_request_ui_refresh()
 	return _has_unresolved_stack_action_window()
 
@@ -4769,6 +4785,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 						_clear_priority_window_state()
 				else:
 					_advance_authoritative_priority()
+				_request_ui_refresh()
 				move_validated.emit(command)
 				return true
 			move_validated.emit(command)
@@ -4790,7 +4807,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 					game_manager.pending_resurrections.erase(card)
 					move_failed.emit("resurrection_choice: card is no longer in its graveyard")
 					return false
-				if player.mana < 1:
+				if player.mana < AgainWalker.RESURRECTION_COST:
 					move_failed.emit("resurrection_choice: not enough mana")
 					return false
 				var resurrection_zone := _get_resurrection_zone_for_card(card)
@@ -4805,7 +4822,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 						_finalize_pending_end_turn(player)
 					return true
 
-				player.spend_mana(1)
+				player.spend_mana(AgainWalker.RESURRECTION_COST)
 				var placed := game_manager.summon_creature_by_effect(
 					player,
 					card,
@@ -4819,7 +4836,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 					false
 				)
 				if not placed:
-					player.gain_mana(1)
+					player.gain_mana(AgainWalker.RESURRECTION_COST)
 					game_manager.note_player_feedback("%s could not resurrect." % card.card_name)
 					game_manager.pending_resurrections.erase(card)
 					move_validated.emit(command)
@@ -5002,7 +5019,7 @@ func _check_for_next_resurrection() -> bool:
 		
 	var candidates: Array[Card] = []
 	for card in game_manager.pending_resurrections:
-		if card.card_owner.mana >= 1 \
+		if card.card_owner.mana >= AgainWalker.RESURRECTION_COST \
 				and card.current_zone == card.card_owner.graveyard_zone \
 				and _get_resurrection_zone_for_card(card) != null:
 			candidates.append(card)

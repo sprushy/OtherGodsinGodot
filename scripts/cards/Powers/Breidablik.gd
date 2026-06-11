@@ -19,7 +19,7 @@ func _init() -> void:
 	if "Targeting" not in card_types:
 		card_types.append("Targeting")
 	targets = true
-	ability_text = "Peaceful Runes: You may [b]Harbor[/b] a friendly Priest that hasn't attacked this turn.\nEnd of turn: gain followers equal to 3x the level of the harbored Priests.\n[b]Upkeep[/b]: Pay 1 mana to return a harbored Priest to the field.\nIf this card is flipped, return all harbored Priests to the field."
+	ability_text = "Peaceful Runes: You may [b]Harbor[/b] a friendly Priest that hasn't attacked this turn.\nEnd of turn: gain followers equal to %dx the level of the harbored Priests.\n[b]Upkeep[/b]: Pay %d mana to return a harbored Priest to the field.\nIf this card is flipped, return all harbored Priests to the field." % [FOLLOWERS_PER_LEVEL, RETURN_MANA_COST]
 	artist = "Lorinda Tomko"
 	art_path = "res://images/card_art/powers/breidablik.jpg"
 
@@ -92,6 +92,13 @@ func can_return_priest(game_manager: GameManager) -> bool:
 		and card_owner.mana >= get_activation_mana_cost(RETURN_MANA_COST, game_manager) \
 		and not stored_priests.is_empty() \
 		and not _get_open_field_zones().is_empty()
+
+func get_activation_cost_hover_data(_game_manager: GameManager = null) -> Dictionary:
+	return {
+		"base_cost": RETURN_MANA_COST,
+		"cost_kind": Card.COST_KIND_POWER_ACTIVATION,
+		"label": "Return Cost",
+	}
 
 func activate(game_manager: GameManager, target: Card = null) -> void:
 	if target == null or target not in get_valid_field_priests(game_manager):
