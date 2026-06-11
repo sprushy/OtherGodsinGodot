@@ -353,7 +353,7 @@ jobs:
           path: dist/appcast.xml
 
   publish-release:
-    if: startsWith(github.ref, 'refs/tags/')
+    if: ${{ startsWith(github.ref, 'refs/tags/') && always() && needs.export-windows.result == 'success' }}
     runs-on: ubuntu-latest
     needs:
       - export-windows
@@ -367,12 +367,14 @@ jobs:
           path: dist/windows
 
       - name: Download macOS zip artifact
+        if: ${{ needs.export-macos.result == 'success' }}
         uses: actions/download-artifact@v4
         with:
           name: OtherGods-macos
           path: dist/macos
 
       - name: Download macOS appcast artifact
+        if: ${{ needs.export-macos.result == 'success' }}
         uses: actions/download-artifact@v4
         with:
           name: OtherGods-macos-appcast
@@ -381,6 +383,7 @@ jobs:
       - name: Publish GitHub release assets
         uses: softprops/action-gh-release@v2
         with:
+          fail_on_unmatched_files: false
           files: |
             dist/windows/OtherGods-windows.zip
             dist/windows/OtherGodsServer-windows.zip
