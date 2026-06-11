@@ -586,9 +586,12 @@ func _get_priority_response_targets(card: Card, action: CardAction) -> Array:
 func _priority_response_has_required_targets(card: Card, action: CardAction) -> bool:
 	if card == null or action == null:
 		return false
-	if not card.targets:
+	if not is_targeting_source(card):
 		return true
 	return not _get_priority_response_targets(card, action).is_empty()
+
+func is_targeting_source(card: Card) -> bool:
+	return card != null and (card.targets or card.has_type("Targeting"))
 
 func can_card_respond_to_priority(card: Card, player: Player = null) -> bool:
 	if card == null or not is_instance_valid(card) or action_stack.is_empty():
@@ -905,7 +908,7 @@ func is_immune_to_source(target: Card, source: Card) -> bool:
 	if target_controller != null \
 			and source_controller != null \
 			and target_controller != source_controller \
-			and source.targets \
+			and is_targeting_source(source) \
 			and has_turn_opponent_targeting_immunity(target_controller):
 		return true
 	if target.current_zone != null \
@@ -1221,7 +1224,7 @@ func get_play_card_failure_reason(player: Player, card: Card, target_zone: Zone)
 
 	return ""
 
-func get_prepare_card_failure_reason(player: Player, card: Card, target_zone: Zone) -> String:
+func get_prepare_card_failure_reason(player: Player, card: Card, target_zone: Zone, ignore_stack_window: bool = false) -> String:
 	_prune_stale_stack_actions()
 	if is_game_over:
 		return "The game is already over."
@@ -1229,7 +1232,7 @@ func get_prepare_card_failure_reason(player: Player, card: Card, target_zone: Zo
 		return "No acting player was provided."
 	if card == null:
 		return "The selected card was not found."
-	if not action_stack.is_empty():
+	if not ignore_stack_window and not action_stack.is_empty():
 		return "Cannot prepare cards while another action is resolving."
 	if player == current_player and not has_resolved_turn_upkeep():
 		return "Resolve upkeep before taking other actions."
@@ -3008,7 +3011,7 @@ func _class_rend_active(player: Player) -> bool:
 # Returns true if target is shielded by Guardian (Asaruludu's passive).
 # Applies during the controller's turn or during the combat phase.
 func is_guardian_protected(target: Card, source: Card = null) -> bool:
-	if source != null and not source.targets:
+	if source != null and not is_targeting_source(source):
 		return false
 	if target != null and target.has_status_effect("en_hedu_anna_exaltation_guard"):
 		return true

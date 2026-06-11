@@ -313,6 +313,14 @@ func _on_game_manager_decision_requested(player: Player, type: String, data: Dic
 		var completion_command_type := str(interaction_data.get("completion_command_type", "")).strip_edges()
 		interaction_data.erase("event_name")
 		interaction_data.erase("completion_command_type")
+		if interaction_data.has("resolve_method"):
+			_queue_method_priority_event(
+				player,
+				source_card,
+				event_name if event_name != "" else type,
+				interaction_data
+			)
+			return
 		if _should_collect_choice_before_priority(type, completion_command_type):
 			interaction_data["_queue_priority_after_choice"] = true
 			interaction_data["_priority_event_name"] = event_name if event_name != "" else type
@@ -626,6 +634,49 @@ func _queue_decision_priority_event(
 	if not remains_on_stack:
 		return
 
+func _emit_local_priority_prompt_if_needed() -> void:
+	if game_manager == null or game_manager.priority_player == null:
+		return
+	if _uses_authoritative_headless_priority_flow():
+		return
+	var priority_idx := game_manager.players.find(game_manager.priority_player)
+	if priority_idx < 0:
+		return
+	request_ui_interaction.emit(
+		priority_idx,
+		"priority",
+		build_priority_prompt_data(game_manager.priority_player)
+	)
+
+func _queue_method_priority_event(
+	player: Player,
+	source_card: Card,
+	event_name: String,
+	interaction_data: Dictionary
+) -> void:
+	if game_manager == null or player == null or source_card == null:
+		return
+	var method_name := str(interaction_data.get("resolve_method", "")).strip_edges()
+	if method_name == "" or not source_card.has_method(method_name):
+		return
+	var action := CardAction.new()
+	action.type = CardAction.Type.EVENT
+	action.source_player = source_card.card_owner if source_card.card_owner != null else player
+	action.initial_priority_player = game_manager.get_opponent(action.source_player) if action.source_player != null else null
+	action.card = source_card
+	action.event_name = event_name
+	action.event_speed = source_card.get_effective_speed()
+	if not game_manager.action_stack.is_empty():
+		action.response_to = game_manager.action_stack.back()
+	action.event_data = interaction_data.duplicate(true)
+	action.resolve_callback = func() -> void:
+		var result = source_card.call(method_name, game_manager)
+		if result is String and str(result).strip_edges() != "":
+			game_manager.note_player_feedback(str(result))
+	var remains_on_stack := queue_or_resolve_priority_event(action)
+	if remains_on_stack:
+		_emit_local_priority_prompt_if_needed()
+
 func _should_collect_choice_before_priority(interaction_type: String, completion_command_type: String) -> bool:
 	return _is_reveal_interaction_type(interaction_type) and not completion_command_type.strip_edges().is_empty()
 
@@ -665,16 +716,19 @@ func _queue_choice_command_as_priority_event(command: Dictionary, source_card: C
 	action.card = source_card
 	action.event_name = event_name
 	action.event_speed = source_card.get_effective_speed()
+	if not game_manager.action_stack.is_empty():
+		action.response_to = game_manager.action_stack.back()
 	action.event_data = prompt_data.duplicate(true)
 	action.event_data["queued_choice_command"] = queued_command
-	action.event_data["force_priority_window"] = true
 	var target_uid := _get_command_choice_uid(command)
 	if target_uid != "":
 		action.target = game_manager.get_card_by_uid(target_uid)
 	action.resolve_callback = func() -> void:
 		_execute_queued_priority_choice_command(queued_command, action, completion_command_type)
 	_mark_deferred_authoritative_action(action, completion_command_type)
-	queue_or_resolve_priority_event(action)
+	var remains_on_stack := queue_or_resolve_priority_event(action)
+	if remains_on_stack:
+		_emit_local_priority_prompt_if_needed()
 	return true
 
 func _execute_queued_priority_choice_command(command: Dictionary, action: CardAction, completion_command_type: String) -> void:
@@ -2231,9 +2285,11 @@ func _advance_authoritative_priority() -> void:
 		else:
 			_advance_authoritative_priority()
 		return
+	var player_idx := game_manager.players.find(player)
+	if player_idx < 0:
+		return
 	if force_priority_window and top_action != null:
 		top_action.event_data["priority_window_offered"] = true
-	var player_idx := game_manager.players.find(player)
 	request_ui_interaction.emit(player_idx, "priority", prompt_data)
 
 func queue_or_resolve_priority_event(action: CardAction) -> bool:

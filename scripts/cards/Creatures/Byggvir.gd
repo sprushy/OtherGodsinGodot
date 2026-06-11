@@ -25,9 +25,12 @@ func on_reveal(game_manager: GameManager) -> void:
 		return
 	var options: Array[Dictionary] = get_brewing_options(game_manager)
 	if options.size() == 1:
-		var feedback := resolve_brewing_option(game_manager, options[0])
-		if feedback.strip_edges() != "":
-			game_manager.note_player_feedback(feedback)
+		game_manager.decision_requested.emit(get_controller(), "reveal_effect", {
+			"source_uid": uid,
+			"queue_with_priority": true,
+			"event_name": "byggvir_reveal",
+			"resolve_method": "resolve_single_brewing_reveal",
+		})
 		return
 	if options.is_empty():
 		game_manager.note_player_feedback("%s found no Brewing option to reveal." % card_name)
@@ -139,6 +142,12 @@ func resolve_brewing_option(game_manager: GameManager, option: Dictionary) -> St
 			get_controller().move_card(mead_card, get_controller().hand_zone)
 			return "%s reveals and returns %s from the graveyard to hand." % [card_name, mead_card.card_name]
 	return card_name + " had no Brewing option."
+
+func resolve_single_brewing_reveal(game_manager: GameManager) -> String:
+	var options: Array[Dictionary] = get_brewing_options(game_manager)
+	if options.is_empty():
+		return "%s found no Brewing option to reveal." % card_name
+	return resolve_brewing_option(game_manager, options[0])
 
 func resolve_brewing_option_from_payload(game_manager: GameManager, payload: Dictionary) -> String:
 	var option := find_matching_brewing_option(game_manager, payload)

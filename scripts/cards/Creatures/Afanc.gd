@@ -24,13 +24,28 @@ func on_reveal(game_manager: GameManager) -> void:
 		return
 	if current_zone == null or not current_zone.is_board_zone():
 		return
-
 	var controller := get_controller()
 	if controller == null:
 		return
+	game_manager.decision_requested.emit(controller, "reveal_effect", {
+		"source_uid": uid,
+		"queue_with_priority": true,
+		"event_name": "afanc_reveal",
+		"resolve_method": "resolve_toxic_emergence",
+	})
+
+func resolve_toxic_emergence(game_manager: GameManager) -> String:
+	if game_manager == null or abilities_suppressed():
+		return ""
+	if current_zone == null or not current_zone.is_board_zone():
+		return ""
+
+	var controller := get_controller()
+	if controller == null:
+		return ""
 	var opponent := game_manager.get_opponent(controller)
 	if opponent == null:
-		return
+		return ""
 
 	var poisoned_targets: Array[String] = []
 	for zone in opponent.frontline_zones + opponent.reserve_zones:
@@ -46,12 +61,9 @@ func on_reveal(game_manager: GameManager) -> void:
 			poisoned_targets.append(card.get_target_log_display_name(game_manager.get_feedback_viewer()))
 
 	if poisoned_targets.is_empty():
-		game_manager.note_player_feedback("%s reveals, but finds no opposing creatures to poison." % card_name)
-		return
+		return "%s reveals, but finds no opposing creatures to poison." % card_name
 
-	game_manager.note_player_feedback(
-		"%s reveals and poisons %s." % [card_name, ", ".join(poisoned_targets)]
-	)
+	return "%s reveals and poisons %s." % [card_name, ", ".join(poisoned_targets)]
 
 func _can_poison_target(card: Card, game_manager: GameManager) -> bool:
 	return card != null \

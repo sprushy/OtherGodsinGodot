@@ -25,18 +25,31 @@ func on_reveal(game_manager: GameManager) -> void:
 	var controller := get_controller()
 	if controller == null:
 		return
+	if _count_mana_boon_targets(controller) <= 0:
+		return
+	game_manager.decision_requested.emit(controller, "reveal_effect", {
+		"source_uid": uid,
+		"queue_with_priority": true,
+		"event_name": "pictish_beast_reveal",
+		"resolve_method": "resolve_mana_boon",
+	})
 
+func resolve_mana_boon(game_manager: GameManager) -> String:
+	if game_manager == null or abilities_suppressed():
+		return ""
+	var controller := get_controller()
+	if controller == null:
+		return ""
 	var beast_count := _count_mana_boon_targets(controller)
 	if beast_count <= 0:
-		return
+		return ""
 
 	var mana_before := controller.mana
 	controller.gain_mana(beast_count * MANA_PER_BEAST)
 	var mana_gained := controller.mana - mana_before
-	if game_manager != null and mana_gained > 0:
-		game_manager.note_player_feedback(
-			"%s reveals and gains %d mana from Mana Boon." % [card_name, mana_gained]
-		)
+	if mana_gained > 0:
+		return "%s reveals and gains %d mana from Mana Boon." % [card_name, mana_gained]
+	return ""
 
 func _count_mana_boon_targets(controller: Player) -> int:
 	var total := 0

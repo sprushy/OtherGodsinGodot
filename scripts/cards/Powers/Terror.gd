@@ -11,6 +11,9 @@ func _init() -> void:
 	level = 0
 	mana_cost = UNLOCK_COST
 	card_types = ["Power", "Class Buff", "Demon"]
+	if "Targeting" not in card_types:
+		card_types.append("Targeting")
+	targets = true
 	ability_text = "Your Demons gain [b]Terror[/b] ([b]Impact[/b]): Return an opponent's lower-level creature to its owner's hand."
 	artist = "Lorinda Tomiko"
 	art_path = ART_PATH
@@ -68,7 +71,7 @@ func resolve_terror_impact(game_manager: GameManager, demon: Card, target: Card)
 			card_name,
 			demon.get_target_log_display_name(game_manager.get_feedback_viewer())
 		]
-	if game_manager.is_immune_to_source(target, demon):
+	if game_manager.is_immune_to_source(target, demon) or game_manager.is_immune_to_source(target, self):
 		return "%s is immune to %s's Terror." % [
 			target.get_target_log_display_name(game_manager.get_feedback_viewer()),
 			demon.get_target_log_display_name(game_manager.get_feedback_viewer())

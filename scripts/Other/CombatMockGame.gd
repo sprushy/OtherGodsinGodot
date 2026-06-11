@@ -3542,9 +3542,38 @@ func _try_resolve_top_nested_response_action() -> bool:
 	var top_action: CardAction = game_manager.action_stack.back()
 	if top_action == null or top_action.response_to == null:
 		return false
-	if top_action.type == CardAction.Type.CHARM:
+	if top_action.type == CardAction.Type.EVENT \
+			and top_action.resolve_callback.is_valid() \
+			and str(top_action.event_name).strip_edges().to_lower().contains("reveal"):
+		return _try_resolve_local_nested_reveal_event(top_action)
+	if top_action.type in [CardAction.Type.CHARM, CardAction.Type.ABILITY] \
+			and top_action.resolve_callback.is_valid():
 		return _try_resolve_local_charm_response_action(top_action)
 	return false
+
+func _try_resolve_local_nested_reveal_event(action: CardAction) -> bool:
+	if action == null or action.response_to == null or not action.resolve_callback.is_valid():
+		return false
+	var pushed_effect_source := false
+	if game_manager != null and action.card != null:
+		game_manager.push_effect_source_card(action.card)
+		pushed_effect_source = true
+	action.resolve_callback.call()
+	if game_manager != null and pushed_effect_source:
+		game_manager.pop_effect_source_card()
+	if game_manager != null:
+		if action in game_manager.action_stack:
+			game_manager.action_stack.erase(action)
+		if action in game_manager.resolving_stack_actions:
+			game_manager.end_stack_action_resolution(action)
+	if match_manager != null and game_manager != null:
+		var feedback := game_manager.consume_player_feedback()
+		if feedback.strip_edges() != "":
+			match_manager.last_resolution_text = feedback
+			_set_action_label_text(_consume_resolution_feedback(feedback))
+	call_deferred("_kick_local_stack_progress")
+	update_ui()
+	return true
 
 func _auto_end_turn_after_move_timeout() -> void:
 	if _game_finished or game_manager == null:
@@ -8573,6 +8602,29 @@ func _get_prepare_card_unavailable_text(card: Card, target_zone: Zone = null) ->
 			return reason
 	return ("%s preparation was rejected without a rules reason." % card.card_name) if card != null else "This preparation was rejected without a rules reason."
 
+func _can_attempt_card_turn_action(player: Player) -> bool:
+	return game_manager != null \
+		and player != null \
+		and player == game_manager.current_player \
+		and _can_attempt_turn_action_to_decline_priority()
+
+func _can_play_card_for_turn_action(player: Player, card: Card, target_zone: Zone = null) -> bool:
+	if game_manager == null:
+		return false
+	return game_manager.can_play_card(player, card, target_zone)
+
+func _can_prepare_card_for_turn_action(player: Player, card: Card, target_zone: Zone = null) -> bool:
+	if game_manager == null:
+		return false
+	if game_manager.can_prepare_card(player, card, target_zone):
+		return true
+	if not _can_attempt_card_turn_action(player):
+		return false
+	var reason := game_manager.get_prepare_card_failure_reason(player, card, target_zone)
+	if reason != "Cannot prepare cards while another action is resolving.":
+		return false
+	return game_manager.get_prepare_card_failure_reason(player, card, target_zone, true).is_empty()
+
 func _get_spell_cast_unavailable_text(spell: Card) -> String:
 	var stack_block_reason := _get_non_priority_action_block_reason()
 	if stack_block_reason != "":
@@ -9248,7 +9300,7 @@ func _can_cast_hand_spell(spell: Card) -> bool:
 	return spell != null \
 		and game_manager != null \
 		and spell.card_owner != null \
-		and game_manager.can_play_card(spell.card_owner, spell, null)
+		and _can_play_card_for_turn_action(spell.card_owner, spell, null)
 
 func _is_prepared_board_spell(spell: Card) -> bool:
 	return spell != null \
@@ -10820,7 +10872,7 @@ func _find_preferred_auto_prepare_zone(card: Card) -> Zone:
 	for zone in _get_auto_select_zone_candidates(card_owner):
 		if zone == null or not zone.is_board_zone() or not zone.cards.is_empty():
 			continue
-		if game_manager.can_prepare_card(card_owner, card, zone):
+		if _can_prepare_card_for_turn_action(card_owner, card, zone):
 			return zone
 	return null
 
@@ -11481,7 +11533,7 @@ func _on_empty_zone_pressed(zone: Zone) -> void:
 				)
 			else:
 				_set_action_label_text(_get_prepare_card_unavailable_text(preparing_card, zone))
-		elif game_manager.can_play_card(game_manager.current_player, selected_card, zone):
+		elif _can_play_card_for_turn_action(game_manager.current_player, selected_card, zone):
 			if selected_card is ApollyonsDemiurge or selected_card.card_name == "Apollyon's Demiurge":
 				_show_demiurge_prompt(selected_card)
 			elif selected_card is BookOfLife:
@@ -11544,7 +11596,7 @@ func _on_empty_zone_pressed(zone: Zone) -> void:
 		return
 	# --- STRUCTURE UI CHANGE START ---
 	elif selected_card.card_type == Card.CardType.STRUCTURE:
-		if game_manager.can_play_card(game_manager.current_player, selected_card, zone):
+		if _can_play_card_for_turn_action(game_manager.current_player, selected_card, zone):
 	# Structure defensive stance is handled internally by StructureCard.gd
 			var played_structure := selected_card
 			game_input.submit_action({type = "play_card", card_uid = selected_card.uid,
@@ -11560,7 +11612,7 @@ func _on_empty_zone_pressed(zone: Zone) -> void:
 			_set_action_label_text(_get_play_card_unavailable_text(selected_card, zone))
 	# --- STRUCTURE UI CHANGE END ---
 	elif selected_card.card_type == Card.CardType.EQUIPMENT and selected_card.current_zone == game_manager.current_player.hand_zone:
-		if game_manager.can_play_card(game_manager.current_player, selected_card, zone):
+		if _can_play_card_for_turn_action(game_manager.current_player, selected_card, zone):
 			var equip_name := selected_card.card_name
 			game_input.submit_action({type = "play_card", card_uid = selected_card.uid,
 					player_index = game_manager.players.find(zone.zone_owner),
@@ -12500,7 +12552,7 @@ func _can_use_zone_after_sacrifice(zone: Zone, sacrificed_card: Card) -> bool:
 func _try_play_selected_creature_to_zone(zone: Zone) -> void:
 	if selected_card == null or selected_card.card_type != Card.CardType.CREATURE or placement_mode == "":
 		return
-	if not game_manager.can_play_card(game_manager.current_player, selected_card, zone):
+	if not _can_play_card_for_turn_action(game_manager.current_player, selected_card, zone):
 		_set_action_label_text(_get_play_card_unavailable_text(selected_card, zone))
 		_pending_creature_play_resolver = Callable()
 		return
@@ -16393,7 +16445,7 @@ func _on_enemy_card_pressed(target_card: Card) -> void:
 			and not target_card.is_god \
 			and target_card.get_controller() == game_manager.current_player \
 			and not awaiting_spell_target:
-		if not game_manager.can_play_card(game_manager.current_player, selected_card, null):
+		if not _can_play_card_for_turn_action(game_manager.current_player, selected_card, null):
 			_set_action_label_text(_get_spell_cast_unavailable_text(selected_card))
 			return
 		_initiate_blot_with_sacrifice(selected_card, target_card)
@@ -18918,6 +18970,11 @@ func _show_priority_response_submit_failure(card: Card) -> void:
 	_set_action_label_text("Could not submit " + card_name + ".")
 	update_ui()
 
+func _requires_priority_target_selection(card: Card) -> bool:
+	return card != null \
+		and card.has_method("requires_priority_target_selection") \
+		and bool(card.call("requires_priority_target_selection"))
+
 func _begin_authoritative_priority_charm_target_selection(
 	charm: CharmCard,
 	source_action: CardAction,
@@ -19045,7 +19102,9 @@ func _try_submit_authoritative_priority_response(card: Card) -> bool:
 		return true
 	if card.is_god or (card.has_method("can_respond_to_priority_action") and card.has_method("activate")):
 		var targets: Array = []
-		if card.has_method("get_priority_field_targets"):
+		if card.has_method("get_priority_targets"):
+			targets = card.get_priority_targets(game_manager, top)
+		elif card.has_method("get_priority_field_targets"):
 			targets = card.get_priority_field_targets(game_manager, top)
 		elif card.has_method("get_valid_targets"):
 			targets = card.get_valid_targets(game_manager)
@@ -19059,7 +19118,7 @@ func _try_submit_authoritative_priority_response(card: Card) -> bool:
 			_set_action_label_text(card.card_name + " has no valid targets.")
 			update_ui()
 			return true
-		if targets.size() > 1:
+		if targets.size() > 1 or (_requires_priority_target_selection(card) and not targets.is_empty()):
 			var choose_ability_target := func(chosen_card: Card) -> void:
 				submit_ability_response.call(chosen_card.uid)
 			_show_card_selection_overlay(
@@ -19163,7 +19222,9 @@ func _on_priority_response_chosen(card: Card) -> void:
 	elif card != null and card.has_method("can_respond_to_priority_action") and card.has_method("activate"):
 		var top: CardAction = game_manager.action_stack.back() as CardAction
 		var targets: Array = []
-		if card.has_method("get_priority_field_targets"):
+		if card.has_method("get_priority_targets"):
+			targets = card.get_priority_targets(game_manager, top)
+		elif card.has_method("get_priority_field_targets"):
 			targets = card.get_priority_field_targets(game_manager, top)
 		elif card.has_method("get_valid_targets"):
 			targets = card.get_valid_targets(game_manager)
@@ -19215,7 +19276,7 @@ func _on_priority_response_chosen(card: Card) -> void:
 			)
 			return
 
-		if targets.size() == 1 and targets[0] is Card:
+		if targets.size() == 1 and targets[0] is Card and not _requires_priority_target_selection(card):
 			var chosen_target := targets[0] as Card
 			_queue_targeted_ability_action(
 				card,
@@ -19224,7 +19285,7 @@ func _on_priority_response_chosen(card: Card) -> void:
 					card.activate(game_manager, chosen_target)
 			)
 			return
-		if targets.size() > 1:
+		if targets.size() > 1 or (_requires_priority_target_selection(card) and not targets.is_empty()):
 			var choose_local_priority_target := func(chosen_target: Card) -> void:
 				_queue_targeted_ability_action(
 					card,
@@ -22938,9 +22999,31 @@ func _linger_for_combat_reveals(combatants: Array) -> void:
 	_set_action_label_text("%s revealed before combat." % " and ".join(names))
 	update_ui()
 	await _await_visual_linger()
-	while _has_pending_click_selection() \
-			and match_manager.pending_click_selection_source in committed_combatants:
+	while _has_pending_combat_reveal_resolution_wait(committed_combatants):
+		if _has_pending_combat_reveal_stack_event(committed_combatants) and not _is_priority_prompt_visible():
+			_offer_priority()
 		await get_tree().process_frame
+
+func _has_pending_combat_reveal_resolution_wait(committed_combatants: Array[Card]) -> bool:
+	if _has_pending_click_selection() and match_manager != null \
+			and match_manager.pending_click_selection_source in committed_combatants:
+		return true
+	return _has_pending_combat_reveal_stack_event(committed_combatants)
+
+func _has_pending_combat_reveal_stack_event(committed_combatants: Array[Card]) -> bool:
+	if game_manager == null:
+		return false
+	for action in game_manager.action_stack:
+		if not (action is CardAction):
+			continue
+		var stack_action := action as CardAction
+		if stack_action.type != CardAction.Type.EVENT:
+			continue
+		if not str(stack_action.event_name).strip_edges().to_lower().contains("reveal"):
+			continue
+		if stack_action.card != null and stack_action.card in committed_combatants:
+			return true
+	return false
 
 func _linger_before_board_leaving_activation(card: Card, action_text: String) -> void:
 	if card == null or card.current_zone == null or not card.current_zone.is_board_zone():
@@ -23037,7 +23120,7 @@ func _execute_top_of_stack() -> void:
 func _try_resolve_local_charm_response_action(action: CardAction) -> bool:
 	if action == null \
 			or action.response_to == null \
-			or action.type != CardAction.Type.CHARM \
+			or action.type not in [CardAction.Type.CHARM, CardAction.Type.ABILITY] \
 			or not action.resolve_callback.is_valid():
 		return false
 	var pushed_effect_source := false
@@ -23352,6 +23435,8 @@ func _on_match_move_validated(move: Dictionary) -> void:
 				_set_action_label_text(response_card.card_name + " responds!")
 			if not _is_networked_client and not authoritative_priority:
 				_offer_priority()
+				_kick_local_stack_progress()
+				call_deferred("_kick_local_stack_progress")
 			elif not _is_networked_client and authoritative_priority:
 				_schedule_priority_recovery_check()
 		"durinn_secondborn_choice", "first_sage_adapa_choice", "third_sage_enmedugga_choice", "fourth_sage_enmegalamma_choice", "sixth_sage_an_enlilda_choice", "lailoken_reveal_choice", "masmassu_priest_reveal_choice", "rally_the_troops_choice", "terror_impact_choice", "fenrir_devour_choice", "gawain_healing_hands_choice", "tatzelwurm_dragon_heart_choice", "byggvir_reveal_choice", "harii_jarl_impact_choice", "gala_tura_destroyed_choice", "kur_jara_tree_of_life_choice", "hunting_tactics_choice", "foolish_optimism_choice", "blessed_knights_choice", "tezcatlipoca_active_titlacauan_choice", "freyja_active_open_sessrumnir_choice", "mummu_entropy_choice", "nusku_active_core_flame_choice", "nusku_well_of_fire_choice", "apollyons_demiurge_choice", "habrok_breakout_choice":
@@ -25470,7 +25555,7 @@ func _show_remote_priority_prompt(responses: Array, action_message: String = "")
 						_get_selection_cursor_mode_for_source(resp_card)
 					)
 			elif rtype == "god" or rtype == "ability":
-				if target_uids.size() == 1:
+				if target_uids.size() == 1 and not _requires_priority_target_selection(resp_card):
 					_request_network_priority_response({
 						type = "play_priority_ability",
 						source_uid = card_uid,
@@ -26189,7 +26274,7 @@ func _on_card_drag_released(card: Card, drop_pos: Vector2, card_rotated: bool, c
 			var target_creature: Card = zu.zone.cards[0]
 			if not _can_use_card_for_creature_sacrifice(target_creature):
 				continue
-			if not game_manager.can_play_card(game_manager.current_player, card, null):
+			if not _can_play_card_for_turn_action(game_manager.current_player, card, null):
 				_set_action_label_text(_get_spell_cast_unavailable_text(card))
 				return
 			_initiate_blot_with_sacrifice(card, target_creature)
@@ -26342,7 +26427,7 @@ func _on_card_dropped_to_zone(card: Card, zone: Zone, is_rotated: bool = false, 
 			_set_action_label_text("Choose an empty friendly zone to prepare " + card.card_name + ".")
 			update_ui()
 			return
-		if not game_manager.can_prepare_card(game_manager.current_player, card, zone):
+		if not _can_prepare_card_for_turn_action(game_manager.current_player, card, zone):
 			_set_action_label_text(_get_prepare_card_unavailable_text(card, zone))
 			update_ui()
 			return

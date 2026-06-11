@@ -7,12 +7,15 @@ func _init() -> void:
 	super._init()
 	card_name = "Grindylow"
 	card_types = ["Aqueous", "Fairy", "Triskelion Creature"]
+	if "Targeting" not in card_types:
+		card_types.append("Targeting")
 	level = 2
 	mana_cost = 0
 	sacrifice_cost = 0
 	speed = 2
 	resilience = 12
 	strength = 15
+	targets = true
 	ability_text = "Drown Below ([b]Reveal[/b]): Destroy any creature."
 	flavor_text = ""
 	culture = "Triskelion"
