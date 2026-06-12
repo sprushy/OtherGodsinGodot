@@ -125,6 +125,7 @@ static func build_visual_hover_body(card: Card, viewer: Player, config: Dictiona
 		vbox.add_child(detail_lbl)
 
 	_add_hover_stored_card_section(vbox, card, viewer, content_width)
+	_add_hover_summoned_active_god_section(vbox, card, viewer, content_width, game_manager)
 
 	return scroll
 
@@ -207,6 +208,7 @@ static func build_board_popup_body(card: Card, viewer: Player, config: Dictionar
 	var cost_lines: Array[String] = _to_string_array(config.get("cost_lines", []))
 	var power_cost_lines: Array[String] = _to_string_array(config.get("power_cost_lines", []))
 	var game_manager = config.get("game_manager", null)
+	var show_listed_costs := bool(config.get("show_listed_costs", false))
 
 	var vbox := _make_vbox(_BOARD_POPUP_WIDTH, 4)
 
@@ -260,6 +262,13 @@ static func build_board_popup_body(card: Card, viewer: Player, config: Dictionar
 
 	if not is_hidden_card and not card.is_god:
 		vbox.add_child(_make_level_symbol_row(card, 13.0))
+
+	if not is_hidden_card and show_listed_costs and card.has_listed_play_costs():
+		vbox.add_child(_make_rich_text(
+			BaseCard.apply_mana_cost_symbols("Summon Cost: " + card.get_cost_shorthand(), 13),
+			13,
+			Color(1.0, 0.78, 0.58)
+		))
 
 	if card.card_type == Card.CardType.CREATURE and not card.is_god:
 		if not is_hidden_card:
@@ -366,6 +375,7 @@ static func build_board_popup_body(card: Card, viewer: Player, config: Dictionar
 
 	if not is_hidden_card:
 		_add_hover_stored_card_section(vbox, card, viewer, _BOARD_POPUP_WIDTH)
+		_add_hover_summoned_active_god_section(vbox, card, viewer, _BOARD_POPUP_WIDTH, game_manager)
 
 	if card.should_show_flavor_text_in_hover() and not is_hidden_card:
 		vbox.add_child(_make_label(card.flavor_text, 13, Color(0.55, 0.55, 0.55), true))
@@ -481,6 +491,53 @@ static func _add_hover_stored_card_section(vbox: VBoxContainer, card: Card, view
 	for stored_card in stored_cards:
 		if stored_card != null:
 			vbox.add_child(_make_stored_card_preview(stored_card, viewer, width))
+
+static func _add_hover_summoned_active_god_section(
+	vbox: VBoxContainer,
+	card: Card,
+	viewer: Player,
+	width: float,
+	game_manager = null
+) -> void:
+	if vbox == null or card == null:
+		return
+	var active_gods := card.get_hover_summoned_active_gods(viewer)
+	if active_gods.is_empty():
+		return
+	vbox.add_child(_make_separator(Color(0.64, 0.48, 0.16)))
+	vbox.add_child(_make_label(
+		card.get_hover_summoned_active_gods_title(viewer),
+		13,
+		Color(1.0, 0.88, 0.48),
+		true
+	))
+	for active_god in active_gods:
+		if active_god != null:
+			vbox.add_child(make_full_card_preview(active_god, viewer, width, game_manager))
+
+static func make_full_card_preview(card: Card, viewer: Player, width: float, game_manager = null) -> Control:
+	var panel := PanelContainer.new()
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.custom_minimum_size = Vector2(width, 0.0)
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.05, 0.07, 0.12, 0.92)
+	style.border_color = Color(0.72, 0.54, 0.18, 0.9)
+	style.corner_radius_top_left = 4
+	style.corner_radius_top_right = 4
+	style.corner_radius_bottom_left = 4
+	style.corner_radius_bottom_right = 4
+	style.content_margin_left = 6
+	style.content_margin_right = 6
+	style.content_margin_top = 5
+	style.content_margin_bottom = 5
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		style.set_border_width(side, 1)
+	panel.add_theme_stylebox_override("panel", style)
+	panel.add_child(build_board_popup_body(card, viewer, {
+		"game_manager": game_manager,
+		"show_listed_costs": true,
+	}))
+	return panel
 
 static func _make_stored_card_preview(card: Card, _viewer: Player, width: float) -> Control:
 	var panel := PanelContainer.new()

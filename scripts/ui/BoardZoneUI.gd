@@ -693,6 +693,10 @@ func _on_badge_gui_input(event: InputEvent) -> void:
 		badge_control = badge_control.get_parent() as Control
 	if badge_control == null:
 		return
+	# Badge actions can synchronously rebuild the board and free this control.
+	# Consume the click before dispatch so it cannot become an off-board click
+	# for a targeting prompt opened by the action.
+	accept_event()
 	var action_name := str(badge_control.get_meta("badge_click_action", ""))
 	var card_uid := str(badge_control.get_meta("badge_click_card_uid", ""))
 	var extra_value = badge_control.get_meta("badge_click_extra") if badge_control.has_meta("badge_click_extra") else null
@@ -717,7 +721,6 @@ func _on_badge_gui_input(event: InputEvent) -> void:
 			_emit_equipment_target_action_clicked_for_uid(card_uid, str(extra_value))
 		"creature_stance_switch":
 			_emit_creature_stance_switch_clicked_for_uid(card_uid, int(extra_value) as Card.CreatureMode)
-	accept_event()
 
 static func get_creature_action_symbol_entries(card: Card) -> Array[Dictionary]:
 	var symbols: Array[Dictionary] = []
@@ -1667,6 +1670,7 @@ func _add_champions_call_badge(overlay: Control, card: Card, is_ready: bool) -> 
 
 	if clickable:
 		_connect_badge_click_action(badge, "champions_call", god_uid)
+	_connect_badge_hover(badge, "Champion's Call", _get_hover_summoned_active_god(god))
 	overlay.add_child(badge)
 
 func _should_show_smoking_mirror_badge(card: Card) -> bool:
@@ -1797,7 +1801,7 @@ func _add_smoking_mirror_badge(overlay: Control, card: Card) -> void:
 
 	if clickable:
 		_connect_badge_click_action(badge, "tez_necoc_yaotl", card_uid)
-	_connect_badge_hover(badge, hover_text)
+	_connect_badge_hover(badge, hover_text, _get_hover_summoned_active_god(card))
 	overlay.add_child(badge)
 
 func _add_tez_sacrifice_badge(overlay: Control, card: Card) -> void:
@@ -1849,7 +1853,7 @@ func _add_tez_sacrifice_badge(overlay: Control, card: Card) -> void:
 
 	if clickable:
 		_connect_badge_click_action(badge, "tez_necoc_yaotl", card_uid)
-	_connect_badge_hover(badge, hover_text)
+	_connect_badge_hover(badge, hover_text, _get_hover_summoned_active_god(card))
 	overlay.add_child(badge)
 
 func _get_creature_ability_badge_texture(card: Card) -> Texture2D:
@@ -2419,12 +2423,20 @@ func _add_badge_image_glow(badge: Control, texture: Texture2D, color: Color, spr
 	glow.modulate = color
 	badge.add_child(glow)
 
-func _connect_badge_hover(badge_control: Control, text: String) -> void:
+func _connect_badge_hover(badge_control: Control, text: String, preview_card: Card = null) -> void:
 	if badge_control == null:
 		return
 	badge_control.set_meta("hover_badge_text", text)
+	if preview_card != null:
+		badge_control.set_meta("hover_badge_preview_card", preview_card)
 	badge_control.mouse_entered.connect(Callable(self, "_on_badge_mouse_entered"))
 	badge_control.mouse_exited.connect(Callable(self, "_on_badge_mouse_exited"))
+
+func _get_hover_summoned_active_god(card: Card) -> Card:
+	if card == null:
+		return null
+	var active_gods := card.get_hover_summoned_active_gods(_get_viewer_player())
+	return active_gods[0] if not active_gods.is_empty() else null
 
 func _on_badge_mouse_entered() -> void:
 	_badge_hovered = true
@@ -2437,7 +2449,8 @@ func _on_badge_mouse_entered() -> void:
 		badge_control = badge_control.get_parent() as Control
 	if badge_control == null:
 		return
-	_show_badge_hover_popup(badge_control, str(badge_control.get_meta("hover_badge_text", "")))
+	var preview_card := badge_control.get_meta("hover_badge_preview_card", null) as Card
+	_show_badge_hover_popup(badge_control, str(badge_control.get_meta("hover_badge_text", "")), preview_card)
 
 func _on_badge_mouse_exited() -> void:
 	_badge_hovered = false
@@ -2477,9 +2490,9 @@ func _on_popup_mouse_exited() -> void:
 	if not _pinned:
 		_schedule_hide()
 
-func _show_badge_hover_popup(anchor: Control, text: String) -> void:
+func _show_badge_hover_popup(anchor: Control, text: String, preview_card: Card = null) -> void:
 	_hide_badge_hover_popup()
-	if anchor == null or text.strip_edges() == "" or not is_inside_tree() or is_queued_for_deletion():
+	if anchor == null or (text.strip_edges() == "" and preview_card == null) or not is_inside_tree() or is_queued_for_deletion():
 		return
 	var floating_parent := _get_floating_popup_parent()
 	if floating_parent == null:
@@ -2505,19 +2518,33 @@ func _show_badge_hover_popup(anchor: Control, text: String) -> void:
 	popup.add_theme_stylebox_override("panel", style)
 	popup_root.add_child(popup)
 
-	var label := RichTextLabel.new()
-	label.bbcode_enabled = true
-	label.text = text
-	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	label.scroll_active = false
-	label.fit_content = true
-	label.add_theme_font_size_override("normal_font_size", 14)
-	label.add_theme_font_size_override("bold_font_size", 14)
-	label.add_theme_color_override("default_color", Color(1.0, 0.95, 0.75))
-	label.mouse_filter = Control.MOUSE_FILTER_STOP if text.contains("[hint=") else Control.MOUSE_FILTER_IGNORE
-	if text.length() >= 80 or text.contains("\n"):
-		label.custom_minimum_size = Vector2(240.0, 0.0)
-	popup.add_child(label)
+	var content := VBoxContainer.new()
+	content.add_theme_constant_override("separation", 6)
+	content.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	popup.add_child(content)
+
+	if text.strip_edges() != "":
+		var label := RichTextLabel.new()
+		label.bbcode_enabled = true
+		label.text = text
+		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		label.scroll_active = false
+		label.fit_content = true
+		label.add_theme_font_size_override("normal_font_size", 14)
+		label.add_theme_font_size_override("bold_font_size", 14)
+		label.add_theme_color_override("default_color", Color(1.0, 0.95, 0.75))
+		label.mouse_filter = Control.MOUSE_FILTER_STOP if text.contains("[hint=") else Control.MOUSE_FILTER_IGNORE
+		if text.length() >= 80 or text.contains("\n"):
+			label.custom_minimum_size = Vector2(240.0, 0.0)
+		content.add_child(label)
+
+	if preview_card != null:
+		content.add_child(CardDetailContentBuilderScript.make_full_card_preview(
+			preview_card,
+			_get_viewer_player(),
+			240.0,
+			game_manager
+		))
 
 	_badge_hover_popup = popup_root
 	floating_parent.add_child(popup_root)

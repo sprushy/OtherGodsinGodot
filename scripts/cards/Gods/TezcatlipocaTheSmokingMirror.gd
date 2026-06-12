@@ -93,6 +93,13 @@ func get_hover_stored_cards(_viewer: Player = null) -> Array[Card]:
 func get_hover_stored_cards_title(_viewer: Player = null) -> String:
 	return "Necoc Yaotl Sacrifices"
 
+func get_hover_summoned_active_gods(_viewer: Player = null) -> Array[Card]:
+	var manifestation := _get_necoc_yaotl_candidate(true)
+	return [manifestation] if manifestation != null else []
+
+func get_hover_summoned_active_gods_title(_viewer: Player = null) -> String:
+	return "Necoc Yaotl summons"
+
 func get_tonal_mastery_token_count() -> int:
 	return clampi(tonal_mastery_tokens, 0, TONAL_MASTERY_TOKEN_THRESHOLD)
 

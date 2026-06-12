@@ -79,6 +79,13 @@ func get_unlock_display_cost_lines(game_manager: GameManager = null) -> Array[St
 
 	return lines
 
+func get_hover_summoned_active_gods(_viewer: Player = null) -> Array[Card]:
+	var manifestation := _peek_manifestation_candidate()
+	return [manifestation] if manifestation != null else []
+
+func get_hover_summoned_active_gods_title(_viewer: Player = null) -> String:
+	return "Take the Field summons"
+
 func on_unlock(game_manager: GameManager) -> void:
 	if game_manager == null or card_owner == null:
 		relock()

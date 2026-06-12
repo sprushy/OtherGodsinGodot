@@ -816,6 +816,12 @@ func get_hover_stored_cards_total_level(_viewer: Player = null) -> int:
 			total += stored_card.get_effective_level()
 	return total
 
+func get_hover_summoned_active_gods(_viewer: Player = null) -> Array[Card]:
+	return []
+
+func get_hover_summoned_active_gods_title(_viewer: Player = null) -> String:
+	return "Summons"
+
 func get_equipment_summary_lines() -> Array[String]:
 	var lines: Array[String] = []
 	for equip in equipment:

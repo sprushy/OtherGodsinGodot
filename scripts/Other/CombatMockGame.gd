@@ -6419,6 +6419,13 @@ func _show_power_hover_popup(source: Control, text: String, bbcode_text: String 
 	if card != null:
 		var hover_viewer := game_manager.get_feedback_viewer() if game_manager != null else null
 		CardDetailContentBuilderScript._add_hover_stored_card_section(vbox, card, hover_viewer, 220.0)
+		CardDetailContentBuilderScript._add_hover_summoned_active_god_section(
+			vbox,
+			card,
+			hover_viewer,
+			220.0,
+			game_manager
+		)
 
 	if not is_inside_tree() or is_queued_for_deletion():
 		return
@@ -15900,6 +15907,9 @@ func _on_creature_stance_switch_clicked(card: Card, target_mode: Card.CreatureMo
 		return
 	var target_mode_name := "aggressive" if target_mode == Card.CreatureMode.AGGRESSIVE else "defensive"
 	if game_input.submit_action({type = "change_mode", card_uid = card.uid, mode = target_mode}):
+		if _has_pending_click_selection():
+			update_ui()
+			return
 		_set_hover_card_options_card(card)
 		_set_action_label_text(card.card_name + " switched to " + target_mode_name + " stance.")
 	else:

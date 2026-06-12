@@ -97,6 +97,15 @@ func get_champions_call_candidate(_allow_fallback: bool = true) -> Card:
 func has_champions_call() -> bool:
 	return ability_text.find("Champion's Call") != -1 or get_champions_call_candidate(false) != null
 
+func get_hover_summoned_active_gods(_viewer: Player = null) -> Array[Card]:
+	if not has_champions_call():
+		return []
+	var manifestation := get_champions_call_candidate(true)
+	return [manifestation] if manifestation != null else []
+
+func get_hover_summoned_active_gods_title(_viewer: Player = null) -> String:
+	return "Champion's Call summons"
+
 func should_show_activation_aura(game_manager: GameManager) -> bool:
 	if not has_method("can_activate"):
 		return false
