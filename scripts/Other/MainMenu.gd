@@ -4344,14 +4344,16 @@ func _launch_assigned_match(
 		mock_game._prepare_for_match_launch("Connecting to match...")
 	show_game()
 	if is_host:
-		get_node("GameContainer/MockGame").start_game(true, false, server_ip, match_port, match_info, server_match_session)
+		await get_node("GameContainer/MockGame").start_game(true, false, server_ip, match_port, match_info, server_match_session)
+		show_game()
 		_finish_smoke_if_enabled("PASS:host_launched_match")
 		return
 	var connect_delay_seconds := 0.4
 	if _uses_dedicated_match_server(match_info):
 		connect_delay_seconds = 1.1
 	await get_tree().create_timer(connect_delay_seconds).timeout
-	get_node("GameContainer/MockGame").start_game(false, true, server_ip, match_port, match_info)
+	await get_node("GameContainer/MockGame").start_game(false, true, server_ip, match_port, match_info)
+	show_game()
 	_finish_smoke_if_enabled("PASS:client_launched_match")
 
 func _launch_host_match_after_lobby_handoff(match_info: Dictionary) -> void:
@@ -4470,11 +4472,9 @@ func _on_game_rematch_requested() -> void:
 func _on_game_return_to_menu_requested() -> void:
 	var active_game = _get_active_embedded_game()
 	if active_game != null:
-		var reconnect_waiting := bool(active_game.get("_match_reconnect_waiting"))
-		var awaiting_initial_state := bool(active_game.get("_awaiting_initial_full_state"))
 		var game_finished := bool(active_game.get("_game_finished"))
 		var networked_client := bool(active_game.get("_is_networked_client"))
-		if networked_client and not game_finished and (reconnect_waiting or awaiting_initial_state):
+		if networked_client and not game_finished:
 			return
 	_return_to_menu()
 

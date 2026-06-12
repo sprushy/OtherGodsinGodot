@@ -314,5 +314,28 @@ func _initialize() -> void:
 		return
 	authority_network_manager.free()
 
+	var menu_script = load("res://scripts/Other/MainMenu.gd")
+	var menu = menu_script.new()
+	var menu_container := Control.new()
+	menu_container.name = "MenuContainer"
+	var game_container := Control.new()
+	game_container.name = "GameContainer"
+	var mock_game = load("res://scripts/Other/CombatMockGame.gd").new()
+	mock_game.name = "MockGame"
+	mock_game._is_networked_client = true
+	mock_game._game_finished = false
+	menu.add_child(menu_container)
+	menu.add_child(game_container)
+	game_container.add_child(mock_game)
+	menu.menu_container = menu_container
+	menu.game_container = game_container
+	menu.show_game()
+	menu._on_game_return_to_menu_requested()
+	if menu_container.visible or not game_container.visible:
+		push_error("phase2_lobby_probe: stale return-to-menu signal hid a live rejoined match")
+		quit(1)
+		return
+	menu.free()
+
 	print("phase2_lobby_probe: PASS")
 	quit()
