@@ -38,6 +38,7 @@ const RUNIC_SPELLBREAKER_CURSOR_IMAGE_PATH := "res://images/ui/cursors/RunicSpel
 const LAILOKEN_CURSOR_IMAGE_PATH := "res://images/ui/cursors/LailokenCursor.png"
 const MASMASSU_PRIEST_CURSOR_IMAGE_PATH := "res://images/ui/cursors/MasmassauPriestCursor.png"
 const GRINDYLOW_DROWN_CURSOR_IMAGE_PATH := "res://images/ui/cursors/DrownCursor.png"
+const SEVENTH_SAGE_CURSOR_IMAGE_PATH := "res://images/ui/cursors/SeventhSageCursor.png"
 const CardBackTexture = preload("res://images/cardbackAI.png")
 const BOARD_FLOOR_TEXTURE_PATH := "res://images/board/moss_stone_floor_albedo.png"
 const BOARD_SPLASH_TEXTURE_PATH := "res://images/ui/splash/other_gods_splash.png"
@@ -531,6 +532,7 @@ var _runic_spellbreaker_cursor_texture: Texture2D = null
 var _lailoken_cursor_texture: Texture2D = null
 var _masmassu_priest_cursor_texture: Texture2D = null
 var _grindylow_drown_cursor_texture: Texture2D = null
+var _seventh_sage_cursor_texture: Texture2D = null
 var _active_selection_cursor_mode: String = ""
 var _active_selection_cursor_target_height: int = 0
 var _overlay_selection_cursor_mode: String = ""
@@ -564,6 +566,7 @@ var _runic_spellbreaker_cursor_target_height: int = 0
 var _lailoken_cursor_target_height: int = 0
 var _masmassu_priest_cursor_target_height: int = 0
 var _grindylow_drown_cursor_target_height: int = 0
+var _seventh_sage_cursor_target_height: int = 0
 var _devour_cancel_prompt: Control = null
 var _tez_titlacauan_cursor_overlay: Control = null
 var _tez_titlacauan_cursor_budget_label: Label = null
@@ -689,6 +692,8 @@ const MASMASSU_PRIEST_CURSOR_TARGET_HEIGHT := 108
 const MASMASSU_PRIEST_CURSOR_HOTSPOT_RATIO := Vector2(0.50, 0.78)
 const GRINDYLOW_DROWN_CURSOR_TARGET_HEIGHT := 108
 const GRINDYLOW_DROWN_CURSOR_HOTSPOT_RATIO := Vector2(0.18, 0.04)
+const SEVENTH_SAGE_CURSOR_TARGET_HEIGHT := 108
+const SEVENTH_SAGE_CURSOR_HOTSPOT_RATIO := Vector2(0.50, 0.50)
 const SACRIFICE_CURSOR_SHAPES := [
 	Input.CURSOR_ARROW,
 	Input.CURSOR_POINTING_HAND,
@@ -2057,6 +2062,8 @@ func _get_selection_cursor_mode_for_source(card: Card) -> String:
 		return "lailoken"
 	if card is Grindylow:
 		return "grindylow_drown"
+	if card is SeventhSageUtuabzu or card is Exorcism:
+		return "seventh_sage"
 	if card is MasmassuPriest:
 		return "masmassu_priest"
 	if card is NimueScript:
@@ -2297,6 +2304,8 @@ func _get_cursor_mode_target_height(cursor_mode: String) -> int:
 			return UIArtScalerScript.get_board_cursor_target_height(MASMASSU_PRIEST_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 		"grindylow_drown":
 			return UIArtScalerScript.get_board_cursor_target_height(GRINDYLOW_DROWN_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+		"seventh_sage":
+			return UIArtScalerScript.get_board_cursor_target_height(SEVENTH_SAGE_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 		"tonal_extraction":
 			return UIArtScalerScript.get_board_cursor_target_height(TONAL_EXTRACTION_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 		"silence":
@@ -2728,6 +2737,19 @@ func _apply_grindylow_drown_cursor() -> bool:
 		Input.set_custom_mouse_cursor(_grindylow_drown_cursor_texture, cursor_shape, hotspot)
 	return true
 
+func _apply_seventh_sage_cursor() -> bool:
+	var target_height := UIArtScalerScript.get_board_cursor_target_height(SEVENTH_SAGE_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+	if _seventh_sage_cursor_texture == null or _seventh_sage_cursor_target_height != target_height:
+		_seventh_sage_cursor_texture = _load_cursor_texture_from_image_path(SEVENTH_SAGE_CURSOR_IMAGE_PATH, target_height)
+		_seventh_sage_cursor_target_height = target_height
+	if _seventh_sage_cursor_texture == null:
+		return false
+
+	var hotspot := UIArtScalerScript.get_cursor_hotspot(_seventh_sage_cursor_texture, SEVENTH_SAGE_CURSOR_HOTSPOT_RATIO)
+	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
+		Input.set_custom_mouse_cursor(_seventh_sage_cursor_texture, cursor_shape, hotspot)
+	return true
+
 func _apply_tez_titlacauan_cursor() -> bool:
 	var target_height := UIArtScalerScript.get_board_cursor_target_height(TEZ_TITLACAUAN_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 	if _tez_titlacauan_cursor_texture == null or _tez_titlacauan_cursor_target_height != target_height:
@@ -2895,6 +2917,14 @@ func _sync_sacrifice_cursor() -> void:
 	if cursor_mode == "grindylow_drown":
 		if _apply_grindylow_drown_cursor():
 			_active_selection_cursor_mode = "grindylow_drown"
+			_active_selection_cursor_target_height = target_height
+		else:
+			_restore_default_selection_cursor()
+		return
+
+	if cursor_mode == "seventh_sage":
+		if _apply_seventh_sage_cursor():
+			_active_selection_cursor_mode = "seventh_sage"
 			_active_selection_cursor_target_height = target_height
 		else:
 			_restore_default_selection_cursor()
@@ -13008,15 +13038,7 @@ func _show_wolf_adolescent_maturation_prompt(card: WolfAdolescent, prompt_target
 	if card == null or game_manager == null:
 		return
 	_active_wolf_adolescent_prompt = card
-	var current_targets: Array[Card] = []
-	if prompt_targets.is_empty():
-		current_targets = card.get_valid_maturation_targets()
-	else:
-		var valid_targets := card.get_valid_maturation_targets()
-		for candidate in prompt_targets:
-			var candidate_card := candidate as Card
-			if candidate_card != null and candidate_card in valid_targets:
-				current_targets.append(candidate_card)
+	var current_targets := _resolve_prompt_targets(card.get_valid_maturation_targets(), prompt_targets)
 	if current_targets.is_empty():
 		var no_target_text := card.card_name + " matured, but found no level 5 or lower Lupine in the deck."
 		card._set_maturation_ready(false)
@@ -13190,8 +13212,8 @@ func _resolve_prompt_targets(valid_targets: Array[Card], prompt_targets: Array =
 			valid_targets_by_uid[valid_uid] = valid_target
 	for candidate in prompt_targets:
 		var candidate_uid := ""
-		var candidate_card := candidate as Card
-		if candidate_card != null:
+		if candidate is Card:
+			var candidate_card := candidate as Card
 			candidate_uid = str(candidate_card.uid).strip_edges()
 			if candidate_card in valid_targets:
 				if candidate_card not in resolved_targets:

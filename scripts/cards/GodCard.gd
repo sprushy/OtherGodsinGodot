@@ -101,7 +101,10 @@ func get_hover_summoned_active_gods(_viewer: Player = null) -> Array[Card]:
 	if not has_champions_call():
 		return []
 	var manifestation := get_champions_call_candidate(true)
-	return [manifestation] if manifestation != null else []
+	var summoned_active_gods: Array[Card] = []
+	if manifestation != null:
+		summoned_active_gods.append(manifestation)
+	return summoned_active_gods
 
 func get_hover_summoned_active_gods_title(_viewer: Player = null) -> String:
 	return "Champion's Call summons"

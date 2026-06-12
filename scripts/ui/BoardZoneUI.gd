@@ -2449,7 +2449,9 @@ func _on_badge_mouse_entered() -> void:
 		badge_control = badge_control.get_parent() as Control
 	if badge_control == null:
 		return
-	var preview_card := badge_control.get_meta("hover_badge_preview_card", null) as Card
+	var preview_card: Card = null
+	if badge_control.has_meta("hover_badge_preview_card"):
+		preview_card = badge_control.get_meta("hover_badge_preview_card") as Card
 	_show_badge_hover_popup(badge_control, str(badge_control.get_meta("hover_badge_text", "")), preview_card)
 
 func _on_badge_mouse_exited() -> void:
