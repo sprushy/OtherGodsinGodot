@@ -424,7 +424,7 @@ func is_hidden_from_viewer(viewer: Player = null) -> bool:
 	return (is_stealth or hidden_face_down) \
 		and controller != null \
 		and controller != viewer \
-		and not is_temporarily_revealed()
+		and not is_revealed_to_all()
 
 func get_log_display_name(
 	viewer: Player = null,
@@ -486,6 +486,9 @@ func is_petrified() -> bool:
 
 func is_temporarily_revealed() -> bool:
 	return has_status_effect("temporarily_revealed")
+
+func is_revealed_to_all() -> bool:
+	return is_temporarily_revealed() or has_status_effect("publicly_revealed")
 
 func is_revealed_in_hand() -> bool:
 	return has_status_effect("revealed_in_hand")
@@ -712,6 +715,9 @@ func get_effect_summary_lines() -> Array[String]:
 			continue
 		if raw_status_name == "temporarily_revealed":
 			lines.append("Revealed until end of turn by " + str(status.get("source", "?")))
+			continue
+		if raw_status_name == "publicly_revealed":
+			lines.append("Publicly revealed by " + str(status.get("source", "?")))
 			continue
 		if raw_status_name == "revealed_in_hand":
 			lines.append("Revealed while in hand by " + str(status.get("source", "?")))

@@ -109,6 +109,7 @@ func _on_game_ended(winner: Player, loser: Player) -> void:
 
 func _on_ui_interaction_requested(player_index: int, type: String, data: Dictionary) -> void:
 	var serialized_data: Dictionary = prompt_router.serialize_prompt_data(data)
+	_sync_remote_prompt_player_state(player_index)
 	_broadcast_ui_interaction(player_index, type, serialized_data)
 
 func _on_doorway_choice_requested(structure: Card, card: Card, combat_death: bool, destruction: bool) -> void:
@@ -132,6 +133,20 @@ func _broadcast_ui_interaction(player_index: int, type: String, data: Dictionary
 		network_manager.game_event_received.emit("ui_interaction", envelope)
 	elif peer_id != -1:
 		network_manager.broadcast_event_to_peer(peer_id, "ui_interaction", envelope)
+
+func _sync_remote_prompt_player_state(player_index: int) -> void:
+	if network_manager == null or game_manager == null:
+		return
+	var peer_id: int = network_manager.player_peer_ids.get(player_index, -1)
+	if peer_id <= 1:
+		return
+	# Prompts can reference cards moved earlier in the same resolution. Send the
+	# personalized state first so the reliable prompt UIDs resolve client-side.
+	network_manager.broadcast_event_to_peer(
+		peer_id,
+		"full_state",
+		_build_full_state_event_data(player_index, "")
+	)
 
 # ---------------------------------------------------------------------------
 # Core broadcast logic

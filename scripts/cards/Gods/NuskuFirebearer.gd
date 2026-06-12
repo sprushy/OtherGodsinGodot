@@ -137,9 +137,16 @@ func _is_eligible_well_of_fire_card(card: Card) -> bool:
 		return false
 	if card.current_zone != card_owner.graveyard_zone:
 		return false
-	if card.culture != "Ancient":
+	var is_ancient := str(card.culture).strip_edges().nocasecmp_to("Ancient") == 0 \
+		or card.has_type("Ancient") \
+		or card.has_type("Ancient Spell") \
+		or card.has_type("Ancient Charm")
+	if not is_ancient:
 		return false
-	return card.card_type == Card.CardType.CHARM or card.card_type == Card.CardType.SPELL
+	return card is CharmCard \
+		or card is SpellCard \
+		or card.card_type == Card.CardType.CHARM \
+		or card.card_type == Card.CardType.SPELL
 
 func _candidate_is_worse_for_controller(candidate: Card, current_choice: Card) -> bool:
 	if current_choice == null:

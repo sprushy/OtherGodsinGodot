@@ -297,6 +297,8 @@ var _pending_structure_bonus_power_uid: String = ""
 var _pending_structure_bonus_structure_uid: String = ""
 var _pending_advanced_building_techniques_prompt_data: Dictionary = {}
 var _pending_freyja_active_prompt_data: Dictionary = {}
+var _pending_nergal_lion_prompt_data: Dictionary = {}
+var _pending_nusku_well_of_fire_prompt_data: Dictionary = {}
 var _awaiting_altar_void_payment: bool = false
 var _altar_pending_power: AltarOfDreams = null
 var _altar_void_targets_chosen: Array[Card] = []
@@ -13967,6 +13969,13 @@ func _queue_nergal_lion_impact_prompt(card: NergalLion, prompt_targets: Array = 
 	if card == null or game_manager == null:
 		return
 	var current_targets := _resolve_prompt_targets(card.get_valid_immolate_targets(game_manager), prompt_targets)
+	if not prompt_targets.is_empty() and current_targets.size() != prompt_targets.size():
+		_pending_nergal_lion_prompt_data = {
+			"source_uid": card.uid,
+			"target_uids": prompt_targets.duplicate(),
+		}
+		return
+	_pending_nergal_lion_prompt_data.clear()
 	if current_targets.is_empty():
 		var no_target_text := card.card_name + " found no physical destruction card to immolate."
 		if _stack_resolution_paused:
@@ -22743,6 +22752,8 @@ func _dismiss_transient_prompts() -> void:
 	_hide_devour_cancel_prompt()
 	_dismiss_zone_overlay()
 	_pending_freyja_active_prompt_data.clear()
+	_pending_nergal_lion_prompt_data.clear()
+	_pending_nusku_well_of_fire_prompt_data.clear()
 	_pending_freyja_active_source_uid = ""
 	_pending_freyja_active_selected_uids.clear()
 	_pending_freyja_active_prompt_targets.clear()
@@ -23664,14 +23675,7 @@ func _on_match_ui_interaction(player_index: int, type: String, data: Dictionary)
 			if card != null:
 				_show_byggvir_reveal_prompt(card, data.get("options", []))
 		"nusku_well_of_fire":
-			var nusku := game_manager.get_card_by_uid(data.get("source_uid", "")) as NuskuFirebearer
-			if nusku != null:
-				var choices: Array[Card] = []
-				for target_uid in data.get("target_uids", []):
-					var chosen_card := game_manager.get_card_by_uid(str(target_uid))
-					if chosen_card != null:
-						choices.append(chosen_card)
-				_show_nusku_well_of_fire_prompt(nusku, choices, int(data.get("mill_count", 0)))
+			_show_nusku_well_of_fire_prompt_from_data(data)
 		"apollyons_demiurge":
 			var spell := game_manager.get_card_by_uid(data.get("source_uid", "")) as ApollyonsDemiurge
 			if spell != null:
@@ -23725,14 +23729,7 @@ func _on_match_ui_interaction(player_index: int, type: String, data: Dictionary)
 						prompt_targets.append(target_card)
 				_queue_pai_long_autumn_king_impact_prompt(card, prompt_targets)
 		"nergal_lion_impact":
-			var card := game_manager.get_card_by_uid(data.get("source_uid", "")) as NergalLion
-			if card != null:
-				var prompt_targets: Array[Card] = []
-				for target_uid in data.get("target_uids", []):
-					var target_card := game_manager.get_card_by_uid(str(target_uid))
-					if target_card != null:
-						prompt_targets.append(target_card)
-				_queue_nergal_lion_impact_prompt(card, prompt_targets)
+			_queue_nergal_lion_impact_prompt_from_data(data)
 		"gala_tura_destroyed":
 			var card := game_manager.get_card_by_uid(data.get("source_uid", "")) as GalaTura
 			if card != null:
@@ -24790,14 +24787,7 @@ func _apply_ui_interaction(event_data: Dictionary) -> void:
 			if card != null:
 				_show_byggvir_reveal_prompt(card, payload.get("options", []))
 		"nusku_well_of_fire":
-			var nusku := game_manager.get_card_by_uid(payload.get("source_uid", "")) as NuskuFirebearer
-			if nusku != null:
-				var choices: Array[Card] = []
-				for target_uid in payload.get("target_uids", []):
-					var chosen_card := game_manager.get_card_by_uid(str(target_uid))
-					if chosen_card != null:
-						choices.append(chosen_card)
-				_show_nusku_well_of_fire_prompt(nusku, choices, int(payload.get("mill_count", 0)))
+			_show_nusku_well_of_fire_prompt_from_data(payload)
 		"apollyons_demiurge":
 			var spell := game_manager.get_card_by_uid(payload.get("source_uid", "")) as ApollyonsDemiurge
 			if spell != null:
@@ -24852,14 +24842,7 @@ func _apply_ui_interaction(event_data: Dictionary) -> void:
 						prompt_targets.append(target_card)
 				_queue_pai_long_autumn_king_impact_prompt(card, prompt_targets)
 		"nergal_lion_impact":
-			var card := game_manager.get_card_by_uid(payload.get("source_uid", "")) as NergalLion
-			if card != null:
-				var prompt_targets: Array[Card] = []
-				for target_uid in payload.get("target_uids", []):
-					var target_card := game_manager.get_card_by_uid(str(target_uid))
-					if target_card != null:
-						prompt_targets.append(target_card)
-				_queue_nergal_lion_impact_prompt(card, prompt_targets)
+			_queue_nergal_lion_impact_prompt_from_data(payload)
 		"gala_tura_destroyed":
 			var card := game_manager.get_card_by_uid(payload.get("source_uid", "")) as GalaTura
 			if card != null:
@@ -25147,6 +25130,8 @@ func _apply_full_state(data: Dictionary) -> void:
 		_hide_priority_prompt()
 	_retry_pending_advanced_building_techniques_prompt()
 	_retry_pending_freyja_active_prompt()
+	_retry_pending_nergal_lion_prompt()
+	_retry_pending_nusku_well_of_fire_prompt()
 	if not restored_reveal_prompt:
 		_restore_priority_prompt_from_authoritative_state()
 	_update_waiting_overlay()
@@ -26006,6 +25991,41 @@ func _show_nusku_well_of_fire_prompt(nusku: NuskuFirebearer, choices: Array[Card
 				return
 			_resume_after_deferred_resolution("Well of Fire choice could not be submitted.")
 	)
+
+func _show_nusku_well_of_fire_prompt_from_data(data: Dictionary) -> void:
+	if game_manager == null:
+		return
+	var target_uids: Array = data.get("target_uids", [])
+	var nusku := game_manager.get_card_by_uid(str(data.get("source_uid", ""))) as NuskuFirebearer
+	var choices: Array[Card] = []
+	for target_uid in target_uids:
+		var chosen_card := game_manager.get_card_by_uid(str(target_uid))
+		if chosen_card != null:
+			choices.append(chosen_card)
+	if nusku == null or choices.size() != target_uids.size():
+		_pending_nusku_well_of_fire_prompt_data = data.duplicate(true)
+		return
+	_pending_nusku_well_of_fire_prompt_data.clear()
+	_show_nusku_well_of_fire_prompt(nusku, choices, int(data.get("mill_count", 0)))
+
+func _queue_nergal_lion_impact_prompt_from_data(data: Dictionary) -> void:
+	if game_manager == null:
+		return
+	var lion := game_manager.get_card_by_uid(str(data.get("source_uid", ""))) as NergalLion
+	if lion == null:
+		_pending_nergal_lion_prompt_data = data.duplicate(true)
+		return
+	_queue_nergal_lion_impact_prompt(lion, data.get("target_uids", []))
+
+func _retry_pending_nergal_lion_prompt() -> void:
+	if _pending_nergal_lion_prompt_data.is_empty():
+		return
+	_queue_nergal_lion_impact_prompt_from_data(_pending_nergal_lion_prompt_data.duplicate(true))
+
+func _retry_pending_nusku_well_of_fire_prompt() -> void:
+	if _pending_nusku_well_of_fire_prompt_data.is_empty():
+		return
+	_show_nusku_well_of_fire_prompt_from_data(_pending_nusku_well_of_fire_prompt_data.duplicate(true))
 
 var _resurrection_panel: Control = null
 var _resurrection_queue: Array[Card] = []

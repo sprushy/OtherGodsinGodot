@@ -88,6 +88,14 @@ func resolve_immolate_impact(game_manager: GameManager, target: Card, target_zon
 	target.is_prepared = true
 	target.is_face_down = true
 	target.is_stealth = false
+	target.remove_status_effects_by_name("publicly_revealed")
+	target.add_status_effect(
+		"publicly_revealed",
+		card_name,
+		self,
+		controller,
+		{"remove_when_leaves_board": true}
+	)
 	target.set_meta("prepared_activation_cost_waived", true)
 	target.set_meta("prepared_activation_cost_waiver_source", card_name)
 	target.set_meta("prepared_activation_cost_waiver_source_card", self)

@@ -991,7 +991,7 @@ func _get_viewer_player() -> Player:
 	return game_manager.get_feedback_viewer()
 
 func _is_public_power(card: Card) -> bool:
-	return card is PowerCard and ((card as PowerCard).is_publicly_revealed or card.is_temporarily_revealed() or not card.is_face_down)
+	return card is PowerCard and ((card as PowerCard).is_publicly_revealed or card.is_revealed_to_all() or not card.is_face_down)
 
 func _get_card_type_label(card: Card) -> String:
 	if card == null:
@@ -4069,7 +4069,7 @@ func _is_hidden_board_card_for_priority_visuals(card: Card) -> bool:
 	if not (card.is_face_down or card.is_stealth or card.is_prepared):
 		return false
 	var viewer := _get_viewer_player()
-	return card.get_controller() != viewer and not card.is_temporarily_revealed()
+	return card.get_controller() != viewer and not card.is_revealed_to_all()
 
 func _is_card_usable_for_priority(card: Card) -> bool:
 	if card == null or game_manager == null:
@@ -4448,7 +4448,7 @@ func _refresh_display() -> void:
 		var face_down_viewer := _get_viewer_player()
 		var can_render_stealth_creature_normally := card.card_type == Card.CardType.CREATURE \
 			and card.is_stealth \
-			and (card.get_controller() == face_down_viewer or card.is_temporarily_revealed())
+			and (card.get_controller() == face_down_viewer or card.is_revealed_to_all())
 		var is_stack_magical_preview := game_manager != null \
 			and card.is_magical_card() \
 			and game_manager._has_pending_stack_action_for_card(card)
@@ -4463,15 +4463,15 @@ func _refresh_display() -> void:
 			fd_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			fd_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 			add_child(fd_overlay)
-			var revealed_face_down_power := (card is PowerCard and (card as PowerCard).is_publicly_revealed) or card.is_temporarily_revealed()
+			var revealed_face_down_card := (card is PowerCard and (card as PowerCard).is_publicly_revealed) or card.is_revealed_to_all()
 			var is_own_hidden_card := card.get_controller() == face_down_viewer and (
 				card.is_stealth
 				or card.is_power
 				or card.is_prepared
 			)
-			var show_revealed_power_art := revealed_face_down_power and card.art_path != ""
+			var show_revealed_card_art := revealed_face_down_card and card.art_path != ""
 			var tex: Texture2D = null
-			if show_revealed_power_art or (is_own_hidden_card and card.art_path != ""):
+			if show_revealed_card_art or (is_own_hidden_card and card.art_path != ""):
 				tex = load(card.art_path)
 			else:
 				tex = load("res://images/cardbackAI.png")
@@ -4483,10 +4483,10 @@ func _refresh_display() -> void:
 				art.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 				art.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				fd_overlay.add_child(art)
-			if show_revealed_power_art:
+			if show_revealed_card_art:
 				var revealed_haze := ColorRect.new()
-				var is_own_revealed_power := card.get_controller() == face_down_viewer
-				revealed_haze.color = Color(0.22, 0.45, 0.85, 0.26) if is_own_revealed_power else Color(0.85, 0.22, 0.45, 0.28)
+				var is_own_revealed_card := card.get_controller() == face_down_viewer
+				revealed_haze.color = Color(0.22, 0.45, 0.85, 0.26) if is_own_revealed_card else Color(0.85, 0.22, 0.45, 0.28)
 				revealed_haze.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 				revealed_haze.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				fd_overlay.add_child(revealed_haze)
@@ -5199,7 +5199,7 @@ func _gui_input(event: InputEvent) -> void:
 				return
 			# Pin the info popup on right-click for any visible card
 			var viewer := _get_viewer_player()
-			if not card.is_face_down or card.get_controller() == viewer or _is_public_power(card) or card.is_temporarily_revealed():
+			if not card.is_face_down or card.get_controller() == viewer or _is_public_power(card) or card.is_revealed_to_all():
 				_pinned = true
 				_hide_ability_popup()
 				_show_ability_popup()
@@ -5230,7 +5230,7 @@ func _notification(what: int) -> void:
 			elif zone != null and zone.cards.is_empty():
 				_refresh_display()
 			var viewer := _get_viewer_player()
-			if _c != null and (not _c.is_face_down or _c.get_controller() == viewer or _is_public_power(_c) or _c.is_temporarily_revealed()):
+			if _c != null and (not _c.is_face_down or _c.get_controller() == viewer or _is_public_power(_c) or _c.is_revealed_to_all()):
 				var _delay := 1.0 if (_c.is_god) else 1.5
 				if is_inside_tree() and not is_queued_for_deletion():
 					get_tree().create_timer(_delay).timeout.connect(Callable(self, "_try_show_popup"))
@@ -5359,7 +5359,7 @@ func _show_ability_popup() -> void:
 	popup.mouse_exited.connect(Callable(self, "_on_popup_mouse_exited"))
 
 	var popup_viewer_shared := _get_viewer_player()
-	var is_hidden_card_shared := (card.is_stealth or (card.is_face_down and not _is_public_power(card))) and card.get_controller() != popup_viewer_shared and not card.is_temporarily_revealed()
+	var is_hidden_card_shared := (card.is_stealth or (card.is_face_down and not _is_public_power(card))) and card.get_controller() != popup_viewer_shared and not card.is_revealed_to_all()
 
 	var effect_lines_shared: Array[String] = []
 	var equipment_lines_shared: Array[String] = []
