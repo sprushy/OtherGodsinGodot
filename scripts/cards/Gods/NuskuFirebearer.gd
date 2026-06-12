@@ -4,6 +4,8 @@ class_name NuskuFirebearer
 const ACTIVATION_COST := 4
 const MILL_COUNT := 7
 const ART_PATH := "res://images/card_art/gods/NuskuEdit2.png"
+const PENDING_CHOICE_UIDS_META := "well_of_fire_pending_choice_uids"
+const PENDING_MILL_COUNT_META := "well_of_fire_pending_mill_count"
 
 func _init() -> void:
 	super._init()
@@ -50,15 +52,20 @@ func activate(game_manager: GameManager, _target: Card = null) -> void:
 
 	var milled_cards := _mill_cards()
 	var eligible_choices := get_eligible_well_of_fire_choices(milled_cards)
+	var opponent := game_manager.get_opponent(card_owner) if game_manager != null else null
+
+	if eligible_choices.size() == 1 or opponent == null:
+		_complete_well_of_fire(game_manager, choose_opponent_pick(eligible_choices), milled_cards.size())
+		return
 
 	if not eligible_choices.is_empty() and game_manager != null:
 		var choice_uids: Array[String] = []
 		for choice in eligible_choices:
 			if choice != null:
 				choice_uids.append(choice.uid)
-		set_meta("well_of_fire_pending_choice_uids", choice_uids)
-		set_meta("well_of_fire_pending_mill_count", milled_cards.size())
-		game_manager.decision_requested.emit(game_manager.get_opponent(card_owner), "nusku_well_of_fire", {
+		set_meta(PENDING_CHOICE_UIDS_META, choice_uids)
+		set_meta(PENDING_MILL_COUNT_META, milled_cards.size())
+		game_manager.decision_requested.emit(opponent, "nusku_well_of_fire", {
 			"source_uid": uid,
 			"target_uids": choice_uids,
 			"mill_count": milled_cards.size(),
@@ -69,21 +76,33 @@ func activate(game_manager: GameManager, _target: Card = null) -> void:
 
 func _complete_well_of_fire(game_manager: GameManager, chosen_card: Card, mill_count: int) -> void:
 	var feedback := "Well of Fire milled %d card(s)." % mill_count
-	if chosen_card != null:
+	if is_valid_pending_well_of_fire_choice(chosen_card):
 		card_owner.move_card(chosen_card, card_owner.hand_zone)
-		var opp: Player = game_manager.get_opponent(card_owner) if game_manager != null else null
-		feedback += " %s chose %s to return to %s's hand." % [
-			opp.player_name if opp != null else "Opponent",
-			chosen_card.card_name,
-			card_owner.player_name,
-		]
+		if chosen_card.current_zone == card_owner.hand_zone:
+			var opp: Player = game_manager.get_opponent(card_owner) if game_manager != null else null
+			feedback += " %s chose %s to return to %s's hand." % [
+				opp.player_name if opp != null else "Opponent",
+				chosen_card.card_name,
+				card_owner.player_name,
+			]
+		else:
+			feedback += " %s could not be added to %s's hand." % [
+				chosen_card.card_name,
+				card_owner.player_name,
+			]
 	else:
 		feedback += " No Ancient Charm or Spell was milled."
 	if game_manager != null:
 		game_manager.note_player_feedback(feedback)
-		notify_power_activated(game_manager, chosen_card)
-	remove_meta("well_of_fire_pending_choice_uids")
-	remove_meta("well_of_fire_pending_mill_count")
+	notify_power_activated(game_manager, chosen_card)
+	remove_meta(PENDING_CHOICE_UIDS_META)
+	remove_meta(PENDING_MILL_COUNT_META)
+
+func is_valid_pending_well_of_fire_choice(card: Card) -> bool:
+	if not _is_eligible_well_of_fire_card(card):
+		return false
+	var pending_choice_uids: Array = get_meta(PENDING_CHOICE_UIDS_META, [])
+	return pending_choice_uids.is_empty() or card.uid in pending_choice_uids
 
 func get_eligible_well_of_fire_choices(milled_cards: Array[Card]) -> Array[Card]:
 	var eligible: Array[Card] = []

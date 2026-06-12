@@ -479,6 +479,7 @@ var _action_log_history_button: Button = null
 var _action_log_messages: Array[String] = []
 var _last_logged_action_text: String = ""
 var _action_label_log_suppressed: bool = false
+var _last_network_action_log_event_id: int = -1
 var _action_log_popup: PanelContainer = null
 var _action_log_popup_view: RichTextLabel = null
 var _center_action_panel: VBoxContainer = null
@@ -25122,12 +25123,20 @@ func _apply_full_state(data: Dictionary) -> void:
 	# Host has the live authoritative game_manager â€” no zone rebuild needed.
 	# Show server's action message if any
 	var msg: String = data.get("action_message", "")
+	var has_network_action_log_event_id := _is_networked_client and data.has("action_log_event_id")
+	var is_new_network_action_log_event := false
+	if has_network_action_log_event_id:
+		var action_log_event_id := int(data.get("action_log_event_id", -1))
+		is_new_network_action_log_event = action_log_event_id != _last_network_action_log_event_id
+		_last_network_action_log_event_id = action_log_event_id
 	if msg != "":
 		var force_log_from_state := true
 		if _is_real_network_host():
 			force_log_from_state = false
 		elif _is_networked_client and bool(state.get("is_game_over", false)):
 			force_log_from_state = false
+		elif has_network_action_log_event_id:
+			force_log_from_state = is_new_network_action_log_event
 		_set_action_label_text(msg, force_log_from_state)
 	if _is_networked_client:
 		_present_game_result_from_state(state, msg)

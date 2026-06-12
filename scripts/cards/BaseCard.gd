@@ -26,6 +26,7 @@ const KEYWORD_HINTS = {
 	"Enslave": "Take control of an opposing creature. It cannot use its abilities, but it can still attack and intercept.",
 	"Mill": "Put a card from the top of a deck into the graveyard.",
 	"Reach": "This creature can intercept for targets one row further forward than normal.",
+	"Engage": "Enter combat with another card, usually by attacking it or intercepting its attack.",
 	"Passive": "This effect is always active while this card remains in play.",
 	"Impact": "This effect triggers when this card enters the field from your hand, unless it has Universal Impact.",
 	"Universal Impact": "This Impact also triggers when this card enters the field from zones other than your hand.",

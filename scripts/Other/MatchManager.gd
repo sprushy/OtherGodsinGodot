@@ -4344,11 +4344,11 @@ func _process_command_impl(command: Dictionary) -> bool:
 				return false
 			var target_uid: String = command.get("target_uid", "")
 			var target := game_manager.get_card_by_uid(target_uid) if target_uid != "" else null
-			var pending_choice_uids: Array = nusku.get_meta("well_of_fire_pending_choice_uids", [])
-			if target == null or target.uid not in pending_choice_uids:
+			var pending_choice_uids: Array = nusku.get_meta(NuskuFirebearer.PENDING_CHOICE_UIDS_META, [])
+			if target == null or target.uid not in pending_choice_uids or not nusku.is_valid_pending_well_of_fire_choice(target):
 				move_failed.emit("nusku_well_of_fire_choice: invalid Well of Fire choice")
 				return false
-			nusku._complete_well_of_fire(game_manager, target, int(nusku.get_meta("well_of_fire_pending_mill_count", int(command.get("mill_count", NuskuFirebearer.MILL_COUNT)))))
+			nusku._complete_well_of_fire(game_manager, target, int(nusku.get_meta(NuskuFirebearer.PENDING_MILL_COUNT_META, int(command.get("mill_count", NuskuFirebearer.MILL_COUNT)))))
 			move_validated.emit(command)
 			return true
 		"ragnarok_discard_choice":

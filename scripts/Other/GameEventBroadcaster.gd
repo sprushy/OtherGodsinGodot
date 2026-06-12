@@ -15,6 +15,7 @@ var game_manager: GameManager
 var match_manager: MatchManager
 var network_manager: Node  # NetworkManager
 var prompt_router = null
+var _action_log_event_id: int = 0
 
 func _init(gm: GameManager, mm: MatchManager, nm: Node, p_prompt_router = null) -> void:
 	game_manager = gm
@@ -139,6 +140,7 @@ func _broadcast_ui_interaction(player_index: int, type: String, data: Dictionary
 func _broadcast_full_state(action_message: String) -> void:
 	if network_manager == null:
 		return
+	_action_log_event_id += 1
 	# Send personalized state to each player (hand privacy + hidden board privacy)
 	for player_index in network_manager.player_peer_ids:
 		var peer_id: int = network_manager.player_peer_ids[player_index]
@@ -162,6 +164,7 @@ func _broadcast_full_state(action_message: String) -> void:
 func _broadcast_full_state_for_move(move: Dictionary) -> void:
 	if network_manager == null:
 		return
+	_action_log_event_id += 1
 	for player_index in network_manager.player_peer_ids:
 		var peer_id: int = network_manager.player_peer_ids[player_index]
 		var event_data := _build_full_state_event_data(
@@ -186,6 +189,7 @@ func _broadcast_full_state_for_move(move: Dictionary) -> void:
 func _broadcast_full_state_for_action(action: CardAction) -> void:
 	if network_manager == null:
 		return
+	_action_log_event_id += 1
 	for player_index in network_manager.player_peer_ids:
 		var peer_id: int = network_manager.player_peer_ids[player_index]
 		var viewer := _viewer_for_player_index(player_index)
@@ -216,6 +220,7 @@ func _build_full_state_event_data(player_index: int, action_message: String, vis
 	var event_data := {
 		state = GameState.serialize(game_manager, player_index, visible_player_indices),
 		action_message = action_message,
+		action_log_event_id = _action_log_event_id,
 	}
 	var attack_preview := _serialize_pending_attack_preview()
 	if player_index >= 0 and not attack_preview.is_empty():
