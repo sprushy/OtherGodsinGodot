@@ -313,9 +313,6 @@ func _on_game_manager_decision_requested(player: Player, type: String, data: Dic
 		var completion_command_type := str(interaction_data.get("completion_command_type", "")).strip_edges()
 		interaction_data.erase("event_name")
 		interaction_data.erase("completion_command_type")
-		if _combat_reveal_decision_depth > 0:
-			_emit_ui_interaction_for_player(player, type, interaction_data)
-			return
 		if interaction_data.has("resolve_method"):
 			_queue_method_priority_event(
 				player,
@@ -323,6 +320,9 @@ func _on_game_manager_decision_requested(player: Player, type: String, data: Dic
 				event_name if event_name != "" else type,
 				interaction_data
 			)
+			return
+		if _combat_reveal_decision_depth > 0:
+			_emit_ui_interaction_for_player(player, type, interaction_data)
 			return
 		if _should_collect_choice_before_priority(type, completion_command_type):
 			interaction_data["_queue_priority_after_choice"] = true
@@ -3751,6 +3751,17 @@ func _process_command_impl(command: Dictionary) -> bool:
 				)
 			)
 			move_validated.emit(command)
+			return true
+		"mopsus_reveal_hand_card":
+			var mopsus := game_manager.get_card_by_uid(str(command.get("source_uid", ""))) as Mopsus
+			var hand_card := game_manager.get_card_by_uid(str(command.get("target_uid", "")))
+			if mopsus == null or hand_card == null:
+				move_failed.emit("Mopsus Seer: card not found")
+				return false
+			if not mopsus.can_activate(game_manager) or not mopsus.reveal_hand_card(game_manager, hand_card):
+				move_failed.emit("Mopsus Seer: invalid opponent hand card")
+				return false
+			_request_ui_refresh()
 			return true
 		"en_hedu_anna_exaltation":
 			var eha_uid: String = command.get("source_uid", "")

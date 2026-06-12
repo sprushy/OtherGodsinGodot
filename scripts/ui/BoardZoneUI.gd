@@ -1625,59 +1625,6 @@ func _add_playing_aura(overlay: Control) -> void:
 	ring.add_theme_stylebox_override("panel", ring_style)
 	overlay.add_child(ring)
 
-func _add_aphrodite_activation_aura(overlay: Control) -> void:
-	if overlay == null:
-		return
-
-	var glow := ColorRect.new()
-	glow.color = Color(1.0, 0.56, 0.78, 0.12)
-	glow.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	glow.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	overlay.add_child(glow)
-
-	var ring := PanelContainer.new()
-	ring.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	ring.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	ring.offset_left = 5
-	ring.offset_top = 5
-	ring.offset_right = -5
-	ring.offset_bottom = -5
-
-	var ring_style := StyleBoxFlat.new()
-	ring_style.bg_color = Color(0, 0, 0, 0)
-	ring_style.border_color = Color(1.0, 0.76, 0.90, 0.92)
-	ring_style.shadow_color = Color(1.0, 0.45, 0.74, 0.5)
-	ring_style.shadow_size = 9
-	ring_style.corner_radius_top_left = 8
-	ring_style.corner_radius_top_right = 8
-	ring_style.corner_radius_bottom_left = 8
-	ring_style.corner_radius_bottom_right = 8
-	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		ring_style.set_border_width(side, 2)
-	ring.add_theme_stylebox_override("panel", ring_style)
-	overlay.add_child(ring)
-
-func _apply_aphrodite_activation_style(style: StyleBoxFlat) -> void:
-	if style == null:
-		return
-	style.border_color = Color(1.0, 0.78, 0.90, 0.98)
-	style.shadow_color = Color(1.0, 0.45, 0.74, 0.72)
-	style.shadow_size = max(style.shadow_size, 16)
-
-func _apply_nusku_activation_style(style: StyleBoxFlat) -> void:
-	if style == null:
-		return
-	style.border_color = Color(1.0, 0.42, 0.36, 0.98)
-	style.shadow_color = Color(1.0, 0.18, 0.12, 0.78)
-	style.shadow_size = max(style.shadow_size, 16)
-
-func _apply_generic_god_activation_style(style: StyleBoxFlat, aura_color: Color) -> void:
-	if style == null or aura_color.a <= 0.0:
-		return
-	style.border_color = aura_color
-	style.shadow_color = aura_color
-	style.shadow_size = max(style.shadow_size, 16)
-
 func _apply_priority_response_style(style: StyleBoxFlat) -> void:
 	if style == null:
 		return
@@ -2429,6 +2376,9 @@ func _add_god_custom_ability_badge(overlay: Control, card: Card) -> void:
 	badge.offset_top = badge_top
 	badge.offset_right = -6
 	badge.offset_bottom = badge_top + ABILITY_BADGE_SIZE
+
+	if badge_ready:
+		_add_badge_image_glow(badge, texture, _get_god_ability_badge_glow_color(card), 6.0)
 
 	var icon := TextureRect.new()
 	icon.texture = texture
@@ -4131,25 +4081,7 @@ func _is_card_usable_for_priority(card: Card) -> bool:
 func _should_show_playing_aura(card: Card) -> bool:
 	return _preview_card != null or _is_card_waiting_on_priority(card) or _is_card_pending_selection_source(card)
 
-func _should_show_aphrodite_activation_aura(card: Card) -> bool:
-	if card == null or game_manager == null:
-		return false
-	if card is not AphroditeAreia:
-		return false
-	if not _can_show_god_activation_aura(card):
-		return false
-	return card.can_activate(game_manager)
-
-func _should_show_nusku_activation_aura(card: Card) -> bool:
-	if card == null or game_manager == null:
-		return false
-	if card is not NuskuFirebearer:
-		return false
-	if not _can_show_god_activation_aura(card):
-		return false
-	return card.can_activate(game_manager)
-
-func _get_deckbuilder_god_glow_color(card: Card) -> Color:
+func _get_god_culture_glow_color(card: Card) -> Color:
 	if card == null:
 		return Color(0.0, 0.0, 0.0, 0.0)
 	match card.culture:
@@ -4167,40 +4099,16 @@ func _get_deckbuilder_god_glow_color(card: Card) -> Color:
 			return Color(0.66, 0.34, 0.98, 0.95)
 	return Color(0.0, 0.0, 0.0, 0.0)
 
-func _has_custom_god_activation_aura(card: Card) -> bool:
-	return card is AphroditeAreia or card is NuskuFirebearer
-
-func _can_show_god_activation_aura(card: Card) -> bool:
-	if card == null or game_manager == null:
-		return false
-	var viewer := _get_viewer_player()
-	if viewer == null or card.get_controller() != viewer:
-		return false
-	var controller := card.get_controller()
-	if controller == null:
-		return false
-	if game_manager.is_player_in_upkeep_window(controller):
-		return false
-	if game_manager.priority_player != null or not game_manager.action_stack.is_empty():
-		return false
-	return true
-
-func _should_show_generic_god_activation_aura(card: Card) -> bool:
-	if card == null or game_manager == null:
-		return false
-	if card is not GodCard:
-		return false
-	if _has_custom_god_activation_aura(card):
-		return false
-	if card is TezcatlipocaTheSmokingMirror:
-		return false
-	if not _can_show_god_activation_aura(card):
-		return false
-	if not card.has_method("can_activate"):
-		return false
-	if card.has_method("should_show_activation_aura"):
-		return bool(card.call("should_show_activation_aura", game_manager))
-	return bool(card.call("can_activate", game_manager))
+func _get_god_ability_badge_glow_color(card: Card) -> Color:
+	if card is AphroditeAreia:
+		return Color(1.0, 0.45, 0.74, 0.58)
+	if card != null and card.card_name in ["Nusku, Firebearer", "Nusku, Active God"]:
+		return Color(1.0, 0.18, 0.12, 0.62)
+	var glow_color := _get_god_culture_glow_color(card)
+	if glow_color.a <= 0.0:
+		return glow_color
+	glow_color.a = 0.52
+	return glow_color
 
 func _should_show_champions_call_badge(card: Card) -> bool:
 	var god := card as GodCard
@@ -4647,9 +4555,6 @@ func _refresh_display() -> void:
 
 		# God slot: show art image filling the zone
 		if zone.zone_type == Zone.ZoneType.GOD_SLOT and card.art_path != "":
-			var show_aphrodite_activation_aura := _should_show_aphrodite_activation_aura(card)
-			var show_nusku_activation_aura := _should_show_nusku_activation_aura(card)
-			var show_generic_god_activation_aura := _should_show_generic_god_activation_aura(card)
 			var show_champions_call_badge := _should_show_champions_call_badge(card)
 			var glow_champions_call_badge := _should_glow_champions_call_badge(card)
 			var show_god_attack_aura := _is_card_attacking_on_stack(card) or _is_card_intercepting_on_stack(card) or _is_card_selected_attacker(card) or _is_card_selected_interceptor(card)
@@ -4668,20 +4573,11 @@ func _refresh_display() -> void:
 			style.border_color = Color(0.9, 0.75, 0.2)
 			for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
 				style.set_border_width(side, 2)
-			if show_aphrodite_activation_aura:
-				_apply_aphrodite_activation_style(style)
-			elif show_nusku_activation_aura:
-				_apply_nusku_activation_style(style)
-			elif show_generic_god_activation_aura:
-				_apply_generic_god_activation_style(style, _get_deckbuilder_god_glow_color(card))
 			if show_god_priority_aura:
 				_apply_priority_response_style(style)
 			add_theme_stylebox_override("panel", style)
 			z_index = GOD_INDICATOR_Z_INDEX if (
-				show_aphrodite_activation_aura
-				or show_nusku_activation_aura
-				or show_generic_god_activation_aura
-				or show_god_attack_aura
+				show_god_attack_aura
 				or show_god_playing_aura
 				or show_god_priority_aura
 				or show_god_target_aura

@@ -28,6 +28,9 @@ func on_attack(game_manager: GameManager, target: Card) -> void:
 func on_defend(game_manager: GameManager, attacker: Card) -> void:
 	_apply_inspired_strength(game_manager, attacker)
 
+func changes_visible_stats_when_entering_combat() -> bool:
+	return true
+
 func on_after_combat(_game_manager: GameManager, _opposing_card: Card) -> void:
 	_remove_inspired_strength()
 

@@ -16,6 +16,9 @@ func on_defend(_game_manager: GameManager, _attacker: Card) -> void:
 	# Override to add effects when this creature is attacked
 	pass
 
+func changes_visible_stats_when_entering_combat() -> bool:
+	return false
+
 func on_summon(_game_manager: GameManager) -> void:
 	# Called whenever this creature is summoned onto the board.
 	pass

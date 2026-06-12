@@ -197,6 +197,7 @@ var _pending_mopsus_source_uid: String = ""
 var _pending_mopsus_selected_uids: Array[String] = []
 var _pending_mopsus_required_count: int = 0
 var _pending_mopsus_flip_uid: String = ""
+var _pending_mopsus_waiting_reveal_uid: String = ""
 var _hand_hover_preview: Control = null
 var _hand_hover_vc: VisualCard = null
 var _hand_hover_preview_card: VisualCard = null
@@ -5213,6 +5214,7 @@ func _get_enemy_hand_overlay_rect() -> Rect2:
 func draw_enemy_hand_overlay() -> void:
 	_enemy_hand_visual_cards.clear()
 	_refresh_mopsus_hand_selection_state()
+	_resume_pending_mopsus_reveal_if_ready()
 	if _enemy_hand_overlay != null and is_instance_valid(_enemy_hand_overlay):
 		if _enemy_hand_overlay.get_parent() == self:
 			remove_child(_enemy_hand_overlay)
@@ -5379,6 +5381,7 @@ func _clear_mopsus_hand_selection() -> void:
 	_pending_mopsus_selected_uids.clear()
 	_pending_mopsus_required_count = 0
 	_pending_mopsus_flip_uid = ""
+	_pending_mopsus_waiting_reveal_uid = ""
 
 func _refresh_mopsus_hand_selection_state() -> void:
 	if not _is_mopsus_hand_selection_active():
@@ -5405,19 +5408,45 @@ func _select_mopsus_enemy_hand_card(card: Card) -> void:
 	if not _is_mopsus_hand_selection_target(card):
 		return
 	_pending_mopsus_selected_uids.append(card.uid)
-	_pending_mopsus_flip_uid = card.uid
+	_pending_mopsus_waiting_reveal_uid = card.uid
 	var source := _get_pending_mopsus_source()
-	var selected_cards: Array[Card] = []
-	if source != null:
-		for uid in _pending_mopsus_selected_uids:
-			var selected_card := game_manager.get_card_by_uid(uid)
-			if selected_card != null:
-				selected_cards.append(selected_card)
-	draw_enemy_hand_overlay()
 	if source == null:
 		_clear_mopsus_hand_selection()
 		update_ui()
 		return
+	if card.is_revealed_in_hand():
+		draw_enemy_hand_overlay()
+	elif _should_submit_ui_action_command():
+		game_input.submit_action({
+			type = "mopsus_reveal_hand_card",
+			source_uid = source.uid,
+			target_uid = card.uid,
+		})
+	else:
+		source.reveal_hand_card(game_manager, card)
+		draw_enemy_hand_overlay()
+
+func _resume_pending_mopsus_reveal_if_ready() -> void:
+	if _pending_mopsus_waiting_reveal_uid == "" or game_manager == null:
+		return
+	var revealed_card := game_manager.get_card_by_uid(_pending_mopsus_waiting_reveal_uid)
+	if revealed_card == null or not revealed_card.is_revealed_in_hand():
+		return
+	_pending_mopsus_flip_uid = _pending_mopsus_waiting_reveal_uid
+	_pending_mopsus_waiting_reveal_uid = ""
+	get_tree().create_timer(0.16).timeout.connect(_continue_mopsus_hand_selection_after_reveal)
+
+func _continue_mopsus_hand_selection_after_reveal() -> void:
+	var source := _get_pending_mopsus_source()
+	if source == null:
+		_clear_mopsus_hand_selection()
+		update_ui()
+		return
+	var selected_cards: Array[Card] = []
+	for uid in _pending_mopsus_selected_uids:
+		var selected_card := game_manager.get_card_by_uid(uid)
+		if selected_card != null:
+			selected_cards.append(selected_card)
 	if selected_cards.size() >= _pending_mopsus_required_count:
 		_resolve_mopsus_hand_choice(source, selected_cards)
 	else:
@@ -8612,6 +8641,10 @@ func _get_pending_target_selection_name() -> String:
 
 func _cancel_pending_target_selection(reason: String) -> bool:
 	if not _has_pending_target_selection():
+		return false
+	if _is_mopsus_hand_selection_active() and not _pending_mopsus_selected_uids.is_empty():
+		_set_action_label_text("Mopsus has begun Seer. Finish choosing the highlighted opponent hand cards.")
+		update_ui()
 		return false
 	_hide_devour_cancel_prompt()
 	var paid_preview_card := _pending_paid_hand_card
@@ -18464,7 +18497,7 @@ func resolve_pending_equip_action(interceptor: Card) -> void:
 		interceptor.spend_major_creature_action()
 		game_manager.record_interception(interceptor)
 		_set_action_label_text(_get_card_name_safe(interceptor) + " intercepts!")
-		await _linger_for_combat_reveals([actor, interceptor])
+		await _linger_for_combat_visual_changes([actor, interceptor])
 		game_manager.resolve_combat_with_continuation(actor, interceptor, func() -> void:
 			update_ui()
 		)
@@ -22938,34 +22971,55 @@ func _on_retreat_yes() -> void:
 	else:
 		update_ui()
 
-func _linger_for_combat_reveals(combatants: Array) -> void:
+func _linger_for_combat_visual_changes(combatants: Array) -> void:
 	var revealed_cards: Array[Card] = []
-	for combatant in combatants:
-		if combatant is Card and combatant.is_stealth and combatant not in revealed_cards:
-			revealed_cards.append(combatant)
-	if revealed_cards.is_empty():
-		return
 	var committed_combatants: Array[Card] = []
 	for combatant in combatants:
-		if combatant is Card and combatant not in committed_combatants:
+		if not (combatant is Card):
+			continue
+		if combatant not in committed_combatants:
 			committed_combatants.append(combatant)
+		if combatant.is_stealth and combatant not in revealed_cards:
+			revealed_cards.append(combatant)
 	for combatant in revealed_cards:
 		combatant.reveal_from_stealth(game_manager)
-	if committed_combatants.size() == 2:
+	var should_commit_visual_snapshot := not revealed_cards.is_empty()
+	for combatant in committed_combatants:
+		if combatant.has_method("changes_visible_stats_when_entering_combat") \
+				and bool(combatant.call("changes_visible_stats_when_entering_combat")):
+			should_commit_visual_snapshot = true
+			break
+	if committed_combatants.size() == 2 and should_commit_visual_snapshot:
 		game_manager.capture_committed_combat_snapshot(
 			committed_combatants[0],
 			committed_combatants[1]
 		)
+	var has_visible_combat_stat_change := _has_visible_combat_stat_change(committed_combatants)
+	if revealed_cards.is_empty() and not has_visible_combat_stat_change:
+		return
 	var names: Array[String] = []
 	for combatant in revealed_cards:
 		names.append(combatant.card_name)
-	_set_action_label_text("%s revealed before combat." % " and ".join(names))
+	if not names.is_empty():
+		_set_action_label_text("%s revealed before combat." % " and ".join(names))
 	update_ui()
 	await _await_visual_linger()
 	while _has_pending_combat_reveal_resolution_wait(committed_combatants):
 		if _has_pending_combat_reveal_stack_event(committed_combatants) and not _is_priority_prompt_visible():
 			_offer_priority()
 		await get_tree().process_frame
+
+func _has_visible_combat_stat_change(combatants: Array[Card]) -> bool:
+	for combatant in combatants:
+		if combatant == null:
+			continue
+		for buff in combatant.active_buffs:
+			if buff.get("expires_after_combat", false) != true:
+				continue
+			for stat_name in ["str", "res", "spd", "lvl"]:
+				if int(buff.get(stat_name, 0)) != 0:
+					return true
+	return false
 
 func _has_pending_combat_reveal_resolution_wait(committed_combatants: Array[Card]) -> bool:
 	if _has_pending_click_selection() and match_manager != null \
@@ -23029,7 +23083,7 @@ func _on_retreat_no() -> void:
 	if not _pending_retreat_guardian_blocked.is_empty():
 		blocked_ask = _pending_retreat_guardian_blocked[0]
 	_clear_pending_retreat_state()
-	await _linger_for_combat_reveals([action.attacker, defender])
+	await _linger_for_combat_visual_changes([action.attacker, defender])
 	game_manager.resolve_combat_with_continuation(action.attacker, defender, func() -> void:
 		if blocked_ask != null:
 			_set_action_label_text("Asaruludu's Guardian prevented " + _get_card_name_safe(blocked_ask) + "'s Tactful Retreat!", true)
@@ -23562,7 +23616,7 @@ func _on_match_ui_interaction(player_index: int, type: String, data: Dictionary)
 						_finish_post_execute(action.source_player)
 				
 				_executing_stack_action = false
-				await _linger_for_combat_reveals([
+				await _linger_for_combat_visual_changes([
 					action.attacker,
 					action.united_front_partner,
 					target,

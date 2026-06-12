@@ -92,6 +92,20 @@ func get_selected_seer_targets(game_manager: GameManager, selection = null) -> A
 func is_valid_seer_selection(game_manager: GameManager, selection = null) -> bool:
 	return get_selected_seer_targets(game_manager, selection).size() == get_required_seer_target_count(game_manager)
 
+func reveal_hand_card(game_manager: GameManager, selected_card: Card) -> bool:
+	if selected_card == null or selected_card not in get_valid_targets(game_manager):
+		return false
+	if selected_card.is_revealed_in_hand():
+		return true
+	selected_card.add_status_effect(
+		"revealed_in_hand",
+		card_name,
+		self,
+		get_controller(),
+		{"clear_on_card_move": true}
+	)
+	return true
+
 func activate(game_manager: GameManager, target = null) -> void:
 	if not can_activate(game_manager):
 		if game_manager != null:
@@ -105,15 +119,7 @@ func activate(game_manager: GameManager, target = null) -> void:
 		return
 	spend_minor_creature_action()
 	for selected_card in selected_targets:
-		if selected_card == null or selected_card.is_revealed_in_hand():
-			continue
-		selected_card.add_status_effect(
-			"revealed_in_hand",
-			card_name,
-			self,
-			get_controller(),
-			{"clear_on_card_move": true}
-		)
+		reveal_hand_card(game_manager, selected_card)
 	if game_manager != null:
 		var revealed_names: Array[String] = []
 		for selected_card in selected_targets:
