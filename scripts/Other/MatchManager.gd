@@ -907,6 +907,8 @@ func _queue_destroyed_response_events(start_index: int, resolved_action: CardAct
 			game_manager.push_to_stack(destroyed_action)
 
 func _finalize_resolved_action(action: CardAction) -> void:
+	if game_manager != null and action != null and action.type == CardAction.Type.ATTACK:
+		game_manager.note_attack_resolved()
 	_remove_resolved_action(action)
 	if game_manager != null and action != null:
 		game_manager.end_stack_action_resolution(action)
@@ -2547,6 +2549,7 @@ func can_attack(card: Card) -> bool:
 		and card.can_take_major_creature_action()
 		and not card.is_sleeping
 		and not card.has_status_effect("cannot_attack")
+		and not card.summoned_after_first_attack_this_turn
 		and game_manager.turn_number > 1
 		and card.creature_mode == Card.CreatureMode.AGGRESSIVE
 		and card.current_zone != null
@@ -2573,6 +2576,8 @@ func get_attack_invalid_reason(card: Card) -> String:
 		var status = card.get_status_effect("cannot_attack")
 		var source = status.get("source", "an effect")
 		return card.card_name + " cannot attack because of " + source + "."
+	if card.summoned_after_first_attack_this_turn:
+		return card.card_name + " cannot attack because it was summoned after the first attack resolved this turn."
 	if card.get_controller() != game_manager.current_player:
 		return "It is not " + card.card_name + "'s controller's turn."
 	if game_manager.turn_number <= 1:
@@ -3133,6 +3138,8 @@ func _process_command_impl(command: Dictionary) -> bool:
 				var choice_feedback := _build_upkeep_resolution_feedback(
 					game_manager.get_upkeep_choice_feedback(str(command.get("choice", "")))
 				)
+				if not choice_feedback.strip_edges().is_empty():
+					choice_feedback = "%s upkeep: %s" % [acting_player.player_name, choice_feedback]
 				if _has_pending_wheel_of_fire_turn_start_choice():
 					_emit_next_wheel_of_fire_turn_start_choice()
 					return true

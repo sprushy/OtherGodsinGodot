@@ -30,6 +30,7 @@ static func serialize(gm: GameManager, viewer_player_index: int = -1, visible_pl
 		viewer = gm.players[viewer_player_index]
 	var data := {
 		turn_number = gm.turn_number,
+		has_resolved_attack_this_turn = gm.has_resolved_attack_this_turn,
 		current_player_index = gm.players.find(gm.current_player),
 		phase = gm.current_phase,
 		is_game_over = gm.is_game_over,
@@ -219,6 +220,7 @@ static func _serialize_card(card: Card, hidden_mode: int = HIDDEN_MODE_NONE) -> 
 		is_sleeping               = card.is_sleeping,
 		is_prepared               = card.is_prepared,
 		summoned_this_turn        = card.summoned_this_turn,
+		summoned_after_first_attack_this_turn = card.summoned_after_first_attack_this_turn,
 		creature_major_action_used   = card.creature_major_action_used,
 		creature_minor_actions_used  = card.creature_minor_actions_used,
 		is_used                   = card.is_used,
@@ -387,6 +389,7 @@ static func _action_involves_hidden_card(action: CardAction, viewer: Player) -> 
 ## After calling this, clear any card references held by the UI.
 static func apply_to_manager(data: Dictionary, gm: GameManager) -> void:
 	gm.turn_number = data.get("turn_number", 0)
+	gm.has_resolved_attack_this_turn = data.get("has_resolved_attack_this_turn", false)
 	var cp_idx: int = data.get("current_player_index", 0)
 	if cp_idx >= 0 and cp_idx < gm.players.size():
 		gm.current_player = gm.players[cp_idx]
@@ -639,6 +642,7 @@ static func _deserialize_card(cdata: Dictionary) -> Card:
 	card.is_sleeping               = cdata.get("is_sleeping", false)
 	card.is_prepared               = cdata.get("is_prepared", false)
 	card.summoned_this_turn        = cdata.get("summoned_this_turn", false)
+	card.summoned_after_first_attack_this_turn = cdata.get("summoned_after_first_attack_this_turn", false)
 	card.creature_major_action_used   = cdata.get("creature_major_action_used", false)
 	card.creature_minor_actions_used  = cdata.get("creature_minor_actions_used", 0)
 	card.is_used                   = cdata.get("is_used", false)

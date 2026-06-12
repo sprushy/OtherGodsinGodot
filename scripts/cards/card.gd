@@ -281,6 +281,7 @@ var sleeping_from: Card = null
 var equipped_on: Card = null
 var equipment: Array[Card] = []
 var summoned_this_turn: bool = false
+var summoned_after_first_attack_this_turn: bool = false
 var board_entry_order: int = -1
 var is_used: bool = false          # for single-use activatable abilities on powers
 var incorporeal: bool = false      # Incorporeal keyword: restricted engagement rules

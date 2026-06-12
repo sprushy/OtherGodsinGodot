@@ -48,11 +48,9 @@ var friend_store = null
 var deck_validator = null
 var match_history_store = null
 
-var _rng := RandomNumberGenerator.new()
 var _seek_timeout_check_elapsed: float = 0.0
 
 func _ready() -> void:
-	_rng.randomize()
 	_ensure_profile_store()
 	_ensure_account_store()
 	_ensure_deck_store()
@@ -199,6 +197,12 @@ func _handle_request(peer_id: int, message: Dictionary) -> void:
 				_send_error_to_peer(peer_id, "Join the lobby before entering a room.")
 				return
 			_join_room_for_session(str(join_session.get("session_id", "")), str(payload.get("room_id", "")))
+		LobbyProtocolScript.REJOIN_ROOM:
+			var rejoin_session: Dictionary = _get_session_for_peer(peer_id)
+			if rejoin_session.is_empty():
+				_send_error_to_peer(peer_id, "Join the lobby before rejoining a match.")
+				return
+			_rejoin_room_for_session(str(rejoin_session.get("session_id", "")), str(payload.get("room_id", "")))
 		LobbyProtocolScript.OBSERVE_ROOM:
 			var observe_session: Dictionary = _get_session_for_peer(peer_id)
 			if observe_session.is_empty():
@@ -940,6 +944,18 @@ func _observe_room_for_session(session_id: String, room_id: String) -> void:
 	match_supervisor.set_spectator_visible_player_indices(match_id, session_id, visible_player_indices)
 	_send_to_session(session_id, LobbyProtocolScript.MATCH_ASSIGNED, match_session.to_spectator_match_info(session_id))
 
+func _rejoin_room_for_session(session_id: String, room_id: String) -> void:
+	var normalized_room_id := room_id.strip_edges().to_upper()
+	if normalized_room_id.is_empty() or not rooms_by_id.has(normalized_room_id):
+		_send_error_to_session(session_id, "That live match was not found.")
+		return
+	var room: LobbyRoom = rooms_by_id[normalized_room_id]
+	var match_info := _build_active_match_info_for_session(session_id, room)
+	if match_info.is_empty():
+		_send_error_to_session(session_id, "This account is not a player in that live match.")
+		return
+	_send_to_session(session_id, LobbyProtocolScript.MATCH_ASSIGNED, match_info)
+
 func _leave_room_for_session(session_id: String) -> void:
 	var room_id: String = str(room_id_by_session.get(session_id, ""))
 	if room_id.is_empty() or not rooms_by_id.has(room_id):
@@ -1489,9 +1505,13 @@ func _generate_room_code() -> String:
 
 func _generate_id(length: int) -> String:
 	const CHARS := "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+	var crypto := Crypto.new()
+	var random_bytes := crypto.generate_random_bytes(length)
+	if random_bytes.size() != length:
+		return ""
 	var output: String = ""
-	for _i in length:
-		output += CHARS[_rng.randi_range(0, CHARS.length() - 1)]
+	for random_byte in random_bytes:
+		output += CHARS[int(random_byte) % CHARS.length()]
 	return output
 
 func _emit_local_match_assigned(match_info: Dictionary) -> void:
@@ -1500,23 +1520,38 @@ func _emit_local_match_assigned(match_info: Dictionary) -> void:
 func _build_active_match_info_for_session(session_id: String, room: LobbyRoom = null) -> Dictionary:
 	if session_id.is_empty():
 		return {}
-	var resolved_room: LobbyRoom = room
-	if resolved_room == null:
+	var candidate_rooms: Array[LobbyRoom] = []
+	if room != null:
+		candidate_rooms.append(room)
+	else:
 		var room_id: String = str(room_id_by_session.get(session_id, ""))
-		if room_id.is_empty() or not rooms_by_id.has(room_id):
-			return {}
-		resolved_room = rooms_by_id[room_id]
-	if resolved_room == null:
+		if not room_id.is_empty() and rooms_by_id.has(room_id):
+			candidate_rooms.append(rooms_by_id[room_id])
+		for room_variant in rooms_by_id.values():
+			var candidate := room_variant as LobbyRoom
+			if candidate != null and candidate not in candidate_rooms:
+				candidate_rooms.append(candidate)
+	if match_supervisor == null:
 		return {}
-	if resolved_room.status != LobbyRoomScript.STATUS_IN_MATCH:
-		return {}
-	var match_id: String = str(resolved_room.assigned_match_id).strip_edges()
-	if match_id.is_empty() or match_supervisor == null:
-		return {}
-	var match_session = match_supervisor.get_match(match_id)
-	if match_session == null:
-		return {}
-	return match_session.to_match_info(session_id)
+	for resolved_room in candidate_rooms:
+		if resolved_room == null or resolved_room.status != LobbyRoomScript.STATUS_IN_MATCH:
+			continue
+		var match_id: String = str(resolved_room.assigned_match_id).strip_edges()
+		if match_id.is_empty():
+			continue
+		var match_session = match_supervisor.get_match(match_id)
+		if match_session == null:
+			continue
+		var participant_session_id := session_id
+		if match_session.get_player_index(participant_session_id) < 0:
+			participant_session_id = _get_matching_participant_session_id(
+				session_id,
+				match_session.player_session_ids
+			)
+		if participant_session_id.is_empty():
+			continue
+		return match_session.to_match_info(participant_session_id)
+	return {}
 
 func _ensure_match_supervisor() -> void:
 	if match_supervisor != null:

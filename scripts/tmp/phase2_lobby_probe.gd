@@ -30,6 +30,11 @@ func _initialize() -> void:
 		push_error("phase2_lobby_probe: saved password prevented deterministic token reconnect")
 		quit(1)
 		return
+	var rejoin_request := LobbyProtocol.make_message(LobbyProtocol.REJOIN_ROOM, {"room_id": "ABC123"})
+	if not LobbyProtocol.validate_request(rejoin_request).is_empty():
+		push_error("phase2_lobby_probe: rejoin room request was rejected by the lobby protocol")
+		quit(1)
+		return
 	lobby_client.free()
 
 	var room_script = load("res://scripts/server/LobbyRoom.gd")
@@ -177,6 +182,12 @@ func _initialize() -> void:
 		push_error("phase2_lobby_probe: self-observe fallback did not resolve the active player session")
 		quit(1)
 		return
+	var replacement_session_match_info := server._build_active_match_info_for_session("DUPLICATE_HOST")
+	if str(replacement_session_match_info.get("session_id", "")) != "READY_HOST" \
+		or str(replacement_session_match_info.get("match_token", "")).is_empty():
+		push_error("phase2_lobby_probe: replacement account session could not resolve player rejoin credentials")
+		quit(1)
+		return
 	var participant_room_list := server._build_room_list("DUPLICATE_HOST")
 	var observer_room_list := server._build_room_list("OUTSIDER")
 	var participant_room_entry: Dictionary = {}
@@ -262,6 +273,46 @@ func _initialize() -> void:
 		push_error("phase2_lobby_probe: match session did not issue a client auth token")
 		quit(1)
 		return
+	match_session.set_spectator_visible_player_indices("OBSERVER", [0])
+	var spectator_match_info: Dictionary = match_session.to_spectator_match_info("OBSERVER")
+	var observer_match_token := str(spectator_match_info.get("observer_match_token", ""))
+	if observer_match_token.is_empty():
+		push_error("phase2_lobby_probe: match session did not issue an observer auth token")
+		quit(1)
+		return
+	if match_session.authenticate_spectator("OBSERVER", "wrong-token", 98):
+		push_error("phase2_lobby_probe: match session accepted an invalid observer auth token")
+		quit(1)
+		return
+	if not match_session.authenticate_spectator("OBSERVER", observer_match_token, 99):
+		push_error("phase2_lobby_probe: match session rejected a valid observer auth token")
+		quit(1)
+		return
+	var host_token := match_session.get_match_token("HOST")
+	if match_session.authenticate_join("HOST", host_token, 99) != 0 \
+		or match_session.authenticate_spectator("OBSERVER", observer_match_token, 99):
+		push_error("phase2_lobby_probe: authenticated player peer could also authenticate as an observer")
+		quit(1)
+		return
+	var restored_match_session = load("res://scripts/server/MatchSession.gd").from_launch_config(match_session.to_launch_config())
+	if restored_match_session == null \
+		or restored_match_session.get_spectator_match_token("OBSERVER") != observer_match_token \
+		or not restored_match_session.authenticate_spectator("OBSERVER", observer_match_token, 100):
+		push_error("phase2_lobby_probe: observer auth token did not survive launch config persistence")
+		quit(1)
+		return
+	var authority_network_manager = load("res://scripts/Other/NetworkManager.gd").new()
+	authority_network_manager.player_peer_ids = {0: 101, 1: 101}
+	authority_network_manager.spectator_peer_ids = [101]
+	authority_network_manager.spectator_visible_player_indices_by_peer = {101: [0]}
+	authority_network_manager.unassign_peer(101)
+	if not authority_network_manager.player_peer_ids.is_empty() \
+		or not authority_network_manager.spectator_peer_ids.is_empty() \
+		or not authority_network_manager.spectator_visible_player_indices_by_peer.is_empty():
+		push_error("phase2_lobby_probe: stale peer authority survived unassignment")
+		quit(1)
+		return
+	authority_network_manager.free()
 
 	print("phase2_lobby_probe: PASS")
 	quit()

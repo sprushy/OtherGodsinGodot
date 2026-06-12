@@ -71,7 +71,7 @@ Turn-ending effects resolve, and play passes to the opponent.
 
 ## 6. Creature Actions and Movement
 
-Creatures **do not** have summoning sickness. They can attack, move, change modes, or use abilities on the turn they are played if they are otherwise eligible to do so.
+Creatures **do not** have summoning sickness. They can attack, move, change modes, or use abilities on the turn they are played if they are otherwise eligible to do so. However, a Creature summoned after the first attack of the turn resolves cannot attack that turn. A fizzled attack still counts as resolved for this rule.
 
 Each Creature can take a maximum of one Minor Action per turn unless an ability grants more. Minor Actions include moving to an adjacent empty zone, changing mode, or picking up an unequipped Equipment card from an adjacent zone.
 

@@ -261,9 +261,9 @@ func assign_peer_to_player(target_peer_id: int, player_index: int) -> void:
 func approve_match_join(target_peer_id: int, player_index: int, match_info: Dictionary = {}) -> void:
 	if not is_server:
 		return
+	unassign_peer(target_peer_id)
 	if player_index >= 0:
 		player_peer_ids[player_index] = target_peer_id
-		spectator_peer_ids.erase(target_peer_id)
 		rpc_id(target_peer_id, "set_local_player_index", player_index)
 	else:
 		register_spectator_peer(target_peer_id)
@@ -286,7 +286,6 @@ func unassign_peer(peer_id: int) -> void:
 		if int(player_index) == 0 and peer_id == 1:
 			continue
 		player_peer_ids.erase(player_index)
-		return
 
 func get_player_index_for_peer(peer_id: int) -> int:
 	for player_index in player_peer_ids.keys():

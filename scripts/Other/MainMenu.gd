@@ -74,6 +74,7 @@ var _lobby_session_id: String = ""
 var _lobby_reconnect_token: String = ""
 var _pending_join_room_code: String = ""
 var _pending_join_room_id: String = ""
+var _pending_rejoin_room_id: String = ""
 var _pending_observe_room_id: String = ""
 var _pending_rematch_room_id: String = ""
 var _pending_rematch_ready_submitted: bool = false
@@ -879,6 +880,7 @@ func _open_multiplayer_screen() -> void:
 		return
 	_pending_host_room_creation = false
 	_pending_join_room_id = ""
+	_pending_rejoin_room_id = ""
 	_pending_observe_room_id = ""
 	_pending_local_lobby_launch_on_connect_failure = false
 	_connect_to_browseable_lobby("Connecting to lobby...")
@@ -1620,6 +1622,8 @@ func _on_refresh_seeks_pressed() -> void:
 		return
 	_pending_host_room_creation = false
 	_pending_join_room_id = ""
+	_pending_rejoin_room_id = ""
+	_pending_observe_room_id = ""
 	_pending_local_lobby_launch_on_connect_failure = false
 	multiplayer_container.visible = true
 	_connect_to_browseable_lobby("Connecting to lobby...")
@@ -1642,6 +1646,7 @@ func _on_create_seek_pressed() -> void:
 	_pending_host_room_creation = true
 	_pending_room_is_ranked = true
 	_pending_join_room_id = ""
+	_pending_rejoin_room_id = ""
 	_pending_observe_room_id = ""
 	_pending_local_lobby_launch_on_connect_failure = false
 	multiplayer_container.visible = true
@@ -1665,6 +1670,7 @@ func _on_create_unranked_seek_pressed() -> void:
 	_pending_host_room_creation = true
 	_pending_room_is_ranked = false
 	_pending_join_room_id = ""
+	_pending_rejoin_room_id = ""
 	_pending_observe_room_id = ""
 	_pending_local_lobby_launch_on_connect_failure = false
 	multiplayer_container.visible = true
@@ -1687,6 +1693,7 @@ func _on_join_seek_requested(room_id: String) -> void:
 		return
 	_pending_host_room_creation = false
 	_pending_join_room_id = room_id.strip_edges().to_upper()
+	_pending_rejoin_room_id = ""
 	_pending_observe_room_id = ""
 	_pending_local_lobby_launch_on_connect_failure = false
 	multiplayer_container.visible = true
@@ -1706,6 +1713,7 @@ func _on_observe_match_requested(room_id: String) -> void:
 		return
 	_pending_host_room_creation = false
 	_pending_join_room_id = ""
+	_pending_rejoin_room_id = ""
 	_pending_observe_room_id = room_id.strip_edges().to_upper()
 	_pending_local_lobby_launch_on_connect_failure = false
 	room_code_line_edit.text = room_id.strip_edges().to_upper()
@@ -1723,7 +1731,8 @@ func _on_rejoin_match_requested(room_id: String) -> void:
 		return
 	_pending_host_room_creation = false
 	_pending_join_room_id = ""
-	_pending_observe_room_id = room_id.strip_edges().to_upper()
+	_pending_rejoin_room_id = room_id.strip_edges().to_upper()
+	_pending_observe_room_id = ""
 	_pending_local_lobby_launch_on_connect_failure = false
 	room_code_line_edit.text = room_id.strip_edges().to_upper()
 	multiplayer_container.visible = true
@@ -1795,6 +1804,7 @@ func _maybe_connect_authenticated_lobby(connect_status: String = "Connecting to 
 		return
 	_pending_host_room_creation = false
 	_pending_join_room_id = ""
+	_pending_rejoin_room_id = ""
 	_pending_observe_room_id = ""
 	_pending_local_lobby_launch_on_connect_failure = false
 	_connect_to_browseable_lobby(connect_status, connect_serial)
@@ -1824,6 +1834,12 @@ func _run_pending_multiplayer_action() -> void:
 		_pending_join_room_id = ""
 		status_label.text = "Joining seek %s..." % room_id
 		lobby_client.join_room(room_id)
+		return
+	if not _pending_rejoin_room_id.is_empty():
+		var rejoin_room_id := _pending_rejoin_room_id
+		_pending_rejoin_room_id = ""
+		status_label.text = "Rejoining match %s..." % rejoin_room_id
+		lobby_client.rejoin_room(rejoin_room_id)
 		return
 	if not _pending_observe_room_id.is_empty():
 		var observe_room_id := _pending_observe_room_id
@@ -4538,12 +4554,16 @@ func _should_suppress_active_match_auto_resume(active_match_info: Dictionary) ->
 	return false
 
 func _has_pending_new_seek_action() -> bool:
-	return _pending_host_room_creation or not _pending_join_room_id.is_empty() or not _pending_observe_room_id.is_empty()
+	return _pending_host_room_creation \
+		or not _pending_join_room_id.is_empty() \
+		or not _pending_rejoin_room_id.is_empty() \
+		or not _pending_observe_room_id.is_empty()
 
 func _clear_pending_new_seek_actions() -> void:
 	_pending_host_room_creation = false
 	_pending_room_is_ranked = true
 	_pending_join_room_id = ""
+	_pending_rejoin_room_id = ""
 	_pending_observe_room_id = ""
 	_pending_local_lobby_launch_on_connect_failure = false
 
@@ -4611,6 +4631,7 @@ func _cleanup_lobby(clear_session: bool) -> void:
 		_lobby_reconnect_token = ""
 		_pending_join_room_code = ""
 		_pending_join_room_id = ""
+		_pending_rejoin_room_id = ""
 		_pending_observe_room_id = ""
 		_current_lobby_ip = ""
 		_is_local_lobby_host = false

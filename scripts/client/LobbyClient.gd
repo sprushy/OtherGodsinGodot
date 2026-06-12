@@ -173,6 +173,9 @@ func list_rooms() -> void:
 func join_room(room_id: String) -> void:
 	_send_request(LobbyProtocolScript.JOIN_ROOM, {"room_id": room_id.strip_edges().to_upper()})
 
+func rejoin_room(room_id: String) -> void:
+	_send_request(LobbyProtocolScript.REJOIN_ROOM, {"room_id": room_id.strip_edges().to_upper()})
+
 func observe_room(room_id: String) -> void:
 	_send_request(LobbyProtocolScript.OBSERVE_ROOM, {"room_id": room_id.strip_edges().to_upper()})
 

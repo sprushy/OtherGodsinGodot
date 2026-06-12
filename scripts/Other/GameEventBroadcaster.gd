@@ -91,7 +91,9 @@ func _on_turn_upkeep_started(_turn_number: int, player: Player) -> void:
 
 func _on_turn_started(turn_number: int, player: Player) -> void:
 	var player_idx := game_manager.players.find(player)
-	_broadcast_full_state("Turn %d — %s's turn." % [turn_number, player.player_name])
+	# Upkeep start already announced this turn. Sync the resolved upkeep state
+	# without adding the same turn announcement to the action log again.
+	_broadcast_full_state("")
 	network_manager.broadcast_event_to_all("turn_started", {
 		turn_number = turn_number,
 		current_player_index = player_idx,

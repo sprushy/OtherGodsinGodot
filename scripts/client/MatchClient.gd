@@ -114,7 +114,7 @@ func requires_match_auth() -> bool:
 	if not _is_networked_client or _match_info.is_empty():
 		return false
 	if bool(_match_info.get("observer_mode", false)):
-		return str(_match_info.get("match_id", "")).strip_edges() != ""
+		return not str(_match_info.get("observer_match_token", "")).strip_edges().is_empty()
 	return str(_match_info.get("match_token", "")).strip_edges() != ""
 
 func _on_connected_to_server() -> void:
@@ -287,6 +287,7 @@ func _submit_match_join_request() -> void:
 		"match_token": str(_match_info.get("match_token", "")),
 		"observer_mode": bool(_match_info.get("observer_mode", false)),
 		"observer_session_id": str(_match_info.get("observer_session_id", "")),
+		"observer_match_token": str(_match_info.get("observer_match_token", "")),
 	})
 
 func _try_submit_match_join_if_already_connected() -> void:

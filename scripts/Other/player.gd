@@ -347,3 +347,4 @@ func reset_creature_actions() -> void:
 		for card in zone.cards:
 			if card.is_creature_card():
 				card.reset_creature_action_state()
+				card.summoned_after_first_attack_this_turn = false

@@ -169,11 +169,14 @@ func _on_match_join_requested(join_request: Dictionary, sender_info: Dictionary)
 		return
 	if observer_mode:
 		var observer_session_id := str(join_request.get("observer_session_id", "")).strip_edges()
+		var observer_match_token := str(join_request.get("observer_match_token", "")).strip_edges()
 		_refresh_spectator_visibility_from_launch_config()
+		if not match_session.authenticate_spectator(observer_session_id, observer_match_token, peer_id):
+			network_manager.deny_match_join(peer_id, "Observer authentication failed.")
+			return
 		var visible_player_indices: Array[int] = match_session.get_spectator_visible_player_indices(observer_session_id)
-		match_session.add_spectator_peer(peer_id)
-		network_manager.set_spectator_visible_player_indices(peer_id, visible_player_indices)
 		network_manager.approve_match_join(peer_id, -1, match_session.to_spectator_match_info(observer_session_id))
+		network_manager.set_spectator_visible_player_indices(peer_id, visible_player_indices)
 		var spectator_state := GameState.serialize(game_manager, GameState.SPECTATOR_VIEWER_INDEX, visible_player_indices)
 		network_manager.broadcast_event_to_peer(peer_id, "full_state", {
 			state = spectator_state,
@@ -209,6 +212,9 @@ func _refresh_spectator_visibility_from_launch_config() -> void:
 	var configured_visibility = config.get("spectator_visible_player_indices_by_session", {})
 	if configured_visibility is Dictionary:
 		match_session.spectator_visible_player_indices_by_session = (configured_visibility as Dictionary).duplicate(true)
+	var configured_tokens = config.get("spectator_match_tokens_by_session", {})
+	if configured_tokens is Dictionary:
+		match_session.spectator_match_tokens_by_session = (configured_tokens as Dictionary).duplicate(true)
 
 func _on_game_event_received(event_type: String, data: Dictionary) -> void:
 	game_event_received.emit(event_type, data)

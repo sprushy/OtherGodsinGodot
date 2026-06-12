@@ -42,6 +42,7 @@ var action_stack: Array[CardAction] = []
 var prepared_hexes: Dictionary = {}
 var prepared_charms: Dictionary = {}
 var attack_restrictions: Dictionary = {}# player -> turns remaining
+var has_resolved_attack_this_turn: bool = false
 var turn_destruction_wards: Dictionary = {} # player -> {expires_turn, source_card}
 var turn_follower_loss_preventions: Dictionary = {} # player -> {expires_turn, source_card}
 var turn_opponent_targeting_immunities: Dictionary = {} # player -> {expires_turn, source_card}
@@ -763,6 +764,7 @@ func start_turn() -> void:
 	turn_player = current_player
 	turn_number += 1
 	_set_phase(GamePhase.MAIN)
+	has_resolved_attack_this_turn = false
 	died_this_turn.clear()
 	destroyed_this_turn.clear()
 	pending_resurrections.clear()
@@ -1315,6 +1317,7 @@ func play_card(player: Player, card: Card, target_zone: Zone, prepared: bool = f
 			if used_extra_normal_summon:
 				_consume_extra_normal_summon(player, card, target_zone)
 			card.summoned_this_turn = true
+			card.summoned_after_first_attack_this_turn = has_resolved_attack_this_turn
 			# Apply any active god passives to the newly placed creature
 			_apply_god_passives_to_card(player, card)
 
@@ -1489,6 +1492,7 @@ func summon_creature_by_effect(
 	if consume_turn_summon:
 		card.spend_creature_summon_actions(stealth)
 	card.summoned_this_turn = true
+	card.summoned_after_first_attack_this_turn = has_resolved_attack_this_turn
 	if consume_turn_summon:
 		player.has_summoned_this_turn = true
 		if using_extra_normal_summon:
@@ -1945,6 +1949,9 @@ func creature_attack(attacker: Card, target) -> void:
 	var attacker_controller := attacker.get_controller()
 	if attacker_controller == null:
 		return
+	if attacker.summoned_after_first_attack_this_turn:
+		print(attacker.card_name + " cannot attack because it was summoned after the first attack resolved this turn.")
+		return
 	if attack_restrictions.has(attacker_controller):
 		print(attacker_controller.player_name + " cannot attack! Restricted for " + str(attack_restrictions[attacker_controller].turns) + " more turns")
 		return
@@ -1984,13 +1991,22 @@ func creature_attack(attacker: Card, target) -> void:
 		united_front_partner.spend_attack_creature_action()
 		united_front_partner.mark_attacked_this_turn()
 	
+	var attack_resolved := false
 	if target is Card:
 		if united_front_partner != null:
 			resolve_united_front_combat(attacker, united_front_partner, target)
 		else:
 			resolve_combat(attacker, target)
+		attack_resolved = true
 	elif target is Player:
 		resolve_followers_attack(_get_active_united_front_attackers(attacker, united_front_partner), target)
+		attack_resolved = true
+	if attack_resolved:
+		note_attack_resolved()
+
+func note_attack_resolved() -> void:
+	# Finalized attacks count even when their combat or target fizzles.
+	has_resolved_attack_this_turn = true
 
 func resolve_followers_attack(attackers: Array[Card], defending_player: Player) -> int:
 	if defending_player == null:

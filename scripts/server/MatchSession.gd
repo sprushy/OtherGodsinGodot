@@ -31,8 +31,7 @@ var peer_id_by_session: Dictionary = {}
 var disconnected_sessions: Dictionary = {}
 var spectator_peer_ids: Array[int] = []
 var spectator_visible_player_indices_by_session: Dictionary = {}
-
-var _rng := RandomNumberGenerator.new()
+var spectator_match_tokens_by_session: Dictionary = {}
 
 func _init(
 	p_match_id: String = "",
@@ -43,7 +42,6 @@ func _init(
 	p_player_decks_by_session: Dictionary = {},
 	p_player_identity_by_session: Dictionary = {}
 ) -> void:
-	_rng.randomize()
 	match_id = p_match_id
 	room_id = p_room_id
 	server_ip = p_server_ip
@@ -75,6 +73,9 @@ func get_player_index_for_peer(peer_id: int) -> int:
 func get_match_token(session_id: String) -> String:
 	return str(player_match_tokens.get(session_id, ""))
 
+func get_spectator_match_token(session_id: String) -> String:
+	return str(spectator_match_tokens_by_session.get(session_id.strip_edges(), ""))
+
 func get_player_identity(session_id: String) -> Dictionary:
 	var identity = player_identity_by_session.get(session_id, {})
 	if identity is Dictionary:
@@ -105,23 +106,33 @@ func get_public_player_names() -> Array[String]:
 	return names
 
 func authenticate_join(session_id: String, match_token: String, peer_id: int) -> int:
-	if get_match_token(session_id) != match_token:
+	var resolved_session_id := session_id.strip_edges()
+	var expected_token := get_match_token(resolved_session_id)
+	if peer_id <= 0 \
+		or resolved_session_id.is_empty() \
+		or expected_token.is_empty() \
+		or match_token.is_empty() \
+		or expected_token != match_token:
 		return -1
-	var player_index := get_player_index(session_id)
+	var player_index := get_player_index(resolved_session_id)
 	if player_index == -1:
 		return -1
-	var previous_peer_id := int(peer_id_by_session.get(session_id, 0))
+	var existing_session_id := str(session_id_by_peer.get(peer_id, "")).strip_edges()
+	if not existing_session_id.is_empty() and existing_session_id != resolved_session_id:
+		return -1
+	var previous_peer_id := int(peer_id_by_session.get(resolved_session_id, 0))
 	if previous_peer_id > 0:
 		session_id_by_peer.erase(previous_peer_id)
 	for existing_peer_id in session_id_by_peer.keys():
 		if int(existing_peer_id) == peer_id:
-			var existing_session_id := str(session_id_by_peer[existing_peer_id])
-			peer_id_by_session.erase(existing_session_id)
+			var mapped_session_id := str(session_id_by_peer[existing_peer_id])
+			peer_id_by_session.erase(mapped_session_id)
 			session_id_by_peer.erase(existing_peer_id)
 			break
-	session_id_by_peer[peer_id] = session_id
-	peer_id_by_session[session_id] = peer_id
-	disconnected_sessions.erase(session_id)
+	session_id_by_peer[peer_id] = resolved_session_id
+	peer_id_by_session[resolved_session_id] = peer_id
+	disconnected_sessions.erase(resolved_session_id)
+	spectator_peer_ids.erase(peer_id)
 	_refresh_reconnect_deadline()
 	return player_index
 
@@ -152,6 +163,19 @@ func add_spectator_peer(peer_id: int) -> void:
 		return
 	spectator_peer_ids.append(peer_id)
 
+func authenticate_spectator(session_id: String, match_token: String, peer_id: int) -> bool:
+	var resolved_session_id := session_id.strip_edges()
+	var expected_token := get_spectator_match_token(resolved_session_id)
+	if peer_id <= 0 \
+		or session_id_by_peer.has(peer_id) \
+		or resolved_session_id.is_empty() \
+		or expected_token.is_empty() \
+		or match_token.is_empty() \
+		or expected_token != match_token:
+		return false
+	add_spectator_peer(peer_id)
+	return true
+
 func is_spectator_peer(peer_id: int) -> bool:
 	return spectator_peer_ids.has(peer_id)
 
@@ -162,6 +186,8 @@ func set_spectator_visible_player_indices(session_id: String, player_indices: Ar
 	var resolved_session_id := session_id.strip_edges()
 	if resolved_session_id.is_empty():
 		return
+	if not spectator_match_tokens_by_session.has(resolved_session_id):
+		spectator_match_tokens_by_session[resolved_session_id] = _generate_token(20)
 	var sanitized: Array[int] = []
 	for raw_index in player_indices:
 		var player_index := int(raw_index)
@@ -244,7 +270,9 @@ func to_spectator_match_info(observer_session_id: String = "") -> Dictionary:
 	var match_info := to_match_info("")
 	match_info["observer_mode"] = true
 	match_info["player_index"] = -1
-	match_info["observer_session_id"] = observer_session_id.strip_edges()
+	var resolved_observer_session_id := observer_session_id.strip_edges()
+	match_info["observer_session_id"] = resolved_observer_session_id
+	match_info["observer_match_token"] = get_spectator_match_token(resolved_observer_session_id)
 	return match_info
 
 func to_launch_config() -> Dictionary:
@@ -264,6 +292,7 @@ func to_launch_config() -> Dictionary:
 		"player_decks_by_session": player_decks_by_session.duplicate(true),
 		"player_identity_by_session": player_identity_by_session.duplicate(true),
 		"spectator_visible_player_indices_by_session": spectator_visible_player_indices_by_session.duplicate(true),
+		"spectator_match_tokens_by_session": spectator_match_tokens_by_session.duplicate(true),
 	}
 
 func mark_process_launched(p_process_id: int, p_launch_config_path: String) -> void:
@@ -300,6 +329,9 @@ static func from_launch_config(config: Dictionary) -> MatchSession:
 	var configured_spectator_visibility = config.get("spectator_visible_player_indices_by_session", {})
 	if configured_spectator_visibility is Dictionary:
 		session.spectator_visible_player_indices_by_session = (configured_spectator_visibility as Dictionary).duplicate(true)
+	var configured_spectator_tokens = config.get("spectator_match_tokens_by_session", {})
+	if configured_spectator_tokens is Dictionary:
+		session.spectator_match_tokens_by_session = (configured_spectator_tokens as Dictionary).duplicate(true)
 	session._ensure_player_match_tokens()
 	return session
 
@@ -330,9 +362,13 @@ func _ensure_player_match_tokens() -> void:
 
 func _generate_token(length: int) -> String:
 	const CHARS := "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+	var crypto := Crypto.new()
+	var random_bytes := crypto.generate_random_bytes(length)
+	if random_bytes.size() != length:
+		return ""
 	var output := ""
-	for _i in length:
-		output += CHARS[_rng.randi_range(0, CHARS.length() - 1)]
+	for random_byte in random_bytes:
+		output += CHARS[int(random_byte) % CHARS.length()]
 	return output
 
 func _refresh_reconnect_deadline() -> void:
