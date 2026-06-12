@@ -11,6 +11,7 @@ const WingedLionScript = preload("res://scripts/cards/Creatures/WingedLion.gd")
 const SacrificeCursorSource = preload("res://images/ui/cursors/BloodySacrificeCursor.png")
 const DevourCursorSource = preload("res://images/ui/cursors/BloodyWolfJawsPGN.png")
 const SilenceCursorSource = preload("res://images/SilenceCursorPGN.png")
+const JeweledHornsCursorSource = preload("res://images/ui/cursors/JeweledHornsCursor.png")
 const TonalExtractionCursorSource = preload("res://images/ui/cursors/ExtractionCursor.png")
 const GiantMasterArchitectCursorSource = preload("res://images/ui/cursors/GiantMasterArchitectHammerCursor.png")
 const HermesCursorSource = preload("res://images/ui/cursors/SpeedHermesCursor.png")
@@ -505,6 +506,7 @@ var _action_point_state_by_card_uid: Dictionary = {}
 var _sacrifice_cursor_texture: Texture2D = null
 var _devour_cursor_texture: Texture2D = null
 var _silence_cursor_texture: Texture2D = null
+var _jeweled_horns_cursor_texture: Texture2D = null
 var _tonal_extraction_cursor_texture: Texture2D = null
 var _giant_master_architect_cursor_texture: Texture2D = null
 var _hermes_cursor_texture: Texture2D = null
@@ -539,6 +541,7 @@ var _overlay_selection_cursor_mode: String = ""
 var _sacrifice_cursor_target_height: int = 0
 var _devour_cursor_target_height: int = 0
 var _silence_cursor_target_height: int = 0
+var _jeweled_horns_cursor_target_height: int = 0
 var _tonal_extraction_cursor_target_height: int = 0
 var _giant_master_architect_cursor_target_height: int = 0
 var _hermes_cursor_target_height: int = 0
@@ -638,6 +641,8 @@ const DEVOUR_CURSOR_TARGET_HEIGHT := 96
 const DEVOUR_CURSOR_HOTSPOT_RATIO := Vector2(0.50, 0.52)
 const SILENCE_CURSOR_TARGET_HEIGHT := 96
 const SILENCE_CURSOR_HOTSPOT_RATIO := Vector2(0.49, 0.22)
+const JEWELED_HORNS_CURSOR_TARGET_HEIGHT := 108
+const JEWELED_HORNS_CURSOR_HOTSPOT_RATIO := Vector2(0.50, 0.82)
 const TONAL_EXTRACTION_CURSOR_TARGET_HEIGHT := 96
 const TONAL_EXTRACTION_CURSOR_HOTSPOT_RATIO := Vector2(0.50, 0.92)
 const GIANT_MASTER_ARCHITECT_CURSOR_TARGET_HEIGHT := 96
@@ -1960,6 +1965,10 @@ func _is_silence_cursor_mode_active() -> bool:
 		return _is_silence_or_mute_targeting_source(spell_waiting_for_target)
 	return false
 
+func _is_jeweled_horns_cursor_mode_active() -> bool:
+	return _has_overlay_selection_cursor_mode("jeweled_horns") \
+		or (_has_pending_click_selection() and _pending_click_selection_source is GugalannaBullOfHeaven)
+
 func _is_tonal_extraction_cursor_mode_active() -> bool:
 	return _has_overlay_selection_cursor_mode("tonal_extraction") \
 		or (_has_pending_click_selection() and _pending_click_selection_source is TonalExtraction)
@@ -2020,7 +2029,6 @@ func _is_hostile_selection_cursor_source(card: Card) -> bool:
 		or card is BitMeseri \
 		or card is DivineLightning \
 		or card is Gambanteinn \
-		or card is GugalannaBullOfHeaven \
 		or card is Grindylow \
 		or card is Lailoken \
 		or card is MasmassuPriest \
@@ -2036,6 +2044,8 @@ func _get_selection_cursor_mode_for_source(card: Card) -> String:
 		return "breidablik"
 	if card is TonalExtraction:
 		return "tonal_extraction"
+	if card is GugalannaBullOfHeaven:
+		return "jeweled_horns"
 	if card is ThirdSageEnmedugga:
 		return "good_fortune"
 	if card is E2Abzu:
@@ -2256,6 +2266,8 @@ func _get_selection_cursor_mode() -> String:
 		return "freyja_tabby"
 	if _is_tonal_extraction_cursor_mode_active():
 		return "tonal_extraction"
+	if _is_jeweled_horns_cursor_mode_active():
+		return "jeweled_horns"
 	if _is_silence_cursor_mode_active():
 		return "silence"
 	if _has_pending_click_selection():
@@ -2310,6 +2322,8 @@ func _get_cursor_mode_target_height(cursor_mode: String) -> int:
 			return UIArtScalerScript.get_board_cursor_target_height(TONAL_EXTRACTION_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 		"silence":
 			return UIArtScalerScript.get_board_cursor_target_height(SILENCE_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+		"jeweled_horns":
+			return UIArtScalerScript.get_board_cursor_target_height(JEWELED_HORNS_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 		"giant_master_architect":
 			return UIArtScalerScript.get_board_cursor_target_height(GIANT_MASTER_ARCHITECT_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 		"hermes":
@@ -2457,6 +2471,19 @@ func _apply_silence_cursor() -> bool:
 	var hotspot := UIArtScalerScript.get_cursor_hotspot(_silence_cursor_texture, SILENCE_CURSOR_HOTSPOT_RATIO)
 	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
 		Input.set_custom_mouse_cursor(_silence_cursor_texture, cursor_shape, hotspot)
+	return true
+
+func _apply_jeweled_horns_cursor() -> bool:
+	var target_height := UIArtScalerScript.get_board_cursor_target_height(JEWELED_HORNS_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+	if _jeweled_horns_cursor_texture == null or _jeweled_horns_cursor_target_height != target_height:
+		_jeweled_horns_cursor_texture = UIArtScalerScript.build_cursor_texture(JeweledHornsCursorSource, target_height)
+		_jeweled_horns_cursor_target_height = target_height
+	if _jeweled_horns_cursor_texture == null:
+		return false
+
+	var hotspot := UIArtScalerScript.get_cursor_hotspot(_jeweled_horns_cursor_texture, JEWELED_HORNS_CURSOR_HOTSPOT_RATIO)
+	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
+		Input.set_custom_mouse_cursor(_jeweled_horns_cursor_texture, cursor_shape, hotspot)
 	return true
 
 func _apply_tonal_extraction_cursor() -> bool:
@@ -3013,6 +3040,14 @@ func _sync_sacrifice_cursor() -> void:
 	if cursor_mode == "silence":
 		if _apply_silence_cursor():
 			_active_selection_cursor_mode = "silence"
+			_active_selection_cursor_target_height = target_height
+		else:
+			_restore_default_selection_cursor()
+		return
+
+	if cursor_mode == "jeweled_horns":
+		if _apply_jeweled_horns_cursor():
+			_active_selection_cursor_mode = "jeweled_horns"
 			_active_selection_cursor_target_height = target_height
 		else:
 			_restore_default_selection_cursor()
@@ -13997,6 +14032,11 @@ func _begin_gugalanna_impact_targeting(card: GugalannaBullOfHeaven, prompt_targe
 func _queue_nergal_lion_impact_prompt(card: NergalLion, prompt_targets: Array = []) -> void:
 	if card == null or game_manager == null:
 		return
+	var source_uid := str(card.uid).strip_edges()
+	var resolve_lion := func() -> NergalLion:
+		if game_manager == null or source_uid == "":
+			return null
+		return game_manager.get_card_by_uid(source_uid) as NergalLion
 	var current_targets := _resolve_prompt_targets(card.get_valid_immolate_targets(game_manager), prompt_targets)
 	if not prompt_targets.is_empty() and current_targets.size() != prompt_targets.size():
 		_pending_nergal_lion_prompt_data = {
@@ -14043,23 +14083,27 @@ func _queue_nergal_lion_impact_prompt(card: NergalLion, prompt_targets: Array = 
 
 	_set_action_label_text(card.card_name + ": choose a destruction card in your graveyard to immolate.")
 	var on_choose_target := func(chosen_card: Card) -> void:
-		var current_valid_targets := card.get_valid_immolate_targets(game_manager)
-		var current_zones := card.get_valid_immolate_zones()
+		var current_card: NergalLion = resolve_lion.call()
+		var current_target := _resolve_live_prompt_target(chosen_card)
 		var feedback := ""
-		if chosen_card == null or chosen_card not in current_valid_targets:
-			feedback = card.card_name + " found no valid destruction card to immolate."
-		elif current_zones.is_empty():
-			feedback = card.card_name + " has no open field zone for Immolate."
+		if current_card == null:
+			feedback = card.card_name + " could not resolve Immolate."
+		elif current_target == null \
+				or not _is_card_in_targets_by_uid(current_target, current_card.get_valid_immolate_targets(game_manager)):
+			feedback = current_card.card_name + " found no valid destruction card to immolate."
+		elif current_card.get_valid_immolate_zones().is_empty():
+			feedback = current_card.card_name + " has no open field zone for Immolate."
+		elif _should_submit_ui_action_command():
+			game_input.submit_action({
+				"type": "nergal_lion_choice",
+				"source_uid": current_card.uid,
+				"target_uid": current_target.uid,
+			})
+			update_ui()
+			return
 		else:
-			if _should_submit_ui_action_command():
-				game_input.submit_action({
-					"type": "nergal_lion_choice",
-					"source_uid": card.uid,
-					"target_uid": chosen_card.uid,
-				})
-				update_ui()
-				return
-			feedback = card.resolve_immolate_impact(game_manager, chosen_card, current_zones[0])
+			var current_zones := current_card.get_valid_immolate_zones()
+			feedback = current_card.resolve_immolate_impact(game_manager, current_target, current_zones[0])
 		if _stack_resolution_paused:
 			_resume_after_deferred_resolution(feedback)
 		else:

@@ -72,8 +72,12 @@ func resolve_immolate_impact(game_manager: GameManager, target: Card, target_zon
 	if controller == null:
 		return card_name + " has no controller for Immolate."
 
+	if target != null and game_manager != null:
+		var live_target := game_manager.get_card_by_uid(str(target.uid).strip_edges())
+		if live_target != null:
+			target = live_target
 	var valid_targets := get_valid_immolate_targets(game_manager)
-	if target == null or target not in valid_targets:
+	if target == null or not _contains_card_uid(valid_targets, target.uid):
 		return card_name + " found no valid destruction card to immolate."
 
 	var valid_zones := get_valid_immolate_zones()
@@ -123,6 +127,15 @@ func _is_valid_immolate_target(card: Card, controller: Player) -> bool:
 	if not _is_destruction_card(card):
 		return false
 	return _can_destroy_physical_card(card)
+
+func _contains_card_uid(cards: Array[Card], target_uid: String) -> bool:
+	var normalized_uid := target_uid.strip_edges()
+	if normalized_uid == "":
+		return false
+	for candidate in cards:
+		if candidate != null and str(candidate.uid).strip_edges() == normalized_uid:
+			return true
+	return false
 
 func _is_destruction_card(card: Card) -> bool:
 	if card == null:
