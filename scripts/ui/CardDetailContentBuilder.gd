@@ -2,6 +2,8 @@ class_name CardDetailContentBuilder
 extends RefCounted
 
 const LevelSymbolRowScript = preload("res://scripts/ui/LevelSymbolRow.gd")
+const DebuffBadgeScript = preload("res://scripts/ui/DebuffBadge.gd")
+const PUBLICLY_IDENTIFIED_BADGE_TEXTURE := preload("res://images/ability_badges/MopsusBadge.png")
 const _BULLET_SEPARATOR := " | "
 const _BOARD_POPUP_WIDTH := 210.0
 const _KEYWORD_PANEL_WIDTH := 210.0
@@ -45,9 +47,12 @@ static func build_visual_hover_body(card: Card, viewer: Player, config: Dictiona
 		vbox.add_child(type_lbl)
 
 	var meta_parts: Array[String] = []
+	var show_meta_mana_cost := display_mana_cost > 0
+	if card is PowerCard and card.is_face_down:
+		show_meta_mana_cost = false
 	if not card.is_god and card.get_effective_level() > 0:
 		vbox.add_child(_make_level_symbol_row(card, 13.0))
-	if display_mana_cost > 0:
+	if show_meta_mana_cost:
 		meta_parts.append("Mana: " + str(display_mana_cost))
 	if card.culture != "":
 		meta_parts.append(card.culture)
@@ -539,7 +544,7 @@ static func make_full_card_preview(card: Card, viewer: Player, width: float, gam
 	}))
 	return panel
 
-static func _make_stored_card_preview(card: Card, _viewer: Player, width: float) -> Control:
+static func _make_stored_card_preview(card: Card, viewer: Player, width: float) -> Control:
 	var panel := PanelContainer.new()
 	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	panel.custom_minimum_size = Vector2(width, 0.0)
@@ -557,6 +562,27 @@ static func _make_stored_card_preview(card: Card, _viewer: Player, width: float)
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
 		style.set_border_width(side, 1)
 	panel.add_theme_stylebox_override("panel", style)
+
+	if viewer != null and card.card_owner == viewer:
+		var preview := TextureRect.new()
+		preview.texture = PUBLICLY_IDENTIFIED_BADGE_TEXTURE
+		preview.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		preview.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+		preview.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		preview.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		preview.offset_left = 2.0
+		preview.offset_top = 2.0
+		preview.offset_right = -2.0
+		preview.offset_bottom = -2.0
+
+		var badge := DebuffBadgeScript.create(preview)
+		badge.z_index = 5
+		badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+		badge.offset_left = -6.0 - DebuffBadgeScript.SIZE
+		badge.offset_top = 6.0
+		badge.offset_right = -6.0
+		badge.offset_bottom = 6.0 + DebuffBadgeScript.SIZE
+		panel.add_child(badge)
 
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 6)

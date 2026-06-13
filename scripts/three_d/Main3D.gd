@@ -1,5 +1,6 @@
 extends Node3D
 
+const WindowsSelfUpdaterScript = preload("res://scripts/client/WindowsSelfUpdater.gd")
 const GAME_SCENE_PATH := "res://scenes/mainfork.tscn"
 const DEFAULT_VIEWPORT_SIZE := Vector2i(1920, 1080)
 const SERVER_MODE_ARG := "server_mode"
@@ -22,6 +23,11 @@ var _is_flat_2d_mode: bool = false
 
 func _ready() -> void:
 	var launch_args := _parse_user_args(OS.get_cmdline_user_args())
+	if WindowsSelfUpdaterScript.is_update_launch(launch_args):
+		var updater := WindowsSelfUpdaterScript.new()
+		add_child(updater)
+		updater.start(launch_args)
+		return
 	if _should_boot_server_runtime(launch_args):
 		_load_original_scene_directly()
 		return

@@ -10,7 +10,7 @@ const DebuffBadgeScript = preload("res://scripts/ui/DebuffBadge.gd")
 const MINOR_ACTION_SYMBOL_TEXTURE := preload("res://images/ui/MinorActionSymbol.png")
 const MAJOR_ACTION_SYMBOL_TEXTURE := preload("res://images/ui/MajorActionSymbol.png")
 const MANA_ORB_TEXTURE := preload("res://images/ui/ManaOrb.png")
-const REVEALED_HAND_BADGE_TEXTURE := preload("res://images/ability_badges/MopsusBadge.png")
+const PUBLICLY_IDENTIFIED_BADGE_TEXTURE := preload("res://images/ability_badges/MopsusBadge.png")
 const DEBUFF_BADGE_SIZE := DebuffBadgeScript.SIZE
 const PRIORITY_RESPONSE_GLOW_COLOR := Color(0.28, 0.92, 0.50, 0.95)
 
@@ -41,6 +41,7 @@ const _LEVEL_TAG_NAME := "LevelTag"
 const _LEVEL_SYMBOL_ROW_NAME := "LevelSymbolRow"
 const _DRAG_LEVEL_OVERLAY_NAME := "DragLevelOverlay"
 const _STATS_LABEL_NAME := "StatsLabel"
+const _PUBLICLY_IDENTIFIED_BADGE_OVERLAY_NAME := "PubliclyIdentifiedBadgeOverlay"
 const _FLOATING_GHOST_Z_INDEX := 1300
 const _DRAG_ROT_SPEED: float = 600.0  # degrees per second (90° in 0.15 s)
 var _base_z_index: int = 0
@@ -523,6 +524,7 @@ func _refresh_drag_board_summon_preview() -> void:
 
 func _on_card_visual_state_changed() -> void:
 	_refresh_dynamic_labels()
+	_refresh_publicly_identified_badge()
 	_apply_card_style()
 	if _hover_panel != null and is_instance_valid(_hover_panel):
 		_hide_hover_panel()
@@ -566,7 +568,8 @@ func _populate_vbox(vbox: VBoxContainer) -> void:
 
 	var display_mana_cost := _get_display_mana_cost()
 	var cost_text := card_data.get_cost_shorthand(display_mana_cost)
-	if cost_text != "" or card_data.card_type == Card.CardType.CREATURE:
+	var show_top_cost := not _should_show_power_lock_overlay()
+	if show_top_cost and (cost_text != "" or card_data.card_type == Card.CardType.CREATURE):
 		top_row.add_child(_make_cost_node(cost_text, display_mana_cost))
 
 	var art := _build_art_node()
@@ -663,7 +666,7 @@ func _build_content() -> void:
 	_disabled_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_inner.add_child(_disabled_overlay)
 
-	_add_revealed_hand_badge()
+	_refresh_publicly_identified_badge()
 	_refresh_power_lock_overlay()
 	_refresh_defense_shield_overlay()
 	_refresh_disabled_visual_state()
@@ -671,18 +674,22 @@ func _build_content() -> void:
 	call_deferred("_sync_minimum_height")
 	call_deferred("_layout_power_lock_overlay")
 
-func _add_revealed_hand_badge() -> void:
-	if _inner == null or card_data == null or not card_data.is_revealed_in_hand():
+func _refresh_publicly_identified_badge() -> void:
+	if _inner == null:
 		return
-	if card_data.current_zone == null or card_data.current_zone.zone_type != Zone.ZoneType.HAND:
+	var existing_overlay := _inner.get_node_or_null(_PUBLICLY_IDENTIFIED_BADGE_OVERLAY_NAME)
+	if existing_overlay != null:
+		existing_overlay.queue_free()
+	if card_data == null or not card_data.is_publicly_identified():
 		return
 	var overlay := Control.new()
+	overlay.name = _PUBLICLY_IDENTIFIED_BADGE_OVERLAY_NAME
 	overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_inner.add_child(overlay)
 
 	var preview := TextureRect.new()
-	preview.texture = REVEALED_HAND_BADGE_TEXTURE
+	preview.texture = PUBLICLY_IDENTIFIED_BADGE_TEXTURE
 	preview.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	preview.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 	preview.mouse_filter = Control.MOUSE_FILTER_IGNORE

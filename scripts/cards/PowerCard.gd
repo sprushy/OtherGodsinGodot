@@ -9,7 +9,15 @@ class_name PowerCard
 
 const PowerUnlockSoundPlayerScript = preload("res://scripts/audio/PowerUnlockSoundPlayer.gd")
 
-var is_publicly_revealed: bool = false
+var _is_publicly_revealed: bool = false
+var is_publicly_revealed: bool = false:
+	set(value):
+		if _is_publicly_revealed == value:
+			return
+		_is_publicly_revealed = value
+		_emit_visual_state_changed()
+	get:
+		return _is_publicly_revealed
 var _pending_activation_discards: Array[Card] = []
 
 func _init() -> void:
@@ -239,7 +247,17 @@ func _replace_display_unlock_cost_text(text: String, replacement_amount: String)
 	var regex := RegEx.new()
 	if regex.compile("(\\[b\\]Unlock\\[/b\\]\\s*\\()\\d+(\\))") != OK:
 		return text
-	return regex.sub(text, "$1" + replacement_amount + "$2", true)
+	var updated_text := text
+	var matches := regex.search_all(text)
+	for match_index in range(matches.size() - 1, -1, -1):
+		var match_result: RegExMatch = matches[match_index]
+		var replacement := match_result.get_string(1) + replacement_amount + match_result.get_string(2)
+		updated_text = (
+			updated_text.substr(0, match_result.get_start())
+			+ replacement
+			+ updated_text.substr(match_result.get_end())
+		)
+	return updated_text
 
 func get_display_ability_text(game_manager: GameManager = null) -> String:
 	var cost_data: Dictionary = _get_display_ability_cost_data(game_manager)

@@ -39,8 +39,13 @@ const STARTUP_MENU_FADE_SECONDS := 3.0
 const UPDATE_CHECK_TIMEOUT_SECONDS := 15.0
 const UPDATE_CHECK_RETRY_DELAY_SECONDS := 1.0
 const UPDATE_CHECK_MAX_ATTEMPTS := 2
+const UPDATE_DOWNLOAD_RETRY_DELAY_SECONDS := 2.0
+const UPDATE_DOWNLOAD_MAX_ATTEMPTS := 3
+const UPDATE_CLEANUP_RETRY_DELAY_SECONDS := 0.5
+const UPDATE_CLEANUP_MAX_ATTEMPTS := 10
 const UPDATE_LOG_PATH := "user://update.log"
 const UPDATE_FAILURE_MARKER_PATH := "user://update_failure.txt"
+const WINDOWS_NATIVE_UPDATER_HANDSHAKE_SECONDS := 10.0
 const MACOS_SPARKLE_EXTENSION_PATH := "res://addons/macos_sparkle/macos_sparkle.gdextension"
 const BYTES_PER_MIB := 1048576.0
 
@@ -75,6 +80,7 @@ var _lobby_reconnect_token: String = ""
 var _pending_join_room_code: String = ""
 var _pending_join_room_id: String = ""
 var _pending_rejoin_room_id: String = ""
+var _manual_rejoin_room_id: String = ""
 var _pending_observe_room_id: String = ""
 var _pending_rematch_room_id: String = ""
 var _pending_rematch_ready_submitted: bool = false
@@ -137,9 +143,12 @@ var _pending_update_release_version: String = ""
 var _pending_update_release_url: String = AppReleaseInfoScript.RELEASES_PAGE_URL
 var _pending_update_download_url: String = ""
 var _pending_update_download_size: int = 0
+var _pending_update_download_sha256: String = ""
 var _update_download_request: HTTPRequest = null
+var _update_download_attempt: int = 0
 var _update_now_button: Button = null
 var _update_open_button: Button = null
+var _update_support_button: Button = null
 var _update_button_row: HBoxContainer = null
 var _update_download_status_label: Label = null
 var _is_auto_updating: bool = false
@@ -192,6 +201,8 @@ var _startup_splash_animation_finished: bool = false
 func _ready() -> void:
 	if _is_server_runtime_launch():
 		return
+	if OS.get_name() == "Windows":
+		call_deferred("_cleanup_windows_update_artifacts")
 	add_to_group("music_controls")
 	_load_audio_preferences()
 	_ensure_startup_splash_background()
@@ -1729,12 +1740,14 @@ func _on_rejoin_match_requested(room_id: String) -> void:
 	if not auth_error.is_empty():
 		status_label.text = auth_error
 		return
+	var normalized_room_id := room_id.strip_edges().to_upper()
 	_pending_host_room_creation = false
 	_pending_join_room_id = ""
-	_pending_rejoin_room_id = room_id.strip_edges().to_upper()
+	_pending_rejoin_room_id = normalized_room_id
+	_manual_rejoin_room_id = normalized_room_id
 	_pending_observe_room_id = ""
 	_pending_local_lobby_launch_on_connect_failure = false
-	room_code_line_edit.text = room_id.strip_edges().to_upper()
+	room_code_line_edit.text = normalized_room_id
 	multiplayer_container.visible = true
 	_connect_to_browseable_lobby("Rejoining live match...")
 
@@ -2051,6 +2064,7 @@ func _on_update_check_request_completed(
 		release_url = AppReleaseInfoScript.RELEASES_PAGE_URL
 	var download_url := ""
 	var download_size := 0
+	var download_sha256 := ""
 	var assets: Array = payload.get("assets", [])
 	var platform_asset_names := AppReleaseInfoScript.get_asset_names_for_platform(OS.get_name())
 	for asset_name in platform_asset_names:
@@ -2059,12 +2073,19 @@ func _on_update_check_request_completed(
 				continue
 			download_url = str(asset.get("browser_download_url", "")).strip_edges()
 			download_size = int(asset.get("size", 0))
+			download_sha256 = _parse_sha256_digest(str(asset.get("digest", "")))
 			break
 		if not download_url.is_empty():
 			break
 	_update_check_no_update_status = ""
 	_update_check_failure_status = ""
-	_begin_required_update(latest_version, release_url, download_url, download_size)
+	_begin_required_update(
+		latest_version,
+		release_url,
+		download_url,
+		download_size,
+		download_sha256
+	)
 
 func _should_prompt_for_update(latest_version: String) -> bool:
 	if not AppReleaseInfoScript.is_release_version(latest_version):
@@ -2084,7 +2105,8 @@ func _begin_required_update(
 	latest_version: String,
 	release_url: String,
 	download_url: String = "",
-	download_size: int = 0
+	download_size: int = 0,
+	download_sha256: String = ""
 ) -> void:
 	if not _release_updates_enabled():
 		_complete_startup_prompts()
@@ -2097,7 +2119,14 @@ func _begin_required_update(
 		if _consume_pending_windows_update_failure(latest_version, release_url):
 			_complete_startup_prompts()
 			return
-		_show_update_prompt(latest_version, release_url, download_url, true, download_size)
+		_show_update_prompt(
+			latest_version,
+			release_url,
+			download_url,
+			true,
+			download_size,
+			download_sha256
+		)
 		call_deferred("_on_update_prompt_auto_update_pressed")
 		return
 	if OS.get_name() == "macOS" and _start_macos_sparkle_update(latest_version):
@@ -2156,7 +2185,8 @@ func _show_update_prompt(
 	release_url: String,
 	download_url: String = "",
 	auto_update: bool = false,
-	download_size: int = 0
+	download_size: int = 0,
+	download_sha256: String = ""
 ) -> void:
 	if _update_prompt_overlay != null and is_instance_valid(_update_prompt_overlay):
 		return
@@ -2164,6 +2194,7 @@ func _show_update_prompt(
 	_pending_update_release_url = release_url
 	_pending_update_download_url = download_url
 	_pending_update_download_size = download_size
+	_pending_update_download_sha256 = download_sha256
 	_automatic_update_required = auto_update
 
 	_update_prompt_overlay = Control.new()
@@ -2251,6 +2282,14 @@ func _show_update_prompt(
 	button_row.add_child(update_button)
 	_update_open_button = update_button
 
+	var support_button := Button.new()
+	support_button.text = "Open Update Log Folder"
+	support_button.custom_minimum_size = Vector2(190, 38)
+	support_button.pressed.connect(_on_update_prompt_support_pressed)
+	support_button.visible = false
+	button_row.add_child(support_button)
+	_update_support_button = support_button
+
 	if (not download_url.is_empty() and OS.get_name() == "Windows") or auto_update:
 		if not auto_update and not download_url.is_empty():
 			var auto_button := Button.new()
@@ -2283,10 +2322,13 @@ func _dismiss_update_prompt() -> void:
 	_is_auto_updating = false
 	_update_now_button = null
 	_update_open_button = null
+	_update_support_button = null
 	_update_button_row = null
 	_update_download_status_label = null
 	_pending_update_download_url = ""
 	_pending_update_download_size = 0
+	_pending_update_download_sha256 = ""
+	_update_download_attempt = 0
 	_last_logged_update_percent = -10
 	_automatic_update_required = false
 	if _update_prompt_overlay != null and is_instance_valid(_update_prompt_overlay):
@@ -2311,6 +2353,15 @@ func _on_update_prompt_open_pressed() -> void:
 	_dismiss_update_prompt()
 	_complete_startup_prompts()
 
+func _on_update_prompt_support_pressed() -> void:
+	var open_error := OS.shell_open(OS.get_user_data_dir())
+	if status_label == null:
+		return
+	if open_error == OK:
+		status_label.text = "Opened the folder containing update.log."
+	else:
+		status_label.text = "Couldn't open the update log folder automatically."
+
 func _on_update_prompt_auto_update_pressed() -> void:
 	if not _release_updates_enabled():
 		_dismiss_update_prompt()
@@ -2319,6 +2370,7 @@ func _on_update_prompt_auto_update_pressed() -> void:
 	if _is_auto_updating:
 		return
 	_is_auto_updating = true
+	_update_download_attempt = 0
 	_last_logged_update_percent = -10
 	if _update_now_button != null and is_instance_valid(_update_now_button):
 		_update_now_button.disabled = true
@@ -2334,6 +2386,37 @@ func _on_update_prompt_auto_update_pressed() -> void:
 		)
 		_update_download_status_label.visible = true
 
+	_begin_auto_update_download()
+
+func _cleanup_windows_update_artifacts() -> void:
+	await get_tree().create_timer(1.0).timeout
+	for update_path in [
+		OS.get_user_data_dir() + "/self_update_staging",
+		OS.get_user_data_dir() + "/self_update_runner",
+	]:
+		for attempt in range(1, UPDATE_CLEANUP_MAX_ATTEMPTS + 1):
+			if _clear_update_staging_root(update_path):
+				if attempt > 1:
+					_write_update_log(
+						"update_artifact_cleanup_completed attempt=%d path=%s"
+						% [attempt, update_path]
+					)
+				break
+			if attempt == UPDATE_CLEANUP_MAX_ATTEMPTS:
+				_write_update_log(
+					"update_artifact_cleanup_failed attempts=%d path=%s"
+					% [UPDATE_CLEANUP_MAX_ATTEMPTS, update_path]
+				)
+				break
+			await get_tree().create_timer(UPDATE_CLEANUP_RETRY_DELAY_SECONDS).timeout
+
+func _begin_auto_update_download() -> void:
+	if not _is_auto_updating:
+		return
+	if _update_download_request != null and is_instance_valid(_update_download_request):
+		_update_download_request.queue_free()
+	_update_download_request = null
+	_update_download_attempt += 1
 	var zip_path := OS.get_user_data_dir() + "/update_download.zip"
 	if FileAccess.file_exists(zip_path):
 		DirAccess.remove_absolute(zip_path)
@@ -2346,9 +2429,10 @@ func _on_update_prompt_auto_update_pressed() -> void:
 	_update_download_request.request_completed.connect(_on_auto_update_download_completed.bind(zip_path))
 	add_child(_update_download_request)
 	_write_update_log(
-		"download_started version=%s expected_bytes=%d url=%s"
+		"download_started version=%s attempt=%d expected_bytes=%d url=%s"
 		% [
 			_pending_update_release_version,
+			_update_download_attempt,
 			_pending_update_download_size,
 			_pending_update_download_url,
 		]
@@ -2359,7 +2443,9 @@ func _on_update_prompt_auto_update_pressed() -> void:
 		PackedStringArray(["User-Agent: OtherGods"])
 	)
 	if request_error != OK:
-		_on_auto_update_failed("Failed to start download (%d)." % request_error)
+		_retry_auto_update_download_or_fail(
+			"Failed to start download (%d)." % request_error
+		)
 
 func _on_auto_update_download_completed(
 	result: int,
@@ -2374,16 +2460,18 @@ func _on_auto_update_download_completed(
 		% [result, response_code, downloaded_size, _pending_update_download_size]
 	)
 	if result != HTTPRequest.RESULT_SUCCESS or response_code < 200 or response_code >= 300:
-		_on_auto_update_failed("Download failed (HTTP %d)." % response_code)
+		_retry_auto_update_download_or_fail(
+			"Download failed (result %d, HTTP %d)." % [result, response_code]
+		)
 		return
 	if downloaded_size <= 0:
-		_on_auto_update_failed("The downloaded update was empty.")
+		_retry_auto_update_download_or_fail("The downloaded update was empty.")
 		return
 	if (
 		_pending_update_download_size > 0
 		and downloaded_size != _pending_update_download_size
 	):
-		_on_auto_update_failed(
+		_retry_auto_update_download_or_fail(
 			"Download was incomplete (%.1f of %.1f MB)."
 			% [
 				float(downloaded_size) / BYTES_PER_MIB,
@@ -2391,7 +2479,41 @@ func _on_auto_update_download_completed(
 			]
 		)
 		return
+	if not _pending_update_download_sha256.is_empty():
+		var downloaded_sha256 := FileAccess.get_sha256(zip_path).to_lower()
+		_write_update_log(
+			"download_hash expected=%s actual=%s"
+			% [_pending_update_download_sha256, downloaded_sha256]
+		)
+		if downloaded_sha256 != _pending_update_download_sha256:
+			_retry_auto_update_download_or_fail(
+				"The downloaded update failed SHA-256 verification. Please try again."
+			)
+			return
+	if _update_download_request != null and is_instance_valid(_update_download_request):
+		_update_download_request.queue_free()
+	_update_download_request = null
 	_apply_update_and_restart(zip_path)
+
+func _retry_auto_update_download_or_fail(message: String) -> void:
+	_write_update_log(
+		"download_attempt_failed version=%s attempt=%d message=%s"
+		% [_pending_update_release_version, _update_download_attempt, message]
+	)
+	if _update_download_request != null and is_instance_valid(_update_download_request):
+		_update_download_request.queue_free()
+	_update_download_request = null
+	if _update_download_attempt >= UPDATE_DOWNLOAD_MAX_ATTEMPTS:
+		_on_auto_update_failed(message)
+		return
+	if _update_download_status_label != null and is_instance_valid(_update_download_status_label):
+		_update_download_status_label.text = (
+			"%s\nRetrying download (%d of %d)..."
+			% [message, _update_download_attempt + 1, UPDATE_DOWNLOAD_MAX_ATTEMPTS]
+		)
+	await get_tree().create_timer(UPDATE_DOWNLOAD_RETRY_DELAY_SECONDS).timeout
+	if _is_auto_updating:
+		_begin_auto_update_download()
 
 func _apply_update_and_restart(zip_path: String) -> void:
 	if not _release_updates_enabled():
@@ -2438,9 +2560,9 @@ func _apply_update_and_restart(zip_path: String) -> void:
 
 	var exe_dir := current_exe.get_base_dir()
 	var current_exe_name := current_exe.get_file()
-	var target_exe_name := "OtherGods.exe"
-	if target_exe_name.is_empty():
-		target_exe_name = current_exe_name
+	var target_exe_name := current_exe_name
+	if target_exe_name.is_empty() or not target_exe_name.to_lower().ends_with(".exe"):
+		target_exe_name = AppReleaseInfoScript.PREFERRED_WINDOWS_EXECUTABLE_NAME
 	if not _align_staged_windows_build_names(staging_root, extracted_files, target_exe_name):
 		_clear_update_staging_root(staging_root)
 		_on_auto_update_failed("The downloaded update didn't contain a usable app build.")
@@ -2462,6 +2584,27 @@ func _apply_update_and_restart(zip_path: String) -> void:
 	var script_path := runner_dir.path_join("updater.ps1")
 	var update_log_path := ProjectSettings.globalize_path(UPDATE_LOG_PATH)
 	var failure_marker_path := ProjectSettings.globalize_path(UPDATE_FAILURE_MARKER_PATH)
+	var staged_exe_sha256 := FileAccess.get_sha256(staged_target_exe_path).to_lower()
+	if staged_exe_sha256.is_empty():
+		_on_auto_update_failed("Couldn't verify the staged game executable.")
+		return
+	if _can_write_to_windows_update_target(exe_dir):
+		var native_updater_failure := await _launch_native_windows_updater(
+			staged_target_exe_path,
+			exe_dir,
+			target_exe_path,
+			staged_exe_sha256,
+			runner_dir,
+			update_log_path,
+			failure_marker_path
+		)
+		if native_updater_failure.is_empty():
+			return
+		_write_update_log(
+			"native_updater_fallback_to_powershell reason=%s" % native_updater_failure
+		)
+	elif _update_download_status_label != null and is_instance_valid(_update_download_status_label):
+		_update_download_status_label.text = "Requesting Windows permission to install update..."
 	var script_content := (
 		"param([switch]$Elevated)\r\n"
 		+ "$ErrorActionPreference = 'Stop'\r\n"
@@ -2576,6 +2719,82 @@ func _apply_update_and_restart(zip_path: String) -> void:
 	)
 	get_tree().quit()
 
+func _can_write_to_windows_update_target(target_dir: String) -> bool:
+	var marker_path := target_dir.path_join(
+		".othergods-update-write-test-%d.tmp" % OS.get_process_id()
+	)
+	DirAccess.remove_absolute(marker_path)
+	var marker_file := FileAccess.open(marker_path, FileAccess.WRITE)
+	if marker_file == null:
+		_write_update_log("native_updater_target_not_writable target=%s" % target_dir)
+		return false
+	marker_file.store_string("ok")
+	marker_file.close()
+	var remove_error := DirAccess.remove_absolute(marker_path)
+	var writable := remove_error == OK and not FileAccess.file_exists(marker_path)
+	_write_update_log(
+		"native_updater_target_preflight writable=%s remove_error=%d target=%s"
+		% [str(writable), remove_error, target_dir]
+	)
+	return writable
+
+func _launch_native_windows_updater(
+	staged_exe_path: String,
+	target_dir: String,
+	target_exe_path: String,
+	expected_sha256: String,
+	runner_dir: String,
+	update_log_path: String,
+	failure_marker_path: String
+) -> String:
+	var handshake_path := runner_dir.path_join("native_updater.ready")
+	DirAccess.remove_absolute(handshake_path)
+	var args := PackedStringArray([
+		"--headless",
+		"--",
+		"self_update=windows_native",
+		"update_target_dir=%s" % target_dir,
+		"update_target_exe=%s" % target_exe_path,
+		"update_wait_pid=%d" % OS.get_process_id(),
+		"update_handshake=%s" % handshake_path,
+		"update_expected_sha256=%s" % expected_sha256,
+		"update_version=%s" % _pending_update_release_version,
+		"update_log_path=%s" % update_log_path,
+		"update_failure_marker=%s" % failure_marker_path,
+	])
+	var updater_pid := OS.create_process(staged_exe_path, args, false)
+	if updater_pid == -1:
+		return "Windows blocked launching the staged updater executable."
+	_write_update_log(
+		"native_updater_process_started version=%s pid=%d staged=%s"
+		% [_pending_update_release_version, updater_pid, staged_exe_path]
+	)
+	if _update_download_status_label != null and is_instance_valid(_update_download_status_label):
+		_update_download_status_label.text = "Starting verified updater..."
+
+	var elapsed_seconds := 0.0
+	while elapsed_seconds < WINDOWS_NATIVE_UPDATER_HANDSHAKE_SECONDS:
+		if FileAccess.file_exists(handshake_path):
+			DirAccess.remove_absolute(handshake_path)
+			_write_update_log(
+				"native_updater_ready version=%s pid=%d"
+				% [_pending_update_release_version, updater_pid]
+			)
+			if _update_download_status_label != null and is_instance_valid(_update_download_status_label):
+				_update_download_status_label.text = "Restarting to finish update..."
+			get_tree().quit()
+			return ""
+		if not OS.is_process_running(updater_pid):
+			return "The staged updater exited before it was ready."
+		await get_tree().create_timer(0.1).timeout
+		elapsed_seconds += 0.1
+
+	if OS.is_process_running(updater_pid):
+		OS.kill(updater_pid)
+	return "The staged updater did not start within %.0f seconds." % (
+		WINDOWS_NATIVE_UPDATER_HANDSHAKE_SECONDS
+	)
+
 func _run_windows_updater_preflight(powershell_path: String, runner_dir: String) -> String:
 	if not FileAccess.file_exists(powershell_path):
 		_write_update_log("updater_preflight_failed reason=powershell_missing path=%s" % powershell_path)
@@ -2654,9 +2873,10 @@ func _consume_pending_windows_update_failure(latest_version: String, release_url
 func _present_windows_update_fallback(message: String) -> void:
 	var fallback_message := (
 		"%s\n\n"
-		+ "The latest release page has been opened. If this PC uses antivirus, "
+		+ "The latest release page has been opened. Use Open Update Log Folder for diagnostics. "
+		+ "If this PC uses antivirus, "
 		+ "Smart App Control, Controlled Folder Access, AppLocker, or work/school device policy, "
-		+ "allow Other Gods and Windows PowerShell or install the update manually."
+		+ "allow Other Gods; protected install folders may also require Windows PowerShell."
 	) % message
 	if status_label != null:
 		status_label.text = message
@@ -2666,6 +2886,9 @@ func _present_windows_update_fallback(message: String) -> void:
 		_update_open_button.visible = true
 		_update_open_button.disabled = false
 		_update_open_button.grab_focus()
+	if _update_support_button != null and is_instance_valid(_update_support_button):
+		_update_support_button.visible = true
+		_update_support_button.disabled = false
 	if _update_now_button != null and is_instance_valid(_update_now_button):
 		_update_now_button.disabled = false
 	if _update_download_status_label != null and is_instance_valid(_update_download_status_label):
@@ -2677,6 +2900,20 @@ func _present_windows_update_fallback(message: String) -> void:
 func _powershell_string_literal(value: String) -> String:
 	return "'%s'" % value.replace("'", "''")
 
+func _parse_sha256_digest(raw_digest: String) -> String:
+	var normalized := raw_digest.strip_edges().to_lower()
+	if normalized.begins_with("sha256:"):
+		normalized = normalized.trim_prefix("sha256:")
+	if normalized.length() != 64:
+		return ""
+	for index in range(normalized.length()):
+		var code := normalized.unicode_at(index)
+		var is_digit := code >= 48 and code <= 57
+		var is_lower_hex := code >= 97 and code <= 102
+		if not is_digit and not is_lower_hex:
+			return ""
+	return normalized
+
 func _on_auto_update_failed(message: String) -> void:
 	_is_auto_updating = false
 	_write_update_log(
@@ -2687,6 +2924,9 @@ func _on_auto_update_failed(message: String) -> void:
 		_automatic_update_required = false
 		_present_windows_update_fallback(message)
 		return
+	if _update_support_button != null and is_instance_valid(_update_support_button):
+		_update_support_button.visible = true
+		_update_support_button.disabled = false
 	if _update_now_button != null and is_instance_valid(_update_now_button):
 		_update_now_button.disabled = false
 	if _update_download_status_label != null and is_instance_valid(_update_download_status_label):
@@ -2726,6 +2966,9 @@ func _extract_update_archive_to_staging(zip: ZIPReader, staging_root: String) ->
 		var archive_path := archive_path_raw.replace("\\", "/")
 		if archive_path.is_empty() or archive_path.ends_with("/"):
 			continue
+		if not _is_safe_update_archive_path(archive_path):
+			_write_update_log("archive_rejected unsafe_path=%s" % archive_path)
+			return []
 		var output_path := staging_root.path_join(archive_path)
 		if DirAccess.make_dir_recursive_absolute(output_path.get_base_dir()) != OK:
 			return []
@@ -2740,6 +2983,15 @@ func _extract_update_archive_to_staging(zip: ZIPReader, staging_root: String) ->
 		extracted_files.append(archive_path)
 	return extracted_files
 
+func _is_safe_update_archive_path(archive_path: String) -> bool:
+	var normalized := archive_path.replace("\\", "/").strip_edges()
+	if normalized.is_empty() or normalized.begins_with("/") or normalized.contains(":"):
+		return false
+	for segment in normalized.split("/"):
+		if segment.is_empty() or segment == "." or segment == "..":
+			return false
+	return true
+
 func _align_staged_windows_build_names(
 	staging_root: String,
 	extracted_files: Array[String],
@@ -2749,9 +3001,15 @@ func _align_staged_windows_build_names(
 		return false
 	var staged_executable := ""
 	for relative_path in extracted_files:
-		if relative_path.to_lower().ends_with(".exe"):
+		if relative_path.get_file().to_lower() == target_exe_name.to_lower():
 			staged_executable = relative_path
 			break
+	if staged_executable.is_empty():
+		for relative_path in extracted_files:
+			var lower_name := relative_path.get_file().to_lower()
+			if lower_name.ends_with(".exe") and not lower_name.contains("console"):
+				staged_executable = relative_path
+				break
 	if staged_executable.is_empty():
 		return false
 
@@ -4074,7 +4332,7 @@ func _on_lobby_login_succeeded(session_id: String, reconnect_token: String, play
 		return
 	if not active_match_info.is_empty():
 		if _has_pending_new_seek_action():
-			_clear_pending_new_seek_actions()
+			_clear_pending_new_seek_actions(true)
 			_save_active_match_resume(active_match_info)
 			status_label.text = "Your active match is still running. Rejoining it instead of opening another seek."
 			call_deferred("_resume_active_match_from_lobby", active_match_info)
@@ -4134,7 +4392,7 @@ func _on_lobby_reconnect_succeeded(
 		return
 	if not active_match_info.is_empty():
 		if _has_pending_new_seek_action():
-			_clear_pending_new_seek_actions()
+			_clear_pending_new_seek_actions(true)
 			_save_active_match_resume(active_match_info)
 			status_label.text = "Your active match is still running. Rejoining it instead of opening another seek."
 			call_deferred("_resume_active_match_from_lobby", active_match_info)
@@ -4314,8 +4572,10 @@ func _on_local_match_assigned(match_info: Dictionary) -> void:
 	call_deferred("_launch_host_match_after_lobby_handoff", match_info)
 
 func _on_remote_match_assigned(match_info: Dictionary) -> void:
-	if _match_launch_queued:
+	var is_manual_rejoin_assignment := _is_manual_rejoin_assignment(match_info)
+	if _match_launch_queued and not is_manual_rejoin_assignment:
 		return
+	_manual_rejoin_room_id = ""
 	_pending_rematch_room_id = ""
 	_pending_rematch_ready_submitted = false
 	_match_launch_queued = true
@@ -4384,6 +4644,7 @@ func _uses_dedicated_match_server(match_info: Dictionary) -> bool:
 
 func _on_lobby_room_error(message: String) -> void:
 	_write_smoke_trace("lobby_room_error %s" % message)
+	_manual_rejoin_room_id = ""
 	status_label.text = message
 	_set_friends_status(message)
 	if _should_prompt_for_account_recovery(message):
@@ -4396,6 +4657,7 @@ func _on_lobby_status_changed(message: String) -> void:
 
 func _on_lobby_connection_failed(message: String) -> void:
 	_write_smoke_trace("lobby_connection_failed %s" % message)
+	_manual_rejoin_room_id = ""
 	_set_connected_server_version("")
 	_seek_list_request_pending = false
 	_seek_auto_refresh_elapsed = 0.0
@@ -4412,6 +4674,7 @@ func _on_lobby_connection_failed(message: String) -> void:
 
 func _on_lobby_disconnected() -> void:
 	_write_smoke_trace("lobby_disconnected")
+	_manual_rejoin_room_id = ""
 	_set_connected_server_version("")
 	_seek_list_request_pending = false
 	_seek_auto_refresh_elapsed = 0.0
@@ -4559,13 +4822,22 @@ func _has_pending_new_seek_action() -> bool:
 		or not _pending_rejoin_room_id.is_empty() \
 		or not _pending_observe_room_id.is_empty()
 
-func _clear_pending_new_seek_actions() -> void:
+func _clear_pending_new_seek_actions(preserve_manual_rejoin: bool = false) -> void:
 	_pending_host_room_creation = false
 	_pending_room_is_ranked = true
 	_pending_join_room_id = ""
 	_pending_rejoin_room_id = ""
+	if not preserve_manual_rejoin:
+		_manual_rejoin_room_id = ""
 	_pending_observe_room_id = ""
 	_pending_local_lobby_launch_on_connect_failure = false
+
+func _is_manual_rejoin_assignment(match_info: Dictionary) -> bool:
+	var assigned_room_id := str(match_info.get("room_id", "")).strip_edges().to_upper()
+	return (
+		not _manual_rejoin_room_id.is_empty()
+		and assigned_room_id == _manual_rejoin_room_id
+	)
 
 func _should_wait_for_rematch_close(active_match_info: Dictionary) -> bool:
 	if _pending_rematch_room_id.is_empty() or active_match_info.is_empty():
@@ -4632,6 +4904,7 @@ func _cleanup_lobby(clear_session: bool) -> void:
 		_pending_join_room_code = ""
 		_pending_join_room_id = ""
 		_pending_rejoin_room_id = ""
+		_manual_rejoin_room_id = ""
 		_pending_observe_room_id = ""
 		_current_lobby_ip = ""
 		_is_local_lobby_host = false
@@ -5815,8 +6088,10 @@ func _on_resume_match_pressed() -> void:
 		status_label.text = "Could not restore the saved lobby session."
 
 func _resume_active_match_from_lobby(match_info: Dictionary) -> void:
-	if match_info.is_empty() or _match_launch_queued:
+	var is_manual_rejoin_assignment := _is_manual_rejoin_assignment(match_info)
+	if match_info.is_empty() or (_match_launch_queued and not is_manual_rejoin_assignment):
 		return
+	_manual_rejoin_room_id = ""
 	_match_launch_queued = true
 	_cleanup_lobby(false)
 	call_deferred(

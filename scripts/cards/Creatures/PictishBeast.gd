@@ -13,7 +13,7 @@ func _init() -> void:
 	speed = 1
 	resilience = 11
 	strength = 10
-	ability_text = "Mana Boon ([b]Reveal[/b]): Gain 2 mana for every \"Pictish Beast\" on your field or in your graveyard."
+	ability_text = "Mana Boon ([b]Reveal[/b]): Gain 2 mana for every face-up \"Pictish Beast\" on your field or every \"Pictish Beast\" in your graveyard."
 	flavor_text = ""
 	culture = "Triskelion"
 	artist = "Ricardo Zoppello"
@@ -55,12 +55,18 @@ func _count_mana_boon_targets(controller: Player) -> int:
 	var total := 0
 	for zone in controller.frontline_zones + controller.reserve_zones:
 		for card in zone.cards:
-			if _is_pictish_beast(card):
+			if _is_face_up_pictish_beast(card):
 				total += 1
 	for card in controller.graveyard_zone.cards:
 		if _is_pictish_beast(card):
 			total += 1
 	return total
+
+func _is_face_up_pictish_beast(card: Card) -> bool:
+	return _is_pictish_beast(card) \
+		and not card.is_face_down \
+		and not card.is_stealth \
+		and not card.is_prepared
 
 func _is_pictish_beast(card: Card) -> bool:
 	return card != null \

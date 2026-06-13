@@ -13,7 +13,7 @@ func _init() -> void:
 	speed = 3
 	culture = "Norse"
 	card_types = ["Hex", "Permanent", "Binding", "Targeting"]
-	ability_text = "Choose a creature. It can't attack, and its controller loses 7 followers at the start of their turns. This remains on the field as long as its target does."
+	ability_text = "Choose a face-up creature. It can't attack, and its controller loses 7 followers at the start of their turns. This remains on the field as long as its target does."
 	art_path = "res://images/card_art/hexes/Dromi(web).jpg"
 	artist = "Ricardo Zoppello"
 
@@ -23,6 +23,8 @@ func can_attach_to_target(_game_manager: GameManager, target: Card) -> bool:
 	if target.card_type != Card.CardType.CREATURE:
 		return false
 	if target.is_god:
+		return false
+	if target.is_face_down or target.is_prepared or target.is_stealth:
 		return false
 	return target.current_zone != null and target.current_zone.is_board_zone()
 

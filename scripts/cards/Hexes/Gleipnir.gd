@@ -15,7 +15,7 @@ func _init() -> void:
 	speed = 4
 	culture = "Norse"
 	card_types = ["Hex", "Permanent", "Binding", "Legendary", "Targeting"]
-	ability_text = "Choose a creature; it cannot attack or intercept and its abilities are negated. This card remains on the field for as long as its target does."
+	ability_text = "Choose a face-up creature; it cannot attack or intercept and its abilities are negated. This card remains on the field for as long as its target does."
 	art_path = ART_PATH
 	artist = "Lorinda Tomko"
 
@@ -25,6 +25,8 @@ func can_attach_to_target(_game_manager: GameManager, target: Card) -> bool:
 	if target.card_type != Card.CardType.CREATURE:
 		return false
 	if target.is_god:
+		return false
+	if target.is_face_down or target.is_prepared or target.is_stealth:
 		return false
 	return target.current_zone != null and target.current_zone.is_board_zone()
 

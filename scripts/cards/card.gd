@@ -494,6 +494,34 @@ func is_revealed_to_all() -> bool:
 func is_revealed_in_hand() -> bool:
 	return has_status_effect("revealed_in_hand")
 
+func is_publicly_identified(game_manager: GameManager = null) -> bool:
+	if is_revealed_in_hand() or is_revealed_to_all():
+		return true
+	if self is PowerCard and (self as PowerCard).is_publicly_revealed:
+		return true
+	for equipment_card in equipment:
+		if equipment_card != null \
+				and equipment_card.equipped_on == self \
+				and equipment_card.current_zone == current_zone:
+			return true
+
+	var identifying_game_manager := game_manager
+	if identifying_game_manager == null and card_owner != null:
+		identifying_game_manager = card_owner.game_manager
+	if identifying_game_manager == null:
+		return false
+	for player in identifying_game_manager.players:
+		if player == null:
+			continue
+		for zone in player.frontline_zones + player.reserve_zones:
+			if zone == null:
+				continue
+			for zone_card in zone.cards:
+				var binding := zone_card as PermanentHexCard
+				if binding != null and binding.attached_target == self:
+					return true
+	return false
+
 func temporarily_reveal_until_end_of_turn(
 	current_turn: int,
 	source: String,

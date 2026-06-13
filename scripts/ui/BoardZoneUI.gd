@@ -3261,6 +3261,42 @@ func _add_debuff_affordances(overlay: Control, card: Card) -> void:
 
 		badge_right -= DEBUFF_BADGE_SIZE + DEBUFF_AFFORDANCE_GAP
 
+func _is_card_publicly_identified(card: Card) -> bool:
+	return card != null and card.is_publicly_identified(game_manager)
+
+func _add_publicly_identified_card_affordance(overlay: Control, card: Card) -> void:
+	if overlay == null or card == null:
+		return
+	if not _is_card_publicly_identified(card):
+		return
+	var viewer := _get_viewer_player()
+	if viewer == null or card.card_owner != viewer:
+		return
+
+	var preview := TextureRect.new()
+	preview.texture = MOPSUS_ABILITY_BADGE_TEXTURE
+	preview.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	preview.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	preview.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	preview.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	preview.offset_left = 2.0
+	preview.offset_top = 2.0
+	preview.offset_right = -2.0
+	preview.offset_bottom = -2.0
+
+	var badge_right := -6.0
+	if card.card_type == Card.CardType.CREATURE and not card.is_god:
+		var debuff_entries := _get_debuff_affordance_entries(card)
+		badge_right -= float(debuff_entries.size()) * (DEBUFF_BADGE_SIZE + DEBUFF_AFFORDANCE_GAP)
+	var badge_top := 32.0 if _is_card_targeted_on_stack(card) else _get_badge_row_top()
+	var badge := DebuffBadgeScript.create(preview)
+	badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	badge.offset_left = badge_right - DEBUFF_BADGE_SIZE
+	badge.offset_top = badge_top
+	badge.offset_right = badge_right
+	badge.offset_bottom = badge_top + DEBUFF_BADGE_SIZE
+	overlay.add_child(badge)
+
 func _add_boon_affordances(overlay: Control, card: Card) -> void:
 	if overlay == null or card == null or card.card_type != Card.CardType.CREATURE or card.is_god:
 		return
@@ -4840,6 +4876,7 @@ func _refresh_display() -> void:
 		_add_token_badge(card_overlay, card, Control.PRESET_TOP_LEFT, 6, 28, 66, 46)
 		_add_turn_countdown_badge(card_overlay, card)
 		_add_prepared_magical_mana_badge(card_overlay, card)
+		_add_publicly_identified_card_affordance(card_overlay, card)
 		if card.is_power:
 			_add_power_cost_badge(card_overlay, card)
 		_add_e2_abzu_badges(card_overlay, card)
