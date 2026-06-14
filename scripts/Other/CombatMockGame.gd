@@ -17,6 +17,11 @@ const GiantMasterArchitectCursorSource = preload("res://images/ui/cursors/GiantM
 const HermesCursorSource = preload("res://images/ui/cursors/SpeedHermesCursor.png")
 const GuanYuCursorSource = preload("res://images/ui/cursors/GuanYuCursor.png")
 const GoodFortuneCursorSource = preload("res://images/ui/cursors/Mermaid Tail Cursor.png")
+const GawainAbilityBadgeCursorSource = preload("res://images/ability_badges/GawainHealingHandsBadge.png")
+const GuduPriestAbilityBadgeCursorSource = preload("res://images/ability_badges/GuduPriestBadge.png")
+const HariiShamanAbilityBadgeCursorSource = preload("res://images/ability_badges/HariiShamanBadge.png")
+const LamashatuAbilityBadgeCursorSource = preload("res://images/ability_badges/LamashatuSuckleBadge.png")
+const NimuePresentAbilityBadgeCursorSource = preload("res://images/ability_badges/NimuePresentBadge.png")
 const AncientPyreCursorSource = preload("res://images/ui/cursors/PyreCursor.png")
 const TezTitlacauanCursorSource = preload("res://images/ui/cursors/SlaveCollar Cursor.png")
 const AnointingStatueCursorSource = preload("res://scripts/Other/Annointing Statue Cursor.png")
@@ -512,6 +517,8 @@ var _giant_master_architect_cursor_texture: Texture2D = null
 var _hermes_cursor_texture: Texture2D = null
 var _guan_yu_cursor_texture: Texture2D = null
 var _good_fortune_cursor_texture: Texture2D = null
+var _ability_badge_cursor_textures: Dictionary = {}
+var _ability_badge_cursor_target_heights: Dictionary = {}
 var _ancient_pyre_cursor_texture: Texture2D = null
 var _tez_titlacauan_cursor_texture: Texture2D = null
 var _anointing_statue_cursor_texture: Texture2D = null
@@ -653,6 +660,9 @@ const GUAN_YU_CURSOR_TARGET_HEIGHT := 96
 const GUAN_YU_CURSOR_HOTSPOT_RATIO := Vector2(0.95, 0.94)
 const GOOD_FORTUNE_CURSOR_TARGET_HEIGHT := 108
 const GOOD_FORTUNE_CURSOR_HOTSPOT_RATIO := Vector2(0.50, 0.79)
+const ABILITY_BADGE_CURSOR_TARGET_HEIGHT := 96
+const ABILITY_BADGE_CURSOR_HOTSPOT_RATIO := Vector2(0.50, 0.50)
+const ABILITY_BADGE_CURSOR_MODE_PREFIX := "ability_badge_"
 const ANCIENT_PYRE_CURSOR_TARGET_HEIGHT := 96
 const ANCIENT_PYRE_CURSOR_HOTSPOT_RATIO := Vector2(0.50, 0.12)
 const TEZ_TITLACAUAN_CURSOR_TARGET_HEIGHT := 108
@@ -2015,14 +2025,19 @@ func _is_silence_or_mute_targeting_source(card: Card) -> bool:
 	var ability_text_value := String(card.ability_text).to_lower()
 	return ability_text_value.contains("silence") or ability_text_value.contains("mute")
 
-func _is_support_selection_cursor_source(card: Card) -> bool:
-	return card is Exorcism \
-		or card is FifaTheMagicalArrow \
-		or card is Gawain \
-		or card is GududPriest \
-		or card is HariiShamanScript \
-		or card is Lamashatu \
-		or card is SeventhSageUtuabzu
+func _uses_good_fortune_cursor_fallback(card: Card) -> bool:
+	return card is FifaTheMagicalArrow
+
+func _get_ability_badge_cursor_mode_for_source(card: Card) -> String:
+	if card is Gawain:
+		return "ability_badge_gawain"
+	if card is GududPriest:
+		return "ability_badge_gudu_priest"
+	if card is HariiShamanScript:
+		return "ability_badge_harii_shaman"
+	if card is Lamashatu:
+		return "ability_badge_lamashatu"
+	return ""
 
 func _is_hostile_selection_cursor_source(card: Card) -> bool:
 	return card is AphroditeAreia \
@@ -2036,6 +2051,9 @@ func _is_hostile_selection_cursor_source(card: Card) -> bool:
 		or card is RunicSpellbreaker
 
 func _get_selection_cursor_mode_for_source(card: Card) -> String:
+	var ability_badge_cursor_mode := _get_ability_badge_cursor_mode_for_source(card)
+	if ability_badge_cursor_mode != "":
+		return ability_badge_cursor_mode
 	if _is_freyja_normal_god(card):
 		return "freyja_tabby"
 	if card is HariiJarl:
@@ -2084,7 +2102,7 @@ func _get_selection_cursor_mode_for_source(card: Card) -> String:
 		return "terror"
 	if card is WingedLionScript:
 		return "hermes"
-	if _is_support_selection_cursor_source(card):
+	if _uses_good_fortune_cursor_fallback(card):
 		return "good_fortune"
 	if _is_hostile_selection_cursor_source(card):
 		return "silence"
@@ -2275,6 +2293,11 @@ func _get_selection_cursor_mode() -> String:
 	return ""
 
 func _get_cursor_mode_target_height(cursor_mode: String) -> int:
+	if cursor_mode.begins_with(ABILITY_BADGE_CURSOR_MODE_PREFIX):
+		return UIArtScalerScript.get_board_cursor_target_height(
+			ABILITY_BADGE_CURSOR_TARGET_HEIGHT,
+			PREFERRED_BOARD_ZONE_EXTENT
+		)
 	match cursor_mode:
 		"sacrifice":
 			return UIArtScalerScript.get_board_cursor_target_height(SACRIFICE_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
@@ -2566,6 +2589,41 @@ func _apply_good_fortune_cursor() -> bool:
 		Input.set_custom_mouse_cursor(_good_fortune_cursor_texture, cursor_shape, hotspot)
 	return true
 
+func _get_ability_badge_cursor_source(cursor_mode: String) -> Texture2D:
+	match cursor_mode:
+		"ability_badge_gawain":
+			return GawainAbilityBadgeCursorSource
+		"ability_badge_gudu_priest":
+			return GuduPriestAbilityBadgeCursorSource
+		"ability_badge_harii_shaman":
+			return HariiShamanAbilityBadgeCursorSource
+		"ability_badge_lamashatu":
+			return LamashatuAbilityBadgeCursorSource
+		"ability_badge_nimue_present":
+			return NimuePresentAbilityBadgeCursorSource
+	return null
+
+func _apply_ability_badge_cursor(cursor_mode: String) -> bool:
+	var source_texture := _get_ability_badge_cursor_source(cursor_mode)
+	if source_texture == null:
+		return false
+	var target_height := UIArtScalerScript.get_board_cursor_target_height(
+		ABILITY_BADGE_CURSOR_TARGET_HEIGHT,
+		PREFERRED_BOARD_ZONE_EXTENT
+	)
+	var cursor_texture := _ability_badge_cursor_textures.get(cursor_mode, null) as Texture2D
+	if cursor_texture == null or int(_ability_badge_cursor_target_heights.get(cursor_mode, 0)) != target_height:
+		cursor_texture = UIArtScalerScript.build_cursor_texture(source_texture, target_height)
+		_ability_badge_cursor_textures[cursor_mode] = cursor_texture
+		_ability_badge_cursor_target_heights[cursor_mode] = target_height
+	if cursor_texture == null:
+		return false
+
+	var hotspot := UIArtScalerScript.get_cursor_hotspot(cursor_texture, ABILITY_BADGE_CURSOR_HOTSPOT_RATIO)
+	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
+		Input.set_custom_mouse_cursor(cursor_texture, cursor_shape, hotspot)
+	return true
+
 func _apply_ancient_pyre_cursor() -> bool:
 	var target_height := UIArtScalerScript.get_board_cursor_target_height(ANCIENT_PYRE_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 	if _ancient_pyre_cursor_texture == null or _ancient_pyre_cursor_target_height != target_height:
@@ -2819,6 +2877,14 @@ func _sync_sacrifice_cursor() -> void:
 	var cursor_mode := _get_selection_cursor_mode()
 	var target_height := _get_cursor_mode_target_height(cursor_mode)
 	if cursor_mode == _active_selection_cursor_mode and target_height == _active_selection_cursor_target_height:
+		return
+
+	if cursor_mode.begins_with(ABILITY_BADGE_CURSOR_MODE_PREFIX):
+		if _apply_ability_badge_cursor(cursor_mode):
+			_active_selection_cursor_mode = cursor_mode
+			_active_selection_cursor_target_height = target_height
+		else:
+			_restore_default_selection_cursor()
 		return
 
 	if cursor_mode == "guan_yu":
@@ -17308,7 +17374,7 @@ func _show_nimue_present_prompt(card: NimueScript) -> void:
 		targets,
 		on_choose_present_target,
 		on_cancel_present_target,
-		"good_fortune"
+		"ability_badge_nimue_present"
 	)
 	_set_action_label_text(card.card_name + ": choose Equipment in your graveyard to Present.")
 	update_ui()
