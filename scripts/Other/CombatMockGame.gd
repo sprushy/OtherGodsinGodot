@@ -636,6 +636,7 @@ const PREFERRED_BOARD_ZONE_EXTENT := UIArtScalerScript.DEFAULT_BOARD_ART_REFEREN
 const HAND_OVERLAY_SIDE_PADDING := 18.0
 const HAND_OVERLAY_BOTTOM_PADDING := -2.0
 const HAND_OVERLAY_Z_INDEX := HOVER_PREVIEW_Z_INDEX + 5
+const CONTEXT_MENU_Z_INDEX := HAND_OVERLAY_Z_INDEX + 120
 const LEFT_PANEL_MIN_WIDTH := 220.0
 const BOARD_RIGHT_NUDGE := 10.0
 const BOARD_HORIZONTAL_OFFSET := -2.0
@@ -11499,8 +11500,6 @@ func _on_hand_card_right_clicked(card: Card) -> void:
 	style.corner_radius_top_left = 4; style.corner_radius_top_right = 4
 	style.corner_radius_bottom_left = 4; style.corner_radius_bottom_right = 4
 	panel.add_theme_stylebox_override("panel", style)
-	panel.z_index = 200
-
 	var vbox := VBoxContainer.new()
 	vbox.add_theme_constant_override("separation", 4)
 	panel.add_child(vbox)
@@ -11556,7 +11555,7 @@ func _show_hand_context_menu_panel(panel: Control, card: Card) -> void:
 	panel.set_meta("context_card_uid", card.uid if card != null else "")
 	_context_menu = panel
 	add_child(panel)
-	_promote_transient_ui(panel, HAND_OVERLAY_Z_INDEX + 120)
+	_promote_transient_ui(panel, CONTEXT_MENU_Z_INDEX)
 	panel.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
 	call_deferred("_position_hand_context_menu_panel", panel, card)
 
@@ -12302,8 +12301,6 @@ func _on_god_right_clicked(card: Card) -> void:
 	style.corner_radius_bottom_left = 4
 	style.corner_radius_bottom_right = 4
 	panel.add_theme_stylebox_override("panel", style)
-	panel.z_index = TRANSIENT_UI_Z_INDEX + 5
-
 	var vbox := VBoxContainer.new()
 	vbox.add_theme_constant_override("separation", 4)
 	panel.add_child(vbox)
@@ -12337,7 +12334,7 @@ func _on_god_right_clicked(card: Card) -> void:
 
 	_context_menu = panel
 	add_child(panel)
-	_promote_transient_ui(panel)
+	_promote_transient_ui(panel, CONTEXT_MENU_Z_INDEX)
 	panel.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
 	var mouse_pos := get_global_mouse_position()
 	panel.global_position = mouse_pos
@@ -13513,6 +13510,38 @@ func _mark_reveal_auto_submit_pending(interaction_type: String, source_uid: Stri
 	_pending_reveal_auto_submit_keys[key] = true
 	return true
 
+func _clear_reveal_auto_submit_keys_for_source(interaction_type: String, source_uid: String) -> void:
+	var prefix := "%s:%s:" % [
+		interaction_type.strip_edges(),
+		source_uid.strip_edges(),
+	]
+	for key in _pending_reveal_auto_submit_keys.keys():
+		if str(key).begins_with(prefix):
+			_pending_reveal_auto_submit_keys.erase(key)
+
+func _clear_matching_reveal_click_selection(source_uid: String) -> void:
+	if match_manager == null or not _has_pending_click_selection():
+		return
+	var pending_source := match_manager.pending_click_selection_source
+	if pending_source == null or str(pending_source.uid).strip_edges() != source_uid.strip_edges():
+		return
+	_clear_pending_click_selection()
+
+func _clear_reveal_auto_submit_for_command(command: Dictionary) -> void:
+	var command_type := str(command.get("type", "")).strip_edges()
+	var interaction_type := ""
+	match command_type:
+		"lailoken_reveal_choice":
+			interaction_type = "lailoken_reveal"
+		"masmassu_priest_reveal_choice":
+			interaction_type = "masmassu_priest_reveal"
+	if interaction_type == "":
+		return
+	_clear_reveal_auto_submit_keys_for_source(
+		interaction_type,
+		str(command.get("source_uid", ""))
+	)
+
 func _resume_combat_reveal_after_local_choice(source_card: Card) -> void:
 	if match_manager == null or source_card == null:
 		return
@@ -13530,6 +13559,7 @@ func _show_lailoken_reveal_prompt(card: Lailoken, prompt_targets: Array = []) ->
 			return null
 		return game_manager.get_card_by_uid(source_uid) as Lailoken
 	if current_targets.is_empty():
+		_clear_matching_reveal_click_selection(source_uid)
 		if not _mark_reveal_auto_submit_pending("lailoken_reveal", source_uid, ""):
 			return
 		if _submit_prompt_choice_command({
@@ -13544,6 +13574,7 @@ func _show_lailoken_reveal_prompt(card: Lailoken, prompt_targets: Array = []) ->
 	if current_targets.size() == 1:
 		var target: Card = current_targets[0]
 		var target_uid: String = str(target.uid).strip_edges()
+		_clear_matching_reveal_click_selection(source_uid)
 		if not _mark_reveal_auto_submit_pending("lailoken_reveal", source_uid, target_uid):
 			return
 		var resolve_single_target := func() -> void:
@@ -13625,6 +13656,7 @@ func _show_masmassu_priest_reveal_prompt(card, prompt_targets: Array = []) -> vo
 			return current_card
 		return null
 	if current_targets.is_empty():
+		_clear_matching_reveal_click_selection(source_uid)
 		if not _mark_reveal_auto_submit_pending("masmassu_priest_reveal", source_uid, ""):
 			return
 		if _submit_prompt_choice_command({
@@ -17008,8 +17040,6 @@ func _on_creature_right_clicked(card: Card) -> void:
 	style.corner_radius_top_left = 4; style.corner_radius_top_right = 4
 	style.corner_radius_bottom_left = 4; style.corner_radius_bottom_right = 4
 	panel.add_theme_stylebox_override("panel", style)
-	panel.z_index = 200
-
 	var vbox := VBoxContainer.new()
 	vbox.add_theme_constant_override("separation", 4)
 	panel.add_child(vbox)
@@ -17136,7 +17166,7 @@ func _on_creature_right_clicked(card: Card) -> void:
 
 	_context_menu = panel
 	add_child(panel)
-	_promote_transient_ui(panel)
+	_promote_transient_ui(panel, CONTEXT_MENU_Z_INDEX)
 	# Position near mouse, anchored to top-left
 	var mp := get_global_mouse_position()
 	panel.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
@@ -23611,6 +23641,7 @@ func _on_match_move_validated(move: Dictionary) -> void:
 			elif not _is_networked_client and authoritative_priority:
 				_schedule_priority_recovery_check()
 		"durinn_secondborn_choice", "first_sage_adapa_choice", "third_sage_enmedugga_choice", "fourth_sage_enmegalamma_choice", "sixth_sage_an_enlilda_choice", "lailoken_reveal_choice", "masmassu_priest_reveal_choice", "rally_the_troops_choice", "terror_impact_choice", "fenrir_devour_choice", "gawain_healing_hands_choice", "tatzelwurm_dragon_heart_choice", "byggvir_reveal_choice", "harii_jarl_impact_choice", "gala_tura_destroyed_choice", "kur_jara_tree_of_life_choice", "hunting_tactics_choice", "foolish_optimism_choice", "blessed_knights_choice", "tezcatlipoca_active_titlacauan_choice", "freyja_active_open_sessrumnir_choice", "mummu_entropy_choice", "nusku_active_core_flame_choice", "nusku_well_of_fire_choice", "apollyons_demiurge_choice", "habrok_breakout_choice":
+			_clear_reveal_auto_submit_for_command(move)
 			_apply_prompt_choice_feedback()
 			return
 	update_ui()
@@ -23684,12 +23715,14 @@ func _apply_prompt_choice_feedback() -> void:
 func _on_match_move_failed(reason: String) -> void:
 	_clear_pending_priority_response_target_selection()
 	_clear_pending_priority_response_submission()
+	_pending_reveal_auto_submit_keys.clear()
 	_set_action_label_text(reason)
 	update_ui()
 
 func _on_game_input_submission_rejected(reason: String) -> void:
 	_clear_pending_priority_response_target_selection()
 	_clear_pending_priority_response_submission()
+	_pending_reveal_auto_submit_keys.clear()
 	if reason.strip_edges().is_empty():
 		return
 	_set_action_label_text(reason)

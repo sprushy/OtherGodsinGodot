@@ -579,11 +579,14 @@ func is_silenced() -> bool:
 	return is_muted and mute_turns_remaining < 0
 
 func abilities_suppressed() -> bool:
+	return abilities_suppressed_by_effects() \
+		or _abilities_disabled_by_hidden_state()
+
+func abilities_suppressed_by_effects() -> bool:
 	return is_enslaved() \
 		or is_petrified() \
 		or is_muted \
-		or has_status_effect(ABILITY_NEGATED_STATUS) \
-		or _abilities_disabled_by_hidden_state()
+		or has_status_effect(ABILITY_NEGATED_STATUS)
 
 func post_field_abilities_suppressed() -> bool:
 	# Silence and generic ability negation only apply while the card remains in play.

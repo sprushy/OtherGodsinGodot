@@ -45,7 +45,12 @@ func _on_move_validated(move: Dictionary) -> void:
 	if move.get("type", "") in ["end_turn", "intercept_decision", "priority_pass"]:
 		return
 	_broadcast_full_state_for_move(move)
-	if not _move_completes_reveal_interaction(move):
+	if _move_completes_reveal_interaction(move):
+		# move_validated fires before MatchManager consumes the completed prompt.
+		# Wait until then so any other simultaneous reveal prompts are re-sent
+		# without also resurrecting the prompt that was just answered.
+		call_deferred("_rebroadcast_pending_reveal_interactions")
+	else:
 		_rebroadcast_pending_reveal_interactions()
 
 func _on_action_resolved(action: CardAction) -> void:

@@ -1641,6 +1641,9 @@ func _emit_next_pending_humbaba_prompt() -> bool:
 		if humbaba == null:
 			pending_humbaba_prompt_uids.remove_at(0)
 			continue
+		if humbaba.abilities_suppressed_by_effects():
+			pending_humbaba_prompt_uids.remove_at(0)
+			continue
 		humbaba.queue_augury_trigger_suppression()
 		var prompt_targets := humbaba.get_augury_cards(game_manager)
 		if prompt_targets.is_empty():
