@@ -54,7 +54,7 @@ func activate(game_manager: GameManager, _target: Card = null) -> void:
 	var eligible_choices := get_eligible_well_of_fire_choices(milled_cards)
 	var opponent := game_manager.get_opponent(card_owner) if game_manager != null else null
 
-	if eligible_choices.size() == 1 or opponent == null:
+	if opponent == null:
 		_complete_well_of_fire(game_manager, choose_opponent_pick(eligible_choices), milled_cards.size())
 		return
 

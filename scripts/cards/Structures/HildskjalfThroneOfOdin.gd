@@ -96,11 +96,8 @@ func activate(game_manager: GameManager, target = null) -> void:
 	var deck_owner := _parse_deck_owner(game_manager, target)
 	var valid_targets := get_top_cards_for_deck_owner(game_manager, deck_owner) if deck_owner != null else get_valid_targets(game_manager)
 	if chosen_card == null:
-		if valid_targets.size() == 1:
-			chosen_card = valid_targets[0]
-		else:
-			game_manager.note_player_feedback("%s fizzles: choose a card from the selected deck." % card_name)
-			return
+		game_manager.note_player_feedback("%s fizzles: choose a card from the selected deck." % card_name)
+		return
 	elif chosen_card not in valid_targets:
 		game_manager.note_player_feedback("%s fizzles: that card is no longer a valid choice." % card_name)
 		return

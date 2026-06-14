@@ -495,6 +495,8 @@ func is_revealed_in_hand() -> bool:
 	return has_status_effect("revealed_in_hand")
 
 func is_publicly_identified(game_manager: GameManager = null) -> bool:
+	if current_zone != null and current_zone.zone_type in [Zone.ZoneType.GRAVEYARD, Zone.ZoneType.ABYSS]:
+		return false
 	if is_revealed_in_hand() or is_revealed_to_all():
 		return true
 	if self is PowerCard and (self as PowerCard).is_publicly_revealed:
@@ -933,6 +935,9 @@ func add_status_effect(
 
 func remove_status_effects_by_name(status_name: String) -> void:
 	var previous_status_count := active_statuses.size()
+	_restore_removed_status_side_effects(active_statuses.filter(func(s):
+		return s.get("name", "") == status_name
+	))
 	active_statuses = active_statuses.filter(func(s):
 		return s.get("name", "") != status_name
 	)
@@ -942,6 +947,11 @@ func remove_status_effects_by_name(status_name: String) -> void:
 
 func remove_status_effects_from_source_card(source_card: Card, status_name: String = "") -> void:
 	var previous_status_count := active_statuses.size()
+	_restore_removed_status_side_effects(active_statuses.filter(func(s):
+		var same_source: bool = s.get("source_card", null) == source_card
+		var same_status: bool = status_name == "" or s.get("name", "") == status_name
+		return same_source and same_status
+	))
 	active_statuses = active_statuses.filter(func(s):
 		var same_source: bool = s.get("source_card", null) == source_card
 		var same_status: bool = status_name == "" or s.get("name", "") == status_name
@@ -1016,6 +1026,7 @@ func wake_up() -> void:
 
 func clear_all_effects() -> void:
 	var had_changes := not active_buffs.is_empty() or not active_statuses.is_empty()
+	_restore_removed_status_side_effects(active_statuses)
 	active_buffs.clear()
 	active_statuses.clear()
 	_sync_status_flags()
@@ -1024,6 +1035,39 @@ func clear_all_effects() -> void:
 
 func clear_board_leave_state() -> void:
 	clear_all_effects()
+	is_prepared = false
+	is_face_down = false
+	is_stealth = false
+	is_muted = false
+	mute_turns_remaining = 0
+	_mute_applied_owner_turn_number = -1
+	_was_muted_last_check = false
+	is_used = false
+	summoned_this_turn = false
+	summoned_after_first_attack_this_turn = false
+	reset_creature_action_state()
+	if self is PowerCard:
+		(self as PowerCard).is_publicly_revealed = false
+	_emit_visual_state_changed()
+
+func _restore_removed_status_side_effects(statuses: Array) -> void:
+	for status_value in statuses:
+		var status := status_value as Dictionary
+		if status.is_empty() or status.get("restore_base_state_on_remove", false) != true:
+			continue
+		if status.has("original_card_type"):
+			card_type = int(status.get("original_card_type")) as CardType
+		if status.has("original_strength"):
+			strength = int(status.get("original_strength"))
+		if status.has("original_resilience"):
+			resilience = int(status.get("original_resilience"))
+		if status.has("original_speed"):
+			speed = int(status.get("original_speed"))
+		if status.has("original_card_types"):
+			var restored_card_types: Array[String] = []
+			for type_name in status.get("original_card_types", []):
+				restored_card_types.append(str(type_name))
+			card_types = restored_card_types
 
 func _sync_status_flags() -> void:
 	var sleep_status: Dictionary = {}

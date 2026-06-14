@@ -59,9 +59,14 @@ func activate(game_manager: GameManager, target: Card = null) -> void:
 		return
 	var viewer := game_manager.get_feedback_viewer()
 	var target_name := target.get_target_log_display_name(viewer)
-	game_manager.note_player_feedback("%s destroyed %s." % [card_name, target_name])
 	print("%s destroys %s." % [card_name, target.card_name])
-	game_manager.request_send_to_graveyard(target, Callable(), false, true)
+	game_manager.request_send_to_graveyard(target, func() -> void:
+		if game_manager.reached_public_destroyed_destination(target):
+			var destroyed_name := game_manager.get_resolved_destruction_log_name(target, viewer, target_name)
+			game_manager.note_player_feedback("%s destroyed %s." % [card_name, destroyed_name])
+		else:
+			game_manager.note_player_feedback("%s failed to destroy %s." % [card_name, target_name])
+	, false, true)
 
 func get_activation_failure_reason(game_manager: GameManager) -> String:
 	if game_manager == null:

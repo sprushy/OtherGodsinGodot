@@ -94,17 +94,18 @@ func begin_dalkhu_break_reveal(
 		card_owner.gain_mana(DEMON_SPIRIT_MANA_GAIN)
 		gained_bonus_mana = true
 	var on_destroy_complete := func() -> void:
-		var destroyed := target.current_zone == null or not target.current_zone.is_board_zone()
+		var destroyed := game_manager.reached_public_destroyed_destination(target)
 		if not destroyed:
 			if gained_bonus_mana:
 				finish.call("%s failed to destroy %s with Dalkhu Break, but gained %d mana from targeting a Demon or Spirit." % [card_name, target_name, DEMON_SPIRIT_MANA_GAIN])
 			else:
 				finish.call("%s failed to destroy %s with Dalkhu Break." % [card_name, target_name])
 			return
+		var destroyed_name := game_manager.get_resolved_destruction_log_name(target, viewer, target_name)
 		if gained_bonus_mana:
-			finish.call("%s destroyed %s with Dalkhu Break and gained %d mana from targeting a Demon or Spirit." % [card_name, target_name, DEMON_SPIRIT_MANA_GAIN])
+			finish.call("%s destroyed %s with Dalkhu Break and gained %d mana from targeting a Demon or Spirit." % [card_name, destroyed_name, DEMON_SPIRIT_MANA_GAIN])
 		else:
-			finish.call("%s destroyed %s with Dalkhu Break." % [card_name, target_name])
+			finish.call("%s destroyed %s with Dalkhu Break." % [card_name, destroyed_name])
 	game_manager.request_send_to_graveyard(
 		target,
 		on_destroy_complete,

@@ -2,6 +2,9 @@ extends CreatureCard
 class_name WolfCub
 
 const ART_PATH := "res://images/card_art/creatures/WolfCubEdit.png"
+const MATURATION_READY_STATUS := "wolf_cub_maturation_ready"
+
+var _maturation_ready: bool = false
 
 func _init() -> void:
 	super._init()
@@ -32,35 +35,85 @@ func on_turn_start(game_manager: GameManager) -> void:
 
 	var valid_targets := get_valid_maturation_targets()
 	if valid_targets.is_empty():
+		_set_maturation_ready(false)
 		game_manager.note_player_feedback("%s matured, but found no level 4 or lower Lupine in the deck." % card_name)
 		return
 
+	_set_maturation_ready(true)
+	var target_uids: Array[String] = []
+	for target in valid_targets:
+		if target != null:
+			target_uids.append(target.uid)
+	game_manager.decision_requested.emit(controller, "wolf_adolescent_maturation", {
+		"source_uid": uid,
+		"target_uids": target_uids,
+	})
+
+func can_offer_maturation(game_manager: GameManager) -> bool:
+	_sync_maturation_ready_state()
+	if game_manager == null or not _maturation_ready:
+		return false
+	var controller := get_controller()
+	if controller == null or controller != game_manager.current_player:
+		return false
+	if abilities_suppressed() or is_face_down or is_stealth:
+		return false
+	return current_zone != null and current_zone.is_board_zone()
+
+func resolve_maturation_choice(game_manager: GameManager, target: Card) -> String:
+	if game_manager == null or not can_offer_maturation(game_manager):
+		_set_maturation_ready(false)
+		return card_name + " cannot mature right now."
+	if target == null:
+		_set_maturation_ready(false)
+		return card_name + " stays a Wolf Cub."
+
+	var controller := get_controller()
+	if controller == null:
+		_set_maturation_ready(false)
+		return card_name + " has no controller for Maturation."
+	if target not in get_valid_maturation_targets():
+		_set_maturation_ready(false)
+		return "%s cannot mature into that Lupine." % card_name
+
 	var target_zone := current_zone
-	var chosen_target := valid_targets[0]
-	game_manager.request_send_to_graveyard(self, func() -> void:
-		if target_zone == null or not target_zone.cards.is_empty():
-			game_manager.note_player_feedback("%s matured, but there was no open lane for %s." % [
-				card_name,
-				chosen_target.card_name
-			])
-			return
-		var summoned := game_manager.summon_creature_without_cost(
-			controller,
-			chosen_target,
-			target_zone,
-			Card.CreatureMode.AGGRESSIVE
-		)
-		if summoned:
-			game_manager.note_player_feedback("%s matures into %s from the deck." % [
-				card_name,
-				chosen_target.card_name
-			])
-		else:
-			game_manager.note_player_feedback("%s matured, but %s could not be summoned." % [
-				card_name,
-				chosen_target.card_name
-			])
-	, false, false)
+	var result := {"text": ""}
+	_set_maturation_ready(false)
+	game_manager.request_send_to_graveyard(
+		self,
+		Callable(self, "_finish_maturation_choice_after_graveyard").bind(game_manager, controller, target, target_zone, result),
+		false,
+		false
+	)
+	var result_text := str(result.get("text", ""))
+	return result_text if result_text.strip_edges() != "" else "%s could not mature." % card_name
+
+func _finish_maturation_choice_after_graveyard(
+	game_manager: GameManager,
+	controller: Player,
+	target: Card,
+	target_zone: Zone,
+	result: Dictionary
+) -> void:
+	if target_zone == null or not target_zone.cards.is_empty():
+		result["text"] = "%s matured, but there was no open lane for %s." % [
+			card_name,
+			target.card_name if target != null else "the chosen Lupine"
+		]
+		return
+	var summoned := game_manager.summon_creature_without_cost(
+		controller,
+		target,
+		target_zone,
+		Card.CreatureMode.AGGRESSIVE
+	)
+	if summoned:
+		result["text"] = "%s matures into %s from the deck." % [card_name, target.card_name]
+	else:
+		result["text"] = "%s matured, but %s could not be summoned." % [
+			card_name,
+			target.card_name if target != null else "the chosen Lupine"
+		]
 
 func get_valid_maturation_targets() -> Array[Card]:
 	var valid_targets: Array[Card] = []
@@ -72,6 +125,9 @@ func get_valid_maturation_targets() -> Array[Card]:
 			valid_targets.append(card)
 	return valid_targets
 
+func on_removed(_game_manager: GameManager) -> void:
+	_set_maturation_ready(false)
+
 func _is_valid_maturation_target(card: Card, controller: Player) -> bool:
 	return card != null \
 		and controller != null \
@@ -80,3 +136,12 @@ func _is_valid_maturation_target(card: Card, controller: Player) -> bool:
 		and not card.is_god \
 		and card.has_type("Lupine") \
 		and card.get_effective_level() <= 4
+
+func _set_maturation_ready(value: bool) -> void:
+	_maturation_ready = value
+	remove_status_effects_by_name(MATURATION_READY_STATUS)
+	if value:
+		add_status_effect(MATURATION_READY_STATUS, "Maturation", self, get_controller())
+
+func _sync_maturation_ready_state() -> void:
+	_maturation_ready = _maturation_ready or has_status_effect(MATURATION_READY_STATUS)

@@ -33,6 +33,9 @@ func get_card_count() -> int:
 func is_board_zone() -> bool:
 	return zone_type in [ZoneType.FRONTLINE, ZoneType.RESERVE]
 
+func is_in_play_zone() -> bool:
+	return is_board_zone() or zone_type in [ZoneType.GOD_SLOT, ZoneType.POWER_SLOT]
+
 func get_creature() -> Card:
 	for card in cards:
 		if card.is_creature_card():

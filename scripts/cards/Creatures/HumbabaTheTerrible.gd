@@ -52,7 +52,7 @@ func _trigger_augury_reading(game_manager: GameManager) -> void:
 		return
 
 	var prompt_player := _get_opponent(game_manager)
-	if top_cards.size() == 1 or prompt_player == null:
+	if prompt_player == null:
 		game_manager.note_player_feedback(resolve_augury_reading(game_manager, top_cards[0]))
 		return
 

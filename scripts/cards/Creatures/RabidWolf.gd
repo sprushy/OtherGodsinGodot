@@ -51,7 +51,8 @@ func on_after_combat(game_manager: GameManager, opposing_card: Card) -> void:
 		DISEASE_EFFECT_TYPE
 	)
 
-	var target_name := opposing_card.get_target_log_display_name(game_manager.get_feedback_viewer())
+	var viewer := game_manager.get_feedback_viewer()
+	var target_name := opposing_card.get_target_log_display_name(viewer)
 	game_manager.note_player_feedback(
 		"%s infects %s for %d Str after combat." % [
 			card_name,
@@ -61,8 +62,11 @@ func on_after_combat(game_manager: GameManager, opposing_card: Card) -> void:
 	)
 
 	if _get_uncapped_strength(opposing_card) < 0:
-		game_manager.note_player_feedback("%s is destroyed by %s." % [target_name, DISEASE_SOURCE])
-		game_manager.request_send_to_graveyard(opposing_card, Callable(), false, true)
+		game_manager.request_send_to_graveyard(opposing_card, func() -> void:
+			if game_manager.reached_public_destroyed_destination(opposing_card):
+				var destroyed_name := game_manager.get_resolved_destruction_log_name(opposing_card, viewer, target_name)
+				game_manager.note_player_feedback("%s is destroyed by %s." % [destroyed_name, DISEASE_SOURCE])
+		, false, true)
 
 func _get_uncapped_strength(card: Card) -> int:
 	if card == null:

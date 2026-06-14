@@ -1277,8 +1277,8 @@ func load_v_w_card_scenario() -> void:
 	# a Mage from your deck; Lailoken and Nimue are both valid targets in the deck.
 	_add_test_power(player1, 0, WalkOfTheSage.new(), true)
 
-	# P1 board: Wolf Cub fires Maturation automatically on the very first upkeep and converts
-	# into Skoll from the deck. Wolf Adolescent is live and aggressive on the frontline —
+	# P1 board: Wolf Cub offers Maturation on the very first upkeep and can convert into Skoll
+	# from the deck. Wolf Adolescent is live and aggressive on the frontline —
 	# attack Gudud Priest this turn to earn the kill, then Maturation is offered on your next
 	# upkeep to send Wolf Adolescent to the grave and summon Hati. Warrior Dragon is a ready
 	# Aerial Ancient body. White Stag sits in reserve; let it die to trigger Hunter's Mark.
@@ -1360,7 +1360,7 @@ func load_v_w_card_scenario() -> void:
 	_open_upkeep_choice_window()
 	action_label.text = (
 		"V/W Scenario: All V and W cards except Warding Stone. Choose an upkeep option first.  |  "
-		+ "Upkeep - when you choose Draw or Gain Mana, Wolf Cub's Maturation fires automatically: it sends itself to the graveyard and Skoll is summoned from your deck to its reserve lane.  |  "
+		+ "Upkeep - when you choose Draw or Gain Mana, Wolf Cub offers Maturation: choose Skoll to send the Cub to the graveyard and summon Skoll into its reserve lane, or skip.  |  "
 		+ "Board - attack Gudud Priest with Wolf Adolescent this turn to earn the kill; on your next P1 upkeep (after choosing Draw or Gain Mana) the Maturation prompt appears and you can send Wolf Adolescent to the grave and summon Hati from your deck.  |  "
 		+ "Warrior Dragon - ready Aerial Ancient on frontline lane 1; attack with it or hold it as a wall.  |  "
 		+ "White Stag - in reserve, aggressive; let it attack into something that can kill it to trigger Hunter's Mark and hand your opponent 2 mana.  |  "

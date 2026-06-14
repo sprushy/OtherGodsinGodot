@@ -1520,16 +1520,32 @@ func _trigger_board_summon(
 		return
 	if card.has_method("on_summon"):
 		card.on_summon(self)
-	var should_trigger_impact := false
-	if not face_down and trigger_impact:
-		if card.has_method("should_trigger_impact_from_zone"):
-			should_trigger_impact = card.should_trigger_impact_from_zone(from_zone)
-		else:
-			should_trigger_impact = from_zone != null and from_zone.zone_type == Zone.ZoneType.HAND
+	var should_trigger_impact := not face_down \
+		and trigger_impact \
+		and _should_trigger_summon_impact(card, from_zone, summon_source)
 	if should_trigger_impact and card.has_method("on_impact"):
 		card.on_impact(self)
 	card_summoned.emit(player, card, from_zone, target_zone, summon_source, face_down, stealth)
 	_notify_powers_of_creature_summon(player, card, from_zone, target_zone, summon_source, face_down, stealth)
+
+func _should_trigger_summon_impact(card: Card, from_zone: Zone, summon_source: Card) -> bool:
+	if card == null:
+		return false
+	if card.has_method("should_trigger_impact_from_zone"):
+		if card.should_trigger_impact_from_zone(from_zone):
+			return true
+	elif from_zone != null and from_zone.zone_type == Zone.ZoneType.HAND:
+		return true
+	return _is_active_god_manifestation_summon(card, summon_source)
+
+func _is_active_god_manifestation_summon(card: Card, summon_source: Card) -> bool:
+	var active_god := card as ActiveGodCard
+	if active_god == null or summon_source == null:
+		return false
+	if summon_source.card_name == "Take the Field":
+		return true
+	var normal_god := summon_source as GodCard
+	return normal_god != null and normal_god.is_own_active_god_card(active_god)
 
 func prepare_card(player: Player, card: Card, target_zone: Zone) -> void:
 	play_card(player, card, target_zone, true)
@@ -3341,6 +3357,24 @@ func _counts_as_destroyed_destination(card: Card) -> bool:
 	return card.current_zone == card.card_owner.graveyard_zone \
 		or card.current_zone == card.card_owner.abyss_zone
 
+func reached_public_destroyed_destination(card: Card) -> bool:
+	if card == null or not is_instance_valid(card):
+		return false
+	if _counts_as_destroyed_destination(card):
+		return true
+	return card.is_token and card.current_zone == null
+
+func get_resolved_destruction_log_name(
+	card: Card,
+	viewer: Player = null,
+	unresolved_fallback: String = "a card"
+) -> String:
+	if card == null or not is_instance_valid(card):
+		return unresolved_fallback
+	if reached_public_destroyed_destination(card):
+		return card.get_display_name()
+	return unresolved_fallback if not unresolved_fallback.is_empty() else card.get_target_log_display_name(viewer)
+
 func _send_to_graveyard_with_hook_resolved(
 	card: Card,
 	send_to_abyss: bool,
@@ -3589,19 +3623,17 @@ func remove_card_from_game_with_hook(card: Card) -> void:
 			equip.unequip()
 	if card.card_type == Card.CardType.EQUIPMENT and card.equipped_on != null:
 		card.unequip()
-	if from_zone.is_board_zone():
+	if from_zone.is_in_play_zone():
 		if card.has_method("reset_activation_counter"):
 			card.reset_activation_counter()
-		if card.has_method("remove_status_effects_with_flag"):
-			card.remove_status_effects_with_flag("remove_when_leaves_board")
 		card.remove_effects_expiring_after_combat()
 	card.process_board_leave_hooks(self)
-	if from_zone.is_board_zone():
-		card.clear_board_leave_state()
 	from_zone.remove_card(card)
 	card.board_entry_order = -1
 	if card.card_owner != null:
 		card.card_owner.card_moved.emit(card, from_zone, null)
+	if from_zone.is_in_play_zone():
+		card.clear_board_leave_state()
 
 func _send_to_abyss_with_hook(card: Card) -> void:
 	card.process_board_leave_hooks(self)
@@ -3702,11 +3734,13 @@ func _resolve_destroy_at_turn_end_statuses() -> void:
 	for card in due_cards:
 		if card == null or card.current_zone == null or not card.current_zone.is_board_zone():
 			continue
-		var card_name_for_feedback := card.get_target_log_display_name(get_feedback_viewer())
+		var viewer := get_feedback_viewer()
+		var card_name_for_feedback := card.get_target_log_display_name(viewer)
 		card.remove_status_effects_by_name("destroy_at_turn_end")
 		var on_destroy_complete := func() -> void:
-			if card.current_zone == null or not card.current_zone.is_board_zone():
-				note_player_feedback("%s is destroyed at turn's end." % card_name_for_feedback)
+			if reached_public_destroyed_destination(card):
+				var destroyed_name := get_resolved_destruction_log_name(card, viewer, card_name_for_feedback)
+				note_player_feedback("%s is destroyed at turn's end." % destroyed_name)
 		request_send_to_graveyard(card, on_destroy_complete, false, true)
 
 func notify_card_revealed_by_effect(revealed_card: Card, source_card: Card) -> void:

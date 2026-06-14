@@ -24,14 +24,6 @@ func on_reveal(game_manager: GameManager) -> void:
 	if game_manager == null or get_controller() == null:
 		return
 	var options: Array[Dictionary] = get_brewing_options(game_manager)
-	if options.size() == 1:
-		game_manager.decision_requested.emit(get_controller(), "reveal_effect", {
-			"source_uid": uid,
-			"queue_with_priority": true,
-			"event_name": "byggvir_reveal",
-			"resolve_method": "resolve_single_brewing_reveal",
-		})
-		return
 	if options.is_empty():
 		game_manager.note_player_feedback("%s found no Brewing option to reveal." % card_name)
 		return
@@ -143,12 +135,6 @@ func resolve_brewing_option(game_manager: GameManager, option: Dictionary) -> St
 			return "%s reveals and returns %s from the graveyard to hand." % [card_name, mead_card.card_name]
 	return card_name + " had no Brewing option."
 
-func resolve_single_brewing_reveal(game_manager: GameManager) -> String:
-	var options: Array[Dictionary] = get_brewing_options(game_manager)
-	if options.is_empty():
-		return "%s found no Brewing option to reveal." % card_name
-	return resolve_brewing_option(game_manager, options[0])
-
 func resolve_brewing_option_from_payload(game_manager: GameManager, payload: Dictionary) -> String:
 	var option := find_matching_brewing_option(game_manager, payload)
 	if option.is_empty():
@@ -226,27 +212,6 @@ func _flip_mead_power(game_manager: GameManager) -> bool:
 		power.is_muted = false
 		power.mute_turns_remaining = 0
 		power.on_unlock(game_manager)
-		return true
-	return false
-
-func _activate_mead_power(game_manager: GameManager) -> bool:
-	for zone in get_controller().power_zones:
-		if zone.cards.is_empty():
-			continue
-		var card: Card = zone.cards[0]
-		if not _is_mead_card(card):
-			continue
-		if card is not PowerCard:
-			continue
-		var power := card as PowerCard
-		if power.is_face_down or power.is_muted or not power.can_activate(game_manager):
-			continue
-		if power.has_method("get_valid_targets"):
-			var valid_targets: Array = power.get_valid_targets(game_manager)
-			if not valid_targets.is_empty():
-				power.activate(game_manager, valid_targets[0] as Card)
-				return true
-		power.activate(game_manager)
 		return true
 	return false
 

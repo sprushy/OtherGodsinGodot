@@ -48,10 +48,15 @@ func on_activate_action(game_manager: GameManager, action: CardAction) -> void:
 	if game_manager.is_immune_to_source(target, self):
 		game_manager.note_player_feedback("%s triggered, but %s was immune to hexes." % [card_name, target_name])
 		on_immune_activate(game_manager, target, target)
-	elif game_manager.request_send_to_graveyard(target, Callable(), false, true):
-		game_manager.note_player_feedback("%s destroyed %s." % [card_name, target_name])
 	else:
-		game_manager.note_player_feedback("%s triggered, but %s could not be destroyed." % [card_name, target_name])
+		var viewer := game_manager.get_feedback_viewer()
+		game_manager.request_send_to_graveyard(target, func() -> void:
+			if game_manager.reached_public_destroyed_destination(target):
+				var destroyed_name := game_manager.get_resolved_destruction_log_name(target, viewer, target_name)
+				game_manager.note_player_feedback("%s destroyed %s." % [card_name, destroyed_name])
+			else:
+				game_manager.note_player_feedback("%s triggered, but %s could not be destroyed." % [card_name, target_name])
+		, false, true)
 
 	if current_zone != null and card_owner != null:
 		card_owner.move_card(self, card_owner.graveyard_zone)

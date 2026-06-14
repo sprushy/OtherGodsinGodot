@@ -167,23 +167,20 @@ func _begin_resolution(game_manager: GameManager) -> String:
 	if defender_choices.is_empty():
 		return "%s fizzles: no friendly creature to attack when it resolves." % card_name
 
-	if attacker_choices.size() > 1 or defender_choices.size() > 1:
-		var attacker_uids: Array[String] = []
-		for attacker in attacker_choices:
-			if attacker != null:
-				attacker_uids.append(attacker.uid)
-		var defender_uids: Array[String] = []
-		for defender in defender_choices:
-			if defender != null:
-				defender_uids.append(defender.uid)
-		game_manager.decision_requested.emit(_get_spell_controller(game_manager), "foolish_optimism", {
-			source_uid = uid,
-			attacker_uids = attacker_uids,
-			defender_uids = defender_uids,
-		})
-		return ""
-
-	return resolve_with_choices(game_manager, attacker_choices[0], defender_choices[0])
+	var attacker_uids: Array[String] = []
+	for attacker in attacker_choices:
+		if attacker != null:
+			attacker_uids.append(attacker.uid)
+	var defender_uids: Array[String] = []
+	for defender in defender_choices:
+		if defender != null:
+			defender_uids.append(defender.uid)
+	game_manager.decision_requested.emit(_get_spell_controller(game_manager), "foolish_optimism", {
+		source_uid = uid,
+		attacker_uids = attacker_uids,
+		defender_uids = defender_uids,
+	})
+	return ""
 
 func _can_force_attack(game_manager: GameManager, attacker: Card, defender: Card) -> bool:
 	if game_manager == null or attacker == null or defender == null:

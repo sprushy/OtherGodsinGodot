@@ -57,8 +57,7 @@ func on_creature_summoned(
 		return
 
 	if game_manager != null:
-		var auto_choice: Card = valid_targets[0] if not valid_targets.is_empty() else null
-		game_manager.note_player_feedback(resolve_rally_choice(game_manager, auto_choice, card))
+		game_manager.note_player_feedback(resolve_rally_choice(game_manager, null, card))
 
 func get_rally_cards() -> Array[Card]:
 	var cards: Array[Card] = []

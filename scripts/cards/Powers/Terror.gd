@@ -44,7 +44,7 @@ func on_any_card_moved(game_manager: GameManager, moved_card: Card, from_zone: Z
 		})
 		return
 
-	game_manager.note_player_feedback(resolve_terror_impact(game_manager, moved_card, valid_targets[0]))
+	game_manager.note_player_feedback("%s could not request a Terror target choice." % card_name)
 
 func get_valid_terror_targets(game_manager: GameManager, demon: Card) -> Array[Card]:
 	var valid_targets: Array[Card] = []

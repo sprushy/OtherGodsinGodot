@@ -88,10 +88,11 @@ func begin_magic_drain_reveal(
 	var viewer := game_manager.get_feedback_viewer()
 	var target_name := target.get_target_log_display_name(viewer)
 	var on_destroy_complete := func() -> void:
-		var destroyed := target.current_zone == null or not target.current_zone.is_board_zone()
+		var destroyed := game_manager.reached_public_destroyed_destination(target)
 		if not destroyed:
 			finish.call("%s failed to destroy %s with Magic Drain." % [card_name, target_name])
 			return
+		var destroyed_name := game_manager.get_resolved_destruction_log_name(target, viewer, target_name)
 		add_buff(
 			MAGIC_DRAIN_BUFF_SOURCE,
 			MAGIC_DRAIN_STR_BONUS,
@@ -103,7 +104,7 @@ func begin_magic_drain_reveal(
 		)
 		finish.call("%s destroyed %s with Magic Drain and gained %d Str." % [
 			card_name,
-			target_name,
+			destroyed_name,
 			MAGIC_DRAIN_STR_BONUS
 		])
 	game_manager.request_send_to_graveyard(

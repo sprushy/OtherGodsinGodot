@@ -156,14 +156,14 @@ func move_card(card: Card, to_zone: Zone) -> void:
 		and destination_zone != null
 		and not destination_zone.is_board_zone()
 	)
-	var leaving_board := (
+	var leaving_play := (
 		from_zone != null
-		and from_zone.is_board_zone()
+		and from_zone.is_in_play_zone()
 		and destination_zone != null
-		and not destination_zone.is_board_zone()
+		and not destination_zone.is_in_play_zone()
 	)
 
-	if leaving_board:
+	if leaving_play:
 		card.process_board_leave_hooks(game_manager)
 	
 	if creature_left_board:
@@ -177,27 +177,28 @@ func move_card(card: Card, to_zone: Zone) -> void:
 		var same_zone_move := destination_zone != null and equipped_creature != null and destination_zone == equipped_creature.current_zone
 		if not same_zone_move:
 			card.unequip()
-	if from_zone and from_zone.is_board_zone() and destination_zone and not destination_zone.is_board_zone():
+	if leaving_play:
 		if card.has_method("reset_activation_counter"):
 			card.reset_activation_counter()
-		if card.has_method("remove_status_effects_with_flag"):
-			card.remove_status_effects_with_flag("remove_when_leaves_board")
 		card.remove_effects_expiring_after_combat()
-		card.clear_board_leave_state()
 
 	if card.is_token and (destination_zone == null or not destination_zone.is_board_zone()):
 		card.remove_effects_expiring_after_combat()
 		if from_zone:
 			from_zone.remove_card(card)
 		card_moved.emit(card, from_zone, null)
+		if leaving_play:
+			card.clear_board_leave_state()
 		return
 	
 	if from_zone:
 		from_zone.remove_card(card)
 	destination_zone.add_card(card)
-	if destination_zone.is_board_zone():
+	if destination_zone.is_in_play_zone():
 		card.reset_board_leave_hooks()
 	card_moved.emit(card, from_zone, destination_zone)
+	if leaving_play:
+		card.clear_board_leave_state()
 
 	if creature_left_board and from_zone != null:
 		_reposition_detached_equipment(from_zone, detached_equipment)

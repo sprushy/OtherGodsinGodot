@@ -368,7 +368,7 @@ func _label_for_move(move: Dictionary, viewer: Player = null) -> String:
 			var lupine := game_manager.get_card_by_uid(move.get("target_uid", ""))
 			if lupine != null:
 				return "%s matures into %s." % [_card_label_for_viewer(wolf, viewer), _card_label_for_viewer(lupine, viewer)]
-			return ("%s skips Maturation." % _card_label_for_viewer(wolf, viewer)) if wolf != null else "Wolf Adolescent skips Maturation."
+			return ("%s skips Maturation." % _card_label_for_viewer(wolf, viewer)) if wolf != null else "Maturation was skipped."
 		"humbaba_augury_choice":
 			var humbaba := game_manager.get_card_by_uid(move.get("source_uid", ""))
 			var chosen := game_manager.get_card_by_uid(move.get("target_uid", ""))
@@ -399,6 +399,19 @@ func _label_for_move(move: Dictionary, viewer: Player = null) -> String:
 			if enlilda != null and chosen != null:
 				return "%s conjures %s home." % [_card_label_for_viewer(enlilda, viewer), _card_label_for_viewer(chosen, viewer)]
 			return ("%s resolves Conjure Home." % _card_label_for_viewer(enlilda, viewer)) if enlilda != null else "Conjure Home resolves."
+		"seventh_sage_utuabzu_choice":
+			var sage := game_manager.get_card_by_uid(move.get("source_uid", ""))
+			var chosen := game_manager.get_card_by_uid(move.get("target_uid", ""))
+			if sage != null and chosen != null:
+				return "%s channels %s." % [_card_label_for_viewer(sage, viewer), _card_label_for_viewer(chosen, viewer)]
+			return ("%s resolves Channel Ally." % _card_label_for_viewer(sage, viewer)) if sage != null else "Channel Ally resolves."
+		"tiamat_active_summon_choice":
+			var tiamat := game_manager.get_card_by_uid(move.get("source_uid", ""))
+			var chosen := game_manager.get_card_by_uid(move.get("target_uid", ""))
+			var label := str(move.get("label", "Birth"))
+			if tiamat != null and chosen != null:
+				return "%s summons %s via %s." % [_card_label_for_viewer(tiamat, viewer), _card_label_for_viewer(chosen, viewer), label]
+			return ("%s resolves %s." % [_card_label_for_viewer(tiamat, viewer), label]) if tiamat != null else "Tiamat's summon resolves."
 		"lailoken_reveal_choice":
 			var lailoken := game_manager.get_card_by_uid(move.get("source_uid", ""))
 			var chosen := game_manager.get_card_by_uid(move.get("target_uid", ""))

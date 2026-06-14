@@ -47,6 +47,11 @@ func resolve(game_manager: GameManager, target = null) -> void:
 		return
 	var viewer := game_manager.get_feedback_viewer()
 	var target_name = target.get_target_log_display_name(viewer)
-	game_manager.note_player_feedback(card_name + " destroyed " + target_name + "!")
 	print(card_name + " destroys " + target.card_name + "!")
-	game_manager.request_send_to_graveyard(target, Callable(), false, true)
+	game_manager.request_send_to_graveyard(target, func() -> void:
+		if game_manager.reached_public_destroyed_destination(target):
+			var destroyed_name := game_manager.get_resolved_destruction_log_name(target, viewer, target_name)
+			game_manager.note_player_feedback(card_name + " destroyed " + destroyed_name + "!")
+		else:
+			game_manager.note_player_feedback(card_name + " failed to destroy " + target_name + ".")
+	, false, true)

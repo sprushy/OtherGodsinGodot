@@ -74,7 +74,6 @@ var pending_humbaba_action: CardAction = null
 var pending_humbaba_target = null
 var pending_humbaba_prompt_uids: Array[String] = []
 var pending_combat_reveal_linger_action: CardAction = null
-var _combat_reveal_decision_depth: int = 0
 var _combat_reveal_wait_generation: int = 0
 var pending_tezcatlipoca_titlacauan_action: CardAction = null
 var _board_leaving_activation_linger_pending: bool = false
@@ -127,7 +126,6 @@ func reset_runtime_state() -> void:
 	pending_humbaba_target = null
 	pending_humbaba_prompt_uids.clear()
 	pending_combat_reveal_linger_action = null
-	_combat_reveal_decision_depth = 0
 	_combat_reveal_wait_generation = 0
 	pending_tezcatlipoca_titlacauan_action = null
 	_board_leaving_activation_linger_pending = false
@@ -320,9 +318,6 @@ func _on_game_manager_decision_requested(player: Player, type: String, data: Dic
 				event_name if event_name != "" else type,
 				interaction_data
 			)
-			return
-		if _combat_reveal_decision_depth > 0:
-			_emit_ui_interaction_for_player(player, type, interaction_data)
 			return
 		if _should_collect_choice_before_priority(type, completion_command_type):
 			interaction_data["_queue_priority_after_choice"] = true
@@ -1254,7 +1249,8 @@ func _resolve_ability(action: CardAction) -> void:
 func _resolve_spell(action: CardAction) -> void:
 	if action.resolve_callback.is_valid():
 		action.resolve_callback.call()
-		last_resolution_text = action.resolution_text if action.resolution_text != "" else action.card.card_name + " resolved!"
+		var feedback := game_manager.consume_player_feedback() if game_manager != null else ""
+		last_resolution_text = feedback if feedback.strip_edges() != "" else (action.resolution_text if action.resolution_text != "" else action.card.card_name + " resolved!")
 
 func _resolve_event(action: CardAction) -> void:
 	if action.resolve_callback.is_valid():
@@ -1411,10 +1407,8 @@ func _begin_combat_reveal_linger(action: CardAction, target: Card) -> bool:
 	pending_combat_reveal_linger_action = action
 	_mark_deferred_authoritative_action(action, "combat_reveal_linger")
 
-	_combat_reveal_decision_depth += 1
 	for combatant in reveal_cards:
 		combatant.reveal_from_stealth(game_manager)
-	_combat_reveal_decision_depth = maxi(0, _combat_reveal_decision_depth - 1)
 
 	if action.united_front_partner == null:
 		game_manager.capture_committed_combat_snapshot(action.attacker, target)
@@ -1651,7 +1645,7 @@ func _emit_next_pending_humbaba_prompt() -> bool:
 			pending_humbaba_prompt_uids.remove_at(0)
 			return true
 		var prompt_player := game_manager.get_opponent(humbaba.get_controller())
-		if prompt_targets.size() == 1 or prompt_player == null:
+		if prompt_player == null:
 			_pause_pending_humbaba_after_auto_resolution(humbaba.resolve_augury_reading(game_manager, prompt_targets[0]))
 			pending_humbaba_prompt_uids.remove_at(0)
 			return true
@@ -3831,10 +3825,6 @@ func _process_command_impl(command: Dictionary) -> bool:
 			var valid_targets := sage.get_valid_targets(game_manager)
 			var target_uid: String = command.get("target_uid", "")
 			if target_uid == "":
-				if valid_targets.size() == 1 and valid_targets[0] == sage:
-					game_manager.note_player_feedback(sage.resolve_good_fortune_impact(game_manager, sage))
-					move_validated.emit(command)
-					return true
 				var feedback := "%s found no Mer Sage to bless." % sage.card_name if valid_targets.is_empty() else sage.card_name + " impact fizzles."
 				game_manager.note_player_feedback(feedback)
 				move_validated.emit(command)
@@ -3902,6 +3892,25 @@ func _process_command_impl(command: Dictionary) -> bool:
 			game_manager.note_player_feedback(sage.resolve_conjure_home_impact(game_manager, target))
 			move_validated.emit(command)
 			return true
+		"seventh_sage_utuabzu_choice":
+			var source_uid: String = command.get("source_uid", "")
+			var sage := game_manager.get_card_by_uid(source_uid) as SeventhSageUtuabzu
+			if sage == null:
+				move_failed.emit("seventh_sage_utuabzu_choice: card not found")
+				return false
+			var valid_targets := sage.get_channel_ally_targets(game_manager)
+			var target_uid: String = command.get("target_uid", "")
+			if target_uid == "":
+				game_manager.note_player_feedback("%s found no valid allied Ancient Sage to channel." % sage.card_name)
+				move_validated.emit(command)
+				return true
+			var target := game_manager.get_card_by_uid(target_uid)
+			if target == null or target not in valid_targets:
+				move_failed.emit("seventh_sage_utuabzu_choice: invalid Ancient Sage target")
+				return false
+			game_manager.note_player_feedback(sage.resolve_channel_ally_impact(game_manager, target))
+			move_validated.emit(command)
+			return true
 		"lailoken_reveal_choice":
 			var source_uid: String = command.get("source_uid", "")
 			var lailoken := game_manager.get_card_by_uid(source_uid) as Lailoken
@@ -3923,6 +3932,16 @@ func _process_command_impl(command: Dictionary) -> bool:
 				return true
 			var target := game_manager.get_card_by_uid(target_uid)
 			if not _is_card_in_targets_by_uid(target, valid_targets):
+				if _resolving_priority_choice_command:
+					var feedback := lailoken.card_name + " reveal fizzles because its target is no longer valid."
+					game_manager.note_player_feedback(feedback)
+					if pending_action != null:
+						pending_action.resolution_text = feedback
+						last_resolution_text = feedback
+						_complete_deferred_authoritative_action(pending_action, "lailoken_reveal_choice")
+					_resume_combat_reveal_after_source_choice(lailoken)
+					move_validated.emit(command)
+					return true
 				move_failed.emit("lailoken_reveal_choice: invalid magical target")
 				return false
 			if _queue_choice_command_as_priority_event(command, lailoken):
@@ -3965,6 +3984,16 @@ func _process_command_impl(command: Dictionary) -> bool:
 				return true
 			var target := game_manager.get_card_by_uid(target_uid)
 			if not _is_card_in_targets_by_uid(target, valid_targets):
+				if _resolving_priority_choice_command:
+					var feedback: String = priest.card_name + " reveal fizzles because its target is no longer valid."
+					game_manager.note_player_feedback(feedback)
+					if pending_action != null:
+						pending_action.resolution_text = feedback
+						last_resolution_text = feedback
+						_complete_deferred_authoritative_action(pending_action, "masmassu_priest_reveal_choice")
+					_resume_combat_reveal_after_source_choice(priest)
+					move_validated.emit(command)
+					return true
 				move_failed.emit("masmassu_priest_reveal_choice: invalid creature target")
 				return false
 			if _queue_choice_command_as_priority_event(command, priest):
@@ -4208,6 +4237,28 @@ func _process_command_impl(command: Dictionary) -> bool:
 				move_failed.emit("freyja_active_open_sessrumnir_choice: invalid selection")
 				return false
 			active_god.resolve_from_command(game_manager, command)
+			move_validated.emit(command)
+			return true
+		"tiamat_active_summon_choice":
+			var source_uid: String = command.get("source_uid", "")
+			var active_god := game_manager.get_card_by_uid(source_uid) as TiamatActive
+			if active_god == null:
+				move_failed.emit("tiamat_active_summon_choice: active god not found")
+				return false
+			var label := str(command.get("label", "Birth"))
+			if label not in ["Birth", "Death"]:
+				move_failed.emit("tiamat_active_summon_choice: invalid summon label")
+				return false
+			var target_uid: String = command.get("target_uid", "")
+			var target := game_manager.get_card_by_uid(target_uid) if target_uid != "" else null
+			var valid_targets := active_god.get_valid_summon_targets(game_manager, label)
+			if target == null and not valid_targets.is_empty():
+				move_failed.emit("tiamat_active_summon_choice: target is required")
+				return false
+			if target != null and target not in valid_targets:
+				move_failed.emit("tiamat_active_summon_choice: invalid Demon or Dragon target")
+				return false
+			game_manager.note_player_feedback(active_god.resolve_summon_choice(game_manager, label, target))
 			move_validated.emit(command)
 			return true
 		"giant_master_architect_choice":
@@ -4487,8 +4538,8 @@ func _process_command_impl(command: Dictionary) -> bool:
 			return true
 		"wolf_adolescent_maturation_choice":
 			var source_uid: String = command.get("source_uid", "")
-			var wolf := game_manager.get_card_by_uid(source_uid) as WolfAdolescent
-			if wolf == null:
+			var wolf := game_manager.get_card_by_uid(source_uid)
+			if wolf == null or not (wolf is WolfAdolescent or wolf is WolfCub):
 				move_failed.emit("wolf_adolescent_maturation_choice: card not found")
 				return false
 			if not wolf.can_offer_maturation(game_manager):
@@ -4496,11 +4547,12 @@ func _process_command_impl(command: Dictionary) -> bool:
 				return false
 			var target_uid: String = command.get("target_uid", "")
 			var target: Card = game_manager.get_card_by_uid(target_uid) if target_uid != "" else null
-			var valid_targets := wolf.get_valid_maturation_targets()
+			var valid_targets: Array[Card] = []
+			valid_targets.assign(wolf.get_valid_maturation_targets())
 			if target != null and target not in valid_targets:
 				move_failed.emit("wolf_adolescent_maturation_choice: invalid Lupine target")
 				return false
-			var feedback := wolf.resolve_maturation_choice(game_manager, target)
+			var feedback: String = wolf.resolve_maturation_choice(game_manager, target)
 			if feedback.strip_edges() != "":
 				game_manager.note_player_feedback(feedback)
 			move_validated.emit(command)

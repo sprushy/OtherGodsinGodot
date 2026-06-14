@@ -30,9 +30,21 @@ func on_impact(game_manager: GameManager) -> void:
 			game_manager.note_player_feedback("%s found no allied Ancient Sage to channel." % card_name)
 		return
 
-	var feedback := resolve_channel_ally_impact(game_manager, valid_targets[0])
-	if game_manager != null and feedback != "":
-		game_manager.note_player_feedback(feedback)
+	var controller := get_controller()
+	if game_manager == null or controller == null:
+		if game_manager != null:
+			game_manager.note_player_feedback("%s could not request a Channel Ally choice." % card_name)
+		return
+	var target_uids: Array[String] = []
+	for target in valid_targets:
+		if target != null:
+			target_uids.append(target.uid)
+	game_manager.decision_requested.emit(controller, "seventh_sage_utuabzu_impact", {
+		"source_uid": uid,
+		"target_uids": target_uids,
+		"queue_with_priority": true,
+		"event_name": "seventh_sage_utuabzu_impact",
+	})
 
 func get_activation_label() -> String:
 	return "Imbue Ally"

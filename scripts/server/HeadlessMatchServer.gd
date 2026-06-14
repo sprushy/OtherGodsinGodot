@@ -121,7 +121,7 @@ func _on_match_player_authenticated(_player_index: int, _session_id: String, was
 		return
 	maybe_start_match_if_ready()
 
-func _queue_wolf_adolescent_maturation_prompt(card: WolfAdolescent) -> void:
+func _queue_wolf_adolescent_maturation_prompt(card: Card) -> void:
 	if card == null or game_manager == null or match_manager == null:
 		return
 	var player_idx := game_manager.players.find(card.card_owner)

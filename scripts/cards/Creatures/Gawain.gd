@@ -157,11 +157,7 @@ func activate(game_manager: GameManager, target: Card = null) -> void:
 			game_manager.note_player_feedback("%s: not enough mana for Healing Hands." % card_name)
 		return
 
-	if removable.size() == 1:
-		_resolve_healing_hands(game_manager, target, removable[0])
-		return
-
-	# Multiple effects — ask the UI to let the player choose.
+	# Always ask the player to confirm which effect to remove.
 	game_manager.decision_requested.emit(get_controller(), "gawain_healing_hands", {
 		"source_uid": uid,
 		"target_uid": target.uid,

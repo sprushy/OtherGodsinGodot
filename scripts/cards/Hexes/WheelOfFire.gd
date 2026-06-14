@@ -176,8 +176,6 @@ func _advance_target_step(game_manager: GameManager, pay_cost: bool, emit_feedba
 
 	var target_name := attached_target.get_target_log_display_name(game_manager.get_feedback_viewer())
 	var from_zone := attached_target.current_zone
-	if from_zone != null and from_zone.is_board_zone():
-		attached_target.reveal_from_stealth(game_manager)
 	attached_target.card_owner.move_card(attached_target, next_zone)
 
 	var movement_text := _get_movement_text(from_zone, next_zone)

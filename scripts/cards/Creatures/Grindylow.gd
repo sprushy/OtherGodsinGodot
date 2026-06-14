@@ -89,11 +89,12 @@ func begin_dalkhu_break_reveal(
 	var viewer := game_manager.get_feedback_viewer()
 	var target_name := target.get_target_log_display_name(viewer)
 	var on_destroy_complete := func() -> void:
-		var destroyed := target.current_zone == null or not target.current_zone.is_board_zone()
+		var destroyed := game_manager.reached_public_destroyed_destination(target)
 		if not destroyed:
 			finish.call("%s failed to destroy %s with Drown Below." % [card_name, target_name])
 			return
-		finish.call("%s destroyed %s with Drown Below." % [card_name, target_name])
+		var destroyed_name := game_manager.get_resolved_destruction_log_name(target, viewer, target_name)
+		finish.call("%s destroyed %s with Drown Below." % [card_name, destroyed_name])
 	game_manager.request_send_to_graveyard(
 		target,
 		on_destroy_complete,

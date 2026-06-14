@@ -80,12 +80,14 @@ func resolve_breakout_choice(game_manager: GameManager, do_breakout: bool) -> vo
 		)
 		return
 
-	var target_name: String = weakest_enemy.get_target_log_display_name(game_manager.get_feedback_viewer())
+	var viewer := game_manager.get_feedback_viewer()
+	var target_name: String = weakest_enemy.get_target_log_display_name(viewer)
 	game_manager.request_send_to_graveyard(weakest_enemy, func() -> void:
-		var destroyed: bool = weakest_enemy.current_zone == null or not weakest_enemy.current_zone.is_board_zone()
+		var destroyed := game_manager.reached_public_destroyed_destination(weakest_enemy)
 		if destroyed:
+			var destroyed_name := game_manager.get_resolved_destruction_log_name(weakest_enemy, viewer, target_name)
 			game_manager.note_player_feedback(
-				"%s breaks out, returns to hand, and destroys %s." % [card_name, target_name]
+				"%s breaks out, returns to hand, and destroys %s." % [card_name, destroyed_name]
 			)
 		else:
 			game_manager.note_player_feedback(

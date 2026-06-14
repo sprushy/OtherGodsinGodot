@@ -86,8 +86,6 @@ func resolve_core_flame(game_manager: GameManager, chosen_card: Card = null, dec
 	var milled_cards := _mill_cards()
 	var eligible_cards := _get_eligible_milled_magical_cards(milled_cards)
 	var resolved_choice := chosen_card if chosen_card != null and chosen_card in eligible_cards else null
-	if resolved_choice == null and not eligible_cards.is_empty():
-		resolved_choice = eligible_cards[0]
 
 	_declined_core_flame = false
 
@@ -99,7 +97,7 @@ func resolve_core_flame(game_manager: GameManager, chosen_card: Card = null, dec
 			card_owner.player_name
 		]
 	else:
-		feedback += " No magical card was milled."
+		feedback += " No magical card was chosen." if not eligible_cards.is_empty() else " No magical card was milled."
 	return feedback
 
 func is_pending_core_flame_choice_uid(chosen_uid: String) -> bool:
@@ -156,15 +154,13 @@ func _resolve_core_flame_after_mill(game_manager: GameManager) -> String:
 	var eligible_cards := _get_eligible_milled_magical_cards(milled_cards)
 	_declined_core_flame = false
 
-	if eligible_cards.size() > 1:
+	if not eligible_cards.is_empty():
 		_request_core_flame_milled_choice(game_manager, eligible_cards, milled_cards.size())
 		return "%s milled %d card(s). Choose a magical card to add to %s's hand." % [
 			card_name,
 			milled_cards.size(),
 			card_owner.player_name,
 		]
-	if eligible_cards.size() == 1:
-		return _complete_core_flame_choice(game_manager, eligible_cards[0], milled_cards.size())
 	return "%s milled %d card(s). No magical card was milled." % [card_name, milled_cards.size()]
 
 func _request_core_flame_milled_choice(game_manager: GameManager, eligible_cards: Array[Card], mill_count: int) -> void:

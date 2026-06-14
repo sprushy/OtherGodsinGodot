@@ -25,20 +25,53 @@ func _init() -> void:
 	artist = "Ricardo Zoppello"
 
 func on_impact(game_manager: GameManager) -> void:
-	if game_manager == null:
-		return
-	game_manager.note_player_feedback(resolve_birth(game_manager))
+	_request_summon_choice(game_manager, BIRTH_MAX_LEVEL, "Birth")
 
 func on_death(game_manager: GameManager) -> void:
-	if game_manager == null:
-		return
-	game_manager.note_player_feedback(resolve_death(game_manager))
+	_request_summon_choice(game_manager, DEATH_MAX_LEVEL, "Death")
 
 func resolve_birth(game_manager: GameManager, chosen_card: Card = null) -> String:
 	return _resolve_tiamat_summon(game_manager, chosen_card, BIRTH_MAX_LEVEL, "Birth")
 
 func resolve_death(game_manager: GameManager, chosen_card: Card = null) -> String:
 	return _resolve_tiamat_summon(game_manager, chosen_card, DEATH_MAX_LEVEL, "Death")
+
+func get_valid_birth_targets(game_manager: GameManager) -> Array[Card]:
+	return _get_valid_targets(game_manager, BIRTH_MAX_LEVEL)
+
+func get_valid_death_targets(game_manager: GameManager) -> Array[Card]:
+	return _get_valid_targets(game_manager, DEATH_MAX_LEVEL)
+
+func get_valid_summon_targets(game_manager: GameManager, label: String) -> Array[Card]:
+	return get_valid_death_targets(game_manager) if label == "Death" else get_valid_birth_targets(game_manager)
+
+func resolve_summon_choice(game_manager: GameManager, label: String, chosen_card: Card) -> String:
+	return resolve_death(game_manager, chosen_card) if label == "Death" else resolve_birth(game_manager, chosen_card)
+
+func _request_summon_choice(game_manager: GameManager, max_level: int, label: String) -> void:
+	if game_manager == null:
+		return
+	var valid_targets := _get_valid_targets(game_manager, max_level)
+	if valid_targets.is_empty():
+		game_manager.note_player_feedback(_resolve_tiamat_summon(game_manager, null, max_level, label))
+		return
+	var controller := get_controller()
+	if controller == null:
+		controller = card_owner
+	if controller == null:
+		game_manager.note_player_feedback("%s could not request a %s choice." % [card_name, label])
+		return
+	var target_uids: Array[String] = []
+	for target in valid_targets:
+		if target != null:
+			target_uids.append(target.uid)
+	game_manager.decision_requested.emit(controller, "tiamat_active_summon", {
+		"source_uid": uid,
+		"target_uids": target_uids,
+		"label": label,
+		"queue_with_priority": true,
+		"event_name": "tiamat_active_%s" % label.to_lower(),
+	})
 
 func _resolve_tiamat_summon(game_manager: GameManager, chosen_card: Card, max_level: int, label: String) -> String:
 	if game_manager == null:
@@ -49,15 +82,16 @@ func _resolve_tiamat_summon(game_manager: GameManager, chosen_card: Card, max_le
 	var open_zones := _get_open_zones()
 	if open_zones.is_empty():
 		return "%s has no open lane for %s." % [card_name, label]
+	if chosen_card == null or chosen_card not in valid_targets:
+		return "%s needs a valid Demon or Dragon choice for %s." % [card_name, label]
 
-	var resolved_card := chosen_card if chosen_card != null and chosen_card in valid_targets else valid_targets[0]
 	var target_zone := open_zones[0] as Zone
 	if target_zone == null:
 		return "%s has no open lane for %s." % [card_name, label]
 
 	var summoned := game_manager.summon_creature_by_effect(
 		card_owner,
-		resolved_card,
+		chosen_card,
 		target_zone,
 		Card.CreatureMode.AGGRESSIVE,
 		false,
@@ -68,8 +102,8 @@ func _resolve_tiamat_summon(game_manager: GameManager, chosen_card: Card, max_le
 		true
 	)
 	if not summoned:
-		return "%s could not summon %s for %s." % [card_name, resolved_card.card_name, label]
-	return "%s summons %s from hand via %s." % [card_name, resolved_card.card_name, label]
+		return "%s could not summon %s for %s." % [card_name, chosen_card.card_name, label]
+	return "%s summons %s from hand via %s." % [card_name, chosen_card.card_name, label]
 
 func _get_valid_targets(game_manager: GameManager, max_level: int) -> Array[Card]:
 	var valid_targets: Array[Card] = []

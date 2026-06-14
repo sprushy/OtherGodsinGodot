@@ -127,18 +127,20 @@ func resolve_devour_impact(game_manager: GameManager, target: Card, continue_cal
 		_emit_devour_result(continue_callback, target.get_target_log_display_name(game_manager.get_feedback_viewer()) + " is immune to " + card_name + "'s creature abilities this turn.")
 		return
 
-	var devoured_name := target.get_target_log_display_name(game_manager.get_feedback_viewer())
+	var viewer := game_manager.get_feedback_viewer()
+	var devoured_name := target.get_target_log_display_name(viewer)
 	var gained_strength := target.get_effective_strength()
 	var gained_resilience := target.get_effective_resilience()
 	game_manager.request_send_to_graveyard(target, func() -> void:
-		var left_board := target.current_zone == null or not target.current_zone.is_board_zone()
-		if left_board:
+		var destroyed := game_manager.reached_public_destroyed_destination(target)
+		if destroyed:
+			var resolved_name := game_manager.get_resolved_destruction_log_name(target, viewer, devoured_name)
 			add_buff(DEVOUR_BUFF_SOURCE, gained_strength, gained_resilience, 0, self, card_owner, "fenrir_devour")
 			_emit_devour_result(
 				continue_callback,
 				"%s devoured %s and gained %d Str and %d Res." % [
 					card_name,
-					devoured_name,
+					resolved_name,
 					gained_strength,
 					gained_resilience
 				]
