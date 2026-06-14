@@ -19,6 +19,7 @@ const STARTUP_SPLASH_IMAGE_PATH := "res://images/ui/splash/other_gods_splash.png
 const STARTUP_SPLASH_SLICE_COUNT := 14
 const STARTUP_SPLASH_SLIDE_SECONDS := 1.15
 const STARTUP_SPLASH_SLICE_STAGGER_SECONDS := 0.045
+const STARTUP_LOADING_FADE_SECONDS := 0.22
 const STARTUP_MUSIC_PATH := "res://audio/relaxingtime-relaxing-music-119247.mp3"
 const USER_SETTINGS_PATH := "user://settings.cfg"
 const AUDIO_SETTINGS_SECTION := "audio"
@@ -196,6 +197,9 @@ var _close_confirm_overlay: Control = null
 var _startup_splash_background: Control = null
 var _startup_splash_texture: Texture2D = null
 var _startup_splash_slices: Array[TextureRect] = []
+var _startup_loading_overlay: Control = null
+var _startup_loading_status_label: Label = null
+var _startup_loading_finished: bool = false
 var _startup_music_player: AudioStreamPlayer = null
 var _music_mute_button: Button = null
 var _music_muted: bool = false
@@ -211,6 +215,7 @@ func _ready() -> void:
 	add_to_group("music_controls")
 	_load_audio_preferences()
 	_ensure_startup_splash_background()
+	_build_startup_loading_overlay()
 	_ensure_startup_music()
 	_prepare_startup_menu_fade()
 	_fit_to_viewport()
@@ -273,10 +278,87 @@ func _ready() -> void:
 	if not _smoke_config.is_empty():
 		if menu_container != null:
 			menu_container.modulate.a = 1.0
+		_remove_startup_loading_overlay()
 		call_deferred("_start_smoke_mode")
 	else:
-		_begin_startup_menu_fade()
-		call_deferred("_begin_startup_prompts")
+		call_deferred("_begin_startup_sequence")
+
+func _build_startup_loading_overlay() -> void:
+	if _startup_loading_overlay != null and is_instance_valid(_startup_loading_overlay):
+		return
+	var overlay := Control.new()
+	overlay.name = "StartupLoadingOverlay"
+	overlay.z_index = 2200
+	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	add_child(overlay)
+
+	var background := ColorRect.new()
+	background.color = Color(0.018, 0.022, 0.038, 1.0)
+	background.mouse_filter = Control.MOUSE_FILTER_STOP
+	background.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	overlay.add_child(background)
+
+	var center := CenterContainer.new()
+	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	overlay.add_child(center)
+
+	var content := VBoxContainer.new()
+	content.custom_minimum_size = Vector2(420.0, 0.0)
+	content.alignment = BoxContainer.ALIGNMENT_CENTER
+	content.add_theme_constant_override("separation", 12)
+	center.add_child(content)
+
+	var title := Label.new()
+	title.text = "OTHER GODS"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 46)
+	title.add_theme_color_override("font_color", Color(0.87, 0.78, 0.58))
+	content.add_child(title)
+
+	var rule := HSeparator.new()
+	rule.custom_minimum_size = Vector2(260.0, 2.0)
+	rule.modulate = Color(0.47, 0.62, 0.82, 0.7)
+	content.add_child(rule)
+
+	var status := Label.new()
+	status.text = "Loading..."
+	status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	status.add_theme_font_size_override("font_size", 18)
+	status.add_theme_color_override("font_color", Color(0.74, 0.80, 0.90))
+	content.add_child(status)
+
+	_startup_loading_overlay = overlay
+	_startup_loading_status_label = status
+
+func _begin_startup_sequence() -> void:
+	await get_tree().process_frame
+	if _startup_loading_status_label != null and is_instance_valid(_startup_loading_status_label):
+		_startup_loading_status_label.text = "Sign in to continue"
+	_begin_startup_prompts()
+
+func _finish_startup_loading() -> void:
+	if _startup_loading_finished:
+		return
+	_startup_loading_finished = true
+	_begin_startup_menu_fade()
+	if _startup_loading_overlay != null and is_instance_valid(_startup_loading_overlay):
+		var tween := create_tween()
+		tween.tween_property(
+			_startup_loading_overlay,
+			"modulate:a",
+			0.0,
+			STARTUP_LOADING_FADE_SECONDS
+		).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+		await tween.finished
+	_remove_startup_loading_overlay()
+
+func _remove_startup_loading_overlay() -> void:
+	if _startup_loading_overlay != null and is_instance_valid(_startup_loading_overlay):
+		_startup_loading_overlay.queue_free()
+	_startup_loading_overlay = null
+	_startup_loading_status_label = null
 
 func _ensure_startup_splash_background() -> void:
 	if _startup_splash_background != null and is_instance_valid(_startup_splash_background):
@@ -312,8 +394,6 @@ func _ensure_startup_splash_background() -> void:
 
 func _ensure_startup_music() -> void:
 	if _startup_music_player != null and is_instance_valid(_startup_music_player):
-		if not _music_muted and not _startup_music_player.playing:
-			_startup_music_player.play()
 		_apply_music_mute_state()
 		return
 	var player := AudioStreamPlayer.new()
@@ -414,6 +494,7 @@ func _begin_startup_splash_animation() -> void:
 func _on_startup_splash_animation_finished() -> void:
 	_startup_splash_animation_finished = true
 	_layout_startup_splash_background(false)
+	_apply_music_mute_state()
 
 func _load_startup_music_stream() -> AudioStream:
 	if ResourceLoader.exists(STARTUP_MUSIC_PATH):
@@ -466,7 +547,7 @@ func _apply_music_mute_state() -> void:
 		if _music_muted:
 			_startup_music_player.stream_paused = true
 		else:
-			if not _startup_music_player.playing:
+			if _startup_splash_animation_finished and not _startup_music_player.playing:
 				_startup_music_player.play()
 			_startup_music_player.stream_paused = false
 	_refresh_music_mute_button()
@@ -2231,6 +2312,7 @@ func _show_update_prompt(
 
 	_update_prompt_overlay = Control.new()
 	_update_prompt_overlay.name = "UpdatePromptOverlay"
+	_update_prompt_overlay.z_index = 2300
 	_update_prompt_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_update_prompt_overlay.mouse_filter = Control.MOUSE_FILTER_STOP
 	add_child(_update_prompt_overlay)
@@ -3910,6 +3992,7 @@ func _show_auth_onboarding() -> void:
 	_auth_onboarding_selected_mode = AUTH_MODE_LOGIN
 	_auth_onboarding_overlay = Control.new()
 	_auth_onboarding_overlay.name = "AuthOnboardingOverlay"
+	_auth_onboarding_overlay.z_index = 2300
 	_auth_onboarding_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_auth_onboarding_overlay.mouse_filter = Control.MOUSE_FILTER_STOP
 	add_child(_auth_onboarding_overlay)
@@ -4215,6 +4298,7 @@ func _dismiss_auth_onboarding() -> void:
 	_auth_onboarding_username_edit = null
 	_auth_onboarding_password_edit = null
 	_auth_onboarding_continue_button = null
+	_finish_startup_loading()
 
 func _on_deck_builder_pressed() -> void:
 	var existing := game_container.get_node_or_null("DeckBuilder")
