@@ -5,6 +5,12 @@ per-user data directory, verifies its size and GitHub SHA-256 digest when
 available, extracts it to staging, and launches the staged `OtherGods.exe` in
 native updater mode.
 
+If Godot's downloader cannot start, resolve DNS, negotiate TLS, or write the
+download file, the app switches to Windows' signed `curl.exe` downloader. This
+uses an independent networking implementation and records curl's error text
+before falling back to the browser. A usable partial download is resumed by the
+Windows fallback instead of discarded.
+
 The native updater:
 
 - writes a readiness handshake before the old game exits;
@@ -55,6 +61,8 @@ For third-party antivirus, request the quarantine/event entry containing the
 file path, detection name, and timestamp. Useful `update.log` milestones are:
 
 - `download_started` / `download_completed`
+- `download_preflight_ok` / `download_preflight_failed`
+- `download_fallback_unavailable` / `download_fallback_failed`
 - `download_hash`
 - `native_updater_process_started`
 - `native_updater_ready`

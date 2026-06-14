@@ -41,6 +41,8 @@ const UPDATE_CHECK_RETRY_DELAY_SECONDS := 1.0
 const UPDATE_CHECK_MAX_ATTEMPTS := 2
 const UPDATE_DOWNLOAD_RETRY_DELAY_SECONDS := 2.0
 const UPDATE_DOWNLOAD_MAX_ATTEMPTS := 3
+const UPDATE_DOWNLOAD_MINIMUM_FREE_MARGIN_BYTES := 268435456
+const WINDOWS_CURL_POLL_SECONDS := 0.25
 const UPDATE_CLEANUP_RETRY_DELAY_SECONDS := 0.5
 const UPDATE_CLEANUP_MAX_ATTEMPTS := 10
 const UPDATE_LOG_PATH := "user://update.log"
@@ -146,6 +148,9 @@ var _pending_update_download_size: int = 0
 var _pending_update_download_sha256: String = ""
 var _update_download_request: HTTPRequest = null
 var _update_download_attempt: int = 0
+var _update_curl_process_id: int = 0
+var _update_curl_download_path: String = ""
+var _update_curl_fallback_started: bool = false
 var _update_now_button: Button = null
 var _update_open_button: Button = null
 var _update_support_button: Button = null
@@ -663,6 +668,8 @@ func _refresh_server_version_overlay_visibility() -> void:
 func _process(delta: float) -> void:
 	if _is_auto_updating and _update_download_request != null and is_instance_valid(_update_download_request):
 		_refresh_update_download_progress()
+	elif _is_auto_updating and _update_curl_process_id > 0:
+		_refresh_windows_curl_download_progress()
 	if not _should_auto_refresh_seeks():
 		_seek_auto_refresh_elapsed = 0.0
 		return
@@ -702,6 +709,31 @@ func _refresh_update_download_progress() -> void:
 	else:
 		_update_download_status_label.text = (
 			"Downloading %s: %.1f MB received.\n"
+			+ "Keep Other Gods open until it restarts."
+		) % [version_text, float(downloaded) / BYTES_PER_MIB]
+
+func _refresh_windows_curl_download_progress() -> void:
+	if _update_download_status_label == null or not is_instance_valid(_update_download_status_label):
+		return
+	var downloaded := maxi(0, _get_file_size(_update_curl_download_path))
+	var total := _pending_update_download_size
+	var version_text := _pending_update_release_version
+	if version_text.is_empty():
+		version_text = "the latest version"
+	if total > 0:
+		var percent := clampi(int(float(downloaded) / float(total) * 100.0), 0, 100)
+		_update_download_status_label.text = (
+			"Windows downloader: %s %d%% (%.1f / %.1f MB).\n"
+			+ "Keep Other Gods open until it restarts."
+		) % [
+			version_text,
+			percent,
+			float(downloaded) / BYTES_PER_MIB,
+			float(total) / BYTES_PER_MIB,
+		]
+	else:
+		_update_download_status_label.text = (
+			"Windows downloader: %s (%.1f MB received).\n"
 			+ "Keep Other Gods open until it restarts."
 		) % [version_text, float(downloaded) / BYTES_PER_MIB]
 
@@ -2319,6 +2351,11 @@ func _dismiss_update_prompt() -> void:
 		_update_download_request.cancel_request()
 		_update_download_request.queue_free()
 	_update_download_request = null
+	if _update_curl_process_id > 0 and OS.is_process_running(_update_curl_process_id):
+		OS.kill(_update_curl_process_id)
+	_update_curl_process_id = 0
+	_update_curl_download_path = ""
+	_update_curl_fallback_started = false
 	_is_auto_updating = false
 	_update_now_button = null
 	_update_open_button = null
@@ -2371,6 +2408,9 @@ func _on_update_prompt_auto_update_pressed() -> void:
 		return
 	_is_auto_updating = true
 	_update_download_attempt = 0
+	_update_curl_process_id = 0
+	_update_curl_download_path = ""
+	_update_curl_fallback_started = false
 	_last_logged_update_percent = -10
 	if _update_now_button != null and is_instance_valid(_update_now_button):
 		_update_now_button.disabled = true
@@ -2386,6 +2426,10 @@ func _on_update_prompt_auto_update_pressed() -> void:
 		)
 		_update_download_status_label.visible = true
 
+	var preflight_failure := _check_update_download_preflight()
+	if not preflight_failure.is_empty():
+		_on_auto_update_failed(preflight_failure)
+		return
 	_begin_auto_update_download()
 
 func _cleanup_windows_update_artifacts() -> void:
@@ -2410,6 +2454,47 @@ func _cleanup_windows_update_artifacts() -> void:
 				break
 			await get_tree().create_timer(UPDATE_CLEANUP_RETRY_DELAY_SECONDS).timeout
 
+func _check_update_download_preflight() -> String:
+	var user_data_dir := OS.get_user_data_dir()
+	var write_test_path := user_data_dir.path_join(
+		"update-download-write-test-%d.tmp" % OS.get_process_id()
+	)
+	DirAccess.remove_absolute(write_test_path)
+	var write_test := FileAccess.open(write_test_path, FileAccess.WRITE)
+	if write_test == null:
+		_write_update_log("download_preflight_failed reason=user_data_not_writable path=%s" % user_data_dir)
+		return (
+			"Other Gods cannot write the update download folder. "
+			+ "Windows security, antivirus, or folder permissions may be blocking it."
+		)
+	write_test.store_string("ok")
+	write_test.close()
+	var remove_error := DirAccess.remove_absolute(write_test_path)
+	if remove_error != OK or FileAccess.file_exists(write_test_path):
+		_write_update_log(
+			"download_preflight_failed reason=write_test_cleanup error=%d path=%s"
+			% [remove_error, write_test_path]
+		)
+		return "Other Gods could not prepare its update download folder."
+
+	var available_bytes := -1
+	var user_dir := DirAccess.open(user_data_dir)
+	if user_dir != null:
+		available_bytes = user_dir.get_space_left()
+	var required_bytes := UPDATE_DOWNLOAD_MINIMUM_FREE_MARGIN_BYTES
+	if _pending_update_download_size > 0:
+		required_bytes += _pending_update_download_size * 2
+	_write_update_log(
+		"download_preflight_ok available_bytes=%d required_bytes=%d path=%s"
+		% [available_bytes, required_bytes, user_data_dir]
+	)
+	if available_bytes > 0 and available_bytes < required_bytes:
+		return (
+			"Not enough free disk space to download and stage the update. "
+			+ "Free at least %.1f GB and try again."
+		) % (float(required_bytes - available_bytes) / 1073741824.0)
+	return ""
+
 func _begin_auto_update_download() -> void:
 	if not _is_auto_updating:
 		return
@@ -2429,7 +2514,7 @@ func _begin_auto_update_download() -> void:
 	_update_download_request.request_completed.connect(_on_auto_update_download_completed.bind(zip_path))
 	add_child(_update_download_request)
 	_write_update_log(
-		"download_started version=%s attempt=%d expected_bytes=%d url=%s"
+		"download_started transport=godot version=%s attempt=%d expected_bytes=%d url=%s"
 		% [
 			_pending_update_release_version,
 			_update_download_attempt,
@@ -2444,7 +2529,8 @@ func _begin_auto_update_download() -> void:
 	)
 	if request_error != OK:
 		_retry_auto_update_download_or_fail(
-			"Failed to start download (%d)." % request_error
+			"Built-in downloader could not start (%s)." % _error_code_name(request_error),
+			true
 		)
 
 func _on_auto_update_download_completed(
@@ -2456,54 +2542,48 @@ func _on_auto_update_download_completed(
 ) -> void:
 	var downloaded_size := _get_file_size(zip_path)
 	_write_update_log(
-		"download_completed result=%d response_code=%d bytes=%d expected_bytes=%d"
-		% [result, response_code, downloaded_size, _pending_update_download_size]
+		"download_completed transport=godot result=%s response_code=%d bytes=%d expected_bytes=%d"
+		% [
+			_http_request_result_name(result),
+			response_code,
+			downloaded_size,
+			_pending_update_download_size,
+		]
 	)
 	if result != HTTPRequest.RESULT_SUCCESS or response_code < 200 or response_code >= 300:
+		var skip_builtin_retries := result in [2, 3, 5, 10, 11]
 		_retry_auto_update_download_or_fail(
-			"Download failed (result %d, HTTP %d)." % [result, response_code]
+			"Built-in downloader failed (%s, HTTP %d)."
+			% [_http_request_result_name(result), response_code],
+			skip_builtin_retries
 		)
 		return
-	if downloaded_size <= 0:
-		_retry_auto_update_download_or_fail("The downloaded update was empty.")
+	var validation_failure := _validate_downloaded_update(zip_path, "godot")
+	if not validation_failure.is_empty():
+		_retry_auto_update_download_or_fail(validation_failure)
 		return
-	if (
-		_pending_update_download_size > 0
-		and downloaded_size != _pending_update_download_size
-	):
-		_retry_auto_update_download_or_fail(
-			"Download was incomplete (%.1f of %.1f MB)."
-			% [
-				float(downloaded_size) / BYTES_PER_MIB,
-				float(_pending_update_download_size) / BYTES_PER_MIB,
-			]
-		)
-		return
-	if not _pending_update_download_sha256.is_empty():
-		var downloaded_sha256 := FileAccess.get_sha256(zip_path).to_lower()
-		_write_update_log(
-			"download_hash expected=%s actual=%s"
-			% [_pending_update_download_sha256, downloaded_sha256]
-		)
-		if downloaded_sha256 != _pending_update_download_sha256:
-			_retry_auto_update_download_or_fail(
-				"The downloaded update failed SHA-256 verification. Please try again."
-			)
-			return
 	if _update_download_request != null and is_instance_valid(_update_download_request):
 		_update_download_request.queue_free()
 	_update_download_request = null
 	_apply_update_and_restart(zip_path)
 
-func _retry_auto_update_download_or_fail(message: String) -> void:
+func _retry_auto_update_download_or_fail(message: String, skip_builtin_retries: bool = false) -> void:
 	_write_update_log(
-		"download_attempt_failed version=%s attempt=%d message=%s"
-		% [_pending_update_release_version, _update_download_attempt, message]
+		"download_attempt_failed transport=godot version=%s attempt=%d skip_retries=%s message=%s"
+		% [
+			_pending_update_release_version,
+			_update_download_attempt,
+			str(skip_builtin_retries),
+			message,
+		]
 	)
 	if _update_download_request != null and is_instance_valid(_update_download_request):
 		_update_download_request.queue_free()
 	_update_download_request = null
-	if _update_download_attempt >= UPDATE_DOWNLOAD_MAX_ATTEMPTS:
+	if skip_builtin_retries or _update_download_attempt >= UPDATE_DOWNLOAD_MAX_ATTEMPTS:
+		if OS.get_name() == "Windows" and not _update_curl_fallback_started:
+			_begin_windows_curl_download(message)
+			return
 		_on_auto_update_failed(message)
 		return
 	if _update_download_status_label != null and is_instance_valid(_update_download_status_label):
@@ -2514,6 +2594,200 @@ func _retry_auto_update_download_or_fail(message: String) -> void:
 	await get_tree().create_timer(UPDATE_DOWNLOAD_RETRY_DELAY_SECONDS).timeout
 	if _is_auto_updating:
 		_begin_auto_update_download()
+
+func _begin_windows_curl_download(previous_failure: String) -> void:
+	_update_curl_fallback_started = true
+	var curl_path := _resolve_windows_curl_path()
+	if curl_path.is_empty():
+		_write_update_log("download_fallback_unavailable reason=curl_missing")
+		_on_auto_update_failed(
+			"%s Windows' fallback downloader was not available." % previous_failure
+		)
+		return
+	var zip_path := OS.get_user_data_dir() + "/update_download_windows.zip"
+	var error_path := OS.get_user_data_dir() + "/update_download_windows_error.txt"
+	DirAccess.remove_absolute(zip_path)
+	DirAccess.remove_absolute(error_path)
+	var built_in_partial_path := OS.get_user_data_dir() + "/update_download.zip"
+	var partial_size := _get_file_size(built_in_partial_path)
+	var can_resume_partial := (
+		partial_size > 0
+		and _pending_update_download_size > 0
+		and partial_size < _pending_update_download_size
+	)
+	if can_resume_partial:
+		var resume_move_error := DirAccess.rename_absolute(built_in_partial_path, zip_path)
+		can_resume_partial = resume_move_error == OK
+		_write_update_log(
+			"download_fallback_resume bytes=%d moved=%s error=%d"
+			% [partial_size, str(can_resume_partial), resume_move_error]
+		)
+	_update_curl_download_path = zip_path
+	if _update_download_status_label != null and is_instance_valid(_update_download_status_label):
+		_update_download_status_label.text = (
+			"%s\nTrying Windows' built-in downloader..."
+			% previous_failure
+		)
+	var args := PackedStringArray([
+		"--fail",
+		"--location",
+		"--silent",
+		"--show-error",
+		"--retry",
+		"4",
+		"--retry-delay",
+		"2",
+		"--connect-timeout",
+		"20",
+		"--speed-limit",
+		"1024",
+		"--speed-time",
+		"90",
+		"--user-agent",
+		"OtherGods",
+	])
+	if can_resume_partial:
+		args.append_array([
+			"--continue-at",
+			"-",
+		])
+	args.append_array([
+		"--output",
+		zip_path,
+		"--stderr",
+		error_path,
+		_pending_update_download_url,
+	])
+	_update_curl_process_id = OS.create_process(curl_path, args, false)
+	if _update_curl_process_id == -1:
+		_update_curl_process_id = 0
+		_write_update_log(
+			"download_fallback_failed reason=curl_launch_failed path=%s" % curl_path
+		)
+		_on_auto_update_failed(
+			"%s Windows blocked its fallback downloader from starting." % previous_failure
+		)
+		return
+	_write_update_log(
+		"download_started transport=windows_curl version=%s pid=%d expected_bytes=%d url=%s"
+		% [
+			_pending_update_release_version,
+			_update_curl_process_id,
+			_pending_update_download_size,
+			_pending_update_download_url,
+		]
+	)
+	while OS.is_process_running(_update_curl_process_id):
+		if not _is_auto_updating:
+			OS.kill(_update_curl_process_id)
+			_update_curl_process_id = 0
+			return
+		await get_tree().create_timer(WINDOWS_CURL_POLL_SECONDS).timeout
+	_update_curl_process_id = 0
+	var error_text := _read_update_text_file(error_path).replace("\r", " ").replace("\n", " ").strip_edges()
+	var downloaded_size := _get_file_size(zip_path)
+	_write_update_log(
+		"download_completed transport=windows_curl bytes=%d expected_bytes=%d error=%s"
+		% [downloaded_size, _pending_update_download_size, error_text.left(500)]
+	)
+	var validation_failure := _validate_downloaded_update(zip_path, "windows_curl")
+	if not validation_failure.is_empty():
+		if not error_text.is_empty():
+			validation_failure += " Windows reported: %s" % error_text.left(240)
+		_on_auto_update_failed(validation_failure)
+		return
+	DirAccess.remove_absolute(error_path)
+	_update_curl_download_path = ""
+	_apply_update_and_restart(zip_path)
+
+func _resolve_windows_curl_path() -> String:
+	var windows_dir := OS.get_environment("WINDIR").strip_edges()
+	var candidates := PackedStringArray()
+	if not windows_dir.is_empty():
+		candidates.append(windows_dir.path_join("System32/curl.exe"))
+	candidates.append("C:/Windows/System32/curl.exe")
+	for candidate in candidates:
+		if FileAccess.file_exists(candidate):
+			return candidate
+	return ""
+
+func _validate_downloaded_update(zip_path: String, transport: String) -> String:
+	var downloaded_size := _get_file_size(zip_path)
+	var transport_label := _download_transport_label(transport)
+	if downloaded_size <= 0:
+		return "The %s download was empty." % transport_label
+	if (
+		_pending_update_download_size > 0
+		and downloaded_size != _pending_update_download_size
+	):
+		return (
+			"The %s download was incomplete (%.1f of %.1f MB)."
+			% [
+				transport_label,
+				float(downloaded_size) / BYTES_PER_MIB,
+				float(_pending_update_download_size) / BYTES_PER_MIB,
+			]
+		)
+	if not _pending_update_download_sha256.is_empty():
+		var downloaded_sha256 := FileAccess.get_sha256(zip_path).to_lower()
+		_write_update_log(
+			"download_hash transport=%s expected=%s actual=%s"
+			% [transport, _pending_update_download_sha256, downloaded_sha256]
+		)
+		if downloaded_sha256 != _pending_update_download_sha256:
+			return "The %s download failed SHA-256 verification." % transport_label
+	return ""
+
+func _download_transport_label(transport: String) -> String:
+	if transport == "windows_curl":
+		return "Windows fallback"
+	return "built-in"
+
+func _http_request_result_name(result: int) -> String:
+	match result:
+		0:
+			return "success"
+		1:
+			return "chunked_body_size_mismatch"
+		2:
+			return "cant_connect"
+		3:
+			return "cant_resolve"
+		4:
+			return "connection_error"
+		5:
+			return "tls_handshake_error"
+		6:
+			return "no_response"
+		7:
+			return "body_size_limit_exceeded"
+		8:
+			return "body_decompress_failed"
+		9:
+			return "request_failed"
+		10:
+			return "download_file_cant_open"
+		11:
+			return "download_file_write_error"
+		12:
+			return "redirect_limit_reached"
+		13:
+			return "timeout"
+		_:
+			return "unknown_%d" % result
+
+func _error_code_name(error_code: int) -> String:
+	return "%s (%d)" % [error_string(error_code), error_code]
+
+func _read_update_text_file(path: String) -> String:
+	if path.is_empty() or not FileAccess.file_exists(path):
+		return ""
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		return ""
+	var text := file.get_as_text()
+	file.close()
+	return text
 
 func _apply_update_and_restart(zip_path: String) -> void:
 	if not _release_updates_enabled():
