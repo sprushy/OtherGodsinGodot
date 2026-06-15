@@ -492,6 +492,7 @@ signal nimue_badge_clicked(card: Card, mode: String)
 signal creature_drag_started(card: Card, from_zone: Zone)
 signal creature_right_clicked(card: Card)
 signal god_right_clicked(card: Card)
+signal hermes_priority_toggle_changed(enabled: bool)
 
 var zone: Zone
 var game_manager: GameManager
@@ -515,6 +516,8 @@ var _defense_overlay: Control = null
 var _raised_overlay: Control = null  # non-null for DEF or stealth - floats above the zone row
 var _visual_state_card: Card = null
 var _badge_hover_popup: Control = null
+var _show_hermes_priority_toggle: bool = false
+var _hermes_offer_priority: bool = true
 
 const BASE_ZONE_EXTENT := 165.0
 const DROMI_BINDING_NAME := "Dromi"
@@ -588,6 +591,12 @@ static func get_always_show_ability_badges() -> bool:
 	if not _always_show_ability_badges_loaded:
 		_load_always_show_ability_badges_setting()
 	return _always_show_ability_badges
+
+func configure_hermes_priority_toggle(show_toggle: bool, offer_priority: bool) -> void:
+	_show_hermes_priority_toggle = show_toggle
+	_hermes_offer_priority = offer_priority
+	if is_inside_tree():
+		_refresh_display()
 
 static func _load_always_show_ability_badges_setting() -> void:
 	_always_show_ability_badges_loaded = true
@@ -2398,6 +2407,30 @@ func _add_god_custom_ability_badge(overlay: Control, card: Card) -> void:
 		_connect_badge_click_action(badge, "god_ability", card_uid)
 	_connect_badge_hover(badge, hover_text)
 	overlay.add_child(badge)
+
+func _add_hermes_priority_toggle(overlay: Control, card: Card) -> void:
+	if overlay == null or card == null or card.card_name != "Hermes":
+		return
+	if not _show_hermes_priority_toggle or _is_enemy or card.get_controller() != _get_viewer_player():
+		return
+	var toggle := CheckButton.new()
+	toggle.name = "HermesOfferPriorityToggle"
+	toggle.text = "Offer Priority"
+	toggle.tooltip_text = "When enabled, Hermes can open priority prompts for Deceptive Speed."
+	toggle.button_pressed = _hermes_offer_priority
+	toggle.mouse_filter = Control.MOUSE_FILTER_STOP
+	toggle.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	toggle.add_theme_font_size_override("font_size", 10)
+	toggle.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+	toggle.offset_left = 5.0
+	toggle.offset_top = -48.0
+	toggle.offset_right = -5.0
+	toggle.offset_bottom = -20.0
+	toggle.toggled.connect(func(enabled: bool) -> void:
+		_hermes_offer_priority = enabled
+		hermes_priority_toggle_changed.emit(enabled)
+	)
+	overlay.add_child(toggle)
 
 func _get_tez_valid_sacrifices(card: Card) -> Array:
 	if game_manager == null or not _is_tez_necoc_yaotl_card(card) or not card.has_method("get_valid_targets"):
@@ -4759,6 +4792,7 @@ func _refresh_display() -> void:
 				if show_champions_call_badge:
 					_add_champions_call_badge(god_overlay, card, glow_champions_call_badge)
 				_add_god_custom_ability_badge(god_overlay, card)
+				_add_hermes_priority_toggle(god_overlay, card)
 
 				if card.is_power and card.is_muted and card.mute_turns_remaining > 0:
 					var muted_badge := PanelContainer.new()

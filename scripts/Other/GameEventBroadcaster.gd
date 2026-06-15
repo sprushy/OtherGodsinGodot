@@ -45,16 +45,17 @@ func _on_move_validated(move: Dictionary) -> void:
 	if move.get("type", "") in ["end_turn", "intercept_decision", "priority_pass"]:
 		return
 	_broadcast_full_state_for_move(move)
-	if _move_completes_reveal_interaction(move):
+	if _move_completes_state_refresh_interaction(move):
 		# move_validated fires before MatchManager consumes the completed prompt.
-		# Wait until then so any other simultaneous reveal prompts are re-sent
+		# Wait until then so any other simultaneous prompts are re-sent
 		# without also resurrecting the prompt that was just answered.
-		call_deferred("_rebroadcast_pending_reveal_interactions")
+		call_deferred("_rebroadcast_pending_state_refresh_interactions")
 	else:
-		_rebroadcast_pending_reveal_interactions()
+		_rebroadcast_pending_state_refresh_interactions()
 
 func _on_action_resolved(action: CardAction) -> void:
 	_broadcast_full_state_for_action(action)
+	_rebroadcast_pending_state_refresh_interactions()
 
 func _on_ui_refresh_requested() -> void:
 	if network_manager == null or game_manager == null:
@@ -85,12 +86,12 @@ func _on_ui_refresh_requested() -> void:
 				network_manager.get_spectator_visible_player_indices(int(peer_id))
 			)
 		)
-	_rebroadcast_pending_reveal_interactions()
+	_rebroadcast_pending_state_refresh_interactions()
 
-func _rebroadcast_pending_reveal_interactions() -> void:
+func _rebroadcast_pending_state_refresh_interactions() -> void:
 	if match_manager == null or game_manager == null:
 		return
-	for entry in match_manager.get_pending_reveal_target_ui_interactions():
+	for entry in match_manager.get_pending_state_refresh_ui_interactions():
 		var prompt_player := entry.get("player", null) as Player
 		var player_index := game_manager.players.find(prompt_player)
 		if player_index < 0:
@@ -101,17 +102,18 @@ func _rebroadcast_pending_reveal_interactions() -> void:
 			continue
 		# A full-state refresh replaces client-side card objects and invalidates
 		# prompt callbacks captured before the refresh. Re-send the still-pending
-		# reveal prompt afterward so targeting binds to the rebuilt live cards.
+		# prompt afterward so targeting binds to the rebuilt live cards.
 		_broadcast_ui_interaction(
 			player_index,
 			interaction_type,
 			prompt_router.serialize_prompt_data(interaction_data)
 		)
 
-func _move_completes_reveal_interaction(move: Dictionary) -> bool:
+func _move_completes_state_refresh_interaction(move: Dictionary) -> bool:
 	var command_type := str(move.get("type", "")).strip_edges()
 	var interaction_type := MatchCommandRegistryScript.get_ui_interaction_type(command_type)
-	return interaction_type.strip_edges().to_lower().contains("reveal")
+	return interaction_type.strip_edges().to_lower().contains("reveal") \
+		or interaction_type.strip_edges() == "nusku_well_of_fire"
 
 func _on_turn_upkeep_started(_turn_number: int, player: Player) -> void:
 	if network_manager == null:

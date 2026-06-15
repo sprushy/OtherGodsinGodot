@@ -9,6 +9,7 @@ const TiamatScript = preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
 const MatchCommandRegistryScript = preload("res://scripts/Other/MatchCommandRegistry.gd")
 const AUTHORITATIVE_FLOW_LOG_PREFIX := "[OG server flow]"
 const AUTHORITATIVE_FLOW_CHECK_DELAY_SECONDS := 1.0
+const PRIORITY_STOP_KEYS := ["start", "main", "combat", "end"]
 
 signal targeting_started(source: Card, target_type: String)
 signal targeting_ended()
@@ -83,6 +84,7 @@ var _active_command_type: String = ""
 var _resolving_priority_choice_command: bool = false
 var _pending_ui_interactions: Array[Dictionary] = []
 var _next_ui_interaction_id: int = 1
+var _priority_preferences_by_player: Dictionary = {}
 
 func _init(p_game_manager: GameManager) -> void:
 	game_manager = p_game_manager
@@ -1056,8 +1058,21 @@ func get_pending_reveal_target_ui_interactions() -> Array[Dictionary]:
 		interactions.append(entry.duplicate(true))
 	return interactions
 
+func get_pending_state_refresh_ui_interactions() -> Array[Dictionary]:
+	var interactions: Array[Dictionary] = []
+	for entry in _pending_ui_interactions:
+		var interaction_type := str(entry.get("type", ""))
+		if not _is_state_refresh_ui_interaction_type(interaction_type):
+			continue
+		interactions.append(entry.duplicate(true))
+	return interactions
+
 func _is_reveal_interaction_type(interaction_type: String) -> bool:
 	return interaction_type.strip_edges().to_lower().contains("reveal")
+
+func _is_state_refresh_ui_interaction_type(interaction_type: String) -> bool:
+	return _is_reveal_interaction_type(interaction_type) \
+		or interaction_type.strip_edges() == "nusku_well_of_fire"
 
 func _log_authoritative_flow_state(context: String) -> void:
 	if game_manager == null or not _uses_authoritative_headless_priority_flow():
@@ -1768,10 +1783,128 @@ func _can_resolve_top_stack_action_now() -> bool:
 	var second_player := game_manager.get_opponent(first_player) if first_player != null else null
 	return not _player_has_priority_prompt_responses(first_player) and not _player_has_priority_prompt_responses(second_player)
 
+func set_priority_preferences(
+	player: Player,
+	stops: Dictionary,
+	full_control: bool,
+	god_specific: Dictionary = {}
+) -> void:
+	if game_manager == null or player == null:
+		return
+	var player_idx := game_manager.players.find(player)
+	if player_idx < 0:
+		return
+	var normalized_stops := {}
+	for stop_key in PRIORITY_STOP_KEYS:
+		normalized_stops[stop_key] = bool(stops.get(stop_key, false))
+	var raw_hermes_settings = god_specific.get("hermes", {})
+	var hermes_settings: Dictionary = {}
+	if raw_hermes_settings is Dictionary:
+		hermes_settings = raw_hermes_settings as Dictionary
+	_priority_preferences_by_player[player_idx] = {
+		"stops": normalized_stops,
+		"full_control": full_control,
+		"god_specific": {
+			"hermes": {
+				"offer_priority": bool(hermes_settings.get("offer_priority", true)),
+				"auto_pass_end_priority": bool(hermes_settings.get("auto_pass_end_priority", true)),
+				"auto_pass_upkeep_priority": bool(hermes_settings.get("auto_pass_upkeep_priority", true)),
+			},
+		},
+	}
+
+func _priority_response_offers_prompt(card: Card, action: CardAction, player: Player) -> bool:
+	if card == null or action == null or player == null or game_manager == null:
+		return false
+	if card.card_name != "Hermes":
+		return true
+	var player_idx := game_manager.players.find(player)
+	var preferences: Dictionary = _priority_preferences_by_player.get(player_idx, {})
+	var god_specific: Dictionary = preferences.get("god_specific", {})
+	var hermes_settings: Dictionary = god_specific.get("hermes", {})
+	if not bool(hermes_settings.get("offer_priority", true)):
+		return false
+	var priority_stop_key := get_priority_stop_key(action)
+	if priority_stop_key == "end" and bool(hermes_settings.get("auto_pass_end_priority", true)):
+		return false
+	if priority_stop_key == "start" and bool(hermes_settings.get("auto_pass_upkeep_priority", true)):
+		return false
+	return true
+
+func get_priority_prompt_offering_responses(player: Player) -> Array:
+	var offering_responses: Array = []
+	if game_manager == null or player == null or game_manager.action_stack.is_empty():
+		return offering_responses
+	var top_action: CardAction = game_manager.action_stack.back()
+	for card in game_manager.get_priority_responses(player):
+		if _priority_response_offers_prompt(card as Card, top_action, player):
+			offering_responses.append(card)
+	return offering_responses
+
+func get_priority_stop_key(action: CardAction) -> String:
+	if action == null:
+		return "main"
+	var root_action := action
+	var response_depth := 0
+	while root_action.response_to != null and root_action.response_to != root_action and response_depth < 32:
+		root_action = root_action.response_to
+		response_depth += 1
+	if root_action.type == CardAction.Type.ATTACK:
+		return "combat"
+	if root_action.type == CardAction.Type.EVENT:
+		if root_action.event_name == "start_turn":
+			return "start"
+		if root_action.event_name == "end_turn":
+			return "end"
+	return "main"
+
+func _priority_window_was_offered_to_player(action: CardAction, player: Player) -> bool:
+	if action == null or player == null or game_manager == null:
+		return false
+	var player_idx := game_manager.players.find(player)
+	if player_idx < 0:
+		return false
+	var offered_indexes: Array = action.event_data.get("priority_window_offered_player_indexes", [])
+	return player_idx in offered_indexes
+
+func mark_priority_window_offered(action: CardAction, player: Player) -> void:
+	if action == null or player == null or game_manager == null:
+		return
+	var player_idx := game_manager.players.find(player)
+	if player_idx < 0:
+		return
+	var offered_indexes: Array = action.event_data.get("priority_window_offered_player_indexes", [])
+	if player_idx not in offered_indexes:
+		offered_indexes.append(player_idx)
+	action.event_data["priority_window_offered_player_indexes"] = offered_indexes
+	if bool(action.event_data.get("force_priority_window", false)):
+		action.event_data["priority_window_offered"] = true
+
+func player_requires_priority_window(action: CardAction, player: Player) -> bool:
+	if action == null or player == null or game_manager == null:
+		return false
+	if bool(action.event_data.get("force_priority_window", false)) \
+			and not bool(action.event_data.get("priority_window_offered", false)):
+		return true
+	if _priority_window_was_offered_to_player(action, player):
+		return false
+	var player_idx := game_manager.players.find(player)
+	var preferences: Dictionary = _priority_preferences_by_player.get(player_idx, {})
+	if bool(preferences.get("full_control", false)):
+		return true
+	var stops: Dictionary = preferences.get("stops", {})
+	return bool(stops.get(get_priority_stop_key(action), false))
+
 func _action_requires_explicit_priority_window(action: CardAction) -> bool:
-	return action != null \
-		and bool(action.event_data.get("force_priority_window", false)) \
-		and not bool(action.event_data.get("priority_window_offered", false))
+	if action == null:
+		return false
+	if bool(action.event_data.get("force_priority_window", false)) \
+			and not bool(action.event_data.get("priority_window_offered", false)):
+		return true
+	for player in game_manager.players:
+		if player_requires_priority_window(action, player):
+			return true
+	return false
 
 func _resolve_authoritative_stack_top_after_priority() -> void:
 	if game_manager == null or game_manager.action_stack.is_empty():
@@ -2204,11 +2337,7 @@ func build_priority_prompt_data(player: Player) -> Dictionary:
 func _player_has_priority_prompt_responses(player: Player) -> bool:
 	if player == null:
 		return false
-	var prompt_data := build_priority_prompt_data(player)
-	if prompt_data.is_empty():
-		return false
-	var responses: Array = prompt_data.get("responses", [])
-	return not responses.is_empty()
+	return not get_priority_prompt_offering_responses(player).is_empty()
 
 func _get_priority_action_message(top: CardAction, viewer: Player = null) -> String:
 	if top == null:
@@ -2274,10 +2403,10 @@ func _advance_authoritative_priority() -> void:
 	if player == null:
 		return
 	var prompt_data := build_priority_prompt_data(player)
-	var prompt_responses: Array = prompt_data.get("responses", [])
+	var prompt_offering_responses := get_priority_prompt_offering_responses(player)
 	var top_action: CardAction = game_manager.action_stack.back()
-	var force_priority_window := _action_requires_explicit_priority_window(top_action)
-	if prompt_responses.is_empty() and not force_priority_window:
+	var force_priority_window := player_requires_priority_window(top_action, player)
+	if prompt_offering_responses.is_empty() and not force_priority_window:
 		game_manager.pass_priority()
 		if game_manager.both_passed():
 			if game_manager.action_stack.is_empty():
@@ -2293,7 +2422,7 @@ func _advance_authoritative_priority() -> void:
 	if top_action != null:
 		top_action.event_data["priority_prompt_offered_player_index"] = player_idx
 		if force_priority_window:
-			top_action.event_data["priority_window_offered"] = true
+			mark_priority_window_offered(top_action, player)
 	request_ui_interaction.emit(player_idx, "priority", prompt_data)
 
 func queue_or_resolve_priority_event(action: CardAction) -> bool:
@@ -2880,7 +3009,7 @@ func _complete_turn_action_priority_decline(actor: Player) -> void:
 	var top_action: CardAction = game_manager.action_stack.back()
 	if waiting_player != null \
 			and waiting_player != actor \
-			and not _action_requires_explicit_priority_window(top_action) \
+			and not player_requires_priority_window(top_action, waiting_player) \
 			and not _player_has_priority_prompt_responses(waiting_player):
 		game_manager.pass_priority()
 		_resolve_authoritative_stack_top_after_priority()
@@ -2997,6 +3126,29 @@ func process_command(command: Dictionary, sender_info: Dictionary = {}) -> bool:
 func _process_command_impl(command: Dictionary) -> bool:
 	var acting_player := _get_command_actor(_active_command_sender_info)
 	match command.get("type", ""):
+		"set_priority_preferences":
+			var preference_player := acting_player
+			var preference_player_idx := int(command.get("player_index", -1))
+			if preference_player_idx >= 0 and preference_player_idx < game_manager.players.size():
+				preference_player = game_manager.players[preference_player_idx]
+			if preference_player == null:
+				move_failed.emit("set_priority_preferences: player not found")
+				return false
+			var priority_stops = command.get("stops", {})
+			if not (priority_stops is Dictionary):
+				move_failed.emit("set_priority_preferences: invalid stops")
+				return false
+			var god_specific = command.get("god_specific", {})
+			if not (god_specific is Dictionary):
+				move_failed.emit("set_priority_preferences: invalid god settings")
+				return false
+			set_priority_preferences(
+				preference_player,
+				priority_stops as Dictionary,
+				bool(command.get("full_control", false)),
+				god_specific as Dictionary
+			)
+			return true
 		"select_attacker":
 			var uid = command.get("card_uid", "")
 			var card = game_manager.get_card_by_uid(uid)

@@ -15,6 +15,7 @@ const PROCESS_WAIT_ATTEMPTS := 120
 const PROCESS_WAIT_DELAY_SECONDS := 0.25
 const FILE_RETRY_ATTEMPTS := 20
 const FILE_RETRY_DELAY_SECONDS := 0.5
+const COPY_BUFFER_BYTES := 4194304
 
 var _log_path: String = ""
 var _failure_marker_path: String = ""
@@ -22,6 +23,7 @@ var _target_exe_path: String = ""
 var _target_dir: String = ""
 var _source_dir: String = ""
 var _version: String = ""
+var _expected_sha256: String = ""
 
 static func is_update_launch(launch_args: Dictionary) -> bool:
 	return str(launch_args.get(MODE_ARG, "")).strip_edges() == UPDATE_MODE_VALUE
@@ -36,7 +38,7 @@ func _run_update(launch_args: Dictionary) -> void:
 	_target_exe_path = str(launch_args.get(TARGET_EXE_ARG, "")).strip_edges().simplify_path()
 	_version = str(launch_args.get(VERSION_ARG, "")).strip_edges()
 	var handshake_path := str(launch_args.get(HANDSHAKE_ARG, "")).strip_edges()
-	var expected_sha256 := str(
+	_expected_sha256 = str(
 		launch_args.get(EXPECTED_SHA256_ARG, "")
 	).strip_edges().to_lower()
 	var source_exe_path := OS.get_executable_path().simplify_path()
@@ -49,7 +51,6 @@ func _run_update(launch_args: Dictionary) -> void:
 	)
 	var validation_error := _validate_launch(
 		source_exe_path,
-		expected_sha256,
 		handshake_path
 	)
 	if not validation_error.is_empty():
@@ -92,7 +93,12 @@ func _run_update(launch_args: Dictionary) -> void:
 	for relative_path in relative_files:
 		var source_path := _source_dir.path_join(relative_path)
 		var target_path := _target_dir.path_join(relative_path)
-		var install_result := await _install_file_transactionally(source_path, target_path)
+		var expected_sha256 := _expected_sha256 if relative_path == target_exe_relative else ""
+		var install_result := await _install_file_transactionally(
+			source_path,
+			target_path,
+			expected_sha256
+		)
 		if not bool(install_result.get("ok", false)):
 			_rollback_committed_files(committed_files)
 			_fail_and_restart(
@@ -124,7 +130,6 @@ func _run_update(launch_args: Dictionary) -> void:
 
 func _validate_launch(
 	source_exe_path: String,
-	expected_sha256: String,
 	handshake_path: String
 ) -> String:
 	if OS.get_name() != "Windows":
@@ -137,10 +142,8 @@ func _validate_launch(
 		return "target executable is outside the target directory"
 	if handshake_path.is_empty():
 		return "handshake path is missing"
-	if not expected_sha256.is_empty():
-		var source_sha256 := FileAccess.get_sha256(source_exe_path).to_lower()
-		if source_sha256.is_empty() or source_sha256 != expected_sha256:
-			return "staged updater executable failed SHA-256 verification"
+	if not _is_sha256(_expected_sha256):
+		return "staged updater executable SHA-256 is missing or invalid"
 	return ""
 
 func _collect_relative_files(root_path: String) -> Array[String]:
@@ -176,10 +179,16 @@ func _collect_relative_files_recursive(
 		entry_name = dir.get_next()
 	dir.list_dir_end()
 
-func _install_file_transactionally(source_path: String, target_path: String) -> Dictionary:
+func _install_file_transactionally(
+	source_path: String,
+	target_path: String,
+	expected_sha256: String = ""
+) -> Dictionary:
 	var temp_path := "%s.update-new" % target_path
 	var backup_path := "%s.update-old" % target_path
-	var source_sha256 := FileAccess.get_sha256(source_path).to_lower()
+	var source_sha256 := expected_sha256
+	if source_sha256.is_empty():
+		source_sha256 = FileAccess.get_sha256(source_path).to_lower()
 	if source_sha256.is_empty():
 		return {"ok": false, "error": "could not hash staged file"}
 	var last_error := "copy failed"
@@ -189,9 +198,9 @@ func _install_file_transactionally(source_path: String, target_path: String) -> 
 			last_error = "could not create target directory"
 		else:
 			_remove_file_if_present(temp_path)
-			var copy_error := DirAccess.copy_absolute(source_path, temp_path)
-			if copy_error == OK:
-				var temp_sha256 := FileAccess.get_sha256(temp_path).to_lower()
+			var copy_result := _copy_file_with_sha256(source_path, temp_path)
+			if bool(copy_result.get("ok", false)):
+				var temp_sha256 := str(copy_result.get("sha256", "")).to_lower()
 				if temp_sha256 != source_sha256:
 					last_error = "temporary copy failed SHA-256 verification"
 				else:
@@ -202,9 +211,6 @@ func _install_file_transactionally(source_path: String, target_path: String) -> 
 						var replace_error := DirAccess.rename_absolute(temp_path, target_path)
 						if replace_error != OK:
 							last_error = "could not move the verified file into place (%d)" % replace_error
-							_restore_backup(target_path, backup_path, had_existing_target)
-						elif FileAccess.get_sha256(target_path).to_lower() != source_sha256:
-							last_error = "installed file failed SHA-256 verification"
 							_restore_backup(target_path, backup_path, had_existing_target)
 						else:
 							_write_log(
@@ -218,7 +224,7 @@ func _install_file_transactionally(source_path: String, target_path: String) -> 
 								"had_existing_target": had_existing_target,
 							}
 			else:
-				last_error = "copy failed (%d)" % copy_error
+				last_error = str(copy_result.get("error", "copy failed"))
 
 		_write_log(
 			"native_file_attempt_failed attempt=%d path=%s error=%s"
@@ -228,6 +234,75 @@ func _install_file_transactionally(source_path: String, target_path: String) -> 
 
 	_remove_file_if_present(temp_path)
 	return {"ok": false, "error": last_error}
+
+func _copy_file_with_sha256(source_path: String, target_path: String) -> Dictionary:
+	var source_file := FileAccess.open(source_path, FileAccess.READ)
+	if source_file == null:
+		return {"ok": false, "error": "could not open staged file for copying"}
+	var target_file := FileAccess.open(target_path, FileAccess.WRITE)
+	if target_file == null:
+		source_file.close()
+		return {"ok": false, "error": "could not open temporary file for copying"}
+	var hash_context := HashingContext.new()
+	if hash_context.start(HashingContext.HASH_SHA256) != OK:
+		source_file.close()
+		target_file.close()
+		_remove_file_if_present(target_path)
+		return {"ok": false, "error": "could not start SHA-256 verification"}
+
+	var source_size := source_file.get_length()
+	var copied_bytes := 0
+	while copied_bytes < source_size:
+		var requested_bytes := mini(COPY_BUFFER_BYTES, source_size - copied_bytes)
+		var buffer := source_file.get_buffer(requested_bytes)
+		if buffer.size() != requested_bytes:
+			source_file.close()
+			target_file.close()
+			_remove_file_if_present(target_path)
+			return {"ok": false, "error": "staged file read ended unexpectedly"}
+		if hash_context.update(buffer) != OK:
+			source_file.close()
+			target_file.close()
+			_remove_file_if_present(target_path)
+			return {"ok": false, "error": "could not update SHA-256 verification"}
+		target_file.store_buffer(buffer)
+		if target_file.get_error() != OK:
+			source_file.close()
+			target_file.close()
+			_remove_file_if_present(target_path)
+			return {"ok": false, "error": "temporary file write failed"}
+		copied_bytes += buffer.size()
+
+	target_file.flush()
+	var write_error := target_file.get_error()
+	source_file.close()
+	target_file.close()
+	if write_error != OK or _get_file_size(target_path) != source_size:
+		_remove_file_if_present(target_path)
+		return {"ok": false, "error": "temporary copy size verification failed"}
+	return {
+		"ok": true,
+		"sha256": hash_context.finish().hex_encode(),
+	}
+
+func _is_sha256(value: String) -> bool:
+	if value.length() != 64:
+		return false
+	for index in range(value.length()):
+		var code := value.unicode_at(index)
+		var is_digit := code >= 48 and code <= 57
+		var is_lower_hex := code >= 97 and code <= 102
+		if not is_digit and not is_lower_hex:
+			return false
+	return true
+
+func _get_file_size(path: String) -> int:
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		return -1
+	var file_size := file.get_length()
+	file.close()
+	return file_size
 
 func _prepare_backup(target_path: String, backup_path: String, had_existing_target: bool) -> bool:
 	_remove_file_if_present(backup_path)

@@ -29,6 +29,7 @@ const KNOWN_COMMAND_TYPES := [
 	"play_charm_response",
 	"play_priority_ability",
 	"priority_pass",
+	"set_priority_preferences",
 	"intercept_decision",
 	"combat_retreat_decision",
 	"resurrection_choice",
@@ -161,6 +162,11 @@ static func get_required_player(command: Dictionary, game_manager: GameManager, 
 			return resurrect_card.card_owner if resurrect_card != null else null
 		"priority_pass":
 			return game_manager.priority_player if game_manager.priority_player != null else game_manager.current_player
+		"set_priority_preferences":
+			var priority_player_index := int(command.get("player_index", -1))
+			if priority_player_index >= 0 and priority_player_index < game_manager.players.size():
+				return game_manager.players[priority_player_index]
+			return null
 		"forfeit":
 			var forfeiting_index := int(command.get("player_index", -1))
 			if forfeiting_index >= 0 and forfeiting_index < game_manager.players.size():
@@ -263,7 +269,7 @@ static func requires_resolved_upkeep(command: Dictionary) -> bool:
 	if command_type == "activate_power" and str(command.get("mode", "")) == "return_priest":
 		return false
 	match command_type:
-		"upkeep_choice", "tiamat_upkeep_choice", "skoll_upkeep_summon", "priority_pass", "intercept_decision", "combat_retreat_decision", "play_hex_response", "play_charm_response", "play_priority_ability", "forfeit", "humbaba_augury_choice", "return_to_hand_choice", "doorway_choice":
+		"upkeep_choice", "tiamat_upkeep_choice", "skoll_upkeep_summon", "priority_pass", "set_priority_preferences", "intercept_decision", "combat_retreat_decision", "play_hex_response", "play_charm_response", "play_priority_ability", "forfeit", "humbaba_augury_choice", "return_to_hand_choice", "doorway_choice":
 			return false
 	return true
 

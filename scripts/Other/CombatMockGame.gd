@@ -64,8 +64,13 @@ const MAJOR_ACTION_SYMBOL_TEXTURE = preload("res://images/ui/MajorActionSymbol.p
 const USER_SETTINGS_PATH := "user://settings.cfg"
 const AUDIO_SETTINGS_SECTION := "audio"
 const COMBAT_SETTINGS_SECTION := "combat"
+const GOD_SPECIFIC_SETTINGS_SECTION := "god_specific"
 const MUSIC_MUTED_KEY := "music_muted"
 const AUTO_PRIORITY_KEY := "auto_priority"
+const PRIORITY_STOP_START_KEY := "priority_stop_start"
+const PRIORITY_STOP_MAIN_KEY := "priority_stop_main"
+const PRIORITY_STOP_COMBAT_KEY := "priority_stop_combat"
+const PRIORITY_STOP_END_KEY := "priority_stop_end"
 const AUTO_SELECT_SPELL_PLAY_ZONES_KEY := "auto_select_spell_play_zones"
 const AUTO_SELECT_SPELL_PREPARE_ZONES_KEY := "auto_select_spell_prepare_zones"
 const AUTO_SELECT_HEX_PREPARE_ZONES_KEY := "auto_select_hex_prepare_zones"
@@ -74,6 +79,10 @@ const AUTO_SELECT_CHARM_PREPARE_ZONES_KEY := "auto_select_charm_prepare_zones"
 const USE_SPLASH_BOARD_BACKGROUND_KEY := "use_splash_board_background"
 const HOVER_SHOW_CARD_OPTIONS_KEY := "hover_show_card_options"
 const ALWAYS_SHOW_ABILITY_BADGES_KEY := "always_show_ability_badges"
+const HERMES_AUTO_PASS_END_PRIORITY_KEY := "hermes_auto_pass_end_priority"
+const HERMES_AUTO_PASS_UPKEEP_PRIORITY_KEY := "hermes_auto_pass_upkeep_priority"
+const HERMES_ADD_PRIORITY_TOGGLE_KEY := "hermes_add_priority_toggle_to_card"
+const HERMES_OFFER_PRIORITY_KEY := "hermes_offer_priority"
 
 signal forfeit_requested
 signal return_to_menu_requested
@@ -191,6 +200,16 @@ var _pending_click_selection_source: Card:
 		if match_manager != null:
 			match_manager.pending_click_selection_source = val
 var auto_priority: bool = true
+var priority_stops := {
+	"start": false,
+	"main": false,
+	"combat": false,
+	"end": false,
+}
+var _temporary_full_control: bool = false
+var _constant_full_control: bool = false
+var _full_control_chord_latched: bool = false
+var _last_priority_preferences_signature: String = ""
 var _pending_local_priority_prompt_signature: Dictionary = {}
 var _visible_priority_prompt_signature: Dictionary = {}
 var _pending_priority_response_submission: Dictionary = {}
@@ -230,6 +249,7 @@ const MOVE_TIMEOUT_CRITICAL_WARNING_MSEC := 10000
 const ACTION_LOG_SCROLL_BOTTOM_TOLERANCE := 4.0
 const ACTION_LOG_TURN_BREAK_FONT_SIZE := 18
 const ACTION_LOG_TURN_BREAK_COLOR := "#d9c58a"
+const ACTION_LOG_ALERT_COLOR := "#ff6b6b"
 const ACTION_LOG_CARD_LINK_COLOR := "#e8cf83"
 const ACTION_LOG_ABILITY_LINK_COLOR := "#a9c9ff"
 
@@ -498,7 +518,11 @@ var _action_log_hover_index_ready: bool = false
 var _action_log_bbcode_tag_regex: RegEx = null
 var _center_action_panel: VBoxContainer = null
 var _board_separator_line: ColorRect = null
-var _auto_priority_toggle: CheckButton = null
+var _priority_controls_panel: PanelContainer = null
+var _priority_controls_row: HBoxContainer = null
+var _priority_stop_buttons: Dictionary = {}
+var _auto_priority_button: Button = null
+var _full_control_indicator: Label = null
 var _pause_menu_overlay: Control = null
 var _pause_menu_panel: PanelContainer = null
 var _settings_menu_panel: PanelContainer = null
@@ -511,6 +535,10 @@ var _auto_select_charm_prepare_zones: bool = true
 var _use_splash_board_background: bool = false
 var _hover_show_card_options: bool = true
 var _always_show_ability_badges: bool = false
+var _hermes_auto_pass_end_priority: bool = true
+var _hermes_auto_pass_upkeep_priority: bool = true
+var _hermes_add_priority_toggle_to_card: bool = true
+var _hermes_offer_priority: bool = true
 var _hover_card_options_card: Card = null
 var _action_point_state_by_card_uid: Dictionary = {}
 var _sacrifice_cursor_texture: Texture2D = null
@@ -739,10 +767,12 @@ const CENTER_ACTION_PANEL_WIDTH := 132.0
 const CENTER_ACTION_PANEL_HEIGHT := 74.0
 const CENTER_ACTION_BUTTON_HEIGHT := 36.0
 const CENTER_ACTION_PANEL_RIGHT_OVERHANG := 10.0
+const PRIORITY_CONTROLS_GAP := 8.0
+const PRIORITY_CONTROL_BUTTON_SIZE := Vector2(36.0, 30.0)
+const PRIORITY_AUTO_PASS_BUTTON_SIZE := Vector2(42.0, 30.0)
 const RIGHT_PANEL_MIN_WIDTH := 100.0
 const RIGHT_PANEL_CONTROL_GAP := 6
 const RIGHT_PANEL_TEXT_FONT_SIZE := 10
-const AUTO_PRIORITY_TOGGLE_WIDTH := 118.0
 const LEFT_LOG_VERTICAL_BIAS := 8.0
 const CENTER_ACTION_FONT_SIZE := 12
 
@@ -846,6 +876,10 @@ func _load_user_settings() -> void:
 	if config.load(USER_SETTINGS_PATH) != OK:
 		return
 	auto_priority = _read_config_bool(config, COMBAT_SETTINGS_SECTION, AUTO_PRIORITY_KEY, auto_priority)
+	priority_stops["start"] = _read_config_bool(config, COMBAT_SETTINGS_SECTION, PRIORITY_STOP_START_KEY, false)
+	priority_stops["main"] = _read_config_bool(config, COMBAT_SETTINGS_SECTION, PRIORITY_STOP_MAIN_KEY, false)
+	priority_stops["combat"] = _read_config_bool(config, COMBAT_SETTINGS_SECTION, PRIORITY_STOP_COMBAT_KEY, false)
+	priority_stops["end"] = _read_config_bool(config, COMBAT_SETTINGS_SECTION, PRIORITY_STOP_END_KEY, false)
 	_auto_select_spell_play_zones = _read_config_bool(config, COMBAT_SETTINGS_SECTION, AUTO_SELECT_SPELL_PLAY_ZONES_KEY, _auto_select_spell_play_zones)
 	_auto_select_spell_prepare_zones = _read_config_bool(config, COMBAT_SETTINGS_SECTION, AUTO_SELECT_SPELL_PREPARE_ZONES_KEY, _auto_select_spell_prepare_zones)
 	_auto_select_hex_prepare_zones = _read_config_bool(config, COMBAT_SETTINGS_SECTION, AUTO_SELECT_HEX_PREPARE_ZONES_KEY, _auto_select_hex_prepare_zones)
@@ -854,6 +888,10 @@ func _load_user_settings() -> void:
 	_use_splash_board_background = _read_config_bool(config, COMBAT_SETTINGS_SECTION, USE_SPLASH_BOARD_BACKGROUND_KEY, _use_splash_board_background)
 	_hover_show_card_options = _read_config_bool(config, COMBAT_SETTINGS_SECTION, HOVER_SHOW_CARD_OPTIONS_KEY, _hover_show_card_options)
 	_always_show_ability_badges = _read_config_bool(config, COMBAT_SETTINGS_SECTION, ALWAYS_SHOW_ABILITY_BADGES_KEY, _always_show_ability_badges)
+	_hermes_auto_pass_end_priority = _read_config_bool(config, GOD_SPECIFIC_SETTINGS_SECTION, HERMES_AUTO_PASS_END_PRIORITY_KEY, true)
+	_hermes_auto_pass_upkeep_priority = _read_config_bool(config, GOD_SPECIFIC_SETTINGS_SECTION, HERMES_AUTO_PASS_UPKEEP_PRIORITY_KEY, true)
+	_hermes_add_priority_toggle_to_card = _read_config_bool(config, GOD_SPECIFIC_SETTINGS_SECTION, HERMES_ADD_PRIORITY_TOGGLE_KEY, true)
+	_hermes_offer_priority = _read_config_bool(config, GOD_SPECIFIC_SETTINGS_SECTION, HERMES_OFFER_PRIORITY_KEY, true)
 
 func _get_saved_bool_setting(section: String, key: String, default_value: bool) -> bool:
 	var config := ConfigFile.new()
@@ -911,6 +949,38 @@ func _set_always_show_ability_badges(pressed: bool) -> void:
 	BoardZoneUI.set_always_show_ability_badges(pressed)
 	draw_board()
 	draw_enemy_board()
+
+func _is_hermes_priority_offer_enabled() -> bool:
+	return _hermes_add_priority_toggle_to_card and _hermes_offer_priority
+
+func _refresh_hermes_priority_toggle_ui() -> void:
+	if _player_god_zone_ui == null or not is_instance_valid(_player_god_zone_ui):
+		return
+	_player_god_zone_ui.configure_hermes_priority_toggle(
+		_hermes_add_priority_toggle_to_card,
+		_hermes_offer_priority
+	)
+
+func _set_hermes_auto_pass_end_priority(pressed: bool) -> void:
+	_hermes_auto_pass_end_priority = pressed
+	_save_bool_setting(GOD_SPECIFIC_SETTINGS_SECTION, HERMES_AUTO_PASS_END_PRIORITY_KEY, pressed)
+	_sync_priority_preferences_to_match()
+
+func _set_hermes_auto_pass_upkeep_priority(pressed: bool) -> void:
+	_hermes_auto_pass_upkeep_priority = pressed
+	_save_bool_setting(GOD_SPECIFIC_SETTINGS_SECTION, HERMES_AUTO_PASS_UPKEEP_PRIORITY_KEY, pressed)
+	_sync_priority_preferences_to_match()
+
+func _set_hermes_add_priority_toggle_to_card(pressed: bool) -> void:
+	_hermes_add_priority_toggle_to_card = pressed
+	_save_bool_setting(GOD_SPECIFIC_SETTINGS_SECTION, HERMES_ADD_PRIORITY_TOGGLE_KEY, pressed)
+	_refresh_hermes_priority_toggle_ui()
+	_sync_priority_preferences_to_match()
+
+func _set_hermes_offer_priority(pressed: bool) -> void:
+	_hermes_offer_priority = pressed
+	_save_bool_setting(GOD_SPECIFIC_SETTINGS_SECTION, HERMES_OFFER_PRIORITY_KEY, pressed)
+	_sync_priority_preferences_to_match()
 
 func _get_music_controller() -> Node:
 	if not is_inside_tree():
@@ -1051,74 +1121,127 @@ func _show_pause_menu() -> void:
 	settings_title.add_theme_font_size_override("font_size", 24)
 	settings_vbox.add_child(settings_title)
 
+	var settings_tabs := TabContainer.new()
+	settings_tabs.custom_minimum_size = Vector2(0, 490)
+	settings_tabs.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	settings_vbox.add_child(settings_tabs)
+
+	var general_scroll := ScrollContainer.new()
+	general_scroll.name = "General"
+	general_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	general_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	settings_tabs.add_child(general_scroll)
+
+	var general_settings := VBoxContainer.new()
+	general_settings.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	general_settings.add_theme_constant_override("separation", 8)
+	general_scroll.add_child(general_settings)
+
 	var settings_info := Label.new()
 	settings_info.text = "When enabled, right-click Play/Prepare will auto-pick a friendly zone and prefer reserve line slots."
 	settings_info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	settings_info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	settings_info.add_theme_color_override("font_color", Color(0.80, 0.85, 0.92))
-	settings_vbox.add_child(settings_info)
+	general_settings.add_child(settings_info)
 
-	settings_vbox.add_child(_make_settings_section_label("Placement"))
+	general_settings.add_child(_make_settings_section_label("Placement"))
 
-	settings_vbox.add_child(_make_auto_zone_toggle(
+	general_settings.add_child(_make_auto_zone_toggle(
 		"Auto-select spell play zones",
 		_auto_select_spell_play_zones,
 		func(pressed: bool) -> void:
 			_set_auto_select_spell_play_zones(pressed)
 	))
-	settings_vbox.add_child(_make_auto_zone_toggle(
+	general_settings.add_child(_make_auto_zone_toggle(
 		"Auto-select spell prepare zones",
 		_auto_select_spell_prepare_zones,
 		func(pressed: bool) -> void:
 			_set_auto_select_spell_prepare_zones(pressed)
 	))
-	settings_vbox.add_child(_make_auto_zone_toggle(
+	general_settings.add_child(_make_auto_zone_toggle(
 		"Auto-select hex prepare zones",
 		_auto_select_hex_prepare_zones,
 		func(pressed: bool) -> void:
 			_set_auto_select_hex_prepare_zones(pressed)
 	))
-	settings_vbox.add_child(_make_auto_zone_toggle(
+	general_settings.add_child(_make_auto_zone_toggle(
 		"Auto-select charm play zones",
 		_auto_select_charm_play_zones,
 		func(pressed: bool) -> void:
 			_set_auto_select_charm_play_zones(pressed)
 	))
-	settings_vbox.add_child(_make_auto_zone_toggle(
+	general_settings.add_child(_make_auto_zone_toggle(
 		"Auto-select charm prepare zones",
 		_auto_select_charm_prepare_zones,
 		func(pressed: bool) -> void:
 			_set_auto_select_charm_prepare_zones(pressed)
 	))
 
-	settings_vbox.add_child(_make_settings_section_label("Audio"))
+	general_settings.add_child(_make_settings_section_label("Audio"))
 	_music_mute_settings_toggle = _make_auto_zone_toggle(
 		"Mute music",
 		_is_music_muted(),
 		func(pressed: bool) -> void:
 			_set_music_muted(pressed)
 	)
-	settings_vbox.add_child(_music_mute_settings_toggle)
+	general_settings.add_child(_music_mute_settings_toggle)
 
-	settings_vbox.add_child(_make_settings_section_label("Visual"))
-	settings_vbox.add_child(_make_auto_zone_toggle(
+	general_settings.add_child(_make_settings_section_label("Visual"))
+	general_settings.add_child(_make_auto_zone_toggle(
 		"Use splash image board background",
 		_use_splash_board_background,
 		func(pressed: bool) -> void:
 			_set_use_splash_board_background(pressed)
 	))
-	settings_vbox.add_child(_make_auto_zone_toggle(
+	general_settings.add_child(_make_auto_zone_toggle(
 		"Hover show card options",
 		_hover_show_card_options,
 		func(pressed: bool) -> void:
 			_set_hover_show_card_options(pressed)
 	))
-	settings_vbox.add_child(_make_auto_zone_toggle(
+	general_settings.add_child(_make_auto_zone_toggle(
 		"Always show ability badges",
 		_always_show_ability_badges,
 		func(pressed: bool) -> void:
 			_set_always_show_ability_badges(pressed)
 	))
+
+	var god_settings_scroll := ScrollContainer.new()
+	god_settings_scroll.name = "God-Specific Settings"
+	god_settings_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	god_settings_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	settings_tabs.add_child(god_settings_scroll)
+
+	var god_settings := VBoxContainer.new()
+	god_settings.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	god_settings.add_theme_constant_override("separation", 8)
+	god_settings_scroll.add_child(god_settings)
+
+	god_settings.add_child(_make_settings_section_label("Hermes"))
+	god_settings.add_child(_make_auto_zone_toggle(
+		"Auto-pass end phase priority (even with Offer Priority enabled)",
+		_hermes_auto_pass_end_priority,
+		func(pressed: bool) -> void:
+			_set_hermes_auto_pass_end_priority(pressed)
+	))
+	god_settings.add_child(_make_auto_zone_toggle(
+		"Auto-pass upkeep priority (even with Offer Priority enabled)",
+		_hermes_auto_pass_upkeep_priority,
+		func(pressed: bool) -> void:
+			_set_hermes_auto_pass_upkeep_priority(pressed)
+	))
+	god_settings.add_child(_make_auto_zone_toggle(
+		"Add priority toggle to card",
+		_hermes_add_priority_toggle_to_card,
+		func(pressed: bool) -> void:
+			_set_hermes_add_priority_toggle_to_card(pressed)
+	))
+
+	var hermes_note := Label.new()
+	hermes_note.text = "When the card toggle is hidden or set to off, Hermes will not open priority prompts himself. He remains available in priority prompts opened by another response."
+	hermes_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	hermes_note.add_theme_color_override("font_color", Color(0.80, 0.85, 0.92))
+	god_settings.add_child(hermes_note)
 
 	var settings_buttons := HBoxContainer.new()
 	settings_buttons.add_theme_constant_override("separation", 10)
@@ -1929,20 +2052,8 @@ func _ready() -> void:
 	defensive_stance_btn.pressed.connect(_on_defensive_stance_pressed)
 	stealth_mode_btn.pressed.connect(_on_stealth_mode_pressed)
 
-	_auto_priority_toggle = CheckButton.new()
-	_auto_priority_toggle.name = "AutoPriorityToggle"
-	_auto_priority_toggle.text = "Auto Priority"
-	_auto_priority_toggle.button_pressed = auto_priority
-	_auto_priority_toggle.custom_minimum_size = Vector2(AUTO_PRIORITY_TOGGLE_WIDTH, 24.0)
-	_auto_priority_toggle.add_theme_font_size_override("font_size", RIGHT_PANEL_TEXT_FONT_SIZE)
-	_auto_priority_toggle.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
-	_auto_priority_toggle.offset_left = -132.0
-	_auto_priority_toggle.offset_top = -28.0
-	_auto_priority_toggle.offset_right = -16.0
-	_auto_priority_toggle.offset_bottom = -2.0
-	_auto_priority_toggle.toggled.connect(_on_auto_priority_toggled)
-	add_child(_auto_priority_toggle)
 	_setup_center_action_panel()
+	_setup_priority_controls()
 	if not board_container.resized.is_connected(_on_board_layout_resized):
 		board_container.resized.connect(_on_board_layout_resized)
 	if not enemy_board_container.resized.is_connected(_on_board_layout_resized):
@@ -3240,6 +3351,110 @@ func _setup_center_action_panel() -> void:
 	right_panel.visible = false
 	_update_center_action_panel_layout()
 
+func _make_priority_control_style(background: Color, border: Color) -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = background
+	style.border_color = border
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		style.set_border_width(side as Side, 1)
+	style.corner_radius_top_left = 5
+	style.corner_radius_top_right = 5
+	style.corner_radius_bottom_left = 5
+	style.corner_radius_bottom_right = 5
+	style.content_margin_left = 5
+	style.content_margin_right = 5
+	style.content_margin_top = 3
+	style.content_margin_bottom = 3
+	return style
+
+func _style_priority_toggle(button: Button, active_color: Color) -> void:
+	button.add_theme_stylebox_override("normal", _make_priority_control_style(
+		Color(0.07, 0.09, 0.13, 0.96),
+		Color(0.30, 0.34, 0.42, 0.95)
+	))
+	button.add_theme_stylebox_override("hover", _make_priority_control_style(
+		Color(0.12, 0.15, 0.21, 0.98),
+		Color(0.55, 0.62, 0.76, 1.0)
+	))
+	button.add_theme_stylebox_override("pressed", _make_priority_control_style(
+		active_color.darkened(0.48),
+		active_color
+	))
+	button.add_theme_stylebox_override("hover_pressed", _make_priority_control_style(
+		active_color.darkened(0.36),
+		active_color.lightened(0.12)
+	))
+	button.add_theme_color_override("font_color", Color(0.82, 0.86, 0.92))
+	button.add_theme_color_override("font_pressed_color", Color(1, 1, 1))
+	button.add_theme_color_override("font_hover_pressed_color", Color(1, 1, 1))
+	button.add_theme_font_size_override("font_size", 11)
+
+func _setup_priority_controls() -> void:
+	if _priority_controls_panel != null and is_instance_valid(_priority_controls_panel):
+		_priority_controls_panel.queue_free()
+	_priority_stop_buttons.clear()
+	_priority_controls_panel = PanelContainer.new()
+	_priority_controls_panel.name = "PriorityControlsPanel"
+	_priority_controls_panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	_priority_controls_panel.z_index = TRANSIENT_UI_Z_INDEX - 5
+	var panel_style := _make_priority_control_style(
+		Color(0.035, 0.045, 0.065, 0.96),
+		Color(0.34, 0.39, 0.50, 0.95)
+	)
+	panel_style.content_margin_left = 5
+	panel_style.content_margin_right = 5
+	panel_style.content_margin_top = 5
+	panel_style.content_margin_bottom = 5
+	_priority_controls_panel.add_theme_stylebox_override("panel", panel_style)
+	add_child(_priority_controls_panel)
+
+	_priority_controls_row = HBoxContainer.new()
+	_priority_controls_row.add_theme_constant_override("separation", 4)
+	_priority_controls_panel.add_child(_priority_controls_row)
+
+	_auto_priority_button = Button.new()
+	_auto_priority_button.name = "AutoPassPriorityButton"
+	_auto_priority_button.text = "▶"
+	_auto_priority_button.tooltip_text = "Auto-pass priority when no stop or full-control override is active."
+	_auto_priority_button.toggle_mode = true
+	_auto_priority_button.button_pressed = auto_priority
+	_auto_priority_button.custom_minimum_size = PRIORITY_AUTO_PASS_BUTTON_SIZE
+	_style_priority_toggle(_auto_priority_button, Color(0.30, 0.88, 0.48))
+	_auto_priority_button.toggled.connect(_on_auto_priority_toggled)
+	_priority_controls_row.add_child(_auto_priority_button)
+
+	var stop_specs := [
+		{"key": "start", "text": "ST", "tooltip": "Stop after upkeep at the start-of-turn priority window."},
+		{"key": "main", "text": "M", "tooltip": "Stop for non-combat spells, abilities, summons, and triggered effects."},
+		{"key": "combat", "text": "C", "tooltip": "Stop for attacks and responses within their combat priority window."},
+		{"key": "end", "text": "E", "tooltip": "Stop before the current turn ends."},
+	]
+	for stop_spec in stop_specs:
+		var stop_key := str(stop_spec.get("key", ""))
+		var stop_button := Button.new()
+		stop_button.name = "PriorityStop" + stop_key.capitalize()
+		stop_button.text = str(stop_spec.get("text", ""))
+		stop_button.tooltip_text = str(stop_spec.get("tooltip", ""))
+		stop_button.toggle_mode = true
+		stop_button.button_pressed = bool(priority_stops.get(stop_key, false))
+		stop_button.custom_minimum_size = PRIORITY_CONTROL_BUTTON_SIZE
+		_style_priority_toggle(stop_button, Color(0.94, 0.66, 0.22))
+		stop_button.toggled.connect(_on_priority_stop_toggled.bind(stop_key))
+		_priority_controls_row.add_child(stop_button)
+		_priority_stop_buttons[stop_key] = stop_button
+
+	_full_control_indicator = Label.new()
+	_full_control_indicator.name = "FullControlIndicator"
+	_full_control_indicator.text = "CTRL"
+	_full_control_indicator.tooltip_text = "Hold Ctrl for temporary full control. Press Shift+Ctrl to toggle full control lock."
+	_full_control_indicator.custom_minimum_size = Vector2(48.0, 30.0)
+	_full_control_indicator.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_full_control_indicator.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_full_control_indicator.add_theme_font_size_override("font_size", 9)
+	_priority_controls_row.add_child(_full_control_indicator)
+	_refresh_priority_controls_ui()
+	_update_center_action_panel_layout()
+
 func _reparent_control(node: Control, new_parent: Control) -> void:
 	if node == null or new_parent == null:
 		return
@@ -3262,6 +3477,13 @@ func _update_center_action_panel_layout() -> void:
 		separator_origin.x + maxf(0.0, _get_board_row_width() - _center_action_panel.size.x + CENTER_ACTION_PANEL_RIGHT_OVERHANG),
 		separator_origin.y + BOARD_SEPARATOR_HEIGHT * 0.5 - _center_action_panel.size.y * 0.5
 	)
+	if _priority_controls_panel != null and is_instance_valid(_priority_controls_panel):
+		_priority_controls_panel.size = _priority_controls_panel.get_combined_minimum_size()
+		_priority_controls_panel.move_to_front()
+		_priority_controls_panel.position = Vector2(
+			_center_action_panel.position.x - _priority_controls_panel.size.x - PRIORITY_CONTROLS_GAP,
+			separator_origin.y + BOARD_SEPARATOR_HEIGHT * 0.5 - _priority_controls_panel.size.y * 0.5
+		)
 
 func _sync_local_end_turn_button() -> void:
 	if _uses_authoritative_turn_ui() or _game_finished:
@@ -3358,7 +3580,7 @@ func _get_priority_idle_auto_pass_hint_text() -> String:
 	return "Auto-passes after %ds of inactivity." % int(float(_get_priority_idle_auto_pass_msec()) / 1000.0)
 
 func _note_priority_prompt_input_activity(event: InputEvent) -> void:
-	if not auto_priority or not _is_priority_prompt_visible():
+	if not auto_priority or _should_hold_current_priority_window() or not _is_priority_prompt_visible():
 		return
 	if event is InputEventMouseButton and event.pressed:
 		_arm_priority_prompt_timeout()
@@ -3372,7 +3594,7 @@ func _note_priority_prompt_input_activity(event: InputEvent) -> void:
 			_arm_priority_prompt_timeout()
 
 func _arm_priority_prompt_timeout() -> void:
-	if not auto_priority or not _is_priority_prompt_visible():
+	if not auto_priority or _should_hold_current_priority_window() or not _is_priority_prompt_visible():
 		_priority_prompt_idle_deadline_msec = 0
 		_priority_prompt_timeout_pending = false
 		return
@@ -3380,7 +3602,7 @@ func _arm_priority_prompt_timeout() -> void:
 	_priority_prompt_timeout_pending = false
 
 func _sync_priority_prompt_timeout() -> void:
-	if _game_finished or not auto_priority or not _is_priority_prompt_visible():
+	if _game_finished or not auto_priority or _should_hold_current_priority_window() or not _is_priority_prompt_visible():
 		_priority_prompt_idle_deadline_msec = 0
 		_priority_prompt_timeout_pending = false
 		return
@@ -4165,7 +4387,50 @@ func _format_action_log_message_for_display(message: String) -> String:
 			ACTION_LOG_TURN_BREAK_FONT_SIZE,
 			decorated_message
 		]
+	if _is_alert_action_log_message(message):
+		return "[color=%s]%s[/color]" % [ACTION_LOG_ALERT_COLOR, decorated_message]
 	return decorated_message
+
+func _is_alert_action_log_message(message: String) -> bool:
+	var normalized := message.to_lower()
+	var alert_fragments := [
+		"not enough mana",
+		" invalid ",
+		" invalid:",
+		" invalid.",
+		" failed",
+		" fizzles",
+		" rejected",
+		" cancelled",
+		" not found",
+		" no longer",
+		" missing ",
+		" unknown ",
+		" already over",
+		" wrong controller",
+		" cannot activate",
+		" cannot resolve",
+		" cannot be activated",
+		" cannot move",
+		" cannot attack",
+		" cannot engage",
+		" cannot intercept",
+		" cannot return",
+		" cannot use",
+		" cannot switch",
+		" cannot convert",
+		" cannot shift",
+		" cannot summon",
+		" cannot cast",
+		" cannot perform",
+		" cannot resurrect",
+		" cannot pay",
+		" could not ",
+	]
+	for fragment in alert_fragments:
+		if normalized.contains(fragment):
+			return true
+	return false
 
 func _decorate_action_log_hover_terms(message: String) -> String:
 	var candidate_terms: Array[String] = []
@@ -4505,10 +4770,12 @@ func start_game(
 		game_manager.feedback_viewer = game_manager.players[0]
 	if _is_networked_client:
 		_awaiting_initial_full_state = true
+		_sync_priority_preferences_to_match(true)
 		_set_action_label_text("Joining match. Waiting for server state...")
 		update_ui()
 		_update_waiting_overlay()
 		return
+	_sync_priority_preferences_to_match(true)
 	game_manager.start_turn()
 	update_ui()
 	_open_upkeep_choice_window()
@@ -4535,6 +4802,11 @@ func _prepare_for_match_launch(status_message: String = "Connecting to match..."
 	_game_result_presented = false
 	_pending_forfeit_return_to_menu = false
 	_pending_post_game_return_to_menu = false
+	_temporary_full_control = false
+	_constant_full_control = false
+	_full_control_chord_latched = false
+	_last_priority_preferences_signature = ""
+	_refresh_priority_controls_ui()
 	_hide_pause_menu()
 	_hide_game_result_overlay()
 	_hide_corner_action_button()
@@ -5081,6 +5353,135 @@ func _on_board_layout_resized() -> void:
 func _on_auto_priority_toggled(on: bool) -> void:
 	auto_priority = on
 	_save_combat_bool_setting(AUTO_PRIORITY_KEY, on)
+	_refresh_priority_controls_ui()
+	if auto_priority and _is_priority_prompt_visible() and not _should_hold_current_priority_window():
+		_arm_priority_prompt_timeout()
+	else:
+		_priority_prompt_idle_deadline_msec = 0
+		_priority_prompt_timeout_pending = false
+
+func _get_priority_stop_setting_key(stop_key: String) -> String:
+	match stop_key:
+		"start":
+			return PRIORITY_STOP_START_KEY
+		"main":
+			return PRIORITY_STOP_MAIN_KEY
+		"combat":
+			return PRIORITY_STOP_COMBAT_KEY
+		"end":
+			return PRIORITY_STOP_END_KEY
+	return ""
+
+func _on_priority_stop_toggled(on: bool, stop_key: String) -> void:
+	if not priority_stops.has(stop_key):
+		return
+	priority_stops[stop_key] = on
+	var setting_key := _get_priority_stop_setting_key(stop_key)
+	if not setting_key.is_empty():
+		_save_combat_bool_setting(setting_key, on)
+	_refresh_priority_controls_ui()
+	_sync_priority_preferences_to_match()
+
+func _is_full_control_active() -> bool:
+	return _temporary_full_control or _constant_full_control
+
+func _get_priority_stop_key_for_action(action: CardAction) -> String:
+	if match_manager != null:
+		return match_manager.get_priority_stop_key(action)
+	var root_action := action
+	var response_depth := 0
+	while root_action != null \
+			and root_action.response_to != null \
+			and root_action.response_to != root_action \
+			and response_depth < 32:
+		root_action = root_action.response_to
+		response_depth += 1
+	if root_action != null and root_action.type == CardAction.Type.ATTACK:
+		return "combat"
+	if root_action != null and root_action.type == CardAction.Type.EVENT:
+		if root_action.event_name == "start_turn":
+			return "start"
+		if root_action.event_name == "end_turn":
+			return "end"
+	return "main"
+
+func _should_hold_priority_for_action(action: CardAction) -> bool:
+	if _is_full_control_active():
+		return true
+	return bool(priority_stops.get(_get_priority_stop_key_for_action(action), false))
+
+func _should_hold_current_priority_window() -> bool:
+	if game_manager == null or game_manager.action_stack.is_empty():
+		return _is_full_control_active()
+	return _should_hold_priority_for_action(game_manager.action_stack.back())
+
+func _get_priority_preferences_signature(player_index: int) -> String:
+	return "%d|%s|%s|%s|%s|%s|%s|%s|%s" % [
+		player_index,
+		str(bool(priority_stops.get("start", false))),
+		str(bool(priority_stops.get("main", false))),
+		str(bool(priority_stops.get("combat", false))),
+		str(bool(priority_stops.get("end", false))),
+		str(_is_full_control_active()),
+		str(_is_hermes_priority_offer_enabled()),
+		str(_hermes_auto_pass_end_priority),
+		str(_hermes_auto_pass_upkeep_priority),
+	]
+
+func _get_local_priority_player_index() -> int:
+	if _is_observer_mode or game_manager == null or game_manager.players.is_empty():
+		return -1
+	if network_manager != null and network_manager.local_player_index >= 0:
+		return network_manager.local_player_index
+	var viewer_index := game_manager.players.find(game_manager.get_feedback_viewer())
+	if viewer_index >= 0:
+		return viewer_index
+	return game_manager.players.find(game_manager.current_player)
+
+func _sync_priority_preferences_to_match(force: bool = false) -> void:
+	if game_manager == null or match_manager == null or game_input == null or _is_observer_mode:
+		return
+	var player_index := _get_local_priority_player_index()
+	if player_index < 0 or player_index >= game_manager.players.size():
+		return
+	var signature := _get_priority_preferences_signature(player_index)
+	if not force and signature == _last_priority_preferences_signature:
+		return
+	var submitted := game_input.submit_action({
+		"type": "set_priority_preferences",
+		"player_index": player_index,
+		"stops": priority_stops.duplicate(true),
+		"full_control": _is_full_control_active(),
+		"god_specific": {
+			"hermes": {
+				"offer_priority": _is_hermes_priority_offer_enabled(),
+				"auto_pass_end_priority": _hermes_auto_pass_end_priority,
+				"auto_pass_upkeep_priority": _hermes_auto_pass_upkeep_priority,
+			},
+		},
+	})
+	if submitted:
+		_last_priority_preferences_signature = signature
+
+func _refresh_priority_controls_ui() -> void:
+	if _auto_priority_button != null and is_instance_valid(_auto_priority_button):
+		_auto_priority_button.set_pressed_no_signal(auto_priority)
+		_auto_priority_button.modulate = Color(1, 1, 1, 1) if auto_priority else Color(0.72, 0.75, 0.82, 1)
+	for stop_key in _priority_stop_buttons:
+		var stop_button := _priority_stop_buttons.get(stop_key) as Button
+		if stop_button == null or not is_instance_valid(stop_button):
+			continue
+		stop_button.set_pressed_no_signal(bool(priority_stops.get(stop_key, false)))
+	if _full_control_indicator != null and is_instance_valid(_full_control_indicator):
+		if _constant_full_control:
+			_full_control_indicator.text = "CTRL*"
+			_full_control_indicator.modulate = Color(1.0, 0.76, 0.28, 1.0)
+		elif _temporary_full_control:
+			_full_control_indicator.text = "CTRL"
+			_full_control_indicator.modulate = Color(0.42, 0.78, 1.0, 1.0)
+		else:
+			_full_control_indicator.text = "CTRL"
+			_full_control_indicator.modulate = Color(0.58, 0.62, 0.70, 1.0)
 
 func _on_match_targeting_started(_source: Card, _target_type: String) -> void:
 	_hide_devour_cancel_prompt()
@@ -5134,9 +5535,6 @@ func _update_match_side_panel_layout() -> void:
 		turn_label.custom_minimum_size.x = right_width - 4.0
 	if end_turn_button != null and end_turn_button.get_parent() == right_panel:
 		end_turn_button.custom_minimum_size.x = right_width - 4.0
-
-	if _auto_priority_toggle != null and is_instance_valid(_auto_priority_toggle):
-		_auto_priority_toggle.custom_minimum_size.x = AUTO_PRIORITY_TOGGLE_WIDTH
 
 	if _action_log_view != null and is_instance_valid(_action_log_view):
 		var log_height := _get_action_log_preview_height(viewport_height)
@@ -6683,6 +7081,10 @@ func _make_god_cluster(zone: Zone, player: Player, is_enemy: bool) -> Control:
 	god_zone_ui.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	god_wrapper.add_child(god_zone_ui)
 	god_zone_ui.setup(zone, game_manager, player, -1, _on_card_dropped_to_zone, is_enemy, "God")
+	god_zone_ui.configure_hermes_priority_toggle(
+		not is_enemy and _hermes_add_priority_toggle_to_card,
+		_hermes_offer_priority
+	)
 
 	var stats_panel := _make_stats_panel(player, true)
 	stats_panel.custom_minimum_size = Vector2(118, BoardZoneUI.get_zone_extent())
@@ -6699,6 +7101,7 @@ func _make_god_cluster(zone: Zone, player: Player, is_enemy: bool) -> Control:
 		_player_god_zone_ui.champions_call_clicked.connect(_on_champions_call_badge_pressed)
 		_player_god_zone_ui.god_ability_badge_clicked.connect(_on_god_ability_badge_clicked)
 		_player_god_zone_ui.tez_necoc_yaotl_badge_clicked.connect(_on_tez_necoc_yaotl_badge_pressed)
+		_player_god_zone_ui.hermes_priority_toggle_changed.connect(_set_hermes_offer_priority)
 		_player_god_zone_ui.god_right_clicked.connect(_on_god_right_clicked)
 
 	return cluster
@@ -17489,8 +17892,54 @@ func _on_creature_drag_started(card: Card, from_zone: Zone) -> void:
 	_bdrag_preview_defensive = card.creature_mode == Card.CreatureMode.DEFENSIVE
 	_bdrag_preview_stealth = false
 
+func _handle_priority_full_control_shortcut(event: InputEvent) -> bool:
+	if not (event is InputEventKey):
+		return false
+	var focus_owner := get_viewport().gui_get_focus_owner()
+	if focus_owner is LineEdit or focus_owner is TextEdit:
+		return false
+	var key_event := event as InputEventKey
+	var is_ctrl_event := key_event.keycode == KEY_CTRL or key_event.physical_keycode == KEY_CTRL
+	var is_shift_event := key_event.keycode == KEY_SHIFT or key_event.physical_keycode == KEY_SHIFT
+	if not is_ctrl_event and not is_shift_event:
+		return false
+	if key_event.pressed and not key_event.echo:
+		var chord_active := (is_ctrl_event and key_event.shift_pressed) \
+			or (is_shift_event and key_event.ctrl_pressed)
+		if chord_active:
+			if not _full_control_chord_latched:
+				_full_control_chord_latched = true
+				_constant_full_control = not _constant_full_control
+				_temporary_full_control = false
+				_refresh_priority_controls_ui()
+				_sync_priority_preferences_to_match(true)
+			return true
+		if is_ctrl_event:
+			_temporary_full_control = true
+			_refresh_priority_controls_ui()
+			_sync_priority_preferences_to_match(true)
+			return true
+	if not key_event.pressed:
+		if is_ctrl_event:
+			_temporary_full_control = false
+			_full_control_chord_latched = false
+			_refresh_priority_controls_ui()
+			_sync_priority_preferences_to_match(true)
+			return true
+		if is_shift_event:
+			_full_control_chord_latched = false
+			if Input.is_key_pressed(KEY_CTRL) and not _constant_full_control:
+				_temporary_full_control = true
+				_refresh_priority_controls_ui()
+				_sync_priority_preferences_to_match(true)
+			return true
+	return false
+
 func _input(event: InputEvent) -> void:
 	if not is_visible_in_tree():
+		return
+	if _handle_priority_full_control_shortcut(event):
+		get_viewport().set_input_as_handled()
 		return
 	if _is_visual_linger_active():
 		get_viewport().set_input_as_handled()
@@ -17648,10 +18097,12 @@ func _maybe_progress_hidden_frontline_entry_action() -> bool:
 		first_player = top_action.initial_priority_player if top_action.initial_priority_player != null else game_manager.get_opponent(top_action.source_player)
 		game_manager.priority_player = first_player
 	var second_player := game_manager.get_opponent(first_player) if first_player != null else null
-	if match_manager._player_has_priority_prompt_responses(first_player):
+	if match_manager._player_has_priority_prompt_responses(first_player) \
+			or _stack_action_requires_explicit_priority_window(top_action, first_player):
 		_show_priority_prompt(first_player)
 		return true
-	if match_manager._player_has_priority_prompt_responses(second_player):
+	if match_manager._player_has_priority_prompt_responses(second_player) \
+			or _stack_action_requires_explicit_priority_window(top_action, second_player):
 		game_manager.priority_player = second_player
 		_show_priority_prompt(second_player)
 		return true
@@ -17699,8 +18150,16 @@ func _recover_stalled_priority_state() -> bool:
 		first_player = top_action.initial_priority_player if top_action.initial_priority_player != null else game_manager.get_opponent(top_action.source_player)
 		game_manager.priority_player = first_player
 	var second_player := game_manager.get_opponent(first_player) if first_player != null else null
-	var first_has_responses: bool = match_manager != null and match_manager._player_has_priority_prompt_responses(first_player)
-	var second_has_responses: bool = match_manager != null and match_manager._player_has_priority_prompt_responses(second_player)
+	var first_has_responses: bool = match_manager != null \
+		and (
+			match_manager._player_has_priority_prompt_responses(first_player)
+			or _stack_action_requires_explicit_priority_window(top_action, first_player)
+		)
+	var second_has_responses: bool = match_manager != null \
+		and (
+			match_manager._player_has_priority_prompt_responses(second_player)
+			or _stack_action_requires_explicit_priority_window(top_action, second_player)
+		)
 	var hidden_frontline_entry := top_action.type == CardAction.Type.EVENT \
 		and top_action.event_name == "frontline_entry" \
 		and top_action.card != null \
@@ -18757,15 +19216,16 @@ func _offer_priority() -> void:
 		return
 	var player := game_manager.priority_player
 	var responses := game_manager.get_priority_responses(player)
+	var offering_responses := match_manager.get_priority_prompt_offering_responses(player) if match_manager != null else responses
 	update_ui()
 
 	var is_remote_priority: bool = _is_real_network_host() \
 		and not game_manager.players.is_empty() \
 		and player != game_manager.players[0]
 	var top_action: CardAction = game_manager.action_stack.back() if not game_manager.action_stack.is_empty() else null
-	var force_priority_window := _stack_action_requires_explicit_priority_window(top_action)
+	var force_priority_window := _stack_action_requires_explicit_priority_window(top_action, player)
 
-	if responses.is_empty() and not force_priority_window:
+	if offering_responses.is_empty() and not force_priority_window:
 		_hide_priority_prompt()
 		game_manager.pass_priority()
 		if game_manager.both_passed():
@@ -18864,7 +19324,7 @@ func _build_priority_prompt_payload_signature(player_index: int, data: Dictionar
 	return signature
 
 func _auto_pass_empty_priority_prompt(player_index: int, data: Dictionary) -> bool:
-	if not auto_priority:
+	if not auto_priority or _should_hold_current_priority_window():
 		return false
 	var responses: Array = data.get("responses", [])
 	if not responses.is_empty():
@@ -19085,7 +19545,11 @@ func _stack_action_should_linger_for_visibility(action: CardAction) -> bool:
 		return true
 	return action.card != null and action.card.has_method("is_magical_card") and action.card.is_magical_card()
 
-func _stack_action_requires_explicit_priority_window(action: CardAction) -> bool:
+func _stack_action_requires_explicit_priority_window(action: CardAction, player: Player = null) -> bool:
+	if match_manager != null:
+		if player != null:
+			return match_manager.player_requires_priority_window(action, player)
+		return match_manager._action_requires_explicit_priority_window(action)
 	return action != null \
 		and bool(action.event_data.get("force_priority_window", false)) \
 		and not bool(action.event_data.get("priority_window_offered", false))
@@ -19206,8 +19670,8 @@ func _get_priority_prompt_action_message(viewer: Player = null) -> String:
 func _show_priority_prompt(player: Player) -> void:
 	if game_manager != null and not game_manager.action_stack.is_empty():
 		var prompted_action: CardAction = game_manager.action_stack.back()
-		if prompted_action != null and bool(prompted_action.event_data.get("force_priority_window", false)):
-			prompted_action.event_data["priority_window_offered"] = true
+		if prompted_action != null and match_manager != null:
+			match_manager.mark_priority_window_offered(prompted_action, player)
 	var panel = get_node_or_null("PriorityPromptPanel")
 	if panel == null:
 		panel = PanelContainer.new()
@@ -19274,7 +19738,7 @@ func _show_priority_prompt(player: Player) -> void:
 
 	if interactive_response_count == 0:
 		lbl.text += " (no responses)"
-	if auto_priority:
+	if auto_priority and not _should_hold_current_priority_window():
 		var hint := Label.new()
 		hint.text = _get_priority_idle_auto_pass_hint_text()
 		hint.add_theme_font_size_override("font_size", 10)
@@ -25333,6 +25797,7 @@ func _apply_full_state(data: Dictionary) -> void:
 		_set_action_label_text(msg, force_log_from_state)
 	if _is_networked_client:
 		_present_game_result_from_state(state, msg)
+		_sync_priority_preferences_to_match()
 
 	update_ui()
 	var restored_reveal_prompt := _ensure_pending_reveal_click_selection()
@@ -25768,7 +26233,7 @@ func _show_remote_priority_prompt(responses: Array, action_message: String = "")
 
 	if interactive_response_count == 0:
 		lbl.text += " (no responses)"
-	if auto_priority:
+	if auto_priority and not _should_hold_current_priority_window():
 		var hint := Label.new()
 		hint.text = _get_priority_idle_auto_pass_hint_text()
 		hint.add_theme_font_size_override("font_size", 10)

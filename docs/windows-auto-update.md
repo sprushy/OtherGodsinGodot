@@ -15,8 +15,8 @@ The native updater:
 
 - writes a readiness handshake before the old game exits;
 - waits for the old process to close;
-- copies each file to a temporary sibling;
-- verifies SHA-256 before and after replacement;
+- copies each file to a temporary sibling while calculating SHA-256;
+- reuses the launch-time SHA-256 to verify the copy before replacement;
 - keeps backups and rolls back a partial update;
 - retries file operations that antivirus scanners may temporarily lock;
 - restarts the installed executable and records failures for the next launch.
