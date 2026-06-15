@@ -17,6 +17,8 @@ const LOBBY_EVENT_TYPE := "__lobby_event__"
 const SEEK_TIMEOUT_SECONDS := 30 * 60
 const SEEK_TIMEOUT_CHECK_INTERVAL_SECONDS := 5.0
 const ROOM_MEMBER_RECONNECT_GRACE_SECONDS := 5 * 60
+const DEDICATED_MATCH_ASSIGNMENT_POLL_SECONDS := 0.25
+const DEDICATED_MATCH_ASSIGNMENT_TIMEOUT_SECONDS := 90.0
 
 signal local_room_snapshot_updated(snapshot: Dictionary)
 signal room_list_updated(rooms: Array)
@@ -936,6 +938,9 @@ func _observe_room_for_session(session_id: String, room_id: String) -> void:
 	if match_session == null:
 		_send_error_to_session(session_id, "That live match is no longer available to observe.")
 		return
+	if match_session.is_dedicated_headless() and not match_supervisor.is_match_ready_for_clients(match_id):
+		_send_error_to_session(session_id, "That live match is still starting. Try again in a moment.")
+		return
 	var participant_session_id := _get_matching_participant_session_id(session_id, match_session.player_session_ids)
 	if not participant_session_id.is_empty():
 		_send_to_session(session_id, LobbyProtocolScript.MATCH_ASSIGNED, match_session.to_match_info(participant_session_id))
@@ -950,6 +955,13 @@ func _rejoin_room_for_session(session_id: String, room_id: String) -> void:
 		_send_error_to_session(session_id, "That live match was not found.")
 		return
 	var room: LobbyRoom = rooms_by_id[normalized_room_id]
+	var match_id := str(room.assigned_match_id).strip_edges()
+	if match_supervisor != null \
+			and not match_id.is_empty() \
+			and match_supervisor.get_match(match_id) != null \
+			and not match_supervisor.is_match_ready_for_clients(match_id):
+		_send_error_to_session(session_id, "That live match is still starting. Try again in a moment.")
+		return
 	var match_info := _build_active_match_info_for_session(session_id, room)
 	if match_info.is_empty():
 		_send_error_to_session(session_id, "This account is not a player in that live match.")
@@ -1050,16 +1062,82 @@ func _assign_match(room: LobbyRoom) -> void:
 		return
 	room.status = LobbyRoomScript.STATUS_IN_MATCH
 	room.assigned_match_id = match_session.match_id
-	var local_match_info: Dictionary = {}
+	_emit_room_updates(room)
+	if match_session.is_dedicated_headless():
+		_trace("waiting for dedicated match %s to become ready for room %s" % [match_session.match_id, room.room_id])
+		call_deferred("_poll_dedicated_match_assignment_ready", room.room_id, match_session.match_id, 0.0)
+		return
+	_send_match_assignments_to_room(room, match_session)
 
+func _send_match_assignments_to_room(room: LobbyRoom, match_session) -> void:
+	if room == null or match_session == null:
+		return
+	_trace("sending match assignments for %s room %s" % [str(match_session.match_id), str(room.room_id)])
+	var local_match_info: Dictionary = {}
 	for session_id in room.members:
 		var match_info: Dictionary = match_session.to_match_info(session_id)
 		_send_to_session(session_id, LobbyProtocolScript.MATCH_ASSIGNED, match_info)
 		if session_id == local_session_id:
 			local_match_info = match_info.duplicate(true)
-	_emit_room_updates(room)
 	if not local_match_info.is_empty():
 		call_deferred("_emit_local_match_assigned", local_match_info)
+
+func _poll_dedicated_match_assignment_ready(room_id: String, match_id: String, elapsed_seconds: float) -> void:
+	var resolved_room_id := room_id.strip_edges().to_upper()
+	var resolved_match_id := match_id.strip_edges()
+	if resolved_room_id.is_empty() or resolved_match_id.is_empty():
+		return
+	if not rooms_by_id.has(resolved_room_id):
+		return
+	var room: LobbyRoom = rooms_by_id[resolved_room_id]
+	if room == null \
+			or room.status != LobbyRoomScript.STATUS_IN_MATCH \
+			or str(room.assigned_match_id).strip_edges() != resolved_match_id:
+		return
+	if match_supervisor == null:
+		_fail_dedicated_match_assignment(room, "Match supervisor is unavailable.")
+		return
+
+	var match_session = match_supervisor.get_match(resolved_match_id)
+	if match_session == null:
+		_fail_dedicated_match_assignment(room, "Match server is no longer available.")
+		return
+	if match_supervisor.is_match_ready_for_clients(resolved_match_id):
+		_send_match_assignments_to_room(room, match_session)
+		return
+
+	var failure_reason := str(match_supervisor.get_match_startup_failure_reason(resolved_match_id)).strip_edges()
+	if not failure_reason.is_empty():
+		_fail_dedicated_match_assignment(room, failure_reason)
+		return
+	if elapsed_seconds >= DEDICATED_MATCH_ASSIGNMENT_TIMEOUT_SECONDS:
+		_fail_dedicated_match_assignment(room, "Match server did not become available in time.")
+		return
+
+	var tree := get_tree()
+	if tree == null:
+		_fail_dedicated_match_assignment(room, "Match server readiness could not be checked.")
+		return
+	var timer := tree.create_timer(DEDICATED_MATCH_ASSIGNMENT_POLL_SECONDS)
+	timer.timeout.connect(
+		Callable(self, "_poll_dedicated_match_assignment_ready").bind(
+			resolved_room_id,
+			resolved_match_id,
+			elapsed_seconds + DEDICATED_MATCH_ASSIGNMENT_POLL_SECONDS
+		)
+	)
+
+func _fail_dedicated_match_assignment(room: LobbyRoom, message: String) -> void:
+	if room == null:
+		return
+	var room_id := str(room.room_id).strip_edges()
+	var match_id := str(room.assigned_match_id).strip_edges()
+	_trace("dedicated match assignment failed for %s room %s: %s" % [match_id, room_id, message])
+	if not room_id.is_empty() and rooms_by_id.has(room_id):
+		_close_room(room_id, message)
+		_broadcast_room_lists()
+	if not match_id.is_empty() and match_supervisor != null and match_supervisor.get_match(match_id) != null:
+		match_supervisor.close_match(match_id, MatchSessionScript.STATUS_ABANDONED, true)
 
 func _try_assign_match(room: LobbyRoom) -> void:
 	if room == null or room.status == LobbyRoomScript.STATUS_IN_MATCH or not room.can_start():
@@ -1273,8 +1351,16 @@ func _build_room_list(viewer_session_id: String = "") -> Array:
 		if room.status != LobbyRoomScript.STATUS_IN_MATCH and not _room_has_connected_member(room):
 			continue
 		var entry := room.to_room_list_entry(sessions_by_id)
+		var match_ready := true
+		var match_id := str(room.assigned_match_id).strip_edges()
+		if room.status == LobbyRoomScript.STATUS_IN_MATCH \
+				and match_supervisor != null \
+				and not match_id.is_empty() \
+				and match_supervisor.get_match(match_id) != null:
+			match_ready = match_supervisor.is_match_ready_for_clients(match_id)
 		entry["viewer_can_rejoin"] = (
 			room.status == LobbyRoomScript.STATUS_IN_MATCH
+			and match_ready
 			and not _get_matching_participant_session_id(viewer_session_id, room.members).is_empty()
 		)
 		rooms.append(entry)
@@ -1541,6 +1627,8 @@ func _build_active_match_info_for_session(session_id: String, room: LobbyRoom = 
 			continue
 		var match_session = match_supervisor.get_match(match_id)
 		if match_session == null:
+			continue
+		if match_session.is_dedicated_headless() and not match_supervisor.is_match_ready_for_clients(match_id):
 			continue
 		var participant_session_id := session_id
 		if match_session.get_player_index(participant_session_id) < 0:

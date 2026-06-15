@@ -15,7 +15,7 @@ func _init() -> void:
 	mana_cost = 0
 	speed = 3
 	targets = true
-	ability_text = "Cannot be negated. Choose a friendly creature. Until end of turn, negate all effects on it except its own, then destroy any enemy cards still targeting it."
+	ability_text = "Cannot be negated. Choose a friendly creature. Until the end of your next turn, negate all effects on it except its own, then destroy any enemy cards still targeting it."
 	artist = "Riccardo Zoppello"
 	art_path = ART_PATH
 
@@ -48,13 +48,14 @@ func resolve(game_manager: GameManager, target = null) -> void:
 		return
 
 	target.remove_status_effects_from_source_card(self, Card.EXTERNAL_EFFECT_NEGATION_STATUS)
+	var expires_turn := _get_protection_expiry_turn(game_manager)
 	target.add_status_effect(
 		Card.EXTERNAL_EFFECT_NEGATION_STATUS,
 		EFFECT_SOURCE,
 		self,
 		card_owner,
 		{
-			"expires_turn": game_manager.turn_number,
+			"expires_turn": expires_turn,
 			"allow_while_negated": true,
 		}
 	)
@@ -62,7 +63,7 @@ func resolve(game_manager: GameManager, target = null) -> void:
 	var destroyed_cards := _destroy_opponent_targeters(game_manager, target)
 	var viewer: Player = game_manager.get_feedback_viewer()
 	var target_name: String = target.get_target_log_display_name(viewer)
-	var feedback: String = "%s exorcised %s, negating outside effects until end of turn." % [card_name, target_name]
+	var feedback: String = "%s exorcised %s, negating outside effects until the end of your next turn." % [card_name, target_name]
 	if not destroyed_cards.is_empty():
 		var names: Array[String] = []
 		for destroyed_card in destroyed_cards:
@@ -72,6 +73,13 @@ func resolve(game_manager: GameManager, target = null) -> void:
 			feedback += " Destroyed: " + ", ".join(names) + "."
 	game_manager.note_player_feedback(feedback)
 	print(feedback)
+
+func _get_protection_expiry_turn(game_manager: GameManager) -> int:
+	if game_manager == null:
+		return 0
+	if card_owner != null and game_manager.current_player == card_owner:
+		return game_manager.turn_number + 2
+	return game_manager.turn_number + 1
 
 func _destroy_opponent_targeters(game_manager: GameManager, target: Card) -> Array[Card]:
 	var destroyed: Array[Card] = []

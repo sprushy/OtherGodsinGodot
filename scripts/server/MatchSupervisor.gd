@@ -109,6 +109,46 @@ func refresh_match_status(match_id: String) -> void:
 		return
 	_refresh_match(resolved_match_id, int(Time.get_unix_time_from_system()))
 
+func is_match_ready_for_clients(match_id: String) -> bool:
+	var resolved_match_id := match_id.strip_edges()
+	if resolved_match_id.is_empty() or not active_matches.has(resolved_match_id):
+		return false
+	var session = active_matches.get(resolved_match_id, null)
+	if session == null:
+		return false
+	if not session.is_dedicated_headless():
+		return true
+	var status_data := _load_status_file(session)
+	if status_data.is_empty():
+		return false
+	return str(status_data.get("status", "")).strip_edges() == MatchSessionScript.STATUS_ACTIVE
+
+func get_match_startup_failure_reason(match_id: String) -> String:
+	var resolved_match_id := match_id.strip_edges()
+	if resolved_match_id.is_empty():
+		return "Match server was not assigned."
+	if not active_matches.has(resolved_match_id):
+		return "Match server is no longer available."
+	var session = active_matches.get(resolved_match_id, null)
+	if session == null:
+		return "Match server is no longer available."
+	if not session.is_dedicated_headless():
+		return ""
+	var status_data := _load_status_file(session)
+	if not status_data.is_empty():
+		var status := str(status_data.get("status", "")).strip_edges()
+		if status == MatchSessionScript.STATUS_ABANDONED:
+			var reason := str(status_data.get("reason", "")).strip_edges()
+			return reason if not reason.is_empty() else "Match server abandoned startup."
+		if status == MatchSessionScript.STATUS_FINISHED:
+			return "Match server closed before players joined."
+	if session.has_spawned_process() and not OS.is_process_running(int(session.process_id)):
+		return "Match server exited before it became available."
+	var now_unix := int(Time.get_unix_time_from_system())
+	if int(session.created_unix) > 0 and now_unix - int(session.created_unix) >= MATCH_STATUS_FILE_STARTUP_GRACE_SECONDS:
+		return "Match server did not become available in time."
+	return ""
+
 func close_match(
 	match_id: String,
 	final_status: String = MatchSessionScript.STATUS_FINISHED,
@@ -281,6 +321,14 @@ func _get_status_file_close_reason(session, now_unix: int) -> String:
 	if heartbeat_unix > 0 and now_unix - heartbeat_unix >= MATCH_STATUS_FILE_STALE_SECONDS:
 		return MatchSessionScript.STATUS_ABANDONED
 	return ""
+
+func _load_status_file(session) -> Dictionary:
+	if session == null:
+		return {}
+	var status_path := str(session.status_file_path).strip_edges()
+	if status_path.is_empty() or not FileAccess.file_exists(status_path):
+		return {}
+	return JsonStoreScript.load_dictionary(status_path, {}, "MatchSupervisor")
 
 func _resolve_headless_executable_path(executable_path: String) -> String:
 	var normalized_path := executable_path.strip_edges()
