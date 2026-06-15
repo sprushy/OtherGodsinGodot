@@ -24,6 +24,7 @@ const STARTUP_MUSIC_PATH := "res://audio/relaxingtime-relaxing-music-119247.mp3"
 const USER_SETTINGS_PATH := "user://settings.cfg"
 const AUDIO_SETTINGS_SECTION := "audio"
 const MUSIC_MUTED_KEY := "music_muted"
+const ALL_SOUND_MUTED_KEY := "all_sound_muted"
 const PRACTICE_THOR_SCENE_PATH := "res://scenes/practice_thor_game.tscn"
 const DEDICATED_LOBBY_ENTRY_SCRIPT_PATH := "res://scripts/server/DedicatedLobbyServerMain.gd"
 const DEDICATED_SERVER_EXPORT_RELATIVE_PATH := "res://.exports/server/OtherGodsServer.exe"
@@ -201,8 +202,9 @@ var _startup_loading_overlay: Control = null
 var _startup_loading_status_label: Label = null
 var _startup_loading_finished: bool = false
 var _startup_music_player: AudioStreamPlayer = null
-var _music_mute_button: Button = null
+var _sound_mute_button: Button = null
 var _music_muted: bool = false
+var _all_sound_muted: bool = false
 var _startup_menu_fade_started: bool = false
 var _startup_splash_animation_started: bool = false
 var _startup_splash_animation_finished: bool = false
@@ -220,7 +222,7 @@ func _ready() -> void:
 	_prepare_startup_menu_fade()
 	_fit_to_viewport()
 	_build_server_version_overlay()
-	_build_music_mute_button()
+	_build_sound_mute_button()
 	get_viewport().size_changed.connect(_fit_to_viewport)
 	if ip_line_edit != null:
 		ip_line_edit.visible = true
@@ -517,13 +519,16 @@ func _load_audio_preferences() -> void:
 	var config := ConfigFile.new()
 	if config.load(USER_SETTINGS_PATH) != OK:
 		_music_muted = false
+		_all_sound_muted = false
 		return
 	_music_muted = bool(config.get_value(AUDIO_SETTINGS_SECTION, MUSIC_MUTED_KEY, false))
+	_all_sound_muted = bool(config.get_value(AUDIO_SETTINGS_SECTION, ALL_SOUND_MUTED_KEY, false))
 
 func _save_audio_preferences() -> void:
 	var config := ConfigFile.new()
 	config.load(USER_SETTINGS_PATH)
 	config.set_value(AUDIO_SETTINGS_SECTION, MUSIC_MUTED_KEY, _music_muted)
+	config.set_value(AUDIO_SETTINGS_SECTION, ALL_SOUND_MUTED_KEY, _all_sound_muted)
 	var error := config.save(USER_SETTINGS_PATH)
 	if error != OK:
 		push_warning("Could not save audio settings: %s" % str(error))
@@ -539,10 +544,24 @@ func set_music_muted(muted: bool) -> void:
 	_apply_music_mute_state()
 	_save_audio_preferences()
 
-func toggle_music_mute() -> void:
-	set_music_muted(not _music_muted)
+func is_all_sound_muted() -> bool:
+	return _all_sound_muted
+
+func set_all_sound_muted(muted: bool) -> void:
+	if _all_sound_muted == muted:
+		_apply_music_mute_state()
+		return
+	_all_sound_muted = muted
+	_apply_music_mute_state()
+	_save_audio_preferences()
+
+func toggle_all_sound_mute() -> void:
+	set_all_sound_muted(not _all_sound_muted)
 
 func _apply_music_mute_state() -> void:
+	var master_bus_index := AudioServer.get_bus_index("Master")
+	if master_bus_index >= 0:
+		AudioServer.set_bus_mute(master_bus_index, _all_sound_muted)
 	if _startup_music_player != null and is_instance_valid(_startup_music_player):
 		if _music_muted:
 			_startup_music_player.stream_paused = true
@@ -550,36 +569,37 @@ func _apply_music_mute_state() -> void:
 			if _startup_splash_animation_finished and not _startup_music_player.playing:
 				_startup_music_player.play()
 			_startup_music_player.stream_paused = false
-	_refresh_music_mute_button()
+	_refresh_sound_mute_button()
 	if is_inside_tree():
 		get_tree().call_group("music_mute_observers", "_on_music_mute_changed", _music_muted)
+		get_tree().call_group("music_mute_observers", "_on_all_sound_mute_changed", _all_sound_muted)
 
-func _build_music_mute_button() -> void:
-	if _music_mute_button != null and is_instance_valid(_music_mute_button):
-		_refresh_music_mute_button()
+func _build_sound_mute_button() -> void:
+	if _sound_mute_button != null and is_instance_valid(_sound_mute_button):
+		_refresh_sound_mute_button()
 		return
 	var button := Button.new()
-	button.name = "MusicMuteButton"
-	button.tooltip_text = "Toggle background music."
-	button.custom_minimum_size = Vector2(146.0, 28.0)
-	button.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
-	button.offset_left = -266.0
-	button.offset_top = -60.0
-	button.offset_right = -120.0
-	button.offset_bottom = -32.0
-	button.z_index = 2100
+	button.name = "SoundMuteButton"
+	button.custom_minimum_size = Vector2(40.0, 28.0)
+	button.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT)
+	button.offset_left = 16.0
+	button.offset_top = -36.0
+	button.offset_right = 56.0
+	button.offset_bottom = -8.0
+	button.z_index = 2300
 	button.mouse_filter = Control.MOUSE_FILTER_STOP
-	button.pressed.connect(toggle_music_mute)
+	button.pressed.connect(toggle_all_sound_mute)
 	add_child(button)
-	_music_mute_button = button
-	_refresh_music_mute_button()
+	_sound_mute_button = button
+	_refresh_sound_mute_button()
 
-func _refresh_music_mute_button() -> void:
-	if _music_mute_button == null or not is_instance_valid(_music_mute_button):
+func _refresh_sound_mute_button() -> void:
+	if _sound_mute_button == null or not is_instance_valid(_sound_mute_button):
 		return
-	_music_mute_button.text = "Music Muted" if _music_muted else "Mute Music"
-	_music_mute_button.modulate = Color(0.78, 0.86, 0.92, 0.96) if _music_muted else Color(1, 1, 1, 0.96)
-	_music_mute_button.visible = not _is_deck_builder_open()
+	_sound_mute_button.text = String.chr(0x1F507) if _all_sound_muted else String.chr(0x1F50A)
+	_sound_mute_button.tooltip_text = "Unmute all sound" if _all_sound_muted else "Mute all sound"
+	_sound_mute_button.modulate = Color(0.72, 0.76, 0.84, 0.96) if _all_sound_muted else Color(1, 1, 1, 0.96)
+	_sound_mute_button.visible = not _is_deck_builder_open()
 
 func _prepare_startup_menu_fade() -> void:
 	if menu_container == null:
@@ -961,14 +981,14 @@ func show_menu() -> void:
 	_refresh_multiplayer_deck_options()
 	_refresh_multiplayer_action_state()
 	_refresh_server_version_overlay_visibility()
-	_refresh_music_mute_button()
+	_refresh_sound_mute_button()
 
 func show_game() -> void:
 	menu_container.visible = false
 	game_container.visible = true
 	_hide_multiplayer_deck_popup()
 	_refresh_server_version_overlay_visibility()
-	_refresh_music_mute_button()
+	_refresh_sound_mute_button()
 
 func _on_multiplayer_pressed() -> void:
 	_open_multiplayer_screen()
@@ -4966,17 +4986,14 @@ func _launch_assigned_match(
 		show_game()
 		_finish_smoke_if_enabled("PASS:host_launched_match")
 		return
-	var connect_delay_seconds := 0.4
-	if _uses_dedicated_match_server(match_info):
-		connect_delay_seconds = 1.1
-	await get_tree().create_timer(connect_delay_seconds).timeout
+	if not _uses_dedicated_match_server(match_info):
+		await get_tree().create_timer(0.4).timeout
 	await get_node("GameContainer/MockGame").start_game(false, true, server_ip, match_port, match_info)
 	show_game()
 	_finish_smoke_if_enabled("PASS:client_launched_match")
 
 func _launch_host_match_after_lobby_handoff(match_info: Dictionary) -> void:
 	if _uses_dedicated_match_server(match_info):
-		await get_tree().create_timer(1.1).timeout
 		_launch_assigned_match(
 			false,
 			str(match_info.get("server_ip", _current_lobby_ip)),
@@ -6760,6 +6777,23 @@ func _wait_for_practice_thor_smoke_condition(predicate: Callable, max_frames: in
 		await get_tree().process_frame
 	return false
 
+func _wait_for_practice_thor_smoke_condition_seconds(predicate: Callable, timeout_seconds: float) -> bool:
+	var deadline_msec := Time.get_ticks_msec() + int(timeout_seconds * 1000.0)
+	while Time.get_ticks_msec() < deadline_msec:
+		if predicate.call():
+			return true
+		await get_tree().process_frame
+	return bool(predicate.call())
+
+func _resolve_practice_thor_smoke_player_prompts(practice_game) -> void:
+	if practice_game == null:
+		return
+	var pending_card = practice_game.get("_pending_resurrection_card")
+	if pending_card != null:
+		practice_game._on_resurrection_no()
+		return
+	practice_game._submit_visible_intercept_choice("")
+
 func _complete_practice_thor_smoke(success: bool, message: String) -> void:
 	if success:
 		_finish_smoke_if_enabled("PASS:%s" % message)
@@ -6784,6 +6818,12 @@ func _run_practice_thor_summon_smoke() -> void:
 		_fail_smoke_if_enabled("practice_thor_summon_setup_%s" % setup_error)
 		return
 	_write_smoke_trace("practice_thor_summon:setup_ok")
+	if practice_game.auto_priority:
+		_fail_smoke_if_enabled("practice_thor_summon_auto_pass_started_on")
+		return
+	_write_smoke_trace("practice_thor_summon:auto_pass_initially_off")
+	practice_game._on_auto_priority_toggled(true)
+	_write_smoke_trace("practice_thor_summon:auto_pass_enabled")
 
 	if not practice_game.game_input.submit_action({type = "upkeep_choice", choice = "draw"}):
 		_fail_smoke_if_enabled("practice_thor_summon_upkeep_choice_failed")
@@ -6802,14 +6842,36 @@ func _run_practice_thor_summon_smoke() -> void:
 	if not practice_game.game_input.submit_action({type = "end_turn", discard_uids = []}):
 		_fail_smoke_if_enabled("practice_thor_summon_end_turn_failed")
 		return
-	if not await _wait_for_practice_thor_smoke_condition(
+	if not await _wait_for_practice_thor_smoke_condition_seconds(
 		func() -> bool:
+			_resolve_practice_thor_smoke_player_prompts(practice_game)
 			return practice_game.game_manager.current_player == practice_game.player1 \
 				and practice_game.game_manager.turn_number >= 3 \
 				and practice_game.game_manager.action_stack.is_empty(),
-		400
+		10.0
 	):
-		_fail_smoke_if_enabled("practice_thor_summon_turn_timeout")
+		var top_action: CardAction = practice_game.game_manager.action_stack.back() if not practice_game.game_manager.action_stack.is_empty() else null
+		var pending_prompt_types: Array[String] = []
+		var pending_interactions = practice_game.match_manager.get("_pending_ui_interactions")
+		if pending_interactions is Array:
+			for entry in pending_interactions:
+				if entry is Dictionary:
+					pending_prompt_types.append(str((entry as Dictionary).get("type", "")))
+		var thor_bot = practice_game.get("_thor_bot")
+		_fail_smoke_if_enabled("practice_thor_summon_turn_timeout turn=%d current=%d priority=%d stack=%d top=%s resolving=%d pending_resolution=%s pending_ui=%s targeting=%s bot_step=%s bot_retry=%s label=%s" % [
+			practice_game.game_manager.turn_number,
+			practice_game.game_manager.players.find(practice_game.game_manager.current_player),
+			practice_game.game_manager.players.find(practice_game.game_manager.priority_player),
+			practice_game.game_manager.action_stack.size(),
+			("%s:%s" % [str(top_action.type), str(top_action.event_name)]) if top_action != null else "none",
+			practice_game.game_manager.resolving_stack_actions.size(),
+			str(practice_game.match_manager.is_authoritative_stack_resolution_pending()),
+			",".join(pending_prompt_types),
+			str(practice_game.match_manager.is_targeting_active()),
+			str(thor_bot.get("_step_queued") if thor_bot != null else false),
+			str(thor_bot.get("_retry_poll_queued") if thor_bot != null else false),
+			str(practice_game.action_label.text).replace("\n", " "),
+		])
 		return
 	_write_smoke_trace("practice_thor_summon:turn3_entry_ok")
 
@@ -6872,14 +6934,14 @@ func _run_practice_thor_summon_smoke() -> void:
 		summon_zone.zone_index,
 	])
 
-	if not await _wait_for_practice_thor_smoke_condition(
+	if not await _wait_for_practice_thor_smoke_condition_seconds(
 		func() -> bool:
 			return summon_card.current_zone == summon_zone \
 				and practice_game.game_manager.current_player == practice_game.player1 \
 				and practice_game.game_manager.action_stack.is_empty() \
 				and not practice_game._stack_resolution_paused \
 				and not practice_game._executing_stack_action,
-		300
+		10.0
 	):
 		var top_action: CardAction = practice_game.game_manager.action_stack.back() if not practice_game.game_manager.action_stack.is_empty() else null
 		var top_label := "none"
@@ -6892,6 +6954,42 @@ func _run_practice_thor_summon_smoke() -> void:
 			top_label,
 			str(practice_game._stack_resolution_paused),
 			str(practice_game._executing_stack_action),
+			str(practice_game.action_label.text).replace("\n", " "),
+		])
+		return
+
+	if not practice_game.game_input.submit_action({type = "end_turn", discard_uids = []}):
+		_fail_smoke_if_enabled("practice_thor_summon_auto_pass_end_turn_failed")
+		return
+	_write_smoke_trace("practice_thor_summon:auto_pass_end_turn_submitted")
+	if not await _wait_for_practice_thor_smoke_condition_seconds(
+		func() -> bool:
+			_resolve_practice_thor_smoke_player_prompts(practice_game)
+			return practice_game.game_manager.current_player == practice_game.player1 \
+				and practice_game.game_manager.turn_number >= 5 \
+				and practice_game.game_manager.action_stack.is_empty(),
+		15.0
+	):
+		var top_action: CardAction = practice_game.game_manager.action_stack.back() if not practice_game.game_manager.action_stack.is_empty() else null
+		var pending_prompt_types: Array[String] = []
+		var pending_interactions = practice_game.match_manager.get("_pending_ui_interactions")
+		if pending_interactions is Array:
+			for entry in pending_interactions:
+				if entry is Dictionary:
+					pending_prompt_types.append(str((entry as Dictionary).get("type", "")))
+		var thor_bot = practice_game.get("_thor_bot")
+		_fail_smoke_if_enabled("practice_thor_summon_auto_pass_turn_timeout turn=%d current=%d priority=%d stack=%d top=%s resolving=%d pending_resolution=%s pending_ui=%s targeting=%s bot_step=%s bot_retry=%s label=%s" % [
+			practice_game.game_manager.turn_number,
+			practice_game.game_manager.players.find(practice_game.game_manager.current_player),
+			practice_game.game_manager.players.find(practice_game.game_manager.priority_player),
+			practice_game.game_manager.action_stack.size(),
+			("%s:%s" % [str(top_action.type), str(top_action.event_name)]) if top_action != null else "none",
+			practice_game.game_manager.resolving_stack_actions.size(),
+			str(practice_game.match_manager.is_authoritative_stack_resolution_pending()),
+			",".join(pending_prompt_types),
+			str(practice_game.match_manager.is_targeting_active()),
+			str(thor_bot.get("_step_queued") if thor_bot != null else false),
+			str(thor_bot.get("_retry_poll_queued") if thor_bot != null else false),
 			str(practice_game.action_label.text).replace("\n", " "),
 		])
 		return

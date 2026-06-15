@@ -37,6 +37,9 @@ func get_play_failure_reason(game_manager: GameManager, player: Player) -> Strin
 		return card_name + " has no Demon in your graveyard or abyss to return."
 	return ""
 
+func _get_missing_sacrifice_cost_reason(_player: Player) -> String:
+	return card_name + " requires a friendly Animal to sacrifice."
+
 ## Returns friendly Animals on the board that can be sacrificed.
 func get_valid_sacrifices() -> Array[Card]:
 	var cards: Array[Card] = []

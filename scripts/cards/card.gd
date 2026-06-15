@@ -1610,6 +1610,27 @@ func can_prepare(game_manager: GameManager, player: Player) -> bool:
 func can_pay_costs(player: Player) -> bool:
 	return can_pay_costs_with_mana_cost(player, mana_cost)
 
+func get_cost_payment_failure_reason(player: Player, mana_required: int) -> String:
+	if player == null:
+		return "No acting player was provided."
+	if player.hand_zone == null:
+		return "No hand is available to pay this card's costs."
+	if player.mana < mana_required:
+		return "Not enough mana."
+	if player.hand_zone.get_card_count() < discard_cost:
+		return "%s requires %d discard(s)." % [card_name, discard_cost]
+	if player.hand_zone.get_card_count() < shelve_cost:
+		return "%s requires %d card(s) in hand to shelve." % [card_name, shelve_cost]
+	var sacrifice_failure_reason := _get_sacrifice_cost_failure_reason(player)
+	if not sacrifice_failure_reason.is_empty():
+		return sacrifice_failure_reason
+	var banishable = player.hand_zone.get_card_count()
+	for zone in player.frontline_zones + player.reserve_zones:
+		banishable += zone.get_card_count()
+	if banishable < banish_cost:
+		return "%s requires %d banish(es)." % [card_name, banish_cost]
+	return ""
+
 func can_pay_costs_with_mana_cost(player: Player, mana_required: int) -> bool:
 	# Check if player can afford all costs
 	if player.mana < mana_required:
@@ -1649,6 +1670,35 @@ func can_pay_costs_with_mana_cost(player: Player, mana_required: int) -> bool:
 		return false
 	
 	return true
+
+func _get_sacrifice_cost_failure_reason(player: Player) -> String:
+	if sacrifice_cost <= 0:
+		return ""
+	if _pending_chosen_sacrifices.size() > 0 and _pending_chosen_sacrifices.size() < sacrifice_cost:
+		return _get_missing_sacrifice_cost_reason(player)
+	if _pending_chosen_sacrifices.size() >= sacrifice_cost:
+		var seen_sacrifice_uids := {}
+		for i in range(sacrifice_cost):
+			var chosen_sacrifice := _pending_chosen_sacrifices[i]
+			if not _is_valid_pending_sacrifice_choice(chosen_sacrifice, player):
+				return _get_missing_sacrifice_cost_reason(player)
+			if seen_sacrifice_uids.has(chosen_sacrifice.uid):
+				return _get_missing_sacrifice_cost_reason(player)
+			seen_sacrifice_uids[chosen_sacrifice.uid] = true
+		return ""
+	var creature_count := 0
+	for zone in player.frontline_zones + player.reserve_zones:
+		for card in zone.cards:
+			if card.is_creature_card() and card.can_be_used_for_creature_sacrifice:
+				creature_count += 1
+	if creature_count < sacrifice_cost:
+		return _get_missing_sacrifice_cost_reason(player)
+	return ""
+
+func _get_missing_sacrifice_cost_reason(_player: Player) -> String:
+	if sacrifice_cost == 1:
+		return card_name + " requires a friendly creature to sacrifice."
+	return "%s requires %d friendly creatures to sacrifice." % [card_name, sacrifice_cost]
 
 func requires_chosen_hand_discards() -> bool:
 	return discard_cost > 0

@@ -629,7 +629,7 @@ func _populate_vbox(vbox: VBoxContainer) -> void:
 func _build_content() -> void:
 	for child in get_children():
 		remove_child(child)
-		child.queue_free()
+		child.free()
 	_level_tag = null
 	_level_label = null
 	_stats_label = null

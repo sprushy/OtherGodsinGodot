@@ -1181,7 +1181,7 @@ func get_play_card_failure_reason(player: Player, card: Card, target_zone: Zone)
 	var mana_required := get_card_play_mana_cost(player, card, false)
 	if not card.can_pay_costs_with_mana_cost(player, mana_required):
 		print("Cannot afford card costs")
-		return "Not enough mana."
+		return card.get_cost_payment_failure_reason(player, mana_required)
 
 	# Speed 1 cards can only be played on your turn
 	if card.get_effective_speed() == 1 and player != current_player:

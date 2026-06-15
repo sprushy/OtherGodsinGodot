@@ -8,6 +8,7 @@ var player_index: int = -1
 var bot_player: Player = null
 var opponent: Player = null
 
+const STEP_DELAY_SECONDS := 0.35
 const RETRY_POLL_DELAY_SECONDS := 0.15
 const CALL_VALKYRIE_DESPERATION_TARGET_SCORE := 3000
 const CALL_VALKYRIE_DEFAULT_TARGET_SCORE := 3600
@@ -136,7 +137,11 @@ func _queue_step() -> void:
 			_queue_retry_poll()
 		return
 	_step_queued = true
-	call_deferred("_run_step")
+	var tree := _get_retry_tree()
+	if tree == null:
+		call_deferred("_run_step")
+		return
+	tree.create_timer(STEP_DELAY_SECONDS).timeout.connect(_run_step, CONNECT_ONE_SHOT)
 
 func _should_retry_poll_later() -> bool:
 	if not _active or game_manager == null or match_manager == null or game_input == null:
@@ -164,7 +169,7 @@ func _run_retry_poll() -> void:
 func _get_retry_tree() -> SceneTree:
 	if match_manager != null and match_manager.network_manager != null:
 		return match_manager.network_manager.get_tree()
-	return null
+	return Engine.get_main_loop() as SceneTree
 
 func _should_queue_step() -> bool:
 	if not _active or game_manager == null or match_manager == null or game_input == null:
@@ -196,6 +201,7 @@ func _run_step() -> void:
 		_handle_upkeep()
 		return
 	if _take_main_phase_action():
+		_queue_retry_poll()
 		return
 	_finish_turn()
 
@@ -1542,6 +1548,8 @@ func _get_attack_ready_creatures() -> Array[Card]:
 			if card.creature_mode != Card.CreatureMode.AGGRESSIVE:
 				continue
 			if card.is_sleeping or not card.get_status_effect("cannot_attack").is_empty():
+				continue
+			if card.summoned_after_first_attack_this_turn:
 				continue
 			if not card.can_take_major_creature_action():
 				continue

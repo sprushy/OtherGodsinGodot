@@ -1950,9 +1950,9 @@ func _stack_action_should_linger_for_visibility(action: CardAction) -> bool:
 func _should_linger_authoritative_stack_resolution(action: CardAction = null) -> bool:
 	if _stack_action_should_linger_for_visibility(action):
 		return true
-	if network_manager == null:
-		return false
 	if allow_immediate_local_authoritative_stack_resolution and not _has_remote_authoritative_recipients():
+		return false
+	if network_manager == null:
 		return false
 	return true
 
@@ -2414,7 +2414,7 @@ func _advance_authoritative_priority() -> void:
 				return
 			_schedule_authoritative_stack_top_after_priority()
 		else:
-			_advance_authoritative_priority()
+			call_deferred("_advance_authoritative_priority")
 		return
 	var player_idx := game_manager.players.find(player)
 	if player_idx < 0:
@@ -2732,12 +2732,12 @@ func select_attacker(card: Card) -> void:
 	else:
 		move_failed.emit(get_attack_invalid_reason(card))
 
-func request_attack(attacker, target) -> void:
+func request_attack(attacker, target) -> bool:
 	var attacker_card: Card = attacker if attacker is Card else game_manager.get_card_by_uid(str(attacker))
 	var target_obj = target
 	if pending_attack_target != null:
 		move_failed.emit("Resolve the pending attack before declaring another attack.")
-		return
+		return false
 	
 	if target is String:
 		target_obj = null
@@ -2756,17 +2756,17 @@ func request_attack(attacker, target) -> void:
 	
 	if attacker_card == null or target_obj == null:
 		move_failed.emit("Invalid attack request: missing attacker or target.")
-		return
+		return false
 		
 	if not can_attack(attacker_card):
 		move_failed.emit(get_attack_invalid_reason(attacker_card))
-		return
+		return false
 		
 	# Check if target is valid for engagement
 	if target_obj is Card:
 		if not game_manager.can_cards_engage_each_other(attacker_card, target_obj):
 			move_failed.emit(attacker_card.card_name + " cannot engage " + target_obj.card_name + ".")
-			return
+			return false
 	elif target_obj is Player:
 		var allied_attackers := []
 		var united_front_partner := _get_declared_attack_partner(attacker_card)
@@ -2774,7 +2774,7 @@ func request_attack(attacker, target) -> void:
 			allied_attackers.append(united_front_partner)
 		if game_manager.is_followers_attack_blocked_by_active_structure(attacker_card, target_obj, allied_attackers):
 			move_failed.emit(attacker_card.card_name + " cannot attack " + target_obj.player_name + "'s followers.")
-			return
+			return false
 
 	selected_attacker = attacker_card
 	pending_attack_target = target_obj
@@ -2784,6 +2784,7 @@ func request_attack(attacker, target) -> void:
 	move_validated.emit({"type": "attack", "attacker": attacker_card, "target": target_obj})
 	if _uses_authoritative_headless_attack_flow():
 		_start_authoritative_headless_attack()
+	return true
 
 func broadcast_event(event_type: String, data: Dictionary) -> void:
 	if network_manager != null and network_manager.is_server:
@@ -3157,8 +3158,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 		"request_attack":
 			var attacker_uid = command.get("attacker_uid", "")
 			var target_id = command.get("target_id", "") # Can be card UID or player name/index
-			request_attack(attacker_uid, target_id)
-			return true
+			return request_attack(attacker_uid, target_id)
 		"cancel_targeting":
 			cancel_targeting()
 			return true

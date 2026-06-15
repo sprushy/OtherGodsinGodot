@@ -66,7 +66,7 @@ const AUDIO_SETTINGS_SECTION := "audio"
 const COMBAT_SETTINGS_SECTION := "combat"
 const GOD_SPECIFIC_SETTINGS_SECTION := "god_specific"
 const MUSIC_MUTED_KEY := "music_muted"
-const AUTO_PRIORITY_KEY := "auto_priority"
+const ALL_SOUND_MUTED_KEY := "all_sound_muted"
 const PRIORITY_STOP_START_KEY := "priority_stop_start"
 const PRIORITY_STOP_MAIN_KEY := "priority_stop_main"
 const PRIORITY_STOP_COMBAT_KEY := "priority_stop_combat"
@@ -199,7 +199,7 @@ var _pending_click_selection_source: Card:
 	set(val):
 		if match_manager != null:
 			match_manager.pending_click_selection_source = val
-var auto_priority: bool = true
+var auto_priority: bool = false
 var priority_stops := {
 	"start": false,
 	"main": false,
@@ -214,7 +214,7 @@ var _pending_local_priority_prompt_signature: Dictionary = {}
 var _visible_priority_prompt_signature: Dictionary = {}
 var _pending_priority_response_submission: Dictionary = {}
 var _pending_priority_response_target_selection: Dictionary = {}
-var _pending_empty_priority_auto_pass_signature: Dictionary = {}
+var _pending_priority_auto_pass_signature: Dictionary = {}
 var _pending_reveal_auto_submit_keys: Dictionary = {}
 var _fan_container: Control = null
 var _enemy_hand_overlay: Control = null
@@ -290,6 +290,7 @@ var _board_zone_uis: Array = []      # Array[BoardZoneUI]
 var _enemy_zone_uis: Array = []      # Array[BoardZoneUI]
 var _enemy_god_zone_ui: BoardZoneUI = null
 var _player_god_zone_ui: BoardZoneUI = null
+var _hermes_priority_toggle_button: CheckButton = null
 var _last_board_player: Player = null   # tracks which player the board was built for
 var _last_enemy_player: Player = null   # tracks which player the enemy board was built for
 var _pending_drop_zone: Zone = null  # Zone queued by a drag-drop before mode selection
@@ -504,6 +505,7 @@ var _pending_forfeit_return_to_menu: bool = false
 var _pending_post_game_return_to_menu: bool = false
 var _game_result_overlay: Control = null
 var _forfeit_button_default_text: String = ""
+var _all_sound_muted: bool = false
 var _action_log_view: RichTextLabel = null
 var _action_log_history_button: Button = null
 var _action_log_messages: Array[String] = []
@@ -527,6 +529,7 @@ var _pause_menu_overlay: Control = null
 var _pause_menu_panel: PanelContainer = null
 var _settings_menu_panel: PanelContainer = null
 var _music_mute_settings_toggle: CheckButton = null
+var _all_sound_settings_toggle: CheckButton = null
 var _auto_select_spell_play_zones: bool = true
 var _auto_select_spell_prepare_zones: bool = true
 var _auto_select_hex_prepare_zones: bool = true
@@ -540,7 +543,9 @@ var _hermes_auto_pass_upkeep_priority: bool = true
 var _hermes_add_priority_toggle_to_card: bool = true
 var _hermes_offer_priority: bool = true
 var _hover_card_options_card: Card = null
+var _hover_card_options_refresh_queued: bool = false
 var _action_point_state_by_card_uid: Dictionary = {}
+var _container_detach_depth: int = 0
 var _sacrifice_cursor_texture: Texture2D = null
 var _devour_cursor_texture: Texture2D = null
 var _silence_cursor_texture: Texture2D = null
@@ -767,13 +772,19 @@ const CENTER_ACTION_PANEL_WIDTH := 132.0
 const CENTER_ACTION_PANEL_HEIGHT := 74.0
 const CENTER_ACTION_BUTTON_HEIGHT := 36.0
 const CENTER_ACTION_PANEL_RIGHT_OVERHANG := 10.0
-const PRIORITY_CONTROLS_GAP := 8.0
 const PRIORITY_CONTROL_BUTTON_SIZE := Vector2(36.0, 30.0)
 const PRIORITY_AUTO_PASS_BUTTON_SIZE := Vector2(42.0, 30.0)
+const SOUND_MUTE_BUTTON_WIDTH := 40.0
+const FORFEIT_BUTTON_WIDTH := 112.0
+const CORNER_ACTION_MARGIN := 16.0
+const CORNER_ACTION_GAP := 8.0
+const PRIORITY_CONTROLS_RIGHT_MARGIN := 2.0
+const PRIORITY_CONTROLS_BOTTOM_MARGIN := 2.0
+const UI_UPDATE_DEBOUNCE_SECONDS := 0.03
 const RIGHT_PANEL_MIN_WIDTH := 100.0
 const RIGHT_PANEL_CONTROL_GAP := 6
 const RIGHT_PANEL_TEXT_FONT_SIZE := 10
-const LEFT_LOG_VERTICAL_BIAS := 8.0
+const LEFT_LOG_VERTICAL_BIAS := -16.0
 const CENTER_ACTION_FONT_SIZE := 12
 
 func _is_turn_choice_pending() -> bool:
@@ -875,7 +886,6 @@ func _load_user_settings() -> void:
 	var config := ConfigFile.new()
 	if config.load(USER_SETTINGS_PATH) != OK:
 		return
-	auto_priority = _read_config_bool(config, COMBAT_SETTINGS_SECTION, AUTO_PRIORITY_KEY, auto_priority)
 	priority_stops["start"] = _read_config_bool(config, COMBAT_SETTINGS_SECTION, PRIORITY_STOP_START_KEY, false)
 	priority_stops["main"] = _read_config_bool(config, COMBAT_SETTINGS_SECTION, PRIORITY_STOP_MAIN_KEY, false)
 	priority_stops["combat"] = _read_config_bool(config, COMBAT_SETTINGS_SECTION, PRIORITY_STOP_COMBAT_KEY, false)
@@ -888,6 +898,7 @@ func _load_user_settings() -> void:
 	_use_splash_board_background = _read_config_bool(config, COMBAT_SETTINGS_SECTION, USE_SPLASH_BOARD_BACKGROUND_KEY, _use_splash_board_background)
 	_hover_show_card_options = _read_config_bool(config, COMBAT_SETTINGS_SECTION, HOVER_SHOW_CARD_OPTIONS_KEY, _hover_show_card_options)
 	_always_show_ability_badges = _read_config_bool(config, COMBAT_SETTINGS_SECTION, ALWAYS_SHOW_ABILITY_BADGES_KEY, _always_show_ability_badges)
+	_all_sound_muted = _read_config_bool(config, AUDIO_SETTINGS_SECTION, ALL_SOUND_MUTED_KEY, _all_sound_muted)
 	_hermes_auto_pass_end_priority = _read_config_bool(config, GOD_SPECIFIC_SETTINGS_SECTION, HERMES_AUTO_PASS_END_PRIORITY_KEY, true)
 	_hermes_auto_pass_upkeep_priority = _read_config_bool(config, GOD_SPECIFIC_SETTINGS_SECTION, HERMES_AUTO_PASS_UPKEEP_PRIORITY_KEY, true)
 	_hermes_add_priority_toggle_to_card = _read_config_bool(config, GOD_SPECIFIC_SETTINGS_SECTION, HERMES_ADD_PRIORITY_TOGGLE_KEY, true)
@@ -954,12 +965,64 @@ func _is_hermes_priority_offer_enabled() -> bool:
 	return _hermes_add_priority_toggle_to_card and _hermes_offer_priority
 
 func _refresh_hermes_priority_toggle_ui() -> void:
-	if _player_god_zone_ui == null or not is_instance_valid(_player_god_zone_ui):
+	_ensure_hermes_priority_toggle_button()
+	if _hermes_priority_toggle_button == null or not is_instance_valid(_hermes_priority_toggle_button):
 		return
-	_player_god_zone_ui.configure_hermes_priority_toggle(
-		_hermes_add_priority_toggle_to_card,
-		_hermes_offer_priority
-	)
+	var god_card: Card = null
+	if _player_god_zone_ui != null \
+			and is_instance_valid(_player_god_zone_ui) \
+			and _player_god_zone_ui.zone != null \
+			and not _player_god_zone_ui.zone.cards.is_empty():
+		god_card = _player_god_zone_ui.zone.cards[0] as Card
+	_hermes_priority_toggle_button.visible = _hermes_add_priority_toggle_to_card \
+		and god_card != null \
+		and god_card.card_name == "Hermes"
+	_hermes_priority_toggle_button.set_pressed_no_signal(_hermes_offer_priority)
+	if _hermes_priority_toggle_button.visible:
+		call_deferred("_layout_hermes_priority_toggle")
+
+func _ensure_hermes_priority_toggle_button() -> void:
+	if _hermes_priority_toggle_button != null and is_instance_valid(_hermes_priority_toggle_button):
+		return
+	_hermes_priority_toggle_button = CheckButton.new()
+	_hermes_priority_toggle_button.name = "HermesOfferPriorityToggle"
+	_hermes_priority_toggle_button.tooltip_text = "When enabled, Hermes can open priority prompts for Deceptive Speed."
+	_hermes_priority_toggle_button.mouse_filter = Control.MOUSE_FILTER_STOP
+	_hermes_priority_toggle_button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	_hermes_priority_toggle_button.focus_mode = Control.FOCUS_NONE
+	_hermes_priority_toggle_button.action_mode = BaseButton.ACTION_MODE_BUTTON_PRESS
+	_hermes_priority_toggle_button.custom_minimum_size = Vector2(40.0, 32.0)
+	_hermes_priority_toggle_button.size = Vector2(40.0, 32.0)
+	_hermes_priority_toggle_button.visible = false
+	_hermes_priority_toggle_button.toggled.connect(_set_hermes_offer_priority)
+	add_child(_hermes_priority_toggle_button)
+	_promote_transient_ui(_hermes_priority_toggle_button, TRANSIENT_UI_Z_INDEX + 120)
+
+func _layout_hermes_priority_toggle() -> void:
+	if _hermes_priority_toggle_button == null or not is_instance_valid(_hermes_priority_toggle_button):
+		return
+	if not _hermes_priority_toggle_button.visible:
+		return
+	if _player_god_zone_ui == null or not is_instance_valid(_player_god_zone_ui) or not _player_god_zone_ui.is_inside_tree():
+		_hermes_priority_toggle_button.visible = false
+		return
+	var god_rect := _player_god_zone_ui.get_global_rect()
+	_hermes_priority_toggle_button.global_position = god_rect.end - Vector2(46.0, 38.0)
+	_hermes_priority_toggle_button.move_to_front()
+
+func _try_handle_hermes_priority_toggle_input(event: InputEvent) -> bool:
+	if _hermes_priority_toggle_button == null or not is_instance_valid(_hermes_priority_toggle_button):
+		return false
+	if not _hermes_priority_toggle_button.visible or not (event is InputEventMouseButton):
+		return false
+	var mouse_event := event as InputEventMouseButton
+	if not mouse_event.pressed or mouse_event.button_index != MOUSE_BUTTON_LEFT:
+		return false
+	if not _hermes_priority_toggle_button.get_global_rect().has_point(mouse_event.position):
+		return false
+	_set_hermes_offer_priority(not _hermes_offer_priority)
+	_hermes_priority_toggle_button.set_pressed_no_signal(_hermes_offer_priority)
+	return true
 
 func _set_hermes_auto_pass_end_priority(pressed: bool) -> void:
 	_hermes_auto_pass_end_priority = pressed
@@ -1001,6 +1064,22 @@ func _set_music_muted(muted: bool) -> void:
 	_save_bool_setting(AUDIO_SETTINGS_SECTION, MUSIC_MUTED_KEY, muted)
 	_on_music_mute_changed(muted)
 
+func _set_all_sound_muted(muted: bool) -> void:
+	_all_sound_muted = muted
+	var music_controller := _get_music_controller()
+	if music_controller != null and music_controller.has_method("set_all_sound_muted"):
+		music_controller.call("set_all_sound_muted", muted)
+		return
+	var master_bus_index := AudioServer.get_bus_index("Master")
+	if master_bus_index >= 0:
+		AudioServer.set_bus_mute(master_bus_index, muted)
+	_save_bool_setting(AUDIO_SETTINGS_SECTION, ALL_SOUND_MUTED_KEY, muted)
+
+func _on_all_sound_mute_changed(muted: bool) -> void:
+	_all_sound_muted = muted
+	if _all_sound_settings_toggle != null and is_instance_valid(_all_sound_settings_toggle):
+		_all_sound_settings_toggle.set_pressed_no_signal(_all_sound_muted)
+
 func _on_music_mute_changed(muted: bool) -> void:
 	if _music_mute_settings_toggle == null or not is_instance_valid(_music_mute_settings_toggle):
 		return
@@ -1029,6 +1108,7 @@ func _hide_pause_menu() -> void:
 	_pause_menu_panel = null
 	_settings_menu_panel = null
 	_music_mute_settings_toggle = null
+	_all_sound_settings_toggle = null
 
 func _show_pause_menu() -> void:
 	if _is_pause_menu_open():
@@ -1185,6 +1265,13 @@ func _show_pause_menu() -> void:
 			_set_music_muted(pressed)
 	)
 	general_settings.add_child(_music_mute_settings_toggle)
+	_all_sound_settings_toggle = _make_auto_zone_toggle(
+		"Mute all sound",
+		_all_sound_muted,
+		func(pressed: bool) -> void:
+			_set_all_sound_muted(pressed)
+	)
+	general_settings.add_child(_all_sound_settings_toggle)
 
 	general_settings.add_child(_make_settings_section_label("Visual"))
 	general_settings.add_child(_make_auto_zone_toggle(
@@ -2037,8 +2124,11 @@ func _ready() -> void:
 	right_panel.custom_minimum_size.x = RIGHT_PANEL_MIN_WIDTH
 	right_panel.add_theme_constant_override("separation", RIGHT_PANEL_CONTROL_GAP)
 	_forfeit_button_default_text = forfeit_button.text
-	forfeit_button.offset_left = -112.0
-	forfeit_button.offset_right = -2.0
+	forfeit_button.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	forfeit_button.offset_left = CORNER_ACTION_MARGIN + SOUND_MUTE_BUTTON_WIDTH + CORNER_ACTION_GAP
+	forfeit_button.offset_top = -36.0
+	forfeit_button.offset_right = forfeit_button.offset_left + FORFEIT_BUTTON_WIDTH
+	forfeit_button.offset_bottom = -8.0
 	forfeit_button.mouse_filter = Control.MOUSE_FILTER_STOP
 	_promote_transient_ui(forfeit_button, TRANSIENT_UI_Z_INDEX + 100)
 	resized.connect(_layout_board_art_background)
@@ -2054,6 +2144,7 @@ func _ready() -> void:
 
 	_setup_center_action_panel()
 	_setup_priority_controls()
+	_ensure_hermes_priority_toggle_button()
 	if not board_container.resized.is_connected(_on_board_layout_resized):
 		board_container.resized.connect(_on_board_layout_resized)
 	if not enemy_board_container.resized.is_connected(_on_board_layout_resized):
@@ -3415,7 +3506,7 @@ func _setup_priority_controls() -> void:
 	_auto_priority_button = Button.new()
 	_auto_priority_button.name = "AutoPassPriorityButton"
 	_auto_priority_button.text = "▶"
-	_auto_priority_button.tooltip_text = "Auto-pass priority when no stop or full-control override is active."
+	_auto_priority_button.tooltip_text = "Continuously auto-pass priority unless a stop or full-control override is active."
 	_auto_priority_button.toggle_mode = true
 	_auto_priority_button.button_pressed = auto_priority
 	_auto_priority_button.custom_minimum_size = PRIORITY_AUTO_PASS_BUTTON_SIZE
@@ -3478,12 +3569,17 @@ func _update_center_action_panel_layout() -> void:
 		separator_origin.y + BOARD_SEPARATOR_HEIGHT * 0.5 - _center_action_panel.size.y * 0.5
 	)
 	if _priority_controls_panel != null and is_instance_valid(_priority_controls_panel):
-		_priority_controls_panel.size = _priority_controls_panel.get_combined_minimum_size()
-		_priority_controls_panel.move_to_front()
+		var priority_panel_size := _priority_controls_panel.get_combined_minimum_size()
+		_priority_controls_panel.anchor_left = 0.0
+		_priority_controls_panel.anchor_top = 0.0
+		_priority_controls_panel.anchor_right = 0.0
+		_priority_controls_panel.anchor_bottom = 0.0
+		_priority_controls_panel.size = priority_panel_size
 		_priority_controls_panel.position = Vector2(
-			_center_action_panel.position.x - _priority_controls_panel.size.x - PRIORITY_CONTROLS_GAP,
-			separator_origin.y + BOARD_SEPARATOR_HEIGHT * 0.5 - _priority_controls_panel.size.y * 0.5
+			maxf(0.0, size.x - priority_panel_size.x - PRIORITY_CONTROLS_RIGHT_MARGIN),
+			maxf(0.0, size.y - priority_panel_size.y - PRIORITY_CONTROLS_BOTTOM_MARGIN)
 		)
+		_priority_controls_panel.move_to_front()
 
 func _sync_local_end_turn_button() -> void:
 	if _uses_authoritative_turn_ui() or _game_finished:
@@ -4805,6 +4901,13 @@ func _prepare_for_match_launch(status_message: String = "Connecting to match..."
 	_temporary_full_control = false
 	_constant_full_control = false
 	_full_control_chord_latched = false
+	auto_priority = false
+	_hermes_offer_priority = true
+	if _hermes_priority_toggle_button != null and is_instance_valid(_hermes_priority_toggle_button):
+		_hermes_priority_toggle_button.visible = false
+	_pending_priority_auto_pass_signature.clear()
+	_priority_prompt_idle_deadline_msec = 0
+	_priority_prompt_timeout_pending = false
 	_last_priority_preferences_signature = ""
 	_refresh_priority_controls_ui()
 	_hide_pause_menu()
@@ -4844,12 +4947,12 @@ func _prepare_for_match_launch(status_message: String = "Connecting to match..."
 	if _fan_container != null and is_instance_valid(_fan_container):
 		if _fan_container.get_parent() == self:
 			remove_child(_fan_container)
-		_fan_container.queue_free()
+		_fan_container.free()
 	_fan_container = null
 	if _enemy_hand_overlay != null and is_instance_valid(_enemy_hand_overlay):
 		if _enemy_hand_overlay.get_parent() == self:
 			remove_child(_enemy_hand_overlay)
-		_enemy_hand_overlay.queue_free()
+		_enemy_hand_overlay.free()
 	_enemy_hand_overlay = null
 	if hand_container != null:
 		hand_container.visible = false
@@ -5130,7 +5233,17 @@ func _is_hover_card_options_preview_active() -> bool:
 	return _get_hover_card_options_card() != null
 
 func _refresh_card_option_preview_visuals() -> void:
+	if game_manager == null or _hover_card_options_refresh_queued:
+		return
+	_hover_card_options_refresh_queued = true
+	call_deferred("_apply_card_option_preview_visual_refresh")
+
+func _apply_card_option_preview_visual_refresh() -> void:
+	_hover_card_options_refresh_queued = false
 	if game_manager == null:
+		return
+	if _container_detach_depth > 0:
+		_refresh_card_option_preview_visuals()
 		return
 	draw_board()
 	draw_enemy_board()
@@ -5172,74 +5285,29 @@ func _sync_action_point_spend_feedback_before_redraw() -> void:
 		if current_state.is_empty():
 			continue
 		var previous_state = _action_point_state_by_card_uid.get(card_uid, {})
-		var spent_kinds: Array[String] = []
-		if previous_state is Dictionary:
+		var spent_kinds := BoardZoneUI.get_pending_action_point_spend_visual_kinds(card)
+		if spent_kinds.is_empty() and previous_state is Dictionary:
 			spent_kinds = BoardZoneUI.get_spent_action_kinds(previous_state as Dictionary, current_state)
-		for pending_kind in BoardZoneUI.get_pending_action_point_spend_visual_kinds(card):
-			if not (pending_kind in spent_kinds):
-				spent_kinds.append(pending_kind)
 		if not spent_kinds.is_empty():
-			_play_registered_action_cost_marker_bursts(card_uid, spent_kinds)
+			var zone_ui := _get_zone_ui_for_zone(card.current_zone)
+			if zone_ui != null and is_instance_valid(zone_ui):
+				zone_ui.play_action_point_spend_effects(card, spent_kinds)
+			BoardZoneUI.clear_pending_action_point_spend_visual_kinds(card)
 		next_state_by_uid[card_uid] = current_state
 	_action_point_state_by_card_uid = next_state_by_uid
-
-func _marker_kinds_include(raw_kinds, action_cost_kind: String) -> bool:
-	if not (raw_kinds is Array):
-		return false
-	for raw_kind in raw_kinds:
-		if str(raw_kind) == action_cost_kind:
-			return true
-	return false
-
-func _play_registered_action_cost_marker_bursts(actor_uid: String, spent_kinds: Array[String]) -> void:
-	if actor_uid == "" or spent_kinds.is_empty():
-		return
-	var tree := get_tree()
-	if tree == null:
-		return
-	var best_marker_by_kind := {}
-	var mouse_position := get_global_mouse_position()
-	for node in tree.get_nodes_in_group(BoardZoneUI.ACTION_COST_MARKER_GROUP):
-		var marker := node as Control
-		if marker == null or not is_instance_valid(marker) or marker.is_queued_for_deletion():
-			continue
-		if str(marker.get_meta("action_cost_actor_uid", "")) != actor_uid:
-			continue
-		var raw_kinds = marker.get_meta("action_cost_kinds", [])
-		for spent_kind in spent_kinds:
-			if not _marker_kinds_include(raw_kinds, spent_kind):
-				continue
-			var center := marker.get_global_rect().get_center()
-			var distance := center.distance_squared_to(mouse_position)
-			var current_best = best_marker_by_kind.get(spent_kind, {})
-			if not (current_best is Dictionary) or (current_best as Dictionary).is_empty() or distance < float((current_best as Dictionary).get("distance", 999999999.0)):
-				best_marker_by_kind[spent_kind] = {
-					"center": center,
-					"distance": distance,
-				}
-	var parent := _get_floating_drag_parent()
-	if parent == null:
-		return
-	for spent_kind in best_marker_by_kind.keys():
-		var entry = best_marker_by_kind[spent_kind]
-		if not (entry is Dictionary):
-			continue
-		var center = (entry as Dictionary).get("center", Vector2.ZERO)
-		if center is Vector2:
-			var center_vec: Vector2 = center
-			BoardZoneUI.spawn_action_point_spend_effect(parent, center_vec, str(spent_kind), 20.0)
 
 func update_ui() -> void:
 	if game_manager == null:
 		return
 	_sync_visual_linger_input_blocker()
-	if _is_networked_client or _is_real_network_host():
-		if _ui_update_pending:
-			return
-		_ui_update_pending = true
+	if _ui_update_pending:
+		return
+	_ui_update_pending = true
+	var tree := get_tree()
+	if tree == null:
 		call_deferred("_do_update_ui")
 		return
-	_do_update_ui()
+	tree.create_timer(UI_UPDATE_DEBOUNCE_SECONDS).timeout.connect(_do_update_ui, CONNECT_ONE_SHOT)
 
 func _do_update_ui() -> void:
 	_ui_update_pending = false
@@ -5258,6 +5326,7 @@ func _do_update_ui() -> void:
 
 	_refresh_turn_label()
 
+	_sync_action_point_spend_feedback_before_redraw()
 	draw_hand()
 	draw_board()
 	draw_enemy_board()
@@ -5267,6 +5336,7 @@ func _do_update_ui() -> void:
 	_refresh_zone_info_icons()
 	_sync_network_turn_controls()
 	_sync_stack_zone_previews()
+	_refresh_hermes_priority_toggle_ui()
 
 func _is_live_board_card(card: Card) -> bool:
 	return card != null and card.current_zone != null and card.current_zone.is_board_zone()
@@ -5344,6 +5414,8 @@ func _on_board_layout_resized() -> void:
 	if _enemy_hand_overlay != null and is_instance_valid(_enemy_hand_overlay):
 		call_deferred("_layout_enemy_hand_overlay")
 	call_deferred("_apply_board_horizontal_offset")
+	call_deferred("_update_center_action_panel_layout")
+	call_deferred("_layout_hermes_priority_toggle")
 	_update_match_side_panel_layout()
 	if game_manager == null:
 		return
@@ -5352,11 +5424,18 @@ func _on_board_layout_resized() -> void:
 
 func _on_auto_priority_toggled(on: bool) -> void:
 	auto_priority = on
-	_save_combat_bool_setting(AUTO_PRIORITY_KEY, on)
 	_refresh_priority_controls_ui()
-	if auto_priority and _is_priority_prompt_visible() and not _should_hold_current_priority_window():
-		_arm_priority_prompt_timeout()
+	var priority_player_index := game_manager.players.find(game_manager.priority_player) \
+		if game_manager != null and game_manager.priority_player != null else -1
+	if auto_priority \
+			and priority_player_index == _get_local_priority_player_index() \
+			and _is_priority_prompt_visible() \
+			and not _should_hold_current_priority_window():
+		_pending_priority_auto_pass_signature.clear()
+		call_deferred("_on_priority_pass_pressed")
 	else:
+		if not auto_priority:
+			_pending_priority_auto_pass_signature.clear()
 		_priority_prompt_idle_deadline_msec = 0
 		_priority_prompt_timeout_pending = false
 
@@ -5944,9 +6023,11 @@ func _invalidate_cached_board_layouts() -> void:
 func _detach_container_children(container: Node) -> void:
 	if container == null:
 		return
+	_container_detach_depth += 1
 	for child in container.get_children():
 		container.remove_child(child)
-		child.queue_free()
+		child.free()
+	_container_detach_depth -= 1
 
 func _get_display_player() -> Player:
 	if game_manager == null:
@@ -5996,7 +6077,7 @@ func draw_enemy_hand_overlay() -> void:
 	if _enemy_hand_overlay != null and is_instance_valid(_enemy_hand_overlay):
 		if _enemy_hand_overlay.get_parent() == self:
 			remove_child(_enemy_hand_overlay)
-		_enemy_hand_overlay.queue_free()
+		_enemy_hand_overlay.free()
 	_enemy_hand_overlay = null
 
 	var enemy_player := _get_display_opponent()
@@ -6357,7 +6438,7 @@ func draw_hand() -> void:
 	if _fan_container != null and is_instance_valid(_fan_container):
 		if _fan_container.get_parent() == self:
 			remove_child(_fan_container)
-		_fan_container.queue_free()
+		_fan_container.free()
 	_fan_container = null
 	_hand_visual_cards.clear()
 	if hand_container != null:
@@ -6378,13 +6459,13 @@ func draw_hand() -> void:
 	_fan_container.mouse_filter = Control.MOUSE_FILTER_PASS
 	_fan_container.clip_contents = false
 	_fan_container.z_index = HAND_OVERLAY_Z_INDEX
-	add_child(_fan_container)
+	var highlighted_proxy_cards: Array[VisualCard] = []
 
 	for card in hand_player.hand_zone.cards:
 		if _should_hide_hand_card(card):
 			continue
 		var vc := VisualCard.new()
-		_fan_container.add_child(vc)
+		vc.set_hand_mode(true)
 		vc.setup(
 			card,
 			180,
@@ -6396,7 +6477,6 @@ func draw_hand() -> void:
 		vc.set_waiting_on_priority(_is_card_waiting_on_priority(card))
 		vc.set_priority_response_available(_is_card_usable_for_priority(card))
 		vc.set_blot_summon_state(card in blot_valid_choices, card in _pending_blot_selected_creatures)
-		vc.set_hand_mode(true)
 		if freyja_power_targeting:
 			vc.set_disabled(true)
 		vc.hand_hovered.connect(_on_hand_card_hover_started)
@@ -6404,11 +6484,12 @@ func draw_hand() -> void:
 		vc.card_clicked.connect(_on_hand_card_pressed)
 		vc.card_right_clicked.connect(_on_hand_card_right_clicked)
 		vc.card_drag_released.connect(_on_card_drag_released)
+		_fan_container.add_child(vc)
 		_hand_visual_cards.append(vc)
 
 	for card in _get_graveyard_hand_proxy_cards(hand_player):
 		var vc := VisualCard.new()
-		_fan_container.add_child(vc)
+		vc.set_hand_mode(true)
 		vc.setup(
 			card,
 			180,
@@ -6417,23 +6498,26 @@ func draw_hand() -> void:
 		)
 		vc.set_hand_proxy_visual(true, true)
 		vc.set_hover_viewer(game_manager.get_feedback_viewer())
-		vc.set_hand_mode(true)
 		vc.hand_hovered.connect(_on_hand_card_hover_started)
 		vc.hand_unhovered.connect(_on_hand_card_hover_ended)
 		vc.card_clicked.connect(_on_hand_card_pressed)
 		vc.card_right_clicked.connect(_on_hand_card_right_clicked)
 		vc.card_drag_released.connect(_on_card_drag_released)
 		if _is_freyja_active_selected_card(card):
-			vc.set_highlighted(true)
+			highlighted_proxy_cards.append(vc)
+		_fan_container.add_child(vc)
 		_hand_visual_cards.append(vc)
 
 	if _hand_visual_cards.is_empty():
 		if _fan_container.get_parent() == self:
 			remove_child(_fan_container)
-		_fan_container.queue_free()
+		_fan_container.free()
 		_fan_container = null
 		return
 
+	add_child(_fan_container)
+	for vc in highlighted_proxy_cards:
+		vc.set_highlighted(true)
 	call_deferred("_layout_fan")
 
 func _layout_fan() -> void:
@@ -7081,10 +7165,6 @@ func _make_god_cluster(zone: Zone, player: Player, is_enemy: bool) -> Control:
 	god_zone_ui.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	god_wrapper.add_child(god_zone_ui)
 	god_zone_ui.setup(zone, game_manager, player, -1, _on_card_dropped_to_zone, is_enemy, "God")
-	god_zone_ui.configure_hermes_priority_toggle(
-		not is_enemy and _hermes_add_priority_toggle_to_card,
-		_hermes_offer_priority
-	)
 
 	var stats_panel := _make_stats_panel(player, true)
 	stats_panel.custom_minimum_size = Vector2(118, BoardZoneUI.get_zone_extent())
@@ -7101,7 +7181,6 @@ func _make_god_cluster(zone: Zone, player: Player, is_enemy: bool) -> Control:
 		_player_god_zone_ui.champions_call_clicked.connect(_on_champions_call_badge_pressed)
 		_player_god_zone_ui.god_ability_badge_clicked.connect(_on_god_ability_badge_clicked)
 		_player_god_zone_ui.tez_necoc_yaotl_badge_clicked.connect(_on_tez_necoc_yaotl_badge_pressed)
-		_player_god_zone_ui.hermes_priority_toggle_changed.connect(_set_hermes_offer_priority)
 		_player_god_zone_ui.god_right_clicked.connect(_on_god_right_clicked)
 
 	return cluster
@@ -17938,6 +18017,9 @@ func _handle_priority_full_control_shortcut(event: InputEvent) -> bool:
 func _input(event: InputEvent) -> void:
 	if not is_visible_in_tree():
 		return
+	if _try_handle_hermes_priority_toggle_input(event):
+		get_viewport().set_input_as_handled()
+		return
 	if _handle_priority_full_control_shortcut(event):
 		get_viewport().set_input_as_handled()
 		return
@@ -18124,6 +18206,9 @@ func _can_auto_resume_paused_stack_resolution() -> bool:
 
 func _recover_stalled_priority_state() -> bool:
 	if game_manager == null or match_manager == null:
+		return false
+	if match_manager.uses_authoritative_priority_flow() \
+			and match_manager.is_authoritative_stack_resolution_pending():
 		return false
 	if _stack_resolution_paused:
 		if _can_auto_resume_paused_stack_resolution():
@@ -19224,6 +19309,16 @@ func _offer_priority() -> void:
 		and player != game_manager.players[0]
 	var top_action: CardAction = game_manager.action_stack.back() if not game_manager.action_stack.is_empty() else null
 	var force_priority_window := _stack_action_requires_explicit_priority_window(top_action, player)
+	var is_local_priority := game_manager.players.find(player) == _get_local_priority_player_index()
+
+	if auto_priority and is_local_priority and not force_priority_window and not is_remote_priority:
+		_hide_priority_prompt()
+		game_manager.pass_priority()
+		if game_manager.both_passed():
+			_execute_top_of_stack()
+		else:
+			call_deferred("_offer_priority")
+		return
 
 	if offering_responses.is_empty() and not force_priority_window:
 		_hide_priority_prompt()
@@ -19323,23 +19418,22 @@ func _build_priority_prompt_payload_signature(player_index: int, data: Dictionar
 			signature["top_source_index"] = game_manager.players.find(top.source_player)
 	return signature
 
-func _auto_pass_empty_priority_prompt(player_index: int, data: Dictionary) -> bool:
+func _auto_pass_priority_prompt(player_index: int, data: Dictionary) -> bool:
 	if not auto_priority or _should_hold_current_priority_window():
-		return false
-	var responses: Array = data.get("responses", [])
-	if not responses.is_empty():
 		return false
 	if game_manager == null or game_manager.action_stack.is_empty():
 		return false
 	if player_index < 0 or player_index >= game_manager.players.size():
 		return false
+	if player_index != _get_local_priority_player_index():
+		return false
 	var priority_player := game_manager.players[player_index]
 	if game_manager.priority_player != priority_player:
 		game_manager.priority_player = priority_player
 	var prompt_signature := _build_priority_prompt_payload_signature(player_index, data)
-	if prompt_signature == _pending_empty_priority_auto_pass_signature:
+	if prompt_signature == _pending_priority_auto_pass_signature:
 		return true
-	_pending_empty_priority_auto_pass_signature = prompt_signature
+	_pending_priority_auto_pass_signature = prompt_signature
 	_hide_priority_prompt()
 	_update_waiting_overlay()
 	call_deferred("_on_priority_pass_pressed")
@@ -19497,6 +19591,10 @@ func _request_network_priority_response(command: Dictionary, response_card: Card
 
 func _schedule_priority_recovery_check() -> void:
 	if _priority_recovery_check_scheduled:
+		return
+	if match_manager != null \
+			and match_manager.uses_authoritative_priority_flow() \
+			and match_manager.is_authoritative_stack_resolution_pending():
 		return
 	_priority_recovery_check_scheduled = true
 	call_deferred("_run_priority_recovery_check")
@@ -19668,6 +19766,11 @@ func _get_priority_prompt_action_message(viewer: Player = null) -> String:
 	return str(prompt_data.get("action_message", "")).strip_edges()
 
 func _show_priority_prompt(player: Player) -> void:
+	if game_manager != null and player != null:
+		var player_index := game_manager.players.find(player)
+		var prompt_data: Dictionary = match_manager.build_priority_prompt_data(player) if match_manager != null else {}
+		if _auto_pass_priority_prompt(player_index, prompt_data):
+			return
 	if game_manager != null and not game_manager.action_stack.is_empty():
 		var prompted_action: CardAction = game_manager.action_stack.back()
 		if prompted_action != null and match_manager != null:
@@ -24060,7 +24163,7 @@ func _on_match_move_validated(move: Dictionary) -> void:
 				else:
 					_offer_priority()
 		"resurrection_choice":
-			if not _is_networked_client:
+			if not _is_networked_client and not authoritative_priority:
 				_continue_end_turn_sequence()
 		"play_hex_response":
 			# Remote player activated a hex; the ABILITY was already pushed by MatchManager.
@@ -24199,6 +24302,8 @@ func _on_match_ui_interaction(player_index: int, type: String, data: Dictionary)
 		_pause_stack_resolution(target_player)
 			
 	if not _is_player_local(target_player):
+		return
+	if type == "priority" and player_index != _get_local_priority_player_index():
 		return
 		
 	match type:
@@ -25755,6 +25860,7 @@ func _apply_ui_interaction(event_data: Dictionary) -> void:
 				_queue_sharur_escape_prompt(card, str(payload.get("reason", "")))
 
 func _apply_full_state(data: Dictionary) -> void:
+	_pending_priority_auto_pass_signature.clear()
 	var state: Dictionary = data.get("state", {})
 	if _is_networked_client:
 		# Client: clear stale card refs and rebuild ghost game_manager from server state
@@ -25869,9 +25975,7 @@ func _restore_priority_prompt_from_authoritative_state() -> void:
 	var prompt_data: Dictionary = match_manager.build_priority_prompt_data(local_player)
 	if prompt_data.is_empty():
 		return
-	var responses: Array = prompt_data.get("responses", [])
-	if auto_priority and responses.is_empty():
-		_auto_pass_empty_priority_prompt(local_idx, prompt_data)
+	if _auto_pass_priority_prompt(local_idx, prompt_data):
 		return
 	_apply_priority_prompt_for_player(local_idx, prompt_data)
 
@@ -26062,7 +26166,7 @@ func _apply_priority_prompt_for_player(player_index: int, data: Dictionary) -> v
 	_update_waiting_status(false)
 	if _is_networked_client or (match_manager != null and match_manager.uses_authoritative_priority_flow() and network_manager != null):
 		var responses: Array = data.get("responses", [])
-		if _auto_pass_empty_priority_prompt(player_index, data):
+		if _auto_pass_priority_prompt(player_index, data):
 			return
 		_show_remote_priority_prompt(responses, msg)
 		return

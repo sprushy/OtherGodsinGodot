@@ -244,13 +244,13 @@ func get_play_failure_reason(_game_manager: GameManager, player: Player) -> Stri
 	if player == null:
 		return "No acting player was provided."
 	if _game_manager == null:
-		return "" if can_pay_costs(player) else "Not enough mana."
+		return "" if can_pay_costs(player) else get_cost_payment_failure_reason(player, mana_cost)
 	var mana_required := mana_cost
 	var prepared := is_prepared and current_zone != null and current_zone.is_board_zone()
 	if _game_manager.has_method("get_card_play_mana_cost"):
 		mana_required = _game_manager.get_card_play_mana_cost(player, self, prepared)
 	if not can_pay_costs_with_mana_cost(player, mana_required):
-		return "Not enough mana."
+		return get_cost_payment_failure_reason(player, mana_required)
 	return ""
 
 func on_enter_zone(_zone: Zone) -> void:
