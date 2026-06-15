@@ -3737,15 +3737,20 @@ func _show_preview(card: Card, force: bool = false) -> void:
 	var stat_parts := _get_card_stat_summary_parts(card, false, true)
 	_prev_stats.text = "  ".join(stat_parts)
 
-	var preview_body := ""
+	var preview_sections: Array[String] = []
+	if card.has_type("Shapeshifter"):
+		var hover_detail_lines := card.get_hover_detail_lines()
+		if hover_detail_lines.size() > 0:
+			preview_sections.append("\n".join(hover_detail_lines))
+
 	if card.ability_text != "":
-		preview_body = BaseCard.apply_keyword_hints(BaseCard.apply_action_cost_symbols(card.ability_text, card))
+		preview_sections.append(
+			BaseCard.apply_keyword_hints(BaseCard.apply_action_cost_symbols(card.ability_text, card))
+		)
 	if card.should_show_flavor_text_in_hover():
 		var escaped_flavor := _escape_preview_bbcode_text(card.flavor_text)
-		if not preview_body.is_empty():
-			preview_body += "\n\n[color=#7f7f89][i]%s[/i][/color]" % escaped_flavor
-		else:
-			preview_body = "[color=#7f7f89][i]%s[/i][/color]" % escaped_flavor
+		preview_sections.append("[color=#7f7f89][i]%s[/i][/color]" % escaped_flavor)
+	var preview_body := "\n\n".join(preview_sections)
 	_prev_ability.text = preview_body
 	_prev_ability.custom_minimum_size.y = 64 if not preview_body.is_empty() else 0
 	_prev_flavor.text = ""

@@ -128,10 +128,11 @@ func get_effective_resilience() -> int:
 	return max(0, total)
 
 func get_hover_detail_lines(_viewer: Player = null) -> Array[String]:
+	var active_form := _get_feline_form_types() if in_feline_form else _get_human_form_types()
+	var inactive_form := _get_human_form_types() if in_feline_form else _get_feline_form_types()
 	return [
-		"[b]Current Form[/b]: %s" % ("Feline" if in_feline_form else "Human"),
-		"[b]Feline[/b]: Animal, Feline, Mage, Shaman, Shapeshifter; +4 STR and +1 SPD.",
-		"[b]Human[/b]: Human, Mage, Shaman, Shapeshifter; +5 RES.",
+		BaseCard.format_shapeshifter_form_summary(active_form, inactive_form),
+		"[b]Feline[/b]: +4 STR and +1 SPD. [b]Human[/b]: +5 RES.",
 	]
 
 func _get_human_form_types() -> Array[String]:

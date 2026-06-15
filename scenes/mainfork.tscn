@@ -33,6 +33,10 @@ text = "Deck Builder"
 layout_mode = 2
 text = "Rules"
 
+[node name="TutorialButton" type="Button" parent="Control/MenuContainer"]
+layout_mode = 2
+text = "Tutorial"
+
 [node name="CardTestButton" type="Button" parent="Control/MenuContainer" unique_id=-1294967295]
 layout_mode = 2
 text = "Card Test"

@@ -22,6 +22,7 @@ env.Append(
         "-framework",
         "Cocoa",
         "-Wl,-rpath,@loader_path",
+        "-Wl,-rpath,@loader_path/../../../../Frameworks",
     ],
 )
 

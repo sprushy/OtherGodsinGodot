@@ -18513,6 +18513,7 @@ func _bdrag_finish(drop_pos: Vector2) -> void:
 		return
 
 	var target_zone := target_zu.zone
+	var drag_attack_target = _get_board_drag_attack_target(target_zu, target_zone)
 
 	# Move: own empty adjacent zone
 	if not target_zu._is_enemy and target_zone.cards.size() == 0:
@@ -18543,6 +18544,8 @@ func _bdrag_finish(drop_pos: Vector2) -> void:
 
 	# Attack guard checks
 	if not match_manager.can_attack(card):
+		if drag_attack_target != null and _try_auto_switch_defensive_drag_attack(card, drag_attack_target):
+			return
 		var major_minor_limit := card.get_max_minor_creature_actions_before_major()
 		if card.is_sleeping:
 			_set_action_label_text(card.card_name + " is Sleeping and cannot act.")
@@ -18598,6 +18601,80 @@ func _bdrag_finish(drop_pos: Vector2) -> void:
 			return
 
 	_set_action_label_text("Invalid drop target.")
+
+func _get_board_drag_attack_target(target_zu: BoardZoneUI, target_zone: Zone):
+	if target_zu == null or target_zone == null or not target_zu._is_enemy:
+		return null
+	if target_zone.zone_type == Zone.ZoneType.GOD_SLOT:
+		return game_manager.other_player if game_manager != null else null
+	if target_zone.cards.is_empty():
+		if target_zone.zone_type == Zone.ZoneType.FRONTLINE:
+			return game_manager.other_player if game_manager != null else null
+		return null
+	var target_card: Card = target_zone.cards[0]
+	return target_card if _is_direct_attack_target_card(target_card) else null
+
+func _can_auto_switch_defensive_drag_attacker(card: Card) -> bool:
+	if card == null or game_manager == null or match_manager == null or game_input == null:
+		return false
+	if card.card_type != Card.CardType.CREATURE:
+		return false
+	if card.creature_mode != Card.CreatureMode.DEFENSIVE or card.is_stealth:
+		return false
+	if card.get_controller() != game_manager.current_player:
+		return false
+	if not card.can_take_major_creature_action() or not card.can_take_minor_creature_action_spending_minor():
+		return false
+	if not _creature_can_change_stance(card):
+		return false
+	if game_manager.has_method("can_pay_creature_action_mana_cost") \
+			and not game_manager.can_pay_creature_action_mana_cost(card, "change stance"):
+		return false
+	var original_mode: Card.CreatureMode = card.creature_mode
+	card.creature_mode = Card.CreatureMode.AGGRESSIVE
+	var can_attack_after_switch := match_manager.can_attack(card)
+	card.creature_mode = original_mode
+	return can_attack_after_switch
+
+func _try_auto_switch_defensive_drag_attack(card: Card, attack_target) -> bool:
+	if not _can_auto_switch_defensive_drag_attacker(card):
+		return false
+	if attack_target is Card:
+		var target_card := attack_target as Card
+		if not game_manager.can_cards_engage_each_other(card, target_card):
+			_set_action_label_text(_get_card_name_safe(card, "That card") + " cannot engage " + _get_card_name_safe(target_card, "that target") + ".")
+			return true
+	elif attack_target is Player:
+		var allied_attackers: Array = []
+		var united_front_partner := _get_declared_attack_partner(card)
+		if united_front_partner != null:
+			allied_attackers.append(united_front_partner)
+		if game_manager.is_followers_attack_blocked_by_active_structure(card, attack_target, allied_attackers):
+			_set_action_label_text(_get_attack_card_label(card, "That creature") + " cannot attack followers through Palisade.")
+			return true
+	else:
+		return false
+
+	if not game_input.submit_action({type = "change_mode", card_uid = card.uid, mode = Card.CreatureMode.AGGRESSIVE}):
+		_set_action_label_text(card.card_name + " could not switch stance right now.")
+		update_ui()
+		return true
+	selected_attacker = card
+	selected_interceptor = null
+	pending_attack_target = null
+	if _should_submit_attack_via_game_input():
+		if not _submit_attack_request(card, attack_target):
+			_set_action_label_text("Could not submit that attack.")
+			update_ui()
+			return true
+		selected_attacker = null
+		update_ui()
+		return true
+	if not match_manager.request_attack(card, attack_target):
+		_set_action_label_text("Could not submit that attack.")
+		update_ui()
+		return true
+	return true
 
 func _bdrag_cancel() -> void:
 	_bdrag_cleanup()

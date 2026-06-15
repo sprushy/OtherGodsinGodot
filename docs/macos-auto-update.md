@@ -23,15 +23,19 @@ a secure backup outside GitHub.
 
 The release workflow:
 
-1. Builds a universal Intel/Apple Silicon GDExtension.
+1. Downloads Sparkle and builds a universal Intel/Apple Silicon `MacSparkleBridge` GDExtension into `addons/macos_sparkle/bin/`.
 2. Embeds `Sparkle.framework` and the public update key.
 3. Signs and notarizes the complete app.
-4. Signs `OtherGods-macos.zip` with the Sparkle private key.
-5. Publishes the archive and `appcast.xml` as GitHub release assets.
+4. Packages `OtherGods-macos.zip`, generates `appcast.xml` plus any Sparkle delta assets, and signs them with the Sparkle private key.
+5. Publishes the archive, `appcast.xml`, and generated Sparkle assets as GitHub release assets.
 
 The app reads its feed from:
 
 `https://github.com/sprushy/OtherGodsinGodot/releases/latest/download/appcast.xml`
+
+The compiled macOS bridge binary is intentionally not checked into git. Tagged
+releases rebuild it in CI so exported apps always ship with a matching
+`libmacos_sparkle.macos.universal.dylib`.
 
 ## Bootstrap Limitation
 

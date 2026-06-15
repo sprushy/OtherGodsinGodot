@@ -57,6 +57,7 @@ const BYTES_PER_MIB := 1048576.0
 @onready var game_container = $GameContainer
 @onready var title_label = $MenuContainer/TitleLabel
 @onready var rules_button = $MenuContainer/RulesButton
+@onready var tutorial_button = $MenuContainer/TutorialButton
 @onready var multiplayer_container = $MenuContainer/MultiplayerContainer
 @onready var multiplayer_button = $MenuContainer/MultiplayerButton
 @onready var multiplayer_back_button = $MenuContainer/MultiplayerContainer/MultiplayerHeaderRow/BackButton
@@ -171,6 +172,35 @@ var _update_check_failure_status: String = ""
 var _last_logged_update_percent: int = -10
 var _startup_prompt_gate_open: bool = false
 var _rules_overlay: Control = null
+var _rules_overlay_focus_button: Button = null
+var _tutorial_lessons: Array[Dictionary] = []
+var _tutorial_lesson_index: int = 0
+var _tutorial_step_index: int = 0
+var _tutorial_lesson_buttons: Array[Button] = []
+var _tutorial_title_label: Label = null
+var _tutorial_progress_label: Label = null
+var _tutorial_step_title_label: Label = null
+var _tutorial_step_body_label: Label = null
+var _tutorial_try_label: Label = null
+var _tutorial_prev_button: Button = null
+var _tutorial_next_button: Button = null
+var _tutorial_action_button: Button = null
+var _tutorial_coach_overlay: Control = null
+var _tutorial_coach_panel: PanelContainer = null
+var _tutorial_coach_title_label: Label = null
+var _tutorial_coach_progress_label: Label = null
+var _tutorial_coach_step_title_label: Label = null
+var _tutorial_coach_body_label: Label = null
+var _tutorial_coach_status_label: Label = null
+var _tutorial_coach_next_button: Button = null
+var _tutorial_coach_lesson: Dictionary = {}
+var _tutorial_coach_steps: Array[Dictionary] = []
+var _tutorial_coach_step_index: int = 0
+var _tutorial_coach_step_complete: bool = false
+var _tutorial_coach_mode: String = ""
+var _tutorial_coach_target: Node = null
+var _tutorial_coach_baseline: Dictionary = {}
+var _tutorial_coach_seen_stack: bool = false
 var _seek_auto_refresh_elapsed: float = 0.0
 var _seek_list_request_pending: bool = false
 var _deck_picker_button: Button = null
@@ -235,12 +265,15 @@ func _ready() -> void:
 
 	var deck_btn = $MenuContainer/DeckBuilderButton
 	var rules_btn = $MenuContainer/RulesButton
+	var tutorial_btn = $MenuContainer/TutorialButton
 	var card_test_btn = $MenuContainer/CardTestButton
 
 	if deck_btn:
 		deck_btn.pressed.connect(_on_deck_builder_pressed)
 	if rules_btn:
 		rules_btn.pressed.connect(_open_rules_overlay)
+	if tutorial_btn:
+		tutorial_btn.pressed.connect(_open_tutorial_overlay)
 	if card_test_btn:
 		if OS.is_debug_build():
 			card_test_btn.pressed.connect(_on_card_test_pressed)
@@ -771,6 +804,7 @@ func _process(delta: float) -> void:
 		_refresh_update_download_progress()
 	elif _is_auto_updating and _update_curl_process_id > 0:
 		_refresh_windows_curl_download_progress()
+	_poll_tutorial_coach()
 	if not _should_auto_refresh_seeks():
 		_seek_auto_refresh_elapsed = 0.0
 		return
@@ -868,8 +902,10 @@ func _handle_escape_navigation() -> bool:
 		_close_program()
 		return true
 	if _rules_overlay != null and is_instance_valid(_rules_overlay):
+		var return_to_menu_after_rules = menu_container != null and menu_container.visible
 		_close_rules_overlay()
-		show_menu()
+		if return_to_menu_after_rules:
+			show_menu()
 		return true
 	if _friends_overlay != null and is_instance_valid(_friends_overlay):
 		_close_friends_overlay()
@@ -975,6 +1011,7 @@ func _close_program() -> void:
 	get_tree().quit()
 
 func show_menu() -> void:
+	_close_tutorial_coach_overlay()
 	menu_container.visible = true
 	game_container.visible = false
 	_hide_multiplayer_deck_popup()
@@ -4353,13 +4390,221 @@ func _on_deck_builder_pressed() -> void:
 	show_game()
 
 func _open_rules_overlay() -> void:
+	_open_document_overlay("Rules", "Rules and tutorial reference.", RULES_DOC_PATH, "RulesOverlay", rules_button)
+
+func _open_tutorial_overlay() -> void:
+	if _rules_overlay != null and is_instance_valid(_rules_overlay):
+		return
+
+	_tutorial_lessons = _get_tutorial_lessons()
+	if _tutorial_lessons.is_empty():
+		return
+	_tutorial_lesson_index = clampi(_tutorial_lesson_index, 0, _tutorial_lessons.size() - 1)
+	_tutorial_step_index = 0
+	_tutorial_lesson_buttons.clear()
+
+	_rules_overlay = Control.new()
+	_rules_overlay.name = "TutorialOverlay"
+	_rules_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_rules_overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	_rules_overlay_focus_button = tutorial_button
+	add_child(_rules_overlay)
+
+	var shade := ColorRect.new()
+	shade.color = Color(0.02, 0.03, 0.06, 0.88)
+	shade.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	shade.mouse_filter = Control.MOUSE_FILTER_STOP
+	_rules_overlay.add_child(shade)
+
+	var outer_margin := MarginContainer.new()
+	outer_margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	outer_margin.add_theme_constant_override("margin_left", 36)
+	outer_margin.add_theme_constant_override("margin_right", 36)
+	outer_margin.add_theme_constant_override("margin_top", 32)
+	outer_margin.add_theme_constant_override("margin_bottom", 32)
+	outer_margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_rules_overlay.add_child(outer_margin)
+
+	var panel := PanelContainer.new()
+	panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	var panel_style := StyleBoxFlat.new()
+	panel_style.bg_color = Color(0.08, 0.10, 0.16, 0.98)
+	panel_style.border_color = Color(0.54, 0.76, 1.0, 0.95)
+	panel_style.corner_radius_top_left = 12
+	panel_style.corner_radius_top_right = 12
+	panel_style.corner_radius_bottom_left = 12
+	panel_style.corner_radius_bottom_right = 12
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		panel_style.set_border_width(side as Side, 2)
+	panel.add_theme_stylebox_override("panel", panel_style)
+	outer_margin.add_child(panel)
+
+	var inner_margin := MarginContainer.new()
+	inner_margin.add_theme_constant_override("margin_left", 18)
+	inner_margin.add_theme_constant_override("margin_right", 18)
+	inner_margin.add_theme_constant_override("margin_top", 18)
+	inner_margin.add_theme_constant_override("margin_bottom", 18)
+	panel.add_child(inner_margin)
+
+	var root := VBoxContainer.new()
+	root.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	root.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	root.add_theme_constant_override("separation", 12)
+	inner_margin.add_child(root)
+
+	var header := HBoxContainer.new()
+	header.add_theme_constant_override("separation", 10)
+	root.add_child(header)
+
+	var heading_box := VBoxContainer.new()
+	heading_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	heading_box.add_theme_constant_override("separation", 2)
+	header.add_child(heading_box)
+
+	var overlay_title := Label.new()
+	overlay_title.text = "Tutorial"
+	overlay_title.add_theme_font_size_override("font_size", 24)
+	heading_box.add_child(overlay_title)
+
+	var overlay_intro := Label.new()
+	overlay_intro.text = "Work through compact lessons, then jump directly into the part of the game they teach."
+	overlay_intro.modulate = Color(0.78, 0.83, 0.95)
+	overlay_intro.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	heading_box.add_child(overlay_intro)
+
+	var close_header_btn := Button.new()
+	close_header_btn.text = "Close"
+	close_header_btn.custom_minimum_size = Vector2(100, 34)
+	close_header_btn.pressed.connect(_close_rules_overlay)
+	header.add_child(close_header_btn)
+
+	var main_row := HBoxContainer.new()
+	main_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	main_row.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	main_row.add_theme_constant_override("separation", 14)
+	root.add_child(main_row)
+
+	var lesson_scroll := ScrollContainer.new()
+	lesson_scroll.custom_minimum_size = Vector2(240, 420)
+	lesson_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	main_row.add_child(lesson_scroll)
+
+	var lesson_list := VBoxContainer.new()
+	lesson_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	lesson_list.add_theme_constant_override("separation", 6)
+	lesson_scroll.add_child(lesson_list)
+
+	for i in range(_tutorial_lessons.size()):
+		var lesson := _tutorial_lessons[i]
+		var lesson_btn := Button.new()
+		lesson_btn.text = "%d. %s" % [i + 1, String(lesson.get("title", "Lesson"))]
+		lesson_btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		lesson_btn.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		lesson_btn.custom_minimum_size = Vector2(220, 38)
+		lesson_btn.pressed.connect(_select_tutorial_lesson.bind(i))
+		lesson_list.add_child(lesson_btn)
+		_tutorial_lesson_buttons.append(lesson_btn)
+
+	var lesson_panel := PanelContainer.new()
+	lesson_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	lesson_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	var lesson_style := StyleBoxFlat.new()
+	lesson_style.bg_color = Color(0.12, 0.14, 0.20, 0.86)
+	lesson_style.border_color = Color(0.28, 0.36, 0.48, 0.8)
+	lesson_style.corner_radius_top_left = 8
+	lesson_style.corner_radius_top_right = 8
+	lesson_style.corner_radius_bottom_left = 8
+	lesson_style.corner_radius_bottom_right = 8
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		lesson_style.set_border_width(side as Side, 1)
+	lesson_panel.add_theme_stylebox_override("panel", lesson_style)
+	main_row.add_child(lesson_panel)
+
+	var lesson_margin := MarginContainer.new()
+	lesson_margin.add_theme_constant_override("margin_left", 18)
+	lesson_margin.add_theme_constant_override("margin_right", 18)
+	lesson_margin.add_theme_constant_override("margin_top", 18)
+	lesson_margin.add_theme_constant_override("margin_bottom", 18)
+	lesson_panel.add_child(lesson_margin)
+
+	var lesson_content := VBoxContainer.new()
+	lesson_content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	lesson_content.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	lesson_content.add_theme_constant_override("separation", 10)
+	lesson_margin.add_child(lesson_content)
+
+	_tutorial_title_label = Label.new()
+	_tutorial_title_label.add_theme_font_size_override("font_size", 22)
+	_tutorial_title_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	lesson_content.add_child(_tutorial_title_label)
+
+	_tutorial_progress_label = Label.new()
+	_tutorial_progress_label.modulate = Color(0.70, 0.78, 0.90)
+	lesson_content.add_child(_tutorial_progress_label)
+
+	var separator := HSeparator.new()
+	lesson_content.add_child(separator)
+
+	var step_scroll := ScrollContainer.new()
+	step_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	step_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	step_scroll.custom_minimum_size = Vector2(0, 260)
+	lesson_content.add_child(step_scroll)
+
+	var step_box := VBoxContainer.new()
+	step_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	step_box.add_theme_constant_override("separation", 10)
+	step_scroll.add_child(step_box)
+
+	_tutorial_step_title_label = Label.new()
+	_tutorial_step_title_label.add_theme_font_size_override("font_size", 18)
+	_tutorial_step_title_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	step_box.add_child(_tutorial_step_title_label)
+
+	_tutorial_step_body_label = Label.new()
+	_tutorial_step_body_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_tutorial_step_body_label.modulate = Color(0.90, 0.92, 0.97)
+	step_box.add_child(_tutorial_step_body_label)
+
+	_tutorial_try_label = Label.new()
+	_tutorial_try_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_tutorial_try_label.modulate = Color(0.96, 0.86, 0.56)
+	step_box.add_child(_tutorial_try_label)
+
+	var actions := HBoxContainer.new()
+	actions.alignment = BoxContainer.ALIGNMENT_END
+	actions.add_theme_constant_override("separation", 8)
+	lesson_content.add_child(actions)
+
+	_tutorial_action_button = Button.new()
+	_tutorial_action_button.custom_minimum_size = Vector2(160, 38)
+	_tutorial_action_button.pressed.connect(_on_tutorial_action_pressed)
+	actions.add_child(_tutorial_action_button)
+
+	_tutorial_prev_button = Button.new()
+	_tutorial_prev_button.text = "Previous"
+	_tutorial_prev_button.custom_minimum_size = Vector2(110, 38)
+	_tutorial_prev_button.pressed.connect(_on_tutorial_prev_pressed)
+	actions.add_child(_tutorial_prev_button)
+
+	_tutorial_next_button = Button.new()
+	_tutorial_next_button.text = "Next"
+	_tutorial_next_button.custom_minimum_size = Vector2(110, 38)
+	_tutorial_next_button.pressed.connect(_on_tutorial_next_pressed)
+	actions.add_child(_tutorial_next_button)
+
+	_refresh_tutorial_lesson_view()
+	_tutorial_next_button.grab_focus()
+
+func _open_document_overlay(title_text: String, intro_text: String, doc_path: String, overlay_name: String, focus_button: Button) -> void:
 	if _rules_overlay != null and is_instance_valid(_rules_overlay):
 		return
 
 	_rules_overlay = Control.new()
-	_rules_overlay.name = "RulesOverlay"
+	_rules_overlay.name = overlay_name
 	_rules_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_rules_overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	_rules_overlay_focus_button = focus_button
 	add_child(_rules_overlay)
 
 	var shade := ColorRect.new()
@@ -4405,12 +4650,12 @@ func _open_rules_overlay() -> void:
 	inner_margin.add_child(content)
 
 	var title := Label.new()
-	title.text = "Rules"
+	title.text = title_text
 	title.add_theme_font_size_override("font_size", 24)
 	content.add_child(title)
 
 	var intro := Label.new()
-	intro.text = "New player rules reference."
+	intro.text = intro_text
 	intro.modulate = Color(0.78, 0.83, 0.95)
 	content.add_child(intro)
 
@@ -4423,7 +4668,7 @@ func _open_rules_overlay() -> void:
 	rules_view.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	rules_view.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	rules_view.custom_minimum_size = Vector2(0, 420)
-	rules_view.text = _get_rules_display_text()
+	rules_view.text = _get_document_display_text(doc_path)
 	content.add_child(rules_view)
 
 	var actions := HBoxContainer.new()
@@ -4439,31 +4684,916 @@ func _open_rules_overlay() -> void:
 
 	close_btn.grab_focus()
 
+func _get_tutorial_lessons() -> Array[Dictionary]:
+	return [
+		{
+			"title": "First Orientation",
+			"lesson_id": "orientation",
+			"mode": "practice",
+			"steps": [
+				{
+					"title": "Win By Protecting Followers",
+					"body": "Followers are your life total. Each player starts at 100, and attacks aimed at a God damage that player's Followers. Your plan is to protect your own Followers while building a board that can safely attack theirs.",
+					"try": "Open the rules reference whenever you want the full written version of a lesson.",
+					"action": "rules"
+				},
+				{
+					"title": "Read The Main Menu",
+					"body": "Deck Builder creates legal decks, Tutorial teaches the game, Rules opens the full reference, Practice vs Thor starts a local match, and Multiplayer uses saved legal decks.",
+					"try": "After this lesson, use Deck Builder before Practice so you understand what you are bringing to the board.",
+					"action": "deck_builder"
+				},
+				{
+					"title": "Read A Card",
+					"body": "Every card has a name, type, culture, cost, and rules text. Creatures also care about Strength, Resilience, Speed, and Level. Subtypes such as Warrior, Spirit, Dragon, and Mage are real mechanical tags.",
+					"try": "In Deck Builder, hover or select cards and read their stats before adding them.",
+					"action": "deck_builder"
+				}
+			]
+		},
+		{
+			"title": "Build A Deck",
+			"lesson_id": "deck_building",
+			"mode": "deck_builder",
+			"steps": [
+				{
+					"title": "Start With The Legal Shell",
+					"body": "A legal deck has exactly 1 God, up to 3 Powers, and at least 35 regular cards. Regular cards are Creatures, Spells, Hexes, Charms, Equipment, and Structures.",
+					"try": "Open Deck Builder, pick a God, then add two or three compatible Powers.",
+					"action": "deck_builder"
+				},
+				{
+					"title": "Respect Copy And Culture Limits",
+					"body": "Regular non-Legendary cards allow up to 3 copies. A specific Legendary allows 1 copy, and total Legendaries are limited by deck size. Powers must match your God's culture or be Neutral, and some Gods have stricter rules.",
+					"try": "Trust the deck builder's legality warnings; those warnings come from the same validation path used for play.",
+					"action": "deck_builder"
+				},
+				{
+					"title": "Use A Beginner Mix",
+					"body": "For a first deck, aim for 16 to 20 Creatures, a few Spells or Charms for interaction, a few Hexes if you want traps, and Equipment only when you have enough Creatures to carry it.",
+					"try": "Save a legal deck so Practice vs Thor and Multiplayer can use it.",
+					"action": "deck_builder"
+				}
+			]
+		},
+		{
+			"title": "Board And Turn Flow",
+			"lesson_id": "board_flow",
+			"mode": "practice",
+			"steps": [
+				{
+					"title": "Learn The Zones",
+					"body": "Each player has a God Slot, up to three Power Slots, five Frontline lanes, five Reserve lanes, Hand, Deck, Graveyard, and Abyss. Frontline and Reserve slots line up as lanes, so position matters.",
+					"try": "In Practice, watch how Frontline cards are exposed while Reserve cards are more protected.",
+					"action": "practice"
+				},
+				{
+					"title": "Choose Upkeep Resources",
+					"body": "At the start of your turn, upkeep offers resource choices. Usually you choose gain 5 mana or gain 1 mana and draw 1 card. On the very first turn, the basic choices are gain 4 mana or draw 1 card.",
+					"try": "Choose mana when you can spend it now; choose draw when your hand needs help.",
+					"action": "practice"
+				},
+				{
+					"title": "Move Through The Turn",
+					"body": "After upkeep, your turn moves through Main, Combat, and End. Main is for playing cards, summoning, unlocking Powers, moving Creatures, and preparing attacks. Combat is where eligible Frontline Creatures attack.",
+					"try": "In your first practice game, spend Main Phase building a board before making risky attacks.",
+					"action": "practice"
+				}
+			]
+		},
+		{
+			"title": "Creatures And Stances",
+			"lesson_id": "creatures",
+			"mode": "practice",
+			"steps": [
+				{
+					"title": "Summon Creatures",
+					"body": "Creatures can enter Frontline or Reserve if the space is legal and empty. You choose Aggressive, Defensive, or Stealth as they enter. You normally get one normal Creature summon each turn.",
+					"try": "Summon one Creature in Practice and notice which action markers are spent.",
+					"action": "practice"
+				},
+				{
+					"title": "Use Minor And Major Actions",
+					"body": "Each Creature normally gets one Minor Action and one Major Action per turn. Minor Actions include movement, stance changes, and picking up friendly Equipment. Major Actions include attacking and major abilities.",
+					"try": "Move a Creature or change its stance before you attack.",
+					"action": "practice"
+				},
+				{
+					"title": "Pick The Right Stance",
+					"body": "Aggressive Creatures attack. Defensive Creatures block with Resilience. Stealth is face-down Defensive mode and spends both normal summon actions, making it safer but more committal.",
+					"try": "Put attackers in Aggressive and protectors in Defensive until the rhythm feels natural.",
+					"action": "practice"
+				}
+			]
+		},
+		{
+			"title": "Combat",
+			"lesson_id": "combat",
+			"mode": "practice",
+			"steps": [
+				{
+					"title": "Declare Legal Attacks",
+					"body": "An attacker must be your Aggressive Frontline Creature, able to spend a Major Action, not Sleeping, not blocked by a status, and not summoned after the first resolved attack of the turn. The game blocks all attacks on turn 1.",
+					"try": "When an attack is unavailable, read the prompt or disabled-action reason before changing the board.",
+					"action": "practice"
+				},
+				{
+					"title": "Expect Interception",
+					"body": "Before an attack resolves, the defender may intercept. Interception depends on row, stance, Speed, target depth, Reach, statuses, engagement restrictions, and special card text.",
+					"try": "Attack the enemy God only after checking which enemy Creatures can step in.",
+					"action": "practice"
+				},
+				{
+					"title": "Resolve Combat Stats",
+					"body": "Aggressive defenders compare Strength against Strength. Defensive defenders compare your attacker's Strength against their Resilience. Attacking into too much Resilience can cost you Followers and heal the defender.",
+					"try": "Avoid attacking a Defensive Creature unless your Strength beats its Resilience.",
+					"action": "practice"
+				}
+			]
+		},
+		{
+			"title": "Reactions And Advanced Cards",
+			"lesson_id": "reactions",
+			"mode": "practice",
+			"steps": [
+				{
+					"title": "Use The Stack",
+					"body": "Spells, abilities, attacks, and reactive Charms can go onto the Action Stack. The most recent action resolves first after both players pass Priority.",
+					"try": "When Priority appears, slow down and decide whether the pending action is worth answering.",
+					"action": "practice"
+				},
+				{
+					"title": "Respect Speed",
+					"body": "Responses usually need Speed 2 or higher and must be equal to or faster than the action they answer. Speed also affects interception and several card abilities.",
+					"try": "Save fast cards for actions that actually change the turn.",
+					"action": "practice"
+				},
+				{
+					"title": "Prepare Hexes, Charms, Powers, And Structures",
+					"body": "Hexes and some Charms can be prepared face-down. Powers begin face-down and must be unlocked. Equipment and Structures create ongoing board value, but they also ask you to defend the lanes they occupy.",
+					"try": "Play a practice game where your goal is to unlock all Powers and use at least one prepared card.",
+					"action": "practice"
+				}
+			]
+		},
+		{
+			"title": "Play Full Matches",
+			"lesson_id": "full_match",
+			"mode": "practice",
+			"steps": [
+				{
+					"title": "Use A Turn Checklist",
+					"body": "At the start of each turn, check Follower totals, lethal threats, and the upkeep option you need. Before attacking, check interceptors, Speed, defender stance, and possible Charm responses.",
+					"try": "Play Practice vs Thor with the goal of making one deliberate attack per turn.",
+					"action": "practice"
+				},
+				{
+					"title": "Enter Multiplayer Prepared",
+					"body": "Multiplayer asks you to choose a saved legal deck, refresh seeks, create or join rooms, ready up, and resume interrupted matches when needed. Spectating live matches is also useful.",
+					"try": "After two or three practice games, bring the same saved deck into Multiplayer.",
+					"action": "rules"
+				},
+				{
+					"title": "Keep The Reference Nearby",
+					"body": "The Rules button now opens the full rules and tutorial reference. Use it for glossary terms, deck construction limits, combat details, and the full match checklist.",
+					"try": "Open the reference when a card or prompt uses a word you do not recognize yet.",
+					"action": "rules"
+				}
+			]
+		}
+	]
+
+func _select_tutorial_lesson(index: int) -> void:
+	if _tutorial_lessons.is_empty():
+		return
+	_tutorial_lesson_index = clampi(index, 0, _tutorial_lessons.size() - 1)
+	_tutorial_step_index = 0
+	_refresh_tutorial_lesson_view()
+
+func _select_tutorial_step(index: int) -> void:
+	if _tutorial_lessons.is_empty():
+		return
+	var lesson := _tutorial_lessons[_tutorial_lesson_index]
+	var steps: Array = lesson.get("steps", [])
+	if steps.is_empty():
+		return
+	_tutorial_step_index = clampi(index, 0, steps.size() - 1)
+	_refresh_tutorial_lesson_view()
+
+func _refresh_tutorial_lesson_view() -> void:
+	if _tutorial_lessons.is_empty() or _tutorial_title_label == null:
+		return
+	_tutorial_lesson_index = clampi(_tutorial_lesson_index, 0, _tutorial_lessons.size() - 1)
+	var lesson := _tutorial_lessons[_tutorial_lesson_index]
+	var steps: Array = lesson.get("steps", [])
+	if steps.is_empty():
+		return
+	_tutorial_step_index = clampi(_tutorial_step_index, 0, steps.size() - 1)
+	var step: Dictionary = steps[_tutorial_step_index]
+
+	_tutorial_title_label.text = String(lesson.get("title", "Lesson"))
+	_tutorial_progress_label.text = "Lesson %d of %d | Step %d of %d" % [
+		_tutorial_lesson_index + 1,
+		_tutorial_lessons.size(),
+		_tutorial_step_index + 1,
+		steps.size()
+	]
+	_tutorial_step_title_label.text = String(step.get("title", "Step"))
+	_tutorial_step_body_label.text = String(step.get("body", ""))
+	var try_text := String(step.get("try", ""))
+	_tutorial_try_label.visible = not try_text.is_empty()
+	_tutorial_try_label.text = "Try it: %s" % try_text
+
+	for i in range(_tutorial_lesson_buttons.size()):
+		var lesson_btn := _tutorial_lesson_buttons[i]
+		if lesson_btn == null or not is_instance_valid(lesson_btn):
+			continue
+		var button_lesson := _tutorial_lessons[i]
+		var prefix := "> " if i == _tutorial_lesson_index else ""
+		lesson_btn.text = "%s%d. %s" % [prefix, i + 1, String(button_lesson.get("title", "Lesson"))]
+		lesson_btn.modulate = Color(1.0, 1.0, 1.0, 1.0) if i == _tutorial_lesson_index else Color(0.76, 0.82, 0.92, 1.0)
+
+	if _tutorial_prev_button != null:
+		_tutorial_prev_button.disabled = _tutorial_lesson_index == 0 and _tutorial_step_index == 0
+	if _tutorial_next_button != null:
+		var at_final_step := _tutorial_lesson_index == _tutorial_lessons.size() - 1 and _tutorial_step_index == steps.size() - 1
+		_tutorial_next_button.text = "Done" if at_final_step else "Next"
+	if _tutorial_action_button != null:
+		var mode := String(lesson.get("mode", "practice"))
+		_tutorial_action_button.text = "Start Deck Lesson" if mode == "deck_builder" else "Start Practice Lesson"
+		_tutorial_action_button.visible = true
+		_tutorial_action_button.disabled = mode == "practice" and not _is_practice_thor_enabled()
+
+func _on_tutorial_prev_pressed() -> void:
+	if _tutorial_step_index > 0:
+		_select_tutorial_step(_tutorial_step_index - 1)
+		return
+	if _tutorial_lesson_index <= 0:
+		return
+	_tutorial_lesson_index -= 1
+	var lesson := _tutorial_lessons[_tutorial_lesson_index]
+	var steps: Array = lesson.get("steps", [])
+	_tutorial_step_index = maxi(0, steps.size() - 1)
+	_refresh_tutorial_lesson_view()
+
+func _on_tutorial_next_pressed() -> void:
+	if _tutorial_lessons.is_empty():
+		return
+	var lesson := _tutorial_lessons[_tutorial_lesson_index]
+	var steps: Array = lesson.get("steps", [])
+	if _tutorial_step_index < steps.size() - 1:
+		_select_tutorial_step(_tutorial_step_index + 1)
+		return
+	if _tutorial_lesson_index < _tutorial_lessons.size() - 1:
+		_tutorial_lesson_index += 1
+		_tutorial_step_index = 0
+		_refresh_tutorial_lesson_view()
+		return
+	_close_rules_overlay()
+
+func _on_tutorial_action_pressed() -> void:
+	if _tutorial_lessons.is_empty():
+		return
+	var lesson := _tutorial_lessons[_tutorial_lesson_index]
+	_start_interactive_tutorial_lesson(lesson)
+
+func _start_interactive_tutorial_lesson(lesson: Dictionary) -> void:
+	var lesson_copy := lesson.duplicate(true)
+	_close_rules_overlay()
+	var mode := String(lesson_copy.get("mode", "practice"))
+	if mode == "deck_builder":
+		_start_deck_builder_tutorial_lesson(lesson_copy)
+		return
+	_start_practice_tutorial_lesson(lesson_copy)
+
+func _start_deck_builder_tutorial_lesson(lesson: Dictionary) -> void:
+	_on_deck_builder_pressed()
+	_begin_tutorial_coach(lesson, null, "deck_builder")
+
+func _start_practice_tutorial_lesson(lesson: Dictionary) -> void:
+	if not _is_practice_thor_enabled():
+		return
+	_refresh_multiplayer_deck_options()
+	var selected_practice_deck := _get_selected_multiplayer_deck()
+	_match_launch_queued = false
+	_cleanup_lobby(true)
+	_close_tutorial_coach_overlay()
+	var practice_game = _show_embedded_game("PracticeThor")
+	show_game()
+	if practice_game == null:
+		return
+	if practice_game.has_method("set_player_practice_deck"):
+		practice_game.set_player_practice_deck(selected_practice_deck)
+	await practice_game.start_game(false, false, "127.0.0.1", 12345, {
+		"tutorial_lesson_id": String(lesson.get("lesson_id", "")),
+		"tutorial_lesson_title": String(lesson.get("title", "Tutorial")),
+	})
+	_begin_tutorial_coach(lesson, practice_game, "practice")
+
+func _begin_tutorial_coach(lesson: Dictionary, target: Node, mode: String) -> void:
+	_close_tutorial_coach_overlay()
+	_tutorial_coach_lesson = lesson.duplicate(true)
+	_tutorial_coach_mode = mode
+	_tutorial_coach_target = target
+	_tutorial_coach_steps = _get_interactive_tutorial_steps(String(lesson.get("lesson_id", "")), mode)
+	_tutorial_coach_step_index = 0
+	_tutorial_coach_step_complete = false
+	_tutorial_coach_seen_stack = false
+	_tutorial_coach_baseline = _capture_tutorial_coach_state()
+	_build_tutorial_coach_overlay()
+	_refresh_tutorial_coach_view()
+
+func _get_interactive_tutorial_steps(lesson_id: String, mode: String) -> Array[Dictionary]:
+	if mode == "deck_builder":
+		return [
+			{
+				"title": "Choose A God",
+				"body": "Use the God filter or card list to put exactly one God into the deck. Your God determines the cultures and Powers the deck can use.",
+				"check": "manual"
+			},
+			{
+				"title": "Add Powers",
+				"body": "Add up to three Powers that match the God or are Neutral. Powers start face-down in the match and become tools you unlock with mana.",
+				"check": "manual"
+			},
+			{
+				"title": "Build The Regular Deck",
+				"body": "Add at least 35 regular cards. Use enough Creatures to contest the board, then add Spells, Hexes, Charms, Equipment, and Structures for support.",
+				"check": "manual"
+			},
+			{
+				"title": "Save A Legal Deck",
+				"body": "When the deck builder says the deck is legal, save it. Practice and Multiplayer both use saved legal decks.",
+				"check": "manual"
+			}
+		]
+	match lesson_id:
+		"orientation":
+			return [
+				{
+					"title": "Practice Board Opened",
+					"body": "This is the real board. Your Followers are your life total, your hand is at the bottom, and Thor is the opponent.",
+					"check": "open_practice"
+				},
+				{
+					"title": "Choose Upkeep",
+					"body": "Use the upkeep buttons on the left. Mana lets you play cards now; draw improves your hand.",
+					"check": "choose_upkeep"
+				},
+				{
+					"title": "Put A Creature On Board",
+					"body": "Select a Creature from hand, choose a stance, then click an empty friendly Frontline or Reserve slot.",
+					"check": "summon_creature"
+				},
+				{
+					"title": "End The Turn",
+					"body": "Use End Turn when you have spent the actions you want. Thor will take the next turn.",
+					"check": "end_turn"
+				}
+			]
+		"board_flow":
+			return [
+				{
+					"title": "Resolve Upkeep",
+					"body": "Every turn starts with upkeep. Choose mana or draw before trying normal actions.",
+					"check": "choose_upkeep"
+				},
+				{
+					"title": "Use The Lanes",
+					"body": "Summon a Creature into the Frontline or Reserve. Each column is a lane, and the back row is safer.",
+					"check": "summon_creature"
+				},
+				{
+					"title": "Spend A Creature Action",
+					"body": "Move, change stance, or use a Creature action. Creatures normally have one Minor Action and one Major Action each turn.",
+					"check": "spend_creature_action"
+				},
+				{
+					"title": "Pass Control",
+					"body": "End the turn and watch how the current player changes.",
+					"check": "end_turn"
+				}
+			]
+		"creatures":
+			return [
+				{
+					"title": "Resolve Upkeep",
+					"body": "Choose an upkeep option so the Creature actions unlock for the turn.",
+					"check": "choose_upkeep"
+				},
+				{
+					"title": "Summon A Creature",
+					"body": "Try Aggressive for an attacker or Defensive for a protector. Stealth is face-down Defensive mode.",
+					"check": "summon_creature"
+				},
+				{
+					"title": "See Defensive Or Stealth",
+					"body": "Put at least one friendly Creature in Defensive or Stealth. Defensive Creatures use RES when attacked.",
+					"check": "defensive_or_stealth"
+				},
+				{
+					"title": "Spend An Action",
+					"body": "Use movement, stance change, or another Creature action so the action markers matter on the board.",
+					"check": "spend_creature_action"
+				}
+			]
+		"combat":
+			return [
+				{
+					"title": "Build A Board",
+					"body": "Resolve upkeep and summon a Creature. Turn 1 attacks are blocked, so this lesson starts by preparing an attacker.",
+					"check": "summon_creature"
+				},
+				{
+					"title": "Reach Your Next Turn",
+					"body": "End the first turn, let Thor act, then choose upkeep when control returns to you.",
+					"check": "player_turn_after_first"
+				},
+				{
+					"title": "Declare An Attack",
+					"body": "Use an Aggressive Frontline Creature to attack an enemy card or Thor's God. Interception may change the final defender.",
+					"check": "attack_used"
+				}
+			]
+		"reactions":
+			return [
+				{
+					"title": "Create A Stack Window",
+					"body": "Play a card, summon a visible Creature, or declare an attack. Stack windows are where responses and Priority happen.",
+					"check": "stack_seen_or_manual"
+				},
+				{
+					"title": "Pass Or Respond",
+					"body": "If the game offers Priority and you do not need to answer, pass. Fast cards are best saved for actions that matter.",
+					"check": "manual"
+				},
+				{
+					"title": "Prepare A Future Response",
+					"body": "If you have a Hex or Charm, prepare it into an empty friendly zone. If your hand does not contain one, mark this step done and continue.",
+					"check": "prepared_card_or_manual"
+				},
+				{
+					"title": "Unlock A Power",
+					"body": "Pay mana to unlock a face-down Power. If this deck has no Powers, mark the step done after checking the Power slots.",
+					"check": "power_unlocked_or_manual"
+				}
+			]
+		"full_match":
+			return [
+				{
+					"title": "Use The Start-Of-Turn Checklist",
+					"body": "Check both Follower totals, choose upkeep, and decide whether this turn needs mana or cards.",
+					"check": "choose_upkeep"
+				},
+				{
+					"title": "Make A Plan Before Combat",
+					"body": "Play or reposition at least one card before attacking. Ask which enemy card can stop your best threat.",
+					"check": "summon_or_action"
+				},
+				{
+					"title": "Attack With A Purpose",
+					"body": "Make one attack only when it improves your board, threatens Followers, or removes an important defender.",
+					"check": "attack_used_or_manual"
+				},
+				{
+					"title": "Finish The Lesson In The Match",
+					"body": "Keep playing from here. Use Rules as a reference and let the prompts be the source of truth for exact targeting.",
+					"check": "manual"
+				}
+			]
+	return [
+		{
+			"title": "Start Practice",
+			"body": "Use the real board to complete this lesson.",
+			"check": "open_practice"
+		},
+		{
+			"title": "Resolve Upkeep",
+			"body": "Choose mana or draw to begin the turn.",
+			"check": "choose_upkeep"
+		}
+	]
+
+func _build_tutorial_coach_overlay() -> void:
+	_tutorial_coach_overlay = Control.new()
+	_tutorial_coach_overlay.name = "TutorialCoachOverlay"
+	_tutorial_coach_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_tutorial_coach_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_tutorial_coach_overlay)
+
+	var margin := MarginContainer.new()
+	margin.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
+	margin.offset_left = -430
+	margin.offset_right = -18
+	margin.offset_top = 18
+	margin.offset_bottom = 0
+	margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_tutorial_coach_overlay.add_child(margin)
+
+	_tutorial_coach_panel = PanelContainer.new()
+	_tutorial_coach_panel.custom_minimum_size = Vector2(410, 0)
+	_tutorial_coach_panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	var panel_style := StyleBoxFlat.new()
+	panel_style.bg_color = Color(0.07, 0.09, 0.14, 0.95)
+	panel_style.border_color = Color(0.98, 0.78, 0.34, 0.95)
+	panel_style.corner_radius_top_left = 8
+	panel_style.corner_radius_top_right = 8
+	panel_style.corner_radius_bottom_left = 8
+	panel_style.corner_radius_bottom_right = 8
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		panel_style.set_border_width(side as Side, 2)
+	_tutorial_coach_panel.add_theme_stylebox_override("panel", panel_style)
+	margin.add_child(_tutorial_coach_panel)
+
+	var inner := MarginContainer.new()
+	inner.add_theme_constant_override("margin_left", 14)
+	inner.add_theme_constant_override("margin_right", 14)
+	inner.add_theme_constant_override("margin_top", 14)
+	inner.add_theme_constant_override("margin_bottom", 14)
+	_tutorial_coach_panel.add_child(inner)
+
+	var content := VBoxContainer.new()
+	content.add_theme_constant_override("separation", 9)
+	content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	inner.add_child(content)
+
+	_tutorial_coach_title_label = Label.new()
+	_tutorial_coach_title_label.add_theme_font_size_override("font_size", 20)
+	_tutorial_coach_title_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	content.add_child(_tutorial_coach_title_label)
+
+	_tutorial_coach_progress_label = Label.new()
+	_tutorial_coach_progress_label.modulate = Color(0.72, 0.80, 0.92)
+	content.add_child(_tutorial_coach_progress_label)
+
+	var separator := HSeparator.new()
+	content.add_child(separator)
+
+	_tutorial_coach_step_title_label = Label.new()
+	_tutorial_coach_step_title_label.add_theme_font_size_override("font_size", 16)
+	_tutorial_coach_step_title_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	content.add_child(_tutorial_coach_step_title_label)
+
+	_tutorial_coach_body_label = Label.new()
+	_tutorial_coach_body_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_tutorial_coach_body_label.modulate = Color(0.90, 0.92, 0.97)
+	content.add_child(_tutorial_coach_body_label)
+
+	_tutorial_coach_status_label = Label.new()
+	_tutorial_coach_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_tutorial_coach_status_label.modulate = Color(0.98, 0.84, 0.46)
+	content.add_child(_tutorial_coach_status_label)
+
+	var actions := HBoxContainer.new()
+	actions.alignment = BoxContainer.ALIGNMENT_END
+	actions.add_theme_constant_override("separation", 8)
+	content.add_child(actions)
+
+	var rules_btn := Button.new()
+	rules_btn.text = "Rules"
+	rules_btn.custom_minimum_size = Vector2(84, 34)
+	rules_btn.pressed.connect(_open_rules_overlay)
+	actions.add_child(rules_btn)
+
+	var end_btn := Button.new()
+	end_btn.text = "End Tutorial"
+	end_btn.custom_minimum_size = Vector2(116, 34)
+	end_btn.pressed.connect(_on_tutorial_coach_end_pressed)
+	actions.add_child(end_btn)
+
+	_tutorial_coach_next_button = Button.new()
+	_tutorial_coach_next_button.custom_minimum_size = Vector2(120, 34)
+	_tutorial_coach_next_button.pressed.connect(_on_tutorial_coach_next_pressed)
+	actions.add_child(_tutorial_coach_next_button)
+
+func _refresh_tutorial_coach_view() -> void:
+	if _tutorial_coach_overlay == null or _tutorial_coach_steps.is_empty():
+		return
+	_tutorial_coach_step_index = clampi(_tutorial_coach_step_index, 0, _tutorial_coach_steps.size() - 1)
+	var step := _tutorial_coach_steps[_tutorial_coach_step_index]
+	_tutorial_coach_step_complete = _is_tutorial_coach_step_complete(step)
+	var check := String(step.get("check", "manual"))
+	var is_manual := check == "manual" or check.ends_with("_or_manual")
+	var at_final_step := _tutorial_coach_step_index == _tutorial_coach_steps.size() - 1
+
+	_tutorial_coach_title_label.text = String(_tutorial_coach_lesson.get("title", "Tutorial Lesson"))
+	_tutorial_coach_progress_label.text = "Step %d of %d" % [_tutorial_coach_step_index + 1, _tutorial_coach_steps.size()]
+	_tutorial_coach_step_title_label.text = String(step.get("title", "Objective"))
+	_tutorial_coach_body_label.text = String(step.get("body", ""))
+	if _tutorial_coach_step_complete:
+		_tutorial_coach_status_label.text = "Objective complete."
+	elif is_manual:
+		_tutorial_coach_status_label.text = "Do this on the board, then mark the step done."
+	else:
+		_tutorial_coach_status_label.text = "Waiting for you to complete this objective in the game."
+	if _tutorial_coach_next_button != null:
+		if at_final_step:
+			_tutorial_coach_next_button.text = "Finish"
+		elif is_manual and not _tutorial_coach_step_complete:
+			_tutorial_coach_next_button.text = "Mark Done"
+		else:
+			_tutorial_coach_next_button.text = "Next"
+		_tutorial_coach_next_button.disabled = not _tutorial_coach_step_complete and not is_manual
+
+func _poll_tutorial_coach() -> void:
+	if _tutorial_coach_overlay == null or not is_instance_valid(_tutorial_coach_overlay):
+		return
+	if _tutorial_coach_mode == "practice":
+		if _tutorial_coach_target == null or not is_instance_valid(_tutorial_coach_target):
+			_close_tutorial_coach_overlay()
+			return
+		var gm := _get_tutorial_coach_game_manager()
+		if gm != null and not gm.action_stack.is_empty():
+			_tutorial_coach_seen_stack = true
+	if _tutorial_coach_steps.is_empty():
+		return
+	var step := _tutorial_coach_steps[_tutorial_coach_step_index]
+	var complete := _is_tutorial_coach_step_complete(step)
+	if complete != _tutorial_coach_step_complete:
+		_tutorial_coach_step_complete = complete
+		_refresh_tutorial_coach_view()
+
+func _on_tutorial_coach_next_pressed() -> void:
+	if _tutorial_coach_steps.is_empty():
+		_close_tutorial_coach_overlay()
+		return
+	var step := _tutorial_coach_steps[_tutorial_coach_step_index]
+	var check := String(step.get("check", "manual"))
+	var is_manual := check == "manual" or check.ends_with("_or_manual")
+	if not _is_tutorial_coach_step_complete(step) and not is_manual:
+		_refresh_tutorial_coach_view()
+		return
+	if _tutorial_coach_step_index >= _tutorial_coach_steps.size() - 1:
+		_close_tutorial_coach_overlay()
+		return
+	_tutorial_coach_step_index += 1
+	_tutorial_coach_step_complete = false
+	_refresh_tutorial_coach_view()
+
+func _on_tutorial_coach_end_pressed() -> void:
+	_close_tutorial_coach_overlay()
+	_return_to_menu()
+
+func _close_tutorial_coach_overlay() -> void:
+	if _tutorial_coach_overlay != null and is_instance_valid(_tutorial_coach_overlay):
+		_tutorial_coach_overlay.queue_free()
+	_tutorial_coach_overlay = null
+	_tutorial_coach_panel = null
+	_tutorial_coach_title_label = null
+	_tutorial_coach_progress_label = null
+	_tutorial_coach_step_title_label = null
+	_tutorial_coach_body_label = null
+	_tutorial_coach_status_label = null
+	_tutorial_coach_next_button = null
+	_tutorial_coach_lesson.clear()
+	_tutorial_coach_steps.clear()
+	_tutorial_coach_step_index = 0
+	_tutorial_coach_step_complete = false
+	_tutorial_coach_mode = ""
+	_tutorial_coach_target = null
+	_tutorial_coach_baseline.clear()
+	_tutorial_coach_seen_stack = false
+
+func _capture_tutorial_coach_state() -> Dictionary:
+	var gm := _get_tutorial_coach_game_manager()
+	var player := _get_tutorial_coach_player()
+	var opponent := _get_tutorial_coach_opponent()
+	return {
+		"turn_number": gm.turn_number if gm != null else 0,
+		"player_mana": player.mana if player != null else 0,
+		"player_board_creatures": _count_player_board_creatures(player),
+		"player_board_cards": _count_player_board_cards(player),
+		"player_actions_spent": _count_player_spent_creature_actions(player),
+		"player_attacks_used": _count_player_attacks_used(player),
+		"player_unlocked_powers": _count_player_unlocked_powers(player),
+		"player_prepared_cards": _count_player_prepared_cards(player),
+		"opponent_followers": opponent.followers if opponent != null else 100,
+	}
+
+func _get_tutorial_coach_game_manager() -> GameManager:
+	if _tutorial_coach_target == null or not is_instance_valid(_tutorial_coach_target):
+		return null
+	return _tutorial_coach_target.get("game_manager") as GameManager
+
+func _get_tutorial_coach_player() -> Player:
+	if _tutorial_coach_target == null or not is_instance_valid(_tutorial_coach_target):
+		return null
+	return _tutorial_coach_target.get("player1") as Player
+
+func _get_tutorial_coach_opponent() -> Player:
+	if _tutorial_coach_target == null or not is_instance_valid(_tutorial_coach_target):
+		return null
+	return _tutorial_coach_target.get("player2") as Player
+
+func _is_tutorial_coach_step_complete(step: Dictionary) -> bool:
+	var check := String(step.get("check", "manual"))
+	match check:
+		"manual":
+			return false
+		"open_practice":
+			return _get_tutorial_coach_game_manager() != null
+		"choose_upkeep":
+			return _tutorial_check_choose_upkeep()
+		"summon_creature":
+			return _count_player_board_creatures(_get_tutorial_coach_player()) > int(_tutorial_coach_baseline.get("player_board_creatures", 0))
+		"frontline_creature":
+			return _count_player_frontline_creatures(_get_tutorial_coach_player()) > 0
+		"defensive_or_stealth":
+			return _player_has_defensive_or_stealth_creature(_get_tutorial_coach_player())
+		"spend_creature_action":
+			return _count_player_spent_creature_actions(_get_tutorial_coach_player()) > int(_tutorial_coach_baseline.get("player_actions_spent", 0))
+		"end_turn":
+			return _tutorial_check_end_turn()
+		"player_turn_after_first":
+			return _tutorial_check_player_turn_after_first()
+		"attack_used":
+			return _tutorial_check_attack_used()
+		"stack_seen_or_manual":
+			return _tutorial_coach_seen_stack
+		"prepared_card_or_manual":
+			return _count_player_prepared_cards(_get_tutorial_coach_player()) > int(_tutorial_coach_baseline.get("player_prepared_cards", 0))
+		"power_unlocked_or_manual":
+			return _tutorial_check_power_unlocked()
+		"summon_or_action":
+			return _count_player_board_cards(_get_tutorial_coach_player()) > int(_tutorial_coach_baseline.get("player_board_cards", 0)) \
+				or _count_player_spent_creature_actions(_get_tutorial_coach_player()) > int(_tutorial_coach_baseline.get("player_actions_spent", 0))
+		"attack_used_or_manual":
+			return _tutorial_check_attack_used()
+	return false
+
+func _tutorial_check_choose_upkeep() -> bool:
+	var gm := _get_tutorial_coach_game_manager()
+	if gm == null:
+		return false
+	return gm.has_resolved_turn_upkeep() and gm.turn_number >= int(_tutorial_coach_baseline.get("turn_number", 0))
+
+func _tutorial_check_end_turn() -> bool:
+	var gm := _get_tutorial_coach_game_manager()
+	var player := _get_tutorial_coach_player()
+	if gm == null or player == null:
+		return false
+	return gm.turn_number > int(_tutorial_coach_baseline.get("turn_number", 0)) or gm.current_player != player
+
+func _tutorial_check_player_turn_after_first() -> bool:
+	var gm := _get_tutorial_coach_game_manager()
+	var player := _get_tutorial_coach_player()
+	if gm == null or player == null:
+		return false
+	return gm.current_player == player and gm.turn_number > int(_tutorial_coach_baseline.get("turn_number", 0)) and gm.has_resolved_turn_upkeep()
+
+func _tutorial_check_attack_used() -> bool:
+	var opponent := _get_tutorial_coach_opponent()
+	if _count_player_attacks_used(_get_tutorial_coach_player()) > int(_tutorial_coach_baseline.get("player_attacks_used", 0)):
+		return true
+	return opponent != null and opponent.followers < int(_tutorial_coach_baseline.get("opponent_followers", 100))
+
+func _tutorial_check_power_unlocked() -> bool:
+	var player := _get_tutorial_coach_player()
+	if player == null:
+		return false
+	if _count_player_powers(player) == 0:
+		return true
+	return _count_player_unlocked_powers(player) > int(_tutorial_coach_baseline.get("player_unlocked_powers", 0))
+
+func _count_player_board_cards(player: Player) -> int:
+	if player == null:
+		return 0
+	var count := 0
+	for zone in player.frontline_zones + player.reserve_zones:
+		count += zone.cards.size()
+	return count
+
+func _count_player_board_creatures(player: Player) -> int:
+	if player == null:
+		return 0
+	var count := 0
+	for zone in player.frontline_zones + player.reserve_zones:
+		for card in zone.cards:
+			if card != null and card.card_type == Card.CardType.CREATURE:
+				count += 1
+	return count
+
+func _count_player_frontline_creatures(player: Player) -> int:
+	if player == null:
+		return 0
+	var count := 0
+	for zone in player.frontline_zones:
+		for card in zone.cards:
+			if card != null and card.card_type == Card.CardType.CREATURE:
+				count += 1
+	return count
+
+func _player_has_defensive_or_stealth_creature(player: Player) -> bool:
+	if player == null:
+		return false
+	for zone in player.frontline_zones + player.reserve_zones:
+		for card in zone.cards:
+			if card == null or card.card_type != Card.CardType.CREATURE:
+				continue
+			if card.is_stealth or card.creature_mode == Card.CreatureMode.DEFENSIVE:
+				return true
+	return false
+
+func _count_player_spent_creature_actions(player: Player) -> int:
+	if player == null:
+		return 0
+	var count := 0
+	for zone in player.frontline_zones + player.reserve_zones:
+		for card in zone.cards:
+			if card == null or card.card_type != Card.CardType.CREATURE:
+				continue
+			if card.creature_major_action_used:
+				count += 1
+			count += card.creature_minor_actions_used
+	return count
+
+func _count_player_attacks_used(player: Player) -> int:
+	if player == null:
+		return 0
+	var count := 0
+	for zone in player.frontline_zones + player.reserve_zones:
+		for card in zone.cards:
+			if card != null and card.card_type == Card.CardType.CREATURE and card.has_attacked_this_turn:
+				count += 1
+	return count
+
+func _count_player_powers(player: Player) -> int:
+	if player == null:
+		return 0
+	var count := 0
+	for zone in player.power_zones:
+		count += zone.cards.size()
+	return count
+
+func _count_player_unlocked_powers(player: Player) -> int:
+	if player == null:
+		return 0
+	var count := 0
+	for zone in player.power_zones:
+		for card in zone.cards:
+			if card != null and not card.is_face_down:
+				count += 1
+	return count
+
+func _count_player_prepared_cards(player: Player) -> int:
+	if player == null:
+		return 0
+	var count := 0
+	for zone in player.frontline_zones + player.reserve_zones:
+		for card in zone.cards:
+			if card != null and card.is_prepared:
+				count += 1
+	return count
+
 func _close_rules_overlay() -> void:
 	if _rules_overlay == null:
 		return
 	if is_instance_valid(_rules_overlay):
 		_rules_overlay.queue_free()
 	_rules_overlay = null
-	if rules_button != null:
+	if _rules_overlay_focus_button != null and is_instance_valid(_rules_overlay_focus_button):
+		_rules_overlay_focus_button.grab_focus()
+	elif rules_button != null:
 		rules_button.grab_focus()
+	_rules_overlay_focus_button = null
+	_tutorial_lesson_buttons.clear()
+	_tutorial_title_label = null
+	_tutorial_progress_label = null
+	_tutorial_step_title_label = null
+	_tutorial_step_body_label = null
+	_tutorial_try_label = null
+	_tutorial_prev_button = null
+	_tutorial_next_button = null
+	_tutorial_action_button = null
 
 func _get_rules_display_text() -> String:
-	var file := FileAccess.open(RULES_DOC_PATH, FileAccess.READ)
+	return _get_document_display_text(RULES_DOC_PATH)
+
+func _get_document_display_text(doc_path: String) -> String:
+	var file := FileAccess.open(doc_path, FileAccess.READ)
 	if file == null:
-		return "Unable to load the rules document at %s." % RULES_DOC_PATH
+		return "Unable to load the document at %s." % doc_path
 	return _format_rules_text(file.get_as_text())
 
 func _format_rules_text(markdown: String) -> String:
 	var formatted_lines: Array[String] = []
 	for raw_line in markdown.split("\n"):
-		var line := raw_line.rstrip("\r").replace("`", "")
+		var line := raw_line.rstrip("\r").replace("`", "").replace("**", "").replace("__", "")
 		if line.begins_with("# "):
 			formatted_lines.append(line.substr(2))
 			formatted_lines.append("")
 			continue
 		if line.begins_with("## "):
 			formatted_lines.append(line.substr(3))
+			formatted_lines.append("")
+			continue
+		if line.begins_with("### "):
+			formatted_lines.append(line.substr(4))
+			formatted_lines.append("")
+			continue
+		if line.begins_with("#### "):
+			formatted_lines.append(line.substr(5))
+			formatted_lines.append("")
 			continue
 		if line.begins_with("- "):
 			formatted_lines.append("- " + line.substr(2))

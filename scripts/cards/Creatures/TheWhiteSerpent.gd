@@ -113,10 +113,10 @@ func activate(game_manager: GameManager, activation_data = null) -> void:
 	game_manager.note_player_feedback(get_activation_failure_reason(game_manager))
 
 func get_hover_detail_lines(_viewer: Player = null) -> Array[String]:
+	var active_form := _get_serpent_form_types() if in_serpent_form else _get_human_form_types()
+	var inactive_form := _get_human_form_types() if in_serpent_form else _get_serpent_form_types()
 	return [
-		"[b]Current Form[/b]: %s" % ("Serpent" if in_serpent_form else "Human"),
-		"[b]Human[/b]: Human, Mage, Shapeshifter.",
-		"[b]Serpent[/b]: Animal, Anguine, Shapeshifter.",
+		BaseCard.format_shapeshifter_form_summary(active_form, inactive_form),
 	]
 
 func get_tonal_extraction_spirit_profile() -> Dictionary:

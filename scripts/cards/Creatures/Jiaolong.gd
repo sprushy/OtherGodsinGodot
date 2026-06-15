@@ -82,18 +82,11 @@ func apply_serialized_state(state: Dictionary) -> void:
 	card_types = _get_human_form_types() if in_human_form else _get_dragon_form_types()
 
 func get_hover_detail_lines(_viewer: Player = null) -> Array[String]:
+	var active_form := _get_human_form_types() if in_human_form else _get_dragon_form_types()
+	var inactive_form := _get_dragon_form_types() if in_human_form else _get_human_form_types()
 	return [
-		"[b]Shift Forms[/b]",
-		_current_form_hover_text(),
-		_inactive_form_hover_text(),
+		BaseCard.format_shapeshifter_form_summary(active_form, inactive_form),
 	]
-
-func _current_form_hover_text() -> String:
-	return "Current: " + ("Human, Aqueous, Shapeshifter" if in_human_form else "Dragon, Animal, Piscine, Aqueous")
-
-func _inactive_form_hover_text() -> String:
-	var inactive_form := "Dragon, Animal, Piscine, Aqueous" if in_human_form else "Human, Aqueous, Shapeshifter"
-	return "[color=#8a8a8a]Can shift to: %s[/color]" % inactive_form
 
 func _get_dragon_form_types() -> Array[String]:
 	var types: Array[String] = []

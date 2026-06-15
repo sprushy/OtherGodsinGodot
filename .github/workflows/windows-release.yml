@@ -115,6 +115,8 @@ jobs:
 
   export-macos:
     runs-on: macos-latest
+    env:
+      SPARKLE_VERSION: 2.9.3
 
     steps:
       - name: Checkout
@@ -151,6 +153,70 @@ jobs:
           version: ${{ env.GODOT_VERSION }}
           use-dotnet: false
           include-templates: true
+
+      - name: Prepare Sparkle tooling
+        shell: bash
+        env:
+          SPARKLE_PUBLIC_ED_KEY: ${{ secrets.SPARKLE_PUBLIC_ED_KEY }}
+          SPARKLE_PRIVATE_ED_KEY: ${{ secrets.SPARKLE_PRIVATE_ED_KEY }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${SPARKLE_PUBLIC_ED_KEY}" ] || [ -z "${SPARKLE_PRIVATE_ED_KEY}" ]; then
+            echo "SPARKLE_PUBLIC_ED_KEY and SPARKLE_PRIVATE_ED_KEY are required for macOS auto-updates." >&2
+            exit 1
+          fi
+
+          python3 -m pip install --user scons
+          echo "$(python3 -m site --user-base)/bin" >> "$GITHUB_PATH"
+
+          sparkle_archive="$RUNNER_TEMP/Sparkle-${SPARKLE_VERSION}.tar.xz"
+          curl -L --fail \
+            -o "$sparkle_archive" \
+            "https://github.com/sparkle-project/Sparkle/releases/download/${SPARKLE_VERSION}/Sparkle-${SPARKLE_VERSION}.tar.xz"
+          tar -xJf "$sparkle_archive" -C "$RUNNER_TEMP"
+
+          sparkle_root="$RUNNER_TEMP/Sparkle-${SPARKLE_VERSION}"
+          if [ ! -d "$sparkle_root/Sparkle.framework" ]; then
+            echo "Sparkle.framework was not found in ${sparkle_root}." >&2
+            exit 1
+          fi
+
+          godot_cpp_dir="$RUNNER_TEMP/godot-cpp"
+          git clone --depth 1 --branch 4.6 https://github.com/godotengine/godot-cpp.git "$godot_cpp_dir"
+
+          echo "SPARKLE_ROOT=$sparkle_root" >> "$GITHUB_ENV"
+          echo "SPARKLE_FRAMEWORK_DIR=$sparkle_root" >> "$GITHUB_ENV"
+          echo "SPARKLE_BIN_DIR=$sparkle_root/bin" >> "$GITHUB_ENV"
+          echo "GODOT_CPP_DIR=$godot_cpp_dir" >> "$GITHUB_ENV"
+
+      - name: Build macOS Sparkle bridge
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p addons/macos_sparkle/bin
+
+          scons -C native/macos_sparkle \
+            platform=macos \
+            target=template_release \
+            arch=x86_64 \
+            godot_cpp_dir="$GODOT_CPP_DIR" \
+            sparkle_framework_dir="$SPARKLE_FRAMEWORK_DIR"
+
+          scons -C native/macos_sparkle \
+            platform=macos \
+            target=template_release \
+            arch=arm64 \
+            godot_cpp_dir="$GODOT_CPP_DIR" \
+            sparkle_framework_dir="$SPARKLE_FRAMEWORK_DIR"
+
+          lipo -create \
+            addons/macos_sparkle/bin/libmacos_sparkle.macos.x86_64.dylib \
+            addons/macos_sparkle/bin/libmacos_sparkle.macos.arm64.dylib \
+            -output addons/macos_sparkle/bin/libmacos_sparkle.macos.universal.dylib
+
+          file addons/macos_sparkle/bin/libmacos_sparkle.macos.universal.dylib
 
       - name: Export macOS build
         run: |
@@ -206,11 +272,15 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          SPARKLE_PUBLIC_ED_KEY: ${{ secrets.SPARKLE_PUBLIC_ED_KEY }}
+          SPARKLE_PRIVATE_ED_KEY: ${{ secrets.SPARKLE_PRIVATE_ED_KEY }}
         run: |
           set -euo pipefail
 
-          rm -rf .exports/macos/unpacked dist/OtherGods-macos.zip
-          mkdir -p .exports/macos/unpacked dist
+          feed_url="https://github.com/sprushy/OtherGodsinGodot/releases/latest/download/appcast.xml"
+
+          rm -rf .exports/macos/unpacked dist/macos dist/OtherGods-macos.zip
+          mkdir -p .exports/macos/unpacked dist/macos
           ditto -x -k .exports/macos/OtherGods-macos.zip .exports/macos/unpacked
 
           app_path="$(find .exports/macos/unpacked -maxdepth 1 -name "*.app" -print -quit)"
@@ -218,6 +288,20 @@ jobs:
             echo "No .app bundle found in macOS export." >&2
             exit 1
           fi
+
+          mkdir -p "$app_path/Contents/Frameworks"
+          rm -rf "$app_path/Contents/Frameworks/Sparkle.framework"
+          ditto "$SPARKLE_FRAMEWORK_DIR/Sparkle.framework" "$app_path/Contents/Frameworks/Sparkle.framework"
+
+          info_plist="$app_path/Contents/Info.plist"
+          set_plist_string() {
+            local key="$1"
+            local value="$2"
+            /usr/libexec/PlistBuddy -c "Set :${key} '${value}'" "$info_plist" >/dev/null 2>&1 || \
+              /usr/libexec/PlistBuddy -c "Add :${key} string '${value}'" "$info_plist"
+          }
+          set_plist_string "SUFeedURL" "$feed_url"
+          set_plist_string "SUPublicEDKey" "$SPARKLE_PUBLIC_ED_KEY"
 
           if [ "${MACOS_SIGN_IDENTITY}" = "-" ]; then
             codesign --force --deep --sign - "$app_path"
@@ -242,13 +326,19 @@ jobs:
             echo "Packaged ad-hoc signed app. Users may still need Finder Open Anyway unless Developer ID notarization is configured."
           fi
 
-          ditto -c -k --keepParent "$app_path" dist/OtherGods-macos.zip
+          ditto -c -k --keepParent "$app_path" dist/macos/OtherGods-macos.zip
+
+          sparkle_private_key_file="$RUNNER_TEMP/sparkle_private_ed_key.txt"
+          printf '%s' "$SPARKLE_PRIVATE_ED_KEY" > "$sparkle_private_key_file"
+          "$SPARKLE_BIN_DIR/generate_appcast" \
+            --ed-key-file "$sparkle_private_key_file" \
+            dist/macos
 
       - name: Upload macOS workflow artifact
         uses: actions/upload-artifact@v4
         with:
           name: OtherGods-macos
-          path: dist/OtherGods-macos.zip
+          path: dist/macos/*
 
   publish-release:
     if: ${{ startsWith(github.ref, 'refs/tags/') && always() && needs.export-windows.result == 'success' }}
@@ -287,4 +377,4 @@ jobs:
             dist/windows/OtherGods-windows.zip.sha256
             dist/windows/OtherGodsServer-windows.zip
             dist/windows/OtherGodsServer-windows.zip.sha256
-            dist/macos/OtherGods-macos.zip
+            dist/macos/*

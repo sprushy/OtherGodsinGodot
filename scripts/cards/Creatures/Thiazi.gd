@@ -100,10 +100,11 @@ func get_effective_strength() -> int:
 	return max(0, total)
 
 func get_hover_detail_lines(_viewer: Player = null) -> Array[String]:
+	var active_form := _get_animal_form_types() if in_animal_form else _get_giant_form_types()
+	var inactive_form := _get_giant_form_types() if in_animal_form else _get_animal_form_types()
 	return [
-		"[b]Current Form[/b]: %s" % _get_current_form_label(),
-		"[b]Giant Form[/b]: Giant, Mage, Shapeshifter; SPD 1 / RES 26 / STR 24.",
-		"[b]Animal Form[/b]: Animal, Mage, Avian, Aerial; SPD 3 / RES 15 / STR 27.",
+		BaseCard.format_shapeshifter_form_summary(active_form, inactive_form),
+		"[b]Animal Form[/b]: SPD 3 / RES 15 / STR 27.",
 	]
 
 func _get_current_form_label() -> String:

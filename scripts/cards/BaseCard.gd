@@ -227,6 +227,21 @@ static func _get_action_symbol_bbcode(action_cost_kind: String, size: int = 18) 
 		return ""
 	return "[img=%dx%d]%s[/img] " % [size, size, path]
 
+static func format_shapeshifter_form_summary(active_form_types: Array[String], inactive_form_types: Array[String]) -> String:
+	return "[b]Shapeshifter[/b]: [color=#66ff66]%s[/color] / [color=#8a8a8a]%s[/color]" % [
+		_format_shapeshifter_form_types(active_form_types),
+		_format_shapeshifter_form_types(inactive_form_types)
+	]
+
+static func _format_shapeshifter_form_types(form_types: Array[String]) -> String:
+	var visible_types: Array[String] = []
+	for raw_type in form_types:
+		var type_name := str(raw_type)
+		if type_name == "" or type_name == "Shapeshifter" or type_name.ends_with(" Creature"):
+			continue
+		visible_types.append(type_name)
+	return ", ".join(visible_types)
+
 # Common hooks all cards can use
 func on_play(_game_manager: GameManager, _target = null) -> void:
 	pass
