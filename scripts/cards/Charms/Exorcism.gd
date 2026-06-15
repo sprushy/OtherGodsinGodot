@@ -68,7 +68,7 @@ func resolve(game_manager: GameManager, target = null) -> void:
 		var names: Array[String] = []
 		for destroyed_card in destroyed_cards:
 			if destroyed_card != null:
-				names.append(destroyed_card.get_target_log_display_name(viewer))
+				names.append(game_manager.get_resolved_destruction_log_name(destroyed_card, viewer, destroyed_card.card_name))
 		if not names.is_empty():
 			feedback += " Destroyed: " + ", ".join(names) + "."
 	game_manager.note_player_feedback(feedback)
@@ -99,9 +99,10 @@ func _destroy_opponent_targeters(game_manager: GameManager, target: Card) -> Arr
 		if action in game_manager.action_stack:
 			game_manager.action_stack.erase(action)
 		if source_card.current_zone != null and source_card.current_zone != source_card.card_owner.graveyard_zone:
-			if game_manager.request_send_to_graveyard(source_card, Callable(), false, true):
-				if source_card not in destroyed:
+			game_manager.request_send_to_graveyard(source_card, func() -> void:
+				if game_manager.reached_public_destroyed_destination(source_card) and source_card not in destroyed:
 					destroyed.append(source_card)
+			, false, true)
 
 	for zone in opponent.frontline_zones + opponent.reserve_zones + opponent.power_zones:
 		for card in zone.cards.duplicate():
@@ -110,9 +111,10 @@ func _destroy_opponent_targeters(game_manager: GameManager, target: Card) -> Arr
 			var attached_hex := card as PermanentHexCard
 			if not _same_card(attached_hex.attached_target, target, target_uid):
 				continue
-			if game_manager.request_send_to_graveyard(attached_hex, Callable(), false, true):
-				if attached_hex not in destroyed:
+			game_manager.request_send_to_graveyard(attached_hex, func() -> void:
+				if game_manager.reached_public_destroyed_destination(attached_hex) and attached_hex not in destroyed:
 					destroyed.append(attached_hex)
+			, false, true)
 
 	return destroyed
 

@@ -28,8 +28,14 @@ func resolve(game_manager: GameManager, _target = null) -> void:
 		game_manager.note_player_feedback(no_targets_feedback)
 		print(no_targets_feedback)
 		return
-	var on_destroy_complete := func(destroyed_count) -> void:
-		var feedback := "%s destroyed %d magical card(s) on the field." % [card_name, destroyed_count]
+	var on_destroy_complete := func(_destroyed_count) -> void:
+		var destroyed_names: Array[String] = []
+		for doomed_card in doomed_cards:
+			if doomed_card != null and game_manager.reached_public_destroyed_destination(doomed_card):
+				destroyed_names.append(doomed_card.get_display_name())
+		var feedback := "%s destroyed %s." % [card_name, _format_name_list(destroyed_names)]
+		if destroyed_names.is_empty():
+			feedback = "%s resolved, but no magical cards were destroyed." % card_name
 		game_manager.note_player_feedback(feedback)
 		print(feedback)
 	game_manager.request_send_cards_to_graveyard(
@@ -38,6 +44,15 @@ func resolve(game_manager: GameManager, _target = null) -> void:
 		false,
 		true
 	)
+
+func _format_name_list(names: Array[String]) -> String:
+	if names.is_empty():
+		return "no magical cards"
+	if names.size() == 1:
+		return names[0]
+	if names.size() == 2:
+		return names[0] + " and " + names[1]
+	return "%s, and %s" % [", ".join(names.slice(0, names.size() - 1)), names.back()]
 
 func can_be_played(game_manager: GameManager, player: Player) -> bool:
 	if not super.can_be_played(game_manager, player):

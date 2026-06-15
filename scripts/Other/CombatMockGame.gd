@@ -244,7 +244,6 @@ var _matriarch_rule_button: Button = null
 @onready var left_bottom_spacer = $MainHBox/LeftPanel/LeftBottomSpacer
 @onready var end_turn_button = $MainHBox/RightPanel/EndTurnButton
 @onready var forfeit_button = $ForfeitButton
-@onready var all_attack_btn = $MainHBox/RightPanel/AllAttackBtn
 @onready var turn_label = $MainHBox/RightPanel/TurnLabel
 @onready var stats_container = $MainHBox/RightPanel/StatsContainer
 @onready var right_panel = $MainHBox/RightPanel
@@ -736,16 +735,16 @@ const ACTION_LOG_POPUP_HEIGHT := 380.0
 const ACTION_LOG_LEFT_INSET := 6
 const TURN_CHOICE_TOP_GAP := 10.0
 const ZONE_INFO_ICON_SIZE := 74.0
-const CENTER_ACTION_PANEL_WIDTH := 104.0
-const CENTER_ACTION_PANEL_HEIGHT := 98.0
-const CENTER_ACTION_BUTTON_HEIGHT := 24.0
+const CENTER_ACTION_PANEL_WIDTH := 132.0
+const CENTER_ACTION_PANEL_HEIGHT := 74.0
+const CENTER_ACTION_BUTTON_HEIGHT := 36.0
 const CENTER_ACTION_PANEL_RIGHT_OVERHANG := 10.0
 const RIGHT_PANEL_MIN_WIDTH := 100.0
 const RIGHT_PANEL_CONTROL_GAP := 6
 const RIGHT_PANEL_TEXT_FONT_SIZE := 10
 const AUTO_PRIORITY_TOGGLE_WIDTH := 118.0
 const LEFT_LOG_VERTICAL_BIAS := 8.0
-const CENTER_ACTION_FONT_SIZE := 9
+const CENTER_ACTION_FONT_SIZE := 12
 
 func _is_turn_choice_pending() -> bool:
 	return choice_container.visible
@@ -1926,7 +1925,6 @@ func _ready() -> void:
 	_setup_turn_choice_buttons()
 	end_turn_button.pressed.connect(_on_end_turn_button_pressed)
 	forfeit_button.pressed.connect(_on_forfeit_button_pressed)
-	all_attack_btn.pressed.connect(_on_all_attack_followers_pressed)
 	aggressive_stance_btn.pressed.connect(_on_aggressive_stance_pressed)
 	defensive_stance_btn.pressed.connect(_on_defensive_stance_pressed)
 	stealth_mode_btn.pressed.connect(_on_stealth_mode_pressed)
@@ -3207,8 +3205,6 @@ func _setup_center_action_panel() -> void:
 		_reparent_control(turn_label, self)
 	if end_turn_button != null:
 		_reparent_control(end_turn_button, self)
-	if all_attack_btn != null:
-		_reparent_control(all_attack_btn, self)
 	if _center_action_panel != null and is_instance_valid(_center_action_panel):
 		_center_action_panel.queue_free()
 	_center_action_panel = null
@@ -3231,7 +3227,6 @@ func _setup_center_action_panel() -> void:
 	_center_action_panel.move_to_front()
 	_reparent_control(turn_label, _center_action_panel)
 	_reparent_control(end_turn_button, _center_action_panel)
-	_reparent_control(all_attack_btn, _center_action_panel)
 	turn_label.custom_minimum_size = Vector2(CENTER_ACTION_PANEL_WIDTH, 22.0)
 	turn_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	turn_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -3239,11 +3234,6 @@ func _setup_center_action_panel() -> void:
 	end_turn_button.custom_minimum_size = Vector2(CENTER_ACTION_PANEL_WIDTH, CENTER_ACTION_BUTTON_HEIGHT)
 	end_turn_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	end_turn_button.add_theme_font_size_override("font_size", CENTER_ACTION_FONT_SIZE)
-	all_attack_btn.custom_minimum_size = Vector2(CENTER_ACTION_PANEL_WIDTH, CENTER_ACTION_BUTTON_HEIGHT)
-	all_attack_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	all_attack_btn.text = "Attack All"
-	all_attack_btn.tooltip_text = "All Attack Followers"
-	all_attack_btn.add_theme_font_size_override("font_size", CENTER_ACTION_FONT_SIZE)
 	right_top_spacer.visible = false
 	right_bottom_spacer.visible = false
 	stats_container.visible = false
@@ -3917,13 +3907,12 @@ func _setup_action_log() -> void:
 func _get_right_action_stack_height() -> float:
 	if _center_action_panel != null and is_instance_valid(_center_action_panel):
 		return 0.0
-	if turn_label == null or end_turn_button == null or all_attack_btn == null or right_panel == null:
+	if turn_label == null or end_turn_button == null or right_panel == null:
 		return 0.0
 	var separation: float = float(right_panel.get_theme_constant("separation"))
 	return turn_label.get_combined_minimum_size().y \
 		+ end_turn_button.get_combined_minimum_size().y \
-		+ all_attack_btn.get_combined_minimum_size().y \
-		+ separation * 2.0
+		+ separation
 
 func _update_side_panel_layout() -> void:
 	var stats_height: float = BoardZoneUI.get_zone_extent()
@@ -5145,8 +5134,6 @@ func _update_match_side_panel_layout() -> void:
 		turn_label.custom_minimum_size.x = right_width - 4.0
 	if end_turn_button != null and end_turn_button.get_parent() == right_panel:
 		end_turn_button.custom_minimum_size.x = right_width - 4.0
-	if all_attack_btn != null and all_attack_btn.get_parent() == right_panel:
-		all_attack_btn.custom_minimum_size.x = right_width - 4.0
 
 	if _auto_priority_toggle != null and is_instance_valid(_auto_priority_toggle):
 		_auto_priority_toggle.custom_minimum_size.x = AUTO_PRIORITY_TOGGLE_WIDTH
@@ -24638,7 +24625,6 @@ func _finalize_game_result_ui(result_message: String, winner = null, loser = nul
 	mana_button.disabled = true
 	end_turn_button.disabled = true
 	_hide_corner_action_button()
-	all_attack_btn.disabled = true
 	selected_card = null
 	selected_attacker = null
 	selected_interceptor = null
@@ -25435,7 +25421,6 @@ func _sync_network_turn_entry_ui_from_state() -> void:
 		_update_match_side_panel_layout()
 		end_turn_button.visible = false
 		end_turn_button.disabled = true
-		all_attack_btn.disabled = true
 		_close_turn_start_windows()
 		return
 	var local_idx: int = network_manager.local_player_index
@@ -25448,7 +25433,6 @@ func _sync_network_turn_entry_ui_from_state() -> void:
 		_update_match_side_panel_layout()
 		end_turn_button.visible = false
 		end_turn_button.disabled = true
-		all_attack_btn.disabled = true
 		_close_turn_start_windows()
 		return
 	if game_manager.has_resolved_turn_upkeep():
@@ -25460,30 +25444,26 @@ func _sync_network_turn_entry_ui_from_state() -> void:
 	_continue_pending_ranked_timeout_turn_pass()
 
 func _sync_network_turn_controls() -> void:
-	if end_turn_button == null or all_attack_btn == null or choice_container == null:
+	if end_turn_button == null or choice_container == null:
 		return
 	if _game_finished:
 		end_turn_button.visible = false
 		end_turn_button.disabled = true
-		all_attack_btn.disabled = true
 		return
 	if _is_observer_mode:
 		choice_container.visible = false
 		end_turn_button.visible = false
 		end_turn_button.disabled = true
-		all_attack_btn.disabled = true
 		return
 	if not _uses_authoritative_turn_ui():
 		_maybe_progress_hidden_frontline_entry_action()
 		end_turn_button.visible = true
 		end_turn_button.disabled = false
-		all_attack_btn.disabled = false
 		return
 	if game_manager == null or not _has_authoritative_local_player_view():
 		choice_container.visible = false
 		end_turn_button.visible = false
 		end_turn_button.disabled = true
-		all_attack_btn.disabled = true
 		_close_turn_start_windows()
 		return
 	game_manager.prune_stale_stack_actions()
@@ -25493,7 +25473,6 @@ func _sync_network_turn_controls() -> void:
 	var stack_locked: bool = not game_manager.action_stack.is_empty()
 	end_turn_button.visible = is_local_turn and not choice_container.visible and not stack_locked
 	end_turn_button.disabled = not end_turn_button.visible
-	all_attack_btn.disabled = not is_local_turn or choice_container.visible or stack_locked
 	var has_pending_attack_choice := selected_attacker != null and pending_attack_target != null
 	if not is_local_turn and not has_pending_attack_choice:
 		selected_attacker = null

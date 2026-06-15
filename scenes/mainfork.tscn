@@ -233,10 +233,6 @@ autowrap_mode = 3
 layout_mode = 2
 text = "End Turn"
 
-[node name="AllAttackBtn" type="Button" parent="Control/GameContainer/MockGame/MainHBox/RightPanel" unique_id=1297052033]
-layout_mode = 2
-text = "All Attack Followers"
-
 [node name="RightBottomSpacer" type="Control" parent="Control/GameContainer/MockGame/MainHBox/RightPanel" unique_id=253145930]
 layout_mode = 2
 size_flags_vertical = 3
@@ -362,10 +358,6 @@ autowrap_mode = 3
 [node name="EndTurnButton" type="Button" parent="Control/GameContainer/CardTest/MainHBox/RightPanel" unique_id=-1294967274]
 layout_mode = 2
 text = "End Turn"
-
-[node name="AllAttackBtn" type="Button" parent="Control/GameContainer/CardTest/MainHBox/RightPanel" unique_id=-1294967273]
-layout_mode = 2
-text = "All Attack Followers"
 
 [node name="RightBottomSpacer" type="Control" parent="Control/GameContainer/CardTest/MainHBox/RightPanel" unique_id=1474344058]
 layout_mode = 2

@@ -109,10 +109,6 @@ autowrap_mode = 3
 layout_mode = 2
 text = "End Turn"
 
-[node name="AllAttackBtn" type="Button" parent="./MainHBox/RightPanel"]
-layout_mode = 2
-text = "All Attack Followers"
-
 [node name="RightBottomSpacer" type="Control" parent="./MainHBox/RightPanel"]
 layout_mode = 2
 size_flags_vertical = 3
