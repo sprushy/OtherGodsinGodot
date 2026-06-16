@@ -1791,7 +1791,8 @@ func set_priority_preferences(
 	stops: Dictionary,
 	full_control: bool,
 	auto_mode: String = PRIORITY_AUTO_MODE_NONE,
-	god_specific: Dictionary = {}
+	god_specific: Dictionary = {},
+	card_offer_priority: Dictionary = {}
 ) -> void:
 	if game_manager == null or player == null:
 		return
@@ -1807,10 +1808,18 @@ func set_priority_preferences(
 	var hermes_settings: Dictionary = {}
 	if raw_hermes_settings is Dictionary:
 		hermes_settings = raw_hermes_settings as Dictionary
+	var card_offer_by_uid: Dictionary = {}
+	var raw_card_offer_by_uid = card_offer_priority.get("by_uid", {})
+	if raw_card_offer_by_uid is Dictionary:
+		card_offer_by_uid = (raw_card_offer_by_uid as Dictionary).duplicate(true)
 	_priority_preferences_by_player[player_idx] = {
 		"stops": normalized_stops,
 		"full_control": full_control,
 		"auto_mode": auto_mode,
+		"card_offer_priority": {
+			"enabled": bool(card_offer_priority.get("enabled", false)),
+			"by_uid": card_offer_by_uid,
+		},
 		"god_specific": {
 			"hermes": {
 				"offer_priority": bool(hermes_settings.get("offer_priority", true)),
@@ -1823,10 +1832,18 @@ func set_priority_preferences(
 func _priority_response_offers_prompt(card: Card, action: CardAction, player: Player) -> bool:
 	if card == null or action == null or player == null or game_manager == null:
 		return false
-	if card.card_name != "Hermes":
-		return true
 	var player_idx := game_manager.players.find(player)
 	var preferences: Dictionary = _priority_preferences_by_player.get(player_idx, {})
+	var card_offer_priority: Dictionary = preferences.get("card_offer_priority", {})
+	if bool(card_offer_priority.get("enabled", false)):
+		var raw_offer_by_uid = card_offer_priority.get("by_uid", {})
+		var offer_by_uid: Dictionary = {}
+		if raw_offer_by_uid is Dictionary:
+			offer_by_uid = raw_offer_by_uid as Dictionary
+		if not bool(offer_by_uid.get(card.uid, true)):
+			return false
+	if card.card_name != "Hermes":
+		return true
 	var god_specific: Dictionary = preferences.get("god_specific", {})
 	var hermes_settings: Dictionary = god_specific.get("hermes", {})
 	if not bool(hermes_settings.get("offer_priority", true)):
@@ -3191,12 +3208,17 @@ func _process_command_impl(command: Dictionary) -> bool:
 			if not (god_specific is Dictionary):
 				move_failed.emit("set_priority_preferences: invalid god settings")
 				return false
+			var card_offer_priority = command.get("card_offer_priority", {})
+			if not (card_offer_priority is Dictionary):
+				move_failed.emit("set_priority_preferences: invalid card priority settings")
+				return false
 			set_priority_preferences(
 				preference_player,
 				priority_stops as Dictionary,
 				bool(command.get("full_control", false)),
 				str(command.get("auto_mode", PRIORITY_AUTO_MODE_NONE)),
-				god_specific as Dictionary
+				god_specific as Dictionary,
+				card_offer_priority as Dictionary
 			)
 			return true
 		"select_attacker":

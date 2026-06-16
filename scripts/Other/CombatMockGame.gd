@@ -82,6 +82,7 @@ const AUTO_SELECT_CHARM_PREPARE_ZONES_KEY := "auto_select_charm_prepare_zones"
 const USE_SPLASH_BOARD_BACKGROUND_KEY := "use_splash_board_background"
 const HOVER_SHOW_CARD_OPTIONS_KEY := "hover_show_card_options"
 const ALWAYS_SHOW_ABILITY_BADGES_KEY := "always_show_ability_badges"
+const ADD_PRIORITY_TOGGLES_TO_ALL_CARDS_KEY := "add_priority_toggles_to_all_cards"
 const HERMES_AUTO_PASS_END_PRIORITY_KEY := "hermes_auto_pass_end_priority"
 const HERMES_AUTO_PASS_UPKEEP_PRIORITY_KEY := "hermes_auto_pass_upkeep_priority"
 const HERMES_ADD_PRIORITY_TOGGLE_KEY := "hermes_add_priority_toggle_to_card"
@@ -298,6 +299,7 @@ var _enemy_zone_uis: Array = []      # Array[BoardZoneUI]
 var _enemy_god_zone_ui: BoardZoneUI = null
 var _player_god_zone_ui: BoardZoneUI = null
 var _hermes_priority_toggle_button: CheckButton = null
+var _priority_offer_toggle_buttons_by_card_uid: Dictionary = {}
 var _last_board_player: Player = null   # tracks which player the board was built for
 var _last_enemy_player: Player = null   # tracks which player the enemy board was built for
 var _pending_drop_zone: Zone = null  # Zone queued by a drag-drop before mode selection
@@ -546,10 +548,12 @@ var _auto_select_charm_prepare_zones: bool = true
 var _use_splash_board_background: bool = false
 var _hover_show_card_options: bool = true
 var _always_show_ability_badges: bool = false
+var _add_priority_toggles_to_all_cards: bool = false
 var _hermes_auto_pass_end_priority: bool = true
 var _hermes_auto_pass_upkeep_priority: bool = true
 var _hermes_add_priority_toggle_to_card: bool = true
 var _hermes_offer_priority: bool = true
+var _priority_offer_by_card_uid: Dictionary = {}
 var _hover_card_options_card: Card = null
 var _hover_card_options_refresh_queued: bool = false
 var _action_point_state_by_card_uid: Dictionary = {}
@@ -906,6 +910,7 @@ func _load_user_settings() -> void:
 	_use_splash_board_background = _read_config_bool(config, COMBAT_SETTINGS_SECTION, USE_SPLASH_BOARD_BACKGROUND_KEY, _use_splash_board_background)
 	_hover_show_card_options = _read_config_bool(config, COMBAT_SETTINGS_SECTION, HOVER_SHOW_CARD_OPTIONS_KEY, _hover_show_card_options)
 	_always_show_ability_badges = _read_config_bool(config, COMBAT_SETTINGS_SECTION, ALWAYS_SHOW_ABILITY_BADGES_KEY, _always_show_ability_badges)
+	_add_priority_toggles_to_all_cards = _read_config_bool(config, COMBAT_SETTINGS_SECTION, ADD_PRIORITY_TOGGLES_TO_ALL_CARDS_KEY, false)
 	_all_sound_muted = _read_config_bool(config, AUDIO_SETTINGS_SECTION, ALL_SOUND_MUTED_KEY, _all_sound_muted)
 	_hermes_auto_pass_end_priority = _read_config_bool(config, GOD_SPECIFIC_SETTINGS_SECTION, HERMES_AUTO_PASS_END_PRIORITY_KEY, true)
 	_hermes_auto_pass_upkeep_priority = _read_config_bool(config, GOD_SPECIFIC_SETTINGS_SECTION, HERMES_AUTO_PASS_UPKEEP_PRIORITY_KEY, true)
@@ -969,6 +974,12 @@ func _set_always_show_ability_badges(pressed: bool) -> void:
 	draw_board()
 	draw_enemy_board()
 
+func _set_add_priority_toggles_to_all_cards(pressed: bool) -> void:
+	_add_priority_toggles_to_all_cards = pressed
+	_save_combat_bool_setting(ADD_PRIORITY_TOGGLES_TO_ALL_CARDS_KEY, pressed)
+	_refresh_all_card_priority_toggle_ui()
+	_sync_priority_preferences_to_match(true)
+
 func _is_hermes_priority_offer_enabled() -> bool:
 	return _hermes_add_priority_toggle_to_card and _hermes_offer_priority
 
@@ -1031,6 +1042,188 @@ func _try_handle_hermes_priority_toggle_input(event: InputEvent) -> bool:
 	_set_hermes_offer_priority(not _hermes_offer_priority)
 	_hermes_priority_toggle_button.set_pressed_no_signal(_hermes_offer_priority)
 	return true
+
+func _get_priority_toggle_player() -> Player:
+	if game_manager == null or game_manager.players.is_empty():
+		return null
+	var display_player := _get_display_player()
+	if display_player != null:
+		return display_player
+	var player_index := _get_local_priority_player_index()
+	if player_index >= 0 and player_index < game_manager.players.size():
+		return game_manager.players[player_index]
+	return null
+
+func _get_card_priority_offer_enabled(card_uid: String) -> bool:
+	if card_uid.strip_edges().is_empty():
+		return true
+	return bool(_priority_offer_by_card_uid.get(card_uid, true))
+
+func _set_card_priority_offer(card_uid: String, pressed: bool) -> void:
+	var normalized_uid := card_uid.strip_edges()
+	if normalized_uid.is_empty():
+		return
+	if pressed:
+		_priority_offer_by_card_uid.erase(normalized_uid)
+	else:
+		_priority_offer_by_card_uid[normalized_uid] = false
+	_refresh_all_card_priority_toggle_ui()
+	_sync_priority_preferences_to_match()
+
+func _clear_all_card_priority_toggle_buttons() -> void:
+	for card_uid in _priority_offer_toggle_buttons_by_card_uid.keys():
+		var button := _priority_offer_toggle_buttons_by_card_uid.get(card_uid) as CheckButton
+		if button != null and is_instance_valid(button):
+			button.queue_free()
+	_priority_offer_toggle_buttons_by_card_uid.clear()
+
+func _ensure_card_priority_toggle_button(card_uid: String, card_name: String) -> CheckButton:
+	var existing := _priority_offer_toggle_buttons_by_card_uid.get(card_uid) as CheckButton
+	if existing != null and is_instance_valid(existing):
+		return existing
+	var button := CheckButton.new()
+	button.name = "OfferPriorityToggle_%s" % card_uid
+	button.tooltip_text = "When enabled, %s can open priority prompts." % card_name
+	button.mouse_filter = Control.MOUSE_FILTER_STOP
+	button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	button.focus_mode = Control.FOCUS_NONE
+	button.action_mode = BaseButton.ACTION_MODE_BUTTON_PRESS
+	button.custom_minimum_size = Vector2(40.0, 32.0)
+	button.size = Vector2(40.0, 32.0)
+	button.visible = false
+	button.toggled.connect(func(pressed: bool) -> void:
+		_set_card_priority_offer(card_uid, pressed)
+	)
+	add_child(button)
+	_priority_offer_toggle_buttons_by_card_uid[card_uid] = button
+	_promote_transient_ui(button, TRANSIENT_UI_Z_INDEX + 120)
+	return button
+
+func _card_can_have_priority_toggle(card: Card, owner: Player) -> bool:
+	if card == null or owner == null or card.card_owner != owner:
+		return false
+	if card.card_name == "Hermes":
+		return false
+	if card is HexCard:
+		return card.is_prepared and card.current_zone != null and card.current_zone.is_board_zone()
+	if card is CharmCard:
+		var charm := card as CharmCard
+		if charm.must_be_prepared_to_activate:
+			return card.is_prepared and card.current_zone != null and card.current_zone.is_board_zone()
+		return true
+	if card.has_method("can_respond_to_priority_action") \
+			or card.has_method("can_respond_to_frontline_entry") \
+			or card.has_method("can_respond_to_destroyed_event"):
+		return true
+	if card.card_type == Card.CardType.SPELL and card.get_effective_speed() >= 2:
+		return true
+	return false
+
+func _add_visible_priority_toggle_target(targets: Dictionary, card: Card, rect: Rect2, owner: Player) -> void:
+	if not _card_can_have_priority_toggle(card, owner):
+		return
+	if card.uid.strip_edges().is_empty() or targets.has(card.uid):
+		return
+	targets[card.uid] = {
+		"card": card,
+		"rect": rect,
+	}
+
+func _get_visible_priority_toggle_targets() -> Dictionary:
+	var targets: Dictionary = {}
+	if not _add_priority_toggles_to_all_cards or _is_observer_mode:
+		return targets
+	var owner := _get_priority_toggle_player()
+	if owner == null:
+		return targets
+	for zone_ui in _board_zone_uis:
+		var zu := zone_ui as BoardZoneUI
+		if zu == null or not is_instance_valid(zu) or not zu.visible or zu.zone == null or zu.zone.cards.is_empty():
+			continue
+		_add_visible_priority_toggle_target(targets, zu.zone.cards[0] as Card, zu.get_global_rect(), owner)
+	if _player_god_zone_ui != null \
+			and is_instance_valid(_player_god_zone_ui) \
+			and _player_god_zone_ui.visible \
+			and _player_god_zone_ui.zone != null \
+			and not _player_god_zone_ui.zone.cards.is_empty():
+		_add_visible_priority_toggle_target(
+			targets,
+			_player_god_zone_ui.zone.cards[0] as Card,
+			_player_god_zone_ui.get_global_rect(),
+			owner
+		)
+	var hand_player := _get_visible_hand_player()
+	if hand_player == owner:
+		for hand_vc in _hand_visual_cards:
+			var vc := hand_vc as VisualCard
+			if vc == null \
+					or not is_instance_valid(vc) \
+					or not vc.visible \
+					or vc.card_data == null \
+					or vc.card_data.current_zone != owner.hand_zone:
+				continue
+			_add_visible_priority_toggle_target(targets, vc.card_data, vc.get_global_rect(), owner)
+	return targets
+
+func _layout_all_card_priority_toggles() -> void:
+	if not _add_priority_toggles_to_all_cards:
+		return
+	var targets := _get_visible_priority_toggle_targets()
+	for raw_card_uid in _priority_offer_toggle_buttons_by_card_uid.keys():
+		var card_uid := str(raw_card_uid)
+		var button := _priority_offer_toggle_buttons_by_card_uid.get(card_uid) as CheckButton
+		if button == null or not is_instance_valid(button):
+			continue
+		if not targets.has(card_uid):
+			button.visible = false
+			continue
+		var target: Dictionary = targets.get(card_uid, {})
+		var rect: Rect2 = target.get("rect", Rect2())
+		button.global_position = rect.end - Vector2(54.0, 58.0)
+		button.move_to_front()
+
+func _refresh_all_card_priority_toggle_ui() -> void:
+	if not _add_priority_toggles_to_all_cards or _is_observer_mode:
+		_clear_all_card_priority_toggle_buttons()
+		return
+	var targets := _get_visible_priority_toggle_targets()
+	for raw_card_uid in targets.keys():
+		var card_uid := str(raw_card_uid)
+		var target: Dictionary = targets.get(card_uid, {})
+		var card := target.get("card", null) as Card
+		if card == null:
+			continue
+		var button := _ensure_card_priority_toggle_button(card_uid, card.card_name)
+		button.set_pressed_no_signal(_get_card_priority_offer_enabled(card_uid))
+		button.visible = true
+	for raw_card_uid in _priority_offer_toggle_buttons_by_card_uid.keys().duplicate():
+		var card_uid := str(raw_card_uid)
+		if targets.has(card_uid):
+			continue
+		var button := _priority_offer_toggle_buttons_by_card_uid.get(card_uid) as CheckButton
+		if button != null and is_instance_valid(button):
+			button.queue_free()
+		_priority_offer_toggle_buttons_by_card_uid.erase(card_uid)
+	call_deferred("_layout_all_card_priority_toggles")
+
+func _try_handle_card_priority_toggle_input(event: InputEvent) -> bool:
+	if _priority_offer_toggle_buttons_by_card_uid.is_empty() or not (event is InputEventMouseButton):
+		return false
+	var mouse_event := event as InputEventMouseButton
+	if not mouse_event.pressed or mouse_event.button_index != MOUSE_BUTTON_LEFT:
+		return false
+	for raw_card_uid in _priority_offer_toggle_buttons_by_card_uid.keys():
+		var card_uid := str(raw_card_uid)
+		var button := _priority_offer_toggle_buttons_by_card_uid.get(card_uid) as CheckButton
+		if button == null or not is_instance_valid(button) or not button.visible:
+			continue
+		if not button.get_global_rect().has_point(mouse_event.position):
+			continue
+		var new_value := not _get_card_priority_offer_enabled(card_uid)
+		_set_card_priority_offer(card_uid, new_value)
+		button.set_pressed_no_signal(new_value)
+		return true
+	return false
 
 func _set_hermes_auto_pass_end_priority(pressed: bool) -> void:
 	_hermes_auto_pass_end_priority = pressed
@@ -1299,6 +1492,14 @@ func _show_pause_menu() -> void:
 		_always_show_ability_badges,
 		func(pressed: bool) -> void:
 			_set_always_show_ability_badges(pressed)
+	))
+
+	general_settings.add_child(_make_settings_section_label("Priority"))
+	general_settings.add_child(_make_auto_zone_toggle(
+		"Add priority toggles to every card",
+		_add_priority_toggles_to_all_cards,
+		func(pressed: bool) -> void:
+			_set_add_priority_toggles_to_all_cards(pressed)
 	))
 
 	var god_settings_scroll := ScrollContainer.new()
@@ -4912,8 +5113,10 @@ func _prepare_for_match_launch(status_message: String = "Connecting to match..."
 	_priority_auto_mode = PRIORITY_AUTO_MODE_NONE
 	_priority_auto_mode_permanent = false
 	_hermes_offer_priority = true
+	_priority_offer_by_card_uid.clear()
 	if _hermes_priority_toggle_button != null and is_instance_valid(_hermes_priority_toggle_button):
 		_hermes_priority_toggle_button.visible = false
+	_clear_all_card_priority_toggle_buttons()
 	_pending_priority_auto_pass_signature.clear()
 	_priority_prompt_idle_deadline_msec = 0
 	_priority_prompt_timeout_pending = false
@@ -5346,6 +5549,7 @@ func _do_update_ui() -> void:
 	_sync_network_turn_controls()
 	_sync_stack_zone_previews()
 	_refresh_hermes_priority_toggle_ui()
+	_refresh_all_card_priority_toggle_ui()
 
 func _is_live_board_card(card: Card) -> bool:
 	return card != null and card.current_zone != null and card.current_zone.is_board_zone()
@@ -5425,6 +5629,7 @@ func _on_board_layout_resized() -> void:
 	call_deferred("_apply_board_horizontal_offset")
 	call_deferred("_update_center_action_panel_layout")
 	call_deferred("_layout_hermes_priority_toggle")
+	call_deferred("_layout_all_card_priority_toggles")
 	_update_match_side_panel_layout()
 	if game_manager == null:
 		return
@@ -5656,8 +5861,18 @@ func _should_hold_current_priority_window() -> bool:
 		return _is_full_control_active()
 	return _should_hold_priority_for_action(game_manager.action_stack.back())
 
+func _get_card_priority_offer_overrides_signature() -> String:
+	if not _add_priority_toggles_to_all_cards:
+		return "off"
+	var disabled_uids: Array[String] = []
+	for card_uid in _priority_offer_by_card_uid.keys():
+		if not bool(_priority_offer_by_card_uid.get(card_uid, true)):
+			disabled_uids.append(str(card_uid))
+	disabled_uids.sort()
+	return ",".join(disabled_uids)
+
 func _get_priority_preferences_signature(player_index: int) -> String:
-	return "%d|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s" % [
+	return "%d|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s" % [
 		player_index,
 		str(bool(priority_stops.get("start", false))),
 		str(bool(priority_stops.get("main", false))),
@@ -5666,6 +5881,8 @@ func _get_priority_preferences_signature(player_index: int) -> String:
 		str(_is_full_control_active()),
 		_priority_auto_mode,
 		str(_priority_auto_mode_permanent),
+		str(_add_priority_toggles_to_all_cards),
+		_get_card_priority_offer_overrides_signature(),
 		str(_is_hermes_priority_offer_enabled()),
 		str(_hermes_auto_pass_end_priority),
 		str(_hermes_auto_pass_upkeep_priority),
@@ -5696,6 +5913,10 @@ func _sync_priority_preferences_to_match(force: bool = false) -> void:
 		"stops": priority_stops.duplicate(true),
 		"full_control": _is_full_control_active(),
 		"auto_mode": _priority_auto_mode,
+		"card_offer_priority": {
+			"enabled": _add_priority_toggles_to_all_cards,
+			"by_uid": _priority_offer_by_card_uid.duplicate(true),
+		},
 		"god_specific": {
 			"hermes": {
 				"offer_priority": _is_hermes_priority_offer_enabled(),
@@ -6739,6 +6960,7 @@ func _layout_fan() -> void:
 		var local_right := clampf(right_bound - vc.position.x, 0.0, vc.size.x)
 		var hit_width := maxf(1.0, local_right - local_left)
 		vc.set_hand_hover_hit_rect(Rect2(Vector2(local_left, 0.0), Vector2(hit_width, vc.size.y)))
+	call_deferred("_layout_all_card_priority_toggles")
 
 func _on_hand_card_hover_started(vc: VisualCard) -> void:
 	if vc != null and vc != _hand_hover_vc:
@@ -18189,6 +18411,9 @@ func _handle_priority_full_control_shortcut(event: InputEvent) -> bool:
 
 func _input(event: InputEvent) -> void:
 	if not is_visible_in_tree():
+		return
+	if _try_handle_card_priority_toggle_input(event):
+		get_viewport().set_input_as_handled()
 		return
 	if _try_handle_hermes_priority_toggle_input(event):
 		get_viewport().set_input_as_handled()
