@@ -106,6 +106,8 @@ func _apply_storm_silence(creature: Card) -> void:
 	if creature == null:
 		return
 	creature.remove_status_effects_from_source_card(self, Card.ABILITY_NEGATED_STATUS)
+	if not _has_non_passive_creature_ability(creature):
+		return
 	creature.add_status_effect(Card.ABILITY_NEGATED_STATUS, card_name, self, card_owner)
 
 func _apply_storm_aerial_loss(creature: Card) -> void:
@@ -133,6 +135,21 @@ func _remove_storm_effects(creature: Card) -> void:
 		return
 	creature.remove_status_effects_from_source_card(self, Card.ABILITY_NEGATED_STATUS)
 	_remove_storm_aerial_loss(creature)
+
+func _has_non_passive_creature_ability(creature: Card) -> bool:
+	if creature == null or creature.card_type != Card.CardType.CREATURE:
+		return false
+	var text := str(creature.ability_text).strip_edges()
+	if text == "":
+		return false
+	for raw_line in text.split("\n", false):
+		var line := str(raw_line).strip_edges().to_lower()
+		if line == "":
+			continue
+		if line.contains("passive") or line.contains("incorporeal"):
+			continue
+		return true
+	return false
 
 func _is_active() -> bool:
 	return current_zone != null and current_zone.is_board_zone() and not is_face_down and not abilities_suppressed()

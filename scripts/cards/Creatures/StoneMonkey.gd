@@ -14,7 +14,7 @@ func _init() -> void:
 	speed = 3
 	resilience = 15
 	strength = 15
-	ability_text = "[b]Stone Skin[/b]: Cannot be destroyed in battle."
+	ability_text = "[b]Stone Skin[/b] ([b]Passive[/b]): Cannot be destroyed in battle."
 	flavor_text = ""
 	culture = "Tian"
 	artist = ""

@@ -11,7 +11,7 @@ func _init() -> void:
 	speed = 1
 	resilience = 13
 	strength = 15
-	ability_text = "Offering (passive): When you destroy an enemy creature in combat, gain 2 mana."
+	ability_text = "Offering ([b]Passive[/b]): When you destroy an enemy creature in combat, gain 2 mana."
 	flavor_text = ""
 	culture = "Ancient"
 	art_path = "res://images/card_art/creatures/asakku.jpg"

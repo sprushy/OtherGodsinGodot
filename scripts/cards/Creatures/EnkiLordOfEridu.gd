@@ -11,7 +11,7 @@ func _init() -> void:
 	speed = 1
 	resilience = 36
 	strength = 32
-	ability_text = "Class Immunity (Passive): Friendly Mages are immune to hexes."
+	ability_text = "Class Immunity ([b]Passive[/b]): Friendly Mages are immune to hexes."
 	flavor_text = ""
 	culture = "Ancient"
 	art_path = "res://images/card_art/creatures/enki_lord_of_eridu - Copy.jpg"

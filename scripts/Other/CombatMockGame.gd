@@ -211,6 +211,8 @@ var priority_stops := {
 }
 var _priority_auto_mode: String = PRIORITY_AUTO_MODE_NONE
 var _priority_auto_mode_permanent: bool = false
+var _priority_control_activation_turn_number: int = -1
+var _priority_control_activation_player_index: int = -1
 var _temporary_full_control: bool = false
 var _constant_full_control: bool = false
 var _full_control_chord_latched: bool = false
@@ -530,7 +532,7 @@ var _priority_controls_row: HBoxContainer = null
 var _priority_stop_buttons: Dictionary = {}
 var _auto_priority_button: Button = null
 var _fast_forward_priority_button: Button = null
-var _full_control_indicator: Label = null
+var _full_control_indicator: Button = null
 var _pause_menu_overlay: Control = null
 var _pause_menu_panel: PanelContainer = null
 var _settings_menu_panel: PanelContainer = null
@@ -3465,23 +3467,30 @@ func _make_priority_control_style(background: Color, border: Color) -> StyleBoxF
 	return style
 
 func _style_priority_toggle(button: Button, active_color: Color) -> void:
+	var neutral_bg := Color(0.07, 0.09, 0.13, 0.96)
+	var neutral_border := Color(0.30, 0.34, 0.42, 0.95)
+	var neutral_font := Color(0.70, 0.74, 0.80)
+	var hover_bg := neutral_bg.lerp(active_color.darkened(0.38), 0.5)
+	var hover_border := neutral_border.lerp(active_color, 0.5)
+	var hover_font := neutral_font.lerp(active_color, 0.5)
 	button.add_theme_stylebox_override("normal", _make_priority_control_style(
-		Color(0.07, 0.09, 0.13, 0.96),
-		Color(0.30, 0.34, 0.42, 0.95)
+		neutral_bg,
+		neutral_border
 	))
 	button.add_theme_stylebox_override("hover", _make_priority_control_style(
-		Color(0.12, 0.15, 0.21, 0.98),
-		Color(0.55, 0.62, 0.76, 1.0)
+		hover_bg,
+		hover_border
 	))
 	button.add_theme_stylebox_override("pressed", _make_priority_control_style(
-		active_color.darkened(0.48),
-		active_color
+		active_color,
+		active_color.lightened(0.15)
 	))
 	button.add_theme_stylebox_override("hover_pressed", _make_priority_control_style(
-		active_color.darkened(0.36),
-		active_color.lightened(0.12)
+		active_color,
+		active_color.lightened(0.24)
 	))
-	button.add_theme_color_override("font_color", Color(0.82, 0.86, 0.92))
+	button.add_theme_color_override("font_color", neutral_font)
+	button.add_theme_color_override("font_hover_color", hover_font)
 	button.add_theme_color_override("font_pressed_color", Color(1, 1, 1))
 	button.add_theme_color_override("font_hover_pressed_color", Color(1, 1, 1))
 	button.add_theme_font_size_override("font_size", 11)
@@ -3511,34 +3520,34 @@ func _setup_priority_controls() -> void:
 
 	_auto_priority_button = Button.new()
 	_auto_priority_button.name = "PlayPriorityButton"
-	_auto_priority_button.text = "Play"
+	_auto_priority_button.text = ">"
 	_auto_priority_button.tooltip_text = "Pass priority automatically except when you have combat-stack options or when a card targeted for destruction can respond. Shift-click to keep this on across turns."
 	_auto_priority_button.toggle_mode = true
 	_auto_priority_button.button_pressed = _priority_auto_mode == PRIORITY_AUTO_MODE_PLAY
-	_auto_priority_button.custom_minimum_size = Vector2(54.0, 30.0)
-	_style_priority_toggle(_auto_priority_button, Color(0.30, 0.88, 0.48))
+	_auto_priority_button.custom_minimum_size = PRIORITY_CONTROL_BUTTON_SIZE
+	_style_priority_toggle(_auto_priority_button, Color(1.0, 0.82, 0.18))
 	_auto_priority_button.pressed.connect(_on_priority_play_button_pressed)
 	_priority_controls_row.add_child(_auto_priority_button)
 
 	_fast_forward_priority_button = Button.new()
 	_fast_forward_priority_button.name = "FastForwardPriorityButton"
-	_fast_forward_priority_button.text = "Fast Forward"
+	_fast_forward_priority_button.text = ">>"
 	_fast_forward_priority_button.tooltip_text = "Pass priority automatically on every priority window. Shift-click to keep this on across turns."
 	_fast_forward_priority_button.toggle_mode = true
 	_fast_forward_priority_button.button_pressed = _priority_auto_mode == PRIORITY_AUTO_MODE_FAST_FORWARD
-	_fast_forward_priority_button.custom_minimum_size = Vector2(112.0, 30.0)
-	_style_priority_toggle(_fast_forward_priority_button, Color(0.42, 0.78, 1.0))
+	_fast_forward_priority_button.custom_minimum_size = PRIORITY_CONTROL_BUTTON_SIZE
+	_style_priority_toggle(_fast_forward_priority_button, Color(0.92, 0.18, 0.16))
 	_fast_forward_priority_button.pressed.connect(_on_priority_fast_forward_button_pressed)
 	_priority_controls_row.add_child(_fast_forward_priority_button)
 
-	_full_control_indicator = Label.new()
+	_full_control_indicator = Button.new()
 	_full_control_indicator.name = "FullControlIndicator"
-	_full_control_indicator.text = "CTRL"
-	_full_control_indicator.tooltip_text = "Hold Ctrl for temporary full control. Press Shift+Ctrl to toggle full control lock."
-	_full_control_indicator.custom_minimum_size = Vector2(48.0, 30.0)
-	_full_control_indicator.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_full_control_indicator.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	_full_control_indicator.add_theme_font_size_override("font_size", 9)
+	_full_control_indicator.text = "II"
+	_full_control_indicator.tooltip_text = "Pause auto-pass and show all priority windows. Hold Ctrl for the same full-control mode; Shift-click keeps it on across turns."
+	_full_control_indicator.toggle_mode = true
+	_full_control_indicator.custom_minimum_size = PRIORITY_CONTROL_BUTTON_SIZE
+	_style_priority_toggle(_full_control_indicator, Color(0.24, 0.58, 1.0))
+	_full_control_indicator.pressed.connect(_on_priority_pause_button_pressed)
 	_priority_controls_row.add_child(_full_control_indicator)
 	_refresh_priority_controls_ui()
 	_update_center_action_panel_layout()
@@ -3617,6 +3626,7 @@ func _sync_local_scheduled_callbacks() -> void:
 func _process(_delta: float) -> void:
 	if not is_visible_in_tree():
 		return
+	_sync_priority_control_turn_boundary()
 	_sync_turn_activity_timers()
 	_sync_local_end_turn_button()
 	_sync_local_scheduled_callbacks()
@@ -5438,12 +5448,41 @@ func _on_priority_fast_forward_button_pressed() -> void:
 		turn_on and _is_shift_modifier_pressed()
 	)
 
+func _on_priority_pause_button_pressed() -> void:
+	var shift_clicked := _is_shift_modifier_pressed()
+	if _is_full_control_active():
+		_temporary_full_control = false
+		_constant_full_control = false
+		_clear_priority_control_activation_context()
+	else:
+		_temporary_full_control = not shift_clicked
+		_constant_full_control = shift_clicked
+		if _temporary_full_control:
+			_capture_priority_control_activation_context()
+		else:
+			_clear_priority_control_activation_context()
+	_refresh_priority_controls_ui()
+	_sync_priority_preferences_to_match(true)
+	if not _is_full_control_active() \
+			and auto_priority \
+			and _is_priority_prompt_visible() \
+			and not _should_hold_current_priority_window():
+		_pending_priority_auto_pass_signature.clear()
+		call_deferred("_on_priority_pass_pressed")
+
 func _set_priority_auto_mode(mode: String, permanent: bool = false, force_sync: bool = false) -> void:
 	if mode not in [PRIORITY_AUTO_MODE_PLAY, PRIORITY_AUTO_MODE_FAST_FORWARD]:
 		mode = PRIORITY_AUTO_MODE_NONE
+	_temporary_full_control = false
+	if mode != PRIORITY_AUTO_MODE_NONE:
+		_constant_full_control = false
 	_priority_auto_mode = mode
 	_priority_auto_mode_permanent = permanent and mode != PRIORITY_AUTO_MODE_NONE
 	auto_priority = mode != PRIORITY_AUTO_MODE_NONE
+	if auto_priority and not _priority_auto_mode_permanent:
+		_capture_priority_control_activation_context()
+	else:
+		_clear_priority_control_activation_context()
 	if not auto_priority:
 		_pending_priority_auto_pass_signature.clear()
 	_priority_prompt_idle_deadline_msec = 0
@@ -5465,9 +5504,49 @@ func _set_priority_auto_mode(mode: String, permanent: bool = false, force_sync: 
 		_priority_prompt_timeout_pending = false
 
 func _reset_transient_priority_auto_mode_for_turn_end() -> void:
-	if _priority_auto_mode == PRIORITY_AUTO_MODE_NONE or _priority_auto_mode_permanent:
+	var changed := false
+	if _temporary_full_control:
+		_temporary_full_control = false
+		changed = true
+	if not _priority_auto_mode_permanent and _priority_auto_mode != PRIORITY_AUTO_MODE_NONE:
+		_priority_auto_mode = PRIORITY_AUTO_MODE_NONE
+		_priority_auto_mode_permanent = false
+		auto_priority = false
+		_pending_priority_auto_pass_signature.clear()
+		_priority_prompt_idle_deadline_msec = 0
+		_priority_prompt_timeout_pending = false
+		changed = true
+	if changed:
+		_clear_priority_control_activation_context()
+		_refresh_priority_controls_ui()
+		_sync_priority_preferences_to_match(true)
+
+func _capture_priority_control_activation_context() -> void:
+	if game_manager == null:
+		_priority_control_activation_turn_number = -1
+		_priority_control_activation_player_index = -1
 		return
-	_set_priority_auto_mode(PRIORITY_AUTO_MODE_NONE, false, true)
+	_priority_control_activation_turn_number = game_manager.turn_number
+	_priority_control_activation_player_index = game_manager.players.find(game_manager.current_player)
+
+func _clear_priority_control_activation_context() -> void:
+	_priority_control_activation_turn_number = -1
+	_priority_control_activation_player_index = -1
+
+func _sync_priority_control_turn_boundary() -> void:
+	if game_manager == null:
+		return
+	var has_transient_auto := _priority_auto_mode != PRIORITY_AUTO_MODE_NONE and not _priority_auto_mode_permanent
+	var has_transient_pause := _temporary_full_control
+	if not has_transient_auto and not has_transient_pause:
+		return
+	var current_player_index := game_manager.players.find(game_manager.current_player)
+	if _priority_control_activation_turn_number < 0 or _priority_control_activation_player_index < 0:
+		_capture_priority_control_activation_context()
+		return
+	if game_manager.turn_number != _priority_control_activation_turn_number \
+			or current_player_index != _priority_control_activation_player_index:
+		_reset_transient_priority_auto_mode_for_turn_end()
 
 func _get_priority_stop_setting_key(stop_key: String) -> String:
 	match stop_key:
@@ -5542,7 +5621,15 @@ func _play_mode_should_hold_priority_for_action(action: CardAction) -> bool:
 	if action == null:
 		return false
 	if _get_priority_stop_key_for_action(action) == "combat":
-		return true
+		if game_manager == null:
+			return false
+		var local_priority_index := _get_local_priority_player_index()
+		if local_priority_index < 0 or local_priority_index >= game_manager.players.size():
+			return false
+		var local_player := game_manager.players[local_priority_index]
+		if match_manager != null:
+			return match_manager._player_has_priority_prompt_responses(local_player)
+		return not game_manager.get_priority_responses(local_player).is_empty()
 	if not _action_targets_card_for_destruction(action):
 		return false
 	var target_card := _get_action_target_card(action)
@@ -5622,13 +5709,13 @@ func _sync_priority_preferences_to_match(force: bool = false) -> void:
 
 func _refresh_priority_controls_ui() -> void:
 	if _auto_priority_button != null and is_instance_valid(_auto_priority_button):
-		_auto_priority_button.text = "Play*" if _priority_auto_mode == PRIORITY_AUTO_MODE_PLAY and _priority_auto_mode_permanent else "Play"
+		_auto_priority_button.text = ">*" if _priority_auto_mode == PRIORITY_AUTO_MODE_PLAY and _priority_auto_mode_permanent else ">"
 		_auto_priority_button.set_pressed_no_signal(_priority_auto_mode == PRIORITY_AUTO_MODE_PLAY)
-		_auto_priority_button.modulate = Color(1, 1, 1, 1) if _priority_auto_mode == PRIORITY_AUTO_MODE_PLAY else Color(0.72, 0.75, 0.82, 1)
+		_auto_priority_button.modulate = Color(1, 1, 1, 1)
 	if _fast_forward_priority_button != null and is_instance_valid(_fast_forward_priority_button):
-		_fast_forward_priority_button.text = "Fast Forward*" if _priority_auto_mode == PRIORITY_AUTO_MODE_FAST_FORWARD and _priority_auto_mode_permanent else "Fast Forward"
+		_fast_forward_priority_button.text = ">>*" if _priority_auto_mode == PRIORITY_AUTO_MODE_FAST_FORWARD and _priority_auto_mode_permanent else ">>"
 		_fast_forward_priority_button.set_pressed_no_signal(_priority_auto_mode == PRIORITY_AUTO_MODE_FAST_FORWARD)
-		_fast_forward_priority_button.modulate = Color(1, 1, 1, 1) if _priority_auto_mode == PRIORITY_AUTO_MODE_FAST_FORWARD else Color(0.72, 0.75, 0.82, 1)
+		_fast_forward_priority_button.modulate = Color(1, 1, 1, 1)
 	for stop_key in _priority_stop_buttons:
 		var stop_button := _priority_stop_buttons.get(stop_key) as Button
 		if stop_button == null or not is_instance_valid(stop_button):
@@ -5636,14 +5723,17 @@ func _refresh_priority_controls_ui() -> void:
 		stop_button.set_pressed_no_signal(bool(priority_stops.get(stop_key, false)))
 	if _full_control_indicator != null and is_instance_valid(_full_control_indicator):
 		if _constant_full_control:
-			_full_control_indicator.text = "CTRL*"
-			_full_control_indicator.modulate = Color(1.0, 0.76, 0.28, 1.0)
+			_full_control_indicator.text = "II*"
+			_full_control_indicator.set_pressed_no_signal(true)
+			_full_control_indicator.modulate = Color(1, 1, 1, 1)
 		elif _temporary_full_control:
-			_full_control_indicator.text = "CTRL"
-			_full_control_indicator.modulate = Color(0.42, 0.78, 1.0, 1.0)
+			_full_control_indicator.text = "II"
+			_full_control_indicator.set_pressed_no_signal(true)
+			_full_control_indicator.modulate = Color(1, 1, 1, 1)
 		else:
-			_full_control_indicator.text = "CTRL"
-			_full_control_indicator.modulate = Color(0.58, 0.62, 0.70, 1.0)
+			_full_control_indicator.text = "II"
+			_full_control_indicator.set_pressed_no_signal(false)
+			_full_control_indicator.modulate = Color(1, 1, 1, 1)
 
 func _on_match_targeting_started(_source: Card, _target_type: String) -> void:
 	_hide_devour_cancel_prompt()
@@ -26780,6 +26870,7 @@ func _do_end_turn() -> void:
 		return
 	print("=== TURN ENDED ===")
 	_dismiss_transient_prompts()
+	_reset_transient_priority_auto_mode_for_turn_end()
 	var et_cmd := {type = "end_turn"}
 	if not _pending_end_turn_discard_uids.is_empty():
 		et_cmd["discard_uids"] = _pending_end_turn_discard_uids.duplicate()

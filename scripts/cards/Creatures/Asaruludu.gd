@@ -11,7 +11,7 @@ func _init() -> void:
 	speed = 1
 	resilience = 25
 	strength = 28
-	ability_text = "Guardian (passive): Allied Ancient creatures cannot be targeted by effects during your turn and during combat."
+	ability_text = "Guardian ([b]Passive[/b]): Allied Ancient creatures cannot be targeted by effects during your turn and during combat."
 	flavor_text = ""
 	culture = "Ancient"
 	art_path = "res://images/card_art/creatures/AsaruluduAI5.png"
