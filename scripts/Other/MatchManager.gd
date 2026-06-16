@@ -10,6 +10,9 @@ const MatchCommandRegistryScript = preload("res://scripts/Other/MatchCommandRegi
 const AUTHORITATIVE_FLOW_LOG_PREFIX := "[OG server flow]"
 const AUTHORITATIVE_FLOW_CHECK_DELAY_SECONDS := 1.0
 const PRIORITY_STOP_KEYS := ["start", "main", "combat", "end"]
+const PRIORITY_AUTO_MODE_NONE := "none"
+const PRIORITY_AUTO_MODE_PLAY := "play"
+const PRIORITY_AUTO_MODE_FAST_FORWARD := "fast_forward"
 
 signal targeting_started(source: Card, target_type: String)
 signal targeting_ended()
@@ -1787,6 +1790,7 @@ func set_priority_preferences(
 	player: Player,
 	stops: Dictionary,
 	full_control: bool,
+	auto_mode: String = PRIORITY_AUTO_MODE_NONE,
 	god_specific: Dictionary = {}
 ) -> void:
 	if game_manager == null or player == null:
@@ -1797,6 +1801,8 @@ func set_priority_preferences(
 	var normalized_stops := {}
 	for stop_key in PRIORITY_STOP_KEYS:
 		normalized_stops[stop_key] = bool(stops.get(stop_key, false))
+	if auto_mode not in [PRIORITY_AUTO_MODE_NONE, PRIORITY_AUTO_MODE_PLAY, PRIORITY_AUTO_MODE_FAST_FORWARD]:
+		auto_mode = PRIORITY_AUTO_MODE_NONE
 	var raw_hermes_settings = god_specific.get("hermes", {})
 	var hermes_settings: Dictionary = {}
 	if raw_hermes_settings is Dictionary:
@@ -1804,6 +1810,7 @@ func set_priority_preferences(
 	_priority_preferences_by_player[player_idx] = {
 		"stops": normalized_stops,
 		"full_control": full_control,
+		"auto_mode": auto_mode,
 		"god_specific": {
 			"hermes": {
 				"offer_priority": bool(hermes_settings.get("offer_priority", true)),
@@ -1880,6 +1887,42 @@ func mark_priority_window_offered(action: CardAction, player: Player) -> void:
 	if bool(action.event_data.get("force_priority_window", false)):
 		action.event_data["priority_window_offered"] = true
 
+func _get_action_target_card(action: CardAction) -> Card:
+	if action == null or not (action.target is Card):
+		return null
+	return action.target as Card
+
+func _action_targets_card_for_destruction(action: CardAction) -> bool:
+	if action == null or _get_action_target_card(action) == null:
+		return false
+	if action.event_data.has("destruction"):
+		return bool(action.event_data.get("destruction", false))
+	if action.event_data.has("destroy"):
+		return bool(action.event_data.get("destroy", false))
+	if action.card != null:
+		if action.card.has_type("Destruction") or action.card.has_type("Magic Destruction"):
+			return true
+		for type_name in action.card.card_types:
+			if str(type_name).findn("destruction") >= 0:
+				return true
+		if str(action.card.ability_text).findn("destroy") >= 0:
+			return true
+	if action.event_name.findn("destroy") >= 0:
+		return true
+	return false
+
+func _play_mode_requires_priority_window(action: CardAction, player: Player) -> bool:
+	if action == null or player == null or game_manager == null:
+		return false
+	if get_priority_stop_key(action) == "combat":
+		return _player_has_priority_prompt_responses(player)
+	if not _action_targets_card_for_destruction(action):
+		return false
+	var target_card := _get_action_target_card(action)
+	return target_card != null \
+		and target_card.card_owner == player \
+		and game_manager.can_card_respond_to_priority(target_card, player)
+
 func player_requires_priority_window(action: CardAction, player: Player) -> bool:
 	if action == null or player == null or game_manager == null:
 		return false
@@ -1892,6 +1935,11 @@ func player_requires_priority_window(action: CardAction, player: Player) -> bool
 	var preferences: Dictionary = _priority_preferences_by_player.get(player_idx, {})
 	if bool(preferences.get("full_control", false)):
 		return true
+	var auto_mode := str(preferences.get("auto_mode", PRIORITY_AUTO_MODE_NONE))
+	if auto_mode == PRIORITY_AUTO_MODE_FAST_FORWARD:
+		return false
+	if auto_mode == PRIORITY_AUTO_MODE_PLAY:
+		return _play_mode_requires_priority_window(action, player)
 	var stops: Dictionary = preferences.get("stops", {})
 	return bool(stops.get(get_priority_stop_key(action), false))
 
@@ -3147,6 +3195,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 				preference_player,
 				priority_stops as Dictionary,
 				bool(command.get("full_control", false)),
+				str(command.get("auto_mode", PRIORITY_AUTO_MODE_NONE)),
 				god_specific as Dictionary
 			)
 			return true
