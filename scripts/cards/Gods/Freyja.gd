@@ -4,6 +4,7 @@ class_name Freyja
 const BASE_ACTIVATION_COST := 5
 const DOOMED_STATUS := "freyja_receiver_of_the_slain"
 const SPIRIT_GRANT_STATUS := "freyja_spirit_grant"
+const ABILITY_NAME := "Receiver of the Slain"
 
 func _init() -> void:
 	super._init()
@@ -71,12 +72,12 @@ func activate(game_manager: GameManager, target: Card = null) -> void:
 			game_manager.note_player_feedback(get_activation_failure_reason(game_manager))
 		return
 	if not is_valid_activation_target(target):
-		game_manager.note_player_feedback("Receiver of the Slain fizzles: invalid target.")
+		game_manager.note_player_feedback(ABILITY_NAME + " fizzles: invalid target.")
 		return
 
 	var summon_zone := _get_best_summon_zone(target)
 	if summon_zone == null:
-		game_manager.note_player_feedback("Receiver of the Slain fizzles: no open summon lane.")
+		game_manager.note_player_feedback(ABILITY_NAME + " fizzles: no open summon lane.")
 		return
 
 	var activation_cost := get_activation_mana_cost(game_manager)
@@ -98,12 +99,13 @@ func activate(game_manager: GameManager, target: Card = null) -> void:
 	)
 	if not summoned:
 		card_owner.gain_mana(activation_cost)
-		game_manager.note_player_feedback("Receiver of the Slain fizzles: " + target.card_name + " could not be summoned.")
+		game_manager.note_player_feedback(ABILITY_NAME + " fizzles: " + target.card_name + " could not be summoned.")
 		return
 
 	_apply_receiver_of_the_slain(target, game_manager)
 	game_manager.note_player_feedback(
-		"Receiver of the Slain summons %s from the graveyard for %d mana." % [
+		"%s summons %s from the graveyard for %d mana." % [
+			ABILITY_NAME,
 			target.card_name,
 			activation_cost
 		]
@@ -232,9 +234,16 @@ func _count_friendly_valkyries_in_play() -> int:
 	zones.append_array(card_owner.reserve_zones)
 	for zone in zones:
 		for card in zone.cards:
-			if _is_valkyrie_card(card):
+			if _counts_for_receiver_discount(card, zone):
 				count += 1
 	return count
+
+func _counts_for_receiver_discount(card: Card, zone: Zone) -> bool:
+	if not _is_valkyrie_card(card):
+		return false
+	if zone != null and zone.zone_type == Zone.ZoneType.POWER_SLOT and card.is_face_down:
+		return false
+	return true
 
 func _is_valkyrie_card(card: Card) -> bool:
 	if card == null:

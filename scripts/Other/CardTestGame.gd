@@ -361,7 +361,7 @@ func load_badge_test_scenario() -> void:
 	_place_test_board_card(player1, player1.frontline_zones[2], badge_attacker, Card.CreatureMode.AGGRESSIVE)
 	_place_test_board_card(player1, player1.reserve_zones[2], BrownBear.new(), Card.CreatureMode.DEFENSIVE)
 
-	# Enemy targets cover each target badge type while keeping the board easy to scan.
+	# Enemy targets cover attack glows and equipment action affordances while keeping the board easy to scan.
 	_place_test_board_card(player2, player2.frontline_zones[0], BrownBear.new(), Card.CreatureMode.AGGRESSIVE)
 	_place_test_board_card(player2, player2.frontline_zones[1], MinotaurFootsoldier.new(), Card.CreatureMode.DEFENSIVE)
 	_place_test_board_permanent(player2, player2.frontline_zones[2], BeardedAxe.new())
@@ -404,10 +404,10 @@ func load_badge_test_scenario() -> void:
 	_open_upkeep_choice_window()
 	selected_attacker = badge_attacker
 	action_label.text = (
-		"Badge Test Scenario. Harii Warrior starts selected on turn 2 so target badges render immediately. "
+		"Badge Test Scenario. Harii Warrior starts selected on turn 2 so attack-target glows render immediately. "
 		+ "Choose Mana first to make the actions live, then reselect Harii Warrior if the selection is cleared. "
-		+ "Brown Bear should show the aggressive target badge, Minotaur Footsoldier and Warding Stone should show the break target badge, and Bearded Axe should show the break badge plus the steal glove centered together. "
-		+ "Runic Shortsword in reserve gives a second legal enemy equipment steal target for checking the paired badge spacing on a lower row."
+		+ "Brown Bear, Minotaur Footsoldier, and Warding Stone should show red attack-target glows instead of centered attack badges. "
+		+ "Bearded Axe should show the attack glow plus the steal glove affordance, and Runic Shortsword in reserve gives a second legal enemy equipment steal target for checking equipment action spacing on a lower row."
 	)
 	update_ui()
 

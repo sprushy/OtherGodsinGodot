@@ -49,11 +49,7 @@ const ODIN_RUNIC_KNOWLEDGE_BADGE_TEXTURE := preload("res://images/ability_badges
 const E2_ABZU_RETURN_BADGE_TEXTURE := preload("res://images/ability_badges/E2AbzuReturnBadge.png")
 const E2_ABZU_VOID_BADGE_TEXTURE := preload("res://images/ability_badges/E2AbzuVoidBadge.png")
 const TEZ_BLOODSTREAK_TEXTURE := preload("res://images/Bloodstreak.png")
-const AGGRESSIVE_ATTACK_TARGET_TEXTURE := preload("res://images/ui/attack_targets/AggressiveAttackTarget.png")
-const RES_ATTACK_TARGET_TEXTURE := preload("res://images/ui/attack_targets/ResAttackTarget.png")
-const DESTROY_ATTACK_TARGET_TEXTURE := preload("res://images/ui/attack_targets/BrokenSword.png")
 const STEAL_ATTACK_TARGET_TEXTURE := preload("res://images/ui/attack_targets/StealGlove.png")
-const FOLLOWERS_ATTACK_TARGET_TEXTURE := preload("res://images/ui/attack_targets/FollowerAttack.png")
 const MOVE_STRAIGHT_INDICATOR_TEXTURE := preload("res://images/ui/move_arrows/ArrowIndicator.png")
 const MOVE_DIAGONAL_INDICATOR_TEXTURE := preload("res://images/ui/move_arrows/AngleArrow.png")
 const MINOR_ACTION_SYMBOL_TEXTURE := preload("res://images/ui/MinorActionSymbol.png")
@@ -83,6 +79,8 @@ const TEZ_TONAL_MASTERY_TEXTURES := [
 const TEZ_NORMAL_GOD_NAME := "Tezcatlipoca, the Smoking Mirror"
 const TEZ_REQUIRED_SACRIFICES := 4
 const TEZ_TONAL_MASTERY_TOKEN_THRESHOLD := 3
+const FREYJA_RECEIVER_OF_THE_SLAIN_STATUS := "freyja_receiver_of_the_slain"
+const FREYJA_ACTIVE_OPEN_SESSRUMNIR_STATUS := "freyja_active_open_sessrumnir"
 const LEVEL_BADGE_TOP := -12.0
 const LEVEL_BADGE_BOTTOM := 12.0
 const BADGE_ROW_GAP := 6.0
@@ -2573,19 +2571,21 @@ func _add_attack_aura(overlay: Control) -> void:
 	_fade_card_option_visual(aura)
 	overlay.add_child(aura)
 
-func _add_followers_attack_target_tint(overlay: Control) -> void:
+func _add_attack_target_aura(overlay: Control) -> void:
 	if overlay == null:
 		return
 
 	var glow := ColorRect.new()
 	glow.color = Color(0.92, 0.10, 0.08, 0.22)
 	glow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	glow.z_index = 4
 	glow.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_fade_card_option_visual(glow)
 	overlay.add_child(glow)
 
 	var ring := PanelContainer.new()
 	ring.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ring.z_index = 5
 	ring.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	ring.offset_left = 4
 	ring.offset_top = 4
@@ -2606,6 +2606,9 @@ func _add_followers_attack_target_tint(overlay: Control) -> void:
 	ring.add_theme_stylebox_override("panel", ring_style)
 	_fade_card_option_visual(ring)
 	overlay.add_child(ring)
+
+func _add_followers_attack_target_tint(overlay: Control) -> void:
+	_add_attack_target_aura(overlay)
 
 func _add_followers_attack_result_label(overlay: Control) -> void:
 	if overlay == null or _followers_attack_result_text == "":
@@ -2650,49 +2653,8 @@ func _add_target_aura(overlay: Control) -> void:
 	_fade_card_option_visual(aura)
 	overlay.add_child(aura)
 
-func _uses_res_attack_target_icon(card: Card) -> bool:
-	if card == null:
-		return false
-	if card.card_type == Card.CardType.STRUCTURE:
-		return true
-	if card.card_type == Card.CardType.EQUIPMENT:
-		return true
-	if card.card_type == Card.CardType.CREATURE:
-		return card.creature_mode == Card.CreatureMode.DEFENSIVE or card.is_petrified()
-	return false
-
-func _get_attack_target_texture(card: Card) -> Texture2D:
-	if card == null:
-		return null
-	if card.card_type == Card.CardType.EQUIPMENT:
-		return DESTROY_ATTACK_TARGET_TEXTURE
-	return RES_ATTACK_TARGET_TEXTURE if _uses_res_attack_target_icon(card) else AGGRESSIVE_ATTACK_TARGET_TEXTURE
-
-func _get_attack_target_hover_text(card: Card) -> String:
-	if card == null:
-		return ""
-	if card.card_type == Card.CardType.EQUIPMENT:
-		return "Destroy"
-	return "Attack"
-
 func _get_card_target_icon_entries(card: Card) -> Array[Dictionary]:
 	var entries: Array[Dictionary] = []
-	if _is_card_attack_candidate(card):
-		var texture := _get_attack_target_texture(card)
-		if texture != null:
-			var scene_root := _get_targeting_scene_root()
-			var actor := _get_selected_attacker(scene_root)
-			var action_name := "destroy equipment" if card.card_type == Card.CardType.EQUIPMENT else "attack"
-			var action_cost_entries := _get_attack_action_cost_entries(actor) if action_name == "attack" else _make_action_cost_entries(Card.ACTION_COST_MAJOR)
-			entries.append({
-				"actor": actor,
-				"texture": texture,
-				"border_color": Color(1.0, 0.32, 0.18, 0.92),
-				"hover_text": _get_attack_target_hover_text(card),
-				"action": "",
-				"action_cost_entries": action_cost_entries,
-				"action_mana_cost": _get_creature_action_mana_cost(actor, action_name),
-			})
 	var equipment_action_entry := _get_equipment_target_action_icon_entry(card)
 	if not equipment_action_entry.is_empty():
 		entries.append(equipment_action_entry)
@@ -2735,22 +2697,6 @@ func _get_equipment_target_action_icon_entry(card: Card) -> Dictionary:
 		"action_cost_entries": _make_action_cost_entries(action_cost_kind),
 		"action_mana_cost": _get_creature_action_mana_cost(actor, action_name),
 	}
-
-func _add_followers_attack_target_icon(overlay: Control) -> void:
-	if overlay == null or FOLLOWERS_ATTACK_TARGET_TEXTURE == null:
-		return
-	var scene_root := _get_targeting_scene_root()
-	var actor := _get_selected_attacker(scene_root)
-	var entries: Array[Dictionary] = [{
-		"actor": actor,
-		"texture": FOLLOWERS_ATTACK_TARGET_TEXTURE,
-		"border_color": Color(1.0, 0.32, 0.18, 0.92),
-		"hover_text": "Attack",
-		"action": "",
-		"action_cost_entries": _get_attack_action_cost_entries(actor),
-		"action_mana_cost": _get_creature_action_mana_cost(actor, "attack"),
-	}]
-	_add_centered_target_icon_group(overlay, entries, null)
 
 func _has_card_target_icon_candidate(card: Card) -> bool:
 	return not _get_card_target_icon_entries(card).is_empty()
@@ -3555,6 +3501,19 @@ func _is_tiamat_power_creature_stack_revealed() -> bool:
 	return false
 
 func _make_debuff_source_preview(entry: Dictionary) -> Control:
+	var preview_texture := entry.get("preview_texture", null) as Texture2D
+	if preview_texture != null:
+		var preview := TextureRect.new()
+		preview.texture = preview_texture
+		preview.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		preview.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+		preview.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		preview.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		preview.offset_left = 2
+		preview.offset_top = 2
+		preview.offset_right = -2
+		preview.offset_bottom = -2
+		return preview
 	var source_card := entry.get("source_card", null) as Card
 	return _make_card_art_preview(source_card)
 
@@ -3590,6 +3549,13 @@ func _build_debuff_entry_from_status(card: Card, status: Dictionary) -> Dictiona
 		return {
 			"key": "source:%s" % source_key,
 			"source_card": source_card,
+			"count": 1,
+		}
+	if status_name in [FREYJA_RECEIVER_OF_THE_SLAIN_STATUS, FREYJA_ACTIVE_OPEN_SESSRUMNIR_STATUS]:
+		return {
+			"key": "source:%s" % source_key,
+			"source_card": source_card,
+			"preview_texture": FREYJA_ABILITY_BADGE_TEXTURE,
 			"count": 1,
 		}
 	if status_name in ["cannot_attack", "cannot_intercept", "cannot_move", "activation_locked", Card.ABILITY_NEGATED_STATUS]:
@@ -3661,6 +3627,18 @@ func _is_card_targeted_on_stack(card: Card) -> bool:
 		if action == null:
 			continue
 		if action.type == CardAction.Type.ATTACK and not _is_attack_stack_action_active(action):
+			continue
+		if action.target is Card and action.target == card:
+			return true
+	return false
+
+func _is_card_attack_targeted_on_stack(card: Card) -> bool:
+	if card == null or game_manager == null:
+		return false
+	for action in game_manager.action_stack:
+		if action == null or action.type != CardAction.Type.ATTACK:
+			continue
+		if not _is_attack_stack_action_active(action):
 			continue
 		if action.target is Card and action.target == card:
 			return true
@@ -4089,10 +4067,18 @@ func _is_hidden_board_card_for_priority_visuals(card: Card) -> bool:
 	var viewer := _get_viewer_player()
 	return card.get_controller() != viewer and not card.is_revealed_to_all()
 
+func _should_suppress_priority_response_visuals() -> bool:
+	var scene_root := _get_targeting_scene_root()
+	if scene_root == null or not scene_root.has_method("should_suppress_priority_response_visuals"):
+		return false
+	return bool(scene_root.call("should_suppress_priority_response_visuals"))
+
 func _is_card_usable_for_priority(card: Card) -> bool:
 	if card == null or game_manager == null:
 		return false
 	if _is_hidden_board_card_for_priority_visuals(card):
+		return false
+	if _should_suppress_priority_response_visuals():
 		return false
 	return game_manager.can_card_respond_to_priority(card, game_manager.priority_player)
 
@@ -4354,7 +4340,7 @@ func _refresh_mouse_cursor_shape(card: Card = null) -> void:
 	if _is_hover_card_options_preview_active():
 		mouse_default_cursor_shape = Control.CURSOR_ARROW
 		return
-	if card != null and (_has_card_target_icon_candidate(card) or _is_god_attack_candidate(card)):
+	if card != null and (_is_card_attack_candidate(card) or _has_card_target_icon_candidate(card) or _is_god_attack_candidate(card)):
 		mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 		return
 	mouse_default_cursor_shape = Control.CURSOR_ARROW
@@ -4566,14 +4552,20 @@ func _refresh_display() -> void:
 				_add_attack_aura(fd_overlay)
 			if _is_card_usable_for_priority(card):
 				_add_priority_response_aura(fd_overlay)
-			var is_face_down_attack_candidate := _is_card_attack_candidate(card)
+			var is_face_down_stack_target := _is_card_targeted_on_stack(card)
+			var is_face_down_pending_target := _is_card_pending_target(card)
+			var is_face_down_attack_target := _is_card_attack_candidate(card) \
+				or _is_card_pending_attack_target(card) \
+				or _is_card_attack_targeted_on_stack(card)
 			var is_face_down_target_icon_candidate := _has_card_target_icon_candidate(card)
-			if _is_card_targeted_on_stack(card) or _is_card_pending_target(card) or _is_card_pending_attack_target(card) or is_face_down_target_icon_candidate:
-				if is_face_down_attack_candidate or _is_card_targeted_on_stack(card) or _is_card_pending_target(card) or _is_card_pending_attack_target(card):
+			if is_face_down_stack_target or is_face_down_pending_target or is_face_down_attack_target or is_face_down_target_icon_candidate:
+				if is_face_down_attack_target:
+					_add_attack_target_aura(fd_overlay)
+				elif is_face_down_stack_target or is_face_down_pending_target:
 					_add_target_aura(fd_overlay)
 				if is_face_down_target_icon_candidate:
 					_add_attack_target_icon(fd_overlay, card)
-				else:
+				elif is_face_down_stack_target or is_face_down_pending_target:
 					_add_stack_target_indicator(fd_overlay)
 			var _fd_is_def := card.card_type == Card.CardType.CREATURE and (
 				card.creature_mode == Card.CreatureMode.DEFENSIVE
@@ -4596,10 +4588,8 @@ func _refresh_display() -> void:
 			var show_god_priority_aura := _is_card_usable_for_priority(card)
 			var show_god_target_aura := _is_card_targeted_on_stack(card) \
 				or _is_card_pending_target(card) \
-				or _is_card_pending_attack_target(card) \
-				or _is_god_targeted_by_followers_attack(card) \
-				or _is_god_pending_followers_attack(card)
-			var show_god_followers_target_icon := _is_god_targeted_by_followers_attack(card) \
+				or _is_card_pending_attack_target(card)
+			var show_god_followers_target_aura := _is_god_targeted_by_followers_attack(card) \
 				or _is_god_pending_followers_attack(card) \
 				or _is_god_attack_candidate(card)
 
@@ -4615,7 +4605,7 @@ func _refresh_display() -> void:
 				or show_god_playing_aura
 				or show_god_priority_aura
 				or show_god_target_aura
-				or show_god_followers_target_icon
+				or show_god_followers_target_aura
 				or glow_champions_call_badge
 			) else BASE_BOARD_Z_INDEX
 			var tex: Texture2D = load(card.art_path)
@@ -4642,8 +4632,8 @@ func _refresh_display() -> void:
 				art.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 				art.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				god_overlay.add_child(art)
-				if show_god_followers_target_icon:
-					_add_followers_attack_target_icon(god_overlay)
+				if show_god_followers_target_aura:
+					_add_attack_target_aura(god_overlay)
 
 				# VBoxContainer fills overlay via anchors; spacer pushes label to correct edge
 				var name_vbox := VBoxContainer.new()
@@ -4789,14 +4779,20 @@ func _refresh_display() -> void:
 			_add_attack_aura(card_overlay)
 		if _should_show_playing_aura(card):
 			_add_playing_aura(card_overlay)
-		var is_attack_candidate := _is_card_attack_candidate(card)
+		var is_stack_target := _is_card_targeted_on_stack(card)
+		var is_pending_target := _is_card_pending_target(card)
+		var is_attack_target := _is_card_attack_candidate(card) \
+			or _is_card_pending_attack_target(card) \
+			or _is_card_attack_targeted_on_stack(card)
 		var is_target_icon_candidate := _has_card_target_icon_candidate(card)
-		if _is_card_targeted_on_stack(card) or _is_card_pending_target(card) or _is_card_pending_attack_target(card) or is_target_icon_candidate:
-			if is_attack_candidate or _is_card_targeted_on_stack(card) or _is_card_pending_target(card) or _is_card_pending_attack_target(card):
+		if is_stack_target or is_pending_target or is_attack_target or is_target_icon_candidate:
+			if is_attack_target:
+				_add_attack_target_aura(card_overlay)
+			elif is_stack_target or is_pending_target:
 				_add_target_aura(card_overlay)
 			if is_target_icon_candidate:
 				_add_attack_target_icon(card_overlay, card)
-			else:
+			elif is_stack_target or is_pending_target:
 				_add_stack_target_indicator(card_overlay)
 		if _is_card_intercepting_followers_attack(card) or _is_card_pending_intercepting_followers_attack(card):
 			_add_followers_attack_target_tint(card_overlay)

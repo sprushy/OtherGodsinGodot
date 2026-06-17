@@ -103,7 +103,22 @@ func _resolve_tree_of_life() -> void:
 	if current_zone == card_owner.graveyard_zone:
 		var self_zone := _find_open_board_zone(gm, null)
 		if self_zone != null:
-			card_owner.move_card(self, self_zone)
+			var self_summoned := gm.summon_creature_by_effect(
+				card_owner,
+				self,
+				self_zone,
+				Card.CreatureMode.AGGRESSIVE,
+				false,
+				false,
+				self,
+				false,
+				false,
+				false
+			)
+			if not self_summoned:
+				gm.note_player_feedback("%s could not resurrect via Tree of Life." % card_name)
+				_clear_tree_of_life_state()
+				return
 			has_acted_this_turn = false
 			is_stealth = false
 			is_face_down = false
@@ -115,7 +130,22 @@ func _resolve_tree_of_life() -> void:
 	if chosen != null and chosen.current_zone == card_owner.graveyard_zone:
 		var chosen_zone := _find_open_board_zone(gm, current_zone)
 		if chosen_zone != null:
-			card_owner.move_card(chosen, chosen_zone)
+			var chosen_summoned := gm.summon_creature_by_effect(
+				card_owner,
+				chosen,
+				chosen_zone,
+				Card.CreatureMode.AGGRESSIVE,
+				false,
+				false,
+				self,
+				false,
+				false,
+				false
+			)
+			if not chosen_summoned:
+				gm.note_player_feedback("Tree of Life: %s could not be resurrected." % chosen.card_name)
+				_clear_tree_of_life_state()
+				return
 			chosen.has_acted_this_turn = false
 			chosen.is_stealth = false
 			chosen.is_face_down = false

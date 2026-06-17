@@ -1,4 +1,12 @@
+param(
+    [int]$LifecycleMutexWaitSeconds = 0
+)
+
 $ErrorActionPreference = "Stop"
+if ($LifecycleMutexWaitSeconds -lt 0) {
+    throw "LifecycleMutexWaitSeconds must be 0 or greater."
+}
+
 $Root = "C:\OtherGodsServer"
 $PreferredExe = Join-Path $Root "OtherGodsServer.exe"
 $LegacyExe = Join-Path $Root "ClaudeOtherGodsServer.exe"
@@ -8,7 +16,6 @@ $Zip  = Join-Path $Root "OtherGodsServer-windows.zip"
 $VersionFile = Join-Path $Root "release_version.txt"
 $Log  = Join-Path $Root "updater.log"
 $LifecycleMutexName = "Global\OtherGodsServerLifecycle"
-$LifecycleMutexWaitSeconds = 90
 
 function Write-Log($m) {
     Add-Content -LiteralPath $Log -Value ("{0} {1}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $m)
@@ -108,13 +115,21 @@ $mutex = New-Object System.Threading.Mutex($false, $LifecycleMutexName)
 $acquiredMutex = $false
 try {
     try {
-        Write-Log "Update: waiting for lifecycle mutex for up to $LifecycleMutexWaitSeconds seconds."
-        $acquiredMutex = $mutex.WaitOne([TimeSpan]::FromSeconds($LifecycleMutexWaitSeconds))
+        if ($LifecycleMutexWaitSeconds -gt 0) {
+            Write-Log "Update: waiting for lifecycle mutex for up to $LifecycleMutexWaitSeconds seconds."
+            $acquiredMutex = $mutex.WaitOne([TimeSpan]::FromSeconds($LifecycleMutexWaitSeconds))
+        } else {
+            $acquiredMutex = $mutex.WaitOne(0)
+        }
     } catch [System.Threading.AbandonedMutexException] {
         $acquiredMutex = $true
     }
     if (-not $acquiredMutex) {
-        Write-Log "Update: skipped because another lifecycle action is still running after waiting $LifecycleMutexWaitSeconds seconds."
+        if ($LifecycleMutexWaitSeconds -gt 0) {
+            Write-Log "Update: skipped because another lifecycle action is still running after waiting $LifecycleMutexWaitSeconds seconds."
+        } else {
+            Write-Log "Update: skipped because another lifecycle action is already running."
+        }
         return
     }
 

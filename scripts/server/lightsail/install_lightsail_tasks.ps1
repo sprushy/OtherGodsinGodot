@@ -1,6 +1,7 @@
 param(
     [int]$UpdateIntervalMinutes = 3,
-    [int]$WatchdogIntervalMinutes = 1
+    [int]$WatchdogIntervalMinutes = 1,
+    [int]$UpdateMutexWaitSeconds = 0
 )
 
 $ErrorActionPreference = "Stop"
@@ -10,6 +11,9 @@ if ($UpdateIntervalMinutes -lt 1) {
 }
 if ($WatchdogIntervalMinutes -lt 1) {
     throw "WatchdogIntervalMinutes must be at least 1."
+}
+if ($UpdateMutexWaitSeconds -lt 0) {
+    throw "UpdateMutexWaitSeconds must be 0 or greater."
 }
 
 $Root          = "C:\OtherGodsServer"
@@ -27,7 +31,7 @@ $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -RunLevel Highest
 $settings  = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 1)
 $repetitionDuration = New-TimeSpan -Days 9999
 
-$updateAction  = New-ScheduledTaskAction -Execute $PowerShellExe -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$UpdateScript`""
+$updateAction  = New-ScheduledTaskAction -Execute $PowerShellExe -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$UpdateScript`" -LifecycleMutexWaitSeconds $UpdateMutexWaitSeconds"
 $updateTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes $UpdateIntervalMinutes) -RepetitionDuration $repetitionDuration
 Register-ScheduledTask -TaskName $UpdateTask -Action $updateAction -Trigger $updateTrigger -Principal $principal -Settings $settings -Force | Out-Null
 
@@ -40,6 +44,6 @@ $watchdogTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInte
 Register-ScheduledTask -TaskName $WatchdogTask -Action $watchdogAction -Trigger $watchdogTrigger -Principal $principal -Settings $settings -Force | Out-Null
 
 Write-Host "Registered scheduled tasks:"
-Write-Host " - $UpdateTask (every $UpdateIntervalMinutes min)"
+Write-Host " - $UpdateTask (every $UpdateIntervalMinutes min, mutex wait $UpdateMutexWaitSeconds sec)"
 Write-Host " - $StartupTask (at boot)"
 Write-Host " - $WatchdogTask (every $WatchdogIntervalMinutes min)"

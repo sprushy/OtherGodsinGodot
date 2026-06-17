@@ -41,6 +41,8 @@ Spells, Hexes, and Charms usually show Speed instead of creature stats. Their Sp
 
 Many cards also have subtype words such as Mage, Warrior, Dragon, Spirit, Aerial, Norse Creature, or Ancient Creature. These are not just flavor. Card effects often care about them.
 
+When a card effect uses division or asks for half of a value, round down unless the card specifically says otherwise.
+
 ## 4. Know The Card Types
 
 Gods start on the board in your God Slot. They are your identity for the match and often define your deck's culture and plan. Gods cannot be attacked as normal Creatures. Attacks aimed at a God damage that player's Followers.

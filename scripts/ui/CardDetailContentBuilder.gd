@@ -280,12 +280,6 @@ static func build_board_popup_body(card: Card, viewer: Player, config: Dictionar
 			if card.is_sleeping:
 				vbox.add_child(_make_label("Sleeping", 13, Color(0.7, 0.86, 1.0)))
 
-			vbox.add_child(_make_label(
-				"DEF" if card.creature_mode == Card.CreatureMode.DEFENSIVE else "AGG",
-				13,
-				Color(0.7, 0.7, 0.7)
-			))
-
 			var stats_rtl := _make_rich_text(_build_board_creature_stats_text(card), 14, Color.WHITE, 0.0)
 			var tooltip_lines := _build_board_creature_tooltips(card)
 			if tooltip_lines.size() > 0:

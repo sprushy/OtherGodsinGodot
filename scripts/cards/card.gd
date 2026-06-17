@@ -54,6 +54,84 @@ func get_display_ability_text(_game_manager: GameManager = null) -> String:
 func get_display_ability_bbcode_text(game_manager: GameManager = null) -> String:
 	return get_display_ability_text(game_manager)
 
+func get_named_ability_name(trigger_hint: String = "") -> String:
+	var ability_lines := _get_named_ability_lines()
+	if ability_lines.is_empty():
+		return ""
+	var normalized_hint := trigger_hint.strip_edges().to_lower()
+	for entry in ability_lines:
+		var qualifiers := str(entry.get("qualifiers", "")).to_lower()
+		if normalized_hint != "" and _ability_qualifiers_match_trigger_hint(qualifiers, normalized_hint):
+			return str(entry.get("name", ""))
+	if ability_lines.size() == 1:
+		return str(ability_lines[0].get("name", ""))
+	return ""
+
+func format_named_ability_log_message(message: String, trigger_hint: String = "") -> String:
+	var trimmed_message := message.strip_edges()
+	if trimmed_message == "":
+		return ""
+	var ability_name := get_named_ability_name(trigger_hint)
+	if ability_name == "":
+		return trimmed_message
+	if trimmed_message.findn(ability_name) >= 0:
+		return trimmed_message
+	return "%s: %s" % [ability_name, trimmed_message]
+
+func _get_named_ability_lines() -> Array[Dictionary]:
+	var entries: Array[Dictionary] = []
+	var seen_names: Dictionary = {}
+	var stripped_text := _strip_ability_bbcode(get_display_ability_text()).strip_edges()
+	if stripped_text == "":
+		return entries
+	for raw_line in stripped_text.split("\n", false):
+		var line := raw_line.strip_edges()
+		if line == "":
+			continue
+		var colon_index := line.find(":")
+		if colon_index < 0:
+			continue
+		var header := line.substr(0, colon_index).strip_edges()
+		if header == "":
+			continue
+		var ability_name := header
+		var qualifiers := ""
+		var paren_index := header.find("(")
+		if paren_index >= 0:
+			ability_name = header.substr(0, paren_index).strip_edges()
+			var closing_index := header.rfind(")")
+			if closing_index > paren_index:
+				qualifiers = header.substr(paren_index + 1, closing_index - paren_index - 1).strip_edges()
+		if ability_name == "" or seen_names.has(ability_name):
+			continue
+		seen_names[ability_name] = true
+		entries.append({
+			"name": ability_name,
+			"qualifiers": qualifiers,
+		})
+	return entries
+
+func _ability_qualifiers_match_trigger_hint(qualifiers: String, trigger_hint: String) -> bool:
+	if trigger_hint == "":
+		return true
+	if qualifiers.findn(trigger_hint) >= 0:
+		return true
+	if trigger_hint == "activated":
+		return qualifiers.findn("activate") >= 0 \
+			or qualifiers.findn("major action") >= 0 \
+			or qualifiers.findn("minor action") >= 0 \
+			or qualifiers.findn("spd") >= 0
+	return false
+
+func _strip_ability_bbcode(text: String) -> String:
+	var stripped := text
+	for tag in ["[b]", "[/b]", "[i]", "[/i]", "[u]", "[/u]", "[s]", "[/s]"]:
+		stripped = stripped.replace(tag, "")
+	var regex := RegEx.new()
+	if regex.compile("\\[(?:/?color(?:=[^\\]]+)?)\\]") == OK:
+		stripped = regex.sub(stripped, "", true)
+	return stripped
+
 const CARD_NAME_MOJIBAKE_FIXES := {
 	"AurboÃƒÂ°a": "Aurboða",
 	"AurboÃ°a": "Aurboða"

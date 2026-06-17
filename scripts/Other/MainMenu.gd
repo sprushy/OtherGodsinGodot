@@ -16,9 +16,14 @@ const MatchHistoryStoreScript = preload("res://scripts/server/MatchHistoryStore.
 const MatchSessionScript = preload("res://scripts/server/MatchSession.gd")
 const LobbyRoomScript = preload("res://scripts/server/LobbyRoom.gd")
 const STARTUP_SPLASH_IMAGE_PATH := "res://images/ui/splash/other_gods_splash.png"
+const STARTUP_SPLASH_FOREGROUND_IMAGE_PATH := "res://images/ui/splash/startup_foreground_field.png"
 const STARTUP_SPLASH_SLICE_COUNT := 14
 const STARTUP_SPLASH_SLIDE_SECONDS := 1.15
 const STARTUP_SPLASH_SLICE_STAGGER_SECONDS := 0.045
+const STARTUP_SPLASH_SLICE_ENTRY_Y_FRACTION := 0.75
+const STARTUP_SPLASH_GOD_LAYER_ZOOM := 0.94
+const STARTUP_SPLASH_LIGHT_STRENGTH := 0.65
+const STARTUP_SPLASH_LIGHT_RADIUS := 12.0
 const STARTUP_LOADING_FADE_SECONDS := 0.22
 const STARTUP_MUSIC_PATH := "res://audio/relaxingtime-relaxing-music-119247.mp3"
 const USER_SETTINGS_PATH := "user://settings.cfg"
@@ -227,7 +232,11 @@ var _friends_pending_send_username: String = ""
 var _close_confirm_overlay: Control = null
 var _startup_splash_background: Control = null
 var _startup_splash_texture: Texture2D = null
+var _startup_splash_foreground_texture: Texture2D = null
 var _startup_splash_slices: Array[TextureRect] = []
+var _startup_splash_light_slices: Array[TextureRect] = []
+var _startup_splash_foreground: TextureRect = null
+var _startup_splash_light_material: ShaderMaterial = null
 var _startup_loading_overlay: Control = null
 var _startup_loading_status_label: Label = null
 var _startup_loading_finished: bool = false
@@ -413,6 +422,7 @@ func _ensure_startup_splash_background() -> void:
 	fill.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	background.add_child(fill)
 	_startup_splash_slices.clear()
+	_startup_splash_light_slices.clear()
 	for slice_index in range(STARTUP_SPLASH_SLICE_COUNT):
 		var slice := TextureRect.new()
 		slice.name = "SplashSlice%d" % slice_index
@@ -422,6 +432,28 @@ func _ensure_startup_splash_background() -> void:
 		slice.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		background.add_child(slice)
 		_startup_splash_slices.append(slice)
+	_startup_splash_foreground = null
+	_startup_splash_foreground_texture = _load_texture_from_path(STARTUP_SPLASH_FOREGROUND_IMAGE_PATH)
+	if _startup_splash_foreground_texture != null:
+		var foreground := TextureRect.new()
+		foreground.name = "StartupSplashForeground"
+		foreground.texture = _startup_splash_foreground_texture
+		foreground.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+		foreground.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		foreground.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		foreground.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		background.add_child(foreground)
+		_startup_splash_foreground = foreground
+		for slice_index in range(STARTUP_SPLASH_SLICE_COUNT):
+			var light_slice := TextureRect.new()
+			light_slice.name = "SplashLightSlice%d" % slice_index
+			light_slice.texture = _make_startup_splash_slice_texture(_startup_splash_texture, slice_index)
+			light_slice.stretch_mode = TextureRect.STRETCH_SCALE
+			light_slice.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			light_slice.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			light_slice.material = _get_startup_splash_light_material()
+			background.add_child(light_slice)
+			_startup_splash_light_slices.append(light_slice)
 	add_child(background)
 	move_child(background, 0)
 	_startup_splash_background = background
@@ -442,17 +474,20 @@ func _ensure_startup_music() -> void:
 	_startup_music_player = player
 	_apply_music_mute_state()
 
-func _load_startup_splash_texture() -> Texture2D:
-	if ResourceLoader.exists(STARTUP_SPLASH_IMAGE_PATH):
-		var imported_resource := load(STARTUP_SPLASH_IMAGE_PATH)
+func _load_texture_from_path(texture_path: String) -> Texture2D:
+	if ResourceLoader.exists(texture_path):
+		var imported_resource := load(texture_path)
 		if imported_resource is Texture2D:
 			return imported_resource as Texture2D
 	var image := Image.new()
-	var error := image.load(STARTUP_SPLASH_IMAGE_PATH)
+	var error := image.load(texture_path)
 	if error != OK:
-		push_warning("Could not load startup splash image: %s" % STARTUP_SPLASH_IMAGE_PATH)
+		push_warning("Could not load texture: %s" % texture_path)
 		return null
 	return ImageTexture.create_from_image(image)
+
+func _load_startup_splash_texture() -> Texture2D:
+	return _load_texture_from_path(STARTUP_SPLASH_IMAGE_PATH)
 
 func _make_startup_splash_slice_texture(splash_texture: Texture2D, slice_index: int) -> Texture2D:
 	if splash_texture == null:
@@ -466,13 +501,51 @@ func _make_startup_splash_slice_texture(splash_texture: Texture2D, slice_index: 
 	atlas.region = Rect2(Vector2(left, 0.0), Vector2(right - left, texture_size.y))
 	return atlas
 
+func _get_startup_splash_light_material() -> ShaderMaterial:
+	if _startup_splash_light_material != null:
+		return _startup_splash_light_material
+	var shader := Shader.new()
+	shader.code = """
+shader_type canvas_item;
+render_mode blend_add;
+
+uniform float strength = 0.28;
+uniform float radius = 12.0;
+
+void fragment() {
+	vec2 step = TEXTURE_PIXEL_SIZE * radius;
+	vec4 glow = texture(TEXTURE, UV) * 0.28;
+	glow += texture(TEXTURE, UV + vec2(step.x, 0.0)) * 0.12;
+	glow += texture(TEXTURE, UV - vec2(step.x, 0.0)) * 0.12;
+	glow += texture(TEXTURE, UV + vec2(0.0, step.y)) * 0.12;
+	glow += texture(TEXTURE, UV - vec2(0.0, step.y)) * 0.12;
+	glow += texture(TEXTURE, UV + step) * 0.06;
+	glow += texture(TEXTURE, UV - step) * 0.06;
+	glow += texture(TEXTURE, UV + vec2(step.x, -step.y)) * 0.06;
+	glow += texture(TEXTURE, UV + vec2(-step.x, step.y)) * 0.06;
+	float chroma = max(glow.r, max(glow.g, glow.b)) - min(glow.r, min(glow.g, glow.b));
+	float lower_mask = smoothstep(0.42, 0.78, UV.y);
+	float alpha = glow.a * strength * lower_mask * smoothstep(0.02, 0.20, chroma);
+	COLOR = vec4(glow.rgb * alpha, alpha) * COLOR;
+}
+"""
+	var material := ShaderMaterial.new()
+	material.shader = shader
+	material.set_shader_parameter("strength", STARTUP_SPLASH_LIGHT_STRENGTH)
+	material.set_shader_parameter("radius", STARTUP_SPLASH_LIGHT_RADIUS)
+	_startup_splash_light_material = material
+	return _startup_splash_light_material
+
 func _layout_startup_splash_background(force_entry_offsets: bool = false) -> void:
 	if _startup_splash_background == null or not is_instance_valid(_startup_splash_background):
 		return
 	_startup_splash_background.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	if _startup_splash_foreground != null and is_instance_valid(_startup_splash_foreground):
+		_startup_splash_foreground.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	if _startup_splash_texture == null:
 		return
 	var draw_rect := _get_startup_splash_draw_rect(_startup_splash_texture.get_size(), size)
+	draw_rect = _zoom_startup_splash_rect(draw_rect, STARTUP_SPLASH_GOD_LAYER_ZOOM)
 	var slice_count := maxi(1, _startup_splash_slices.size())
 	var use_entry_offsets := force_entry_offsets or (_startup_splash_animation_started and not _startup_splash_animation_finished)
 	for slice_index in range(_startup_splash_slices.size()):
@@ -489,6 +562,15 @@ func _layout_startup_splash_background(force_entry_offsets: bool = false) -> voi
 			slice.position = Vector2(target_position.x, _get_startup_splash_entry_y(target_position, target_size, slice_index))
 		else:
 			slice.position = target_position
+		if slice_index < _startup_splash_light_slices.size():
+			var light_slice := _startup_splash_light_slices[slice_index]
+			if light_slice != null and is_instance_valid(light_slice):
+				light_slice.size = target_size
+				light_slice.set_meta("target_position", target_position)
+				if use_entry_offsets:
+					light_slice.position = Vector2(target_position.x, _get_startup_splash_entry_y(target_position, target_size, slice_index))
+				else:
+					light_slice.position = target_position
 
 func _get_startup_splash_draw_rect(texture_size: Vector2, available_size: Vector2) -> Rect2:
 	if texture_size.x <= 0.0 or texture_size.y <= 0.0 or available_size.x <= 0.0 or available_size.y <= 0.0:
@@ -497,10 +579,14 @@ func _get_startup_splash_draw_rect(texture_size: Vector2, available_size: Vector
 	var scaled_size := texture_size * scale
 	return Rect2((available_size - scaled_size) * 0.5, scaled_size)
 
-func _get_startup_splash_entry_y(target_position: Vector2, target_size: Vector2, slice_index: int) -> float:
-	if slice_index % 2 == 0:
-		return target_position.y - target_size.y
-	return target_position.y + target_size.y
+func _zoom_startup_splash_rect(rect: Rect2, zoom: float) -> Rect2:
+	if zoom <= 0.0 or is_equal_approx(zoom, 1.0):
+		return rect
+	var zoomed_size := rect.size * zoom
+	return Rect2(rect.position + (rect.size - zoomed_size) * 0.5, zoomed_size)
+
+func _get_startup_splash_entry_y(target_position: Vector2, target_size: Vector2, _slice_index: int) -> float:
+	return target_position.y + target_size.y * STARTUP_SPLASH_SLICE_ENTRY_Y_FRACTION
 
 func _begin_startup_splash_animation() -> void:
 	if _startup_splash_animation_started:
@@ -524,6 +610,15 @@ func _begin_startup_splash_animation() -> void:
 			target_position.y,
 			STARTUP_SPLASH_SLIDE_SECONDS
 		).set_delay(float(slice_index) * STARTUP_SPLASH_SLICE_STAGGER_SECONDS).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+		if slice_index < _startup_splash_light_slices.size():
+			var light_slice := _startup_splash_light_slices[slice_index]
+			if light_slice != null and is_instance_valid(light_slice):
+				tween.parallel().tween_property(
+					light_slice,
+					"position:y",
+					target_position.y,
+					STARTUP_SPLASH_SLIDE_SECONDS
+				).set_delay(float(slice_index) * STARTUP_SPLASH_SLICE_STAGGER_SECONDS).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 	tween.finished.connect(Callable(self, "_on_startup_splash_animation_finished"))
 
 func _on_startup_splash_animation_finished() -> void:

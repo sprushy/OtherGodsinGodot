@@ -88,7 +88,7 @@ func converts_follower_damage_to_conversion(_game_manager: GameManager = null) -
 func get_follower_damage_conversion_amount(amount: int, _game_manager: GameManager = null) -> int:
 	if amount <= 0 or not _passives_are_active():
 		return 0
-	return int(floor(float(amount) / 2.0))
+	return GameManager.round_down_divide(amount, 2)
 
 func activate(game_manager: GameManager, _target = null) -> void:
 	if not can_activate(game_manager):

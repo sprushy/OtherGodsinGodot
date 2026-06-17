@@ -4,6 +4,8 @@ class_name FreyjaActive
 const LINKED_GOD_NAME := "Freyja"
 const ART_PATH := "res://images/card_art/gods/FrejyaAndCatsAieditSquare.png"
 const DOOMED_STATUS := "freyja_active_open_sessrumnir"
+const SPIRIT_GRANT_STATUS := "freyja_active_spirit_grant"
+const OPEN_SESSRUMNIR_ABILITY_NAME := "Open Sessrumnir"
 
 func _init() -> void:
 	super._init()
@@ -18,7 +20,7 @@ func _init() -> void:
 	culture = "Norse"
 	# flavor_text = "Sessrumnir opens and the fallen march once more, but only until dawn returns."
 	flavor_text = ""
-	ability_text = "[b]Open Sessrumnir[/b] ([b]Impact[/b]): Summon a minimum of 1, up to half the Norse Warriors in your grave; they are destroyed at the start of your next turn."
+	ability_text = "[b]Open Sessrumnir[/b] ([b]Impact[/b]): Summon up to half the Norse Warriors in your grave; they gain Spirit and are destroyed at the start of your next turn."
 	art_path = ART_PATH
 	name_at_bottom = true
 	artist = "Ricardo Zoppello"
@@ -55,17 +57,23 @@ func on_turn_start(game_manager: GameManager) -> void:
 			continue
 		card.remove_status_effects_from_source_card(self, DOOMED_STATUS)
 		if card.current_zone == null or not card.current_zone.is_board_zone():
+			_cleanup_spirit_grant(card)
 			continue
 		game_manager.request_send_to_graveyard(card, Callable(), false, true)
+		if card.current_zone == null or not card.current_zone.is_board_zone():
+			_cleanup_spirit_grant(card)
 
 func on_any_card_moved(_game_manager: GameManager, moved_card: Card, from_zone: Zone, to_zone: Zone) -> void:
-	if moved_card == null or not _has_status_from_source(moved_card, DOOMED_STATUS):
+	if moved_card == null:
+		return
+	if not _has_status_from_source(moved_card, DOOMED_STATUS) and not _has_status_from_source(moved_card, SPIRIT_GRANT_STATUS):
 		return
 	if from_zone == null or not from_zone.is_board_zone():
 		return
 	if to_zone != null and to_zone.is_board_zone():
 		return
 	moved_card.remove_status_effects_from_source_card(self, DOOMED_STATUS)
+	_cleanup_spirit_grant(moved_card)
 
 func _get_valid_graveyard_targets() -> Array[Card]:
 	var valid_targets: Array[Card] = []
@@ -83,7 +91,7 @@ func get_open_sessrumnir_summon_limit(_game_manager: GameManager = null) -> int:
 	var valid_targets := _get_valid_graveyard_targets()
 	if valid_targets.is_empty():
 		return 0
-	var desired_count := maxi(1, int(floor(float(valid_targets.size()) / 2.0)))
+	var desired_count := GameManager.round_down_divide(valid_targets.size(), 2)
 	return mini(_get_open_summon_zone_count(), mini(valid_targets.size(), desired_count))
 
 func get_selected_open_sessrumnir_targets(game_manager: GameManager, target_data) -> Array[Card]:
@@ -141,7 +149,9 @@ func resolve_open_sessrumnir_choice(
 		return "%s finds no Norse Warriors to call from the graveyard." % card_name
 	var summon_limit := get_open_sessrumnir_summon_limit(game_manager)
 	if summon_limit <= 0:
-		return "%s needs open summon lanes to call the slain." % card_name
+		if _get_open_summon_zone_count() <= 0:
+			return "%s needs open summon lanes to call the slain." % card_name
+		return "%s chooses no targets for Open Sessrumnir." % card_name
 
 	var resolved_targets := chosen_targets.duplicate()
 	if resolved_targets.is_empty():
@@ -175,12 +185,13 @@ func resolve_open_sessrumnir_choice(
 		)
 		if not summoned:
 			continue
-		_mark_for_next_turn_destruction(target, game_manager)
+		_apply_open_sessrumnir_effects(target, game_manager)
 		summoned_names.append(target.card_name)
 
 	if summoned_names.is_empty():
-		return "%s could not summon any chosen Norse Warriors." % card_name
-	return "%s summons %s from the graveyard. They will be destroyed at the start of your next turn." % [
+		return "%s: %s could not summon any chosen Norse Warriors." % [OPEN_SESSRUMNIR_ABILITY_NAME, card_name]
+	return "%s: %s summons %s from the graveyard. They gain Spirit and will be destroyed at the start of your next turn." % [
+		OPEN_SESSRUMNIR_ABILITY_NAME,
 		card_name,
 		", ".join(summoned_names)
 	]
@@ -194,7 +205,7 @@ func _is_valid_target(target: Card) -> bool:
 		and target.culture == "Norse" \
 		and _get_best_summon_zone(target) != null
 
-func _mark_for_next_turn_destruction(creature: Card, game_manager: GameManager) -> void:
+func _apply_open_sessrumnir_effects(creature: Card, game_manager: GameManager) -> void:
 	if creature == null or game_manager == null:
 		return
 	creature.remove_status_effects_from_source_card(self, DOOMED_STATUS)
@@ -205,6 +216,30 @@ func _mark_for_next_turn_destruction(creature: Card, game_manager: GameManager) 
 		card_owner,
 		{"return_turn_number": game_manager.turn_number}
 	)
+	var added_spirit := false
+	if not creature.has_type("Spirit"):
+		creature.card_types.append("Spirit")
+		added_spirit = true
+	creature.remove_status_effects_from_source_card(self, SPIRIT_GRANT_STATUS)
+	creature.add_status_effect(
+		SPIRIT_GRANT_STATUS,
+		card_name,
+		self,
+		card_owner,
+		{"added_type": added_spirit}
+	)
+
+func _cleanup_spirit_grant(creature: Card) -> void:
+	if creature == null:
+		return
+	var spirit_status := _get_status_from_source(creature, SPIRIT_GRANT_STATUS)
+	if spirit_status.is_empty():
+		return
+	creature.remove_status_effects_from_source_card(self, SPIRIT_GRANT_STATUS)
+	if spirit_status.get("added_type", false):
+		creature.card_types = creature.card_types.filter(func(type_name: String) -> bool:
+			return type_name != "Spirit"
+		)
 
 func _get_due_cards(game_manager: GameManager) -> Array[Card]:
 	var due_cards: Array[Card] = []

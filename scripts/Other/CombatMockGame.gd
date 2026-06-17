@@ -79,6 +79,7 @@ const AUTO_SELECT_SPELL_PREPARE_ZONES_KEY := "auto_select_spell_prepare_zones"
 const AUTO_SELECT_HEX_PREPARE_ZONES_KEY := "auto_select_hex_prepare_zones"
 const AUTO_SELECT_CHARM_PLAY_ZONES_KEY := "auto_select_charm_play_zones"
 const AUTO_SELECT_CHARM_PREPARE_ZONES_KEY := "auto_select_charm_prepare_zones"
+const GENERIC_PREPARED_FACE_DOWN_LOG := "A card was prepared face-down."
 const USE_SPLASH_BOARD_BACKGROUND_KEY := "use_splash_board_background"
 const HOVER_SHOW_CARD_OPTIONS_KEY := "hover_show_card_options"
 const ALWAYS_SHOW_ABILITY_BADGES_KEY := "always_show_ability_badges"
@@ -203,15 +204,16 @@ var _pending_click_selection_source: Card:
 	set(val):
 		if match_manager != null:
 			match_manager.pending_click_selection_source = val
-var auto_priority: bool = false
+var auto_priority: bool = true
 var priority_stops := {
 	"start": false,
 	"main": false,
 	"combat": false,
 	"end": false,
 }
-var _priority_auto_mode: String = PRIORITY_AUTO_MODE_NONE
+var _priority_auto_mode: String = PRIORITY_AUTO_MODE_PLAY
 var _priority_auto_mode_permanent: bool = false
+var _priority_auto_mode_visual_active: bool = false
 var _priority_control_activation_turn_number: int = -1
 var _priority_control_activation_player_index: int = -1
 var _temporary_full_control: bool = false
@@ -259,7 +261,8 @@ const ACTION_LOG_TURN_BREAK_FONT_SIZE := 18
 const ACTION_LOG_TURN_BREAK_COLOR := "#d9c58a"
 const ACTION_LOG_ALERT_COLOR := "#ff6b6b"
 const ACTION_LOG_CARD_LINK_COLOR := "#e8cf83"
-const ACTION_LOG_ABILITY_LINK_COLOR := "#a9c9ff"
+const ACTION_LOG_CARD_HOVER_WIDTH := 320.0
+const ACTION_LOG_CARD_HOVER_MAX_HEIGHT := 420.0
 
 @onready var choice_container = $MainHBox/LeftPanel/ChoiceContainer
 @onready var choice_intro_label = $MainHBox/LeftPanel/ChoiceContainer/ChoiceIntroLabel
@@ -508,6 +511,7 @@ const MOVE_ARROW_WIDTH_ZONE_FRACTION := 1.08
 const HOVER_MOVE_ARROW_ALPHA := 0.68
 const HOVER_MOVE_ARROW_COST_ALPHA := 0.68
 const MOVE_ARROW_DIAGONAL_LENGTH_SCALE := 0.88
+const MOVE_INDICATOR_OVERLAY_GROUP := "combat_match_move_indicator_overlays"
 var _game_finished: bool = false
 var _game_result_presented: bool = false
 var _pending_forfeit_return_to_menu: bool = false
@@ -520,13 +524,13 @@ var _action_log_history_button: Button = null
 var _action_log_messages: Array[String] = []
 var _last_logged_action_text: String = ""
 var _action_label_log_suppressed: bool = false
+var _suppress_next_generic_prepare_log: bool = false
 var _last_network_action_log_event_id: int = -1
 var _action_log_popup: PanelContainer = null
 var _action_log_popup_view: RichTextLabel = null
-var _action_log_card_hints: Dictionary = {}
-var _action_log_ability_hints: Dictionary = {}
+var _action_log_hover_cards: Dictionary = {}
 var _action_log_hover_index_ready: bool = false
-var _action_log_bbcode_tag_regex: RegEx = null
+var _action_log_card_hover_popup: PanelContainer = null
 var _center_action_panel: VBoxContainer = null
 var _board_separator_line: ColorRect = null
 var _priority_controls_panel: PanelContainer = null
@@ -2371,6 +2375,7 @@ func _ready() -> void:
 
 func _exit_tree() -> void:
 	_hide_devour_cancel_prompt()
+	_clear_match_move_indicators()
 	_restore_default_selection_cursor()
 
 func _is_sacrifice_cursor_mode_active() -> bool:
@@ -3722,9 +3727,9 @@ func _setup_priority_controls() -> void:
 	_auto_priority_button = Button.new()
 	_auto_priority_button.name = "PlayPriorityButton"
 	_auto_priority_button.text = ">"
-	_auto_priority_button.tooltip_text = "Pass priority automatically except when you have combat-stack options or when a card targeted for destruction can respond. Shift-click to keep this on across turns."
+	_auto_priority_button.tooltip_text = "Pass priority automatically except for combat-stack options, destructive responses, or when a card targeted for destruction can respond. Shift-click to keep this on across turns."
 	_auto_priority_button.toggle_mode = true
-	_auto_priority_button.button_pressed = _priority_auto_mode == PRIORITY_AUTO_MODE_PLAY
+	_auto_priority_button.button_pressed = _priority_auto_mode == PRIORITY_AUTO_MODE_PLAY and _priority_auto_mode_visual_active
 	_auto_priority_button.custom_minimum_size = PRIORITY_CONTROL_BUTTON_SIZE
 	_style_priority_toggle(_auto_priority_button, Color(1.0, 0.82, 0.18))
 	_auto_priority_button.pressed.connect(_on_priority_play_button_pressed)
@@ -3735,7 +3740,7 @@ func _setup_priority_controls() -> void:
 	_fast_forward_priority_button.text = ">>"
 	_fast_forward_priority_button.tooltip_text = "Pass priority automatically on every priority window. Shift-click to keep this on across turns."
 	_fast_forward_priority_button.toggle_mode = true
-	_fast_forward_priority_button.button_pressed = _priority_auto_mode == PRIORITY_AUTO_MODE_FAST_FORWARD
+	_fast_forward_priority_button.button_pressed = _priority_auto_mode == PRIORITY_AUTO_MODE_FAST_FORWARD and _priority_auto_mode_visual_active
 	_fast_forward_priority_button.custom_minimum_size = PRIORITY_CONTROL_BUTTON_SIZE
 	_style_priority_toggle(_fast_forward_priority_button, Color(0.92, 0.18, 0.16))
 	_fast_forward_priority_button.pressed.connect(_on_priority_fast_forward_button_pressed)
@@ -4406,6 +4411,7 @@ func _setup_action_log() -> void:
 	log_text.add_theme_constant_override("line_separation", ACTION_LOG_LINE_SEPARATION)
 	log_text.selection_enabled = true
 	log_text.mouse_filter = Control.MOUSE_FILTER_STOP
+	_bind_action_log_hover_signals(log_text)
 
 	log_box.add_child(log_text)
 	var log_shell := MarginContainer.new()
@@ -4539,6 +4545,8 @@ func _capture_action_log_message(force: bool = false) -> void:
 	var message = action_label.text.strip_edges()
 	if message == "":
 		return
+	if _should_suppress_action_log_echo(message, force):
+		return
 	if not force and message == _last_logged_action_text:
 		return
 	_last_logged_action_text = message
@@ -4546,6 +4554,129 @@ func _capture_action_log_message(force: bool = false) -> void:
 	if _action_log_messages.size() > ACTION_LOG_MAX_MESSAGES:
 		_action_log_messages.pop_front()
 	_refresh_action_log()
+
+func _should_suppress_action_log_echo(message: String, force: bool = false) -> bool:
+	if force:
+		_suppress_next_generic_prepare_log = false
+		return false
+	if _action_log_messages.is_empty():
+		_suppress_next_generic_prepare_log = false
+		return false
+	var previous_message = _action_log_messages.back()
+	if _should_suppress_generic_prepare_log(message, previous_message):
+		return true
+	var normalized_message := _normalize_action_log_echo_text(message)
+	var normalized_previous := _normalize_action_log_echo_text(previous_message)
+	if normalized_message != "" and normalized_message == normalized_previous:
+		_suppress_next_generic_prepare_log = false
+		return true
+	var current_intent := _get_action_log_echo_intent(message)
+	var previous_intent := _get_action_log_echo_intent(previous_message)
+	if current_intent == "" or previous_intent == "":
+		_suppress_next_generic_prepare_log = false
+		return false
+	if not _are_equivalent_action_log_echo_intents(previous_intent, current_intent):
+		_suppress_next_generic_prepare_log = false
+		return false
+	var current_primary_card := _get_action_log_primary_card_name(message)
+	var previous_primary_card := _get_action_log_primary_card_name(previous_message)
+	if current_primary_card == "" or previous_primary_card == "":
+		_suppress_next_generic_prepare_log = false
+		return false
+	_suppress_next_generic_prepare_log = false
+	return current_primary_card == previous_primary_card
+
+func _should_suppress_generic_prepare_log(message: String, previous_message: String) -> bool:
+	if message != GENERIC_PREPARED_FACE_DOWN_LOG:
+		_suppress_next_generic_prepare_log = false
+		return false
+	if not _suppress_next_generic_prepare_log:
+		return false
+	_suppress_next_generic_prepare_log = false
+	if _action_log_messages.is_empty():
+		return false
+	return _is_specific_prepare_log_message(previous_message)
+
+func _is_specific_prepare_log_message(message: String) -> bool:
+	var stripped_message := message.strip_edges()
+	return stripped_message.begins_with("Prepared ") and stripped_message.ends_with(" (face-down)!")
+
+func _normalize_action_log_echo_text(message: String) -> String:
+	var normalized := message.strip_edges().to_lower()
+	for token in ["[", "]", "!", ".", ",", ":", ";", "?", "(", ")", "'", "\""]:
+		normalized = normalized.replace(token, "")
+	normalized = normalized.replace("...", "")
+	normalized = normalized.replace("  ", " ")
+	while normalized.contains("  "):
+		normalized = normalized.replace("  ", " ")
+	return normalized.strip_edges()
+
+func _get_action_log_echo_intent(message: String) -> String:
+	var normalized := _normalize_action_log_echo_text(message)
+	if normalized == "":
+		return ""
+	if message == GENERIC_PREPARED_FACE_DOWN_LOG or _is_specific_prepare_log_message(message):
+		return "prepare"
+	if normalized.contains("goes on the stack") \
+			or normalized.contains(" is targeting ") \
+			or normalized.ends_with(" responds") \
+			or normalized.ends_with(" activated"):
+		return "stack"
+	if normalized.contains(" attacking ") \
+			or (normalized.contains(" attacks ") and not normalized.contains(" for ")):
+		return "attack"
+	if normalized.begins_with("summoned ") \
+			or normalized.contains(" was summoned") \
+			or normalized.contains(" creature was summoned") \
+			or (normalized.begins_with("played ") and normalized.contains(" stance")):
+		return "summon"
+	if normalized.begins_with("played ") \
+			or normalized.contains(" equipped to ") \
+			or normalized.contains(" was played from hand"):
+		return "play"
+	if normalized.contains(" moved"):
+		return "move"
+	if normalized.contains("changed stance") \
+			or (normalized.contains("switched to ") and normalized.contains(" stance")):
+		return "stance"
+	return ""
+
+func _are_equivalent_action_log_echo_intents(previous_intent: String, current_intent: String) -> bool:
+	if previous_intent == current_intent:
+		return true
+	if previous_intent in ["play", "summon"] and current_intent in ["play", "summon"]:
+		return true
+	return false
+
+func _get_action_log_primary_card_name(message: String) -> String:
+	_ensure_action_log_hover_index()
+	_register_action_log_runtime_cards()
+	var best_name := ""
+	var best_index := -1
+	for raw_name in _action_log_hover_cards.keys():
+		var card_name := str(raw_name)
+		var found_at := _find_action_log_term(message, card_name)
+		if found_at < 0:
+			continue
+		if best_index < 0 \
+				or found_at < best_index \
+				or (found_at == best_index and card_name.length() > best_name.length()):
+			best_name = card_name
+			best_index = found_at
+	return best_name
+
+func _find_action_log_term(message: String, term: String) -> int:
+	if term == "":
+		return -1
+	var search_from := 0
+	while search_from < message.length():
+		var found_at := message.find(term, search_from)
+		if found_at < 0:
+			return -1
+		if _is_action_log_term_boundary(message, found_at, term.length()):
+			return found_at
+		search_from = found_at + term.length()
+	return -1
 
 func _refresh_action_log() -> void:
 	if _action_log_view == null or not is_instance_valid(_action_log_view):
@@ -4648,6 +4779,7 @@ func _open_action_log_popup() -> void:
 	history_view.custom_minimum_size = Vector2(ACTION_LOG_POPUP_WIDTH - 24.0, ACTION_LOG_POPUP_HEIGHT - 60.0)
 	history_view.add_theme_font_size_override("normal_font_size", ACTION_LOG_FONT_SIZE)
 	history_view.add_theme_constant_override("line_separation", ACTION_LOG_LINE_SEPARATION)
+	_bind_action_log_hover_signals(history_view)
 	vbox.add_child(history_view)
 
 	add_child(panel)
@@ -4738,13 +4870,9 @@ func _is_alert_action_log_message(message: String) -> bool:
 
 func _decorate_action_log_hover_terms(message: String) -> String:
 	var candidate_terms: Array[String] = []
-	for raw_term in _action_log_card_hints.keys():
+	for raw_term in _action_log_hover_cards.keys():
 		var term := str(raw_term)
 		if _action_log_message_contains_term(message, term):
-			candidate_terms.append(term)
-	for raw_term in _action_log_ability_hints.keys():
-		var term := str(raw_term)
-		if term not in _action_log_card_hints and _action_log_message_contains_term(message, term):
 			candidate_terms.append(term)
 	if candidate_terms.is_empty():
 		return _escape_action_log_bbcode(message)
@@ -4765,11 +4893,9 @@ func _decorate_action_log_hover_terms(message: String) -> String:
 			output += _escape_action_log_bbcode(message.substr(cursor, 1))
 			cursor += 1
 			continue
-		var hint_text := _get_action_log_term_hint(matched_term, message)
-		var link_color := ACTION_LOG_CARD_LINK_COLOR if matched_term in _action_log_card_hints else ACTION_LOG_ABILITY_LINK_COLOR
-		output += "[hint=\"%s\"][color=%s][u]%s[/u][/color][/hint]" % [
-			_escape_action_log_hint_text(hint_text),
-			link_color,
+		output += "[url=card:%s][color=%s][u]%s[/u][/color][/url]" % [
+			CardCatalog.to_lookup_key(matched_term),
+			ACTION_LOG_CARD_LINK_COLOR,
 			_escape_action_log_bbcode(matched_term)
 		]
 		cursor += matched_term.length()
@@ -4779,9 +4905,6 @@ func _ensure_action_log_hover_index() -> void:
 	if _action_log_hover_index_ready:
 		return
 	_action_log_hover_index_ready = true
-	for keyword_value in BaseCard.KEYWORD_HINTS.keys():
-		var keyword := str(keyword_value)
-		_register_action_log_ability_hint(keyword, "", str(BaseCard.KEYWORD_HINTS[keyword_value]))
 	for card in CardCatalog.make_all_cards():
 		_register_action_log_hover_card(card)
 
@@ -4808,99 +4931,19 @@ func _register_action_log_runtime_cards() -> void:
 			for card_value in zone.cards:
 				var card := card_value as Card
 				if card != null:
-					_register_action_log_hover_card(card)
+					_register_action_log_hover_card(card, true)
 		if player.reserved_active_god != null:
-			_register_action_log_hover_card(player.reserved_active_god)
+			_register_action_log_hover_card(player.reserved_active_god, true)
 
-func _register_action_log_hover_card(card: Card) -> void:
+func _register_action_log_hover_card(card: Card, replace_existing: bool = false) -> void:
 	if card == null:
 		return
 	var card_name := str(card.card_name).strip_edges()
 	if card_name == "" or card_name == "Hidden Card":
 		return
-	if _action_log_card_hints.has(card_name):
+	if _action_log_hover_cards.has(card_name) and not replace_existing:
 		return
-	var display_manager := game_manager if card.card_owner != null else null
-	var ability_text := _strip_action_log_bbcode(card.get_display_ability_text(display_manager))
-	_action_log_card_hints[card_name] = _build_action_log_card_hint(card, ability_text)
-	for raw_line in ability_text.split("\n", false):
-		var ability_line := str(raw_line).strip_edges()
-		if ability_line == "":
-			continue
-		var ability_name := _extract_action_log_ability_name(ability_line)
-		if ability_name != "" and not BaseCard.KEYWORD_HINTS.has(ability_name):
-			_register_action_log_ability_hint(
-				ability_name,
-				card_name,
-				"%s\n%s" % [card_name, ability_line]
-			)
-
-func _build_action_log_card_hint(card: Card, ability_text: String) -> String:
-	var lines: Array[String] = [str(card.card_name)]
-	var type_label: String = str(Card.CardType.keys()[card.card_type]).capitalize()
-	if not card.card_types.is_empty():
-		type_label += " | " + " | ".join(card.card_types)
-	lines.append(type_label)
-	var details: Array[String] = []
-	if not card.is_god and card.get_effective_level() > 0:
-		details.append("Level %d" % card.get_effective_level())
-	if card.mana_cost > 0:
-		details.append("Mana %d" % card.mana_cost)
-	if card.culture != "":
-		details.append(card.culture)
-	if not details.is_empty():
-		lines.append(" | ".join(details))
-	match card.card_type:
-		Card.CardType.CREATURE:
-			lines.append("STR %d | RES %d | SPD %d" % [
-				card.get_effective_strength(),
-				card.get_effective_resilience(),
-				card.get_effective_speed(),
-			])
-		Card.CardType.STRUCTURE:
-			lines.append("RES %d" % card.get_effective_resilience())
-		Card.CardType.SPELL, Card.CardType.HEX, Card.CardType.CHARM:
-			lines.append("Speed %d" % card.get_effective_speed())
-	if ability_text != "":
-		lines.append(ability_text)
-	return "\n".join(lines)
-
-func _extract_action_log_ability_name(ability_line: String) -> String:
-	var marker_index := ability_line.find(" (")
-	var colon_index := ability_line.find(":")
-	if marker_index < 0 or (colon_index >= 0 and colon_index < marker_index):
-		marker_index = colon_index
-	var candidate := ability_line.substr(0, marker_index).strip_edges() if marker_index >= 0 else ability_line.strip_edges()
-	if candidate == "" or candidate.length() > 48:
-		return ""
-	if candidate.contains(".") or candidate.contains(","):
-		return ""
-	return candidate
-
-func _register_action_log_ability_hint(ability_name: String, card_name: String, hint_text: String) -> void:
-	var clean_name := ability_name.strip_edges()
-	if clean_name == "" or hint_text.strip_edges() == "":
-		return
-	var hints_by_card: Dictionary = _action_log_ability_hints.get(clean_name, {})
-	hints_by_card[card_name] = hint_text.strip_edges()
-	_action_log_ability_hints[clean_name] = hints_by_card
-
-func _get_action_log_term_hint(term: String, message: String) -> String:
-	if term in _action_log_card_hints:
-		return str(_action_log_card_hints[term])
-	var hints_by_card: Dictionary = _action_log_ability_hints.get(term, {})
-	for raw_card_name in hints_by_card.keys():
-		var card_name := str(raw_card_name)
-		if card_name != "" and _action_log_message_contains_term(message, card_name):
-			return str(hints_by_card[raw_card_name])
-	if hints_by_card.has(""):
-		return str(hints_by_card[""])
-	var combined_hints: Array[String] = []
-	for hint_value in hints_by_card.values():
-		var hint := str(hint_value)
-		if hint not in combined_hints:
-			combined_hints.append(hint)
-	return "\n\n".join(combined_hints)
+	_action_log_hover_cards[card_name] = card
 
 func _action_log_message_contains_term(message: String, term: String) -> bool:
 	var search_from := 0
@@ -4927,20 +4970,107 @@ func _is_action_log_word_character(character: String) -> bool:
 		or (codepoint >= 65 and codepoint <= 90) \
 		or (codepoint >= 97 and codepoint <= 122)
 
-func _strip_action_log_bbcode(text: String) -> String:
-	if _action_log_bbcode_tag_regex == null:
-		_action_log_bbcode_tag_regex = RegEx.new()
-		_action_log_bbcode_tag_regex.compile("\\[[^\\]]+\\]")
-	return _action_log_bbcode_tag_regex.sub(text, "", true)
-
 func _is_turn_announcement_log_message(message: String) -> bool:
 	return message.begins_with("Turn ") and message.contains("—") and message.ends_with("'s turn.")
 
 func _escape_action_log_bbcode(message: String) -> String:
 	return message.replace("[", "[lb]").replace("]", "[rb]")
 
-func _escape_action_log_hint_text(text: String) -> String:
-	return text.replace("\"", "'").replace("[", "(").replace("]", ")")
+func _bind_action_log_hover_signals(log_view: RichTextLabel) -> void:
+	if log_view == null:
+		return
+	var hover_started := Callable(self, "_on_action_log_meta_hover_started").bind(log_view)
+	if not log_view.meta_hover_started.is_connected(hover_started):
+		log_view.meta_hover_started.connect(hover_started)
+	var hover_ended := Callable(self, "_on_action_log_meta_hover_ended").bind(log_view)
+	if not log_view.meta_hover_ended.is_connected(hover_ended):
+		log_view.meta_hover_ended.connect(hover_ended)
+
+func _on_action_log_meta_hover_started(meta, source_view: RichTextLabel) -> void:
+	if source_view == null or not is_instance_valid(source_view):
+		return
+	var card := _get_action_log_hover_card_for_meta(meta)
+	if card == null:
+		return
+	_show_action_log_card_hover(card)
+
+func _on_action_log_meta_hover_ended(_meta, _source_view: RichTextLabel) -> void:
+	_hide_action_log_card_hover_popup()
+
+func _get_action_log_hover_card_for_meta(meta) -> Card:
+	var meta_text := str(meta)
+	if not meta_text.begins_with("card:"):
+		return null
+	var lookup_key := meta_text.substr("card:".length())
+	if lookup_key == "":
+		return null
+	_ensure_action_log_hover_index()
+	_register_action_log_runtime_cards()
+	for raw_name in _action_log_hover_cards.keys():
+		if CardCatalog.to_lookup_key(str(raw_name)) == lookup_key:
+			return _action_log_hover_cards[raw_name] as Card
+	return CardCatalog.instantiate_card_by_name(lookup_key)
+
+func _show_action_log_card_hover(card: Card) -> void:
+	_hide_action_log_card_hover_popup()
+	if card == null or not is_inside_tree():
+		return
+	var panel := PanelContainer.new()
+	panel.name = "ActionLogCardHover"
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.05, 0.05, 0.12, 0.97)
+	style.border_color = Color(0.5, 0.7, 1.0)
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		style.set_border_width(side, 2)
+	style.corner_radius_top_left = 6
+	style.corner_radius_top_right = 6
+	style.corner_radius_bottom_left = 6
+	style.corner_radius_bottom_right = 6
+	style.content_margin_left = 10
+	style.content_margin_right = 10
+	style.content_margin_top = 8
+	style.content_margin_bottom = 8
+	panel.add_theme_stylebox_override("panel", style)
+
+	var hover_viewer := game_manager.get_feedback_viewer() if game_manager != null else null
+	var hover_body := CardDetailContentBuilderScript.build_visual_hover_body(
+		card,
+		hover_viewer,
+		{
+			"content_width": ACTION_LOG_CARD_HOVER_WIDTH - 20.0,
+			"game_manager": game_manager
+		}
+	)
+	panel.add_child(hover_body)
+	add_child(panel)
+	_promote_transient_ui(panel, HOVER_PREVIEW_Z_INDEX)
+	if hover_body is ScrollContainer:
+		var hover_scroll := hover_body as ScrollContainer
+		CardDetailContentBuilderScript.apply_deckbuilder_scrollbar_style(hover_scroll, true)
+	var vp_size := get_viewport_rect().size
+	panel.size = Vector2(ACTION_LOG_CARD_HOVER_WIDTH, minf(ACTION_LOG_CARD_HOVER_MAX_HEIGHT, vp_size.y - 8.0))
+	_action_log_card_hover_popup = panel
+	call_deferred("_position_action_log_card_hover_popup", panel)
+
+func _position_action_log_card_hover_popup(panel: Control) -> void:
+	if panel == null or not is_instance_valid(panel):
+		return
+	var vp_size := get_viewport_rect().size
+	var panel_size := panel.size
+	var mouse_pos := get_viewport().get_mouse_position()
+	var px := mouse_pos.x + 14.0
+	if px + panel_size.x > vp_size.x:
+		px = mouse_pos.x - panel_size.x - 14.0
+	var py := mouse_pos.y - 12.0
+	px = clampf(px, 4.0, maxf(4.0, vp_size.x - panel_size.x - 4.0))
+	py = clampf(py, 4.0, maxf(4.0, vp_size.y - panel_size.y - 4.0))
+	panel.global_position = Vector2(px, py)
+
+func _hide_action_log_card_hover_popup() -> void:
+	if _action_log_card_hover_popup != null and is_instance_valid(_action_log_card_hover_popup):
+		_action_log_card_hover_popup.queue_free()
+	_action_log_card_hover_popup = null
 
 func _should_keep_action_log_scrolled_to_bottom(log_view: RichTextLabel) -> bool:
 	if log_view == null or not is_instance_valid(log_view):
@@ -4961,6 +5091,7 @@ func _scroll_action_log_popup_to_bottom() -> void:
 		_action_log_popup_view.scroll_to_line(maxi(0, _action_log_popup_view.get_line_count() - 1))
 
 func _close_action_log_popup() -> void:
+	_hide_action_log_card_hover_popup()
 	if _action_log_popup != null and is_instance_valid(_action_log_popup):
 		_action_log_popup.queue_free()
 	_action_log_popup = null
@@ -5101,6 +5232,7 @@ func _build_initial_match_players(default_match_setup, server_match_session = nu
 
 func _prepare_for_match_launch(status_message: String = "Connecting to match...") -> void:
 	_set_match_reconnect_wait(false)
+	_clear_match_move_indicators()
 	_awaiting_initial_full_state = false
 	_game_finished = false
 	_game_result_presented = false
@@ -5109,9 +5241,10 @@ func _prepare_for_match_launch(status_message: String = "Connecting to match..."
 	_temporary_full_control = false
 	_constant_full_control = false
 	_full_control_chord_latched = false
-	auto_priority = false
-	_priority_auto_mode = PRIORITY_AUTO_MODE_NONE
+	auto_priority = true
+	_priority_auto_mode = PRIORITY_AUTO_MODE_PLAY
 	_priority_auto_mode_permanent = false
+	_priority_auto_mode_visual_active = false
 	_hermes_offer_priority = true
 	_priority_offer_by_card_uid.clear()
 	if _hermes_priority_toggle_button != null and is_instance_valid(_hermes_priority_toggle_button):
@@ -5640,17 +5773,21 @@ func _is_shift_modifier_pressed() -> bool:
 	return Input.is_key_pressed(KEY_SHIFT)
 
 func _on_priority_play_button_pressed() -> void:
-	var turn_on := _priority_auto_mode != PRIORITY_AUTO_MODE_PLAY
+	var turn_on := _priority_auto_mode != PRIORITY_AUTO_MODE_PLAY or not _priority_auto_mode_visual_active
 	_set_priority_auto_mode(
-		PRIORITY_AUTO_MODE_PLAY if turn_on else PRIORITY_AUTO_MODE_NONE,
-		turn_on and _is_shift_modifier_pressed()
+		PRIORITY_AUTO_MODE_PLAY,
+		turn_on and _is_shift_modifier_pressed(),
+		false,
+		turn_on
 	)
 
 func _on_priority_fast_forward_button_pressed() -> void:
-	var turn_on := _priority_auto_mode != PRIORITY_AUTO_MODE_FAST_FORWARD
+	var turn_on := _priority_auto_mode != PRIORITY_AUTO_MODE_FAST_FORWARD or not _priority_auto_mode_visual_active
 	_set_priority_auto_mode(
-		PRIORITY_AUTO_MODE_FAST_FORWARD if turn_on else PRIORITY_AUTO_MODE_NONE,
-		turn_on and _is_shift_modifier_pressed()
+		PRIORITY_AUTO_MODE_FAST_FORWARD if turn_on else PRIORITY_AUTO_MODE_PLAY,
+		turn_on and _is_shift_modifier_pressed(),
+		false,
+		turn_on
 	)
 
 func _on_priority_pause_button_pressed() -> void:
@@ -5675,21 +5812,20 @@ func _on_priority_pause_button_pressed() -> void:
 		_pending_priority_auto_pass_signature.clear()
 		call_deferred("_on_priority_pass_pressed")
 
-func _set_priority_auto_mode(mode: String, permanent: bool = false, force_sync: bool = false) -> void:
+func _set_priority_auto_mode(mode: String, permanent: bool = false, force_sync: bool = false, visual_active: bool = true) -> void:
 	if mode not in [PRIORITY_AUTO_MODE_PLAY, PRIORITY_AUTO_MODE_FAST_FORWARD]:
-		mode = PRIORITY_AUTO_MODE_NONE
+		mode = PRIORITY_AUTO_MODE_PLAY
+		visual_active = false
 	_temporary_full_control = false
-	if mode != PRIORITY_AUTO_MODE_NONE:
-		_constant_full_control = false
+	_constant_full_control = false
 	_priority_auto_mode = mode
-	_priority_auto_mode_permanent = permanent and mode != PRIORITY_AUTO_MODE_NONE
-	auto_priority = mode != PRIORITY_AUTO_MODE_NONE
-	if auto_priority and not _priority_auto_mode_permanent:
+	_priority_auto_mode_visual_active = visual_active or permanent
+	_priority_auto_mode_permanent = permanent and _priority_auto_mode_visual_active
+	auto_priority = true
+	if _priority_auto_mode_visual_active and not _priority_auto_mode_permanent:
 		_capture_priority_control_activation_context()
 	else:
 		_clear_priority_control_activation_context()
-	if not auto_priority:
-		_pending_priority_auto_pass_signature.clear()
 	_priority_prompt_idle_deadline_msec = 0
 	_priority_prompt_timeout_pending = false
 	_refresh_priority_controls_ui()
@@ -5713,10 +5849,12 @@ func _reset_transient_priority_auto_mode_for_turn_end() -> void:
 	if _temporary_full_control:
 		_temporary_full_control = false
 		changed = true
-	if not _priority_auto_mode_permanent and _priority_auto_mode != PRIORITY_AUTO_MODE_NONE:
-		_priority_auto_mode = PRIORITY_AUTO_MODE_NONE
+	if not _priority_auto_mode_permanent \
+			and (_priority_auto_mode != PRIORITY_AUTO_MODE_PLAY or _priority_auto_mode_visual_active):
+		_priority_auto_mode = PRIORITY_AUTO_MODE_PLAY
 		_priority_auto_mode_permanent = false
-		auto_priority = false
+		_priority_auto_mode_visual_active = false
+		auto_priority = true
 		_pending_priority_auto_pass_signature.clear()
 		_priority_prompt_idle_deadline_msec = 0
 		_priority_prompt_timeout_pending = false
@@ -5741,7 +5879,8 @@ func _clear_priority_control_activation_context() -> void:
 func _sync_priority_control_turn_boundary() -> void:
 	if game_manager == null:
 		return
-	var has_transient_auto := _priority_auto_mode != PRIORITY_AUTO_MODE_NONE and not _priority_auto_mode_permanent
+	var has_transient_auto := not _priority_auto_mode_permanent \
+		and (_priority_auto_mode != PRIORITY_AUTO_MODE_PLAY or _priority_auto_mode_visual_active)
 	var has_transient_pause := _temporary_full_control
 	if not has_transient_auto and not has_transient_pause:
 		return
@@ -5822,6 +5961,30 @@ func _action_targets_card_for_destruction(action: CardAction) -> bool:
 		return true
 	return false
 
+func _card_indicates_destruction(card: Card) -> bool:
+	if card == null:
+		return false
+	if card.has_type("Destruction") or card.has_type("Magic Destruction"):
+		return true
+	for type_name in card.card_types:
+		if str(type_name).findn("destruction") >= 0:
+			return true
+	return str(card.ability_text).findn("destroy") >= 0
+
+func _local_player_has_destructive_priority_response(action: CardAction) -> bool:
+	if action == null or game_manager == null:
+		return false
+	var local_priority_index := _get_local_priority_player_index()
+	if local_priority_index < 0 or local_priority_index >= game_manager.players.size():
+		return false
+	var local_player := game_manager.players[local_priority_index]
+	var responses := match_manager.get_priority_prompt_offering_responses(local_player) if match_manager != null else game_manager.get_priority_responses(local_player)
+	for response in responses:
+		var response_card := response as Card
+		if _card_indicates_destruction(response_card):
+			return true
+	return false
+
 func _play_mode_should_hold_priority_for_action(action: CardAction) -> bool:
 	if action == null:
 		return false
@@ -5835,6 +5998,8 @@ func _play_mode_should_hold_priority_for_action(action: CardAction) -> bool:
 		if match_manager != null:
 			return match_manager._player_has_priority_prompt_responses(local_player)
 		return not game_manager.get_priority_responses(local_player).is_empty()
+	if _local_player_has_destructive_priority_response(action):
+		return true
 	if not _action_targets_card_for_destruction(action):
 		return false
 	var target_card := _get_action_target_card(action)
@@ -5931,11 +6096,11 @@ func _sync_priority_preferences_to_match(force: bool = false) -> void:
 func _refresh_priority_controls_ui() -> void:
 	if _auto_priority_button != null and is_instance_valid(_auto_priority_button):
 		_auto_priority_button.text = ">*" if _priority_auto_mode == PRIORITY_AUTO_MODE_PLAY and _priority_auto_mode_permanent else ">"
-		_auto_priority_button.set_pressed_no_signal(_priority_auto_mode == PRIORITY_AUTO_MODE_PLAY)
+		_auto_priority_button.set_pressed_no_signal(_priority_auto_mode == PRIORITY_AUTO_MODE_PLAY and _priority_auto_mode_visual_active)
 		_auto_priority_button.modulate = Color(1, 1, 1, 1)
 	if _fast_forward_priority_button != null and is_instance_valid(_fast_forward_priority_button):
 		_fast_forward_priority_button.text = ">>*" if _priority_auto_mode == PRIORITY_AUTO_MODE_FAST_FORWARD and _priority_auto_mode_permanent else ">>"
-		_fast_forward_priority_button.set_pressed_no_signal(_priority_auto_mode == PRIORITY_AUTO_MODE_FAST_FORWARD)
+		_fast_forward_priority_button.set_pressed_no_signal(_priority_auto_mode == PRIORITY_AUTO_MODE_FAST_FORWARD and _priority_auto_mode_visual_active)
 		_fast_forward_priority_button.modulate = Color(1, 1, 1, 1)
 	for stop_key in _priority_stop_buttons:
 		var stop_button := _priority_stop_buttons.get(stop_key) as Button
@@ -6366,7 +6531,27 @@ func _is_card_waiting_on_priority(card: Card) -> bool:
 func _is_card_usable_for_priority(card: Card) -> bool:
 	if card == null or game_manager == null:
 		return false
+	if should_suppress_priority_response_visuals():
+		return false
 	return game_manager.can_card_respond_to_priority(card, game_manager.priority_player)
+
+func should_suppress_priority_response_visuals() -> bool:
+	if game_manager == null or game_manager.action_stack.is_empty() or game_manager.priority_player == null:
+		return false
+	if _is_priority_prompt_visible() or _is_intercept_prompt_visible():
+		return false
+	if not _pending_priority_auto_pass_signature.is_empty():
+		return true
+	var priority_player := game_manager.priority_player
+	var priority_index := game_manager.players.find(priority_player)
+	if priority_index != _get_local_priority_player_index():
+		return false
+	if not auto_priority or _is_full_control_active():
+		return false
+	var top_action: CardAction = game_manager.action_stack.back()
+	if match_manager != null and match_manager.player_requires_priority_window(top_action, priority_player):
+		return false
+	return not _should_hold_priority_for_action(top_action)
 
 func _get_visible_hand_player() -> Player:
 	return _get_display_player()
@@ -12221,6 +12406,7 @@ func _select_hand_card(card: Card) -> void:
 
 func _finalize_prepare_submission(success_text: String, zone: Zone) -> void:
 	_set_action_label_text(success_text)
+	_suppress_next_generic_prepare_log = true
 	selected_card = null
 	placement_mode = ""
 	if placement_container != null:
@@ -19281,14 +19467,26 @@ func _get_board_zone_ui_for_zone(zone: Zone) -> BoardZoneUI:
 
 func _clear_move_indicator_path_overlays() -> void:
 	for overlay in _move_indicator_path_overlays:
-		if overlay != null and is_instance_valid(overlay):
-			overlay.queue_free()
+		_queue_free_move_indicator_overlay(overlay)
 	_move_indicator_path_overlays.clear()
+	var tree := get_tree()
+	if tree != null:
+		for overlay in tree.get_nodes_in_group(MOVE_INDICATOR_OVERLAY_GROUP):
+			_queue_free_move_indicator_overlay(overlay)
+
+func _queue_free_move_indicator_overlay(overlay: Node) -> void:
+	if overlay != null and is_instance_valid(overlay) and not overlay.is_queued_for_deletion():
+		overlay.queue_free()
 
 func _clear_zone_move_indicators() -> void:
 	for zu in _board_zone_uis:
 		if zu != null and is_instance_valid(zu):
 			zu.clear_move_indicator()
+
+func _clear_match_move_indicators() -> void:
+	_indicated_move_card = null
+	_clear_move_indicator_path_overlays()
+	_clear_zone_move_indicators()
 
 func _add_move_indicator_path_overlay(source_zone_ui: BoardZoneUI, target_zone_ui: BoardZoneUI, preview_only: bool = false) -> void:
 	if source_zone_ui == null or target_zone_ui == null:
@@ -19347,6 +19545,7 @@ func _add_move_indicator_path_overlay(source_zone_ui: BoardZoneUI, target_zone_u
 	indicator.global_position = visual_midpoint - indicator_size * 0.5
 	indicator.rotation = base_direction.angle_to(normalized_direction)
 	indicator.modulate = Color(1.0, 1.0, 1.0, HOVER_MOVE_ARROW_ALPHA if preview_only else 0.98)
+	indicator.add_to_group(MOVE_INDICATOR_OVERLAY_GROUP)
 	floating_parent.add_child(indicator)
 	_move_indicator_path_overlays.append(indicator)
 	_add_move_indicator_action_cost_marker(
@@ -19446,6 +19645,7 @@ func _add_move_indicator_action_cost_marker(parent: Node, center: Vector2, actio
 	parent.add_child(marker)
 	marker.global_position = center - marker.size * 0.5
 	BoardZoneUI.register_action_cost_marker_for_kinds(marker, _get_move_indicator_card(), [action_cost_kind])
+	marker.add_to_group(MOVE_INDICATOR_OVERLAY_GROUP)
 	_move_indicator_path_overlays.append(marker)
 
 func _get_move_indicator_card() -> Card:
@@ -19777,7 +19977,6 @@ func _offer_priority() -> void:
 	var player := game_manager.priority_player
 	var responses := game_manager.get_priority_responses(player)
 	var offering_responses := match_manager.get_priority_prompt_offering_responses(player) if match_manager != null else responses
-	update_ui()
 
 	var is_remote_priority: bool = _is_real_network_host() \
 		and not game_manager.players.is_empty() \
@@ -19786,7 +19985,16 @@ func _offer_priority() -> void:
 	var force_priority_window := _stack_action_requires_explicit_priority_window(top_action, player)
 	var is_local_priority := game_manager.players.find(player) == _get_local_priority_player_index()
 
-	if auto_priority and is_local_priority and not force_priority_window and not is_remote_priority:
+	if auto_priority \
+			and is_local_priority \
+			and not force_priority_window \
+			and not is_remote_priority \
+			and (
+				_priority_auto_mode == PRIORITY_AUTO_MODE_FAST_FORWARD
+				or offering_responses.is_empty()
+				or (_priority_auto_mode == PRIORITY_AUTO_MODE_PLAY and _priority_auto_mode_visual_active)
+			) \
+			and not _should_hold_priority_for_action(top_action):
 		_hide_priority_prompt()
 		game_manager.pass_priority()
 		if game_manager.both_passed():
@@ -19809,6 +20017,7 @@ func _offer_priority() -> void:
 		_schedule_priority_recovery_check()
 		return
 
+	update_ui()
 	if is_remote_priority:
 		# The remote player has valid responses â€” ask them over the network.
 		# The priority loop pauses here; it resumes when their command arrives.
@@ -19894,13 +20103,24 @@ func _build_priority_prompt_payload_signature(player_index: int, data: Dictionar
 	return signature
 
 func _auto_pass_priority_prompt(player_index: int, data: Dictionary) -> bool:
-	if not auto_priority or _should_hold_current_priority_window():
+	if not auto_priority or _is_full_control_active():
 		return false
-	if game_manager == null or game_manager.action_stack.is_empty():
+	if game_manager == null:
 		return false
 	if player_index < 0 or player_index >= game_manager.players.size():
 		return false
 	if player_index != _get_local_priority_player_index():
+		return false
+	var responses = data.get("responses", [])
+	var has_payload_responses := responses is Array and not (responses as Array).is_empty()
+	if game_manager.action_stack.is_empty():
+		if _priority_auto_mode != PRIORITY_AUTO_MODE_FAST_FORWARD and has_payload_responses:
+			return false
+	elif _should_hold_current_priority_window():
+		return false
+	elif _priority_auto_mode != PRIORITY_AUTO_MODE_FAST_FORWARD \
+			and has_payload_responses \
+			and not (_priority_auto_mode == PRIORITY_AUTO_MODE_PLAY and _priority_auto_mode_visual_active):
 		return false
 	var priority_player := game_manager.players[player_index]
 	if game_manager.priority_player != priority_player:
@@ -20154,7 +20374,7 @@ func _can_resolve_top_stack_action_now() -> bool:
 
 func _get_priority_response_target_uids(card: Card, top: CardAction) -> Array:
 	var target_uids: Array = []
-	if card == null:
+	if card == null or not _requires_priority_target_selection(card):
 		return target_uids
 	var targets: Array = []
 	if card is HexCard:
@@ -20366,8 +20586,11 @@ func _show_priority_response_submit_failure(card: Card) -> void:
 	update_ui()
 
 func _requires_priority_target_selection(card: Card) -> bool:
-	return card != null \
-		and card.has_method("requires_priority_target_selection") \
+	if card == null:
+		return false
+	if card.targets or card.has_type("Targeting"):
+		return true
+	return card.has_method("requires_priority_target_selection") \
 		and bool(card.call("requires_priority_target_selection"))
 
 func _begin_authoritative_priority_charm_target_selection(
@@ -20879,7 +21102,7 @@ func _show_retreat_prompt(ask_card: Askelladen) -> void:
 	var ask_owner_prefix := ""
 	if ask_controller != null and ask_controller.player_name != "":
 		ask_owner_prefix = ask_controller.player_name + "'s "
-	lbl.text = ask_owner_prefix + "Askelladen may use Tactful Retreat.\nReturn both creatures to the bottom of their decks?"
+	lbl.text = ask_owner_prefix + "Askelladen may use Tactical Retreat.\nReturn both creatures to the bottom of their decks?"
 	lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	lbl.add_theme_font_size_override("font_size", 13)
 	vbox.add_child(lbl)
@@ -24191,7 +24414,7 @@ func _on_retreat_yes() -> void:
 	_executing_stack_action = false
 	_send_to_deck_bottom(action.attacker)
 	_send_to_deck_bottom(defender)
-	_set_action_label_text("Tactful Retreat! Both creatures returned to the bottom of their decks.")
+	_set_action_label_text("Tactical Retreat! Both creatures returned to the bottom of their decks.")
 	if _stack_resolution_paused:
 		_resume_after_deferred_resolution(action_label.text)
 	else:
@@ -24312,7 +24535,7 @@ func _on_retreat_no() -> void:
 	await _linger_for_combat_visual_changes([action.attacker, defender])
 	game_manager.resolve_combat_with_continuation(action.attacker, defender, func() -> void:
 		if blocked_ask != null:
-			_set_action_label_text("Asaruludu's Guardian prevented " + _get_card_name_safe(blocked_ask) + "'s Tactful Retreat!", true)
+			_set_action_label_text("Asaruludu's Guardian prevented " + _get_card_name_safe(blocked_ask) + "'s Tactical Retreat!", true)
 		else:
 			_set_action_label_text(_get_attack_card_label(action.attacker, "The attacker") + " fought " + _get_card_name_safe(defender) + "!", true)
 		action.attacker.spend_attack_creature_action()
@@ -24829,7 +25052,7 @@ func _on_match_ui_interaction(player_index: int, type: String, data: Dictionary)
 						active_attackers = [action.attacker]
 						
 					if blocked_ask != null:
-						_set_action_label_text("Asaruludu's Guardian prevented " + _get_card_name_safe(blocked_ask) + "'s Tactful Retreat!", true)
+						_set_action_label_text("Asaruludu's Guardian prevented " + _get_card_name_safe(blocked_ask) + "'s Tactical Retreat!", true)
 					else:
 						if active_attackers.size() >= 2:
 							_set_action_label_text(_get_attack_card_label(active_attackers[0], "The attacker") + " and " + _get_card_name_safe(active_attackers[1]) + " fought " + _get_card_name_safe(target) + "!", true)
@@ -26707,6 +26930,8 @@ func _show_remote_priority_prompt(responses: Array, action_message: String = "")
 		var resp_card := game_manager.get_card_by_uid(card_uid)
 		if resp_card == null:
 			continue
+		if not _requires_priority_target_selection(resp_card):
+			target_uids = []
 		interactive_response_count += 1
 		var card_name: String = resp_card.card_name
 		var btn := Button.new()

@@ -27,6 +27,11 @@ const UPKEEP_MANA_GAIN := 5
 const FIRST_TURN_UPKEEP_DRAW_MANA_GAIN := 0
 const FIRST_TURN_UPKEEP_MANA_GAIN := 4
 
+static func round_down_divide(amount: int, divisor: int) -> int:
+	if divisor == 0:
+		return 0
+	return int(floor(float(amount) / float(divisor)))
+
 var players: Array[Player] = []
 var current_player: Player
 var other_player: Player
@@ -476,7 +481,7 @@ func _adjust_combat_follower_damage(amount: int) -> int:
 	if amount <= 0:
 		return 0
 	if _temporary_combat_follower_damage_halved:
-		return int(floor(float(amount) / 2.0))
+		return GameManager.round_down_divide(amount, 2)
 	return amount
 
 func get_card_by_uid(uid: String) -> Card:
@@ -4129,7 +4134,7 @@ func _giants_disdain_applies(stat_owner: Card, opposing_cards: Array[Card]) -> b
 func _get_giants_disdain_damage_stat(stat_owner: Card, opposing_cards: Array[Card], base_stat: int) -> int:
 	if not _giants_disdain_applies(stat_owner, opposing_cards):
 		return base_stat
-	return maxi(0, int(floor(float(base_stat) / 2.0)))
+	return maxi(0, GameManager.round_down_divide(base_stat, 2))
 
 func _get_giants_disdain_combined_strength_for_damage(attackers: Array[Card], opposing_card: Card) -> int:
 	var total := 0

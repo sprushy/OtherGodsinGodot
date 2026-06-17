@@ -1262,6 +1262,11 @@ func _resolve_ability(action: CardAction) -> void:
 	elif action.resolve_callback.is_valid():
 		action.resolve_callback.call()
 		var feedback := game_manager.consume_player_feedback() if game_manager != null else ""
+		if feedback.strip_edges() != "" and action.card != null:
+			feedback = action.card.format_named_ability_log_message(
+				feedback,
+				str(action.event_data.get("ability_trigger_hint", "activated"))
+			)
 		last_resolution_text = feedback if feedback.strip_edges() != "" else (action.resolution_text if action.resolution_text != "" else action.card.card_name + " resolved!")
 
 func _resolve_spell(action: CardAction) -> void:
@@ -1284,6 +1289,8 @@ func _resolve_event(action: CardAction) -> void:
 		action.resolve_callback.call()
 	var feedback := game_manager.consume_player_feedback() if game_manager != null else ""
 	if feedback.strip_edges() != "":
+		if action.card != null and action.event_name == "summon":
+			feedback = action.card.format_named_ability_log_message(feedback, "impact")
 		last_resolution_text = feedback
 		return
 	if action.resolution_text != "":
@@ -1331,7 +1338,7 @@ func _resolve_attack(action: CardAction) -> void:
 			game_manager._clear_combat_engagement_state(actual_target)
 			last_resolution_text = action.attacker.card_name + "'s attack fizzles — target is no longer on the board."
 			return
-		# Check for Askelladen Tactful Retreat prompts.
+		# Check for Askelladen Tactical Retreat prompts.
 		# If any combatant can retreat, delegate to the UI for the interactive prompt.
 		# Otherwise, resolve headlessly so the server can handle networked combat.
 		var retreat_prompts := _get_retreat_candidates(action.attacker, actual_target, action.source_player)
@@ -1586,7 +1593,7 @@ func _resolve_creature_combat_now(
 			game_manager.record_interception(action.interceptor)
 		game_manager.resolve_combat_with_continuation(attacker, target, wrapped_finish, action.interceptor != null)
 
-## Returns any Askelladen cards in the combat that qualify for Tactful Retreat.
+## Returns any Askelladen cards in the combat that qualify for Tactical Retreat.
 func _get_retreat_candidates(attacker: Card, defender: Card, _turn_player: Player) -> Array:
 	var candidates: Array = []
 	for card in [attacker, defender]:
@@ -1928,11 +1935,32 @@ func _action_targets_card_for_destruction(action: CardAction) -> bool:
 		return true
 	return false
 
+func _card_indicates_destruction(card: Card) -> bool:
+	if card == null:
+		return false
+	if card.has_type("Destruction") or card.has_type("Magic Destruction"):
+		return true
+	for type_name in card.card_types:
+		if str(type_name).findn("destruction") >= 0:
+			return true
+	return str(card.ability_text).findn("destroy") >= 0
+
+func _player_has_destructive_priority_response(player: Player) -> bool:
+	if player == null or game_manager == null:
+		return false
+	for response in get_priority_prompt_offering_responses(player):
+		var response_card := response as Card
+		if _card_indicates_destruction(response_card):
+			return true
+	return false
+
 func _play_mode_requires_priority_window(action: CardAction, player: Player) -> bool:
 	if action == null or player == null or game_manager == null:
 		return false
 	if get_priority_stop_key(action) == "combat":
 		return _player_has_priority_prompt_responses(player)
+	if _player_has_destructive_priority_response(player):
+		return true
 	if not _action_targets_card_for_destruction(action):
 		return false
 	var target_card := _get_action_target_card(action)
@@ -2073,9 +2101,17 @@ func _get_action_target_label(target, viewer: Player = null) -> String:
 func _build_authoritative_resolution_text(action_type: int, source_card: Card, target = null, viewer: Player = null) -> String:
 	var source_name := _get_action_label(source_card, viewer)
 	if target != null:
+		if action_type == CardAction.Type.ABILITY and source_card != null:
+			var target_ability_name := source_card.get_named_ability_name("activated")
+			if target_ability_name != "":
+				return "%s uses %s targeting %s." % [source_name, target_ability_name, _get_action_target_label(target, viewer)]
 		return "%s is targeting %s." % [source_name, _get_action_target_label(target, viewer)]
 	if action_type == CardAction.Type.SPELL:
 		return "Cast " + source_name + "!"
+	if action_type == CardAction.Type.ABILITY and source_card != null:
+		var ability_name := source_card.get_named_ability_name("activated")
+		if ability_name != "":
+			return "%s uses %s." % [source_name, ability_name]
 	return source_name + " activated!"
 
 func _find_available_stack_display_zone(player: Player) -> Zone:
@@ -2173,6 +2209,8 @@ func _queue_authoritative_magical_action(
 	action.response_to = response_to
 	action.resolve_callback = resolve_callback
 	action.resolution_text = resolution_text if resolution_text != "" else _build_authoritative_resolution_text(action_type, source_card, target)
+	if action_type == CardAction.Type.ABILITY:
+		action.event_data["ability_trigger_hint"] = "activated"
 	action.event_data["linger_for_visibility"] = true
 	_assign_stack_display_zone(action, preferred_display_zone)
 	game_manager.push_to_stack(action)
@@ -2299,22 +2337,35 @@ func _get_priority_response_targets(card: Card, top: CardAction) -> Array:
 
 func _get_priority_response_target_uids(card: Card, top: CardAction) -> Array:
 	var target_uids: Array = []
+	if not _priority_response_requires_target_choice(card):
+		return target_uids
 	var targets := _get_priority_response_targets(card, top)
 	for target in targets:
 		if target is Card:
 			target_uids.append((target as Card).uid)
 	return target_uids
 
+func _priority_response_requires_target_choice(card: Card) -> bool:
+	if card == null:
+		return false
+	if game_manager != null and game_manager.is_targeting_source(card):
+		return true
+	return card.has_method("requires_priority_target_selection") \
+		and bool(card.call("requires_priority_target_selection"))
+
 func _validate_priority_response_target(card: Card, top: CardAction, target: Card, target_uid: String, context: String) -> String:
 	var requested_uid := str(target_uid).strip_edges()
+	var requires_target := _priority_response_requires_target_choice(card)
 	var valid_targets := _get_priority_response_targets(card, top)
 	if not requested_uid.is_empty():
+		if not requires_target:
+			return ""
 		if target == null:
 			return context + ": target not found"
 		if not _is_card_in_targets_by_uid(target, valid_targets):
 			return context + ": invalid priority target"
 		return ""
-	if card != null and card.targets:
+	if requires_target:
 		if valid_targets.is_empty():
 			return context + ": no valid targets"
 		return context + ": target required"
@@ -2329,7 +2380,7 @@ func _build_priority_response_options(responses: Array) -> Array:
 		if card is HexCard:
 			var hex := card as HexCard
 			var hex_target_uids := _get_priority_response_target_uids(hex, top)
-			if hex.targets and hex_target_uids.is_empty():
+			if _priority_response_requires_target_choice(hex) and hex_target_uids.is_empty():
 				continue
 			var target_is_attacker := not hex.has_method("get_priority_targets") and top.type == CardAction.Type.ATTACK
 			response_options.append({
@@ -2341,7 +2392,7 @@ func _build_priority_response_options(responses: Array) -> Array:
 		elif card is CharmCard:
 			var charm := card as CharmCard
 			var charm_target_uids := _get_priority_response_target_uids(charm, top)
-			if charm.targets and charm_target_uids.is_empty():
+			if _priority_response_requires_target_choice(charm) and charm_target_uids.is_empty():
 				continue
 			var from_hand := charm.current_zone == charm.card_owner.hand_zone
 			response_options.append({
@@ -2353,7 +2404,7 @@ func _build_priority_response_options(responses: Array) -> Array:
 		elif card is SpellCard:
 			var spell := card as SpellCard
 			var spell_target_uids := _get_priority_response_target_uids(spell, top)
-			if spell.targets and spell_target_uids.is_empty():
+			if _priority_response_requires_target_choice(spell) and spell_target_uids.is_empty():
 				continue
 			response_options.append({
 				response_type = "spell",
@@ -2362,7 +2413,7 @@ func _build_priority_response_options(responses: Array) -> Array:
 			})
 		elif card != null and card.is_god and card.has_method("get_valid_targets"):
 			var god_target_uids := _get_priority_response_target_uids(card, top)
-			if card.targets and god_target_uids.is_empty():
+			if _priority_response_requires_target_choice(card) and god_target_uids.is_empty():
 				continue
 			response_options.append({
 				response_type = "god",
@@ -2371,7 +2422,7 @@ func _build_priority_response_options(responses: Array) -> Array:
 			})
 		elif card != null and card.has_method("can_respond_to_priority_action") and card.has_method("activate"):
 			var ability_target_uids := _get_priority_response_target_uids(card, top)
-			if card.targets and ability_target_uids.is_empty():
+			if _priority_response_requires_target_choice(card) and ability_target_uids.is_empty():
 				continue
 			response_options.append({
 				response_type = "ability",
@@ -3019,7 +3070,7 @@ func _validate_sender_authority(command: Dictionary, sender_info: Dictionary) ->
 		return ""
 	if sender_player != required_player:
 		if str(command.get("type", "")) == "combat_retreat_decision":
-			return "Waiting for %s to decide Tactful Retreat." % required_player.player_name
+			return "Waiting for %s to decide Tactical Retreat." % required_player.player_name
 		return "Unauthorized command: that action belongs to %s." % required_player.player_name
 	return ""
 
@@ -5212,6 +5263,9 @@ func _process_command_impl(command: Dictionary) -> bool:
 			if not phr_target_error.is_empty():
 				move_failed.emit(phr_target_error)
 				return false
+			if not _priority_response_requires_target_choice(phr_hex):
+				phr_target_uid = ""
+				phr_target = null
 			var phr_target_is_attacker := not phr_hex.has_method("get_priority_targets") and phr_source.type == CardAction.Type.ATTACK
 			var phr_ability := CardAction.new()
 			phr_ability.type = CardAction.Type.ABILITY
@@ -5250,7 +5304,7 @@ func _process_combat_retreat_decision(command: Dictionary) -> bool:
 	if bool(command.get("retreat", false)):
 		game_manager.send_to_deck_bottom_with_hook(action.attacker)
 		game_manager.send_to_deck_bottom_with_hook(target)
-		last_resolution_text = "Tactful Retreat! Both creatures returned to the bottom of their decks."
+		last_resolution_text = "Tactical Retreat! Both creatures returned to the bottom of their decks."
 		_clear_pending_retreat_state()
 		_complete_deferred_authoritative_action(action, "combat_retreat_decision")
 		return true
@@ -5270,7 +5324,7 @@ func _process_combat_retreat_decision(command: Dictionary) -> bool:
 	_clear_pending_retreat_state()
 	_finish_creature_combat(action, target)
 	if blocked_ask != null:
-		last_resolution_text = "Asaruludu's Guardian prevented %s's Tactful Retreat!" % blocked_ask.card_name
+		last_resolution_text = "Asaruludu's Guardian prevented %s's Tactical Retreat!" % blocked_ask.card_name
 	_complete_deferred_authoritative_action(action, "combat_retreat_decision")
 	return true
 
