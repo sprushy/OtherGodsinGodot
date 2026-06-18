@@ -20745,6 +20745,7 @@ func _broadcast_priority_offered(player: Player, responses: Array) -> void:
 
 	var event_data := {responses = response_options, action_message = action_msg}
 	var remote_player_idx := game_manager.players.find(player)
+	event_data["player_index"] = remote_player_idx
 	var peer_id: int = network_manager.player_peer_ids.get(remote_player_idx, -1)
 	if peer_id == 1:
 		network_manager.game_event_received.emit("priority_offered", event_data)
@@ -26804,7 +26805,13 @@ func _apply_ui_interaction(event_data: Dictionary) -> void:
 	
 	match type:
 		"priority":
-			_apply_priority_prompt_for_player(int(event_data.get("player_index", local_idx)), payload)
+			var prompt_player_index := int(event_data.get("player_index", local_idx))
+			if local_idx >= 0 and prompt_player_index != local_idx:
+				if _is_priority_prompt_visible():
+					_hide_priority_prompt()
+				_update_waiting_overlay()
+				return
+			_apply_priority_prompt_for_player(prompt_player_index, payload)
 		"advanced_building_techniques":
 			_show_advanced_building_techniques_prompt_from_data(payload)
 		"intercept":
@@ -27470,7 +27477,13 @@ func _set_match_reconnect_wait(is_waiting: bool, message: String = "Waiting for 
 	_update_waiting_status(false)
 
 func _apply_priority_offered(data: Dictionary) -> void:
-	var priority_idx = network_manager.local_player_index if network_manager != null else -1
+	var local_idx = network_manager.local_player_index if network_manager != null else -1
+	var priority_idx := int(data.get("player_index", local_idx))
+	if local_idx >= 0 and priority_idx != local_idx:
+		if _is_priority_prompt_visible():
+			_hide_priority_prompt()
+		_update_waiting_overlay()
+		return
 	_apply_priority_prompt_for_player(priority_idx, data)
 
 func _apply_priority_prompt_for_player(player_index: int, data: Dictionary) -> void:

@@ -83,6 +83,19 @@ func _is_hidden_board_card(card: Card) -> bool:
 func _reveal_without_triggering_reveal_ability(target: Card, game_manager: GameManager) -> void:
 	if target == null or game_manager == null:
 		return
+	if _is_hand_card(target):
+		target.remove_status_effects_by_name("temporarily_revealed")
+		target.remove_status_effects_by_name("revealed_in_hand")
+		target.add_status_effect(
+			"revealed_in_hand",
+			REVEAL_SOURCE,
+			self,
+			card_owner,
+			{"clear_on_card_move": true}
+		)
+		if game_manager.has_method("notify_card_revealed_by_effect"):
+			game_manager.notify_card_revealed_by_effect(target, self)
+		return
 	target.remove_status_effects_by_name("temporarily_revealed")
 	target.add_status_effect(
 		"temporarily_revealed",
@@ -96,3 +109,6 @@ func _reveal_without_triggering_reveal_ability(target: Card, game_manager: GameM
 	)
 	if game_manager.has_method("notify_card_revealed_by_effect"):
 		game_manager.notify_card_revealed_by_effect(target, self)
+
+func _is_hand_card(card: Card) -> bool:
+	return card != null and card.current_zone != null and card.current_zone.zone_type == Zone.ZoneType.HAND

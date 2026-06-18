@@ -2434,16 +2434,19 @@ func build_priority_prompt_data(player: Player) -> Dictionary:
 		game_manager.prune_stale_stack_actions()
 	if game_manager == null or player == null or game_manager.action_stack.is_empty():
 		return {
+			player_index = game_manager.players.find(player) if game_manager != null and player != null else -1,
 			responses = [],
 			action_message = "",
 		}
 	var responses := game_manager.get_priority_responses(player)
 	if game_manager.action_stack.is_empty():
 		return {
+			player_index = game_manager.players.find(player),
 			responses = [],
 			action_message = "",
 		}
 	return {
+		player_index = game_manager.players.find(player),
 		responses = _build_priority_response_options(responses),
 		action_message = _get_priority_action_message(game_manager.action_stack.back(), player),
 	}
@@ -2488,6 +2491,7 @@ func _broadcast_priority_offered(player: Player, responses: Array) -> void:
 	if network_manager == null or game_manager.action_stack.is_empty() or player == null:
 		return
 	var event_data := {
+		player_index = game_manager.players.find(player),
 		responses = _build_priority_response_options(responses),
 		action_message = _get_priority_action_message(game_manager.action_stack.back(), player),
 	}

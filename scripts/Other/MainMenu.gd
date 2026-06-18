@@ -462,12 +462,23 @@ func _make_startup_splash_slice_texture(splash_texture: Texture2D, slice_index: 
 		return null
 	var slice_count := maxi(1, STARTUP_SPLASH_SLICE_COUNT)
 	var texture_size := splash_texture.get_size()
-	var left := texture_size.x * float(slice_index) / float(slice_count)
-	var right := texture_size.x * float(slice_index + 1) / float(slice_count)
+	var source_rect := _get_startup_splash_slice_source_rect(texture_size, slice_index, slice_count)
 	var atlas := AtlasTexture.new()
 	atlas.atlas = splash_texture
-	atlas.region = Rect2(Vector2(left, 0.0), Vector2(right - left, texture_size.y))
+	atlas.region = source_rect
+	atlas.filter_clip = true
 	return atlas
+
+func _get_startup_splash_slice_source_rect(texture_size: Vector2, slice_index: int, slice_count: int) -> Rect2:
+	var texture_width := maxi(1, int(round(texture_size.x)))
+	var texture_height := maxi(1, int(round(texture_size.y)))
+	var clamped_index := clampi(slice_index, 0, maxi(0, slice_count - 1))
+	var left := int(floor(float(texture_width) * float(clamped_index) / float(slice_count)))
+	var right := int(floor(float(texture_width) * float(clamped_index + 1) / float(slice_count)))
+	if clamped_index == slice_count - 1:
+		right = texture_width
+	right = clampi(right, left + 1, texture_width)
+	return Rect2(Vector2(left, 0.0), Vector2(right - left, texture_height))
 
 func _layout_startup_splash_background(force_entry_offsets: bool = false) -> void:
 	if _startup_splash_background == null or not is_instance_valid(_startup_splash_background):
@@ -475,20 +486,21 @@ func _layout_startup_splash_background(force_entry_offsets: bool = false) -> voi
 	_startup_splash_background.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	if _startup_splash_texture == null:
 		return
-	var draw_rect := _get_startup_splash_draw_rect(_startup_splash_texture.get_size(), size)
+	var texture_size := _startup_splash_texture.get_size()
+	var draw_rect := _get_startup_splash_draw_rect(texture_size, size)
 	var slice_count := maxi(1, _startup_splash_slices.size())
-	var use_entry_offsets := force_entry_offsets or (_startup_splash_animation_started and not _startup_splash_animation_finished)
 	for slice_index in range(_startup_splash_slices.size()):
 		var slice := _startup_splash_slices[slice_index]
 		if slice == null or not is_instance_valid(slice):
 			continue
-		var left := draw_rect.position.x + draw_rect.size.x * float(slice_index) / float(slice_count)
-		var right := draw_rect.position.x + draw_rect.size.x * float(slice_index + 1) / float(slice_count)
+		var source_rect := _get_startup_splash_slice_source_rect(texture_size, slice_index, slice_count)
+		var left := draw_rect.position.x + draw_rect.size.x * source_rect.position.x / texture_size.x
+		var right := draw_rect.position.x + draw_rect.size.x * (source_rect.position.x + source_rect.size.x) / texture_size.x
 		var target_position := Vector2(left, draw_rect.position.y)
 		var target_size := Vector2(right - left, draw_rect.size.y)
 		slice.size = target_size
 		slice.set_meta("target_position", target_position)
-		if use_entry_offsets:
+		if force_entry_offsets:
 			slice.position = Vector2(target_position.x, _get_startup_splash_entry_y(target_position, target_size, slice_index))
 		else:
 			slice.position = target_position
