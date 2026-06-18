@@ -583,6 +583,11 @@ func is_publicly_identified(game_manager: GameManager = null) -> bool:
 		return true
 	if self is PowerCard and (self as PowerCard).is_publicly_revealed:
 		return true
+	var has_hidden_board_identity := current_zone != null \
+		and current_zone.is_board_zone() \
+		and (is_face_down or is_stealth or is_prepared)
+	if not has_hidden_board_identity:
+		return false
 	for equipment_card in equipment:
 		if equipment_card != null \
 				and equipment_card.equipped_on == self \

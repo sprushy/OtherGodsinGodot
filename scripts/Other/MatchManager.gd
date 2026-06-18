@@ -88,6 +88,9 @@ var _resolving_priority_choice_command: bool = false
 var _pending_ui_interactions: Array[Dictionary] = []
 var _next_ui_interaction_id: int = 1
 var _priority_preferences_by_player: Dictionary = {}
+var _pending_turn_action_after_opponent_priority_command: Dictionary = {}
+var _pending_turn_action_after_opponent_priority_sender_info: Dictionary = {}
+var _replaying_turn_action_after_opponent_priority: bool = false
 
 func _init(p_game_manager: GameManager) -> void:
 	game_manager = p_game_manager
@@ -140,6 +143,9 @@ func reset_runtime_state() -> void:
 	_resolving_priority_choice_command = false
 	_pending_ui_interactions.clear()
 	_next_ui_interaction_id = 1
+	_pending_turn_action_after_opponent_priority_command.clear()
+	_pending_turn_action_after_opponent_priority_sender_info.clear()
+	_replaying_turn_action_after_opponent_priority = false
 	last_resolution_text = ""
 	last_move_failed_reason = ""
 	_authoritative_stack_resolution_pending = false
@@ -2067,6 +2073,8 @@ func _finish_authoritative_stack_resolution(action: CardAction, force_resolve: b
 	if not game_manager.action_stack.has(action):
 		if not game_manager.action_stack.is_empty():
 			_advance_authoritative_priority()
+		else:
+			_try_process_pending_turn_action_after_opponent_priority()
 		return
 	if not force_resolve and not _can_resolve_top_stack_action_now():
 		_advance_authoritative_priority()
@@ -2075,6 +2083,7 @@ func _finish_authoritative_stack_resolution(action: CardAction, force_resolve: b
 	resolve_action(action)
 	if action in game_manager.resolving_stack_actions:
 		return
+	_try_process_pending_turn_action_after_opponent_priority()
 
 func _get_action_label(card: Card, viewer: Player = null) -> String:
 	return card.get_log_display_name(viewer) if card != null else "Card"
@@ -2506,6 +2515,8 @@ func _advance_authoritative_priority() -> void:
 		player = top_action.initial_priority_player if top_action.initial_priority_player != null else game_manager.get_opponent(top_action.source_player)
 		game_manager.priority_player = player
 	if player == null:
+		return
+	if _try_pass_pending_turn_action_actor_priority():
 		return
 	var prompt_data := build_priority_prompt_data(player)
 	var prompt_offering_responses := get_priority_prompt_offering_responses(player)
@@ -3143,6 +3154,82 @@ func _validate_upkeep_choice_window(actor: Player) -> String:
 		return "Upkeep has already been resolved."
 	return ""
 
+func _clear_pending_turn_action_after_opponent_priority() -> void:
+	_pending_turn_action_after_opponent_priority_command.clear()
+	_pending_turn_action_after_opponent_priority_sender_info.clear()
+
+func _has_pending_turn_action_after_opponent_priority() -> bool:
+	return not _pending_turn_action_after_opponent_priority_command.is_empty()
+
+func _should_defer_turn_action_until_opponent_priority_declines(command: Dictionary, sender_info: Dictionary) -> bool:
+	if _replaying_turn_action_after_opponent_priority:
+		return false
+	if game_manager == null or not _uses_authoritative_headless_priority_flow():
+		return false
+	var command_type := str(command.get("type", ""))
+	if not _requires_clear_stack_window(command_type):
+		return false
+	if is_targeting_active() or _has_pending_reveal_target_ui_interaction():
+		return false
+	if game_manager.action_stack.is_empty():
+		return false
+	if _authoritative_stack_resolution_pending or not game_manager.resolving_stack_actions.is_empty():
+		return false
+	var actor := _get_command_actor(sender_info)
+	return actor != null \
+		and actor == game_manager.current_player \
+		and game_manager.priority_player != null \
+		and game_manager.priority_player != actor
+
+func _defer_turn_action_until_opponent_priority_declines(command: Dictionary, sender_info: Dictionary) -> bool:
+	if not _should_defer_turn_action_until_opponent_priority_declines(command, sender_info):
+		return false
+	_pending_turn_action_after_opponent_priority_command = command.duplicate(true)
+	_pending_turn_action_after_opponent_priority_sender_info = sender_info.duplicate(true)
+	_request_ui_refresh()
+	return true
+
+func _get_pending_turn_action_after_opponent_priority_actor() -> Player:
+	if not _has_pending_turn_action_after_opponent_priority():
+		return null
+	var sender_player := _resolve_sender_player(_pending_turn_action_after_opponent_priority_sender_info)
+	return sender_player if sender_player != null else game_manager.current_player
+
+func _try_pass_pending_turn_action_actor_priority() -> bool:
+	if game_manager == null or not _has_pending_turn_action_after_opponent_priority():
+		return false
+	if game_manager.action_stack.is_empty() or _authoritative_stack_resolution_pending:
+		return false
+	var actor := _get_pending_turn_action_after_opponent_priority_actor()
+	if actor == null or actor != game_manager.current_player or actor != game_manager.priority_player:
+		return false
+	game_manager.pass_priority()
+	move_validated.emit({type = "priority_pass"})
+	if game_manager.both_passed():
+		if not game_manager.action_stack.is_empty():
+			_schedule_authoritative_stack_top_after_priority()
+		else:
+			_clear_priority_window_state()
+	else:
+		_advance_authoritative_priority()
+	_request_ui_refresh()
+	return true
+
+func _try_process_pending_turn_action_after_opponent_priority() -> void:
+	if _replaying_turn_action_after_opponent_priority or not _has_pending_turn_action_after_opponent_priority():
+		return
+	if game_manager == null:
+		_clear_pending_turn_action_after_opponent_priority()
+		return
+	if _has_unresolved_stack_action_window():
+		return
+	var command := _pending_turn_action_after_opponent_priority_command.duplicate(true)
+	var sender_info := _pending_turn_action_after_opponent_priority_sender_info.duplicate(true)
+	_clear_pending_turn_action_after_opponent_priority()
+	_replaying_turn_action_after_opponent_priority = true
+	process_command(command, sender_info)
+	_replaying_turn_action_after_opponent_priority = false
+
 func _on_move_failed(reason: String) -> void:
 	last_move_failed_reason = reason
 	_send_rejection_to_sender(_active_command_sender_info, reason)
@@ -3201,6 +3288,10 @@ func process_command(command: Dictionary, sender_info: Dictionary = {}) -> bool:
 		_active_command_sender_info.clear()
 		_active_command_type = ""
 		return false
+	if _defer_turn_action_until_opponent_priority_declines(command, sender_info):
+		_active_command_sender_info.clear()
+		_active_command_type = ""
+		return true
 	if _decline_priority_for_turn_action(command, sender_info):
 		_active_command_sender_info.clear()
 		_active_command_type = ""
@@ -5132,6 +5223,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 						_schedule_authoritative_stack_top_after_priority()
 					else:
 						_clear_priority_window_state()
+						_try_process_pending_turn_action_after_opponent_priority()
 				else:
 					_advance_authoritative_priority()
 				_request_ui_refresh()

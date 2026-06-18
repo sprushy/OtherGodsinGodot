@@ -225,6 +225,11 @@ var _visible_priority_prompt_signature: Dictionary = {}
 var _pending_priority_response_submission: Dictionary = {}
 var _pending_priority_response_target_selection: Dictionary = {}
 var _pending_priority_auto_pass_signature: Dictionary = {}
+var _pending_turn_action_after_opponent_priority: Callable = Callable()
+var _pending_turn_action_after_opponent_priority_description: String = ""
+var _pending_turn_action_after_opponent_priority_turn: int = -1
+var _pending_turn_action_after_opponent_priority_player_index: int = -1
+var _running_turn_action_after_opponent_priority: bool = false
 var _pending_reveal_auto_submit_keys: Dictionary = {}
 var _fan_container: Control = null
 var _enemy_hand_overlay: Control = null
@@ -3850,6 +3855,7 @@ func _process(_delta: float) -> void:
 	_sync_local_end_turn_button()
 	_sync_local_scheduled_callbacks()
 	_sync_local_priority_recovery()
+	_sync_deferred_turn_action_after_opponent_priority()
 	_sync_sacrifice_cursor()
 	_capture_action_log_message()
 	_update_hand_hover_preview()
@@ -10328,6 +10334,176 @@ func _can_attempt_turn_action_to_decline_priority() -> bool:
 	game_manager.prune_stale_stack_actions()
 	return not game_manager.action_stack.is_empty()
 
+func _is_waiting_on_opponent_priority_for_turn_action() -> bool:
+	if game_manager == null:
+		return false
+	if game_manager.current_player == null \
+			or game_manager.priority_player == null \
+			or game_manager.priority_player == game_manager.current_player:
+		return false
+	if not _is_player_local(game_manager.current_player):
+		return false
+	if match_manager != null \
+			and match_manager.has_method("is_authoritative_stack_resolution_pending") \
+			and bool(match_manager.call("is_authoritative_stack_resolution_pending")):
+		return false
+	if not game_manager.resolving_stack_actions.is_empty():
+		return false
+	game_manager.prune_stale_stack_actions()
+	return not game_manager.action_stack.is_empty()
+
+func _clear_deferred_turn_action_after_opponent_priority() -> void:
+	_pending_turn_action_after_opponent_priority = Callable()
+	_pending_turn_action_after_opponent_priority_description = ""
+	_pending_turn_action_after_opponent_priority_turn = -1
+	_pending_turn_action_after_opponent_priority_player_index = -1
+
+func _defer_turn_action_until_opponent_priority_declines(replay_action: Callable, description: String = "action") -> bool:
+	if _running_turn_action_after_opponent_priority:
+		return false
+	if not replay_action.is_valid() or not _is_waiting_on_opponent_priority_for_turn_action():
+		return false
+	_pending_turn_action_after_opponent_priority = replay_action
+	_pending_turn_action_after_opponent_priority_description = description.strip_edges()
+	_pending_turn_action_after_opponent_priority_turn = game_manager.turn_number
+	_pending_turn_action_after_opponent_priority_player_index = game_manager.players.find(game_manager.current_player)
+	var queued_label := _pending_turn_action_after_opponent_priority_description
+	if queued_label == "":
+		queued_label = "action"
+	_set_action_label_text("Queued " + queued_label + " after opponent priority.")
+	return true
+
+func _get_zone_replay_data(zone: Zone) -> Dictionary:
+	if zone == null or game_manager == null:
+		return {}
+	return {
+		"player_index": game_manager.players.find(zone.zone_owner),
+		"zone_type": int(zone.zone_type),
+		"zone_index": zone.zone_index,
+	}
+
+func _resolve_zone_replay_data(data: Dictionary) -> Zone:
+	if game_manager == null or data.is_empty():
+		return null
+	var player_index := int(data.get("player_index", -1))
+	if player_index < 0 or player_index >= game_manager.players.size():
+		return null
+	var player: Player = game_manager.players[player_index]
+	var zone_type := int(data.get("zone_type", -1))
+	var zone_index := int(data.get("zone_index", -1))
+	match zone_type:
+		Zone.ZoneType.HAND:
+			return player.hand_zone
+		Zone.ZoneType.DECK:
+			return player.deck_zone
+		Zone.ZoneType.GRAVEYARD:
+			return player.graveyard_zone
+		Zone.ZoneType.ABYSS:
+			return player.abyss_zone
+		Zone.ZoneType.GOD_SLOT:
+			return player.god_zone
+		Zone.ZoneType.POWER_SLOT:
+			if zone_index >= 0 and zone_index < player.power_zones.size():
+				return player.power_zones[zone_index]
+		Zone.ZoneType.FRONTLINE:
+			if zone_index >= 0 and zone_index < player.frontline_zones.size():
+				return player.frontline_zones[zone_index]
+		Zone.ZoneType.RESERVE:
+			if zone_index >= 0 and zone_index < player.reserve_zones.size():
+				return player.reserve_zones[zone_index]
+	return null
+
+func _retry_hand_card_pressed(card_uid: String) -> void:
+	var card := game_manager.get_card_by_uid(card_uid) if game_manager != null else null
+	if card != null:
+		_on_hand_card_pressed(card)
+
+func _retry_god_card_pressed(card_uid: String) -> void:
+	var card := game_manager.get_card_by_uid(card_uid) if game_manager != null else null
+	if card != null:
+		_on_god_card_pressed(card)
+
+func _retry_empty_zone_pressed(
+	zone_data: Dictionary,
+	selected_card_uid: String = "",
+	replay_placement_mode: String = "",
+	pending_move_uid: String = "",
+	indicated_move_uid: String = ""
+) -> void:
+	var zone := _resolve_zone_replay_data(zone_data)
+	if zone != null:
+		if not selected_card_uid.is_empty():
+			selected_card = game_manager.get_card_by_uid(selected_card_uid)
+			placement_mode = replay_placement_mode
+			if placement_container != null:
+				placement_container.visible = false
+		if not pending_move_uid.is_empty():
+			_pending_move_card = game_manager.get_card_by_uid(pending_move_uid)
+		if not indicated_move_uid.is_empty():
+			_indicated_move_card = game_manager.get_card_by_uid(indicated_move_uid)
+		_on_empty_zone_pressed(zone)
+
+func _retry_card_drag_released(card_uid: String, drop_pos: Vector2, card_rotated: bool, card_stealth: bool) -> void:
+	var card := game_manager.get_card_by_uid(card_uid) if game_manager != null else null
+	if card != null:
+		_on_card_drag_released(card, drop_pos, card_rotated, card_stealth)
+
+func _retry_card_dropped_to_zone(card_uid: String, zone_data: Dictionary, is_rotated: bool, is_stealth: bool) -> void:
+	var card := game_manager.get_card_by_uid(card_uid) if game_manager != null else null
+	var zone := _resolve_zone_replay_data(zone_data)
+	if card != null and zone != null:
+		_on_card_dropped_to_zone(card, zone, is_rotated, is_stealth)
+
+func _retry_hand_context_action(card_uid: String, action_name: String) -> void:
+	var card := game_manager.get_card_by_uid(card_uid) if game_manager != null else null
+	if card == null:
+		return
+	match action_name:
+		"cast_spell":
+			_handle_spell_cast_menu_action(card)
+		"prepare_spell":
+			_handle_spell_prepare_menu_action(card)
+		"prepare_hex":
+			_handle_hex_prepare_menu_action(card)
+		"play_charm":
+			_handle_charm_play_menu_action(card)
+		"prepare_charm":
+			_handle_charm_prepare_menu_action(card)
+
+func _retry_end_turn_button_pressed() -> void:
+	_on_end_turn_button_pressed()
+
+func _has_deferred_turn_action_after_opponent_priority() -> bool:
+	return _pending_turn_action_after_opponent_priority.is_valid()
+
+func _sync_deferred_turn_action_after_opponent_priority() -> void:
+	if not _has_deferred_turn_action_after_opponent_priority() or _running_turn_action_after_opponent_priority:
+		return
+	if game_manager == null or game_manager.current_player == null:
+		_clear_deferred_turn_action_after_opponent_priority()
+		return
+	var current_player_index := game_manager.players.find(game_manager.current_player)
+	if game_manager.turn_number != _pending_turn_action_after_opponent_priority_turn \
+			or current_player_index != _pending_turn_action_after_opponent_priority_player_index \
+			or not _is_player_local(game_manager.current_player):
+		_clear_deferred_turn_action_after_opponent_priority()
+		return
+	if _is_waiting_on_opponent_priority_for_turn_action():
+		return
+	if _can_attempt_turn_action_to_decline_priority():
+		_on_priority_pass_pressed()
+		return
+	if _has_unresolved_priority_state() \
+			or (match_manager != null \
+				and match_manager.has_method("has_unresolved_stack_action_window") \
+				and bool(match_manager.call("has_unresolved_stack_action_window"))):
+		return
+	var replay_action := _pending_turn_action_after_opponent_priority
+	_clear_deferred_turn_action_after_opponent_priority()
+	_running_turn_action_after_opponent_priority = true
+	replay_action.call()
+	_running_turn_action_after_opponent_priority = false
+
 func _try_decline_local_priority_for_turn_action_attempt() -> bool:
 	if not _can_attempt_turn_action_to_decline_priority():
 		return false
@@ -10365,7 +10541,7 @@ func _get_non_priority_action_block_reason() -> String:
 		return "Resolve the pending %s before continuing." % _describe_unresolved_priority_state()
 	return ""
 
-func _reject_non_priority_action_if_blocked() -> bool:
+func _reject_non_priority_action_if_blocked(replay_action: Callable = Callable(), description: String = "action") -> bool:
 	if _try_decline_local_priority_for_turn_action_attempt():
 		var still_blocked := _is_turn_action_blocked_after_priority_pass()
 		if still_blocked:
@@ -10374,6 +10550,9 @@ func _reject_non_priority_action_if_blocked() -> bool:
 	var reason := _get_non_priority_action_block_reason()
 	if reason == "":
 		return false
+	if _defer_turn_action_until_opponent_priority_declines(replay_action, description):
+		update_ui()
+		return true
 	_set_action_label_text(reason)
 	update_ui()
 	return true
@@ -12606,7 +12785,7 @@ func _begin_manual_charm_prepare_from_menu(card: Card) -> void:
 
 func _handle_spell_cast_menu_action(card: Card) -> void:
 	_close_context_menu()
-	if _reject_non_priority_action_if_blocked():
+	if _reject_non_priority_action_if_blocked(Callable(self, "_retry_hand_context_action").bind(card.uid, "cast_spell"), "cast " + card.card_name):
 		return
 	if _auto_select_spell_play_zones and _try_auto_resolve_hand_card_to_zone(
 		card,
@@ -12619,7 +12798,7 @@ func _handle_spell_cast_menu_action(card: Card) -> void:
 
 func _handle_spell_prepare_menu_action(card: Card) -> void:
 	_close_context_menu()
-	if _reject_non_priority_action_if_blocked():
+	if _reject_non_priority_action_if_blocked(Callable(self, "_retry_hand_context_action").bind(card.uid, "prepare_spell"), "prepare " + card.card_name):
 		return
 	if _auto_select_spell_prepare_zones and _try_auto_resolve_hand_card_to_zone(
 		card,
@@ -12631,7 +12810,7 @@ func _handle_spell_prepare_menu_action(card: Card) -> void:
 
 func _handle_hex_prepare_menu_action(card: Card) -> void:
 	_close_context_menu()
-	if _reject_non_priority_action_if_blocked():
+	if _reject_non_priority_action_if_blocked(Callable(self, "_retry_hand_context_action").bind(card.uid, "prepare_hex"), "prepare " + card.card_name):
 		return
 	if _auto_select_hex_prepare_zones and _try_auto_resolve_hand_card_to_zone(
 		card,
@@ -12642,7 +12821,7 @@ func _handle_hex_prepare_menu_action(card: Card) -> void:
 
 func _handle_charm_play_menu_action(card: Card) -> void:
 	_close_context_menu()
-	if _reject_non_priority_action_if_blocked():
+	if _reject_non_priority_action_if_blocked(Callable(self, "_retry_hand_context_action").bind(card.uid, "play_charm"), "play " + card.card_name):
 		return
 	if _auto_select_charm_play_zones and _try_auto_resolve_hand_card_to_zone(
 		card,
@@ -12655,7 +12834,7 @@ func _handle_charm_play_menu_action(card: Card) -> void:
 
 func _handle_charm_prepare_menu_action(card: Card) -> void:
 	_close_context_menu()
-	if _reject_non_priority_action_if_blocked():
+	if _reject_non_priority_action_if_blocked(Callable(self, "_retry_hand_context_action").bind(card.uid, "prepare_charm"), "prepare " + card.card_name):
 		return
 	if _auto_select_charm_prepare_zones and _try_auto_resolve_hand_card_to_zone(
 		card,
@@ -12707,6 +12886,9 @@ func _on_hand_card_pressed(card: Card) -> void:
 			update_ui()
 			return
 	if game_manager != null and not game_manager.action_stack.is_empty():
+		if _defer_turn_action_until_opponent_priority_declines(Callable(self, "_retry_hand_card_pressed").bind(card.uid), "select " + card.card_name):
+			update_ui()
+			return
 		var priority_failure_text := _get_priority_response_unavailable_text(card)
 		_set_action_label_text(priority_failure_text if priority_failure_text != "" else card.card_name + " is not a legal priority response.")
 		update_ui()
@@ -13107,7 +13289,19 @@ func _on_empty_zone_pressed(zone: Zone) -> void:
 	if _is_turn_choice_pending():
 		_reject_pre_turn_action()
 		return
-	if _reject_non_priority_action_if_blocked():
+	var replay_selected_card_uid := selected_card.uid if selected_card != null else ""
+	var replay_pending_move_uid := _pending_move_card.uid if _pending_move_card != null else ""
+	var replay_indicated_move_uid := _indicated_move_card.uid if _indicated_move_card != null else ""
+	if _reject_non_priority_action_if_blocked(
+		Callable(self, "_retry_empty_zone_pressed").bind(
+			_get_zone_replay_data(zone),
+			replay_selected_card_uid,
+			placement_mode,
+			replay_pending_move_uid,
+			replay_indicated_move_uid
+		),
+		"that move"
+	):
 		return
 	if _awaiting_drag_sacrifice_zone:
 		if zone.zone_type in [Zone.ZoneType.FRONTLINE, Zone.ZoneType.RESERVE] \
@@ -13348,6 +13542,9 @@ func _on_god_card_pressed(card: Card) -> void:
 		if _is_turn_action_blocked_after_priority_pass():
 			update_ui()
 			return
+	if _defer_turn_action_until_opponent_priority_declines(Callable(self, "_retry_god_card_pressed").bind(card.uid), "use " + card.card_name):
+		update_ui()
+		return
 	if selected_card is Absence and card.is_god:
 		_cast_targeted_spell(selected_card, card)
 		return
@@ -18994,7 +19191,11 @@ func _describe_unresolved_priority_state() -> String:
 			return "charm action"
 	return "stack action"
 
-func _reject_priority_locked_action(reason: String = "Only legal priority responses can be used right now.") -> bool:
+func _reject_priority_locked_action(
+	reason: String = "Only legal priority responses can be used right now.",
+	replay_action: Callable = Callable(),
+	description: String = "action"
+) -> bool:
 	if _maybe_progress_hidden_frontline_entry_action():
 		if _has_unresolved_priority_state():
 			return true
@@ -19012,6 +19213,9 @@ func _reject_priority_locked_action(reason: String = "Only legal priority respon
 		feedback = "Resolve the pending %s before ending the turn." % _describe_unresolved_priority_state()
 	if not _is_priority_prompt_visible() and feedback == "Only legal priority responses can be used right now.":
 		feedback = "Resolve the pending %s before continuing." % _describe_unresolved_priority_state()
+	if _defer_turn_action_until_opponent_priority_declines(replay_action, description):
+		update_ui()
+		return true
 	_set_action_label_text(feedback)
 	update_ui()
 	return true
@@ -25811,7 +26015,11 @@ func _continue_end_turn_sequence() -> void:
 func _on_end_turn_button_pressed() -> void:
 	if _game_finished:
 		return
-	if _reject_priority_locked_action("Resolve the pending stack action before ending the turn."):
+	if _reject_priority_locked_action(
+		"Resolve the pending stack action before ending the turn.",
+		Callable(self, "_retry_end_turn_button_pressed"),
+		"end turn"
+	):
 		return
 	if _is_networked_client:
 		end_turn_button.visible = false
@@ -27033,6 +27241,7 @@ func _apply_full_state(data: Dictionary) -> void:
 	if not restored_reveal_prompt:
 		_restore_priority_prompt_from_authoritative_state()
 	_update_waiting_overlay()
+	_sync_deferred_turn_action_after_opponent_priority()
 
 func _restore_network_attack_preview_from_state(preview_data: Dictionary) -> void:
 	if not _is_networked_client or match_manager == null or game_manager == null:
@@ -28106,7 +28315,7 @@ func _on_card_drag_released(card: Card, drop_pos: Vector2, card_rotated: bool, c
 	if _try_handle_blot_drag_selection(card):
 		return
 	var priority_drop_allowed := game_manager != null and game_manager.can_card_respond_to_priority(card, game_manager.priority_player)
-	if not priority_drop_allowed and _reject_non_priority_action_if_blocked():
+	if not priority_drop_allowed and _reject_non_priority_action_if_blocked(Callable(self, "_retry_card_drag_released").bind(card.uid, drop_pos, card_rotated, card_stealth), "drop " + card.card_name):
 		update_ui()
 		return
 	if _has_active_modal_prompt():
@@ -28321,7 +28530,7 @@ func _on_card_dropped_to_zone(card: Card, zone: Zone, is_rotated: bool = false, 
 	if _game_finished:
 		return
 	var priority_drop_allowed := game_manager != null and game_manager.can_card_respond_to_priority(card, game_manager.priority_player)
-	if not priority_drop_allowed and _reject_non_priority_action_if_blocked():
+	if not priority_drop_allowed and _reject_non_priority_action_if_blocked(Callable(self, "_retry_card_dropped_to_zone").bind(card.uid, _get_zone_replay_data(zone), is_rotated, is_stealth), "drop " + card.card_name):
 		return
 	_pending_spell_display_zone = _get_drop_play_display_zone(card, zone)
 	var prepare_on_drop := _should_prepare_magical_card_on_drop(card, is_stealth)
@@ -28406,6 +28615,7 @@ func _on_card_dropped_to_zone(card: Card, zone: Zone, is_rotated: bool = false, 
 func cleanup() -> void:
 	_prepare_for_match_launch("")
 	_reset_turn_activity_timers()
+	_clear_deferred_turn_action_after_opponent_priority()
 	_local_match_result_recorded = false
 	_current_match_info.clear()
 	_clear_hati_moon_hunt_state()
