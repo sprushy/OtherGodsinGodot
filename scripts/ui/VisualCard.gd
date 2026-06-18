@@ -50,6 +50,8 @@ const _HOVER_PANEL_WIDTH := 320.0
 const _HOVER_PANEL_MAX_HEIGHT := 420.0
 var _hover_panel: Control = null
 var _hover_viewer: Player = null
+var _hover_use_board_popup: bool = false
+var _hover_game_manager = null
 var _waiting_on_priority: bool = false
 var _priority_response_available: bool = false
 var _blot_summonable: bool = false
@@ -830,6 +832,10 @@ func set_hand_proxy_visual(enabled: bool, click_only: bool = true) -> void:
 func set_hover_viewer(viewer: Player) -> void:
 	_hover_viewer = viewer
 
+func set_hover_use_board_popup(value: bool, game_manager = null) -> void:
+	_hover_use_board_popup = value
+	_hover_game_manager = game_manager
+
 func set_hand_mode(enabled: bool) -> void:
 	if _hand_mode == enabled:
 		if not enabled:
@@ -1353,15 +1359,24 @@ func _show_hover_panel() -> void:
 	style.content_margin_top = 8
 	style.content_margin_bottom = 8
 	panel.add_theme_stylebox_override("panel", style)
-	var hover_body := CardDetailContentBuilderScript.build_visual_hover_body(
-		card_data,
-		_hover_viewer,
-		{
-			"content_width": _HOVER_PANEL_WIDTH - 20.0,
-			"display_mana_cost": _get_display_mana_cost(),
-			"display_cost_adjustment_lines": _display_cost_adjustment_lines
-		}
-	)
+	var hover_body: Control = null
+	if _hover_use_board_popup:
+		hover_body = CardDetailContentBuilderScript.build_board_popup_body_from_game_state(
+			card_data,
+			_hover_viewer,
+			_hover_game_manager,
+			{"show_listed_costs": true}
+		)
+	else:
+		hover_body = CardDetailContentBuilderScript.build_visual_hover_body(
+			card_data,
+			_hover_viewer,
+			{
+				"content_width": _HOVER_PANEL_WIDTH - 20.0,
+				"display_mana_cost": _get_display_mana_cost(),
+				"display_cost_adjustment_lines": _display_cost_adjustment_lines
+			}
+		)
 	panel.add_child(hover_body)
 
 	floating_parent.add_child(panel)
@@ -1371,7 +1386,10 @@ func _show_hover_panel() -> void:
 		hover_scroll.ready.connect(Callable(self, "_apply_hover_scrollbar_style").bind(hover_scroll), CONNECT_ONE_SHOT)
 	panel.move_to_front()
 	var vp_size := get_viewport().get_visible_rect().size
-	panel.size = Vector2(_HOVER_PANEL_WIDTH, minf(_HOVER_PANEL_MAX_HEIGHT, vp_size.y - 8.0))
+	if _hover_use_board_popup:
+		panel.size = panel.get_combined_minimum_size()
+	else:
+		panel.size = Vector2(_HOVER_PANEL_WIDTH, minf(_HOVER_PANEL_MAX_HEIGHT, vp_size.y - 8.0))
 
 	# Position: prefer right of card, flip left if off-screen
 	var panel_size := panel.size

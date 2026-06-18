@@ -30,6 +30,9 @@ func can_activate(attacker: Card, defender: Card) -> bool:
 		return false
 	return attacker.get_effective_speed() <= get_effective_speed()
 
+func requires_priority_target_selection() -> bool:
+	return false
+
 func get_affected_cards(attacker: Card, _defender: Card) -> Array[Card]:
 	var affected: Array[Card] = []
 	if attacker != null:

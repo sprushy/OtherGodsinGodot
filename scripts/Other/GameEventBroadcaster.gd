@@ -613,10 +613,23 @@ func _label_for_move(move: Dictionary, viewer: Player = null) -> String:
 func _label_for_resolved_action(action: CardAction, viewer: Player = null) -> String:
 	if action == null:
 		return match_manager.last_resolution_text
+	if bool(action.event_data.get("suppress_public_resolution_log", false)):
+		return ""
 	if not _action_involves_hidden_card(action, viewer):
 		return match_manager.last_resolution_text
 	match action.type:
 		CardAction.Type.ATTACK:
+			if action.interceptor != null:
+				var attacker_label := _card_label_for_viewer(action.attacker, viewer)
+				if action.united_front_partner != null:
+					attacker_label += " and " + _card_label_for_viewer(action.united_front_partner, viewer)
+				var interceptor_label := _card_label_for_viewer(action.interceptor, viewer)
+				return "%s intercepted %s. %s fought %s." % [
+					interceptor_label,
+					attacker_label,
+					attacker_label,
+					interceptor_label,
+				]
 			if action.target is Player:
 				return "%s attacks %s's followers." % [_card_label_for_viewer(action.attacker, viewer), (action.target as Player).player_name]
 			if action.target is Card:

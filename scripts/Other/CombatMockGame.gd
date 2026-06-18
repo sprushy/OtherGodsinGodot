@@ -3730,7 +3730,7 @@ func _setup_priority_controls() -> void:
 	_auto_priority_button = Button.new()
 	_auto_priority_button.name = "PlayPriorityButton"
 	_auto_priority_button.text = ">"
-	_auto_priority_button.tooltip_text = "Pass priority automatically except for combat-stack options, destructive responses, or when a card targeted for destruction can respond. Shift-click to keep this on across turns."
+	_auto_priority_button.tooltip_text = "Pass priority automatically except for combat-stack options or when a card targeted for destruction can respond. Shift-click to keep this on across turns."
 	_auto_priority_button.toggle_mode = true
 	_auto_priority_button.button_pressed = _priority_auto_mode == PRIORITY_AUTO_MODE_PLAY and _priority_auto_mode_visual_active
 	_auto_priority_button.custom_minimum_size = PRIORITY_CONTROL_BUTTON_SIZE
@@ -3928,7 +3928,7 @@ func _sync_priority_prompt_timeout() -> void:
 	_priority_prompt_timeout_pending = true
 	_set_action_label_text("Priority timed out. Passing.")
 	update_ui()
-	call_deferred("_on_priority_pass_pressed")
+	_queue_deferred_priority_pass()
 
 func _get_local_move_timer_context() -> Dictionary:
 	if game_manager == null or _game_finished:
@@ -4354,7 +4354,7 @@ func _continue_pending_ranked_timeout_turn_pass() -> void:
 		_pending_ranked_timeout_priority_pass_turn = game_manager.turn_number
 		_set_action_label_text("Move timer expired. Passing priority.")
 		update_ui()
-		call_deferred("_on_priority_pass_pressed")
+		_queue_deferred_priority_pass()
 		return
 	_pending_ranked_timeout_priority_pass_turn = -1
 	if _has_unresolved_priority_state():
@@ -4548,6 +4548,8 @@ func _capture_action_log_message(force: bool = false) -> void:
 	var message = action_label.text.strip_edges()
 	if message == "":
 		return
+	if _is_internal_priority_log_message(message):
+		return
 	if _should_suppress_action_log_echo(message, force):
 		return
 	if not force and message == _last_logged_action_text:
@@ -4557,6 +4559,14 @@ func _capture_action_log_message(force: bool = false) -> void:
 	if _action_log_messages.size() > ACTION_LOG_MAX_MESSAGES:
 		_action_log_messages.pop_front()
 	_refresh_action_log()
+
+func _is_internal_priority_log_message(message: String) -> bool:
+	var normalized := message.strip_edges().to_lower()
+	return normalized in [
+		"start-of-turn priority window.",
+		"end-of-turn priority window.",
+		"end-turn window closed.",
+	]
 
 func _should_suppress_action_log_echo(message: String, force: bool = false) -> bool:
 	if force:
@@ -5917,7 +5927,7 @@ func _on_priority_pause_button_pressed() -> void:
 			and _is_priority_prompt_visible() \
 			and not _should_hold_current_priority_window():
 		_pending_priority_auto_pass_signature.clear()
-		call_deferred("_on_priority_pass_pressed")
+		_queue_deferred_priority_pass()
 
 func _set_priority_auto_mode(mode: String, permanent: bool = false, force_sync: bool = false, visual_active: bool = true) -> void:
 	if mode not in [PRIORITY_AUTO_MODE_PLAY, PRIORITY_AUTO_MODE_FAST_FORWARD]:
@@ -5944,7 +5954,7 @@ func _set_priority_auto_mode(mode: String, permanent: bool = false, force_sync: 
 			and _is_priority_prompt_visible() \
 			and not _should_hold_current_priority_window():
 		_pending_priority_auto_pass_signature.clear()
-		call_deferred("_on_priority_pass_pressed")
+		_queue_deferred_priority_pass()
 	else:
 		if not auto_priority:
 			_pending_priority_auto_pass_signature.clear()
@@ -6068,30 +6078,6 @@ func _action_targets_card_for_destruction(action: CardAction) -> bool:
 		return true
 	return false
 
-func _card_indicates_destruction(card: Card) -> bool:
-	if card == null:
-		return false
-	if card.has_type("Destruction") or card.has_type("Magic Destruction"):
-		return true
-	for type_name in card.card_types:
-		if str(type_name).findn("destruction") >= 0:
-			return true
-	return str(card.ability_text).findn("destroy") >= 0
-
-func _local_player_has_destructive_priority_response(action: CardAction) -> bool:
-	if action == null or game_manager == null:
-		return false
-	var local_priority_index := _get_local_priority_player_index()
-	if local_priority_index < 0 or local_priority_index >= game_manager.players.size():
-		return false
-	var local_player := game_manager.players[local_priority_index]
-	var responses := match_manager.get_priority_prompt_offering_responses(local_player) if match_manager != null else game_manager.get_priority_responses(local_player)
-	for response in responses:
-		var response_card := response as Card
-		if _card_indicates_destruction(response_card):
-			return true
-	return false
-
 func _play_mode_should_hold_priority_for_action(action: CardAction) -> bool:
 	if action == null:
 		return false
@@ -6105,8 +6091,6 @@ func _play_mode_should_hold_priority_for_action(action: CardAction) -> bool:
 		if match_manager != null:
 			return match_manager._player_has_priority_prompt_responses(local_player)
 		return not game_manager.get_priority_responses(local_player).is_empty()
-	if _local_player_has_destructive_priority_response(action):
-		return true
 	if not _action_targets_card_for_destruction(action):
 		return false
 	var target_card := _get_action_target_card(action)
@@ -9851,6 +9835,7 @@ func _show_zone_contents(zone_name: String, zone: Zone) -> void:
 		var vc := VisualCard.new()
 		vc.setup(card)
 		vc.set_hover_viewer(game_manager.get_feedback_viewer())
+		vc.set_hover_use_board_popup(true, game_manager)
 		vc.set_hover_preview_when_disabled(true)
 		vc.set_disabled(true, false)
 		hbox.add_child(vc)
@@ -20232,7 +20217,7 @@ func _auto_pass_priority_prompt(player_index: int, data: Dictionary) -> bool:
 	_pending_priority_auto_pass_signature = prompt_signature
 	_hide_priority_prompt()
 	_update_waiting_overlay()
-	call_deferred("_on_priority_pass_pressed")
+	_queue_deferred_priority_pass()
 	return true
 
 func _clear_pending_priority_response_submission() -> void:
@@ -20660,6 +20645,11 @@ func _hide_priority_prompt() -> void:
 	_sync_visual_linger_input_blocker()
 
 func _on_priority_pass_pressed() -> void:
+	if game_manager != null and game_manager.priority_player != null:
+		var priority_player_index := game_manager.players.find(game_manager.priority_player)
+		var local_player_index := _get_local_priority_player_index()
+		if local_player_index >= 0 and priority_player_index != local_player_index:
+			return
 	_hide_priority_prompt()
 	if match_manager != null and match_manager.uses_authoritative_priority_flow():
 		_submit_authoritative_priority_command({type = "priority_pass"})
@@ -20672,6 +20662,37 @@ func _on_priority_pass_pressed() -> void:
 		_execute_top_of_stack()
 	else:
 		_offer_priority()
+
+func _get_priority_pass_state_signature() -> Dictionary:
+	if game_manager == null or game_manager.priority_player == null:
+		return {}
+	var signature := {
+		"player_index": game_manager.players.find(game_manager.priority_player),
+		"turn_number": game_manager.turn_number,
+		"stack_size": game_manager.action_stack.size(),
+	}
+	if not game_manager.action_stack.is_empty():
+		var top_action := game_manager.action_stack.back() as CardAction
+		if top_action != null:
+			signature["top_type"] = int(top_action.type)
+			signature["top_event_name"] = top_action.event_name
+			signature["top_card_uid"] = top_action.card.uid if top_action.card != null else ""
+			signature["top_source_index"] = game_manager.players.find(top_action.source_player)
+	return signature
+
+func _queue_deferred_priority_pass() -> void:
+	var expected_state := _get_priority_pass_state_signature()
+	if expected_state.is_empty():
+		return
+	call_deferred("_run_deferred_priority_pass", expected_state)
+
+func _run_deferred_priority_pass(expected_state: Dictionary) -> void:
+	if expected_state != _get_priority_pass_state_signature():
+		return
+	var expected_player_index := int(expected_state.get("player_index", -1))
+	if expected_player_index < 0 or expected_player_index != _get_local_priority_player_index():
+		return
+	_on_priority_pass_pressed()
 
 func _submit_authoritative_priority_command(command: Dictionary) -> bool:
 	if game_input != null:
@@ -20689,10 +20710,11 @@ func _show_priority_response_submit_failure(card: Card) -> void:
 func _requires_priority_target_selection(card: Card) -> bool:
 	if card == null:
 		return false
+	if card.has_method("requires_priority_target_selection"):
+		return bool(card.call("requires_priority_target_selection"))
 	if card.targets or card.has_type("Targeting"):
 		return true
-	return card.has_method("requires_priority_target_selection") \
-		and bool(card.call("requires_priority_target_selection"))
+	return false
 
 func _begin_authoritative_priority_charm_target_selection(
 	charm: CharmCard,
@@ -20747,6 +20769,7 @@ func _try_submit_authoritative_priority_response(card: Card) -> bool:
 		var has_manual_targets := hex.has_method("get_priority_targets") or top.type == CardAction.Type.ATTACK
 		var targets: Array = game_manager.get_priority_hex_targets(hex, top) if has_manual_targets else []
 		var target_is_attacker := not hex.has_method("get_priority_targets") and top.type == CardAction.Type.ATTACK
+		var requires_target_selection := _requires_priority_target_selection(hex)
 		var submit_hex_response := func(target_uid: String = "") -> void:
 			_submit_authoritative_priority_command({
 				type = "play_hex_response",
@@ -20754,11 +20777,11 @@ func _try_submit_authoritative_priority_response(card: Card) -> bool:
 				target_uid = target_uid,
 				target_is_attacker = target_is_attacker,
 			})
-		if has_manual_targets and hex.targets and targets.is_empty():
+		if has_manual_targets and requires_target_selection and targets.is_empty():
 			_set_action_label_text(hex.card_name + " has no valid targets.")
 			update_ui()
 			return true
-		if hex.targets and not targets.is_empty():
+		if requires_target_selection and not targets.is_empty():
 			var choose_hex_target := func(chosen_card: Card) -> void:
 				submit_hex_response.call(chosen_card.uid)
 			_show_card_selection_overlay(
@@ -20863,10 +20886,11 @@ func _on_priority_response_chosen(card: Card) -> void:
 		var has_manual_targets := hex.has_method("get_priority_targets") or top.type == CardAction.Type.ATTACK
 		var hex_targets: Array = game_manager.get_priority_hex_targets(hex, top) if has_manual_targets else []
 		var target_is_attacker := not hex.has_method("get_priority_targets") and top.type == CardAction.Type.ATTACK
-		if hex is PermanentHexCard and hex.targets and has_manual_targets:
+		var requires_target_selection := _requires_priority_target_selection(hex)
+		if hex is PermanentHexCard and requires_target_selection and has_manual_targets:
 			_begin_priority_hex_target_selection(hex, top, target_is_attacker)
 			return
-		if hex.targets and not hex_targets.is_empty():
+		if requires_target_selection and not hex_targets.is_empty():
 			var on_choose_priority_hex_target := func(chosen_card: Card) -> void:
 				_queue_hex_response_action(hex, top, chosen_card, target_is_attacker)
 			_show_card_selection_overlay(
@@ -20877,7 +20901,7 @@ func _on_priority_response_chosen(card: Card) -> void:
 				_get_selection_cursor_mode_for_source(hex)
 			)
 			return
-		if has_manual_targets and hex.targets and hex_targets.is_empty():
+		if has_manual_targets and requires_target_selection and hex_targets.is_empty():
 			_set_action_label_text(hex.card_name + " has no valid targets.")
 			update_ui()
 			return
@@ -24298,6 +24322,18 @@ func _dismiss_transient_prompts() -> void:
 	_hide_pause_menu()
 	_hide_devour_cancel_prompt()
 	_dismiss_zone_overlay()
+	_clear_pending_click_selection()
+	_clear_pending_priority_response_target_selection()
+	_clear_pending_priority_response_submission()
+	_pending_priority_auto_pass_signature.clear()
+	_pending_reveal_auto_submit_keys.clear()
+	_clear_mopsus_hand_selection()
+	_clear_paid_hand_card_preview()
+	_clear_network_breidablik_return_pending(false)
+	_pending_end_turn_discard_uids.clear()
+	_network_upkeep_prompt_turn = -1
+	_network_upkeep_prompt_player_index = -1
+	_suppress_next_devour_cancel_prompt = false
 	_pending_freyja_active_prompt_data.clear()
 	_pending_nergal_lion_prompt_data.clear()
 	_pending_nusku_well_of_fire_prompt_data.clear()
@@ -24311,9 +24347,11 @@ func _dismiss_transient_prompts() -> void:
 	_hide_tezcatlipoca_active_titlacauan_prompt()
 	_hide_priority_prompt()
 	_hide_intercept_prompt()
-	_hide_retreat_prompt()
+	_clear_pending_retreat_state()
 	_hide_hati_prompt()
+	_hide_gala_tura_prompt()
 	_hide_kur_jara_tree_of_life_prompt()
+	_hide_tezcatlipoca_shift_prompt()
 	_declined_hati_prompts.clear()
 	_hide_skoll_prompt()
 	_hide_doorway_choice_prompt()
@@ -24327,11 +24365,13 @@ func _dismiss_transient_prompts() -> void:
 	_hide_nusku_active_core_flame_prompt()
 	_hide_habrok_breakout_prompt(true)
 	_hide_champions_call_prompt()
+	_clear_champions_call_placement()
 	_hide_sharur_escape_prompt()
 	_hide_wheel_of_fire_turn_start_prompt()
 	_hide_byggvir_reveal_prompt()
 	_hide_gawain_healing_hands_prompt()
 	_hide_harii_shaman_prompt()
+	_hide_en_hedu_anna_prompt()
 	_hide_erlqueens_nightingale_prompt()
 	_clear_hunting_tactics_prompt_state()
 	_hide_breidablik_prompt()
@@ -24340,6 +24380,25 @@ func _dismiss_transient_prompts() -> void:
 	_hide_aphrodite_prompt()
 	_hide_blot_sacrifice_prompt()
 	_hide_deucalion_prompt()
+	_clear_ragnarok_prompt_state()
+	_pending_key_of_solomon = null
+	_pending_kos_sacrifice = null
+	_pending_kos_selected_demons.clear()
+	_awaiting_creature_sacrifice = false
+	_awaiting_altar_void_payment = false
+	_altar_pending_power = null
+	_sacrifice_pending_card = null
+	_sacrifice_pending_zone = null
+	_sacrifice_pending_mode = ""
+	_sacrifice_remaining = 0
+	_pending_creature_play_resolver = Callable()
+	_clear_pending_creature_summon_payment_state()
+	_drag_sacrifice_done = false
+	_awaiting_drag_sacrifice_zone = false
+	_drag_sacrifice_card = null
+	_drag_sacrifice_target = null
+	_drag_sacrifice_mode = ""
+	_clear_wolf_master_summon()
 	_pending_wheel_of_fire_prompts.clear()
 	_pending_wolf_adolescent_prompts.clear()
 	_active_wolf_adolescent_prompt = null
@@ -24354,6 +24413,13 @@ func _dismiss_transient_prompts() -> void:
 	_active_huginn_prime_prompt = null
 	_pending_muninn_prime_prompts.clear()
 	_active_muninn_prime_prompt = null
+	_pending_oracles_sight_prompts.clear()
+	_active_oracles_sight_prompt = null
+	_queued_oracles_sight_prompt_targets.clear()
+	_pending_humbaba_prompts.clear()
+	_active_humbaba_prompt = null
+	_queued_humbaba_prompt_targets.clear()
+	_humbaba_prompt_paused_resolution = false
 	_pending_mummu_entropy_prompts.clear()
 	_hide_mummu_entropy_prompt()
 	_queued_harii_jarl_prompt_targets.clear()
@@ -24361,14 +24427,12 @@ func _dismiss_transient_prompts() -> void:
 	_queued_huginn_prime_prompt_targets.clear()
 	_queued_muninn_prime_prompt_targets.clear()
 	_queued_wolf_adolescent_prompt_targets.clear()
-	_queued_humbaba_prompt_targets.clear()
-	_humbaba_prompt_paused_resolution = false
-	_queued_oracles_sight_prompt_targets.clear()
 	_pending_tonal_extraction_prompts.clear()
 	_queued_tonal_extraction_prompt_targets.clear()
 	if _resurrection_panel and is_instance_valid(_resurrection_panel):
 		_resurrection_panel.queue_free()
 	_resurrection_panel = null
+	_pending_resurrection_card = null
 	_resurrection_queue.clear()
 
 func _on_demiurge_confirm_pressed(spin: SpinBox) -> void:

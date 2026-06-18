@@ -1555,10 +1555,19 @@ func _resolve_creature_combat_now(
 		for combatant in active:
 			combatant.spend_attack_creature_action()
 			combatant.mark_attacked_this_turn()
+		var combat_text := ""
 		if active.size() >= 2:
-			last_resolution_text = active[0].card_name + " and " + active[1].card_name + " fought " + target.card_name + "!"
+			combat_text = active[0].card_name + " and " + active[1].card_name + " fought " + target.card_name + "!"
 		elif not active.is_empty():
-			last_resolution_text = active[0].card_name + " fought " + target.card_name + "!"
+			combat_text = active[0].card_name + " fought " + target.card_name + "!"
+		if action.interceptor != null and not combat_text.is_empty():
+			last_resolution_text = "%s intercepted %s. %s" % [
+				target.card_name,
+				_format_card_name_list(active),
+				combat_text,
+			]
+		else:
+			last_resolution_text = combat_text
 		if completion_callback.is_valid():
 			completion_callback.call()
 
@@ -1935,32 +1944,11 @@ func _action_targets_card_for_destruction(action: CardAction) -> bool:
 		return true
 	return false
 
-func _card_indicates_destruction(card: Card) -> bool:
-	if card == null:
-		return false
-	if card.has_type("Destruction") or card.has_type("Magic Destruction"):
-		return true
-	for type_name in card.card_types:
-		if str(type_name).findn("destruction") >= 0:
-			return true
-	return str(card.ability_text).findn("destroy") >= 0
-
-func _player_has_destructive_priority_response(player: Player) -> bool:
-	if player == null or game_manager == null:
-		return false
-	for response in get_priority_prompt_offering_responses(player):
-		var response_card := response as Card
-		if _card_indicates_destruction(response_card):
-			return true
-	return false
-
 func _play_mode_requires_priority_window(action: CardAction, player: Player) -> bool:
 	if action == null or player == null or game_manager == null:
 		return false
 	if get_priority_stop_key(action) == "combat":
 		return _player_has_priority_prompt_responses(player)
-	if _player_has_destructive_priority_response(player):
-		return true
 	if not _action_targets_card_for_destruction(action):
 		return false
 	var target_card := _get_action_target_card(action)
@@ -2348,10 +2336,11 @@ func _get_priority_response_target_uids(card: Card, top: CardAction) -> Array:
 func _priority_response_requires_target_choice(card: Card) -> bool:
 	if card == null:
 		return false
+	if card.has_method("requires_priority_target_selection"):
+		return bool(card.call("requires_priority_target_selection"))
 	if game_manager != null and game_manager.is_targeting_source(card):
 		return true
-	return card.has_method("requires_priority_target_selection") \
-		and bool(card.call("requires_priority_target_selection"))
+	return false
 
 func _validate_priority_response_target(card: Card, top: CardAction, target: Card, target_uid: String, context: String) -> String:
 	var requested_uid := str(target_uid).strip_edges()
@@ -2571,7 +2560,8 @@ func _queue_authoritative_priority_event(
 	source_player_override: Player = null,
 	resolution_text: String = "",
 	source_card: Card = null,
-	event_speed: int = 0
+	event_speed: int = 0,
+	suppress_public_resolution_log: bool = false
 ) -> void:
 	var action := CardAction.new()
 	action.type = CardAction.Type.EVENT
@@ -2582,6 +2572,7 @@ func _queue_authoritative_priority_event(
 	action.event_speed = event_speed
 	action.resolve_callback = resolve_callback
 	action.resolution_text = resolution_text
+	action.event_data["suppress_public_resolution_log"] = suppress_public_resolution_log
 	_queue_or_resolve_authoritative_priority_event(action)
 
 func _build_upkeep_resolution_feedback(default_feedback: String) -> String:
@@ -3404,13 +3395,16 @@ func _process_command_impl(command: Dictionary) -> bool:
 				_:
 					move_failed.emit("upkeep_choice: unknown choice '" + str(command.get("choice")) + "'")
 					return false
-			move_validated.emit(command)
+			var choice_feedback := ""
 			if _uses_authoritative_headless_priority_flow():
-				var choice_feedback := _build_upkeep_resolution_feedback(
+				choice_feedback = _build_upkeep_resolution_feedback(
 					game_manager.get_upkeep_choice_feedback(str(command.get("choice", "")))
 				)
 				if not choice_feedback.strip_edges().is_empty():
 					choice_feedback = "%s upkeep: %s" % [acting_player.player_name, choice_feedback]
+					command["public_log_message"] = choice_feedback
+			move_validated.emit(command)
+			if _uses_authoritative_headless_priority_flow():
 				if _has_pending_wheel_of_fire_turn_start_choice():
 					_emit_next_wheel_of_fire_turn_start_choice()
 					return true
@@ -3419,7 +3413,10 @@ func _process_command_impl(command: Dictionary) -> bool:
 					Callable(),
 					game_manager.current_player,
 					game_manager.current_player,
-					choice_feedback
+					choice_feedback,
+					null,
+					0,
+					true
 				)
 			return true
 		"tiamat_upkeep_choice":

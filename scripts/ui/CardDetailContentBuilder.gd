@@ -8,6 +8,8 @@ const _BULLET_SEPARATOR := " | "
 const _BOARD_POPUP_WIDTH := 210.0
 const _KEYWORD_PANEL_WIDTH := 210.0
 const _DECKBUILDER_SCROLLBAR_CONTENT_CLEARANCE := 32.0
+const _DROMI_BINDING_NAME := "Dromi"
+const _DROMI_BINDING_HOVER_TEXT := "Cannot attack. Losing 7 followers on opponent's turn start - Dromi"
 
 static func build_visual_hover_body(card: Card, viewer: Player, config: Dictionary = {}) -> Control:
 	var content_width := float(config.get("content_width", 300.0))
@@ -203,6 +205,213 @@ static func apply_deckbuilder_scrollbar_style(scroll: ScrollContainer, force_vis
 	grabber_pressed.corner_radius_bottom_right = 8
 	grabber_pressed.bg_color = Color(1.0, 0.84, 0.44, 1.0)
 	bar.add_theme_stylebox_override("grabber_pressed", grabber_pressed)
+
+static func build_board_popup_body_from_game_state(
+	card: Card,
+	viewer: Player,
+	game_manager,
+	config: Dictionary = {}
+) -> Control:
+	var merged_config := config.duplicate(true)
+	var is_hidden_card := (card.is_stealth or (card.is_face_down and not _is_public_power(card))) \
+		and card.get_controller() != viewer \
+		and not card.is_revealed_to_all()
+	merged_config["is_hidden_card"] = is_hidden_card
+	merged_config["type_label"] = _get_card_type_label(card)
+	merged_config["game_manager"] = game_manager
+	merged_config["effect_lines"] = []
+	merged_config["equipment_lines"] = []
+	merged_config["binding_lines"] = []
+	merged_config["cost_lines"] = []
+	merged_config["power_cost_lines"] = []
+
+	if not is_hidden_card:
+		if card.card_type == Card.CardType.CREATURE:
+			merged_config["effect_lines"] = card.get_effect_summary_lines()
+			merged_config["equipment_lines"] = card.get_equipment_summary_lines()
+			var binding_lines: Array[String] = []
+			for binding in _get_attached_permanent_hexes(card, game_manager):
+				var line := binding.card_name
+				var binding_effect_lines := _get_binding_hover_lines(binding)
+				if binding_effect_lines.is_empty():
+					binding_lines.append(line)
+				else:
+					binding_lines.append(line + ": " + " | ".join(binding_effect_lines))
+			var has_dromi_line := false
+			for line in binding_lines:
+				if line.begins_with(_DROMI_BINDING_NAME):
+					has_dromi_line = true
+					break
+			if not has_dromi_line and _has_dromi_binding(card, game_manager):
+				var dromi_source := _get_dromi_binding_source(card, game_manager)
+				if dromi_source != null and dromi_source != card:
+					var dromi_effect_lines := _get_binding_hover_lines(dromi_source)
+					if dromi_effect_lines.is_empty():
+						binding_lines.append(_DROMI_BINDING_NAME + ": " + _DROMI_BINDING_HOVER_TEXT)
+					else:
+						binding_lines.append(_DROMI_BINDING_NAME + ": " + " | ".join(dromi_effect_lines))
+				else:
+					binding_lines.append(_DROMI_BINDING_NAME + ": " + _DROMI_BINDING_HOVER_TEXT)
+			merged_config["binding_lines"] = binding_lines
+		elif card.card_type == Card.CardType.STRUCTURE or card.card_type == Card.CardType.EQUIPMENT:
+			merged_config["effect_lines"] = card.get_effect_summary_lines()
+
+		if card is PowerCard:
+			merged_config["power_cost_lines"] = _get_power_hover_cost_lines(card as PowerCard, game_manager)
+		elif _can_show_prepared_magical_cost(card, viewer):
+			merged_config["cost_lines"] = _get_prepared_magical_hover_cost_lines(card, viewer, game_manager)
+
+	return build_board_popup_body(card, viewer, merged_config)
+
+static func _is_public_power(card: Card) -> bool:
+	var power := card as PowerCard
+	return power != null and power.is_publicly_revealed
+
+static func _get_card_type_label(card: Card) -> String:
+	if card == null:
+		return "Card"
+	if card.is_god:
+		return "God"
+	if card.is_power:
+		return "Power"
+	if card.has_type("Charm"):
+		return "Charm"
+	match card.card_type:
+		Card.CardType.CREATURE:
+			return "Creature"
+		Card.CardType.CHARM:
+			return "Charm"
+		Card.CardType.SPELL:
+			return "Spell"
+		Card.CardType.STRUCTURE:
+			return "Structure"
+		Card.CardType.HEX:
+			return "Hex"
+		Card.CardType.EQUIPMENT:
+			return "Equipment"
+	return "Card"
+
+static func _get_power_hover_cost_lines(power: PowerCard, game_manager) -> Array[String]:
+	var lines: Array[String] = []
+	if power == null or game_manager == null:
+		return lines
+	if power.is_face_down:
+		return power.get_unlock_display_cost_lines(game_manager)
+	var hover_data: Dictionary = power.get_activation_cost_hover_data(game_manager)
+	if hover_data.is_empty():
+		return lines
+	var base_cost: int = int(hover_data.get("base_cost", 0))
+	var cost_kind: String = str(hover_data.get("cost_kind", Card.COST_KIND_POWER_ACTIVATION))
+	var metadata: Dictionary = hover_data.get("metadata", {})
+	var label: String = str(hover_data.get("label", "Activation Cost"))
+	var current_cost := power.get_adjusted_mana_cost(base_cost, cost_kind, game_manager, metadata)
+	if power.should_include_activation_cost_summary_line(game_manager):
+		lines.append("%s: %d" % [label, current_cost])
+	for breakdown_line in power.get_cost_adjustment_lines(base_cost, cost_kind, game_manager, metadata):
+		lines.append(breakdown_line)
+	for extra_line in hover_data.get("extra_lines", []):
+		var text := str(extra_line).strip_edges()
+		if text != "":
+			lines.append(text)
+	return lines
+
+static func _can_show_prepared_magical_cost(card: Card, viewer: Player) -> bool:
+	if card == null:
+		return false
+	if not card.is_prepared or not card.is_magical_card():
+		return false
+	if card.current_zone == null or not card.current_zone.is_board_zone():
+		return false
+	return card.get_controller() == viewer
+
+static func _get_prepared_magical_cost_player(card: Card) -> Player:
+	if card == null:
+		return null
+	var controller := card.get_controller()
+	if controller != null:
+		return controller
+	return card.card_owner
+
+static func _get_prepared_magical_hover_cost_lines(card: Card, viewer: Player, game_manager) -> Array[String]:
+	var lines: Array[String] = []
+	if not _can_show_prepared_magical_cost(card, viewer) or game_manager == null:
+		return lines
+	var current_cost := card.mana_cost
+	var paying_player := _get_prepared_magical_cost_player(card)
+	if paying_player != null:
+		current_cost = game_manager.get_prepared_card_activation_mana_cost(paying_player, card)
+	var cost_parts := card.get_cost_shorthand_parts(current_cost)
+	if not cost_parts.is_empty():
+		lines.append("Activation Cost: " + " ".join(cost_parts))
+	if paying_player != null:
+		for breakdown_line in card.get_cost_adjustment_lines(
+			card.mana_cost,
+			Card.COST_KIND_HAND_PLAY,
+			game_manager,
+			{"player": paying_player, "prepared": true}
+		):
+			lines.append(breakdown_line)
+	return lines
+
+static func _get_attached_permanent_hexes(card: Card, game_manager) -> Array[Card]:
+	var bindings: Array[Card] = []
+	if card == null:
+		return bindings
+	var scanned_zones: Array[Zone] = []
+	if game_manager != null:
+		for player in game_manager.players:
+			scanned_zones.append_array(player.frontline_zones)
+			scanned_zones.append_array(player.reserve_zones)
+			scanned_zones.append_array(player.power_zones)
+	elif card.current_zone != null:
+		scanned_zones.append(card.current_zone)
+	for scanned_zone in scanned_zones:
+		if scanned_zone == null:
+			continue
+		for zone_card in scanned_zone.cards:
+			if zone_card == null or zone_card == card or zone_card in bindings:
+				continue
+			if zone_card is PermanentHexCard and (zone_card as PermanentHexCard).attached_target == card:
+				bindings.append(zone_card)
+	return bindings
+
+static func _get_dromi_binding_source(card: Card, game_manager) -> Card:
+	if card == null:
+		return null
+	for binding in _get_attached_permanent_hexes(card, game_manager):
+		if binding != null and binding.card_name == _DROMI_BINDING_NAME:
+			return binding
+	var cannot_attack_status := card.get_status_effect("cannot_attack")
+	if cannot_attack_status.is_empty():
+		return null
+	var source_name := str(cannot_attack_status.get("source", ""))
+	var source_card = cannot_attack_status.get("source_card", null)
+	if source_card is Card and (source_card as Card).card_name == _DROMI_BINDING_NAME:
+		return source_card as Card
+	if source_name == _DROMI_BINDING_NAME:
+		if source_card is Card:
+			return source_card as Card
+		return card
+	return null
+
+static func _has_dromi_binding(card: Card, game_manager) -> bool:
+	return _get_dromi_binding_source(card, game_manager) != null
+
+static func _get_binding_hover_lines(binding: Card) -> Array[String]:
+	var details: Array[String] = []
+	if binding == null:
+		return details
+	if binding.card_name == _DROMI_BINDING_NAME:
+		details.append(_DROMI_BINDING_HOVER_TEXT)
+		return details
+	var ability_summary := binding.get_inline_ability_summary()
+	if ability_summary != "":
+		details.append(ability_summary)
+	for effect_line in binding.get_effect_summary_lines():
+		if effect_line == "" or effect_line in details:
+			continue
+		details.append(effect_line)
+	return details
 
 static func build_board_popup_body(card: Card, viewer: Player, config: Dictionary = {}) -> Control:
 	var is_hidden_card := bool(config.get("is_hidden_card", false))

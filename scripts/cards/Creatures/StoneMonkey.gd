@@ -12,8 +12,8 @@ func _init() -> void:
 	mana_cost = 2
 	sacrifice_cost = 0
 	speed = 3
-	resilience = 15
-	strength = 15
+	resilience = 14
+	strength = 14
 	ability_text = "[b]Stone Skin[/b] ([b]Passive[/b]): Cannot be destroyed in battle."
 	flavor_text = ""
 	culture = "Tian"

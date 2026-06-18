@@ -28,6 +28,9 @@ func can_respond_to_action(action: CardAction) -> bool:
 		return false
 	return action.card.card_type == Card.CardType.SPELL
 
+func requires_priority_target_selection() -> bool:
+	return false
+
 func on_activate_action(game_manager: GameManager, action: CardAction) -> void:
 	var negated_action := action.response_to
 	if game_manager == null or card_owner == null:

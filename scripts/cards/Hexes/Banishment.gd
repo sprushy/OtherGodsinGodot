@@ -27,6 +27,9 @@ func can_respond_to_action(action: CardAction) -> bool:
 		return false
 	return action.card.is_magical_card()
 
+func requires_priority_target_selection() -> bool:
+	return false
+
 func on_activate_action(game_manager: GameManager, action: CardAction) -> void:
 	var negated_action := action.response_to
 	if negated_action == null or negated_action.card == null:
