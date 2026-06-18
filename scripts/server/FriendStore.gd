@@ -153,7 +153,8 @@ func send_deck_share(
 	recipient_account_id: String,
 	deck_name: String,
 	cards,
-	special_setup = {}
+	special_setup = {},
+	reinforcements = {}
 ) -> Dictionary:
 	_ensure_loaded()
 	var sender_id := sender_account_id.strip_edges()
@@ -186,6 +187,7 @@ func send_deck_share(
 		"deck": {
 			"name": clean_name,
 			"cards": sanitized_cards,
+			"reinforcements": _sanitize_cards(reinforcements),
 			"special_setup": _sanitize_special_setup(special_setup),
 		},
 		"created_unix": now_unix,
@@ -228,7 +230,8 @@ func respond_to_deck_share(
 			str((deck as Dictionary).get("name", DeckStoreScript.DEFAULT_DECK_NAME)),
 			(deck as Dictionary).get("cards", {}),
 			"",
-			(deck as Dictionary).get("special_setup", {})
+			(deck as Dictionary).get("special_setup", {}),
+			(deck as Dictionary).get("reinforcements", {})
 		)
 		if not bool(save_result.get("success", false)):
 			return save_result

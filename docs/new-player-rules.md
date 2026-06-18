@@ -67,15 +67,22 @@ A legal deck contains:
 
 - Exactly 1 God.
 - Up to 3 Powers.
-- At least 35 regular cards.
+- At least 40 regular cards.
 
-Regular cards are Creatures, Spells, Hexes, Charms, Equipment, and Structures. Gods and Powers do not count toward the 35 regular-card minimum.
+Regular cards are Creatures, Spells, Hexes, Charms, Equipment, and Structures. Gods and Powers do not count toward the 40 regular-card minimum.
+
+You may also register a side deck called **Reinforcements**:
+
+- Its maximum size is one-third of your regular main-deck cards plus Powers, rounded down.
+- Your God is not included in that calculation and cannot be placed in Reinforcements.
+- For example, 40 regular cards plus 3 Powers allows up to 14 Reinforcements.
+- Copy limits apply across the main deck and Reinforcements together.
 
 Copy limits:
 
 - Regular non-Legendary cards: up to 3 copies.
 - A specific Legendary card: 1 copy.
-- Total Legendary cards: 1 for every 10 regular cards. A 35 regular-card deck can have up to 3 Legendaries.
+- Total Legendary cards in the main deck: 1 for every 10 regular cards. A 40 regular-card deck can have up to 4 Legendaries.
 
 Culture rules:
 
@@ -91,6 +98,12 @@ First deck recipe:
 5. Add a few Hexes if you want defensive traps.
 6. Add Equipment only if you have enough Creatures to carry it.
 7. Press Save Deck when the deck builder says the deck is legal.
+
+### Best-Of-Three Matches
+
+Multiplayer matches are best-of-three: the first player to win two games wins the match.
+
+After game 1 and, if needed, game 2, both players may exchange cards between their main deck and Reinforcements. Each change must be a one-for-one swap, so the main deck and registered card pool stay the same size. The resulting main deck must still satisfy every normal deck construction rule before the next game can begin.
 
 ## 6. Understand The Battlefield
 

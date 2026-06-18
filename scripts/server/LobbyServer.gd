@@ -226,7 +226,8 @@ func _handle_request(peer_id: int, message: Dictionary) -> void:
 				str(payload.get("deck_name", "")),
 				str(payload.get("deck_id", "")),
 				payload.get("cards", {}),
-				payload.get("special_setup", {})
+				payload.get("special_setup", {}),
+				payload.get("reinforcements", {})
 			)
 		LobbyProtocolScript.REQUEST_ACCOUNT_DECKS:
 			_handle_request_account_decks(peer_id)
@@ -486,7 +487,8 @@ func _handle_save_account_deck(peer_id: int, payload: Dictionary) -> void:
 		str(payload.get("deck_name", "")),
 		payload.get("cards", {}),
 		str(payload.get("deck_id", "")),
-		payload.get("special_setup", {})
+		payload.get("special_setup", {}),
+		payload.get("reinforcements", {})
 	)
 	if not bool(save_result.get("success", false)):
 		_send_error_to_peer(peer_id, str(save_result.get("message", "Could not save that deck.")))
@@ -663,7 +665,8 @@ func _handle_send_deck_to_friend(peer_id: int, payload: Dictionary) -> void:
 		recipient_account_id,
 		str(payload.get("deck_name", "")),
 		payload.get("cards", {}),
-		payload.get("special_setup", {})
+		payload.get("special_setup", {}),
+		payload.get("reinforcements", {})
 	)
 	if not bool(result.get("success", false)):
 		_send_error_to_peer(peer_id, str(result.get("message", "Could not send that deck.")))
@@ -1217,7 +1220,8 @@ func _submit_deck_for_session(
 	deck_name: String,
 	deck_id: String,
 	cards,
-	special_setup = {}
+	special_setup = {},
+	reinforcements = {}
 ) -> void:
 	var room_id: String = str(room_id_by_session.get(session_id, ""))
 	if room_id.is_empty() or not rooms_by_id.has(room_id):
@@ -1228,6 +1232,7 @@ func _submit_deck_for_session(
 	var resolved_deck_name := deck_name.strip_edges()
 	var resolved_deck_id := deck_id.strip_edges()
 	var resolved_cards: Dictionary = {}
+	var resolved_reinforcements: Dictionary = {}
 	var resolved_special_setup: Dictionary = {}
 	if not account_id.is_empty():
 		_ensure_deck_store()
@@ -1248,6 +1253,9 @@ func _submit_deck_for_session(
 			_send_error_to_session(session_id, "That saved deck is missing its cards.")
 			return
 		resolved_cards = (saved_cards as Dictionary).duplicate(true)
+		var saved_reinforcements = saved_deck.get("reinforcements", {})
+		if saved_reinforcements is Dictionary:
+			resolved_reinforcements = (saved_reinforcements as Dictionary).duplicate(true)
 		var saved_special_setup = saved_deck.get("special_setup", {})
 		if saved_special_setup is Dictionary:
 			resolved_special_setup = (saved_special_setup as Dictionary).duplicate(true)
@@ -1258,6 +1266,9 @@ func _submit_deck_for_session(
 			_send_error_to_session(session_id, "Deck submission was missing cards.")
 			return
 		resolved_cards = (cards as Dictionary).duplicate(true)
+		var submitted_reinforcements = reinforcements
+		if submitted_reinforcements is Dictionary:
+			resolved_reinforcements = (submitted_reinforcements as Dictionary).duplicate(true)
 		var submitted_special_setup = special_setup
 		if submitted_special_setup is Dictionary:
 			resolved_special_setup = (submitted_special_setup as Dictionary).duplicate(true)
@@ -1265,7 +1276,11 @@ func _submit_deck_for_session(
 	if deck_validator == null:
 		_send_error_to_session(session_id, "Deck validator is unavailable.")
 		return
-	var validation: Dictionary = deck_validator.validate_deck(resolved_cards, resolved_special_setup)
+	var validation: Dictionary = deck_validator.validate_deck(
+		resolved_cards,
+		resolved_special_setup,
+		resolved_reinforcements
+	)
 	var room: LobbyRoom = rooms_by_id[room_id]
 	if not room.submit_deck(
 		session_id,
@@ -1273,7 +1288,8 @@ func _submit_deck_for_session(
 		resolved_deck_id,
 		validation.get("cards", {}),
 		validation,
-		validation.get("special_setup", {})
+		validation.get("special_setup", {}),
+		validation.get("reinforcements", {})
 	):
 		_send_error_to_session(session_id, "Unable to store selected deck.")
 		return

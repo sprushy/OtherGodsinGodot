@@ -7,6 +7,7 @@ const MatchSessionScript = preload("res://scripts/server/MatchSession.gd")
 const DefaultMatchSetupScript = preload("res://scripts/server/DefaultMatchSetup.gd")
 const MatchHistoryStoreScript = preload("res://scripts/server/MatchHistoryStore.gd")
 const JsonStoreScript = preload("res://scripts/server/JsonStore.gd")
+const DeckValidatorScript = preload("res://scripts/server/DeckValidator.gd")
 const INITIAL_JOIN_TIMEOUT_SECONDS := 120
 const ABANDONED_MATCH_SHUTDOWN_DELAY_SECONDS := 0.25
 const GAME_END_SHUTDOWN_DELAY_SECONDS := 3.0
@@ -25,10 +26,12 @@ var match_session = null
 
 var _default_match_setup = DefaultMatchSetupScript.new()
 var _match_history_store = MatchHistoryStoreScript.new()
+var _deck_validator = DeckValidatorScript.new()
 var _match_started: bool = false
 var _initial_join_deadline_unix: int = 0
 var _abandoned_shutdown_started: bool = false
 var _status_heartbeat_elapsed: float = 0.0
+var _reinforcement_phase_active: bool = false
 
 func _process(delta: float) -> void:
 	if not _abandoned_shutdown_started:
@@ -58,6 +61,7 @@ func start_from_config(config: Dictionary) -> Error:
 	headless_match_host.attach(game_manager, match_manager, prompt_router)
 	headless_match_host.configure_match_session(match_session)
 	headless_match_host.match_player_authenticated.connect(_on_match_player_authenticated)
+	headless_match_host.series_command_received.connect(_on_series_command_received)
 
 	if match_session == null or match_session.player_decks_by_session.is_empty():
 		startup_failed.emit("Dedicated match launch was missing submitted deck data.")
@@ -92,10 +96,10 @@ func start_from_config(config: Dictionary) -> Error:
 		startup_failed.emit("Dedicated match transport failed to bind port %d." % match_session.match_port)
 		return transport_err
 
-	headless_match_host.enable_authoritative_broadcasts()
-	game_event_broadcaster = headless_match_host.game_event_broadcaster
 	if not game_manager.game_ended.is_connected(_on_game_ended):
 		game_manager.game_ended.connect(_on_game_ended)
+	headless_match_host.enable_authoritative_broadcasts()
+	game_event_broadcaster = headless_match_host.game_event_broadcaster
 
 	_write_status_file(MatchSessionScript.STATUS_ACTIVE)
 	startup_succeeded.emit(match_session.match_id, match_session.match_port)
@@ -117,6 +121,9 @@ func maybe_start_match_if_ready() -> bool:
 	return true
 
 func _on_match_player_authenticated(_player_index: int, _session_id: String, was_reconnect: bool) -> void:
+	if _reinforcement_phase_active:
+		_send_reinforcement_phase_to_player(_player_index)
+		return
 	if was_reconnect:
 		return
 	maybe_start_match_if_ready()
@@ -167,16 +174,170 @@ func _validate_config(config: Dictionary) -> String:
 	return ""
 
 func _on_game_ended(_winner: Player, _loser: Player) -> void:
+	var winner_index := game_manager.players.find(_winner) if game_manager != null else -1
+	var series_snapshot: Dictionary = match_session.record_series_game_win(winner_index) if match_session != null else {}
+	if match_session != null \
+			and game_manager != null \
+			and game_manager.game_end_reason == GameManager.GAME_END_REASON_FORFEIT \
+			and winner_index >= 0:
+		var winner_session_id := str(match_session.player_session_ids[winner_index]).strip_edges()
+		match_session.series_wins_by_session[winner_session_id] = match_session.games_to_win
+		series_snapshot = match_session.get_series_snapshot()
+	if match_session != null and not match_session.is_series_complete():
+		if game_event_broadcaster != null:
+			game_event_broadcaster.suppress_next_game_end = true
+		_reinforcement_phase_active = true
+		headless_match_host.series_between_games = true
+		_broadcast_reinforcement_phase(series_snapshot, winner_index)
+		_write_status_file(MatchSessionScript.STATUS_ACTIVE)
+		return
+
 	_abandoned_shutdown_started = true
 	if match_session != null:
 		match_session.mark_finished()
 	_write_status_file(MatchSessionScript.STATUS_FINISHED)
 	_record_match_result(_winner, _loser)
+	if network_manager != null:
+		network_manager.broadcast_event_to_all("series_ended", {
+			"winner_index": winner_index,
+			"series": series_snapshot,
+		})
 	var tree := get_tree()
 	if tree == null:
 		return
 	var shutdown_timer := tree.create_timer(GAME_END_SHUTDOWN_DELAY_SECONDS)
 	shutdown_timer.timeout.connect(Callable(tree, "quit"))
+
+func _on_series_command_received(command: Dictionary, sender_info: Dictionary) -> void:
+	var peer_id := int(sender_info.get("peer_id", -1))
+	var player_index := int(sender_info.get("player_index", -1))
+	if not _reinforcement_phase_active or match_session == null:
+		_reject_series_command(peer_id, "Reinforcements can only be changed between games.")
+		return
+	if player_index < 0 or player_index >= match_session.player_session_ids.size():
+		_reject_series_command(peer_id, "Could not identify the series player.")
+		return
+	var proposed_cards = command.get("cards", {})
+	var proposed_reinforcements = command.get("reinforcements", {})
+	if not (proposed_cards is Dictionary) or not (proposed_reinforcements is Dictionary):
+		_reject_series_command(peer_id, "Submit both the main deck and Reinforcements.")
+		return
+	var session_id := str(match_session.player_session_ids[player_index]).strip_edges()
+	var registered_submission = match_session.registered_player_decks_by_session.get(session_id, {})
+	if not (registered_submission is Dictionary):
+		_reject_series_command(peer_id, "The registered deck could not be found.")
+		return
+	var special_setup = (registered_submission as Dictionary).get("special_setup", {})
+	var validation := _deck_validator.validate_reinforcement_swap(
+		(registered_submission as Dictionary).get("cards", {}),
+		(registered_submission as Dictionary).get("reinforcements", {}),
+		proposed_cards as Dictionary,
+		proposed_reinforcements as Dictionary,
+		special_setup if special_setup is Dictionary else {}
+	)
+	if not bool(validation.get("is_valid", false)):
+		_reject_series_command(peer_id, str(validation.get("error", "That Reinforcement swap is not legal.")))
+		return
+	var current_submission = match_session.player_decks_by_session.get(session_id, {})
+	if not (current_submission is Dictionary):
+		current_submission = {}
+	var updated_submission := (current_submission as Dictionary).duplicate(true)
+	updated_submission["cards"] = validation.get("cards", {})
+	updated_submission["reinforcements"] = validation.get("reinforcements", {})
+	updated_submission["validation"] = validation.duplicate(true)
+	match_session.player_decks_by_session[session_id] = updated_submission
+	match_session.set_reinforcement_ready(session_id, true)
+	network_manager.broadcast_event_to_peer(peer_id, "reinforcement_submission_accepted", {
+		"series": match_session.get_series_snapshot(),
+	})
+	_broadcast_reinforcement_readiness()
+	if match_session.all_reinforcement_submissions_ready():
+		call_deferred("_start_next_series_game")
+
+func _reject_series_command(peer_id: int, reason: String) -> void:
+	if network_manager == null:
+		return
+	network_manager.broadcast_event_to_peer(peer_id, "command_rejected", {"reason": reason})
+
+func _broadcast_reinforcement_phase(series_snapshot: Dictionary, winner_index: int) -> void:
+	if network_manager == null or match_session == null:
+		return
+	for player_index in network_manager.player_peer_ids.keys():
+		_send_reinforcement_phase_to_player(int(player_index), series_snapshot, winner_index)
+	for peer_id in network_manager.spectator_peer_ids:
+		network_manager.broadcast_event_to_peer(int(peer_id), "series_game_ended", {
+			"winner_index": winner_index,
+			"series": series_snapshot,
+		})
+
+func _send_reinforcement_phase_to_player(
+	player_index: int,
+	series_snapshot: Dictionary = {},
+	winner_index: int = -1
+) -> void:
+	if network_manager == null or match_session == null:
+		return
+	if player_index < 0 or player_index >= match_session.player_session_ids.size():
+		return
+	var peer_id := int(network_manager.player_peer_ids.get(player_index, -1))
+	if peer_id <= 0:
+		return
+	var session_id := str(match_session.player_session_ids[player_index]).strip_edges()
+	var submission = match_session.player_decks_by_session.get(session_id, {})
+	if not (submission is Dictionary):
+		return
+	var resolved_series: Dictionary = series_snapshot if not series_snapshot.is_empty() else match_session.get_series_snapshot()
+	network_manager.broadcast_event_to_peer(peer_id, "reinforcement_phase", {
+		"winner_index": winner_index,
+		"series": resolved_series,
+		"cards": (submission as Dictionary).get("cards", {}),
+		"reinforcements": (submission as Dictionary).get("reinforcements", {}),
+		"is_ready": bool(match_session.reinforcement_ready_by_session.get(session_id, false)),
+	})
+
+func _broadcast_reinforcement_readiness() -> void:
+	if network_manager == null or match_session == null:
+		return
+	var ready_count := 0
+	for session_id in match_session.player_session_ids:
+		if bool(match_session.reinforcement_ready_by_session.get(session_id, false)):
+			ready_count += 1
+	network_manager.broadcast_event_to_all("reinforcement_readiness", {
+		"ready_count": ready_count,
+		"player_count": match_session.player_session_ids.size(),
+		"series": match_session.get_series_snapshot(),
+	})
+
+func _start_next_series_game() -> void:
+	if not _reinforcement_phase_active or match_session == null:
+		return
+	_reinforcement_phase_active = false
+	headless_match_host.series_between_games = false
+	match_session.begin_next_series_game()
+	if game_event_broadcaster != null:
+		game_event_broadcaster.shutdown()
+
+	game_manager = GameManager.new()
+	match_manager = MatchManager.new(game_manager)
+	match_manager.network_manager = network_manager
+	match_manager.authoritative_match_flow_enabled = true
+	prompt_router = PromptRouterScript.new(game_manager)
+	headless_match_host.attach(game_manager, match_manager, prompt_router)
+	headless_match_host.configure_match_session(match_session)
+
+	var match_players: Dictionary = _default_match_setup.build_match_from_session_decks(game_manager, match_session)
+	if match_players.is_empty():
+		_shutdown_abandoned_match("Could not build the next game in the series.")
+		return
+	if not game_manager.game_ended.is_connected(_on_game_ended):
+		game_manager.game_ended.connect(_on_game_ended)
+	headless_match_host.enable_authoritative_broadcasts()
+	game_event_broadcaster = headless_match_host.game_event_broadcaster
+	network_manager.broadcast_event_to_all("series_game_started", {
+		"series": match_session.get_series_snapshot(),
+	})
+	game_manager.start_turn()
+	_write_status_file(MatchSessionScript.STATUS_ACTIVE)
 
 func _shutdown_if_match_was_abandoned() -> void:
 	if _abandoned_shutdown_started or match_session == null:
@@ -248,6 +409,8 @@ func _write_status_file(status_override: String = "", reason: String = "") -> vo
 		"all_players_connected": match_session.all_players_connected(),
 		"waiting_for_reconnect": match_session.is_waiting_for_reconnect(),
 		"reconnect_deadline_unix": int(match_session.reconnect_deadline_unix),
+		"reinforcement_phase": _reinforcement_phase_active,
+		"series": match_session.get_series_snapshot(),
 	}
 	var clean_reason := reason.strip_edges()
 	if not clean_reason.is_empty():

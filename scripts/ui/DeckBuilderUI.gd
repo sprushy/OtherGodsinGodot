@@ -6,6 +6,7 @@ class_name DeckBuilderUI
 const LocalProfileStoreScript = preload("res://scripts/core/LocalProfileStore.gd")
 const DeckCatalogUtilsScript = preload("res://scripts/core/DeckCatalogUtils.gd")
 const CardCatalogScript = preload("res://scripts/cards/CardCatalog.gd")
+const DeckValidatorScript = preload("res://scripts/server/DeckValidator.gd")
 const TiamatScript = preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
 const CardArtVariantsScript = preload("res://scripts/core/CardArtVariants.gd")
 const LevelSymbolRowScript = preload("res://scripts/ui/LevelSymbolRow.gd")
@@ -18,7 +19,7 @@ signal send_deck_to_friend_requested(friend_username: String, deck: Dictionary)
 # ── constants ──────────────────────────────────────────────────────
 const CARD_W    := 140
 const CARD_H    := 192
-const MIN_REGULAR_CARDS := 35
+const MIN_REGULAR_CARDS := 40
 const DEFAULT_COLLECTION_ROWS := 3
 const COLLECTION_GAP  := 8.0
 const PAGE_REPEAT_INTERVAL_MS := 90
@@ -52,6 +53,8 @@ const CARD_VIEW_PRESETS := [
 # ── state ──────────────────────────────────────────────────────────
 var _all_cards: Array  = []        # template Card instances (read-only)
 var _deck: Dictionary  = {}        # card_name (String) -> count (int)
+var _reinforcements: Dictionary = {}
+var _editing_reinforcements: bool = false
 var _filter: String         = "All"
 var _faction_filter: String = "All"
 var _level_filter: String = LEVEL_FILTER_ANY
@@ -91,6 +94,7 @@ var _deck_count_lbl:   Label
 var _validation_lbl:   Label
 var _profile_lbl:      Label
 var _deck_name_edit:   LineEdit
+var _reinforcements_mode_btn: Button
 var _saved_decks_option: OptionButton
 var _saved_decks_view_btn: Button
 var _saved_actions_bar: HBoxContainer
@@ -681,6 +685,12 @@ func _build_deck_panel(parent: Control) -> void:
 	_deck_name_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_deck_name_edit.custom_minimum_size.y = 28
 	deck_name_row.add_child(_deck_name_edit)
+
+	_reinforcements_mode_btn = Button.new()
+	_reinforcements_mode_btn.text = "Adding: Main"
+	_reinforcements_mode_btn.tooltip_text = "Toggle whether collection cards are added to the main deck or Reinforcements."
+	_reinforcements_mode_btn.pressed.connect(_toggle_reinforcements_edit_mode)
+	deck_name_row.add_child(_reinforcements_mode_btn)
 
 	_saved_decks_option = OptionButton.new()
 	_saved_decks_option.visible = false
@@ -1517,7 +1527,10 @@ func _make_card_item(card: Card) -> Control:
 	minus_btn.offset_bottom = -4
 	minus_btn.custom_minimum_size = Vector2(36, 24)
 	minus_btn.pressed.connect(func() -> void:
-		_remove_from_deck(card.card_name)
+		if _editing_reinforcements:
+			_remove_from_reinforcements(card.card_name)
+		else:
+			_remove_from_deck(card.card_name)
 		_update_collection_selection_visuals()
 	)
 	root.add_child(minus_btn)
@@ -1582,7 +1595,10 @@ func _make_card_item(card: Card) -> Control:
 				_handle_collection_card_primary_press(card, ev.global_position)
 				get_viewport().set_input_as_handled()
 			elif ev.button_index == MOUSE_BUTTON_RIGHT:
-				_remove_from_deck(card.card_name)
+				if _editing_reinforcements:
+					_remove_from_reinforcements(card.card_name)
+				else:
+					_remove_from_deck(card.card_name)
 				get_viewport().set_input_as_handled()
 	)
 	root.mouse_entered.connect(func() -> void:
@@ -1817,8 +1833,10 @@ func _update_collection_card_selection_visual(root: Control, card: Card) -> void
 	var selected := _selected_collection_card_name == card.card_name
 	var has_selection := not _selected_collection_card_name.is_empty()
 	var is_clickable := _get_card_unavailable_reason(card).is_empty()
-	var deck_count := int(_deck.get(card.card_name, 0))
-	var at_max := deck_count >= _max_copies(card)
+	var active_bucket := _reinforcements if _editing_reinforcements else _deck
+	var deck_count := int(active_bucket.get(card.card_name, 0))
+	var combined_count := int(_deck.get(card.card_name, 0)) + int(_reinforcements.get(card.card_name, 0))
+	var at_max := combined_count >= _max_copies(card)
 	var can_remove := selected and deck_count > 0
 	root.z_index = COLLECTION_SELECTED_CARD_Z_INDEX if selected else 0
 	var card_body := root.get_node_or_null("CardBody")
@@ -1893,8 +1911,9 @@ func _refresh_deck_panel(rebuild_collection: bool = false, refresh_layout: bool 
 		var card := _find_template(card_name)
 		if card != null:
 			total += int(_deck[card_name])
+	var reinforcement_total := _count_cards_in_dictionary(_reinforcements)
 	if _deck_count_lbl != null:
-		_deck_count_lbl.text = "%d cards" % total
+		_deck_count_lbl.text = "%d main + %d Reinforcements" % [total, reinforcement_total]
 
 	# Sort: gods → creatures → spells → structures → hexes, then alphabetical
 	var in_deck_filter := func(c: Card) -> bool:
@@ -1910,6 +1929,11 @@ func _refresh_deck_panel(rebuild_collection: bool = false, refresh_layout: bool 
 		return _alphabetical_card_less(a, b)
 	in_deck.sort_custom(in_deck_sort)
 
+	var main_header := Label.new()
+	main_header.text = "MAIN DECK"
+	main_header.add_theme_font_size_override("font_size", 12)
+	main_header.add_theme_color_override("font_color", Color(0.95, 0.82, 0.38))
+	_deck_list.add_child(main_header)
 	var last_section := ""
 	for card: Card in in_deck:
 		var sec := _section_name(card)
@@ -1920,7 +1944,34 @@ func _refresh_deck_panel(rebuild_collection: bool = false, refresh_layout: bool 
 			sep_lbl.add_theme_font_size_override("font_size", 11)
 			sep_lbl.add_theme_color_override("font_color", _get_type_color(card).lerp(Color.WHITE, 0.3))
 			_deck_list.add_child(sep_lbl)
-		_deck_list.add_child(_make_deck_row(card))
+		_deck_list.add_child(_make_deck_row(card, false))
+
+	var reinforcement_header := Label.new()
+	reinforcement_header.text = "REINFORCEMENTS"
+	reinforcement_header.add_theme_font_size_override("font_size", 12)
+	reinforcement_header.add_theme_color_override("font_color", Color(0.48, 0.78, 1.0))
+	_deck_list.add_child(reinforcement_header)
+	var reinforcement_cards: Array = _all_cards.filter(func(card: Card) -> bool:
+		return int(_reinforcements.get(card.card_name, 0)) > 0
+	)
+	reinforcement_cards.sort_custom(in_deck_sort)
+	if reinforcement_cards.is_empty():
+		var empty_label := Label.new()
+		empty_label.text = "None"
+		empty_label.modulate = Color(0.65, 0.68, 0.74)
+		_deck_list.add_child(empty_label)
+	else:
+		last_section = ""
+		for card: Card in reinforcement_cards:
+			var sec := _section_name(card)
+			if sec != last_section:
+				last_section = sec
+				var sep_lbl := Label.new()
+				sep_lbl.text = sec
+				sep_lbl.add_theme_font_size_override("font_size", 11)
+				sep_lbl.add_theme_color_override("font_color", _get_type_color(card).lerp(Color.WHITE, 0.3))
+				_deck_list.add_child(sep_lbl)
+			_deck_list.add_child(_make_deck_row(card, true))
 
 	_refresh_tiamat_panel()
 	_update_validation()
@@ -2022,7 +2073,8 @@ func _refresh_tiamat_panel() -> void:
 			)
 			entry.add_child(remove_btn)
 
-func _make_deck_row(card: Card) -> Control:
+func _make_deck_row(card: Card, is_reinforcement: bool = false) -> Control:
+	var card_bucket := _reinforcements if is_reinforcement else _deck
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 8)
 	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -2050,7 +2102,7 @@ func _make_deck_row(card: Card) -> Control:
 	row.add_child(legendary_lbl)
 
 	var cnt_lbl := Label.new()
-	cnt_lbl.text = "×%d" % _deck[card.card_name]
+	cnt_lbl.text = "×%d" % int(card_bucket.get(card.card_name, 0))
 	cnt_lbl.add_theme_font_size_override("font_size", 14)
 	cnt_lbl.add_theme_color_override("font_color", Color(0.9, 0.9, 0.4))
 	cnt_lbl.custom_minimum_size.x = 42
@@ -2060,13 +2112,23 @@ func _make_deck_row(card: Card) -> Control:
 	var minus := Button.new()
 	minus.text = "−"
 	minus.custom_minimum_size = Vector2(32, 28)
-	minus.pressed.connect(func() -> void: _remove_from_deck(card.card_name))
+	minus.pressed.connect(func() -> void:
+		if is_reinforcement:
+			_remove_from_reinforcements(card.card_name)
+		else:
+			_remove_from_deck(card.card_name)
+	)
 	row.add_child(minus)
 
 	var plus := Button.new()
 	plus.text = "+"
 	plus.custom_minimum_size = Vector2(32, 28)
-	plus.pressed.connect(func() -> void: _add_to_deck(card))
+	plus.pressed.connect(func() -> void:
+		if is_reinforcement:
+			_add_to_reinforcements(card)
+		else:
+			_add_to_deck(card)
+	)
 	row.add_child(plus)
 
 	row.mouse_entered.connect(func() -> void: _show_preview(card))
@@ -2147,7 +2209,18 @@ func _update_deck_scroll_nav_buttons() -> void:
 func _handle_collection_card_add(card: Card) -> void:
 	if _try_assign_card_to_tiamat_slot(card):
 		return
-	_add_to_deck(card)
+	if _editing_reinforcements:
+		_add_to_reinforcements(card)
+	else:
+		_add_to_deck(card)
+
+func _toggle_reinforcements_edit_mode() -> void:
+	_editing_reinforcements = not _editing_reinforcements
+	if _reinforcements_mode_btn != null:
+		_reinforcements_mode_btn.text = "Adding: Reinforcements" if _editing_reinforcements else "Adding: Main"
+		_reinforcements_mode_btn.modulate = Color(0.68, 0.88, 1.0) if _editing_reinforcements else Color.WHITE
+	_update_collection_selection_visuals()
+	_set_status_flash("Collection cards now add to %s." % ("Reinforcements" if _editing_reinforcements else "the main deck"))
 
 func _deck_uses_tiamat() -> bool:
 	return TiamatScript.is_tiamat_god(_get_selected_god_template())
@@ -2237,6 +2310,7 @@ func _remove_tiamat_slot_card(slot_index: int, card_name: String) -> void:
 func _make_deck_undo_state() -> Dictionary:
 	return {
 		"deck": _deck.duplicate(true),
+		"reinforcements": _reinforcements.duplicate(true),
 		"tiamat_slots": _tiamat_slots.duplicate(true),
 		"art_variant_selections": _art_variant_selections.duplicate(true),
 		"deck_name": _deck_name_edit.text if _deck_name_edit != null else "",
@@ -2247,6 +2321,7 @@ func _make_deck_undo_state() -> Dictionary:
 func _deck_undo_states_equal(a: Dictionary, b: Dictionary) -> bool:
 	return (
 		a.get("deck", {}) == b.get("deck", {})
+		and a.get("reinforcements", {}) == b.get("reinforcements", {})
 		and a.get("tiamat_slots", []) == b.get("tiamat_slots", [])
 		and a.get("art_variant_selections", {}) == b.get("art_variant_selections", {})
 		and str(a.get("deck_name", "")) == str(b.get("deck_name", ""))
@@ -2257,6 +2332,7 @@ func _deck_undo_states_equal(a: Dictionary, b: Dictionary) -> bool:
 func _make_saved_deck_state() -> Dictionary:
 	return {
 		"deck": _deck.duplicate(true),
+		"reinforcements": _reinforcements.duplicate(true),
 		"tiamat_slots": _tiamat_slots.duplicate(true),
 		"art_variant_selections": _art_variant_selections.duplicate(true),
 		"deck_name": _deck_name_edit.text if _deck_name_edit != null else "",
@@ -2280,6 +2356,7 @@ func _push_current_deck_undo_state() -> void:
 
 func _restore_deck_undo_state(state: Dictionary) -> void:
 	_deck = (state.get("deck", {}) as Dictionary).duplicate(true)
+	_reinforcements = (state.get("reinforcements", {}) as Dictionary).duplicate(true)
 	_tiamat_slots = (state.get("tiamat_slots", []) as Array).duplicate(true)
 	_art_variant_selections = (state.get("art_variant_selections", {}) as Dictionary).duplicate(true)
 	_selected_saved_deck_id = str(state.get("selected_saved_deck_id", "")).strip_edges()
@@ -2318,7 +2395,7 @@ func _get_active_god_form(god: Card) -> ActiveGodCard:
 # ── deck mutation ──────────────────────────────────────────────────
 func _add_to_deck(card: Card) -> void:
 	var current: int = _deck.get(card.card_name, 0)
-	if current >= _max_copies(card):
+	if current + int(_reinforcements.get(card.card_name, 0)) >= _max_copies(card):
 		return
 	var unavailable_reason := _get_card_unavailable_reason(card)
 	if not unavailable_reason.is_empty():
@@ -2350,6 +2427,33 @@ func _add_to_deck(card: Card) -> void:
 	if card.is_god:
 		_focus_power_selection()
 
+func _add_to_reinforcements(card: Card) -> void:
+	if card == null:
+		return
+	if card.is_god:
+		_set_status_flash("Gods cannot be added to Reinforcements.")
+		return
+	var combined_count := int(_deck.get(card.card_name, 0)) + int(_reinforcements.get(card.card_name, 0))
+	if combined_count >= _max_copies(card):
+		_set_status_flash("%s has reached its combined copy limit." % card.get_display_name_for_control())
+		return
+	var unavailable_reason := _get_card_unavailable_reason(card)
+	if not unavailable_reason.is_empty():
+		_set_status_flash(unavailable_reason)
+		return
+	_push_current_deck_undo_state()
+	_reinforcements[card.card_name] = int(_reinforcements.get(card.card_name, 0)) + 1
+	_refresh_deck_panel(false, false)
+
+func _remove_from_reinforcements(card_name: String) -> void:
+	if int(_reinforcements.get(card_name, 0)) <= 0:
+		return
+	_push_current_deck_undo_state()
+	_reinforcements[card_name] = int(_reinforcements[card_name]) - 1
+	if int(_reinforcements[card_name]) <= 0:
+		_reinforcements.erase(card_name)
+	_refresh_deck_panel(false, false)
+
 func _remove_from_deck(card_name: String) -> void:
 	if not _deck.has(card_name) or _deck[card_name] <= 0:
 		return
@@ -2373,10 +2477,11 @@ func _deck_change_needs_collection_rebuild(card: Card) -> bool:
 	return false
 
 func _clear_deck() -> void:
-	if _deck.is_empty() and not _has_any_tiamat_slot_cards():
+	if _deck.is_empty() and _reinforcements.is_empty() and not _has_any_tiamat_slot_cards():
 		return
 	_push_current_deck_undo_state()
 	_deck.clear()
+	_reinforcements.clear()
 	_clear_tiamat_slots()
 	_art_variant_selections.clear()
 	_refresh_deck_panel(true, false)
@@ -2512,7 +2617,8 @@ func _save_profile_deck() -> void:
 			resolved_name,
 			_deck,
 			_selected_saved_deck_id,
-			_get_deck_special_setup()
+			_get_deck_special_setup(),
+			_reinforcements
 		)
 		_mark_current_deck_saved()
 		_set_status_flash("Saving deck for %s..." % _active_player_name)
@@ -2526,7 +2632,8 @@ func _save_profile_deck() -> void:
 		deck_name,
 		_deck,
 		_selected_saved_deck_id,
-		_get_deck_special_setup()
+		_get_deck_special_setup(),
+		_reinforcements
 	)
 	_pending_remote_saved_deck_id = ""
 	_selected_saved_deck_id = str(saved_deck.get("deck_id", _selected_saved_deck_id)).strip_edges()
@@ -2541,7 +2648,7 @@ func _export_current_deck() -> void:
 		_set_status_flash("Nothing to export.")
 		return
 	var deck_name := _deck_name_edit.text if _deck_name_edit != null else ""
-	var shareable_deck := _make_shareable_deck(deck_name, _deck, _get_deck_special_setup())
+	var shareable_deck := _make_shareable_deck(deck_name, _deck, _get_deck_special_setup(), _reinforcements)
 	_copy_deck_share_code(shareable_deck, "Deck share code copied.")
 
 func _show_send_friend_dialog() -> void:
@@ -2569,7 +2676,7 @@ func _confirm_send_deck_to_friend() -> void:
 		_set_status_flash("Choose a friend first.")
 		return
 	var deck_name := _deck_name_edit.text if _deck_name_edit != null else ""
-	var shareable_deck := _make_shareable_deck(deck_name, _deck, _get_deck_special_setup())
+	var shareable_deck := _make_shareable_deck(deck_name, _deck, _get_deck_special_setup(), _reinforcements)
 	send_deck_to_friend_requested.emit(friend_username, shareable_deck)
 	_set_status_flash("Sending deck to %s..." % friend_username)
 
@@ -2581,7 +2688,8 @@ func _export_saved_deck(deck_id: String) -> void:
 	var shareable_deck := _make_shareable_deck(
 		str(saved_deck.get("name", LocalProfileStoreScript.DEFAULT_DECK_NAME)),
 		saved_deck.get("cards", {}),
-		saved_deck.get("special_setup", {})
+		saved_deck.get("special_setup", {}),
+		saved_deck.get("reinforcements", {})
 	)
 	_copy_deck_share_code(shareable_deck, "Saved deck share code copied.")
 
@@ -2607,7 +2715,7 @@ func _confirm_import_shared_deck() -> void:
 		return
 	_import_shared_deck(imported_deck as Dictionary)
 
-func _make_shareable_deck(deck_name: String, cards, special_setup) -> Dictionary:
+func _make_shareable_deck(deck_name: String, cards, special_setup, reinforcements = {}) -> Dictionary:
 	var resolved_name := deck_name.strip_edges()
 	if resolved_name.is_empty():
 		resolved_name = LocalProfileStoreScript.DEFAULT_DECK_NAME
@@ -2617,6 +2725,7 @@ func _make_shareable_deck(deck_name: String, cards, special_setup) -> Dictionary
 		"app_version": str(ProjectSettings.get_setting("application/config/version", "")),
 		"name": resolved_name,
 		"cards": _sanitize_export_cards(cards),
+		"reinforcements": _sanitize_export_cards(reinforcements),
 		"special_setup": _sanitize_export_special_setup(special_setup),
 	}
 	return payload
@@ -2659,6 +2768,12 @@ func _decode_shared_deck_text(raw_text: String) -> Dictionary:
 	var special_result := _sanitize_imported_special_setup(parsed_deck.get("special_setup", {}))
 	if not bool(special_result.get("is_valid", false)):
 		return special_result
+	var reinforcements_result := _sanitize_imported_share_cards(
+		parsed_deck.get("reinforcements", {}),
+		true
+	)
+	if not bool(reinforcements_result.get("is_valid", false)):
+		return reinforcements_result
 
 	var imported_name := str(parsed_deck.get("name", "Imported Deck")).strip_edges()
 	if imported_name.is_empty():
@@ -2668,6 +2783,7 @@ func _decode_shared_deck_text(raw_text: String) -> Dictionary:
 		"deck": {
 			"name": imported_name,
 			"cards": cards_result.get("cards", {}),
+			"reinforcements": reinforcements_result.get("cards", {}),
 			"special_setup": special_result.get("special_setup", {}),
 		}
 	}
@@ -2687,7 +2803,7 @@ func _sanitize_export_cards(cards) -> Dictionary:
 func _sanitize_export_special_setup(special_setup) -> Dictionary:
 	return CardArtVariantsScript.sanitize_special_setup(special_setup)
 
-func _sanitize_imported_share_cards(cards) -> Dictionary:
+func _sanitize_imported_share_cards(cards, allow_empty: bool = false) -> Dictionary:
 	if not (cards is Dictionary):
 		return _share_import_error("The deck code is missing its card list.")
 	var sanitized: Dictionary = {}
@@ -2704,7 +2820,7 @@ func _sanitize_imported_share_cards(cards) -> Dictionary:
 		if next_count > max_count:
 			return _share_import_error("%s exceeds the copy limit (%d)." % [card.card_name, max_count])
 		sanitized[card.card_name] = next_count
-	if sanitized.is_empty():
+	if sanitized.is_empty() and not allow_empty:
 		return _share_import_error("The deck code has no cards.")
 	return {
 		"is_valid": true,
@@ -2783,7 +2899,8 @@ func _import_shared_deck(shared_deck: Dictionary) -> void:
 				deck_name,
 				imported_deck.get("cards", {}),
 				_selected_saved_deck_id,
-				imported_deck.get("special_setup", {})
+				imported_deck.get("special_setup", {}),
+				imported_deck.get("reinforcements", {})
 			)
 			_apply_saved_deck(imported_deck)
 			_pending_remote_saved_deck_id = _selected_saved_deck_id
@@ -2806,7 +2923,8 @@ func _import_shared_deck(shared_deck: Dictionary) -> void:
 		deck_name,
 		imported_deck.get("cards", {}),
 		str(imported_deck.get("deck_id", "")),
-		imported_deck.get("special_setup", {})
+		imported_deck.get("special_setup", {}),
+		imported_deck.get("reinforcements", {})
 	)
 	_selected_saved_deck_id = str(saved_deck.get("deck_id", "")).strip_edges()
 	_pending_remote_saved_deck_id = ""
@@ -2901,7 +3019,8 @@ func _copy_saved_deck(deck_id: String) -> void:
 			copied_deck_name,
 			source_deck.get("cards", {}),
 			copied_deck_id,
-			source_deck.get("special_setup", {})
+			source_deck.get("special_setup", {}),
+			source_deck.get("reinforcements", {})
 		)
 		_set_status_flash("Copying saved deck...")
 		return
@@ -2913,7 +3032,8 @@ func _copy_saved_deck(deck_id: String) -> void:
 		copied_deck_name,
 		source_deck.get("cards", {}),
 		copied_deck_id,
-		source_deck.get("special_setup", {})
+		source_deck.get("special_setup", {}),
+		source_deck.get("reinforcements", {})
 	)
 	_selected_saved_deck_id = str(copied_deck.get("deck_id", copied_deck_id)).strip_edges()
 	_pending_remote_saved_deck_id = ""
@@ -2991,6 +3111,7 @@ func _new_deck() -> void:
 	_pending_remote_saved_deck_id = ""
 	_selected_saved_deck_id = ""
 	_deck.clear()
+	_reinforcements.clear()
 	_clear_tiamat_slots()
 	_art_variant_selections.clear()
 	if _deck_name_edit != null:
@@ -3152,12 +3273,19 @@ func _apply_saved_deck(saved_deck: Dictionary) -> void:
 	if _deck_name_edit != null:
 		_deck_name_edit.text = str(saved_deck.get("name", LocalProfileStoreScript.DEFAULT_DECK_NAME))
 	_deck = {}
+	_reinforcements = {}
 	var cards = saved_deck.get("cards", {})
 	if cards is Dictionary:
 		for raw_card_name in (cards as Dictionary).keys():
 			var count := int((cards as Dictionary)[raw_card_name])
 			if count > 0:
 				_deck[str(raw_card_name)] = count
+	var reinforcements = saved_deck.get("reinforcements", {})
+	if reinforcements is Dictionary:
+		for raw_card_name in (reinforcements as Dictionary).keys():
+			var count := int((reinforcements as Dictionary)[raw_card_name])
+			if count > 0:
+				_reinforcements[str(raw_card_name)] = count
 	var special_setup = saved_deck.get("special_setup", {})
 	_tiamat_slots = TiamatScript.get_slot_card_names_from_setup(special_setup)
 	_art_variant_selections = CardArtVariantsScript.get_selections_from_setup(special_setup)
@@ -3540,31 +3668,26 @@ func _update_validation_if_ready() -> void:
 		_update_validation()
 
 func _update_validation() -> void:
-	var regular_count_summary := 0
-	var legendary_count_summary := 0
-	var selected_god_template := _get_selected_god_template() as GodCard
-
-	for card_name: String in _deck:
-		var cnt: int = _deck[card_name]
-		var card := _find_template(card_name)
-		if card == null or card.is_god or card.is_power:
-			continue
-		if _is_illegal_active_god_for_god(card, selected_god_template):
-			continue
-		regular_count_summary += cnt
-		if card.is_legendary:
-			legendary_count_summary += cnt
-
-	var max_legends_summary := int(regular_count_summary / 10.0)
-	var summary_ok := regular_count_summary >= MIN_REGULAR_CARDS and legendary_count_summary <= max_legends_summary
-	_validation_lbl.text = "Card Count: %d / %d      Legendaries: %d / %d" % [
-		regular_count_summary,
+	var validation := DeckValidatorScript.new().validate_deck(
+		_deck,
+		_get_deck_special_setup(),
+		_reinforcements
+	)
+	var regular_count := int(validation.get("regular_count", _count_regular_cards_in_current_deck()))
+	var power_count := int(validation.get("power_count", _count_powers_in_current_deck()))
+	var reinforcement_count := _count_cards_in_dictionary(_reinforcements)
+	var reinforcement_limit := DeckValidatorScript.get_reinforcement_limit(regular_count, power_count)
+	var summary := "Main: %d / %d regular      Reinforcements: %d / %d" % [
+		regular_count,
 		MIN_REGULAR_CARDS,
-		legendary_count_summary,
-		max_legends_summary
+		reinforcement_count,
+		reinforcement_limit
 	]
-	_validation_lbl.modulate = Color(0.5, 1.0, 0.55) if summary_ok else Color(1.0, 0.85, 0.45)
-	_validation_lbl.tooltip_text = ""
+	var is_valid := bool(validation.get("is_valid", false))
+	var error := str(validation.get("error", "")).strip_edges()
+	_validation_lbl.text = summary if error.is_empty() else "%s\n%s" % [summary, error]
+	_validation_lbl.modulate = Color(0.5, 1.0, 0.55) if is_valid else Color(1.0, 0.72, 0.42)
+	_validation_lbl.tooltip_text = error
 
 func _legacy_validation_details() -> void:
 	var total := 0
@@ -3697,8 +3820,15 @@ func _update_count_badges() -> void:
 		var lbl: Label = _count_badges[card_name]
 		if not is_instance_valid(lbl):
 			continue
-		var count: int = _deck.get(card_name, 0)
-		lbl.text = "×%d" % count if count > 0 else ""
+		var main_count := int(_deck.get(card_name, 0))
+		var reinforcement_count := int(_reinforcements.get(card_name, 0))
+		var count := main_count + reinforcement_count
+		if main_count > 0 and reinforcement_count > 0:
+			lbl.text = "×%d +%dR" % [main_count, reinforcement_count]
+		elif reinforcement_count > 0:
+			lbl.text = "×%dR" % reinforcement_count
+		else:
+			lbl.text = "×%d" % main_count if main_count > 0 else ""
 
 		# Dim card when at max copies
 		var card := _find_template(card_name)
@@ -4281,7 +4411,7 @@ func _get_preferred_autofill_regular_candidates() -> Array[Card]:
 	for card: Card in _all_cards:
 		if not _is_regular_card(card):
 			continue
-		if int(_deck.get(card.card_name, 0)) >= _max_copies(card):
+		if int(_deck.get(card.card_name, 0)) + int(_reinforcements.get(card.card_name, 0)) >= _max_copies(card):
 			continue
 		if not _is_card_compatible_with_selected_god(card, god):
 			continue
@@ -4352,7 +4482,7 @@ func _can_autofill_regular_card(card: Card, god: GodCard, legendary_only: bool) 
 		return false
 	if not legendary_only and card.is_legendary:
 		return false
-	if int(_deck.get(card.card_name, 0)) >= _max_copies(card):
+	if int(_deck.get(card.card_name, 0)) + int(_reinforcements.get(card.card_name, 0)) >= _max_copies(card):
 		return false
 	if god == null:
 		return card is not ActiveGodCard
@@ -4361,7 +4491,7 @@ func _can_autofill_regular_card(card: Card, god: GodCard, legendary_only: bool) 
 func _can_autofill_power_card(card: Card, god: GodCard) -> bool:
 	if card == null or not card.is_power or card.is_god:
 		return false
-	if int(_deck.get(card.card_name, 0)) >= _max_copies(card):
+	if int(_deck.get(card.card_name, 0)) + int(_reinforcements.get(card.card_name, 0)) >= _max_copies(card):
 		return false
 	if god == null:
 		return str(card.culture).strip_edges() == "Neutral"
@@ -4403,6 +4533,8 @@ func _get_card_unavailable_badge_text(card: Card) -> String:
 func _get_card_unavailable_reason(card: Card) -> String:
 	if card == null:
 		return ""
+	if _editing_reinforcements and card.is_god:
+		return "Unavailable: Gods cannot be added to Reinforcements."
 	var god := _get_selected_god_template() as GodCard
 	if card is ActiveGodCard:
 		if god == null:
@@ -4476,9 +4608,12 @@ func _can_add_god_to_current_deck(god: Card) -> bool:
 	var god_card := god as GodCard
 	if god_card == null or not god.is_god:
 		return false
-	for card_name: String in _deck:
+	var combined_cards := _deck.duplicate(true)
+	for reinforcement_name in _reinforcements.keys():
+		combined_cards[reinforcement_name] = int(combined_cards.get(reinforcement_name, 0)) + int(_reinforcements[reinforcement_name])
+	for card_name: String in combined_cards:
 		var card := _find_template(card_name)
-		if card == null or card.is_god or _deck.get(card_name, 0) <= 0:
+		if card == null or card.is_god or int(combined_cards.get(card_name, 0)) <= 0:
 			continue
 		if not _is_card_compatible_with_selected_god(card, god_card):
 			return false

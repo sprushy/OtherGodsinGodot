@@ -11,6 +11,7 @@ const NETWORK_MANAGER_NODE_NAME := "MatchNetworkManager"
 signal game_event_received(event_type: String, data: Dictionary)
 signal peer_disconnected(peer_id: int)
 signal match_player_authenticated(player_index: int, session_id: String, was_reconnect: bool)
+signal series_command_received(command: Dictionary, sender_info: Dictionary)
 
 var game_manager: GameManager = null
 var match_manager: MatchManager = null
@@ -18,6 +19,7 @@ var prompt_router = null
 var network_manager: Node = null
 var game_event_broadcaster: GameEventBroadcaster = null
 var match_session = null
+var series_between_games: bool = false
 
 var _is_host: bool = false
 var _is_client: bool = false
@@ -88,6 +90,9 @@ func setup_transport(
 func _on_command_received(command: Dictionary, sender_info: Dictionary) -> void:
 	if match_manager == null:
 		return
+	if str(command.get("type", "")).strip_edges() == "submit_reinforcements":
+		series_command_received.emit(command, _resolve_command_sender_info(sender_info))
+		return
 	if match_session != null \
 			and match_session.is_waiting_for_reconnect() \
 			and str(command.get("type", "")).strip_edges() != "forfeit":
@@ -115,9 +120,11 @@ func enable_authoritative_broadcasts() -> void:
 		return
 	game_event_broadcaster = GameEventBroadcaster.new(game_manager, match_manager, network_manager, prompt_router)
 	if match_session == null:
-		network_manager.peer_connected.connect(_on_peer_connected)
+		if not network_manager.peer_connected.is_connected(_on_peer_connected):
+			network_manager.peer_connected.connect(_on_peer_connected)
 	else:
-		network_manager.match_join_requested.connect(_on_match_join_requested)
+		if not network_manager.match_join_requested.is_connected(_on_match_join_requested):
+			network_manager.match_join_requested.connect(_on_match_join_requested)
 
 func should_route_prompts_via_network() -> bool:
 	return network_manager != null and _is_host
@@ -177,6 +184,11 @@ func _on_match_join_requested(join_request: Dictionary, sender_info: Dictionary)
 		var visible_player_indices: Array[int] = match_session.get_spectator_visible_player_indices(observer_session_id)
 		network_manager.approve_match_join(peer_id, -1, match_session.to_spectator_match_info(observer_session_id))
 		network_manager.set_spectator_visible_player_indices(peer_id, visible_player_indices)
+		if series_between_games:
+			network_manager.broadcast_event_to_peer(peer_id, "series_game_ended", {
+				"series": match_session.get_series_snapshot(),
+			})
+			return
 		var spectator_state := GameState.serialize(game_manager, GameState.SPECTATOR_VIEWER_INDEX, visible_player_indices)
 		network_manager.broadcast_event_to_peer(peer_id, "full_state", {
 			state = spectator_state,
@@ -196,6 +208,8 @@ func _on_match_join_requested(join_request: Dictionary, sender_info: Dictionary)
 			"player_index": player_index,
 			"session_id": session_id,
 		})
+	if series_between_games:
+		return
 	var state := GameState.serialize(game_manager, player_index)
 	network_manager.broadcast_event_to_peer(peer_id, "full_state", {
 		state = state,

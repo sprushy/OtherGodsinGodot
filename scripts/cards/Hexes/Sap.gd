@@ -35,6 +35,9 @@ func get_priority_targets(game_manager: GameManager, action: CardAction) -> Arra
 		return []
 	return [entered_card]
 
+func requires_priority_target_selection() -> bool:
+	return false
+
 func on_activate_action(game_manager: GameManager, action: CardAction) -> void:
 	var target := action.target as Card
 	if not is_valid_target(game_manager, target):

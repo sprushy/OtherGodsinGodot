@@ -189,7 +189,8 @@ func submit_deck(
 	deck_name: String = "",
 	cards: Dictionary = {},
 	deck_id: String = "",
-	special_setup: Dictionary = {}
+	special_setup: Dictionary = {},
+	reinforcements: Dictionary = {}
 ) -> void:
 	var payload: Dictionary = {
 		"deck_id": deck_id.strip_edges(),
@@ -200,6 +201,8 @@ func submit_deck(
 		payload["cards"] = cards.duplicate(true)
 	if not special_setup.is_empty():
 		payload["special_setup"] = special_setup.duplicate(true)
+	if not reinforcements.is_empty():
+		payload["reinforcements"] = reinforcements.duplicate(true)
 	_send_request(LobbyProtocolScript.SELECT_DECK, payload)
 
 func request_account_decks() -> void:
@@ -209,12 +212,14 @@ func save_account_deck(
 	deck_name: String,
 	cards: Dictionary,
 	deck_id: String = "",
-	special_setup: Dictionary = {}
+	special_setup: Dictionary = {},
+	reinforcements: Dictionary = {}
 ) -> void:
 	_send_request(LobbyProtocolScript.SAVE_ACCOUNT_DECK, {
 		"deck_name": deck_name.strip_edges(),
 		"deck_id": deck_id.strip_edges(),
 		"cards": cards.duplicate(true),
+		"reinforcements": reinforcements.duplicate(true),
 		"special_setup": special_setup.duplicate(true),
 	})
 
@@ -256,12 +261,14 @@ func send_deck_to_friend(
 	username: String,
 	deck_name: String,
 	cards: Dictionary,
-	special_setup: Dictionary = {}
+	special_setup: Dictionary = {},
+	reinforcements: Dictionary = {}
 ) -> void:
 	_send_request(LobbyProtocolScript.SEND_DECK_TO_FRIEND, {
 		"username": username.strip_edges(),
 		"deck_name": deck_name.strip_edges(),
 		"cards": cards.duplicate(true),
+		"reinforcements": reinforcements.duplicate(true),
 		"special_setup": special_setup.duplicate(true),
 	})
 

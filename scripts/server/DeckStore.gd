@@ -48,7 +48,8 @@ func save_deck(
 	deck_name: String,
 	cards: Dictionary,
 	deck_id: String = "",
-	special_setup: Dictionary = {}
+	special_setup: Dictionary = {},
+	reinforcements: Dictionary = {}
 ) -> Dictionary:
 	_ensure_loaded()
 	var resolved_account_id: String = account_id.strip_edges()
@@ -76,6 +77,7 @@ func save_deck(
 	deck_entry["deck_id"] = resolved_deck_id
 	deck_entry["name"] = clean_name
 	deck_entry["cards"] = sanitized_cards
+	deck_entry["reinforcements"] = _sanitize_cards(reinforcements)
 	deck_entry["special_setup"] = _sanitize_special_setup(special_setup)
 	if not deck_entry.has("created_unix"):
 		deck_entry["created_unix"] = now_unix

@@ -3467,6 +3467,9 @@ func _process_command_impl(command: Dictionary) -> bool:
 			game_manager.forfeit_game(forfeiting_player)
 			move_validated.emit(command)
 			return true
+		"submit_reinforcements":
+			move_failed.emit("Reinforcement changes are only available between games in a series.")
+			return false
 		"play_creature":
 			var card := game_manager.get_card_by_uid(command.get("card_uid", ""))
 			var zone := resolve_zone(command)
@@ -5261,8 +5264,9 @@ func _process_command_impl(command: Dictionary) -> bool:
 				move_failed.emit(phr_target_error)
 				return false
 			if not _priority_response_requires_target_choice(phr_hex):
-				phr_target_uid = ""
-				phr_target = null
+				var automatic_targets := _get_priority_response_targets(phr_hex, phr_source)
+				phr_target = automatic_targets[0] as Card if automatic_targets.size() == 1 else null
+				phr_target_uid = phr_target.uid if phr_target != null else ""
 			var phr_target_is_attacker := not phr_hex.has_method("get_priority_targets") and phr_source.type == CardAction.Type.ATTACK
 			var phr_ability := CardAction.new()
 			phr_ability.type = CardAction.Type.ABILITY

@@ -83,11 +83,15 @@ static func validate_request(message: Dictionary) -> String:
 				return "Missing saved deck id or deck cards."
 			if has_cards and str(payload.get("deck_name", "")).strip_edges().is_empty():
 				return "Missing deck name."
+			if payload.has("reinforcements") and not (payload.get("reinforcements") is Dictionary):
+				return "Invalid Reinforcements."
 		SAVE_ACCOUNT_DECK:
 			if str(payload.get("deck_name", "")).strip_edges().is_empty():
 				return "Missing deck name."
 			if not payload.has("cards") or not (payload.get("cards") is Dictionary):
 				return "Missing deck cards."
+			if payload.has("reinforcements") and not (payload.get("reinforcements") is Dictionary):
+				return "Invalid Reinforcements."
 		DELETE_ACCOUNT_DECK:
 			if str(payload.get("deck_id", "")).strip_edges().is_empty():
 				return "Missing deck id."
@@ -112,6 +116,8 @@ static func validate_request(message: Dictionary) -> String:
 				return "Missing deck name."
 			if not payload.has("cards") or not (payload.get("cards") is Dictionary):
 				return "Missing deck cards."
+			if payload.has("reinforcements") and not (payload.get("reinforcements") is Dictionary):
+				return "Invalid Reinforcements."
 		RESPOND_DECK_SHARE:
 			if str(payload.get("share_id", "")).strip_edges().is_empty():
 				return "Missing deck share id."

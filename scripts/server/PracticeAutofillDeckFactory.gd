@@ -4,7 +4,7 @@ class_name PracticeAutofillDeckFactory
 const CardCatalogScript = preload("res://scripts/cards/CardCatalog.gd")
 const DeckValidatorScript = preload("res://scripts/server/DeckValidator.gd")
 
-const DEFAULT_REGULAR_CARD_COUNT := 35
+const DEFAULT_REGULAR_CARD_COUNT := 40
 const MAX_POWERS := 3
 const MAX_BUILD_ATTEMPTS := 32
 const MAX_RANDOM_PICK_ATTEMPTS := 256

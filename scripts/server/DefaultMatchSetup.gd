@@ -215,7 +215,10 @@ func _get_session_first_player_index(game_manager: GameManager, match_session) -
 		return 0
 	var seed_text := "%s|%s" % [
 		str(match_session.match_id).strip_edges(),
-		str(match_session.room_id).strip_edges(),
+		"%s|game:%d" % [
+			str(match_session.room_id).strip_edges(),
+			int(match_session.series_game_number) if "series_game_number" in match_session else 1,
+		],
 	]
 	if seed_text.strip_edges().is_empty():
 		return _rng.randi_range(0, game_manager.players.size() - 1)

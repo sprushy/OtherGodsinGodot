@@ -92,6 +92,34 @@ func _check_deck_validator(failures: PackedStringArray) -> void:
 	var invalid_result: Dictionary = validator.validate_deck({"Thor": 2})
 	if bool(invalid_result.get("is_valid", false)):
 		failures.append("invalid duplicate-god deck passed validation")
+	if DeckValidatorScript.get_reinforcement_limit(40, 3) != 14:
+		failures.append("40 regular cards plus 3 Powers should allow 14 Reinforcements")
+	var oversized_reinforcements := {
+		"Tablet of Life": 3,
+		"Pictish Beast": 3,
+		"Hyena Pack": 3,
+		"Ancient Pyre": 3,
+		"Harii Shaman": 2,
+	}
+	var reinforcement_result: Dictionary = validator.validate_deck(valid_deck, {}, oversized_reinforcements)
+	if bool(reinforcement_result.get("is_valid", false)):
+		failures.append("deck validator accepted Reinforcements above the rounded-down limit")
+	var registered_reinforcements := {"Tablet of Life": 3}
+	var proposed_main := valid_deck.duplicate(true)
+	proposed_main["Again-Walker"] = 2
+	proposed_main["Tablet of Life"] = 1
+	var proposed_reinforcements := {
+		"Tablet of Life": 2,
+		"Again-Walker": 1,
+	}
+	var swap_result: Dictionary = validator.validate_reinforcement_swap(
+		valid_deck,
+		registered_reinforcements,
+		proposed_main,
+		proposed_reinforcements
+	)
+	if not bool(swap_result.get("is_valid", false)):
+		failures.append("legal one-for-one Reinforcement swap failed validation: %s" % str(swap_result.get("error", "")))
 	var player := Player.new()
 	if not player.validate_deck(_cards_from_counts(valid_deck)):
 		failures.append("Player.validate_deck rejected a DeckValidator-valid deck")
@@ -449,6 +477,8 @@ func _known_good_deck_counts() -> Dictionary:
 		"Blot Sacrifice": 3,
 		"Fall of the Mighty": 2,
 		"Blessed Knights": 3,
+		"Again-Walker": 3,
+		"Alu": 2,
 	}
 
 func _cards_from_counts(card_counts: Dictionary) -> Array[Card]:

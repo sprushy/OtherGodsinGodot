@@ -32,6 +32,12 @@ var disconnected_sessions: Dictionary = {}
 var spectator_peer_ids: Array[int] = []
 var spectator_visible_player_indices_by_session: Dictionary = {}
 var spectator_match_tokens_by_session: Dictionary = {}
+var series_best_of: int = 3
+var games_to_win: int = 2
+var series_game_number: int = 1
+var series_wins_by_session: Dictionary = {}
+var registered_player_decks_by_session: Dictionary = {}
+var reinforcement_ready_by_session: Dictionary = {}
 
 func _init(
 	p_match_id: String = "",
@@ -48,9 +54,11 @@ func _init(
 	match_port = p_match_port
 	player_session_ids = p_player_session_ids.duplicate()
 	player_decks_by_session = p_player_decks_by_session.duplicate(true)
+	registered_player_decks_by_session = p_player_decks_by_session.duplicate(true)
 	player_identity_by_session = p_player_identity_by_session.duplicate(true)
 	created_unix = int(Time.get_unix_time_from_system())
 	_ensure_player_match_tokens()
+	_ensure_series_state()
 
 func mark_active() -> void:
 	status = STATUS_ACTIVE
@@ -104,6 +112,48 @@ func get_public_player_names() -> Array[String]:
 		var session_id := str(player_session_ids[player_index]).strip_edges()
 		names.append(get_player_display_name(session_id, player_index))
 	return names
+
+func record_series_game_win(winner_index: int) -> Dictionary:
+	if winner_index < 0 or winner_index >= player_session_ids.size():
+		return get_series_snapshot()
+	var winner_session_id := str(player_session_ids[winner_index]).strip_edges()
+	series_wins_by_session[winner_session_id] = int(series_wins_by_session.get(winner_session_id, 0)) + 1
+	reinforcement_ready_by_session.clear()
+	return get_series_snapshot()
+
+func is_series_complete() -> bool:
+	for session_id in player_session_ids:
+		if int(series_wins_by_session.get(session_id, 0)) >= games_to_win:
+			return true
+	return false
+
+func begin_next_series_game() -> void:
+	series_game_number += 1
+	reinforcement_ready_by_session.clear()
+
+func set_reinforcement_ready(session_id: String, ready: bool = true) -> void:
+	var resolved_session_id := session_id.strip_edges()
+	if resolved_session_id.is_empty() or not player_session_ids.has(resolved_session_id):
+		return
+	reinforcement_ready_by_session[resolved_session_id] = ready
+
+func all_reinforcement_submissions_ready() -> bool:
+	for session_id in player_session_ids:
+		if not bool(reinforcement_ready_by_session.get(session_id, false)):
+			return false
+	return not player_session_ids.is_empty()
+
+func get_series_snapshot() -> Dictionary:
+	var wins: Array[int] = []
+	for session_id in player_session_ids:
+		wins.append(int(series_wins_by_session.get(session_id, 0)))
+	return {
+		"best_of": series_best_of,
+		"games_to_win": games_to_win,
+		"game_number": series_game_number,
+		"wins": wins,
+		"is_complete": is_series_complete(),
+	}
 
 func authenticate_join(session_id: String, match_token: String, peer_id: int) -> int:
 	var resolved_session_id := session_id.strip_edges()
@@ -254,6 +304,7 @@ func to_match_info(session_id: String = "") -> Dictionary:
 		"status": status,
 		"server_mode": server_mode,
 		"is_ranked": is_ranked,
+		"series": get_series_snapshot(),
 	}
 	if not session_id.is_empty():
 		var selected_deck := _get_player_deck(session_id)
@@ -262,6 +313,8 @@ func to_match_info(session_id: String = "") -> Dictionary:
 		match_info["reconnect_deadline_unix"] = get_reconnect_deadline_for_session(session_id)
 		match_info["selected_deck_name"] = str(selected_deck.get("deck_name", ""))
 		match_info["selected_deck_cards"] = selected_deck.get("cards", {})
+		match_info["selected_deck_reinforcements"] = selected_deck.get("reinforcements", {})
+		match_info["selected_deck_special_setup"] = selected_deck.get("special_setup", {})
 	match_info["reconnect_window_seconds"] = reconnect_window_seconds
 	match_info["waiting_for_reconnect"] = is_waiting_for_reconnect()
 	return match_info
@@ -291,6 +344,12 @@ func to_launch_config() -> Dictionary:
 		"player_match_tokens": player_match_tokens.duplicate(true),
 		"player_decks_by_session": player_decks_by_session.duplicate(true),
 		"player_identity_by_session": player_identity_by_session.duplicate(true),
+		"series_best_of": series_best_of,
+		"games_to_win": games_to_win,
+		"series_game_number": series_game_number,
+		"series_wins_by_session": series_wins_by_session.duplicate(true),
+		"registered_player_decks_by_session": registered_player_decks_by_session.duplicate(true),
+		"reinforcement_ready_by_session": reinforcement_ready_by_session.duplicate(true),
 		"spectator_visible_player_indices_by_session": spectator_visible_player_indices_by_session.duplicate(true),
 		"spectator_match_tokens_by_session": spectator_match_tokens_by_session.duplicate(true),
 	}
@@ -321,6 +380,14 @@ static func from_launch_config(config: Dictionary) -> MatchSession:
 	session.is_ranked = bool(config.get("is_ranked", true))
 	session.reconnect_window_seconds = int(config.get("reconnect_window_seconds", 90))
 	session.created_unix = int(config.get("created_unix", session.created_unix))
+	session.series_best_of = int(config.get("series_best_of", 3))
+	session.games_to_win = int(config.get("games_to_win", 2))
+	session.series_game_number = int(config.get("series_game_number", 1))
+	session.series_wins_by_session = _to_dictionary(config.get("series_wins_by_session", {}))
+	session.registered_player_decks_by_session = _to_dictionary(
+		config.get("registered_player_decks_by_session", session.player_decks_by_session)
+	)
+	session.reinforcement_ready_by_session = _to_dictionary(config.get("reinforcement_ready_by_session", {}))
 	session.status_file_path = str(config.get("status_file_path", "")).strip_edges()
 	session.launch_config_path = str(config.get("_launch_config_path", "")).strip_edges()
 	var configured_tokens = config.get("player_match_tokens", {})
@@ -333,6 +400,7 @@ static func from_launch_config(config: Dictionary) -> MatchSession:
 	if configured_spectator_tokens is Dictionary:
 		session.spectator_match_tokens_by_session = (configured_spectator_tokens as Dictionary).duplicate(true)
 	session._ensure_player_match_tokens()
+	session._ensure_series_state()
 	return session
 
 static func _to_string_array(value) -> Array[String]:
@@ -359,6 +427,13 @@ func _ensure_player_match_tokens() -> void:
 		if player_match_tokens.has(session_id):
 			continue
 		player_match_tokens[session_id] = _generate_token(20)
+
+func _ensure_series_state() -> void:
+	if registered_player_decks_by_session.is_empty():
+		registered_player_decks_by_session = player_decks_by_session.duplicate(true)
+	for session_id in player_session_ids:
+		if not series_wins_by_session.has(session_id):
+			series_wins_by_session[session_id] = 0
 
 func _generate_token(length: int) -> String:
 	const CHARS := "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"

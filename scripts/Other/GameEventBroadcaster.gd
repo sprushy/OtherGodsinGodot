@@ -17,6 +17,7 @@ var match_manager: MatchManager
 var network_manager: Node  # NetworkManager
 var prompt_router = null
 var _action_log_event_id: int = 0
+var suppress_next_game_end: bool = false
 
 func _init(gm: GameManager, mm: MatchManager, nm: Node, p_prompt_router = null) -> void:
 	game_manager = gm
@@ -137,6 +138,9 @@ func _on_turn_started(turn_number: int, player: Player) -> void:
 	})
 
 func _on_game_ended(winner: Player, loser: Player) -> void:
+	if suppress_next_game_end:
+		suppress_next_game_end = false
+		return
 	var winner_idx := game_manager.players.find(winner)
 	var result_message := game_manager.get_game_result_message(winner, loser)
 	_broadcast_full_state(result_message)
@@ -145,6 +149,29 @@ func _on_game_ended(winner: Player, loser: Player) -> void:
 		winner_name  = winner.player_name if winner != null else "",
 		result_message = result_message,
 	})
+
+func broadcast_current_state(action_message: String = "") -> void:
+	_broadcast_full_state(action_message)
+
+func shutdown() -> void:
+	if match_manager != null:
+		if match_manager.move_validated.is_connected(_on_move_validated):
+			match_manager.move_validated.disconnect(_on_move_validated)
+		if match_manager.action_resolved.is_connected(_on_action_resolved):
+			match_manager.action_resolved.disconnect(_on_action_resolved)
+		if match_manager.ui_refresh_requested.is_connected(_on_ui_refresh_requested):
+			match_manager.ui_refresh_requested.disconnect(_on_ui_refresh_requested)
+		if match_manager.request_ui_interaction.is_connected(_on_ui_interaction_requested):
+			match_manager.request_ui_interaction.disconnect(_on_ui_interaction_requested)
+	if game_manager != null:
+		if game_manager.turn_upkeep_started.is_connected(_on_turn_upkeep_started):
+			game_manager.turn_upkeep_started.disconnect(_on_turn_upkeep_started)
+		if game_manager.turn_started.is_connected(_on_turn_started):
+			game_manager.turn_started.disconnect(_on_turn_started)
+		if game_manager.game_ended.is_connected(_on_game_ended):
+			game_manager.game_ended.disconnect(_on_game_ended)
+		if game_manager.doorway_choice_requested.is_connected(_on_doorway_choice_requested):
+			game_manager.doorway_choice_requested.disconnect(_on_doorway_choice_requested)
 
 func _on_ui_interaction_requested(player_index: int, type: String, data: Dictionary) -> void:
 	var serialized_data: Dictionary = prompt_router.serialize_prompt_data(data)

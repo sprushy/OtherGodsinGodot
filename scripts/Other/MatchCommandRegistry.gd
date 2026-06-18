@@ -18,6 +18,7 @@ const KNOWN_COMMAND_TYPES := [
 	"upkeep_choice",
 	"tiamat_upkeep_choice",
 	"forfeit",
+	"submit_reinforcements",
 	"cast_spell",
 	"activate_prepared_hex",
 	"god_ability",
@@ -171,6 +172,11 @@ static func get_required_player(command: Dictionary, game_manager: GameManager, 
 			var forfeiting_index := int(command.get("player_index", -1))
 			if forfeiting_index >= 0 and forfeiting_index < game_manager.players.size():
 				return game_manager.players[forfeiting_index]
+			return null
+		"submit_reinforcements":
+			var reinforcement_player_index := int(command.get("player_index", -1))
+			if reinforcement_player_index >= 0 and reinforcement_player_index < game_manager.players.size():
+				return game_manager.players[reinforcement_player_index]
 			return null
 		"upkeep_choice", "tiamat_upkeep_choice", "end_turn":
 			return game_manager.current_player

@@ -1237,7 +1237,11 @@ func _get_saved_deck_name(saved_deck: Dictionary) -> String:
 func _get_saved_deck_validation(saved_deck: Dictionary) -> Dictionary:
 	if saved_deck.is_empty():
 		return {"is_valid": false, "error": "Deck is missing."}
-	return _deck_validator.validate_deck(saved_deck.get("cards", {}))
+	return _deck_validator.validate_deck(
+		saved_deck.get("cards", {}),
+		saved_deck.get("special_setup", {}),
+		saved_deck.get("reinforcements", {})
+	)
 
 func _get_saved_decks_for_current_identity() -> Array[Dictionary]:
 	if _uses_server_account_storage():
@@ -4718,7 +4722,7 @@ func _get_tutorial_lessons() -> Array[Dictionary]:
 			"steps": [
 				{
 					"title": "Start With The Legal Shell",
-					"body": "A legal deck has exactly 1 God, up to 3 Powers, and at least 35 regular cards. Regular cards are Creatures, Spells, Hexes, Charms, Equipment, and Structures.",
+					"body": "A legal deck has exactly 1 God, up to 3 Powers, and at least 40 regular cards. It may also have Reinforcements up to one-third of its regular cards plus Powers, rounded down.",
 					"try": "Open Deck Builder, pick a God, then add two or three compatible Powers.",
 					"action": "deck_builder"
 				},
@@ -5018,7 +5022,7 @@ func _get_interactive_tutorial_steps(lesson_id: String, mode: String) -> Array[D
 			},
 			{
 				"title": "Build The Regular Deck",
-				"body": "Add at least 35 regular cards. Use enough Creatures to contest the board, then add Spells, Hexes, Charms, Equipment, and Structures for support.",
+				"body": "Add at least 40 regular cards. Use enough Creatures to contest the board, then add Spells, Hexes, Charms, Equipment, and Structures for support.",
 				"check": "manual"
 			},
 			{
@@ -6705,7 +6709,8 @@ func _on_account_deck_list_received(decks, preferred_deck_id: String = "") -> vo
 			str(local_deck.get("name", "Deck")),
 			local_deck.get("cards", {}),
 			str(local_deck.get("deck_id", "")),
-			local_deck.get("special_setup", {})
+			local_deck.get("special_setup", {}),
+			local_deck.get("reinforcements", {})
 		)
 	var resolved_preferred_deck_id := preferred_deck_id.strip_edges()
 	if resolved_preferred_deck_id.is_empty():
@@ -7272,7 +7277,8 @@ func _send_deck_to_friend(friend_username: String, deck: Dictionary) -> void:
 		friend_username,
 		str(deck.get("name", "Deck")),
 		deck.get("cards", {}),
-		deck.get("special_setup", {})
+		deck.get("special_setup", {}),
+		deck.get("reinforcements", {})
 	)
 	_set_friends_status("Sending deck to %s..." % friend_username)
 	status_label.text = "Sending deck to %s..." % friend_username
@@ -7647,6 +7653,8 @@ func _maybe_submit_current_profile_deck(room_id: String, snapshot: Dictionary) -
 				"Bearded Axe": 3,
 				"Blot Sacrifice": 3,
 				"Fall of the Mighty": 2,
+				"Circle of Rebirth": 3,
+				"Alu": 2,
 			},
 		}
 		selected_deck_id = "smoke_default"
@@ -7660,7 +7668,8 @@ func _maybe_submit_current_profile_deck(room_id: String, snapshot: Dictionary) -
 	var selected_deck_hash := LobbyRoomScript.compute_deck_hash(
 		str(selected_deck.get("name", "Default Deck")),
 		selected_deck.get("cards", {}) as Dictionary,
-		selected_deck.get("special_setup", {})
+		selected_deck.get("special_setup", {}),
+		selected_deck.get("reinforcements", {})
 	)
 	var submitted_deck_id := str(local_member.get("selected_deck_id", "")).strip_edges()
 	var submitted_deck_hash := str(local_member.get("selected_deck_hash", "")).strip_edges()
@@ -7682,7 +7691,8 @@ func _maybe_submit_current_profile_deck(room_id: String, snapshot: Dictionary) -
 			str(selected_deck.get("name", "Default Deck")),
 			selected_deck.get("cards", {}),
 			selected_deck_id,
-			selected_deck.get("special_setup", {})
+			selected_deck.get("special_setup", {}),
+			selected_deck.get("reinforcements", {})
 		)
 	_last_submitted_lobby_room_id = room_id
 	_last_submitted_lobby_deck_id = selected_deck_id

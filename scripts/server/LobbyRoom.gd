@@ -87,7 +87,8 @@ func submit_deck(
 	deck_id: String,
 	deck_cards: Dictionary,
 	validation: Dictionary,
-	special_setup: Dictionary = {}
+	special_setup: Dictionary = {},
+	reinforcements: Dictionary = {}
 ) -> bool:
 	if not contains_session(session_id):
 		return false
@@ -95,8 +96,9 @@ func submit_deck(
 		"deck_name": deck_name.strip_edges(),
 		"deck_id": deck_id.strip_edges(),
 		"cards": deck_cards.duplicate(true),
+		"reinforcements": reinforcements.duplicate(true),
 		"special_setup": special_setup.duplicate(true),
-		"deck_hash": compute_deck_hash(deck_name, deck_cards, special_setup),
+		"deck_hash": compute_deck_hash(deck_name, deck_cards, special_setup, reinforcements),
 		"validation": validation.duplicate(true),
 	}
 	refresh_status()
@@ -183,7 +185,12 @@ func to_room_list_entry(sessions_by_id: Dictionary) -> Dictionary:
 		"status": status,
 	}
 
-static func compute_deck_hash(deck_name: String, deck_cards: Dictionary, special_setup: Dictionary = {}) -> String:
+static func compute_deck_hash(
+	deck_name: String,
+	deck_cards: Dictionary,
+	special_setup: Dictionary = {},
+	reinforcements: Dictionary = {}
+) -> String:
 	var card_rows: Array[String] = []
 	for raw_card_name in deck_cards.keys():
 		var card_name := str(raw_card_name).strip_edges()
@@ -191,6 +198,13 @@ static func compute_deck_hash(deck_name: String, deck_cards: Dictionary, special
 			continue
 		card_rows.append("%s=%d" % [card_name, int(deck_cards[raw_card_name])])
 	card_rows.sort()
+	var reinforcement_rows: Array[String] = []
+	for raw_card_name in reinforcements.keys():
+		var reinforcement_name := str(raw_card_name).strip_edges()
+		if reinforcement_name.is_empty():
+			continue
+		reinforcement_rows.append("%s=%d" % [reinforcement_name, int(reinforcements[raw_card_name])])
+	reinforcement_rows.sort()
 	var special_rows: Array[String] = []
 	var tiamat_slots = special_setup.get("tiamat_slots", [])
 	if tiamat_slots is Array:
@@ -214,4 +228,9 @@ static func compute_deck_hash(deck_name: String, deck_cards: Dictionary, special
 			if not card_name.is_empty() and variant_index > 0:
 				special_rows.append("art:%s=%d" % [card_name, variant_index])
 	special_rows.sort()
-	return "%s|%s|%s" % [deck_name.strip_edges(), "|".join(card_rows), "|".join(special_rows)]
+	return "%s|%s|%s|%s" % [
+		deck_name.strip_edges(),
+		"|".join(card_rows),
+		"|".join(reinforcement_rows),
+		"|".join(special_rows)
+	]

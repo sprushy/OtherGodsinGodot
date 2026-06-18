@@ -333,7 +333,9 @@ func _on_connect_attempt_timer_timeout(expected_serial: int) -> void:
 	_on_connect_attempt_timeout()
 
 func _on_game_event_received(event_type: String, data: Dictionary) -> void:
-	if event_type == "game_ended":
+	if event_type in ["reinforcement_phase", "series_game_started"]:
+		_match_completed = false
+	elif event_type == "game_ended":
 		_match_completed = true
 	elif event_type == "full_state":
 		var state = data.get("state", {})

@@ -213,7 +213,8 @@ func save_deck(
 	deck_name: String,
 	cards: Dictionary,
 	deck_id: String = "",
-	special_setup: Dictionary = {}
+	special_setup: Dictionary = {},
+	reinforcements: Dictionary = {}
 ) -> Dictionary:
 	var profile := ensure_profile(profile_id, DEFAULT_PROFILE_NAME, true)
 	var resolved_profile_id := str(profile.get("profile_id", "")).strip_edges()
@@ -234,6 +235,7 @@ func save_deck(
 	deck_entry["deck_id"] = resolved_deck_id
 	deck_entry["name"] = clean_name
 	deck_entry["cards"] = _sanitize_cards(cards)
+	deck_entry["reinforcements"] = _sanitize_cards(reinforcements)
 	deck_entry["special_setup"] = _sanitize_special_setup(special_setup)
 	if not deck_entry.has("created_unix"):
 		deck_entry["created_unix"] = now_unix
@@ -1303,6 +1305,7 @@ func _normalize_saved_deck(saved_deck: Dictionary) -> Dictionary:
 		"deck_id": resolved_deck_id,
 		"name": str(saved_deck.get("name", DEFAULT_DECK_NAME)).strip_edges(),
 		"cards": _sanitize_cards(saved_deck.get("cards", {})),
+		"reinforcements": _sanitize_cards(saved_deck.get("reinforcements", {})),
 		"special_setup": _sanitize_special_setup(saved_deck.get("special_setup", {})),
 		"created_unix": int(saved_deck.get("created_unix", now_unix)),
 		"updated_unix": int(saved_deck.get("updated_unix", now_unix)),

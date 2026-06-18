@@ -54,6 +54,7 @@ const MatchClientScript = preload("res://scripts/client/MatchClient.gd")
 const DefaultMatchSetupScript = preload("res://scripts/server/DefaultMatchSetup.gd")
 const MatchHistoryStoreScript = preload("res://scripts/server/MatchHistoryStore.gd")
 const MatchSessionScript = preload("res://scripts/server/MatchSession.gd")
+const DeckValidatorScript = preload("res://scripts/server/DeckValidator.gd")
 const TiamatScript = preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
 const UIArtScalerScript = preload("res://scripts/ui/UIArtScaler.gd")
 const CardDetailContentBuilderScript = preload("res://scripts/ui/CardDetailContentBuilder.gd")
@@ -519,6 +520,15 @@ var _game_result_presented: bool = false
 var _pending_forfeit_return_to_menu: bool = false
 var _pending_post_game_return_to_menu: bool = false
 var _game_result_overlay: Control = null
+var _reinforcement_overlay: Control = null
+var _reinforcement_main_cards: Dictionary = {}
+var _reinforcement_side_cards: Dictionary = {}
+var _reinforcement_main_option: OptionButton = null
+var _reinforcement_side_option: OptionButton = null
+var _reinforcement_swap_button: Button = null
+var _reinforcement_status_label: Label = null
+var _reinforcement_submit_button: Button = null
+var _series_snapshot: Dictionary = {}
 var _forfeit_button_default_text: String = ""
 var _all_sound_muted: bool = false
 var _action_log_view: RichTextLabel = null
@@ -5230,6 +5240,7 @@ func start_game(
 	_pending_post_game_return_to_menu = false
 	_reset_turn_activity_timers()
 	_hide_game_result_overlay()
+	_hide_reinforcement_overlay()
 	_local_match_result_recorded = false
 	_current_match_info = match_info.duplicate(true)
 	_is_observer_mode = bool(match_info.get("observer_mode", false))
@@ -5374,6 +5385,7 @@ func _prepare_for_match_launch(status_message: String = "Connecting to match..."
 	_refresh_priority_controls_ui()
 	_hide_pause_menu()
 	_hide_game_result_overlay()
+	_hide_reinforcement_overlay()
 	_hide_corner_action_button()
 	_hide_devour_cancel_prompt()
 	_hide_hand_hover_preview()
@@ -20887,6 +20899,9 @@ func _on_priority_response_chosen(card: Card) -> void:
 		var hex_targets: Array = game_manager.get_priority_hex_targets(hex, top) if has_manual_targets else []
 		var target_is_attacker := not hex.has_method("get_priority_targets") and top.type == CardAction.Type.ATTACK
 		var requires_target_selection := _requires_priority_target_selection(hex)
+		var automatic_target: Card = hex_targets[0] as Card \
+			if not requires_target_selection and hex_targets.size() == 1 \
+			else null
 		if hex is PermanentHexCard and requires_target_selection and has_manual_targets:
 			_begin_priority_hex_target_selection(hex, top, target_is_attacker)
 			return
@@ -20905,7 +20920,7 @@ func _on_priority_response_chosen(card: Card) -> void:
 			_set_action_label_text(hex.card_name + " has no valid targets.")
 			update_ui()
 			return
-		_queue_hex_response_action(hex, top, null, target_is_attacker)
+		_queue_hex_response_action(hex, top, automatic_target, target_is_attacker)
 	elif card is CharmCard:
 		var charm := card as CharmCard
 		if charm.targets:
@@ -25986,6 +26001,202 @@ func _hide_game_result_overlay() -> void:
 		_game_result_overlay.queue_free()
 	_game_result_overlay = null
 
+func _hide_reinforcement_overlay() -> void:
+	if _reinforcement_overlay != null and is_instance_valid(_reinforcement_overlay):
+		_reinforcement_overlay.queue_free()
+	_reinforcement_overlay = null
+	_reinforcement_main_option = null
+	_reinforcement_side_option = null
+	_reinforcement_swap_button = null
+	_reinforcement_status_label = null
+	_reinforcement_submit_button = null
+
+func _show_reinforcement_phase(data: Dictionary) -> void:
+	_hide_game_result_overlay()
+	_hide_reinforcement_overlay()
+	_game_finished = true
+	_game_result_presented = false
+	_series_snapshot = (data.get("series", {}) as Dictionary).duplicate(true)
+	_reinforcement_main_cards = (data.get("cards", {}) as Dictionary).duplicate(true)
+	_reinforcement_side_cards = (data.get("reinforcements", {}) as Dictionary).duplicate(true)
+	_dismiss_transient_prompts()
+	_hide_corner_action_button()
+	choice_container.visible = false
+	end_turn_button.visible = false
+	placement_container.visible = false
+
+	var overlay := ColorRect.new()
+	overlay.name = "ReinforcementOverlay"
+	overlay.color = Color(0.02, 0.03, 0.06, 0.9)
+	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	add_child(overlay)
+	_promote_transient_ui(overlay, TRANSIENT_UI_Z_INDEX + 125)
+	_reinforcement_overlay = overlay
+
+	var panel := PanelContainer.new()
+	panel.set_anchors_preset(Control.PRESET_CENTER)
+	panel.custom_minimum_size = Vector2(650, 0)
+	overlay.add_child(panel)
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.07, 0.09, 0.14, 0.98)
+	style.border_color = Color(0.35, 0.72, 1.0, 0.95)
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		style.set_border_width(side as Side, 2)
+	style.content_margin_left = 24
+	style.content_margin_right = 24
+	style.content_margin_top = 22
+	style.content_margin_bottom = 20
+	panel.add_theme_stylebox_override("panel", style)
+
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 12)
+	panel.add_child(box)
+	var wins = _series_snapshot.get("wins", [])
+	var score_text := "%d–%d" % [
+		int(wins[0]) if wins is Array and wins.size() > 0 else 0,
+		int(wins[1]) if wins is Array and wins.size() > 1 else 0,
+	]
+	var title := Label.new()
+	title.text = "Reinforcements — Series %s" % score_text
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 26)
+	box.add_child(title)
+	var instructions := Label.new()
+	instructions.text = "Swap cards one-for-one between your main deck and Reinforcements, then lock in for the next game."
+	instructions.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	instructions.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	box.add_child(instructions)
+
+	var choices := HBoxContainer.new()
+	choices.add_theme_constant_override("separation", 12)
+	box.add_child(choices)
+	_reinforcement_main_option = OptionButton.new()
+	_reinforcement_main_option.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	choices.add_child(_reinforcement_main_option)
+	var swap_button := Button.new()
+	_reinforcement_swap_button = swap_button
+	swap_button.text = "Swap One"
+	swap_button.pressed.connect(_swap_selected_reinforcement_cards)
+	choices.add_child(swap_button)
+	_reinforcement_side_option = OptionButton.new()
+	_reinforcement_side_option.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	choices.add_child(_reinforcement_side_option)
+
+	_reinforcement_status_label = Label.new()
+	_reinforcement_status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_reinforcement_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	box.add_child(_reinforcement_status_label)
+	var actions := HBoxContainer.new()
+	actions.alignment = BoxContainer.ALIGNMENT_CENTER
+	actions.add_theme_constant_override("separation", 12)
+	box.add_child(actions)
+	_reinforcement_submit_button = Button.new()
+	_reinforcement_submit_button.text = "Lock In"
+	_reinforcement_submit_button.pressed.connect(_submit_reinforcement_changes)
+	actions.add_child(_reinforcement_submit_button)
+	_refresh_reinforcement_options()
+	if bool(data.get("is_ready", false)):
+		_reinforcement_submit_button.disabled = true
+		_reinforcement_swap_button.disabled = true
+		_reinforcement_main_option.disabled = true
+		_reinforcement_side_option.disabled = true
+		_reinforcement_status_label.text = "Deck locked. Waiting for your opponent."
+
+func _refresh_reinforcement_options() -> void:
+	if _reinforcement_main_option == null or _reinforcement_side_option == null:
+		return
+	_reinforcement_main_option.clear()
+	_reinforcement_side_option.clear()
+	var main_names: Array = _reinforcement_main_cards.keys()
+	main_names.sort()
+	for raw_name in main_names:
+		var card_name := str(raw_name)
+		var card := CardCatalog.instantiate_card_by_name(card_name)
+		if card == null or card.is_god or int(_reinforcement_main_cards.get(card_name, 0)) <= 0:
+			continue
+		_reinforcement_main_option.add_item("%s ×%d" % [card_name, int(_reinforcement_main_cards[card_name])])
+		_reinforcement_main_option.set_item_metadata(_reinforcement_main_option.item_count - 1, card_name)
+	var side_names: Array = _reinforcement_side_cards.keys()
+	side_names.sort()
+	for raw_name in side_names:
+		var card_name := str(raw_name)
+		if int(_reinforcement_side_cards.get(card_name, 0)) <= 0:
+			continue
+		_reinforcement_side_option.add_item("%s ×%d" % [card_name, int(_reinforcement_side_cards[card_name])])
+		_reinforcement_side_option.set_item_metadata(_reinforcement_side_option.item_count - 1, card_name)
+	if _reinforcement_status_label != null:
+		var regular_count := 0
+		var power_count := 0
+		for card_name in _reinforcement_main_cards.keys():
+			var card := CardCatalog.instantiate_card_by_name(str(card_name))
+			if card == null or card.is_god:
+				continue
+			if card.is_power:
+				power_count += int(_reinforcement_main_cards[card_name])
+			else:
+				regular_count += int(_reinforcement_main_cards[card_name])
+		var limit := DeckValidatorScript.get_reinforcement_limit(regular_count, power_count)
+		_reinforcement_status_label.text = "Main: %d regular + %d Powers • Reinforcements: %d / %d" % [
+			regular_count,
+			power_count,
+			_count_card_dictionary(_reinforcement_side_cards),
+			limit,
+		]
+
+func _swap_selected_reinforcement_cards() -> void:
+	if _reinforcement_main_option == null or _reinforcement_side_option == null:
+		return
+	if _reinforcement_main_option.item_count <= 0 or _reinforcement_side_option.item_count <= 0:
+		_reinforcement_status_label.text = "A swap needs one main-deck card and one Reinforcement."
+		return
+	var main_name := str(_reinforcement_main_option.get_item_metadata(_reinforcement_main_option.selected))
+	var side_name := str(_reinforcement_side_option.get_item_metadata(_reinforcement_side_option.selected))
+	if main_name.is_empty() or side_name.is_empty():
+		return
+	_move_one_card_between_dictionaries(_reinforcement_main_cards, _reinforcement_side_cards, main_name)
+	_move_one_card_between_dictionaries(_reinforcement_side_cards, _reinforcement_main_cards, side_name)
+	_refresh_reinforcement_options()
+
+func _move_one_card_between_dictionaries(source: Dictionary, destination: Dictionary, card_name: String) -> void:
+	source[card_name] = int(source.get(card_name, 0)) - 1
+	if int(source[card_name]) <= 0:
+		source.erase(card_name)
+	destination[card_name] = int(destination.get(card_name, 0)) + 1
+
+func _count_card_dictionary(cards: Dictionary) -> int:
+	var total := 0
+	for count in cards.values():
+		total += int(count)
+	return total
+
+func _submit_reinforcement_changes() -> void:
+	if game_input == null or network_manager == null:
+		return
+	var local_index := int(network_manager.local_player_index)
+	game_input.submit_action({
+		"type": "submit_reinforcements",
+		"player_index": local_index,
+		"cards": _reinforcement_main_cards.duplicate(true),
+		"reinforcements": _reinforcement_side_cards.duplicate(true),
+	})
+	if _reinforcement_submit_button != null:
+		_reinforcement_submit_button.disabled = true
+	if _reinforcement_status_label != null:
+		_reinforcement_status_label.text = "Validating and locking your deck..."
+
+func _begin_next_series_game(data: Dictionary) -> void:
+	_series_snapshot = (data.get("series", {}) as Dictionary).duplicate(true)
+	_current_match_info["series"] = _series_snapshot.duplicate(true)
+	_hide_reinforcement_overlay()
+	_hide_game_result_overlay()
+	_game_finished = false
+	_game_result_presented = false
+	_pending_forfeit_return_to_menu = false
+	_restore_corner_action_button()
+	_set_action_label_text("Next game starting...")
+	update_ui()
+
 func _get_result_viewer():
 	if game_manager == null:
 		return null
@@ -26039,6 +26250,7 @@ func _resolve_game_result_message(result_message: String, winner = null, loser =
 
 func _finalize_game_result_ui(result_message: String, winner = null, loser = null, auto_return: bool = false) -> void:
 	var resolved_message := _resolve_game_result_message(result_message, winner, loser)
+	_hide_reinforcement_overlay()
 	# Networked match results should remain visible on both clients until each
 	# player explicitly leaves; otherwise a forfeit can pull both players away.
 	if _is_networked_client or _is_real_network_host():
@@ -26304,8 +26516,46 @@ func _apply_network_event(event_type: String, data: Dictionary) -> void:
 					forfeit_button.disabled = false
 			_clear_pending_priority_response_submission()
 			_clear_network_breidablik_return_pending()
-			_set_action_label_text(str(data.get("reason", "That move was rejected by the server.")))
+			var rejection_reason := str(data.get("reason", "That move was rejected by the server."))
+			if _reinforcement_overlay != null and is_instance_valid(_reinforcement_overlay):
+				if _reinforcement_submit_button != null:
+					_reinforcement_submit_button.disabled = false
+				if _reinforcement_swap_button != null:
+					_reinforcement_swap_button.disabled = false
+				if _reinforcement_main_option != null:
+					_reinforcement_main_option.disabled = false
+				if _reinforcement_side_option != null:
+					_reinforcement_side_option.disabled = false
+				if _reinforcement_status_label != null:
+					_reinforcement_status_label.text = rejection_reason
+			_set_action_label_text(rejection_reason)
 			update_ui()
+		"reinforcement_phase":
+			_show_reinforcement_phase(data)
+		"reinforcement_submission_accepted":
+			_current_match_info["selected_deck_cards"] = _reinforcement_main_cards.duplicate(true)
+			_current_match_info["selected_deck_reinforcements"] = _reinforcement_side_cards.duplicate(true)
+			if _reinforcement_swap_button != null:
+				_reinforcement_swap_button.disabled = true
+			if _reinforcement_main_option != null:
+				_reinforcement_main_option.disabled = true
+			if _reinforcement_side_option != null:
+				_reinforcement_side_option.disabled = true
+			if _reinforcement_status_label != null:
+				_reinforcement_status_label.text = "Deck locked. Waiting for your opponent."
+		"reinforcement_readiness":
+			if _reinforcement_status_label != null:
+				_reinforcement_status_label.text = "%d / %d players locked in." % [
+					int(data.get("ready_count", 0)),
+					int(data.get("player_count", 2)),
+				]
+		"series_game_started":
+			_begin_next_series_game(data)
+		"series_game_ended":
+			_series_snapshot = (data.get("series", {}) as Dictionary).duplicate(true)
+			_set_action_label_text("A game in the series has ended.")
+		"series_ended":
+			_series_snapshot = (data.get("series", {}) as Dictionary).duplicate(true)
 		"game_ended":
 			var result_message: String = str(data.get("result_message", "")).strip_edges()
 			if result_message.is_empty():
