@@ -1349,9 +1349,11 @@ func _make_card_item(card: Card) -> Control:
 	count_lbl.add_theme_color_override("font_color", Color(1.0, 0.9, 0.3))
 	count_lbl.anchor_right  = 1; count_lbl.anchor_left  = 1
 	count_lbl.anchor_bottom = 1; count_lbl.anchor_top   = 1
-	count_lbl.offset_left   = -24; count_lbl.offset_right  = -4
-	count_lbl.offset_top    = -38; count_lbl.offset_bottom = -2
+	count_lbl.offset_left   = -72; count_lbl.offset_right  = -4
+	count_lbl.offset_top    = -36; count_lbl.offset_bottom = -4
 	count_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	count_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	count_lbl.clip_text = true
 	count_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	card_body.add_child(count_lbl)
 	_count_badges[card.card_name] = count_lbl
@@ -3825,10 +3827,13 @@ func _update_count_badges() -> void:
 		var count := main_count + reinforcement_count
 		if main_count > 0 and reinforcement_count > 0:
 			lbl.text = "×%d +%dR" % [main_count, reinforcement_count]
+			lbl.add_theme_font_size_override("font_size", 12)
 		elif reinforcement_count > 0:
 			lbl.text = "×%dR" % reinforcement_count
+			lbl.add_theme_font_size_override("font_size", 14)
 		else:
 			lbl.text = "×%d" % main_count if main_count > 0 else ""
+			lbl.add_theme_font_size_override("font_size", 14)
 
 		# Dim card when at max copies
 		var card := _find_template(card_name)

@@ -126,12 +126,17 @@ static func validate_request(message: Dictionary) -> String:
 		SET_READY:
 			if not payload.has("is_ready"):
 				return "Missing ready state."
+		CREATE_ROOM:
+			if payload.has("best_of"):
+				var best_of := int(payload.get("best_of", 1))
+				if best_of not in [1, 3]:
+					return "Invalid match format."
 		REQUEST_RECONNECT_LOBBY:
 			if str(payload.get("session_id", "")).strip_edges().is_empty():
 				return "Missing session id."
 			if str(payload.get("reconnect_token", "")).strip_edges().is_empty():
 				return "Missing reconnect token."
-		CREATE_ROOM, LIST_ROOMS, LEAVE_ROOM, REQUEST_ACCOUNT_DECKS, REQUEST_PROFILE_SUMMARY, REQUEST_FRIENDS:
+		LIST_ROOMS, LEAVE_ROOM, REQUEST_ACCOUNT_DECKS, REQUEST_PROFILE_SUMMARY, REQUEST_FRIENDS:
 			pass
 		_:
 			return "Unknown lobby message type: %s" % message_type

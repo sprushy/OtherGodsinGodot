@@ -33,7 +33,7 @@ text = "Deck Builder"
 layout_mode = 2
 text = "Rules"
 
-[node name="TutorialButton" type="Button" parent="Control/MenuContainer"]
+[node name="TutorialButton" type="Button" parent="Control/MenuContainer" unique_id=1539916658]
 layout_mode = 2
 text = "Tutorial"
 
@@ -92,7 +92,7 @@ autowrap_mode = 3
 
 [node name="CreateSeekButton" type="Button" parent="Control/MenuContainer/MultiplayerContainer" unique_id=1087590090]
 layout_mode = 2
-text = "Create Seek"
+text = "Create Bo1 Rated Seek"
 
 [node name="OpenSeeksLabel" type="Label" parent="Control/MenuContainer/MultiplayerContainer" unique_id=780342706]
 layout_mode = 2

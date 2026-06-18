@@ -99,9 +99,11 @@ First deck recipe:
 6. Add Equipment only if you have enough Creatures to carry it.
 7. Press Save Deck when the deck builder says the deck is legal.
 
-### Best-Of-Three Matches
+### Match Formats
 
-Multiplayer matches are best-of-three: the first player to win two games wins the match.
+Multiplayer seeks can be Bo1 rated, Bo1 unrated, Bo3 rated, or Bo3 unrated.
+
+In Bo1, a single game decides the match. In Bo3, the first player to win two games wins the match.
 
 After game 1 and, if needed, game 2, both players may exchange cards between their main deck and Reinforcements. Each change must be a one-for-one swap, so the main deck and registered card pool stay the same size. The resulting main deck must still satisfy every normal deck construction rule before the next game can begin.
 

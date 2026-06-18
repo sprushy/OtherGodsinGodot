@@ -143,10 +143,10 @@ func create_local_guest_session(player_name: String = "Host") -> Dictionary:
 	local_session_id = str(session.get("session_id", ""))
 	return session.duplicate(true)
 
-func create_room_for_local_session(is_ranked: bool = true) -> Dictionary:
+func create_room_for_local_session(is_ranked: bool = true, best_of: int = 1) -> Dictionary:
 	if local_session_id.is_empty():
 		return {}
-	var room: LobbyRoom = _create_room_for_session(local_session_id, is_ranked)
+	var room: LobbyRoom = _create_room_for_session(local_session_id, is_ranked, best_of)
 	return room.to_snapshot(sessions_by_id)
 
 func set_local_ready(is_ready: bool) -> void:
@@ -189,7 +189,11 @@ func _handle_request(peer_id: int, message: Dictionary) -> void:
 			if session.is_empty():
 				_send_error_to_peer(peer_id, "Join the lobby before creating a room.")
 				return
-			var room: LobbyRoom = _create_room_for_session(str(session.get("session_id", "")), bool(payload.get("is_ranked", true)))
+			var room: LobbyRoom = _create_room_for_session(
+				str(session.get("session_id", "")),
+				_payload_is_ranked(payload),
+				_payload_best_of(payload)
+			)
 			_broadcast_room_snapshot(room)
 		LobbyProtocolScript.LIST_ROOMS:
 			_send_room_list_to_peer(peer_id)
@@ -846,7 +850,7 @@ func _reclaim_session_for_peer(
 		session_id_by_peer[peer_id] = session_id
 	return session.duplicate(true)
 
-func _create_room_for_session(session_id: String, is_ranked: bool = true) -> LobbyRoom:
+func _create_room_for_session(session_id: String, is_ranked: bool = true, best_of: int = 1) -> LobbyRoom:
 	var existing_room_id: String = str(room_id_by_session.get(session_id, ""))
 	if not existing_room_id.is_empty() and rooms_by_id.has(existing_room_id):
 		var existing_room: LobbyRoom = rooms_by_id[existing_room_id]
@@ -861,11 +865,48 @@ func _create_room_for_session(session_id: String, is_ranked: bool = true) -> Lob
 
 	var room: LobbyRoom = LobbyRoomScript.new(room_id, session_id)
 	room.is_ranked = is_ranked
+	room.best_of = 3 if best_of == 3 else 1
 	room.add_member(session_id)
 	rooms_by_id[room_id] = room
 	room_id_by_session[session_id] = room_id
 	_emit_room_updates(room)
 	return room
+
+func _payload_bool(payload: Dictionary, key: String, default_value: bool = false) -> bool:
+	if not payload.has(key):
+		return default_value
+	var value = payload.get(key)
+	if value is bool:
+		return bool(value)
+	if value is int or value is float:
+		return int(value) != 0
+	var text := str(value).strip_edges().to_lower()
+	if text in ["true", "1", "yes", "y", "on", "rated"]:
+		return true
+	if text in ["false", "0", "no", "n", "off", "unrated"]:
+		return false
+	return default_value
+
+func _payload_is_ranked(payload: Dictionary) -> bool:
+	var format := str(payload.get("match_format", "")).strip_edges().to_lower()
+	if not format.is_empty():
+		if format.find("unrated") != -1:
+			return false
+		if format.find("rated") != -1:
+			return true
+	return _payload_bool(payload, "is_ranked", true)
+
+func _payload_best_of(payload: Dictionary) -> int:
+	var format := str(payload.get("match_format", "")).strip_edges().to_lower()
+	if format.find("bo3") != -1 or format.find("best_of_3") != -1 or format.find("best-of-3") != -1:
+		return 3
+	var value = payload.get("best_of", 1)
+	if value is int or value is float:
+		return 3 if int(value) == 3 else 1
+	var text := str(value).strip_edges().to_lower()
+	if text in ["3", "bo3", "best_of_3", "best-of-3"]:
+		return 3
+	return 1
 
 func _join_room_for_session(session_id: String, room_id: String) -> void:
 	var normalized_room_id: String = room_id.strip_edges().to_upper()
@@ -1055,7 +1096,8 @@ func _assign_match(room: LobbyRoom) -> void:
 		player_decks_by_session,
 		player_identity_by_session,
 		spectator_visibility,
-		room.is_ranked
+		room.is_ranked,
+		room.best_of
 	)
 	if match_session == null:
 		var error_message := str(match_supervisor.last_create_match_error).strip_edges()

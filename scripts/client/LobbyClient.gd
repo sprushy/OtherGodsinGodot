@@ -164,8 +164,14 @@ func is_authenticated() -> bool:
 		and is_transport_connected() \
 		and not current_session_id.strip_edges().is_empty()
 
-func create_room(is_ranked: bool = true) -> void:
-	_send_request(LobbyProtocolScript.CREATE_ROOM, {"is_ranked": is_ranked})
+func create_room(is_ranked: bool = true, best_of: int = 1) -> void:
+	var normalized_best_of := 3 if best_of == 3 else 1
+	var match_format := "bo%d_%s" % [normalized_best_of, "rated" if is_ranked else "unrated"]
+	_send_request(LobbyProtocolScript.CREATE_ROOM, {
+		"is_ranked": is_ranked,
+		"best_of": normalized_best_of,
+		"match_format": match_format,
+	})
 
 func list_rooms() -> void:
 	_send_request(LobbyProtocolScript.LIST_ROOMS)

@@ -95,6 +95,7 @@ var _is_local_lobby_host: bool = false
 var _match_launch_queued: bool = false
 var _pending_host_room_creation: bool = false
 var _pending_room_is_ranked: bool = true
+var _pending_room_best_of: int = 1
 var _pending_local_lobby_launch_on_connect_failure: bool = false
 var _spawned_lobby_process_id: int = 0
 var _dedicated_lobby_connect_attempts_remaining: int = 0
@@ -111,6 +112,8 @@ var _password_line_edit: LineEdit = null
 var _switch_account_button: Button = null
 var _resume_match_button: Button = null
 var _create_unranked_seek_button: Button = null
+var _create_bo3_ranked_seek_button: Button = null
+var _create_bo3_unranked_seek_button: Button = null
 var _profile_summary_panel: PanelContainer = null
 var _profile_summary_label: Label = null
 var _current_profile_summary: Dictionary = {}
@@ -303,7 +306,7 @@ func _ready() -> void:
 	_build_account_identity_controls()
 	_build_friends_controls()
 	_build_resume_controls()
-	_build_unranked_seek_controls()
+	_build_seek_format_controls()
 	_refresh_multiplayer_deck_options()
 	_refresh_seek_list()
 	_refresh_multiplayer_action_state()
@@ -1715,12 +1718,40 @@ func _refresh_seek_list() -> void:
 		var max_players := int(room.get("max_players", 2))
 		var room_status := str(room.get("status", "waiting")).strip_edges().to_lower()
 		var status := "Live" if room_status == LobbyRoomScript.STATUS_IN_MATCH else room_status.capitalize()
-		var rank_tag := "" if bool(room.get("is_ranked", true)) else "[Unranked]  "
+		var rank_tag := "[%s]  " % _format_seek_format_label(room)
 		var action_hint := "  Click to Join"
 		if room_status == LobbyRoomScript.STATUS_IN_MATCH:
 			action_hint = "  Click to Rejoin" if bool(room.get("viewer_can_rejoin", false)) else "  Click to Observe"
 		seek_list.add_item("%s%s  %d/%d  %s%s" % [rank_tag, host_name, member_count, max_players, status, action_hint])
 		seek_list.set_item_metadata(seek_list.get_item_count() - 1, room.duplicate(true))
+
+func _format_seek_format_label(room: Dictionary) -> String:
+	return "Bo%d %s" % [
+		_get_room_best_of(room),
+		"Rated" if _get_room_is_ranked(room) else "Unrated",
+	]
+
+func _get_room_best_of(room: Dictionary) -> int:
+	var raw_value = room.get("best_of", 1)
+	if raw_value is int or raw_value is float:
+		return 3 if int(raw_value) == 3 else 1
+	var text := str(raw_value).strip_edges().to_lower()
+	return 3 if text in ["3", "bo3", "best_of_3", "best-of-3"] else 1
+
+func _get_room_is_ranked(room: Dictionary) -> bool:
+	if not room.has("is_ranked"):
+		return true
+	var raw_value = room.get("is_ranked")
+	if raw_value is bool:
+		return bool(raw_value)
+	if raw_value is int or raw_value is float:
+		return int(raw_value) != 0
+	var text := str(raw_value).strip_edges().to_lower()
+	if text in ["true", "1", "yes", "y", "on", "rated"]:
+		return true
+	if text in ["false", "0", "no", "n", "off", "unrated"]:
+		return false
+	return true
 
 func _refresh_multiplayer_action_state() -> void:
 	var has_legal_deck := not _get_selected_multiplayer_deck().is_empty()
@@ -1729,6 +1760,10 @@ func _refresh_multiplayer_action_state() -> void:
 		create_seek_button.disabled = not has_legal_deck or in_room
 	if _create_unranked_seek_button != null:
 		_create_unranked_seek_button.disabled = not has_legal_deck or in_room
+	if _create_bo3_ranked_seek_button != null:
+		_create_bo3_ranked_seek_button.disabled = not has_legal_deck or in_room
+	if _create_bo3_unranked_seek_button != null:
+		_create_bo3_unranked_seek_button.disabled = not has_legal_deck or in_room
 	if leave_seek_button != null:
 		leave_seek_button.visible = in_room
 	if ready_button != null:
@@ -1814,30 +1849,18 @@ func _on_refresh_seeks_pressed() -> void:
 	_connect_to_browseable_lobby("Connecting to lobby...")
 
 func _on_create_seek_pressed() -> void:
-	var target_error := _validate_multiplayer_target()
-	if not target_error.is_empty():
-		status_label.text = target_error
-		return
-	var auth_error := _validate_auth_inputs()
-	if not auth_error.is_empty():
-		status_label.text = auth_error
-		return
-	if _get_selected_multiplayer_deck().is_empty():
-		status_label.text = "Choose a saved legal deck before creating a seek."
-		return
-	if not _current_room_snapshot.is_empty():
-		status_label.text = "Leave your current seek before creating another."
-		return
-	_pending_host_room_creation = true
-	_pending_room_is_ranked = true
-	_pending_join_room_id = ""
-	_pending_rejoin_room_id = ""
-	_pending_observe_room_id = ""
-	_pending_local_lobby_launch_on_connect_failure = false
-	multiplayer_container.visible = true
-	_connect_to_browseable_lobby("Connecting to lobby...")
+	_on_create_seek_option_pressed(true, 1)
 
 func _on_create_unranked_seek_pressed() -> void:
+	_on_create_seek_option_pressed(false, 1)
+
+func _on_create_bo3_ranked_seek_pressed() -> void:
+	_on_create_seek_option_pressed(true, 3)
+
+func _on_create_bo3_unranked_seek_pressed() -> void:
+	_on_create_seek_option_pressed(false, 3)
+
+func _on_create_seek_option_pressed(is_ranked: bool, best_of: int) -> void:
 	var target_error := _validate_multiplayer_target()
 	if not target_error.is_empty():
 		status_label.text = target_error
@@ -1853,7 +1876,8 @@ func _on_create_unranked_seek_pressed() -> void:
 		status_label.text = "Leave your current seek before creating another."
 		return
 	_pending_host_room_creation = true
-	_pending_room_is_ranked = false
+	_pending_room_is_ranked = is_ranked
+	_pending_room_best_of = 3 if best_of == 3 else 1
 	_pending_join_room_id = ""
 	_pending_rejoin_room_id = ""
 	_pending_observe_room_id = ""
@@ -2010,11 +2034,13 @@ func _run_pending_multiplayer_action() -> void:
 		return
 	if _pending_host_room_creation:
 		var is_ranked := _pending_room_is_ranked
+		var best_of := _pending_room_best_of
 		_pending_host_room_creation = false
 		_pending_room_is_ranked = true
+		_pending_room_best_of = 1
 		_pending_local_lobby_launch_on_connect_failure = false
-		status_label.text = "Creating seek..."
-		lobby_client.create_room(is_ranked)
+		status_label.text = "Creating Bo%d %s seek..." % [best_of, "rated" if is_ranked else "unrated"]
+		lobby_client.create_room(is_ranked, best_of)
 		return
 	if not _pending_join_room_id.is_empty():
 		var room_id := _pending_join_room_id
@@ -6027,8 +6053,9 @@ func _apply_room_snapshot(snapshot: Dictionary) -> void:
 		local_deck_message = deck_error
 	elif not str(local_member.get("selected_deck_name", "")).strip_edges().is_empty():
 		local_deck_message = "Your deck: %s" % str(local_member.get("selected_deck_name", ""))
-	status_label.text = "Seek %s\n%s\n%s%s" % [
+	status_label.text = "Seek %s (%s)\n%s\n%s%s" % [
 		room_id,
+		_format_seek_format_label(snapshot),
 		"\n".join(member_lines),
 		guidance,
 		"\n%s" % local_deck_message if not local_deck_message.is_empty() else ""
@@ -6334,6 +6361,7 @@ func _has_pending_new_seek_action() -> bool:
 func _clear_pending_new_seek_actions(preserve_manual_rejoin: bool = false) -> void:
 	_pending_host_room_creation = false
 	_pending_room_is_ranked = true
+	_pending_room_best_of = 1
 	_pending_join_room_id = ""
 	_pending_rejoin_room_id = ""
 	if not preserve_manual_rejoin:
@@ -7468,15 +7496,30 @@ func _build_resume_controls() -> void:
 	if insert_index >= 0:
 		multiplayer_container.move_child(_resume_match_button, insert_index)
 
-func _build_unranked_seek_controls() -> void:
+func _build_seek_format_controls() -> void:
 	if multiplayer_container == null or create_seek_button == null or _create_unranked_seek_button != null:
 		return
+	create_seek_button.text = "Create Bo1 Rated Seek"
 	_create_unranked_seek_button = Button.new()
 	_create_unranked_seek_button.name = "CreateUnrankedSeekButton"
-	_create_unranked_seek_button.text = "Create Unranked Seek"
+	_create_unranked_seek_button.text = "Create Bo1 Unrated Seek"
 	_create_unranked_seek_button.pressed.connect(_on_create_unranked_seek_pressed)
 	multiplayer_container.add_child(_create_unranked_seek_button)
 	multiplayer_container.move_child(_create_unranked_seek_button, create_seek_button.get_index() + 1)
+
+	_create_bo3_ranked_seek_button = Button.new()
+	_create_bo3_ranked_seek_button.name = "CreateBo3RatedSeekButton"
+	_create_bo3_ranked_seek_button.text = "Create Bo3 Rated Seek"
+	_create_bo3_ranked_seek_button.pressed.connect(_on_create_bo3_ranked_seek_pressed)
+	multiplayer_container.add_child(_create_bo3_ranked_seek_button)
+	multiplayer_container.move_child(_create_bo3_ranked_seek_button, _create_unranked_seek_button.get_index() + 1)
+
+	_create_bo3_unranked_seek_button = Button.new()
+	_create_bo3_unranked_seek_button.name = "CreateBo3UnratedSeekButton"
+	_create_bo3_unranked_seek_button.text = "Create Bo3 Unrated Seek"
+	_create_bo3_unranked_seek_button.pressed.connect(_on_create_bo3_unranked_seek_pressed)
+	multiplayer_container.add_child(_create_bo3_unranked_seek_button)
+	multiplayer_container.move_child(_create_bo3_unranked_seek_button, _create_bo3_ranked_seek_button.get_index() + 1)
 
 func _restore_saved_resume_state() -> void:
 	_update_resume_controls()

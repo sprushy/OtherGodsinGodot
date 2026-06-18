@@ -32,8 +32,8 @@ var disconnected_sessions: Dictionary = {}
 var spectator_peer_ids: Array[int] = []
 var spectator_visible_player_indices_by_session: Dictionary = {}
 var spectator_match_tokens_by_session: Dictionary = {}
-var series_best_of: int = 3
-var games_to_win: int = 2
+var series_best_of: int = 1
+var games_to_win: int = 1
 var series_game_number: int = 1
 var series_wins_by_session: Dictionary = {}
 var registered_player_decks_by_session: Dictionary = {}
@@ -68,6 +68,10 @@ func mark_finished() -> void:
 
 func mark_abandoned() -> void:
 	status = STATUS_ABANDONED
+
+func configure_series_format(best_of: int) -> void:
+	series_best_of = 3 if best_of == 3 else 1
+	games_to_win = 2 if series_best_of == 3 else 1
 
 func get_player_index(session_id: String) -> int:
 	return player_session_ids.find(session_id)
@@ -380,8 +384,7 @@ static func from_launch_config(config: Dictionary) -> MatchSession:
 	session.is_ranked = bool(config.get("is_ranked", true))
 	session.reconnect_window_seconds = int(config.get("reconnect_window_seconds", 90))
 	session.created_unix = int(config.get("created_unix", session.created_unix))
-	session.series_best_of = int(config.get("series_best_of", 3))
-	session.games_to_win = int(config.get("games_to_win", 2))
+	session.configure_series_format(int(config.get("series_best_of", 1)))
 	session.series_game_number = int(config.get("series_game_number", 1))
 	session.series_wins_by_session = _to_dictionary(config.get("series_wins_by_session", {}))
 	session.registered_player_decks_by_session = _to_dictionary(
@@ -429,6 +432,7 @@ func _ensure_player_match_tokens() -> void:
 		player_match_tokens[session_id] = _generate_token(20)
 
 func _ensure_series_state() -> void:
+	configure_series_format(series_best_of)
 	if registered_player_decks_by_session.is_empty():
 		registered_player_decks_by_session = player_decks_by_session.duplicate(true)
 	for session_id in player_session_ids:
