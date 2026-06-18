@@ -58,7 +58,6 @@ const TiamatScript = preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
 const UIArtScalerScript = preload("res://scripts/ui/UIArtScaler.gd")
 const CardDetailContentBuilderScript = preload("res://scripts/ui/CardDetailContentBuilder.gd")
 const LevelSymbolRowScript = preload("res://scripts/ui/LevelSymbolRow.gd")
-const DefenseShieldOverlayScript = preload("res://scripts/ui/DefenseShieldOverlay.gd")
 const MINOR_ACTION_SYMBOL_TEXTURE = preload("res://images/ui/MinorActionSymbol.png")
 const MAJOR_ACTION_SYMBOL_TEXTURE = preload("res://images/ui/MajorActionSymbol.png")
 const USER_SETTINGS_PATH := "user://settings.cfg"
@@ -483,9 +482,11 @@ var _visual_linger_input_blocker: Control = null
 var _bdrag_card: Card = null
 var _bdrag_from_zone: Zone = null
 var _bdrag_active: bool = false
-var _bdrag_ghost: Control = null
+var _bdrag_visual: BoardZoneUI = null
+var _bdrag_source_zone_ui: BoardZoneUI = null
 var _bdrag_preview_defensive: bool = false
 var _bdrag_preview_stealth: bool = false
+const BOARD_DRAG_SOURCE_GHOST_ALPHA := 0.32
 
 # Right-click context menu state
 var _pending_move_card: Card = null
@@ -18549,6 +18550,11 @@ func _on_creature_drag_started(card: Card, from_zone: Zone) -> void:
 	_bdrag_card = card
 	_bdrag_from_zone = from_zone
 	_bdrag_active = true
+	_bdrag_source_zone_ui = null
+	for zone_ui in _board_zone_uis:
+		if is_instance_valid(zone_ui) and zone_ui.zone == from_zone:
+			_bdrag_source_zone_ui = zone_ui
+			break
 	_bdrag_preview_defensive = card.creature_mode == Card.CreatureMode.DEFENSIVE
 	_bdrag_preview_stealth = false
 
@@ -18661,13 +18667,13 @@ func _input(event: InputEvent) -> void:
 		if not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
 			_bdrag_cancel()
 			return
-		if _bdrag_ghost == null:
-			_bdrag_start_ghost()
+		if _bdrag_visual == null:
+			_bdrag_start_visual()
 		else:
-			_position_bdrag_ghost()
+			_position_bdrag_visual()
 		get_viewport().set_input_as_handled()
 	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and not event.pressed:
-		if _bdrag_ghost != null:
+		if _bdrag_visual != null:
 			_bdrag_finish(get_global_mouse_position())
 		else:
 			# Was a click (no movement) ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â treat as board card click
@@ -18981,83 +18987,69 @@ func _unhandled_input(event: InputEvent) -> void:
 		_cancel_pending_target_selection(_get_pending_target_selection_name() + " cancelled: clicked off the board.")
 		get_viewport().set_input_as_handled()
 
-func _bdrag_get_preview_mode_label() -> String:
-	if _bdrag_preview_stealth:
-		return "STEALTH"
-	return "DEF" if _bdrag_preview_defensive else "AGG"
-
-func _bdrag_get_preview_stats_label() -> String:
-	if _bdrag_card == null:
-		return ""
-	if _bdrag_preview_defensive or _bdrag_preview_stealth:
-		return "RES:%d SPD:%d" % [
-			_bdrag_card.get_effective_resilience(),
-			_bdrag_card.get_effective_speed()
-		]
-	return "STR:%d RES:%d SPD:%d" % [
-		_bdrag_card.get_effective_strength(),
-		_bdrag_card.get_effective_resilience(),
-		_bdrag_card.get_effective_speed()
-	]
-
 func _bdrag_set_preview_mode(defensive: bool, stealth: bool) -> void:
 	var next_defensive := defensive or stealth
 	if _bdrag_preview_defensive == next_defensive and _bdrag_preview_stealth == stealth:
 		return
 	_bdrag_preview_defensive = next_defensive
 	_bdrag_preview_stealth = stealth
-	if _bdrag_ghost != null and is_instance_valid(_bdrag_ghost):
-		_bdrag_ghost.queue_free()
-		_bdrag_ghost = null
-		_bdrag_start_ghost()
+	if _bdrag_visual != null and is_instance_valid(_bdrag_visual):
+		_bdrag_visual.queue_free()
+		_bdrag_visual = null
+		_bdrag_start_visual()
 
-func _bdrag_start_ghost() -> void:
-	var zone_size := BoardZoneUI.get_zone_size()
-	var panel := PanelContainer.new()
-	panel.custom_minimum_size = zone_size
-	panel.size = zone_size
-	panel.z_index = 100
-	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.04, 0.07, 0.14, 0.88) if _bdrag_preview_stealth else Color(0.13, 0.22, 0.42, 0.85)
-	style.border_color = Color(0.62, 0.8, 1.0) if _bdrag_preview_stealth else Color(0.4, 0.65, 1.0)
-	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		style.set_border_width(side as Side, 2)
-	style.corner_radius_top_left = 4; style.corner_radius_top_right = 4
-	style.corner_radius_bottom_left = 4; style.corner_radius_bottom_right = 4
-	panel.add_theme_stylebox_override("panel", style)
-	var vbox := VBoxContainer.new()
-	vbox.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	panel.add_child(vbox)
-	var nl := Label.new(); nl.text = _bdrag_card.card_name; nl.add_theme_font_size_override("font_size", 14); vbox.add_child(nl)
-	if not _bdrag_card.is_god:
-		var ml := Label.new(); ml.text = _bdrag_get_preview_mode_label(); ml.add_theme_font_size_override("font_size", 13); vbox.add_child(ml)
-		var sl := Label.new(); sl.text = _bdrag_get_preview_stats_label(); sl.add_theme_font_size_override("font_size", 12); vbox.add_child(sl)
-		if _bdrag_preview_stealth:
-			var haze := ColorRect.new()
-			haze.color = Color(0.02, 0.04, 0.11, 0.34)
-			haze.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			haze.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-			panel.add_child(haze)
-		if _bdrag_preview_defensive or _bdrag_preview_stealth:
-			var shield_scale := DefenseShieldOverlayScript.STEALTH_VIEW_SIZE_MULTIPLIER if _bdrag_preview_stealth else 1.0
-			var shield := DefenseShieldOverlayScript.ensure_on(panel, DefenseShieldOverlayScript.LAYOUT_CENTER, shield_scale)
-			if shield != null and is_instance_valid(shield):
-				shield.move_to_front()
+func _bdrag_start_visual() -> void:
+	if _bdrag_card == null or _bdrag_from_zone == null:
+		return
 	var floating_parent := _get_floating_drag_parent()
 	if floating_parent == null:
 		return
-	_bdrag_ghost = panel
-	floating_parent.add_child(_bdrag_ghost)
-	_position_bdrag_ghost()
 
-func _position_bdrag_ghost() -> void:
-	if _bdrag_ghost == null or not is_instance_valid(_bdrag_ghost):
+	var preview_card := _bdrag_card.duplicate(true) as Card
+	if preview_card == null:
+		return
+	preview_card.card_owner = _bdrag_card.card_owner
+	preview_card.creature_mode = Card.CreatureMode.DEFENSIVE if _bdrag_preview_defensive else Card.CreatureMode.AGGRESSIVE
+	preview_card.is_stealth = _bdrag_preview_stealth
+	preview_card.is_face_down = _bdrag_preview_stealth
+
+	var preview_zone := Zone.new()
+	preview_zone.zone_type = _bdrag_from_zone.zone_type
+	preview_zone.zone_index = _bdrag_from_zone.zone_index
+	preview_zone.zone_owner = _bdrag_from_zone.zone_owner
+	preview_zone.cards.append(preview_card)
+	preview_card.current_zone = preview_zone
+
+	var zone_size := BoardZoneUI.get_zone_size()
+	var dragged_card := BoardZoneUI.new()
+	dragged_card.top_level = true
+	dragged_card.z_index = 100
+	dragged_card.z_as_relative = false
+	dragged_card.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	dragged_card.custom_minimum_size = zone_size
+	dragged_card.size = zone_size
+	dragged_card.viewer_override = _get_display_player()
+	dragged_card.setup(
+		preview_zone,
+		game_manager,
+		_bdrag_from_zone.zone_owner,
+		_bdrag_from_zone.zone_index,
+		Callable(),
+		false
+	)
+	_bdrag_visual = dragged_card
+	floating_parent.add_child(_bdrag_visual)
+	if _bdrag_source_zone_ui != null and is_instance_valid(_bdrag_source_zone_ui):
+		_bdrag_source_zone_ui.self_modulate.a = BOARD_DRAG_SOURCE_GHOST_ALPHA
+	_position_bdrag_visual()
+
+func _position_bdrag_visual() -> void:
+	if _bdrag_visual == null or not is_instance_valid(_bdrag_visual):
 		return
 	var ghost_size := BoardZoneUI.get_zone_size()
 	var target_pos := get_global_mouse_position() - ghost_size / 2.0
 	var viewport_size := get_viewport_rect().size
-	_bdrag_ghost.global_position = Vector2(
+	_bdrag_visual.global_position = Vector2(
 		clampf(target_pos.x, 4.0, maxf(4.0, viewport_size.x - ghost_size.x - 4.0)),
 		clampf(target_pos.y, 4.0, maxf(4.0, viewport_size.y - ghost_size.y - 4.0))
 	)
@@ -19267,11 +19259,14 @@ func _bdrag_cleanup() -> void:
 	_bdrag_active = false
 	_bdrag_card = null
 	_bdrag_from_zone = null
+	if _bdrag_source_zone_ui != null and is_instance_valid(_bdrag_source_zone_ui):
+		_bdrag_source_zone_ui.self_modulate.a = 1.0
+	_bdrag_source_zone_ui = null
 	_bdrag_preview_defensive = false
 	_bdrag_preview_stealth = false
-	if _bdrag_ghost and is_instance_valid(_bdrag_ghost):
-		_bdrag_ghost.queue_free()
-	_bdrag_ghost = null
+	if _bdrag_visual and is_instance_valid(_bdrag_visual):
+		_bdrag_visual.queue_free()
+	_bdrag_visual = null
 
 func _get_attack_block_reason(attacker: Card) -> String:
 	if attacker == null or not attacker is Card:
