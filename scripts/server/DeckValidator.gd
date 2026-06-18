@@ -232,13 +232,6 @@ func validate_reinforcement_swap(
 	var original_side: Dictionary = original_validation.get("reinforcements", {})
 	var proposed_main: Dictionary = proposed_validation.get("cards", {})
 	var proposed_side: Dictionary = proposed_validation.get("reinforcements", {})
-	if _count_cards(original_main) != _count_cards(proposed_main):
-		return _result(
-			false,
-			"Reinforcement changes must swap cards one-for-one; the main deck size cannot change.",
-			proposed_main,
-			{"reinforcements": proposed_side}
-		)
 	if _combined_counts(original_main, original_side) != _combined_counts(proposed_main, proposed_side):
 		return _result(
 			false,

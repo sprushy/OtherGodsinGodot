@@ -59,6 +59,8 @@ const TiamatScript = preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
 const UIArtScalerScript = preload("res://scripts/ui/UIArtScaler.gd")
 const CardDetailContentBuilderScript = preload("res://scripts/ui/CardDetailContentBuilder.gd")
 const LevelSymbolRowScript = preload("res://scripts/ui/LevelSymbolRow.gd")
+const ReinforcementCardTileScript = preload("res://scripts/ui/ReinforcementCardTile.gd")
+const ReinforcementDropAreaScript = preload("res://scripts/ui/ReinforcementDropArea.gd")
 const MINOR_ACTION_SYMBOL_TEXTURE = preload("res://images/ui/MinorActionSymbol.png")
 const MAJOR_ACTION_SYMBOL_TEXTURE = preload("res://images/ui/MajorActionSymbol.png")
 const USER_SETTINGS_PATH := "user://settings.cfg"
@@ -532,8 +534,15 @@ var _reinforcement_side_cards: Dictionary = {}
 var _reinforcement_main_option: OptionButton = null
 var _reinforcement_side_option: OptionButton = null
 var _reinforcement_swap_button: Button = null
+var _reinforcement_main_grid: GridContainer = null
+var _reinforcement_side_list: VBoxContainer = null
+var _reinforcement_main_drop_area = null
+var _reinforcement_side_drop_area = null
 var _reinforcement_status_label: Label = null
 var _reinforcement_submit_button: Button = null
+var _reinforcement_original_main_count: int = 0
+var _reinforcement_original_side_count: int = 0
+var _reinforcement_locked: bool = false
 var _series_snapshot: Dictionary = {}
 var _series_between_games_active: bool = false
 var _forfeit_button_default_text: String = ""
@@ -26326,8 +26335,13 @@ func _hide_reinforcement_overlay() -> void:
 	_reinforcement_main_option = null
 	_reinforcement_side_option = null
 	_reinforcement_swap_button = null
+	_reinforcement_main_grid = null
+	_reinforcement_side_list = null
+	_reinforcement_main_drop_area = null
+	_reinforcement_side_drop_area = null
 	_reinforcement_status_label = null
 	_reinforcement_submit_button = null
+	_reinforcement_locked = false
 
 func _show_reinforcement_phase(data: Dictionary) -> void:
 	_hide_game_result_overlay()
@@ -26338,6 +26352,7 @@ func _show_reinforcement_phase(data: Dictionary) -> void:
 	_series_snapshot = (data.get("series", {}) as Dictionary).duplicate(true)
 	_reinforcement_main_cards = (data.get("cards", {}) as Dictionary).duplicate(true)
 	_reinforcement_side_cards = (data.get("reinforcements", {}) as Dictionary).duplicate(true)
+	_reinforcement_locked = bool(data.get("is_ready", false))
 	_dismiss_transient_prompts()
 	_hide_corner_action_button()
 	choice_container.visible = false
@@ -26355,7 +26370,7 @@ func _show_reinforcement_phase(data: Dictionary) -> void:
 
 	var panel := PanelContainer.new()
 	panel.set_anchors_preset(Control.PRESET_CENTER)
-	panel.custom_minimum_size = Vector2(650, 0)
+	panel.custom_minimum_size = Vector2(1320, 760)
 	overlay.add_child(panel)
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color(0.07, 0.09, 0.14, 0.98)
@@ -26382,25 +26397,62 @@ func _show_reinforcement_phase(data: Dictionary) -> void:
 	title.add_theme_font_size_override("font_size", 26)
 	box.add_child(title)
 	var instructions := Label.new()
-	instructions.text = "Swap cards one-for-one between your main deck and Reinforcements, then lock in for the next game."
+	instructions.text = "Drag cards between your main deck and Reinforcements, then lock in any legal submitted deck."
 	instructions.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	instructions.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	box.add_child(instructions)
 
-	var choices := HBoxContainer.new()
-	choices.add_theme_constant_override("separation", 12)
-	box.add_child(choices)
-	_reinforcement_main_option = OptionButton.new()
-	_reinforcement_main_option.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	choices.add_child(_reinforcement_main_option)
-	var swap_button := Button.new()
-	_reinforcement_swap_button = swap_button
-	swap_button.text = "Swap One"
-	swap_button.pressed.connect(_swap_selected_reinforcement_cards)
-	choices.add_child(swap_button)
-	_reinforcement_side_option = OptionButton.new()
-	_reinforcement_side_option.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	choices.add_child(_reinforcement_side_option)
+	var board := HBoxContainer.new()
+	board.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	board.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	board.add_theme_constant_override("separation", 18)
+	box.add_child(board)
+
+	_reinforcement_main_drop_area = ReinforcementDropAreaScript.new()
+	_reinforcement_main_drop_area.setup("main")
+	_reinforcement_main_drop_area.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_reinforcement_main_drop_area.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_reinforcement_main_drop_area.card_dropped.connect(_on_reinforcement_card_dropped)
+	board.add_child(_reinforcement_main_drop_area)
+	var main_box := VBoxContainer.new()
+	main_box.add_theme_constant_override("separation", 8)
+	_reinforcement_main_drop_area.add_child(main_box)
+	var main_header := Label.new()
+	main_header.text = "Main Deck"
+	main_header.add_theme_font_size_override("font_size", 22)
+	main_box.add_child(main_header)
+	var main_scroll := ScrollContainer.new()
+	main_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	main_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	main_box.add_child(main_scroll)
+	_reinforcement_main_grid = GridContainer.new()
+	_reinforcement_main_grid.columns = 5
+	_reinforcement_main_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_reinforcement_main_grid.add_theme_constant_override("h_separation", 10)
+	_reinforcement_main_grid.add_theme_constant_override("v_separation", 12)
+	main_scroll.add_child(_reinforcement_main_grid)
+
+	_reinforcement_side_drop_area = ReinforcementDropAreaScript.new()
+	_reinforcement_side_drop_area.setup("side")
+	_reinforcement_side_drop_area.custom_minimum_size = Vector2(315, 0)
+	_reinforcement_side_drop_area.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_reinforcement_side_drop_area.card_dropped.connect(_on_reinforcement_card_dropped)
+	board.add_child(_reinforcement_side_drop_area)
+	var side_box := VBoxContainer.new()
+	side_box.add_theme_constant_override("separation", 8)
+	_reinforcement_side_drop_area.add_child(side_box)
+	var side_header := Label.new()
+	side_header.text = "Reinforcements"
+	side_header.add_theme_font_size_override("font_size", 22)
+	side_box.add_child(side_header)
+	var side_scroll := ScrollContainer.new()
+	side_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	side_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	side_box.add_child(side_scroll)
+	_reinforcement_side_list = VBoxContainer.new()
+	_reinforcement_side_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_reinforcement_side_list.add_theme_constant_override("separation", 8)
+	side_scroll.add_child(_reinforcement_side_list)
 
 	_reinforcement_status_label = Label.new()
 	_reinforcement_status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -26416,13 +26468,13 @@ func _show_reinforcement_phase(data: Dictionary) -> void:
 	actions.add_child(_reinforcement_submit_button)
 	_refresh_reinforcement_options()
 	if bool(data.get("is_ready", false)):
-		_reinforcement_submit_button.disabled = true
-		_reinforcement_swap_button.disabled = true
-		_reinforcement_main_option.disabled = true
-		_reinforcement_side_option.disabled = true
+		_set_reinforcement_locked(true)
 		_reinforcement_status_label.text = "Deck locked. Waiting for your opponent."
 
 func _refresh_reinforcement_options() -> void:
+	if _reinforcement_main_grid != null and _reinforcement_side_list != null:
+		_refresh_reinforcement_visual_options()
+		return
 	if _reinforcement_main_option == null or _reinforcement_side_option == null:
 		return
 	_reinforcement_main_option.clear()
@@ -26463,6 +26515,137 @@ func _refresh_reinforcement_options() -> void:
 			limit,
 		]
 
+func _refresh_reinforcement_visual_options() -> void:
+	if _reinforcement_main_grid == null or _reinforcement_side_list == null:
+		return
+	for child in _reinforcement_main_grid.get_children():
+		child.queue_free()
+	for child in _reinforcement_side_list.get_children():
+		child.queue_free()
+	var main_names: Array = _reinforcement_main_cards.keys()
+	main_names.sort()
+	for raw_name in main_names:
+		var card_name := str(raw_name)
+		var card := CardCatalog.instantiate_card_by_name(card_name)
+		if card == null or card.is_god or int(_reinforcement_main_cards.get(card_name, 0)) <= 0:
+			continue
+		var tile = ReinforcementCardTileScript.new()
+		tile.setup(card, int(_reinforcement_main_cards[card_name]), "main", false)
+		tile.drag_enabled = not _reinforcement_locked
+		tile.card_dropped.connect(_on_reinforcement_card_dropped)
+		_reinforcement_main_grid.add_child(tile)
+	var side_names: Array = _reinforcement_side_cards.keys()
+	side_names.sort()
+	for raw_name in side_names:
+		var card_name := str(raw_name)
+		if int(_reinforcement_side_cards.get(card_name, 0)) <= 0:
+			continue
+		var card := CardCatalog.instantiate_card_by_name(card_name)
+		if card == null:
+			continue
+		var tile = ReinforcementCardTileScript.new()
+		tile.setup(card, int(_reinforcement_side_cards[card_name]), "side", true)
+		tile.drag_enabled = not _reinforcement_locked
+		tile.card_dropped.connect(_on_reinforcement_card_dropped)
+		_reinforcement_side_list.add_child(tile)
+	if _reinforcement_main_drop_area != null:
+		_reinforcement_main_drop_area.drag_enabled = not _reinforcement_locked
+	if _reinforcement_side_drop_area != null:
+		_reinforcement_side_drop_area.drag_enabled = not _reinforcement_locked
+	_refresh_reinforcement_status()
+
+func _refresh_reinforcement_status() -> void:
+	if _reinforcement_status_label == null:
+		return
+	var regular_count := 0
+	var power_count := 0
+	for card_name in _reinforcement_main_cards.keys():
+		var card := CardCatalog.instantiate_card_by_name(str(card_name))
+		if card == null or card.is_god:
+			continue
+		if card.is_power:
+			power_count += int(_reinforcement_main_cards[card_name])
+		else:
+			regular_count += int(_reinforcement_main_cards[card_name])
+	var limit := DeckValidatorScript.get_reinforcement_limit(regular_count, power_count)
+	var main_count := _count_card_dictionary(_reinforcement_main_cards)
+	var side_count := _count_card_dictionary(_reinforcement_side_cards)
+	var balanced := main_count == _reinforcement_original_main_count and side_count == _reinforcement_original_side_count
+	_reinforcement_status_label.text = "Main: %d regular + %d Powers • Reinforcements: %d / %d%s" % [
+		regular_count,
+		power_count,
+		side_count,
+		limit,
+		"" if balanced else " • Submitted deck must satisfy normal deck construction.",
+	]
+	if _reinforcement_submit_button != null:
+		_reinforcement_submit_button.disabled = _reinforcement_locked or not balanced
+	_apply_reinforcement_deck_validation_to_status(regular_count, power_count, side_count, limit)
+
+func _apply_reinforcement_deck_validation_to_status(
+	regular_count: int,
+	power_count: int,
+	side_count: int,
+	limit: int
+) -> void:
+	var validator = DeckValidatorScript.new()
+	var validation: Dictionary = validator.validate_deck(
+		_reinforcement_main_cards,
+		_get_reinforcement_special_setup(),
+		_reinforcement_side_cards
+	)
+	var is_valid := bool(validation.get("is_valid", false))
+	var validation_note := "" if is_valid else " • " + str(validation.get("error", "Submitted deck is not legal."))
+	if _reinforcement_status_label != null:
+		_reinforcement_status_label.text = "Main: %d regular + %d Powers • Reinforcements: %d / %d%s" % [
+			regular_count,
+			power_count,
+			side_count,
+			limit,
+			validation_note,
+		]
+	if _reinforcement_submit_button != null:
+		_reinforcement_submit_button.disabled = _reinforcement_locked or not is_valid
+
+func _get_reinforcement_special_setup() -> Dictionary:
+	var special_setup = _current_match_info.get("selected_deck_special_setup", {})
+	if special_setup is Dictionary:
+		return (special_setup as Dictionary).duplicate(true)
+	return {}
+
+func _on_reinforcement_card_dropped(card_name: String, from_zone: String, to_zone: String) -> void:
+	if _reinforcement_locked:
+		return
+	card_name = card_name.strip_edges()
+	if card_name.is_empty() or from_zone == to_zone:
+		return
+	if from_zone == "main" and to_zone == "side":
+		var card := CardCatalog.instantiate_card_by_name(card_name)
+		if card == null or card.is_god:
+			return
+		_move_one_card_between_dictionaries(_reinforcement_main_cards, _reinforcement_side_cards, card_name)
+	elif from_zone == "side" and to_zone == "main":
+		_move_one_card_between_dictionaries(_reinforcement_side_cards, _reinforcement_main_cards, card_name)
+	else:
+		return
+	_refresh_reinforcement_options()
+
+func _set_reinforcement_locked(locked: bool) -> void:
+	_reinforcement_locked = locked
+	if _reinforcement_submit_button != null:
+		_reinforcement_submit_button.disabled = locked
+	if _reinforcement_main_drop_area != null:
+		_reinforcement_main_drop_area.drag_enabled = not locked
+	if _reinforcement_side_drop_area != null:
+		_reinforcement_side_drop_area.drag_enabled = not locked
+	if _reinforcement_main_option != null:
+		_reinforcement_main_option.disabled = locked
+	if _reinforcement_side_option != null:
+		_reinforcement_side_option.disabled = locked
+	if _reinforcement_swap_button != null:
+		_reinforcement_swap_button.disabled = locked
+	_refresh_reinforcement_options()
+
 func _swap_selected_reinforcement_cards() -> void:
 	if _reinforcement_main_option == null or _reinforcement_side_option == null:
 		return
@@ -26499,6 +26682,7 @@ func _submit_reinforcement_changes() -> void:
 		"cards": _reinforcement_main_cards.duplicate(true),
 		"reinforcements": _reinforcement_side_cards.duplicate(true),
 	})
+	_set_reinforcement_locked(true)
 	if _reinforcement_submit_button != null:
 		_reinforcement_submit_button.disabled = true
 	if _reinforcement_status_label != null:
@@ -26864,7 +27048,8 @@ func _apply_network_event(event_type: String, data: Dictionary) -> void:
 				update_ui()
 				return
 			if _reinforcement_overlay != null and is_instance_valid(_reinforcement_overlay):
-				if _reinforcement_submit_button != null:
+				_set_reinforcement_locked(false)
+				if _reinforcement_submit_button != null and _reinforcement_main_grid == null:
 					_reinforcement_submit_button.disabled = false
 				if _reinforcement_swap_button != null:
 					_reinforcement_swap_button.disabled = false
@@ -26881,6 +27066,7 @@ func _apply_network_event(event_type: String, data: Dictionary) -> void:
 		"reinforcement_submission_accepted":
 			_current_match_info["selected_deck_cards"] = _reinforcement_main_cards.duplicate(true)
 			_current_match_info["selected_deck_reinforcements"] = _reinforcement_side_cards.duplicate(true)
+			_set_reinforcement_locked(true)
 			if _reinforcement_swap_button != null:
 				_reinforcement_swap_button.disabled = true
 			if _reinforcement_main_option != null:

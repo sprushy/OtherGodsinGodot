@@ -105,7 +105,7 @@ Multiplayer seeks can be Bo1 rated, Bo1 unrated, Bo3 rated, or Bo3 unrated.
 
 In Bo1, a single game decides the match. In Bo3, the first player to win two games wins the match.
 
-After game 1 and, if needed, game 2, both players may exchange cards between their main deck and Reinforcements. Each change must be a one-for-one swap, so the main deck and registered card pool stay the same size. The resulting main deck must still satisfy every normal deck construction rule before the next game can begin.
+After game 1 and, if needed, game 2, both players may move cards between their main deck and Reinforcements. The registered card pool stays the same, but the main deck does not need to stay the same size. The submitted main deck and remaining Reinforcements must still satisfy every normal deck construction rule before the next game can begin.
 
 ## 6. Understand The Battlefield
 

@@ -106,11 +106,9 @@ func _check_deck_validator(failures: PackedStringArray) -> void:
 		failures.append("deck validator accepted Reinforcements above the rounded-down limit")
 	var registered_reinforcements := {"Tablet of Life": 3}
 	var proposed_main := valid_deck.duplicate(true)
-	proposed_main["Again-Walker"] = 2
-	proposed_main["Tablet of Life"] = 1
+	proposed_main["Tablet of Life"] = 2
 	var proposed_reinforcements := {
-		"Tablet of Life": 2,
-		"Again-Walker": 1,
+		"Tablet of Life": 1,
 	}
 	var swap_result: Dictionary = validator.validate_reinforcement_swap(
 		valid_deck,
@@ -119,7 +117,7 @@ func _check_deck_validator(failures: PackedStringArray) -> void:
 		proposed_reinforcements
 	)
 	if not bool(swap_result.get("is_valid", false)):
-		failures.append("legal one-for-one Reinforcement swap failed validation: %s" % str(swap_result.get("error", "")))
+		failures.append("legal Reinforcement resubmission with changed main-deck size failed validation: %s" % str(swap_result.get("error", "")))
 	var player := Player.new()
 	if not player.validate_deck(_cards_from_counts(valid_deck)):
 		failures.append("Player.validate_deck rejected a DeckValidator-valid deck")
