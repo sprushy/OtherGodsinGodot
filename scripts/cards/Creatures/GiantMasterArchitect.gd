@@ -8,7 +8,7 @@ func _init() -> void:
 	card_name = "Giant Master Architect"
 	card_types = ["Giant", "Smith", "Norse Creature"]
 	level = 5
-	mana_cost = 6
+	mana_cost = 7
 	sacrifice_cost = 0
 	speed = 1
 	resilience = 32

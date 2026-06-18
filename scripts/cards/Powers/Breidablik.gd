@@ -2,6 +2,7 @@ extends PowerCard
 class_name Breidablik
 
 const UNLOCK_COST := 3
+const HARBOR_MANA_COST := 1
 const RETURN_MANA_COST := 1
 const FOLLOWERS_PER_LEVEL := 3
 
@@ -19,14 +20,20 @@ func _init() -> void:
 	if "Targeting" not in card_types:
 		card_types.append("Targeting")
 	targets = true
-	ability_text = "Peaceful Runes: You may [b]Harbor[/b] a friendly Priest that hasn't attacked this turn.\nEnd of turn: gain followers equal to %dx the level of the harbored Priests.\n[b]Upkeep[/b]: Pay %d mana to return a harbored Priest to the field.\nIf this card is flipped, return all harbored Priests to the field." % [FOLLOWERS_PER_LEVEL, RETURN_MANA_COST]
+	ability_text = "Peaceful Runes: Pay %d mana to [b]Harbor[/b] a friendly Priest that hasn't attacked this turn.\nEnd of turn: gain followers equal to %dx the level of the harbored Priests.\n[b]Upkeep[/b]: Pay %d mana to return a harbored Priest to the field.\nIf this card is flipped, return all harbored Priests to the field." % [HARBOR_MANA_COST, FOLLOWERS_PER_LEVEL, RETURN_MANA_COST]
 	artist = "Lorinda Tomko"
 	art_path = "res://images/card_art/powers/breidablik.jpg"
 
 func can_activate(game_manager: GameManager) -> bool:
 	if is_face_down or is_muted or is_activation_locked(game_manager) or card_owner != game_manager.current_player:
 		return false
-	return not get_valid_field_priests(game_manager).is_empty() or can_return_priest(game_manager)
+	return can_harbor_priest(game_manager) or can_return_priest(game_manager)
+
+func can_harbor_priest(game_manager: GameManager) -> bool:
+	return game_manager != null \
+		and card_owner != null \
+		and card_owner.mana >= get_activation_mana_cost(HARBOR_MANA_COST, game_manager) \
+		and not get_valid_field_priests(game_manager).is_empty()
 
 func get_valid_field_priests(_game_manager: GameManager) -> Array[Card]:
 	var valid_priests: Array[Card] = []
@@ -88,21 +95,34 @@ func apply_serialized_state(state: Dictionary) -> void:
 func can_return_priest(game_manager: GameManager) -> bool:
 	return return_window_open \
 		and game_manager != null \
+		and game_manager.is_player_in_upkeep_window(card_owner) \
 		and game_manager.current_player == card_owner \
 		and card_owner.mana >= get_activation_mana_cost(RETURN_MANA_COST, game_manager) \
 		and not stored_priests.is_empty() \
 		and not _get_open_field_zones().is_empty()
 
-func get_activation_cost_hover_data(_game_manager: GameManager = null) -> Dictionary:
-	return {
-		"base_cost": RETURN_MANA_COST,
-		"cost_kind": Card.COST_KIND_POWER_ACTIVATION,
-		"label": "Return Cost",
-	}
+func get_activation_cost_hover_data(game_manager: GameManager = null) -> Dictionary:
+	if can_return_priest(game_manager):
+		return {
+			"base_cost": RETURN_MANA_COST,
+			"cost_kind": Card.COST_KIND_POWER_ACTIVATION,
+			"label": "Return Cost",
+		}
+	if can_harbor_priest(game_manager):
+		return {
+			"base_cost": HARBOR_MANA_COST,
+			"cost_kind": Card.COST_KIND_POWER_ACTIVATION,
+			"label": "Harbor Cost",
+		}
+	return {}
 
 func activate(game_manager: GameManager, target: Card = null) -> void:
+	if not can_harbor_priest(game_manager):
+		return
 	if target == null or target not in get_valid_field_priests(game_manager):
 		print(card_name + ": Invalid Priest target.")
+		return
+	if not spend_activation_mana(HARBOR_MANA_COST, game_manager):
 		return
 	_store_priest(target)
 	print(card_name + ": " + target.card_name + " was placed under this card.")

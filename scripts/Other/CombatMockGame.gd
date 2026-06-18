@@ -18029,7 +18029,7 @@ func _on_board_card_pressed(card: Card) -> void:
 					_set_action_label_text("Ancient Pyre: Ritual Flame ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â 5 followers converted!")
 					update_ui()
 			else:
-				_set_action_label_text("Ancient Pyre cannot activate right now (need %d mana or no valid targets)." % AncientPyre.ACTIVATION_COST)
+				_set_action_label_text((card as AncientPyre).get_activation_failure_reason(game_manager))
 		elif card is AnointingStatue and card.get_controller() == game_manager.current_player:
 			awaiting_anointing_target = true
 			anointing_source = card as AnointingStatue
@@ -23437,6 +23437,7 @@ func _show_en_hedu_anna_prompt(card: EnHeduAnnaScript) -> void:
 	if game_manager == null or card == null:
 		return
 	if not card.can_activate(game_manager):
+		_set_action_label_text(_get_activation_unavailable_text(card, card.card_name + " cannot use Exaltation right now."))
 		update_ui()
 		return
 
@@ -23511,7 +23512,9 @@ func _resolve_en_hedu_anna_exaltation(option: Dictionary) -> void:
 		option,
 		card.card_name + " activated!",
 		func() -> void:
-			card.resolve_exaltation_choice(game_manager, option)
+			var feedback := str(card.resolve_exaltation_choice(game_manager, option))
+			if feedback.strip_edges() != "" and game_manager != null:
+				game_manager.note_player_feedback(feedback)
 	)
 	update_ui()
 

@@ -81,6 +81,8 @@ const TEZ_REQUIRED_SACRIFICES := 4
 const TEZ_TONAL_MASTERY_TOKEN_THRESHOLD := 3
 const FREYJA_RECEIVER_OF_THE_SLAIN_STATUS := "freyja_receiver_of_the_slain"
 const FREYJA_ACTIVE_OPEN_SESSRUMNIR_STATUS := "freyja_active_open_sessrumnir"
+const GIDIM_ENSI_CARD_NAME := "Gidim Ensi"
+const GIDIM_ENSI_SLEEP_SOURCE := "Gidim Ensi Guardian"
 const LEVEL_BADGE_TOP := -12.0
 const LEVEL_BADGE_BOTTOM := 12.0
 const BADGE_ROW_GAP := 6.0
@@ -572,6 +574,9 @@ const STANCE_SWITCH_ICON_TOP := -4.0
 const STANCE_SWITCH_ICON_SIZE := 58.0
 const STANCE_SWITCH_COST_ROW_WIDTH := 34.0
 const STANCE_SWITCH_COST_ROW_HEIGHT := 18.0
+const BREIDABLIK_PRIEST_BADGE_SIZE := 30.0
+const BREIDABLIK_PRIEST_BADGE_GAP := 4.0
+const BREIDABLIK_PRIEST_BADGE_MAX_SLOTS := 4
 const ACTION_COST_MARKER_HEIGHT := 18.0
 const ACTION_COST_MARKER_ACTION_WIDTH := 34.0
 const ACTION_COST_MARKER_MANA_WIDTH := 60.0
@@ -1546,6 +1551,137 @@ func _add_power_lock_overlay(overlay: Control, card: Card) -> void:
 	var culture_is_known := viewer != null and card.get_controller() == viewer
 	_add_power_lock_texture_overlay(overlay, card, culture_is_known)
 	_add_power_cost_badge(overlay, card)
+
+func _make_breidablik_priest_badge(priest: Card) -> Control:
+	var badge := PanelContainer.new()
+	badge.name = "BreidablikPriestBadge"
+	badge.mouse_filter = Control.MOUSE_FILTER_STOP
+	badge.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	badge.custom_minimum_size = Vector2(BREIDABLIK_PRIEST_BADGE_SIZE, BREIDABLIK_PRIEST_BADGE_SIZE)
+	badge.size = badge.custom_minimum_size
+	badge.clip_contents = true
+
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.06, 0.12, 0.16, 0.95)
+	style.border_color = Color(0.75, 0.94, 0.58, 0.98)
+	style.corner_radius_top_left = 6
+	style.corner_radius_top_right = 6
+	style.corner_radius_bottom_left = 6
+	style.corner_radius_bottom_right = 6
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		style.set_border_width(side, 1)
+	badge.add_theme_stylebox_override("panel", style)
+
+	var art_added := false
+	if priest != null and priest.art_path != "":
+		var tex := load(priest.art_path) as Texture2D
+		if tex != null:
+			var art := TextureRect.new()
+			art.texture = tex
+			art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+			art.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			art.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+			art.offset_left = 2
+			art.offset_top = 2
+			art.offset_right = -2
+			art.offset_bottom = -2
+			badge.add_child(art)
+			art_added = true
+	if not art_added:
+		var label := Label.new()
+		label.text = "P"
+		if priest != null and priest.card_name.strip_edges() != "":
+			label.text = priest.card_name.substr(0, 1)
+		label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		label.add_theme_font_size_override("font_size", 15)
+		label.add_theme_color_override("font_color", Color(0.94, 1.0, 0.84))
+		label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		badge.add_child(label)
+
+	if priest != null:
+		var hover_text := "[b]%s[/b]\nHarbored in Breidablik" % priest.card_name
+		_connect_badge_hover(badge, hover_text, priest)
+	return badge
+
+func _make_breidablik_overflow_badge(hidden_count: int, hidden_priests: Array[Card]) -> Control:
+	var badge := _make_empty_field_badge()
+	badge.name = "BreidablikPriestOverflowBadge"
+	badge.mouse_filter = Control.MOUSE_FILTER_STOP
+	badge.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	badge.custom_minimum_size = Vector2(BREIDABLIK_PRIEST_BADGE_SIZE, BREIDABLIK_PRIEST_BADGE_SIZE)
+	badge.size = badge.custom_minimum_size
+	var label := Label.new()
+	label.text = "+%d" % hidden_count
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	label.add_theme_font_size_override("font_size", 12)
+	label.add_theme_color_override("font_color", Color(1.0, 0.95, 0.68))
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	badge.add_child(label)
+
+	var names: Array[String] = []
+	for priest in hidden_priests:
+		if priest != null:
+			names.append(priest.card_name)
+	var hover_text := "%d more harbored Priest%s" % [
+		hidden_count,
+		"" if hidden_count == 1 else "s"
+	]
+	if not names.is_empty():
+		hover_text += "\n" + "\n".join(names)
+	_connect_badge_hover(badge, hover_text)
+	return badge
+
+func _add_breidablik_priest_badges(overlay: Control, card: Card) -> void:
+	if overlay == null or not is_instance_valid(overlay) or overlay.is_queued_for_deletion():
+		return
+	if not (card is Breidablik):
+		return
+	var priests := (card as Breidablik).get_stored_priests()
+	if priests.is_empty():
+		return
+
+	var has_overflow := priests.size() > BREIDABLIK_PRIEST_BADGE_MAX_SLOTS
+	var shown_count := mini(priests.size(), BREIDABLIK_PRIEST_BADGE_MAX_SLOTS)
+	if has_overflow:
+		shown_count = BREIDABLIK_PRIEST_BADGE_MAX_SLOTS - 1
+	var slot_count := shown_count + (1 if has_overflow else 0)
+	var row_width := BREIDABLIK_PRIEST_BADGE_SIZE * float(slot_count) \
+		+ BREIDABLIK_PRIEST_BADGE_GAP * float(maxi(0, slot_count - 1))
+
+	var row := Control.new()
+	row.name = "BreidablikPriestBadgeRow"
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.z_index = 34
+	row.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	row.offset_left = 6.0
+	row.offset_top = -66.0
+	row.offset_right = 6.0 + row_width
+	row.offset_bottom = -66.0 + BREIDABLIK_PRIEST_BADGE_SIZE
+	overlay.add_child(row)
+
+	for priest_index in range(shown_count):
+		var badge := _make_breidablik_priest_badge(priests[priest_index])
+		badge.position = Vector2(
+			float(priest_index) * (BREIDABLIK_PRIEST_BADGE_SIZE + BREIDABLIK_PRIEST_BADGE_GAP),
+			0.0
+		)
+		row.add_child(badge)
+
+	if has_overflow:
+		var hidden_priests: Array[Card] = []
+		for priest_index in range(shown_count, priests.size()):
+			hidden_priests.append(priests[priest_index])
+		var overflow_badge := _make_breidablik_overflow_badge(priests.size() - shown_count, hidden_priests)
+		overflow_badge.position = Vector2(
+			float(shown_count) * (BREIDABLIK_PRIEST_BADGE_SIZE + BREIDABLIK_PRIEST_BADGE_GAP),
+			0.0
+		)
+		row.add_child(overflow_badge)
 
 func _add_playing_aura(overlay: Control) -> void:
 	if overlay == null:
@@ -3539,12 +3675,21 @@ func _build_debuff_entry_from_status(card: Card, status: Dictionary) -> Dictiona
 	if card == null or status.is_empty():
 		return {}
 	var status_name := str(status.get("name", ""))
-	if status_name in ["", "sleep", "temporarily_revealed", "blessed_ward", Card.EXTERNAL_EFFECT_NEGATION_STATUS]:
+	if status_name in ["", "temporarily_revealed", "blessed_ward", Card.EXTERNAL_EFFECT_NEGATION_STATUS]:
 		return {}
 	if _is_debuff_status_from_attached_binding(card, status):
 		return {}
 	var source_key := _get_debuff_source_key(status)
 	var source_card := status.get("source_card", null) as Card
+	if status_name == "sleep":
+		var source_name := str(status.get("source", ""))
+		if (source_card != null and source_card.card_name == GIDIM_ENSI_CARD_NAME) or source_name == GIDIM_ENSI_SLEEP_SOURCE:
+			return {
+				"key": "source:%s:sleep" % source_key,
+				"source_card": source_card,
+				"count": 1,
+			}
+		return {}
 	if status_name == "malinalxochitl_poison" or status_name.contains("poison"):
 		return {
 			"key": "source:%s" % source_key,
@@ -4846,6 +4991,7 @@ func _refresh_display() -> void:
 		_add_publicly_identified_card_affordance(card_overlay, card)
 		if card.is_power:
 			_add_power_cost_badge(card_overlay, card)
+			_add_breidablik_priest_badges(card_overlay, card)
 		_add_e2_abzu_badges(card_overlay, card)
 
 		_add_sleep_affordance(card_overlay, card)

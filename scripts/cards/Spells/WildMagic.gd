@@ -73,7 +73,6 @@ func resolve(game_manager: GameManager, _target = null) -> void:
 		self,
 		controller,
 		{
-			"clear_on_card_move": true,
 			"clear_when_hidden_state_ends": true,
 		}
 	)

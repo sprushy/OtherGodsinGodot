@@ -311,6 +311,22 @@ var last_resolution_text: String = ""
 var last_move_failed_reason: String = ""
 var _authoritative_stack_resolution_pending: bool = false
 
+const SIMPLE_DEFERRED_PROMPT_COMPLETION_COMMANDS := [
+	"blessed_knights_choice",
+	"first_sage_adapa_choice",
+	"third_sage_enmedugga_choice",
+	"fourth_sage_enmegalamma_choice",
+	"seventh_sage_utuabzu_choice",
+	"rally_the_troops_choice",
+	"terror_impact_choice",
+	"harii_jarl_impact_choice",
+	"durinn_secondborn_choice",
+	"freyja_active_open_sessrumnir_choice",
+	"tiamat_active_summon_choice",
+	"giant_master_architect_choice",
+	"pai_long_autumn_king_choice",
+]
+
 func _on_game_manager_decision_requested(player: Player, type: String, data: Dictionary) -> void:
 	if game_manager == null or player == null:
 		return
@@ -322,6 +338,8 @@ func _on_game_manager_decision_requested(player: Player, type: String, data: Dic
 		var completion_command_type := str(interaction_data.get("completion_command_type", "")).strip_edges()
 		interaction_data.erase("event_name")
 		interaction_data.erase("completion_command_type")
+		if completion_command_type.is_empty() and not interaction_data.has("resolve_method"):
+			completion_command_type = _get_default_completion_command_for_interaction(type)
 		if interaction_data.has("resolve_method"):
 			_queue_method_priority_event(
 				player,
@@ -450,6 +468,42 @@ func _consume_pending_ui_interaction_by_id(prompt_id: int) -> void:
 
 func _get_ui_interaction_type_for_command(command_type: String) -> String:
 	return MatchCommandRegistryScript.get_ui_interaction_type(command_type)
+
+func _get_default_completion_command_for_interaction(interaction_type: String) -> String:
+	match interaction_type:
+		"blessed_knights_ward":
+			return "blessed_knights_choice"
+		"first_sage_adapa_impact":
+			return "first_sage_adapa_choice"
+		"third_sage_enmedugga_impact":
+			return "third_sage_enmedugga_choice"
+		"fourth_sage_enmegalamma_impact":
+			return "fourth_sage_enmegalamma_choice"
+		"sixth_sage_an_enlilda_impact":
+			return "sixth_sage_an_enlilda_choice"
+		"seventh_sage_utuabzu_impact":
+			return "seventh_sage_utuabzu_choice"
+		"rally_the_troops":
+			return "rally_the_troops_choice"
+		"terror_impact":
+			return "terror_impact_choice"
+		"fenrir_devour_impact":
+			return "fenrir_devour_choice"
+		"harii_jarl_impact":
+			return "harii_jarl_impact_choice"
+		"durinn_secondborn_impact":
+			return "durinn_secondborn_choice"
+		"gugalanna_celestial_charge":
+			return "gugalanna_celestial_charge_choice"
+		"freyja_active_open_sessrumnir":
+			return "freyja_active_open_sessrumnir_choice"
+		"tiamat_active_summon":
+			return "tiamat_active_summon_choice"
+		"giant_master_architect_impact":
+			return "giant_master_architect_choice"
+		"pai_long_autumn_king_impact":
+			return "pai_long_autumn_king_choice"
+	return ""
 
 func _find_pending_ui_interaction_index(command: Dictionary, expected_type: String) -> int:
 	for idx in range(_pending_ui_interactions.size() - 1, -1, -1):
@@ -1234,7 +1288,49 @@ func _find_pending_deferred_action_for_source(command_type: String, source_card:
 			continue
 		if str(action.event_data.get("deferred_authoritative_completion_command", "")).strip_edges() == command_type:
 			return action
+	for i in range(game_manager.resolving_stack_actions.size() - 1, -1, -1):
+		var action := game_manager.resolving_stack_actions[i]
+		if action == null or action.card != source_card:
+			continue
+		if str(action.event_data.get("deferred_authoritative_completion_command", "")).strip_edges() == command_type:
+			return action
 	return null
+
+func _complete_deferred_prompt_action(
+	command_type: String,
+	source_card: Card,
+	feedback_text: String = "",
+	consume_pending_feedback: bool = true
+) -> bool:
+	if game_manager == null or source_card == null or command_type.strip_edges() == "":
+		return false
+	var pending_action := _find_pending_deferred_action_for_source(command_type, source_card)
+	if pending_action == null:
+		return false
+	var resolved_feedback := feedback_text.strip_edges()
+	if resolved_feedback == "" and consume_pending_feedback:
+		resolved_feedback = game_manager.consume_player_feedback().strip_edges()
+	if resolved_feedback != "":
+		pending_action.resolution_text = resolved_feedback
+		last_resolution_text = resolved_feedback
+	_complete_deferred_authoritative_action(pending_action, command_type)
+	return true
+
+func _complete_simple_deferred_prompt_action_for_command(command: Dictionary) -> bool:
+	var command_type := str(command.get("type", "")).strip_edges()
+	if command_type not in SIMPLE_DEFERRED_PROMPT_COMPLETION_COMMANDS:
+		return false
+	var source_uid := str(command.get("source_uid", "")).strip_edges()
+	if source_uid == "" or game_manager == null:
+		return false
+	var source_card := game_manager.get_card_by_uid(source_uid)
+	return _complete_deferred_prompt_action(command_type, source_card)
+
+func _complete_deferred_prompt_action_or_note(command_type: String, source_card: Card, feedback_text: String) -> void:
+	if not _complete_deferred_prompt_action(command_type, source_card, feedback_text, false) \
+			and game_manager != null \
+			and feedback_text.strip_edges() != "":
+		game_manager.note_player_feedback(feedback_text)
 
 func _continue_pending_authoritative_graveyard_prompt_action() -> void:
 	var action := _find_pending_deferred_authoritative_action(["doorway_choice", "return_to_hand_choice"])
@@ -3321,6 +3417,7 @@ func process_command(command: Dictionary, sender_info: Dictionary = {}) -> bool:
 	var pending_prompt_id := int(pending_prompt_validation.get("prompt_id", -1))
 	var result := _process_command_impl(command)
 	if result:
+		_complete_simple_deferred_prompt_action_for_command(command)
 		_consume_pending_ui_interaction_by_id(pending_prompt_id)
 	_active_command_sender_info.clear()
 	_active_command_type = ""
@@ -4098,9 +4195,12 @@ func _process_command_impl(command: Dictionary) -> bool:
 			if aca_source is AncientPyre:
 				var aca_pyre := aca_source as AncientPyre
 				var pyre_mode := str(aca_option.get("mode", "")).strip_edges()
+				if not aca_pyre.can_activate(game_manager):
+					move_failed.emit(aca_pyre.get_activation_failure_reason(game_manager))
+					return false
 				if pyre_mode == "convert":
 					var pyre_opponent := game_manager.get_opponent(aca_pyre.card_owner)
-					if pyre_opponent == null or pyre_opponent.followers <= 0 or not aca_pyre.can_activate(game_manager):
+					if pyre_opponent == null or pyre_opponent.followers <= 0:
 						move_failed.emit("activate_card_ability: Ancient Pyre cannot convert right now")
 						return false
 				elif aca_pyre.is_frontline():
@@ -4165,6 +4265,9 @@ func _process_command_impl(command: Dictionary) -> bool:
 			var eha := eha_card as EnHeduAnna
 			if not eha.is_valid_exaltation_option(eha_option):
 				move_failed.emit("en_hedu_anna_exaltation: invalid Exaltation bonus")
+				return false
+			if not eha.can_activate(game_manager):
+				move_failed.emit(eha.get_activation_failure_reason(game_manager))
 				return false
 			var eha_feedback := eha.resolve_exaltation_choice(game_manager, eha_option)
 			if eha_feedback.strip_edges() != "":
@@ -4262,7 +4365,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 			var target_uid: String = command.get("target_uid", "")
 			if target_uid == "":
 				var feedback := sage.resolve_no_conjure_home_targets() if valid_targets.is_empty() else sage.resolve_conjure_home_decline(game_manager)
-				game_manager.note_player_feedback(feedback)
+				_complete_deferred_prompt_action_or_note("sixth_sage_an_enlilda_choice", sage, feedback)
 				move_validated.emit(command)
 				return true
 			var target := game_manager.get_card_by_uid(target_uid)
@@ -4273,11 +4376,16 @@ func _process_command_impl(command: Dictionary) -> bool:
 				sage,
 				"%s activates Conjure Home." % sage.card_name,
 				func() -> void:
-					game_manager.note_player_feedback(sage.resolve_conjure_home_impact(game_manager, target))
+					var feedback := sage.resolve_conjure_home_impact(game_manager, target)
+					_complete_deferred_prompt_action_or_note("sixth_sage_an_enlilda_choice", sage, feedback)
 			):
 				move_validated.emit(command)
 				return true
-			game_manager.note_player_feedback(sage.resolve_conjure_home_impact(game_manager, target))
+			_complete_deferred_prompt_action_or_note(
+				"sixth_sage_an_enlilda_choice",
+				sage,
+				sage.resolve_conjure_home_impact(game_manager, target)
+			)
 			move_validated.emit(command)
 			return true
 		"seventh_sage_utuabzu_choice":
@@ -4478,7 +4586,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 			var valid_targets := fenrir.get_valid_devour_targets(game_manager)
 			var target_uid: String = command.get("target_uid", "")
 			if target_uid == "":
-				game_manager.note_player_feedback(fenrir.card_name + " impact fizzles.")
+				_complete_deferred_prompt_action_or_note("fenrir_devour_choice", fenrir, fenrir.card_name + " impact fizzles.")
 				move_validated.emit(command)
 				return true
 			var target := game_manager.get_card_by_uid(target_uid)
@@ -4489,8 +4597,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 				game_manager,
 				target,
 				func(feedback: String) -> void:
-					if feedback.strip_edges() != "":
-						game_manager.note_player_feedback(feedback)
+					_complete_deferred_prompt_action_or_note("fenrir_devour_choice", fenrir, feedback)
 			)
 			move_validated.emit(command)
 			return true
@@ -4597,10 +4704,12 @@ func _process_command_impl(command: Dictionary) -> bool:
 				"%s activates Celestial Charge." % card.card_name,
 				func() -> void:
 					card.apply_celestial_charge(game_manager, target)
+					_complete_deferred_prompt_action("gugalanna_celestial_charge_choice", card)
 			):
 				move_validated.emit(command)
 				return true
 			card.apply_celestial_charge(game_manager, target)
+			_complete_deferred_prompt_action("gugalanna_celestial_charge_choice", card)
 			move_validated.emit(command)
 			return true
 		"freyja_active_open_sessrumnir_choice":
@@ -4855,6 +4964,12 @@ func _process_command_impl(command: Dictionary) -> bool:
 				move_failed.emit("blessed_knights_choice: invalid ward choice")
 				return false
 			card.apply_blessed_ward(game_manager, ward_kind)
+			game_manager.note_player_feedback(
+				"%s grants Blessed Ward against %s this turn." % [
+					card.card_name,
+					card.get_blessed_ward_label(ward_kind),
+				]
+			)
 			move_validated.emit(command)
 			return true
 		"tezcatlipoca_active_titlacauan_choice":

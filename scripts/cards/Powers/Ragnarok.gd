@@ -1,7 +1,7 @@
 extends PowerCard
 class_name Ragnarok
 
-const UNLOCK_COST := 11
+const UNLOCK_COST := 12
 const HAND_LIMIT := 5
 const RELOCK_TURNS := 7
 const ART_PATH := "res://images/card_art/powers/RagnarokEdit.png"
@@ -18,12 +18,49 @@ func _init() -> void:
 	is_legendary = true
 	card_types = ["Power", "Legendary Destruction", "Universal"]
 	targets = false
-	ability_text = "[b]Unlock[/b] (11): This activates only when you unlock it. Destroy all creatures on the field; then each player with more than 5 cards discards down to 5. You cannot attack this turn. After 7 of your turns, [b]Relock[/b] this."
+	ability_text = "[b]Unlock[/b] (%d): This activates only when you unlock it. Destroy all creatures on the field; then each player with more than %d cards discards down to %d. You cannot attack this turn. After %d of your opponent's turns, [b]Relock[/b] this." % [UNLOCK_COST, HAND_LIMIT, HAND_LIMIT, RELOCK_TURNS]
 	artist = "Riccardo Zoppello"
 	art_path = ART_PATH
 
 func can_activate(_game_manager: GameManager) -> bool:
 	return false
+
+func get_turn_countdown_badge_text(game_manager: GameManager = null) -> String:
+	var turns_remaining := get_relock_turns_remaining(game_manager)
+	return "%dT" % turns_remaining if turns_remaining > 0 else ""
+
+func get_turn_countdown_badge_hover_text(game_manager: GameManager = null) -> String:
+	var turns_remaining := get_relock_turns_remaining(game_manager)
+	if turns_remaining <= 0:
+		return ""
+	return "%s relocks after %d more opponent turn%s." % [
+		card_name,
+		turns_remaining,
+		"" if turns_remaining == 1 else "s",
+	]
+
+func get_relock_turns_remaining(_game_manager: GameManager = null) -> int:
+	if is_face_down:
+		return 0
+	return maxi(0, _relock_turns_remaining)
+
+func get_hover_detail_lines(viewer: Player = null) -> Array[String]:
+	var lines := super.get_hover_detail_lines(viewer)
+	var turns_remaining := get_relock_turns_remaining()
+	if turns_remaining > 0:
+		lines.append("[b]Opponent turns remaining until relock:[/b] %d" % turns_remaining)
+	return lines
+
+func get_serialized_state() -> Dictionary:
+	var state := super.get_serialized_state()
+	state["relock_turns_remaining"] = _relock_turns_remaining
+	state["relock_activation_turn"] = _relock_activation_turn
+	return state
+
+func apply_serialized_state(state: Dictionary) -> void:
+	super.apply_serialized_state(state)
+	_relock_turns_remaining = int(state.get("relock_turns_remaining", -1))
+	_relock_activation_turn = int(state.get("relock_activation_turn", -1))
 
 func on_unlock(game_manager: GameManager) -> void:
 	if game_manager != null:
@@ -184,12 +221,14 @@ func _finish_resolution(game_manager: GameManager, destroyed_count: int, discard
 	print(feedback)
 	_start_relock_countdown(game_manager)
 
-func on_turn_end(game_manager: GameManager) -> void:
-	super.on_turn_end(game_manager)
+func on_global_turn_end(game_manager: GameManager, ending_player: Player) -> void:
+	super.on_global_turn_end(game_manager, ending_player)
 	if is_face_down or _relock_turns_remaining <= 0:
 		_clear_relock_countdown()
 		return
 	if game_manager != null and game_manager.turn_number == _relock_activation_turn:
+		return
+	if ending_player == null or card_owner == null or ending_player == card_owner:
 		return
 	_relock_turns_remaining -= 1
 	if _relock_turns_remaining <= 0:

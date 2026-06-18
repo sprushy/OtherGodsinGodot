@@ -18,8 +18,6 @@ func can_activate_from_hand(game_manager: GameManager, triggering_action: CardAc
 		return false
 	if game_manager == null or card_owner == null:
 		return false
-	if game_manager.current_player != card_owner:
-		return false
 	if game_manager._has_pending_stack_action_for_card(self):
 		return false
 	if is_activation_locked(game_manager):
@@ -27,15 +25,20 @@ func can_activate_from_hand(game_manager: GameManager, triggering_action: CardAc
 	if current_zone != card_owner.hand_zone:
 		return false
 	var responding_player := game_manager.priority_player
+	if triggering_action == null and game_manager.action_stack.is_empty():
+		responding_player = game_manager.current_player
 	if responding_player == null and triggering_action != null:
 		responding_player = triggering_action.initial_priority_player
+	if responding_player == null and triggering_action != null:
+		responding_player = triggering_action.source_player
 	if responding_player == null:
 		responding_player = game_manager.turn_player if game_manager.turn_player != null else game_manager.current_player
 	if card_owner != responding_player:
 		return false
 	if not can_pay_costs(card_owner):
 		return false
-	if targets and get_valid_targets(game_manager).is_empty():
+	var valid_targets := get_priority_targets(game_manager, triggering_action) if triggering_action != null else get_valid_targets(game_manager)
+	if targets and valid_targets.is_empty():
 		return false
 	return can_respond_to_action(triggering_action, game_manager)
 
@@ -56,7 +59,8 @@ func can_activate_prepared(game_manager: GameManager, triggering_action: CardAct
 		return false
 	if not game_manager.can_pay_prepared_card_activation_cost(self, card_owner):
 		return false
-	if targets and get_valid_targets(game_manager).is_empty():
+	var valid_targets := get_priority_targets(game_manager, triggering_action) if triggering_action != null else get_valid_targets(game_manager)
+	if targets and valid_targets.is_empty():
 		return false
 	return can_respond_to_action(triggering_action, game_manager)
 

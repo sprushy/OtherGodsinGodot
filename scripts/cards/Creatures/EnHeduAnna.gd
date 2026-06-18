@@ -55,6 +55,33 @@ func can_activate(game_manager: GameManager) -> bool:
 		return false
 	return _god_power_activated_while_face_up_this_turn
 
+func get_activation_failure_reason(game_manager: GameManager) -> String:
+	if game_manager == null:
+		return card_name + " cannot use Exaltation right now."
+	if get_controller() != game_manager.current_player:
+		return "It is not your turn to use " + card_name + "."
+	if abilities_suppressed():
+		return card_name + " has no active abilities right now."
+	if is_activation_locked(game_manager):
+		return card_name + " cannot be activated this turn."
+	if current_zone == null or not current_zone.is_board_zone():
+		return card_name + " must be on the field to use Exaltation."
+	if is_face_down or is_stealth or is_prepared:
+		return card_name + " must be face-up to use Exaltation."
+	if is_sleeping:
+		return card_name + " is Sleeping and cannot use Exaltation."
+	if creature_major_action_used:
+		return card_name + " has already used its major action this turn."
+	if not _god_power_activated_while_face_up_this_turn:
+		return "Your God's power must activate this turn while " + card_name + " is face-up."
+	return card_name + " cannot use Exaltation right now."
+
+func has_pending_exaltation_choice() -> bool:
+	return _god_power_activated_while_face_up_this_turn
+
+func consume_pending_exaltation_choice() -> void:
+	_god_power_activated_while_face_up_this_turn = false
+
 func get_exaltation_options() -> Array[Dictionary]:
 	return [
 		{"label": "+7 RES", "str": 0, "res": 7, "spd": 0},
