@@ -149,6 +149,14 @@ var _collection_drag_active: bool = false
 var _collection_drag_was_selected: bool = false
 var _collection_drag_offset: Vector2 = Vector2.ZERO
 var _collection_drag_ghost: Control = null
+var _deck_row_drag_card: Card = null
+var _deck_row_drag_from_reinforcements: bool = false
+var _deck_row_drag_start_pos: Vector2 = Vector2.ZERO
+var _deck_row_drag_active: bool = false
+var _deck_row_drag_offset: Vector2 = Vector2.ZERO
+var _deck_row_drag_ghost: Control = null
+var _main_deck_section_header: Control = null
+var _reinforcement_section_header: Control = null
 var _show_collection_card_overlays: bool = false
 var _saved_deck_state: Dictionary = {}
 
@@ -1733,7 +1741,11 @@ func _finish_collection_card_drag(mouse_global_position: Vector2) -> void:
 		return
 	if was_dragging:
 		if _is_point_in_decklist(mouse_global_position):
-			_handle_collection_card_add(card)
+			var drop_zone := _get_decklist_drop_zone(mouse_global_position)
+			if drop_zone == "reinforcements":
+				_add_to_reinforcements(card)
+			else:
+				_add_to_deck(card)
 			_update_collection_selection_visuals()
 		return
 	if was_selected:
@@ -1819,6 +1831,14 @@ func _is_point_in_decklist(mouse_global_position: Vector2) -> bool:
 	if is_instance_valid(_deck_list) and _deck_list.get_global_rect().has_point(mouse_global_position):
 		return true
 	return false
+
+func _get_decklist_drop_zone(mouse_global_position: Vector2) -> String:
+	if not _is_point_in_decklist(mouse_global_position):
+		return ""
+	if is_instance_valid(_reinforcement_section_header) \
+			and mouse_global_position.y >= _reinforcement_section_header.global_position.y:
+		return "reinforcements"
+	return "main"
 
 func _update_collection_selection_visuals() -> void:
 	for card_name: String in _collection_card_roots:
@@ -1907,6 +1927,8 @@ func _set_show_collection_card_overlays(enabled: bool) -> void:
 func _refresh_deck_panel(rebuild_collection: bool = false, refresh_layout: bool = false) -> void:
 	for child in _deck_list.get_children():
 		child.queue_free()
+	_main_deck_section_header = null
+	_reinforcement_section_header = null
 
 	var total := 0
 	for card_name in _deck:
@@ -1932,6 +1954,7 @@ func _refresh_deck_panel(rebuild_collection: bool = false, refresh_layout: bool 
 	in_deck.sort_custom(in_deck_sort)
 
 	var main_header := Label.new()
+	_main_deck_section_header = main_header
 	main_header.text = "MAIN DECK"
 	main_header.add_theme_font_size_override("font_size", 12)
 	main_header.add_theme_color_override("font_color", Color(0.95, 0.82, 0.38))
@@ -1949,6 +1972,7 @@ func _refresh_deck_panel(rebuild_collection: bool = false, refresh_layout: bool 
 		_deck_list.add_child(_make_deck_row(card, false))
 
 	var reinforcement_header := Label.new()
+	_reinforcement_section_header = reinforcement_header
 	reinforcement_header.text = "REINFORCEMENTS"
 	reinforcement_header.add_theme_font_size_override("font_size", 12)
 	reinforcement_header.add_theme_color_override("font_color", Color(0.48, 0.78, 1.0))
@@ -2081,11 +2105,16 @@ func _make_deck_row(card: Card, is_reinforcement: bool = false) -> Control:
 	row.add_theme_constant_override("separation", 8)
 	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.custom_minimum_size.y = 34.0
+	row.mouse_filter = Control.MOUSE_FILTER_STOP
+	row.gui_input.connect(func(event: InputEvent) -> void:
+		_on_deck_row_gui_input(event, card, is_reinforcement, row)
+	)
 
 	var dot := ColorRect.new()
 	dot.custom_minimum_size = Vector2(11, 11)
 	dot.color = _get_type_color(card)
 	dot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_child(dot)
 
 	var name_lbl := Label.new()
@@ -2093,6 +2122,7 @@ func _make_deck_row(card: Card, is_reinforcement: bool = false) -> Control:
 	name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	name_lbl.clip_text = true
 	name_lbl.text = card.get_display_name_for_control(name_lbl)
+	name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_child(name_lbl)
 
 	var legendary_lbl := Label.new()
@@ -2101,6 +2131,7 @@ func _make_deck_row(card: Card, is_reinforcement: bool = false) -> Control:
 	legendary_lbl.add_theme_color_override("font_color", Color(0.95, 0.82, 0.28))
 	legendary_lbl.custom_minimum_size.x = 18
 	legendary_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	legendary_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_child(legendary_lbl)
 
 	var cnt_lbl := Label.new()
@@ -2109,6 +2140,7 @@ func _make_deck_row(card: Card, is_reinforcement: bool = false) -> Control:
 	cnt_lbl.add_theme_color_override("font_color", Color(0.9, 0.9, 0.4))
 	cnt_lbl.custom_minimum_size.x = 42
 	cnt_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	cnt_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_child(cnt_lbl)
 
 	var minus := Button.new()
@@ -2136,6 +2168,110 @@ func _make_deck_row(card: Card, is_reinforcement: bool = false) -> Control:
 	row.mouse_entered.connect(func() -> void: _show_preview(card))
 
 	return row
+
+func _on_deck_row_gui_input(event: InputEvent, card: Card, is_reinforcement: bool, row: Control) -> void:
+	if card == null:
+		return
+	var mouse_event := event as InputEventMouseButton
+	if mouse_event != null and mouse_event.button_index == MOUSE_BUTTON_LEFT:
+		if mouse_event.pressed:
+			_begin_deck_row_drag(card, is_reinforcement, mouse_event.global_position, row)
+			accept_event()
+		else:
+			_finish_deck_row_drag(mouse_event.global_position)
+			accept_event()
+
+func _begin_deck_row_drag(card: Card, from_reinforcements: bool, mouse_global_position: Vector2, row: Control) -> void:
+	_deck_row_drag_card = card
+	_deck_row_drag_from_reinforcements = from_reinforcements
+	_deck_row_drag_start_pos = mouse_global_position
+	_deck_row_drag_active = false
+	_deck_row_drag_offset = mouse_global_position - row.global_position if is_instance_valid(row) else Vector2(16, 16)
+
+func _finish_deck_row_drag(mouse_global_position: Vector2) -> void:
+	var card := _deck_row_drag_card
+	var was_dragging := _deck_row_drag_active
+	var from_reinforcements := _deck_row_drag_from_reinforcements
+	_deck_row_drag_card = null
+	_deck_row_drag_active = false
+	_deck_row_drag_from_reinforcements = false
+	_cleanup_deck_row_drag_ghost()
+	if card == null or not was_dragging:
+		return
+	var drop_zone := _get_decklist_drop_zone(mouse_global_position)
+	if drop_zone == "":
+		return
+	var to_reinforcements := drop_zone == "reinforcements"
+	if to_reinforcements == from_reinforcements:
+		return
+	_move_one_card_between_deck_sections(card, from_reinforcements, to_reinforcements)
+
+func _move_one_card_between_deck_sections(card: Card, from_reinforcements: bool, to_reinforcements: bool) -> void:
+	if card == null or from_reinforcements == to_reinforcements:
+		return
+	if to_reinforcements:
+		if card.is_god:
+			_set_status_flash("Gods cannot be moved to Reinforcements.")
+			return
+		if int(_deck.get(card.card_name, 0)) <= 0:
+			return
+		_push_current_deck_undo_state()
+		_deck[card.card_name] = int(_deck.get(card.card_name, 0)) - 1
+		if int(_deck[card.card_name]) <= 0:
+			_deck.erase(card.card_name)
+		_reinforcements[card.card_name] = int(_reinforcements.get(card.card_name, 0)) + 1
+		if not _deck_uses_tiamat():
+			_clear_tiamat_slots()
+		_refresh_deck_panel(_deck_change_needs_collection_rebuild(card), false)
+		return
+	if int(_reinforcements.get(card.card_name, 0)) <= 0:
+		return
+	_push_current_deck_undo_state()
+	_reinforcements[card.card_name] = int(_reinforcements.get(card.card_name, 0)) - 1
+	if int(_reinforcements[card.card_name]) <= 0:
+		_reinforcements.erase(card.card_name)
+	_deck[card.card_name] = int(_deck.get(card.card_name, 0)) + 1
+	_refresh_deck_panel(_deck_change_needs_collection_rebuild(card), false)
+
+func _ensure_deck_row_drag_ghost(mouse_global_position: Vector2) -> void:
+	if _deck_row_drag_card == null:
+		return
+	if is_instance_valid(_deck_row_drag_ghost):
+		_update_deck_row_drag_ghost_position(mouse_global_position)
+		return
+	var ghost := PanelContainer.new()
+	ghost.name = "DeckRowDragGhost"
+	ghost.top_level = true
+	ghost.z_index = 10000
+	ghost.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ghost.modulate = Color(1.0, 1.0, 1.0, 0.88)
+	ghost.custom_minimum_size = Vector2(260, 36)
+	ghost.size = Vector2(260, 36)
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.08, 0.10, 0.14, 0.94)
+	style.border_color = Color(0.48, 0.78, 1.0, 1.0) if _deck_row_drag_from_reinforcements else Color(0.95, 0.82, 0.38, 1.0)
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		style.set_border_width(side as Side, 2)
+	ghost.add_theme_stylebox_override("panel", style)
+	var label := Label.new()
+	label.text = _deck_row_drag_card.get_display_name_for_control(label)
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	label.clip_text = true
+	ghost.add_child(label)
+	add_child(ghost)
+	_deck_row_drag_ghost = ghost
+	_update_deck_row_drag_ghost_position(mouse_global_position)
+
+func _update_deck_row_drag_ghost_position(mouse_global_position: Vector2) -> void:
+	if not is_instance_valid(_deck_row_drag_ghost):
+		return
+	_deck_row_drag_ghost.global_position = mouse_global_position - _deck_row_drag_offset
+
+func _cleanup_deck_row_drag_ghost() -> void:
+	if is_instance_valid(_deck_row_drag_ghost):
+		_deck_row_drag_ghost.queue_free()
+	_deck_row_drag_ghost = null
 
 func _get_scroll_container_max_scroll(scroll: ScrollContainer) -> float:
 	if not is_instance_valid(scroll):
@@ -3917,6 +4053,9 @@ func _cycle_card_art(card: Card) -> void:
 func _input(event: InputEvent) -> void:
 	if not visible:
 		return
+	if _try_handle_deck_row_drag_input(event):
+		get_viewport().set_input_as_handled()
+		return
 	if _try_handle_collection_card_drag_input(event):
 		get_viewport().set_input_as_handled()
 		return
@@ -3982,6 +4121,24 @@ func _try_handle_collection_card_drag_input(event: InputEvent) -> bool:
 		var mouse_event := event as InputEventMouseButton
 		if mouse_event.button_index == MOUSE_BUTTON_LEFT and not mouse_event.pressed:
 			_finish_collection_card_drag(mouse_event.global_position)
+			return true
+	return false
+
+func _try_handle_deck_row_drag_input(event: InputEvent) -> bool:
+	if _deck_row_drag_card == null:
+		return false
+	if event is InputEventMouseMotion:
+		var motion := event as InputEventMouseMotion
+		if motion.global_position.distance_to(_deck_row_drag_start_pos) >= COLLECTION_DRAG_THRESHOLD:
+			_deck_row_drag_active = true
+		if _deck_row_drag_active:
+			_ensure_deck_row_drag_ghost(motion.global_position)
+			return true
+		return false
+	if event is InputEventMouseButton:
+		var mouse_event := event as InputEventMouseButton
+		if mouse_event.button_index == MOUSE_BUTTON_LEFT and not mouse_event.pressed:
+			_finish_deck_row_drag(mouse_event.global_position)
 			return true
 	return false
 

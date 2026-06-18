@@ -538,6 +538,7 @@ var _reinforcement_main_grid: GridContainer = null
 var _reinforcement_side_list: VBoxContainer = null
 var _reinforcement_main_drop_area = null
 var _reinforcement_side_drop_area = null
+var _reinforcement_main_scroll: ScrollContainer = null
 var _reinforcement_status_label: Label = null
 var _reinforcement_submit_button: Button = null
 var _reinforcement_original_main_count: int = 0
@@ -26339,6 +26340,7 @@ func _hide_reinforcement_overlay() -> void:
 	_reinforcement_side_list = null
 	_reinforcement_main_drop_area = null
 	_reinforcement_side_drop_area = null
+	_reinforcement_main_scroll = null
 	_reinforcement_status_label = null
 	_reinforcement_submit_button = null
 	_reinforcement_locked = false
@@ -26369,8 +26371,13 @@ func _show_reinforcement_phase(data: Dictionary) -> void:
 	_reinforcement_overlay = overlay
 
 	var panel := PanelContainer.new()
-	panel.set_anchors_preset(Control.PRESET_CENTER)
-	panel.custom_minimum_size = Vector2(1320, 760)
+	panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	panel.offset_left = 24.0
+	panel.offset_top = 24.0
+	panel.offset_right = -24.0
+	panel.offset_bottom = -24.0
+	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	overlay.add_child(panel)
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color(0.07, 0.09, 0.14, 0.98)
@@ -26384,6 +26391,8 @@ func _show_reinforcement_phase(data: Dictionary) -> void:
 	panel.add_theme_stylebox_override("panel", style)
 
 	var box := VBoxContainer.new()
+	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	box.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	box.add_theme_constant_override("separation", 12)
 	panel.add_child(box)
 	var wins = _series_snapshot.get("wins", [])
@@ -26415,6 +26424,8 @@ func _show_reinforcement_phase(data: Dictionary) -> void:
 	_reinforcement_main_drop_area.card_dropped.connect(_on_reinforcement_card_dropped)
 	board.add_child(_reinforcement_main_drop_area)
 	var main_box := VBoxContainer.new()
+	main_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	main_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	main_box.add_theme_constant_override("separation", 8)
 	_reinforcement_main_drop_area.add_child(main_box)
 	var main_header := Label.new()
@@ -26422,6 +26433,7 @@ func _show_reinforcement_phase(data: Dictionary) -> void:
 	main_header.add_theme_font_size_override("font_size", 22)
 	main_box.add_child(main_header)
 	var main_scroll := ScrollContainer.new()
+	_reinforcement_main_scroll = main_scroll
 	main_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	main_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	main_box.add_child(main_scroll)
@@ -26434,11 +26446,13 @@ func _show_reinforcement_phase(data: Dictionary) -> void:
 
 	_reinforcement_side_drop_area = ReinforcementDropAreaScript.new()
 	_reinforcement_side_drop_area.setup("side")
-	_reinforcement_side_drop_area.custom_minimum_size = Vector2(315, 0)
+	_reinforcement_side_drop_area.custom_minimum_size = Vector2(300, 0)
 	_reinforcement_side_drop_area.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_reinforcement_side_drop_area.card_dropped.connect(_on_reinforcement_card_dropped)
 	board.add_child(_reinforcement_side_drop_area)
 	var side_box := VBoxContainer.new()
+	side_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	side_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	side_box.add_theme_constant_override("separation", 8)
 	_reinforcement_side_drop_area.add_child(side_box)
 	var side_header := Label.new()
@@ -26467,9 +26481,26 @@ func _show_reinforcement_phase(data: Dictionary) -> void:
 	_reinforcement_submit_button.pressed.connect(_submit_reinforcement_changes)
 	actions.add_child(_reinforcement_submit_button)
 	_refresh_reinforcement_options()
+	overlay.resized.connect(_layout_reinforcement_overlay)
+	call_deferred("_layout_reinforcement_overlay")
 	if bool(data.get("is_ready", false)):
 		_set_reinforcement_locked(true)
 		_reinforcement_status_label.text = "Deck locked. Waiting for your opponent."
+
+func _layout_reinforcement_overlay() -> void:
+	if _reinforcement_main_grid == null or not is_instance_valid(_reinforcement_main_grid):
+		return
+	var available_width := 0.0
+	if _reinforcement_main_scroll != null and is_instance_valid(_reinforcement_main_scroll):
+		available_width = _reinforcement_main_scroll.size.x
+	if available_width <= 0.0 and _reinforcement_main_drop_area != null and is_instance_valid(_reinforcement_main_drop_area):
+		available_width = _reinforcement_main_drop_area.size.x
+	if available_width <= 0.0:
+		return
+	var tile_width := 182.0
+	var next_columns := clampi(int(floor((available_width + 10.0) / tile_width)), 2, 8)
+	if _reinforcement_main_grid.columns != next_columns:
+		_reinforcement_main_grid.columns = next_columns
 
 func _refresh_reinforcement_options() -> void:
 	if _reinforcement_main_grid != null and _reinforcement_side_list != null:
