@@ -260,6 +260,7 @@ const ACTION_LOG_TURN_BREAK_FONT_SIZE := 18
 const ACTION_LOG_TURN_BREAK_COLOR := "#d9c58a"
 const ACTION_LOG_ALERT_COLOR := "#ff6b6b"
 const ACTION_LOG_CARD_LINK_COLOR := "#e8cf83"
+const ACTION_LOG_ABILITY_LINK_COLOR := "#68a8ff"
 const ACTION_LOG_CARD_HOVER_WIDTH := 320.0
 const ACTION_LOG_CARD_HOVER_MAX_HEIGHT := 420.0
 
@@ -530,6 +531,7 @@ var _last_network_action_log_event_id: int = -1
 var _action_log_popup: PanelContainer = null
 var _action_log_popup_view: RichTextLabel = null
 var _action_log_hover_cards: Dictionary = {}
+var _action_log_hover_abilities: Dictionary = {}
 var _action_log_hover_index_ready: bool = false
 var _action_log_card_hover_popup: PanelContainer = null
 var _center_action_panel: VBoxContainer = null
@@ -4871,9 +4873,13 @@ func _is_alert_action_log_message(message: String) -> bool:
 
 func _decorate_action_log_hover_terms(message: String) -> String:
 	var candidate_terms: Array[String] = []
+	for raw_term in _action_log_hover_abilities.keys():
+		var ability_term := str(raw_term)
+		if _action_log_message_contains_term(message, ability_term):
+			candidate_terms.append(ability_term)
 	for raw_term in _action_log_hover_cards.keys():
 		var term := str(raw_term)
-		if _action_log_message_contains_term(message, term):
+		if not candidate_terms.has(term) and _action_log_message_contains_term(message, term):
 			candidate_terms.append(term)
 	if candidate_terms.is_empty():
 		return _escape_action_log_bbcode(message)
@@ -4894,9 +4900,13 @@ func _decorate_action_log_hover_terms(message: String) -> String:
 			output += _escape_action_log_bbcode(message.substr(cursor, 1))
 			cursor += 1
 			continue
-		output += "[url=card:%s][color=%s][u]%s[/u][/color][/url]" % [
+		var is_named_ability := _action_log_hover_abilities.has(matched_term)
+		var meta_kind := "ability" if is_named_ability else "card"
+		var link_color := ACTION_LOG_ABILITY_LINK_COLOR if is_named_ability else ACTION_LOG_CARD_LINK_COLOR
+		output += "[url=%s:%s][color=%s][u]%s[/u][/color][/url]" % [
+			meta_kind,
 			CardCatalog.to_lookup_key(matched_term),
-			ACTION_LOG_CARD_LINK_COLOR,
+			link_color,
 			_escape_action_log_bbcode(matched_term)
 		]
 		cursor += matched_term.length()
@@ -4943,8 +4953,36 @@ func _register_action_log_hover_card(card: Card, replace_existing: bool = false)
 	if card_name == "" or card_name == "Hidden Card":
 		return
 	if _action_log_hover_cards.has(card_name) and not replace_existing:
+		_register_action_log_hover_abilities(card)
 		return
 	_action_log_hover_cards[card_name] = card
+	_register_action_log_hover_abilities(card)
+
+func _register_action_log_hover_abilities(card: Card) -> void:
+	for ability in card.get_named_ability_entries():
+		var ability_name := str(ability.get("name", "")).strip_edges()
+		if ability_name == "":
+			continue
+		var entries: Array = _action_log_hover_abilities.get(ability_name, [])
+		var description := str(ability.get("description", "")).strip_edges()
+		var qualifiers := str(ability.get("qualifiers", "")).strip_edges()
+		var duplicate := false
+		for raw_entry in entries:
+			var existing := raw_entry as Dictionary
+			if str(existing.get("card_name", "")) == card.card_name \
+				and str(existing.get("description", "")) == description \
+				and str(existing.get("qualifiers", "")) == qualifiers:
+				duplicate = true
+				break
+		if duplicate:
+			continue
+		entries.append({
+			"name": ability_name,
+			"card_name": card.card_name,
+			"description": description,
+			"qualifiers": qualifiers,
+		})
+		_action_log_hover_abilities[ability_name] = entries
 
 func _action_log_message_contains_term(message: String, term: String) -> bool:
 	var search_from := 0
@@ -4990,6 +5028,10 @@ func _bind_action_log_hover_signals(log_view: RichTextLabel) -> void:
 func _on_action_log_meta_hover_started(meta, source_view: RichTextLabel) -> void:
 	if source_view == null or not is_instance_valid(source_view):
 		return
+	var ability_entries := _get_action_log_hover_abilities_for_meta(meta)
+	if not ability_entries.is_empty():
+		_show_action_log_ability_hover(ability_entries)
+		return
 	var card := _get_action_log_hover_card_for_meta(meta)
 	if card == null:
 		return
@@ -5011,6 +5053,70 @@ func _get_action_log_hover_card_for_meta(meta) -> Card:
 		if CardCatalog.to_lookup_key(str(raw_name)) == lookup_key:
 			return _action_log_hover_cards[raw_name] as Card
 	return CardCatalog.instantiate_card_by_name(lookup_key)
+
+func _get_action_log_hover_abilities_for_meta(meta) -> Array:
+	var meta_text := str(meta)
+	if not meta_text.begins_with("ability:"):
+		return []
+	var lookup_key := meta_text.substr("ability:".length())
+	if lookup_key == "":
+		return []
+	_ensure_action_log_hover_index()
+	_register_action_log_runtime_cards()
+	for raw_name in _action_log_hover_abilities.keys():
+		if CardCatalog.to_lookup_key(str(raw_name)) == lookup_key:
+			return _action_log_hover_abilities[raw_name] as Array
+	return []
+
+func _show_action_log_ability_hover(entries: Array) -> void:
+	_hide_action_log_card_hover_popup()
+	if entries.is_empty() or not is_inside_tree():
+		return
+	var first_entry := entries[0] as Dictionary
+	var panel := PanelContainer.new()
+	panel.name = "ActionLogAbilityHover"
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.05, 0.05, 0.12, 0.97)
+	style.border_color = Color(ACTION_LOG_ABILITY_LINK_COLOR)
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		style.set_border_width(side, 2)
+	style.corner_radius_top_left = 6
+	style.corner_radius_top_right = 6
+	style.corner_radius_bottom_left = 6
+	style.corner_radius_bottom_right = 6
+	style.content_margin_left = 10
+	style.content_margin_right = 10
+	style.content_margin_top = 8
+	style.content_margin_bottom = 8
+	panel.add_theme_stylebox_override("panel", style)
+
+	var content := VBoxContainer.new()
+	content.add_theme_constant_override("separation", 5)
+	var title := Label.new()
+	title.text = str(first_entry.get("name", "Ability"))
+	title.add_theme_color_override("font_color", Color(ACTION_LOG_ABILITY_LINK_COLOR))
+	title.add_theme_font_size_override("font_size", 17)
+	content.add_child(title)
+	for raw_entry in entries:
+		var entry := raw_entry as Dictionary
+		var body_text := str(entry.get("description", "")).strip_edges()
+		var qualifiers := str(entry.get("qualifiers", "")).strip_edges()
+		if qualifiers != "":
+			body_text = "(%s) %s" % [qualifiers, body_text]
+		if entries.size() > 1:
+			body_text = "%s — %s" % [str(entry.get("card_name", "Card")), body_text]
+		var body := Label.new()
+		body.text = body_text
+		body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		body.custom_minimum_size = Vector2(ACTION_LOG_CARD_HOVER_WIDTH - 20.0, 0.0)
+		content.add_child(body)
+	panel.add_child(content)
+	add_child(panel)
+	_promote_transient_ui(panel, HOVER_PREVIEW_Z_INDEX)
+	panel.size = Vector2(ACTION_LOG_CARD_HOVER_WIDTH, 0.0)
+	_action_log_card_hover_popup = panel
+	call_deferred("_position_action_log_card_hover_popup", panel)
 
 func _show_action_log_card_hover(card: Card) -> void:
 	_hide_action_log_card_hover_popup()

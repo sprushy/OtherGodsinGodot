@@ -67,6 +67,9 @@ func get_named_ability_name(trigger_hint: String = "") -> String:
 		return str(ability_lines[0].get("name", ""))
 	return ""
 
+func get_named_ability_entries() -> Array[Dictionary]:
+	return _get_named_ability_lines()
+
 func format_named_ability_log_message(message: String, trigger_hint: String = "") -> String:
 	var trimmed_message := message.strip_edges()
 	if trimmed_message == "":
@@ -108,6 +111,7 @@ func _get_named_ability_lines() -> Array[Dictionary]:
 		entries.append({
 			"name": ability_name,
 			"qualifiers": qualifiers,
+			"description": line.substr(colon_index + 1).strip_edges(),
 		})
 	return entries
 

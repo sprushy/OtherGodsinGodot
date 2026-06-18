@@ -3807,8 +3807,11 @@ func _allows_pending_self_target_highlight(source: Card, scene_root: Node) -> bo
 		return true
 	if source.has_method("is_valid_activation_target") and source.call("is_valid_activation_target", source) == true:
 		return true
-	if source.has_method("is_valid_target") and source.call("is_valid_target", source) == true:
-		return true
+	if source.has_method("is_valid_target"):
+		if source is HexCard and source.call("is_valid_target", game_manager, source) == true:
+			return true
+		elif not (source is HexCard) and source.call("is_valid_target", source) == true:
+			return true
 	if source.has_method("can_play_to_target") and source.call("can_play_to_target", game_manager, source) == true:
 		return true
 	if scene_root != null and scene_root.get("awaiting_pyre_target") == true and scene_root.get("pyre_source") == source:
