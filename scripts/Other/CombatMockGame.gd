@@ -281,6 +281,7 @@ var _matriarch_rule_button: Button = null
 @onready var left_bottom_spacer = $MainHBox/LeftPanel/LeftBottomSpacer
 @onready var end_turn_button = $MainHBox/RightPanel/EndTurnButton
 @onready var forfeit_button = $ForfeitButton
+var forfeit_match_button: Button = null
 @onready var turn_label = $MainHBox/RightPanel/TurnLabel
 @onready var stats_container = $MainHBox/RightPanel/StatsContainer
 @onready var right_panel = $MainHBox/RightPanel
@@ -534,7 +535,9 @@ var _reinforcement_swap_button: Button = null
 var _reinforcement_status_label: Label = null
 var _reinforcement_submit_button: Button = null
 var _series_snapshot: Dictionary = {}
+var _series_between_games_active: bool = false
 var _forfeit_button_default_text: String = ""
+var _forfeit_match_confirm_pending: bool = false
 var _all_sound_muted: bool = false
 var _action_log_view: RichTextLabel = null
 var _action_log_history_button: Button = null
@@ -810,6 +813,7 @@ const PRIORITY_CONTROL_BUTTON_SIZE := Vector2(36.0, 30.0)
 const PRIORITY_AUTO_PASS_BUTTON_SIZE := Vector2(42.0, 30.0)
 const SOUND_MUTE_BUTTON_WIDTH := 40.0
 const FORFEIT_BUTTON_WIDTH := 112.0
+const FORFEIT_MATCH_BUTTON_WIDTH := 144.0
 const CORNER_ACTION_MARGIN := 16.0
 const CORNER_ACTION_GAP := 8.0
 const PRIORITY_CONTROLS_RIGHT_MARGIN := 2.0
@@ -2362,6 +2366,19 @@ func _ready() -> void:
 	forfeit_button.offset_bottom = -8.0
 	forfeit_button.mouse_filter = Control.MOUSE_FILTER_STOP
 	_promote_transient_ui(forfeit_button, TRANSIENT_UI_Z_INDEX + 100)
+	forfeit_match_button = Button.new()
+	forfeit_match_button.name = "ForfeitMatchButton"
+	forfeit_match_button.text = "Forfeit Match"
+	forfeit_match_button.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	forfeit_match_button.offset_left = forfeit_button.offset_right + CORNER_ACTION_GAP
+	forfeit_match_button.offset_top = forfeit_button.offset_top
+	forfeit_match_button.offset_right = forfeit_match_button.offset_left + FORFEIT_MATCH_BUTTON_WIDTH
+	forfeit_match_button.offset_bottom = forfeit_button.offset_bottom
+	forfeit_match_button.mouse_filter = Control.MOUSE_FILTER_STOP
+	forfeit_match_button.visible = false
+	forfeit_match_button.disabled = true
+	add_child(forfeit_match_button)
+	_promote_transient_ui(forfeit_match_button, TRANSIENT_UI_Z_INDEX + 100)
 	resized.connect(_layout_board_art_background)
 
 	draw_button.pressed.connect(_on_draw_button_pressed)
@@ -2369,6 +2386,7 @@ func _ready() -> void:
 	_setup_turn_choice_buttons()
 	end_turn_button.pressed.connect(_on_end_turn_button_pressed)
 	forfeit_button.pressed.connect(_on_forfeit_button_pressed)
+	forfeit_match_button.pressed.connect(_on_forfeit_match_button_pressed)
 	aggressive_stance_btn.pressed.connect(_on_aggressive_stance_pressed)
 	defensive_stance_btn.pressed.connect(_on_defensive_stance_pressed)
 	stealth_mode_btn.pressed.connect(_on_stealth_mode_pressed)
@@ -5244,6 +5262,7 @@ func start_game(
 	_game_result_presented = false
 	_pending_forfeit_return_to_menu = false
 	_pending_post_game_return_to_menu = false
+	_series_between_games_active = false
 	_reset_turn_activity_timers()
 	_hide_game_result_overlay()
 	_hide_reinforcement_overlay()
@@ -5372,6 +5391,7 @@ func _prepare_for_match_launch(status_message: String = "Connecting to match..."
 	_game_result_presented = false
 	_pending_forfeit_return_to_menu = false
 	_pending_post_game_return_to_menu = false
+	_series_between_games_active = false
 	_temporary_full_control = false
 	_constant_full_control = false
 	_full_control_chord_latched = false
@@ -8511,6 +8531,8 @@ func _on_power_pressed(power: PowerCard) -> void:
 			return
 		_handle_invalid_pending_target_click()
 		return
+	if _reject_non_priority_action_if_blocked():
+		return
 	if _try_queue_god_targeted_ability(power):
 		return
 	if _is_turn_choice_pending() and not _can_activate_before_turn_choice(power):
@@ -11270,13 +11292,17 @@ func _prompt_generic_spell_target_selection(spell: SpellCard) -> void:
 		selected_card = null
 		_set_action_label_text("Cancelled " + spell.card_name + ".")
 		update_ui()
-	_show_card_selection_overlay(
-		"Choose a target for " + spell.card_name,
-		targets,
+	var validate_spell_target := func(clicked_card: Card) -> bool:
+		return clicked_card != null and clicked_card in spell.get_valid_targets(game_manager)
+	_begin_pending_click_selection(
+		spell.card_name,
+		spell,
+		validate_spell_target,
 		choose_target,
-		cancel_target,
-		_get_selection_cursor_mode_for_source(spell)
+		cancel_target
 	)
+	_set_action_label_text(spell.card_name + ": click a valid target.")
+	update_ui()
 
 func _pay_hand_card_costs(card: Card, custom_pay_callback: Callable = Callable()) -> bool:
 	if card == null or game_manager == null or card.card_owner == null:
@@ -12030,7 +12056,7 @@ func _prompt_charm_target_selection(charm: CharmCard, triggering_action: CardAct
 		_set_action_label_text(_get_play_card_unavailable_text(charm, null))
 		update_ui()
 		return
-	if _should_prompt_charm_targets_in_overlay(targets):
+	if not (charm is DivineLightning) and _should_prompt_charm_targets_in_overlay(targets):
 		var choose_overlay_target := func(chosen_target: Card) -> void:
 			spell_waiting_for_display_zone = requested_display_zone
 			_queue_charm_action(charm, triggering_action, chosen_target)
@@ -12934,6 +12960,8 @@ func _on_hand_card_pressed(card: Card) -> void:
 		if (card as CharmCard).must_be_prepared_to_activate:
 			placement_mode = "prepare_charm"
 			_set_action_label_text(card.card_name + " selected - click an empty friendly zone to prepare it.")
+		elif card is DivineLightning and (card as CharmCard).targets:
+			_prompt_charm_target_selection(card as CharmCard)
 		else:
 			_set_action_label_text("Selected charm: " + card.card_name + " - click a zone to play it, right-click for menu, or drag with S/right-click to prepare it.")
 	elif card.card_type == Card.CardType.SPELL:
@@ -14985,13 +15013,17 @@ func _queue_third_sage_enmedugga_impact_prompt(card) -> void:
 			_resume_after_deferred_resolution(card.resolve_good_fortune_impact(game_manager, chosen_card))
 		var on_cancel_sage := func() -> void:
 			_resume_after_deferred_resolution(card.card_name + " impact fizzles.")
-		_show_card_selection_overlay(
-			"Choose a Mer Sage for " + card.card_name,
-			current_targets,
+		var validate_sage_target := func(clicked_card: Card) -> bool:
+			return clicked_card != null and clicked_card in card.get_valid_targets(game_manager)
+		_begin_pending_click_selection(
+			card.card_name,
+			card,
+			validate_sage_target,
 			on_choose_sage,
-			on_cancel_sage,
-			_get_selection_cursor_mode_for_source(card)
+			on_cancel_sage
 		)
+		_set_action_label_text(card.card_name + ": click a Mer Sage to bless.")
+		update_ui()
 	_set_action_label_text(card.card_name + " impact waits on priority.")
 	game_manager.push_to_stack(action)
 	update_ui()
@@ -15029,13 +15061,17 @@ func _show_third_sage_enmedugga_impact_prompt(card: ThirdSageEnmedugga, prompt_t
 			return
 		_set_action_label_text(_consume_resolution_feedback(card.card_name + " impact fizzles."))
 		update_ui()
-	_show_card_selection_overlay(
-		"Choose a Mer Sage for " + card.card_name,
-		current_targets,
+	var validate_sage_target := func(clicked_card: Card) -> bool:
+		return clicked_card != null and _is_card_in_targets_by_uid(_resolve_live_prompt_target(clicked_card), current_targets)
+	_begin_pending_click_selection(
+		card.card_name,
+		card,
+		validate_sage_target,
 		on_choose_sage,
-		on_cancel_sage,
-		_get_selection_cursor_mode_for_source(card)
+		on_cancel_sage
 	)
+	_set_action_label_text(card.card_name + ": click a Mer Sage to bless.")
+	update_ui()
 
 func _mark_reveal_auto_submit_pending(interaction_type: String, source_uid: String, target_uid: String) -> bool:
 	var key := "%s:%s:%s" % [
@@ -20861,6 +20897,14 @@ func _hide_priority_prompt() -> void:
 		panel.hide()
 	_sync_visual_linger_input_blocker()
 
+func _state_confirms_local_priority_prompt(local_idx: int) -> bool:
+	if game_manager == null or local_idx < 0 or game_manager.action_stack.is_empty():
+		return false
+	var top_action := game_manager.action_stack.back() as CardAction
+	if top_action == null:
+		return false
+	return int(top_action.event_data.get("priority_prompt_offered_player_index", -1)) == local_idx
+
 func _on_priority_pass_pressed() -> void:
 	if game_manager != null and game_manager.priority_player != null:
 		var priority_player_index := game_manager.players.find(game_manager.priority_player)
@@ -26183,16 +26227,21 @@ func _restore_corner_action_button() -> void:
 	if _forfeit_button_default_text == "":
 		_forfeit_button_default_text = forfeit_button.text
 	_promote_transient_ui(forfeit_button, TRANSIENT_UI_Z_INDEX + 100)
-	forfeit_button.text = "Leave Match" if _is_observer_mode else _forfeit_button_default_text
-	forfeit_button.tooltip_text = "Leave the live match and return to the menu." if _is_observer_mode else ""
+	forfeit_button.text = "Leave Match" if _is_observer_mode else "Forfeit Game"
+	forfeit_button.tooltip_text = "Leave the live match and return to the menu." if _is_observer_mode else "Concede only the current game."
 	forfeit_button.disabled = false
 	forfeit_button.visible = true
+	_refresh_forfeit_match_button_visibility()
 
 func _hide_corner_action_button() -> void:
 	if forfeit_button == null:
 		return
 	forfeit_button.visible = false
 	forfeit_button.disabled = true
+	_reset_forfeit_match_confirmation()
+	if forfeit_match_button != null:
+		forfeit_match_button.visible = false
+		forfeit_match_button.disabled = true
 
 func _show_post_game_return_button() -> void:
 	if forfeit_button == null:
@@ -26204,6 +26253,63 @@ func _show_post_game_return_button() -> void:
 	forfeit_button.tooltip_text = "Leave the finished match and return to the menu."
 	forfeit_button.disabled = false
 	forfeit_button.visible = true
+	_reset_forfeit_match_confirmation()
+	if forfeit_match_button != null:
+		forfeit_match_button.visible = false
+		forfeit_match_button.disabled = true
+
+func _refresh_forfeit_match_button_visibility() -> void:
+	if forfeit_match_button == null:
+		return
+	_reset_forfeit_match_confirmation()
+	var should_show := not _is_observer_mode and _is_bo3_series_match() and not _game_finished
+	forfeit_match_button.visible = should_show
+	forfeit_match_button.disabled = not should_show
+	forfeit_match_button.tooltip_text = "Concede the whole Bo3 match."
+
+func _reset_forfeit_match_confirmation() -> void:
+	_forfeit_match_confirm_pending = false
+	if forfeit_match_button != null:
+		forfeit_match_button.text = "Forfeit Match"
+
+func _is_bo3_series_match() -> bool:
+	if headless_match_host != null and headless_match_host.match_session != null:
+		return int(headless_match_host.match_session.series_best_of) >= 3
+	var series = _current_match_info.get("series", {})
+	if series is Dictionary and int((series as Dictionary).get("best_of", 1)) >= 3:
+		return true
+	return int(_series_snapshot.get("best_of", 1)) >= 3
+
+func _get_known_series_snapshot() -> Dictionary:
+	if not _series_snapshot.is_empty():
+		return _series_snapshot
+	var series = _current_match_info.get("series", {})
+	if series is Dictionary:
+		return series as Dictionary
+	if headless_match_host != null and headless_match_host.match_session != null:
+		return headless_match_host.match_session.get_series_snapshot()
+	return {}
+
+func _is_known_series_complete() -> bool:
+	var series := _get_known_series_snapshot()
+	if series.is_empty():
+		return false
+	if series.has("is_complete"):
+		return bool(series.get("is_complete", false))
+	var wins = series.get("wins", [])
+	var games_to_win := int(series.get("games_to_win", 1))
+	if wins is Array:
+		for win_count in wins:
+			if int(win_count) >= games_to_win:
+				return true
+	return false
+
+func _should_defer_game_result_for_series() -> bool:
+	if not _is_bo3_series_match():
+		return false
+	if _series_between_games_active:
+		return true
+	return not _is_known_series_complete()
 
 func _hide_game_result_overlay() -> void:
 	if _game_result_overlay != null and is_instance_valid(_game_result_overlay):
@@ -26225,6 +26331,7 @@ func _show_reinforcement_phase(data: Dictionary) -> void:
 	_hide_reinforcement_overlay()
 	_game_finished = true
 	_game_result_presented = false
+	_series_between_games_active = true
 	_series_snapshot = (data.get("series", {}) as Dictionary).duplicate(true)
 	_reinforcement_main_cards = (data.get("cards", {}) as Dictionary).duplicate(true)
 	_reinforcement_side_cards = (data.get("reinforcements", {}) as Dictionary).duplicate(true)
@@ -26397,6 +26504,7 @@ func _submit_reinforcement_changes() -> void:
 func _begin_next_series_game(data: Dictionary) -> void:
 	_series_snapshot = (data.get("series", {}) as Dictionary).duplicate(true)
 	_current_match_info["series"] = _series_snapshot.duplicate(true)
+	_series_between_games_active = false
 	_hide_reinforcement_overlay()
 	_hide_game_result_overlay()
 	_game_finished = false
@@ -26499,6 +26607,8 @@ func _finalize_game_result_ui(result_message: String, winner = null, loser = nul
 
 func _present_game_result_from_state(state: Dictionary, action_message: String) -> void:
 	if _game_result_presented or not bool(state.get("is_game_over", false)) or game_manager == null:
+		return
+	if _should_defer_game_result_for_series():
 		return
 	var winner: Player = null
 	var loser: Player = null
@@ -26621,6 +26731,19 @@ func _on_peer_disconnected(_peer_id: int) -> void:
 	_update_waiting_status(false)
 	update_ui()
 
+func _should_suppress_stale_priority_rejection(reason: String) -> bool:
+	if _pending_priority_auto_pass_signature.is_empty():
+		return false
+	var normalized := reason.strip_edges().to_lower()
+	if not normalized.begins_with("unauthorized command: that action belongs to "):
+		return false
+	if game_manager == null or network_manager == null:
+		return false
+	var local_idx: int = network_manager.local_player_index
+	if local_idx < 0 or local_idx >= game_manager.players.size():
+		return false
+	return true
+
 func _apply_network_event(event_type: String, data: Dictionary) -> void:
 	if _game_finished and event_type in [
 		"match_connect_retry_started",
@@ -26644,6 +26767,7 @@ func _apply_network_event(event_type: String, data: Dictionary) -> void:
 			_apply_ui_interaction(data)
 		"match_join_ok":
 			_current_match_info.merge(data, true)
+			_refresh_forfeit_match_button_visibility()
 			_set_action_label_text("Match authenticated. Waiting for state sync...")
 			update_ui()
 			_update_waiting_overlay()
@@ -26690,6 +26814,7 @@ func _apply_network_event(event_type: String, data: Dictionary) -> void:
 			update_ui()
 		"match_reconnect_ok":
 			_current_match_info.merge(data, true)
+			_refresh_forfeit_match_button_visibility()
 			_set_match_reconnect_wait(false)
 			_set_action_label_text("Reconnected to the match server.")
 			update_ui()
@@ -26723,9 +26848,18 @@ func _apply_network_event(event_type: String, data: Dictionary) -> void:
 				_pending_forfeit_return_to_menu = false
 				if not _game_finished:
 					forfeit_button.disabled = false
+					_refresh_forfeit_match_button_visibility()
+			elif not _game_finished and forfeit_button != null and forfeit_button.disabled:
+				forfeit_button.disabled = false
+				_refresh_forfeit_match_button_visibility()
 			_clear_pending_priority_response_submission()
 			_clear_network_breidablik_return_pending()
 			var rejection_reason := str(data.get("reason", "That move was rejected by the server."))
+			if _should_suppress_stale_priority_rejection(rejection_reason):
+				_pending_priority_auto_pass_signature.clear()
+				_update_waiting_overlay()
+				update_ui()
+				return
 			if _reinforcement_overlay != null and is_instance_valid(_reinforcement_overlay):
 				if _reinforcement_submit_button != null:
 					_reinforcement_submit_button.disabled = false
@@ -26762,14 +26896,22 @@ func _apply_network_event(event_type: String, data: Dictionary) -> void:
 			_begin_next_series_game(data)
 		"series_game_ended":
 			_series_snapshot = (data.get("series", {}) as Dictionary).duplicate(true)
+			_current_match_info["series"] = _series_snapshot.duplicate(true)
+			_series_between_games_active = true
 			_set_action_label_text("A game in the series has ended.")
 		"series_ended":
 			_series_snapshot = (data.get("series", {}) as Dictionary).duplicate(true)
+			_current_match_info["series"] = _series_snapshot.duplicate(true)
+			_series_between_games_active = false
 		"game_ended":
 			var result_message: String = str(data.get("result_message", "")).strip_edges()
 			if result_message.is_empty():
 				var winner_name: String = data.get("winner_name", "Unknown")
 				result_message = winner_name + " wins!"
+			if _should_defer_game_result_for_series():
+				_set_action_label_text(result_message)
+				update_ui()
+				return
 			var winner: Player = null
 			var loser: Player = null
 			var winner_idx := int(data.get("winner_index", -1))
@@ -27295,6 +27437,8 @@ func _restore_priority_prompt_from_authoritative_state() -> void:
 	var should_have_priority_prompt := not _game_finished \
 		and not game_manager.action_stack.is_empty() \
 		and game_manager.priority_player == local_player
+	if should_have_priority_prompt and not _state_confirms_local_priority_prompt(local_idx):
+		should_have_priority_prompt = false
 	if not should_have_priority_prompt:
 		if _is_priority_prompt_visible():
 			_hide_priority_prompt()
@@ -27907,6 +28051,26 @@ func _on_forfeit_button_pressed() -> void:
 	if _game_finished:
 		_on_game_result_back_to_menu_pressed()
 		return
+	_reset_forfeit_match_confirmation()
+	_submit_forfeit_command("forfeit", "Forfeit game requested...")
+
+func _on_forfeit_match_button_pressed() -> void:
+	if _game_finished:
+		_on_game_result_back_to_menu_pressed()
+		return
+	if not _is_bo3_series_match():
+		_refresh_forfeit_match_button_visibility()
+		return
+	if not _forfeit_match_confirm_pending:
+		_forfeit_match_confirm_pending = true
+		if forfeit_match_button != null:
+			forfeit_match_button.text = "Confirm Forfeit Match"
+		_set_action_label_text("Click Confirm Forfeit Match to concede the whole Bo3 match.")
+		update_ui()
+		return
+	_submit_forfeit_command("forfeit_match", "Forfeit match requested...")
+
+func _submit_forfeit_command(command_type: String, request_message: String) -> void:
 	if _is_observer_mode:
 		_cancel_match_locally("Stopped observing.")
 		_emit_leave_match_requested()
@@ -27945,10 +28109,15 @@ func _on_forfeit_button_pressed() -> void:
 		return
 	_pending_forfeit_return_to_menu = false
 	forfeit_button.disabled = true
-	_set_action_label_text("Forfeit requested...")
-	if not game_input.submit_action({type = "forfeit", player_index = forfeiting_index}):
+	if forfeit_match_button != null:
+		forfeit_match_button.disabled = true
+	_set_action_label_text(request_message)
+	if not game_input.submit_action({type = command_type, player_index = forfeiting_index}):
 		_pending_forfeit_return_to_menu = false
 		forfeit_button.disabled = false
+		if forfeit_match_button != null and forfeit_match_button.visible:
+			forfeit_match_button.disabled = false
+		_reset_forfeit_match_confirmation()
 		_set_action_label_text("Could not send the forfeit request.")
 	update_ui()
 
@@ -28285,6 +28454,8 @@ func _get_player_god_name(player: Player) -> String:
 	return str(god_card.card_name).strip_edges()
 
 func _on_game_ended(winner: Player, loser: Player) -> void:
+	if (_is_networked_client or _is_real_network_host()) and _should_defer_game_result_for_series():
+		return
 	_record_local_host_match_result(winner, loser)
 	var should_return_to_menu := _pending_forfeit_return_to_menu
 	_finalize_game_result_ui("", winner, loser, should_return_to_menu)

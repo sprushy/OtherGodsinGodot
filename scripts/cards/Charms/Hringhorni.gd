@@ -16,14 +16,35 @@ func _init() -> void:
 	art_path = "res://images/card_art/charms/HringhorniEdit.png"
 
 func can_activate_from_hand(game_manager: GameManager, triggering_action: CardAction = null) -> bool:
-	if not super.can_activate_from_hand(game_manager, triggering_action):
+	if game_manager == null or card_owner == null:
 		return false
-	return _has_destroyed_friendly_norse_warrior(game_manager)
+	if must_be_prepared_to_activate:
+		return false
+	if not _is_valid_destroyed_warrior_event(triggering_action):
+		return false
+	if game_manager._has_pending_stack_action_for_card(self):
+		return false
+	if is_activation_locked(game_manager):
+		return false
+	if current_zone != card_owner.hand_zone:
+		return false
+	var responding_player := game_manager.priority_player
+	if responding_player == null:
+		responding_player = triggering_action.initial_priority_player
+	if responding_player == null:
+		responding_player = triggering_action.source_player
+	if card_owner != responding_player:
+		return false
+	if not can_pay_costs(card_owner):
+		return false
+	if targets and get_priority_targets(game_manager, triggering_action).is_empty():
+		return false
+	return can_respond_to_destroyed_event(triggering_action, game_manager)
 
 func can_activate_prepared(game_manager: GameManager, triggering_action: CardAction = null) -> bool:
 	if not super.can_activate_prepared(game_manager, triggering_action):
 		return false
-	return _has_destroyed_friendly_norse_warrior(game_manager)
+	return _is_valid_destroyed_warrior_event(triggering_action)
 
 func can_respond_to_action(action: CardAction, game_manager: GameManager = null) -> bool:
 	if action != null and action.type == CardAction.Type.EVENT and action.event_name == "destroyed":
@@ -121,8 +142,11 @@ func _is_valid_destroyed_warrior(card: Card) -> bool:
 		and card.has_type("Warrior") \
 		and card.culture == "Norse"
 
-func _has_destroyed_friendly_norse_warrior(game_manager: GameManager) -> bool:
-	return get_destroyed_warrior_level_cap(game_manager) >= 0
+func _is_valid_destroyed_warrior_event(action: CardAction) -> bool:
+	return action != null \
+		and action.type == CardAction.Type.EVENT \
+		and action.event_name == "destroyed" \
+		and _is_valid_destroyed_warrior(action.card)
 
 func _is_valid_recruit(card: Card, max_level: int) -> bool:
 	return card != null \

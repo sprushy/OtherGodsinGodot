@@ -41,6 +41,8 @@ func _connect_signals() -> void:
 # ---------------------------------------------------------------------------
 
 func _on_move_validated(move: Dictionary) -> void:
+	if game_manager != null and game_manager.is_game_over:
+		return
 	# "end_turn" already triggers _on_turn_started which broadcasts full_state;
 	# broadcasting again here would send it twice per turn change.
 	if move.get("type", "") in ["end_turn", "intercept_decision", "priority_pass"]:
@@ -55,6 +57,8 @@ func _on_move_validated(move: Dictionary) -> void:
 		_rebroadcast_pending_state_refresh_interactions()
 
 func _on_action_resolved(action: CardAction) -> void:
+	if game_manager != null and game_manager.is_game_over:
+		return
 	_broadcast_full_state_for_action(action)
 	_rebroadcast_pending_state_refresh_interactions()
 

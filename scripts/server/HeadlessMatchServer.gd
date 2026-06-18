@@ -178,7 +178,7 @@ func _on_game_ended(_winner: Player, _loser: Player) -> void:
 	var series_snapshot: Dictionary = match_session.record_series_game_win(winner_index) if match_session != null else {}
 	if match_session != null \
 			and game_manager != null \
-			and game_manager.game_end_reason == GameManager.GAME_END_REASON_FORFEIT \
+			and game_manager.game_end_reason == GameManager.GAME_END_REASON_MATCH_FORFEIT \
 			and winner_index >= 0:
 		var winner_session_id := str(match_session.player_session_ids[winner_index]).strip_edges()
 		match_session.series_wins_by_session[winner_session_id] = match_session.games_to_win

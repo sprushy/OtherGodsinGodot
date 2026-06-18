@@ -18,6 +18,7 @@ const KNOWN_COMMAND_TYPES := [
 	"upkeep_choice",
 	"tiamat_upkeep_choice",
 	"forfeit",
+	"forfeit_match",
 	"submit_reinforcements",
 	"cast_spell",
 	"activate_prepared_hex",
@@ -168,7 +169,7 @@ static func get_required_player(command: Dictionary, game_manager: GameManager, 
 			if priority_player_index >= 0 and priority_player_index < game_manager.players.size():
 				return game_manager.players[priority_player_index]
 			return null
-		"forfeit":
+		"forfeit", "forfeit_match":
 			var forfeiting_index := int(command.get("player_index", -1))
 			if forfeiting_index >= 0 and forfeiting_index < game_manager.players.size():
 				return game_manager.players[forfeiting_index]
@@ -275,7 +276,7 @@ static func requires_resolved_upkeep(command: Dictionary) -> bool:
 	if command_type == "activate_power" and str(command.get("mode", "")) == "return_priest":
 		return false
 	match command_type:
-		"upkeep_choice", "tiamat_upkeep_choice", "skoll_upkeep_summon", "priority_pass", "set_priority_preferences", "intercept_decision", "combat_retreat_decision", "play_hex_response", "play_charm_response", "play_priority_ability", "forfeit", "humbaba_augury_choice", "return_to_hand_choice", "doorway_choice":
+		"upkeep_choice", "tiamat_upkeep_choice", "skoll_upkeep_summon", "priority_pass", "set_priority_preferences", "intercept_decision", "combat_retreat_decision", "play_hex_response", "play_charm_response", "play_priority_ability", "forfeit", "forfeit_match", "humbaba_augury_choice", "return_to_hand_choice", "doorway_choice":
 			return false
 	return true
 

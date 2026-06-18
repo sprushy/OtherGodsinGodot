@@ -28,6 +28,7 @@ var _has_authenticated_match: bool = false
 var _connect_attempt_serial: int = 0
 var _reconnect_attempt_serial: int = 0
 var _match_completed: bool = false
+var _series_between_games: bool = false
 
 func _init(
 	p_match_manager: MatchManager,
@@ -333,13 +334,22 @@ func _on_connect_attempt_timer_timeout(expected_serial: int) -> void:
 	_on_connect_attempt_timeout()
 
 func _on_game_event_received(event_type: String, data: Dictionary) -> void:
-	if event_type in ["reinforcement_phase", "series_game_started"]:
+	if event_type == "reinforcement_phase":
+		_series_between_games = true
 		_match_completed = false
+	elif event_type == "series_game_ended":
+		_series_between_games = true
+		_match_completed = false
+	elif event_type == "series_game_started":
+		_series_between_games = false
+		_match_completed = false
+	elif event_type == "series_ended":
+		_series_between_games = false
 	elif event_type == "game_ended":
 		_match_completed = true
 	elif event_type == "full_state":
 		var state = data.get("state", {})
-		if state is Dictionary and bool((state as Dictionary).get("is_game_over", false)):
+		if not _series_between_games and state is Dictionary and bool((state as Dictionary).get("is_game_over", false)):
 			_match_completed = true
 	game_event_received.emit(event_type, data)
 

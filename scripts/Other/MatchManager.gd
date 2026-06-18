@@ -3562,6 +3562,20 @@ func _process_command_impl(command: Dictionary) -> bool:
 			game_manager.forfeit_game(forfeiting_player)
 			move_validated.emit(command)
 			return true
+		"forfeit_match":
+			if game_manager.is_game_over:
+				move_failed.emit("The game is already over.")
+				return false
+			var match_forfeiting_player: Player = acting_player
+			var match_forfeiting_index := int(command.get("player_index", -1))
+			if match_forfeiting_index >= 0 and match_forfeiting_index < game_manager.players.size():
+				match_forfeiting_player = game_manager.players[match_forfeiting_index]
+			if match_forfeiting_player == null:
+				move_failed.emit("forfeit_match: player not found")
+				return false
+			game_manager.forfeit_match(match_forfeiting_player)
+			move_validated.emit(command)
+			return true
 		"submit_reinforcements":
 			move_failed.emit("Reinforcement changes are only available between games in a series.")
 			return false
@@ -3852,6 +3866,11 @@ func _process_command_impl(command: Dictionary) -> bool:
 				if not power_card.can_activate(game_manager):
 					move_failed.emit(_get_move_activation_failure_reason(power_card, false, power_card.card_owner))
 					return false
+				if power_card is Breidablik:
+					var breidablik := power_card as Breidablik
+					if act_target == null or act_target not in breidablik.get_valid_field_priests(game_manager):
+						move_failed.emit(power_card.card_name + " needs a friendly Priest that has not attacked this turn.")
+						return false
 				if _uses_authoritative_headless_priority_flow():
 					_queue_authoritative_magical_action(
 						CardAction.Type.ABILITY,

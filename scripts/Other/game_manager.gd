@@ -20,6 +20,7 @@ signal card_summoned(player: Player, card: Card, from_zone: Zone, to_zone: Zone,
 enum GamePhase { MULLIGAN, MAIN, COMBAT, END }
 const GAME_END_REASON_DEFEAT := "defeat"
 const GAME_END_REASON_FORFEIT := "forfeit"
+const GAME_END_REASON_MATCH_FORFEIT := "match_forfeit"
 const GOD_DEATH_FOLLOWER_LOSS := 7
 const GOD_DEATH_UPKEEP_MANA_PENALTY := 1
 const UPKEEP_DRAW_MANA_GAIN := 1
@@ -466,6 +467,13 @@ func get_game_result_message(winner: Player = winning_player, loser: Player = lo
 			return "Game over! %s forfeited." % [loser.player_name]
 		if winner != null:
 			return winner.player_name + " wins by forfeit!"
+	if resolved_reason == GAME_END_REASON_MATCH_FORFEIT:
+		if winner != null and loser != null:
+			return "%s wins the match! %s forfeited the match." % [winner.player_name, loser.player_name]
+		if loser != null:
+			return "Match over! %s forfeited the match." % [loser.player_name]
+		if winner != null:
+			return winner.player_name + " wins the match by forfeit!"
 	if winner != null and loser != null:
 		return "%s wins the game! %s reached 0 followers." % [winner.player_name, loser.player_name]
 	if loser != null:
@@ -4210,6 +4218,9 @@ func _apply_god_passives_to_card(_player: Player, _card: Card) -> void:
 
 func forfeit_game(forfeiting_player: Player) -> void:
 	_finish_game(forfeiting_player, GAME_END_REASON_FORFEIT)
+
+func forfeit_match(forfeiting_player: Player) -> void:
+	_finish_game(forfeiting_player, GAME_END_REASON_MATCH_FORFEIT)
 
 func _finish_game(losing_player_ref: Player, reason: String = GAME_END_REASON_DEFEAT) -> void:
 	if is_game_over or losing_player_ref == null:
