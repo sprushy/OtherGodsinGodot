@@ -185,7 +185,9 @@ func _check_command_authority(failures: PackedStringArray) -> void:
 	game_manager.current_player = player_one
 	game_manager.other_player = player_two
 	game_manager.turn_player = player_one
-	game_manager.turn_number = 1
+	game_manager.turn_number = 2
+	game_manager._upkeep_started_turn = game_manager.turn_number
+	game_manager._upkeep_resolved_turn = game_manager.turn_number
 
 	var match_manager := MatchManager.new(game_manager)
 	var attacker := BaseCard.new()

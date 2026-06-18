@@ -13289,9 +13289,9 @@ func _on_empty_zone_pressed(zone: Zone) -> void:
 	if _is_turn_choice_pending():
 		_reject_pre_turn_action()
 		return
-	var replay_selected_card_uid := selected_card.uid if selected_card != null else ""
-	var replay_pending_move_uid := _pending_move_card.uid if _pending_move_card != null else ""
-	var replay_indicated_move_uid := _indicated_move_card.uid if _indicated_move_card != null else ""
+	var replay_selected_card_uid: String = selected_card.uid if selected_card != null else ""
+	var replay_pending_move_uid: String = _pending_move_card.uid if _pending_move_card != null else ""
+	var replay_indicated_move_uid: String = _indicated_move_card.uid if _indicated_move_card != null else ""
 	if _reject_non_priority_action_if_blocked(
 		Callable(self, "_retry_empty_zone_pressed").bind(
 			_get_zone_replay_data(zone),
