@@ -1537,7 +1537,8 @@ func _trigger_board_summon(
 		card.on_summon(self)
 	var should_trigger_impact := not face_down \
 		and trigger_impact \
-		and _should_trigger_summon_impact(card, from_zone, summon_source)
+		and _should_trigger_summon_impact(card, from_zone, summon_source) \
+		and not card.abilities_suppressed()
 	if should_trigger_impact and card.has_method("on_impact"):
 		card.on_impact(self)
 	card_summoned.emit(player, card, from_zone, target_zone, summon_source, face_down, stealth)

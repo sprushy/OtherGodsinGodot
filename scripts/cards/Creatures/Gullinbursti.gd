@@ -11,7 +11,7 @@ func _init() -> void:
 	speed = 4
 	resilience = 25
 	strength = 24
-	ability_text = "[b]Dodge[/b]: Cannot be attacked by slower creatures."
+	ability_text = "[b]Dodge[/b] ([b]Passive[/b]): Cannot be attacked by slower creatures."
 	# flavor_text = "Forged by Dwarven smiths for the God Freyr, Gullinbursti can run through air and water and moves faster than any horse."
 	flavor_text = ""
 	culture = "Norse"

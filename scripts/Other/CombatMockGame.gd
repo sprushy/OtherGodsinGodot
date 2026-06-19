@@ -528,6 +528,7 @@ var _game_result_presented: bool = false
 var _pending_forfeit_return_to_menu: bool = false
 var _pending_post_game_return_to_menu: bool = false
 var _game_result_overlay: Control = null
+var _reinforcement_layer: CanvasLayer = null
 var _reinforcement_overlay: Control = null
 var _reinforcement_main_cards: Dictionary = {}
 var _reinforcement_side_cards: Dictionary = {}
@@ -26361,6 +26362,9 @@ func _hide_reinforcement_overlay() -> void:
 	if _reinforcement_overlay != null and is_instance_valid(_reinforcement_overlay):
 		_reinforcement_overlay.queue_free()
 	_reinforcement_overlay = null
+	if _reinforcement_layer != null and is_instance_valid(_reinforcement_layer):
+		_reinforcement_layer.queue_free()
+	_reinforcement_layer = null
 	_reinforcement_main_option = null
 	_reinforcement_side_option = null
 	_reinforcement_swap_button = null
@@ -26390,13 +26394,19 @@ func _show_reinforcement_phase(data: Dictionary) -> void:
 	end_turn_button.visible = false
 	placement_container.visible = false
 
+	var layer := CanvasLayer.new()
+	layer.name = "ReinforcementModalLayer"
+	layer.layer = REINFORCEMENT_OVERLAY_Z_INDEX
+	add_child(layer)
+	_reinforcement_layer = layer
+
 	var overlay := ColorRect.new()
 	overlay.name = "ReinforcementOverlay"
 	overlay.color = Color(0.02, 0.03, 0.06, 0.9)
 	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
-	add_child(overlay)
-	_promote_transient_ui(overlay, REINFORCEMENT_OVERLAY_Z_INDEX)
+	layer.add_child(overlay)
+	overlay.move_to_front()
 	_reinforcement_overlay = overlay
 
 	var panel := PanelContainer.new()
@@ -26716,6 +26726,11 @@ func _hide_reinforcement_hover_popup() -> void:
 	_reinforcement_hover_popup = null
 	_reinforcement_hover_tile = null
 
+func _get_reinforcement_modal_parent() -> Node:
+	if _reinforcement_layer != null and is_instance_valid(_reinforcement_layer):
+		return _reinforcement_layer
+	return self
+
 func _show_reinforcement_hover_popup(card: Card, viewer: Player, tile: Control) -> void:
 	_hide_reinforcement_hover_popup()
 	if card == null or tile == null or not is_instance_valid(tile):
@@ -26757,7 +26772,7 @@ func _show_reinforcement_hover_popup(card: Card, viewer: Player, tile: Control) 
 		keywords_panel = CardDetailContentBuilderScript.build_keywords_panel(keywords)
 		popup_root.add_child(keywords_panel)
 
-	add_child(popup_root)
+	_get_reinforcement_modal_parent().add_child(popup_root)
 	_promote_transient_ui(popup_root, REINFORCEMENT_HOVER_Z_INDEX)
 	_reinforcement_hover_popup = popup_root
 	_reinforcement_hover_tile = tile
@@ -26927,7 +26942,7 @@ func _ensure_reinforcement_drag_ghost(mouse_global_position: Vector2) -> void:
 	if not str(card.art_path).strip_edges().is_empty():
 		art.texture = load(str(card.art_path))
 	box.add_child(art)
-	add_child(ghost)
+	_get_reinforcement_modal_parent().add_child(ghost)
 	_reinforcement_drag_ghost = ghost
 	_promote_transient_ui(ghost, REINFORCEMENT_DRAG_Z_INDEX)
 	_update_reinforcement_drag_ghost_position(mouse_global_position)
