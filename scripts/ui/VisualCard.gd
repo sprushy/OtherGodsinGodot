@@ -805,7 +805,8 @@ func _refresh_defense_shield_overlay() -> void:
 		_defense_shield_overlay = null
 		return
 	if is_rotated:
-		_defense_shield_overlay = DefenseShieldOverlayScript.ensure_on(_inner, DefenseShieldOverlayScript.LAYOUT_CENTER)
+		var use_stealth_shield := _drag_stealth or (card_data != null and card_data.is_stealth)
+		_defense_shield_overlay = DefenseShieldOverlayScript.ensure_on(_inner, DefenseShieldOverlayScript.LAYOUT_CENTER, 1.0, use_stealth_shield)
 	else:
 		DefenseShieldOverlayScript.remove_from(_inner)
 		_defense_shield_overlay = null

@@ -154,7 +154,7 @@ jobs:
           use-dotnet: false
           include-templates: true
 
-      - name: Prepare Sparkle tooling
+      - name: Prepare optional Sparkle tooling
         shell: bash
         env:
           SPARKLE_PUBLIC_ED_KEY: ${{ secrets.SPARKLE_PUBLIC_ED_KEY }}
@@ -163,9 +163,13 @@ jobs:
           set -euo pipefail
 
           if [ -z "${SPARKLE_PUBLIC_ED_KEY}" ] || [ -z "${SPARKLE_PRIVATE_ED_KEY}" ]; then
-            echo "SPARKLE_PUBLIC_ED_KEY and SPARKLE_PRIVATE_ED_KEY are required for macOS auto-updates." >&2
-            exit 1
+            echo "::warning::SPARKLE_PUBLIC_ED_KEY and SPARKLE_PRIVATE_ED_KEY are not configured; building macOS without Sparkle auto-updates."
+            echo "SPARKLE_ENABLED=false" >> "$GITHUB_ENV"
+            rm -f addons/macos_sparkle/macos_sparkle.gdextension
+            exit 0
           fi
+
+          echo "SPARKLE_ENABLED=true" >> "$GITHUB_ENV"
 
           python3 -m pip install --user scons
           echo "$(python3 -m site --user-base)/bin" >> "$GITHUB_PATH"
@@ -194,6 +198,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
+          if [ "${SPARKLE_ENABLED:-false}" != "true" ]; then
+            echo "Skipping Sparkle bridge build because Sparkle is disabled for this run."
+            exit 0
+          fi
 
           mkdir -p addons/macos_sparkle/bin
 
@@ -289,19 +298,21 @@ jobs:
             exit 1
           fi
 
-          mkdir -p "$app_path/Contents/Frameworks"
-          rm -rf "$app_path/Contents/Frameworks/Sparkle.framework"
-          ditto "$SPARKLE_FRAMEWORK_DIR/Sparkle.framework" "$app_path/Contents/Frameworks/Sparkle.framework"
+          if [ "${SPARKLE_ENABLED:-false}" = "true" ]; then
+            mkdir -p "$app_path/Contents/Frameworks"
+            rm -rf "$app_path/Contents/Frameworks/Sparkle.framework"
+            ditto "$SPARKLE_FRAMEWORK_DIR/Sparkle.framework" "$app_path/Contents/Frameworks/Sparkle.framework"
 
-          info_plist="$app_path/Contents/Info.plist"
-          set_plist_string() {
-            local key="$1"
-            local value="$2"
-            /usr/libexec/PlistBuddy -c "Set :${key} '${value}'" "$info_plist" >/dev/null 2>&1 || \
-              /usr/libexec/PlistBuddy -c "Add :${key} string '${value}'" "$info_plist"
-          }
-          set_plist_string "SUFeedURL" "$feed_url"
-          set_plist_string "SUPublicEDKey" "$SPARKLE_PUBLIC_ED_KEY"
+            info_plist="$app_path/Contents/Info.plist"
+            set_plist_string() {
+              local key="$1"
+              local value="$2"
+              /usr/libexec/PlistBuddy -c "Set :${key} '${value}'" "$info_plist" >/dev/null 2>&1 || \
+                /usr/libexec/PlistBuddy -c "Add :${key} string '${value}'" "$info_plist"
+            }
+            set_plist_string "SUFeedURL" "$feed_url"
+            set_plist_string "SUPublicEDKey" "$SPARKLE_PUBLIC_ED_KEY"
+          fi
 
           if [ "${MACOS_SIGN_IDENTITY}" = "-" ]; then
             codesign --force --deep --sign - "$app_path"
@@ -328,11 +339,13 @@ jobs:
 
           ditto -c -k --keepParent "$app_path" dist/macos/OtherGods-macos.zip
 
-          sparkle_private_key_file="$RUNNER_TEMP/sparkle_private_ed_key.txt"
-          printf '%s' "$SPARKLE_PRIVATE_ED_KEY" > "$sparkle_private_key_file"
-          "$SPARKLE_BIN_DIR/generate_appcast" \
-            --ed-key-file "$sparkle_private_key_file" \
-            dist/macos
+          if [ "${SPARKLE_ENABLED:-false}" = "true" ]; then
+            sparkle_private_key_file="$RUNNER_TEMP/sparkle_private_ed_key.txt"
+            printf '%s' "$SPARKLE_PRIVATE_ED_KEY" > "$sparkle_private_key_file"
+            "$SPARKLE_BIN_DIR/generate_appcast" \
+              --ed-key-file "$sparkle_private_key_file" \
+              dist/macos
+          fi
 
       - name: Upload macOS workflow artifact
         uses: actions/upload-artifact@v4

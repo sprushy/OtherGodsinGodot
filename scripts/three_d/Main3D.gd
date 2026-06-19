@@ -37,6 +37,7 @@ var _stealth_fog_cloud_texture: Texture2D = null
 var _stealth_fog_detail_texture: Texture2D = null
 var _stealth_fog_control_rects: Dictionary = {}
 var _stealth_fog_refresh_elapsed: float = 999.0
+var _stealth_fog_motion_elapsed: float = 0.0
 var _screen_world_height: float = 0.0
 var _fog_cursor_actual_position: Vector2 = Vector2.INF
 var _fog_cursor_position: Vector2 = Vector2.INF
@@ -207,12 +208,14 @@ func _process(delta: float) -> void:
 	_sync_3d_display_to_window()
 	_refresh_display_mode()
 	_refresh_stealth_fog_cursor_from_window(delta)
+	_stealth_fog_motion_elapsed += delta
 	_stealth_fog_refresh_elapsed += delta
 	if _stealth_fog_refresh_elapsed >= 0.12:
 		_stealth_fog_refresh_elapsed = 0.0
 		_update_stealth_fog_emitters()
 	else:
 		_update_existing_stealth_fog_cursor_wind()
+	_animate_stealth_fog_layers()
 	_decay_stealth_fog_cursor_motion(delta)
 
 func _sync_3d_display_to_window() -> void:
@@ -337,6 +340,29 @@ func _update_existing_stealth_fog_cursor_wind() -> void:
 		if not (rect_value is Rect2):
 			continue
 		_update_stealth_fog_cursor_wind(fog_cluster, rect_value)
+
+func _animate_stealth_fog_layers() -> void:
+	if _stealth_fog_emitters.is_empty():
+		return
+	for key in _stealth_fog_emitters.keys():
+		var fog_cluster := _stealth_fog_emitters.get(key, null) as Node3D
+		if fog_cluster == null or not is_instance_valid(fog_cluster):
+			continue
+		var mist := fog_cluster.get_node_or_null("SteadyMist") as Node3D
+		if mist == null:
+			continue
+		var cluster_phase := float(fog_cluster.get_instance_id() % 1000) * 0.017
+		for i in range(mist.get_child_count()):
+			var layer := mist.get_child(i) as MeshInstance3D
+			if layer == null:
+				continue
+			var layer_phase := cluster_phase + float(i) * 1.73
+			var speed_x := 0.36 + float(i) * 0.10
+			var speed_y := 0.29 + float(i) * 0.08
+			var sway_x := sin(_stealth_fog_motion_elapsed * speed_x + layer_phase) * (0.070 + float(i) * 0.030)
+			var sway_y := cos(_stealth_fog_motion_elapsed * speed_y + layer_phase * 0.82) * (0.052 + float(i) * 0.022)
+			layer.position = Vector3(sway_x, sway_y, -0.034 + float(i) * 0.014)
+			layer.rotation.z = sin(_stealth_fog_motion_elapsed * 0.24 + layer_phase) * (0.025 + float(i) * 0.014)
 
 func _refresh_stealth_fog_cursor_from_window(delta: float) -> void:
 	if _game_viewport == null or _screen_mesh == null or _camera == null or _is_flat_2d_mode:
@@ -488,12 +514,12 @@ func _update_steady_stealth_mist(fog_cluster: Node3D, local_size: Vector2) -> vo
 	var mist := fog_cluster.get_node_or_null("SteadyMist") as Node3D
 	if mist == null:
 		return
-	var base_scale := Vector2(maxf(0.58, local_size.x * 1.12), maxf(0.46, local_size.y * 1.08))
+	var base_scale := Vector2(maxf(0.64, local_size.x * 1.22), maxf(0.52, local_size.y * 1.18))
 	for i in range(mist.get_child_count()):
 		var layer := mist.get_child(i) as MeshInstance3D
 		if layer == null:
 			continue
-		var layer_scale := 1.0 + float(i) * 0.045
+		var layer_scale := 1.0 + float(i) * 0.070
 		layer.scale = Vector3(base_scale.x * layer_scale, base_scale.y * layer_scale, 1.0)
 		var material := layer.get_active_material(0) as ShaderMaterial
 		if material != null and local_size.x > 0.0 and local_size.y > 0.0:
@@ -606,6 +632,13 @@ float segment_distance(vec2 p, vec2 a, vec2 b) {
 	return length((p - a) - segment * h);
 }
 
+vec2 rotate_uv(vec2 p, float angle) {
+	float s = sin(angle);
+	float c = cos(angle);
+	vec2 centered = p - vec2(0.5);
+	return vec2(centered.x * c - centered.y * s, centered.x * s + centered.y * c) + vec2(0.5);
+}
+
 void fragment() {
 	vec2 uv = UV;
 	vec2 remapped_cursor_uv = vec2(0.5) + (cursor_uv - vec2(0.5)) / max(layer_card_scale, vec2(0.001));
@@ -625,26 +658,34 @@ void fragment() {
 	vec2 radial_push = normalize(to_cursor + vec2(0.0001, 0.0001)) * gust_field * 0.32;
 	vec2 stirred_uv = uv + radial_push;
 	vec2 drift = vec2(TIME * drift_speed, -TIME * drift_speed * 0.55 + phase);
+	float flow_time = TIME * (0.42 + drift_speed * 1.8) + phase;
 	float broad = fbm(stirred_uv * cloud_scale + drift);
 	float rolling = fbm(stirred_uv * cloud_scale * 1.72 - drift * 0.88 + phase);
 	float fine = fbm(stirred_uv * cloud_scale * 3.1 + drift * 1.6 + phase);
 	float ridge = smoothstep(0.060, 0.0, abs(cursor_distance - brush_radius)) * speed_strength * 0.06;
 	float smoke_mask = 1.0;
 	if (use_smoke_texture) {
-		smoke_mask = smoothstep(0.03, 0.92, texture(smoke_texture, uv).r);
+		vec2 smoke_offset_a = vec2(sin(flow_time * 0.71), cos(flow_time * 0.53)) * 0.082;
+		vec2 smoke_offset_b = vec2(cos(flow_time * 0.47 + 1.4), sin(flow_time * 0.61 - 0.8)) * 0.055;
+		vec2 smoke_uv_a = clamp(rotate_uv(uv + smoke_offset_a, sin(flow_time * 0.33) * 0.105), vec2(0.0), vec2(1.0));
+		vec2 smoke_uv_b = clamp(rotate_uv((uv - vec2(0.5)) * 1.08 + vec2(0.5) - smoke_offset_b, -sin(flow_time * 0.29 + 0.6) * 0.085), vec2(0.0), vec2(1.0));
+		float smoke_a = texture(smoke_texture, smoke_uv_a).r;
+		float smoke_b = texture(smoke_texture, smoke_uv_b).r;
+		smoke_mask = smoothstep(0.02, 0.80, max(smoke_a, smoke_b * 0.82));
 	}
-	float density = 0.34 + broad * 0.28 + rolling * 0.18 + fine * 0.06;
+	float density = 0.38 + broad * 0.31 + rolling * 0.20 + fine * 0.065;
 	if (use_cloud_texture) {
-		vec2 cloud_uv_a = fract(stirred_uv * (cloud_scale * 0.58) + drift * 0.42 + vec2(phase * 0.037, phase * 0.021));
-		vec2 cloud_uv_b = fract(stirred_uv * (cloud_scale * 0.91) - drift * 0.36 + vec2(phase * 0.019, -phase * 0.031));
+		vec2 cloud_uv_a = fract(stirred_uv * (cloud_scale * 0.58) + drift * 1.35 + vec2(phase * 0.037, phase * 0.021));
+		vec2 cloud_uv_b = fract(stirred_uv * (cloud_scale * 0.91) - drift * 1.05 + vec2(phase * 0.019, -phase * 0.031));
 		float texture_cloud = texture(cloud_texture, cloud_uv_a).r * 0.62 + texture(cloud_texture, cloud_uv_b).r * 0.38;
 		density = mix(density, texture_cloud, 0.46);
 	}
 	if (use_detail_texture) {
-		vec2 detail_uv = fract(stirred_uv * (cloud_scale * 2.65) + drift * 1.14 + vec2(phase * 0.017, phase * 0.047));
+		vec2 detail_uv = fract(stirred_uv * (cloud_scale * 2.65) + drift * 2.20 + vec2(phase * 0.017, phase * 0.047));
 		float detail_noise = texture(detail_texture, detail_uv).r;
 		density += (detail_noise - 0.5) * 0.075 * (1.0 - gust_field * 0.45);
 	}
+	density *= 0.94 + sin(flow_time * 0.66) * 0.060;
 	density = clamp(density * smoke_mask + ridge - gust_field * 1.34, 0.0, 1.0);
 	float edge_x = smoothstep(0.0, 0.16, uv.x) * smoothstep(0.0, 0.16, 1.0 - uv.x);
 	float edge_y = smoothstep(0.0, 0.16, uv.y) * smoothstep(0.0, 0.16, 1.0 - uv.y);
@@ -654,9 +695,9 @@ void fragment() {
 }
 """
 	material.shader = shader
-	material.set_shader_parameter("fog_alpha", 0.42 - float(layer_index) * 0.075)
+	material.set_shader_parameter("fog_alpha", 0.48 - float(layer_index) * 0.070)
 	material.set_shader_parameter("cloud_scale", 1.12 + float(layer_index) * 0.26)
-	material.set_shader_parameter("drift_speed", 0.024 + float(layer_index) * 0.008)
+	material.set_shader_parameter("drift_speed", 0.090 + float(layer_index) * 0.034)
 	material.set_shader_parameter("phase", float(layer_index) * 3.17)
 	var smoke_texture := _get_stealth_fog_smoke_texture()
 	if smoke_texture != null:

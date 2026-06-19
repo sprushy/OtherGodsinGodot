@@ -3266,6 +3266,13 @@ func _clear_pending_turn_action_after_opponent_priority() -> void:
 func _has_pending_turn_action_after_opponent_priority() -> bool:
 	return not _pending_turn_action_after_opponent_priority_command.is_empty()
 
+func _clear_pending_turn_action_after_priority_response(responding_player: Player) -> void:
+	if not _has_pending_turn_action_after_opponent_priority():
+		return
+	var pending_actor := _get_pending_turn_action_after_opponent_priority_actor()
+	if pending_actor == null or responding_player == null or pending_actor != responding_player:
+		_clear_pending_turn_action_after_opponent_priority()
+
 func _should_defer_turn_action_until_opponent_priority_declines(command: Dictionary, sender_info: Dictionary) -> bool:
 	if _replaying_turn_action_after_opponent_priority:
 		return false
@@ -5286,6 +5293,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 				pcr_target.current_zone if pcr_target != null and pcr_target.current_zone != null and pcr_target.current_zone.is_board_zone() else null
 			)
 			game_manager.push_to_stack(pcr_action)
+			_clear_pending_turn_action_after_priority_response(pcr_charm_card.card_owner)
 			if _uses_authoritative_headless_priority_flow():
 				_advance_authoritative_priority()
 			move_validated.emit(command)
@@ -5354,6 +5362,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 				else:
 					pra_source.activate(game_manager)
 			game_manager.push_to_stack(pra_action)
+			_clear_pending_turn_action_after_priority_response(pra_source.card_owner)
 			if _uses_authoritative_headless_priority_flow():
 				_advance_authoritative_priority()
 			move_validated.emit(command)
@@ -5515,6 +5524,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 				move_failed.emit(_get_move_cost_payment_failure_reason(phr_hex, true, phr_hex.card_owner))
 				return false
 			game_manager.push_to_stack(phr_ability)
+			_clear_pending_turn_action_after_priority_response(phr_hex.card_owner)
 			if _uses_authoritative_headless_priority_flow():
 				_advance_authoritative_priority()
 			move_validated.emit(command)

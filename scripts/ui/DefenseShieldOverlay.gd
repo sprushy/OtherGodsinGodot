@@ -2,6 +2,7 @@ class_name DefenseShieldOverlay
 extends TextureRect
 
 const SHIELD_TEXTURE := preload("res://images/DefenseShieldOverlay.png")
+const STEALTH_SHIELD_TEXTURE := preload("res://images/StealthDefenseShieldOverlay.png")
 const OVERLAY_NAME := "DefenseShieldOverlay"
 const LAYOUT_CORNER := 0
 const LAYOUT_STAT_UNDER := 1
@@ -19,13 +20,14 @@ const STAT_MIN_EXTENSION := 18.0
 
 var _layout_mode: int = LAYOUT_CORNER
 var _size_multiplier: float = 1.0
+var _use_stealth_texture: bool = false
 
-static func ensure_on(parent: Control, shield_layout_mode: int = LAYOUT_CORNER, size_multiplier: float = 1.0) -> Control:
+static func ensure_on(parent: Control, shield_layout_mode: int = LAYOUT_CORNER, size_multiplier: float = 1.0, use_stealth_texture: bool = false) -> Control:
 	if parent == null or not is_instance_valid(parent):
 		return null
 	var existing := parent.get_node_or_null(OVERLAY_NAME) as Control
 	if existing != null:
-		_configure_container(existing, shield_layout_mode, size_multiplier)
+		_configure_container(existing, shield_layout_mode, size_multiplier, use_stealth_texture)
 		return existing
 
 	var container := Control.new()
@@ -38,7 +40,7 @@ static func ensure_on(parent: Control, shield_layout_mode: int = LAYOUT_CORNER, 
 	var shield := DefenseShieldOverlay.new()
 	shield.name = "ShieldImage"
 	container.add_child(shield)
-	_configure_container(container, shield_layout_mode, size_multiplier)
+	_configure_container(container, shield_layout_mode, size_multiplier, use_stealth_texture)
 	return container
 
 static func remove_from(parent: Control) -> void:
@@ -48,12 +50,12 @@ static func remove_from(parent: Control) -> void:
 	if existing != null:
 		existing.queue_free()
 
-static func _configure_container(container: Control, shield_layout_mode: int, size_multiplier: float) -> void:
+static func _configure_container(container: Control, shield_layout_mode: int, size_multiplier: float, use_stealth_texture: bool) -> void:
 	if container == null or not is_instance_valid(container):
 		return
 	var shield := container.get_node_or_null("ShieldImage") as DefenseShieldOverlay
 	if shield != null:
-		shield.set_layout_mode(shield_layout_mode, size_multiplier)
+		shield.set_layout_mode(shield_layout_mode, size_multiplier, use_stealth_texture)
 
 func _init() -> void:
 	texture = SHIELD_TEXTURE
@@ -61,9 +63,11 @@ func _init() -> void:
 	expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 
-func set_layout_mode(shield_layout_mode: int, size_multiplier: float = 1.0) -> void:
+func set_layout_mode(shield_layout_mode: int, size_multiplier: float = 1.0, use_stealth_texture: bool = false) -> void:
 	_layout_mode = shield_layout_mode
 	_size_multiplier = maxf(0.01, size_multiplier)
+	_use_stealth_texture = use_stealth_texture
+	texture = STEALTH_SHIELD_TEXTURE if _use_stealth_texture else SHIELD_TEXTURE
 	_layout_to_parent()
 	call_deferred("_layout_to_parent")
 
@@ -87,7 +91,7 @@ func _connect_parent_resize() -> void:
 		parent_control.resized.connect(resize_callback)
 
 func _compute_shield_size(parent_size: Vector2, width_ratio: float, max_height_ratio: float) -> Vector2:
-	var texture_size := SHIELD_TEXTURE.get_size()
+	var texture_size := texture.get_size() if texture != null else Vector2.ZERO
 	if texture_size.x <= 0.0 or texture_size.y <= 0.0:
 		return Vector2.ZERO
 	var aspect := texture_size.x / texture_size.y

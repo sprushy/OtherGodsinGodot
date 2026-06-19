@@ -4740,7 +4740,7 @@ func _refresh_display() -> void:
 				or card.is_stealth
 			)
 			if _fd_is_def:
-				DefenseShieldOverlayScript.ensure_on(fd_overlay, DefenseShieldOverlayScript.LAYOUT_STAT_UNDER)
+				DefenseShieldOverlayScript.ensure_on(fd_overlay, DefenseShieldOverlayScript.LAYOUT_STAT_UNDER, 1.0, card.is_stealth)
 			_defense_overlay = fd_overlay if _fd_is_def else null
 			_raised_overlay  = fd_overlay if (_fd_is_def or card.is_stealth) else null
 			z_index = _get_resting_z_index()
@@ -4996,7 +4996,7 @@ func _refresh_display() -> void:
 				art.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				card_overlay.add_child(art)
 		if shows_defense_shield:
-			DefenseShieldOverlayScript.ensure_on(card_overlay, DefenseShieldOverlayScript.LAYOUT_STAT_UNDER)
+			DefenseShieldOverlayScript.ensure_on(card_overlay, DefenseShieldOverlayScript.LAYOUT_STAT_UNDER, 1.0, card.is_stealth)
 		elif shows_aggressive_sword:
 			AggressiveSwordOverlay.ensure_on(card_overlay, AggressiveSwordOverlay.LAYOUT_STAT_UNDER)
 		_add_level_badge(card_overlay, card, Control.PRESET_TOP_LEFT, 6, LEVEL_BADGE_TOP, 54, LEVEL_BADGE_BOTTOM)
