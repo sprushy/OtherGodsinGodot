@@ -6,6 +6,7 @@ const BaseCardScript = preload("res://scripts/cards/BaseCard.gd")
 const LockedPowerCursorScript = preload("res://scripts/ui/LockedPowerCursor.gd")
 const DefenseShieldOverlayScript = preload("res://scripts/ui/DefenseShieldOverlay.gd")
 const AggressiveSwordOverlay = preload("res://scripts/ui/AggressiveSwordOverlay.gd")
+const StealthFogOverlayScript = preload("res://scripts/ui/StealthFogOverlay.gd")
 const LevelSymbolRowScript = preload("res://scripts/ui/LevelSymbolRow.gd")
 const DebuffBadgeScript = preload("res://scripts/ui/DebuffBadge.gd")
 const CHAMPIONS_CALL_BADGE_TEXTURE := preload("res://images/Champion's Call Horn Badge.png")
@@ -2746,6 +2747,23 @@ func _add_attack_target_aura(overlay: Control) -> void:
 func _add_followers_attack_target_tint(overlay: Control) -> void:
 	_add_attack_target_aura(overlay)
 
+func _add_stealth_fog_overlay(overlay: Control, card: Card) -> void:
+	if overlay == null or card == null:
+		return
+	if card.card_type != Card.CardType.CREATURE or not card.is_stealth:
+		return
+	var existing := overlay.get_node_or_null(StealthFogOverlayScript.OVERLAY_NAME) as Control
+	if existing != null:
+		existing.set("fog_alpha", 0.18)
+		return
+	var fog_overlay := StealthFogOverlayScript.new() as Control
+	fog_overlay.name = StealthFogOverlayScript.OVERLAY_NAME
+	fog_overlay.set("fog_alpha", 0.18)
+	fog_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	fog_overlay.clip_contents = false
+	fog_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	overlay.add_child(fog_overlay)
+
 func _add_followers_attack_result_label(overlay: Control) -> void:
 	if overlay == null or _followers_attack_result_text == "":
 		return
@@ -4692,7 +4710,9 @@ func _refresh_display() -> void:
 				haze.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 				haze.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				fd_overlay.add_child(haze)
+			_add_stealth_fog_overlay(fd_overlay, card)
 			_add_power_lock_overlay(fd_overlay, card)
+			_add_publicly_identified_card_affordance(fd_overlay, card)
 			if card.get_controller() == face_down_viewer and card.is_prepared and card.is_magical_card():
 				_add_speed_badge(fd_overlay, card)
 				_add_prepared_magical_mana_badge(fd_overlay, card)
@@ -4720,8 +4740,7 @@ func _refresh_display() -> void:
 				or card.is_stealth
 			)
 			if _fd_is_def:
-				var shield_scale := DefenseShieldOverlayScript.STEALTH_VIEW_SIZE_MULTIPLIER if card.is_stealth else 1.0
-				DefenseShieldOverlayScript.ensure_on(fd_overlay, DefenseShieldOverlayScript.LAYOUT_CENTER, shield_scale)
+				DefenseShieldOverlayScript.ensure_on(fd_overlay, DefenseShieldOverlayScript.LAYOUT_STAT_UNDER)
 			_defense_overlay = fd_overlay if _fd_is_def else null
 			_raised_overlay  = fd_overlay if (_fd_is_def or card.is_stealth) else null
 			z_index = _get_resting_z_index()
@@ -4918,7 +4937,6 @@ func _refresh_display() -> void:
 		add_theme_stylebox_override("panel", style)
 
 		var board_viewer := _get_viewer_player()
-		var can_view_stealth_details := card.get_controller() == board_viewer or card.is_temporarily_revealed()
 		var card_overlay := Control.new()
 		card_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		card_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -4966,6 +4984,7 @@ func _refresh_display() -> void:
 				haze.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 				haze.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				card_overlay.add_child(haze)
+			_add_stealth_fog_overlay(card_overlay, card)
 		elif card.art_path != "":
 			var tex: Texture2D = load(card.art_path)
 			if tex:
@@ -4977,11 +4996,7 @@ func _refresh_display() -> void:
 				art.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				card_overlay.add_child(art)
 		if shows_defense_shield:
-			var shield_layout := DefenseShieldOverlayScript.LAYOUT_STAT_UNDER
-			if card.is_stealth and not can_view_stealth_details:
-				shield_layout = DefenseShieldOverlayScript.LAYOUT_CENTER
-			var shield_scale := DefenseShieldOverlayScript.STEALTH_VIEW_SIZE_MULTIPLIER if shield_layout == DefenseShieldOverlayScript.LAYOUT_CENTER else 1.0
-			DefenseShieldOverlayScript.ensure_on(card_overlay, shield_layout, shield_scale)
+			DefenseShieldOverlayScript.ensure_on(card_overlay, DefenseShieldOverlayScript.LAYOUT_STAT_UNDER)
 		elif shows_aggressive_sword:
 			AggressiveSwordOverlay.ensure_on(card_overlay, AggressiveSwordOverlay.LAYOUT_STAT_UNDER)
 		_add_level_badge(card_overlay, card, Control.PRESET_TOP_LEFT, 6, LEVEL_BADGE_TOP, 54, LEVEL_BADGE_BOTTOM)

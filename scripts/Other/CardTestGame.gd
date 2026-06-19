@@ -232,36 +232,25 @@ func load_featured_card_test_scenario() -> void:
 	_add_test_god(player1, Odin.new())
 	_add_test_god(player2, Thor.new())
 
-	# Friendly board: two cheap bodies cover the sacrifice cost on Afanc and Pazuzu
-	# while keeping plenty of open lanes for reveals and impact testing.
-	_place_test_board_card(player1, player1.frontline_zones[0], BrownBear.new(), Card.CreatureMode.AGGRESSIVE)
-	_place_test_board_card(player1, player1.reserve_zones[0], PictishBeast.new(), Card.CreatureMode.DEFENSIVE)
+	# Default Card Test is a clean stealth visual sandbox.
+	# P1 stealth creatures show their hazed art; P2 stealth creatures show card backs.
+	_place_test_hidden_creature(player1, player1.frontline_zones[1], PictishBeast.new())
+	_place_test_hidden_creature(player1, player1.frontline_zones[2], BrownBear.new())
+	_place_test_hidden_creature(player1, player1.frontline_zones[3], Pegasus.new())
+	_place_test_hidden_creature(player1, player1.reserve_zones[1], Nimue.new())
+	_place_test_hidden_creature(player1, player1.reserve_zones[3], Nagual.new())
 
-	# Load the requested cards directly into hand for immediate testing.
-	_add_test_hand_card(player1, Lailoken.new())
-	_add_test_hand_card(player1, Grindylow.new())
-	_add_test_hand_card(player1, MasmassuPriest.new())
-	_add_test_hand_card(player1, Afanc.new())
-	_add_test_hand_card(player1, Pazuzu.new())
-	_add_test_hand_card(player1, HumbabaTheTerrible.new())
+	_place_test_hidden_creature(player2, player2.frontline_zones[1], Alu.new())
+	_place_test_hidden_creature(player2, player2.frontline_zones[2], MinotaurFootsoldier.new())
+	_place_test_hidden_creature(player2, player2.frontline_zones[3], Berserker.new())
+	_place_test_hidden_creature(player2, player2.reserve_zones[1], TheWhiteSerpent.new())
+	_place_test_hidden_creature(player2, player2.reserve_zones[3], GududPriest.new())
 
-	# Small deterministic deck keeps draw/upkeep simple if the scenario runs longer.
+	# Keep draw/upkeep choices stable if the sandbox runs longer.
 	_add_test_deck_card(player1, BrownBear.new())
 	_add_test_deck_card(player1, PictishBeast.new())
 	_add_test_deck_card(player1, TheWhiteSerpent.new())
 	_add_test_deck_card(player1, HeroicStand.new())
-
-	# Opponent board gives each featured card a clean target:
-	# Exorcism for Lailoken, multiple creatures for Grindylow and Afanc,
-	# and Alu as a Demon for Masmassu Priest's mana rider.
-	_place_test_board_card(player2, player2.frontline_zones[0], BrownBear.new(), Card.CreatureMode.DEFENSIVE)
-	_place_test_board_card(player2, player2.frontline_zones[1], Alu.new(), Card.CreatureMode.DEFENSIVE)
-	_place_test_board_card(player2, player2.reserve_zones[0], MinotaurFootsoldier.new(), Card.CreatureMode.DEFENSIVE)
-	_place_test_prepared_card(player2, player2.reserve_zones[1], Exorcism.new())
-
-	_add_test_hand_card(player2, DivineLightning.new())
-	_add_test_hand_card(player2, HeroicStand.new())
-	_add_test_hand_card(player2, HumbabaTheTerrible.new())
 	_add_test_deck_card(player2, BrownBear.new())
 	_add_test_deck_card(player2, Berserker.new())
 	_add_test_deck_card(player2, TheWhiteSerpent.new())
@@ -291,11 +280,9 @@ func load_featured_card_test_scenario() -> void:
 	game_manager.start_turn()
 	_open_upkeep_choice_window()
 	action_label.text = (
-		"Featured Card Test Scenario. Choose Mana first.  |  "
-		+ "Hand - Lailoken, Grindylow, Ma" + char(353) + "ma" + char(353) + char(353) + "u Priest, Afanc, Pazuzu, and Humbaba the Terrible are all ready on P1, and P2 also has a Humbaba for mirror testing.  |  "
-		+ "Board - Brown Bear and Pictish Beast give you easy sacrifice fodder for Afanc and Pazuzu while leaving most lanes open.  |  "
-		+ "Opponent - Exorcism is already prepared for Lailoken to drain, Alu is a Demon for Ma" + char(353) + "ma" + char(353) + char(353) + "u Priest's bonus mana, and the extra creatures give Grindylow and Afanc clean reveal targets.  |  "
-		+ "Mana - P2 starts at 10 mana so Pazuzu can show both its impact drain and the next-turn passive drain."
+		"Stealth Visual Test. The board starts cleared except for stealth-mode creatures. "
+		+ "Friendly stealth cards use visible hazed art; opposing stealth cards use hidden card backs. "
+		+ "Use this screen to judge the fog and normal defensive shield placement instantly."
 	)
 	update_ui()
 

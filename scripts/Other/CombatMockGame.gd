@@ -544,6 +544,14 @@ var _reinforcement_submit_button: Button = null
 var _reinforcement_original_main_count: int = 0
 var _reinforcement_original_side_count: int = 0
 var _reinforcement_locked: bool = false
+var _reinforcement_drag_card_name: String = ""
+var _reinforcement_drag_source_zone: String = ""
+var _reinforcement_drag_start_pos: Vector2 = Vector2.ZERO
+var _reinforcement_drag_active: bool = false
+var _reinforcement_drag_offset: Vector2 = Vector2.ZERO
+var _reinforcement_drag_ghost: Control = null
+var _reinforcement_hover_popup: Control = null
+var _reinforcement_hover_tile: Control = null
 var _series_snapshot: Dictionary = {}
 var _series_between_games_active: bool = false
 var _forfeit_button_default_text: String = ""
@@ -722,6 +730,9 @@ const HAND_OVERLAY_SIDE_PADDING := 18.0
 const HAND_OVERLAY_BOTTOM_PADDING := -2.0
 const HAND_OVERLAY_Z_INDEX := HOVER_PREVIEW_Z_INDEX + 5
 const CONTEXT_MENU_Z_INDEX := HAND_OVERLAY_Z_INDEX + 120
+const REINFORCEMENT_OVERLAY_Z_INDEX := 10000
+const REINFORCEMENT_HOVER_Z_INDEX := REINFORCEMENT_OVERLAY_Z_INDEX + 20
+const REINFORCEMENT_DRAG_Z_INDEX := REINFORCEMENT_OVERLAY_Z_INDEX + 30
 const LEFT_PANEL_MIN_WIDTH := 220.0
 const BOARD_RIGHT_NUDGE := 10.0
 const BOARD_HORIZONTAL_OFFSET := -2.0
@@ -832,7 +843,7 @@ const UI_UPDATE_DEBOUNCE_SECONDS := 0.03
 const RIGHT_PANEL_MIN_WIDTH := 100.0
 const RIGHT_PANEL_CONTROL_GAP := 6
 const RIGHT_PANEL_TEXT_FONT_SIZE := 10
-const LEFT_LOG_VERTICAL_BIAS := -16.0
+const LEFT_LOG_VERTICAL_BIAS := -112.0
 const CENTER_ACTION_FONT_SIZE := 12
 
 func _is_turn_choice_pending() -> bool:
@@ -882,6 +893,9 @@ func _promote_transient_ui(control: Control, overlay_z_index: int = TRANSIENT_UI
 
 func _is_pause_menu_open() -> bool:
 	return _pause_menu_overlay != null and is_instance_valid(_pause_menu_overlay)
+
+func _is_reinforcement_overlay_open() -> bool:
+	return _reinforcement_overlay != null and is_instance_valid(_reinforcement_overlay)
 
 func _is_settings_menu_open() -> bool:
 	return _settings_menu_panel != null and is_instance_valid(_settings_menu_panel) and _settings_menu_panel.visible
@@ -7302,6 +7316,9 @@ func _hide_hand_hover_preview() -> void:
 	_hand_hover_preview_keywords = null
 
 func _show_hand_hover_preview(vc: VisualCard) -> void:
+	if _is_reinforcement_overlay_open():
+		_hide_hand_hover_preview()
+		return
 	if vc == null or not is_instance_valid(vc) or vc.card_data == null:
 		return
 	if vc == _hand_hover_vc and _hand_hover_preview != null and is_instance_valid(_hand_hover_preview):
@@ -7390,6 +7407,9 @@ func _position_hand_hover_preview() -> void:
 	preview.visible = true
 
 func _refresh_hand_hover_from_mouse() -> void:
+	if _is_reinforcement_overlay_open():
+		_hide_hand_hover_preview()
+		return
 	if _is_pause_menu_open():
 		_hide_hand_hover_preview()
 		return
@@ -7414,6 +7434,9 @@ func _on_hand_hover_preview_gui_input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 
 func _update_hand_hover_preview() -> void:
+	if _is_reinforcement_overlay_open():
+		_hide_hand_hover_preview()
+		return
 	if _hand_visual_cards.is_empty() and _enemy_hand_visual_cards.is_empty():
 		_hide_hand_hover_preview()
 		return
@@ -18967,6 +18990,9 @@ func _input(event: InputEvent) -> void:
 		return
 	if _try_handle_hand_creature_drag_preview_modifier(event):
 		return
+	if _try_handle_reinforcement_card_drag_input(event):
+		get_viewport().set_input_as_handled()
+		return
 	if event is InputEventMouseButton:
 		var mouse_button_event := event as InputEventMouseButton
 		if mouse_button_event.pressed and mouse_button_event.button_index == MOUSE_BUTTON_RIGHT \
@@ -21355,7 +21381,7 @@ func _on_priority_response_chosen(card: Card) -> void:
 
 func _finish_post_execute(source_player: Player) -> void:
 	game_manager.current_phase = GameManager.GamePhase.MAIN
-	# Auto-fizzle any ATTACK on the stack whose attacker is no longer on the board
+	# Auto-fizzle any ATTACK on the stack whose attacker is no longer on the frontline
 	while not game_manager.action_stack.is_empty():
 		var next: CardAction = game_manager.action_stack.back()
 		if next.type == CardAction.Type.ATTACK and not _is_attacker_on_board(next.attacker, next.source_player):
@@ -25887,10 +25913,7 @@ func _find_nearest_empty_friendly_zone(drop_pos: Vector2) -> Zone:
 func _is_attacker_on_board(attacker: Card, owning_player: Player) -> bool:
 	if attacker == null or owning_player == null:
 		return false
-	for z in owning_player.frontline_zones + owning_player.reserve_zones:
-		if attacker in z.cards:
-			return true
-	return false
+	return attacker.current_zone != null and attacker.current_zone.zone_type == Zone.ZoneType.FRONTLINE
 
 func _on_draw_button_pressed() -> void:
 	if _game_finished:
@@ -26330,6 +26353,11 @@ func _hide_game_result_overlay() -> void:
 	_game_result_overlay = null
 
 func _hide_reinforcement_overlay() -> void:
+	_cleanup_reinforcement_drag_ghost()
+	_hide_reinforcement_hover_popup()
+	_reinforcement_drag_card_name = ""
+	_reinforcement_drag_source_zone = ""
+	_reinforcement_drag_active = false
 	if _reinforcement_overlay != null and is_instance_valid(_reinforcement_overlay):
 		_reinforcement_overlay.queue_free()
 	_reinforcement_overlay = null
@@ -26348,6 +26376,7 @@ func _hide_reinforcement_overlay() -> void:
 func _show_reinforcement_phase(data: Dictionary) -> void:
 	_hide_game_result_overlay()
 	_hide_reinforcement_overlay()
+	_hide_hand_hover_preview()
 	_game_finished = true
 	_game_result_presented = false
 	_series_between_games_active = true
@@ -26367,7 +26396,7 @@ func _show_reinforcement_phase(data: Dictionary) -> void:
 	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
 	add_child(overlay)
-	_promote_transient_ui(overlay, TRANSIENT_UI_Z_INDEX + 125)
+	_promote_transient_ui(overlay, REINFORCEMENT_OVERLAY_Z_INDEX)
 	_reinforcement_overlay = overlay
 
 	var panel := PanelContainer.new()
@@ -26478,6 +26507,8 @@ func _show_reinforcement_phase(data: Dictionary) -> void:
 	box.add_child(actions)
 	_reinforcement_submit_button = Button.new()
 	_reinforcement_submit_button.text = "Lock In"
+	_reinforcement_submit_button.custom_minimum_size = Vector2(180, 48)
+	_reinforcement_submit_button.add_theme_font_size_override("font_size", 22)
 	_reinforcement_submit_button.pressed.connect(_submit_reinforcement_changes)
 	actions.add_child(_reinforcement_submit_button)
 	_refresh_reinforcement_options()
@@ -26549,6 +26580,7 @@ func _refresh_reinforcement_options() -> void:
 func _refresh_reinforcement_visual_options() -> void:
 	if _reinforcement_main_grid == null or _reinforcement_side_list == null:
 		return
+	_hide_reinforcement_hover_popup()
 	for child in _reinforcement_main_grid.get_children():
 		child.queue_free()
 	for child in _reinforcement_side_list.get_children():
@@ -26561,9 +26593,16 @@ func _refresh_reinforcement_visual_options() -> void:
 		if card == null or card.is_god or int(_reinforcement_main_cards.get(card_name, 0)) <= 0:
 			continue
 		var tile = ReinforcementCardTileScript.new()
-		tile.setup(card, int(_reinforcement_main_cards[card_name]), "main", false)
+		tile.drag_enabled = not _reinforcement_locked
+		tile.adjust_enabled = not _reinforcement_locked
+		tile.custom_drag_signal_enabled = true
+		tile.setup(card, int(_reinforcement_main_cards[card_name]), "main", false, int(_reinforcement_side_cards.get(card_name, 0)))
 		tile.drag_enabled = not _reinforcement_locked
 		tile.card_dropped.connect(_on_reinforcement_card_dropped)
+		tile.card_adjust_requested.connect(_on_reinforcement_card_adjust_requested)
+		tile.card_drag_started.connect(_on_reinforcement_card_drag_started)
+		tile.card_hover_started.connect(_on_reinforcement_card_hover_started)
+		tile.card_hover_ended.connect(_on_reinforcement_card_hover_ended)
 		_reinforcement_main_grid.add_child(tile)
 	var side_names: Array = _reinforcement_side_cards.keys()
 	side_names.sort()
@@ -26575,9 +26614,16 @@ func _refresh_reinforcement_visual_options() -> void:
 		if card == null:
 			continue
 		var tile = ReinforcementCardTileScript.new()
-		tile.setup(card, int(_reinforcement_side_cards[card_name]), "side", true)
+		tile.drag_enabled = not _reinforcement_locked
+		tile.adjust_enabled = not _reinforcement_locked
+		tile.custom_drag_signal_enabled = true
+		tile.setup(card, int(_reinforcement_side_cards[card_name]), "side", true, int(_reinforcement_main_cards.get(card_name, 0)))
 		tile.drag_enabled = not _reinforcement_locked
 		tile.card_dropped.connect(_on_reinforcement_card_dropped)
+		tile.card_adjust_requested.connect(_on_reinforcement_card_adjust_requested)
+		tile.card_drag_started.connect(_on_reinforcement_card_drag_started)
+		tile.card_hover_started.connect(_on_reinforcement_card_hover_started)
+		tile.card_hover_ended.connect(_on_reinforcement_card_hover_ended)
 		_reinforcement_side_list.add_child(tile)
 	if _reinforcement_main_drop_area != null:
 		_reinforcement_main_drop_area.drag_enabled = not _reinforcement_locked
@@ -26644,6 +26690,120 @@ func _get_reinforcement_special_setup() -> Dictionary:
 		return (special_setup as Dictionary).duplicate(true)
 	return {}
 
+func _on_reinforcement_card_hover_started(card_name: String, _source_zone: String, tile: Control) -> void:
+	if not _is_reinforcement_overlay_open() or tile == null or not is_instance_valid(tile):
+		return
+	if not _reinforcement_drag_card_name.is_empty():
+		return
+	card_name = card_name.strip_edges()
+	if card_name.is_empty():
+		return
+	var card := CardCatalog.instantiate_card_by_name(card_name)
+	if card == null:
+		return
+	var viewer: Player = game_manager.get_feedback_viewer() if game_manager != null else null
+	if card.card_owner == null and viewer != null:
+		card.card_owner = viewer
+	_show_reinforcement_hover_popup(card, viewer, tile)
+
+func _on_reinforcement_card_hover_ended(_card_name: String, _source_zone: String, tile: Control) -> void:
+	if tile == _reinforcement_hover_tile:
+		_hide_reinforcement_hover_popup()
+
+func _hide_reinforcement_hover_popup() -> void:
+	if _reinforcement_hover_popup != null and is_instance_valid(_reinforcement_hover_popup):
+		_reinforcement_hover_popup.queue_free()
+	_reinforcement_hover_popup = null
+	_reinforcement_hover_tile = null
+
+func _show_reinforcement_hover_popup(card: Card, viewer: Player, tile: Control) -> void:
+	_hide_reinforcement_hover_popup()
+	if card == null or tile == null or not is_instance_valid(tile):
+		return
+	var popup_root := Control.new()
+	popup_root.name = "ReinforcementCardHoverPopup"
+	popup_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	popup_root.top_level = true
+	popup_root.z_as_relative = false
+	popup_root.z_index = REINFORCEMENT_HOVER_Z_INDEX
+
+	var popup := PanelContainer.new()
+	popup.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.08, 0.08, 0.14, 0.97)
+	style.border_color = Color(0.5, 0.7, 1.0, 0.95)
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		style.set_border_width(side as Side, 1)
+	style.corner_radius_top_left = 5
+	style.corner_radius_top_right = 5
+	style.corner_radius_bottom_left = 5
+	style.corner_radius_bottom_right = 5
+	style.content_margin_left = 8
+	style.content_margin_right = 8
+	style.content_margin_top = 7
+	style.content_margin_bottom = 7
+	popup.add_theme_stylebox_override("panel", style)
+	popup.add_child(CardDetailContentBuilderScript.build_board_popup_body_from_game_state(
+		card,
+		viewer,
+		game_manager,
+		{"show_listed_costs": true}
+	))
+	popup_root.add_child(popup)
+
+	var keywords_panel: Control = null
+	var keywords := CardDetailContentBuilderScript.extract_card_keywords(card)
+	if not keywords.is_empty():
+		keywords_panel = CardDetailContentBuilderScript.build_keywords_panel(keywords)
+		popup_root.add_child(keywords_panel)
+
+	add_child(popup_root)
+	_promote_transient_ui(popup_root, REINFORCEMENT_HOVER_Z_INDEX)
+	_reinforcement_hover_popup = popup_root
+	_reinforcement_hover_tile = tile
+	await get_tree().process_frame
+	if not is_instance_valid(popup_root) or not is_instance_valid(popup) or not is_instance_valid(tile):
+		return
+	_position_reinforcement_hover_popup(tile, popup_root, popup, keywords_panel)
+
+func _position_reinforcement_hover_popup(tile: Control, popup_root: Control, popup: Control, keywords_panel: Control) -> void:
+	if tile == null or popup_root == null or popup == null:
+		return
+	if not is_instance_valid(tile) or not is_instance_valid(popup_root) or not is_instance_valid(popup):
+		return
+	var viewport_size := get_viewport_rect().size
+	var gap := 8.0
+	var popup_size := popup.get_combined_minimum_size()
+	popup.size = popup_size
+	popup.position = Vector2.ZERO
+	var keyword_size := Vector2.ZERO
+	if keywords_panel != null and is_instance_valid(keywords_panel):
+		keyword_size = keywords_panel.get_combined_minimum_size()
+		keywords_panel.size = keyword_size
+	var total_size := Vector2(
+		popup_size.x + (keyword_size.x + gap if keyword_size.x > 0.0 else 0.0),
+		maxf(popup_size.y, keyword_size.y)
+	)
+	var tile_rect := tile.get_global_rect()
+	var show_left := false
+	if keyword_size.x > 0.0:
+		var room_right := viewport_size.x - (tile_rect.end.x + gap + total_size.x) - 4.0
+		var room_left := tile_rect.position.x - gap - total_size.x - 4.0
+		show_left = room_right < 0.0 and room_left > room_right
+		if show_left:
+			keywords_panel.position = Vector2.ZERO
+			popup.position = Vector2(keyword_size.x + gap, 0.0)
+		else:
+			popup.position = Vector2.ZERO
+			keywords_panel.position = Vector2(popup_size.x + gap, 0.0)
+	var px := tile_rect.end.x + gap
+	if px + total_size.x > viewport_size.x - 4.0:
+		px = tile_rect.position.x - total_size.x - gap
+	px = clampf(px, 4.0, maxf(4.0, viewport_size.x - total_size.x - 4.0))
+	var py := clampf(tile_rect.position.y, 4.0, maxf(4.0, viewport_size.y - total_size.y - 4.0))
+	popup_root.size = total_size
+	popup_root.global_position = Vector2(px, py)
+
 func _on_reinforcement_card_dropped(card_name: String, from_zone: String, to_zone: String) -> void:
 	if _reinforcement_locked:
 		return
@@ -26660,6 +26820,127 @@ func _on_reinforcement_card_dropped(card_name: String, from_zone: String, to_zon
 	else:
 		return
 	_refresh_reinforcement_options()
+
+func _on_reinforcement_card_adjust_requested(card_name: String, source_zone: String, direction: int) -> void:
+	if _reinforcement_locked:
+		return
+	var from_zone := source_zone
+	var to_zone := "side" if source_zone == "main" else "main"
+	if direction > 0:
+		from_zone = to_zone
+		to_zone = source_zone
+	_on_reinforcement_card_dropped(card_name, from_zone, to_zone)
+
+func _on_reinforcement_card_drag_started(card_name: String, source_zone: String, mouse_global_position: Vector2) -> void:
+	if _reinforcement_locked:
+		return
+	_hide_reinforcement_hover_popup()
+	_reinforcement_drag_card_name = card_name.strip_edges()
+	if _reinforcement_drag_card_name.is_empty():
+		return
+	_reinforcement_drag_source_zone = source_zone
+	_reinforcement_drag_start_pos = mouse_global_position
+	_reinforcement_drag_active = false
+	_reinforcement_drag_offset = Vector2(86, 118) if source_zone == "main" else Vector2(125, 31)
+
+func _try_handle_reinforcement_card_drag_input(event: InputEvent) -> bool:
+	if _reinforcement_drag_card_name.is_empty():
+		return false
+	if event is InputEventMouseMotion:
+		var motion := event as InputEventMouseMotion
+		if motion.global_position.distance_to(_reinforcement_drag_start_pos) >= 8.0:
+			_reinforcement_drag_active = true
+		if _reinforcement_drag_active:
+			_ensure_reinforcement_drag_ghost(motion.global_position)
+			return true
+		return false
+	if event is InputEventMouseButton:
+		var mouse_event := event as InputEventMouseButton
+		if mouse_event.button_index == MOUSE_BUTTON_LEFT and not mouse_event.pressed:
+			_finish_reinforcement_card_drag(mouse_event.global_position)
+			return true
+	return false
+
+func _finish_reinforcement_card_drag(mouse_global_position: Vector2) -> void:
+	var card_name := _reinforcement_drag_card_name
+	var source_zone := _reinforcement_drag_source_zone
+	var was_dragging := _reinforcement_drag_active
+	_reinforcement_drag_card_name = ""
+	_reinforcement_drag_source_zone = ""
+	_reinforcement_drag_active = false
+	_cleanup_reinforcement_drag_ghost()
+	if card_name.is_empty() or not was_dragging:
+		return
+	var target_zone := _get_reinforcement_drop_zone(mouse_global_position)
+	if target_zone.is_empty() or target_zone == source_zone:
+		return
+	_on_reinforcement_card_dropped(card_name, source_zone, target_zone)
+
+func _get_reinforcement_drop_zone(mouse_global_position: Vector2) -> String:
+	if _reinforcement_main_drop_area != null \
+			and is_instance_valid(_reinforcement_main_drop_area) \
+			and (_reinforcement_main_drop_area as Control).get_global_rect().has_point(mouse_global_position):
+		return "main"
+	if _reinforcement_side_drop_area != null \
+			and is_instance_valid(_reinforcement_side_drop_area) \
+			and (_reinforcement_side_drop_area as Control).get_global_rect().has_point(mouse_global_position):
+		return "side"
+	return ""
+
+func _ensure_reinforcement_drag_ghost(mouse_global_position: Vector2) -> void:
+	if _reinforcement_drag_card_name.is_empty():
+		return
+	if is_instance_valid(_reinforcement_drag_ghost):
+		_update_reinforcement_drag_ghost_position(mouse_global_position)
+		return
+	var card := CardCatalog.instantiate_card_by_name(_reinforcement_drag_card_name)
+	if card == null:
+		return
+	var compact := _reinforcement_drag_source_zone == "side"
+	var ghost := PanelContainer.new()
+	ghost.name = "ReinforcementCardDragGhost"
+	ghost.top_level = true
+	ghost.z_index = REINFORCEMENT_DRAG_Z_INDEX
+	ghost.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ghost.modulate = Color(1.0, 1.0, 1.0, 0.88)
+	ghost.custom_minimum_size = Vector2(172, 236) if not compact else Vector2(250, 62)
+	ghost.size = ghost.custom_minimum_size
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.055, 0.065, 0.08, 0.96)
+	style.border_color = Color(0.38, 0.58, 0.82, 1.0) if not compact else Color(0.78, 0.62, 0.30, 1.0)
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		style.set_border_width(side as Side, 2)
+	ghost.add_theme_stylebox_override("panel", style)
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 4)
+	ghost.add_child(box)
+	var title := Label.new()
+	title.text = str(card.card_name)
+	title.clip_text = true
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.add_child(title)
+	var art := TextureRect.new()
+	art.custom_minimum_size = Vector2(154, 172) if not compact else Vector2(220, 38)
+	art.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	if not str(card.art_path).strip_edges().is_empty():
+		art.texture = load(str(card.art_path))
+	box.add_child(art)
+	add_child(ghost)
+	_reinforcement_drag_ghost = ghost
+	_promote_transient_ui(ghost, REINFORCEMENT_DRAG_Z_INDEX)
+	_update_reinforcement_drag_ghost_position(mouse_global_position)
+
+func _update_reinforcement_drag_ghost_position(mouse_global_position: Vector2) -> void:
+	if not is_instance_valid(_reinforcement_drag_ghost):
+		return
+	_reinforcement_drag_ghost.global_position = mouse_global_position - _reinforcement_drag_offset
+
+func _cleanup_reinforcement_drag_ghost() -> void:
+	if is_instance_valid(_reinforcement_drag_ghost):
+		_reinforcement_drag_ghost.queue_free()
+	_reinforcement_drag_ghost = null
 
 func _set_reinforcement_locked(locked: bool) -> void:
 	_reinforcement_locked = locked

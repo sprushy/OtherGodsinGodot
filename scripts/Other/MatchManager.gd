@@ -1412,24 +1412,24 @@ func _resolve_attack(action: CardAction) -> void:
 
 	game_manager.current_phase = GameManager.GamePhase.COMBAT
 	var actual_target = action.interceptor if action.interceptor != null else action.target
-	var attacker_on_board := action.attacker.current_zone != null and action.attacker.current_zone.is_board_zone()
-	var partner_on_board := action.united_front_partner != null \
+	var attacker_on_frontline := _is_attacker_still_on_frontline(action.attacker)
+	var partner_on_frontline := action.united_front_partner != null \
 		and action.united_front_partner.current_zone != null \
-		and action.united_front_partner.current_zone.is_board_zone()
+		and action.united_front_partner.current_zone.zone_type == Zone.ZoneType.FRONTLINE
 
-	if not attacker_on_board and not partner_on_board:
+	if not attacker_on_frontline and not partner_on_frontline:
 		if actual_target is Card:
 			game_manager._clear_combat_engagement_state(actual_target)
-		last_resolution_text = action.attacker.card_name + "'s attack fizzles — attacker is no longer on the board."
+		last_resolution_text = action.attacker.card_name + "'s attack fizzles — attacker is no longer on the frontline."
 		return
 
 	if actual_target is Card and actual_target.current_zone != null and actual_target.current_zone.is_board_zone():
-		if attacker_on_board:
+		if attacker_on_frontline:
 			game_manager._begin_declared_combat(action.attacker, actual_target)
-		if partner_on_board:
+		if partner_on_frontline:
 			game_manager._begin_declared_combat(action.united_front_partner, actual_target)
 
-	if attacker_on_board:
+	if attacker_on_frontline:
 		action.attacker.mark_attacked_this_turn()
 
 	if actual_target is Card:
@@ -1680,12 +1680,12 @@ func _resolve_creature_combat_now(
 		return
 	var attacker_on_board := attacker != null \
 		and attacker.current_zone != null \
-		and attacker.current_zone.is_board_zone()
+		and attacker.current_zone.zone_type == Zone.ZoneType.FRONTLINE
 	var partner_on_board := partner != null \
 		and partner.current_zone != null \
-		and partner.current_zone.is_board_zone()
+		and partner.current_zone.zone_type == Zone.ZoneType.FRONTLINE
 	if not has_committed_snapshot and not attacker_on_board and not partner_on_board:
-		last_resolution_text = "The attack fizzles - no attacker remains on the board."
+		last_resolution_text = "The attack fizzles - no attacker remains on the frontline."
 		if completion_callback.is_valid():
 			completion_callback.call()
 		return
@@ -1703,6 +1703,11 @@ func _resolve_creature_combat_now(
 		if action.interceptor != null:
 			game_manager.record_interception(action.interceptor)
 		game_manager.resolve_combat_with_continuation(attacker, target, wrapped_finish, action.interceptor != null)
+
+func _is_attacker_still_on_frontline(attacker: Card) -> bool:
+	return attacker != null \
+		and attacker.current_zone != null \
+		and attacker.current_zone.zone_type == Zone.ZoneType.FRONTLINE
 
 ## Returns any Askelladen cards in the combat that qualify for Tactical Retreat.
 func _get_retreat_candidates(attacker: Card, defender: Card, _turn_player: Player) -> Array:

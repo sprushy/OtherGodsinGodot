@@ -508,8 +508,8 @@ func _layout_startup_splash_background(force_entry_offsets: bool = false) -> voi
 func _get_startup_splash_draw_rect(texture_size: Vector2, available_size: Vector2) -> Rect2:
 	if texture_size.x <= 0.0 or texture_size.y <= 0.0 or available_size.x <= 0.0 or available_size.y <= 0.0:
 		return Rect2(Vector2.ZERO, available_size)
-	var scale := maxf(available_size.x / texture_size.x, available_size.y / texture_size.y)
-	var scaled_size := texture_size * scale
+	var fit_scale := maxf(available_size.x / texture_size.x, available_size.y / texture_size.y)
+	var scaled_size := texture_size * fit_scale
 	return Rect2((available_size - scaled_size) * 0.5, scaled_size)
 
 func _get_startup_splash_entry_y(target_position: Vector2, target_size: Vector2, slice_index: int) -> float:
@@ -3397,9 +3397,9 @@ func _get_file_size(path: String) -> int:
 	var file := FileAccess.open(path, FileAccess.READ)
 	if file == null:
 		return -1
-	var size := file.get_length()
+	var file_size := file.get_length()
 	file.close()
-	return size
+	return file_size
 
 func _write_update_log(message: String) -> void:
 	var timestamp := Time.get_datetime_string_from_system()

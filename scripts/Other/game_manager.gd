@@ -181,10 +181,10 @@ func _action_is_stale(action: CardAction) -> bool:
 		CardAction.Type.ATTACK:
 			var attacker_active := action.attacker != null \
 				and action.attacker.current_zone != null \
-				and action.attacker.current_zone.is_board_zone()
+				and action.attacker.current_zone.zone_type == Zone.ZoneType.FRONTLINE
 			var partner_active := action.united_front_partner != null \
 				and action.united_front_partner.current_zone != null \
-				and action.united_front_partner.current_zone.is_board_zone()
+				and action.united_front_partner.current_zone.zone_type == Zone.ZoneType.FRONTLINE
 			return not attacker_active and not partner_active
 		CardAction.Type.SPELL, CardAction.Type.ABILITY, CardAction.Type.CHARM:
 			if action.card == null or action.card.current_zone == null:

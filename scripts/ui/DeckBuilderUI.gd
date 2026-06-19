@@ -10,6 +10,8 @@ const DeckValidatorScript = preload("res://scripts/server/DeckValidator.gd")
 const TiamatScript = preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
 const CardArtVariantsScript = preload("res://scripts/core/CardArtVariants.gd")
 const LevelSymbolRowScript = preload("res://scripts/ui/LevelSymbolRow.gd")
+const ReinforcementCardTileScript = preload("res://scripts/ui/ReinforcementCardTile.gd")
+const ReinforcementDropAreaScript = preload("res://scripts/ui/ReinforcementDropArea.gd")
 const MANA_ORB_TEXTURE := preload("res://images/ui/ManaOrb.png")
 
 signal back_pressed
@@ -95,6 +97,7 @@ var _validation_lbl:   Label
 var _profile_lbl:      Label
 var _deck_name_edit:   LineEdit
 var _reinforcements_mode_btn: Button
+var _visual_deck_view_btn: Button
 var _saved_decks_option: OptionButton
 var _saved_decks_view_btn: Button
 var _saved_actions_bar: HBoxContainer
@@ -102,6 +105,7 @@ var _deck_scroll_nav_bar: HBoxContainer
 var _deck_scroll_up_btn: Button
 var _deck_scroll_down_btn: Button
 var _deck_footer_buttons: HFlowContainer
+var _autofill_deck_btn: Button
 var _delete_confirm_dialog: ConfirmationDialog
 var _exit_confirm_dialog: ConfirmationDialog
 var _import_deck_dialog: ConfirmationDialog
@@ -157,6 +161,20 @@ var _deck_row_drag_offset: Vector2 = Vector2.ZERO
 var _deck_row_drag_ghost: Control = null
 var _main_deck_section_header: Control = null
 var _reinforcement_section_header: Control = null
+var _visual_deck_view_enabled: bool = false
+var _deck_visual_board: HBoxContainer = null
+var _deck_visual_main_grid: GridContainer = null
+var _deck_visual_side_list: VBoxContainer = null
+var _deck_visual_main_scroll: ScrollContainer = null
+var _deck_visual_side_scroll: ScrollContainer = null
+var _deck_visual_main_drop_area = null
+var _deck_visual_side_drop_area = null
+var _visual_deck_drag_card: Card = null
+var _visual_deck_drag_source_zone: String = ""
+var _visual_deck_drag_start_pos: Vector2 = Vector2.ZERO
+var _visual_deck_drag_active: bool = false
+var _visual_deck_drag_offset: Vector2 = Vector2.ZERO
+var _visual_deck_drag_ghost: Control = null
 var _show_collection_card_overlays: bool = false
 var _saved_deck_state: Dictionary = {}
 
@@ -700,6 +718,12 @@ func _build_deck_panel(parent: Control) -> void:
 	_reinforcements_mode_btn.pressed.connect(_toggle_reinforcements_edit_mode)
 	deck_name_row.add_child(_reinforcements_mode_btn)
 
+	_visual_deck_view_btn = Button.new()
+	_visual_deck_view_btn.text = "Visual View"
+	_visual_deck_view_btn.tooltip_text = "Toggle a visual Main Deck + Reinforcements deck view."
+	_visual_deck_view_btn.pressed.connect(_toggle_visual_deck_view)
+	deck_name_row.add_child(_visual_deck_view_btn)
+
 	_saved_decks_option = OptionButton.new()
 	_saved_decks_option.visible = false
 	_saved_decks_option.item_selected.connect(_on_saved_deck_selected)
@@ -795,6 +819,7 @@ func _build_deck_panel(parent: Control) -> void:
 	panel.add_child(btns)
 
 	var autofill_btn := Button.new()
+	_autofill_deck_btn = autofill_btn
 	autofill_btn.text = "Auto Fill"
 	autofill_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	autofill_btn.pressed.connect(_autofill_deck_to_minimum)
@@ -1308,14 +1333,18 @@ func _make_card_item(card: Card) -> Control:
 
 	# Name bar (bottom 22%)
 	var name_bg := ColorRect.new()
+	name_bg.name = "NameBar"
 	name_bg.color = Color(0.0, 0.0, 0.0, 0.80)
 	name_bg.anchor_left = 0; name_bg.anchor_right = 1
 	name_bg.anchor_top  = 1; name_bg.anchor_bottom = 1
 	name_bg.offset_top  = -42; name_bg.offset_bottom = 0
 	name_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	name_bg.visible = not card.is_god
+	name_bg.set_meta("hover_only", card.is_god)
 
 	var name_lbl := Label.new()
-	name_lbl.add_theme_font_size_override("font_size", 13)
+	name_lbl.name = "NameLabel"
+	name_lbl.add_theme_font_size_override("font_size", 15 if card.is_god else 13)
 	name_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	name_lbl.vertical_alignment   = VERTICAL_ALIGNMENT_CENTER
 	name_lbl.autowrap_mode        = TextServer.AUTOWRAP_WORD_SMART
@@ -1324,6 +1353,8 @@ func _make_card_item(card: Card) -> Control:
 	name_lbl.offset_top   = -42; name_lbl.offset_bottom = 0
 	name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	name_lbl.text = card.get_display_name_for_control(name_lbl)
+	name_lbl.visible = not card.is_god
+	name_lbl.set_meta("hover_only", card.is_god)
 	card_body.add_child(name_bg)
 	card_body.add_child(name_lbl)
 
@@ -1351,20 +1382,21 @@ func _make_card_item(card: Card) -> Control:
 		card_body.add_child(hover_stats_strip)
 
 	# Count badge (bottom-right, overlaid on name bar)
-	var count_lbl := Label.new()
-	count_lbl.text = ""
-	count_lbl.add_theme_font_size_override("font_size", 14)
-	count_lbl.add_theme_color_override("font_color", Color(1.0, 0.9, 0.3))
-	count_lbl.anchor_right  = 1; count_lbl.anchor_left  = 1
-	count_lbl.anchor_bottom = 1; count_lbl.anchor_top   = 1
-	count_lbl.offset_left   = -72; count_lbl.offset_right  = -4
-	count_lbl.offset_top    = -36; count_lbl.offset_bottom = -4
-	count_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	count_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	count_lbl.clip_text = true
-	count_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	card_body.add_child(count_lbl)
-	_count_badges[card.card_name] = count_lbl
+	if not card.is_god:
+		var count_lbl := Label.new()
+		count_lbl.text = ""
+		count_lbl.add_theme_font_size_override("font_size", 14)
+		count_lbl.add_theme_color_override("font_color", Color(1.0, 0.9, 0.3))
+		count_lbl.anchor_right  = 1; count_lbl.anchor_left  = 1
+		count_lbl.anchor_bottom = 1; count_lbl.anchor_top   = 1
+		count_lbl.offset_left   = -72; count_lbl.offset_right  = -4
+		count_lbl.offset_top    = -36; count_lbl.offset_bottom = -4
+		count_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		count_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		count_lbl.clip_text = true
+		count_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		card_body.add_child(count_lbl)
+		_count_badges[card.card_name] = count_lbl
 
 	# Dim overlay (filled when at max copies)
 	var dim := ColorRect.new()
@@ -1913,6 +1945,14 @@ func _set_collection_card_overlay_state(root: Control, hovered: bool) -> void:
 	var hover_stats_strip := root.find_child("HoverStatsStrip", true, false)
 	if hover_stats_strip is Control:
 		(hover_stats_strip as Control).visible = overlays_visible
+	var name_bar := root.find_child("NameBar", true, false)
+	if name_bar is Control:
+		var hover_only := bool((name_bar as Control).get_meta("hover_only", false))
+		(name_bar as Control).visible = hovered if hover_only else true
+	var name_label := root.find_child("NameLabel", true, false)
+	if name_label is Control:
+		var hover_only := bool((name_label as Control).get_meta("hover_only", false))
+		(name_label as Control).visible = hovered if hover_only else true
 
 func _set_show_collection_card_overlays(enabled: bool) -> void:
 	if _show_collection_card_overlays == enabled:
@@ -1938,6 +1978,19 @@ func _refresh_deck_panel(rebuild_collection: bool = false, refresh_layout: bool 
 	var reinforcement_total := _count_cards_in_dictionary(_reinforcements)
 	if _deck_count_lbl != null:
 		_deck_count_lbl.text = "%d main + %d Reinforcements" % [total, reinforcement_total]
+	if _visual_deck_view_enabled:
+		_build_visual_deck_panel_contents()
+		_refresh_tiamat_panel()
+		_update_validation()
+		if rebuild_collection:
+			_rebuild_filtered_cards_cache()
+			_refresh_grid()
+		_update_count_badges()
+		if refresh_layout:
+			_queue_responsive_layout_refresh()
+		call_deferred("_update_deck_scroll_nav_buttons")
+		call_deferred("_layout_visual_deck_view")
+		return
 
 	# Sort: gods → creatures → spells → structures → hexes, then alphabetical
 	var in_deck_filter := func(c: Card) -> bool:
@@ -2008,6 +2061,339 @@ func _refresh_deck_panel(rebuild_collection: bool = false, refresh_layout: bool 
 	if refresh_layout:
 		_queue_responsive_layout_refresh()
 	call_deferred("_update_deck_scroll_nav_buttons")
+
+func _build_visual_deck_panel_contents() -> void:
+	_deck_visual_board = null
+	_deck_visual_main_grid = null
+	_deck_visual_side_list = null
+	_deck_visual_main_scroll = null
+	_deck_visual_side_scroll = null
+	_deck_visual_main_drop_area = null
+	_deck_visual_side_drop_area = null
+
+	var board := HBoxContainer.new()
+	_deck_visual_board = board
+	board.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	board.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	board.custom_minimum_size.y = 520.0
+	board.add_theme_constant_override("separation", 16)
+	_deck_list.add_child(board)
+
+	_deck_visual_main_drop_area = ReinforcementDropAreaScript.new()
+	_deck_visual_main_drop_area.setup("main")
+	_deck_visual_main_drop_area.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_deck_visual_main_drop_area.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_deck_visual_main_drop_area.card_dropped.connect(_on_visual_deck_card_dropped)
+	_deck_visual_main_drop_area.resized.connect(_queue_visual_deck_layout_refresh)
+	board.add_child(_deck_visual_main_drop_area)
+
+	var main_box := VBoxContainer.new()
+	main_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	main_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	main_box.add_theme_constant_override("separation", 8)
+	_deck_visual_main_drop_area.add_child(main_box)
+
+	var main_header := Label.new()
+	_main_deck_section_header = main_header
+	main_header.text = _get_visual_main_header_text()
+	main_header.add_theme_font_size_override("font_size", 22)
+	main_header.add_theme_color_override("font_color", Color(0.95, 0.82, 0.38))
+	main_box.add_child(main_header)
+
+	var main_scroll := ScrollContainer.new()
+	_deck_visual_main_scroll = main_scroll
+	main_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	main_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	main_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	main_scroll.resized.connect(_queue_visual_deck_layout_refresh)
+	main_box.add_child(main_scroll)
+
+	_deck_visual_main_grid = GridContainer.new()
+	_deck_visual_main_grid.columns = 5
+	_deck_visual_main_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_deck_visual_main_grid.add_theme_constant_override("h_separation", 10)
+	_deck_visual_main_grid.add_theme_constant_override("v_separation", 12)
+	main_scroll.add_child(_deck_visual_main_grid)
+
+	_deck_visual_side_drop_area = ReinforcementDropAreaScript.new()
+	_deck_visual_side_drop_area.setup("side")
+	_deck_visual_side_drop_area.custom_minimum_size = Vector2(315, 0)
+	_deck_visual_side_drop_area.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_deck_visual_side_drop_area.card_dropped.connect(_on_visual_deck_card_dropped)
+	_deck_visual_side_drop_area.resized.connect(_queue_visual_deck_layout_refresh)
+	board.add_child(_deck_visual_side_drop_area)
+
+	var side_box := VBoxContainer.new()
+	side_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	side_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	side_box.add_theme_constant_override("separation", 8)
+	_deck_visual_side_drop_area.add_child(side_box)
+
+	var side_header := Label.new()
+	_reinforcement_section_header = side_header
+	side_header.text = _get_visual_reinforcement_header_text()
+	side_header.add_theme_font_size_override("font_size", 22)
+	side_header.add_theme_color_override("font_color", Color(0.48, 0.78, 1.0))
+	side_box.add_child(side_header)
+
+	var side_scroll := ScrollContainer.new()
+	_deck_visual_side_scroll = side_scroll
+	side_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	side_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	side_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	side_box.add_child(side_scroll)
+
+	_deck_visual_side_list = VBoxContainer.new()
+	_deck_visual_side_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_deck_visual_side_list.add_theme_constant_override("separation", 8)
+	side_scroll.add_child(_deck_visual_side_list)
+
+	_populate_visual_deck_tiles()
+	_queue_visual_deck_layout_refresh()
+
+func _queue_visual_deck_layout_refresh() -> void:
+	call_deferred("_layout_visual_deck_view")
+
+func _get_visual_main_header_text() -> String:
+	return "Main Deck  %d / %d regular" % [
+		_count_regular_cards_in_current_deck(),
+		MIN_REGULAR_CARDS,
+	]
+
+func _get_visual_reinforcement_header_text() -> String:
+	var regular_count := _count_regular_cards_in_current_deck()
+	var power_count := _count_powers_in_current_deck()
+	return "Reinforcements  %d / %d" % [
+		_count_cards_in_dictionary(_reinforcements),
+		DeckValidatorScript.get_reinforcement_limit(regular_count, power_count),
+	]
+
+func _populate_visual_deck_tiles() -> void:
+	if _deck_visual_main_grid == null or _deck_visual_side_list == null:
+		return
+	for child in _deck_visual_main_grid.get_children():
+		child.queue_free()
+	for child in _deck_visual_side_list.get_children():
+		child.queue_free()
+	for card in _get_sorted_cards_in_bucket(_deck):
+		var card_name := str(card.card_name)
+		var tile = ReinforcementCardTileScript.new()
+		tile.custom_drag_signal_enabled = true
+		tile.adjust_moves_between_zones = false
+		var can_add_to_main := 1 if _can_add_copy_to_visual_deck_zone(card, "main") else 0
+		tile.setup(card, int(_deck.get(card_name, 0)), "main", false, can_add_to_main)
+		tile.card_dropped.connect(_on_visual_deck_card_dropped)
+		tile.card_adjust_requested.connect(_on_visual_deck_card_adjust_requested)
+		tile.card_drag_started.connect(_on_visual_deck_card_drag_started)
+		tile.mouse_entered.connect(func() -> void: _show_preview(card))
+		_deck_visual_main_grid.add_child(tile)
+	for card in _get_sorted_cards_in_bucket(_reinforcements):
+		var card_name := str(card.card_name)
+		var tile = ReinforcementCardTileScript.new()
+		tile.custom_drag_signal_enabled = true
+		tile.adjust_moves_between_zones = false
+		var can_add_to_reinforcements := 1 if _can_add_copy_to_visual_deck_zone(card, "side") else 0
+		tile.setup(card, int(_reinforcements.get(card_name, 0)), "side", true, can_add_to_reinforcements)
+		tile.card_dropped.connect(_on_visual_deck_card_dropped)
+		tile.card_adjust_requested.connect(_on_visual_deck_card_adjust_requested)
+		tile.card_drag_started.connect(_on_visual_deck_card_drag_started)
+		tile.mouse_entered.connect(func() -> void: _show_preview(card))
+		_deck_visual_side_list.add_child(tile)
+
+func _get_sorted_cards_in_bucket(bucket: Dictionary) -> Array:
+	var cards: Array = _all_cards.filter(func(card: Card) -> bool:
+		return int(bucket.get(card.card_name, 0)) > 0
+	)
+	cards.sort_custom(func(a: Card, b: Card) -> bool:
+		var oa := _type_order(a)
+		var ob := _type_order(b)
+		if oa != ob:
+			return oa < ob
+		return _alphabetical_card_less(a, b)
+	)
+	return cards
+
+func _can_add_copy_to_visual_deck_zone(card: Card, zone: String) -> bool:
+	if card == null:
+		return false
+	if zone == "side" and card.is_god:
+		return false
+	var combined_count := int(_deck.get(card.card_name, 0)) + int(_reinforcements.get(card.card_name, 0))
+	if combined_count >= _max_copies(card):
+		return false
+	var god := _get_selected_god_template() as GodCard
+	if card is ActiveGodCard:
+		return god != null and god.get_active_god_deck_role(card as ActiveGodCard) == GodCard.ACTIVE_GOD_DECK_ROLE_ALLOWED
+	if god != null and not card.is_god and not _is_card_compatible_with_selected_god(card, god):
+		return false
+	if zone == "main":
+		if card.is_god:
+			return _can_add_god_to_current_deck(card)
+		if card.is_power:
+			return _can_add_power_to_current_deck(card)
+	return true
+
+func _on_visual_deck_card_dropped(card_name: String, from_zone: String, to_zone: String) -> void:
+	card_name = card_name.strip_edges()
+	if card_name.is_empty() or from_zone == to_zone:
+		return
+	var card := _find_template(card_name)
+	if card == null:
+		return
+	_move_one_card_between_deck_sections(card, from_zone == "side", to_zone == "side")
+
+func _on_visual_deck_card_adjust_requested(card_name: String, source_zone: String, direction: int) -> void:
+	var card := _find_template(card_name)
+	if direction < 0:
+		if source_zone == "side":
+			_remove_from_reinforcements(card_name)
+		else:
+			_remove_from_deck(card_name)
+		return
+	if card == null:
+		return
+	if source_zone == "side":
+		_add_to_reinforcements(card)
+	else:
+		_add_to_deck(card)
+
+func _on_visual_deck_card_drag_started(card_name: String, source_zone: String, mouse_global_position: Vector2) -> void:
+	var card := _find_template(card_name)
+	if card == null:
+		return
+	_visual_deck_drag_card = card
+	_visual_deck_drag_source_zone = source_zone
+	_visual_deck_drag_start_pos = mouse_global_position
+	_visual_deck_drag_active = false
+	_visual_deck_drag_offset = Vector2(86, 118) if source_zone == "main" else Vector2(125, 31)
+
+func _try_handle_visual_deck_card_drag_input(event: InputEvent) -> bool:
+	if _visual_deck_drag_card == null:
+		return false
+	if event is InputEventMouseMotion:
+		var motion := event as InputEventMouseMotion
+		if motion.global_position.distance_to(_visual_deck_drag_start_pos) >= COLLECTION_DRAG_THRESHOLD:
+			_visual_deck_drag_active = true
+		if _visual_deck_drag_active:
+			_ensure_visual_deck_drag_ghost(motion.global_position)
+			return true
+		return false
+	if event is InputEventMouseButton:
+		var mouse_event := event as InputEventMouseButton
+		if mouse_event.button_index == MOUSE_BUTTON_LEFT and not mouse_event.pressed:
+			_finish_visual_deck_card_drag(mouse_event.global_position)
+			return true
+	return false
+
+func _finish_visual_deck_card_drag(mouse_global_position: Vector2) -> void:
+	var card := _visual_deck_drag_card
+	var source_zone := _visual_deck_drag_source_zone
+	var was_dragging := _visual_deck_drag_active
+	_visual_deck_drag_card = null
+	_visual_deck_drag_source_zone = ""
+	_visual_deck_drag_active = false
+	_cleanup_visual_deck_drag_ghost()
+	if card == null or not was_dragging:
+		return
+	var target_zone := _get_visual_deck_drop_zone(mouse_global_position)
+	if target_zone.is_empty() or target_zone == source_zone:
+		return
+	_on_visual_deck_card_dropped(card.card_name, source_zone, target_zone)
+
+func _get_visual_deck_drop_zone(mouse_global_position: Vector2) -> String:
+	if _deck_visual_main_drop_area != null \
+			and is_instance_valid(_deck_visual_main_drop_area) \
+			and (_deck_visual_main_drop_area as Control).get_global_rect().has_point(mouse_global_position):
+		return "main"
+	if _deck_visual_side_drop_area != null \
+			and is_instance_valid(_deck_visual_side_drop_area) \
+			and (_deck_visual_side_drop_area as Control).get_global_rect().has_point(mouse_global_position):
+		return "side"
+	return ""
+
+func _ensure_visual_deck_drag_ghost(mouse_global_position: Vector2) -> void:
+	if _visual_deck_drag_card == null:
+		return
+	if is_instance_valid(_visual_deck_drag_ghost):
+		_update_visual_deck_drag_ghost_position(mouse_global_position)
+		return
+	var compact := _visual_deck_drag_source_zone == "side"
+	var ghost := PanelContainer.new()
+	ghost.name = "VisualDeckCardDragGhost"
+	ghost.top_level = true
+	ghost.z_index = 10000
+	ghost.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ghost.modulate = Color(1.0, 1.0, 1.0, 0.88)
+	ghost.custom_minimum_size = Vector2(172, 236) if not compact else Vector2(250, 62)
+	ghost.size = ghost.custom_minimum_size
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.055, 0.065, 0.08, 0.96)
+	style.border_color = Color(0.38, 0.58, 0.82, 1.0) if not compact else Color(0.78, 0.62, 0.30, 1.0)
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		style.set_border_width(side as Side, 2)
+	ghost.add_theme_stylebox_override("panel", style)
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 4)
+	ghost.add_child(box)
+	var title := Label.new()
+	title.text = _visual_deck_drag_card.get_display_name_for_control(title)
+	title.clip_text = true
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.add_child(title)
+	var art := TextureRect.new()
+	art.custom_minimum_size = Vector2(154, 172) if not compact else Vector2(220, 38)
+	art.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	var art_path := _get_selected_art_path(_visual_deck_drag_card)
+	if not art_path.is_empty():
+		art.texture = _get_card_art_texture(art_path)
+	box.add_child(art)
+	add_child(ghost)
+	_visual_deck_drag_ghost = ghost
+	_update_visual_deck_drag_ghost_position(mouse_global_position)
+
+func _update_visual_deck_drag_ghost_position(mouse_global_position: Vector2) -> void:
+	if not is_instance_valid(_visual_deck_drag_ghost):
+		return
+	_visual_deck_drag_ghost.global_position = mouse_global_position - _visual_deck_drag_offset
+
+func _cleanup_visual_deck_drag_ghost() -> void:
+	if is_instance_valid(_visual_deck_drag_ghost):
+		_visual_deck_drag_ghost.queue_free()
+	_visual_deck_drag_ghost = null
+
+func _layout_visual_deck_view() -> void:
+	if _deck_visual_main_grid == null or not is_instance_valid(_deck_visual_main_grid):
+		return
+	var available_height := 520.0
+	if is_instance_valid(_deck_scroll) and _deck_scroll.size.y > 0.0:
+		available_height = maxf(360.0, _deck_scroll.size.y - 28.0)
+	if _deck_visual_board != null and is_instance_valid(_deck_visual_board):
+		_deck_visual_board.custom_minimum_size.y = available_height
+	if _deck_visual_main_drop_area != null and is_instance_valid(_deck_visual_main_drop_area):
+		(_deck_visual_main_drop_area as Control).custom_minimum_size.y = available_height
+	if _deck_visual_side_drop_area != null and is_instance_valid(_deck_visual_side_drop_area):
+		(_deck_visual_side_drop_area as Control).custom_minimum_size.y = available_height
+	if _deck_visual_main_scroll != null and is_instance_valid(_deck_visual_main_scroll):
+		_deck_visual_main_scroll.custom_minimum_size.y = maxf(260.0, available_height - 54.0)
+	if _deck_visual_side_scroll != null and is_instance_valid(_deck_visual_side_scroll):
+		_deck_visual_side_scroll.custom_minimum_size.y = maxf(260.0, available_height - 54.0)
+	var available_width := 0.0
+	if _deck_visual_main_scroll != null and is_instance_valid(_deck_visual_main_scroll):
+		available_width = _deck_visual_main_scroll.size.x
+	if available_width <= 0.0 and _deck_visual_main_drop_area != null and is_instance_valid(_deck_visual_main_drop_area):
+		available_width = _deck_visual_main_drop_area.size.x
+	if available_width <= 0.0 and is_instance_valid(_deck_scroll):
+		var side_width := 315.0
+		if _deck_visual_side_drop_area != null and is_instance_valid(_deck_visual_side_drop_area):
+			side_width = maxf(side_width, (_deck_visual_side_drop_area as Control).get_combined_minimum_size().x)
+		available_width = maxf(0.0, _deck_scroll.size.x - side_width - 32.0)
+	if available_width <= 0.0:
+		return
+	var tile_width := 182.0
+	var desired_columns := clampi(int(floor((available_width + 10.0) / tile_width)), 2, 12)
+	_deck_visual_main_grid.columns = desired_columns
 
 func _refresh_tiamat_panel() -> void:
 	if _tiamat_panel == null or _tiamat_rows == null or _tiamat_hint_lbl == null:
@@ -2359,6 +2745,19 @@ func _toggle_reinforcements_edit_mode() -> void:
 		_reinforcements_mode_btn.modulate = Color(0.68, 0.88, 1.0) if _editing_reinforcements else Color.WHITE
 	_update_collection_selection_visuals()
 	_set_status_flash("Collection cards now add to %s." % ("Reinforcements" if _editing_reinforcements else "the main deck"))
+
+func _toggle_visual_deck_view() -> void:
+	_visual_deck_view_enabled = not _visual_deck_view_enabled
+	if _visual_deck_view_btn != null:
+		_visual_deck_view_btn.text = "List View" if _visual_deck_view_enabled else "Visual View"
+		_visual_deck_view_btn.modulate = Color(0.68, 0.88, 1.0) if _visual_deck_view_enabled else Color.WHITE
+	if _visual_deck_view_enabled:
+		_clear_selected_collection_card()
+		_set_status_flash("Visual deck view enabled. Drag or use +/- between Main Deck and Reinforcements.")
+	else:
+		_set_status_flash("List deck view enabled.")
+	_refresh_deck_panel(false, true)
+	_queue_responsive_layout_refresh()
 
 func _deck_uses_tiamat() -> bool:
 	return TiamatScript.is_tiamat_god(_get_selected_god_template())
@@ -4053,6 +4452,9 @@ func _cycle_card_art(card: Card) -> void:
 func _input(event: InputEvent) -> void:
 	if not visible:
 		return
+	if _try_handle_visual_deck_card_drag_input(event):
+		get_viewport().set_input_as_handled()
+		return
 	if _try_handle_deck_row_drag_input(event):
 		get_viewport().set_input_as_handled()
 		return
@@ -4269,6 +4671,7 @@ func _update_responsive_layout() -> void:
 		return
 
 	var use_stacked_layout := viewport_width < STACKED_LAYOUT_WIDTH_THRESHOLD
+	var use_visual_deck_layout := _visual_deck_view_enabled
 	var body_available_height := 0.0
 	if is_instance_valid(_body_scroll) and _body_scroll.size.y > 0.0:
 		body_available_height = _body_scroll.size.y
@@ -4279,16 +4682,21 @@ func _update_responsive_layout() -> void:
 	var column_available_height := body_available_height
 	if not use_stacked_layout:
 		column_available_height = maxf(0.0, body_available_height - DESKTOP_LAYOUT_BOTTOM_CLEARANCE)
-	_body_grid.columns = 1 if use_stacked_layout else 2
+	if use_visual_deck_layout:
+		column_available_height = body_available_height
+	_body_grid.columns = 1 if use_stacked_layout or use_visual_deck_layout else 2
 	_body_grid.custom_minimum_size.x = maxf(0.0, viewport_width - 16.0)
-	_body_grid.custom_minimum_size.y = column_available_height * (2.0 if use_stacked_layout else 1.0)
+	_body_grid.custom_minimum_size.y = column_available_height * (2.0 if use_stacked_layout and not use_visual_deck_layout else 1.0)
+	_body_grid.size_flags_vertical = Control.SIZE_EXPAND_FILL if use_visual_deck_layout else Control.SIZE_SHRINK_BEGIN
 	if is_instance_valid(_body_scroll):
 		_body_scroll.custom_minimum_size.y = 0.0
 		_body_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 		_body_scroll.scroll_vertical = 0
 
 	var target_panel_width := clampf(floor(viewport_width * 0.34), MIN_DECK_PANEL_WIDTH, MAX_DECK_PANEL_WIDTH)
-	if use_stacked_layout:
+	if use_visual_deck_layout:
+		target_panel_width = max(MIN_DECK_PANEL_WIDTH, viewport_width - 24.0)
+	elif use_stacked_layout:
 		target_panel_width = max(MIN_DECK_PANEL_WIDTH, viewport_width - 24.0)
 	else:
 		if viewport_width < 1100.0:
@@ -4298,17 +4706,28 @@ func _update_responsive_layout() -> void:
 
 	_deck_panel.custom_minimum_size.x = target_panel_width
 	_deck_panel.custom_minimum_size.y = column_available_height
-	_deck_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL if use_stacked_layout else Control.SIZE_FILL
+	_deck_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL if use_stacked_layout or use_visual_deck_layout else Control.SIZE_FILL
 	_deck_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	if is_instance_valid(_collection_panel):
+		_collection_panel.visible = not use_visual_deck_layout
 		_collection_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		_collection_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
 		_collection_panel.custom_minimum_size.y = column_available_height
+	if is_instance_valid(_preview_outer):
+		_preview_outer.visible = not use_visual_deck_layout
 	if is_instance_valid(_collection_host):
 		_collection_host.custom_minimum_size.y = maxf(196.0, column_available_height - 84.0)
+	if is_instance_valid(_deck_scroll_nav_bar):
+		_deck_scroll_nav_bar.visible = not use_visual_deck_layout
+	if is_instance_valid(_deck_footer_buttons):
+		_deck_footer_buttons.visible = not use_visual_deck_layout
+	if is_instance_valid(_autofill_deck_btn):
+		_autofill_deck_btn.visible = not use_visual_deck_layout
+	if is_instance_valid(_validation_lbl):
+		_validation_lbl.visible = not use_visual_deck_layout
 
 	var preview_height := 252.0
-	if is_instance_valid(_preview_outer):
+	if is_instance_valid(_preview_outer) and _preview_outer.visible:
 		if target_panel_width <= COMPACT_PREVIEW_WIDTH_THRESHOLD:
 			preview_height = 212.0
 		if viewport_height < 1200.0:
@@ -4350,8 +4769,11 @@ func _update_responsive_layout() -> void:
 		var deck_panel_separation := float(_deck_panel.get_theme_constant("separation"))
 		fixed_deck_panel_height += maxf(0.0, float(visible_child_count - 1)) * deck_panel_separation
 		var deck_scroll_height := maxf(72.0, column_available_height - fixed_deck_panel_height)
+		if use_visual_deck_layout:
+			deck_scroll_height = maxf(420.0, column_available_height - fixed_deck_panel_height)
 		_deck_scroll.custom_minimum_size.y = deck_scroll_height
 		call_deferred("_update_deck_scroll_nav_buttons")
+		call_deferred("_layout_visual_deck_view")
 
 	if is_instance_valid(_prev_page_btn):
 		var page_button_width := 96.0 if viewport_width < 1100.0 else 120.0
