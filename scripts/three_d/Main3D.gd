@@ -5,13 +5,20 @@ const GAME_SCENE_PATH := "res://scenes/mainfork.tscn"
 const DEFAULT_VIEWPORT_SIZE := Vector2i(2560, 1440)
 const SERVER_MODE_ARG := "server_mode"
 const MATCH_CONFIG_ARG := "match_config"
-const STEALTH_FOG_CURSOR_LEAD_SECONDS := 0.055
-const STEALTH_FOG_CURSOR_MAX_LEAD_PIXELS := 86.0
-const STEALTH_FOG_CURSOR_REFERENCE_SECONDS := 0.018
-const STEALTH_FOG_CURSOR_MAX_WIND_PIXELS := 96.0
 const STEALTH_FOG_SMOKE_TEXTURE_PATH := "res://images/ui/stealth_fog/lelu_smoke_b7.png"
 const STEALTH_FOG_CLOUD_TEXTURE_PATH := "res://images/ui/stealth_fog/lelu_cloud_noise_tiled.png"
 const STEALTH_FOG_DETAIL_TEXTURE_PATH := "res://images/ui/stealth_fog/seamless_noise_02.png"
+const STEALTH_FOG_CURSOR_TEXTURE_PATH := "res://images/ui/cursors/StealthFogCursor.png"
+const STEALTH_FOG_CLEAR_UI_GROUP := "stealth_fog_clear_ui"
+const STEALTH_FOG_TOP_UI_GROUP := "stealth_fog_top_ui"
+const STEALTH_FOG_PLANE_Z := 0.001
+const STEALTH_FOG_LAYER_Z_BASE := 0.0002
+const STEALTH_FOG_LAYER_Z_STEP := 0.0003
+const STEALTH_FOG_CURSOR_EFFECT_RADIUS_PIXELS := 52.0
+const STEALTH_FOG_CURSOR_CENTER_OFFSET := Vector2(18.0, 20.0)
+const STEALTH_FOG_CURSOR_TRAIL_LIFETIME := 1.4
+const STEALTH_FOG_CURSOR_TRAIL_MIN_DISTANCE := 8.0
+const STEALTH_FOG_CURSOR_TRAIL_COUNT := 6
 
 @export var game_scene_path: String = GAME_SCENE_PATH
 @export var game_viewport_size: Vector2i = DEFAULT_VIEWPORT_SIZE
@@ -24,6 +31,8 @@ var _game_viewport: SubViewport = null
 var _game_instance: Node = null
 var _three_d_world: Node3D = null
 var _flat_canvas_layer: CanvasLayer = null
+var _stealth_fog_top_ui_layer: CanvasLayer = null
+var _stealth_fog_top_ui_root: Control = null
 var _screen_rig: Node3D = null
 var _screen_mesh: MeshInstance3D = null
 var _stealth_fog_root: Node3D = null
@@ -36,15 +45,25 @@ var _stealth_fog_smoke_texture: Texture2D = null
 var _stealth_fog_cloud_texture: Texture2D = null
 var _stealth_fog_detail_texture: Texture2D = null
 var _stealth_fog_control_rects: Dictionary = {}
+var _stealth_fog_hover_clear_rects: Array[Rect2] = []
+var _stealth_fog_top_ui_copies: Dictionary = {}
 var _stealth_fog_refresh_elapsed: float = 999.0
 var _stealth_fog_motion_elapsed: float = 0.0
 var _screen_world_height: float = 0.0
 var _fog_cursor_actual_position: Vector2 = Vector2.INF
 var _fog_cursor_position: Vector2 = Vector2.INF
-var _fog_cursor_velocity: Vector2 = Vector2.ZERO
-var _fog_cursor_wind: Vector2 = Vector2.ZERO
+var _fog_cursor_clear_strength: float = 0.0
+var _fog_cursor_trail: Array[Dictionary] = []
+var _previous_use_accumulated_input: bool = true
+var _previous_vsync_mode: int = -1
+var _software_cursor_layer: CanvasLayer = null
+var _software_cursor_root: Node2D = null
 
 func _ready() -> void:
+	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+	_previous_use_accumulated_input = Input.use_accumulated_input
+	Input.use_accumulated_input = false
+	process_priority = -100
 	var launch_args := _parse_user_args(OS.get_cmdline_user_args())
 	if WindowsSelfUpdaterScript.is_update_launch(launch_args):
 		var updater := WindowsSelfUpdaterScript.new()
@@ -55,7 +74,11 @@ func _ready() -> void:
 		_load_original_scene_directly()
 		return
 
+	_previous_vsync_mode = DisplayServer.window_get_vsync_mode()
+	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
+	Input.set_mouse_mode(Input.MOUSE_MODE_HIDDEN)
 	_build_3d_shell()
+	_build_software_cursor()
 	_load_game_into_viewport()
 	call_deferred("_refresh_display_mode")
 
@@ -76,7 +99,40 @@ func _build_3d_shell() -> void:
 	_build_camera()
 	_build_lighting()
 	_build_flat_canvas()
+	_build_stealth_fog_top_ui_layer()
 	_sync_3d_display_to_window()
+
+func _exit_tree() -> void:
+	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+	Input.use_accumulated_input = _previous_use_accumulated_input
+	if _previous_vsync_mode >= 0:
+		DisplayServer.window_set_vsync_mode(_previous_vsync_mode as DisplayServer.VSyncMode)
+
+func _build_software_cursor() -> void:
+	_software_cursor_layer = CanvasLayer.new()
+	_software_cursor_layer.name = "SoftwareCursorLayer"
+	_software_cursor_layer.layer = 1000
+	add_child(_software_cursor_layer)
+
+	_software_cursor_root = Node2D.new()
+	_software_cursor_root.name = "SoftwareCursor"
+	_software_cursor_layer.add_child(_software_cursor_root)
+
+	var texture := load(STEALTH_FOG_CURSOR_TEXTURE_PATH) as Texture2D
+	if texture != null:
+		var cursor_sprite := Sprite2D.new()
+		cursor_sprite.name = "CursorVisual"
+		cursor_sprite.texture = texture
+		cursor_sprite.centered = false
+		cursor_sprite.scale = Vector2(0.040, 0.040)
+		cursor_sprite.position = Vector2(-4.2, -2.5)
+		_software_cursor_root.add_child(cursor_sprite)
+	_update_software_cursor_position(get_viewport().get_mouse_position())
+
+func _update_software_cursor_position(window_position: Vector2) -> void:
+	if _software_cursor_root == null or not is_instance_valid(_software_cursor_root):
+		return
+	_software_cursor_root.position = window_position
 
 func _build_environment() -> void:
 	var world_environment := WorldEnvironment.new()
@@ -183,6 +239,19 @@ func _build_flat_canvas() -> void:
 	_flat_canvas_layer.visible = false
 	add_child(_flat_canvas_layer)
 
+func _build_stealth_fog_top_ui_layer() -> void:
+	_stealth_fog_top_ui_layer = CanvasLayer.new()
+	_stealth_fog_top_ui_layer.name = "StealthFogTopUI"
+	_stealth_fog_top_ui_layer.layer = 90
+	_stealth_fog_top_ui_layer.visible = false
+	add_child(_stealth_fog_top_ui_layer)
+
+	_stealth_fog_top_ui_root = Control.new()
+	_stealth_fog_top_ui_root.name = "StealthFogTopUIRoot"
+	_stealth_fog_top_ui_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_stealth_fog_top_ui_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_stealth_fog_top_ui_layer.add_child(_stealth_fog_top_ui_root)
+
 func _make_box(node_name: String, box_size: Vector3, box_position: Vector3, color: Color) -> MeshInstance3D:
 	var mesh_instance := MeshInstance3D.new()
 	mesh_instance.name = node_name
@@ -205,16 +274,20 @@ func _load_game_into_viewport() -> void:
 	_flat_canvas_layer.add_child(_game_instance)
 
 func _process(delta: float) -> void:
+	_update_software_cursor_position(get_viewport().get_mouse_position())
+	_age_stealth_fog_cursor_trail(delta)
 	_sync_3d_display_to_window()
 	_refresh_display_mode()
 	_refresh_stealth_fog_cursor_from_window(delta)
+	_stealth_fog_hover_clear_rects = _get_visible_stealth_fog_hover_clear_rects()
+	_refresh_stealth_fog_top_ui_overlay()
 	_stealth_fog_motion_elapsed += delta
 	_stealth_fog_refresh_elapsed += delta
 	if _stealth_fog_refresh_elapsed >= 0.12:
 		_stealth_fog_refresh_elapsed = 0.0
 		_update_stealth_fog_emitters()
 	else:
-		_update_existing_stealth_fog_cursor_wind()
+		_update_existing_stealth_fog_cursor_effect()
 	_animate_stealth_fog_layers()
 	_decay_stealth_fog_cursor_motion(delta)
 
@@ -333,7 +406,7 @@ func _update_stealth_fog_emitters() -> void:
 		_stealth_fog_emitters.erase(key)
 		_stealth_fog_control_rects.erase(key)
 
-func _update_existing_stealth_fog_cursor_wind() -> void:
+func _update_existing_stealth_fog_cursor_effect() -> void:
 	for key in _stealth_fog_emitters.keys():
 		var fog_cluster := _stealth_fog_emitters.get(key, null) as Node3D
 		if fog_cluster == null or not is_instance_valid(fog_cluster):
@@ -341,7 +414,7 @@ func _update_existing_stealth_fog_cursor_wind() -> void:
 		var rect_value = _stealth_fog_control_rects.get(key, null)
 		if not (rect_value is Rect2):
 			continue
-		_update_stealth_fog_cursor_wind(fog_cluster, rect_value)
+		_update_stealth_fog_cursor_effect(fog_cluster, rect_value)
 
 func _animate_stealth_fog_layers() -> void:
 	if _stealth_fog_emitters.is_empty():
@@ -363,57 +436,63 @@ func _animate_stealth_fog_layers() -> void:
 			var layer_phase := cluster_phase + float(i) * 1.73
 			var speed_x := (0.36 + float(i) * 0.10) * speed_multiplier
 			var speed_y := (0.29 + float(i) * 0.08) * speed_multiplier
-			var sway_x := sin(_stealth_fog_motion_elapsed * speed_x + layer_phase) * (0.070 + float(i) * 0.030) * sway_multiplier
-			var sway_y := cos(_stealth_fog_motion_elapsed * speed_y + layer_phase * 0.82) * (0.052 + float(i) * 0.022) * sway_multiplier
-			layer.position = Vector3(sway_x, sway_y, -0.034 + float(i) * 0.014)
+			var sway_x := sin(_stealth_fog_motion_elapsed * speed_x + layer_phase) * (0.034 + float(i) * 0.015) * sway_multiplier
+			var sway_y := cos(_stealth_fog_motion_elapsed * speed_y + layer_phase * 0.82) * (0.026 + float(i) * 0.011) * sway_multiplier
+			layer.position = Vector3(sway_x, sway_y, STEALTH_FOG_LAYER_Z_BASE + float(i) * STEALTH_FOG_LAYER_Z_STEP)
 			layer.rotation.z = sin(_stealth_fog_motion_elapsed * 0.24 * speed_multiplier + layer_phase) * (0.025 + float(i) * 0.014) * sway_multiplier
 
-func _refresh_stealth_fog_cursor_from_window(delta: float) -> void:
+func _refresh_stealth_fog_cursor_from_window(_delta: float) -> void:
 	if _game_viewport == null or _screen_mesh == null or _camera == null or _is_flat_2d_mode:
 		_clear_stealth_fog_cursor_motion()
 		return
-	var mapped_position = _map_window_position_to_game_viewport(get_viewport().get_mouse_position())
+	var mapped_position = _map_window_position_to_game_viewport(
+		get_viewport().get_mouse_position() + STEALTH_FOG_CURSOR_CENTER_OFFSET
+	)
 	if not (mapped_position is Vector2):
 		_clear_stealth_fog_cursor_motion()
 		return
 	var game_position: Vector2 = mapped_position
-	var motion_delta := Vector2.ZERO
-	if _fog_cursor_actual_position != Vector2.INF:
-		motion_delta = game_position - _fog_cursor_actual_position
-	_update_stealth_fog_cursor_motion(game_position, motion_delta, delta)
+	_update_stealth_fog_cursor_motion(game_position)
 
-func _update_stealth_fog_cursor_motion(game_position: Vector2, motion_delta: Vector2, delta: float) -> void:
+func _update_stealth_fog_cursor_motion(game_position: Vector2) -> void:
+	if _fog_cursor_actual_position != Vector2.INF \
+			and _fog_cursor_actual_position.distance_to(game_position) >= STEALTH_FOG_CURSOR_TRAIL_MIN_DISTANCE:
+		_fog_cursor_trail.push_front({
+			"position": _fog_cursor_actual_position,
+			"age": 0.0,
+		})
+		if _fog_cursor_trail.size() > STEALTH_FOG_CURSOR_TRAIL_COUNT:
+			_fog_cursor_trail.resize(STEALTH_FOG_CURSOR_TRAIL_COUNT)
 	_fog_cursor_actual_position = game_position
-	if motion_delta.length_squared() > 0.01:
-		_fog_cursor_velocity = motion_delta / maxf(delta, 0.001)
+	_fog_cursor_clear_strength = 1.0
 	_apply_stealth_fog_cursor_prediction()
+
+func _age_stealth_fog_cursor_trail(delta: float) -> void:
+	for i in range(_fog_cursor_trail.size() - 1, -1, -1):
+		var sample := _fog_cursor_trail[i]
+		var age := float(sample.get("age", 0.0)) + delta
+		if age >= STEALTH_FOG_CURSOR_TRAIL_LIFETIME:
+			_fog_cursor_trail.remove_at(i)
+			continue
+		sample["age"] = age
+		_fog_cursor_trail[i] = sample
 
 func _apply_stealth_fog_cursor_prediction() -> void:
 	if _fog_cursor_actual_position == Vector2.INF:
 		_fog_cursor_position = Vector2.INF
-		_fog_cursor_wind = Vector2.ZERO
 		return
-	var lead := _fog_cursor_velocity * STEALTH_FOG_CURSOR_LEAD_SECONDS
-	if lead.length() > STEALTH_FOG_CURSOR_MAX_LEAD_PIXELS:
-		lead = lead.normalized() * STEALTH_FOG_CURSOR_MAX_LEAD_PIXELS
-	_fog_cursor_position = _fog_cursor_actual_position + lead
+	_fog_cursor_position = _fog_cursor_actual_position
 
-	var wind_delta := _fog_cursor_velocity * STEALTH_FOG_CURSOR_REFERENCE_SECONDS
-	if wind_delta.length() > STEALTH_FOG_CURSOR_MAX_WIND_PIXELS:
-		wind_delta = wind_delta.normalized() * STEALTH_FOG_CURSOR_MAX_WIND_PIXELS
-	_fog_cursor_wind = wind_delta
-
-func _decay_stealth_fog_cursor_motion(delta: float) -> void:
+func _decay_stealth_fog_cursor_motion(_delta: float) -> void:
 	if _fog_cursor_actual_position == Vector2.INF:
 		return
-	_fog_cursor_velocity = _fog_cursor_velocity.lerp(Vector2.ZERO, clampf(delta * 8.0, 0.0, 1.0))
+	_fog_cursor_clear_strength = 1.0
 	_apply_stealth_fog_cursor_prediction()
 
 func _clear_stealth_fog_cursor_motion() -> void:
 	_fog_cursor_actual_position = Vector2.INF
 	_fog_cursor_position = Vector2.INF
-	_fog_cursor_velocity = Vector2.ZERO
-	_fog_cursor_wind = Vector2.ZERO
+	_fog_cursor_clear_strength = 0.0
 
 func _get_visible_stealth_zone_controls() -> Array[Control]:
 	var result: Array[Control] = []
@@ -432,6 +511,133 @@ func _get_visible_stealth_zone_controls() -> Array[Control]:
 		if _control_has_visible_stealth_creature(control):
 			result.append(control)
 	return result
+
+func _get_visible_stealth_fog_hover_clear_rects() -> Array[Rect2]:
+	var result: Array[Rect2] = []
+	if _game_viewport == null or get_tree() == null:
+		return result
+	for node in get_tree().get_nodes_in_group(STEALTH_FOG_CLEAR_UI_GROUP):
+		var control := node as Control
+		if control == null or not is_instance_valid(control) or not control.is_visible_in_tree():
+			continue
+		if control.get_viewport() != _game_viewport:
+			continue
+		var rect := control.get_global_rect()
+		if rect.size.x <= 1.0 or rect.size.y <= 1.0:
+			continue
+		result.append(rect.grow(6.0))
+	return result
+
+func _refresh_stealth_fog_top_ui_overlay() -> void:
+	if _stealth_fog_top_ui_layer == null or _stealth_fog_top_ui_root == null:
+		return
+	var should_show := show_stealth_fog_3d and not _is_flat_2d_mode and _game_viewport != null
+	_stealth_fog_top_ui_layer.visible = should_show
+	if not should_show:
+		_clear_stealth_fog_top_ui_copies()
+		return
+	var game_size := Vector2(_game_viewport.size)
+	var view_size := get_viewport().get_visible_rect().size
+	if game_size.x <= 0.0 or game_size.y <= 0.0 or view_size.x <= 0.0 or view_size.y <= 0.0:
+		_clear_stealth_fog_top_ui_copies()
+		return
+	_stealth_fog_top_ui_root.size = view_size
+	var scale := Vector2(view_size.x / game_size.x, view_size.y / game_size.y)
+	var active_keys: Dictionary = {}
+	for node in get_tree().get_nodes_in_group(STEALTH_FOG_TOP_UI_GROUP):
+		var control := node as Control
+		if control == null or not is_instance_valid(control) or not control.is_visible_in_tree():
+			continue
+		if control.get_viewport() != _game_viewport:
+			continue
+		var rect := control.get_global_rect()
+		if rect.size.x <= 1.0 or rect.size.y <= 1.0 or not _rect_over_active_stealth_fog(rect):
+			continue
+		var key := str(control.get_instance_id())
+		active_keys[key] = true
+		var copy := _stealth_fog_top_ui_copies.get(key, null) as Control
+		if copy == null or not is_instance_valid(copy):
+			copy = _make_stealth_fog_top_ui_copy(control)
+			if copy == null:
+				continue
+			_stealth_fog_top_ui_copies[key] = copy
+			_stealth_fog_top_ui_root.add_child(copy)
+		_sync_stealth_fog_top_ui_copy(copy, control, rect, scale)
+	var stale_keys: Array = []
+	for key in _stealth_fog_top_ui_copies.keys():
+		if active_keys.has(key):
+			continue
+		var stale := _stealth_fog_top_ui_copies.get(key, null) as Node
+		if stale != null and is_instance_valid(stale):
+			stale.queue_free()
+		stale_keys.append(key)
+	for key in stale_keys:
+		_stealth_fog_top_ui_copies.erase(key)
+
+func _clear_stealth_fog_top_ui_copies() -> void:
+	for key in _stealth_fog_top_ui_copies.keys():
+		var copy := _stealth_fog_top_ui_copies.get(key, null) as Node
+		if copy != null and is_instance_valid(copy):
+			copy.queue_free()
+	_stealth_fog_top_ui_copies.clear()
+
+func _rect_over_active_stealth_fog(rect: Rect2) -> bool:
+	for rect_value in _stealth_fog_control_rects.values():
+		if not (rect_value is Rect2):
+			continue
+		var fog_rect := rect_value as Rect2
+		if fog_rect.grow(4.0).intersects(rect):
+			return true
+	return false
+
+func _make_stealth_fog_top_ui_copy(source: Control) -> Control:
+	if source is PanelContainer:
+		var panel := PanelContainer.new()
+		panel.name = "StealthFogTopUICopy"
+		panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var source_panel := source as PanelContainer
+		var stylebox := source_panel.get_theme_stylebox("panel")
+		if stylebox != null:
+			panel.add_theme_stylebox_override("panel", stylebox.duplicate(true))
+		var source_label := _find_first_label(source)
+		if source_label != null:
+			panel.add_child(_make_stealth_fog_top_ui_label_copy(source_label))
+		return panel
+	if source is Label:
+		return _make_stealth_fog_top_ui_label_copy(source as Label)
+	return null
+
+func _make_stealth_fog_top_ui_label_copy(source_label: Label) -> Label:
+	var label := Label.new()
+	label.name = "StealthFogTopUILabel"
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	label.horizontal_alignment = source_label.horizontal_alignment
+	label.vertical_alignment = source_label.vertical_alignment
+	label.text = source_label.text
+	label.add_theme_font_size_override("font_size", source_label.get_theme_font_size("font_size"))
+	label.add_theme_color_override("font_color", source_label.get_theme_color("font_color"))
+	return label
+
+func _sync_stealth_fog_top_ui_copy(copy: Control, source: Control, rect: Rect2, scale: Vector2) -> void:
+	copy.position = rect.position * scale
+	copy.size = rect.size * scale
+	copy.visible = true
+	var source_label := _find_first_label(source)
+	var copy_label := _find_first_label(copy)
+	if source_label != null and copy_label != null:
+		copy_label.text = source_label.text
+		copy_label.add_theme_font_size_override("font_size", source_label.get_theme_font_size("font_size"))
+		copy_label.add_theme_color_override("font_color", source_label.get_theme_color("font_color"))
+
+func _find_first_label(root: Node) -> Label:
+	var label := root as Label
+	if label != null:
+		return label
+	for child in root.get_children():
+		var found := _find_first_label(child)
+		if found != null:
+			return found
+	return null
 
 func _control_has_visible_stealth_creature(control: Control) -> bool:
 	var zone := control.get("zone") as Zone
@@ -458,7 +664,7 @@ func _place_stealth_fog_cluster(fog_cluster: Node3D, control: Control) -> void:
 	fog_cluster.position = Vector3(
 		(uv.x - 0.5) * screen_size.x,
 		(0.5 - uv.y) * screen_size.y,
-		0.24
+		STEALTH_FOG_PLANE_Z
 	)
 
 	var local_size := Vector2(
@@ -466,7 +672,7 @@ func _place_stealth_fog_cluster(fog_cluster: Node3D, control: Control) -> void:
 		rect.size.y / viewport_size.y * screen_size.y
 	)
 	_update_steady_stealth_mist(fog_cluster, local_size)
-	_update_stealth_fog_cursor_wind(fog_cluster, rect)
+	_update_stealth_fog_cursor_effect(fog_cluster, rect)
 	_update_native_stealth_fog_volume(fog_cluster, local_size)
 
 func _create_stealth_fog_cluster(variant_seed: int) -> Node3D:
@@ -503,11 +709,9 @@ func _seeded_range(seed: int, salt: int, min_value: float, max_value: float) -> 
 func _configure_stealth_fog_cluster_variant(fog_cluster: Node3D, variant_seed: int) -> void:
 	if fog_cluster == null or not is_instance_valid(fog_cluster):
 		return
-	if int(fog_cluster.get_meta("fog_variant_seed", -1)) == variant_seed:
-		return
 	fog_cluster.set_meta("fog_variant_seed", variant_seed)
 	fog_cluster.set_meta("fog_phase", _seeded_range(variant_seed, 1, 0.0, TAU))
-	fog_cluster.set_meta("fog_sway_multiplier", _seeded_range(variant_seed, 2, 0.82, 1.24))
+	fog_cluster.set_meta("fog_sway_multiplier", _seeded_range(variant_seed, 2, 0.72, 1.06))
 	fog_cluster.set_meta("fog_speed_multiplier", _seeded_range(variant_seed, 3, 0.84, 1.22))
 
 	var angle := _seeded_range(variant_seed, 4, 0.0, TAU)
@@ -528,7 +732,7 @@ func _configure_stealth_fog_cluster_variant(fog_cluster: Node3D, variant_seed: i
 			continue
 		var layer_seed := variant_seed + i * 101
 		material.set_shader_parameter("phase", float(i) * 3.17 + _seeded_range(layer_seed, 10, 0.0, TAU))
-		material.set_shader_parameter("fog_alpha", (0.48 - float(i) * 0.070) * _seeded_range(layer_seed, 11, 0.88, 1.10))
+		material.set_shader_parameter("fog_alpha", (0.42 - float(i) * 0.060) * _seeded_range(layer_seed, 11, 0.88, 1.10))
 		material.set_shader_parameter("cloud_scale", (1.12 + float(i) * 0.26) * _seeded_range(layer_seed, 12, 0.90, 1.18))
 		material.set_shader_parameter("drift_speed", (0.090 + float(i) * 0.034) * _seeded_range(layer_seed, 13, 0.82, 1.28))
 		material.set_shader_parameter("variant_uv_offset_a", Vector2(
@@ -543,11 +747,24 @@ func _configure_stealth_fog_cluster_variant(fog_cluster: Node3D, variant_seed: i
 		material.set_shader_parameter("smoke_scale", _seeded_range(layer_seed, 19, 0.82, 1.20))
 		material.set_shader_parameter("density_bias", _seeded_range(layer_seed, 20, -0.035, 0.045))
 		material.set_shader_parameter("texture_mix", _seeded_range(layer_seed, 21, 0.36, 0.58))
+		material.set_shader_parameter("smoke_rotation", Vector3(
+			_seeded_range(layer_seed, 22, 0.0, TAU),
+			_seeded_range(layer_seed, 23, 0.0, TAU),
+			_seeded_range(layer_seed, 24, 0.0, TAU)
+		))
+		material.set_shader_parameter("smoke_flip", Vector2(
+			-1.0 if _seeded_unit(layer_seed, 25) < 0.5 else 1.0,
+			-1.0 if _seeded_unit(layer_seed, 26) < 0.5 else 1.0
+		))
+		material.set_shader_parameter("smoke_anchor", Vector2(
+			_seeded_range(layer_seed, 27, -0.22, 0.22),
+			_seeded_range(layer_seed, 28, -0.20, 0.20)
+		))
 
 func _make_native_stealth_fog_volume() -> FogVolume:
 	var volume := FogVolume.new()
 	volume.name = "NativeFogVolume"
-	volume.position.z = 0.18
+	volume.position.z = STEALTH_FOG_PLANE_Z
 	volume.size = Vector3(1.25, 0.92, 1.15)
 
 	var material := FogMaterial.new()
@@ -579,7 +796,7 @@ func _make_steady_stealth_mist() -> Node3D:
 		mesh.size = Vector2.ONE
 		mesh.material = _make_steady_stealth_mist_material(i)
 		layer.mesh = mesh
-		layer.position.z = -0.034 + float(i) * 0.014
+		layer.position.z = STEALTH_FOG_LAYER_Z_BASE + float(i) * STEALTH_FOG_LAYER_Z_STEP
 		mist.add_child(layer)
 	return mist
 
@@ -587,12 +804,12 @@ func _update_steady_stealth_mist(fog_cluster: Node3D, local_size: Vector2) -> vo
 	var mist := fog_cluster.get_node_or_null("SteadyMist") as Node3D
 	if mist == null:
 		return
-	var base_scale := Vector2(maxf(0.64, local_size.x * 1.22), maxf(0.52, local_size.y * 1.18))
+	var base_scale := Vector2(maxf(0.52, local_size.x * 1.01), maxf(0.42, local_size.y * 1.00))
 	for i in range(mist.get_child_count()):
 		var layer := mist.get_child(i) as MeshInstance3D
 		if layer == null:
 			continue
-		var layer_scale := 1.0 + float(i) * 0.070
+		var layer_scale := 1.0 + float(i) * 0.015
 		layer.scale = Vector3(base_scale.x * layer_scale, base_scale.y * layer_scale, 1.0)
 		var material := layer.get_active_material(0) as ShaderMaterial
 		if material != null and local_size.x > 0.0 and local_size.y > 0.0:
@@ -601,25 +818,63 @@ func _update_steady_stealth_mist(fog_cluster: Node3D, local_size: Vector2) -> vo
 				layer.scale.y / local_size.y
 			))
 
-func _update_stealth_fog_cursor_wind(fog_cluster: Node3D, control_rect: Rect2) -> void:
+func _update_stealth_fog_cursor_effect(fog_cluster: Node3D, control_rect: Rect2) -> void:
 	var cursor_uv := Vector2(-10.0, -10.0)
-	var cursor_lead_uv := Vector2(-10.0, -10.0)
-	var wind := Vector2.ZERO
+	var clear_strength := 0.0
+	var brush_radius := 0.18
+	var cursor_trail: Array[Vector4] = []
+	cursor_trail.resize(STEALTH_FOG_CURSOR_TRAIL_COUNT)
+	cursor_trail.fill(Vector4(-10.0, -10.0, 0.0, brush_radius))
+	var hover_clear_uv_min := Vector2(2.0, 2.0)
+	var hover_clear_uv_max := Vector2(-1.0, -1.0)
 	var influence_rect := control_rect.grow(maxf(control_rect.size.x, control_rect.size.y) * 0.72)
 	if _fog_cursor_actual_position != Vector2.INF \
-			and _fog_cursor_position != Vector2.INF \
 			and control_rect.size.x > 0.0 \
 			and control_rect.size.y > 0.0 \
-			and (influence_rect.has_point(_fog_cursor_actual_position) or influence_rect.has_point(_fog_cursor_position)):
+			and influence_rect.has_point(_fog_cursor_actual_position):
 		cursor_uv = Vector2(
 			(_fog_cursor_actual_position.x - control_rect.position.x) / control_rect.size.x,
 			(_fog_cursor_actual_position.y - control_rect.position.y) / control_rect.size.y
 		)
-		cursor_lead_uv = Vector2(
-			(_fog_cursor_position.x - control_rect.position.x) / control_rect.size.x,
-			(_fog_cursor_position.y - control_rect.position.y) / control_rect.size.y
+		clear_strength = _fog_cursor_clear_strength
+		brush_radius = STEALTH_FOG_CURSOR_EFFECT_RADIUS_PIXELS / maxf(control_rect.size.x, control_rect.size.y)
+	for i in range(mini(_fog_cursor_trail.size(), STEALTH_FOG_CURSOR_TRAIL_COUNT)):
+		var sample := _fog_cursor_trail[i]
+		var sample_position := sample.get("position", Vector2.INF) as Vector2
+		if sample_position == Vector2.INF or not influence_rect.has_point(sample_position):
+			continue
+		var sample_age := float(sample.get("age", STEALTH_FOG_CURSOR_TRAIL_LIFETIME))
+		var sample_strength := pow(
+			clampf(1.0 - sample_age / STEALTH_FOG_CURSOR_TRAIL_LIFETIME, 0.0, 1.0),
+			1.35
 		)
-		wind = _fog_cursor_wind / maxf(control_rect.size.x, control_rect.size.y)
+		cursor_trail[i] = Vector4(
+			(sample_position.x - control_rect.position.x) / control_rect.size.x,
+			(sample_position.y - control_rect.position.y) / control_rect.size.y,
+			sample_strength,
+			brush_radius
+		)
+	if control_rect.size.x > 0.0 and control_rect.size.y > 0.0:
+		for clear_rect in _stealth_fog_hover_clear_rects:
+			var overlap := control_rect.intersection(clear_rect)
+			if overlap.size.x <= 0.0 or overlap.size.y <= 0.0:
+				continue
+			var clear_min := Vector2(
+				(overlap.position.x - control_rect.position.x) / control_rect.size.x,
+				(overlap.position.y - control_rect.position.y) / control_rect.size.y
+			)
+			var clear_max := Vector2(
+				(overlap.position.x + overlap.size.x - control_rect.position.x) / control_rect.size.x,
+				(overlap.position.y + overlap.size.y - control_rect.position.y) / control_rect.size.y
+			)
+			hover_clear_uv_min = Vector2(
+				minf(hover_clear_uv_min.x, clear_min.x),
+				minf(hover_clear_uv_min.y, clear_min.y)
+			)
+			hover_clear_uv_max = Vector2(
+				maxf(hover_clear_uv_max.x, clear_max.x),
+				maxf(hover_clear_uv_max.y, clear_max.y)
+			)
 	for child in fog_cluster.get_children():
 		var mist := child as Node3D
 		if mist == null or mist.name != "SteadyMist":
@@ -632,8 +887,12 @@ func _update_stealth_fog_cursor_wind(fog_cluster: Node3D, control_rect: Rect2) -
 			if material == null:
 				continue
 			material.set_shader_parameter("cursor_uv", cursor_uv)
-			material.set_shader_parameter("cursor_lead_uv", cursor_lead_uv)
-			material.set_shader_parameter("cursor_wind", wind)
+			material.set_shader_parameter("cursor_clear_strength", clear_strength)
+			material.set_shader_parameter("cursor_brush_radius", brush_radius)
+			for i in range(STEALTH_FOG_CURSOR_TRAIL_COUNT):
+				material.set_shader_parameter("cursor_trail_%d" % i, cursor_trail[i])
+			material.set_shader_parameter("hover_clear_uv_min", hover_clear_uv_min)
+			material.set_shader_parameter("hover_clear_uv_max", hover_clear_uv_max)
 
 func _make_stealth_fog_particle_material() -> StandardMaterial3D:
 	var material := StandardMaterial3D.new()
@@ -668,13 +927,24 @@ uniform bool use_smoke_texture = false;
 uniform bool use_cloud_texture = false;
 uniform bool use_detail_texture = false;
 uniform vec2 cursor_uv = vec2(-10.0, -10.0);
-uniform vec2 cursor_lead_uv = vec2(-10.0, -10.0);
-uniform vec2 cursor_wind = vec2(0.0, 0.0);
+uniform float cursor_clear_strength = 0.0;
+uniform float cursor_brush_radius = 0.18;
+uniform vec4 cursor_trail_0 = vec4(-10.0, -10.0, 0.0, 0.18);
+uniform vec4 cursor_trail_1 = vec4(-10.0, -10.0, 0.0, 0.18);
+uniform vec4 cursor_trail_2 = vec4(-10.0, -10.0, 0.0, 0.18);
+uniform vec4 cursor_trail_3 = vec4(-10.0, -10.0, 0.0, 0.18);
+uniform vec4 cursor_trail_4 = vec4(-10.0, -10.0, 0.0, 0.18);
+uniform vec4 cursor_trail_5 = vec4(-10.0, -10.0, 0.0, 0.18);
+uniform vec2 hover_clear_uv_min = vec2(2.0, 2.0);
+uniform vec2 hover_clear_uv_max = vec2(-1.0, -1.0);
 uniform vec2 layer_card_scale = vec2(1.0, 1.0);
 uniform vec2 variant_uv_offset_a = vec2(0.0, 0.0);
 uniform vec2 variant_uv_offset_b = vec2(0.0, 0.0);
 uniform vec2 variant_drift = vec2(1.0, -0.55);
 uniform float smoke_scale = 1.0;
+uniform vec3 smoke_rotation = vec3(0.0, 2.1, 4.2);
+uniform vec2 smoke_flip = vec2(1.0, 1.0);
+uniform vec2 smoke_anchor = vec2(0.0, 0.0);
 uniform float density_bias = 0.0;
 uniform float texture_mix = 0.46;
 
@@ -704,6 +974,49 @@ float fbm(vec2 p) {
 	return value;
 }
 
+vec3 gradient_hash(vec3 p) {
+	p = vec3(
+		dot(p, vec3(127.1, 311.7, 74.7)),
+		dot(p, vec3(269.5, 183.3, 246.1)),
+		dot(p, vec3(113.5, 271.9, 124.6))
+	);
+	return normalize(-1.0 + 2.0 * fract(sin(p) * 43758.5453123));
+}
+
+float gradient_noise(vec3 p) {
+	vec3 i = floor(p);
+	vec3 f = fract(p);
+	vec3 u = f * f * (3.0 - 2.0 * f);
+
+	float n000 = dot(gradient_hash(i + vec3(0.0, 0.0, 0.0)), f - vec3(0.0, 0.0, 0.0));
+	float n100 = dot(gradient_hash(i + vec3(1.0, 0.0, 0.0)), f - vec3(1.0, 0.0, 0.0));
+	float n010 = dot(gradient_hash(i + vec3(0.0, 1.0, 0.0)), f - vec3(0.0, 1.0, 0.0));
+	float n110 = dot(gradient_hash(i + vec3(1.0, 1.0, 0.0)), f - vec3(1.0, 1.0, 0.0));
+	float n001 = dot(gradient_hash(i + vec3(0.0, 0.0, 1.0)), f - vec3(0.0, 0.0, 1.0));
+	float n101 = dot(gradient_hash(i + vec3(1.0, 0.0, 1.0)), f - vec3(1.0, 0.0, 1.0));
+	float n011 = dot(gradient_hash(i + vec3(0.0, 1.0, 1.0)), f - vec3(0.0, 1.0, 1.0));
+	float n111 = dot(gradient_hash(i + vec3(1.0, 1.0, 1.0)), f - vec3(1.0, 1.0, 1.0));
+
+	float nx00 = mix(n000, n100, u.x);
+	float nx10 = mix(n010, n110, u.x);
+	float nx01 = mix(n001, n101, u.x);
+	float nx11 = mix(n011, n111, u.x);
+	float nxy0 = mix(nx00, nx10, u.y);
+	float nxy1 = mix(nx01, nx11, u.y);
+	return mix(nxy0, nxy1, u.z) * 0.5 + 0.5;
+}
+
+float gradient_fbm(vec3 p) {
+	float value = 0.0;
+	float amplitude = 0.58;
+	for (int i = 0; i < 4; i++) {
+		value += amplitude * gradient_noise(p);
+		p = p * 2.03 + vec3(17.1, 11.7, 7.3);
+		amplitude *= 0.50;
+	}
+	return clamp(value, 0.0, 1.0);
+}
+
 float segment_distance(vec2 p, vec2 a, vec2 b) {
 	vec2 segment = b - a;
 	float segment_length = max(dot(segment, segment), 0.0001);
@@ -718,48 +1031,80 @@ vec2 rotate_uv(vec2 p, float angle) {
 	return vec2(centered.x * c - centered.y * s, centered.x * s + centered.y * c) + vec2(0.5);
 }
 
+float soft_rect_mask(vec2 p, vec2 rect_min, vec2 rect_max, float softness) {
+	float left = smoothstep(rect_min.x - softness, rect_min.x + softness, p.x);
+	float right = 1.0 - smoothstep(rect_max.x - softness, rect_max.x + softness, p.x);
+	float top = smoothstep(rect_min.y - softness, rect_min.y + softness, p.y);
+	float bottom = 1.0 - smoothstep(rect_max.y - softness, rect_max.y + softness, p.y);
+	return clamp(left * right * top * bottom, 0.0, 1.0);
+}
+
+float cursor_trail_field(vec2 uv, vec4 sample_data) {
+	vec2 sample_uv = vec2(0.5) + (sample_data.xy - vec2(0.5)) / max(layer_card_scale, vec2(0.001));
+	float sample_radius = sample_data.w;
+	return smoothstep(sample_radius, 0.0, length(uv - sample_uv)) * sample_data.z;
+}
+
 void fragment() {
 	vec2 uv = UV;
 	vec2 remapped_cursor_uv = vec2(0.5) + (cursor_uv - vec2(0.5)) / max(layer_card_scale, vec2(0.001));
-	vec2 remapped_cursor_lead_uv = vec2(0.5) + (cursor_lead_uv - vec2(0.5)) / max(layer_card_scale, vec2(0.001));
-	vec2 to_cursor = uv - remapped_cursor_lead_uv;
-	float lead_distance = length(to_cursor);
-	float actual_distance = length(uv - remapped_cursor_uv);
-	float path_distance = segment_distance(uv, remapped_cursor_uv, remapped_cursor_lead_uv);
-	vec2 scaled_wind = cursor_wind / max(layer_card_scale, vec2(0.001));
-	float speed_strength = clamp(length(scaled_wind) * 22.0, 0.0, 1.0);
-	float cursor_distance = min(min(lead_distance, actual_distance), path_distance * mix(1.35, 1.0, speed_strength));
-	float brush_radius = mix(0.25, 0.46, speed_strength);
+	vec2 to_cursor = uv - remapped_cursor_uv;
+	float motion_strength = clamp(cursor_clear_strength, 0.0, 1.0);
+	float cursor_distance = length(to_cursor);
+	float brush_radius = cursor_brush_radius;
 	float brush_field = smoothstep(brush_radius, 0.0, cursor_distance);
-	float pressure_radius = mix(0.42, 0.62, speed_strength);
-	float pressure_field = smoothstep(pressure_radius, 0.0, cursor_distance) * speed_strength;
-	float gust_field = max(brush_field * mix(0.62, 1.0, speed_strength), pressure_field * 0.55);
-	vec2 radial_push = normalize(to_cursor + vec2(0.0001, 0.0001)) * gust_field * 0.32;
+	float pressure_radius = brush_radius * 1.36;
+	float pressure_field = smoothstep(pressure_radius, 0.0, cursor_distance);
+	float gust_field = max(brush_field * 0.88, pressure_field * 0.42) * motion_strength;
+	float healing_clear = 0.0;
+	healing_clear = max(healing_clear, cursor_trail_field(uv, cursor_trail_0));
+	healing_clear = max(healing_clear, cursor_trail_field(uv, cursor_trail_1));
+	healing_clear = max(healing_clear, cursor_trail_field(uv, cursor_trail_2));
+	healing_clear = max(healing_clear, cursor_trail_field(uv, cursor_trail_3));
+	healing_clear = max(healing_clear, cursor_trail_field(uv, cursor_trail_4));
+	healing_clear = max(healing_clear, cursor_trail_field(uv, cursor_trail_5));
+	vec2 radial_push = normalize(to_cursor + vec2(0.0001, 0.0001)) * gust_field * 0.18;
 	vec2 stirred_uv = uv + radial_push;
 	vec2 drift = variant_drift * TIME * drift_speed + vec2(phase * 0.017, phase * 0.013);
 	float flow_time = TIME * (0.42 + drift_speed * 1.8) + phase;
 	float broad = fbm(stirred_uv * cloud_scale + drift);
 	float rolling = fbm(stirred_uv * cloud_scale * 1.72 - drift * 0.88 + phase);
 	float fine = fbm(stirred_uv * cloud_scale * 3.1 + drift * 1.6 + phase);
-	float ridge = smoothstep(0.060, 0.0, abs(cursor_distance - brush_radius)) * speed_strength * 0.06;
+	float ridge = smoothstep(0.060, 0.0, abs(cursor_distance - brush_radius)) * motion_strength * 0.035;
 	float smoke_mask = 1.0;
 	if (use_smoke_texture) {
-		vec2 smoke_offset_a = vec2(sin(flow_time * 0.71), cos(flow_time * 0.53)) * 0.082;
-		vec2 smoke_offset_b = vec2(cos(flow_time * 0.47 + 1.4), sin(flow_time * 0.61 - 0.8)) * 0.055;
-		vec2 smoke_base_a = (uv - vec2(0.5)) * smoke_scale + vec2(0.5) + variant_uv_offset_a;
-		vec2 smoke_base_b = (uv - vec2(0.5)) * (smoke_scale * 1.08) + vec2(0.5) + variant_uv_offset_b;
-		vec2 smoke_uv_a = clamp(rotate_uv(smoke_base_a + smoke_offset_a, sin(flow_time * 0.33 + phase) * 0.105), vec2(0.0), vec2(1.0));
-		vec2 smoke_uv_b = clamp(rotate_uv(smoke_base_b - smoke_offset_b, -sin(flow_time * 0.29 + 0.6 + phase) * 0.085), vec2(0.0), vec2(1.0));
-		float smoke_a = texture(smoke_texture, smoke_uv_a).r;
-		float smoke_b = texture(smoke_texture, smoke_uv_b).r;
-		smoke_mask = smoothstep(0.02, 0.80, max(smoke_a, smoke_b * 0.82));
+		vec2 smoke_offset_a = vec2(sin(flow_time * 0.71), cos(flow_time * 0.53)) * 0.076;
+		vec2 smoke_offset_b = vec2(cos(flow_time * 0.47 + 1.4), sin(flow_time * 0.61 - 0.8)) * 0.060;
+		vec2 smoke_offset_c = vec2(sin(flow_time * 0.39 - 0.9), cos(flow_time * 0.44 + 1.1)) * 0.050;
+		vec2 smoke_coord = (uv - vec2(0.5)) * smoke_flip + vec2(0.5) + smoke_anchor;
+		vec2 smoke_base_a = (smoke_coord - vec2(0.5)) * smoke_scale + vec2(0.5) + variant_uv_offset_a;
+		vec2 smoke_base_b = (smoke_coord - vec2(0.5)) * (smoke_scale * 1.08) + vec2(0.5) + variant_uv_offset_b;
+		vec2 smoke_base_c = (smoke_coord - vec2(0.5)) * (smoke_scale * 0.92) + vec2(0.5) - variant_uv_offset_a * 0.6;
+		vec2 smoke_uv_a = clamp(rotate_uv(smoke_base_a + smoke_offset_a, smoke_rotation.x + sin(flow_time * 0.33 + phase) * 0.105), vec2(0.0), vec2(1.0));
+		vec2 smoke_uv_b = clamp(rotate_uv(smoke_base_b - smoke_offset_b, smoke_rotation.y - sin(flow_time * 0.29 + 0.6 + phase) * 0.085), vec2(0.0), vec2(1.0));
+		vec2 smoke_uv_c = clamp(rotate_uv(smoke_base_c + smoke_offset_c, smoke_rotation.z + sin(flow_time * 0.25 + 1.9 + phase) * 0.070), vec2(0.0), vec2(1.0));
+		float smoke_a = texture(smoke_texture, smoke_uv_a).a;
+		float smoke_b = texture(smoke_texture, smoke_uv_b).a;
+		float smoke_c = texture(smoke_texture, smoke_uv_c).a;
+		smoke_mask = smoothstep(0.018, 0.62, max(max(smoke_a, smoke_b * 0.88), smoke_c * 0.76));
 	}
-	float density = 0.38 + density_bias + broad * 0.31 + rolling * 0.20 + fine * 0.065;
+	vec3 fog_field_a = vec3(
+		stirred_uv * cloud_scale * 1.16 + drift * 1.15 + variant_uv_offset_a,
+		phase * 0.19 + TIME * drift_speed * 0.66
+	);
+	vec3 fog_field_b = vec3(
+		stirred_uv * cloud_scale * 2.05 - drift * 0.74 + variant_uv_offset_b,
+		phase * 0.11 - TIME * drift_speed * 0.48
+	);
+	float gradient_cloud = gradient_fbm(fog_field_a);
+	float gradient_detail = gradient_fbm(fog_field_b);
+	float procedural_mist = smoothstep(0.16, 0.78, gradient_cloud * 0.68 + gradient_detail * 0.32);
+	float density = 0.08 + density_bias + smoke_mask * (0.62 + broad * 0.20 + rolling * 0.14) + procedural_mist * 0.12 + fine * 0.035;
 	if (use_cloud_texture) {
 		vec2 cloud_uv_a = fract(stirred_uv * (cloud_scale * 0.58) + drift * 1.35 + vec2(phase * 0.037, phase * 0.021) + variant_uv_offset_a);
 		vec2 cloud_uv_b = fract(stirred_uv * (cloud_scale * 0.91) - drift * 1.05 + vec2(phase * 0.019, -phase * 0.031) + variant_uv_offset_b);
 		float texture_cloud = texture(cloud_texture, cloud_uv_a).r * 0.62 + texture(cloud_texture, cloud_uv_b).r * 0.38;
-		density = mix(density, texture_cloud + density_bias * 0.5, texture_mix);
+		density = mix(density, texture_cloud + smoke_mask * 0.55 + density_bias * 0.5, texture_mix * 0.16);
 	}
 	if (use_detail_texture) {
 		vec2 detail_uv = fract(stirred_uv * (cloud_scale * 2.65) + drift * 2.20 + vec2(phase * 0.017, phase * 0.047) + variant_uv_offset_b * 1.7);
@@ -767,16 +1112,20 @@ void fragment() {
 		density += (detail_noise - 0.5) * 0.075 * (1.0 - gust_field * 0.45);
 	}
 	density *= 0.94 + sin(flow_time * 0.66) * 0.060;
-	density = clamp(density * smoke_mask + ridge - gust_field * 1.34, 0.0, 1.0);
-	float edge_x = smoothstep(0.0, 0.16, uv.x) * smoothstep(0.0, 0.16, 1.0 - uv.x);
-	float edge_y = smoothstep(0.0, 0.16, uv.y) * smoothstep(0.0, 0.16, 1.0 - uv.y);
-	float feather = edge_x * edge_y;
+	vec2 remapped_hover_clear_min = vec2(0.5) + (hover_clear_uv_min - vec2(0.5)) / max(layer_card_scale, vec2(0.001));
+	vec2 remapped_hover_clear_max = vec2(0.5) + (hover_clear_uv_max - vec2(0.5)) / max(layer_card_scale, vec2(0.001));
+	float hover_clear = soft_rect_mask(uv, remapped_hover_clear_min, remapped_hover_clear_max, 0.026);
+	density = clamp(density + ridge - gust_field * 1.18 - healing_clear * 1.06, 0.0, 1.0);
+	density *= 1.0 - hover_clear;
+	float edge_x = smoothstep(0.0, 0.075, uv.x) * smoothstep(0.0, 0.075, 1.0 - uv.x);
+	float edge_y = smoothstep(0.0, 0.085, uv.y) * smoothstep(0.0, 0.085, 1.0 - uv.y);
+	float feather = pow(edge_x * edge_y, 0.78);
 	ALBEDO = fog_color.rgb;
 	ALPHA = fog_alpha * density * feather;
 }
 """
 	material.shader = shader
-	material.set_shader_parameter("fog_alpha", 0.48 - float(layer_index) * 0.070)
+	material.set_shader_parameter("fog_alpha", 0.42 - float(layer_index) * 0.060)
 	material.set_shader_parameter("cloud_scale", 1.12 + float(layer_index) * 0.26)
 	material.set_shader_parameter("drift_speed", 0.090 + float(layer_index) * 0.034)
 	material.set_shader_parameter("phase", float(layer_index) * 3.17)
@@ -862,6 +1211,8 @@ func _load_original_scene_directly() -> void:
 	add_child((scene as PackedScene).instantiate())
 
 func _input(event: InputEvent) -> void:
+	if event is InputEventMouseMotion:
+		_update_software_cursor_position((event as InputEventMouseMotion).position)
 	if _game_viewport == null or _screen_mesh == null or _camera == null:
 		return
 	if _is_flat_2d_mode:
@@ -893,13 +1244,12 @@ func _forward_mouse_motion(event: InputEventMouseMotion) -> void:
 	else:
 		forwarded.relative = game_position - _last_game_mouse_position
 	_last_game_mouse_position = game_position
-	if event.velocity.length_squared() > 0.01:
-		_fog_cursor_actual_position = game_position
-		_fog_cursor_velocity = event.velocity
-		_apply_stealth_fog_cursor_prediction()
-	else:
-		_update_stealth_fog_cursor_motion(game_position, forwarded.relative, get_process_delta_time())
-	_update_existing_stealth_fog_cursor_wind()
+	var fog_mapped_position = _map_window_position_to_game_viewport(
+		event.position + STEALTH_FOG_CURSOR_CENTER_OFFSET
+	)
+	if fog_mapped_position is Vector2:
+		_update_stealth_fog_cursor_motion(fog_mapped_position)
+	_update_existing_stealth_fog_cursor_effect()
 	_game_viewport.push_input(forwarded, true)
 	get_viewport().set_input_as_handled()
 
@@ -914,7 +1264,11 @@ func _forward_mouse_button(event: InputEventMouseButton) -> void:
 	forwarded.position = game_position
 	forwarded.global_position = game_position
 	_last_game_mouse_position = game_position
-	_update_stealth_fog_cursor_motion(game_position, Vector2.ZERO, get_process_delta_time())
+	var fog_mapped_position = _map_window_position_to_game_viewport(
+		event.position + STEALTH_FOG_CURSOR_CENTER_OFFSET
+	)
+	if fog_mapped_position is Vector2:
+		_update_stealth_fog_cursor_motion(fog_mapped_position)
 	_game_viewport.push_input(forwarded, true)
 	get_viewport().set_input_as_handled()
 

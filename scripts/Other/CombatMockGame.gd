@@ -13197,6 +13197,7 @@ func _toggle_selected_spell_prepare_mode() -> void:
 func _show_hand_context_menu_panel(panel: Control, card: Card) -> void:
 	if panel == null:
 		return
+	panel.add_to_group("stealth_fog_clear_ui")
 	panel.set_meta("context_scope", "hand_card")
 	panel.set_meta("context_card_uid", card.uid if card != null else "")
 	_context_menu = panel
@@ -13951,6 +13952,7 @@ func _on_god_right_clicked(card: Card) -> void:
 
 	var panel := PanelContainer.new()
 	panel.name = "GodContextMenu"
+	panel.add_to_group("stealth_fog_clear_ui")
 	panel.mouse_filter = Control.MOUSE_FILTER_STOP
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color(0.1, 0.1, 0.18, 0.97)
@@ -18513,6 +18515,7 @@ func _on_creature_right_clicked(card: Card) -> void:
 
 	var panel := PanelContainer.new()
 	panel.name = "CreatureContextMenu"
+	panel.add_to_group("stealth_fog_clear_ui")
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color(0.1, 0.1, 0.18, 0.97)
 	style.border_color = Color(0.5, 0.7, 1.0)

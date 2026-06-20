@@ -1192,6 +1192,8 @@ func _add_prepared_magical_mana_badge(overlay: Control, card: Card) -> void:
 
 func _make_field_stat_badge(text: String, font_size: int = 15, font_color: Color = Color(0.92, 0.97, 1.0)) -> PanelContainer:
 	var badge := PanelContainer.new()
+	badge.name = "BoardStatBadge"
+	badge.add_to_group("stealth_fog_top_ui")
 	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	badge.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 
@@ -2589,6 +2591,8 @@ func _show_badge_hover_popup(anchor: Control, text: String, preview_card: Card =
 		return
 
 	var popup_root := Control.new()
+	popup_root.name = "CardHoverPanel"
+	popup_root.add_to_group("stealth_fog_clear_ui")
 	popup_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	popup_root.top_level = true
 	popup_root.z_as_relative = false
@@ -5519,6 +5523,8 @@ func _show_ability_popup() -> void:
 		return
 
 	var popup_root := Control.new()
+	popup_root.name = "CardHoverPanel"
+	popup_root.add_to_group("stealth_fog_clear_ui")
 	popup_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	popup_root.top_level = true
 	popup_root.z_as_relative = false

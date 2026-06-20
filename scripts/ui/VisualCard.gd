@@ -589,18 +589,21 @@ func _populate_vbox(vbox: VBoxContainer) -> void:
 		Card.CardType.CREATURE:
 			var stats_lbl := Label.new()
 			stats_lbl.name = _STATS_LABEL_NAME
+			stats_lbl.add_to_group("stealth_fog_top_ui")
 			stats_lbl.add_theme_font_size_override("font_size", 19)
 			_stats_label = stats_lbl
 			vbox.add_child(stats_lbl)
 		Card.CardType.STRUCTURE:
 			var res_lbl := Label.new()
 			res_lbl.name = _STATS_LABEL_NAME
+			res_lbl.add_to_group("stealth_fog_top_ui")
 			res_lbl.add_theme_font_size_override("font_size", 16)
 			_stats_label = res_lbl
 			vbox.add_child(res_lbl)
 		Card.CardType.SPELL, Card.CardType.HEX, Card.CardType.CHARM:
 			var spd_lbl := Label.new()
 			spd_lbl.name = _STATS_LABEL_NAME
+			spd_lbl.add_to_group("stealth_fog_top_ui")
 			spd_lbl.add_theme_font_size_override("font_size", 16)
 			_stats_label = spd_lbl
 			vbox.add_child(spd_lbl)
@@ -1343,6 +1346,8 @@ func _show_hover_panel() -> void:
 		return
 
 	var panel := PanelContainer.new()
+	panel.name = "CardHoverPanel"
+	panel.add_to_group("stealth_fog_clear_ui")
 	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	panel.top_level = true
 	panel.z_index = _HOVER_PANEL_Z_INDEX
