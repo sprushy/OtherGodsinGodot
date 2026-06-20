@@ -597,8 +597,37 @@ static func _get_hidden_card_hover_label(card: Card) -> String:
 	if card != null and card.is_prepared and card.is_magical_card():
 		return "Prepared magical card"
 	if card != null and card.card_type == Card.CardType.CREATURE:
-		return "Hidden creature"
+		var cost_text := _get_hidden_creature_cost_text(card)
+		if cost_text != "":
+			return "Hidden Creature that cost " + cost_text
+		return "Hidden Creature"
 	return "Hidden card"
+
+static func _get_hidden_creature_cost_text(card: Card) -> String:
+	if card == null:
+		return ""
+	var cost_parts: Array[String] = []
+	if card.mana_cost > 0:
+		cost_parts.append(_format_hidden_cost_amount(card.mana_cost, "mana", "mana"))
+	if card.sacrifice_cost > 0:
+		cost_parts.append(_format_hidden_cost_amount(card.sacrifice_cost, "sacrifice", "sacrifices"))
+	if card.discard_cost > 0:
+		cost_parts.append(_format_hidden_cost_amount(card.discard_cost, "discard", "discards"))
+	if card.banish_cost > 0:
+		cost_parts.append(_format_hidden_cost_amount(card.banish_cost, "banish", "banishes"))
+	if card.shelve_cost > 0:
+		cost_parts.append(_format_hidden_cost_amount(card.shelve_cost, "shelve", "shelves"))
+	if cost_parts.is_empty():
+		return ""
+	if cost_parts.size() == 1:
+		return cost_parts[0]
+	if cost_parts.size() == 2:
+		return cost_parts[0] + " and " + cost_parts[1]
+	var last_part: String = str(cost_parts.pop_back())
+	return ", ".join(cost_parts) + ", and " + last_part
+
+static func _format_hidden_cost_amount(amount: int, singular: String, plural: String) -> String:
+	return "%d %s" % [amount, singular if amount == 1 else plural]
 
 static func extract_card_keywords(card: Card) -> Array[String]:
 	var found: Array[String] = []

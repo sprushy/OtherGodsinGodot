@@ -58,7 +58,7 @@ const MAJOR_ACTION_SYMBOL_TEXTURE := preload("res://images/ui/MajorActionSymbol.
 const MANA_ORB_TEXTURE := preload("res://images/ui/ManaOrb.png")
 const SWITCH_TO_AGGRESSIVE_SYMBOL_TEXTURE := preload("res://images/ui/SwitchToAggressiveSymbol.png")
 const SWITCH_TO_DEFENSIVE_SYMBOL_TEXTURE := preload("res://images/ui/SwitchToDefensiveSymbol.png")
-const PREPARED_MAGICAL_CARD_COVER_TEXTURE := preload("res://images/PreparedMagicalCardCoverRuntime.png")
+const PREPARED_MAGICAL_CARD_COVER_TEXTURE := preload("res://images/PreparedMagicalCardCoverDimRuntime.png")
 const PREPARED_MAGICAL_CARD_COVER_HOVER_TEXTURE := preload("res://images/PreparedMagicalCardCoverHoverRuntime.png")
 const BOARD_ZONE_SLAB_TEXTURE_PATHS := [
 	"res://images/board/stone_zone_slab.png",
@@ -108,6 +108,7 @@ const PRIORITY_RESPONSE_GLOW_COLOR := Color(0.28, 0.92, 0.50, 0.95)
 # transient previews and modal UI promoted by CombatMockGame.
 const HOVER_BOARD_Z_INDEX := 2260
 const POPUP_Z_INDEX := 2290
+const CARD_HOVER_POPUP_DELAY := 0.22
 
 func _get_badge_row_top() -> float:
 	return BADGE_ROW_TOP
@@ -4696,9 +4697,6 @@ func _refresh_display() -> void:
 					art.offset_top = -5.0
 					art.offset_right = 5.0
 					art.offset_bottom = 5.0
-				if use_prepared_magical_cover and card.get_controller() != face_down_viewer:
-					art.flip_h = true
-					art.flip_v = true
 				fd_overlay.add_child(art)
 				if use_prepared_magical_cover:
 					_prepared_magical_cover_art = art
@@ -5449,9 +5447,8 @@ func _notification(what: int) -> void:
 				_refresh_display()
 			var viewer := _get_viewer_player()
 			if _c != null and _should_show_hover_popup_for_card(_c, viewer):
-				var _delay := 1.0 if (_c.is_god) else 1.5
 				if is_inside_tree() and not is_queued_for_deletion():
-					get_tree().create_timer(_delay).timeout.connect(Callable(self, "_try_show_popup"))
+					get_tree().create_timer(CARD_HOVER_POPUP_DELAY).timeout.connect(Callable(self, "_try_show_popup"))
 		NOTIFICATION_MOUSE_EXIT:
 			if _badge_hovered or _is_mouse_over_owned_badge() or _is_mouse_in_affordance_hover_area():
 				_hovered = true
