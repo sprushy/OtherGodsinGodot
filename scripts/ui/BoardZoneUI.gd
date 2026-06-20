@@ -58,6 +58,8 @@ const MAJOR_ACTION_SYMBOL_TEXTURE := preload("res://images/ui/MajorActionSymbol.
 const MANA_ORB_TEXTURE := preload("res://images/ui/ManaOrb.png")
 const SWITCH_TO_AGGRESSIVE_SYMBOL_TEXTURE := preload("res://images/ui/SwitchToAggressiveSymbol.png")
 const SWITCH_TO_DEFENSIVE_SYMBOL_TEXTURE := preload("res://images/ui/SwitchToDefensiveSymbol.png")
+const PREPARED_MAGICAL_CARD_COVER_TEXTURE := preload("res://images/PreparedMagicalCardCoverRuntime.png")
+const PREPARED_MAGICAL_CARD_COVER_HOVER_TEXTURE := preload("res://images/PreparedMagicalCardCoverHoverRuntime.png")
 const BOARD_ZONE_SLAB_TEXTURE_PATHS := [
 	"res://images/board/stone_zone_slab.png",
 	"res://images/board/slot_tile_1.png",
@@ -550,6 +552,9 @@ var _move_indicator_source_center: Vector2 = Vector2.ZERO
 var _move_indicator_target_center: Vector2 = Vector2.ZERO
 var _defense_overlay: Control = null
 var _raised_overlay: Control = null  # non-null for DEF or stealth - floats above the zone row
+var _prepared_magical_cover_art: TextureRect = null
+var _prepared_magical_cover_overlay: Control = null
+var _prepared_magical_hover_tween: Tween = null
 var _visual_state_card: Card = null
 var _visual_state_refresh_queued: bool = false
 var _badge_hover_popup: Control = null
@@ -2665,6 +2670,7 @@ func _hide_badge_hover_popup() -> void:
 	if _badge_hover_popup != null and is_instance_valid(_badge_hover_popup):
 		_badge_hover_popup.queue_free()
 	_badge_hover_popup = null
+	_update_hover_polling()
 
 func _add_tez_bloodstreaks(badge: Control, sacrifice_count: int) -> void:
 	if badge == null:
@@ -4594,6 +4600,7 @@ func setup(p_zone: Zone, p_gm: GameManager, p_player: Player, idx: int,
 	size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	z_as_relative = false
+	set_process(false)
 	_refresh_display()
 
 func _get_resting_z_index() -> int:
@@ -4604,8 +4611,11 @@ func _refresh_display() -> void:
 		return
 	_hide_ability_popup()
 	_hide_badge_hover_popup()
+	_stop_prepared_magical_hover_shake()
 	_defense_overlay = null
 	_raised_overlay = null
+	_prepared_magical_cover_art = null
+	_prepared_magical_cover_overlay = null
 	for child in get_children():
 		child.queue_free()
 	var card: Card = _preview_card if _preview_card != null else (zone.cards[0] if zone.cards.size() > 0 else null)
@@ -4659,9 +4669,18 @@ func _refresh_display() -> void:
 				or card.is_power
 				or card.is_prepared
 			)
+			var use_prepared_magical_cover := card.is_prepared \
+				and card.is_magical_card() \
+				and card.get_controller() != face_down_viewer
 			var show_revealed_card_art := revealed_face_down_card and card.art_path != ""
 			var tex: Texture2D = null
-			if show_revealed_card_art or (is_own_hidden_card and card.art_path != ""):
+			if use_prepared_magical_cover:
+				tex = (
+					PREPARED_MAGICAL_CARD_COVER_HOVER_TEXTURE
+					if _hovered
+					else PREPARED_MAGICAL_CARD_COVER_TEXTURE
+				)
+			elif show_revealed_card_art or (is_own_hidden_card and card.art_path != ""):
 				tex = load(card.art_path)
 			else:
 				tex = load("res://images/cardbackAI.png")
@@ -4672,7 +4691,19 @@ func _refresh_display() -> void:
 				art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 				art.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 				art.mouse_filter = Control.MOUSE_FILTER_IGNORE
+				if use_prepared_magical_cover:
+					art.offset_left = -5.0
+					art.offset_top = -5.0
+					art.offset_right = 5.0
+					art.offset_bottom = 5.0
+				if use_prepared_magical_cover and card.get_controller() != face_down_viewer:
+					art.flip_h = true
+					art.flip_v = true
 				fd_overlay.add_child(art)
+				if use_prepared_magical_cover:
+					_prepared_magical_cover_art = art
+					_prepared_magical_cover_overlay = fd_overlay
+					fd_overlay.pivot_offset = get_zone_size() * 0.5
 			if show_revealed_card_art:
 				var revealed_haze := ColorRect.new()
 				var is_own_revealed_card := card.get_controller() == face_down_viewer
@@ -4708,7 +4739,7 @@ func _refresh_display() -> void:
 					mute_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 					mute_badge.add_child(mute_lbl)
 					fd_overlay.add_child(mute_badge)
-			elif is_own_hidden_card:
+			elif is_own_hidden_card and not use_prepared_magical_cover:
 				var haze := ColorRect.new()
 				haze.color = Color(0.05, 0.05, 0.2, 0.38)
 				haze.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -5392,6 +5423,7 @@ func _notification(what: int) -> void:
 			if zone != null:
 				call_deferred("_refresh_display")
 		NOTIFICATION_EXIT_TREE:
+			set_process(false)
 			if _active_affordance_hover_owner_id == get_instance_id():
 				_active_affordance_hover_owner_id = 0
 			_pinned = false
@@ -5404,17 +5436,19 @@ func _notification(what: int) -> void:
 			_hide_ability_popup()
 		NOTIFICATION_MOUSE_ENTER:
 			_hovered = true
+			set_process(true)
 			_active_affordance_hover_owner_id = get_instance_id()
 			var _c := _preview_card if _preview_card != null else (zone.cards[0] if zone != null and zone.cards.size() > 0 else null)
 			if _c != null:
 				_notify_hover_card_options_changed(_c)
-				_refresh_display()
+				if not _set_prepared_magical_cover_hovered(true):
+					_refresh_display()
 			if _c != null:
 				z_index = HOVER_BOARD_Z_INDEX
 			elif zone != null and zone.cards.is_empty():
 				_refresh_display()
 			var viewer := _get_viewer_player()
-			if _c != null and (not _c.is_face_down or _c.get_controller() == viewer or _is_public_power(_c) or _c.is_revealed_to_all()):
+			if _c != null and _should_show_hover_popup_for_card(_c, viewer):
 				var _delay := 1.0 if (_c.is_god) else 1.5
 				if is_inside_tree() and not is_queued_for_deletion():
 					get_tree().create_timer(_delay).timeout.connect(Callable(self, "_try_show_popup"))
@@ -5426,12 +5460,74 @@ func _notification(what: int) -> void:
 			_hovered = false
 			_badge_hovered = false
 			_notify_hover_card_options_changed(null)
+			_set_prepared_magical_cover_hovered(false)
 			z_index = _get_resting_z_index()
 			if zone != null and zone.cards.is_empty():
 				_refresh_display()
-			elif zone != null and not zone.cards.is_empty():
+			elif zone != null and not zone.cards.is_empty() and _prepared_magical_cover_art == null:
 				_schedule_hover_exit_refresh()
 			_schedule_hide()
+			_update_hover_polling()
+
+func _set_prepared_magical_cover_hovered(is_hovered: bool) -> bool:
+	if _prepared_magical_cover_art == null or not is_instance_valid(_prepared_magical_cover_art):
+		return false
+	_prepared_magical_cover_art.texture = (
+		PREPARED_MAGICAL_CARD_COVER_HOVER_TEXTURE
+		if is_hovered
+		else PREPARED_MAGICAL_CARD_COVER_TEXTURE
+	)
+	if is_hovered:
+		_start_prepared_magical_hover_shake()
+	else:
+		_stop_prepared_magical_hover_shake()
+	return true
+
+func _start_prepared_magical_hover_shake() -> void:
+	if _prepared_magical_cover_overlay == null or not is_instance_valid(_prepared_magical_cover_overlay):
+		return
+	if _prepared_magical_hover_tween != null and _prepared_magical_hover_tween.is_valid():
+		return
+	_prepared_magical_cover_overlay.rotation_degrees = 0.0
+	_prepared_magical_hover_tween = create_tween().set_loops()
+	_prepared_magical_hover_tween.set_trans(Tween.TRANS_SINE)
+	_prepared_magical_hover_tween.set_ease(Tween.EASE_IN_OUT)
+	_prepared_magical_hover_tween.tween_property(
+		_prepared_magical_cover_overlay,
+		"rotation_degrees",
+		-0.45,
+		0.055
+	)
+	_prepared_magical_hover_tween.tween_property(
+		_prepared_magical_cover_overlay,
+		"rotation_degrees",
+		0.5,
+		0.075
+	)
+	_prepared_magical_hover_tween.tween_property(
+		_prepared_magical_cover_overlay,
+		"rotation_degrees",
+		-0.25,
+		0.065
+	)
+	_prepared_magical_hover_tween.tween_property(
+		_prepared_magical_cover_overlay,
+		"rotation_degrees",
+		0.0,
+		0.055
+	)
+
+func _stop_prepared_magical_hover_shake() -> void:
+	if _prepared_magical_hover_tween != null and _prepared_magical_hover_tween.is_valid():
+		_prepared_magical_hover_tween.kill()
+	_prepared_magical_hover_tween = null
+	if _prepared_magical_cover_overlay != null and is_instance_valid(_prepared_magical_cover_overlay):
+		_prepared_magical_cover_overlay.rotation_degrees = 0.0
+
+func _update_hover_polling() -> void:
+	var has_popup := _popup != null and is_instance_valid(_popup)
+	var has_badge_popup := _badge_hover_popup != null and is_instance_valid(_badge_hover_popup)
+	set_process(_hovered or _badge_hovered or _pinned or has_popup or has_badge_popup)
 
 func _schedule_hover_exit_refresh() -> void:
 	if _hover_exit_refresh_pending:
@@ -5449,7 +5545,9 @@ func _schedule_hover_exit_refresh() -> void:
 		_hovered = true
 		_schedule_hover_exit_refresh()
 		return
-	_refresh_display()
+	if not _set_prepared_magical_cover_hovered(false):
+		_refresh_display()
+	_update_hover_polling()
 
 func _schedule_hide() -> void:
 	if _pinned or _hide_pending:
@@ -5472,6 +5570,17 @@ func _schedule_hide() -> void:
 		return  # Mouse returned to zone
 	_hide_ability_popup()
 
+func _should_show_hover_popup_for_card(card: Card, viewer: Player) -> bool:
+	if card == null:
+		return false
+	if not card.is_face_down:
+		return true
+	if card.get_controller() == viewer or _is_public_power(card) or card.is_revealed_to_all():
+		return true
+	if card.is_prepared and card.is_magical_card():
+		return true
+	return card.card_type == Card.CardType.CREATURE and card.is_stealth
+
 func _input(event: InputEvent) -> void:
 	if not _pinned:
 		return
@@ -5486,11 +5595,17 @@ func _process(_delta: float) -> void:
 		return
 	if not is_inside_tree() or is_queued_for_deletion() or get_viewport() == null:
 		return
-	if _hovered and not _badge_hovered and not _is_mouse_over_owned_badge() and not _is_mouse_in_affordance_hover_area():
+	if _hovered \
+		and not _badge_hovered \
+		and not _is_mouse_over_owned_badge() \
+		and not _is_mouse_in_affordance_hover_area() \
+		and not get_global_rect().has_point(get_global_mouse_position()):
 		_hovered = false
 		_notify_hover_card_options_changed(null)
 		z_index = _get_resting_z_index()
-		_refresh_display()
+		if not _set_prepared_magical_cover_hovered(false):
+			_refresh_display()
+		_update_hover_polling()
 		return
 	if _popup and is_instance_valid(_popup):
 		var over_zone  := get_global_rect().has_point(get_global_mouse_position())
@@ -5545,7 +5660,9 @@ func _show_ability_popup() -> void:
 	popup.mouse_exited.connect(Callable(self, "_on_popup_mouse_exited"))
 
 	var popup_viewer_shared := _get_viewer_player()
-	var is_hidden_card_shared := (card.is_stealth or (card.is_face_down and not _is_public_power(card))) and card.get_controller() != popup_viewer_shared and not card.is_revealed_to_all()
+	var is_hidden_card_shared := (card.is_stealth or card.is_prepared or (card.is_face_down and not _is_public_power(card))) \
+		and card.get_controller() != popup_viewer_shared \
+		and not card.is_revealed_to_all()
 
 	var effect_lines_shared: Array[String] = []
 	var equipment_lines_shared: Array[String] = []
@@ -5653,6 +5770,7 @@ func _hide_ability_popup() -> void:
 	if _popup and is_instance_valid(_popup):
 		_popup.queue_free()
 	_popup = null
+	_update_hover_polling()
 
 func can_accept_card(card: Card) -> bool:
 	if card is BitMeseri:

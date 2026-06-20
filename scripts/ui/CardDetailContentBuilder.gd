@@ -213,7 +213,7 @@ static func build_board_popup_body_from_game_state(
 	config: Dictionary = {}
 ) -> Control:
 	var merged_config := config.duplicate(true)
-	var is_hidden_card := (card.is_stealth or (card.is_face_down and not _is_public_power(card))) \
+	var is_hidden_card := (card.is_stealth or card.is_prepared or (card.is_face_down and not _is_public_power(card))) \
 		and card.get_controller() != viewer \
 		and not card.is_revealed_to_all()
 	merged_config["is_hidden_card"] = is_hidden_card
@@ -432,11 +432,14 @@ static func build_board_popup_body(card: Card, viewer: Player, config: Dictionar
 	vbox.add_child(header_row)
 
 	var name_lbl := _make_label(
-		card.get_display_name_for_control() if not is_hidden_card else "???",
+		card.get_display_name_for_control() if not is_hidden_card else _get_hidden_card_hover_label(card),
 		15
 	)
 	name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header_row.add_child(name_lbl)
+
+	if is_hidden_card:
+		return vbox
 
 	if not is_hidden_card and card.culture != "":
 		var culture_lbl := _make_label(card.culture, 13, Color(0.96, 0.88, 0.62))
@@ -589,6 +592,13 @@ static func build_board_popup_body(card: Card, viewer: Player, config: Dictionar
 		vbox.add_child(_make_label(card.flavor_text, 13, Color(0.55, 0.55, 0.55), true))
 
 	return vbox
+
+static func _get_hidden_card_hover_label(card: Card) -> String:
+	if card != null and card.is_prepared and card.is_magical_card():
+		return "Prepared magical card"
+	if card != null and card.card_type == Card.CardType.CREATURE:
+		return "Hidden creature"
+	return "Hidden card"
 
 static func extract_card_keywords(card: Card) -> Array[String]:
 	var found: Array[String] = []

@@ -46,6 +46,7 @@ const MASMASSU_PRIEST_CURSOR_IMAGE_PATH := "res://images/ui/cursors/MasmassauPri
 const GRINDYLOW_DROWN_CURSOR_IMAGE_PATH := "res://images/ui/cursors/DrownCursor.png"
 const SEVENTH_SAGE_CURSOR_IMAGE_PATH := "res://images/ui/cursors/SeventhSageCursor.png"
 const CardBackTexture = preload("res://images/cardbackAI.png")
+const PreparedMagicalCardCoverTexture = preload("res://images/PreparedMagicalCardCoverRuntime.png")
 const BOARD_FLOOR_TEXTURE_PATH := "res://images/board/moss_stone_floor_albedo.png"
 const BOARD_SPLASH_TEXTURE_PATH := "res://images/ui/splash/other_gods_splash.png"
 const PromptRouterScript = preload("res://scripts/server/PromptRouter.gd")
@@ -2119,7 +2120,14 @@ func _make_wheel_of_fire_target_preview(target: Card) -> Control:
 		and target.current_zone != null \
 		and target.current_zone.is_board_zone() \
 		and target.is_hidden_from_viewer(viewer)
-	var texture: Texture2D = CardBackTexture if hide_target else null
+	var use_prepared_magical_cover := hide_target \
+		and target.is_prepared \
+		and target.is_magical_card()
+	var texture: Texture2D = (
+		PreparedMagicalCardCoverTexture
+		if use_prepared_magical_cover
+		else CardBackTexture if hide_target else null
+	)
 	if texture == null and target != null and target.art_path != "":
 		texture = load(target.art_path) as Texture2D
 	if texture != null:
@@ -10057,8 +10065,7 @@ func _should_hide_card_in_selection_overlay(card: Card) -> bool:
 	var viewer := game_manager.get_feedback_viewer() if game_manager != null else null
 	return card.is_hidden_from_viewer(viewer)
 
-func _make_hidden_selection_preview(_card: Card) -> Control:
-	const CARD_BACK := "res://images/cardbackAI.png"
+func _make_hidden_selection_preview(card: Card) -> Control:
 	var panel := PanelContainer.new()
 	panel.custom_minimum_size = Vector2(VisualCard.CARD_WIDTH, VisualCard.CARD_HEIGHT)
 	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -10088,7 +10095,11 @@ func _make_hidden_selection_preview(_card: Card) -> Control:
 	name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vbox.add_child(name_lbl)
 
-	var tex := load(CARD_BACK) as Texture2D
+	var tex := (
+		PreparedMagicalCardCoverTexture
+		if card != null and card.is_prepared and card.is_magical_card()
+		else CardBackTexture
+	)
 	if tex != null:
 		var art := TextureRect.new()
 		art.texture = tex

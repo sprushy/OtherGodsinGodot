@@ -239,12 +239,16 @@ func load_featured_card_test_scenario() -> void:
 	_place_test_hidden_creature(player1, player1.frontline_zones[3], Pegasus.new())
 	_place_test_hidden_creature(player1, player1.reserve_zones[1], Nimue.new())
 	_place_test_hidden_creature(player1, player1.reserve_zones[3], Nagual.new())
+	_place_test_prepared_card(player1, player1.frontline_zones[0], OccultSingularity.new())
+	_place_test_prepared_card(player1, player1.reserve_zones[4], Absence.new())
 
 	_place_test_hidden_creature(player2, player2.frontline_zones[1], Alu.new())
 	_place_test_hidden_creature(player2, player2.frontline_zones[2], MinotaurFootsoldier.new())
 	_place_test_hidden_creature(player2, player2.frontline_zones[3], Berserker.new())
 	_place_test_hidden_creature(player2, player2.reserve_zones[1], TheWhiteSerpent.new())
 	_place_test_hidden_creature(player2, player2.reserve_zones[3], GududPriest.new())
+	_place_test_prepared_card(player2, player2.frontline_zones[0], Famine.new())
+	_place_test_prepared_card(player2, player2.reserve_zones[4], FoolishOptimism.new())
 
 	# Keep draw/upkeep choices stable if the sandbox runs longer.
 	_add_test_deck_card(player1, BrownBear.new())
@@ -280,9 +284,10 @@ func load_featured_card_test_scenario() -> void:
 	game_manager.start_turn()
 	_open_upkeep_choice_window()
 	action_label.text = (
-		"Stealth Visual Test. The board starts cleared except for stealth-mode creatures. "
+		"Stealth and Prepared Magic Visual Test. The board starts with stealth-mode creatures "
+		+ "and prepared spells in the outer slots. "
 		+ "Friendly stealth cards use visible hazed art; opposing stealth cards use hidden card backs. "
-		+ "Use this screen to judge the fog and normal defensive shield placement instantly."
+		+ "Prepared spells use the sun-and-moon cover and brighten when moused over."
 	)
 	update_ui()
 
