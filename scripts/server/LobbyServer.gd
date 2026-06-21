@@ -916,6 +916,7 @@ func _join_room_for_session(session_id: String, room_id: String) -> void:
 	if not rooms_by_id.has(normalized_room_id):
 		_send_error_to_session(session_id, "Room %s was not found." % normalized_room_id)
 		return
+	var previous_room_id := ""
 	if room_id_by_session.has(session_id):
 		var current_room_id: String = str(room_id_by_session.get(session_id, ""))
 		if current_room_id == normalized_room_id:
@@ -926,13 +927,9 @@ func _join_room_for_session(session_id: String, room_id: String) -> void:
 			if current_room.status == LobbyRoomScript.STATUS_IN_MATCH:
 				_send_error_to_session(session_id, "Finish or forfeit your active match before joining another seek.")
 				return
-			_send_error_to_session(session_id, "Leave your current room before joining a new one.")
-			return
+			previous_room_id = current_room_id
 		else:
 			room_id_by_session.erase(session_id)
-	if room_id_by_session.has(session_id):
-		_send_error_to_session(session_id, "Leave your current room before joining a new one.")
-		return
 
 	var room: LobbyRoom = rooms_by_id[normalized_room_id]
 	if room.status == LobbyRoomScript.STATUS_IN_MATCH:
@@ -949,7 +946,28 @@ func _join_room_for_session(session_id: String, room_id: String) -> void:
 		_send_error_to_session(session_id, "Unable to join room %s." % normalized_room_id)
 		return
 
+	if not previous_room_id.is_empty():
+		_leave_non_match_room_for_seek_switch(session_id, previous_room_id)
 	room_id_by_session[session_id] = normalized_room_id
+	_emit_room_updates(room)
+
+func _leave_non_match_room_for_seek_switch(session_id: String, room_id: String) -> void:
+	if room_id.is_empty():
+		return
+	if not rooms_by_id.has(room_id):
+		if str(room_id_by_session.get(session_id, "")) == room_id:
+			room_id_by_session.erase(session_id)
+		return
+	var room: LobbyRoom = rooms_by_id[room_id]
+	if room.status == LobbyRoomScript.STATUS_IN_MATCH:
+		return
+	room.remove_member(session_id)
+	if str(room_id_by_session.get(session_id, "")) == room_id:
+		room_id_by_session.erase(session_id)
+	if room.is_empty():
+		rooms_by_id.erase(room_id)
+		_broadcast_room_lists()
+		return
 	_emit_room_updates(room)
 
 func _observe_room_for_session(session_id: String, room_id: String) -> void:

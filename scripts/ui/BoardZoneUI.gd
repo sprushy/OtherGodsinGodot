@@ -9,6 +9,7 @@ const AggressiveSwordOverlay = preload("res://scripts/ui/AggressiveSwordOverlay.
 const StealthFogOverlayScript = preload("res://scripts/ui/StealthFogOverlay.gd")
 const LevelSymbolRowScript = preload("res://scripts/ui/LevelSymbolRow.gd")
 const DebuffBadgeScript = preload("res://scripts/ui/DebuffBadge.gd")
+const UITextureCacheScript = preload("res://scripts/ui/UITextureCache.gd")
 const CHAMPIONS_CALL_BADGE_TEXTURE := preload("res://images/Champion's Call Horn Badge.png")
 const SMOKING_MIRROR_BADGE_TEXTURE := preload("res://images/Smoking Mirror Icon.png")
 const TEZ_SACRIFICE_BADGE_TEXTURE := preload("res://images/TezSacBadge.png")
@@ -88,6 +89,7 @@ const GIDIM_ENSI_CARD_NAME := "Gidim Ensi"
 const GIDIM_ENSI_SLEEP_SOURCE := "Gidim Ensi Guardian"
 const LEVEL_BADGE_TOP := -12.0
 const LEVEL_BADGE_BOTTOM := 12.0
+const POPUP_VIEWPORT_MARGIN := 4.0
 const BADGE_ROW_GAP := 6.0
 const BADGE_ROW_TOP := LEVEL_BADGE_BOTTOM + BADGE_ROW_GAP + 31.0
 const GOD_ABILITY_BADGE_TOP_OFFSET := -22.0
@@ -168,7 +170,7 @@ class TiamatBroodSlotArt extends Control:
 			if slot_card == null or slot_card.art_path == "":
 				textures.append(null)
 				continue
-			var tex := load(slot_card.art_path) as Texture2D
+			var tex := UITextureCacheScript.get_texture(slot_card.art_path)
 			textures.append(tex)
 		queue_redraw()
 
@@ -1583,7 +1585,7 @@ func _make_breidablik_priest_badge(priest: Card) -> Control:
 
 	var art_added := false
 	if priest != null and priest.art_path != "":
-		var tex := load(priest.art_path) as Texture2D
+		var tex := UITextureCacheScript.get_texture(priest.art_path)
 		if tex != null:
 			var art := TextureRect.new()
 			art.texture = tex
@@ -2658,13 +2660,31 @@ func _show_badge_hover_popup(anchor: Control, text: String, preview_card: Card =
 	popup_root.size = popup_size
 	var anchor_rect := anchor.get_global_rect()
 	var viewport_size := get_viewport_rect().size
+	var popup_scale := minf(
+		1.0,
+		minf(
+			maxf(0.35, (viewport_size.x - POPUP_VIEWPORT_MARGIN * 2.0) / maxf(popup_size.x, 1.0)),
+			maxf(0.35, (viewport_size.y - POPUP_VIEWPORT_MARGIN * 2.0) / maxf(popup_size.y, 1.0))
+		)
+	)
+	popup_root.scale = Vector2(popup_scale, popup_scale)
+	var scaled_popup_size := popup_size * popup_scale
 	var popup_pos := Vector2(
-		anchor_rect.position.x + (anchor_rect.size.x - popup_size.x) * 0.5,
-		anchor_rect.position.y - popup_size.y - 6.0
+		anchor_rect.position.x + (anchor_rect.size.x - scaled_popup_size.x) * 0.5,
+		anchor_rect.position.y - scaled_popup_size.y - 6.0
 	)
 	if popup_pos.y < 4.0:
 		popup_pos.y = anchor_rect.end.y + 6.0
-	popup_pos.x = clamp(popup_pos.x, 4.0, viewport_size.x - popup_size.x - 4.0)
+	popup_pos.x = clampf(
+		popup_pos.x,
+		POPUP_VIEWPORT_MARGIN,
+		maxf(POPUP_VIEWPORT_MARGIN, viewport_size.x - scaled_popup_size.x - POPUP_VIEWPORT_MARGIN)
+	)
+	popup_pos.y = clampf(
+		popup_pos.y,
+		POPUP_VIEWPORT_MARGIN,
+		maxf(POPUP_VIEWPORT_MARGIN, viewport_size.y - scaled_popup_size.y - POPUP_VIEWPORT_MARGIN)
+	)
 	popup_root.global_position = popup_pos
 
 func _hide_badge_hover_popup() -> void:
@@ -3587,7 +3607,7 @@ func _append_debuff_affordance_entry(entries: Array[Dictionary], seen: Dictionar
 func _make_card_art_preview(source_card: Card) -> Control:
 	if source_card == null or source_card.art_path == "":
 		return null
-	var tex := load(source_card.art_path) as Texture2D
+	var tex := UITextureCacheScript.get_texture(source_card.art_path)
 	if tex == null:
 		return null
 	var art := TextureRect.new()
@@ -4425,7 +4445,7 @@ func _get_minimum_size() -> Vector2:
 	return get_zone_size()
 
 static func _load_png_texture(path: String) -> Texture2D:
-	var texture := load(path) as Texture2D
+	var texture := UITextureCacheScript.get_texture(path)
 	if texture == null:
 		push_warning("BoardZoneUI: failed to load board texture %s" % path)
 		return null
@@ -4707,9 +4727,9 @@ func _refresh_display() -> void:
 					else PREPARED_MAGICAL_CARD_COVER_TEXTURE
 				)
 			elif show_revealed_card_art or (is_own_hidden_card and card.art_path != ""):
-				tex = load(card.art_path)
+				tex = UITextureCacheScript.get_texture(card.art_path)
 			else:
-				tex = load("res://images/cardbackAI.png")
+				tex = UITextureCacheScript.get_texture("res://images/cardbackAI.png")
 			if tex:
 				var art := TextureRect.new()
 				art.texture = tex
@@ -4833,7 +4853,7 @@ func _refresh_display() -> void:
 				or show_god_followers_target_aura
 				or glow_champions_call_badge
 			) else BASE_BOARD_Z_INDEX
-			var tex: Texture2D = load(card.art_path)
+			var tex: Texture2D = UITextureCacheScript.get_texture(card.art_path)
 			if tex:
 				# Single Control overlay - PanelContainer fills it to the zone size.
 				# Children inside use anchors relative to the overlay, bypassing
@@ -5027,7 +5047,7 @@ func _refresh_display() -> void:
 			var stealth_viewer := _get_viewer_player()
 			var is_own := card.get_controller() == stealth_viewer
 			var tex_path := card.art_path if (is_own or show_public_stealth) and card.art_path != "" else "res://images/cardbackAI.png"
-			var tex: Texture2D = load(tex_path)
+			var tex: Texture2D = UITextureCacheScript.get_texture(tex_path)
 			if tex:
 				var art := TextureRect.new()
 				art.texture = tex
@@ -5044,7 +5064,7 @@ func _refresh_display() -> void:
 				card_overlay.add_child(haze)
 			_add_stealth_fog_overlay(card_overlay, card)
 		elif card.art_path != "":
-			var tex: Texture2D = load(card.art_path)
+			var tex: Texture2D = UITextureCacheScript.get_texture(card.art_path)
 			if tex:
 				var art := TextureRect.new()
 				art.texture = tex
@@ -5779,13 +5799,31 @@ func _show_ability_popup() -> void:
 		maxf(popup_size.y, keyword_size.y)
 	)
 	popup_root.size = popup_root_size
+	var popup_root_scale := minf(
+		1.0,
+		minf(
+			maxf(0.35, (popup_vp_size_shared.x - POPUP_VIEWPORT_MARGIN * 2.0) / maxf(popup_root_size.x, 1.0)),
+			maxf(0.35, (popup_vp_size_shared.y - POPUP_VIEWPORT_MARGIN * 2.0) / maxf(popup_root_size.y, 1.0))
+		)
+	)
+	popup_root.scale = Vector2(popup_root_scale, popup_root_scale)
+	var scaled_popup_root_size := popup_root_size * popup_root_scale
 
 	var popup_pos_shared := global_position
-	popup_pos_shared.y -= popup.size.y + 6
+	popup_pos_shared.y -= popup.size.y * popup_root_scale + 6
 	if popup_pos_shared.y < 0:
 		popup_pos_shared.y = global_position.y + size.y + 6
-	var desired_x := global_position.x - (keyword_size.x + KEYWORD_PANEL_GAP if keywords_on_left else 0.0)
-	popup_pos_shared.x = clamp(desired_x, 4.0, popup_vp_size_shared.x - popup_root_size.x - 4.0)
+	var desired_x := global_position.x - ((keyword_size.x + KEYWORD_PANEL_GAP) * popup_root_scale if keywords_on_left else 0.0)
+	popup_pos_shared.x = clampf(
+		desired_x,
+		POPUP_VIEWPORT_MARGIN,
+		maxf(POPUP_VIEWPORT_MARGIN, popup_vp_size_shared.x - scaled_popup_root_size.x - POPUP_VIEWPORT_MARGIN)
+	)
+	popup_pos_shared.y = clampf(
+		popup_pos_shared.y,
+		POPUP_VIEWPORT_MARGIN,
+		maxf(POPUP_VIEWPORT_MARGIN, popup_vp_size_shared.y - scaled_popup_root_size.y - POPUP_VIEWPORT_MARGIN)
+	)
 	popup_root.global_position = popup_pos_shared
 
 func _hide_ability_popup() -> void:

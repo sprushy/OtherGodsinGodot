@@ -62,6 +62,7 @@ const CardDetailContentBuilderScript = preload("res://scripts/ui/CardDetailConte
 const LevelSymbolRowScript = preload("res://scripts/ui/LevelSymbolRow.gd")
 const ReinforcementCardTileScript = preload("res://scripts/ui/ReinforcementCardTile.gd")
 const ReinforcementDropAreaScript = preload("res://scripts/ui/ReinforcementDropArea.gd")
+const UITextureCacheScript = preload("res://scripts/ui/UITextureCache.gd")
 const MINOR_ACTION_SYMBOL_TEXTURE = preload("res://images/ui/MinorActionSymbol.png")
 const MAJOR_ACTION_SYMBOL_TEXTURE = preload("res://images/ui/MajorActionSymbol.png")
 const USER_SETTINGS_PATH := "user://settings.cfg"
@@ -2132,7 +2133,7 @@ func _make_wheel_of_fire_target_preview(target: Card) -> Control:
 		else CardBackTexture if hide_target else null
 	)
 	if texture == null and target != null and target.art_path != "":
-		texture = load(target.art_path) as Texture2D
+		texture = UITextureCacheScript.get_texture(target.art_path)
 	if texture != null:
 		var art := TextureRect.new()
 		art.name = "WheelOfFireTargetArt"
@@ -7430,9 +7431,19 @@ func _position_hand_hover_preview() -> void:
 	preview.size = preview_sz
 	if keywords_panel != null and is_instance_valid(keywords_panel):
 		keywords_panel.size = keywords_sz
+	var viewport_margin := 4.0
+	var preview_scale := minf(
+		1.0,
+		minf(
+			maxf(0.25, (vp_size.x - viewport_margin * 2.0) / maxf(preview_sz.x, 1.0)),
+			maxf(0.25, (vp_size.y - viewport_margin * 2.0) / maxf(preview_sz.y, 1.0))
+		)
+	)
+	preview.scale = Vector2(preview_scale, preview_scale)
+	var scaled_preview_sz := preview_sz * preview_scale
 	var desired_px := card_cx - (large_vc.position.x + card_sz.x * 0.5)
-	var px := clampf(desired_px, 4.0, maxf(4.0, vp_size.x - preview_sz.x - 4.0))
-	var py := 4.0 if vc in _enemy_hand_visual_cards else maxf(0.0, vp_size.y - preview_sz.y)
+	var px := clampf(desired_px, viewport_margin, maxf(viewport_margin, vp_size.x - scaled_preview_sz.x - viewport_margin))
+	var py := viewport_margin if vc in _enemy_hand_visual_cards else maxf(viewport_margin, vp_size.y - scaled_preview_sz.y - viewport_margin)
 	preview.global_position = Vector2(px, py)
 	preview.visible = true
 
@@ -8073,15 +8084,26 @@ func _position_power_hover_popup(popup: Control, source: Control) -> void:
 	if popup == null or not is_instance_valid(popup) or source == null or not is_instance_valid(source):
 		return
 	var popup_size := popup.get_combined_minimum_size()
-	popup.size = popup_size
 	var source_rect := source.get_global_rect()
-	var pos := Vector2(
-		source_rect.position.x + (source_rect.size.x - popup_size.x) * 0.5,
-		source_rect.position.y - popup_size.y - 6.0
-	)
 	var vp_size := get_viewport_rect().size
-	pos.x = clamp(pos.x, 4.0, vp_size.x - popup.size.x - 4.0)
-	pos.y = clamp(pos.y, 4.0, vp_size.y - popup.size.y - 4.0)
+	var popup_scale := minf(
+		1.0,
+		minf(
+			maxf(0.35, (vp_size.x - 8.0) / maxf(popup_size.x, 1.0)),
+			maxf(0.35, (vp_size.y - 8.0) / maxf(popup_size.y, 1.0))
+		)
+	)
+	popup.scale = Vector2(popup_scale, popup_scale)
+	popup.size = popup_size
+	var scaled_popup_size := popup_size * popup_scale
+	var pos := Vector2(
+		source_rect.position.x + (source_rect.size.x - scaled_popup_size.x) * 0.5,
+		source_rect.position.y - scaled_popup_size.y - 6.0
+	)
+	if pos.y < 4.0 and source_rect.end.y + 6.0 + scaled_popup_size.y <= vp_size.y - 4.0:
+		pos.y = source_rect.end.y + 6.0
+	pos.x = clampf(pos.x, 4.0, maxf(4.0, vp_size.x - scaled_popup_size.x - 4.0))
+	pos.y = clampf(pos.y, 4.0, maxf(4.0, vp_size.y - scaled_popup_size.y - 4.0))
 	popup.global_position = pos
 
 func _hide_power_hover_popup() -> void:
@@ -8435,7 +8457,7 @@ func _make_power_icon(card: Card, is_enemy: bool, _player: Player, zone: Zone = 
 			style.border_color = Color(0.9, 0.45, 0.6, 0.95)
 			panel.add_theme_stylebox_override("panel", style)
 			if card.art_path != "":
-				var tex := load(card.art_path) as Texture2D
+				var tex := UITextureCacheScript.get_texture(card.art_path)
 				if tex:
 					var art := TextureRect.new()
 					art.texture = tex
@@ -26758,7 +26780,7 @@ func _ensure_reinforcement_drag_ghost(mouse_global_position: Vector2) -> void:
 	art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 	art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	if not str(card.art_path).strip_edges().is_empty():
-		art.texture = load(str(card.art_path))
+		art.texture = UITextureCacheScript.get_texture(str(card.art_path))
 	box.add_child(art)
 	_get_reinforcement_modal_parent().add_child(ghost)
 	_reinforcement_drag_ghost = ghost
@@ -28275,7 +28297,7 @@ func _make_intercept_prompt_art(card: Card) -> Control:
 	frame.add_theme_stylebox_override("panel", style)
 
 	if card != null and card.art_path != "":
-		var tex := load(card.art_path) as Texture2D
+		var tex := UITextureCacheScript.get_texture(card.art_path)
 		if tex != null:
 			var art := TextureRect.new()
 			art.texture = tex

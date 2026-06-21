@@ -86,6 +86,7 @@ var _board_leaving_activation_linger_pending: bool = false
 var _pending_end_turn_after_resurrection: bool = false
 var _active_command_sender_info: Dictionary = {}
 var _active_command_type: String = ""
+var _active_command_pending_prompt_id: int = -1
 var _resolving_priority_choice_command: bool = false
 var _pending_ui_interactions: Array[Dictionary] = []
 var _queued_ui_interactions: Array[Dictionary] = []
@@ -145,6 +146,7 @@ func reset_runtime_state() -> void:
 	_pending_end_turn_after_resurrection = false
 	_active_command_sender_info.clear()
 	_active_command_type = ""
+	_active_command_pending_prompt_id = -1
 	_resolving_priority_choice_command = false
 	_pending_ui_interactions.clear()
 	_queued_ui_interactions.clear()
@@ -451,6 +453,9 @@ func _release_next_queued_ui_interaction() -> void:
 	if pending_blot_spell != null:
 		_try_queue_pending_authoritative_blot_action()
 		return
+	if game_manager != null and game_manager.action_stack.is_empty():
+		_try_process_pending_turn_action_after_opponent_priority()
+		return
 	_advance_authoritative_priority()
 
 func emit_ui_interaction_for_player(player: Player, type: String, data: Dictionary) -> void:
@@ -551,6 +556,16 @@ func _consume_pending_ui_interaction_by_id(prompt_id: int) -> void:
 			_pending_ui_interactions.remove_at(idx)
 			call_deferred("_release_next_queued_ui_interaction")
 			return
+
+func _consume_active_command_prompt_for_completion(command_type: String) -> void:
+	if _active_command_pending_prompt_id < 0:
+		return
+	var expected_type := command_type.strip_edges()
+	if expected_type != "" and _active_command_type != expected_type:
+		return
+	var prompt_id := _active_command_pending_prompt_id
+	_active_command_pending_prompt_id = -1
+	_consume_pending_ui_interaction_by_id(prompt_id)
 
 func _get_ui_interaction_type_for_command(command_type: String) -> String:
 	return MatchCommandRegistryScript.get_ui_interaction_type(command_type)
@@ -905,10 +920,12 @@ func _queue_choice_command_as_priority_event(command: Dictionary, source_card: C
 func _execute_queued_priority_choice_command(command: Dictionary, action: CardAction, completion_command_type: String) -> void:
 	var previous_resolving := _resolving_priority_choice_command
 	var previous_command_type := _active_command_type
+	var previous_pending_prompt_id := _active_command_pending_prompt_id
 	var resolution_command := command.duplicate(true)
 	resolution_command["_suppress_full_state_broadcast"] = true
 	_resolving_priority_choice_command = true
 	_active_command_type = str(resolution_command.get("type", "")).strip_edges()
+	_active_command_pending_prompt_id = -1
 	var resolved := _process_command_impl(resolution_command)
 	if not resolved:
 		var feedback := last_move_failed_reason.strip_edges()
@@ -927,6 +944,7 @@ func _execute_queued_priority_choice_command(command: Dictionary, action: CardAc
 				_complete_deferred_authoritative_action(action, completion_command_type)
 	_resolving_priority_choice_command = previous_resolving
 	_active_command_type = previous_command_type
+	_active_command_pending_prompt_id = previous_pending_prompt_id
 
 func _on_game_manager_card_summoned(
 	player: Player,
@@ -1107,6 +1125,7 @@ func _continue_authoritative_stack_after_resolution() -> void:
 	game_manager.prune_stale_stack_actions()
 	if game_manager.action_stack.is_empty():
 		_clear_priority_window_state()
+		_try_process_pending_turn_action_after_opponent_priority()
 		return
 	if pending_combat_reveal_linger_action != null \
 			and game_manager.action_stack.back() == pending_combat_reveal_linger_action:
@@ -1367,6 +1386,10 @@ func _complete_deferred_authoritative_action(action: CardAction, completion_comm
 			expected_command_type,
 			_get_action_debug_label(action),
 		])
+	var completed_command_type := completion_command_type.strip_edges()
+	if completed_command_type.is_empty():
+		completed_command_type = expected_command_type
+	_consume_active_command_prompt_for_completion(completed_command_type)
 	_clear_deferred_authoritative_action_metadata(action)
 	var destroyed_start_index := int(action.event_data.get("destroyed_count_before", game_manager.destroyed_this_turn.size() if game_manager != null else 0))
 	_queue_destroyed_response_events(destroyed_start_index, action)
@@ -3647,24 +3670,29 @@ func _get_move_cost_payment_failure_reason(card: Card, prepared: bool = false, p
 func process_command(command: Dictionary, sender_info: Dictionary = {}) -> bool:
 	_active_command_sender_info = sender_info.duplicate(true)
 	_active_command_type = str(command.get("type", ""))
+	_active_command_pending_prompt_id = -1
 	if not MatchCommandRegistryScript.is_known_command_type(_active_command_type):
 		move_failed.emit("Unknown command type: " + str(command.get("type")))
 		_active_command_sender_info.clear()
 		_active_command_type = ""
+		_active_command_pending_prompt_id = -1
 		return false
 	var authority_error := _validate_sender_authority(command, sender_info)
 	if not authority_error.is_empty():
 		move_failed.emit(authority_error)
 		_active_command_sender_info.clear()
 		_active_command_type = ""
+		_active_command_pending_prompt_id = -1
 		return false
 	if _defer_turn_action_until_opponent_priority_declines(command, sender_info):
 		_active_command_sender_info.clear()
 		_active_command_type = ""
+		_active_command_pending_prompt_id = -1
 		return true
 	if _decline_priority_for_turn_action(command, sender_info):
 		_active_command_sender_info.clear()
 		_active_command_type = ""
+		_active_command_pending_prompt_id = -1
 		return true
 	var turn_window_error := _validate_turn_action_window(command, sender_info)
 	if not turn_window_error.is_empty():
@@ -3676,6 +3704,7 @@ func process_command(command: Dictionary, sender_info: Dictionary = {}) -> bool:
 		move_failed.emit(turn_window_error)
 		_active_command_sender_info.clear()
 		_active_command_type = ""
+		_active_command_pending_prompt_id = -1
 		return false
 	var pending_prompt_validation := _validate_pending_ui_interaction_for_command(command)
 	var pending_prompt_error := str(pending_prompt_validation.get("error", ""))
@@ -3683,14 +3712,17 @@ func process_command(command: Dictionary, sender_info: Dictionary = {}) -> bool:
 		move_failed.emit(pending_prompt_error)
 		_active_command_sender_info.clear()
 		_active_command_type = ""
+		_active_command_pending_prompt_id = -1
 		return false
 	var pending_prompt_id := int(pending_prompt_validation.get("prompt_id", -1))
+	_active_command_pending_prompt_id = pending_prompt_id
 	var result := _process_command_impl(command)
 	if result:
 		_complete_simple_deferred_prompt_action_for_command(command)
-		_consume_pending_ui_interaction_by_id(pending_prompt_id)
+		_consume_active_command_prompt_for_completion(_active_command_type)
 	_active_command_sender_info.clear()
 	_active_command_type = ""
+	_active_command_pending_prompt_id = -1
 	if result and _pending_ui_interactions.is_empty() and not _queued_ui_interactions.is_empty():
 		_release_next_queued_ui_interaction()
 	return result

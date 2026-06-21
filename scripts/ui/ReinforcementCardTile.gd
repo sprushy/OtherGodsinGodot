@@ -9,6 +9,7 @@ signal card_hover_ended(card_name: String, source_zone: String, tile: Control)
 
 const ZONE_MAIN := "main"
 const ZONE_SIDE := "side"
+const UITextureCacheScript = preload("res://scripts/ui/UITextureCache.gd")
 
 var card_name: String = ""
 var source_zone: String = ZONE_MAIN
@@ -58,7 +59,7 @@ func _build_full(card: Card, count: int, other_count: int) -> void:
 	art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 	art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	if card != null and not str(card.art_path).strip_edges().is_empty():
-		art.texture = load(str(card.art_path))
+		art.texture = UITextureCacheScript.get_texture(str(card.art_path))
 	box.add_child(art)
 
 	var footer := HBoxContainer.new()
@@ -94,7 +95,7 @@ func _build_compact(card: Card, count: int, other_count: int) -> void:
 	art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 	art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	if card != null and not str(card.art_path).strip_edges().is_empty():
-		art.texture = load(str(card.art_path))
+		art.texture = UITextureCacheScript.get_texture(str(card.art_path))
 	row.add_child(art)
 
 	var title := Label.new()

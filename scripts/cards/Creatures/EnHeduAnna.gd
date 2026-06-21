@@ -24,13 +24,13 @@ func _init() -> void:
 func on_friendly_god_power_activated(game_manager: GameManager, _god: Card, _target: Card = null) -> void:
 	if not _was_face_up_on_field_when_god_power_activated(game_manager):
 		return
-	_god_power_activated_while_face_up_this_turn = true
+	_set_god_power_activated_while_face_up_this_turn(true)
 
 func on_turn_end(_game_manager: GameManager) -> void:
-	_god_power_activated_while_face_up_this_turn = false
+	_set_god_power_activated_while_face_up_this_turn(false)
 
 func on_removed(_game_manager: GameManager) -> void:
-	_god_power_activated_while_face_up_this_turn = false
+	_set_god_power_activated_while_face_up_this_turn(false)
 	clear_buffs_from(EXALTATION_SOURCE)
 	remove_status_effects_by_name(EXALTATION_GUARD_STATUS)
 	remove_status_effects_by_name("cannot_attack")
@@ -80,7 +80,7 @@ func has_pending_exaltation_choice() -> bool:
 	return _god_power_activated_while_face_up_this_turn
 
 func consume_pending_exaltation_choice() -> void:
-	_god_power_activated_while_face_up_this_turn = false
+	_set_god_power_activated_while_face_up_this_turn(false)
 
 func get_exaltation_options() -> Array[Dictionary]:
 	return [
@@ -110,7 +110,7 @@ func resolve_exaltation_choice(game_manager: GameManager, option: Dictionary) ->
 	if matched_option.is_empty():
 		return card_name + " fizzles: choose a valid Exaltation bonus."
 
-	_god_power_activated_while_face_up_this_turn = false
+	_set_god_power_activated_while_face_up_this_turn(false)
 	var expires_turn := game_manager.turn_number + 1
 
 	clear_buffs_from(EXALTATION_SOURCE)
@@ -147,6 +147,18 @@ func resolve_exaltation_choice(game_manager: GameManager, option: Dictionary) ->
 		get_exaltation_option_label(matched_option)
 	]
 
+func get_serialized_state() -> Dictionary:
+	var state := super.get_serialized_state()
+	state["god_power_activated_while_face_up_this_turn"] = _god_power_activated_while_face_up_this_turn
+	return state
+
+func apply_serialized_state(state: Dictionary) -> void:
+	super.apply_serialized_state(state)
+	_god_power_activated_while_face_up_this_turn = bool(state.get(
+		"god_power_activated_while_face_up_this_turn",
+		_god_power_activated_while_face_up_this_turn
+	))
+
 func _get_matching_exaltation_option(option: Dictionary) -> Dictionary:
 	for valid_option in get_exaltation_options():
 		if int(option.get("str", 0)) != int(valid_option.get("str", 0)):
@@ -166,3 +178,9 @@ func _was_face_up_on_field_when_god_power_activated(game_manager: GameManager) -
 	if get_controller() != card_owner:
 		return false
 	return not is_face_down and not is_stealth and not is_prepared
+
+func _set_god_power_activated_while_face_up_this_turn(value: bool) -> void:
+	if _god_power_activated_while_face_up_this_turn == value:
+		return
+	_god_power_activated_while_face_up_this_turn = value
+	visual_state_changed.emit()

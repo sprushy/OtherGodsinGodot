@@ -10,6 +10,7 @@ const FOG_TEXTURE_PATHS := [
 	"res://images/ui/stealth_fog/shadow_fog_10.png",
 	"res://images/ui/stealth_fog/shadow_fog_15.png",
 ]
+const ANIMATION_UPDATE_INTERVAL := 1.0 / 24.0
 
 static var _texture_cache: Array[Texture2D] = []
 static var _additive_material: CanvasItemMaterial = null
@@ -17,6 +18,7 @@ static var _additive_material: CanvasItemMaterial = null
 var fog_alpha: float = 0.18
 var _puffs: Array[TextureRect] = []
 var _time: float = 0.0
+var _animation_accumulator: float = 0.0
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -26,7 +28,15 @@ func _ready() -> void:
 	call_deferred("_layout_puffs")
 
 func _process(delta: float) -> void:
-	_time = fmod(_time + delta, 1000.0)
+	if not is_visible_in_tree():
+		_animation_accumulator = 0.0
+		return
+	_animation_accumulator += delta
+	if _animation_accumulator < ANIMATION_UPDATE_INTERVAL:
+		return
+	var elapsed := _animation_accumulator
+	_animation_accumulator = 0.0
+	_time = fmod(_time + elapsed, 1000.0)
 	_layout_puffs()
 	queue_redraw()
 

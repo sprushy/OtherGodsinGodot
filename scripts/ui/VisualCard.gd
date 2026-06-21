@@ -7,6 +7,7 @@ const DefenseShieldOverlayScript = preload("res://scripts/ui/DefenseShieldOverla
 const BoardZoneUIScript = preload("res://scripts/ui/BoardZoneUI.gd")
 const LevelSymbolRowScript = preload("res://scripts/ui/LevelSymbolRow.gd")
 const DebuffBadgeScript = preload("res://scripts/ui/DebuffBadge.gd")
+const UITextureCacheScript = preload("res://scripts/ui/UITextureCache.gd")
 const MINOR_ACTION_SYMBOL_TEXTURE := preload("res://images/ui/MinorActionSymbol.png")
 const MAJOR_ACTION_SYMBOL_TEXTURE := preload("res://images/ui/MajorActionSymbol.png")
 const MANA_ORB_TEXTURE := preload("res://images/ui/ManaOrb.png")
@@ -118,7 +119,7 @@ func _get_display_mana_cost() -> int:
 func _compute_natural_height() -> float:
 	var h := 26.0  # name + mana row
 	if card_data.art_path != "":
-		var tex: Texture2D = load(card_data.art_path)
+		var tex: Texture2D = UITextureCacheScript.get_texture(card_data.art_path)
 		if tex:
 			h += _card_width * float(tex.get_height()) / float(tex.get_width())
 	if not card_data.is_god:
@@ -137,7 +138,7 @@ func _compute_natural_height() -> float:
 func _compute_compact_height() -> float:
 	var h := 26.0  # name + mana row
 	if card_data.art_path != "":
-		var tex: Texture2D = load(card_data.art_path)
+		var tex: Texture2D = UITextureCacheScript.get_texture(card_data.art_path)
 		if tex:
 			h += _card_width * float(tex.get_height()) / float(tex.get_width())
 	if not card_data.is_god:
@@ -177,7 +178,7 @@ func _get_power_lock_texture() -> Texture2D:
 func _build_art_node() -> TextureRect:
 	if card_data.art_path == "":
 		return null
-	var tex: Texture2D = load(card_data.art_path)
+	var tex: Texture2D = UITextureCacheScript.get_texture(card_data.art_path)
 	if tex == null:
 		return null
 	var art := TextureRect.new()
@@ -193,7 +194,7 @@ func _build_art_node() -> TextureRect:
 func _on_art_updated(new_path: String) -> void:
 	if _art_rect == null or not is_instance_valid(_art_rect):
 		return
-	var tex: Texture2D = load(new_path)
+	var tex: Texture2D = UITextureCacheScript.get_texture(new_path)
 	if tex:
 		_art_rect.texture = tex
 		_sync_minimum_height()

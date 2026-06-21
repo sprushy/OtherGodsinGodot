@@ -1825,12 +1825,8 @@ func _on_seek_item_clicked(index: int, _at_position: Vector2, _mouse_button_inde
 	if room_id.is_empty():
 		return
 	var can_rejoin := bool(room_data.get("viewer_can_rejoin", false))
-	if not _current_room_snapshot.is_empty() and not can_rejoin:
-		status_label.text = (
-			"Leave your current seek before observing another match."
-			if room_status == LobbyRoomScript.STATUS_IN_MATCH
-			else "Leave your current seek before joining another."
-		)
+	if not _current_room_snapshot.is_empty() and room_status == LobbyRoomScript.STATUS_IN_MATCH and not can_rejoin:
+		status_label.text = "Leave your current seek before observing another match."
 		return
 	if room_status == LobbyRoomScript.STATUS_IN_MATCH:
 		if can_rejoin:
@@ -1909,8 +1905,9 @@ func _on_join_seek_requested(room_id: String) -> void:
 	if _get_selected_multiplayer_deck().is_empty():
 		status_label.text = "Choose a saved legal deck before joining a seek."
 		return
-	if not _current_room_snapshot.is_empty():
-		status_label.text = "Leave your current seek before joining a new one."
+	var current_room_status := str(_current_room_snapshot.get("status", "")).strip_edges().to_lower()
+	if not _current_room_snapshot.is_empty() and current_room_status == LobbyRoomScript.STATUS_IN_MATCH:
+		status_label.text = "Finish or forfeit your active match before joining another seek."
 		return
 	_pending_host_room_creation = false
 	_pending_join_room_id = room_id.strip_edges().to_upper()

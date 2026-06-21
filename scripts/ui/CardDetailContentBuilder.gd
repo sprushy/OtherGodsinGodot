@@ -2,7 +2,7 @@ class_name CardDetailContentBuilder
 extends RefCounted
 
 const LevelSymbolRowScript = preload("res://scripts/ui/LevelSymbolRow.gd")
-const DebuffBadgeScript = preload("res://scripts/ui/DebuffBadge.gd")
+const UITextureCacheScript = preload("res://scripts/ui/UITextureCache.gd")
 const PUBLICLY_IDENTIFIED_BADGE_TEXTURE := preload("res://images/ability_badges/MopsusBadge.png")
 const _BULLET_SEPARATOR := " | "
 const _BOARD_POPUP_WIDTH := 210.0
@@ -780,7 +780,24 @@ static func make_full_card_preview(card: Card, viewer: Player, width: float, gam
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
 		style.set_border_width(side, 1)
 	panel.add_theme_stylebox_override("panel", style)
-	panel.add_child(build_board_popup_body(card, viewer, {
+
+	var content := VBoxContainer.new()
+	content.add_theme_constant_override("separation", 5)
+	content.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_child(content)
+
+	if card.art_path != "":
+		var tex := UITextureCacheScript.get_texture(card.art_path)
+		if tex != null:
+			var art := TextureRect.new()
+			art.texture = tex
+			art.custom_minimum_size = Vector2(maxf(80.0, width - 12.0), 72.0)
+			art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+			art.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			content.add_child(art)
+
+	content.add_child(build_board_popup_body(card, viewer, {
 		"game_manager": game_manager,
 		"show_listed_costs": true,
 	}))
@@ -806,25 +823,32 @@ static func _make_stored_card_preview(card: Card, viewer: Player, width: float) 
 	panel.add_theme_stylebox_override("panel", style)
 
 	if viewer != null and card.card_owner == viewer:
-		var preview := TextureRect.new()
-		preview.texture = PUBLICLY_IDENTIFIED_BADGE_TEXTURE
-		preview.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		preview.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-		preview.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		preview.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-		preview.offset_left = 2.0
-		preview.offset_top = 2.0
-		preview.offset_right = -2.0
-		preview.offset_bottom = -2.0
-
-		var badge := DebuffBadgeScript.create(preview)
-		badge.z_index = 5
-		badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-		badge.offset_left = -6.0 - DebuffBadgeScript.SIZE
-		badge.offset_top = 6.0
-		badge.offset_right = -6.0
-		badge.offset_bottom = 6.0 + DebuffBadgeScript.SIZE
-		panel.add_child(badge)
+		var identified_marker := PanelContainer.new()
+		identified_marker.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		identified_marker.z_index = 5
+		identified_marker.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+		identified_marker.offset_left = -26.0
+		identified_marker.offset_top = 6.0
+		identified_marker.offset_right = -6.0
+		identified_marker.offset_bottom = 26.0
+		var marker_style := StyleBoxFlat.new()
+		marker_style.bg_color = Color(0.18, 0.02, 0.02, 0.92)
+		marker_style.border_color = Color(1.0, 0.28, 0.24, 0.98)
+		marker_style.corner_radius_top_left = 5
+		marker_style.corner_radius_top_right = 5
+		marker_style.corner_radius_bottom_left = 5
+		marker_style.corner_radius_bottom_right = 5
+		for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+			marker_style.set_border_width(side, 1)
+		identified_marker.add_theme_stylebox_override("panel", marker_style)
+		var marker_icon := TextureRect.new()
+		marker_icon.texture = PUBLICLY_IDENTIFIED_BADGE_TEXTURE
+		marker_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		marker_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		marker_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		marker_icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		identified_marker.add_child(marker_icon)
+		panel.add_child(identified_marker)
 
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 6)
@@ -832,7 +856,7 @@ static func _make_stored_card_preview(card: Card, viewer: Player, width: float) 
 	panel.add_child(row)
 
 	if card.art_path != "":
-		var tex := load(card.art_path) as Texture2D
+		var tex := UITextureCacheScript.get_texture(card.art_path)
 		if tex != null:
 			var art := TextureRect.new()
 			art.texture = tex
