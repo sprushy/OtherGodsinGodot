@@ -62,21 +62,23 @@ func resolve_good_fortune_impact(game_manager: GameManager, target: Card) -> Str
 	_clear_existing_good_fortune_marks(game_manager)
 	target.add_status_effect(
 		GOOD_FORTUNE_STATUS,
-		"Good Fortune",
+		card_name,
 		self,
 		get_controller(),
 		{
 			"ward_kind": "spells",
+			"ability_name": "Good Fortune",
 			"source_board_entry_order": board_entry_order,
 		}
 	)
 	target.add_status_effect(
 		GOOD_FORTUNE_STATUS,
-		"Good Fortune",
+		card_name,
 		self,
 		get_controller(),
 		{
 			"ward_kind": "creature_abilities",
+			"ability_name": "Good Fortune",
 			"source_board_entry_order": board_entry_order,
 		}
 	)

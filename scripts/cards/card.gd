@@ -825,8 +825,17 @@ func get_effect_summary_lines() -> Array[String]:
 			continue
 		lines.append(", ".join(parts) + " from " + str(buff.get("source", "?")))
 
-	for status in _get_effective_statuses():
+	var effective_statuses := _get_effective_statuses()
+	var summarized_good_fortune_sources: Dictionary = {}
+	for status in effective_statuses:
 		var raw_status_name := str(status.get("name", "Status"))
+		if raw_status_name == "third_sage_good_fortune":
+			var good_fortune_key := _get_effect_source_key(status)
+			if summarized_good_fortune_sources.has(good_fortune_key):
+				continue
+			summarized_good_fortune_sources[good_fortune_key] = true
+			lines.append(_format_good_fortune_effect_summary(status, effective_statuses))
+			continue
 		if raw_status_name == "blessed_ward":
 			var ward_kind := str(status.get("ward_kind", "")).replace("_", " ")
 			lines.append("Blessed Ward vs " + ward_kind.capitalize() + " from " + str(status.get("source", "?")))
@@ -853,6 +862,56 @@ func get_effect_summary_lines() -> Array[String]:
 		lines.append(status_name + " from " + str(status.get("source", "?")))
 
 	return lines
+
+func _format_good_fortune_effect_summary(status: Dictionary, statuses: Array[Dictionary]) -> String:
+	var source_label := _get_effect_source_label(status)
+	var source_key := _get_effect_source_key(status)
+	var ward_kinds: Array[String] = []
+	for candidate in statuses:
+		if str(candidate.get("name", "")) != "third_sage_good_fortune":
+			continue
+		if _get_effect_source_key(candidate) != source_key:
+			continue
+		var ward_kind := str(candidate.get("ward_kind", "")).strip_edges()
+		if ward_kind != "" and ward_kind not in ward_kinds:
+			ward_kinds.append(ward_kind)
+	var protection_text := _format_good_fortune_protection_text(ward_kinds)
+	if protection_text == "":
+		return "Good Fortune from " + source_label
+	return "Good Fortune from %s: Cannot be targeted by %s while %s remains face-up on the field." % [
+		source_label,
+		protection_text,
+		source_label,
+	]
+
+func _format_good_fortune_protection_text(ward_kinds: Array[String]) -> String:
+	var protects_spells := "spells" in ward_kinds
+	var protects_creature_abilities := "creature_abilities" in ward_kinds
+	if protects_spells and protects_creature_abilities:
+		return "spells or creature abilities"
+	if protects_spells:
+		return "spells"
+	if protects_creature_abilities:
+		return "creature abilities"
+	return ""
+
+func _get_effect_source_label(entry: Dictionary) -> String:
+	var source_card := entry.get("source_card", null) as Card
+	if source_card != null and source_card.card_name.strip_edges() != "":
+		return source_card.card_name
+	var source_label := str(entry.get("source", "")).strip_edges()
+	return source_label if source_label != "" else "?"
+
+func _get_effect_source_key(entry: Dictionary) -> String:
+	var source_card := entry.get("source_card", null) as Card
+	if source_card != null:
+		if source_card.uid.strip_edges() != "":
+			return "card:" + source_card.uid
+		return "card_instance:%d" % source_card.get_instance_id()
+	var source_uid := str(entry.get("source_card_uid", "")).strip_edges()
+	if source_uid != "":
+		return "card:" + source_uid
+	return "source:" + _get_effect_source_label(entry)
 
 func get_equipment_modifier_summary_parts() -> Array[String]:
 	var parts: Array[String] = []

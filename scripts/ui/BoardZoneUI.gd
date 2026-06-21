@@ -3447,15 +3447,39 @@ func _get_boon_affordance_entries(card: Card) -> Array[Dictionary]:
 	return entries
 
 func _get_good_fortune_tooltip(status: Dictionary, ward_kinds: Array) -> String:
-	var source := str(status.get("source", "Good Fortune"))
-	var readable_kinds: Array[String] = []
-	for ward_kind in ward_kinds:
-		var readable := str(ward_kind).replace("_", " ").capitalize()
-		if readable != "":
-			readable_kinds.append(readable)
-	if readable_kinds.is_empty():
+	var source := _get_effect_source_label(status)
+	var protection_text := _format_good_fortune_protection_text(ward_kinds)
+	if protection_text == "":
 		return "Good Fortune from " + source
-	return "Good Fortune vs " + " and ".join(readable_kinds) + " from " + source
+	return "Good Fortune from %s\nCannot be targeted by %s while %s remains face-up on the field." % [
+		source,
+		protection_text,
+		source,
+	]
+
+func _format_good_fortune_protection_text(ward_kinds: Array) -> String:
+	var protects_spells := false
+	var protects_creature_abilities := false
+	for ward_kind in ward_kinds:
+		match str(ward_kind).strip_edges():
+			"spells":
+				protects_spells = true
+			"creature_abilities":
+				protects_creature_abilities = true
+	if protects_spells and protects_creature_abilities:
+		return "spells or creature abilities"
+	if protects_spells:
+		return "spells"
+	if protects_creature_abilities:
+		return "creature abilities"
+	return ""
+
+func _get_effect_source_label(entry: Dictionary) -> String:
+	var source_card := entry.get("source_card", null) as Card
+	if source_card != null and source_card.card_name.strip_edges() != "":
+		return source_card.card_name
+	var source_label := str(entry.get("source", "")).strip_edges()
+	return source_label if source_label != "" else "?"
 
 func _get_debuff_affordance_entries(card: Card) -> Array[Dictionary]:
 	var entries: Array[Dictionary] = []

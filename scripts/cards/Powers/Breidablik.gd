@@ -4,7 +4,7 @@ class_name Breidablik
 const UNLOCK_COST := 3
 const HARBOR_MANA_COST := 1
 const RETURN_MANA_COST := 1
-const FOLLOWERS_PER_LEVEL := 3
+const FOLLOWERS_PER_LEVEL := 2
 
 var stored_priests: Array[Card] = []
 var stored_priest_origins: Dictionary = {}
@@ -43,6 +43,22 @@ func get_valid_field_priests(_game_manager: GameManager) -> Array[Card]:
 			if _can_store_priest(card):
 				valid_priests.append(card)
 	return valid_priests
+
+func get_valid_field_priest_by_uid(priest_uid: String) -> Card:
+	var cleaned_uid := str(priest_uid).strip_edges()
+	if cleaned_uid == "":
+		return null
+	for priest in get_valid_field_priests(null):
+		if priest != null and str(priest.uid).strip_edges() == cleaned_uid:
+			return priest
+	return null
+
+func resolve_harbor_target(target: Card) -> Card:
+	if target == null:
+		return null
+	if _can_store_priest(target):
+		return target
+	return get_valid_field_priest_by_uid(target.uid)
 
 func get_stored_priests() -> Array[Card]:
 	var copy: Array[Card] = []
@@ -123,13 +139,14 @@ func get_activation_cost_hover_data(game_manager: GameManager = null) -> Diction
 func activate(game_manager: GameManager, target: Card = null) -> void:
 	if not can_harbor_priest(game_manager):
 		return
-	if target == null or target not in get_valid_field_priests(game_manager):
+	var resolved_target := resolve_harbor_target(target)
+	if resolved_target == null:
 		print(card_name + ": Invalid Priest target.")
 		return
 	if not spend_activation_mana(HARBOR_MANA_COST, game_manager):
 		return
-	_store_priest(target)
-	print(card_name + ": " + target.card_name + " was placed under this card.")
+	_store_priest(resolved_target)
+	print(card_name + ": " + resolved_target.card_name + " was placed under this card.")
 
 func return_priest(game_manager: GameManager, priest: Card) -> bool:
 	if not can_return_priest(game_manager):

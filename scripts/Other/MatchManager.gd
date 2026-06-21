@@ -4276,7 +4276,13 @@ func _process_command_impl(command: Dictionary) -> bool:
 					return false
 				if power_card is Breidablik:
 					var breidablik := power_card as Breidablik
-					if act_target == null or act_target not in breidablik.get_valid_field_priests(game_manager):
+					act_target = breidablik.resolve_harbor_target(act_target)
+					if act_target == null and command.get("target_zone", {}) is Dictionary:
+						var target_zone := resolve_zone(command.get("target_zone", {}) as Dictionary)
+						var target_zone_card_index := int(command.get("target_zone_card_index", -1))
+						if target_zone != null and target_zone_card_index >= 0 and target_zone_card_index < target_zone.cards.size():
+							act_target = breidablik.resolve_harbor_target(target_zone.cards[target_zone_card_index])
+					if act_target == null:
 						move_failed.emit(power_card.card_name + " needs a friendly Priest that has not attacked this turn.")
 						return false
 				if _uses_authoritative_headless_priority_flow():

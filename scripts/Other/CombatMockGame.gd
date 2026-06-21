@@ -8604,6 +8604,10 @@ func _on_power_pressed(power: PowerCard) -> void:
 	if selected_card is Absence:
 		_cast_targeted_spell(selected_card, power)
 		return
+	if _uses_authoritative_turn_ui() and power.card_owner != null and not _is_player_local(power.card_owner):
+		_set_action_label_text("Waiting for " + power.card_owner.player_name + " to act.")
+		update_ui()
+		return
 	if power is DivineCaprice and not power.can_unlock(game_manager) and not power.can_activate(game_manager):
 		_set_action_label_text(_get_activation_unavailable_text(power, power.card_name + " cannot activate right now."))
 		return
@@ -8907,7 +8911,11 @@ func _handle_breidablik_store_choice(power: Breidablik, selected_priest: Card) -
 	if power == null or selected_priest == null:
 		return
 	if _should_submit_ui_action_command():
-		game_input.submit_action({type = "activate_power", power_uid = power.uid, target_uid = selected_priest.uid})
+		var command := {type = "activate_power", power_uid = power.uid, target_uid = selected_priest.uid}
+		if selected_priest.current_zone != null:
+			command["target_zone"] = MatchManager.zone_to_dict(selected_priest.current_zone, game_manager)
+			command["target_zone_card_index"] = selected_priest.current_zone.cards.find(selected_priest)
+		game_input.submit_action(command)
 		return
 	_queue_magical_action(
 		CardAction.Type.ABILITY,
@@ -25895,6 +25903,18 @@ func _continue_end_turn_sequence() -> void:
 func _on_end_turn_button_pressed() -> void:
 	if _game_finished:
 		return
+	if _uses_authoritative_turn_ui() \
+			and network_manager != null \
+			and network_manager.local_player_index >= 0 \
+			and game_manager != null \
+			and game_manager.current_player != null:
+		var local_idx := int(network_manager.local_player_index)
+		var current_idx := game_manager.players.find(game_manager.current_player)
+		if current_idx >= 0 and current_idx != local_idx:
+			_set_action_label_text("Waiting for " + game_manager.current_player.player_name + " to finish their turn.")
+			_sync_network_turn_controls()
+			update_ui()
+			return
 	if _reject_priority_locked_action(
 		"Resolve the pending stack action before ending the turn.",
 		Callable(self, "_retry_end_turn_button_pressed"),
