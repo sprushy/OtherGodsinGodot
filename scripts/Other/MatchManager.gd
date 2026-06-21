@@ -362,7 +362,7 @@ func _on_game_manager_decision_requested(player: Player, type: String, data: Dic
 			interaction_data["_queue_priority_after_choice"] = true
 			interaction_data["_priority_event_name"] = event_name if event_name != "" else type
 			interaction_data["_priority_completion_command_type"] = completion_command_type
-			_emit_ui_interaction_for_player(player, type, interaction_data)
+			_present_pre_priority_choice_interaction(player, type, interaction_data)
 			return
 		_queue_decision_priority_event(
 			player,
@@ -374,6 +374,18 @@ func _on_game_manager_decision_requested(player: Player, type: String, data: Dic
 		)
 		return
 	_emit_ui_interaction_for_player(player, type, interaction_data)
+
+func _present_pre_priority_choice_interaction(player: Player, type: String, data: Dictionary) -> void:
+	var parent_action := _get_current_resolving_action()
+	if parent_action != null:
+		_queue_ui_interaction(player, type, data, parent_action)
+		return
+	_emit_ui_interaction_for_player(player, type, data)
+
+func _get_current_resolving_action() -> CardAction:
+	if game_manager == null or game_manager.resolving_stack_actions.is_empty():
+		return null
+	return game_manager.resolving_stack_actions.back() as CardAction
 
 func _emit_ui_interaction_for_player(player: Player, type: String, data: Dictionary) -> void:
 	if game_manager == null or player == null:
@@ -394,25 +406,38 @@ func _emit_ui_interaction_now(player: Player, type: String, data: Dictionary) ->
 	_record_pending_ui_interaction(player, type, data)
 	request_ui_interaction.emit(player_idx, type, data)
 
-func _queue_ui_interaction(player: Player, type: String, data: Dictionary) -> void:
+func _queue_ui_interaction(
+	player: Player,
+	type: String,
+	data: Dictionary,
+	release_after_action: CardAction = null
+) -> void:
 	if player == null or type.strip_edges() == "":
 		return
 	for queued in _queued_ui_interactions:
 		if queued.get("player", null) == player \
 				and str(queued.get("type", "")) == type \
-				and queued.get("data", {}) == data:
+				and queued.get("data", {}) == data \
+				and queued.get("release_after_action", null) == release_after_action:
 			return
 	_queued_ui_interactions.append({
 		"player": player,
 		"type": type,
 		"data": data.duplicate(true),
+		"release_after_action": release_after_action,
 	})
 
 func _release_next_queued_ui_interaction() -> void:
 	if not _pending_ui_interactions.is_empty():
 		return
 	while not _queued_ui_interactions.is_empty():
-		var queued: Dictionary = _queued_ui_interactions.pop_front()
+		var queued: Dictionary = _queued_ui_interactions[0]
+		var release_after_action := queued.get("release_after_action", null) as CardAction
+		if release_after_action != null \
+				and game_manager != null \
+				and release_after_action in game_manager.resolving_stack_actions:
+			return
+		_queued_ui_interactions.pop_front()
 		var player := queued.get("player", null) as Player
 		var type := str(queued.get("type", ""))
 		var data: Dictionary = queued.get("data", {})
@@ -561,6 +586,10 @@ func _get_default_completion_command_for_interaction(interaction_type: String) -
 			return "giant_master_architect_choice"
 		"pai_long_autumn_king_impact":
 			return "pai_long_autumn_king_choice"
+		"nergal_lion_impact":
+			return "nergal_lion_choice"
+		"nusku_active_core_flame":
+			return "nusku_active_core_flame_choice"
 	return ""
 
 func _find_pending_ui_interaction_index(command: Dictionary, expected_type: String) -> int:
@@ -1059,6 +1088,8 @@ func _finalize_resolved_action(action: CardAction) -> void:
 	if game_manager != null:
 		game_manager.prune_stale_stack_actions()
 	action_resolved.emit(action)
+	if _pending_ui_interactions.is_empty() and not _queued_ui_interactions.is_empty():
+		_release_next_queued_ui_interaction()
 	_continue_authoritative_stack_after_resolution()
 
 func _continue_authoritative_stack_after_resolution() -> void:
@@ -5165,8 +5196,15 @@ func _process_command_impl(command: Dictionary) -> bool:
 			var target_uid: String = command.get("target_uid", "")
 			var target := game_manager.get_card_by_uid(target_uid) if target_uid != "" else null
 			if target == null or target not in valid_targets:
+				if _resolving_priority_choice_command:
+					game_manager.note_player_feedback(card.card_name + " impact fizzles because its target is no longer valid.")
+					move_validated.emit(command)
+					return true
 				move_failed.emit("nergal_lion_choice: invalid destruction target")
 				return false
+			if _queue_choice_command_as_priority_event(command, card):
+				move_validated.emit(command)
+				return true
 			game_manager.note_player_feedback(card.resolve_immolate_impact(game_manager, target, valid_zones[0]))
 			move_validated.emit(command)
 			return true
@@ -5368,17 +5406,18 @@ func _process_command_impl(command: Dictionary) -> bool:
 			return true
 		"nusku_active_core_flame_choice":
 			var source_uid: String = command.get("source_uid", "")
-			var active_god := game_manager.get_card_by_uid(source_uid)
-			if active_god == null or not active_god.has_method("resolve_from_command"):
+			var active_god := game_manager.get_card_by_uid(source_uid) as NuskuActive
+			if active_god == null:
 				move_failed.emit("nusku_active_core_flame_choice: active god not found")
 				return false
 			var chosen_uid: String = str(command.get("chosen_uid", command.get("target_uid", ""))).strip_edges()
 			if chosen_uid != "":
-				var nusku_active := active_god as NuskuActive
-				if nusku_active == null or not nusku_active.is_pending_core_flame_choice_uid(chosen_uid):
+				if not active_god.is_pending_core_flame_choice_uid(chosen_uid):
 					move_failed.emit("nusku_active_core_flame_choice: invalid Core Flame choice")
 					return false
 			active_god.resolve_from_command(game_manager, command)
+			if not active_god.has_pending_core_flame_choice():
+				_complete_deferred_prompt_action("nusku_active_core_flame_choice", active_god)
 			move_validated.emit(command)
 			return true
 		"apollyons_demiurge_choice":

@@ -11,6 +11,7 @@ const STEALTH_FOG_DETAIL_TEXTURE_PATH := "res://images/ui/stealth_fog/seamless_n
 const STEALTH_FOG_CURSOR_TEXTURE_PATH := "res://images/ui/cursors/StealthFogCursor.png"
 const STEALTH_FOG_CLEAR_UI_GROUP := "stealth_fog_clear_ui"
 const STEALTH_FOG_TOP_UI_GROUP := "stealth_fog_top_ui"
+const CUSTOM_CURSOR_ACTIVE_META := &"other_gods_custom_cursor_active"
 const STEALTH_FOG_PLANE_Z := 0.001
 const STEALTH_FOG_LAYER_Z_BASE := 0.0002
 const STEALTH_FOG_LAYER_Z_STEP := 0.0003
@@ -133,6 +134,15 @@ func _update_software_cursor_position(window_position: Vector2) -> void:
 	if _software_cursor_root == null or not is_instance_valid(_software_cursor_root):
 		return
 	_software_cursor_root.position = window_position
+
+func _sync_cursor_presentation() -> void:
+	var custom_cursor_active := _game_viewport != null \
+		and bool(_game_viewport.get_meta(CUSTOM_CURSOR_ACTIVE_META, false))
+	if _software_cursor_root != null and is_instance_valid(_software_cursor_root):
+		_software_cursor_root.visible = not custom_cursor_active
+	var desired_mouse_mode := Input.MOUSE_MODE_VISIBLE if custom_cursor_active else Input.MOUSE_MODE_HIDDEN
+	if Input.mouse_mode != desired_mouse_mode:
+		Input.set_mouse_mode(desired_mouse_mode)
 
 func _build_environment() -> void:
 	var world_environment := WorldEnvironment.new()
@@ -275,6 +285,7 @@ func _load_game_into_viewport() -> void:
 
 func _process(delta: float) -> void:
 	_update_software_cursor_position(get_viewport().get_mouse_position())
+	_sync_cursor_presentation()
 	_age_stealth_fog_cursor_trail(delta)
 	_sync_3d_display_to_window()
 	_refresh_display_mode()

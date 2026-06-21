@@ -3410,10 +3410,17 @@ func _restore_default_selection_cursor() -> void:
 		Input.set_custom_mouse_cursor(null, cursor_shape)
 		_active_selection_cursor_mode = ""
 		_active_selection_cursor_target_height = 0
+	_set_embedded_custom_cursor_active(false)
+
+func _set_embedded_custom_cursor_active(active: bool) -> void:
+	var viewport := get_viewport()
+	if viewport != null:
+		viewport.set_meta(&"other_gods_custom_cursor_active", active)
 
 func _sync_sacrifice_cursor() -> void:
 	var cursor_mode := _get_selection_cursor_mode()
 	var target_height := _get_cursor_mode_target_height(cursor_mode)
+	_set_embedded_custom_cursor_active(not cursor_mode.is_empty())
 	if cursor_mode == _active_selection_cursor_mode and target_height == _active_selection_cursor_target_height:
 		return
 
@@ -14655,28 +14662,6 @@ func _resolve_wolf_master_creature_play(card: Card, zone: Zone, mode: String) ->
 	_set_action_label_text("Wolf Master summoned " + card.card_name + " from the deck!")
 	_clear_wolf_master_summon()
 
-func _queue_blessed_knights_impact_prompt(card: BlessedKnights) -> void:
-	if card == null or game_manager == null:
-		return
-	var action := CardAction.new()
-	action.type = CardAction.Type.EVENT
-	action.source_player = card.card_owner
-	action.card = card
-	action.event_name = "blessed_knights_impact"
-	action.event_speed = 0
-	action.resolve_callback = func() -> void:
-		if network_manager != null and network_manager.is_server:
-			if _executing_stack_action and not _stack_resolution_paused:
-				_pause_stack_resolution(card.card_owner)
-			match_manager.emit_ui_interaction_for_player(card.card_owner, "blessed_knights_ward", {"source_uid": card.uid})
-		else:
-			_pause_stack_resolution(card.card_owner)
-			_show_blessed_knights_prompt(card)
-	game_manager.push_to_stack(action)
-	update_ui()
-	_set_action_label_text(card.card_name + " impact waits on priority.")
-	_offer_priority()
-
 func _queue_tezcatlipoca_active_titlacauan_prompt(card: Card) -> void:
 	if card == null or game_manager == null:
 		return
@@ -14894,49 +14879,6 @@ func _queue_durinn_secondborn_impact_prompt(card: DurinnSecondborn, prompt_targe
 	_set_action_label_text(card.card_name + ": choose a weapon to reforge.")
 	update_ui()
 
-func _queue_first_sage_adapa_impact_prompt(card: FirstSageAdapa) -> void:
-	if card == null or game_manager == null:
-		return
-	var targets: Array = card.get_valid_targets(game_manager)
-	if targets.is_empty():
-		return
-	var action := CardAction.new()
-	action.type = CardAction.Type.EVENT
-	action.source_player = card.card_owner
-	action.card = card
-	action.event_name = "first_sage_adapa_impact"
-	action.event_speed = 0
-	action.resolve_callback = func() -> void:
-		var current_targets: Array = card.get_valid_targets(game_manager)
-		if current_targets.is_empty():
-			var no_target_text := card.card_name + " found no opposing powers or God abilities to silence."
-			if _stack_resolution_paused:
-				_resume_after_deferred_resolution(no_target_text)
-			else:
-				_set_action_label_text(no_target_text)
-				update_ui()
-			return
-		_pause_stack_resolution(card.card_owner)
-		var on_choose_silence_target := func(clicked_card: Card) -> void:
-			_resume_after_deferred_resolution(card.resolve_silence_divine_impact(game_manager, clicked_card))
-		var on_cancel_silence_target := func() -> void:
-			_resume_after_deferred_resolution(card.card_name + " impact fizzles.")
-		var validate_silence_target := func(clicked_card: Card) -> bool:
-			return card.resolve_silence_target(game_manager, clicked_card) != null
-		_begin_pending_click_selection(
-			card.card_name,
-			card,
-			validate_silence_target,
-			on_choose_silence_target,
-			on_cancel_silence_target
-		)
-		_set_action_label_text(card.card_name + ": click an opposing power or God ability to silence.")
-		update_ui()
-	game_manager.push_to_stack(action)
-	update_ui()
-	_set_action_label_text(card.card_name + " impact waits on priority.")
-	_offer_priority()
-
 func _resolve_prompt_targets(valid_targets: Array[Card], prompt_targets: Array = []) -> Array[Card]:
 	var resolved_targets: Array[Card] = []
 	if prompt_targets.is_empty():
@@ -15032,49 +14974,6 @@ func _show_first_sage_adapa_impact_prompt(card: FirstSageAdapa, prompt_targets: 
 	)
 	_set_action_label_text(card.card_name + ": click an opposing power or God ability to silence.")
 	update_ui()
-
-func _queue_third_sage_enmedugga_impact_prompt(card) -> void:
-	if card == null or game_manager == null:
-		return
-	var targets: Array = card.get_valid_targets(game_manager)
-	if targets.is_empty():
-		return
-	var action := CardAction.new()
-	action.type = CardAction.Type.EVENT
-	action.source_player = card.card_owner
-	action.card = card
-	action.event_name = "third_sage_enmedugga_impact"
-	action.event_speed = 0
-	action.resolve_callback = func() -> void:
-		var current_targets: Array = card.get_valid_targets(game_manager)
-		if current_targets.is_empty():
-			var no_target_text: String = card.card_name + " found no Mer Sage to bless."
-			if _stack_resolution_paused:
-				_resume_after_deferred_resolution(no_target_text)
-			else:
-				_set_action_label_text(no_target_text)
-				update_ui()
-			return
-		_pause_stack_resolution(card.card_owner)
-		var on_choose_sage := func(chosen_card: Card) -> void:
-			_resume_after_deferred_resolution(card.resolve_good_fortune_impact(game_manager, chosen_card))
-		var on_cancel_sage := func() -> void:
-			_resume_after_deferred_resolution(card.card_name + " impact fizzles.")
-		var validate_sage_target := func(clicked_card: Card) -> bool:
-			return clicked_card != null and clicked_card in card.get_valid_targets(game_manager)
-		_begin_pending_click_selection(
-			card.card_name,
-			card,
-			validate_sage_target,
-			on_choose_sage,
-			on_cancel_sage
-		)
-		_set_action_label_text(card.card_name + ": click a Mer Sage to bless.")
-		update_ui()
-	_set_action_label_text(card.card_name + " impact waits on priority.")
-	game_manager.push_to_stack(action)
-	update_ui()
-	_offer_priority()
 
 func _show_third_sage_enmedugga_impact_prompt(card: ThirdSageEnmedugga, prompt_targets: Array = []) -> void:
 	if card == null or game_manager == null:
@@ -15309,154 +15208,6 @@ func _show_masmassu_priest_reveal_prompt(card, prompt_targets: Array = []) -> vo
 	_set_action_label_text(card.card_name + ": click a creature to destroy.")
 	update_ui()
 
-func _queue_lailoken_reveal_prompt(card: Lailoken) -> void:
-	if card == null or game_manager == null:
-		return
-	var targets: Array = card.get_valid_targets(game_manager)
-	if targets.is_empty():
-		return
-	var target_uids: Array[String] = []
-	for target in targets:
-		if target != null:
-			target_uids.append(target.uid)
-	var action := CardAction.new()
-	action.type = CardAction.Type.EVENT
-	action.source_player = card.card_owner
-	action.card = card
-	action.event_name = "lailoken_reveal"
-	action.event_speed = card.get_effective_speed()
-	action.event_data["target_uids"] = target_uids
-	action.resolve_callback = func() -> void:
-		var current_targets: Array = card.get_valid_targets(game_manager)
-		if current_targets.is_empty():
-			var no_target_text := card.card_name + " found no prepared magical cards to drain."
-			if _stack_resolution_paused:
-				_resume_after_deferred_resolution(no_target_text)
-			else:
-				_set_action_label_text(no_target_text)
-				update_ui()
-			return
-
-		_pause_stack_resolution(card.card_owner)
-		var finish_magic_drain := func(result_text: String) -> void:
-			_resume_after_deferred_resolution(result_text)
-
-		var on_choose_magic_drain := func(clicked_card: Card) -> void:
-			var current_target := _resolve_live_prompt_target(clicked_card)
-			if current_target == null:
-				return
-			card.begin_magic_drain_reveal(game_manager, current_target, finish_magic_drain)
-		var on_cancel_magic_drain := func() -> void:
-			_resume_after_deferred_resolution(card.card_name + " reveal fizzles.")
-		var validate_magic_drain_target := func(clicked_card: Card) -> bool:
-			return _is_card_in_targets_by_uid(_resolve_live_prompt_target(clicked_card), card.get_valid_targets(game_manager))
-		_begin_pending_click_selection(
-			card.card_name,
-			card,
-			validate_magic_drain_target,
-			on_choose_magic_drain,
-			on_cancel_magic_drain
-		)
-		_set_action_label_text(card.card_name + ": click a prepared magical card to destroy.")
-		update_ui()
-	game_manager.push_to_stack(action)
-	update_ui()
-	_set_action_label_text(card.card_name + " reveal waits on priority.")
-	_offer_priority()
-
-func _queue_masmassu_priest_reveal_prompt(card) -> void:
-	if card == null or game_manager == null:
-		return
-	var targets: Array = card.get_valid_targets(game_manager)
-	if targets.is_empty():
-		return
-	var target_uids: Array[String] = []
-	for target in targets:
-		if target != null:
-			target_uids.append(target.uid)
-	var action := CardAction.new()
-	action.type = CardAction.Type.EVENT
-	action.source_player = card.card_owner
-	action.card = card
-	action.event_name = "masmassu_priest_reveal"
-	action.event_speed = card.get_effective_speed()
-	action.event_data["target_uids"] = target_uids
-	action.resolve_callback = func() -> void:
-		var current_targets: Array = card.get_valid_targets(game_manager)
-		if current_targets.is_empty():
-			var no_target_text: String = "%s found no creatures to drown." % card.card_name if card is Grindylow else card.card_name + " found no creatures to break."
-			if _stack_resolution_paused:
-				_resume_after_deferred_resolution(no_target_text)
-			else:
-				_set_action_label_text(no_target_text)
-				update_ui()
-			return
-
-		_pause_stack_resolution(card.card_owner)
-		var finish_dalkhu_break := func(result_text: String) -> void:
-			_resume_after_deferred_resolution(result_text)
-
-		var on_choose_dalkhu_break := func(clicked_card: Card) -> void:
-			var current_target := _resolve_live_prompt_target(clicked_card)
-			if current_target == null:
-				return
-			card.begin_dalkhu_break_reveal(game_manager, current_target, finish_dalkhu_break)
-		var on_cancel_dalkhu_break := func() -> void:
-			_resume_after_deferred_resolution(card.card_name + " reveal fizzles.")
-		var validate_dalkhu_break_target := func(clicked_card: Card) -> bool:
-			return _is_card_in_targets_by_uid(_resolve_live_prompt_target(clicked_card), card.get_valid_targets(game_manager))
-		_begin_pending_click_selection(
-			card.card_name,
-			card,
-			validate_dalkhu_break_target,
-			on_choose_dalkhu_break,
-			on_cancel_dalkhu_break
-		)
-		_set_action_label_text(card.card_name + ": click a creature to destroy.")
-		update_ui()
-	game_manager.push_to_stack(action)
-	update_ui()
-	_set_action_label_text(card.card_name + " reveal waits on priority.")
-	_offer_priority()
-
-func _queue_fourth_sage_enmegalamma_impact_prompt(card) -> void:
-	if card == null or game_manager == null:
-		return
-	var targets: Array[Card] = card.get_valid_targets(game_manager)
-	if targets.is_empty():
-		return
-	var action := CardAction.new()
-	action.type = CardAction.Type.EVENT
-	action.source_player = card.card_owner
-	action.card = card
-	action.event_name = "fourth_sage_enmegalamma_impact"
-	action.event_speed = 0
-	action.resolve_callback = func() -> void:
-		var current_targets: Array[Card] = card.get_valid_targets(game_manager)
-		if current_targets.is_empty():
-			var no_target_text: String = card.resolve_no_search_targets()
-			if _stack_resolution_paused:
-				_resume_after_deferred_resolution(no_target_text)
-			else:
-				_set_action_label_text(no_target_text)
-				update_ui()
-			return
-		_pause_stack_resolution(card.card_owner)
-		var on_choose_sage := func(chosen_card: Card) -> void:
-			_resume_after_deferred_resolution(card.resolve_search_sage_impact(game_manager, chosen_card))
-		var on_cancel_sage := func() -> void:
-			_resume_after_deferred_resolution(card.resolve_search_sage_decline(game_manager))
-		_show_card_selection_overlay(
-			"Choose a Mer Sage for " + card.card_name,
-			current_targets,
-			on_choose_sage,
-			on_cancel_sage
-		)
-	game_manager.push_to_stack(action)
-	update_ui()
-	_set_action_label_text(card.card_name + " impact waits on priority.")
-	_offer_priority()
-
 func _show_fourth_sage_enmegalamma_impact_prompt(card, prompt_targets: Array = []) -> void:
 	if card == null or game_manager == null:
 		return
@@ -15495,50 +15246,6 @@ func _show_fourth_sage_enmegalamma_impact_prompt(card, prompt_targets: Array = [
 		on_choose_sage,
 		on_cancel_sage
 	)
-
-func _queue_sixth_sage_an_enlilda_impact_prompt(card) -> void:
-	if card == null or game_manager == null:
-		return
-	var targets: Array[Card] = card.get_valid_targets(game_manager)
-	if targets.is_empty():
-		return
-	var action := CardAction.new()
-	action.type = CardAction.Type.EVENT
-	action.source_player = card.card_owner
-	action.card = card
-	action.event_name = "sixth_sage_an_enlilda_impact"
-	action.event_speed = 0
-	action.resolve_callback = func() -> void:
-		var current_targets: Array[Card] = card.get_valid_targets(game_manager)
-		if current_targets.is_empty():
-			var no_target_text: String = card.resolve_no_conjure_home_targets()
-			if _stack_resolution_paused:
-				_resume_after_deferred_resolution(no_target_text)
-			else:
-				_set_action_label_text(no_target_text)
-				update_ui()
-			return
-		_pause_stack_resolution(card.card_owner)
-		var on_choose_dwelling := func(chosen_card: Card) -> void:
-			await _linger_before_board_leaving_activation(
-				card,
-				"%s activates Conjure Home." % card.card_name
-			)
-			_resume_after_deferred_resolution(card.resolve_conjure_home_impact(game_manager, chosen_card))
-		var on_cancel_dwelling := func() -> void:
-			_resume_after_deferred_resolution(card.resolve_conjure_home_decline(game_manager))
-		_show_card_selection_overlay(
-			"Choose an Ancient Dwelling for " + card.card_name,
-			current_targets,
-			on_choose_dwelling,
-			on_cancel_dwelling,
-			"",
-			"Decline"
-		)
-	game_manager.push_to_stack(action)
-	update_ui()
-	_set_action_label_text(card.card_name + " impact waits on priority.")
-	_offer_priority()
 
 func _show_sixth_sage_an_enlilda_impact_prompt(card: SixthSageAnEnlilda, prompt_targets: Array = []) -> void:
 	if card == null or game_manager == null:
@@ -15648,46 +15355,6 @@ func _show_tiamat_active_summon_prompt(card: TiamatActive, label: String, prompt
 		Callable(),
 		_get_selection_cursor_mode_for_source(card)
 	)
-
-func _queue_terror_impact_prompt(power: Terror, demon: Card) -> void:
-	if power == null or demon == null or game_manager == null:
-		return
-	var targets: Array[Card] = power.get_valid_terror_targets(game_manager, demon)
-	if targets.is_empty():
-		return
-	var action := CardAction.new()
-	action.type = CardAction.Type.EVENT
-	action.source_player = demon.get_controller()
-	action.card = demon
-	action.event_name = "terror_impact"
-	action.event_speed = 0
-	action.resolve_callback = func() -> void:
-		var current_targets: Array[Card] = power.get_valid_terror_targets(game_manager, demon)
-		if current_targets.is_empty():
-			var no_target_text := "%s spread terror through %s, but there was no lower-level enemy creature to return." % [
-				power.card_name,
-				demon.get_target_log_display_name(game_manager.get_feedback_viewer())
-			]
-			if _stack_resolution_paused:
-				_resume_after_deferred_resolution(no_target_text)
-			else:
-				_set_action_label_text(no_target_text)
-				update_ui()
-			return
-		_pause_stack_resolution(demon.get_controller())
-		var on_choose_target := func(chosen_card: Card) -> void:
-			_resume_after_deferred_resolution(power.resolve_terror_impact(game_manager, demon, chosen_card))
-		_show_card_selection_overlay(
-			"Choose a creature for " + demon.card_name + "'s Terror",
-			current_targets,
-			on_choose_target,
-			Callable(),
-			_get_selection_cursor_mode_for_source(power)
-		)
-	game_manager.push_to_stack(action)
-	update_ui()
-	_set_action_label_text(demon.card_name + " impact waits on priority.")
-	_offer_priority()
 
 func _begin_gugalanna_impact_targeting(card: GugalannaBullOfHeaven, prompt_targets: Array = []) -> void:
 	if card == null or game_manager == null:

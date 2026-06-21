@@ -52,6 +52,8 @@ func on_impact(game_manager: GameManager) -> void:
 	game_manager.decision_requested.emit(prompt_player, "nusku_active_core_flame", {
 		"source_uid": uid,
 		"mill_count": mill_count,
+		"queue_with_priority": true,
+		"event_name": "nusku_active_core_flame_impact",
 	})
 
 func resolve_from_command(game_manager: GameManager, command: Dictionary) -> String:
@@ -105,6 +107,10 @@ func resolve_core_flame(game_manager: GameManager, chosen_card: Card = null, dec
 func is_pending_core_flame_choice_uid(chosen_uid: String) -> bool:
 	var pending_choice_uids: Array = get_meta(CORE_FLAME_PENDING_CHOICE_UIDS_META, [])
 	return chosen_uid in pending_choice_uids
+
+func has_pending_core_flame_choice() -> bool:
+	var pending_choice_uids: Array = get_meta(CORE_FLAME_PENDING_CHOICE_UIDS_META, [])
+	return not pending_choice_uids.is_empty()
 
 func on_death(game_manager: GameManager) -> void:
 	if game_manager == null or not _declined_core_flame:

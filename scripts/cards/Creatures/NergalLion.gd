@@ -38,6 +38,8 @@ func on_impact(game_manager: GameManager) -> void:
 	game_manager.decision_requested.emit(get_controller(), "nergal_lion_impact", {
 		"source_uid": uid,
 		"target_uids": target_uids,
+		"queue_with_priority": true,
+		"event_name": "nergal_lion_impact",
 	})
 
 func get_valid_immolate_targets(_game_manager: GameManager = null) -> Array[Card]:
