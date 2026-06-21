@@ -336,6 +336,14 @@ func _build_full_state_event_data(player_index: int, action_message: String, vis
 		action_message = action_message,
 		action_log_event_id = _action_log_event_id,
 	}
+	if match_manager != null and player_index >= 0 and player_index < game_manager.players.size():
+		var pending_priority_prompt := match_manager.get_pending_priority_prompt_data(
+			game_manager.players[player_index]
+		)
+		if not pending_priority_prompt.is_empty():
+			event_data["pending_priority_prompt"] = prompt_router.serialize_prompt_data(
+				pending_priority_prompt
+			)
 	var attack_preview := _serialize_pending_attack_preview()
 	if player_index >= 0 and not attack_preview.is_empty():
 		event_data["pending_attack_preview"] = attack_preview

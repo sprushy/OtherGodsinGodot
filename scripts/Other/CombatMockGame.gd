@@ -27916,6 +27916,10 @@ func _apply_ui_interaction(event_data: Dictionary) -> void:
 func _apply_full_state(data: Dictionary) -> void:
 	_pending_priority_auto_pass_signature.clear()
 	var state: Dictionary = data.get("state", {})
+	var pending_priority_prompt: Dictionary = {}
+	var pending_priority_value = data.get("pending_priority_prompt", {})
+	if pending_priority_value is Dictionary:
+		pending_priority_prompt = (pending_priority_value as Dictionary).duplicate(true)
 	var previous_turn_number := game_manager.turn_number if game_manager != null else -1
 	if _is_networked_client:
 		# Client: clear stale card refs and rebuild ghost game_manager from server state
@@ -27971,7 +27975,13 @@ func _apply_full_state(data: Dictionary) -> void:
 	_retry_pending_nergal_lion_prompt()
 	_retry_pending_nusku_well_of_fire_prompt()
 	if not restored_reveal_prompt:
-		_restore_priority_prompt_from_authoritative_state()
+		if not pending_priority_prompt.is_empty() and network_manager != null:
+			_apply_priority_prompt_for_player(
+				int(pending_priority_prompt.get("player_index", network_manager.local_player_index)),
+				pending_priority_prompt
+			)
+		else:
+			_restore_priority_prompt_from_authoritative_state()
 	_update_waiting_overlay()
 	_sync_deferred_turn_action_after_opponent_priority()
 

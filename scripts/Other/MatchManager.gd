@@ -1364,6 +1364,16 @@ func get_pending_state_refresh_ui_interactions() -> Array[Dictionary]:
 		interactions.append(entry.duplicate(true))
 	return interactions
 
+func get_pending_priority_prompt_data(player: Player) -> Dictionary:
+	if player == null:
+		return {}
+	for entry in _pending_ui_interactions:
+		if entry.get("player", null) != player or str(entry.get("type", "")) != "priority":
+			continue
+		var prompt_data: Dictionary = entry.get("data", {})
+		return prompt_data.duplicate(true)
+	return {}
+
 func _is_reveal_interaction_type(interaction_type: String) -> bool:
 	return interaction_type.strip_edges().to_lower().contains("reveal")
 
