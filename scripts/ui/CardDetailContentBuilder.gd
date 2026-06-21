@@ -3,7 +3,6 @@ extends RefCounted
 
 const LevelSymbolRowScript = preload("res://scripts/ui/LevelSymbolRow.gd")
 const UITextureCacheScript = preload("res://scripts/ui/UITextureCache.gd")
-const PUBLICLY_IDENTIFIED_BADGE_TEXTURE := preload("res://images/ability_badges/MopsusBadge.png")
 const _BULLET_SEPARATOR := " | "
 const _BOARD_POPUP_WIDTH := 210.0
 const _KEYWORD_PANEL_WIDTH := 210.0
@@ -803,7 +802,7 @@ static func make_full_card_preview(card: Card, viewer: Player, width: float, gam
 	}))
 	return panel
 
-static func _make_stored_card_preview(card: Card, viewer: Player, width: float) -> Control:
+static func _make_stored_card_preview(card: Card, _viewer: Player, width: float) -> Control:
 	var panel := PanelContainer.new()
 	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	panel.custom_minimum_size = Vector2(width, 0.0)
@@ -824,11 +823,12 @@ static func _make_stored_card_preview(card: Card, viewer: Player, width: float) 
 
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 6)
+	row.custom_minimum_size = Vector2(width - 10.0, 76.0)
 	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	panel.add_child(row)
 
 	var thumbnail := Control.new()
-	thumbnail.custom_minimum_size = Vector2(40, 54)
+	thumbnail.custom_minimum_size = Vector2(56, 76)
 	thumbnail.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	thumbnail.clip_contents = true
 	thumbnail.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
@@ -853,36 +853,10 @@ static func _make_stored_card_preview(card: Card, viewer: Player, width: float) 
 		initial.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		initial.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		thumbnail.add_child(initial)
-	if viewer != null and card.card_owner == viewer:
-		var identified_marker := PanelContainer.new()
-		identified_marker.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		identified_marker.z_index = 5
-		identified_marker.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-		identified_marker.offset_left = -18.0
-		identified_marker.offset_top = 3.0
-		identified_marker.offset_right = -3.0
-		identified_marker.offset_bottom = 18.0
-		var marker_style := StyleBoxFlat.new()
-		marker_style.bg_color = Color(0.18, 0.02, 0.02, 0.92)
-		marker_style.border_color = Color(1.0, 0.28, 0.24, 0.98)
-		marker_style.corner_radius_top_left = 4
-		marker_style.corner_radius_top_right = 4
-		marker_style.corner_radius_bottom_left = 4
-		marker_style.corner_radius_bottom_right = 4
-		for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-			marker_style.set_border_width(side, 1)
-		identified_marker.add_theme_stylebox_override("panel", marker_style)
-		var marker_icon := TextureRect.new()
-		marker_icon.texture = PUBLICLY_IDENTIFIED_BADGE_TEXTURE
-		marker_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		marker_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-		marker_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		marker_icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-		identified_marker.add_child(marker_icon)
-		thumbnail.add_child(identified_marker)
 
 	var info := VBoxContainer.new()
 	info.add_theme_constant_override("separation", 2)
+	info.custom_minimum_size = Vector2(maxf(100.0, width - 76.0), 0.0)
 	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	info.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_child(info)

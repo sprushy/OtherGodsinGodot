@@ -8171,17 +8171,11 @@ func _show_power_hover_popup(source: Control, text: String, bbcode_text: String 
 	popup.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	popup.z_index = HOVER_PREVIEW_Z_INDEX
 
-	var scroll := ScrollContainer.new()
-	scroll.name = "PowerHoverScroll"
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
-	scroll.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	popup.add_child(scroll)
-
 	var vbox := VBoxContainer.new()
 	vbox.add_theme_constant_override("separation", 6)
+	vbox.custom_minimum_size = Vector2(220.0, 0.0)
 	vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	scroll.add_child(vbox)
+	popup.add_child(vbox)
 
 	var label := RichTextLabel.new()
 	label.bbcode_enabled = true
@@ -8209,11 +8203,18 @@ func _show_power_hover_popup(source: Control, text: String, bbcode_text: String 
 
 	if not is_inside_tree() or is_queued_for_deletion():
 		return
+	_set_power_hover_mouse_passthrough(popup)
 	popup.top_level = true
 	add_child(popup)
 	_promote_transient_ui(popup, HOVER_PREVIEW_Z_INDEX)
 	_power_hover_popup = popup
 	call_deferred("_position_power_hover_popup", popup, source)
+
+func _set_power_hover_mouse_passthrough(node: Node) -> void:
+	if node is Control:
+		(node as Control).mouse_filter = Control.MOUSE_FILTER_IGNORE
+	for child in node.get_children():
+		_set_power_hover_mouse_passthrough(child)
 
 func _position_power_hover_popup(popup: Control, source: Control) -> void:
 	if popup == null or not is_instance_valid(popup) or source == null or not is_instance_valid(source):
@@ -8229,33 +8230,19 @@ func _position_power_hover_popup(popup: Control, source: Control) -> void:
 		maxf(80.0, vp_size.x - viewport_margin * 2.0),
 		maxf(80.0, vp_size.y - viewport_margin * 2.0)
 	)
-	if popup_size.x > max_popup_size.x or popup_size.y > max_popup_size.y:
-		var scroll := popup.get_node_or_null("PowerHoverScroll") as ScrollContainer
-		if scroll != null:
-			scroll.custom_minimum_size = Vector2(
-				minf(popup_size.x, max_popup_size.x),
-				minf(popup_size.y, max_popup_size.y)
-			)
-			popup_size = Vector2(
-				minf(popup_size.x, max_popup_size.x),
-				minf(popup_size.y, max_popup_size.y)
-			)
 	var popup_scale := minf(
 		1.0,
 		minf(
-			maxf(0.35, max_popup_size.x / maxf(popup_size.x, 1.0)),
-			maxf(0.35, max_popup_size.y / maxf(popup_size.y, 1.0))
+			max_popup_size.x / maxf(popup_size.x, 1.0),
+			max_popup_size.y / maxf(popup_size.y, 1.0)
 		)
 	)
 	popup.scale = Vector2(popup_scale, popup_scale)
 	popup.size = popup_size
 	var scaled_popup_size := popup_size * popup_scale
-	var pos := Vector2(
-		source_rect.position.x + (source_rect.size.x - scaled_popup_size.x) * 0.5,
-		source_rect.position.y - scaled_popup_size.y - 6.0
-	)
-	if pos.y < viewport_margin and source_rect.end.y + 6.0 + scaled_popup_size.y <= vp_size.y - viewport_margin:
-		pos.y = source_rect.end.y + 6.0
+	var pos := Vector2(source_rect.position.x - scaled_popup_size.x - 6.0, source_rect.position.y)
+	if pos.x < viewport_margin:
+		pos.x = source_rect.end.x + 6.0
 	pos.x = clampf(pos.x, viewport_margin, maxf(viewport_margin, vp_size.x - scaled_popup_size.x - viewport_margin))
 	pos.y = clampf(pos.y, viewport_margin, maxf(viewport_margin, vp_size.y - scaled_popup_size.y - viewport_margin))
 	popup.global_position = pos
@@ -20437,6 +20424,12 @@ func _consume_duplicate_local_priority_offer() -> bool:
 	return matches
 
 func _build_priority_prompt_payload_signature(player_index: int, data: Dictionary) -> Dictionary:
+	var prompt_id := int(data.get("_prompt_id", -1))
+	if prompt_id >= 0:
+		return {
+			"player_index": player_index,
+			"prompt_id": prompt_id,
+		}
 	var response_signatures: Array[String] = []
 	for response in data.get("responses", []):
 		if not (response is Dictionary):

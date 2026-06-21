@@ -414,8 +414,10 @@ func _emit_ui_interaction_now(player: Player, type: String, data: Dictionary) ->
 		return
 	if type == "intercept" and _has_duplicate_pending_ui_interaction(player, type, data):
 		return
-	_record_pending_ui_interaction(player, type, data)
-	request_ui_interaction.emit(player_idx, type, data)
+	var prompt_id := _record_pending_ui_interaction(player, type, data)
+	var emitted_data := data.duplicate(true)
+	emitted_data["_prompt_id"] = prompt_id
+	request_ui_interaction.emit(player_idx, type, emitted_data)
 
 func _queue_ui_interaction(
 	player: Player,
@@ -518,14 +520,15 @@ func _is_queued_ui_interaction_still_valid(queued: Dictionary) -> bool:
 func emit_ui_interaction_for_player(player: Player, type: String, data: Dictionary) -> void:
 	_emit_ui_interaction_for_player(player, type, data)
 
-func _record_pending_ui_interaction(player: Player, type: String, data: Dictionary) -> void:
+func _record_pending_ui_interaction(player: Player, type: String, data: Dictionary) -> int:
 	if player == null or type.strip_edges() == "":
-		return
+		return -1
+	var prompt_id := _next_ui_interaction_id
 	var entry := {
 		"player": player,
 		"type": type,
 		"turn_number": game_manager.turn_number if game_manager != null else -1,
-		"prompt_id": _next_ui_interaction_id,
+		"prompt_id": prompt_id,
 		"data": data.duplicate(true),
 	}
 	_next_ui_interaction_id += 1
@@ -533,6 +536,7 @@ func _record_pending_ui_interaction(player: Player, type: String, data: Dictiona
 	_pending_ui_interactions.append(entry)
 	while _pending_ui_interactions.size() > 64:
 		_pending_ui_interactions.remove_at(0)
+	return prompt_id
 
 func _has_duplicate_pending_ui_interaction(player: Player, type: String, data: Dictionary) -> bool:
 	for existing in _pending_ui_interactions:
@@ -635,6 +639,27 @@ func _consume_matching_pending_ui_interaction_for_command(command: Dictionary) -
 	var prompt_id := int(_pending_ui_interactions[prompt_idx].get("prompt_id", -1))
 	return _consume_pending_ui_interaction_by_id(prompt_id)
 
+func _reemit_pending_ui_interaction(entry: Dictionary) -> bool:
+	if game_manager == null or entry.is_empty():
+		return false
+	var player := entry.get("player", null) as Player
+	var interaction_type := str(entry.get("type", "")).strip_edges()
+	if player == null or interaction_type == "":
+		return false
+	var player_idx := game_manager.players.find(player)
+	if player_idx < 0:
+		return false
+	var interaction_data: Dictionary = entry.get("data", {})
+	var emitted_data := interaction_data.duplicate(true)
+	emitted_data["_prompt_id"] = int(entry.get("prompt_id", -1))
+	request_ui_interaction.emit(player_idx, interaction_type, emitted_data)
+	return true
+
+func _reemit_active_pending_ui_interaction() -> bool:
+	if _pending_ui_interactions.is_empty():
+		return false
+	return _reemit_pending_ui_interaction(_pending_ui_interactions[0])
+
 func _consume_pending_ui_interaction_for_player(player: Player, interaction_type: String) -> bool:
 	if player == null or interaction_type.strip_edges() == "":
 		return false
@@ -647,7 +672,12 @@ func _consume_pending_ui_interaction_for_player(player: Player, interaction_type
 	return false
 
 func _resume_authoritative_flow_after_prompt_command() -> void:
-	if not _pending_ui_interactions.is_empty() or not _queued_ui_interactions.is_empty():
+	if not _pending_ui_interactions.is_empty():
+		var active_interaction_type := str(_pending_ui_interactions[0].get("type", ""))
+		if active_interaction_type == "priority":
+			_reemit_active_pending_ui_interaction()
+		return
+	if not _queued_ui_interactions.is_empty():
 		return
 	if pending_blot_spell != null:
 		_try_queue_pending_authoritative_blot_action()
@@ -1361,7 +1391,11 @@ func get_pending_state_refresh_ui_interactions() -> Array[Dictionary]:
 		var interaction_data: Dictionary = entry.get("data", {})
 		if not _is_state_refresh_ui_interaction(interaction_type, interaction_data):
 			continue
-		interactions.append(entry.duplicate(true))
+		var serialized_entry := entry.duplicate(true)
+		var serialized_data := interaction_data.duplicate(true)
+		serialized_data["_prompt_id"] = int(entry.get("prompt_id", -1))
+		serialized_entry["data"] = serialized_data
+		interactions.append(serialized_entry)
 	return interactions
 
 func get_pending_priority_prompt_data(player: Player) -> Dictionary:
@@ -1371,7 +1405,9 @@ func get_pending_priority_prompt_data(player: Player) -> Dictionary:
 		if entry.get("player", null) != player or str(entry.get("type", "")) != "priority":
 			continue
 		var prompt_data: Dictionary = entry.get("data", {})
-		return prompt_data.duplicate(true)
+		var serialized_prompt_data := prompt_data.duplicate(true)
+		serialized_prompt_data["_prompt_id"] = int(entry.get("prompt_id", -1))
+		return serialized_prompt_data
 	return {}
 
 func _is_reveal_interaction_type(interaction_type: String) -> bool:
@@ -1379,6 +1415,7 @@ func _is_reveal_interaction_type(interaction_type: String) -> bool:
 
 func _is_state_refresh_ui_interaction(interaction_type: String, interaction_data: Dictionary = {}) -> bool:
 	return _is_reveal_interaction_type(interaction_type) \
+		or interaction_type.strip_edges() == "priority" \
 		or interaction_type.strip_edges() == "nusku_well_of_fire" \
 		or bool(interaction_data.get("_queue_priority_after_choice", false))
 
