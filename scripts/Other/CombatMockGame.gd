@@ -467,6 +467,9 @@ var _pending_freyja_active_selected_uids: Array[String] = []
 var _pending_freyja_active_prompt_targets: Array[String] = []
 var _pending_turn_start_priority_feedback: String = ""
 var _breidablik_panel: Control = null
+var _breidablik_post_upkeep_active: bool = false
+var _pending_breidablik_post_upkeep_feedback: String = ""
+var _pending_breidablik_post_upkeep_finish: Callable = Callable()
 var _e2_abzu_panel: Control = null
 var _divine_caprice_panel: Control = null
 var _pending_divine_caprice_power: DivineCaprice = null
@@ -2225,7 +2228,7 @@ func _finish_wheel_of_fire_turn_start_sequence() -> void:
 			_set_action_label_text(feedback)
 		update_ui()
 		return
-	_queue_standard_turn_start_priority(feedback)
+	_continue_after_turn_start_optional_windows(feedback)
 
 func _finish_wolf_adolescent_turn_start_sequence() -> void:
 	var feedback := _pending_turn_start_priority_feedback
@@ -2245,7 +2248,7 @@ func _finish_wolf_adolescent_turn_start_sequence() -> void:
 		_request_ui_refresh()
 		update_ui()
 		return
-	_queue_standard_turn_start_priority(feedback)
+	_continue_after_turn_start_optional_windows(feedback)
 	_request_ui_refresh()
 
 func _continue_after_upkeep_choice(feedback: String) -> void:
@@ -2262,7 +2265,18 @@ func _continue_after_upkeep_choice(feedback: String) -> void:
 	if _begin_wheel_of_fire_turn_start_sequence(feedback):
 		update_ui()
 		return
-	_queue_standard_turn_start_priority(feedback)
+	_continue_after_turn_start_optional_windows(feedback)
+
+func _continue_after_turn_start_optional_windows(feedback: String, finish_callback: Callable = Callable()) -> void:
+	var resolved_finish := finish_callback
+	if not resolved_finish.is_valid():
+		resolved_finish = func(final_feedback: String) -> void:
+			_queue_standard_turn_start_priority(final_feedback)
+	if _begin_breidablik_post_upkeep_sequence(feedback, resolved_finish):
+		update_ui()
+		return
+	_close_breidablik_turn_start_windows()
+	resolved_finish.call(feedback)
 
 func _build_upkeep_resolution_feedback(default_feedback: String) -> String:
 	var resolved_feedback := _consume_resolution_feedback()
@@ -8853,6 +8867,10 @@ func _show_breidablik_prompt(power: Breidablik) -> void:
 				power.get_stored_priests(),
 				on_choose_return_priest,
 				func() -> void:
+					if _breidablik_post_upkeep_active:
+						_finish_breidablik_post_upkeep_sequence()
+						return
+					_hide_breidablik_prompt()
 					_set_action_label_text("Declined " + power.card_name + ".")
 					update_ui(),
 				"breidablik",
@@ -8864,6 +8882,9 @@ func _show_breidablik_prompt(power: Breidablik) -> void:
 	var cancel_btn := Button.new()
 	cancel_btn.text = "Decline"
 	cancel_btn.pressed.connect(func() -> void:
+		if _breidablik_post_upkeep_active:
+			_finish_breidablik_post_upkeep_sequence()
+			return
 		_hide_breidablik_prompt()
 		_set_action_label_text("Declined " + power.card_name + ".")
 		update_ui()
@@ -8928,6 +8949,9 @@ func _resolve_breidablik_return_choice(power: Breidablik, selected_priest: Card)
 		update_ui()
 		return
 	var feedback := _consume_resolution_feedback(power.card_name + " returned " + selected_priest.card_name + ".")
+	if _breidablik_post_upkeep_active:
+		_finish_breidablik_post_upkeep_sequence(feedback)
+		return
 	if keep_upkeep_choice_open:
 		_set_action_label_text(feedback + " Choose your upkeep option.")
 		show_turn_choice()
@@ -9167,6 +9191,35 @@ func _hide_breidablik_prompt() -> void:
 	if _breidablik_panel != null and is_instance_valid(_breidablik_panel):
 		_breidablik_panel.queue_free()
 	_breidablik_panel = null
+
+func _begin_breidablik_post_upkeep_sequence(feedback: String, finish_callback: Callable) -> bool:
+	var power := _get_available_breidablik_return_power()
+	if power == null:
+		return false
+	_breidablik_post_upkeep_active = true
+	_pending_breidablik_post_upkeep_feedback = feedback
+	_pending_breidablik_post_upkeep_finish = finish_callback
+	_show_breidablik_prompt(power)
+	return true
+
+func _finish_breidablik_post_upkeep_sequence(feedback: String = "") -> void:
+	var pending_feedback := _pending_breidablik_post_upkeep_feedback
+	var finish_callback := _pending_breidablik_post_upkeep_finish
+	_breidablik_post_upkeep_active = false
+	_pending_breidablik_post_upkeep_feedback = ""
+	_pending_breidablik_post_upkeep_finish = Callable()
+	_hide_breidablik_prompt()
+	_close_breidablik_turn_start_windows()
+	var final_feedback := feedback.strip_edges()
+	if final_feedback == "":
+		final_feedback = pending_feedback
+	elif pending_feedback.strip_edges() != "" and final_feedback != pending_feedback:
+		final_feedback = "%s %s" % [pending_feedback, final_feedback]
+	if finish_callback.is_valid():
+		finish_callback.call(final_feedback)
+	else:
+		_queue_standard_turn_start_priority(final_feedback)
+	update_ui()
 
 func _show_e2_abzu_prompt(structure: E2Abzu) -> void:
 	_hide_e2_abzu_prompt()
@@ -9411,11 +9464,15 @@ func _resolve_skoll_upkeep_creature_play(card: Card, zone: Zone, mode: String) -
 	_queued_skoll_turn_start_zone = zone
 	_queued_skoll_turn_start_mode = mode
 	game_manager.player_chooses_upkeep_only()
-	_close_turn_start_windows()
+	_close_turn_start_windows(false)
 	update_ui()
 	hide_turn_choice()
 	if not _is_networked_client:
-		_queue_skoll_turn_start_priority()
+		_continue_after_turn_start_optional_windows(
+			"Sun Hunt chosen.",
+			func(_final_feedback: String) -> void:
+				_queue_skoll_turn_start_priority()
+		)
 
 func _remove_skoll_from_prompt_queue(skoll: Skoll) -> void:
 	if skoll == null:
@@ -9734,7 +9791,7 @@ func _submit_tiamat_upkeep_choice(chosen_card: Card) -> void:
 		_reject_pending_network_breidablik_return_choice()
 		return
 	game_input.submit_action({type = "tiamat_upkeep_choice", card_uid = chosen_card.uid})
-	_close_turn_start_windows()
+	_close_turn_start_windows(false)
 	update_ui()
 	hide_turn_choice()
 
@@ -9780,9 +9837,9 @@ func _on_matriarch_rule_button_pressed() -> void:
 	_set_action_label_text("Matriarch Rule: choose a creature from your power slots to return to hand.")
 	update_ui()
 
-func _maybe_prompt_breidablik_on_turn_start() -> void:
+func _get_available_breidablik_return_power() -> Breidablik:
 	if game_manager == null or game_manager.current_player == null:
-		return
+		return null
 	for zone in game_manager.current_player.power_zones:
 		for card in zone.cards:
 			if not (card is Breidablik):
@@ -9792,8 +9849,26 @@ func _maybe_prompt_breidablik_on_turn_start() -> void:
 				continue
 			if not power.can_return_priest(game_manager):
 				continue
-			_show_breidablik_prompt(power)
-			return
+			return power
+	return null
+
+func _maybe_prompt_breidablik_on_turn_start() -> bool:
+	var power := _get_available_breidablik_return_power()
+	if power == null:
+		return false
+	_show_breidablik_prompt(power)
+	return true
+
+func _close_breidablik_turn_start_windows() -> void:
+	if game_manager == null:
+		return
+	for player in game_manager.players:
+		if player == null:
+			continue
+		for zone in player.power_zones:
+			for card in zone.cards:
+				if card is Breidablik and card.has_method("close_turn_start_window"):
+					card.close_turn_start_window()
 
 func _get_absence_targets() -> Array[Card]:
 	var targets: Array[Card] = []
@@ -24418,6 +24493,9 @@ func _dismiss_transient_prompts() -> void:
 	_pending_wolf_adolescent_prompts.clear()
 	_active_wolf_adolescent_prompt = null
 	_pending_turn_start_priority_feedback = ""
+	_breidablik_post_upkeep_active = false
+	_pending_breidablik_post_upkeep_feedback = ""
+	_pending_breidablik_post_upkeep_finish = Callable()
 	_pending_hati_prompts.clear()
 	_clear_hati_moon_hunt_state()
 	_pending_skoll_prompts.clear()
@@ -24923,7 +25001,7 @@ func _on_match_move_validated(move: Dictionary) -> void:
 			if _is_networked_client:
 				_set_action_label_text("Skoll summoned via Sun Hunt.")
 			else:
-				_queue_standard_turn_start_priority("Skoll summoned via Sun Hunt.")
+				_continue_after_turn_start_optional_windows("Skoll summoned via Sun Hunt.")
 		"hati_moon_hunt":
 			_set_action_label_text("Moon Hunt resolved. Hati was summoned.")
 			if _is_networked_client:
@@ -24995,9 +25073,14 @@ func _on_match_move_validated(move: Dictionary) -> void:
 					feedback = _consume_resolution_feedback()
 				if feedback.strip_edges() == "":
 					feedback = "Breidablik returned a priest."
-				_set_action_label_text(feedback + " Choose your upkeep option.")
+				if _breidablik_post_upkeep_active:
+					_finish_breidablik_post_upkeep_sequence(feedback)
+					return
 				if game_manager != null and game_manager.is_player_in_upkeep_window(game_manager.current_player):
+					_set_action_label_text(feedback + " Choose your upkeep option.")
 					show_turn_choice()
+				else:
+					_set_action_label_text(feedback)
 				update_ui()
 				return
 			var queued_power := game_manager.get_card_by_uid(str(move.get("power_uid", "")))
@@ -25644,7 +25727,7 @@ func _on_draw_button_pressed() -> void:
 		_set_action_label_text("Finish resolving Sun Hunt or cancel it before choosing another upkeep option.")
 		return
 	game_input.submit_action({type = "upkeep_choice", choice = "draw"})
-	_close_turn_start_windows()
+	_close_turn_start_windows(false)
 	update_ui()
 	hide_turn_choice()
 
@@ -25663,11 +25746,11 @@ func _on_mana_button_pressed() -> void:
 		_set_action_label_text("Finish resolving Sun Hunt or cancel it before choosing another upkeep option.")
 		return
 	game_input.submit_action({type = "upkeep_choice", choice = "mana"})
-	_close_turn_start_windows()
+	_close_turn_start_windows(false)
 	update_ui()
 	hide_turn_choice()
 
-func _close_turn_start_windows() -> void:
+func _close_turn_start_windows(close_breidablik: bool = true) -> void:
 	_dismiss_zone_overlay()
 	_hide_hati_prompt()
 	_pending_hati_prompts.clear()
@@ -25690,6 +25773,8 @@ func _close_turn_start_windows() -> void:
 		for zone in player.power_zones + player.frontline_zones + player.reserve_zones:
 			for card in zone.cards:
 				if card.has_method("close_turn_start_window"):
+					if not close_breidablik and card is Breidablik:
+						continue
 					var wheel := card as WheelOfFire
 					if wheel != null and (wheel == _active_wheel_of_fire_prompt or _pending_wheel_of_fire_prompts.has(wheel)):
 						continue

@@ -9,6 +9,7 @@ const FOLLOWERS_PER_LEVEL := 3
 var stored_priests: Array[Card] = []
 var stored_priest_origins: Dictionary = {}
 var return_window_open: bool = false
+var return_used_turn_number: int = -1
 
 func _init() -> void:
 	super._init()
@@ -70,6 +71,7 @@ func get_serialized_state() -> Dictionary:
 		})
 	state["stored_priests"] = stored_entries
 	state["return_window_open"] = return_window_open
+	state["return_used_turn_number"] = return_used_turn_number
 	return state
 
 func apply_serialized_state(state: Dictionary) -> void:
@@ -77,6 +79,7 @@ func apply_serialized_state(state: Dictionary) -> void:
 	stored_priests.clear()
 	stored_priest_origins.clear()
 	return_window_open = bool(state.get("return_window_open", false))
+	return_used_turn_number = int(state.get("return_used_turn_number", -1))
 	for entry_value in state.get("stored_priests", []):
 		if not (entry_value is Dictionary):
 			continue
@@ -95,7 +98,8 @@ func apply_serialized_state(state: Dictionary) -> void:
 func can_return_priest(game_manager: GameManager) -> bool:
 	return return_window_open \
 		and game_manager != null \
-		and game_manager.is_player_in_upkeep_window(card_owner) \
+		and game_manager.has_resolved_turn_upkeep() \
+		and return_used_turn_number != game_manager.turn_number \
 		and game_manager.current_player == card_owner \
 		and card_owner.mana >= get_activation_mana_cost(RETURN_MANA_COST, game_manager) \
 		and not stored_priests.is_empty() \
@@ -147,6 +151,7 @@ func return_priest(game_manager: GameManager, priest: Card) -> bool:
 	stored_priest.reset_creature_action_state()
 	stored_priest.summoned_this_turn = false
 	return_window_open = false
+	return_used_turn_number = game_manager.turn_number
 	_emit_visual_state_changed()
 	return true
 

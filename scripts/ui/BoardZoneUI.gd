@@ -4672,7 +4672,8 @@ func _refresh_display() -> void:
 			)
 			var use_prepared_magical_cover := card.is_prepared \
 				and card.is_magical_card() \
-				and card.get_controller() != face_down_viewer
+				and card.get_controller() != face_down_viewer \
+				and not revealed_face_down_card
 			var show_revealed_card_art := revealed_face_down_card and card.art_path != ""
 			var tex: Texture2D = null
 			if use_prepared_magical_cover:
