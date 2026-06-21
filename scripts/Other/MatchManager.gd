@@ -380,6 +380,9 @@ func _present_pre_priority_choice_interaction(player: Player, type: String, data
 	if parent_action != null:
 		_queue_ui_interaction(player, type, data, parent_action)
 		return
+	if not _active_command_type.is_empty():
+		_queue_ui_interaction(player, type, data)
+		return
 	_emit_ui_interaction_for_player(player, type, data)
 
 func _get_current_resolving_action() -> CardAction:
@@ -1240,7 +1243,8 @@ func get_pending_state_refresh_ui_interactions() -> Array[Dictionary]:
 	var interactions: Array[Dictionary] = []
 	for entry in _pending_ui_interactions:
 		var interaction_type := str(entry.get("type", ""))
-		if not _is_state_refresh_ui_interaction_type(interaction_type):
+		var interaction_data: Dictionary = entry.get("data", {})
+		if not _is_state_refresh_ui_interaction(interaction_type, interaction_data):
 			continue
 		interactions.append(entry.duplicate(true))
 	return interactions
@@ -1248,9 +1252,10 @@ func get_pending_state_refresh_ui_interactions() -> Array[Dictionary]:
 func _is_reveal_interaction_type(interaction_type: String) -> bool:
 	return interaction_type.strip_edges().to_lower().contains("reveal")
 
-func _is_state_refresh_ui_interaction_type(interaction_type: String) -> bool:
+func _is_state_refresh_ui_interaction(interaction_type: String, interaction_data: Dictionary = {}) -> bool:
 	return _is_reveal_interaction_type(interaction_type) \
-		or interaction_type.strip_edges() == "nusku_well_of_fire"
+		or interaction_type.strip_edges() == "nusku_well_of_fire" \
+		or bool(interaction_data.get("_queue_priority_after_choice", false))
 
 func _log_authoritative_flow_state(context: String) -> void:
 	if game_manager == null or not _uses_authoritative_headless_priority_flow():
@@ -3686,6 +3691,8 @@ func process_command(command: Dictionary, sender_info: Dictionary = {}) -> bool:
 		_consume_pending_ui_interaction_by_id(pending_prompt_id)
 	_active_command_sender_info.clear()
 	_active_command_type = ""
+	if result and _pending_ui_interactions.is_empty() and not _queued_ui_interactions.is_empty():
+		_release_next_queued_ui_interaction()
 	return result
 
 func _process_command_impl(command: Dictionary) -> bool:

@@ -147,9 +147,7 @@ func _rebroadcast_pending_state_refresh_interactions() -> void:
 
 func _move_completes_state_refresh_interaction(move: Dictionary) -> bool:
 	var command_type := str(move.get("type", "")).strip_edges()
-	var interaction_type := MatchCommandRegistryScript.get_ui_interaction_type(command_type)
-	return interaction_type.strip_edges().to_lower().contains("reveal") \
-		or interaction_type.strip_edges() == "nusku_well_of_fire"
+	return not MatchCommandRegistryScript.get_ui_interaction_type(command_type).strip_edges().is_empty()
 
 func _on_turn_upkeep_started(_turn_number: int, player: Player) -> void:
 	if network_manager == null:
