@@ -3826,6 +3826,8 @@ func _get_move_activation_failure_reason(card: Card, prepared: bool = false, pla
 	var acting_player := player
 	if acting_player == null:
 		acting_player = card.card_owner
+	if game_manager != null and game_manager._has_pending_stack_action_for_card(card):
+		return card.card_name + " is already waiting to resolve."
 	if game_manager != null and game_manager.has_insufficient_activation_mana(card, prepared, acting_player):
 		return game_manager.get_activation_mana_unavailable_text(card)
 	if prepared and game_manager != null:

@@ -27,7 +27,14 @@ func _init() -> void:
 func can_activate(game_manager: GameManager) -> bool:
 	if is_face_down or is_muted or is_activation_locked(game_manager) or card_owner != game_manager.current_player:
 		return false
+	if game_manager != null and game_manager._has_pending_stack_action_for_card(self):
+		return false
 	return can_harbor_priest(game_manager) or can_return_priest(game_manager)
+
+func get_activation_failure_reason(game_manager: GameManager) -> String:
+	if game_manager != null and game_manager._has_pending_stack_action_for_card(self):
+		return card_name + " is already waiting to resolve."
+	return super.get_activation_failure_reason(game_manager)
 
 func can_harbor_priest(game_manager: GameManager) -> bool:
 	return game_manager != null \

@@ -18889,14 +18889,14 @@ func _clamp_context_menu_to_viewport(panel: Control, anchor_pos: Vector2) -> voi
 	)
 
 func _on_creature_drag_started(card: Card, from_zone: Zone) -> void:
+	if _has_pending_target_selection():
+		_on_board_card_pressed(card)
+		return
 	if _is_turn_choice_pending():
 		if _awaiting_creature_sacrifice or _awaiting_altar_void_payment:
 			_on_board_card_pressed(card)
 			return
 		_reject_pre_turn_action()
-		return
-	if _has_pending_target_selection():
-		_on_board_card_pressed(card)
 		return
 	if awaiting_god_ability_target and god_ability_source != null:
 		_on_board_card_pressed(card)
