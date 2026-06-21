@@ -615,11 +615,13 @@ func can_card_respond_to_priority(card: Card, player: Player = null) -> bool:
 	var responding_player := player if player != null else priority_player
 	if responding_player == null or card.card_owner != responding_player:
 		return false
+	var top: CardAction = action_stack.back()
+	if not _can_hand_card_respond_to_priority(card, top):
+		return false
 	if (card.is_power or card.is_god) and not can_player_use_powers(card.card_owner):
 		return false
 	if card.card_type == Card.CardType.SPELL and card.current_zone == card.card_owner.hand_zone and spells_must_be_prepared():
 		return false
-	var top: CardAction = action_stack.back()
 	if top.type == CardAction.Type.EVENT and top.event_name == "frontline_entry":
 		if not card.has_method("can_respond_to_frontline_entry"):
 			return false
@@ -693,6 +695,17 @@ func can_card_respond_to_priority(card: Card, player: Player = null) -> bool:
 	if not can_play_card(responding_player, card, null):
 		return false
 	return _priority_response_has_required_targets(card, top)
+
+func _can_hand_card_respond_to_priority(card: Card, action: CardAction) -> bool:
+	if card == null or card.card_owner == null:
+		return false
+	if card.current_zone != card.card_owner.hand_zone:
+		return true
+	if card.card_owner == current_player:
+		return true
+	if card.has_method("can_respond_from_hand_on_opponent_turn"):
+		return bool(card.can_respond_from_hand_on_opponent_turn(action, self))
+	return false
 
 func get_priority_hex_targets(hex: HexCard, action: CardAction) -> Array[Card]:
 	var valid_targets: Array[Card] = []

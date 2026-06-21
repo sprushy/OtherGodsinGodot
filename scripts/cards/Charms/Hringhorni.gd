@@ -28,6 +28,8 @@ func can_activate_from_hand(game_manager: GameManager, triggering_action: CardAc
 		return false
 	if current_zone != card_owner.hand_zone:
 		return false
+	if card_owner != game_manager.current_player:
+		return false
 	var responding_player := game_manager.priority_player
 	if responding_player == null:
 		responding_player = triggering_action.initial_priority_player

@@ -9,7 +9,6 @@ const FOLLOWERS_PER_LEVEL := 2
 var stored_priests: Array[Card] = []
 var stored_priest_origins: Dictionary = {}
 var return_window_open: bool = false
-var return_used_turn_number: int = -1
 
 func _init() -> void:
 	super._init()
@@ -21,7 +20,7 @@ func _init() -> void:
 	if "Targeting" not in card_types:
 		card_types.append("Targeting")
 	targets = true
-	ability_text = "Peaceful Runes: Pay %d mana to [b]Harbor[/b] a friendly Priest that hasn't attacked this turn.\nEnd of turn: gain followers equal to %dx the level of the harbored Priests.\n[b]Upkeep[/b]: Pay %d mana to return a harbored Priest to the field.\nIf this card is flipped, return all harbored Priests to the field." % [HARBOR_MANA_COST, FOLLOWERS_PER_LEVEL, RETURN_MANA_COST]
+	ability_text = "Peaceful Runes: Pay %d mana to [b]Harbor[/b] a friendly Priest that hasn't attacked this turn.\nEnd of turn: gain followers equal to %dx the level of the harbored Priests.\n[b]Upkeep[/b]: You may repeatedly pay %d mana to return a harbored Priest to the field.\nIf this card is flipped, return all harbored Priests to the field." % [HARBOR_MANA_COST, FOLLOWERS_PER_LEVEL, RETURN_MANA_COST]
 	artist = "Lorinda Tomko"
 	art_path = "res://images/card_art/powers/breidablik.jpg"
 
@@ -87,7 +86,6 @@ func get_serialized_state() -> Dictionary:
 		})
 	state["stored_priests"] = stored_entries
 	state["return_window_open"] = return_window_open
-	state["return_used_turn_number"] = return_used_turn_number
 	return state
 
 func apply_serialized_state(state: Dictionary) -> void:
@@ -95,7 +93,6 @@ func apply_serialized_state(state: Dictionary) -> void:
 	stored_priests.clear()
 	stored_priest_origins.clear()
 	return_window_open = bool(state.get("return_window_open", false))
-	return_used_turn_number = int(state.get("return_used_turn_number", -1))
 	for entry_value in state.get("stored_priests", []):
 		if not (entry_value is Dictionary):
 			continue
@@ -114,8 +111,8 @@ func apply_serialized_state(state: Dictionary) -> void:
 func can_return_priest(game_manager: GameManager) -> bool:
 	return return_window_open \
 		and game_manager != null \
+		and card_owner != null \
 		and game_manager.has_resolved_turn_upkeep() \
-		and return_used_turn_number != game_manager.turn_number \
 		and game_manager.current_player == card_owner \
 		and card_owner.mana >= get_activation_mana_cost(RETURN_MANA_COST, game_manager) \
 		and not stored_priests.is_empty() \
@@ -172,8 +169,7 @@ func return_priest(game_manager: GameManager, priest: Card) -> bool:
 	stored_priest.wake_up()
 	stored_priest.reset_creature_action_state()
 	stored_priest.summoned_this_turn = false
-	return_window_open = false
-	return_used_turn_number = game_manager.turn_number
+	return_window_open = can_return_priest(game_manager)
 	_emit_visual_state_changed()
 	return true
 

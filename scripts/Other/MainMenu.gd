@@ -7971,7 +7971,7 @@ func _get_practice_thor_smoke_setup_error(practice_game) -> String:
 		return "practice_thor_not_authoritative"
 	if practice_game.network_manager == null or not bool(practice_game.network_manager.get("is_server")):
 		return "practice_thor_not_server"
-	if practice_game.get("_thor_bot") == null:
+	if not _practice_thor_has_bot(practice_game):
 		return "practice_thor_bot_missing"
 	if practice_game.player2.god_zone.cards.size() != 1 or not (practice_game.player2.god_zone.cards[0] is Thor):
 		return "practice_thor_wrong_god"
@@ -8001,6 +8001,20 @@ func _get_practice_thor_smoke_setup_error(practice_game) -> String:
 	if _count_cards_of_type_in_zones(regular_zones, Askelladen) != 2:
 		return "practice_thor_wrong_askelladen_count"
 	return ""
+
+func _get_practice_thor_bot(practice_game) -> Variant:
+	if practice_game == null:
+		return null
+	if practice_game.has_method("get_thor_bot"):
+		return practice_game.call("get_thor_bot")
+	return practice_game.get("_thor_bot")
+
+func _practice_thor_has_bot(practice_game) -> bool:
+	if practice_game == null:
+		return false
+	if practice_game.has_method("has_thor_bot"):
+		return bool(practice_game.call("has_thor_bot"))
+	return practice_game.get("_thor_bot") != null
 
 func _count_cards_in_zones(zones: Array) -> int:
 	var count := 0
@@ -8069,11 +8083,12 @@ func _run_practice_thor_summon_smoke() -> void:
 		_fail_smoke_if_enabled("practice_thor_summon_setup_%s" % setup_error)
 		return
 	_write_smoke_trace("practice_thor_summon:setup_ok")
-	if practice_game.auto_priority:
+	practice_game._set_priority_auto_mode("play", false, true, false)
+	if bool(practice_game.get("_priority_auto_mode_visual_active")):
 		_fail_smoke_if_enabled("practice_thor_summon_auto_pass_started_on")
 		return
 	_write_smoke_trace("practice_thor_summon:auto_pass_initially_off")
-	practice_game._on_auto_priority_toggled(true)
+	practice_game._set_priority_auto_mode("play", false, true, true)
 	_write_smoke_trace("practice_thor_summon:auto_pass_enabled")
 
 	if not practice_game.game_input.submit_action({type = "upkeep_choice", choice = "draw"}):
@@ -8108,7 +8123,7 @@ func _run_practice_thor_summon_smoke() -> void:
 			for entry in pending_interactions:
 				if entry is Dictionary:
 					pending_prompt_types.append(str((entry as Dictionary).get("type", "")))
-		var thor_bot = practice_game.get("_thor_bot")
+		var thor_bot: Variant = _get_practice_thor_bot(practice_game)
 		_fail_smoke_if_enabled("practice_thor_summon_turn_timeout turn=%d current=%d priority=%d stack=%d top=%s resolving=%d pending_resolution=%s pending_ui=%s targeting=%s bot_step=%s bot_retry=%s label=%s" % [
 			practice_game.game_manager.turn_number,
 			practice_game.game_manager.players.find(practice_game.game_manager.current_player),
@@ -8228,7 +8243,7 @@ func _run_practice_thor_summon_smoke() -> void:
 			for entry in pending_interactions:
 				if entry is Dictionary:
 					pending_prompt_types.append(str((entry as Dictionary).get("type", "")))
-		var thor_bot = practice_game.get("_thor_bot")
+		var thor_bot: Variant = _get_practice_thor_bot(practice_game)
 		_fail_smoke_if_enabled("practice_thor_summon_auto_pass_turn_timeout turn=%d current=%d priority=%d stack=%d top=%s resolving=%d pending_resolution=%s pending_ui=%s targeting=%s bot_step=%s bot_retry=%s label=%s" % [
 			practice_game.game_manager.turn_number,
 			practice_game.game_manager.players.find(practice_game.game_manager.current_player),
@@ -8463,12 +8478,12 @@ func _run_practice_thor_divine_lightning_smoke() -> void:
 		_fail_smoke_if_enabled("practice_thor_divine_lightning_setup_%s" % setup_error)
 		return
 
-	var thor_bot: ThorPracticeBot = practice_game.get("_thor_bot") as ThorPracticeBot
-	if thor_bot == null:
+	if not practice_game.has_method("find_thor_hand_divine_lightning") \
+			or not practice_game.has_method("submit_thor_priority_response"):
 		_fail_smoke_if_enabled("practice_thor_divine_lightning_bot_missing")
 		return
 
-	var divine_lightning := thor_bot._find_hand_divine_lightning()
+	var divine_lightning: Card = practice_game.call("find_thor_hand_divine_lightning") as Card
 	if divine_lightning == null:
 		divine_lightning = DivineLightning.new()
 		divine_lightning.card_owner = practice_game.player2
@@ -8497,9 +8512,15 @@ func _run_practice_thor_divine_lightning_smoke() -> void:
 	if smoke_targets.is_empty():
 		_fail_smoke_if_enabled("practice_thor_divine_lightning_no_targets")
 		return
+	if practice_game.game_manager.can_card_respond_to_priority(divine_lightning, practice_game.player2):
+		_fail_smoke_if_enabled("practice_thor_divine_lightning_illegal_hand_response_offered")
+		return
 
-	var submitted := thor_bot._submit_priority_response(divine_lightning)
+	var submitted: bool = bool(practice_game.call("submit_thor_priority_response", divine_lightning))
 	_write_smoke_trace("practice_thor_divine_lightning:submit_result=%s target=%s" % [str(submitted), target.uid])
+	if submitted:
+		_fail_smoke_if_enabled("practice_thor_divine_lightning_illegal_hand_response_accepted")
+		return
 
 	_finish_smoke_if_enabled("PASS:practice_thor_divine_lightning")
 
@@ -8811,7 +8832,7 @@ func _get_practice_thor_fuzz_setup_error(practice_game) -> String:
 		return "not_authoritative"
 	if practice_game.network_manager == null or not bool(practice_game.network_manager.get("is_server")):
 		return "not_server"
-	if practice_game.get("_thor_bot") == null:
+	if not _practice_thor_has_bot(practice_game):
 		return "thor_bot_missing"
 	if practice_game.player2.player_name != "Thor":
 		return "wrong_enemy_name"

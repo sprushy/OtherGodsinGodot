@@ -822,33 +822,53 @@ static func _make_stored_card_preview(card: Card, viewer: Player, width: float) 
 		style.set_border_width(side, 1)
 	panel.add_theme_stylebox_override("panel", style)
 
-	var overlay_root := Control.new()
-	overlay_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	overlay_root.custom_minimum_size = Vector2(width - 10.0, 54.0)
-	panel.add_child(overlay_root)
-
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 6)
 	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	row.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	overlay_root.add_child(row)
+	panel.add_child(row)
 
+	var thumbnail := Control.new()
+	thumbnail.custom_minimum_size = Vector2(40, 54)
+	thumbnail.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	thumbnail.clip_contents = true
+	thumbnail.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	row.add_child(thumbnail)
+	if card.art_path != "":
+		var tex := UITextureCacheScript.get_texture(card.art_path)
+		if tex != null:
+			var art := TextureRect.new()
+			art.texture = tex
+			art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+			art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			art.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			art.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+			thumbnail.add_child(art)
+	if thumbnail.get_child_count() == 0:
+		var initial := Label.new()
+		initial.text = card.card_name.substr(0, 1) if card.card_name.strip_edges() != "" else "?"
+		initial.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		initial.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		initial.add_theme_font_size_override("font_size", 18)
+		initial.add_theme_color_override("font_color", Color(0.86, 0.92, 1.0))
+		initial.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		initial.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		thumbnail.add_child(initial)
 	if viewer != null and card.card_owner == viewer:
 		var identified_marker := PanelContainer.new()
 		identified_marker.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		identified_marker.z_index = 5
 		identified_marker.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-		identified_marker.offset_left = -26.0
-		identified_marker.offset_top = 6.0
-		identified_marker.offset_right = -6.0
-		identified_marker.offset_bottom = 26.0
+		identified_marker.offset_left = -18.0
+		identified_marker.offset_top = 3.0
+		identified_marker.offset_right = -3.0
+		identified_marker.offset_bottom = 18.0
 		var marker_style := StyleBoxFlat.new()
 		marker_style.bg_color = Color(0.18, 0.02, 0.02, 0.92)
 		marker_style.border_color = Color(1.0, 0.28, 0.24, 0.98)
-		marker_style.corner_radius_top_left = 5
-		marker_style.corner_radius_top_right = 5
-		marker_style.corner_radius_bottom_left = 5
-		marker_style.corner_radius_bottom_right = 5
+		marker_style.corner_radius_top_left = 4
+		marker_style.corner_radius_top_right = 4
+		marker_style.corner_radius_bottom_left = 4
+		marker_style.corner_radius_bottom_right = 4
 		for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
 			marker_style.set_border_width(side, 1)
 		identified_marker.add_theme_stylebox_override("panel", marker_style)
@@ -859,18 +879,7 @@ static func _make_stored_card_preview(card: Card, viewer: Player, width: float) 
 		marker_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		marker_icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		identified_marker.add_child(marker_icon)
-		overlay_root.add_child(identified_marker)
-
-	if card.art_path != "":
-		var tex := UITextureCacheScript.get_texture(card.art_path)
-		if tex != null:
-			var art := TextureRect.new()
-			art.texture = tex
-			art.custom_minimum_size = Vector2(40, 54)
-			art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-			art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-			art.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			row.add_child(art)
+		thumbnail.add_child(identified_marker)
 
 	var info := VBoxContainer.new()
 	info.add_theme_constant_override("separation", 2)

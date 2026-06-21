@@ -9163,6 +9163,12 @@ func _resolve_breidablik_return_choice(power: Breidablik, selected_priest: Card)
 		return
 	var feedback := _consume_resolution_feedback(power.card_name + " returned " + selected_priest.card_name + ".")
 	if _breidablik_post_upkeep_active:
+		if power.can_return_priest(game_manager):
+			_append_breidablik_post_upkeep_feedback(feedback)
+			_set_action_label_text(feedback)
+			_show_breidablik_prompt(power)
+			update_ui()
+			return
 		_finish_breidablik_post_upkeep_sequence(feedback)
 		return
 	if keep_upkeep_choice_open:
@@ -9414,6 +9420,16 @@ func _begin_breidablik_post_upkeep_sequence(feedback: String, finish_callback: C
 	_pending_breidablik_post_upkeep_finish = finish_callback
 	_show_breidablik_prompt(power)
 	return true
+
+func _append_breidablik_post_upkeep_feedback(feedback: String) -> void:
+	var cleaned_feedback := feedback.strip_edges()
+	if cleaned_feedback == "":
+		return
+	var pending_feedback := _pending_breidablik_post_upkeep_feedback.strip_edges()
+	if pending_feedback == "":
+		_pending_breidablik_post_upkeep_feedback = cleaned_feedback
+	elif pending_feedback != cleaned_feedback:
+		_pending_breidablik_post_upkeep_feedback = "%s %s" % [pending_feedback, cleaned_feedback]
 
 func _finish_breidablik_post_upkeep_sequence(feedback: String = "") -> void:
 	var pending_feedback := _pending_breidablik_post_upkeep_feedback
@@ -20369,7 +20385,7 @@ func _offer_priority() -> void:
 	if is_remote_priority:
 		# The remote player has valid responses â€” ask them over the network.
 		# The priority loop pauses here; it resumes when their command arrives.
-		_broadcast_priority_offered(player, responses)
+		_broadcast_priority_offered(player, offering_responses)
 		_schedule_priority_recovery_check()
 		return
 
@@ -20396,7 +20412,9 @@ func _build_local_priority_prompt_signature() -> Dictionary:
 		elif top.target is Player:
 			signature["top_target_player_index"] = game_manager.players.find(top.target)
 	var response_uids: Array[String] = []
-	for response in game_manager.get_priority_responses(game_manager.priority_player):
+	var responses := match_manager.get_priority_prompt_offering_responses(game_manager.priority_player) \
+		if match_manager != null else game_manager.get_priority_responses(game_manager.priority_player)
+	for response in responses:
 		if response is Card:
 			response_uids.append((response as Card).uid)
 	signature["response_uids"] = response_uids
@@ -20868,7 +20886,9 @@ func _show_priority_prompt(player: Player) -> void:
 	vbox.add_child(pass_btn)
 
 	var interactive_response_count := 0
-	for response_card in game_manager.get_priority_responses(player):
+	var prompt_responses := match_manager.get_priority_prompt_offering_responses(player) \
+		if match_manager != null else game_manager.get_priority_responses(player)
+	for response_card in prompt_responses:
 		if response_card == null:
 			continue
 		var response: Card = response_card as Card
@@ -21082,11 +21102,11 @@ func _try_submit_authoritative_priority_response(card: Card) -> bool:
 			_set_action_label_text(charm.card_name + " has no valid targets.")
 			update_ui()
 			return true
-			if charm.targets:
-				_begin_authoritative_priority_charm_target_selection(charm, top, targets, from_hand)
-				return true
-			submit_charm_response.call()
+		if charm.targets:
+			_begin_authoritative_priority_charm_target_selection(charm, top, targets, from_hand)
 			return true
+		submit_charm_response.call()
+		return true
 	if card is SpellCard:
 		var spell := card as SpellCard
 		var targets: Array = spell.get_valid_targets(game_manager) if spell.targets and spell.has_method("get_valid_targets") else []
@@ -25295,6 +25315,13 @@ func _on_match_move_validated(move: Dictionary) -> void:
 				if feedback.strip_edges() == "":
 					feedback = "Breidablik returned a priest."
 				if _breidablik_post_upkeep_active:
+					var return_power := game_manager.get_card_by_uid(str(move.get("power_uid", ""))) as Breidablik
+					if return_power != null and return_power.can_return_priest(game_manager):
+						_append_breidablik_post_upkeep_feedback(feedback)
+						_set_action_label_text(feedback)
+						_show_breidablik_prompt(return_power)
+						update_ui()
+						return
 					_finish_breidablik_post_upkeep_sequence(feedback)
 					return
 				if game_manager != null and game_manager.is_player_in_upkeep_window(game_manager.current_player):

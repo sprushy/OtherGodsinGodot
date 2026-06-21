@@ -2762,7 +2762,7 @@ func build_priority_prompt_data(player: Player) -> Dictionary:
 			responses = [],
 			action_message = "",
 		}
-	var responses := game_manager.get_priority_responses(player)
+	var responses := get_priority_prompt_offering_responses(player)
 	if game_manager.action_stack.is_empty():
 		return {
 			player_index = game_manager.players.find(player),
@@ -2997,8 +2997,17 @@ func _begin_or_continue_authoritative_turn_start_sequence(feedback: String = "")
 		_active_turn_start_sequence_turn = game_manager.turn_number
 		_turn_start_sequence_feedback = ""
 	if not feedback.strip_edges().is_empty():
-		_turn_start_sequence_feedback = feedback
+		_append_turn_start_sequence_feedback(feedback)
 	_continue_active_authoritative_turn_start_sequence()
+
+func _append_turn_start_sequence_feedback(feedback: String) -> void:
+	var cleaned_feedback := feedback.strip_edges()
+	if cleaned_feedback == "":
+		return
+	if _turn_start_sequence_feedback.strip_edges() == "":
+		_turn_start_sequence_feedback = cleaned_feedback
+	elif _turn_start_sequence_feedback != cleaned_feedback:
+		_turn_start_sequence_feedback = "%s %s" % [_turn_start_sequence_feedback, cleaned_feedback]
 
 func _continue_active_authoritative_turn_start_sequence() -> bool:
 	if game_manager == null \

@@ -42,17 +42,35 @@ func start_game(
 func _build_initial_match_players(_default_match_setup, _server_match_session = null, _match_info: Dictionary = {}) -> Dictionary:
 	var result := _practice_match_setup.build_thor_practice_match(game_manager, _player_practice_deck, _thor_practice_deck)
 	_practice_deck_name = str(result.get("player_deck_name", ""))
+	if match_manager != null:
+		match_manager.allow_immediate_local_authoritative_stack_resolution = true
+	_attach_thor_bot(result.get("player2", null) as Player)
 	return result
 
 func uses_authoritative_match_flow() -> bool:
 	return true
+
+func has_thor_bot() -> bool:
+	return _thor_bot != null
+
+func get_thor_bot():
+	return _thor_bot
+
+func find_thor_hand_divine_lightning() -> Card:
+	if _thor_bot == null:
+		return null
+	return _thor_bot._find_hand_divine_lightning()
+
+func submit_thor_priority_response(card: Card) -> bool:
+	if _thor_bot == null or card == null:
+		return false
+	return bool(_thor_bot._submit_priority_response(card))
 
 func cleanup() -> void:
 	_shutdown_thor_bot()
 	super.cleanup()
 
 func _exit_tree() -> void:
-	_shutdown_thor_bot()
 	super._exit_tree()
 
 func _on_forfeit_button_pressed() -> void:
@@ -76,10 +94,13 @@ func _add_selected_deck_info(practice_info: Dictionary) -> void:
 	if not selected_name.is_empty():
 		practice_info["selected_deck_name"] = selected_name
 
-func _attach_thor_bot() -> void:
-	if game_manager == null or match_manager == null or player2 == null:
+func _attach_thor_bot(thor_player: Player = null) -> void:
+	if _thor_bot != null:
 		return
-	var thor_index := game_manager.players.find(player2)
+	var resolved_thor_player := thor_player if thor_player != null else player2
+	if game_manager == null or match_manager == null or resolved_thor_player == null:
+		return
+	var thor_index := game_manager.players.find(resolved_thor_player)
 	if thor_index < 0:
 		return
 	var bot_input := BotGameInputScript.new(match_manager, thor_index)
