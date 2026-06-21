@@ -14922,7 +14922,7 @@ func _queue_first_sage_adapa_impact_prompt(card: FirstSageAdapa) -> void:
 		var on_cancel_silence_target := func() -> void:
 			_resume_after_deferred_resolution(card.card_name + " impact fizzles.")
 		var validate_silence_target := func(clicked_card: Card) -> bool:
-			return clicked_card != null and clicked_card in card.get_valid_targets(game_manager)
+			return card.resolve_silence_target(game_manager, clicked_card) != null
 		_begin_pending_click_selection(
 			card.card_name,
 			card,
@@ -15022,7 +15022,7 @@ func _show_first_sage_adapa_impact_prompt(card: FirstSageAdapa, prompt_targets: 
 		_set_action_label_text(_consume_resolution_feedback(card.card_name + " impact fizzles."))
 		update_ui()
 	var validate_silence_target := func(clicked_card: Card) -> bool:
-		return clicked_card != null and clicked_card in card.get_valid_targets(game_manager)
+		return card.resolve_silence_target(game_manager, clicked_card) != null
 	_begin_pending_click_selection(
 		card.card_name,
 		card,

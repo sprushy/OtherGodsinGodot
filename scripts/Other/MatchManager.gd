@@ -313,18 +313,20 @@ var _authoritative_stack_resolution_pending: bool = false
 
 const SIMPLE_DEFERRED_PROMPT_COMPLETION_COMMANDS := [
 	"blessed_knights_choice",
-	"first_sage_adapa_choice",
-	"third_sage_enmedugga_choice",
 	"fourth_sage_enmegalamma_choice",
-	"seventh_sage_utuabzu_choice",
 	"rally_the_troops_choice",
-	"terror_impact_choice",
 	"harii_jarl_impact_choice",
-	"durinn_secondborn_choice",
-	"freyja_active_open_sessrumnir_choice",
 	"tiamat_active_summon_choice",
 	"giant_master_architect_choice",
 	"pai_long_autumn_king_choice",
+]
+
+const CHOICE_TIMING_BEFORE_PRIORITY := "before_priority"
+const CHOICE_TIMING_ON_RESOLUTION := "on_resolution"
+
+const HANDLER_COMPLETES_DEFERRED_PRIORITY_CHOICE_COMMANDS := [
+	"fenrir_devour_choice",
+	"gugalanna_celestial_charge_choice",
 ]
 
 func _on_game_manager_decision_requested(player: Player, type: String, data: Dictionary) -> void:
@@ -333,6 +335,10 @@ func _on_game_manager_decision_requested(player: Player, type: String, data: Dic
 	var interaction_data := data.duplicate(true)
 	if bool(interaction_data.get("queue_with_priority", false)):
 		interaction_data.erase("queue_with_priority")
+		var collect_choice_before_priority := bool(interaction_data.get("collect_choice_before_priority", false))
+		interaction_data.erase("collect_choice_before_priority")
+		var choice_timing := str(interaction_data.get("choice_timing", "")).strip_edges()
+		interaction_data.erase("choice_timing")
 		var source_card := game_manager.get_card_by_uid(str(interaction_data.get("source_uid", "")))
 		var event_name := str(interaction_data.get("event_name", type)).strip_edges()
 		var completion_command_type := str(interaction_data.get("completion_command_type", "")).strip_edges()
@@ -348,7 +354,14 @@ func _on_game_manager_decision_requested(player: Player, type: String, data: Dic
 				interaction_data
 			)
 			return
-		if _should_collect_choice_before_priority(type, completion_command_type):
+		if _should_collect_choice_before_priority(
+			type,
+			completion_command_type,
+			source_card,
+			interaction_data,
+			choice_timing,
+			collect_choice_before_priority
+		):
 			interaction_data["_queue_priority_after_choice"] = true
 			interaction_data["_priority_event_name"] = event_name if event_name != "" else type
 			interaction_data["_priority_completion_command_type"] = completion_command_type
@@ -740,8 +753,29 @@ func _queue_method_priority_event(
 	if remains_on_stack:
 		_emit_local_priority_prompt_if_needed()
 
-func _should_collect_choice_before_priority(interaction_type: String, completion_command_type: String) -> bool:
-	return _is_reveal_interaction_type(interaction_type) and not completion_command_type.strip_edges().is_empty()
+func _should_collect_choice_before_priority(
+	interaction_type: String,
+	completion_command_type: String,
+	source_card: Card = null,
+	interaction_data: Dictionary = {},
+	choice_timing: String = "",
+	explicitly_requested: bool = false
+) -> bool:
+	if completion_command_type.strip_edges().is_empty():
+		return false
+	var normalized_timing := choice_timing.strip_edges().to_lower()
+	if normalized_timing == CHOICE_TIMING_BEFORE_PRIORITY:
+		return true
+	if normalized_timing == CHOICE_TIMING_ON_RESOLUTION:
+		return false
+	return explicitly_requested \
+		or _is_reveal_interaction_type(interaction_type) \
+		or _is_targeting_choice_prompt(source_card, interaction_data)
+
+func _is_targeting_choice_prompt(source_card: Card, interaction_data: Dictionary) -> bool:
+	if source_card == null or not source_card.has_type("Targeting"):
+		return false
+	return interaction_data.has("target_uids") or interaction_data.has("target_uid")
 
 func _get_priority_after_choice_prompt_data(command: Dictionary) -> Dictionary:
 	if _resolving_priority_choice_command:
@@ -809,9 +843,12 @@ func _execute_queued_priority_choice_command(command: Dictionary, action: CardAc
 			action.resolution_text = feedback
 			_clear_deferred_authoritative_action_metadata(action)
 	elif action != null and _has_deferred_authoritative_action_metadata(action):
-		var pending_graveyard_prompt := _get_pending_authoritative_graveyard_prompt_command_type()
-		if pending_graveyard_prompt.is_empty():
-			_complete_deferred_authoritative_action(action, completion_command_type)
+		if completion_command_type in HANDLER_COMPLETES_DEFERRED_PRIORITY_CHOICE_COMMANDS:
+			pass
+		else:
+			var pending_graveyard_prompt := _get_pending_authoritative_graveyard_prompt_command_type()
+			if pending_graveyard_prompt.is_empty():
+				_complete_deferred_authoritative_action(action, completion_command_type)
 	_resolving_priority_choice_command = previous_resolving
 	_active_command_type = previous_command_type
 
@@ -1379,7 +1416,7 @@ func _resolve_spell(action: CardAction) -> void:
 
 func _resolve_event(action: CardAction) -> void:
 	if action.resolve_callback.is_valid():
-		if action.event_name == "tezcatlipoca_active_titlacauan":
+		if action.event_name == "tezcatlipoca_active_titlacauan" and not action.event_data.has("queued_choice_command"):
 			pending_tezcatlipoca_titlacauan_action = action
 			_mark_deferred_authoritative_action(
 				action,
@@ -4312,10 +4349,17 @@ func _process_command_impl(command: Dictionary) -> bool:
 				game_manager.note_player_feedback(feedback)
 				move_validated.emit(command)
 				return true
-			var target := game_manager.get_card_by_uid(target_uid)
-			if target == null or target not in valid_targets:
+			var target := sage.get_silence_target_by_uid(game_manager, target_uid)
+			if target == null:
+				if _resolving_priority_choice_command:
+					game_manager.note_player_feedback(sage.card_name + " impact fizzles because its target is no longer valid.")
+					move_validated.emit(command)
+					return true
 				move_failed.emit("first_sage_adapa_choice: invalid silence target")
 				return false
+			if _queue_choice_command_as_priority_event(command, sage):
+				move_validated.emit(command)
+				return true
 			game_manager.note_player_feedback(sage.resolve_silence_divine_impact(game_manager, target))
 			move_validated.emit(command)
 			return true
@@ -4333,9 +4377,16 @@ func _process_command_impl(command: Dictionary) -> bool:
 				move_validated.emit(command)
 				return true
 			var target := game_manager.get_card_by_uid(target_uid)
-			if target == null or target not in valid_targets:
+			if not _is_card_in_targets_by_uid(target, valid_targets):
+				if _resolving_priority_choice_command:
+					game_manager.note_player_feedback(sage.card_name + " impact fizzles because its target is no longer valid.")
+					move_validated.emit(command)
+					return true
 				move_failed.emit("third_sage_enmedugga_choice: invalid Mer Sage target")
 				return false
+			if _queue_choice_command_as_priority_event(command, sage):
+				move_validated.emit(command)
+				return true
 			game_manager.note_player_feedback(sage.resolve_good_fortune_impact(game_manager, target))
 			move_validated.emit(command)
 			return true
@@ -4413,9 +4464,16 @@ func _process_command_impl(command: Dictionary) -> bool:
 				move_validated.emit(command)
 				return true
 			var target := game_manager.get_card_by_uid(target_uid)
-			if target == null or target not in valid_targets:
+			if not _is_card_in_targets_by_uid(target, valid_targets):
+				if _resolving_priority_choice_command:
+					game_manager.note_player_feedback(sage.card_name + " impact fizzles because its target is no longer valid.")
+					move_validated.emit(command)
+					return true
 				move_failed.emit("seventh_sage_utuabzu_choice: invalid Ancient Sage target")
 				return false
+			if _queue_choice_command_as_priority_event(command, sage):
+				move_validated.emit(command)
+				return true
 			game_manager.note_player_feedback(sage.resolve_channel_ally_impact(game_manager, target))
 			move_validated.emit(command)
 			return true
@@ -4553,9 +4611,16 @@ func _process_command_impl(command: Dictionary) -> bool:
 			var valid_targets := terror.get_valid_terror_targets(game_manager, demon)
 			var target_uid: String = command.get("target_uid", "")
 			var target := game_manager.get_card_by_uid(target_uid) if target_uid != "" else null
-			if target == null or target not in valid_targets:
+			if not _is_card_in_targets_by_uid(target, valid_targets):
+				if _resolving_priority_choice_command:
+					game_manager.note_player_feedback(terror.card_name + " impact fizzles because its target is no longer valid.")
+					move_validated.emit(command)
+					return true
 				move_failed.emit("terror_impact_choice: invalid creature target")
 				return false
+			if _queue_choice_command_as_priority_event(command, terror):
+				move_validated.emit(command)
+				return true
 			game_manager.note_player_feedback(terror.resolve_terror_impact(game_manager, demon, target))
 			move_validated.emit(command)
 			return true
@@ -4602,9 +4667,20 @@ func _process_command_impl(command: Dictionary) -> bool:
 				move_validated.emit(command)
 				return true
 			var target := game_manager.get_card_by_uid(target_uid)
-			if target == null or target not in valid_targets:
+			if not _is_card_in_targets_by_uid(target, valid_targets):
+				if _resolving_priority_choice_command:
+					_complete_deferred_prompt_action_or_note(
+						"fenrir_devour_choice",
+						fenrir,
+						fenrir.card_name + " impact fizzles because its target is no longer valid."
+					)
+					move_validated.emit(command)
+					return true
 				move_failed.emit("fenrir_devour_choice: invalid creature target")
 				return false
+			if _queue_choice_command_as_priority_event(command, fenrir):
+				move_validated.emit(command)
+				return true
 			fenrir.resolve_devour_impact(
 				game_manager,
 				target,
@@ -4650,9 +4726,16 @@ func _process_command_impl(command: Dictionary) -> bool:
 				move_validated.emit(command)
 				return true
 			var target := game_manager.get_card_by_uid(target_uid)
-			if target == null or target not in valid_targets:
+			if not _is_card_in_targets_by_uid(target, valid_targets):
+				if _resolving_priority_choice_command:
+					game_manager.note_player_feedback(durinn.card_name + " impact fizzles because its target is no longer valid.")
+					move_validated.emit(command)
+					return true
 				move_failed.emit("durinn_secondborn_choice: invalid weapon target")
 				return false
+			if _queue_choice_command_as_priority_event(command, durinn):
+				move_validated.emit(command)
+				return true
 			game_manager.note_player_feedback(durinn.resolve_reforge_impact(game_manager, target))
 			move_validated.emit(command)
 			return true
@@ -4708,9 +4791,23 @@ func _process_command_impl(command: Dictionary) -> bool:
 			var valid_targets := card.get_valid_impact_targets(game_manager)
 			var target_uid: String = command.get("target_uid", "")
 			var target := game_manager.get_card_by_uid(target_uid) if target_uid != "" else null
-			if target != null and target not in valid_targets:
+			if target != null and not _is_card_in_targets_by_uid(target, valid_targets):
+				if _resolving_priority_choice_command:
+					var feedback := card.card_name + " impact fizzles because its target is no longer valid."
+					game_manager.note_player_feedback(feedback)
+					_complete_deferred_prompt_action(
+						"gugalanna_celestial_charge_choice",
+						card,
+						feedback,
+						false
+					)
+					move_validated.emit(command)
+					return true
 				move_failed.emit("gugalanna_celestial_charge_choice: invalid target")
 				return false
+			if target != null and _queue_choice_command_as_priority_event(command, card):
+				move_validated.emit(command)
+				return true
 			if target != null and _defer_board_leaving_activation(
 				card,
 				"%s activates Celestial Charge." % card.card_name,
@@ -4731,6 +4828,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 				move_failed.emit("freyja_active_open_sessrumnir_choice: active god not found")
 				return false
 			var option: Dictionary = command.get("option", {})
+			var skip_choice := bool(option.get("skip", command.get("skip", false)))
 			var selection_data = option if not option.is_empty() else command
 			var chosen_targets := active_god.get_selected_open_sessrumnir_targets(game_manager, selection_data)
 			var raw_choices: Array = []
@@ -4738,13 +4836,26 @@ func _process_command_impl(command: Dictionary) -> bool:
 				raw_choices = selection_data.get("target_uids", [])
 			elif selection_data is Array:
 				raw_choices = selection_data
+			if raw_choices.is_empty() and not skip_choice:
+				command["skip"] = true
+				skip_choice = true
 			if chosen_targets.size() != raw_choices.size():
+				if _resolving_priority_choice_command:
+					game_manager.note_player_feedback(active_god.card_name + " impact fizzles because its selection is no longer valid.")
+					move_validated.emit(command)
+					return true
 				move_failed.emit("freyja_active_open_sessrumnir_choice: invalid target")
 				return false
-			var skip_choice := bool(option.get("skip", command.get("skip", false)))
 			if not skip_choice and not active_god.is_valid_open_sessrumnir_selection(game_manager, chosen_targets):
+				if _resolving_priority_choice_command:
+					game_manager.note_player_feedback(active_god.card_name + " impact fizzles because its selection is no longer valid.")
+					move_validated.emit(command)
+					return true
 				move_failed.emit("freyja_active_open_sessrumnir_choice: invalid selection")
 				return false
+			if _queue_choice_command_as_priority_event(command, active_god):
+				move_validated.emit(command)
+				return true
 			active_god.resolve_from_command(game_manager, command)
 			move_validated.emit(command)
 			return true
@@ -4986,10 +5097,39 @@ func _process_command_impl(command: Dictionary) -> bool:
 			return true
 		"tezcatlipoca_active_titlacauan_choice":
 			var source_uid: String = command.get("source_uid", "")
-			var active_god := game_manager.get_card_by_uid(source_uid)
-			if active_god == null or not active_god.has_method("resolve_from_command"):
+			var active_god := game_manager.get_card_by_uid(source_uid) as TezcatlipocaActive
+			if active_god == null:
 				move_failed.emit("tezcatlipoca_active_titlacauan_choice: active god not found")
 				return false
+			var option: Dictionary = command.get("option", {})
+			var skip_choice := bool(option.get("skip", command.get("skip", false)))
+			var selection_data = option if not option.is_empty() else command
+			var chosen_targets := active_god.get_selected_titlacauan_targets(game_manager, selection_data)
+			var raw_choices: Array = []
+			if selection_data is Dictionary:
+				raw_choices = selection_data.get("target_uids", [])
+			elif selection_data is Array:
+				raw_choices = selection_data
+			if raw_choices.is_empty() and not skip_choice:
+				command["skip"] = true
+				skip_choice = true
+			if chosen_targets.size() != raw_choices.size():
+				if _resolving_priority_choice_command:
+					game_manager.note_player_feedback(active_god.card_name + " impact fizzles because its selection is no longer valid.")
+					move_validated.emit(command)
+					return true
+				move_failed.emit("tezcatlipoca_active_titlacauan_choice: invalid target")
+				return false
+			if not skip_choice and not active_god.is_valid_titlacauan_selection(game_manager, chosen_targets):
+				if _resolving_priority_choice_command:
+					game_manager.note_player_feedback(active_god.card_name + " impact fizzles because its selection is no longer valid.")
+					move_validated.emit(command)
+					return true
+				move_failed.emit("tezcatlipoca_active_titlacauan_choice: invalid selection")
+				return false
+			if _queue_choice_command_as_priority_event(command, active_god):
+				move_validated.emit(command)
+				return true
 			active_god.resolve_from_command(game_manager, command)
 			var feedback := game_manager.consume_player_feedback()
 			if feedback.strip_edges() != "":

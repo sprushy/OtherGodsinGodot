@@ -61,17 +61,33 @@ func get_valid_targets(game_manager: GameManager) -> Array[Card]:
 			valid_targets.append(power)
 	return valid_targets
 
-func resolve_silence_divine_impact(game_manager: GameManager, target: Card) -> String:
-	var valid_targets := get_valid_targets(game_manager)
-	if target == null or target not in valid_targets:
-		return card_name + " found no valid opposing power or God ability to silence."
-	if game_manager != null and game_manager.is_immune_to_source(target, self):
-		return target.get_target_log_display_name(game_manager.get_feedback_viewer()) + " is immune to " + card_name + "'s creature abilities this turn."
+func get_silence_target_by_uid(game_manager: GameManager, target_uid: String) -> Card:
+	var normalized_uid := str(target_uid).strip_edges()
+	if normalized_uid == "":
+		return null
+	for target in get_valid_targets(game_manager):
+		if target != null and str(target.uid).strip_edges() == normalized_uid:
+			return target
+	return null
 
-	target.mute_for_turns(MUTE_DURATION, game_manager)
+func resolve_silence_target(game_manager: GameManager, target: Card) -> Card:
+	if target == null:
+		return null
+	if target in get_valid_targets(game_manager):
+		return target
+	return get_silence_target_by_uid(game_manager, target.uid)
+
+func resolve_silence_divine_impact(game_manager: GameManager, target: Card) -> String:
+	var resolved_target := resolve_silence_target(game_manager, target)
+	if resolved_target == null:
+		return card_name + " found no valid opposing power or God ability to silence."
+	if game_manager != null and game_manager.is_immune_to_source(resolved_target, self):
+		return resolved_target.get_target_log_display_name(game_manager.get_feedback_viewer()) + " is immune to " + card_name + "'s creature abilities this turn."
+
+	resolved_target.mute_for_turns(MUTE_DURATION, game_manager)
 	return "%s silences %s for %d of its owner's turns." % [
 		card_name,
-		target.get_target_log_display_name(game_manager.get_feedback_viewer()),
+		resolved_target.get_target_log_display_name(game_manager.get_feedback_viewer()),
 		MUTE_DURATION
 	]
 
