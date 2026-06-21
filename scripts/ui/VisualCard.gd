@@ -3,6 +3,7 @@ extends PanelContainer
 
 const CardDetailContentBuilderScript = preload("res://scripts/ui/CardDetailContentBuilder.gd")
 const LockedPowerCursorScript = preload("res://scripts/ui/LockedPowerCursor.gd")
+const LOCKED_POWER_CURSOR_ACTIVE_META := &"other_gods_locked_power_cursor_active"
 const DefenseShieldOverlayScript = preload("res://scripts/ui/DefenseShieldOverlay.gd")
 const BoardZoneUIScript = preload("res://scripts/ui/BoardZoneUI.gd")
 const LevelSymbolRowScript = preload("res://scripts/ui/LevelSymbolRow.gd")
@@ -65,6 +66,8 @@ var _click_only: bool = false
 var _dim_when_disabled: bool = true
 var _hand_mode: bool = false
 var _hand_hover_hit_rect: Rect2 = Rect2()
+var _mouse_hovered: bool = false
+var _locked_power_cursor_active: bool = false
 
 func set_base_z_index(idx: int) -> void:
 	_base_z_index = idx
@@ -858,7 +861,16 @@ func set_hand_hover_hit_rect(rect: Rect2) -> void:
 func _refresh_mouse_filter() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP if (not _disabled or _hover_preview_when_disabled) else Control.MOUSE_FILTER_IGNORE
 
+func _set_locked_power_cursor_active(active: bool) -> void:
+	if _locked_power_cursor_active == active:
+		return
+	_locked_power_cursor_active = active
+	var viewport := get_viewport()
+	if viewport != null:
+		viewport.set_meta(LOCKED_POWER_CURSOR_ACTIVE_META, active)
+
 func _refresh_mouse_cursor_shape() -> void:
+	_set_locked_power_cursor_active(_mouse_hovered and _should_show_power_lock_overlay())
 	if _should_show_power_lock_overlay():
 		mouse_default_cursor_shape = LockedPowerCursorScript.get_control_cursor_shape(Control.CURSOR_POINTING_HAND as Control.CursorShape)
 		return
@@ -1423,6 +1435,7 @@ func _notification(what: int) -> void:
 		NOTIFICATION_ENTER_TREE:
 			_bind_visual_state()
 		NOTIFICATION_EXIT_TREE:
+			_set_locked_power_cursor_active(false)
 			_unbind_visual_state()
 		NOTIFICATION_RESIZED:
 			# Safe: setting _inner.pivot_offset only notifies self (outer),
@@ -1431,6 +1444,8 @@ func _notification(what: int) -> void:
 				_inner.pivot_offset = size / 2.0
 			_layout_power_lock_overlay()
 		NOTIFICATION_MOUSE_ENTER:
+			_mouse_hovered = true
+			_set_locked_power_cursor_active(_should_show_power_lock_overlay())
 			if _hand_mode:
 				if not _picked_up:
 					hand_hovered.emit(self)
@@ -1442,6 +1457,8 @@ func _notification(what: int) -> void:
 				tw.tween_property(self, "scale", Vector2(1.08, 1.08), 0.08)
 				_show_hover_panel()
 		NOTIFICATION_MOUSE_EXIT:
+			_mouse_hovered = false
+			_set_locked_power_cursor_active(false)
 			if _hand_mode:
 				if not _picked_up:
 					hand_unhovered.emit(self)

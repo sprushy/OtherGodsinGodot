@@ -37,6 +37,7 @@ const AUTH_MODE_REGISTER := "register"
 const SEEK_AUTO_REFRESH_INTERVAL_SECONDS := 3.0
 const FRESH_LOBBY_RECONNECT_DELAY_SECONDS := 0.6
 const ACTIVE_MATCH_AUTO_RESUME_SUPPRESS_SECONDS := 10.0
+const LEGACY_JOIN_WHILE_IN_ROOM_ERROR := "Leave your current room before joining a new one."
 const STARTUP_MENU_FADE_SECONDS := 3.0
 const UPDATE_CHECK_TIMEOUT_SECONDS := 15.0
 const UPDATE_CHECK_RETRY_DELAY_SECONDS := 1.0
@@ -87,6 +88,7 @@ var _pending_join_room_id: String = ""
 var _pending_rejoin_room_id: String = ""
 var _manual_rejoin_room_id: String = ""
 var _pending_observe_room_id: String = ""
+var _pending_seek_switch_join_room_id: String = ""
 var _pending_rematch_room_id: String = ""
 var _pending_rematch_ready_submitted: bool = false
 var _pending_leave_room_id: String = ""
@@ -1078,6 +1080,7 @@ func _open_multiplayer_screen() -> void:
 	_pending_join_room_id = ""
 	_pending_rejoin_room_id = ""
 	_pending_observe_room_id = ""
+	_pending_seek_switch_join_room_id = ""
 	_pending_local_lobby_launch_on_connect_failure = false
 	_connect_to_browseable_lobby("Connecting to lobby...")
 
@@ -1852,6 +1855,7 @@ func _on_refresh_seeks_pressed() -> void:
 	_pending_join_room_id = ""
 	_pending_rejoin_room_id = ""
 	_pending_observe_room_id = ""
+	_pending_seek_switch_join_room_id = ""
 	_pending_local_lobby_launch_on_connect_failure = false
 	multiplayer_container.visible = true
 	_connect_to_browseable_lobby("Connecting to lobby...")
@@ -1889,6 +1893,7 @@ func _on_create_seek_option_pressed(is_ranked: bool, best_of: int) -> void:
 	_pending_join_room_id = ""
 	_pending_rejoin_room_id = ""
 	_pending_observe_room_id = ""
+	_pending_seek_switch_join_room_id = ""
 	_pending_local_lobby_launch_on_connect_failure = false
 	multiplayer_container.visible = true
 	_connect_to_browseable_lobby("Connecting to lobby...")
@@ -1909,10 +1914,13 @@ func _on_join_seek_requested(room_id: String) -> void:
 	if not _current_room_snapshot.is_empty() and current_room_status == LobbyRoomScript.STATUS_IN_MATCH:
 		status_label.text = "Finish or forfeit your active match before joining another seek."
 		return
+	var normalized_room_id := room_id.strip_edges().to_upper()
+	var current_room_id := str(_current_room_snapshot.get("room_id", "")).strip_edges().to_upper()
 	_pending_host_room_creation = false
-	_pending_join_room_id = room_id.strip_edges().to_upper()
+	_pending_join_room_id = normalized_room_id
 	_pending_rejoin_room_id = ""
 	_pending_observe_room_id = ""
+	_pending_seek_switch_join_room_id = normalized_room_id if not _current_room_snapshot.is_empty() and current_room_id != normalized_room_id else ""
 	_pending_local_lobby_launch_on_connect_failure = false
 	multiplayer_container.visible = true
 	_connect_to_browseable_lobby("Connecting to lobby...")
@@ -1933,6 +1941,7 @@ func _on_observe_match_requested(room_id: String) -> void:
 	_pending_join_room_id = ""
 	_pending_rejoin_room_id = ""
 	_pending_observe_room_id = room_id.strip_edges().to_upper()
+	_pending_seek_switch_join_room_id = ""
 	_pending_local_lobby_launch_on_connect_failure = false
 	room_code_line_edit.text = room_id.strip_edges().to_upper()
 	multiplayer_container.visible = true
@@ -1953,6 +1962,7 @@ func _on_rejoin_match_requested(room_id: String) -> void:
 	_pending_rejoin_room_id = normalized_room_id
 	_manual_rejoin_room_id = normalized_room_id
 	_pending_observe_room_id = ""
+	_pending_seek_switch_join_room_id = ""
 	_pending_local_lobby_launch_on_connect_failure = false
 	room_code_line_edit.text = normalized_room_id
 	multiplayer_container.visible = true
@@ -1961,6 +1971,7 @@ func _on_rejoin_match_requested(room_id: String) -> void:
 func _on_leave_seek_pressed() -> void:
 	if lobby_client == null:
 		return
+	_pending_seek_switch_join_room_id = ""
 	_clear_current_seek_state()
 	status_label.text = "Leaving seek..."
 	lobby_client.leave_room()
@@ -2026,6 +2037,7 @@ func _maybe_connect_authenticated_lobby(connect_status: String = "Connecting to 
 	_pending_join_room_id = ""
 	_pending_rejoin_room_id = ""
 	_pending_observe_room_id = ""
+	_pending_seek_switch_join_room_id = ""
 	_pending_local_lobby_launch_on_connect_failure = false
 	_connect_to_browseable_lobby(connect_status, connect_serial)
 
@@ -5986,10 +5998,12 @@ func _on_lobby_room_list_updated(rooms: Array) -> void:
 		if room_status != LobbyRoomScript.STATUS_IN_MATCH and int(entry.get("member_count", 0)) >= int(entry.get("max_players", 2)):
 			continue
 		_open_seek_rooms.append(entry)
+	var retried_seek_switch := false
 	if not current_room_id.is_empty() and not current_room_still_visible:
 		_clear_current_seek_state()
+		retried_seek_switch = _retry_pending_seek_switch_after_room_clear()
 	_refresh_seek_list()
-	if _current_room_snapshot.is_empty():
+	if _current_room_snapshot.is_empty() and not retried_seek_switch:
 		if _open_seek_rooms.is_empty():
 			status_label.text = "No open seeks or live matches right now. Create one to start a match."
 		elif _open_seek_rooms.any(func(room: Dictionary) -> bool: return bool(room.get("viewer_can_rejoin", false))):
@@ -6009,7 +6023,10 @@ func _apply_room_snapshot(snapshot: Dictionary) -> void:
 	var room_id := str(snapshot.get("room_id", "")).strip_edges()
 	if room_id.is_empty():
 		_clear_current_seek_state()
+		_retry_pending_seek_switch_after_room_clear()
 		return
+	if room_id.to_upper() == _pending_seek_switch_join_room_id:
+		_pending_seek_switch_join_room_id = ""
 	var room_status := str(snapshot.get("status", "")).strip_edges().to_lower()
 	if room_status == "in_match" and not _match_launch_queued and lobby_client != null:
 		var active_match_info: Dictionary = lobby_client.current_active_match_info.duplicate(true)
@@ -6189,12 +6206,49 @@ func _uses_dedicated_match_server(match_info: Dictionary) -> bool:
 
 func _on_lobby_room_error(message: String) -> void:
 	_write_smoke_trace("lobby_room_error %s" % message)
+	if _maybe_handle_legacy_seek_switch_error(message):
+		return
+	_pending_seek_switch_join_room_id = ""
 	_manual_rejoin_room_id = ""
 	status_label.text = message
 	_set_friends_status(message)
 	if _should_prompt_for_account_recovery(message):
 		_show_auth_recovery_prompt(message)
 	_fail_smoke_if_enabled("ROOM_ERROR:%s" % message)
+
+func _maybe_handle_legacy_seek_switch_error(message: String) -> bool:
+	if message.strip_edges() != LEGACY_JOIN_WHILE_IN_ROOM_ERROR:
+		return false
+	if _pending_seek_switch_join_room_id.is_empty():
+		return false
+	if lobby_client == null or not lobby_client.is_authenticated():
+		_pending_seek_switch_join_room_id = ""
+		return false
+	var current_room_status := str(_current_room_snapshot.get("status", "")).strip_edges().to_lower()
+	if _current_room_snapshot.is_empty():
+		_retry_pending_seek_switch_after_room_clear()
+		return true
+	if current_room_status == LobbyRoomScript.STATUS_IN_MATCH:
+		_pending_seek_switch_join_room_id = ""
+		return false
+	var message_text := "Leaving your current seek before joining %s..." % _pending_seek_switch_join_room_id
+	status_label.text = message_text
+	_set_friends_status(message_text)
+	lobby_client.leave_room()
+	return true
+
+func _retry_pending_seek_switch_after_room_clear() -> bool:
+	if _pending_seek_switch_join_room_id.is_empty():
+		return false
+	if lobby_client == null or not lobby_client.is_authenticated():
+		_pending_seek_switch_join_room_id = ""
+		return false
+	var room_id := _pending_seek_switch_join_room_id
+	_pending_seek_switch_join_room_id = ""
+	_pending_join_room_id = ""
+	status_label.text = "Joining seek %s..." % room_id
+	lobby_client.join_room(room_id)
+	return true
 
 func _on_lobby_status_changed(message: String) -> void:
 	_write_smoke_trace("lobby_status %s" % message)
@@ -6220,6 +6274,7 @@ func _on_lobby_connection_failed(message: String) -> void:
 func _on_lobby_disconnected() -> void:
 	_write_smoke_trace("lobby_disconnected")
 	_manual_rejoin_room_id = ""
+	_pending_seek_switch_join_room_id = ""
 	_set_connected_server_version("")
 	_seek_list_request_pending = false
 	_seek_auto_refresh_elapsed = 0.0
@@ -6365,7 +6420,8 @@ func _has_pending_new_seek_action() -> bool:
 	return _pending_host_room_creation \
 		or not _pending_join_room_id.is_empty() \
 		or not _pending_rejoin_room_id.is_empty() \
-		or not _pending_observe_room_id.is_empty()
+		or not _pending_observe_room_id.is_empty() \
+		or not _pending_seek_switch_join_room_id.is_empty()
 
 func _clear_pending_new_seek_actions(preserve_manual_rejoin: bool = false) -> void:
 	_pending_host_room_creation = false
@@ -6376,6 +6432,7 @@ func _clear_pending_new_seek_actions(preserve_manual_rejoin: bool = false) -> vo
 	if not preserve_manual_rejoin:
 		_manual_rejoin_room_id = ""
 	_pending_observe_room_id = ""
+	_pending_seek_switch_join_room_id = ""
 	_pending_local_lobby_launch_on_connect_failure = false
 
 func _is_manual_rejoin_assignment(match_info: Dictionary) -> bool:
@@ -6432,6 +6489,7 @@ func _cleanup_lobby(clear_session: bool) -> void:
 	_cleanup_lobby_server()
 	_set_connected_server_version("")
 	_clear_current_seek_state()
+	_pending_seek_switch_join_room_id = ""
 	_open_seek_rooms.clear()
 	_seek_list_request_pending = false
 	_seek_auto_refresh_elapsed = 0.0
@@ -6452,6 +6510,7 @@ func _cleanup_lobby(clear_session: bool) -> void:
 		_pending_rejoin_room_id = ""
 		_manual_rejoin_room_id = ""
 		_pending_observe_room_id = ""
+		_pending_seek_switch_join_room_id = ""
 		_current_lobby_ip = ""
 		_is_local_lobby_host = false
 		room_code_line_edit.text = ""

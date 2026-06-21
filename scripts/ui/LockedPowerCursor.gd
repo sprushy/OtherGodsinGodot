@@ -3,8 +3,8 @@ class_name LockedPowerCursor
 
 const CURSOR_SOURCE := preload("res://images/NorseLockedPowerCursor.png")
 const UIArtScalerScript = preload("res://scripts/ui/UIArtScaler.gd")
-const CURSOR_SHAPE := Input.CURSOR_VSPLIT
-const CONTROL_CURSOR_SHAPE := Control.CURSOR_VSPLIT
+const CURSOR_SHAPE := Input.CURSOR_CROSS
+const CONTROL_CURSOR_SHAPE := Control.CURSOR_CROSS
 const CURSOR_TARGET_HEIGHT := 96
 const CURSOR_HOTSPOT_RATIO := Vector2(0.50, 0.28)
 

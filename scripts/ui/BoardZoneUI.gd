@@ -4,6 +4,7 @@ extends PanelContainer
 const CardDetailContentBuilderScript = preload("res://scripts/ui/CardDetailContentBuilder.gd")
 const BaseCardScript = preload("res://scripts/cards/BaseCard.gd")
 const LockedPowerCursorScript = preload("res://scripts/ui/LockedPowerCursor.gd")
+const LOCKED_POWER_CURSOR_ACTIVE_META := &"other_gods_locked_power_cursor_active"
 const DefenseShieldOverlayScript = preload("res://scripts/ui/DefenseShieldOverlay.gd")
 const AggressiveSwordOverlay = preload("res://scripts/ui/AggressiveSwordOverlay.gd")
 const StealthFogOverlayScript = preload("res://scripts/ui/StealthFogOverlay.gd")
@@ -546,6 +547,7 @@ var _preview_refresh_queued: bool = false
 var viewer_override: Player = null
 var _hovered: bool = false
 var _badge_hovered: bool = false
+var _locked_power_cursor_active: bool = false
 var _pinned: bool = false
 var _hide_pending: bool = false
 var _hover_exit_refresh_pending: bool = false
@@ -4554,8 +4556,23 @@ func _add_empty_zone_slab() -> void:
 
 	_add_empty_zone_slab_label(overlay)
 
+func _is_locked_power_cursor_card(card: Card) -> bool:
+	return card != null and card.card_type == Card.CardType.POWER and card.is_face_down
+
+func _set_locked_power_cursor_active(active: bool) -> void:
+	if _locked_power_cursor_active == active:
+		return
+	_locked_power_cursor_active = active
+	var viewport := get_viewport()
+	if viewport != null:
+		viewport.set_meta(LOCKED_POWER_CURSOR_ACTIVE_META, active)
+
+func _sync_locked_power_cursor_hover(card: Card = null) -> void:
+	_set_locked_power_cursor_active(_hovered and _is_locked_power_cursor_card(card))
+
 func _refresh_mouse_cursor_shape(card: Card = null) -> void:
-	if card != null and card.card_type == Card.CardType.POWER and card.is_face_down:
+	_sync_locked_power_cursor_hover(card)
+	if _is_locked_power_cursor_card(card):
 		mouse_default_cursor_shape = LockedPowerCursorScript.get_control_cursor_shape(Control.CURSOR_ARROW as Control.CursorShape)
 		return
 	if _is_hover_card_options_preview_active():
@@ -5469,6 +5486,7 @@ func _notification(what: int) -> void:
 			set_process(false)
 			if _active_affordance_hover_owner_id == get_instance_id():
 				_active_affordance_hover_owner_id = 0
+			_set_locked_power_cursor_active(false)
 			_pinned = false
 			_hovered = false
 			_badge_hovered = false
@@ -5482,6 +5500,7 @@ func _notification(what: int) -> void:
 			set_process(true)
 			_active_affordance_hover_owner_id = get_instance_id()
 			var _c := _preview_card if _preview_card != null else (zone.cards[0] if zone != null and zone.cards.size() > 0 else null)
+			_sync_locked_power_cursor_hover(_c)
 			if _c != null:
 				_notify_hover_card_options_changed(_c)
 				if not _set_prepared_magical_cover_hovered(true):
@@ -5501,6 +5520,7 @@ func _notification(what: int) -> void:
 				return
 			_hovered = false
 			_badge_hovered = false
+			_set_locked_power_cursor_active(false)
 			_notify_hover_card_options_changed(null)
 			_set_prepared_magical_cover_hovered(false)
 			z_index = _get_resting_z_index()
@@ -5585,8 +5605,11 @@ func _schedule_hover_exit_refresh() -> void:
 		return
 	if get_global_rect().has_point(get_global_mouse_position()) or _is_mouse_in_affordance_hover_area():
 		_hovered = true
+		var card := _preview_card if _preview_card != null else (zone.cards[0] if zone != null and zone.cards.size() > 0 else null)
+		_sync_locked_power_cursor_hover(card)
 		_schedule_hover_exit_refresh()
 		return
+	_set_locked_power_cursor_active(false)
 	if not _set_prepared_magical_cover_hovered(false):
 		_refresh_display()
 	_update_hover_polling()
@@ -5643,6 +5666,7 @@ func _process(_delta: float) -> void:
 		and not _is_mouse_in_affordance_hover_area() \
 		and not get_global_rect().has_point(get_global_mouse_position()):
 		_hovered = false
+		_set_locked_power_cursor_active(false)
 		_notify_hover_card_options_changed(null)
 		z_index = _get_resting_z_index()
 		if not _set_prepared_magical_cover_hovered(false):

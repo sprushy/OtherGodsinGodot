@@ -238,6 +238,7 @@ var _pending_reveal_auto_submit_keys: Dictionary = {}
 var _fan_container: Control = null
 var _enemy_hand_overlay: Control = null
 var _enemy_hand_visual_cards: Array = []   # Array[VisualCard]
+var _enemy_hand_render_signature: String = ""
 var _pending_mopsus_source_uid: String = ""
 var _pending_mopsus_selected_uids: Array[String] = []
 var _pending_mopsus_required_count: int = 0
@@ -308,6 +309,7 @@ var match_manager: MatchManager
 
 # Visual UI state
 var _hand_visual_cards: Array = []   # Array[VisualCard]
+var _hand_render_signature: String = ""
 var _board_zone_uis: Array = []      # Array[BoardZoneUI]
 var _enemy_zone_uis: Array = []      # Array[BoardZoneUI]
 var _enemy_god_zone_ui: BoardZoneUI = null
@@ -471,6 +473,7 @@ var _breidablik_panel: Control = null
 var _breidablik_post_upkeep_active: bool = false
 var _pending_breidablik_post_upkeep_feedback: String = ""
 var _pending_breidablik_post_upkeep_finish: Callable = Callable()
+var _breidablik_authoritative_turn_start_prompt_active: bool = false
 var _e2_abzu_panel: Control = null
 var _divine_caprice_panel: Control = null
 var _pending_divine_caprice_power: DivineCaprice = null
@@ -736,7 +739,9 @@ const HAND_OVERLAY_SIDE_PADDING := 18.0
 const HAND_OVERLAY_BOTTOM_PADDING := -2.0
 const HAND_OVERLAY_Z_INDEX := HOVER_PREVIEW_Z_INDEX + 5
 const CONTEXT_MENU_Z_INDEX := HAND_OVERLAY_Z_INDEX + 120
-const REINFORCEMENT_OVERLAY_Z_INDEX := 10000
+const CANVAS_ITEM_Z_MAX := 4096
+const REINFORCEMENT_MODAL_LAYER := 10000
+const REINFORCEMENT_OVERLAY_Z_INDEX := TRANSIENT_UI_Z_INDEX + 220
 const REINFORCEMENT_HOVER_Z_INDEX := REINFORCEMENT_OVERLAY_Z_INDEX + 20
 const REINFORCEMENT_DRAG_Z_INDEX := REINFORCEMENT_OVERLAY_Z_INDEX + 30
 const LEFT_PANEL_MIN_WIDTH := 220.0
@@ -894,7 +899,7 @@ func _promote_transient_ui(control: Control, overlay_z_index: int = TRANSIENT_UI
 	if control == null:
 		return
 	control.top_level = true
-	control.z_index = overlay_z_index
+	control.z_index = clampi(overlay_z_index, -CANVAS_ITEM_Z_MAX, CANVAS_ITEM_Z_MAX)
 	control.move_to_front()
 
 func _is_pause_menu_open() -> bool:
@@ -5479,6 +5484,7 @@ func _prepare_for_match_launch(status_message: String = "Connecting to match..."
 	_invalidate_cached_board_layouts()
 	_queued_attackers.clear()
 	_hand_visual_cards.clear()
+	_hand_render_signature = ""
 	_board_zone_uis.clear()
 	_enemy_zone_uis.clear()
 	_player_god_zone_ui = null
@@ -5509,6 +5515,7 @@ func _prepare_for_match_launch(status_message: String = "Connecting to match..."
 			remove_child(_enemy_hand_overlay)
 		_enemy_hand_overlay.free()
 	_enemy_hand_overlay = null
+	_enemy_hand_render_signature = ""
 	if hand_container != null:
 		hand_container.visible = false
 	_update_waiting_status(not str(status_message).strip_edges().is_empty(), status_message)
@@ -6833,36 +6840,70 @@ func _get_enemy_hand_overlay_rect() -> Rect2:
 	var overlay_y: float = local_top_left.y + ENEMY_HAND_OVERLAY_TOP_PADDING
 	return Rect2(Vector2(overlay_x, overlay_y), Vector2(overlay_width, ENEMY_HAND_DOCK_HEIGHT))
 
+func _get_enemy_hand_render_signature(enemy_player: Player, display_cards: Array[Card]) -> String:
+	if enemy_player == null:
+		return ""
+	var parts := PackedStringArray([str(enemy_player.get_instance_id())])
+	for card in display_cards:
+		if card == null:
+			parts.append("null")
+			continue
+		parts.append("%s|%s|%s|%s|%s|%s" % [
+			str(card.get_instance_id()),
+			card.uid,
+			str(_is_enemy_hand_card_revealed(card)),
+			str(_is_mopsus_hand_selection_target(card)),
+			str(card.uid in _pending_mopsus_selected_uids),
+			str(card.uid == _pending_mopsus_flip_uid),
+		])
+	return "\u001f".join(parts)
+
 func draw_enemy_hand_overlay() -> void:
-	_enemy_hand_visual_cards.clear()
 	_refresh_mopsus_hand_selection_state()
 	_resume_pending_mopsus_reveal_if_ready()
-	if _enemy_hand_overlay != null and is_instance_valid(_enemy_hand_overlay):
-		if _enemy_hand_overlay.get_parent() == self:
-			remove_child(_enemy_hand_overlay)
-		_enemy_hand_overlay.free()
-	_enemy_hand_overlay = null
 
 	var enemy_player := _get_display_opponent()
-	var peek_count := _get_enemy_hand_overlay_card_count(enemy_player)
-	if peek_count <= 0:
+	var display_cards := _get_enemy_hand_overlay_display_cards(enemy_player)
+	var signature := _get_enemy_hand_render_signature(enemy_player, display_cards)
+	if signature == _enemy_hand_render_signature \
+			and _enemy_hand_overlay != null \
+			and is_instance_valid(_enemy_hand_overlay) \
+			and _enemy_hand_overlay.get_parent() == self:
+		_layout_enemy_hand_overlay()
 		return
 
-	_enemy_hand_overlay = Control.new()
-	_enemy_hand_overlay.name = "EnemyHandOverlay"
-	_enemy_hand_overlay.custom_minimum_size = Vector2(180.0, ENEMY_HAND_DOCK_HEIGHT)
-	_enemy_hand_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_enemy_hand_overlay.clip_contents = true
-	_enemy_hand_overlay.z_index = TRANSIENT_UI_Z_INDEX - 20
-	add_child(_enemy_hand_overlay)
+	if _hand_hover_vc in _enemy_hand_visual_cards:
+		_hide_hand_hover_preview()
+	_enemy_hand_visual_cards.clear()
+	var previous_overlay := _enemy_hand_overlay
+	if display_cards.is_empty():
+		_enemy_hand_overlay = null
+		_enemy_hand_render_signature = signature
+		if previous_overlay != null and is_instance_valid(previous_overlay):
+			if previous_overlay.get_parent() == self:
+				remove_child(previous_overlay)
+			previous_overlay.free()
+		return
 
-	var display_cards := _get_enemy_hand_overlay_display_cards(enemy_player)
+	var next_overlay := Control.new()
+	next_overlay.name = "EnemyHandOverlay"
+	next_overlay.custom_minimum_size = Vector2(180.0, ENEMY_HAND_DOCK_HEIGHT)
+	next_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	next_overlay.clip_contents = true
+	next_overlay.z_index = TRANSIENT_UI_Z_INDEX - 20
 	for display_card in display_cards:
 		var hand_card := display_card as Card
-		_enemy_hand_overlay.add_child(_make_enemy_hand_overlay_card(hand_card))
+		next_overlay.add_child(_make_enemy_hand_overlay_card(hand_card))
+	_enemy_hand_overlay = next_overlay
 	_pending_mopsus_flip_uid = ""
+	_enemy_hand_render_signature = _get_enemy_hand_render_signature(enemy_player, display_cards)
 
-	call_deferred("_layout_enemy_hand_overlay")
+	add_child(next_overlay)
+	_layout_enemy_hand_overlay()
+	if previous_overlay != null and is_instance_valid(previous_overlay):
+		if previous_overlay.get_parent() == self:
+			remove_child(previous_overlay)
+		previous_overlay.free()
 
 func _get_enemy_hand_overlay_display_cards(enemy_player: Player) -> Array[Card]:
 	var display_cards: Array[Card] = []
@@ -7196,36 +7237,130 @@ func _get_graveyard_hand_proxy_display_mana_cost(card: Card) -> int:
 		return int(card.get_graveyard_hand_proxy_mana_cost())
 	return card.mana_cost
 
+func _get_hand_render_entries(
+	hand_player: Player,
+	blot_valid_choices: Array[Card]
+) -> Array[Dictionary]:
+	var entries: Array[Dictionary] = []
+	for card in hand_player.hand_zone.cards:
+		if _should_hide_hand_card(card):
+			continue
+		entries.append({
+			"card": card,
+			"is_proxy": false,
+			"display_mana_cost": _get_hand_card_display_mana_cost(card),
+			"cost_adjustment_lines": _get_hand_card_cost_adjustment_lines(card),
+			"highlighted": false,
+			"blot_summonable": card in blot_valid_choices,
+			"blot_selected": card in _pending_blot_selected_creatures,
+		})
+	for card in _get_graveyard_hand_proxy_cards(hand_player):
+		entries.append({
+			"card": card,
+			"is_proxy": true,
+			"display_mana_cost": _get_graveyard_hand_proxy_display_mana_cost(card),
+			"cost_adjustment_lines": [],
+			"highlighted": _is_freyja_active_selected_card(card),
+			"blot_summonable": false,
+			"blot_selected": false,
+		})
+	return entries
+
+func _get_hand_render_signature(hand_player: Player, entries: Array[Dictionary]) -> String:
+	var parts := PackedStringArray([str(hand_player.get_instance_id())])
+	for entry in entries:
+		var card := entry.get("card", null) as Card
+		if card == null:
+			parts.append("null")
+			continue
+		var cost_lines: Array = entry.get("cost_adjustment_lines", [])
+		parts.append("%s|%s|%s|%d|%s|%s" % [
+			str(card.get_instance_id()),
+			card.uid,
+			str(bool(entry.get("is_proxy", false))),
+			int(entry.get("display_mana_cost", card.mana_cost)),
+			"\n".join(cost_lines),
+			str(bool(entry.get("highlighted", false))),
+		])
+	return "\u001f".join(parts)
+
+func _can_refresh_hand_in_place(signature: String, entries: Array[Dictionary]) -> bool:
+	if signature != _hand_render_signature \
+			or _fan_container == null \
+			or not is_instance_valid(_fan_container) \
+			or _fan_container.get_parent() != self \
+			or _hand_visual_cards.size() != entries.size():
+		return false
+	for i in range(entries.size()):
+		var vc := _hand_visual_cards[i] as VisualCard
+		var card := entries[i].get("card", null) as Card
+		if vc == null or not is_instance_valid(vc) or vc.card_data != card:
+			return false
+	return true
+
+func _refresh_hand_visual_states(
+	entries: Array[Dictionary],
+	freyja_power_targeting: bool
+) -> void:
+	var viewer := game_manager.get_feedback_viewer()
+	for i in range(entries.size()):
+		var entry := entries[i]
+		var card := entry.get("card", null) as Card
+		var vc := _hand_visual_cards[i] as VisualCard
+		if card == null or vc == null or not is_instance_valid(vc):
+			continue
+		vc.set_hover_viewer(viewer)
+		if bool(entry.get("is_proxy", false)):
+			continue
+		vc.set_waiting_on_priority(_is_card_waiting_on_priority(card))
+		vc.set_priority_response_available(_is_card_usable_for_priority(card))
+		vc.set_blot_summon_state(
+			bool(entry.get("blot_summonable", false)),
+			bool(entry.get("blot_selected", false))
+		)
+		vc.set_disabled(freyja_power_targeting)
+
 func draw_hand() -> void:
-	_hide_hand_hover_preview()
-	if _fan_container != null and is_instance_valid(_fan_container):
-		if _fan_container.get_parent() == self:
-			remove_child(_fan_container)
-		_fan_container.free()
-	_fan_container = null
-	_hand_visual_cards.clear()
 	if hand_container != null:
 		hand_container.visible = false
 	var hand_player := _get_visible_hand_player()
 	if _is_hand_context_menu_stale(hand_player):
 		_close_context_menu()
 	if hand_player == null:
+		_hide_hand_hover_preview()
+		if _fan_container != null and is_instance_valid(_fan_container):
+			if _fan_container.get_parent() == self:
+				remove_child(_fan_container)
+			_fan_container.free()
+		_fan_container = null
+		_hand_visual_cards.clear()
+		_hand_render_signature = ""
 		return
 	var blot_valid_choices: Array[Card] = []
 	if _is_blot_selection_active():
 		blot_valid_choices = _get_blot_valid_choices(_pending_blot_spell)
 	var freyja_power_targeting := _is_freyja_power_target_selection_active(hand_player)
+	var entries := _get_hand_render_entries(hand_player, blot_valid_choices)
+	var signature := _get_hand_render_signature(hand_player, entries)
+	if _can_refresh_hand_in_place(signature, entries):
+		_refresh_hand_visual_states(entries, freyja_power_targeting)
+		_layout_fan()
+		return
 
-	_fan_container = Control.new()
-	_fan_container.name = "HandOverlay"
-	_fan_container.custom_minimum_size = Vector2(180.0, HAND_DOCK_HEIGHT + HAND_OVERLAY_TOP_BLEED)
-	_fan_container.mouse_filter = Control.MOUSE_FILTER_PASS
-	_fan_container.clip_contents = false
-	_fan_container.z_index = HAND_OVERLAY_Z_INDEX
+	_hide_hand_hover_preview()
+	var previous_fan := _fan_container
+	var next_fan := Control.new()
+	next_fan.name = "HandOverlay"
+	next_fan.custom_minimum_size = Vector2(180.0, HAND_DOCK_HEIGHT + HAND_OVERLAY_TOP_BLEED)
+	next_fan.mouse_filter = Control.MOUSE_FILTER_PASS
+	next_fan.clip_contents = false
+	next_fan.z_index = HAND_OVERLAY_Z_INDEX
+	var next_visual_cards: Array = []
 	var highlighted_proxy_cards: Array[VisualCard] = []
 
-	for card in hand_player.hand_zone.cards:
-		if _should_hide_hand_card(card):
+	for entry in entries:
+		var card := entry.get("card", null) as Card
+		if card == null:
 			continue
 		var vc := VisualCard.new()
 		vc.set_hand_mode(true)
@@ -7233,55 +7368,51 @@ func draw_hand() -> void:
 			card,
 			180,
 			0,
-			_get_hand_card_display_mana_cost(card),
-			_get_hand_card_cost_adjustment_lines(card)
+			int(entry.get("display_mana_cost", card.mana_cost)),
+			entry.get("cost_adjustment_lines", []) as Array[String]
 		)
 		vc.set_hover_viewer(game_manager.get_feedback_viewer())
-		vc.set_waiting_on_priority(_is_card_waiting_on_priority(card))
-		vc.set_priority_response_available(_is_card_usable_for_priority(card))
-		vc.set_blot_summon_state(card in blot_valid_choices, card in _pending_blot_selected_creatures)
-		if freyja_power_targeting:
-			vc.set_disabled(true)
+		if bool(entry.get("is_proxy", false)):
+			vc.set_hand_proxy_visual(true, true)
+			if bool(entry.get("highlighted", false)):
+				highlighted_proxy_cards.append(vc)
+		else:
+			vc.set_waiting_on_priority(_is_card_waiting_on_priority(card))
+			vc.set_priority_response_available(_is_card_usable_for_priority(card))
+			vc.set_blot_summon_state(
+				bool(entry.get("blot_summonable", false)),
+				bool(entry.get("blot_selected", false))
+			)
+			if freyja_power_targeting:
+				vc.set_disabled(true)
 		vc.hand_hovered.connect(_on_hand_card_hover_started)
 		vc.hand_unhovered.connect(_on_hand_card_hover_ended)
 		vc.card_clicked.connect(_on_hand_card_pressed)
 		vc.card_right_clicked.connect(_on_hand_card_right_clicked)
 		vc.card_drag_released.connect(_on_card_drag_released)
-		_fan_container.add_child(vc)
-		_hand_visual_cards.append(vc)
+		next_fan.add_child(vc)
+		next_visual_cards.append(vc)
 
-	for card in _get_graveyard_hand_proxy_cards(hand_player):
-		var vc := VisualCard.new()
-		vc.set_hand_mode(true)
-		vc.setup(
-			card,
-			180,
-			0,
-			_get_graveyard_hand_proxy_display_mana_cost(card)
-		)
-		vc.set_hand_proxy_visual(true, true)
-		vc.set_hover_viewer(game_manager.get_feedback_viewer())
-		vc.hand_hovered.connect(_on_hand_card_hover_started)
-		vc.hand_unhovered.connect(_on_hand_card_hover_ended)
-		vc.card_clicked.connect(_on_hand_card_pressed)
-		vc.card_right_clicked.connect(_on_hand_card_right_clicked)
-		vc.card_drag_released.connect(_on_card_drag_released)
-		if _is_freyja_active_selected_card(card):
-			highlighted_proxy_cards.append(vc)
-		_fan_container.add_child(vc)
-		_hand_visual_cards.append(vc)
-
+	_fan_container = next_fan
+	_hand_visual_cards = next_visual_cards
+	_hand_render_signature = signature
 	if _hand_visual_cards.is_empty():
-		if _fan_container.get_parent() == self:
-			remove_child(_fan_container)
-		_fan_container.free()
+		next_fan.free()
 		_fan_container = null
+		if previous_fan != null and is_instance_valid(previous_fan):
+			if previous_fan.get_parent() == self:
+				remove_child(previous_fan)
+			previous_fan.free()
 		return
 
-	add_child(_fan_container)
+	add_child(next_fan)
 	for vc in highlighted_proxy_cards:
 		vc.set_highlighted(true)
-	call_deferred("_layout_fan")
+	_layout_fan()
+	if previous_fan != null and is_instance_valid(previous_fan):
+		if previous_fan.get_parent() == self:
+			remove_child(previous_fan)
+		previous_fan.free()
 
 func _layout_fan() -> void:
 	if not _fan_container or not is_instance_valid(_fan_container):
@@ -8040,10 +8171,17 @@ func _show_power_hover_popup(source: Control, text: String, bbcode_text: String 
 	popup.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	popup.z_index = HOVER_PREVIEW_Z_INDEX
 
+	var scroll := ScrollContainer.new()
+	scroll.name = "PowerHoverScroll"
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	scroll.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	popup.add_child(scroll)
+
 	var vbox := VBoxContainer.new()
 	vbox.add_theme_constant_override("separation", 6)
 	vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	popup.add_child(vbox)
+	scroll.add_child(vbox)
 
 	var label := RichTextLabel.new()
 	label.bbcode_enabled = true
@@ -8086,11 +8224,27 @@ func _position_power_hover_popup(popup: Control, source: Control) -> void:
 	var popup_size := popup.get_combined_minimum_size()
 	var source_rect := source.get_global_rect()
 	var vp_size := get_viewport_rect().size
+	var viewport_margin := 4.0
+	var max_popup_size := Vector2(
+		maxf(80.0, vp_size.x - viewport_margin * 2.0),
+		maxf(80.0, vp_size.y - viewport_margin * 2.0)
+	)
+	if popup_size.x > max_popup_size.x or popup_size.y > max_popup_size.y:
+		var scroll := popup.get_node_or_null("PowerHoverScroll") as ScrollContainer
+		if scroll != null:
+			scroll.custom_minimum_size = Vector2(
+				minf(popup_size.x, max_popup_size.x),
+				minf(popup_size.y, max_popup_size.y)
+			)
+			popup_size = Vector2(
+				minf(popup_size.x, max_popup_size.x),
+				minf(popup_size.y, max_popup_size.y)
+			)
 	var popup_scale := minf(
 		1.0,
 		minf(
-			maxf(0.35, (vp_size.x - 8.0) / maxf(popup_size.x, 1.0)),
-			maxf(0.35, (vp_size.y - 8.0) / maxf(popup_size.y, 1.0))
+			maxf(0.35, max_popup_size.x / maxf(popup_size.x, 1.0)),
+			maxf(0.35, max_popup_size.y / maxf(popup_size.y, 1.0))
 		)
 	)
 	popup.scale = Vector2(popup_scale, popup_scale)
@@ -8100,10 +8254,10 @@ func _position_power_hover_popup(popup: Control, source: Control) -> void:
 		source_rect.position.x + (source_rect.size.x - scaled_popup_size.x) * 0.5,
 		source_rect.position.y - scaled_popup_size.y - 6.0
 	)
-	if pos.y < 4.0 and source_rect.end.y + 6.0 + scaled_popup_size.y <= vp_size.y - 4.0:
+	if pos.y < viewport_margin and source_rect.end.y + 6.0 + scaled_popup_size.y <= vp_size.y - viewport_margin:
 		pos.y = source_rect.end.y + 6.0
-	pos.x = clampf(pos.x, 4.0, maxf(4.0, vp_size.x - scaled_popup_size.x - 4.0))
-	pos.y = clampf(pos.y, 4.0, maxf(4.0, vp_size.y - scaled_popup_size.y - 4.0))
+	pos.x = clampf(pos.x, viewport_margin, maxf(viewport_margin, vp_size.x - scaled_popup_size.x - viewport_margin))
+	pos.y = clampf(pos.y, viewport_margin, maxf(viewport_margin, vp_size.y - scaled_popup_size.y - viewport_margin))
 	popup.global_position = pos
 
 func _hide_power_hover_popup() -> void:
@@ -8856,6 +9010,9 @@ func _show_breidablik_prompt(power: Breidablik) -> void:
 		update_ui()
 		return
 	var on_choose_return_priest := func(selected_priest: Card) -> void:
+		if _breidablik_authoritative_turn_start_prompt_active:
+			_submit_breidablik_turn_start_choice(power, selected_priest)
+			return
 		_handle_breidablik_return_choice(power, selected_priest)
 
 	var panel := PanelContainer.new()
@@ -8893,6 +9050,9 @@ func _show_breidablik_prompt(power: Breidablik) -> void:
 				power.get_stored_priests(),
 				on_choose_return_priest,
 				func() -> void:
+					if _breidablik_authoritative_turn_start_prompt_active:
+						_submit_breidablik_turn_start_choice(power)
+						return
 					if _breidablik_post_upkeep_active:
 						_finish_breidablik_post_upkeep_sequence()
 						return
@@ -8908,6 +9068,9 @@ func _show_breidablik_prompt(power: Breidablik) -> void:
 	var cancel_btn := Button.new()
 	cancel_btn.text = "Decline"
 	cancel_btn.pressed.connect(func() -> void:
+		if _breidablik_authoritative_turn_start_prompt_active:
+			_submit_breidablik_turn_start_choice(power)
+			return
 		if _breidablik_post_upkeep_active:
 			_finish_breidablik_post_upkeep_sequence()
 			return
@@ -8928,6 +9091,26 @@ func _show_breidablik_prompt(power: Breidablik) -> void:
 	panel.offset_top = -90
 	panel.offset_bottom = 90
 	_breidablik_panel = panel
+
+func _show_authoritative_breidablik_turn_start_prompt(power: Breidablik) -> void:
+	_breidablik_authoritative_turn_start_prompt_active = true
+	_show_breidablik_prompt(power)
+
+func _submit_breidablik_turn_start_choice(power: Breidablik, selected_priest: Card = null) -> void:
+	if power == null or game_input == null:
+		return
+	var command := {
+		"type": "breidablik_turn_start_choice",
+		"source_uid": power.uid,
+		"return_priest": selected_priest != null,
+	}
+	if selected_priest != null:
+		command["target_uid"] = selected_priest.uid
+		command["stored_priest_index"] = power.get_stored_priest_index(selected_priest)
+	_breidablik_authoritative_turn_start_prompt_active = false
+	_hide_breidablik_prompt()
+	game_input.submit_action(command)
+	update_ui()
 
 func _handle_breidablik_store_choice(power: Breidablik, selected_priest: Card) -> void:
 	if power == null or selected_priest == null:
@@ -24526,6 +24709,7 @@ func _dismiss_transient_prompts() -> void:
 	_breidablik_post_upkeep_active = false
 	_pending_breidablik_post_upkeep_feedback = ""
 	_pending_breidablik_post_upkeep_finish = Callable()
+	_breidablik_authoritative_turn_start_prompt_active = false
 	_pending_hati_prompts.clear()
 	_clear_hati_moon_hunt_state()
 	_pending_skoll_prompts.clear()
@@ -25006,6 +25190,13 @@ func _on_match_move_validated(move: Dictionary) -> void:
 				_consume_current_wheel_of_fire_prompt()
 				if not _show_next_wheel_of_fire_turn_start_prompt():
 					_finish_wheel_of_fire_turn_start_sequence()
+		"breidablik_turn_start_choice":
+			_breidablik_authoritative_turn_start_prompt_active = false
+			_hide_breidablik_prompt()
+			var feedback := str(move.get("public_log_message", "")).strip_edges()
+			if feedback != "":
+				_set_action_label_text(feedback)
+			update_ui()
 		"en_hedu_anna_exaltation":
 			var card := game_manager.get_card_by_uid(str(move.get("source_uid", ""))) as EnHeduAnna
 			var option: Dictionary = move.get("option", {})
@@ -25704,6 +25895,10 @@ func _on_match_ui_interaction(player_index: int, type: String, data: Dictionary)
 			var card := game_manager.get_card_by_uid(data.get("source_uid", "")) as WheelOfFire
 			if card != null:
 				_show_wheel_of_fire_turn_start_prompt(card)
+		"breidablik_turn_start":
+			var card := game_manager.get_card_by_uid(data.get("source_uid", "")) as Breidablik
+			if card != null:
+				_show_authoritative_breidablik_turn_start_prompt(card)
 		"en_hedu_anna_exaltation":
 			var card := game_manager.get_card_by_uid(data.get("source_uid", "")) as EnHeduAnna
 			if card != null:
@@ -26236,7 +26431,7 @@ func _show_reinforcement_phase(data: Dictionary) -> void:
 
 	var layer := CanvasLayer.new()
 	layer.name = "ReinforcementModalLayer"
-	layer.layer = REINFORCEMENT_OVERLAY_Z_INDEX
+	layer.layer = REINFORCEMENT_MODAL_LAYER
 	add_child(layer)
 	_reinforcement_layer = layer
 
@@ -27208,6 +27403,7 @@ func _apply_network_event(event_type: String, data: Dictionary) -> void:
 				_refresh_forfeit_match_button_visibility()
 			_clear_pending_priority_response_submission()
 			_clear_network_breidablik_return_pending()
+			_breidablik_authoritative_turn_start_prompt_active = false
 			var rejection_reason := str(data.get("reason", "That move was rejected by the server."))
 			if _should_suppress_stale_priority_rejection(rejection_reason):
 				_pending_priority_auto_pass_signature.clear()
@@ -27677,6 +27873,10 @@ func _apply_ui_interaction(event_data: Dictionary) -> void:
 			var card := game_manager.get_card_by_uid(payload.get("source_uid", "")) as WheelOfFire
 			if card != null:
 				_show_wheel_of_fire_turn_start_prompt(card)
+		"breidablik_turn_start":
+			var card := game_manager.get_card_by_uid(payload.get("source_uid", "")) as Breidablik
+			if card != null:
+				_show_authoritative_breidablik_turn_start_prompt(card)
 		"en_hedu_anna_exaltation":
 			var card := game_manager.get_card_by_uid(payload.get("source_uid", "")) as EnHeduAnna
 			if card != null:

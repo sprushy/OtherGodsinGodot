@@ -9,9 +9,13 @@ const STEALTH_FOG_SMOKE_TEXTURE_PATH := "res://images/ui/stealth_fog/lelu_smoke_
 const STEALTH_FOG_CLOUD_TEXTURE_PATH := "res://images/ui/stealth_fog/lelu_cloud_noise_tiled.png"
 const STEALTH_FOG_DETAIL_TEXTURE_PATH := "res://images/ui/stealth_fog/seamless_noise_02.png"
 const STEALTH_FOG_CURSOR_TEXTURE_PATH := "res://images/ui/cursors/StealthFogCursor.png"
+const LOCKED_POWER_CURSOR_TEXTURE_PATH := "res://images/NorseLockedPowerCursor.png"
 const STEALTH_FOG_CLEAR_UI_GROUP := "stealth_fog_clear_ui"
 const STEALTH_FOG_TOP_UI_GROUP := "stealth_fog_top_ui"
 const CUSTOM_CURSOR_ACTIVE_META := &"other_gods_custom_cursor_active"
+const LOCKED_POWER_CURSOR_ACTIVE_META := &"other_gods_locked_power_cursor_active"
+const LOCKED_POWER_CURSOR_TARGET_HEIGHT := 96
+const LOCKED_POWER_CURSOR_HOTSPOT_RATIO := Vector2(0.50, 0.28)
 const STEALTH_FOG_PLANE_Z := 0.001
 const STEALTH_FOG_LAYER_Z_BASE := 0.0002
 const STEALTH_FOG_LAYER_Z_STEP := 0.0003
@@ -59,6 +63,10 @@ var _previous_use_accumulated_input: bool = true
 var _previous_vsync_mode: int = -1
 var _software_cursor_layer: CanvasLayer = null
 var _software_cursor_root: Node2D = null
+var _software_cursor_sprite: Sprite2D = null
+var _default_software_cursor_texture: Texture2D = null
+var _locked_power_software_cursor_texture: Texture2D = null
+var _software_cursor_showing_locked_power: bool = false
 
 func _ready() -> void:
 	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
@@ -121,26 +129,85 @@ func _build_software_cursor() -> void:
 
 	var texture := load(STEALTH_FOG_CURSOR_TEXTURE_PATH) as Texture2D
 	if texture != null:
-		var cursor_sprite := Sprite2D.new()
-		cursor_sprite.name = "CursorVisual"
-		cursor_sprite.texture = texture
-		cursor_sprite.centered = false
-		cursor_sprite.scale = Vector2(0.040, 0.040)
-		cursor_sprite.position = Vector2(-4.2, -2.5)
-		_software_cursor_root.add_child(cursor_sprite)
+		_default_software_cursor_texture = texture
+		_software_cursor_sprite = Sprite2D.new()
+		_software_cursor_sprite.name = "CursorVisual"
+		_software_cursor_sprite.centered = false
+		_software_cursor_root.add_child(_software_cursor_sprite)
+		_apply_default_software_cursor()
+	_locked_power_software_cursor_texture = _load_cropped_cursor_texture(
+		LOCKED_POWER_CURSOR_TEXTURE_PATH,
+		LOCKED_POWER_CURSOR_TARGET_HEIGHT
+	)
 	_update_software_cursor_position(get_viewport().get_mouse_position())
+
+func _load_cropped_cursor_texture(texture_path: String, target_height: int) -> Texture2D:
+	var source_texture := load(texture_path) as Texture2D
+	if source_texture == null:
+		return null
+	var source_image := source_texture.get_image()
+	if source_image == null or source_image.is_empty():
+		return null
+	var used_rect := source_image.get_used_rect()
+	if used_rect.size.x <= 0 or used_rect.size.y <= 0:
+		return null
+	var cursor_image := source_image.get_region(used_rect)
+	if cursor_image == null or cursor_image.is_empty():
+		return null
+	var cursor_scale := float(target_height) / float(cursor_image.get_height())
+	var target_width := maxi(1, int(round(cursor_image.get_width() * cursor_scale)))
+	cursor_image.resize(target_width, target_height, Image.INTERPOLATE_LANCZOS)
+	return ImageTexture.create_from_image(cursor_image)
+
+func _apply_default_software_cursor() -> void:
+	if _software_cursor_sprite == null or not is_instance_valid(_software_cursor_sprite):
+		return
+	_software_cursor_sprite.texture = _default_software_cursor_texture
+	_software_cursor_sprite.scale = Vector2(0.040, 0.040)
+	_software_cursor_sprite.position = Vector2(-4.2, -2.5)
+	_software_cursor_showing_locked_power = false
+
+func _apply_locked_power_software_cursor() -> void:
+	if _software_cursor_sprite == null or not is_instance_valid(_software_cursor_sprite):
+		return
+	_software_cursor_sprite.texture = _locked_power_software_cursor_texture
+	_software_cursor_sprite.scale = Vector2.ONE
+	var cursor_size := _locked_power_software_cursor_texture.get_size()
+	_software_cursor_sprite.position = -Vector2(
+		cursor_size.x * LOCKED_POWER_CURSOR_HOTSPOT_RATIO.x,
+		cursor_size.y * LOCKED_POWER_CURSOR_HOTSPOT_RATIO.y
+	)
+	_software_cursor_showing_locked_power = true
 
 func _update_software_cursor_position(window_position: Vector2) -> void:
 	if _software_cursor_root == null or not is_instance_valid(_software_cursor_root):
 		return
 	_software_cursor_root.position = window_position
 
+func _has_viewport_meta(meta_name: StringName) -> bool:
+	var root_viewport := get_viewport()
+	if root_viewport != null and bool(root_viewport.get_meta(meta_name, false)):
+		return true
+	return _game_viewport != null and bool(_game_viewport.get_meta(meta_name, false))
+
+func _has_custom_cursor_active() -> bool:
+	return _has_viewport_meta(CUSTOM_CURSOR_ACTIVE_META)
+
 func _sync_cursor_presentation() -> void:
-	var custom_cursor_active := _game_viewport != null \
-		and bool(_game_viewport.get_meta(CUSTOM_CURSOR_ACTIVE_META, false))
+	var locked_power_cursor_active := _has_viewport_meta(LOCKED_POWER_CURSOR_ACTIVE_META)
+	var custom_cursor_active := _has_custom_cursor_active()
+	var use_locked_power_software_cursor := locked_power_cursor_active \
+		and _locked_power_software_cursor_texture != null
+	if use_locked_power_software_cursor and not _software_cursor_showing_locked_power:
+		_apply_locked_power_software_cursor()
+	elif not use_locked_power_software_cursor and _software_cursor_showing_locked_power:
+		_apply_default_software_cursor()
 	if _software_cursor_root != null and is_instance_valid(_software_cursor_root):
-		_software_cursor_root.visible = not custom_cursor_active
-	var desired_mouse_mode := Input.MOUSE_MODE_VISIBLE if custom_cursor_active else Input.MOUSE_MODE_HIDDEN
+		_software_cursor_root.visible = use_locked_power_software_cursor \
+			or (not locked_power_cursor_active and not custom_cursor_active)
+	var show_hardware_cursor := custom_cursor_active \
+		or (locked_power_cursor_active and not use_locked_power_software_cursor)
+	var desired_mouse_mode := Input.MOUSE_MODE_VISIBLE if show_hardware_cursor else Input.MOUSE_MODE_HIDDEN
 	if Input.mouse_mode != desired_mouse_mode:
 		Input.set_mouse_mode(desired_mouse_mode)
 

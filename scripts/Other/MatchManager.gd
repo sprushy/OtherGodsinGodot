@@ -95,6 +95,9 @@ var _priority_preferences_by_player: Dictionary = {}
 var _pending_turn_action_after_opponent_priority_command: Dictionary = {}
 var _pending_turn_action_after_opponent_priority_sender_info: Dictionary = {}
 var _replaying_turn_action_after_opponent_priority: bool = false
+var _active_turn_start_sequence_turn: int = -1
+var _turn_start_sequence_feedback: String = ""
+var _turn_start_priority_queued_turn: int = -1
 
 func _init(p_game_manager: GameManager) -> void:
 	game_manager = p_game_manager
@@ -154,6 +157,9 @@ func reset_runtime_state() -> void:
 	_pending_turn_action_after_opponent_priority_command.clear()
 	_pending_turn_action_after_opponent_priority_sender_info.clear()
 	_replaying_turn_action_after_opponent_priority = false
+	_active_turn_start_sequence_turn = -1
+	_turn_start_sequence_feedback = ""
+	_turn_start_priority_queued_turn = -1
 	last_resolution_text = ""
 	last_move_failed_reason = ""
 	_authoritative_stack_resolution_pending = false
@@ -430,6 +436,7 @@ func _queue_ui_interaction(
 		"type": type,
 		"data": data.duplicate(true),
 		"release_after_action": release_after_action,
+		"turn_number": game_manager.turn_number if game_manager != null else -1,
 	})
 
 func _release_next_queued_ui_interaction() -> void:
@@ -443,6 +450,8 @@ func _release_next_queued_ui_interaction() -> void:
 				and release_after_action in game_manager.resolving_stack_actions:
 			return
 		_queued_ui_interactions.pop_front()
+		if not _is_queued_ui_interaction_still_valid(queued):
+			continue
 		var player := queued.get("player", null) as Player
 		var type := str(queued.get("type", ""))
 		var data: Dictionary = queued.get("data", {})
@@ -453,10 +462,58 @@ func _release_next_queued_ui_interaction() -> void:
 	if pending_blot_spell != null:
 		_try_queue_pending_authoritative_blot_action()
 		return
+	if _continue_active_authoritative_turn_start_sequence():
+		return
 	if game_manager != null and game_manager.action_stack.is_empty():
 		_try_process_pending_turn_action_after_opponent_priority()
 		return
 	_advance_authoritative_priority()
+
+func _is_queued_ui_interaction_still_valid(queued: Dictionary) -> bool:
+	if game_manager == null:
+		return false
+	if int(queued.get("turn_number", game_manager.turn_number)) != game_manager.turn_number:
+		return false
+	var player := queued.get("player", null) as Player
+	if player == null or game_manager.players.find(player) < 0:
+		return false
+	var type := str(queued.get("type", ""))
+	var data: Dictionary = queued.get("data", {})
+	var source_uid := str(data.get("source_uid", "")).strip_edges()
+	match type:
+		"wheel_of_fire_turn_start":
+			var wheel := game_manager.get_card_by_uid(source_uid) as WheelOfFire
+			return wheel != null \
+				and wheel.card_owner == player \
+				and wheel.can_offer_turn_start_advance(game_manager)
+		"breidablik_turn_start":
+			var breidablik := game_manager.get_card_by_uid(source_uid) as Breidablik
+			if breidablik == null \
+					or breidablik.card_owner != player \
+					or not breidablik.can_return_priest(game_manager):
+				return false
+			var stored_priest_uids: Array[String] = []
+			for priest in breidablik.get_stored_priests():
+				if priest != null:
+					stored_priest_uids.append(priest.uid)
+			data["target_uids"] = stored_priest_uids
+			queued["data"] = data
+			return not stored_priest_uids.is_empty()
+		"wolf_adolescent_maturation":
+			var wolf := game_manager.get_card_by_uid(source_uid)
+			if wolf == null \
+					or not (wolf is WolfAdolescent or wolf is WolfCub) \
+					or wolf.get_controller() != player \
+					or not wolf.can_offer_maturation(game_manager):
+				return false
+			var target_uids: Array[String] = []
+			for target in wolf.get_valid_maturation_targets():
+				if target != null:
+					target_uids.append(target.uid)
+			data["target_uids"] = target_uids
+			queued["data"] = data
+			return not target_uids.is_empty()
+	return true
 
 func emit_ui_interaction_for_player(player: Player, type: String, data: Dictionary) -> void:
 	_emit_ui_interaction_for_player(player, type, data)
@@ -548,24 +605,50 @@ func _validate_pending_ui_interaction_for_command(command: Dictionary) -> Dictio
 	result["prompt_id"] = int(_pending_ui_interactions[prompt_idx].get("prompt_id", -1))
 	return result
 
-func _consume_pending_ui_interaction_by_id(prompt_id: int) -> void:
+func _consume_pending_ui_interaction_by_id(prompt_id: int) -> bool:
 	if prompt_id < 0:
-		return
+		return false
 	for idx in range(_pending_ui_interactions.size() - 1, -1, -1):
 		if int(_pending_ui_interactions[idx].get("prompt_id", -1)) == prompt_id:
 			_pending_ui_interactions.remove_at(idx)
 			call_deferred("_release_next_queued_ui_interaction")
-			return
+			return true
+	return false
 
-func _consume_active_command_prompt_for_completion(command_type: String) -> void:
+func _consume_active_command_prompt_for_completion(command_type: String) -> bool:
 	if _active_command_pending_prompt_id < 0:
-		return
+		return false
 	var expected_type := command_type.strip_edges()
 	if expected_type != "" and _active_command_type != expected_type:
-		return
+		return false
 	var prompt_id := _active_command_pending_prompt_id
 	_active_command_pending_prompt_id = -1
-	_consume_pending_ui_interaction_by_id(prompt_id)
+	return _consume_pending_ui_interaction_by_id(prompt_id)
+
+func _consume_matching_pending_ui_interaction_for_command(command: Dictionary) -> bool:
+	var expected_type := _get_ui_interaction_type_for_command(str(command.get("type", "")))
+	if expected_type == "":
+		return false
+	var prompt_idx := _find_pending_ui_interaction_index(command, expected_type)
+	if prompt_idx < 0:
+		return false
+	var prompt_id := int(_pending_ui_interactions[prompt_idx].get("prompt_id", -1))
+	return _consume_pending_ui_interaction_by_id(prompt_id)
+
+func _resume_authoritative_flow_after_prompt_command() -> void:
+	if not _pending_ui_interactions.is_empty() or not _queued_ui_interactions.is_empty():
+		return
+	if pending_blot_spell != null:
+		_try_queue_pending_authoritative_blot_action()
+		return
+	if not _uses_authoritative_headless_priority_flow() or game_manager == null:
+		return
+	if _continue_active_authoritative_turn_start_sequence():
+		return
+	if game_manager.action_stack.is_empty():
+		_try_process_pending_turn_action_after_opponent_priority()
+		return
+	_advance_authoritative_priority()
 
 func _get_ui_interaction_type_for_command(command_type: String) -> String:
 	return MatchCommandRegistryScript.get_ui_interaction_type(command_type)
@@ -1125,6 +1208,8 @@ func _continue_authoritative_stack_after_resolution() -> void:
 	game_manager.prune_stale_stack_actions()
 	if game_manager.action_stack.is_empty():
 		_clear_priority_window_state()
+		if _continue_active_authoritative_turn_start_sequence():
+			return
 		_try_process_pending_turn_action_after_opponent_priority()
 		return
 	if pending_combat_reveal_linger_action != null \
@@ -2857,6 +2942,84 @@ func _emit_next_wheel_of_fire_turn_start_choice() -> bool:
 	})
 	return true
 
+func _get_pending_breidablik_turn_start_choices() -> Array[Breidablik]:
+	var pending: Array[Breidablik] = []
+	if game_manager == null or game_manager.current_player == null:
+		return pending
+	for zone in game_manager.current_player.power_zones:
+		for card in zone.cards:
+			var breidablik := card as Breidablik
+			if breidablik != null and breidablik.can_return_priest(game_manager):
+				pending.append(breidablik)
+	return pending
+
+func _emit_next_breidablik_turn_start_choice() -> bool:
+	var pending := _get_pending_breidablik_turn_start_choices()
+	if pending.is_empty():
+		return false
+	var breidablik := pending[0]
+	var stored_priest_uids: Array[String] = []
+	for priest in breidablik.get_stored_priests():
+		if priest != null:
+			stored_priest_uids.append(priest.uid)
+	_emit_ui_interaction_for_player(breidablik.card_owner, "breidablik_turn_start", {
+		"source_uid": breidablik.uid,
+		"target_uids": stored_priest_uids,
+	})
+	return true
+
+func _close_breidablik_turn_start_windows() -> void:
+	if game_manager == null:
+		return
+	for player in game_manager.players:
+		if player == null:
+			continue
+		for zone in player.power_zones:
+			for card in zone.cards:
+				if card is Breidablik:
+					(card as Breidablik).close_turn_start_window()
+
+func _begin_or_continue_authoritative_turn_start_sequence(feedback: String = "") -> void:
+	if game_manager == null:
+		return
+	if _active_turn_start_sequence_turn != game_manager.turn_number:
+		_active_turn_start_sequence_turn = game_manager.turn_number
+		_turn_start_sequence_feedback = ""
+	if not feedback.strip_edges().is_empty():
+		_turn_start_sequence_feedback = feedback
+	_continue_active_authoritative_turn_start_sequence()
+
+func _continue_active_authoritative_turn_start_sequence() -> bool:
+	if game_manager == null \
+			or _active_turn_start_sequence_turn != game_manager.turn_number \
+			or _turn_start_priority_queued_turn == game_manager.turn_number:
+		return false
+	if not _pending_ui_interactions.is_empty() or not _queued_ui_interactions.is_empty():
+		return true
+	if _emit_next_wheel_of_fire_turn_start_choice():
+		return true
+	if _emit_next_breidablik_turn_start_choice():
+		return true
+	_close_breidablik_turn_start_windows()
+	game_manager.prune_stale_stack_actions()
+	if not game_manager.action_stack.is_empty() or not game_manager.resolving_stack_actions.is_empty():
+		_advance_authoritative_priority()
+		return true
+	_turn_start_priority_queued_turn = game_manager.turn_number
+	_active_turn_start_sequence_turn = -1
+	_queue_authoritative_priority_event(
+		"start_turn",
+		Callable(),
+		game_manager.current_player,
+		game_manager.current_player,
+		_turn_start_sequence_feedback,
+		null,
+		0,
+		true
+	)
+	_turn_start_sequence_feedback = ""
+	return true
+
 func _has_pending_impact_priority_action(card: Card) -> bool:
 	if game_manager == null or card == null:
 		return false
@@ -3478,6 +3641,8 @@ func _validate_turn_action_window(command: Dictionary, sender_info: Dictionary) 
 		if is_targeting_active() or _has_pending_reveal_target_ui_interaction():
 			return "Choose a target for %s before continuing." % get_targeting_name()
 		if _has_unresolved_stack_action_window():
+			if _uses_authoritative_headless_priority_flow():
+				call_deferred("_resume_authoritative_flow_after_prompt_command")
 			return "Resolve the pending stack action before continuing."
 	var actor := _get_command_actor(sender_info)
 	if actor == null:
@@ -3715,16 +3880,20 @@ func process_command(command: Dictionary, sender_info: Dictionary = {}) -> bool:
 		_active_command_pending_prompt_id = -1
 		return false
 	var pending_prompt_id := int(pending_prompt_validation.get("prompt_id", -1))
+	var had_pending_prompt := pending_prompt_id >= 0
 	_active_command_pending_prompt_id = pending_prompt_id
 	var result := _process_command_impl(command)
 	if result:
 		_complete_simple_deferred_prompt_action_for_command(command)
-		_consume_active_command_prompt_for_completion(_active_command_type)
+		if not _consume_active_command_prompt_for_completion(_active_command_type):
+			_consume_matching_pending_ui_interaction_for_command(command)
 	_active_command_sender_info.clear()
 	_active_command_type = ""
 	_active_command_pending_prompt_id = -1
 	if result and _pending_ui_interactions.is_empty() and not _queued_ui_interactions.is_empty():
 		_release_next_queued_ui_interaction()
+	elif result and not had_pending_prompt:
+		call_deferred("_resume_authoritative_flow_after_prompt_command")
 	return result
 
 func _process_command_impl(command: Dictionary) -> bool:
@@ -3901,19 +4070,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 					command["public_log_message"] = choice_feedback
 			move_validated.emit(command)
 			if _uses_authoritative_headless_priority_flow():
-				if _has_pending_wheel_of_fire_turn_start_choice():
-					_emit_next_wheel_of_fire_turn_start_choice()
-					return true
-				_queue_authoritative_priority_event(
-					"start_turn",
-					Callable(),
-					game_manager.current_player,
-					game_manager.current_player,
-					choice_feedback,
-					null,
-					0,
-					true
-				)
+				_begin_or_continue_authoritative_turn_start_sequence(choice_feedback)
 			return true
 		"tiamat_upkeep_choice":
 			var tiamat_upkeep_error := _validate_upkeep_choice_window(acting_player)
@@ -3938,16 +4095,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 				var tiamat_feedback := _build_upkeep_resolution_feedback(
 					"Matriarch Rule returned %s to hand." % tiamat_card.card_name
 				)
-				if _has_pending_wheel_of_fire_turn_start_choice():
-					_emit_next_wheel_of_fire_turn_start_choice()
-					return true
-				_queue_authoritative_priority_event(
-					"start_turn",
-					Callable(),
-					game_manager.current_player,
-					game_manager.current_player,
-					tiamat_feedback
-				)
+				_begin_or_continue_authoritative_turn_start_sequence(tiamat_feedback)
 			return true
 		"forfeit":
 			if game_manager.is_game_over:
@@ -4441,7 +4589,10 @@ func _process_command_impl(command: Dictionary) -> bool:
 				return false
 			skoll.apply_upkeep_summon_tax(game_manager)
 			move_validated.emit(command)
-			_advance_authoritative_priority_for_pending_card_events(skoll)
+			if _uses_authoritative_headless_priority_flow():
+				_begin_or_continue_authoritative_turn_start_sequence("Skoll summoned via Sun Hunt.")
+			else:
+				_advance_authoritative_priority_for_pending_card_events(skoll)
 			return true
 		"hati_moon_hunt":
 			var hati_uid: String = command.get("hati_uid", "")
@@ -4489,15 +4640,41 @@ func _process_command_impl(command: Dictionary) -> bool:
 				game_manager.note_player_feedback(feedback)
 			move_validated.emit(command)
 			if _uses_authoritative_headless_priority_flow():
-				if _emit_next_wheel_of_fire_turn_start_choice():
-					return true
-				_queue_authoritative_priority_event(
-					"start_turn",
-					Callable(),
-					game_manager.current_player,
-					game_manager.current_player,
+				_begin_or_continue_authoritative_turn_start_sequence(
 					_build_upkeep_resolution_feedback(feedback)
 				)
+			return true
+		"breidablik_turn_start_choice":
+			var source_uid := str(command.get("source_uid", "")).strip_edges()
+			var breidablik := game_manager.get_card_by_uid(source_uid) as Breidablik
+			if breidablik == null:
+				move_failed.emit("breidablik_turn_start_choice: Breidablik not found")
+				return false
+			if not breidablik.can_return_priest(game_manager):
+				move_failed.emit("Breidablik cannot return a Priest right now.")
+				return false
+			var feedback := "Declined Breidablik."
+			if bool(command.get("return_priest", false)):
+				var priest := breidablik.get_stored_priest_by_uid_or_index(
+					str(command.get("target_uid", "")),
+					int(command.get("stored_priest_index", -1))
+				)
+				if priest == null:
+					move_failed.emit("Breidablik could not find that harbored Priest.")
+					return false
+				game_manager.push_effect_source_card(breidablik)
+				var returned := breidablik.return_priest(game_manager, priest)
+				game_manager.pop_effect_source_card()
+				if not returned:
+					move_failed.emit("Breidablik could not return that Priest.")
+					return false
+				feedback = "%s returned %s." % [breidablik.card_name, priest.card_name]
+			else:
+				breidablik.close_turn_start_window()
+			command["public_log_message"] = feedback
+			move_validated.emit(command)
+			if _uses_authoritative_headless_priority_flow():
+				_begin_or_continue_authoritative_turn_start_sequence(feedback)
 			return true
 		"unlock_power":
 			var up_uid: String = command.get("power_uid", "")

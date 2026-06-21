@@ -822,6 +822,17 @@ static func _make_stored_card_preview(card: Card, viewer: Player, width: float) 
 		style.set_border_width(side, 1)
 	panel.add_theme_stylebox_override("panel", style)
 
+	var overlay_root := Control.new()
+	overlay_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	overlay_root.custom_minimum_size = Vector2(width - 10.0, 54.0)
+	panel.add_child(overlay_root)
+
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 6)
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	overlay_root.add_child(row)
+
 	if viewer != null and card.card_owner == viewer:
 		var identified_marker := PanelContainer.new()
 		identified_marker.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -848,12 +859,7 @@ static func _make_stored_card_preview(card: Card, viewer: Player, width: float) 
 		marker_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		marker_icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		identified_marker.add_child(marker_icon)
-		panel.add_child(identified_marker)
-
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 6)
-	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	panel.add_child(row)
+		overlay_root.add_child(identified_marker)
 
 	if card.art_path != "":
 		var tex := UITextureCacheScript.get_texture(card.art_path)

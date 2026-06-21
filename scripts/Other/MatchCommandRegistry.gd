@@ -40,6 +40,7 @@ const KNOWN_COMMAND_TYPES := [
 	"skoll_upkeep_summon",
 	"hati_moon_hunt",
 	"wheel_of_fire_turn_start_choice",
+	"breidablik_turn_start_choice",
 	"activate_card_ability",
 	"mopsus_reveal_hand_card",
 	"en_hedu_anna_exaltation",
@@ -130,7 +131,7 @@ static func get_required_player(command: Dictionary, game_manager: GameManager, 
 			return _controller_from_uid(command, game_manager, "hati_uid")
 		"skoll_upkeep_summon":
 			return _controller_from_uid(command, game_manager, "skoll_uid")
-		"activate_card_ability", "mopsus_reveal_hand_card", "en_hedu_anna_exaltation", "aphrodite_enslave_choice", "blessed_knights_choice", "wolf_adolescent_maturation_choice", "wheel_of_fire_turn_start_choice", "tezcatlipoca_active_titlacauan_choice", "nusku_active_core_flame_choice", "mummu_entropy_choice", "first_sage_adapa_choice", "third_sage_enmedugga_choice", "fourth_sage_enmegalamma_choice", "sixth_sage_an_enlilda_choice", "seventh_sage_utuabzu_choice", "lailoken_reveal_choice", "masmassu_priest_reveal_choice", "rally_the_troops_choice", "terror_impact_choice", "huginn_perish_prime_choice", "muninn_perish_prime_choice", "fenrir_devour_choice", "harii_jarl_impact_choice", "durinn_secondborn_choice", "kur_jara_tree_of_life_choice", "hunting_tactics_choice", "foolish_optimism_choice", "gugalanna_celestial_charge_choice", "freyja_active_open_sessrumnir_choice", "tiamat_active_summon_choice", "giant_master_architect_choice", "pai_long_autumn_king_choice", "nergal_lion_choice", "gala_tura_destroyed_choice", "gawain_healing_hands_choice", "tatzelwurm_dragon_heart_choice", "byggvir_reveal_choice", "apollyons_demiurge_choice", "habrok_breakout_choice":
+		"activate_card_ability", "mopsus_reveal_hand_card", "en_hedu_anna_exaltation", "aphrodite_enslave_choice", "blessed_knights_choice", "wolf_adolescent_maturation_choice", "wheel_of_fire_turn_start_choice", "breidablik_turn_start_choice", "tezcatlipoca_active_titlacauan_choice", "nusku_active_core_flame_choice", "mummu_entropy_choice", "first_sage_adapa_choice", "third_sage_enmedugga_choice", "fourth_sage_enmegalamma_choice", "sixth_sage_an_enlilda_choice", "seventh_sage_utuabzu_choice", "lailoken_reveal_choice", "masmassu_priest_reveal_choice", "rally_the_troops_choice", "terror_impact_choice", "huginn_perish_prime_choice", "muninn_perish_prime_choice", "fenrir_devour_choice", "harii_jarl_impact_choice", "durinn_secondborn_choice", "kur_jara_tree_of_life_choice", "hunting_tactics_choice", "foolish_optimism_choice", "gugalanna_celestial_charge_choice", "freyja_active_open_sessrumnir_choice", "tiamat_active_summon_choice", "giant_master_architect_choice", "pai_long_autumn_king_choice", "nergal_lion_choice", "gala_tura_destroyed_choice", "gawain_healing_hands_choice", "tatzelwurm_dragon_heart_choice", "byggvir_reveal_choice", "apollyons_demiurge_choice", "habrok_breakout_choice":
 			return _controller_from_uid(command, game_manager, "source_uid")
 		"humbaba_augury_choice":
 			var humbaba := _card_from_uid(command, game_manager, "source_uid") as HumbabaTheTerrible
@@ -201,6 +202,8 @@ static func get_ui_interaction_type(command_type: String) -> String:
 			return "blessed_knights_ward"
 		"wheel_of_fire_turn_start_choice":
 			return "wheel_of_fire_turn_start"
+		"breidablik_turn_start_choice":
+			return "breidablik_turn_start"
 		"tezcatlipoca_active_titlacauan_choice":
 			return "tezcatlipoca_active_titlacauan"
 		"nusku_active_core_flame_choice":
