@@ -263,8 +263,16 @@ static func make_all_cards() -> Array[Card]:
 static func _duplicate_cached_cards() -> Array[Card]:
 	var duplicates: Array[Card] = []
 	for card in _cached_all_cards:
-		duplicates.append(card.duplicate(true))
+		duplicates.append(_duplicate_card_with_fresh_uid(card))
 	return duplicates
+
+static func _duplicate_card_with_fresh_uid(template: Card) -> Card:
+	if template == null:
+		return null
+	var duplicated := template.duplicate(true) as Card
+	if duplicated is BaseCard:
+		(duplicated as BaseCard).assign_fresh_uid()
+	return duplicated
 
 static func _discover_cards_from_registry(out_cards: Array[Card]) -> void:
 	for full_path in CARD_SCRIPT_PATHS:
@@ -301,7 +309,7 @@ static func instantiate_card_by_name(card_name: String) -> Card:
 	if template == null:
 		template = _cached_card_templates_by_alias.get(to_lookup_key(requested_name), null)
 	if template is Card:
-		return (template as Card).duplicate(true)
+		return _duplicate_card_with_fresh_uid(template as Card)
 	return null
 
 static func make_cards_from_counts(card_counts: Dictionary) -> Array[Card]:

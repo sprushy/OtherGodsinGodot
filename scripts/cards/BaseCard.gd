@@ -15,6 +15,9 @@ func _generate_uid() -> String:
 	# For now, we'll use a prefix to distinguish local IDs.
 	return "card_" + str(Time.get_ticks_msec()) + "_" + str(_uid_counter)
 
+func assign_fresh_uid() -> void:
+	uid = _generate_uid()
+
 # Keyword definitions - displayed as hover tooltips in ability text.
 const KEYWORD_HINTS = {
 	"Void": "Send this card to the Abyss - removed from the game.",

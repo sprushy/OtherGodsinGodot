@@ -866,8 +866,16 @@ func _set_locked_power_cursor_active(active: bool) -> void:
 		return
 	_locked_power_cursor_active = active
 	var viewport := get_viewport()
-	if viewport != null:
-		viewport.set_meta(LOCKED_POWER_CURSOR_ACTIVE_META, active)
+	if viewport == null:
+		return
+	var owners_value: Variant = viewport.get_meta(LOCKED_POWER_CURSOR_ACTIVE_META, {})
+	var owners: Dictionary = owners_value.duplicate() if owners_value is Dictionary else {}
+	var owner_id := get_instance_id()
+	if active:
+		owners[owner_id] = true
+	else:
+		owners.erase(owner_id)
+	viewport.set_meta(LOCKED_POWER_CURSOR_ACTIVE_META, owners)
 
 func _refresh_mouse_cursor_shape() -> void:
 	_set_locked_power_cursor_active(_mouse_hovered and _should_show_power_lock_overlay())

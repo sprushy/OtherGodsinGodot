@@ -13,6 +13,8 @@ func build_deck(player: Player, selected_cards: Array[Card], special_setup: Dict
 		var unique_cards: Array[Card] = []
 		for card in selected_cards:
 			var deck_card := card.duplicate(true)
+			if deck_card is BaseCard:
+				(deck_card as BaseCard).assign_fresh_uid()
 			CardArtVariantsScript.apply_to_card(deck_card, validated_special_setup)
 			unique_cards.append(deck_card)
 			

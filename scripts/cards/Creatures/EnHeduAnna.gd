@@ -79,6 +79,9 @@ func get_activation_failure_reason(game_manager: GameManager) -> String:
 func has_pending_exaltation_choice() -> bool:
 	return _god_power_activated_while_face_up_this_turn
 
+func should_emphasize_ability_badge(game_manager: GameManager) -> bool:
+	return can_activate(game_manager)
+
 func consume_pending_exaltation_choice() -> void:
 	_set_god_power_activated_while_face_up_this_turn(false)
 

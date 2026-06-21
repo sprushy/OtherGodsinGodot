@@ -14,7 +14,7 @@ const STEALTH_FOG_CLEAR_UI_GROUP := "stealth_fog_clear_ui"
 const STEALTH_FOG_TOP_UI_GROUP := "stealth_fog_top_ui"
 const CUSTOM_CURSOR_ACTIVE_META := &"other_gods_custom_cursor_active"
 const LOCKED_POWER_CURSOR_ACTIVE_META := &"other_gods_locked_power_cursor_active"
-const LOCKED_POWER_CURSOR_TARGET_HEIGHT := 96
+const LOCKED_POWER_CURSOR_TARGET_HEIGHT := 72
 const LOCKED_POWER_CURSOR_HOTSPOT_RATIO := Vector2(0.50, 0.28)
 const STEALTH_FOG_PLANE_Z := 0.001
 const STEALTH_FOG_LAYER_Z_BASE := 0.0002
@@ -186,9 +186,15 @@ func _update_software_cursor_position(window_position: Vector2) -> void:
 
 func _has_viewport_meta(meta_name: StringName) -> bool:
 	var root_viewport := get_viewport()
-	if root_viewport != null and bool(root_viewport.get_meta(meta_name, false)):
+	if root_viewport != null and _is_cursor_meta_active(root_viewport.get_meta(meta_name, false)):
 		return true
-	return _game_viewport != null and bool(_game_viewport.get_meta(meta_name, false))
+	return _game_viewport != null \
+		and _is_cursor_meta_active(_game_viewport.get_meta(meta_name, false))
+
+func _is_cursor_meta_active(meta_value: Variant) -> bool:
+	if meta_value is Dictionary:
+		return not (meta_value as Dictionary).is_empty()
+	return bool(meta_value)
 
 func _has_custom_cursor_active() -> bool:
 	return _has_viewport_meta(CUSTOM_CURSOR_ACTIVE_META)
@@ -205,8 +211,8 @@ func _sync_cursor_presentation() -> void:
 	if _software_cursor_root != null and is_instance_valid(_software_cursor_root):
 		_software_cursor_root.visible = use_locked_power_software_cursor \
 			or (not locked_power_cursor_active and not custom_cursor_active)
-	var show_hardware_cursor := custom_cursor_active \
-		or (locked_power_cursor_active and not use_locked_power_software_cursor)
+	var show_hardware_cursor := not use_locked_power_software_cursor \
+		and (custom_cursor_active or locked_power_cursor_active)
 	var desired_mouse_mode := Input.MOUSE_MODE_VISIBLE if show_hardware_cursor else Input.MOUSE_MODE_HIDDEN
 	if Input.mouse_mode != desired_mouse_mode:
 		Input.set_mouse_mode(desired_mouse_mode)

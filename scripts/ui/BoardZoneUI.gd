@@ -86,6 +86,8 @@ const TEZ_REQUIRED_SACRIFICES := 4
 const TEZ_TONAL_MASTERY_TOKEN_THRESHOLD := 3
 const FREYJA_RECEIVER_OF_THE_SLAIN_STATUS := "freyja_receiver_of_the_slain"
 const FREYJA_ACTIVE_OPEN_SESSRUMNIR_STATUS := "freyja_active_open_sessrumnir"
+const EN_HEDU_ANNA_EXALTATION_SOURCE := "En-hedu-anna Exaltation"
+const EN_HEDU_ANNA_EXALTATION_EFFECT_TYPE := "exaltation"
 const GIDIM_ENSI_CARD_NAME := "Gidim Ensi"
 const GIDIM_ENSI_SLEEP_SOURCE := "Gidim Ensi Guardian"
 const LEVEL_BADGE_TOP := -12.0
@@ -107,6 +109,7 @@ const BASE_BOARD_Z_INDEX := 0
 const RAISED_BOARD_Z_INDEX := 2
 const GOD_INDICATOR_Z_INDEX := 3
 const PRIORITY_RESPONSE_GLOW_COLOR := Color(0.28, 0.92, 0.50, 0.95)
+const AVAILABLE_ABILITY_BADGE_GLOW_COLOR := Color(0.28, 0.92, 0.50, 0.58)
 # Keep hovered board cards above the hand fan overlay, but below the larger
 # transient previews and modal UI promoted by CombatMockGame.
 const HOVER_BOARD_Z_INDEX := 2260
@@ -1759,6 +1762,9 @@ func _add_champions_call_badge(overlay: Control, card: Card, is_ready: bool) -> 
 	badge.offset_right = -6
 	badge.offset_bottom = badge_top + ABILITY_BADGE_SIZE
 
+	if _should_emphasize_available_ability_badge(god, is_ready):
+		_add_badge_image_glow(badge, CHAMPIONS_CALL_BADGE_TEXTURE, AVAILABLE_ABILITY_BADGE_GLOW_COLOR, 6.0)
+
 	var icon := TextureRect.new()
 	icon.texture = CHAMPIONS_CALL_BADGE_TEXTURE
 	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
@@ -1890,6 +1896,9 @@ func _add_smoking_mirror_badge(overlay: Control, card: Card) -> void:
 	badge.offset_right = TEZ_BADGE_RIGHT
 	badge.offset_bottom = TEZ_PRIMARY_BADGE_BOTTOM
 
+	if _should_emphasize_available_ability_badge(card, badge_ready):
+		_add_badge_image_glow(badge, SMOKING_MIRROR_BADGE_TEXTURE, AVAILABLE_ABILITY_BADGE_GLOW_COLOR, 6.0)
+
 	var icon := TextureRect.new()
 	icon.texture = SMOKING_MIRROR_BADGE_TEXTURE
 	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
@@ -1939,6 +1948,9 @@ func _add_tez_sacrifice_badge(overlay: Control, card: Card) -> void:
 	badge.offset_top = TEZ_PRIMARY_BADGE_TOP
 	badge.offset_right = TEZ_BADGE_RIGHT
 	badge.offset_bottom = TEZ_PRIMARY_BADGE_BOTTOM
+
+	if _should_emphasize_available_ability_badge(card, badge_ready):
+		_add_badge_image_glow(badge, TEZ_SACRIFICE_BADGE_TEXTURE, AVAILABLE_ABILITY_BADGE_GLOW_COLOR, 6.0)
 
 	var icon := TextureRect.new()
 	icon.texture = TEZ_SACRIFICE_BADGE_TEXTURE
@@ -2135,6 +2147,9 @@ func _add_e2_abzu_mode_badge(
 	badge.offset_right = badge_right
 	badge.offset_bottom = top + CREATURE_ABILITY_BADGE_SIZE
 
+	if _should_emphasize_available_ability_badge(card, badge_ready):
+		_add_badge_image_glow(badge, texture, AVAILABLE_ABILITY_BADGE_GLOW_COLOR, 6.0)
+
 	var icon := TextureRect.new()
 	icon.texture = texture
 	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
@@ -2235,6 +2250,9 @@ func _add_nimue_mode_badge(
 	badge.offset_right = badge_right
 	badge.offset_bottom = top + CREATURE_ABILITY_BADGE_SIZE
 
+	if _should_emphasize_available_ability_badge(card, badge_ready):
+		_add_badge_image_glow(badge, texture, AVAILABLE_ABILITY_BADGE_GLOW_COLOR, 6.0)
+
 	var icon := TextureRect.new()
 	icon.texture = texture
 	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
@@ -2316,6 +2334,9 @@ func _add_white_serpent_medicine_badge(overlay: Control, card: Card) -> void:
 	badge.offset_right = badge_right
 	badge.offset_bottom = badge_top + CREATURE_ABILITY_BADGE_SIZE
 
+	if _should_emphasize_available_ability_badge(card, badge_ready):
+		_add_badge_image_glow(badge, WHITE_SERPENT_MEDICINE_BADGE_TEXTURE, AVAILABLE_ABILITY_BADGE_GLOW_COLOR, 6.0)
+
 	var icon := TextureRect.new()
 	icon.texture = WHITE_SERPENT_MEDICINE_BADGE_TEXTURE
 	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
@@ -2379,6 +2400,9 @@ func _add_creature_ability_badge(overlay: Control, card: Card) -> void:
 	badge.offset_right = badge_right
 	badge.offset_bottom = badge_top + CREATURE_ABILITY_BADGE_SIZE
 
+	if _should_emphasize_available_ability_badge(card, badge_ready):
+		_add_badge_image_glow(badge, texture, AVAILABLE_ABILITY_BADGE_GLOW_COLOR, 6.0)
+
 	var icon := TextureRect.new()
 	icon.texture = texture
 	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
@@ -2427,6 +2451,9 @@ func _add_board_card_custom_ability_badge(overlay: Control, card: Card) -> void:
 	badge.offset_top = badge_top
 	badge.offset_right = badge_right
 	badge.offset_bottom = badge_top + CREATURE_ABILITY_BADGE_SIZE
+
+	if _should_emphasize_available_ability_badge(card, badge_ready):
+		_add_badge_image_glow(badge, texture, AVAILABLE_ABILITY_BADGE_GLOW_COLOR, 6.0)
 
 	var icon := TextureRect.new()
 	icon.texture = texture
@@ -2481,7 +2508,7 @@ func _add_god_custom_ability_badge(overlay: Control, card: Card) -> void:
 	badge.offset_right = -6
 	badge.offset_bottom = badge_top + ABILITY_BADGE_SIZE
 
-	if badge_ready:
+	if _should_emphasize_available_ability_badge(card, badge_ready):
 		_add_badge_image_glow(badge, texture, _get_god_ability_badge_glow_color(card), 6.0)
 
 	var icon := TextureRect.new()
@@ -3436,6 +3463,21 @@ func _get_boon_affordance_entries(card: Card) -> Array[Dictionary]:
 	if card == null:
 		return entries
 	var seen: Dictionary = {}
+	for buff in card._get_effective_buffs():
+		if str(buff.get("effect_type", "")) != EN_HEDU_ANNA_EXALTATION_EFFECT_TYPE:
+			continue
+		var source_key := _get_debuff_source_key(buff)
+		var key := "exaltation:%s" % source_key
+		if seen.has(key):
+			continue
+		seen[key] = entries.size()
+		entries.append({
+			"key": key,
+			"source_card": buff.get("source_card", null),
+			"source": buff.get("source", EN_HEDU_ANNA_EXALTATION_SOURCE),
+			"label": "EX",
+			"tooltip": _get_exaltation_boon_tooltip(buff),
+		})
 	for status in card.active_statuses:
 		if str(status.get("name", "")) != THIRD_SAGE_GOOD_FORTUNE_STATUS:
 			continue
@@ -3467,6 +3509,25 @@ func _get_boon_affordance_entries(card: Card) -> Array[Dictionary]:
 		seen[key] = entries.size()
 		entries.append(entry)
 	return entries
+
+func _get_exaltation_boon_tooltip(buff: Dictionary) -> String:
+	var bonuses: Array[String] = []
+	var str_bonus := int(buff.get("str", 0))
+	var res_bonus := int(buff.get("res", 0))
+	var spd_bonus := int(buff.get("spd", 0))
+	if str_bonus != 0:
+		bonuses.append("%+d STR" % str_bonus)
+	if res_bonus != 0:
+		bonuses.append("%+d RES" % res_bonus)
+	if spd_bonus != 0:
+		bonuses.append("%+d SPD" % spd_bonus)
+	var bonus_text := ", ".join(bonuses)
+	if bonus_text == "":
+		bonus_text = "Exaltation"
+	return "%s from %s\nCannot attack, be destroyed, or be targeted until the end of the next turn." % [
+		bonus_text,
+		_get_effect_source_label(buff),
+	]
 
 func _get_good_fortune_tooltip(status: Dictionary, ward_kinds: Array) -> String:
 	var source := _get_effect_source_label(status)
@@ -3751,6 +3812,8 @@ func _build_debuff_entry_from_status(card: Card, status: Dictionary) -> Dictiona
 		return {}
 	var status_name := str(status.get("name", ""))
 	if status_name in ["", "temporarily_revealed", "blessed_ward", Card.EXTERNAL_EFFECT_NEGATION_STATUS]:
+		return {}
+	if str(status.get("source", "")) == EN_HEDU_ANNA_EXALTATION_SOURCE:
 		return {}
 	if _is_debuff_status_from_attached_binding(card, status):
 		return {}
@@ -4351,24 +4414,30 @@ func _should_glow_champions_call_badge(card: Card) -> bool:
 		return false
 	return god.can_use_champions_call(game_manager)
 
-func _is_viewer_priority_player() -> bool:
-	if game_manager == null or game_manager.action_stack.is_empty():
-		return false
-	return game_manager.priority_player != null and game_manager.priority_player == _get_viewer_player()
-
 func _is_priority_badge_filter_active() -> bool:
 	return game_manager != null and (game_manager.priority_player != null or not game_manager.action_stack.is_empty())
+
+func _should_emphasize_available_ability_badge(card: Card, badge_ready: bool) -> bool:
+	if not badge_ready or card == null:
+		return false
+	if _is_priority_badge_filter_active():
+		return _is_card_usable_for_priority(card)
+	if card.has_method("should_emphasize_ability_badge"):
+		return bool(card.call("should_emphasize_ability_badge", game_manager))
+	return false
 
 func _should_show_ability_badge_control(card: Card, badge_ready: bool = false, clickable: bool = false) -> bool:
 	if BoardZoneUI.get_always_show_ability_badges():
 		return true
 	if _is_priority_badge_filter_active():
 		return clickable and badge_ready and _is_card_usable_for_priority(card)
+	if clickable and _should_emphasize_available_ability_badge(card, badge_ready):
+		return true
 	if _hovered or _badge_hovered or _is_mouse_in_affordance_hover_area():
 		return true
 	if _is_card_click_selected(card):
 		return true
-	return clickable and badge_ready and _is_viewer_priority_player()
+	return false
 
 func set_preview_card(card: Card) -> void:
 	if _preview_card == card:
@@ -4564,8 +4633,16 @@ func _set_locked_power_cursor_active(active: bool) -> void:
 		return
 	_locked_power_cursor_active = active
 	var viewport := get_viewport()
-	if viewport != null:
-		viewport.set_meta(LOCKED_POWER_CURSOR_ACTIVE_META, active)
+	if viewport == null:
+		return
+	var owners_value: Variant = viewport.get_meta(LOCKED_POWER_CURSOR_ACTIVE_META, {})
+	var owners: Dictionary = owners_value.duplicate() if owners_value is Dictionary else {}
+	var owner_id := get_instance_id()
+	if active:
+		owners[owner_id] = true
+	else:
+		owners.erase(owner_id)
+	viewport.set_meta(LOCKED_POWER_CURSOR_ACTIVE_META, owners)
 
 func _sync_locked_power_cursor_hover(card: Card = null) -> void:
 	_set_locked_power_cursor_active(_hovered and _is_locked_power_cursor_card(card))

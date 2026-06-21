@@ -192,6 +192,8 @@ static func get_required_player(command: Dictionary, game_manager: GameManager, 
 
 static func get_ui_interaction_type(command_type: String) -> String:
 	match command_type:
+		"priority_pass", "play_hex_response", "play_charm_response", "play_priority_ability":
+			return "priority"
 		"intercept_decision":
 			return "intercept"
 		"combat_retreat_decision":

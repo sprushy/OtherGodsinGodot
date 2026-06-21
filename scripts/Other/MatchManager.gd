@@ -635,6 +635,17 @@ func _consume_matching_pending_ui_interaction_for_command(command: Dictionary) -
 	var prompt_id := int(_pending_ui_interactions[prompt_idx].get("prompt_id", -1))
 	return _consume_pending_ui_interaction_by_id(prompt_id)
 
+func _consume_pending_ui_interaction_for_player(player: Player, interaction_type: String) -> bool:
+	if player == null or interaction_type.strip_edges() == "":
+		return false
+	for idx in range(_pending_ui_interactions.size() - 1, -1, -1):
+		var entry: Dictionary = _pending_ui_interactions[idx]
+		if entry.get("player", null) != player \
+				or str(entry.get("type", "")) != interaction_type:
+			continue
+		return _consume_pending_ui_interaction_by_id(int(entry.get("prompt_id", -1)))
+	return false
+
 func _resume_authoritative_flow_after_prompt_command() -> void:
 	if not _pending_ui_interactions.is_empty() or not _queued_ui_interactions.is_empty():
 		return
@@ -2858,7 +2869,7 @@ func _advance_authoritative_priority() -> void:
 		top_action.event_data["priority_prompt_offered_player_index"] = player_idx
 		if force_priority_window:
 			mark_priority_window_offered(top_action, player)
-	request_ui_interaction.emit(player_idx, "priority", prompt_data)
+	_emit_ui_interaction_for_player(player, "priority", prompt_data)
 
 func queue_or_resolve_priority_event(action: CardAction, defer_authoritative_priority: bool = false) -> bool:
 	if action == null:
@@ -3690,6 +3701,7 @@ func _decline_priority_for_turn_action(command: Dictionary, sender_info: Diction
 	if not _should_turn_action_decline_priority(command, sender_info):
 		return false
 	var actor := _get_command_actor(sender_info)
+	_consume_pending_ui_interaction_for_player(actor, "priority")
 	game_manager.pass_priority()
 	move_validated.emit({type = "priority_pass"})
 	_complete_turn_action_priority_decline(actor)
@@ -3880,7 +3892,6 @@ func process_command(command: Dictionary, sender_info: Dictionary = {}) -> bool:
 		_active_command_pending_prompt_id = -1
 		return false
 	var pending_prompt_id := int(pending_prompt_validation.get("prompt_id", -1))
-	var had_pending_prompt := pending_prompt_id >= 0
 	_active_command_pending_prompt_id = pending_prompt_id
 	var result := _process_command_impl(command)
 	if result:
@@ -3892,7 +3903,7 @@ func process_command(command: Dictionary, sender_info: Dictionary = {}) -> bool:
 	_active_command_pending_prompt_id = -1
 	if result and _pending_ui_interactions.is_empty() and not _queued_ui_interactions.is_empty():
 		_release_next_queued_ui_interaction()
-	elif result and not had_pending_prompt:
+	elif result:
 		call_deferred("_resume_authoritative_flow_after_prompt_command")
 	return result
 
@@ -4466,6 +4477,46 @@ func _process_command_impl(command: Dictionary) -> bool:
 						move_failed.emit(power_card.card_name + " needs a friendly Priest that has not attacked this turn.")
 						return false
 				if _uses_authoritative_headless_priority_flow():
+					if power_card is Breidablik:
+						var queued_breidablik := power_card as Breidablik
+						var queued_priest := act_target
+						var breidablik_uid: String = str(power_card.uid)
+						var priest_uid: String = str(act_target.uid)
+						var priest_name: String = str(act_target.card_name)
+						var priest_zone := act_target.current_zone
+						var priest_zone_card_index := priest_zone.cards.find(act_target) if priest_zone != null else -1
+						_queue_authoritative_magical_action(
+							CardAction.Type.ABILITY,
+							power_card,
+							act_target,
+							func() -> void:
+								var live_breidablik := queued_breidablik
+								if live_breidablik == null \
+										or live_breidablik.current_zone == null \
+										or live_breidablik.current_zone.zone_type != Zone.ZoneType.POWER_SLOT:
+									live_breidablik = game_manager.get_card_by_uid(breidablik_uid) as Breidablik
+								var live_priest := live_breidablik.resolve_harbor_target(queued_priest) \
+									if live_breidablik != null else null
+								if live_priest == null \
+										and live_breidablik != null \
+										and priest_zone != null \
+										and priest_zone_card_index >= 0 \
+										and priest_zone_card_index < priest_zone.cards.size():
+									live_priest = live_breidablik.resolve_harbor_target(
+										priest_zone.cards[priest_zone_card_index]
+									)
+								if live_priest == null and live_breidablik != null:
+									live_priest = live_breidablik.get_valid_field_priest_by_uid(priest_uid)
+								if live_breidablik == null \
+										or live_priest == null \
+										or not live_breidablik.harbor_priest(game_manager, live_priest):
+									game_manager.note_player_feedback(
+										"Breidablik could not harbor %s." % priest_name
+									)
+						)
+						_advance_authoritative_priority()
+						move_validated.emit(command)
+						return true
 					_queue_authoritative_magical_action(
 						CardAction.Type.ABILITY,
 						power_card,

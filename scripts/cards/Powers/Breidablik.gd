@@ -137,16 +137,21 @@ func get_activation_cost_hover_data(game_manager: GameManager = null) -> Diction
 	return {}
 
 func activate(game_manager: GameManager, target: Card = null) -> void:
+	harbor_priest(game_manager, target)
+
+func harbor_priest(game_manager: GameManager, target: Card) -> bool:
 	if not can_harbor_priest(game_manager):
-		return
+		return false
 	var resolved_target := resolve_harbor_target(target)
 	if resolved_target == null:
-		print(card_name + ": Invalid Priest target.")
-		return
+		return false
 	if not spend_activation_mana(HARBOR_MANA_COST, game_manager):
-		return
+		return false
 	_store_priest(resolved_target)
+	if game_manager != null:
+		game_manager.note_player_feedback("%s harbored %s." % [card_name, resolved_target.card_name])
 	print(card_name + ": " + resolved_target.card_name + " was placed under this card.")
+	return true
 
 func return_priest(game_manager: GameManager, priest: Card) -> bool:
 	if not can_return_priest(game_manager):
