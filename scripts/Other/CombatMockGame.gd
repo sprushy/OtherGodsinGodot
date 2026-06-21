@@ -16150,7 +16150,11 @@ func _resolve_tonal_extraction_prompt(card: TonalExtraction, chosen_target: Card
 		return
 	if _should_submit_ui_action_command():
 		if _is_player_local(card.card_owner):
-			game_input.submit_action({type = "activate_power", power_uid = card.uid, target_uid = resolved_target.uid})
+			game_input.submit_action({
+				type = "tonal_extraction_choice",
+				source_uid = card.uid,
+				target_uid = resolved_target.uid,
+			})
 			_set_action_label_text(card.card_name + " is extracting a Spirit.")
 		else:
 			_set_action_label_text(card.card_name + " is waiting for the other player's choice.")
@@ -24182,6 +24186,17 @@ func _initiate_blot_with_sacrifice(spell, sacrifice_target: Card) -> void:
 		update_ui()
 		return
 	var prepared_spell := _is_prepared_board_spell(spell)
+	if _should_submit_ui_action_command():
+		var authoritative_display_zone: Zone = spell.current_zone if prepared_spell else _resolve_pending_display_zone(spell, null)
+		game_input.submit_action(_add_display_zone_to_command({
+			type = "cast_spell",
+			spell_uid = spell.uid,
+			sacrifice_uid = sacrifice_target.uid,
+		}, authoritative_display_zone))
+		selected_card = null
+		_set_action_label_text("Blot Sacrifice: resolving the sacrifice first.")
+		update_ui()
+		return
 	var orig_creature_cost: int = spell.sacrifice_cost
 	spell.sacrifice_cost = 0
 	var paid: bool = game_manager.activate_prepared_card(spell, game_manager.current_player) if prepared_spell else spell.pay_costs(game_manager.current_player, game_manager)
@@ -24211,7 +24226,12 @@ func _initiate_blot_with_sacrifice(spell, sacrifice_target: Card) -> void:
 		_offer_priority()
 	)
 
-func _begin_blot_resolution_prompt(spell, sacrifice_target: Card, display_zone: Zone = null) -> void:
+func _begin_blot_resolution_prompt(
+	spell,
+	sacrifice_target: Card,
+	display_zone: Zone = null,
+	authoritative_prompt: bool = false
+) -> void:
 	if spell == null:
 		update_ui()
 		return
@@ -24220,7 +24240,8 @@ func _begin_blot_resolution_prompt(spell, sacrifice_target: Card, display_zone: 
 	_pending_blot_selected_creatures.clear()
 	_pending_blot_display_zone = display_zone
 	_pending_blot_costs_paid = true
-	game_manager.notify_spell_played(spell.card_owner, spell)
+	if not authoritative_prompt:
+		game_manager.notify_spell_played(spell.card_owner, spell)
 	if spell.get_available_summon_zones().is_empty():
 		_send_used_hand_card_to_graveyard(spell)
 		_hide_blot_sacrifice_prompt()
@@ -24601,9 +24622,11 @@ func _on_blot_sacrifice_confirm_pressed() -> void:
 		for c in chosen_creatures:
 			if c != null and "uid" in c:
 				choices.append(c.uid)
-		# Include the sacrifice target UID so server knows which creature to sacrifice
-		var sac_uid: String = sacrifice_target.get("uid") if sacrifice_target != null and "uid" in sacrifice_target else ""
-		game_input.submit_action(_add_display_zone_to_command({type = "cast_spell", spell_uid = spell_uid, choices = choices, sacrifice_uid = sac_uid}))
+		game_input.submit_action({
+			type = "blot_sacrifice_choice",
+			source_uid = spell_uid,
+			choices = choices,
+		})
 		return
 	if spell == null or sacrifice_target == null:
 		update_ui()
@@ -24629,6 +24652,13 @@ func _on_blot_sacrifice_cancel_pressed() -> void:
 	var costs_paid := _pending_blot_costs_paid
 	_hide_blot_sacrifice_prompt()
 	selected_card = null
+	if _should_submit_ui_action_command() and costs_paid and spell != null:
+		game_input.submit_action({
+			type = "blot_sacrifice_choice",
+			source_uid = spell.uid,
+			choices = [],
+		})
+		return
 	if costs_paid and spell != null:
 		_send_used_hand_card_to_graveyard(spell)
 		_resume_after_deferred_resolution("Blot Sacrifice fizzles.")
@@ -25279,6 +25309,8 @@ func _on_match_move_validated(move: Dictionary) -> void:
 					_schedule_priority_recovery_check()
 				else:
 					_offer_priority()
+		"blot_sacrifice_choice":
+			_apply_prompt_choice_feedback()
 		"god_ability":
 			var queued_god := game_manager.get_card_by_uid(str(move.get("god_uid", "")))
 			if queued_god != null:
@@ -25580,7 +25612,7 @@ func _on_match_ui_interaction(player_index: int, type: String, data: Dictionary)
 			var spell := game_manager.get_card_by_uid(data.get("source_uid", ""))
 			var sacrifice_target := game_manager.get_card_by_uid(data.get("sacrifice_target_uid", ""))
 			if spell != null:
-				_begin_blot_resolution_prompt(spell, sacrifice_target)
+				_begin_blot_resolution_prompt(spell, sacrifice_target, null, true)
 		"gawain_healing_hands":
 			var card := game_manager.get_card_by_uid(data.get("source_uid", "")) as Gawain
 			var target := game_manager.get_card_by_uid(data.get("target_uid", ""))
@@ -27529,7 +27561,7 @@ func _apply_ui_interaction(event_data: Dictionary) -> void:
 			var spell := game_manager.get_card_by_uid(payload.get("source_uid", ""))
 			var sacrifice_target := game_manager.get_card_by_uid(payload.get("sacrifice_target_uid", ""))
 			if spell != null:
-				_begin_blot_resolution_prompt(spell, sacrifice_target)
+				_begin_blot_resolution_prompt(spell, sacrifice_target, null, true)
 		"gawain_healing_hands":
 			var card := game_manager.get_card_by_uid(payload.get("source_uid", "")) as Gawain
 			var target := game_manager.get_card_by_uid(payload.get("target_uid", ""))

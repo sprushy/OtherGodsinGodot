@@ -21,9 +21,11 @@ const KNOWN_COMMAND_TYPES := [
 	"forfeit_match",
 	"submit_reinforcements",
 	"cast_spell",
+	"blot_sacrifice_choice",
 	"activate_prepared_hex",
 	"god_ability",
 	"activate_power",
+	"tonal_extraction_choice",
 	"unlock_power",
 	"activate_divine_caprice",
 	"cast_charm",
@@ -108,6 +110,8 @@ static func get_required_player(command: Dictionary, game_manager: GameManager, 
 			return _controller_from_uid(command, game_manager, "card_uid")
 		"cast_spell":
 			return _controller_from_uid(command, game_manager, "spell_uid")
+		"blot_sacrifice_choice":
+			return _controller_from_uid(command, game_manager, "source_uid")
 		"activate_prepared_hex":
 			return _controller_from_uid(command, game_manager, "hex_uid")
 		"god_ability":
@@ -116,6 +120,8 @@ static func get_required_player(command: Dictionary, game_manager: GameManager, 
 			return _controller_from_uid(command, game_manager, "source_uid")
 		"activate_power", "unlock_power", "activate_divine_caprice", "apply_advanced_building_techniques":
 			return _controller_from_uid(command, game_manager, "power_uid")
+		"tonal_extraction_choice":
+			return _controller_from_uid(command, game_manager, "source_uid")
 		"cast_charm", "play_charm_response":
 			return _controller_from_uid(command, game_manager, "charm_uid")
 		"play_hex_response":
@@ -187,6 +193,8 @@ static func get_ui_interaction_type(command_type: String) -> String:
 	match command_type:
 		"intercept_decision":
 			return "intercept"
+		"combat_retreat_decision":
+			return "combat_retreat"
 		"aphrodite_enslave_choice":
 			return "aphrodite_enslave"
 		"blessed_knights_choice":
@@ -217,6 +225,10 @@ static func get_ui_interaction_type(command_type: String) -> String:
 			return "rally_the_troops"
 		"terror_impact_choice":
 			return "terror_impact"
+		"tonal_extraction_choice":
+			return "tonal_extraction"
+		"blot_sacrifice_choice":
+			return "blot_sacrifice"
 		"huginn_perish_prime_choice":
 			return "huginn_perish_prime"
 		"muninn_perish_prime_choice":

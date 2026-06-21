@@ -43,9 +43,21 @@ func _connect_signals() -> void:
 func _on_move_validated(move: Dictionary) -> void:
 	if game_manager != null and game_manager.is_game_over:
 		return
-	# "end_turn" already triggers _on_turn_started which broadcasts full_state;
-	# broadcasting again here would send it twice per turn change.
-	if move.get("type", "") in ["end_turn", "intercept_decision", "priority_pass"]:
+	if bool(move.get("_suppress_full_state_broadcast", false)):
+		return
+	var move_type := str(move.get("type", ""))
+	if move_type == "end_turn":
+		# End turn may now wait on priority after move_validated fires. Broadcast
+		# after MatchManager has queued or resolved that window so every client
+		# immediately receives the authoritative stack/turn state.
+		call_deferred(
+			"_broadcast_validated_end_turn_state",
+			move.duplicate(true),
+			game_manager.turn_number,
+			game_manager.players.find(game_manager.current_player)
+		)
+		return
+	if move_type in ["intercept_decision", "priority_pass"]:
 		return
 	_broadcast_full_state_for_move(move)
 	if _move_completes_state_refresh_interaction(move):
@@ -56,11 +68,30 @@ func _on_move_validated(move: Dictionary) -> void:
 	else:
 		_rebroadcast_pending_state_refresh_interactions()
 
+func _broadcast_validated_end_turn_state(
+	move: Dictionary,
+	validated_turn_number: int,
+	validated_player_index: int
+) -> void:
+	if game_manager == null or game_manager.is_game_over:
+		return
+	if game_manager.turn_number != validated_turn_number \
+			or game_manager.players.find(game_manager.current_player) != validated_player_index:
+		return
+	_broadcast_full_state_for_move(move)
+	_rebroadcast_pending_state_refresh_interactions()
+
 func _on_action_resolved(action: CardAction) -> void:
 	if game_manager != null and game_manager.is_game_over:
 		return
+	if action != null \
+			and action.type == CardAction.Type.EVENT \
+			and action.event_name == "end_turn":
+		return
 	_broadcast_full_state_for_action(action)
-	_rebroadcast_pending_state_refresh_interactions()
+	# Deferred prompt completion removes the answered prompt after action_resolved
+	# fires. Re-send only prompts that remain once command processing has settled.
+	call_deferred("_rebroadcast_pending_state_refresh_interactions")
 
 func _on_ui_refresh_requested() -> void:
 	if network_manager == null or game_manager == null:
@@ -333,6 +364,21 @@ func _label_for_pending_stack_action(action: CardAction, viewer: Player = null) 
 			return prompt_message
 	return _label_for_resolved_action(action, viewer)
 
+func _pending_stack_root_is_event(event_name: String) -> bool:
+	if game_manager == null or game_manager.action_stack.is_empty():
+		return false
+	var root_action: CardAction = game_manager.action_stack.back()
+	var response_depth := 0
+	while root_action != null \
+			and root_action.response_to != null \
+			and root_action.response_to != root_action \
+			and response_depth < 32:
+		root_action = root_action.response_to
+		response_depth += 1
+	return root_action != null \
+		and root_action.type == CardAction.Type.EVENT \
+		and root_action.event_name == event_name
+
 func _label_for_move(move: Dictionary, viewer: Player = null) -> String:
 	var public_log_message := str(move.get("public_log_message", "")).strip_edges()
 	if public_log_message != "":
@@ -366,6 +412,10 @@ func _label_for_move(move: Dictionary, viewer: Player = null) -> String:
 				game_manager.get_card_by_uid(move.get("target_uid", "")),
 				viewer
 			)
+		"blot_sacrifice_choice":
+			var raw_choices = move.get("choices", [])
+			var summoned_count: int = raw_choices.size() if raw_choices is Array else 0
+			return "Blot Sacrifice summoned %d creature(s)." % summoned_count if summoned_count > 0 else "Blot Sacrifice resolved without summoning."
 		"cast_charm":
 			return _label_for_stack_move(
 				game_manager.get_card_by_uid(move.get("charm_uid", "")),
@@ -638,6 +688,8 @@ func _label_for_move(move: Dictionary, viewer: Player = null) -> String:
 			var habrok := game_manager.get_card_by_uid(str(move.get("source_uid", "")))
 			return ("%s resolved Breakout." % _card_label_for_viewer(habrok, viewer)) if habrok else "Breakout resolved."
 		"end_turn":
+			if _pending_stack_root_is_event("end_turn"):
+				return "End-turn priority window."
 			return "Turn ended."
 	return ""
 

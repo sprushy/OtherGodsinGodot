@@ -63,9 +63,12 @@ var pending_attack_target = null # Card or Player
 var selected_interceptor: Card = null
 
 # Spell-specific targeting states
+var pending_blot_spell: BlotSacrifice = null
 var pending_blot_sacrifice_target: Card = null
 var pending_blot_selected_creatures: Array[Card] = []
 var pending_blot_costs_paid: bool = false
+var pending_blot_display_zone: Zone = null
+var pending_blot_cast_command: Dictionary = {}
 
 var pending_divine_caprice_power: Card = null
 var pending_divine_caprice_selected_zone: Zone = null
@@ -79,13 +82,13 @@ var pending_humbaba_target = null
 var pending_humbaba_prompt_uids: Array[String] = []
 var pending_combat_reveal_linger_action: CardAction = null
 var _combat_reveal_wait_generation: int = 0
-var pending_tezcatlipoca_titlacauan_action: CardAction = null
 var _board_leaving_activation_linger_pending: bool = false
 var _pending_end_turn_after_resurrection: bool = false
 var _active_command_sender_info: Dictionary = {}
 var _active_command_type: String = ""
 var _resolving_priority_choice_command: bool = false
 var _pending_ui_interactions: Array[Dictionary] = []
+var _queued_ui_interactions: Array[Dictionary] = []
 var _next_ui_interaction_id: int = 1
 var _priority_preferences_by_player: Dictionary = {}
 var _pending_turn_action_after_opponent_priority_command: Dictionary = {}
@@ -121,9 +124,12 @@ func reset_runtime_state() -> void:
 	selected_attacker = null
 	pending_attack_target = null
 	selected_interceptor = null
+	pending_blot_spell = null
 	pending_blot_sacrifice_target = null
 	pending_blot_selected_creatures.clear()
 	pending_blot_costs_paid = false
+	pending_blot_display_zone = null
+	pending_blot_cast_command.clear()
 	pending_divine_caprice_power = null
 	pending_divine_caprice_selected_zone = null
 	pending_retreat_action = null
@@ -135,13 +141,13 @@ func reset_runtime_state() -> void:
 	pending_humbaba_prompt_uids.clear()
 	pending_combat_reveal_linger_action = null
 	_combat_reveal_wait_generation = 0
-	pending_tezcatlipoca_titlacauan_action = null
 	_board_leaving_activation_linger_pending = false
 	_pending_end_turn_after_resurrection = false
 	_active_command_sender_info.clear()
 	_active_command_type = ""
 	_resolving_priority_choice_command = false
 	_pending_ui_interactions.clear()
+	_queued_ui_interactions.clear()
 	_next_ui_interaction_id = 1
 	_pending_turn_action_after_opponent_priority_command.clear()
 	_pending_turn_action_after_opponent_priority_sender_info.clear()
@@ -321,9 +327,6 @@ const SIMPLE_DEFERRED_PROMPT_COMPLETION_COMMANDS := [
 	"pai_long_autumn_king_choice",
 ]
 
-const CHOICE_TIMING_BEFORE_PRIORITY := "before_priority"
-const CHOICE_TIMING_ON_RESOLUTION := "on_resolution"
-
 const HANDLER_COMPLETES_DEFERRED_PRIORITY_CHOICE_COMMANDS := [
 	"fenrir_devour_choice",
 	"gugalanna_celestial_charge_choice",
@@ -335,10 +338,6 @@ func _on_game_manager_decision_requested(player: Player, type: String, data: Dic
 	var interaction_data := data.duplicate(true)
 	if bool(interaction_data.get("queue_with_priority", false)):
 		interaction_data.erase("queue_with_priority")
-		var collect_choice_before_priority := bool(interaction_data.get("collect_choice_before_priority", false))
-		interaction_data.erase("collect_choice_before_priority")
-		var choice_timing := str(interaction_data.get("choice_timing", "")).strip_edges()
-		interaction_data.erase("choice_timing")
 		var source_card := game_manager.get_card_by_uid(str(interaction_data.get("source_uid", "")))
 		var event_name := str(interaction_data.get("event_name", type)).strip_edges()
 		var completion_command_type := str(interaction_data.get("completion_command_type", "")).strip_edges()
@@ -358,9 +357,7 @@ func _on_game_manager_decision_requested(player: Player, type: String, data: Dic
 			type,
 			completion_command_type,
 			source_card,
-			interaction_data,
-			choice_timing,
-			collect_choice_before_priority
+			interaction_data
 		):
 			interaction_data["_queue_priority_after_choice"] = true
 			interaction_data["_priority_event_name"] = event_name if event_name != "" else type
@@ -381,6 +378,14 @@ func _on_game_manager_decision_requested(player: Player, type: String, data: Dic
 func _emit_ui_interaction_for_player(player: Player, type: String, data: Dictionary) -> void:
 	if game_manager == null or player == null:
 		return
+	if not _pending_ui_interactions.is_empty() or not _queued_ui_interactions.is_empty():
+		_queue_ui_interaction(player, type, data)
+		return
+	_emit_ui_interaction_now(player, type, data)
+
+func _emit_ui_interaction_now(player: Player, type: String, data: Dictionary) -> void:
+	if game_manager == null or player == null:
+		return
 	var player_idx := game_manager.players.find(player)
 	if player_idx < 0:
 		return
@@ -388,6 +393,37 @@ func _emit_ui_interaction_for_player(player: Player, type: String, data: Diction
 		return
 	_record_pending_ui_interaction(player, type, data)
 	request_ui_interaction.emit(player_idx, type, data)
+
+func _queue_ui_interaction(player: Player, type: String, data: Dictionary) -> void:
+	if player == null or type.strip_edges() == "":
+		return
+	for queued in _queued_ui_interactions:
+		if queued.get("player", null) == player \
+				and str(queued.get("type", "")) == type \
+				and queued.get("data", {}) == data:
+			return
+	_queued_ui_interactions.append({
+		"player": player,
+		"type": type,
+		"data": data.duplicate(true),
+	})
+
+func _release_next_queued_ui_interaction() -> void:
+	if not _pending_ui_interactions.is_empty():
+		return
+	while not _queued_ui_interactions.is_empty():
+		var queued: Dictionary = _queued_ui_interactions.pop_front()
+		var player := queued.get("player", null) as Player
+		var type := str(queued.get("type", ""))
+		var data: Dictionary = queued.get("data", {})
+		if player == null or game_manager == null or game_manager.players.find(player) < 0:
+			continue
+		_emit_ui_interaction_now(player, type, data)
+		return
+	if pending_blot_spell != null:
+		_try_queue_pending_authoritative_blot_action()
+		return
+	_advance_authoritative_priority()
 
 func emit_ui_interaction_for_player(player: Player, type: String, data: Dictionary) -> void:
 	_emit_ui_interaction_for_player(player, type, data)
@@ -461,6 +497,14 @@ func _validate_pending_ui_interaction_for_command(command: Dictionary) -> Dictio
 	var command_type := str(command.get("type", ""))
 	var expected_type := _get_ui_interaction_type_for_command(command_type)
 	if expected_type == "":
+		var blocking_interaction: Dictionary = {}
+		if not _pending_ui_interactions.is_empty():
+			blocking_interaction = _pending_ui_interactions[0]
+		elif not _queued_ui_interactions.is_empty():
+			blocking_interaction = _queued_ui_interactions[0]
+		if not blocking_interaction.is_empty() \
+				and command_type not in ["forfeit", "forfeit_match", "set_priority_preferences"]:
+			result["error"] = "Resolve the pending %s choice before continuing." % str(blocking_interaction.get("type", "card"))
 		return result
 	if not (authoritative_match_flow_enabled or network_manager != null):
 		return result
@@ -477,6 +521,7 @@ func _consume_pending_ui_interaction_by_id(prompt_id: int) -> void:
 	for idx in range(_pending_ui_interactions.size() - 1, -1, -1):
 		if int(_pending_ui_interactions[idx].get("prompt_id", -1)) == prompt_id:
 			_pending_ui_interactions.remove_at(idx)
+			call_deferred("_release_next_queued_ui_interaction")
 			return
 
 func _get_ui_interaction_type_for_command(command_type: String) -> String:
@@ -713,6 +758,8 @@ func _queue_decision_priority_event(
 func _emit_local_priority_prompt_if_needed() -> void:
 	if game_manager == null or game_manager.priority_player == null:
 		return
+	if not _pending_ui_interactions.is_empty() or not _queued_ui_interactions.is_empty():
+		return
 	if _uses_authoritative_headless_priority_flow():
 		return
 	var priority_idx := game_manager.players.find(game_manager.priority_player)
@@ -757,19 +804,11 @@ func _should_collect_choice_before_priority(
 	interaction_type: String,
 	completion_command_type: String,
 	source_card: Card = null,
-	interaction_data: Dictionary = {},
-	choice_timing: String = "",
-	explicitly_requested: bool = false
+	interaction_data: Dictionary = {}
 ) -> bool:
 	if completion_command_type.strip_edges().is_empty():
 		return false
-	var normalized_timing := choice_timing.strip_edges().to_lower()
-	if normalized_timing == CHOICE_TIMING_BEFORE_PRIORITY:
-		return true
-	if normalized_timing == CHOICE_TIMING_ON_RESOLUTION:
-		return false
-	return explicitly_requested \
-		or _is_reveal_interaction_type(interaction_type) \
+	return _is_reveal_interaction_type(interaction_type) \
 		or _is_targeting_choice_prompt(source_card, interaction_data)
 
 func _is_targeting_choice_prompt(source_card: Card, interaction_data: Dictionary) -> bool:
@@ -823,17 +862,22 @@ func _queue_choice_command_as_priority_event(command: Dictionary, source_card: C
 	action.resolve_callback = func() -> void:
 		_execute_queued_priority_choice_command(queued_command, action, completion_command_type)
 	_mark_deferred_authoritative_action(action, completion_command_type)
-	var remains_on_stack := queue_or_resolve_priority_event(action)
-	if remains_on_stack:
-		_emit_local_priority_prompt_if_needed()
+	var remains_on_stack := queue_or_resolve_priority_event(
+		action,
+		_uses_authoritative_headless_priority_flow()
+	)
+	if not remains_on_stack:
+		command["_suppress_full_state_broadcast"] = true
 	return true
 
 func _execute_queued_priority_choice_command(command: Dictionary, action: CardAction, completion_command_type: String) -> void:
 	var previous_resolving := _resolving_priority_choice_command
 	var previous_command_type := _active_command_type
+	var resolution_command := command.duplicate(true)
+	resolution_command["_suppress_full_state_broadcast"] = true
 	_resolving_priority_choice_command = true
-	_active_command_type = str(command.get("type", "")).strip_edges()
-	var resolved := _process_command_impl(command)
+	_active_command_type = str(resolution_command.get("type", "")).strip_edges()
+	var resolved := _process_command_impl(resolution_command)
 	if not resolved:
 		var feedback := last_move_failed_reason.strip_edges()
 		if feedback == "":
@@ -940,14 +984,17 @@ func resolve_action(action: CardAction) -> void:
 			_resolve_ability(action)
 		CardAction.Type.SPELL:
 			_resolve_spell(action)
+			if _has_deferred_authoritative_action_metadata(action):
+				action_completed = false
+				deferred_completion_command_type = str(action.event_data.get("deferred_authoritative_completion_command", ""))
 		CardAction.Type.CHARM:
 			_resolve_spell(action)
+			if _has_deferred_authoritative_action_metadata(action):
+				action_completed = false
+				deferred_completion_command_type = str(action.event_data.get("deferred_authoritative_completion_command", ""))
 		CardAction.Type.EVENT:
 			_resolve_event(action)
-			action_completed = pending_tezcatlipoca_titlacauan_action != action
-			if not action_completed:
-				deferred_completion_command_type = "tezcatlipoca_active_titlacauan_choice"
-			elif _has_deferred_authoritative_action_metadata(action):
+			if _has_deferred_authoritative_action_metadata(action):
 				action_completed = false
 				deferred_completion_command_type = str(action.event_data.get("deferred_authoritative_completion_command", ""))
 		CardAction.Type.ATTACK:
@@ -1215,11 +1262,6 @@ func _log_authoritative_flow_state(context: String) -> void:
 			_get_target_debug_label(pending_retreat_target),
 			str(pending_retreat_prompt_uids),
 		])
-	if pending_tezcatlipoca_titlacauan_action != null:
-		print("%s   pending_tezcatlipoca action=%s" % [
-			AUTHORITATIVE_FLOW_LOG_PREFIX,
-			_get_action_debug_summary(pending_tezcatlipoca_titlacauan_action),
-		])
 	print("%s   pending_ui %s" % [
 		AUTHORITATIVE_FLOW_LOG_PREFIX,
 		_get_pending_ui_debug_summary(),
@@ -1264,7 +1306,6 @@ func _check_authoritative_deferred_action_cleared(context: String, action: CardA
 			pending_humbaba_action == action
 			or pending_retreat_action == action
 			or pending_combat_reveal_linger_action == action
-			or pending_tezcatlipoca_titlacauan_action == action
 		)
 	var follower_attack_left_stack_locked := target is Player and not game_manager.action_stack.is_empty()
 	if action_still_present or still_waiting_on_prompt or follower_attack_left_stack_locked:
@@ -1416,15 +1457,6 @@ func _resolve_spell(action: CardAction) -> void:
 
 func _resolve_event(action: CardAction) -> void:
 	if action.resolve_callback.is_valid():
-		if action.event_name == "tezcatlipoca_active_titlacauan" and not action.event_data.has("queued_choice_command"):
-			pending_tezcatlipoca_titlacauan_action = action
-			_mark_deferred_authoritative_action(
-				action,
-				"tezcatlipoca_active_titlacauan_choice"
-			)
-			action.resolve_callback.call()
-			last_resolution_text = action.resolution_text
-			return
 		action.resolve_callback.call()
 	var feedback := game_manager.consume_player_feedback() if game_manager != null else ""
 	if feedback.strip_edges() != "":
@@ -1494,8 +1526,7 @@ func _resolve_attack(action: CardAction) -> void:
 				"combat_retreat_decision"
 			)
 			var target_player: Player = _get_card_controller(retreat_prompts[0])
-			var player_idx := game_manager.players.find(target_player)
-			request_ui_interaction.emit(player_idx, "combat_retreat", {
+			_emit_ui_interaction_for_player(target_player, "combat_retreat", {
 				"action": action,
 				"target": actual_target,
 				"askelladen_uid": str(retreat_prompts[0].uid),
@@ -2646,7 +2677,9 @@ func advance_priority() -> void:
 func _advance_authoritative_priority() -> void:
 	if not _uses_authoritative_headless_priority_flow():
 		return
-	if _authoritative_stack_resolution_pending:
+	if _authoritative_stack_resolution_pending \
+			or not _pending_ui_interactions.is_empty() \
+			or not _queued_ui_interactions.is_empty():
 		return
 	game_manager.prune_stale_stack_actions()
 	if game_manager.action_stack.is_empty():
@@ -2683,7 +2716,7 @@ func _advance_authoritative_priority() -> void:
 			mark_priority_window_offered(top_action, player)
 	request_ui_interaction.emit(player_idx, "priority", prompt_data)
 
-func queue_or_resolve_priority_event(action: CardAction) -> bool:
+func queue_or_resolve_priority_event(action: CardAction, defer_authoritative_priority: bool = false) -> bool:
 	if action == null:
 		return false
 	game_manager.push_to_stack(action)
@@ -2696,7 +2729,7 @@ func queue_or_resolve_priority_event(action: CardAction) -> bool:
 	if first_has_responses or second_has_responses or _action_requires_explicit_priority_window(action):
 		if game_manager.priority_player == null:
 			game_manager.priority_player = first_player
-		if _uses_authoritative_headless_priority_flow():
+		if _uses_authoritative_headless_priority_flow() and not defer_authoritative_priority:
 			_advance_authoritative_priority()
 		return true
 	_clear_priority_window_state()
@@ -2822,10 +2855,10 @@ func _has_unresolved_stack_action_window() -> bool:
 	game_manager.prune_stale_stack_actions()
 	return _board_leaving_activation_linger_pending \
 		or _authoritative_stack_resolution_pending \
+		or pending_blot_spell != null \
 		or pending_combat_reveal_linger_action != null \
 		or pending_humbaba_action != null \
 		or pending_retreat_action != null \
-		or pending_tezcatlipoca_titlacauan_action != null \
 		or not game_manager.action_stack.is_empty() \
 		or not game_manager.resolving_stack_actions.is_empty()
 
@@ -3191,6 +3224,158 @@ func _resolve_authoritative_creature_summon_sacrifices(
 			sacrificed.on_sacrificed_for_summon(game_manager, summoned_card)
 		_resolve_authoritative_creature_summon_sacrifices(sacrifices, summoned_card, on_complete, index + 1)
 	game_manager.request_send_to_graveyard(sacrificed, finish, false, false)
+
+func _clear_pending_authoritative_blot_cast() -> void:
+	pending_blot_spell = null
+	pending_blot_sacrifice_target = null
+	pending_blot_selected_creatures.clear()
+	pending_blot_costs_paid = false
+	pending_blot_display_zone = null
+	pending_blot_cast_command.clear()
+
+func _begin_authoritative_blot_cast(
+	spell: BlotSacrifice,
+	player: Player,
+	sacrifice_target: Card,
+	prepared_spell: bool,
+	command: Dictionary
+) -> bool:
+	if spell == null or player == null:
+		move_failed.emit("Blot Sacrifice could not identify its caster.")
+		return false
+	if pending_blot_spell != null:
+		move_failed.emit("Another Blot Sacrifice payment is still resolving.")
+		return false
+	if not _can_use_creature_for_summon_sacrifice(sacrifice_target, player):
+		move_failed.emit("Blot Sacrifice requires a valid friendly creature sacrifice.")
+		return false
+	var original_sacrifice_cost := spell.sacrifice_cost
+	spell.sacrifice_cost = 0
+	var paid := false
+	if prepared_spell:
+		if not spell.can_activate_prepared(game_manager, player):
+			spell.sacrifice_cost = original_sacrifice_cost
+			move_failed.emit(_get_move_activation_failure_reason(spell, true, player))
+			return false
+		paid = game_manager.activate_prepared_card(spell, player)
+	else:
+		var play_failure_reason := game_manager.get_play_card_failure_reason(player, spell, null)
+		if not play_failure_reason.is_empty():
+			spell.sacrifice_cost = original_sacrifice_cost
+			move_failed.emit(play_failure_reason)
+			return false
+		var mana_required := game_manager.get_card_play_mana_cost(player, spell, false)
+		paid = spell.pay_costs_with_mana_cost(player, mana_required, game_manager)
+		if paid and mana_required < spell.mana_cost:
+			game_manager.claim_cost_adjustments(
+				spell,
+				spell.mana_cost,
+				Card.COST_KIND_HAND_PLAY,
+				{"player": player, "prepared": false}
+			)
+	spell.sacrifice_cost = original_sacrifice_cost
+	spell.clear_pending_chosen_sacrifices()
+	if not paid:
+		move_failed.emit(_get_move_cost_payment_failure_reason(spell, prepared_spell, player))
+		return false
+	pending_blot_spell = spell
+	pending_blot_sacrifice_target = sacrifice_target
+	pending_blot_costs_paid = true
+	pending_blot_display_zone = spell.current_zone if prepared_spell else _resolve_command_display_zone(command, player)
+	pending_blot_cast_command = command.duplicate(true)
+	var finish_sacrifice := func() -> void:
+		var sacrifice_paid := not is_instance_valid(sacrifice_target) \
+			or sacrifice_target.current_zone == null \
+			or not sacrifice_target.current_zone.is_board_zone()
+		if not sacrifice_paid:
+			_clear_pending_authoritative_blot_cast()
+			move_failed.emit("%s could not be sacrificed for Blot Sacrifice." % sacrifice_target.card_name)
+			return
+		# Perish hooks schedule their selectors when the card reaches the
+		# graveyard. Queue Blot on the following frame so that selector becomes
+		# the active authoritative prompt first.
+		move_validated.emit(pending_blot_cast_command)
+		call_deferred("_try_queue_pending_authoritative_blot_action")
+	game_manager.request_send_to_graveyard(sacrifice_target, finish_sacrifice, false, false)
+	return true
+
+func _try_queue_pending_authoritative_blot_action() -> void:
+	if pending_blot_spell == null \
+			or not _pending_ui_interactions.is_empty() \
+			or not _queued_ui_interactions.is_empty():
+		return
+	_queue_pending_authoritative_blot_action()
+
+func _queue_pending_authoritative_blot_action() -> void:
+	var spell := pending_blot_spell
+	var sacrifice_target := pending_blot_sacrifice_target
+	var display_zone := pending_blot_display_zone
+	_clear_pending_authoritative_blot_cast()
+	if spell == null or game_manager == null or game_manager.is_game_over:
+		return
+	var action := CardAction.new()
+	action.type = CardAction.Type.SPELL
+	action.source_player = spell.card_owner
+	action.card = spell
+	action.display_zone = display_zone
+	action.resolution_text = "Blot Sacrifice resolves."
+	action.event_data["linger_for_visibility"] = true
+	action.resolve_callback = func() -> void:
+		game_manager.notify_spell_played(spell.card_owner, spell)
+		if spell.get_available_summon_zones().is_empty():
+			if spell.should_go_to_graveyard() and spell.current_zone != spell.card_owner.graveyard_zone:
+				spell.card_owner.move_card(spell, spell.card_owner.graveyard_zone)
+			game_manager.note_player_feedback("Blot Sacrifice resolved, but no open zone was available.")
+			return
+		if spell.get_valid_hand_creatures(BlotSacrifice.MAX_SUMMON_LEVELS, []).is_empty():
+			if spell.should_go_to_graveyard() and spell.current_zone != spell.card_owner.graveyard_zone:
+				spell.card_owner.move_card(spell, spell.card_owner.graveyard_zone)
+			game_manager.note_player_feedback("Blot Sacrifice resolved, but there were no valid creatures in hand to summon.")
+			return
+		_mark_deferred_authoritative_action(action, "blot_sacrifice_choice")
+		_emit_ui_interaction_for_player(spell.card_owner, "blot_sacrifice", {
+			"source_uid": spell.uid,
+			"sacrifice_target_uid": sacrifice_target.uid if sacrifice_target != null else "",
+		})
+	_assign_stack_display_zone(action, display_zone)
+	game_manager.push_to_stack(action)
+	move_validated.emit({
+		"type": "blot_sacrifice_queued",
+		"source_uid": spell.uid,
+	})
+	_advance_authoritative_priority()
+
+func _get_valid_authoritative_blot_choices(spell: BlotSacrifice, raw_uids: Array) -> Dictionary:
+	var result := {
+		"ok": false,
+		"reason": "Blot Sacrifice received an invalid creature selection.",
+		"cards": [],
+	}
+	if spell == null:
+		return result
+	var selected: Array[Card] = []
+	var seen_uids := {}
+	var remaining_levels := BlotSacrifice.MAX_SUMMON_LEVELS
+	var available_slots := spell.get_available_summon_zones().size()
+	for raw_uid in raw_uids:
+		var uid := str(raw_uid).strip_edges()
+		if uid == "" or seen_uids.has(uid):
+			result["reason"] = "Blot Sacrifice choices must be unique creatures."
+			return result
+		if selected.size() >= available_slots:
+			result["reason"] = "Blot Sacrifice selected more creatures than there are open zones."
+			return result
+		var creature := game_manager.get_card_by_uid(uid)
+		if creature == null or creature not in spell.get_valid_hand_creatures(remaining_levels, selected):
+			result["reason"] = "Blot Sacrifice selected a creature that is no longer summonable."
+			return result
+		seen_uids[uid] = true
+		selected.append(creature)
+		remaining_levels -= creature.get_effective_level()
+	result["ok"] = true
+	result["reason"] = ""
+	result["cards"] = selected
+	return result
 
 func _get_required_player_for_command(command: Dictionary) -> Player:
 	return MatchCommandRegistryScript.get_required_player(command, game_manager, self)
@@ -3810,6 +3995,16 @@ func _process_command_impl(command: Dictionary) -> bool:
 				return false
 			var player := acting_player
 			var prepared_spell := spell.is_prepared and spell.current_zone != null and spell.current_zone.is_board_zone()
+			if _uses_authoritative_headless_priority_flow() and spell is BlotSacrifice:
+				var blot_sacrifice_uid := str(command.get("sacrifice_uid", "")).strip_edges()
+				var blot_sacrifice_target := game_manager.get_card_by_uid(blot_sacrifice_uid) if blot_sacrifice_uid != "" else null
+				return _begin_authoritative_blot_cast(
+					spell as BlotSacrifice,
+					player,
+					blot_sacrifice_target,
+					prepared_spell,
+					command
+				)
 			
 			# Set chosen discards
 			var discard_uids: Array = command.get("discard_uids", [])
@@ -3895,6 +4090,35 @@ func _process_command_impl(command: Dictionary) -> bool:
 			)
 			if (spell as SpellCard).should_go_to_graveyard() and spell.current_zone != player.graveyard_zone:
 				player.move_card(spell, player.graveyard_zone)
+			move_validated.emit(command)
+			return true
+		"blot_sacrifice_choice":
+			var source_uid := str(command.get("source_uid", "")).strip_edges()
+			var blot := game_manager.get_card_by_uid(source_uid) as BlotSacrifice
+			if blot == null:
+				move_failed.emit("blot_sacrifice_choice: spell not found")
+				return false
+			var pending_blot_action := _find_pending_deferred_action_for_source("blot_sacrifice_choice", blot)
+			if pending_blot_action == null:
+				move_failed.emit("blot_sacrifice_choice: no Blot Sacrifice choice is pending")
+				return false
+			var choice_result := _get_valid_authoritative_blot_choices(blot, command.get("choices", []))
+			if not bool(choice_result.get("ok", false)):
+				move_failed.emit(str(choice_result.get("reason", "Blot Sacrifice choices were invalid.")))
+				return false
+			var chosen_creatures: Array[Card] = []
+			for chosen in choice_result.get("cards", []):
+				if chosen is Card:
+					chosen_creatures.append(chosen as Card)
+			var summoned_creatures := blot.summon_selected_creatures(game_manager, chosen_creatures)
+			if blot.should_go_to_graveyard() and blot.current_zone != blot.card_owner.graveyard_zone:
+				blot.card_owner.move_card(blot, blot.card_owner.graveyard_zone)
+			var feedback := "Blot Sacrifice fizzled: no creatures chosen to summon."
+			if not chosen_creatures.is_empty():
+				feedback = "Blot Sacrifice summoned %d creature(s)." % summoned_creatures.size()
+			command["public_log_message"] = feedback
+			_complete_deferred_prompt_action("blot_sacrifice_choice", blot, feedback, false)
+			command["_suppress_full_state_broadcast"] = true
 			move_validated.emit(command)
 			return true
 		"activate_prepared_hex":
@@ -4035,6 +4259,11 @@ func _process_command_impl(command: Dictionary) -> bool:
 				)
 			move_validated.emit(command)
 			return true
+		"tonal_extraction_choice":
+			var delegated_command := command.duplicate(true)
+			delegated_command["type"] = "activate_power"
+			delegated_command["power_uid"] = str(command.get("source_uid", ""))
+			return _process_command_impl(delegated_command)
 		"cast_charm":
 			var charm_uid: String = command.get("charm_uid", "")
 			var charm := game_manager.get_card_by_uid(charm_uid)
@@ -5136,10 +5365,6 @@ func _process_command_impl(command: Dictionary) -> bool:
 				game_manager.note_player_feedback(feedback)
 				last_resolution_text = feedback
 			move_validated.emit(command)
-			if pending_tezcatlipoca_titlacauan_action != null:
-				var action := pending_tezcatlipoca_titlacauan_action
-				pending_tezcatlipoca_titlacauan_action = null
-				_complete_deferred_authoritative_action(action, "tezcatlipoca_active_titlacauan_choice")
 			return true
 		"nusku_active_core_flame_choice":
 			var source_uid: String = command.get("source_uid", "")
@@ -5434,9 +5659,9 @@ func _process_command_impl(command: Dictionary) -> bool:
 			)
 			game_manager.push_to_stack(pcr_action)
 			_clear_pending_turn_action_after_priority_response(pcr_charm_card.card_owner)
+			move_validated.emit(command)
 			if _uses_authoritative_headless_priority_flow():
 				_advance_authoritative_priority()
-			move_validated.emit(command)
 			return true
 		"play_priority_ability":
 			var pra_source_uid: String = command.get("source_uid", "")
@@ -5503,9 +5728,9 @@ func _process_command_impl(command: Dictionary) -> bool:
 					pra_source.activate(game_manager)
 			game_manager.push_to_stack(pra_action)
 			_clear_pending_turn_action_after_priority_response(pra_source.card_owner)
+			move_validated.emit(command)
 			if _uses_authoritative_headless_priority_flow():
 				_advance_authoritative_priority()
-			move_validated.emit(command)
 			return true
 		"priority_pass":
 			if _uses_authoritative_headless_priority_flow():
@@ -5665,9 +5890,9 @@ func _process_command_impl(command: Dictionary) -> bool:
 				return false
 			game_manager.push_to_stack(phr_ability)
 			_clear_pending_turn_action_after_priority_response(phr_hex.card_owner)
+			move_validated.emit(command)
 			if _uses_authoritative_headless_priority_flow():
 				_advance_authoritative_priority()
-			move_validated.emit(command)
 			return true
 	move_failed.emit("Unknown command type: " + str(command.get("type")))
 	return false
@@ -5700,8 +5925,7 @@ func _process_combat_retreat_decision(command: Dictionary) -> bool:
 			_clear_pending_retreat_state()
 			move_failed.emit("combat_retreat_decision: next retreat prompt was unavailable")
 			return false
-		var player_idx := game_manager.players.find(_get_card_controller(next_prompt))
-		request_ui_interaction.emit(player_idx, "combat_retreat", {
+		_emit_ui_interaction_for_player(_get_card_controller(next_prompt), "combat_retreat", {
 			"action": action,
 			"target": target,
 			"askelladen_uid": str(next_prompt.uid),
