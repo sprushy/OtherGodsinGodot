@@ -54,12 +54,13 @@ func resolve(game_manager: GameManager, _target = null) -> void:
 		])
 		return
 
-	var prepare_zone := _find_prepare_zone(controller)
+	var prepare_zone := _find_prepare_zone(controller, game_manager)
 	if prepare_zone == null:
-		game_manager.note_player_feedback("%s found a magical card, but %s had no open zone to prepare it." % [
-			card_name,
-			controller.player_name
-		])
+		game_manager.note_player_feedback("%s found a magical card, but the zone it was played on could not prepare it." % card_name)
+		return
+
+	if not _clear_played_zone_for_prepared_card(prepare_zone, controller):
+		game_manager.note_player_feedback("%s found a magical card, but the zone it was played on could not be cleared." % card_name)
 		return
 
 	found_card.card_owner = controller
@@ -112,19 +113,43 @@ func _join_card_names(cards: Array[Card], viewer: Player = null) -> String:
 			names.append(card.get_target_log_display_name(viewer))
 	return ", ".join(names)
 
-func _find_prepare_zone(controller: Player) -> Zone:
+func _find_prepare_zone(controller: Player, game_manager: GameManager) -> Zone:
 	if controller == null:
 		return null
-	for zone in controller.reserve_zones:
-		if _can_prepare_into_zone(zone):
-			return zone
-	for zone in controller.frontline_zones:
-		if _can_prepare_into_zone(zone):
-			return zone
+	var played_zone := _get_played_zone(controller, game_manager)
+	if _can_prepare_into_zone(played_zone):
+		return played_zone
 	return null
 
 func _can_prepare_into_zone(zone: Zone) -> bool:
-	return zone != null and zone.cards.is_empty() and zone.get_equipment().is_empty()
+	if zone == null or not zone.is_board_zone():
+		return false
+	if not zone.get_equipment().is_empty():
+		return false
+	for card in zone.cards:
+		if card != self:
+			return false
+	return true
+
+func _get_played_zone(controller: Player, game_manager: GameManager) -> Zone:
+	if current_zone != null and current_zone.is_board_zone() and current_zone.zone_owner == controller:
+		return current_zone
+	if game_manager == null:
+		return null
+	var display_zone := game_manager.get_resolving_action_display_zone(self)
+	if display_zone != null and display_zone.is_board_zone() and display_zone.zone_owner == controller:
+		return display_zone
+	return null
+
+func _clear_played_zone_for_prepared_card(prepare_zone: Zone, controller: Player) -> bool:
+	if prepare_zone == null:
+		return false
+	if current_zone != prepare_zone:
+		return prepare_zone.cards.is_empty()
+	if controller == null or controller.graveyard_zone == null:
+		return false
+	controller.move_card(self, controller.graveyard_zone)
+	return current_zone != prepare_zone and prepare_zone.cards.is_empty()
 
 func _target_zone_label(zone: Zone, controller: Player) -> String:
 	if zone == null or controller == null:

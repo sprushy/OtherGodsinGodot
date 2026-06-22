@@ -142,6 +142,17 @@ func end_stack_action_resolution(action: CardAction) -> void:
 		return
 	resolving_stack_actions.erase(action)
 
+func get_resolving_action_display_zone(source_card: Card = null) -> Zone:
+	for i in range(resolving_stack_actions.size() - 1, -1, -1):
+		var action := resolving_stack_actions[i]
+		if action == null:
+			continue
+		if source_card != null and action.card != source_card:
+			continue
+		if action.display_zone != null:
+			return action.display_zone
+	return null
+
 func _is_zone_in_play(zone: Zone) -> bool:
 	if zone == null:
 		return false
@@ -3684,19 +3695,19 @@ func send_to_deck_bottom_with_hook(card: Card) -> void:
 	card.card_owner.move_card(card, card.card_owner.deck_zone)
 
 func _on_player_card_moved(card: Card, from_zone: Zone, to_zone: Zone) -> void:
-	if card == null or from_zone == null:
+	if card == null:
 		return
 	card.remove_status_effects_with_flag("clear_on_card_move")
-	if from_zone.is_board_zone() and (to_zone == null or not to_zone.is_board_zone()):
+	if from_zone != null and from_zone.is_board_zone() and (to_zone == null or not to_zone.is_board_zone()):
 		card.board_entry_order = -1
-	elif to_zone != null and not from_zone.is_board_zone() and to_zone.is_board_zone():
+	elif to_zone != null and (from_zone == null or not from_zone.is_board_zone()) and to_zone.is_board_zone():
 		_ensure_board_entry_order(card)
 	if prepared_hexes.has(card) and (to_zone == null or not to_zone.is_board_zone() or not card.is_prepared):
 		prepared_hexes.erase(card)
 	if prepared_charms.has(card) and (to_zone == null or not to_zone.is_board_zone() or not card.is_prepared):
 		prepared_charms.erase(card)
 	if card.card_type == Card.CardType.CREATURE and to_zone != null:
-		if from_zone.zone_type == Zone.ZoneType.ABYSS and to_zone.is_board_zone():
+		if from_zone != null and from_zone.zone_type == Zone.ZoneType.ABYSS and to_zone.is_board_zone():
 			_notify_creature_returned_from_void(card)
 		elif to_zone.zone_type == Zone.ZoneType.ABYSS:
 			_notify_creature_sent_to_void(card)

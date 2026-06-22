@@ -332,7 +332,12 @@ static func _serialize_action_stack(action_stack: Array, gm: GameManager, viewer
 	for action in action_stack:
 		if action == null or not (action is CardAction):
 			continue
-		if gm != null and action in gm.resolving_stack_actions:
+		var is_resolving: bool = gm != null and action in gm.resolving_stack_actions
+		var has_visible_resolving_card: bool = is_resolving \
+			and action.display_zone != null \
+			and action.card != null \
+			and action.card.is_magical_card()
+		if is_resolving and not has_visible_resolving_card:
 			continue
 		var serialized := (action as CardAction).to_dict(gm)
 		if action.card != null and action.card.is_magical_card():

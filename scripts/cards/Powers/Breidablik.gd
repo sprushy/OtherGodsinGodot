@@ -151,7 +151,7 @@ func harbor_priest(game_manager: GameManager, target: Card) -> bool:
 		return false
 	if not spend_activation_mana(HARBOR_MANA_COST, game_manager):
 		return false
-	_store_priest(resolved_target)
+	_store_priest(resolved_target, game_manager)
 	if game_manager != null:
 		game_manager.note_player_feedback("%s harbored %s." % [card_name, resolved_target.card_name])
 	print(card_name + ": " + resolved_target.card_name + " was placed under this card.")
@@ -171,11 +171,15 @@ func return_priest(game_manager: GameManager, priest: Card) -> bool:
 	stored_priests.erase(stored_priest)
 	stored_priest_origins.erase(stored_priest)
 	zone.add_card(stored_priest)
+	if zone.is_in_play_zone():
+		stored_priest.reset_board_leave_hooks()
 	stored_priest.is_face_down = false
 	stored_priest.is_stealth = false
 	stored_priest.wake_up()
 	stored_priest.reset_creature_action_state()
 	stored_priest.summoned_this_turn = false
+	if stored_priest.card_owner != null:
+		stored_priest.card_owner.card_moved.emit(stored_priest, null, zone)
 	return_window_open = can_return_priest(game_manager)
 	_emit_visual_state_changed()
 	return true
@@ -234,17 +238,31 @@ func _can_store_priest(card: Card) -> bool:
 		and card.current_zone.is_board_zone() \
 		and not card.has_attacked_this_turn
 
-func _store_priest(priest: Card) -> void:
+func _store_priest(priest: Card, game_manager: GameManager = null) -> void:
 	if priest == null or priest.current_zone == null:
 		return
+	var from_zone := priest.current_zone
 	stored_priest_origins[priest] = {
-		"zone_type": priest.current_zone.zone_type,
-		"zone_index": priest.current_zone.zone_index,
+		"zone_type": from_zone.zone_type,
+		"zone_index": from_zone.zone_index,
 	}
+	if from_zone.is_board_zone():
+		priest.last_board_zone_type = from_zone.zone_type
+		priest.last_board_zone_index = from_zone.zone_index
+		if priest.has_method("reset_activation_counter"):
+			priest.reset_activation_counter()
+		priest.remove_effects_expiring_after_combat()
 	for equipment_card in priest.equipment.duplicate():
 		equipment_card.unequip()
-	priest.current_zone.remove_card(priest)
+	if from_zone.is_in_play_zone():
+		priest.process_board_leave_hooks(game_manager)
+	from_zone.remove_card(priest)
+	priest.board_entry_order = -1
 	stored_priests.append(priest)
+	if priest.card_owner != null:
+		priest.card_owner.card_moved.emit(priest, from_zone, null)
+	if from_zone.is_in_play_zone():
+		priest.clear_board_leave_state()
 	_emit_visual_state_changed()
 
 func _return_all_stored_priests() -> void:
@@ -260,11 +278,15 @@ func _return_all_stored_priests() -> void:
 			continue
 		stored_priest_origins.erase(priest)
 		zone.add_card(priest)
+		if zone.is_in_play_zone():
+			priest.reset_board_leave_hooks()
 		priest.is_face_down = false
 		priest.is_stealth = false
 		priest.wake_up()
 		priest.reset_creature_action_state()
 		priest.summoned_this_turn = false
+		if priest.card_owner != null:
+			priest.card_owner.card_moved.emit(priest, null, zone)
 	stored_priests = unresolved
 	return_window_open = false
 	_emit_visual_state_changed()

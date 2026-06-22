@@ -226,6 +226,8 @@ var _full_control_chord_latched: bool = false
 var _last_priority_preferences_signature: String = ""
 var _pending_local_priority_prompt_signature: Dictionary = {}
 var _visible_priority_prompt_signature: Dictionary = {}
+var _pending_priority_prompt_command_signature: Dictionary = {}
+var _handled_priority_prompt_keys: Dictionary = {}
 var _pending_priority_response_submission: Dictionary = {}
 var _pending_priority_response_target_selection: Dictionary = {}
 var _pending_priority_auto_pass_signature: Dictionary = {}
@@ -5323,6 +5325,8 @@ func start_game(
 	_pending_forfeit_return_to_menu = false
 	_pending_post_game_return_to_menu = false
 	_series_between_games_active = false
+	_handled_priority_prompt_keys.clear()
+	_clear_priority_prompt_command_context()
 	_reset_turn_activity_timers()
 	_hide_game_result_overlay()
 	_hide_reinforcement_overlay()
@@ -11635,6 +11639,17 @@ func _prompt_generic_spell_target_selection(spell: SpellCard) -> void:
 		selected_card = null
 		_set_action_label_text("Cancelled " + spell.card_name + ".")
 		update_ui()
+	if _should_prompt_targets_in_overlay(targets):
+		_show_card_selection_overlay(
+			"Choose a target for " + spell.card_name,
+			targets,
+			choose_target,
+			cancel_target,
+			_get_selection_cursor_mode_for_source(spell)
+		)
+		_set_action_label_text(spell.card_name + ": choose a valid target.")
+		update_ui()
+		return
 	var validate_spell_target := func(clicked_card: Card) -> bool:
 		return clicked_card != null and clicked_card in spell.get_valid_targets(game_manager)
 	_begin_pending_click_selection(
@@ -12437,7 +12452,7 @@ func _prompt_charm_target_selection(charm: CharmCard, triggering_action: CardAct
 	_set_action_label_text(charm.card_name + ": choosing target. Click a valid card.")
 	update_ui()
 
-func _should_prompt_charm_targets_in_overlay(targets: Array) -> bool:
+func _should_prompt_targets_in_overlay(targets: Array) -> bool:
 	for target in targets:
 		if not (target is Card):
 			return true
@@ -12453,6 +12468,9 @@ func _should_prompt_charm_targets_in_overlay(targets: Array) -> bool:
 		]:
 			return true
 	return false
+
+func _should_prompt_charm_targets_in_overlay(targets: Array) -> bool:
+	return _should_prompt_targets_in_overlay(targets)
 
 func _should_reveal_charm_target_cards(charm: CharmCard, targets: Array) -> bool:
 	if charm == null:
@@ -12620,13 +12638,14 @@ func _clear_interaction_refs_for_moved_card(card: Card, from_zone: Zone, to_zone
 	return interaction_refs_changed
 
 func _on_local_player_card_moved(card: Card, from_zone: Zone, to_zone: Zone) -> void:
-	if card == null or from_zone == null or to_zone == null:
+	if card == null or from_zone == null:
 		return
 	_invalidate_cached_board_layouts()
 	var cleared_interaction_refs := _clear_interaction_refs_for_moved_card(card, from_zone, to_zone)
-	if from_zone.is_board_zone() or to_zone.is_board_zone() or cleared_interaction_refs:
+	if from_zone.is_board_zone() or (to_zone != null and to_zone.is_board_zone()) or cleared_interaction_refs:
 		_schedule_local_ui_refresh()
 	if not _is_networked_client \
+			and to_zone != null \
 			and to_zone.zone_type == Zone.ZoneType.FRONTLINE \
 			and card.current_zone == to_zone \
 			and (card.is_prepared or card.is_face_down or card.is_stealth):
@@ -12635,9 +12654,9 @@ func _on_local_player_card_moved(card: Card, from_zone: Zone, to_zone: Zone) -> 
 		return
 	if from_zone.zone_type != Zone.ZoneType.HAND:
 		return
-	if to_zone.is_board_zone() and card.card_type in [Card.CardType.CREATURE, Card.CardType.STRUCTURE]:
+	if to_zone != null and to_zone.is_board_zone() and card.card_type in [Card.CardType.CREATURE, Card.CardType.STRUCTURE]:
 		return
-	if not _is_in_play_zone(to_zone):
+	if to_zone == null or not _is_in_play_zone(to_zone):
 		return
 	if card.current_zone != to_zone:
 		return
@@ -13746,6 +13765,7 @@ func _on_empty_zone_pressed(zone: Zone) -> void:
 			else:
 				_set_action_label_text(_get_prepare_card_unavailable_text(preparing_card, zone))
 		else:
+			_pending_spell_display_zone = _get_drop_play_display_zone(charm, zone)
 			if charm.targets:
 				_prompt_charm_target_selection(charm)
 			else:
@@ -13766,6 +13786,7 @@ func _on_empty_zone_pressed(zone: Zone) -> void:
 			else:
 				_set_action_label_text(_get_prepare_card_unavailable_text(preparing_card, zone))
 		elif _can_play_card_for_turn_action(game_manager.current_player, selected_card, zone):
+			_pending_spell_display_zone = _get_drop_play_display_zone(selected_card, zone)
 			if selected_card is ApollyonsDemiurge or selected_card.card_name == "Apollyon's Demiurge":
 				_show_demiurge_prompt(selected_card)
 			elif selected_card is BookOfLife:
@@ -14786,6 +14807,7 @@ func _try_play_selected_creature_to_zone(zone: Zone) -> void:
 	if not _can_play_card_for_turn_action(game_manager.current_player, selected_card, zone):
 		_set_action_label_text(_get_play_card_unavailable_text(selected_card, zone))
 		_pending_creature_play_resolver = Callable()
+		update_ui()
 		return
 	if selected_card.sacrifice_cost > 0 and not _drag_sacrifice_done:
 		_sacrifice_pending_card = selected_card
@@ -20461,6 +20483,45 @@ func _build_priority_prompt_payload_signature(player_index: int, data: Dictionar
 			signature["top_source_index"] = game_manager.players.find(top.source_player)
 	return signature
 
+func _get_priority_prompt_tracking_key(player_index: int, prompt_id: int) -> String:
+	if player_index < 0 or prompt_id < 0:
+		return ""
+	var match_id := str(_current_match_info.get("match_id", ""))
+	return "%s:%d:%d" % [match_id, player_index, prompt_id]
+
+func _remember_handled_priority_prompt_signature(prompt_signature: Dictionary) -> void:
+	var player_index := int(prompt_signature.get("player_index", -1))
+	var prompt_id := int(prompt_signature.get("prompt_id", -1))
+	var key := _get_priority_prompt_tracking_key(player_index, prompt_id)
+	if key == "":
+		return
+	_handled_priority_prompt_keys[key] = true
+	while _handled_priority_prompt_keys.size() > 96:
+		var keys := _handled_priority_prompt_keys.keys()
+		if keys.is_empty():
+			return
+		_handled_priority_prompt_keys.erase(keys[0])
+
+func _begin_priority_prompt_command_context() -> void:
+	_pending_priority_prompt_command_signature.clear()
+	if not _visible_priority_prompt_signature.is_empty():
+		_pending_priority_prompt_command_signature = _visible_priority_prompt_signature.duplicate(true)
+
+func _clear_priority_prompt_command_context() -> void:
+	_pending_priority_prompt_command_signature.clear()
+
+func _remember_current_priority_prompt_as_handled() -> void:
+	var prompt_signature := _visible_priority_prompt_signature
+	if prompt_signature.is_empty():
+		prompt_signature = _pending_priority_prompt_command_signature
+	_remember_handled_priority_prompt_signature(prompt_signature)
+	_pending_priority_prompt_command_signature.clear()
+
+func _should_ignore_handled_priority_prompt(player_index: int, data: Dictionary) -> bool:
+	var prompt_id := int(data.get("_prompt_id", -1))
+	var key := _get_priority_prompt_tracking_key(player_index, prompt_id)
+	return key != "" and _handled_priority_prompt_keys.has(key)
+
 func _auto_pass_priority_prompt(player_index: int, data: Dictionary) -> bool:
 	if not auto_priority or _is_full_control_active():
 		return false
@@ -20488,6 +20549,7 @@ func _auto_pass_priority_prompt(player_index: int, data: Dictionary) -> bool:
 	if prompt_signature == _pending_priority_auto_pass_signature:
 		return true
 	_pending_priority_auto_pass_signature = prompt_signature
+	_remember_handled_priority_prompt_signature(prompt_signature)
 	_hide_priority_prompt()
 	_update_waiting_overlay()
 	_queue_deferred_priority_pass()
@@ -20631,6 +20693,7 @@ func _refresh_pending_priority_response_target_selection_from_state() -> void:
 func _request_network_priority_response(command: Dictionary, response_card: Card, response_data: Dictionary) -> void:
 	_clear_pending_priority_response_target_selection()
 	_mark_priority_response_submission_pending(response_card, response_data)
+	_remember_current_priority_prompt_as_handled()
 	var submitted := false
 	if game_input != null:
 		submitted = game_input.submit_action(command)
@@ -20638,6 +20701,8 @@ func _request_network_priority_response(command: Dictionary, response_card: Card
 		network_manager.request_action(command)
 		submitted = true
 	if not submitted:
+		_handled_priority_prompt_keys.clear()
+		_clear_priority_prompt_command_context()
 		_clear_pending_priority_response_submission()
 		var card_name := response_card.card_name if response_card != null else "response"
 		_set_action_label_text("Could not submit " + card_name + ".")
@@ -20934,6 +20999,7 @@ func _on_priority_pass_pressed() -> void:
 		var local_player_index := _get_local_priority_player_index()
 		if local_player_index >= 0 and priority_player_index != local_player_index:
 			return
+	_remember_current_priority_prompt_as_handled()
 	_hide_priority_prompt()
 	if match_manager != null and match_manager.uses_authoritative_priority_flow():
 		_submit_authoritative_priority_command({type = "priority_pass"})
@@ -20979,12 +21045,26 @@ func _run_deferred_priority_pass(expected_state: Dictionary) -> void:
 	_on_priority_pass_pressed()
 
 func _submit_authoritative_priority_command(command: Dictionary) -> bool:
+	var command_type := str(command.get("type", ""))
+	var tracks_priority_prompt := command_type in [
+		"priority_pass",
+		"play_hex_response",
+		"play_charm_response",
+		"cast_spell",
+		"play_priority_ability",
+	]
+	if tracks_priority_prompt:
+		_remember_current_priority_prompt_as_handled()
+	var submitted := false
 	if game_input != null:
-		return game_input.submit_action(command)
-	if network_manager != null and bool(network_manager.get("is_server")):
+		submitted = game_input.submit_action(command)
+	elif network_manager != null and bool(network_manager.get("is_server")):
 		network_manager.request_action(command)
-		return true
-	return false
+		submitted = true
+	if not submitted and tracks_priority_prompt:
+		_handled_priority_prompt_keys.clear()
+		_clear_priority_prompt_command_context()
+	return submitted
 
 func _show_priority_response_submit_failure(card: Card) -> void:
 	var card_name := card.card_name if card != null else "response"
@@ -21028,6 +21108,7 @@ func _begin_authoritative_priority_charm_target_selection(
 		if not submitted:
 			_show_priority_response_submit_failure(charm)
 	var cancel_charm_response_target := func() -> void:
+		_clear_priority_prompt_command_context()
 		_set_action_label_text("Cancelled " + charm.card_name + " target selection.")
 		update_ui()
 		_offer_priority()
@@ -21039,7 +21120,7 @@ func _begin_authoritative_priority_charm_target_selection(
 		cancel_charm_response_target
 	)
 	_sync_sacrifice_cursor()
-	_set_action_label_text(charm.card_name + ": click a friendly creature to protect.")
+	_set_action_label_text(charm.card_name + ": click a valid target.")
 	update_ui()
 
 func _try_submit_authoritative_priority_response(card: Card) -> bool:
@@ -21160,6 +21241,7 @@ func _try_submit_authoritative_priority_response(card: Card) -> bool:
 	return false
 
 func _on_priority_response_chosen(card: Card) -> void:
+	_begin_priority_prompt_command_context()
 	_hide_priority_prompt()
 	if _try_submit_authoritative_priority_response(card):
 		return
@@ -25486,6 +25568,7 @@ func _apply_prompt_choice_feedback() -> void:
 func _on_match_move_failed(reason: String) -> void:
 	_clear_pending_priority_response_target_selection()
 	_clear_pending_priority_response_submission()
+	_clear_paid_hand_card_preview()
 	_pending_reveal_auto_submit_keys.clear()
 	_set_action_label_text(reason)
 	update_ui()
@@ -25493,6 +25576,7 @@ func _on_match_move_failed(reason: String) -> void:
 func _on_game_input_submission_rejected(reason: String) -> void:
 	_clear_pending_priority_response_target_selection()
 	_clear_pending_priority_response_submission()
+	_clear_paid_hand_card_preview()
 	_pending_reveal_auto_submit_keys.clear()
 	if reason.strip_edges().is_empty():
 		return
@@ -27430,6 +27514,8 @@ func _apply_network_event(event_type: String, data: Dictionary) -> void:
 				_update_waiting_overlay()
 				update_ui()
 				return
+			_handled_priority_prompt_keys.clear()
+			_clear_priority_prompt_command_context()
 			if _reinforcement_overlay != null and is_instance_valid(_reinforcement_overlay):
 				_set_reinforcement_locked(false)
 				if _reinforcement_submit_button != null and _reinforcement_main_grid == null:
@@ -28218,6 +28304,9 @@ func _apply_priority_offered(data: Dictionary) -> void:
 
 func _apply_priority_prompt_for_player(player_index: int, data: Dictionary) -> void:
 	var prompt_signature := _build_priority_prompt_payload_signature(player_index, data)
+	if _should_ignore_handled_priority_prompt(player_index, data):
+		_update_waiting_overlay()
+		return
 	if _should_defer_priority_prompt_refresh(player_index, data):
 		if _is_priority_prompt_visible():
 			_hide_priority_prompt()
@@ -28305,6 +28394,7 @@ func _show_remote_priority_prompt(responses: Array, action_message: String = "")
 		btn.text = "Use " + card_name
 		btn.pressed.connect(func() -> void:
 			_set_action_label_text("Selected " + card_name + " from priority.")
+			_begin_priority_prompt_command_context()
 			_hide_priority_prompt()
 			if rtype == "hex":
 				var target_is_attacker: bool = response.get("target_is_attacker", false)
@@ -28345,14 +28435,29 @@ func _show_remote_priority_prompt(responses: Array, action_message: String = "")
 							target_uid = chosen_card.uid,
 							from_hand = from_hand,
 						}, resp_card, response)
-					_mark_priority_response_target_selection_pending(resp_card, response)
-					_show_card_selection_overlay(
-						"Choose a target for " + card_name,
-						target_cards,
-						on_choose_charm_response_target,
-						Callable(),
-						_get_selection_cursor_mode_for_source(resp_card)
-					)
+					var cancel_charm_response_target := func() -> void:
+						_clear_pending_priority_response_target_selection()
+						_clear_priority_prompt_command_context()
+						_set_action_label_text("Cancelled " + card_name + " target selection.")
+						update_ui()
+						_show_remote_priority_prompt(responses)
+					if _should_prompt_targets_in_overlay(target_cards):
+						_mark_priority_response_target_selection_pending(resp_card, response)
+						_show_card_selection_overlay(
+							"Choose a target for " + card_name,
+							target_cards,
+							on_choose_charm_response_target,
+							cancel_charm_response_target,
+							_get_selection_cursor_mode_for_source(resp_card)
+						)
+					else:
+						_begin_remote_priority_charm_target_selection(
+							resp_card as CharmCard,
+							target_cards,
+							from_hand,
+							responses,
+							response
+						)
 			elif rtype == "spell":
 				if target_uids.is_empty():
 					_request_network_priority_response({
@@ -28371,11 +28476,18 @@ func _show_remote_priority_prompt(responses: Array, action_message: String = "")
 							spell_uid = card_uid,
 							target_uid = chosen_card.uid,
 						}, resp_card, response)
+					var cancel_spell_response_target := func() -> void:
+						_clear_pending_priority_response_target_selection()
+						_clear_priority_prompt_command_context()
+						_set_action_label_text("Cancelled " + card_name + " target selection.")
+						update_ui()
+						_show_remote_priority_prompt(responses)
+					_mark_priority_response_target_selection_pending(resp_card, response)
 					_show_card_selection_overlay(
 						"Choose a target for " + card_name,
 						target_cards,
 						on_choose_spell_response_target,
-						Callable(),
+						cancel_spell_response_target,
 						_get_selection_cursor_mode_for_source(resp_card)
 					)
 			elif rtype == "god" or rtype == "ability":
@@ -28396,11 +28508,18 @@ func _show_remote_priority_prompt(responses: Array, action_message: String = "")
 							source_uid = card_uid,
 							target_uid = chosen_card.uid,
 						}, resp_card, response)
+					var cancel_priority_ability_target := func() -> void:
+						_clear_pending_priority_response_target_selection()
+						_clear_priority_prompt_command_context()
+						_set_action_label_text("Cancelled " + card_name + " target selection.")
+						update_ui()
+						_show_remote_priority_prompt(responses)
+					_mark_priority_response_target_selection_pending(resp_card, response)
 					_show_card_selection_overlay(
 						"Choose a target for " + card_name,
 						target_cards,
 						on_choose_priority_ability_target,
-						Callable(),
+						cancel_priority_ability_target,
 						_get_selection_cursor_mode_for_source(resp_card)
 					)
 		)
@@ -28441,6 +28560,7 @@ func _begin_remote_priority_hex_target_selection(
 		}, hex, response_data)
 	var cancel_hex_target := func() -> void:
 		_clear_pending_priority_response_target_selection()
+		_clear_priority_prompt_command_context()
 		_set_action_label_text("Cancelled " + hex.card_name + " target selection.")
 		update_ui()
 		_show_remote_priority_prompt(responses)
@@ -28452,6 +28572,44 @@ func _begin_remote_priority_hex_target_selection(
 		cancel_hex_target
 	)
 	_set_action_label_text(hex.card_name + ": click a creature to target.")
+	update_ui()
+
+func _begin_remote_priority_charm_target_selection(
+	charm: CharmCard,
+	targets: Array,
+	from_hand: bool,
+	responses: Array,
+	response_data: Dictionary
+) -> void:
+	if charm == null or network_manager == null:
+		return
+	_mark_priority_response_target_selection_pending(charm, response_data)
+	var validate_charm_target := func(clicked_card: Card) -> bool:
+		return _is_card_in_targets_by_uid(_resolve_live_prompt_target(clicked_card), targets)
+	var confirm_charm_target := func(chosen_card: Card) -> void:
+		var live_target := _resolve_live_prompt_target(chosen_card)
+		if live_target == null:
+			return
+		_request_network_priority_response({
+			type = "play_charm_response",
+			charm_uid = charm.uid,
+			target_uid = live_target.uid,
+			from_hand = from_hand,
+		}, charm, response_data)
+	var cancel_charm_target := func() -> void:
+		_clear_pending_priority_response_target_selection()
+		_clear_priority_prompt_command_context()
+		_set_action_label_text("Cancelled " + charm.card_name + " target selection.")
+		update_ui()
+		_show_remote_priority_prompt(responses)
+	_begin_pending_click_selection(
+		charm.card_name,
+		charm,
+		validate_charm_target,
+		confirm_charm_target,
+		cancel_charm_target
+	)
+	_set_action_label_text(charm.card_name + ": click a valid target.")
 	update_ui()
 
 func _apply_intercept_offered(data: Dictionary) -> void:
@@ -29386,6 +29544,8 @@ func cleanup() -> void:
 	_prepare_for_match_launch("")
 	_reset_turn_activity_timers()
 	_clear_deferred_turn_action_after_opponent_priority()
+	_handled_priority_prompt_keys.clear()
+	_clear_priority_prompt_command_context()
 	_local_match_result_recorded = false
 	_current_match_info.clear()
 	_clear_hati_moon_hunt_state()
