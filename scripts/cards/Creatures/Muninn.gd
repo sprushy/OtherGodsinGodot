@@ -17,10 +17,7 @@ func _init() -> void:
 	artist = "Daniel Decena"
 	art_path = "res://images/card_art/creatures/Muninn.jpg"
 
-func on_removed(game_manager: GameManager) -> void:
-	call_deferred("_resolve_perish_prime", game_manager)
-
-func _resolve_perish_prime(game_manager: GameManager) -> void:
+func on_perish(game_manager: GameManager) -> void:
 	if game_manager == null or card_owner == null or card_owner.deck_zone == null:
 		return
 	if current_zone != card_owner.graveyard_zone:

@@ -2711,7 +2711,6 @@ func _combat_kill_routed_deferred(
 		for equip in victim.equipment.duplicate():
 			_send_to_abyss_with_hook(equip)
 		victim.card_owner.move_card(victim, victim.card_owner.abyss_zone)
-		_notify_combat_death_resolved(victim)
 		finish.call()
 		return true
 	return request_send_to_graveyard(victim, finish, true, true, bypass_combat_survival)
@@ -3155,7 +3154,6 @@ func _combat_kill_routed(killer: Card, victim: Card, do_void: bool, suppress_all
 		for equip in victim.equipment.duplicate():
 			_send_to_abyss_with_hook(equip)
 		victim.card_owner.move_card(victim, victim.card_owner.abyss_zone)
-		_notify_combat_death_resolved(victim)
 		finish.call()
 		return
 	request_send_to_graveyard(victim, finish, true, true, bypass_combat_survival)
@@ -3460,8 +3458,6 @@ func _send_to_graveyard_with_hook_resolved(
 		destroyed_this_turn.append(card)
 	if replacement_zone != null:
 		card.card_owner.move_card(card, replacement_zone)
-		if combat_death:
-			_notify_combat_death_resolved(card)
 		if replacement_zone == card.card_owner.hand_zone:
 			print("%s returns to %s's hand instead." % [card.card_name, card.card_owner.player_name])
 		if continue_callback.is_valid():
@@ -3482,15 +3478,9 @@ func _send_to_graveyard_with_hook_resolved(
 		card.card_owner.move_card(card, card.card_owner.abyss_zone)
 	else:
 		card.card_owner.move_card(card, card.card_owner.graveyard_zone)
-	if combat_death:
-		_notify_combat_death_resolved(card)
 	if continue_callback.is_valid():
 		continue_callback.call()
 	return true
-
-func _notify_combat_death_resolved(card: Card) -> void:
-	if card != null and card.has_method("on_combat_death_resolved"):
-		card.call("on_combat_death_resolved", self)
 
 func has_pending_return_to_hand_choice() -> bool:
 	return _pending_return_to_hand_card != null

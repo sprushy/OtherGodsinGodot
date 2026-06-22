@@ -9,7 +9,6 @@ const CORE_FLAME_PENDING_CHOICE_UIDS_META := "core_flame_pending_choice_uids"
 const CORE_FLAME_PENDING_MILL_COUNT_META := "core_flame_pending_mill_count"
 
 var _declined_core_flame: bool = false
-var _celestial_light_pending: bool = false
 
 func _init() -> void:
 	super._init()
@@ -24,14 +23,13 @@ func _init() -> void:
 	culture = "Ancient"
 	# flavor_text = "Nusku's fire offers revelation now or judgment later."
 	flavor_text = ""
-	ability_text = "Core Flame ([b]Impact[/b]): You may [b]Mill[/b] 7. Add a magical card milled this way to your hand.\nCelestial Light ([b]Fatality[/b]): If you declined Core Flame, [b]Convert[/b] followers equal to your graveyard size."
+	ability_text = "Core Flame ([b]Impact[/b]): You may [b]Mill[/b] 7. Add a magical card milled this way to your hand.\nCelestial Light ([b]Perish[/b]): If you declined Core Flame, [b]Convert[/b] followers equal to your graveyard size."
 	art_path = ART_PATH
 	name_at_bottom = true
 	artist = "Ricardo Zoppello"
 
 func on_summon(_game_manager: GameManager) -> void:
 	_declined_core_flame = false
-	_celestial_light_pending = false
 	_clear_pending_core_flame_initial_prompt()
 	_clear_pending_core_flame_choice()
 
@@ -112,16 +110,12 @@ func has_pending_core_flame_choice() -> bool:
 	var pending_choice_uids: Array = get_meta(CORE_FLAME_PENDING_CHOICE_UIDS_META, [])
 	return not pending_choice_uids.is_empty()
 
-func on_death(game_manager: GameManager) -> void:
+func on_perish(game_manager: GameManager) -> void:
 	if game_manager == null or not _declined_core_flame:
 		return
 	_declined_core_flame = false
-	_celestial_light_pending = true
-
-func on_combat_death_resolved(game_manager: GameManager) -> void:
-	if game_manager == null or not _celestial_light_pending:
+	if card_owner == null or current_zone != card_owner.graveyard_zone:
 		return
-	_celestial_light_pending = false
 	var controller := get_controller()
 	if controller == null:
 		controller = card_owner
@@ -142,13 +136,11 @@ func on_combat_death_resolved(game_manager: GameManager) -> void:
 func get_serialized_state() -> Dictionary:
 	var state := super.get_serialized_state()
 	state["declined_core_flame"] = _declined_core_flame
-	state["celestial_light_pending"] = _celestial_light_pending
 	return state
 
 func apply_serialized_state(state: Dictionary) -> void:
 	super.apply_serialized_state(state)
 	_declined_core_flame = bool(state.get("declined_core_flame", false))
-	_celestial_light_pending = bool(state.get("celestial_light_pending", false))
 
 func _mill_cards() -> Array[Card]:
 	var milled: Array[Card] = []

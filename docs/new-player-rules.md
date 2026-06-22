@@ -437,7 +437,10 @@ Cards explain their own rules text, and keyword hints appear in card detail view
 - Search: look through your deck for a card, then shuffle.
 - Dodge: cannot be attacked by lower-speed Creatures.
 - Incorporeal: has special engagement restrictions.
-- Slay, Slain, Fatality, Perish, Destroyed: different destruction or combat trigger words.
+- Slay and Fatality are combat-destruction triggers.
+- Slain means a card was destroyed in combat.
+- Destroyed triggers require destruction; sacrificing a card is not destruction.
+- Perish triggers whenever a card is sent from the field to the Graveyard, including when it is sacrificed.
 - Status: an ongoing condition on a card.
 
 When a card and the general rules disagree, follow the specific card text.

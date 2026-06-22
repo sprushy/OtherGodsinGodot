@@ -28053,6 +28053,11 @@ func _apply_full_state(data: Dictionary) -> void:
 		# Client: clear stale card refs and rebuild ghost game_manager from server state
 		_clear_network_selection_state()
 		GameState.apply_to_manager(state, game_manager)
+		if match_manager != null and match_manager.has_method("set_remote_authoritative_stack_window_locked"):
+			match_manager.call(
+				"set_remote_authoritative_stack_window_locked",
+				bool(data.get("authoritative_stack_window_locked", false))
+			)
 		_sync_network_breidablik_return_pending_from_state()
 		# Set feedback_viewer so client sees their own perspective
 		if network_manager != null and network_manager.local_player_index >= 0:

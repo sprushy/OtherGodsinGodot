@@ -197,6 +197,11 @@ func move_card(card: Card, to_zone: Zone) -> void:
 	if destination_zone.is_in_play_zone():
 		card.reset_board_leave_hooks()
 	card_moved.emit(card, from_zone, destination_zone)
+	if leaving_play \
+			and destination_zone == card.card_owner.graveyard_zone \
+			and card.has_method("on_perish") \
+			and not card.post_field_abilities_suppressed():
+		card.call("on_perish", game_manager)
 	if leaving_play:
 		card.clear_board_leave_state()
 

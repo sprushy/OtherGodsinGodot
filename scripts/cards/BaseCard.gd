@@ -48,7 +48,7 @@ const KEYWORD_HINTS = {
 	"Dodge": "This creature cannot be attacked by creatures with lower speed.",
 	"Shuffle": "Return this card to its owner's deck, then shuffle that deck.",
 	"Prime": "Put a card on top of your deck.",
-	"Perish": "This effect triggers when this card is destroyed and sent to the graveyard.",
+	"Perish": "This effect triggers when this card is sent from the field to the graveyard.",
 	"Silence": "Remove this card's abilities.",
 	"Frontlined": "This effect applies while this card is in the frontline.",
 	"Upkeep": "This effect happens during upkeep at the beginning of your turn.",

@@ -24,6 +24,7 @@ var game_state: GameState
 var network_manager: Node = null # Set this if in multiplayer mode
 var authoritative_match_flow_enabled: bool = false
 var allow_immediate_local_authoritative_stack_resolution: bool = false
+var remote_authoritative_stack_window_locked: bool = false
 
 # Targeting State (moved from CombatMockGame)
 var pending_click_selection_name: String = ""
@@ -164,6 +165,7 @@ func reset_runtime_state() -> void:
 	last_move_failed_reason = ""
 	_authoritative_stack_resolution_pending = false
 	allow_immediate_local_authoritative_stack_resolution = false
+	remote_authoritative_stack_window_locked = false
 
 # --- Targeting Control ---
 
@@ -2429,6 +2431,10 @@ func _stack_action_should_linger_for_visibility(action: CardAction) -> bool:
 func _should_linger_authoritative_stack_resolution(action: CardAction = null) -> bool:
 	if _stack_action_should_linger_for_visibility(action):
 		return true
+	# Events such as "summon" have no resolving card visual. Lingering them on
+	# the server creates an invisible interval where clients appear unlocked.
+	if action != null and action.type == CardAction.Type.EVENT:
+		return false
 	if allow_immediate_local_authoritative_stack_resolution and not _has_remote_authoritative_recipients():
 		return false
 	if network_manager == null:
@@ -3163,7 +3169,8 @@ func _has_unresolved_stack_action_window() -> bool:
 	if game_manager == null:
 		return false
 	game_manager.prune_stale_stack_actions()
-	return _board_leaving_activation_linger_pending \
+	return remote_authoritative_stack_window_locked \
+		or _board_leaving_activation_linger_pending \
 		or _authoritative_stack_resolution_pending \
 		or pending_blot_spell != null \
 		or pending_combat_reveal_linger_action != null \
@@ -3203,8 +3210,12 @@ func _defer_board_leaving_activation(
 func has_unresolved_stack_action_window() -> bool:
 	return _has_unresolved_stack_action_window()
 
+func set_remote_authoritative_stack_window_locked(locked: bool) -> void:
+	remote_authoritative_stack_window_locked = locked
+
 func is_visual_linger_pending() -> bool:
-	return _board_leaving_activation_linger_pending \
+	return remote_authoritative_stack_window_locked \
+		or _board_leaving_activation_linger_pending \
 		or pending_combat_reveal_linger_action != null \
 		or _authoritative_stack_resolution_pending
 
