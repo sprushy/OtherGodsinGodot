@@ -673,9 +673,10 @@ func _consume_pending_ui_interaction_for_player(player: Player, interaction_type
 
 func _resume_authoritative_flow_after_prompt_command() -> void:
 	if not _pending_ui_interactions.is_empty():
-		var active_interaction_type := str(_pending_ui_interactions[0].get("type", ""))
-		if active_interaction_type == "priority":
-			_reemit_active_pending_ui_interaction()
+		# The authoritative prompt queue is strictly serial. If the active
+		# selector was missed or replaced by a state refresh, reissue that same
+		# prompt instead of leaving the match locked behind invisible state.
+		_reemit_active_pending_ui_interaction()
 		return
 	if not _queued_ui_interactions.is_empty():
 		return
@@ -1089,6 +1090,7 @@ func _on_game_manager_card_summoned(
 		return
 	if card.current_zone != to_zone or not to_zone.is_board_zone():
 		return
+	_prune_invalidated_frontline_entry_event(card)
 	if card.card_type == Card.CardType.STRUCTURE:
 		_maybe_emit_advanced_building_techniques_prompt(player, card)
 	if _is_tezcatlipoca_necoc_yaotl_summon(card, summon_source):
@@ -1108,6 +1110,25 @@ func _on_game_manager_card_summoned(
 	if _active_command_advances_summon_priority():
 		return
 	_advance_authoritative_priority_for_pending_card_events(card)
+
+func _prune_invalidated_frontline_entry_event(card: Card) -> void:
+	if game_manager == null or card == null:
+		return
+	for idx in range(game_manager.action_stack.size() - 1, -1, -1):
+		var action := game_manager.action_stack[idx] as CardAction
+		if action == null \
+				or action.type != CardAction.Type.EVENT \
+				or action.event_name != "frontline_entry" \
+				or action.card != card:
+			continue
+		# Frontline-entry responses are discovered when the card first moves.
+		# Its Impact can then invalidate those responses before card_summoned
+		# fires (for example, Dellingr revealing and locking a prepared Sap).
+		if game_manager._has_priority_responses_for_action(action) \
+				or _action_requires_explicit_priority_window(action):
+			return
+		game_manager.action_stack.remove_at(idx)
+		return
 
 func _maybe_emit_advanced_building_techniques_prompt(player: Player, structure: Card) -> void:
 	if game_manager == null or player == null or structure == null:

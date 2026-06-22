@@ -7485,11 +7485,28 @@ func _hide_hand_hover_preview() -> void:
 	_hand_hover_preview_card = null
 	_hand_hover_preview_keywords = null
 
+func _get_live_hand_hover_source_side(vc: VisualCard) -> int:
+	if vc == null or not is_instance_valid(vc) or vc.is_queued_for_deletion():
+		return 0
+	if vc in _hand_visual_cards \
+			and _fan_container != null \
+			and is_instance_valid(_fan_container) \
+			and vc.get_parent() == _fan_container:
+		return 1
+	if vc in _enemy_hand_visual_cards \
+			and _enemy_hand_overlay != null \
+			and is_instance_valid(_enemy_hand_overlay) \
+			and vc.get_parent() == _enemy_hand_overlay:
+		return -1
+	return 0
+
 func _show_hand_hover_preview(vc: VisualCard) -> void:
 	if _is_reinforcement_overlay_open():
 		_hide_hand_hover_preview()
 		return
-	if vc == null or not is_instance_valid(vc) or vc.card_data == null:
+	var source_side := _get_live_hand_hover_source_side(vc)
+	if source_side == 0 or vc.card_data == null:
+		_hide_hand_hover_preview()
 		return
 	if vc == _hand_hover_vc and _hand_hover_preview != null and is_instance_valid(_hand_hover_preview):
 		_position_hand_hover_preview()
@@ -7510,7 +7527,7 @@ func _show_hand_hover_preview(vc: VisualCard) -> void:
 	var large_vc := VisualCard.new()
 	large_vc.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	preview.add_child(large_vc)
-	var enemy_hand_hover := vc in _enemy_hand_visual_cards
+	var enemy_hand_hover := source_side < 0
 	var display_mana_cost := card.mana_cost if enemy_hand_hover else _get_hand_card_display_mana_cost(card)
 	var cost_adjustment_lines: Array[String] = []
 	if not enemy_hand_hover:
@@ -7535,7 +7552,9 @@ func _position_hand_hover_preview() -> void:
 	if _hand_hover_preview == null or not is_instance_valid(_hand_hover_preview):
 		return
 	var vc := _hand_hover_vc
-	if vc == null or not is_instance_valid(vc):
+	var source_side := _get_live_hand_hover_source_side(vc)
+	if source_side == 0:
+		_hide_hand_hover_preview()
 		return
 	var preview := _hand_hover_preview
 	var large_vc := _hand_hover_preview_card
@@ -7582,7 +7601,7 @@ func _position_hand_hover_preview() -> void:
 	var scaled_preview_sz := preview_sz * preview_scale
 	var desired_px := card_cx - (large_vc.position.x + card_sz.x * 0.5)
 	var px := clampf(desired_px, viewport_margin, maxf(viewport_margin, vp_size.x - scaled_preview_sz.x - viewport_margin))
-	var py := viewport_margin if vc in _enemy_hand_visual_cards else maxf(viewport_margin, vp_size.y - scaled_preview_sz.y - viewport_margin)
+	var py := viewport_margin if source_side < 0 else maxf(viewport_margin, vp_size.y - scaled_preview_sz.y - viewport_margin)
 	preview.global_position = Vector2(px, py)
 	preview.visible = true
 
@@ -7649,17 +7668,26 @@ func _find_hand_hover_card_at(global_pos: Vector2) -> VisualCard:
 		var vc: VisualCard = hover_cards[i]
 		if vc != null \
 				and is_instance_valid(vc) \
+				and _get_live_hand_hover_source_side(vc) != 0 \
 				and vc.visible \
 				and not vc.is_hand_interacting() \
 				and vc.contains_global_point(global_pos):
 			return vc
 	if _hand_hover_preview != null and is_instance_valid(_hand_hover_preview):
-		if _hand_hover_preview.get_global_rect().has_point(global_pos):
+		if _get_live_hand_hover_source_side(_hand_hover_vc) == 0:
+			_hide_hand_hover_preview()
+		elif _control_contains_global_point(_hand_hover_preview, global_pos):
 			return _hand_hover_vc
 	if _is_hand_context_menu_active() \
 			and _control_global_rect_has_point(_context_menu, global_pos, _HAND_CONTEXT_MENU_KEEPALIVE_MARGIN):
 		return _get_hand_context_menu_source_vc()
 	return null
+
+func _control_contains_global_point(control: Control, global_pos: Vector2) -> bool:
+	if control == null or not is_instance_valid(control) or not control.visible:
+		return false
+	var local_pos := control.get_global_transform().affine_inverse() * global_pos
+	return Rect2(Vector2.ZERO, control.size).has_point(local_pos)
 
 func _control_global_rect_has_point(control: Control, global_pos: Vector2, margin: float = 0.0) -> bool:
 	if control == null or not is_instance_valid(control) or not control.visible:
