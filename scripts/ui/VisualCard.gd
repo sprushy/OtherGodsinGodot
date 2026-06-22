@@ -1346,6 +1346,13 @@ func _remove_drag_ghost_rules_text(node: Node) -> void:
 
 func _finish_drag() -> void:
 	_dragging = false
+	if _drag_parent and is_instance_valid(_drag_parent):
+		var current_parent := get_parent()
+		if current_parent != null:
+			current_parent.remove_child(self)
+		_drag_parent.add_child(self)
+		_drag_parent.move_child(self, clampi(_drag_index, 0, _drag_parent.get_child_count() - 1))
+	visible = true
 	_drag_parent = null
 	_drag_index = -1
 	var drop_pos := get_global_mouse_position()

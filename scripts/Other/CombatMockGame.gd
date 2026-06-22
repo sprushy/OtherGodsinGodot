@@ -7298,7 +7298,11 @@ func _can_refresh_hand_in_place(signature: String, entries: Array[Dictionary]) -
 	for i in range(entries.size()):
 		var vc := _hand_visual_cards[i] as VisualCard
 		var card := entries[i].get("card", null) as Card
-		if vc == null or not is_instance_valid(vc) or vc.card_data != card:
+		if vc == null \
+				or not is_instance_valid(vc) \
+				or vc.card_data != card \
+				or vc.get_parent() != _fan_container \
+				or not vc.visible:
 			return false
 	return true
 
@@ -8160,6 +8164,7 @@ func _show_power_hover_popup(source: Control, text: String, bbcode_text: String 
 	if text.strip_edges() == "":
 		return
 	_hide_power_hover_popup()
+	const POWER_HOVER_WIDTH := 288.0
 
 	var popup := PanelContainer.new()
 	var pstyle := StyleBoxFlat.new()
@@ -8177,7 +8182,7 @@ func _show_power_hover_popup(source: Control, text: String, bbcode_text: String 
 
 	var vbox := VBoxContainer.new()
 	vbox.add_theme_constant_override("separation", 6)
-	vbox.custom_minimum_size = Vector2(220.0, 0.0)
+	vbox.custom_minimum_size = Vector2(POWER_HOVER_WIDTH, 0.0)
 	vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	popup.add_child(vbox)
 
@@ -8186,7 +8191,7 @@ func _show_power_hover_popup(source: Control, text: String, bbcode_text: String 
 	label.fit_content = true
 	label.scroll_active = false
 	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	label.custom_minimum_size = Vector2(220, 0)
+	label.custom_minimum_size = Vector2(POWER_HOVER_WIDTH, 0.0)
 	label.add_theme_font_size_override("normal_font_size", 12)
 	label.add_theme_font_size_override("bold_font_size", 12)
 	label.add_theme_color_override("default_color", Color(1.0, 0.95, 0.98))
@@ -8196,12 +8201,17 @@ func _show_power_hover_popup(source: Control, text: String, bbcode_text: String 
 
 	if card != null:
 		var hover_viewer := game_manager.get_feedback_viewer() if game_manager != null else null
-		CardDetailContentBuilderScript._add_hover_stored_card_section(vbox, card, hover_viewer, 220.0)
+		CardDetailContentBuilderScript._add_hover_stored_card_section(
+			vbox,
+			card,
+			hover_viewer,
+			POWER_HOVER_WIDTH
+		)
 		CardDetailContentBuilderScript._add_hover_summoned_active_god_section(
 			vbox,
 			card,
 			hover_viewer,
-			220.0,
+			POWER_HOVER_WIDTH,
 			game_manager
 		)
 
@@ -8230,8 +8240,12 @@ func _position_power_hover_popup(popup: Control, source: Control) -> void:
 	var source_rect := source.get_global_rect()
 	var vp_size := get_viewport_rect().size
 	var viewport_margin := 4.0
+	var board_edge_x := source_rect.end.x + 8.0
+	if board_separator != null and is_instance_valid(board_separator):
+		board_edge_x = board_separator.get_global_rect().position.x + 8.0
+	board_edge_x = clampf(board_edge_x, viewport_margin, vp_size.x - viewport_margin)
 	var max_popup_size := Vector2(
-		maxf(80.0, vp_size.x - viewport_margin * 2.0),
+		maxf(80.0, vp_size.x - board_edge_x - viewport_margin),
 		maxf(80.0, vp_size.y - viewport_margin * 2.0)
 	)
 	var popup_scale := minf(
@@ -8244,9 +8258,7 @@ func _position_power_hover_popup(popup: Control, source: Control) -> void:
 	popup.scale = Vector2(popup_scale, popup_scale)
 	popup.size = popup_size
 	var scaled_popup_size := popup_size * popup_scale
-	var pos := Vector2(source_rect.position.x - scaled_popup_size.x - 6.0, source_rect.position.y)
-	if pos.x < viewport_margin:
-		pos.x = source_rect.end.x + 6.0
+	var pos := Vector2(board_edge_x, source_rect.position.y)
 	pos.x = clampf(pos.x, viewport_margin, maxf(viewport_margin, vp_size.x - scaled_popup_size.x - viewport_margin))
 	pos.y = clampf(pos.y, viewport_margin, maxf(viewport_margin, vp_size.y - scaled_popup_size.y - viewport_margin))
 	popup.global_position = pos
@@ -8294,7 +8306,7 @@ func _get_power_hover_bbcode(card: Card) -> String:
 	var sections: Array[String] = ["[b]%s[/b]" % card.card_name]
 	var ability_text := power.get_display_ability_bbcode_text(game_manager) if power != null else card.ability_text
 	if ability_text != "":
-		sections.append(BaseCard.apply_keyword_hints(ability_text))
+		sections.append(ability_text)
 	if power != null:
 		var cost_lines := _get_power_cost_hover_bbcode_lines(power)
 		if not cost_lines.is_empty():
@@ -8587,7 +8599,6 @@ func _make_power_icon(card: Card, is_enemy: bool, _player: Player, zone: Zone = 
 	var can_show_hover := is_tiamat_slot or not (is_enemy and card.is_face_down and not ((power != null and power.is_publicly_revealed) or card.is_temporarily_revealed()))
 	if can_show_hover:
 		var hover_zone_dict := CardAction._zone_to_dict(zone, game_manager)
-		panel.tooltip_text = _get_power_icon_hover_text(card.uid, hover_zone_dict)
 		panel.mouse_entered.connect(_on_power_icon_mouse_entered.bind(panel.get_instance_id(), card.uid, hover_zone_dict))
 		panel.mouse_exited.connect(_hide_power_hover_popup)
 		panel.mouse_default_cursor_shape = Control.CURSOR_HELP
@@ -8726,7 +8737,6 @@ func _on_power_icon_mouse_entered(panel_instance_id: int, card_uid: String, zone
 	var text := _get_power_icon_hover_text(card_uid, zone_dict)
 	var bbcode_text := _get_power_icon_hover_bbcode(card_uid, zone_dict)
 	var card := game_manager.get_card_by_uid(card_uid) if game_manager != null and card_uid != "" else null
-	panel.tooltip_text = text
 	_show_power_hover_popup(panel, text, bbcode_text, card)
 
 func _on_power_icon_gui_input(event: InputEvent, card_uid: String) -> void:
@@ -20549,7 +20559,7 @@ func _auto_pass_priority_prompt(player_index: int, data: Dictionary) -> bool:
 	if prompt_signature == _pending_priority_auto_pass_signature:
 		return true
 	_pending_priority_auto_pass_signature = prompt_signature
-	_remember_handled_priority_prompt_signature(prompt_signature)
+	_begin_priority_prompt_command_context()
 	_hide_priority_prompt()
 	_update_waiting_overlay()
 	_queue_deferred_priority_pass()
@@ -21034,14 +21044,25 @@ func _queue_deferred_priority_pass() -> void:
 	var expected_state := _get_priority_pass_state_signature()
 	if expected_state.is_empty():
 		return
-	call_deferred("_run_deferred_priority_pass", expected_state)
+	var prompt_signature := _pending_priority_prompt_command_signature.duplicate(true)
+	call_deferred("_run_deferred_priority_pass", expected_state, prompt_signature)
 
-func _run_deferred_priority_pass(expected_state: Dictionary) -> void:
+func _run_deferred_priority_pass(expected_state: Dictionary, prompt_signature: Dictionary = {}) -> void:
 	if expected_state != _get_priority_pass_state_signature():
+		if prompt_signature == _pending_priority_prompt_command_signature:
+			_clear_priority_prompt_command_context()
+		if prompt_signature == _pending_priority_auto_pass_signature:
+			_pending_priority_auto_pass_signature.clear()
 		return
 	var expected_player_index := int(expected_state.get("player_index", -1))
 	if expected_player_index < 0 or expected_player_index != _get_local_priority_player_index():
+		if prompt_signature == _pending_priority_prompt_command_signature:
+			_clear_priority_prompt_command_context()
+		if prompt_signature == _pending_priority_auto_pass_signature:
+			_pending_priority_auto_pass_signature.clear()
 		return
+	if not prompt_signature.is_empty():
+		_pending_priority_prompt_command_signature = prompt_signature.duplicate(true)
 	_on_priority_pass_pressed()
 
 func _submit_authoritative_priority_command(command: Dictionary) -> bool:

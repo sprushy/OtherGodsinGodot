@@ -822,13 +822,13 @@ static func _make_stored_card_preview(card: Card, _viewer: Player, width: float)
 	panel.add_theme_stylebox_override("panel", style)
 
 	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 6)
-	row.custom_minimum_size = Vector2(width - 10.0, 76.0)
+	row.add_theme_constant_override("separation", 10)
+	row.custom_minimum_size = Vector2(width - 10.0, 104.0)
 	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	panel.add_child(row)
 
 	var thumbnail := Control.new()
-	thumbnail.custom_minimum_size = Vector2(56, 76)
+	thumbnail.custom_minimum_size = Vector2(76, 104)
 	thumbnail.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	thumbnail.clip_contents = true
 	thumbnail.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
@@ -855,14 +855,18 @@ static func _make_stored_card_preview(card: Card, _viewer: Player, width: float)
 		thumbnail.add_child(initial)
 
 	var info := VBoxContainer.new()
-	info.add_theme_constant_override("separation", 2)
-	info.custom_minimum_size = Vector2(maxf(100.0, width - 76.0), 0.0)
+	info.add_theme_constant_override("separation", 5)
+	info.custom_minimum_size = Vector2(maxf(120.0, width - 106.0), 0.0)
 	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	info.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_child(info)
 
-	info.add_child(_make_label(card.get_display_name_for_control(), 12, Color(1.0, 0.95, 0.76), true))
+	var name_label := _make_label(card.get_display_name_for_control(), 13, Color(1.0, 0.95, 0.76), true)
+	name_label.custom_minimum_size.x = maxf(120.0, width - 106.0)
+	info.add_child(name_label)
 	var meta_parts: Array[String] = []
+	if not card.is_god and card.get_effective_level() > 0:
+		meta_parts.append("Level %d" % card.get_effective_level())
 	if card.card_type == Card.CardType.CREATURE:
 		meta_parts.append("STR %d" % card.get_effective_strength())
 		meta_parts.append("RES %d" % card.get_effective_resilience())
@@ -871,23 +875,15 @@ static func _make_stored_card_preview(card: Card, _viewer: Player, width: float)
 		meta_parts.append("RES %d" % card.get_effective_resilience())
 	elif card.get_effective_speed() > 0:
 		meta_parts.append("SPD %d" % card.get_effective_speed())
-	if not meta_parts.is_empty() or (not card.is_god and card.get_effective_level() > 0):
-		var meta_row := HBoxContainer.new()
-		meta_row.add_theme_constant_override("separation", 5)
-		meta_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		if not card.is_god and card.get_effective_level() > 0:
-			meta_row.add_child(_make_level_symbol_row(card, 10.0))
-		if not meta_parts.is_empty():
-			meta_row.add_child(_make_label("  |  ".join(meta_parts), 11, Color(0.72, 0.84, 0.95), true))
-		info.add_child(meta_row)
-
-	var summary := card.get_inline_ability_summary()
-	if summary == "":
-		var effect_lines := card.get_effect_summary_lines()
-		if not effect_lines.is_empty():
-			summary = " | ".join(effect_lines)
-	if summary != "":
-		info.add_child(_make_label(summary, 11, Color(0.82, 0.86, 0.94), true))
+	if not meta_parts.is_empty():
+		var meta_label := _make_label(
+			"\n".join(meta_parts),
+			11,
+			Color(0.72, 0.84, 0.95),
+			false
+		)
+		meta_label.custom_minimum_size.x = maxf(120.0, width - 106.0)
+		info.add_child(meta_label)
 	return panel
 
 static func _make_vbox(width: float, separation: int) -> VBoxContainer:
