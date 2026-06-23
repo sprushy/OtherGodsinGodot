@@ -599,6 +599,14 @@ func _pending_ui_interaction_has_same_identity(first: Dictionary, second: Dictio
 			return false
 	return compared_key or first.get("player", null) == second.get("player", null)
 
+func _command_can_bypass_pending_ui_interaction(command_type: String) -> bool:
+	match command_type:
+		"forfeit", "forfeit_match", "set_priority_preferences":
+			return true
+		"upkeep_choice", "tiamat_upkeep_choice", "skoll_upkeep_summon":
+			return true
+	return false
+
 func _validate_pending_ui_interaction_for_command(command: Dictionary) -> Dictionary:
 	_prune_stale_ui_interactions_for_current_turn()
 	var result := {
@@ -614,7 +622,7 @@ func _validate_pending_ui_interaction_for_command(command: Dictionary) -> Dictio
 		elif not _queued_ui_interactions.is_empty():
 			blocking_interaction = _queued_ui_interactions[0]
 		if not blocking_interaction.is_empty() \
-				and command_type not in ["forfeit", "forfeit_match", "set_priority_preferences"]:
+				and not _command_can_bypass_pending_ui_interaction(command_type):
 			result["error"] = "Resolve the pending %s choice before continuing." % str(blocking_interaction.get("type", "card"))
 		return result
 	if not (authoritative_match_flow_enabled or network_manager != null):
