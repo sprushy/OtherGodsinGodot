@@ -983,6 +983,46 @@ func load_n_o_card_scenario() -> void:
 	)
 	update_ui()
 
+func load_blot_sacrifice_scenario() -> void:
+	_reset_test_match_state()
+	_add_test_god(player1, Odin.new())
+	_add_test_god(player2, NuskuFirebearer.new())
+
+	# P1 board: one creature on the frontline to sacrifice for Blot Sacrifice.
+	_place_test_board_card(player1, player1.frontline_zones[0], Berserker.new(), Card.CreatureMode.AGGRESSIVE)
+
+	# P1 hand: Blot Sacrifice plus several low-level creatures to summon (within the 7-level budget).
+	_add_test_hand_card(player1, BlotSacrifice.new())
+	_add_test_hand_card(player1, HariiWarrior.new())
+	_add_test_hand_card(player1, Beyla.new())
+	_add_test_hand_card(player1, Berserker.new())
+
+	# P2 board: a defensive blocker so attacks resolve normally.
+	_place_test_board_card(player2, player2.frontline_zones[0], BrownBear.new(), Card.CreatureMode.DEFENSIVE)
+
+	player1.spend_mana(player1.mana)
+	player1.gain_mana(10)
+	player2.spend_mana(player2.mana)
+	player2.gain_mana(10)
+	player1.has_summoned_this_turn = false
+	player2.has_summoned_this_turn = false
+
+	game_manager.current_player = player1
+	game_manager.other_player = player2
+	game_manager.feedback_viewer = player1
+	player1.is_turn_player = true
+	player2.is_turn_player = false
+	selected_card = null
+	selected_attacker = null
+	selected_interceptor = null
+	_test_turn_owner = player1
+	_test_turn_opponent = player2
+	game_manager.turn_number = 1
+	game_manager.start_turn()
+	_open_upkeep_choice_window()
+	action_label.text = "Blot Sacrifice scenario: sacrifice the Berserker, summon creatures, then try to attack."
+	update_ui()
+
 func load_m_card_scenario() -> void:
 	_reset_test_match_state()
 	_add_test_god(player1, Mummu.new())

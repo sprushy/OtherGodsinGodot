@@ -114,7 +114,7 @@ const AVAILABLE_ABILITY_BADGE_GLOW_COLOR := Color(0.28, 0.92, 0.50, 0.58)
 # transient previews and modal UI promoted by CombatMockGame.
 const HOVER_BOARD_Z_INDEX := 2260
 const POPUP_Z_INDEX := 2290
-const CARD_HOVER_POPUP_DELAY := 0.22
+const CARD_HOVER_POPUP_DELAY := 0.33
 
 func _get_badge_row_top() -> float:
 	return BADGE_ROW_TOP

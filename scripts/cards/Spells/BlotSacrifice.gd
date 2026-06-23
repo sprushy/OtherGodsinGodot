@@ -84,15 +84,15 @@ func summon_selected_creatures(game_manager: GameManager, creatures: Array) -> A
 			break
 		var zone: Zone = open_zones.pop_front() as Zone
 		if game_manager != null and game_manager.summon_creature_by_effect(
-			card_owner,
-			creature,
-			zone,
-			Card.CreatureMode.AGGRESSIVE,
-			false,
-			false,
-			self,
-			false,
-			false
-		):
+				card_owner,
+				creature,
+				zone,
+				Card.CreatureMode.AGGRESSIVE,
+				false,
+				false,
+				self,
+				false,
+				false
+			):
 			summoned.append(creature)
 	return summoned

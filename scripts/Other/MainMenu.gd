@@ -8091,6 +8091,10 @@ func _start_smoke_mode() -> void:
 		call_deferred("_run_card_test_occult_singularity_smoke")
 		return
 
+	if role == "card_test_blot_sacrifice":
+		call_deferred("_run_card_test_blot_sacrifice_smoke")
+		return
+
 	if role == "resume":
 		var resume_timer := get_tree().create_timer(0.5)
 		resume_timer.timeout.connect(Callable(self, "_on_resume_match_pressed"))
@@ -9301,6 +9305,143 @@ func _run_card_test_occult_singularity_smoke() -> void:
 
 	_finish_smoke_if_enabled("PASS:card_test_occult_singularity before=%d after=%d" % [magical_before, magical_after])
 
+func _run_card_test_blot_sacrifice_smoke() -> void:
+	var card_test = _show_embedded_game("CardTest")
+	if card_test == null:
+		_fail_smoke_if_enabled("card_test_missing")
+		return
+	show_game()
+	await card_test.start_game()
+	card_test.load_blot_sacrifice_scenario()
+	await get_tree().process_frame
+	await get_tree().process_frame
+
+	# Resolve upkeep so the main phase opens cleanly.
+	if not card_test.game_input.submit_action({type = "upkeep_choice", choice = "mana"}):
+		_fail_smoke_if_enabled("card_test_blot_upkeep_choice_failed reason=%s label=%s in_window=%s turn=%d" % [
+			str(card_test.match_manager.last_move_failed_reason),
+			str(card_test.action_label.text).replace("\n", " "),
+			str(card_test.game_manager.is_player_in_upkeep_window(card_test.player1)),
+			card_test.game_manager.turn_number,
+		])
+		return
+	if not await _wait_for_card_test_turn2_smoke_condition(
+		func() -> bool:
+			return card_test.game_manager.current_player == card_test.player1 \
+				and card_test.game_manager.has_resolved_turn_upkeep() \
+				and card_test.game_manager.action_stack.is_empty(),
+		180
+	):
+		_fail_smoke_if_enabled("card_test_blot_upkeep_timeout")
+		return
+
+	var spell := _find_smoke_hand_card_by_name(card_test.player1, "Blot Sacrifice")
+	if spell == null:
+		_fail_smoke_if_enabled("card_test_blot_missing_spell")
+		return
+	# Sacrifice target: the Berserker on P1's frontline.
+	var sacrifice_target: Card = null
+	for zone in card_test.player1.frontline_zones:
+		for c in zone.cards:
+			if c != null and c.card_name == "Berserker":
+				sacrifice_target = c
+				break
+		if sacrifice_target != null:
+			break
+	if sacrifice_target == null:
+		_fail_smoke_if_enabled("card_test_blot_missing_sacrifice_target")
+		return
+
+	# Collect the hand creatures (excluding the spell) that blot can summon.
+	var choice_uids: Array = []
+	for c in card_test.player1.hand_zone.cards:
+		if c == null or c == spell:
+			continue
+		if c.card_type == Card.CardType.CREATURE and not c.is_god:
+			choice_uids.append(c.uid)
+	if choice_uids.is_empty():
+		_fail_smoke_if_enabled("card_test_blot_no_summonable_creatures")
+		return
+
+	# Enable authoritative flow to exercise the same path the server uses.
+	card_test.match_manager.authoritative_match_flow_enabled = true
+
+	# Cast Blot Sacrifice with the sacrifice target.
+	if not card_test.game_input.submit_action({type = "cast_spell", spell_uid = spell.uid, sacrifice_uid = sacrifice_target.uid}):
+		_fail_smoke_if_enabled("card_test_blot_cast_failed")
+		return
+
+	# Wait for the blot_sacrifice prompt to reach the owning player.
+	if not await _wait_for_card_test_turn2_smoke_condition(
+		func() -> bool:
+			return _count_pending_smoke_prompts_of_type(card_test.match_manager, "blot_sacrifice") > 0,
+		240
+	):
+		_fail_smoke_if_enabled(
+			"card_test_blot_prompt_timeout stack=%d paused=%s label=%s" % [
+				card_test.game_manager.action_stack.size(),
+				str(card_test._stack_resolution_paused),
+				str(card_test.action_label.text).replace("\n", " "),
+			]
+		)
+		return
+
+	# Submit the creature choices.
+	if not card_test.game_input.submit_action({
+		type = "blot_sacrifice_choice",
+		source_uid = spell.uid,
+		choices = choice_uids,
+	}):
+		_fail_smoke_if_enabled("card_test_blot_choice_failed")
+		return
+
+	# Wait for the stack to fully drain after the blot resolves.
+	if not await _wait_for_card_test_turn2_smoke_condition(
+		func() -> bool:
+			return card_test.game_manager.action_stack.is_empty() \
+				and card_test.game_manager.resolving_stack_actions.is_empty() \
+				and not card_test._stack_resolution_paused \
+				and not card_test._executing_stack_action,
+		360
+	):
+		_fail_smoke_if_enabled(
+			"card_test_blot_stack_not_drained stack=%d resolving=%d paused=%s executing=%s label=%s" % [
+				card_test.game_manager.action_stack.size(),
+				card_test.game_manager.resolving_stack_actions.size(),
+				str(card_test._stack_resolution_paused),
+				str(card_test._executing_stack_action),
+				str(card_test.action_label.text).replace("\n", " "),
+			]
+		)
+		return
+
+	# The key assertion: a blot-summoned creature on the frontline must be able to attack.
+	var summonable_attacker: Card = null
+	for zone in card_test.player1.frontline_zones:
+		for c in zone.cards:
+			if c != null and c.card_type == Card.CardType.CREATURE \
+					and c.get_controller() == card_test.player1 \
+					and c.creature_mode == Card.CreatureMode.AGGRESSIVE:
+				summonable_attacker = c
+				break
+		if summonable_attacker != null:
+			break
+	if summonable_attacker == null:
+		_fail_smoke_if_enabled("card_test_blot_no_frontline_attacker_after_summon")
+		return
+	if not card_test.match_manager.can_attack(summonable_attacker):
+		_fail_smoke_if_enabled(
+			"card_test_blot_cannot_attack reason=%s stack=%d resolving=%d res_pending=%s" % [
+				card_test.match_manager.get_attack_invalid_reason(summonable_attacker),
+				card_test.game_manager.action_stack.size(),
+				card_test.game_manager.resolving_stack_actions.size(),
+				str(card_test.match_manager.is_authoritative_stack_resolution_pending()),
+			]
+		)
+		return
+
+	_finish_smoke_if_enabled("PASS:card_test_blot_sacrifice attacker=%s" % summonable_attacker.card_name)
+
 func _wait_for_card_test_turn2_smoke_condition(predicate: Callable, max_frames: int) -> bool:
 	for _frame in range(max_frames):
 		if predicate.call():
@@ -9332,6 +9473,7 @@ func _should_ignore_lobby_failure_for_smoke() -> bool:
 		"ranked_timeout_upkeep",
 		"card_test_turn2",
 		"card_test_occult_singularity",
+		"card_test_blot_sacrifice",
 	]
 
 func _parse_smoke_config(args: Array) -> Dictionary:

@@ -9,6 +9,7 @@ const TiamatScript = preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
 const MatchCommandRegistryScript = preload("res://scripts/Other/MatchCommandRegistry.gd")
 const AUTHORITATIVE_FLOW_LOG_PREFIX := "[OG server flow]"
 const AUTHORITATIVE_FLOW_CHECK_DELAY_SECONDS := 1.0
+const AUTHORITATIVE_SETTLED_REFRESH_DELAY_SECONDS := 0.05
 const PRIORITY_STOP_KEYS := ["start", "main", "combat", "end"]
 const PRIORITY_AUTO_MODE_NONE := "none"
 const PRIORITY_AUTO_MODE_PLAY := "play"
@@ -1301,6 +1302,10 @@ func _continue_authoritative_stack_after_resolution() -> void:
 		if _continue_active_authoritative_turn_start_sequence():
 			return
 		_try_process_pending_turn_action_after_opponent_priority()
+		if game_manager.action_stack.is_empty() \
+				and _pending_ui_interactions.is_empty() \
+				and _queued_ui_interactions.is_empty():
+			call_deferred("_request_ui_refresh")
 		return
 	if pending_combat_reveal_linger_action != null \
 			and game_manager.action_stack.back() == pending_combat_reveal_linger_action:
@@ -1586,6 +1591,26 @@ func _complete_deferred_authoritative_action(action: CardAction, completion_comm
 	var destroyed_start_index := int(action.event_data.get("destroyed_count_before", game_manager.destroyed_this_turn.size() if game_manager != null else 0))
 	_queue_destroyed_response_events(destroyed_start_index, action)
 	_finalize_resolved_action(action)
+	_schedule_authoritative_settled_state_refresh()
+
+func _schedule_authoritative_settled_state_refresh() -> void:
+	if not _uses_authoritative_headless_priority_flow():
+		return
+	var tree = _get_authoritative_resolution_tree()
+	if tree == null:
+		call_deferred("_request_authoritative_settled_state_refresh")
+		return
+	tree.create_timer(AUTHORITATIVE_SETTLED_REFRESH_DELAY_SECONDS).timeout.connect(
+		func() -> void:
+			_request_authoritative_settled_state_refresh(),
+		CONNECT_ONE_SHOT
+	)
+
+func _request_authoritative_settled_state_refresh() -> void:
+	if game_manager == null or not _uses_authoritative_headless_priority_flow():
+		return
+	_resume_authoritative_flow_after_prompt_command()
+	call_deferred("_request_ui_refresh")
 
 func _get_pending_authoritative_graveyard_prompt_command_type() -> String:
 	if game_manager == null:
