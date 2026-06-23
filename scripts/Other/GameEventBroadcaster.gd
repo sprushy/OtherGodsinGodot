@@ -153,7 +153,27 @@ func _on_turn_upkeep_started(_turn_number: int, player: Player) -> void:
 	if network_manager == null:
 		return
 	var player_idx := game_manager.players.find(player)
-	_broadcast_full_state("Turn %d — %s's turn." % [game_manager.turn_number, player.player_name])
+	# turn_upkeep_started fires while the new turn is starting, which can happen
+	# mid-resolution of the previous turn's end_turn event (the action is still in
+	# resolving_stack_actions). Broadcasting synchronously would report a locked
+	# authoritative stack window, and since end_turn resolutions are not rebroadcast
+	# by _on_action_resolved, clients would keep their input blocker engaged and be
+	# unable to click their upkeep buttons. Defer so the end_turn action is fully
+	# resolved and the stack window is reported unlocked.
+	call_deferred(
+		"_broadcast_turn_upkeep_started",
+		game_manager.turn_number,
+		player_idx
+	)
+
+func _broadcast_turn_upkeep_started(turn_number: int, player_idx: int) -> void:
+	if game_manager == null or network_manager == null:
+		return
+	if game_manager.turn_number != turn_number:
+		return
+	if player_idx < 0 or player_idx >= game_manager.players.size():
+		return
+	_broadcast_full_state("Turn %d — %s's turn." % [game_manager.turn_number, game_manager.players[player_idx].player_name])
 	var peer_id: int = network_manager.player_peer_ids.get(player_idx, -1)
 	if peer_id != 1 and peer_id != -1:
 		network_manager.broadcast_event_to_peer(peer_id, "upkeep_needed", {
