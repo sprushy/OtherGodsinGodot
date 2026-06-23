@@ -3875,12 +3875,13 @@ func _decline_priority_for_turn_action(command: Dictionary, sender_info: Diction
 	if not _should_turn_action_decline_priority(command, sender_info):
 		return false
 	var actor := _get_command_actor(sender_info)
+	_remember_turn_action_after_priority(command, sender_info)
 	_consume_pending_ui_interaction_for_player(actor, "priority")
 	game_manager.pass_priority()
 	move_validated.emit({type = "priority_pass"})
 	_complete_turn_action_priority_decline(actor)
 	_request_ui_refresh()
-	return _has_unresolved_stack_action_window()
+	return true
 
 func _validate_upkeep_choice_window(actor: Player) -> String:
 	if game_manager == null or actor == null:
@@ -3894,6 +3895,12 @@ func _validate_upkeep_choice_window(actor: Player) -> String:
 func _clear_pending_turn_action_after_opponent_priority() -> void:
 	_pending_turn_action_after_opponent_priority_command.clear()
 	_pending_turn_action_after_opponent_priority_sender_info.clear()
+
+func _remember_turn_action_after_priority(command: Dictionary, sender_info: Dictionary) -> void:
+	if _replaying_turn_action_after_opponent_priority:
+		return
+	_pending_turn_action_after_opponent_priority_command = command.duplicate(true)
+	_pending_turn_action_after_opponent_priority_sender_info = sender_info.duplicate(true)
 
 func _has_pending_turn_action_after_opponent_priority() -> bool:
 	return not _pending_turn_action_after_opponent_priority_command.is_empty()
@@ -3928,8 +3935,7 @@ func _should_defer_turn_action_until_opponent_priority_declines(command: Diction
 func _defer_turn_action_until_opponent_priority_declines(command: Dictionary, sender_info: Dictionary) -> bool:
 	if not _should_defer_turn_action_until_opponent_priority_declines(command, sender_info):
 		return false
-	_pending_turn_action_after_opponent_priority_command = command.duplicate(true)
-	_pending_turn_action_after_opponent_priority_sender_info = sender_info.duplicate(true)
+	_remember_turn_action_after_priority(command, sender_info)
 	_request_ui_refresh()
 	return true
 
