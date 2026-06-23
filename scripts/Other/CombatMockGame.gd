@@ -10974,7 +10974,10 @@ func _reject_non_priority_action_if_blocked(replay_action: Callable = Callable()
 	return true
 
 func _is_visual_linger_active() -> bool:
-	if _is_priority_prompt_visible() or _is_intercept_prompt_visible() or _has_active_modal_prompt():
+	if _is_priority_prompt_visible() \
+			or _is_intercept_prompt_visible() \
+			or _has_active_modal_prompt() \
+			or _is_blot_selection_active():
 		return false
 	if _visual_linger_depth > 0:
 		return true
@@ -24365,6 +24368,7 @@ func _begin_blot_resolution_prompt(
 	game_manager.note_player_feedback("Blot Sacrifice resolved. Choose creatures to summon.")
 	_pause_stack_resolution(spell.card_owner)
 	_show_blot_creature_prompt()
+	update_ui()
 
 func _queue_blot_resolution_prompt(spell, sacrifice_target: Card, display_zone: Zone = null) -> void:
 	if spell == null:
@@ -28083,6 +28087,11 @@ func _apply_full_state(data: Dictionary) -> void:
 			match_manager.call(
 				"set_remote_authoritative_stack_window_locked",
 				bool(data.get("authoritative_stack_window_locked", false))
+			)
+		if match_manager != null and match_manager.has_method("set_remote_authoritative_visual_linger_pending"):
+			match_manager.call(
+				"set_remote_authoritative_visual_linger_pending",
+				bool(data.get("authoritative_visual_linger_pending", false))
 			)
 		_sync_network_breidablik_return_pending_from_state()
 		# Set feedback_viewer so client sees their own perspective

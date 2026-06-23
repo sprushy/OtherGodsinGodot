@@ -25,6 +25,7 @@ var network_manager: Node = null # Set this if in multiplayer mode
 var authoritative_match_flow_enabled: bool = false
 var allow_immediate_local_authoritative_stack_resolution: bool = false
 var remote_authoritative_stack_window_locked: bool = false
+var remote_authoritative_visual_linger_pending: bool = false
 
 # Targeting State (moved from CombatMockGame)
 var pending_click_selection_name: String = ""
@@ -166,6 +167,7 @@ func reset_runtime_state() -> void:
 	_authoritative_stack_resolution_pending = false
 	allow_immediate_local_authoritative_stack_resolution = false
 	remote_authoritative_stack_window_locked = false
+	remote_authoritative_visual_linger_pending = false
 
 # --- Targeting Control ---
 
@@ -3239,8 +3241,11 @@ func has_unresolved_stack_action_window() -> bool:
 func set_remote_authoritative_stack_window_locked(locked: bool) -> void:
 	remote_authoritative_stack_window_locked = locked
 
+func set_remote_authoritative_visual_linger_pending(pending: bool) -> void:
+	remote_authoritative_visual_linger_pending = pending
+
 func is_visual_linger_pending() -> bool:
-	return remote_authoritative_stack_window_locked \
+	return remote_authoritative_visual_linger_pending \
 		or _board_leaving_activation_linger_pending \
 		or pending_combat_reveal_linger_action != null \
 		or _authoritative_stack_resolution_pending

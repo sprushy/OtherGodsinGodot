@@ -5,6 +5,7 @@ const OVERLAY_NAME := "StealthFogOverlay"
 const SMOKE_TEXTURE_PATH := "res://images/ui/stealth_fog/lelu_smoke_b7.png"
 const CLOUD_TEXTURE_PATH := "res://images/ui/stealth_fog/lelu_cloud_noise_tiled.png"
 const DETAIL_TEXTURE_PATH := "res://images/ui/stealth_fog/seamless_noise_02.png"
+const MIST_LAYER_COUNT := 2
 const CURSOR_EFFECT_RADIUS_PIXELS := 52.0
 const CURSOR_TRAIL_LIFETIME := 1.4
 const CURSOR_TRAIL_MIN_DISTANCE := 8.0
@@ -26,10 +27,6 @@ var variant_seed: int = 0:
 		variant_seed = value
 		_configure_variant()
 
-var _viewport_container: SubViewportContainer = null
-var _viewport: SubViewport = null
-var _camera: Camera3D = null
-var _mist_root: Node3D = null
 var _layer_materials: Array[ShaderMaterial] = []
 var _cursor_actual_position: Vector2 = Vector2.INF
 var _cursor_clear_strength: float = 0.0
@@ -39,11 +36,11 @@ var _motion_elapsed: float = 0.0
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	clip_contents = false
-	resized.connect(_sync_viewport_size)
-	_build_fog_viewport()
+	resized.connect(_sync_layer_size)
+	_build_mist_layers()
 	_configure_variant()
 	_update_alpha()
-	call_deferred("_sync_viewport_size")
+	_sync_layer_size()
 
 func _process(delta: float) -> void:
 	if not is_visible_in_tree():
@@ -51,67 +48,31 @@ func _process(delta: float) -> void:
 		_cursor_clear_strength = 0.0
 		return
 	_motion_elapsed = fmod(_motion_elapsed + delta, 1000.0)
-	_sync_viewport_size()
 	_age_cursor_trail(delta)
 	_refresh_cursor_motion()
 	_sync_cursor_shader_parameters()
-	_animate_fog_layers()
+	_animate_mist_layers()
 
-func _build_fog_viewport() -> void:
-	_viewport_container = SubViewportContainer.new()
-	_viewport_container.name = "FogViewportContainer"
-	_viewport_container.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_viewport_container.stretch = true
-	_viewport_container.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	add_child(_viewport_container)
-
-	_viewport = SubViewport.new()
-	_viewport.name = "FogViewport"
-	_viewport.transparent_bg = true
-	_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
-	_viewport.size = Vector2i(64, 64)
-	_viewport_container.add_child(_viewport)
-
-	var world_root := Node3D.new()
-	world_root.name = "FogWorld"
-	_viewport.add_child(world_root)
-
-	_camera = Camera3D.new()
-	_camera.name = "FogCamera"
-	_camera.projection = Camera3D.PROJECTION_ORTHOGONAL
-	_camera.size = 1.0
-	_camera.position = Vector3(0.0, 0.0, 2.0)
-	world_root.add_child(_camera)
-	_camera.look_at(Vector3.ZERO, Vector3.UP)
-	_camera.current = true
-
-	_mist_root = Node3D.new()
-	_mist_root.name = "SteadyMist"
-	world_root.add_child(_mist_root)
-	for i in range(2):
+func _build_mist_layers() -> void:
+	for i in range(MIST_LAYER_COUNT):
+		var layer := ColorRect.new()
+		layer.name = "WrapperMistLayer%d" % i
+		layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		layer.color = Color.WHITE
+		layer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		layer.z_index = i
 		var material := _make_layer_material(i)
+		layer.material = material
 		_layer_materials.append(material)
-		var layer := MeshInstance3D.new()
-		layer.name = "CloudLayer%d" % i
-		var mesh := QuadMesh.new()
-		mesh.size = Vector2.ONE
-		mesh.material = material
-		layer.mesh = mesh
-		layer.position.z = float(i) * 0.0003
-		_mist_root.add_child(layer)
+		add_child(layer)
 
 func _make_layer_material(layer_index: int) -> ShaderMaterial:
 	var material := ShaderMaterial.new()
-	material.shader = _get_fog_shader()
-	var smoke_texture := _get_smoke_texture()
-	var cloud_texture := _get_cloud_texture()
-	var detail_texture := _get_detail_texture()
-	material.set_shader_parameter("smoke_texture", smoke_texture)
-	material.set_shader_parameter("use_smoke_texture", smoke_texture != null)
-	material.set_shader_parameter("cloud_texture", cloud_texture)
-	material.set_shader_parameter("use_cloud_texture", cloud_texture != null)
-	material.set_shader_parameter("detail_texture", detail_texture)
-	material.set_shader_parameter("use_detail_texture", detail_texture != null)
+	material.shader = _get_mist_shader()
+	material.set_shader_parameter("fog_alpha", fog_alpha - float(layer_index) * 0.060)
+	material.set_shader_parameter("cloud_scale", 1.12 + float(layer_index) * 0.26)
+	material.set_shader_parameter("drift_speed", 0.090 + float(layer_index) * 0.034)
+	material.set_shader_parameter("phase", float(layer_index) * 3.17)
 	material.set_shader_parameter("layer_card_scale", Vector2.ONE)
 	material.set_shader_parameter("cursor_uv", Vector2(-10.0, -10.0))
 	material.set_shader_parameter("cursor_clear_strength", 0.0)
@@ -120,52 +81,48 @@ func _make_layer_material(layer_index: int) -> ShaderMaterial:
 	material.set_shader_parameter("hover_clear_uv_max", Vector2(-1.0, -1.0))
 	for i in range(CURSOR_TRAIL_COUNT):
 		material.set_shader_parameter("cursor_trail_%d" % i, Vector4(-10.0, -10.0, 0.0, 0.18))
+	var smoke_texture := _get_smoke_texture()
+	if smoke_texture != null:
+		material.set_shader_parameter("smoke_texture", smoke_texture)
+		material.set_shader_parameter("use_smoke_texture", true)
+	var cloud_texture := _get_cloud_texture()
+	if cloud_texture != null:
+		material.set_shader_parameter("cloud_texture", cloud_texture)
+		material.set_shader_parameter("use_cloud_texture", true)
+	var detail_texture := _get_detail_texture()
+	if detail_texture != null:
+		material.set_shader_parameter("detail_texture", detail_texture)
+		material.set_shader_parameter("use_detail_texture", true)
 	material.set_meta("layer_index", layer_index)
 	return material
 
-func _sync_viewport_size() -> void:
-	if _viewport == null or _mist_root == null:
+func _sync_layer_size() -> void:
+	if _layer_materials.is_empty() or size.x <= 0.0 or size.y <= 0.0:
 		return
-	if size.x <= 0.0 or size.y <= 0.0:
-		return
-	var target_size := Vector2i(
-		maxi(16, int(round(size.x))),
-		maxi(16, int(round(size.y)))
-	)
-	if _viewport.size != target_size:
-		_viewport.size = target_size
-	var aspect := size.x / size.y
-	if _camera != null:
-		_camera.size = 1.0
-	for child in _mist_root.get_children():
-		var layer := child as MeshInstance3D
-		if layer == null:
+	for i in range(_layer_materials.size()):
+		var material := _layer_materials[i]
+		if material == null:
 			continue
-		var mesh := layer.mesh as QuadMesh
-		if mesh != null:
-			mesh.size = Vector2(aspect, 1.0)
-		var material := layer.get_active_material(0) as ShaderMaterial
-		if material != null:
-			material.set_shader_parameter("layer_card_scale", Vector2.ONE)
+		var layer_scale := 1.0 + float(i) * 0.015
+		material.set_shader_parameter("layer_card_scale", Vector2(layer_scale, layer_scale))
 
-func _animate_fog_layers() -> void:
-	if _mist_root == null:
+func _animate_mist_layers() -> void:
+	if _layer_materials.is_empty():
 		return
 	var seed := variant_seed if variant_seed != 0 else get_instance_id()
 	var cluster_phase := _seeded_range(seed, 1, 0.0, TAU)
 	var sway_multiplier := _seeded_range(seed, 2, 0.72, 1.06)
 	var speed_multiplier := _seeded_range(seed, 3, 0.84, 1.22)
-	for i in range(_mist_root.get_child_count()):
-		var layer := _mist_root.get_child(i) as MeshInstance3D
-		if layer == null:
+	for i in range(_layer_materials.size()):
+		var material := _layer_materials[i]
+		if material == null:
 			continue
 		var layer_phase := cluster_phase + float(i) * 1.73
 		var speed_x := (0.36 + float(i) * 0.10) * speed_multiplier
 		var speed_y := (0.29 + float(i) * 0.08) * speed_multiplier
 		var sway_x := sin(_motion_elapsed * speed_x + layer_phase) * (0.034 + float(i) * 0.015) * sway_multiplier
 		var sway_y := cos(_motion_elapsed * speed_y + layer_phase * 0.82) * (0.026 + float(i) * 0.011) * sway_multiplier
-		layer.position = Vector3(sway_x, sway_y, float(i) * 0.0003)
-		layer.rotation.z = sin(_motion_elapsed * 0.24 * speed_multiplier + layer_phase) * (0.025 + float(i) * 0.014) * sway_multiplier
+		material.set_shader_parameter("layer_motion_offset", Vector2(sway_x, sway_y))
 
 func _refresh_cursor_motion() -> void:
 	if size.x <= 0.0 or size.y <= 0.0:
@@ -221,8 +178,6 @@ func _sync_cursor_shader_parameters() -> void:
 		)
 		clear_strength = _cursor_clear_strength
 	var trail_values: Array[Vector4] = []
-	if _cursor_actual_position == Vector2.INF:
-		clear_strength = 0.0
 	for i in range(CURSOR_TRAIL_COUNT):
 		var trail_value := Vector4(-10.0, -10.0, 0.0, brush_radius)
 		if i < _cursor_trail.size():
@@ -309,22 +264,22 @@ func _configure_variant() -> void:
 		))
 	_update_alpha()
 
-static func _get_fog_shader() -> Shader:
+static func _get_mist_shader() -> Shader:
 	if _shader_cache != null:
 		return _shader_cache
 	var shader := Shader.new()
 	shader.code = """
-shader_type spatial;
-render_mode unshaded, blend_mix, depth_draw_never, cull_disabled, shadows_disabled;
+shader_type canvas_item;
+render_mode blend_mix, unshaded;
 
 uniform vec4 fog_color : source_color = vec4(0.80, 0.82, 0.84, 0.34);
 uniform float fog_alpha = 0.42;
 uniform float cloud_scale = 2.3;
 uniform float drift_speed = 0.025;
 uniform float phase = 0.0;
-uniform sampler2D smoke_texture;
-uniform sampler2D cloud_texture;
-uniform sampler2D detail_texture;
+uniform sampler2D smoke_texture : filter_linear, repeat_disable;
+uniform sampler2D cloud_texture : filter_linear, repeat_enable;
+uniform sampler2D detail_texture : filter_linear, repeat_enable;
 uniform bool use_smoke_texture = false;
 uniform bool use_cloud_texture = false;
 uniform bool use_detail_texture = false;
@@ -340,6 +295,7 @@ uniform vec4 cursor_trail_5 = vec4(-10.0, -10.0, 0.0, 0.18);
 uniform vec2 hover_clear_uv_min = vec2(2.0, 2.0);
 uniform vec2 hover_clear_uv_max = vec2(-1.0, -1.0);
 uniform vec2 layer_card_scale = vec2(1.0, 1.0);
+uniform vec2 layer_motion_offset = vec2(0.0, 0.0);
 uniform vec2 variant_uv_offset_a = vec2(0.0, 0.0);
 uniform vec2 variant_uv_offset_b = vec2(0.0, 0.0);
 uniform vec2 variant_drift = vec2(1.0, -0.55);
@@ -439,7 +395,7 @@ float cursor_trail_field(vec2 uv, vec4 sample_data) {
 }
 
 void fragment() {
-	vec2 uv = UV;
+	vec2 uv = vec2(0.5) + (UV - vec2(0.5)) / max(layer_card_scale, vec2(0.001)) - layer_motion_offset;
 	vec2 remapped_cursor_uv = vec2(0.5) + (cursor_uv - vec2(0.5)) / max(layer_card_scale, vec2(0.001));
 	vec2 to_cursor = uv - remapped_cursor_uv;
 	float motion_strength = clamp(cursor_clear_strength, 0.0, 1.0);
@@ -510,11 +466,10 @@ void fragment() {
 	float hover_clear = soft_rect_mask(uv, remapped_hover_clear_min, remapped_hover_clear_max, 0.026);
 	density = clamp(density + ridge - gust_field * 1.18 - healing_clear * 1.06, 0.0, 1.0);
 	density *= 1.0 - hover_clear;
-	float edge_x = smoothstep(0.0, 0.075, uv.x) * smoothstep(0.0, 0.075, 1.0 - uv.x);
-	float edge_y = smoothstep(0.0, 0.085, uv.y) * smoothstep(0.0, 0.085, 1.0 - uv.y);
+	float edge_x = smoothstep(0.0, 0.075, UV.x) * smoothstep(0.0, 0.075, 1.0 - UV.x);
+	float edge_y = smoothstep(0.0, 0.085, UV.y) * smoothstep(0.0, 0.085, 1.0 - UV.y);
 	float feather = pow(edge_x * edge_y, 0.78);
-	ALBEDO = fog_color.rgb;
-	ALPHA = fog_alpha * density * feather;
+	COLOR = vec4(fog_color.rgb, fog_alpha * density * feather);
 }
 """
 	_shader_cache = shader

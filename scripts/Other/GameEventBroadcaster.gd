@@ -357,6 +357,8 @@ func _build_full_state_event_data(player_index: int, action_message: String, vis
 		action_log_event_id = _action_log_event_id,
 		authoritative_stack_window_locked = match_manager != null \
 			and match_manager.has_unresolved_stack_action_window(),
+		authoritative_visual_linger_pending = match_manager != null \
+			and match_manager.is_visual_linger_pending(),
 	}
 	if match_manager != null and player_index >= 0 and player_index < game_manager.players.size():
 		var pending_priority_prompt := match_manager.get_pending_priority_prompt_data(
