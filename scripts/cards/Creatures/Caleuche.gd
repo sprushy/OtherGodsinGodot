@@ -42,9 +42,9 @@ func on_unmuted(game_manager: GameManager) -> void:
 func on_any_card_moved(game_manager: GameManager, _moved_card: Card, _from_zone: Zone, _to_zone: Zone) -> void:
 	_update_spirit_crew_bonus(game_manager)
 
-func _update_spirit_crew_bonus(_game_manager: GameManager) -> void:
+func _update_spirit_crew_bonus(game_manager: GameManager) -> void:
 	clear_buffs_from(SPIRIT_CREW_SOURCE)
-	if current_zone == null or not current_zone.is_board_zone() or abilities_suppressed():
+	if not counts_as_on_field(game_manager) or abilities_suppressed():
 		return
 
 	var controller := get_controller()
@@ -52,10 +52,15 @@ func _update_spirit_crew_bonus(_game_manager: GameManager) -> void:
 		return
 
 	var other_friendly_spirits := 0
-	for zone in controller.frontline_zones + controller.reserve_zones:
-		for card in zone.cards:
-			if _counts_as_other_friendly_spirit(card, controller):
+	if game_manager != null:
+		for card in game_manager.get_field_cards(controller):
+			if _counts_as_other_friendly_spirit(card, controller, game_manager):
 				other_friendly_spirits += 1
+	else:
+		for zone in controller.frontline_zones + controller.reserve_zones:
+			for card in zone.cards:
+				if _counts_as_other_friendly_spirit(card, controller):
+					other_friendly_spirits += 1
 
 	if other_friendly_spirits > 0:
 		add_buff(
@@ -68,13 +73,12 @@ func _update_spirit_crew_bonus(_game_manager: GameManager) -> void:
 			"passive"
 		)
 
-func _counts_as_other_friendly_spirit(card: Card, controller: Player) -> bool:
+func _counts_as_other_friendly_spirit(card: Card, controller: Player, game_manager: GameManager = null) -> bool:
 	return card != null \
 		and card != self \
 		and (uid == "" or card.uid != uid) \
 		and card.card_type == Card.CardType.CREATURE \
 		and not card.is_god \
 		and card.get_controller() == controller \
-		and card.current_zone != null \
-		and card.current_zone.is_board_zone() \
+		and card.counts_as_on_field(game_manager) \
 		and card.has_type("Spirit")

@@ -113,6 +113,8 @@ var _auth_mode_option: OptionButton = null
 var _password_line_edit: LineEdit = null
 var _switch_account_button: Button = null
 var _resume_match_button: Button = null
+var _active_match_rejoin_dialog: ConfirmationDialog = null
+var _pending_active_match_rejoin_info: Dictionary = {}
 var _create_unranked_seek_button: Button = null
 var _create_bo3_ranked_seek_button: Button = null
 var _create_bo3_unranked_seek_button: Button = null
@@ -134,6 +136,8 @@ var _bug_report_actual_edit: TextEdit = null
 var _suppressed_active_match_id: String = ""
 var _suppressed_active_match_room_id: String = ""
 var _suppress_active_match_resume_until_msec: int = 0
+var _declined_active_match_rejoin_id: String = ""
+var _declined_active_match_rejoin_room_id: String = ""
 var _bug_report_status_label: Label = null
 var _bug_report_screenshot_label: Label = null
 var _bug_report_screenshot_preview: TextureRect = null
@@ -308,6 +312,7 @@ func _ready() -> void:
 	_build_account_identity_controls()
 	_build_friends_controls()
 	_build_resume_controls()
+	_build_active_match_rejoin_dialog()
 	_build_seek_format_controls()
 	_refresh_multiplayer_deck_options()
 	_refresh_seek_list()
@@ -863,6 +868,12 @@ func _refresh_update_download_progress() -> void:
 			"Downloading %s: %.1f MB received.\n"
 			+ "Keep Other Gods open until it restarts."
 		) % [version_text, float(downloaded) / BYTES_PER_MIB]
+
+func _set_update_download_status(message: String) -> void:
+	if _update_download_status_label == null or not is_instance_valid(_update_download_status_label):
+		return
+	_update_download_status_label.text = message
+	_update_download_status_label.visible = true
 
 func _refresh_windows_curl_download_progress() -> void:
 	if _update_download_status_label == null or not is_instance_valid(_update_download_status_label):
@@ -1956,6 +1967,7 @@ func _on_rejoin_match_requested(room_id: String) -> void:
 	if not auth_error.is_empty():
 		status_label.text = auth_error
 		return
+	_clear_declined_active_match_rejoin()
 	var normalized_room_id := room_id.strip_edges().to_upper()
 	_pending_host_room_creation = false
 	_pending_join_room_id = ""
@@ -2985,8 +2997,11 @@ func _apply_update_and_restart(zip_path: String) -> void:
 		_dismiss_update_prompt()
 		_complete_startup_prompts()
 		return
-	if _update_download_status_label != null and is_instance_valid(_update_download_status_label):
-		_update_download_status_label.text = "Applying update..."
+	_set_update_download_status(
+		"Download complete. Verifying and unpacking the update...\n"
+		+ "Keep Other Gods open; an updater window will take over before the game reopens."
+	)
+	await get_tree().process_frame
 	_write_update_log(
 		"apply_started version=%s archive=%s"
 		% [_pending_update_release_version, zip_path]
@@ -3004,11 +3019,21 @@ func _apply_update_and_restart(zip_path: String) -> void:
 		_on_auto_update_failed("Couldn't create the update staging folder.")
 		return
 
+	_set_update_download_status(
+		"Opening update archive...\n"
+		+ "This may take a moment on slower disks or while Windows scans the download."
+	)
+	await get_tree().process_frame
 	var zip := ZIPReader.new()
 	if zip.open(zip_path) != OK:
 		_on_auto_update_failed("Failed to open downloaded archive.")
 		return
 
+	_set_update_download_status(
+		"Unpacking update files...\n"
+		+ "Other Gods will close and reopen automatically after the installer starts."
+	)
+	await get_tree().process_frame
 	var extracted_files := _extract_update_archive_to_staging(zip, staging_root)
 	zip.close()
 	DirAccess.remove_absolute(zip_path)
@@ -3022,6 +3047,8 @@ func _apply_update_and_restart(zip_path: String) -> void:
 		_on_auto_update_failed("The downloaded update archive had an unexpected layout.")
 		return
 
+	_set_update_download_status("Preparing updater files...")
+	await get_tree().process_frame
 	var exe_dir := current_exe.get_base_dir()
 	var current_exe_name := current_exe.get_file()
 	var target_exe_name := current_exe_name
@@ -3048,11 +3075,18 @@ func _apply_update_and_restart(zip_path: String) -> void:
 	var script_path := runner_dir.path_join("updater.ps1")
 	var update_log_path := ProjectSettings.globalize_path(UPDATE_LOG_PATH)
 	var failure_marker_path := ProjectSettings.globalize_path(UPDATE_FAILURE_MARKER_PATH)
+	_set_update_download_status("Verifying the staged game executable...")
+	await get_tree().process_frame
 	var staged_exe_sha256 := FileAccess.get_sha256(staged_target_exe_path).to_lower()
 	if staged_exe_sha256.is_empty():
 		_on_auto_update_failed("Couldn't verify the staged game executable.")
 		return
 	if _can_write_to_windows_update_target(exe_dir):
+		_set_update_download_status(
+			"Starting the verified updater...\n"
+			+ "A separate updater window will install the files, then Other Gods will reopen."
+		)
+		await get_tree().process_frame
 		var native_updater_failure := await _launch_native_windows_updater(
 			staged_target_exe_path,
 			exe_dir,
@@ -3067,8 +3101,11 @@ func _apply_update_and_restart(zip_path: String) -> void:
 		_write_update_log(
 			"native_updater_fallback_to_powershell reason=%s" % native_updater_failure
 		)
+		_set_update_download_status(
+			"The verified updater could not start. Trying the Windows permission flow..."
+		)
 	elif _update_download_status_label != null and is_instance_valid(_update_download_status_label):
-		_update_download_status_label.text = "Requesting Windows permission to install update..."
+		_set_update_download_status("Requesting Windows permission to install update...")
 	var script_content := (
 		"param([switch]$Elevated)\r\n"
 		+ "$ErrorActionPreference = 'Stop'\r\n"
@@ -3163,13 +3200,18 @@ func _apply_update_and_restart(zip_path: String) -> void:
 	script_file.store_string(script_content)
 	script_file.close()
 
+	_set_update_download_status("Checking Windows updater permissions...")
+	await get_tree().process_frame
 	var preflight_failure := _run_windows_updater_preflight(powershell_path, runner_dir)
 	if not preflight_failure.is_empty():
 		_on_auto_update_failed(preflight_failure)
 		return
 
-	if _update_download_status_label != null and is_instance_valid(_update_download_status_label):
-		_update_download_status_label.text = "Restarting to finish update..."
+	_set_update_download_status(
+		"Starting Windows updater...\n"
+		+ "Other Gods will close now and reopen after the update finishes. If Windows asks, choose Yes."
+	)
+	await get_tree().process_frame
 	var updater_pid := OS.create_process(
 		powershell_path,
 		["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script_path]
@@ -3214,7 +3256,6 @@ func _launch_native_windows_updater(
 	var handshake_path := runner_dir.path_join("native_updater.ready")
 	DirAccess.remove_absolute(handshake_path)
 	var args := PackedStringArray([
-		"--headless",
 		"--",
 		"self_update=windows_native",
 		"update_target_dir=%s" % target_dir,
@@ -3233,8 +3274,10 @@ func _launch_native_windows_updater(
 		"native_updater_process_started version=%s pid=%d staged=%s"
 		% [_pending_update_release_version, updater_pid, staged_exe_path]
 	)
-	if _update_download_status_label != null and is_instance_valid(_update_download_status_label):
-		_update_download_status_label.text = "Starting verified updater..."
+	_set_update_download_status(
+		"Opening updater window...\n"
+		+ "Keep it open; it will replace the files and restart Other Gods."
+	)
 
 	var elapsed_seconds := 0.0
 	while elapsed_seconds < WINDOWS_NATIVE_UPDATER_HANDSHAKE_SECONDS:
@@ -3244,8 +3287,11 @@ func _launch_native_windows_updater(
 				"native_updater_ready version=%s pid=%d"
 				% [_pending_update_release_version, updater_pid]
 			)
-			if _update_download_status_label != null and is_instance_valid(_update_download_status_label):
-				_update_download_status_label.text = "Restarting to finish update..."
+			_set_update_download_status(
+				"Updater is ready.\n"
+				+ "Other Gods will close now. The updater window will stay open until the game reopens."
+			)
+			await get_tree().process_frame
 			get_tree().quit()
 			return ""
 		if not OS.is_process_running(updater_pid):
@@ -5901,7 +5947,16 @@ func _on_lobby_login_succeeded(session_id: String, reconnect_token: String, play
 				_apply_room_snapshot(restored_room)
 			status_label.text = "Waiting for the finished match to close so the rematch can start..."
 			return
+		elif _has_declined_active_match_rejoin(active_match_info):
+			_save_active_match_resume(active_match_info)
+			status_label.text = "Signed in as %s. Your live match is available to rejoin." % resolved_identity_name
+			return
 		elif not _should_suppress_active_match_auto_resume(active_match_info):
+			if _offer_active_match_rejoin(
+				active_match_info,
+				"Signed in as %s. Your active match is ready to rejoin." % resolved_identity_name
+			):
+				return
 			_save_active_match_resume(active_match_info)
 			status_label.text = "Signed in as %s. Rejoining your active match..." % resolved_identity_name
 			call_deferred("_resume_active_match_from_lobby", active_match_info)
@@ -5961,7 +6016,16 @@ func _on_lobby_reconnect_succeeded(
 				_apply_room_snapshot(room)
 			status_label.text = "Waiting for the finished match to close so the rematch can start..."
 			return
+		elif _has_declined_active_match_rejoin(active_match_info):
+			_save_active_match_resume(active_match_info)
+			status_label.text = "Lobby session restored. Your live match is available to rejoin."
+			return
 		elif not _should_suppress_active_match_auto_resume(active_match_info):
+			if _offer_active_match_rejoin(
+				active_match_info,
+				"Lobby session restored. Your active match is ready to rejoin."
+			):
+				return
 			_save_active_match_resume(active_match_info)
 			status_label.text = "Lobby session restored. Rejoining your active match..."
 			call_deferred("_resume_active_match_from_lobby", active_match_info)
@@ -6031,6 +6095,9 @@ func _apply_room_snapshot(snapshot: Dictionary) -> void:
 	if room_status == "in_match" and not _match_launch_queued and lobby_client != null:
 		var active_match_info: Dictionary = lobby_client.current_active_match_info.duplicate(true)
 		if not active_match_info.is_empty() and str(active_match_info.get("room_id", "")).strip_edges() == room_id:
+			if _is_active_match_rejoin_offer_pending(active_match_info) or _has_declined_active_match_rejoin(active_match_info):
+				_save_active_match_resume(active_match_info)
+				return
 			if room_id == _pending_rematch_room_id:
 				status_label.text = "Waiting for the finished match to close so the rematch can start..."
 				return
@@ -6485,6 +6552,7 @@ func _abandon_current_lobby_match() -> void:
 	lobby_client.current_active_match_info.clear()
 
 func _cleanup_lobby(clear_session: bool) -> void:
+	_dismiss_active_match_rejoin_offer(clear_session)
 	_cleanup_lobby_client()
 	_cleanup_lobby_server()
 	_set_connected_server_version("")
@@ -7564,6 +7632,22 @@ func _build_resume_controls() -> void:
 	if insert_index >= 0:
 		multiplayer_container.move_child(_resume_match_button, insert_index)
 
+func _build_active_match_rejoin_dialog() -> void:
+	if _active_match_rejoin_dialog != null and is_instance_valid(_active_match_rejoin_dialog):
+		return
+	var dialog := ConfirmationDialog.new()
+	dialog.name = "ActiveMatchRejoinDialog"
+	dialog.title = "Rejoin Active Match?"
+	dialog.initial_position = Window.WINDOW_INITIAL_POSITION_CENTER_PRIMARY_SCREEN
+	dialog.exclusive = true
+	dialog.min_size = Vector2i(460, 170)
+	dialog.get_ok_button().text = "Rejoin Match"
+	dialog.get_cancel_button().text = "Stay in Lobby"
+	dialog.confirmed.connect(_on_active_match_rejoin_confirmed)
+	dialog.canceled.connect(_on_active_match_rejoin_canceled)
+	add_child(dialog)
+	_active_match_rejoin_dialog = dialog
+
 func _build_seek_format_controls() -> void:
 	if multiplayer_container == null or create_seek_button == null or _create_unranked_seek_button != null:
 		return
@@ -7597,6 +7681,127 @@ func _update_resume_controls() -> void:
 	if _resume_match_button == null:
 		return
 	_resume_match_button.visible = false
+
+func _offer_active_match_rejoin(match_info: Dictionary, status_text: String = "") -> bool:
+	if not _should_offer_active_match_rejoin(match_info):
+		return false
+	_build_active_match_rejoin_dialog()
+	if _active_match_rejoin_dialog == null or not is_instance_valid(_active_match_rejoin_dialog):
+		return false
+	_pending_active_match_rejoin_info = match_info.duplicate(true)
+	_clear_declined_active_match_rejoin()
+	_save_active_match_resume(match_info)
+	var detail_text := _format_active_match_rejoin_details(match_info)
+	_active_match_rejoin_dialog.dialog_text = "You have a match in progress%s.\n\nRejoin it now?" % detail_text
+	if not status_text.strip_edges().is_empty():
+		status_label.text = status_text
+	_active_match_rejoin_dialog.popup_centered(Vector2i(460, 170))
+	if str(_smoke_config.get("role", "")).strip_edges().to_lower() == "resume":
+		call_deferred("_on_active_match_rejoin_confirmed")
+	return true
+
+func _should_offer_active_match_rejoin(match_info: Dictionary) -> bool:
+	if match_info.is_empty():
+		return false
+	if bool(match_info.get("observer_mode", false)):
+		return false
+	if _has_declined_active_match_rejoin(match_info):
+		return false
+	var status := str(match_info.get("status", MatchSessionScript.STATUS_ACTIVE)).strip_edges().to_lower()
+	return status.is_empty() or status == MatchSessionScript.STATUS_ACTIVE
+
+func _format_active_match_rejoin_details(match_info: Dictionary) -> String:
+	var details: Array[String] = []
+	var room_id := str(match_info.get("room_id", "")).strip_edges()
+	if not room_id.is_empty():
+		details.append("room %s" % room_id)
+	var opponent_name := _get_active_match_opponent_name(match_info)
+	if not opponent_name.is_empty():
+		details.append("vs %s" % opponent_name)
+	if details.is_empty():
+		return ""
+	return " (%s)" % ", ".join(details)
+
+func _get_active_match_opponent_name(match_info: Dictionary) -> String:
+	var player_names = match_info.get("player_names", [])
+	if not (player_names is Array):
+		return ""
+	var names: Array = player_names as Array
+	var local_player_index := int(match_info.get("player_index", -1))
+	for index in range(names.size()):
+		if index == local_player_index:
+			continue
+		var player_name := str(names[index]).strip_edges()
+		if not player_name.is_empty():
+			return player_name
+	return ""
+
+func _on_active_match_rejoin_confirmed() -> void:
+	var match_info := _pending_active_match_rejoin_info.duplicate(true)
+	_pending_active_match_rejoin_info.clear()
+	_clear_declined_active_match_rejoin()
+	if match_info.is_empty():
+		status_label.text = "That active match is no longer available."
+		return
+	_save_active_match_resume(match_info)
+	status_label.text = "Rejoining your active match..."
+	call_deferred("_resume_active_match_from_lobby", match_info)
+
+func _on_active_match_rejoin_canceled() -> void:
+	var match_info := _pending_active_match_rejoin_info.duplicate(true)
+	_pending_active_match_rejoin_info.clear()
+	if match_info.is_empty():
+		return
+	_remember_declined_active_match_rejoin(match_info)
+	_save_active_match_resume(match_info)
+	status_label.text = "Your live match is available to rejoin from the seek list."
+	_queue_room_list_refresh(false)
+
+func _is_active_match_rejoin_offer_pending(match_info: Dictionary = {}) -> bool:
+	if _pending_active_match_rejoin_info.is_empty():
+		return false
+	if _active_match_rejoin_dialog == null or not is_instance_valid(_active_match_rejoin_dialog):
+		return false
+	if not _active_match_rejoin_dialog.visible:
+		return false
+	if match_info.is_empty():
+		return true
+	return _active_match_infos_match(_pending_active_match_rejoin_info, match_info)
+
+func _remember_declined_active_match_rejoin(match_info: Dictionary) -> void:
+	_declined_active_match_rejoin_id = str(match_info.get("match_id", "")).strip_edges()
+	_declined_active_match_rejoin_room_id = str(match_info.get("room_id", "")).strip_edges()
+
+func _clear_declined_active_match_rejoin() -> void:
+	_declined_active_match_rejoin_id = ""
+	_declined_active_match_rejoin_room_id = ""
+
+func _has_declined_active_match_rejoin(match_info: Dictionary) -> bool:
+	if _declined_active_match_rejoin_id.is_empty() and _declined_active_match_rejoin_room_id.is_empty():
+		return false
+	var match_id := str(match_info.get("match_id", "")).strip_edges()
+	var room_id := str(match_info.get("room_id", "")).strip_edges()
+	if not _declined_active_match_rejoin_id.is_empty():
+		return match_id == _declined_active_match_rejoin_id
+	if not _declined_active_match_rejoin_room_id.is_empty() and room_id == _declined_active_match_rejoin_room_id:
+		return true
+	return false
+
+func _dismiss_active_match_rejoin_offer(clear_declined_choice: bool = false) -> void:
+	_pending_active_match_rejoin_info.clear()
+	if clear_declined_choice:
+		_clear_declined_active_match_rejoin()
+	if _active_match_rejoin_dialog != null and is_instance_valid(_active_match_rejoin_dialog):
+		_active_match_rejoin_dialog.hide()
+
+func _active_match_infos_match(left: Dictionary, right: Dictionary) -> bool:
+	var left_match_id := str(left.get("match_id", "")).strip_edges()
+	var right_match_id := str(right.get("match_id", "")).strip_edges()
+	if not left_match_id.is_empty() and not right_match_id.is_empty():
+		return left_match_id == right_match_id
+	var left_room_id := str(left.get("room_id", "")).strip_edges()
+	var right_room_id := str(right.get("room_id", "")).strip_edges()
+	return not left_room_id.is_empty() and left_room_id == right_room_id
 
 func _get_saved_lobby_resume() -> Dictionary:
 	if _local_profile_store == null:

@@ -32,13 +32,9 @@ static func get_creatures_for_strength_check(game_manager: GameManager) -> Array
 	var creatures: Array[Card] = []
 	if game_manager == null:
 		return creatures
-	for player: Player in game_manager.players:
-		if player == null:
-			continue
-		for zone: Zone in player.frontline_zones + player.reserve_zones:
-			for card: Card in zone.cards:
-				if counts_for_strength_check(card):
-					creatures.append(card)
+	for card in game_manager.get_field_cards():
+		if counts_for_strength_check(card):
+			creatures.append(card)
 	return creatures
 
 static func get_strongest_creatures(game_manager: GameManager) -> Array[Card]:

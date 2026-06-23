@@ -3359,7 +3359,7 @@ func request_send_cards_to_graveyard(
 			destroyed_count
 		)
 		return
-	if card.current_zone == null:
+	if card.current_zone == null and not is_card_on_field(card):
 		request_send_cards_to_graveyard(
 			working_queue,
 			completion_callback,
@@ -3717,6 +3717,56 @@ func _push_frontline_entry_event(card: Card) -> void:
 		return
 	push_to_stack(action)
 
+func get_field_cards(player: Player = null, include_sheltered: bool = true) -> Array[Card]:
+	var field_cards: Array[Card] = []
+	var seen_cards: Dictionary = {}
+	if player != null:
+		_append_player_field_cards(player, field_cards, seen_cards, include_sheltered)
+		return field_cards
+	for field_player in players:
+		_append_player_field_cards(field_player, field_cards, seen_cards, include_sheltered)
+	return field_cards
+
+func is_card_on_field(card: Card, include_sheltered: bool = true) -> bool:
+	if card == null:
+		return false
+	if card.current_zone != null and card.current_zone.is_board_zone():
+		return true
+	if not include_sheltered or card.card_owner == null:
+		return false
+	for field_card in get_field_cards(card.card_owner, true):
+		if field_card == card:
+			return true
+	return false
+
+func _append_player_field_cards(player: Player, field_cards: Array[Card], seen_cards: Dictionary, include_sheltered: bool) -> void:
+	if player == null:
+		return
+	for zone in player.frontline_zones + player.reserve_zones:
+		if zone == null:
+			continue
+		for card in zone.cards:
+			_append_unique_field_card(field_cards, seen_cards, card)
+	if not include_sheltered:
+		return
+	for zone in player.power_zones:
+		if zone == null:
+			continue
+		for source_card in zone.cards:
+			if source_card == null or not source_card.has_method("get_sheltered_cards_for_field_effects"):
+				continue
+			for sheltered_card in source_card.get_sheltered_cards_for_field_effects():
+				_append_unique_field_card(field_cards, seen_cards, sheltered_card)
+
+func _append_unique_field_card(field_cards: Array[Card], seen_cards: Dictionary, card: Card) -> void:
+	if card == null:
+		return
+	var card_id := card.get_instance_id()
+	if seen_cards.has(card_id):
+		return
+	seen_cards[card_id] = true
+	field_cards.append(card)
+
 func _has_priority_responses_for_action(action: CardAction) -> bool:
 	if action == null:
 		return false
@@ -4006,15 +4056,20 @@ func _get_cost_adjustment_source_cards() -> Array[Card]:
 		for card in player.god_zone.cards:
 			if _can_source_adjust_costs(card):
 				sources.append(card)
-		for zone in player.power_zones + player.frontline_zones + player.reserve_zones:
+		for zone in player.power_zones:
 			for card in zone.cards:
 				if _can_source_adjust_costs(card):
 					sources.append(card)
+		for card in get_field_cards(player):
+			if _can_source_adjust_costs(card):
+				sources.append(card)
 	return sources
 
 func _can_source_adjust_costs(card: Card) -> bool:
-	if card == null or card.current_zone == null or card.card_owner == null:
+	if card == null or card.card_owner == null:
 		return false
+	if card.current_zone == null:
+		return is_card_on_field(card) and not card.is_face_down and not card.abilities_suppressed()
 	if (card.is_power or card.is_god) and not can_player_use_powers(card.card_owner):
 		return false
 	if card is PowerCard:

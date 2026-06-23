@@ -111,22 +111,26 @@ func _controls_more_face_up_board_cards(game_manager: GameManager) -> bool:
 	var opponent := game_manager.get_opponent(card_owner)
 	if opponent == null:
 		return false
-	return _count_face_up_board_cards(card_owner) > _count_face_up_board_cards(opponent)
+	return _count_face_up_board_cards(card_owner, game_manager) > _count_face_up_board_cards(opponent, game_manager)
 
-func _count_face_up_board_cards(player: Player) -> int:
+func _count_face_up_board_cards(player: Player, game_manager: GameManager) -> int:
 	if player == null:
 		return 0
 	var total := 0
+	if game_manager != null:
+		for board_card in game_manager.get_field_cards(player):
+			if _is_face_up_board_card(board_card, game_manager):
+				total += 1
+		return total
 	for zone in player.frontline_zones + player.reserve_zones:
 		for board_card in zone.cards:
 			if _is_face_up_board_card(board_card):
 				total += 1
 	return total
 
-func _is_face_up_board_card(card: Card) -> bool:
+func _is_face_up_board_card(card: Card, game_manager: GameManager = null) -> bool:
 	return card != null \
-		and card.current_zone != null \
-		and card.current_zone.is_board_zone() \
+		and card.counts_as_on_field(game_manager) \
 		and not card.is_face_down \
 		and not card.is_stealth
 

@@ -63,41 +63,34 @@ func _destroy_face_up_weather_charms(game_manager: GameManager) -> void:
 		return
 	var doomed_cards: Array[Card] = []
 	for player in game_manager.players:
-		for zone in player.frontline_zones + player.reserve_zones:
-			for card in zone.cards.duplicate():
-				if card == null or card == self:
-					continue
-				if not (card is CharmCard):
-					continue
-				if card.is_face_down or not card.has_type("Weather"):
-					continue
-				doomed_cards.append(card)
+		for card in game_manager.get_field_cards(player):
+			if card == null or card == self:
+				continue
+			if not (card is CharmCard):
+				continue
+			if card.is_face_down or not card.has_type("Weather"):
+				continue
+			doomed_cards.append(card)
 	game_manager.request_send_cards_to_graveyard(doomed_cards)
 
 func _refresh_weather_lock(game_manager: GameManager) -> void:
 	if game_manager == null:
 		return
-	for player in game_manager.players:
-		for zone in player.frontline_zones + player.reserve_zones:
-			for card in zone.cards:
-				var creature := card as Card
-				if creature == null or creature.card_type != Card.CardType.CREATURE:
-					continue
-				if _is_active() and _is_weather_locked_creature(creature) and not _weather_effect_is_blocked(creature):
-					_apply_weather_lock(creature)
-				else:
-					_remove_weather_lock(creature)
+	for creature in game_manager.get_field_cards():
+		if creature == null or creature.card_type != Card.CardType.CREATURE:
+			continue
+		if _is_active() and _is_weather_locked_creature(creature) and not _weather_effect_is_blocked(creature):
+			_apply_weather_lock(creature)
+		else:
+			_remove_weather_lock(creature)
 
 func _clear_weather_lock(game_manager: GameManager) -> void:
 	if game_manager == null:
 		return
-	for player in game_manager.players:
-		for zone in player.frontline_zones + player.reserve_zones:
-			for card in zone.cards:
-				var creature := card as Card
-				if creature == null or creature.card_type != Card.CardType.CREATURE:
-					continue
-				_remove_weather_lock(creature)
+	for creature in game_manager.get_field_cards():
+		if creature == null or creature.card_type != Card.CardType.CREATURE:
+			continue
+		_remove_weather_lock(creature)
 
 func _apply_weather_lock(creature: Card) -> void:
 	if creature == null:

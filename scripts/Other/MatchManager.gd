@@ -444,6 +444,7 @@ func _queue_ui_interaction(
 	})
 
 func _release_next_queued_ui_interaction() -> void:
+	_prune_stale_ui_interactions_for_current_turn()
 	if not _pending_ui_interactions.is_empty():
 		return
 	while not _queued_ui_interactions.is_empty():
@@ -540,6 +541,19 @@ func _record_pending_ui_interaction(player: Player, type: String, data: Dictiona
 		_pending_ui_interactions.remove_at(0)
 	return prompt_id
 
+func _prune_stale_ui_interactions_for_current_turn() -> void:
+	if game_manager == null:
+		return
+	var current_turn := game_manager.turn_number
+	for idx in range(_pending_ui_interactions.size() - 1, -1, -1):
+		var entry: Dictionary = _pending_ui_interactions[idx]
+		if int(entry.get("turn_number", current_turn)) != current_turn:
+			_pending_ui_interactions.remove_at(idx)
+	for idx in range(_queued_ui_interactions.size() - 1, -1, -1):
+		var queued: Dictionary = _queued_ui_interactions[idx]
+		if int(queued.get("turn_number", current_turn)) != current_turn:
+			_queued_ui_interactions.remove_at(idx)
+
 func _has_duplicate_pending_ui_interaction(player: Player, type: String, data: Dictionary) -> bool:
 	for existing in _pending_ui_interactions:
 		if existing.get("player", null) != player:
@@ -586,6 +600,7 @@ func _pending_ui_interaction_has_same_identity(first: Dictionary, second: Dictio
 	return compared_key or first.get("player", null) == second.get("player", null)
 
 func _validate_pending_ui_interaction_for_command(command: Dictionary) -> Dictionary:
+	_prune_stale_ui_interactions_for_current_turn()
 	var result := {
 		"error": "",
 		"prompt_id": -1,
@@ -674,6 +689,7 @@ func _consume_pending_ui_interaction_for_player(player: Player, interaction_type
 	return false
 
 func _resume_authoritative_flow_after_prompt_command() -> void:
+	_prune_stale_ui_interactions_for_current_turn()
 	if not _pending_ui_interactions.is_empty():
 		# The authoritative prompt queue is strictly serial. If the active
 		# selector was missed or replaced by a state refresh, reissue that same
@@ -2906,6 +2922,7 @@ func advance_priority() -> void:
 func _advance_authoritative_priority() -> void:
 	if not _uses_authoritative_headless_priority_flow():
 		return
+	_prune_stale_ui_interactions_for_current_turn()
 	if _authoritative_stack_resolution_pending \
 			or not _pending_ui_interactions.is_empty() \
 			or not _queued_ui_interactions.is_empty():
@@ -3088,6 +3105,7 @@ func _continue_active_authoritative_turn_start_sequence() -> bool:
 			or _active_turn_start_sequence_turn != game_manager.turn_number \
 			or _turn_start_priority_queued_turn == game_manager.turn_number:
 		return false
+	_prune_stale_ui_interactions_for_current_turn()
 	if not _pending_ui_interactions.is_empty() or not _queued_ui_interactions.is_empty():
 		return true
 	if _emit_next_wheel_of_fire_turn_start_choice():

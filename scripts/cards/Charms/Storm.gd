@@ -59,48 +59,41 @@ func _destroy_face_up_weather_charms(game_manager: GameManager) -> void:
 		return
 	var doomed_cards: Array[Card] = []
 	for player in game_manager.players:
-		for zone in player.frontline_zones + player.reserve_zones:
-			for card in zone.cards.duplicate():
-				if card == null or card == self:
-					continue
-				if not (card is CharmCard):
-					continue
-				if card.is_face_down or not card.has_type("Weather"):
-					continue
-				doomed_cards.append(card)
+		for card in game_manager.get_field_cards(player):
+			if card == null or card == self:
+				continue
+			if not (card is CharmCard):
+				continue
+			if card.is_face_down or not card.has_type("Weather"):
+				continue
+			doomed_cards.append(card)
 	game_manager.request_send_cards_to_graveyard(doomed_cards)
 
 func _refresh_storm_field(game_manager: GameManager) -> void:
 	if game_manager == null:
 		return
-	for player in game_manager.players:
-		for zone in player.frontline_zones + player.reserve_zones:
-			for card in zone.cards:
-				var creature := card as Card
-				if creature == null or creature.card_type != Card.CardType.CREATURE:
-					continue
-				if _is_active():
-					if _weather_effect_is_blocked(creature):
-						_remove_storm_effects(creature)
-						continue
-					_apply_storm_silence(creature)
-					if _is_aerial_under_storm(creature):
-						_apply_storm_aerial_loss(creature)
-					else:
-						_remove_storm_aerial_loss(creature)
-				else:
-					_remove_storm_effects(creature)
+	for creature in game_manager.get_field_cards():
+		if creature == null or creature.card_type != Card.CardType.CREATURE:
+			continue
+		if _is_active():
+			if _weather_effect_is_blocked(creature):
+				_remove_storm_effects(creature)
+				continue
+			_apply_storm_silence(creature)
+			if _is_aerial_under_storm(creature):
+				_apply_storm_aerial_loss(creature)
+			else:
+				_remove_storm_aerial_loss(creature)
+		else:
+			_remove_storm_effects(creature)
 
 func _clear_storm_field(game_manager: GameManager) -> void:
 	if game_manager == null:
 		return
-	for player in game_manager.players:
-		for zone in player.frontline_zones + player.reserve_zones:
-			for card in zone.cards:
-				var creature := card as Card
-				if creature == null or creature.card_type != Card.CardType.CREATURE:
-					continue
-				_remove_storm_effects(creature)
+	for creature in game_manager.get_field_cards():
+		if creature == null or creature.card_type != Card.CardType.CREATURE:
+			continue
+		_remove_storm_effects(creature)
 
 func _apply_storm_silence(creature: Card) -> void:
 	if creature == null:

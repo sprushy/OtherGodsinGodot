@@ -16,7 +16,7 @@ func _init() -> void:
 	level = 0
 	mana_cost = 5
 	card_types = ["Power", "Ancient Power"]
-	ability_text = "[b]Alternate State[/b]: When a friendly Ancient Human or Mer is destroyed or voided, you may place it under this card until the end of your next turn instead. While under this card, it keeps its passive abilities and may use abilities that affect the field."
+	ability_text = "[b]Alternate State[/b]: When a friendly Ancient Human or Mer is destroyed or voided from the field, you may place it under this card until the end of your next turn instead. While under this card, it counts as on the field for effects and requirements, keeps its passive abilities, and may use abilities that affect the field."
 	art_path = ART_PATH
 
 func get_hover_detail_lines(viewer: Player = null) -> Array[String]:
@@ -77,6 +77,11 @@ func get_sheltered_cards_for_passive_effects() -> Array[Card]:
 		return []
 	return _get_sheltered_cards()
 
+func get_sheltered_cards_for_field_effects() -> Array[Card]:
+	if not is_effectively_active():
+		return []
+	return _get_sheltered_cards()
+
 func on_any_card_moved(game_manager: GameManager, moved_card: Card, from_zone: Zone, to_zone: Zone) -> void:
 	# Forward to sheltered cards so their field-affecting abilities still trigger
 	for card in _get_sheltered_cards():
@@ -92,6 +97,12 @@ func on_any_card_moved(game_manager: GameManager, moved_card: Card, from_zone: Z
 	if moved_card.card_owner != card_owner:
 		return
 	if moved_card in sheltered_cards:
+		if to_zone != null:
+			_forget_sheltered_card(moved_card)
+		return
+
+	var came_from_field := from_zone != null and from_zone.is_board_zone()
+	if not came_from_field:
 		return
 
 	var went_to_graveyard := to_zone == card_owner.graveyard_zone
@@ -117,6 +128,14 @@ func _shelter_card(game_manager: GameManager, card: Card, holding_zone: Zone, wa
 			card_name, card.card_name, origin, card_owner.player_name
 		]
 	)
+
+func _forget_sheltered_card(card: Card) -> void:
+	if card == null:
+		return
+	sheltered_cards.erase(card)
+	_sheltered_release_turns.erase(card.uid)
+	_sheltered_destinations.erase(card.uid)
+	_emit_visual_state_changed()
 
 func on_global_turn_start(game_manager: GameManager, starting_player: Player) -> void:
 	for card in _get_sheltered_cards():

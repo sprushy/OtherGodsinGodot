@@ -74,17 +74,21 @@ func _get_doomed_cards(game_manager: GameManager) -> Array[Card]:
 	var doomed_cards: Array[Card] = []
 	if game_manager == null:
 		return doomed_cards
-	for player: Player in game_manager.players:
-		for zone: Zone in player.frontline_zones + player.reserve_zones:
-			for card: Card in zone.cards:
-				if card == self:
-					continue
-				if _is_doomed_card(card):
-					doomed_cards.append(card)
+	for card in game_manager.get_field_cards():
+		if card == self:
+			continue
+		if _is_doomed_card(card, game_manager):
+			doomed_cards.append(card)
 	return doomed_cards
 
-func _is_doomed_card(card: Card) -> bool:
+func _is_doomed_card(card: Card, game_manager: GameManager = null) -> bool:
 	return card != null \
-		and card.current_zone != null \
-		and card.current_zone.is_board_zone() \
+		and _counts_as_field_card(card, game_manager) \
 		and card.is_magical_card()
+
+func _counts_as_field_card(card: Card, game_manager: GameManager = null) -> bool:
+	if card == null:
+		return false
+	if card.current_zone != null and card.current_zone.is_board_zone():
+		return true
+	return game_manager != null and game_manager.is_card_on_field(card)

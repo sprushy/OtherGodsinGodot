@@ -727,6 +727,14 @@ func _append_unique_passive_card(passive_cards: Array[Card], seen_cards: Diction
 func is_creature_card() -> bool:
 	return card_type == CardType.CREATURE
 
+func counts_as_on_field(game_manager: GameManager = null) -> bool:
+	if current_zone != null and current_zone.is_board_zone():
+		return true
+	var resolved_game_manager := game_manager
+	if resolved_game_manager == null and card_owner != null:
+		resolved_game_manager = card_owner.game_manager
+	return resolved_game_manager != null and resolved_game_manager.is_card_on_field(self)
+
 func get_effective_speed() -> int:
 	var base_speed = speed
 	var speed_override: Variant = null

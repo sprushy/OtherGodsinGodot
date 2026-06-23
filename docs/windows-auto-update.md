@@ -15,6 +15,10 @@ The native updater:
 
 - writes a readiness handshake before the old game exits;
 - waits for the old process to close;
+- shows a small updater window with "do not close" guidance while the main
+  game window is closed;
+- tries to move staged files into place on the same filesystem before falling
+  back to the copy-and-verify path;
 - copies each file to a temporary sibling while calculating SHA-256;
 - reuses the launch-time SHA-256 to verify the copy before replacement;
 - keeps backups and rolls back a partial update;
@@ -66,6 +70,7 @@ file path, detection name, and timestamp. Useful `update.log` milestones are:
 - `download_hash`
 - `native_updater_process_started`
 - `native_updater_ready`
+- `native_fast_move_used` / `native_fast_move_unavailable`
 - `native_file_attempt_failed`
 - `native_update_complete`
 - `native_updater_fallback_to_powershell`

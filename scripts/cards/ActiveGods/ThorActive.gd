@@ -29,26 +29,31 @@ func applies_to(card: Card) -> bool:
 		and card != self \
 		and card.get_controller() == get_controller() \
 		and card.has_type("Warrior") \
-		and card.current_zone != null \
-		and card.current_zone.is_board_zone()
+		and card.counts_as_on_field()
 
-func apply_passive_to_board() -> void:
+func apply_passive_to_board(game_manager: GameManager = null) -> void:
 	var controller := get_controller()
 	if controller == null:
 		return
-	remove_passive_from_board()
+	remove_passive_from_board(game_manager)
 	if abilities_suppressed():
 		return
 	if current_zone == null or not current_zone.is_board_zone():
 		return
 	if is_face_down or is_stealth:
 		return
+	var resolved_game_manager := game_manager if game_manager != null else controller.game_manager
+	if resolved_game_manager != null:
+		for card in resolved_game_manager.get_field_cards(controller):
+			if applies_to(card):
+				card.add_buff(PASSIVE_SOURCE, 5, 5, 0, self, controller, "passive")
+		return
 	for zone in controller.frontline_zones + controller.reserve_zones:
 		for card in zone.cards:
 			if applies_to(card):
 				card.add_buff(PASSIVE_SOURCE, 5, 5, 0, self, controller, "passive")
 
-func remove_passive_from_board() -> void:
+func remove_passive_from_board(game_manager: GameManager = null) -> void:
 	var controller := get_controller()
 	if controller == null:
 		controller = card_owner
@@ -57,6 +62,11 @@ func remove_passive_from_board() -> void:
 	for zone in _get_passive_cleanup_zones(controller):
 		for card in zone.cards:
 			card.clear_buffs_from(PASSIVE_SOURCE)
+	var resolved_game_manager := game_manager if game_manager != null else controller.game_manager
+	if resolved_game_manager == null:
+		return
+	for card in resolved_game_manager.get_field_cards(controller):
+		card.clear_buffs_from(PASSIVE_SOURCE)
 
 func _get_passive_cleanup_zones(player: Player) -> Array[Zone]:
 	var zones: Array[Zone] = []
@@ -92,20 +102,20 @@ func can_special_intercept(_game_manager: GameManager, _attacker: Card, protecte
 func halves_follower_damage_inflicted() -> bool:
 	return not abilities_suppressed()
 
-func on_summon(_game_manager: GameManager) -> void:
-	apply_passive_to_board()
+func on_summon(game_manager: GameManager) -> void:
+	apply_passive_to_board(game_manager)
 
-func on_turn_start(_game_manager: GameManager) -> void:
-	apply_passive_to_board()
+func on_turn_start(game_manager: GameManager) -> void:
+	apply_passive_to_board(game_manager)
 
-func on_removed(_game_manager: GameManager) -> void:
-	remove_passive_from_board()
+func on_removed(game_manager: GameManager) -> void:
+	remove_passive_from_board(game_manager)
 
-func on_muted(_game_manager: GameManager) -> void:
-	remove_passive_from_board()
+func on_muted(game_manager: GameManager) -> void:
+	remove_passive_from_board(game_manager)
 
-func on_unmuted(_game_manager: GameManager) -> void:
-	apply_passive_to_board()
+func on_unmuted(game_manager: GameManager) -> void:
+	apply_passive_to_board(game_manager)
 
-func on_any_card_moved(_game_manager: GameManager, _moved_card: Card, _from_zone: Zone, _to_zone: Zone) -> void:
-	apply_passive_to_board()
+func on_any_card_moved(game_manager: GameManager, _moved_card: Card, _from_zone: Zone, _to_zone: Zone) -> void:
+	apply_passive_to_board(game_manager)

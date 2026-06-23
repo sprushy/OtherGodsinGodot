@@ -5,6 +5,7 @@ const GAME_SCENE_PATH := "res://scenes/mainfork.tscn"
 const DEFAULT_VIEWPORT_SIZE := Vector2i(2560, 1440)
 const SERVER_MODE_ARG := "server_mode"
 const MATCH_CONFIG_ARG := "match_config"
+const LEGACY_3D_ARG := "legacy_3d"
 const STEALTH_FOG_SMOKE_TEXTURE_PATH := "res://images/ui/stealth_fog/lelu_smoke_b7.png"
 const STEALTH_FOG_CLOUD_TEXTURE_PATH := "res://images/ui/stealth_fog/lelu_cloud_noise_tiled.png"
 const STEALTH_FOG_DETAIL_TEXTURE_PATH := "res://images/ui/stealth_fog/seamless_noise_02.png"
@@ -29,8 +30,9 @@ const STEALTH_FOG_CURSOR_TRAIL_COUNT := 6
 @export var game_viewport_size: Vector2i = DEFAULT_VIEWPORT_SIZE
 @export var screen_size: Vector2 = Vector2(18.4, 10.35)
 @export var screen_tilt_degrees: float = 0.0
-@export var use_flat_match_view: bool = false
-@export var show_stealth_fog_3d: bool = true
+@export var enable_legacy_3d_shell: bool = false
+@export var use_flat_match_view: bool = true
+@export var show_stealth_fog_3d: bool = false
 
 var _game_viewport: SubViewport = null
 var _game_instance: Node = null
@@ -67,6 +69,7 @@ var _software_cursor_sprite: Sprite2D = null
 var _default_software_cursor_texture: Texture2D = null
 var _locked_power_software_cursor_texture: Texture2D = null
 var _software_cursor_showing_locked_power: bool = false
+var _legacy_3d_shell_active: bool = false
 
 func _ready() -> void:
 	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
@@ -83,11 +86,21 @@ func _ready() -> void:
 		_load_original_scene_directly()
 		return
 
-	_previous_vsync_mode = DisplayServer.window_get_vsync_mode()
-	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
-	Input.set_mouse_mode(Input.MOUSE_MODE_HIDDEN)
-	_build_3d_shell()
-	_build_software_cursor()
+	var legacy_3d_requested := _is_truthy_arg(launch_args.get(LEGACY_3D_ARG, false))
+	_legacy_3d_shell_active = enable_legacy_3d_shell or legacy_3d_requested
+	if legacy_3d_requested:
+		use_flat_match_view = false
+		show_stealth_fog_3d = true
+
+	if _legacy_3d_shell_active:
+		_previous_vsync_mode = DisplayServer.window_get_vsync_mode()
+		DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
+		Input.set_mouse_mode(Input.MOUSE_MODE_HIDDEN)
+		_build_3d_shell()
+		_build_software_cursor()
+	else:
+		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+		_build_flat_canvas()
 	_load_game_into_viewport()
 	call_deferred("_refresh_display_mode")
 
@@ -357,6 +370,9 @@ func _load_game_into_viewport() -> void:
 	_flat_canvas_layer.add_child(_game_instance)
 
 func _process(delta: float) -> void:
+	if not _legacy_3d_shell_active:
+		_refresh_display_mode()
+		return
 	_update_software_cursor_position(get_viewport().get_mouse_position())
 	_sync_cursor_presentation()
 	_age_stealth_fog_cursor_trail(delta)
@@ -439,6 +455,8 @@ func _fit_embedded_game_to_viewport() -> void:
 		menu.call("_fit_to_viewport")
 
 func _should_show_flat_2d() -> bool:
+	if not _legacy_3d_shell_active:
+		return true
 	var menu := _get_embedded_menu_control()
 	if menu == null:
 		return true
@@ -1295,6 +1313,8 @@ func _load_original_scene_directly() -> void:
 	add_child((scene as PackedScene).instantiate())
 
 func _input(event: InputEvent) -> void:
+	if not _legacy_3d_shell_active:
+		return
 	if event is InputEventMouseMotion:
 		_update_software_cursor_position((event as InputEventMouseMotion).position)
 	if _game_viewport == null or _screen_mesh == null or _camera == null:
@@ -1391,6 +1411,10 @@ func _parse_user_args(args: PackedStringArray) -> Dictionary:
 			continue
 		parsed[str(parts[0]).strip_edges()] = str(parts[1]).strip_edges()
 	return parsed
+
+func _is_truthy_arg(value: Variant) -> bool:
+	var text := str(value).strip_edges().to_lower()
+	return text == "1" or text == "true" or text == "yes" or text == "on"
 
 func _should_boot_server_runtime(launch_args: Dictionary) -> bool:
 	if str(launch_args.get(MATCH_CONFIG_ARG, "")).strip_edges() != "":

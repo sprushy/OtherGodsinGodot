@@ -61,21 +61,17 @@ func _refresh_aura(game_manager: GameManager) -> void:
 	_clear_aura(game_manager)
 	if not _is_aura_live():
 		return
-	for player in game_manager.players:
-		for zone in player.frontline_zones + player.reserve_zones:
-			for card in zone.cards:
-				if _is_affected_creature(card):
-					card.add_buff(PASSIVE_SOURCE, 0, 0, -1, self, card_owner, SPEED_DEBUFF_EFFECT_TYPE)
+	for card in game_manager.get_field_cards():
+		if _is_affected_creature(card, game_manager):
+			card.add_buff(PASSIVE_SOURCE, 0, 0, -1, self, card_owner, SPEED_DEBUFF_EFFECT_TYPE)
 
 func _clear_aura(game_manager: GameManager) -> void:
 	if game_manager == null:
 		return
-	for player in game_manager.players:
-		for zone in player.frontline_zones + player.reserve_zones:
-			for card in zone.cards:
-				if card == null or card.card_type != Card.CardType.CREATURE:
-					continue
-				card.remove_buffs_from_source_card(self, SPEED_DEBUFF_EFFECT_TYPE)
+	for card in game_manager.get_field_cards():
+		if card == null or card.card_type != Card.CardType.CREATURE:
+			continue
+		card.remove_buffs_from_source_card(self, SPEED_DEBUFF_EFFECT_TYPE)
 
 func _is_aura_live() -> bool:
 	return is_effectively_active() and _controller_has_nature_creature()
@@ -83,22 +79,33 @@ func _is_aura_live() -> bool:
 func _controller_has_nature_creature() -> bool:
 	if card_owner == null:
 		return false
+	var game_manager := card_owner.game_manager
+	if game_manager != null:
+		for card in game_manager.get_field_cards(card_owner):
+			if _is_nature_creature(card, game_manager):
+				return true
+		return false
 	for zone in card_owner.frontline_zones + card_owner.reserve_zones:
 		for card in zone.cards:
 			if _is_nature_creature(card):
 				return true
 	return false
 
-func _is_affected_creature(card: Card) -> bool:
+func _is_affected_creature(card: Card, game_manager: GameManager = null) -> bool:
 	return card != null \
 		and card.card_type == Card.CardType.CREATURE \
-		and card.current_zone != null \
-		and card.current_zone.is_board_zone() \
-		and not _is_nature_creature(card)
+		and _counts_as_field_card(card, game_manager) \
+		and not _is_nature_creature(card, game_manager)
 
-func _is_nature_creature(card: Card) -> bool:
+func _is_nature_creature(card: Card, game_manager: GameManager = null) -> bool:
 	return card != null \
 		and card.card_type == Card.CardType.CREATURE \
-		and card.current_zone != null \
-		and card.current_zone.is_board_zone() \
+		and _counts_as_field_card(card, game_manager) \
 		and (card.has_type("Plant") or card.has_type("Animal") or card.has_type("Hybrid"))
+
+func _counts_as_field_card(card: Card, game_manager: GameManager = null) -> bool:
+	if card == null:
+		return false
+	if card.current_zone != null and card.current_zone.is_board_zone():
+		return true
+	return game_manager != null and game_manager.is_card_on_field(card)

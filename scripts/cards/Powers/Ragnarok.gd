@@ -97,16 +97,7 @@ func _get_field_cards(game_manager: GameManager) -> Array[Card]:
 	var field_cards: Array[Card] = []
 	if game_manager == null:
 		return field_cards
-	for player in game_manager.players:
-		var zones: Array[Zone] = []
-		zones.append_array(player.frontline_zones)
-		zones.append_array(player.reserve_zones)
-		for zone in zones:
-			if zone == null:
-				continue
-			for card in zone.cards:
-				if card != null:
-					field_cards.append(card)
+	field_cards.append_array(game_manager.get_field_cards())
 	return field_cards
 
 func _discard_down_to_limit(player: Player, limit: int) -> int:
