@@ -3936,6 +3936,7 @@ func _defer_turn_action_until_opponent_priority_declines(command: Dictionary, se
 	if not _should_defer_turn_action_until_opponent_priority_declines(command, sender_info):
 		return false
 	_remember_turn_action_after_priority(command, sender_info)
+	call_deferred("_advance_authoritative_priority")
 	_request_ui_refresh()
 	return true
 

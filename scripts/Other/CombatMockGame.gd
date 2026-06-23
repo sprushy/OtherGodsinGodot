@@ -28976,14 +28976,15 @@ func _do_end_turn() -> void:
 	if _game_finished:
 		return
 	print("=== TURN ENDED ===")
+	var pending_discard_uids := _pending_end_turn_discard_uids.duplicate()
 	_dismiss_transient_prompts()
 	_reset_transient_priority_auto_mode_for_turn_end()
 	var et_cmd := {type = "end_turn"}
-	if not _pending_end_turn_discard_uids.is_empty():
-		et_cmd["discard_uids"] = _pending_end_turn_discard_uids.duplicate()
-		_pending_end_turn_discard_uids.clear()
+	if not pending_discard_uids.is_empty():
+		et_cmd["discard_uids"] = pending_discard_uids
 	if (_is_networked_client or uses_authoritative_match_flow()) and game_input != null:
-		game_input.submit_action(et_cmd)
+		if not game_input.submit_action(et_cmd):
+			_pending_end_turn_discard_uids = pending_discard_uids.duplicate()
 		update_ui()
 		return
 	var end_turn_priority_owner := game_manager.current_player
