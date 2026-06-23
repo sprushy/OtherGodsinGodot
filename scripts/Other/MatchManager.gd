@@ -1591,6 +1591,7 @@ func _complete_deferred_authoritative_action(action: CardAction, completion_comm
 	var destroyed_start_index := int(action.event_data.get("destroyed_count_before", game_manager.destroyed_this_turn.size() if game_manager != null else 0))
 	_queue_destroyed_response_events(destroyed_start_index, action)
 	_finalize_resolved_action(action)
+	_try_drain_authoritative_event_stack_without_prompt()
 	_schedule_authoritative_settled_state_refresh()
 
 func _schedule_authoritative_settled_state_refresh() -> void:
@@ -1610,7 +1611,34 @@ func _request_authoritative_settled_state_refresh() -> void:
 	if game_manager == null or not _uses_authoritative_headless_priority_flow():
 		return
 	_resume_authoritative_flow_after_prompt_command()
+	_try_drain_authoritative_event_stack_without_prompt()
 	call_deferred("_request_ui_refresh")
+
+func _try_drain_authoritative_event_stack_without_prompt(max_steps: int = 16) -> bool:
+	if game_manager == null or not _uses_authoritative_headless_priority_flow():
+		return false
+	var drained := false
+	for _step in range(max_steps):
+		_prune_stale_ui_interactions_for_current_turn()
+		if _authoritative_stack_resolution_pending \
+				or not _pending_ui_interactions.is_empty() \
+				or not _queued_ui_interactions.is_empty() \
+				or not game_manager.resolving_stack_actions.is_empty():
+			return drained
+		game_manager.prune_stale_stack_actions()
+		if game_manager.action_stack.is_empty():
+			_clear_priority_window_state()
+			return drained
+		var top_action := game_manager.action_stack.back() as CardAction
+		if top_action == null or top_action.type != CardAction.Type.EVENT:
+			return drained
+		if not _can_resolve_top_stack_action_now():
+			_advance_authoritative_priority()
+			return drained
+		_clear_priority_window_state()
+		resolve_action(top_action)
+		drained = true
+	return drained
 
 func _get_pending_authoritative_graveyard_prompt_command_type() -> String:
 	if game_manager == null:
@@ -3795,6 +3823,8 @@ func _validate_turn_action_window(command: Dictionary, sender_info: Dictionary) 
 	if _requires_clear_stack_window(command_type):
 		if is_targeting_active() or _has_pending_reveal_target_ui_interaction():
 			return "Choose a target for %s before continuing." % get_targeting_name()
+		if _uses_authoritative_headless_priority_flow():
+			_try_drain_authoritative_event_stack_without_prompt()
 		if _has_unresolved_stack_action_window():
 			if _uses_authoritative_headless_priority_flow():
 				call_deferred("_resume_authoritative_flow_after_prompt_command")
