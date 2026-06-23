@@ -15732,6 +15732,11 @@ func _begin_gugalanna_impact_targeting(card: GugalannaBullOfHeaven, prompt_targe
 				"source_uid": card.uid,
 				"target_uid": "",
 			})
+			# The server drives authoritative resolution; clear the local paused
+			# state so the client does not keep blocking actions while waiting for
+			# the next full_state broadcast.
+			if _stack_resolution_paused:
+				_resume_after_deferred_resolution(_consume_resolution_feedback(card.card_name + ": no valid targets for Celestial Charge. %s stays on field." % card.card_name))
 			return
 		var text: String = card.card_name + ": no valid targets for Celestial Charge. %s stays on field." % card.card_name
 		if _stack_resolution_paused:
@@ -15751,6 +15756,11 @@ func _begin_gugalanna_impact_targeting(card: GugalannaBullOfHeaven, prompt_targe
 				"source_uid": card.uid,
 				"target_uid": clicked_card.uid if clicked_card != null else "",
 			})
+			# The server drives authoritative resolution; clear the local paused
+			# state so the client does not keep blocking actions while waiting for
+			# the next full_state broadcast.
+			if _stack_resolution_paused:
+				_resume_after_deferred_resolution(_consume_resolution_feedback("%s activates Celestial Charge." % card.card_name))
 			return
 		await _linger_before_board_leaving_activation(
 			card,
@@ -22605,8 +22615,14 @@ func _resolve_mopsus_hand_choice(card: MopsusScript, targets: Array[Card]) -> vo
 		for target in chosen_targets:
 			target_uids.append(target.uid)
 		game_input.submit_action({type = "activate_card_ability", source_uid = card.uid, option = {target_uids = target_uids}})
-		_set_action_label_text(card.card_name + " is using Seer.")
-		update_ui()
+		# The server drives authoritative resolution; clear the local paused
+		# state so the client does not keep blocking actions while waiting for
+		# the next full_state broadcast.
+		if _stack_resolution_paused:
+			_resume_after_deferred_resolution(_consume_resolution_feedback(card.card_name + " is using Seer."))
+		else:
+			_set_action_label_text(card.card_name + " is using Seer.")
+			update_ui()
 		return
 	var revealed_names: Array[String] = []
 	for target in chosen_targets:
@@ -24207,6 +24223,11 @@ func _queue_deucalion_spell(spell: DeucalionsInfants, friendly_targets: Array[Ca
 				choices.append(c.uid)
 		var enemy_uid: String = enemy_target.get("uid") if enemy_target != null and "uid" in enemy_target else ""
 		game_input.submit_action(_add_display_zone_to_command({type = "cast_spell", spell_uid = spell_uid, choices = choices, enemy_target_uid = enemy_uid}))
+		# The server drives authoritative resolution; clear the local paused
+		# state so the client does not keep blocking actions while waiting for
+		# the next full_state broadcast.
+		if _stack_resolution_paused:
+			_resume_after_deferred_resolution(_consume_resolution_feedback("Cast " + spell.card_name + "!"))
 		return
 	spell.resolve_with_choices(game_manager, friendly_targets, enemy_target, func() -> void:
 		_send_used_hand_card_to_graveyard(spell)
@@ -24689,8 +24710,14 @@ func _on_kos_demon_done() -> void:
 		_pending_kos_selected_demons.clear()
 		_pending_key_of_solomon = null
 		_pending_kos_sacrifice = null
-		_set_action_label_text("Key of Solomon submitted.")
-		update_ui()
+		# The server drives authoritative resolution; clear the local paused
+		# state so the client does not keep blocking actions while waiting for
+		# the next full_state broadcast.
+		if _stack_resolution_paused:
+			_resume_after_deferred_resolution(_consume_resolution_feedback("Key of Solomon submitted."))
+		else:
+			_set_action_label_text("Key of Solomon submitted.")
+			update_ui()
 		return
 	spell.resolve(game_manager, _pending_kos_selected_demons)
 	_send_used_hand_card_to_graveyard(spell)
@@ -24919,6 +24946,11 @@ func _on_demiurge_confirm_pressed(spin: SpinBox) -> void:
 	if _should_submit_ui_action_command():
 		var spell_uid: String = spell.get("uid") if "uid" in spell else ""
 		game_input.submit_action(_add_display_zone_to_command({type = "cast_spell", spell_uid = spell_uid, x_value = x_value}))
+		# The server drives authoritative resolution; clear the local paused
+		# state so the client does not keep blocking actions while waiting for
+		# the next full_state broadcast.
+		if _stack_resolution_paused:
+			_resume_after_deferred_resolution(_consume_resolution_feedback("Cast " + spell.card_name + "!"))
 		return
 	if spell == null:
 		update_ui()
@@ -25579,7 +25611,14 @@ func _submit_prompt_choice_command(command: Dictionary) -> bool:
 		submitted = bool(match_manager.process_command(command))
 	if submitted:
 		_apply_client_prompt_submission_followup(command)
-		if _should_offer_local_priority_after_prompt_choice():
+		# The server drives authoritative resolution for networked clients and
+		# authoritative hosts, so the client must clear its own stack-paused
+		# state now. Without this the paused flag stays engaged and blocks all
+		# further actions until the next full_state broadcast repaints it.
+		# _resume_after_deferred_resolution is a no-op when not paused.
+		if _stack_resolution_paused:
+			_resume_after_deferred_resolution(_consume_resolution_feedback(action_label.text))
+		elif _should_offer_local_priority_after_prompt_choice():
 			call_deferred("_offer_priority")
 			update_ui()
 	return submitted
