@@ -2812,17 +2812,35 @@ func _add_stealth_fog_overlay(overlay: Control, card: Card) -> void:
 		return
 	if card.card_type != Card.CardType.CREATURE or not card.is_stealth:
 		return
+	var fog_variant_seed := _get_stealth_fog_overlay_seed(card)
 	var existing := overlay.get_node_or_null(StealthFogOverlayScript.OVERLAY_NAME) as Control
 	if existing != null:
-		existing.set("fog_alpha", 0.18)
+		existing.set("fog_alpha", 0.42)
+		existing.set("variant_seed", fog_variant_seed)
 		return
 	var fog_overlay := StealthFogOverlayScript.new() as Control
 	fog_overlay.name = StealthFogOverlayScript.OVERLAY_NAME
-	fog_overlay.set("fog_alpha", 0.18)
+	fog_overlay.set("fog_alpha", 0.42)
+	fog_overlay.set("variant_seed", fog_variant_seed)
 	fog_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	fog_overlay.clip_contents = false
 	fog_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	overlay.add_child(fog_overlay)
+
+func _get_stealth_fog_overlay_seed(card: Card) -> int:
+	var seed_parts: Array[String] = []
+	if zone != null:
+		seed_parts.append(str(zone.zone_type))
+		seed_parts.append(str(zone.zone_index))
+	if card != null:
+		if "uid" in card and str(card.uid).strip_edges() != "":
+			seed_parts.append(str(card.uid))
+		else:
+			seed_parts.append(card.card_name)
+			seed_parts.append(card.art_path)
+	if seed_parts.is_empty():
+		seed_parts.append(str(get_instance_id()))
+	return posmod("|".join(seed_parts).hash(), 1000000)
 
 func _add_followers_attack_result_label(overlay: Control) -> void:
 	if overlay == null or _followers_attack_result_text == "":

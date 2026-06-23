@@ -2,84 +2,543 @@ class_name StealthFogOverlay
 extends Control
 
 const OVERLAY_NAME := "StealthFogOverlay"
-const FOG_TEXTURE_PATHS := [
-	"res://images/ui/stealth_fog/shadow_fog_03.png",
-	"res://images/ui/stealth_fog/shadow_fog_05.png",
-	"res://images/ui/stealth_fog/shadow_fog_08.png",
-	"res://images/ui/stealth_fog/shadow_fog_09.png",
-	"res://images/ui/stealth_fog/shadow_fog_10.png",
-	"res://images/ui/stealth_fog/shadow_fog_15.png",
-]
-const ANIMATION_UPDATE_INTERVAL := 1.0 / 24.0
+const SMOKE_TEXTURE_PATH := "res://images/ui/stealth_fog/lelu_smoke_b7.png"
+const CLOUD_TEXTURE_PATH := "res://images/ui/stealth_fog/lelu_cloud_noise_tiled.png"
+const DETAIL_TEXTURE_PATH := "res://images/ui/stealth_fog/seamless_noise_02.png"
+const CURSOR_EFFECT_RADIUS_PIXELS := 52.0
+const CURSOR_TRAIL_LIFETIME := 1.4
+const CURSOR_TRAIL_MIN_DISTANCE := 8.0
+const CURSOR_TRAIL_COUNT := 6
 
-static var _texture_cache: Array[Texture2D] = []
-static var _additive_material: CanvasItemMaterial = null
+static var _shader_cache: Shader = null
+static var _smoke_texture_cache: Texture2D = null
+static var _cloud_texture_cache: Texture2D = null
+static var _detail_texture_cache: Texture2D = null
 
-var fog_alpha: float = 0.18
-var _puffs: Array[TextureRect] = []
-var _time: float = 0.0
-var _animation_accumulator: float = 0.0
+var fog_alpha: float = 0.42:
+	set(value):
+		fog_alpha = value
+		_update_alpha()
+var variant_seed: int = 0:
+	set(value):
+		if variant_seed == value:
+			return
+		variant_seed = value
+		_configure_variant()
+
+var _viewport_container: SubViewportContainer = null
+var _viewport: SubViewport = null
+var _camera: Camera3D = null
+var _mist_root: Node3D = null
+var _layer_materials: Array[ShaderMaterial] = []
+var _cursor_actual_position: Vector2 = Vector2.INF
+var _cursor_clear_strength: float = 0.0
+var _cursor_trail: Array[Dictionary] = []
+var _motion_elapsed: float = 0.0
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	clip_contents = false
-	resized.connect(_layout_puffs)
-	_build_puffs()
-	call_deferred("_layout_puffs")
+	resized.connect(_sync_viewport_size)
+	_build_fog_viewport()
+	_configure_variant()
+	_update_alpha()
+	call_deferred("_sync_viewport_size")
 
 func _process(delta: float) -> void:
 	if not is_visible_in_tree():
-		_animation_accumulator = 0.0
+		_cursor_actual_position = Vector2.INF
+		_cursor_clear_strength = 0.0
 		return
-	_animation_accumulator += delta
-	if _animation_accumulator < ANIMATION_UPDATE_INTERVAL:
-		return
-	var elapsed := _animation_accumulator
-	_animation_accumulator = 0.0
-	_time = fmod(_time + elapsed, 1000.0)
-	_layout_puffs()
-	queue_redraw()
+	_motion_elapsed = fmod(_motion_elapsed + delta, 1000.0)
+	_sync_viewport_size()
+	_age_cursor_trail(delta)
+	_refresh_cursor_motion()
+	_sync_cursor_shader_parameters()
+	_animate_fog_layers()
 
-func _draw() -> void:
+func _build_fog_viewport() -> void:
+	_viewport_container = SubViewportContainer.new()
+	_viewport_container.name = "FogViewportContainer"
+	_viewport_container.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_viewport_container.stretch = true
+	_viewport_container.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	add_child(_viewport_container)
+
+	_viewport = SubViewport.new()
+	_viewport.name = "FogViewport"
+	_viewport.transparent_bg = true
+	_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	_viewport.size = Vector2i(64, 64)
+	_viewport_container.add_child(_viewport)
+
+	var world_root := Node3D.new()
+	world_root.name = "FogWorld"
+	_viewport.add_child(world_root)
+
+	_camera = Camera3D.new()
+	_camera.name = "FogCamera"
+	_camera.projection = Camera3D.PROJECTION_ORTHOGONAL
+	_camera.size = 1.0
+	_camera.position = Vector3(0.0, 0.0, 2.0)
+	world_root.add_child(_camera)
+	_camera.look_at(Vector3.ZERO, Vector3.UP)
+	_camera.current = true
+
+	_mist_root = Node3D.new()
+	_mist_root.name = "SteadyMist"
+	world_root.add_child(_mist_root)
+	for i in range(2):
+		var material := _make_layer_material(i)
+		_layer_materials.append(material)
+		var layer := MeshInstance3D.new()
+		layer.name = "CloudLayer%d" % i
+		var mesh := QuadMesh.new()
+		mesh.size = Vector2.ONE
+		mesh.material = material
+		layer.mesh = mesh
+		layer.position.z = float(i) * 0.0003
+		_mist_root.add_child(layer)
+
+func _make_layer_material(layer_index: int) -> ShaderMaterial:
+	var material := ShaderMaterial.new()
+	material.shader = _get_fog_shader()
+	var smoke_texture := _get_smoke_texture()
+	var cloud_texture := _get_cloud_texture()
+	var detail_texture := _get_detail_texture()
+	material.set_shader_parameter("smoke_texture", smoke_texture)
+	material.set_shader_parameter("use_smoke_texture", smoke_texture != null)
+	material.set_shader_parameter("cloud_texture", cloud_texture)
+	material.set_shader_parameter("use_cloud_texture", cloud_texture != null)
+	material.set_shader_parameter("detail_texture", detail_texture)
+	material.set_shader_parameter("use_detail_texture", detail_texture != null)
+	material.set_shader_parameter("layer_card_scale", Vector2.ONE)
+	material.set_shader_parameter("cursor_uv", Vector2(-10.0, -10.0))
+	material.set_shader_parameter("cursor_clear_strength", 0.0)
+	material.set_shader_parameter("cursor_brush_radius", 0.18)
+	material.set_shader_parameter("hover_clear_uv_min", Vector2(2.0, 2.0))
+	material.set_shader_parameter("hover_clear_uv_max", Vector2(-1.0, -1.0))
+	for i in range(CURSOR_TRAIL_COUNT):
+		material.set_shader_parameter("cursor_trail_%d" % i, Vector4(-10.0, -10.0, 0.0, 0.18))
+	material.set_meta("layer_index", layer_index)
+	return material
+
+func _sync_viewport_size() -> void:
+	if _viewport == null or _mist_root == null:
+		return
 	if size.x <= 0.0 or size.y <= 0.0:
 		return
-	var pulse := 0.78 + sin(_time * 1.4) * 0.22
-	var edge_alpha := fog_alpha * pulse
-	var rect := Rect2(Vector2.ZERO, size)
-	_draw_rounded_outline(rect.grow(-2.0), 7.0, Color(0.04, 0.04, 0.055, 0.48 * edge_alpha), 3.0)
-	_draw_rounded_outline(rect.grow(-5.0), 5.0, Color(0.20, 0.22, 0.28, 0.18 * edge_alpha), 2.0)
-	var edge := maxf(8.0, minf(size.x, size.y) * 0.16)
-	draw_rect(Rect2(0.0, 0.0, size.x, edge), Color(0.02, 0.02, 0.03, 0.11 * edge_alpha), true)
-	draw_rect(Rect2(0.0, size.y - edge, size.x, edge), Color(0.02, 0.02, 0.03, 0.10 * edge_alpha), true)
-	draw_rect(Rect2(0.0, 0.0, edge, size.y), Color(0.02, 0.02, 0.03, 0.11 * edge_alpha), true)
-	draw_rect(Rect2(size.x - edge, 0.0, edge, size.y), Color(0.02, 0.02, 0.03, 0.09 * edge_alpha), true)
+	var target_size := Vector2i(
+		maxi(16, int(round(size.x))),
+		maxi(16, int(round(size.y)))
+	)
+	if _viewport.size != target_size:
+		_viewport.size = target_size
+	var aspect := size.x / size.y
+	if _camera != null:
+		_camera.size = 1.0
+	for child in _mist_root.get_children():
+		var layer := child as MeshInstance3D
+		if layer == null:
+			continue
+		var mesh := layer.mesh as QuadMesh
+		if mesh != null:
+			mesh.size = Vector2(aspect, 1.0)
+		var material := layer.get_active_material(0) as ShaderMaterial
+		if material != null:
+			material.set_shader_parameter("layer_card_scale", Vector2.ONE)
 
-func _build_puffs() -> void:
-	for child in get_children():
-		child.queue_free()
-	_puffs.clear()
-	var fog_textures := _get_fog_textures()
-	for i in range(fog_textures.size()):
-		var puff := TextureRect.new()
-		puff.texture = fog_textures[i]
-		puff.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		puff.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-		puff.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		puff.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
-		puff.material = _get_additive_material()
-		add_child(puff)
-		_puffs.append(puff)
+func _animate_fog_layers() -> void:
+	if _mist_root == null:
+		return
+	var seed := variant_seed if variant_seed != 0 else get_instance_id()
+	var cluster_phase := _seeded_range(seed, 1, 0.0, TAU)
+	var sway_multiplier := _seeded_range(seed, 2, 0.72, 1.06)
+	var speed_multiplier := _seeded_range(seed, 3, 0.84, 1.22)
+	for i in range(_mist_root.get_child_count()):
+		var layer := _mist_root.get_child(i) as MeshInstance3D
+		if layer == null:
+			continue
+		var layer_phase := cluster_phase + float(i) * 1.73
+		var speed_x := (0.36 + float(i) * 0.10) * speed_multiplier
+		var speed_y := (0.29 + float(i) * 0.08) * speed_multiplier
+		var sway_x := sin(_motion_elapsed * speed_x + layer_phase) * (0.034 + float(i) * 0.015) * sway_multiplier
+		var sway_y := cos(_motion_elapsed * speed_y + layer_phase * 0.82) * (0.026 + float(i) * 0.011) * sway_multiplier
+		layer.position = Vector3(sway_x, sway_y, float(i) * 0.0003)
+		layer.rotation.z = sin(_motion_elapsed * 0.24 * speed_multiplier + layer_phase) * (0.025 + float(i) * 0.014) * sway_multiplier
 
-static func _get_fog_textures() -> Array[Texture2D]:
-	if not _texture_cache.is_empty():
-		return _texture_cache
-	for path in FOG_TEXTURE_PATHS:
-		var texture := _load_fog_texture(path)
-		if texture != null:
-			_texture_cache.append(texture)
-	return _texture_cache
+func _refresh_cursor_motion() -> void:
+	if size.x <= 0.0 or size.y <= 0.0:
+		_clear_cursor_motion()
+		return
+	var rect := get_global_rect()
+	var influence_rect := rect.grow(maxf(rect.size.x, rect.size.y) * 0.72)
+	var mouse_position := get_global_mouse_position()
+	if not influence_rect.has_point(mouse_position):
+		_clear_cursor_motion(true)
+		return
+	var local_position := mouse_position - rect.position
+	if _cursor_actual_position != Vector2.INF \
+			and _cursor_actual_position.distance_to(local_position) >= CURSOR_TRAIL_MIN_DISTANCE:
+		_push_cursor_trail_sample(_cursor_actual_position)
+	_cursor_actual_position = local_position
+	_cursor_clear_strength = 1.0
 
-static func _load_fog_texture(path: String) -> Texture2D:
+func _clear_cursor_motion(add_last_sample: bool = false) -> void:
+	if add_last_sample and _cursor_actual_position != Vector2.INF:
+		_push_cursor_trail_sample(_cursor_actual_position)
+	_cursor_actual_position = Vector2.INF
+	_cursor_clear_strength = 0.0
+
+func _push_cursor_trail_sample(position: Vector2) -> void:
+	_cursor_trail.push_front({
+		"position": position,
+		"age": 0.0,
+	})
+	if _cursor_trail.size() > CURSOR_TRAIL_COUNT:
+		_cursor_trail.resize(CURSOR_TRAIL_COUNT)
+
+func _age_cursor_trail(delta: float) -> void:
+	for i in range(_cursor_trail.size() - 1, -1, -1):
+		var sample := _cursor_trail[i]
+		var age := float(sample.get("age", 0.0)) + delta
+		if age >= CURSOR_TRAIL_LIFETIME:
+			_cursor_trail.remove_at(i)
+			continue
+		sample["age"] = age
+		_cursor_trail[i] = sample
+
+func _sync_cursor_shader_parameters() -> void:
+	if _layer_materials.is_empty() or size.x <= 0.0 or size.y <= 0.0:
+		return
+	var brush_radius := CURSOR_EFFECT_RADIUS_PIXELS / maxf(size.x, size.y)
+	var cursor_uv := Vector2(-10.0, -10.0)
+	var clear_strength := 0.0
+	if _cursor_actual_position != Vector2.INF:
+		cursor_uv = Vector2(
+			_cursor_actual_position.x / size.x,
+			_cursor_actual_position.y / size.y
+		)
+		clear_strength = _cursor_clear_strength
+	var trail_values: Array[Vector4] = []
+	if _cursor_actual_position == Vector2.INF:
+		clear_strength = 0.0
+	for i in range(CURSOR_TRAIL_COUNT):
+		var trail_value := Vector4(-10.0, -10.0, 0.0, brush_radius)
+		if i < _cursor_trail.size():
+			var sample := _cursor_trail[i]
+			var sample_position := sample.get("position", Vector2.INF) as Vector2
+			if sample_position != Vector2.INF:
+				var sample_age := float(sample.get("age", CURSOR_TRAIL_LIFETIME))
+				var sample_strength := pow(
+					clampf(1.0 - sample_age / CURSOR_TRAIL_LIFETIME, 0.0, 1.0),
+					1.35
+				)
+				trail_value = Vector4(
+					sample_position.x / size.x,
+					sample_position.y / size.y,
+					sample_strength,
+					brush_radius
+				)
+		trail_values.append(trail_value)
+	for material in _layer_materials:
+		if material == null:
+			continue
+		material.set_shader_parameter("cursor_uv", cursor_uv)
+		material.set_shader_parameter("cursor_clear_strength", clear_strength)
+		material.set_shader_parameter("cursor_brush_radius", brush_radius)
+		for i in range(CURSOR_TRAIL_COUNT):
+			material.set_shader_parameter("cursor_trail_%d" % i, trail_values[i])
+
+func _update_alpha() -> void:
+	for i in range(_layer_materials.size()):
+		var material := _layer_materials[i]
+		if material == null:
+			continue
+		var seed := variant_seed if variant_seed != 0 else get_instance_id()
+		var layer_seed := seed + i * 101
+		material.set_shader_parameter(
+			"fog_alpha",
+			maxf(0.0, fog_alpha - float(i) * 0.060) * _seeded_range(layer_seed, 11, 0.88, 1.10)
+		)
+
+func _configure_variant() -> void:
+	if _layer_materials.is_empty():
+		return
+	var seed := variant_seed
+	if seed == 0:
+		seed = get_instance_id()
+	var angle := _seeded_range(seed, 4, 0.0, TAU)
+	var drift_direction := Vector2(cos(angle), sin(angle) * 0.72)
+	if drift_direction.length_squared() <= 0.001:
+		drift_direction = Vector2(1.0, -0.55)
+	drift_direction = drift_direction.normalized()
+
+	for i in range(_layer_materials.size()):
+		var material := _layer_materials[i]
+		if material == null:
+			continue
+		var layer_seed := seed + i * 101
+		material.set_shader_parameter("phase", float(i) * 3.17 + _seeded_range(layer_seed, 10, 0.0, TAU))
+		material.set_shader_parameter("cloud_scale", (1.12 + float(i) * 0.26) * _seeded_range(layer_seed, 12, 0.90, 1.18))
+		material.set_shader_parameter("drift_speed", (0.090 + float(i) * 0.034) * _seeded_range(layer_seed, 13, 0.82, 1.28))
+		material.set_shader_parameter("variant_uv_offset_a", Vector2(
+			_seeded_range(layer_seed, 14, -0.18, 0.18),
+			_seeded_range(layer_seed, 15, -0.16, 0.16)
+		))
+		material.set_shader_parameter("variant_uv_offset_b", Vector2(
+			_seeded_range(layer_seed, 16, -0.14, 0.14),
+			_seeded_range(layer_seed, 17, -0.18, 0.18)
+		))
+		material.set_shader_parameter("variant_drift", drift_direction.rotated(_seeded_range(layer_seed, 18, -0.38, 0.38)))
+		material.set_shader_parameter("smoke_scale", _seeded_range(layer_seed, 19, 0.82, 1.20))
+		material.set_shader_parameter("density_bias", _seeded_range(layer_seed, 20, -0.035, 0.045))
+		material.set_shader_parameter("texture_mix", _seeded_range(layer_seed, 21, 0.36, 0.58))
+		material.set_shader_parameter("smoke_rotation", Vector3(
+			_seeded_range(layer_seed, 22, 0.0, TAU),
+			_seeded_range(layer_seed, 23, 0.0, TAU),
+			_seeded_range(layer_seed, 24, 0.0, TAU)
+		))
+		material.set_shader_parameter("smoke_flip", Vector2(
+			-1.0 if _seeded_unit(layer_seed, 25) < 0.5 else 1.0,
+			-1.0 if _seeded_unit(layer_seed, 26) < 0.5 else 1.0
+		))
+		material.set_shader_parameter("smoke_anchor", Vector2(
+			_seeded_range(layer_seed, 27, -0.22, 0.22),
+			_seeded_range(layer_seed, 28, -0.20, 0.20)
+		))
+	_update_alpha()
+
+static func _get_fog_shader() -> Shader:
+	if _shader_cache != null:
+		return _shader_cache
+	var shader := Shader.new()
+	shader.code = """
+shader_type spatial;
+render_mode unshaded, blend_mix, depth_draw_never, cull_disabled, shadows_disabled;
+
+uniform vec4 fog_color : source_color = vec4(0.80, 0.82, 0.84, 0.34);
+uniform float fog_alpha = 0.42;
+uniform float cloud_scale = 2.3;
+uniform float drift_speed = 0.025;
+uniform float phase = 0.0;
+uniform sampler2D smoke_texture;
+uniform sampler2D cloud_texture;
+uniform sampler2D detail_texture;
+uniform bool use_smoke_texture = false;
+uniform bool use_cloud_texture = false;
+uniform bool use_detail_texture = false;
+uniform vec2 cursor_uv = vec2(-10.0, -10.0);
+uniform float cursor_clear_strength = 0.0;
+uniform float cursor_brush_radius = 0.18;
+uniform vec4 cursor_trail_0 = vec4(-10.0, -10.0, 0.0, 0.18);
+uniform vec4 cursor_trail_1 = vec4(-10.0, -10.0, 0.0, 0.18);
+uniform vec4 cursor_trail_2 = vec4(-10.0, -10.0, 0.0, 0.18);
+uniform vec4 cursor_trail_3 = vec4(-10.0, -10.0, 0.0, 0.18);
+uniform vec4 cursor_trail_4 = vec4(-10.0, -10.0, 0.0, 0.18);
+uniform vec4 cursor_trail_5 = vec4(-10.0, -10.0, 0.0, 0.18);
+uniform vec2 hover_clear_uv_min = vec2(2.0, 2.0);
+uniform vec2 hover_clear_uv_max = vec2(-1.0, -1.0);
+uniform vec2 layer_card_scale = vec2(1.0, 1.0);
+uniform vec2 variant_uv_offset_a = vec2(0.0, 0.0);
+uniform vec2 variant_uv_offset_b = vec2(0.0, 0.0);
+uniform vec2 variant_drift = vec2(1.0, -0.55);
+uniform float smoke_scale = 1.0;
+uniform vec3 smoke_rotation = vec3(0.0, 2.1, 4.2);
+uniform vec2 smoke_flip = vec2(1.0, 1.0);
+uniform vec2 smoke_anchor = vec2(0.0, 0.0);
+uniform float density_bias = 0.0;
+uniform float texture_mix = 0.46;
+
+float hash(vec2 p) {
+	return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+}
+
+float noise(vec2 p) {
+	vec2 i = floor(p);
+	vec2 f = fract(p);
+	vec2 u = f * f * (3.0 - 2.0 * f);
+	return mix(
+		mix(hash(i + vec2(0.0, 0.0)), hash(i + vec2(1.0, 0.0)), u.x),
+		mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), u.x),
+		u.y
+	);
+}
+
+float fbm(vec2 p) {
+	float value = 0.0;
+	float amplitude = 0.55;
+	for (int i = 0; i < 5; i++) {
+		value += amplitude * noise(p);
+		p = p * 2.02 + vec2(13.7, 8.9);
+		amplitude *= 0.52;
+	}
+	return value;
+}
+
+vec3 gradient_hash(vec3 p) {
+	p = vec3(
+		dot(p, vec3(127.1, 311.7, 74.7)),
+		dot(p, vec3(269.5, 183.3, 246.1)),
+		dot(p, vec3(113.5, 271.9, 124.6))
+	);
+	return normalize(-1.0 + 2.0 * fract(sin(p) * 43758.5453123));
+}
+
+float gradient_noise(vec3 p) {
+	vec3 i = floor(p);
+	vec3 f = fract(p);
+	vec3 u = f * f * (3.0 - 2.0 * f);
+	float n000 = dot(gradient_hash(i + vec3(0.0, 0.0, 0.0)), f - vec3(0.0, 0.0, 0.0));
+	float n100 = dot(gradient_hash(i + vec3(1.0, 0.0, 0.0)), f - vec3(1.0, 0.0, 0.0));
+	float n010 = dot(gradient_hash(i + vec3(0.0, 1.0, 0.0)), f - vec3(0.0, 1.0, 0.0));
+	float n110 = dot(gradient_hash(i + vec3(1.0, 1.0, 0.0)), f - vec3(1.0, 1.0, 0.0));
+	float n001 = dot(gradient_hash(i + vec3(0.0, 0.0, 1.0)), f - vec3(0.0, 0.0, 1.0));
+	float n101 = dot(gradient_hash(i + vec3(1.0, 0.0, 1.0)), f - vec3(1.0, 0.0, 1.0));
+	float n011 = dot(gradient_hash(i + vec3(0.0, 1.0, 1.0)), f - vec3(0.0, 1.0, 1.0));
+	float n111 = dot(gradient_hash(i + vec3(1.0, 1.0, 1.0)), f - vec3(1.0, 1.0, 1.0));
+	float nx00 = mix(n000, n100, u.x);
+	float nx10 = mix(n010, n110, u.x);
+	float nx01 = mix(n001, n101, u.x);
+	float nx11 = mix(n011, n111, u.x);
+	float nxy0 = mix(nx00, nx10, u.y);
+	float nxy1 = mix(nx01, nx11, u.y);
+	return mix(nxy0, nxy1, u.z) * 0.5 + 0.5;
+}
+
+float gradient_fbm(vec3 p) {
+	float value = 0.0;
+	float amplitude = 0.58;
+	for (int i = 0; i < 4; i++) {
+		value += amplitude * gradient_noise(p);
+		p = p * 2.03 + vec3(17.1, 11.7, 7.3);
+		amplitude *= 0.50;
+	}
+	return clamp(value, 0.0, 1.0);
+}
+
+vec2 rotate_uv(vec2 p, float angle) {
+	float s = sin(angle);
+	float c = cos(angle);
+	vec2 centered = p - vec2(0.5);
+	return vec2(centered.x * c - centered.y * s, centered.x * s + centered.y * c) + vec2(0.5);
+}
+
+float soft_rect_mask(vec2 p, vec2 rect_min, vec2 rect_max, float softness) {
+	float left = smoothstep(rect_min.x - softness, rect_min.x + softness, p.x);
+	float right = 1.0 - smoothstep(rect_max.x - softness, rect_max.x + softness, p.x);
+	float top = smoothstep(rect_min.y - softness, rect_min.y + softness, p.y);
+	float bottom = 1.0 - smoothstep(rect_max.y - softness, rect_max.y + softness, p.y);
+	return clamp(left * right * top * bottom, 0.0, 1.0);
+}
+
+float cursor_trail_field(vec2 uv, vec4 sample_data) {
+	vec2 sample_uv = vec2(0.5) + (sample_data.xy - vec2(0.5)) / max(layer_card_scale, vec2(0.001));
+	float sample_radius = sample_data.w;
+	return smoothstep(sample_radius, 0.0, length(uv - sample_uv)) * sample_data.z;
+}
+
+void fragment() {
+	vec2 uv = UV;
+	vec2 remapped_cursor_uv = vec2(0.5) + (cursor_uv - vec2(0.5)) / max(layer_card_scale, vec2(0.001));
+	vec2 to_cursor = uv - remapped_cursor_uv;
+	float motion_strength = clamp(cursor_clear_strength, 0.0, 1.0);
+	float cursor_distance = length(to_cursor);
+	float brush_radius = cursor_brush_radius;
+	float brush_field = smoothstep(brush_radius, 0.0, cursor_distance);
+	float pressure_radius = brush_radius * 1.36;
+	float pressure_field = smoothstep(pressure_radius, 0.0, cursor_distance);
+	float gust_field = max(brush_field * 0.88, pressure_field * 0.42) * motion_strength;
+	float healing_clear = 0.0;
+	healing_clear = max(healing_clear, cursor_trail_field(uv, cursor_trail_0));
+	healing_clear = max(healing_clear, cursor_trail_field(uv, cursor_trail_1));
+	healing_clear = max(healing_clear, cursor_trail_field(uv, cursor_trail_2));
+	healing_clear = max(healing_clear, cursor_trail_field(uv, cursor_trail_3));
+	healing_clear = max(healing_clear, cursor_trail_field(uv, cursor_trail_4));
+	healing_clear = max(healing_clear, cursor_trail_field(uv, cursor_trail_5));
+	vec2 radial_push = normalize(to_cursor + vec2(0.0001, 0.0001)) * gust_field * 0.18;
+	vec2 stirred_uv = uv + radial_push;
+	vec2 drift = variant_drift * TIME * drift_speed + vec2(phase * 0.017, phase * 0.013);
+	float flow_time = TIME * (0.42 + drift_speed * 1.8) + phase;
+	float broad = fbm(stirred_uv * cloud_scale + drift);
+	float rolling = fbm(stirred_uv * cloud_scale * 1.72 - drift * 0.88 + phase);
+	float fine = fbm(stirred_uv * cloud_scale * 3.1 + drift * 1.6 + phase);
+	float ridge = smoothstep(0.060, 0.0, abs(cursor_distance - brush_radius)) * motion_strength * 0.035;
+	float smoke_mask = 1.0;
+	if (use_smoke_texture) {
+		vec2 smoke_offset_a = vec2(sin(flow_time * 0.71), cos(flow_time * 0.53)) * 0.076;
+		vec2 smoke_offset_b = vec2(cos(flow_time * 0.47 + 1.4), sin(flow_time * 0.61 - 0.8)) * 0.060;
+		vec2 smoke_offset_c = vec2(sin(flow_time * 0.39 - 0.9), cos(flow_time * 0.44 + 1.1)) * 0.050;
+		vec2 smoke_coord = (uv - vec2(0.5)) * smoke_flip + vec2(0.5) + smoke_anchor;
+		vec2 smoke_base_a = (smoke_coord - vec2(0.5)) * smoke_scale + vec2(0.5) + variant_uv_offset_a;
+		vec2 smoke_base_b = (smoke_coord - vec2(0.5)) * (smoke_scale * 1.08) + vec2(0.5) + variant_uv_offset_b;
+		vec2 smoke_base_c = (smoke_coord - vec2(0.5)) * (smoke_scale * 0.92) + vec2(0.5) - variant_uv_offset_a * 0.6;
+		vec2 smoke_uv_a = clamp(rotate_uv(smoke_base_a + smoke_offset_a, smoke_rotation.x + sin(flow_time * 0.33 + phase) * 0.105), vec2(0.0), vec2(1.0));
+		vec2 smoke_uv_b = clamp(rotate_uv(smoke_base_b - smoke_offset_b, smoke_rotation.y - sin(flow_time * 0.29 + 0.6 + phase) * 0.085), vec2(0.0), vec2(1.0));
+		vec2 smoke_uv_c = clamp(rotate_uv(smoke_base_c + smoke_offset_c, smoke_rotation.z + sin(flow_time * 0.25 + 1.9 + phase) * 0.070), vec2(0.0), vec2(1.0));
+		float smoke_a = texture(smoke_texture, smoke_uv_a).a;
+		float smoke_b = texture(smoke_texture, smoke_uv_b).a;
+		float smoke_c = texture(smoke_texture, smoke_uv_c).a;
+		smoke_mask = smoothstep(0.018, 0.62, max(max(smoke_a, smoke_b * 0.88), smoke_c * 0.76));
+	}
+	vec3 fog_field_a = vec3(
+		stirred_uv * cloud_scale * 1.16 + drift * 1.15 + variant_uv_offset_a,
+		phase * 0.19 + TIME * drift_speed * 0.66
+	);
+	vec3 fog_field_b = vec3(
+		stirred_uv * cloud_scale * 2.05 - drift * 0.74 + variant_uv_offset_b,
+		phase * 0.11 - TIME * drift_speed * 0.48
+	);
+	float gradient_cloud = gradient_fbm(fog_field_a);
+	float gradient_detail = gradient_fbm(fog_field_b);
+	float procedural_mist = smoothstep(0.16, 0.78, gradient_cloud * 0.68 + gradient_detail * 0.32);
+	float density = 0.08 + density_bias + smoke_mask * (0.62 + broad * 0.20 + rolling * 0.14) + procedural_mist * 0.12 + fine * 0.035;
+	if (use_cloud_texture) {
+		vec2 cloud_uv_a = fract(stirred_uv * (cloud_scale * 0.58) + drift * 1.35 + vec2(phase * 0.037, phase * 0.021) + variant_uv_offset_a);
+		vec2 cloud_uv_b = fract(stirred_uv * (cloud_scale * 0.91) - drift * 1.05 + vec2(phase * 0.019, -phase * 0.031) + variant_uv_offset_b);
+		float texture_cloud = texture(cloud_texture, cloud_uv_a).r * 0.62 + texture(cloud_texture, cloud_uv_b).r * 0.38;
+		density = mix(density, texture_cloud + smoke_mask * 0.55 + density_bias * 0.5, texture_mix * 0.16);
+	}
+	if (use_detail_texture) {
+		vec2 detail_uv = fract(stirred_uv * (cloud_scale * 2.65) + drift * 2.20 + vec2(phase * 0.017, phase * 0.047) + variant_uv_offset_b * 1.7);
+		float detail_noise = texture(detail_texture, detail_uv).r;
+		density += (detail_noise - 0.5) * 0.075 * (1.0 - gust_field * 0.45);
+	}
+	density *= 0.94 + sin(flow_time * 0.66) * 0.060;
+	vec2 remapped_hover_clear_min = vec2(0.5) + (hover_clear_uv_min - vec2(0.5)) / max(layer_card_scale, vec2(0.001));
+	vec2 remapped_hover_clear_max = vec2(0.5) + (hover_clear_uv_max - vec2(0.5)) / max(layer_card_scale, vec2(0.001));
+	float hover_clear = soft_rect_mask(uv, remapped_hover_clear_min, remapped_hover_clear_max, 0.026);
+	density = clamp(density + ridge - gust_field * 1.18 - healing_clear * 1.06, 0.0, 1.0);
+	density *= 1.0 - hover_clear;
+	float edge_x = smoothstep(0.0, 0.075, uv.x) * smoothstep(0.0, 0.075, 1.0 - uv.x);
+	float edge_y = smoothstep(0.0, 0.085, uv.y) * smoothstep(0.0, 0.085, 1.0 - uv.y);
+	float feather = pow(edge_x * edge_y, 0.78);
+	ALBEDO = fog_color.rgb;
+	ALPHA = fog_alpha * density * feather;
+}
+"""
+	_shader_cache = shader
+	return _shader_cache
+
+static func _get_smoke_texture() -> Texture2D:
+	if _smoke_texture_cache != null:
+		return _smoke_texture_cache
+	_smoke_texture_cache = _load_texture(SMOKE_TEXTURE_PATH)
+	return _smoke_texture_cache
+
+static func _get_cloud_texture() -> Texture2D:
+	if _cloud_texture_cache != null:
+		return _cloud_texture_cache
+	_cloud_texture_cache = _load_texture(CLOUD_TEXTURE_PATH)
+	return _cloud_texture_cache
+
+static func _get_detail_texture() -> Texture2D:
+	if _detail_texture_cache != null:
+		return _detail_texture_cache
+	_detail_texture_cache = _load_texture(DETAIL_TEXTURE_PATH)
+	return _detail_texture_cache
+
+static func _load_texture(path: String) -> Texture2D:
 	if ResourceLoader.exists(path, "Texture2D"):
 		var imported_texture := ResourceLoader.load(path, "Texture2D", ResourceLoader.CACHE_MODE_REUSE) as Texture2D
 		if imported_texture != null:
@@ -89,93 +548,8 @@ static func _load_fog_texture(path: String) -> Texture2D:
 		return ImageTexture.create_from_image(image)
 	return null
 
-static func _get_additive_material() -> CanvasItemMaterial:
-	if _additive_material == null:
-		_additive_material = CanvasItemMaterial.new()
-		_additive_material.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
-	return _additive_material
+func _seeded_unit(seed: int, salt: int) -> float:
+	return float(posmod(("%d:%d" % [seed, salt]).hash(), 10000)) / 10000.0
 
-func _layout_puffs() -> void:
-	if size.x <= 0.0 or size.y <= 0.0:
-		return
-	var max_dim := maxf(size.x, size.y)
-	for i in range(_puffs.size()):
-		var puff := _puffs[i]
-		if puff == null or not is_instance_valid(puff):
-			continue
-		var phase := _get_phase(i)
-		var drift := Vector2(
-			sin(_time * _get_speed(i) + phase) * size.x * 0.055,
-			cos(_time * (_get_speed(i) * 0.74) + phase * 1.7) * size.y * 0.045
-		)
-		var puff_size := Vector2.ONE * max_dim * _get_scale(i)
-		var center := size * _get_anchor(i) + drift
-		puff.size = puff_size
-		puff.pivot_offset = puff_size * 0.5
-		puff.position = center - puff_size * 0.5
-		puff.rotation = _get_base_rotation(i) + sin(_time * 0.18 + phase) * 0.16
-		var pulse := 0.82 + sin(_time * 0.75 + phase) * 0.18
-		puff.modulate = Color(0.55, 0.58, 0.66, fog_alpha * _get_alpha_multiplier(i) * pulse)
-
-func _draw_rounded_outline(rect: Rect2, radius: float, color: Color, width: float) -> void:
-	if rect.size.x <= 0.0 or rect.size.y <= 0.0:
-		return
-	draw_arc(rect.position + Vector2(radius, radius), radius, PI, PI * 1.5, 12, color, width)
-	draw_arc(rect.position + Vector2(rect.size.x - radius, radius), radius, PI * 1.5, TAU, 12, color, width)
-	draw_arc(rect.position + rect.size - Vector2(radius, radius), radius, 0.0, PI * 0.5, 12, color, width)
-	draw_arc(rect.position + Vector2(radius, rect.size.y - radius), radius, PI * 0.5, PI, 12, color, width)
-	draw_line(rect.position + Vector2(radius, 0.0), rect.position + Vector2(rect.size.x - radius, 0.0), color, width)
-	draw_line(rect.position + Vector2(rect.size.x, radius), rect.position + Vector2(rect.size.x, rect.size.y - radius), color, width)
-	draw_line(rect.position + Vector2(radius, rect.size.y), rect.position + Vector2(rect.size.x - radius, rect.size.y), color, width)
-	draw_line(rect.position + Vector2(0.0, radius), rect.position + Vector2(0.0, rect.size.y - radius), color, width)
-
-func _get_anchor(index: int) -> Vector2:
-	match index % 6:
-		0:
-			return Vector2(0.18, 0.28)
-		1:
-			return Vector2(0.78, 0.24)
-		2:
-			return Vector2(0.20, 0.76)
-		3:
-			return Vector2(0.82, 0.70)
-		4:
-			return Vector2(0.50, 0.10)
-	return Vector2(0.52, 0.90)
-
-func _get_scale(index: int) -> float:
-	match index % 6:
-		0:
-			return 0.86
-		1:
-			return 0.78
-		2:
-			return 0.82
-		3:
-			return 0.80
-		4:
-			return 0.70
-	return 0.74
-
-func _get_alpha_multiplier(index: int) -> float:
-	match index % 6:
-		0:
-			return 1.0
-		1:
-			return 0.9
-		2:
-			return 0.95
-		3:
-			return 0.86
-		4:
-			return 0.74
-	return 0.80
-
-func _get_speed(index: int) -> float:
-	return 0.26 + float(index % 6) * 0.035
-
-func _get_phase(index: int) -> float:
-	return float(index) * 1.31
-
-func _get_base_rotation(index: int) -> float:
-	return [-0.45, 0.34, 0.78, -0.62, 0.12, -0.18][index % 6]
+func _seeded_range(seed: int, salt: int, min_value: float, max_value: float) -> float:
+	return lerpf(min_value, max_value, _seeded_unit(seed, salt))

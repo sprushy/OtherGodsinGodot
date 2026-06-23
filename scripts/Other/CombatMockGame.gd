@@ -5675,6 +5675,15 @@ func _set_turn_choice_controls_disabled(disabled: bool) -> void:
 func _is_network_breidablik_return_pending() -> bool:
 	return _is_networked_client and _network_breidablik_return_pending
 
+func _is_local_authoritative_upkeep_pending() -> bool:
+	if game_manager == null or game_manager.has_resolved_turn_upkeep():
+		return false
+	if _is_networked_client:
+		if network_manager == null or network_manager.local_player_index < 0:
+			return false
+		return game_manager.players.find(game_manager.current_player) == network_manager.local_player_index
+	return true
+
 func _begin_network_breidablik_return_pending(power: Breidablik, priest: Card) -> void:
 	if not _is_networked_client:
 		return
@@ -26093,6 +26102,8 @@ func _is_attacker_on_board(attacker: Card, owning_player: Player) -> bool:
 func _on_draw_button_pressed() -> void:
 	if _game_finished:
 		return
+	if _is_priority_prompt_visible():
+		_hide_priority_prompt()
 	if _is_network_breidablik_return_pending():
 		_reject_pending_network_breidablik_return_choice()
 		return
@@ -26104,7 +26115,11 @@ func _on_draw_button_pressed() -> void:
 	if _skoll_prompt_panel != null or _pending_skoll_summon != null:
 		_set_action_label_text("Finish resolving Sun Hunt or cancel it before choosing another upkeep option.")
 		return
-	game_input.submit_action({type = "upkeep_choice", choice = "draw"})
+	if not game_input.submit_action({type = "upkeep_choice", choice = "draw"}):
+		_set_action_label_text("Could not submit upkeep choice. Please try again.")
+		_refresh_turn_choice_options()
+		update_ui()
+		return
 	_close_turn_start_windows(false)
 	update_ui()
 	hide_turn_choice()
@@ -26112,6 +26127,8 @@ func _on_draw_button_pressed() -> void:
 func _on_mana_button_pressed() -> void:
 	if _game_finished:
 		return
+	if _is_priority_prompt_visible():
+		_hide_priority_prompt()
 	if _is_network_breidablik_return_pending():
 		_reject_pending_network_breidablik_return_choice()
 		return
@@ -26123,7 +26140,11 @@ func _on_mana_button_pressed() -> void:
 	if _skoll_prompt_panel != null or _pending_skoll_summon != null:
 		_set_action_label_text("Finish resolving Sun Hunt or cancel it before choosing another upkeep option.")
 		return
-	game_input.submit_action({type = "upkeep_choice", choice = "mana"})
+	if not game_input.submit_action({type = "upkeep_choice", choice = "mana"}):
+		_set_action_label_text("Could not submit upkeep choice. Please try again.")
+		_refresh_turn_choice_options()
+		update_ui()
+		return
 	_close_turn_start_windows(false)
 	update_ui()
 	hide_turn_choice()
@@ -27654,6 +27675,11 @@ func _apply_ui_interaction(event_data: Dictionary) -> void:
 	
 	match type:
 		"priority":
+			if _is_local_authoritative_upkeep_pending():
+				if _is_priority_prompt_visible():
+					_hide_priority_prompt()
+				_update_waiting_overlay()
+				return
 			var prompt_player_index := int(event_data.get("player_index", local_idx))
 			if local_idx >= 0 and prompt_player_index != local_idx:
 				if _is_priority_prompt_visible():
@@ -28159,6 +28185,10 @@ func _restore_priority_prompt_from_authoritative_state() -> void:
 		if _is_priority_prompt_visible():
 			_hide_priority_prompt()
 		return
+	if _is_local_authoritative_upkeep_pending():
+		if _is_priority_prompt_visible():
+			_hide_priority_prompt()
+		return
 	var local_player: Player = game_manager.players[local_idx]
 	var should_have_priority_prompt := not _game_finished \
 		and not game_manager.action_stack.is_empty() \
@@ -28210,6 +28240,10 @@ func _sync_network_turn_entry_ui_from_state() -> void:
 	if game_manager.has_resolved_turn_upkeep():
 		hide_turn_choice()
 	else:
+		if _is_priority_prompt_visible():
+			_hide_priority_prompt()
+		if _is_intercept_prompt_visible():
+			_hide_intercept_prompt()
 		show_turn_choice()
 		if _network_upkeep_prompt_turn != game_manager.turn_number or _network_upkeep_prompt_player_index != local_idx:
 			call_deferred("_open_upkeep_choice_window")
@@ -28347,6 +28381,11 @@ func _set_match_reconnect_wait(is_waiting: bool, message: String = "Waiting for 
 	_update_waiting_status(false)
 
 func _apply_priority_offered(data: Dictionary) -> void:
+	if _is_local_authoritative_upkeep_pending():
+		if _is_priority_prompt_visible():
+			_hide_priority_prompt()
+		_update_waiting_overlay()
+		return
 	var local_idx = network_manager.local_player_index if network_manager != null else -1
 	var priority_idx := int(data.get("player_index", local_idx))
 	if local_idx >= 0 and priority_idx != local_idx:
@@ -28357,6 +28396,11 @@ func _apply_priority_offered(data: Dictionary) -> void:
 	_apply_priority_prompt_for_player(priority_idx, data)
 
 func _apply_priority_prompt_for_player(player_index: int, data: Dictionary) -> void:
+	if _is_local_authoritative_upkeep_pending():
+		if _is_priority_prompt_visible():
+			_hide_priority_prompt()
+		_update_waiting_overlay()
+		return
 	var prompt_signature := _build_priority_prompt_payload_signature(player_index, data)
 	if _should_ignore_handled_priority_prompt(player_index, data):
 		_update_waiting_overlay()
