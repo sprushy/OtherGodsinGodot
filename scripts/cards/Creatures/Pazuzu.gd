@@ -57,6 +57,7 @@ func _drain_opponent_mana(game_manager: GameManager, ability_name: String) -> St
 
 	# Play locust swarm sound effect
 	LocustSwarmSoundPlayer.play_sound()
+	game_manager.note_ui_sound_cue("locust_swarm")
 
 	return "%s triggers %s and reduces %s's mana by %d." % [
 		card_name,

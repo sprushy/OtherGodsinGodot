@@ -59,6 +59,7 @@ var combat_destroy_events_this_turn: Array[Dictionary] = []
 var last_hex_resolution_text: String = ""
 var last_player_feedback_text: String = ""
 var _pending_player_feedback_texts: Array[String] = []
+var _pending_ui_sound_cues: Array[String] = []
 var _upkeep_resolved_turn: int = -1
 var _upkeep_started_turn: int = -1
 var _temporary_summon_cost_modifiers: Array[Dictionary] = []
@@ -466,6 +467,17 @@ func consume_player_feedback() -> String:
 	last_player_feedback_text = ""
 	_pending_player_feedback_texts.clear()
 	return text
+
+func note_ui_sound_cue(cue_name: String) -> void:
+	var normalized_cue := cue_name.strip_edges()
+	if normalized_cue == "":
+		return
+	_pending_ui_sound_cues.append(normalized_cue)
+
+func consume_ui_sound_cues() -> Array[String]:
+	var cues := _pending_ui_sound_cues.duplicate()
+	_pending_ui_sound_cues.clear()
+	return cues
 
 func get_game_result_message(winner: Player = winning_player, loser: Player = losing_player, reason: String = "") -> String:
 	var resolved_reason := reason.strip_edges()

@@ -56,8 +56,11 @@ const DefaultMatchSetupScript = preload("res://scripts/server/DefaultMatchSetup.
 const MatchHistoryStoreScript = preload("res://scripts/server/MatchHistoryStore.gd")
 const MatchSessionScript = preload("res://scripts/server/MatchSession.gd")
 const DeckValidatorScript = preload("res://scripts/server/DeckValidator.gd")
+const PowerUnlockSoundPlayerScript = preload("res://scripts/audio/PowerUnlockSoundPlayer.gd")
+const LocustSwarmSoundPlayerScript = preload("res://scripts/audio/LocustSwarmSoundPlayer.gd")
 const TiamatScript = preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
 const UIArtScalerScript = preload("res://scripts/ui/UIArtScaler.gd")
+const GameCursorScript = preload("res://scripts/ui/GameCursor.gd")
 const CardDetailContentBuilderScript = preload("res://scripts/ui/CardDetailContentBuilder.gd")
 const LevelSymbolRowScript = preload("res://scripts/ui/LevelSymbolRow.gd")
 const ReinforcementCardTileScript = preload("res://scripts/ui/ReinforcementCardTile.gd")
@@ -3428,10 +3431,9 @@ func _apply_anointing_statue_cursor() -> bool:
 	return true
 
 func _restore_default_selection_cursor() -> void:
-	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
-		Input.set_custom_mouse_cursor(null, cursor_shape)
-		_active_selection_cursor_mode = ""
-		_active_selection_cursor_target_height = 0
+	GameCursorScript.ensure_registered(SACRIFICE_CURSOR_SHAPES)
+	_active_selection_cursor_mode = ""
+	_active_selection_cursor_target_height = 0
 	_set_embedded_custom_cursor_active(false)
 
 func _set_embedded_custom_cursor_active(active: bool) -> void:
@@ -26189,6 +26191,12 @@ func _get_end_turn_discard_count() -> int:
 
 func _prompt_end_turn_discards() -> void:
 	var excess := _get_end_turn_discard_count()
+	print("[OG client end_turn] discard_prompt excess=%d staged=%s hand=%d current=%s" % [
+		excess,
+		str(_pending_end_turn_discard_uids),
+		game_manager.current_player.hand_zone.get_card_count() if game_manager != null and game_manager.current_player != null else -1,
+		game_manager.current_player.player_name if game_manager != null and game_manager.current_player != null else "none",
+	])
 	if excess <= 0:
 		_continue_end_turn_sequence()
 		return
@@ -26263,10 +26271,19 @@ func _clear_ragnarok_prompt_state() -> void:
 
 func _discard_end_turn_card(card: Card) -> void:
 	if card == null or card.current_zone != game_manager.current_player.hand_zone:
+		print("[OG client end_turn] discard_click_invalid card=%s staged=%s" % [
+			card.card_name if card != null else "null",
+			str(_pending_end_turn_discard_uids),
+		])
 		_prompt_end_turn_discards()
 		return
 	if card.uid not in _pending_end_turn_discard_uids:
 		_pending_end_turn_discard_uids.append(card.uid)
+	print("[OG client end_turn] discard_click card=%s uid=%s staged=%s" % [
+		card.card_name,
+		card.uid,
+		str(_pending_end_turn_discard_uids),
+	])
 	update_ui()
 	_prompt_end_turn_discards()
 
@@ -28071,9 +28088,71 @@ func _apply_ui_interaction(event_data: Dictionary) -> void:
 			if card != null:
 				_queue_sharur_escape_prompt(card, str(payload.get("reason", "")))
 
+func _debug_serialized_stack_summary(state: Dictionary) -> String:
+	var raw_stack = state.get("action_stack", [])
+	if not (raw_stack is Array):
+		return "not_array"
+	var stack := raw_stack as Array
+	if stack.is_empty():
+		return "empty"
+	var parts: Array[String] = []
+	for idx in range(mini(stack.size(), 5)):
+		var action_data = stack[idx]
+		if not (action_data is Dictionary):
+			parts.append("[%d]non_dict" % idx)
+			continue
+		var action_dict := action_data as Dictionary
+		parts.append("[%d]{type=%s,event=%s,card=%s,source=%s,initial=%s}" % [
+			idx,
+			str(action_dict.get("type", "")),
+			str(action_dict.get("event_name", "")),
+			str(action_dict.get("card_uid", "")),
+			str(action_dict.get("source_player_index", "")),
+			str(action_dict.get("initial_priority_player_index", "")),
+		])
+	return " ".join(parts)
+
+func _debug_live_stack_summary() -> String:
+	if game_manager == null or game_manager.action_stack.is_empty():
+		return "empty"
+	var parts: Array[String] = []
+	for idx in range(mini(game_manager.action_stack.size(), 5)):
+		var action := game_manager.action_stack[idx] as CardAction
+		if action == null:
+			parts.append("[%d]null" % idx)
+			continue
+		parts.append("[%d]{type=%d,event=%s,card=%s,source=%d,initial=%d}" % [
+			idx,
+			int(action.type),
+			action.event_name,
+			action.card.uid if action.card != null else "",
+			game_manager.players.find(action.source_player) if action.source_player != null else -1,
+			game_manager.players.find(action.initial_priority_player) if action.initial_priority_player != null else -1,
+		])
+	return " ".join(parts)
+
+func _debug_log_full_state(context: String, data: Dictionary, state: Dictionary) -> void:
+	var raw_stack = state.get("action_stack", [])
+	var stack_size: int = raw_stack.size() if raw_stack is Array else -1
+	var message := str(data.get("action_message", "")).replace("\n", " ")
+	print("[OG client state] %s local=%s turn=%s current=%s priority=%s state_stack=%d locked=%s visual=%s pending_priority=%s msg=%s stack=%s" % [
+		context,
+		str(network_manager.local_player_index if network_manager != null else -1),
+		str(state.get("turn_number", "")),
+		str(state.get("current_player_index", "")),
+		str(state.get("priority_player_index", "")),
+		stack_size,
+		str(data.get("authoritative_stack_window_locked", false)),
+		str(data.get("authoritative_visual_linger_pending", false)),
+		str(data.has("pending_priority_prompt")),
+		message,
+		_debug_serialized_stack_summary(state),
+	])
+
 func _apply_full_state(data: Dictionary) -> void:
 	_pending_priority_auto_pass_signature.clear()
 	var state: Dictionary = data.get("state", {})
+	_debug_log_full_state("receive", data, state)
 	var pending_priority_prompt: Dictionary = {}
 	var pending_priority_value = data.get("pending_priority_prompt", {})
 	if pending_priority_value is Dictionary:
@@ -28105,6 +28184,13 @@ func _apply_full_state(data: Dictionary) -> void:
 			game_manager.feedback_viewer = _observer_feedback_viewer
 		_restore_network_attack_preview_from_state(data.get("pending_attack_preview", {}))
 		_awaiting_initial_full_state = false
+		print("[OG client state] after_apply local=%s ghost_stack=%d remote_locked=%s has_unresolved=%s live_stack=%s" % [
+			str(network_manager.local_player_index if network_manager != null else -1),
+			game_manager.action_stack.size() if game_manager != null else -1,
+			str(match_manager.remote_authoritative_stack_window_locked if match_manager != null else false),
+			str(match_manager.has_unresolved_stack_action_window() if match_manager != null else false),
+			_debug_live_stack_summary(),
+		])
 	if _is_networked_client and _is_intercept_prompt_visible() and match_manager != null and match_manager.pending_attack_target == null:
 		_hide_intercept_prompt()
 	if game_manager != null and previous_turn_number >= 0 and game_manager.turn_number != previous_turn_number:
@@ -28121,6 +28207,8 @@ func _apply_full_state(data: Dictionary) -> void:
 		var action_log_event_id := int(data.get("action_log_event_id", -1))
 		is_new_network_action_log_event = action_log_event_id != _last_network_action_log_event_id
 		_last_network_action_log_event_id = action_log_event_id
+	if _is_networked_client and (not has_network_action_log_event_id or is_new_network_action_log_event):
+		_play_network_ui_sound_cues(data.get("ui_sound_cues", []))
 	if msg != "":
 		var force_log_from_state := true
 		if _is_real_network_host():
@@ -28152,6 +28240,16 @@ func _apply_full_state(data: Dictionary) -> void:
 			_restore_priority_prompt_from_authoritative_state()
 	_update_waiting_overlay()
 	_sync_deferred_turn_action_after_opponent_priority()
+
+func _play_network_ui_sound_cues(raw_cues: Variant) -> void:
+	if not (raw_cues is Array):
+		return
+	for raw_cue in raw_cues:
+		match str(raw_cue):
+			"power_unlock":
+				PowerUnlockSoundPlayerScript.play_sequence()
+			"locust_swarm":
+				LocustSwarmSoundPlayerScript.play_sound()
 
 func _restore_network_attack_preview_from_state(preview_data: Dictionary) -> void:
 	if not _is_networked_client or match_manager == null or game_manager == null:
@@ -28977,6 +29075,12 @@ func _do_end_turn() -> void:
 		return
 	print("=== TURN ENDED ===")
 	var pending_discard_uids := _pending_end_turn_discard_uids.duplicate()
+	print("[OG client end_turn] submit_start pending_discards=%s hand=%d networked=%s authoritative=%s" % [
+		str(pending_discard_uids),
+		game_manager.current_player.hand_zone.get_card_count() if game_manager != null and game_manager.current_player != null else -1,
+		str(_is_networked_client),
+		str(uses_authoritative_match_flow()),
+	])
 	_dismiss_transient_prompts()
 	_reset_transient_priority_auto_mode_for_turn_end()
 	var et_cmd := {type = "end_turn"}
@@ -28985,6 +29089,9 @@ func _do_end_turn() -> void:
 	if (_is_networked_client or uses_authoritative_match_flow()) and game_input != null:
 		if not game_input.submit_action(et_cmd):
 			_pending_end_turn_discard_uids = pending_discard_uids.duplicate()
+			print("[OG client end_turn] submit_failed restored_discards=%s" % str(_pending_end_turn_discard_uids))
+		else:
+			print("[OG client end_turn] submit_sent command=%s" % str(et_cmd))
 		update_ui()
 		return
 	var end_turn_priority_owner := game_manager.current_player

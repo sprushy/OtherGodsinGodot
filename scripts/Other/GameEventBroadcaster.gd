@@ -11,6 +11,7 @@ class_name GameEventBroadcaster
 
 const PromptRouterScript = preload("res://scripts/server/PromptRouter.gd")
 const MatchCommandRegistryScript = preload("res://scripts/Other/MatchCommandRegistry.gd")
+const BROADCAST_LOG_PREFIX := "[OG broadcast]"
 
 var game_manager: GameManager
 var match_manager: MatchManager
@@ -44,8 +45,13 @@ func _on_move_validated(move: Dictionary) -> void:
 	if game_manager != null and game_manager.is_game_over:
 		return
 	if bool(move.get("_suppress_full_state_broadcast", false)):
+		_log_broadcast_state("move_validated:suppressed type=%s" % str(move.get("type", "")))
 		return
 	var move_type := str(move.get("type", ""))
+	_log_broadcast_state("move_validated:start type=%s keys=%s" % [
+		move_type,
+		str(move.keys()),
+	])
 	if move_type == "end_turn":
 		# End turn may now wait on priority after move_validated fires. Broadcast
 		# after MatchManager has queued or resolved that window so every client
@@ -87,15 +93,27 @@ func _on_action_resolved(action: CardAction) -> void:
 	if action != null \
 			and action.type == CardAction.Type.EVENT \
 			and action.event_name == "end_turn":
+		_log_broadcast_state("action_resolved:skip_end_turn action=%s" % _action_debug_summary(action))
 		return
+	if action != null and bool(action.event_data.get("defer_resolved_state_broadcast_until_settled", false)):
+		_log_broadcast_state("action_resolved:defer_until_settled action=%s" % _action_debug_summary(action))
+		call_deferred("_broadcast_settled_resolved_action_state", action)
+		return
+	_log_broadcast_state("action_resolved:broadcast_now action=%s" % _action_debug_summary(action))
 	_broadcast_full_state_for_action(action)
 	# Deferred prompt completion removes the answered prompt after action_resolved
 	# fires. Re-send only prompts that remain once command processing has settled.
 	call_deferred("_rebroadcast_pending_state_refresh_interactions")
 
+func _broadcast_settled_resolved_action_state(action: CardAction) -> void:
+	_log_broadcast_state("action_resolved:settled_broadcast action=%s" % _action_debug_summary(action))
+	_broadcast_full_state_for_action(action)
+	call_deferred("_rebroadcast_pending_state_refresh_interactions")
+
 func _on_ui_refresh_requested() -> void:
 	if network_manager == null or game_manager == null:
 		return
+	_log_broadcast_state("ui_refresh:start")
 	for player_index in network_manager.player_peer_ids:
 		var peer_id: int = network_manager.player_peer_ids[player_index]
 		var viewer := _viewer_for_player_index(player_index)
@@ -275,10 +293,11 @@ func _broadcast_full_state(action_message: String) -> void:
 	if network_manager == null:
 		return
 	_action_log_event_id += 1
+	var ui_sound_cues := _consume_pending_ui_sound_cues()
 	# Send personalized state to each player (hand privacy + hidden board privacy)
 	for player_index in network_manager.player_peer_ids:
 		var peer_id: int = network_manager.player_peer_ids[player_index]
-		var event_data := _build_full_state_event_data(player_index, action_message)
+		var event_data := _build_full_state_event_data(player_index, action_message, [], ui_sound_cues)
 		if peer_id == 1:
 			# Server's own "peer" — emit locally so the host UI updates too
 			network_manager.game_event_received.emit("full_state", event_data)
@@ -291,7 +310,8 @@ func _broadcast_full_state(action_message: String) -> void:
 			_build_full_state_event_data(
 				GameState.SPECTATOR_VIEWER_INDEX,
 				action_message,
-				network_manager.get_spectator_visible_player_indices(int(peer_id))
+				network_manager.get_spectator_visible_player_indices(int(peer_id)),
+				ui_sound_cues
 			)
 		)
 
@@ -299,11 +319,14 @@ func _broadcast_full_state_for_move(move: Dictionary) -> void:
 	if network_manager == null:
 		return
 	_action_log_event_id += 1
+	var ui_sound_cues := _consume_pending_ui_sound_cues(_ui_sound_cues_for_move(move))
 	for player_index in network_manager.player_peer_ids:
 		var peer_id: int = network_manager.player_peer_ids[player_index]
 		var event_data := _build_full_state_event_data(
 			player_index,
-			_label_for_move(move, _viewer_for_player_index(player_index))
+			_label_for_move(move, _viewer_for_player_index(player_index)),
+			[],
+			ui_sound_cues
 		)
 		if peer_id == 1:
 			network_manager.game_event_received.emit("full_state", event_data)
@@ -316,7 +339,8 @@ func _broadcast_full_state_for_move(move: Dictionary) -> void:
 			_build_full_state_event_data(
 				GameState.SPECTATOR_VIEWER_INDEX,
 				_label_for_move(move, _viewer_for_player_index(GameState.SPECTATOR_VIEWER_INDEX)),
-				network_manager.get_spectator_visible_player_indices(int(peer_id))
+				network_manager.get_spectator_visible_player_indices(int(peer_id)),
+				ui_sound_cues
 			)
 		)
 
@@ -324,12 +348,15 @@ func _broadcast_full_state_for_action(action: CardAction) -> void:
 	if network_manager == null:
 		return
 	_action_log_event_id += 1
+	var ui_sound_cues := _consume_pending_ui_sound_cues()
 	for player_index in network_manager.player_peer_ids:
 		var peer_id: int = network_manager.player_peer_ids[player_index]
 		var viewer := _viewer_for_player_index(player_index)
 		var event_data := _build_full_state_event_data(
 			player_index,
-			_label_for_resolved_action(action, viewer)
+			_label_for_resolved_action(action, viewer),
+			[],
+			ui_sound_cues
 		)
 		if peer_id == 1:
 			network_manager.game_event_received.emit("full_state", event_data)
@@ -342,7 +369,8 @@ func _broadcast_full_state_for_action(action: CardAction) -> void:
 			_build_full_state_event_data(
 				GameState.SPECTATOR_VIEWER_INDEX,
 				_label_for_resolved_action(action, _viewer_for_player_index(GameState.SPECTATOR_VIEWER_INDEX)),
-				network_manager.get_spectator_visible_player_indices(int(peer_id))
+				network_manager.get_spectator_visible_player_indices(int(peer_id)),
+				ui_sound_cues
 			)
 		)
 
@@ -350,9 +378,68 @@ func _broadcast_full_state_for_action(action: CardAction) -> void:
 # Helpers
 # ---------------------------------------------------------------------------
 
-func _build_full_state_event_data(player_index: int, action_message: String, visible_player_indices: Array = []) -> Dictionary:
+func _player_debug_label(player: Player) -> String:
+	if player == null:
+		return "none"
+	var idx := game_manager.players.find(player) if game_manager != null else -1
+	return "%s#%d" % [player.player_name, idx]
+
+func _action_debug_summary(action: CardAction) -> String:
+	if action == null:
+		return "none"
+	var parts: Array[String] = []
+	parts.append("type=%d" % int(action.type))
+	if action.event_name != "":
+		parts.append("event=%s" % action.event_name)
+	if action.card != null:
+		parts.append("card=%s/%s" % [action.card.card_name, action.card.uid])
+	if action.source_player != null:
+		parts.append("source=%s" % _player_debug_label(action.source_player))
+	if action.initial_priority_player != null:
+		parts.append("initial=%s" % _player_debug_label(action.initial_priority_player))
+	if action.event_data.has("deferred_authoritative_completion_command"):
+		parts.append("deferred=%s" % str(action.event_data.get("deferred_authoritative_completion_command", "")))
+	if bool(action.event_data.get("defer_resolved_state_broadcast_until_settled", false)):
+		parts.append("defer_broadcast=true")
+	return "{%s}" % ", ".join(parts)
+
+func _stack_debug_summary() -> String:
+	if game_manager == null:
+		return "no_game_manager"
+	var parts: Array[String] = []
+	for idx in range(game_manager.action_stack.size()):
+		parts.append("[%d]%s" % [idx, _action_debug_summary(game_manager.action_stack[idx])])
+	return "empty" if parts.is_empty() else " ".join(parts)
+
+func _log_broadcast_state(context: String) -> void:
+	if game_manager == null:
+		print("%s %s game_manager=null" % [BROADCAST_LOG_PREFIX, context])
+		return
+	var locked := match_manager != null and match_manager.has_unresolved_stack_action_window()
+	var visual := match_manager != null and match_manager.is_visual_linger_pending()
+	print("%s %s turn=%d current=%s priority=%s passes=%d server_stack=%d resolving=%d locked=%s visual=%s stack=%s" % [
+		BROADCAST_LOG_PREFIX,
+		context,
+		game_manager.turn_number,
+		_player_debug_label(game_manager.current_player),
+		_player_debug_label(game_manager.priority_player),
+		game_manager.consecutive_passes,
+		game_manager.action_stack.size(),
+		game_manager.resolving_stack_actions.size(),
+		str(locked),
+		str(visual),
+		_stack_debug_summary(),
+	])
+
+func _build_full_state_event_data(
+	player_index: int,
+	action_message: String,
+	visible_player_indices: Array = [],
+	ui_sound_cues: Array[String] = []
+) -> Dictionary:
+	var serialized_state := GameState.serialize(game_manager, player_index, visible_player_indices)
 	var event_data := {
-		state = GameState.serialize(game_manager, player_index, visible_player_indices),
+		state = serialized_state,
 		action_message = action_message,
 		action_log_event_id = _action_log_event_id,
 		authoritative_stack_window_locked = match_manager != null \
@@ -371,7 +458,42 @@ func _build_full_state_event_data(player_index: int, action_message: String, vis
 	var attack_preview := _serialize_pending_attack_preview()
 	if player_index >= 0 and not attack_preview.is_empty():
 		event_data["pending_attack_preview"] = attack_preview
+	if not ui_sound_cues.is_empty():
+		event_data["ui_sound_cues"] = ui_sound_cues.duplicate()
+	var serialized_stack = serialized_state.get("action_stack", [])
+	var serialized_stack_size: int = serialized_stack.size() if serialized_stack is Array else -1
+	var prompt_present := event_data.has("pending_priority_prompt")
+	var sanitized_message := action_message.replace("\n", " ")
+	print("%s full_state_payload player=%d msg=%s server_stack=%d serialized_stack=%d resolving=%d locked=%s visual=%s priority_prompt=%s stack=%s" % [
+		BROADCAST_LOG_PREFIX,
+		player_index,
+		sanitized_message,
+		game_manager.action_stack.size() if game_manager != null else -1,
+		serialized_stack_size,
+		game_manager.resolving_stack_actions.size() if game_manager != null else -1,
+		str(event_data.get("authoritative_stack_window_locked", false)),
+		str(event_data.get("authoritative_visual_linger_pending", false)),
+		str(prompt_present),
+		_stack_debug_summary(),
+	])
 	return event_data
+
+func _consume_pending_ui_sound_cues(extra_cues: Array[String] = []) -> Array[String]:
+	var cues: Array[String] = []
+	if game_manager != null:
+		cues.append_array(game_manager.consume_ui_sound_cues())
+	for cue in extra_cues:
+		var normalized_cue := cue.strip_edges()
+		if normalized_cue != "":
+			cues.append(normalized_cue)
+	return cues
+
+func _ui_sound_cues_for_move(move: Dictionary) -> Array[String]:
+	var cues: Array[String] = []
+	match str(move.get("type", "")):
+		"unlock_power":
+			cues.append("power_unlock")
+	return cues
 
 func _serialize_pending_attack_preview() -> Dictionary:
 	if match_manager == null or match_manager.selected_attacker == null or match_manager.pending_attack_target == null:

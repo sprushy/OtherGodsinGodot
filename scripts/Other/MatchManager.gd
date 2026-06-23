@@ -905,29 +905,51 @@ func _validate_end_turn_discards(player: Player, discard_uids: Array) -> Diction
 		"reason": "end_turn: invalid discard selection",
 		"cards": [],
 	}
+	_log_authoritative_flow_state("end_turn_discard:validate_start player=%s discard_uids=%s" % [
+		_get_player_debug_label(player),
+		str(discard_uids),
+	])
 	if player == null or player.hand_zone == null:
 		result["reason"] = "end_turn: player hand not found"
+		_log_authoritative_flow_state("end_turn_discard:validate_fail reason=%s" % str(result["reason"]))
 		return result
 	var required_count := maxi(0, player.hand_zone.get_card_count() - Player.MAX_HAND_SIZE)
+	_log_authoritative_flow_state("end_turn_discard:required hand=%d max=%d required=%d selected=%d" % [
+		player.hand_zone.get_card_count(),
+		Player.MAX_HAND_SIZE,
+		required_count,
+		discard_uids.size(),
+	])
 	var selected_cards: Array[Card] = []
 	var seen_uids: Array[String] = []
 	for raw_uid in discard_uids:
 		var discard_uid := str(raw_uid).strip_edges()
 		if discard_uid == "" or discard_uid in seen_uids:
 			result["reason"] = "end_turn: discard choices must be unique hand cards"
+			_log_authoritative_flow_state("end_turn_discard:validate_fail reason=%s uid=%s" % [
+				str(result["reason"]),
+				discard_uid,
+			])
 			return result
 		seen_uids.append(discard_uid)
 		var discard_card := game_manager.get_card_by_uid(discard_uid)
 		if discard_card == null or discard_card.current_zone != player.hand_zone:
 			result["reason"] = "end_turn: discard choices must be cards in your hand"
+			_log_authoritative_flow_state("end_turn_discard:validate_fail reason=%s uid=%s card=%s" % [
+				str(result["reason"]),
+				discard_uid,
+				_get_card_debug_label(discard_card),
+			])
 			return result
 		selected_cards.append(discard_card)
 	if selected_cards.size() != required_count:
 		result["reason"] = "end_turn: discard exactly %d card(s) to reach the hand limit" % required_count
+		_log_authoritative_flow_state("end_turn_discard:validate_fail reason=%s" % str(result["reason"]))
 		return result
 	result["ok"] = true
 	result["reason"] = ""
 	result["cards"] = selected_cards
+	_log_authoritative_flow_state("end_turn_discard:validate_ok selected=%d" % selected_cards.size())
 	return result
 
 func _queue_decision_priority_event(
@@ -1111,6 +1133,13 @@ func _on_game_manager_card_summoned(
 ) -> void:
 	if game_manager == null or not _uses_authoritative_headless_priority_flow():
 		return
+	_log_authoritative_flow_state("card_summoned:received player=%s card=%s source=%s face_down=%s stealth=%s" % [
+		_get_player_debug_label(player),
+		_get_card_debug_label(card),
+		_get_card_debug_label(summon_source),
+		str(face_down),
+		str(stealth),
+	])
 	if player == null or card == null or to_zone == null:
 		return
 	if card.card_type not in [Card.CardType.CREATURE, Card.CardType.STRUCTURE]:
@@ -1136,7 +1165,12 @@ func _on_game_manager_card_summoned(
 	summon_priority_action.event_name = "summon"
 	summon_priority_action.event_speed = card.get_effective_speed()
 	game_manager.push_to_stack(summon_priority_action)
+	_log_authoritative_flow_state("card_summoned:pushed_event action=%s active_command=%s" % [
+		_get_action_debug_summary(summon_priority_action),
+		_active_command_type,
+	])
 	if _active_command_advances_summon_priority():
+		_log_authoritative_flow_state("card_summoned:active_command_will_advance command=%s" % _active_command_type)
 		return
 	_advance_authoritative_priority_for_pending_card_events(card)
 
@@ -1574,6 +1608,10 @@ func _check_authoritative_deferred_action_cleared(context: String, action: CardA
 func _complete_deferred_authoritative_action(action: CardAction, completion_command_type: String) -> void:
 	if action == null:
 		return
+	_log_authoritative_flow_state("deferred_complete:start command=%s action=%s" % [
+		completion_command_type,
+		_get_action_debug_summary(action),
+	])
 	var expected_command_type := str(action.event_data.get("deferred_authoritative_completion_command", "")).strip_edges()
 	if expected_command_type.is_empty():
 		printerr("MatchManager: deferred authoritative action completed without stored metadata: %s" % _get_action_debug_label(action))
@@ -1586,17 +1624,28 @@ func _complete_deferred_authoritative_action(action: CardAction, completion_comm
 	var completed_command_type := completion_command_type.strip_edges()
 	if completed_command_type.is_empty():
 		completed_command_type = expected_command_type
-	_consume_active_command_prompt_for_completion(completed_command_type)
+	action.event_data["defer_resolved_state_broadcast_until_settled"] = true
+	var consumed_prompt := _consume_active_command_prompt_for_completion(completed_command_type)
+	_log_authoritative_flow_state("deferred_complete:prompt command=%s consumed=%s expected=%s" % [
+		completed_command_type,
+		str(consumed_prompt),
+		expected_command_type,
+	])
 	_clear_deferred_authoritative_action_metadata(action)
 	var destroyed_start_index := int(action.event_data.get("destroyed_count_before", game_manager.destroyed_this_turn.size() if game_manager != null else 0))
 	_queue_destroyed_response_events(destroyed_start_index, action)
 	_finalize_resolved_action(action)
-	_try_drain_authoritative_event_stack_without_prompt()
+	var drained := _try_drain_authoritative_event_stack_without_prompt()
+	_log_authoritative_flow_state("deferred_complete:after_drain command=%s drained=%s" % [
+		completed_command_type,
+		str(drained),
+	])
 	_schedule_authoritative_settled_state_refresh()
 
 func _schedule_authoritative_settled_state_refresh() -> void:
 	if not _uses_authoritative_headless_priority_flow():
 		return
+	_log_authoritative_flow_state("settled_refresh:schedule")
 	var tree = _get_authoritative_resolution_tree()
 	if tree == null:
 		call_deferred("_request_authoritative_settled_state_refresh")
@@ -1610,13 +1659,16 @@ func _schedule_authoritative_settled_state_refresh() -> void:
 func _request_authoritative_settled_state_refresh() -> void:
 	if game_manager == null or not _uses_authoritative_headless_priority_flow():
 		return
+	_log_authoritative_flow_state("settled_refresh:run_before_resume")
 	_resume_authoritative_flow_after_prompt_command()
-	_try_drain_authoritative_event_stack_without_prompt()
+	var drained := _try_drain_authoritative_event_stack_without_prompt()
+	_log_authoritative_flow_state("settled_refresh:run_after_drain drained=%s" % str(drained))
 	call_deferred("_request_ui_refresh")
 
 func _try_drain_authoritative_event_stack_without_prompt(max_steps: int = 16) -> bool:
 	if game_manager == null or not _uses_authoritative_headless_priority_flow():
 		return false
+	_log_authoritative_flow_state("event_drain:start max_steps=%d" % max_steps)
 	var drained := false
 	for _step in range(max_steps):
 		_prune_stale_ui_interactions_for_current_turn()
@@ -1624,20 +1676,42 @@ func _try_drain_authoritative_event_stack_without_prompt(max_steps: int = 16) ->
 				or not _pending_ui_interactions.is_empty() \
 				or not _queued_ui_interactions.is_empty() \
 				or not game_manager.resolving_stack_actions.is_empty():
+			_log_authoritative_flow_state("event_drain:blocked step=%d drained=%s" % [
+				_step,
+				str(drained),
+			])
 			return drained
 		game_manager.prune_stale_stack_actions()
 		if game_manager.action_stack.is_empty():
 			_clear_priority_window_state()
+			_log_authoritative_flow_state("event_drain:empty step=%d drained=%s" % [
+				_step,
+				str(drained),
+			])
 			return drained
 		var top_action := game_manager.action_stack.back() as CardAction
 		if top_action == null or top_action.type != CardAction.Type.EVENT:
+			_log_authoritative_flow_state("event_drain:non_event step=%d top=%s drained=%s" % [
+				_step,
+				_get_action_debug_summary(top_action),
+				str(drained),
+			])
 			return drained
 		if not _can_resolve_top_stack_action_now():
+			_log_authoritative_flow_state("event_drain:needs_priority step=%d top=%s" % [
+				_step,
+				_get_action_debug_summary(top_action),
+			])
 			_advance_authoritative_priority()
 			return drained
 		_clear_priority_window_state()
+		_log_authoritative_flow_state("event_drain:resolve step=%d top=%s" % [
+			_step,
+			_get_action_debug_summary(top_action),
+		])
 		resolve_action(top_action)
 		drained = true
+	_log_authoritative_flow_state("event_drain:max_steps_exhausted drained=%s" % str(drained))
 	return drained
 
 func _get_pending_authoritative_graveyard_prompt_command_type() -> String:
@@ -2985,13 +3059,16 @@ func advance_priority() -> void:
 func _advance_authoritative_priority() -> void:
 	if not _uses_authoritative_headless_priority_flow():
 		return
+	_log_authoritative_flow_state("priority_advance:start")
 	_prune_stale_ui_interactions_for_current_turn()
 	if _authoritative_stack_resolution_pending \
 			or not _pending_ui_interactions.is_empty() \
 			or not _queued_ui_interactions.is_empty():
+		_log_authoritative_flow_state("priority_advance:blocked")
 		return
 	game_manager.prune_stale_stack_actions()
 	if game_manager.action_stack.is_empty():
+		_log_authoritative_flow_state("priority_advance:no_stack")
 		return
 	var player := game_manager.priority_player
 	if player == null:
@@ -2999,18 +3076,28 @@ func _advance_authoritative_priority() -> void:
 		player = top_action.initial_priority_player if top_action.initial_priority_player != null else game_manager.get_opponent(top_action.source_player)
 		game_manager.priority_player = player
 	if player == null:
+		_log_authoritative_flow_state("priority_advance:no_player")
 		return
 	if _try_pass_pending_turn_action_actor_priority():
+		_log_authoritative_flow_state("priority_advance:passed_pending_actor")
 		return
 	var prompt_data := build_priority_prompt_data(player)
 	var prompt_offering_responses := get_priority_prompt_offering_responses(player)
 	var top_action: CardAction = game_manager.action_stack.back()
 	var force_priority_window := player_requires_priority_window(top_action, player)
+	_log_authoritative_flow_state("priority_advance:evaluate player=%s responses=%d force=%s top=%s" % [
+		_get_player_debug_label(player),
+		prompt_offering_responses.size(),
+		str(force_priority_window),
+		_get_action_debug_summary(top_action),
+	])
 	if prompt_offering_responses.is_empty() and not force_priority_window:
 		game_manager.pass_priority()
+		_log_authoritative_flow_state("priority_advance:auto_pass player=%s" % _get_player_debug_label(player))
 		if game_manager.both_passed():
 			if game_manager.action_stack.is_empty():
 				_clear_priority_window_state()
+				_log_authoritative_flow_state("priority_advance:both_passed_empty")
 				return
 			_schedule_authoritative_stack_top_after_priority()
 		else:
@@ -3023,6 +3110,11 @@ func _advance_authoritative_priority() -> void:
 		top_action.event_data["priority_prompt_offered_player_index"] = player_idx
 		if force_priority_window:
 			mark_priority_window_offered(top_action, player)
+	_log_authoritative_flow_state("priority_advance:emit_prompt player=%s responses=%d force=%s" % [
+		_get_player_debug_label(player),
+		prompt_offering_responses.size(),
+		str(force_priority_window),
+	])
 	_emit_ui_interaction_for_player(player, "priority", prompt_data)
 
 func queue_or_resolve_priority_event(action: CardAction, defer_authoritative_priority: bool = false) -> bool:
@@ -3983,6 +4075,10 @@ func _try_process_pending_turn_action_after_opponent_priority() -> void:
 
 func _on_move_failed(reason: String) -> void:
 	last_move_failed_reason = reason
+	_log_authoritative_flow_state("command:failed type=%s reason=%s" % [
+		_active_command_type,
+		reason,
+	])
 	_send_rejection_to_sender(_active_command_sender_info, reason)
 
 func _get_move_play_failure_reason(card: Card, player: Player, target_zone: Zone = null) -> String:
@@ -4031,6 +4127,13 @@ func process_command(command: Dictionary, sender_info: Dictionary = {}) -> bool:
 	_active_command_sender_info = sender_info.duplicate(true)
 	_active_command_type = str(command.get("type", ""))
 	_active_command_pending_prompt_id = -1
+	if _uses_authoritative_headless_priority_flow():
+		_log_authoritative_flow_state("command:start type=%s peer=%s player_index=%s keys=%s" % [
+			_active_command_type,
+			str(sender_info.get("peer_id", "")),
+			str(sender_info.get("player_index", "")),
+			str(command.keys()),
+		])
 	if not MatchCommandRegistryScript.is_known_command_type(_active_command_type):
 		move_failed.emit("Unknown command type: " + str(command.get("type")))
 		_active_command_sender_info.clear()
@@ -4045,11 +4148,13 @@ func process_command(command: Dictionary, sender_info: Dictionary = {}) -> bool:
 		_active_command_pending_prompt_id = -1
 		return false
 	if _defer_turn_action_until_opponent_priority_declines(command, sender_info):
+		_log_authoritative_flow_state("command:deferred_until_opponent_priority type=%s" % _active_command_type)
 		_active_command_sender_info.clear()
 		_active_command_type = ""
 		_active_command_pending_prompt_id = -1
 		return true
 	if _decline_priority_for_turn_action(command, sender_info):
+		_log_authoritative_flow_state("command:declined_priority type=%s" % _active_command_type)
 		_active_command_sender_info.clear()
 		_active_command_type = ""
 		_active_command_pending_prompt_id = -1
@@ -4077,6 +4182,12 @@ func process_command(command: Dictionary, sender_info: Dictionary = {}) -> bool:
 	var pending_prompt_id := int(pending_prompt_validation.get("prompt_id", -1))
 	_active_command_pending_prompt_id = pending_prompt_id
 	var result := _process_command_impl(command)
+	if _uses_authoritative_headless_priority_flow():
+		_log_authoritative_flow_state("command:processed type=%s result=%s prompt_id=%d" % [
+			_active_command_type,
+			str(result),
+			_active_command_pending_prompt_id,
+		])
 	if result:
 		_complete_simple_deferred_prompt_action_for_command(command)
 		if not _consume_active_command_prompt_for_completion(_active_command_type):
@@ -4507,6 +4618,10 @@ func _process_command_impl(command: Dictionary) -> bool:
 		"blot_sacrifice_choice":
 			var source_uid := str(command.get("source_uid", "")).strip_edges()
 			var blot := game_manager.get_card_by_uid(source_uid) as BlotSacrifice
+			_log_authoritative_flow_state("blot_choice:start source=%s choices=%s" % [
+				source_uid,
+				str(command.get("choices", [])),
+			])
 			if blot == null:
 				move_failed.emit("blot_sacrifice_choice: spell not found")
 				return false
@@ -4522,14 +4637,21 @@ func _process_command_impl(command: Dictionary) -> bool:
 			for chosen in choice_result.get("cards", []):
 				if chosen is Card:
 					chosen_creatures.append(chosen as Card)
+			_log_authoritative_flow_state("blot_choice:before_summon chosen=%d pending_action=%s" % [
+				chosen_creatures.size(),
+				_get_action_debug_summary(pending_blot_action),
+			])
 			var summoned_creatures := blot.summon_selected_creatures(game_manager, chosen_creatures)
+			_log_authoritative_flow_state("blot_choice:after_summon summoned=%d" % summoned_creatures.size())
 			if blot.should_go_to_graveyard() and blot.current_zone != blot.card_owner.graveyard_zone:
 				blot.card_owner.move_card(blot, blot.card_owner.graveyard_zone)
 			var feedback := "Blot Sacrifice fizzled: no creatures chosen to summon."
 			if not chosen_creatures.is_empty():
 				feedback = "Blot Sacrifice summoned %d creature(s)." % summoned_creatures.size()
 			command["public_log_message"] = feedback
+			_log_authoritative_flow_state("blot_choice:before_complete feedback=%s" % feedback)
 			_complete_deferred_prompt_action("blot_sacrifice_choice", blot, feedback, false)
+			_log_authoritative_flow_state("blot_choice:after_complete")
 			command["_suppress_full_state_broadcast"] = true
 			move_validated.emit(command)
 			return true
