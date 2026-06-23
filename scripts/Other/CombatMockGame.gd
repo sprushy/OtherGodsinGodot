@@ -24741,6 +24741,10 @@ func _on_blot_sacrifice_confirm_pressed() -> void:
 			source_uid = spell_uid,
 			choices = choices,
 		})
+		# The server drives authoritative resolution; clear the local paused
+		# state so the client does not keep blocking actions (e.g. attacks)
+		# while waiting for the next full_state broadcast.
+		_resume_after_deferred_resolution("Blot Sacrifice summoned " + str(chosen_creatures.size()) + " creature(s).")
 		return
 	if spell == null or sacrifice_target == null:
 		update_ui()
@@ -24772,6 +24776,10 @@ func _on_blot_sacrifice_cancel_pressed() -> void:
 			source_uid = spell.uid,
 			choices = [],
 		})
+		# The server drives authoritative resolution; clear the local paused
+		# state so the client does not keep blocking actions while waiting for
+		# the next full_state broadcast.
+		_resume_after_deferred_resolution("Blot Sacrifice fizzles.")
 		return
 	if costs_paid and spell != null:
 		_send_used_hand_card_to_graveyard(spell)
