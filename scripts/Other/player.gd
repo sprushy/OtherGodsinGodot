@@ -17,6 +17,7 @@ var followers: int = 100
 var is_defeated: bool = false
 var is_turn_player: bool = false
 var has_summoned_this_turn: bool = false
+var has_summoned_structure_this_turn: bool = false
 var attack_restriction_turns: int = 0
 
 var card_collection: Array[Card] = []
@@ -349,6 +350,7 @@ func get_adjacent_zones(zone: Zone) -> Array[Zone]:
 
 func reset_creature_actions() -> void:
 	has_summoned_this_turn = false
+	has_summoned_structure_this_turn = false
 	for zone in frontline_zones + reserve_zones:
 		for card in zone.cards:
 			if card.is_creature_card():

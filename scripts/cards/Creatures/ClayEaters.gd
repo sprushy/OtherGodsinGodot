@@ -1,7 +1,7 @@
 extends CreatureCard
 class_name ClayEaters
 
-const GEOPHAGIA_COST := 2
+const GEOPHAGIA_COST := 1
 
 var pending_geophagia_targets: Array[Card] = []
 

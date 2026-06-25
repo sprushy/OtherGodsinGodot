@@ -13,7 +13,7 @@ func _init() -> void:
 	speed = 1
 	resilience = 14
 	strength = 8
-	ability_text = "[b]Conjure Home[/b] ([b]Impact[/b]): You may [b]Void[/b] this card. If you do, add an Ancient Dwelling from your deck to your hand."
+	ability_text = "[b]Conjure Home[/b] ([b]Impact[/b]): You may [b]Void[/b] this card. If you do, [b]Acquire[/b] an Ancient Dwelling."
 	flavor_text = ""
 	culture = "Ancient"
 	artist = "Ricardo Zoppello"

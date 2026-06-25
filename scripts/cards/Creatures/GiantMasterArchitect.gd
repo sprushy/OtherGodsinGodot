@@ -13,7 +13,7 @@ func _init() -> void:
 	speed = 1
 	resilience = 32
 	strength = 27
-	ability_text = "Master Plan ([b]Impact[/b]): Add one structure from your deck to your hand."
+	ability_text = "Master Plan ([b]Impact[/b]): [b]Acquire[/b] a structure."
 	flavor_text = ""
 	culture = "Norse"
 	artist = "Tim Nguyen"

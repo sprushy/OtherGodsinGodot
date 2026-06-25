@@ -10,7 +10,7 @@ func _init() -> void:
 	speed = 1
 	resilience = 15
 	strength = 14
-	ability_text = "[b]Search[/b] Sage ([b]Impact[/b]): You may add a Mer Sage from your deck to your hand except for another copy of this card."
+	ability_text = "[b]Search[/b] Sage ([b]Impact[/b]): You may [b]Acquire[/b] a Mer Sage, except another copy of this card."
 	flavor_text = ""
 	culture = "Ancient"
 	artist = "Ricardo Zoppello"

@@ -45,6 +45,7 @@ const KEYWORD_HINTS = {
 	"Leech": "Steal the listed stats from each affected target, reducing them and increasing this card by the same amount.",
 	"Returns": "This card enters the field from the Abyss.",
 	"Search": "Look through your deck for a card, then shuffle.",
+	"Acquire": "Add a card from your deck to your hand.",
 	"Dodge": "This creature cannot be attacked by creatures with lower speed.",
 	"Shuffle": "Return this card to its owner's deck, then shuffle that deck.",
 	"Prime": "Put a card on top of your deck.",
@@ -96,10 +97,10 @@ static func apply_action_cost_symbols(text: String, card = null) -> String:
 static func apply_mana_cost_symbols(text: String, icon_size: int = 14) -> String:
 	if text.strip_edges() == "":
 		return text
-	var decorated := _replace_mana_shorthand_symbols(text, icon_size)
+	var decorated := _replace_labeled_mana_costs(text, icon_size)
+	decorated = _replace_mana_shorthand_symbols(decorated, icon_size)
 	decorated = _replace_pay_mana_phrases(decorated, icon_size)
 	decorated = _replace_pay_variable_mana_phrases(decorated, icon_size)
-	decorated = _replace_labeled_mana_costs(decorated, icon_size)
 	decorated = _replace_numeric_mana_phrases(decorated, icon_size)
 	return decorated
 
@@ -163,7 +164,7 @@ static func _replace_pay_variable_mana_phrases(text: String, icon_size: int) -> 
 
 static func _replace_labeled_mana_costs(text: String, icon_size: int) -> String:
 	var regex := RegEx.new()
-	if regex.compile("(?i)(\\b(?:mana|activation cost|unlock cost):\\s*)([0-9]+)\\b") != OK:
+	if regex.compile("(?i)(\\b(?:mana|activation cost|unlock cost):\\s*)([0-9]+)(?:M\\b|\\b)") != OK:
 		return text
 	var matches := regex.search_all(text)
 	if matches.is_empty():

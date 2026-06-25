@@ -21,7 +21,7 @@ func _init() -> void:
 	strength = 9
 	is_legendary = true
 	targets = false
-	ability_text = "[b]Patient Strategist[/b] ([b]Summon[/b]): Put 2 tactic counters on this.\n[b]Counterstroke[/b]: When this is targeted by an effect or attack, you may remove 2 tactic counters to negate it and destroy its source or attacker.\n[b]Fisher of Kings[/b] ([b]Activate[/b]): Remove 2 tactic counters to add a King or Legendary card from your deck to your hand."
+	ability_text = "[b]Patient Strategist[/b] ([b]Summon[/b]): Put 2 tactic counters on this.\n[b]Counterstroke[/b]: When this is targeted by an effect or attack, you may remove 2 tactic counters to negate it and destroy its source or attacker.\n[b]Fisher of Kings[/b] ([b]Activate[/b]): Remove 2 tactic counters to [b]Acquire[/b] a King or Legendary card."
 	flavor_text = ""
 	culture = "Tian"
 	artist = "User provided art"

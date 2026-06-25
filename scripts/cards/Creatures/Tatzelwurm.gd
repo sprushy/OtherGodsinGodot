@@ -13,7 +13,7 @@ func _init() -> void:
 	speed = 2
 	resilience = 9
 	strength = 16
-	ability_text = "[b]Dragon Heart[/b]: [b]Slay[/b]: Add a Dragon from your deck to your hand."
+	ability_text = "[b]Dragon Heart[/b]: [b]Slay[/b]: [b]Acquire[/b] a Dragon."
 	flavor_text = ""
 	culture = "Norse"
 	artist = "Ricardo Zoppello"

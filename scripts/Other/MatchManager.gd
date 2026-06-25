@@ -1861,24 +1861,22 @@ func _resolve_attack(action: CardAction) -> void:
 
 	game_manager.current_phase = GameManager.GamePhase.COMBAT
 	var actual_target = action.interceptor if action.interceptor != null else action.target
-	var attacker_on_frontline := _is_attacker_still_on_frontline(action.attacker)
-	var partner_on_frontline := action.united_front_partner != null \
-		and action.united_front_partner.current_zone != null \
-		and action.united_front_partner.current_zone.zone_type == Zone.ZoneType.FRONTLINE
+	var attacker_can_continue := _can_continue_declared_attack(action.attacker)
+	var partner_can_continue := _can_continue_declared_attack(action.united_front_partner)
 
-	if not attacker_on_frontline and not partner_on_frontline:
+	if not attacker_can_continue and not partner_can_continue:
 		if actual_target is Card:
 			game_manager._clear_combat_engagement_state(actual_target)
 		last_resolution_text = action.attacker.card_name + "'s attack fizzles — attacker is no longer on the frontline."
 		return
 
 	if actual_target is Card and actual_target.current_zone != null and actual_target.current_zone.is_board_zone():
-		if attacker_on_frontline:
+		if attacker_can_continue:
 			game_manager._begin_declared_combat(action.attacker, actual_target)
-		if partner_on_frontline:
+		if partner_can_continue:
 			game_manager._begin_declared_combat(action.united_front_partner, actual_target)
 
-	if attacker_on_frontline:
+	if attacker_can_continue:
 		action.attacker.mark_attacked_this_turn()
 
 	if actual_target is Card:
@@ -2127,11 +2125,9 @@ func _resolve_creature_combat_now(
 			completion_callback.call()
 		return
 	var attacker_on_board := attacker != null \
-		and attacker.current_zone != null \
-		and attacker.current_zone.zone_type == Zone.ZoneType.FRONTLINE
+		and _can_continue_declared_attack(attacker)
 	var partner_on_board := partner != null \
-		and partner.current_zone != null \
-		and partner.current_zone.zone_type == Zone.ZoneType.FRONTLINE
+		and _can_continue_declared_attack(partner)
 	if not has_committed_snapshot and not attacker_on_board and not partner_on_board:
 		last_resolution_text = "The attack fizzles - no attacker remains on the frontline."
 		if completion_callback.is_valid():
@@ -2156,6 +2152,10 @@ func _is_attacker_still_on_frontline(attacker: Card) -> bool:
 	return attacker != null \
 		and attacker.current_zone != null \
 		and attacker.current_zone.zone_type == Zone.ZoneType.FRONTLINE
+
+func _can_continue_declared_attack(attacker: Card) -> bool:
+	return _is_attacker_still_on_frontline(attacker) \
+		and attacker.creature_mode == Card.CreatureMode.AGGRESSIVE
 
 ## Returns any Askelladen cards in the combat that qualify for Tactical Retreat.
 func _get_retreat_candidates(attacker: Card, defender: Card, _turn_player: Player) -> Array:
@@ -2322,7 +2322,7 @@ func is_targeting_active() -> bool:
 func _get_active_attackers(action: CardAction) -> Array[Card]:
 	var active: Array[Card] = []
 	for c in [action.attacker, action.united_front_partner]:
-		if c != null and c.current_zone != null and c.current_zone.is_board_zone():
+		if _can_continue_declared_attack(c):
 			active.append(c)
 	return active
 
@@ -3559,6 +3559,14 @@ func get_attack_invalid_reason(card: Card) -> String:
 	
 	return ""
 
+func _emit_attack_invalid_feedback(reason: String) -> void:
+	var trimmed_reason := reason.strip_edges()
+	if trimmed_reason == "":
+		return
+	if trimmed_reason.contains("cannot attack because it was summoned after the first attack resolved this turn"):
+		game_manager.note_player_feedback(trimmed_reason)
+	move_failed.emit(trimmed_reason)
+
 func select_attacker(card: Card) -> void:
 	if card == null:
 		selected_attacker = null
@@ -3571,7 +3579,7 @@ func select_attacker(card: Card) -> void:
 			selected_attacker = card
 			pending_attack_target = null
 	else:
-		move_failed.emit(get_attack_invalid_reason(card))
+		_emit_attack_invalid_feedback(get_attack_invalid_reason(card))
 
 func request_attack(attacker, target) -> bool:
 	var attacker_card: Card = attacker if attacker is Card else game_manager.get_card_by_uid(str(attacker))
@@ -3600,7 +3608,7 @@ func request_attack(attacker, target) -> bool:
 		return false
 		
 	if not can_attack(attacker_card):
-		move_failed.emit(get_attack_invalid_reason(attacker_card))
+		_emit_attack_invalid_feedback(get_attack_invalid_reason(attacker_card))
 		return false
 		
 	# Check if target is valid for engagement

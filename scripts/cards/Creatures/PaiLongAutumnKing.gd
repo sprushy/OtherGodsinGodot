@@ -14,7 +14,7 @@ func _init() -> void:
 	speed = 3
 	resilience = 25
 	strength = 36
-	ability_text = "[b]Stormcloud[/b] ([b]Impact[/b]): Add a [b]Weather[/b] charm from your deck to your hand.\n[b]Weather King[/b] ([b]Passive[/b]): This card is immune to weather effects that do not increase its stats."
+	ability_text = "[b]Stormcloud[/b] ([b]Impact[/b]): [b]Acquire[/b] a [b]Weather[/b] charm.\n[b]Weather King[/b] ([b]Passive[/b]): This card is immune to weather effects that do not increase its stats."
 	flavor_text = ""
 	culture = "Tian"
 	artist = "David Revoy"

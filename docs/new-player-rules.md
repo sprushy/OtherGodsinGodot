@@ -408,6 +408,8 @@ Structures stay on the board and usually provide ongoing effects.
 
 Structures have RES and can be attacked. If a Structure is central to your plan, defend its lane. If an enemy Structure is taking over the game, attack it before it generates too much value.
 
+You may only summon one Structure per turn. Card effects that summon a Structure (rather than playing it normally from your hand) do not count against this limit.
+
 ## 27. Graveyard And Abyss
 
 The Graveyard is where destroyed Creatures and spent cards usually go.

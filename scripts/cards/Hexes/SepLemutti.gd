@@ -14,7 +14,7 @@ func _init() -> void:
 	card_types = ["Hex"]
 	if "Targeting" not in card_types:
 		card_types.append("Targeting")
-	ability_text = "Activate when a Spirit, Monster, Undead, or Demon is summoned; return it to the deck."
+	ability_text = "Activate when a Spirit, Monster, Undead, or Demon is summoned; [b]Shelve[/b] it."
 	flavor_text = ""
 	artist = "Lorinda Tomko"
 	art_path = ART_PATH
@@ -52,7 +52,7 @@ func on_activate_action(game_manager: GameManager, action: CardAction) -> void:
 		return
 
 	game_manager.send_to_deck_bottom_with_hook(target)
-	game_manager.note_player_feedback("%s returned %s to its owner's deck." % [card_name, target_name])
+	game_manager.note_player_feedback("%s shelved %s." % [card_name, target_name])
 	if card_owner != null:
 		card_owner.move_card(self, card_owner.graveyard_zone)
 

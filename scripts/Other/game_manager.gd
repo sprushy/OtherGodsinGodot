@@ -191,12 +191,8 @@ func _action_is_stale(action: CardAction) -> bool:
 			if action.event_name not in ["start_turn", "end_turn"] and _is_hidden_board_card(action.card):
 				return true
 		CardAction.Type.ATTACK:
-			var attacker_active := action.attacker != null \
-				and action.attacker.current_zone != null \
-				and action.attacker.current_zone.zone_type == Zone.ZoneType.FRONTLINE
-			var partner_active := action.united_front_partner != null \
-				and action.united_front_partner.current_zone != null \
-				and action.united_front_partner.current_zone.zone_type == Zone.ZoneType.FRONTLINE
+			var attacker_active := _can_continue_declared_attack(action.attacker)
+			var partner_active := _can_continue_declared_attack(action.united_front_partner)
 			return not attacker_active and not partner_active
 		CardAction.Type.SPELL, CardAction.Type.ABILITY, CardAction.Type.CHARM:
 			if action.card == null or action.card.current_zone == null:
@@ -1253,6 +1249,11 @@ func get_play_card_failure_reason(player: Player, card: Card, target_zone: Zone)
 		if player.has_summoned_this_turn and not _can_use_extra_normal_summon(player, card, target_zone):
 			return "You have already used your normal summon for this turn."
 
+	# One structure summon per turn
+	if card.card_type == Card.CardType.STRUCTURE and player == current_player:
+		if player.has_summoned_structure_this_turn:
+			return "You have already summoned a structure this turn."
+
 	# Equipment zone rules: unequipped equipment cannot share a zone with anything else.
 	if target_zone != null and target_zone.is_board_zone():
 		var unequipped_in_zone := target_zone.get_equipment()
@@ -1371,6 +1372,8 @@ func play_card(player: Player, card: Card, target_zone: Zone, prepared: bool = f
 			card.summoned_after_first_attack_this_turn = has_resolved_attack_this_turn
 			# Apply any active god passives to the newly placed creature
 			_apply_god_passives_to_card(player, card)
+		elif card.card_type == Card.CardType.STRUCTURE and player == current_player and not prepared:
+			player.has_summoned_structure_this_turn = true
 
 		if target_zone != null and target_zone.is_board_zone() and card.card_type in [Card.CardType.CREATURE, Card.CardType.STRUCTURE]:
 			_trigger_board_summon(card, player, from_zone, target_zone, null, card.is_face_down, card.is_stealth, entered_field_face_up_from_hand)
@@ -2081,7 +2084,7 @@ func resolve_followers_attack(attackers: Array[Card], defending_player: Player) 
 		return 0
 	var active_attackers: Array[Card] = []
 	for combatant in attackers:
-		if combatant != null and combatant.current_zone != null and combatant.current_zone.is_board_zone():
+		if _can_continue_declared_attack(combatant):
 			active_attackers.append(combatant)
 	if active_attackers.is_empty():
 		return 0
@@ -2851,7 +2854,7 @@ func _get_active_united_front_attackers(attacker: Card, partner: Card) -> Array[
 	for candidate in [attacker, partner]:
 		if candidate == null:
 			continue
-		if candidate.current_zone == null or not candidate.current_zone.is_board_zone():
+		if not _can_continue_declared_attack(candidate):
 			continue
 		if controller != null and candidate.get_controller() != controller:
 			continue
@@ -2859,6 +2862,13 @@ func _get_active_united_front_attackers(attacker: Card, partner: Card) -> Array[
 			continue
 		active_attackers.append(candidate)
 	return active_attackers
+
+func _can_continue_declared_attack(attacker: Card) -> bool:
+	return attacker != null \
+		and attacker.card_type == Card.CardType.CREATURE \
+		and attacker.current_zone != null \
+		and attacker.current_zone.zone_type == Zone.ZoneType.FRONTLINE \
+		and attacker.creature_mode == Card.CreatureMode.AGGRESSIVE
 
 func add_to_stack(action: CardAction) -> void:
 	action_stack.append(action)

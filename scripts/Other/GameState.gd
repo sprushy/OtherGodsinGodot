@@ -64,6 +64,7 @@ static func serialize(gm: GameManager, viewer_player_index: int = -1, visible_pl
 			deck_count = player.deck_zone.cards.size(),
 			deck         = deck_cards,
 			has_summoned_this_turn = player.has_summoned_this_turn,
+			has_summoned_structure_this_turn = player.has_summoned_structure_this_turn,
 			hand         = _serialize_zone_cards(player.hand_zone, viewer, hide_hand, reveal_private_cards),
 			god_zone     = _serialize_zone_cards(player.god_zone, viewer, false, reveal_private_cards),
 			power_zones  = [] as Array,
@@ -445,6 +446,7 @@ static func apply_to_manager(data: Dictionary, gm: GameManager) -> void:
 		player.mana = pdata.get("mana", 0)
 		player.followers = pdata.get("followers", 100)
 		player.has_summoned_this_turn = pdata.get("has_summoned_this_turn", false)
+		player.has_summoned_structure_this_turn = pdata.get("has_summoned_structure_this_turn", false)
 
 		var dk_cards: Array = pdata.get("deck", [])
 		var dk_count: int = pdata.get("deck_count", -1)

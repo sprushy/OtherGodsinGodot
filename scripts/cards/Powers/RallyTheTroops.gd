@@ -13,7 +13,7 @@ func _init() -> void:
 	level = 0
 	mana_cost = UNLOCK_COST
 	card_types = ["Power", "Aura", "Warrior", "Search"]
-	ability_text = "Aura ([b]Passive[/b]): When you summon a Lvl 5 or higher Warrior from your hand, you may look at the top 3 cards of your deck and add a Warrior from among them to your hand. [b]Shelve[/b] the rest."
+	ability_text = "Aura ([b]Passive[/b]): When you summon a Lvl 5 or higher Warrior from your hand, you may look at the top 3 cards of your deck and [b]Acquire[/b] a Warrior from among them. [b]Shelve[/b] the rest."
 	artist = "Mike Caprotti"
 	art_path = ART_PATH
 

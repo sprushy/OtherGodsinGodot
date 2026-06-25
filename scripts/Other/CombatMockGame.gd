@@ -893,6 +893,7 @@ func _has_active_modal_prompt() -> bool:
 		or (_hati_prompt_panel != null and is_instance_valid(_hati_prompt_panel)) \
 		or (_skoll_prompt_panel != null and is_instance_valid(_skoll_prompt_panel)) \
 		or (_kur_jara_prompt_panel != null and is_instance_valid(_kur_jara_prompt_panel)) \
+		or (_doorway_prompt_panel != null and is_instance_valid(_doorway_prompt_panel)) \
 		or _deucalion_prompt_pending \
 		or (_deucalion_panel != null and is_instance_valid(_deucalion_panel)) \
 		or (_pause_menu_overlay != null and is_instance_valid(_pause_menu_overlay))
@@ -2323,11 +2324,11 @@ func _resolve_sharur_escape_prompt(pay_cost: bool) -> void:
 
 func _on_doorway_choice_requested(structure: DoorwayToTheVoid, card: Card, combat_death: bool, destruction: bool) -> void:
 	var target_player := structure.card_owner if structure != null else game_manager.current_player
-	
+
 	if network_manager != null and network_manager.is_server:
 		if _executing_stack_action and not _stack_resolution_paused:
 			_pause_stack_resolution(target_player)
-			
+
 	if _is_player_local(target_player):
 		_show_doorway_choice_prompt(structure, card, combat_death, destruction)
 
@@ -16434,26 +16435,8 @@ func _queue_huginn_perish_prime_prompt(card: Huginn, prompt_targets: Array = [])
 		return
 	if not prompt_targets.is_empty():
 		_queued_huginn_prime_prompt_targets[card.uid] = prompt_targets.duplicate()
-	if _active_huginn_prime_prompt == card or card in _pending_huginn_prime_prompts:
-		return
 	_pending_huginn_prime_prompts.append(card)
 	call_deferred("_show_next_huginn_perish_prime_prompt")
-
-func _consume_huginn_perish_prime_prompt(source_uid: String = "") -> void:
-	if source_uid.strip_edges() == "" and _active_huginn_prime_prompt != null:
-		source_uid = _active_huginn_prime_prompt.uid
-	if _active_huginn_prime_prompt != null and (source_uid == "" or _active_huginn_prime_prompt.uid == source_uid):
-		_active_huginn_prime_prompt = null
-	if source_uid == "":
-		if not _pending_huginn_prime_prompts.is_empty():
-			_pending_huginn_prime_prompts.remove_at(0)
-		return
-	var remaining: Array[Huginn] = []
-	for pending in _pending_huginn_prime_prompts:
-		if pending != null and pending.uid != source_uid:
-			remaining.append(pending)
-	_pending_huginn_prime_prompts = remaining
-	_queued_huginn_prime_prompt_targets.erase(source_uid)
 
 func _show_next_huginn_perish_prime_prompt() -> void:
 	if _active_huginn_prime_prompt != null:
@@ -16523,26 +16506,8 @@ func _queue_muninn_perish_prime_prompt(card: Muninn, prompt_targets: Array = [])
 		return
 	if not prompt_targets.is_empty():
 		_queued_muninn_prime_prompt_targets[card.uid] = prompt_targets.duplicate()
-	if _active_muninn_prime_prompt == card or card in _pending_muninn_prime_prompts:
-		return
 	_pending_muninn_prime_prompts.append(card)
 	call_deferred("_show_next_muninn_perish_prime_prompt")
-
-func _consume_muninn_perish_prime_prompt(source_uid: String = "") -> void:
-	if source_uid.strip_edges() == "" and _active_muninn_prime_prompt != null:
-		source_uid = _active_muninn_prime_prompt.uid
-	if _active_muninn_prime_prompt != null and (source_uid == "" or _active_muninn_prime_prompt.uid == source_uid):
-		_active_muninn_prime_prompt = null
-	if source_uid == "":
-		if not _pending_muninn_prime_prompts.is_empty():
-			_pending_muninn_prime_prompts.remove_at(0)
-		return
-	var remaining: Array[Muninn] = []
-	for pending in _pending_muninn_prime_prompts:
-		if pending != null and pending.uid != source_uid:
-			remaining.append(pending)
-	_pending_muninn_prime_prompts = remaining
-	_queued_muninn_prime_prompt_targets.erase(source_uid)
 
 func _show_next_muninn_perish_prime_prompt() -> void:
 	if _active_muninn_prime_prompt != null:
@@ -20232,6 +20197,13 @@ func _get_declared_attack_speed(attacker: Card) -> int:
 	if attacker.has_method("get_united_front_attack_speed"):
 		return attacker.get_united_front_attack_speed(game_manager)
 	return attacker.get_effective_speed()
+
+func _can_continue_declared_attack(attacker: Card) -> bool:
+	return attacker != null \
+		and attacker.card_type == Card.CardType.CREATURE \
+		and attacker.current_zone != null \
+		and attacker.current_zone.zone_type == Zone.ZoneType.FRONTLINE \
+		and attacker.creature_mode == Card.CreatureMode.AGGRESSIVE
 
 func _is_real_network_host() -> bool:
 	return headless_match_host != null \
@@ -25241,6 +25213,12 @@ func _on_retreat_no() -> void:
 		update_ui()
 		_finish_post_execute(action.source_player)
 		return
+	if not _can_continue_declared_attack(action.attacker):
+		_clear_pending_retreat_state()
+		_set_action_label_text("The attack fizzles because the attacker is no longer in an attacking frontline stance.", true)
+		update_ui()
+		_finish_post_execute(action.source_player)
+		return
 	if not _pending_retreat_prompts.is_empty():
 		_show_retreat_prompt(_pending_retreat_prompts[0])
 		return
@@ -25249,6 +25227,11 @@ func _on_retreat_no() -> void:
 		blocked_ask = _pending_retreat_guardian_blocked[0]
 	_clear_pending_retreat_state()
 	await _linger_for_combat_visual_changes([action.attacker, defender])
+	if not _can_continue_declared_attack(action.attacker):
+		_set_action_label_text("The attack fizzles because the attacker is no longer in an attacking frontline stance.", true)
+		update_ui()
+		_finish_post_execute(action.source_player)
+		return
 	game_manager.resolve_combat_with_continuation(action.attacker, defender, func() -> void:
 		if blocked_ask != null:
 			_set_action_label_text("Asaruludu's Guardian prevented " + _get_card_name_safe(blocked_ask) + "'s Tactical Retreat!", true)
@@ -25694,12 +25677,6 @@ func _apply_client_prompt_submission_followup(command: Dictionary) -> void:
 		"humbaba_augury_choice":
 			_consume_current_humbaba_prompt()
 			call_deferred("_show_next_humbaba_augury_prompt")
-		"huginn_perish_prime_choice":
-			_consume_huginn_perish_prime_prompt(str(command.get("source_uid", "")))
-			call_deferred("_show_next_huginn_perish_prime_prompt")
-		"muninn_perish_prime_choice":
-			_consume_muninn_perish_prime_prompt(str(command.get("source_uid", "")))
-			call_deferred("_show_next_muninn_perish_prime_prompt")
 		"wheel_of_fire_turn_start_choice":
 			_consume_current_wheel_of_fire_prompt()
 			call_deferred("_show_next_wheel_of_fire_turn_start_prompt")
@@ -25800,7 +25777,7 @@ func _on_match_ui_interaction(player_index: int, type: String, data: Dictionary)
 					var active_attackers: Array[Card] = []
 					if action.united_front_partner != null:
 						active_attackers = game_manager._get_active_united_front_attackers(action.attacker, action.united_front_partner)
-					elif action.attacker.current_zone != null and action.attacker.current_zone.is_board_zone():
+					elif _can_continue_declared_attack(action.attacker):
 						active_attackers = [action.attacker]
 						
 					if blocked_ask != null:
@@ -25827,6 +25804,15 @@ func _on_match_ui_interaction(player_index: int, type: String, data: Dictionary)
 					action.united_front_partner,
 					target,
 				])
+				if not _can_continue_declared_attack(action.attacker) \
+						and not _can_continue_declared_attack(action.united_front_partner):
+					_set_action_label_text("The attack fizzles because no attacker remains in an attacking frontline stance.", true)
+					update_ui()
+					if _stack_resolution_paused:
+						_resume_after_deferred_resolution(action_label.text)
+					else:
+						_finish_post_execute(action.source_player)
+					return
 				if action.united_front_partner != null:
 					game_manager.resolve_united_front_combat(action.attacker, action.united_front_partner, target)
 					finish_attack.call()
