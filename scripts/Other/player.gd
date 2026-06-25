@@ -8,12 +8,14 @@ const DeckValidatorScript = preload("res://scripts/server/DeckValidator.gd")
 
 signal mana_changed(new_mana: int)
 signal followers_changed(new_followers: int)
+signal guard_changed(new_guard: int)
 signal card_moved(card: Card, from_zone: Zone, to_zone: Zone)
 signal defeated(player: Player)
 
 var player_name: String
 var mana: int = 0
 var followers: int = 100
+var guard: int = 0
 var is_defeated: bool = false
 var is_turn_player: bool = false
 var has_summoned_this_turn: bool = false
@@ -113,6 +115,22 @@ func lose_mana(amount: int) -> int:
 	mana -= removed
 	mana_changed.emit(mana)
 	return removed
+
+func gain_guard(amount: int) -> void:
+	if is_defeated:
+		return
+	if amount <= 0:
+		return
+	guard += amount
+	guard_changed.emit(guard)
+
+func absorb_guard_damage(amount: int) -> int:
+	if amount <= 0 or guard <= 0:
+		return amount
+	var absorbed := mini(amount, guard)
+	guard -= absorbed
+	guard_changed.emit(guard)
+	return amount - absorbed
 
 func gain_followers(amount: int) -> void:
 	if is_defeated:

@@ -212,6 +212,7 @@ const CARD_SCRIPT_PATHS := [
 	"res://scripts/cards/Powers/ImmortalTechniques.gd",
 	"res://scripts/cards/Powers/Kurnugia.gd",
 	"res://scripts/cards/Powers/LawsOfCivilization.gd",
+	"res://scripts/cards/Powers/ManaGuard.gd",
 	"res://scripts/cards/Powers/MechFactory.gd",
 	"res://scripts/cards/Powers/Myrkwood.gd",
 	"res://scripts/cards/Spells/Absence.gd",

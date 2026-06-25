@@ -41,6 +41,7 @@ static func serialize(gm: GameManager, viewer_player_index: int = -1, visible_pl
 		attack_restrictions = _serialize_attack_restrictions(gm),
 		turn_follower_loss_preventions = _serialize_turn_follower_loss_preventions(gm),
 		combat_destroy_events_this_turn = _serialize_combat_destroy_events(gm),
+		temporary_summon_cost_modifiers = _serialize_temporary_summon_cost_modifiers(gm),
 		prepared_hexes = _serialize_prepared_cards(gm.prepared_hexes),
 		prepared_charms = _serialize_prepared_cards(gm.prepared_charms),
 		action_stack = _serialize_action_stack(gm.action_stack, gm, viewer),
@@ -61,6 +62,7 @@ static func serialize(gm: GameManager, viewer_player_index: int = -1, visible_pl
 			player_name = player.player_name,
 			mana = player.mana,
 			followers = player.followers,
+			guard = player.guard,
 			deck_count = player.deck_zone.cards.size(),
 			deck         = deck_cards,
 			has_summoned_this_turn = player.has_summoned_this_turn,
@@ -432,6 +434,7 @@ static func apply_to_manager(data: Dictionary, gm: GameManager) -> void:
 	gm.prepared_hexes.clear()
 	gm.prepared_charms.clear()
 	gm.combat_destroy_events_this_turn.clear()
+	gm._temporary_summon_cost_modifiers.clear()
 	gm.action_stack.clear()
 	gm.resolving_stack_actions.clear()
 
@@ -445,6 +448,7 @@ static func apply_to_manager(data: Dictionary, gm: GameManager) -> void:
 		player.reserved_active_god = null
 		player.mana = pdata.get("mana", 0)
 		player.followers = pdata.get("followers", 100)
+		player.guard = pdata.get("guard", 0)
 		player.has_summoned_this_turn = pdata.get("has_summoned_this_turn", false)
 		player.has_summoned_structure_this_turn = pdata.get("has_summoned_structure_this_turn", false)
 
@@ -487,6 +491,7 @@ static func apply_to_manager(data: Dictionary, gm: GameManager) -> void:
 
 	_restore_card_uid_references(gm)
 	_restore_attack_restriction_sources(gm)
+	_restore_temporary_summon_cost_modifiers(data.get("temporary_summon_cost_modifiers", []), gm)
 	_restore_prepared_cards(data.get("prepared_hexes", []), gm.prepared_hexes, gm)
 	_restore_prepared_cards(data.get("prepared_charms", []), gm.prepared_charms, gm)
 	_restore_combat_destroy_events(data.get("combat_destroy_events_this_turn", []), gm)
@@ -553,6 +558,65 @@ static func _restore_attack_restriction_sources(gm: GameManager) -> void:
 		restriction.erase("source_uid")
 		if source_uid != "" and uid_map.has(source_uid):
 			restriction.source = uid_map[source_uid]
+
+static func _serialize_temporary_summon_cost_modifiers(gm: GameManager) -> Array:
+	var entries := []
+	if gm == null:
+		return entries
+	for modifier in gm._temporary_summon_cost_modifiers:
+		if not (modifier is Dictionary):
+			continue
+		var player := (modifier as Dictionary).get("player", null) as Player
+		var player_index := gm.players.find(player)
+		if player_index < 0:
+			continue
+		var source_card := (modifier as Dictionary).get("source", null) as Card
+		var excluded_uids := []
+		var excluded_cards: Array = (modifier as Dictionary).get("excluded_cards", [])
+		for excluded in excluded_cards:
+			var excluded_card := excluded as Card
+			if excluded_card != null and excluded_card.uid != "":
+				excluded_uids.append(excluded_card.uid)
+		entries.append({
+			"player_index": player_index,
+			"amount": int((modifier as Dictionary).get("amount", 0)),
+			"source_uid": source_card.uid if source_card != null else "",
+			"excluded_uids": excluded_uids,
+			"turn_number": int((modifier as Dictionary).get("turn_number", gm.turn_number)),
+		})
+	return entries
+
+static func _restore_temporary_summon_cost_modifiers(entries: Array, gm: GameManager) -> void:
+	gm._temporary_summon_cost_modifiers.clear()
+	var uid_map := _build_card_uid_map(gm)
+	for raw_entry in entries:
+		if not (raw_entry is Dictionary):
+			continue
+		var entry := raw_entry as Dictionary
+		var player_index := int(entry.get("player_index", -1))
+		if player_index < 0 or player_index >= gm.players.size():
+			continue
+		var amount := int(entry.get("amount", 0))
+		if amount == 0:
+			continue
+		var excluded_cards: Array[Card] = []
+		for raw_uid in entry.get("excluded_uids", []):
+			var excluded_uid := str(raw_uid).strip_edges()
+			if excluded_uid != "" and uid_map.has(excluded_uid):
+				var excluded_card := uid_map[excluded_uid] as Card
+				if excluded_card != null:
+					excluded_cards.append(excluded_card)
+		var source: Card = null
+		var source_uid := str(entry.get("source_uid", "")).strip_edges()
+		if source_uid != "" and uid_map.has(source_uid):
+			source = uid_map[source_uid] as Card
+		gm._temporary_summon_cost_modifiers.append({
+			"player": gm.players[player_index],
+			"amount": amount,
+			"source": source,
+			"excluded_cards": excluded_cards,
+			"turn_number": int(entry.get("turn_number", gm.turn_number)),
+		})
 
 static func _restore_effect_uid_references(entries: Array, uid_map: Dictionary) -> void:
 	for entry in entries:

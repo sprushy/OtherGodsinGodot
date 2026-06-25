@@ -94,9 +94,7 @@ func _restore_normal_god_after_leaving_field(game_manager: GameManager) -> void:
 
 	var restored_god := restore_stored_normal_god()
 	if restored_god != null and game_manager != null:
-		game_manager.note_player_feedback("%s was reactivated." % [
-			restored_god.card_name
-		])
+		game_manager.note_player_feedback("Mummu has Returned to Godhood.")
 
 func _queue_pending_entropy_victim(victim: Card) -> void:
 	if victim == null:

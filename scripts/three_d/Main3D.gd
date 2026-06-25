@@ -215,6 +215,18 @@ func _is_cursor_meta_active(meta_value: Variant) -> bool:
 func _has_custom_cursor_active() -> bool:
 	return _has_viewport_meta(CUSTOM_CURSOR_ACTIVE_META)
 
+func _has_software_custom_cursor_active() -> bool:
+	var root_viewport := get_viewport()
+	if root_viewport != null and _is_software_custom_cursor_meta(root_viewport.get_meta(CUSTOM_CURSOR_ACTIVE_META, false)):
+		return true
+	return _game_viewport != null \
+		and _is_software_custom_cursor_meta(_game_viewport.get_meta(CUSTOM_CURSOR_ACTIVE_META, false))
+
+func _is_software_custom_cursor_meta(meta_value: Variant) -> bool:
+	if not (meta_value is Dictionary):
+		return false
+	return bool((meta_value as Dictionary).get("software_cursor", false))
+
 # Returns true when an embedded popup Window (ConfirmationDialog, AcceptDialog,
 # FileDialog, etc.) is currently visible in the game subtree. Such popups render
 # as real OS sub-windows, so the layer-1000 software cursor cannot draw over
@@ -242,6 +254,7 @@ func _has_visible_window_in_subtree(node: Node) -> bool:
 func _sync_cursor_presentation() -> void:
 	var locked_power_cursor_active := _has_viewport_meta(LOCKED_POWER_CURSOR_ACTIVE_META)
 	var custom_cursor_active := _has_custom_cursor_active()
+	var software_custom_cursor_active := _has_software_custom_cursor_active()
 	var popup_window_open := _has_open_embedded_popup_window()
 	if _software_cursor_sprite == null or not is_instance_valid(_software_cursor_sprite):
 		if Input.mouse_mode != Input.MOUSE_MODE_VISIBLE:
@@ -261,8 +274,9 @@ func _sync_cursor_presentation() -> void:
 		_software_cursor_root.visible = use_locked_power_software_cursor \
 			or (not suppress_software_cursor and not locked_power_cursor_active and not custom_cursor_active)
 	var show_hardware_cursor := suppress_software_cursor \
-		or not use_locked_power_software_cursor \
-			and (custom_cursor_active or locked_power_cursor_active)
+		or (not software_custom_cursor_active \
+			and not use_locked_power_software_cursor \
+			and (custom_cursor_active or locked_power_cursor_active))
 	var desired_mouse_mode := Input.MOUSE_MODE_VISIBLE if show_hardware_cursor else Input.MOUSE_MODE_HIDDEN
 	if Input.mouse_mode != desired_mouse_mode:
 		Input.set_mouse_mode(desired_mouse_mode)

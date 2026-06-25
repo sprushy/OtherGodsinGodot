@@ -30,7 +30,7 @@ func can_use_moon_hunt_summon(game_manager: GameManager) -> bool:
 		return false
 	if get_valid_moon_hunt_sacrifices().is_empty():
 		return false
-	if get_total_moon_hunt_mana_cost(game_manager) > card_owner.mana:
+	if not can_pay_moon_hunt_mana_cost(game_manager):
 		return false
 	return true
 
@@ -54,6 +54,11 @@ func get_moon_hunt_summon_mana_cost(game_manager: GameManager) -> int:
 
 func get_total_moon_hunt_mana_cost(game_manager: GameManager) -> int:
 	return get_moon_hunt_mana_cost(game_manager) + get_moon_hunt_summon_mana_cost(game_manager)
+
+func can_pay_moon_hunt_mana_cost(game_manager: GameManager) -> bool:
+	if game_manager == null or card_owner == null:
+		return false
+	return card_owner.mana >= get_total_moon_hunt_mana_cost(game_manager)
 
 func get_valid_moon_hunt_sacrifices() -> Array[Card]:
 	var valid_targets: Array[Card] = []
@@ -90,6 +95,8 @@ func resolve_moon_hunt_summon(
 	if not target_zone.cards.is_empty():
 		return false
 	if not is_valid_moon_hunt_sacrifice(sacrificed_card):
+		return false
+	if not can_pay_moon_hunt_mana_cost(game_manager):
 		return false
 
 	var extra_mana := get_moon_hunt_mana_cost(game_manager)

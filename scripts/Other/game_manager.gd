@@ -2288,11 +2288,13 @@ func resolve_combat(attacker: Card, defender: Card, continue_callback: Callable 
 				_combat_kill(attacker, defender)
 			elif attacker_str_vs_res < defender_res_real:
 				# Followers convert using the defender's full resilience, with Giant's Disdain reducing only the opposing attack stat.
-				var diff_damage: int = _adjust_combat_follower_damage(maxi(0, defender_res_real - attacker_str_for_conversion))
+				var diff_damage: int = _convert_combat_follower_damage(
+					attacker_controller,
+					defender_controller,
+					maxi(0, defender_res_real - attacker_str_for_conversion)
+				)
 				var diff_gain: int = defender_res_real - attacker_str_vs_res
 				print("	" + str(diff_damage) + " followers convert to " + defender_controller.player_name)
-				attacker_controller.lose_followers(diff_damage)
-				defender_controller.gain_followers(diff_damage)
 				if diff_gain != diff_damage:
 					print("\t(disdain adjusted conversion from %d to %d)" % [diff_gain, diff_damage])
 				if _ferocious_defence_triggers(defender, attacker_str_vs_res):
@@ -2405,10 +2407,12 @@ func resolve_united_front_combat(attacker: Card, partner: Card, defender: Card) 
 				print("	%s destroyed!" % defender.card_name)
 				_combat_kill(primary, defender)
 			elif attacker_str_vs_res < defender_res_real:
-				var diff_damage: int = _adjust_combat_follower_damage(maxi(0, defender_res_real - attacker_str_for_conversion))
+				var diff_damage: int = _convert_combat_follower_damage(
+					attacker_controller,
+					defender_controller,
+					maxi(0, defender_res_real - attacker_str_for_conversion)
+				)
 				print("	%d followers convert to %s" % [diff_damage, defender_controller.player_name])
-				attacker_controller.lose_followers(diff_damage)
-				defender_controller.gain_followers(diff_damage)
 				if _ferocious_defence_triggers(defender, attacker_str_vs_res):
 					print("	Ferocious Defence! United Front attackers destroyed!")
 					_combat_kill(defender, primary)
@@ -2526,10 +2530,12 @@ func resolve_combat_with_continuation(
 				print("	" + defender.card_name + " destroyed!")
 				return _combat_kill_deferred(attacker, defender, finish)
 			if attacker_str_vs_res < defender_res_real:
-				var diff_damage: int = _adjust_combat_follower_damage(maxi(0, defender_res_real - attacker_str_for_conversion))
+				var diff_damage: int = _convert_combat_follower_damage(
+					attacker_controller,
+					defender_controller,
+					maxi(0, defender_res_real - attacker_str_for_conversion)
+				)
 				print("	" + str(diff_damage) + " followers convert to " + defender_controller.player_name)
-				attacker_controller.lose_followers(diff_damage)
-				defender_controller.gain_followers(diff_damage)
 				if _ferocious_defence_triggers(defender, attacker_str_vs_res):
 					print("	Ferocious Defence! " + attacker.card_name + " destroyed!")
 					return _combat_kill_deferred(defender, attacker, finish)
@@ -2657,11 +2663,11 @@ func _resolve_committed_combat_snapshot(
 			kill_if_present.call(attacker, defender, finish)
 			return true
 		if attacker_str_vs_res < defender_res:
-			var converted := _adjust_combat_follower_damage(
+			_convert_combat_follower_damage(
+				attacker_controller,
+				defender_controller,
 				maxi(0, defender_res - int(snapshot.get("attacker_str_for_conversion", attacker_str_vs_res)))
 			)
-			attacker_controller.lose_followers(converted)
-			defender_controller.gain_followers(converted)
 		if bool(snapshot.get("ferocious_defence", false)):
 			kill_if_present.call(defender, attacker, finish)
 		else:
@@ -2885,6 +2891,20 @@ func convert_followers(from_player: Player, to_player: Player, amount: int) -> i
 	print("Convert! " + str(actual) + " followers move from " + from_player.player_name + " to " + to_player.player_name)
 	return actual
 
+func _convert_combat_follower_damage(from_player: Player, to_player: Player, amount: int) -> int:
+	if from_player == null or to_player == null or amount <= 0:
+		return 0
+	var adjusted_amount := _adjust_combat_follower_damage(amount)
+	if adjusted_amount <= 0:
+		return 0
+	var remaining_amount := from_player.absorb_guard_damage(adjusted_amount)
+	if remaining_amount <= 0:
+		return 0
+	var actual := mini(remaining_amount, from_player.followers)
+	from_player.lose_followers(actual)
+	to_player.gain_followers(actual)
+	return actual
+
 func _source_converts_combat_follower_damage(source_card: Card) -> bool:
 	if source_card == null or not source_card.has_method("converts_follower_damage_to_conversion"):
 		return false
@@ -2901,6 +2921,9 @@ func _apply_combat_follower_damage(source_card: Card, damaged_player: Player, am
 	if damaged_player == null or amount <= 0:
 		return 0
 	var adjusted_amount := _adjust_combat_follower_damage(amount)
+	if adjusted_amount <= 0:
+		return 0
+	adjusted_amount = damaged_player.absorb_guard_damage(adjusted_amount)
 	if adjusted_amount <= 0:
 		return 0
 	var source_controller := source_card.get_controller() if source_card != null else null

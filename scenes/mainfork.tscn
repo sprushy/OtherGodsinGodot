@@ -107,6 +107,11 @@ visible = false
 layout_mode = 2
 text = "Leave Seek"
 
+[node name="LeaveMatchButton" type="Button" parent="Control/MenuContainer/MultiplayerContainer" unique_id=124902115]
+visible = false
+layout_mode = 2
+text = "Leave Match"
+
 [node name="ReadyButton" type="Button" parent="Control/MenuContainer/MultiplayerContainer" unique_id=157483098]
 visible = false
 layout_mode = 2

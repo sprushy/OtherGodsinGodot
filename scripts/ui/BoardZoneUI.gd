@@ -5999,22 +5999,70 @@ func _show_ability_popup() -> void:
 	popup_root.scale = Vector2(popup_root_scale, popup_root_scale)
 	var scaled_popup_root_size := popup_root_size * popup_root_scale
 
-	var popup_pos_shared := global_position
-	popup_pos_shared.y -= popup.size.y * popup_root_scale + 6
-	if popup_pos_shared.y < 0:
-		popup_pos_shared.y = global_position.y + size.y + 6
 	var desired_x := global_position.x - ((keyword_size.x + KEYWORD_PANEL_GAP) * popup_root_scale if keywords_on_left else 0.0)
-	popup_pos_shared.x = clampf(
-		desired_x,
-		POPUP_VIEWPORT_MARGIN,
-		maxf(POPUP_VIEWPORT_MARGIN, popup_vp_size_shared.x - scaled_popup_root_size.x - POPUP_VIEWPORT_MARGIN)
+	popup_root.global_position = _get_card_hover_popup_position(
+		get_global_rect(),
+		Vector2(desired_x, global_position.y),
+		scaled_popup_root_size,
+		popup_vp_size_shared
 	)
-	popup_pos_shared.y = clampf(
-		popup_pos_shared.y,
+
+func _get_card_hover_popup_position(
+	anchor_rect: Rect2,
+	preferred_origin: Vector2,
+	scaled_popup_size: Vector2,
+	viewport_size: Vector2
+) -> Vector2:
+	var gap := 6.0
+	var vertical_x := clampf(
+		preferred_origin.x,
 		POPUP_VIEWPORT_MARGIN,
-		maxf(POPUP_VIEWPORT_MARGIN, popup_vp_size_shared.y - scaled_popup_root_size.y - POPUP_VIEWPORT_MARGIN)
+		maxf(POPUP_VIEWPORT_MARGIN, viewport_size.x - scaled_popup_size.x - POPUP_VIEWPORT_MARGIN)
 	)
-	popup_root.global_position = popup_pos_shared
+	var horizontal_y := anchor_rect.position.y + (anchor_rect.size.y - scaled_popup_size.y) * 0.5
+	var candidates: Array[Vector2] = [
+		Vector2(vertical_x, anchor_rect.position.y - scaled_popup_size.y - gap),
+		Vector2(vertical_x, anchor_rect.end.y + gap),
+		Vector2(anchor_rect.end.x + gap, horizontal_y),
+		Vector2(anchor_rect.position.x - scaled_popup_size.x - gap, horizontal_y),
+	]
+	var avoid_rect := anchor_rect.grow(2.0)
+	var best_position := _clamp_hover_popup_position(candidates[0], scaled_popup_size, viewport_size)
+	var best_overlap := INF
+	var best_distance := INF
+	for candidate in candidates:
+		var clamped := _clamp_hover_popup_position(candidate, scaled_popup_size, viewport_size)
+		var popup_rect := Rect2(clamped, scaled_popup_size)
+		var overlap := _get_rect_overlap_area(popup_rect, avoid_rect)
+		var distance := clamped.distance_squared_to(candidate)
+		if overlap < best_overlap or (is_equal_approx(overlap, best_overlap) and distance < best_distance):
+			best_position = clamped
+			best_overlap = overlap
+			best_distance = distance
+	return best_position
+
+func _clamp_hover_popup_position(position: Vector2, scaled_popup_size: Vector2, viewport_size: Vector2) -> Vector2:
+	return Vector2(
+		clampf(
+			position.x,
+			POPUP_VIEWPORT_MARGIN,
+			maxf(POPUP_VIEWPORT_MARGIN, viewport_size.x - scaled_popup_size.x - POPUP_VIEWPORT_MARGIN)
+		),
+		clampf(
+			position.y,
+			POPUP_VIEWPORT_MARGIN,
+			maxf(POPUP_VIEWPORT_MARGIN, viewport_size.y - scaled_popup_size.y - POPUP_VIEWPORT_MARGIN)
+		)
+	)
+
+func _get_rect_overlap_area(a: Rect2, b: Rect2) -> float:
+	var overlap_left := maxf(a.position.x, b.position.x)
+	var overlap_right := minf(a.end.x, b.end.x)
+	var overlap_top := maxf(a.position.y, b.position.y)
+	var overlap_bottom := minf(a.end.y, b.end.y)
+	if overlap_right <= overlap_left or overlap_bottom <= overlap_top:
+		return 0.0
+	return (overlap_right - overlap_left) * (overlap_bottom - overlap_top)
 
 func _hide_ability_popup() -> void:
 	if _popup and is_instance_valid(_popup):

@@ -1506,6 +1506,8 @@ func _is_reveal_interaction_type(interaction_type: String) -> bool:
 func _is_state_refresh_ui_interaction(interaction_type: String, interaction_data: Dictionary = {}) -> bool:
 	return _is_reveal_interaction_type(interaction_type) \
 		or interaction_type.strip_edges() == "priority" \
+		or interaction_type.strip_edges() == "huginn_perish_prime" \
+		or interaction_type.strip_edges() == "muninn_perish_prime" \
 		or interaction_type.strip_edges() == "nusku_well_of_fire" \
 		or bool(interaction_data.get("_queue_priority_after_choice", false))
 
@@ -3513,10 +3515,10 @@ func can_attack(card: Card) -> bool:
 	return (
 		card.card_type == Card.CardType.CREATURE
 		and card.get_controller() == game_manager.current_player
+		and not card.summoned_after_first_attack_this_turn
 		and card.can_take_major_creature_action()
 		and not card.is_sleeping
 		and not card.has_status_effect("cannot_attack")
-		and not card.summoned_after_first_attack_this_turn
 		and game_manager.turn_number > 1
 		and card.creature_mode == Card.CreatureMode.AGGRESSIVE
 		and card.current_zone != null
@@ -3533,6 +3535,8 @@ func get_attack_invalid_reason(card: Card) -> String:
 		return "Choose a target for %s before attacking." % get_targeting_name()
 	if _has_unresolved_stack_action_window():
 		return "Resolve the pending stack action before attacking."
+	if card.summoned_after_first_attack_this_turn:
+		return card.card_name + " cannot attack because it was summoned after the first attack resolved this turn."
 	if not card.can_take_major_creature_action():
 		if card.creature_major_action_used:
 			return card.card_name + " has already used its major action this turn."
@@ -3543,8 +3547,6 @@ func get_attack_invalid_reason(card: Card) -> String:
 		var status = card.get_status_effect("cannot_attack")
 		var source = status.get("source", "an effect")
 		return card.card_name + " cannot attack because of " + source + "."
-	if card.summoned_after_first_attack_this_turn:
-		return card.card_name + " cannot attack because it was summoned after the first attack resolved this turn."
 	if card.get_controller() != game_manager.current_player:
 		return "It is not " + card.card_name + "'s controller's turn."
 	if game_manager.turn_number <= 1:
@@ -4831,6 +4833,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 				if not power_card.can_activate(game_manager):
 					move_failed.emit(_get_move_activation_failure_reason(power_card, false, power_card.card_owner))
 					return false
+				var activation_command := command.duplicate(true)
 				if power_card is Breidablik:
 					var breidablik := power_card as Breidablik
 					act_target = breidablik.resolve_harbor_target(act_target)
@@ -4888,7 +4891,10 @@ func _process_command_impl(command: Dictionary) -> bool:
 						power_card,
 						act_target,
 						func() -> void:
-							power_card.activate(game_manager, act_target)
+							if power_card.has_method("activate_from_command"):
+								power_card.call("activate_from_command", game_manager, activation_command)
+							else:
+								power_card.activate(game_manager, act_target)
 					)
 					_advance_authoritative_priority()
 					move_validated.emit(command)
@@ -4896,7 +4902,10 @@ func _process_command_impl(command: Dictionary) -> bool:
 				game_manager.run_with_effect_source(
 					power_card,
 					func() -> void:
-						power_card.activate(game_manager, act_target)
+						if power_card.has_method("activate_from_command"):
+							power_card.call("activate_from_command", game_manager, activation_command)
+						else:
+							power_card.activate(game_manager, act_target)
 				)
 			move_validated.emit(command)
 			return true

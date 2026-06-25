@@ -2,6 +2,7 @@ extends CreatureCard
 class_name Fenrir
 
 const ART_PATH := "res://images/card_art/creatures/fenrir.jpg"
+const ALT_ART_PATH := "res://images/card_art/creatures/fenrir_alt_art.png"
 const DEVOUR_BUFF_SOURCE := "Fenrir Devour"
 
 func _init() -> void:
@@ -22,6 +23,7 @@ func _init() -> void:
 	culture = "Norse"
 	artist = "Riccardo Zoppello"
 	art_path = ART_PATH
+	art_variants = [ART_PATH, ALT_ART_PATH]
 
 func get_hand_ability_label() -> String:
 	return "Wolf Master"

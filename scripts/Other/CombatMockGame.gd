@@ -8,6 +8,7 @@ const NimueScript = preload("res://scripts/cards/Creatures/Nimue.gd")
 const TezcatlipocaBlasphemerScript = preload("res://scripts/cards/Creatures/TezcatlipocaBlasphemer.gd")
 const TheWhiteSerpentScript = preload("res://scripts/cards/Creatures/TheWhiteSerpent.gd")
 const WingedLionScript = preload("res://scripts/cards/Creatures/WingedLion.gd")
+const ClayEatersScript = preload("res://scripts/cards/Creatures/ClayEaters.gd")
 const SacrificeCursorSource = preload("res://images/ui/cursors/BloodySacrificeCursor.png")
 const DevourCursorSource = preload("res://images/ui/cursors/BloodyWolfJawsPGN.png")
 const SilenceCursorSource = preload("res://images/SilenceCursorPGN.png")
@@ -45,6 +46,8 @@ const LAILOKEN_CURSOR_IMAGE_PATH := "res://images/ui/cursors/LailokenCursor.png"
 const MASMASSU_PRIEST_CURSOR_IMAGE_PATH := "res://images/ui/cursors/MasmassauPriestCursor.png"
 const GRINDYLOW_DROWN_CURSOR_IMAGE_PATH := "res://images/ui/cursors/DrownCursor.png"
 const SEVENTH_SAGE_CURSOR_IMAGE_PATH := "res://images/ui/cursors/SeventhSageCursor.png"
+const GEOPHAGIA_CURSOR_IMAGE_PATH := "res://images/ui/cursors/GeophagiaCursor.png"
+const ENTROPY_CURSOR_IMAGE_PATH := "res://images/ui/cursors/EntropyCursor.png"
 const CardBackTexture = preload("res://images/cardbackAI.png")
 const PreparedMagicalCardCoverTexture = preload("res://images/PreparedMagicalCardCoverDimRuntime.png")
 const BOARD_FLOOR_TEXTURE_PATH := "res://images/board/moss_stone_floor_albedo.png"
@@ -63,6 +66,7 @@ const UIArtScalerScript = preload("res://scripts/ui/UIArtScaler.gd")
 const GameCursorScript = preload("res://scripts/ui/GameCursor.gd")
 const CardDetailContentBuilderScript = preload("res://scripts/ui/CardDetailContentBuilder.gd")
 const LevelSymbolRowScript = preload("res://scripts/ui/LevelSymbolRow.gd")
+const MatchReplayBoardViewScript = preload("res://scripts/ui/MatchReplayBoardView.gd")
 const ReinforcementCardTileScript = preload("res://scripts/ui/ReinforcementCardTile.gd")
 const ReinforcementDropAreaScript = preload("res://scripts/ui/ReinforcementDropArea.gd")
 const UITextureCacheScript = preload("res://scripts/ui/UITextureCache.gd")
@@ -279,6 +283,7 @@ const ACTION_LOG_CARD_LINK_COLOR := "#e8cf83"
 const ACTION_LOG_ABILITY_LINK_COLOR := "#68a8ff"
 const ACTION_LOG_CARD_HOVER_WIDTH := 320.0
 const ACTION_LOG_CARD_HOVER_MAX_HEIGHT := 420.0
+const MATCH_REPLAY_PANEL_MARGIN := 56.0
 
 @onready var choice_container = $MainHBox/LeftPanel/ChoiceContainer
 @onready var choice_intro_label = $MainHBox/LeftPanel/ChoiceContainer/ChoiceIntroLabel
@@ -573,7 +578,15 @@ var _forfeit_match_confirm_pending: bool = false
 var _all_sound_muted: bool = false
 var _action_log_view: RichTextLabel = null
 var _action_log_history_button: Button = null
+var _action_log_replay_button: Button = null
 var _action_log_messages: Array[String] = []
+var _match_replay_entries: Array[Dictionary] = []
+var _match_replay_overlay: Control = null
+var _match_replay_board_view: Control = null
+var _match_replay_step_label: Label = null
+var _match_replay_prev_button: Button = null
+var _match_replay_next_button: Button = null
+var _match_replay_step_index: int = -1
 var _last_logged_action_text: String = ""
 var _action_label_log_suppressed: bool = false
 var _suppress_next_generic_prepare_log: bool = false
@@ -649,6 +662,10 @@ var _lailoken_cursor_texture: Texture2D = null
 var _masmassu_priest_cursor_texture: Texture2D = null
 var _grindylow_drown_cursor_texture: Texture2D = null
 var _seventh_sage_cursor_texture: Texture2D = null
+var _geophagia_cursor_texture: Texture2D = null
+var _entropy_cursor_texture: Texture2D = null
+var _entropy_cursor_layer: CanvasLayer = null
+var _entropy_cursor_sprite: TextureRect = null
 var _active_selection_cursor_mode: String = ""
 var _active_selection_cursor_target_height: int = 0
 var _overlay_selection_cursor_mode: String = ""
@@ -684,6 +701,8 @@ var _lailoken_cursor_target_height: int = 0
 var _masmassu_priest_cursor_target_height: int = 0
 var _grindylow_drown_cursor_target_height: int = 0
 var _seventh_sage_cursor_target_height: int = 0
+var _geophagia_cursor_target_height: int = 0
+var _entropy_cursor_target_height: int = 0
 var _devour_cancel_prompt: Control = null
 var _tez_titlacauan_cursor_overlay: Control = null
 var _tez_titlacauan_cursor_budget_label: Label = null
@@ -822,6 +841,11 @@ const GRINDYLOW_DROWN_CURSOR_TARGET_HEIGHT := 108
 const GRINDYLOW_DROWN_CURSOR_HOTSPOT_RATIO := Vector2(0.18, 0.04)
 const SEVENTH_SAGE_CURSOR_TARGET_HEIGHT := 108
 const SEVENTH_SAGE_CURSOR_HOTSPOT_RATIO := Vector2(0.50, 0.50)
+const GEOPHAGIA_CURSOR_TARGET_HEIGHT := 108
+const GEOPHAGIA_CURSOR_HOTSPOT_RATIO := Vector2(0.50, 0.58)
+const ENTROPY_CURSOR_TARGET_HEIGHT := 128
+const ENTROPY_CURSOR_HOTSPOT_RATIO := Vector2(0.50, 0.50)
+const ENTROPY_CURSOR_ROTATION_SPEED := 0.55
 const SACRIFICE_CURSOR_SHAPES := [
 	Input.CURSOR_ARROW,
 	Input.CURSOR_POINTING_HAND,
@@ -2574,6 +2598,10 @@ func _is_harii_jarl_cursor_mode_active() -> bool:
 	return _has_overlay_selection_cursor_mode("harii_jarl") \
 		or (_has_pending_click_selection() and _pending_click_selection_source is HariiJarl)
 
+func _is_mummu_entropy_cursor_mode_active() -> bool:
+	return _has_overlay_selection_cursor_mode("entropy") \
+		or (awaiting_god_ability_target and god_ability_source is Mummu)
+
 func _is_tez_titlacauan_cursor_mode_active() -> bool:
 	return _has_overlay_selection_cursor_mode("tez_titlacauan") \
 		or _pending_tezcatlipoca_active_prompt != null
@@ -2664,6 +2692,10 @@ func _get_selection_cursor_mode_for_source(card: Card) -> String:
 		return "runic_spellbreaker"
 	if card is Terror:
 		return "terror"
+	if card is ClayEatersScript:
+		return "geophagia"
+	if card is Mummu:
+		return "entropy"
 	if card is WingedLionScript:
 		return "hermes"
 	if _uses_good_fortune_cursor_fallback(card):
@@ -2830,6 +2862,8 @@ func _get_selection_cursor_mode() -> String:
 		return "good_fortune"
 	if _is_harii_jarl_cursor_mode_active():
 		return "harii_jarl"
+	if _is_mummu_entropy_cursor_mode_active():
+		return "entropy"
 	if _is_tez_titlacauan_cursor_mode_active():
 		return "tez_titlacauan"
 	if _is_ancient_pyre_cursor_mode_active():
@@ -2927,6 +2961,10 @@ func _get_cursor_mode_target_height(cursor_mode: String) -> int:
 			return UIArtScalerScript.get_board_cursor_target_height(ANCIENT_PYRE_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 		"anointing_statue":
 			return UIArtScalerScript.get_board_cursor_target_height(ANOINTING_STATUE_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+		"geophagia":
+			return UIArtScalerScript.get_board_cursor_target_height(GEOPHAGIA_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+		"entropy":
+			return UIArtScalerScript.get_board_cursor_target_height(ENTROPY_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 	return 0
 
 func _apply_sacrifice_cursor() -> bool:
@@ -3399,6 +3437,64 @@ func _apply_seventh_sage_cursor() -> bool:
 		Input.set_custom_mouse_cursor(_seventh_sage_cursor_texture, cursor_shape, hotspot)
 	return true
 
+func _apply_geophagia_cursor() -> bool:
+	var target_height := UIArtScalerScript.get_board_cursor_target_height(GEOPHAGIA_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+	if _geophagia_cursor_texture == null or _geophagia_cursor_target_height != target_height:
+		_geophagia_cursor_texture = _load_cursor_texture_from_image_path(GEOPHAGIA_CURSOR_IMAGE_PATH, target_height)
+		_geophagia_cursor_target_height = target_height
+	if _geophagia_cursor_texture == null:
+		return false
+
+	var hotspot := UIArtScalerScript.get_cursor_hotspot(_geophagia_cursor_texture, GEOPHAGIA_CURSOR_HOTSPOT_RATIO)
+	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
+		Input.set_custom_mouse_cursor(_geophagia_cursor_texture, cursor_shape, hotspot)
+	return true
+
+func _ensure_entropy_cursor_overlay() -> bool:
+	var target_height := UIArtScalerScript.get_board_cursor_target_height(ENTROPY_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+	if _entropy_cursor_texture == null or _entropy_cursor_target_height != target_height:
+		_entropy_cursor_texture = _load_cursor_texture_from_image_path(ENTROPY_CURSOR_IMAGE_PATH, target_height)
+		_entropy_cursor_target_height = target_height
+	if _entropy_cursor_texture == null:
+		return false
+	if _entropy_cursor_layer == null or not is_instance_valid(_entropy_cursor_layer):
+		_entropy_cursor_layer = CanvasLayer.new()
+		_entropy_cursor_layer.name = "EntropyCursorLayer"
+		_entropy_cursor_layer.layer = 4095
+		add_child(_entropy_cursor_layer)
+	if _entropy_cursor_sprite == null or not is_instance_valid(_entropy_cursor_sprite):
+		_entropy_cursor_sprite = TextureRect.new()
+		_entropy_cursor_sprite.name = "EntropyCursor"
+		_entropy_cursor_sprite.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_entropy_cursor_sprite.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		_entropy_cursor_layer.add_child(_entropy_cursor_sprite)
+	_entropy_cursor_sprite.texture = _entropy_cursor_texture
+	_entropy_cursor_sprite.size = _entropy_cursor_texture.get_size()
+	_entropy_cursor_sprite.pivot_offset = UIArtScalerScript.get_cursor_hotspot(_entropy_cursor_texture, ENTROPY_CURSOR_HOTSPOT_RATIO)
+	_entropy_cursor_sprite.visible = true
+	return true
+
+func _hide_entropy_cursor_overlay() -> void:
+	var had_entropy_cursor := _entropy_cursor_layer != null and is_instance_valid(_entropy_cursor_layer)
+	if _entropy_cursor_layer != null and is_instance_valid(_entropy_cursor_layer):
+		_entropy_cursor_layer.queue_free()
+	_entropy_cursor_layer = null
+	_entropy_cursor_sprite = null
+	if had_entropy_cursor and Input.mouse_mode == Input.MOUSE_MODE_HIDDEN:
+		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+
+func _sync_entropy_cursor_overlay(delta: float) -> void:
+	if _get_selection_cursor_mode() != "entropy":
+		_hide_entropy_cursor_overlay()
+		return
+	if not _ensure_entropy_cursor_overlay():
+		return
+	var hotspot := UIArtScalerScript.get_cursor_hotspot(_entropy_cursor_texture, ENTROPY_CURSOR_HOTSPOT_RATIO)
+	_entropy_cursor_sprite.position = get_viewport().get_mouse_position() - hotspot
+	_entropy_cursor_sprite.rotation -= ENTROPY_CURSOR_ROTATION_SPEED * delta
+	if Input.mouse_mode != Input.MOUSE_MODE_HIDDEN:
+		Input.set_mouse_mode(Input.MOUSE_MODE_HIDDEN)
+
 func _apply_tez_titlacauan_cursor() -> bool:
 	var target_height := UIArtScalerScript.get_board_cursor_target_height(TEZ_TITLACAUAN_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 	if _tez_titlacauan_cursor_texture == null or _tez_titlacauan_cursor_target_height != target_height:
@@ -3435,17 +3531,24 @@ func _restore_default_selection_cursor() -> void:
 	GameCursorScript.ensure_registered(SACRIFICE_CURSOR_SHAPES)
 	_active_selection_cursor_mode = ""
 	_active_selection_cursor_target_height = 0
+	_hide_entropy_cursor_overlay()
 	_set_embedded_custom_cursor_active(false)
 
-func _set_embedded_custom_cursor_active(active: bool) -> void:
+func _uses_software_selection_cursor(cursor_mode: String) -> bool:
+	return cursor_mode == "entropy"
+
+func _set_embedded_custom_cursor_active(active: bool, software_cursor: bool = false) -> void:
 	var viewport := get_viewport()
 	if viewport != null:
-		viewport.set_meta(&"other_gods_custom_cursor_active", active)
+		if active and software_cursor:
+			viewport.set_meta(&"other_gods_custom_cursor_active", {"software_cursor": true})
+		else:
+			viewport.set_meta(&"other_gods_custom_cursor_active", active)
 
 func _sync_sacrifice_cursor() -> void:
 	var cursor_mode := _get_selection_cursor_mode()
 	var target_height := _get_cursor_mode_target_height(cursor_mode)
-	_set_embedded_custom_cursor_active(not cursor_mode.is_empty())
+	_set_embedded_custom_cursor_active(not cursor_mode.is_empty(), _uses_software_selection_cursor(cursor_mode))
 	if cursor_mode == _active_selection_cursor_mode and target_height == _active_selection_cursor_target_height:
 		return
 
@@ -3713,6 +3816,19 @@ func _sync_sacrifice_cursor() -> void:
 			_restore_default_selection_cursor()
 		return
 
+	if cursor_mode == "geophagia":
+		if _apply_geophagia_cursor():
+			_active_selection_cursor_mode = "geophagia"
+			_active_selection_cursor_target_height = target_height
+		else:
+			_restore_default_selection_cursor()
+		return
+
+	if cursor_mode == "entropy":
+		_active_selection_cursor_mode = "entropy"
+		_active_selection_cursor_target_height = target_height
+		return
+
 	_restore_default_selection_cursor()
 
 func _setup_center_action_panel() -> void:
@@ -3930,7 +4046,7 @@ func _sync_local_scheduled_callbacks() -> void:
 		if not has_deucalion_panel:
 			_begin_deucalion_resolution(_pending_deucalion_spell)
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	if not is_visible_in_tree():
 		return
 	_sync_priority_control_turn_boundary()
@@ -3940,6 +4056,7 @@ func _process(_delta: float) -> void:
 	_sync_local_priority_recovery()
 	_sync_deferred_turn_action_after_opponent_priority()
 	_sync_sacrifice_cursor()
+	_sync_entropy_cursor_overlay(delta)
 	_capture_action_log_message()
 	_update_hand_hover_preview()
 	_update_hand_context_menu_dismissal()
@@ -4515,6 +4632,14 @@ func _setup_action_log() -> void:
 	_bind_action_log_hover_signals(log_text)
 
 	log_box.add_child(log_text)
+
+	var replay_button := Button.new()
+	replay_button.text = "View Replay"
+	replay_button.tooltip_text = "Open the visual action-by-action replay"
+	replay_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	replay_button.pressed.connect(_open_match_replay_overlay)
+	log_box.add_child(replay_button)
+
 	var log_shell := MarginContainer.new()
 	log_shell.name = "ActionLogShell"
 	log_shell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -4535,6 +4660,7 @@ func _setup_action_log() -> void:
 
 	_action_log_view = log_text
 	_action_log_history_button = history_button
+	_action_log_replay_button = replay_button
 	_refresh_action_log()
 
 func _get_right_action_stack_height() -> float:
@@ -4654,6 +4780,7 @@ func _capture_action_log_message(force: bool = false) -> void:
 		return
 	_last_logged_action_text = message
 	_action_log_messages.append(message)
+	_capture_match_replay_entry(message)
 	if _action_log_messages.size() > ACTION_LOG_MAX_MESSAGES:
 		_action_log_messages.pop_front()
 	_refresh_action_log()
@@ -4822,11 +4949,244 @@ func _get_action_log_history_messages() -> Array[String]:
 
 func _refresh_action_log_history_button() -> void:
 	if _action_log_history_button == null or not is_instance_valid(_action_log_history_button):
+		_refresh_match_replay_button()
 		return
 	var has_history := not _action_log_messages.is_empty()
 	_action_log_history_button.disabled = not has_history
 	_action_log_history_button.tooltip_text = "Open full log history" if has_history else "No log entries yet"
 	_action_log_history_button.modulate = Color(1, 1, 1, 1) if has_history else Color(1, 1, 1, 0.45)
+	_refresh_match_replay_button()
+
+func _refresh_match_replay_button() -> void:
+	if _action_log_replay_button == null or not is_instance_valid(_action_log_replay_button):
+		return
+	var has_replay := not _match_replay_entries.is_empty()
+	_action_log_replay_button.disabled = not has_replay
+	_action_log_replay_button.tooltip_text = "Open the visual replay" if has_replay else "Replay history will appear after the first logged action"
+	_action_log_replay_button.modulate = Color(1, 1, 1, 1) if has_replay else Color(1, 1, 1, 0.45)
+
+func _clear_match_replay_history() -> void:
+	_match_replay_entries.clear()
+	_match_replay_step_index = -1
+	_refresh_match_replay_button()
+
+func _should_capture_match_replay_for_message(message: String) -> bool:
+	if game_manager == null:
+		return false
+	if game_manager.turn_number <= 0:
+		return false
+	var normalized := message.strip_edges().to_lower()
+	if normalized == "":
+		return false
+	if normalized.begins_with("joining match"):
+		return false
+	if normalized.begins_with("match authenticated"):
+		return false
+	if normalized.begins_with("connected! syncing game state"):
+		return false
+	return true
+
+func _get_match_replay_viewer_index() -> int:
+	if game_manager == null:
+		return 0
+	var current_player_index := game_manager.players.find(game_manager.current_player)
+	if current_player_index >= 0:
+		return current_player_index
+	var viewer_index := game_manager.players.find(game_manager.get_feedback_viewer())
+	return maxi(viewer_index, 0)
+
+func _capture_match_replay_entry(action_message: String) -> void:
+	if not _should_capture_match_replay_for_message(action_message):
+		return
+	var viewer_index := _get_match_replay_viewer_index()
+	_match_replay_entries.append({
+		"state": GameState.serialize(game_manager, viewer_index),
+		"action_message": action_message,
+		"viewer_player_index": viewer_index,
+	})
+	_refresh_match_replay_button()
+	if _is_match_replay_open():
+		_refresh_match_replay_overlay_step()
+
+func _ensure_match_replay_history_seed() -> void:
+	if not _match_replay_entries.is_empty():
+		return
+	if game_manager == null or game_manager.turn_number <= 0:
+		return
+	var fallback_message: String = action_label.text.strip_edges() if action_label != null else ""
+	if fallback_message == "":
+		var current_player := game_manager.current_player
+		fallback_message = "%s's turn." % (current_player.player_name if current_player != null else "Current player")
+	_capture_match_replay_entry(fallback_message)
+
+func _is_match_replay_open() -> bool:
+	return _match_replay_overlay != null and is_instance_valid(_match_replay_overlay)
+
+func _open_match_replay_overlay() -> void:
+	_ensure_match_replay_history_seed()
+	if _match_replay_entries.is_empty():
+		return
+	if _is_match_replay_open():
+		_refresh_match_replay_overlay_step()
+		return
+
+	_hide_pause_menu()
+	_close_action_log_popup()
+
+	var overlay := ColorRect.new()
+	overlay.name = "MatchReplayOverlay"
+	overlay.color = Color(0.01, 0.02, 0.04, 0.88)
+	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	add_child(overlay)
+	_promote_transient_ui(overlay, TRANSIENT_UI_Z_INDEX + 115)
+	_match_replay_overlay = overlay
+
+	var panel := PanelContainer.new()
+	panel.anchor_left = 0.0
+	panel.anchor_top = 0.0
+	panel.anchor_right = 1.0
+	panel.anchor_bottom = 1.0
+	panel.offset_left = MATCH_REPLAY_PANEL_MARGIN
+	panel.offset_top = MATCH_REPLAY_PANEL_MARGIN
+	panel.offset_right = -MATCH_REPLAY_PANEL_MARGIN
+	panel.offset_bottom = -MATCH_REPLAY_PANEL_MARGIN
+	overlay.add_child(panel)
+
+	var panel_style := StyleBoxFlat.new()
+	panel_style.bg_color = Color(0.08, 0.10, 0.14, 0.985)
+	panel_style.border_color = Color(0.86, 0.75, 0.44, 0.95)
+	panel_style.content_margin_left = 18
+	panel_style.content_margin_right = 18
+	panel_style.content_margin_top = 16
+	panel_style.content_margin_bottom = 16
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		panel_style.set_border_width(side as Side, 2)
+	panel.add_theme_stylebox_override("panel", panel_style)
+
+	var vbox := VBoxContainer.new()
+	vbox.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	vbox.add_theme_constant_override("separation", 10)
+	panel.add_child(vbox)
+
+	var header := HBoxContainer.new()
+	header.add_theme_constant_override("separation", 8)
+	vbox.add_child(header)
+
+	var title := Label.new()
+	title.text = "Match Replay"
+	title.add_theme_font_size_override("font_size", 22)
+	header.add_child(title)
+
+	var spacer := Control.new()
+	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	header.add_child(spacer)
+
+	var hint := Label.new()
+	hint.text = "Left/Right arrow = step"
+	hint.modulate = Color(0.82, 0.86, 0.92, 0.84)
+	header.add_child(hint)
+
+	var close_button := Button.new()
+	close_button.text = "Close"
+	close_button.pressed.connect(_close_match_replay_overlay)
+	header.add_child(close_button)
+
+	_match_replay_board_view = MatchReplayBoardViewScript.new()
+	_match_replay_board_view.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_match_replay_board_view.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	vbox.add_child(_match_replay_board_view)
+
+	var footer := HBoxContainer.new()
+	footer.alignment = BoxContainer.ALIGNMENT_CENTER
+	footer.add_theme_constant_override("separation", 10)
+	vbox.add_child(footer)
+
+	_match_replay_prev_button = Button.new()
+	_match_replay_prev_button.text = "Previous"
+	_match_replay_prev_button.pressed.connect(func() -> void:
+		_step_match_replay(-1)
+	)
+	footer.add_child(_match_replay_prev_button)
+
+	_match_replay_step_label = Label.new()
+	_match_replay_step_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_match_replay_step_label.custom_minimum_size.x = 180.0
+	footer.add_child(_match_replay_step_label)
+
+	_match_replay_next_button = Button.new()
+	_match_replay_next_button.text = "Next"
+	_match_replay_next_button.pressed.connect(func() -> void:
+		_step_match_replay(1)
+	)
+	footer.add_child(_match_replay_next_button)
+
+	_match_replay_step_index = _match_replay_entries.size() - 1
+	_refresh_match_replay_overlay_step()
+
+func _close_match_replay_overlay() -> void:
+	if _match_replay_overlay != null and is_instance_valid(_match_replay_overlay):
+		_match_replay_overlay.queue_free()
+	_match_replay_overlay = null
+	_match_replay_board_view = null
+	_match_replay_step_label = null
+	_match_replay_prev_button = null
+	_match_replay_next_button = null
+
+func _step_match_replay(direction: int) -> void:
+	if _match_replay_entries.is_empty():
+		return
+	_match_replay_step_index = clampi(
+		_match_replay_step_index + direction,
+		0,
+		_match_replay_entries.size() - 1
+	)
+	_refresh_match_replay_overlay_step()
+
+func _refresh_match_replay_overlay_step() -> void:
+	if not _is_match_replay_open():
+		return
+	if _match_replay_entries.is_empty():
+		return
+	_match_replay_step_index = clampi(_match_replay_step_index, 0, _match_replay_entries.size() - 1)
+	var entry := _match_replay_entries[_match_replay_step_index]
+	if _match_replay_board_view != null and is_instance_valid(_match_replay_board_view):
+		_match_replay_board_view.set_snapshot(
+			entry.get("state", {}),
+			str(entry.get("action_message", "")),
+			int(entry.get("viewer_player_index", 0)),
+			_match_replay_step_index,
+			_match_replay_entries.size()
+		)
+	if _match_replay_step_label != null and is_instance_valid(_match_replay_step_label):
+		_match_replay_step_label.text = "%d / %d" % [
+			_match_replay_step_index + 1,
+			_match_replay_entries.size(),
+		]
+	if _match_replay_prev_button != null and is_instance_valid(_match_replay_prev_button):
+		_match_replay_prev_button.disabled = _match_replay_step_index <= 0
+	if _match_replay_next_button != null and is_instance_valid(_match_replay_next_button):
+		_match_replay_next_button.disabled = _match_replay_step_index >= _match_replay_entries.size() - 1
+
+func _try_handle_match_replay_input(event: InputEvent) -> bool:
+	if not _is_match_replay_open():
+		return false
+	if not (event is InputEventKey):
+		return false
+	var key_event := event as InputEventKey
+	if not key_event.pressed or key_event.echo:
+		return false
+	match key_event.keycode:
+		KEY_LEFT:
+			_step_match_replay(-1)
+			return true
+		KEY_RIGHT:
+			_step_match_replay(1)
+			return true
+		KEY_ESCAPE:
+			_close_match_replay_overlay()
+			return true
+	return false
 
 func _toggle_action_log_popup() -> void:
 	if _action_log_popup != null and is_instance_valid(_action_log_popup):
@@ -5398,6 +5758,8 @@ func start_game(
 	player2.mana_changed.connect(_on_player_mana_changed)
 	player1.followers_changed.connect(_on_player_followers_changed)
 	player2.followers_changed.connect(_on_enemy_followers_changed)
+	player1.guard_changed.connect(_on_player_guard_changed)
+	player2.guard_changed.connect(_on_enemy_guard_changed)
 	game_manager.game_ended.connect(_on_game_ended)
 
 	# Broadcaster: server-side only, sends full state to clients after each action
@@ -5478,6 +5840,8 @@ func _prepare_for_match_launch(status_message: String = "Connecting to match..."
 	_hide_pause_menu()
 	_hide_game_result_overlay()
 	_hide_reinforcement_overlay()
+	_close_match_replay_overlay()
+	_clear_match_replay_history()
 	_hide_corner_action_button()
 	_hide_devour_cancel_prompt()
 	_hide_hand_hover_preview()
@@ -8866,6 +9230,8 @@ func _on_power_pressed(power: PowerCard) -> void:
 				_begin_breidablik_harbor_selection(breidablik)
 		elif power is DivineCaprice:
 			_show_divine_caprice_prompt(power as DivineCaprice)
+		elif power is ManaGuard:
+			_show_mana_guard_prompt(power as ManaGuard)
 		elif power is AllfathersSacrifice:
 			var allfather := power as AllfathersSacrifice
 			var on_choose_allfather_spell := func(chosen_card: Card) -> void:
@@ -11073,6 +11439,32 @@ func _begin_pending_click_selection(
 		return
 	match_manager.start_click_selection(selection_name, source_card, validator, confirm_callback, cancel_callback)
 	_sync_visual_linger_input_blocker()
+
+func _begin_clay_eaters_geophagia_selection(card: ClayEatersScript) -> void:
+	if card == null or game_manager == null:
+		update_ui()
+		return
+	var targets: Array = card.get_valid_targets(game_manager)
+	if targets.is_empty():
+		_set_action_label_text(card.card_name + " has no valid Geophagia targets right now.")
+		update_ui()
+		return
+	var validate_geophagia_target := func(clicked_card: Card) -> bool:
+		return clicked_card != null and clicked_card in card.get_valid_targets(game_manager)
+	var confirm_geophagia_target := func(clicked_card: Card) -> void:
+		_queue_context_targeted_ability(card, clicked_card)
+	var cancel_geophagia_target := func() -> void:
+		_set_action_label_text("Cancelled " + card.card_name + ": Geophagia.")
+		update_ui()
+	_begin_pending_click_selection(
+		card.card_name + ": Geophagia",
+		card,
+		validate_geophagia_target,
+		confirm_geophagia_target,
+		cancel_geophagia_target
+	)
+	_set_action_label_text(card.card_name + ": click a structure or Stone creature for Geophagia.")
+	update_ui()
 
 func _clear_pending_click_selection() -> void:
 	if match_manager == null:
@@ -17717,6 +18109,9 @@ func _on_creature_ability_badge_clicked(card: Card) -> void:
 	if _uses_devour_click_selection(card):
 		_begin_devour_activation(card)
 		return
+	if card is ClayEatersScript:
+		_begin_clay_eaters_geophagia_selection(card as ClayEatersScript)
+		return
 	if card.has_method("get_valid_targets"):
 		var targets: Array = card.get_valid_targets(game_manager)
 		if targets.is_empty():
@@ -17828,6 +18223,9 @@ func _on_context_creature_ability_pressed(card_uid: String) -> void:
 		return
 	if _uses_devour_click_selection(card):
 		_begin_devour_activation(card)
+		return
+	if card is ClayEatersScript:
+		_begin_clay_eaters_geophagia_selection(card as ClayEatersScript)
 		return
 	if card.has_method("get_valid_targets"):
 		var targets: Array = card.get_valid_targets(game_manager)
@@ -19053,6 +19451,12 @@ func _handle_priority_full_control_shortcut(event: InputEvent) -> bool:
 func _input(event: InputEvent) -> void:
 	if not is_visible_in_tree():
 		return
+	if _is_match_replay_open():
+		if _try_handle_match_replay_input(event):
+			get_viewport().set_input_as_handled()
+		elif event is InputEventKey:
+			get_viewport().set_input_as_handled()
+		return
 	if _try_handle_card_priority_toggle_input(event):
 		get_viewport().set_input_as_handled()
 		return
@@ -19396,6 +19800,10 @@ func _try_handle_escape_key(event: InputEvent) -> bool:
 func _unhandled_input(event: InputEvent) -> void:
 	if not is_visible_in_tree():
 		return
+	if _is_match_replay_open():
+		if event is InputEventKey:
+			get_viewport().set_input_as_handled()
+		return
 	if _is_visual_linger_active():
 		get_viewport().set_input_as_handled()
 		return
@@ -19581,19 +19989,7 @@ func _bdrag_finish(drop_pos: Vector2) -> void:
 	if not match_manager.can_attack(card):
 		if drag_attack_target != null and _try_auto_switch_defensive_drag_attack(card, drag_attack_target):
 			return
-		var major_minor_limit := card.get_max_minor_creature_actions_before_major()
-		if card.is_sleeping:
-			_set_action_label_text(card.card_name + " is Sleeping and cannot act.")
-		elif card.creature_major_action_used:
-			_set_action_label_text(card.card_name + " has already used its major action this turn.")
-		elif card.creature_minor_actions_used >= major_minor_limit:
-			_set_action_label_text("%s has already used %d minor actions this turn." % [card.card_name, major_minor_limit])
-		elif card.creature_mode == Card.CreatureMode.DEFENSIVE:
-			_set_action_label_text(card.card_name + " is in defensive stance and cannot attack.")
-		elif from_zone.zone_type == Zone.ZoneType.RESERVE:
-			_set_action_label_text(card.card_name + " cannot attack from the back row.")
-		else:
-			_set_action_label_text(card.card_name + " cannot attack right now.")
+		_set_action_label_text(match_manager.get_attack_invalid_reason(card))
 		return
 
 	# Attack followers via God slot
@@ -21941,6 +22337,111 @@ func _hide_structure_bonus_prompt() -> void:
 		panel.queue_free()
 	_pending_structure_bonus_power_uid = ""
 	_pending_structure_bonus_structure_uid = ""
+
+func _show_mana_guard_prompt(power: ManaGuard) -> void:
+	_hide_mana_guard_prompt()
+	if power == null or power.card_owner == null:
+		return
+	var max_mana := power.card_owner.mana
+	if max_mana <= 0:
+		_set_action_label_text(power.get_activation_failure_reason(game_manager))
+		update_ui()
+		return
+
+	var panel := PanelContainer.new()
+	panel.name = "ManaGuardPromptPanel"
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.07, 0.11, 0.13, 0.97)
+	style.border_color = Color(0.48, 0.82, 0.9)
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		style.set_border_width(side as Side, 2)
+	panel.add_theme_stylebox_override("panel", style)
+	panel.custom_minimum_size = Vector2(280, 0)
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 8)
+	panel.add_child(vbox)
+
+	var title := Label.new()
+	title.text = power.card_name
+	title.add_theme_font_size_override("font_size", 14)
+	vbox.add_child(title)
+
+	var info := Label.new()
+	info.text = "Spend mana to gain %d Guard per mana." % ManaGuard.GUARD_PER_MANA
+	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	vbox.add_child(info)
+
+	var spin := SpinBox.new()
+	spin.min_value = 1
+	spin.max_value = max_mana
+	spin.step = 1
+	spin.value = 1
+	spin.allow_greater = false
+	spin.allow_lesser = false
+	vbox.add_child(spin)
+
+	var hint := Label.new()
+	hint.text = "Available mana: %d" % max_mana
+	hint.modulate = Color(0.75, 0.9, 0.95)
+	vbox.add_child(hint)
+
+	var buttons := HBoxContainer.new()
+	vbox.add_child(buttons)
+
+	var confirm_btn := Button.new()
+	confirm_btn.text = "Build Guard"
+	confirm_btn.pressed.connect(_on_mana_guard_confirm_pressed.bind(power.uid, spin))
+	buttons.add_child(confirm_btn)
+
+	var cancel_btn := Button.new()
+	cancel_btn.text = "Cancel"
+	cancel_btn.pressed.connect(_on_mana_guard_cancel_pressed)
+	buttons.add_child(cancel_btn)
+
+	add_child(panel)
+	_promote_transient_ui(panel)
+	panel.anchor_left = 0.5
+	panel.anchor_right = 0.5
+	panel.anchor_top = 0.5
+	panel.anchor_bottom = 0.5
+	panel.offset_left = -140
+	panel.offset_right = 140
+	panel.offset_top = -70
+	panel.offset_bottom = 70
+
+func _hide_mana_guard_prompt() -> void:
+	var panel := get_node_or_null("ManaGuardPromptPanel")
+	if panel:
+		panel.queue_free()
+
+func _on_mana_guard_confirm_pressed(power_uid: String, spin: SpinBox) -> void:
+	var mana_amount := int(spin.value) if spin != null else 0
+	_hide_mana_guard_prompt()
+	var power := game_manager.get_card_by_uid(power_uid) as ManaGuard if game_manager != null else null
+	if power == null:
+		_set_action_label_text("Mana Guard is no longer available.")
+		update_ui()
+		return
+	if mana_amount <= 0:
+		_set_action_label_text("Choose mana to spend for Mana Guard.")
+		update_ui()
+		return
+	if game_input != null:
+		game_input.submit_action({type = "activate_power", power_uid = power.uid, mana_amount = mana_amount})
+		return
+	_queue_power_activation_action(
+		power,
+		null,
+		"Mana Guard activated!",
+		func() -> void:
+			power.activate_with_mana(game_manager, mana_amount)
+	)
+
+func _on_mana_guard_cancel_pressed() -> void:
+	_hide_mana_guard_prompt()
+	_set_action_label_text("Cancelled Mana Guard.")
+	update_ui()
 
 func _show_demiurge_prompt(spell) -> void:
 	_hide_demiurge_prompt()
@@ -27450,6 +27951,7 @@ func _present_game_result_from_state(state: Dictionary, action_message: String) 
 
 func _show_game_result_overlay(result_message: String, winner = null, loser = null, auto_return: bool = false) -> void:
 	_hide_pause_menu()
+	_close_match_replay_overlay()
 	_hide_game_result_overlay()
 
 	var overlay := ColorRect.new()
@@ -27519,6 +28021,13 @@ func _show_game_result_overlay(result_message: String, winner = null, loser = nu
 	close_btn.text = "Stay Here"
 	close_btn.pressed.connect(_on_game_result_stay_here_pressed)
 	buttons.add_child(close_btn)
+
+	var replay_btn := Button.new()
+	replay_btn.text = "View Replay"
+	replay_btn.disabled = _match_replay_entries.is_empty()
+	replay_btn.tooltip_text = "Open the visual replay" if not _match_replay_entries.is_empty() else "Replay history will appear after the first logged action"
+	replay_btn.pressed.connect(_open_match_replay_overlay)
+	buttons.add_child(replay_btn)
 
 	if can_offer_rematch:
 		var rematch_btn := Button.new()
@@ -29458,6 +29967,16 @@ func _on_player_followers_changed(_new_followers: int) -> void:
 
 func _on_enemy_followers_changed(_new_followers: int) -> void:
 	_show_followers_attack_result_on_god(player2, _new_followers)
+	_invalidate_cached_board_layouts()
+	_refresh_visible_stat_panels()
+	_request_ui_refresh()
+
+func _on_player_guard_changed(_new_guard: int) -> void:
+	_invalidate_cached_board_layouts()
+	_refresh_visible_stat_panels()
+	_request_ui_refresh()
+
+func _on_enemy_guard_changed(_new_guard: int) -> void:
 	_invalidate_cached_board_layouts()
 	_refresh_visible_stat_panels()
 	_request_ui_refresh()

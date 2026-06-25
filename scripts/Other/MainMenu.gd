@@ -70,6 +70,7 @@ const BYTES_PER_MIB := 1048576.0
 @onready var create_seek_button = $MenuContainer/MultiplayerContainer/CreateSeekButton
 @onready var seek_list = $MenuContainer/MultiplayerContainer/SeekList
 @onready var leave_seek_button = $MenuContainer/MultiplayerContainer/LeaveSeekButton
+@onready var leave_match_button = $MenuContainer/MultiplayerContainer/LeaveMatchButton
 @onready var room_code_line_edit = $MenuContainer/MultiplayerContainer/RoomCodeLineEdit
 @onready var connect_button = $MenuContainer/MultiplayerContainer/MultiplayerHeaderRow/ConnectButton
 @onready var ready_button = $MenuContainer/MultiplayerContainer/ReadyButton
@@ -298,6 +299,8 @@ func _ready() -> void:
 		create_seek_button.pressed.connect(_on_create_seek_pressed)
 	if leave_seek_button:
 		leave_seek_button.pressed.connect(_on_leave_seek_pressed)
+	if leave_match_button:
+		leave_match_button.pressed.connect(_on_leave_match_pressed)
 	if seek_list != null and seek_list.has_signal("item_clicked"):
 		seek_list.item_clicked.connect(_on_seek_item_clicked)
 	if ready_button:
@@ -1792,6 +1795,8 @@ func _refresh_multiplayer_action_state() -> void:
 		_create_bo3_unranked_seek_button.disabled = not has_legal_deck or in_room
 	if leave_seek_button != null:
 		leave_seek_button.visible = in_room
+	if leave_match_button != null:
+		leave_match_button.visible = _has_forfeitable_active_match()
 	if ready_button != null:
 		ready_button.visible = false
 
@@ -1987,6 +1992,26 @@ func _on_leave_seek_pressed() -> void:
 	_clear_current_seek_state()
 	status_label.text = "Leaving seek..."
 	lobby_client.leave_room()
+
+func _has_forfeitable_active_match() -> bool:
+	if lobby_client == null:
+		return false
+	var active_match_info = lobby_client.current_active_match_info
+	if active_match_info == null or not (active_match_info is Dictionary) or active_match_info.is_empty():
+		return false
+	if bool((active_match_info as Dictionary).get("observer_mode", false)):
+		return false
+	return true
+
+func _on_leave_match_pressed() -> void:
+	if not _has_forfeitable_active_match():
+		return
+	_clear_declined_active_match_rejoin()
+	_clear_saved_match_resume()
+	status_label.text = "Leaving and forfeiting your active match..."
+	_abandon_current_lobby_match()
+	_refresh_multiplayer_action_state()
+	_queue_room_list_refresh(false)
 
 func _connect_to_browseable_lobby(connect_status: String, connect_serial: int = 0) -> void:
 	if connect_serial > 0 and connect_serial != _authenticated_lobby_connect_serial:
@@ -7643,8 +7668,10 @@ func _build_active_match_rejoin_dialog() -> void:
 	dialog.min_size = Vector2i(460, 170)
 	dialog.get_ok_button().text = "Rejoin Match"
 	dialog.get_cancel_button().text = "Stay in Lobby"
+	dialog.add_button("Leave Match", false, "leave_match")
 	dialog.confirmed.connect(_on_active_match_rejoin_confirmed)
 	dialog.canceled.connect(_on_active_match_rejoin_canceled)
+	dialog.custom_action.connect(_on_active_match_rejoin_custom_action)
 	add_child(dialog)
 	_active_match_rejoin_dialog = dialog
 
@@ -7755,6 +7782,21 @@ func _on_active_match_rejoin_canceled() -> void:
 	_remember_declined_active_match_rejoin(match_info)
 	_save_active_match_resume(match_info)
 	status_label.text = "Your live match is available to rejoin from the seek list."
+	_queue_room_list_refresh(false)
+
+func _on_active_match_rejoin_custom_action(action: StringName) -> void:
+	if action != &"leave_match":
+		return
+	var match_info := _pending_active_match_rejoin_info.duplicate(true)
+	_pending_active_match_rejoin_info.clear()
+	if match_info.is_empty():
+		return
+	_clear_declined_active_match_rejoin()
+	_clear_saved_match_resume()
+	if _active_match_rejoin_dialog != null and is_instance_valid(_active_match_rejoin_dialog):
+		_active_match_rejoin_dialog.hide()
+	status_label.text = "Leaving and forfeiting your active match..."
+	_abandon_current_lobby_match()
 	_queue_room_list_refresh(false)
 
 func _is_active_match_rejoin_offer_pending(match_info: Dictionary = {}) -> bool:
