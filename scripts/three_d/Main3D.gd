@@ -215,24 +215,54 @@ func _is_cursor_meta_active(meta_value: Variant) -> bool:
 func _has_custom_cursor_active() -> bool:
 	return _has_viewport_meta(CUSTOM_CURSOR_ACTIVE_META)
 
+# Returns true when an embedded popup Window (ConfirmationDialog, AcceptDialog,
+# FileDialog, etc.) is currently visible in the game subtree. Such popups render
+# as real OS sub-windows, so the layer-1000 software cursor cannot draw over
+# them; while one is open we must fall back to the hardware cursor so the player
+# still sees a pointer over the dialog.
+func _has_open_embedded_popup_window() -> bool:
+	var root := _game_instance
+	if root == null or not is_instance_valid(root):
+		return false
+	return _has_visible_window_in_subtree(root)
+
+func _has_visible_window_in_subtree(node: Node) -> bool:
+	if node == null:
+		return false
+	if node is Window and node != get_window():
+		# Embedded popup windows are parented inside the game subtree. A popup
+		# is "open" when it is both in the tree and visible.
+		if node.is_inside_tree() and node.visible:
+			return true
+	for child in node.get_children():
+		if _has_visible_window_in_subtree(child):
+			return true
+	return false
+
 func _sync_cursor_presentation() -> void:
 	var locked_power_cursor_active := _has_viewport_meta(LOCKED_POWER_CURSOR_ACTIVE_META)
 	var custom_cursor_active := _has_custom_cursor_active()
+	var popup_window_open := _has_open_embedded_popup_window()
 	if _software_cursor_sprite == null or not is_instance_valid(_software_cursor_sprite):
 		if Input.mouse_mode != Input.MOUSE_MODE_VISIBLE:
 			Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 		return
+	# A popup Window occludes the software cursor; defer to the hardware cursor
+	# while one is open so the pointer stays visible over the dialog.
+	var suppress_software_cursor := popup_window_open
 	var use_locked_power_software_cursor := locked_power_cursor_active \
-		and _locked_power_software_cursor_texture != null
+		and _locked_power_software_cursor_texture != null \
+		and not suppress_software_cursor
 	if use_locked_power_software_cursor and not _software_cursor_showing_locked_power:
 		_apply_locked_power_software_cursor()
 	elif not use_locked_power_software_cursor and _software_cursor_showing_locked_power:
 		_apply_default_software_cursor()
 	if _software_cursor_root != null and is_instance_valid(_software_cursor_root):
 		_software_cursor_root.visible = use_locked_power_software_cursor \
-			or (not locked_power_cursor_active and not custom_cursor_active)
-	var show_hardware_cursor := not use_locked_power_software_cursor \
-		and (custom_cursor_active or locked_power_cursor_active)
+			or (not suppress_software_cursor and not locked_power_cursor_active and not custom_cursor_active)
+	var show_hardware_cursor := suppress_software_cursor \
+		or not use_locked_power_software_cursor \
+			and (custom_cursor_active or locked_power_cursor_active)
 	var desired_mouse_mode := Input.MOUSE_MODE_VISIBLE if show_hardware_cursor else Input.MOUSE_MODE_HIDDEN
 	if Input.mouse_mode != desired_mouse_mode:
 		Input.set_mouse_mode(desired_mouse_mode)
