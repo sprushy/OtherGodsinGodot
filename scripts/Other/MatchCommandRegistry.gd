@@ -301,7 +301,7 @@ static func requires_clear_stack_window(command_type: String) -> bool:
 	match command_type:
 		"select_attacker", "request_attack", "play_card", "prepare_card", "play_creature", "creature_move", "equip_action", "change_mode", "end_turn":
 			return true
-		"cast_spell", "activate_prepared_hex", "god_ability", "activate_power", "unlock_power", "activate_divine_caprice", "cast_charm", "activate_card_ability", "mopsus_reveal_hand_card", "en_hedu_anna_exaltation", "apply_advanced_building_techniques":
+		"cast_spell", "activate_prepared_hex", "god_ability", "activate_power", "unlock_power", "activate_divine_caprice", "cast_charm", "activate_card_ability", "mopsus_reveal_hand_card", "en_hedu_anna_exaltation":
 			return true
 	return false
 

@@ -66,7 +66,6 @@ const UIArtScalerScript = preload("res://scripts/ui/UIArtScaler.gd")
 const GameCursorScript = preload("res://scripts/ui/GameCursor.gd")
 const CardDetailContentBuilderScript = preload("res://scripts/ui/CardDetailContentBuilder.gd")
 const LevelSymbolRowScript = preload("res://scripts/ui/LevelSymbolRow.gd")
-const MatchReplayBoardViewScript = preload("res://scripts/ui/MatchReplayBoardView.gd")
 const ReinforcementCardTileScript = preload("res://scripts/ui/ReinforcementCardTile.gd")
 const ReinforcementDropAreaScript = preload("res://scripts/ui/ReinforcementDropArea.gd")
 const UITextureCacheScript = preload("res://scripts/ui/UITextureCache.gd")
@@ -284,6 +283,7 @@ const ACTION_LOG_ABILITY_LINK_COLOR := "#68a8ff"
 const ACTION_LOG_CARD_HOVER_WIDTH := 320.0
 const ACTION_LOG_CARD_HOVER_MAX_HEIGHT := 420.0
 const MATCH_REPLAY_PANEL_MARGIN := 56.0
+const MATCH_REPLAY_MAX_SNAPSHOT_WIDTH := 1920
 
 @onready var choice_container = $MainHBox/LeftPanel/ChoiceContainer
 @onready var choice_intro_label = $MainHBox/LeftPanel/ChoiceContainer/ChoiceIntroLabel
@@ -582,11 +582,14 @@ var _action_log_replay_button: Button = null
 var _action_log_messages: Array[String] = []
 var _match_replay_entries: Array[Dictionary] = []
 var _match_replay_overlay: Control = null
-var _match_replay_board_view: Control = null
+var _match_replay_image: TextureRect = null
+var _match_replay_message_label: Label = null
 var _match_replay_step_label: Label = null
 var _match_replay_prev_button: Button = null
 var _match_replay_next_button: Button = null
 var _match_replay_step_index: int = -1
+var _match_replay_next_snapshot_id: int = 1
+var _match_replay_initial_snapshot_requested: bool = false
 var _last_logged_action_text: String = ""
 var _action_label_log_suppressed: bool = false
 var _suppress_next_generic_prepare_log: bool = false
@@ -4057,6 +4060,7 @@ func _process(delta: float) -> void:
 	_sync_deferred_turn_action_after_opponent_priority()
 	_sync_sacrifice_cursor()
 	_sync_entropy_cursor_overlay(delta)
+	_sync_match_replay_initial_snapshot()
 	_capture_action_log_message()
 	_update_hand_hover_preview()
 	_update_hand_context_menu_dismissal()
@@ -4968,6 +4972,8 @@ func _refresh_match_replay_button() -> void:
 func _clear_match_replay_history() -> void:
 	_match_replay_entries.clear()
 	_match_replay_step_index = -1
+	_match_replay_next_snapshot_id = 1
+	_match_replay_initial_snapshot_requested = false
 	_refresh_match_replay_button()
 
 func _should_capture_match_replay_for_message(message: String) -> bool:
@@ -4986,25 +4992,36 @@ func _should_capture_match_replay_for_message(message: String) -> bool:
 		return false
 	return true
 
-func _get_match_replay_viewer_index() -> int:
-	if game_manager == null:
-		return 0
-	var current_player_index := game_manager.players.find(game_manager.current_player)
-	if current_player_index >= 0:
-		return current_player_index
-	var viewer_index := game_manager.players.find(game_manager.get_feedback_viewer())
-	return maxi(viewer_index, 0)
+func _sync_match_replay_initial_snapshot() -> void:
+	if _match_replay_initial_snapshot_requested:
+		return
+	if not _match_replay_entries.is_empty():
+		_match_replay_initial_snapshot_requested = true
+		return
+	if game_manager == null or game_manager.turn_number <= 0 or game_manager.current_player == null:
+		return
+	_match_replay_initial_snapshot_requested = true
+	_capture_match_replay_entry("Turn %d - %s's turn." % [
+		game_manager.turn_number,
+		game_manager.current_player.player_name,
+	])
 
 func _capture_match_replay_entry(action_message: String) -> void:
 	if not _should_capture_match_replay_for_message(action_message):
 		return
-	var viewer_index := _get_match_replay_viewer_index()
+	while _match_replay_entries.size() >= ACTION_LOG_MAX_MESSAGES:
+		_match_replay_entries.pop_front()
+		if _match_replay_step_index > 0:
+			_match_replay_step_index -= 1
+	var snapshot_id := _match_replay_next_snapshot_id
+	_match_replay_next_snapshot_id += 1
 	_match_replay_entries.append({
-		"state": GameState.serialize(game_manager, viewer_index),
 		"action_message": action_message,
-		"viewer_player_index": viewer_index,
+		"snapshot": null,
+		"snapshot_id": snapshot_id,
 	})
 	_refresh_match_replay_button()
+	_capture_match_replay_snapshot_deferred(snapshot_id)
 	if _is_match_replay_open():
 		_refresh_match_replay_overlay_step()
 
@@ -5017,7 +5034,73 @@ func _ensure_match_replay_history_seed() -> void:
 	if fallback_message == "":
 		var current_player := game_manager.current_player
 		fallback_message = "%s's turn." % (current_player.player_name if current_player != null else "Current player")
-	_capture_match_replay_entry(fallback_message)
+	_match_replay_entries.append({
+		"action_message": fallback_message,
+		"snapshot": _capture_match_replay_snapshot_now(),
+		"snapshot_id": _match_replay_next_snapshot_id,
+	})
+	_match_replay_next_snapshot_id += 1
+	_refresh_match_replay_button()
+
+func _capture_match_replay_snapshot_deferred(snapshot_id: int) -> void:
+	await RenderingServer.frame_post_draw
+	var entry_index := _find_match_replay_entry_index(snapshot_id)
+	if entry_index >= 0:
+		var hidden_overlays := _hide_match_replay_capture_overlays()
+		if not hidden_overlays.is_empty():
+			await RenderingServer.frame_post_draw
+		_match_replay_entries[entry_index]["snapshot"] = _capture_match_replay_snapshot_now()
+		_restore_match_replay_capture_overlays(hidden_overlays)
+		if _is_match_replay_open() and _match_replay_step_index == entry_index:
+			_refresh_match_replay_overlay_step()
+
+func _find_match_replay_entry_index(snapshot_id: int) -> int:
+	for i in range(_match_replay_entries.size()):
+		if int(_match_replay_entries[i].get("snapshot_id", -1)) == snapshot_id:
+			return i
+	return -1
+
+func _capture_match_replay_snapshot_now() -> Texture2D:
+	var viewport := get_viewport()
+	if viewport == null:
+		return null
+	var viewport_texture := viewport.get_texture()
+	if viewport_texture == null:
+		return null
+	var image := viewport_texture.get_image()
+	if image == null or image.is_empty():
+		return null
+	image = _crop_match_replay_image_to_game_rect(image)
+	if image.get_width() > MATCH_REPLAY_MAX_SNAPSHOT_WIDTH:
+		var scaled_height := maxi(1, int(round(float(image.get_height()) * float(MATCH_REPLAY_MAX_SNAPSHOT_WIDTH) / float(image.get_width()))))
+		image.resize(MATCH_REPLAY_MAX_SNAPSHOT_WIDTH, scaled_height, Image.INTERPOLATE_LANCZOS)
+	return ImageTexture.create_from_image(image)
+
+func _crop_match_replay_image_to_game_rect(source_image: Image) -> Image:
+	var global_rect := get_global_rect()
+	var crop_x := clampi(int(floor(global_rect.position.x)), 0, source_image.get_width() - 1)
+	var crop_y := clampi(int(floor(global_rect.position.y)), 0, source_image.get_height() - 1)
+	var crop_width := clampi(int(ceil(global_rect.size.x)), 1, source_image.get_width() - crop_x)
+	var crop_height := clampi(int(ceil(global_rect.size.y)), 1, source_image.get_height() - crop_y)
+	if crop_width >= source_image.get_width() and crop_height >= source_image.get_height() and crop_x == 0 and crop_y == 0:
+		return source_image
+	var cropped := Image.create(crop_width, crop_height, false, source_image.get_format())
+	cropped.blit_rect(source_image, Rect2i(crop_x, crop_y, crop_width, crop_height), Vector2i.ZERO)
+	return cropped
+
+func _hide_match_replay_capture_overlays() -> Array[Control]:
+	var hidden_overlays: Array[Control] = []
+	for overlay in [_match_replay_overlay, _game_result_overlay]:
+		var control := overlay as Control
+		if control != null and is_instance_valid(control) and control.visible:
+			control.visible = false
+			hidden_overlays.append(control)
+	return hidden_overlays
+
+func _restore_match_replay_capture_overlays(hidden_overlays: Array[Control]) -> void:
+	for control in hidden_overlays:
+		if control != null and is_instance_valid(control):
+			control.visible = true
 
 func _is_match_replay_open() -> bool:
 	return _match_replay_overlay != null and is_instance_valid(_match_replay_overlay)
@@ -5092,10 +5175,20 @@ func _open_match_replay_overlay() -> void:
 	close_button.pressed.connect(_close_match_replay_overlay)
 	header.add_child(close_button)
 
-	_match_replay_board_view = MatchReplayBoardViewScript.new()
-	_match_replay_board_view.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_match_replay_board_view.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	vbox.add_child(_match_replay_board_view)
+	_match_replay_message_label = Label.new()
+	_match_replay_message_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_match_replay_message_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_match_replay_message_label.add_theme_font_size_override("font_size", 16)
+	vbox.add_child(_match_replay_message_label)
+
+	_match_replay_image = TextureRect.new()
+	_match_replay_image.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_match_replay_image.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	_match_replay_image.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_match_replay_image.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_match_replay_image.mouse_filter = Control.MOUSE_FILTER_STOP
+	_match_replay_image.gui_input.connect(_on_match_replay_snapshot_gui_input)
+	vbox.add_child(_match_replay_image)
 
 	var footer := HBoxContainer.new()
 	footer.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -5128,7 +5221,8 @@ func _close_match_replay_overlay() -> void:
 	if _match_replay_overlay != null and is_instance_valid(_match_replay_overlay):
 		_match_replay_overlay.queue_free()
 	_match_replay_overlay = null
-	_match_replay_board_view = null
+	_match_replay_image = null
+	_match_replay_message_label = null
 	_match_replay_step_label = null
 	_match_replay_prev_button = null
 	_match_replay_next_button = null
@@ -5150,14 +5244,12 @@ func _refresh_match_replay_overlay_step() -> void:
 		return
 	_match_replay_step_index = clampi(_match_replay_step_index, 0, _match_replay_entries.size() - 1)
 	var entry := _match_replay_entries[_match_replay_step_index]
-	if _match_replay_board_view != null and is_instance_valid(_match_replay_board_view):
-		_match_replay_board_view.set_snapshot(
-			entry.get("state", {}),
-			str(entry.get("action_message", "")),
-			int(entry.get("viewer_player_index", 0)),
-			_match_replay_step_index,
-			_match_replay_entries.size()
-		)
+	var snapshot := entry.get("snapshot", null) as Texture2D
+	if _match_replay_message_label != null and is_instance_valid(_match_replay_message_label):
+		var message := str(entry.get("action_message", ""))
+		_match_replay_message_label.text = message if snapshot != null else "%s\nSnapshot is still rendering..." % message
+	if _match_replay_image != null and is_instance_valid(_match_replay_image):
+		_match_replay_image.texture = snapshot
 	if _match_replay_step_label != null and is_instance_valid(_match_replay_step_label):
 		_match_replay_step_label.text = "%d / %d" % [
 			_match_replay_step_index + 1,
@@ -5167,6 +5259,15 @@ func _refresh_match_replay_overlay_step() -> void:
 		_match_replay_prev_button.disabled = _match_replay_step_index <= 0
 	if _match_replay_next_button != null and is_instance_valid(_match_replay_next_button):
 		_match_replay_next_button.disabled = _match_replay_step_index >= _match_replay_entries.size() - 1
+
+func _on_match_replay_snapshot_gui_input(event: InputEvent) -> void:
+	if not (event is InputEventMouseButton):
+		return
+	var mouse_event := event as InputEventMouseButton
+	if not mouse_event.pressed or mouse_event.button_index != MOUSE_BUTTON_LEFT:
+		return
+	var width := _match_replay_image.size.x if _match_replay_image != null and is_instance_valid(_match_replay_image) else 0.0
+	_step_match_replay(1 if mouse_event.position.x >= width * 0.5 else -1)
 
 func _try_handle_match_replay_input(event: InputEvent) -> bool:
 	if not _is_match_replay_open():
@@ -8361,6 +8462,25 @@ func _get_board_row_width() -> float:
 func _get_separator_line_width() -> float:
 	return BoardZoneUI.get_zone_extent() * BOARD_MAIN_COLUMN_COUNT + BOARD_ZONE_COLUMN_GAP * (BOARD_MAIN_COLUMN_COUNT - 1.0)
 
+func _ensure_stats_panel_guard_label(panel: PanelContainer) -> Label:
+	if panel == null:
+		return null
+	var vbox := panel.get_node_or_null("StatsVBox") as VBoxContainer
+	if vbox == null:
+		return null
+	var guard_lbl := vbox.get_node_or_null("GuardLabel") as Label
+	if guard_lbl == null:
+		guard_lbl = Label.new()
+		guard_lbl.name = "GuardLabel"
+		guard_lbl.add_theme_font_size_override("font_size", 13)
+		vbox.add_child(guard_lbl)
+	var followers_lbl := vbox.get_node_or_null("FollowersLabel") as Label
+	if followers_lbl != null:
+		var followers_index := followers_lbl.get_index()
+		if guard_lbl.get_index() != followers_index - 1:
+			vbox.move_child(guard_lbl, followers_index)
+	return guard_lbl
+
 func _refresh_stats_panel(panel: PanelContainer, player: Player, show_mana: bool = true) -> void:
 	if panel == null or player == null:
 		return
@@ -8380,6 +8500,10 @@ func _refresh_stats_panel(panel: PanelContainer, player: Player, show_mana: bool
 		mana_lbl.visible = show_mana
 		if show_mana:
 			mana_lbl.text = "Mana: " + str(player.mana)
+	var guard_lbl := _ensure_stats_panel_guard_label(panel)
+	if guard_lbl != null:
+		guard_lbl.visible = player.guard > 0
+		guard_lbl.text = "Guard: " + str(player.guard)
 	var followers_lbl := panel.get_node_or_null("StatsVBox/FollowersLabel") as Label
 	if followers_lbl != null:
 		followers_lbl.text = "Followers:\n" + str(player.followers)
@@ -8467,6 +8591,11 @@ func _make_stats_panel(player: Player, show_mana: bool = true) -> PanelContainer
 		mana_lbl.name = "ManaLabel"
 		mana_lbl.add_theme_font_size_override("font_size", 13)
 		vbox.add_child(mana_lbl)
+	var guard_lbl := Label.new()
+	guard_lbl.name = "GuardLabel"
+	guard_lbl.add_theme_font_size_override("font_size", 13)
+	guard_lbl.visible = false
+	vbox.add_child(guard_lbl)
 	var fol_lbl := Label.new()
 	fol_lbl.name = "FollowersLabel"
 	fol_lbl.add_theme_font_size_override("font_size", 13)
@@ -25577,7 +25706,19 @@ func _on_structure_bonus_confirm_pressed(spin: SpinBox) -> void:
 	update_ui()
 
 func _on_structure_bonus_skip_pressed() -> void:
+	var power_uid := _pending_structure_bonus_power_uid
+	var structure_uid := _pending_structure_bonus_structure_uid
 	_hide_structure_bonus_prompt()
+	# Submit a 0-mana choice so the server clears its pending prompt. Without
+	# this, the held UI interaction gets re-emitted on the next state sync and
+	# the panel reappears, making Skip look like it does nothing.
+	if power_uid != "" and structure_uid != "" and game_input != null:
+		game_input.submit_action({
+			type = "apply_advanced_building_techniques",
+			power_uid = power_uid,
+			structure_uid = structure_uid,
+			mana_to_spend = 0,
+		})
 	_set_action_label_text("Skipped Advanced Building Techniques.")
 	update_ui()
 

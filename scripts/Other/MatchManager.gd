@@ -5693,6 +5693,12 @@ func _process_command_impl(command: Dictionary) -> bool:
 			game_manager.note_player_feedback(power.resolve_combat_support_choice(game_manager, attacker, chosen_cards))
 			move_validated.emit(command)
 			if continue_pending_attack:
+				# Consume the hunting_tactics prompt before resuming the attack so
+				# _advance_authoritative_priority() doesn't bail out on the still-
+				# pending interaction (which would leave the attack stuck on the
+				# stack in the no-interceptor case) and the intercept prompt emits
+				# immediately rather than being queued behind this entry.
+				_consume_active_command_prompt_for_completion("hunting_tactics_choice")
 				_continue_pending_attack_after_hunting_tactics_choice(attacker)
 			return true
 		"gugalanna_celestial_charge_choice":

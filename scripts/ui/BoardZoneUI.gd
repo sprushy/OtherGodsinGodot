@@ -1739,6 +1739,82 @@ func _apply_priority_response_style(style: StyleBoxFlat) -> void:
 	style.shadow_color = PRIORITY_RESPONSE_GLOW_COLOR
 	style.shadow_size = max(style.shadow_size, 16)
 
+# Centralized builder for ability-style badge controls. Every ability badge
+# (creature, board structure/equipment, god, Champion's Call, Tezcatlipoca
+# sacrifice/smoking mirror/tonal mastery, E2 Abzu modes, Nimue modes, White
+# Serpent medicine) is constructed through this helper so the Control/TextureRect
+# glow/click/hover wiring stays consistent. Callers keep their own positioning,
+# ready checks, click actions, modes and custom extras (e.g. Tez bloodstreaks).
+#
+# badge_left/top/right/bottom are the anchor offsets for PRESET_TOP_RIGHT.
+# mouse_filter_mode = -1 derives STOP-when-hover-text-present else IGNORE (the
+# creature/board/god convention); pass an explicit Control.MOUSE_FILTER_* to
+# override. extra_children_callback, if valid, is invoked as (badge) after the
+# icon is added so callers can attach bespoke children such as bloodstreaks.
+func _build_ability_badge(
+	overlay: Control,
+	card: Card,
+	badge_name: String,
+	texture: Texture2D,
+	badge_left: float,
+	badge_top: float,
+	badge_right: float,
+	badge_bottom: float,
+	badge_ready: bool,
+	clickable: bool,
+	hover_text: String,
+	click_action: String,
+	card_uid: String,
+	extra_value: Variant = null,
+	preview_card: Card = null,
+	icon_inset: float = 0.0,
+	dim_modulate: Color = Color(0.82, 0.82, 0.86, 0.9),
+	glow_color: Color = AVAILABLE_ABILITY_BADGE_GLOW_COLOR,
+	mouse_filter_mode: int = -1,
+	z_index: int = 31,
+	extra_children_callback: Callable = Callable()
+) -> void:
+	if overlay == null or texture == null:
+		return
+	var badge := Control.new()
+	badge.name = badge_name
+	if mouse_filter_mode == -1:
+		badge.mouse_filter = Control.MOUSE_FILTER_STOP if hover_text.strip_edges() != "" else Control.MOUSE_FILTER_IGNORE
+	else:
+		badge.mouse_filter = mouse_filter_mode
+	badge.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND if clickable else Control.CURSOR_ARROW
+	badge.z_index = z_index
+	badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	badge.offset_left = badge_left
+	badge.offset_top = badge_top
+	badge.offset_right = badge_right
+	badge.offset_bottom = badge_bottom
+
+	if _should_emphasize_available_ability_badge(card, badge_ready):
+		_add_badge_image_glow(badge, texture, glow_color, 6.0)
+
+	var icon := TextureRect.new()
+	icon.texture = texture
+	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	if icon_inset > 0.0:
+		icon.offset_left = icon_inset
+		icon.offset_top = icon_inset
+		icon.offset_right = -icon_inset
+		icon.offset_bottom = -icon_inset
+	icon.modulate = Color(1, 1, 1, 1) if badge_ready else dim_modulate
+	badge.add_child(icon)
+
+	if extra_children_callback.is_valid():
+		extra_children_callback.call(badge)
+
+	if clickable and click_action.strip_edges() != "" and card_uid != "":
+		_connect_badge_click_action(badge, click_action, card_uid, extra_value)
+	_connect_badge_hover(badge, hover_text, preview_card)
+	overlay.add_child(badge)
+
 func _add_champions_call_badge(overlay: Control, card: Card, is_ready: bool) -> void:
 	if overlay == null or card == null:
 		return
@@ -1750,35 +1826,29 @@ func _add_champions_call_badge(overlay: Control, card: Card, is_ready: bool) -> 
 	var god_uid := BoardZoneUI.get_action_point_card_uid(god)
 	if not _should_show_ability_badge_control(god, is_ready, clickable):
 		return
-	var badge := Control.new()
-	badge.name = "ChampionsCallBadge"
-	badge.tooltip_text = "Champion's Call"
-	badge.mouse_filter = Control.MOUSE_FILTER_STOP if clickable else Control.MOUSE_FILTER_IGNORE
-	badge.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-	badge.z_index = 30
-	badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
 	var badge_top := _get_badge_row_top() + GOD_ABILITY_BADGE_TOP_OFFSET
-	badge.offset_left = -6.0 - ABILITY_BADGE_SIZE
-	badge.offset_top = badge_top
-	badge.offset_right = -6
-	badge.offset_bottom = badge_top + ABILITY_BADGE_SIZE
-
-	if _should_emphasize_available_ability_badge(god, is_ready):
-		_add_badge_image_glow(badge, CHAMPIONS_CALL_BADGE_TEXTURE, AVAILABLE_ABILITY_BADGE_GLOW_COLOR, 6.0)
-
-	var icon := TextureRect.new()
-	icon.texture = CHAMPIONS_CALL_BADGE_TEXTURE
-	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	icon.modulate = Color(1, 1, 1, 1) if is_ready else Color(0.72, 0.72, 0.72, 0.72)
-	badge.add_child(icon)
-
-	if clickable:
-		_connect_badge_click_action(badge, "champions_call", god_uid)
-	_connect_badge_hover(badge, "Champion's Call", _get_hover_summoned_active_god(god))
-	overlay.add_child(badge)
+	_build_ability_badge(
+		overlay,
+		god,
+		"ChampionsCallBadge",
+		CHAMPIONS_CALL_BADGE_TEXTURE,
+		-6.0 - ABILITY_BADGE_SIZE,
+		badge_top,
+		-6,
+		badge_top + ABILITY_BADGE_SIZE,
+		is_ready,
+		clickable,
+		"Champion's Call",
+		"champions_call",
+		god_uid,
+		null,
+		_get_hover_summoned_active_god(god),
+		0.0,
+		Color(0.72, 0.72, 0.72, 0.72),
+		AVAILABLE_ABILITY_BADGE_GLOW_COLOR,
+		Control.MOUSE_FILTER_STOP if clickable else Control.MOUSE_FILTER_IGNORE,
+		30
+	)
 
 func _should_show_smoking_mirror_badge(card: Card) -> bool:
 	if not _is_tez_necoc_yaotl_card(card):
@@ -1840,33 +1910,30 @@ func _add_tez_tonal_mastery_badge(overlay: Control, card: Card) -> void:
 	if texture == null:
 		return
 
-	var badge := Control.new()
-	badge.name = "TezTonalMasteryBadge"
-	badge.mouse_filter = Control.MOUSE_FILTER_PASS
-	badge.mouse_default_cursor_shape = Control.CURSOR_ARROW
-	badge.z_index = 31
-	badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	badge.offset_left = TEZ_SECONDARY_BADGE_LEFT
-	badge.offset_top = TEZ_SECONDARY_BADGE_TOP
-	badge.offset_right = TEZ_SECONDARY_BADGE_RIGHT
-	badge.offset_bottom = TEZ_SECONDARY_BADGE_BOTTOM
-
-	var icon := TextureRect.new()
-	icon.texture = texture
-	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	badge.add_child(icon)
-
-	_connect_badge_hover(
-		badge,
+	_build_ability_badge(
+		overlay,
+		card,
+		"TezTonalMasteryBadge",
+		texture,
+		TEZ_SECONDARY_BADGE_LEFT,
+		TEZ_SECONDARY_BADGE_TOP,
+		TEZ_SECONDARY_BADGE_RIGHT,
+		TEZ_SECONDARY_BADGE_BOTTOM,
+		false,
+		false,
 		"Tonal Mastery: %d/%d tokens\nAt 3 tokens, gain 3 mana and reset." % [
 			token_count,
 			TEZ_TONAL_MASTERY_TOKEN_THRESHOLD
-		]
+		],
+		"",
+		"",
+		null,
+		null,
+		0.0,
+		Color(1, 1, 1, 1),
+		AVAILABLE_ABILITY_BADGE_GLOW_COLOR,
+		Control.MOUSE_FILTER_PASS
 	)
-	overlay.add_child(badge)
 
 func _add_smoking_mirror_badge(overlay: Control, card: Card) -> void:
 	if overlay == null or card == null:
@@ -1881,38 +1948,32 @@ func _add_smoking_mirror_badge(overlay: Control, card: Card) -> void:
 		and bool(card.call("can_resolve_necoc_yaotl_summon", game_manager))
 	if not _should_show_ability_badge_control(card, badge_ready, clickable):
 		return
-	var badge := Control.new()
-	badge.name = "SmokingMirrorBadge"
 	var hover_text := "Summon Tezcatlipoca, Active God"
 	if not badge_ready and game_manager != null and card.has_method("get_necoc_yaotl_summon_failure_reason"):
 		var failure_reason := str(card.call("get_necoc_yaotl_summon_failure_reason", game_manager))
 		if failure_reason != "":
 			hover_text = failure_reason
-	badge.mouse_filter = Control.MOUSE_FILTER_STOP if clickable else Control.MOUSE_FILTER_IGNORE
-	badge.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND if clickable else Control.CURSOR_ARROW
-	badge.z_index = 31
-	badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	badge.offset_left = TEZ_BADGE_LEFT
-	badge.offset_top = TEZ_PRIMARY_BADGE_TOP
-	badge.offset_right = TEZ_BADGE_RIGHT
-	badge.offset_bottom = TEZ_PRIMARY_BADGE_BOTTOM
-
-	if _should_emphasize_available_ability_badge(card, badge_ready):
-		_add_badge_image_glow(badge, SMOKING_MIRROR_BADGE_TEXTURE, AVAILABLE_ABILITY_BADGE_GLOW_COLOR, 6.0)
-
-	var icon := TextureRect.new()
-	icon.texture = SMOKING_MIRROR_BADGE_TEXTURE
-	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	icon.modulate = Color(1, 1, 1, 1) if badge_ready else Color(0.78, 0.74, 0.82, 0.86)
-	badge.add_child(icon)
-
-	if clickable:
-		_connect_badge_click_action(badge, "tez_necoc_yaotl", card_uid)
-	_connect_badge_hover(badge, hover_text, _get_hover_summoned_active_god(card))
-	overlay.add_child(badge)
+	_build_ability_badge(
+		overlay,
+		card,
+		"SmokingMirrorBadge",
+		SMOKING_MIRROR_BADGE_TEXTURE,
+		TEZ_BADGE_LEFT,
+		TEZ_PRIMARY_BADGE_TOP,
+		TEZ_BADGE_RIGHT,
+		TEZ_PRIMARY_BADGE_BOTTOM,
+		badge_ready,
+		clickable,
+		hover_text,
+		"tez_necoc_yaotl",
+		card_uid,
+		null,
+		_get_hover_summoned_active_god(card),
+		0.0,
+		Color(0.78, 0.74, 0.82, 0.86),
+		AVAILABLE_ABILITY_BADGE_GLOW_COLOR,
+		Control.MOUSE_FILTER_STOP if clickable else Control.MOUSE_FILTER_IGNORE
+	)
 
 func _add_tez_sacrifice_badge(overlay: Control, card: Card) -> void:
 	if overlay == null or card == null:
@@ -1933,41 +1994,34 @@ func _add_tez_sacrifice_badge(overlay: Control, card: Card) -> void:
 	var clickable := not _is_enemy and card.get_controller() == _get_viewer_player()
 	if not _should_show_ability_badge_control(card, badge_ready, clickable):
 		return
-
-	var badge := Control.new()
-	badge.name = "TezSacrificeBadge"
 	var hover_text := "%d/%d sacrifices" % [
 		sacrifice_count,
 		TEZ_REQUIRED_SACRIFICES
 	]
 	hover_text += "\nSacrificed levels: %d" % _get_tez_necoc_yaotl_total_level(card)
-	badge.mouse_filter = Control.MOUSE_FILTER_STOP if clickable else Control.MOUSE_FILTER_IGNORE
-	badge.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND if clickable else Control.CURSOR_ARROW
-	badge.z_index = 31
-	badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	badge.offset_left = TEZ_BADGE_LEFT
-	badge.offset_top = TEZ_PRIMARY_BADGE_TOP
-	badge.offset_right = TEZ_BADGE_RIGHT
-	badge.offset_bottom = TEZ_PRIMARY_BADGE_BOTTOM
-
-	if _should_emphasize_available_ability_badge(card, badge_ready):
-		_add_badge_image_glow(badge, TEZ_SACRIFICE_BADGE_TEXTURE, AVAILABLE_ABILITY_BADGE_GLOW_COLOR, 6.0)
-
-	var icon := TextureRect.new()
-	icon.texture = TEZ_SACRIFICE_BADGE_TEXTURE
-	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	icon.modulate = Color(1, 1, 1, 1) if badge_ready else Color(0.86, 0.82, 0.76, 0.92)
-	badge.add_child(icon)
-
-	_add_tez_bloodstreaks(badge, sacrifice_count)
-
-	if clickable:
-		_connect_badge_click_action(badge, "tez_necoc_yaotl", card_uid)
-	_connect_badge_hover(badge, hover_text, _get_hover_summoned_active_god(card))
-	overlay.add_child(badge)
+	_build_ability_badge(
+		overlay,
+		card,
+		"TezSacrificeBadge",
+		TEZ_SACRIFICE_BADGE_TEXTURE,
+		TEZ_BADGE_LEFT,
+		TEZ_PRIMARY_BADGE_TOP,
+		TEZ_BADGE_RIGHT,
+		TEZ_PRIMARY_BADGE_BOTTOM,
+		badge_ready,
+		clickable,
+		hover_text,
+		"tez_necoc_yaotl",
+		card_uid,
+		null,
+		_get_hover_summoned_active_god(card),
+		0.0,
+		Color(0.86, 0.82, 0.76, 0.92),
+		AVAILABLE_ABILITY_BADGE_GLOW_COLOR,
+		Control.MOUSE_FILTER_STOP if clickable else Control.MOUSE_FILTER_IGNORE,
+		31,
+		Callable(self, "_add_tez_bloodstreaks").bind(sacrifice_count)
+	)
 
 func _get_creature_ability_badge_texture(card: Card) -> Texture2D:
 	if card == null:
@@ -2137,37 +2191,27 @@ func _add_e2_abzu_mode_badge(
 	if not _should_show_ability_badge_control(card, badge_ready, clickable):
 		return
 	var badge_right := _get_creature_ability_badge_right(card)
-	var badge := Control.new()
-	badge.name = "E2AbzuBadge_%s" % mode
-	badge.mouse_filter = Control.MOUSE_FILTER_STOP
-	badge.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND if clickable else Control.CURSOR_ARROW
-	badge.z_index = 31
-	badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	badge.offset_left = badge_right - CREATURE_ABILITY_BADGE_SIZE
-	badge.offset_top = top
-	badge.offset_right = badge_right
-	badge.offset_bottom = top + CREATURE_ABILITY_BADGE_SIZE
-
-	if _should_emphasize_available_ability_badge(card, badge_ready):
-		_add_badge_image_glow(badge, texture, AVAILABLE_ABILITY_BADGE_GLOW_COLOR, 6.0)
-
-	var icon := TextureRect.new()
-	icon.texture = texture
-	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	icon.offset_left = E2_ABZU_BADGE_ICON_INSET
-	icon.offset_top = E2_ABZU_BADGE_ICON_INSET
-	icon.offset_right = -E2_ABZU_BADGE_ICON_INSET
-	icon.offset_bottom = -E2_ABZU_BADGE_ICON_INSET
-	icon.modulate = Color(1, 1, 1, 1) if badge_ready else Color(0.78, 0.82, 0.88, 0.88)
-	badge.add_child(icon)
-
-	if clickable and card_uid != "":
-		_connect_badge_click_action(badge, "e2_abzu", card_uid, mode)
-	_connect_badge_hover(badge, hover_text)
-	overlay.add_child(badge)
+	_build_ability_badge(
+		overlay,
+		card,
+		"E2AbzuBadge_%s" % mode,
+		texture,
+		badge_right - CREATURE_ABILITY_BADGE_SIZE,
+		top,
+		badge_right,
+		top + CREATURE_ABILITY_BADGE_SIZE,
+		badge_ready,
+		clickable,
+		hover_text,
+		"e2_abzu",
+		card_uid,
+		mode,
+		null,
+		E2_ABZU_BADGE_ICON_INSET,
+		Color(0.78, 0.82, 0.88, 0.88),
+		AVAILABLE_ABILITY_BADGE_GLOW_COLOR,
+		Control.MOUSE_FILTER_STOP
+	)
 
 func _add_e2_abzu_badges(overlay: Control, card: Card) -> void:
 	if overlay == null or not (card is E2Abzu):
@@ -2240,33 +2284,27 @@ func _add_nimue_mode_badge(
 	if not _should_show_ability_badge_control(card, badge_ready, clickable):
 		return
 	var badge_right := _get_creature_ability_badge_right(card)
-	var badge := Control.new()
-	badge.name = "NimueBadge_%s" % mode
-	badge.mouse_filter = Control.MOUSE_FILTER_STOP
-	badge.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND if clickable else Control.CURSOR_ARROW
-	badge.z_index = 31
-	badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	badge.offset_left = badge_right - CREATURE_ABILITY_BADGE_SIZE
-	badge.offset_top = top
-	badge.offset_right = badge_right
-	badge.offset_bottom = top + CREATURE_ABILITY_BADGE_SIZE
-
-	if _should_emphasize_available_ability_badge(card, badge_ready):
-		_add_badge_image_glow(badge, texture, AVAILABLE_ABILITY_BADGE_GLOW_COLOR, 6.0)
-
-	var icon := TextureRect.new()
-	icon.texture = texture
-	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	icon.modulate = Color(1, 1, 1, 1) if badge_ready else Color(0.78, 0.82, 0.88, 0.88)
-	badge.add_child(icon)
-
-	if clickable and card_uid != "":
-		_connect_badge_click_action(badge, "nimue", card_uid, mode)
-	_connect_badge_hover(badge, hover_text)
-	overlay.add_child(badge)
+	_build_ability_badge(
+		overlay,
+		card,
+		"NimueBadge_%s" % mode,
+		texture,
+		badge_right - CREATURE_ABILITY_BADGE_SIZE,
+		top,
+		badge_right,
+		top + CREATURE_ABILITY_BADGE_SIZE,
+		badge_ready,
+		clickable,
+		hover_text,
+		"nimue",
+		card_uid,
+		mode,
+		null,
+		0.0,
+		Color(0.78, 0.82, 0.88, 0.88),
+		AVAILABLE_ABILITY_BADGE_GLOW_COLOR,
+		Control.MOUSE_FILTER_STOP
+	)
 
 func _add_nimue_badges(overlay: Control, card: Card) -> void:
 	if overlay == null or not (card is Nimue):
@@ -2321,47 +2359,32 @@ func _add_white_serpent_medicine_badge(overlay: Control, card: Card) -> void:
 	)
 	if not _should_show_ability_badge_control(card, badge_ready, clickable):
 		return
-
 	var badge_right := _get_creature_ability_badge_right(card)
 	var badge_top := _get_badge_row_top() + CREATURE_ABILITY_BADGE_TOP_OFFSET + CREATURE_ABILITY_BADGE_SIZE + 4.0
-	var badge := Control.new()
-	badge.name = "WhiteSerpentMedicineBadge"
-	badge.mouse_filter = Control.MOUSE_FILTER_STOP
-	badge.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND if clickable else Control.CURSOR_ARROW
-	badge.z_index = 31
-	badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	badge.offset_left = badge_right - CREATURE_ABILITY_BADGE_SIZE
-	badge.offset_top = badge_top
-	badge.offset_right = badge_right
-	badge.offset_bottom = badge_top + CREATURE_ABILITY_BADGE_SIZE
-
-	if _should_emphasize_available_ability_badge(card, badge_ready):
-		_add_badge_image_glow(badge, WHITE_SERPENT_MEDICINE_BADGE_TEXTURE, AVAILABLE_ABILITY_BADGE_GLOW_COLOR, 6.0)
-
-	var icon := TextureRect.new()
-	icon.texture = WHITE_SERPENT_MEDICINE_BADGE_TEXTURE
-	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	icon.modulate = Color(1, 1, 1, 1) if badge_ready else Color(0.82, 0.82, 0.86, 0.9)
-	badge.add_child(icon)
-
-	if clickable:
-		_connect_badge_click_action(
-			badge,
-			"creature_ability_option",
-			BoardZoneUI.get_action_point_card_uid(card),
-			"medicine"
-		)
-	_connect_badge_hover(
-		badge,
+	_build_ability_badge(
+		overlay,
+		card,
+		"WhiteSerpentMedicineBadge",
+		WHITE_SERPENT_MEDICINE_BADGE_TEXTURE,
+		badge_right - CREATURE_ABILITY_BADGE_SIZE,
+		badge_top,
+		badge_right,
+		badge_top + CREATURE_ABILITY_BADGE_SIZE,
+		badge_ready,
+		clickable,
 		BaseCardScript.apply_keyword_hints(BaseCardScript.apply_action_cost_symbols(
 			"Medicine ([b]Activate[/b], [b]Spd[/b] 2): Negate enemy effects targeting your cards until end of turn.",
 			card
-		))
+		)),
+		"creature_ability_option",
+		BoardZoneUI.get_action_point_card_uid(card),
+		"medicine",
+		null,
+		0.0,
+		Color(0.82, 0.82, 0.86, 0.9),
+		AVAILABLE_ABILITY_BADGE_GLOW_COLOR,
+		Control.MOUSE_FILTER_STOP
 	)
-	overlay.add_child(badge)
 
 func _add_creature_ability_badge(overlay: Control, card: Card) -> void:
 	if overlay == null or card == null or card.card_type != Card.CardType.CREATURE or card.is_god:
@@ -2389,34 +2412,21 @@ func _add_creature_ability_badge(overlay: Control, card: Card) -> void:
 	var hover_text := _get_creature_ability_badge_hover_text(card)
 	var badge_right := _get_creature_ability_badge_right(card)
 	var badge_top := _get_badge_row_top() + CREATURE_ABILITY_BADGE_TOP_OFFSET
-
-	var badge := Control.new()
-	badge.name = "CreatureAbilityBadge"
-	badge.mouse_filter = Control.MOUSE_FILTER_STOP if hover_text.strip_edges() != "" else Control.MOUSE_FILTER_IGNORE
-	badge.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND if clickable else Control.CURSOR_ARROW
-	badge.z_index = 31
-	badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	badge.offset_left = badge_right - CREATURE_ABILITY_BADGE_SIZE
-	badge.offset_top = badge_top
-	badge.offset_right = badge_right
-	badge.offset_bottom = badge_top + CREATURE_ABILITY_BADGE_SIZE
-
-	if _should_emphasize_available_ability_badge(card, badge_ready):
-		_add_badge_image_glow(badge, texture, AVAILABLE_ABILITY_BADGE_GLOW_COLOR, 6.0)
-
-	var icon := TextureRect.new()
-	icon.texture = texture
-	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	icon.modulate = Color(1, 1, 1, 1) if badge_ready else Color(0.82, 0.82, 0.86, 0.9)
-	badge.add_child(icon)
-
-	if clickable and card_uid != "":
-		_connect_badge_click_action(badge, "creature_ability", card_uid)
-	_connect_badge_hover(badge, hover_text)
-	overlay.add_child(badge)
+	_build_ability_badge(
+		overlay,
+		card,
+		"CreatureAbilityBadge",
+		texture,
+		badge_right - CREATURE_ABILITY_BADGE_SIZE,
+		badge_top,
+		badge_right,
+		badge_top + CREATURE_ABILITY_BADGE_SIZE,
+		badge_ready,
+		clickable,
+		hover_text,
+		"creature_ability",
+		card_uid
+	)
 
 func _add_board_card_custom_ability_badge(overlay: Control, card: Card) -> void:
 	if overlay == null or card == null:
@@ -2441,34 +2451,21 @@ func _add_board_card_custom_ability_badge(overlay: Control, card: Card) -> void:
 	var hover_text := _get_creature_ability_badge_hover_text(card)
 	var badge_right := _get_creature_ability_badge_right(card)
 	var badge_top := _get_badge_row_top() + CREATURE_ABILITY_BADGE_TOP_OFFSET
-
-	var badge := Control.new()
-	badge.name = "BoardCardCustomAbilityBadge"
-	badge.mouse_filter = Control.MOUSE_FILTER_STOP if hover_text.strip_edges() != "" else Control.MOUSE_FILTER_IGNORE
-	badge.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND if clickable else Control.CURSOR_ARROW
-	badge.z_index = 31
-	badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	badge.offset_left = badge_right - CREATURE_ABILITY_BADGE_SIZE
-	badge.offset_top = badge_top
-	badge.offset_right = badge_right
-	badge.offset_bottom = badge_top + CREATURE_ABILITY_BADGE_SIZE
-
-	if _should_emphasize_available_ability_badge(card, badge_ready):
-		_add_badge_image_glow(badge, texture, AVAILABLE_ABILITY_BADGE_GLOW_COLOR, 6.0)
-
-	var icon := TextureRect.new()
-	icon.texture = texture
-	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	icon.modulate = Color(1, 1, 1, 1) if badge_ready else Color(0.82, 0.82, 0.86, 0.9)
-	badge.add_child(icon)
-
-	if clickable and card_uid != "":
-		_connect_badge_click_action(badge, "creature_ability", card_uid)
-	_connect_badge_hover(badge, hover_text)
-	overlay.add_child(badge)
+	_build_ability_badge(
+		overlay,
+		card,
+		"BoardCardCustomAbilityBadge",
+		texture,
+		badge_right - CREATURE_ABILITY_BADGE_SIZE,
+		badge_top,
+		badge_right,
+		badge_top + CREATURE_ABILITY_BADGE_SIZE,
+		badge_ready,
+		clickable,
+		hover_text,
+		"creature_ability",
+		card_uid
+	)
 
 func _add_god_custom_ability_badge(overlay: Control, card: Card) -> void:
 	if overlay == null or card == null or not card.is_god:
@@ -2494,38 +2491,30 @@ func _add_god_custom_ability_badge(overlay: Control, card: Card) -> void:
 	if not _should_show_ability_badge_control(card, badge_ready, clickable):
 		return
 	var hover_text := _get_creature_ability_badge_hover_text(card)
-
-	var badge := Control.new()
-	badge.name = "GodCustomAbilityBadge"
-	badge.mouse_filter = Control.MOUSE_FILTER_STOP if hover_text.strip_edges() != "" else Control.MOUSE_FILTER_IGNORE
-	badge.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND if clickable else Control.CURSOR_ARROW
-	badge.z_index = 31
-	badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
 	var badge_top := _get_badge_row_top() + 26.0 + GOD_ABILITY_BADGE_TOP_OFFSET
 	if card.card_name == "Guan Yu":
 		badge_top = _get_badge_row_top() + GOD_ABILITY_BADGE_TOP_OFFSET + ABILITY_BADGE_SIZE + 4.0
-	badge.offset_left = -6.0 - ABILITY_BADGE_SIZE
-	badge.offset_top = badge_top
-	badge.offset_right = -6
-	badge.offset_bottom = badge_top + ABILITY_BADGE_SIZE
-
-	if _should_emphasize_available_ability_badge(card, badge_ready):
-		_add_badge_image_glow(badge, texture, _get_god_ability_badge_glow_color(card), 6.0)
-
-	var icon := TextureRect.new()
-	icon.texture = texture
-	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	icon.modulate = Color(1, 1, 1, 1) if badge_ready else Color(0.82, 0.82, 0.86, 0.9)
-	badge.add_child(icon)
-
 	var card_uid := BoardZoneUI.get_action_point_card_uid(card)
-	if clickable:
-		_connect_badge_click_action(badge, "god_ability", card_uid)
-	_connect_badge_hover(badge, hover_text)
-	overlay.add_child(badge)
+	_build_ability_badge(
+		overlay,
+		card,
+		"GodCustomAbilityBadge",
+		texture,
+		-6.0 - ABILITY_BADGE_SIZE,
+		badge_top,
+		-6,
+		badge_top + ABILITY_BADGE_SIZE,
+		badge_ready,
+		clickable,
+		hover_text,
+		"god_ability",
+		card_uid,
+		null,
+		null,
+		0.0,
+		Color(0.82, 0.82, 0.86, 0.9),
+		_get_god_ability_badge_glow_color(card)
+	)
 
 func _get_tez_valid_sacrifices(card: Card) -> Array:
 	if game_manager == null or not _is_tez_necoc_yaotl_card(card) or not card.has_method("get_valid_targets"):
