@@ -26,8 +26,6 @@ func on_after_combat(game_manager: GameManager, opposing_card: Card) -> void:
 		return
 	if abilities_suppressed():
 		return
-	if current_zone == null or not current_zone.is_board_zone():
-		return
 	if opposing_card.card_type != Card.CardType.CREATURE:
 		return
 	if opposing_card.current_zone == null or not opposing_card.current_zone.is_board_zone():

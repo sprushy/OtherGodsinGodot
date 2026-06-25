@@ -4,7 +4,7 @@ Read this first on a fresh thread, then inspect the files relevant to the user's
 
 ## Project Shape
 
-- Engine target is Godot 4.6.x. The exact CI/export patch version is stored in `.godot-version` and loaded by `.github/workflows/windows-release.yml`; debug/editor runs should use the same Godot patch version as the deployed server to avoid scene RPC checksum mismatches.
+- Engine target is Godot 4.7 stable. The CI/export runtime marker is stored in `.godot-version` and loaded by `.github/workflows/windows-release.yml`; debug/editor runs should use the same Godot version as the deployed server to avoid scene RPC checksum mismatches.
 - Main configured scene is `res://scenes/main_3d.tscn`, which runs `scripts/three_d/Main3D.gd`.
 - `Main3D.gd` embeds `res://scenes/mainfork.tscn` into a viewport/flat 2D canvas. Server-mode launches bypass the 3D shell and load the original scene directly.
 - `scripts/Other/MainMenu.gd` owns the menu, embedded game selection, deck builder entry, practice Thor mode, update prompts, smoke modes, and lobby UI flow.

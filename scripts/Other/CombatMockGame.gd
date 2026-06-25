@@ -3943,8 +3943,7 @@ func _process(_delta: float) -> void:
 	_update_hand_hover_preview()
 	_update_hand_context_menu_dismissal()
 	_sync_board_creature_drag_preview_from_input_state()
-	if has_method("_sync_tez_titlacauan_cursor_overlay"):
-		call("_sync_tez_titlacauan_cursor_overlay")
+	_sync_tez_titlacauan_cursor_overlay()
 
 func _sync_board_creature_drag_preview_from_input_state() -> void:
 	if not _bdrag_active:
@@ -4648,9 +4647,9 @@ func _capture_action_log_message(force: bool = false) -> void:
 		return
 	if _is_internal_priority_log_message(message):
 		return
-	if _should_suppress_action_log_echo(message, force):
-		return
 	if not force and message == _last_logged_action_text:
+		return
+	if _should_suppress_action_log_echo(message, force):
 		return
 	_last_logged_action_text = message
 	_action_log_messages.append(message)
@@ -7557,6 +7556,7 @@ func _show_hand_hover_preview(vc: VisualCard) -> void:
 	_hand_hover_preview = preview
 	_hand_hover_preview_card = large_vc
 	_hand_hover_preview_keywords = keywords_panel
+	_position_hand_hover_preview()
 	call_deferred("_position_hand_hover_preview")
 
 func _position_hand_hover_preview() -> void:
@@ -7667,23 +7667,23 @@ func _update_hand_hover_preview() -> void:
 		_position_hand_hover_preview()
 
 func _any_hand_card_interacting() -> bool:
-	for hand_vc in _hand_visual_cards + _enemy_hand_visual_cards:
+	return _any_hand_card_list_interacting(_hand_visual_cards) \
+		or _any_hand_card_list_interacting(_enemy_hand_visual_cards)
+
+func _any_hand_card_list_interacting(cards: Array) -> bool:
+	for hand_vc in cards:
 		var vc := hand_vc as VisualCard
 		if vc != null and is_instance_valid(vc) and vc.is_hand_interacting():
 			return true
 	return false
 
 func _find_hand_hover_card_at(global_pos: Vector2) -> VisualCard:
-	var hover_cards := _hand_visual_cards + _enemy_hand_visual_cards
-	for i in range(hover_cards.size() - 1, -1, -1):
-		var vc: VisualCard = hover_cards[i]
-		if vc != null \
-				and is_instance_valid(vc) \
-				and _get_live_hand_hover_source_side(vc) != 0 \
-				and vc.visible \
-				and not vc.is_hand_interacting() \
-				and vc.contains_global_point(global_pos):
-			return vc
+	var hovered_vc := _find_hand_hover_card_in_list(_enemy_hand_visual_cards, global_pos)
+	if hovered_vc != null:
+		return hovered_vc
+	hovered_vc = _find_hand_hover_card_in_list(_hand_visual_cards, global_pos)
+	if hovered_vc != null:
+		return hovered_vc
 	if _hand_hover_preview != null and is_instance_valid(_hand_hover_preview):
 		if _get_live_hand_hover_source_side(_hand_hover_vc) == 0:
 			_hide_hand_hover_preview()
@@ -7692,6 +7692,18 @@ func _find_hand_hover_card_at(global_pos: Vector2) -> VisualCard:
 	if _is_hand_context_menu_active() \
 			and _control_global_rect_has_point(_context_menu, global_pos, _HAND_CONTEXT_MENU_KEEPALIVE_MARGIN):
 		return _get_hand_context_menu_source_vc()
+	return null
+
+func _find_hand_hover_card_in_list(cards: Array, global_pos: Vector2) -> VisualCard:
+	for i in range(cards.size() - 1, -1, -1):
+		var vc := cards[i] as VisualCard
+		if vc != null \
+				and is_instance_valid(vc) \
+				and _get_live_hand_hover_source_side(vc) != 0 \
+				and vc.visible \
+				and not vc.is_hand_interacting() \
+				and vc.contains_global_point(global_pos):
+			return vc
 	return null
 
 func _control_contains_global_point(control: Control, global_pos: Vector2) -> bool:
@@ -9890,6 +9902,12 @@ func _resolve_hati_moon_hunt(zone: Zone) -> void:
 	if hati == null or game_manager == null:
 		_clear_hati_moon_hunt_state()
 		update_ui()
+		return
+	if not hati.can_use_moon_hunt_summon(game_manager):
+		_clear_hati_moon_hunt_state()
+		_set_action_label_text("Moon Hunt cannot be paid right now.")
+		update_ui()
+		_show_next_hati_prompt()
 		return
 	if sacrifice_target == null:
 		_set_action_label_text("Hati: choose a friendly creature to sacrifice first.")
@@ -16416,8 +16434,26 @@ func _queue_huginn_perish_prime_prompt(card: Huginn, prompt_targets: Array = [])
 		return
 	if not prompt_targets.is_empty():
 		_queued_huginn_prime_prompt_targets[card.uid] = prompt_targets.duplicate()
+	if _active_huginn_prime_prompt == card or card in _pending_huginn_prime_prompts:
+		return
 	_pending_huginn_prime_prompts.append(card)
 	call_deferred("_show_next_huginn_perish_prime_prompt")
+
+func _consume_huginn_perish_prime_prompt(source_uid: String = "") -> void:
+	if source_uid.strip_edges() == "" and _active_huginn_prime_prompt != null:
+		source_uid = _active_huginn_prime_prompt.uid
+	if _active_huginn_prime_prompt != null and (source_uid == "" or _active_huginn_prime_prompt.uid == source_uid):
+		_active_huginn_prime_prompt = null
+	if source_uid == "":
+		if not _pending_huginn_prime_prompts.is_empty():
+			_pending_huginn_prime_prompts.remove_at(0)
+		return
+	var remaining: Array[Huginn] = []
+	for pending in _pending_huginn_prime_prompts:
+		if pending != null and pending.uid != source_uid:
+			remaining.append(pending)
+	_pending_huginn_prime_prompts = remaining
+	_queued_huginn_prime_prompt_targets.erase(source_uid)
 
 func _show_next_huginn_perish_prime_prompt() -> void:
 	if _active_huginn_prime_prompt != null:
@@ -16487,8 +16523,26 @@ func _queue_muninn_perish_prime_prompt(card: Muninn, prompt_targets: Array = [])
 		return
 	if not prompt_targets.is_empty():
 		_queued_muninn_prime_prompt_targets[card.uid] = prompt_targets.duplicate()
+	if _active_muninn_prime_prompt == card or card in _pending_muninn_prime_prompts:
+		return
 	_pending_muninn_prime_prompts.append(card)
 	call_deferred("_show_next_muninn_perish_prime_prompt")
+
+func _consume_muninn_perish_prime_prompt(source_uid: String = "") -> void:
+	if source_uid.strip_edges() == "" and _active_muninn_prime_prompt != null:
+		source_uid = _active_muninn_prime_prompt.uid
+	if _active_muninn_prime_prompt != null and (source_uid == "" or _active_muninn_prime_prompt.uid == source_uid):
+		_active_muninn_prime_prompt = null
+	if source_uid == "":
+		if not _pending_muninn_prime_prompts.is_empty():
+			_pending_muninn_prime_prompts.remove_at(0)
+		return
+	var remaining: Array[Muninn] = []
+	for pending in _pending_muninn_prime_prompts:
+		if pending != null and pending.uid != source_uid:
+			remaining.append(pending)
+	_pending_muninn_prime_prompts = remaining
+	_queued_muninn_prime_prompt_targets.erase(source_uid)
 
 func _show_next_muninn_perish_prime_prompt() -> void:
 	if _active_muninn_prime_prompt != null:
@@ -21409,24 +21463,15 @@ func _on_priority_response_chosen(card: Card) -> void:
 			targets = card.get_priority_field_targets(game_manager, top)
 		elif card.has_method("get_valid_targets"):
 			targets = card.get_valid_targets(game_manager)
+		var requires_target_selection := _requires_priority_target_selection(card)
 		if card is RavenStorm:
 			if targets.is_empty():
 				_set_action_label_text(card.card_name + " has no valid Sighting trigger.")
 				update_ui()
 				return
-			var choose_raven_storm_attacker := func(chosen_target: Card) -> void:
-				_begin_raven_storm_priority_placement(card, chosen_target)
-			_show_card_selection_overlay(
-				"Choose the attacker for " + card.card_name,
-				targets,
-				choose_raven_storm_attacker,
-				Callable(),
-				_get_selection_cursor_mode_for_source(card)
-			)
-			return
 
 		if _is_networked_client:
-			if targets.is_empty():
+			if targets.is_empty() or not requires_target_selection:
 				game_input.submit_action({
 					type = "play_priority_ability",
 					source_uid = card.uid,
@@ -21447,7 +21492,7 @@ func _on_priority_response_chosen(card: Card) -> void:
 			)
 			return
 
-		if not targets.is_empty():
+		if not targets.is_empty() and requires_target_selection:
 			var choose_local_priority_target := func(chosen_target: Card) -> void:
 				_queue_targeted_ability_action(
 					card,
@@ -25649,6 +25694,12 @@ func _apply_client_prompt_submission_followup(command: Dictionary) -> void:
 		"humbaba_augury_choice":
 			_consume_current_humbaba_prompt()
 			call_deferred("_show_next_humbaba_augury_prompt")
+		"huginn_perish_prime_choice":
+			_consume_huginn_perish_prime_prompt(str(command.get("source_uid", "")))
+			call_deferred("_show_next_huginn_perish_prime_prompt")
+		"muninn_perish_prime_choice":
+			_consume_muninn_perish_prime_prompt(str(command.get("source_uid", "")))
+			call_deferred("_show_next_muninn_perish_prime_prompt")
 		"wheel_of_fire_turn_start_choice":
 			_consume_current_wheel_of_fire_prompt()
 			call_deferred("_show_next_wheel_of_fire_turn_start_prompt")

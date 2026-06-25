@@ -7,9 +7,10 @@ const CLOUD_TEXTURE_PATH := "res://images/ui/stealth_fog/lelu_cloud_noise_tiled.
 const DETAIL_TEXTURE_PATH := "res://images/ui/stealth_fog/seamless_noise_02.png"
 const MIST_LAYER_COUNT := 2
 const CURSOR_EFFECT_RADIUS_PIXELS := 52.0
-const CURSOR_TRAIL_LIFETIME := 1.4
-const CURSOR_TRAIL_MIN_DISTANCE := 8.0
-const CURSOR_TRAIL_COUNT := 6
+const CURSOR_CENTER_OFFSET_PIXELS := Vector2.ZERO
+const CURSOR_TRAIL_LIFETIME := 1.65
+const CURSOR_TRAIL_MIN_DISTANCE := 6.5
+const CURSOR_TRAIL_COUNT := 7
 
 static var _shader_cache: Shader = null
 static var _smoke_texture_cache: Texture2D = null
@@ -52,6 +53,18 @@ func _process(delta: float) -> void:
 	_refresh_cursor_motion()
 	_sync_cursor_shader_parameters()
 	_animate_mist_layers()
+
+func refresh_cursor_state() -> void:
+	if not is_inside_tree() or is_queued_for_deletion():
+		return
+	_refresh_cursor_motion()
+	_sync_cursor_shader_parameters()
+
+func push_cursor_hotspot_position(global_hotspot_position: Vector2) -> void:
+	if not is_inside_tree() or is_queued_for_deletion():
+		return
+	_refresh_cursor_motion_at(global_hotspot_position + CURSOR_CENTER_OFFSET_PIXELS)
+	_sync_cursor_shader_parameters()
 
 func _build_mist_layers() -> void:
 	for i in range(MIST_LAYER_COUNT):
@@ -125,12 +138,14 @@ func _animate_mist_layers() -> void:
 		material.set_shader_parameter("layer_motion_offset", Vector2(sway_x, sway_y))
 
 func _refresh_cursor_motion() -> void:
+	_refresh_cursor_motion_at(get_global_mouse_position() + CURSOR_CENTER_OFFSET_PIXELS)
+
+func _refresh_cursor_motion_at(mouse_position: Vector2) -> void:
 	if size.x <= 0.0 or size.y <= 0.0:
 		_clear_cursor_motion()
 		return
 	var rect := get_global_rect()
 	var influence_rect := rect.grow(maxf(rect.size.x, rect.size.y) * 0.72)
-	var mouse_position := get_global_mouse_position()
 	if not influence_rect.has_point(mouse_position):
 		_clear_cursor_motion(true)
 		return
@@ -292,6 +307,7 @@ uniform vec4 cursor_trail_2 = vec4(-10.0, -10.0, 0.0, 0.18);
 uniform vec4 cursor_trail_3 = vec4(-10.0, -10.0, 0.0, 0.18);
 uniform vec4 cursor_trail_4 = vec4(-10.0, -10.0, 0.0, 0.18);
 uniform vec4 cursor_trail_5 = vec4(-10.0, -10.0, 0.0, 0.18);
+uniform vec4 cursor_trail_6 = vec4(-10.0, -10.0, 0.0, 0.18);
 uniform vec2 hover_clear_uv_min = vec2(2.0, 2.0);
 uniform vec2 hover_clear_uv_max = vec2(-1.0, -1.0);
 uniform vec2 layer_card_scale = vec2(1.0, 1.0);
@@ -412,6 +428,7 @@ void fragment() {
 	healing_clear = max(healing_clear, cursor_trail_field(uv, cursor_trail_3));
 	healing_clear = max(healing_clear, cursor_trail_field(uv, cursor_trail_4));
 	healing_clear = max(healing_clear, cursor_trail_field(uv, cursor_trail_5));
+	healing_clear = max(healing_clear, cursor_trail_field(uv, cursor_trail_6));
 	vec2 radial_push = normalize(to_cursor + vec2(0.0001, 0.0001)) * gust_field * 0.18;
 	vec2 stirred_uv = uv + radial_push;
 	vec2 drift = variant_drift * TIME * drift_speed + vec2(phase * 0.017, phase * 0.013);

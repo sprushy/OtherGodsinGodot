@@ -1033,6 +1033,8 @@ func _toggle_rotation() -> void:
 func apply_creature_drag_defensive_preview() -> bool:
 	if card_data == null or card_data.card_type != Card.CardType.CREATURE or not _dragging:
 		return false
+	if is_rotated and not _drag_stealth:
+		return true
 	_drag_stealth = false
 	if not is_rotated:
 		_toggle_rotation()
@@ -1042,6 +1044,8 @@ func apply_creature_drag_defensive_preview() -> bool:
 func apply_creature_drag_stealth_preview() -> bool:
 	if card_data == null or card_data.card_type != Card.CardType.CREATURE or not _dragging:
 		return false
+	if is_rotated and _drag_stealth:
+		return true
 	_drag_stealth = true
 	if not is_rotated:
 		_toggle_rotation()
@@ -1211,10 +1215,13 @@ func _process(delta: float) -> void:
 	# they are never one frame out of step (which caused the wobble when a tween
 	# owned rotation_degrees while _process owned position).
 	var cur := _drag_ghost.rotation_degrees
+	var rotation_changed := false
 	if cur != _drag_target_rotation:
 		var step := _DRAG_ROT_SPEED * delta
 		_drag_ghost.rotation_degrees = move_toward(cur, _drag_target_rotation, step)
-	_update_ghost_position()
+		rotation_changed = true
+	if rotation_changed:
+		_update_ghost_position()
 
 func _sync_creature_drag_preview_from_input_state() -> void:
 	if card_data == null or card_data.card_type != Card.CardType.CREATURE:
@@ -1379,6 +1386,7 @@ func _show_hover_panel() -> void:
 	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	panel.top_level = true
 	panel.z_index = _HOVER_PANEL_Z_INDEX
+	panel.visible = false
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color(0.05, 0.05, 0.12, 0.97)
 	style.border_color = Color(0.5, 0.7, 1.0)
@@ -1432,6 +1440,7 @@ func _show_hover_panel() -> void:
 	px = clampf(px, 4.0, max(4.0, vp_size.x - panel_size.x - 4.0))
 	var py := clampf(global_position.y, 4.0, max(4.0, vp_size.y - panel_size.y - 4.0))
 	panel.global_position = Vector2(px, py)
+	panel.visible = true
 
 	_hover_panel = panel
 

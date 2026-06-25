@@ -566,6 +566,7 @@ var _prepared_magical_hover_tween: Tween = null
 var _visual_state_card: Card = null
 var _visual_state_refresh_queued: bool = false
 var _badge_hover_popup: Control = null
+var _stealth_fog_overlay: Control = null
 
 const BASE_ZONE_EXTENT := 165.0
 const DROMI_BINDING_NAME := "Dromi"
@@ -2807,7 +2808,34 @@ func _add_attack_target_aura(overlay: Control) -> void:
 func _add_followers_attack_target_tint(overlay: Control) -> void:
 	_add_attack_target_aura(overlay)
 
-func _add_stealth_fog_overlay(overlay: Control, card: Card) -> void:
+func _take_stealth_fog_overlay_for_refresh(card: Card) -> Control:
+	if card == null or card.card_type != Card.CardType.CREATURE or not card.is_stealth:
+		return null
+	var fog_overlay := _stealth_fog_overlay
+	if fog_overlay == null or not is_instance_valid(fog_overlay) or fog_overlay.is_queued_for_deletion():
+		fog_overlay = _find_stealth_fog_overlay(self)
+	if fog_overlay == null or not is_instance_valid(fog_overlay) or fog_overlay.is_queued_for_deletion():
+		return null
+	if int(fog_overlay.get("variant_seed")) != _get_stealth_fog_overlay_seed(card):
+		return null
+	var parent := fog_overlay.get_parent()
+	if parent != null:
+		parent.remove_child(fog_overlay)
+	_stealth_fog_overlay = null
+	return fog_overlay
+
+func _find_stealth_fog_overlay(root: Node) -> Control:
+	if root == null:
+		return null
+	if root is Control and root.name == StealthFogOverlayScript.OVERLAY_NAME:
+		return root as Control
+	for child in root.get_children():
+		var found := _find_stealth_fog_overlay(child)
+		if found != null:
+			return found
+	return null
+
+func _add_stealth_fog_overlay(overlay: Control, card: Card, preserved_fog_overlay: Control = null) -> void:
 	if overlay == null or card == null:
 		return
 	if card.card_type != Card.CardType.CREATURE or not card.is_stealth:
@@ -2817,6 +2845,19 @@ func _add_stealth_fog_overlay(overlay: Control, card: Card) -> void:
 	if existing != null:
 		existing.set("fog_alpha", 0.42)
 		existing.set("variant_seed", fog_variant_seed)
+		_stealth_fog_overlay = existing
+		return
+	if preserved_fog_overlay != null and is_instance_valid(preserved_fog_overlay):
+		preserved_fog_overlay.name = StealthFogOverlayScript.OVERLAY_NAME
+		preserved_fog_overlay.set("fog_alpha", 0.42)
+		preserved_fog_overlay.set("variant_seed", fog_variant_seed)
+		preserved_fog_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		preserved_fog_overlay.clip_contents = false
+		preserved_fog_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		overlay.add_child(preserved_fog_overlay)
+		_stealth_fog_overlay = preserved_fog_overlay
+		if preserved_fog_overlay.has_method("refresh_cursor_state"):
+			preserved_fog_overlay.call("refresh_cursor_state")
 		return
 	var fog_overlay := StealthFogOverlayScript.new() as Control
 	fog_overlay.name = StealthFogOverlayScript.OVERLAY_NAME
@@ -2826,6 +2867,9 @@ func _add_stealth_fog_overlay(overlay: Control, card: Card) -> void:
 	fog_overlay.clip_contents = false
 	fog_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	overlay.add_child(fog_overlay)
+	_stealth_fog_overlay = fog_overlay
+	if fog_overlay.has_method("refresh_cursor_state"):
+		fog_overlay.call("refresh_cursor_state")
 
 func _get_stealth_fog_overlay_seed(card: Card) -> int:
 	var seed_parts: Array[String] = []
@@ -4766,6 +4810,8 @@ func _get_resting_z_index() -> int:
 func _refresh_display() -> void:
 	if not is_inside_tree() or is_queued_for_deletion():
 		return
+	var card: Card = _preview_card if _preview_card != null else (zone.cards[0] if zone.cards.size() > 0 else null)
+	var preserved_stealth_fog_overlay := _take_stealth_fog_overlay_for_refresh(card)
 	_hide_ability_popup()
 	_hide_badge_hover_popup()
 	_stop_prepared_magical_hover_shake()
@@ -4773,9 +4819,9 @@ func _refresh_display() -> void:
 	_raised_overlay = null
 	_prepared_magical_cover_art = null
 	_prepared_magical_cover_overlay = null
+	_stealth_fog_overlay = null
 	for child in get_children():
 		child.queue_free()
-	var card: Card = _preview_card if _preview_card != null else (zone.cards[0] if zone.cards.size() > 0 else null)
 	_sync_visual_state_card(card)
 	_refresh_mouse_cursor_shape(card)
 
@@ -4900,7 +4946,7 @@ func _refresh_display() -> void:
 				haze.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 				haze.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				fd_overlay.add_child(haze)
-			_add_stealth_fog_overlay(fd_overlay, card)
+			_add_stealth_fog_overlay(fd_overlay, card, preserved_stealth_fog_overlay)
 			_add_power_lock_overlay(fd_overlay, card)
 			_add_publicly_identified_card_affordance(fd_overlay, card)
 			if card.get_controller() == face_down_viewer and card.is_prepared and card.is_magical_card():
@@ -5174,7 +5220,7 @@ func _refresh_display() -> void:
 				haze.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 				haze.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				card_overlay.add_child(haze)
-			_add_stealth_fog_overlay(card_overlay, card)
+			_add_stealth_fog_overlay(card_overlay, card, preserved_stealth_fog_overlay)
 		elif card.art_path != "":
 			var tex: Texture2D = UITextureCacheScript.get_texture(card.art_path)
 			if tex:
@@ -5545,6 +5591,8 @@ func _is_draggable_creature() -> bool:
 	return true
 
 func _gui_input(event: InputEvent) -> void:
+	if event is InputEventMouseMotion:
+		_push_stealth_fog_cursor_from_motion(event as InputEventMouseMotion)
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 		if _is_draggable_creature():
 			creature_drag_started.emit(zone.cards[0], zone)
@@ -5571,6 +5619,27 @@ func _gui_input(event: InputEvent) -> void:
 				_hide_ability_popup()
 				_show_ability_popup()
 				accept_event()
+
+func _push_stealth_fog_cursor_from_motion(event: InputEventMouseMotion) -> void:
+	var fog_overlay := _get_live_stealth_fog_overlay()
+	if fog_overlay == null:
+		return
+	var cursor_hotspot := get_global_transform() * event.position
+	if fog_overlay.has_method("push_cursor_hotspot_position"):
+		fog_overlay.call("push_cursor_hotspot_position", cursor_hotspot)
+
+func _get_live_stealth_fog_overlay() -> Control:
+	if _stealth_fog_overlay != null \
+			and is_instance_valid(_stealth_fog_overlay) \
+			and not _stealth_fog_overlay.is_queued_for_deletion():
+		return _stealth_fog_overlay
+	_stealth_fog_overlay = _find_stealth_fog_overlay(self)
+	if _stealth_fog_overlay != null \
+			and is_instance_valid(_stealth_fog_overlay) \
+			and not _stealth_fog_overlay.is_queued_for_deletion():
+		return _stealth_fog_overlay
+	_stealth_fog_overlay = null
+	return null
 
 func _notification(what: int) -> void:
 	match what:
@@ -5755,11 +5824,13 @@ func _process(_delta: float) -> void:
 		return
 	if not is_inside_tree() or is_queued_for_deletion() or get_viewport() == null:
 		return
+	var mouse_pos := get_global_mouse_position()
+	var zone_rect := get_global_rect()
 	if _hovered \
 		and not _badge_hovered \
 		and not _is_mouse_over_owned_badge() \
 		and not _is_mouse_in_affordance_hover_area() \
-		and not get_global_rect().has_point(get_global_mouse_position()):
+		and not zone_rect.has_point(mouse_pos):
 		_hovered = false
 		_set_locked_power_cursor_active(false)
 		_notify_hover_card_options_changed(null)
@@ -5769,8 +5840,8 @@ func _process(_delta: float) -> void:
 		_update_hover_polling()
 		return
 	if _popup and is_instance_valid(_popup):
-		var over_zone  := get_global_rect().has_point(get_global_mouse_position())
-		var over_popup := _popup.get_global_rect().has_point(get_global_mouse_position())
+		var over_zone := zone_rect.has_point(mouse_pos)
+		var over_popup := _popup.get_global_rect().has_point(mouse_pos)
 		var over_badge := _badge_hovered or _is_mouse_over_owned_badge() or _is_mouse_in_affordance_hover_area()
 		if not over_zone and not over_popup and not over_badge:
 			_schedule_hide()

@@ -43,6 +43,9 @@ func can_respond_to_priority_action(action: CardAction, game_manager: GameManage
 		return false
 	return not get_priority_field_targets(game_manager, action).is_empty()
 
+func requires_priority_target_selection() -> bool:
+	return false
+
 func activate(game_manager: GameManager, activation_data = null) -> void:
 	if game_manager == null or card_owner == null:
 		return

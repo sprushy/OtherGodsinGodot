@@ -30,14 +30,14 @@ func can_use_moon_hunt_summon(game_manager: GameManager) -> bool:
 		return false
 	if get_valid_moon_hunt_sacrifices().is_empty():
 		return false
-	if get_moon_hunt_mana_cost(game_manager) > card_owner.mana:
+	if get_total_moon_hunt_mana_cost(game_manager) > card_owner.mana:
 		return false
 	return true
 
 func get_moon_hunt_prompt_text(game_manager: GameManager) -> String:
-	var extra_mana := get_moon_hunt_mana_cost(game_manager)
-	if extra_mana > 0:
-		return "Moon Hunt: sacrifice 1 friendly creature and pay %d mana to summon this Hati from your hand." % extra_mana
+	var total_mana := get_total_moon_hunt_mana_cost(game_manager)
+	if total_mana > 0:
+		return "Moon Hunt: sacrifice 1 friendly creature and pay %d mana to summon this Hati from your hand." % total_mana
 	return "Moon Hunt: sacrifice 1 friendly creature to summon this Hati from your hand."
 
 func get_moon_hunt_mana_cost(game_manager: GameManager) -> int:
@@ -46,6 +46,14 @@ func get_moon_hunt_mana_cost(game_manager: GameManager) -> int:
 	if card_owner.has_summoned_this_turn:
 		return MOON_HUNT_EXTRA_MANA
 	return 0
+
+func get_moon_hunt_summon_mana_cost(game_manager: GameManager) -> int:
+	if game_manager == null or card_owner == null:
+		return 0
+	return game_manager.get_creature_summon_mana_cost(card_owner, self, self, true)
+
+func get_total_moon_hunt_mana_cost(game_manager: GameManager) -> int:
+	return get_moon_hunt_mana_cost(game_manager) + get_moon_hunt_summon_mana_cost(game_manager)
 
 func get_valid_moon_hunt_sacrifices() -> Array[Card]:
 	var valid_targets: Array[Card] = []

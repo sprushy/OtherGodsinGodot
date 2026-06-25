@@ -4,7 +4,7 @@ class_name GameCursor
 const CURSOR_SOURCE := preload("res://images/ui/cursors/StealthFogCursor.png")
 const UIArtScalerScript = preload("res://scripts/ui/UIArtScaler.gd")
 
-const CURSOR_TARGET_HEIGHT := 67
+const CURSOR_TARGET_HEIGHT := 87
 const CURSOR_HOTSPOT_RATIO := Vector2(0.10, 0.08)
 const DEFAULT_CURSOR_SHAPES := [
 	Input.CURSOR_ARROW,

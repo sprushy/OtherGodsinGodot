@@ -27,7 +27,11 @@ jobs:
           if (-not $version) {
             throw ".godot-version is empty."
           }
-          "GODOT_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
+          $setupVersion = $version
+          if ($setupVersion -match '^\d+\.\d+$') {
+            $setupVersion = "$setupVersion.0"
+          }
+          "GODOT_VERSION=$setupVersion" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Stamp build version
         shell: pwsh
@@ -129,7 +133,11 @@ jobs:
           if (-not $version) {
             throw ".godot-version is empty."
           }
-          "GODOT_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
+          $setupVersion = $version
+          if ($setupVersion -match '^\d+\.\d+$') {
+            $setupVersion = "$setupVersion.0"
+          }
+          "GODOT_VERSION=$setupVersion" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Stamp build version
         shell: pwsh
@@ -187,7 +195,7 @@ jobs:
           fi
 
           godot_cpp_dir="$RUNNER_TEMP/godot-cpp"
-          git clone --depth 1 --branch 4.6 https://github.com/godotengine/godot-cpp.git "$godot_cpp_dir"
+          git clone --depth 1 --branch 4.7 https://github.com/godotengine/godot-cpp.git "$godot_cpp_dir"
 
           echo "SPARKLE_ROOT=$sparkle_root" >> "$GITHUB_ENV"
           echo "SPARKLE_FRAMEWORK_DIR=$sparkle_root" >> "$GITHUB_ENV"

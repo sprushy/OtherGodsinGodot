@@ -5,6 +5,7 @@ const UNLOCK_COST := 5
 const ATTACK_BUFF_SOURCE := "Hunting Tactics"
 const ATTACK_BUFF_EFFECT_TYPE := "hunting_tactics_attack_buff"
 const CANNOT_ATTACK_STATUS := "cannot_attack"
+const ATTACK_DECLARATION_CHOICE_META := "hunting_tactics_attack_declaration_choice_turns"
 const ART_PATH := "res://images/card_art/powers/HuntingTacticsEdit.png"
 
 func _init() -> void:
@@ -18,28 +19,64 @@ func _init() -> void:
 	artist = "Ricardo Zoppello"
 	art_path = ART_PATH
 
+func can_activate(_game_manager: GameManager) -> bool:
+	return false
+
 func on_creature_enters_combat(game_manager: GameManager, attacker: Card, _defender: Card) -> void:
 	if game_manager == null or attacker == null:
 		return
-	if not is_effectively_active():
+	if has_attack_declaration_choice_for(game_manager, attacker):
 		return
-	if attacker.get_controller() != card_owner:
-		return
-	if not _is_hunting_tactics_attacker(attacker):
+	if not can_offer_attack_support(attacker):
 		return
 
-	var default_supporters := get_support_choices(attacker)
-	if default_supporters.is_empty():
-		return
+	game_manager.decision_requested.emit(card_owner, "hunting_tactics", build_attack_support_prompt_data(attacker))
+
+func can_offer_attack_support(attacker: Card) -> bool:
+	if not can_check_attack_support_trigger(attacker):
+		return false
+	return not get_support_choices(attacker).is_empty()
+
+func can_check_attack_support_trigger(attacker: Card) -> bool:
+	if attacker == null:
+		return false
+	if not is_effectively_active():
+		return false
+	if card_owner == null or attacker.get_controller() != card_owner:
+		return false
+	if not _is_hunting_tactics_attacker(attacker):
+		return false
+	return true
+
+func build_attack_support_prompt_data(attacker: Card) -> Dictionary:
 	var supporter_uids: Array[String] = []
-	for supporter in default_supporters:
+	for supporter in get_support_choices(attacker):
 		if supporter != null:
 			supporter_uids.append(supporter.uid)
-	game_manager.decision_requested.emit(card_owner, "hunting_tactics", {
+	return {
 		source_uid = uid,
-		attacker_uid = attacker.uid,
+		attacker_uid = attacker.uid if attacker != null else "",
 		target_uids = supporter_uids,
-	})
+	}
+
+func has_attack_declaration_choice_for(game_manager: GameManager, attacker: Card) -> bool:
+	if game_manager == null or attacker == null:
+		return false
+	var raw_choices = attacker.get_meta(ATTACK_DECLARATION_CHOICE_META, {})
+	if not (raw_choices is Dictionary):
+		return false
+	var choices: Dictionary = raw_choices
+	return int(choices.get(uid, -1)) == game_manager.turn_number
+
+func note_attack_declaration_choice(game_manager: GameManager, attacker: Card) -> void:
+	if game_manager == null or attacker == null:
+		return
+	var choices: Dictionary = {}
+	var raw_choices = attacker.get_meta(ATTACK_DECLARATION_CHOICE_META, {})
+	if raw_choices is Dictionary:
+		choices = raw_choices.duplicate(true)
+	choices[uid] = game_manager.turn_number
+	attacker.set_meta(ATTACK_DECLARATION_CHOICE_META, choices)
 
 func get_support_choices(attacker: Card) -> Array[Card]:
 	var supporters: Array[Card] = []
@@ -59,6 +96,7 @@ func resolve_combat_support_choice(game_manager: GameManager, attacker: Card, ch
 		return card_name + " cannot resolve right now."
 	if attacker == null:
 		return card_name + " fizzles: the attacker is gone."
+	note_attack_declaration_choice(game_manager, attacker)
 	if attacker.current_zone == null or not attacker.current_zone.is_board_zone():
 		return "%s fizzles: %s is no longer on the field." % [card_name, attacker.card_name]
 	if attacker.get_controller() != card_owner:

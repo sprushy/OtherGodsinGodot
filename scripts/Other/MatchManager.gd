@@ -64,6 +64,7 @@ var anointing_source: Card = null # AnointingStatue
 var selected_attacker: Card = null
 var pending_attack_target = null # Card or Player
 var selected_interceptor: Card = null
+var _pending_hunting_tactics_attack_declaration: bool = false
 
 # Spell-specific targeting states
 var pending_blot_spell: BlotSacrifice = null
@@ -160,6 +161,7 @@ func reset_runtime_state() -> void:
 	_pending_turn_action_after_opponent_priority_command.clear()
 	_pending_turn_action_after_opponent_priority_sender_info.clear()
 	_replaying_turn_action_after_opponent_priority = false
+	_pending_hunting_tactics_attack_declaration = false
 	_active_turn_start_sequence_turn = -1
 	_turn_start_sequence_feedback = ""
 	_turn_start_priority_queued_turn = -1
@@ -3337,6 +3339,7 @@ func _clear_pending_attack_state() -> void:
 	selected_attacker = null
 	selected_interceptor = null
 	pending_attack_target = null
+	_pending_hunting_tactics_attack_declaration = false
 
 func _has_unresolved_stack_action_window() -> bool:
 	if game_manager == null:
@@ -3411,6 +3414,54 @@ func _resolve_authoritative_headless_attack() -> void:
 	game_manager.push_to_stack(attack_action)
 	_request_ui_refresh()
 	_advance_authoritative_priority()
+
+func _get_hunting_tactics_powers_for_attack(attacker: Card) -> Array[HuntingTactics]:
+	var powers: Array[HuntingTactics] = []
+	if attacker == null:
+		return powers
+	var controller := attacker.get_controller()
+	if controller == null:
+		return powers
+	for zone in controller.power_zones:
+		for card in zone.cards:
+			var power := card as HuntingTactics
+			if power != null and power.can_check_attack_support_trigger(attacker):
+				powers.append(power)
+	return powers
+
+func _get_hunting_tactics_prompt_power_for_attack(attacker: Card) -> HuntingTactics:
+	for power in _get_hunting_tactics_powers_for_attack(attacker):
+		if power.can_offer_attack_support(attacker):
+			return power
+	return null
+
+func _mark_hunting_tactics_attack_declaration_checked(attacker: Card) -> void:
+	if game_manager == null or attacker == null:
+		return
+	for power in _get_hunting_tactics_powers_for_attack(attacker):
+		power.note_attack_declaration_choice(game_manager, attacker)
+
+func _offer_hunting_tactics_attack_declaration_prompt() -> bool:
+	if selected_attacker == null or pending_attack_target == null:
+		return false
+	var power := _get_hunting_tactics_prompt_power_for_attack(selected_attacker)
+	if power == null:
+		_mark_hunting_tactics_attack_declaration_checked(selected_attacker)
+		return false
+	_pending_hunting_tactics_attack_declaration = true
+	_emit_ui_interaction_for_player(power.card_owner, "hunting_tactics", power.build_attack_support_prompt_data(selected_attacker))
+	return true
+
+func _continue_pending_attack_after_hunting_tactics_choice(attacker: Card) -> void:
+	if not _pending_hunting_tactics_attack_declaration:
+		return
+	if attacker != selected_attacker:
+		return
+	_pending_hunting_tactics_attack_declaration = false
+	if selected_attacker == null or pending_attack_target == null:
+		return
+	if _uses_authoritative_headless_attack_flow():
+		_start_authoritative_headless_attack()
 
 func _start_authoritative_headless_attack() -> void:
 	if selected_attacker == null or pending_attack_target == null:
@@ -3573,6 +3624,8 @@ func request_attack(attacker, target) -> bool:
 	# In a real game, this might trigger an "intercept" phase
 	move_validated.emit({"type": "attack", "attacker": attacker_card, "target": target_obj})
 	if _uses_authoritative_headless_attack_flow():
+		if _offer_hunting_tactics_attack_declaration_prompt():
+			return true
 		_start_authoritative_headless_attack()
 	return true
 
@@ -5617,8 +5670,13 @@ func _process_command_impl(command: Dictionary) -> bool:
 					move_failed.emit("hunting_tactics_choice: invalid supporter")
 					return false
 				chosen_cards.append(chosen_card)
+			var continue_pending_attack := _pending_hunting_tactics_attack_declaration \
+				and attacker == selected_attacker \
+				and pending_attack_target != null
 			game_manager.note_player_feedback(power.resolve_combat_support_choice(game_manager, attacker, chosen_cards))
 			move_validated.emit(command)
+			if continue_pending_attack:
+				_continue_pending_attack_after_hunting_tactics_choice(attacker)
 			return true
 		"gugalanna_celestial_charge_choice":
 			var source_uid: String = command.get("source_uid", "")

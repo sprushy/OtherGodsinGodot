@@ -86,6 +86,9 @@ func _ready() -> void:
 		_load_original_scene_directly()
 		return
 
+	_previous_vsync_mode = DisplayServer.window_get_vsync_mode()
+	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
+
 	var legacy_3d_requested := _is_truthy_arg(launch_args.get(LEGACY_3D_ARG, false))
 	_legacy_3d_shell_active = enable_legacy_3d_shell or legacy_3d_requested
 	if legacy_3d_requested:
@@ -93,14 +96,14 @@ func _ready() -> void:
 		show_stealth_fog_3d = true
 
 	if _legacy_3d_shell_active:
-		_previous_vsync_mode = DisplayServer.window_get_vsync_mode()
-		DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
 		Input.set_mouse_mode(Input.MOUSE_MODE_HIDDEN)
 		_build_3d_shell()
 		_build_software_cursor()
 	else:
 		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 		_build_flat_canvas()
+		_build_software_cursor()
+	_sync_cursor_presentation()
 	_load_game_into_viewport()
 	call_deferred("_refresh_display_mode")
 
@@ -176,8 +179,8 @@ func _apply_default_software_cursor() -> void:
 	if _software_cursor_sprite == null or not is_instance_valid(_software_cursor_sprite):
 		return
 	_software_cursor_sprite.texture = _default_software_cursor_texture
-	_software_cursor_sprite.scale = Vector2(0.040, 0.040)
-	_software_cursor_sprite.position = Vector2(-4.2, -2.5)
+	_software_cursor_sprite.scale = Vector2(0.052, 0.052)
+	_software_cursor_sprite.position = Vector2(-5.46, -3.25)
 	_software_cursor_showing_locked_power = false
 
 func _apply_locked_power_software_cursor() -> void:
@@ -215,6 +218,10 @@ func _has_custom_cursor_active() -> bool:
 func _sync_cursor_presentation() -> void:
 	var locked_power_cursor_active := _has_viewport_meta(LOCKED_POWER_CURSOR_ACTIVE_META)
 	var custom_cursor_active := _has_custom_cursor_active()
+	if _software_cursor_sprite == null or not is_instance_valid(_software_cursor_sprite):
+		if Input.mouse_mode != Input.MOUSE_MODE_VISIBLE:
+			Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+		return
 	var use_locked_power_software_cursor := locked_power_cursor_active \
 		and _locked_power_software_cursor_texture != null
 	if use_locked_power_software_cursor and not _software_cursor_showing_locked_power:
@@ -371,6 +378,8 @@ func _load_game_into_viewport() -> void:
 
 func _process(delta: float) -> void:
 	if not _legacy_3d_shell_active:
+		_update_software_cursor_position(get_viewport().get_mouse_position())
+		_sync_cursor_presentation()
 		_refresh_display_mode()
 		return
 	_update_software_cursor_position(get_viewport().get_mouse_position())
@@ -1313,10 +1322,10 @@ func _load_original_scene_directly() -> void:
 	add_child((scene as PackedScene).instantiate())
 
 func _input(event: InputEvent) -> void:
-	if not _legacy_3d_shell_active:
-		return
 	if event is InputEventMouseMotion:
 		_update_software_cursor_position((event as InputEventMouseMotion).position)
+	if not _legacy_3d_shell_active:
+		return
 	if _game_viewport == null or _screen_mesh == null or _camera == null:
 		return
 	if _is_flat_2d_mode:
