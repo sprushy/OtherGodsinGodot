@@ -12,6 +12,8 @@ const DeckValidatorScript = preload("res://scripts/server/DeckValidator.gd")
 const PracticeAutofillDeckFactoryScript = preload("res://scripts/server/PracticeAutofillDeckFactory.gd")
 const PracticeFuzzPlayerBotScript = preload("res://scripts/bots/PracticeFuzzPlayerBot.gd")
 const BotGameInputScript = preload("res://scripts/bots/BotGameInput.gd")
+const HostHuntingTacticsBotScript = preload("res://scripts/bots/HostHuntingTacticsBot.gd")
+const NetworkClientSmokeBotScript = preload("res://scripts/bots/NetworkClientSmokeBot.gd")
 const MatchHistoryStoreScript = preload("res://scripts/server/MatchHistoryStore.gd")
 const MatchSessionScript = preload("res://scripts/server/MatchSession.gd")
 const LobbyRoomScript = preload("res://scripts/server/LobbyRoom.gd")
@@ -78,6 +80,10 @@ const BYTES_PER_MIB := 1048576.0
 
 var _smoke_config: Dictionary = {}
 var _smoke_finished: bool = false
+# True while a hunting_tactics_host/client two-process smoke is driving a match.
+# Gates the post-launch bot-attachment phase and the smoke-mode deck fallback.
+var _hunting_tactics_smoke_active: bool = false
+var _hunting_tactics_bot_attached: bool = false
 var lobby_server: LobbyServer = null
 var lobby_client: LobbyClient = null
 var _current_room_snapshot: Dictionary = {}
@@ -2108,6 +2114,14 @@ func _run_pending_multiplayer_action() -> void:
 		_pending_join_room_id = ""
 		status_label.text = "Joining seek %s..." % room_id
 		lobby_client.join_room(room_id)
+		return
+	# Smoke clients enter via _join_smoke_room, which records the room CODE (not the
+	# join_id used above). Convert it to a join now that the lobby session is live.
+	if not _pending_join_room_code.is_empty():
+		var smoke_room_code := _pending_join_room_code
+		_pending_join_room_code = ""
+		status_label.text = "Joining seek %s..." % smoke_room_code
+		lobby_client.join_room(smoke_room_code)
 		return
 	if not _pending_rejoin_room_id.is_empty():
 		var rejoin_room_id := _pending_rejoin_room_id
@@ -5798,12 +5812,15 @@ func _on_practice_thor_pressed() -> void:
 		await practice_game.start_game()
 
 func _on_host_game_pressed() -> void:
+	print("[SMOKE-DIAG] _on_host_game_pressed entered")
 	var target_error := _validate_multiplayer_target()
 	if not target_error.is_empty():
+		print("[SMOKE-DIAG] host target_error=%s" % target_error)
 		status_label.text = target_error
 		return
 	var auth_error := _validate_auth_inputs()
 	if not auth_error.is_empty():
+		print("[SMOKE-DIAG] host auth_error=%s" % auth_error)
 		status_label.text = auth_error
 		return
 	_match_launch_queued = false
@@ -6318,13 +6335,132 @@ func _launch_assigned_match(
 	if is_host:
 		await get_node("GameContainer/MockGame").start_game(true, false, server_ip, match_port, match_info, server_match_session)
 		show_game()
+		if _hunting_tactics_smoke_active:
+			await _drive_hunting_tactics_smoke(true)
+			return
 		_finish_smoke_if_enabled("PASS:host_launched_match")
 		return
 	if not _uses_dedicated_match_server(match_info):
 		await get_tree().create_timer(0.4).timeout
 	await get_node("GameContainer/MockGame").start_game(false, true, server_ip, match_port, match_info)
 	show_game()
+	if _hunting_tactics_smoke_active:
+		await _drive_hunting_tactics_smoke(false)
+		return
 	_finish_smoke_if_enabled("PASS:client_launched_match")
+
+# Called after match launch for the hunting_tactics_host / hunting_tactics_client
+# smoke roles. Attaches a gameplay-driving bot to the running CombatMockGame and
+# pumps frames until the host's server log shows the attack resolved (PASS), the
+# match ends, or the smoke times out (FAIL).
+func _drive_hunting_tactics_smoke(is_host: bool) -> void:
+	var mock_game = get_node_or_null("GameContainer/MockGame")
+	if mock_game == null or mock_game.game_manager == null or mock_game.match_manager == null:
+		_fail_smoke_if_enabled("hunting_tactics_missing_game")
+		return
+	_write_smoke_trace("hunting_tactics_drive:is_host=%s" % str(is_host))
+	# Both smoke processes are networked clients of the dedicated match server, so
+	# both drive their local seat through the client's real NetworkedGameInput and
+	# answer prompts via match_client.game_event_received. HostHuntingTacticsBot
+	# reuses the full ThorPracticeBot main-phase/attack loop, so each bot will
+	# summon and attack when it can; the first qualifying attack triggers the
+	# hunting_tactics prompt on the dedicated server.
+	var host_bot = null
+	var client_bot = null
+	var local_idx := 0
+	if mock_game.network_manager != null:
+		local_idx = mock_game.network_manager.local_player_index
+	var local_game_input = null
+	if mock_game.match_client != null and mock_game.match_client.has_method("get_game_input"):
+		local_game_input = mock_game.match_client.get_game_input()
+	if local_game_input == null:
+		# Fallback to a BotGameInput (processes locally) if no networked input exists.
+		local_game_input = BotGameInputScript.new(mock_game.match_manager, local_idx)
+	host_bot = HostHuntingTacticsBotScript.new()
+	host_bot.attach_networked(
+		mock_game.game_manager,
+		mock_game.match_manager,
+		local_game_input,
+		local_idx,
+		mock_game.match_client
+	)
+	host_bot.poll()
+	_hunting_tactics_bot_attached = true
+
+	var trace_path := str(_smoke_config.get("trace_file", "")).strip_edges()
+	var max_frames := maxi(600, int(_smoke_config.get("match_frames", 5400)))
+	var stall_frames := maxi(120, int(_smoke_config.get("stall_frames", 600)))
+	var last_snapshot := ""
+	var unchanged := 0
+	for frame_index in range(max_frames):
+		await get_tree().process_frame
+		if mock_game.game_manager != null and mock_game.game_manager.is_game_over:
+			_write_smoke_trace("hunting_tactics_drive:game_over")
+			break
+		# Outcome is read from the attached bot: it tracks whether it answered a
+		# hunting_tactics prompt and whether the game progressed afterwards. The
+		# dedicated match server owns MatchManager (and thus the [HT-DEBUG] prints),
+		# so we cannot scan this client's log for them; the bot's local observation
+		# is the authoritative pass/fail signal here.
+		var answered := bool(host_bot.get("hunting_tactics_answered")) if host_bot != null else false
+		var progressed := bool(host_bot.get("progressed_after_hunting_tactics")) if host_bot != null else false
+		if answered and progressed:
+			_write_smoke_trace("hunting_tactics_drive:answered_and_progressed frames=%d" % frame_index)
+			_finish_smoke_if_enabled("PASS:hunting_tactics_%s answered_and_progressed" % ("host" if is_host else "client"))
+			_detach_hunting_tactics_bots(host_bot, client_bot)
+			return
+		if answered and not progressed:
+			# Answered but the state never moved on -> the attack is stuck.
+			var snap := _read_smoke_trace_tail(trace_path)
+			if snap == last_snapshot:
+				unchanged += 1
+			else:
+				unchanged = 0
+				last_snapshot = snap
+			if unchanged > stall_frames:
+				_write_smoke_trace("hunting_tactics_drive:stalled_after_answer frames=%d" % frame_index)
+				_fail_smoke_if_enabled("FAIL:hunting_tactics_stuck_after_answer")
+				_detach_hunting_tactics_bots(host_bot, client_bot)
+				return
+	# Did not observe a resolved hunting_tactics exchange within the frame budget.
+	_fail_smoke_if_enabled("FAIL:hunting_tactics_%s no_resolved_attack" % ("host" if is_host else "client"))
+
+func _detach_hunting_tactics_bots(host_bot, client_bot) -> void:
+	if host_bot != null and host_bot.has_method("detach"):
+		host_bot.detach()
+	if client_bot != null and client_bot.has_method("detach"):
+		client_bot.detach()
+	_hunting_tactics_bot_attached = false
+
+func _read_smoke_trace_tail(trace_path: String) -> String:
+	if trace_path.is_empty() or not FileAccess.file_exists(trace_path):
+		return ""
+	var file := FileAccess.open(trace_path, FileAccess.READ)
+	if file == null:
+		return ""
+	var content := file.get_as_text()
+	file.close()
+	return content.substr(maxi(0, content.length() - 256))
+
+func _hunting_tactics_attack_resolved_in_log(log_path: String) -> bool:
+	return _hunting_tactics_log_contains(log_path, "[HT-DEBUG] _resolve: pushed to stack")
+
+func _hunting_tactics_attack_stuck_in_log(log_path: String) -> bool:
+	return _hunting_tactics_log_contains(log_path, "[HT-DEBUG] _resolve: build returned null")
+
+func _hunting_tactics_log_contains(log_path: String, needle: String) -> bool:
+	if log_path.is_empty() or not FileAccess.file_exists(log_path):
+		return false
+	var file := FileAccess.open(log_path, FileAccess.READ)
+	if file == null:
+		return false
+	# Only scan the tail to avoid re-reading the whole file each frame.
+	file.seek_end()
+	var size := file.get_position()
+	file.seek(maxi(0, size - 16384))
+	var tail := file.get_buffer(mini(16384, int(size))).get_string_from_utf8()
+	file.close()
+	return tail.find(needle) >= 0
 
 func _launch_host_match_after_lobby_handoff(match_info: Dictionary) -> void:
 	if _uses_dedicated_match_server(match_info):
@@ -6361,6 +6497,11 @@ func _on_lobby_room_error(message: String) -> void:
 	_set_friends_status(message)
 	if _should_prompt_for_account_recovery(message):
 		_show_auth_recovery_prompt(message)
+	# In smoke mode the first select_deck for a freshly-registered account can race
+	# ahead of the proactive save_account_deck. Tolerate that transient error and
+	# let the room-snapshot retry loop select the deck once the save lands.
+	if not _smoke_config.is_empty() and message.find("saved deck was not found") >= 0:
+		return
 	_fail_smoke_if_enabled("ROOM_ERROR:%s" % message)
 
 func _maybe_handle_legacy_seek_switch_error(message: String) -> bool:
@@ -6675,7 +6816,6 @@ func _cleanup_lobby(clear_session: bool) -> void:
 		_clear_saved_lobby_resume()
 		_clear_saved_match_resume()
 		_current_profile_summary.clear()
-		_account_decks_cache.clear()
 		_friends_state.clear()
 		_refresh_friends_button()
 		_refresh_friends_overlay()
@@ -6869,7 +7009,8 @@ func _capture_logged_in_profile(player_name: String) -> void:
 	if not resolved_account_username.is_empty():
 		if resolved_auth_mode == AUTH_MODE_REGISTER:
 			resolved_auth_mode = AUTH_MODE_LOGIN
-		_account_decks_cache.clear()
+		if resolved_account_username != _logged_in_account_username:
+			_account_decks_cache.clear()
 		_logged_in_account_username = resolved_account_username
 		_set_selected_account_username(resolved_account_username)
 		var prefer_connected_profile_id := not resolved_profile_id.is_empty() \
@@ -6932,6 +7073,58 @@ func _maybe_request_profile_summary() -> void:
 		return
 	lobby_client.request_profile_summary()
 
+func _maybe_save_smoke_account_deck(visible_decks: Array) -> void:
+	if _smoke_config.is_empty() or lobby_client == null:
+		return
+	var selected_deck: Dictionary = _get_selected_multiplayer_deck()
+	if selected_deck.is_empty():
+		if _hunting_tactics_smoke_active:
+			var ht_factory := PracticeAutofillDeckFactoryScript.new()
+			var ht_deck := ht_factory.build_hunting_tactics_deck()
+			if ht_deck.is_empty():
+				return
+			selected_deck = {
+				"deck_id": "hunting_tactics_smoke",
+				"name": str(ht_deck.get("name", "Hunting Tactics Smoke")),
+				"cards": ht_deck.get("cards", {}),
+				"special_setup": ht_deck.get("special_setup", {}),
+			}
+		else:
+			selected_deck = {
+				"deck_id": "smoke_default",
+				"name": "Smoke Default Deck",
+				"cards": {
+					"Baldr": 1,
+					"Blessed Knights": 3,
+					"Brown Bear": 3,
+					"Berserker": 3,
+					"Again-Walker": 3,
+					"Byggvir": 3,
+					"Bit Meseri": 3,
+					"Absence": 3,
+					"Warding Stone": 3,
+					"Void Shield": 3,
+					"Bearded Axe": 3,
+					"Blot Sacrifice": 3,
+					"Fall of the Mighty": 2,
+					"Circle of Rebirth": 3,
+					"Alu": 2,
+				},
+			}
+	var deck_id := str(selected_deck.get("deck_id", "")).strip_edges()
+	if deck_id.is_empty():
+		return
+	for entry in visible_decks:
+		if str(entry.get("deck_id", "")).strip_edges() == deck_id:
+			return # Already saved on the server.
+	lobby_client.save_account_deck(
+		str(selected_deck.get("name", "Default Deck")),
+		selected_deck.get("cards", {}),
+		deck_id,
+		selected_deck.get("special_setup", {}),
+		selected_deck.get("reinforcements", {})
+	)
+
 func _on_account_deck_list_received(decks, preferred_deck_id: String = "") -> void:
 	var remote_decks: Array[Dictionary] = []
 	if decks is Array:
@@ -6955,6 +7148,11 @@ func _on_account_deck_list_received(decks, preferred_deck_id: String = "") -> vo
 	)
 	var visible_decks: Array[Dictionary] = merged_decks.get("visible_decks", [])
 	var local_migration_decks: Array[Dictionary] = merged_decks.get("local_migration_decks", [])
+	# Smoke-mode accounts are freshly registered, so their saved-deck list is empty.
+	# The lobby server rejects select_deck for account sessions that reference an
+	# unsaved deck_id, so proactively persist the smoke deck here; the room snapshot
+	# retry loop will then select it successfully once the save lands.
+	_maybe_save_smoke_account_deck(visible_decks)
 	_replace_account_decks_cache(visible_decks)
 	for local_deck in local_migration_decks:
 		if lobby_client == null:
@@ -8058,29 +8256,45 @@ func _maybe_submit_current_profile_deck(room_id: String, snapshot: Dictionary) -
 
 	var selected_deck_id: String = _selected_multiplayer_deck_id.strip_edges()
 	var selected_deck: Dictionary = _get_selected_multiplayer_deck()
+	var smoke_deck_kind := str(_smoke_config.get("deck_kind", "")).strip_edges().to_lower()
+	var force_hunting_tactics_deck := _hunting_tactics_smoke_active or smoke_deck_kind == "hunting_tactics"
 	if selected_deck.is_empty() and not _smoke_config.is_empty():
-		selected_deck = {
-			"deck_id": "smoke_default",
-			"name": "Smoke Default Deck",
-			"cards": {
-				"Baldr": 1,
-				"Blessed Knights": 3,
-				"Brown Bear": 3,
-				"Berserker": 3,
-				"Again-Walker": 3,
-				"Byggvir": 3,
-				"Bit Meseri": 3,
-				"Absence": 3,
-				"Warding Stone": 3,
-				"Void Shield": 3,
-				"Bearded Axe": 3,
-				"Blot Sacrifice": 3,
-				"Fall of the Mighty": 2,
-				"Circle of Rebirth": 3,
-				"Alu": 2,
-			},
-		}
-		selected_deck_id = "smoke_default"
+		if force_hunting_tactics_deck:
+			var ht_factory := PracticeAutofillDeckFactoryScript.new()
+			var ht_deck := ht_factory.build_hunting_tactics_deck()
+			if ht_deck.is_empty():
+				_fail_smoke_if_enabled("hunting_tactics_deck_build_failed")
+				return
+			selected_deck = {
+				"deck_id": "hunting_tactics_smoke",
+				"name": str(ht_deck.get("name", "Hunting Tactics Smoke")),
+				"cards": ht_deck.get("cards", {}),
+				"special_setup": ht_deck.get("special_setup", {}),
+			}
+			selected_deck_id = "hunting_tactics_smoke"
+		else:
+			selected_deck = {
+				"deck_id": "smoke_default",
+				"name": "Smoke Default Deck",
+				"cards": {
+					"Baldr": 1,
+					"Blessed Knights": 3,
+					"Brown Bear": 3,
+					"Berserker": 3,
+					"Again-Walker": 3,
+					"Byggvir": 3,
+					"Bit Meseri": 3,
+					"Absence": 3,
+					"Warding Stone": 3,
+					"Void Shield": 3,
+					"Bearded Axe": 3,
+					"Blot Sacrifice": 3,
+					"Fall of the Mighty": 2,
+					"Circle of Rebirth": 3,
+					"Alu": 2,
+				},
+			}
+			selected_deck_id = "smoke_default"
 	if selected_deck.is_empty():
 		status_label.text = "Choose a saved legal deck before joining or creating a seek."
 		_last_submitted_lobby_room_id = ""
@@ -8107,9 +8321,20 @@ func _maybe_submit_current_profile_deck(room_id: String, snapshot: Dictionary) -
 			and _last_submitted_lobby_deck_id == selected_deck_id \
 			and _last_submitted_lobby_deck_hash == selected_deck_hash:
 		return
-	if _uses_server_account_storage():
+	if _uses_server_account_storage() and _smoke_config.is_empty():
 		lobby_client.submit_deck("", {}, selected_deck_id)
 	else:
+		# In smoke mode against a freshly-registered test account there are no saved
+		# decks yet. The lobby server rejects select_deck for account sessions that
+		# reference an unsaved deck_id, so persist the deck first then select it.
+		if _uses_server_account_storage() and not selected_deck_id.is_empty():
+			lobby_client.save_account_deck(
+				str(selected_deck.get("name", "Default Deck")),
+				selected_deck.get("cards", {}),
+				selected_deck_id,
+				selected_deck.get("special_setup", {}),
+				selected_deck.get("reinforcements", {})
+			)
 		lobby_client.submit_deck(
 			str(selected_deck.get("name", "Default Deck")),
 			selected_deck.get("cards", {}),
@@ -8133,17 +8358,35 @@ func _get_configured_match_port() -> int:
 
 func _start_smoke_mode() -> void:
 	var role := str(_smoke_config.get("role", "")).to_lower()
+	print("[SMOKE-DIAG] _start_smoke_mode role=%s config_keys=%d" % [role, _smoke_config.size()])
 	if role.is_empty():
 		return
 	_smoke_finished = false
 
 	ip_line_edit.text = str(_smoke_config.get("ip", "127.0.0.1"))
-	_set_selected_account_username(str(_smoke_config.get("player_name", "Smoke%s" % role.capitalize())))
-	var smoke_auth_mode: String = str(_smoke_config.get("auth_mode", AUTH_MODE_LOGIN)).strip_edges().to_lower()
+	# Register mode needs globally-unique usernames on the persistent account store.
+	# Append a short random suffix so repeated smoke runs never collide on a name
+	# left behind by a previous run.
+	var smoke_base_name := str(_smoke_config.get("player_name", "Smoke%s" % role.capitalize())).strip_edges()
+	if smoke_base_name.is_empty():
+		smoke_base_name = "Smoke%s" % role.capitalize()
+	var smoke_suffix := str(_smoke_config.get("name_suffix", "")).strip_edges()
+	if smoke_suffix.is_empty():
+		var rng := RandomNumberGenerator.new()
+		rng.randomize()
+		smoke_suffix = "%04d" % (rng.randi() % 10000)
+	_set_selected_account_username("%s%s" % [smoke_base_name, smoke_suffix])
+	var smoke_auth_mode: String = str(_smoke_config.get("auth_mode", AUTH_MODE_REGISTER)).strip_edges().to_lower()
 	if smoke_auth_mode not in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
-		smoke_auth_mode = AUTH_MODE_LOGIN
+		smoke_auth_mode = AUTH_MODE_REGISTER
 	_set_auth_mode(smoke_auth_mode)
-	_set_selected_account_password(str(_smoke_config.get("password", "")))
+	# Smoke runs against a local dedicated lobby and needs throwaway credentials.
+	# Default to register mode + a fixed password so the harness never blocks on
+	# missing auth input (run_lobby_smoke otherwise dies on the password check).
+	var smoke_password := str(_smoke_config.get("password", "")).strip_edges()
+	if smoke_password.is_empty():
+		smoke_password = "smoke-test-password"
+	_set_selected_account_password(smoke_password)
 
 	var timeout_seconds := float(_smoke_config.get("timeout", 25.0))
 	var timeout_timer := get_tree().create_timer(timeout_seconds)
@@ -8160,6 +8403,22 @@ func _start_smoke_mode() -> void:
 			_wait_for_smoke_room_code()
 			return
 		_join_smoke_room(room_code)
+		return
+
+	if role == "hunting_tactics_host":
+		# Reuse the host lobby handshake, then drive gameplay after launch.
+		_hunting_tactics_smoke_active = true
+		_on_host_game_pressed()
+		return
+
+	if role == "hunting_tactics_client":
+		_hunting_tactics_smoke_active = true
+		_on_join_game_pressed()
+		var ht_room_code := _read_smoke_room_code()
+		if ht_room_code.is_empty():
+			_wait_for_smoke_room_code()
+			return
+		_join_smoke_room(ht_room_code)
 		return
 
 	if role == "practice_thor":
@@ -9459,7 +9718,8 @@ func _parse_smoke_config(args: Array) -> Dictionary:
 		"role": str(config.get("smoke_role", "")),
 		"ip": str(config.get("smoke_ip", "127.0.0.1")),
 		"player_name": str(config.get("smoke_name", "")),
-		"auth_mode": str(config.get("smoke_auth_mode", AUTH_MODE_LOGIN)),
+		"name_suffix": str(config.get("smoke_name_suffix", "")),
+		"auth_mode": str(config.get("smoke_auth_mode", AUTH_MODE_REGISTER)),
 		"password": str(config.get("smoke_password", "")),
 		"room_file": str(config.get("smoke_room_file", "")),
 		"result_file": str(config.get("smoke_result_file", "")),
@@ -9475,6 +9735,7 @@ func _parse_smoke_config(args: Array) -> Dictionary:
 		"seed": int(str(config.get("smoke_seed", "1337")).to_int()),
 		"stall_frames": int(str(config.get("smoke_stall_frames", "360")).to_int()),
 		"match_frames": int(str(config.get("smoke_match_frames", "2400")).to_int()),
+		"hunting_tactics_log_file": str(config.get("smoke_hunting_tactics_log_file", "")),
 	}
 
 func _write_smoke_room_code(room_code: String) -> void:
@@ -9561,6 +9822,49 @@ func _complete_smoke_if_enabled(message: String) -> void:
 	_smoke_finished = true
 	_write_smoke_result(message)
 	call_deferred("_close_program")
+
+func _start_in_process_lobby_server() -> bool:
+	# Spin up a LobbyServer node inside this host process so local_match_assigned
+	# fires here (instead of in a subprocess), letting the host launch the match
+	# authoritatively in-process. Used only by the hunting_tactics smoke.
+	if lobby_server != null and is_instance_valid(lobby_server):
+		return true
+	var server := LobbyServerScript.new()
+	server.name = "LobbyPeer"
+	# In-process matches: the host runs the authoritative match server itself.
+	server.use_dedicated_match_processes = false
+	server.allow_in_process_match_fallback = true
+	server.use_default_multiplayer = true
+	server.trace_network = true
+	server.trace_file_path = str(_smoke_config.get("lobby_server_trace_file", "")).strip_edges()
+	var mount := get_node_or_null("Main3D")
+	if mount == null:
+		mount = self
+	mount.add_child(server)
+	lobby_server = server
+	_bind_lobby_server_signals()
+	var lobby_port := _get_configured_lobby_port()
+	var match_port := int(_smoke_config.get("match_port", LobbyProtocolScript.MATCH_PORT))
+	var err: Error = server.start_server(_current_lobby_ip, lobby_port, match_port)
+	if err != OK:
+		push_error("[hunting_tactics smoke] failed to start in-process lobby server (%s)" % error_string(err))
+		_cleanup_lobby_server_node()
+		return false
+	var ready_file := str(_smoke_config.get("lobby_ready_file", "")).strip_edges()
+	if not ready_file.is_empty():
+		var file := FileAccess.open(ready_file, FileAccess.WRITE)
+		if file != null:
+			file.store_string("READY")
+			file.flush()
+			file.close()
+	return true
+
+func _cleanup_lobby_server_node() -> void:
+	if lobby_server == null or not is_instance_valid(lobby_server):
+		lobby_server = null
+		return
+	lobby_server.queue_free()
+	lobby_server = null
 
 func _launch_dedicated_lobby_server() -> int:
 	var project_path := ProjectSettings.globalize_path("res://")

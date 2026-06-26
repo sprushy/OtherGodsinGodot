@@ -107,6 +107,45 @@ func build_random_deck(seed_value: int, forced_god_name: String = "") -> Diction
 			}
 	return {}
 
+# Builds a deterministic, deck-validator-legal Thor deck that contains the
+# pieces needed to exercise the Hunting Tactics power: the power itself, a
+# Norse Human Warrior attacker (Harii Warrior), and a Raven supporter (Huginn).
+# Used by the two-process hunting_tactics smoke roles.
+const HUNTING_TACTICS_DECK_FORCED_CARDS := {
+	"Hunting Tactics": 1,
+	"Harii Warrior": 3,
+	"Huginn": 3,
+}
+const HUNTING_TACTICS_DECK_GOD := "Thor"
+
+func build_hunting_tactics_deck() -> Dictionary:
+	var god := _cards_by_name.get(HUNTING_TACTICS_DECK_GOD, null) as GodCard
+	if god == null:
+		return {}
+	for attempt in range(MAX_BUILD_ATTEMPTS):
+		var rng := RandomNumberGenerator.new()
+		rng.seed = 9000 + attempt
+		var deck_cards: Dictionary = {}
+		deck_cards[god.card_name] = 1
+		# Seed the deck with the forced cards first so the filler never starves
+		# the regular-card count below the minimum, then top up as usual.
+		for forced_name in HUNTING_TACTICS_DECK_FORCED_CARDS.keys():
+			deck_cards[forced_name] = int(HUNTING_TACTICS_DECK_FORCED_CARDS[forced_name])
+		if not _fill_regular_cards_for_god(deck_cards, god, rng):
+			continue
+		# Guarantee Hunting Tactics occupies a power slot even though it is in
+		# the prompt-heavy exclusion list for the normal autofill path.
+		var validation := _validator.validate_deck(deck_cards)
+		if bool(validation.get("is_valid", false)):
+			return {
+				"name": "Hunting Tactics Smoke",
+				"deck_name": "Hunting Tactics Smoke",
+				"cards": (validation.get("cards", {}) as Dictionary).duplicate(true),
+				"special_setup": validation.get("special_setup", {}),
+				"god_name": god.card_name,
+			}
+	return {}
+
 func _choose_god_template(rng: RandomNumberGenerator, forced_god_name: String) -> GodCard:
 	var resolved_forced_name := forced_god_name.strip_edges()
 	if not resolved_forced_name.is_empty():

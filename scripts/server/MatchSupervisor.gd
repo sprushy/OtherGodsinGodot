@@ -200,6 +200,10 @@ func _launch_dedicated_match(session) -> bool:
 		return false
 
 	var args := PackedStringArray(["--headless"])
+	# Capture the dedicated match server's stdout (incl. [HT-DEBUG] prints) to a log
+	# next to its launch config so smoke runs and manual debugging can read it.
+	var match_log_path := config_path.get_basename() + ".log"
+	args.append_array(["--log-file", match_log_path])
 	if uses_exported_runtime:
 		args.append_array([
 			"--",

@@ -559,36 +559,6 @@ func _prune_stale_ui_interactions_for_current_turn() -> void:
 		if int(queued.get("turn_number", current_turn)) != current_turn:
 			_queued_ui_interactions.remove_at(idx)
 
-# Some interaction prompts only exist to gather a choice while specific server
-# state is live. If that state has already moved on (the triggering action
-# resolved, or the pending attack was cleared) the prompt is stale and must be
-# dropped instead of blocking unrelated commands and re-emitting phantom
-# selectors. Each type is checked against the state it actually depends on.
-func _prune_stale_stack_tied_ui_interactions() -> void:
-	if game_manager == null:
-		return
-	var stack_active := not game_manager.action_stack.is_empty() \
-		or not game_manager.resolving_stack_actions.is_empty()
-	var intercept_live := selected_attacker != null and pending_attack_target != null
-	for idx in range(_pending_ui_interactions.size() - 1, -1, -1):
-		var entry: Dictionary = _pending_ui_interactions[idx]
-		var interaction_type := str(entry.get("type", ""))
-		if interaction_type == "intercept":
-			if not intercept_live:
-				_pending_ui_interactions.remove_at(idx)
-		elif interaction_type == "priority" or interaction_type == "combat_retreat":
-			if not stack_active:
-				_pending_ui_interactions.remove_at(idx)
-	for idx in range(_queued_ui_interactions.size() - 1, -1, -1):
-		var queued: Dictionary = _queued_ui_interactions[idx]
-		var interaction_type := str(queued.get("type", ""))
-		if interaction_type == "intercept":
-			if not intercept_live:
-				_queued_ui_interactions.remove_at(idx)
-		elif interaction_type == "priority" or interaction_type == "combat_retreat":
-			if not stack_active:
-				_queued_ui_interactions.remove_at(idx)
-
 func _has_duplicate_pending_ui_interaction(player: Player, type: String, data: Dictionary) -> bool:
 	for existing in _pending_ui_interactions:
 		if existing.get("player", null) != player:
@@ -644,7 +614,6 @@ func _command_can_bypass_pending_ui_interaction(command_type: String) -> bool:
 
 func _validate_pending_ui_interaction_for_command(command: Dictionary) -> Dictionary:
 	_prune_stale_ui_interactions_for_current_turn()
-	_prune_stale_stack_tied_ui_interactions()
 	var result := {
 		"error": "",
 		"prompt_id": -1,
@@ -3440,12 +3409,21 @@ func _request_ui_refresh() -> void:
 func _resolve_authoritative_headless_attack() -> void:
 	var attack_action := _build_pending_attack_action()
 	if attack_action == null:
+		print("[HT-DEBUG] _resolve: build returned null, selected=%s target=%s" % [
+			selected_attacker.card_name if selected_attacker != null else "null",
+			str(pending_attack_target),
+		])
 		move_failed.emit("The pending attack could not be resolved.")
 		_clear_pending_attack_state()
 		return
 	_clear_pending_attack_state()
 	game_manager.push_to_stack(attack_action)
 	_request_ui_refresh()
+	print("[HT-DEBUG] _resolve: pushed to stack, advancing priority (stack_size=%d pending_ui=%d queued_ui=%d)" % [
+		game_manager.action_stack.size(),
+		_pending_ui_interactions.size(),
+		_queued_ui_interactions.size(),
+	])
 	_advance_authoritative_priority()
 
 func _get_hunting_tactics_powers_for_attack(attacker: Card) -> Array[HuntingTactics]:
@@ -3480,12 +3458,24 @@ func _offer_hunting_tactics_attack_declaration_prompt() -> bool:
 	var power := _get_hunting_tactics_prompt_power_for_attack(selected_attacker)
 	if power == null:
 		_mark_hunting_tactics_attack_declaration_checked(selected_attacker)
+		print("[HT-DEBUG] _offer: no prompt power found for %s" % (selected_attacker.card_name if selected_attacker != null else "null"))
 		return false
 	_pending_hunting_tactics_attack_declaration = true
+	print("[HT-DEBUG] _offer: offering prompt power_owner=%s attacker=%s supporters=%d" % [
+		power.card_owner.player_name if power.card_owner != null else "null",
+		selected_attacker.card_name,
+		power.get_support_choices(selected_attacker).size(),
+	])
 	_emit_ui_interaction_for_player(power.card_owner, "hunting_tactics", power.build_attack_support_prompt_data(selected_attacker))
 	return true
 
 func _continue_pending_attack_after_hunting_tactics_choice(attacker: Card) -> void:
+	print("[HT-DEBUG] _continue_pending_attack_after_hunting_tactics_choice flag=%s attacker=%s selected=%s target=%s" % [
+		str(_pending_hunting_tactics_attack_declaration),
+		attacker.card_name if attacker != null else "null",
+		selected_attacker.card_name if selected_attacker != null else "null",
+		str(pending_attack_target),
+	])
 	if not _pending_hunting_tactics_attack_declaration:
 		return
 	if attacker != selected_attacker:
@@ -3498,11 +3488,21 @@ func _continue_pending_attack_after_hunting_tactics_choice(attacker: Card) -> vo
 
 func _start_authoritative_headless_attack() -> void:
 	if selected_attacker == null or pending_attack_target == null:
+		print("[HT-DEBUG] _start_authoritative_headless_attack: missing attacker/target attacker=%s target=%s" % [
+			selected_attacker.card_name if selected_attacker != null else "null",
+			str(pending_attack_target),
+		])
 		move_failed.emit("The pending attack is missing an attacker or target.")
 		_clear_pending_attack_state()
 		return
 	selected_interceptor = null
 	var possible_interceptors := _get_possible_interceptors(selected_attacker, pending_attack_target)
+	print("[HT-DEBUG] _start_authoritative_headless_attack: attacker=%s interceptors=%d pending_ui=%d queued_ui=%d" % [
+		selected_attacker.card_name,
+		possible_interceptors.size(),
+		_pending_ui_interactions.size(),
+		_queued_ui_interactions.size(),
+	])
 	if possible_interceptors.is_empty():
 		_resolve_authoritative_headless_attack()
 		return
@@ -5721,6 +5721,13 @@ func _process_command_impl(command: Dictionary) -> bool:
 			var continue_pending_attack := _pending_hunting_tactics_attack_declaration \
 				and attacker == selected_attacker \
 				and pending_attack_target != null
+			print("[HT-DEBUG] choice: flag=%s attacker_matches=%s selected=%s target=%s chosen=%d" % [
+				str(_pending_hunting_tactics_attack_declaration),
+				str(attacker == selected_attacker),
+				selected_attacker.card_name if selected_attacker != null else "null",
+				str(pending_attack_target),
+				chosen_cards.size(),
+			])
 			game_manager.note_player_feedback(power.resolve_combat_support_choice(game_manager, attacker, chosen_cards))
 			move_validated.emit(command)
 			if continue_pending_attack:
@@ -5729,7 +5736,8 @@ func _process_command_impl(command: Dictionary) -> bool:
 				# pending interaction (which would leave the attack stuck on the
 				# stack in the no-interceptor case) and the intercept prompt emits
 				# immediately rather than being queued behind this entry.
-				_consume_active_command_prompt_for_completion("hunting_tactics_choice")
+				var consumed := _consume_active_command_prompt_for_completion("hunting_tactics_choice")
+				print("[HT-DEBUG] choice: consumed_prompt=%s pending_ui_after=%d" % [str(consumed), _pending_ui_interactions.size()])
 				_continue_pending_attack_after_hunting_tactics_choice(attacker)
 			return true
 		"gugalanna_celestial_charge_choice":

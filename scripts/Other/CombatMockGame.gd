@@ -590,6 +590,8 @@ var _match_replay_overlay: Control = null
 var _match_replay_image: TextureRect = null
 var _match_replay_message_label: Label = null
 var _match_replay_step_label: Label = null
+var _match_replay_timeline: Control = null
+var _match_replay_timeline_dragging: bool = false
 var _match_replay_start_button: Button = null
 var _match_replay_prev_button: Button = null
 var _match_replay_next_button: Button = null
@@ -612,6 +614,9 @@ var _action_log_hover_index_ready: bool = false
 var _action_log_card_hover_popup: PanelContainer = null
 var _center_action_panel: VBoxContainer = null
 var _board_separator_line: ColorRect = null
+var _visual_stack_layer: Control = null
+var _visual_stack_cards: Array[Control] = []
+var _visual_stack_beams: Array[Dictionary] = []
 var _priority_controls_panel: PanelContainer = null
 var _priority_controls_row: HBoxContainer = null
 var _priority_stop_buttons: Dictionary = {}
@@ -776,6 +781,11 @@ const HAND_OVERLAY_SIDE_PADDING := 18.0
 const HAND_OVERLAY_BOTTOM_PADDING := -2.0
 const HAND_OVERLAY_Z_INDEX := HOVER_PREVIEW_Z_INDEX + 5
 const CONTEXT_MENU_Z_INDEX := HAND_OVERLAY_Z_INDEX + 120
+const VISUAL_STACK_Z_INDEX := TRANSIENT_UI_Z_INDEX - 35
+const VISUAL_STACK_CARD_WIDTH := 178
+const VISUAL_STACK_TOP_CARD_WIDTH := 214
+const VISUAL_STACK_CARD_SPACING := 42.0
+const VISUAL_STACK_MAX_VISIBLE := 5
 const CANVAS_ITEM_Z_MAX := 4096
 const REINFORCEMENT_MODAL_LAYER := 10000
 const REINFORCEMENT_OVERLAY_Z_INDEX := TRANSIENT_UI_Z_INDEX + 220
@@ -5026,11 +5036,7 @@ func _capture_match_replay_entry(action_message: String) -> void:
 			_match_replay_step_index -= 1
 	var snapshot_id := _match_replay_next_snapshot_id
 	_match_replay_next_snapshot_id += 1
-	_match_replay_entries.append({
-		"action_message": action_message,
-		"snapshot": null,
-		"snapshot_id": snapshot_id,
-	})
+	_match_replay_entries.append(_build_match_replay_entry(action_message, snapshot_id, null))
 	_refresh_match_replay_button()
 	_capture_match_replay_snapshot_deferred(snapshot_id)
 	if _is_match_replay_open():
@@ -5045,13 +5051,53 @@ func _ensure_match_replay_history_seed() -> void:
 	if fallback_message == "":
 		var current_player := game_manager.current_player
 		fallback_message = "%s's turn." % (current_player.player_name if current_player != null else "Current player")
-	_match_replay_entries.append({
-		"action_message": fallback_message,
-		"snapshot": _capture_match_replay_snapshot_now(),
-		"snapshot_id": _match_replay_next_snapshot_id,
-	})
+	_match_replay_entries.append(_build_match_replay_entry(
+		fallback_message,
+		_match_replay_next_snapshot_id,
+		_capture_match_replay_snapshot_now()
+	))
 	_match_replay_next_snapshot_id += 1
 	_refresh_match_replay_button()
+
+func _build_match_replay_entry(action_message: String, snapshot_id: int, snapshot: Texture2D = null) -> Dictionary:
+	var turn_number := game_manager.turn_number if game_manager != null else 0
+	var followers := _get_match_replay_followers_snapshot()
+	var destroyed_count := game_manager.destroyed_this_turn.size() if game_manager != null else 0
+	var markers := _get_match_replay_entry_markers(turn_number, followers, destroyed_count)
+	return {
+		"action_message": action_message,
+		"snapshot": snapshot,
+		"snapshot_id": snapshot_id,
+		"turn_number": turn_number,
+		"followers": followers,
+		"destroyed_count_this_turn": destroyed_count,
+		"markers": markers,
+	}
+
+func _get_match_replay_followers_snapshot() -> Array[int]:
+	var followers: Array[int] = []
+	if game_manager == null:
+		return followers
+	for player in game_manager.players:
+		followers.append(player.followers if player != null else 0)
+	return followers
+
+func _get_match_replay_entry_markers(turn_number: int, followers: Array[int], destroyed_count: int) -> Array[String]:
+	var markers: Array[String] = []
+	var previous_entry: Dictionary = _match_replay_entries.back() if not _match_replay_entries.is_empty() else {}
+	var previous_turn: int = int(previous_entry.get("turn_number", -1))
+	if previous_entry.is_empty() or previous_turn != turn_number:
+		markers.append("turn")
+	var previous_followers: Array = previous_entry.get("followers", [])
+	for i in range(mini(previous_followers.size(), followers.size())):
+		var loss := int(previous_followers[i]) - followers[i]
+		if loss > MATCH_REPLAY_MAJOR_FOLLOWER_LOSS_THRESHOLD:
+			markers.append("follower_loss")
+			break
+	var previous_destroyed := int(previous_entry.get("destroyed_count_this_turn", 0)) if previous_turn == turn_number else 0
+	if destroyed_count - previous_destroyed >= MATCH_REPLAY_MULTI_DESTROY_THRESHOLD:
+		markers.append("multi_destroy")
+	return markers
 
 func _capture_match_replay_snapshot_deferred(snapshot_id: int) -> void:
 	await RenderingServer.frame_post_draw
@@ -5190,6 +5236,15 @@ func _open_match_replay_overlay() -> void:
 	_match_replay_image.gui_input.connect(_on_match_replay_snapshot_gui_input)
 	vbox.add_child(_match_replay_image)
 
+	_match_replay_timeline = Control.new()
+	_match_replay_timeline.custom_minimum_size = Vector2(0.0, MATCH_REPLAY_TIMELINE_HEIGHT)
+	_match_replay_timeline.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_match_replay_timeline.mouse_filter = Control.MOUSE_FILTER_STOP
+	_match_replay_timeline.tooltip_text = "Gold ticks: turns. Red dots: major follower loss. Orange squares: multi-destroy."
+	_match_replay_timeline.draw.connect(_draw_match_replay_timeline)
+	_match_replay_timeline.gui_input.connect(_on_match_replay_timeline_gui_input)
+	vbox.add_child(_match_replay_timeline)
+
 	var footer := HBoxContainer.new()
 	footer.alignment = BoxContainer.ALIGNMENT_CENTER
 	footer.add_theme_constant_override("separation", 10)
@@ -5246,6 +5301,8 @@ func _close_match_replay_overlay() -> void:
 	_match_replay_image = null
 	_match_replay_message_label = null
 	_match_replay_step_label = null
+	_match_replay_timeline = null
+	_match_replay_timeline_dragging = false
 	_match_replay_start_button = null
 	_match_replay_prev_button = null
 	_match_replay_next_button = null
@@ -5334,6 +5391,8 @@ func _refresh_match_replay_overlay_step() -> void:
 		_match_replay_next_button.disabled = _match_replay_step_index >= _match_replay_entries.size() - 1
 	if _match_replay_end_button != null and is_instance_valid(_match_replay_end_button):
 		_match_replay_end_button.disabled = _match_replay_step_index >= _match_replay_entries.size() - 1
+	if _match_replay_timeline != null and is_instance_valid(_match_replay_timeline):
+		_match_replay_timeline.queue_redraw()
 	_refresh_match_replay_autoplay_button()
 
 func _refresh_match_replay_autoplay_button() -> void:
@@ -5341,6 +5400,85 @@ func _refresh_match_replay_autoplay_button() -> void:
 		return
 	_match_replay_autoplay_button.text = "Pause" if _match_replay_autoplay_active else "Autoplay"
 	_match_replay_autoplay_button.disabled = _match_replay_entries.size() <= 1
+
+func _draw_match_replay_timeline() -> void:
+	if _match_replay_timeline == null or not is_instance_valid(_match_replay_timeline):
+		return
+	var timeline_size := _match_replay_timeline.size
+	var count := _match_replay_entries.size()
+	var left := MATCH_REPLAY_TIMELINE_MARGIN
+	var right := maxf(left + 1.0, timeline_size.x - MATCH_REPLAY_TIMELINE_MARGIN)
+	var center_y: float = floor(timeline_size.y * 0.55)
+	_match_replay_timeline.draw_line(
+		Vector2(left, center_y),
+		Vector2(right, center_y),
+		Color(0.62, 0.66, 0.74, 0.55),
+		2.0
+	)
+	if count <= 0:
+		return
+	for i in range(count):
+		var x := _get_match_replay_timeline_x_for_index(i, left, right)
+		var entry := _match_replay_entries[i]
+		var markers: Array = entry.get("markers", [])
+		var tick_height := 8.0
+		var tick_width := 1.0
+		var tick_color := Color(0.78, 0.82, 0.90, 0.62)
+		if markers.has("turn"):
+			tick_height = 21.0
+			tick_width = 2.0
+			tick_color = Color(0.95, 0.78, 0.30, 0.96)
+		_match_replay_timeline.draw_line(
+			Vector2(x, center_y - tick_height * 0.5),
+			Vector2(x, center_y + tick_height * 0.5),
+			tick_color,
+			tick_width
+		)
+		if markers.has("follower_loss"):
+			_match_replay_timeline.draw_circle(Vector2(x, center_y - 13.0), 4.0, Color(0.95, 0.22, 0.16, 0.95))
+		if markers.has("multi_destroy"):
+			_match_replay_timeline.draw_rect(Rect2(Vector2(x - 3.5, center_y + 9.0), Vector2(7.0, 7.0)), Color(0.95, 0.55, 0.16, 0.95))
+	var playhead_x := _get_match_replay_timeline_x_for_index(_match_replay_step_index, left, right)
+	_match_replay_timeline.draw_line(
+		Vector2(playhead_x, 3.0),
+		Vector2(playhead_x, timeline_size.y - 3.0),
+		Color(0.40, 0.83, 1.0, 1.0),
+		3.0
+	)
+	_match_replay_timeline.draw_circle(Vector2(playhead_x, center_y), 5.0, Color(0.40, 0.83, 1.0, 1.0))
+
+func _get_match_replay_timeline_x_for_index(index: int, left: float, right: float) -> float:
+	if _match_replay_entries.size() <= 1:
+		return (left + right) * 0.5
+	var step := clampi(index, 0, _match_replay_entries.size() - 1)
+	return lerpf(left, right, float(step) / float(_match_replay_entries.size() - 1))
+
+func _on_match_replay_timeline_gui_input(event: InputEvent) -> void:
+	if _match_replay_entries.is_empty():
+		return
+	if event is InputEventMouseButton:
+		var mouse_button := event as InputEventMouseButton
+		if mouse_button.button_index != MOUSE_BUTTON_LEFT:
+			return
+		_match_replay_timeline_dragging = mouse_button.pressed
+		if mouse_button.pressed:
+			_seek_match_replay_timeline(mouse_button.position.x)
+			get_viewport().set_input_as_handled()
+		return
+	if event is InputEventMouseMotion and _match_replay_timeline_dragging:
+		var mouse_motion := event as InputEventMouseMotion
+		_seek_match_replay_timeline(mouse_motion.position.x)
+		get_viewport().set_input_as_handled()
+
+func _seek_match_replay_timeline(local_x: float) -> void:
+	if _match_replay_entries.is_empty() or _match_replay_timeline == null or not is_instance_valid(_match_replay_timeline):
+		return
+	_set_match_replay_autoplay(false)
+	var left := MATCH_REPLAY_TIMELINE_MARGIN
+	var right := maxf(left + 1.0, _match_replay_timeline.size.x - MATCH_REPLAY_TIMELINE_MARGIN)
+	var progress := clampf((local_x - left) / (right - left), 0.0, 1.0)
+	_match_replay_step_index = clampi(int(round(progress * float(_match_replay_entries.size() - 1))), 0, _match_replay_entries.size() - 1)
+	_refresh_match_replay_overlay_step()
 
 func _on_match_replay_snapshot_gui_input(event: InputEvent) -> void:
 	if not (event is InputEventMouseButton):
@@ -6460,6 +6598,7 @@ func _do_update_ui() -> void:
 	_refresh_zone_info_icons()
 	_sync_network_turn_controls()
 	_sync_stack_zone_previews()
+	_sync_visual_stack_overlay()
 	_refresh_hermes_priority_toggle_ui()
 	_refresh_all_card_priority_toggle_ui()
 
@@ -6542,6 +6681,7 @@ func _on_board_layout_resized() -> void:
 	call_deferred("_update_center_action_panel_layout")
 	call_deferred("_layout_hermes_priority_toggle")
 	call_deferred("_layout_all_card_priority_toggles")
+	call_deferred("_sync_visual_stack_overlay")
 	_update_match_side_panel_layout()
 	if game_manager == null:
 		return
@@ -6984,6 +7124,227 @@ func _sync_stack_zone_previews() -> void:
 		var pending_zone_ui := _get_zone_ui_for_zone(spell_waiting_for_display_zone)
 		if pending_zone_ui != null and is_instance_valid(pending_zone_ui):
 			pending_zone_ui.set_preview_card(spell_waiting_for_target)
+
+func _ensure_visual_stack_layer() -> void:
+	if _visual_stack_layer != null and is_instance_valid(_visual_stack_layer):
+		return
+	_visual_stack_layer = Control.new()
+	_visual_stack_layer.name = "VisualStackLayer"
+	_visual_stack_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_visual_stack_layer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_visual_stack_layer.draw.connect(_draw_visual_stack_layer)
+	add_child(_visual_stack_layer)
+	_promote_transient_ui(_visual_stack_layer, VISUAL_STACK_Z_INDEX)
+
+func _clear_visual_stack_overlay() -> void:
+	_visual_stack_beams.clear()
+	_visual_stack_cards.clear()
+	if _visual_stack_layer != null and is_instance_valid(_visual_stack_layer):
+		for child in _visual_stack_layer.get_children():
+			child.queue_free()
+		_visual_stack_layer.queue_redraw()
+
+func _sync_visual_stack_overlay() -> void:
+	if game_manager == null or game_manager.action_stack.is_empty():
+		_clear_visual_stack_overlay()
+		return
+	if _is_match_replay_open() or _is_reinforcement_overlay_open() or _is_pause_menu_open():
+		_clear_visual_stack_overlay()
+		return
+	_ensure_visual_stack_layer()
+	if _visual_stack_layer == null or not is_instance_valid(_visual_stack_layer):
+		return
+	_visual_stack_layer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_clear_visual_stack_overlay()
+	var actions := _get_visual_stack_visible_actions()
+	if actions.is_empty():
+		return
+	var stack_origin := _get_visual_stack_origin(actions.size())
+	for i in range(actions.size()):
+		var action := actions[i] as CardAction
+		if action == null or _get_visual_stack_card(action) == null:
+			continue
+		var is_top := i == actions.size() - 1
+		var holder := _make_visual_stack_action_card(action, i, actions.size(), is_top)
+		_visual_stack_layer.add_child(holder)
+		_visual_stack_cards.append(holder)
+		var card_width := VISUAL_STACK_TOP_CARD_WIDTH if is_top else VISUAL_STACK_CARD_WIDTH
+		var offset := Vector2(float(i) * VISUAL_STACK_CARD_SPACING, -10.0 * float(actions.size() - 1 - i))
+		holder.position = stack_origin + offset
+		holder.size = holder.get_combined_minimum_size()
+		holder.rotation_degrees = clampf(-8.0 + float(i) * 3.4, -9.0, 7.0)
+		if is_top:
+			holder.position += Vector2(12.0, -18.0)
+			holder.rotation_degrees = 3.0
+		var target_anchor := _get_visual_stack_anchor_for_value(action.target)
+		if target_anchor != Vector2.INF:
+			_visual_stack_beams.append({
+				"from": holder.position + Vector2(card_width * 0.5, holder.size.y * 0.42),
+				"to": target_anchor,
+				"top": is_top,
+			})
+	_visual_stack_layer.queue_redraw()
+	_visual_stack_layer.move_to_front()
+
+func _get_visual_stack_visible_actions() -> Array[CardAction]:
+	var actions: Array[CardAction] = []
+	if game_manager == null:
+		return actions
+	var start_index := maxi(0, game_manager.action_stack.size() - VISUAL_STACK_MAX_VISIBLE)
+	for i in range(start_index, game_manager.action_stack.size()):
+		var action := game_manager.action_stack[i] as CardAction
+		if action != null and _get_visual_stack_card(action) != null:
+			actions.append(action)
+	return actions
+
+func _get_visual_stack_card(action: CardAction) -> Card:
+	if action == null:
+		return null
+	if action.card != null:
+		return action.card
+	if action.attacker != null:
+		return action.attacker
+	return null
+
+func _get_visual_stack_origin(action_count: int) -> Vector2:
+	var viewport_size := size
+	if viewport_size.x <= 0.0 or viewport_size.y <= 0.0:
+		viewport_size = get_viewport_rect().size
+	var visible_width := VISUAL_STACK_TOP_CARD_WIDTH + maxf(0.0, float(action_count - 1) * VISUAL_STACK_CARD_SPACING)
+	var x := clampf(viewport_size.x * 0.58, 260.0, maxf(260.0, viewport_size.x - visible_width - 42.0))
+	var y := clampf(viewport_size.y * 0.25, 74.0, maxf(74.0, viewport_size.y - 390.0))
+	return Vector2(x, y)
+
+func _make_visual_stack_action_card(action: CardAction, index: int, action_count: int, is_top: bool) -> Control:
+	var holder := PanelContainer.new()
+	holder.name = "VisualStackAction"
+	holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	holder.z_index = index
+	var card_width := VISUAL_STACK_TOP_CARD_WIDTH if is_top else VISUAL_STACK_CARD_WIDTH
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.025, 0.035, 0.055, 0.90 if is_top else 0.78)
+	style.border_color = Color(0.26, 0.88, 1.0, 0.98) if is_top else Color(0.92, 0.88, 0.72, 0.68)
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		style.set_border_width(side as Side, 3 if is_top else 2)
+	style.corner_radius_top_left = 8
+	style.corner_radius_top_right = 8
+	style.corner_radius_bottom_left = 8
+	style.corner_radius_bottom_right = 8
+	style.content_margin_left = 5
+	style.content_margin_right = 5
+	style.content_margin_top = 5
+	style.content_margin_bottom = 6
+	holder.add_theme_stylebox_override("panel", style)
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 3)
+	vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	holder.add_child(vbox)
+	var label := Label.new()
+	label.text = _get_visual_stack_action_title(action, action_count - index, is_top)
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.add_theme_font_size_override("font_size", 12 if is_top else 10)
+	label.add_theme_color_override("font_color", Color(0.74, 0.95, 1.0, 1.0) if is_top else Color(0.88, 0.86, 0.76, 0.92))
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vbox.add_child(label)
+	var visual_card := VisualCard.new()
+	visual_card.setup(_get_visual_stack_card(action), card_width, 0)
+	visual_card.set_disabled(true, false)
+	visual_card.set_hover_preview_when_disabled(false)
+	visual_card.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vbox.add_child(visual_card)
+	holder.custom_minimum_size = Vector2(card_width + 10.0, visual_card.get_combined_minimum_size().y + label.get_combined_minimum_size().y + 20.0)
+	holder.modulate = Color(1, 1, 1, 1.0 if is_top else 0.86)
+	return holder
+
+func _get_visual_stack_action_title(action: CardAction, depth_from_top: int, is_top: bool) -> String:
+	var prefix := "Resolving Next" if is_top else "Stack +%d" % depth_from_top
+	return "%s - %s" % [prefix, _get_visual_stack_action_type_name(action)]
+
+func _get_visual_stack_action_type_name(action: CardAction) -> String:
+	if action == null:
+		return "Action"
+	match action.type:
+		CardAction.Type.ATTACK:
+			return "Attack"
+		CardAction.Type.SPELL:
+			return "Spell"
+		CardAction.Type.ABILITY:
+			return "Ability"
+		CardAction.Type.EVENT:
+			if action.event_name.strip_edges() != "":
+				return action.event_name.capitalize()
+			return "Event"
+		CardAction.Type.CHARM:
+			return "Charm"
+	return "Action"
+
+func _get_visual_stack_anchor_for_value(value) -> Vector2:
+	if value == null:
+		return Vector2.INF
+	if value is Card:
+		var card := value as Card
+		if card.current_zone != null:
+			var zone_ui := _get_zone_ui_for_zone(card.current_zone)
+			if zone_ui != null and is_instance_valid(zone_ui):
+				return zone_ui.get_global_rect().get_center()
+	if value is Zone:
+		var zone_ui := _get_zone_ui_for_zone(value as Zone)
+		if zone_ui != null and is_instance_valid(zone_ui):
+			return zone_ui.get_global_rect().get_center()
+	if value is Player:
+		var panel := _get_visual_stack_player_panel(value as Player)
+		if panel != null and is_instance_valid(panel):
+			return panel.get_global_rect().get_center()
+	if value is Array:
+		var values := value as Array
+		for entry in values:
+			var anchor := _get_visual_stack_anchor_for_value(entry)
+			if anchor != Vector2.INF:
+				return anchor
+	if value is Dictionary:
+		var values := value as Dictionary
+		for key in values.keys():
+			var anchor := _get_visual_stack_anchor_for_value(values[key])
+			if anchor != Vector2.INF:
+				return anchor
+	return Vector2.INF
+
+func _get_visual_stack_player_panel(player: Player) -> PanelContainer:
+	if player == null:
+		return null
+	var display_player := _get_display_player()
+	var display_opponent := _get_display_opponent()
+	if player == display_player:
+		return _get_stats_panel_for_zone_ui(_player_god_zone_ui)
+	if player == display_opponent:
+		return _get_stats_panel_for_zone_ui(_enemy_god_zone_ui)
+	return null
+
+func _draw_visual_stack_layer() -> void:
+	if _visual_stack_layer == null or not is_instance_valid(_visual_stack_layer):
+		return
+	for beam in _visual_stack_beams:
+		var from_point: Vector2 = beam.get("from", Vector2.ZERO)
+		var to_point: Vector2 = beam.get("to", Vector2.ZERO)
+		var is_top := bool(beam.get("top", false))
+		_draw_visual_stack_beam(from_point, to_point, is_top)
+
+func _draw_visual_stack_beam(from_point: Vector2, to_point: Vector2, is_top: bool) -> void:
+	var color := Color(0.20, 0.82, 1.0, 0.86) if is_top else Color(0.72, 0.86, 1.0, 0.34)
+	var width := 5.0 if is_top else 2.0
+	var control := Vector2((from_point.x + to_point.x) * 0.5, minf(from_point.y, to_point.y) - 90.0)
+	var points := PackedVector2Array()
+	for i in range(19):
+		var t := float(i) / 18.0
+		points.append(_quadratic_bezier(from_point, control, to_point, t))
+	_visual_stack_layer.draw_polyline(points, color, width, true)
+	if is_top:
+		_visual_stack_layer.draw_circle(to_point, 8.0, Color(0.20, 0.82, 1.0, 0.32))
+		_visual_stack_layer.draw_circle(to_point, 4.0, Color(0.75, 0.96, 1.0, 0.92))
+
+func _quadratic_bezier(a: Vector2, b: Vector2, c: Vector2, t: float) -> Vector2:
+	var inv := 1.0 - t
+	return a * inv * inv + b * 2.0 * inv * t + c * t * t
 
 func _find_available_stack_display_zone(player: Player) -> Zone:
 	if player == null:

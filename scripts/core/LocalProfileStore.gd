@@ -1151,7 +1151,10 @@ func _score_account_profile_candidate(
 		score += 10
 	if profile_id == preferred_profile_id:
 		score += 40 if prefer_preferred_profile_id else 15
-	score += mini(_get_saved_deck_count_for_profile(profile_id), 50) * 5
+	var deck_count := _get_saved_deck_count_for_profile(profile_id)
+	if deck_count > 0:
+		score += 500
+	score += mini(deck_count, 50) * 5
 	score += mini(_get_synced_account_deck_count_for_profile(profile_id), 50) * 2
 	if _has_lobby_resume_for_profile(profile_id):
 		score += 25
