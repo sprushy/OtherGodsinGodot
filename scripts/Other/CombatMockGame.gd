@@ -284,6 +284,11 @@ const ACTION_LOG_CARD_HOVER_WIDTH := 320.0
 const ACTION_LOG_CARD_HOVER_MAX_HEIGHT := 420.0
 const MATCH_REPLAY_PANEL_MARGIN := 56.0
 const MATCH_REPLAY_MAX_SNAPSHOT_WIDTH := 1920
+const MATCH_REPLAY_AUTOPLAY_INTERVAL_SECONDS := 0.85
+const MATCH_REPLAY_TIMELINE_HEIGHT := 38.0
+const MATCH_REPLAY_TIMELINE_MARGIN := 14.0
+const MATCH_REPLAY_MAJOR_FOLLOWER_LOSS_THRESHOLD := 25
+const MATCH_REPLAY_MULTI_DESTROY_THRESHOLD := 2
 
 @onready var choice_container = $MainHBox/LeftPanel/ChoiceContainer
 @onready var choice_intro_label = $MainHBox/LeftPanel/ChoiceContainer/ChoiceIntroLabel
@@ -585,8 +590,13 @@ var _match_replay_overlay: Control = null
 var _match_replay_image: TextureRect = null
 var _match_replay_message_label: Label = null
 var _match_replay_step_label: Label = null
+var _match_replay_start_button: Button = null
 var _match_replay_prev_button: Button = null
 var _match_replay_next_button: Button = null
+var _match_replay_end_button: Button = null
+var _match_replay_autoplay_button: Button = null
+var _match_replay_autoplay_timer: Timer = null
+var _match_replay_autoplay_active: bool = false
 var _match_replay_step_index: int = -1
 var _match_replay_next_snapshot_id: int = 1
 var _match_replay_initial_snapshot_requested: bool = false
@@ -4970,6 +4980,7 @@ func _refresh_match_replay_button() -> void:
 	_action_log_replay_button.modulate = Color(1, 1, 1, 1) if has_replay else Color(1, 1, 1, 0.45)
 
 func _clear_match_replay_history() -> void:
+	_set_match_replay_autoplay(false)
 	_match_replay_entries.clear()
 	_match_replay_step_index = -1
 	_match_replay_next_snapshot_id = 1
@@ -5184,6 +5195,11 @@ func _open_match_replay_overlay() -> void:
 	footer.add_theme_constant_override("separation", 10)
 	vbox.add_child(footer)
 
+	_match_replay_start_button = Button.new()
+	_match_replay_start_button.text = "Start"
+	_match_replay_start_button.pressed.connect(_go_to_match_replay_start)
+	footer.add_child(_match_replay_start_button)
+
 	_match_replay_prev_button = Button.new()
 	_match_replay_prev_button.text = "Previous"
 	_match_replay_prev_button.pressed.connect(func() -> void:
@@ -5203,28 +5219,94 @@ func _open_match_replay_overlay() -> void:
 	)
 	footer.add_child(_match_replay_next_button)
 
+	_match_replay_end_button = Button.new()
+	_match_replay_end_button.text = "End"
+	_match_replay_end_button.pressed.connect(_go_to_match_replay_end)
+	footer.add_child(_match_replay_end_button)
+
+	_match_replay_autoplay_button = Button.new()
+	_match_replay_autoplay_button.text = "Autoplay"
+	_match_replay_autoplay_button.pressed.connect(_toggle_match_replay_autoplay)
+	footer.add_child(_match_replay_autoplay_button)
+
+	_match_replay_autoplay_timer = Timer.new()
+	_match_replay_autoplay_timer.one_shot = false
+	_match_replay_autoplay_timer.wait_time = MATCH_REPLAY_AUTOPLAY_INTERVAL_SECONDS
+	_match_replay_autoplay_timer.timeout.connect(_on_match_replay_autoplay_timeout)
+	overlay.add_child(_match_replay_autoplay_timer)
+
 	_match_replay_step_index = _match_replay_entries.size() - 1
 	_refresh_match_replay_overlay_step()
 
 func _close_match_replay_overlay() -> void:
+	_set_match_replay_autoplay(false)
 	if _match_replay_overlay != null and is_instance_valid(_match_replay_overlay):
 		_match_replay_overlay.queue_free()
 	_match_replay_overlay = null
 	_match_replay_image = null
 	_match_replay_message_label = null
 	_match_replay_step_label = null
+	_match_replay_start_button = null
 	_match_replay_prev_button = null
 	_match_replay_next_button = null
+	_match_replay_end_button = null
+	_match_replay_autoplay_button = null
+	_match_replay_autoplay_timer = null
 
-func _step_match_replay(direction: int) -> void:
+func _step_match_replay(direction: int, stop_autoplay: bool = true) -> void:
 	if _match_replay_entries.is_empty():
 		return
+	if stop_autoplay:
+		_set_match_replay_autoplay(false)
 	_match_replay_step_index = clampi(
 		_match_replay_step_index + direction,
 		0,
 		_match_replay_entries.size() - 1
 	)
 	_refresh_match_replay_overlay_step()
+
+func _go_to_match_replay_start() -> void:
+	if _match_replay_entries.is_empty():
+		return
+	_set_match_replay_autoplay(false)
+	_match_replay_step_index = 0
+	_refresh_match_replay_overlay_step()
+
+func _go_to_match_replay_end() -> void:
+	if _match_replay_entries.is_empty():
+		return
+	_set_match_replay_autoplay(false)
+	_match_replay_step_index = _match_replay_entries.size() - 1
+	_refresh_match_replay_overlay_step()
+
+func _toggle_match_replay_autoplay() -> void:
+	if _match_replay_entries.size() <= 1:
+		return
+	if _match_replay_autoplay_active:
+		_set_match_replay_autoplay(false)
+		return
+	if _match_replay_step_index >= _match_replay_entries.size() - 1:
+		_match_replay_step_index = 0
+		_refresh_match_replay_overlay_step()
+	_set_match_replay_autoplay(true)
+
+func _set_match_replay_autoplay(active: bool) -> void:
+	_match_replay_autoplay_active = active
+	if _match_replay_autoplay_timer != null and is_instance_valid(_match_replay_autoplay_timer):
+		if active:
+			_match_replay_autoplay_timer.start()
+		else:
+			_match_replay_autoplay_timer.stop()
+	_refresh_match_replay_autoplay_button()
+
+func _on_match_replay_autoplay_timeout() -> void:
+	if not _is_match_replay_open() or _match_replay_entries.is_empty():
+		_set_match_replay_autoplay(false)
+		return
+	if _match_replay_step_index >= _match_replay_entries.size() - 1:
+		_set_match_replay_autoplay(false)
+		return
+	_step_match_replay(1, false)
 
 func _refresh_match_replay_overlay_step() -> void:
 	if not _is_match_replay_open():
@@ -5244,10 +5326,21 @@ func _refresh_match_replay_overlay_step() -> void:
 			_match_replay_step_index + 1,
 			_match_replay_entries.size(),
 		]
+	if _match_replay_start_button != null and is_instance_valid(_match_replay_start_button):
+		_match_replay_start_button.disabled = _match_replay_step_index <= 0
 	if _match_replay_prev_button != null and is_instance_valid(_match_replay_prev_button):
 		_match_replay_prev_button.disabled = _match_replay_step_index <= 0
 	if _match_replay_next_button != null and is_instance_valid(_match_replay_next_button):
 		_match_replay_next_button.disabled = _match_replay_step_index >= _match_replay_entries.size() - 1
+	if _match_replay_end_button != null and is_instance_valid(_match_replay_end_button):
+		_match_replay_end_button.disabled = _match_replay_step_index >= _match_replay_entries.size() - 1
+	_refresh_match_replay_autoplay_button()
+
+func _refresh_match_replay_autoplay_button() -> void:
+	if _match_replay_autoplay_button == null or not is_instance_valid(_match_replay_autoplay_button):
+		return
+	_match_replay_autoplay_button.text = "Pause" if _match_replay_autoplay_active else "Autoplay"
+	_match_replay_autoplay_button.disabled = _match_replay_entries.size() <= 1
 
 func _on_match_replay_snapshot_gui_input(event: InputEvent) -> void:
 	if not (event is InputEventMouseButton):

@@ -2164,6 +2164,7 @@ func _complete_startup_prompts() -> void:
 	if _startup_autologin_pending:
 		_startup_autologin_pending = false
 		_startup_autologin_in_progress = true
+		_finish_startup_loading()
 		_queue_authenticated_lobby_connect("Restoring lobby session...")
 		return
 	_maybe_show_auth_onboarding()

@@ -1,6 +1,7 @@
 extends Node3D
 
 const WindowsSelfUpdaterScript = preload("res://scripts/client/WindowsSelfUpdater.gd")
+const GameCursorScript = preload("res://scripts/ui/GameCursor.gd")
 const GAME_SCENE_PATH := "res://scenes/mainfork.tscn"
 const DEFAULT_VIEWPORT_SIZE := Vector2i(2560, 1440)
 const SERVER_MODE_ARG := "server_mode"
@@ -9,12 +10,12 @@ const LEGACY_3D_ARG := "legacy_3d"
 const STEALTH_FOG_SMOKE_TEXTURE_PATH := "res://images/ui/stealth_fog/lelu_smoke_b7.png"
 const STEALTH_FOG_CLOUD_TEXTURE_PATH := "res://images/ui/stealth_fog/lelu_cloud_noise_tiled.png"
 const STEALTH_FOG_DETAIL_TEXTURE_PATH := "res://images/ui/stealth_fog/seamless_noise_02.png"
-const STEALTH_FOG_CURSOR_TEXTURE_PATH := "res://images/ui/cursors/StealthFogCursor.png"
 const LOCKED_POWER_CURSOR_TEXTURE_PATH := "res://images/NorseLockedPowerCursor.png"
 const STEALTH_FOG_CLEAR_UI_GROUP := "stealth_fog_clear_ui"
 const STEALTH_FOG_TOP_UI_GROUP := "stealth_fog_top_ui"
 const CUSTOM_CURSOR_ACTIVE_META := &"other_gods_custom_cursor_active"
 const LOCKED_POWER_CURSOR_ACTIVE_META := &"other_gods_locked_power_cursor_active"
+const SOFTWARE_CURSOR_LAYER := 20000
 const LOCKED_POWER_CURSOR_TARGET_HEIGHT := 72
 const LOCKED_POWER_CURSOR_HOTSPOT_RATIO := Vector2(0.50, 0.28)
 const STEALTH_FOG_PLANE_Z := 0.001
@@ -103,6 +104,7 @@ func _ready() -> void:
 		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 		_build_flat_canvas()
 		_build_software_cursor()
+	GameCursorScript.ensure_registered()
 	_sync_cursor_presentation()
 	_load_game_into_viewport()
 	call_deferred("_refresh_display_mode")
@@ -136,14 +138,14 @@ func _exit_tree() -> void:
 func _build_software_cursor() -> void:
 	_software_cursor_layer = CanvasLayer.new()
 	_software_cursor_layer.name = "SoftwareCursorLayer"
-	_software_cursor_layer.layer = 1000
+	_software_cursor_layer.layer = SOFTWARE_CURSOR_LAYER
 	add_child(_software_cursor_layer)
 
 	_software_cursor_root = Node2D.new()
 	_software_cursor_root.name = "SoftwareCursor"
 	_software_cursor_layer.add_child(_software_cursor_root)
 
-	var texture := load(STEALTH_FOG_CURSOR_TEXTURE_PATH) as Texture2D
+	var texture := GameCursorScript.build_texture()
 	if texture != null:
 		_default_software_cursor_texture = texture
 		_software_cursor_sprite = Sprite2D.new()
@@ -179,8 +181,8 @@ func _apply_default_software_cursor() -> void:
 	if _software_cursor_sprite == null or not is_instance_valid(_software_cursor_sprite):
 		return
 	_software_cursor_sprite.texture = _default_software_cursor_texture
-	_software_cursor_sprite.scale = Vector2(0.052, 0.052)
-	_software_cursor_sprite.position = Vector2(-5.46, -3.25)
+	_software_cursor_sprite.scale = Vector2.ONE
+	_software_cursor_sprite.position = -GameCursorScript.get_hotspot(_default_software_cursor_texture)
 	_software_cursor_showing_locked_power = false
 
 func _apply_locked_power_software_cursor() -> void:

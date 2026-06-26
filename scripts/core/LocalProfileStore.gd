@@ -690,33 +690,15 @@ func _save(skip_backup_refresh: bool = false) -> void:
 	if not _ensure_storage_parent_exists(STORAGE_PATH):
 		return
 	var json_string := JSON.stringify(_data, "\t")
-	if not _write_storage_snapshot(STORAGE_TEMP_PATH, json_string):
-		return
-
 	if not skip_backup_refresh and FileAccess.file_exists(STORAGE_PATH):
 		if FileAccess.file_exists(STORAGE_BACKUP_PATH):
 			DirAccess.remove_absolute(ProjectSettings.globalize_path(STORAGE_BACKUP_PATH))
 		if not _copy_storage_snapshot(STORAGE_PATH, STORAGE_BACKUP_PATH):
-			print("LocalProfileStore: Aborting save because the backup snapshot could not be refreshed.")
-			return
-
-	var storage_global_path: String = ProjectSettings.globalize_path(STORAGE_PATH)
-	if FileAccess.file_exists(STORAGE_PATH):
-		var remove_err := DirAccess.remove_absolute(storage_global_path)
-		if remove_err != OK:
-			print("LocalProfileStore: Error replacing existing storage file ", STORAGE_PATH, " : ", remove_err)
-			return
-
-	var rename_err := DirAccess.rename_absolute(
-		ProjectSettings.globalize_path(STORAGE_TEMP_PATH),
-		storage_global_path
-	)
-	if rename_err != OK:
-		print("LocalProfileStore: Error promoting temp snapshot ", STORAGE_TEMP_PATH, " : ", rename_err)
+			print("LocalProfileStore: Warning - could not refresh backup snapshot %s." % STORAGE_BACKUP_PATH)
+	if not _write_storage_snapshot(STORAGE_PATH, json_string):
 		if not FileAccess.file_exists(STORAGE_PATH) and FileAccess.file_exists(STORAGE_BACKUP_PATH):
 			_copy_storage_snapshot(STORAGE_BACKUP_PATH, STORAGE_PATH)
 		return
-
 	if not FileAccess.file_exists(STORAGE_BACKUP_PATH):
 		_copy_storage_snapshot(STORAGE_PATH, STORAGE_BACKUP_PATH)
 

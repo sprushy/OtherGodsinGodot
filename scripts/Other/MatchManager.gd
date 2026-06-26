@@ -559,29 +559,35 @@ func _prune_stale_ui_interactions_for_current_turn() -> void:
 		if int(queued.get("turn_number", current_turn)) != current_turn:
 			_queued_ui_interactions.remove_at(idx)
 
-# Interaction types that only exist to gather a choice while a specific action
-# is on the stack or actively resolving. Once the stack and resolving set are
-# both empty, any such lingering interaction is stale (its triggering action
-# already resolved) and must be dropped instead of blocking unrelated commands.
-const _STACK_TIED_UI_INTERACTION_TYPES := [
-	"priority",
-	"intercept",
-	"combat_retreat",
-]
-
+# Some interaction prompts only exist to gather a choice while specific server
+# state is live. If that state has already moved on (the triggering action
+# resolved, or the pending attack was cleared) the prompt is stale and must be
+# dropped instead of blocking unrelated commands and re-emitting phantom
+# selectors. Each type is checked against the state it actually depends on.
 func _prune_stale_stack_tied_ui_interactions() -> void:
 	if game_manager == null:
 		return
-	if not game_manager.action_stack.is_empty() or not game_manager.resolving_stack_actions.is_empty():
-		return
+	var stack_active := not game_manager.action_stack.is_empty() \
+		or not game_manager.resolving_stack_actions.is_empty()
+	var intercept_live := selected_attacker != null and pending_attack_target != null
 	for idx in range(_pending_ui_interactions.size() - 1, -1, -1):
 		var entry: Dictionary = _pending_ui_interactions[idx]
-		if str(entry.get("type", "")) in _STACK_TIED_UI_INTERACTION_TYPES:
-			_pending_ui_interactions.remove_at(idx)
+		var interaction_type := str(entry.get("type", ""))
+		if interaction_type == "intercept":
+			if not intercept_live:
+				_pending_ui_interactions.remove_at(idx)
+		elif interaction_type == "priority" or interaction_type == "combat_retreat":
+			if not stack_active:
+				_pending_ui_interactions.remove_at(idx)
 	for idx in range(_queued_ui_interactions.size() - 1, -1, -1):
 		var queued: Dictionary = _queued_ui_interactions[idx]
-		if str(queued.get("type", "")) in _STACK_TIED_UI_INTERACTION_TYPES:
-			_queued_ui_interactions.remove_at(idx)
+		var interaction_type := str(queued.get("type", ""))
+		if interaction_type == "intercept":
+			if not intercept_live:
+				_queued_ui_interactions.remove_at(idx)
+		elif interaction_type == "priority" or interaction_type == "combat_retreat":
+			if not stack_active:
+				_queued_ui_interactions.remove_at(idx)
 
 func _has_duplicate_pending_ui_interaction(player: Player, type: String, data: Dictionary) -> bool:
 	for existing in _pending_ui_interactions:
@@ -728,7 +734,6 @@ func _consume_pending_ui_interaction_for_player(player: Player, interaction_type
 
 func _resume_authoritative_flow_after_prompt_command() -> void:
 	_prune_stale_ui_interactions_for_current_turn()
-	_prune_stale_stack_tied_ui_interactions()
 	if not _pending_ui_interactions.is_empty():
 		# The authoritative prompt queue is strictly serial. If the active
 		# selector was missed or replaced by a state refresh, reissue that same
@@ -3091,7 +3096,6 @@ func _advance_authoritative_priority() -> void:
 		return
 	_log_authoritative_flow_state("priority_advance:start")
 	_prune_stale_ui_interactions_for_current_turn()
-	_prune_stale_stack_tied_ui_interactions()
 	if _authoritative_stack_resolution_pending \
 			or not _pending_ui_interactions.is_empty() \
 			or not _queued_ui_interactions.is_empty():
