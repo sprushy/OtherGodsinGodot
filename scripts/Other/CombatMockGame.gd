@@ -5070,23 +5070,10 @@ func _capture_match_replay_snapshot_now() -> Texture2D:
 	var image := viewport_texture.get_image()
 	if image == null or image.is_empty():
 		return null
-	image = _crop_match_replay_image_to_game_rect(image)
 	if image.get_width() > MATCH_REPLAY_MAX_SNAPSHOT_WIDTH:
 		var scaled_height := maxi(1, int(round(float(image.get_height()) * float(MATCH_REPLAY_MAX_SNAPSHOT_WIDTH) / float(image.get_width()))))
 		image.resize(MATCH_REPLAY_MAX_SNAPSHOT_WIDTH, scaled_height, Image.INTERPOLATE_LANCZOS)
 	return ImageTexture.create_from_image(image)
-
-func _crop_match_replay_image_to_game_rect(source_image: Image) -> Image:
-	var global_rect := get_global_rect()
-	var crop_x := clampi(int(floor(global_rect.position.x)), 0, source_image.get_width() - 1)
-	var crop_y := clampi(int(floor(global_rect.position.y)), 0, source_image.get_height() - 1)
-	var crop_width := clampi(int(ceil(global_rect.size.x)), 1, source_image.get_width() - crop_x)
-	var crop_height := clampi(int(ceil(global_rect.size.y)), 1, source_image.get_height() - crop_y)
-	if crop_width >= source_image.get_width() and crop_height >= source_image.get_height() and crop_x == 0 and crop_y == 0:
-		return source_image
-	var cropped := Image.create(crop_width, crop_height, false, source_image.get_format())
-	cropped.blit_rect(source_image, Rect2i(crop_x, crop_y, crop_width, crop_height), Vector2i.ZERO)
-	return cropped
 
 func _hide_match_replay_capture_overlays() -> Array[Control]:
 	var hidden_overlays: Array[Control] = []
@@ -5115,6 +5102,8 @@ func _open_match_replay_overlay() -> void:
 
 	_hide_pause_menu()
 	_close_action_log_popup()
+	_hide_hand_hover_preview()
+	_hide_power_hover_popup()
 
 	var overlay := ColorRect.new()
 	overlay.name = "MatchReplayOverlay"
@@ -5183,7 +5172,7 @@ func _open_match_replay_overlay() -> void:
 
 	_match_replay_image = TextureRect.new()
 	_match_replay_image.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	_match_replay_image.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	_match_replay_image.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT
 	_match_replay_image.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_match_replay_image.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_match_replay_image.mouse_filter = Control.MOUSE_FILTER_STOP
@@ -7947,10 +7936,16 @@ func _layout_fan() -> void:
 	call_deferred("_layout_all_card_priority_toggles")
 
 func _on_hand_card_hover_started(vc: VisualCard) -> void:
+	if _is_match_replay_open():
+		_hide_hand_hover_preview()
+		return
 	if vc != null and vc != _hand_hover_vc:
 		_show_hand_hover_preview(vc)
 
 func _on_hand_card_hover_ended(_vc: VisualCard) -> void:
+	if _is_match_replay_open():
+		_hide_hand_hover_preview()
+		return
 	call_deferred("_refresh_hand_hover_from_mouse")
 
 func _hide_hand_hover_preview() -> void:
@@ -7977,6 +7972,9 @@ func _get_live_hand_hover_source_side(vc: VisualCard) -> int:
 	return 0
 
 func _show_hand_hover_preview(vc: VisualCard) -> void:
+	if _is_match_replay_open():
+		_hide_hand_hover_preview()
+		return
 	if _is_reinforcement_overlay_open():
 		_hide_hand_hover_preview()
 		return
@@ -8083,6 +8081,9 @@ func _position_hand_hover_preview() -> void:
 	preview.visible = true
 
 func _refresh_hand_hover_from_mouse() -> void:
+	if _is_match_replay_open():
+		_hide_hand_hover_preview()
+		return
 	if _is_reinforcement_overlay_open():
 		_hide_hand_hover_preview()
 		return
@@ -8099,6 +8100,10 @@ func _refresh_hand_hover_from_mouse() -> void:
 		_show_hand_hover_preview(hovered_vc)
 
 func _on_hand_hover_preview_gui_input(event: InputEvent) -> void:
+	if _is_match_replay_open():
+		_hide_hand_hover_preview()
+		get_viewport().set_input_as_handled()
+		return
 	var hover_vc := _hand_hover_vc
 	if hover_vc == null or not is_instance_valid(hover_vc):
 		return
@@ -8110,6 +8115,9 @@ func _on_hand_hover_preview_gui_input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 
 func _update_hand_hover_preview() -> void:
+	if _is_match_replay_open():
+		_hide_hand_hover_preview()
+		return
 	if _is_reinforcement_overlay_open():
 		_hide_hand_hover_preview()
 		return

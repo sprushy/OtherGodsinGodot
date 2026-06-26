@@ -468,6 +468,17 @@ func set_preferred_auth_mode(auth_mode: String) -> void:
 	_data["preferred_auth_mode"] = resolved_mode
 	_save()
 
+func get_account_auto_login_enabled() -> bool:
+	_ensure_loaded()
+	if _data.has("account_auto_login_enabled"):
+		return bool(_data.get("account_auto_login_enabled", false))
+	return not str(_data.get("last_account_password", "")).is_empty()
+
+func set_account_auto_login_enabled(enabled: bool) -> void:
+	_ensure_loaded()
+	_data["account_auto_login_enabled"] = enabled
+	_save()
+
 func get_last_account_username() -> String:
 	_ensure_loaded()
 	return str(_data.get("last_account_username", "")).strip_edges()
@@ -630,6 +641,7 @@ func _ensure_loaded() -> void:
 		"lobby_resume_by_profile": {},
 		"active_match_by_profile": {},
 		"preferred_auth_mode": AUTH_MODE_LOGIN,
+		"account_auto_login_enabled": false,
 		"allow_friend_observers_to_see_cards": true,
 		"last_account_username": "",
 		"last_account_password": "",

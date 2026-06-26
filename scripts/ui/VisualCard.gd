@@ -933,18 +933,24 @@ func set_blot_summon_state(is_summonable: bool, is_selected: bool = false) -> vo
 func _cancel_drag() -> void:
 	if _dragging:
 		_dragging = false
-		if _drag_parent and is_instance_valid(_drag_parent):
-			get_parent().remove_child(self)
+		var restored := false
+		if _drag_parent and is_instance_valid(_drag_parent) and not _drag_parent.is_queued_for_deletion():
+			var current_parent := get_parent()
+			if current_parent != null:
+				current_parent.remove_child(self)
 			_drag_parent.add_child(self)
-			_drag_parent.move_child(self, _drag_index)
+			_drag_parent.move_child(self, clampi(_drag_index, 0, _drag_parent.get_child_count() - 1))
+			restored = true
 		_drag_parent = null
 		_drag_index = -1
-		visible = true
+		visible = restored
 		# Sync _inner rotation to match is_rotated — drag rotation only modifies
 		# the drag ghost, so _inner can lag behind when the card returns to hand.
 		if _inner:
 			_inner.rotation_degrees = 0.0
 			_inner.pivot_offset = size / 2.0
+		if not restored:
+			queue_free()
 	if _drag_ghost and is_instance_valid(_drag_ghost):
 		_drag_ghost.queue_free()
 		_drag_ghost = null
@@ -1245,6 +1251,9 @@ func _start_drag() -> void:
 		return
 	_dragging = true
 	_drag_ghost = _build_drag_ghost()
+	if _drag_ghost == null or not is_instance_valid(_drag_ghost):
+		_dragging = false
+		return
 	_drag_target_rotation = _drag_ghost.rotation_degrees  # already at correct angle
 	# Reparent to scene root so the hand HBox collapses the gap,
 	# but the node stays in the tree so _input() keeps firing.
@@ -1353,13 +1362,15 @@ func _remove_drag_ghost_rules_text(node: Node) -> void:
 
 func _finish_drag() -> void:
 	_dragging = false
-	if _drag_parent and is_instance_valid(_drag_parent):
+	var restored := false
+	if _drag_parent and is_instance_valid(_drag_parent) and not _drag_parent.is_queued_for_deletion():
 		var current_parent := get_parent()
 		if current_parent != null:
 			current_parent.remove_child(self)
 		_drag_parent.add_child(self)
 		_drag_parent.move_child(self, clampi(_drag_index, 0, _drag_parent.get_child_count() - 1))
-	visible = true
+		restored = true
+	visible = restored
 	_drag_parent = null
 	_drag_index = -1
 	var drop_pos := get_global_mouse_position()
@@ -1374,6 +1385,8 @@ func _finish_drag() -> void:
 	var was_stealth := _drag_stealth
 	_drag_stealth = false
 	card_drag_released.emit(card_data, drop_pos, is_rotated, was_stealth)
+	if not restored:
+		queue_free()
 
 func _show_hover_panel() -> void:
 	var floating_parent := _get_floating_parent()

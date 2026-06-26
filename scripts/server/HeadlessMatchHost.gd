@@ -102,7 +102,29 @@ func _on_command_received(command: Dictionary, sender_info: Dictionary) -> void:
 				"Match paused while a player reconnects."
 			)
 		return
-	match_manager.process_command(command, _resolve_command_sender_info(sender_info))
+	var resolved_sender_info := _resolve_command_sender_info(sender_info)
+	# Capture the first logic rejection emitted while processing this command so
+	# it can be forwarded to the originating client. Without this, a move_failed
+	# reason (e.g. "Resolve the pending ... choice before continuing.") only
+	# fires locally on the server and the networked client is left silently
+	# waiting, which presents as a permanent soft-lock.
+	var captured_rejection := ""
+	var capture_callable := func(reason: String) -> void:
+		if captured_rejection.is_empty():
+			captured_rejection = reason
+	var move_failed_connected := false
+	if match_manager.move_failed.is_connected(capture_callable) == false:
+		match_manager.move_failed.connect(capture_callable, Object.CONNECT_ONE_SHOT)
+		move_failed_connected = true
+	match_manager.process_command(command, resolved_sender_info)
+	if move_failed_connected and match_manager.move_failed.is_connected(capture_callable):
+		# CONNECT_ONE_SHOT did not fire; disconnect the unused capture.
+		match_manager.move_failed.disconnect(capture_callable)
+	if not captured_rejection.is_empty() and network_manager != null:
+		network_manager.reject_command(
+			int(resolved_sender_info.get("peer_id", -1)),
+			captured_rejection
+		)
 
 func _configure_in_process_authority(assign_local_host_player: bool) -> void:
 	if network_manager == null:

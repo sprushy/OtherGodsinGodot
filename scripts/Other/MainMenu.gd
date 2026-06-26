@@ -129,6 +129,7 @@ var _auth_onboarding_selected_mode: String = AUTH_MODE_LOGIN
 var _auth_onboarding_mode_hint_label: Label = null
 var _auth_onboarding_username_edit: LineEdit = null
 var _auth_onboarding_password_edit: LineEdit = null
+var _auth_onboarding_auto_login_toggle: CheckButton = null
 var _auth_onboarding_continue_button: Button = null
 var _report_bug_button: Button = null
 var _bug_report_overlay: Control = null
@@ -149,6 +150,8 @@ var _logged_in_account_username: String = ""
 var _selected_auth_mode: String = AUTH_MODE_LOGIN
 var _selected_account_username: String = ""
 var _selected_account_password: String = ""
+var _startup_autologin_pending: bool = false
+var _startup_autologin_in_progress: bool = false
 var _account_switch_pending: bool = false
 var _account_switch_retry_attempts: int = 0
 var _authenticated_lobby_connect_serial: int = 0
@@ -2158,6 +2161,11 @@ func _complete_startup_prompts() -> void:
 	if not _startup_prompt_gate_open:
 		return
 	_startup_prompt_gate_open = false
+	if _startup_autologin_pending:
+		_startup_autologin_pending = false
+		_startup_autologin_in_progress = true
+		_queue_authenticated_lobby_connect("Restoring lobby session...")
+		return
 	_maybe_show_auth_onboarding()
 
 func _should_check_for_updates() -> bool:
@@ -3948,10 +3956,12 @@ func _copy_bug_report_screenshot(source_path: String, screenshots_dir: String, r
 	destination_file.close()
 	return destination_path
 
-func _maybe_show_auth_onboarding() -> void:
+func _maybe_show_auth_onboarding(force_show: bool = false) -> void:
 	if _local_profile_store == null:
 		return
 	if _auth_onboarding_overlay != null and is_instance_valid(_auth_onboarding_overlay):
+		return
+	if not force_show and _should_auto_login_saved_account():
 		return
 	_show_auth_onboarding()
 
@@ -4004,6 +4014,25 @@ func _get_saved_account_username() -> String:
 	if _local_profile_store == null:
 		return ""
 	return _local_profile_store.get_last_account_username()
+
+func _get_saved_account_password() -> String:
+	if _local_profile_store == null:
+		return ""
+	return _local_profile_store.get_last_account_password()
+
+func _is_saved_account_auto_login_enabled() -> bool:
+	if _local_profile_store == null:
+		return false
+	return _local_profile_store.get_account_auto_login_enabled()
+
+func _should_auto_login_saved_account() -> bool:
+	if _get_launch_auth_mode() not in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
+		return false
+	if not _is_saved_account_auto_login_enabled():
+		return false
+	if _get_saved_account_username().is_empty():
+		return false
+	return not _get_saved_account_password().is_empty()
 
 func _get_editable_account_username() -> String:
 	if _auth_onboarding_username_edit != null \
@@ -4283,6 +4312,12 @@ func _show_auth_onboarding() -> void:
 	)
 	inner.add_child(_auth_onboarding_password_edit)
 
+	_auth_onboarding_auto_login_toggle = CheckButton.new()
+	_auth_onboarding_auto_login_toggle.text = "Autologin on this computer"
+	_auth_onboarding_auto_login_toggle.tooltip_text = "Stores your account password on this device and signs in automatically when the game launches."
+	_auth_onboarding_auto_login_toggle.visible = false
+	inner.add_child(_auth_onboarding_auto_login_toggle)
+
 	var continue_row := HBoxContainer.new()
 	continue_row.add_theme_constant_override("separation", 8)
 	inner.add_child(continue_row)
@@ -4320,9 +4355,12 @@ func _begin_auth_onboarding_account_flow(auth_mode: String) -> void:
 	if _auth_onboarding_password_edit != null:
 		_auth_onboarding_password_edit.visible = true
 		if _local_profile_store != null:
-			_auth_onboarding_password_edit.text = _local_profile_store.get_last_account_password()
+			_auth_onboarding_password_edit.text = _get_saved_account_password()
 		else:
 			_auth_onboarding_password_edit.text = ""
+	if _auth_onboarding_auto_login_toggle != null:
+		_auth_onboarding_auto_login_toggle.visible = true
+		_auth_onboarding_auto_login_toggle.set_pressed_no_signal(_is_saved_account_auto_login_enabled())
 	if _auth_onboarding_continue_button != null:
 		_auth_onboarding_continue_button.visible = true
 		_auth_onboarding_continue_button.text = "Create Account" if auth_mode == AUTH_MODE_REGISTER else "Login"
@@ -4342,6 +4380,8 @@ func _submit_auth_onboarding() -> bool:
 		username = _auth_onboarding_username_edit.text.strip_edges()
 	if _auth_onboarding_password_edit != null:
 		password = _auth_onboarding_password_edit.text
+	var auto_login_enabled := _auth_onboarding_auto_login_toggle != null \
+		and _auth_onboarding_auto_login_toggle.button_pressed
 	if username.is_empty():
 		_set_auth_onboarding_hint("Enter an account username to continue.", true)
 		if _auth_onboarding_username_edit != null:
@@ -4360,6 +4400,12 @@ func _submit_auth_onboarding() -> bool:
 		return false
 	_set_selected_account_username(username)
 	_set_selected_account_password(password)
+	if _local_profile_store != null:
+		_local_profile_store.set_account_auto_login_enabled(auto_login_enabled)
+		if auto_login_enabled:
+			_local_profile_store.remember_account_password(password)
+		else:
+			_local_profile_store.clear_account_password()
 	_prepare_submitted_account_auth(username)
 	_complete_auth_onboarding(auth_mode, "Account details saved. Open Multiplayer to sign in.")
 	return true
@@ -4401,7 +4447,7 @@ func _should_prompt_for_account_recovery(message: String) -> bool:
 	]
 
 func _show_auth_recovery_prompt(message: String) -> void:
-	_maybe_show_auth_onboarding()
+	_maybe_show_auth_onboarding(true)
 	_begin_auth_onboarding_account_flow(AUTH_MODE_LOGIN)
 	_set_auth_onboarding_hint(message, true)
 
@@ -4449,7 +4495,12 @@ func _complete_auth_onboarding(auth_mode: String, message: String) -> void:
 	_set_auth_mode(auth_mode)
 	var selected_account_username := _get_selected_account_username()
 	if not selected_account_username.is_empty():
-		_activate_account_profile(selected_account_username, "", auth_mode, true)
+		_activate_account_profile(
+			selected_account_username,
+			"",
+			auth_mode,
+			_auth_onboarding_auto_login_toggle != null and _auth_onboarding_auto_login_toggle.button_pressed
+		)
 	multiplayer_container.visible = false
 	ready_button.visible = false
 	status_label.text = message
@@ -4476,6 +4527,7 @@ func _dismiss_auth_onboarding() -> void:
 	_auth_onboarding_mode_hint_label = null
 	_auth_onboarding_username_edit = null
 	_auth_onboarding_password_edit = null
+	_auth_onboarding_auto_login_toggle = null
 	_auth_onboarding_continue_button = null
 	_finish_startup_loading()
 
@@ -5934,6 +5986,7 @@ func _on_lobby_login_succeeded(session_id: String, reconnect_token: String, play
 	_write_smoke_trace("lobby_login_succeeded session=%s player=%s host=%s" % [session_id, player_name, str(_is_local_lobby_host)])
 	if _retry_account_switch_if_identity_mismatch(player_name):
 		return
+	_startup_autologin_in_progress = false
 	_lobby_failure_update_check_requested = false
 	_sync_friend_observer_card_visibility()
 	_set_connected_server_version(lobby_client.current_server_version if lobby_client != null else "")
@@ -6008,6 +6061,7 @@ func _on_lobby_reconnect_succeeded(
 	_write_smoke_trace("lobby_reconnect_succeeded session=%s player=%s" % [session_id, player_name])
 	if _retry_account_switch_if_identity_mismatch(player_name):
 		return
+	_startup_autologin_in_progress = false
 	_lobby_failure_update_check_requested = false
 	_sync_friend_observer_card_visibility()
 	_set_connected_server_version(lobby_client.current_server_version if lobby_client != null else "")
@@ -6348,6 +6402,8 @@ func _on_lobby_status_changed(message: String) -> void:
 
 func _on_lobby_connection_failed(message: String) -> void:
 	_write_smoke_trace("lobby_connection_failed %s" % message)
+	var restore_auth_prompt := _startup_autologin_in_progress
+	_startup_autologin_in_progress = false
 	_manual_rejoin_room_id = ""
 	_set_connected_server_version("")
 	_seek_list_request_pending = false
@@ -6358,6 +6414,9 @@ func _on_lobby_connection_failed(message: String) -> void:
 	_logged_in_account_username = ""
 	_refresh_account_identity_label()
 	status_label.text = message
+	if restore_auth_prompt:
+		_maybe_show_auth_onboarding(true)
+		_set_auth_onboarding_hint(message, true)
 	_maybe_check_for_update_after_lobby_failure(message)
 	if _should_ignore_lobby_failure_for_smoke():
 		return
@@ -6365,6 +6424,8 @@ func _on_lobby_connection_failed(message: String) -> void:
 
 func _on_lobby_disconnected() -> void:
 	_write_smoke_trace("lobby_disconnected")
+	var restore_auth_prompt := _startup_autologin_in_progress
+	_startup_autologin_in_progress = false
 	_manual_rejoin_room_id = ""
 	_pending_seek_switch_join_room_id = ""
 	_set_connected_server_version("")
@@ -6377,6 +6438,9 @@ func _on_lobby_disconnected() -> void:
 	_clear_current_seek_state()
 	var message := "Lobby connection lost. Refresh seeks to reconnect."
 	status_label.text = message
+	if restore_auth_prompt:
+		_maybe_show_auth_onboarding(true)
+		_set_auth_onboarding_hint(message, true)
 	_maybe_check_for_update_after_lobby_failure(message)
 	if _should_ignore_lobby_failure_for_smoke():
 		return
@@ -9650,14 +9714,13 @@ func _restore_auth_preferences() -> void:
 	var auth_mode: String = _normalize_auth_mode(_local_profile_store.get_preferred_auth_mode(), AUTH_MODE_LOGIN)
 	var saved_username := _get_saved_account_username()
 	_set_selected_account_username(saved_username)
-	_set_selected_account_password(_local_profile_store.get_last_account_password())
+	_set_selected_account_password(_get_saved_account_password())
 	_set_auth_mode(auth_mode)
 	if not saved_username.is_empty():
 		_activate_account_profile(saved_username, "", auth_mode, false)
 	_refresh_auth_controls()
 	_refresh_account_identity_label()
-	if auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
-		_queue_authenticated_lobby_connect("Restoring lobby session...")
+	_startup_autologin_pending = _should_auto_login_saved_account()
 
 func _on_auth_mode_selected(_index: int) -> void:
 	if _auth_mode_option != null and _auth_mode_option.item_count > 0:
