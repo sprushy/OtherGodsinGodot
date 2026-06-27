@@ -3469,7 +3469,7 @@ func _offer_hunting_tactics_attack_declaration_prompt() -> bool:
 	_emit_ui_interaction_for_player(power.card_owner, "hunting_tactics", power.build_attack_support_prompt_data(selected_attacker))
 	return true
 
-func _continue_pending_attack_after_hunting_tactics_choice(attacker: Card) -> void:
+func _continue_pending_attack_after_hunting_tactics_choice(attacker: Card, fallback_attack_target = null) -> void:
 	print("[HT-DEBUG] _continue_pending_attack_after_hunting_tactics_choice flag=%s attacker=%s selected=%s target=%s" % [
 		str(_pending_hunting_tactics_attack_declaration),
 		attacker.card_name if attacker != null else "null",
@@ -3478,6 +3478,10 @@ func _continue_pending_attack_after_hunting_tactics_choice(attacker: Card) -> vo
 	])
 	if not _pending_hunting_tactics_attack_declaration:
 		return
+	if selected_attacker == null and attacker != null:
+		selected_attacker = attacker
+	if pending_attack_target == null and fallback_attack_target != null:
+		pending_attack_target = fallback_attack_target
 	if attacker != selected_attacker:
 		return
 	_pending_hunting_tactics_attack_declaration = false
@@ -5067,9 +5071,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 				move_failed.emit("Moon Hunt requires a valid friendly creature sacrifice.")
 				return false
 			var hati_zone := resolve_zone(command)
-			if hati_zone == null or hati_zone.zone_owner != game_manager.current_player \
-					or hati_zone.zone_type not in [Zone.ZoneType.FRONTLINE, Zone.ZoneType.RESERVE] \
-					or not hati_zone.cards.is_empty():
+			if not hati.is_valid_moon_hunt_destination(hati_zone, sacrifice_target):
 				move_failed.emit("Moon Hunt: invalid zone.")
 				return false
 			var hati_mode_str: String = command.get("mode", "defensive")
@@ -5718,9 +5720,10 @@ func _process_command_impl(command: Dictionary) -> bool:
 					move_failed.emit("hunting_tactics_choice: invalid supporter")
 					return false
 				chosen_cards.append(chosen_card)
+			var attack_target_before_choice = pending_attack_target
 			var continue_pending_attack := _pending_hunting_tactics_attack_declaration \
-				and attacker == selected_attacker \
-				and pending_attack_target != null
+				and (attacker == selected_attacker or selected_attacker == null) \
+				and attack_target_before_choice != null
 			print("[HT-DEBUG] choice: flag=%s attacker_matches=%s selected=%s target=%s chosen=%d" % [
 				str(_pending_hunting_tactics_attack_declaration),
 				str(attacker == selected_attacker),
@@ -5738,7 +5741,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 				# immediately rather than being queued behind this entry.
 				var consumed := _consume_active_command_prompt_for_completion("hunting_tactics_choice")
 				print("[HT-DEBUG] choice: consumed_prompt=%s pending_ui_after=%d" % [str(consumed), _pending_ui_interactions.size()])
-				_continue_pending_attack_after_hunting_tactics_choice(attacker)
+				_continue_pending_attack_after_hunting_tactics_choice(attacker, attack_target_before_choice)
 			return true
 		"gugalanna_celestial_charge_choice":
 			var source_uid: String = command.get("source_uid", "")

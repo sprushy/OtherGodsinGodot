@@ -88,11 +88,7 @@ func resolve_moon_hunt_summon(
 ) -> bool:
 	if not can_use_moon_hunt_summon(game_manager):
 		return false
-	if target_zone == null or target_zone.zone_owner != card_owner:
-		return false
-	if target_zone.zone_type not in [Zone.ZoneType.FRONTLINE, Zone.ZoneType.RESERVE]:
-		return false
-	if not target_zone.cards.is_empty():
+	if not is_valid_moon_hunt_destination(target_zone, sacrificed_card):
 		return false
 	if not is_valid_moon_hunt_sacrifice(sacrificed_card):
 		return false
@@ -123,11 +119,25 @@ func resolve_moon_hunt_summon(
 		true
 	)
 
+func is_valid_moon_hunt_destination(target_zone: Zone, sacrificed_card: Card = null) -> bool:
+	if target_zone == null or target_zone.zone_owner != card_owner:
+		return false
+	if target_zone.zone_type not in [Zone.ZoneType.FRONTLINE, Zone.ZoneType.RESERVE]:
+		return false
+	if target_zone.cards.is_empty():
+		return true
+	return sacrificed_card != null \
+		and target_zone.cards.size() == 1 \
+		and target_zone.cards[0] == sacrificed_card \
+		and is_valid_moon_hunt_sacrifice(sacrificed_card)
+
 func _get_open_summon_zones() -> Array[Zone]:
 	var open_zones: Array[Zone] = []
 	if card_owner == null:
 		return open_zones
 	for zone in card_owner.frontline_zones + card_owner.reserve_zones:
 		if zone.cards.is_empty():
+			open_zones.append(zone)
+		elif zone.cards.size() == 1 and is_valid_moon_hunt_sacrifice(zone.cards[0]):
 			open_zones.append(zone)
 	return open_zones

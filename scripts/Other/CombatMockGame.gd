@@ -10850,7 +10850,7 @@ func _select_hati_moon_hunt_sacrifice(card: Card) -> void:
 		update_ui()
 		return
 	_pending_hati_sacrifice = card
-	_set_action_label_text("Hati: choose an empty friendly zone to summon in " + _pending_hati_mode.to_upper() + ".")
+	_set_action_label_text("Hati: choose an empty friendly zone, or the sacrificed creature's lane, to summon in " + _pending_hati_mode.to_upper() + ".")
 	update_ui()
 
 func _resolve_hati_moon_hunt(zone: Zone) -> void:
@@ -10871,8 +10871,8 @@ func _resolve_hati_moon_hunt(zone: Zone) -> void:
 		_set_action_label_text("Hati: choose a friendly creature to sacrifice first.")
 		update_ui()
 		return
-	if zone == null or zone.zone_owner != game_manager.current_player or zone.zone_type not in [Zone.ZoneType.FRONTLINE, Zone.ZoneType.RESERVE] or not zone.cards.is_empty():
-		_set_action_label_text("Hati: choose an empty friendly zone.")
+	if not hati.is_valid_moon_hunt_destination(zone, sacrifice_target):
+		_set_action_label_text("Hati: choose an empty friendly zone, or the sacrificed creature's lane.")
 		update_ui()
 		return
 
@@ -19009,6 +19009,13 @@ func _on_board_card_pressed(card: Card) -> void:
 
 	if _pending_hati_summon != null and _pending_hati_sacrifice == null:
 		_select_hati_moon_hunt_sacrifice(card)
+		return
+	if _pending_hati_summon != null and _pending_hati_sacrifice != null:
+		if _pending_hati_summon.is_valid_moon_hunt_destination(card.current_zone, _pending_hati_sacrifice):
+			_resolve_hati_moon_hunt(card.current_zone)
+		else:
+			_set_action_label_text("Hati: choose an empty friendly zone, or the sacrificed creature's lane.")
+			update_ui()
 		return
 
 	# Check if we're selecting a target for a god ability
