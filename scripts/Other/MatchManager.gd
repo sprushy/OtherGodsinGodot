@@ -65,6 +65,8 @@ var selected_attacker: Card = null
 var pending_attack_target = null # Card or Player
 var selected_interceptor: Card = null
 var _pending_hunting_tactics_attack_declaration: bool = false
+var _pending_hunting_tactics_attack_attacker: Card = null
+var _pending_hunting_tactics_attack_target = null # Card or Player
 
 # Spell-specific targeting states
 var pending_blot_spell: BlotSacrifice = null
@@ -161,7 +163,7 @@ func reset_runtime_state() -> void:
 	_pending_turn_action_after_opponent_priority_command.clear()
 	_pending_turn_action_after_opponent_priority_sender_info.clear()
 	_replaying_turn_action_after_opponent_priority = false
-	_pending_hunting_tactics_attack_declaration = false
+	_clear_pending_hunting_tactics_attack_declaration()
 	_active_turn_start_sequence_turn = -1
 	_turn_start_sequence_feedback = ""
 	_turn_start_priority_queued_turn = -1
@@ -3341,7 +3343,12 @@ func _clear_pending_attack_state() -> void:
 	selected_attacker = null
 	selected_interceptor = null
 	pending_attack_target = null
+	_clear_pending_hunting_tactics_attack_declaration()
+
+func _clear_pending_hunting_tactics_attack_declaration() -> void:
 	_pending_hunting_tactics_attack_declaration = false
+	_pending_hunting_tactics_attack_attacker = null
+	_pending_hunting_tactics_attack_target = null
 
 func _has_unresolved_stack_action_window() -> bool:
 	if game_manager == null:
@@ -3461,6 +3468,8 @@ func _offer_hunting_tactics_attack_declaration_prompt() -> bool:
 		print("[HT-DEBUG] _offer: no prompt power found for %s" % (selected_attacker.card_name if selected_attacker != null else "null"))
 		return false
 	_pending_hunting_tactics_attack_declaration = true
+	_pending_hunting_tactics_attack_attacker = selected_attacker
+	_pending_hunting_tactics_attack_target = pending_attack_target
 	print("[HT-DEBUG] _offer: offering prompt power_owner=%s attacker=%s supporters=%d" % [
 		power.card_owner.player_name if power.card_owner != null else "null",
 		selected_attacker.card_name,
@@ -3476,13 +3485,19 @@ func _continue_pending_attack_after_hunting_tactics_choice(attacker: Card, fallb
 		selected_attacker.card_name if selected_attacker != null else "null",
 		str(pending_attack_target),
 	])
-	if not _pending_hunting_tactics_attack_declaration:
+	if not _pending_hunting_tactics_attack_declaration \
+			and _pending_hunting_tactics_attack_attacker == null \
+			and _pending_hunting_tactics_attack_target == null:
 		return
+	if attacker == null and _pending_hunting_tactics_attack_attacker != null:
+		attacker = _pending_hunting_tactics_attack_attacker
 	if selected_attacker == null and attacker != null:
 		selected_attacker = attacker
-	if pending_attack_target == null and fallback_attack_target != null:
-		pending_attack_target = fallback_attack_target
-	if attacker != selected_attacker:
+	if selected_attacker == null and _pending_hunting_tactics_attack_attacker != null:
+		selected_attacker = _pending_hunting_tactics_attack_attacker
+	if pending_attack_target == null:
+		pending_attack_target = fallback_attack_target if fallback_attack_target != null else _pending_hunting_tactics_attack_target
+	if attacker != null and selected_attacker != null and attacker != selected_attacker:
 		return
 	_pending_hunting_tactics_attack_declaration = false
 	if selected_attacker == null or pending_attack_target == null:
@@ -5720,9 +5735,15 @@ func _process_command_impl(command: Dictionary) -> bool:
 					move_failed.emit("hunting_tactics_choice: invalid supporter")
 					return false
 				chosen_cards.append(chosen_card)
-			var attack_target_before_choice = pending_attack_target
-			var continue_pending_attack := _pending_hunting_tactics_attack_declaration \
-				and (attacker == selected_attacker or selected_attacker == null) \
+			var attack_target_before_choice = pending_attack_target if pending_attack_target != null else _pending_hunting_tactics_attack_target
+			var has_pending_hunting_tactics_attack := _pending_hunting_tactics_attack_declaration \
+				or (_pending_hunting_tactics_attack_attacker != null and _pending_hunting_tactics_attack_target != null)
+			var continue_pending_attack := has_pending_hunting_tactics_attack \
+				and (
+					attacker == selected_attacker \
+					or selected_attacker == null \
+					or attacker == _pending_hunting_tactics_attack_attacker
+				) \
 				and attack_target_before_choice != null
 			print("[HT-DEBUG] choice: flag=%s attacker_matches=%s selected=%s target=%s chosen=%d" % [
 				str(_pending_hunting_tactics_attack_declaration),
@@ -5740,6 +5761,8 @@ func _process_command_impl(command: Dictionary) -> bool:
 				# stack in the no-interceptor case) and the intercept prompt emits
 				# immediately rather than being queued behind this entry.
 				var consumed := _consume_active_command_prompt_for_completion("hunting_tactics_choice")
+				if not consumed:
+					consumed = _consume_matching_pending_ui_interaction_for_command(command)
 				print("[HT-DEBUG] choice: consumed_prompt=%s pending_ui_after=%d" % [str(consumed), _pending_ui_interactions.size()])
 				_continue_pending_attack_after_hunting_tactics_choice(attacker, attack_target_before_choice)
 			return true

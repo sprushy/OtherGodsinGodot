@@ -128,8 +128,15 @@ func is_valid_moon_hunt_destination(target_zone: Zone, sacrificed_card: Card = n
 		return true
 	return sacrificed_card != null \
 		and target_zone.cards.size() == 1 \
-		and target_zone.cards[0] == sacrificed_card \
+		and _is_same_moon_hunt_card(target_zone.cards[0], sacrificed_card) \
 		and is_valid_moon_hunt_sacrifice(sacrificed_card)
+
+func _is_same_moon_hunt_card(left: Card, right: Card) -> bool:
+	if left == null or right == null:
+		return false
+	if left == right:
+		return true
+	return left.uid.strip_edges() != "" and left.uid == right.uid
 
 func _get_open_summon_zones() -> Array[Zone]:
 	var open_zones: Array[Zone] = []

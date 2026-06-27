@@ -15853,7 +15853,42 @@ func _can_use_zone_after_sacrifice(zone: Zone, sacrificed_card: Card) -> bool:
 		return false
 	if zone.zone_type not in [Zone.ZoneType.FRONTLINE, Zone.ZoneType.RESERVE]:
 		return false
-	return zone.cards.size() == 1 and zone.cards[0] == sacrificed_card and _can_use_card_for_creature_sacrifice(sacrificed_card)
+	return zone.cards.size() == 1 \
+		and _is_same_card_by_uid(zone.cards[0], sacrificed_card) \
+		and _can_use_card_for_creature_sacrifice(sacrificed_card)
+
+func _is_same_card_by_uid(left: Card, right: Card) -> bool:
+	if left == null or right == null:
+		return false
+	if left == right:
+		return true
+	return left.uid.strip_edges() != "" and left.uid == right.uid
+
+func _try_handle_sacrifice_opened_lane_click(card: Card) -> bool:
+	if card == null:
+		return false
+	if selected_card != null \
+			and selected_card.card_type == Card.CardType.CREATURE \
+			and placement_mode != "" \
+			and selected_card.sacrifice_cost > 0 \
+			and _can_use_zone_after_sacrifice(card.current_zone, card):
+		_try_play_selected_creature_to_zone(card.current_zone)
+		if _awaiting_creature_sacrifice \
+				and _can_use_zone_after_sacrifice(_sacrifice_pending_zone, card):
+			_select_pending_creature_sacrifice(card)
+		return true
+	if _pending_hati_summon != null and _pending_hati_sacrifice == null:
+		_select_hati_moon_hunt_sacrifice(card)
+		return true
+	if _pending_hati_summon != null and _pending_hati_sacrifice != null:
+		if _can_use_zone_after_sacrifice(card.current_zone, _pending_hati_sacrifice) \
+				or _pending_hati_summon.is_valid_moon_hunt_destination(card.current_zone, _pending_hati_sacrifice):
+			_resolve_hati_moon_hunt(card.current_zone)
+		else:
+			_set_action_label_text("Hati: choose an empty friendly zone, or the sacrificed creature's lane.")
+			update_ui()
+		return true
+	return false
 
 func _try_play_selected_creature_to_zone(zone: Zone) -> void:
 	if selected_card == null or selected_card.card_type != Card.CardType.CREATURE or placement_mode == "":
@@ -17620,9 +17655,7 @@ func _prompt_hunting_tactics_support_choice() -> void:
 		if supporter not in _pending_hunting_tactics_supporters:
 			remaining_supporters.append(supporter)
 	if remaining_supporters.is_empty():
-		_finish_hunting_tactics_prompt(
-			power.resolve_combat_support_choice(game_manager, attacker, _pending_hunting_tactics_supporters)
-		)
+		_on_hunting_tactics_supporter_done()
 		return
 	_show_card_selection_overlay(
 		"Choose supporters for Hunting Tactics",
@@ -18857,7 +18890,7 @@ func _on_board_card_pressed(card: Card) -> void:
 		return
 	if _awaiting_drag_sacrifice_zone:
 		_set_action_label_text("Choose an empty friendly zone to place " + _drag_sacrifice_card.card_name)
-		if _can_use_zone_after_sacrifice(card.current_zone, card) and card == _drag_sacrifice_target:
+		if _can_use_zone_after_sacrifice(card.current_zone, _drag_sacrifice_target):
 			_execute_drag_sacrifice(card.current_zone)
 		return
 	if _awaiting_creature_sacrifice:
@@ -18912,6 +18945,8 @@ func _on_board_card_pressed(card: Card) -> void:
 	if match_manager == null:
 		return
 	_indicated_move_card = null
+	if _try_handle_sacrifice_opened_lane_click(card):
+		return
 
 	if awaiting_pyre_target and pyre_source != null:
 		var source_pyre := pyre_source
@@ -18997,25 +19032,6 @@ func _on_board_card_pressed(card: Card) -> void:
 		return
 
 	if _try_activate_owned_board_spell(card):
-		return
-
-	if selected_card != null \
-			and selected_card.card_type == Card.CardType.CREATURE \
-			and placement_mode != "" \
-			and selected_card.sacrifice_cost > 0 \
-			and _can_use_zone_after_sacrifice(card.current_zone, card):
-		_try_play_selected_creature_to_zone(card.current_zone)
-		return
-
-	if _pending_hati_summon != null and _pending_hati_sacrifice == null:
-		_select_hati_moon_hunt_sacrifice(card)
-		return
-	if _pending_hati_summon != null and _pending_hati_sacrifice != null:
-		if _pending_hati_summon.is_valid_moon_hunt_destination(card.current_zone, _pending_hati_sacrifice):
-			_resolve_hati_moon_hunt(card.current_zone)
-		else:
-			_set_action_label_text("Hati: choose an empty friendly zone, or the sacrificed creature's lane.")
-			update_ui()
 		return
 
 	# Check if we're selecting a target for a god ability
