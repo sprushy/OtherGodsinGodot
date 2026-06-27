@@ -152,6 +152,7 @@ func to_snapshot(sessions_by_id: Dictionary) -> Dictionary:
 		member_snapshots.append({
 			"session_id": session_id,
 			"player_name": str(session.get("player_name", "Guest")),
+			"is_bot": bool(session.get("is_bot", false)),
 			"is_host": session_id == host_session_id,
 			"is_ready": bool(ready_by_session_id.get(session_id, false)),
 			"is_connected": bool(session.get("connected", false)),
@@ -178,9 +179,13 @@ func to_room_list_entry(sessions_by_id: Dictionary) -> Dictionary:
 	var host_name := "Host"
 	if sessions_by_id.has(host_session_id):
 		host_name = str(sessions_by_id[host_session_id].get("player_name", "Host"))
+	var host_is_bot := false
+	if sessions_by_id.has(host_session_id):
+		host_is_bot = bool(sessions_by_id[host_session_id].get("is_bot", false))
 	return {
 		"room_id": room_id,
 		"host_name": host_name,
+		"host_is_bot": host_is_bot,
 		"is_ranked": is_ranked,
 		"best_of": best_of,
 		"member_count": members.size(),

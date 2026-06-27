@@ -8,6 +8,8 @@ const DefaultMatchSetupScript = preload("res://scripts/server/DefaultMatchSetup.
 const MatchHistoryStoreScript = preload("res://scripts/server/MatchHistoryStore.gd")
 const JsonStoreScript = preload("res://scripts/server/JsonStore.gd")
 const DeckValidatorScript = preload("res://scripts/server/DeckValidator.gd")
+const PracticeFuzzPlayerBotScript = preload("res://scripts/bots/PracticeFuzzPlayerBot.gd")
+const ServerBotGameInputScript = preload("res://scripts/bots/ServerBotGameInput.gd")
 const INITIAL_JOIN_TIMEOUT_SECONDS := 120
 const ABANDONED_MATCH_SHUTDOWN_DELAY_SECONDS := 0.25
 const GAME_END_SHUTDOWN_DELAY_SECONDS := 3.0
@@ -32,6 +34,7 @@ var _initial_join_deadline_unix: int = 0
 var _abandoned_shutdown_started: bool = false
 var _status_heartbeat_elapsed: float = 0.0
 var _reinforcement_phase_active: bool = false
+var _server_bot_entries: Array[Dictionary] = []
 
 func _process(delta: float) -> void:
 	if not _abandoned_shutdown_started:
@@ -103,6 +106,8 @@ func start_from_config(config: Dictionary) -> Error:
 
 	_write_status_file(MatchSessionScript.STATUS_ACTIVE)
 	startup_succeeded.emit(match_session.match_id, match_session.match_port)
+	if match_session.all_players_connected():
+		call_deferred("maybe_start_match_if_ready")
 	return OK
 
 func has_started_match() -> bool:
@@ -113,11 +118,16 @@ func maybe_start_match_if_ready() -> bool:
 		return _match_started
 	if not match_session.all_players_connected():
 		return false
-	if network_manager == null or network_manager.player_peer_ids.size() < match_session.player_session_ids.size():
+	if network_manager == null:
+		return false
+	var required_human_count := _get_required_human_player_count()
+	if _get_connected_human_player_count() < required_human_count:
 		return false
 	_match_started = true
 	_initial_join_deadline_unix = 0
+	_attach_server_bots_for_match()
 	game_manager.start_turn()
+	_poll_server_bots()
 	return true
 
 func _on_match_player_authenticated(_player_index: int, _session_id: String, was_reconnect: bool) -> void:
@@ -125,6 +135,7 @@ func _on_match_player_authenticated(_player_index: int, _session_id: String, was
 		_send_reinforcement_phase_to_player(_player_index)
 		return
 	if was_reconnect:
+		_poll_server_bots()
 		return
 	maybe_start_match_if_ready()
 
@@ -155,6 +166,78 @@ func _queue_humbaba_augury_reading_prompt(card: HumbabaTheTerrible) -> void:
 		"target_uids": target_uids,
 	})
 
+func _attach_server_bots_for_match() -> void:
+	_detach_server_bots()
+	if match_session == null or game_manager == null or match_manager == null:
+		return
+	for player_index in range(match_session.player_session_ids.size()):
+		var session_id := str(match_session.player_session_ids[player_index]).strip_edges()
+		if session_id.is_empty() or not match_session.is_bot_session(session_id):
+			continue
+		if player_index < 0 or player_index >= game_manager.players.size():
+			continue
+		var bot_input = ServerBotGameInputScript.new(match_manager, player_index, match_session)
+		var bot = PracticeFuzzPlayerBotScript.new()
+		bot.attach(game_manager, match_manager, bot_input, player_index)
+		_server_bot_entries.append({
+			"session_id": session_id,
+			"player_index": player_index,
+			"bot": bot,
+			"game_input": bot_input,
+		})
+
+func _detach_server_bots() -> void:
+	for entry in _server_bot_entries:
+		var bot = entry.get("bot", null)
+		if bot != null and bot.has_method("detach"):
+			bot.detach()
+	_server_bot_entries.clear()
+
+func _poll_server_bots() -> void:
+	for entry in _server_bot_entries:
+		var bot = entry.get("bot", null)
+		if bot != null and bot.has_method("poll"):
+			bot.poll()
+
+func _mark_bot_reinforcements_ready() -> void:
+	if match_session == null:
+		return
+	for session_id in match_session.player_session_ids:
+		var resolved_session_id := str(session_id).strip_edges()
+		if not resolved_session_id.is_empty() and match_session.is_bot_session(resolved_session_id):
+			match_session.set_reinforcement_ready(resolved_session_id, true)
+
+func _get_required_human_player_count() -> int:
+	if match_session == null:
+		return 0
+	if match_session.has_method("get_human_player_count"):
+		return int(match_session.get_human_player_count())
+	var count := 0
+	for session_id in match_session.player_session_ids:
+		var resolved_session_id := str(session_id).strip_edges()
+		if resolved_session_id.is_empty() or (match_session.has_method("is_bot_session") and match_session.is_bot_session(resolved_session_id)):
+			continue
+		count += 1
+	return count
+
+func _get_connected_human_player_count() -> int:
+	if match_session == null:
+		return 0
+	if match_session.has_method("get_connected_human_player_count"):
+		return int(match_session.get_connected_human_player_count())
+	if network_manager == null:
+		return 0
+	var count := 0
+	for player_index in network_manager.player_peer_ids.keys():
+		var resolved_index := int(player_index)
+		if resolved_index < 0 or resolved_index >= match_session.player_session_ids.size():
+			continue
+		var session_id := str(match_session.player_session_ids[resolved_index]).strip_edges()
+		if session_id.is_empty() or (match_session.has_method("is_bot_session") and match_session.is_bot_session(session_id)):
+			continue
+		count += 1
+	return count
+
 func _validate_config(config: Dictionary) -> String:
 	if config.is_empty():
 		return "Dedicated headless match config was empty."
@@ -178,6 +261,7 @@ func _on_game_ended(_winner: Player, _loser: Player) -> void:
 		match_session.series_wins_by_session[winner_session_id] = match_session.games_to_win
 		series_snapshot = match_session.get_series_snapshot()
 	if match_session != null and not match_session.is_series_complete():
+		_mark_bot_reinforcements_ready()
 		if game_event_broadcaster != null:
 			game_event_broadcaster.suppress_next_game_end = true
 		_reinforcement_phase_active = true
@@ -189,6 +273,7 @@ func _on_game_ended(_winner: Player, _loser: Player) -> void:
 	_abandoned_shutdown_started = true
 	if match_session != null:
 		match_session.mark_finished()
+	_detach_server_bots()
 	_write_status_file(MatchSessionScript.STATUS_FINISHED)
 	_record_match_result(_winner, _loser)
 	if network_manager != null:
@@ -308,6 +393,7 @@ func _start_next_series_game() -> void:
 	_reinforcement_phase_active = false
 	headless_match_host.series_between_games = false
 	match_session.begin_next_series_game()
+	_detach_server_bots()
 	if game_event_broadcaster != null:
 		game_event_broadcaster.shutdown()
 
@@ -327,10 +413,12 @@ func _start_next_series_game() -> void:
 		game_manager.game_ended.connect(_on_game_ended)
 	headless_match_host.enable_authoritative_broadcasts()
 	game_event_broadcaster = headless_match_host.game_event_broadcaster
+	_attach_server_bots_for_match()
 	network_manager.broadcast_event_to_all("series_game_started", {
 		"series": match_session.get_series_snapshot(),
 	})
 	game_manager.start_turn()
+	_poll_server_bots()
 	_write_status_file(MatchSessionScript.STATUS_ACTIVE)
 
 func _shutdown_if_match_was_abandoned() -> void:
@@ -352,6 +440,7 @@ func _shutdown_abandoned_match(reason: String) -> void:
 	_abandoned_shutdown_started = true
 	if match_session != null:
 		match_session.mark_abandoned()
+	_detach_server_bots()
 	_write_status_file(MatchSessionScript.STATUS_ABANDONED, reason)
 	if network_manager != null:
 		network_manager.broadcast_event_to_all("match_abandoned", {"reason": reason})

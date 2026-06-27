@@ -781,6 +781,7 @@ const HAND_OVERLAY_SIDE_PADDING := 18.0
 const HAND_OVERLAY_BOTTOM_PADDING := -2.0
 const HAND_OVERLAY_Z_INDEX := HOVER_PREVIEW_Z_INDEX + 5
 const CONTEXT_MENU_Z_INDEX := HAND_OVERLAY_Z_INDEX + 120
+const VISUAL_STACK_ENABLED := false
 const VISUAL_STACK_Z_INDEX := TRANSIENT_UI_Z_INDEX - 35
 const VISUAL_STACK_CARD_WIDTH := 178
 const VISUAL_STACK_TOP_CARD_WIDTH := 214
@@ -7145,6 +7146,9 @@ func _clear_visual_stack_overlay() -> void:
 		_visual_stack_layer.queue_redraw()
 
 func _sync_visual_stack_overlay() -> void:
+	if not VISUAL_STACK_ENABLED:
+		_clear_visual_stack_overlay()
+		return
 	if game_manager == null or game_manager.action_stack.is_empty():
 		_clear_visual_stack_overlay()
 		return

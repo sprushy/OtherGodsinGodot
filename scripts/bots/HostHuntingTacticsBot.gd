@@ -7,7 +7,6 @@ class_name HostHuntingTacticsBot
 # event path, since on a dedicated-server client match_manager.request_ui_interaction
 # never fires for these prompts (they arrive via match_client.game_event_received).
 
-var match_client = null
 # Outcome tracking read by the smoke driver: did this bot answer a hunting_tactics
 # prompt, and did the game progress (state changed) afterwards?
 var hunting_tactics_answered: bool = false
@@ -22,36 +21,35 @@ func attach_networked(
 	p_player_index: int,
 	p_match_client
 ) -> void:
-	attach(p_game_manager, p_match_manager, p_game_input, p_player_index)
-	match_client = p_match_client
-	if match_client != null and match_client.has_signal("game_event_received"):
-		if not match_client.game_event_received.is_connected(_on_network_game_event):
-			match_client.game_event_received.connect(_on_network_game_event)
+	super.attach_networked(
+		p_game_manager,
+		p_match_manager,
+		p_game_input,
+		p_player_index,
+		p_match_client
+	)
 
 func detach() -> void:
-	if match_client != null and is_instance_valid(match_client) \
-			and match_client.has_signal("game_event_received") \
-			and match_client.game_event_received.is_connected(_on_network_game_event):
-		match_client.game_event_received.disconnect(_on_network_game_event)
-	match_client = null
 	super.detach()
 
 func _on_network_game_event(event_type: String, data: Dictionary) -> void:
 	if event_type != "ui_interaction":
+		super._on_network_game_event(event_type, data)
 		return
-	var type: String = data.get("type", "")
+	var type := str(data.get("type", ""))
 	var prompt_player_index := int(data.get("player_index", player_index))
 	if prompt_player_index != player_index:
+		super._on_network_game_event(event_type, data)
 		return
-	var payload: Dictionary = data.get("data", {})
+	var payload: Dictionary = {}
+	var raw_payload = data.get("data", {})
+	if raw_payload is Dictionary:
+		payload = (raw_payload as Dictionary).duplicate(true)
 	match type:
 		"hunting_tactics":
 			_submit_hunting_tactics_choice(payload)
-		"intercept":
-			game_input.submit_action({"type": "intercept_decision", "interceptor_uid": ""})
-		"priority":
-			# Hand off to the standard priority handling (pass) via the parent poll loop.
-			poll()
+		_:
+			super._on_network_game_event(event_type, data)
 
 func _on_match_ui_interaction(prompt_player_index: int, type: String, data: Dictionary) -> void:
 	# In-process fallback (used if this bot ever runs against an authoritative

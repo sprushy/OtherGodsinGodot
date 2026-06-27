@@ -7,6 +7,7 @@ const STATUS_FINISHED := "finished"
 const STATUS_ABANDONED := "abandoned"
 const SERVER_MODE_IN_PROCESS_HOST := "in_process_host"
 const SERVER_MODE_DEDICATED_HEADLESS := "dedicated_headless"
+const BOT_SESSION_PREFIX := "BOT_"
 
 var match_id: String = ""
 var room_id: String = ""
@@ -75,6 +76,33 @@ func configure_series_format(best_of: int) -> void:
 
 func get_player_index(session_id: String) -> int:
 	return player_session_ids.find(session_id)
+
+func is_bot_session(session_id: String) -> bool:
+	var resolved_session_id := session_id.strip_edges()
+	if resolved_session_id.is_empty():
+		return false
+	var identity := get_player_identity(resolved_session_id)
+	if bool(identity.get("is_bot", false)):
+		return true
+	return resolved_session_id.to_upper().begins_with(BOT_SESSION_PREFIX)
+
+func get_human_player_count() -> int:
+	var count := 0
+	for session_id in player_session_ids:
+		if is_bot_session(str(session_id)):
+			continue
+		count += 1
+	return count
+
+func get_connected_human_player_count() -> int:
+	var count := 0
+	for session_id in player_session_ids:
+		var resolved_session_id := str(session_id).strip_edges()
+		if resolved_session_id.is_empty() or is_bot_session(resolved_session_id):
+			continue
+		if peer_id_by_session.has(resolved_session_id):
+			count += 1
+	return count
 
 func get_player_index_for_peer(peer_id: int) -> int:
 	var session_id := str(session_id_by_peer.get(peer_id, "")).strip_edges()
@@ -161,6 +189,8 @@ func get_series_snapshot() -> Dictionary:
 
 func authenticate_join(session_id: String, match_token: String, peer_id: int) -> int:
 	var resolved_session_id := session_id.strip_edges()
+	if is_bot_session(resolved_session_id):
+		return -1
 	var expected_token := get_match_token(resolved_session_id)
 	if peer_id <= 0 \
 		or resolved_session_id.is_empty() \
@@ -276,6 +306,8 @@ func get_reconnect_deadline_for_session(session_id: String) -> int:
 
 func all_players_connected() -> bool:
 	for session_id in player_session_ids:
+		if is_bot_session(str(session_id)):
+			continue
 		if not peer_id_by_session.has(session_id):
 			return false
 	return not player_session_ids.is_empty()

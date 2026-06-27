@@ -6359,6 +6359,11 @@ func _drive_hunting_tactics_smoke(is_host: bool) -> void:
 		_fail_smoke_if_enabled("hunting_tactics_missing_game")
 		return
 	_write_smoke_trace("hunting_tactics_drive:is_host=%s" % str(is_host))
+	var attach_wait_frames := maxi(60, int(_smoke_config.get("bot_attach_wait_frames", 900)))
+	var bot_ready := await _wait_for_hunting_tactics_bot_ready(mock_game, attach_wait_frames)
+	if not bot_ready:
+		_fail_smoke_if_enabled("hunting_tactics_bot_ready_timeout")
+		return
 	# Both smoke processes are networked clients of the dedicated match server, so
 	# both drive their local seat through the client's real NetworkedGameInput and
 	# answer prompts via match_client.game_event_received. HostHuntingTacticsBot
@@ -6367,9 +6372,10 @@ func _drive_hunting_tactics_smoke(is_host: bool) -> void:
 	# hunting_tactics prompt on the dedicated server.
 	var host_bot = null
 	var client_bot = null
-	var local_idx := 0
-	if mock_game.network_manager != null:
-		local_idx = mock_game.network_manager.local_player_index
+	var local_idx := _get_hunting_tactics_local_player_index(mock_game)
+	if local_idx < 0:
+		_fail_smoke_if_enabled("hunting_tactics_missing_local_player")
+		return
 	var local_game_input = null
 	if mock_game.match_client != null and mock_game.match_client.has_method("get_game_input"):
 		local_game_input = mock_game.match_client.get_game_input()
@@ -6424,6 +6430,54 @@ func _drive_hunting_tactics_smoke(is_host: bool) -> void:
 				return
 	# Did not observe a resolved hunting_tactics exchange within the frame budget.
 	_fail_smoke_if_enabled("FAIL:hunting_tactics_%s no_resolved_attack" % ("host" if is_host else "client"))
+
+func _wait_for_hunting_tactics_bot_ready(mock_game, max_frames: int) -> bool:
+	for frame_index in range(max_frames):
+		if _is_hunting_tactics_bot_ready(mock_game):
+			_write_smoke_trace("hunting_tactics_bot_ready frame=%d local=%d turn=%d" % [
+				frame_index,
+				_get_hunting_tactics_local_player_index(mock_game),
+				mock_game.game_manager.turn_number if mock_game != null and mock_game.game_manager != null else -1,
+			])
+			return true
+		await get_tree().process_frame
+	_write_smoke_trace("hunting_tactics_bot_not_ready local=%d turn=%d awaiting=%s" % [
+		_get_hunting_tactics_local_player_index(mock_game),
+		mock_game.game_manager.turn_number if mock_game != null and mock_game.game_manager != null else -1,
+		str(bool(mock_game.get("_awaiting_initial_full_state")) if mock_game != null else false),
+	])
+	return false
+
+func _is_hunting_tactics_bot_ready(mock_game) -> bool:
+	if mock_game == null or mock_game.game_manager == null or mock_game.match_manager == null:
+		return false
+	if mock_game.match_client == null:
+		return false
+	if bool(mock_game.get("_awaiting_initial_full_state")):
+		return false
+	if mock_game.game_manager.players.is_empty() or mock_game.game_manager.turn_number <= 0:
+		return false
+	var local_idx := _get_hunting_tactics_local_player_index(mock_game)
+	if local_idx < 0 or local_idx >= mock_game.game_manager.players.size():
+		return false
+	if mock_game.network_manager == null:
+		return true
+	var multiplayer_api = mock_game.network_manager.multiplayer
+	if multiplayer_api == null:
+		return false
+	var multiplayer_peer = multiplayer_api.multiplayer_peer
+	if multiplayer_peer == null:
+		return false
+	return multiplayer_peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED
+
+func _get_hunting_tactics_local_player_index(mock_game) -> int:
+	if mock_game == null:
+		return -1
+	if mock_game.network_manager != null:
+		return int(mock_game.network_manager.local_player_index)
+	if mock_game.game_manager != null and not mock_game.game_manager.players.is_empty():
+		return 0
+	return -1
 
 func _detach_hunting_tactics_bots(host_bot, client_bot) -> void:
 	if host_bot != null and host_bot.has_method("detach"):

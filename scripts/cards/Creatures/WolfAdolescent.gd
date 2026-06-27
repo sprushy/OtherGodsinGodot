@@ -16,7 +16,7 @@ func _init() -> void:
 	speed = 2
 	resilience = 7
 	strength = 20
-	ability_text = "[b]Maturation[/b] ([b]Upkeep[/b]): If this creature destroyed another creature in combat since your last turn began, you may send it to the graveyard to summon a level 5 or lower Lupine from your deck to the field."
+	ability_text = "[b]Maturation[/b] ([b]Upkeep[/b], after [b]Slay[/b]): You may send this creature to the graveyard to summon a level 5 or lower Lupine from your deck to the field."
 	flavor_text = ""
 	culture = "Norse"
 	artist = "Ricardo Zoppello"

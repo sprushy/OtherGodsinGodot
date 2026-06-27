@@ -13,12 +13,16 @@ const DeckStoreScript = preload("res://scripts/server/DeckStore.gd")
 const FriendStoreScript = preload("res://scripts/server/FriendStore.gd")
 const DeckValidatorScript = preload("res://scripts/server/DeckValidator.gd")
 const MatchHistoryStoreScript = preload("res://scripts/server/MatchHistoryStore.gd")
+const PracticeAutofillDeckFactoryScript = preload("res://scripts/server/PracticeAutofillDeckFactory.gd")
 const LOBBY_EVENT_TYPE := "__lobby_event__"
 const SEEK_TIMEOUT_SECONDS := 30 * 60
 const SEEK_TIMEOUT_CHECK_INTERVAL_SECONDS := 5.0
 const ROOM_MEMBER_RECONNECT_GRACE_SECONDS := 5 * 60
 const DEDICATED_MATCH_ASSIGNMENT_POLL_SECONDS := 0.25
 const DEDICATED_MATCH_ASSIGNMENT_TIMEOUT_SECONDS := 90.0
+const BOT_SESSION_PREFIX := "BOT_"
+const SERVER_BOT_AUTH_MODE := "bot"
+const SERVER_BOT_TYPE_FUZZ := "practice_fuzz"
 
 signal local_room_snapshot_updated(snapshot: Dictionary)
 signal room_list_updated(rooms: Array)
@@ -31,6 +35,8 @@ var match_port: int = LobbyProtocolScript.MATCH_PORT
 var is_listening: bool = false
 var use_dedicated_match_processes: bool = true
 var allow_in_process_match_fallback: bool = true
+var server_bots_enabled: bool = true
+var server_bot_seek_count: int = 1
 var trace_network: bool = false
 var trace_file_path: String = ""
 var multiplayer_mount_path: NodePath = NodePath("")
@@ -49,8 +55,10 @@ var deck_store = null
 var friend_store = null
 var deck_validator = null
 var match_history_store = null
+var server_bot_deck_factory = null
 
 var _seek_timeout_check_elapsed: float = 0.0
+var _server_bot_seed_counter: int = 0
 
 func _ready() -> void:
 	_ensure_profile_store()
@@ -72,6 +80,7 @@ func _process(delta: float) -> void:
 	_seek_timeout_check_elapsed = 0.0
 	_expire_stale_seeks()
 	_expire_disconnected_room_members()
+	_ensure_server_bot_seeks()
 
 func start_server(p_advertised_host: String = "127.0.0.1", port: int = LobbyProtocolScript.PORT, p_match_port: int = LobbyProtocolScript.MATCH_PORT) -> Error:
 	if is_listening:
@@ -107,6 +116,7 @@ func start_server(p_advertised_host: String = "127.0.0.1", port: int = LobbyProt
 	is_listening = true
 	_trace("listening on %s:%d" % [advertised_host, lobby_port])
 	status_changed.emit("Lobby server listening on %s:%d" % [advertised_host, lobby_port])
+	_ensure_server_bot_seeks()
 	return OK
 
 func stop_server() -> void:
@@ -872,6 +882,150 @@ func _create_room_for_session(session_id: String, is_ranked: bool = true, best_o
 	_emit_room_updates(room)
 	return room
 
+func _ensure_server_bot_seeks() -> void:
+	if not is_listening or not server_bots_enabled or server_bot_seek_count <= 0:
+		return
+	var available_bot_seek_count := 0
+	for room_variant in rooms_by_id.values():
+		var room := room_variant as LobbyRoom
+		if _is_available_server_bot_seek(room):
+			available_bot_seek_count += 1
+	while available_bot_seek_count < server_bot_seek_count:
+		if _create_server_bot_seek() == null:
+			break
+		available_bot_seek_count += 1
+
+func _create_server_bot_seek() -> LobbyRoom:
+	_ensure_deck_validator()
+	_ensure_server_bot_deck_factory()
+	if deck_validator == null or server_bot_deck_factory == null:
+		return null
+	var bot_session_id := _create_server_bot_session()
+	if bot_session_id.is_empty():
+		return null
+	var room := _create_room_for_session(bot_session_id, false, 1)
+	if room == null:
+		_remove_server_bot_session(bot_session_id)
+		return null
+	var deck_submission := _build_server_bot_deck_submission(bot_session_id)
+	if deck_submission.is_empty():
+		_close_room(str(room.room_id))
+		return null
+	if not room.submit_deck(
+		bot_session_id,
+		str(deck_submission.get("deck_name", "Practice Bot")),
+		str(deck_submission.get("deck_id", "")),
+		deck_submission.get("cards", {}),
+		deck_submission.get("validation", {}),
+		deck_submission.get("special_setup", {}),
+		deck_submission.get("reinforcements", {})
+	):
+		_close_room(str(room.room_id))
+		return null
+	room.set_ready(bot_session_id, true)
+	_emit_room_updates(room)
+	return room
+
+func _create_server_bot_session() -> String:
+	var session_id := "%s%s" % [BOT_SESSION_PREFIX, _generate_id(9)]
+	while sessions_by_id.has(session_id):
+		session_id = "%s%s" % [BOT_SESSION_PREFIX, _generate_id(9)]
+	var bot_number := _count_server_bot_sessions() + 1
+	var bot_name := "Practice Bot %d" % bot_number
+	sessions_by_id[session_id] = {
+		"session_id": session_id,
+		"profile_id": "",
+		"account_id": "",
+		"reconnect_token": "",
+		"player_name": bot_name,
+		"username": bot_name,
+		"auth_mode": SERVER_BOT_AUTH_MODE,
+		"peer_id": 0,
+		"connected": true,
+		"room_disconnected_since_unix": 0,
+		"is_local": false,
+		"is_bot": true,
+		"bot_type": SERVER_BOT_TYPE_FUZZ,
+	}
+	return session_id
+
+func _build_server_bot_deck_submission(bot_session_id: String) -> Dictionary:
+	_server_bot_seed_counter += 1
+	var deck_seed := int(Time.get_unix_time_from_system()) + _server_bot_seed_counter
+	var deck: Dictionary = server_bot_deck_factory.build_random_deck(deck_seed)
+	if deck.is_empty():
+		return {}
+	var validation: Dictionary = deck_validator.validate_deck(
+		deck.get("cards", {}),
+		deck.get("special_setup", {}),
+		deck.get("reinforcements", {})
+	)
+	if not bool(validation.get("is_valid", false)):
+		return {}
+	var validation_cards := _duplicate_dictionary(validation.get("cards", {}))
+	var validation_reinforcements := _duplicate_dictionary(validation.get("reinforcements", {}))
+	var validation_special_setup := _duplicate_dictionary(validation.get("special_setup", {}))
+	if validation_cards.is_empty():
+		return {}
+	return {
+		"deck_name": str(deck.get("deck_name", deck.get("name", "Practice Bot"))),
+		"deck_id": "server-bot-%s" % bot_session_id,
+		"cards": validation_cards,
+		"reinforcements": validation_reinforcements,
+		"special_setup": validation_special_setup,
+		"validation": validation.duplicate(true),
+	}
+
+func _ensure_server_bot_deck_factory() -> void:
+	if server_bot_deck_factory != null:
+		return
+	server_bot_deck_factory = PracticeAutofillDeckFactoryScript.new()
+
+func _duplicate_dictionary(value) -> Dictionary:
+	if value is Dictionary:
+		return (value as Dictionary).duplicate(true)
+	return {}
+
+func _is_available_server_bot_seek(room: LobbyRoom) -> bool:
+	if room == null or room.status == LobbyRoomScript.STATUS_IN_MATCH:
+		return false
+	if room.members.size() != 1:
+		return false
+	var only_session_id := str(room.members[0]).strip_edges()
+	return _is_server_bot_session(only_session_id) \
+		and room.host_session_id == only_session_id \
+		and room.has_valid_deck(only_session_id) \
+		and room.get_ready(only_session_id)
+
+func _room_has_server_bot(room: LobbyRoom) -> bool:
+	if room == null:
+		return false
+	for session_id in room.members:
+		if _is_server_bot_session(str(session_id)):
+			return true
+	return false
+
+func _is_server_bot_session(session_id: String) -> bool:
+	var resolved_session_id := session_id.strip_edges()
+	if resolved_session_id.is_empty():
+		return false
+	var session: Dictionary = sessions_by_id.get(resolved_session_id, {})
+	return bool(session.get("is_bot", false)) or resolved_session_id.to_upper().begins_with(BOT_SESSION_PREFIX)
+
+func _remove_server_bot_session(session_id: String) -> void:
+	var resolved_session_id := session_id.strip_edges()
+	if resolved_session_id.is_empty() or not _is_server_bot_session(resolved_session_id):
+		return
+	room_id_by_session.erase(resolved_session_id)
+	sessions_by_id.erase(resolved_session_id)
+
+func _count_server_bot_sessions() -> int:
+	var count := 0
+	for session_id_variant in sessions_by_id.keys():
+		if _is_server_bot_session(str(session_id_variant)):
+			count += 1
+	return count
+
 func _payload_bool(payload: Dictionary, key: String, default_value: bool = false) -> bool:
 	if not payload.has(key):
 		return default_value
@@ -1105,6 +1259,8 @@ func _assign_match(room: LobbyRoom) -> void:
 			"account_id": str(session.get("account_id", "")),
 			"username": str(session.get("username", "")),
 			"player_name": str(session.get("player_name", "Guest")),
+			"is_bot": bool(session.get("is_bot", false)),
+			"bot_type": str(session.get("bot_type", "")),
 		}
 
 	var spectator_visibility := _build_spectator_visibility_by_session(room.members)
@@ -1128,9 +1284,13 @@ func _assign_match(room: LobbyRoom) -> void:
 	_emit_room_updates(room)
 	if match_session.is_dedicated_headless():
 		_trace("waiting for dedicated match %s to become ready for room %s" % [match_session.match_id, room.room_id])
+		if _room_has_server_bot(room):
+			call_deferred("_ensure_server_bot_seeks")
 		call_deferred("_poll_dedicated_match_assignment_ready", room.room_id, match_session.match_id, 0.0)
 		return
 	_send_match_assignments_to_room(room, match_session)
+	if _room_has_server_bot(room):
+		call_deferred("_ensure_server_bot_seeks")
 
 func _send_match_assignments_to_room(room: LobbyRoom, match_session) -> void:
 	if room == null or match_session == null:
@@ -1459,6 +1619,7 @@ func _expire_stale_seeks() -> void:
 			room_id,
 			"Seek %s expired after 30 minutes of waiting for an opponent." % room_id
 		)
+	_ensure_server_bot_seeks()
 	_broadcast_room_lists()
 
 func _expire_disconnected_room_members() -> void:
@@ -1534,6 +1695,8 @@ func _close_room(room_id: String, message: String = "") -> void:
 		_notify_session_room_cleared(session_id)
 		if not message.strip_edges().is_empty():
 			_send_error_to_session(session_id, message)
+		if _is_server_bot_session(session_id):
+			sessions_by_id.erase(session_id)
 
 func _notify_session_room_cleared(session_id: String) -> void:
 	if session_id == local_session_id:
@@ -1812,6 +1975,11 @@ func _on_match_closed(match_id: String, room_id: String, final_status: String) -
 		return
 	var room: LobbyRoom = rooms_by_id[room_id]
 	if room.assigned_match_id != match_id:
+		return
+	if _room_has_server_bot(room):
+		_close_room(room_id)
+		_ensure_server_bot_seeks()
+		_broadcast_room_lists()
 		return
 	if final_status == MatchSessionScript.STATUS_FINISHED:
 		room.reset_after_match()
