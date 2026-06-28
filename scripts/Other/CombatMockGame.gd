@@ -412,9 +412,14 @@ var _active_hati_prompt: Hati = null
 var _pending_huginn_prime_prompts: Array[Huginn] = []
 var _active_huginn_prime_prompt: Huginn = null
 var _queued_huginn_prime_prompt_targets: Dictionary = {}
+var _queued_huginn_prime_prompt_keys: Dictionary = {}
+var _active_huginn_prime_prompt_key: String = ""
 var _pending_muninn_prime_prompts: Array[Muninn] = []
 var _active_muninn_prime_prompt: Muninn = null
 var _queued_muninn_prime_prompt_targets: Dictionary = {}
+var _queued_muninn_prime_prompt_keys: Dictionary = {}
+var _active_muninn_prime_prompt_key: String = ""
+var _handled_raven_prime_prompt_keys: Dictionary = {}
 var _pending_oracles_sight_prompts: Array[OraclesSight] = []
 var _active_oracles_sight_prompt: OraclesSight = null
 var _queued_oracles_sight_prompt_targets: Dictionary = {}
@@ -11479,14 +11484,20 @@ func _restore_active_raven_prime_prompt_overlay() -> void:
 	var restored := false
 	if _active_huginn_prime_prompt != null:
 		var pending_huginn := _active_huginn_prime_prompt
+		var pending_huginn_key := _active_huginn_prime_prompt_key
 		_active_huginn_prime_prompt = null
+		_active_huginn_prime_prompt_key = ""
 		if pending_huginn != null and pending_huginn not in _pending_huginn_prime_prompts:
+			_queued_huginn_prime_prompt_keys[pending_huginn.uid] = pending_huginn_key
 			_pending_huginn_prime_prompts.insert(0, pending_huginn)
 		restored = true
 	if _active_muninn_prime_prompt != null:
 		var pending_muninn := _active_muninn_prime_prompt
+		var pending_muninn_key := _active_muninn_prime_prompt_key
 		_active_muninn_prime_prompt = null
+		_active_muninn_prime_prompt_key = ""
 		if pending_muninn != null and pending_muninn not in _pending_muninn_prime_prompts:
+			_queued_muninn_prime_prompt_keys[pending_muninn.uid] = pending_muninn_key
 			_pending_muninn_prime_prompts.insert(0, pending_muninn)
 		restored = true
 	if not restored:
@@ -16386,6 +16397,58 @@ func _resolve_prompt_payload_targets(payload: Dictionary) -> Array[Card]:
 				seen_uids[uid] = true
 	return resolved_targets
 
+func _get_raven_prime_prompt_key(prompt_type: String, card: Card, prompt_id: int = -1) -> String:
+	if prompt_id >= 0:
+		return "%s#%d" % [prompt_type, prompt_id]
+	var source_uid := str(card.uid).strip_edges() if card != null else ""
+	if source_uid != "":
+		return "%s:%s" % [prompt_type, source_uid]
+	return ""
+
+func _mark_raven_prime_prompt_handled(prompt_key: String) -> void:
+	var key := prompt_key.strip_edges()
+	if key == "":
+		return
+	_handled_raven_prime_prompt_keys[key] = true
+	while _handled_raven_prime_prompt_keys.size() > 64:
+		_handled_raven_prime_prompt_keys.erase(_handled_raven_prime_prompt_keys.keys()[0])
+
+func _is_raven_prime_prompt_handled(prompt_key: String) -> bool:
+	var key := prompt_key.strip_edges()
+	return key != "" and bool(_handled_raven_prime_prompt_keys.get(key, false))
+
+func _has_huginn_prime_prompt_in_flight(card: Huginn, prompt_key: String) -> bool:
+	if card == null:
+		return true
+	if prompt_key != "" and prompt_key == _active_huginn_prime_prompt_key:
+		return true
+	if _active_huginn_prime_prompt != null and _active_huginn_prime_prompt.uid == card.uid:
+		return true
+	if prompt_key != "":
+		for queued_key in _queued_huginn_prime_prompt_keys.values():
+			if str(queued_key) == prompt_key:
+				return true
+	for queued_card in _pending_huginn_prime_prompts:
+		if queued_card != null and queued_card.uid == card.uid:
+			return true
+	return false
+
+func _has_muninn_prime_prompt_in_flight(card: Muninn, prompt_key: String) -> bool:
+	if card == null:
+		return true
+	if prompt_key != "" and prompt_key == _active_muninn_prime_prompt_key:
+		return true
+	if _active_muninn_prime_prompt != null and _active_muninn_prime_prompt.uid == card.uid:
+		return true
+	if prompt_key != "":
+		for queued_key in _queued_muninn_prime_prompt_keys.values():
+			if str(queued_key) == prompt_key:
+				return true
+	for queued_card in _pending_muninn_prime_prompts:
+		if queued_card != null and queued_card.uid == card.uid:
+			return true
+	return false
+
 func _resolve_live_prompt_target(clicked_card: Card) -> Card:
 	if clicked_card == null:
 		return null
@@ -17523,11 +17586,17 @@ func _show_next_humbaba_augury_prompt() -> void:
 		call_deferred("_show_humbaba_augury_prompt", card, current_targets)
 		return
 
-func _queue_huginn_perish_prime_prompt(card: Huginn, prompt_targets: Array = []) -> void:
+func _queue_huginn_perish_prime_prompt(card: Huginn, prompt_targets: Array = [], prompt_id: int = -1) -> void:
 	if card == null or game_manager == null:
+		return
+	var prompt_key := _get_raven_prime_prompt_key("huginn_perish_prime", card, prompt_id)
+	if _is_raven_prime_prompt_handled(prompt_key):
 		return
 	if not prompt_targets.is_empty():
 		_queued_huginn_prime_prompt_targets[card.uid] = prompt_targets.duplicate()
+	if _has_huginn_prime_prompt_in_flight(card, prompt_key):
+		return
+	_queued_huginn_prime_prompt_keys[card.uid] = prompt_key
 	_pending_huginn_prime_prompts.append(card)
 	call_deferred("_show_next_huginn_perish_prime_prompt")
 
@@ -17551,29 +17620,37 @@ func _show_next_huginn_perish_prime_prompt() -> void:
 			current_targets = card.get_valid_hex_targets()
 		if current_targets.is_empty():
 			_queued_huginn_prime_prompt_targets.erase(card.uid)
+			_queued_huginn_prime_prompt_keys.erase(card.uid)
 			_set_action_label_text("%s perished, but found no hex to prime." % card.card_name)
 			update_ui()
 			continue
 		if not _is_player_local(card.card_owner):
 			_queued_huginn_prime_prompt_targets.erase(card.uid)
+			_queued_huginn_prime_prompt_keys.erase(card.uid)
 			_set_action_label_text(card.resolve_perish_prime_choice(game_manager, current_targets[0]))
 			update_ui()
 			continue
 		_active_huginn_prime_prompt = card
+		_active_huginn_prime_prompt_key = str(_queued_huginn_prime_prompt_keys.get(card.uid, ""))
 		var on_choose_prime := func(chosen_hex: Card) -> void:
 			var resolved_card := _active_huginn_prime_prompt
+			var resolved_prompt_key := _active_huginn_prime_prompt_key
 			_active_huginn_prime_prompt = null
+			_active_huginn_prime_prompt_key = ""
 			if resolved_card == null or game_manager == null:
 				call_deferred("_show_next_huginn_perish_prime_prompt")
 				return
 			_queued_huginn_prime_prompt_targets.erase(resolved_card.uid)
+			_queued_huginn_prime_prompt_keys.erase(resolved_card.uid)
 			if _submit_prompt_choice_command({
 				"type": "huginn_perish_prime_choice",
 				"source_uid": resolved_card.uid,
 				"target_uid": chosen_hex.uid if chosen_hex != null else "",
 			}):
+				_mark_raven_prime_prompt_handled(resolved_prompt_key)
 				update_ui()
 			else:
+				_mark_raven_prime_prompt_handled(resolved_prompt_key)
 				_set_action_label_text(resolved_card.resolve_perish_prime_choice(game_manager, chosen_hex))
 				update_ui()
 			update_ui()
@@ -17592,11 +17669,17 @@ func _show_next_huginn_perish_prime_prompt() -> void:
 		update_ui()
 		return
 
-func _queue_muninn_perish_prime_prompt(card: Muninn, prompt_targets: Array = []) -> void:
+func _queue_muninn_perish_prime_prompt(card: Muninn, prompt_targets: Array = [], prompt_id: int = -1) -> void:
 	if card == null or game_manager == null:
+		return
+	var prompt_key := _get_raven_prime_prompt_key("muninn_perish_prime", card, prompt_id)
+	if _is_raven_prime_prompt_handled(prompt_key):
 		return
 	if not prompt_targets.is_empty():
 		_queued_muninn_prime_prompt_targets[card.uid] = prompt_targets.duplicate()
+	if _has_muninn_prime_prompt_in_flight(card, prompt_key):
+		return
+	_queued_muninn_prime_prompt_keys[card.uid] = prompt_key
 	_pending_muninn_prime_prompts.append(card)
 	call_deferred("_show_next_muninn_perish_prime_prompt")
 
@@ -17620,29 +17703,37 @@ func _show_next_muninn_perish_prime_prompt() -> void:
 			current_targets = card.get_valid_charm_targets()
 		if current_targets.is_empty():
 			_queued_muninn_prime_prompt_targets.erase(card.uid)
+			_queued_muninn_prime_prompt_keys.erase(card.uid)
 			_set_action_label_text("%s perished, but found no charm to prime." % card.card_name)
 			update_ui()
 			continue
 		if not _is_player_local(card.card_owner):
 			_queued_muninn_prime_prompt_targets.erase(card.uid)
+			_queued_muninn_prime_prompt_keys.erase(card.uid)
 			_set_action_label_text(card.resolve_perish_prime_choice(game_manager, current_targets[0]))
 			update_ui()
 			continue
 		_active_muninn_prime_prompt = card
+		_active_muninn_prime_prompt_key = str(_queued_muninn_prime_prompt_keys.get(card.uid, ""))
 		var on_choose_prime := func(chosen_charm: Card) -> void:
 			var resolved_card := _active_muninn_prime_prompt
+			var resolved_prompt_key := _active_muninn_prime_prompt_key
 			_active_muninn_prime_prompt = null
+			_active_muninn_prime_prompt_key = ""
 			if resolved_card == null or game_manager == null:
 				call_deferred("_show_next_muninn_perish_prime_prompt")
 				return
 			_queued_muninn_prime_prompt_targets.erase(resolved_card.uid)
+			_queued_muninn_prime_prompt_keys.erase(resolved_card.uid)
 			if _submit_prompt_choice_command({
 				"type": "muninn_perish_prime_choice",
 				"source_uid": resolved_card.uid,
 				"target_uid": chosen_charm.uid if chosen_charm != null else "",
 			}):
+				_mark_raven_prime_prompt_handled(resolved_prompt_key)
 				update_ui()
 			else:
+				_mark_raven_prime_prompt_handled(resolved_prompt_key)
 				_set_action_label_text(resolved_card.resolve_perish_prime_choice(game_manager, chosen_charm))
 				update_ui()
 			update_ui()
@@ -26119,10 +26210,15 @@ func _dismiss_transient_prompts(clear_required_prompts: bool = true) -> void:
 	if clear_required_prompts:
 		_pending_huginn_prime_prompts.clear()
 		_active_huginn_prime_prompt = null
+		_active_huginn_prime_prompt_key = ""
 		_queued_huginn_prime_prompt_targets.clear()
+		_queued_huginn_prime_prompt_keys.clear()
 		_pending_muninn_prime_prompts.clear()
 		_active_muninn_prime_prompt = null
+		_active_muninn_prime_prompt_key = ""
 		_queued_muninn_prime_prompt_targets.clear()
+		_queued_muninn_prime_prompt_keys.clear()
+		_handled_raven_prime_prompt_keys.clear()
 	_pending_oracles_sight_prompts.clear()
 	_active_oracles_sight_prompt = null
 	_queued_oracles_sight_prompt_targets.clear()
@@ -26134,8 +26230,6 @@ func _dismiss_transient_prompts(clear_required_prompts: bool = true) -> void:
 	_hide_mummu_entropy_prompt()
 	_queued_harii_jarl_prompt_targets.clear()
 	_queued_fenrir_devour_prompt_targets.clear()
-	_queued_huginn_prime_prompt_targets.clear()
-	_queued_muninn_prime_prompt_targets.clear()
 	_queued_wolf_adolescent_prompt_targets.clear()
 	_pending_tonal_extraction_prompts.clear()
 	_queued_tonal_extraction_prompt_targets.clear()
@@ -27181,11 +27275,11 @@ func _on_match_ui_interaction(player_index: int, type: String, data: Dictionary)
 		"huginn_perish_prime":
 			var card := game_manager.get_card_by_uid(data.get("source_uid", "")) as Huginn
 			if card != null:
-				_queue_huginn_perish_prime_prompt(card, _resolve_prompt_payload_targets(data))
+				_queue_huginn_perish_prime_prompt(card, _resolve_prompt_payload_targets(data), int(data.get("_prompt_id", -1)))
 		"muninn_perish_prime":
 			var card := game_manager.get_card_by_uid(data.get("source_uid", "")) as Muninn
 			if card != null:
-				_queue_muninn_perish_prime_prompt(card, _resolve_prompt_payload_targets(data))
+				_queue_muninn_perish_prime_prompt(card, _resolve_prompt_payload_targets(data), int(data.get("_prompt_id", -1)))
 		"lailoken_reveal":
 			var card := game_manager.get_card_by_uid(data.get("source_uid", "")) as Lailoken
 			if card != null:
@@ -29182,11 +29276,11 @@ func _apply_ui_interaction(event_data: Dictionary) -> void:
 		"huginn_perish_prime":
 			var card := game_manager.get_card_by_uid(payload.get("source_uid", "")) as Huginn
 			if card != null:
-				_queue_huginn_perish_prime_prompt(card, _resolve_prompt_payload_targets(payload))
+				_queue_huginn_perish_prime_prompt(card, _resolve_prompt_payload_targets(payload), int(payload.get("_prompt_id", -1)))
 		"muninn_perish_prime":
 			var card := game_manager.get_card_by_uid(payload.get("source_uid", "")) as Muninn
 			if card != null:
-				_queue_muninn_perish_prime_prompt(card, _resolve_prompt_payload_targets(payload))
+				_queue_muninn_perish_prime_prompt(card, _resolve_prompt_payload_targets(payload), int(payload.get("_prompt_id", -1)))
 		"lailoken_reveal":
 			var card := game_manager.get_card_by_uid(payload.get("source_uid", "")) as Lailoken
 			if card != null:

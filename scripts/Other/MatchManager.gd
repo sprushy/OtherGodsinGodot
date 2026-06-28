@@ -650,8 +650,6 @@ func _validate_pending_ui_interaction_for_command(command: Dictionary) -> Dictio
 		if not blocking_interaction.is_empty() \
 				and not _command_can_bypass_pending_ui_interaction(command_type):
 			result["error"] = "Resolve the pending %s choice before continuing." % str(blocking_interaction.get("type", "card"))
-			if not _pending_ui_interactions.is_empty():
-				call_deferred("_reemit_active_pending_ui_interaction")
 		return result
 	if not (authoritative_match_flow_enabled or network_manager != null):
 		return result
