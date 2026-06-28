@@ -2139,6 +2139,12 @@ func _resolve_creature_combat_now(
 			]
 		else:
 			last_resolution_text = combat_text
+		var combat_feedback := game_manager.consume_player_feedback().strip_edges() if game_manager != null else ""
+		if combat_feedback != "":
+			last_resolution_text = combat_feedback if last_resolution_text.strip_edges() == "" else "%s %s" % [
+				last_resolution_text,
+				combat_feedback,
+			]
 		if completion_callback.is_valid():
 			completion_callback.call()
 
@@ -6022,14 +6028,18 @@ func _process_command_impl(command: Dictionary) -> bool:
 			var valid_targets := card.get_valid_targets(game_manager)
 			var target_uid: String = command.get("target_uid", "")
 			if target_uid == "":
-				game_manager.note_player_feedback(card.resolve_dragon_heart_decline(game_manager))
+				var empty_choice_feedback := card.resolve_no_dragon_heart_targets() if valid_targets.is_empty() else card.resolve_dragon_heart_decline(game_manager)
+				game_manager.note_player_feedback(empty_choice_feedback)
+				command["public_log_message"] = empty_choice_feedback
 				move_validated.emit(command)
 				return true
 			var target := game_manager.get_card_by_uid(target_uid)
 			if target == null or target not in valid_targets:
 				move_failed.emit("tatzelwurm_dragon_heart_choice: invalid Dragon target")
 				return false
-			game_manager.note_player_feedback(card.resolve_dragon_heart(game_manager, target))
+			var dragon_heart_feedback := card.resolve_dragon_heart(game_manager, target)
+			game_manager.note_player_feedback(dragon_heart_feedback)
+			command["public_log_message"] = dragon_heart_feedback
 			move_validated.emit(command)
 			return true
 		"byggvir_reveal_choice":

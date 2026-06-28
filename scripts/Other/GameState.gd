@@ -49,6 +49,11 @@ static func serialize(gm: GameManager, viewer_player_index: int = -1, visible_pl
 	}
 	if gm.winning_player != null:
 		data["winner_index"] = gm.players.find(gm.winning_player)
+	if gm.losing_player != null:
+		data["loser_index"] = gm.players.find(gm.losing_player)
+	if gm.is_game_over:
+		data["game_end_reason"] = gm.game_end_reason
+		data["result_message"] = gm.get_game_result_message()
 
 	for i in gm.players.size():
 		var player := gm.players[i]
@@ -405,6 +410,17 @@ static func apply_to_manager(data: Dictionary, gm: GameManager) -> void:
 		gm.turn_player = gm.current_player
 	gm.current_phase = int(data.get("phase", GameManager.GamePhase.MULLIGAN)) as GameManager.GamePhase
 	gm.is_game_over = data.get("is_game_over", false)
+	gm.game_end_reason = str(data.get("game_end_reason", ""))
+	gm.winning_player = null
+	gm.losing_player = null
+	var winner_idx := int(data.get("winner_index", -1))
+	if winner_idx >= 0 and winner_idx < gm.players.size():
+		gm.winning_player = gm.players[winner_idx]
+	var loser_idx := int(data.get("loser_index", -1))
+	if loser_idx >= 0 and loser_idx < gm.players.size():
+		gm.losing_player = gm.players[loser_idx]
+	elif gm.winning_player != null and gm.players.size() == 2:
+		gm.losing_player = gm.get_opponent(gm.winning_player)
 	gm._upkeep_resolved_turn = data.get("upkeep_resolved_turn", -1)
 	gm._upkeep_started_turn = data.get("upkeep_started_turn", -1)
 	gm.consecutive_passes = data.get("consecutive_passes", 0)

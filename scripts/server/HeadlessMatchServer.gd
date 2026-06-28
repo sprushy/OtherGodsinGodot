@@ -32,6 +32,7 @@ var _deck_validator = DeckValidatorScript.new()
 var _match_started: bool = false
 var _initial_join_deadline_unix: int = 0
 var _abandoned_shutdown_started: bool = false
+var _finished_shutdown_pending: bool = false
 var _status_heartbeat_elapsed: float = 0.0
 var _reinforcement_phase_active: bool = false
 var _server_bot_entries: Array[Dictionary] = []
@@ -132,7 +133,13 @@ func maybe_start_match_if_ready() -> bool:
 
 func _on_match_player_authenticated(_player_index: int, _session_id: String, was_reconnect: bool) -> void:
 	if _reinforcement_phase_active:
-		_send_reinforcement_phase_to_player(_player_index)
+		var winner_index := game_manager.players.find(game_manager.winning_player) if game_manager != null else -1
+		_send_reinforcement_phase_to_player(_player_index, {}, winner_index)
+		return
+	if _finished_shutdown_pending:
+		_write_status_file(MatchSessionScript.STATUS_FINISHED)
+		if match_session == null or not match_session.is_waiting_for_reconnect():
+			_schedule_finished_match_shutdown(GAME_END_SHUTDOWN_DELAY_SECONDS)
 		return
 	if was_reconnect:
 		_poll_server_bots()
@@ -252,6 +259,7 @@ func _validate_config(config: Dictionary) -> String:
 
 func _on_game_ended(_winner: Player, _loser: Player) -> void:
 	var winner_index := game_manager.players.find(_winner) if game_manager != null else -1
+	var result_message := _get_current_game_result_message()
 	var series_snapshot: Dictionary = match_session.record_series_game_win(winner_index) if match_session != null else {}
 	if match_session != null \
 			and game_manager != null \
@@ -266,11 +274,11 @@ func _on_game_ended(_winner: Player, _loser: Player) -> void:
 			game_event_broadcaster.suppress_next_game_end = true
 		_reinforcement_phase_active = true
 		headless_match_host.series_between_games = true
-		_broadcast_reinforcement_phase(series_snapshot, winner_index)
+		_broadcast_reinforcement_phase(series_snapshot, winner_index, result_message)
 		_write_status_file(MatchSessionScript.STATUS_ACTIVE)
 		return
 
-	_abandoned_shutdown_started = true
+	_finished_shutdown_pending = true
 	if match_session != null:
 		match_session.mark_finished()
 	_detach_server_bots()
@@ -280,12 +288,38 @@ func _on_game_ended(_winner: Player, _loser: Player) -> void:
 		network_manager.broadcast_event_to_all("series_ended", {
 			"winner_index": winner_index,
 			"series": series_snapshot,
+			"result_message": result_message,
 		})
 	var tree := get_tree()
 	if tree == null:
 		return
-	var shutdown_timer := tree.create_timer(GAME_END_SHUTDOWN_DELAY_SECONDS)
-	shutdown_timer.timeout.connect(Callable(tree, "quit"))
+	_schedule_finished_match_shutdown(_get_finished_match_shutdown_delay_seconds())
+
+func _get_finished_match_shutdown_delay_seconds() -> float:
+	var shutdown_delay := GAME_END_SHUTDOWN_DELAY_SECONDS
+	if match_session != null and match_session.is_waiting_for_reconnect():
+		var now_unix := int(Time.get_unix_time_from_system())
+		var reconnect_deadline := int(match_session.reconnect_deadline_unix)
+		if reconnect_deadline > now_unix:
+			shutdown_delay = max(shutdown_delay, float(reconnect_deadline - now_unix) + GAME_END_SHUTDOWN_DELAY_SECONDS)
+	return shutdown_delay
+
+func _schedule_finished_match_shutdown(delay_seconds: float) -> void:
+	var tree := get_tree()
+	if tree == null:
+		return
+	var shutdown_timer := tree.create_timer(max(0.05, delay_seconds))
+	shutdown_timer.timeout.connect(Callable(self, "_on_finished_match_shutdown_timer_timeout"))
+
+func _on_finished_match_shutdown_timer_timeout() -> void:
+	if not _finished_shutdown_pending:
+		return
+	_abandoned_shutdown_started = true
+	_write_status_file(MatchSessionScript.STATUS_FINISHED)
+	var tree := get_tree()
+	if tree == null:
+		return
+	tree.quit()
 
 func _on_series_command_received(command: Dictionary, sender_info: Dictionary) -> void:
 	var peer_id := int(sender_info.get("peer_id", -1))
@@ -338,21 +372,32 @@ func _reject_series_command(peer_id: int, reason: String) -> void:
 		return
 	network_manager.broadcast_event_to_peer(peer_id, "command_rejected", {"reason": reason})
 
-func _broadcast_reinforcement_phase(series_snapshot: Dictionary, winner_index: int) -> void:
+func _get_current_game_result_message() -> String:
+	if game_manager != null and game_manager.is_game_over:
+		return game_manager.get_game_result_message()
+	return ""
+
+func _broadcast_reinforcement_phase(
+	series_snapshot: Dictionary,
+	winner_index: int,
+	result_message: String = ""
+) -> void:
 	if network_manager == null or match_session == null:
 		return
 	for player_index in network_manager.player_peer_ids.keys():
-		_send_reinforcement_phase_to_player(int(player_index), series_snapshot, winner_index)
+		_send_reinforcement_phase_to_player(int(player_index), series_snapshot, winner_index, result_message)
 	for peer_id in network_manager.spectator_peer_ids:
 		network_manager.broadcast_event_to_peer(int(peer_id), "series_game_ended", {
 			"winner_index": winner_index,
 			"series": series_snapshot,
+			"result_message": result_message,
 		})
 
 func _send_reinforcement_phase_to_player(
 	player_index: int,
 	series_snapshot: Dictionary = {},
-	winner_index: int = -1
+	winner_index: int = -1,
+	result_message: String = ""
 ) -> void:
 	if network_manager == null or match_session == null:
 		return
@@ -366,9 +411,13 @@ func _send_reinforcement_phase_to_player(
 	if not (submission is Dictionary):
 		return
 	var resolved_series: Dictionary = series_snapshot if not series_snapshot.is_empty() else match_session.get_series_snapshot()
+	var resolved_result_message := result_message.strip_edges()
+	if resolved_result_message.is_empty():
+		resolved_result_message = _get_current_game_result_message()
 	network_manager.broadcast_event_to_peer(peer_id, "reinforcement_phase", {
 		"winner_index": winner_index,
 		"series": resolved_series,
+		"result_message": resolved_result_message,
 		"cards": (submission as Dictionary).get("cards", {}),
 		"reinforcements": (submission as Dictionary).get("reinforcements", {}),
 		"is_ready": bool(match_session.reinforcement_ready_by_session.get(session_id, false)),
@@ -423,6 +472,8 @@ func _start_next_series_game() -> void:
 
 func _shutdown_if_match_was_abandoned() -> void:
 	if _abandoned_shutdown_started or match_session == null:
+		return
+	if _finished_shutdown_pending:
 		return
 	var now_unix := int(Time.get_unix_time_from_system())
 	if match_session.has_reconnect_timed_out(now_unix):

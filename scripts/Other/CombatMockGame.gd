@@ -18592,6 +18592,8 @@ func _show_fenrir_devour_prompt(card: Fenrir, prompt_targets: Array = []) -> voi
 		_set_action_label_text("%s found no creature weak enough to devour." % card.card_name)
 		update_ui()
 		return
+	var validate_devour_target := func(clicked_card: Card) -> bool:
+		return clicked_card != null and clicked_card in current_targets
 	var on_choose_devour_target := func(chosen_card: Card) -> void:
 		_queued_fenrir_devour_prompt_targets.erase(card.uid)
 		if _submit_prompt_choice_command({
@@ -18614,14 +18616,14 @@ func _show_fenrir_devour_prompt(card: Fenrir, prompt_targets: Array = []) -> voi
 			return
 		_set_action_label_text(card.card_name + " impact fizzles.")
 		update_ui()
-	_show_card_selection_overlay(
-		"Choose a creature to devour for " + card.card_name,
-		current_targets,
+	_begin_pending_click_selection(
+		card.card_name + ": Devour",
+		card,
+		validate_devour_target,
 		on_choose_devour_target,
-		on_cancel_devour_target,
-		_get_selection_cursor_mode_for_source(card)
+		on_cancel_devour_target
 	)
-	_set_action_label_text(card.card_name + ": choose a creature to devour.")
+	_set_action_label_text("Click a Devour target.")
 	update_ui()
 
 func _finish_creature_sacrifice_play() -> void:
@@ -27992,6 +27994,9 @@ func _show_reinforcement_phase(data: Dictionary) -> void:
 	_reinforcement_locked = bool(data.get("is_ready", false))
 	_dismiss_transient_prompts()
 	_hide_corner_action_button()
+	var result_message := str(data.get("result_message", "")).strip_edges()
+	if not result_message.is_empty():
+		_set_action_label_text(result_message)
 	choice_container.visible = false
 	end_turn_button.visible = false
 	placement_container.visible = false
@@ -28046,6 +28051,12 @@ func _show_reinforcement_phase(data: Dictionary) -> void:
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.add_theme_font_size_override("font_size", 26)
 	box.add_child(title)
+	if not result_message.is_empty():
+		var result_label := Label.new()
+		result_label.text = result_message
+		result_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		result_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		box.add_child(result_label)
 	var instructions := Label.new()
 	instructions.text = "Drag cards between your main deck and Reinforcements, then lock in any legal submitted deck."
 	instructions.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -28734,7 +28745,10 @@ func _present_game_result_from_state(state: Dictionary, action_message: String) 
 		if game_manager.players.size() == 2:
 			loser = game_manager.get_opponent(winner)
 	var should_return_to_menu := _pending_forfeit_return_to_menu
-	_finalize_game_result_ui(action_message, winner, loser, should_return_to_menu)
+	var result_message := str(state.get("result_message", "")).strip_edges()
+	if result_message.is_empty():
+		result_message = action_message
+	_finalize_game_result_ui(result_message, winner, loser, should_return_to_menu)
 
 func _show_game_result_overlay(result_message: String, winner = null, loser = null, auto_return: bool = false) -> void:
 	_hide_pause_menu()
@@ -29027,7 +29041,8 @@ func _apply_network_event(event_type: String, data: Dictionary) -> void:
 			_series_snapshot = (data.get("series", {}) as Dictionary).duplicate(true)
 			_current_match_info["series"] = _series_snapshot.duplicate(true)
 			_series_between_games_active = true
-			_set_action_label_text("A game in the series has ended.")
+			var result_message := str(data.get("result_message", "")).strip_edges()
+			_set_action_label_text(result_message if not result_message.is_empty() else "A game in the series has ended.")
 		"series_ended":
 			_series_snapshot = (data.get("series", {}) as Dictionary).duplicate(true)
 			_current_match_info["series"] = _series_snapshot.duplicate(true)

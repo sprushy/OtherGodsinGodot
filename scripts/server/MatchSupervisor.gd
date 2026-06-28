@@ -123,7 +123,12 @@ func is_match_ready_for_clients(match_id: String) -> bool:
 	var status_data := _load_status_file(session)
 	if status_data.is_empty():
 		return false
-	return str(status_data.get("status", "")).strip_edges() == MatchSessionScript.STATUS_ACTIVE
+	var status := str(status_data.get("status", "")).strip_edges()
+	if status == MatchSessionScript.STATUS_ACTIVE:
+		return true
+	if status == MatchSessionScript.STATUS_FINISHED:
+		return _finished_status_allows_reconnect(status_data)
+	return false
 
 func get_match_startup_failure_reason(match_id: String) -> String:
 	var resolved_match_id := match_id.strip_edges()
@@ -320,6 +325,8 @@ func _get_status_file_close_reason(session, now_unix: int) -> String:
 		return ""
 	var status := str(status_data.get("status", "")).strip_edges()
 	if status == MatchSessionScript.STATUS_FINISHED:
+		if _finished_status_allows_reconnect(status_data, now_unix):
+			return ""
 		return MatchSessionScript.STATUS_FINISHED
 	if status == MatchSessionScript.STATUS_ABANDONED:
 		return MatchSessionScript.STATUS_ABANDONED
@@ -327,6 +334,15 @@ func _get_status_file_close_reason(session, now_unix: int) -> String:
 	if heartbeat_unix > 0 and now_unix - heartbeat_unix >= MATCH_STATUS_FILE_STALE_SECONDS:
 		return MatchSessionScript.STATUS_ABANDONED
 	return ""
+
+func _finished_status_allows_reconnect(status_data: Dictionary, now_unix: int = -1) -> bool:
+	if not bool(status_data.get("waiting_for_reconnect", false)):
+		return false
+	var reconnect_deadline := int(status_data.get("reconnect_deadline_unix", 0))
+	if reconnect_deadline <= 0:
+		return false
+	var resolved_now := now_unix if now_unix >= 0 else int(Time.get_unix_time_from_system())
+	return resolved_now < reconnect_deadline
 
 func _load_status_file(session) -> Dictionary:
 	if session == null:

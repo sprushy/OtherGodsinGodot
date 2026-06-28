@@ -7,6 +7,10 @@ class_name HeadlessMatchHost
 const PromptRouterScript = preload("res://scripts/server/PromptRouter.gd")
 const JsonStoreScript = preload("res://scripts/server/JsonStore.gd")
 const NETWORK_MANAGER_NODE_NAME := "MatchNetworkManager"
+const COMMAND_TYPES_ALLOWED_DURING_RECONNECT := {
+	"forfeit": true,
+	"forfeit_match": true,
+}
 
 signal game_event_received(event_type: String, data: Dictionary)
 signal peer_disconnected(peer_id: int)
@@ -90,12 +94,13 @@ func setup_transport(
 func _on_command_received(command: Dictionary, sender_info: Dictionary) -> void:
 	if match_manager == null:
 		return
-	if str(command.get("type", "")).strip_edges() == "submit_reinforcements":
+	var command_type := str(command.get("type", "")).strip_edges()
+	if command_type == "submit_reinforcements":
 		series_command_received.emit(command, _resolve_command_sender_info(sender_info))
 		return
 	if match_session != null \
 			and match_session.is_waiting_for_reconnect() \
-			and str(command.get("type", "")).strip_edges() != "forfeit":
+			and not _is_command_allowed_during_reconnect(command_type):
 		if network_manager != null:
 			network_manager.reject_command(
 				int(sender_info.get("peer_id", -1)),
@@ -103,6 +108,9 @@ func _on_command_received(command: Dictionary, sender_info: Dictionary) -> void:
 			)
 		return
 	match_manager.process_command(command, _resolve_command_sender_info(sender_info))
+
+func _is_command_allowed_during_reconnect(command_type: String) -> bool:
+	return bool(COMMAND_TYPES_ALLOWED_DURING_RECONNECT.get(command_type, false))
 
 func _configure_in_process_authority(assign_local_host_player: bool) -> void:
 	if network_manager == null:
@@ -213,8 +221,13 @@ func _on_match_join_requested(join_request: Dictionary, sender_info: Dictionary)
 	var state := GameState.serialize(game_manager, player_index)
 	network_manager.broadcast_event_to_peer(peer_id, "full_state", {
 		state = state,
-		action_message = "Connected! Syncing game state.",
+		action_message = _get_match_join_state_message(),
 	})
+
+func _get_match_join_state_message() -> String:
+	if game_manager != null and game_manager.is_game_over:
+		return game_manager.get_game_result_message()
+	return "Connected! Syncing game state."
 
 func _refresh_spectator_visibility_from_launch_config() -> void:
 	if match_session == null:
