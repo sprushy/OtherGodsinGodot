@@ -10,44 +10,58 @@ func build_deck(player: Player, selected_cards: Array[Card], special_setup: Dict
 	var validation := player.get_deck_validation(selected_cards, special_setup)
 	if bool(validation.get("is_valid", false)):
 		var validated_special_setup: Dictionary = validation.get("special_setup", special_setup)
-		var unique_cards: Array[Card] = []
-		for card in selected_cards:
-			var deck_card := card.duplicate(true)
-			if deck_card is BaseCard:
-				(deck_card as BaseCard).assign_fresh_uid()
-			CardArtVariantsScript.apply_to_card(deck_card, validated_special_setup)
-			unique_cards.append(deck_card)
-			
-		player.current_deck = unique_cards.duplicate()
-		player.reserved_active_god = null
-		
-		var god_card: Card = null
-		var power_cards: Array[Card] = []
-		var regular_cards: Array[Card] = []
-		
-		for card in unique_cards:
-			card.card_owner = player
-			if card.is_god:
-				god_card = card
-			elif card.is_power:
-				power_cards.append(card)
-			else:
-				regular_cards.append(card)
-		
-		if god_card:
-			player.god_zone.add_card(god_card)
-
-		for i in range(min(power_cards.size(), 3)):
-			player.power_zones[i].add_card(power_cards[i])
-		
-		regular_cards.shuffle()
-		for card in regular_cards:
-			player.deck_zone.add_card(card)
-
-		_apply_special_setup(player, validated_special_setup)
-		
-		return true
+		return _install_deck(player, selected_cards, validated_special_setup)
 	return false
+
+func build_unvalidated_deck(player: Player, selected_cards: Array[Card], special_setup: Dictionary = {}) -> bool:
+	if player == null or selected_cards.is_empty():
+		return false
+	return _install_deck(player, selected_cards, special_setup)
+
+func _install_deck(player: Player, selected_cards: Array[Card], special_setup: Dictionary = {}) -> bool:
+	if player == null:
+		return false
+	var unique_cards: Array[Card] = []
+	for card in selected_cards:
+		if card == null:
+			continue
+		var deck_card := card.duplicate(true)
+		if deck_card is BaseCard:
+			(deck_card as BaseCard).assign_fresh_uid()
+		CardArtVariantsScript.apply_to_card(deck_card, special_setup)
+		unique_cards.append(deck_card)
+	if unique_cards.is_empty():
+		return false
+		
+	player.current_deck = unique_cards.duplicate()
+	player.reserved_active_god = null
+	
+	var god_card: Card = null
+	var power_cards: Array[Card] = []
+	var regular_cards: Array[Card] = []
+	
+	for card in unique_cards:
+		card.card_owner = player
+		if card.is_god:
+			god_card = card
+		elif card.is_power:
+			power_cards.append(card)
+		else:
+			regular_cards.append(card)
+	
+	if god_card:
+		player.god_zone.add_card(god_card)
+
+	for i in range(min(power_cards.size(), 3)):
+		player.power_zones[i].add_card(power_cards[i])
+	
+	regular_cards.shuffle()
+	for card in regular_cards:
+		player.deck_zone.add_card(card)
+
+	_apply_special_setup(player, special_setup)
+	
+	return true
 
 func _apply_special_setup(player: Player, special_setup: Dictionary) -> void:
 	if player == null:

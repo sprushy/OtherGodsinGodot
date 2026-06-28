@@ -142,11 +142,11 @@ func build_match_from_session_decks(game_manager: GameManager, match_session) ->
 		var submitted_cards: Array[Card] = CardCatalogScript.make_cards_from_counts(submission.get("cards", {}))
 		if submitted_cards.is_empty():
 			return {}
-		if not deck_builder.build_deck(
-			players[player_index],
-			submitted_cards,
-			submission.get("special_setup", {})
-		):
+		var special_setup: Dictionary = submission.get("special_setup", {})
+		var built_deck := deck_builder.build_unvalidated_deck(players[player_index], submitted_cards, special_setup) \
+			if _is_purpose_deck_submission(submission) \
+			else deck_builder.build_deck(players[player_index], submitted_cards, special_setup)
+		if not built_deck:
 			return {}
 
 	game_manager.setup_game()
@@ -234,6 +234,12 @@ func _get_session_deck_submission(match_session, session_id: String) -> Dictiona
 	if submission is Dictionary:
 		return (submission as Dictionary).duplicate(true)
 	return {}
+
+func _is_purpose_deck_submission(submission: Dictionary) -> bool:
+	if bool(submission.get("is_purpose_deck", false)):
+		return true
+	var special_setup = submission.get("special_setup", {})
+	return special_setup is Dictionary and bool((special_setup as Dictionary).get("is_purpose_deck", false))
 
 func _get_session_player_name(match_session, session_id: String, player_index: int) -> String:
 	if match_session != null and match_session.has_method("get_player_display_name"):

@@ -157,11 +157,7 @@ func _rebroadcast_pending_state_refresh_interactions() -> void:
 		# A full-state refresh replaces client-side card objects and invalidates
 		# prompt callbacks captured before the refresh. Re-send the still-pending
 		# prompt afterward so targeting binds to the rebuilt live cards.
-		_broadcast_ui_interaction(
-			player_index,
-			interaction_type,
-			prompt_router.serialize_prompt_data(interaction_data)
-		)
+		_broadcast_ui_interaction(player_index, interaction_type, interaction_data)
 
 func _move_completes_state_refresh_interaction(move: Dictionary) -> bool:
 	var command_type := str(move.get("type", "")).strip_edges()
@@ -245,9 +241,8 @@ func shutdown() -> void:
 			game_manager.doorway_choice_requested.disconnect(_on_doorway_choice_requested)
 
 func _on_ui_interaction_requested(player_index: int, type: String, data: Dictionary) -> void:
-	var serialized_data: Dictionary = prompt_router.serialize_prompt_data(data)
 	_sync_remote_prompt_player_state(player_index)
-	_broadcast_ui_interaction(player_index, type, serialized_data)
+	_broadcast_ui_interaction(player_index, type, data)
 
 func _on_doorway_choice_requested(structure: Card, card: Card, combat_death: bool, destruction: bool) -> void:
 	var player := structure.card_owner if structure != null else game_manager.current_player

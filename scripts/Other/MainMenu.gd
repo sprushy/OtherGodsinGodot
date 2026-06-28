@@ -6403,11 +6403,16 @@ func _drive_hunting_tactics_smoke(is_host: bool) -> void:
 		if mock_game.game_manager != null and mock_game.game_manager.is_game_over:
 			_write_smoke_trace("hunting_tactics_drive:game_over")
 			break
-		# Outcome is read from the attached bot: it tracks whether it answered a
-		# hunting_tactics prompt and whether the game progressed afterwards. The
-		# dedicated match server owns MatchManager (and thus the [HT-DEBUG] prints),
-		# so we cannot scan this client's log for them; the bot's local observation
-		# is the authoritative pass/fail signal here.
+		# Outcome is read from the attached bot. The current purpose deck exercises
+		# Raven perish prompts, while the older smoke path can still report a
+		# Hunting Tactics exchange if that deck is restored.
+		var huginn_primed := bool(host_bot.get("huginn_prime_observed")) if host_bot != null else false
+		var muninn_primed := bool(host_bot.get("muninn_prime_observed")) if host_bot != null else false
+		if huginn_primed and muninn_primed:
+			_write_smoke_trace("raven_drive:huginn_muninn_primed frames=%d" % frame_index)
+			_finish_smoke_if_enabled("PASS:raven_%s huginn_muninn_primed" % ("host" if is_host else "client"))
+			_detach_hunting_tactics_bots(host_bot, client_bot)
+			return
 		var answered := bool(host_bot.get("hunting_tactics_answered")) if host_bot != null else false
 		var progressed := bool(host_bot.get("progressed_after_hunting_tactics")) if host_bot != null else false
 		if answered and progressed:
@@ -6428,8 +6433,8 @@ func _drive_hunting_tactics_smoke(is_host: bool) -> void:
 				_fail_smoke_if_enabled("FAIL:hunting_tactics_stuck_after_answer")
 				_detach_hunting_tactics_bots(host_bot, client_bot)
 				return
-	# Did not observe a resolved hunting_tactics exchange within the frame budget.
-	_fail_smoke_if_enabled("FAIL:hunting_tactics_%s no_resolved_attack" % ("host" if is_host else "client"))
+	# Did not observe both Raven prime resolutions within the frame budget.
+	_fail_smoke_if_enabled("FAIL:raven_%s no_huginn_muninn_prime" % ("host" if is_host else "client"))
 
 func _wait_for_hunting_tactics_bot_ready(mock_game, max_frames: int) -> bool:
 	for frame_index in range(max_frames):
@@ -7134,14 +7139,22 @@ func _maybe_save_smoke_account_deck(visible_decks: Array) -> void:
 	if selected_deck.is_empty():
 		if _hunting_tactics_smoke_active:
 			var ht_factory := PracticeAutofillDeckFactoryScript.new()
-			var ht_deck := ht_factory.build_hunting_tactics_deck()
-			if ht_deck.is_empty():
+			var purpose_deck := ht_factory.build_purpose_deck("Hunting Tactics Raven Smoke", "Thor", {
+				"Thor": 1,
+				"Huginn": 24,
+				"Muninn": 24,
+				"Banishment": 12,
+				"Mead of Poetry": 12,
+			})
+			if purpose_deck.is_empty():
 				return
+			var purpose_special := (purpose_deck.get("special_setup", {}) as Dictionary).duplicate(true)
+			purpose_special["is_purpose_deck"] = true
 			selected_deck = {
 				"deck_id": "hunting_tactics_smoke",
-				"name": str(ht_deck.get("name", "Hunting Tactics Smoke")),
-				"cards": ht_deck.get("cards", {}),
-				"special_setup": ht_deck.get("special_setup", {}),
+				"name": str(purpose_deck.get("name", "Hunting Tactics Smoke")),
+				"cards": purpose_deck.get("cards", {}),
+				"special_setup": purpose_special,
 			}
 		else:
 			selected_deck = {
@@ -8314,16 +8327,27 @@ func _maybe_submit_current_profile_deck(room_id: String, snapshot: Dictionary) -
 	var force_hunting_tactics_deck := _hunting_tactics_smoke_active or smoke_deck_kind == "hunting_tactics"
 	if selected_deck.is_empty() and not _smoke_config.is_empty():
 		if force_hunting_tactics_deck:
+			# Purpose deck (validation-free): Raven-heavy, with enough Hex/Charm
+			# targets that opening draws do not starve Huginn/Muninn prime choices.
+			# Banishment avoids attack-triggered voiding so Raven perish hooks still fire.
 			var ht_factory := PracticeAutofillDeckFactoryScript.new()
-			var ht_deck := ht_factory.build_hunting_tactics_deck()
-			if ht_deck.is_empty():
+			var purpose_deck := ht_factory.build_purpose_deck("Hunting Tactics Raven Smoke", "Thor", {
+				"Thor": 1,
+				"Huginn": 24,
+				"Muninn": 24,
+				"Banishment": 12,
+				"Mead of Poetry": 12,
+			})
+			if purpose_deck.is_empty():
 				_fail_smoke_if_enabled("hunting_tactics_deck_build_failed")
 				return
+			var purpose_special := (purpose_deck.get("special_setup", {}) as Dictionary).duplicate(true)
+			purpose_special["is_purpose_deck"] = true
 			selected_deck = {
 				"deck_id": "hunting_tactics_smoke",
-				"name": str(ht_deck.get("name", "Hunting Tactics Smoke")),
-				"cards": ht_deck.get("cards", {}),
-				"special_setup": ht_deck.get("special_setup", {}),
+				"name": str(purpose_deck.get("name", "Hunting Tactics Smoke")),
+				"cards": purpose_deck.get("cards", {}),
+				"special_setup": purpose_special,
 			}
 			selected_deck_id = "hunting_tactics_smoke"
 		else:
@@ -8381,6 +8405,7 @@ func _maybe_submit_current_profile_deck(room_id: String, snapshot: Dictionary) -
 		# In smoke mode against a freshly-registered test account there are no saved
 		# decks yet. The lobby server rejects select_deck for account sessions that
 		# reference an unsaved deck_id, so persist the deck first then select it.
+		var submit_is_purpose_deck := bool(selected_deck.get("special_setup", {}).get("is_purpose_deck", false))
 		if _uses_server_account_storage() and not selected_deck_id.is_empty():
 			lobby_client.save_account_deck(
 				str(selected_deck.get("name", "Default Deck")),
@@ -8394,7 +8419,8 @@ func _maybe_submit_current_profile_deck(room_id: String, snapshot: Dictionary) -
 			selected_deck.get("cards", {}),
 			selected_deck_id,
 			selected_deck.get("special_setup", {}),
-			selected_deck.get("reinforcements", {})
+			selected_deck.get("reinforcements", {}),
+			submit_is_purpose_deck
 		)
 	_last_submitted_lobby_room_id = room_id
 	_last_submitted_lobby_deck_id = selected_deck_id

@@ -493,6 +493,8 @@ func _is_queued_ui_interaction_still_valid(queued: Dictionary) -> bool:
 	var data: Dictionary = queued.get("data", {})
 	var source_uid := str(data.get("source_uid", "")).strip_edges()
 	match type:
+		"priority":
+			return not _is_stale_priority_ui_interaction(queued)
 		"wheel_of_fire_turn_start":
 			var wheel := game_manager.get_card_by_uid(source_uid) as WheelOfFire
 			return wheel != null \
@@ -554,12 +556,29 @@ func _prune_stale_ui_interactions_for_current_turn() -> void:
 	var current_turn := game_manager.turn_number
 	for idx in range(_pending_ui_interactions.size() - 1, -1, -1):
 		var entry: Dictionary = _pending_ui_interactions[idx]
-		if int(entry.get("turn_number", current_turn)) != current_turn:
+		if _is_stale_ui_interaction_for_current_turn(entry, current_turn):
 			_pending_ui_interactions.remove_at(idx)
 	for idx in range(_queued_ui_interactions.size() - 1, -1, -1):
 		var queued: Dictionary = _queued_ui_interactions[idx]
-		if int(queued.get("turn_number", current_turn)) != current_turn:
+		if _is_stale_ui_interaction_for_current_turn(queued, current_turn):
 			_queued_ui_interactions.remove_at(idx)
+
+func _is_stale_ui_interaction_for_current_turn(entry: Dictionary, current_turn: int) -> bool:
+	if int(entry.get("turn_number", current_turn)) != current_turn:
+		return true
+	if str(entry.get("type", "")) == "priority":
+		return _is_stale_priority_ui_interaction(entry)
+	return false
+
+func _is_stale_priority_ui_interaction(entry: Dictionary) -> bool:
+	if game_manager == null:
+		return false
+	if game_manager.action_stack.is_empty():
+		return true
+	var player := entry.get("player", null) as Player
+	if player == null:
+		return true
+	return game_manager.priority_player != player
 
 func _has_duplicate_pending_ui_interaction(player: Player, type: String, data: Dictionary) -> bool:
 	for existing in _pending_ui_interactions:
@@ -631,6 +650,8 @@ func _validate_pending_ui_interaction_for_command(command: Dictionary) -> Dictio
 		if not blocking_interaction.is_empty() \
 				and not _command_can_bypass_pending_ui_interaction(command_type):
 			result["error"] = "Resolve the pending %s choice before continuing." % str(blocking_interaction.get("type", "card"))
+			if not _pending_ui_interactions.is_empty():
+				call_deferred("_reemit_active_pending_ui_interaction")
 		return result
 	if not (authoritative_match_flow_enabled or network_manager != null):
 		return result
@@ -4253,6 +4274,11 @@ func process_command(command: Dictionary, sender_info: Dictionary = {}) -> bool:
 		_active_command_type = ""
 		_active_command_pending_prompt_id = -1
 		return false
+	if _accept_redundant_priority_pass(command, sender_info):
+		_active_command_sender_info.clear()
+		_active_command_type = ""
+		_active_command_pending_prompt_id = -1
+		return true
 	var authority_error := _validate_sender_authority(command, sender_info)
 	if not authority_error.is_empty():
 		move_failed.emit(authority_error)
@@ -4313,6 +4339,23 @@ func process_command(command: Dictionary, sender_info: Dictionary = {}) -> bool:
 	elif result:
 		call_deferred("_resume_authoritative_flow_after_prompt_command")
 	return result
+
+func _accept_redundant_priority_pass(command: Dictionary, sender_info: Dictionary) -> bool:
+	if str(command.get("type", "")) != "priority_pass":
+		return false
+	if game_manager == null or not _uses_authoritative_headless_priority_flow():
+		return false
+	var priority_cleared := game_manager.priority_player == null or game_manager.action_stack.is_empty()
+	if not priority_cleared and not _authoritative_stack_resolution_pending:
+		return false
+	var sender_player := _resolve_sender_player(sender_info)
+	if not sender_info.is_empty() and sender_player == null:
+		return false
+	if sender_player != null:
+		_consume_pending_ui_interaction_for_player(sender_player, "priority")
+	_log_authoritative_flow_state("command:redundant_priority_pass_accepted")
+	_request_ui_refresh()
+	return true
 
 func _process_command_impl(command: Dictionary) -> bool:
 	var acting_player := _get_command_actor(_active_command_sender_info)
@@ -6497,6 +6540,10 @@ func _process_command_impl(command: Dictionary) -> bool:
 			return true
 		"priority_pass":
 			if _uses_authoritative_headless_priority_flow():
+				# The pass can resolve the stack and run a deferred turn action before
+				# submit_command's normal prompt cleanup gets another chance.
+				if not _consume_active_command_prompt_for_completion("priority_pass") and acting_player != null:
+					_consume_pending_ui_interaction_for_player(acting_player, "priority")
 				game_manager.pass_priority()
 				if game_manager.both_passed():
 					if not game_manager.action_stack.is_empty():

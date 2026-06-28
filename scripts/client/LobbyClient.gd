@@ -196,7 +196,8 @@ func submit_deck(
 	cards: Dictionary = {},
 	deck_id: String = "",
 	special_setup: Dictionary = {},
-	reinforcements: Dictionary = {}
+	reinforcements: Dictionary = {},
+	is_purpose_deck: bool = false
 ) -> void:
 	var payload: Dictionary = {
 		"deck_id": deck_id.strip_edges(),
@@ -209,6 +210,11 @@ func submit_deck(
 		payload["special_setup"] = special_setup.duplicate(true)
 	if not reinforcements.is_empty():
 		payload["reinforcements"] = reinforcements.duplicate(true)
+	if is_purpose_deck:
+		# Top-level flag survives deck-store sanitization (which strips special_setup
+		# to only art-variant keys) and lets the server bypass construction validation
+		# for campaign/scenario/smoke decks. Never set for normal matchmaking decks.
+		payload["is_purpose_deck"] = true
 	_send_request(LobbyProtocolScript.SELECT_DECK, payload)
 
 func request_account_decks() -> void:

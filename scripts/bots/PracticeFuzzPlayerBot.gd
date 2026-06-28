@@ -3,6 +3,7 @@ class_name PracticeFuzzPlayerBot
 
 var match_client = null
 var _awaiting_network_state_after_submit: bool = false
+var _answered_prompt_ids: Dictionary = {}
 
 func attach(
 	p_game_manager: GameManager,
@@ -13,6 +14,7 @@ func attach(
 	super.attach(p_game_manager, p_match_manager, p_game_input, p_player_index)
 	match_client = null
 	_awaiting_network_state_after_submit = false
+	_answered_prompt_ids.clear()
 	if match_manager != null and not match_manager.move_failed.is_connected(_on_match_move_failed):
 		match_manager.move_failed.connect(_on_match_move_failed)
 	if game_input != null and game_input.has_signal("submission_rejected"):
@@ -30,6 +32,7 @@ func attach_networked(
 	attach(p_game_manager, p_match_manager, p_game_input, p_player_index)
 	match_client = p_match_client
 	_awaiting_network_state_after_submit = false
+	_answered_prompt_ids.clear()
 	if match_client != null and match_client.has_signal("game_event_received"):
 		if not match_client.game_event_received.is_connected(_on_network_game_event):
 			match_client.game_event_received.connect(_on_network_game_event)
@@ -42,6 +45,7 @@ func detach() -> void:
 		match_client.game_event_received.disconnect(_on_network_game_event)
 	match_client = null
 	_awaiting_network_state_after_submit = false
+	_answered_prompt_ids.clear()
 	if match_manager != null and match_manager.move_failed.is_connected(_on_match_move_failed):
 		match_manager.move_failed.disconnect(_on_match_move_failed)
 	if game_input != null and game_input.has_signal("submission_rejected"):
@@ -110,10 +114,14 @@ func _normalize_network_prompt_payload(type: String, payload: Dictionary) -> Dic
 func _should_queue_step() -> bool:
 	if _awaiting_network_state_after_submit:
 		return false
+	if _is_networked_bot_client() and game_manager != null and not game_manager.action_stack.is_empty():
+		return false
 	return super._should_queue_step()
 
 func _should_retry_poll_later() -> bool:
 	if _awaiting_network_state_after_submit:
+		return false
+	if _is_networked_bot_client() and game_manager != null and not game_manager.action_stack.is_empty():
 		return false
 	return super._should_retry_poll_later()
 
@@ -121,6 +129,8 @@ func _on_match_ui_interaction(prompt_player_index: int, type: String, data: Dict
 	if prompt_player_index != player_index:
 		return
 	match type:
+		"priority":
+			_submit_priority_pass_from_prompt(data)
 		"wheel_of_fire_turn_start":
 			_submit_action({
 				"type": "wheel_of_fire_turn_start_choice",
@@ -137,6 +147,10 @@ func _on_match_ui_interaction(prompt_player_index: int, type: String, data: Dict
 			_submit_first_target_choice("sixth_sage_an_enlilda_choice", data)
 		"hunting_tactics":
 			_submit_hunting_tactics_choice(data)
+		"huginn_perish_prime":
+			_submit_first_target_choice("huginn_perish_prime_choice", data)
+		"muninn_perish_prime":
+			_submit_first_target_choice("muninn_perish_prime_choice", data)
 		"return_to_hand_choice":
 			_submit_action({
 				"type": "return_to_hand_choice",
@@ -170,7 +184,29 @@ func _is_networked_bot_client() -> bool:
 		return false
 	return bool(match_client.call("is_networked_client"))
 
+func _mark_prompt_answered(data: Dictionary) -> bool:
+	var prompt_id := int(data.get("_prompt_id", -1))
+	if prompt_id < 0:
+		return true
+	var key := str(prompt_id)
+	if _answered_prompt_ids.has(key):
+		return false
+	_answered_prompt_ids[key] = true
+	return true
+
+func _submit_priority_pass_from_prompt(data: Dictionary) -> void:
+	if game_manager != null:
+		if game_manager.action_stack.is_empty():
+			return
+		if bot_player != null and game_manager.priority_player != bot_player:
+			return
+	if not _mark_prompt_answered(data):
+		return
+	_submit_action({"type": "priority_pass"})
+
 func _submit_first_target_choice(command_type: String, data: Dictionary) -> void:
+	if not _mark_prompt_answered(data):
+		return
 	_submit_action({
 		"type": command_type,
 		"source_uid": str(data.get("source_uid", "")),
@@ -178,6 +214,8 @@ func _submit_first_target_choice(command_type: String, data: Dictionary) -> void
 	})
 
 func _submit_hunting_tactics_choice(data: Dictionary) -> void:
+	if not _mark_prompt_answered(data):
+		return
 	var source_uid := str(data.get("source_uid", "")).strip_edges()
 	var attacker_uid := str(data.get("attacker_uid", "")).strip_edges()
 	var chosen_uids: Array[String] = []

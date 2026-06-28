@@ -13,6 +13,8 @@ var hunting_tactics_answered: bool = false
 var hunting_tactics_answer_turn: int = -1
 var last_observed_turn: int = -1
 var progressed_after_hunting_tactics: bool = false
+var huginn_prime_observed: bool = false
+var muninn_prime_observed: bool = false
 
 func attach_networked(
 	p_game_manager: GameManager,
@@ -33,6 +35,10 @@ func detach() -> void:
 	super.detach()
 
 func _on_network_game_event(event_type: String, data: Dictionary) -> void:
+	if event_type == "full_state":
+		_record_raven_prime_message(str(data.get("action_message", "")))
+		super._on_network_game_event(event_type, data)
+		return
 	if event_type != "ui_interaction":
 		super._on_network_game_event(event_type, data)
 		return
@@ -63,6 +69,8 @@ func _on_match_ui_interaction(prompt_player_index: int, type: String, data: Dict
 			super._on_match_ui_interaction(prompt_player_index, type, data)
 
 func _submit_hunting_tactics_choice(data: Dictionary) -> void:
+	if not _mark_prompt_answered(data):
+		return
 	var source_uid := str(data.get("source_uid", "")).strip_edges()
 	var attacker_uid := str(data.get("attacker_uid", "")).strip_edges()
 	# Pick the first supporter offered (a Raven) so the buff actually applies.
@@ -82,6 +90,12 @@ func _submit_hunting_tactics_choice(data: Dictionary) -> void:
 		"attacker_uid": attacker_uid,
 		"chosen_uids": chosen_uids,
 	})
+
+func _record_raven_prime_message(message: String) -> void:
+	if message.find("Huginn primes") >= 0 or message.find("Huginn perished and primed") >= 0:
+		huginn_prime_observed = true
+	if message.find("Muninn primes") >= 0 or message.find("Muninn perished and primed") >= 0:
+		muninn_prime_observed = true
 
 func poll() -> void:
 	super.poll()

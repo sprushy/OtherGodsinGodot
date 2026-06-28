@@ -241,7 +241,8 @@ func _handle_request(peer_id: int, message: Dictionary) -> void:
 				str(payload.get("deck_id", "")),
 				payload.get("cards", {}),
 				payload.get("special_setup", {}),
-				payload.get("reinforcements", {})
+				payload.get("reinforcements", {}),
+				bool(payload.get("is_purpose_deck", false))
 			)
 		LobbyProtocolScript.REQUEST_ACCOUNT_DECKS:
 			_handle_request_account_decks(peer_id)
@@ -1441,7 +1442,8 @@ func _submit_deck_for_session(
 	deck_id: String,
 	cards,
 	special_setup = {},
-	reinforcements = {}
+	reinforcements = {},
+	payload_is_purpose_deck: bool = false
 ) -> void:
 	var room_id: String = str(room_id_by_session.get(session_id, ""))
 	if room_id.is_empty() or not rooms_by_id.has(room_id):
@@ -1496,11 +1498,27 @@ func _submit_deck_for_session(
 	if deck_validator == null:
 		_send_error_to_session(session_id, "Deck validator is unavailable.")
 		return
-	var validation: Dictionary = deck_validator.validate_deck(
-		resolved_cards,
-		resolved_special_setup,
-		resolved_reinforcements
-	)
+	# Purpose decks (campaign scenarios, scripted smoke runs) are allowed to
+	# violate normal construction rules and bypass validation entirely. They
+	# must never come from normal matchmaking - only from trusted callers that
+	# set is_purpose_deck=true in the submit_deck payload.
+	var is_purpose_deck := bool(resolved_special_setup.get("is_purpose_deck", false)) \
+		or bool(payload_is_purpose_deck)
+	var validation: Dictionary = {}
+	if is_purpose_deck:
+		validation = {
+			"is_valid": true,
+			"cards": resolved_cards,
+			"special_setup": resolved_special_setup,
+			"reinforcements": resolved_reinforcements,
+			"is_purpose_deck": true,
+		}
+	else:
+		validation = deck_validator.validate_deck(
+			resolved_cards,
+			resolved_special_setup,
+			resolved_reinforcements
+		)
 	var room: LobbyRoom = rooms_by_id[room_id]
 	if not room.submit_deck(
 		session_id,
@@ -1509,7 +1527,8 @@ func _submit_deck_for_session(
 		validation.get("cards", {}),
 		validation,
 		validation.get("special_setup", {}),
-		validation.get("reinforcements", {})
+		validation.get("reinforcements", {}),
+		is_purpose_deck
 	):
 		_send_error_to_session(session_id, "Unable to store selected deck.")
 		return

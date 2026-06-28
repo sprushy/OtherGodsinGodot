@@ -89,7 +89,8 @@ func submit_deck(
 	deck_cards: Dictionary,
 	validation: Dictionary,
 	special_setup: Dictionary = {},
-	reinforcements: Dictionary = {}
+	reinforcements: Dictionary = {},
+	is_purpose_deck: bool = false
 ) -> bool:
 	if not contains_session(session_id):
 		return false
@@ -101,6 +102,7 @@ func submit_deck(
 		"special_setup": special_setup.duplicate(true),
 		"deck_hash": compute_deck_hash(deck_name, deck_cards, special_setup, reinforcements),
 		"validation": validation.duplicate(true),
+		"is_purpose_deck": is_purpose_deck,
 	}
 	refresh_status()
 	return true

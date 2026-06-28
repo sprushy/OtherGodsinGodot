@@ -28,6 +28,7 @@ const RETRY_DELAY_SECONDS := 0.2
 var _active: bool = false
 var _step_queued: bool = false
 var _retry_queued: bool = false
+var _answered_prompt_ids: Dictionary = {}
 
 func attach(
 	p_game_manager: GameManager,
@@ -42,6 +43,7 @@ func attach(
 	player_index = p_player_index
 	if game_manager != null and player_index >= 0 and player_index < game_manager.players.size():
 		bot_player = game_manager.players[player_index]
+	_answered_prompt_ids.clear()
 	if match_client != null:
 		game_input = match_client.get_game_input()
 		network_manager = match_client.network_manager
@@ -60,6 +62,7 @@ func detach() -> void:
 	network_manager = null
 	player_index = -1
 	bot_player = null
+	_answered_prompt_ids.clear()
 	_active = false
 	_step_queued = false
 	_retry_queued = false
@@ -123,14 +126,21 @@ func _on_game_event(event_type: String, data: Dictionary) -> void:
 	match type:
 		"hunting_tactics":
 			_answer_hunting_tactics(payload)
+		"huginn_perish_prime":
+			_answer_first_target_choice("huginn_perish_prime_choice", payload)
+		"muninn_perish_prime":
+			_answer_first_target_choice("muninn_perish_prime_choice", payload)
 		"intercept":
-			_submit_action({"type": "intercept_decision", "interceptor_uid": ""})
+			if _mark_prompt_answered(payload):
+				_submit_action({"type": "intercept_decision", "interceptor_uid": ""})
 		"priority":
-			_queue_retry()
+			_answer_priority(payload)
 		_:
 			_queue_step()
 
 func _answer_hunting_tactics(payload: Dictionary) -> void:
+	if not _mark_prompt_answered(payload):
+		return
 	var source_uid := str(payload.get("source_uid", "")).strip_edges()
 	var attacker_uid := str(payload.get("attacker_uid", "")).strip_edges()
 	var chosen_uids: Array[String] = []
@@ -145,6 +155,35 @@ func _answer_hunting_tactics(payload: Dictionary) -> void:
 		"attacker_uid": attacker_uid,
 		"chosen_uids": chosen_uids,
 	})
+
+func _answer_first_target_choice(command_type: String, payload: Dictionary) -> void:
+	if not _mark_prompt_answered(payload):
+		return
+	_submit_action({
+		"type": command_type,
+		"source_uid": str(payload.get("source_uid", "")),
+		"target_uid": _first_uid_from_prompt(payload, "target_uids"),
+	})
+
+func _answer_priority(payload: Dictionary) -> void:
+	if game_manager != null:
+		if game_manager.action_stack.is_empty():
+			return
+		if bot_player != null and game_manager.priority_player != bot_player:
+			return
+	if not _mark_prompt_answered(payload):
+		return
+	_submit_action({"type": "priority_pass"})
+
+func _mark_prompt_answered(payload: Dictionary) -> bool:
+	var prompt_id := int(payload.get("_prompt_id", -1))
+	if prompt_id < 0:
+		return true
+	var key := str(prompt_id)
+	if _answered_prompt_ids.has(key):
+		return false
+	_answered_prompt_ids[key] = true
+	return true
 
 func _queue_step() -> void:
 	if _step_queued or not _should_act():
@@ -165,6 +204,13 @@ func _queue_retry() -> void:
 		call_deferred("_run_retry")
 		return
 	tree.create_timer(RETRY_DELAY_SECONDS).timeout.connect(_run_retry, CONNECT_ONE_SHOT)
+
+func _first_uid_from_prompt(payload: Dictionary, key: String) -> String:
+	for raw_uid in payload.get(key, []):
+		var uid := str(raw_uid).strip_edges()
+		if not uid.is_empty():
+			return uid
+	return ""
 
 func _run_retry() -> void:
 	_retry_queued = false

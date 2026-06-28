@@ -146,6 +146,42 @@ func build_hunting_tactics_deck() -> Dictionary:
 			}
 	return {}
 
+# Builds a PURPOSE deck that is allowed to violate normal construction rules
+# (1 god not required, copy limits ignored, below the 35-card minimum, all the
+# same card, etc.). Intended for campaign scenarios, scripted tests, and smoke
+# runs that need a guaranteed board state - never for normal bot matchmaking.
+#
+# `god_name` selects the god slot (may be empty for a godless deck).
+# `card_counts` is a {card_name: count} dict of exactly what to include; counts
+# are not clamped to copy/legendary limits. The deck is NOT run through the
+# validator, so callers must ensure the cards exist in the catalog.
+func build_purpose_deck(deck_name: String, god_name: String, card_counts: Dictionary) -> Dictionary:
+	var resolved_cards: Dictionary = {}
+	for card_name in card_counts.keys():
+		var resolved_name := str(card_name).strip_edges()
+		if resolved_name.is_empty():
+			continue
+		var count := int(card_counts[card_name])
+		if count <= 0:
+			continue
+		if _cards_by_name.get(resolved_name, null) == null:
+			push_warning("[PracticeAutofillDeckFactory] purpose deck references unknown card: %s" % resolved_name)
+			continue
+		resolved_cards[resolved_name] = count
+	var god_card = null
+	var resolved_god := str(god_name).strip_edges()
+	if not resolved_god.is_empty():
+		god_card = _cards_by_name.get(resolved_god, null) as GodCard
+	var result := {
+		"name": deck_name,
+		"deck_name": deck_name,
+		"cards": resolved_cards.duplicate(true),
+		"special_setup": {},
+		"god_name": god_card.card_name if god_card != null else "",
+		"is_purpose_deck": true,
+	}
+	return result
+
 func _choose_god_template(rng: RandomNumberGenerator, forced_god_name: String) -> GodCard:
 	var resolved_forced_name := forced_god_name.strip_edges()
 	if not resolved_forced_name.is_empty():

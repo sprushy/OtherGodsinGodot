@@ -501,6 +501,8 @@ var _stack_resolution_paused: bool = false
 var _pending_post_execute_source_player: Player = null
 var _priority_recovery_check_scheduled: bool = false
 var _overlay_card_dismissed: Callable = Callable()
+var _card_selection_overlay_active: bool = false
+var _card_selection_overlay_background_dismiss_enabled: bool = true
 var _doorway_prompt_panel: Control = null
 var _pending_doorway_structure: DoorwayToTheVoid = null
 var _pending_doorway_card: Card = null
@@ -6602,6 +6604,7 @@ func _do_update_ui() -> void:
 	_sync_visual_stack_overlay()
 	_refresh_hermes_priority_toggle_ui()
 	_refresh_all_card_priority_toggle_ui()
+	_restore_active_raven_prime_prompt_overlay()
 
 func _is_live_board_card(card: Card) -> bool:
 	return card != null and card.current_zone != null and card.current_zone.is_board_zone()
@@ -11263,7 +11266,8 @@ func _show_card_selection_overlay(
 	on_cancel: Callable = Callable(),
 	cursor_mode: String = "",
 	cancel_button_text: String = "",
-	reveal_hidden_cards: bool = false
+	reveal_hidden_cards: bool = false,
+	dismiss_on_background: bool = true
 ) -> void:
 	if cards.is_empty():
 		_set_action_label_text(title_text + ": no valid cards.")
@@ -11273,6 +11277,8 @@ func _show_card_selection_overlay(
 	_overlay_card_selected = on_selected
 	_overlay_card_dismissed = on_cancel
 	_overlay_selection_cursor_mode = cursor_mode
+	_card_selection_overlay_active = true
+	_card_selection_overlay_background_dismiss_enabled = dismiss_on_background
 	_sync_sacrifice_cursor()
 
 	var overlay := Control.new()
@@ -11356,7 +11362,8 @@ func _show_card_selection_overlay(
 		decline_button.pressed.connect(_on_card_selection_overlay_cancel_pressed)
 		vbox.add_child(decline_button)
 
-	overlay.gui_input.connect(_on_card_selection_overlay_background_gui_input)
+	if dismiss_on_background:
+		overlay.gui_input.connect(_on_card_selection_overlay_background_gui_input)
 
 func _on_zone_overlay_background_gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
@@ -11369,6 +11376,8 @@ func _on_card_selection_overlay_cancel_pressed() -> void:
 		dismiss_callback.call()
 
 func _on_card_selection_overlay_background_gui_input(event: InputEvent) -> void:
+	if not _card_selection_overlay_background_dismiss_enabled:
+		return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 		_on_card_selection_overlay_cancel_pressed()
 
@@ -11449,9 +11458,41 @@ func _dismiss_zone_overlay() -> void:
 	_zone_overlay = null
 	_overlay_card_selected = Callable()
 	_overlay_card_dismissed = Callable()
+	_card_selection_overlay_active = false
+	_card_selection_overlay_background_dismiss_enabled = true
 	_overlay_selection_cursor_mode = ""
 	_sync_sacrifice_cursor()
 	_sync_visual_linger_input_blocker()
+
+func _is_card_selection_overlay_visible() -> bool:
+	return _card_selection_overlay_active and _zone_overlay != null and is_instance_valid(_zone_overlay)
+
+func _has_raven_prime_prompt_state() -> bool:
+	return _active_huginn_prime_prompt != null \
+		or _active_muninn_prime_prompt != null \
+		or not _pending_huginn_prime_prompts.is_empty() \
+		or not _pending_muninn_prime_prompts.is_empty()
+
+func _restore_active_raven_prime_prompt_overlay() -> void:
+	if _is_card_selection_overlay_visible():
+		return
+	var restored := false
+	if _active_huginn_prime_prompt != null:
+		var pending_huginn := _active_huginn_prime_prompt
+		_active_huginn_prime_prompt = null
+		if pending_huginn != null and pending_huginn not in _pending_huginn_prime_prompts:
+			_pending_huginn_prime_prompts.insert(0, pending_huginn)
+		restored = true
+	if _active_muninn_prime_prompt != null:
+		var pending_muninn := _active_muninn_prime_prompt
+		_active_muninn_prime_prompt = null
+		if pending_muninn != null and pending_muninn not in _pending_muninn_prime_prompts:
+			_pending_muninn_prime_prompts.insert(0, pending_muninn)
+		restored = true
+	if not restored:
+		return
+	call_deferred("_show_next_huginn_perish_prime_prompt")
+	call_deferred("_show_next_muninn_perish_prime_prompt")
 
 func _get_card_zone_label(card: Card) -> String:
 	if card == null or card.current_zone == null:
@@ -16315,6 +16356,36 @@ func _resolve_prompt_targets(valid_targets: Array[Card], prompt_targets: Array =
 			resolved_targets.append(resolved_card)
 	return resolved_targets
 
+func _resolve_prompt_payload_targets(payload: Dictionary) -> Array[Card]:
+	var resolved_targets: Array[Card] = []
+	var seen_uids := {}
+	var raw_target_uids = payload.get("target_uids", [])
+	if raw_target_uids is Array:
+		for raw_uid in raw_target_uids:
+			var uid := str(raw_uid).strip_edges()
+			if uid.is_empty() or seen_uids.has(uid):
+				continue
+			var target_card := game_manager.get_card_by_uid(uid) if game_manager != null else null
+			if target_card != null:
+				resolved_targets.append(target_card)
+				seen_uids[uid] = true
+	var raw_target_cards = payload.get("target_cards", [])
+	if raw_target_cards is Array:
+		for raw_card_data in raw_target_cards:
+			if not (raw_card_data is Dictionary):
+				continue
+			var card_data := raw_card_data as Dictionary
+			var uid := str(card_data.get("uid", "")).strip_edges()
+			if uid.is_empty() or seen_uids.has(uid):
+				continue
+			var target_card := game_manager.get_card_by_uid(uid) if game_manager != null else null
+			if target_card == null:
+				target_card = GameState.deserialize_embedded_card(card_data)
+			if target_card != null:
+				resolved_targets.append(target_card)
+				seen_uids[uid] = true
+	return resolved_targets
+
 func _resolve_live_prompt_target(clicked_card: Card) -> Card:
 	if clicked_card == null:
 		return null
@@ -17507,17 +17578,15 @@ func _show_next_huginn_perish_prime_prompt() -> void:
 				update_ui()
 			update_ui()
 			call_deferred("_show_next_huginn_perish_prime_prompt")
-		var on_cancel_prime := func() -> void:
-			var pending_card := _active_huginn_prime_prompt
-			_active_huginn_prime_prompt = null
-			if pending_card != null:
-				_pending_huginn_prime_prompts.insert(0, pending_card)
-			call_deferred("_show_next_huginn_perish_prime_prompt")
 		_show_card_selection_overlay(
 			"Choose a Hex to prime for " + card.card_name,
 			current_targets,
 			on_choose_prime,
-			on_cancel_prime
+			Callable(),
+			"",
+			"",
+			true,
+			false
 		)
 		_set_action_label_text(card.card_name + ": choose a Hex to prime.")
 		update_ui()
@@ -17578,17 +17647,15 @@ func _show_next_muninn_perish_prime_prompt() -> void:
 				update_ui()
 			update_ui()
 			call_deferred("_show_next_muninn_perish_prime_prompt")
-		var on_cancel_prime := func() -> void:
-			var pending_card := _active_muninn_prime_prompt
-			_active_muninn_prime_prompt = null
-			if pending_card != null:
-				_pending_muninn_prime_prompts.insert(0, pending_card)
-			call_deferred("_show_next_muninn_perish_prime_prompt")
 		_show_card_selection_overlay(
 			"Choose a Charm to prime for " + card.card_name,
 			current_targets,
 			on_choose_prime,
-			on_cancel_prime
+			Callable(),
+			"",
+			"",
+			true,
+			false
 		)
 		_set_action_label_text(card.card_name + ": choose a Charm to prime.")
 		update_ui()
@@ -25951,10 +26018,12 @@ func _on_blot_sacrifice_cancel_pressed() -> void:
 		_set_action_label_text("Cancelled Blot Sacrifice.")
 		update_ui()
 
-func _dismiss_transient_prompts() -> void:
+func _dismiss_transient_prompts(clear_required_prompts: bool = true) -> void:
+	var preserve_raven_prime_prompts := not clear_required_prompts and _has_raven_prime_prompt_state()
 	_hide_pause_menu()
 	_hide_devour_cancel_prompt()
-	_dismiss_zone_overlay()
+	if not preserve_raven_prime_prompts:
+		_dismiss_zone_overlay()
 	_clear_pending_click_selection()
 	_clear_pending_priority_response_target_selection()
 	_clear_pending_priority_response_submission()
@@ -26011,7 +26080,8 @@ func _dismiss_transient_prompts() -> void:
 	_hide_e2_abzu_prompt()
 	_hide_divine_caprice_prompt()
 	_hide_aphrodite_prompt()
-	_hide_blot_sacrifice_prompt()
+	if not preserve_raven_prime_prompts:
+		_hide_blot_sacrifice_prompt()
 	_hide_deucalion_prompt()
 	_clear_ragnarok_prompt_state()
 	_pending_key_of_solomon = null
@@ -26046,10 +26116,13 @@ func _dismiss_transient_prompts() -> void:
 	_clear_skoll_upkeep_summon()
 	_pending_harii_jarl = null
 	_pending_harii_jarl_choices.clear()
-	_pending_huginn_prime_prompts.clear()
-	_active_huginn_prime_prompt = null
-	_pending_muninn_prime_prompts.clear()
-	_active_muninn_prime_prompt = null
+	if clear_required_prompts:
+		_pending_huginn_prime_prompts.clear()
+		_active_huginn_prime_prompt = null
+		_queued_huginn_prime_prompt_targets.clear()
+		_pending_muninn_prime_prompts.clear()
+		_active_muninn_prime_prompt = null
+		_queued_muninn_prime_prompt_targets.clear()
 	_pending_oracles_sight_prompts.clear()
 	_active_oracles_sight_prompt = null
 	_queued_oracles_sight_prompt_targets.clear()
@@ -27108,21 +27181,11 @@ func _on_match_ui_interaction(player_index: int, type: String, data: Dictionary)
 		"huginn_perish_prime":
 			var card := game_manager.get_card_by_uid(data.get("source_uid", "")) as Huginn
 			if card != null:
-				var prompt_targets: Array[Card] = []
-				for target_uid in data.get("target_uids", []):
-					var target_card := game_manager.get_card_by_uid(str(target_uid))
-					if target_card != null:
-						prompt_targets.append(target_card)
-				_queue_huginn_perish_prime_prompt(card, prompt_targets)
+				_queue_huginn_perish_prime_prompt(card, _resolve_prompt_payload_targets(data))
 		"muninn_perish_prime":
 			var card := game_manager.get_card_by_uid(data.get("source_uid", "")) as Muninn
 			if card != null:
-				var prompt_targets: Array[Card] = []
-				for target_uid in data.get("target_uids", []):
-					var target_card := game_manager.get_card_by_uid(str(target_uid))
-					if target_card != null:
-						prompt_targets.append(target_card)
-				_queue_muninn_perish_prime_prompt(card, prompt_targets)
+				_queue_muninn_perish_prime_prompt(card, _resolve_prompt_payload_targets(data))
 		"lailoken_reveal":
 			var card := game_manager.get_card_by_uid(data.get("source_uid", "")) as Lailoken
 			if card != null:
@@ -27553,7 +27616,7 @@ func _on_end_turn_button_pressed() -> void:
 		end_turn_button.disabled = true
 	if _is_blot_selection_active():
 		_hide_blot_sacrifice_prompt()
-	_dismiss_transient_prompts()
+	_dismiss_transient_prompts(false)
 	_close_context_menu()
 	_pending_move_card = null
 	_indicated_move_card = null
@@ -29119,21 +29182,11 @@ func _apply_ui_interaction(event_data: Dictionary) -> void:
 		"huginn_perish_prime":
 			var card := game_manager.get_card_by_uid(payload.get("source_uid", "")) as Huginn
 			if card != null:
-				var prompt_targets: Array[Card] = []
-				for target_uid in payload.get("target_uids", []):
-					var target_card := game_manager.get_card_by_uid(str(target_uid))
-					if target_card != null:
-						prompt_targets.append(target_card)
-				_queue_huginn_perish_prime_prompt(card, prompt_targets)
+				_queue_huginn_perish_prime_prompt(card, _resolve_prompt_payload_targets(payload))
 		"muninn_perish_prime":
 			var card := game_manager.get_card_by_uid(payload.get("source_uid", "")) as Muninn
 			if card != null:
-				var prompt_targets: Array[Card] = []
-				for target_uid in payload.get("target_uids", []):
-					var target_card := game_manager.get_card_by_uid(str(target_uid))
-					if target_card != null:
-						prompt_targets.append(target_card)
-				_queue_muninn_perish_prime_prompt(card, prompt_targets)
+				_queue_muninn_perish_prime_prompt(card, _resolve_prompt_payload_targets(payload))
 		"lailoken_reveal":
 			var card := game_manager.get_card_by_uid(payload.get("source_uid", "")) as Lailoken
 			if card != null:
@@ -30304,7 +30357,7 @@ func _do_end_turn() -> void:
 		str(_is_networked_client),
 		str(uses_authoritative_match_flow()),
 	])
-	_dismiss_transient_prompts()
+	_dismiss_transient_prompts(false)
 	_reset_transient_priority_auto_mode_for_turn_end()
 	var et_cmd := {type = "end_turn"}
 	if not pending_discard_uids.is_empty():
