@@ -1874,7 +1874,7 @@ func _resolve_event(action: CardAction) -> void:
 		last_resolution_text = ""
 		return
 	if action.event_name == "summon" and action.card != null:
-		last_resolution_text = "%s was summoned." % action.card.card_name
+		last_resolution_text = ""
 		return
 	last_resolution_text = action.event_name.replace("_", " ").capitalize() + " passed."
 
@@ -6731,11 +6731,12 @@ func _process_combat_retreat_decision(command: Dictionary) -> bool:
 	if not pending_retreat_prompt_uids.is_empty():
 		pending_retreat_prompt_uids.remove_at(0)
 	if bool(command.get("retreat", false)):
-		game_manager.send_to_deck_bottom_with_hook(action.attacker)
-		game_manager.send_to_deck_bottom_with_hook(target)
-		last_resolution_text = "Tactical Retreat! Both creatures returned to the bottom of their decks."
 		_clear_pending_retreat_state()
-		_complete_deferred_authoritative_action(action, "combat_retreat_decision")
+		if not _queue_askelladen_retreat_priority_action(current_prompt, action, target):
+			game_manager.send_to_deck_bottom_with_hook(action.attacker)
+			game_manager.send_to_deck_bottom_with_hook(target)
+			last_resolution_text = "Tactical Retreat! Both creatures returned to the bottom of their decks."
+			_complete_deferred_authoritative_action(action, "combat_retreat_decision")
 		return true
 	if not pending_retreat_prompt_uids.is_empty():
 		var next_prompt := _get_pending_retreat_prompt()
@@ -6755,6 +6756,62 @@ func _process_combat_retreat_decision(command: Dictionary) -> bool:
 		last_resolution_text = "Asaruludu's Guardian prevented %s's Tactical Retreat!" % blocked_ask.card_name
 	_complete_deferred_authoritative_action(action, "combat_retreat_decision")
 	return true
+
+func _queue_askelladen_retreat_priority_action(ask_card: Askelladen, attack_action: CardAction, target: Card) -> bool:
+	if game_manager == null or ask_card == null or attack_action == null or target == null:
+		return false
+	if attack_action.attacker == null:
+		return false
+	var source_player := ask_card.get_controller()
+	if source_player == null:
+		source_player = ask_card.card_owner
+	if source_player == null:
+		return false
+	var retreat_targets: Array[Card] = []
+	for candidate in [attack_action.attacker, target]:
+		if candidate != null and candidate not in retreat_targets:
+			retreat_targets.append(candidate)
+	if retreat_targets.is_empty():
+		return false
+	var target_uids: Array[String] = []
+	for retreat_target in retreat_targets:
+		target_uids.append(str(retreat_target.uid))
+
+	var retreat_action := CardAction.new()
+	retreat_action.type = CardAction.Type.ABILITY
+	retreat_action.source_player = source_player
+	retreat_action.initial_priority_player = game_manager.get_opponent(source_player)
+	retreat_action.card = ask_card
+	retreat_action.target = retreat_targets
+	retreat_action.response_to = attack_action
+	retreat_action.event_speed = ask_card.get_effective_speed()
+	retreat_action.event_data = {
+		"ability": "tactical_retreat",
+		"ability_trigger_hint": "tactical retreat",
+		"target_uids": target_uids,
+	}
+	retreat_action.resolution_text = "Tactical Retreat! Both creatures returned to the bottom of their decks."
+	retreat_action.resolve_callback = func() -> void:
+		_resolve_askelladen_retreat_priority_action(ask_card, attack_action, target, retreat_targets)
+	queue_or_resolve_priority_event(retreat_action)
+	return true
+
+func _resolve_askelladen_retreat_priority_action(ask_card: Askelladen, attack_action: CardAction, target: Card, retreat_targets: Array[Card]) -> void:
+	if game_manager == null or attack_action == null:
+		return
+	if ask_card == null or target == null or attack_action.attacker == null:
+		game_manager.note_player_feedback("Tactical Retreat fizzles.")
+		_complete_deferred_authoritative_action(attack_action, "combat_retreat_decision")
+		return
+	for retreat_target in retreat_targets:
+		if retreat_target != null and game_manager.is_immune_to_source(retreat_target, ask_card):
+			game_manager.note_player_feedback("%s's Tactical Retreat is negated." % ask_card.card_name)
+			_complete_deferred_authoritative_action(attack_action, "combat_retreat_decision")
+			return
+	game_manager.send_to_deck_bottom_with_hook(attack_action.attacker)
+	game_manager.send_to_deck_bottom_with_hook(target)
+	game_manager.note_player_feedback("Tactical Retreat! Both creatures returned to the bottom of their decks.")
+	_complete_deferred_authoritative_action(attack_action, "combat_retreat_decision")
 
 func _get_pending_retreat_prompt() -> Askelladen:
 	if pending_retreat_prompt_uids.is_empty():

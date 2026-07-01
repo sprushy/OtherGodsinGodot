@@ -28,7 +28,7 @@ const KEYWORD_HINTS = {
 	"Convert": "Move followers from the opponent to you - they switch sides.",
 	"Enslave": "Take control of an opposing creature. It cannot use its abilities, but it can still attack and intercept.",
 	"Mill": "Put a card from the top of a deck into the graveyard.",
-	"Reach": "This creature can intercept for targets one row further forward than normal.",
+	"Reach": "Improves interception range. This creature can intercept equal or slower speed attackers targeting protected cards within its current row and stance range.",
 	"Engage": "Enter combat with another card, usually by attacking it or intercepting its attack.",
 	"Passive": "This effect is always active while this card remains in play.",
 	"Impact": "This effect triggers when this card enters the field from your hand, unless it has Universal Impact.",

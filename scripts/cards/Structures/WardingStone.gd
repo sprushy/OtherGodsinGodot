@@ -1,6 +1,9 @@
 extends StructureCard
 class_name WardingStone
 
+const DEFAULT_ART_PATH := "res://images/card_art/structures/warding stone ai edit.png"
+const ONE_TURN_EXPIRED_ART_PATH := "res://images/card_art/structures/warding_stone_one_turn_expired.png"
+
 # Helper function to reliably get the restricted player (the opponent/non-owner)
 # Now delegates logic to the robust GameManager function.
 func _get_restricted_player(game_manager: GameManager) -> Player:
@@ -23,8 +26,7 @@ func get_attack_restriction_turns_remaining(game_manager: GameManager = null) ->
 	return maxi(0, int(restriction.get("turns", 0)))
 
 func get_turn_countdown_badge_text(game_manager: GameManager = null) -> String:
-	var turns_remaining := get_attack_restriction_turns_remaining(game_manager)
-	return "%dT" % turns_remaining if turns_remaining > 0 else ""
+	return ""
 
 func get_turn_countdown_badge_hover_text(game_manager: GameManager = null) -> String:
 	var turns_remaining := get_attack_restriction_turns_remaining(game_manager)
@@ -42,12 +44,22 @@ func get_hover_detail_lines(viewer: Player = null) -> Array[String]:
 		lines.append("[b]Opponent turns remaining:[/b] %d" % turns_remaining)
 	return lines
 
+func refresh_attack_restriction_art(game_manager: GameManager = null) -> void:
+	var next_art_path := DEFAULT_ART_PATH
+	if get_attack_restriction_turns_remaining(game_manager) == 1:
+		next_art_path = ONE_TURN_EXPIRED_ART_PATH
+	if art_path == next_art_path:
+		return
+	art_path = next_art_path
+	art_updated.emit(art_path)
+	_emit_visual_state_changed()
+
 func _init() -> void:
 	super._init()
 	card_name = "Warding Stone"
 	card_type = Card.CardType.STRUCTURE
 	card_types = ["Runic", "Monument"]
-	art_path = "res://images/card_art/structures/warding stone ai edit.png"
+	art_path = DEFAULT_ART_PATH
 	exhausted_art_path = "res://images/card_art/structures/wardstone.jpeg"
 	level = 2
 	mana_cost = 0

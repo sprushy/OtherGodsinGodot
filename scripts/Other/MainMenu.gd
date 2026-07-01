@@ -14,6 +14,7 @@ const PracticeFuzzPlayerBotScript = preload("res://scripts/bots/PracticeFuzzPlay
 const BotGameInputScript = preload("res://scripts/bots/BotGameInput.gd")
 const HostHuntingTacticsBotScript = preload("res://scripts/bots/HostHuntingTacticsBot.gd")
 const NetworkClientSmokeBotScript = preload("res://scripts/bots/NetworkClientSmokeBot.gd")
+const LoadingBarScript = preload("res://scripts/ui/LoadingBar.gd")
 const MatchHistoryStoreScript = preload("res://scripts/server/MatchHistoryStore.gd")
 const MatchSessionScript = preload("res://scripts/server/MatchSession.gd")
 const LobbyRoomScript = preload("res://scripts/server/LobbyRoom.gd")
@@ -249,6 +250,8 @@ var _startup_splash_texture: Texture2D = null
 var _startup_splash_slices: Array[TextureRect] = []
 var _startup_loading_overlay: Control = null
 var _startup_loading_status_label: Label = null
+var _startup_loading_bar: LoadingBar = null
+var _startup_loading_progress_tween: Tween = null
 var _startup_loading_finished: bool = false
 var _startup_music_player: AudioStreamPlayer = null
 var _sound_mute_button: Button = null
@@ -379,6 +382,11 @@ func _build_startup_loading_overlay() -> void:
 	rule.modulate = Color(0.47, 0.62, 0.82, 0.7)
 	content.add_child(rule)
 
+	var loading_bar := LoadingBarScript.new()
+	loading_bar.custom_minimum_size = Vector2(620.0, 86.0)
+	loading_bar.progress = 0.16
+	content.add_child(loading_bar)
+
 	var status := Label.new()
 	status.text = "Loading..."
 	status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -388,17 +396,21 @@ func _build_startup_loading_overlay() -> void:
 
 	_startup_loading_overlay = overlay
 	_startup_loading_status_label = status
+	_startup_loading_bar = loading_bar
+	_set_startup_loading_progress(0.42, 1.0)
 
 func _begin_startup_sequence() -> void:
 	await get_tree().process_frame
 	if _startup_loading_status_label != null and is_instance_valid(_startup_loading_status_label):
 		_startup_loading_status_label.text = "Sign in to continue"
+	_set_startup_loading_progress(0.76, 0.55)
 	_begin_startup_prompts()
 
 func _finish_startup_loading() -> void:
 	if _startup_loading_finished:
 		return
 	_startup_loading_finished = true
+	_set_startup_loading_progress(1.0, 0.18)
 	_begin_startup_menu_fade()
 	if _startup_loading_overlay != null and is_instance_valid(_startup_loading_overlay):
 		var tween := create_tween()
@@ -416,6 +428,27 @@ func _remove_startup_loading_overlay() -> void:
 		_startup_loading_overlay.queue_free()
 	_startup_loading_overlay = null
 	_startup_loading_status_label = null
+	_startup_loading_bar = null
+	if _startup_loading_progress_tween != null:
+		_startup_loading_progress_tween.kill()
+	_startup_loading_progress_tween = null
+
+func _set_startup_loading_progress(value: float, duration: float = 0.0) -> void:
+	if _startup_loading_bar == null or not is_instance_valid(_startup_loading_bar):
+		return
+	if _startup_loading_progress_tween != null:
+		_startup_loading_progress_tween.kill()
+		_startup_loading_progress_tween = null
+	if duration <= 0.0:
+		_startup_loading_bar.progress = value
+		return
+	_startup_loading_progress_tween = create_tween()
+	_startup_loading_progress_tween.tween_property(
+		_startup_loading_bar,
+		"progress",
+		clampf(value, 0.0, 1.0),
+		duration
+	).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 
 func _ensure_startup_splash_background() -> void:
 	if _startup_splash_background != null and is_instance_valid(_startup_splash_background):

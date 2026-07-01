@@ -610,9 +610,12 @@ const KEYWORD_PANEL_GAP := 8.0
 const USER_SETTINGS_PATH := "user://settings.cfg"
 const COMBAT_SETTINGS_SECTION := "combat"
 const ALWAYS_SHOW_ABILITY_BADGES_KEY := "always_show_ability_badges"
+const HIDE_UNALTERED_REACH_TAG_KEY := "hide_unaltered_reach_tag"
 static var _zone_extent: float = BASE_ZONE_EXTENT
 static var _always_show_ability_badges: bool = false
 static var _always_show_ability_badges_loaded: bool = false
+static var _hide_unaltered_reach_tag: bool = false
+static var _hide_unaltered_reach_tag_loaded: bool = false
 static var _active_affordance_hover_owner_id: int = 0
 
 var _row_label: String = ""
@@ -642,6 +645,15 @@ static func get_always_show_ability_badges() -> bool:
 		_load_always_show_ability_badges_setting()
 	return _always_show_ability_badges
 
+static func set_hide_unaltered_reach_tag(enabled: bool) -> void:
+	_hide_unaltered_reach_tag = enabled
+	_hide_unaltered_reach_tag_loaded = true
+
+static func get_hide_unaltered_reach_tag() -> bool:
+	if not _hide_unaltered_reach_tag_loaded:
+		_load_hide_unaltered_reach_tag_setting()
+	return _hide_unaltered_reach_tag
+
 static func _load_always_show_ability_badges_setting() -> void:
 	_always_show_ability_badges_loaded = true
 	var config := ConfigFile.new()
@@ -656,6 +668,21 @@ static func _load_always_show_ability_badges_setting() -> void:
 			_always_show_ability_badges = true
 		elif text in ["false", "0", "no", "off"]:
 			_always_show_ability_badges = false
+
+static func _load_hide_unaltered_reach_tag_setting() -> void:
+	_hide_unaltered_reach_tag_loaded = true
+	var config := ConfigFile.new()
+	if config.load(USER_SETTINGS_PATH) != OK:
+		return
+	var value = config.get_value(COMBAT_SETTINGS_SECTION, HIDE_UNALTERED_REACH_TAG_KEY, _hide_unaltered_reach_tag)
+	if value is bool:
+		_hide_unaltered_reach_tag = value
+	elif value is String:
+		var text := str(value).strip_edges().to_lower()
+		if text in ["true", "1", "yes", "on"]:
+			_hide_unaltered_reach_tag = true
+		elif text in ["false", "0", "no", "off"]:
+			_hide_unaltered_reach_tag = false
 
 static func get_action_point_card_uid(card: Card) -> String:
 	if card == null:
@@ -5944,9 +5971,10 @@ func _show_ability_popup() -> void:
 
 	var keywords_panel: Control = null
 	if not is_hidden_card_shared:
-		var keywords := CardDetailContentBuilderScript.extract_card_keywords(card)
+		var keyword_config := {"hide_unaltered_reach": get_hide_unaltered_reach_tag()}
+		var keywords := CardDetailContentBuilderScript.extract_card_keywords(card, keyword_config)
 		if not keywords.is_empty():
-			keywords_panel = CardDetailContentBuilderScript.build_keywords_panel(keywords)
+			keywords_panel = CardDetailContentBuilderScript.build_keywords_panel(keywords, card, keyword_config)
 			popup_root.add_child(keywords_panel)
 
 	_popup = popup_root

@@ -12,7 +12,7 @@ func _init() -> void:
 	card_name = "Vision of Odin"
 	level = 3
 	mana_cost = 0
-	speed = 2
+	speed = 5
 	culture = "Norse"
 	card_types = ["Hex", "Battle Modifier"]
 	if "Targeting" not in card_types:

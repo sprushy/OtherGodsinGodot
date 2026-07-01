@@ -18,7 +18,7 @@ func _init() -> void:
 		card_types.append("Targeting")
 	level = 3
 	mana_cost = 0
-	speed = 2
+	speed = 6
 	is_legendary = false
 	targets = true
 	flavor_text = ""

@@ -93,6 +93,7 @@ const GENERIC_PREPARED_FACE_DOWN_LOG := "A card was prepared face-down."
 const USE_SPLASH_BOARD_BACKGROUND_KEY := "use_splash_board_background"
 const HOVER_SHOW_CARD_OPTIONS_KEY := "hover_show_card_options"
 const ALWAYS_SHOW_ABILITY_BADGES_KEY := "always_show_ability_badges"
+const HIDE_UNALTERED_REACH_TAG_KEY := "hide_unaltered_reach_tag"
 const ADD_PRIORITY_TOGGLES_TO_ALL_CARDS_KEY := "add_priority_toggles_to_all_cards"
 const HERMES_AUTO_PASS_END_PRIORITY_KEY := "hermes_auto_pass_end_priority"
 const HERMES_AUTO_PASS_UPKEEP_PRIORITY_KEY := "hermes_auto_pass_upkeep_priority"
@@ -643,6 +644,7 @@ var _auto_select_charm_prepare_zones: bool = true
 var _use_splash_board_background: bool = false
 var _hover_show_card_options: bool = true
 var _always_show_ability_badges: bool = false
+var _hide_unaltered_reach_tag: bool = false
 var _add_priority_toggles_to_all_cards: bool = false
 var _hermes_auto_pass_end_priority: bool = true
 var _hermes_auto_pass_upkeep_priority: bool = true
@@ -1032,6 +1034,7 @@ func _load_user_settings() -> void:
 	_use_splash_board_background = _read_config_bool(config, COMBAT_SETTINGS_SECTION, USE_SPLASH_BOARD_BACKGROUND_KEY, _use_splash_board_background)
 	_hover_show_card_options = _read_config_bool(config, COMBAT_SETTINGS_SECTION, HOVER_SHOW_CARD_OPTIONS_KEY, _hover_show_card_options)
 	_always_show_ability_badges = _read_config_bool(config, COMBAT_SETTINGS_SECTION, ALWAYS_SHOW_ABILITY_BADGES_KEY, _always_show_ability_badges)
+	_hide_unaltered_reach_tag = _read_config_bool(config, COMBAT_SETTINGS_SECTION, HIDE_UNALTERED_REACH_TAG_KEY, false)
 	_add_priority_toggles_to_all_cards = _read_config_bool(config, COMBAT_SETTINGS_SECTION, ADD_PRIORITY_TOGGLES_TO_ALL_CARDS_KEY, false)
 	_all_sound_muted = _read_config_bool(config, AUDIO_SETTINGS_SECTION, ALL_SOUND_MUTED_KEY, _all_sound_muted)
 	_hermes_auto_pass_end_priority = _read_config_bool(config, GOD_SPECIFIC_SETTINGS_SECTION, HERMES_AUTO_PASS_END_PRIORITY_KEY, true)
@@ -1093,6 +1096,14 @@ func _set_always_show_ability_badges(pressed: bool) -> void:
 	_always_show_ability_badges = pressed
 	_save_combat_bool_setting(ALWAYS_SHOW_ABILITY_BADGES_KEY, pressed)
 	BoardZoneUI.set_always_show_ability_badges(pressed)
+	draw_board()
+	draw_enemy_board()
+
+func _set_hide_unaltered_reach_tag(pressed: bool) -> void:
+	_hide_unaltered_reach_tag = pressed
+	_save_combat_bool_setting(HIDE_UNALTERED_REACH_TAG_KEY, pressed)
+	BoardZoneUI.set_hide_unaltered_reach_tag(pressed)
+	_hide_hand_hover_preview()
 	draw_board()
 	draw_enemy_board()
 
@@ -1614,6 +1625,12 @@ func _show_pause_menu() -> void:
 		_always_show_ability_badges,
 		func(pressed: bool) -> void:
 			_set_always_show_ability_badges(pressed)
+	))
+	general_settings.add_child(_make_auto_zone_toggle(
+		"Hide Reach tag unless altered",
+		_hide_unaltered_reach_tag,
+		func(pressed: bool) -> void:
+			_set_hide_unaltered_reach_tag(pressed)
 	))
 
 	general_settings.add_child(_make_settings_section_label("Priority"))
@@ -2447,6 +2464,7 @@ func _ready() -> void:
 	add_to_group("music_mute_observers")
 	_load_user_settings()
 	BoardZoneUI.set_always_show_ability_badges(_always_show_ability_badges)
+	BoardZoneUI.set_hide_unaltered_reach_tag(_hide_unaltered_reach_tag)
 	_ensure_board_art_background()
 	choice_container.visible = false
 	end_turn_button.visible = false
@@ -4826,13 +4844,13 @@ func _is_internal_priority_log_message(message: String) -> bool:
 	]
 
 func _should_suppress_action_log_echo(message: String, force: bool = false) -> bool:
-	if force:
-		_suppress_next_generic_prepare_log = false
-		return false
 	if _action_log_messages.is_empty():
 		_suppress_next_generic_prepare_log = false
 		return false
 	var previous_message = _action_log_messages.back()
+	if force and not _should_suppress_forced_generic_summon_log(message, previous_message):
+		_suppress_next_generic_prepare_log = false
+		return false
 	if _should_suppress_generic_prepare_log(message, previous_message):
 		return true
 	var normalized_message := _normalize_action_log_echo_text(message)
@@ -4855,6 +4873,22 @@ func _should_suppress_action_log_echo(message: String, force: bool = false) -> b
 		return false
 	_suppress_next_generic_prepare_log = false
 	return current_primary_card == previous_primary_card
+
+func _should_suppress_forced_generic_summon_log(message: String, previous_message: String) -> bool:
+	if not _is_generic_summon_resolution_log_message(message):
+		return false
+	if _get_action_log_echo_intent(previous_message) != "summon":
+		return false
+	var current_primary_card := _get_action_log_primary_card_name(message)
+	var previous_primary_card := _get_action_log_primary_card_name(previous_message)
+	return current_primary_card != "" \
+		and previous_primary_card != "" \
+		and current_primary_card == previous_primary_card
+
+func _is_generic_summon_resolution_log_message(message: String) -> bool:
+	var normalized := _normalize_action_log_echo_text(message)
+	return normalized == "creature was summoned" \
+		or normalized.ends_with(" was summoned")
 
 func _should_suppress_generic_prepare_log(message: String, previous_message: String) -> bool:
 	if message != GENERIC_PREPARED_FACE_DOWN_LOG:
@@ -8714,13 +8748,10 @@ func _build_hand_info_sections(card: Card) -> Array[Dictionary]:
 			"title_color": Color(0.78, 0.9, 1.0),
 			"body_color": Color(0.82, 0.88, 0.96),
 		})
-	for kw in _extract_card_keywords(card):
-		sections.append({
-			"title": kw,
-			"body": BaseCard.KEYWORD_HINTS.get(kw, ""),
-			"title_color": Color(0.95, 0.88, 0.5),
-			"body_color": Color(0.72, 0.72, 0.72),
-		})
+	sections.append_array(CardDetailContentBuilderScript.extract_card_keyword_sections(
+		card,
+		{"hide_unaltered_reach": _hide_unaltered_reach_tag}
+	))
 	return sections
 
 func _normalize_hand_info_sections(raw_sections: Array) -> Array[Dictionary]:
@@ -9865,7 +9896,13 @@ func _on_power_pressed(power: PowerCard) -> void:
 			_show_card_selection_overlay(
 				"Choose a Card to Bind",
 				ananke.get_cards_in_deck(),
-				on_choose_ananke_card
+				on_choose_ananke_card,
+				Callable(),
+				"",
+				"",
+				false,
+				true,
+				true
 			)
 		elif power is BerserkerMead:
 			var mead := power as BerserkerMead
@@ -11272,7 +11309,9 @@ func _show_card_selection_overlay(
 	cursor_mode: String = "",
 	cancel_button_text: String = "",
 	reveal_hidden_cards: bool = false,
-	dismiss_on_background: bool = true
+	dismiss_on_background: bool = true,
+	enable_search: bool = false,
+	search_placeholder: String = "Card names, keywords, or tags"
 ) -> void:
 	if cards.is_empty():
 		_set_action_label_text(title_text + ": no valid cards.")
@@ -11315,6 +11354,35 @@ func _show_card_selection_overlay(
 	title.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vbox.add_child(title)
 
+	var search_edit: LineEdit = null
+	if enable_search:
+		var search_row := HBoxContainer.new()
+		search_row.add_theme_constant_override("separation", 6)
+		search_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		vbox.add_child(search_row)
+
+		var search_lbl := Label.new()
+		search_lbl.text = "Search:"
+		search_lbl.add_theme_font_size_override("font_size", 11)
+		search_lbl.modulate = Color(0.7, 0.7, 0.7)
+		search_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		search_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		search_row.add_child(search_lbl)
+
+		search_edit = LineEdit.new()
+		search_edit.placeholder_text = search_placeholder
+		search_edit.clear_button_enabled = true
+		search_edit.custom_minimum_size = Vector2(420, 28)
+		search_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		search_row.add_child(search_edit)
+
+	var no_results_label := Label.new()
+	no_results_label.text = "No matching cards."
+	no_results_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	no_results_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	no_results_label.visible = false
+	vbox.add_child(no_results_label)
+
 	var scroll := ScrollContainer.new()
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
@@ -11329,6 +11397,7 @@ func _show_card_selection_overlay(
 	hbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	scroll.add_child(hbox)
 
+	var card_wrappers: Array[Dictionary] = []
 	for card: Card in cards:
 		var wrapper := PanelContainer.new()
 		wrapper.mouse_filter = Control.MOUSE_FILTER_STOP
@@ -11359,6 +11428,33 @@ func _show_card_selection_overlay(
 			card_vbox.add_child(zone_lbl)
 
 		wrapper.gui_input.connect(_on_card_selection_overlay_card_gui_input.bind(card))
+		card_wrappers.append({
+			"card": card,
+			"wrapper": wrapper,
+		})
+
+	var refresh_search_filter := func(query: String) -> void:
+		var visible_count := 0
+		for entry in card_wrappers:
+			var entry_card := entry.get("card") as Card
+			var entry_wrapper := entry.get("wrapper") as Control
+			if entry_wrapper == null:
+				continue
+			var matches := _matches_card_selection_search(entry_card, query)
+			entry_wrapper.visible = matches
+			if matches:
+				visible_count += 1
+		no_results_label.visible = visible_count == 0
+		if str(query).strip_edges() == "":
+			title.text = title_text + " (%d)" % cards.size()
+		else:
+			title.text = title_text + " (%d/%d)" % [visible_count, cards.size()]
+
+	if search_edit != null:
+		search_edit.text_changed.connect(func(new_text: String) -> void:
+			refresh_search_filter.call(new_text)
+		)
+		call_deferred("_focus_selection_overlay_search", search_edit)
 
 	if cancel_button_text.strip_edges() != "" and on_cancel.is_valid():
 		var decline_button := Button.new()
@@ -11369,6 +11465,53 @@ func _show_card_selection_overlay(
 
 	if dismiss_on_background:
 		overlay.gui_input.connect(_on_card_selection_overlay_background_gui_input)
+
+func _focus_selection_overlay_search(search_edit: LineEdit) -> void:
+	if search_edit != null and is_instance_valid(search_edit):
+		search_edit.grab_focus()
+
+func _matches_card_selection_search(card: Card, query: String) -> bool:
+	var search_key := CardCatalog.to_lookup_key(str(query))
+	if search_key.is_empty():
+		return true
+	if card == null:
+		return false
+	if CardCatalog.to_lookup_key(card.get_normalized_card_name()).contains(search_key):
+		return true
+	if CardCatalog.to_lookup_key(card.get_ascii_card_name()).contains(search_key):
+		return true
+	if CardCatalog.to_lookup_key(_get_card_selection_type_label(card)).contains(search_key):
+		return true
+	if CardCatalog.to_lookup_key(card.culture).contains(search_key):
+		return true
+	for card_type: String in card.card_types:
+		if CardCatalog.to_lookup_key(card_type).contains(search_key):
+			return true
+	if CardCatalog.to_lookup_key(card.ability_text).contains(search_key):
+		return true
+	return false
+
+func _get_card_selection_type_label(card: Card) -> String:
+	if card == null:
+		return "Card"
+	if card.is_god:
+		return "God"
+	if card.is_power:
+		return "Power"
+	match card.card_type:
+		Card.CardType.CREATURE:
+			return "Creature"
+		Card.CardType.EQUIPMENT:
+			return "Equipment"
+		Card.CardType.CHARM:
+			return "Charm"
+		Card.CardType.SPELL:
+			return "Spell"
+		Card.CardType.STRUCTURE:
+			return "Structure"
+		Card.CardType.HEX:
+			return "Hex"
+	return "Card"
 
 func _on_zone_overlay_background_gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
@@ -13926,7 +14069,6 @@ func _flush_summon_priority_events() -> void:
 	_pending_summon_priority_events.pop_front()
 	var on_resolve := func() -> void:
 		update_ui()
-		_set_action_label_text(card.card_name + " was summoned.")
 		if not _pending_summon_priority_events.is_empty():
 			call_deferred("_flush_summon_priority_events")
 	_queue_priority_event(
@@ -26393,11 +26535,14 @@ func _on_retreat_yes() -> void:
 			})
 		return
 	_hide_retreat_prompt()
+	var ask_card := _pending_retreat_prompts[0] if not _pending_retreat_prompts.is_empty() else null
 	var action := _pending_retreat_action
 	var defender := _pending_retreat_target
 	_clear_pending_retreat_state()
 	if action == null or defender == null:
 		update_ui()
+		return
+	if _queue_local_askelladen_retreat_priority_action(ask_card, action, defender):
 		return
 	_executing_stack_action = false
 	_send_to_deck_bottom(action.attacker)
@@ -26406,6 +26551,72 @@ func _on_retreat_yes() -> void:
 	if _stack_resolution_paused:
 		_resume_after_deferred_resolution(action_label.text)
 	else:
+		update_ui()
+
+func _queue_local_askelladen_retreat_priority_action(ask_card: Askelladen, attack_action: CardAction, defender: Card) -> bool:
+	if game_manager == null or match_manager == null or ask_card == null or attack_action == null or defender == null:
+		return false
+	if attack_action.attacker == null:
+		return false
+	var source_player := ask_card.get_controller()
+	if source_player == null:
+		source_player = ask_card.card_owner
+	if source_player == null:
+		return false
+	var retreat_targets: Array[Card] = []
+	for candidate in [attack_action.attacker, defender]:
+		if candidate != null and candidate not in retreat_targets:
+			retreat_targets.append(candidate)
+	if retreat_targets.is_empty():
+		return false
+	var target_uids: Array[String] = []
+	for retreat_target in retreat_targets:
+		target_uids.append(str(retreat_target.uid))
+
+	var retreat_action := CardAction.new()
+	retreat_action.type = CardAction.Type.ABILITY
+	retreat_action.source_player = source_player
+	retreat_action.initial_priority_player = game_manager.get_opponent(source_player)
+	retreat_action.card = ask_card
+	retreat_action.target = retreat_targets
+	retreat_action.response_to = attack_action
+	retreat_action.event_speed = ask_card.get_effective_speed()
+	retreat_action.event_data = {
+		"ability": "tactical_retreat",
+		"ability_trigger_hint": "tactical retreat",
+		"target_uids": target_uids,
+	}
+	retreat_action.resolution_text = "Tactical Retreat! Both creatures returned to the bottom of their decks."
+	retreat_action.resolve_callback = func() -> void:
+		_resolve_local_askelladen_retreat_priority_action(ask_card, attack_action, defender, retreat_targets)
+	var remains_on_stack := match_manager.queue_or_resolve_priority_event(retreat_action)
+	if not remains_on_stack:
+		return true
+	update_ui()
+	_set_action_label_text("Askelladen's Tactical Retreat is on the stack.")
+	_offer_priority()
+	return true
+
+func _resolve_local_askelladen_retreat_priority_action(ask_card: Askelladen, attack_action: CardAction, defender: Card, retreat_targets: Array[Card]) -> void:
+	var feedback := ""
+	if game_manager == null or ask_card == null or attack_action == null or defender == null or attack_action.attacker == null:
+		feedback = "Tactical Retreat fizzles."
+	else:
+		for retreat_target in retreat_targets:
+			if retreat_target != null and game_manager.is_immune_to_source(retreat_target, ask_card):
+				feedback = "%s's Tactical Retreat is negated." % ask_card.card_name
+				break
+		if feedback == "":
+			_send_to_deck_bottom(attack_action.attacker)
+			_send_to_deck_bottom(defender)
+			feedback = "Tactical Retreat! Both creatures returned to the bottom of their decks."
+	if game_manager != null:
+		game_manager.note_player_feedback(feedback)
+	if _stack_resolution_paused:
+		call_deferred("_resume_after_deferred_resolution", feedback)
+	else:
+		_executing_stack_action = false
+		_set_action_label_text(feedback)
 		update_ui()
 
 func _linger_for_combat_visual_changes(combatants: Array) -> void:
@@ -28380,9 +28591,10 @@ func _show_reinforcement_hover_popup(card: Card, viewer: Player, tile: Control) 
 	popup_root.add_child(popup)
 
 	var keywords_panel: Control = null
-	var keywords := CardDetailContentBuilderScript.extract_card_keywords(card)
+	var keyword_config := {"hide_unaltered_reach": _hide_unaltered_reach_tag}
+	var keywords := CardDetailContentBuilderScript.extract_card_keywords(card, keyword_config)
 	if not keywords.is_empty():
-		keywords_panel = CardDetailContentBuilderScript.build_keywords_panel(keywords)
+		keywords_panel = CardDetailContentBuilderScript.build_keywords_panel(keywords, card, keyword_config)
 		popup_root.add_child(keywords_panel)
 
 	_get_reinforcement_modal_parent().add_child(popup_root)

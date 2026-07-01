@@ -2939,6 +2939,8 @@ func _apply_combat_follower_damage(source_card: Card, damaged_player: Player, am
 
 func apply_attack_restriction(player: Player, turns: int, source: Card = null) -> void:
 	attack_restrictions[player] = {turns = turns, source = source}
+	if source != null and source.has_method("refresh_attack_restriction_art"):
+		source.call("refresh_attack_restriction_art", self)
 	print(player.player_name + " cannot attack for " + str(turns) + " turns!")
 
 func remove_attack_restriction(player: Player) -> void:
@@ -2957,6 +2959,9 @@ func _advance_attack_restriction_turn(player: Player) -> void:
 		if source_card != null:
 			source_card.switch_to_exhausted_art()
 	else:
+		var source_card: Card = attack_restrictions[player].source
+		if source_card != null and source_card.has_method("refresh_attack_restriction_art"):
+			source_card.call("refresh_attack_restriction_art", self)
 		print(player.player_name + " still cannot attack (" + str(attack_restrictions[player].turns) + " turns left)")
 
 # Turn lifecycle order is intentionally explicit:
