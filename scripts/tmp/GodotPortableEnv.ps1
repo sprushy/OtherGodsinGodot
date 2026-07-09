@@ -5,10 +5,16 @@ function Get-GodotProjectRoot {
 
 function Resolve-GodotExecutable {
     param(
-        [string]$PreferredPath = ''
+        [string]$PreferredPath = '',
+        [switch]$PreferConsole
     )
 
     $candidates = @()
+    $projectRoot = ''
+    try {
+        $projectRoot = Get-GodotProjectRoot
+    } catch {
+    }
 
     if (-not [string]::IsNullOrWhiteSpace($PreferredPath)) {
         $candidates += $PreferredPath
@@ -32,6 +38,9 @@ function Resolve-GodotExecutable {
         (Join-Path $HOME 'Downloads'),
         (Join-Path $HOME 'bin')
     )
+    if (-not [string]::IsNullOrWhiteSpace($projectRoot)) {
+        $downloadRoots += (Join-Path $projectRoot '.codex_tmp')
+    }
     foreach ($root in $downloadRoots) {
         if (-not (Test-Path $root)) {
             continue
@@ -56,10 +65,30 @@ function Resolve-GodotExecutable {
         $resolved += (Resolve-Path $candidate).Path
     }
     $resolved = $resolved | Select-Object -Unique
+    if ($PreferConsole) {
+        $consoleResolved = @()
+        foreach ($path in $resolved) {
+            $leaf = Split-Path $path -Leaf
+            $dir = Split-Path $path -Parent
+            if ($leaf -match '(?i)_console\.exe$' -or $leaf -ieq 'godot_console.exe') {
+                $consoleResolved += $path
+                continue
+            }
+            $consolePath = ''
+            if ($leaf -ieq 'godot.exe') {
+                $consolePath = Join-Path $dir 'godot_console.exe'
+            } elseif ($leaf -match '^(.*)\.exe$') {
+                $consolePath = Join-Path $dir ($Matches[1] + '_console.exe')
+            }
+            if (-not [string]::IsNullOrWhiteSpace($consolePath) -and (Test-Path $consolePath)) {
+                $consoleResolved += (Resolve-Path $consolePath).Path
+            }
+        }
+        $resolved = @($consoleResolved + $resolved) | Select-Object -Unique
+    }
 
     $expectedVersion = ''
     try {
-        $projectRoot = Get-GodotProjectRoot
         $versionFile = Join-Path $projectRoot '.godot-version'
         if (Test-Path -LiteralPath $versionFile) {
             $expectedVersion = (Get-Content -LiteralPath $versionFile -Raw).Trim()
@@ -78,13 +107,26 @@ function Resolve-GodotExecutable {
         if ($path -match 'mono' -or $versionText -match 'mono') {
             continue
         }
-        if (-not [string]::IsNullOrWhiteSpace($expectedVersion) -and $versionText -match [regex]::Escape($expectedVersion)) {
+        $matchesExpectedVersion = -not [string]::IsNullOrWhiteSpace($expectedVersion) -and (
+            $versionText -match [regex]::Escape($expectedVersion) -or
+            $path -match [regex]::Escape($expectedVersion)
+        )
+        if ($matchesExpectedVersion) {
             $matchingExpectedVersion += $path
             continue
         }
         $preferred += $path
     }
     if ($matchingExpectedVersion.Count -gt 0) {
+        if (-not $PreferConsole) {
+            $guiMatchingExpectedVersion = @($matchingExpectedVersion | Where-Object {
+                $leaf = Split-Path $_ -Leaf
+                -not ($leaf -match '(?i)_console\.exe$' -or $leaf -ieq 'godot_console.exe')
+            })
+            if ($guiMatchingExpectedVersion.Count -gt 0) {
+                return $guiMatchingExpectedVersion[0]
+            }
+        }
         return $matchingExpectedVersion[0]
     }
     if ($preferred.Count -gt 0) {

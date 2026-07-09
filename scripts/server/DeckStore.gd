@@ -7,6 +7,10 @@ const CardCatalogScript = preload("res://scripts/cards/CardCatalog.gd")
 const TiamatScript = preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
 const CardArtVariantsScript = preload("res://scripts/core/CardArtVariants.gd")
 const DEFAULT_DECK_NAME := "Default Deck"
+const MAX_DECKS_PER_ACCOUNT := 64
+const MAX_DECK_NAME_LENGTH := 80
+const MAX_CARD_ENTRIES_PER_DECK := 128
+const MAX_TOTAL_CARD_COPIES_PER_DECK := 250
 
 var _decks_by_account_id: Dictionary = {}
 var _loaded: bool = false
@@ -58,15 +62,32 @@ func save_deck(
 	var sanitized_cards: Dictionary = _sanitize_cards(cards)
 	if sanitized_cards.is_empty():
 		return {"success": false, "message": "Deck did not contain any valid cards.", "deck": {}}
+	if sanitized_cards.size() > MAX_CARD_ENTRIES_PER_DECK \
+			or _total_card_copies(sanitized_cards) > MAX_TOTAL_CARD_COPIES_PER_DECK:
+		return {"success": false, "message": "Deck is too large to save.", "deck": {}}
 
 	var deck_bucket: Dictionary = _get_deck_bucket(resolved_account_id)
 	var resolved_deck_id: String = deck_id.strip_edges()
 	if resolved_deck_id.is_empty():
+		if deck_bucket.size() >= MAX_DECKS_PER_ACCOUNT:
+			return {
+				"success": false,
+				"message": "You can save up to %d decks on this account." % MAX_DECKS_PER_ACCOUNT,
+				"deck": {},
+			}
 		resolved_deck_id = _generate_id("deck_", 12)
+	elif not deck_bucket.has(resolved_deck_id) and deck_bucket.size() >= MAX_DECKS_PER_ACCOUNT:
+		return {
+			"success": false,
+			"message": "You can save up to %d decks on this account." % MAX_DECKS_PER_ACCOUNT,
+			"deck": {},
+		}
 
 	var clean_name: String = deck_name.strip_edges()
 	if clean_name.is_empty():
 		clean_name = DEFAULT_DECK_NAME
+	if clean_name.length() > MAX_DECK_NAME_LENGTH:
+		clean_name = clean_name.left(MAX_DECK_NAME_LENGTH)
 
 	var previous_decks_by_account_id := _decks_by_account_id.duplicate(true)
 	var now_unix := int(Time.get_unix_time_from_system())
@@ -139,6 +160,12 @@ func _sanitize_cards(cards: Dictionary) -> Dictionary:
 			continue
 		sanitized[str(template.card_name)] = count
 	return sanitized
+
+func _total_card_copies(cards: Dictionary) -> int:
+	var total := 0
+	for card_name in cards.keys():
+		total += maxi(0, int(cards[card_name]))
+	return total
 
 func _sanitize_special_setup(special_setup: Dictionary) -> Dictionary:
 	if special_setup == null or special_setup.is_empty():

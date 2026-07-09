@@ -29,6 +29,11 @@ The release workflow:
 4. Packages `OtherGods-macos.zip`, generates `appcast.xml` plus any Sparkle delta assets, and signs them with the Sparkle private key.
 5. Publishes the archive, `appcast.xml`, and generated Sparkle assets as GitHub release assets.
 
+Tagged releases must include both `OtherGods-macos.zip` and `appcast.xml`.
+If the Sparkle secrets are missing or the appcast is not generated, the macOS
+release job should fail instead of publishing a Mac build that cannot update
+itself.
+
 The app reads its feed from:
 
 `https://github.com/sprushy/OtherGodsinGodot/releases/latest/download/appcast.xml`

@@ -4,13 +4,19 @@ extends PanelContainer
 const CardDetailContentBuilderScript = preload("res://scripts/ui/CardDetailContentBuilder.gd")
 const BaseCardScript = preload("res://scripts/cards/BaseCard.gd")
 const LockedPowerCursorScript = preload("res://scripts/ui/LockedPowerCursor.gd")
-const LOCKED_POWER_CURSOR_ACTIVE_META := &"other_gods_locked_power_cursor_active"
 const DefenseShieldOverlayScript = preload("res://scripts/ui/DefenseShieldOverlay.gd")
 const AggressiveSwordOverlay = preload("res://scripts/ui/AggressiveSwordOverlay.gd")
 const StealthFogOverlayScript = preload("res://scripts/ui/StealthFogOverlay.gd")
 const LevelSymbolRowScript = preload("res://scripts/ui/LevelSymbolRow.gd")
 const DebuffBadgeScript = preload("res://scripts/ui/DebuffBadge.gd")
 const UITextureCacheScript = preload("res://scripts/ui/UITextureCache.gd")
+const SnowV2CardMeltOverlayScript = preload("res://scripts/fx/SnowV2CardMeltOverlay.gd")
+const SNOW_V2_SNOWFLAKE_TEXTURE := preload("res://images/fx/snow_v2/snowflake.png")
+const SNOW_V2_PAINTBRUSH_TEXTURE := preload("res://images/fx/snow_v2/snow_paintbrush.png")
+const SNOW_V2_FLAKE_ATLAS_TEXTURE := preload("res://images/fx/snow_v2/flake_particle_atlas.png")
+const SNOW_V2_POWDER_TEXTURE := preload("res://images/fx/snow_v2/snow_powder_atlas.png")
+const SNOW_V2_EDGE_STRIPS_TEXTURE := preload("res://images/fx/snow_v2/snow_edge_strips_atlas.png")
+const SNOW_V2_CORNER_BORDER_TEXTURE := preload("res://images/fx/snow_v2/snow_corner_border_atlas.png")
 const CHAMPIONS_CALL_BADGE_TEXTURE := preload("res://images/Champion's Call Horn Badge.png")
 const SMOKING_MIRROR_BADGE_TEXTURE := preload("res://images/Smoking Mirror Icon.png")
 const TEZ_SACRIFICE_BADGE_TEXTURE := preload("res://images/TezSacBadge.png")
@@ -1360,6 +1366,42 @@ func _add_overlay_stat_badge(
 	badge.offset_bottom = bottom
 	overlay.add_child(badge)
 	return badge
+
+func _get_hover_reach_badge_data(card: Card) -> Dictionary:
+	if not _hovered or card == null:
+		return {}
+	return CardDetailContentBuilderScript.get_reach_badge_data(
+		card,
+		{"hide_unaltered_reach": get_hide_unaltered_reach_tag()}
+	)
+
+func _has_hover_reach_badge(card: Card) -> bool:
+	return not _get_hover_reach_badge_data(card).is_empty()
+
+func _add_hover_reach_badge(overlay: Control, card: Card) -> bool:
+	if overlay == null or not is_instance_valid(overlay) or overlay.is_queued_for_deletion():
+		return false
+	var reach_data := _get_hover_reach_badge_data(card)
+	if reach_data.is_empty():
+		return false
+	var reach_value := int(reach_data.get("value", 0))
+	if reach_value <= 0:
+		return false
+	var badge := _make_field_stat_badge(
+		"Reach %d" % reach_value,
+		11,
+		Color(0.95, 0.88, 0.5) if bool(reach_data.get("altered", false)) else Color(0.92, 0.97, 1.0)
+	)
+	badge.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+	badge.offset_left = 66
+	badge.offset_top = -32
+	badge.offset_right = -66
+	badge.offset_bottom = -6
+	badge.name = "BoardReachBadge"
+	badge.tooltip_text = str(reach_data.get("tooltip", ""))
+	badge.mouse_filter = Control.MOUSE_FILTER_STOP
+	overlay.add_child(badge)
+	return true
 
 func _add_overlay_mana_badge(
 	overlay: Control,
@@ -3763,6 +3805,31 @@ func _make_card_art_preview(source_card: Card) -> Control:
 	art.offset_bottom = -2
 	return art
 
+func _add_snow_v2_card_weather_overlay(overlay: Control, card: Card, allow_melt: bool = false, show_falling: bool = true, show_body_powder: bool = true) -> void:
+	if overlay == null:
+		return
+	var snow_overlay := SnowV2CardMeltOverlayScript.new()
+	snow_overlay.name = "SnowV2CardMeltOverlay"
+	snow_overlay.snowflake_texture = SNOW_V2_SNOWFLAKE_TEXTURE
+	snow_overlay.paintbrush_texture = SNOW_V2_PAINTBRUSH_TEXTURE
+	snow_overlay.flake_atlas_texture = SNOW_V2_FLAKE_ATLAS_TEXTURE
+	snow_overlay.powder_texture = SNOW_V2_POWDER_TEXTURE
+	snow_overlay.edge_strip_texture = SNOW_V2_EDGE_STRIPS_TEXTURE
+	snow_overlay.corner_border_texture = SNOW_V2_CORNER_BORDER_TEXTURE
+	snow_overlay.allow_melt_on_land = allow_melt
+	snow_overlay.show_falling_flakes = show_falling and allow_melt
+	snow_overlay.show_body_powder = show_body_powder
+	snow_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	if card != null and card.is_god:
+		snow_overlay.body_inset = Vector4(14.0, 18.0, 14.0, 34.0)
+	elif card != null and card.card_type == Card.CardType.CREATURE:
+		snow_overlay.body_inset = Vector4(12.0, 18.0, 12.0, 56.0)
+	elif card != null and card.card_type == Card.CardType.STRUCTURE:
+		snow_overlay.body_inset = Vector4(12.0, 18.0, 12.0, 46.0)
+	else:
+		snow_overlay.body_inset = Vector4(10.0, 12.0, 10.0, 24.0)
+	overlay.add_child(snow_overlay)
+
 func _is_tiamat_power_creature_zone() -> bool:
 	if _preview_card != null:
 		return false
@@ -4651,9 +4718,9 @@ func _get_empty_zone_slab_tint() -> Color:
 	if zone == null:
 		return Color(1.0, 1.0, 1.0, 0.9)
 	if zone.zone_type == Zone.ZoneType.GOD_SLOT:
-		return Color(1.08, 0.98, 0.72, 0.96)
+		return Color(1.0, 1.0, 1.0, 0.94)
 	if zone.zone_type == Zone.ZoneType.POWER_SLOT:
-		return Color(1.02, 0.98, 0.88, 0.9)
+		return Color(0.98, 1.0, 1.0, 0.9)
 	return Color(1.0, 1.0, 1.0, 0.88)
 
 func _add_empty_zone_slab_label(parent: Control) -> void:
@@ -4701,6 +4768,7 @@ func _add_empty_zone_slab() -> void:
 	slab.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	overlay.add_child(slab)
 
+	_add_snow_v2_card_weather_overlay(overlay, null, false, false, false)
 	_add_empty_zone_slab_label(overlay)
 
 func _is_locked_power_cursor_card(card: Card) -> bool:
@@ -4710,20 +4778,13 @@ func _set_locked_power_cursor_active(active: bool) -> void:
 	if _locked_power_cursor_active == active:
 		return
 	_locked_power_cursor_active = active
-	var viewport := get_viewport()
-	if viewport == null:
-		return
-	var owners_value: Variant = viewport.get_meta(LOCKED_POWER_CURSOR_ACTIVE_META, {})
-	var owners: Dictionary = owners_value.duplicate() if owners_value is Dictionary else {}
-	var owner_id := get_instance_id()
-	if active:
-		owners[owner_id] = true
-	else:
-		owners.erase(owner_id)
-	viewport.set_meta(LOCKED_POWER_CURSOR_ACTIVE_META, owners)
+	LockedPowerCursorScript.set_viewport_owner_active(get_viewport(), self, active)
 
 func _sync_locked_power_cursor_hover(card: Card = null) -> void:
-	_set_locked_power_cursor_active(_hovered and _is_locked_power_cursor_card(card))
+	_set_locked_power_cursor_active(_hovered and _is_mouse_actually_over_control() and _is_locked_power_cursor_card(card))
+
+func _is_mouse_actually_over_control() -> bool:
+	return is_inside_tree() and is_visible_in_tree() and get_global_rect().has_point(get_global_mouse_position())
 
 func _refresh_mouse_cursor_shape(card: Card = null) -> void:
 	_sync_locked_power_cursor_hover(card)
@@ -4861,6 +4922,7 @@ func _refresh_display() -> void:
 			tiamat_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 			add_child(tiamat_overlay)
 			_add_tiamat_brood_slot_art(tiamat_overlay)
+			_add_snow_v2_card_weather_overlay(tiamat_overlay, card, card.is_god or card.card_type == Card.CardType.CREATURE)
 			_add_followers_attack_result_label(tiamat_overlay)
 			return
 
@@ -4993,6 +5055,7 @@ func _refresh_display() -> void:
 			)
 			if _fd_is_def:
 				DefenseShieldOverlayScript.ensure_on(fd_overlay, DefenseShieldOverlayScript.LAYOUT_STAT_UNDER, 1.0, card.is_stealth)
+			_add_snow_v2_card_weather_overlay(fd_overlay, card, false)
 			_defense_overlay = fd_overlay if _fd_is_def else null
 			_raised_overlay  = fd_overlay if (_fd_is_def or card.is_stealth) else null
 			z_index = _get_resting_z_index()
@@ -5051,6 +5114,7 @@ func _refresh_display() -> void:
 				art.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 				art.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				god_overlay.add_child(art)
+				_add_snow_v2_card_weather_overlay(god_overlay, card, true)
 				if show_god_followers_target_aura:
 					_add_attack_target_aura(god_overlay)
 
@@ -5251,6 +5315,7 @@ func _refresh_display() -> void:
 			DefenseShieldOverlayScript.ensure_on(card_overlay, DefenseShieldOverlayScript.LAYOUT_STAT_UNDER, 1.0, card.is_stealth)
 		elif shows_aggressive_sword:
 			AggressiveSwordOverlay.ensure_on(card_overlay, AggressiveSwordOverlay.LAYOUT_STAT_UNDER)
+		_add_snow_v2_card_weather_overlay(card_overlay, card, card.is_god or card.card_type == Card.CardType.CREATURE)
 		_add_level_badge(card_overlay, card, Control.PRESET_TOP_LEFT, 6, LEVEL_BADGE_TOP, 54, LEVEL_BADGE_BOTTOM)
 		_add_token_badge(card_overlay, card, Control.PRESET_TOP_LEFT, 6, 28, 66, 46)
 		_add_turn_countdown_badge(card_overlay, card)
@@ -5382,6 +5447,7 @@ func _refresh_display() -> void:
 			muted_badge.add_child(muted_lbl)
 			card_overlay.add_child(muted_badge)
 
+		_add_hover_reach_badge(card_overlay, card)
 		_add_creature_action_symbols(card_overlay, card)
 		_add_stance_switch_symbol(card_overlay, card)
 		_defense_overlay = card_overlay if shows_defense_shield else null
@@ -5425,8 +5491,9 @@ func _add_creature_action_symbols(overlay: Control, card: Card) -> void:
 	row.anchor_bottom = 1.0
 	row.offset_left = -total_width * 0.5
 	row.offset_right = total_width * 0.5
-	row.offset_top = -32.0
-	row.offset_bottom = -8.0
+	var row_bottom := -38.0 if _has_hover_reach_badge(card) else -8.0
+	row.offset_top = row_bottom - icon_size
+	row.offset_bottom = row_bottom
 	row.custom_minimum_size = Vector2(total_width, icon_size)
 	row.size = Vector2(total_width, icon_size)
 	overlay.add_child(row)
@@ -5720,10 +5787,18 @@ func _set_prepared_magical_cover_hovered(is_hovered: bool) -> bool:
 		else PREPARED_MAGICAL_CARD_COVER_TEXTURE
 	)
 	if is_hovered:
+		_shake_snow_from_prepared_magical_cover()
 		_start_prepared_magical_hover_shake()
 	else:
 		_stop_prepared_magical_hover_shake()
 	return true
+
+func _shake_snow_from_prepared_magical_cover() -> void:
+	if _prepared_magical_cover_overlay == null or not is_instance_valid(_prepared_magical_cover_overlay):
+		return
+	var snow_overlay := _prepared_magical_cover_overlay.get_node_or_null("SnowV2CardMeltOverlay")
+	if snow_overlay != null and snow_overlay.has_method("shake_off_snow"):
+		snow_overlay.call("shake_off_snow", 0.22)
 
 func _start_prepared_magical_hover_shake() -> void:
 	if _prepared_magical_cover_overlay == null or not is_instance_valid(_prepared_magical_cover_overlay):

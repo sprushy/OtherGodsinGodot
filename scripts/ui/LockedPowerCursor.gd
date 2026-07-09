@@ -5,6 +5,7 @@ const CURSOR_SOURCE := preload("res://images/NorseLockedPowerCursor.png")
 const UIArtScalerScript = preload("res://scripts/ui/UIArtScaler.gd")
 const CURSOR_SHAPE := Input.CURSOR_CROSS
 const CONTROL_CURSOR_SHAPE := Control.CURSOR_CROSS
+const ACTIVE_META := &"other_gods_locked_power_cursor_active"
 const CURSOR_TARGET_HEIGHT := 72
 const CURSOR_HOTSPOT_RATIO := Vector2(0.50, 0.28)
 
@@ -30,3 +31,22 @@ static func get_control_cursor_shape(fallback_shape: Control.CursorShape) -> Con
 	if ensure_registered():
 		return CONTROL_CURSOR_SHAPE as Control.CursorShape
 	return fallback_shape
+
+static func set_viewport_owner_active(viewport: Viewport, owner: Object, active: bool) -> void:
+	if viewport == null or owner == null:
+		return
+	var owners_value: Variant = viewport.get_meta(ACTIVE_META, {})
+	var owners: Dictionary = owners_value.duplicate() if owners_value is Dictionary else {}
+	var owner_id := owner.get_instance_id()
+	if active:
+		owners[owner_id] = owner
+	else:
+		owners.erase(owner_id)
+	if owners.is_empty():
+		viewport.remove_meta(ACTIVE_META)
+	else:
+		viewport.set_meta(ACTIVE_META, owners)
+
+static func clear_viewport_active(viewport: Viewport) -> void:
+	if viewport != null and viewport.has_meta(ACTIVE_META):
+		viewport.remove_meta(ACTIVE_META)

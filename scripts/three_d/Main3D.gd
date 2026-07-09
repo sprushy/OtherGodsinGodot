@@ -2,6 +2,7 @@ extends Node3D
 
 const WindowsSelfUpdaterScript = preload("res://scripts/client/WindowsSelfUpdater.gd")
 const GameCursorScript = preload("res://scripts/ui/GameCursor.gd")
+const SnowV2WeatherControllerScript = preload("res://scripts/fx/SnowV2WeatherController.gd")
 const GAME_SCENE_PATH := "res://scenes/mainfork.tscn"
 const DEFAULT_VIEWPORT_SIZE := Vector2i(2560, 1440)
 const SERVER_MODE_ARG := "server_mode"
@@ -71,6 +72,7 @@ var _default_software_cursor_texture: Texture2D = null
 var _locked_power_software_cursor_texture: Texture2D = null
 var _software_cursor_showing_locked_power: bool = false
 var _legacy_3d_shell_active: bool = false
+var _snow_v2_weather_controller: Node = null
 
 func _ready() -> void:
 	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
@@ -104,6 +106,7 @@ func _ready() -> void:
 		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 		_build_flat_canvas()
 		_build_software_cursor()
+	_build_snow_v2_weather()
 	GameCursorScript.ensure_registered()
 	_sync_cursor_presentation()
 	_load_game_into_viewport()
@@ -122,12 +125,21 @@ func _build_3d_shell() -> void:
 	add_child(_three_d_world)
 
 	_build_environment()
+	_build_table()
 	_build_game_screen()
 	_build_camera()
 	_build_lighting()
 	_build_flat_canvas()
 	_build_stealth_fog_top_ui_layer()
 	_sync_3d_display_to_window()
+
+func _build_snow_v2_weather() -> void:
+	var controller := SnowV2WeatherControllerScript.new()
+	controller.name = "SnowV2WeatherController"
+	add_child(controller)
+	_snow_v2_weather_controller = controller
+	if _three_d_world != null and controller.has_method("attach_3d_world"):
+		controller.call("attach_3d_world", _three_d_world)
 
 func _exit_tree() -> void:
 	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
@@ -211,7 +223,13 @@ func _has_viewport_meta(meta_name: StringName) -> bool:
 
 func _is_cursor_meta_active(meta_value: Variant) -> bool:
 	if meta_value is Dictionary:
-		return not (meta_value as Dictionary).is_empty()
+		for owner in (meta_value as Dictionary).values():
+			if owner is Object:
+				if is_instance_valid(owner):
+					return true
+			elif bool(owner):
+				return true
+		return false
 	return bool(meta_value)
 
 func _has_custom_cursor_active() -> bool:

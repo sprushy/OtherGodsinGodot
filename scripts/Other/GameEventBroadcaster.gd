@@ -12,6 +12,7 @@ class_name GameEventBroadcaster
 const PromptRouterScript = preload("res://scripts/server/PromptRouter.gd")
 const MatchCommandRegistryScript = preload("res://scripts/Other/MatchCommandRegistry.gd")
 const BROADCAST_LOG_PREFIX := "[OG broadcast]"
+const DEBUG_BROADCAST_LOGS := false
 
 var game_manager: GameManager
 var match_manager: MatchManager
@@ -407,6 +408,8 @@ func _stack_debug_summary() -> String:
 	return "empty" if parts.is_empty() else " ".join(parts)
 
 func _log_broadcast_state(context: String) -> void:
+	if not DEBUG_BROADCAST_LOGS:
+		return
 	if game_manager == null:
 		print("%s %s game_manager=null" % [BROADCAST_LOG_PREFIX, context])
 		return
@@ -455,22 +458,23 @@ func _build_full_state_event_data(
 		event_data["pending_attack_preview"] = attack_preview
 	if not ui_sound_cues.is_empty():
 		event_data["ui_sound_cues"] = ui_sound_cues.duplicate()
-	var serialized_stack = serialized_state.get("action_stack", [])
-	var serialized_stack_size: int = serialized_stack.size() if serialized_stack is Array else -1
-	var prompt_present := event_data.has("pending_priority_prompt")
-	var sanitized_message := action_message.replace("\n", " ")
-	print("%s full_state_payload player=%d msg=%s server_stack=%d serialized_stack=%d resolving=%d locked=%s visual=%s priority_prompt=%s stack=%s" % [
-		BROADCAST_LOG_PREFIX,
-		player_index,
-		sanitized_message,
-		game_manager.action_stack.size() if game_manager != null else -1,
-		serialized_stack_size,
-		game_manager.resolving_stack_actions.size() if game_manager != null else -1,
-		str(event_data.get("authoritative_stack_window_locked", false)),
-		str(event_data.get("authoritative_visual_linger_pending", false)),
-		str(prompt_present),
-		_stack_debug_summary(),
-	])
+	if DEBUG_BROADCAST_LOGS:
+		var serialized_stack = serialized_state.get("action_stack", [])
+		var serialized_stack_size: int = serialized_stack.size() if serialized_stack is Array else -1
+		var prompt_present := event_data.has("pending_priority_prompt")
+		var sanitized_message := action_message.replace("\n", " ")
+		print("%s full_state_payload player=%d msg=%s server_stack=%d serialized_stack=%d resolving=%d locked=%s visual=%s priority_prompt=%s stack=%s" % [
+			BROADCAST_LOG_PREFIX,
+			player_index,
+			sanitized_message,
+			game_manager.action_stack.size() if game_manager != null else -1,
+			serialized_stack_size,
+			game_manager.resolving_stack_actions.size() if game_manager != null else -1,
+			str(event_data.get("authoritative_stack_window_locked", false)),
+			str(event_data.get("authoritative_visual_linger_pending", false)),
+			str(prompt_present),
+			_stack_debug_summary(),
+		])
 	return event_data
 
 func _consume_pending_ui_sound_cues(extra_cues: Array[String] = []) -> Array[String]:

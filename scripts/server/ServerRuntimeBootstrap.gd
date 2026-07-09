@@ -84,6 +84,7 @@ func _boot_match_runtime(launch_args: Dictionary) -> void:
 		get_tree().quit(1)
 		return
 	config["_launch_config_path"] = config_path
+	_cleanup_launch_config_path(config_path)
 
 	var match_server = HeadlessMatchServerScript.new()
 	match_server.name = "HeadlessMatchServer"
@@ -134,3 +135,8 @@ func _parse_user_args(args: PackedStringArray) -> Dictionary:
 
 func _load_launch_config(config_path: String) -> Dictionary:
 	return JsonStoreScript.load_dictionary(config_path, {}, "ServerRuntimeBootstrap")
+
+func _cleanup_launch_config_path(config_path: String) -> void:
+	for path in [config_path, "%s.tmp" % config_path, "%s.bak" % config_path]:
+		if FileAccess.file_exists(path):
+			DirAccess.remove_absolute(path)

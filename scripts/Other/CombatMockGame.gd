@@ -64,6 +64,7 @@ const LocustSwarmSoundPlayerScript = preload("res://scripts/audio/LocustSwarmSou
 const TiamatScript = preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
 const UIArtScalerScript = preload("res://scripts/ui/UIArtScaler.gd")
 const GameCursorScript = preload("res://scripts/ui/GameCursor.gd")
+const LockedPowerCursorScript = preload("res://scripts/ui/LockedPowerCursor.gd")
 const CardDetailContentBuilderScript = preload("res://scripts/ui/CardDetailContentBuilder.gd")
 const LevelSymbolRowScript = preload("res://scripts/ui/LevelSymbolRow.gd")
 const ReinforcementCardTileScript = preload("res://scripts/ui/ReinforcementCardTile.gd")
@@ -99,6 +100,9 @@ const HERMES_AUTO_PASS_END_PRIORITY_KEY := "hermes_auto_pass_end_priority"
 const HERMES_AUTO_PASS_UPKEEP_PRIORITY_KEY := "hermes_auto_pass_upkeep_priority"
 const HERMES_ADD_PRIORITY_TOGGLE_KEY := "hermes_add_priority_toggle_to_card"
 const HERMES_OFFER_PRIORITY_KEY := "hermes_offer_priority"
+const SNOWSTORM_CONTROL_GROUP := "other_gods_snowstorm_control"
+const DEBUG_CLIENT_STATE_LOGS := false
+const DEBUG_END_TURN_LOGS := false
 
 signal forfeit_requested
 signal return_to_menu_requested
@@ -270,7 +274,7 @@ const FAN_CARD_SPACING := 130   # px between card pivot centres
 const STACK_ACTION_LINGER_SECONDS := 1.2
 const POST_GAME_RETURN_DELAY_SECONDS := 1.6
 const CARD_PLAY_TIME_BONUS_MSEC := 2000
-const PRIORITY_IDLE_AUTO_PASS_MSEC := 5000
+const PRIORITY_IDLE_AUTO_PASS_MSEC := 10000
 const UNRANKED_PRIORITY_IDLE_AUTO_PASS_MSEC := PRIORITY_IDLE_AUTO_PASS_MSEC * 2
 const MOVE_TIMEOUT_MSEC := 180000
 const MOVE_TIMEOUT_WARNING_MSEC := 30000
@@ -588,6 +592,8 @@ var _series_snapshot: Dictionary = {}
 var _series_between_games_active: bool = false
 var _forfeit_button_default_text: String = ""
 var _forfeit_match_confirm_pending: bool = false
+var _observer_perspective_button: Button = null
+var _observer_perspective_player_index: int = 0
 var _all_sound_muted: bool = false
 var _action_log_view: RichTextLabel = null
 var _action_log_history_button: Button = null
@@ -654,6 +660,7 @@ var _priority_offer_by_card_uid: Dictionary = {}
 var _hover_card_options_card: Card = null
 var _hover_card_options_refresh_queued: bool = false
 var _action_point_state_by_card_uid: Dictionary = {}
+var _snow_weather_visual_active: bool = false
 var _container_detach_depth: int = 0
 var _sacrifice_cursor_texture: Texture2D = null
 var _devour_cursor_texture: Texture2D = null
@@ -908,6 +915,7 @@ const PRIORITY_AUTO_PASS_BUTTON_SIZE := Vector2(42.0, 30.0)
 const SOUND_MUTE_BUTTON_WIDTH := 40.0
 const FORFEIT_BUTTON_WIDTH := 112.0
 const FORFEIT_MATCH_BUTTON_WIDTH := 144.0
+const OBSERVER_PERSPECTIVE_BUTTON_WIDTH := 132.0
 const CORNER_ACTION_MARGIN := 16.0
 const CORNER_ACTION_GAP := 8.0
 const PRIORITY_CONTROLS_RIGHT_MARGIN := 2.0
@@ -2413,7 +2421,7 @@ func _ensure_board_art_background() -> void:
 	_board_art_background.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 	_board_art_background.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	_board_art_background.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_board_art_background.modulate = Color(0.78, 0.80, 0.74, 1.0)
+	_board_art_background.modulate = Color(0.80, 0.80, 0.80, 1.0)
 	_board_art_background.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	add_child(_board_art_background)
 	move_child(_board_art_background, 0)
@@ -2457,7 +2465,7 @@ func _apply_board_art_background_texture() -> void:
 	if _use_splash_board_background:
 		_board_art_background.modulate = Color(1, 1, 1, 1)
 	else:
-		_board_art_background.modulate = Color(0.78, 0.80, 0.74, 1.0)
+		_board_art_background.modulate = Color(0.80, 0.80, 0.80, 1.0)
 
 func _ready() -> void:
 	add_to_group("combat_mock_game")
@@ -2511,14 +2519,30 @@ func _ready() -> void:
 	forfeit_match_button.disabled = true
 	add_child(forfeit_match_button)
 	_promote_transient_ui(forfeit_match_button, TRANSIENT_UI_Z_INDEX + 100)
+	_observer_perspective_button = Button.new()
+	_observer_perspective_button.name = "ObserverPerspectiveButton"
+	_observer_perspective_button.text = "Switch View"
+	_observer_perspective_button.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	_observer_perspective_button.offset_left = forfeit_button.offset_right + CORNER_ACTION_GAP
+	_observer_perspective_button.offset_top = forfeit_button.offset_top
+	_observer_perspective_button.offset_right = _observer_perspective_button.offset_left + OBSERVER_PERSPECTIVE_BUTTON_WIDTH
+	_observer_perspective_button.offset_bottom = forfeit_button.offset_bottom
+	_observer_perspective_button.mouse_filter = Control.MOUSE_FILTER_STOP
+	_observer_perspective_button.visible = false
+	_observer_perspective_button.disabled = true
+	add_child(_observer_perspective_button)
+	_promote_transient_ui(_observer_perspective_button, TRANSIENT_UI_Z_INDEX + 100)
 	resized.connect(_layout_board_art_background)
 
 	draw_button.pressed.connect(_on_draw_button_pressed)
 	mana_button.pressed.connect(_on_mana_button_pressed)
+	draw_button.mouse_entered.connect(_clear_locked_power_cursor_hover)
+	mana_button.mouse_entered.connect(_clear_locked_power_cursor_hover)
 	_setup_turn_choice_buttons()
 	end_turn_button.pressed.connect(_on_end_turn_button_pressed)
 	forfeit_button.pressed.connect(_on_forfeit_button_pressed)
 	forfeit_match_button.pressed.connect(_on_forfeit_match_button_pressed)
+	_observer_perspective_button.pressed.connect(_on_observer_perspective_button_pressed)
 	aggressive_stance_btn.pressed.connect(_on_aggressive_stance_pressed)
 	defensive_stance_btn.pressed.connect(_on_defensive_stance_pressed)
 	stealth_mode_btn.pressed.connect(_on_stealth_mode_pressed)
@@ -3593,6 +3617,13 @@ func _set_embedded_custom_cursor_active(active: bool, software_cursor: bool = fa
 			viewport.set_meta(&"other_gods_custom_cursor_active", {"software_cursor": true})
 		else:
 			viewport.set_meta(&"other_gods_custom_cursor_active", active)
+
+func _clear_locked_power_cursor_hover() -> void:
+	var viewport := get_viewport()
+	LockedPowerCursorScript.clear_viewport_active(viewport)
+	var root_viewport := get_tree().root if get_tree() != null else null
+	if root_viewport != viewport:
+		LockedPowerCursorScript.clear_viewport_active(root_viewport)
 
 func _sync_sacrifice_cursor() -> void:
 	var cursor_mode := _get_selection_cursor_mode()
@@ -4848,9 +4879,6 @@ func _should_suppress_action_log_echo(message: String, force: bool = false) -> b
 		_suppress_next_generic_prepare_log = false
 		return false
 	var previous_message = _action_log_messages.back()
-	if force and not _should_suppress_forced_generic_summon_log(message, previous_message):
-		_suppress_next_generic_prepare_log = false
-		return false
 	if _should_suppress_generic_prepare_log(message, previous_message):
 		return true
 	var normalized_message := _normalize_action_log_echo_text(message)
@@ -4858,6 +4886,9 @@ func _should_suppress_action_log_echo(message: String, force: bool = false) -> b
 	if normalized_message != "" and normalized_message == normalized_previous:
 		_suppress_next_generic_prepare_log = false
 		return true
+	if force and not _should_suppress_forced_generic_summon_log(message, previous_message):
+		_suppress_next_generic_prepare_log = false
+		return false
 	var current_intent := _get_action_log_echo_intent(message)
 	var previous_intent := _get_action_log_echo_intent(previous_message)
 	if current_intent == "" or previous_intent == "":
@@ -6058,6 +6089,7 @@ func start_game(
 	_local_match_result_recorded = false
 	_current_match_info = match_info.duplicate(true)
 	_is_observer_mode = bool(match_info.get("observer_mode", false))
+	_observer_perspective_player_index = 0
 	_observer_feedback_viewer = Player.new() if _is_observer_mode else null
 	_restore_corner_action_button()
 	
@@ -6225,6 +6257,7 @@ func _prepare_for_match_launch(status_message: String = "Connecting to match..."
 	player1 = null
 	player2 = null
 	_is_observer_mode = false
+	_observer_perspective_player_index = 0
 	_observer_feedback_viewer = null
 	selected_card = null
 	_pending_drop_zone = null
@@ -6300,6 +6333,7 @@ func _own(card: Card, player: Player) -> Card:
 func show_turn_choice() -> void:
 	if _game_finished:
 		return
+	_clear_locked_power_cursor_hover()
 	choice_container.visible = true
 	end_turn_button.visible = false
 	_refresh_turn_choice_options()
@@ -6312,6 +6346,7 @@ func show_turn_choice() -> void:
 func hide_turn_choice() -> void:
 	if _game_finished:
 		return
+	_clear_locked_power_cursor_hover()
 	choice_container.visible = false
 	end_turn_button.visible = true
 	_hide_sun_hunt_button()
@@ -6330,6 +6365,7 @@ func _setup_turn_choice_buttons() -> void:
 		_sun_hunt_button.text = "Sun Hunt"
 		_sun_hunt_button.visible = false
 		_sun_hunt_button.pressed.connect(_on_sun_hunt_button_pressed)
+		_sun_hunt_button.mouse_entered.connect(_clear_locked_power_cursor_hover)
 		choice_container.add_child(_sun_hunt_button)
 	if _matriarch_rule_button == null:
 		_matriarch_rule_button = Button.new()
@@ -6337,6 +6373,7 @@ func _setup_turn_choice_buttons() -> void:
 		_matriarch_rule_button.text = "Matriarch Rule"
 		_matriarch_rule_button.visible = false
 		_matriarch_rule_button.pressed.connect(_on_matriarch_rule_button_pressed)
+		_matriarch_rule_button.mouse_entered.connect(_clear_locked_power_cursor_hover)
 		choice_container.add_child(_matriarch_rule_button)
 
 func _hide_sun_hunt_button() -> void:
@@ -6643,10 +6680,48 @@ func _do_update_ui() -> void:
 	_sync_visual_stack_overlay()
 	_refresh_hermes_priority_toggle_ui()
 	_refresh_all_card_priority_toggle_ui()
+	_refresh_observer_perspective_button()
 	_restore_active_raven_prime_prompt_overlay()
+	_sync_heavy_snow_weather_visuals()
 
 func _is_live_board_card(card: Card) -> bool:
 	return card != null and card.current_zone != null and card.current_zone.is_board_zone()
+
+func _sync_heavy_snow_weather_visuals(force: bool = false) -> void:
+	var active := _has_active_heavy_snow_weather()
+	if not force and active == _snow_weather_visual_active:
+		return
+	_snow_weather_visual_active = active
+	var tree := get_tree()
+	if tree == null:
+		return
+	if active:
+		tree.call_group(
+			SNOWSTORM_CONTROL_GROUP,
+			"set_snowstorm_profile",
+			0.72,
+			0.08,
+			0.42,
+			Vector2(-1.0, 0.16),
+			0.85
+		)
+	else:
+		tree.call_group(SNOWSTORM_CONTROL_GROUP, "set_snowstorm_active", false)
+
+func _has_active_heavy_snow_weather() -> bool:
+	if game_manager == null:
+		return false
+	for card in game_manager.get_field_cards():
+		if _is_active_heavy_snow_card(card):
+			return true
+	return false
+
+func _is_active_heavy_snow_card(card: Card) -> bool:
+	return card is HeavySnow \
+		and card.current_zone != null \
+		and card.current_zone.is_board_zone() \
+		and not card.is_face_down \
+		and not card.abilities_suppressed()
 
 func _sanitize_transient_card_references() -> void:
 	if selected_card != null and selected_card.current_zone == null:
@@ -7772,8 +7847,10 @@ func _get_display_player() -> Player:
 	if game_manager == null:
 		return null
 	if _is_observer_mode:
-		if game_manager.players.size() > 0:
-			return game_manager.players[0]
+		_clamp_observer_perspective_index()
+		if _observer_perspective_player_index >= 0 \
+				and _observer_perspective_player_index < game_manager.players.size():
+			return game_manager.players[_observer_perspective_player_index]
 		return game_manager.current_player
 	var viewer := game_manager.get_feedback_viewer()
 	if viewer != null:
@@ -7784,8 +7861,11 @@ func _get_display_opponent() -> Player:
 	if game_manager == null:
 		return null
 	if _is_observer_mode:
+		_clamp_observer_perspective_index()
 		if game_manager.players.size() > 1:
-			return game_manager.players[1]
+			var opponent_index := 1 if _observer_perspective_player_index == 0 else 0
+			if opponent_index >= 0 and opponent_index < game_manager.players.size():
+				return game_manager.players[opponent_index]
 		return game_manager.other_player
 	var display_player := _get_display_player()
 	if display_player != null:
@@ -19183,12 +19263,18 @@ func _on_board_card_pressed(card: Card) -> void:
 	if _game_finished:
 		return
 	if _pending_freyja_active_prompt != null:
-		_set_action_label_text("Open Sessrumnir only selects Norse Warriors from your graveyard. Click Freyja to confirm or right-click to skip.")
-		update_ui()
+		if card == _get_pending_freyja_active_card():
+			_confirm_freyja_active_prompt()
+		else:
+			_set_action_label_text("Open Sessrumnir only selects Norse Warriors from your graveyard. Click Freyja to confirm or right-click to skip.")
+			update_ui()
 		return
 	if _pending_tezcatlipoca_active_prompt != null:
-		_set_action_label_text("Titlacauan only enslaves enemy creatures. Click an enemy creature, click Tez to confirm, or right-click to skip.")
-		update_ui()
+		if card == _pending_tezcatlipoca_active_prompt:
+			_confirm_tez_titlacauan_prompt()
+		else:
+			_set_action_label_text("Titlacauan only enslaves enemy creatures. Click an enemy creature, click Tez to confirm, or right-click to skip.")
+			update_ui()
 		return
 	if _try_submit_tiamat_upkeep_card_from_board(card):
 		return
@@ -23030,6 +23116,34 @@ func _show_retreat_prompt(ask_card: Askelladen) -> void:
 	panel.offset_right = 120
 	panel.offset_top = -40
 	panel.offset_bottom = 40
+
+func _reveal_combatants_before_retreat_prompt(action: CardAction, target) -> void:
+	if action == null or not (target is Card):
+		return
+	var revealed_cards: Array[Card] = []
+	var committed_combatants: Array[Card] = []
+	for combatant in [action.attacker, action.united_front_partner, target]:
+		if not (combatant is Card):
+			continue
+		if combatant not in committed_combatants:
+			committed_combatants.append(combatant)
+		if combatant.is_stealth and combatant not in revealed_cards:
+			revealed_cards.append(combatant)
+	if revealed_cards.is_empty():
+		return
+	for combatant in revealed_cards:
+		combatant.reveal_from_stealth(game_manager)
+	var names: Array[String] = []
+	for combatant in revealed_cards:
+		names.append(combatant.card_name)
+	if not names.is_empty():
+		_set_action_label_text("%s revealed before combat." % " and ".join(names))
+	update_ui()
+	await _await_visual_linger()
+	while _has_pending_combat_reveal_resolution_wait(committed_combatants):
+		if _has_pending_combat_reveal_stack_event(committed_combatants) and not _is_priority_prompt_visible():
+			_offer_priority()
+		await get_tree().process_frame
 
 func _hide_retreat_prompt() -> void:
 	if _retreat_prompt_panel != null and is_instance_valid(_retreat_prompt_panel):
@@ -27262,6 +27376,7 @@ func _on_match_ui_interaction(player_index: int, type: String, data: Dictionary)
 					var p_idx: int = data.get("target_player_index", -1)
 					if p_idx >= 0 and p_idx < game_manager.players.size():
 						target = game_manager.players[p_idx]
+			await _reveal_combatants_before_retreat_prompt(action, target)
 			if (_is_networked_client or _is_real_network_host()) and not requested_askelladen_uid.is_empty():
 				var requested_ask := game_manager.get_card_by_uid(requested_askelladen_uid) as Askelladen
 				if requested_ask != null:
@@ -27776,12 +27891,13 @@ func _get_end_turn_discard_count() -> int:
 
 func _prompt_end_turn_discards() -> void:
 	var excess := _get_end_turn_discard_count()
-	print("[OG client end_turn] discard_prompt excess=%d staged=%s hand=%d current=%s" % [
-		excess,
-		str(_pending_end_turn_discard_uids),
-		game_manager.current_player.hand_zone.get_card_count() if game_manager != null and game_manager.current_player != null else -1,
-		game_manager.current_player.player_name if game_manager != null and game_manager.current_player != null else "none",
-	])
+	if DEBUG_END_TURN_LOGS:
+		print("[OG client end_turn] discard_prompt excess=%d staged=%s hand=%d current=%s" % [
+			excess,
+			str(_pending_end_turn_discard_uids),
+			game_manager.current_player.hand_zone.get_card_count() if game_manager != null and game_manager.current_player != null else -1,
+			game_manager.current_player.player_name if game_manager != null and game_manager.current_player != null else "none",
+		])
 	if excess <= 0:
 		_continue_end_turn_sequence()
 		return
@@ -27856,19 +27972,21 @@ func _clear_ragnarok_prompt_state() -> void:
 
 func _discard_end_turn_card(card: Card) -> void:
 	if card == null or card.current_zone != game_manager.current_player.hand_zone:
-		print("[OG client end_turn] discard_click_invalid card=%s staged=%s" % [
-			card.card_name if card != null else "null",
-			str(_pending_end_turn_discard_uids),
-		])
+		if DEBUG_END_TURN_LOGS:
+			print("[OG client end_turn] discard_click_invalid card=%s staged=%s" % [
+				card.card_name if card != null else "null",
+				str(_pending_end_turn_discard_uids),
+			])
 		_prompt_end_turn_discards()
 		return
 	if card.uid not in _pending_end_turn_discard_uids:
 		_pending_end_turn_discard_uids.append(card.uid)
-	print("[OG client end_turn] discard_click card=%s uid=%s staged=%s" % [
-		card.card_name,
-		card.uid,
-		str(_pending_end_turn_discard_uids),
-	])
+	if DEBUG_END_TURN_LOGS:
+		print("[OG client end_turn] discard_click card=%s uid=%s staged=%s" % [
+			card.card_name,
+			card.uid,
+			str(_pending_end_turn_discard_uids),
+		])
 	update_ui()
 	_prompt_end_turn_discards()
 
@@ -28084,6 +28202,7 @@ func _restore_corner_action_button() -> void:
 	forfeit_button.disabled = false
 	forfeit_button.visible = true
 	_refresh_forfeit_match_button_visibility()
+	_refresh_observer_perspective_button()
 
 func _hide_corner_action_button() -> void:
 	if forfeit_button == null:
@@ -28094,6 +28213,9 @@ func _hide_corner_action_button() -> void:
 	if forfeit_match_button != null:
 		forfeit_match_button.visible = false
 		forfeit_match_button.disabled = true
+	if _observer_perspective_button != null:
+		_observer_perspective_button.visible = false
+		_observer_perspective_button.disabled = true
 
 func _show_post_game_return_button() -> void:
 	if forfeit_button == null:
@@ -28109,6 +28231,9 @@ func _show_post_game_return_button() -> void:
 	if forfeit_match_button != null:
 		forfeit_match_button.visible = false
 		forfeit_match_button.disabled = true
+	if _observer_perspective_button != null:
+		_observer_perspective_button.visible = false
+		_observer_perspective_button.disabled = true
 
 func _refresh_forfeit_match_button_visibility() -> void:
 	if forfeit_match_button == null:
@@ -28118,6 +28243,53 @@ func _refresh_forfeit_match_button_visibility() -> void:
 	forfeit_match_button.visible = should_show
 	forfeit_match_button.disabled = not should_show
 	forfeit_match_button.tooltip_text = "Concede the whole Bo3 match."
+
+func _refresh_observer_perspective_button() -> void:
+	if _observer_perspective_button == null or not is_instance_valid(_observer_perspective_button):
+		return
+	var can_switch := _is_observer_mode \
+		and game_manager != null \
+		and game_manager.players.size() > 1 \
+		and not _game_finished
+	_observer_perspective_button.visible = can_switch
+	_observer_perspective_button.disabled = not can_switch
+	if not can_switch:
+		return
+	_clamp_observer_perspective_index()
+	var next_index := 1 if _observer_perspective_player_index == 0 else 0
+	var next_name := _get_player_display_name_for_index(next_index)
+	_observer_perspective_button.text = "View P%d" % (next_index + 1)
+	_observer_perspective_button.tooltip_text = "Switch observer perspective to %s." % next_name
+
+func _get_player_display_name_for_index(player_index: int) -> String:
+	if game_manager == null or player_index < 0 or player_index >= game_manager.players.size():
+		return "Player %d" % (player_index + 1)
+	var player := game_manager.players[player_index]
+	if player != null and str(player.player_name).strip_edges() != "":
+		return player.player_name
+	return "Player %d" % (player_index + 1)
+
+func _clamp_observer_perspective_index() -> void:
+	if game_manager == null or game_manager.players.is_empty():
+		_observer_perspective_player_index = 0
+		return
+	_observer_perspective_player_index = clampi(
+		_observer_perspective_player_index,
+		0,
+		game_manager.players.size() - 1
+	)
+
+func _on_observer_perspective_button_pressed() -> void:
+	if not _is_observer_mode or game_manager == null or game_manager.players.size() < 2:
+		return
+	_observer_perspective_player_index = 1 if _observer_perspective_player_index == 0 else 0
+	_hide_hand_hover_preview()
+	_close_context_menu()
+	_invalidate_cached_board_layouts()
+	_hand_render_signature = ""
+	_enemy_hand_render_signature = ""
+	_refresh_observer_perspective_button()
+	update_ui()
 
 func _reset_forfeit_match_confirmation() -> void:
 	_forfeit_match_confirm_pending = false
@@ -28904,8 +29076,23 @@ func _resolve_game_result_message(result_message: String, winner = null, loser =
 		return "%s wins!" % str(winner.player_name)
 	return "Game over!"
 
+func _has_recent_action_log_equivalent(message: String) -> bool:
+	var stripped_message := message.strip_edges()
+	if stripped_message.is_empty() or _action_log_messages.is_empty():
+		return false
+	var normalized_message := _normalize_action_log_echo_text(stripped_message)
+	var lower_bound := maxi(0, _action_log_messages.size() - 6)
+	for i in range(_action_log_messages.size() - 1, lower_bound - 1, -1):
+		var existing_message := str(_action_log_messages[i]).strip_edges()
+		if existing_message == stripped_message:
+			return true
+		if normalized_message != "" and _normalize_action_log_echo_text(existing_message) == normalized_message:
+			return true
+	return false
+
 func _finalize_game_result_ui(result_message: String, winner = null, loser = null, auto_return: bool = false) -> void:
 	var resolved_message := _resolve_game_result_message(result_message, winner, loser)
+	var should_present_result := not _game_result_presented
 	_hide_reinforcement_overlay()
 	# Networked match results should remain visible on both clients until each
 	# player explicitly leaves; otherwise a forfeit can pull both players away.
@@ -28931,13 +29118,15 @@ func _finalize_game_result_ui(result_message: String, winner = null, loser = nul
 	pending_attack_target = null
 	_clear_raven_storm_priority_selection()
 	placement_mode = ""
-	_set_action_label_text(resolved_message, not _game_result_presented)
-	if not _game_result_presented:
+	if should_present_result:
+		_game_result_presented = true
+	var should_record_result_log := should_present_result and not _has_recent_action_log_equivalent(resolved_message)
+	_set_action_label_text(resolved_message, should_record_result_log, should_record_result_log)
+	if should_present_result:
 		match_session_cleared.emit()
 	update_ui()
-	if _game_result_presented:
+	if not should_present_result:
 		return
-	_game_result_presented = true
 	_show_game_result_overlay(resolved_message, winner, loser, auto_return)
 	_pending_forfeit_return_to_menu = false
 	_schedule_post_game_return_to_menu(auto_return)
@@ -29729,6 +29918,8 @@ func _debug_live_stack_summary() -> String:
 	return " ".join(parts)
 
 func _debug_log_full_state(context: String, data: Dictionary, state: Dictionary) -> void:
+	if not DEBUG_CLIENT_STATE_LOGS:
+		return
 	var raw_stack = state.get("action_stack", [])
 	var stack_size: int = raw_stack.size() if raw_stack is Array else -1
 	var message := str(data.get("action_message", "")).replace("\n", " ")
@@ -29779,15 +29970,18 @@ func _apply_full_state(data: Dictionary) -> void:
 			if _observer_feedback_viewer == null:
 				_observer_feedback_viewer = Player.new()
 			game_manager.feedback_viewer = _observer_feedback_viewer
+			_clamp_observer_perspective_index()
+			_refresh_observer_perspective_button()
 		_restore_network_attack_preview_from_state(data.get("pending_attack_preview", {}))
 		_awaiting_initial_full_state = false
-		print("[OG client state] after_apply local=%s ghost_stack=%d remote_locked=%s has_unresolved=%s live_stack=%s" % [
-			str(network_manager.local_player_index if network_manager != null else -1),
-			game_manager.action_stack.size() if game_manager != null else -1,
-			str(match_manager.remote_authoritative_stack_window_locked if match_manager != null else false),
-			str(match_manager.has_unresolved_stack_action_window() if match_manager != null else false),
-			_debug_live_stack_summary(),
-		])
+		if DEBUG_CLIENT_STATE_LOGS:
+			print("[OG client state] after_apply local=%s ghost_stack=%d remote_locked=%s has_unresolved=%s live_stack=%s" % [
+				str(network_manager.local_player_index if network_manager != null else -1),
+				game_manager.action_stack.size() if game_manager != null else -1,
+				str(match_manager.remote_authoritative_stack_window_locked if match_manager != null else false),
+				str(match_manager.has_unresolved_stack_action_window() if match_manager != null else false),
+				_debug_live_stack_summary(),
+			])
 	if _is_networked_client and _is_intercept_prompt_visible() and match_manager != null and match_manager.pending_attack_target == null:
 		_hide_intercept_prompt()
 	if game_manager != null and previous_turn_number >= 0 and game_manager.turn_number != previous_turn_number:
@@ -30670,14 +30864,16 @@ func _submit_forfeit_command(command_type: String, request_message: String) -> v
 func _do_end_turn() -> void:
 	if _game_finished:
 		return
-	print("=== TURN ENDED ===")
+	if DEBUG_END_TURN_LOGS:
+		print("=== TURN ENDED ===")
 	var pending_discard_uids := _pending_end_turn_discard_uids.duplicate()
-	print("[OG client end_turn] submit_start pending_discards=%s hand=%d networked=%s authoritative=%s" % [
-		str(pending_discard_uids),
-		game_manager.current_player.hand_zone.get_card_count() if game_manager != null and game_manager.current_player != null else -1,
-		str(_is_networked_client),
-		str(uses_authoritative_match_flow()),
-	])
+	if DEBUG_END_TURN_LOGS:
+		print("[OG client end_turn] submit_start pending_discards=%s hand=%d networked=%s authoritative=%s" % [
+			str(pending_discard_uids),
+			game_manager.current_player.hand_zone.get_card_count() if game_manager != null and game_manager.current_player != null else -1,
+			str(_is_networked_client),
+			str(uses_authoritative_match_flow()),
+		])
 	_dismiss_transient_prompts(false)
 	_reset_transient_priority_auto_mode_for_turn_end()
 	var et_cmd := {type = "end_turn"}
@@ -30686,9 +30882,11 @@ func _do_end_turn() -> void:
 	if (_is_networked_client or uses_authoritative_match_flow()) and game_input != null:
 		if not game_input.submit_action(et_cmd):
 			_pending_end_turn_discard_uids = pending_discard_uids.duplicate()
-			print("[OG client end_turn] submit_failed restored_discards=%s" % str(_pending_end_turn_discard_uids))
+			if DEBUG_END_TURN_LOGS:
+				print("[OG client end_turn] submit_failed restored_discards=%s" % str(_pending_end_turn_discard_uids))
 		else:
-			print("[OG client end_turn] submit_sent command=%s" % str(et_cmd))
+			if DEBUG_END_TURN_LOGS:
+				print("[OG client end_turn] submit_sent command=%s" % str(et_cmd))
 		update_ui()
 		return
 	var end_turn_priority_owner := game_manager.current_player

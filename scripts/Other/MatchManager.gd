@@ -8,6 +8,8 @@ class_name MatchManager
 const TiamatScript = preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
 const MatchCommandRegistryScript = preload("res://scripts/Other/MatchCommandRegistry.gd")
 const AUTHORITATIVE_FLOW_LOG_PREFIX := "[OG server flow]"
+const DEBUG_AUTHORITATIVE_FLOW_LOGS := false
+const DEBUG_HUNTING_TACTICS_LOGS := false
 const AUTHORITATIVE_FLOW_CHECK_DELAY_SECONDS := 1.0
 const AUTHORITATIVE_SETTLED_REFRESH_DELAY_SECONDS := 0.05
 const PRIORITY_STOP_KEYS := ["start", "main", "combat", "end"]
@@ -1533,7 +1535,7 @@ func _is_state_refresh_ui_interaction(interaction_type: String, interaction_data
 		or bool(interaction_data.get("_queue_priority_after_choice", false))
 
 func _log_authoritative_flow_state(context: String) -> void:
-	if game_manager == null or not _uses_authoritative_headless_priority_flow():
+	if not DEBUG_AUTHORITATIVE_FLOW_LOGS or game_manager == null or not _uses_authoritative_headless_priority_flow():
 		return
 	print("%s %s turn=%d current=%s priority=%s passes=%d stack=%d resolving=%d pending_resolution=%s pending_ui=%d" % [
 		AUTHORITATIVE_FLOW_LOG_PREFIX,
@@ -1579,7 +1581,7 @@ func _log_authoritative_flow_state(context: String) -> void:
 	])
 
 func _log_authoritative_flow_checkpoint(context: String, action: CardAction = null, target = null) -> void:
-	if game_manager == null or not _uses_authoritative_headless_priority_flow():
+	if not DEBUG_AUTHORITATIVE_FLOW_LOGS or game_manager == null or not _uses_authoritative_headless_priority_flow():
 		return
 	print("%s checkpoint=%s action=%s target=%s stack=%d resolving=%d pending_resolution=%s pending_humbaba=%s priority=%s pending_ui=%d" % [
 		AUTHORITATIVE_FLOW_LOG_PREFIX,
@@ -1915,6 +1917,9 @@ func _resolve_attack(action: CardAction) -> void:
 		# Otherwise, resolve headlessly so the server can handle networked combat.
 		var retreat_prompts := _get_retreat_candidates(action.attacker, actual_target, action.source_player)
 		if not retreat_prompts.is_empty():
+			_reveal_combatants_before_retreat_prompt(action, actual_target)
+			retreat_prompts = _get_retreat_candidates(action.attacker, actual_target, action.source_player)
+		if not retreat_prompts.is_empty():
 			pending_retreat_action = action
 			pending_retreat_target = actual_target
 			pending_retreat_prompt_uids.clear()
@@ -1983,6 +1988,20 @@ func _finish_creature_combat(action: CardAction, target: Card) -> void:
 	if _begin_combat_reveal_linger(action, target):
 		return
 	_resolve_creature_combat_now(action, target)
+
+func _reveal_combatants_before_retreat_prompt(action: CardAction, target: Card) -> void:
+	if action == null or target == null:
+		return
+	var reveal_cards: Array[Card] = []
+	for combatant in [action.attacker, action.united_front_partner, target]:
+		if combatant != null and combatant.is_stealth and combatant not in reveal_cards:
+			reveal_cards.append(combatant)
+	if reveal_cards.is_empty():
+		return
+	for combatant in reveal_cards:
+		combatant.reveal_from_stealth(game_manager)
+	last_resolution_text = "%s revealed before combat." % _format_card_name_list(reveal_cards)
+	_request_ui_refresh()
 
 func _begin_combat_reveal_linger(action: CardAction, target: Card) -> bool:
 	if action == null or target == null or pending_combat_reveal_linger_action != null:
@@ -2677,18 +2696,26 @@ func _get_action_target_label(target, viewer: Player = null) -> String:
 		return (target as Player).player_name + "'s followers"
 	return "target"
 
+func _get_action_ability_log_label(source_card: Card, trigger_hint: String = "activated") -> String:
+	if source_card == null:
+		return ""
+	var ability_name := source_card.get_named_ability_name(trigger_hint).strip_edges()
+	if ability_name.to_lower() == "unlock":
+		return ""
+	return ability_name
+
 func _build_authoritative_resolution_text(action_type: int, source_card: Card, target = null, viewer: Player = null) -> String:
 	var source_name := _get_action_label(source_card, viewer)
 	if target != null:
 		if action_type == CardAction.Type.ABILITY and source_card != null:
-			var target_ability_name := source_card.get_named_ability_name("activated")
+			var target_ability_name := _get_action_ability_log_label(source_card)
 			if target_ability_name != "":
 				return "%s uses %s targeting %s." % [source_name, target_ability_name, _get_action_target_label(target, viewer)]
 		return "%s is targeting %s." % [source_name, _get_action_target_label(target, viewer)]
 	if action_type == CardAction.Type.SPELL:
 		return "Cast " + source_name + "!"
 	if action_type == CardAction.Type.ABILITY and source_card != null:
-		var ability_name := source_card.get_named_ability_name("activated")
+		var ability_name := _get_action_ability_log_label(source_card)
 		if ability_name != "":
 			return "%s uses %s." % [source_name, ability_name]
 	return source_name + " activated!"
@@ -3441,21 +3468,23 @@ func _request_ui_refresh() -> void:
 func _resolve_authoritative_headless_attack() -> void:
 	var attack_action := _build_pending_attack_action()
 	if attack_action == null:
-		print("[HT-DEBUG] _resolve: build returned null, selected=%s target=%s" % [
-			selected_attacker.card_name if selected_attacker != null else "null",
-			str(pending_attack_target),
-		])
+		if DEBUG_HUNTING_TACTICS_LOGS:
+			print("[HT-DEBUG] _resolve: build returned null, selected=%s target=%s" % [
+				selected_attacker.card_name if selected_attacker != null else "null",
+				str(pending_attack_target),
+			])
 		move_failed.emit("The pending attack could not be resolved.")
 		_clear_pending_attack_state()
 		return
 	_clear_pending_attack_state()
 	game_manager.push_to_stack(attack_action)
 	_request_ui_refresh()
-	print("[HT-DEBUG] _resolve: pushed to stack, advancing priority (stack_size=%d pending_ui=%d queued_ui=%d)" % [
-		game_manager.action_stack.size(),
-		_pending_ui_interactions.size(),
-		_queued_ui_interactions.size(),
-	])
+	if DEBUG_HUNTING_TACTICS_LOGS:
+		print("[HT-DEBUG] _resolve: pushed to stack, advancing priority (stack_size=%d pending_ui=%d queued_ui=%d)" % [
+			game_manager.action_stack.size(),
+			_pending_ui_interactions.size(),
+			_queued_ui_interactions.size(),
+		])
 	_advance_authoritative_priority()
 
 func _get_hunting_tactics_powers_for_attack(attacker: Card) -> Array[HuntingTactics]:
@@ -3490,26 +3519,29 @@ func _offer_hunting_tactics_attack_declaration_prompt() -> bool:
 	var power := _get_hunting_tactics_prompt_power_for_attack(selected_attacker)
 	if power == null:
 		_mark_hunting_tactics_attack_declaration_checked(selected_attacker)
-		print("[HT-DEBUG] _offer: no prompt power found for %s" % (selected_attacker.card_name if selected_attacker != null else "null"))
+		if DEBUG_HUNTING_TACTICS_LOGS:
+			print("[HT-DEBUG] _offer: no prompt power found for %s" % (selected_attacker.card_name if selected_attacker != null else "null"))
 		return false
 	_pending_hunting_tactics_attack_declaration = true
 	_pending_hunting_tactics_attack_attacker = selected_attacker
 	_pending_hunting_tactics_attack_target = pending_attack_target
-	print("[HT-DEBUG] _offer: offering prompt power_owner=%s attacker=%s supporters=%d" % [
-		power.card_owner.player_name if power.card_owner != null else "null",
-		selected_attacker.card_name,
-		power.get_support_choices(selected_attacker).size(),
-	])
+	if DEBUG_HUNTING_TACTICS_LOGS:
+		print("[HT-DEBUG] _offer: offering prompt power_owner=%s attacker=%s supporters=%d" % [
+			power.card_owner.player_name if power.card_owner != null else "null",
+			selected_attacker.card_name,
+			power.get_support_choices(selected_attacker).size(),
+		])
 	_emit_ui_interaction_for_player(power.card_owner, "hunting_tactics", power.build_attack_support_prompt_data(selected_attacker))
 	return true
 
 func _continue_pending_attack_after_hunting_tactics_choice(attacker: Card, fallback_attack_target = null) -> void:
-	print("[HT-DEBUG] _continue_pending_attack_after_hunting_tactics_choice flag=%s attacker=%s selected=%s target=%s" % [
-		str(_pending_hunting_tactics_attack_declaration),
-		attacker.card_name if attacker != null else "null",
-		selected_attacker.card_name if selected_attacker != null else "null",
-		str(pending_attack_target),
-	])
+	if DEBUG_HUNTING_TACTICS_LOGS:
+		print("[HT-DEBUG] _continue_pending_attack_after_hunting_tactics_choice flag=%s attacker=%s selected=%s target=%s" % [
+			str(_pending_hunting_tactics_attack_declaration),
+			attacker.card_name if attacker != null else "null",
+			selected_attacker.card_name if selected_attacker != null else "null",
+			str(pending_attack_target),
+		])
 	if not _pending_hunting_tactics_attack_declaration \
 			and _pending_hunting_tactics_attack_attacker == null \
 			and _pending_hunting_tactics_attack_target == null:
@@ -3532,21 +3564,23 @@ func _continue_pending_attack_after_hunting_tactics_choice(attacker: Card, fallb
 
 func _start_authoritative_headless_attack() -> void:
 	if selected_attacker == null or pending_attack_target == null:
-		print("[HT-DEBUG] _start_authoritative_headless_attack: missing attacker/target attacker=%s target=%s" % [
-			selected_attacker.card_name if selected_attacker != null else "null",
-			str(pending_attack_target),
-		])
+		if DEBUG_HUNTING_TACTICS_LOGS:
+			print("[HT-DEBUG] _start_authoritative_headless_attack: missing attacker/target attacker=%s target=%s" % [
+				selected_attacker.card_name if selected_attacker != null else "null",
+				str(pending_attack_target),
+			])
 		move_failed.emit("The pending attack is missing an attacker or target.")
 		_clear_pending_attack_state()
 		return
 	selected_interceptor = null
 	var possible_interceptors := _get_possible_interceptors(selected_attacker, pending_attack_target)
-	print("[HT-DEBUG] _start_authoritative_headless_attack: attacker=%s interceptors=%d pending_ui=%d queued_ui=%d" % [
-		selected_attacker.card_name,
-		possible_interceptors.size(),
-		_pending_ui_interactions.size(),
-		_queued_ui_interactions.size(),
-	])
+	if DEBUG_HUNTING_TACTICS_LOGS:
+		print("[HT-DEBUG] _start_authoritative_headless_attack: attacker=%s interceptors=%d pending_ui=%d queued_ui=%d" % [
+			selected_attacker.card_name,
+			possible_interceptors.size(),
+			_pending_ui_interactions.size(),
+			_queued_ui_interactions.size(),
+		])
 	if possible_interceptors.is_empty():
 		_resolve_authoritative_headless_attack()
 		return
@@ -4029,11 +4063,14 @@ func _validate_sender_authority(command: Dictionary, sender_info: Dictionary) ->
 	var sender_player := _resolve_sender_player(sender_info)
 	if sender_player == null:
 		return "Unauthorized command: unknown player."
+	var command_type := str(command.get("type", "")).strip_edges()
 	var required_player := _get_required_player_for_command(command)
 	if required_player == null:
+		if MatchCommandRegistryScript.is_known_command_type(command_type):
+			return "Unauthorized command: could not resolve the command owner."
 		return ""
 	if sender_player != required_player:
-		if str(command.get("type", "")) == "combat_retreat_decision":
+		if command_type == "combat_retreat_decision":
 			return "Waiting for %s to decide Tactical Retreat." % required_player.player_name
 		return "Unauthorized command: that action belongs to %s." % required_player.player_name
 	return ""
@@ -5792,13 +5829,14 @@ func _process_command_impl(command: Dictionary) -> bool:
 					or attacker == _pending_hunting_tactics_attack_attacker
 				) \
 				and attack_target_before_choice != null
-			print("[HT-DEBUG] choice: flag=%s attacker_matches=%s selected=%s target=%s chosen=%d" % [
-				str(_pending_hunting_tactics_attack_declaration),
-				str(attacker == selected_attacker),
-				selected_attacker.card_name if selected_attacker != null else "null",
-				str(pending_attack_target),
-				chosen_cards.size(),
-			])
+			if DEBUG_HUNTING_TACTICS_LOGS:
+				print("[HT-DEBUG] choice: flag=%s attacker_matches=%s selected=%s target=%s chosen=%d" % [
+					str(_pending_hunting_tactics_attack_declaration),
+					str(attacker == selected_attacker),
+					selected_attacker.card_name if selected_attacker != null else "null",
+					str(pending_attack_target),
+					chosen_cards.size(),
+				])
 			game_manager.note_player_feedback(power.resolve_combat_support_choice(game_manager, attacker, chosen_cards))
 			move_validated.emit(command)
 			if continue_pending_attack:
@@ -5810,7 +5848,8 @@ func _process_command_impl(command: Dictionary) -> bool:
 				var consumed := _consume_active_command_prompt_for_completion("hunting_tactics_choice")
 				if not consumed:
 					consumed = _consume_matching_pending_ui_interaction_for_command(command)
-				print("[HT-DEBUG] choice: consumed_prompt=%s pending_ui_after=%d" % [str(consumed), _pending_ui_interactions.size()])
+				if DEBUG_HUNTING_TACTICS_LOGS:
+					print("[HT-DEBUG] choice: consumed_prompt=%s pending_ui_after=%d" % [str(consumed), _pending_ui_interactions.size()])
 				_continue_pending_attack_after_hunting_tactics_choice(attacker, attack_target_before_choice)
 			return true
 		"gugalanna_celestial_charge_choice":

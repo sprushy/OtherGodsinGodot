@@ -1,7 +1,7 @@
 extends SceneTree
 
 func _init() -> void:
-	var store_script = load("res://scripts/client/LocalProfileStore.gd")
+	var store_script = load("res://scripts/core/LocalProfileStore.gd")
 	if store_script == null:
 		push_error("local_resume_state_probe: failed to load LocalProfileStore.gd")
 		quit(1)

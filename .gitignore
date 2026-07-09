@@ -4,6 +4,8 @@
 .godot_portable/
 *.tmp
 scripts/tmp/
+tmp/
+nul
 .release/
 server_upload/
 addons/macos_sparkle/bin/

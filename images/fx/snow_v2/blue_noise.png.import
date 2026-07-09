@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://cuxqypna5l1wv"
-path="res://.godot/imported/warding_stone_one_turn_expired.png-e3c7d6c43b72bdd61193bbff561f0492.ctex"
+uid="uid://bn4ohyiu085s0"
+path="res://.godot/imported/blue_noise.png-d5cc6aa8a8fa493962bd491df8a3a31f.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://images/card_art/structures/warding_stone_one_turn_expired.png"
-dest_files=["res://.godot/imported/warding_stone_one_turn_expired.png-e3c7d6c43b72bdd61193bbff561f0492.ctex"]
+source_file="res://images/fx/snow_v2/blue_noise.png"
+dest_files=["res://.godot/imported/blue_noise.png-d5cc6aa8a8fa493962bd491df8a3a31f.ctex"]
 
 [params]
 

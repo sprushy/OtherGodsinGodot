@@ -23,6 +23,8 @@ const DEDICATED_MATCH_ASSIGNMENT_TIMEOUT_SECONDS := 90.0
 const BOT_SESSION_PREFIX := "BOT_"
 const SERVER_BOT_AUTH_MODE := "bot"
 const SERVER_BOT_TYPE_FUZZ := "practice_fuzz"
+const ALLOW_INSECURE_ACCOUNT_AUTH_ENV := "OTHERGODS_ALLOW_INSECURE_ACCOUNT_AUTH"
+const ALLOW_INSECURE_ACCOUNT_AUTH_SETTING := "application/config/allow_insecure_account_auth"
 
 signal local_room_snapshot_updated(snapshot: Dictionary)
 signal room_list_updated(rooms: Array)
@@ -41,6 +43,7 @@ var trace_network: bool = false
 var trace_file_path: String = ""
 var multiplayer_mount_path: NodePath = NodePath("")
 var use_default_multiplayer: bool = false
+var allow_insecure_account_auth: bool = false
 
 var sessions_by_id: Dictionary = {}
 var session_id_by_peer: Dictionary = {}
@@ -61,6 +64,7 @@ var _seek_timeout_check_elapsed: float = 0.0
 var _server_bot_seed_counter: int = 0
 
 func _ready() -> void:
+	allow_insecure_account_auth = _runtime_allows_insecure_account_auth()
 	_ensure_profile_store()
 	_ensure_account_store()
 	_ensure_deck_store()
@@ -85,6 +89,7 @@ func _process(delta: float) -> void:
 func start_server(p_advertised_host: String = "127.0.0.1", port: int = LobbyProtocolScript.PORT, p_match_port: int = LobbyProtocolScript.MATCH_PORT) -> Error:
 	if is_listening:
 		return OK
+	allow_insecure_account_auth = _runtime_allows_insecure_account_auth()
 
 	advertised_host = p_advertised_host.strip_edges()
 	if advertised_host.is_empty():
@@ -194,6 +199,10 @@ func _handle_request(peer_id: int, message: Dictionary) -> void:
 			_handle_login_account(peer_id, payload)
 		LobbyProtocolScript.REGISTER_ACCOUNT:
 			_handle_register_account(peer_id, payload)
+		LobbyProtocolScript.CLAIM_LEGACY_ACCOUNT:
+			_handle_claim_legacy_account(peer_id, payload)
+		LobbyProtocolScript.UPDATE_ACCOUNT_SETTINGS:
+			_handle_update_account_settings(peer_id, payload)
 		LobbyProtocolScript.CREATE_ROOM:
 			var session: Dictionary = _get_session_for_peer(peer_id)
 			if session.is_empty():
@@ -288,72 +297,204 @@ func _handle_login_guest(peer_id: int, payload: Dictionary) -> void:
 		str(profile.get("profile_id", requested_profile_id)),
 		"",
 		"",
+		"",
 		LobbyProtocolScript.LOGIN_GUEST
 	)
 
 func _handle_register_account(peer_id: int, payload: Dictionary) -> void:
+	if not _can_accept_password_account_auth(peer_id):
+		_send_error_to_peer(peer_id, _insecure_account_auth_message())
+		return
 	_ensure_account_store()
 	_ensure_profile_store()
 	if account_store == null or profile_store == null:
 		_send_error_to_peer(peer_id, "Account storage is unavailable.")
 		return
+	var requested_email := str(payload.get("email", payload.get("username", "")))
 	var requested_username := str(payload.get("username", ""))
 	var requested_password := str(payload.get("password", ""))
-	var account_result: Dictionary = account_store.register_account(requested_username, requested_password)
+	var accepts_game_updates := bool(payload.get("accepts_game_updates", false))
+	var account_result: Dictionary = account_store.register_account(
+		requested_email,
+		requested_password,
+		requested_username,
+		accepts_game_updates
+	)
 	if not bool(account_result.get("success", false)):
 		_send_error_to_peer(peer_id, str(account_result.get("message", "Could not create account.")))
 		return
 	var account: Dictionary = account_result.get("account", {})
+	var account_username := str(account.get("username", requested_username)).strip_edges()
+	if account_username.is_empty():
+		account_username = str(account.get("email", requested_email)).strip_edges()
 	var profile: Dictionary = profile_store.login_profile(
 		"",
-		str(account.get("username", requested_username)),
+		account_username,
 		str(account.get("account_id", "")),
-		str(account.get("username", requested_username))
+		account_username
 	)
 	_complete_login_for_peer(
 		peer_id,
-		str(profile.get("display_name", requested_username)),
+		str(profile.get("display_name", account_username)),
 		str(profile.get("profile_id", "")),
 		str(account.get("account_id", "")),
-		str(account.get("username", requested_username)),
-		LobbyProtocolScript.REGISTER_ACCOUNT
+		str(account.get("email", requested_email)),
+		account_username,
+		LobbyProtocolScript.REGISTER_ACCOUNT,
+		bool(account.get("accepts_game_updates", accepts_game_updates))
 	)
 
-func _handle_login_account(peer_id: int, payload: Dictionary) -> void:
+func _handle_claim_legacy_account(peer_id: int, payload: Dictionary) -> void:
+	if not _can_accept_password_account_auth(peer_id):
+		_send_error_to_peer(peer_id, _insecure_account_auth_message())
+		return
 	_ensure_account_store()
 	_ensure_profile_store()
 	if account_store == null or profile_store == null:
 		_send_error_to_peer(peer_id, "Account storage is unavailable.")
 		return
 	var requested_username := str(payload.get("username", ""))
+	var requested_email := str(payload.get("email", ""))
 	var requested_password := str(payload.get("password", ""))
-	var account_result: Dictionary = account_store.login_account(requested_username, requested_password)
+	var accepts_game_updates := bool(payload.get("accepts_game_updates", false))
+	var account_result: Dictionary = account_store.claim_legacy_account(
+		requested_username,
+		requested_password,
+		requested_email,
+		accepts_game_updates
+	)
+	if not bool(account_result.get("success", false)):
+		_send_error_to_peer(peer_id, str(account_result.get("message", "Could not update that account.")))
+		return
+	var account: Dictionary = account_result.get("account", {})
+	var account_username := str(account.get("username", requested_username)).strip_edges()
+	var profile: Dictionary = profile_store.login_profile(
+		"",
+		account_username,
+		str(account.get("account_id", "")),
+		account_username
+	)
+	_complete_login_for_peer(
+		peer_id,
+		str(profile.get("display_name", account_username)),
+		str(profile.get("profile_id", "")),
+		str(account.get("account_id", "")),
+		str(account.get("email", requested_email)),
+		account_username,
+		LobbyProtocolScript.CLAIM_LEGACY_ACCOUNT,
+		bool(account.get("accepts_game_updates", accepts_game_updates))
+	)
+
+func _handle_login_account(peer_id: int, payload: Dictionary) -> void:
+	if not _can_accept_password_account_auth(peer_id):
+		_send_error_to_peer(peer_id, _insecure_account_auth_message())
+		return
+	_ensure_account_store()
+	_ensure_profile_store()
+	if account_store == null or profile_store == null:
+		_send_error_to_peer(peer_id, "Account storage is unavailable.")
+		return
+	var requested_email := str(payload.get("email", payload.get("username", "")))
+	var requested_password := str(payload.get("password", ""))
+	var account_result: Dictionary = account_store.login_account(requested_email, requested_password)
 	if not bool(account_result.get("success", false)):
 		_send_error_to_peer(peer_id, str(account_result.get("message", "Could not log in.")))
 		return
 	var account: Dictionary = account_result.get("account", {})
+	var account_username := str(account.get("username", "")).strip_edges()
+	if account_username.is_empty():
+		account_username = str(account.get("email", requested_email)).strip_edges()
 	var profile: Dictionary = profile_store.login_profile(
 		"",
-		str(account.get("username", requested_username)),
+		account_username,
 		str(account.get("account_id", "")),
-		str(account.get("username", requested_username))
+		account_username
 	)
 	_complete_login_for_peer(
 		peer_id,
-		str(profile.get("display_name", requested_username)),
+		str(profile.get("display_name", account_username)),
 		str(profile.get("profile_id", "")),
 		str(account.get("account_id", "")),
-		str(account.get("username", requested_username)),
-		LobbyProtocolScript.LOGIN_ACCOUNT
+		str(account.get("email", requested_email)),
+		account_username,
+		LobbyProtocolScript.LOGIN_ACCOUNT,
+		bool(account.get("accepts_game_updates", false))
 	)
+
+func _handle_update_account_settings(peer_id: int, payload: Dictionary) -> void:
+	var session: Dictionary = _get_session_for_peer(peer_id)
+	if session.is_empty():
+		_send_error_to_peer(peer_id, "Join the lobby before changing account settings.")
+		return
+	var account_id := str(session.get("account_id", "")).strip_edges()
+	if account_id.is_empty():
+		_send_error_to_peer(peer_id, "Log into an account before changing account settings.")
+		return
+	var sends_password_material := not str(payload.get("current_password", "")).is_empty() \
+		or not str(payload.get("new_password", "")).is_empty() \
+		or not str(payload.get("new_email", "")).strip_edges().is_empty()
+	if sends_password_material and not _can_accept_password_account_auth(peer_id):
+		_send_error_to_peer(peer_id, _insecure_account_auth_message())
+		return
+	_ensure_account_store()
+	if account_store == null:
+		_send_error_to_peer(peer_id, "Account storage is unavailable.")
+		return
+	var update_result: Dictionary = account_store.update_account_settings(
+		account_id,
+		str(payload.get("current_password", "")),
+		str(payload.get("new_email", "")),
+		str(payload.get("new_password", "")),
+		bool(payload.get("accepts_game_updates", false)),
+		payload.has("accepts_game_updates")
+	)
+	if not bool(update_result.get("success", false)):
+		_send_error_to_peer(peer_id, str(update_result.get("message", "Could not update account settings.")))
+		return
+	var account: Dictionary = update_result.get("account", {})
+	session["email"] = str(account.get("email", session.get("email", "")))
+	session["username"] = str(account.get("username", session.get("username", "")))
+	session["accepts_game_updates"] = bool(account.get("accepts_game_updates", false))
+	sessions_by_id[str(session.get("session_id", ""))] = session
+	_send_to_peer(peer_id, LobbyProtocolScript.ACCOUNT_SETTINGS_UPDATED, {
+		"account": account,
+	})
+
+func _can_accept_password_account_auth(peer_id: int) -> bool:
+	if peer_id == 1:
+		return true
+	return allow_insecure_account_auth
+
+func _runtime_allows_insecure_account_auth() -> bool:
+	if allow_insecure_account_auth:
+		return true
+	if OS.is_debug_build() or Engine.is_editor_hint():
+		return true
+	if _truthy_string(OS.get_environment(ALLOW_INSECURE_ACCOUNT_AUTH_ENV)):
+		return true
+	return bool(ProjectSettings.get_setting(ALLOW_INSECURE_ACCOUNT_AUTH_SETTING, false))
+
+func _truthy_string(value: String) -> bool:
+	match value.strip_edges().to_lower():
+		"1", "true", "yes", "on":
+			return true
+	return false
+
+func _insecure_account_auth_message() -> String:
+	return (
+		"Password account auth is disabled on this lobby because the ENet transport is not encrypted. "
+		+ "Enable %s only for trusted/private deployments."
+	) % ALLOW_INSECURE_ACCOUNT_AUTH_ENV
 
 func _complete_login_for_peer(
 	peer_id: int,
 	player_name: String,
 	profile_id: String,
 	account_id: String = "",
+	email: String = "",
 	username: String = "",
-	auth_mode: String = LobbyProtocolScript.LOGIN_ACCOUNT
+	auth_mode: String = LobbyProtocolScript.LOGIN_ACCOUNT,
+	accepts_game_updates: bool = false
 ) -> void:
 	var existing: Dictionary = _get_session_for_peer(peer_id)
 	if not existing.is_empty() and not _session_matches_login_identity(existing, profile_id, account_id):
@@ -367,15 +508,17 @@ func _complete_login_for_peer(
 	if existing.is_empty():
 		existing = _find_resumable_session(profile_id, account_id)
 		if existing.is_empty():
-			existing = _create_session(player_name, peer_id, false, profile_id, account_id, username, auth_mode)
+			existing = _create_session(player_name, peer_id, false, profile_id, account_id, email, username, auth_mode, accepts_game_updates)
 		else:
-			existing = _reclaim_session_for_peer(existing, peer_id, player_name, profile_id, account_id, username, auth_mode)
+			existing = _reclaim_session_for_peer(existing, peer_id, player_name, profile_id, account_id, email, username, auth_mode, accepts_game_updates)
 	else:
 		existing["player_name"] = player_name
 		existing["profile_id"] = profile_id
 		existing["account_id"] = account_id
+		existing["email"] = email
 		existing["username"] = username
 		existing["auth_mode"] = auth_mode
+		existing["accepts_game_updates"] = accepts_game_updates
 		sessions_by_id[str(existing.get("session_id", ""))] = existing
 	var session_id := str(existing.get("session_id", "")).strip_edges()
 	var room_snapshot: Dictionary = {}
@@ -390,8 +533,10 @@ func _complete_login_for_peer(
 		"player_name": str(existing.get("player_name", "Guest")),
 		"profile_id": str(existing.get("profile_id", "")),
 		"account_id": str(existing.get("account_id", "")),
+		"email": str(existing.get("email", "")),
 		"username": str(existing.get("username", "")),
 		"auth_mode": str(existing.get("auth_mode", LobbyProtocolScript.LOGIN_ACCOUNT)),
+		"accepts_game_updates": bool(existing.get("accepts_game_updates", false)),
 		"allow_friend_observers_to_see_cards": _get_allow_friend_observers_to_see_cards(existing),
 		"server_version": _get_server_version(),
 		"room": room_snapshot,
@@ -452,8 +597,10 @@ func _handle_reconnect_request(peer_id: int, payload: Dictionary) -> void:
 		"player_name": str(session.get("player_name", "Guest")),
 		"profile_id": str(session.get("profile_id", "")),
 		"account_id": str(session.get("account_id", "")),
+		"email": str(session.get("email", "")),
 		"username": str(session.get("username", "")),
 		"auth_mode": str(session.get("auth_mode", LobbyProtocolScript.LOGIN_ACCOUNT)),
+		"accepts_game_updates": bool(session.get("accepts_game_updates", false)),
 		"allow_friend_observers_to_see_cards": _get_allow_friend_observers_to_see_cards(session),
 		"server_version": _get_server_version(),
 		"room": room_snapshot,
@@ -725,8 +872,10 @@ func _create_session(
 	is_local: bool,
 	profile_id: String = "",
 	account_id: String = "",
+	email: String = "",
 	username: String = "",
-	auth_mode: String = LobbyProtocolScript.LOGIN_ACCOUNT
+	auth_mode: String = LobbyProtocolScript.LOGIN_ACCOUNT,
+	accepts_game_updates: bool = false
 ) -> Dictionary:
 	var clean_name: String = player_name.strip_edges()
 	if clean_name.is_empty():
@@ -741,10 +890,12 @@ func _create_session(
 		"session_id": session_id,
 		"profile_id": profile_id.strip_edges(),
 		"account_id": account_id.strip_edges(),
+		"email": email.strip_edges(),
 		"reconnect_token": reconnect_token,
 		"player_name": clean_name,
 		"username": username.strip_edges(),
 		"auth_mode": auth_mode,
+		"accepts_game_updates": accepts_game_updates,
 		"peer_id": peer_id,
 		"connected": true,
 		"room_disconnected_since_unix": 0,
@@ -837,8 +988,10 @@ func _reclaim_session_for_peer(
 	player_name: String,
 	profile_id: String,
 	account_id: String,
+	email: String,
 	username: String,
-	auth_mode: String
+	auth_mode: String,
+	accepts_game_updates: bool = false
 ) -> Dictionary:
 	if session.is_empty():
 		return {}
@@ -851,8 +1004,10 @@ func _reclaim_session_for_peer(
 	session["player_name"] = player_name
 	session["profile_id"] = profile_id
 	session["account_id"] = account_id
+	session["email"] = email
 	session["username"] = username
 	session["auth_mode"] = auth_mode
+	session["accepts_game_updates"] = accepts_game_updates
 	session["peer_id"] = peer_id
 	session["connected"] = true
 	session["room_disconnected_since_unix"] = 0
@@ -937,6 +1092,7 @@ func _create_server_bot_session() -> String:
 		"session_id": session_id,
 		"profile_id": "",
 		"account_id": "",
+		"email": "",
 		"reconnect_token": "",
 		"player_name": bot_name,
 		"username": bot_name,

@@ -7,6 +7,11 @@ const HIDDEN_MODE_HAND := 1
 const HIDDEN_MODE_BOARD := 2
 const SPECTATOR_VIEWER_INDEX := -2
 
+static var _card_script_cache: Dictionary = {}
+
+static func clear_deserialization_cache() -> void:
+	_card_script_cache.clear()
+
 # Serializes and deserializes full game state for network transmission.
 # Used by GameEventBroadcaster (server side) and CombatMockGame (client side).
 
@@ -505,12 +510,13 @@ static func apply_to_manager(data: Dictionary, gm: GameManager) -> void:
 		for j in mini(res_data.size(), player.reserve_zones.size()):
 			_apply_zone_cards(player.reserve_zones[j], res_data[j])
 
-	_restore_card_uid_references(gm)
-	_restore_attack_restriction_sources(gm)
-	_restore_temporary_summon_cost_modifiers(data.get("temporary_summon_cost_modifiers", []), gm)
-	_restore_prepared_cards(data.get("prepared_hexes", []), gm.prepared_hexes, gm)
-	_restore_prepared_cards(data.get("prepared_charms", []), gm.prepared_charms, gm)
-	_restore_combat_destroy_events(data.get("combat_destroy_events_this_turn", []), gm)
+	var uid_map := _build_card_uid_map(gm)
+	_restore_card_uid_references(gm, uid_map)
+	_restore_attack_restriction_sources(gm, uid_map)
+	_restore_temporary_summon_cost_modifiers(data.get("temporary_summon_cost_modifiers", []), gm, uid_map)
+	_restore_prepared_cards(data.get("prepared_hexes", []), gm.prepared_hexes, gm, uid_map)
+	_restore_prepared_cards(data.get("prepared_charms", []), gm.prepared_charms, gm, uid_map)
+	_restore_combat_destroy_events(data.get("combat_destroy_events_this_turn", []), gm, uid_map)
 	for action_data in data.get("action_stack", []):
 		if not (action_data is Dictionary):
 			continue
@@ -543,8 +549,7 @@ static func _link_equipment_in_zone(zone: Zone) -> void:
 				if card not in creature.equipment:
 					creature.equipment.append(card)
 
-static func _restore_card_uid_references(gm: GameManager) -> void:
-	var uid_map := _build_card_uid_map(gm)
+static func _restore_card_uid_references(gm: GameManager, uid_map: Dictionary) -> void:
 	for card_value in uid_map.values():
 		var card := card_value as Card
 		if card == null:
@@ -566,8 +571,7 @@ static func _restore_card_uid_references(gm: GameManager) -> void:
 					creature.equipment.append(card)
 		card._sync_status_flags()
 
-static func _restore_attack_restriction_sources(gm: GameManager) -> void:
-	var uid_map := _build_card_uid_map(gm)
+static func _restore_attack_restriction_sources(gm: GameManager, uid_map: Dictionary) -> void:
 	for player in gm.attack_restrictions:
 		var restriction: Dictionary = gm.attack_restrictions[player]
 		var source_uid := str(restriction.get("source_uid", "")).strip_edges()
@@ -602,9 +606,8 @@ static func _serialize_temporary_summon_cost_modifiers(gm: GameManager) -> Array
 		})
 	return entries
 
-static func _restore_temporary_summon_cost_modifiers(entries: Array, gm: GameManager) -> void:
+static func _restore_temporary_summon_cost_modifiers(entries: Array, gm: GameManager, uid_map: Dictionary) -> void:
 	gm._temporary_summon_cost_modifiers.clear()
-	var uid_map := _build_card_uid_map(gm)
 	for raw_entry in entries:
 		if not (raw_entry is Dictionary):
 			continue
@@ -686,6 +689,19 @@ static func _get_player_card_zones(player: Player) -> Array:
 	zones.append_array(player.reserve_zones)
 	return zones
 
+static func _get_cached_card_script(script_path: String):
+	var normalized_path := script_path.strip_edges()
+	if normalized_path.is_empty():
+		return null
+	if _card_script_cache.has(normalized_path):
+		return _card_script_cache[normalized_path]
+	if not ResourceLoader.exists(normalized_path):
+		return null
+	var loaded_script = ResourceLoader.load(normalized_path, "GDScript", ResourceLoader.CACHE_MODE_REUSE)
+	if loaded_script != null:
+		_card_script_cache[normalized_path] = loaded_script
+	return loaded_script
+
 static func _deserialize_card(cdata: Dictionary) -> Card:
 	if cdata.get("hidden", false):
 		var placeholder := BaseCard.new()
@@ -703,12 +719,9 @@ static func _deserialize_card(cdata: Dictionary) -> Card:
 
 	var script_path: String = cdata.get("script_path", "")
 	var card: Card
-	if script_path != "" and ResourceLoader.exists(script_path):
-		var script = load(script_path)
-		if script != null:
-			card = script.new()
-		else:
-			card = BaseCard.new()
+	var script = _get_cached_card_script(script_path)
+	if script != null:
+		card = script.new()
 	else:
 		card = BaseCard.new()
 
@@ -777,27 +790,31 @@ static func deserialize_embedded_card(cdata: Dictionary) -> Card:
 		return null
 	return _deserialize_card(cdata)
 
-static func _restore_prepared_cards(entries: Array, target_map: Dictionary, gm: GameManager) -> void:
+static func _restore_prepared_cards(entries: Array, target_map: Dictionary, gm: GameManager, uid_map: Dictionary) -> void:
 	for entry in entries:
 		if not (entry is Dictionary):
 			continue
 		var uid := str((entry as Dictionary).get("uid", "")).strip_edges()
 		if uid.is_empty():
 			continue
-		var card := gm.get_card_by_uid(uid)
+		var card := uid_map.get(uid, null) as Card
 		if card == null:
 			continue
 		target_map[card] = int((entry as Dictionary).get("prepared_turn", gm.turn_number))
 
-static func _restore_combat_destroy_events(entries: Array, gm: GameManager) -> void:
+static func _restore_combat_destroy_events(entries: Array, gm: GameManager, uid_map: Dictionary) -> void:
 	for entry in entries:
 		if not (entry is Dictionary):
 			continue
 		var event_dict := entry as Dictionary
 		var killer_uid := str(event_dict.get("killer_uid", "")).strip_edges()
 		var victim_uid := str(event_dict.get("victim_uid", "")).strip_edges()
-		var killer := gm.get_card_by_uid(killer_uid) if not killer_uid.is_empty() else null
-		var victim := gm.get_card_by_uid(victim_uid) if not victim_uid.is_empty() else null
+		var killer: Card = null
+		if not killer_uid.is_empty():
+			killer = uid_map.get(killer_uid, null) as Card
+		var victim: Card = null
+		if not victim_uid.is_empty():
+			victim = uid_map.get(victim_uid, null) as Card
 		var killer_owner_index := int(event_dict.get("killer_owner_index", -1))
 		var victim_owner_index := int(event_dict.get("victim_owner_index", -1))
 		var killer_owner := gm.players[killer_owner_index] if killer_owner_index >= 0 and killer_owner_index < gm.players.size() else null

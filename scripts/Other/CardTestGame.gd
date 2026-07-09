@@ -62,6 +62,10 @@ func _add_test_hand_card(player: Player, card: Card) -> void:
 	card.card_owner = player
 	player.hand_zone.add_card(card)
 
+func _add_weather_visual_test_hand_cards(player: Player) -> void:
+	_add_test_hand_card(player, HeavySnow.new())
+	_add_test_hand_card(player, DivineLightning.new())
+
 func _add_test_deck_card(player: Player, card: Card) -> void:
 	card.card_owner = player
 	player.deck_zone.add_card(card)
@@ -241,6 +245,7 @@ func load_featured_card_test_scenario() -> void:
 	_place_test_hidden_creature(player1, player1.reserve_zones[3], Nagual.new())
 	_place_test_prepared_card(player1, player1.frontline_zones[0], OccultSingularity.new())
 	_place_test_prepared_card(player1, player1.reserve_zones[4], Absence.new())
+	_add_weather_visual_test_hand_cards(player1)
 
 	_place_test_hidden_creature(player2, player2.frontline_zones[1], Alu.new())
 	_place_test_hidden_creature(player2, player2.frontline_zones[2], MinotaurFootsoldier.new())
@@ -249,6 +254,7 @@ func load_featured_card_test_scenario() -> void:
 	_place_test_hidden_creature(player2, player2.reserve_zones[3], GududPriest.new())
 	_place_test_prepared_card(player2, player2.frontline_zones[0], Famine.new())
 	_place_test_prepared_card(player2, player2.reserve_zones[4], FoolishOptimism.new())
+	_add_weather_visual_test_hand_cards(player2)
 
 	# Keep draw/upkeep choices stable if the sandbox runs longer.
 	_add_test_deck_card(player1, BrownBear.new())
@@ -287,7 +293,8 @@ func load_featured_card_test_scenario() -> void:
 		"Stealth and Prepared Magic Visual Test. The board starts with stealth-mode creatures "
 		+ "and prepared spells in the outer slots. "
 		+ "Friendly stealth cards use visible hazed art; opposing stealth cards use hidden card backs. "
-		+ "Prepared spells use the sun-and-moon cover and brighten when moused over."
+		+ "Prepared spells use the sun-and-moon cover and brighten when moused over. "
+		+ "Both players have Heavy Snow and Divine Lightning in hand; play Heavy Snow to start the snow visuals, then destroy it with Divine Lightning to clear them."
 	)
 	update_ui()
 
@@ -675,6 +682,7 @@ func load_s_card_scenario() -> void:
 	_add_test_hand_card(player1, Storm.new())
 	_add_test_hand_card(player1, TabletOfLife.new())
 	_add_test_hand_card(player1, Tatzelwurm.new())
+	_add_weather_visual_test_hand_cards(player1)
 
 	# P1 graveyard/deck: Tablet of Life has multiple Ancient ability creatures to bring back immediately,
 	# and Tatzelwurm has multiple Dragons to search after a combat kill.
@@ -688,18 +696,18 @@ func load_s_card_scenario() -> void:
 	_add_test_deck_card(player1, Jiaolong.new())
 
 	# P2 board: Brown Bear is ready to attack into Smite, Pegasus is a live Storm target,
-	# Gudud Priest in lane 2 is a clean Tatzelwurm kill and also another activated-ability body
-	# for silence testing, and Heavy Snow is face-up so Storm can destroy an existing Weather charm on resolution.
+	# and Gudud Priest in lane 2 is a clean Tatzelwurm kill and also another activated-ability body
+	# for silence testing.
 	_place_test_board_card(player2, player2.frontline_zones[0], BrownBear.new(), Card.CreatureMode.AGGRESSIVE)
 	_place_test_board_card(player2, player2.frontline_zones[1], GududPriest.new(), Card.CreatureMode.DEFENSIVE)
 	_place_test_board_card(player2, player2.reserve_zones[0], Pegasus.new(), Card.CreatureMode.DEFENSIVE)
-	_place_test_board_permanent(player2, player2.reserve_zones[1], HeavySnow.new())
 
 	# P2 hand/deck: Earthquake is the clean Spell Demolition target, with a second spell and follow-up creatures
 	# available for longer S/T test lines after the first response window.
 	_add_test_hand_card(player2, Earthquake.new())
 	_add_test_hand_card(player2, FoolishOptimism.new())
 	_add_test_hand_card(player2, BrownBear.new())
+	_add_weather_visual_test_hand_cards(player2)
 	_add_test_deck_card(player2, Pegasus.new())
 	_add_test_deck_card(player2, BrownBear.new())
 	_add_test_deck_card(player2, Earthquake.new())
@@ -731,10 +739,10 @@ func load_s_card_scenario() -> void:
 		"S/T Scenario: Sharur through Tablet of Life alphabetically. Choose an upkeep option first.  |  "
 		+ "Tatzelwurm - A ready Tatzelwurm starts in your second frontline lane with enemy Gudu Priest directly across from it. Attack there first for a clean Dragon Heart trigger, then choose Lindwyrm, Lesser Mushussu, or Jiaolong from your deck. A second Tatzelwurm is also in hand for repeat tests.  |  "
 		+ "Power - Summoned Sap starts unlocked. Because Brown Bear is already on your field, Sulak is slowed by 1; switch Sulak's stance to confirm the aura makes it use up its full turn action.  |  "
-		+ "Hand - Sharur, Storm, and Tablet of Life are ready now. Play Sharur onto Sulak or any valid bearer, cast Storm to destroy the face-up Heavy Snow and silence Gudud Priest while stripping Pegasus of Aerial, and cast Tablet of Life to resurrect Alu or First Sage Adapa from your graveyard with negated abilities.  |  "
+		+ "Hand - Sharur, Storm, Tablet of Life, Heavy Snow, and Divine Lightning are ready now. Play Heavy Snow to start snow accumulation, destroy it with Divine Lightning or Storm to clear the snow visuals, play Sharur onto Sulak or any valid bearer, and cast Tablet of Life to resurrect Alu or First Sage Adapa from your graveyard with negated abilities.  |  "
 		+ "Prepared - Shroud of the Ancients, Smite, and Spell Demolition are already prepared in reserve. Pass to P2 so Brown Bear can attack into Smite, and let Earthquake or Foolish Optimism give you clean response windows for Spell Demolition or Shroud.  |  "
 		+ "Board - Your own Gudu Priest gives you an activated creature ability to test before and after Storm, while Sulak is your simple Ancient Demon body for Sharur and Summoned Sap testing.  |  "
-		+ "Opponent - Pegasus is the best Storm target, Heavy Snow is the face-up Weather charm Storm should destroy on resolve, enemy Gudud Priest is another silence target, and P2 has extra spell and creature follow-ups in hand and deck for longer test loops."
+		+ "Opponent - Pegasus is the best Storm target, enemy Gudud Priest is another silence target, and P2 has Heavy Snow, Divine Lightning, plus extra spell and creature follow-ups in hand and deck for longer test loops."
 	)
 	update_ui()
 

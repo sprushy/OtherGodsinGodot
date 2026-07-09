@@ -9,6 +9,8 @@ const CONNECT_ATTEMPT_TIMEOUT_SECONDS := 5.0
 const INITIAL_AUTH_RETRY_INTERVAL_SECONDS := 0.1
 const INITIAL_AUTH_MAX_ATTEMPTS := 30
 const AUTH_RESPONSE_TIMEOUT_SECONDS := 8.0
+const ALLOW_INSECURE_ACCOUNT_AUTH_ENV := "OTHERGODS_ALLOW_INSECURE_ACCOUNT_AUTH"
+const ALLOW_INSECURE_ACCOUNT_AUTH_SETTING := "application/config/allow_insecure_account_auth"
 
 signal connected_to_lobby()
 signal server_version_updated(version: String)
@@ -29,6 +31,7 @@ signal account_deck_saved(deck: Dictionary)
 signal account_deck_deleted(deck_id: String)
 signal profile_summary_received(summary: Dictionary)
 signal friends_state_received(state: Dictionary)
+signal account_settings_updated(account: Dictionary)
 signal connection_failed(message: String)
 signal disconnected_from_lobby()
 
@@ -37,8 +40,10 @@ var current_reconnect_token: String = ""
 var current_player_name: String = "Player"
 var current_profile_id: String = ""
 var current_account_id: String = ""
+var current_email: String = ""
 var current_username: String = ""
 var current_auth_mode: String = "login"
+var current_accepts_game_updates: bool = false
 var current_server_version: String = ""
 var current_allow_friend_observers_to_see_cards: bool = true
 var current_active_match_info: Dictionary = {}
@@ -51,6 +56,9 @@ var use_default_multiplayer: bool = false
 var network_manager: Node = null
 var _is_authenticated: bool = false
 
+var _pending_account_email: String = ""
+var _pending_account_username: String = ""
+var _pending_accepts_game_updates: bool = false
 var _pending_player_name: String = "Player"
 var _pending_session_id: String = ""
 var _pending_reconnect_token: String = ""
@@ -63,19 +71,22 @@ var _auth_response_serial: int = 0
 var _transport_connected_signal_received: bool = false
 var _ignore_network_events: bool = false
 var _reconnect_fallback_attempted: bool = false
+var _password_auth_allowed_for_current_connection: bool = true
 
 func _ready() -> void:
 	_ensure_network_manager()
 
 func connect_to_server(
 	address: String,
-	player_name: String = "Player",
+	account_email: String = "",
 	session_id: String = "",
 	reconnect_token: String = "",
 	port: int = LobbyProtocolScript.PORT,
 	profile_id: String = "",
 	auth_mode: String = "login",
-	password: String = ""
+	password: String = "",
+	account_username: String = "",
+	accepts_game_updates: bool = false
 ) -> Error:
 	_cancel_initial_auth_request()
 	_cancel_auth_response_timeout()
@@ -87,27 +98,36 @@ func connect_to_server(
 	current_reconnect_token = ""
 	current_profile_id = ""
 	current_account_id = ""
+	current_email = ""
 	current_username = ""
 	current_auth_mode = "login"
+	current_accepts_game_updates = false
 	current_allow_friend_observers_to_see_cards = true
 	current_room_snapshot = {}
 	current_active_match_info = {}
 	current_preferred_account_deck_id = ""
 	_set_current_server_version("")
-	_pending_player_name = player_name.strip_edges()
+	_pending_account_email = account_email.strip_edges()
+	_pending_account_username = account_username.strip_edges()
+	_pending_accepts_game_updates = accepts_game_updates
+	_pending_player_name = _pending_account_username
 	if _pending_player_name.is_empty():
-		_pending_player_name = "Player"
+		_pending_player_name = _display_name_from_email(_pending_account_email)
 	_pending_session_id = session_id.strip_edges()
 	_pending_reconnect_token = reconnect_token.strip_edges()
 	_pending_profile_id = profile_id.strip_edges()
 	_pending_auth_mode = auth_mode.strip_edges().to_lower()
-	if not _pending_auth_mode in ["login", "register"]:
+	if not _pending_auth_mode in ["login", "register", "claim_legacy_account"]:
 		_pending_auth_mode = "login"
 	_pending_password = password
 
 	var connect_address: String = address.strip_edges()
 	if connect_address.is_empty():
 		connect_address = "127.0.0.1"
+	_password_auth_allowed_for_current_connection = _can_send_password_auth_to_address(connect_address)
+	if _password_auth_would_be_sent_immediately() and not _password_auth_allowed_for_current_connection:
+		connection_failed.emit(_insecure_account_auth_message())
+		return ERR_UNAUTHORIZED
 
 	_ensure_network_manager()
 	if network_manager == null:
@@ -129,13 +149,18 @@ func disconnect_from_server() -> void:
 	current_reconnect_token = ""
 	current_profile_id = ""
 	current_account_id = ""
+	current_email = ""
 	current_username = ""
 	current_auth_mode = "login"
+	current_accepts_game_updates = false
 	current_allow_friend_observers_to_see_cards = true
 	current_room_snapshot = {}
 	current_active_match_info = {}
 	current_preferred_account_deck_id = ""
 	_pending_player_name = "Player"
+	_pending_account_email = ""
+	_pending_account_username = ""
+	_pending_accepts_game_updates = false
 	_pending_session_id = ""
 	_pending_reconnect_token = ""
 	_pending_profile_id = ""
@@ -290,6 +315,22 @@ func respond_deck_share(share_id: String, accept: bool) -> void:
 		"accept": accept,
 	})
 
+func update_account_settings(
+	current_password: String = "",
+	new_email: String = "",
+	new_password: String = "",
+	accepts_game_updates: bool = false
+) -> void:
+	if (not current_password.is_empty() or not new_password.is_empty()) and not _password_auth_allowed_for_current_connection:
+		connection_failed.emit(_insecure_account_auth_message())
+		return
+	_send_request(LobbyProtocolScript.UPDATE_ACCOUNT_SETTINGS, {
+		"current_password": current_password,
+		"new_email": new_email.strip_edges(),
+		"new_password": new_password,
+		"accepts_game_updates": accepts_game_updates,
+	})
+
 func lobby_event(message: Dictionary) -> void:
 	var message_type: String = LobbyProtocolScript.get_type(message)
 	var payload: Dictionary = LobbyProtocolScript.get_payload(message)
@@ -306,8 +347,10 @@ func lobby_event(message: Dictionary) -> void:
 			current_player_name = str(payload.get("player_name", _pending_player_name))
 			current_profile_id = str(payload.get("profile_id", _pending_profile_id))
 			current_account_id = str(payload.get("account_id", ""))
+			current_email = str(payload.get("email", _pending_account_email))
 			current_username = str(payload.get("username", current_player_name))
 			current_auth_mode = str(payload.get("auth_mode", _pending_auth_mode))
+			current_accepts_game_updates = bool(payload.get("accepts_game_updates", _pending_accepts_game_updates))
 			current_allow_friend_observers_to_see_cards = bool(payload.get("allow_friend_observers_to_see_cards", true))
 			var hello_room = payload.get("room", {})
 			current_room_snapshot = hello_room.duplicate(true) if hello_room is Dictionary else {}
@@ -325,8 +368,10 @@ func lobby_event(message: Dictionary) -> void:
 			current_player_name = str(payload.get("player_name", _pending_player_name))
 			current_profile_id = str(payload.get("profile_id", _pending_profile_id))
 			current_account_id = str(payload.get("account_id", ""))
+			current_email = str(payload.get("email", _pending_account_email))
 			current_username = str(payload.get("username", current_player_name))
 			current_auth_mode = str(payload.get("auth_mode", _pending_auth_mode))
+			current_accepts_game_updates = bool(payload.get("accepts_game_updates", current_accepts_game_updates))
 			current_allow_friend_observers_to_see_cards = bool(payload.get("allow_friend_observers_to_see_cards", true))
 			var room = payload.get("room", {})
 			current_room_snapshot = room.duplicate(true) if room is Dictionary else {}
@@ -368,6 +413,13 @@ func lobby_event(message: Dictionary) -> void:
 			profile_summary_received.emit(payload)
 		LobbyProtocolScript.FRIENDS_STATE:
 			friends_state_received.emit(payload)
+		LobbyProtocolScript.ACCOUNT_SETTINGS_UPDATED:
+			var account = payload.get("account", {})
+			if account is Dictionary:
+				current_email = str((account as Dictionary).get("email", current_email))
+				current_username = str((account as Dictionary).get("username", current_username))
+				current_accepts_game_updates = bool((account as Dictionary).get("accepts_game_updates", current_accepts_game_updates))
+				account_settings_updated.emit((account as Dictionary).duplicate(true))
 
 func _on_connected_to_server() -> void:
 	_cancel_connect_attempt_timeout()
@@ -442,21 +494,32 @@ func _send_initial_auth_request() -> void:
 
 	if _pending_auth_mode == "register":
 		_send_request(LobbyProtocolScript.REGISTER_ACCOUNT, {
-			"username": _pending_player_name,
+			"email": _pending_account_email,
+			"username": _pending_account_username,
 			"password": _pending_password,
+			"accepts_game_updates": _pending_accepts_game_updates,
+		})
+		_arm_auth_response_timeout()
+		return
+	if _pending_auth_mode == "claim_legacy_account":
+		_send_request(LobbyProtocolScript.CLAIM_LEGACY_ACCOUNT, {
+			"email": _pending_account_email,
+			"username": _pending_account_username,
+			"password": _pending_password,
+			"accepts_game_updates": _pending_accepts_game_updates,
 		})
 		_arm_auth_response_timeout()
 		return
 	if _pending_auth_mode == "login":
 		_send_request(LobbyProtocolScript.LOGIN_ACCOUNT, {
-			"username": _pending_player_name,
+			"email": _pending_account_email,
 			"password": _pending_password,
 		})
 		_arm_auth_response_timeout()
 		return
 
 	_send_request(LobbyProtocolScript.LOGIN_ACCOUNT, {
-		"username": _pending_player_name,
+		"email": _pending_account_email,
 		"password": _pending_password,
 	})
 	_arm_auth_response_timeout()
@@ -472,6 +535,9 @@ func _try_fallback_to_password_login() -> bool:
 		or _pending_reconnect_token.is_empty() \
 		or _pending_password.is_empty():
 		return false
+	if not _password_auth_allowed_for_current_connection:
+		connection_failed.emit(_insecure_account_auth_message())
+		return false
 	_reconnect_fallback_attempted = true
 	_pending_session_id = ""
 	_pending_reconnect_token = ""
@@ -479,6 +545,37 @@ func _try_fallback_to_password_login() -> bool:
 	_pending_auth_mode = "login"
 	_send_initial_auth_request()
 	return true
+
+func _password_auth_would_be_sent_immediately() -> bool:
+	return not _pending_password.is_empty() and not _should_attempt_pending_lobby_reconnect()
+
+func _can_send_password_auth_to_address(address: String) -> bool:
+	if _is_loopback_address(address):
+		return true
+	if OS.is_debug_build() or Engine.is_editor_hint():
+		return true
+	if _truthy_string(OS.get_environment(ALLOW_INSECURE_ACCOUNT_AUTH_ENV)):
+		return true
+	return bool(ProjectSettings.get_setting(ALLOW_INSECURE_ACCOUNT_AUTH_SETTING, false))
+
+func _is_loopback_address(address: String) -> bool:
+	var normalized := address.strip_edges().to_lower()
+	return normalized == "localhost" \
+		or normalized == "::1" \
+		or normalized == "0:0:0:0:0:0:0:1" \
+		or normalized.begins_with("127.")
+
+func _truthy_string(value: String) -> bool:
+	match value.strip_edges().to_lower():
+		"1", "true", "yes", "on":
+			return true
+	return false
+
+func _insecure_account_auth_message() -> String:
+	return (
+		"Password sign-in is disabled for this lobby because the ENet transport is not encrypted. "
+		+ "Use a local lobby or enable %s only for trusted/private deployments."
+	) % ALLOW_INSECURE_ACCOUNT_AUTH_ENV
 
 func _on_connection_failed() -> void:
 	_cancel_connect_attempt_timeout()
@@ -493,8 +590,10 @@ func _on_connection_failed() -> void:
 	current_reconnect_token = ""
 	current_profile_id = ""
 	current_account_id = ""
+	current_email = ""
 	current_username = ""
 	current_auth_mode = "login"
+	current_accepts_game_updates = false
 	current_room_snapshot = {}
 	current_active_match_info = {}
 	current_preferred_account_deck_id = ""
@@ -515,8 +614,10 @@ func _on_server_disconnected() -> void:
 	current_reconnect_token = ""
 	current_profile_id = ""
 	current_account_id = ""
+	current_email = ""
 	current_username = ""
 	current_auth_mode = "login"
+	current_accepts_game_updates = false
 	current_room_snapshot = {}
 	current_active_match_info = {}
 	current_preferred_account_deck_id = ""
@@ -604,6 +705,15 @@ func _set_current_server_version(version: String) -> void:
 		return
 	current_server_version = normalized_version
 	server_version_updated.emit(current_server_version)
+
+func _display_name_from_email(email: String) -> String:
+	var normalized_email := email.strip_edges()
+	var at_index := normalized_email.find("@")
+	if at_index > 0:
+		var local_part := normalized_email.substr(0, at_index).strip_edges()
+		if not local_part.is_empty():
+			return local_part
+	return "Player"
 
 func _trace(message: String) -> void:
 	if not trace_network and trace_file_path.is_empty():

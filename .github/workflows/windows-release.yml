@@ -171,6 +171,10 @@ jobs:
           set -euo pipefail
 
           if [ -z "${SPARKLE_PUBLIC_ED_KEY}" ] || [ -z "${SPARKLE_PRIVATE_ED_KEY}" ]; then
+            if [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
+              echo "Tagged macOS releases require SPARKLE_PUBLIC_ED_KEY and SPARKLE_PRIVATE_ED_KEY so appcast.xml is published for auto-updates." >&2
+              exit 1
+            fi
             echo "::warning::SPARKLE_PUBLIC_ED_KEY and SPARKLE_PRIVATE_ED_KEY are not configured; building macOS without Sparkle auto-updates."
             echo "SPARKLE_ENABLED=false" >> "$GITHUB_ENV"
             rm -f addons/macos_sparkle/macos_sparkle.gdextension
@@ -178,6 +182,7 @@ jobs:
           fi
 
           echo "SPARKLE_ENABLED=true" >> "$GITHUB_ENV"
+          rm -f addons/macos_sparkle/.gdignore
 
           python3 -m pip install --user scons
           echo "$(python3 -m site --user-base)/bin" >> "$GITHUB_PATH"
@@ -307,6 +312,15 @@ jobs:
           fi
 
           if [ "${SPARKLE_ENABLED:-false}" = "true" ]; then
+            bridge_extension_path="$(find "$app_path" -name macos_sparkle.gdextension -print -quit)"
+            bridge_library_path="$(find "$app_path" -name "libmacos_sparkle.macos.universal.dylib" -print -quit)"
+            if [ -z "$bridge_extension_path" ] || [ -z "$bridge_library_path" ]; then
+              echo "MacSparkleBridge was not exported into the app bundle." >&2
+              echo "gdextension=${bridge_extension_path:-missing}" >&2
+              echo "library=${bridge_library_path:-missing}" >&2
+              exit 1
+            fi
+
             mkdir -p "$app_path/Contents/Frameworks"
             rm -rf "$app_path/Contents/Frameworks/Sparkle.framework"
             ditto "$SPARKLE_FRAMEWORK_DIR/Sparkle.framework" "$app_path/Contents/Frameworks/Sparkle.framework"
@@ -353,6 +367,7 @@ jobs:
             "$SPARKLE_BIN_DIR/generate_appcast" \
               --ed-key-file "$sparkle_private_key_file" \
               dist/macos
+            test -s dist/macos/appcast.xml
           fi
 
       - name: Upload macOS workflow artifact
@@ -393,6 +408,14 @@ jobs:
           echo "::warning::Publishing Windows assets without macOS assets because export-macos finished with '${{ needs.export-macos.result }}'."
           echo "## macOS assets were not published" >> "$GITHUB_STEP_SUMMARY"
           echo "The export-macos job finished with \`${{ needs.export-macos.result }}\`; this release contains Windows assets only." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Validate macOS appcast artifact
+        if: ${{ needs.export-macos.result == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s dist/macos/OtherGods-macos.zip
+          test -s dist/macos/appcast.xml
 
       - name: Publish GitHub release assets
         uses: softprops/action-gh-release@v2

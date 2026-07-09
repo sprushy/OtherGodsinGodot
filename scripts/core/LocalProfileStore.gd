@@ -17,11 +17,14 @@ const DEFAULT_DECK_NAME := "Default Deck"
 const AUTH_MODE_GUEST := "guest"
 const AUTH_MODE_LOGIN := "login"
 const AUTH_MODE_REGISTER := "register"
+const AUTH_MODE_CLAIM_LEGACY := "claim_legacy_account"
 const DISMISSED_RELEASE_VERSION_KEY := "dismissed_release_version"
 
 var _data: Dictionary = {}
 var _loaded: bool = false
 var _rng := RandomNumberGenerator.new()
+var _pending_legacy_claim_username: String = ""
+var _pending_legacy_claim_password: String = ""
 
 func _init() -> void:
 	_rng.randomize()
@@ -164,31 +167,40 @@ func activate_guest_session(display_name: String = DEFAULT_PROFILE_NAME) -> Dict
 	if resolved_display_name.is_empty():
 		resolved_display_name = DEFAULT_PROFILE_NAME
 	var profile := ensure_guest_profile(resolved_display_name, true)
-	_data["preferred_auth_mode"] = AUTH_MODE_LOGIN
+	_data["preferred_auth_mode"] = AUTH_MODE_GUEST
 	_save()
 	return get_profile(str(profile.get("profile_id", "")))
 
 func activate_account_session(
-	account_username: String,
+	account_email: String,
 	preferred_profile_id: String = "",
 	auth_mode: String = AUTH_MODE_LOGIN,
-	password: String = "",
-	persist_password: bool = false,
-	prefer_preferred_profile_id: bool = false
+	_password: String = "",
+	_persist_password: bool = false,
+	prefer_preferred_profile_id: bool = false,
+	public_username: String = ""
 ) -> Dictionary:
 	_ensure_loaded()
-	var resolved_username := account_username.strip_edges()
-	if resolved_username.is_empty():
+	var resolved_email := account_email.strip_edges().to_lower()
+	if resolved_email.is_empty():
 		return ensure_profile(preferred_profile_id, DEFAULT_PROFILE_NAME, true)
 	var resolved_auth_mode := auth_mode.strip_edges().to_lower()
-	if resolved_auth_mode not in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
+	if resolved_auth_mode not in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]:
 		resolved_auth_mode = AUTH_MODE_LOGIN
-	var profile := ensure_account_profile(
-		resolved_username,
-		preferred_profile_id,
-		true,
-		prefer_preferred_profile_id
-	)
+	var stored_auth_mode := AUTH_MODE_LOGIN if resolved_auth_mode == AUTH_MODE_CLAIM_LEGACY else resolved_auth_mode
+	var resolved_public_username := public_username.strip_edges()
+	if resolved_public_username.is_empty():
+		resolved_public_username = _display_name_from_email(resolved_email)
+	var profile := {}
+	if resolved_auth_mode == AUTH_MODE_CLAIM_LEGACY:
+		profile = _activate_claimed_legacy_profile(resolved_email, resolved_public_username, preferred_profile_id)
+	if profile.is_empty():
+		profile = ensure_account_profile(
+			resolved_email,
+			preferred_profile_id,
+			true,
+			prefer_preferred_profile_id
+		)
 	var resolved_profile_id := str(profile.get("profile_id", "")).strip_edges()
 	if resolved_profile_id.is_empty():
 		return profile
@@ -196,15 +208,18 @@ func activate_account_session(
 	var stored_profile = profiles.get(resolved_profile_id, {})
 	if stored_profile is Dictionary:
 		var updated_profile := (stored_profile as Dictionary).duplicate(true)
-		updated_profile["display_name"] = resolved_username
-		updated_profile["account_username_key"] = resolved_username.to_lower()
+		updated_profile["display_name"] = resolved_public_username
+		updated_profile["account_email"] = resolved_email
+		updated_profile["account_email_key"] = resolved_email.to_lower()
+		updated_profile["account_username_key"] = resolved_public_username.to_lower()
 		profiles[resolved_profile_id] = updated_profile
-		_data["profiles"] = profiles
+	_data["profiles"] = profiles
 	_data["current_profile_id"] = resolved_profile_id
-	_data["preferred_auth_mode"] = resolved_auth_mode
-	_data["last_account_username"] = resolved_username
-	if persist_password:
-		_data["last_account_password"] = password
+	_data["preferred_auth_mode"] = stored_auth_mode
+	_data["last_account_email"] = resolved_email
+	_data["last_account_username"] = resolved_email
+	_data["account_auto_login_enabled"] = false
+	_data.erase("last_account_password")
 	_save()
 	return get_profile(resolved_profile_id)
 
@@ -447,7 +462,7 @@ func mark_account_decks_deleted(profile_id: String, deck_ids: Array) -> void:
 func get_preferred_auth_mode() -> String:
 	_ensure_loaded()
 	var mode := str(_data.get("preferred_auth_mode", AUTH_MODE_LOGIN)).strip_edges().to_lower()
-	if mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
+	if mode in [AUTH_MODE_GUEST, AUTH_MODE_LOGIN, AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]:
 		return mode
 	return AUTH_MODE_LOGIN
 
@@ -463,43 +478,73 @@ func set_allow_friend_observers_to_see_cards(allowed: bool) -> void:
 func set_preferred_auth_mode(auth_mode: String) -> void:
 	_ensure_loaded()
 	var resolved_mode := auth_mode.strip_edges().to_lower()
-	if not resolved_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
+	if not resolved_mode in [AUTH_MODE_GUEST, AUTH_MODE_LOGIN, AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]:
 		resolved_mode = AUTH_MODE_LOGIN
 	_data["preferred_auth_mode"] = resolved_mode
 	_save()
 
 func get_account_auto_login_enabled() -> bool:
 	_ensure_loaded()
-	if _data.has("account_auto_login_enabled"):
-		return bool(_data.get("account_auto_login_enabled", false))
-	return not str(_data.get("last_account_password", "")).is_empty()
+	return false
 
-func set_account_auto_login_enabled(enabled: bool) -> void:
+func set_account_auto_login_enabled(_enabled: bool) -> void:
 	_ensure_loaded()
-	_data["account_auto_login_enabled"] = enabled
+	_data["account_auto_login_enabled"] = false
+	_data.erase("last_account_password")
+	_save()
+
+func get_last_account_email() -> String:
+	_ensure_loaded()
+	var stored_email := str(_data.get("last_account_email", "")).strip_edges().to_lower()
+	if not stored_email.is_empty():
+		return stored_email
+	var legacy_username := str(_data.get("last_account_username", "")).strip_edges()
+	if legacy_username.find("@") > 0:
+		return legacy_username.to_lower()
+	return ""
+
+func remember_account_email(email: String) -> void:
+	_ensure_loaded()
+	var resolved_email := email.strip_edges().to_lower()
+	_data["last_account_email"] = resolved_email
+	_data["last_account_username"] = resolved_email
 	_save()
 
 func get_last_account_username() -> String:
-	_ensure_loaded()
-	return str(_data.get("last_account_username", "")).strip_edges()
+	return get_last_account_email()
 
 func remember_account_username(username: String) -> void:
-	_ensure_loaded()
-	_data["last_account_username"] = username.strip_edges()
-	_save()
+	remember_account_email(username)
 
 func get_last_account_password() -> String:
 	_ensure_loaded()
-	return str(_data.get("last_account_password", ""))
+	return _pending_legacy_claim_password
 
-func remember_account_password(password: String) -> void:
+func remember_account_password(_password: String) -> void:
 	_ensure_loaded()
-	_data["last_account_password"] = password
+	_data.erase("last_account_password")
 	_save()
 
 func clear_account_password() -> void:
 	_ensure_loaded()
-	_data["last_account_password"] = ""
+	_pending_legacy_claim_password = ""
+	_data.erase("last_account_password")
+	_save()
+
+func get_pending_legacy_account_claim_username() -> String:
+	_ensure_loaded()
+	return _pending_legacy_claim_username
+
+func get_pending_legacy_account_claim_password() -> String:
+	_ensure_loaded()
+	return _pending_legacy_claim_password
+
+func clear_pending_legacy_account_claim() -> void:
+	_ensure_loaded()
+	_pending_legacy_claim_username = ""
+	_pending_legacy_claim_password = ""
+	if _data.get("preferred_auth_mode", "") == AUTH_MODE_CLAIM_LEGACY:
+		_data["preferred_auth_mode"] = AUTH_MODE_LOGIN
 	_save()
 
 func get_dismissed_release_version() -> String:
@@ -523,7 +568,8 @@ func remember_lobby_resume(
 	lobby_ip: String,
 	lobby_port: int,
 	username: String = "",
-	auth_mode: String = AUTH_MODE_LOGIN
+	auth_mode: String = AUTH_MODE_LOGIN,
+	email: String = ""
 ) -> Dictionary:
 	_ensure_loaded()
 	var resolved_profile_id := _resolve_profile_id(profile_id)
@@ -539,6 +585,7 @@ func remember_lobby_resume(
 		"player_name": player_name.strip_edges(),
 		"lobby_ip": lobby_ip.strip_edges(),
 		"lobby_port": lobby_port,
+		"email": email.strip_edges().to_lower(),
 		"username": username.strip_edges(),
 		"auth_mode": resolved_auth_mode,
 		"saved_unix": int(Time.get_unix_time_from_system()),
@@ -632,6 +679,7 @@ func _ensure_loaded() -> void:
 	_data = {
 		"current_profile_id": "",
 		"guest_profile_id": "",
+		"account_profile_id_by_email": {},
 		"account_profile_id_by_username": {},
 		"profiles": {},
 		"decks_by_profile": {},
@@ -643,13 +691,14 @@ func _ensure_loaded() -> void:
 		"preferred_auth_mode": AUTH_MODE_LOGIN,
 		"account_auto_login_enabled": false,
 		"allow_friend_observers_to_see_cards": true,
+		"last_account_email": "",
 		"last_account_username": "",
-		"last_account_password": "",
 		DISMISSED_RELEASE_VERSION_KEY: "",
 	}
 	var primary_snapshot: Dictionary = _read_storage_snapshot(STORAGE_PATH, "primary")
 	if _merge_storage_snapshot(primary_snapshot):
 		_try_migrate_legacy_storage_over_placeholder_data()
+		var auth_storage_dirty := _sanitize_loaded_auth_state()
 		var repaired_primary_mappings := _repair_account_profile_mappings()
 		if bool(primary_snapshot.get("recovered", false)):
 			print("LocalProfileStore: Repairing malformed primary snapshot.")
@@ -657,7 +706,7 @@ func _ensure_loaded() -> void:
 			if not FileAccess.file_exists(STORAGE_BACKUP_PATH):
 				_copy_storage_snapshot(STORAGE_PATH, STORAGE_BACKUP_PATH)
 			return
-		if repaired_primary_mappings:
+		if repaired_primary_mappings or auth_storage_dirty:
 			print("LocalProfileStore: Repairing account profile mappings in primary snapshot.")
 			_save()
 		if not FileAccess.file_exists(STORAGE_BACKUP_PATH):
@@ -667,6 +716,7 @@ func _ensure_loaded() -> void:
 	var temp_snapshot: Dictionary = _read_storage_snapshot(STORAGE_TEMP_PATH, "temp")
 	if _merge_storage_snapshot(temp_snapshot):
 		_try_migrate_legacy_storage_over_placeholder_data()
+		_sanitize_loaded_auth_state()
 		_repair_account_profile_mappings()
 		print("LocalProfileStore: Restoring profile data from temp snapshot.")
 		_save(true)
@@ -675,6 +725,7 @@ func _ensure_loaded() -> void:
 	var backup_snapshot: Dictionary = _read_storage_snapshot(STORAGE_BACKUP_PATH, "backup")
 	if _merge_storage_snapshot(backup_snapshot):
 		_try_migrate_legacy_storage_over_placeholder_data()
+		_sanitize_loaded_auth_state()
 		_repair_account_profile_mappings()
 		print("LocalProfileStore: Restoring profile data from backup snapshot.")
 		_save(true)
@@ -682,6 +733,7 @@ func _ensure_loaded() -> void:
 
 	var legacy_snapshot: Dictionary = _read_legacy_storage_snapshot()
 	if _merge_storage_snapshot(legacy_snapshot):
+		_sanitize_loaded_auth_state()
 		_repair_account_profile_mappings()
 		print("LocalProfileStore: Migrating profile data from legacy app storage.")
 		_save(true)
@@ -689,6 +741,7 @@ func _ensure_loaded() -> void:
 func _save(skip_backup_refresh: bool = false) -> void:
 	if not _ensure_storage_parent_exists(STORAGE_PATH):
 		return
+	_sanitize_loaded_auth_state()
 	var json_string := JSON.stringify(_data, "\t")
 	if not skip_backup_refresh and FileAccess.file_exists(STORAGE_PATH):
 		if FileAccess.file_exists(STORAGE_BACKUP_PATH):
@@ -950,7 +1003,12 @@ func _try_migrate_legacy_storage_over_placeholder_data() -> void:
 	_data.merge(legacy_data as Dictionary, true)
 
 func _has_meaningful_persisted_state(data: Dictionary) -> bool:
+	if not str(data.get("last_account_email", "")).strip_edges().is_empty():
+		return true
 	if not str(data.get("last_account_username", "")).strip_edges().is_empty():
+		return true
+	var account_email_mappings = data.get("account_profile_id_by_email", {})
+	if account_email_mappings is Dictionary and not (account_email_mappings as Dictionary).is_empty():
 		return true
 	var account_mappings = data.get("account_profile_id_by_username", {})
 	if account_mappings is Dictionary and not (account_mappings as Dictionary).is_empty():
@@ -966,6 +1024,8 @@ func _has_meaningful_persisted_state(data: Dictionary) -> bool:
 		for profile_value in (profiles as Dictionary).values():
 			if not (profile_value is Dictionary):
 				continue
+			if not str((profile_value as Dictionary).get("account_email_key", "")).strip_edges().is_empty():
+				return true
 			if not str((profile_value as Dictionary).get("account_username_key", "")).strip_edges().is_empty():
 				return true
 	return false
@@ -978,6 +1038,56 @@ func _merge_storage_snapshot(snapshot: Dictionary) -> bool:
 		return false
 	_data.merge(snapshot_data as Dictionary, true)
 	return true
+
+func _sanitize_loaded_auth_state() -> bool:
+	var changed := false
+	var legacy_username := str(_data.get("last_account_username", "")).strip_edges()
+	if _data.has("last_account_password"):
+		var legacy_password := str(_data.get("last_account_password", ""))
+		if not legacy_username.is_empty() and legacy_username.find("@") < 0 and not legacy_password.is_empty():
+			_pending_legacy_claim_username = legacy_username
+			_pending_legacy_claim_password = legacy_password
+			_data["preferred_auth_mode"] = AUTH_MODE_CLAIM_LEGACY
+		_data.erase("last_account_password")
+		changed = true
+	if bool(_data.get("account_auto_login_enabled", false)):
+		_data["account_auto_login_enabled"] = false
+		changed = true
+	var stored_email := str(_data.get("last_account_email", "")).strip_edges().to_lower()
+	if stored_email.is_empty() and legacy_username.find("@") > 0:
+		stored_email = legacy_username.to_lower()
+		_data["last_account_email"] = stored_email
+		changed = true
+	if not stored_email.is_empty() and legacy_username != stored_email:
+		_data["last_account_username"] = stored_email
+		changed = true
+	var profiles := _get_profiles()
+	var profiles_changed := false
+	for profile_id in profiles.keys():
+		var profile = profiles.get(profile_id, {})
+		if not (profile is Dictionary):
+			continue
+		var updated_profile := (profile as Dictionary).duplicate(true)
+		var account_email := str(updated_profile.get("account_email", "")).strip_edges().to_lower()
+		var account_email_key := str(updated_profile.get("account_email_key", "")).strip_edges().to_lower()
+		var account_username_key := str(updated_profile.get("account_username_key", "")).strip_edges().to_lower()
+		if account_email.is_empty() and account_email_key.find("@") > 0:
+			account_email = account_email_key
+		if account_email.is_empty() and account_username_key.find("@") > 0:
+			account_email = account_username_key
+		if account_email.is_empty():
+			continue
+		if str(updated_profile.get("account_email", "")).strip_edges().to_lower() != account_email:
+			updated_profile["account_email"] = account_email
+			profiles_changed = true
+		if str(updated_profile.get("account_email_key", "")).strip_edges().to_lower() != account_email:
+			updated_profile["account_email_key"] = account_email
+			profiles_changed = true
+		profiles[profile_id] = updated_profile
+	if profiles_changed:
+		_data["profiles"] = profiles
+		changed = true
+	return changed
 
 func _ensure_storage_parent_exists(storage_path: String) -> bool:
 	var global_path := ProjectSettings.globalize_path(storage_path)
@@ -1028,10 +1138,14 @@ func _get_profiles() -> Dictionary:
 	return {}
 
 func _get_account_profile_id_by_username() -> Dictionary:
+	var merged: Dictionary = {}
+	var email_mappings = _data.get("account_profile_id_by_email", {})
+	if email_mappings is Dictionary:
+		merged.merge(email_mappings as Dictionary, true)
 	var mappings = _data.get("account_profile_id_by_username", {})
 	if mappings is Dictionary:
-		return (mappings as Dictionary).duplicate(true)
-	return {}
+		merged.merge(mappings as Dictionary, false)
+	return merged.duplicate(true)
 
 func _remember_account_profile_mapping(account_username_key: String, profile: Dictionary) -> Dictionary:
 	var resolved_key := account_username_key.strip_edges().to_lower()
@@ -1042,9 +1156,80 @@ func _remember_account_profile_mapping(account_username_key: String, profile: Di
 		return profile.duplicate(true)
 	var mappings := _get_account_profile_id_by_username()
 	mappings[resolved_key] = resolved_profile_id
+	_data["account_profile_id_by_email"] = mappings
 	_data["account_profile_id_by_username"] = mappings
 	_save()
 	return profile.duplicate(true)
+
+func _activate_claimed_legacy_profile(account_email: String, legacy_username: String, preferred_profile_id: String = "") -> Dictionary:
+	var resolved_email := account_email.strip_edges().to_lower()
+	var resolved_username := legacy_username.strip_edges()
+	if resolved_email.is_empty() or resolved_username.is_empty():
+		return {}
+	var resolved_profile_id := _find_best_legacy_claim_profile_id(resolved_email, resolved_username, preferred_profile_id)
+	if resolved_profile_id.is_empty():
+		return {}
+	var profile := ensure_profile(resolved_profile_id, resolved_username, true)
+	var profile_id := str(profile.get("profile_id", "")).strip_edges()
+	if profile_id.is_empty():
+		return {}
+	var mappings := _get_account_profile_id_by_username()
+	mappings[resolved_email] = profile_id
+	mappings[resolved_username.to_lower()] = profile_id
+	_data["account_profile_id_by_email"] = mappings
+	_data["account_profile_id_by_username"] = mappings
+	return profile.duplicate(true)
+
+func _find_best_legacy_claim_profile_id(account_email: String, legacy_username: String, preferred_profile_id: String = "") -> String:
+	var email_key := account_email.strip_edges().to_lower()
+	var username_key := legacy_username.strip_edges().to_lower()
+	if email_key.is_empty() or username_key.is_empty():
+		return ""
+	var preferred_id := preferred_profile_id.strip_edges()
+	var current_profile_id := str(_data.get("current_profile_id", "")).strip_edges()
+	var profiles := _get_profiles()
+	var best_profile_id := ""
+	var best_score := -999999
+	var best_last_seen := -1
+	for profile_id_variant in profiles.keys():
+		var profile_id := str(profile_id_variant).strip_edges()
+		if profile_id.is_empty():
+			continue
+		var profile = profiles.get(profile_id, {})
+		if not (profile is Dictionary):
+			continue
+		var profile_dict := profile as Dictionary
+		var stored_email_key := str(profile_dict.get("account_email_key", "")).strip_edges().to_lower()
+		var stored_username_key := str(profile_dict.get("account_username_key", "")).strip_edges().to_lower()
+		var display_key := str(profile_dict.get("display_name", "")).strip_edges().to_lower()
+		if stored_username_key != username_key and display_key != username_key:
+			continue
+		var deck_count := _get_saved_deck_count_for_profile(profile_id)
+		var score := 0
+		if deck_count > 0:
+			score += 10000 + mini(deck_count, 50) * 100
+		if stored_email_key.is_empty():
+			score += 600
+		elif stored_email_key == email_key:
+			score += 100
+			if deck_count == 0:
+				score -= 500
+		else:
+			score -= 2000
+		if stored_username_key == username_key:
+			score += 500
+		if display_key == username_key:
+			score += 250
+		if profile_id == preferred_id:
+			score += 100
+		if profile_id == current_profile_id:
+			score += 75
+		var last_seen := int(profile_dict.get("last_seen_unix", 0))
+		if score > best_score or (score == best_score and last_seen > best_last_seen):
+			best_score = score
+			best_last_seen = last_seen
+			best_profile_id = profile_id
+	return best_profile_id
 
 func _find_best_account_profile_id(
 	account_username: String,
@@ -1120,6 +1305,9 @@ func _append_account_profile_candidate(candidate_ids: Array[String], seen_candid
 func _profile_matches_account_username(profile: Dictionary, normalized_key: String) -> bool:
 	if profile.is_empty() or normalized_key.is_empty():
 		return false
+	var stored_email_key := str(profile.get("account_email_key", "")).strip_edges().to_lower()
+	if not stored_email_key.is_empty() and stored_email_key == normalized_key:
+		return true
 	var stored_username_key := str(profile.get("account_username_key", "")).strip_edges().to_lower()
 	if not stored_username_key.is_empty():
 		return stored_username_key == normalized_key
@@ -1137,6 +1325,9 @@ func _score_account_profile_candidate(
 	if profile.is_empty():
 		return -1
 	var score := 0
+	var stored_email_key := str(profile.get("account_email_key", "")).strip_edges().to_lower()
+	if stored_email_key == normalized_key:
+		score += 1200
 	var stored_username_key := str(profile.get("account_username_key", "")).strip_edges().to_lower()
 	if stored_username_key == normalized_key:
 		score += 1000
@@ -1196,6 +1387,9 @@ func _repair_account_profile_mappings() -> bool:
 	for profile in profiles.values():
 		if not (profile is Dictionary):
 			continue
+		var stored_email_key := str((profile as Dictionary).get("account_email_key", "")).strip_edges().to_lower()
+		if not stored_email_key.is_empty():
+			normalized_usernames[stored_email_key] = true
 		var stored_username_key := str((profile as Dictionary).get("account_username_key", "")).strip_edges().to_lower()
 		if stored_username_key.is_empty():
 			continue
@@ -1211,6 +1405,7 @@ func _repair_account_profile_mappings() -> bool:
 		mappings_changed = true
 
 	if mappings_changed:
+		_data["account_profile_id_by_email"] = account_mappings
 		_data["account_profile_id_by_username"] = account_mappings
 
 	var current_profile_id := str(_data.get("current_profile_id", "")).strip_edges()
@@ -1219,7 +1414,9 @@ func _repair_account_profile_mappings() -> bool:
 	var current_profile := get_profile(current_profile_id)
 	if current_profile.is_empty():
 		return mappings_changed
-	var current_username_key := str(current_profile.get("account_username_key", "")).strip_edges().to_lower()
+	var current_username_key := str(current_profile.get("account_email_key", "")).strip_edges().to_lower()
+	if current_username_key.is_empty():
+		current_username_key = str(current_profile.get("account_username_key", "")).strip_edges().to_lower()
 	if current_username_key.is_empty():
 		return mappings_changed
 	var repaired_current_profile_id := str(account_mappings.get(current_username_key, "")).strip_edges()
@@ -1403,6 +1600,15 @@ func _resolve_profile_id(profile_id: String) -> String:
 	if resolved_profile_id.is_empty():
 		resolved_profile_id = get_current_profile_id()
 	return resolved_profile_id
+
+func _display_name_from_email(email: String) -> String:
+	var normalized_email := email.strip_edges()
+	var at_index := normalized_email.find("@")
+	if at_index > 0:
+		var local_part := normalized_email.substr(0, at_index).strip_edges()
+		if not local_part.is_empty():
+			return local_part
+	return DEFAULT_PROFILE_NAME
 
 func _import_legacy_deck_if_needed(profile_id: String) -> void:
 	var resolved_profile_id := profile_id.strip_edges()

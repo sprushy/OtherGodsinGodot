@@ -1,8 +1,8 @@
 # Windows Auto-Update
 
 The normal Windows update path downloads the release archive into Godot's
-per-user data directory, verifies its size and GitHub SHA-256 digest when
-available, extracts it to staging, and launches the staged `OtherGods.exe` in
+per-user data directory, verifies its size and SHA-256 digest from GitHub
+release metadata or the sibling `.sha256` release asset, extracts it to staging, and launches the staged `OtherGods.exe` in
 native updater mode.
 
 If Godot's downloader cannot start, resolve DNS, negotiate TLS, or write the

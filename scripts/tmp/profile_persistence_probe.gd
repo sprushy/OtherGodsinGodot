@@ -1,7 +1,7 @@
 extends SceneTree
 
 func _initialize() -> void:
-	var LocalProfileStoreScript = load("res://scripts/client/LocalProfileStore.gd")
+	var LocalProfileStoreScript = load("res://scripts/core/LocalProfileStore.gd")
 	var ProfileStoreScript = load("res://scripts/server/ProfileStore.gd")
 	var DeckBuilderUIScript = load("res://scripts/ui/DeckBuilderUI.gd")
 	var MainMenuScript = load("res://scripts/Other/MainMenu.gd")

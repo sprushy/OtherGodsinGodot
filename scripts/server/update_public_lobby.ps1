@@ -136,6 +136,75 @@ function Get-Current-Version {
     return ""
 }
 
+function Get-Sha256FromText {
+    param(
+        [string]$Text
+    )
+
+    if (-not $Text) {
+        return ""
+    }
+
+    $match = [regex]::Match($Text, '(?i)(?:sha256:)?([a-f0-9]{64})')
+    if (-not $match.Success) {
+        return ""
+    }
+
+    return $match.Groups[1].Value.ToLowerInvariant()
+}
+
+function Get-ReleaseAssetSha256 {
+    param(
+        [object]$Release,
+        [object]$Asset,
+        [hashtable]$Headers,
+        [string]$TempRoot
+    )
+
+    $digestHash = Get-Sha256FromText ([string]$Asset.digest)
+    if ($digestHash) {
+        return $digestHash
+    }
+
+    $checksumAssetName = "$($Asset.name).sha256"
+    $checksumAsset = @($Release.assets) |
+        Where-Object { $_.name -eq $checksumAssetName } |
+        Select-Object -First 1
+    if ($null -eq $checksumAsset) {
+        throw "Release asset $($Asset.name) did not include a GitHub digest or sibling $checksumAssetName checksum."
+    }
+
+    $checksumPath = Join-Path $TempRoot $checksumAsset.name
+    Write-Log "Downloading checksum $($checksumAsset.browser_download_url)"
+    Invoke-WebRequest -Headers $Headers -Uri $checksumAsset.browser_download_url -OutFile $checksumPath
+    $checksumText = Get-Content -LiteralPath $checksumPath -Raw
+    $checksumHash = Get-Sha256FromText $checksumText
+    if (-not $checksumHash) {
+        throw "Checksum asset $checksumAssetName did not contain a SHA-256 hash."
+    }
+
+    return $checksumHash
+}
+
+function Assert-FileSha256 {
+    param(
+        [string]$Path,
+        [string]$ExpectedSha256,
+        [string]$Label
+    )
+
+    if (-not $ExpectedSha256 -or $ExpectedSha256 -notmatch '^[a-f0-9]{64}$') {
+        throw "Missing expected SHA-256 for $Label."
+    }
+
+    $actualSha256 = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($actualSha256 -ne $ExpectedSha256) {
+        throw "$Label failed SHA-256 verification. Expected $ExpectedSha256 but got $actualSha256."
+    }
+
+    Write-Log "$Label SHA-256 verified: $actualSha256"
+}
+
 $mutex = New-Object System.Threading.Mutex($false, "Global\OtherGodsPublicLobbyUpdater")
 $acquiredMutex = $false
 try {
@@ -189,8 +258,10 @@ try {
     New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
     New-Item -ItemType Directory -Force -Path $extractDir | Out-Null
 
+    $expectedZipSha256 = Get-ReleaseAssetSha256 -Release $release -Asset $asset -Headers $headers -TempRoot $tempRoot
     Write-Log "Downloading $($asset.browser_download_url)"
     Invoke-WebRequest -Headers $headers -Uri $asset.browser_download_url -OutFile $zipPath
+    Assert-FileSha256 -Path $zipPath -ExpectedSha256 $expectedZipSha256 -Label $asset.name
     Expand-Archive -LiteralPath $zipPath -DestinationPath $extractDir -Force
 
     $downloadedExe = Get-ChildItem -LiteralPath $extractDir -Recurse -File |

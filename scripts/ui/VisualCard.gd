@@ -3,7 +3,6 @@ extends PanelContainer
 
 const CardDetailContentBuilderScript = preload("res://scripts/ui/CardDetailContentBuilder.gd")
 const LockedPowerCursorScript = preload("res://scripts/ui/LockedPowerCursor.gd")
-const LOCKED_POWER_CURSOR_ACTIVE_META := &"other_gods_locked_power_cursor_active"
 const DefenseShieldOverlayScript = preload("res://scripts/ui/DefenseShieldOverlay.gd")
 const BoardZoneUIScript = preload("res://scripts/ui/BoardZoneUI.gd")
 const LevelSymbolRowScript = preload("res://scripts/ui/LevelSymbolRow.gd")
@@ -110,6 +109,7 @@ func setup(
 	custom_minimum_size = Vector2(_card_width, natural_h)
 	size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	mouse_filter = Control.MOUSE_FILTER_STOP
+	set_process(false)
 	_refresh_mouse_cursor_shape()
 	_build_content()
 	_bind_visual_state()
@@ -865,24 +865,17 @@ func _set_locked_power_cursor_active(active: bool) -> void:
 	if _locked_power_cursor_active == active:
 		return
 	_locked_power_cursor_active = active
-	var viewport := get_viewport()
-	if viewport == null:
-		return
-	var owners_value: Variant = viewport.get_meta(LOCKED_POWER_CURSOR_ACTIVE_META, {})
-	var owners: Dictionary = owners_value.duplicate() if owners_value is Dictionary else {}
-	var owner_id := get_instance_id()
-	if active:
-		owners[owner_id] = true
-	else:
-		owners.erase(owner_id)
-	viewport.set_meta(LOCKED_POWER_CURSOR_ACTIVE_META, owners)
+	LockedPowerCursorScript.set_viewport_owner_active(get_viewport(), self, active)
 
 func _refresh_mouse_cursor_shape() -> void:
-	_set_locked_power_cursor_active(_mouse_hovered and _should_show_power_lock_overlay())
+	_set_locked_power_cursor_active(_mouse_hovered and _is_mouse_actually_over_control() and _should_show_power_lock_overlay())
 	if _should_show_power_lock_overlay():
 		mouse_default_cursor_shape = LockedPowerCursorScript.get_control_cursor_shape(Control.CURSOR_POINTING_HAND as Control.CursorShape)
 		return
 	mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+
+func _is_mouse_actually_over_control() -> bool:
+	return is_inside_tree() and is_visible_in_tree() and _has_point(get_local_mouse_position())
 
 func _has_point(point: Vector2) -> bool:
 	var hit_rect := Rect2(Vector2.ZERO, size)
@@ -933,6 +926,7 @@ func set_blot_summon_state(is_summonable: bool, is_selected: bool = false) -> vo
 func _cancel_drag() -> void:
 	if _dragging:
 		_dragging = false
+		set_process(false)
 		var restored := false
 		if _drag_parent and is_instance_valid(_drag_parent) and not _drag_parent.is_queued_for_deletion():
 			var current_parent := get_parent()
@@ -956,6 +950,7 @@ func _cancel_drag() -> void:
 		_drag_ghost = null
 	_drag_rot_tween = null
 	_drag_stealth = false
+	set_process(false)
 
 func _cancel_rot_ghost() -> void:
 	if _rot_tween and _rot_tween.is_valid():
@@ -1253,7 +1248,9 @@ func _start_drag() -> void:
 	_drag_ghost = _build_drag_ghost()
 	if _drag_ghost == null or not is_instance_valid(_drag_ghost):
 		_dragging = false
+		set_process(false)
 		return
+	set_process(true)
 	_drag_target_rotation = _drag_ghost.rotation_degrees  # already at correct angle
 	# Reparent to scene root so the hand HBox collapses the gap,
 	# but the node stays in the tree so _input() keeps firing.
@@ -1362,6 +1359,7 @@ func _remove_drag_ghost_rules_text(node: Node) -> void:
 
 func _finish_drag() -> void:
 	_dragging = false
+	set_process(false)
 	var restored := false
 	if _drag_parent and is_instance_valid(_drag_parent) and not _drag_parent.is_queued_for_deletion():
 		var current_parent := get_parent()
@@ -1482,7 +1480,7 @@ func _notification(what: int) -> void:
 			_layout_power_lock_overlay()
 		NOTIFICATION_MOUSE_ENTER:
 			_mouse_hovered = true
-			_set_locked_power_cursor_active(_should_show_power_lock_overlay())
+			_set_locked_power_cursor_active(_is_mouse_actually_over_control() and _should_show_power_lock_overlay())
 			if _hand_mode:
 				if not _picked_up:
 					hand_hovered.emit(self)

@@ -174,7 +174,7 @@ func _initialize() -> void:
 		"peer_id": 100,
 		"is_local": false,
 	}
-	var matched_participant_session_id := server._get_matching_participant_session_id(
+	var matched_participant_session_id: String = server._get_matching_participant_session_id(
 		"DUPLICATE_HOST",
 		connected_room.members
 	)
@@ -182,14 +182,14 @@ func _initialize() -> void:
 		push_error("phase2_lobby_probe: self-observe fallback did not resolve the active player session")
 		quit(1)
 		return
-	var replacement_session_match_info := server._build_active_match_info_for_session("DUPLICATE_HOST")
+	var replacement_session_match_info: Dictionary = server._build_active_match_info_for_session("DUPLICATE_HOST")
 	if str(replacement_session_match_info.get("session_id", "")) != "READY_HOST" \
 		or str(replacement_session_match_info.get("match_token", "")).is_empty():
 		push_error("phase2_lobby_probe: replacement account session could not resolve player rejoin credentials")
 		quit(1)
 		return
-	var participant_room_list := server._build_room_list("DUPLICATE_HOST")
-	var observer_room_list := server._build_room_list("OUTSIDER")
+	var participant_room_list: Array = server._build_room_list("DUPLICATE_HOST")
+	var observer_room_list: Array = server._build_room_list("OUTSIDER")
 	var participant_room_entry: Dictionary = {}
 	var observer_room_entry: Dictionary = {}
 	for room_entry in participant_room_list:
@@ -288,7 +288,7 @@ func _initialize() -> void:
 		push_error("phase2_lobby_probe: match session rejected a valid observer auth token")
 		quit(1)
 		return
-	var host_token := match_session.get_match_token("HOST")
+	var host_token: String = match_session.get_match_token("HOST")
 	if match_session.authenticate_join("HOST", host_token, 99) != 0 \
 		or match_session.authenticate_spectator("OBSERVER", observer_match_token, 99):
 		push_error("phase2_lobby_probe: authenticated player peer could also authenticate as an observer")

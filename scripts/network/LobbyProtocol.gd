@@ -7,6 +7,8 @@ const MATCH_PORT: int = 12345
 const LOGIN_GUEST := "login_guest"
 const LOGIN_ACCOUNT := "login_account"
 const REGISTER_ACCOUNT := "register_account"
+const CLAIM_LEGACY_ACCOUNT := "claim_legacy_account"
+const UPDATE_ACCOUNT_SETTINGS := "update_account_settings"
 const CREATE_ROOM := "create_room"
 const LIST_ROOMS := "list_rooms"
 const JOIN_ROOM := "join_room"
@@ -39,6 +41,7 @@ const ACCOUNT_DECK_SAVED := "account_deck_saved"
 const ACCOUNT_DECK_DELETED := "account_deck_deleted"
 const PROFILE_SUMMARY := "profile_summary"
 const FRIENDS_STATE := "friends_state"
+const ACCOUNT_SETTINGS_UPDATED := "account_settings_updated"
 
 static func make_message(message_type: String, payload: Dictionary = {}) -> Dictionary:
 	return {
@@ -66,10 +69,24 @@ static func validate_request(message: Dictionary) -> String:
 		LOGIN_GUEST:
 			return "Guest sign-in is no longer supported."
 		LOGIN_ACCOUNT, REGISTER_ACCOUNT:
-			if str(payload.get("username", "")).strip_edges().is_empty():
-				return "Missing username."
+			if str(payload.get("email", "")).strip_edges().is_empty():
+				return "Missing email address."
 			if str(payload.get("password", "")).strip_edges().is_empty():
 				return "Missing password."
+			if message_type == REGISTER_ACCOUNT and str(payload.get("username", "")).strip_edges().is_empty():
+				return "Missing username."
+		CLAIM_LEGACY_ACCOUNT:
+			if str(payload.get("username", "")).strip_edges().is_empty():
+				return "Missing username."
+			if str(payload.get("email", "")).strip_edges().is_empty():
+				return "Missing email address."
+			if str(payload.get("password", "")).strip_edges().is_empty():
+				return "Missing password."
+		UPDATE_ACCOUNT_SETTINGS:
+			var changing_email := not str(payload.get("new_email", "")).strip_edges().is_empty()
+			var changing_password := not str(payload.get("new_password", "")).is_empty()
+			if (changing_email or changing_password) and str(payload.get("current_password", "")).is_empty():
+				return "Missing current password."
 		JOIN_ROOM, REJOIN_ROOM:
 			if str(payload.get("room_id", "")).strip_edges().is_empty():
 				return "Missing room code."

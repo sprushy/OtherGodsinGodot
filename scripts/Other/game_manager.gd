@@ -2968,8 +2968,9 @@ func _advance_attack_restriction_turn(player: Player) -> void:
 # 1. Fire controller turn-end hooks for the ending player's permanents.
 # 2. Fire global turn-end hooks for all permanents.
 # 3. Emit turn_ended and clear end-of-turn expiring statuses.
-# 4. Swap active/other players.
-# 5. Begin the next turn immediately.
+# 4. Reset creature action points for every board creature.
+# 5. Swap active/other players.
+# 6. Begin the next turn immediately.
 func end_turn() -> void:
 	if is_game_over:
 		return
@@ -2984,6 +2985,7 @@ func end_turn() -> void:
 	_clear_expired_turn_follower_loss_preventions(turn_number)
 	_clear_expired_turn_opponent_targeting_immunities(turn_number)
 	_advance_attack_restriction_turn(ending_player)
+	_reset_all_board_creature_action_states()
 	
 	# Swap players for the next turn
 	var temp = current_player
@@ -2993,6 +2995,16 @@ func end_turn() -> void:
 	current_player.is_turn_player = true
 	other_player.is_turn_player = false
 	start_turn()
+
+func _reset_all_board_creature_action_states() -> void:
+	for player in players:
+		if player == null:
+			continue
+		for zone in player.frontline_zones + player.reserve_zones:
+			for card in zone.cards:
+				if card != null and card.is_creature_card():
+					card.reset_creature_action_state()
+					card.summoned_after_first_attack_this_turn = false
 
 func _get_player_turn_event_cards(player: Player, include_god: bool = true) -> Array[Card]:
 	var cards: Array[Card] = []

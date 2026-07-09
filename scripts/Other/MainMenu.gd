@@ -33,10 +33,15 @@ const DEDICATED_LOBBY_ENTRY_SCRIPT_PATH := "res://scripts/server/DedicatedLobbyS
 const DEDICATED_SERVER_EXPORT_RELATIVE_PATH := "res://.exports/server/OtherGodsServer.exe"
 const DEFAULT_LOBBY_HOST_SETTING := "application/config/default_lobby_host"
 const DEFAULT_LOBBY_HOST := ""
+const SNOWSTORM_CONTROL_GROUP := "other_gods_snowstorm_control"
 const RULES_DOC_PATH := "res://docs/new-player-rules.md"
 const AUTH_MODE_GUEST := "guest"
 const AUTH_MODE_LOGIN := "login"
 const AUTH_MODE_REGISTER := "register"
+const AUTH_MODE_CLAIM_LEGACY := "claim_legacy_account"
+const GUEST_USERNAME_PREFIX := "guest#"
+const GUEST_ACCOUNT_PROMPT := "Make an account to save decks across instances."
+const ACCOUNT_SETTINGS_SECTION_TITLE := "Account"
 const SEEK_AUTO_REFRESH_INTERVAL_SECONDS := 3.0
 const FRESH_LOBBY_RECONNECT_DELAY_SECONDS := 0.6
 const ACTIVE_MATCH_AUTO_RESUME_SUPPRESS_SECONDS := 10.0
@@ -135,9 +140,18 @@ var _auth_onboarding_overlay: Control = null
 var _auth_onboarding_selected_mode: String = AUTH_MODE_LOGIN
 var _auth_onboarding_mode_hint_label: Label = null
 var _auth_onboarding_username_edit: LineEdit = null
+var _auth_onboarding_public_username_edit: LineEdit = null
 var _auth_onboarding_password_edit: LineEdit = null
 var _auth_onboarding_auto_login_toggle: CheckButton = null
+var _auth_onboarding_game_updates_toggle: CheckButton = null
 var _auth_onboarding_continue_button: Button = null
+var _settings_button: Button = null
+var _settings_overlay: Control = null
+var _settings_account_status_label: Label = null
+var _settings_account_updates_toggle: CheckButton = null
+var _settings_current_password_edit: LineEdit = null
+var _settings_new_email_edit: LineEdit = null
+var _settings_new_password_edit: LineEdit = null
 var _report_bug_button: Button = null
 var _bug_report_overlay: Control = null
 var _bug_report_expected_edit: TextEdit = null
@@ -156,6 +170,8 @@ var _account_identity_label: Label = null
 var _logged_in_account_username: String = ""
 var _selected_auth_mode: String = AUTH_MODE_LOGIN
 var _selected_account_username: String = ""
+var _selected_account_public_username: String = ""
+var _selected_account_accepts_game_updates: bool = false
 var _selected_account_password: String = ""
 var _startup_autologin_pending: bool = false
 var _startup_autologin_in_progress: bool = false
@@ -169,6 +185,8 @@ var _pending_update_release_url: String = AppReleaseInfoScript.RELEASES_PAGE_URL
 var _pending_update_download_url: String = ""
 var _pending_update_download_size: int = 0
 var _pending_update_download_sha256: String = ""
+var _pending_update_download_sha256_url: String = ""
+var _update_checksum_request: HTTPRequest = null
 var _update_download_request: HTTPRequest = null
 var _update_download_attempt: int = 0
 var _update_curl_process_id: int = 0
@@ -321,6 +339,7 @@ func _ready() -> void:
 	_build_menu_card_template_cache()
 	_build_multiplayer_deck_controls()
 	_build_auth_controls()
+	_build_settings_controls()
 	_ensure_local_profile_store()
 	_restore_auth_preferences()
 	_build_profile_summary_controls()
@@ -1084,6 +1103,7 @@ func _close_program() -> void:
 	get_tree().quit()
 
 func show_menu() -> void:
+	_set_snowstorm_visible(false)
 	_close_tutorial_coach_overlay()
 	menu_container.visible = true
 	game_container.visible = false
@@ -1099,6 +1119,12 @@ func show_game() -> void:
 	_hide_multiplayer_deck_popup()
 	_refresh_server_version_overlay_visibility()
 	_refresh_sound_mute_button()
+
+func _set_snowstorm_visible(active: bool) -> void:
+	var tree := get_tree()
+	if tree == null:
+		return
+	tree.call_group(SNOWSTORM_CONTROL_GROUP, "set_snowstorm_active", active)
 
 func _on_multiplayer_pressed() -> void:
 	_open_multiplayer_screen()
@@ -1175,13 +1201,15 @@ func _should_reuse_active_lobby_connection(target_lobby_ip: String) -> bool:
 		str(lobby_client.current_auth_mode) if lobby_client != null else "",
 		AUTH_MODE_LOGIN
 	)
-	if desired_auth_mode not in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
+	if desired_auth_mode not in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]:
 		return false
-	var desired_username := _get_preferred_account_username().strip_edges().to_lower()
-	var connected_username := _get_connected_account_username().strip_edges().to_lower()
-	return not desired_username.is_empty() \
-		and connected_auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER] \
-		and connected_username == desired_username
+	if desired_auth_mode == AUTH_MODE_CLAIM_LEGACY:
+		return false
+	var desired_email := _get_preferred_account_username().strip_edges().to_lower()
+	var connected_email := _get_connected_account_email().strip_edges().to_lower()
+	return not desired_email.is_empty() \
+		and connected_auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY] \
+		and connected_email == desired_email
 
 func _build_menu_card_template_cache() -> void:
 	_menu_card_templates.clear()
@@ -2094,7 +2122,9 @@ func _connect_to_browseable_lobby(connect_status: String, connect_serial: int = 
 		_get_configured_lobby_port(),
 		_local_profile_id,
 		_get_selected_auth_mode(),
-		_get_auth_password()
+		_get_auth_password(),
+		_get_selected_account_public_username(),
+		_selected_account_accepts_game_updates
 	)
 	if connect_err != OK:
 		status_label.text = "Could not connect to the lobby."
@@ -2102,7 +2132,7 @@ func _connect_to_browseable_lobby(connect_status: String, connect_serial: int = 
 func _maybe_connect_authenticated_lobby(connect_status: String = "Connecting to lobby...", connect_serial: int = 0) -> void:
 	if connect_serial > 0 and connect_serial != _authenticated_lobby_connect_serial:
 		return
-	if _get_selected_auth_mode() not in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
+	if _get_selected_auth_mode() not in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]:
 		return
 	var auth_error := _validate_auth_inputs()
 	if not auth_error.is_empty():
@@ -2250,7 +2280,13 @@ func _maybe_check_for_server_required_update(server_version: String) -> void:
 				server_version,
 				AppReleaseInfoScript.WINDOWS_ASSET_NAME
 			),
-			0
+			0,
+			"",
+			false,
+			AppReleaseInfoScript.get_download_url_for_version(
+				server_version,
+				"%s.sha256" % AppReleaseInfoScript.WINDOWS_ASSET_NAME
+			)
 		)
 		return
 	_start_update_check(
@@ -2379,8 +2415,11 @@ func _on_update_check_request_completed(
 	var download_url := ""
 	var download_size := 0
 	var download_sha256 := ""
+	var download_sha256_url := ""
 	var assets: Array = payload.get("assets", [])
 	var platform_asset_names := AppReleaseInfoScript.get_asset_names_for_platform(OS.get_name())
+	var macos_appcast_available := OS.get_name() == "macOS" \
+		and _release_assets_include_name(assets, AppReleaseInfoScript.MACOS_APPCAST_ASSET_NAME)
 	for asset_name in platform_asset_names:
 		for asset in assets:
 			if str(asset.get("name", "")) != asset_name:
@@ -2388,6 +2427,7 @@ func _on_update_check_request_completed(
 			download_url = str(asset.get("browser_download_url", "")).strip_edges()
 			download_size = int(asset.get("size", 0))
 			download_sha256 = _parse_sha256_digest(str(asset.get("digest", "")))
+			download_sha256_url = _get_release_asset_download_url(assets, "%s.sha256" % asset_name)
 			break
 		if not download_url.is_empty():
 			break
@@ -2398,8 +2438,22 @@ func _on_update_check_request_completed(
 		release_url,
 		download_url,
 		download_size,
-		download_sha256
+		download_sha256,
+		macos_appcast_available,
+		download_sha256_url
 	)
+
+func _release_assets_include_name(assets: Array, asset_name: String) -> bool:
+	for asset in assets:
+		if str(asset.get("name", "")) == asset_name:
+			return true
+	return false
+
+func _get_release_asset_download_url(assets: Array, asset_name: String) -> String:
+	for asset in assets:
+		if str(asset.get("name", "")) == asset_name:
+			return str(asset.get("browser_download_url", "")).strip_edges()
+	return ""
 
 func _should_prompt_for_update(latest_version: String) -> bool:
 	if not AppReleaseInfoScript.is_release_version(latest_version):
@@ -2420,7 +2474,9 @@ func _begin_required_update(
 	release_url: String,
 	download_url: String = "",
 	download_size: int = 0,
-	download_sha256: String = ""
+	download_sha256: String = "",
+	macos_appcast_available: bool = false,
+	download_sha256_url: String = ""
 ) -> void:
 	if not _release_updates_enabled():
 		_complete_startup_prompts()
@@ -2439,13 +2495,17 @@ func _begin_required_update(
 			download_url,
 			true,
 			download_size,
-			download_sha256
+			download_sha256,
+			download_sha256_url
 		)
 		call_deferred("_on_update_prompt_auto_update_pressed")
 		return
-	if OS.get_name() == "macOS" and _start_macos_sparkle_update(latest_version):
-		_complete_startup_prompts()
-		return
+	if OS.get_name() == "macOS":
+		if macos_appcast_available and _start_macos_sparkle_update(latest_version):
+			_complete_startup_prompts()
+			return
+		if not macos_appcast_available:
+			_write_update_log("sparkle_appcast_missing latest=%s" % latest_version)
 	var open_error := OS.shell_open(release_url)
 	if open_error == OK:
 		status_label.text = "Opened the latest release page for %s." % latest_version
@@ -2479,7 +2539,7 @@ func _ensure_macos_sparkle_bridge() -> bool:
 	return _macos_sparkle_bridge != null
 
 func _ensure_macos_sparkle_extension_loaded() -> bool:
-	var extension_path := ProjectSettings.globalize_path(MACOS_SPARKLE_EXTENSION_PATH)
+	var extension_path := MACOS_SPARKLE_EXTENSION_PATH
 	if GDExtensionManager.is_extension_loaded(extension_path):
 		return true
 	var load_status := GDExtensionManager.load_extension(extension_path)
@@ -2489,8 +2549,8 @@ func _ensure_macos_sparkle_extension_loaded() -> bool:
 	]:
 		return true
 	_write_update_log(
-		"sparkle_extension_load_failed status=%s path=%s"
-		% [str(load_status), extension_path]
+		"sparkle_extension_load_failed status=%s path=%s global_path=%s"
+		% [str(load_status), extension_path, ProjectSettings.globalize_path(extension_path)]
 	)
 	return false
 
@@ -2500,7 +2560,8 @@ func _show_update_prompt(
 	download_url: String = "",
 	auto_update: bool = false,
 	download_size: int = 0,
-	download_sha256: String = ""
+	download_sha256: String = "",
+	download_sha256_url: String = ""
 ) -> void:
 	if _update_prompt_overlay != null and is_instance_valid(_update_prompt_overlay):
 		return
@@ -2509,6 +2570,7 @@ func _show_update_prompt(
 	_pending_update_download_url = download_url
 	_pending_update_download_size = download_size
 	_pending_update_download_sha256 = download_sha256
+	_pending_update_download_sha256_url = download_sha256_url
 	_automatic_update_required = auto_update
 
 	_update_prompt_overlay = Control.new()
@@ -2630,6 +2692,10 @@ func _show_update_prompt(
 		button_row.visible = false
 
 func _dismiss_update_prompt() -> void:
+	if _update_checksum_request != null and is_instance_valid(_update_checksum_request):
+		_update_checksum_request.cancel_request()
+		_update_checksum_request.queue_free()
+	_update_checksum_request = null
 	if _update_download_request != null and is_instance_valid(_update_download_request):
 		_update_download_request.cancel_request()
 		_update_download_request.queue_free()
@@ -2648,6 +2714,7 @@ func _dismiss_update_prompt() -> void:
 	_pending_update_download_url = ""
 	_pending_update_download_size = 0
 	_pending_update_download_sha256 = ""
+	_pending_update_download_sha256_url = ""
 	_update_download_attempt = 0
 	_last_logged_update_percent = -10
 	_automatic_update_required = false
@@ -2713,6 +2780,71 @@ func _on_update_prompt_auto_update_pressed() -> void:
 	if not preflight_failure.is_empty():
 		_on_auto_update_failed(preflight_failure)
 		return
+	if _pending_update_download_sha256.is_empty():
+		if _pending_update_download_sha256_url.is_empty():
+			_on_auto_update_failed(
+				"Automatic update could not verify the release checksum. Install manually from the release page."
+			)
+			return
+		_begin_update_checksum_download()
+		return
+	_begin_auto_update_download()
+
+func _begin_update_checksum_download() -> void:
+	if not _is_auto_updating:
+		return
+	if _update_checksum_request != null and is_instance_valid(_update_checksum_request):
+		_update_checksum_request.cancel_request()
+		_update_checksum_request.queue_free()
+	_update_checksum_request = HTTPRequest.new()
+	_update_checksum_request.name = "UpdateChecksumRequest"
+	_update_checksum_request.use_threads = true
+	_update_checksum_request.timeout = UPDATE_CHECK_TIMEOUT_SECONDS
+	_update_checksum_request.request_completed.connect(_on_update_checksum_request_completed)
+	add_child(_update_checksum_request)
+	if _update_download_status_label != null and is_instance_valid(_update_download_status_label):
+		_update_download_status_label.text = "Verifying %s release checksum..." % _pending_update_release_version
+		_update_download_status_label.visible = true
+	_write_update_log(
+		"checksum_download_started version=%s url=%s"
+		% [_pending_update_release_version, _pending_update_download_sha256_url]
+	)
+	var request_error := _update_checksum_request.request(
+		_pending_update_download_sha256_url,
+		PackedStringArray(["User-Agent: OtherGods"])
+	)
+	if request_error != OK:
+		if _update_checksum_request != null and is_instance_valid(_update_checksum_request):
+			_update_checksum_request.queue_free()
+		_update_checksum_request = null
+		_on_auto_update_failed(
+			"Automatic update could not fetch the release checksum (%s)." % _error_code_name(request_error)
+		)
+
+func _on_update_checksum_request_completed(
+	result: int,
+	response_code: int,
+	_headers: PackedStringArray,
+	body: PackedByteArray
+) -> void:
+	if _update_checksum_request != null and is_instance_valid(_update_checksum_request):
+		_update_checksum_request.queue_free()
+	_update_checksum_request = null
+	if result != HTTPRequest.RESULT_SUCCESS or response_code < 200 or response_code >= 300:
+		_on_auto_update_failed(
+			"Automatic update could not fetch the release checksum (%s, HTTP %d)."
+			% [_http_request_result_name(result), response_code]
+		)
+		return
+	var parsed_sha256 := _parse_sha256_text(body.get_string_from_utf8())
+	if parsed_sha256.is_empty():
+		_on_auto_update_failed("Automatic update received an invalid release checksum.")
+		return
+	_pending_update_download_sha256 = parsed_sha256
+	_write_update_log(
+		"checksum_download_completed version=%s sha256=%s"
+		% [_pending_update_release_version, _pending_update_download_sha256]
+	)
 	_begin_auto_update_download()
 
 func _cleanup_windows_update_artifacts() -> void:
@@ -3011,14 +3143,15 @@ func _validate_downloaded_update(zip_path: String, transport: String) -> String:
 				float(_pending_update_download_size) / BYTES_PER_MIB,
 			]
 		)
-	if not _pending_update_download_sha256.is_empty():
-		var downloaded_sha256 := FileAccess.get_sha256(zip_path).to_lower()
-		_write_update_log(
-			"download_hash transport=%s expected=%s actual=%s"
-			% [transport, _pending_update_download_sha256, downloaded_sha256]
-		)
-		if downloaded_sha256 != _pending_update_download_sha256:
-			return "The %s download failed SHA-256 verification." % transport_label
+	if _pending_update_download_sha256.is_empty():
+		return "The %s download could not be verified because the release did not provide a SHA-256 checksum." % transport_label
+	var downloaded_sha256 := FileAccess.get_sha256(zip_path).to_lower()
+	_write_update_log(
+		"download_hash transport=%s expected=%s actual=%s"
+		% [transport, _pending_update_download_sha256, downloaded_sha256]
+	)
+	if downloaded_sha256 != _pending_update_download_sha256:
+		return "The %s download failed SHA-256 verification." % transport_label
 	return ""
 
 func _download_transport_label(transport: String) -> String:
@@ -3504,6 +3637,14 @@ func _parse_sha256_digest(raw_digest: String) -> String:
 		if not is_digit and not is_lower_hex:
 			return ""
 	return normalized
+
+func _parse_sha256_text(raw_text: String) -> String:
+	var normalized := raw_text.replace("\r", " ").replace("\n", " ")
+	for token in normalized.split(" ", false):
+		var parsed := _parse_sha256_digest(token)
+		if not parsed.is_empty():
+			return parsed
+	return ""
 
 func _on_auto_update_failed(message: String) -> void:
 	_is_auto_updating = false
@@ -4009,19 +4150,35 @@ func _maybe_show_auth_onboarding(force_show: bool = false) -> void:
 		return
 	if _auth_onboarding_overlay != null and is_instance_valid(_auth_onboarding_overlay):
 		return
+	if not force_show and _should_continue_as_guest_locally():
+		_activate_stored_guest_session()
+		return
 	if not force_show and _should_auto_login_saved_account():
 		return
 	_show_auth_onboarding()
+
+func _should_continue_as_guest_locally() -> bool:
+	if _local_profile_store == null:
+		return false
+	if _local_profile_store.get_preferred_auth_mode() != AUTH_MODE_GUEST:
+		return false
+	return not _local_profile_store.get_guest_profile_id().is_empty()
+
+func _activate_stored_guest_session() -> void:
+	_activate_guest_profile_session("Guest")
+	_finish_startup_loading()
 
 func _prompt_account_login() -> void:
 	_account_switch_pending = true
 	_account_switch_retry_attempts = 0
 	_cancel_pending_authenticated_lobby_connects()
 	_set_selected_account_username("")
+	_set_selected_account_public_username("", false)
 	if _local_profile_store != null:
 		_local_profile_store.set_preferred_auth_mode(AUTH_MODE_LOGIN)
 		_local_profile_store.clear_account_password()
 	_set_selected_account_password("")
+	_selected_account_accepts_game_updates = false
 	_set_auth_mode(AUTH_MODE_LOGIN)
 	if _auth_onboarding_username_edit != null and is_instance_valid(_auth_onboarding_username_edit):
 		_auth_onboarding_username_edit.text = ""
@@ -4050,23 +4207,39 @@ func _normalize_auth_mode(auth_mode: String, fallback_mode: String = AUTH_MODE_L
 	var resolved_auth_mode := auth_mode.strip_edges().to_lower()
 	match resolved_auth_mode:
 		AUTH_MODE_GUEST, LobbyProtocolScript.LOGIN_GUEST:
-			return fallback_mode
+			return AUTH_MODE_GUEST
 		AUTH_MODE_LOGIN, LobbyProtocolScript.LOGIN_ACCOUNT:
 			return AUTH_MODE_LOGIN
 		AUTH_MODE_REGISTER, LobbyProtocolScript.REGISTER_ACCOUNT:
 			return AUTH_MODE_REGISTER
+		AUTH_MODE_CLAIM_LEGACY, LobbyProtocolScript.CLAIM_LEGACY_ACCOUNT:
+			return AUTH_MODE_CLAIM_LEGACY
 		_:
 			return fallback_mode
 
 func _get_saved_account_username() -> String:
 	if _local_profile_store == null:
 		return ""
+	if _local_profile_store.has_method("get_last_account_email"):
+		return _local_profile_store.get_last_account_email()
 	return _local_profile_store.get_last_account_username()
 
 func _get_saved_account_password() -> String:
+	return ""
+
+func _get_pending_legacy_claim_username() -> String:
 	if _local_profile_store == null:
 		return ""
-	return _local_profile_store.get_last_account_password()
+	if not _local_profile_store.has_method("get_pending_legacy_account_claim_username"):
+		return ""
+	return _local_profile_store.get_pending_legacy_account_claim_username()
+
+func _get_pending_legacy_claim_password() -> String:
+	if _local_profile_store == null:
+		return ""
+	if not _local_profile_store.has_method("get_pending_legacy_account_claim_password"):
+		return ""
+	return _local_profile_store.get_pending_legacy_account_claim_password()
 
 func _is_saved_account_auto_login_enabled() -> bool:
 	if _local_profile_store == null:
@@ -4074,13 +4247,7 @@ func _is_saved_account_auto_login_enabled() -> bool:
 	return _local_profile_store.get_account_auto_login_enabled()
 
 func _should_auto_login_saved_account() -> bool:
-	if _get_launch_auth_mode() not in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
-		return false
-	if not _is_saved_account_auto_login_enabled():
-		return false
-	if _get_saved_account_username().is_empty():
-		return false
-	return not _get_saved_account_password().is_empty()
+	return false
 
 func _get_editable_account_username() -> String:
 	if _auth_onboarding_username_edit != null \
@@ -4095,6 +4262,11 @@ func _set_selected_account_username(username: String, sync_field: bool = true) -
 	_selected_account_username = username.strip_edges()
 	if sync_field and player_name_line_edit != null:
 		player_name_line_edit.text = _selected_account_username
+
+func _set_selected_account_public_username(username: String, sync_field: bool = true) -> void:
+	_selected_account_public_username = username.strip_edges()
+	if sync_field and _auth_onboarding_public_username_edit != null:
+		_auth_onboarding_public_username_edit.text = _selected_account_public_username
 
 func _set_selected_account_password(password: String, sync_field: bool = true) -> void:
 	_selected_account_password = password
@@ -4138,9 +4310,20 @@ func _get_connected_account_username() -> String:
 	var lobby_auth_mode := _normalize_auth_mode(str(lobby_client.current_auth_mode), "")
 	if not str(lobby_client.current_account_id).strip_edges().is_empty():
 		return lobby_username
-	if lobby_auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
+	if lobby_auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]:
 		return lobby_username
 	return ""
+
+func _get_connected_account_email() -> String:
+	if _account_switch_pending:
+		return ""
+	if lobby_client == null:
+		return ""
+	if not lobby_client.is_authenticated():
+		return ""
+	if str(lobby_client.current_account_id).strip_edges().is_empty():
+		return ""
+	return str(lobby_client.current_email).strip_edges().to_lower()
 
 func _get_effective_account_username() -> String:
 	if _account_switch_pending:
@@ -4151,11 +4334,11 @@ func _get_effective_account_username() -> String:
 	return _logged_in_account_username.strip_edges()
 
 func _get_preferred_account_username() -> String:
-	var connected_username := _get_connected_account_username()
-	if not connected_username.is_empty():
-		return connected_username
+	var connected_email := _get_connected_account_email()
+	if not connected_email.is_empty():
+		return connected_email
 	var auth_mode := _get_selected_auth_mode()
-	if auth_mode not in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
+	if auth_mode not in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]:
 		return ""
 	if not _selected_account_username.is_empty():
 		return _selected_account_username
@@ -4171,18 +4354,25 @@ func _get_effective_identity_name(default_name: String = "Player") -> String:
 	var account_username := _get_effective_account_username()
 	if not account_username.is_empty():
 		return account_username
+	if _is_guest_session_active() and _local_profile_store != null and not _local_profile_id.is_empty():
+		var guest_display_name := str(_local_profile_store.get_profile_display_name(_local_profile_id, "")).strip_edges()
+		if not guest_display_name.is_empty():
+			return guest_display_name
+	var selected_public_username := _get_selected_account_public_username()
+	if not selected_public_username.is_empty():
+		return selected_public_username
 	var fallback_name := default_name.strip_edges()
 	if fallback_name.is_empty():
 		fallback_name = "Player"
-	if _get_selected_auth_mode() in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
-		var selected_account_username := _get_selected_account_username()
-		if not selected_account_username.is_empty():
-			return selected_account_username
+	if _get_selected_auth_mode() in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]:
+		var selected_account_email := _get_selected_account_username()
+		if not selected_account_email.is_empty():
+			return _display_name_from_account_email(selected_account_email)
 	return fallback_name
 
 func _get_selected_account_username() -> String:
 	var auth_mode := _get_selected_auth_mode()
-	if auth_mode not in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
+	if auth_mode not in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]:
 		return ""
 	if not _selected_account_username.is_empty():
 		return _selected_account_username
@@ -4194,6 +4384,22 @@ func _get_selected_account_username() -> String:
 		return saved_account_username
 	return ""
 
+func _get_selected_account_public_username() -> String:
+	var connected_username := _get_connected_account_username()
+	if not connected_username.is_empty():
+		return connected_username
+	if not _selected_account_public_username.is_empty():
+		return _selected_account_public_username
+	if _auth_onboarding_public_username_edit != null and is_instance_valid(_auth_onboarding_public_username_edit):
+		var editable_username := _auth_onboarding_public_username_edit.text.strip_edges()
+		if not editable_username.is_empty():
+			return editable_username
+	if player_name_line_edit != null and not player_name_line_edit.text.strip_edges().is_empty():
+		var player_name: String = player_name_line_edit.text.strip_edges()
+		if player_name.find("@") < 0:
+			return player_name
+	return ""
+
 func _get_active_profile_display_name(default_name: String = "Player") -> String:
 	var resolved_default := default_name.strip_edges()
 	if resolved_default.is_empty():
@@ -4201,9 +4407,12 @@ func _get_active_profile_display_name(default_name: String = "Player") -> String
 	var active_account_username := _get_effective_account_username()
 	if not active_account_username.is_empty():
 		return active_account_username
-	var selected_account_username := _get_selected_account_username()
-	if not selected_account_username.is_empty():
-		return selected_account_username
+	var selected_public_username := _get_selected_account_public_username()
+	if not selected_public_username.is_empty():
+		return selected_public_username
+	var selected_account_email := _get_selected_account_username()
+	if not selected_account_email.is_empty():
+		return _display_name_from_account_email(selected_account_email)
 	if _local_profile_store != null and not _local_profile_id.is_empty():
 		var profile: Dictionary = _local_profile_store.get_profile(_local_profile_id)
 		var profile_display_name := str(profile.get("display_name", "")).strip_edges()
@@ -4212,27 +4421,55 @@ func _get_active_profile_display_name(default_name: String = "Player") -> String
 	return _get_effective_identity_name(resolved_default)
 
 func _activate_account_profile(
-	account_username: String,
+	account_email: String,
 	preferred_profile_id: String = "",
 	auth_mode: String = AUTH_MODE_LOGIN,
-	persist_password: bool = false,
-	prefer_preferred_profile_id: bool = false
+	_persist_password: bool = false,
+	prefer_preferred_profile_id: bool = false,
+	public_username: String = ""
 ) -> String:
 	_ensure_local_profile_store()
-	var resolved_username := account_username.strip_edges()
-	if _local_profile_store == null or resolved_username.is_empty():
+	var resolved_email := account_email.strip_edges().to_lower()
+	if _local_profile_store == null or resolved_email.is_empty():
 		return _local_profile_id
+	var resolved_public_username := public_username.strip_edges()
+	if resolved_public_username.is_empty():
+		resolved_public_username = _display_name_from_account_email(resolved_email)
 	var profile: Dictionary = _local_profile_store.activate_account_session(
-		resolved_username,
+		resolved_email,
 		preferred_profile_id,
 		auth_mode,
 		_get_auth_password(),
-		persist_password,
-		prefer_preferred_profile_id
+		false,
+		prefer_preferred_profile_id,
+		resolved_public_username
 	)
-	_set_selected_account_username(resolved_username)
+	_set_selected_account_username(resolved_email)
+	_set_selected_account_public_username(resolved_public_username, false)
 	_local_profile_id = str(profile.get("profile_id", _local_profile_id)).strip_edges()
 	return _local_profile_id
+
+func _display_name_from_account_email(email: String) -> String:
+	var normalized_email := email.strip_edges()
+	var at_index := normalized_email.find("@")
+	if at_index > 0:
+		var local_part := normalized_email.substr(0, at_index).strip_edges()
+		if not local_part.is_empty():
+			return local_part
+	return "Player"
+
+func _is_valid_account_email(email: String) -> bool:
+	var normalized_email := email.strip_edges()
+	var at_index := normalized_email.find("@")
+	if at_index <= 0 or at_index != normalized_email.rfind("@"):
+		return false
+	var local_part := normalized_email.substr(0, at_index)
+	var domain_part := normalized_email.substr(at_index + 1)
+	if local_part.is_empty() or domain_part.is_empty():
+		return false
+	if domain_part.find(".") <= 0 or domain_part.ends_with("."):
+		return false
+	return true
 
 func _on_switch_account_pressed() -> void:
 	_account_switch_pending = true
@@ -4327,6 +4564,23 @@ func _show_auth_onboarding() -> void:
 	)
 	button_column.add_child(register_btn)
 
+	var claim_btn := Button.new()
+	claim_btn.text = "Claim Old Account"
+	claim_btn.custom_minimum_size = Vector2(0, 40)
+	claim_btn.pressed.connect(func() -> void:
+		_begin_auth_onboarding_account_flow(AUTH_MODE_CLAIM_LEGACY)
+	)
+	button_column.add_child(claim_btn)
+
+	var guest_btn := Button.new()
+	guest_btn.text = "Continue as Guest"
+	guest_btn.tooltip_text = "Decks save only on this device. %s" % GUEST_ACCOUNT_PROMPT
+	guest_btn.custom_minimum_size = Vector2(0, 40)
+	guest_btn.pressed.connect(func() -> void:
+		_continue_as_guest()
+	)
+	button_column.add_child(guest_btn)
+
 	_auth_onboarding_mode_hint_label = Label.new()
 	_auth_onboarding_mode_hint_label.text = ""
 	_auth_onboarding_mode_hint_label.visible = false
@@ -4335,8 +4589,20 @@ func _show_auth_onboarding() -> void:
 	_auth_onboarding_mode_hint_label.modulate = Color(0.76, 0.80, 0.92)
 	inner.add_child(_auth_onboarding_mode_hint_label)
 
+	_auth_onboarding_public_username_edit = LineEdit.new()
+	_auth_onboarding_public_username_edit.placeholder_text = "Username"
+	_auth_onboarding_public_username_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_auth_onboarding_public_username_edit.visible = false
+	_auth_onboarding_public_username_edit.text_changed.connect(func(_new_text: String) -> void:
+		_refresh_auth_onboarding_form_state()
+	)
+	_auth_onboarding_public_username_edit.text_submitted.connect(func(_text: String) -> void:
+		_submit_auth_onboarding()
+	)
+	inner.add_child(_auth_onboarding_public_username_edit)
+
 	_auth_onboarding_username_edit = LineEdit.new()
-	_auth_onboarding_username_edit.placeholder_text = "Account username"
+	_auth_onboarding_username_edit.placeholder_text = "Email address"
 	_auth_onboarding_username_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_auth_onboarding_username_edit.visible = false
 	_auth_onboarding_username_edit.text_changed.connect(func(_new_text: String) -> void:
@@ -4361,10 +4627,16 @@ func _show_auth_onboarding() -> void:
 	inner.add_child(_auth_onboarding_password_edit)
 
 	_auth_onboarding_auto_login_toggle = CheckButton.new()
-	_auth_onboarding_auto_login_toggle.text = "Autologin on this computer"
-	_auth_onboarding_auto_login_toggle.tooltip_text = "Stores your account password on this device and signs in automatically when the game launches."
+	_auth_onboarding_auto_login_toggle.text = "Remember this email"
+	_auth_onboarding_auto_login_toggle.tooltip_text = "Stores only your email on this device. Passwords are never saved locally."
 	_auth_onboarding_auto_login_toggle.visible = false
 	inner.add_child(_auth_onboarding_auto_login_toggle)
+
+	_auth_onboarding_game_updates_toggle = CheckButton.new()
+	_auth_onboarding_game_updates_toggle.text = "Send me game updates by email"
+	_auth_onboarding_game_updates_toggle.tooltip_text = "Optional. You can change this later in Settings under Account."
+	_auth_onboarding_game_updates_toggle.visible = false
+	inner.add_child(_auth_onboarding_game_updates_toggle)
 
 	var continue_row := HBoxContainer.new()
 	continue_row.add_theme_constant_override("separation", 8)
@@ -4384,54 +4656,84 @@ func _show_auth_onboarding() -> void:
 	_refresh_auth_onboarding_form_state()
 
 func _begin_auth_onboarding_account_flow(auth_mode: String) -> void:
-	if auth_mode not in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
+	if auth_mode not in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]:
 		auth_mode = AUTH_MODE_LOGIN
 	_auth_onboarding_selected_mode = auth_mode
 	if auth_mode == AUTH_MODE_REGISTER:
-		_set_auth_onboarding_hint("New account passwords must be at least %d characters." % _get_account_min_password_length())
+		_set_auth_onboarding_hint("Create a username, add your email, and choose a password of at least %d characters." % _get_account_min_password_length())
+	elif auth_mode == AUTH_MODE_CLAIM_LEGACY:
+		_set_auth_onboarding_hint("Add an email to your old username account. Your username and saved password are prefilled when available.")
 	else:
 		_set_auth_onboarding_hint("")
+	if _auth_onboarding_public_username_edit != null:
+		_auth_onboarding_public_username_edit.visible = auth_mode in [AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]
+		if auth_mode == AUTH_MODE_CLAIM_LEGACY:
+			var legacy_username := _get_pending_legacy_claim_username()
+			if _auth_onboarding_public_username_edit.text.strip_edges().is_empty() and not legacy_username.is_empty():
+				_auth_onboarding_public_username_edit.text = legacy_username
+		elif _auth_onboarding_public_username_edit.text.strip_edges().is_empty() and not _selected_account_public_username.is_empty():
+			_auth_onboarding_public_username_edit.text = _selected_account_public_username
 	if _auth_onboarding_username_edit != null:
 		_auth_onboarding_username_edit.visible = true
 		if _auth_onboarding_username_edit.text.strip_edges().is_empty():
 			var saved_username := ""
-			if _local_profile_store != null:
+			if auth_mode == AUTH_MODE_CLAIM_LEGACY:
+				saved_username = ""
+			elif _local_profile_store != null:
 				saved_username = _local_profile_store.get_last_account_username()
 			if saved_username.is_empty():
 				saved_username = _selected_account_username
 			_auth_onboarding_username_edit.text = saved_username
 	if _auth_onboarding_password_edit != null:
 		_auth_onboarding_password_edit.visible = true
-		if _local_profile_store != null:
-			_auth_onboarding_password_edit.text = _get_saved_account_password()
+		if auth_mode == AUTH_MODE_CLAIM_LEGACY:
+			var legacy_password := _get_pending_legacy_claim_password()
+			_auth_onboarding_password_edit.text = legacy_password
 		else:
 			_auth_onboarding_password_edit.text = ""
 	if _auth_onboarding_auto_login_toggle != null:
-		_auth_onboarding_auto_login_toggle.visible = true
-		_auth_onboarding_auto_login_toggle.set_pressed_no_signal(_is_saved_account_auto_login_enabled())
+		_auth_onboarding_auto_login_toggle.visible = false
+		_auth_onboarding_auto_login_toggle.set_pressed_no_signal(false)
+	if _auth_onboarding_game_updates_toggle != null:
+		_auth_onboarding_game_updates_toggle.visible = auth_mode in [AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]
+		_auth_onboarding_game_updates_toggle.set_pressed_no_signal(_selected_account_accepts_game_updates)
 	if _auth_onboarding_continue_button != null:
 		_auth_onboarding_continue_button.visible = true
-		_auth_onboarding_continue_button.text = "Create Account" if auth_mode == AUTH_MODE_REGISTER else "Login"
+		if auth_mode == AUTH_MODE_REGISTER:
+			_auth_onboarding_continue_button.text = "Create Account"
+		elif auth_mode == AUTH_MODE_CLAIM_LEGACY:
+			_auth_onboarding_continue_button.text = "Add Email"
+		else:
+			_auth_onboarding_continue_button.text = "Login"
 	_refresh_auth_onboarding_form_state()
-	if _auth_onboarding_username_edit != null and _auth_onboarding_username_edit.text.strip_edges().is_empty():
+	if _auth_onboarding_public_username_edit != null and _auth_onboarding_public_username_edit.visible \
+			and _auth_onboarding_public_username_edit.text.strip_edges().is_empty():
+		_auth_onboarding_public_username_edit.grab_focus()
+	elif _auth_onboarding_username_edit != null and _auth_onboarding_username_edit.text.strip_edges().is_empty():
 		_auth_onboarding_username_edit.grab_focus()
 	elif _auth_onboarding_password_edit != null:
 		_auth_onboarding_password_edit.grab_focus()
 
 func _submit_auth_onboarding() -> bool:
 	var auth_mode := _auth_onboarding_selected_mode
-	if auth_mode not in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
+	if auth_mode not in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]:
 		return false
-	var username := ""
+	var email := ""
+	var public_username := ""
 	var password := ""
 	if _auth_onboarding_username_edit != null:
-		username = _auth_onboarding_username_edit.text.strip_edges()
+		email = _auth_onboarding_username_edit.text.strip_edges().to_lower()
+	if _auth_onboarding_public_username_edit != null:
+		public_username = _auth_onboarding_public_username_edit.text.strip_edges()
 	if _auth_onboarding_password_edit != null:
 		password = _auth_onboarding_password_edit.text
-	var auto_login_enabled := _auth_onboarding_auto_login_toggle != null \
-		and _auth_onboarding_auto_login_toggle.button_pressed
-	if username.is_empty():
-		_set_auth_onboarding_hint("Enter an account username to continue.", true)
+	if auth_mode in [AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY] and public_username.is_empty():
+		_set_auth_onboarding_hint("Enter a username to continue.", true)
+		if _auth_onboarding_public_username_edit != null:
+			_auth_onboarding_public_username_edit.grab_focus()
+		return false
+	if email.is_empty():
+		_set_auth_onboarding_hint("Enter your email address to continue.", true)
 		if _auth_onboarding_username_edit != null:
 			_auth_onboarding_username_edit.grab_focus()
 		return false
@@ -4440,33 +4742,39 @@ func _submit_auth_onboarding() -> bool:
 		if _auth_onboarding_password_edit != null:
 			_auth_onboarding_password_edit.grab_focus()
 		return false
-	var credential_error := _validate_account_auth_details(auth_mode, username, password)
+	var credential_error := _validate_account_auth_details(auth_mode, email, password, public_username)
 	if not credential_error.is_empty():
 		_set_auth_onboarding_hint(credential_error, true)
-		if _auth_onboarding_password_edit != null:
+		if auth_mode in [AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY] and not _is_valid_account_public_username(public_username) \
+				and _auth_onboarding_public_username_edit != null:
+			_auth_onboarding_public_username_edit.grab_focus()
+		elif not _is_valid_account_email(email) and _auth_onboarding_username_edit != null:
+			_auth_onboarding_username_edit.grab_focus()
+		elif _auth_onboarding_password_edit != null:
 			_auth_onboarding_password_edit.grab_focus()
 		return false
-	_set_selected_account_username(username)
+	_set_selected_account_username(email)
+	_set_selected_account_public_username(public_username, false)
+	_selected_account_accepts_game_updates = _auth_onboarding_game_updates_toggle != null \
+		and _auth_onboarding_game_updates_toggle.button_pressed
 	_set_selected_account_password(password)
 	if _local_profile_store != null:
-		_local_profile_store.set_account_auto_login_enabled(auto_login_enabled)
-		if auto_login_enabled:
-			_local_profile_store.remember_account_password(password)
-		else:
-			_local_profile_store.clear_account_password()
-	_prepare_submitted_account_auth(username)
+		_local_profile_store.set_account_auto_login_enabled(false)
+		_local_profile_store.remember_account_email(email)
+		_local_profile_store.clear_account_password()
+	_prepare_submitted_account_auth(email)
 	_complete_auth_onboarding(auth_mode, "Account details saved. Open Multiplayer to sign in.")
 	return true
 
-func _prepare_submitted_account_auth(username: String) -> void:
-	var requested_username := username.strip_edges()
-	if requested_username.is_empty():
+func _prepare_submitted_account_auth(email: String) -> void:
+	var requested_email := email.strip_edges().to_lower()
+	if requested_email.is_empty():
 		return
 	_cancel_pending_authenticated_lobby_connects()
-	var requested_key := requested_username.to_lower()
-	var connected_key := _get_connected_account_username().strip_edges().to_lower()
-	var logged_key := _logged_in_account_username.strip_edges().to_lower()
-	if connected_key == requested_key and (logged_key.is_empty() or logged_key == requested_key):
+	var requested_key := requested_email.to_lower()
+	var connected_key := _get_connected_account_email().strip_edges().to_lower()
+	var auth_mode := _auth_onboarding_selected_mode
+	if connected_key == requested_key and auth_mode != AUTH_MODE_CLAIM_LEGACY:
 		return
 	_account_switch_pending = true
 	_account_switch_retry_attempts = 0
@@ -4478,7 +4786,7 @@ func _get_launch_auth_mode() -> String:
 	if _local_profile_store == null:
 		return AUTH_MODE_LOGIN
 	var preferred_auth_mode: String = _local_profile_store.get_preferred_auth_mode()
-	if preferred_auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
+	if preferred_auth_mode in [AUTH_MODE_GUEST, AUTH_MODE_LOGIN, AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]:
 		return preferred_auth_mode
 	var saved_username: String = _get_saved_account_username()
 	if not saved_username.is_empty():
@@ -4492,11 +4800,17 @@ func _should_prompt_for_account_recovery(message: String) -> bool:
 	return normalized_message in [
 		"that account was not found.",
 		"incorrect password.",
+		"that email address already has an account.",
+		"that account already has an email address. log in with email instead.",
 	]
 
 func _show_auth_recovery_prompt(message: String) -> void:
+	var recovery_auth_mode := AUTH_MODE_LOGIN
+	if _get_selected_auth_mode() == AUTH_MODE_CLAIM_LEGACY \
+			or _auth_onboarding_selected_mode == AUTH_MODE_CLAIM_LEGACY:
+		recovery_auth_mode = AUTH_MODE_CLAIM_LEGACY
 	_maybe_show_auth_onboarding(true)
-	_begin_auth_onboarding_account_flow(AUTH_MODE_LOGIN)
+	_begin_auth_onboarding_account_flow(recovery_auth_mode)
 	_set_auth_onboarding_hint(message, true)
 
 func _set_auth_onboarding_hint(message: String, is_error: bool = false) -> void:
@@ -4513,15 +4827,18 @@ func _refresh_auth_onboarding_form_state() -> void:
 		_auth_onboarding_password_edit.placeholder_text = "Account password (min %d characters)" % min_password_length if auth_mode == AUTH_MODE_REGISTER else "Account password"
 	if _auth_onboarding_continue_button == null:
 		return
-	if auth_mode not in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
+	if auth_mode not in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]:
 		_auth_onboarding_continue_button.disabled = true
 		return
-	var username := _auth_onboarding_username_edit.text.strip_edges() if _auth_onboarding_username_edit != null else ""
+	var email := _auth_onboarding_username_edit.text.strip_edges().to_lower() if _auth_onboarding_username_edit != null else ""
+	var public_username := _auth_onboarding_public_username_edit.text.strip_edges() if _auth_onboarding_public_username_edit != null else ""
 	var password := _auth_onboarding_password_edit.text if _auth_onboarding_password_edit != null else ""
-	var can_submit := not username.is_empty() and not password.is_empty()
+	var can_submit := _is_valid_account_email(email) and not password.is_empty()
+	if auth_mode in [AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]:
+		can_submit = can_submit and _is_valid_account_public_username(public_username)
 	if auth_mode == AUTH_MODE_REGISTER:
 		can_submit = can_submit and password.strip_edges().length() >= min_password_length
-		if not can_submit and not username.is_empty() and not password.is_empty():
+		if not can_submit and not email.is_empty() and not password.is_empty():
 			_set_auth_onboarding_hint("Passwords for new accounts must be at least %d characters." % min_password_length, true)
 		elif _auth_onboarding_mode_hint_label != null and _auth_onboarding_mode_hint_label.visible \
 				and str(_auth_onboarding_mode_hint_label.text).begins_with("Passwords for new accounts must be at least "):
@@ -4531,23 +4848,54 @@ func _refresh_auth_onboarding_form_state() -> void:
 func _get_account_min_password_length() -> int:
 	return int(AccountStoreScript.MIN_PASSWORD_LENGTH)
 
-func _validate_account_auth_details(auth_mode: String, _username: String, password: String) -> String:
-	if auth_mode != AUTH_MODE_REGISTER:
+func _validate_account_auth_details(
+	auth_mode: String,
+	email: String,
+	password: String,
+	public_username: String = ""
+) -> String:
+	if not _is_valid_account_email(email):
+		return "Enter a valid email address."
+	if auth_mode in [AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]:
+		if not _is_valid_account_public_username(public_username):
+			return "Username can only use 3-24 letters, numbers, and underscores."
+	if auth_mode not in [AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]:
 		return ""
 	var min_password_length := _get_account_min_password_length()
 	if password.strip_edges().length() < min_password_length:
 		return "Passwords for new accounts must be at least %d characters." % min_password_length
 	return ""
 
+func _is_valid_account_public_username(username: String) -> bool:
+	var normalized_username := username.strip_edges()
+	if normalized_username.length() < int(AccountStoreScript.MIN_USERNAME_LENGTH):
+		return false
+	if normalized_username.length() > int(AccountStoreScript.MAX_USERNAME_LENGTH):
+		return false
+	for char_index in range(normalized_username.length()):
+		var codepoint := normalized_username.unicode_at(char_index)
+		var is_letter_or_number := (codepoint >= 48 and codepoint <= 57) \
+			or (codepoint >= 65 and codepoint <= 90) \
+			or (codepoint >= 97 and codepoint <= 122)
+		var is_allowed_symbol := codepoint == 95
+		if not is_letter_or_number and not is_allowed_symbol:
+			return false
+	return true
+
 func _complete_auth_onboarding(auth_mode: String, message: String) -> void:
 	_set_auth_mode(auth_mode)
 	var selected_account_username := _get_selected_account_username()
-	if not selected_account_username.is_empty():
+	if not selected_account_username.is_empty() and auth_mode != AUTH_MODE_CLAIM_LEGACY:
+		var selected_public_username := _get_selected_account_public_username()
+		if selected_public_username.is_empty():
+			selected_public_username = _display_name_from_account_email(selected_account_username)
 		_activate_account_profile(
 			selected_account_username,
 			"",
 			auth_mode,
-			_auth_onboarding_auto_login_toggle != null and _auth_onboarding_auto_login_toggle.button_pressed
+			false,
+			false,
+			selected_public_username
 		)
 	multiplayer_container.visible = false
 	ready_button.visible = false
@@ -4563,8 +4911,20 @@ func _complete_auth_onboarding(auth_mode: String, message: String) -> void:
 	if multiplayer_button != null:
 		multiplayer_button.grab_focus()
 	_dismiss_auth_onboarding()
-	if auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
+	if auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]:
 		_queue_authenticated_lobby_connect("Signing in to lobby...")
+
+func _continue_as_guest() -> void:
+	_cancel_pending_authenticated_lobby_connects()
+	_cleanup_lobby(true)
+	var guest_display_name := _activate_guest_profile_session("Guest")
+	multiplayer_container.visible = false
+	ready_button.visible = false
+	status_label.text = "Continuing as %s. Decks save on this device only." % guest_display_name
+	show_menu()
+	if multiplayer_button != null:
+		multiplayer_button.grab_focus()
+	_dismiss_auth_onboarding()
 
 func _dismiss_auth_onboarding() -> void:
 	if _auth_onboarding_overlay == null:
@@ -4574,8 +4934,10 @@ func _dismiss_auth_onboarding() -> void:
 	_auth_onboarding_overlay = null
 	_auth_onboarding_mode_hint_label = null
 	_auth_onboarding_username_edit = null
+	_auth_onboarding_public_username_edit = null
 	_auth_onboarding_password_edit = null
 	_auth_onboarding_auto_login_toggle = null
+	_auth_onboarding_game_updates_toggle = null
 	_auth_onboarding_continue_button = null
 	_finish_startup_loading()
 
@@ -5924,7 +6286,9 @@ func _on_connect_pressed() -> void:
 		_get_configured_lobby_port(),
 		_local_profile_id,
 		_get_selected_auth_mode(),
-		_get_auth_password()
+		_get_auth_password(),
+		_get_selected_account_public_username(),
+		_selected_account_accepts_game_updates
 	)
 	if connect_err != OK:
 		status_label.text = "Could not connect to the lobby."
@@ -5973,7 +6337,9 @@ func _connect_local_host_to_dedicated_lobby() -> void:
 		_get_configured_lobby_port(),
 		_local_profile_id,
 		_get_selected_auth_mode(),
-		_get_auth_password()
+		_get_auth_password(),
+		_get_selected_account_public_username(),
+		_selected_account_accepts_game_updates
 	)
 	if connect_err != OK:
 		_queue_host_lobby_retry("Could not connect to dedicated lobby at %s." % _current_lobby_ip)
@@ -6018,6 +6384,8 @@ func _bind_lobby_client_signals() -> void:
 		lobby_client.profile_summary_received.connect(_on_profile_summary_received)
 	if lobby_client.has_signal("friends_state_received") and not lobby_client.friends_state_received.is_connected(_on_friends_state_received):
 		lobby_client.friends_state_received.connect(_on_friends_state_received)
+	if lobby_client.has_signal("account_settings_updated") and not lobby_client.account_settings_updated.is_connected(_on_account_settings_updated):
+		lobby_client.account_settings_updated.connect(_on_account_settings_updated)
 	if not lobby_client.connection_failed.is_connected(_on_lobby_connection_failed):
 		lobby_client.connection_failed.connect(_on_lobby_connection_failed)
 	if not lobby_client.disconnected_from_lobby.is_connected(_on_lobby_disconnected):
@@ -6587,6 +6955,8 @@ func _on_lobby_room_error(message: String) -> void:
 	_manual_rejoin_room_id = ""
 	status_label.text = message
 	_set_friends_status(message)
+	if _settings_overlay != null and is_instance_valid(_settings_overlay):
+		_set_settings_account_status(message, true)
 	if _should_prompt_for_account_recovery(message):
 		_show_auth_recovery_prompt(message)
 	# In smoke mode the first select_deck for a freshly-registered account can race
@@ -7006,8 +7376,8 @@ func _get_lobby_ip() -> String:
 
 func _get_player_name(default_name: String) -> String:
 	var player_name := ""
-	if _get_selected_auth_mode() in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
-		player_name = _get_selected_account_username()
+	if _get_selected_auth_mode() in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]:
+		player_name = _get_effective_identity_name(default_name)
 	elif player_name_line_edit != null:
 		player_name = player_name_line_edit.text.strip_edges()
 	if player_name.is_empty():
@@ -7057,22 +7427,77 @@ func _get_preferred_guest_display_name(default_name: String = "Guest") -> String
 	var resolved_default := default_name.strip_edges()
 	if resolved_default.is_empty():
 		resolved_default = "Guest"
-	return resolved_default
-
-func _apply_guest_display_name(default_name: String = "Player") -> String:
-	var guest_display_name := _get_preferred_guest_display_name(default_name)
 	if _local_profile_store != null:
+		var guest_profile_id: String = _local_profile_store.get_guest_profile_id()
+		if not guest_profile_id.is_empty():
+			var guest_name := str(_local_profile_store.get_profile_display_name(guest_profile_id, "")).strip_edges()
+			if _is_generated_guest_username(guest_name):
+				return guest_name
+	if _is_generated_guest_username(resolved_default):
+		return resolved_default
+	return _generate_guest_username()
+
+func _is_generated_guest_username(display_name: String) -> bool:
+	var normalized := display_name.strip_edges().to_lower()
+	if not normalized.begins_with(GUEST_USERNAME_PREFIX):
+		return false
+	var digits := normalized.substr(GUEST_USERNAME_PREFIX.length())
+	return digits.length() == 5 and digits.is_valid_int()
+
+func _generate_guest_username() -> String:
+	var rng := RandomNumberGenerator.new()
+	rng.randomize()
+	var digits := str(rng.randi_range(0, 99999))
+	while digits.length() < 5:
+		digits = "0" + digits
+	return "%s%s" % [GUEST_USERNAME_PREFIX, digits]
+
+func _activate_guest_profile_session(default_name: String = "Guest") -> String:
+	_ensure_local_profile_store()
+	var guest_display_name := _get_preferred_guest_display_name(default_name)
+	_cancel_pending_authenticated_lobby_connects()
+	_account_switch_pending = false
+	_account_switch_retry_attempts = 0
+	_logged_in_account_username = ""
+	_account_decks_cache.clear()
+	_friends_state.clear()
+	_current_profile_summary.clear()
+	_set_selected_account_username("", false)
+	_set_selected_account_public_username("", false)
+	_set_selected_account_password("", false)
+	_selected_account_accepts_game_updates = false
+	_set_auth_mode(AUTH_MODE_GUEST)
+	if _local_profile_store != null:
+		_local_profile_store.set_account_auto_login_enabled(false)
+		_local_profile_store.clear_account_password()
 		var profile: Dictionary = _local_profile_store.activate_guest_session(guest_display_name)
 		_local_profile_id = str(profile.get("profile_id", _local_profile_id)).strip_edges()
 		guest_display_name = str(profile.get("display_name", guest_display_name)).strip_edges()
-		_selected_multiplayer_deck_id = ""
-		_refresh_open_deck_builder_saved_decks()
-		_refresh_profile_summary_from_local_history(_local_profile_id)
-		_update_resume_controls()
-		_refresh_account_identity_label()
+	_selected_multiplayer_deck_id = ""
 	if player_name_line_edit != null:
 		player_name_line_edit.text = guest_display_name
+	_refresh_open_deck_builder_saved_decks()
+	_refresh_profile_summary_label()
+	_refresh_profile_summary_from_local_history(_local_profile_id)
+	_update_resume_controls()
+	_refresh_friends_button()
+	_refresh_friends_overlay()
+	_refresh_account_identity_label()
+	_refresh_auth_controls()
 	return guest_display_name
+
+func _apply_guest_display_name(default_name: String = "Player") -> String:
+	return _activate_guest_profile_session(default_name)
+
+func _is_guest_session_active() -> bool:
+	if _get_selected_auth_mode() == AUTH_MODE_GUEST:
+		return true
+	if _local_profile_store == null:
+		return false
+	if _local_profile_store.get_preferred_auth_mode() != AUTH_MODE_GUEST:
+		return false
+	var guest_profile_id: String = _local_profile_store.get_guest_profile_id()
+	return not guest_profile_id.is_empty() and _local_profile_id == guest_profile_id
 
 func _capture_logged_in_profile(player_name: String) -> void:
 	_ensure_local_profile_store()
@@ -7083,36 +7508,49 @@ func _capture_logged_in_profile(player_name: String) -> void:
 	var previous_profile_id := _local_profile_id.strip_edges()
 	var resolved_profile_id := previous_profile_id
 	var resolved_auth_mode := _get_selected_auth_mode()
+	var resolved_account_email := ""
 	var resolved_account_username := ""
 	if lobby_client != null:
 		resolved_profile_id = str(lobby_client.current_profile_id).strip_edges()
 		var lobby_auth_mode := _normalize_auth_mode(str(lobby_client.current_auth_mode), resolved_auth_mode)
-		if lobby_auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
+		if lobby_auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]:
 			resolved_auth_mode = lobby_auth_mode
+		resolved_account_email = str(lobby_client.current_email).strip_edges().to_lower()
 		resolved_account_username = _get_connected_account_username()
-		if resolved_account_username.is_empty() and resolved_auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
+		if resolved_account_username.is_empty() and resolved_auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]:
 			resolved_account_username = str(lobby_client.current_username).strip_edges()
-		if resolved_account_username.is_empty() and resolved_auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
+		if resolved_account_username.is_empty() and resolved_auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]:
 			resolved_account_username = player_name.strip_edges()
 	if resolved_profile_id.is_empty():
 		resolved_profile_id = previous_profile_id
-	if resolved_account_username.is_empty() and resolved_auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
-		resolved_account_username = _get_preferred_account_username()
-	if not resolved_account_username.is_empty():
-		if resolved_auth_mode == AUTH_MODE_REGISTER:
+	if resolved_account_email.is_empty() and resolved_auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]:
+		resolved_account_email = _get_preferred_account_username()
+	if resolved_account_username.is_empty() and not resolved_account_email.is_empty():
+		resolved_account_username = _display_name_from_account_email(resolved_account_email)
+	if not resolved_account_email.is_empty():
+		var was_legacy_claim := resolved_auth_mode == AUTH_MODE_CLAIM_LEGACY
+		var profile_activation_auth_mode := AUTH_MODE_CLAIM_LEGACY if was_legacy_claim else resolved_auth_mode
+		if resolved_auth_mode in [AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]:
 			resolved_auth_mode = AUTH_MODE_LOGIN
 		if resolved_account_username != _logged_in_account_username:
 			_account_decks_cache.clear()
 		_logged_in_account_username = resolved_account_username
-		_set_selected_account_username(resolved_account_username)
+		_set_selected_account_username(resolved_account_email)
+		_set_selected_account_public_username(resolved_account_username, false)
+		_selected_account_accepts_game_updates = lobby_client != null and bool(lobby_client.current_accepts_game_updates)
+		if was_legacy_claim and _local_profile_store != null \
+				and _local_profile_store.has_method("clear_pending_legacy_account_claim"):
+			_local_profile_store.clear_pending_legacy_account_claim()
 		var prefer_connected_profile_id := not resolved_profile_id.is_empty() \
-			and resolved_auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]
+			and not was_legacy_claim \
+			and resolved_auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]
 		resolved_profile_id = _activate_account_profile(
-			resolved_account_username,
+			resolved_account_email,
 			resolved_profile_id,
-			resolved_auth_mode,
-			not _get_auth_password().is_empty(),
-			prefer_connected_profile_id
+			profile_activation_auth_mode,
+			false,
+			prefer_connected_profile_id,
+			resolved_account_username
 		)
 		_local_profile_id = resolved_profile_id
 	else:
@@ -7131,18 +7569,16 @@ func _capture_logged_in_profile(player_name: String) -> void:
 func _retry_account_switch_if_identity_mismatch(player_name: String) -> bool:
 	if not _account_switch_pending or lobby_client == null:
 		return false
-	var desired_username := _selected_account_username.strip_edges().to_lower()
-	if desired_username.is_empty():
+	var desired_email := _selected_account_username.strip_edges().to_lower()
+	if desired_email.is_empty():
 		return false
-	var actual_username := str(lobby_client.current_username).strip_edges().to_lower()
-	if actual_username.is_empty():
-		actual_username = player_name.strip_edges().to_lower()
-	if actual_username.is_empty() or actual_username == desired_username:
+	var actual_email := str(lobby_client.current_email).strip_edges().to_lower()
+	if actual_email.is_empty() or actual_email == desired_email:
 		return false
 	if _account_switch_retry_attempts >= 1:
 		return false
 	_account_switch_retry_attempts += 1
-	_write_smoke_trace("account_switch_retry desired=%s actual=%s" % [desired_username, actual_username])
+	_write_smoke_trace("account_switch_retry desired_email=%s actual_email=%s" % [desired_email, actual_email])
 	_lobby_session_id = ""
 	_lobby_reconnect_token = ""
 	_cleanup_lobby_client()
@@ -7330,6 +7766,28 @@ func _on_profile_summary_received(summary) -> void:
 	_current_profile_summary = (summary as Dictionary).duplicate(true)
 	_refresh_profile_summary_label()
 
+func _on_account_settings_updated(account: Dictionary) -> void:
+	var account_email := str(account.get("email", "")).strip_edges().to_lower()
+	var account_username := str(account.get("username", "")).strip_edges()
+	if not account_email.is_empty():
+		_set_selected_account_username(account_email)
+	if not account_username.is_empty():
+		_set_selected_account_public_username(account_username, false)
+		_logged_in_account_username = account_username
+	_selected_account_accepts_game_updates = bool(account.get("accepts_game_updates", _selected_account_accepts_game_updates))
+	if not account_email.is_empty() and not account_username.is_empty():
+		_activate_account_profile(account_email, _local_profile_id, AUTH_MODE_LOGIN, false, true, account_username)
+	if _settings_current_password_edit != null:
+		_settings_current_password_edit.text = ""
+	if _settings_new_email_edit != null:
+		_settings_new_email_edit.text = ""
+	if _settings_new_password_edit != null:
+		_settings_new_password_edit.text = ""
+	_set_settings_account_status("Account settings saved.", false)
+	_refresh_settings_account_section()
+	_refresh_account_identity_label()
+	_refresh_open_deck_builder_saved_decks()
+
 func _refresh_open_deck_builder_saved_decks() -> void:
 	_refresh_multiplayer_deck_options()
 	var deck_builder = game_container.get_node_or_null("DeckBuilder")
@@ -7384,10 +7842,201 @@ func _build_profile_summary_controls() -> void:
 		multiplayer_container.move_child(panel, seek_list.get_index())
 
 func _build_account_identity_controls() -> void:
+	if menu_container == null:
+		return
 	if _account_identity_label != null and is_instance_valid(_account_identity_label):
-		_account_identity_label.queue_free()
-	_account_identity_label = null
+		_refresh_account_identity_label()
+		return
+	_account_identity_label = Label.new()
+	_account_identity_label.name = "AccountIdentityLabel"
+	_account_identity_label.visible = false
+	_account_identity_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_account_identity_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_account_identity_label.modulate = Color(0.78, 0.84, 0.96)
+	_account_identity_label.add_theme_font_size_override("font_size", 13)
+	menu_container.add_child(_account_identity_label)
+	var anchor_node: Node = multiplayer_button
+	if _switch_account_button != null:
+		anchor_node = _switch_account_button
+	var insert_index := menu_container.get_children().find(anchor_node) + 1
+	if insert_index <= 0:
+		insert_index = menu_container.get_child_count()
+	menu_container.move_child(_account_identity_label, insert_index)
 	_refresh_account_identity_label()
+
+func _build_settings_controls() -> void:
+	if menu_container == null or _settings_button != null:
+		return
+	_settings_button = Button.new()
+	_settings_button.name = "SettingsButton"
+	_settings_button.text = "Settings"
+	_settings_button.pressed.connect(_open_settings_overlay)
+	menu_container.add_child(_settings_button)
+	var insert_index := menu_container.get_children().find(tutorial_button) + 1
+	if insert_index <= 0:
+		insert_index = menu_container.get_children().find(multiplayer_button)
+	if insert_index <= 0:
+		insert_index = menu_container.get_child_count()
+	menu_container.move_child(_settings_button, insert_index)
+
+func _open_settings_overlay() -> void:
+	if _settings_overlay != null and is_instance_valid(_settings_overlay):
+		return
+	_settings_overlay = Control.new()
+	_settings_overlay.name = "SettingsOverlay"
+	_settings_overlay.z_index = 2250
+	_settings_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_settings_overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	add_child(_settings_overlay)
+
+	var shade := ColorRect.new()
+	shade.color = Color(0.02, 0.03, 0.06, 0.86)
+	shade.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	shade.mouse_filter = Control.MOUSE_FILTER_STOP
+	_settings_overlay.add_child(shade)
+
+	var center := CenterContainer.new()
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_settings_overlay.add_child(center)
+
+	var panel := PanelContainer.new()
+	panel.custom_minimum_size = Vector2(520, 0)
+	panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	var panel_style := StyleBoxFlat.new()
+	panel_style.bg_color = Color(0.09, 0.10, 0.16, 0.98)
+	panel_style.border_color = Color(0.38, 0.66, 1.0, 0.95)
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		panel_style.set_border_width(side as Side, 2)
+	panel_style.corner_radius_top_left = 10
+	panel_style.corner_radius_top_right = 10
+	panel_style.corner_radius_bottom_left = 10
+	panel_style.corner_radius_bottom_right = 10
+	panel.add_theme_stylebox_override("panel", panel_style)
+	center.add_child(panel)
+
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 18)
+	margin.add_theme_constant_override("margin_right", 18)
+	margin.add_theme_constant_override("margin_top", 18)
+	margin.add_theme_constant_override("margin_bottom", 18)
+	panel.add_child(margin)
+
+	var content := VBoxContainer.new()
+	content.add_theme_constant_override("separation", 10)
+	margin.add_child(content)
+
+	var title := Label.new()
+	title.text = "Settings"
+	title.add_theme_font_size_override("font_size", 22)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	content.add_child(title)
+
+	var account_title := Label.new()
+	account_title.text = ACCOUNT_SETTINGS_SECTION_TITLE
+	account_title.add_theme_font_size_override("font_size", 17)
+	content.add_child(account_title)
+
+	_settings_account_status_label = Label.new()
+	_settings_account_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_settings_account_status_label.modulate = Color(0.78, 0.84, 0.96)
+	content.add_child(_settings_account_status_label)
+
+	_settings_account_updates_toggle = CheckButton.new()
+	_settings_account_updates_toggle.text = "Send me game updates by email"
+	content.add_child(_settings_account_updates_toggle)
+
+	_settings_current_password_edit = LineEdit.new()
+	_settings_current_password_edit.secret = true
+	_settings_current_password_edit.placeholder_text = "Current password for email/password changes"
+	content.add_child(_settings_current_password_edit)
+
+	_settings_new_email_edit = LineEdit.new()
+	_settings_new_email_edit.placeholder_text = "New email address"
+	content.add_child(_settings_new_email_edit)
+
+	_settings_new_password_edit = LineEdit.new()
+	_settings_new_password_edit.secret = true
+	_settings_new_password_edit.placeholder_text = "New password"
+	content.add_child(_settings_new_password_edit)
+
+	var button_row := HBoxContainer.new()
+	button_row.add_theme_constant_override("separation", 8)
+	content.add_child(button_row)
+
+	var save_btn := Button.new()
+	save_btn.text = "Save"
+	save_btn.custom_minimum_size = Vector2(0, 38)
+	save_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	save_btn.pressed.connect(_on_account_settings_save_pressed)
+	button_row.add_child(save_btn)
+
+	var close_btn := Button.new()
+	close_btn.text = "Close"
+	close_btn.custom_minimum_size = Vector2(0, 38)
+	close_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	close_btn.pressed.connect(_close_settings_overlay)
+	button_row.add_child(close_btn)
+
+	_refresh_settings_account_section()
+
+func _close_settings_overlay() -> void:
+	if _settings_overlay != null and is_instance_valid(_settings_overlay):
+		_settings_overlay.queue_free()
+	_settings_overlay = null
+	_settings_account_status_label = null
+	_settings_account_updates_toggle = null
+	_settings_current_password_edit = null
+	_settings_new_email_edit = null
+	_settings_new_password_edit = null
+
+func _refresh_settings_account_section() -> void:
+	if _settings_account_status_label == null:
+		return
+	var signed_in := _uses_server_account_storage() and lobby_client != null and lobby_client.is_authenticated()
+	if not signed_in:
+		_settings_account_status_label.text = "Log into an account to manage account settings."
+	else:
+		_settings_account_status_label.text = "Signed in as %s (%s)." % [
+			str(lobby_client.current_username).strip_edges(),
+			str(lobby_client.current_email).strip_edges(),
+		]
+	if _settings_account_updates_toggle != null:
+		_settings_account_updates_toggle.disabled = not signed_in
+		_settings_account_updates_toggle.set_pressed_no_signal(
+			bool(lobby_client.current_accepts_game_updates) if signed_in else false
+		)
+	for edit in [_settings_current_password_edit, _settings_new_email_edit, _settings_new_password_edit]:
+		if edit == null:
+			continue
+		edit.editable = signed_in
+		edit.visible = signed_in
+
+func _on_account_settings_save_pressed() -> void:
+	if not _uses_server_account_storage() or lobby_client == null or not lobby_client.is_authenticated():
+		_set_settings_account_status("Log into an account before changing account settings.", true)
+		return
+	var current_password := _settings_current_password_edit.text if _settings_current_password_edit != null else ""
+	var new_email := _settings_new_email_edit.text.strip_edges().to_lower() if _settings_new_email_edit != null else ""
+	var new_password := _settings_new_password_edit.text if _settings_new_password_edit != null else ""
+	var accepts_updates := _settings_account_updates_toggle != null and _settings_account_updates_toggle.button_pressed
+	if not new_email.is_empty() and not _is_valid_account_email(new_email):
+		_set_settings_account_status("Enter a valid new email address.", true)
+		return
+	if not new_password.is_empty() and new_password.strip_edges().length() < _get_account_min_password_length():
+		_set_settings_account_status("New passwords must be at least %d characters." % _get_account_min_password_length(), true)
+		return
+	if (not new_email.is_empty() or not new_password.is_empty()) and current_password.is_empty():
+		_set_settings_account_status("Enter your current password to change email or password.", true)
+		return
+	lobby_client.update_account_settings(current_password, new_email, new_password, accepts_updates)
+	_set_settings_account_status("Saving account settings...", false)
+
+func _set_settings_account_status(message: String, is_error: bool = false) -> void:
+	if _settings_account_status_label == null:
+		return
+	_settings_account_status_label.text = message
+	_settings_account_status_label.modulate = Color(1.0, 0.72, 0.72) if is_error else Color(0.78, 0.84, 0.96)
 
 func _build_friends_controls() -> void:
 	if menu_container == null or _friends_button != null:
@@ -7842,10 +8491,19 @@ func _refresh_account_identity_label() -> void:
 	if title_label != null:
 		title_label.text = _get_effective_identity_name("Guest")
 	_refresh_friends_button()
+	_refresh_settings_account_section()
 	if _account_identity_label == null:
 		return
 	if not active_account_username.is_empty():
 		_account_identity_label.text = "Signed in: %s" % active_account_username
+		_account_identity_label.visible = true
+		_refresh_auth_controls()
+		return
+	if _is_guest_session_active():
+		var guest_display_name := _get_active_profile_display_name("Guest")
+		if not _is_generated_guest_username(guest_display_name):
+			guest_display_name = _get_preferred_guest_display_name("Guest")
+		_account_identity_label.text = "Guest: %s\n%s" % [guest_display_name, GUEST_ACCOUNT_PROMPT]
 		_account_identity_label.visible = true
 		_refresh_auth_controls()
 		return
@@ -7855,8 +8513,8 @@ func _refresh_account_identity_label() -> void:
 		_account_identity_label.text = ""
 		_refresh_auth_controls()
 		return
-	_account_identity_label.text = "Account: %s" % selected_account_username
-	_account_identity_label.visible = true
+	_account_identity_label.text = ""
+	_account_identity_label.visible = false
 	_refresh_auth_controls()
 
 func _refresh_profile_summary_label() -> void:
@@ -7991,7 +8649,7 @@ func _get_profile_summary_loadout(god_name: String, deck_name: String) -> String
 	return "%s (%s)" % [resolved_god_name, resolved_deck_name]
 
 func _refresh_profile_summary_from_local_history(profile_id: String) -> void:
-	if _is_account_logged_in() or _get_selected_auth_mode() in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
+	if _is_account_logged_in() or _get_selected_auth_mode() in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]:
 		return
 	var resolved_profile_id := profile_id.strip_edges()
 	if resolved_profile_id.is_empty():
@@ -8242,9 +8900,11 @@ func _save_lobby_resume() -> void:
 	if _local_profile_store == null or _local_profile_id.is_empty() or _lobby_session_id.is_empty() or _lobby_reconnect_token.is_empty():
 		return
 	var username := ""
+	var email := _get_preferred_account_username()
 	var auth_mode := _get_selected_auth_mode()
 	if lobby_client != null:
 		username = str(lobby_client.current_username).strip_edges()
+		email = str(lobby_client.current_email).strip_edges().to_lower()
 		auth_mode = _normalize_auth_mode(str(lobby_client.current_auth_mode), auth_mode)
 	_local_profile_store.remember_lobby_resume(
 		_local_profile_id,
@@ -8254,7 +8914,8 @@ func _save_lobby_resume() -> void:
 		_current_lobby_ip,
 		_get_configured_lobby_port(),
 		username,
-		auth_mode
+		auth_mode,
+		email
 	)
 	_update_resume_controls()
 
@@ -8308,7 +8969,7 @@ func _on_resume_match_pressed() -> void:
 	_bind_lobby_client_signals()
 	var connect_err: Error = lobby_client.connect_to_server(
 		_current_lobby_ip,
-		str(saved_lobby_resume.get("username", saved_lobby_resume.get("player_name", "Player"))),
+		str(saved_lobby_resume.get("email", _get_saved_account_username())),
 		str(saved_lobby_resume.get("session_id", "")),
 		str(saved_lobby_resume.get("reconnect_token", "")),
 		int(saved_lobby_resume.get("lobby_port", _get_configured_lobby_port())),
@@ -8477,9 +9138,9 @@ func _start_smoke_mode() -> void:
 	_smoke_finished = false
 
 	ip_line_edit.text = str(_smoke_config.get("ip", "127.0.0.1"))
-	# Register mode needs globally-unique usernames on the persistent account store.
-	# Append a short random suffix so repeated smoke runs never collide on a name
-	# left behind by a previous run.
+	# Register mode needs globally-unique emails on the persistent account store.
+	# Append a short random suffix so repeated smoke runs never collide on an
+	# account left behind by a previous run.
 	var smoke_base_name := str(_smoke_config.get("player_name", "Smoke%s" % role.capitalize())).strip_edges()
 	if smoke_base_name.is_empty():
 		smoke_base_name = "Smoke%s" % role.capitalize()
@@ -8488,7 +9149,26 @@ func _start_smoke_mode() -> void:
 		var rng := RandomNumberGenerator.new()
 		rng.randomize()
 		smoke_suffix = "%04d" % (rng.randi() % 10000)
-	_set_selected_account_username("%s%s" % [smoke_base_name, smoke_suffix])
+	var smoke_email := str(_smoke_config.get("email", "")).strip_edges()
+	if smoke_email.is_empty():
+		smoke_email = "%s%s@smoke.othergods.test" % [smoke_base_name.to_lower(), smoke_suffix]
+	_set_selected_account_username(smoke_email)
+	var smoke_username := str(_smoke_config.get("username", "")).strip_edges()
+	if smoke_username.is_empty():
+		var smoke_username_base := ""
+		for char_index in range(smoke_base_name.length()):
+			var codepoint := smoke_base_name.unicode_at(char_index)
+			var is_letter_or_number := (codepoint >= 48 and codepoint <= 57) \
+				or (codepoint >= 65 and codepoint <= 90) \
+				or (codepoint >= 97 and codepoint <= 122)
+			smoke_username_base += smoke_base_name[char_index] if is_letter_or_number else "_"
+		var max_base_length := int(AccountStoreScript.MAX_USERNAME_LENGTH) - smoke_suffix.length() - 1
+		if smoke_username_base.length() > max_base_length:
+			smoke_username_base = smoke_username_base.substr(0, max_base_length)
+		if smoke_username_base.length() < int(AccountStoreScript.MIN_USERNAME_LENGTH):
+			smoke_username_base = "Smoke"
+		smoke_username = "%s_%s" % [smoke_username_base, smoke_suffix]
+	_set_selected_account_public_username(smoke_username, false)
 	var smoke_auth_mode: String = str(_smoke_config.get("auth_mode", AUTH_MODE_REGISTER)).strip_edges().to_lower()
 	if smoke_auth_mode not in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
 		smoke_auth_mode = AUTH_MODE_REGISTER
@@ -9831,6 +10511,8 @@ func _parse_smoke_config(args: Array) -> Dictionary:
 		"role": str(config.get("smoke_role", "")),
 		"ip": str(config.get("smoke_ip", "127.0.0.1")),
 		"player_name": str(config.get("smoke_name", "")),
+		"email": str(config.get("smoke_email", "")),
+		"username": str(config.get("smoke_username", "")),
 		"name_suffix": str(config.get("smoke_name_suffix", "")),
 		"auth_mode": str(config.get("smoke_auth_mode", AUTH_MODE_REGISTER)),
 		"password": str(config.get("smoke_password", "")),
@@ -9934,7 +10616,28 @@ func _complete_smoke_if_enabled(message: String) -> void:
 		return
 	_smoke_finished = true
 	_write_smoke_result(message)
-	call_deferred("_close_program")
+	call_deferred("_complete_smoke_shutdown")
+
+func _complete_smoke_shutdown() -> void:
+	_cleanup_embedded_games_for_smoke_shutdown()
+	await get_tree().process_frame
+	await get_tree().process_frame
+	_close_program()
+
+func _cleanup_embedded_games_for_smoke_shutdown() -> void:
+	for node_name in _get_embedded_game_node_names():
+		var game: Node = get_node_or_null("GameContainer/" + node_name)
+		if game == null:
+			continue
+		if game.has_method("cleanup"):
+			game.cleanup()
+		game.queue_free()
+	var deck_builder: Node = null
+	if game_container != null:
+		deck_builder = game_container.get_node_or_null("DeckBuilder")
+	if deck_builder != null:
+		deck_builder.queue_free()
+	GameState.clear_deserialization_cache()
 
 func _start_in_process_lobby_server() -> bool:
 	# Spin up a LobbyServer node inside this host process so local_match_assigned
@@ -10130,12 +10833,25 @@ func _restore_auth_preferences() -> void:
 	if _local_profile_store == null:
 		return
 	var auth_mode: String = _normalize_auth_mode(_local_profile_store.get_preferred_auth_mode(), AUTH_MODE_LOGIN)
+	if auth_mode == AUTH_MODE_GUEST:
+		_activate_guest_profile_session("Guest")
+		_startup_autologin_pending = false
+		return
+	if auth_mode == AUTH_MODE_CLAIM_LEGACY:
+		_set_selected_account_username("")
+		_set_selected_account_public_username(_get_pending_legacy_claim_username(), false)
+		_set_selected_account_password(_get_pending_legacy_claim_password())
+		_set_auth_mode(auth_mode)
+		_refresh_auth_controls()
+		_refresh_account_identity_label()
+		_startup_autologin_pending = false
+		return
 	var saved_username := _get_saved_account_username()
 	_set_selected_account_username(saved_username)
-	_set_selected_account_password(_get_saved_account_password())
+	_set_selected_account_password("")
 	_set_auth_mode(auth_mode)
 	if not saved_username.is_empty():
-		_activate_account_profile(saved_username, "", auth_mode, false)
+		_activate_account_profile(saved_username, "", auth_mode, false, false, _display_name_from_account_email(saved_username))
 	_refresh_auth_controls()
 	_refresh_account_identity_label()
 	_startup_autologin_pending = _should_auto_login_saved_account()
@@ -10151,11 +10867,9 @@ func _on_auth_mode_selected(_index: int) -> void:
 	var preferred_account_username := _get_preferred_account_username()
 	if not preferred_account_username.is_empty():
 		_set_selected_account_username(preferred_account_username)
-		_activate_account_profile(preferred_account_username, "", auth_mode, false)
+		_activate_account_profile(preferred_account_username, "", auth_mode, false, false, _display_name_from_account_email(preferred_account_username))
 	elif _local_profile_store != null:
 		_local_profile_store.set_preferred_auth_mode(auth_mode)
-	if _get_auth_password().is_empty():
-		_set_selected_account_password(_local_profile_store.get_last_account_password())
 	_refresh_open_deck_builder_saved_decks()
 	_refresh_profile_summary_from_local_history(_local_profile_id)
 	_update_resume_controls()
@@ -10179,7 +10893,7 @@ func _get_selected_auth_mode() -> String:
 func _refresh_auth_controls() -> void:
 	var signed_in_account := _is_account_logged_in()
 	if player_name_line_edit != null:
-		player_name_line_edit.placeholder_text = "Account username"
+		player_name_line_edit.placeholder_text = "Email address"
 		player_name_line_edit.editable = not signed_in_account
 		player_name_line_edit.visible = false
 	if _password_line_edit != null:
@@ -10187,19 +10901,26 @@ func _refresh_auth_controls() -> void:
 	if _auth_mode_option != null:
 		_auth_mode_option.visible = false
 	if _switch_account_button != null:
-		_switch_account_button.visible = signed_in_account
+		_switch_account_button.visible = true
 
 func _validate_auth_inputs() -> String:
 	var auth_mode: String = _get_selected_auth_mode()
 	if _is_account_logged_in():
 		return ""
-	var username: String = _get_preferred_account_username()
-	if username.is_empty():
-		return "Enter an account username first."
+	if _is_guest_session_active():
+		return "Make an account to play online and save decks across instances."
+	var email: String = _get_preferred_account_username()
+	if email.is_empty():
+		return "Enter your account email first."
+	if not _is_valid_account_email(email):
+		return "Enter a valid email address."
+	var public_username := _get_selected_account_public_username()
+	if auth_mode in [AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY] and not _is_valid_account_public_username(public_username):
+		return "Enter a username using 3-24 letters, numbers, or underscores."
 	var password := _get_auth_password()
 	if password.is_empty():
 		return "Enter your account password first."
-	var credential_error := _validate_account_auth_details(auth_mode, username, password)
+	var credential_error := _validate_account_auth_details(auth_mode, email, password, public_username)
 	if not credential_error.is_empty():
 		return credential_error
 	return ""
@@ -10213,16 +10934,21 @@ func _get_auth_password() -> String:
 
 func _get_lobby_login_name(default_name: String) -> String:
 	var auth_mode := _get_selected_auth_mode()
-	if auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
-		var preferred_account_username := _get_preferred_account_username()
-		if not preferred_account_username.is_empty():
-			_set_selected_account_username(preferred_account_username)
+	if auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]:
+		var preferred_account_email := _get_preferred_account_username()
+		if not preferred_account_email.is_empty():
+			var public_username := _get_selected_account_public_username()
+			if public_username.is_empty():
+				public_username = _display_name_from_account_email(preferred_account_email)
+			_set_selected_account_username(preferred_account_email)
 			_activate_account_profile(
-				preferred_account_username,
+				preferred_account_email,
 				_local_profile_id,
 				auth_mode,
-				not _get_auth_password().is_empty()
+				false,
+				false,
+				public_username
 			)
-			return preferred_account_username
+			return preferred_account_email
 	var player_name := _get_player_name(default_name)
 	return player_name

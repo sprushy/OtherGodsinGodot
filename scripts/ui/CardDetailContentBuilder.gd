@@ -667,6 +667,22 @@ static func build_keyword_section(card: Card, keyword: String) -> Dictionary:
 		"body_color": Color(0.72, 0.72, 0.72),
 	}
 
+static func get_reach_badge_data(card: Card, config: Dictionary = {}) -> Dictionary:
+	if card == null or card.card_type != Card.CardType.CREATURE:
+		return {}
+	var target_labels := _get_current_intercept_target_labels(card)
+	if target_labels.is_empty():
+		return {}
+	if bool(config.get("hide_unaltered_reach", false)) and not _is_card_reach_altered(card):
+		return {}
+	var reach_value := target_labels.size()
+	return {
+		"value": reach_value,
+		"title": "Reach %d" % reach_value,
+		"tooltip": _build_current_reach_badge_hint(card, target_labels),
+		"altered": _is_card_reach_altered(card),
+	}
+
 static func build_keywords_panel(keywords: Array[String], card: Card = null, config: Dictionary = {}) -> Control:
 	var panel := PanelContainer.new()
 	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -740,12 +756,20 @@ static func _strip_simple_bbcode(text: String) -> String:
 		stripped = stripped.replace("  ", " ")
 	return stripped
 
+static func _has_printed_reach_keyword(card: Card) -> bool:
+	if card == null:
+		return false
+	return str(card.ability_text).contains("[b]Reach[/b]")
+
 static func _get_card_reach_display_value(card: Card) -> int:
 	if card == null:
 		return 0
+	var current_reach := _get_card_current_reach_value(card)
+	if current_reach > 0:
+		return current_reach
+	if not _has_printed_reach_keyword(card):
+		return 0
 	var reach_value := 0
-	if card.has_method("get_intercept_reach_bonus"):
-		reach_value = maxi(reach_value, int(card.get_intercept_reach_bonus()))
 	var normalized := _strip_simple_bbcode(str(card.ability_text)).to_lower()
 	var regex := RegEx.new()
 	if regex.compile("\\breach\\s*\\+?([0-9]+)\\b") == OK:
@@ -759,7 +783,7 @@ static func _get_card_reach_display_value(card: Card) -> int:
 	return reach_value
 
 static func _get_card_printed_reach_value(card: Card) -> int:
-	if card == null:
+	if card == null or not _has_printed_reach_keyword(card):
 		return 0
 	var printed_reach := 0
 	var normalized := _strip_simple_bbcode(str(card.ability_text)).to_lower()
@@ -794,8 +818,25 @@ static func _build_reach_keyword_hint(card: Card, reach_value: int) -> String:
 	return "This card can intercept equal or slower speed creatures attacking " + target_text + "."
 
 static func _get_reach_intercept_target_text(card: Card, reach_value: int) -> String:
+	return _join_human_list(_get_intercept_target_labels(card, reach_value))
+
+static func _get_current_intercept_target_labels(card: Card) -> Array[String]:
+	return _get_intercept_target_labels(card, _get_card_current_reach_value(card))
+
+static func _build_current_reach_badge_hint(card: Card, target_labels: Array[String]) -> String:
+	var target_text := _join_human_list(target_labels)
+	if card == null or target_text == "":
+		return "This card cannot currently intercept through normal row and stance rules."
+	return "This card can intercept equal or slower speed creatures attacking " + target_text + "."
+
+static func _get_intercept_target_labels(card: Card, reach_value: int) -> Array[String]:
+	var target_labels: Array[String] = []
 	if card == null or card.current_zone == null:
-		return ""
+		return target_labels
+	if card.card_type != Card.CardType.CREATURE or card.is_sleeping:
+		return target_labels
+	if not card.get_status_effect("cannot_intercept").is_empty():
+		return target_labels
 	var defender_depth := -1
 	match card.current_zone.zone_type:
 		Zone.ZoneType.FRONTLINE:
@@ -803,23 +844,22 @@ static func _get_reach_intercept_target_text(card: Card, reach_value: int) -> St
 		Zone.ZoneType.RESERVE:
 			defender_depth = 1
 		_:
-			return ""
+			return target_labels
 	var minimum_distance := 1
 	if card.creature_mode == Card.CreatureMode.AGGRESSIVE:
 		minimum_distance = 2
 	minimum_distance = max(0, minimum_distance - maxi(0, reach_value))
-	var target_labels: Array[String] = []
 	for target_info in [
 		[0, "frontline creatures"],
-		[1, "reserve creatures"],
-		[2, "your god or followers"]
+		[1, "reserve targets"],
+		[2, "followers"]
 	]:
 		var target_depth := int(target_info[0])
 		if target_depth < defender_depth:
 			continue
 		if target_depth - defender_depth >= minimum_distance:
 			target_labels.append(str(target_info[1]))
-	return _join_human_list(target_labels)
+	return target_labels
 
 static func _join_human_list(parts: Array[String]) -> String:
 	if parts.is_empty():
