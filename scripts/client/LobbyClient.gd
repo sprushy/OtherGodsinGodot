@@ -110,15 +110,15 @@ func connect_to_server(
 	_pending_account_email = account_email.strip_edges()
 	_pending_account_username = account_username.strip_edges()
 	_pending_accepts_game_updates = accepts_game_updates
-	_pending_player_name = _pending_account_username
-	if _pending_player_name.is_empty():
-		_pending_player_name = _display_name_from_email(_pending_account_email)
 	_pending_session_id = session_id.strip_edges()
 	_pending_reconnect_token = reconnect_token.strip_edges()
 	_pending_profile_id = profile_id.strip_edges()
 	_pending_auth_mode = auth_mode.strip_edges().to_lower()
 	if not _pending_auth_mode in ["login", "register", "claim_legacy_account"]:
 		_pending_auth_mode = "login"
+	_pending_player_name = _pending_account_username
+	if _pending_player_name.is_empty():
+		_pending_player_name = "Player" if _pending_auth_mode == "login" else _display_name_from_email(_pending_account_email)
 	_pending_password = password
 
 	var connect_address: String = address.strip_edges()
@@ -334,7 +334,10 @@ func update_account_settings(
 func lobby_event(message: Dictionary) -> void:
 	var message_type: String = LobbyProtocolScript.get_type(message)
 	var payload: Dictionary = LobbyProtocolScript.get_payload(message)
-	_trace("received %s" % message_type)
+	if message_type == LobbyProtocolScript.ROOM_ERROR:
+		_trace("received %s: %s" % [message_type, str(payload.get("message", ""))])
+	else:
+		_trace("received %s" % message_type)
 
 	match message_type:
 		LobbyProtocolScript.HELLO_OK:
@@ -393,12 +396,17 @@ func lobby_event(message: Dictionary) -> void:
 			current_room_snapshot = payload.duplicate(true)
 			room_snapshot_updated.emit(payload)
 		LobbyProtocolScript.ROOM_ERROR:
+			var error_message := str(payload.get("message", "Unknown lobby error."))
 			if not _is_authenticated:
 				_cancel_initial_auth_request()
 				_cancel_auth_response_timeout()
 				if _try_fallback_to_password_login():
 					return
-			room_error.emit(str(payload.get("message", "Unknown lobby error.")))
+				_trace("auth failed: %s" % error_message)
+				disconnect_from_server()
+				connection_failed.emit(error_message)
+				return
+			room_error.emit(error_message)
 		LobbyProtocolScript.MATCH_ASSIGNED:
 			current_active_match_info = payload.duplicate(true)
 			match_assigned.emit(payload)

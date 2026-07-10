@@ -33,7 +33,7 @@ func register_account(email: String, password: String, username: String = "", ac
 	if not password_error.is_empty():
 		return _result(false, password_error)
 	var email_key := _email_key(normalized_email)
-	if _account_id_by_email.has(email_key):
+	if not _find_account_id_by_email(email_key).is_empty():
 		return _result(false, "That email address already has an account.")
 
 	var normalized_username := _normalize_username(username)
@@ -97,7 +97,7 @@ func claim_legacy_account(
 	if not email_error.is_empty():
 		return _result(false, email_error)
 	var email_key := _email_key(normalized_email)
-	if _account_id_by_email.has(email_key):
+	if not _find_account_id_by_email(email_key).is_empty():
 		return _result(false, "That email address already has an account.")
 	var username_key := _username_key(normalized_username)
 	if not _account_id_by_username.has(username_key):
@@ -136,7 +136,8 @@ func login_account(email: String, password: String) -> Dictionary:
 	if not email_error.is_empty():
 		return _result(false, email_error)
 	var email_key := _email_key(normalized_email)
-	if not _account_id_by_email.has(email_key):
+	var matching_account_ids := _get_account_ids_by_email(email_key)
+	if matching_account_ids.is_empty():
 		print(
 			"AccountStore: login failed, email not found email=%s key=%s total_accounts=%d" % [
 				_redact_email_for_log(normalized_email),
@@ -145,7 +146,51 @@ func login_account(email: String, password: String) -> Dictionary:
 			]
 		)
 		return _result(false, "That account was not found.")
-	var account_id := str(_account_id_by_email.get(email_key, "")).strip_edges()
+	var account_id := ""
+	var password_result := {}
+	if matching_account_ids.size() > 1:
+		var password_matched_account_ids: Array[String] = []
+		var password_result_by_account_id := {}
+		for candidate_account_id in matching_account_ids:
+			var candidate_account = _accounts_by_id.get(candidate_account_id, {})
+			if not (candidate_account is Dictionary):
+				continue
+			var candidate_password_result := _verify_password(password, candidate_account as Dictionary)
+			if not bool(candidate_password_result.get("success", false)):
+				continue
+			password_matched_account_ids.append(candidate_account_id)
+			password_result_by_account_id[candidate_account_id] = candidate_password_result
+		if password_matched_account_ids.is_empty():
+			print(
+				"AccountStore: login failed, duplicate email records had no password match email=%s key=%s matches=%d" % [
+					_redact_email_for_log(normalized_email),
+					_redact_id_for_log(email_key),
+					matching_account_ids.size(),
+				]
+			)
+			return _result(false, "Incorrect password.")
+		account_id = _choose_duplicate_email_login_account(password_matched_account_ids, normalized_email)
+		if account_id.is_empty():
+			print(
+				"AccountStore: login failed, duplicate email records email=%s key=%s matches=%d password_matches=%d" % [
+					_redact_email_for_log(normalized_email),
+					_redact_id_for_log(email_key),
+					matching_account_ids.size(),
+					password_matched_account_ids.size(),
+				]
+			)
+			return _result(false, "More than one account uses that email address. Contact support.")
+		password_result = password_result_by_account_id.get(account_id, {})
+		print(
+			"AccountStore: resolved duplicate email login email=%s key=%s selected=%s password_matches=%d" % [
+				_redact_email_for_log(normalized_email),
+				_redact_id_for_log(email_key),
+				_redact_id_for_log(account_id),
+				password_matched_account_ids.size(),
+			]
+		)
+	else:
+		account_id = matching_account_ids[0]
 	if account_id.is_empty() or not _accounts_by_id.has(account_id):
 		print(
 			"AccountStore: login failed, email index points at missing account email=%s key=%s account=%s total_accounts=%d" % [
@@ -157,7 +202,8 @@ func login_account(email: String, password: String) -> Dictionary:
 		)
 		return _result(false, "That account was not found.")
 	var account: Dictionary = (_accounts_by_id[account_id] as Dictionary).duplicate(true)
-	var password_result := _verify_password(password, account)
+	if password_result.is_empty():
+		password_result = _verify_password(password, account)
 	if not bool(password_result.get("success", false)):
 		print(
 			"AccountStore: login failed, incorrect password email=%s account=%s" % [
@@ -218,8 +264,7 @@ func update_account_settings(
 			if not email_error.is_empty():
 				return _result(false, email_error)
 			var new_email_key := _email_key(normalized_new_email)
-			if _account_id_by_email.has(new_email_key) \
-					and str(_account_id_by_email.get(new_email_key, "")) != resolved_account_id:
+			if not _find_account_id_by_email(new_email_key, resolved_account_id).is_empty():
 				return _result(false, "That email address already has an account.")
 			account["email"] = normalized_new_email
 			account["email_key"] = new_email_key
@@ -252,12 +297,12 @@ func get_account(account_id: String) -> Dictionary:
 func get_account_by_email(email: String) -> Dictionary:
 	_ensure_loaded()
 	var email_key := _email_key(_normalize_email(email))
-	if email_key.is_empty() or not _account_id_by_email.has(email_key):
+	if email_key.is_empty():
 		return {}
-	var account_id := str(_account_id_by_email.get(email_key, "")).strip_edges()
-	if account_id.is_empty():
+	var matching_account_ids := _get_account_ids_by_email(email_key)
+	if matching_account_ids.size() != 1:
 		return {}
-	return get_account(account_id)
+	return get_account(matching_account_ids[0])
 
 func get_account_by_username(username: String) -> Dictionary:
 	_ensure_loaded()
@@ -415,6 +460,62 @@ func _email_key(email: String) -> String:
 
 func _username_key(username: String) -> String:
 	return username.to_lower()
+
+func _find_account_id_by_email(email_key: String, excluded_account_id: String = "") -> String:
+	var matching_account_ids := _get_account_ids_by_email(email_key, excluded_account_id)
+	if matching_account_ids.is_empty():
+		return ""
+	return matching_account_ids[0]
+
+func _get_account_ids_by_email(email_key: String, excluded_account_id: String = "") -> Array[String]:
+	var resolved_email_key := email_key.strip_edges().to_lower()
+	var excluded_id := excluded_account_id.strip_edges()
+	var matching_account_ids: Array[String] = []
+	if resolved_email_key.is_empty():
+		return matching_account_ids
+	for account_id_variant in _accounts_by_id.keys():
+		var account_id := str(account_id_variant).strip_edges()
+		if account_id.is_empty() or account_id == excluded_id:
+			continue
+		var account = _accounts_by_id.get(account_id_variant, {})
+		if not (account is Dictionary):
+			continue
+		var account_dict := account as Dictionary
+		var stored_email_key := str(account_dict.get("email_key", "")).strip_edges().to_lower()
+		if stored_email_key.is_empty():
+			stored_email_key = _email_key(str(account_dict.get("email", "")).strip_edges().to_lower())
+		if stored_email_key == resolved_email_key:
+			matching_account_ids.append(account_id)
+	return matching_account_ids
+
+func _choose_duplicate_email_login_account(account_ids: Array[String], normalized_email: String) -> String:
+	if account_ids.is_empty():
+		return ""
+	if account_ids.size() == 1:
+		return account_ids[0]
+	var generated_username_key := _username_key(_derive_username_from_email(normalized_email))
+	var non_generated_account_ids: Array[String] = []
+	for account_id in account_ids:
+		var account = _accounts_by_id.get(account_id, {})
+		if not (account is Dictionary):
+			continue
+		var username_key := str((account as Dictionary).get("username_key", "")).strip_edges().to_lower()
+		if username_key.is_empty():
+			username_key = _username_key(str((account as Dictionary).get("username", "")).strip_edges())
+		if not username_key.is_empty() and username_key != generated_username_key:
+			non_generated_account_ids.append(account_id)
+	var preferred_ids := non_generated_account_ids if not non_generated_account_ids.is_empty() else account_ids
+	var oldest_account_id := ""
+	var oldest_created_unix := 0
+	for account_id in preferred_ids:
+		var account = _accounts_by_id.get(account_id, {})
+		if not (account is Dictionary):
+			continue
+		var created_unix := int((account as Dictionary).get("created_unix", 0))
+		if oldest_account_id.is_empty() or created_unix < oldest_created_unix:
+			oldest_account_id = account_id
+			oldest_created_unix = created_unix
+	return oldest_account_id
 
 func _derive_username_from_email(email: String) -> String:
 	var local_part := email.substr(0, email.find("@"))
@@ -686,9 +787,27 @@ func _rebuild_account_indexes() -> void:
 		if email_key.is_empty():
 			email_key = _email_key(str((account as Dictionary).get("email", "")))
 		if not email_key.is_empty():
-			_account_id_by_email[email_key] = str(account_id)
+			if _account_id_by_email.has(email_key):
+				print(
+					"AccountStore: duplicate email index ignored key=%s existing=%s duplicate=%s" % [
+						_redact_id_for_log(email_key),
+						_redact_id_for_log(str(_account_id_by_email.get(email_key, ""))),
+						_redact_id_for_log(str(account_id)),
+					]
+				)
+			else:
+				_account_id_by_email[email_key] = str(account_id)
 		var username_key := str((account as Dictionary).get("username_key", "")).strip_edges()
 		if username_key.is_empty():
 			username_key = _username_key(str((account as Dictionary).get("username", "")))
 		if not username_key.is_empty():
-			_account_id_by_username[username_key] = str(account_id)
+			if _account_id_by_username.has(username_key):
+				print(
+					"AccountStore: duplicate username index ignored key=%s existing=%s duplicate=%s" % [
+						username_key,
+						_redact_id_for_log(str(_account_id_by_username.get(username_key, ""))),
+						_redact_id_for_log(str(account_id)),
+					]
+				)
+			else:
+				_account_id_by_username[username_key] = str(account_id)

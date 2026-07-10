@@ -199,6 +199,7 @@ var _update_button_row: HBoxContainer = null
 var _update_download_status_label: Label = null
 var _is_auto_updating: bool = false
 var _automatic_update_required: bool = false
+var _update_uses_startup_loading_bar: bool = false
 var _macos_sparkle_bridge: Object = null
 var _server_version_update_check_requested: bool = false
 var _lobby_failure_update_check_requested: bool = false
@@ -409,6 +410,8 @@ func _build_startup_loading_overlay() -> void:
 	var status := Label.new()
 	status.text = "Loading..."
 	status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	status.custom_minimum_size = Vector2(620.0, 0.0)
 	status.add_theme_font_size_override("font_size", 18)
 	status.add_theme_color_override("font_color", Color(0.74, 0.80, 0.90))
 	content.add_child(status)
@@ -901,7 +904,7 @@ func _process(delta: float) -> void:
 	_queue_room_list_refresh(false)
 
 func _refresh_update_download_progress() -> void:
-	if _update_download_status_label == null or not is_instance_valid(_update_download_status_label):
+	if not _has_update_download_status_target():
 		return
 	var downloaded := _update_download_request.get_downloaded_bytes()
 	var total := _update_download_request.get_body_size()
@@ -911,16 +914,20 @@ func _refresh_update_download_progress() -> void:
 	if version_text.is_empty():
 		version_text = "the latest version"
 	if total > 0:
-		var percent := clampi(int(float(downloaded) / float(total) * 100.0), 0, 100)
-		_update_download_status_label.text = (
-			"Downloading %s: %d%% (%.1f / %.1f MB).\n"
-			+ "Keep Other Gods open until it restarts."
-		) % [
-			version_text,
-			percent,
-			float(downloaded) / BYTES_PER_MIB,
-			float(total) / BYTES_PER_MIB,
-		]
+		var progress := clampf(float(downloaded) / float(total), 0.0, 1.0)
+		var percent := clampi(int(progress * 100.0), 0, 100)
+		_set_update_download_progress(progress)
+		_set_update_download_status(
+			(
+				"Downloading %s: %d%% (%.1f / %.1f MB).\n"
+				+ "Keep Other Gods open until it restarts."
+			) % [
+				version_text,
+				percent,
+				float(downloaded) / BYTES_PER_MIB,
+				float(total) / BYTES_PER_MIB,
+			]
+		)
 		if percent >= _last_logged_update_percent + 10 or percent == 100:
 			_last_logged_update_percent = percent
 			_write_update_log(
@@ -928,19 +935,38 @@ func _refresh_update_download_progress() -> void:
 				% [version_text, percent, downloaded, total]
 			)
 	else:
-		_update_download_status_label.text = (
-			"Downloading %s: %.1f MB received.\n"
-			+ "Keep Other Gods open until it restarts."
-		) % [version_text, float(downloaded) / BYTES_PER_MIB]
+		_set_update_download_status(
+			(
+				"Downloading %s: %.1f MB received.\n"
+				+ "Keep Other Gods open until it restarts."
+			) % [version_text, float(downloaded) / BYTES_PER_MIB]
+		)
+
+func _has_update_download_status_target() -> bool:
+	if _update_download_status_label != null and is_instance_valid(_update_download_status_label):
+		return true
+	return _update_uses_startup_loading_bar \
+		and _startup_loading_status_label != null \
+		and is_instance_valid(_startup_loading_status_label)
 
 func _set_update_download_status(message: String) -> void:
-	if _update_download_status_label == null or not is_instance_valid(_update_download_status_label):
+	if _update_download_status_label != null and is_instance_valid(_update_download_status_label):
+		_update_download_status_label.text = message
+		_update_download_status_label.visible = true
+	if (
+		_update_uses_startup_loading_bar
+		and _startup_loading_status_label != null
+		and is_instance_valid(_startup_loading_status_label)
+	):
+		_startup_loading_status_label.text = message
+
+func _set_update_download_progress(progress: float, duration: float = 0.0) -> void:
+	if not _update_uses_startup_loading_bar:
 		return
-	_update_download_status_label.text = message
-	_update_download_status_label.visible = true
+	_set_startup_loading_progress(progress, duration)
 
 func _refresh_windows_curl_download_progress() -> void:
-	if _update_download_status_label == null or not is_instance_valid(_update_download_status_label):
+	if not _has_update_download_status_target():
 		return
 	var downloaded := maxi(0, _get_file_size(_update_curl_download_path))
 	var total := _pending_update_download_size
@@ -948,21 +974,27 @@ func _refresh_windows_curl_download_progress() -> void:
 	if version_text.is_empty():
 		version_text = "the latest version"
 	if total > 0:
-		var percent := clampi(int(float(downloaded) / float(total) * 100.0), 0, 100)
-		_update_download_status_label.text = (
-			"Windows downloader: %s %d%% (%.1f / %.1f MB).\n"
-			+ "Keep Other Gods open until it restarts."
-		) % [
-			version_text,
-			percent,
-			float(downloaded) / BYTES_PER_MIB,
-			float(total) / BYTES_PER_MIB,
-		]
+		var progress := clampf(float(downloaded) / float(total), 0.0, 1.0)
+		var percent := clampi(int(progress * 100.0), 0, 100)
+		_set_update_download_progress(progress)
+		_set_update_download_status(
+			(
+				"Windows downloader: %s %d%% (%.1f / %.1f MB).\n"
+				+ "Keep Other Gods open until it restarts."
+			) % [
+				version_text,
+				percent,
+				float(downloaded) / BYTES_PER_MIB,
+				float(total) / BYTES_PER_MIB,
+			]
+		)
 	else:
-		_update_download_status_label.text = (
-			"Windows downloader: %s (%.1f MB received).\n"
-			+ "Keep Other Gods open until it restarts."
-		) % [version_text, float(downloaded) / BYTES_PER_MIB]
+		_set_update_download_status(
+			(
+				"Windows downloader: %s (%.1f MB received).\n"
+				+ "Keep Other Gods open until it restarts."
+			) % [version_text, float(downloaded) / BYTES_PER_MIB]
+		)
 
 func _input(event: InputEvent) -> void:
 	if event is InputEventKey:
@@ -2572,6 +2604,21 @@ func _show_update_prompt(
 	_pending_update_download_sha256 = download_sha256
 	_pending_update_download_sha256_url = download_sha256_url
 	_automatic_update_required = auto_update
+	_update_uses_startup_loading_bar = auto_update \
+		and _startup_loading_overlay != null \
+		and is_instance_valid(_startup_loading_overlay) \
+		and _startup_loading_bar != null \
+		and is_instance_valid(_startup_loading_bar)
+	if _update_uses_startup_loading_bar:
+		var update_size_message := ""
+		if download_size > 0:
+			update_size_message = " (%.1f MB)" % (float(download_size) / BYTES_PER_MIB)
+		_set_update_download_progress(0.0)
+		_set_update_download_status(
+			"Updating Other Gods to %s%s.\nKeep Other Gods open; it will restart automatically."
+			% [latest_version, update_size_message]
+		)
+		return
 
 	_update_prompt_overlay = Control.new()
 	_update_prompt_overlay.name = "UpdatePromptOverlay"
@@ -2706,6 +2753,7 @@ func _dismiss_update_prompt() -> void:
 	_update_curl_download_path = ""
 	_update_curl_fallback_started = false
 	_is_auto_updating = false
+	_update_uses_startup_loading_bar = false
 	_update_now_button = null
 	_update_open_button = null
 	_update_support_button = null
@@ -2764,17 +2812,16 @@ func _on_update_prompt_auto_update_pressed() -> void:
 	_last_logged_update_percent = -10
 	if _update_now_button != null and is_instance_valid(_update_now_button):
 		_update_now_button.disabled = true
-	if _update_download_status_label != null and is_instance_valid(_update_download_status_label):
-		var size_message := ""
-		if _pending_update_download_size > 0:
-			size_message = " (%.1f MB)" % (
-				float(_pending_update_download_size) / BYTES_PER_MIB
-			)
-		_update_download_status_label.text = (
-			"Starting %s%s download...\nKeep Other Gods open until it restarts."
-			% [_pending_update_release_version, size_message]
+	var size_message := ""
+	if _pending_update_download_size > 0:
+		size_message = " (%.1f MB)" % (
+			float(_pending_update_download_size) / BYTES_PER_MIB
 		)
-		_update_download_status_label.visible = true
+	_set_update_download_progress(0.0)
+	_set_update_download_status(
+		"Starting %s%s download...\nKeep Other Gods open until it restarts."
+		% [_pending_update_release_version, size_message]
+	)
 
 	var preflight_failure := _check_update_download_preflight()
 	if not preflight_failure.is_empty():
@@ -2802,9 +2849,8 @@ func _begin_update_checksum_download() -> void:
 	_update_checksum_request.timeout = UPDATE_CHECK_TIMEOUT_SECONDS
 	_update_checksum_request.request_completed.connect(_on_update_checksum_request_completed)
 	add_child(_update_checksum_request)
-	if _update_download_status_label != null and is_instance_valid(_update_download_status_label):
-		_update_download_status_label.text = "Verifying %s release checksum..." % _pending_update_release_version
-		_update_download_status_label.visible = true
+	_set_update_download_progress(0.0)
+	_set_update_download_status("Verifying %s release checksum..." % _pending_update_release_version)
 	_write_update_log(
 		"checksum_download_started version=%s url=%s"
 		% [_pending_update_release_version, _pending_update_download_sha256_url]
@@ -2920,6 +2966,7 @@ func _begin_auto_update_download() -> void:
 	var zip_path := OS.get_user_data_dir() + "/update_download.zip"
 	if FileAccess.file_exists(zip_path):
 		DirAccess.remove_absolute(zip_path)
+	_set_update_download_progress(0.0)
 
 	_update_download_request = HTTPRequest.new()
 	_update_download_request.name = "UpdateDownloadRequest"
@@ -3001,11 +3048,10 @@ func _retry_auto_update_download_or_fail(message: String, skip_builtin_retries: 
 			return
 		_on_auto_update_failed(message)
 		return
-	if _update_download_status_label != null and is_instance_valid(_update_download_status_label):
-		_update_download_status_label.text = (
-			"%s\nRetrying download (%d of %d)..."
-			% [message, _update_download_attempt + 1, UPDATE_DOWNLOAD_MAX_ATTEMPTS]
-		)
+	_set_update_download_status(
+		"%s\nRetrying download (%d of %d)..."
+		% [message, _update_download_attempt + 1, UPDATE_DOWNLOAD_MAX_ATTEMPTS]
+	)
 	await get_tree().create_timer(UPDATE_DOWNLOAD_RETRY_DELAY_SECONDS).timeout
 	if _is_auto_updating:
 		_begin_auto_update_download()
@@ -3038,11 +3084,10 @@ func _begin_windows_curl_download(previous_failure: String) -> void:
 			% [partial_size, str(can_resume_partial), resume_move_error]
 		)
 	_update_curl_download_path = zip_path
-	if _update_download_status_label != null and is_instance_valid(_update_download_status_label):
-		_update_download_status_label.text = (
-			"%s\nTrying Windows' built-in downloader..."
-			% previous_failure
-		)
+	_set_update_download_status(
+		"%s\nTrying Windows' built-in downloader..."
+		% previous_failure
+	)
 	var args := PackedStringArray([
 		"--fail",
 		"--location",
@@ -3211,6 +3256,7 @@ func _apply_update_and_restart(zip_path: String) -> void:
 		_dismiss_update_prompt()
 		_complete_startup_prompts()
 		return
+	_set_update_download_progress(1.0)
 	_set_update_download_status(
 		"Download complete. Verifying and unpacking the update...\n"
 		+ "Keep Other Gods open; an updater window will take over before the game reopens."
@@ -3602,6 +3648,16 @@ func _present_windows_update_fallback(message: String) -> void:
 		+ "Smart App Control, Controlled Folder Access, AppLocker, or work/school device policy, "
 		+ "allow Other Gods; protected install folders may also require Windows PowerShell."
 	) % message
+	if _update_prompt_overlay == null or not is_instance_valid(_update_prompt_overlay):
+		_show_update_prompt(
+			_pending_update_release_version,
+			_pending_update_release_url,
+			_pending_update_download_url,
+			false,
+			_pending_update_download_size,
+			_pending_update_download_sha256,
+			_pending_update_download_sha256_url
+		)
 	if status_label != null:
 		status_label.text = message
 	if _update_button_row != null and is_instance_valid(_update_button_row):
@@ -3615,9 +3671,7 @@ func _present_windows_update_fallback(message: String) -> void:
 		_update_support_button.disabled = false
 	if _update_now_button != null and is_instance_valid(_update_now_button):
 		_update_now_button.disabled = false
-	if _update_download_status_label != null and is_instance_valid(_update_download_status_label):
-		_update_download_status_label.text = fallback_message
-		_update_download_status_label.visible = true
+	_set_update_download_status(fallback_message)
 	OS.shell_open(_pending_update_release_url)
 	_complete_startup_prompts()
 
@@ -3661,8 +3715,7 @@ func _on_auto_update_failed(message: String) -> void:
 		_update_support_button.disabled = false
 	if _update_now_button != null and is_instance_valid(_update_now_button):
 		_update_now_button.disabled = false
-	if _update_download_status_label != null and is_instance_valid(_update_download_status_label):
-		_update_download_status_label.text = message
+	_set_update_download_status(message)
 
 func _join_process_output(output: Array) -> String:
 	var parts: Array[String] = []
@@ -4358,13 +4411,18 @@ func _get_effective_identity_name(default_name: String = "Player") -> String:
 		var guest_display_name := str(_local_profile_store.get_profile_display_name(_local_profile_id, "")).strip_edges()
 		if not guest_display_name.is_empty():
 			return guest_display_name
+	var auth_mode := _get_selected_auth_mode()
+	if auth_mode == AUTH_MODE_LOGIN:
+		var local_profile_display_name := _get_local_profile_display_name("")
+		if not local_profile_display_name.is_empty():
+			return local_profile_display_name
 	var selected_public_username := _get_selected_account_public_username()
-	if not selected_public_username.is_empty():
+	if auth_mode in [AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY] and not selected_public_username.is_empty():
 		return selected_public_username
 	var fallback_name := default_name.strip_edges()
 	if fallback_name.is_empty():
 		fallback_name = "Player"
-	if _get_selected_auth_mode() in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]:
+	if auth_mode in [AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]:
 		var selected_account_email := _get_selected_account_username()
 		if not selected_account_email.is_empty():
 			return _display_name_from_account_email(selected_account_email)
@@ -4400,6 +4458,15 @@ func _get_selected_account_public_username() -> String:
 			return player_name
 	return ""
 
+func _get_local_profile_display_name(default_name: String = "") -> String:
+	if _local_profile_store == null or _local_profile_id.is_empty():
+		return default_name.strip_edges()
+	var profile: Dictionary = _local_profile_store.get_profile(_local_profile_id)
+	var profile_display_name := str(profile.get("display_name", "")).strip_edges()
+	if not profile_display_name.is_empty():
+		return profile_display_name
+	return default_name.strip_edges()
+
 func _get_active_profile_display_name(default_name: String = "Player") -> String:
 	var resolved_default := default_name.strip_edges()
 	if resolved_default.is_empty():
@@ -4407,17 +4474,16 @@ func _get_active_profile_display_name(default_name: String = "Player") -> String
 	var active_account_username := _get_effective_account_username()
 	if not active_account_username.is_empty():
 		return active_account_username
+	var local_profile_display_name := _get_local_profile_display_name("")
+	if not local_profile_display_name.is_empty():
+		return local_profile_display_name
 	var selected_public_username := _get_selected_account_public_username()
-	if not selected_public_username.is_empty():
+	var auth_mode := _get_selected_auth_mode()
+	if auth_mode in [AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY] and not selected_public_username.is_empty():
 		return selected_public_username
 	var selected_account_email := _get_selected_account_username()
-	if not selected_account_email.is_empty():
+	if auth_mode in [AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY] and not selected_account_email.is_empty():
 		return _display_name_from_account_email(selected_account_email)
-	if _local_profile_store != null and not _local_profile_id.is_empty():
-		var profile: Dictionary = _local_profile_store.get_profile(_local_profile_id)
-		var profile_display_name := str(profile.get("display_name", "")).strip_edges()
-		if not profile_display_name.is_empty():
-			return profile_display_name
 	return _get_effective_identity_name(resolved_default)
 
 func _activate_account_profile(
@@ -4884,19 +4950,6 @@ func _is_valid_account_public_username(username: String) -> bool:
 
 func _complete_auth_onboarding(auth_mode: String, message: String) -> void:
 	_set_auth_mode(auth_mode)
-	var selected_account_username := _get_selected_account_username()
-	if not selected_account_username.is_empty() and auth_mode != AUTH_MODE_CLAIM_LEGACY:
-		var selected_public_username := _get_selected_account_public_username()
-		if selected_public_username.is_empty():
-			selected_public_username = _display_name_from_account_email(selected_account_username)
-		_activate_account_profile(
-			selected_account_username,
-			"",
-			auth_mode,
-			false,
-			false,
-			selected_public_username
-		)
 	multiplayer_container.visible = false
 	ready_button.visible = false
 	status_label.text = message
@@ -10850,8 +10903,6 @@ func _restore_auth_preferences() -> void:
 	_set_selected_account_username(saved_username)
 	_set_selected_account_password("")
 	_set_auth_mode(auth_mode)
-	if not saved_username.is_empty():
-		_activate_account_profile(saved_username, "", auth_mode, false, false, _display_name_from_account_email(saved_username))
 	_refresh_auth_controls()
 	_refresh_account_identity_label()
 	_startup_autologin_pending = _should_auto_login_saved_account()
@@ -10867,8 +10918,7 @@ func _on_auth_mode_selected(_index: int) -> void:
 	var preferred_account_username := _get_preferred_account_username()
 	if not preferred_account_username.is_empty():
 		_set_selected_account_username(preferred_account_username)
-		_activate_account_profile(preferred_account_username, "", auth_mode, false, false, _display_name_from_account_email(preferred_account_username))
-	elif _local_profile_store != null:
+	if _local_profile_store != null:
 		_local_profile_store.set_preferred_auth_mode(auth_mode)
 	_refresh_open_deck_builder_saved_decks()
 	_refresh_profile_summary_from_local_history(_local_profile_id)
@@ -10937,18 +10987,7 @@ func _get_lobby_login_name(default_name: String) -> String:
 	if auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]:
 		var preferred_account_email := _get_preferred_account_username()
 		if not preferred_account_email.is_empty():
-			var public_username := _get_selected_account_public_username()
-			if public_username.is_empty():
-				public_username = _display_name_from_account_email(preferred_account_email)
 			_set_selected_account_username(preferred_account_email)
-			_activate_account_profile(
-				preferred_account_email,
-				_local_profile_id,
-				auth_mode,
-				false,
-				false,
-				public_username
-			)
 			return preferred_account_email
 	var player_name := _get_player_name(default_name)
 	return player_name
