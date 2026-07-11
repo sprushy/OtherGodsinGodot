@@ -859,6 +859,8 @@ func _refresh_server_version_label() -> void:
 			server_text = "Server: version unavailable"
 		elif _has_connected_lobby_transport():
 			server_text = "Server: signing in..."
+		elif _has_saved_account_identity():
+			server_text = "Server: sign in required"
 		else:
 			server_text = "Server: not connected"
 	else:
@@ -1205,6 +1207,10 @@ func _has_active_lobby_connection() -> bool:
 
 func _has_connected_lobby_transport() -> bool:
 	return lobby_client != null and is_instance_valid(lobby_client) and lobby_client.is_transport_connected()
+
+func _has_saved_account_identity() -> bool:
+	return _get_selected_auth_mode() in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY] \
+		and not _get_saved_account_username().is_empty()
 
 func _clear_unauthenticated_lobby_transport() -> void:
 	if lobby_client == null or not is_instance_valid(lobby_client):
@@ -4257,7 +4263,7 @@ func _maybe_show_auth_onboarding(force_show: bool = false) -> void:
 	if not force_show and _should_continue_as_guest_locally():
 		_activate_stored_guest_session()
 		return
-	if not force_show and _should_auto_login_saved_account():
+	if not force_show and _start_saved_lobby_resume_connect("Restoring lobby session..."):
 		return
 	_show_auth_onboarding()
 
@@ -4351,7 +4357,65 @@ func _is_saved_account_auto_login_enabled() -> bool:
 	return _local_profile_store.get_account_auto_login_enabled()
 
 func _should_auto_login_saved_account() -> bool:
-	return false
+	return _get_saved_account_lobby_resume().is_empty() == false
+
+func _get_saved_account_lobby_resume() -> Dictionary:
+	if _local_profile_store == null:
+		return {}
+	var selected_email := _get_selected_account_username().strip_edges().to_lower()
+	var candidate_profile_ids: Array[String] = []
+	if not _local_profile_id.strip_edges().is_empty():
+		candidate_profile_ids.append(_local_profile_id.strip_edges())
+	var resume_profile_id := _get_resume_profile_id()
+	if not resume_profile_id.strip_edges().is_empty() and resume_profile_id not in candidate_profile_ids:
+		candidate_profile_ids.append(resume_profile_id.strip_edges())
+	for profile_id in candidate_profile_ids:
+		var resume := _get_saved_lobby_resume_for_profile(profile_id)
+		if _is_usable_saved_lobby_resume(resume, selected_email):
+			return resume
+	return {}
+
+func _is_usable_saved_lobby_resume(resume: Dictionary, selected_email: String = "") -> bool:
+	if resume.is_empty():
+		return false
+	var session_id := str(resume.get("session_id", "")).strip_edges()
+	var reconnect_token := str(resume.get("reconnect_token", "")).strip_edges()
+	if session_id.is_empty() or reconnect_token.is_empty():
+		return false
+	var resume_email := str(resume.get("email", "")).strip_edges().to_lower()
+	if not selected_email.strip_edges().is_empty() and not resume_email.is_empty() and resume_email != selected_email.strip_edges().to_lower():
+		return false
+	var lobby_ip := str(resume.get("lobby_ip", "")).strip_edges()
+	if lobby_ip.is_empty() and _get_configured_lobby_host().is_empty():
+		return false
+	return true
+
+func _prepare_saved_lobby_resume_autologin() -> bool:
+	var resume := _get_saved_account_lobby_resume()
+	if resume.is_empty():
+		return false
+	var resume_email := str(resume.get("email", "")).strip_edges().to_lower()
+	if not resume_email.is_empty():
+		_set_selected_account_username(resume_email)
+	var resume_username := str(resume.get("username", "")).strip_edges()
+	if not resume_username.is_empty():
+		_set_selected_account_public_username(resume_username, false)
+	_lobby_session_id = str(resume.get("session_id", "")).strip_edges()
+	_lobby_reconnect_token = str(resume.get("reconnect_token", "")).strip_edges()
+	var resume_host := str(resume.get("lobby_ip", "")).strip_edges()
+	if not resume_host.is_empty() and ip_line_edit != null:
+		ip_line_edit.text = resume_host
+	_current_lobby_ip = resume_host
+	_set_auth_mode(_normalize_auth_mode(str(resume.get("auth_mode", AUTH_MODE_LOGIN)), AUTH_MODE_LOGIN))
+	return not _lobby_session_id.is_empty() and not _lobby_reconnect_token.is_empty()
+
+func _start_saved_lobby_resume_connect(connect_status: String) -> bool:
+	if not _prepare_saved_lobby_resume_autologin():
+		return false
+	_startup_autologin_in_progress = true
+	_finish_startup_loading()
+	_queue_authenticated_lobby_connect(connect_status)
+	return true
 
 func _get_editable_account_username() -> String:
 	if _auth_onboarding_username_edit != null \
@@ -10977,7 +11041,7 @@ func _restore_auth_preferences() -> void:
 	_set_auth_mode(auth_mode)
 	_refresh_auth_controls()
 	_refresh_account_identity_label()
-	_startup_autologin_pending = _should_auto_login_saved_account()
+	_startup_autologin_pending = _prepare_saved_lobby_resume_autologin()
 
 func _on_auth_mode_selected(_index: int) -> void:
 	if _auth_mode_option != null and _auth_mode_option.item_count > 0:
