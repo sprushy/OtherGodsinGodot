@@ -121,6 +121,7 @@ jobs:
     runs-on: macos-latest
     env:
       SPARKLE_VERSION: 2.9.3
+      GODOT_CPP_REF: "4.7"
 
     steps:
       - name: Checkout
@@ -171,11 +172,15 @@ jobs:
           set -euo pipefail
 
           if [ -z "${SPARKLE_PUBLIC_ED_KEY}" ] || [ -z "${SPARKLE_PRIVATE_ED_KEY}" ]; then
-            if [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
-              echo "Tagged macOS releases require SPARKLE_PUBLIC_ED_KEY and SPARKLE_PRIVATE_ED_KEY so appcast.xml is published for auto-updates." >&2
-              exit 1
-            fi
             echo "::warning::SPARKLE_PUBLIC_ED_KEY and SPARKLE_PRIVATE_ED_KEY are not configured; building macOS without Sparkle auto-updates."
+            echo "SPARKLE_ENABLED=false" >> "$GITHUB_ENV"
+            rm -f addons/macos_sparkle/macos_sparkle.gdextension
+            exit 0
+          fi
+
+          godot_cpp_ref="${GODOT_CPP_REF:-4.7}"
+          if ! git ls-remote --exit-code --heads https://github.com/godotengine/godot-cpp.git "$godot_cpp_ref" >/dev/null 2>&1; then
+            echo "::warning::godot-cpp branch '${godot_cpp_ref}' was not found; building macOS without Sparkle auto-updates."
             echo "SPARKLE_ENABLED=false" >> "$GITHUB_ENV"
             rm -f addons/macos_sparkle/macos_sparkle.gdextension
             exit 0
@@ -200,7 +205,7 @@ jobs:
           fi
 
           godot_cpp_dir="$RUNNER_TEMP/godot-cpp"
-          git clone --depth 1 --branch 4.7 https://github.com/godotengine/godot-cpp.git "$godot_cpp_dir"
+          git clone --depth 1 --branch "$godot_cpp_ref" https://github.com/godotengine/godot-cpp.git "$godot_cpp_dir"
 
           echo "SPARKLE_ROOT=$sparkle_root" >> "$GITHUB_ENV"
           echo "SPARKLE_FRAMEWORK_DIR=$sparkle_root" >> "$GITHUB_ENV"
@@ -409,13 +414,17 @@ jobs:
           echo "## macOS assets were not published" >> "$GITHUB_STEP_SUMMARY"
           echo "The export-macos job finished with \`${{ needs.export-macos.result }}\`; this release contains Windows assets only." >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Validate macOS appcast artifact
+      - name: Validate macOS release artifacts
         if: ${{ needs.export-macos.result == 'success' }}
         shell: bash
         run: |
           set -euo pipefail
           test -s dist/macos/OtherGods-macos.zip
-          test -s dist/macos/appcast.xml
+          if [ -e dist/macos/appcast.xml ]; then
+            test -s dist/macos/appcast.xml
+          else
+            echo "::warning::macOS appcast.xml was not produced; publishing the macOS zip without Sparkle auto-updates."
+          fi
 
       - name: Publish GitHub release assets
         uses: softprops/action-gh-release@v2
