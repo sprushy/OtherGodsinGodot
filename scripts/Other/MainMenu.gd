@@ -44,6 +44,7 @@ const GUEST_ACCOUNT_PROMPT := "Make an account to save decks across instances."
 const ACCOUNT_SETTINGS_SECTION_TITLE := "Account"
 const SEEK_AUTO_REFRESH_INTERVAL_SECONDS := 3.0
 const FRESH_LOBBY_RECONNECT_DELAY_SECONDS := 0.6
+const LOBBY_SIGN_IN_WATCHDOG_SECONDS := 12.0
 const ACTIVE_MATCH_AUTO_RESUME_SUPPRESS_SECONDS := 10.0
 const LEGACY_JOIN_WHILE_IN_ROOM_ERROR := "Leave your current room before joining a new one."
 const STARTUP_MENU_FADE_SECONDS := 3.0
@@ -178,6 +179,7 @@ var _startup_autologin_in_progress: bool = false
 var _account_switch_pending: bool = false
 var _account_switch_retry_attempts: int = 0
 var _authenticated_lobby_connect_serial: int = 0
+var _lobby_sign_in_watchdog_serial: int = 0
 var _update_check_request: HTTPRequest = null
 var _update_prompt_overlay: Control = null
 var _pending_update_release_version: String = ""
@@ -1204,6 +1206,14 @@ func _has_active_lobby_connection() -> bool:
 func _has_connected_lobby_transport() -> bool:
 	return lobby_client != null and is_instance_valid(lobby_client) and lobby_client.is_transport_connected()
 
+func _clear_unauthenticated_lobby_transport() -> void:
+	if lobby_client == null or not is_instance_valid(lobby_client):
+		return
+	if lobby_client.is_authenticated():
+		return
+	_cleanup_lobby_client()
+	_set_connected_server_version("")
+
 func _prepare_fresh_lobby_login() -> void:
 	if not _account_switch_pending and not _has_active_lobby_connection():
 		return
@@ -1220,6 +1230,41 @@ func _should_delay_fresh_lobby_connect() -> bool:
 func _queue_authenticated_lobby_connect(connect_status: String = "Connecting to lobby...") -> void:
 	_authenticated_lobby_connect_serial += 1
 	call_deferred("_deferred_authenticated_lobby_connect", connect_status, _authenticated_lobby_connect_serial)
+
+func _begin_lobby_sign_in_watchdog() -> void:
+	_lobby_sign_in_watchdog_serial += 1
+	var watchdog_serial := _lobby_sign_in_watchdog_serial
+	var tree := get_tree()
+	if tree == null:
+		return
+	var timer := tree.create_timer(LOBBY_SIGN_IN_WATCHDOG_SECONDS)
+	timer.timeout.connect(Callable(self, "_on_lobby_sign_in_watchdog_timeout").bind(watchdog_serial))
+
+func _cancel_lobby_sign_in_watchdog() -> void:
+	_lobby_sign_in_watchdog_serial += 1
+
+func _on_lobby_sign_in_watchdog_timeout(watchdog_serial: int) -> void:
+	if watchdog_serial != _lobby_sign_in_watchdog_serial:
+		return
+	if lobby_client == null or not is_instance_valid(lobby_client):
+		return
+	if lobby_client.is_authenticated():
+		return
+	if not lobby_client.is_transport_connected():
+		return
+	_write_smoke_trace("lobby_sign_in_watchdog_timeout")
+	_cancel_lobby_sign_in_watchdog()
+	_startup_autologin_in_progress = false
+	_account_switch_pending = false
+	_account_switch_retry_attempts = 0
+	_logged_in_account_username = ""
+	_cleanup_lobby_client()
+	_set_connected_server_version("")
+	var message := "The lobby sign-in timed out. Try Switch Account and sign in again."
+	status_label.text = message
+	_refresh_account_identity_label()
+	_maybe_show_auth_onboarding(true)
+	_set_auth_onboarding_hint(message, true)
 
 func _should_reuse_active_lobby_connection(target_lobby_ip: String) -> bool:
 	if _account_switch_pending:
@@ -2160,6 +2205,10 @@ func _connect_to_browseable_lobby(connect_status: String, connect_serial: int = 
 	)
 	if connect_err != OK:
 		status_label.text = "Could not connect to the lobby."
+		_cleanup_lobby_client()
+		_set_connected_server_version("")
+	else:
+		_begin_lobby_sign_in_watchdog()
 
 func _maybe_connect_authenticated_lobby(connect_status: String = "Connecting to lobby...", connect_serial: int = 0) -> void:
 	if connect_serial > 0 and connect_serial != _authenticated_lobby_connect_serial:
@@ -2168,10 +2217,12 @@ func _maybe_connect_authenticated_lobby(connect_status: String = "Connecting to 
 		return
 	var auth_error := _validate_auth_inputs()
 	if not auth_error.is_empty():
+		_clear_unauthenticated_lobby_transport()
 		status_label.text = auth_error
 		return
 	var target_error := _validate_multiplayer_target()
 	if not target_error.is_empty():
+		_clear_unauthenticated_lobby_transport()
 		status_label.text = target_error
 		return
 	_pending_host_room_creation = false
@@ -4415,6 +4466,13 @@ func _get_effective_identity_name(default_name: String = "Player") -> String:
 	if auth_mode == AUTH_MODE_LOGIN:
 		var local_profile_display_name := _get_local_profile_display_name("")
 		if not local_profile_display_name.is_empty():
+			var selected_email := _get_selected_account_username()
+			var email_display_name := _display_name_from_account_email(selected_email).to_lower() if not selected_email.is_empty() else ""
+			if local_profile_display_name.find("@") >= 0:
+				local_profile_display_name = ""
+			elif not email_display_name.is_empty() and local_profile_display_name.to_lower() == email_display_name:
+				local_profile_display_name = ""
+		if not local_profile_display_name.is_empty():
 			return local_profile_display_name
 	var selected_public_username := _get_selected_account_public_username()
 	if auth_mode in [AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY] and not selected_public_username.is_empty():
@@ -4422,10 +4480,6 @@ func _get_effective_identity_name(default_name: String = "Player") -> String:
 	var fallback_name := default_name.strip_edges()
 	if fallback_name.is_empty():
 		fallback_name = "Player"
-	if auth_mode in [AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]:
-		var selected_account_email := _get_selected_account_username()
-		if not selected_account_email.is_empty():
-			return _display_name_from_account_email(selected_account_email)
 	return fallback_name
 
 func _get_selected_account_username() -> String:
@@ -6345,10 +6399,15 @@ func _on_connect_pressed() -> void:
 	)
 	if connect_err != OK:
 		status_label.text = "Could not connect to the lobby."
+		_cleanup_lobby_client()
+		_set_connected_server_version("")
+	else:
+		_begin_lobby_sign_in_watchdog()
 
 func _connect_local_host_to_dedicated_lobby() -> void:
 	var auth_error := _validate_auth_inputs()
 	if not auth_error.is_empty():
+		_clear_unauthenticated_lobby_transport()
 		status_label.text = auth_error
 		_fail_smoke_if_enabled("AUTH_ERROR:%s" % auth_error)
 		return
@@ -6396,6 +6455,8 @@ func _connect_local_host_to_dedicated_lobby() -> void:
 	)
 	if connect_err != OK:
 		_queue_host_lobby_retry("Could not connect to dedicated lobby at %s." % _current_lobby_ip)
+	else:
+		_begin_lobby_sign_in_watchdog()
 
 func _on_ready_button_pressed() -> void:
 	status_label.text = "Your seek locks in automatically once your selected deck is valid."
@@ -6458,6 +6519,7 @@ func _on_lobby_login_succeeded(session_id: String, reconnect_token: String, play
 	_write_smoke_trace("lobby_login_succeeded session=%s player=%s host=%s" % [session_id, player_name, str(_is_local_lobby_host)])
 	if _retry_account_switch_if_identity_mismatch(player_name):
 		return
+	_cancel_lobby_sign_in_watchdog()
 	_startup_autologin_in_progress = false
 	_lobby_failure_update_check_requested = false
 	_sync_friend_observer_card_visibility()
@@ -6533,6 +6595,7 @@ func _on_lobby_reconnect_succeeded(
 	_write_smoke_trace("lobby_reconnect_succeeded session=%s player=%s" % [session_id, player_name])
 	if _retry_account_switch_if_identity_mismatch(player_name):
 		return
+	_cancel_lobby_sign_in_watchdog()
 	_startup_autologin_in_progress = false
 	_lobby_failure_update_check_requested = false
 	_sync_friend_observer_card_visibility()
@@ -7059,6 +7122,7 @@ func _on_lobby_status_changed(message: String) -> void:
 
 func _on_lobby_connection_failed(message: String) -> void:
 	_write_smoke_trace("lobby_connection_failed %s" % message)
+	_cancel_lobby_sign_in_watchdog()
 	var restore_auth_prompt := _startup_autologin_in_progress
 	_startup_autologin_in_progress = false
 	_manual_rejoin_room_id = ""
@@ -7068,6 +7132,8 @@ func _on_lobby_connection_failed(message: String) -> void:
 	if _should_retry_host_lobby_connect():
 		_queue_host_lobby_retry(message)
 		return
+	_cleanup_lobby_client()
+	_set_connected_server_version("")
 	_logged_in_account_username = ""
 	_refresh_account_identity_label()
 	status_label.text = message
@@ -7081,6 +7147,7 @@ func _on_lobby_connection_failed(message: String) -> void:
 
 func _on_lobby_disconnected() -> void:
 	_write_smoke_trace("lobby_disconnected")
+	_cancel_lobby_sign_in_watchdog()
 	var restore_auth_prompt := _startup_autologin_in_progress
 	_startup_autologin_in_progress = false
 	_manual_rejoin_room_id = ""
@@ -7341,6 +7408,7 @@ func _cleanup_lobby(clear_session: bool) -> void:
 	_refresh_multiplayer_action_state()
 
 func _cleanup_lobby_client() -> void:
+	_cancel_lobby_sign_in_watchdog()
 	if lobby_client == null:
 		return
 	var existing_client: LobbyClient = lobby_client
@@ -9032,6 +9100,10 @@ func _on_resume_match_pressed() -> void:
 	)
 	if connect_err != OK:
 		status_label.text = "Could not restore the saved lobby session."
+		_cleanup_lobby_client()
+		_set_connected_server_version("")
+	else:
+		_begin_lobby_sign_in_watchdog()
 
 func _resume_active_match_from_lobby(match_info: Dictionary) -> void:
 	var is_manual_rejoin_assignment := _is_manual_rejoin_assignment(match_info)

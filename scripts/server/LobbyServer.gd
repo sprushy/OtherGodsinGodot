@@ -367,18 +367,22 @@ func _handle_claim_legacy_account(peer_id: int, payload: Dictionary) -> void:
 		_send_error_to_peer(peer_id, str(account_result.get("message", "Could not update that account.")))
 		return
 	var account: Dictionary = account_result.get("account", {})
+	var account_id := str(account.get("account_id", "")).strip_edges()
+	var merged_account_id := str(account_result.get("merged_account_id", "")).strip_edges()
+	if not merged_account_id.is_empty() and not account_id.is_empty() and merged_account_id != account_id:
+		_merge_account_server_state(merged_account_id, account_id)
 	var account_username := str(account.get("username", requested_username)).strip_edges()
 	var profile: Dictionary = profile_store.login_profile(
 		"",
 		account_username,
-		str(account.get("account_id", "")),
+		account_id,
 		account_username
 	)
 	_complete_login_for_peer(
 		peer_id,
 		str(profile.get("display_name", account_username)),
 		str(profile.get("profile_id", "")),
-		str(account.get("account_id", "")),
+		account_id,
 		str(account.get("email", requested_email)),
 		account_username,
 		LobbyProtocolScript.CLAIM_LEGACY_ACCOUNT,
@@ -2071,6 +2075,22 @@ func _ensure_match_supervisor() -> void:
 	)
 	if not match_supervisor.match_closed.is_connected(_on_match_closed):
 		match_supervisor.match_closed.connect(_on_match_closed)
+
+func _merge_account_server_state(source_account_id: String, target_account_id: String) -> void:
+	var source_id := source_account_id.strip_edges()
+	var target_id := target_account_id.strip_edges()
+	if source_id.is_empty() or target_id.is_empty() or source_id == target_id:
+		return
+	_ensure_deck_store()
+	_ensure_friend_store()
+	if deck_store != null and deck_store.has_method("merge_account_decks"):
+		var deck_result: Dictionary = deck_store.merge_account_decks(source_id, target_id)
+		if not bool(deck_result.get("success", false)):
+			print("LobbyServer: account deck merge failed: %s" % str(deck_result.get("message", "")))
+	if friend_store != null and friend_store.has_method("merge_account_references"):
+		var friend_result: Dictionary = friend_store.merge_account_references(source_id, target_id)
+		if not bool(friend_result.get("success", false)):
+			print("LobbyServer: account friend merge failed: %s" % str(friend_result.get("message", "")))
 
 func _ensure_profile_store() -> void:
 	if profile_store != null:

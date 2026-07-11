@@ -97,8 +97,6 @@ func claim_legacy_account(
 	if not email_error.is_empty():
 		return _result(false, email_error)
 	var email_key := _email_key(normalized_email)
-	if not _find_account_id_by_email(email_key).is_empty():
-		return _result(false, "That email address already has an account.")
 	var username_key := _username_key(normalized_username)
 	if not _account_id_by_username.has(username_key):
 		return _result(false, "That account was not found.")
@@ -111,23 +109,54 @@ func claim_legacy_account(
 	var password_result := _verify_password(password, account)
 	if not bool(password_result.get("success", false)):
 		return _result(false, "Incorrect password.")
+	var upgraded_record := {}
+	if bool(password_result.get("needs_rehash", false)):
+		upgraded_record = _build_password_record(password)
+		if upgraded_record.is_empty():
+			return _result(false, "Could not upgrade account password storage.")
+	var matching_email_account_id := _find_account_id_by_email(email_key, account_id)
+	var existing_email_account_id := ""
+	if not matching_email_account_id.is_empty():
+		existing_email_account_id = _find_reassignable_email_account_id(email_key, account_id, normalized_email, normalized_username)
+	var displaced_account_id := ""
+	var previous_email_account: Dictionary = {}
+	if not matching_email_account_id.is_empty():
+		if existing_email_account_id.is_empty():
+			return _result(false, "That email address already has an account.")
+		var existing_email_account = _accounts_by_id.get(existing_email_account_id, {})
+		if not (existing_email_account is Dictionary) \
+				or not _can_reassign_email_account_for_legacy_claim(
+					existing_email_account as Dictionary,
+					normalized_email,
+					normalized_username
+				):
+			return _result(false, "That email address already has an account.")
+		previous_email_account = (existing_email_account as Dictionary).duplicate(true)
+		var updated_email_account := previous_email_account.duplicate(true)
+		updated_email_account["email"] = ""
+		updated_email_account["email_key"] = ""
+		updated_email_account["last_seen_unix"] = int(Time.get_unix_time_from_system())
+		_accounts_by_id[existing_email_account_id] = updated_email_account
+		displaced_account_id = existing_email_account_id
 	var previous_account := account.duplicate(true)
 	account["email"] = normalized_email
 	account["email_key"] = email_key
 	account["accepts_game_updates"] = accepts_game_updates
 	account["last_seen_unix"] = int(Time.get_unix_time_from_system())
-	if bool(password_result.get("needs_rehash", false)):
-		var upgraded_record := _build_password_record(password)
-		if upgraded_record.is_empty():
-			return _result(false, "Could not upgrade account password storage.")
+	if not upgraded_record.is_empty():
 		account.merge(upgraded_record, true)
 	_accounts_by_id[account_id] = account
 	_rebuild_account_indexes()
 	if not _save():
 		_accounts_by_id[account_id] = previous_account
+		if not displaced_account_id.is_empty():
+			_accounts_by_id[displaced_account_id] = previous_email_account
 		_rebuild_account_indexes()
 		return _result(false, "Could not update account storage.")
-	return _result(true, "", _sanitize_account(account))
+	var extra := {}
+	if not displaced_account_id.is_empty():
+		extra["merged_account_id"] = displaced_account_id
+	return _result(true, "", _sanitize_account(account), extra)
 
 func login_account(email: String, password: String) -> Dictionary:
 	_ensure_loaded()
@@ -371,12 +400,15 @@ func _save() -> bool:
 		"account_id_by_username": _account_id_by_username,
 	}, "AccountStore")
 
-func _result(success: bool, message: String, account: Dictionary = {}) -> Dictionary:
-	return {
+func _result(success: bool, message: String, account: Dictionary = {}, extra: Dictionary = {}) -> Dictionary:
+	var result := {
 		"success": success,
 		"message": message,
 		"account": account.duplicate(true),
 	}
+	for key in extra.keys():
+		result[key] = extra[key]
+	return result
 
 func _sanitize_account(account: Dictionary) -> Dictionary:
 	return {
@@ -460,6 +492,42 @@ func _email_key(email: String) -> String:
 
 func _username_key(username: String) -> String:
 	return username.to_lower()
+
+func _find_reassignable_email_account_id(
+	email_key: String,
+	excluded_account_id: String,
+	normalized_email: String,
+	legacy_username: String
+) -> String:
+	for account_id in _get_account_ids_by_email(email_key, excluded_account_id):
+		var account = _accounts_by_id.get(account_id, {})
+		if not (account is Dictionary):
+			continue
+		if _can_reassign_email_account_for_legacy_claim(account as Dictionary, normalized_email, legacy_username):
+			return account_id
+	return ""
+
+func _can_reassign_email_account_for_legacy_claim(
+	email_account: Dictionary,
+	normalized_email: String,
+	legacy_username: String
+) -> bool:
+	var email_account_id := str(email_account.get("account_id", "")).strip_edges()
+	if email_account_id.is_empty():
+		return false
+	var stored_email_key := str(email_account.get("email_key", "")).strip_edges().to_lower()
+	if stored_email_key.is_empty():
+		stored_email_key = _email_key(str(email_account.get("email", "")).strip_edges().to_lower())
+	if stored_email_key != _email_key(normalized_email):
+		return false
+	var email_username_key := str(email_account.get("username_key", "")).strip_edges().to_lower()
+	if email_username_key.is_empty():
+		email_username_key = _username_key(str(email_account.get("username", "")).strip_edges())
+	var generated_username_key := _username_key(_derive_username_from_email(normalized_email))
+	var legacy_username_key := _username_key(legacy_username)
+	if email_username_key.is_empty() or email_username_key == legacy_username_key:
+		return false
+	return email_username_key == generated_username_key
 
 func _find_account_id_by_email(email_key: String, excluded_account_id: String = "") -> String:
 	var matching_account_ids := _get_account_ids_by_email(email_key, excluded_account_id)

@@ -127,6 +127,40 @@ func delete_deck(account_id: String, deck_id: String) -> Dictionary:
 		return {"success": false, "message": "Could not save deck storage.", "deck_id": resolved_deck_id}
 	return {"success": true, "message": "", "deck_id": resolved_deck_id}
 
+func merge_account_decks(source_account_id: String, target_account_id: String) -> Dictionary:
+	_ensure_loaded()
+	var source_id := source_account_id.strip_edges()
+	var target_id := target_account_id.strip_edges()
+	if source_id.is_empty() or target_id.is_empty() or source_id == target_id:
+		return {"success": true, "message": "", "moved_count": 0}
+	var source_bucket := _get_deck_bucket(source_id)
+	if source_bucket.is_empty():
+		return {"success": true, "message": "", "moved_count": 0}
+	var target_bucket := _get_deck_bucket(target_id)
+	var previous_decks_by_account_id := _decks_by_account_id.duplicate(true)
+	var moved_count := 0
+	for raw_deck_id in source_bucket.keys():
+		var deck = source_bucket.get(raw_deck_id, {})
+		if not (deck is Dictionary):
+			continue
+		if target_bucket.size() >= MAX_DECKS_PER_ACCOUNT:
+			break
+		var deck_entry := (deck as Dictionary).duplicate(true)
+		var deck_id := str(deck_entry.get("deck_id", raw_deck_id)).strip_edges()
+		if deck_id.is_empty():
+			deck_id = _generate_id("deck_", 12)
+		while target_bucket.has(deck_id):
+			deck_id = _generate_id("deck_", 12)
+		deck_entry["deck_id"] = deck_id
+		target_bucket[deck_id] = deck_entry
+		moved_count += 1
+	_decks_by_account_id[target_id] = target_bucket
+	_decks_by_account_id.erase(source_id)
+	if not _save():
+		_decks_by_account_id = previous_decks_by_account_id
+		return {"success": false, "message": "Could not merge account deck storage.", "moved_count": 0}
+	return {"success": true, "message": "", "moved_count": moved_count}
+
 func _ensure_loaded() -> void:
 	if _loaded:
 		return
