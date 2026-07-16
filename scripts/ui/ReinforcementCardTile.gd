@@ -10,8 +10,10 @@ signal card_hover_ended(card_name: String, source_zone: String, tile: Control)
 const ZONE_MAIN := "main"
 const ZONE_SIDE := "side"
 const UITextureCacheScript = preload("res://scripts/ui/UITextureCache.gd")
+const UIFontScript = preload("res://scripts/ui/UIFont.gd")
 
 var card_name: String = ""
+var _card_for_font: Card = null
 var source_zone: String = ZONE_MAIN
 var drag_enabled: bool = true
 var adjust_enabled: bool = true
@@ -20,6 +22,7 @@ var adjust_moves_between_zones: bool = true
 
 func setup(card: Card, count: int, p_source_zone: String, compact: bool = false, other_count: int = 0) -> void:
 	card_name = str(card.card_name) if card != null else ""
+	_card_for_font = card
 	source_zone = p_source_zone
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	custom_minimum_size = Vector2(172, 246) if not compact else Vector2(250, 62)
@@ -48,6 +51,7 @@ func _build_full(card: Card, count: int, other_count: int) -> void:
 
 	var title := Label.new()
 	title.text = card_name
+	UIFontScript.apply_norse_card_name_font(title, card)
 	title.clip_text = true
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.add_theme_font_size_override("font_size", 13)
@@ -100,6 +104,7 @@ func _build_compact(card: Card, count: int, other_count: int) -> void:
 
 	var title := Label.new()
 	title.text = card_name
+	UIFontScript.apply_norse_card_name_font(title, card)
 	title.clip_text = true
 	title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -136,6 +141,7 @@ func _get_drag_data(_at_position: Vector2) -> Variant:
 		return null
 	var preview := Label.new()
 	preview.text = card_name
+	UIFontScript.apply_norse_card_name_font(preview, _card_for_font)
 	preview.add_theme_font_size_override("font_size", 18)
 	preview.modulate = Color(1.0, 1.0, 1.0, 0.92)
 	set_drag_preview(preview)

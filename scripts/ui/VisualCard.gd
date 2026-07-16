@@ -8,6 +8,7 @@ const BoardZoneUIScript = preload("res://scripts/ui/BoardZoneUI.gd")
 const LevelSymbolRowScript = preload("res://scripts/ui/LevelSymbolRow.gd")
 const DebuffBadgeScript = preload("res://scripts/ui/DebuffBadge.gd")
 const UITextureCacheScript = preload("res://scripts/ui/UITextureCache.gd")
+const UIFontScript = preload("res://scripts/ui/UIFont.gd")
 const MINOR_ACTION_SYMBOL_TEXTURE := preload("res://images/ui/MinorActionSymbol.png")
 const MAJOR_ACTION_SYMBOL_TEXTURE := preload("res://images/ui/MajorActionSymbol.png")
 const MANA_ORB_TEXTURE := preload("res://images/ui/ManaOrb.png")
@@ -213,6 +214,7 @@ func _make_name_label() -> Label:
 	name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	name_lbl.custom_minimum_size = Vector2(maxf(36.0, float(_card_width) - 132.0), 0.0)
 	name_lbl.text = card_data.get_display_name_for_control(name_lbl)
+	UIFontScript.apply_norse_card_name_font(name_lbl, card_data)
 	name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return name_lbl
 

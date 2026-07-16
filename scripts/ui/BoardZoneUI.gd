@@ -10,6 +10,7 @@ const StealthFogOverlayScript = preload("res://scripts/ui/StealthFogOverlay.gd")
 const LevelSymbolRowScript = preload("res://scripts/ui/LevelSymbolRow.gd")
 const DebuffBadgeScript = preload("res://scripts/ui/DebuffBadge.gd")
 const UITextureCacheScript = preload("res://scripts/ui/UITextureCache.gd")
+const UIFontScript = preload("res://scripts/ui/UIFont.gd")
 const SnowV2CardMeltOverlayScript = preload("res://scripts/fx/SnowV2CardMeltOverlay.gd")
 const SNOW_V2_SNOWFLAKE_TEXTURE := preload("res://images/fx/snow_v2/snowflake.png")
 const SNOW_V2_PAINTBRUSH_TEXTURE := preload("res://images/fx/snow_v2/snow_paintbrush.png")
@@ -3817,7 +3818,7 @@ func _add_snow_v2_card_weather_overlay(overlay: Control, card: Card, allow_melt:
 	snow_overlay.edge_strip_texture = SNOW_V2_EDGE_STRIPS_TEXTURE
 	snow_overlay.corner_border_texture = SNOW_V2_CORNER_BORDER_TEXTURE
 	snow_overlay.allow_melt_on_land = allow_melt
-	snow_overlay.show_falling_flakes = show_falling and allow_melt
+	snow_overlay.show_falling_flakes = show_falling
 	snow_overlay.show_body_powder = show_body_powder
 	snow_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	if card != null and card.is_god:
@@ -4768,7 +4769,7 @@ func _add_empty_zone_slab() -> void:
 	slab.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	overlay.add_child(slab)
 
-	_add_snow_v2_card_weather_overlay(overlay, null, false, false, false)
+	_add_snow_v2_card_weather_overlay(overlay, null, false, true, true)
 	_add_empty_zone_slab_label(overlay)
 
 func _is_locked_power_cursor_card(card: Card) -> bool:
@@ -5138,6 +5139,7 @@ func _refresh_display() -> void:
 				name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 				name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				name_lbl.text = card.get_display_name_for_control(name_lbl)
+				UIFontScript.apply_norse_card_name_font(name_lbl, card)
 				name_vbox.add_child(name_lbl)
 
 				if not card.name_at_bottom:

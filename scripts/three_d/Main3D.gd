@@ -101,15 +101,17 @@ func _ready() -> void:
 	if _legacy_3d_shell_active:
 		Input.set_mouse_mode(Input.MOUSE_MODE_HIDDEN)
 		_build_3d_shell()
-		_build_software_cursor()
 	else:
 		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 		_build_flat_canvas()
-		_build_software_cursor()
-	_build_snow_v2_weather()
+	# Load the embedded game scene first so the menu becomes interactive ASAP;
+	# cursor/snow are presentation-only and are built deferred (their _process
+	# consumers are null-guarded).
+	_load_game_into_viewport()
 	GameCursorScript.ensure_registered()
 	_sync_cursor_presentation()
-	_load_game_into_viewport()
+	call_deferred("_build_software_cursor")
+	call_deferred("_build_snow_v2_weather")
 	call_deferred("_refresh_display_mode")
 
 func _build_3d_shell() -> void:

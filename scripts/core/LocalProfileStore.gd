@@ -184,6 +184,7 @@ func activate_account_session(
 	var resolved_email := account_email.strip_edges().to_lower()
 	if resolved_email.is_empty():
 		return ensure_profile(preferred_profile_id, DEFAULT_PROFILE_NAME, true)
+	var previous_account_email := str(_data.get("last_account_email", "")).strip_edges().to_lower()
 	var resolved_auth_mode := auth_mode.strip_edges().to_lower()
 	if resolved_auth_mode not in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]:
 		resolved_auth_mode = AUTH_MODE_LOGIN
@@ -218,8 +219,15 @@ func activate_account_session(
 	_data["preferred_auth_mode"] = stored_auth_mode
 	_data["last_account_email"] = resolved_email
 	_data["last_account_username"] = resolved_email
-	_data["account_auto_login_enabled"] = false
 	_data.erase("last_account_password")
+	if _persist_password:
+		_data["account_password_save_enabled"] = true
+		if not _password.is_empty():
+			_data["saved_account_password"] = _password
+		elif previous_account_email != resolved_email:
+			_data.erase("saved_account_password")
+	else:
+		clear_account_password(false)
 	_save()
 	return get_profile(resolved_profile_id)
 
@@ -485,12 +493,25 @@ func set_preferred_auth_mode(auth_mode: String) -> void:
 
 func get_account_auto_login_enabled() -> bool:
 	_ensure_loaded()
-	return false
+	return bool(_data.get("account_auto_login_enabled", false))
 
-func set_account_auto_login_enabled(_enabled: bool) -> void:
+func set_account_auto_login_enabled(enabled: bool) -> void:
 	_ensure_loaded()
-	_data["account_auto_login_enabled"] = false
-	_data.erase("last_account_password")
+	_data["account_auto_login_enabled"] = enabled
+	if not enabled:
+		_data.erase("last_account_password")
+	_save()
+
+func get_account_password_save_enabled() -> bool:
+	_ensure_loaded()
+	return bool(_data.get("account_password_save_enabled", false))
+
+func set_account_password_save_enabled(enabled: bool) -> void:
+	_ensure_loaded()
+	_data["account_password_save_enabled"] = enabled
+	if not enabled:
+		_data.erase("saved_account_password")
+		_data.erase("last_account_password")
 	_save()
 
 func get_last_account_email() -> String:
@@ -518,18 +539,25 @@ func remember_account_username(username: String) -> void:
 
 func get_last_account_password() -> String:
 	_ensure_loaded()
+	if bool(_data.get("account_password_save_enabled", false)):
+		return str(_data.get("saved_account_password", ""))
 	return _pending_legacy_claim_password
 
-func remember_account_password(_password: String) -> void:
+func remember_account_password(password: String) -> void:
 	_ensure_loaded()
+	_data["account_password_save_enabled"] = true
+	_data["saved_account_password"] = password
 	_data.erase("last_account_password")
 	_save()
 
-func clear_account_password() -> void:
+func clear_account_password(save_immediately: bool = true) -> void:
 	_ensure_loaded()
 	_pending_legacy_claim_password = ""
+	_data["account_password_save_enabled"] = false
+	_data.erase("saved_account_password")
 	_data.erase("last_account_password")
-	_save()
+	if save_immediately:
+		_save()
 
 func get_pending_legacy_account_claim_username() -> String:
 	_ensure_loaded()
@@ -690,6 +718,7 @@ func _ensure_loaded() -> void:
 		"active_match_by_profile": {},
 		"preferred_auth_mode": AUTH_MODE_LOGIN,
 		"account_auto_login_enabled": false,
+		"account_password_save_enabled": false,
 		"allow_friend_observers_to_see_cards": true,
 		"last_account_email": "",
 		"last_account_username": "",
@@ -770,7 +799,8 @@ func _read_storage_snapshot(storage_path: String, label: String) -> Dictionary:
 			"data": {},
 			"recovered": false,
 		}
-	var content_bytes := file.get_buffer(file.get_length())
+	var length := file.get_length()
+	var content_bytes := file.get_buffer(length)
 	file.close()
 	var decode_result := _decode_utf8_bytes_lossy(content_bytes)
 	var content: String = str(decode_result.get("text", ""))
@@ -800,88 +830,13 @@ func _decode_utf8_bytes_lossy(content_bytes: PackedByteArray) -> Dictionary:
 			"text": "",
 			"had_invalid_utf8": false,
 		}
-	var text := ""
-	var had_invalid_utf8 := false
-	var index := 0
-	if content_bytes.size() >= 3 and (
-		content_bytes[0] == 0xef
-		and content_bytes[1] == 0xbb
-		and content_bytes[2] == 0xbf
-	):
-		index = 3
-	while index < content_bytes.size():
-		var leading_byte := int(content_bytes[index])
-		if leading_byte <= 0x7f:
-			text += char(leading_byte)
-			index += 1
-			continue
-		var sequence_length := _get_utf8_sequence_length(leading_byte)
-		if sequence_length < 2 or index + sequence_length > content_bytes.size():
-			had_invalid_utf8 = true
-			text += char(65533)
-			index += 1
-			continue
-		var codepoint := _decode_utf8_sequence(content_bytes, index, sequence_length)
-		if codepoint < 0:
-			had_invalid_utf8 = true
-			text += char(65533)
-			index += 1
-			continue
-		text += char(codepoint)
-		index += sequence_length
+	var text := content_bytes.get_string_from_utf8()
+	if not text.is_empty() and text.unicode_at(0) == 0xfeff:
+		text = text.substr(1)
 	return {
 		"text": text,
-		"had_invalid_utf8": had_invalid_utf8,
+		"had_invalid_utf8": false,
 	}
-
-func _get_utf8_sequence_length(leading_byte: int) -> int:
-	if (leading_byte & 0xe0) == 0xc0:
-		return 2
-	if (leading_byte & 0xf0) == 0xe0:
-		return 3
-	if (leading_byte & 0xf8) == 0xf0:
-		return 4
-	return -1
-
-func _decode_utf8_sequence(content_bytes: PackedByteArray, start_index: int, sequence_length: int) -> int:
-	var codepoint := 0
-	if sequence_length == 2:
-		var byte_1 := int(content_bytes[start_index + 1])
-		if (byte_1 & 0xc0) != 0x80:
-			return -1
-		codepoint = ((int(content_bytes[start_index]) & 0x1f) << 6) | (byte_1 & 0x3f)
-		if codepoint < 0x80:
-			return -1
-		return codepoint
-	if sequence_length == 3:
-		var byte_1 := int(content_bytes[start_index + 1])
-		var byte_2 := int(content_bytes[start_index + 2])
-		if (byte_1 & 0xc0) != 0x80 or (byte_2 & 0xc0) != 0x80:
-			return -1
-		codepoint = (
-			((int(content_bytes[start_index]) & 0x0f) << 12)
-			| ((byte_1 & 0x3f) << 6)
-			| (byte_2 & 0x3f)
-		)
-		if codepoint < 0x800 or (codepoint >= 0xd800 and codepoint <= 0xdfff):
-			return -1
-		return codepoint
-	if sequence_length == 4:
-		var byte_1 := int(content_bytes[start_index + 1])
-		var byte_2 := int(content_bytes[start_index + 2])
-		var byte_3 := int(content_bytes[start_index + 3])
-		if (byte_1 & 0xc0) != 0x80 or (byte_2 & 0xc0) != 0x80 or (byte_3 & 0xc0) != 0x80:
-			return -1
-		codepoint = (
-			((int(content_bytes[start_index]) & 0x07) << 18)
-			| ((byte_1 & 0x3f) << 12)
-			| ((byte_2 & 0x3f) << 6)
-			| (byte_3 & 0x3f)
-		)
-		if codepoint < 0x10000 or codepoint > 0x10ffff:
-			return -1
-		return codepoint
-	return -1
 
 func _parse_storage_snapshot_content(content: String, storage_path: String, label: String) -> Dictionary:
 	var json := JSON.new()
@@ -1050,9 +1005,6 @@ func _sanitize_loaded_auth_state() -> bool:
 			_data["preferred_auth_mode"] = AUTH_MODE_CLAIM_LEGACY
 		_data.erase("last_account_password")
 		changed = true
-	if bool(_data.get("account_auto_login_enabled", false)):
-		_data["account_auto_login_enabled"] = false
-		changed = true
 	var stored_email := str(_data.get("last_account_email", "")).strip_edges().to_lower()
 	if stored_email.is_empty() and legacy_username.find("@") > 0:
 		stored_email = legacy_username.to_lower()
@@ -1060,6 +1012,9 @@ func _sanitize_loaded_auth_state() -> bool:
 		changed = true
 	if not stored_email.is_empty() and legacy_username != stored_email:
 		_data["last_account_username"] = stored_email
+		changed = true
+	if not bool(_data.get("account_password_save_enabled", false)) and _data.has("saved_account_password"):
+		_data.erase("saved_account_password")
 		changed = true
 	var profiles := _get_profiles()
 	var profiles_changed := false
@@ -1377,6 +1332,8 @@ func _repair_account_profile_mappings() -> bool:
 	var mappings_changed := false
 	var account_mappings := _get_account_profile_id_by_username()
 	var profiles := _get_profiles()
+	if _account_profile_mappings_look_complete(profiles, account_mappings):
+		return false
 	var normalized_usernames: Dictionary = {}
 
 	for raw_username_key in account_mappings.keys():
@@ -1423,6 +1380,33 @@ func _repair_account_profile_mappings() -> bool:
 	if repaired_current_profile_id.is_empty() or repaired_current_profile_id == current_profile_id:
 		return mappings_changed
 	_data["current_profile_id"] = repaired_current_profile_id
+	return true
+
+func _account_profile_mappings_look_complete(profiles: Dictionary, account_mappings: Dictionary) -> bool:
+	var current_profile_id := str(_data.get("current_profile_id", "")).strip_edges()
+	if not current_profile_id.is_empty() and not profiles.has(current_profile_id):
+		return false
+	for raw_mapping_key in account_mappings.keys():
+		var mapping_key := str(raw_mapping_key).strip_edges().to_lower()
+		if mapping_key.is_empty():
+			return false
+		var mapped_profile_id := str(account_mappings.get(raw_mapping_key, "")).strip_edges()
+		if mapped_profile_id.is_empty() or not profiles.has(mapped_profile_id):
+			return false
+	for profile_id_variant in profiles.keys():
+		var profile_id := str(profile_id_variant).strip_edges()
+		if profile_id.is_empty():
+			continue
+		var profile = profiles.get(profile_id, {})
+		if not (profile is Dictionary):
+			continue
+		var profile_dict := profile as Dictionary
+		var account_email_key := str(profile_dict.get("account_email_key", "")).strip_edges().to_lower()
+		if not account_email_key.is_empty() and not account_mappings.has(account_email_key):
+			return false
+		var account_username_key := str(profile_dict.get("account_username_key", "")).strip_edges().to_lower()
+		if not account_username_key.is_empty() and not account_mappings.has(account_username_key):
+			return false
 	return true
 
 func _get_decks_by_profile() -> Dictionary:

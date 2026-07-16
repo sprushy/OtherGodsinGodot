@@ -12,6 +12,7 @@ const CardArtVariantsScript = preload("res://scripts/core/CardArtVariants.gd")
 const LevelSymbolRowScript = preload("res://scripts/ui/LevelSymbolRow.gd")
 const ReinforcementCardTileScript = preload("res://scripts/ui/ReinforcementCardTile.gd")
 const ReinforcementDropAreaScript = preload("res://scripts/ui/ReinforcementDropArea.gd")
+const UIFontScript = preload("res://scripts/ui/UIFont.gd")
 const MANA_ORB_TEXTURE := preload("res://images/ui/ManaOrb.png")
 
 signal back_pressed
@@ -195,6 +196,7 @@ func _apply_deckbuilder_scrollbar_style(scroll: ScrollContainer, force_visible: 
 # ── init ───────────────────────────────────────────────────────────
 func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	UIFontScript.apply_default_font(self)
 	_deck_id_rng.randomize()
 	resized.connect(_queue_responsive_layout_refresh)
 	_all_cards = _make_all_cards()
@@ -1353,6 +1355,7 @@ func _make_card_item(card: Card) -> Control:
 	name_lbl.offset_top   = -42; name_lbl.offset_bottom = 0
 	name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	name_lbl.text = card.get_display_name_for_control(name_lbl)
+	UIFontScript.apply_norse_card_name_font(name_lbl, card)
 	name_lbl.visible = not card.is_god
 	name_lbl.set_meta("hover_only", card.is_god)
 	card_body.add_child(name_bg)
@@ -1825,6 +1828,7 @@ func _ensure_collection_card_drag_ghost(mouse_global_position: Vector2) -> void:
 
 		var label := Label.new()
 		label.text = _collection_drag_card.get_display_name_for_control(label)
+		UIFontScript.apply_norse_card_name_font(label, _collection_drag_card)
 		label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -2337,6 +2341,7 @@ func _ensure_visual_deck_drag_ghost(mouse_global_position: Vector2) -> void:
 	ghost.add_child(box)
 	var title := Label.new()
 	title.text = _visual_deck_drag_card.get_display_name_for_control(title)
+	UIFontScript.apply_norse_card_name_font(title, _visual_deck_drag_card)
 	title.clip_text = true
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	box.add_child(title)
@@ -2508,6 +2513,7 @@ func _make_deck_row(card: Card, is_reinforcement: bool = false) -> Control:
 	name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	name_lbl.clip_text = true
 	name_lbl.text = card.get_display_name_for_control(name_lbl)
+	UIFontScript.apply_norse_card_name_font(name_lbl, card)
 	name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_child(name_lbl)
 
@@ -2641,6 +2647,7 @@ func _ensure_deck_row_drag_ghost(mouse_global_position: Vector2) -> void:
 	ghost.add_theme_stylebox_override("panel", style)
 	var label := Label.new()
 	label.text = _deck_row_drag_card.get_display_name_for_control(label)
+	UIFontScript.apply_norse_card_name_font(label, _deck_row_drag_card)
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	label.clip_text = true
@@ -4394,6 +4401,7 @@ func _show_preview(card: Card, force: bool = false) -> void:
 	_refresh_preview_level_badge(card)
 
 	_prev_name.text = card.get_display_name_for_control(_prev_name)
+	UIFontScript.refresh_card_name_font(_prev_name, card)
 
 	var type_parts: PackedStringArray = [_get_type_label(card)]
 	if card.culture != "":

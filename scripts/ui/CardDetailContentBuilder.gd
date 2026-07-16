@@ -3,6 +3,7 @@ extends RefCounted
 
 const LevelSymbolRowScript = preload("res://scripts/ui/LevelSymbolRow.gd")
 const UITextureCacheScript = preload("res://scripts/ui/UITextureCache.gd")
+const UIFontScript = preload("res://scripts/ui/UIFont.gd")
 const _BULLET_SEPARATOR := " | "
 const _BOARD_POPUP_WIDTH := 210.0
 const _KEYWORD_PANEL_WIDTH := 210.0
@@ -36,6 +37,7 @@ static func build_visual_hover_body(card: Card, viewer: Player, config: Dictiona
 		Color(1.0, 0.95, 0.7),
 		true
 	)
+	UIFontScript.apply_norse_card_name_font(name_lbl, card)
 	vbox.add_child(name_lbl)
 
 	if card.card_types.size() > 0:
@@ -434,6 +436,8 @@ static func build_board_popup_body(card: Card, viewer: Player, config: Dictionar
 		card.get_display_name_for_control() if not is_hidden_card else _get_hidden_card_hover_label(card),
 		15
 	)
+	if not is_hidden_card:
+		UIFontScript.apply_norse_card_name_font(name_lbl, card)
 	name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header_row.add_child(name_lbl)
 

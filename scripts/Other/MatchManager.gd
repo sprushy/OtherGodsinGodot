@@ -657,10 +657,60 @@ func _validate_pending_ui_interaction_for_command(command: Dictionary) -> Dictio
 		return result
 	var prompt_idx := _find_pending_ui_interaction_index(command, expected_type)
 	if prompt_idx < 0:
-		result["error"] = "%s: no matching server prompt is pending" % command_type
+		# Authoritative flow can reap a freshly offered "priority" prompt between
+		# the client rendering it and the player's response landing - notably for
+		# the token start_turn / end_turn window, whose event has no anchoring
+		# card to keep the stack action alive through re-entrant ticks. If the
+		# substantive state still justifies the response, reissue the prompt
+		# instead of rejecting the otherwise-legal click.
+		var recovered := _recover_spurious_priority_prompt_for_command(command, expected_type)
+		var recovered_prompt_id := int(recovered.get("prompt_id", -1))
+		if recovered_prompt_id < 0:
+			result["error"] = "%s: no matching server prompt is pending" % command_type
+			return result
+		result["prompt_id"] = recovered_prompt_id
 		return result
 	result["prompt_id"] = int(_pending_ui_interactions[prompt_idx].get("prompt_id", -1))
 	return result
+
+func _recover_spurious_priority_prompt_for_command(command: Dictionary, expected_type: String) -> Dictionary:
+	var result := { "prompt_id": -1 }
+	if game_manager == null or expected_type != "priority":
+		return result
+	if game_manager.action_stack.is_empty():
+		return result
+	var responding_player := _get_required_player_for_command(command)
+	if responding_player == null or game_manager.priority_player != responding_player:
+		return result
+	# For card-based responses, confirm the card can still legally respond to
+	# the current stack top before reissuing the window.
+	var priority_card := _get_priority_response_card_for_command(command)
+	if priority_card != null \
+			and not game_manager.can_card_respond_to_priority(priority_card, responding_player):
+		return result
+	var prompt_data := build_priority_prompt_data(responding_player)
+	if game_manager.action_stack.is_empty():
+		return result
+	var prompt_id := _record_pending_ui_interaction(responding_player, "priority", prompt_data)
+	result["prompt_id"] = prompt_id
+	_log_authoritative_flow_state("priority_prompt_recovered: command=%s player=%s prompt_id=%d" % [
+		str(command.get("type", "")),
+		_get_player_debug_label(responding_player),
+		prompt_id,
+	])
+	return result
+
+func _get_priority_response_card_for_command(command: Dictionary) -> Card:
+	if game_manager == null:
+		return null
+	match str(command.get("type", "")):
+		"play_charm_response":
+			return game_manager.get_card_by_uid(str(command.get("charm_uid", "")))
+		"play_hex_response":
+			return game_manager.get_card_by_uid(str(command.get("hex_uid", "")))
+		"play_priority_ability":
+			return game_manager.get_card_by_uid(str(command.get("source_uid", "")))
+	return null
 
 func _consume_pending_ui_interaction_by_id(prompt_id: int) -> bool:
 	if prompt_id < 0:
