@@ -3,7 +3,7 @@ extends Control
 
 const WEATHER_GROUP := "snow_v2_card_weather"
 const MAX_PATCHES := 6
-const MAX_FALLING_FLAKES := 3
+const MAX_FALLING_FLAKES := 8
 const MAX_LANDED_FLAKES := 4
 const POWDER_LANDING_THRESHOLD := 6
 const EDGE_ACCUMULATION_THRESHOLD := 0.22
@@ -259,7 +259,7 @@ func _update_falling_flakes(delta: float) -> void:
 func _target_falling_flake_count() -> int:
 	if not show_falling_flakes:
 		return 0
-	return clampi(1 + int(round(_strength * 2.0)), 1, MAX_FALLING_FLAKES)
+	return clampi(3 + int(round(_strength * 5.0)), 3, MAX_FALLING_FLAKES)
 
 func _make_falling_flake(start_above: bool) -> Dictionary:
 	var start_y := _rng.randf_range(-0.20, 0.45)

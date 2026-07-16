@@ -1,8 +1,8 @@
 class_name SnowV2ScreenOverlay
 extends Control
 
-const MAX_FLAKES := 82
-const MIN_FLAKES := 22
+const MAX_FLAKES := 320
+const MIN_FLAKES := 55
 const FLAKE_ATLAS_COLUMNS := 11
 const FLAKE_ATLAS_ROWS := 10
 
@@ -26,11 +26,13 @@ func _init() -> void:
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	size = get_viewport_rect().size
 	_rng.seed = 47027
 	set_process(false)
 	visible = false
 
 func set_weather(active: bool, strength: float, wind_direction: Vector2, wind_force: float) -> void:
+	size = get_viewport_rect().size
 	_active = active
 	_strength = clampf(strength, 0.0, 1.0)
 	if wind_direction.length_squared() > 0.001:

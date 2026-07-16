@@ -8,6 +8,7 @@ const SNOWFLAKE_TEXTURE_PATH := "res://images/fx/snow_v2/snowflake.png"
 const PAINTBRUSH_TEXTURE_PATH := "res://images/fx/snow_v2/snow_paintbrush.png"
 const FLAKE_ATLAS_TEXTURE_PATH := "res://images/fx/snow_v2/flake_particle_atlas.png"
 const WIND_WISP_TEXTURE_PATH := "res://images/fx/snow_v2/wind_wisps_overlay.png"
+const SCREEN_WEATHER_LAYER := 150
 
 var strength_variation: float = 0.0
 var accumulation: float = 0.0
@@ -27,7 +28,7 @@ var _flake_atlas_texture: Texture2D = null
 var _wind_wisp_texture: Texture2D = null
 
 func _ready() -> void:
-	layer = 90
+	layer = SCREEN_WEATHER_LAYER
 	visible = false
 	add_to_group(CONTROL_GROUP)
 	_snowflake_texture = load(SNOWFLAKE_TEXTURE_PATH) as Texture2D
@@ -157,7 +158,7 @@ func _apply_weather() -> void:
 	if _screen_overlay != null and is_instance_valid(_screen_overlay):
 		_screen_overlay.call("set_weather", _active, current_strength, wind_direction, wind_force)
 	if _world_particles != null and is_instance_valid(_world_particles):
-		_world_particles.amount = int(round(lerpf(50.0, 170.0, current_strength)))
+		_world_particles.amount = int(round(lerpf(120.0, 480.0, current_strength)))
 		var process_material := _world_particles.process_material as ParticleProcessMaterial
 		if process_material != null:
 			process_material.gravity = Vector3(wind_direction.x * wind_force * 0.65, -1.45, wind_direction.y * wind_force * 0.18)

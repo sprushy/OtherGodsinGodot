@@ -75,9 +75,9 @@ const MENU_ACCOUNT_IDENTITY_FONT_SIZE := 20
 const AUTH_TITLE_FONT_SIZE := 28
 const AUTH_BODY_FONT_SIZE := 18
 const AUTH_CONTROL_FONT_SIZE := 18
-const AUTH_BUTTON_FONT_SIZE := 20
+const AUTH_BUTTON_FONT_SIZE := MENU_PRIMARY_BUTTON_FONT_SIZE
 const AUTH_FIELD_MIN_HEIGHT := 42.0
-const AUTH_BUTTON_MIN_HEIGHT := 46.0
+const AUTH_BUTTON_MIN_HEIGHT := MENU_PRIMARY_BUTTON_MIN_HEIGHT
 
 @onready var menu_container = $MenuContainer
 @onready var game_container = $GameContainer
@@ -463,6 +463,7 @@ func _finish_startup_loading() -> void:
 	if _startup_loading_finished:
 		return
 	_startup_loading_finished = true
+	_apply_main_menu_text_sizing()
 	_set_startup_loading_progress(1.0, 0.18)
 	_begin_startup_menu_fade()
 	if _startup_loading_overlay != null and is_instance_valid(_startup_loading_overlay):
@@ -1236,6 +1237,7 @@ func show_menu() -> void:
 	_close_tutorial_coach_overlay()
 	menu_container.visible = true
 	game_container.visible = false
+	_apply_main_menu_text_sizing()
 	_hide_multiplayer_deck_popup()
 	_refresh_multiplayer_deck_options()
 	_refresh_multiplayer_action_state()

@@ -6699,11 +6699,11 @@ func _sync_heavy_snow_weather_visuals(force: bool = false) -> void:
 		tree.call_group(
 			SNOWSTORM_CONTROL_GROUP,
 			"set_snowstorm_profile",
-			0.72,
-			0.08,
-			0.42,
+			0.92,
+			0.06,
+			0.62,
 			Vector2(-1.0, 0.16),
-			0.85
+			1.08
 		)
 	else:
 		tree.call_group(SNOWSTORM_CONTROL_GROUP, "set_snowstorm_active", false)
