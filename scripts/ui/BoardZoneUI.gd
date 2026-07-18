@@ -4122,6 +4122,16 @@ func _get_hover_card_options_attacker(scene_root: Node = null) -> Card:
 		return null
 	return _get_hover_card_options_card(root)
 
+func _get_board_drag_followers_attack_preview_attacker(scene_root: Node, target_player: Player) -> Card:
+	if scene_root == null or target_player == null:
+		return null
+	if not scene_root.has_method("_get_board_drag_followers_attack_preview_attacker"):
+		return null
+	var preview_attacker = scene_root.call("_get_board_drag_followers_attack_preview_attacker", target_player)
+	if preview_attacker is Card:
+		return preview_attacker as Card
+	return null
+
 func _is_hover_card_options_preview_active() -> bool:
 	var scene_root := _get_targeting_scene_root()
 	if scene_root == null or not scene_root.has_method("_is_hover_card_options_preview_active"):
@@ -4397,6 +4407,8 @@ func _can_selected_attacker_hit_followers(scene_root: Node) -> bool:
 	if _get_pending_attack_target(scene_root) != null:
 		return false
 	var attacker := _get_selected_attacker(scene_root)
+	if attacker == null:
+		attacker = _get_board_drag_followers_attack_preview_attacker(scene_root, owning_player)
 	if attacker == null or attacker.get_controller() == owning_player:
 		return false
 	var allied_attackers: Array = []
@@ -4898,7 +4910,8 @@ func _refresh_display() -> void:
 	_prepared_magical_cover_art = null
 	_prepared_magical_cover_overlay = null
 	_stealth_fog_overlay = null
-	for child in get_children():
+	for child in get_children().duplicate():
+		remove_child(child)
 		child.queue_free()
 	_sync_visual_state_card(card)
 	_refresh_mouse_cursor_shape(card)

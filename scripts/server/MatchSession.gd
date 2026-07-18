@@ -7,6 +7,7 @@ const STATUS_FINISHED := "finished"
 const STATUS_ABANDONED := "abandoned"
 const SERVER_MODE_IN_PROCESS_HOST := "in_process_host"
 const SERVER_MODE_DEDICATED_HEADLESS := "dedicated_headless"
+const SERVER_MODE_PLAYER_HOST := "player_host"
 const BOT_SESSION_PREFIX := "BOT_"
 
 var match_id: String = ""
@@ -39,6 +40,16 @@ var series_game_number: int = 1
 var series_wins_by_session: Dictionary = {}
 var registered_player_decks_by_session: Dictionary = {}
 var reinforcement_ready_by_session: Dictionary = {}
+
+## Player-hosted (listen-server) match bookkeeping. Only meaningful when
+## server_mode == SERVER_MODE_PLAYER_HOST. host_session_id names the player who
+## runs the authoritative match; host_reachable_ip/port is their UPnP-mapped
+## public endpoint the opponent connects to. host_bind_port is the local port
+## the host binds and that the lobby probes for inbound reachability.
+var host_session_id: String = ""
+var host_reachable_ip: String = ""
+var host_reachable_port: int = 0
+var host_bind_port: int = 0
 
 func _init(
 	p_match_id: String = "",
@@ -315,6 +326,9 @@ func all_players_connected() -> bool:
 func is_dedicated_headless() -> bool:
 	return server_mode == SERVER_MODE_DEDICATED_HEADLESS
 
+func is_player_host() -> bool:
+	return server_mode == SERVER_MODE_PLAYER_HOST
+
 func has_spawned_process() -> bool:
 	return process_id > 0
 
@@ -353,7 +367,54 @@ func to_match_info(session_id: String = "") -> Dictionary:
 		match_info["selected_deck_special_setup"] = selected_deck.get("special_setup", {})
 	match_info["reconnect_window_seconds"] = reconnect_window_seconds
 	match_info["waiting_for_reconnect"] = is_waiting_for_reconnect()
+	_apply_player_host_match_info(match_info, session_id)
 	return match_info
+
+## For SERVER_MODE_PLAYER_HOST, override server_ip/match_port per recipient:
+## the host binds locally (no remote endpoint), while the opponent and any
+## spectators are pointed at the host's UPnP-mapped public endpoint. Also emit
+## is_match_host so the host client knows to launch authoritatively. The host
+## additionally receives the full roster (session ids, tokens, identities, decks)
+## so its local MatchSession can authenticate the opponent's join and resolve
+## the right per-player state.
+func _apply_player_host_match_info(match_info: Dictionary, session_id: String) -> void:
+	if not is_player_host():
+		return
+	var is_recipient_host := not session_id.is_empty() and session_id == host_session_id
+	match_info["is_match_host"] = is_recipient_host
+	match_info["host_session_id"] = host_session_id
+	match_info["host_bind_port"] = host_bind_port
+	match_info["host_reachable_ip"] = host_reachable_ip
+	match_info["host_reachable_port"] = host_reachable_port
+	if is_recipient_host:
+		# The host binds its own port; it does not connect to a remote endpoint.
+		match_info["server_ip"] = "127.0.0.1"
+		match_info["match_port"] = host_bind_port
+		_apply_host_roster(match_info)
+	elif host_reachable_ip != "" and host_reachable_port > 0:
+		match_info["server_ip"] = host_reachable_ip
+		match_info["match_port"] = host_reachable_port
+
+## Host-private roster: every player's session id, match token, identity, and
+## submitted deck. Lets the host client rebuild a MatchSession capable of
+## authenticating joins and seeding both Player objects.
+func _apply_host_roster(match_info: Dictionary) -> void:
+	var roster: Array = []
+	for player_session_id in player_session_ids:
+		var resolved_session_id := str(player_session_id).strip_edges()
+		if resolved_session_id.is_empty():
+			continue
+		var deck := _get_player_deck(resolved_session_id)
+		roster.append({
+			"session_id": resolved_session_id,
+			"match_token": get_match_token(resolved_session_id),
+			"identity": get_player_identity(resolved_session_id),
+			"deck_name": str(deck.get("deck_name", "")),
+			"cards": deck.get("cards", {}),
+			"reinforcements": deck.get("reinforcements", {}),
+			"special_setup": deck.get("special_setup", {}),
+		})
+	match_info["host_roster"] = roster
 
 func to_spectator_match_info(observer_session_id: String = "") -> Dictionary:
 	var match_info := to_match_info("")
@@ -388,6 +449,10 @@ func to_launch_config() -> Dictionary:
 		"reinforcement_ready_by_session": reinforcement_ready_by_session.duplicate(true),
 		"spectator_visible_player_indices_by_session": spectator_visible_player_indices_by_session.duplicate(true),
 		"spectator_match_tokens_by_session": spectator_match_tokens_by_session.duplicate(true),
+		"host_session_id": host_session_id,
+		"host_reachable_ip": host_reachable_ip,
+		"host_reachable_port": host_reachable_port,
+		"host_bind_port": host_bind_port,
 	}
 
 func mark_process_launched(p_process_id: int, p_launch_config_path: String) -> void:
@@ -434,6 +499,66 @@ static func from_launch_config(config: Dictionary) -> MatchSession:
 	var configured_spectator_tokens = config.get("spectator_match_tokens_by_session", {})
 	if configured_spectator_tokens is Dictionary:
 		session.spectator_match_tokens_by_session = (configured_spectator_tokens as Dictionary).duplicate(true)
+	session._ensure_player_match_tokens()
+	session._ensure_series_state()
+	session.host_session_id = str(config.get("host_session_id", "")).strip_edges()
+	session.host_reachable_ip = str(config.get("host_reachable_ip", "")).strip_edges()
+	session.host_reachable_port = int(config.get("host_reachable_port", 0))
+	session.host_bind_port = int(config.get("host_bind_port", 0))
+	return session
+
+## Reconstruct a MatchSession on the host client from the lobby-provided
+## match_info payload. The host needs the full roster (player session IDs,
+## match tokens, identities, decks) for the authenticated join path
+## (HeadlessMatchHost._on_match_join_requested -> authenticate_join) to validate
+## the opponent and seed both Player objects. The roster is carried in
+## match_info["host_roster"] (host-private; only emitted to the host recipient).
+static func from_match_info(match_info: Dictionary) -> MatchSession:
+	if match_info.is_empty():
+		return null
+	var match_id := str(match_info.get("match_id", "")).strip_edges()
+	var room_id := str(match_info.get("room_id", "")).strip_edges()
+	var roster_value = match_info.get("host_roster", [])
+	var roster: Array = roster_value if roster_value is Array else []
+	var player_session_ids: Array[String] = []
+	var decks_by_session: Dictionary = {}
+	var identity_by_session: Dictionary = {}
+	var tokens_by_session: Dictionary = {}
+	for entry in roster:
+		if not (entry is Dictionary):
+			continue
+		var resolved_session_id := str((entry as Dictionary).get("session_id", "")).strip_edges()
+		if resolved_session_id.is_empty() or player_session_ids.has(resolved_session_id):
+			continue
+		player_session_ids.append(resolved_session_id)
+		decks_by_session[resolved_session_id] = {
+			"deck_name": str((entry as Dictionary).get("deck_name", "")),
+			"cards": (entry as Dictionary).get("cards", {}),
+			"reinforcements": (entry as Dictionary).get("reinforcements", {}),
+			"special_setup": (entry as Dictionary).get("special_setup", {}),
+		}
+		identity_by_session[resolved_session_id] = (entry as Dictionary).get("identity", {})
+		var token := str((entry as Dictionary).get("match_token", "")).strip_edges()
+		if not token.is_empty():
+			tokens_by_session[resolved_session_id] = token
+	var session := MatchSession.new(
+		match_id,
+		room_id,
+		str(match_info.get("server_ip", "127.0.0.1")),
+		int(match_info.get("match_port", 12345)),
+		player_session_ids,
+		decks_by_session,
+		identity_by_session
+	)
+	session.status = str(match_info.get("status", STATUS_ACTIVE))
+	session.server_mode = str(match_info.get("server_mode", SERVER_MODE_IN_PROCESS_HOST))
+	session.is_ranked = bool(match_info.get("is_ranked", true))
+	session.host_session_id = str(match_info.get("host_session_id", "")).strip_edges()
+	session.host_reachable_ip = str(match_info.get("host_reachable_ip", "")).strip_edges()
+	session.host_reachable_port = int(match_info.get("host_reachable_port", 0))
+	session.host_bind_port = int(match_info.get("host_bind_port", int(match_info.get("match_port", 12345))))
+	for resolved_session_id in tokens_by_session.keys():
+		session.player_match_tokens[resolved_session_id] = tokens_by_session[resolved_session_id]
 	session._ensure_player_match_tokens()
 	session._ensure_series_state()
 	return session

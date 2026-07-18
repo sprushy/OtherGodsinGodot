@@ -84,6 +84,7 @@ func _process(delta: float) -> void:
 	_seek_timeout_check_elapsed = 0.0
 	_expire_stale_seeks()
 	_expire_disconnected_room_members()
+	_expire_abandoned_player_host_matches()
 	_ensure_server_bot_seeks()
 
 func start_server(p_advertised_host: String = "127.0.0.1", port: int = LobbyProtocolScript.PORT, p_match_port: int = LobbyProtocolScript.MATCH_PORT) -> Error:
@@ -283,6 +284,8 @@ func _handle_request(peer_id: int, message: Dictionary) -> void:
 			_set_ready_for_session(str(ready_session.get("session_id", "")), bool(payload.get("is_ready", false)))
 		LobbyProtocolScript.REQUEST_RECONNECT_LOBBY:
 			_handle_reconnect_request(peer_id, payload)
+		LobbyProtocolScript.REPORT_HOST_VIABILITY:
+			_handle_report_host_viability(peer_id, payload)
 
 func _handle_login_guest(peer_id: int, payload: Dictionary) -> void:
 	var requested_player_name := str(payload.get("player_name", "Guest"))
@@ -615,6 +618,32 @@ func _handle_reconnect_request(peer_id: int, payload: Dictionary) -> void:
 	_send_room_list_to_peer(peer_id)
 	if restored_room != null and rooms_by_id.has(room_id):
 		_try_assign_match(rooms_by_id[room_id])
+
+func _handle_report_host_viability(peer_id: int, payload: Dictionary) -> void:
+	var session: Dictionary = _get_session_for_peer(peer_id)
+	if session.is_empty():
+		_send_error_to_peer(peer_id, "Join the lobby before reporting host viability.")
+		return
+	var session_id := str(session.get("session_id", "")).strip_edges()
+	if session_id.is_empty():
+		return
+	var viable := bool(payload.get("viable", false))
+	var reachable_ip := str(payload.get("reachable_ip", "")).strip_edges()
+	var reachable_port := int(payload.get("reachable_port", 0))
+	var bind_port := int(payload.get("bind_port", reachable_port))
+	if reachable_port <= 0:
+		bind_port = 0
+		viable = false
+	var updated: Dictionary = session.duplicate(true)
+	updated["host_viable"] = bool(viable)
+	updated["host_reachable_ip"] = reachable_ip if viable else ""
+	updated["host_reachable_port"] = reachable_port if viable else 0
+	updated["host_bind_port"] = bind_port if viable else 0
+	sessions_by_id[session_id] = updated
+	_trace("host viability session=%s viable=%s ip=%s port=%d" % [
+		session_id, str(viable), reachable_ip, reachable_port
+	])
+
 
 func _handle_request_account_decks(peer_id: int) -> void:
 	var session: Dictionary = _get_session_for_peer(peer_id)
@@ -1425,6 +1454,15 @@ func _assign_match(room: LobbyRoom) -> void:
 		}
 
 	var spectator_visibility := _build_spectator_visibility_by_session(room.members)
+	# Unranked matches prefer a player-hosted (listen-server) topology when the
+	# seek creator can host: one player runs the authoritative match and the
+	# opponent connects directly, sparing a dedicated subprocess. Ranked matches
+	# always use the dedicated/in-process path for integrity. The player-host
+	# assignment is async (host must bind, lobby verifies reachability, then the
+	# opponent is assigned or we fall back to dedicated).
+	if _should_try_player_host(room):
+		_begin_player_host_assignment(room, player_decks_by_session, player_identity_by_session, spectator_visibility)
+		return
 	var match_session = match_supervisor.create_match(
 		room.room_id,
 		room.members,
@@ -1434,6 +1472,11 @@ func _assign_match(room: LobbyRoom) -> void:
 		room.is_ranked,
 		room.best_of
 	)
+	_finalize_match_assignment(room, match_session)
+
+## Finalize a (non-player-host) match: emit room updates, then either poll the
+## dedicated subprocess for readiness or send both assignments immediately.
+func _finalize_match_assignment(room: LobbyRoom, match_session) -> void:
 	if match_session == null:
 		var error_message := str(match_supervisor.last_create_match_error).strip_edges()
 		if error_message.is_empty():
@@ -1452,6 +1495,200 @@ func _assign_match(room: LobbyRoom) -> void:
 	_send_match_assignments_to_room(room, match_session)
 	if _room_has_server_bot(room):
 		call_deferred("_ensure_server_bot_seeks")
+
+# --- Player-hosted (listen-server) match assignment ---------------------------
+
+const PLAYER_HOST_READY_POLL_SECONDS := 0.4
+const PLAYER_HOST_READY_TIMEOUT_SECONDS := 12.0
+const PLAYER_HOST_PROBE_TIMEOUT_SECONDS := 4.0
+const PLAYER_HOST_FALLBACK_MESSAGE := "Hosted match unavailable — using dedicated server."
+
+## Player-host is attempted only for unranked rooms whose creator is a human,
+## connected, and has reported a viable UPnP endpoint. Bots never host.
+func _should_try_player_host(room: LobbyRoom) -> bool:
+	if room == null:
+		return false
+	if room.is_ranked:
+		return false
+	var host_session_id := str(room.host_session_id).strip_edges()
+	if host_session_id.is_empty() or not room.members.has(host_session_id):
+		return false
+	var host_session: Dictionary = sessions_by_id.get(host_session_id, {})
+	if host_session.is_empty():
+		return false
+	if bool(host_session.get("is_bot", false)):
+		return false
+	if not bool(host_session.get("connected", false)):
+		return false
+	if not bool(host_session.get("host_viable", false)):
+		return false
+	if int(host_session.get("host_reachable_port", 0)) <= 0:
+		return false
+	return true
+
+## Create a player-host MatchSession, assign the host (so it binds), then poll
+## reachability before assigning the opponent. On any failure, abandon the
+## player-host session and fall back to the dedicated/in-process path.
+func _begin_player_host_assignment(
+	room: LobbyRoom,
+	player_decks_by_session: Dictionary,
+	player_identity_by_session: Dictionary,
+	spectator_visibility: Dictionary
+) -> void:
+	_ensure_match_supervisor()
+	if match_supervisor == null:
+		_send_error_to_session(room.host_session_id, "Match supervisor is unavailable.")
+		return
+	var host_session_id := str(room.host_session_id).strip_edges()
+	var host_session: Dictionary = sessions_by_id.get(host_session_id, {})
+	var reachable_ip := str(host_session.get("host_reachable_ip", "")).strip_edges()
+	var reachable_port := int(host_session.get("host_reachable_port", 0))
+	var bind_port := int(host_session.get("host_bind_port", reachable_port))
+	var match_session = match_supervisor.create_match(
+		room.room_id,
+		room.members,
+		player_decks_by_session,
+		player_identity_by_session,
+		spectator_visibility,
+		room.is_ranked,
+		room.best_of,
+		host_session_id,
+		reachable_ip,
+		reachable_port,
+		bind_port
+	)
+	if match_session == null or not match_session.is_player_host():
+		# Supervisor declined the player-host path; fall back immediately.
+		_finalize_match_assignment(room, match_session)
+		return
+	room.status = LobbyRoomScript.STATUS_IN_MATCH
+	room.assigned_match_id = match_session.match_id
+	_emit_room_updates(room)
+	_trace("player-host match %s created for room %s host=%s endpoint=%s:%d" % [
+		match_session.match_id, room.room_id, host_session_id, reachable_ip, reachable_port
+	])
+	# Send the host its assignment first so it binds the local port and starts
+	# accepting the opponent's connection. The opponent is assigned only after
+	# the lobby confirms the host endpoint is reachable.
+	_send_match_assignment_to_session(room, match_session, host_session_id)
+	if _room_has_server_bot(room):
+		call_deferred("_ensure_server_bot_seeks")
+	call_deferred(
+		"_poll_player_host_assignment_ready",
+		str(room.room_id),
+		str(match_session.match_id),
+		0.0
+	)
+
+## Wait briefly for the host to bind, verify the host endpoint is reachable via
+## a short ENet probe, then assign the opponent. On timeout/failure, abandon and
+## fall back to the dedicated/in-process path for both players.
+func _poll_player_host_assignment_ready(room_id: String, match_id: String, elapsed_seconds: float) -> void:
+	var resolved_room_id := room_id.strip_edges().to_upper()
+	var resolved_match_id := match_id.strip_edges()
+	if resolved_room_id.is_empty() or not rooms_by_id.has(resolved_room_id):
+		return
+	var room: LobbyRoom = rooms_by_id[resolved_room_id]
+	if room == null or str(room.assigned_match_id).strip_edges() != resolved_match_id:
+		return
+	if match_supervisor == null:
+		_fallback_player_host_to_dedicated(room, "Match supervisor is unavailable.")
+		return
+	var match_session = match_supervisor.get_match(resolved_match_id)
+	if match_session == null or not match_session.is_player_host():
+		return
+	var reachable := await _probe_player_host_reachable(
+		str(match_session.host_reachable_ip),
+		int(match_session.host_reachable_port)
+	)
+	if reachable:
+		_send_match_assignment_to_session(room, match_session, _opponent_session_id(room, match_session))
+		return
+	if elapsed_seconds >= PLAYER_HOST_READY_TIMEOUT_SECONDS:
+		_fallback_player_host_to_dedicated(room, "The host endpoint was not reachable.")
+		return
+	var tree := get_tree()
+	if tree == null:
+		_fallback_player_host_to_dedicated(room, "Match readiness could not be checked.")
+		return
+	var timer := tree.create_timer(PLAYER_HOST_READY_POLL_SECONDS)
+	await timer.timeout
+	_poll_player_host_assignment_ready(resolved_room_id, resolved_match_id, elapsed_seconds + PLAYER_HOST_READY_POLL_SECONDS)
+
+## Open a throwaway ENet client to the host's advertised endpoint and report
+## whether it completes the ENet handshake within a short window. This is a true
+## reachability proof for the UDP transport the match actually uses. The probe
+## never sends a match_join_requested, so the host treats it as a transient peer
+## and does not assign it a player slot; closing it cleans up cleanly.
+func _probe_player_host_reachable(host_ip: String, host_port: int) -> bool:
+	var resolved_ip := host_ip.strip_edges()
+	if resolved_ip.is_empty() or host_port <= 0:
+		return false
+	var probe_peer := ENetMultiplayerPeer.new()
+	if probe_peer.create_client(resolved_ip, host_port) != OK:
+		return false
+	var connected := false
+	var tree := get_tree()
+	if tree == null:
+		probe_peer.close()
+		return false
+	var deadline_msec := Time.get_ticks_msec() + int(PLAYER_HOST_PROBE_TIMEOUT_SECONDS * 1000.0)
+	while Time.get_ticks_msec() < deadline_msec:
+		await tree.process_frame
+		probe_peer.poll()
+		var status := probe_peer.get_connection_status()
+		if status == MultiplayerPeer.CONNECTION_CONNECTED:
+			connected = true
+			break
+		if status == MultiplayerPeer.CONNECTION_DISCONNECTED:
+			break
+	probe_peer.close()
+	return connected
+
+func _opponent_session_id(room: LobbyRoom, match_session) -> String:
+	for session_id in room.members:
+		var resolved := str(session_id).strip_edges()
+		if resolved != str(match_session.host_session_id).strip_edges():
+			return resolved
+	return ""
+
+func _send_match_assignment_to_session(room: LobbyRoom, match_session, session_id: String) -> void:
+	if room == null or match_session == null:
+		return
+	var resolved_session_id := str(session_id).strip_edges()
+	if resolved_session_id.is_empty():
+		return
+	var match_info: Dictionary = match_session.to_match_info(resolved_session_id)
+	_send_to_session(resolved_session_id, LobbyProtocolScript.MATCH_ASSIGNED, match_info)
+	if resolved_session_id == local_session_id:
+		call_deferred("_emit_local_match_assigned", match_info.duplicate(true))
+
+## Abandon a player-host attempt and reassign the room on the dedicated/in-process
+## path so both players still get a match. The host client tears down its bind
+## when it receives the replacement assignment (its match_info no longer carries
+## is_match_host).
+func _fallback_player_host_to_dedicated(room: LobbyRoom, reason: String) -> void:
+	if room == null:
+		return
+	var match_id := str(room.assigned_match_id).strip_edges()
+	_trace("player-host fallback for room %s match %s: %s" % [room.room_id, match_id, reason])
+	if not match_id.is_empty() and match_supervisor != null and match_supervisor.get_match(match_id) != null:
+		match_supervisor.close_match(match_id, MatchSessionScript.STATUS_ABANDONED, false)
+	room.assigned_match_id = ""
+	room.status = LobbyRoomScript.STATUS_READY if room.can_start() else LobbyRoomScript.STATUS_WAITING
+	_emit_room_updates(room)
+	for session_id in room.members:
+		_send_error_to_session(session_id, PLAYER_HOST_FALLBACK_MESSAGE)
+	# Brief pause so clients can tear down the host bind before reconnecting.
+	var tree := get_tree()
+	if tree != null:
+		await tree.create_timer(1.0).timeout
+	if not is_inside_tree() or not rooms_by_id.has(str(room.room_id)):
+		return
+	if room.status == LobbyRoomScript.STATUS_IN_MATCH:
+		return  # Another assignment path already took over.
+	_assign_match(room)
+
 
 func _send_match_assignments_to_room(room: LobbyRoom, match_session) -> void:
 	if room == null or match_session == null:
@@ -1841,6 +2078,40 @@ func _expire_disconnected_room_members() -> void:
 	if not expired_by_room.is_empty():
 		_broadcast_room_lists()
 
+## Player-hosted matches have no dedicated subprocess heartbeat, so the lobby
+## must detect a dropped host itself. If the host's lobby session has been
+## disconnected beyond the reconnect grace while the room is in a player-host
+## match, abandon the room so the opponent is freed (no host migration).
+func _expire_abandoned_player_host_matches() -> void:
+	if match_supervisor == null:
+		return
+	var now_unix := int(Time.get_unix_time_from_system())
+	var rooms_to_abandon: Array[LobbyRoom] = []
+	for room_id_variant in rooms_by_id.keys():
+		var room_id := str(room_id_variant)
+		var room: LobbyRoom = rooms_by_id.get(room_id, null)
+		if room == null or room.status != LobbyRoomScript.STATUS_IN_MATCH:
+			continue
+		var match_id := str(room.assigned_match_id).strip_edges()
+		if match_id.is_empty():
+			continue
+		var match_session = match_supervisor.get_match(match_id)
+		if match_session == null or not match_session.is_player_host():
+			continue
+		var host_session_id := str(match_session.host_session_id).strip_edges()
+		var host_session: Dictionary = sessions_by_id.get(host_session_id, {})
+		if host_session.is_empty() or bool(host_session.get("connected", false)):
+			continue
+		var disconnected_since := int(host_session.get("room_disconnected_since_unix", 0))
+		if disconnected_since <= 0:
+			continue
+		if now_unix - disconnected_since >= ROOM_MEMBER_RECONNECT_GRACE_SECONDS:
+			rooms_to_abandon.append(room)
+	for room in rooms_to_abandon:
+		_abandon_match_room(room)
+	if not rooms_to_abandon.is_empty():
+		_broadcast_room_lists()
+
 func _prune_excess_open_seeks_for_session(session_id: String) -> void:
 	var seek_owner_key := _get_seek_owner_key_for_session(session_id)
 	if seek_owner_key.is_empty():
@@ -1996,13 +2267,31 @@ func _on_peer_disconnected(peer_id: int) -> void:
 	if not room_id.is_empty() and rooms_by_id.has(room_id):
 		var room: LobbyRoom = rooms_by_id[room_id]
 		if room.status == LobbyRoomScript.STATUS_IN_MATCH:
-			session["room_disconnected_since_unix"] = 0
+			# Dedicated matches manage their own reconnect window via the
+			# supervisor's status-file polling. Player-host matches have no such
+			# heartbeat, so record when the host dropped so the periodic expiry
+			# can free the opponent once grace elapses.
+			if _is_player_host_session(room, session_id):
+				session["room_disconnected_since_unix"] = int(Time.get_unix_time_from_system())
+			else:
+				session["room_disconnected_since_unix"] = 0
 			sessions_by_id[session_id] = session
 			return
 		session["room_disconnected_since_unix"] = int(Time.get_unix_time_from_system())
 		sessions_by_id[session_id] = session
 		_broadcast_room_snapshot(room)
 	_broadcast_room_lists()
+
+func _is_player_host_session(room: LobbyRoom, session_id: String) -> bool:
+	if room == null or match_supervisor == null:
+		return false
+	var match_id := str(room.assigned_match_id).strip_edges()
+	if match_id.is_empty():
+		return false
+	var match_session = match_supervisor.get_match(match_id)
+	if match_session == null or not match_session.is_player_host():
+		return false
+	return str(match_session.host_session_id).strip_edges() == str(session_id).strip_edges()
 
 func _generate_room_code() -> String:
 	return _generate_id(6)

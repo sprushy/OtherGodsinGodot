@@ -50,6 +50,10 @@ const GEOPHAGIA_CURSOR_IMAGE_PATH := "res://images/ui/cursors/GeophagiaCursor.pn
 const ENTROPY_CURSOR_IMAGE_PATH := "res://images/ui/cursors/EntropyCursor.png"
 const CardBackTexture = preload("res://images/cardbackAI.png")
 const PreparedMagicalCardCoverTexture = preload("res://images/PreparedMagicalCardCoverDimRuntime.png")
+const FOLLOWER_CASUALTY_ALIVE_TEXTURE := preload("res://images/ui/followers/god_follower_alive.png")
+const FOLLOWER_CASUALTY_WALK_SIDE_TEXTURE := preload("res://images/ui/followers/god_follower_walk_sheet.png")
+const FOLLOWER_CASUALTY_WALK_TOWARD_TEXTURE := preload("res://images/ui/followers/god_follower_walk_toward.png")
+const FOLLOWER_CASUALTY_WALK_AWAY_TEXTURE := preload("res://images/ui/followers/god_follower_walk_away.png")
 const BOARD_FLOOR_TEXTURE_PATH := "res://images/board/moss_stone_floor_albedo.png"
 const BOARD_SPLASH_TEXTURE_PATH := "res://images/ui/splash/other_gods_splash.png"
 const PromptRouterScript = preload("res://scripts/server/PromptRouter.gd")
@@ -249,6 +253,16 @@ var _pending_turn_action_after_opponent_priority_player_index: int = -1
 var _running_turn_action_after_opponent_priority: bool = false
 var _pending_reveal_auto_submit_keys: Dictionary = {}
 var _fan_container: Control = null
+var _follower_casualty_overlay: Control = null
+var _follower_casualty_sprites: Array = []
+var _follower_casualty_bubbles: Array = []
+var _opponent_follower_casualty_overlay: Control = null
+var _opponent_follower_casualty_sprites: Array = []
+var _opponent_follower_casualty_bubbles: Array = []
+var _follower_casualty_records_by_player_key: Dictionary = {}
+var _follower_casualty_last_followers_by_player_key: Dictionary = {}
+var _pending_follower_conversion_out_by_player_key: Dictionary = {}
+var _pending_follower_conversion_in_by_player_key: Dictionary = {}
 var _enemy_hand_overlay: Control = null
 var _enemy_hand_visual_cards: Array = []   # Array[VisualCard]
 var _enemy_hand_render_signature: String = ""
@@ -531,6 +545,8 @@ var _bdrag_visual: BoardZoneUI = null
 var _bdrag_source_zone_ui: BoardZoneUI = null
 var _bdrag_preview_defensive: bool = false
 var _bdrag_preview_stealth: bool = false
+var _bdrag_followers_target_preview_active: bool = false
+var _board_drag_followers_highlight: Control = null
 const BOARD_DRAG_SOURCE_GHOST_ALPHA := 0.32
 
 # Right-click context menu state
@@ -744,6 +760,8 @@ var _tez_titlacauan_cursor_count_label: Label = null
 var _suppress_next_devour_cancel_prompt: bool = false
 var _pending_end_turn_discard_uids: Array = []
 var _ui_update_pending: bool = false
+var _ui_update_generation: int = 0
+var _post_game_board_refresh_locked: bool = false
 var _match_reconnect_waiting: bool = false
 var _match_reconnect_wait_message: String = "Waiting for opponent to reconnect..."
 var _awaiting_initial_full_state: bool = false
@@ -796,6 +814,41 @@ const PREFERRED_BOARD_ZONE_EXTENT := UIArtScalerScript.DEFAULT_BOARD_ART_REFEREN
 const HAND_OVERLAY_SIDE_PADDING := 18.0
 const HAND_OVERLAY_BOTTOM_PADDING := -2.0
 const HAND_OVERLAY_Z_INDEX := HOVER_PREVIEW_Z_INDEX + 5
+const BOARD_DRAG_FOLLOWERS_TARGET_HIGHLIGHT_Z_INDEX := TRANSIENT_UI_Z_INDEX - 24
+const FOLLOWER_CASUALTY_BASELINE := 100
+const FOLLOWER_CASUALTY_MAX_RECORDS := 99
+const FOLLOWER_CASUALTY_ENTER_SECONDS := 0.82
+const FOLLOWER_CASUALTY_FLEE_SECONDS := 2.1
+const FOLLOWER_CASUALTY_CONVERT_SECONDS := 8.0
+const FOLLOWER_CASUALTY_FLEE_OFFSCREEN_PADDING := 56.0
+const FOLLOWER_CASUALTY_CONVERT_SIDE_PADDING := 20.0
+const FOLLOWER_CASUALTY_CONVERT_OCCUPIED_PADDING := 12.0
+const FOLLOWER_CASUALTY_CONVERT_ROW_TOLERANCE := 20.0
+const FOLLOWER_CASUALTY_SPEECH_SECONDS := 1.08
+const FOLLOWER_CASUALTY_SPEECH_FONT_SIZE := 11
+const FOLLOWER_CASUALTY_FLEE_PHRASES := [
+	"Fuck that!",
+	"Absolutely not...",
+	"Did you see what that thing did?",
+	"Puta Madre",
+	"Tengo mucho dolor",
+]
+const FOLLOWER_CASUALTY_IDLE_MIN_SECONDS := 1.6
+const FOLLOWER_CASUALTY_IDLE_MAX_SECONDS := 4.2
+const FOLLOWER_CASUALTY_ALIVE_HEIGHT := 37.0
+const FOLLOWER_CASUALTY_WALK_FRAME_COUNT := 6
+const FOLLOWER_CASUALTY_WALK_FRAME_SECONDS := 0.16
+const FOLLOWER_CASUALTY_MILL_HEIGHT := 76.0
+const FOLLOWER_CASUALTY_MIN_MILL_WIDTH := 78.0
+const FOLLOWER_CASUALTY_MIN_MILL_HEIGHT := 48.0
+const FOLLOWER_CASUALTY_SCREEN_EDGE_PADDING := 2.0
+const FOLLOWER_CASUALTY_SIDE_GAP := 18.0
+const FOLLOWER_CASUALTY_BOTTOM_LIFT := -38.0
+const FOLLOWER_CASUALTY_CONTROL_AVOID_PADDING := 24.0
+const OPPONENT_FOLLOWER_BAND_HEIGHT := 66.0
+const OPPONENT_FOLLOWER_BAND_TOP_PADDING := 4.0
+const OPPONENT_FOLLOWER_BAND_BOTTOM_PADDING := 5.0
+const OPPONENT_FOLLOWER_HEIGHT_SCALE := 0.72
 const CONTEXT_MENU_Z_INDEX := HAND_OVERLAY_Z_INDEX + 120
 const VISUAL_STACK_ENABLED := false
 const VISUAL_STACK_Z_INDEX := TRANSIENT_UI_Z_INDEX - 35
@@ -808,9 +861,9 @@ const REINFORCEMENT_MODAL_LAYER := 10000
 const REINFORCEMENT_OVERLAY_Z_INDEX := TRANSIENT_UI_Z_INDEX + 220
 const REINFORCEMENT_HOVER_Z_INDEX := REINFORCEMENT_OVERLAY_Z_INDEX + 20
 const REINFORCEMENT_DRAG_Z_INDEX := REINFORCEMENT_OVERLAY_Z_INDEX + 30
-const LEFT_PANEL_MIN_WIDTH := 220.0
-const BOARD_RIGHT_NUDGE := 10.0
-const BOARD_HORIZONTAL_OFFSET := -2.0
+const LEFT_PANEL_MIN_WIDTH := 196.0
+const BOARD_RIGHT_NUDGE := 0.0
+const BOARD_HORIZONTAL_OFFSET := -12.0
 const ENEMY_BOARD_STRETCH_RATIO := 0.82
 const PLAYER_BOARD_STRETCH_RATIO := 1.18
 const BOARD_WIDTH_TRIM := 8.0
@@ -924,7 +977,7 @@ const UI_UPDATE_DEBOUNCE_SECONDS := 0.03
 const RIGHT_PANEL_MIN_WIDTH := 100.0
 const RIGHT_PANEL_CONTROL_GAP := 6
 const RIGHT_PANEL_TEXT_FONT_SIZE := 10
-const LEFT_LOG_VERTICAL_BIAS := -112.0
+const LEFT_LOG_VERTICAL_BIAS := -84.0
 const CENTER_ACTION_FONT_SIZE := 12
 
 func _is_turn_choice_pending() -> bool:
@@ -2487,7 +2540,8 @@ func _ready() -> void:
 	hand_container.size_flags_vertical = 0
 	hand_container.visible = false
 	center_panel.add_theme_constant_override("separation", CENTER_PANEL_SECTION_GAP)
-	top_spacer.custom_minimum_size.y = 0
+	top_spacer.custom_minimum_size.y = OPPONENT_FOLLOWER_BAND_HEIGHT
+	top_spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	board_separator.custom_minimum_size.y = BOARD_SEPARATOR_HEIGHT
 	board_separator.size_flags_horizontal = Control.SIZE_SHRINK_END
 	board_separator.clip_contents = false
@@ -2568,6 +2622,7 @@ func _ready() -> void:
 func _exit_tree() -> void:
 	_hide_devour_cancel_prompt()
 	_clear_match_move_indicators()
+	_clear_board_drag_followers_highlight()
 	_restore_default_selection_cursor()
 
 func _is_sacrifice_cursor_mode_active() -> bool:
@@ -3914,10 +3969,6 @@ func _sync_sacrifice_cursor() -> void:
 func _setup_center_action_panel() -> void:
 	if board_separator == null:
 		return
-	if turn_label != null:
-		_reparent_control(turn_label, self)
-	if end_turn_button != null:
-		_reparent_control(end_turn_button, self)
 	if _center_action_panel != null and is_instance_valid(_center_action_panel):
 		_center_action_panel.queue_free()
 	_center_action_panel = null
@@ -3930,28 +3981,27 @@ func _setup_center_action_panel() -> void:
 	_board_separator_line.visible = false
 	_board_separator_line.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	board_separator.add_child(_board_separator_line)
-	_center_action_panel = VBoxContainer.new()
-	_center_action_panel.name = "CenterActionPanel"
-	_center_action_panel.custom_minimum_size = Vector2(CENTER_ACTION_PANEL_WIDTH, CENTER_ACTION_PANEL_HEIGHT)
-	_center_action_panel.add_theme_constant_override("separation", RIGHT_PANEL_CONTROL_GAP)
-	_center_action_panel.mouse_filter = Control.MOUSE_FILTER_STOP
-	_center_action_panel.z_index = TRANSIENT_UI_Z_INDEX - 5
-	add_child(_center_action_panel)
-	_center_action_panel.move_to_front()
-	_reparent_control(turn_label, _center_action_panel)
-	_reparent_control(end_turn_button, _center_action_panel)
-	turn_label.custom_minimum_size = Vector2(CENTER_ACTION_PANEL_WIDTH, 22.0)
-	turn_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	turn_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	turn_label.add_theme_font_size_override("font_size", CENTER_ACTION_FONT_SIZE)
-	end_turn_button.custom_minimum_size = Vector2(CENTER_ACTION_PANEL_WIDTH, CENTER_ACTION_BUTTON_HEIGHT)
-	end_turn_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	end_turn_button.add_theme_font_size_override("font_size", CENTER_ACTION_FONT_SIZE)
-	right_top_spacer.visible = false
-	right_bottom_spacer.visible = false
-	stats_container.visible = false
-	right_panel.visible = false
+	if right_panel != null:
+		right_panel.visible = true
+	if right_top_spacer != null:
+		right_top_spacer.visible = true
+	if right_bottom_spacer != null:
+		right_bottom_spacer.visible = true
+	if stats_container != null:
+		stats_container.visible = false
+	if turn_label != null and right_panel != null:
+		_reparent_control(turn_label, right_panel)
+		right_panel.move_child(turn_label, mini(1, right_panel.get_child_count() - 1))
+		turn_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		turn_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		turn_label.add_theme_font_size_override("font_size", RIGHT_PANEL_TEXT_FONT_SIZE)
+	if end_turn_button != null and right_panel != null:
+		_reparent_control(end_turn_button, right_panel)
+		right_panel.move_child(end_turn_button, mini(2, right_panel.get_child_count() - 1))
+		end_turn_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		end_turn_button.add_theme_font_size_override("font_size", RIGHT_PANEL_TEXT_FONT_SIZE)
 	_update_center_action_panel_layout()
+	_update_match_side_panel_layout()
 
 func _make_priority_control_style(background: Color, border: Color) -> StyleBoxFlat:
 	var style := StyleBoxFlat.new()
@@ -4064,19 +4114,18 @@ func _reparent_control(node: Control, new_parent: Control) -> void:
 	new_parent.add_child(node)
 
 func _update_center_action_panel_layout() -> void:
-	if board_separator == null or _center_action_panel == null:
-		return
-	_center_action_panel.size = _center_action_panel.get_combined_minimum_size()
-	_center_action_panel.move_to_front()
-	if _board_separator_line != null and is_instance_valid(_board_separator_line):
+	if board_separator != null and _board_separator_line != null and is_instance_valid(_board_separator_line):
 		_board_separator_line.position = Vector2.ZERO
 		_board_separator_line.size = Vector2(_get_separator_line_width(), BOARD_SEPARATOR_HEIGHT)
-	var root_origin := get_global_rect().position
-	var separator_origin = board_separator.get_global_rect().position - root_origin
-	_center_action_panel.position = Vector2(
-		separator_origin.x + maxf(0.0, _get_board_row_width() - _center_action_panel.size.x + CENTER_ACTION_PANEL_RIGHT_OVERHANG),
-		separator_origin.y + BOARD_SEPARATOR_HEIGHT * 0.5 - _center_action_panel.size.y * 0.5
-	)
+	if board_separator != null and _center_action_panel != null and is_instance_valid(_center_action_panel):
+		_center_action_panel.size = _center_action_panel.get_combined_minimum_size()
+		_center_action_panel.move_to_front()
+		var root_origin := get_global_rect().position
+		var separator_origin = board_separator.get_global_rect().position - root_origin
+		_center_action_panel.position = Vector2(
+			separator_origin.x + maxf(0.0, _get_board_row_width() - _center_action_panel.size.x + CENTER_ACTION_PANEL_RIGHT_OVERHANG),
+			separator_origin.y + BOARD_SEPARATOR_HEIGHT * 0.5 - _center_action_panel.size.y * 0.5
+		)
 	if _priority_controls_panel != null and is_instance_valid(_priority_controls_panel):
 		var priority_panel_size := _priority_controls_panel.get_combined_minimum_size()
 		_priority_controls_panel.anchor_left = 0.0
@@ -4100,16 +4149,22 @@ func _sync_local_end_turn_button() -> void:
 	var turn_button_changed = end_turn_button.visible != should_show or end_turn_button.disabled != not should_show
 	end_turn_button.visible = should_show
 	end_turn_button.disabled = not should_show
-	if turn_button_changed and _center_action_panel != null and is_instance_valid(_center_action_panel):
+	if turn_button_changed:
 		call_deferred("_update_center_action_panel_layout")
+		call_deferred("_update_match_side_panel_layout")
 
 func _schedule_local_ui_refresh() -> void:
+	if _post_game_board_refresh_locked:
+		return
 	if _is_networked_client or _is_real_network_host():
 		call_deferred("_request_ui_refresh")
 		return
 	_local_ui_refresh_pending = true
 
 func _sync_local_scheduled_callbacks() -> void:
+	if _game_finished or _post_game_board_refresh_locked:
+		_local_ui_refresh_pending = false
+		return
 	if _is_networked_client or match_manager == null:
 		return
 	if _local_ui_refresh_pending and not _is_real_network_host():
@@ -4143,6 +4198,8 @@ func _process(delta: float) -> void:
 	_update_hand_context_menu_dismissal()
 	_sync_board_creature_drag_preview_from_input_state()
 	_sync_tez_titlacauan_cursor_overlay()
+	if not _game_finished:
+		_sync_follower_casualty_overlay()
 
 func _sync_board_creature_drag_preview_from_input_state() -> void:
 	if not _bdrag_active:
@@ -6148,11 +6205,15 @@ func start_game(
 		game_manager.god_power_activated.connect(_on_god_power_activated)
 	if not game_manager.card_summoned.is_connected(_on_card_summoned):
 		game_manager.card_summoned.connect(_on_card_summoned)
+	if not game_manager.followers_converted.is_connected(_on_followers_converted):
+		game_manager.followers_converted.connect(_on_followers_converted)
 
 	player1.mana_changed.connect(_on_player_mana_changed)
 	player2.mana_changed.connect(_on_player_mana_changed)
 	player1.followers_changed.connect(_on_player_followers_changed)
 	player2.followers_changed.connect(_on_enemy_followers_changed)
+	_sync_follower_casualties_for_player(player1, player1.followers, false)
+	_sync_follower_casualties_for_player(player2, player2.followers, false)
 	player1.guard_changed.connect(_on_player_guard_changed)
 	player2.guard_changed.connect(_on_enemy_guard_changed)
 	game_manager.game_ended.connect(_on_game_ended)
@@ -6210,6 +6271,7 @@ func _prepare_for_match_launch(status_message: String = "Connecting to match..."
 	_set_match_reconnect_wait(false)
 	_clear_match_move_indicators()
 	_awaiting_initial_full_state = false
+	_post_game_board_refresh_locked = false
 	_game_finished = false
 	_game_result_presented = false
 	_pending_forfeit_return_to_menu = false
@@ -6250,6 +6312,12 @@ func _prepare_for_match_launch(status_message: String = "Connecting to match..."
 	_queued_attackers.clear()
 	_hand_visual_cards.clear()
 	_hand_render_signature = ""
+	_clear_board_drag_followers_highlight()
+	_clear_follower_casualty_overlay()
+	_follower_casualty_records_by_player_key.clear()
+	_follower_casualty_last_followers_by_player_key.clear()
+	_pending_follower_conversion_out_by_player_key.clear()
+	_pending_follower_conversion_in_by_player_key.clear()
 	_board_zone_uis.clear()
 	_enemy_zone_uis.clear()
 	_player_god_zone_ui = null
@@ -6640,17 +6708,26 @@ func _sync_action_point_spend_feedback_before_redraw() -> void:
 func update_ui() -> void:
 	if game_manager == null:
 		return
+	if _post_game_board_refresh_locked:
+		return
 	_sync_visual_linger_input_blocker()
 	if _ui_update_pending:
 		return
 	_ui_update_pending = true
+	_ui_update_generation += 1
+	var update_generation := _ui_update_generation
 	var tree := get_tree()
 	if tree == null:
-		call_deferred("_do_update_ui")
+		call_deferred("_do_update_ui", update_generation)
 		return
-	tree.create_timer(UI_UPDATE_DEBOUNCE_SECONDS).timeout.connect(_do_update_ui, CONNECT_ONE_SHOT)
+	tree.create_timer(UI_UPDATE_DEBOUNCE_SECONDS).timeout.connect(_do_update_ui.bind(update_generation), CONNECT_ONE_SHOT)
 
-func _do_update_ui() -> void:
+func _do_update_ui(expected_generation: int = -1) -> void:
+	if expected_generation >= 0 and expected_generation != _ui_update_generation:
+		return
+	if _post_game_board_refresh_locked:
+		_ui_update_pending = false
+		return
 	_ui_update_pending = false
 	if game_manager == null:
 		return
@@ -6673,6 +6750,7 @@ func _do_update_ui() -> void:
 	draw_enemy_board()
 	_refresh_move_indicators()
 	draw_enemy_hand_overlay()
+	_sync_follower_casualty_overlay()
 	_refresh_visible_stat_panels()
 	_refresh_zone_info_icons()
 	_sync_network_turn_controls()
@@ -6683,6 +6761,18 @@ func _do_update_ui() -> void:
 	_refresh_observer_perspective_button()
 	_restore_active_raven_prime_prompt_overlay()
 	_sync_heavy_snow_weather_visuals()
+
+func _update_ui_immediately() -> void:
+	_ui_update_generation += 1
+	_ui_update_pending = true
+	_do_update_ui(_ui_update_generation)
+
+func _lock_post_game_board_refresh() -> void:
+	_post_game_board_refresh_locked = true
+	_local_ui_refresh_pending = false
+	_ui_refresh_queued = false
+	_ui_update_pending = false
+	_ui_update_generation += 1
 
 func _is_live_board_card(card: Card) -> bool:
 	return card != null and card.current_zone != null and card.current_zone.is_board_zone()
@@ -6767,7 +6857,8 @@ func _get_board_zone_extent_target() -> float:
 
 	var horizontal_extent: float = floor(available_width / BOARD_MAIN_COLUMN_COUNT)
 	var vertical_extent: float = floor(available_height / BOARD_ROW_COUNT) - BOARD_SIZE_TRIM
-	return maxf(base_extent, minf(horizontal_extent, vertical_extent))
+	var top_band_extent_cost := OPPONENT_FOLLOWER_BAND_HEIGHT / BOARD_ROW_COUNT
+	return maxf(base_extent, minf(horizontal_extent, vertical_extent) - top_band_extent_cost)
 
 func _update_board_zone_extent() -> void:
 	var previous_extent := BoardZoneUI.get_zone_extent()
@@ -6800,6 +6891,8 @@ func _on_board_layout_resized() -> void:
 	call_deferred("_layout_hermes_priority_toggle")
 	call_deferred("_layout_all_card_priority_toggles")
 	call_deferred("_sync_visual_stack_overlay")
+	call_deferred("_sync_follower_casualty_overlay")
+	call_deferred("_sync_board_drag_followers_highlight")
 	_update_match_side_panel_layout()
 	if game_manager == null:
 		return
@@ -7157,7 +7250,7 @@ func _update_match_side_panel_layout() -> void:
 		return
 	_sync_turn_choice_vertical_order()
 
-	var left_width := maxf(LEFT_PANEL_MIN_WIDTH + BOARD_RIGHT_NUDGE, left_panel.size.x)
+	var left_width := LEFT_PANEL_MIN_WIDTH + BOARD_RIGHT_NUDGE
 	var right_width := 0.0 if not right_panel.visible else RIGHT_PANEL_MIN_WIDTH
 	var left_log_width := maxf(ACTION_LOG_MIN_WIDTH, left_width - ACTION_LOG_LEFT_INSET)
 
@@ -8178,6 +8271,1494 @@ func _get_hand_overlay_rect() -> Rect2:
 	var overlay_y: float = local_top_left.y + center_rect.size.y - HAND_DOCK_HEIGHT - HAND_OVERLAY_BOTTOM_PADDING - HAND_OVERLAY_TOP_BLEED
 	return Rect2(Vector2(overlay_x, overlay_y), Vector2(overlay_width, overlay_height))
 
+func _get_follower_casualty_player_key(player: Player) -> String:
+	if player == null:
+		return ""
+	var player_index := game_manager.players.find(player) if game_manager != null else -1
+	return "%d:%s" % [player_index, str(player.player_name)]
+
+func _get_follower_casualty_records_for_key(player_key: String) -> Array:
+	if player_key == "":
+		return []
+	var records: Array = []
+	if _follower_casualty_records_by_player_key.has(player_key) \
+			and _follower_casualty_records_by_player_key[player_key] is Array:
+		records = _follower_casualty_records_by_player_key[player_key]
+	_follower_casualty_records_by_player_key[player_key] = records
+	return records
+
+func _follower_noise01(seed: int) -> float:
+	var value := sin(float(seed) * 12.9898 + 78.233) * 43758.5453
+	return value - floor(value)
+
+func _make_follower_body_record(record_index: int, state: String = "hidden", transient: bool = false) -> Dictionary:
+	var target_seed := record_index * 101 + 37
+	var start_seed := record_index * 211 + 19
+	return {
+		"state": state,
+		"slot_index": record_index,
+		"born_msec": 0,
+		"transient": transient,
+		"offset_x": float(((record_index * 29) % 7) - 3) * 0.8,
+		"offset_y": float(((record_index * 23) % 5) - 2) * 1.1,
+		"rotation": float(((record_index * 37) % 9) - 4) * 2.0,
+		"flip": (record_index % 2) == 0,
+		"walk_phase": float((record_index * 41) % 97) * 0.19,
+		"walk_speed": 1.05 + float((record_index * 17) % 9) * 0.06,
+		"mill_x": _follower_noise01(start_seed),
+		"mill_y": _follower_noise01(start_seed + 1),
+		"target_x": _follower_noise01(target_seed),
+		"target_y": _follower_noise01(target_seed + 1),
+		"target_seed": target_seed,
+		"last_mill_msec": 0,
+		"idle_until_msec": 0,
+		"flee_side": -1.0 if (record_index % 2) == 0 else 1.0,
+		"speech_text": "",
+		"mill_speed": 0.022 + _follower_noise01(record_index * 173 + 5) * 0.018,
+		"move_x": 1.0,
+		"move_y": 0.0,
+	}
+
+func _ensure_follower_body_records_for_key(player_key: String) -> Array:
+	var records: Array = _get_follower_casualty_records_for_key(player_key)
+	while records.size() < FOLLOWER_CASUALTY_MAX_RECORDS:
+		records.append(_make_follower_body_record(records.size()))
+	_follower_casualty_records_by_player_key[player_key] = records
+	return records
+
+func _get_follower_visible_target(followers: int) -> int:
+	return clampi(followers, 0, FOLLOWER_CASUALTY_MAX_RECORDS)
+
+func _is_follower_body_active_state(state: String) -> bool:
+	return state == "alive" or state == "entering" or state == "converting"
+
+func _is_follower_body_departure_candidate_state(state: String) -> bool:
+	return state == "alive" or state == "entering"
+
+func _count_follower_active_bodies(records: Array) -> int:
+	var count := 0
+	for entry in records:
+		var record := entry as Dictionary
+		if record != null and not bool(record.get("transient", false)) \
+				and _is_follower_body_active_state(str(record.get("state", "hidden"))):
+			count += 1
+	return count
+
+func _set_follower_initial_body_count(records: Array, target_count: int) -> void:
+	var remaining := clampi(target_count, 0, FOLLOWER_CASUALTY_MAX_RECORDS)
+	var now_msec := Time.get_ticks_msec()
+	for i in range(FOLLOWER_CASUALTY_MAX_RECORDS):
+		var record := records[i] as Dictionary
+		if record == null:
+			record = _make_follower_body_record(i)
+		var alive := i < remaining
+		record["state"] = "alive" if alive else "hidden"
+		record["slot_index"] = i
+		record["born_msec"] = 0
+		record["transient"] = false
+		record["speech_text"] = ""
+		if alive and _follower_noise01(i * 313 + 7) > 0.42:
+			record["idle_until_msec"] = now_msec + int(lerpf(FOLLOWER_CASUALTY_IDLE_MIN_SECONDS, FOLLOWER_CASUALTY_IDLE_MAX_SECONDS, _follower_noise01(i * 397 + 11)) * 1000.0)
+		else:
+			record["idle_until_msec"] = 0
+		records[i] = record
+
+func _pop_follower_flee_phrase(phrase_queue: Array[String]) -> String:
+	if phrase_queue.is_empty():
+		return ""
+	return str(phrase_queue.pop_front())
+
+func _get_follower_flee_phrase_queue(loss_count: int) -> Array[String]:
+	var phrase_queue: Array[String] = []
+	if loss_count <= 0:
+		return phrase_queue
+	for _i in range(loss_count):
+		phrase_queue.append("")
+	var speaking_count := mini(
+		FOLLOWER_CASUALTY_FLEE_PHRASES.size(),
+		maxi(1, int(floor(float(loss_count) / 6.0)))
+	)
+	if speaking_count <= 0:
+		return phrase_queue
+	var rng := RandomNumberGenerator.new()
+	rng.randomize()
+	var phrase_indices: Array[int] = []
+	for i in range(FOLLOWER_CASUALTY_FLEE_PHRASES.size()):
+		phrase_indices.append(i)
+	for i in range(phrase_indices.size()):
+		var phrase_swap_index := rng.randi_range(i, phrase_indices.size() - 1)
+		var phrase_tmp := phrase_indices[i]
+		phrase_indices[i] = phrase_indices[phrase_swap_index]
+		phrase_indices[phrase_swap_index] = phrase_tmp
+	var follower_indices: Array[int] = []
+	for i in range(loss_count):
+		follower_indices.append(i)
+	for i in range(follower_indices.size()):
+		var follower_swap_index := rng.randi_range(i, follower_indices.size() - 1)
+		var follower_tmp := follower_indices[i]
+		follower_indices[i] = follower_indices[follower_swap_index]
+		follower_indices[follower_swap_index] = follower_tmp
+	for i in range(speaking_count):
+		phrase_queue[follower_indices[i]] = str(FOLLOWER_CASUALTY_FLEE_PHRASES[phrase_indices[i]])
+	return phrase_queue
+
+func _get_player_god_display_name(player: Player) -> String:
+	if player == null or player.god_zone == null or player.god_zone.cards.is_empty():
+		return "their god"
+	var god_card := player.god_zone.cards[0] as Card
+	if god_card == null:
+		return "their god"
+	var god_name := str(god_card.card_name).strip_edges()
+	if god_name == "":
+		return "their god"
+	if god_name.ends_with(", Active God"):
+		god_name = god_name.substr(0, god_name.length() - String(", Active God").length()).strip_edges()
+	return god_name
+
+func _normalize_follower_god_name(god_name: String) -> String:
+	return god_name.strip_edges().to_lower().replace(", active god", "")
+
+func _is_baldr_follower_god_name(god_name: String) -> bool:
+	return _normalize_follower_god_name(god_name) == "baldr"
+
+func _get_follower_conversion_phrase_queue(amount: int, from_player: Player, to_player: Player) -> Array[String]:
+	var phrase_queue: Array[String] = []
+	if amount <= 0:
+		return phrase_queue
+	for _i in range(amount):
+		phrase_queue.append("")
+	var speaking_count := maxi(1, int(floor(float(amount) / 6.0)))
+	var from_god_name := _get_player_god_display_name(from_player)
+	var to_god_name := _get_player_god_display_name(to_player)
+	var phrases: Array[String] = []
+	if _normalize_follower_god_name(from_god_name) == _normalize_follower_god_name(to_god_name):
+		phrases.append("That (%s) just seems so much stronger." % to_god_name)
+	else:
+		phrases.append("%s just seems so much stronger." % to_god_name)
+	phrases.append("How embarrassing")
+	phrases.append("Oof")
+	var beautiful_weight := 10 if _is_baldr_follower_god_name(to_god_name) else 1
+	for _i in range(beautiful_weight):
+		phrases.append("So beautiful...")
+	var rng := RandomNumberGenerator.new()
+	rng.randomize()
+	var follower_indices: Array[int] = []
+	for i in range(amount):
+		follower_indices.append(i)
+	for i in range(follower_indices.size()):
+		var follower_swap_index := rng.randi_range(i, follower_indices.size() - 1)
+		var follower_tmp := follower_indices[i]
+		follower_indices[i] = follower_indices[follower_swap_index]
+		follower_indices[follower_swap_index] = follower_tmp
+	for i in range(mini(speaking_count, follower_indices.size())):
+		phrase_queue[follower_indices[i]] = phrases[rng.randi_range(0, phrases.size() - 1)]
+	return phrase_queue
+
+func _add_pending_follower_conversion(from_player: Player, to_player: Player, amount: int) -> void:
+	if from_player == null or to_player == null or amount <= 0:
+		return
+	var from_key := _get_follower_casualty_player_key(from_player)
+	var to_key := _get_follower_casualty_player_key(to_player)
+	if from_key == "" or to_key == "":
+		return
+	_pending_follower_conversion_out_by_player_key[from_key] = int(_pending_follower_conversion_out_by_player_key.get(from_key, 0)) + amount
+	var incoming_batches: Array = []
+	if _pending_follower_conversion_in_by_player_key.has(to_key) \
+			and _pending_follower_conversion_in_by_player_key[to_key] is Array:
+		incoming_batches = _pending_follower_conversion_in_by_player_key[to_key]
+	incoming_batches.append({
+		"amount": amount,
+		"from_key": from_key,
+		"to_key": to_key,
+		"phrases": _get_follower_conversion_phrase_queue(amount, from_player, to_player),
+	})
+	_pending_follower_conversion_in_by_player_key[to_key] = incoming_batches
+
+func _consume_pending_follower_conversion_out_count(player_key: String, max_count: int) -> int:
+	if max_count <= 0 or not _pending_follower_conversion_out_by_player_key.has(player_key):
+		return 0
+	var pending_count := maxi(0, int(_pending_follower_conversion_out_by_player_key.get(player_key, 0)))
+	var consumed_count := mini(max_count, pending_count)
+	pending_count -= consumed_count
+	if pending_count <= 0:
+		_pending_follower_conversion_out_by_player_key.erase(player_key)
+	else:
+		_pending_follower_conversion_out_by_player_key[player_key] = pending_count
+	return consumed_count
+
+func _consume_pending_follower_conversion_in_batches(player_key: String, max_count: int) -> Array:
+	var consumed_batches: Array = []
+	if max_count <= 0 or not _pending_follower_conversion_in_by_player_key.has(player_key):
+		return consumed_batches
+	var incoming_batches: Array = []
+	if _pending_follower_conversion_in_by_player_key[player_key] is Array:
+		incoming_batches = _pending_follower_conversion_in_by_player_key[player_key]
+	var remaining_count := max_count
+	var remaining_batches: Array = []
+	for raw_batch in incoming_batches:
+		var batch := raw_batch as Dictionary
+		if batch == null:
+			continue
+		var batch_amount := maxi(0, int(batch.get("amount", 0)))
+		if batch_amount <= 0:
+			continue
+		if remaining_count <= 0:
+			remaining_batches.append(batch)
+			continue
+		var consumed_amount := mini(remaining_count, batch_amount)
+		var phrases: Array[String] = []
+		var raw_phrases = batch.get("phrases", [])
+		if raw_phrases is Array:
+			for phrase in raw_phrases:
+				phrases.append(str(phrase))
+		var consumed_phrases: Array[String] = []
+		for _i in range(consumed_amount):
+			consumed_phrases.append(_pop_follower_flee_phrase(phrases))
+		consumed_batches.append({
+			"amount": consumed_amount,
+			"from_key": str(batch.get("from_key", "")),
+			"to_key": str(batch.get("to_key", player_key)),
+			"phrases": consumed_phrases,
+		})
+		remaining_count -= consumed_amount
+		batch_amount -= consumed_amount
+		if batch_amount > 0:
+			batch["amount"] = batch_amount
+			batch["phrases"] = phrases
+			remaining_batches.append(batch)
+	if remaining_batches.is_empty():
+		_pending_follower_conversion_in_by_player_key.erase(player_key)
+	else:
+		_pending_follower_conversion_in_by_player_key[player_key] = remaining_batches
+	return consumed_batches
+
+func _count_consumed_follower_conversion_batches(batches: Array) -> int:
+	var total := 0
+	for raw_batch in batches:
+		var batch := raw_batch as Dictionary
+		if batch != null:
+			total += maxi(0, int(batch.get("amount", 0)))
+	return total
+
+func _mark_follower_bodies_fleeing(records: Array, count: int, phrase_queue: Array[String]) -> int:
+	if count <= 0:
+		return 0
+	var now_msec := Time.get_ticks_msec()
+	var remaining := count
+	for i in range(records.size() - 1, -1, -1):
+		if remaining <= 0:
+			return count
+		var record := records[i] as Dictionary
+		if record == null or bool(record.get("transient", false)) \
+				or not _is_follower_body_departure_candidate_state(str(record.get("state", "hidden"))):
+			continue
+		var flee_side := -1.0 if int(record.get("slot_index", i)) < int(ceil(float(FOLLOWER_CASUALTY_MAX_RECORDS) * 0.5)) else 1.0
+		record["state"] = "fleeing"
+		record["born_msec"] = now_msec
+		record["idle_until_msec"] = 0
+		record["flee_side"] = flee_side
+		record["speech_text"] = _pop_follower_flee_phrase(phrase_queue)
+		record["move_x"] = flee_side
+		record["move_y"] = 0.0
+		record["flip"] = flee_side < 0.0
+		records[i] = record
+		remaining -= 1
+	return count - remaining
+
+func _mark_follower_bodies_converted_out(records: Array, count: int) -> int:
+	if count <= 0:
+		return 0
+	var remaining := count
+	for i in range(records.size() - 1, -1, -1):
+		if remaining <= 0:
+			return count
+		var record := records[i] as Dictionary
+		if record == null or bool(record.get("transient", false)) \
+				or not _is_follower_body_departure_candidate_state(str(record.get("state", "hidden"))):
+			continue
+		record["state"] = "hidden"
+		record["born_msec"] = 0
+		record["transient"] = false
+		record["speech_text"] = ""
+		records[i] = record
+		remaining -= 1
+	return count - remaining
+
+func _prepare_follower_conversion_record(record: Dictionary, from_key: String, to_key: String, phrase_queue: Array[String], seed: int) -> Dictionary:
+	var left_count := int(ceil(float(FOLLOWER_CASUALTY_MAX_RECORDS) * 0.5))
+	var slot_index := clampi(int(record.get("slot_index", 0)), 0, FOLLOWER_CASUALTY_MAX_RECORDS - 1)
+	var end_side := -1.0 if slot_index < left_count else 1.0
+	var start_side := -end_side if _follower_noise01(seed + 7) > 0.42 else end_side
+	record["state"] = "converting"
+	record["born_msec"] = Time.get_ticks_msec()
+	record["idle_until_msec"] = 0
+	record["convert_from_key"] = from_key
+	record["convert_to_key"] = to_key
+	record["convert_start_side"] = start_side
+	record["convert_end_side"] = end_side
+	record["convert_start_x"] = _follower_noise01(seed + 11)
+	record["convert_start_y"] = _follower_noise01(seed + 13)
+	record["convert_end_x"] = _follower_noise01(seed + 17)
+	record["convert_end_y"] = _follower_noise01(seed + 19)
+	record["speech_text"] = _pop_follower_flee_phrase(phrase_queue)
+	record["move_x"] = end_side
+	record["move_y"] = 0.0
+	record["flip"] = end_side < 0.0
+	return record
+
+func _start_follower_conversions(records: Array, count: int, from_key: String, to_key: String, phrase_queue: Array[String]) -> int:
+	if count <= 0:
+		return 0
+	var remaining := count
+	var now_msec := Time.get_ticks_msec()
+	for i in range(FOLLOWER_CASUALTY_MAX_RECORDS):
+		if remaining <= 0:
+			return count
+		var record := records[i] as Dictionary
+		if record == null:
+			record = _make_follower_body_record(i)
+		if str(record.get("state", "hidden")) != "hidden":
+			continue
+		record["slot_index"] = i
+		record["transient"] = false
+		record = _prepare_follower_conversion_record(record, from_key, to_key, phrase_queue, now_msec + i * 43)
+		records[i] = record
+		remaining -= 1
+	return count - remaining
+
+func _append_transient_follower_conversions(records: Array, count: int, from_key: String, to_key: String, phrase_queue: Array[String]) -> void:
+	if count <= 0:
+		return
+	var now_msec := Time.get_ticks_msec()
+	for i in range(count):
+		var slot_index := clampi(FOLLOWER_CASUALTY_MAX_RECORDS - 1 - i, 0, FOLLOWER_CASUALTY_MAX_RECORDS - 1)
+		var record := _make_follower_body_record(slot_index, "converting", true)
+		record["transient"] = true
+		record = _prepare_follower_conversion_record(record, from_key, to_key, phrase_queue, now_msec + i * 59 + slot_index * 7)
+		records.append(record)
+
+func _append_transient_follower_fleeing(records: Array, count: int, phrase_queue: Array[String]) -> void:
+	if count <= 0:
+		return
+	var now_msec := Time.get_ticks_msec()
+	for i in range(count):
+		var slot_index := clampi(FOLLOWER_CASUALTY_MAX_RECORDS - 1 - i, 0, FOLLOWER_CASUALTY_MAX_RECORDS - 1)
+		var record := _make_follower_body_record(slot_index, "fleeing", true)
+		record["born_msec"] = now_msec
+		var seed := now_msec + i * 37 + slot_index * 11
+		record["mill_x"] = _follower_noise01(seed)
+		record["mill_y"] = _follower_noise01(seed + 1)
+		var flee_side := -1.0 if slot_index < int(ceil(float(FOLLOWER_CASUALTY_MAX_RECORDS) * 0.5)) else 1.0
+		record["flee_side"] = flee_side
+		record["speech_text"] = _pop_follower_flee_phrase(phrase_queue)
+		record["move_x"] = flee_side
+		record["move_y"] = 0.0
+		record["flip"] = flee_side < 0.0
+		records.append(record)
+
+func _start_follower_entries(records: Array, count: int) -> void:
+	if count <= 0:
+		return
+	var now_msec := Time.get_ticks_msec()
+	var remaining := count
+	for i in range(FOLLOWER_CASUALTY_MAX_RECORDS):
+		if remaining <= 0:
+			return
+		var record := records[i] as Dictionary
+		if record == null:
+			record = _make_follower_body_record(i)
+		if str(record.get("state", "hidden")) != "hidden":
+			continue
+		record["state"] = "entering"
+		record["slot_index"] = i
+		record["born_msec"] = now_msec
+		record["transient"] = false
+		record["idle_until_msec"] = 0
+		record["speech_text"] = ""
+		records[i] = record
+		remaining -= 1
+
+func _start_follower_idle(record: Dictionary, now_msec: int) -> Dictionary:
+	var seed := int(record.get("target_seed", 0)) + int(record.get("slot_index", 0)) * 53 + now_msec
+	var idle_seconds := lerpf(FOLLOWER_CASUALTY_IDLE_MIN_SECONDS, FOLLOWER_CASUALTY_IDLE_MAX_SECONDS, _follower_noise01(seed))
+	record["idle_until_msec"] = now_msec + int(idle_seconds * 1000.0)
+	record["move_x"] = 0.0
+	record["move_y"] = 0.0
+	return record
+
+func _retarget_follower_body(record: Dictionary) -> Dictionary:
+	var seed := int(record.get("target_seed", 0)) + 97
+	record["target_seed"] = seed
+	record["target_x"] = _follower_noise01(seed)
+	record["target_y"] = _follower_noise01(seed + 1)
+	record["idle_until_msec"] = 0
+	return record
+
+func _advance_follower_milling(record: Dictionary, now_msec: int, movement_speed_scale: float = 1.0) -> Dictionary:
+	var state := str(record.get("state", "hidden"))
+	if state != "alive" and state != "entering":
+		record["last_mill_msec"] = now_msec
+		record["idle_until_msec"] = 0
+		return record
+	if state == "alive":
+		var idle_until_msec := int(record.get("idle_until_msec", 0))
+		if idle_until_msec > now_msec:
+			record["last_mill_msec"] = now_msec
+			record["move_x"] = 0.0
+			record["move_y"] = 0.0
+			return record
+		if idle_until_msec > 0:
+			record = _retarget_follower_body(record)
+	else:
+		record["idle_until_msec"] = 0
+	var last_msec := int(record.get("last_mill_msec", 0))
+	record["last_mill_msec"] = now_msec
+	if last_msec <= 0:
+		return record
+	var delta_seconds := clampf(float(now_msec - last_msec) / 1000.0, 0.0, 0.12)
+	if delta_seconds <= 0.0:
+		return record
+	var position := Vector2(
+		float(record.get("mill_x", 0.5)),
+		float(record.get("mill_y", 0.5))
+	)
+	var target := Vector2(
+		float(record.get("target_x", 0.5)),
+		float(record.get("target_y", 0.5))
+	)
+	var offset := target - position
+	var distance := offset.length()
+	var speed := float(record.get("mill_speed", 0.12))
+	var step := speed * movement_speed_scale * delta_seconds
+	if distance <= maxf(step, 0.018):
+		position = target
+		if state == "alive":
+			record = _start_follower_idle(record, now_msec)
+		else:
+			record = _retarget_follower_body(record)
+	else:
+		var direction := offset.normalized()
+		position += direction * step
+		record["move_x"] = direction.x
+		record["move_y"] = direction.y
+		record["flip"] = direction.x < 0.0
+	record["mill_x"] = clampf(position.x, 0.0, 1.0)
+	record["mill_y"] = clampf(position.y, 0.0, 1.0)
+	return record
+
+func _advance_follower_body_records(records: Array, movement_speed_scale: float = 1.0) -> void:
+	var now_msec := Time.get_ticks_msec()
+	for i in range(records.size() - 1, -1, -1):
+		var record := records[i] as Dictionary
+		if record == null:
+			continue
+		record = _advance_follower_milling(record, now_msec, movement_speed_scale)
+		var state := str(record.get("state", "hidden"))
+		var age_seconds := float(now_msec - int(record.get("born_msec", now_msec))) / 1000.0
+		if state == "hurt" or state == "flash":
+			record["state"] = "fleeing"
+			record["born_msec"] = now_msec
+			record["idle_until_msec"] = 0
+			record["speech_text"] = ""
+			record["move_x"] = float(record.get("flee_side", 1.0))
+			record["move_y"] = 0.0
+			records[i] = record
+		elif state == "fleeing" and age_seconds >= FOLLOWER_CASUALTY_FLEE_SECONDS:
+			if bool(record.get("transient", false)):
+				records.remove_at(i)
+			else:
+				record["state"] = "hidden"
+				record["born_msec"] = 0
+				record["transient"] = false
+				record["speech_text"] = ""
+				records[i] = record
+		elif state == "converting" and age_seconds >= FOLLOWER_CASUALTY_CONVERT_SECONDS:
+			if bool(record.get("transient", false)):
+				records.remove_at(i)
+			else:
+				record["state"] = "alive"
+				record["born_msec"] = 0
+				record["transient"] = false
+				record["speech_text"] = ""
+				record["idle_until_msec"] = now_msec + int(lerpf(FOLLOWER_CASUALTY_IDLE_MIN_SECONDS, FOLLOWER_CASUALTY_IDLE_MAX_SECONDS, _follower_noise01(i * 467 + now_msec)) * 1000.0)
+				records[i] = record
+		elif state == "entering" and age_seconds >= FOLLOWER_CASUALTY_ENTER_SECONDS:
+			record["state"] = "alive"
+			record["born_msec"] = 0
+			record["speech_text"] = ""
+			records[i] = record
+
+func _sync_follower_casualties_for_player(player: Player, new_followers: int, _play_hurt: bool) -> void:
+	if player == null:
+		return
+	var player_key := _get_follower_casualty_player_key(player)
+	if player_key == "":
+		return
+	var records: Array = _ensure_follower_body_records_for_key(player_key)
+	var current_followers := maxi(0, new_followers)
+	var target_visible_followers := _get_follower_visible_target(current_followers)
+	var has_previous := _follower_casualty_last_followers_by_player_key.has(player_key)
+	var previous_followers := maxi(0, int(_follower_casualty_last_followers_by_player_key.get(
+		player_key,
+		current_followers
+	)))
+	if not has_previous:
+		_set_follower_initial_body_count(records, target_visible_followers)
+		_follower_casualty_last_followers_by_player_key[player_key] = current_followers
+		_follower_casualty_records_by_player_key[player_key] = records
+		return
+	if current_followers < previous_followers:
+		var loss_count := previous_followers - current_followers
+		var conversion_loss_count := _consume_pending_follower_conversion_out_count(player_key, loss_count)
+		if conversion_loss_count > 0:
+			var active_count := _count_follower_active_bodies(records)
+			var visible_loss_needed := maxi(0, active_count - target_visible_followers)
+			_mark_follower_bodies_converted_out(records, mini(conversion_loss_count, visible_loss_needed))
+			loss_count -= conversion_loss_count
+		if loss_count > 0:
+			var phrase_queue := _get_follower_flee_phrase_queue(loss_count)
+			var active_count := _count_follower_active_bodies(records)
+			var visible_loss_needed := maxi(0, active_count - target_visible_followers)
+			var killed_count := _mark_follower_bodies_fleeing(records, mini(loss_count, visible_loss_needed), phrase_queue)
+			_append_transient_follower_fleeing(records, loss_count - killed_count, phrase_queue)
+	elif current_followers > previous_followers:
+		var gain_count := current_followers - previous_followers
+		var incoming_conversion_batches := _consume_pending_follower_conversion_in_batches(player_key, gain_count)
+		if not incoming_conversion_batches.is_empty():
+			for raw_batch in incoming_conversion_batches:
+				var batch := raw_batch as Dictionary
+				if batch == null:
+					continue
+				var batch_amount := maxi(0, int(batch.get("amount", 0)))
+				if batch_amount <= 0:
+					continue
+				var phrase_queue: Array[String] = []
+				var raw_phrases = batch.get("phrases", [])
+				if raw_phrases is Array:
+					for phrase in raw_phrases:
+						phrase_queue.append(str(phrase))
+				var active_count := _count_follower_active_bodies(records)
+				var visible_gain_needed := maxi(0, target_visible_followers - active_count)
+				var started_count := _start_follower_conversions(
+					records,
+					mini(batch_amount, visible_gain_needed),
+					str(batch.get("from_key", "")),
+					str(batch.get("to_key", player_key)),
+					phrase_queue
+				)
+				_append_transient_follower_conversions(
+					records,
+					batch_amount - started_count,
+					str(batch.get("from_key", "")),
+					str(batch.get("to_key", player_key)),
+					phrase_queue
+				)
+			gain_count -= _count_consumed_follower_conversion_batches(incoming_conversion_batches)
+		if gain_count > 0:
+			var previous_visible_followers := _get_follower_visible_target(previous_followers)
+			if previous_visible_followers < FOLLOWER_CASUALTY_MAX_RECORDS:
+				var active_count := _count_follower_active_bodies(records)
+				_start_follower_entries(records, maxi(0, target_visible_followers - active_count))
+	else:
+		var active_count := _count_follower_active_bodies(records)
+		if active_count < target_visible_followers:
+			_start_follower_entries(records, target_visible_followers - active_count)
+	_follower_casualty_last_followers_by_player_key[player_key] = current_followers
+	_follower_casualty_records_by_player_key[player_key] = records
+
+func _clear_follower_casualty_overlay() -> void:
+	if _follower_casualty_overlay != null and is_instance_valid(_follower_casualty_overlay):
+		if _follower_casualty_overlay.get_parent() == self:
+			remove_child(_follower_casualty_overlay)
+		_follower_casualty_overlay.free()
+	_follower_casualty_overlay = null
+	_follower_casualty_sprites.clear()
+	_follower_casualty_bubbles.clear()
+	if _opponent_follower_casualty_overlay != null and is_instance_valid(_opponent_follower_casualty_overlay):
+		if _opponent_follower_casualty_overlay.get_parent() == self:
+			remove_child(_opponent_follower_casualty_overlay)
+		_opponent_follower_casualty_overlay.free()
+	_opponent_follower_casualty_overlay = null
+	_opponent_follower_casualty_sprites.clear()
+	_opponent_follower_casualty_bubbles.clear()
+
+func _ensure_follower_casualty_overlay() -> void:
+	if _follower_casualty_overlay != null and is_instance_valid(_follower_casualty_overlay):
+		return
+	_follower_casualty_overlay = Control.new()
+	_follower_casualty_overlay.name = "FollowerCasualtyOverlay"
+	_follower_casualty_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_follower_casualty_overlay.clip_contents = false
+	_follower_casualty_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_follower_casualty_overlay.z_as_relative = false
+	_follower_casualty_overlay.z_index = HAND_OVERLAY_Z_INDEX - 2
+	add_child(_follower_casualty_overlay)
+
+func _ensure_opponent_follower_casualty_overlay() -> void:
+	if _opponent_follower_casualty_overlay != null and is_instance_valid(_opponent_follower_casualty_overlay):
+		return
+	_opponent_follower_casualty_overlay = Control.new()
+	_opponent_follower_casualty_overlay.name = "OpponentFollowerCasualtyOverlay"
+	_opponent_follower_casualty_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_opponent_follower_casualty_overlay.clip_contents = false
+	_opponent_follower_casualty_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_opponent_follower_casualty_overlay.z_as_relative = false
+	_opponent_follower_casualty_overlay.z_index = TRANSIENT_UI_Z_INDEX - 25
+	add_child(_opponent_follower_casualty_overlay)
+
+func _make_follower_speech_bubble() -> PanelContainer:
+	var bubble := PanelContainer.new()
+	bubble.name = "FollowerSpeechBubble"
+	bubble.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bubble.visible = false
+	bubble.z_as_relative = true
+	bubble.z_index = 900
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(1.0, 0.98, 0.88, 0.94)
+	style.border_color = Color(0.08, 0.06, 0.04, 0.92)
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		style.set_border_width(side as Side, 1)
+	style.corner_radius_top_left = 5
+	style.corner_radius_top_right = 5
+	style.corner_radius_bottom_left = 5
+	style.corner_radius_bottom_right = 5
+	style.content_margin_left = 6
+	style.content_margin_right = 6
+	style.content_margin_top = 3
+	style.content_margin_bottom = 3
+	bubble.add_theme_stylebox_override("panel", style)
+	var label := Label.new()
+	label.name = "SpeechLabel"
+	label.add_theme_font_size_override("font_size", FOLLOWER_CASUALTY_SPEECH_FONT_SIZE)
+	label.add_theme_color_override("font_color", Color(0.06, 0.04, 0.03, 1.0))
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	bubble.add_child(label)
+	return bubble
+
+func _resize_follower_sprite_array(overlay: Control, sprites: Array, bubbles: Array, count: int) -> void:
+	if overlay == null or not is_instance_valid(overlay):
+		return
+	while sprites.size() < count:
+		var sprite := Sprite2D.new()
+		sprite.centered = true
+		sprite.z_as_relative = true
+		overlay.add_child(sprite)
+		sprites.append(sprite)
+		var speech_bubble := _make_follower_speech_bubble()
+		overlay.add_child(speech_bubble)
+		bubbles.append(speech_bubble)
+	while sprites.size() > count:
+		var sprite = sprites.pop_back()
+		if sprite != null and is_instance_valid(sprite):
+			sprite.queue_free()
+		if not bubbles.is_empty():
+			var removed_bubble = bubbles.pop_back()
+			if removed_bubble != null and is_instance_valid(removed_bubble):
+				removed_bubble.queue_free()
+
+func _resize_follower_casualty_sprites(count: int) -> void:
+	_resize_follower_sprite_array(_follower_casualty_overlay, _follower_casualty_sprites, _follower_casualty_bubbles, count)
+
+func _resize_opponent_follower_casualty_sprites(count: int) -> void:
+	_resize_follower_sprite_array(_opponent_follower_casualty_overlay, _opponent_follower_casualty_sprites, _opponent_follower_casualty_bubbles, count)
+
+func _get_follower_casualty_hand_bounds() -> Rect2:
+	var overlay_rect := _get_hand_overlay_rect()
+	var min_x := 1.0e20
+	var max_x := -1.0e20
+	if _fan_container != null and is_instance_valid(_fan_container):
+		for card_control in _hand_visual_cards:
+			var vc := card_control as Control
+			if vc == null or not is_instance_valid(vc):
+				continue
+			var card_pos := _fan_container.position + vc.position
+			min_x = minf(min_x, card_pos.x)
+			max_x = maxf(max_x, card_pos.x + vc.size.x)
+	if min_x < max_x:
+		return Rect2(Vector2(min_x, overlay_rect.position.y), Vector2(maxf(180.0, max_x - min_x), overlay_rect.size.y))
+	var fallback_width := minf(440.0, overlay_rect.size.x * 0.5)
+	var center_x := overlay_rect.position.x + overlay_rect.size.x * 0.5
+	return Rect2(Vector2(center_x - fallback_width * 0.5, overlay_rect.position.y), Vector2(fallback_width, overlay_rect.size.y))
+
+func _get_follower_mill_rect(hand_bounds: Rect2, side: float, base_y: float) -> Rect2:
+	var viewport_width := size.x if size.x > 0.0 else get_viewport_rect().size.x
+	var viewport_height := size.y if size.y > 0.0 else get_viewport_rect().size.y
+	var edge_padding := FOLLOWER_CASUALTY_SCREEN_EDGE_PADDING
+	var rect_x := edge_padding
+	var rect_right := hand_bounds.position.x - FOLLOWER_CASUALTY_SIDE_GAP
+	if side > 0.0:
+		rect_x = hand_bounds.end.x + FOLLOWER_CASUALTY_SIDE_GAP
+		rect_right = viewport_width - edge_padding
+	if rect_right - rect_x < FOLLOWER_CASUALTY_MIN_MILL_WIDTH:
+		if side < 0.0:
+			rect_right = minf(viewport_width - edge_padding, rect_x + FOLLOWER_CASUALTY_MIN_MILL_WIDTH)
+		else:
+			rect_x = maxf(edge_padding, rect_right - FOLLOWER_CASUALTY_MIN_MILL_WIDTH)
+	var rect_width := maxf(FOLLOWER_CASUALTY_MIN_MILL_WIDTH, rect_right - rect_x)
+	var rect_height := clampf(FOLLOWER_CASUALTY_MILL_HEIGHT, FOLLOWER_CASUALTY_MIN_MILL_HEIGHT, maxf(FOLLOWER_CASUALTY_MIN_MILL_HEIGHT, viewport_height - 24.0))
+	rect_x = clampf(rect_x, edge_padding, maxf(edge_padding, viewport_width - rect_width - edge_padding))
+	var y := clampf(base_y - rect_height + 8.0, 8.0, maxf(8.0, viewport_height - rect_height - edge_padding))
+	return Rect2(Vector2(rect_x, y), Vector2(rect_width, rect_height))
+
+func _append_follower_control_avoid_rect(rects: Array[Rect2], control: Control) -> void:
+	if control == null or not is_instance_valid(control) or not control.is_visible_in_tree():
+		return
+	var global_rect := control.get_global_rect()
+	if global_rect.size.x <= 0.0 or global_rect.size.y <= 0.0:
+		return
+	var local_position: Vector2 = get_global_transform().affine_inverse() * global_rect.position
+	rects.append(Rect2(local_position, global_rect.size).grow(FOLLOWER_CASUALTY_CONTROL_AVOID_PADDING))
+
+func _get_follower_control_avoid_rects() -> Array[Rect2]:
+	var rects: Array[Rect2] = []
+	_append_follower_control_avoid_rect(rects, forfeit_button)
+	_append_follower_control_avoid_rect(rects, forfeit_match_button)
+	_append_follower_control_avoid_rect(rects, _observer_perspective_button)
+	_append_follower_control_avoid_rect(rects, _priority_controls_panel)
+	var tree := get_tree()
+	if tree != null and tree.root != null:
+		_append_follower_control_avoid_rect(rects, tree.root.find_child("SoundMuteButton", true, false) as Control)
+	return rects
+
+func _avoid_follower_control_rects(point: Vector2, bounds: Rect2, side: float, avoid_rects: Array[Rect2]) -> Vector2:
+	var adjusted := point
+	if bounds.size.x <= 0.0 or bounds.size.y <= 0.0:
+		return adjusted
+	for _pass in range(3):
+		var changed := false
+		for rect in avoid_rects:
+			if not rect.has_point(adjusted):
+				continue
+			var horizontal_candidate := rect.end.x + FOLLOWER_CASUALTY_CONTROL_AVOID_PADDING if side < 0.0 else rect.position.x - FOLLOWER_CASUALTY_CONTROL_AVOID_PADDING
+			if horizontal_candidate >= bounds.position.x and horizontal_candidate <= bounds.end.x:
+				adjusted.x = horizontal_candidate
+			else:
+				var upward_candidate := rect.position.y - FOLLOWER_CASUALTY_CONTROL_AVOID_PADDING
+				if upward_candidate >= bounds.position.y:
+					adjusted.y = upward_candidate
+				else:
+					adjusted.y = rect.end.y + FOLLOWER_CASUALTY_CONTROL_AVOID_PADDING
+			adjusted.x = clampf(adjusted.x, bounds.position.x, bounds.end.x)
+			adjusted.y = clampf(adjusted.y, bounds.position.y, bounds.end.y)
+			changed = true
+		if not changed:
+			break
+	return adjusted
+
+func _set_follower_sprite_height(sprite: Sprite2D, target_height: float) -> void:
+	if sprite == null or sprite.texture == null:
+		return
+	var texture_size := sprite.texture.get_size()
+	if texture_size.y <= 0.0:
+		return
+	var scale_factor := target_height / texture_size.y
+	sprite.scale = Vector2(scale_factor, scale_factor)
+
+func _prepare_follower_sprite_for_record(sprite: Sprite2D, record: Dictionary, state: String, age_seconds: float, height_scale: float, now_msec: int, animation_speed_scale: float = 1.0) -> void:
+	sprite.visible = true
+	var target_height := FOLLOWER_CASUALTY_ALIVE_HEIGHT * height_scale
+	var is_idle := state == "alive" and int(record.get("idle_until_msec", 0)) > now_msec
+	var is_walking := (state == "alive" and not is_idle) or state == "entering" or state == "fleeing" or state == "converting"
+	if is_walking:
+		var move_x := float(record.get("move_x", 1.0))
+		var move_y := float(record.get("move_y", 0.0))
+		if absf(move_y) > absf(move_x) * 0.72:
+			sprite.texture = FOLLOWER_CASUALTY_WALK_TOWARD_TEXTURE if move_y > 0.0 else FOLLOWER_CASUALTY_WALK_AWAY_TEXTURE
+			sprite.flip_h = false
+		else:
+			sprite.texture = FOLLOWER_CASUALTY_WALK_SIDE_TEXTURE
+			sprite.flip_h = move_x < 0.0
+	else:
+		sprite.texture = FOLLOWER_CASUALTY_ALIVE_TEXTURE
+	sprite.hframes = FOLLOWER_CASUALTY_WALK_FRAME_COUNT if is_walking else 1
+	sprite.vframes = 1
+	var walk_phase := float(record.get("walk_phase", 0.0))
+	var walk_speed := float(record.get("walk_speed", 1.0))
+	var walk_time := float(now_msec) / 1000.0 * walk_speed * animation_speed_scale + walk_phase
+	sprite.frame = posmod(int(floor(walk_time / FOLLOWER_CASUALTY_WALK_FRAME_SECONDS)), FOLLOWER_CASUALTY_WALK_FRAME_COUNT) if is_walking else 0
+	if not is_walking:
+		sprite.flip_h = bool(record.get("flip", false))
+	_set_follower_sprite_height(sprite, target_height)
+	sprite.rotation_degrees = 0.0
+	sprite.modulate = Color(1, 1, 1, 1)
+
+func _hide_follower_speech_bubble(bubble: Control) -> void:
+	if bubble == null or not is_instance_valid(bubble):
+		return
+	bubble.visible = false
+
+func _layout_follower_speech_bubble(bubble: Control, record: Dictionary, state: String, age_seconds: float, sprite_position: Vector2, height_scale: float) -> void:
+	if bubble == null or not is_instance_valid(bubble):
+		return
+	var speech_text := str(record.get("speech_text", ""))
+	var speech_seconds := FOLLOWER_CASUALTY_CONVERT_SECONDS if state == "converting" else FOLLOWER_CASUALTY_SPEECH_SECONDS
+	if (state != "fleeing" and state != "converting") or speech_text == "" or age_seconds >= speech_seconds:
+		bubble.visible = false
+		return
+	var bubble_scale := 1.0 if state == "converting" else height_scale
+	var label := bubble.get_node_or_null("SpeechLabel") as Label
+	if label != null:
+		var scaled_font_size := maxi(8, int(round(float(FOLLOWER_CASUALTY_SPEECH_FONT_SIZE) * clampf(bubble_scale, 0.72, 1.0))))
+		label.text = speech_text
+		label.add_theme_font_size_override("font_size", scaled_font_size)
+		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		var label_width := clampf(
+			float(speech_text.length()) * float(scaled_font_size) * 0.48,
+			48.0 * bubble_scale,
+			136.0 * bubble_scale
+		)
+		label.custom_minimum_size = Vector2(label_width, 0.0)
+	bubble.visible = true
+	var bubble_alpha := 1.0
+	if state != "converting":
+		bubble_alpha = clampf(1.0 - maxf(0.0, age_seconds - speech_seconds * 0.72) / maxf(0.001, speech_seconds * 0.28), 0.0, 1.0)
+	bubble.modulate = Color(1, 1, 1, bubble_alpha)
+	bubble.size = bubble.get_combined_minimum_size()
+	var viewport_width := size.x if size.x > 0.0 else get_viewport_rect().size.x
+	var viewport_height := size.y if size.y > 0.0 else get_viewport_rect().size.y
+	var bubble_size := bubble.size
+	var bubble_x := sprite_position.x - bubble_size.x * 0.5
+	var bubble_y := sprite_position.y - FOLLOWER_CASUALTY_ALIVE_HEIGHT * height_scale * 0.76 - bubble_size.y - 2.0
+	bubble.position = Vector2(
+		clampf(bubble_x, 2.0, maxf(2.0, viewport_width - bubble_size.x - 2.0)),
+		clampf(bubble_y, 2.0, maxf(2.0, viewport_height - bubble_size.y - 2.0))
+	)
+	bubble.z_index = 900 + int(sprite_position.y)
+
+func _get_follower_display_point_for_player_key(player_key: String, side: float, normalized_x: float, normalized_y: float, avoid_rects: Array[Rect2] = []) -> Vector2:
+	var hand_player := _get_visible_hand_player()
+	var opponent_player := _get_display_opponent()
+	var opponent_key := _get_follower_casualty_player_key(opponent_player) if opponent_player != null else ""
+	if player_key != "" and player_key == opponent_key:
+		var band_rect := _get_opponent_follower_band_rect()
+		var hand_bounds := _get_opponent_follower_hand_bounds()
+		var mill_rect := _get_opponent_follower_mill_rect(hand_bounds, side, band_rect)
+		var inset_y := FOLLOWER_CASUALTY_ALIVE_HEIGHT * OPPONENT_FOLLOWER_HEIGHT_SCALE * 0.56
+		var usable_height := maxf(1.0, mill_rect.size.y - inset_y * 2.0)
+		return Vector2(
+			mill_rect.position.x + clampf(normalized_x, 0.0, 1.0) * mill_rect.size.x,
+			mill_rect.position.y + inset_y + clampf(normalized_y, 0.0, 1.0) * usable_height
+		)
+	var hand_key := _get_follower_casualty_player_key(hand_player) if hand_player != null else ""
+	var hand_bounds := _get_follower_casualty_hand_bounds()
+	var base_y := hand_bounds.position.y + hand_bounds.size.y - FOLLOWER_CASUALTY_BOTTOM_LIFT
+	var viewport_height := size.y if size.y > 0.0 else get_viewport_rect().size.y
+	base_y = minf(base_y, viewport_height - 12.0)
+	var mill_rect := _get_follower_mill_rect(hand_bounds, side, base_y)
+	var point := Vector2(
+		mill_rect.position.x + clampf(normalized_x, 0.0, 1.0) * mill_rect.size.x,
+		mill_rect.position.y + clampf(normalized_y, 0.0, 1.0) * mill_rect.size.y
+	)
+	if player_key == "" or player_key == hand_key:
+		return _avoid_follower_control_rects(point, mill_rect, side, avoid_rects)
+	return point
+
+func _get_follower_local_control_rect(control: Control) -> Rect2:
+	if control == null or not is_instance_valid(control) or not control.is_visible_in_tree():
+		return Rect2()
+	var global_rect := control.get_global_rect()
+	if global_rect.size.x <= 0.0 or global_rect.size.y <= 0.0:
+		return Rect2()
+	var local_position: Vector2 = get_global_transform().affine_inverse() * global_rect.position
+	return Rect2(local_position, global_rect.size)
+
+func _append_follower_route_zone_data(open_points: Array, occupied_rects: Array[Rect2], zone_ui: BoardZoneUI) -> void:
+	if zone_ui == null or not is_instance_valid(zone_ui) or not zone_ui.visible or zone_ui.zone == null:
+		return
+	var zone_rect := _get_follower_local_control_rect(zone_ui)
+	if zone_rect.size.x <= 0.0 or zone_rect.size.y <= 0.0:
+		return
+	if zone_ui.zone.cards.is_empty():
+		open_points.append(zone_rect.position + zone_rect.size * 0.5)
+	else:
+		occupied_rects.append(zone_rect.grow(FOLLOWER_CASUALTY_CONVERT_OCCUPIED_PADDING))
+
+func _get_follower_battlefield_route_data() -> Dictionary:
+	var open_points: Array = []
+	var occupied_rects: Array[Rect2] = []
+	for raw_zone_ui in _enemy_zone_uis:
+		_append_follower_route_zone_data(open_points, occupied_rects, raw_zone_ui as BoardZoneUI)
+	_append_follower_route_zone_data(open_points, occupied_rects, _enemy_god_zone_ui)
+	for raw_zone_ui in _board_zone_uis:
+		_append_follower_route_zone_data(open_points, occupied_rects, raw_zone_ui as BoardZoneUI)
+	_append_follower_route_zone_data(open_points, occupied_rects, _player_god_zone_ui)
+	return {
+		"open_points": open_points,
+		"occupied_rects": occupied_rects,
+	}
+
+func _get_follower_battlefield_bounds() -> Rect2:
+	var min_x := 1.0e20
+	var min_y := 1.0e20
+	var max_x := -1.0e20
+	var max_y := -1.0e20
+	for control in [enemy_board_container, board_container]:
+		var rect := _get_follower_local_control_rect(control as Control)
+		if rect.size.x <= 0.0 or rect.size.y <= 0.0:
+			continue
+		min_x = minf(min_x, rect.position.x)
+		min_y = minf(min_y, rect.position.y)
+		max_x = maxf(max_x, rect.end.x)
+		max_y = maxf(max_y, rect.end.y)
+	if min_x >= max_x or min_y >= max_y:
+		return Rect2(Vector2.ZERO, size)
+	return Rect2(Vector2(min_x, min_y), Vector2(max_x - min_x, max_y - min_y))
+
+func _is_follower_route_segment_clear(a: Vector2, b: Vector2, occupied_rects: Array[Rect2]) -> bool:
+	if occupied_rects.is_empty():
+		return true
+	var distance := a.distance_to(b)
+	var steps := maxi(2, int(ceil(distance / 18.0)))
+	for step_index in range(steps + 1):
+		var point := a.lerp(b, float(step_index) / float(steps))
+		for occupied_rect in occupied_rects:
+			if occupied_rect.has_point(point):
+				return false
+	return true
+
+func _is_follower_route_clear(route: Array, occupied_rects: Array[Rect2]) -> bool:
+	if route.size() < 2:
+		return false
+	for i in range(route.size() - 1):
+		if not _is_follower_route_segment_clear(route[i] as Vector2, route[i + 1] as Vector2, occupied_rects):
+			return false
+	return true
+
+func _get_follower_open_battlefield_route(start_position: Vector2, end_position: Vector2, record: Dictionary, open_points: Array, occupied_rects: Array[Rect2]) -> Array:
+	if open_points.is_empty():
+		return []
+	var rows: Array = []
+	var min_route_y := minf(start_position.y, end_position.y)
+	var max_route_y := maxf(start_position.y, end_position.y)
+	for raw_point in open_points:
+		var point := raw_point as Vector2
+		if point.y <= min_route_y + 4.0 or point.y >= max_route_y - 4.0:
+			continue
+		var row_index := -1
+		for i in range(rows.size()):
+			var row := rows[i] as Dictionary
+			if absf(float(row.get("y", 0.0)) - point.y) <= FOLLOWER_CASUALTY_CONVERT_ROW_TOLERANCE:
+				row_index = i
+				break
+		if row_index < 0:
+			rows.append({"y": point.y, "points": [point]})
+		else:
+			var row := rows[row_index] as Dictionary
+			var row_points: Array = row.get("points", [])
+			row_points.append(point)
+			row["points"] = row_points
+			row["y"] = (float(row.get("y", point.y)) + point.y) * 0.5
+			rows[row_index] = row
+	if rows.is_empty():
+		return []
+	rows.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		return float(a.get("y", 0.0)) < float(b.get("y", 0.0))
+	)
+	if start_position.y > end_position.y:
+		rows.reverse()
+	var route: Array = [start_position]
+	var slot_seed := int(record.get("slot_index", 0)) * 719 + int(record.get("born_msec", 0))
+	var previous_point := start_position
+	for row_number in range(rows.size()):
+		var row := rows[row_number] as Dictionary
+		var row_y := float(row.get("y", start_position.y))
+		var progress := clampf(inverse_lerp(start_position.y, end_position.y, row_y), 0.0, 1.0)
+		var desired_x := lerpf(start_position.x, end_position.x, progress)
+		var row_points: Array = row.get("points", [])
+		var best_point := Vector2.INF
+		var best_score := 1.0e20
+		for point_index in range(row_points.size()):
+			var candidate := row_points[point_index] as Vector2
+			var noise := _follower_noise01(slot_seed + row_number * 131 + point_index * 17)
+			var score := absf(candidate.x - desired_x) + absf(candidate.x - previous_point.x) * 0.35 + noise * 28.0
+			if score < best_score:
+				best_score = score
+				best_point = candidate
+		if best_point != Vector2.INF:
+			route.append(best_point)
+			previous_point = best_point
+	route.append(end_position)
+	if route.size() < 3:
+		return []
+	return route if _is_follower_route_clear(route, occupied_rects) else []
+
+func _get_follower_side_conversion_route(start_position: Vector2, end_position: Vector2, record: Dictionary, occupied_rects: Array[Rect2]) -> Array:
+	var battlefield_bounds := _get_follower_battlefield_bounds()
+	var viewport_width := size.x if size.x > 0.0 else get_viewport_rect().size.x
+	var edge_padding := maxf(FOLLOWER_CASUALTY_CONVERT_SIDE_PADDING, FOLLOWER_CASUALTY_SCREEN_EDGE_PADDING)
+	var left_x := clampf(battlefield_bounds.position.x - FOLLOWER_CASUALTY_CONVERT_SIDE_PADDING, edge_padding, maxf(edge_padding, viewport_width - edge_padding))
+	var right_x := clampf(battlefield_bounds.end.x + FOLLOWER_CASUALTY_CONVERT_SIDE_PADDING, edge_padding, maxf(edge_padding, viewport_width - edge_padding))
+	var prefer_right := absf(start_position.x - right_x) + absf(end_position.x - right_x) < absf(start_position.x - left_x) + absf(end_position.x - left_x)
+	var primary_x := right_x if prefer_right else left_x
+	var secondary_x := left_x if prefer_right else right_x
+	var primary_route: Array = [start_position, Vector2(primary_x, start_position.y), Vector2(primary_x, end_position.y), end_position]
+	if _is_follower_route_clear(primary_route, occupied_rects):
+		return primary_route
+	var secondary_route: Array = [start_position, Vector2(secondary_x, start_position.y), Vector2(secondary_x, end_position.y), end_position]
+	return secondary_route
+
+func _get_follower_route_distance(route: Array) -> float:
+	var total_distance := 0.0
+	for i in range(route.size() - 1):
+		total_distance += (route[i] as Vector2).distance_to(route[i + 1] as Vector2)
+	return total_distance
+
+func _get_follower_conversion_route(start_position: Vector2, end_position: Vector2, record: Dictionary) -> Array:
+	var route_data := _get_follower_battlefield_route_data()
+	var open_points: Array = route_data.get("open_points", [])
+	var occupied_rects: Array[Rect2] = []
+	var raw_occupied = route_data.get("occupied_rects", [])
+	if raw_occupied is Array:
+		for rect in raw_occupied:
+			if rect is Rect2:
+				occupied_rects.append(rect)
+	var open_route := _get_follower_open_battlefield_route(start_position, end_position, record, open_points, occupied_rects)
+	var side_route := _get_follower_side_conversion_route(start_position, end_position, record, occupied_rects)
+	if open_route.is_empty():
+		return side_route
+	if side_route.is_empty():
+		return open_route
+	return side_route if _get_follower_route_distance(side_route) < _get_follower_route_distance(open_route) else open_route
+
+func _sample_follower_route(route: Array, t: float) -> Vector2:
+	if route.is_empty():
+		return Vector2.ZERO
+	if route.size() == 1:
+		return route[0] as Vector2
+	var total_distance := 0.0
+	for i in range(route.size() - 1):
+		total_distance += (route[i] as Vector2).distance_to(route[i + 1] as Vector2)
+	if total_distance <= 0.001:
+		return route.back() as Vector2
+	var target_distance := clampf(t, 0.0, 1.0) * total_distance
+	var walked_distance := 0.0
+	for i in range(route.size() - 1):
+		var point_a := route[i] as Vector2
+		var point_b := route[i + 1] as Vector2
+		var segment_distance := point_a.distance_to(point_b)
+		if walked_distance + segment_distance >= target_distance:
+			var segment_t := (target_distance - walked_distance) / maxf(0.001, segment_distance)
+			return point_a.lerp(point_b, segment_t)
+		walked_distance += segment_distance
+	return route.back() as Vector2
+
+func _layout_follower_conversion_sprite(sprite: Sprite2D, bubble: Control, record: Dictionary, age_seconds: float, now_msec: int, height_scale: float, avoid_rects: Array[Rect2] = []) -> void:
+	var from_key := str(record.get("convert_from_key", ""))
+	var to_key := str(record.get("convert_to_key", ""))
+	var start_side := -1.0 if float(record.get("convert_start_side", -1.0)) < 0.0 else 1.0
+	var end_side := -1.0 if float(record.get("convert_end_side", 1.0)) < 0.0 else 1.0
+	var start_position := _get_follower_display_point_for_player_key(
+		from_key,
+		start_side,
+		float(record.get("convert_start_x", 0.5)),
+		float(record.get("convert_start_y", 0.5)),
+		avoid_rects
+	)
+	var end_position := _get_follower_display_point_for_player_key(
+		to_key,
+		end_side,
+		float(record.get("convert_end_x", 0.5)),
+		float(record.get("convert_end_y", 0.5)),
+		avoid_rects
+	)
+	var convert_t := clampf(age_seconds / FOLLOWER_CASUALTY_CONVERT_SECONDS, 0.0, 1.0)
+	var route := _get_follower_conversion_route(start_position, end_position, record)
+	var final_position := _sample_follower_route(route, convert_t)
+	var lookahead_position := _sample_follower_route(route, minf(1.0, convert_t + 0.04))
+	var direction := lookahead_position - final_position
+	if direction.length() <= 0.001:
+		direction = end_position - start_position
+	if direction.length() > 0.001:
+		var normalized_direction := direction.normalized()
+		record["move_x"] = normalized_direction.x
+		record["move_y"] = normalized_direction.y
+		record["flip"] = normalized_direction.x < 0.0
+	_prepare_follower_sprite_for_record(sprite, record, "converting", age_seconds, height_scale, now_msec, 0.72)
+	final_position.y += sin((age_seconds + float(int(record.get("slot_index", 0))) * 0.29) * 14.0) * (1.8 * height_scale)
+	sprite.position = final_position
+	sprite.z_index = 120 + int(final_position.y)
+	_layout_follower_speech_bubble(bubble, record, "converting", age_seconds, sprite.position, height_scale)
+
+func _layout_follower_casualty_sprites(records: Array) -> void:
+	if _follower_casualty_overlay == null or not is_instance_valid(_follower_casualty_overlay):
+		return
+	_follower_casualty_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_follower_casualty_overlay.size = size
+	var hand_bounds := _get_follower_casualty_hand_bounds()
+	var left_count := int(ceil(float(FOLLOWER_CASUALTY_MAX_RECORDS) * 0.5))
+	var base_y := hand_bounds.position.y + hand_bounds.size.y - FOLLOWER_CASUALTY_BOTTOM_LIFT
+	var viewport_height := size.y if size.y > 0.0 else get_viewport_rect().size.y
+	base_y = minf(base_y, viewport_height - 12.0)
+	var left_mill_rect := _get_follower_mill_rect(hand_bounds, -1.0, base_y)
+	var right_mill_rect := _get_follower_mill_rect(hand_bounds, 1.0, base_y)
+	var avoid_rects := _get_follower_control_avoid_rects()
+	var now_msec := Time.get_ticks_msec()
+	for i in range(_follower_casualty_sprites.size()):
+		var sprite := _follower_casualty_sprites[i] as Sprite2D
+		var bubble: Control = null
+		if i < _follower_casualty_bubbles.size():
+			bubble = _follower_casualty_bubbles[i] as Control
+		if sprite == null or not is_instance_valid(sprite):
+			_hide_follower_speech_bubble(bubble)
+			continue
+		if i >= records.size():
+			sprite.visible = false
+			_hide_follower_speech_bubble(bubble)
+			continue
+		var record := records[i] as Dictionary
+		if record == null:
+			sprite.visible = false
+			_hide_follower_speech_bubble(bubble)
+			continue
+		var state := str(record.get("state", "hidden"))
+		if state == "hidden":
+			sprite.visible = false
+			_hide_follower_speech_bubble(bubble)
+			continue
+		var slot_index := clampi(int(record.get("slot_index", i)), 0, FOLLOWER_CASUALTY_MAX_RECORDS - 1)
+		var age_seconds := float(now_msec - int(record.get("born_msec", now_msec))) / 1000.0
+		if state == "converting":
+			_layout_follower_conversion_sprite(sprite, bubble, record, age_seconds, now_msec, 1.0, avoid_rects)
+			records[i] = record
+			continue
+		var side := -1.0
+		if slot_index >= left_count:
+			side = 1.0
+		if state == "fleeing":
+			side = -1.0 if float(record.get("flee_side", side)) < 0.0 else 1.0
+		_prepare_follower_sprite_for_record(sprite, record, state, age_seconds, 1.0, now_msec)
+		var mill_rect := left_mill_rect if side < 0.0 else right_mill_rect
+		var final_x := mill_rect.position.x + clampf(float(record.get("mill_x", 0.5)), 0.0, 1.0) * mill_rect.size.x
+		var y := mill_rect.position.y + clampf(float(record.get("mill_y", 0.5)), 0.0, 1.0) * mill_rect.size.y
+		var adjusted_position := _avoid_follower_control_rects(Vector2(final_x, y), mill_rect, side, avoid_rects)
+		final_x = adjusted_position.x
+		y = adjusted_position.y
+		if state == "entering":
+			var enter_t := clampf(age_seconds / FOLLOWER_CASUALTY_ENTER_SECONDS, 0.0, 1.0)
+			enter_t = enter_t * enter_t * (3.0 - 2.0 * enter_t)
+			final_x = lerpf(-32.0, final_x, enter_t)
+		elif state == "fleeing":
+			var flee_t := clampf(age_seconds / FOLLOWER_CASUALTY_FLEE_SECONDS, 0.0, 1.0)
+			flee_t = flee_t * flee_t * (3.0 - 2.0 * flee_t)
+			var offscreen_x := -FOLLOWER_CASUALTY_FLEE_OFFSCREEN_PADDING if side < 0.0 else size.x + FOLLOWER_CASUALTY_FLEE_OFFSCREEN_PADDING
+			final_x = lerpf(final_x, offscreen_x, flee_t)
+			y += sin((age_seconds + float(slot_index) * 0.31) * 18.0) * 1.5
+		else:
+			final_x = clampf(final_x, FOLLOWER_CASUALTY_SCREEN_EDGE_PADDING, maxf(FOLLOWER_CASUALTY_SCREEN_EDGE_PADDING, size.x - FOLLOWER_CASUALTY_SCREEN_EDGE_PADDING))
+		sprite.position = Vector2(final_x, y)
+		sprite.z_index = 100 + int(y)
+		_layout_follower_speech_bubble(bubble, record, state, age_seconds, sprite.position, 1.0)
+
+func _get_opponent_follower_band_rect() -> Rect2:
+	var viewport_width := size.x if size.x > 0.0 else get_viewport_rect().size.x
+	var edge_padding := FOLLOWER_CASUALTY_SCREEN_EDGE_PADDING
+	if center_panel == null or not is_instance_valid(center_panel):
+		return Rect2(
+			Vector2(edge_padding, OPPONENT_FOLLOWER_BAND_TOP_PADDING),
+			Vector2(maxf(180.0, viewport_width - edge_padding * 2.0), maxf(32.0, OPPONENT_FOLLOWER_BAND_HEIGHT - OPPONENT_FOLLOWER_BAND_TOP_PADDING - OPPONENT_FOLLOWER_BAND_BOTTOM_PADDING))
+		)
+	var root_inverse := get_global_transform().affine_inverse()
+	var center_rect: Rect2 = center_panel.get_global_rect()
+	var center_top_left: Vector2 = root_inverse * center_rect.position
+	var band_x := edge_padding
+	var band_y := center_top_left.y + OPPONENT_FOLLOWER_BAND_TOP_PADDING
+	var band_right := viewport_width - edge_padding
+	var band_bottom := center_top_left.y + OPPONENT_FOLLOWER_BAND_HEIGHT - OPPONENT_FOLLOWER_BAND_BOTTOM_PADDING
+	if enemy_board_container != null and is_instance_valid(enemy_board_container):
+		var enemy_rect: Rect2 = enemy_board_container.get_global_rect()
+		if enemy_rect.size.y > 0.0:
+			var enemy_top_left: Vector2 = root_inverse * enemy_rect.position
+			band_bottom = minf(band_bottom, enemy_top_left.y - OPPONENT_FOLLOWER_BAND_BOTTOM_PADDING)
+	var band_width := maxf(180.0, band_right - band_x)
+	var band_height := maxf(32.0, band_bottom - band_y)
+	return Rect2(Vector2(band_x, band_y), Vector2(band_width, band_height))
+
+func _get_opponent_follower_hand_bounds() -> Rect2:
+	var enemy_player := _get_display_opponent()
+	if _get_enemy_hand_overlay_card_count(enemy_player) <= 0:
+		return Rect2()
+	var overlay_rect := _get_enemy_hand_overlay_rect()
+	var min_x := 1.0e20
+	var max_x := -1.0e20
+	if _enemy_hand_overlay != null and is_instance_valid(_enemy_hand_overlay):
+		for child in _enemy_hand_overlay.get_children():
+			var card_control := child as Control
+			if card_control == null or not is_instance_valid(card_control):
+				continue
+			min_x = minf(min_x, overlay_rect.position.x + card_control.position.x)
+			max_x = maxf(max_x, overlay_rect.position.x + card_control.position.x + card_control.size.x)
+	if min_x < max_x:
+		return Rect2(Vector2(min_x, overlay_rect.position.y), Vector2(maxf(1.0, max_x - min_x), overlay_rect.size.y))
+	var fallback_count := maxi(1, _get_enemy_hand_overlay_card_count(enemy_player))
+	var fallback_width := minf(
+		overlay_rect.size.x,
+		ENEMY_HAND_CARD_WIDTH + ENEMY_HAND_CARD_SPACING * float(maxi(0, fallback_count - 1))
+	)
+	var center_x := overlay_rect.position.x + overlay_rect.size.x * 0.5
+	return Rect2(Vector2(center_x - fallback_width * 0.5, overlay_rect.position.y), Vector2(fallback_width, overlay_rect.size.y))
+
+func _get_opponent_follower_mill_rect(hand_bounds: Rect2, side: float, band_rect: Rect2) -> Rect2:
+	if hand_bounds.size.x <= 0.0:
+		return band_rect
+	var gap := FOLLOWER_CASUALTY_SIDE_GAP
+	var rect_x := band_rect.position.x
+	var rect_right := hand_bounds.position.x - gap
+	if side > 0.0:
+		rect_x = hand_bounds.end.x + gap
+		rect_right = band_rect.end.x
+	var rect_width := maxf(1.0, rect_right - rect_x)
+	return Rect2(Vector2(rect_x, band_rect.position.y), Vector2(rect_width, band_rect.size.y))
+
+func _get_board_drag_followers_target_rects(include_god_zone: bool = true) -> Array[Rect2]:
+	var rects: Array[Rect2] = []
+	if game_manager == null or game_manager.other_player == null:
+		return rects
+	if _get_display_opponent() != game_manager.other_player:
+		return rects
+
+	var band_rect := _get_opponent_follower_band_rect()
+	if band_rect.size.x > 0.0 and band_rect.size.y > 0.0:
+		var hand_bounds := _get_opponent_follower_hand_bounds()
+		if hand_bounds.size.x <= 0.0 or hand_bounds.size.y <= 0.0:
+			rects.append(band_rect)
+		else:
+			var left_rect := _get_opponent_follower_mill_rect(hand_bounds, -1.0, band_rect)
+			var right_rect := _get_opponent_follower_mill_rect(hand_bounds, 1.0, band_rect)
+			if left_rect.size.x > 1.0 and left_rect.size.y > 1.0:
+				rects.append(left_rect)
+			if right_rect.size.x > 1.0 and right_rect.size.y > 1.0:
+				rects.append(right_rect)
+
+	if include_god_zone \
+			and _enemy_god_zone_ui != null \
+			and is_instance_valid(_enemy_god_zone_ui):
+		var god_global_rect := _enemy_god_zone_ui.get_global_rect()
+		if god_global_rect.size.x > 0.0 and god_global_rect.size.y > 0.0:
+			var god_local_pos: Vector2 = get_global_transform().affine_inverse() * god_global_rect.position
+			rects.append(Rect2(god_local_pos, god_global_rect.size))
+	return rects
+
+func _get_board_drag_followers_target_player_at(global_pos: Vector2) -> Player:
+	if not _bdrag_active or _bdrag_card == null or game_manager == null:
+		return null
+	var opponent := game_manager.other_player
+	if opponent == null or _get_display_opponent() != opponent:
+		return null
+	var local_pos: Vector2 = get_global_transform().affine_inverse() * global_pos
+	for target_rect in _get_board_drag_followers_target_rects(true):
+		if target_rect.has_point(local_pos):
+			return opponent
+	return null
+
+func _can_board_drag_attack_followers(target_player: Player) -> bool:
+	if target_player == null \
+			or game_manager == null \
+			or match_manager == null \
+			or _bdrag_card == null:
+		return false
+	if target_player != game_manager.other_player:
+		return false
+	if _bdrag_card.get_controller() != game_manager.current_player:
+		return false
+	if not match_manager.can_attack(_bdrag_card) and not _can_auto_switch_defensive_drag_attacker(_bdrag_card):
+		return false
+	var allied_attackers: Array = []
+	var united_front_partner := _get_declared_attack_partner(_bdrag_card)
+	if united_front_partner != null:
+		allied_attackers.append(united_front_partner)
+	return not game_manager.is_followers_attack_blocked_by_active_structure(_bdrag_card, target_player, allied_attackers)
+
+func _get_board_drag_followers_attack_preview_attacker(target_player: Player) -> Card:
+	if not _bdrag_followers_target_preview_active:
+		return null
+	return _bdrag_card if _can_board_drag_attack_followers(target_player) else null
+
+func _ensure_board_drag_followers_highlight() -> void:
+	if _board_drag_followers_highlight != null and is_instance_valid(_board_drag_followers_highlight):
+		return
+	_board_drag_followers_highlight = Control.new()
+	_board_drag_followers_highlight.name = "BoardDragFollowersTargetHighlight"
+	_board_drag_followers_highlight.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_board_drag_followers_highlight.clip_contents = false
+	_board_drag_followers_highlight.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_board_drag_followers_highlight.z_as_relative = false
+	_board_drag_followers_highlight.z_index = BOARD_DRAG_FOLLOWERS_TARGET_HIGHLIGHT_Z_INDEX
+	_board_drag_followers_highlight.draw.connect(_draw_board_drag_followers_highlight)
+	add_child(_board_drag_followers_highlight)
+
+func _clear_board_drag_followers_highlight() -> void:
+	_bdrag_followers_target_preview_active = false
+	if _board_drag_followers_highlight != null and is_instance_valid(_board_drag_followers_highlight):
+		_board_drag_followers_highlight.queue_free()
+	_board_drag_followers_highlight = null
+
+func _sync_board_drag_followers_highlight() -> void:
+	if not _bdrag_followers_target_preview_active:
+		if _board_drag_followers_highlight != null and is_instance_valid(_board_drag_followers_highlight):
+			_board_drag_followers_highlight.visible = false
+		return
+	_ensure_board_drag_followers_highlight()
+	if _board_drag_followers_highlight == null or not is_instance_valid(_board_drag_followers_highlight):
+		return
+	_board_drag_followers_highlight.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_board_drag_followers_highlight.size = size
+	_board_drag_followers_highlight.visible = true
+	_board_drag_followers_highlight.queue_redraw()
+
+func _draw_board_drag_followers_highlight() -> void:
+	if not _bdrag_followers_target_preview_active \
+			or _board_drag_followers_highlight == null \
+			or not is_instance_valid(_board_drag_followers_highlight):
+		return
+	for target_rect in _get_board_drag_followers_target_rects(true):
+		if target_rect.size.x <= 1.0 or target_rect.size.y <= 1.0:
+			continue
+		var render_rect := target_rect.grow(-1.0)
+		if render_rect.size.x <= 0.0 or render_rect.size.y <= 0.0:
+			continue
+		_board_drag_followers_highlight.draw_rect(render_rect, Color(0.92, 0.10, 0.08, 0.18), true)
+		_board_drag_followers_highlight.draw_rect(render_rect, Color(0.98, 0.24, 0.18, 0.92), false, 2.4)
+		var inner_rect := render_rect.grow(-5.0)
+		if inner_rect.size.x > 0.0 and inner_rect.size.y > 0.0:
+			_board_drag_followers_highlight.draw_rect(inner_rect, Color(1.0, 0.54, 0.32, 0.55), false, 1.2)
+
+func _set_bdrag_followers_target_preview(active: bool) -> void:
+	var target_player: Player = game_manager.other_player if game_manager != null else null
+	var next_active := active and _can_board_drag_attack_followers(target_player)
+	if _bdrag_followers_target_preview_active == next_active:
+		if next_active:
+			_sync_board_drag_followers_highlight()
+		return
+	_bdrag_followers_target_preview_active = next_active
+	_sync_board_drag_followers_highlight()
+	if _enemy_god_zone_ui != null and is_instance_valid(_enemy_god_zone_ui):
+		_enemy_god_zone_ui._refresh_display()
+
+func _update_bdrag_followers_target_preview(global_pos: Vector2) -> void:
+	_set_bdrag_followers_target_preview(_get_board_drag_followers_target_player_at(global_pos) != null)
+
+func _layout_opponent_follower_casualty_sprites(records: Array) -> void:
+	if _opponent_follower_casualty_overlay == null or not is_instance_valid(_opponent_follower_casualty_overlay):
+		return
+	_opponent_follower_casualty_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_opponent_follower_casualty_overlay.size = size
+	var band_rect := _get_opponent_follower_band_rect()
+	var hand_bounds := _get_opponent_follower_hand_bounds()
+	var left_count := int(ceil(float(FOLLOWER_CASUALTY_MAX_RECORDS) * 0.5))
+	var left_mill_rect := _get_opponent_follower_mill_rect(hand_bounds, -1.0, band_rect)
+	var right_mill_rect := _get_opponent_follower_mill_rect(hand_bounds, 1.0, band_rect)
+	var now_msec := Time.get_ticks_msec()
+	var inset_y := FOLLOWER_CASUALTY_ALIVE_HEIGHT * OPPONENT_FOLLOWER_HEIGHT_SCALE * 0.56
+	for i in range(_opponent_follower_casualty_sprites.size()):
+		var sprite := _opponent_follower_casualty_sprites[i] as Sprite2D
+		var bubble: Control = null
+		if i < _opponent_follower_casualty_bubbles.size():
+			bubble = _opponent_follower_casualty_bubbles[i] as Control
+		if sprite == null or not is_instance_valid(sprite):
+			_hide_follower_speech_bubble(bubble)
+			continue
+		if i >= records.size():
+			sprite.visible = false
+			_hide_follower_speech_bubble(bubble)
+			continue
+		var record := records[i] as Dictionary
+		if record == null:
+			sprite.visible = false
+			_hide_follower_speech_bubble(bubble)
+			continue
+		var state := str(record.get("state", "hidden"))
+		if state == "hidden":
+			sprite.visible = false
+			_hide_follower_speech_bubble(bubble)
+			continue
+		var age_seconds := float(now_msec - int(record.get("born_msec", now_msec))) / 1000.0
+		if state == "converting":
+			_layout_follower_conversion_sprite(sprite, bubble, record, age_seconds, now_msec, OPPONENT_FOLLOWER_HEIGHT_SCALE)
+			records[i] = record
+			continue
+		_prepare_follower_sprite_for_record(sprite, record, state, age_seconds, OPPONENT_FOLLOWER_HEIGHT_SCALE, now_msec, OPPONENT_FOLLOWER_HEIGHT_SCALE)
+		var slot_index := clampi(int(record.get("slot_index", i)), 0, FOLLOWER_CASUALTY_MAX_RECORDS - 1)
+		var side := -1.0 if slot_index < left_count else 1.0
+		if state == "fleeing":
+			side = -1.0 if float(record.get("flee_side", side)) < 0.0 else 1.0
+		var mill_rect := left_mill_rect if side < 0.0 else right_mill_rect
+		var usable_height := maxf(1.0, mill_rect.size.y - inset_y * 2.0)
+		var final_x := mill_rect.position.x + clampf(float(record.get("mill_x", 0.5)), 0.0, 1.0) * mill_rect.size.x
+		var y := mill_rect.position.y + inset_y + clampf(float(record.get("mill_y", 0.5)), 0.0, 1.0) * usable_height
+		if state == "entering":
+			var enter_t := clampf(age_seconds / FOLLOWER_CASUALTY_ENTER_SECONDS, 0.0, 1.0)
+			enter_t = enter_t * enter_t * (3.0 - 2.0 * enter_t)
+			final_x = lerpf(-32.0, final_x, enter_t)
+		elif state == "fleeing":
+			var flee_t := clampf(age_seconds / FOLLOWER_CASUALTY_FLEE_SECONDS, 0.0, 1.0)
+			flee_t = flee_t * flee_t * (3.0 - 2.0 * flee_t)
+			var offscreen_x := -FOLLOWER_CASUALTY_FLEE_OFFSCREEN_PADDING if side < 0.0 else size.x + FOLLOWER_CASUALTY_FLEE_OFFSCREEN_PADDING
+			final_x = lerpf(final_x, offscreen_x, flee_t)
+			y += sin((age_seconds + float(slot_index) * 0.31) * 18.0) * 1.1
+		else:
+			final_x = clampf(final_x, mill_rect.position.x, maxf(mill_rect.position.x, mill_rect.end.x))
+		sprite.position = Vector2(final_x, y)
+		sprite.z_index = 100 + int(y)
+		_layout_follower_speech_bubble(bubble, record, state, age_seconds, sprite.position, OPPONENT_FOLLOWER_HEIGHT_SCALE)
+
+func _sync_follower_casualty_overlay() -> void:
+	if _post_game_board_refresh_locked:
+		return
+	if game_manager == null:
+		if _follower_casualty_overlay != null and is_instance_valid(_follower_casualty_overlay):
+			_follower_casualty_overlay.visible = false
+		if _opponent_follower_casualty_overlay != null and is_instance_valid(_opponent_follower_casualty_overlay):
+			_opponent_follower_casualty_overlay.visible = false
+		return
+	var advanced_keys := {}
+	var hand_player := _get_visible_hand_player()
+	if hand_player == null:
+		if _follower_casualty_overlay != null and is_instance_valid(_follower_casualty_overlay):
+			_follower_casualty_overlay.visible = false
+	else:
+		_sync_follower_casualties_for_player(hand_player, hand_player.followers, false)
+		var player_key := _get_follower_casualty_player_key(hand_player)
+		var records := _get_follower_casualty_records_for_key(player_key)
+		if not advanced_keys.has(player_key):
+			_advance_follower_body_records(records)
+			advanced_keys[player_key] = true
+		_follower_casualty_records_by_player_key[player_key] = records
+		if records.is_empty():
+			if _follower_casualty_overlay != null and is_instance_valid(_follower_casualty_overlay):
+				_resize_follower_casualty_sprites(0)
+				_follower_casualty_overlay.visible = false
+		else:
+			_ensure_follower_casualty_overlay()
+			if _follower_casualty_overlay != null and is_instance_valid(_follower_casualty_overlay):
+				_follower_casualty_overlay.visible = true
+				_resize_follower_casualty_sprites(records.size())
+				_layout_follower_casualty_sprites(records)
+
+	var opponent_player := _get_display_opponent()
+	if opponent_player == null:
+		if _opponent_follower_casualty_overlay != null and is_instance_valid(_opponent_follower_casualty_overlay):
+			_opponent_follower_casualty_overlay.visible = false
+		return
+	_sync_follower_casualties_for_player(opponent_player, opponent_player.followers, false)
+	var opponent_key := _get_follower_casualty_player_key(opponent_player)
+	var opponent_records := _get_follower_casualty_records_for_key(opponent_key)
+	if not advanced_keys.has(opponent_key):
+		_advance_follower_body_records(opponent_records, OPPONENT_FOLLOWER_HEIGHT_SCALE)
+		advanced_keys[opponent_key] = true
+	_follower_casualty_records_by_player_key[opponent_key] = opponent_records
+	if opponent_records.is_empty():
+		if _opponent_follower_casualty_overlay != null and is_instance_valid(_opponent_follower_casualty_overlay):
+			_resize_opponent_follower_casualty_sprites(0)
+			_opponent_follower_casualty_overlay.visible = false
+		return
+	_ensure_opponent_follower_casualty_overlay()
+	if _opponent_follower_casualty_overlay == null or not is_instance_valid(_opponent_follower_casualty_overlay):
+		return
+	_opponent_follower_casualty_overlay.visible = true
+	_resize_opponent_follower_casualty_sprites(opponent_records.size())
+	_layout_opponent_follower_casualty_sprites(opponent_records)
+
 func _should_hide_hand_card(card: Card) -> bool:
 	var hand_player := _get_visible_hand_player()
 	if card == null or game_manager == null or hand_player == null:
@@ -8315,6 +9896,15 @@ func _get_hand_render_entries(
 		})
 	return entries
 
+func _get_hand_render_entry_cost_lines(entry: Dictionary) -> Array[String]:
+	var lines: Array[String] = []
+	var raw_lines = entry.get("cost_adjustment_lines", [])
+	if raw_lines is Array:
+		for line in raw_lines:
+			if line != null:
+				lines.append(str(line))
+	return lines
+
 func _get_hand_render_signature(hand_player: Player, entries: Array[Dictionary]) -> String:
 	var parts := PackedStringArray([str(hand_player.get_instance_id())])
 	for entry in entries:
@@ -8322,7 +9912,7 @@ func _get_hand_render_signature(hand_player: Player, entries: Array[Dictionary])
 		if card == null:
 			parts.append("null")
 			continue
-		var cost_lines: Array = entry.get("cost_adjustment_lines", [])
+		var cost_lines := _get_hand_render_entry_cost_lines(entry)
 		parts.append("%s|%s|%s|%d|%s|%s" % [
 			str(card.get_instance_id()),
 			card.uid,
@@ -8417,12 +10007,13 @@ func draw_hand() -> void:
 			continue
 		var vc := VisualCard.new()
 		vc.set_hand_mode(true)
+		var cost_lines := _get_hand_render_entry_cost_lines(entry)
 		vc.setup(
 			card,
 			180,
 			0,
 			int(entry.get("display_mana_cost", card.mana_cost)),
-			entry.get("cost_adjustment_lines", []) as Array[String]
+			cost_lines
 		)
 		vc.set_hover_viewer(game_manager.get_feedback_viewer())
 		if bool(entry.get("is_proxy", false)):
@@ -8514,6 +10105,7 @@ func _layout_fan() -> void:
 		var hit_width := maxf(1.0, local_right - local_left)
 		vc.set_hand_hover_hit_rect(Rect2(Vector2(local_left, 0.0), Vector2(hit_width, vc.size.y)))
 	call_deferred("_layout_all_card_priority_toggles")
+	call_deferred("_sync_follower_casualty_overlay")
 
 func _on_hand_card_hover_started(vc: VisualCard) -> void:
 	if _is_match_replay_open():
@@ -20533,6 +22125,7 @@ func _input(event: InputEvent) -> void:
 			_bdrag_start_visual()
 		else:
 			_position_bdrag_visual()
+		_update_bdrag_followers_target_preview(get_global_mouse_position())
 		get_viewport().set_input_as_handled()
 	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and not event.pressed:
 		if _bdrag_visual != null:
@@ -20915,6 +22508,7 @@ func _bdrag_start_visual() -> void:
 	if _bdrag_source_zone_ui != null and is_instance_valid(_bdrag_source_zone_ui):
 		_bdrag_source_zone_ui.self_modulate.a = BOARD_DRAG_SOURCE_GHOST_ALPHA
 	_position_bdrag_visual()
+	_update_bdrag_followers_target_preview(get_global_mouse_position())
 
 func _position_bdrag_visual() -> void:
 	if _bdrag_visual == null or not is_instance_valid(_bdrag_visual):
@@ -20958,14 +22552,17 @@ func _bdrag_finish(drop_pos: Vector2) -> void:
 		if _enemy_god_zone_ui.get_global_rect().has_point(drop_pos):
 			target_zu = _enemy_god_zone_ui
 
-	if target_zu == null:
+	var followers_target_player := _get_board_drag_followers_target_player_at(drop_pos)
+	if target_zu == null and followers_target_player == null:
 		return
 
-	var target_zone := target_zu.zone
+	var target_zone: Zone = target_zu.zone if target_zu != null else null
 	var drag_attack_target = _get_board_drag_attack_target(target_zu, target_zone)
+	if drag_attack_target == null and followers_target_player != null:
+		drag_attack_target = followers_target_player
 
 	# Move: own empty adjacent zone
-	if not target_zu._is_enemy and target_zone.cards.size() == 0:
+	if target_zu != null and not target_zu._is_enemy and target_zone.cards.size() == 0:
 		if not _creature_can_move(card):
 			var minor_action_limit := card.get_max_minor_creature_actions_per_turn()
 			if card.is_sleeping:
@@ -20998,20 +22595,14 @@ func _bdrag_finish(drop_pos: Vector2) -> void:
 		_set_action_label_text(match_manager.get_attack_invalid_reason(card))
 		return
 
-	# Attack followers via God slot
-	if target_zu._is_enemy and target_zone.zone_type == Zone.ZoneType.GOD_SLOT:
-		selected_attacker = card
-		_on_attack_followers_pressed()
-		return
-
-	# Attack followers via empty enemy frontline
-	if target_zu._is_enemy and target_zone.cards.size() == 0 and target_zone.zone_type == Zone.ZoneType.FRONTLINE:
+	# Attacks on the follower band, god slot, and empty enemy frontline all target followers.
+	if drag_attack_target is Player:
 		selected_attacker = card
 		_on_attack_followers_pressed()
 		return
 
 	# Attack creature, structure, or unequipped equipment
-	if target_zu._is_enemy and target_zone.cards.size() > 0:
+	if target_zu != null and target_zu._is_enemy and target_zone.cards.size() > 0:
 		var target_card := target_zone.cards[0]
 		if _is_direct_attack_target_card(target_card):
 			selected_attacker = card
@@ -21117,6 +22708,7 @@ func _bdrag_cancel() -> void:
 	_bdrag_cleanup()
 
 func _bdrag_cleanup() -> void:
+	_set_bdrag_followers_target_preview(false)
 	_bdrag_active = false
 	_bdrag_card = null
 	_bdrag_from_zone = null
@@ -29018,6 +30610,7 @@ func _begin_next_series_game(data: Dictionary) -> void:
 	_series_between_games_active = false
 	_hide_reinforcement_overlay()
 	_hide_game_result_overlay()
+	_post_game_board_refresh_locked = false
 	_game_finished = false
 	_game_result_presented = false
 	_pending_forfeit_return_to_menu = false
@@ -29124,10 +30717,12 @@ func _finalize_game_result_ui(result_message: String, winner = null, loser = nul
 	_set_action_label_text(resolved_message, should_record_result_log, should_record_result_log)
 	if should_present_result:
 		match_session_cleared.emit()
-	update_ui()
-	if not should_present_result:
+		_update_ui_immediately()
+	else:
+		update_ui()
 		return
 	_show_game_result_overlay(resolved_message, winner, loser, auto_return)
+	_lock_post_game_board_refresh()
 	_pending_forfeit_return_to_menu = false
 	_schedule_post_game_return_to_menu(auto_return)
 	if _is_networked_client:
@@ -29283,7 +30878,29 @@ func _should_suppress_stale_priority_rejection(reason: String) -> bool:
 		return false
 	return true
 
+func _should_ignore_post_game_network_event(event_type: String, data: Dictionary) -> bool:
+	if not _post_game_board_refresh_locked:
+		return false
+	if event_type in [
+		"full_state",
+		"game_ended",
+		"ui_interaction",
+		"priority_offered",
+		"intercept_offered",
+		"command_rejected",
+		"turn_started",
+		"upkeep_needed",
+	]:
+		return true
+	if event_type == "series_game_started":
+		return false
+	if event_type == "series_game_ended" or event_type == "series_ended":
+		return false
+	return bool(data.get("is_terminal_game_event", false))
+
 func _apply_network_event(event_type: String, data: Dictionary) -> void:
+	if _should_ignore_post_game_network_event(event_type, data):
+		return
 	if _game_finished and event_type in [
 		"match_connect_retry_started",
 		"match_join_ok",
@@ -30011,6 +31628,8 @@ func _apply_full_state(data: Dictionary) -> void:
 		_set_action_label_text(msg, force_log_from_state)
 	if _is_networked_client:
 		_present_game_result_from_state(state, msg)
+		if _post_game_board_refresh_locked:
+			return
 		_sync_priority_preferences_to_match()
 
 	update_ui()
@@ -31161,13 +32780,20 @@ func _show_followers_attack_result_on_god(player: Player, new_followers: int) ->
 	if zone_ui != null and is_instance_valid(zone_ui):
 		zone_ui.show_followers_attack_result(new_followers, STACK_ACTION_LINGER_SECONDS)
 
+func _on_followers_converted(from_player: Player, to_player: Player, amount: int) -> void:
+	_add_pending_follower_conversion(from_player, to_player, amount)
+
 func _on_player_followers_changed(_new_followers: int) -> void:
+	_sync_follower_casualties_for_player(player1, _new_followers, true)
+	_sync_follower_casualty_overlay()
 	_show_followers_attack_result_on_god(player1, _new_followers)
 	_invalidate_cached_board_layouts()
 	_refresh_visible_stat_panels()
 	_request_ui_refresh()
 
 func _on_enemy_followers_changed(_new_followers: int) -> void:
+	_sync_follower_casualties_for_player(player2, _new_followers, true)
+	_sync_follower_casualty_overlay()
 	_show_followers_attack_result_on_god(player2, _new_followers)
 	_invalidate_cached_board_layouts()
 	_refresh_visible_stat_panels()
@@ -31188,7 +32814,9 @@ func _record_local_host_match_result(winner: Player, loser: Player) -> void:
 		return
 	if headless_match_host == null or headless_match_host.match_session == null or game_manager == null:
 		return
-	if str(headless_match_host.match_session.server_mode).strip_edges() != MatchSessionScript.SERVER_MODE_IN_PROCESS_HOST:
+	var host_server_mode := str(headless_match_host.match_session.server_mode).strip_edges()
+	if host_server_mode != MatchSessionScript.SERVER_MODE_IN_PROCESS_HOST \
+			and host_server_mode != MatchSessionScript.SERVER_MODE_PLAYER_HOST:
 		return
 	if not headless_match_host.match_session.is_ranked:
 		return
@@ -31225,6 +32853,9 @@ func _on_game_ended(winner: Player, loser: Player) -> void:
 	_finalize_game_result_ui("", winner, loser, should_return_to_menu)
 
 func _request_ui_refresh() -> void:
+	if _post_game_board_refresh_locked:
+		_ui_refresh_queued = false
+		return
 	if not _is_networked_client and not _is_real_network_host():
 		if match_manager != null and match_manager.pending_humbaba_action != null:
 			var pending_resolution := str(match_manager.last_resolution_text).strip_edges()
@@ -31239,6 +32870,8 @@ func _request_ui_refresh() -> void:
 
 func _flush_ui_refresh() -> void:
 	_ui_refresh_queued = false
+	if _post_game_board_refresh_locked:
+		return
 	update_ui()
 
 func _try_handle_blot_drag_selection(card: Card) -> bool:

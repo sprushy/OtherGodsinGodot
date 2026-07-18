@@ -19,6 +19,7 @@ const UIFontScript = preload("res://scripts/ui/UIFont.gd")
 const MatchHistoryStoreScript = preload("res://scripts/server/MatchHistoryStore.gd")
 const MatchSessionScript = preload("res://scripts/server/MatchSession.gd")
 const LobbyRoomScript = preload("res://scripts/server/LobbyRoom.gd")
+const HostReachabilityProbeScript = preload("res://scripts/network/HostReachabilityProbe.gd")
 const STARTUP_SPLASH_IMAGE_PATH := "res://images/ui/splash/other_gods_splash.png"
 const STARTUP_SPLASH_SLICE_COUNT := 14
 const STARTUP_SPLASH_SLIDE_SECONDS := 1.15
@@ -48,7 +49,8 @@ const FRESH_LOBBY_RECONNECT_DELAY_SECONDS := 0.6
 const LOBBY_SIGN_IN_WATCHDOG_SECONDS := 12.0
 const ACTIVE_MATCH_AUTO_RESUME_SUPPRESS_SECONDS := 10.0
 const LEGACY_JOIN_WHILE_IN_ROOM_ERROR := "Leave your current room before joining a new one."
-const STARTUP_MENU_FADE_SECONDS := 3.0
+const STARTUP_MENU_FADE_SECONDS := 0.4
+const MENU_CARD_CACHE_BATCH_SIZE := 24
 const UPDATE_CHECK_TIMEOUT_SECONDS := 15.0
 const UPDATE_CHECK_RETRY_DELAY_SECONDS := 1.0
 const UPDATE_CHECK_MAX_ATTEMPTS := 2
@@ -64,6 +66,7 @@ const WINDOWS_NATIVE_UPDATER_HANDSHAKE_SECONDS := 10.0
 const MACOS_SPARKLE_EXTENSION_PATH := "res://addons/macos_sparkle/macos_sparkle.gdextension"
 const BYTES_PER_MIB := 1048576.0
 const MENU_PRIMARY_BUTTON_FONT_SIZE := 32
+const MENU_PRIMARY_BUTTON_MIN_WIDTH := 420.0
 const MENU_PRIMARY_BUTTON_MIN_HEIGHT := 68.0
 const MENU_BUTTON_FONT_SIZE := 24
 const MENU_BUTTON_MIN_HEIGHT := 52.0
@@ -125,6 +128,10 @@ var _pending_leave_room_id: String = ""
 var _current_lobby_ip: String = ""
 var _is_local_lobby_host: bool = false
 var _match_launch_queued: bool = false
+## External port mapped via UPnP for the currently-running player-hosted match,
+## if any. Tracked so the mapping can be removed when the host match ends. 0 when
+## not hosting or when UPnP was not used.
+var _player_host_external_port: int = 0
 var _pending_host_room_creation: bool = false
 var _pending_room_is_ranked: bool = true
 var _pending_room_best_of: int = 1
@@ -777,6 +784,8 @@ func _refresh_sound_mute_button() -> void:
 
 func _apply_main_menu_text_sizing() -> void:
 	if menu_container != null:
+		menu_container.custom_minimum_size.x = maxf(menu_container.custom_minimum_size.x, MENU_PRIMARY_BUTTON_MIN_WIDTH)
+		menu_container.size.x = maxf(menu_container.size.x, MENU_PRIMARY_BUTTON_MIN_WIDTH)
 		_apply_main_menu_text_sizing_recursive(menu_container)
 	if title_label != null:
 		title_label.add_theme_font_size_override("font_size", MENU_USERNAME_FONT_SIZE)
@@ -790,7 +799,7 @@ func _apply_main_menu_text_sizing_recursive(root: Node) -> void:
 		if child is Button:
 			var button := child as Button
 			if _is_primary_main_menu_button(button):
-				_apply_button_text_sizing(button, MENU_PRIMARY_BUTTON_FONT_SIZE, MENU_PRIMARY_BUTTON_MIN_HEIGHT)
+				_apply_primary_main_menu_button_sizing(button)
 			else:
 				_apply_button_text_sizing(button, MENU_BUTTON_FONT_SIZE, MENU_BUTTON_MIN_HEIGHT)
 		elif child is LineEdit:
@@ -805,6 +814,12 @@ func _apply_main_menu_text_sizing_recursive(root: Node) -> void:
 func _is_primary_main_menu_button(button: Button) -> bool:
 	return button != null and menu_container != null and button.get_parent() == menu_container
 
+func _apply_primary_main_menu_button_sizing(button: Button) -> void:
+	_apply_button_text_sizing(button, MENU_PRIMARY_BUTTON_FONT_SIZE, MENU_PRIMARY_BUTTON_MIN_HEIGHT)
+	button.custom_minimum_size.x = maxf(button.custom_minimum_size.x, MENU_PRIMARY_BUTTON_MIN_WIDTH)
+	button.clip_text = true
+	button.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+
 func _apply_button_text_sizing(button: Button, font_size: int, min_height: float = 0.0) -> void:
 	if button == null:
 		return
@@ -818,6 +833,12 @@ func _apply_line_edit_text_sizing(edit: LineEdit, font_size: int, min_height: fl
 	edit.add_theme_font_size_override("font_size", font_size)
 	if min_height > 0.0:
 		edit.custom_minimum_size.y = maxf(edit.custom_minimum_size.y, min_height)
+
+func _fit_main_menu_container_to_contents() -> void:
+	if menu_container == null:
+		return
+	menu_container.reset_size()
+	menu_container.size.x = maxf(menu_container.size.x, MENU_PRIMARY_BUTTON_MIN_WIDTH)
 
 func _prepare_startup_menu_fade() -> void:
 	if menu_container == null:
@@ -1235,12 +1256,13 @@ func _close_program() -> void:
 func show_menu() -> void:
 	_set_snowstorm_visible(false)
 	_close_tutorial_coach_overlay()
-	menu_container.visible = true
 	game_container.visible = false
 	_apply_main_menu_text_sizing()
 	_hide_multiplayer_deck_popup()
 	_refresh_multiplayer_deck_options()
 	_refresh_multiplayer_action_state()
+	_fit_main_menu_container_to_contents()
+	menu_container.visible = true
 	_refresh_server_version_overlay_visibility()
 	_refresh_sound_mute_button()
 
@@ -1403,13 +1425,33 @@ func _build_menu_card_template_cache_backgrounded() -> void:
 	if _menu_card_templates_built:
 		return
 	# Yield one frame so the startup loading overlay paints before we do the
-	# heavy 225-card-script load. This keeps the catalog eager (so the deck
-	# picker resolves immediately once built) without blocking the menu's first
-	# interactive frame.
+	# heavy 225-card-script load.
 	await get_tree().process_frame
 	if not is_instance_valid(self):
 		return
-	_build_menu_card_template_cache()
+	# Discover scripts once (unavoidable compilation cost), but hold the shared
+	# cached templates directly instead of duplicating all 225 cards with fresh
+	# UIDs -- the menu only reads art/names from these templates.
+	var templates: Array = CardCatalogScript.get_cached_card_templates()
+	_menu_card_templates.clear()
+	var index := 0
+	while index < templates.size():
+		var card = templates[index]
+		if card != null:
+			var card_name := str(card.card_name).strip_edges()
+			if not card_name.is_empty():
+				_menu_card_templates[card_name] = card
+			var lookup_key := CardCatalogScript.to_lookup_key(card_name)
+			if not lookup_key.is_empty():
+				_menu_card_templates[lookup_key] = card
+		index += 1
+		# Yield between batches so the splash slice animation keeps animating
+		# smoothly while we populate the cache in the background.
+		if index % MENU_CARD_CACHE_BATCH_SIZE == 0:
+			await get_tree().process_frame
+			if not is_instance_valid(self):
+				return
+	_menu_card_templates_built = true
 	# Refresh the deck picker now that god-card templates are available, so any
 	# rows rendered before the cache finished resolve their icons.
 	if is_instance_valid(self):
@@ -1419,7 +1461,7 @@ func _build_menu_card_template_cache() -> void:
 	if _menu_card_templates_built:
 		return
 	_menu_card_templates.clear()
-	for card in CardCatalogScript.make_all_cards():
+	for card in CardCatalogScript.get_cached_card_templates():
 		if card == null:
 			continue
 		var card_name := str(card.card_name).strip_edges()
@@ -1446,7 +1488,7 @@ func _build_multiplayer_deck_controls() -> void:
 	button.text = "Change Deck: No saved decks"
 	button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	button.custom_minimum_size = Vector2(0, 36)
-	button.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	button.alignment = HORIZONTAL_ALIGNMENT_CENTER
 	button.pressed.connect(_toggle_multiplayer_deck_popup)
 	menu_container.add_child(button)
 	var menu_insert_index := multiplayer_button.get_index() if multiplayer_button != null else menu_container.get_child_count() - 1
@@ -6867,6 +6909,8 @@ func _bind_lobby_client_signals() -> void:
 		lobby_client.room_error.connect(_on_lobby_room_error)
 	if not lobby_client.match_assigned.is_connected(_on_remote_match_assigned):
 		lobby_client.match_assigned.connect(_on_remote_match_assigned)
+	if lobby_client.has_signal("match_host_viability_requested") and not lobby_client.match_host_viability_requested.is_connected(_on_match_host_viability_requested):
+		lobby_client.match_host_viability_requested.connect(_on_match_host_viability_requested)
 	if not lobby_client.account_deck_list_received.is_connected(_on_account_deck_list_received):
 		lobby_client.account_deck_list_received.connect(_on_account_deck_list_received)
 	if not lobby_client.account_deck_saved.is_connected(_on_account_deck_saved):
@@ -6894,6 +6938,37 @@ func _on_lobby_connected() -> void:
 func _on_server_version_updated(version: String) -> void:
 	_set_connected_server_version(version)
 
+func _on_match_host_viability_requested() -> void:
+	# The lobby (re)asked whether this client can host. Re-run the probe and
+	# report the current result. Triggered after login and on demand.
+	call_deferred("_report_local_host_viability")
+
+## Run the UPnP reachability probe and tell the lobby whether this client can
+## host a player-hosted (listen-server) unranked match. No-op when not logged
+## into a remote lobby (local in-process lobby hosts never need to report).
+func _report_local_host_viability() -> void:
+	if lobby_client == null or not lobby_client.is_authenticated():
+		return
+	if _is_local_lobby_host:
+		return
+	var bind_port := _get_configured_match_port()
+	var result: Dictionary = HostReachabilityProbeScript.probe(bind_port)
+	lobby_client.report_host_viability(
+		bool(result.get("viable", false)),
+		str(result.get("reachable_ip", "")),
+		int(result.get("reachable_port", 0)),
+		int(result.get("bind_port", bind_port))
+	)
+
+## Remove the UPnP port mapping created for a player-hosted match, if any.
+## Best-effort: failures are ignored. Called when leaving a match back to menu.
+func _release_player_host_port_mapping() -> void:
+	if _player_host_external_port <= 0:
+		return
+	var port_to_release := _player_host_external_port
+	_player_host_external_port = 0
+	HostReachabilityProbeScript.remove_mapping(port_to_release)
+
 func _on_lobby_login_succeeded(session_id: String, reconnect_token: String, player_name: String) -> void:
 	_write_smoke_trace("lobby_login_succeeded session=%s player=%s host=%s" % [session_id, player_name, str(_is_local_lobby_host)])
 	if _retry_account_switch_if_identity_mismatch(player_name):
@@ -6915,6 +6990,10 @@ func _on_lobby_login_succeeded(session_id: String, reconnect_token: String, play
 	_maybe_request_account_decks()
 	_maybe_request_profile_summary()
 	_request_friends_state()
+	# Proactively report whether this client can host a player-hosted match so
+	# unranked seeks can use listen-server topology when viable. Best-effort and
+	# deferred so it never blocks login or the lobby UI.
+	call_deferred("_report_local_host_viability")
 	var resolved_identity_name := _get_effective_identity_name(player_name)
 	player_name_line_edit.text = resolved_identity_name
 	_refresh_open_deck_builder_saved_decks()
@@ -6991,6 +7070,10 @@ func _on_lobby_reconnect_succeeded(
 	_maybe_request_account_decks()
 	_maybe_request_profile_summary()
 	_request_friends_state()
+	# Proactively report whether this client can host a player-hosted match so
+	# unranked seeks can use listen-server topology when viable. Best-effort and
+	# deferred so it never blocks login or the lobby UI.
+	call_deferred("_report_local_host_viability")
 	var resolved_identity_name := _get_effective_identity_name(player_name)
 	player_name_line_edit.text = resolved_identity_name
 	_refresh_open_deck_builder_saved_decks()
@@ -7206,6 +7289,15 @@ func _on_remote_match_assigned(match_info: Dictionary) -> void:
 	_match_launch_queued = true
 	_save_active_match_resume(match_info)
 	_write_smoke_trace("remote_match_assigned match=%s" % str(match_info.get("match_id", "")))
+	# A player-hosted (listen-server) assignment for a remote lobby tells this
+	# client to run the authoritative match (is_match_host=true). Route it
+	# through the host launch path so it binds the local port and enables
+	# authoritative broadcasts, exactly like the in-process lobby host path.
+	if bool(match_info.get("is_match_host", false)) and not _uses_dedicated_match_server(match_info):
+		status_label.text = "Both players joined. Preparing the hosted match..."
+		_write_smoke_result("MATCH_ASSIGNED_PLAYER_HOST:%s" % str(match_info))
+		call_deferred("_launch_host_match_after_lobby_handoff", match_info)
+		return
 	var match_ip := str(match_info.get("server_ip", _current_lobby_ip))
 	var match_port := int(match_info.get("match_port", _get_configured_match_port()))
 	status_label.text = (
@@ -7429,6 +7521,15 @@ func _launch_host_match_after_lobby_handoff(match_info: Dictionary) -> void:
 	var match_session = null
 	if lobby_server != null:
 		match_session = lobby_server.get_match_session(str(match_info.get("match_id", "")))
+	# Player-hosted matches against a remote lobby: the authoritative session
+	# lives in the lobby process, not here, so reconstruct a host-side
+	# MatchSession from the roster the lobby embedded in match_info. This gives
+	# HeadlessMatchHost enough to authenticate the opponent's join and seed both
+	# Player objects. (For the local in-process lobby smoke path the real
+	# match_session is used, as before.)
+	if match_session == null and bool(match_info.get("is_match_host", false)):
+		match_session = MatchSessionScript.from_match_info(match_info)
+		_player_host_external_port = int(match_info.get("host_reachable_port", 0))
 	await get_tree().create_timer(0.75).timeout
 	_cleanup_lobby(false)
 	_launch_assigned_match(
@@ -7605,6 +7706,7 @@ func _on_game_return_to_menu_requested() -> void:
 func _return_to_lobby_for_rematch() -> void:
 	_pending_leave_room_id = ""
 	_suppress_active_match_auto_resume_from_embedded_games()
+	multiplayer_container.visible = true
 	show_menu()
 	_match_launch_queued = false
 	_cleanup_lobby(false)
@@ -7623,6 +7725,8 @@ func _return_to_menu() -> void:
 	_pending_rematch_room_id = ""
 	_pending_rematch_ready_submitted = false
 	_suppress_active_match_auto_resume_from_embedded_games()
+	_release_player_host_port_mapping()
+	multiplayer_container.visible = false
 	show_menu()
 	_match_launch_queued = false
 	_cleanup_lobby(true)
@@ -9243,7 +9347,14 @@ func _should_refresh_profile_summary_from_local_history(saved_match: Dictionary)
 		return false
 	if _is_local_lobby_host:
 		return true
-	return str(saved_match.get("server_mode", "")).strip_edges() == MatchSessionScript.SERVER_MODE_IN_PROCESS_HOST
+	var server_mode := str(saved_match.get("server_mode", "")).strip_edges()
+	# The host of a player-hosted match runs authority locally, so it (like the
+	# in-process host) is the source of match history for its own games.
+	if server_mode == MatchSessionScript.SERVER_MODE_IN_PROCESS_HOST:
+		return true
+	if server_mode == MatchSessionScript.SERVER_MODE_PLAYER_HOST and bool(saved_match.get("is_match_host", false)):
+		return true
+	return false
 
 func _build_resume_controls() -> void:
 	if multiplayer_container == null or _resume_match_button != null:

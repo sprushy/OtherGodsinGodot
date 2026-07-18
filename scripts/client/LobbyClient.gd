@@ -34,6 +34,7 @@ signal friends_state_received(state: Dictionary)
 signal account_settings_updated(account: Dictionary)
 signal connection_failed(message: String)
 signal disconnected_from_lobby()
+signal match_host_viability_requested()
 
 var current_session_id: String = ""
 var current_reconnect_token: String = ""
@@ -212,6 +213,23 @@ func observe_room(room_id: String) -> void:
 
 func leave_room() -> void:
 	_send_request(LobbyProtocolScript.LEAVE_ROOM)
+
+## Report whether this client can host a player-hosted (listen-server) match.
+## viable=true requires a reachable_ip and reachable_port (the host's UPnP-mapped
+## public endpoint). The lobby uses this to decide whether an unranked match can
+## be player-hosted instead of using the dedicated server.
+func report_host_viability(
+	viable: bool,
+	reachable_ip: String = "",
+	reachable_port: int = 0,
+	bind_port: int = 0
+) -> void:
+	_send_request(LobbyProtocolScript.REPORT_HOST_VIABILITY, {
+		"viable": bool(viable),
+		"reachable_ip": str(reachable_ip).strip_edges(),
+		"reachable_port": int(reachable_port),
+		"bind_port": int(bind_port),
+	})
 
 func set_ready(is_ready: bool) -> void:
 	_send_request(LobbyProtocolScript.SET_READY, {"is_ready": is_ready})
@@ -428,6 +446,8 @@ func lobby_event(message: Dictionary) -> void:
 				current_username = str((account as Dictionary).get("username", current_username))
 				current_accepts_game_updates = bool((account as Dictionary).get("accepts_game_updates", current_accepts_game_updates))
 				account_settings_updated.emit((account as Dictionary).duplicate(true))
+		LobbyProtocolScript.MATCH_HOST_VIABILITY_REQUEST:
+			match_host_viability_requested.emit()
 
 func _on_connected_to_server() -> void:
 	_cancel_connect_attempt_timeout()

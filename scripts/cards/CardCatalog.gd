@@ -295,6 +295,20 @@ static func _discover_cards_from_registry(out_cards: Array[Card]) -> void:
 		elif inst is Object and not inst is RefCounted:
 			inst.free()
 
+# Returns the shared cached card templates WITHOUT duplicating them or
+# assigning fresh UIDs. Use this for read-only lookups (e.g. resolving card
+# art/names for UI lists) where you do not mutate the card or hand it to match
+# play. This skips the 225x duplicate(true) cost that make_all_cards() pays to
+# give every match instance its own UID. The returned array references the
+# internal cache directly and must not be mutated.
+static func get_cached_card_templates() -> Array[Card]:
+	if _cached_all_cards.is_empty():
+		var discovered_cards: Array[Card] = []
+		_discover_cards_from_registry(discovered_cards)
+		_cached_all_cards = discovered_cards
+		_rebuild_card_alias_cache()
+	return _cached_all_cards
+
 static func instantiate_card_by_name(card_name: String) -> Card:
 	var requested_name := str(card_name).strip_edges()
 	if requested_name.is_empty():

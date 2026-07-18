@@ -57,7 +57,11 @@ func create_match(
 	player_identity_by_session: Dictionary = {},
 	spectator_visible_player_indices_by_session: Dictionary = {},
 	is_ranked: bool = true,
-	best_of: int = 1
+	best_of: int = 1,
+	player_host_session_id: String = "",
+	player_host_reachable_ip: String = "",
+	player_host_reachable_port: int = 0,
+	player_host_bind_port: int = 0
 ):
 	last_create_match_error = ""
 	var match_id: String = _generate_match_id()
@@ -79,7 +83,17 @@ func create_match(
 	session.is_ranked = is_ranked
 	session.configure_series_format(best_of)
 	session.mark_active()
-	if use_dedicated_headless and _launch_dedicated_match(session):
+	# Player-hosted (listen-server) match: one player runs the authoritative
+	# GameManager in their own process. No dedicated subprocess, no supervisor-
+	# allocated port bound here (the host binds its own). The supervisor does not
+	# poll a status file for this mode; lifecycle is driven by the lobby.
+	if not player_host_session_id.strip_edges().is_empty() and player_host_reachable_port > 0:
+		session.server_mode = MatchSessionScript.SERVER_MODE_PLAYER_HOST
+		session.host_session_id = player_host_session_id.strip_edges()
+		session.host_reachable_ip = player_host_reachable_ip.strip_edges()
+		session.host_reachable_port = int(player_host_reachable_port)
+		session.host_bind_port = int(player_host_bind_port) if player_host_bind_port > 0 else int(player_host_reachable_port)
+	elif use_dedicated_headless and _launch_dedicated_match(session):
 		session.server_mode = MatchSessionScript.SERVER_MODE_DEDICATED_HEADLESS
 	elif use_dedicated_headless and not allow_in_process_fallback:
 		last_create_match_error = session.process_launch_error

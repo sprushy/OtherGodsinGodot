@@ -16,6 +16,7 @@ signal turn_upkeep_resolved(turn_number: int, player: Player)
 signal phase_changed(old_phase: int, new_phase: int, turn_number: int, player: Player)
 signal god_power_activated(turn_number: int, player: Player, god: Card, target: Card)
 signal card_summoned(player: Player, card: Card, from_zone: Zone, to_zone: Zone, summon_source: Card, face_down: bool, stealth: bool)
+signal followers_converted(from_player: Player, to_player: Player, amount: int)
 
 enum GamePhase { MULLIGAN, MAIN, COMBAT, END }
 const GAME_END_REASON_DEFEAT := "defeat"
@@ -2885,7 +2886,14 @@ func resolve_stack() -> void:
 		action.resolve()
 		
 func convert_followers(from_player: Player, to_player: Player, amount: int) -> int:
+	if from_player == null or to_player == null or amount <= 0:
+		return 0
+	if not can_player_lose_followers_now(from_player):
+		return 0
 	var actual: int = mini(amount, from_player.followers)
+	if actual <= 0:
+		return 0
+	followers_converted.emit(from_player, to_player, actual)
 	from_player.lose_followers(actual)
 	to_player.gain_followers(actual)
 	print("Convert! " + str(actual) + " followers move from " + from_player.player_name + " to " + to_player.player_name)
@@ -2900,7 +2908,12 @@ func _convert_combat_follower_damage(from_player: Player, to_player: Player, amo
 	var remaining_amount := from_player.absorb_guard_damage(adjusted_amount)
 	if remaining_amount <= 0:
 		return 0
+	if not can_player_lose_followers_now(from_player):
+		return 0
 	var actual := mini(remaining_amount, from_player.followers)
+	if actual <= 0:
+		return 0
+	followers_converted.emit(from_player, to_player, actual)
 	from_player.lose_followers(actual)
 	to_player.gain_followers(actual)
 	return actual

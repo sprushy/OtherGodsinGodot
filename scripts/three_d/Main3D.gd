@@ -278,13 +278,17 @@ func _sync_cursor_presentation() -> void:
 	var custom_cursor_active := _has_custom_cursor_active()
 	var software_custom_cursor_active := _has_software_custom_cursor_active()
 	var popup_window_open := _has_open_embedded_popup_window()
+	var flat_default_pointer := _should_show_flat_2d() \
+		and not software_custom_cursor_active \
+		and not locked_power_cursor_active \
+		and not custom_cursor_active
 	if _software_cursor_sprite == null or not is_instance_valid(_software_cursor_sprite):
 		if Input.mouse_mode != Input.MOUSE_MODE_VISIBLE:
 			Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 		return
-	# A popup Window occludes the software cursor; defer to the hardware cursor
-	# while one is open so the pointer stays visible over the dialog.
-	var suppress_software_cursor := popup_window_open
+	# Flat menu screens should never briefly lose the hardware pointer while the
+	# optional software cursor layer catches up.
+	var suppress_software_cursor := popup_window_open or flat_default_pointer
 	var use_locked_power_software_cursor := locked_power_cursor_active \
 		and _locked_power_software_cursor_texture != null \
 		and not suppress_software_cursor

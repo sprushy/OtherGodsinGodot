@@ -29,6 +29,7 @@ const RESPOND_FRIEND_REQUEST := "respond_friend_request"
 const SEND_DECK_TO_FRIEND := "send_deck_to_friend"
 const RESPOND_DECK_SHARE := "respond_deck_share"
 const REQUEST_RECONNECT_LOBBY := "request_reconnect_lobby"
+const REPORT_HOST_VIABILITY := "report_host_viability"
 
 const HELLO_OK := "hello_ok"
 const ROOM_LIST := "room_list"
@@ -42,6 +43,7 @@ const ACCOUNT_DECK_DELETED := "account_deck_deleted"
 const PROFILE_SUMMARY := "profile_summary"
 const FRIENDS_STATE := "friends_state"
 const ACCOUNT_SETTINGS_UPDATED := "account_settings_updated"
+const MATCH_HOST_VIABILITY_REQUEST := "match_host_viability_request"
 
 static func make_message(message_type: String, payload: Dictionary = {}) -> Dictionary:
 	return {
@@ -155,6 +157,9 @@ static func validate_request(message: Dictionary) -> String:
 				return "Missing reconnect token."
 		LIST_ROOMS, LEAVE_ROOM, REQUEST_ACCOUNT_DECKS, REQUEST_PROFILE_SUMMARY, REQUEST_FRIENDS:
 			pass
+		REPORT_HOST_VIABILITY:
+			if not payload.has("viable"):
+				return "Missing viability flag."
 		_:
 			return "Unknown lobby message type: %s" % message_type
 

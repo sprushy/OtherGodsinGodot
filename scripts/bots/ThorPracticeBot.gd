@@ -19,6 +19,8 @@ const CALL_VALKYRIE_LARGE_UPGRADE_MARGIN := 500
 const ECON_CARD_VALUE := 5000
 const ECON_MANA_VALUE := 1000
 const ECON_FOLLOWERS_PER_CARD := 25
+const ASKELLADEN_BOUNCE_TARGET_SCORE := 1800
+const ASKELLADEN_RETREAT_SCORE_MARGIN := 400
 
 var _active: bool = false
 var _step_queued: bool = false
@@ -659,7 +661,7 @@ func _handle_combat_retreat_prompt(data: Dictionary) -> void:
 	var other_card: Card = null
 	if askelladen != null and action != null and target != null:
 		other_card = action.attacker if action.attacker != askelladen else (target as Card)
-	var use_retreat := _should_use_askelladen_retreat(askelladen, other_card)
+	var use_retreat := _should_use_askelladen_retreat(askelladen, other_card, action)
 	_submit_action({
 		"type": "combat_retreat_decision",
 		"askelladen_uid": askelladen.uid if askelladen != null else "",
@@ -914,7 +916,7 @@ func _get_best_askelladen_attack(attackers: Array[Card], opposing_creatures: Arr
 
 func _get_best_askelladen_target_for(askelladen: Askelladen, opposing_creatures: Array[Card]) -> Card:
 	var best_target: Card = null
-	var best_score := 2400
+	var best_score := ASKELLADEN_BOUNCE_TARGET_SCORE
 	for creature in opposing_creatures:
 		if not _can_attack_creature(askelladen, creature):
 			continue
@@ -1301,7 +1303,7 @@ func _get_highest_opposing_strength_or_resilience(cards: Array[Card]) -> int:
 
 func _get_askelladen_problem_creature() -> Card:
 	var best_target: Card = null
-	var best_score := 2400
+	var best_score := ASKELLADEN_BOUNCE_TARGET_SCORE
 	var sample_askelladen := Askelladen.new()
 	sample_askelladen.card_owner = bot_player
 	for creature in _get_board_creatures(opponent):
@@ -1508,17 +1510,42 @@ func _find_graveyard_askelladen() -> Askelladen:
 			return card as Askelladen
 	return null
 
-func _should_use_askelladen_retreat(ask_card: Askelladen, other_card: Card) -> bool:
+func _should_use_askelladen_retreat(ask_card: Askelladen, other_card: Card, action: CardAction = null) -> bool:
 	if ask_card == null or other_card == null:
+		return false
+	if ask_card.get_controller() != bot_player:
 		return false
 	if other_card.get_controller() == bot_player:
 		return false
 	if not _can_askelladen_retreat(ask_card, other_card):
 		return false
+	var fight_score := _score_askelladen_fight_result(action, ask_card, other_card)
+	if fight_score > -1000000:
+		var retreat_score := _score_askelladen_retreat_result(ask_card, other_card)
+		return retreat_score > fight_score + ASKELLADEN_RETREAT_SCORE_MARGIN
 	var score := _score_askelladen_bounce_target(other_card)
 	if _can_clear_creature_without_askelladen(other_card):
 		score -= 1800
-	return score >= 2400
+	return score >= ASKELLADEN_BOUNCE_TARGET_SCORE
+
+func _score_askelladen_fight_result(action: CardAction, ask_card: Askelladen, other_card: Card) -> int:
+	if action == null or action.type != CardAction.Type.ATTACK:
+		return -1000000
+	if action.attacker == null:
+		return -1000000
+	var defender := _get_attack_defender_card(action)
+	if defender == null:
+		return -1000000
+	if action.attacker != ask_card and action.attacker != other_card:
+		return -1000000
+	if defender != ask_card and defender != other_card:
+		return -1000000
+	return _score_attack_economy(_estimate_attack_economy(action, null, 0, 0))
+
+func _score_askelladen_retreat_result(ask_card: Askelladen, other_card: Card) -> int:
+	if ask_card == null or other_card == null:
+		return -1000000
+	return _get_card_economic_value(other_card) - _get_card_economic_value(ask_card)
 
 func _can_askelladen_retreat(ask_card: Askelladen, other_card: Card) -> bool:
 	if ask_card == null or other_card == null:
@@ -1775,12 +1802,14 @@ func _find_best_priority_vision_response(responses: Array, top_action: CardActio
 
 func _choose_best_priority_vision_target(vision: VisionOfOdin, top_action: CardAction, targets: Array) -> Card:
 	var best_target: Card = null
-	var best_score := 0
+	var best_score := -1000000
 	for raw_target in targets:
 		var target := raw_target as Card
 		if target == null:
 			continue
 		var score := _score_vision_of_odin_priority_target(vision, top_action, target)
+		if score <= -1000000:
+			continue
 		if best_target == null or score > best_score:
 			best_target = target
 			best_score = score
