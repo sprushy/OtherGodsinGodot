@@ -1,6 +1,8 @@
 class_name AbyssGatewayIcon
 extends Control
 
+signal portal_clicked
+
 const GATEWAY_TEXTURE := preload("res://images/ui/zones/abyss_gateway.png")
 const GATEWAY_FOREGROUND_TEXTURE := preload("res://images/ui/zones/abyss_gateway_foreground_overlay.png")
 const VOID_SHEET_TEXTURE := preload("res://images/ui/zones/abyss_gateway_void_sheet.png")
@@ -15,6 +17,11 @@ const VOID_FRAME_RATE := 12.0
 const VOID_ACTIVE_ALPHA := 0.82
 const VOID_FADE_DURATION := 0.25
 const VOID_ACTIVITY_LINGER_SECONDS := 2.5
+# Hover + click hit box matching the drawn gateway art, which spills well past
+# the 50x48 control rect (and past the 74x74 zone-info panel it lives in).
+# Kept off the art's far left/top arcs so it does not steal clicks from the
+# neighbouring reserve zone and grave icon.
+const PORTAL_HIT_RECT := Rect2(0.0, -55.0, 140.0, 115.0)
 
 var _void_art: TextureRect = null
 var _void_frames: Array[Texture2D] = []
@@ -22,6 +29,7 @@ var _void_frame_index := 0
 var _void_frame_time := 0.0
 var _void_hovered := false
 var _void_activity_seconds_remaining := 0.0
+var _click_catcher: Control = null
 
 
 func _ready() -> void:
@@ -50,6 +58,22 @@ func _ready() -> void:
 
 	add_child(_make_gateway_texture("AbyssGatewayForeground", GATEWAY_FOREGROUND_TEXTURE))
 
+	_click_catcher = Control.new()
+	_click_catcher.name = "AbyssGatewayClickCatcher"
+	_click_catcher.mouse_filter = Control.MOUSE_FILTER_STOP
+	_click_catcher.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	_click_catcher.position = PORTAL_HIT_RECT.position
+	_click_catcher.size = PORTAL_HIT_RECT.size
+	_click_catcher.gui_input.connect(_on_click_catcher_gui_input)
+	add_child(_click_catcher)
+
+
+func _on_click_catcher_gui_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton \
+			and event.button_index == MOUSE_BUTTON_LEFT \
+			and event.pressed:
+		portal_clicked.emit()
+
 
 func _make_gateway_texture(node_name: String, texture: Texture2D) -> TextureRect:
 	var art := TextureRect.new()
@@ -66,10 +90,6 @@ func _make_gateway_texture(node_name: String, texture: Texture2D) -> TextureRect
 	return art
 
 
-func set_void_hover(active: bool) -> void:
-	_void_hovered = active
-
-
 func pulse_void_activity(linger_seconds: float = VOID_ACTIVITY_LINGER_SECONDS) -> void:
 	_void_activity_seconds_remaining = maxf(_void_activity_seconds_remaining, linger_seconds)
 
@@ -78,7 +98,20 @@ func _void_wants_visible() -> bool:
 	return _void_hovered or _void_activity_seconds_remaining > 0.0
 
 
+func _update_hover_from_mouse() -> void:
+	if not is_visible_in_tree():
+		_void_hovered = false
+		return
+	var viewport := get_viewport()
+	if viewport == null:
+		_void_hovered = false
+		return
+	var local_mouse := get_global_transform().affine_inverse() * viewport.get_mouse_position()
+	_void_hovered = PORTAL_HIT_RECT.has_point(local_mouse)
+
+
 func _process(delta: float) -> void:
+	_update_hover_from_mouse()
 	if _void_art == null or _void_frames.is_empty():
 		return
 	_void_activity_seconds_remaining = maxf(0.0, _void_activity_seconds_remaining - delta)

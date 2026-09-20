@@ -10838,6 +10838,7 @@ func _make_zone_info_icon(label_text: String, short_label: String, zone: Zone, c
 		gateway_icon.name = "ZoneAbyssGatewayIcon"
 		gateway_icon.position = Vector2(0.0, 0.0)
 		gateway_icon.size = Vector2(50.0, 48.0)
+		gateway_icon.portal_clicked.connect(_show_zone_contents.bind("Abyss", zone))
 		vbox.add_child(gateway_icon)
 	else:
 		vbox.add_child(name_lbl)
@@ -10862,10 +10863,6 @@ func _make_zone_info_icon(label_text: String, short_label: String, zone: Zone, c
 	if is_abyss_icon:
 		panel.mouse_entered.connect(_set_zone_info_count_visible.bind(count_lbl, true))
 		panel.mouse_exited.connect(_set_zone_info_count_visible.bind(count_lbl, false))
-		var gateway_icon := vbox.get_node_or_null("ZoneAbyssGatewayIcon") as AbyssGatewayIcon
-		if gateway_icon != null:
-			panel.mouse_entered.connect(gateway_icon.set_void_hover.bind(true))
-			panel.mouse_exited.connect(gateway_icon.set_void_hover.bind(false))
 	panel.gui_input.connect(_on_zone_info_icon_gui_input.bind(label_text, CardAction._zone_to_dict(zone, game_manager)))
 
 	return panel

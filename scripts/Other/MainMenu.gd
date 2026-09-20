@@ -1328,6 +1328,7 @@ func show_menu() -> void:
 	game_container.visible = false
 	_set_startup_splash_background_visible(true)
 	_apply_main_menu_text_sizing()
+	_reconcile_multiplayer_screen_for_menu()
 	_hide_multiplayer_deck_popup()
 	_refresh_multiplayer_deck_options()
 	_refresh_multiplayer_action_state()
@@ -1370,19 +1371,30 @@ func _on_multiplayer_back_pressed() -> void:
 func _is_multiplayer_screen_active() -> bool:
 	return multiplayer_container != null and multiplayer_container.visible
 
+func _reconcile_multiplayer_screen_for_menu() -> void:
+	if multiplayer_container == null:
+		return
+	if multiplayer_container.visible:
+		_hide_main_menu_controls_for_multiplayer_screen()
+	else:
+		_restore_main_menu_controls_after_multiplayer_screen()
+
 func _hide_main_menu_controls_for_multiplayer_screen() -> void:
-	_multiplayer_screen_hidden_menu_controls.clear()
 	if menu_container == null:
 		return
 	for child in menu_container.get_children():
 		if child == multiplayer_container or not (child is Control):
 			continue
 		var child_control := child as Control
-		if child_control.visible:
-			child_control.visible = false
+		if not child_control.visible:
+			continue
+		child_control.visible = false
+		if not _multiplayer_screen_hidden_menu_controls.has(child_control):
 			_multiplayer_screen_hidden_menu_controls.append(child_control)
 
 func _restore_main_menu_controls_after_multiplayer_screen() -> void:
+	if _multiplayer_screen_hidden_menu_controls.is_empty():
+		return
 	for hidden_control in _multiplayer_screen_hidden_menu_controls:
 		if hidden_control != null and is_instance_valid(hidden_control):
 			hidden_control.visible = true
