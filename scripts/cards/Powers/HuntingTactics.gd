@@ -111,7 +111,7 @@ func resolve_combat_support_choice(game_manager: GameManager, attacker: Card, ch
 	attacker.remove_buffs_from_source_card(self, ATTACK_BUFF_EFFECT_TYPE)
 
 	if selected_supporters.is_empty():
-		return "%s declined to support %s." % [card_name, attacker.get_target_log_display_name(game_manager.get_feedback_viewer())]
+		return "%s declined to support %s." % [card_name, attacker.get_combat_log_display_name(game_manager.get_feedback_viewer())]
 
 	var str_bonus := 0
 	var spd_bonus := 0
@@ -123,7 +123,7 @@ func resolve_combat_support_choice(game_manager: GameManager, attacker: Card, ch
 			str_bonus += supporter.get_effective_strength()
 
 	if str_bonus == 0 and spd_bonus == 0:
-		return "%s found no useful support for %s." % [card_name, attacker.get_target_log_display_name(game_manager.get_feedback_viewer())]
+		return "%s found no useful support for %s." % [card_name, attacker.get_combat_log_display_name(game_manager.get_feedback_viewer())]
 
 	attacker.add_buff(
 		ATTACK_BUFF_SOURCE,
@@ -156,7 +156,7 @@ func resolve_combat_support_choice(game_manager: GameManager, attacker: Card, ch
 		supporter_names.append(supporter.get_target_log_display_name(game_manager.get_feedback_viewer()))
 	return "%s grants %s %s using %s. Selected supporters cannot attack this turn." % [
 		card_name,
-		attacker.get_target_log_display_name(game_manager.get_feedback_viewer()),
+		attacker.get_combat_log_display_name(game_manager.get_feedback_viewer()),
 		", ".join(parts),
 		", ".join(supporter_names)
 	]

@@ -31,9 +31,6 @@ func start_game(
 	var practice_info := match_info.duplicate(true)
 	_add_selected_deck_info(practice_info)
 	await super.start_game(true, false, server_ip, PRACTICE_AUTHORITY_PORT, practice_info, null)
-	if match_manager != null:
-		# Keep nonvisual local bookkeeping immediate; visible stack actions still linger.
-		match_manager.allow_immediate_local_authoritative_stack_resolution = true
 	_attach_thor_bot()
 	_show_practice_intro()
 	if _thor_bot != null:
@@ -42,13 +39,8 @@ func start_game(
 func _build_initial_match_players(_default_match_setup, _server_match_session = null, _match_info: Dictionary = {}) -> Dictionary:
 	var result := _practice_match_setup.build_thor_practice_match(game_manager, _player_practice_deck, _thor_practice_deck)
 	_practice_deck_name = str(result.get("player_deck_name", ""))
-	if match_manager != null:
-		match_manager.allow_immediate_local_authoritative_stack_resolution = true
 	_attach_thor_bot(result.get("player2", null) as Player)
 	return result
-
-func uses_authoritative_match_flow() -> bool:
-	return true
 
 func has_thor_bot() -> bool:
 	return _thor_bot != null

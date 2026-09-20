@@ -50,7 +50,7 @@ func on_after_combat(game_manager: GameManager, opposing_card: Card) -> void:
 	)
 
 	var viewer := game_manager.get_feedback_viewer()
-	var target_name := opposing_card.get_target_log_display_name(viewer)
+	var target_name := opposing_card.get_combat_log_display_name(viewer)
 	game_manager.note_player_feedback(
 		"%s infects %s for %d Str after combat." % [
 			card_name,

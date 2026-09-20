@@ -1,0 +1,13 @@
+shader_type spatial;
+render_mode blend_mix, unshaded, depth_draw_never, cull_disabled, particles_anim;
+
+// Use on QuadMesh particles with Billboard = Enabled on the material.
+uniform sampler2D particle_texture : source_color, filter_linear;
+uniform vec4 tint : source_color = vec4(0.82, 0.92, 1.0, 1.0);
+uniform float opacity = 0.82;
+
+void fragment() {
+    vec4 tex = texture(particle_texture, UV);
+    ALBEDO = tint.rgb;
+    ALPHA = tex.a * opacity * COLOR.a;
+}

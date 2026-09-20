@@ -1,0 +1,26 @@
+shader_type canvas_item;
+
+uniform sampler2D swirl_a : filter_linear, repeat_enable;
+uniform sampler2D swirl_b : filter_linear, repeat_enable;
+uniform float intensity : hint_range(0.0, 1.0) = 0.25;
+uniform float rotation_speed = 0.08;
+uniform vec2 wind_direction = vec2(-1.0, 0.22);
+uniform vec4 tint : source_color = vec4(0.85, 0.95, 1.0, 1.0);
+
+vec2 rotate_uv(vec2 uv, float a) {
+    vec2 p = uv - 0.5;
+    float s = sin(a);
+    float c = cos(a);
+    p = mat2(vec2(c, -s), vec2(s, c)) * p;
+    return p + 0.5;
+}
+
+void fragment() {
+    vec2 wind = normalize(wind_direction + vec2(0.001, 0.001));
+    vec2 uv1 = rotate_uv(UV * 1.15 + wind * TIME * 0.024 + vec2(0.0, TIME * 0.020), TIME * rotation_speed);
+    vec2 uv2 = rotate_uv(UV * 0.85 - wind * TIME * 0.016 + vec2(0.0, TIME * 0.012), -TIME * rotation_speed * 0.7);
+    vec4 a = texture(swirl_a, uv1);
+    vec4 b = texture(swirl_b, uv2);
+    float alpha = (a.a * 0.65 + b.a * 0.45) * intensity;
+    COLOR = vec4(tint.rgb, clamp(alpha, 0.0, 0.7));
+}

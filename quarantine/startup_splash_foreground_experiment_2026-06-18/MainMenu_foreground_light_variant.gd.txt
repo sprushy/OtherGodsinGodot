@@ -7941,8 +7941,8 @@ func _get_practice_thor_smoke_setup_error(practice_game) -> String:
 		return "practice_thor_players_missing"
 	if practice_game.player2.player_name != "Thor":
 		return "practice_thor_wrong_name"
-	if practice_game.match_manager == null or not practice_game.match_manager.authoritative_match_flow_enabled:
-		return "practice_thor_not_authoritative"
+	if practice_game.match_manager == null:
+		return "practice_thor_match_manager_missing"
 	if practice_game.network_manager == null or not bool(practice_game.network_manager.get("is_server")):
 		return "practice_thor_not_server"
 	if practice_game.get("_thor_bot") == null:
@@ -8781,8 +8781,8 @@ func _get_practice_thor_fuzz_setup_error(practice_game) -> String:
 		return "missing"
 	if practice_game.player1 == null or practice_game.player2 == null:
 		return "players_missing"
-	if practice_game.match_manager == null or not practice_game.match_manager.authoritative_match_flow_enabled:
-		return "not_authoritative"
+	if practice_game.match_manager == null:
+		return "match_manager_missing"
 	if practice_game.network_manager == null or not bool(practice_game.network_manager.get("is_server")):
 		return "not_server"
 	if practice_game.get("_thor_bot") == null:
@@ -9017,7 +9017,6 @@ func _run_card_test_occult_singularity_smoke() -> void:
 	if magical_before < 2:
 		_fail_smoke_if_enabled("card_test_occult_singularity_missing_targets count=%d" % magical_before)
 		return
-	card_test.match_manager.authoritative_match_flow_enabled = true
 	if not card_test.game_input.submit_action({type = "cast_spell", spell_uid = occult.uid}):
 		_fail_smoke_if_enabled("card_test_occult_singularity_cast_failed")
 		return

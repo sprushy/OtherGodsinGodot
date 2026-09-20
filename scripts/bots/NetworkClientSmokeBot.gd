@@ -1,7 +1,7 @@
 extends RefCounted
 class_name NetworkClientSmokeBot
 
-# Drives the non-authoritative client side of a two-process smoke match.
+# Drives the network client side of a two-process smoke match.
 #
 # Unlike ThorPracticeBot (which assumes an authoritative MatchManager that emits
 # request_ui_interaction), this bot runs on a remote client where prompts arrive

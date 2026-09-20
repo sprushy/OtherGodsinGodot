@@ -545,6 +545,18 @@ func get_target_log_display_name(viewer: Player = null) -> String:
 		return get_hidden_log_position_label()
 	return get_display_name()
 
+func is_known_for_combat_log(viewer: Player = null) -> bool:
+	if not is_hidden_from_viewer(viewer):
+		return true
+	return has_meta("combat_declared_attackers") \
+		or has_meta("combat_was_stealth_when_engaged") \
+		or has_meta("combat_was_sleeping_when_engaged")
+
+func get_combat_log_display_name(viewer: Player = null) -> String:
+	if is_known_for_combat_log(viewer):
+		return get_display_name()
+	return get_target_log_display_name(viewer)
+
 func is_enslaved() -> bool:
 	var controller := get_controller()
 	return controller != null and card_owner != null and controller != card_owner

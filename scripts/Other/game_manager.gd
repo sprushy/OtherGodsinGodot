@@ -2041,7 +2041,8 @@ func creature_attack(attacker: Card, target) -> void:
 		print("Only frontline creatures can attack")
 		return
 
-	if attacker.creature_mode == Card.CreatureMode.DEFENSIVE:
+	var attacker_was_stealth := attacker.is_stealth
+	if attacker.creature_mode == Card.CreatureMode.DEFENSIVE and not attacker_was_stealth:
 		print(attacker.card_name + " is in defensive stance and cannot attack")
 		return
 	if not can_pay_creature_action_mana_cost(attacker, "attack"):
@@ -2052,6 +2053,8 @@ func creature_attack(attacker: Card, target) -> void:
 
 	if attacker.is_stealth:
 		attacker.reveal_from_stealth(self)
+		if attacker.creature_mode == Card.CreatureMode.DEFENSIVE:
+			attacker.creature_mode = Card.CreatureMode.AGGRESSIVE
 	var united_front_partner: Card = null
 	if attacker.has_method("get_united_front_partner_for_attack"):
 		united_front_partner = attacker.get_united_front_partner_for_attack(self)

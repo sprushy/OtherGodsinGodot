@@ -68,6 +68,7 @@ const BYTES_PER_MIB := 1048576.0
 const MENU_PRIMARY_BUTTON_FONT_SIZE := 32
 const MENU_PRIMARY_BUTTON_MIN_WIDTH := 420.0
 const MENU_PRIMARY_BUTTON_MIN_HEIGHT := 68.0
+const MENU_VIEWPORT_MARGIN := 24.0
 const MENU_BUTTON_FONT_SIZE := 24
 const MENU_BUTTON_MIN_HEIGHT := 52.0
 const MENU_TEXT_FONT_SIZE := 20
@@ -462,7 +463,7 @@ func _build_startup_loading_overlay() -> void:
 func _begin_startup_sequence() -> void:
 	await get_tree().process_frame
 	if _startup_loading_status_label != null and is_instance_valid(_startup_loading_status_label):
-		_startup_loading_status_label.text = "Sign in to continue"
+		_startup_loading_status_label.text = "Restoring saved account..." if _startup_autologin_pending else "Sign in to continue"
 	_set_startup_loading_progress(0.76, 0.55)
 	_begin_startup_prompts()
 
@@ -471,6 +472,12 @@ func _finish_startup_loading() -> void:
 		return
 	_startup_loading_finished = true
 	_apply_main_menu_text_sizing()
+	if not _menu_card_templates_built:
+		_set_startup_loading_status("Loading card catalog...")
+		_set_startup_loading_progress(0.92, 0.25)
+		await _wait_for_startup_background_loads()
+		if not is_instance_valid(self):
+			return
 	_set_startup_loading_progress(1.0, 0.18)
 	_begin_startup_menu_fade()
 	if _startup_loading_overlay != null and is_instance_valid(_startup_loading_overlay):
@@ -494,6 +501,10 @@ func _remove_startup_loading_overlay() -> void:
 		_startup_loading_progress_tween.kill()
 	_startup_loading_progress_tween = null
 
+func _set_startup_loading_status(message: String) -> void:
+	if _startup_loading_status_label != null and is_instance_valid(_startup_loading_status_label):
+		_startup_loading_status_label.text = message
+
 func _set_startup_loading_progress(value: float, duration: float = 0.0) -> void:
 	if _startup_loading_bar == null or not is_instance_valid(_startup_loading_bar):
 		return
@@ -510,6 +521,15 @@ func _set_startup_loading_progress(value: float, duration: float = 0.0) -> void:
 		clampf(value, 0.0, 1.0),
 		duration
 	).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+
+func _wait_for_startup_background_loads() -> void:
+	while not _menu_card_templates_built:
+		var tree := get_tree()
+		if tree == null:
+			return
+		await tree.process_frame
+		if not is_instance_valid(self):
+			return
 
 func _ensure_startup_splash_background() -> void:
 	if _startup_splash_background != null and is_instance_valid(_startup_splash_background):
@@ -788,8 +808,13 @@ func _apply_main_menu_text_sizing() -> void:
 		menu_container.size.x = maxf(menu_container.size.x, MENU_PRIMARY_BUTTON_MIN_WIDTH)
 		_apply_main_menu_text_sizing_recursive(menu_container)
 	if title_label != null:
+		title_label.custom_minimum_size.x = maxf(title_label.custom_minimum_size.x, MENU_PRIMARY_BUTTON_MIN_WIDTH)
+		title_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		title_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		title_label.add_theme_font_size_override("font_size", MENU_USERNAME_FONT_SIZE)
 	if _account_identity_label != null:
+		_account_identity_label.custom_minimum_size.x = maxf(_account_identity_label.custom_minimum_size.x, MENU_PRIMARY_BUTTON_MIN_WIDTH)
+		_account_identity_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		_account_identity_label.add_theme_font_size_override("font_size", MENU_ACCOUNT_IDENTITY_FONT_SIZE)
 
 func _apply_main_menu_text_sizing_recursive(root: Node) -> void:
@@ -839,6 +864,25 @@ func _fit_main_menu_container_to_contents() -> void:
 		return
 	menu_container.reset_size()
 	menu_container.size.x = maxf(menu_container.size.x, MENU_PRIMARY_BUTTON_MIN_WIDTH)
+	_center_main_menu_container()
+
+func _center_main_menu_container() -> void:
+	if menu_container == null:
+		return
+	var viewport_size: Vector2 = get_viewport().get_visible_rect().size
+	if viewport_size == Vector2.ZERO:
+		viewport_size = size
+	var menu_size: Vector2 = menu_container.size
+	if menu_size.x <= 0.0 or menu_size.y <= 0.0:
+		menu_size = menu_container.get_combined_minimum_size()
+	if menu_size.x <= 0.0 or menu_size.y <= 0.0:
+		return
+	var max_x := maxf(MENU_VIEWPORT_MARGIN, viewport_size.x - menu_size.x - MENU_VIEWPORT_MARGIN)
+	var max_y := maxf(MENU_VIEWPORT_MARGIN, viewport_size.y - menu_size.y - MENU_VIEWPORT_MARGIN)
+	menu_container.position = Vector2(
+		clampf((viewport_size.x - menu_size.x) * 0.5, MENU_VIEWPORT_MARGIN, max_x),
+		clampf((viewport_size.y - menu_size.y) * 0.5, MENU_VIEWPORT_MARGIN, max_y)
+	).floor()
 
 func _prepare_startup_menu_fade() -> void:
 	if menu_container == null:
@@ -928,13 +972,27 @@ func _show_embedded_game(node_name: String) -> Node:
 	_hide_embedded_games()
 	var game = get_node_or_null("GameContainer/" + node_name)
 	if game != null:
+		_fit_embedded_game_to_container(game)
 		game.visible = true
 	return game
+
+func _fit_embedded_game_to_container(game: Node) -> void:
+	if game_container == null or not (game is Control):
+		return
+	var control := game as Control
+	control.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	control.position = Vector2.ZERO
+	control.size = game_container.size
 
 func _fit_to_viewport() -> void:
 	position = Vector2.ZERO
 	size = get_viewport().get_visible_rect().size
+	_center_main_menu_container()
 	_layout_startup_splash_background()
+	for node_name in _get_embedded_game_node_names():
+		var game = get_node_or_null("GameContainer/" + node_name)
+		if game != null:
+			_fit_embedded_game_to_container(game)
 	if _deck_picker_popup != null and is_instance_valid(_deck_picker_popup) and _deck_picker_popup.visible:
 		_position_multiplayer_deck_popup()
 
@@ -1257,6 +1315,7 @@ func show_menu() -> void:
 	_set_snowstorm_visible(false)
 	_close_tutorial_coach_overlay()
 	game_container.visible = false
+	_set_startup_splash_background_visible(true)
 	_apply_main_menu_text_sizing()
 	_hide_multiplayer_deck_popup()
 	_refresh_multiplayer_deck_options()
@@ -1267,11 +1326,16 @@ func show_menu() -> void:
 	_refresh_sound_mute_button()
 
 func show_game() -> void:
+	_set_startup_splash_background_visible(false)
 	menu_container.visible = false
 	game_container.visible = true
 	_hide_multiplayer_deck_popup()
 	_refresh_server_version_overlay_visibility()
 	_refresh_sound_mute_button()
+
+func _set_startup_splash_background_visible(is_visible: bool) -> void:
+	if _startup_splash_background != null and is_instance_valid(_startup_splash_background):
+		_startup_splash_background.visible = is_visible
 
 func _set_snowstorm_visible(active: bool) -> void:
 	var tree := get_tree()
@@ -2351,6 +2415,7 @@ func _connect_to_browseable_lobby(connect_status: String, connect_serial: int = 
 	var target_error := _validate_multiplayer_target()
 	if not target_error.is_empty():
 		status_label.text = target_error
+		_abort_startup_autologin(target_error, false)
 		return
 	var target_lobby_ip := _get_lobby_ip()
 	if _should_reuse_active_lobby_connection(target_lobby_ip):
@@ -2392,6 +2457,7 @@ func _connect_to_browseable_lobby(connect_status: String, connect_serial: int = 
 		status_label.text = "Could not connect to the lobby."
 		_cleanup_lobby_client()
 		_set_connected_server_version("")
+		_abort_startup_autologin("Could not connect to the lobby.", true)
 	else:
 		_begin_lobby_sign_in_watchdog()
 
@@ -2404,11 +2470,13 @@ func _maybe_connect_authenticated_lobby(connect_status: String = "Connecting to 
 	if not auth_error.is_empty():
 		_clear_unauthenticated_lobby_transport()
 		status_label.text = auth_error
+		_abort_startup_autologin(auth_error, true)
 		return
 	var target_error := _validate_multiplayer_target()
 	if not target_error.is_empty():
 		_clear_unauthenticated_lobby_transport()
 		status_label.text = target_error
+		_abort_startup_autologin(target_error, false)
 		return
 	_pending_host_room_creation = false
 	_pending_join_room_id = ""
@@ -2520,7 +2588,8 @@ func _complete_startup_prompts() -> void:
 	if _startup_autologin_pending:
 		_startup_autologin_pending = false
 		_startup_autologin_in_progress = true
-		_finish_startup_loading()
+		_set_startup_loading_status("Signing in with saved account...")
+		_set_startup_loading_progress(0.84, 0.35)
 		call_deferred("_deferred_startup_autologin_connect")
 		return
 	_maybe_show_auth_onboarding()
@@ -2532,7 +2601,20 @@ func _deferred_startup_autologin_connect() -> void:
 		await tree.create_timer(0.35).timeout
 	if not _startup_autologin_in_progress:
 		return
+	_set_startup_loading_status("Connecting to lobby...")
+	_set_startup_loading_progress(0.86, 0.25)
 	_queue_authenticated_lobby_connect("Signing in with saved account...")
+
+func _abort_startup_autologin(message: String, show_auth_prompt: bool) -> void:
+	if not _startup_autologin_in_progress:
+		return
+	_startup_autologin_in_progress = false
+	_set_startup_loading_status(message)
+	_set_startup_loading_progress(0.76, 0.2)
+	if show_auth_prompt:
+		_show_auth_recovery_prompt(message)
+	else:
+		_finish_startup_loading()
 
 func _should_check_for_updates() -> bool:
 	if not _release_updates_enabled():
@@ -4685,7 +4767,8 @@ func _start_saved_account_autologin_connect(connect_status: String) -> bool:
 	if not _prepare_saved_account_autologin():
 		return false
 	_startup_autologin_in_progress = true
-	_finish_startup_loading()
+	_set_startup_loading_status(connect_status)
+	_set_startup_loading_progress(0.84, 0.35)
 	_queue_authenticated_lobby_connect(connect_status)
 	return true
 
@@ -6934,6 +7017,9 @@ func _bind_lobby_client_signals() -> void:
 func _on_lobby_connected() -> void:
 	_write_smoke_trace("lobby_connected")
 	status_label.text = "Connected to lobby. Signing in..."
+	if _startup_autologin_in_progress:
+		_set_startup_loading_status("Signing in with saved account...")
+		_set_startup_loading_progress(0.90, 0.3)
 
 func _on_server_version_updated(version: String) -> void:
 	_set_connected_server_version(version)
@@ -6974,6 +7060,7 @@ func _on_lobby_login_succeeded(session_id: String, reconnect_token: String, play
 	if _retry_account_switch_if_identity_mismatch(player_name):
 		return
 	_cancel_lobby_sign_in_watchdog()
+	var finish_startup_loading_after_auth := _startup_autologin_in_progress
 	_startup_autologin_in_progress = false
 	_lobby_failure_update_check_requested = false
 	_sync_friend_observer_card_visibility()
@@ -6998,6 +7085,9 @@ func _on_lobby_login_succeeded(session_id: String, reconnect_token: String, play
 	player_name_line_edit.text = resolved_identity_name
 	_refresh_open_deck_builder_saved_decks()
 	_update_resume_controls()
+	if finish_startup_loading_after_auth:
+		_set_startup_loading_status("Signed in as %s." % resolved_identity_name)
+		_finish_startup_loading()
 	var active_match_info: Dictionary = {}
 	var restored_room: Dictionary = {}
 	if lobby_client != null:
@@ -7054,6 +7144,7 @@ func _on_lobby_reconnect_succeeded(
 	if _retry_account_switch_if_identity_mismatch(player_name):
 		return
 	_cancel_lobby_sign_in_watchdog()
+	var finish_startup_loading_after_auth := _startup_autologin_in_progress
 	_startup_autologin_in_progress = false
 	_lobby_failure_update_check_requested = false
 	_sync_friend_observer_card_visibility()
@@ -7078,6 +7169,9 @@ func _on_lobby_reconnect_succeeded(
 	player_name_line_edit.text = resolved_identity_name
 	_refresh_open_deck_builder_saved_decks()
 	_update_resume_controls()
+	if finish_startup_loading_after_auth:
+		_set_startup_loading_status("Lobby session restored.")
+		_finish_startup_loading()
 	if _maybe_leave_pending_room(room, active_match_info):
 		return
 	if not active_match_info.is_empty():
@@ -10026,8 +10120,8 @@ func _get_practice_thor_smoke_setup_error(practice_game) -> String:
 		return "practice_thor_players_missing"
 	if practice_game.player2.player_name != "Thor":
 		return "practice_thor_wrong_name"
-	if practice_game.match_manager == null or not practice_game.match_manager.authoritative_match_flow_enabled:
-		return "practice_thor_not_authoritative"
+	if practice_game.match_manager == null:
+		return "practice_thor_match_manager_missing"
 	if practice_game.network_manager == null or not bool(practice_game.network_manager.get("is_server")):
 		return "practice_thor_not_server"
 	if not _practice_thor_has_bot(practice_game):
@@ -10887,8 +10981,8 @@ func _get_practice_thor_fuzz_setup_error(practice_game) -> String:
 		return "missing"
 	if practice_game.player1 == null or practice_game.player2 == null:
 		return "players_missing"
-	if practice_game.match_manager == null or not practice_game.match_manager.authoritative_match_flow_enabled:
-		return "not_authoritative"
+	if practice_game.match_manager == null:
+		return "match_manager_missing"
 	if practice_game.network_manager == null or not bool(practice_game.network_manager.get("is_server")):
 		return "not_server"
 	if not _practice_thor_has_bot(practice_game):
@@ -11050,21 +11144,65 @@ func _run_card_test_turn2_smoke() -> void:
 	if not await _wait_for_card_test_turn2_smoke_condition(
 		func() -> bool:
 			return card_test.game_manager.current_player == card_test.player1 \
-				and card_test.game_manager.has_resolved_turn_upkeep() \
-				and card_test.game_manager.action_stack.is_empty(),
+				and card_test.game_manager.has_resolved_turn_upkeep(),
 		180
 	):
-		_fail_smoke_if_enabled("card_test_turn1_upkeep_timeout")
+		_fail_smoke_if_enabled(
+			"card_test_turn1_upkeep_timeout current=%s upkeep=%s stack=%d priority=%s pending_ui=%d choice=%s label=%s" % [
+				card_test.game_manager.current_player.player_name if card_test.game_manager.current_player != null else "none",
+				str(card_test.game_manager.has_resolved_turn_upkeep()),
+				card_test.game_manager.action_stack.size(),
+				card_test.game_manager.priority_player.player_name if card_test.game_manager.priority_player != null else "none",
+				card_test.match_manager.get_pending_ui_interaction_count() if card_test.match_manager != null else -1,
+				str(card_test.choice_container.visible),
+				str(card_test.action_label.text).replace("\n", " "),
+			]
+		)
+		return
+	if not await _settle_card_test_turn2_smoke_priority(card_test, 240):
+		_fail_smoke_if_enabled(
+			"card_test_turn1_priority_timeout stack=%d paused=%s executing=%s priority=%s pending_ui=%d label=%s" % [
+				card_test.game_manager.action_stack.size(),
+				str(card_test._stack_resolution_paused),
+				str(card_test._executing_stack_action),
+				card_test.game_manager.priority_player.player_name if card_test.game_manager.priority_player != null else "none",
+				card_test.match_manager.get_pending_ui_interaction_count() if card_test.match_manager != null else -1,
+				str(card_test.action_label.text).replace("\n", " "),
+			]
+		)
 		return
 
 	card_test._do_end_turn()
+	if not await _settle_card_test_turn2_smoke_priority(card_test, 240):
+		_fail_smoke_if_enabled(
+			"card_test_turn1_end_priority_timeout stack=%d paused=%s executing=%s priority=%s pending_ui=%d label=%s" % [
+				card_test.game_manager.action_stack.size(),
+				str(card_test._stack_resolution_paused),
+				str(card_test._executing_stack_action),
+				card_test.game_manager.priority_player.player_name if card_test.game_manager.priority_player != null else "none",
+				card_test.match_manager.get_pending_ui_interaction_count() if card_test.match_manager != null else -1,
+				str(card_test.action_label.text).replace("\n", " "),
+			]
+		)
+		return
 	if not await _wait_for_card_test_turn2_smoke_condition(
 		func() -> bool:
 			return card_test.game_manager.current_player == card_test.player2 \
 				and card_test.choice_container.visible,
 		240
 	):
-		_fail_smoke_if_enabled("card_test_turn2_entry_timeout")
+		_fail_smoke_if_enabled(
+			"card_test_turn2_entry_timeout current=%s upkeep=%s stack=%d priority=%s pending_ui=%d choice=%s end_visible=%s label=%s" % [
+				card_test.game_manager.current_player.player_name if card_test.game_manager.current_player != null else "none",
+				str(card_test.game_manager.has_resolved_turn_upkeep()),
+				card_test.game_manager.action_stack.size(),
+				card_test.game_manager.priority_player.player_name if card_test.game_manager.priority_player != null else "none",
+				card_test.match_manager.get_pending_ui_interaction_count() if card_test.match_manager != null else -1,
+				str(card_test.choice_container.visible),
+				str(card_test.end_turn_button.visible),
+				str(card_test.action_label.text).replace("\n", " "),
+			]
+		)
 		return
 
 	if not card_test.game_input.submit_action({type = "upkeep_choice", choice = "mana"}):
@@ -11073,10 +11211,7 @@ func _run_card_test_turn2_smoke() -> void:
 	if not await _wait_for_card_test_turn2_smoke_condition(
 		func() -> bool:
 			return card_test.game_manager.current_player == card_test.player2 \
-				and card_test.game_manager.has_resolved_turn_upkeep() \
-				and card_test.game_manager.action_stack.is_empty() \
-				and not card_test._stack_resolution_paused \
-				and not card_test._executing_stack_action,
+				and card_test.game_manager.has_resolved_turn_upkeep(),
 		240
 	):
 		_fail_smoke_if_enabled(
@@ -11084,6 +11219,18 @@ func _run_card_test_turn2_smoke() -> void:
 				card_test.game_manager.action_stack.size(),
 				str(card_test._stack_resolution_paused),
 				str(card_test._executing_stack_action),
+				str(card_test.action_label.text).replace("\n", " "),
+			]
+		)
+		return
+	if not await _settle_card_test_turn2_smoke_priority(card_test, 240):
+		_fail_smoke_if_enabled(
+			"card_test_turn2_priority_timeout stack=%d paused=%s executing=%s priority=%s pending_ui=%d label=%s" % [
+				card_test.game_manager.action_stack.size(),
+				str(card_test._stack_resolution_paused),
+				str(card_test._executing_stack_action),
+				card_test.game_manager.priority_player.player_name if card_test.game_manager.priority_player != null else "none",
+				card_test.match_manager.get_pending_ui_interaction_count() if card_test.match_manager != null else -1,
 				str(card_test.action_label.text).replace("\n", " "),
 			]
 		)
@@ -11108,11 +11255,22 @@ func _run_card_test_occult_singularity_smoke() -> void:
 	if not await _wait_for_card_test_turn2_smoke_condition(
 		func() -> bool:
 			return card_test.game_manager.current_player == card_test.player1 \
-				and card_test.game_manager.has_resolved_turn_upkeep() \
-				and card_test.game_manager.action_stack.is_empty(),
+				and card_test.game_manager.has_resolved_turn_upkeep(),
 		180
 	):
 		_fail_smoke_if_enabled("card_test_occult_singularity_upkeep_timeout")
+		return
+	if not await _settle_card_test_turn2_smoke_priority(card_test, 240):
+		_fail_smoke_if_enabled(
+			"card_test_occult_singularity_priority_timeout stack=%d paused=%s executing=%s priority=%s pending_ui=%d label=%s" % [
+				card_test.game_manager.action_stack.size(),
+				str(card_test._stack_resolution_paused),
+				str(card_test._executing_stack_action),
+				card_test.game_manager.priority_player.player_name if card_test.game_manager.priority_player != null else "none",
+				card_test.match_manager.get_pending_ui_interaction_count() if card_test.match_manager != null else -1,
+				str(card_test.action_label.text).replace("\n", " "),
+			]
+		)
 		return
 
 	var occult := _find_smoke_hand_card_by_name(card_test.player1, "Occult Singularity")
@@ -11123,7 +11281,6 @@ func _run_card_test_occult_singularity_smoke() -> void:
 	if magical_before < 2:
 		_fail_smoke_if_enabled("card_test_occult_singularity_missing_targets count=%d" % magical_before)
 		return
-	card_test.match_manager.authoritative_match_flow_enabled = true
 	if not card_test.game_input.submit_action({type = "cast_spell", spell_uid = occult.uid}):
 		_fail_smoke_if_enabled("card_test_occult_singularity_cast_failed")
 		return
@@ -11159,6 +11316,19 @@ func _wait_for_card_test_turn2_smoke_condition(predicate: Callable, max_frames: 
 	for _frame in range(max_frames):
 		if predicate.call():
 			return true
+		await get_tree().process_frame
+	return false
+
+func _settle_card_test_turn2_smoke_priority(card_test, max_frames: int) -> bool:
+	for _frame in range(max_frames):
+		if card_test.game_manager.action_stack.is_empty() \
+				and not card_test._stack_resolution_paused \
+				and not card_test._executing_stack_action:
+			return true
+		if card_test.match_manager != null \
+				and card_test.match_manager.get_pending_ui_interaction_count() > 0 \
+				and card_test.game_manager.priority_player != null:
+			card_test.game_input.submit_action({type = "priority_pass"})
 		await get_tree().process_frame
 	return false
 

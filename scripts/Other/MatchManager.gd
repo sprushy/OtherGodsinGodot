@@ -25,8 +25,6 @@ signal move_failed(reason: String)
 var game_manager: GameManager
 var game_state: GameState
 var network_manager: Node = null # Set this if in multiplayer mode
-var authoritative_match_flow_enabled: bool = false
-var allow_immediate_local_authoritative_stack_resolution: bool = false
 var remote_authoritative_stack_window_locked: bool = false
 var remote_authoritative_visual_linger_pending: bool = false
 
@@ -172,7 +170,6 @@ func reset_runtime_state() -> void:
 	last_resolution_text = ""
 	last_move_failed_reason = ""
 	_authoritative_stack_resolution_pending = false
-	allow_immediate_local_authoritative_stack_resolution = false
 	remote_authoritative_stack_window_locked = false
 	remote_authoritative_visual_linger_pending = false
 
@@ -411,6 +408,8 @@ func _get_current_resolving_action() -> CardAction:
 
 func _emit_ui_interaction_for_player(player: Player, type: String, data: Dictionary) -> void:
 	if game_manager == null or player == null:
+		return
+	if type == "intercept" and _has_duplicate_pending_ui_interaction(player, type, data):
 		return
 	if not _pending_ui_interactions.is_empty() or not _queued_ui_interactions.is_empty():
 		_queue_ui_interaction(player, type, data)
@@ -653,8 +652,6 @@ func _validate_pending_ui_interaction_for_command(command: Dictionary) -> Dictio
 				and not _command_can_bypass_pending_ui_interaction(command_type):
 			result["error"] = "Resolve the pending %s choice before continuing." % str(blocking_interaction.get("type", "card"))
 		return result
-	if not (authoritative_match_flow_enabled or network_manager != null):
-		return result
 	var prompt_idx := _find_pending_ui_interaction_index(command, expected_type)
 	if prompt_idx < 0:
 		# Authoritative flow can reap a freshly offered "priority" prompt between
@@ -774,6 +771,43 @@ func _consume_pending_ui_interaction_for_player(player: Player, interaction_type
 		return _consume_pending_ui_interaction_by_id(int(entry.get("prompt_id", -1)))
 	return false
 
+func _get_pending_ui_interaction_by_id(prompt_id: int) -> Dictionary:
+	if prompt_id < 0:
+		return {}
+	for entry in _pending_ui_interactions:
+		if int(entry.get("prompt_id", -1)) == prompt_id:
+			return entry
+	return {}
+
+func _restore_pending_attack_state_from_intercept_prompt(prompt_id: int) -> bool:
+	if game_manager == null:
+		return false
+	var entry := _get_pending_ui_interaction_by_id(prompt_id)
+	if entry.is_empty() or str(entry.get("type", "")) != "intercept":
+		return false
+	var data: Dictionary = entry.get("data", {})
+	var attacker_uid := str(data.get("attacker_uid", "")).strip_edges()
+	var attacker := game_manager.get_card_by_uid(attacker_uid)
+	if attacker == null:
+		return false
+	var restored_target = null
+	var target_uid := str(data.get("target_uid", "")).strip_edges()
+	var target_player_index := int(data.get("target_player_index", -1))
+	if target_player_index >= 0 \
+			and target_player_index < game_manager.players.size() \
+			and target_uid == str(target_player_index):
+		restored_target = game_manager.players[target_player_index]
+	elif target_uid != "":
+		restored_target = game_manager.get_card_by_uid(target_uid)
+	if restored_target == null and target_player_index >= 0 and target_player_index < game_manager.players.size():
+		restored_target = game_manager.players[target_player_index]
+	if restored_target == null:
+		return false
+	selected_attacker = attacker
+	pending_attack_target = restored_target
+	selected_interceptor = null
+	return true
+
 func _resume_authoritative_flow_after_prompt_command() -> void:
 	_prune_stale_ui_interactions_for_current_turn()
 	if not _pending_ui_interactions.is_empty():
@@ -787,7 +821,7 @@ func _resume_authoritative_flow_after_prompt_command() -> void:
 	if pending_blot_spell != null:
 		_try_queue_pending_authoritative_blot_action()
 		return
-	if not _uses_authoritative_headless_priority_flow() or game_manager == null:
+	if game_manager == null:
 		return
 	if _continue_active_authoritative_turn_start_sequence():
 		return
@@ -840,8 +874,15 @@ func _get_default_completion_command_for_interaction(interaction_type: String) -
 	return ""
 
 func _find_pending_ui_interaction_index(command: Dictionary, expected_type: String) -> int:
+	var requested_prompt_id := int(command.get("_prompt_id", -1))
 	for idx in range(_pending_ui_interactions.size() - 1, -1, -1):
 		var entry := _pending_ui_interactions[idx]
+		if requested_prompt_id >= 0:
+			if int(entry.get("prompt_id", -1)) == requested_prompt_id \
+					and str(entry.get("type", "")) == expected_type \
+					and (game_manager == null or int(entry.get("turn_number", -1)) == game_manager.turn_number):
+				return idx
+			continue
 		if _pending_ui_interaction_matches_command(entry, command, expected_type):
 			return idx
 	return -1
@@ -1053,22 +1094,6 @@ func _queue_decision_priority_event(
 	if not remains_on_stack:
 		return
 
-func _emit_local_priority_prompt_if_needed() -> void:
-	if game_manager == null or game_manager.priority_player == null:
-		return
-	if not _pending_ui_interactions.is_empty() or not _queued_ui_interactions.is_empty():
-		return
-	if _uses_authoritative_headless_priority_flow():
-		return
-	var priority_idx := game_manager.players.find(game_manager.priority_player)
-	if priority_idx < 0:
-		return
-	request_ui_interaction.emit(
-		priority_idx,
-		"priority",
-		build_priority_prompt_data(game_manager.priority_player)
-	)
-
 func _queue_method_priority_event(
 	player: Player,
 	source_card: Card,
@@ -1094,9 +1119,7 @@ func _queue_method_priority_event(
 		var result = source_card.call(method_name, game_manager)
 		if result is String and str(result).strip_edges() != "":
 			game_manager.note_player_feedback(str(result))
-	var remains_on_stack := queue_or_resolve_priority_event(action)
-	if remains_on_stack:
-		_emit_local_priority_prompt_if_needed()
+	queue_or_resolve_priority_event(action)
 
 func _should_collect_choice_before_priority(
 	interaction_type: String,
@@ -1162,7 +1185,7 @@ func _queue_choice_command_as_priority_event(command: Dictionary, source_card: C
 	_mark_deferred_authoritative_action(action, completion_command_type)
 	var remains_on_stack := queue_or_resolve_priority_event(
 		action,
-		_uses_authoritative_headless_priority_flow()
+		true
 	)
 	if not remains_on_stack:
 		command["_suppress_full_state_broadcast"] = true
@@ -1206,7 +1229,7 @@ func _on_game_manager_card_summoned(
 	face_down: bool,
 	stealth: bool
 ) -> void:
-	if game_manager == null or not _uses_authoritative_headless_priority_flow():
+	if game_manager == null:
 		return
 	_log_authoritative_flow_state("card_summoned:received player=%s card=%s source=%s face_down=%s stealth=%s" % [
 		_get_player_debug_label(player),
@@ -1357,7 +1380,7 @@ func resolve_action(action: CardAction) -> void:
 	if not action_completed:
 		if not deferred_completion_command_type.is_empty():
 			_mark_deferred_authoritative_action(action, deferred_completion_command_type)
-		if _uses_authoritative_headless_priority_flow() and not _has_deferred_authoritative_action_metadata(action):
+		if true and not _has_deferred_authoritative_action_metadata(action):
 			printerr("MatchManager: paused authoritative action is missing deferred completion metadata: %s" % _get_action_debug_label(action))
 		return
 	_queue_destroyed_response_events(destroyed_count_before, action)
@@ -1398,8 +1421,6 @@ func _finalize_resolved_action(action: CardAction) -> void:
 
 func _continue_authoritative_stack_after_resolution() -> void:
 	# Keep continuation centralized so direct and deferred resolution paths both drain the stack.
-	if not _uses_authoritative_headless_priority_flow():
-		return
 	if game_manager == null:
 		return
 	if _has_blocking_stack_resolution_for_continuation():
@@ -1531,6 +1552,9 @@ func _get_pending_ui_debug_summary(limit: int = 5) -> String:
 		])
 	return "; ".join(items)
 
+func get_pending_ui_interaction_count() -> int:
+	return _pending_ui_interactions.size()
+
 func _has_pending_reveal_target_ui_interaction() -> bool:
 	for entry in _pending_ui_interactions:
 		var interaction_type := str(entry.get("type", ""))
@@ -1585,7 +1609,7 @@ func _is_state_refresh_ui_interaction(interaction_type: String, interaction_data
 		or bool(interaction_data.get("_queue_priority_after_choice", false))
 
 func _log_authoritative_flow_state(context: String) -> void:
-	if not DEBUG_AUTHORITATIVE_FLOW_LOGS or game_manager == null or not _uses_authoritative_headless_priority_flow():
+	if not DEBUG_AUTHORITATIVE_FLOW_LOGS or game_manager == null:
 		return
 	print("%s %s turn=%d current=%s priority=%s passes=%d stack=%d resolving=%d pending_resolution=%s pending_ui=%d" % [
 		AUTHORITATIVE_FLOW_LOG_PREFIX,
@@ -1631,7 +1655,7 @@ func _log_authoritative_flow_state(context: String) -> void:
 	])
 
 func _log_authoritative_flow_checkpoint(context: String, action: CardAction = null, target = null) -> void:
-	if not DEBUG_AUTHORITATIVE_FLOW_LOGS or game_manager == null or not _uses_authoritative_headless_priority_flow():
+	if not DEBUG_AUTHORITATIVE_FLOW_LOGS or game_manager == null:
 		return
 	print("%s checkpoint=%s action=%s target=%s stack=%d resolving=%d pending_resolution=%s pending_humbaba=%s priority=%s pending_ui=%d" % [
 		AUTHORITATIVE_FLOW_LOG_PREFIX,
@@ -1647,7 +1671,7 @@ func _log_authoritative_flow_checkpoint(context: String, action: CardAction = nu
 	])
 
 func _schedule_authoritative_deferred_action_check(context: String, action: CardAction, target = null) -> void:
-	if game_manager == null or not _uses_authoritative_headless_priority_flow():
+	if game_manager == null:
 		return
 	var tree = _get_authoritative_resolution_tree()
 	if tree == null:
@@ -1660,7 +1684,7 @@ func _schedule_authoritative_deferred_action_check(context: String, action: Card
 	)
 
 func _check_authoritative_deferred_action_cleared(context: String, action: CardAction, target = null) -> void:
-	if game_manager == null or not _uses_authoritative_headless_priority_flow():
+	if game_manager == null:
 		return
 	var action_still_present := action != null \
 		and (game_manager.action_stack.has(action) or action in game_manager.resolving_stack_actions)
@@ -1720,8 +1744,6 @@ func _complete_deferred_authoritative_action(action: CardAction, completion_comm
 	_schedule_authoritative_settled_state_refresh()
 
 func _schedule_authoritative_settled_state_refresh() -> void:
-	if not _uses_authoritative_headless_priority_flow():
-		return
 	_log_authoritative_flow_state("settled_refresh:schedule")
 	var tree = _get_authoritative_resolution_tree()
 	if tree == null:
@@ -1734,7 +1756,7 @@ func _schedule_authoritative_settled_state_refresh() -> void:
 	)
 
 func _request_authoritative_settled_state_refresh() -> void:
-	if game_manager == null or not _uses_authoritative_headless_priority_flow():
+	if game_manager == null:
 		return
 	_log_authoritative_flow_state("settled_refresh:run_before_resume")
 	_resume_authoritative_flow_after_prompt_command()
@@ -1743,7 +1765,7 @@ func _request_authoritative_settled_state_refresh() -> void:
 	call_deferred("_request_ui_refresh")
 
 func _try_drain_authoritative_event_stack_without_prompt(max_steps: int = 16) -> bool:
-	if game_manager == null or not _uses_authoritative_headless_priority_flow():
+	if game_manager == null:
 		return false
 	_log_authoritative_flow_state("event_drain:start max_steps=%d" % max_steps)
 	var drained := false
@@ -2424,15 +2446,6 @@ func _get_active_attackers(action: CardAction) -> Array[Card]:
 			active.append(c)
 	return active
 
-func _uses_authoritative_headless_attack_flow() -> bool:
-	return authoritative_match_flow_enabled
-
-func uses_authoritative_priority_flow() -> bool:
-	return _uses_authoritative_headless_attack_flow()
-
-func _uses_authoritative_headless_priority_flow() -> bool:
-	return uses_authoritative_priority_flow()
-
 func _clear_priority_window_state() -> void:
 	if game_manager == null:
 		return
@@ -2688,8 +2701,6 @@ func _should_linger_authoritative_stack_resolution(action: CardAction = null) ->
 	# the server creates an invisible interval where clients appear unlocked.
 	if action != null and action.type == CardAction.Type.EVENT:
 		return false
-	if allow_immediate_local_authoritative_stack_resolution and not _has_remote_authoritative_recipients():
-		return false
 	if network_manager == null:
 		return false
 	return true
@@ -2711,6 +2722,8 @@ func _schedule_authoritative_stack_top_after_priority() -> void:
 	if tree == null:
 		_finish_authoritative_stack_resolution(resolved_action, resolve_after_passes)
 		return
+	_request_ui_refresh()
+	call_deferred("_request_ui_refresh")
 	tree.create_timer(AUTHORITATIVE_STACK_ACTION_LINGER_SECONDS).timeout.connect(
 		func() -> void:
 			_finish_authoritative_stack_resolution(resolved_action, resolve_after_passes),
@@ -3165,8 +3178,6 @@ func advance_priority() -> void:
 	_advance_authoritative_priority()
 
 func _advance_authoritative_priority() -> void:
-	if not _uses_authoritative_headless_priority_flow():
-		return
 	_log_authoritative_flow_state("priority_advance:start")
 	_prune_stale_ui_interactions_for_current_turn()
 	if _authoritative_stack_resolution_pending \
@@ -3238,7 +3249,7 @@ func queue_or_resolve_priority_event(action: CardAction, defer_authoritative_pri
 	if first_has_responses or second_has_responses or _action_requires_explicit_priority_window(action):
 		if game_manager.priority_player == null:
 			game_manager.priority_player = first_player
-		if _uses_authoritative_headless_priority_flow() and not defer_authoritative_priority:
+		if not defer_authoritative_priority:
 			_advance_authoritative_priority()
 		return true
 	_clear_priority_window_state()
@@ -3422,7 +3433,7 @@ func _has_pending_event_priority_action(card: Card, event_name: String) -> bool:
 	return false
 
 func _advance_authoritative_priority_for_pending_card_events(card: Card) -> void:
-	if not _uses_authoritative_headless_priority_flow() or game_manager == null or card == null:
+	if game_manager == null or card == null:
 		return
 	if _authoritative_stack_resolution_pending or not game_manager.resolving_stack_actions.is_empty():
 		return
@@ -3609,8 +3620,7 @@ func _continue_pending_attack_after_hunting_tactics_choice(attacker: Card, fallb
 	_pending_hunting_tactics_attack_declaration = false
 	if selected_attacker == null or pending_attack_target == null:
 		return
-	if _uses_authoritative_headless_attack_flow():
-		_start_authoritative_headless_attack()
+	_start_authoritative_headless_attack()
 
 func _start_authoritative_headless_attack() -> void:
 	if selected_attacker == null or pending_attack_target == null:
@@ -3679,7 +3689,7 @@ func can_attack(card: Card) -> bool:
 		and not card.is_sleeping
 		and not card.has_status_effect("cannot_attack")
 		and game_manager.turn_number > 1
-		and card.creature_mode == Card.CreatureMode.AGGRESSIVE
+		and (card.creature_mode == Card.CreatureMode.AGGRESSIVE or card.is_stealth)
 		and card.current_zone != null
 		and card.current_zone.zone_type == Zone.ZoneType.FRONTLINE
 		and not game_manager.attack_restrictions.has(card.get_controller())
@@ -3710,7 +3720,7 @@ func get_attack_invalid_reason(card: Card) -> String:
 		return "It is not " + card.card_name + "'s controller's turn."
 	if game_manager.turn_number <= 1:
 		return "Cannot attack on the first turn!"
-	if card.creature_mode != Card.CreatureMode.AGGRESSIVE:
+	if card.creature_mode != Card.CreatureMode.AGGRESSIVE and not card.is_stealth:
 		return card.card_name + " is in defensive stance and cannot attack."
 	if card.current_zone == null or card.current_zone.zone_type != Zone.ZoneType.FRONTLINE:
 		return card.card_name + " cannot attack from the back row."
@@ -3786,16 +3796,20 @@ func request_attack(attacker, target) -> bool:
 			move_failed.emit(attacker_card.card_name + " cannot attack " + target_obj.player_name + "'s followers.")
 			return false
 
+	if attacker_card.is_stealth:
+		attacker_card.reveal_from_stealth(game_manager)
+		if attacker_card.creature_mode == Card.CreatureMode.DEFENSIVE:
+			attacker_card.creature_mode = Card.CreatureMode.AGGRESSIVE
+
 	selected_attacker = attacker_card
 	pending_attack_target = target_obj
 	selected_interceptor = null
 	
 	# In a real game, this might trigger an "intercept" phase
 	move_validated.emit({"type": "attack", "attacker": attacker_card, "target": target_obj})
-	if _uses_authoritative_headless_attack_flow():
-		if _offer_hunting_tactics_attack_declaration_prompt():
-			return true
-		_start_authoritative_headless_attack()
+	if _offer_hunting_tactics_attack_declaration_prompt():
+		return true
+	_start_authoritative_headless_attack()
 	return true
 
 func broadcast_event(event_type: String, data: Dictionary) -> void:
@@ -4140,11 +4154,9 @@ func _validate_turn_action_window(command: Dictionary, sender_info: Dictionary) 
 	if _requires_clear_stack_window(command_type):
 		if is_targeting_active() or _has_pending_reveal_target_ui_interaction():
 			return "Choose a target for %s before continuing." % get_targeting_name()
-		if _uses_authoritative_headless_priority_flow():
-			_try_drain_authoritative_event_stack_without_prompt()
+		_try_drain_authoritative_event_stack_without_prompt()
 		if _has_unresolved_stack_action_window():
-			if _uses_authoritative_headless_priority_flow():
-				call_deferred("_resume_authoritative_flow_after_prompt_command")
+			call_deferred("_resume_authoritative_flow_after_prompt_command")
 			return "Resolve the pending stack action before continuing."
 	var actor := _get_command_actor(sender_info)
 	if actor == null:
@@ -4154,7 +4166,7 @@ func _validate_turn_action_window(command: Dictionary, sender_info: Dictionary) 
 	return ""
 
 func _should_turn_action_decline_priority(command: Dictionary, sender_info: Dictionary) -> bool:
-	if game_manager == null or not _uses_authoritative_headless_priority_flow():
+	if game_manager == null:
 		return false
 	var command_type := str(command.get("type", ""))
 	if not _requires_clear_stack_window(command_type):
@@ -4232,7 +4244,7 @@ func _clear_pending_turn_action_after_priority_response(responding_player: Playe
 func _should_defer_turn_action_until_opponent_priority_declines(command: Dictionary, sender_info: Dictionary) -> bool:
 	if _replaying_turn_action_after_opponent_priority:
 		return false
-	if game_manager == null or not _uses_authoritative_headless_priority_flow():
+	if game_manager == null:
 		return false
 	var command_type := str(command.get("type", ""))
 	if not _requires_clear_stack_window(command_type):
@@ -4352,13 +4364,12 @@ func process_command(command: Dictionary, sender_info: Dictionary = {}) -> bool:
 	_active_command_sender_info = sender_info.duplicate(true)
 	_active_command_type = str(command.get("type", ""))
 	_active_command_pending_prompt_id = -1
-	if _uses_authoritative_headless_priority_flow():
-		_log_authoritative_flow_state("command:start type=%s peer=%s player_index=%s keys=%s" % [
-			_active_command_type,
-			str(sender_info.get("peer_id", "")),
-			str(sender_info.get("player_index", "")),
-			str(command.keys()),
-		])
+	_log_authoritative_flow_state("command:start type=%s peer=%s player_index=%s keys=%s" % [
+		_active_command_type,
+		str(sender_info.get("peer_id", "")),
+		str(sender_info.get("player_index", "")),
+		str(command.keys()),
+	])
 	if not MatchCommandRegistryScript.is_known_command_type(_active_command_type):
 		move_failed.emit("Unknown command type: " + str(command.get("type")))
 		_active_command_sender_info.clear()
@@ -4391,7 +4402,7 @@ func process_command(command: Dictionary, sender_info: Dictionary = {}) -> bool:
 		return true
 	var turn_window_error := _validate_turn_action_window(command, sender_info)
 	if not turn_window_error.is_empty():
-		if _uses_authoritative_headless_priority_flow() and _requires_clear_stack_window(_active_command_type):
+		if true and _requires_clear_stack_window(_active_command_type):
 			_log_authoritative_flow_state("command_rejected %s: %s" % [
 				_active_command_type,
 				turn_window_error,
@@ -4411,13 +4422,24 @@ func process_command(command: Dictionary, sender_info: Dictionary = {}) -> bool:
 		return false
 	var pending_prompt_id := int(pending_prompt_validation.get("prompt_id", -1))
 	_active_command_pending_prompt_id = pending_prompt_id
+	# Attack resolution refreshes and advances priority re-entrantly. Consume the
+	# intercept prompt first so that refresh cannot offer the answered prompt again.
+	if _active_command_type == "intercept_decision" and pending_prompt_id >= 0:
+		if (selected_attacker == null or pending_attack_target == null) \
+				and not _restore_pending_attack_state_from_intercept_prompt(pending_prompt_id):
+			move_failed.emit("intercept_decision: no attack is waiting for interception")
+			_active_command_sender_info.clear()
+			_active_command_type = ""
+			_active_command_pending_prompt_id = -1
+			return false
+		_consume_pending_ui_interaction_by_id(pending_prompt_id)
+		_active_command_pending_prompt_id = -1
 	var result := _process_command_impl(command)
-	if _uses_authoritative_headless_priority_flow():
-		_log_authoritative_flow_state("command:processed type=%s result=%s prompt_id=%d" % [
-			_active_command_type,
-			str(result),
-			_active_command_pending_prompt_id,
-		])
+	_log_authoritative_flow_state("command:processed type=%s result=%s prompt_id=%d" % [
+		_active_command_type,
+		str(result),
+		_active_command_pending_prompt_id,
+	])
 	if result:
 		_complete_simple_deferred_prompt_action_for_command(command)
 		if not _consume_active_command_prompt_for_completion(_active_command_type):
@@ -4434,7 +4456,7 @@ func process_command(command: Dictionary, sender_info: Dictionary = {}) -> bool:
 func _accept_redundant_priority_pass(command: Dictionary, sender_info: Dictionary) -> bool:
 	if str(command.get("type", "")) != "priority_pass":
 		return false
-	if game_manager == null or not _uses_authoritative_headless_priority_flow():
+	if game_manager == null:
 		return false
 	var priority_cleared := game_manager.priority_player == null or game_manager.action_stack.is_empty()
 	if not priority_cleared and not _authoritative_stack_resolution_pending:
@@ -4613,16 +4635,14 @@ func _process_command_impl(command: Dictionary) -> bool:
 					move_failed.emit("upkeep_choice: unknown choice '" + str(command.get("choice")) + "'")
 					return false
 			var choice_feedback := ""
-			if _uses_authoritative_headless_priority_flow():
-				choice_feedback = _build_upkeep_resolution_feedback(
-					game_manager.get_upkeep_choice_feedback(str(command.get("choice", "")))
-				)
-				if not choice_feedback.strip_edges().is_empty():
-					choice_feedback = "%s upkeep: %s" % [acting_player.player_name, choice_feedback]
-					command["public_log_message"] = choice_feedback
+			choice_feedback = _build_upkeep_resolution_feedback(
+				game_manager.get_upkeep_choice_feedback(str(command.get("choice", "")))
+			)
+			if not choice_feedback.strip_edges().is_empty():
+				choice_feedback = "%s upkeep: %s" % [acting_player.player_name, choice_feedback]
+				command["public_log_message"] = choice_feedback
 			move_validated.emit(command)
-			if _uses_authoritative_headless_priority_flow():
-				_begin_or_continue_authoritative_turn_start_sequence(choice_feedback)
+			_begin_or_continue_authoritative_turn_start_sequence(choice_feedback)
 			return true
 		"tiamat_upkeep_choice":
 			var tiamat_upkeep_error := _validate_upkeep_choice_window(acting_player)
@@ -4643,11 +4663,10 @@ func _process_command_impl(command: Dictionary) -> bool:
 			]
 			game_manager.player_chooses_upkeep_only()
 			move_validated.emit(command)
-			if _uses_authoritative_headless_priority_flow():
-				var tiamat_feedback := _build_upkeep_resolution_feedback(
-					"Matriarch Rule returned %s to hand." % tiamat_card.card_name
-				)
-				_begin_or_continue_authoritative_turn_start_sequence(tiamat_feedback)
+			var tiamat_feedback := _build_upkeep_resolution_feedback(
+				"Matriarch Rule returned %s to hand." % tiamat_card.card_name
+			)
+			_begin_or_continue_authoritative_turn_start_sequence(tiamat_feedback)
 			return true
 		"forfeit":
 			if game_manager.is_game_over:
@@ -4765,7 +4784,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 				return false
 			var player := acting_player
 			var prepared_spell := spell.is_prepared and spell.current_zone != null and spell.current_zone.is_board_zone()
-			if _uses_authoritative_headless_priority_flow() and spell is BlotSacrifice:
+			if spell is BlotSacrifice:
 				var blot_sacrifice_uid := str(command.get("sacrifice_uid", "")).strip_edges()
 				var blot_sacrifice_target := game_manager.get_card_by_uid(blot_sacrifice_uid) if blot_sacrifice_uid != "" else null
 				return _begin_authoritative_blot_cast(
@@ -4833,33 +4852,22 @@ func _process_command_impl(command: Dictionary) -> bool:
 						Card.COST_KIND_HAND_PLAY,
 						{"player": player, "prepared": false}
 					)
-			if _uses_authoritative_headless_priority_flow():
-				var spell_command_display_zone := _resolve_command_display_zone(command, player)
-				var preferred_display_zone: Zone = spell.current_zone if prepared_spell else spell_command_display_zone
-				var spell_resolve := func() -> void:
-					game_manager.notify_spell_played(player, spell)
-					(spell as SpellCard).resolve_from_command(game_manager, command)
-					if (spell as SpellCard).should_go_to_graveyard() and spell.current_zone != player.graveyard_zone:
-						player.move_card(spell, player.graveyard_zone)
-				_queue_authoritative_magical_action(
-					CardAction.Type.SPELL,
-					spell,
-					spell_target,
-					spell_resolve,
-					"",
-					preferred_display_zone
-				)
-				_advance_authoritative_priority()
-				move_validated.emit(command)
-				return true
-			game_manager.notify_spell_played(player, spell)
-			game_manager.run_with_effect_source(
+			var spell_command_display_zone := _resolve_command_display_zone(command, player)
+			var preferred_display_zone: Zone = spell.current_zone if prepared_spell else spell_command_display_zone
+			var spell_resolve := func() -> void:
+				game_manager.notify_spell_played(player, spell)
+				(spell as SpellCard).resolve_from_command(game_manager, command)
+				if (spell as SpellCard).should_go_to_graveyard() and spell.current_zone != player.graveyard_zone:
+					player.move_card(spell, player.graveyard_zone)
+			_queue_authoritative_magical_action(
+				CardAction.Type.SPELL,
 				spell,
-				func() -> void:
-					(spell as SpellCard).resolve_from_command(game_manager, command)
+				spell_target,
+				spell_resolve,
+				"",
+				preferred_display_zone
 			)
-			if (spell as SpellCard).should_go_to_graveyard() and spell.current_zone != player.graveyard_zone:
-				player.move_card(spell, player.graveyard_zone)
+			_advance_authoritative_priority()
 			move_validated.emit(command)
 			return true
 		"blot_sacrifice_choice":
@@ -4921,8 +4929,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 			hex_action.card = hex
 			hex_action.resolution_text = hex.card_name + " resolved."
 			game_manager.push_to_stack(hex_action)
-			if _uses_authoritative_headless_priority_flow():
-				_advance_authoritative_priority()
+			_advance_authoritative_priority()
 			move_validated.emit(command)
 			return true
 		"god_ability":
@@ -4950,29 +4957,17 @@ func _process_command_impl(command: Dictionary) -> bool:
 			if god_ward_block_reason != "":
 				move_failed.emit(god_ward_block_reason)
 				return false
-			if _uses_authoritative_headless_priority_flow():
-				_queue_authoritative_magical_action(
-					CardAction.Type.ABILITY,
-					god_card,
-					target,
-					func() -> void:
-						if god_card.has_method("activate_from_command"):
-							god_card.activate_from_command(game_manager, command)
-						else:
-							god_card.activate(game_manager, target)
-				)
-				_advance_authoritative_priority()
-				move_validated.emit(command)
-				return true
-			if god_card.has_method("activate"):
-				game_manager.run_with_effect_source(
-					god_card,
-					func() -> void:
-						if god_card.has_method("activate_from_command"):
-							god_card.activate_from_command(game_manager, command)
-						else:
-							god_card.activate(game_manager, target)
-				)
+			_queue_authoritative_magical_action(
+				CardAction.Type.ABILITY,
+				god_card,
+				target,
+				func() -> void:
+					if god_card.has_method("activate_from_command"):
+						god_card.activate_from_command(game_manager, command)
+					else:
+						god_card.activate(game_manager, target)
+			)
+			_advance_authoritative_priority()
 			move_validated.emit(command)
 			return true
 		"activate_power":
@@ -5029,68 +5024,57 @@ func _process_command_impl(command: Dictionary) -> bool:
 					if act_target == null:
 						move_failed.emit(power_card.card_name + " needs a friendly Priest that has not attacked this turn.")
 						return false
-				if _uses_authoritative_headless_priority_flow():
-					if power_card is Breidablik:
-						var queued_breidablik := power_card as Breidablik
-						var queued_priest := act_target
-						var breidablik_uid: String = str(power_card.uid)
-						var priest_uid: String = str(act_target.uid)
-						var priest_name: String = str(act_target.card_name)
-						var priest_zone := act_target.current_zone
-						var priest_zone_card_index := priest_zone.cards.find(act_target) if priest_zone != null else -1
-						_queue_authoritative_magical_action(
-							CardAction.Type.ABILITY,
-							power_card,
-							act_target,
-							func() -> void:
-								var live_breidablik := queued_breidablik
-								if live_breidablik == null \
-										or live_breidablik.current_zone == null \
-										or live_breidablik.current_zone.zone_type != Zone.ZoneType.POWER_SLOT:
-									live_breidablik = game_manager.get_card_by_uid(breidablik_uid) as Breidablik
-								var live_priest := live_breidablik.resolve_harbor_target(queued_priest) \
-									if live_breidablik != null else null
-								if live_priest == null \
-										and live_breidablik != null \
-										and priest_zone != null \
-										and priest_zone_card_index >= 0 \
-										and priest_zone_card_index < priest_zone.cards.size():
-									live_priest = live_breidablik.resolve_harbor_target(
-										priest_zone.cards[priest_zone_card_index]
-									)
-								if live_priest == null and live_breidablik != null:
-									live_priest = live_breidablik.get_valid_field_priest_by_uid(priest_uid)
-								if live_breidablik == null \
-										or live_priest == null \
-										or not live_breidablik.harbor_priest(game_manager, live_priest):
-									game_manager.note_player_feedback(
-										"Breidablik could not harbor %s." % priest_name
-									)
-						)
-						_advance_authoritative_priority()
-						move_validated.emit(command)
-						return true
+				if power_card is Breidablik:
+					var queued_breidablik := power_card as Breidablik
+					var queued_priest := act_target
+					var breidablik_uid: String = str(power_card.uid)
+					var priest_uid: String = str(act_target.uid)
+					var priest_name: String = str(act_target.card_name)
+					var priest_zone := act_target.current_zone
+					var priest_zone_card_index := priest_zone.cards.find(act_target) if priest_zone != null else -1
 					_queue_authoritative_magical_action(
 						CardAction.Type.ABILITY,
 						power_card,
 						act_target,
 						func() -> void:
-							if power_card.has_method("activate_from_command"):
-								power_card.call("activate_from_command", game_manager, activation_command)
-							else:
-								power_card.activate(game_manager, act_target)
-					)
+							var live_breidablik := queued_breidablik
+							if live_breidablik == null \
+									or live_breidablik.current_zone == null \
+									or live_breidablik.current_zone.zone_type != Zone.ZoneType.POWER_SLOT:
+								live_breidablik = game_manager.get_card_by_uid(breidablik_uid) as Breidablik
+							var live_priest := live_breidablik.resolve_harbor_target(queued_priest) \
+								if live_breidablik != null else null
+							if live_priest == null \
+									and live_breidablik != null \
+									and priest_zone != null \
+									and priest_zone_card_index >= 0 \
+									and priest_zone_card_index < priest_zone.cards.size():
+								live_priest = live_breidablik.resolve_harbor_target(
+									priest_zone.cards[priest_zone_card_index]
+								)
+							if live_priest == null and live_breidablik != null:
+								live_priest = live_breidablik.get_valid_field_priest_by_uid(priest_uid)
+							if live_breidablik == null \
+									or live_priest == null \
+									or not live_breidablik.harbor_priest(game_manager, live_priest):
+								game_manager.note_player_feedback(
+									"Breidablik could not harbor %s." % priest_name
+								)
+				)
 					_advance_authoritative_priority()
 					move_validated.emit(command)
 					return true
-				game_manager.run_with_effect_source(
+				_queue_authoritative_magical_action(
+					CardAction.Type.ABILITY,
 					power_card,
+					act_target,
 					func() -> void:
 						if power_card.has_method("activate_from_command"):
 							power_card.call("activate_from_command", game_manager, activation_command)
 						else:
 							power_card.activate(game_manager, act_target)
 				)
+				_advance_authoritative_priority()
 			move_validated.emit(command)
 			return true
 		"tonal_extraction_choice":
@@ -5129,39 +5113,25 @@ func _process_command_impl(command: Dictionary) -> bool:
 				if not charm_card.pay_costs(charm_card.card_owner, game_manager):
 					move_failed.emit(_get_move_cost_payment_failure_reason(charm_card, false, charm_card.card_owner))
 					return false
-			if _uses_authoritative_headless_priority_flow():
-				var charm_command_display_zone := _resolve_command_display_zone(command, charm_card.card_owner)
-				var preferred_display_zone: Zone = charm_card.current_zone if charm_prepared else charm_command_display_zone
-				var charm_resolve := func() -> void:
-					_place_persistent_charm_on_board(charm_card, preferred_display_zone)
-					charm_card.resolve(game_manager, charm_target)
-					if charm_card.goes_to_graveyard_after_use() \
-							and charm_card.current_zone != null \
-							and charm_card.current_zone != charm_card.card_owner.graveyard_zone:
-						charm_card.card_owner.move_card(charm_card, charm_card.card_owner.graveyard_zone)
-				_queue_authoritative_magical_action(
-					CardAction.Type.SPELL,
-					charm_card,
-					charm_target,
-					charm_resolve,
-					"",
-					preferred_display_zone,
-					charm_source_action
-				)
-				_advance_authoritative_priority()
-				move_validated.emit(command)
-				return true
-			game_manager.run_with_effect_source(
+			var charm_command_display_zone := _resolve_command_display_zone(command, charm_card.card_owner)
+			var preferred_display_zone: Zone = charm_card.current_zone if charm_prepared else charm_command_display_zone
+			var charm_resolve := func() -> void:
+				_place_persistent_charm_on_board(charm_card, preferred_display_zone)
+				charm_card.resolve(game_manager, charm_target)
+				if charm_card.goes_to_graveyard_after_use() \
+						and charm_card.current_zone != null \
+						and charm_card.current_zone != charm_card.card_owner.graveyard_zone:
+					charm_card.card_owner.move_card(charm_card, charm_card.card_owner.graveyard_zone)
+			_queue_authoritative_magical_action(
+				CardAction.Type.SPELL,
 				charm_card,
-				func() -> void:
-					var charm_immediate_display_zone := _resolve_command_display_zone(command, charm_card.card_owner)
-					_place_persistent_charm_on_board(charm_card, charm_immediate_display_zone)
-					charm_card.resolve(game_manager, charm_target)
+				charm_target,
+				charm_resolve,
+				"",
+				preferred_display_zone,
+				charm_source_action
 			)
-			if charm_card.goes_to_graveyard_after_use() \
-					and charm_card.current_zone != null \
-					and charm_card.current_zone != charm_card.card_owner.graveyard_zone:
-				charm_card.card_owner.move_card(charm_card, charm_card.card_owner.graveyard_zone)
+			_advance_authoritative_priority()
 			move_validated.emit(command)
 			return true
 		"skoll_upkeep_summon":
@@ -5199,10 +5169,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 				return false
 			skoll.apply_upkeep_summon_tax(game_manager)
 			move_validated.emit(command)
-			if _uses_authoritative_headless_priority_flow():
-				_begin_or_continue_authoritative_turn_start_sequence("Skoll summoned via Sun Hunt.")
-			else:
-				_advance_authoritative_priority_for_pending_card_events(skoll)
+			_begin_or_continue_authoritative_turn_start_sequence("Skoll summoned via Sun Hunt.")
 			return true
 		"hati_moon_hunt":
 			var hati_uid: String = command.get("hati_uid", "")
@@ -5247,10 +5214,9 @@ func _process_command_impl(command: Dictionary) -> bool:
 			if feedback.strip_edges() != "":
 				game_manager.note_player_feedback(feedback)
 			move_validated.emit(command)
-			if _uses_authoritative_headless_priority_flow():
-				_begin_or_continue_authoritative_turn_start_sequence(
-					_build_upkeep_resolution_feedback(feedback)
-				)
+			_begin_or_continue_authoritative_turn_start_sequence(
+				_build_upkeep_resolution_feedback(feedback)
+			)
 			return true
 		"breidablik_turn_start_choice":
 			var source_uid := str(command.get("source_uid", "")).strip_edges()
@@ -5281,8 +5247,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 				breidablik.close_turn_start_window()
 			command["public_log_message"] = feedback
 			move_validated.emit(command)
-			if _uses_authoritative_headless_priority_flow():
-				_begin_or_continue_authoritative_turn_start_sequence(feedback)
+			_begin_or_continue_authoritative_turn_start_sequence(feedback)
 			return true
 		"unlock_power":
 			var up_uid: String = command.get("power_uid", "")
@@ -5353,25 +5318,10 @@ func _process_command_impl(command: Dictionary) -> bool:
 					and not game_manager.can_pay_creature_action_mana_cost(aca_source, "activate"):
 				move_failed.emit(aca_source.card_name + " needs 1 mana to activate while Wheel of Fire is attached.")
 				return false
-			if _uses_authoritative_headless_priority_flow():
-				_queue_authoritative_magical_action(
-					CardAction.Type.ABILITY,
-					aca_source,
-					aca_target,
-					Callable(self, "_execute_activate_card_ability_command").bind(
-						aca_source_uid,
-						aca_resolve_target_uid,
-						aca_option,
-						aca_has_option,
-						aca_has_return_to_hand,
-						aca_return_to_hand
-					)
-				)
-				move_validated.emit(command)
-				_advance_authoritative_priority()
-				return true
-			game_manager.run_with_effect_source(
+			_queue_authoritative_magical_action(
+				CardAction.Type.ABILITY,
 				aca_source,
+				aca_target,
 				Callable(self, "_execute_activate_card_ability_command").bind(
 					aca_source_uid,
 					aca_resolve_target_uid,
@@ -5382,6 +5332,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 				)
 			)
 			move_validated.emit(command)
+			_advance_authoritative_priority()
 			return true
 		"mopsus_reveal_hand_card":
 			var mopsus := game_manager.get_card_by_uid(str(command.get("source_uid", ""))) as Mopsus
@@ -6470,22 +6421,14 @@ func _process_command_impl(command: Dictionary) -> bool:
 			if dc_plan.is_empty():
 				move_failed.emit("activate_divine_caprice: plan is empty or all zones invalid")
 				return false
-			if _uses_authoritative_headless_priority_flow():
-				_queue_authoritative_magical_action(
-					CardAction.Type.ABILITY,
-					dc,
-					dc_plan,
-					func() -> void:
-						dc.activate(game_manager, dc_plan)
-				)
-				_advance_authoritative_priority()
-				move_validated.emit(command)
-				return true
-			game_manager.run_with_effect_source(
+			_queue_authoritative_magical_action(
+				CardAction.Type.ABILITY,
 				dc,
+				dc_plan,
 				func() -> void:
 					dc.activate(game_manager, dc_plan)
 			)
+			_advance_authoritative_priority()
 			move_validated.emit(command)
 			return true
 		"intercept_decision":
@@ -6504,8 +6447,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 					move_failed.emit("intercept_decision: invalid interceptor")
 					return false
 				selected_interceptor = interceptor
-			if _uses_authoritative_headless_attack_flow():
-				_resolve_authoritative_headless_attack()
+			_resolve_authoritative_headless_attack()
 			move_validated.emit(command)
 			return true
 		"combat_retreat_decision":
@@ -6563,8 +6505,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 			game_manager.push_to_stack(pcr_action)
 			_clear_pending_turn_action_after_priority_response(pcr_charm_card.card_owner)
 			move_validated.emit(command)
-			if _uses_authoritative_headless_priority_flow():
-				_advance_authoritative_priority()
+			_advance_authoritative_priority()
 			return true
 		"play_priority_ability":
 			var pra_source_uid: String = command.get("source_uid", "")
@@ -6632,27 +6573,23 @@ func _process_command_impl(command: Dictionary) -> bool:
 			game_manager.push_to_stack(pra_action)
 			_clear_pending_turn_action_after_priority_response(pra_source.card_owner)
 			move_validated.emit(command)
-			if _uses_authoritative_headless_priority_flow():
-				_advance_authoritative_priority()
+			_advance_authoritative_priority()
 			return true
 		"priority_pass":
-			if _uses_authoritative_headless_priority_flow():
-				# The pass can resolve the stack and run a deferred turn action before
-				# submit_command's normal prompt cleanup gets another chance.
-				if not _consume_active_command_prompt_for_completion("priority_pass") and acting_player != null:
-					_consume_pending_ui_interaction_for_player(acting_player, "priority")
-				game_manager.pass_priority()
-				if game_manager.both_passed():
-					if not game_manager.action_stack.is_empty():
-						_schedule_authoritative_stack_top_after_priority()
-					else:
-						_clear_priority_window_state()
-						_try_process_pending_turn_action_after_opponent_priority()
+			# The pass can resolve the stack and run a deferred turn action before
+			# submit_command's normal prompt cleanup gets another chance.
+			if not _consume_active_command_prompt_for_completion("priority_pass") and acting_player != null:
+				_consume_pending_ui_interaction_for_player(acting_player, "priority")
+			game_manager.pass_priority()
+			if game_manager.both_passed():
+				if not game_manager.action_stack.is_empty():
+					_schedule_authoritative_stack_top_after_priority()
 				else:
-					_advance_authoritative_priority()
-				_request_ui_refresh()
-				move_validated.emit(command)
-				return true
+					_clear_priority_window_state()
+					_try_process_pending_turn_action_after_opponent_priority()
+			else:
+				_advance_authoritative_priority()
+			_request_ui_refresh()
 			move_validated.emit(command)
 			return true
 		"resurrection_choice":
@@ -6735,8 +6672,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 				move_failed.emit("return_to_hand_choice: failed to resolve")
 				return false
 			move_validated.emit(command)
-			if _uses_authoritative_headless_priority_flow():
-				_continue_pending_authoritative_graveyard_prompt_action()
+			_continue_pending_authoritative_graveyard_prompt_action()
 			return true
 		"doorway_choice":
 			var structure_uid := str(command.get("structure_uid", "")).strip_edges()
@@ -6756,8 +6692,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 				move_failed.emit("doorway_choice: failed to resolve")
 				return false
 			move_validated.emit(command)
-			if _uses_authoritative_headless_priority_flow():
-				_continue_pending_authoritative_graveyard_prompt_action()
+			_continue_pending_authoritative_graveyard_prompt_action()
 			return true
 		"play_hex_response":
 			var phr_hex_uid: String = command.get("hex_uid", "")
@@ -6798,8 +6733,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 			game_manager.push_to_stack(phr_ability)
 			_clear_pending_turn_action_after_priority_response(phr_hex.card_owner)
 			move_validated.emit(command)
-			if _uses_authoritative_headless_priority_flow():
-				_advance_authoritative_priority()
+			_advance_authoritative_priority()
 			return true
 	move_failed.emit("Unknown command type: " + str(command.get("type")))
 	return false
@@ -6926,17 +6860,14 @@ func _finalize_pending_end_turn(acting_player: Player) -> void:
 	var end_turn_player := acting_player if acting_player != null else game_manager.current_player
 	if end_turn_player == null:
 		return
-	if _uses_authoritative_headless_priority_flow():
-		_queue_authoritative_priority_event(
-			"end_turn",
-			func() -> void:
-				game_manager.end_turn(),
-			end_turn_player,
-			end_turn_player,
-			"End-turn window closed."
-		)
-		return
-	game_manager.end_turn()
+	_queue_authoritative_priority_event(
+		"end_turn",
+		func() -> void:
+			game_manager.end_turn(),
+		end_turn_player,
+		end_turn_player,
+		"End-turn window closed."
+	)
 
 func _check_for_next_resurrection() -> bool:
 	# Only relevant if we have pending resurrections

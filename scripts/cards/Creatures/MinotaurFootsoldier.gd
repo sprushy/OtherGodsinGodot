@@ -44,7 +44,7 @@ func on_creature_enters_combat(game_manager: GameManager, attacker: Card, defend
 		game_manager.note_player_feedback(
 			"%s stuns %s, negating its abilities until end of turn." % [
 				card_name,
-				defender.get_target_log_display_name(game_manager.get_feedback_viewer())
+				defender.get_combat_log_display_name(game_manager.get_feedback_viewer())
 			]
 		)
 

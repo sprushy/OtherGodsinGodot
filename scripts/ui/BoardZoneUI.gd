@@ -59,6 +59,8 @@ const ODIN_RUNIC_KNOWLEDGE_BADGE_TEXTURE := preload("res://images/ability_badges
 const E2_ABZU_RETURN_BADGE_TEXTURE := preload("res://images/ability_badges/E2AbzuReturnBadge.png")
 const E2_ABZU_VOID_BADGE_TEXTURE := preload("res://images/ability_badges/E2AbzuVoidBadge.png")
 const TEZ_BLOODSTREAK_TEXTURE := preload("res://images/Bloodstreak.png")
+const INTERCEPT_PREVIEW_BADGE_TEXTURE := preload("res://images/ui/intercept/InterceptorBadge.png")
+const STEALTH_INTERCEPT_PREVIEW_QUESTION_TEXTURE := preload("res://images/ui/intercept/StealthInterceptorQuestionBadge.png")
 const STEAL_ATTACK_TARGET_TEXTURE := preload("res://images/ui/attack_targets/StealGlove.png")
 const MOVE_STRAIGHT_INDICATOR_TEXTURE := preload("res://images/ui/move_arrows/ArrowIndicator.png")
 const MOVE_DIAGONAL_INDICATOR_TEXTURE := preload("res://images/ui/move_arrows/AngleArrow.png")
@@ -590,6 +592,11 @@ const E2_ABZU_BADGE_ICON_INSET := 10.0
 const ATTACK_TARGET_ICON_SIZE := 74.0
 const TARGET_ICON_PAD := 5.0
 const TARGET_ICON_GROUP_GAP := 8.0
+const INTERCEPT_PREVIEW_BADGE_SIZE := 58.0
+const INTERCEPT_PREVIEW_BADGE_TOP := -28.0
+const STEALTH_INTERCEPT_PREVIEW_ICON_ALPHA := 0.78
+const STEALTH_INTERCEPT_PREVIEW_FADE_SECONDS := 0.34
+const STEALTH_INTERCEPT_PREVIEW_HOLD_SECONDS := 0.56
 const STANCE_SWITCH_BADGE_SIZE := 64.0
 const STANCE_SWITCH_ICON_LEFT := 3.0
 const STANCE_SWITCH_ICON_TOP := -4.0
@@ -2867,6 +2874,117 @@ func _add_attack_target_aura(overlay: Control) -> void:
 func _add_followers_attack_target_tint(overlay: Control) -> void:
 	_add_attack_target_aura(overlay)
 
+func _add_intercept_preview_badge(overlay: Control, card: Card) -> void:
+	if overlay == null or card == null:
+		return
+	if card.card_type != Card.CardType.CREATURE or card.is_god:
+		return
+	if _is_stealth_hidden_from_viewer(card):
+		if _is_attack_preview_ambiguous_stealth_interceptor(card):
+			_add_ambiguous_stealth_intercept_preview_badge(overlay, card)
+		return
+	if not _is_attack_preview_interceptor(card):
+		return
+	_add_exact_intercept_preview_badge(overlay)
+
+func _make_intercept_preview_badge_container(badge_name: String) -> Control:
+	var badge := Control.new()
+	badge.name = badge_name
+	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	badge.z_index = 42
+	badge.clip_contents = false
+	badge.anchor_left = 0.5
+	badge.anchor_right = 0.5
+	badge.anchor_top = 0.0
+	badge.anchor_bottom = 0.0
+	badge.offset_left = -INTERCEPT_PREVIEW_BADGE_SIZE * 0.5
+	badge.offset_top = INTERCEPT_PREVIEW_BADGE_TOP
+	badge.offset_right = INTERCEPT_PREVIEW_BADGE_SIZE * 0.5
+	badge.offset_bottom = INTERCEPT_PREVIEW_BADGE_TOP + INTERCEPT_PREVIEW_BADGE_SIZE
+	badge.custom_minimum_size = Vector2(INTERCEPT_PREVIEW_BADGE_SIZE, INTERCEPT_PREVIEW_BADGE_SIZE)
+	badge.size = badge.custom_minimum_size
+	return badge
+
+func _add_intercept_preview_badge_icon(
+	badge: Control,
+	texture: Texture2D,
+	rotation_degrees: float,
+	modulate_color: Color = Color.WHITE
+) -> TextureRect:
+	if badge == null or texture == null:
+		return null
+	var icon := TextureRect.new()
+	icon.texture = texture
+	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	icon.pivot_offset = Vector2(INTERCEPT_PREVIEW_BADGE_SIZE, INTERCEPT_PREVIEW_BADGE_SIZE) * 0.5
+	icon.rotation_degrees = rotation_degrees
+	icon.modulate = modulate_color
+	badge.add_child(icon)
+	return icon
+
+func _add_exact_intercept_preview_badge(overlay: Control) -> void:
+	var badge := _make_intercept_preview_badge_container("InterceptPreviewBadge")
+	_add_intercept_preview_badge_icon(badge, INTERCEPT_PREVIEW_BADGE_TEXTURE, 180.0)
+	overlay.add_child(badge)
+
+func _add_ambiguous_stealth_intercept_preview_badge(overlay: Control, card: Card) -> void:
+	var badge := _make_intercept_preview_badge_container("StealthInterceptPreviewBadge")
+	var intercept_icon := _add_intercept_preview_badge_icon(
+		badge,
+		INTERCEPT_PREVIEW_BADGE_TEXTURE,
+		180.0,
+		Color(1.0, 1.0, 1.0, STEALTH_INTERCEPT_PREVIEW_ICON_ALPHA)
+	)
+	var question_icon := _add_intercept_preview_badge_icon(
+		badge,
+		STEALTH_INTERCEPT_PREVIEW_QUESTION_TEXTURE,
+		0.0,
+		Color(1.0, 1.0, 1.0, 0.0)
+	)
+	_add_stealth_intercept_badge_haze(badge, card)
+	overlay.add_child(badge)
+	_start_stealth_intercept_badge_alternation(badge, intercept_icon, question_icon)
+
+func _add_stealth_intercept_badge_haze(badge: Control, card: Card) -> void:
+	if badge == null:
+		return
+	var haze := ColorRect.new()
+	haze.name = "StealthInterceptBadgeHaze"
+	haze.color = Color(0.04, 0.05, 0.13, 0.24)
+	haze.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	haze.z_index = 8
+	haze.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	badge.add_child(haze)
+
+	var fog_overlay := StealthFogOverlayScript.new() as Control
+	fog_overlay.name = "StealthInterceptBadgeFog"
+	fog_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	fog_overlay.z_index = 9
+	fog_overlay.clip_contents = false
+	fog_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	fog_overlay.set("fog_alpha", 0.34)
+	fog_overlay.set("variant_seed", _get_stealth_fog_overlay_seed(card) + 409)
+	badge.add_child(fog_overlay)
+
+func _start_stealth_intercept_badge_alternation(
+	badge: Control,
+	intercept_icon: TextureRect,
+	question_icon: TextureRect
+) -> void:
+	if badge == null or intercept_icon == null or question_icon == null:
+		return
+	var tween := badge.create_tween()
+	tween.set_loops()
+	tween.tween_interval(STEALTH_INTERCEPT_PREVIEW_HOLD_SECONDS)
+	tween.tween_property(intercept_icon, "modulate:a", 0.0, STEALTH_INTERCEPT_PREVIEW_FADE_SECONDS).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	tween.parallel().tween_property(question_icon, "modulate:a", STEALTH_INTERCEPT_PREVIEW_ICON_ALPHA, STEALTH_INTERCEPT_PREVIEW_FADE_SECONDS).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	tween.tween_interval(STEALTH_INTERCEPT_PREVIEW_HOLD_SECONDS)
+	tween.tween_property(question_icon, "modulate:a", 0.0, STEALTH_INTERCEPT_PREVIEW_FADE_SECONDS).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	tween.parallel().tween_property(intercept_icon, "modulate:a", STEALTH_INTERCEPT_PREVIEW_ICON_ALPHA, STEALTH_INTERCEPT_PREVIEW_FADE_SECONDS).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+
 func _take_stealth_fog_overlay_for_refresh(card: Card) -> Control:
 	if card == null or card.card_type != Card.CardType.CREATURE or not card.is_stealth:
 		return null
@@ -4132,6 +4250,54 @@ func _get_board_drag_followers_attack_preview_attacker(scene_root: Node, target_
 		return preview_attacker as Card
 	return null
 
+func _is_board_drag_attack_target_preview(card: Card, scene_root: Node) -> bool:
+	if card == null or scene_root == null:
+		return false
+	if not scene_root.has_method("_is_board_drag_attack_target_preview"):
+		return false
+	return bool(scene_root.call("_is_board_drag_attack_target_preview", card))
+
+func _is_stealth_hidden_from_viewer(card: Card) -> bool:
+	if card == null or not card.is_stealth:
+		return false
+	var viewer := _get_viewer_player()
+	return card.get_controller() != viewer \
+		and not card.is_revealed_to_all() \
+		and not card.is_temporarily_revealed()
+
+func _get_hover_attack_preview_target(card: Card):
+	if card == null:
+		return null
+	if _is_card_attack_candidate(card):
+		return card
+	if _is_god_attack_candidate(card):
+		return owning_player
+	return null
+
+func _notify_hover_attack_preview_target_changed(attack_target) -> void:
+	var scene_root := _get_targeting_scene_root()
+	if scene_root == null or not scene_root.has_method("_set_hover_attack_preview_target"):
+		return
+	scene_root.call("_set_hover_attack_preview_target", attack_target)
+
+func _is_attack_preview_interceptor(card: Card) -> bool:
+	if card == null:
+		return false
+	if _is_stealth_hidden_from_viewer(card):
+		return false
+	var scene_root := _get_targeting_scene_root()
+	if scene_root == null or not scene_root.has_method("_is_attack_preview_interceptor"):
+		return false
+	return bool(scene_root.call("_is_attack_preview_interceptor", card))
+
+func _is_attack_preview_ambiguous_stealth_interceptor(card: Card) -> bool:
+	if card == null or not _is_stealth_hidden_from_viewer(card):
+		return false
+	var scene_root := _get_targeting_scene_root()
+	if scene_root == null or not scene_root.has_method("_is_attack_preview_ambiguous_stealth_interceptor"):
+		return false
+	return bool(scene_root.call("_is_attack_preview_ambiguous_stealth_interceptor", card))
+
 func _is_hover_card_options_preview_active() -> bool:
 	var scene_root := _get_targeting_scene_root()
 	if scene_root == null or not scene_root.has_method("_is_hover_card_options_preview_active"):
@@ -4391,6 +4557,8 @@ func _is_card_attack_candidate(card: Card) -> bool:
 	var scene_root := _get_targeting_scene_root()
 	if scene_root == null:
 		return false
+	if _is_board_drag_attack_target_preview(card, scene_root):
+		return true
 	if _get_pending_attack_target(scene_root) != null:
 		return false
 	var attacker := _get_selected_attacker(scene_root)
@@ -5063,6 +5231,7 @@ func _refresh_display() -> void:
 					_add_attack_target_icon(fd_overlay, card)
 				elif is_face_down_stack_target or is_face_down_pending_target:
 					_add_stack_target_indicator(fd_overlay)
+			_add_intercept_preview_badge(fd_overlay, card)
 			var _fd_is_def := card.card_type == Card.CardType.CREATURE and (
 				card.creature_mode == Card.CreatureMode.DEFENSIVE
 				or card.is_stealth
@@ -5463,6 +5632,7 @@ func _refresh_display() -> void:
 			card_overlay.add_child(muted_badge)
 
 		_add_hover_reach_badge(card_overlay, card)
+		_add_intercept_preview_badge(card_overlay, card)
 		_add_creature_action_symbols(card_overlay, card)
 		_add_stance_switch_symbol(card_overlay, card)
 		_defense_overlay = card_overlay if shows_defense_shield else null
@@ -5763,6 +5933,7 @@ func _notification(what: int) -> void:
 			_active_affordance_hover_owner_id = get_instance_id()
 			var _c := _preview_card if _preview_card != null else (zone.cards[0] if zone != null and zone.cards.size() > 0 else null)
 			_sync_locked_power_cursor_hover(_c)
+			_notify_hover_attack_preview_target_changed(_get_hover_attack_preview_target(_c))
 			if _c != null:
 				_notify_hover_card_options_changed(_c)
 				if not _set_prepared_magical_cover_hovered(true):
@@ -5784,6 +5955,7 @@ func _notification(what: int) -> void:
 			_badge_hovered = false
 			_set_locked_power_cursor_active(false)
 			_notify_hover_card_options_changed(null)
+			_notify_hover_attack_preview_target_changed(null)
 			_set_prepared_magical_cover_hovered(false)
 			z_index = _get_resting_z_index()
 			if zone != null and zone.cards.is_empty():

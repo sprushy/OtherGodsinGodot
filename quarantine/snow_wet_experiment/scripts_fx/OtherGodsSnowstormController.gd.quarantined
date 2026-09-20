@@ -1,0 +1,140 @@
+class_name OtherGodsSnowstormController
+extends Node
+
+@export_range(0.0, 1.0, 0.01) var snow_strength: float = 0.66:
+	set(value):
+		snow_strength = clampf(value, 0.0, 1.0)
+		_apply_strength()
+@export_range(0.0, 0.6, 0.01) var strength_variation: float = 0.24
+@export_range(0.0, 1.0, 0.01) var accumulation: float = 0.52
+@export var wind_direction := Vector2(-1.0, 0.22)
+@export_range(0.0, 4.0, 0.01) var wind_force: float = 1.25
+
+var far_snow_3d: GPUParticles3D = null
+var near_snow_3d: GPUParticles3D = null
+var gust_snow_3d: GPUParticles3D = null
+var ui_snow_2d: GPUParticles2D = null
+var ui_overlay_material: ShaderMaterial = null
+var ui_whirl_material: ShaderMaterial = null
+var board_snow_materials: Array[ShaderMaterial] = []
+var pile_spawner: Node = null
+
+var _base_strength := 0.66
+var _weather_time := 0.0
+var _weather_apply_elapsed := 999.0
+var _viewport_size := Vector2(1280.0, 720.0)
+var _active := false
+
+func _ready() -> void:
+	_base_strength = snow_strength
+	set_process(false)
+	_apply_strength()
+
+func set_active(value: bool) -> void:
+	_active = value
+	set_process(_active)
+	_apply_strength()
+
+func set_base_strength(value: float) -> void:
+	_base_strength = clampf(value, 0.0, 1.0)
+	snow_strength = _base_strength
+
+func set_viewport_size(value: Vector2) -> void:
+	if value.x <= 0.0 or value.y <= 0.0:
+		return
+	_viewport_size = value
+	if ui_snow_2d != null:
+		ui_snow_2d.position = Vector2(_viewport_size.x * 0.5, -64.0)
+		var material := ui_snow_2d.process_material as ParticleProcessMaterial
+		if material != null:
+			material.emission_box_extents = Vector3(_viewport_size.x * 0.58, 12.0, 0.0)
+
+func _process(delta: float) -> void:
+	if not _active:
+		return
+	_weather_time += delta
+	_weather_apply_elapsed += delta
+	if _weather_apply_elapsed < 0.16:
+		return
+	_weather_apply_elapsed = 0.0
+	var slow_roll := sin(_weather_time * 0.19) * 0.50 + sin(_weather_time * 0.47 + 1.7) * 0.32
+	var gust := pow(maxf(0.0, sin(_weather_time * 0.73 - 0.9)), 5.0) * 0.42
+	var next_strength := clampf(_base_strength + slow_roll * strength_variation + gust, 0.0, 1.0)
+	if absf(next_strength - snow_strength) >= 0.025:
+		snow_strength = next_strength
+
+func _apply_strength() -> void:
+	if not _active:
+		_set_inactive_visuals()
+		return
+	var amount_curve := smoothstep(0.0, 1.0, snow_strength)
+	var wind3 := Vector3(wind_direction.x, -0.22, wind_direction.y).normalized()
+
+	if far_snow_3d != null:
+		far_snow_3d.emitting = true
+		far_snow_3d.amount = int(lerpf(55.0, 420.0, amount_curve))
+		far_snow_3d.speed_scale = lerpf(0.50, 1.25, snow_strength)
+		_set_particle_gravity_3d(far_snow_3d, Vector3(0.0, -1.0, 0.0) + wind3 * wind_force * snow_strength)
+
+	if near_snow_3d != null:
+		near_snow_3d.emitting = true
+		near_snow_3d.amount = int(lerpf(16.0, 120.0, amount_curve))
+		near_snow_3d.speed_scale = lerpf(0.72, 1.68, snow_strength)
+		_set_particle_gravity_3d(near_snow_3d, Vector3(0.0, -1.45, 0.0) + wind3 * wind_force * 1.55 * snow_strength)
+
+	if gust_snow_3d != null:
+		gust_snow_3d.emitting = snow_strength > 0.44
+		gust_snow_3d.amount = int(lerpf(0.0, 72.0, smoothstep(0.42, 1.0, snow_strength)))
+		gust_snow_3d.speed_scale = lerpf(0.85, 2.25, snow_strength)
+		_set_particle_gravity_3d(gust_snow_3d, Vector3(0.0, -0.32, 0.0) + wind3 * wind_force * 3.05 * snow_strength)
+
+	if ui_snow_2d != null:
+		ui_snow_2d.emitting = true
+		ui_snow_2d.amount = int(lerpf(5.0, 36.0, amount_curve))
+		ui_snow_2d.speed_scale = lerpf(0.60, 1.65, snow_strength)
+		var material := ui_snow_2d.process_material as ParticleProcessMaterial
+		if material != null:
+			material.gravity = Vector3(wind_direction.normalized().x * 165.0 * wind_force * snow_strength, 155.0 + snow_strength * 260.0, 0.0)
+
+	if ui_overlay_material != null:
+		ui_overlay_material.set_shader_parameter("intensity", snow_strength)
+		ui_overlay_material.set_shader_parameter("wind_strength", wind_force)
+		ui_overlay_material.set_shader_parameter("wind_direction", wind_direction.normalized())
+
+	if ui_whirl_material != null:
+		ui_whirl_material.set_shader_parameter("intensity", smoothstep(0.16, 0.86, snow_strength))
+		ui_whirl_material.set_shader_parameter("wind_direction", wind_direction.normalized())
+
+	for material in board_snow_materials:
+		if material != null:
+			material.set_shader_parameter("snow_amount", clampf(accumulation + snow_strength * 0.24, 0.0, 1.0))
+
+	if pile_spawner != null and pile_spawner.has_method("set_accumulation"):
+		pile_spawner.call("set_accumulation", clampf(accumulation + snow_strength * 0.18, 0.0, 1.0))
+
+	_push_card_weather()
+
+func _set_particle_gravity_3d(particles: GPUParticles3D, gravity: Vector3) -> void:
+	var material := particles.process_material as ParticleProcessMaterial
+	if material != null:
+		material.gravity = gravity
+
+func _set_inactive_visuals() -> void:
+	for particles in [far_snow_3d, near_snow_3d, gust_snow_3d]:
+		if particles != null:
+			particles.emitting = false
+	if ui_snow_2d != null:
+		ui_snow_2d.emitting = false
+	if ui_overlay_material != null:
+		ui_overlay_material.set_shader_parameter("intensity", 0.0)
+	if ui_whirl_material != null:
+		ui_whirl_material.set_shader_parameter("intensity", 0.0)
+	var tree := get_tree()
+	if tree != null:
+		tree.call_group("snowstorm_card_weather", "set_weather", 0.0, wind_direction.normalized())
+
+func _push_card_weather() -> void:
+	var tree := get_tree()
+	if tree == null:
+		return
+	tree.call_group("snowstorm_card_weather", "set_weather", snow_strength, wind_direction.normalized())

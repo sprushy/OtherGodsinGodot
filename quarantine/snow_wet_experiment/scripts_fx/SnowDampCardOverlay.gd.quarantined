@@ -1,0 +1,188 @@
+class_name SnowDampCardOverlay
+extends Control
+
+const SNOWFLAKE_TEXTURE := preload("res://images/fx/snowstorm/particles/snowflake_soft_01.png")
+const SNOW_PATCH_TEXTURE := preload("res://images/fx/snowstorm/decals/snow_pile_decal_02.png")
+const WET_CARD_SHADER := preload("res://shaders/fx/wet_card/wet_card_canvas_overlay.gdshader")
+const WETNESS_CONTROL_TEXTURE := preload("res://images/fx/wet_card/wetness_control.png")
+const WET_NORMAL_TEXTURE := preload("res://images/fx/wet_card/wet_normal.png")
+const WET_ROUGHNESS_TEXTURE := preload("res://images/fx/wet_card/wet_roughness.png")
+const MELT_DROPLET_ATLAS_TEXTURE := preload("res://images/fx/wet_card/melt_droplet_atlas.png")
+const ENABLE_WET_CONTROL_MAP_OVERLAY := false
+
+@export var body_inset := Vector4(10.0, 14.0, 10.0, 30.0)
+@export_range(0.0, 1.0, 0.01) var snow_strength: float = 0.62
+@export var wind := Vector2(-1.0, 0.18)
+
+var _spots: Array[Dictionary] = []
+var _spawn_elapsed: float = 0.0
+var _rng := RandomNumberGenerator.new()
+var _wet_rect: ColorRect = null
+var _wet_material: ShaderMaterial = null
+
+func _ready() -> void:
+	mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_to_group("snowstorm_card_weather")
+	_rng.seed = hash(str(get_instance_id()) + ":" + str(Time.get_ticks_usec()))
+	if ENABLE_WET_CONTROL_MAP_OVERLAY:
+		_build_wet_control_overlay()
+	set_process(false)
+
+func set_weather(strength: float, wind_direction: Vector2) -> void:
+	snow_strength = clampf(strength, 0.0, 1.0)
+	if wind_direction.length_squared() > 0.001:
+		wind = wind_direction.normalized()
+	_update_wet_material()
+	if snow_strength <= 0.02:
+		_spots.clear()
+		_spawn_elapsed = 0.0
+		queue_redraw()
+		set_process(false)
+		return
+	set_process(true)
+
+func _process(delta: float) -> void:
+	if size.x <= 4.0 or size.y <= 4.0:
+		return
+	_sync_wet_control_overlay()
+	_spawn_elapsed += delta
+	var spawn_interval := lerpf(1.60, 0.58, snow_strength)
+	while _spawn_elapsed >= spawn_interval:
+		_spawn_elapsed -= spawn_interval
+		_spawn_spot()
+	for i in range(_spots.size() - 1, -1, -1):
+		var spot := _spots[i]
+		spot["age"] = float(spot.get("age", 0.0)) + delta
+		if float(spot.get("age", 0.0)) > float(spot.get("life", 2.0)):
+			_spots.remove_at(i)
+		else:
+			_spots[i] = spot
+	queue_redraw()
+
+func _build_wet_control_overlay() -> void:
+	_wet_material = ShaderMaterial.new()
+	_wet_material.shader = WET_CARD_SHADER
+	_wet_material.set_shader_parameter("wetness_control", WETNESS_CONTROL_TEXTURE)
+	_wet_material.set_shader_parameter("wet_normal", WET_NORMAL_TEXTURE)
+	_wet_material.set_shader_parameter("wet_roughness", WET_ROUGHNESS_TEXTURE)
+	_wet_material.set_shader_parameter("droplet_atlas", MELT_DROPLET_ATLAS_TEXTURE)
+	_update_wet_material()
+
+	_wet_rect = ColorRect.new()
+	_wet_rect.name = "WetControlMapOverlay"
+	_wet_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_wet_rect.color = Color.WHITE
+	_wet_rect.material = _wet_material
+	add_child(_wet_rect)
+	_sync_wet_control_overlay()
+
+func _sync_wet_control_overlay() -> void:
+	if _wet_rect == null or not is_instance_valid(_wet_rect):
+		return
+	var rect := _get_body_rect()
+	_wet_rect.position = rect.position
+	_wet_rect.size = rect.size
+	_wet_rect.visible = snow_strength > 0.04 and rect.size.x > 4.0 and rect.size.y > 4.0
+	_update_wet_material()
+
+func _update_wet_material() -> void:
+	if _wet_material == null:
+		return
+	var wet_strength := smoothstep(0.08, 0.96, snow_strength)
+	_wet_material.set_shader_parameter("wet_strength", wet_strength)
+	_wet_material.set_shader_parameter("gloss_strength", lerpf(0.42, 0.92, snow_strength))
+	_wet_material.set_shader_parameter("droplet_strength", lerpf(0.18, 0.62, snow_strength))
+	_wet_material.set_shader_parameter("flow_speed", lerpf(0.14, 0.38, snow_strength))
+	_wet_material.set_shader_parameter("wind_direction", wind)
+
+func _spawn_spot() -> void:
+	var rect := _get_body_rect()
+	if rect.size.x <= 4.0 or rect.size.y <= 4.0:
+		return
+	var target := Vector2(
+		_rng.randf_range(rect.position.x, rect.end.x),
+		_rng.randf_range(rect.position.y, rect.end.y)
+	)
+	var fall_time := _rng.randf_range(0.22, 0.52)
+	var wind_px := wind * _rng.randf_range(11.0, 30.0) * lerpf(0.6, 1.6, snow_strength)
+	var start := target - wind_px - Vector2(_rng.randf_range(-8.0, 8.0), _rng.randf_range(18.0, 42.0))
+	_spots.append({
+		"start": start,
+		"target": target,
+		"wind_px": wind_px,
+		"age": 0.0,
+		"fall_time": fall_time,
+		"melt_time": fall_time + _rng.randf_range(0.16, 0.42),
+		"life": fall_time + _rng.randf_range(2.5, 5.2),
+		"radius": _rng.randf_range(5.0, 14.0) * lerpf(0.74, 1.18, snow_strength),
+		"rotation": _rng.randf_range(-PI, PI),
+		"alpha": _rng.randf_range(0.34, 0.74)
+	})
+	if _spots.size() > 4:
+		_spots.remove_at(0)
+
+func _draw() -> void:
+	var rect := _get_body_rect()
+	if rect.size.x <= 4.0 or rect.size.y <= 4.0:
+		return
+	draw_rect(rect, Color(0.72, 0.86, 1.0, 0.030 * snow_strength), true)
+	for spot in _spots:
+		_draw_spot(spot, rect)
+
+func _draw_spot(spot: Dictionary, body_rect: Rect2) -> void:
+	var age := float(spot.get("age", 0.0))
+	var fall_time := maxf(0.001, float(spot.get("fall_time", 0.25)))
+	var melt_time := maxf(fall_time, float(spot.get("melt_time", 0.55)))
+	var life := maxf(melt_time + 0.001, float(spot.get("life", 3.0)))
+	var target := spot.get("target", body_rect.get_center()) as Vector2
+	var radius := float(spot.get("radius", 8.0))
+	if age < fall_time:
+		var start := spot.get("start", target) as Vector2
+		var t := clampf(age / fall_time, 0.0, 1.0)
+		var eased := 1.0 - pow(1.0 - t, 2.0)
+		var flutter := Vector2(sin(age * 19.0 + radius) * 2.3, cos(age * 15.0) * 1.5)
+		var pos := start.lerp(target, eased) + flutter
+		var flake_size := Vector2.ONE * radius * 1.25
+		var flake_rect := Rect2(pos - flake_size * 0.5, flake_size)
+		draw_set_transform(pos, float(spot.get("rotation", 0.0)) + age * 1.2, Vector2.ONE)
+		draw_texture_rect(SNOWFLAKE_TEXTURE, Rect2(-flake_size * 0.5, flake_size), false, Color(0.88, 0.96, 1.0, 0.60))
+		draw_set_transform(Vector2.ZERO)
+		return
+
+	var melt_t := clampf((age - fall_time) / maxf(0.001, melt_time - fall_time), 0.0, 1.0)
+	var fade_t := clampf((age - melt_time) / maxf(0.001, life - melt_time), 0.0, 1.0)
+	var drift := wind * radius * 0.28 * fade_t
+	var patch_pos := target + drift
+	var snow_alpha := (1.0 - melt_t) * (1.0 - fade_t) * float(spot.get("alpha", 0.5))
+	var damp_alpha := sin(melt_t * PI * 0.5) * (1.0 - fade_t) * 0.34 * lerpf(0.72, 1.2, snow_strength)
+	var patch_size := Vector2(radius * 1.45, radius * 0.92)
+	var patch_rect := Rect2(patch_pos - patch_size * 0.5, patch_size)
+
+	if damp_alpha > 0.01:
+		draw_texture_rect(
+			SNOW_PATCH_TEXTURE,
+			patch_rect.grow(radius * 0.22),
+			false,
+			Color(0.18, 0.29, 0.36, damp_alpha)
+		)
+		_fill_soft_oval_polygon(patch_rect.grow(-radius * 0.16), Color(0.12, 0.19, 0.24, damp_alpha * 0.38))
+	if snow_alpha > 0.01:
+		draw_texture_rect(SNOW_PATCH_TEXTURE, patch_rect, false, Color(0.88, 0.96, 1.0, snow_alpha))
+
+func _get_body_rect() -> Rect2:
+	var rect := Rect2(
+		Vector2(body_inset.x, body_inset.y),
+		size - Vector2(body_inset.x + body_inset.z, body_inset.y + body_inset.w)
+	)
+	if rect.size.x <= 0.0 or rect.size.y <= 0.0:
+		return Rect2(Vector2.ZERO, size)
+	return rect
+
+func _fill_soft_oval_polygon(rect: Rect2, color: Color) -> void:
+	var points := PackedVector2Array()
+	var center := rect.get_center()
+	var radius := rect.size * 0.5
+	for i in range(28):
+		var angle := TAU * float(i) / 28.0
+		points.append(center + Vector2(cos(angle) * radius.x, sin(angle) * radius.y))
+	draw_colored_polygon(points, color)

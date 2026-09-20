@@ -854,10 +854,10 @@ func _label_for_resolved_action(action: CardAction, viewer: Player = null) -> St
 	match action.type:
 		CardAction.Type.ATTACK:
 			if action.interceptor != null:
-				var attacker_label := _card_label_for_viewer(action.attacker, viewer)
+				var attacker_label := _combat_card_label_for_viewer(action.attacker, viewer)
 				if action.united_front_partner != null:
-					attacker_label += " and " + _card_label_for_viewer(action.united_front_partner, viewer)
-				var interceptor_label := _card_label_for_viewer(action.interceptor, viewer)
+					attacker_label += " and " + _combat_card_label_for_viewer(action.united_front_partner, viewer)
+				var interceptor_label := _combat_card_label_for_viewer(action.interceptor, viewer)
 				return "%s intercepted %s. %s fought %s." % [
 					interceptor_label,
 					attacker_label,
@@ -865,10 +865,10 @@ func _label_for_resolved_action(action: CardAction, viewer: Player = null) -> St
 					interceptor_label,
 				]
 			if action.target is Player:
-				return "%s attacks %s's followers." % [_card_label_for_viewer(action.attacker, viewer), (action.target as Player).player_name]
+				return "%s attacks %s's followers." % [_combat_card_label_for_viewer(action.attacker, viewer), (action.target as Player).player_name]
 			if action.target is Card:
-				return "%s fought %s." % [_card_label_for_viewer(action.attacker, viewer), _target_label_for_viewer(action.target, viewer)]
-			return _card_label_for_viewer(action.attacker, viewer) + " attacks."
+				return "%s fought %s." % [_combat_card_label_for_viewer(action.attacker, viewer), _combat_target_label_for_viewer(action.target, viewer)]
+			return _combat_card_label_for_viewer(action.attacker, viewer) + " attacks."
 		CardAction.Type.EVENT:
 			return action.event_name.replace("_", " ").capitalize() + "."
 		_:
@@ -895,9 +895,21 @@ func _card_label_for_viewer(card: Card, viewer: Player = null) -> String:
 		return "Card"
 	return card.get_log_display_name(viewer)
 
+func _combat_card_label_for_viewer(card: Card, viewer: Player = null) -> String:
+	if card == null:
+		return "Card"
+	return card.get_combat_log_display_name(viewer)
+
 func _target_label_for_viewer(target, viewer: Player = null) -> String:
 	if target is Card:
 		return (target as Card).get_target_log_display_name(viewer)
+	if target is Player:
+		return (target as Player).player_name + "'s followers"
+	return "target"
+
+func _combat_target_label_for_viewer(target, viewer: Player = null) -> String:
+	if target is Card:
+		return (target as Card).get_combat_log_display_name(viewer)
 	if target is Player:
 		return (target as Player).player_name + "'s followers"
 	return "target"

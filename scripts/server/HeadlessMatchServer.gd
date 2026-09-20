@@ -449,7 +449,6 @@ func _start_next_series_game() -> void:
 	game_manager = GameManager.new()
 	match_manager = MatchManager.new(game_manager)
 	match_manager.network_manager = network_manager
-	match_manager.authoritative_match_flow_enabled = true
 	prompt_router = PromptRouterScript.new(game_manager)
 	headless_match_host.attach(game_manager, match_manager, prompt_router)
 	headless_match_host.configure_match_session(match_session)

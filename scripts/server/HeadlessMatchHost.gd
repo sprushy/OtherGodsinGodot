@@ -79,10 +79,6 @@ func setup_transport(
 
 	if match_manager != null:
 		match_manager.network_manager = network_manager
-		match_manager.authoritative_match_flow_enabled = is_host
-		match_manager.allow_immediate_local_authoritative_stack_resolution = is_host \
-			and server_port <= 0 \
-			and match_session == null
 		network_manager.command_received.connect(_on_command_received)
 
 	if is_host or is_client:

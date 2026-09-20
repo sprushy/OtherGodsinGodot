@@ -54,7 +54,7 @@ func on_friendly_creature_after_combat(game_manager: GameManager, friendly_creat
 	game_manager.note_player_feedback(
 		"%s infects %s after combat with %s." % [
 			card_name,
-			opposing_card.get_target_log_display_name(game_manager.get_feedback_viewer()),
+			opposing_card.get_combat_log_display_name(game_manager.get_feedback_viewer()),
 			friendly_creature.card_name
 		]
 	)

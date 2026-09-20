@@ -1,6 +1,8 @@
 extends RefCounted
 class_name MatchClient
 
+const InProcessGameInputScript = preload("res://scripts/Other/InProcessGameInput.gd")
+
 ## Wraps the client's gameplay submission path and match event subscriptions.
 ## The current direct-connect flow still works, but CombatMockGame now depends
 ## on this boundary instead of talking to transport details directly.
@@ -52,7 +54,7 @@ func _init(
 	if _is_networked_client:
 		_game_input = NetworkedGameInput.new(network_manager)
 	else:
-		_game_input = LocalGameInput.new(match_manager)
+		_game_input = InProcessGameInputScript.new(match_manager)
 
 	if _receives_network_events and network_manager != null:
 		network_manager.game_event_received.connect(_on_game_event_received)
