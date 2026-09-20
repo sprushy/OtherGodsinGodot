@@ -92,6 +92,11 @@ static func _load_first_font(paths: Array) -> Font:
 	return null
 
 static func _load_font_file(font_path: String) -> Font:
+	# Imported fonts (editor and exported PCK) resolve through the import remap,
+	# so ResourceLoader must be tried before reading raw font files from disk.
+	var loaded := ResourceLoader.load(font_path)
+	if loaded is Font:
+		return loaded
 	var extension := font_path.get_extension().to_lower()
 	if extension == "fnt" or extension == "font":
 		var bitmap_font := FontFile.new()
@@ -101,8 +106,7 @@ static func _load_font_file(font_path: String) -> Font:
 		var dynamic_font := FontFile.new()
 		var error := dynamic_font.load_dynamic_font(font_path)
 		return dynamic_font if error == OK else null
-	var loaded := ResourceLoader.load(font_path)
-	return loaded as Font
+	return null
 
 static func _apply_engine_fallback(font: Font) -> void:
 	var fallback := ThemeDB.fallback_font
