@@ -193,6 +193,19 @@ func _apply_deckbuilder_scrollbar_style(scroll: ScrollContainer, force_visible: 
 		_update_deck_scroll_nav_buttons()
 	)
 
+func _apply_hover_to_all_buttons(node: Control) -> void:
+	if node is Button:
+		var normal = node.get_theme_stylebox("normal")
+		if normal and normal is StyleBoxFlat:
+			var hover = normal.duplicate()
+			# Darken by 20%
+			hover.bg_color = normal.bg_color * Color(0.8, 0.8, 0.8, 1)
+			node.add_theme_stylebox_override("hover", hover)
+	# Recursively apply to children
+	for child in node.get_children():
+		if child is Control:
+			_apply_hover_to_all_buttons(child)
+
 # ── init ───────────────────────────────────────────────────────────
 func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -299,6 +312,7 @@ func _build_ui() -> void:
 	_build_exit_confirm_dialog()
 	_build_import_deck_dialog()
 	_build_send_friend_dialog()
+	_apply_hover_to_all_buttons(self)
 
 func _build_top_bar(parent: Control) -> void:
 	var bar := PanelContainer.new()
