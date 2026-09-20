@@ -342,6 +342,35 @@ Server to client:
 - match remains paused or forfeit-timed depending on rules
 - reconnect restores same player index and hidden-hand perspective
 
+### Connection robustness (flaky-link behavior)
+
+Client retry policy is deliberately bounded by the server's own patience
+windows, so a client never stops trying earlier than the seat is actually held
+and never hammers past it:
+
+- ENet peer timeouts are raised on every transport (limit 4s, min 15s,
+  max 45s) so multi-second packet-loss bursts ride through instead of
+  dropping the connection; per-side only, so mixed client/server versions
+  stay compatible.
+- Initial match joins retry with backoff for ~60s (the match server waits
+  120s for both players). A join request that gets no reply within 10s is
+  treated as a failed attempt instead of hanging.
+- Post-authentication match reconnects retry with growing backoff until the
+  server's reconnect window (`reconnect_window_seconds`, default 90s, minus a
+  small safety margin) expires. Server denial (bad token, stale match id) is
+  terminal and never retried.
+- A dropped authenticated lobby session retries automatically with the saved
+  reconnect token (6 attempts, growing backoff ~1-12s) before the client
+  reports the lobby as lost; the server keeps room membership for 5 minutes.
+- If the match connection is unrecoverable from inside the game, the client
+  returns to the lobby, restores its session with the reconnect token, and
+  the existing active-match rejoin offer takes over while the seat lasts.
+
+Fair-play guardrails are unchanged: match joins still require per-player
+tokens, gameplay commands stay frozen while a player is disconnected (only
+forfeits are accepted), the server still abandons matches when the reconnect
+window expires, and ranked results are only recorded on a real game end.
+
 ## Rollout Plan
 
 ### Phase 1: Stabilize match authority boundary

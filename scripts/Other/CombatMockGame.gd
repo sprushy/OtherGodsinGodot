@@ -118,6 +118,10 @@ signal return_to_menu_requested
 signal leave_match_requested
 signal rematch_requested
 signal match_session_cleared
+## Emitted when the match connection is unrecoverable from inside the game
+## (join retries or the server's reconnect window ran out). MainMenu uses this
+## to restore the lobby session and offer the rejoin flow while the seat lasts.
+signal match_connection_lost(reason: String)
 
 var player1: Player
 var player2: Player
@@ -30206,6 +30210,7 @@ func _apply_network_event(event_type: String, data: Dictionary) -> void:
 		return
 	if _game_finished and event_type in [
 		"match_connect_retry_started",
+		"match_connect_exhausted",
 		"match_join_ok",
 		"match_join_denied",
 		"peer_left",
@@ -30214,6 +30219,7 @@ func _apply_network_event(event_type: String, data: Dictionary) -> void:
 		"match_reconnect_started",
 		"match_reconnect_ok",
 		"match_reconnect_failed",
+		"match_connection_lost",
 		"server_disconnected"
 	]:
 		return
@@ -30231,9 +30237,9 @@ func _apply_network_event(event_type: String, data: Dictionary) -> void:
 			update_ui()
 			_update_waiting_overlay()
 		"match_connect_retry_started":
-			var attempts_remaining := int(data.get("attempts_remaining", 0))
-			_update_waiting_status(true, "Match server is still starting...")
-			_set_action_label_text("Match server is still starting... (%d retries left)" % attempts_remaining)
+			var retry_status := _format_connection_retry_status(data, "Still trying to reach the match server")
+			_update_waiting_status(true, retry_status)
+			_set_action_label_text(retry_status)
 			update_ui()
 		"match_join_denied":
 			_awaiting_initial_full_state = false
@@ -30267,9 +30273,9 @@ func _apply_network_event(event_type: String, data: Dictionary) -> void:
 				reason = "Match abandoned."
 			_cancel_match_locally(reason)
 		"match_reconnect_started":
-			var attempts_remaining := int(data.get("attempts_remaining", 0))
-			_set_match_reconnect_wait(true, "Connection lost. Reconnecting to match server...")
-			_set_action_label_text("Connection lost. Reconnecting to match server... (%d retries left)" % attempts_remaining)
+			var reconnect_status := _format_connection_retry_status(data, "Connection lost. Reconnecting to the match server")
+			_set_match_reconnect_wait(true, reconnect_status)
+			_set_action_label_text(reconnect_status)
 			update_ui()
 		"match_reconnect_ok":
 			_current_match_info.merge(data, true)
@@ -30281,6 +30287,27 @@ func _apply_network_event(event_type: String, data: Dictionary) -> void:
 			_set_match_reconnect_wait(true, "Reconnect failed. You may need to rejoin the match.")
 			_set_action_label_text(str(data.get("reason", "Reconnect failed.")))
 			update_ui()
+		"match_connect_exhausted":
+			var exhausted_reason := str(data.get("reason", "Could not connect to the match server."))
+			_awaiting_initial_full_state = false
+			_set_action_label_text(exhausted_reason)
+			update_ui()
+			# Emit last: MainMenu tears this game down synchronously inside the
+			# signal, so nothing may touch game state afterwards.
+			match_connection_lost.emit(exhausted_reason)
+		"match_connection_lost":
+			var lost_reason := str(data.get("reason", "The match connection was lost.")).strip_edges()
+			if lost_reason.is_empty():
+				lost_reason = "The match connection was lost."
+			_set_match_reconnect_wait(true, "Match connection lost. Returning to the lobby to rejoin...")
+			_set_action_label_text(lost_reason)
+			_dismiss_transient_prompts()
+			_hide_priority_prompt()
+			_hide_intercept_prompt()
+			update_ui()
+			# Emit last: MainMenu tears this game down synchronously inside the
+			# signal, so nothing may touch game state afterwards.
+			match_connection_lost.emit(lost_reason)
 		"server_disconnected":
 			_set_match_reconnect_wait(true, "Disconnected from match server. Reconnect may still be available.")
 			_set_action_label_text(_match_reconnect_wait_message)
@@ -31204,6 +31231,17 @@ func _set_match_reconnect_wait(is_waiting: bool, message: String = "Waiting for 
 		return
 	_match_reconnect_wait_message = "Waiting for opponent to reconnect..."
 	_update_waiting_status(false)
+
+## Human-readable retry status from the match client's retry events. Prefers
+## the server-window-derived seconds remaining; falls back to an attempt count.
+func _format_connection_retry_status(data: Dictionary, base_text: String) -> String:
+	var seconds_remaining := int(data.get("seconds_remaining", 0))
+	if seconds_remaining > 0:
+		return "%s... (%ds left)" % [base_text, seconds_remaining]
+	var attempts_remaining := int(data.get("attempts_remaining", 0))
+	if attempts_remaining > 0:
+		return "%s... (%d retries left)" % [base_text, attempts_remaining]
+	return "%s..." % base_text
 
 func _apply_priority_offered(data: Dictionary) -> void:
 	if _is_local_authoritative_upkeep_pending():

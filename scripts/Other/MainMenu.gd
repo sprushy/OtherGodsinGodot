@@ -129,6 +129,9 @@ var _pending_leave_room_id: String = ""
 var _current_lobby_ip: String = ""
 var _is_local_lobby_host: bool = false
 var _match_launch_queued: bool = false
+## True while the lobby client is silently retrying a dropped session with its
+## reconnect token; used to word the final failure message once attempts end.
+var _lobby_auto_reconnect_was_active: bool = false
 ## External port mapped via UPnP for the currently-running player-hosted match,
 ## if any. Tracked so the mapping can be removed when the host match ends. 0 when
 ## not hosting or when UPnP was not used.
@@ -926,6 +929,10 @@ func _bind_game_signals() -> void:
 			var rematch_callback := Callable(self, "_on_game_rematch_requested")
 			if not game.rematch_requested.is_connected(rematch_callback):
 				game.rematch_requested.connect(rematch_callback)
+		if game != null and game.has_signal("match_connection_lost"):
+			var connection_lost_callback := Callable(self, "_on_game_match_connection_lost")
+			if not game.match_connection_lost.is_connected(connection_lost_callback):
+				game.match_connection_lost.connect(connection_lost_callback)
 		if game != null and game.has_signal("match_session_cleared"):
 			var clear_callback := Callable(self, "_on_match_session_cleared")
 			if not game.match_session_cleared.is_connected(clear_callback):
@@ -7089,6 +7096,10 @@ func _bind_lobby_client_signals() -> void:
 		lobby_client.connection_failed.connect(_on_lobby_connection_failed)
 	if not lobby_client.disconnected_from_lobby.is_connected(_on_lobby_disconnected):
 		lobby_client.disconnected_from_lobby.connect(_on_lobby_disconnected)
+	if lobby_client.has_signal("lobby_auto_reconnect_started") and not lobby_client.lobby_auto_reconnect_started.is_connected(_on_lobby_auto_reconnect_started):
+		lobby_client.lobby_auto_reconnect_started.connect(_on_lobby_auto_reconnect_started)
+	if lobby_client.has_signal("lobby_auto_reconnect_failed") and not lobby_client.lobby_auto_reconnect_failed.is_connected(_on_lobby_auto_reconnect_failed):
+		lobby_client.lobby_auto_reconnect_failed.connect(_on_lobby_auto_reconnect_failed)
 	if not lobby_client.server_version_updated.is_connected(_on_server_version_updated):
 		lobby_client.server_version_updated.connect(_on_server_version_updated)
 	_set_connected_server_version(lobby_client.current_server_version)
@@ -7135,6 +7146,7 @@ func _release_player_host_port_mapping() -> void:
 	HostReachabilityProbeScript.remove_mapping(port_to_release)
 
 func _on_lobby_login_succeeded(session_id: String, reconnect_token: String, player_name: String) -> void:
+	_lobby_auto_reconnect_was_active = false
 	_write_smoke_trace("lobby_login_succeeded session=%s player=%s host=%s" % [session_id, player_name, str(_is_local_lobby_host)])
 	if _retry_account_switch_if_identity_mismatch(player_name):
 		return
@@ -7220,6 +7232,7 @@ func _on_lobby_reconnect_succeeded(
 	active_match_info: Dictionary
 ) -> void:
 	_write_smoke_trace("lobby_reconnect_succeeded session=%s player=%s" % [session_id, player_name])
+	_lobby_auto_reconnect_was_active = false
 	if _retry_account_switch_if_identity_mismatch(player_name):
 		return
 	_cancel_lobby_sign_in_watchdog()
@@ -7783,6 +7796,10 @@ func _on_lobby_connection_failed(message: String) -> void:
 	_set_connected_server_version("")
 	_seek_list_request_pending = false
 	_seek_auto_refresh_elapsed = 0.0
+	if _is_lobby_auto_reconnecting():
+		if status_label != null:
+			status_label.text = "Connection lost. Reconnecting to the lobby..."
+		return
 	if _should_retry_host_lobby_connect():
 		_queue_host_lobby_retry(message)
 		return
@@ -7810,12 +7827,17 @@ func _on_lobby_disconnected() -> void:
 	_set_connected_server_version("")
 	_seek_list_request_pending = false
 	_seek_auto_refresh_elapsed = 0.0
+	if _is_lobby_auto_reconnecting():
+		return
 	if _should_retry_host_lobby_connect():
 		_queue_host_lobby_retry("Dedicated lobby disconnected before room setup completed.")
 		return
 	_refresh_account_identity_label()
 	_clear_current_seek_state()
 	var message := "Lobby connection lost. Refresh seeks to reconnect."
+	if _lobby_auto_reconnect_was_active:
+		message = "Could not re-establish the lobby connection. Refresh seeks to reconnect."
+		_lobby_auto_reconnect_was_active = false
 	status_label.text = message
 	if restore_auth_prompt:
 		_maybe_show_auth_onboarding(true)
@@ -7824,6 +7846,22 @@ func _on_lobby_disconnected() -> void:
 	if _should_ignore_lobby_failure_for_smoke():
 		return
 	_fail_smoke_if_enabled("DISCONNECTED_FROM_LOBBY")
+
+func _is_lobby_auto_reconnecting() -> bool:
+	return lobby_client != null \
+		and lobby_client.has_method("is_auto_reconnecting") \
+		and lobby_client.is_auto_reconnecting()
+
+func _on_lobby_auto_reconnect_started(attempt: int, max_attempts: int) -> void:
+	_write_smoke_trace("lobby_auto_reconnect_started %d/%d" % [attempt, max_attempts])
+	_lobby_auto_reconnect_was_active = true
+	if status_label != null:
+		status_label.text = "Connection lost. Reconnecting to the lobby... (attempt %d of %d)" % [attempt, max_attempts]
+
+## Runs right before disconnected_from_lobby once auto-reconnect is exhausted.
+## Keep this non-destructive: the follow-up disconnect handler owns the cleanup.
+func _on_lobby_auto_reconnect_failed() -> void:
+	_write_smoke_trace("lobby_auto_reconnect_failed")
 
 func _maybe_check_for_update_after_lobby_failure(message: String) -> void:
 	if not _release_updates_enabled():
@@ -7850,6 +7888,41 @@ func _on_game_forfeit_requested() -> void:
 
 func _on_game_leave_match_requested() -> void:
 	_return_to_menu()
+
+## The match connection is gone for good (join retries or the reconnect window
+## ran out). Route the player back through the lobby so the existing rejoin
+## flow can put them back in the match while the server still holds their seat,
+## instead of stranding them on a dead game screen.
+func _on_game_match_connection_lost(reason: String) -> void:
+	_write_smoke_trace("game_match_connection_lost %s" % reason)
+	if _match_launch_queued and _get_active_embedded_game() == null:
+		return
+	_restore_lobby_after_match_connection_lost(reason)
+
+func _restore_lobby_after_match_connection_lost(reason: String) -> void:
+	_pending_rematch_room_id = ""
+	_pending_rematch_ready_submitted = false
+	multiplayer_container.visible = true
+	show_menu()
+	_match_launch_queued = false
+	# Unlike _return_to_menu, deliberately do NOT set _pending_leave_room_id or
+	# suppress active-match auto-resume: the server still holds the player's
+	# match seat, and the lobby reconnect flow should offer to rejoin it.
+	_cleanup_lobby(false)
+	for node_name in _get_embedded_game_node_names():
+		var game = get_node_or_null("GameContainer/" + node_name)
+		if game and game.has_method("cleanup"):
+			game.cleanup()
+	var db := game_container.get_node_or_null("DeckBuilder")
+	if db:
+		db.queue_free()
+	_refresh_server_version_overlay_visibility()
+	multiplayer_container.visible = true
+	var clean_reason := reason.strip_edges()
+	if clean_reason.is_empty():
+		clean_reason = "The match connection was lost."
+	status_label.text = "%s Restoring your lobby session..." % clean_reason
+	_maybe_connect_authenticated_lobby("Reconnecting to lobby after the match connection was lost...")
 
 func _on_game_rematch_requested() -> void:
 	_pending_leave_room_id = ""

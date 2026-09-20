@@ -9,6 +9,13 @@ const CONNECT_ATTEMPT_TIMEOUT_SECONDS := 5.0
 const INITIAL_AUTH_RETRY_INTERVAL_SECONDS := 0.1
 const INITIAL_AUTH_MAX_ATTEMPTS := 30
 const AUTH_RESPONSE_TIMEOUT_SECONDS := 8.0
+# After an authenticated lobby connection drops, retry automatically with the
+# saved reconnect token before giving up. The server keeps room membership for
+# ROOM_MEMBER_RECONNECT_GRACE_SECONDS (5 minutes), so this budget restores the
+# player's seat rather than booting them back to sign-in on a brief outage.
+const AUTO_RECONNECT_MAX_ATTEMPTS := 6
+const AUTO_RECONNECT_BACKOFF_SECONDS := [1.0, 2.0, 4.0, 8.0, 12.0]
+const AUTO_RECONNECT_BACKOFF_MAX_SECONDS := 12.0
 const ALLOW_INSECURE_ACCOUNT_AUTH_ENV := "OTHERGODS_ALLOW_INSECURE_ACCOUNT_AUTH"
 const ALLOW_INSECURE_ACCOUNT_AUTH_SETTING := "application/config/allow_insecure_account_auth"
 
@@ -35,6 +42,8 @@ signal account_settings_updated(account: Dictionary)
 signal connection_failed(message: String)
 signal disconnected_from_lobby()
 signal match_host_viability_requested()
+signal lobby_auto_reconnect_started(attempt: int, max_attempts: int)
+signal lobby_auto_reconnect_failed()
 
 var current_session_id: String = ""
 var current_reconnect_token: String = ""
@@ -73,6 +82,14 @@ var _transport_connected_signal_received: bool = false
 var _ignore_network_events: bool = false
 var _reconnect_fallback_attempted: bool = false
 var _password_auth_allowed_for_current_connection: bool = true
+var _auto_reconnect_active: bool = false
+var _auto_reconnect_attempt: int = 0
+var _auto_reconnect_serial: int = 0
+var _auto_reconnect_session_id: String = ""
+var _auto_reconnect_token: String = ""
+var _auto_reconnect_profile_id: String = ""
+var _last_server_address: String = ""
+var _last_server_port: int = LobbyProtocolScript.PORT
 
 func _ready() -> void:
 	_ensure_network_manager()
@@ -91,6 +108,8 @@ func connect_to_server(
 ) -> Error:
 	_cancel_initial_auth_request()
 	_cancel_auth_response_timeout()
+	if not _auto_reconnect_active:
+		_auto_reconnect_attempt = 0
 	_transport_connected_signal_received = false
 	_ignore_network_events = false
 	_reconnect_fallback_attempted = false
@@ -125,6 +144,8 @@ func connect_to_server(
 	var connect_address: String = address.strip_edges()
 	if connect_address.is_empty():
 		connect_address = "127.0.0.1"
+	_last_server_address = connect_address
+	_last_server_port = port
 	_password_auth_allowed_for_current_connection = _can_send_password_auth_to_address(connect_address)
 	if _password_auth_would_be_sent_immediately() and not _password_auth_allowed_for_current_connection:
 		connection_failed.emit(_insecure_account_auth_message())
@@ -144,6 +165,7 @@ func disconnect_from_server() -> void:
 	_cancel_connect_attempt_timeout()
 	_cancel_initial_auth_request()
 	_cancel_auth_response_timeout()
+	_cancel_auto_reconnect()
 	_transport_connected_signal_received = false
 	_is_authenticated = false
 	current_session_id = ""
@@ -361,6 +383,7 @@ func lobby_event(message: Dictionary) -> void:
 		LobbyProtocolScript.HELLO_OK:
 			_cancel_initial_auth_request()
 			_cancel_auth_response_timeout()
+			_finish_auto_reconnect()
 			_is_authenticated = true
 			_set_current_server_version(str(payload.get("server_version", "")))
 			current_session_id = str(payload.get("session_id", ""))
@@ -382,6 +405,7 @@ func lobby_event(message: Dictionary) -> void:
 		LobbyProtocolScript.LOBBY_RECONNECT_OK:
 			_cancel_initial_auth_request()
 			_cancel_auth_response_timeout()
+			_finish_auto_reconnect()
 			_is_authenticated = true
 			_set_current_server_version(str(payload.get("server_version", "")))
 			current_session_id = str(payload.get("session_id", ""))
@@ -418,6 +442,11 @@ func lobby_event(message: Dictionary) -> void:
 			if not _is_authenticated:
 				_cancel_initial_auth_request()
 				_cancel_auth_response_timeout()
+				if _auto_reconnect_active:
+					# The server rejected our reconnect credentials; retrying the
+					# same token can never succeed, so stop the retry series.
+					_trace("auto-reconnect rejected by server: %s" % error_message)
+					_emit_auto_reconnect_failure()
 				if _try_fallback_to_password_login():
 					return
 				_trace("auth failed: %s" % error_message)
@@ -486,6 +515,12 @@ func _on_auth_response_timeout(expected_serial: int) -> void:
 	if not is_transport_connected():
 		return
 	_trace("auth response timed out")
+	if _auto_reconnect_active:
+		if network_manager != null:
+			network_manager.disconnect_client()
+		_transport_connected_signal_received = false
+		_continue_auto_reconnect()
+		return
 	disconnect_from_server()
 	connection_failed.emit("The lobby sign-in timed out.")
 
@@ -614,19 +649,13 @@ func _on_connection_failed() -> void:
 		_trace("ignoring connection_failed after disconnect")
 		return
 	_is_authenticated = false
-	current_session_id = ""
-	current_reconnect_token = ""
-	current_profile_id = ""
-	current_account_id = ""
-	current_email = ""
-	current_username = ""
-	current_auth_mode = "login"
-	current_accepts_game_updates = false
-	current_room_snapshot = {}
-	current_active_match_info = {}
-	current_preferred_account_deck_id = ""
 	_set_current_server_version("")
 	_trace("connection failed")
+	if _auto_reconnect_active:
+		_continue_auto_reconnect()
+		return
+	_clear_session_fields()
+	_trace("connection failed (final)")
 	connection_failed.emit("The lobby connection failed.")
 
 func _on_server_disconnected() -> void:
@@ -638,6 +667,17 @@ func _on_server_disconnected() -> void:
 		_trace("ignoring server_disconnected after disconnect")
 		return
 	_is_authenticated = false
+	_set_current_server_version("")
+	_trace("server disconnected")
+	if _try_auto_reconnect():
+		return
+	_finalize_unexpected_disconnect()
+
+func _finalize_unexpected_disconnect() -> void:
+	_clear_session_fields()
+	disconnected_from_lobby.emit()
+
+func _clear_session_fields() -> void:
 	current_session_id = ""
 	current_reconnect_token = ""
 	current_profile_id = ""
@@ -649,8 +689,111 @@ func _on_server_disconnected() -> void:
 	current_room_snapshot = {}
 	current_active_match_info = {}
 	current_preferred_account_deck_id = ""
-	_set_current_server_version("")
-	_trace("server disconnected")
+
+func is_auto_reconnecting() -> bool:
+	return _auto_reconnect_active
+
+## Kick off the automatic reconnect series after an unexpected drop of an
+## authenticated session. Credentials come from the session that just died;
+## the server's reconnect-token check is idempotent, so retrying with the same
+## token after a failed attempt is safe.
+func _try_auto_reconnect() -> bool:
+	if network_manager == null:
+		return false
+	if _auto_reconnect_active:
+		# Mid-series drop (an attempt connected, then died before
+		# authenticating): current_* was already cleared by connect_to_server,
+		# so the stash is the source of truth.
+		if _auto_reconnect_session_id.strip_edges().is_empty() or _auto_reconnect_token.strip_edges().is_empty():
+			return false
+		_continue_auto_reconnect()
+		return true
+	if current_session_id.strip_edges().is_empty() or current_reconnect_token.strip_edges().is_empty():
+		return false
+	_auto_reconnect_active = true
+	_auto_reconnect_session_id = current_session_id
+	_auto_reconnect_token = current_reconnect_token
+	_auto_reconnect_profile_id = current_profile_id
+	_continue_auto_reconnect()
+	return true
+
+func _continue_auto_reconnect() -> void:
+	if not _auto_reconnect_active:
+		return
+	if _auto_reconnect_attempt >= AUTO_RECONNECT_MAX_ATTEMPTS:
+		_emit_auto_reconnect_failure()
+		return
+	_auto_reconnect_attempt += 1
+	var attempt := _auto_reconnect_attempt
+	lobby_auto_reconnect_started.emit(attempt, AUTO_RECONNECT_MAX_ATTEMPTS)
+	_auto_reconnect_serial += 1
+	var expected_serial := _auto_reconnect_serial
+	var delay_seconds := _get_auto_reconnect_delay(attempt)
+	var tree := get_tree()
+	if tree == null:
+		_emit_auto_reconnect_failure()
+		return
+	var retry_timer := tree.create_timer(delay_seconds)
+	retry_timer.timeout.connect(Callable(self, "_perform_auto_reconnect").bind(expected_serial))
+
+func _get_auto_reconnect_delay(attempt: int) -> float:
+	if attempt - 1 >= AUTO_RECONNECT_BACKOFF_SECONDS.size():
+		return AUTO_RECONNECT_BACKOFF_MAX_SECONDS
+	return float(AUTO_RECONNECT_BACKOFF_SECONDS[attempt - 1])
+
+func _perform_auto_reconnect(expected_serial: int) -> void:
+	if expected_serial != _auto_reconnect_serial or not _auto_reconnect_active:
+		return
+	if _ignore_network_events or _is_authenticated:
+		return
+	if network_manager == null:
+		_emit_auto_reconnect_failure()
+		return
+	_trace("auto-reconnect attempt %d/%d" % [_auto_reconnect_attempt, AUTO_RECONNECT_MAX_ATTEMPTS])
+	network_manager.disconnect_client()
+	var connect_err := connect_to_server(
+		_last_server_address,
+		"",
+		_auto_reconnect_session_id,
+		_auto_reconnect_token,
+		_last_server_port,
+		_auto_reconnect_profile_id,
+		"login",
+		"",
+		"",
+		false
+	)
+	if connect_err != OK:
+		_continue_auto_reconnect()
+		return
+	# connect_to_server clears the in-session fields; the stashed copies keep
+	# the series alive across attempts.
+	_auto_reconnect_active = true
+	_auto_reconnect_session_id = _pending_session_id
+	_auto_reconnect_token = _pending_reconnect_token
+	_auto_reconnect_profile_id = _pending_profile_id
+
+func _cancel_auto_reconnect() -> void:
+	_auto_reconnect_active = false
+	_auto_reconnect_attempt = 0
+	_auto_reconnect_serial += 1
+	_auto_reconnect_session_id = ""
+	_auto_reconnect_token = ""
+	_auto_reconnect_profile_id = ""
+
+func _finish_auto_reconnect() -> void:
+	_auto_reconnect_active = false
+	_auto_reconnect_attempt = 0
+	_auto_reconnect_serial += 1
+	_auto_reconnect_session_id = ""
+	_auto_reconnect_token = ""
+	_auto_reconnect_profile_id = ""
+
+func _emit_auto_reconnect_failure() -> void:
+	_trace("auto-reconnect exhausted")
+	_finish_auto_reconnect()
+	lobby_auto_reconnect_failed.emit()
+	_clear_session_fields()
 	disconnected_from_lobby.emit()
 
 func _send_request(message_type: String, payload: Dictionary = {}) -> void:
@@ -724,6 +867,12 @@ func _on_connect_attempt_timeout() -> void:
 	if is_transport_connected():
 		return
 	_trace("connect attempt timed out")
+	if _auto_reconnect_active:
+		if network_manager != null:
+			network_manager.disconnect_client()
+		_transport_connected_signal_received = false
+		_continue_auto_reconnect()
+		return
 	disconnect_from_server()
 	connection_failed.emit("The lobby connection timed out.")
 

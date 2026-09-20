@@ -11,6 +11,14 @@ const MAX_NETWORK_PAYLOAD_ITEMS := 128
 const MAX_NETWORK_PAYLOAD_STRING_LENGTH := 4096
 const MAX_COMMAND_TYPE_LENGTH := 96
 const MAX_GAME_EVENT_TYPE_LENGTH := 96
+# ENet drops a peer when reliable traffic goes unacknowledged for too long. The
+# library defaults (limit 1000ms, min 5000ms, max 30000ms) treat a multi-second
+# packet-loss burst as a dead connection, which kills otherwise recoverable
+# matches on flaky links. Raise the tolerance so brief outages ride through; the
+# application-level reconnect windows remain the real liveness bound.
+const ENET_PEER_TIMEOUT_LIMIT_MS := 4000
+const ENET_PEER_TIMEOUT_MIN_MS := 15000
+const ENET_PEER_TIMEOUT_MAX_MS := 45000
 const MatchCommandRegistryScript = preload("res://scripts/Other/MatchCommandRegistry.gd")
 
 signal command_received(command: Dictionary, sender_info: Dictionary)
@@ -56,6 +64,7 @@ func _ready() -> void:
 
 func _on_peer_connected(id: int) -> void:
 	_trace("peer_connected %d" % id)
+	_apply_enet_peer_timeouts(id)
 	peer_connected.emit(id)
 
 func _on_peer_disconnected(id: int) -> void:
@@ -67,6 +76,7 @@ func _on_peer_disconnected(id: int) -> void:
 
 func _on_connected_to_server() -> void:
 	_trace("connected_to_server")
+	_apply_enet_peer_timeouts(1)
 	connected_to_server.emit()
 
 func _on_connection_failed() -> void:
@@ -137,6 +147,30 @@ func reconnect_client(address: String = "", port: int = -1) -> Error:
 	var connect_port := port if port > 0 else last_client_port
 	disconnect_client()
 	return create_client(connect_address, connect_port)
+
+## Apply loss-tolerant ENet timeouts to one connected peer. Per-side only, so
+## mixed client/server versions stay compatible: whichever side still runs the
+## defaults simply drops earlier and the reconnect paths take over.
+func _apply_enet_peer_timeouts(target_peer_id: int) -> void:
+	if target_peer_id <= 0 or peer == null:
+		return
+	var enet_peer := peer as ENetMultiplayerPeer
+	if enet_peer == null:
+		return
+	var packet_peer: ENetPacketPeer = null
+	if target_peer_id == 1 and not is_server and enet_peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED:
+		# On a client the server is always peer 1; get_peer is valid once connected.
+		packet_peer = enet_peer.get_peer(target_peer_id)
+	elif is_server:
+		packet_peer = enet_peer.get_peer(target_peer_id)
+	if packet_peer == null:
+		return
+	packet_peer.set_timeout(
+		ENET_PEER_TIMEOUT_LIMIT_MS,
+		ENET_PEER_TIMEOUT_MIN_MS,
+		ENET_PEER_TIMEOUT_MAX_MS
+	)
+	_trace("applied tolerant ENet timeouts to peer %d" % target_peer_id)
 
 func _should_suppress_disconnect_event() -> bool:
 	return _suppress_disconnect_events_until_msec > 0 \
