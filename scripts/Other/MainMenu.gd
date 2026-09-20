@@ -143,6 +143,9 @@ var _local_profile_store = null
 var _local_profile_id: String = ""
 var _selected_multiplayer_deck_id: String = ""
 var _multiplayer_deck_entries: Array[Dictionary] = []
+var _multiplayer_screen_hidden_menu_controls: Array[Control] = []
+var _multiplayer_deck_change_button: Button = null
+var _deck_popup_anchor_button: Button = null
 var _deck_validator = DeckValidatorScript.new()
 var _last_submitted_lobby_room_id: String = ""
 var _last_submitted_lobby_deck_id: String = ""
@@ -433,6 +436,9 @@ func _build_startup_loading_overlay() -> void:
 	title.text = "OTHER GODS"
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.add_theme_font_size_override("font_size", 46)
+	var title_font: Font = UIFontScript.get_norse_card_name_font()
+	if title_font != null:
+		title.add_theme_font_override("font", title_font)
 	title.add_theme_color_override("font_color", Color(0.87, 0.78, 0.58))
 	content.add_child(title)
 
@@ -1192,8 +1198,9 @@ func _input(event: InputEvent) -> void:
 			return
 		var popup_rect := _deck_picker_popup.get_global_rect()
 		var button_rect := Rect2()
-		if _deck_picker_button != null and is_instance_valid(_deck_picker_button):
-			button_rect = _deck_picker_button.get_global_rect()
+		var anchor_button := _get_deck_popup_anchor_button()
+		if anchor_button != null and is_instance_valid(anchor_button):
+			button_rect = anchor_button.get_global_rect()
 		if popup_rect.has_point(mouse_event.position) or button_rect.has_point(mouse_event.position):
 			return
 		_hide_multiplayer_deck_popup()
@@ -1219,6 +1226,10 @@ func _handle_escape_navigation() -> bool:
 		else:
 			_return_to_menu()
 		return true
+	if menu_container != null and menu_container.visible and multiplayer_container != null and multiplayer_container.visible:
+		if _auth_onboarding_overlay == null or not is_instance_valid(_auth_onboarding_overlay):
+			_on_multiplayer_back_pressed()
+			return true
 	if menu_container != null and menu_container.visible and multiplayer_container != null and not multiplayer_container.visible:
 		_open_close_confirm_overlay()
 		return true
@@ -1349,14 +1360,45 @@ func _on_multiplayer_pressed() -> void:
 func _on_multiplayer_back_pressed() -> void:
 	multiplayer_container.visible = false
 	_hide_multiplayer_deck_popup()
+	_restore_main_menu_controls_after_multiplayer_screen()
 	status_label.text = "Refresh seeks to join a room or watch a live match."
 	_refresh_seek_list()
 	_refresh_multiplayer_action_state()
+	_fit_main_menu_container_to_contents()
+	_refresh_server_version_overlay_visibility()
+
+func _is_multiplayer_screen_active() -> bool:
+	return multiplayer_container != null and multiplayer_container.visible
+
+func _hide_main_menu_controls_for_multiplayer_screen() -> void:
+	_multiplayer_screen_hidden_menu_controls.clear()
+	if menu_container == null:
+		return
+	for child in menu_container.get_children():
+		if child == multiplayer_container or not (child is Control):
+			continue
+		var child_control := child as Control
+		if child_control.visible:
+			child_control.visible = false
+			_multiplayer_screen_hidden_menu_controls.append(child_control)
+
+func _restore_main_menu_controls_after_multiplayer_screen() -> void:
+	for hidden_control in _multiplayer_screen_hidden_menu_controls:
+		if hidden_control != null and is_instance_valid(hidden_control):
+			hidden_control.visible = true
+	_multiplayer_screen_hidden_menu_controls.clear()
+	# Auth-owned controls can be created or re-shown while the multiplayer
+	# screen is open; recompute their visibility for the main menu.
+	_refresh_switch_account_button()
+	_refresh_account_identity_label()
 
 func _open_multiplayer_screen() -> void:
+	_hide_main_menu_controls_for_multiplayer_screen()
 	multiplayer_container.visible = true
 	_refresh_multiplayer_deck_options()
 	_refresh_auth_controls()
+	_fit_main_menu_container_to_contents()
+	_refresh_server_version_overlay_visibility()
 	if _current_profile_summary.is_empty() and not _has_active_lobby_connection():
 		_refresh_profile_summary_from_local_history(_local_profile_id)
 	_refresh_seek_list()
@@ -1553,11 +1595,21 @@ func _build_multiplayer_deck_controls() -> void:
 	button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	button.custom_minimum_size = Vector2(0, 36)
 	button.alignment = HORIZONTAL_ALIGNMENT_CENTER
-	button.pressed.connect(_toggle_multiplayer_deck_popup)
+	button.pressed.connect(_toggle_multiplayer_deck_popup.bind(button))
 	menu_container.add_child(button)
 	var menu_insert_index := multiplayer_button.get_index() if multiplayer_button != null else menu_container.get_child_count() - 1
 	menu_container.move_child(button, menu_insert_index)
 	_deck_picker_button = button
+
+	var screen_button := Button.new()
+	screen_button.name = "MultiplayerDeckChangeButton"
+	screen_button.text = "Change Deck: No saved decks"
+	screen_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	screen_button.custom_minimum_size = Vector2(0, 36)
+	screen_button.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	screen_button.pressed.connect(_toggle_multiplayer_deck_popup.bind(screen_button))
+	multiplayer_container.add_child(screen_button)
+	_multiplayer_deck_change_button = screen_button
 
 	var summary_panel := PanelContainer.new()
 	summary_panel.name = "SelectedDeckSummaryPanel"
@@ -1575,6 +1627,7 @@ func _build_multiplayer_deck_controls() -> void:
 	multiplayer_container.add_child(summary_panel)
 	if create_seek_button != null:
 		multiplayer_container.move_child(summary_panel, create_seek_button.get_index())
+	multiplayer_container.move_child(screen_button, summary_panel.get_index())
 	_multiplayer_deck_summary_panel = summary_panel
 
 	var summary_row := HBoxContainer.new()
@@ -1825,31 +1878,37 @@ func _get_menu_card_art_texture(art_path: String) -> Texture2D:
 func _refresh_multiplayer_deck_picker_button() -> void:
 	if _deck_picker_button == null:
 		return
+	var button_text := ""
+	var tooltip_text := ""
+	var disabled := false
 	if _is_account_sign_in_required():
-		_deck_picker_button.text = "Change Deck: Sign in required"
-		_deck_picker_button.tooltip_text = "Sign in to load your account decks."
-		_deck_picker_button.disabled = true
-		return
-	if _multiplayer_deck_entries.is_empty():
-		_deck_picker_button.text = "Change Deck: No saved decks"
-		_deck_picker_button.tooltip_text = "No saved decks yet."
-		_deck_picker_button.disabled = true
-		return
-	var selected_entry: Dictionary = _get_selected_multiplayer_deck_entry()
-	if selected_entry.is_empty():
-		_deck_picker_button.text = "Change Deck: Choose a deck"
-		_deck_picker_button.tooltip_text = "Choose one of your saved decks."
-		_deck_picker_button.disabled = false
-		return
-	var deck_name := str(selected_entry.get("deck_name", "Deck"))
-	if bool(selected_entry.get("is_legal", false)):
-		_deck_picker_button.text = "Change Deck: %s" % deck_name
-		_deck_picker_button.tooltip_text = "Current multiplayer deck: %s" % deck_name
+		button_text = "Change Deck: Sign in required"
+		tooltip_text = "Sign in to load your account decks."
+		disabled = true
+	elif _multiplayer_deck_entries.is_empty():
+		button_text = "Change Deck: No saved decks"
+		tooltip_text = "No saved decks yet."
+		disabled = true
 	else:
-		var reason := str(selected_entry.get("reason", "")).strip_edges()
-		_deck_picker_button.text = "Change Deck: %s (Unavailable)" % deck_name
-		_deck_picker_button.tooltip_text = reason if not reason.is_empty() else "This deck is unavailable for multiplayer."
-	_deck_picker_button.disabled = false
+		var selected_entry: Dictionary = _get_selected_multiplayer_deck_entry()
+		if selected_entry.is_empty():
+			button_text = "Change Deck: Choose a deck"
+			tooltip_text = "Choose one of your saved decks."
+		else:
+			var deck_name := str(selected_entry.get("deck_name", "Deck"))
+			if bool(selected_entry.get("is_legal", false)):
+				button_text = "Change Deck: %s" % deck_name
+				tooltip_text = "Current multiplayer deck: %s" % deck_name
+			else:
+				var reason := str(selected_entry.get("reason", "")).strip_edges()
+				button_text = "Change Deck: %s (Unavailable)" % deck_name
+				tooltip_text = reason if not reason.is_empty() else "This deck is unavailable for multiplayer."
+	for change_deck_button in [_deck_picker_button, _multiplayer_deck_change_button]:
+		if change_deck_button == null or not is_instance_valid(change_deck_button):
+			continue
+		change_deck_button.text = button_text
+		change_deck_button.tooltip_text = tooltip_text
+		change_deck_button.disabled = disabled
 
 func _make_multiplayer_deck_entry_row(entry: Dictionary) -> Control:
 	var row := PanelContainer.new()
@@ -1979,9 +2038,10 @@ func _rebuild_multiplayer_deck_popup() -> void:
 func _position_multiplayer_deck_popup() -> void:
 	if _deck_picker_popup == null or not is_instance_valid(_deck_picker_popup):
 		return
-	if _deck_picker_button == null or not is_instance_valid(_deck_picker_button):
+	var anchor_button := _get_deck_popup_anchor_button()
+	if anchor_button == null or not is_instance_valid(anchor_button):
 		return
-	var button_rect: Rect2 = _deck_picker_button.get_global_rect()
+	var button_rect: Rect2 = anchor_button.get_global_rect()
 	var viewport_rect: Rect2 = get_viewport().get_visible_rect()
 	var popup_width: float = minf(maxf(button_rect.size.x, 520.0), maxf(320.0, viewport_rect.size.x - 24.0))
 	var row_count: int = maxi(1, _multiplayer_deck_entries.size())
@@ -1994,8 +2054,13 @@ func _position_multiplayer_deck_popup() -> void:
 	_deck_picker_popup.position = Vector2(popup_x, popup_y)
 	_deck_picker_popup.size = Vector2(popup_width, popup_height)
 
+func _get_deck_popup_anchor_button() -> Button:
+	if _deck_popup_anchor_button != null and is_instance_valid(_deck_popup_anchor_button):
+		return _deck_popup_anchor_button
+	return _deck_picker_button
+
 func _show_multiplayer_deck_popup() -> void:
-	if _deck_picker_popup == null or _deck_picker_button == null:
+	if _deck_picker_popup == null or _get_deck_popup_anchor_button() == null:
 		return
 	_rebuild_multiplayer_deck_popup()
 	_deck_picker_popup.visible = true
@@ -2005,9 +2070,11 @@ func _hide_multiplayer_deck_popup() -> void:
 	if _deck_picker_popup != null and is_instance_valid(_deck_picker_popup):
 		_deck_picker_popup.visible = false
 
-func _toggle_multiplayer_deck_popup() -> void:
+func _toggle_multiplayer_deck_popup(anchor_button: Button = null) -> void:
 	if _deck_picker_popup == null or not is_instance_valid(_deck_picker_popup):
 		return
+	if anchor_button != null:
+		_deck_popup_anchor_button = anchor_button
 	if _deck_picker_popup.visible:
 		_hide_multiplayer_deck_popup()
 		return
@@ -9274,7 +9341,8 @@ func _refresh_account_identity_label() -> void:
 		return
 	if not active_account_username.is_empty():
 		_account_identity_label.text = "Signed in: %s" % active_account_username
-		_account_identity_label.visible = true
+		if not _is_multiplayer_screen_active():
+			_account_identity_label.visible = true
 		_refresh_auth_controls()
 		return
 	if _is_guest_session_active():
@@ -9282,7 +9350,8 @@ func _refresh_account_identity_label() -> void:
 		if not _is_generated_guest_username(guest_display_name):
 			guest_display_name = _get_preferred_guest_display_name("Guest")
 		_account_identity_label.text = "Guest: %s" % guest_display_name
-		_account_identity_label.visible = true
+		if not _is_multiplayer_screen_active():
+			_account_identity_label.visible = true
 		_refresh_auth_controls()
 		return
 	var selected_account_username := _get_selected_account_username()
@@ -11762,7 +11831,8 @@ func _get_selected_auth_mode() -> String:
 func _refresh_switch_account_button() -> void:
 	if _switch_account_button == null:
 		return
-	_switch_account_button.visible = true
+	if not _is_multiplayer_screen_active():
+		_switch_account_button.visible = true
 	if _is_guest_session_active():
 		_switch_account_button.text = "Make Account"
 		_switch_account_button.tooltip_text = GUEST_ACCOUNT_PROMPT

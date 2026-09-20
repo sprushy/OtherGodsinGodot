@@ -10862,6 +10862,10 @@ func _make_zone_info_icon(label_text: String, short_label: String, zone: Zone, c
 	if is_abyss_icon:
 		panel.mouse_entered.connect(_set_zone_info_count_visible.bind(count_lbl, true))
 		panel.mouse_exited.connect(_set_zone_info_count_visible.bind(count_lbl, false))
+		var gateway_icon := vbox.get_node_or_null("ZoneAbyssGatewayIcon") as AbyssGatewayIcon
+		if gateway_icon != null:
+			panel.mouse_entered.connect(gateway_icon.set_void_hover.bind(true))
+			panel.mouse_exited.connect(gateway_icon.set_void_hover.bind(false))
 	panel.gui_input.connect(_on_zone_info_icon_gui_input.bind(label_text, CardAction._zone_to_dict(zone, game_manager)))
 
 	return panel
@@ -10878,6 +10882,17 @@ func _on_zone_info_icon_gui_input(event: InputEvent, label_text: String, zone_di
 	var zone := CardAction._dict_to_zone(zone_dict, game_manager)
 	if zone != null:
 		_show_zone_contents(label_text, zone)
+
+func _pulse_abyss_gateway_activity(abyss_zone: Zone) -> void:
+	for icon in find_children("ZoneAbyssGatewayIcon", "Control", true, false):
+		var gateway_icon := icon as AbyssGatewayIcon
+		if gateway_icon == null:
+			continue
+		var panel := gateway_icon.get_parent().get_parent() as PanelContainer
+		if panel == null or not panel.has_meta("zone_ref"):
+			continue
+		if (panel.get_meta("zone_ref") as Zone) == abyss_zone:
+			gateway_icon.pulse_void_activity()
 
 func _refresh_zone_info_icons() -> void:
 	for child in find_children("ZoneInfoIcon", "PanelContainer", true, false):
@@ -15616,6 +15631,8 @@ func _on_local_player_card_moved(card: Card, from_zone: Zone, to_zone: Zone) -> 
 	var cleared_interaction_refs := _clear_interaction_refs_for_moved_card(card, from_zone, to_zone)
 	if from_zone.is_board_zone() or (to_zone != null and to_zone.is_board_zone()) or cleared_interaction_refs:
 		_schedule_local_ui_refresh()
+	if to_zone != null and to_zone.zone_type == Zone.ZoneType.ABYSS:
+		_pulse_abyss_gateway_activity(to_zone)
 	if not _is_networked_client \
 			and to_zone != null \
 			and to_zone.zone_type == Zone.ZoneType.FRONTLINE \

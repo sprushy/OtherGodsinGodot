@@ -12,11 +12,16 @@ const VOID_FRAME_COLUMNS := 6
 const VOID_FRAME_ROWS := 6
 const VOID_FRAME_COUNT := 36
 const VOID_FRAME_RATE := 12.0
+const VOID_ACTIVE_ALPHA := 0.82
+const VOID_FADE_DURATION := 0.25
+const VOID_ACTIVITY_LINGER_SECONDS := 2.5
 
 var _void_art: TextureRect = null
 var _void_frames: Array[Texture2D] = []
 var _void_frame_index := 0
 var _void_frame_time := 0.0
+var _void_hovered := false
+var _void_activity_seconds_remaining := 0.0
 
 
 func _ready() -> void:
@@ -32,7 +37,8 @@ func _ready() -> void:
 	_void_art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	_void_art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	_void_art.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_void_art.modulate = Color(1.0, 1.0, 1.0, 0.82)
+	_void_art.modulate = Color(1.0, 1.0, 1.0, 0.0)
+	_void_art.visible = false
 	_void_art.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_void_art.offset_left = VOID_OVERSCAN.position.x
 	_void_art.offset_top = VOID_OVERSCAN.position.y
@@ -60,8 +66,29 @@ func _make_gateway_texture(node_name: String, texture: Texture2D) -> TextureRect
 	return art
 
 
+func set_void_hover(active: bool) -> void:
+	_void_hovered = active
+
+
+func pulse_void_activity(linger_seconds: float = VOID_ACTIVITY_LINGER_SECONDS) -> void:
+	_void_activity_seconds_remaining = maxf(_void_activity_seconds_remaining, linger_seconds)
+
+
+func _void_wants_visible() -> bool:
+	return _void_hovered or _void_activity_seconds_remaining > 0.0
+
+
 func _process(delta: float) -> void:
 	if _void_art == null or _void_frames.is_empty():
+		return
+	_void_activity_seconds_remaining = maxf(0.0, _void_activity_seconds_remaining - delta)
+	var target_alpha := VOID_ACTIVE_ALPHA if _void_wants_visible() else 0.0
+	var alpha := _void_art.modulate.a
+	if not is_equal_approx(alpha, target_alpha):
+		alpha = move_toward(alpha, target_alpha, delta * VOID_ACTIVE_ALPHA / VOID_FADE_DURATION)
+		_void_art.modulate.a = alpha
+	_void_art.visible = alpha > 0.0 or target_alpha > 0.0
+	if not _void_art.visible:
 		return
 	_void_frame_time += delta
 	var frame_duration := 1.0 / VOID_FRAME_RATE

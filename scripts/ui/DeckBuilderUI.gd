@@ -86,6 +86,8 @@ var _page_label:       Label
 var _prev_page_btn:    Button
 var _next_page_btn:    Button
 var _card_view_controls_bar: HBoxContainer
+var _card_view_label:       Label
+var _card_overlays_toggle:  CheckBox
 var _deck_panel:       VBoxContainer
 var _preview_outer:    PanelContainer
 var _preview_layout:   HBoxContainer
@@ -422,6 +424,7 @@ func _add_card_view_controls(parent: Control) -> void:
 		parent.add_child(btn)
 
 	var overlay_toggle := CheckBox.new()
+	_card_overlays_toggle = overlay_toggle
 	overlay_toggle.text = "Always Show Overlays"
 	overlay_toggle.button_pressed = _show_collection_card_overlays
 	overlay_toggle.custom_minimum_size = Vector2(164, 28)
@@ -588,6 +591,7 @@ func _build_collection_panel(parent: Control) -> void:
 	page_bar.add_child(card_view_bar)
 
 	var view_lbl := Label.new()
+	_card_view_label = view_lbl
 	view_lbl.text = "Card View:"
 	view_lbl.add_theme_font_size_override("font_size", 11)
 	view_lbl.modulate = Color(0.7, 0.7, 0.7)
@@ -4805,66 +4809,37 @@ func _update_collection_layout() -> void:
 	if available.x <= 0.0 or available.y <= 0.0:
 		return
 
-	var total_items := _current_grid_total()
 	var aspect: float = CARD_W / float(CARD_H)
 	var previous_page_grid_columns := _page_grid_columns
 	var previous_page_visible_rows := _page_visible_collection_rows
 	var columns := 1
 	var next_size := Vector2(CARD_W, CARD_H)
 	var visible_rows := 1
-	var max_card_height := 1.0
-	var width_limited := 1.0
-	var estimated_width := 1.0
-	var height_from_width := 1.0
 
-	if _collection_mode == COLLECTION_MODE_SAVED_DECKS and total_items > 0:
-		if total_items <= 2:
-			columns = 1
-		elif total_items <= 4:
-			columns = 2
-		else:
-			columns = 3
+	# Saved-deck covers share the card view size presets; they have no
+	# add/count footer, so that height allowance is skipped.
+	var footer_height := COLLECTION_ADD_FOOTER_HEIGHT if _collection_mode == COLLECTION_MODE_CARDS else 0.0
+	var base_max_card_height = floor((available.y - COLLECTION_GAP * float(_collection_rows - 1)) / float(_collection_rows))
+	base_max_card_height = max(base_max_card_height, footer_height + 1.0)
+	var base_visual_height = maxf(1.0, base_max_card_height - footer_height)
+	var base_estimated_width = floor(base_visual_height * aspect)
+	var base_columns = max(1, int(floor((available.x + COLLECTION_GAP) / max(1.0, base_estimated_width + COLLECTION_GAP))))
+	var base_width_limited = floor((available.x - COLLECTION_GAP * float(base_columns - 1)) / float(base_columns))
+	var base_height_from_width = floor(base_width_limited / aspect) + footer_height
 
-		var target_rows := maxi(1, int(ceil(total_items / float(columns))))
-		max_card_height = floor((available.y - COLLECTION_GAP * float(target_rows - 1)) / float(target_rows))
-		max_card_height = max(max_card_height, 1.0)
-		width_limited = floor((available.x - COLLECTION_GAP * float(columns - 1)) / float(columns))
-		estimated_width = floor(max_card_height * aspect)
-		height_from_width = floor(width_limited / aspect)
-
-		if height_from_width < max_card_height:
-			max_card_height = height_from_width
-			estimated_width = width_limited
-		else:
-			estimated_width = floor(max_card_height * aspect)
-
-		next_size = Vector2(max(1.0, estimated_width), max(1.0, max_card_height))
-		visible_rows = target_rows
-		_page_grid_columns = columns
-		_page_visible_collection_rows = visible_rows
+	if base_height_from_width < base_max_card_height:
+		base_max_card_height = base_height_from_width
+		base_estimated_width = base_width_limited
 	else:
-		var footer_height := COLLECTION_ADD_FOOTER_HEIGHT
-		var base_max_card_height = floor((available.y - COLLECTION_GAP * float(_collection_rows - 1)) / float(_collection_rows))
-		base_max_card_height = max(base_max_card_height, footer_height + 1.0)
-		var base_visual_height = maxf(1.0, base_max_card_height - footer_height)
-		var base_estimated_width = floor(base_visual_height * aspect)
-		var base_columns = max(1, int(floor((available.x + COLLECTION_GAP) / max(1.0, base_estimated_width + COLLECTION_GAP))))
-		var base_width_limited = floor((available.x - COLLECTION_GAP * float(base_columns - 1)) / float(base_columns))
-		var base_height_from_width = floor(base_width_limited / aspect) + footer_height
+		base_estimated_width = floor(maxf(1.0, base_max_card_height - footer_height) * aspect)
 
-		if base_height_from_width < base_max_card_height:
-			base_max_card_height = base_height_from_width
-			base_estimated_width = base_width_limited
-		else:
-			base_estimated_width = floor(maxf(1.0, base_max_card_height - footer_height) * aspect)
-
-		var base_card_size := Vector2(max(1.0, base_estimated_width), max(1.0, base_max_card_height))
-		var base_visible_rows := maxi(1, mini(_collection_rows, int(floor((available.y + COLLECTION_GAP) / max(1.0, base_card_size.y + COLLECTION_GAP)))))
-		next_size = base_card_size
-		columns = base_columns
-		visible_rows = base_visible_rows
-		_page_grid_columns = columns
-		_page_visible_collection_rows = visible_rows
+	var base_card_size := Vector2(max(1.0, base_estimated_width), max(1.0, base_max_card_height))
+	var base_visible_rows := maxi(1, mini(_collection_rows, int(floor((available.y + COLLECTION_GAP) / max(1.0, base_card_size.y + COLLECTION_GAP)))))
+	next_size = base_card_size
+	columns = base_columns
+	visible_rows = base_visible_rows
+	_page_grid_columns = columns
+	_page_visible_collection_rows = visible_rows
 
 	_grid.custom_minimum_size.y = visible_rows * next_size.y + COLLECTION_GAP * float(visible_rows - 1)
 
@@ -4964,9 +4939,12 @@ func _set_collection_mode(mode: String, reset_page: bool = true) -> void:
 func _refresh_saved_decks_view_button() -> void:
 	if _saved_decks_view_btn == null:
 		return
-	_saved_decks_view_btn.text = "Back to Cards" if _collection_mode == COLLECTION_MODE_SAVED_DECKS else "Saved Decks"
-	if _card_view_controls_bar != null:
-		_card_view_controls_bar.visible = (_collection_mode == COLLECTION_MODE_CARDS)
+	var saved_decks_mode := _collection_mode == COLLECTION_MODE_SAVED_DECKS
+	_saved_decks_view_btn.text = "Back to Cards" if saved_decks_mode else "Saved Decks"
+	if _card_view_label != null:
+		_card_view_label.text = "Deck Size:" if saved_decks_mode else "Card View:"
+	if _card_overlays_toggle != null:
+		_card_overlays_toggle.visible = not saved_decks_mode
 
 func _generate_saved_deck_id() -> String:
 	var existing_deck_ids: Dictionary = {}
