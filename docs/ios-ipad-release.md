@@ -1,48 +1,52 @@
 # iPad / iOS Release Flow
 
-The Desktop Release workflow (`.github/workflows/windows-release.yml`) exports an
-**unsigned Xcode project** for iOS on every tag release, next to the Windows and
-macOS assets. Apple requires the final IPA to be signed from Xcode on a Mac, so
-CI stops at the project and the signing/archiving step stays manual.
+The Desktop Release workflow publishes an **unsigned iOS IPA**
+(`OtherGods-ios-unsigned.ipa`) on every tag release. iPadOS refuses to run
+unsigned apps, so the final signing happens on a Windows PC with a free Apple
+ID via Sideloadly (or AltStore). No Mac and no paid Apple Developer account is
+needed anywhere in this flow.
 
 ## What CI produces
 
-- Release asset `OtherGods-ios-xcode.zip` (plus `.sha256`) containing
-  `OtherGods.xcodeproj`, an Xcode project with the game PCK embedded.
+- Release asset `OtherGods-ios-unsigned.ipa` (plus `.sha256`) — the game
+  packaged as an iOS app, ready to be re-signed by a sideloading tool.
 
-## Prerequisites
+## Install on an iPad with Sideloadly (Windows)
 
-- A Mac with Xcode and an Apple Developer account for device/TestFlight builds.
-- Optional but recommended: the repo secret `APPLE_TEAM_ID` holding the
-  10-character App Store Team ID (the same ID macOS notarization uses). When
-  set, the workflow stamps it into the exported Xcode project so the right team
-  is pre-selected. When it is missing, CI stamps a placeholder (`AAAAAAAAAA`)
-  instead — Godot refuses to export with an empty team ID — and you select the
-  real team in Xcode under Signing & Capabilities before building.
+1. Install [Sideloadly](https://sideloadly.io) on the PC. It needs iTunes from
+   Apple's website (not the Microsoft Store version) for the USB drivers.
+2. Download `OtherGods-ios-unsigned.ipa` from the release, connect the iPad
+   over USB, and trust the computer on the iPad when prompted.
+3. In Sideloadly: drag the IPA in, enter your Apple ID, press Start, then
+   approve the two-factor prompt when it appears.
+4. On the iPad: Settings → General → VPN & Device Management → tap your Apple
+   ID under Developer App → **Trust**.
+5. Launch Other Gods from the home screen.
 
-## Build and run on an iPad
+Free Apple ID limits:
 
-1. Download `OtherGods-ios-xcode.zip` from the release and unzip it.
-2. Open `OtherGods.xcodeproj` in Xcode.
-3. Select the target → **Signing & Capabilities**: the team should already be
-   filled in from CI. Keep "Automatically manage signing" enabled; Xcode
-   registers the App ID `com.sprushy.othergods` on first run.
-4. Connect the iPad, pick it as the run destination, press **Run**. On the
-   iPad, trust the developer profile under Settings → General → VPN & Device
-   Management.
-5. For TestFlight / App Store: **Product → Archive**, then **Distribute App**
-   from the Organizer.
+- The signature expires after **7 days**; re-sideload the same IPA to refresh
+  it (save data survives).
+- At most 3 sideloaded apps and 10 new app IDs per week per free account.
+- AltStore (with AltServer running on the PC) is an alternative that can
+  refresh the 7-day signature automatically while the iPad is on the same
+  network.
 
-## Exporting from the editor instead
+## How CI builds it
 
-The `iOS` preset in `export_presets.cfg` can also be exported manually
-(Project → Export). Notes:
+The `export-ios` job runs on a macOS runner (Apple's toolchain only exists
+there; nobody touches it manually):
 
-- The export errors out while `application/app_store_team_id` is empty — fill
-  it in once in the preset UI.
-- `application/export_project_only` is `true`, so export stops after generating
-  the Xcode project. Turn it off only on a Mac with signing configured if you
-  want Godot to drive `xcodebuild` all the way to an IPA.
+1. Godot exports the Xcode project from the `iOS` preset. A placeholder App
+   Store Team ID is stamped first because Godot refuses an export with an
+   empty team ID; the value is irrelevant here.
+2. `xcodebuild` assembles the `.app` with code signing disabled
+   (`CODE_SIGNING_ALLOWED=NO`), which is then zipped into the unsigned IPA.
+3. The IPA is attached to the GitHub release next to the Windows/macOS assets.
+
+If a paid Apple Developer Program membership is ever added, this job is where
+a signed IPA / TestFlight upload would slot in; the Xcode project export stays
+available via the preset's `application/export_project_only` option.
 
 ## Configuration notes
 
@@ -51,8 +55,9 @@ The `iOS` preset in `export_presets.cfg` can also be exported manually
   cramped on phones.
 - **Orientation:** engine default (landscape), which suits the board layout.
 - **Icon:** `images/export_icons/nergal_lion_export_1024.png` is currently
-  upscaled from the 256px export icon onto an opaque background (iOS icons must
-  be square and opaque). Replace it with native 1024x1024 art when available.
+  upscaled from the 256px export icon onto an opaque background (iOS icons
+  must be square and opaque). Replace it with native 1024x1024 art when
+  available.
 - **Renderer:** the project's Forward+ renderer runs via Metal on iOS. If
   battery, heat, or older-device support becomes an issue, switching to the
   Mobile or Compatibility renderer is the lever, at the cost of 3D background
@@ -63,8 +68,8 @@ The `iOS` preset in `export_presets.cfg` can also be exported manually
 - **Layout:** the 4:3 iPad aspect is untested on hardware; the
   `canvas_items`/`expand` stretch should adapt, but verify edge-anchored UI on
   a real device.
-- **Versions:** Info.plist versions come from `config/version` and the preset's
-  `application/short_version`/`application/version`, which CI stamps from the
-  release tag.
+- **Versions:** Info.plist versions come from `config/version` and the
+  preset's `application/short_version`/`application/version`, which CI stamps
+  from the release tag.
 - **Textures:** `rendering/textures/vram_compression/import_etc2_astc` is
   already enabled, so no extra texture work is needed for iOS.

@@ -459,12 +459,28 @@ jobs:
           mkdir -p .exports/ios dist/ios
           godot --headless --path . --export-release "iOS" .exports/ios/OtherGods.xcodeproj
 
-      - name: Package iOS Xcode project
+      - name: Package unsigned iOS IPA
         run: |
+          set -euo pipefail
           cd .exports/ios
-          zip -9 -r ../../dist/ios/OtherGods-ios-xcode.zip .
+          scheme="$(xcodebuild -list -json -project OtherGods.xcodeproj | python3 -c "import json,sys; d=json.load(sys.stdin)['project']; print((d.get('schemes') or [''])[0])")"
+          target="$(xcodebuild -list -json -project OtherGods.xcodeproj | python3 -c "import json,sys; d=json.load(sys.stdin)['project']; print((d.get('targets') or [''])[0])")"
+          echo "Building iOS app without signing (scheme='${scheme}' target='${target}')."
+          if [ -n "$scheme" ]; then
+            xcodebuild -project OtherGods.xcodeproj -scheme "$scheme" -configuration Release -sdk iphoneos -derivedDataPath build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" -quiet
+          else
+            xcodebuild -project OtherGods.xcodeproj -target "$target" -configuration Release -sdk iphoneos -derivedDataPath build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" -quiet
+          fi
+          app_path="$(find build/Build/Products -maxdepth 3 -name '*.app' -print -quit)"
+          if [ -z "$app_path" ]; then
+            echo "::error::No .app product was produced by xcodebuild." >&2
+            exit 1
+          fi
+          mkdir -p Payload
+          cp -R "$app_path" Payload/
+          zip -qry "../../dist/ios/OtherGods-ios-unsigned.ipa" Payload
           cd ../..
-          shasum -a 256 dist/ios/OtherGods-ios-xcode.zip > dist/ios/OtherGods-ios-xcode.zip.sha256
+          shasum -a 256 dist/ios/OtherGods-ios-unsigned.ipa > dist/ios/OtherGods-ios-unsigned.ipa.sha256
 
       - name: Upload iOS workflow artifact
         uses: actions/upload-artifact@v4
@@ -537,8 +553,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -s dist/ios/OtherGods-ios-xcode.zip
-          test -s dist/ios/OtherGods-ios-xcode.zip.sha256
+          test -s dist/ios/OtherGods-ios-unsigned.ipa
+          test -s dist/ios/OtherGods-ios-unsigned.ipa.sha256
 
       - name: Publish GitHub release assets
         uses: softprops/action-gh-release@v2
