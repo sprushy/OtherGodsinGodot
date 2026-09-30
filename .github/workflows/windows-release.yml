@@ -381,12 +381,101 @@ jobs:
           name: OtherGods-macos
           path: dist/macos/*
 
+  export-ios:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Load Godot version
+        shell: pwsh
+        run: |
+          $version = (Get-Content .godot-version -Raw).Trim()
+          if (-not $version) {
+            throw ".godot-version is empty."
+          }
+          $setupVersion = $version
+          if ($setupVersion -match '^\d+\.\d+$') {
+            $setupVersion = "$setupVersion.0"
+          }
+          "GODOT_VERSION=$setupVersion" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Stamp build version
+        shell: pwsh
+        env:
+          BUILD_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}
+        run: |
+          $resourceVersion = $env:BUILD_VERSION -replace '^v', ''
+          if ($resourceVersion -notmatch '^\d+(\.\d+){1,3}$') {
+            $resourceVersion = '0.0.0'
+          }
+          $projectContent = Get-Content project.godot -Raw
+          $projectContent = $projectContent -replace '(?m)^config/version=.*$', "config/version=`"$env:BUILD_VERSION`""
+          Set-Content project.godot $projectContent -NoNewline
+          $exportContent = Get-Content export_presets.cfg -Raw
+          $exportContent = $exportContent -replace '(?m)^(application/(?:file_version|product_version|short_version|version)=)".*"$', "`${1}`"$resourceVersion`""
+          Set-Content export_presets.cfg $exportContent -NoNewline
+
+      - name: Stamp iOS App Store team ID
+        shell: bash
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "${APPLE_TEAM_ID}" ]; then
+            echo "::error::APPLE_TEAM_ID secret is not configured. iOS export hard-fails without an App Store Team ID."
+            exit 1
+          fi
+          python3 - "$APPLE_TEAM_ID" <<'PY'
+          import pathlib
+          import sys
+
+          team_id = sys.argv[1]
+          preset_path = pathlib.Path("export_presets.cfg")
+          text = preset_path.read_text(encoding="utf-8")
+          placeholder = 'application/app_store_team_id=""'
+          if placeholder not in text:
+              print('::error::iOS preset placeholder application/app_store_team_id="" was not found in export_presets.cfg')
+              sys.exit(1)
+          preset_path.write_text(
+              text.replace(placeholder, f'application/app_store_team_id="{team_id}"', 1),
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Setup Godot
+        uses: chickensoft-games/setup-godot@v2
+        with:
+          version: ${{ env.GODOT_VERSION }}
+          use-dotnet: false
+          include-templates: true
+
+      - name: Export iOS Xcode project
+        run: |
+          mkdir -p .exports/ios dist/ios
+          godot --headless --path . --export-release "iOS" .exports/ios/OtherGods.xcodeproj
+
+      - name: Package iOS Xcode project
+        run: |
+          cd .exports/ios
+          zip -9 -r ../../dist/ios/OtherGods-ios-xcode.zip .
+          cd ../..
+          shasum -a 256 dist/ios/OtherGods-ios-xcode.zip > dist/ios/OtherGods-ios-xcode.zip.sha256
+
+      - name: Upload iOS workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: OtherGods-ios
+          path: dist/ios/*
+
   publish-release:
     if: ${{ startsWith(github.ref, 'refs/tags/') && always() && needs.export-windows.result == 'success' }}
     runs-on: ubuntu-latest
     needs:
       - export-windows
       - export-macos
+      - export-ios
 
     steps:
       - name: Checkout
@@ -426,6 +515,28 @@ jobs:
             echo "::warning::macOS appcast.xml was not produced; publishing the macOS zip without Sparkle auto-updates."
           fi
 
+      - name: Download iOS artifact
+        if: ${{ needs.export-ios.result == 'success' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: OtherGods-ios
+          path: dist/ios
+
+      - name: Report missing iOS assets
+        if: ${{ needs.export-ios.result != 'success' }}
+        run: |
+          echo "::warning::Publishing without iOS assets because export-ios finished with '${{ needs.export-ios.result }}'."
+          echo "## iOS assets were not published" >> "$GITHUB_STEP_SUMMARY"
+          echo "The export-ios job finished with \`${{ needs.export-ios.result }}\`; this release contains no iOS Xcode project." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Validate iOS release artifacts
+        if: ${{ needs.export-ios.result == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s dist/ios/OtherGods-ios-xcode.zip
+          test -s dist/ios/OtherGods-ios-xcode.zip.sha256
+
       - name: Publish GitHub release assets
         uses: softprops/action-gh-release@v2
         with:
@@ -436,6 +547,7 @@ jobs:
             dist/windows/OtherGodsServer-windows.zip
             dist/windows/OtherGodsServer-windows.zip.sha256
             dist/macos/*
+            dist/ios/*
 
       - name: Sync tagged version back to default branch
         shell: pwsh

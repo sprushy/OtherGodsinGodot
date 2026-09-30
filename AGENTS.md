@@ -79,7 +79,7 @@ powershell.exe -ExecutionPolicy Bypass -File scripts\tmp\run_lobby_smoke.ps1
 
 `docs/lobby-manual-smoke-test.md` notes that the automated cross-process lobby smoke has Godot editor-script RPC limitations, so a real two-window test is still the strongest proof for that flow.
 
-CI export presets are `Windows Desktop`, `Windows Dedicated Server`, and `macOS` in `export_presets.cfg`.
+CI export presets are `Windows Desktop`, `Windows Dedicated Server`, `macOS`, and `iOS` in `export_presets.cfg`. The iOS job exports an unsigned Xcode project; the manual iPad signing flow is documented in `docs/ios-ipad-release.md`.
 
 ## Working Habits For This Repo
 
