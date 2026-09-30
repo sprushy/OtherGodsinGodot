@@ -423,11 +423,14 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
-          if [ -z "${APPLE_TEAM_ID}" ]; then
-            echo "::error::APPLE_TEAM_ID secret is not configured. iOS export hard-fails without an App Store Team ID."
-            exit 1
+          team_id="${APPLE_TEAM_ID}"
+          if [ -z "${team_id}" ]; then
+            team_id="AAAAAAAAAA"
+            echo "::warning::APPLE_TEAM_ID secret is not configured; stamping placeholder team ${team_id}. Select the real team in Xcode (Signing & Capabilities) before archiving."
+            echo "## iOS App Store Team ID not configured" >> "$GITHUB_STEP_SUMMARY"
+            echo "The APPLE_TEAM_ID secret is missing, so the exported Xcode project has a placeholder DEVELOPMENT_TEAM (AAAAAAAAAA). Open the project in Xcode and select the real team under Signing & Capabilities before building." >> "$GITHUB_STEP_SUMMARY"
           fi
-          python3 - "$APPLE_TEAM_ID" <<'PY'
+          python3 - "$team_id" <<'PY'
           import pathlib
           import sys
 

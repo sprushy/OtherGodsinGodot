@@ -13,10 +13,12 @@ CI stops at the project and the signing/archiving step stays manual.
 ## Prerequisites
 
 - A Mac with Xcode and an Apple Developer account for device/TestFlight builds.
-- The repo secret `APPLE_TEAM_ID` must hold the 10-character App Store Team ID
-  (the same ID already used for macOS notarization). The workflow stamps it into
-  `application/app_store_team_id` before exporting; Godot hard-fails an iOS
-  export while that field is empty.
+- Optional but recommended: the repo secret `APPLE_TEAM_ID` holding the
+  10-character App Store Team ID (the same ID macOS notarization uses). When
+  set, the workflow stamps it into the exported Xcode project so the right team
+  is pre-selected. When it is missing, CI stamps a placeholder (`AAAAAAAAAA`)
+  instead — Godot refuses to export with an empty team ID — and you select the
+  real team in Xcode under Signing & Capabilities before building.
 
 ## Build and run on an iPad
 
