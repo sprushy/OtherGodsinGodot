@@ -18,6 +18,7 @@ static func play_sequence() -> void:
 	player._play_next()
 
 func _ready() -> void:
+	bus = "SFX"
 	finished.connect(_on_finished)
 
 func _play_next() -> void:

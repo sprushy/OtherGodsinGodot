@@ -157,6 +157,18 @@ func _on_match_ui_interaction(prompt_player_index: int, type: String, data: Dict
 				"source_uid": str(data.get("source_uid", "")),
 				"target_uid": _first_uid_from_prompt(data, "target_uids"),
 			})
+		"humbaba_augury":
+			_submit_first_target_choice("humbaba_augury_choice", data)
+		"wolf_adolescent_maturation":
+			_submit_first_target_choice("wolf_adolescent_maturation_choice", data)
+		"breidablik_turn_start":
+			if not _mark_prompt_answered(data):
+				return
+			_submit_action({
+				"type": "breidablik_turn_start_choice",
+				"source_uid": str(data.get("source_uid", "")),
+				"return_priest": false,
+			})
 		_:
 			super._on_match_ui_interaction(prompt_player_index, type, data)
 

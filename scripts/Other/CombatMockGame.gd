@@ -79,6 +79,9 @@ const ReinforcementCardTileScript = preload("res://scripts/ui/ReinforcementCardT
 const ReinforcementDropAreaScript = preload("res://scripts/ui/ReinforcementDropArea.gd")
 const UITextureCacheScript = preload("res://scripts/ui/UITextureCache.gd")
 const AbyssGatewayIconScript = preload("res://scripts/ui/AbyssGatewayIcon.gd")
+const GameSettingsTabsScript = preload("res://scripts/ui/GameSettingsTabs.gd")
+const AudioSettingsScript = preload("res://scripts/core/AudioSettings.gd")
+const UIHoverSfxScript = preload("res://scripts/core/UIHoverSfx.gd")
 const MINOR_ACTION_SYMBOL_TEXTURE = preload("res://images/ui/MinorActionSymbol.png")
 const MAJOR_ACTION_SYMBOL_TEXTURE = preload("res://images/ui/MajorActionSymbol.png")
 const USER_SETTINGS_PATH := "user://settings.cfg"
@@ -87,6 +90,7 @@ const COMBAT_SETTINGS_SECTION := "combat"
 const GOD_SPECIFIC_SETTINGS_SECTION := "god_specific"
 const MUSIC_MUTED_KEY := "music_muted"
 const ALL_SOUND_MUTED_KEY := "all_sound_muted"
+const STARTUP_MUSIC_TRACK_KEY := "startup_music_track"
 const PRIORITY_STOP_START_KEY := "priority_stop_start"
 const PRIORITY_STOP_MAIN_KEY := "priority_stop_main"
 const PRIORITY_STOP_COMBAT_KEY := "priority_stop_combat"
@@ -1066,22 +1070,6 @@ func _make_pause_menu_style(border_color: Color) -> StyleBoxFlat:
 	style.content_margin_bottom = 18
 	return style
 
-func _make_auto_zone_toggle(label_text: String, initial_state: bool, toggle_callback: Callable) -> CheckButton:
-	var toggle := CheckButton.new()
-	toggle.text = label_text
-	toggle.button_pressed = initial_state
-	toggle.custom_minimum_size = Vector2(0, 34)
-	if toggle_callback.is_valid():
-		toggle.toggled.connect(toggle_callback)
-	return toggle
-
-func _make_settings_section_label(label_text: String) -> Label:
-	var label := Label.new()
-	label.text = label_text
-	label.add_theme_font_size_override("font_size", 15)
-	label.add_theme_color_override("font_color", Color(0.96, 0.92, 0.68))
-	return label
-
 func _read_config_bool(config: ConfigFile, section: String, key: String, default_value: bool) -> bool:
 	var value = config.get_value(section, key, default_value)
 	if value is bool:
@@ -1125,6 +1113,23 @@ func _get_saved_bool_setting(section: String, key: String, default_value: bool) 
 	return _read_config_bool(config, section, key, default_value)
 
 func _save_bool_setting(section: String, key: String, value: bool) -> void:
+	var config := ConfigFile.new()
+	config.load(USER_SETTINGS_PATH)
+	config.set_value(section, key, value)
+	var error := config.save(USER_SETTINGS_PATH)
+	if error != OK:
+		push_warning("Could not save user setting %s/%s: %s" % [section, key, str(error)])
+
+func _get_saved_string_setting(section: String, key: String, default_value: String) -> String:
+	var config := ConfigFile.new()
+	if config.load(USER_SETTINGS_PATH) != OK:
+		return default_value
+	var value = config.get_value(section, key, default_value)
+	if value is String:
+		return str(value)
+	return default_value
+
+func _save_string_setting(section: String, key: String, value: String) -> void:
 	var config := ConfigFile.new()
 	config.load(USER_SETTINGS_PATH)
 	config.set_value(section, key, value)
@@ -1485,6 +1490,101 @@ func _set_all_sound_muted(muted: bool) -> void:
 		AudioServer.set_bus_mute(master_bus_index, muted)
 	_save_bool_setting(AUDIO_SETTINGS_SECTION, ALL_SOUND_MUTED_KEY, muted)
 
+func _get_settings_menu_value(section: String, key: String, default_value: bool) -> bool:
+	match [section, key]:
+		[AUDIO_SETTINGS_SECTION, MUSIC_MUTED_KEY]:
+			return _is_music_muted()
+		[AUDIO_SETTINGS_SECTION, ALL_SOUND_MUTED_KEY]:
+			return _all_sound_muted
+		[COMBAT_SETTINGS_SECTION, AUTO_SELECT_SPELL_PLAY_ZONES_KEY]:
+			return _auto_select_spell_play_zones
+		[COMBAT_SETTINGS_SECTION, AUTO_SELECT_SPELL_PREPARE_ZONES_KEY]:
+			return _auto_select_spell_prepare_zones
+		[COMBAT_SETTINGS_SECTION, AUTO_SELECT_HEX_PREPARE_ZONES_KEY]:
+			return _auto_select_hex_prepare_zones
+		[COMBAT_SETTINGS_SECTION, AUTO_SELECT_CHARM_PLAY_ZONES_KEY]:
+			return _auto_select_charm_play_zones
+		[COMBAT_SETTINGS_SECTION, AUTO_SELECT_CHARM_PREPARE_ZONES_KEY]:
+			return _auto_select_charm_prepare_zones
+		[COMBAT_SETTINGS_SECTION, USE_SPLASH_BOARD_BACKGROUND_KEY]:
+			return _use_splash_board_background
+		[COMBAT_SETTINGS_SECTION, HOVER_SHOW_CARD_OPTIONS_KEY]:
+			return _hover_show_card_options
+		[COMBAT_SETTINGS_SECTION, ALWAYS_SHOW_ABILITY_BADGES_KEY]:
+			return _always_show_ability_badges
+		[COMBAT_SETTINGS_SECTION, HIDE_UNALTERED_REACH_TAG_KEY]:
+			return _hide_unaltered_reach_tag
+		[COMBAT_SETTINGS_SECTION, ADD_PRIORITY_TOGGLES_TO_ALL_CARDS_KEY]:
+			return _add_priority_toggles_to_all_cards
+		[GOD_SPECIFIC_SETTINGS_SECTION, HERMES_AUTO_PASS_END_PRIORITY_KEY]:
+			return _hermes_auto_pass_end_priority
+		[GOD_SPECIFIC_SETTINGS_SECTION, HERMES_AUTO_PASS_UPKEEP_PRIORITY_KEY]:
+			return _hermes_auto_pass_upkeep_priority
+		[GOD_SPECIFIC_SETTINGS_SECTION, HERMES_ADD_PRIORITY_TOGGLE_KEY]:
+			return _hermes_add_priority_toggle_to_card
+	return _get_saved_bool_setting(section, key, default_value)
+
+func _set_settings_menu_value(section: String, key: String, value: bool) -> void:
+	match [section, key]:
+		[AUDIO_SETTINGS_SECTION, MUSIC_MUTED_KEY]:
+			_set_music_muted(value)
+		[AUDIO_SETTINGS_SECTION, ALL_SOUND_MUTED_KEY]:
+			_set_all_sound_muted(value)
+		[COMBAT_SETTINGS_SECTION, AUTO_SELECT_SPELL_PLAY_ZONES_KEY]:
+			_set_auto_select_spell_play_zones(value)
+		[COMBAT_SETTINGS_SECTION, AUTO_SELECT_SPELL_PREPARE_ZONES_KEY]:
+			_set_auto_select_spell_prepare_zones(value)
+		[COMBAT_SETTINGS_SECTION, AUTO_SELECT_HEX_PREPARE_ZONES_KEY]:
+			_set_auto_select_hex_prepare_zones(value)
+		[COMBAT_SETTINGS_SECTION, AUTO_SELECT_CHARM_PLAY_ZONES_KEY]:
+			_set_auto_select_charm_play_zones(value)
+		[COMBAT_SETTINGS_SECTION, AUTO_SELECT_CHARM_PREPARE_ZONES_KEY]:
+			_set_auto_select_charm_prepare_zones(value)
+		[COMBAT_SETTINGS_SECTION, USE_SPLASH_BOARD_BACKGROUND_KEY]:
+			_set_use_splash_board_background(value)
+		[COMBAT_SETTINGS_SECTION, HOVER_SHOW_CARD_OPTIONS_KEY]:
+			_set_hover_show_card_options(value)
+		[COMBAT_SETTINGS_SECTION, ALWAYS_SHOW_ABILITY_BADGES_KEY]:
+			_set_always_show_ability_badges(value)
+		[COMBAT_SETTINGS_SECTION, HIDE_UNALTERED_REACH_TAG_KEY]:
+			_set_hide_unaltered_reach_tag(value)
+		[COMBAT_SETTINGS_SECTION, ADD_PRIORITY_TOGGLES_TO_ALL_CARDS_KEY]:
+			_set_add_priority_toggles_to_all_cards(value)
+		[GOD_SPECIFIC_SETTINGS_SECTION, HERMES_AUTO_PASS_END_PRIORITY_KEY]:
+			_set_hermes_auto_pass_end_priority(value)
+		[GOD_SPECIFIC_SETTINGS_SECTION, HERMES_AUTO_PASS_UPKEEP_PRIORITY_KEY]:
+			_set_hermes_auto_pass_upkeep_priority(value)
+		[GOD_SPECIFIC_SETTINGS_SECTION, HERMES_ADD_PRIORITY_TOGGLE_KEY]:
+			_set_hermes_add_priority_toggle_to_card(value)
+		_:
+			_save_bool_setting(section, key, value)
+
+func _get_settings_menu_text_value(section: String, key: String, default_value: String) -> String:
+	if section == AUDIO_SETTINGS_SECTION and key == STARTUP_MUSIC_TRACK_KEY:
+		var music_controller := _get_music_controller()
+		if music_controller != null and music_controller.has_method("get_startup_music_track"):
+			return str(music_controller.call("get_startup_music_track"))
+	return _get_saved_string_setting(section, key, default_value)
+
+func _set_settings_menu_text_value(section: String, key: String, value: String) -> void:
+	if section == AUDIO_SETTINGS_SECTION and key == STARTUP_MUSIC_TRACK_KEY:
+		var music_controller := _get_music_controller()
+		if music_controller != null and music_controller.has_method("set_startup_music_track"):
+			music_controller.call("set_startup_music_track", value)
+			return
+		_save_string_setting(AUDIO_SETTINGS_SECTION, STARTUP_MUSIC_TRACK_KEY, value)
+		return
+	_save_string_setting(section, key, value)
+
+func _get_settings_menu_number_value(section: String, key: String, default_value: float) -> float:
+	if section == AUDIO_SETTINGS_SECTION and AudioSettingsScript.is_volume_key(key):
+		return AudioSettingsScript.get_volume(key, USER_SETTINGS_PATH)
+	return default_value
+
+func _set_settings_menu_number_value(section: String, key: String, value: float) -> void:
+	if section == AUDIO_SETTINGS_SECTION and AudioSettingsScript.is_volume_key(key):
+		AudioSettingsScript.set_volume(key, value, USER_SETTINGS_PATH)
+
 func _on_all_sound_mute_changed(muted: bool) -> void:
 	_all_sound_muted = muted
 	if _all_sound_settings_toggle != null and is_instance_valid(_all_sound_settings_toggle):
@@ -1616,143 +1716,27 @@ func _show_pause_menu() -> void:
 	settings_tabs.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	settings_vbox.add_child(settings_tabs)
 
-	var general_scroll := ScrollContainer.new()
-	general_scroll.name = "General"
-	general_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	general_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	settings_tabs.add_child(general_scroll)
-
-	var general_settings := VBoxContainer.new()
-	general_settings.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	general_settings.add_theme_constant_override("separation", 8)
-	general_scroll.add_child(general_settings)
-
-	var settings_info := Label.new()
-	settings_info.text = "When enabled, right-click Play/Prepare will auto-pick a friendly zone and prefer reserve line slots."
-	settings_info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	settings_info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	settings_info.add_theme_color_override("font_color", Color(0.80, 0.85, 0.92))
-	general_settings.add_child(settings_info)
-
-	general_settings.add_child(_make_settings_section_label("Placement"))
-
-	general_settings.add_child(_make_auto_zone_toggle(
-		"Auto-select spell play zones",
-		_auto_select_spell_play_zones,
-		func(pressed: bool) -> void:
-			_set_auto_select_spell_play_zones(pressed)
+	var created_settings_toggles := {}
+	settings_tabs.add_child(GameSettingsTabsScript.build_general_tab(
+		Callable(self, "_get_settings_menu_value"),
+		Callable(self, "_set_settings_menu_value"),
+		created_settings_toggles,
+		Callable(self, "_get_settings_menu_text_value"),
+		Callable(self, "_set_settings_menu_text_value"),
+		Callable(self, "_get_settings_menu_number_value"),
+		Callable(self, "_set_settings_menu_number_value")
 	))
-	general_settings.add_child(_make_auto_zone_toggle(
-		"Auto-select spell prepare zones",
-		_auto_select_spell_prepare_zones,
-		func(pressed: bool) -> void:
-			_set_auto_select_spell_prepare_zones(pressed)
+	settings_tabs.add_child(GameSettingsTabsScript.build_god_tab(
+		Callable(self, "_get_settings_menu_value"),
+		Callable(self, "_set_settings_menu_value"),
+		created_settings_toggles
 	))
-	general_settings.add_child(_make_auto_zone_toggle(
-		"Auto-select hex prepare zones",
-		_auto_select_hex_prepare_zones,
-		func(pressed: bool) -> void:
-			_set_auto_select_hex_prepare_zones(pressed)
-	))
-	general_settings.add_child(_make_auto_zone_toggle(
-		"Auto-select charm play zones",
-		_auto_select_charm_play_zones,
-		func(pressed: bool) -> void:
-			_set_auto_select_charm_play_zones(pressed)
-	))
-	general_settings.add_child(_make_auto_zone_toggle(
-		"Auto-select charm prepare zones",
-		_auto_select_charm_prepare_zones,
-		func(pressed: bool) -> void:
-			_set_auto_select_charm_prepare_zones(pressed)
-	))
-
-	general_settings.add_child(_make_settings_section_label("Audio"))
-	_music_mute_settings_toggle = _make_auto_zone_toggle(
-		"Mute music",
-		_is_music_muted(),
-		func(pressed: bool) -> void:
-			_set_music_muted(pressed)
-	)
-	general_settings.add_child(_music_mute_settings_toggle)
-	_all_sound_settings_toggle = _make_auto_zone_toggle(
-		"Mute all sound",
-		_all_sound_muted,
-		func(pressed: bool) -> void:
-			_set_all_sound_muted(pressed)
-	)
-	general_settings.add_child(_all_sound_settings_toggle)
-
-	general_settings.add_child(_make_settings_section_label("Visual"))
-	general_settings.add_child(_make_auto_zone_toggle(
-		"Use splash image board background",
-		_use_splash_board_background,
-		func(pressed: bool) -> void:
-			_set_use_splash_board_background(pressed)
-	))
-	general_settings.add_child(_make_auto_zone_toggle(
-		"Hover show card options",
-		_hover_show_card_options,
-		func(pressed: bool) -> void:
-			_set_hover_show_card_options(pressed)
-	))
-	general_settings.add_child(_make_auto_zone_toggle(
-		"Always show ability badges",
-		_always_show_ability_badges,
-		func(pressed: bool) -> void:
-			_set_always_show_ability_badges(pressed)
-	))
-	general_settings.add_child(_make_auto_zone_toggle(
-		"Hide Reach tag unless altered",
-		_hide_unaltered_reach_tag,
-		func(pressed: bool) -> void:
-			_set_hide_unaltered_reach_tag(pressed)
-	))
-
-	general_settings.add_child(_make_settings_section_label("Priority"))
-	general_settings.add_child(_make_auto_zone_toggle(
-		"Add priority toggles to every card",
-		_add_priority_toggles_to_all_cards,
-		func(pressed: bool) -> void:
-			_set_add_priority_toggles_to_all_cards(pressed)
-	))
-
-	var god_settings_scroll := ScrollContainer.new()
-	god_settings_scroll.name = "God-Specific Settings"
-	god_settings_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	god_settings_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	settings_tabs.add_child(god_settings_scroll)
-
-	var god_settings := VBoxContainer.new()
-	god_settings.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	god_settings.add_theme_constant_override("separation", 8)
-	god_settings_scroll.add_child(god_settings)
-
-	god_settings.add_child(_make_settings_section_label("Hermes"))
-	god_settings.add_child(_make_auto_zone_toggle(
-		"Auto-pass end phase priority (even with Offer Priority enabled)",
-		_hermes_auto_pass_end_priority,
-		func(pressed: bool) -> void:
-			_set_hermes_auto_pass_end_priority(pressed)
-	))
-	god_settings.add_child(_make_auto_zone_toggle(
-		"Auto-pass upkeep priority (even with Offer Priority enabled)",
-		_hermes_auto_pass_upkeep_priority,
-		func(pressed: bool) -> void:
-			_set_hermes_auto_pass_upkeep_priority(pressed)
-	))
-	god_settings.add_child(_make_auto_zone_toggle(
-		"Add priority toggle to card",
-		_hermes_add_priority_toggle_to_card,
-		func(pressed: bool) -> void:
-			_set_hermes_add_priority_toggle_to_card(pressed)
-	))
-
-	var hermes_note := Label.new()
-	hermes_note.text = "When the card toggle is hidden or set to off, Hermes will not open priority prompts himself. He remains available in priority prompts opened by another response."
-	hermes_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	hermes_note.add_theme_color_override("font_color", Color(0.80, 0.85, 0.92))
-	god_settings.add_child(hermes_note)
+	var music_mute_toggle = created_settings_toggles.get("%s/%s" % [AUDIO_SETTINGS_SECTION, MUSIC_MUTED_KEY])
+	if music_mute_toggle is CheckButton:
+		_music_mute_settings_toggle = music_mute_toggle
+	var all_sound_toggle = created_settings_toggles.get("%s/%s" % [AUDIO_SETTINGS_SECTION, ALL_SOUND_MUTED_KEY])
+	if all_sound_toggle is CheckButton:
+		_all_sound_settings_toggle = all_sound_toggle
 
 	var settings_buttons := HBoxContainer.new()
 	settings_buttons.add_theme_constant_override("separation", 10)
@@ -2517,6 +2501,7 @@ func _apply_board_art_background_texture() -> void:
 func _ready() -> void:
 	add_to_group("combat_mock_game")
 	add_to_group("music_mute_observers")
+	add_to_group(UIHoverSfxScript.SUPPRESS_CLICK_GROUP)
 	_load_user_settings()
 	BoardZoneUI.set_always_show_ability_badges(_always_show_ability_badges)
 	BoardZoneUI.set_hide_unaltered_reach_tag(_hide_unaltered_reach_tag)

@@ -12,6 +12,7 @@ const CardArtVariantsScript = preload("res://scripts/core/CardArtVariants.gd")
 const LevelSymbolRowScript = preload("res://scripts/ui/LevelSymbolRow.gd")
 const ReinforcementCardTileScript = preload("res://scripts/ui/ReinforcementCardTile.gd")
 const ReinforcementDropAreaScript = preload("res://scripts/ui/ReinforcementDropArea.gd")
+const UIHoverSfxScript = preload("res://scripts/core/UIHoverSfx.gd")
 const MANA_ORB_TEXTURE := preload("res://images/ui/ManaOrb.png")
 
 signal back_pressed
@@ -71,7 +72,7 @@ var _collection_rows: int   = DEFAULT_COLLECTION_ROWS
 var _visible_collection_rows: int = DEFAULT_COLLECTION_ROWS
 var _page_visible_collection_rows: int = DEFAULT_COLLECTION_ROWS
 var _last_page_turn_ms: int = -PAGE_REPEAT_INTERVAL_MS
-var _art_cache: Dictionary = {}
+static var _art_cache: Dictionary = {}
 var _collection_mode: String = COLLECTION_MODE_CARDS
 var _saved_decks_cache: Array[Dictionary] = []
 
@@ -139,6 +140,9 @@ var _online_lobby_client = null
 var _remote_account_decks_cache: Array[Dictionary] = []
 var _use_remote_account_decks: bool = false
 var _remote_preferred_deck_id: String = ""
+var _profile_configured: bool = false
+var _account_decks_configured: bool = false
+var _remote_account_decks_key: String = ""
 var _friend_usernames := PackedStringArray()
 var _pending_delete_deck_id: String = ""
 var _tiamat_slots: Array = [[], [], []]
@@ -209,6 +213,7 @@ func _apply_hover_to_all_buttons(node: Control) -> void:
 
 # ── init ───────────────────────────────────────────────────────────
 func _ready() -> void:
+	add_to_group(UIHoverSfxScript.SUPPRESS_ALL_GROUP)
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_deck_id_rng.randomize()
 	resized.connect(_queue_responsive_layout_refresh)
@@ -219,28 +224,58 @@ func _ready() -> void:
 	_ensure_local_profile_store()
 	_load_profile_decks()
 	_apply_default_collection_mode()
-	_refresh_grid()
 	_queue_collection_layout_refresh()
+	# The rebuild_collection pass below builds the grid once, after decks are
+	# loaded (the god-filter exclusion depends on the selected god).
 	_refresh_deck_panel(true, false)
 	_mark_current_deck_saved()
 
-func configure_profile_store(profile_store, profile_id: String, player_name: String = "") -> void:
+func configure_profile_store(profile_store, profile_id: String, player_name: String = "") -> bool:
+	# Change-detection gate: _refresh_open_deck_builder_saved_decks() runs this
+	# on every account_deck_list response. Returning false means nothing changed
+	# and the caller can skip its own reload pass.
+	var clean_id := profile_id.strip_edges()
+	var clean_name := player_name.strip_edges()
+	if clean_name.is_empty():
+		clean_name = "Player"
+	if _profile_configured and _local_profile_store == profile_store \
+			and _active_profile_id == clean_id:
+		if _active_player_name == clean_name:
+			return false
+		# Display-name only change: refresh labels, keep decks loaded.
+		_active_player_name = clean_name
+		if is_inside_tree():
+			_refresh_profile_labels()
+		return false
+	_profile_configured = true
 	_local_profile_store = profile_store
-	_active_profile_id = profile_id.strip_edges()
-	_active_player_name = player_name.strip_edges()
-	if _active_player_name.is_empty():
-		_active_player_name = "Player"
+	_active_profile_id = clean_id
+	_active_player_name = clean_name
 	if is_inside_tree():
 		_ensure_local_profile_store()
 		_load_profile_decks()
 		_apply_default_collection_mode()
 		_refresh_collection_grid_and_layout()
 		_refresh_profile_labels()
+	return true
 
 func configure_online_sync(lobby_client) -> void:
 	_online_lobby_client = lobby_client
 
-func configure_account_decks(decks: Array, use_remote: bool = false, preferred_deck_id: String = "") -> void:
+func configure_account_decks(decks: Array, use_remote: bool = false, preferred_deck_id: String = "") -> bool:
+	# Change-detection gate: identical account_deck_list responses (the common
+	# case while connected) must not reload decks and rebuild the grid.
+	var remote_key := JSON.stringify(decks)
+	if remote_key.is_empty() and not decks.is_empty():
+		# Stringify failed; treat the payload as always-changed rather than
+		# wrongly skipping a real update.
+		remote_key = "unserializable-%d" % Time.get_ticks_usec()
+	var clean_preferred := preferred_deck_id.strip_edges()
+	if _account_decks_configured and _remote_account_decks_key == remote_key \
+			and _use_remote_account_decks == use_remote and _remote_preferred_deck_id == clean_preferred:
+		return false
+	_account_decks_configured = true
+	_remote_account_decks_key = remote_key
 	_remote_account_decks_cache.clear()
 	var visible_decks: Array[Dictionary] = []
 	for entry in decks:
@@ -256,12 +291,13 @@ func configure_account_decks(decks: Array, use_remote: bool = false, preferred_d
 	_use_remote_account_decks = use_remote
 	if not _use_remote_account_decks:
 		_pending_remote_saved_deck_id = ""
-	_remote_preferred_deck_id = preferred_deck_id.strip_edges()
+	_remote_preferred_deck_id = clean_preferred
 	if is_inside_tree():
 		_load_profile_decks()
 		_apply_default_collection_mode()
 		_refresh_collection_grid_and_layout()
 		_refresh_profile_labels()
+	return true
 
 func configure_friends(friend_usernames: PackedStringArray) -> void:
 	_friend_usernames = PackedStringArray()
@@ -269,7 +305,9 @@ func configure_friends(friend_usernames: PackedStringArray) -> void:
 		_friend_usernames.append(str(username))
 
 func _make_all_cards() -> Array:
-	return CardCatalogScript.make_all_cards()
+	# Shared read-only templates: skips the 225x duplicate(true) that
+	# make_all_cards() pays for fresh per-match UIDs the builder never uses.
+	return CardCatalogScript.get_cached_card_templates()
 
 # ── UI construction ────────────────────────────────────────────────
 func _build_ui() -> void:

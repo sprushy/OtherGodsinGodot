@@ -342,6 +342,33 @@ func upsert_saved_deck(profile_id: String, saved_deck: Dictionary, make_selected
 		_save()
 	return normalized_deck.duplicate(true)
 
+func upsert_saved_decks(profile_id: String, saved_decks: Array) -> int:
+	# Batched mirror for account_deck_list responses: one normalize pass with
+	# per-deck change detection and a single _save(). Saving per deck made each
+	# response rewrite the whole store ~24 times (~12s with a large profile).
+	_ensure_loaded()
+	var resolved_profile_id := profile_id.strip_edges()
+	if resolved_profile_id.is_empty():
+		return 0
+	var changed := 0
+	var deck_bucket := _get_deck_bucket(resolved_profile_id, true)
+	for raw_deck in saved_decks:
+		if not (raw_deck is Dictionary):
+			continue
+		var normalized_deck: Dictionary = _normalize_saved_deck(raw_deck)
+		var deck_id := str(normalized_deck.get("deck_id", "")).strip_edges()
+		if deck_id.is_empty():
+			continue
+		var existing = deck_bucket.get(deck_id)
+		if existing is Dictionary and (existing as Dictionary).hash() == normalized_deck.hash():
+			continue
+		deck_bucket[deck_id] = normalized_deck
+		changed += 1
+	if changed > 0:
+		_set_deck_bucket(resolved_profile_id, deck_bucket)
+		_save()
+	return changed
+
 func delete_deck(profile_id: String, deck_id: String) -> void:
 	_ensure_loaded()
 	var resolved_profile_id := profile_id.strip_edges()

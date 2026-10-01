@@ -16,6 +16,9 @@ const HostHuntingTacticsBotScript = preload("res://scripts/bots/HostHuntingTacti
 const NetworkClientSmokeBotScript = preload("res://scripts/bots/NetworkClientSmokeBot.gd")
 const LoadingBarScript = preload("res://scripts/ui/LoadingBar.gd")
 const UIFontScript = preload("res://scripts/ui/UIFont.gd")
+const GameSettingsTabsScript = preload("res://scripts/ui/GameSettingsTabs.gd")
+const AudioSettingsScript = preload("res://scripts/core/AudioSettings.gd")
+const UIHoverSfxScript = preload("res://scripts/core/UIHoverSfx.gd")
 const MatchHistoryStoreScript = preload("res://scripts/server/MatchHistoryStore.gd")
 const MatchSessionScript = preload("res://scripts/server/MatchSession.gd")
 const LobbyRoomScript = preload("res://scripts/server/LobbyRoom.gd")
@@ -25,11 +28,16 @@ const STARTUP_SPLASH_SLICE_COUNT := 14
 const STARTUP_SPLASH_SLIDE_SECONDS := 1.15
 const STARTUP_SPLASH_SLICE_STAGGER_SECONDS := 0.045
 const STARTUP_LOADING_FADE_SECONDS := 0.22
-const STARTUP_MUSIC_PATH := "res://audio/relaxingtime-relaxing-music-119247.mp3"
+const STARTUP_MUSIC_PATH := "res://audio/if-they-had-hearts.mp3"
+const STARTUP_MUSIC_CLASSIC_PATH := "res://audio/relaxingtime-relaxing-music-119247.mp3"
 const USER_SETTINGS_PATH := "user://settings.cfg"
 const AUDIO_SETTINGS_SECTION := "audio"
 const MUSIC_MUTED_KEY := "music_muted"
 const ALL_SOUND_MUTED_KEY := "all_sound_muted"
+const STARTUP_MUSIC_TRACK_KEY := "startup_music_track"
+const STARTUP_MUSIC_TRACK_IF_THEY_HAD_HEARTS := "if_they_had_hearts"
+const STARTUP_MUSIC_TRACK_RELAXING_TIME := "relaxing_time"
+const DEFAULT_STARTUP_MUSIC_TRACK := STARTUP_MUSIC_TRACK_IF_THEY_HAD_HEARTS
 const PRACTICE_THOR_SCENE_PATH := "res://scenes/practice_thor_game.tscn"
 const DEDICATED_LOBBY_ENTRY_SCRIPT_PATH := "res://scripts/server/DedicatedLobbyServerMain.gd"
 const DEDICATED_SERVER_EXPORT_RELATIVE_PATH := "res://.exports/server/OtherGodsServer.exe"
@@ -327,9 +335,11 @@ func _ready() -> void:
 		return
 	if menu_container != null:
 		UIFontScript.apply_default_font(menu_container)
+	_apply_multiplayer_screen_default_font()
 	if OS.get_name() == "Windows":
 		call_deferred("_cleanup_windows_update_artifacts")
 	add_to_group("music_controls")
+	add_to_group(UIHoverSfxScript.CLICK_ZONE_GROUP)
 	_load_audio_preferences()
 	_ensure_startup_splash_background()
 	_build_startup_loading_overlay()
@@ -586,6 +596,7 @@ func _ensure_startup_music() -> void:
 		return
 	var player := AudioStreamPlayer.new()
 	player.name = "StartupMusicPlayer"
+	player.bus = AudioSettingsScript.MUSIC_BUS_NAME
 	var music_stream := _load_startup_music_stream()
 	if music_stream == null:
 		return
@@ -709,21 +720,55 @@ func _set_startup_splash_final_frame_visible(visible: bool) -> void:
 			slice.visible = not visible
 
 func _load_startup_music_stream() -> AudioStream:
-	if ResourceLoader.exists(STARTUP_MUSIC_PATH):
-		var imported_resource := load(STARTUP_MUSIC_PATH)
+	var music_path := _get_startup_music_path_for_track(get_startup_music_track())
+	if ResourceLoader.exists(music_path):
+		var imported_resource := load(music_path)
 		if imported_resource is AudioStream:
 			var imported_stream := (imported_resource as AudioStream).duplicate()
 			return imported_stream
-	if not FileAccess.file_exists(STARTUP_MUSIC_PATH):
-		push_warning("Could not find startup music: %s" % STARTUP_MUSIC_PATH)
+	if not FileAccess.file_exists(music_path):
+		push_warning("Could not find startup music: %s" % music_path)
 		return null
-	var bytes := FileAccess.get_file_as_bytes(STARTUP_MUSIC_PATH)
+	var bytes := FileAccess.get_file_as_bytes(music_path)
 	if bytes.is_empty():
-		push_warning("Could not read startup music: %s" % STARTUP_MUSIC_PATH)
+		push_warning("Could not read startup music: %s" % music_path)
 		return null
 	var stream := AudioStreamMP3.new()
 	stream.data = bytes
 	return stream
+
+func get_startup_music_track() -> String:
+	var saved_track := _get_saved_string_setting(AUDIO_SETTINGS_SECTION, STARTUP_MUSIC_TRACK_KEY, DEFAULT_STARTUP_MUSIC_TRACK).strip_edges()
+	if _is_valid_startup_music_track(saved_track):
+		return saved_track
+	return DEFAULT_STARTUP_MUSIC_TRACK
+
+func set_startup_music_track(track: String) -> void:
+	var normalized_track := track.strip_edges()
+	if not _is_valid_startup_music_track(normalized_track):
+		return
+	var previous_track := get_startup_music_track()
+	_save_string_setting(AUDIO_SETTINGS_SECTION, STARTUP_MUSIC_TRACK_KEY, normalized_track)
+	if normalized_track != previous_track:
+		_refresh_startup_music_stream()
+
+func _is_valid_startup_music_track(track: String) -> bool:
+	return track == STARTUP_MUSIC_TRACK_IF_THEY_HAD_HEARTS or track == STARTUP_MUSIC_TRACK_RELAXING_TIME
+
+func _get_startup_music_path_for_track(track: String) -> String:
+	if track == STARTUP_MUSIC_TRACK_RELAXING_TIME:
+		return STARTUP_MUSIC_CLASSIC_PATH
+	return STARTUP_MUSIC_PATH
+
+func _refresh_startup_music_stream() -> void:
+	if _startup_music_player == null or not is_instance_valid(_startup_music_player):
+		_ensure_startup_music()
+		return
+	var music_stream := _load_startup_music_stream()
+	if music_stream == null:
+		return
+	_startup_music_player.stream = music_stream
+	_apply_music_mute_state()
 
 func _load_audio_preferences() -> void:
 	var config := ConfigFile.new()
@@ -742,6 +787,87 @@ func _save_audio_preferences() -> void:
 	var error := config.save(USER_SETTINGS_PATH)
 	if error != OK:
 		push_warning("Could not save audio settings: %s" % str(error))
+
+func _read_config_bool(config: ConfigFile, section: String, key: String, default_value: bool) -> bool:
+	var value = config.get_value(section, key, default_value)
+	if value is bool:
+		return value
+	if value is String:
+		var text := str(value).strip_edges().to_lower()
+		if text in ["true", "1", "yes", "on"]:
+			return true
+		if text in ["false", "0", "no", "off"]:
+			return false
+	return default_value
+
+func _get_saved_bool_setting(section: String, key: String, default_value: bool) -> bool:
+	var config := ConfigFile.new()
+	if config.load(USER_SETTINGS_PATH) != OK:
+		return default_value
+	return _read_config_bool(config, section, key, default_value)
+
+func _save_bool_setting(section: String, key: String, value: bool) -> void:
+	var config := ConfigFile.new()
+	config.load(USER_SETTINGS_PATH)
+	config.set_value(section, key, value)
+	var error := config.save(USER_SETTINGS_PATH)
+	if error != OK:
+		push_warning("Could not save user setting %s/%s: %s" % [section, key, str(error)])
+
+func _get_saved_string_setting(section: String, key: String, default_value: String) -> String:
+	var config := ConfigFile.new()
+	if config.load(USER_SETTINGS_PATH) != OK:
+		return default_value
+	var value = config.get_value(section, key, default_value)
+	if value is String:
+		return str(value)
+	return default_value
+
+func _save_string_setting(section: String, key: String, value: String) -> void:
+	var config := ConfigFile.new()
+	config.load(USER_SETTINGS_PATH)
+	config.set_value(section, key, value)
+	var error := config.save(USER_SETTINGS_PATH)
+	if error != OK:
+		push_warning("Could not save user setting %s/%s: %s" % [section, key, str(error)])
+
+func _get_settings_menu_value(section: String, key: String, default_value: bool) -> bool:
+	if section == AUDIO_SETTINGS_SECTION:
+		if key == MUSIC_MUTED_KEY:
+			return _music_muted
+		if key == ALL_SOUND_MUTED_KEY:
+			return _all_sound_muted
+	return _get_saved_bool_setting(section, key, default_value)
+
+func _set_settings_menu_value(section: String, key: String, value: bool) -> void:
+	if section == AUDIO_SETTINGS_SECTION:
+		if key == MUSIC_MUTED_KEY:
+			set_music_muted(value)
+			return
+		if key == ALL_SOUND_MUTED_KEY:
+			set_all_sound_muted(value)
+			return
+	_save_bool_setting(section, key, value)
+
+func _get_settings_menu_text_value(section: String, key: String, default_value: String) -> String:
+	if section == AUDIO_SETTINGS_SECTION and key == STARTUP_MUSIC_TRACK_KEY:
+		return get_startup_music_track()
+	return _get_saved_string_setting(section, key, default_value)
+
+func _set_settings_menu_text_value(section: String, key: String, value: String) -> void:
+	if section == AUDIO_SETTINGS_SECTION and key == STARTUP_MUSIC_TRACK_KEY:
+		set_startup_music_track(value)
+		return
+	_save_string_setting(section, key, value)
+
+func _get_settings_menu_number_value(section: String, key: String, default_value: float) -> float:
+	if section == AUDIO_SETTINGS_SECTION and AudioSettingsScript.is_volume_key(key):
+		return AudioSettingsScript.get_volume(key, USER_SETTINGS_PATH)
+	return default_value
+
+func _set_settings_menu_number_value(section: String, key: String, value: float) -> void:
+	if section == AUDIO_SETTINGS_SECTION and AudioSettingsScript.is_volume_key(key):
+		AudioSettingsScript.set_volume(key, value, USER_SETTINGS_PATH)
 
 func is_music_muted() -> bool:
 	return _music_muted
@@ -1361,6 +1487,15 @@ func _set_snowstorm_visible(active: bool) -> void:
 	if tree == null:
 		return
 	tree.call_group(SNOWSTORM_CONTROL_GROUP, "set_snowstorm_active", active)
+
+func _apply_multiplayer_screen_default_font() -> void:
+	# The multiplayer screen uses the engine default font instead of the
+	# Norse UI font applied to the rest of the menu container.
+	if multiplayer_container == null:
+		return
+	if multiplayer_container.theme == null:
+		multiplayer_container.theme = Theme.new()
+	multiplayer_container.theme.default_font = ThemeDB.fallback_font
 
 func _on_multiplayer_pressed() -> void:
 	_open_multiplayer_screen()
@@ -8521,12 +8656,17 @@ func _on_account_deck_list_received(decks, preferred_deck_id: String = "") -> vo
 				remote_decks.append((entry as Dictionary).duplicate(true))
 	var deleted_lookup := _get_deleted_account_deck_lookup()
 	var remote_deck_ids: Array[String] = []
+	var mirrored_decks: Array[Dictionary] = []
 	for remote_deck in remote_decks:
 		var remote_deck_id := str(remote_deck.get("deck_id", "")).strip_edges()
 		if _should_ignore_account_deck_sync_update(remote_deck_id, deleted_lookup):
 			continue
 		remote_deck_ids.append(remote_deck_id)
-		_mirror_remote_account_deck_locally(remote_deck)
+		mirrored_decks.append(remote_deck)
+	# One batched store write for the whole list; mirroring per deck rewrote the
+	# full profile store ~24 times per response (~12s with a large profile).
+	if not mirrored_decks.is_empty():
+		_local_profile_store.upsert_saved_decks(_local_profile_id, mirrored_decks)
 	_mark_active_profile_account_decks_synced(remote_deck_ids)
 	var merged_decks := _merge_account_deck_catalogs(
 		remote_decks,
@@ -8655,21 +8795,27 @@ func _refresh_open_deck_builder_saved_decks() -> void:
 	var deck_builder = game_container.get_node_or_null("DeckBuilder")
 	if deck_builder == null:
 		return
+	# configure_profile_store/configure_account_decks return false when nothing
+	# changed. account_deck_list responses arrive repeatedly while connected and
+	# are usually identical, so only reload the local store when one actually
+	# applied an update; otherwise each response froze the builder for seconds.
+	var changed := false
 	if deck_builder.has_method("configure_profile_store"):
-		deck_builder.configure_profile_store(_local_profile_store, _local_profile_id, _get_active_profile_display_name("Player"))
+		changed = deck_builder.configure_profile_store(_local_profile_store, _local_profile_id, _get_active_profile_display_name("Player")) or changed
 	if deck_builder.has_method("configure_online_sync"):
 		deck_builder.configure_online_sync(lobby_client)
 	if deck_builder.has_method("configure_account_decks"):
-		deck_builder.configure_account_decks(
+		changed = deck_builder.configure_account_decks(
 			_account_decks_cache,
 			_uses_server_account_storage(),
 			_get_server_preferred_account_deck_id()
-		)
+		) or changed
 	if deck_builder.has_method("configure_friends"):
 		deck_builder.configure_friends(_get_friend_usernames())
-	if not deck_builder.has_method("reload_saved_decks_from_store"):
+	if not changed:
 		return
-	deck_builder.reload_saved_decks_from_store()
+	if deck_builder.has_method("reload_saved_decks_from_store"):
+		deck_builder.reload_saved_decks_from_store()
 
 func _build_profile_summary_controls() -> void:
 	if multiplayer_container == null or _profile_summary_label != null:
@@ -8763,7 +8909,7 @@ func _open_settings_overlay() -> void:
 	_settings_overlay.add_child(center)
 
 	var panel := PanelContainer.new()
-	panel.custom_minimum_size = Vector2(520, 0)
+	panel.custom_minimum_size = Vector2(560, 0)
 	panel.mouse_filter = Control.MOUSE_FILTER_STOP
 	var panel_style := StyleBoxFlat.new()
 	panel_style.bg_color = Color(0.09, 0.10, 0.16, 0.98)
@@ -8794,63 +8940,78 @@ func _open_settings_overlay() -> void:
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	content.add_child(title)
 
-	var account_title := Label.new()
-	account_title.text = ACCOUNT_SETTINGS_SECTION_TITLE
-	account_title.add_theme_font_size_override("font_size", 17)
-	content.add_child(account_title)
+	var settings_tabs := TabContainer.new()
+	settings_tabs.custom_minimum_size = Vector2(0, 470)
+	settings_tabs.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	content.add_child(settings_tabs)
+
+	var created_settings_toggles := {}
+	settings_tabs.add_child(GameSettingsTabsScript.build_general_tab(
+		Callable(self, "_get_settings_menu_value"),
+		Callable(self, "_set_settings_menu_value"),
+		created_settings_toggles,
+		Callable(self, "_get_settings_menu_text_value"),
+		Callable(self, "_set_settings_menu_text_value"),
+		Callable(self, "_get_settings_menu_number_value"),
+		Callable(self, "_set_settings_menu_number_value")
+	))
+	settings_tabs.add_child(GameSettingsTabsScript.build_god_tab(
+		Callable(self, "_get_settings_menu_value"),
+		Callable(self, "_set_settings_menu_value"),
+		created_settings_toggles
+	))
+
+	var account_tab := VBoxContainer.new()
+	account_tab.name = ACCOUNT_SETTINGS_SECTION_TITLE
+	account_tab.add_theme_constant_override("separation", 10)
+	settings_tabs.add_child(account_tab)
 
 	_settings_account_status_label = Label.new()
 	_settings_account_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_settings_account_status_label.modulate = Color(0.78, 0.84, 0.96)
-	content.add_child(_settings_account_status_label)
+	account_tab.add_child(_settings_account_status_label)
 
 	_settings_auto_login_toggle = CheckButton.new()
 	_settings_auto_login_toggle.text = "Auto login on this device"
 	_settings_auto_login_toggle.tooltip_text = "Automatically restores this account on startup when a saved lobby session is available."
 	_settings_auto_login_toggle.toggled.connect(_on_settings_auto_login_toggled)
-	content.add_child(_settings_auto_login_toggle)
+	account_tab.add_child(_settings_auto_login_toggle)
 
 	_settings_save_password_toggle = CheckButton.new()
 	_settings_save_password_toggle.text = "Save login details on this device"
 	_settings_save_password_toggle.tooltip_text = "Stores your account password locally on this device. Use only on devices you trust."
 	_settings_save_password_toggle.toggled.connect(_on_settings_save_password_toggled)
-	content.add_child(_settings_save_password_toggle)
+	account_tab.add_child(_settings_save_password_toggle)
 
 	_settings_account_updates_toggle = CheckButton.new()
 	_settings_account_updates_toggle.text = "Send me game updates by email"
-	content.add_child(_settings_account_updates_toggle)
+	account_tab.add_child(_settings_account_updates_toggle)
 
 	_settings_current_password_edit = LineEdit.new()
 	_settings_current_password_edit.secret = true
 	_settings_current_password_edit.placeholder_text = "Current password for email/password changes"
-	content.add_child(_settings_current_password_edit)
+	account_tab.add_child(_settings_current_password_edit)
 
 	_settings_new_email_edit = LineEdit.new()
 	_settings_new_email_edit.placeholder_text = "New email address"
-	content.add_child(_settings_new_email_edit)
+	account_tab.add_child(_settings_new_email_edit)
 
 	_settings_new_password_edit = LineEdit.new()
 	_settings_new_password_edit.secret = true
 	_settings_new_password_edit.placeholder_text = "New password"
-	content.add_child(_settings_new_password_edit)
-
-	var button_row := HBoxContainer.new()
-	button_row.add_theme_constant_override("separation", 8)
-	content.add_child(button_row)
+	account_tab.add_child(_settings_new_password_edit)
 
 	var save_btn := Button.new()
-	save_btn.text = "Save"
+	save_btn.text = "Save Account Changes"
 	save_btn.custom_minimum_size = Vector2(0, 38)
-	save_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	save_btn.pressed.connect(_on_account_settings_save_pressed)
-	button_row.add_child(save_btn)
+	account_tab.add_child(save_btn)
 
 	var close_btn := Button.new()
 	close_btn.text = "Close"
 	close_btn.custom_minimum_size = Vector2(0, 38)
-	close_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	close_btn.pressed.connect(_close_settings_overlay)
-	button_row.add_child(close_btn)
+	content.add_child(close_btn)
 
 	_refresh_settings_account_section()
 

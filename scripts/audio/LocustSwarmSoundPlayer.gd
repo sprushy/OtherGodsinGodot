@@ -14,6 +14,7 @@ static func play_sound() -> void:
 	player.play_once()
 
 func _ready() -> void:
+	bus = "SFX"
 	finished.connect(queue_free)
 
 func play_once() -> void:
