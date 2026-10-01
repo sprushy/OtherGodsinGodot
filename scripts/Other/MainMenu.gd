@@ -28,6 +28,7 @@ const STARTUP_SPLASH_SLICE_COUNT := 14
 const STARTUP_SPLASH_SLIDE_SECONDS := 1.15
 const STARTUP_SPLASH_SLICE_STAGGER_SECONDS := 0.045
 const STARTUP_LOADING_FADE_SECONDS := 0.22
+const STARTUP_SPLASH_SETTLE_TIMEOUT_SECONDS := 4.0
 const STARTUP_MUSIC_PATH := "res://audio/if-they-had-hearts.mp3"
 const STARTUP_MUSIC_CLASSIC_PATH := "res://audio/relaxingtime-relaxing-music-119247.mp3"
 const USER_SETTINGS_PATH := "user://settings.cfg"
@@ -57,7 +58,7 @@ const FRESH_LOBBY_RECONNECT_DELAY_SECONDS := 0.6
 const LOBBY_SIGN_IN_WATCHDOG_SECONDS := 12.0
 const ACTIVE_MATCH_AUTO_RESUME_SUPPRESS_SECONDS := 10.0
 const LEGACY_JOIN_WHILE_IN_ROOM_ERROR := "Leave your current room before joining a new one."
-const STARTUP_MENU_FADE_SECONDS := 0.4
+const STARTUP_MENU_FADE_SECONDS := 0.25
 const MENU_CARD_CACHE_BATCH_SIZE := 24
 const UPDATE_CHECK_TIMEOUT_SECONDS := 15.0
 const UPDATE_CHECK_RETRY_DELAY_SECONDS := 1.0
@@ -341,6 +342,7 @@ func _ready() -> void:
 	add_to_group("music_controls")
 	add_to_group(UIHoverSfxScript.CLICK_ZONE_GROUP)
 	_load_audio_preferences()
+	_startup_trace("_ready: audio prefs loaded")
 	_ensure_startup_splash_background()
 	_build_startup_loading_overlay()
 	_ensure_startup_music()
@@ -393,22 +395,32 @@ func _ready() -> void:
 
 	call_deferred("_build_menu_card_template_cache_backgrounded")
 	_build_multiplayer_deck_controls()
+	_startup_trace("_ready: multiplayer deck controls")
 	_build_auth_controls()
+	_startup_trace("_ready: auth controls")
 	_build_settings_controls()
+	_startup_trace("_ready: settings controls")
 	_ensure_local_profile_store()
+	_startup_trace("_ready: local profile store loaded")
 	_restore_auth_preferences()
+	_startup_trace("_ready: auth prefs restored")
 	_build_profile_summary_controls()
 	_build_account_identity_controls()
 	_build_friends_controls()
 	_build_resume_controls()
 	_build_active_match_rejoin_dialog()
 	_build_seek_format_controls()
+	_startup_trace("_ready: misc controls built")
 	_apply_main_menu_text_sizing()
+	_startup_trace("_ready: text sizing applied")
 	_refresh_multiplayer_deck_options()
+	_startup_trace("_ready: multiplayer deck options refreshed")
 	_refresh_seek_list()
 	_refresh_multiplayer_action_state()
 	_restore_saved_resume_state()
+	_startup_trace("_ready: resume state restored")
 	_smoke_config = _parse_smoke_config(OS.get_cmdline_user_args())
+	_startup_trace("_ready: menu build complete, showing menu")
 	show_menu()
 	if not _smoke_config.is_empty():
 		if menu_container != null:
@@ -417,6 +429,9 @@ func _ready() -> void:
 		call_deferred("_start_smoke_mode")
 	else:
 		call_deferred("_begin_startup_sequence")
+
+func _startup_trace(message: String) -> void:
+	print("[STARTUP] t=%dms %s" % [Time.get_ticks_msec(), message])
 
 func _build_startup_loading_overlay() -> void:
 	if _startup_loading_overlay != null and is_instance_valid(_startup_loading_overlay):
@@ -462,7 +477,13 @@ func _build_startup_loading_overlay() -> void:
 
 	var loading_bar := LoadingBarScript.new()
 	loading_bar.custom_minimum_size = Vector2(620.0, 86.0)
-	loading_bar.progress = 0.16
+	# Main3D's early loading screen (a replica of this overlay) hands off its
+	# bar progress here, so the fill continues across the swap instead of
+	# jumping backwards to the start.
+	var start_progress := 0.16
+	if get_parent() != null and get_parent().has_meta("early_loading_progress"):
+		start_progress = clampf(float(get_parent().get_meta("early_loading_progress")), 0.0, 0.9)
+	loading_bar.progress = start_progress
 	content.add_child(loading_bar)
 
 	var status := Label.new()
@@ -477,19 +498,48 @@ func _build_startup_loading_overlay() -> void:
 	_startup_loading_overlay = overlay
 	_startup_loading_status_label = status
 	_startup_loading_bar = loading_bar
-	_set_startup_loading_progress(0.42, 1.0)
+	# The overlay is short-lived and the startup stages now fire back-to-back,
+	# so the bar gets ONE smooth fill tween (fast start, slow approach) that is
+	# only replaced when loading actually finishes. Per-stage progress tweens
+	# were killing this tween mid-flight every frame, leaving the bar frozen
+	# near its start value before snapping to full. The chained crawl keeps the
+	# bar alive during long local loads instead of parking at 0.9, and the
+	# first segment's duration shrinks when the early loading screen already
+	# filled part of the way (or is skipped entirely if it crawled past 0.9, so
+	# the fill never moves backwards).
+	var fill_target := maxf(0.9, start_progress)
+	var fill_span := clampf((fill_target - start_progress) / (0.9 - 0.16), 0.0, 1.0)
+	var fill_tween := create_tween()
+	if fill_span > 0.0:
+		fill_tween.tween_property(_startup_loading_bar, "progress", fill_target, 2.2 * fill_span) \
+			.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	fill_tween.tween_property(_startup_loading_bar, "progress", 0.97, 6.0) \
+		.set_trans(Tween.TRANS_LINEAR)
+	_startup_loading_progress_tween = fill_tween
 
 func _begin_startup_sequence() -> void:
 	await get_tree().process_frame
+	_startup_trace("_begin_startup_sequence")
 	if _startup_loading_status_label != null and is_instance_valid(_startup_loading_status_label):
 		_startup_loading_status_label.text = "Restoring saved account..." if _startup_autologin_pending else "Sign in to continue"
-	_set_startup_loading_progress(0.76, 0.55)
+	# The update check and lobby autologin no longer gate the menu: they run
+	# while the remaining local loads finish, and their results surface through
+	# the menu status line / auth prompts once the loading overlay is gone.
+	# Progress is driven by the single overlay fill tween, not per-stage here.
 	_begin_startup_prompts()
+	_reveal_menu_when_local_loads_done()
+
+func _reveal_menu_when_local_loads_done() -> void:
+	await _wait_for_startup_background_loads()
+	if not is_instance_valid(self):
+		return
+	_finish_startup_loading()
 
 func _finish_startup_loading() -> void:
 	if _startup_loading_finished:
 		return
 	_startup_loading_finished = true
+	_startup_trace("_finish_startup_loading (menu reveal)")
 	_apply_main_menu_text_sizing()
 	if not _menu_card_templates_built:
 		_set_startup_loading_status("Loading card catalog...")
@@ -1028,6 +1078,7 @@ func _begin_startup_menu_fade() -> void:
 	if _startup_menu_fade_started or menu_container == null:
 		return
 	_startup_menu_fade_started = true
+	_startup_trace("_begin_startup_menu_fade (menu fade + splash slide start)")
 	_begin_startup_splash_animation()
 	menu_container.modulate.a = 0.0
 	var tween := create_tween()
@@ -1072,16 +1123,8 @@ func _ensure_practice_thor_entry() -> void:
 		if practice_button != null:
 			practice_button.visible = false
 		return
-	var practice_game = game_container.get_node_or_null("PracticeThor")
-	if practice_game == null:
-		var practice_scene := load(PRACTICE_THOR_SCENE_PATH)
-		var practice_instance = practice_scene.instantiate() if practice_scene is PackedScene else null
-		if practice_instance != null:
-			practice_instance.name = "PracticeThor"
-			if practice_instance is Control:
-				practice_instance.visible = false
-			game_container.add_child(practice_instance)
-			practice_game = practice_instance
+	# The PracticeThor scene is instantiated lazily on first use (see
+	# _ensure_practice_thor_game) so startup only pays for the menu button.
 	if practice_button == null:
 		practice_button = Button.new()
 		practice_button.name = "PracticeThorButton"
@@ -1090,10 +1133,29 @@ func _ensure_practice_thor_entry() -> void:
 		var insert_index := multiplayer_button.get_index() if multiplayer_button != null else menu_container.get_child_count() - 1
 		menu_container.move_child(practice_button, insert_index)
 	if practice_button != null:
-		practice_button.visible = practice_game != null
+		practice_button.visible = true
 		var callback := Callable(self, "_on_practice_thor_pressed")
-		if practice_game != null and not practice_button.pressed.is_connected(callback):
-			practice_button.pressed.connect(_on_practice_thor_pressed)
+		if not practice_button.pressed.is_connected(callback):
+			practice_button.pressed.connect(callback)
+
+func _ensure_practice_thor_game() -> Node:
+	if not _is_practice_thor_enabled():
+		return null
+	var practice_game = game_container.get_node_or_null("PracticeThor")
+	if practice_game != null:
+		return practice_game
+	var practice_scene := load(PRACTICE_THOR_SCENE_PATH)
+	var practice_instance = practice_scene.instantiate() if practice_scene is PackedScene else null
+	if practice_instance == null:
+		return null
+	practice_instance.name = "PracticeThor"
+	if practice_instance is Control:
+		(practice_instance as Control).visible = false
+	game_container.add_child(practice_instance)
+	# Signal bindings normally happen in _ready for embedded games; games
+	# created lazily need the same connections before first use.
+	_bind_game_signals()
+	return practice_instance
 
 func _get_embedded_game_node_names() -> Array[String]:
 	var node_names: Array[String] = ["MockGame", "CardTest"]
@@ -1109,6 +1171,8 @@ func _hide_embedded_games() -> void:
 
 func _show_embedded_game(node_name: String) -> Node:
 	_hide_embedded_games()
+	if node_name == "PracticeThor":
+		_ensure_practice_thor_game()
 	var game = get_node_or_null("GameContainer/" + node_name)
 	if game != null:
 		_fit_embedded_game_to_container(game)
@@ -1684,33 +1748,38 @@ func _should_reuse_active_lobby_connection(target_lobby_ip: String) -> bool:
 func _build_menu_card_template_cache_backgrounded() -> void:
 	if _menu_card_templates_built:
 		return
-	# Yield one frame so the startup loading overlay paints before we do the
-	# heavy 225-card-script load.
+	# Yield one frame so the startup loading overlay paints before we start the
+	# card-script warm-up.
 	await get_tree().process_frame
 	if not is_instance_valid(self):
 		return
-	# Discover scripts once (unavoidable compilation cost), but hold the shared
-	# cached templates directly instead of duplicating all 225 cards with fresh
-	# UIDs -- the menu only reads art/names from these templates.
-	var templates: Array = CardCatalogScript.get_cached_card_templates()
+	# Warm the shared CardCatalog cache a batch of scripts per frame so the
+	# ~230-script load never blocks one frame for longer than a single batch.
+	var warm_started_ms := Time.get_ticks_msec()
+	var batch_index := 0
+	while not CardCatalogScript.warm_cache_batch(MENU_CARD_CACHE_BATCH_SIZE):
+		batch_index += 1
+		_startup_trace("card warm batch %d done (%dms cumulative)" % [
+			batch_index,
+			Time.get_ticks_msec() - warm_started_ms
+		])
+		if not is_instance_valid(self):
+			return
+		await get_tree().process_frame
+	_startup_trace("card warm complete: %dms total" % (Time.get_ticks_msec() - warm_started_ms))
+	# Hold the shared cached templates directly instead of duplicating all 225
+	# cards with fresh UIDs -- the menu only reads art/names from these
+	# templates.
 	_menu_card_templates.clear()
-	var index := 0
-	while index < templates.size():
-		var card = templates[index]
-		if card != null:
-			var card_name := str(card.card_name).strip_edges()
-			if not card_name.is_empty():
-				_menu_card_templates[card_name] = card
-			var lookup_key := CardCatalogScript.to_lookup_key(card_name)
-			if not lookup_key.is_empty():
-				_menu_card_templates[lookup_key] = card
-		index += 1
-		# Yield between batches so the splash slice animation keeps animating
-		# smoothly while we populate the cache in the background.
-		if index % MENU_CARD_CACHE_BATCH_SIZE == 0:
-			await get_tree().process_frame
-			if not is_instance_valid(self):
-				return
+	for card in CardCatalogScript.get_cached_card_templates():
+		if card == null:
+			continue
+		var card_name := str(card.card_name).strip_edges()
+		if not card_name.is_empty():
+			_menu_card_templates[card_name] = card
+		var lookup_key := CardCatalogScript.to_lookup_key(card_name)
+		if not lookup_key.is_empty():
+			_menu_card_templates[lookup_key] = card
 	_menu_card_templates_built = true
 	# Refresh the deck picker now that god-card templates are available, so any
 	# rows rendered before the cache finished resolve their icons.
@@ -1918,10 +1987,10 @@ static func _should_ignore_account_deck_sync_update(deck_id: String, deleted_loo
 		return true
 	return bool(deleted_lookup.get(resolved_deck_id, false))
 
-func _mark_active_profile_account_decks_synced(deck_ids: Array) -> void:
+func _mark_active_profile_account_decks_synced(deck_ids: Array, defer_save: bool = false) -> bool:
 	if _local_profile_store == null or _local_profile_id.is_empty() or deck_ids.is_empty():
-		return
-	_local_profile_store.mark_account_decks_synced(_local_profile_id, deck_ids)
+		return false
+	return _local_profile_store.mark_account_decks_synced(_local_profile_id, deck_ids, defer_save)
 
 func _mirror_remote_account_deck_locally(deck: Dictionary) -> void:
 	if _local_profile_store == null or _local_profile_id.is_empty() or deck.is_empty():
@@ -2798,8 +2867,9 @@ func _begin_startup_prompts() -> void:
 	_startup_prompt_gate_open = true
 	_ensure_macos_sparkle_bridge()
 	if _should_check_for_updates():
+		# Run the update check alongside sign-in instead of in front of it;
+		# its completion handlers still funnel through _complete_startup_prompts.
 		_start_update_check()
-		return
 	_complete_startup_prompts()
 
 func _complete_startup_prompts() -> void:
@@ -2810,28 +2880,43 @@ func _complete_startup_prompts() -> void:
 		_startup_autologin_pending = false
 		_startup_autologin_in_progress = true
 		_set_startup_loading_status("Signing in with saved account...")
-		_set_startup_loading_progress(0.84, 0.35)
+		_startup_trace("_complete_startup_prompts -> autologin")
 		call_deferred("_deferred_startup_autologin_connect")
 		return
 	_maybe_show_auth_onboarding()
 
 func _deferred_startup_autologin_connect() -> void:
 	await get_tree().process_frame
-	var tree := get_tree()
-	if tree != null:
-		await tree.create_timer(0.35).timeout
 	if not _startup_autologin_in_progress:
 		return
+	# The auth response triggers store saves + deck refreshes that stutter the
+	# splash slide if they land mid-animation, so hold the connect until the
+	# splash has settled (or timed out).
+	await _wait_for_startup_splash_settled()
+	if not _startup_autologin_in_progress:
+		return
+	_startup_trace("_deferred_startup_autologin_connect (splash settled)")
 	_set_startup_loading_status("Connecting to lobby...")
-	_set_startup_loading_progress(0.86, 0.25)
 	_queue_authenticated_lobby_connect("Signing in with saved account...")
+
+func _wait_for_startup_splash_settled() -> void:
+	# When the splash is disabled the animation never starts, so return
+	# immediately rather than waiting for a finished flag nobody sets.
+	if not _startup_splash_animation_started:
+		return
+	var deadline_ms := Time.get_ticks_msec() + int(STARTUP_SPLASH_SETTLE_TIMEOUT_SECONDS * 1000.0)
+	while not _startup_splash_animation_finished and Time.get_ticks_msec() < deadline_ms:
+		var tree := get_tree()
+		if tree == null or not is_instance_valid(self):
+			return
+		await tree.process_frame
 
 func _abort_startup_autologin(message: String, show_auth_prompt: bool) -> void:
 	if not _startup_autologin_in_progress:
 		return
 	_startup_autologin_in_progress = false
+	_startup_trace("_abort_startup_autologin: %s" % message)
 	_set_startup_loading_status(message)
-	_set_startup_loading_progress(0.76, 0.2)
 	if show_auth_prompt:
 		_show_auth_recovery_prompt(message)
 	else:
@@ -4972,15 +5057,25 @@ func _select_saved_account_profile_if_available(account_email: String = "", publ
 	if not normalized_username.is_empty() and normalized_username not in lookup_values:
 		lookup_values.append(normalized_username)
 	for lookup_value in lookup_values:
+		var step_started_ms := Time.get_ticks_msec()
 		var profile_id := str(_local_profile_store.find_profile_id_by_account_username(lookup_value)).strip_edges()
+		_startup_trace("profile select: account username scan %dms" % (Time.get_ticks_msec() - step_started_ms))
 		if profile_id.is_empty():
+			step_started_ms = Time.get_ticks_msec()
 			profile_id = str(_local_profile_store.find_profile_id_by_display_name(lookup_value)).strip_edges()
+			_startup_trace("profile select: display name scan %dms" % (Time.get_ticks_msec() - step_started_ms))
 		if profile_id.is_empty():
 			continue
 		_local_profile_id = profile_id
+		step_started_ms = Time.get_ticks_msec()
 		_refresh_open_deck_builder_saved_decks()
+		_startup_trace("profile select: deck builder decks refreshed %dms" % (Time.get_ticks_msec() - step_started_ms))
+		step_started_ms = Time.get_ticks_msec()
 		_refresh_profile_summary_from_local_history(_local_profile_id)
+		_startup_trace("profile select: profile summary refreshed %dms" % (Time.get_ticks_msec() - step_started_ms))
+		step_started_ms = Time.get_ticks_msec()
 		_update_resume_controls()
+		_startup_trace("profile select: resume controls updated %dms" % (Time.get_ticks_msec() - step_started_ms))
 		return true
 	return false
 
@@ -8665,9 +8760,15 @@ func _on_account_deck_list_received(decks, preferred_deck_id: String = "") -> vo
 		mirrored_decks.append(remote_deck)
 	# One batched store write for the whole list; mirroring per deck rewrote the
 	# full profile store ~24 times per response (~12s with a large profile).
+	# The deck upsert and sync-state marking share one flush().
+	var store_dirty := false
 	if not mirrored_decks.is_empty():
-		_local_profile_store.upsert_saved_decks(_local_profile_id, mirrored_decks)
-	_mark_active_profile_account_decks_synced(remote_deck_ids)
+		if _local_profile_store.upsert_saved_decks(_local_profile_id, mirrored_decks, true) > 0:
+			store_dirty = true
+	if _mark_active_profile_account_decks_synced(remote_deck_ids, true):
+		store_dirty = true
+	if store_dirty:
+		_local_profile_store.flush()
 	var merged_decks := _merge_account_deck_catalogs(
 		remote_decks,
 		_get_local_saved_decks_for_active_profile(),
@@ -9331,8 +9432,8 @@ func _on_friends_state_received(state) -> void:
 	_refresh_open_deck_builder_saved_decks()
 
 func _on_friend_observer_card_visibility_toggled(allowed: bool) -> void:
-	if _local_profile_store != null:
-		_local_profile_store.set_allow_friend_observers_to_see_cards(allowed)
+	# The authoritative value lives on the lobby server per account; the local
+	# profile-store copy this used to write had no reader.
 	if lobby_client != null and _uses_server_account_storage():
 		lobby_client.set_allow_friend_observers_to_see_cards(allowed)
 
@@ -9340,8 +9441,6 @@ func _sync_friend_observer_card_visibility() -> void:
 	if lobby_client == null:
 		return
 	var allowed := lobby_client.current_allow_friend_observers_to_see_cards
-	if _local_profile_store != null:
-		_local_profile_store.set_allow_friend_observers_to_see_cards(allowed)
 	if _friend_observer_card_visibility_toggle != null:
 		_friend_observer_card_visibility_toggle.set_pressed_no_signal(allowed)
 
@@ -12033,13 +12132,19 @@ func _restore_auth_preferences() -> void:
 		_startup_autologin_pending = false
 		return
 	var saved_username := _get_saved_account_username()
+	_startup_trace("auth restore: username fetched")
 	_set_selected_account_username(saved_username)
 	_set_selected_account_password(_get_saved_account_password())
+	_startup_trace("auth restore: credentials fetched")
 	_set_auth_mode(auth_mode)
+	_startup_trace("auth restore: auth mode set")
 	_select_saved_account_profile_if_available(saved_username, "")
+	_startup_trace("auth restore: profile selected")
 	_refresh_auth_controls()
 	_refresh_account_identity_label()
+	_startup_trace("auth restore: auth controls refreshed")
 	_startup_autologin_pending = _prepare_saved_account_autologin()
+	_startup_trace("auth restore: autologin prepared (pending=%s)" % str(_startup_autologin_pending))
 
 func _on_auth_mode_selected(_index: int) -> void:
 	if _auth_mode_option != null and _auth_mode_option.item_count > 0:

@@ -42,16 +42,16 @@ func restore_last_profile(default_name: String = DEFAULT_PROFILE_NAME) -> Dictio
 	_import_legacy_deck_if_needed(str(created.get("profile_id", "")))
 	return created
 
-func ensure_guest_profile(display_name: String = DEFAULT_PROFILE_NAME, make_current: bool = true) -> Dictionary:
+func ensure_guest_profile(display_name: String = DEFAULT_PROFILE_NAME, make_current: bool = true, defer_save: bool = false) -> Dictionary:
 	_ensure_loaded()
 	var guest_profile_id := str(_data.get("guest_profile_id", "")).strip_edges()
 	if not guest_profile_id.is_empty():
 		var existing := get_profile(guest_profile_id)
 		if not existing.is_empty():
-			var restored := ensure_profile(guest_profile_id, display_name, make_current)
+			var restored := ensure_profile(guest_profile_id, display_name, make_current, defer_save)
 			_import_legacy_deck_if_needed(str(restored.get("profile_id", "")))
 			return restored
-	var created := ensure_profile("", display_name, make_current)
+	var created := ensure_profile("", display_name, make_current, defer_save)
 	var created_profile_id := str(created.get("profile_id", "")).strip_edges()
 	if created_profile_id.is_empty():
 		return created
@@ -68,12 +68,13 @@ func ensure_account_profile(
 	account_username: String,
 	preferred_profile_id: String = "",
 	make_current: bool = true,
-	prefer_preferred_profile_id: bool = false
+	prefer_preferred_profile_id: bool = false,
+	defer_save: bool = false
 ) -> Dictionary:
 	_ensure_loaded()
 	var normalized_username := account_username.strip_edges()
 	if normalized_username.is_empty():
-		return ensure_profile(preferred_profile_id, DEFAULT_PROFILE_NAME, make_current)
+		return ensure_profile(preferred_profile_id, DEFAULT_PROFILE_NAME, make_current, defer_save)
 	var normalized_key := normalized_username.to_lower()
 	var resolved_preferred_id := preferred_profile_id.strip_edges()
 	var matched_profile_id := _find_best_account_profile_id(
@@ -84,10 +85,11 @@ func ensure_account_profile(
 	if not matched_profile_id.is_empty():
 		return _remember_account_profile_mapping(
 			normalized_key,
-			ensure_profile(matched_profile_id, normalized_username, make_current)
+			ensure_profile(matched_profile_id, normalized_username, make_current, defer_save),
+			defer_save
 		)
-	var created_profile := ensure_profile("", normalized_username, make_current)
-	return _remember_account_profile_mapping(normalized_key, created_profile)
+	var created_profile := ensure_profile("", normalized_username, make_current, defer_save)
+	return _remember_account_profile_mapping(normalized_key, created_profile, defer_save)
 
 func find_profile_id_by_account_username(account_username: String) -> String:
 	_ensure_loaded()
@@ -98,7 +100,7 @@ func find_profile_id_by_display_name(display_name: String) -> String:
 	var normalized_name := display_name.strip_edges().to_lower()
 	if normalized_name.is_empty():
 		return ""
-	var profiles := _get_profiles()
+	var profiles := _get_profiles_ref()
 	for profile_id in profiles.keys():
 		var profile = profiles.get(profile_id, {})
 		if not (profile is Dictionary):
@@ -108,7 +110,7 @@ func find_profile_id_by_display_name(display_name: String) -> String:
 			return str(profile_id)
 	return ""
 
-func ensure_profile(profile_id: String = "", display_name: String = DEFAULT_PROFILE_NAME, make_current: bool = true) -> Dictionary:
+func ensure_profile(profile_id: String = "", display_name: String = DEFAULT_PROFILE_NAME, make_current: bool = true, defer_save: bool = false) -> Dictionary:
 	_ensure_loaded()
 	var clean_name: String = display_name.strip_edges()
 	if clean_name.is_empty():
@@ -133,7 +135,8 @@ func ensure_profile(profile_id: String = "", display_name: String = DEFAULT_PROF
 	_data["profiles"] = profiles
 	if make_current:
 		_data["current_profile_id"] = resolved_profile_id
-	_save()
+	if not defer_save:
+		_save()
 	return profile.duplicate(true)
 
 func remember_profile(profile_id: String, display_name: String = DEFAULT_PROFILE_NAME) -> Dictionary:
@@ -141,7 +144,7 @@ func remember_profile(profile_id: String, display_name: String = DEFAULT_PROFILE
 
 func get_profile(profile_id: String) -> Dictionary:
 	_ensure_loaded()
-	var profiles := _get_profiles()
+	var profiles := _get_profiles_ref()
 	var existing = profiles.get(profile_id, {})
 	if existing is Dictionary:
 		return (existing as Dictionary).duplicate(true)
@@ -166,7 +169,9 @@ func activate_guest_session(display_name: String = DEFAULT_PROFILE_NAME) -> Dict
 	var resolved_display_name := display_name.strip_edges()
 	if resolved_display_name.is_empty():
 		resolved_display_name = DEFAULT_PROFILE_NAME
-	var profile := ensure_guest_profile(resolved_display_name, true)
+	# ensure_guest_profile defers its save so session activation persists
+	# everything in one write instead of two.
+	var profile := ensure_guest_profile(resolved_display_name, true, true)
 	_data["preferred_auth_mode"] = AUTH_MODE_GUEST
 	_save()
 	return get_profile(str(profile.get("profile_id", "")))
@@ -194,13 +199,14 @@ func activate_account_session(
 		resolved_public_username = _display_name_from_email(resolved_email)
 	var profile := {}
 	if resolved_auth_mode == AUTH_MODE_CLAIM_LEGACY:
-		profile = _activate_claimed_legacy_profile(resolved_email, resolved_public_username, preferred_profile_id)
+		profile = _activate_claimed_legacy_profile(resolved_email, resolved_public_username, preferred_profile_id, true)
 	if profile.is_empty():
 		profile = ensure_account_profile(
 			resolved_email,
 			preferred_profile_id,
 			true,
-			prefer_preferred_profile_id
+			prefer_preferred_profile_id,
+			true
 		)
 	var resolved_profile_id := str(profile.get("profile_id", "")).strip_edges()
 	if resolved_profile_id.is_empty():
@@ -342,10 +348,12 @@ func upsert_saved_deck(profile_id: String, saved_deck: Dictionary, make_selected
 		_save()
 	return normalized_deck.duplicate(true)
 
-func upsert_saved_decks(profile_id: String, saved_decks: Array) -> int:
+func upsert_saved_decks(profile_id: String, saved_decks: Array, defer_save: bool = false) -> int:
 	# Batched mirror for account_deck_list responses: one normalize pass with
 	# per-deck change detection and a single _save(). Saving per deck made each
 	# response rewrite the whole store ~24 times (~12s with a large profile).
+	# defer_save lets adjacent store mutations (e.g. deck sync-state marking)
+	# share one _save() via flush().
 	_ensure_loaded()
 	var resolved_profile_id := profile_id.strip_edges()
 	if resolved_profile_id.is_empty():
@@ -366,7 +374,8 @@ func upsert_saved_decks(profile_id: String, saved_decks: Array) -> int:
 		changed += 1
 	if changed > 0:
 		_set_deck_bucket(resolved_profile_id, deck_bucket)
-		_save()
+		if not defer_save:
+			_save()
 	return changed
 
 func delete_deck(profile_id: String, deck_id: String) -> void:
@@ -417,11 +426,11 @@ func get_synced_account_deck_ids(profile_id: String) -> PackedStringArray:
 			synced_ids.append(deck_id)
 	return synced_ids
 
-func mark_account_decks_synced(profile_id: String, deck_ids: Array) -> void:
+func mark_account_decks_synced(profile_id: String, deck_ids: Array, defer_save: bool = false) -> bool:
 	_ensure_loaded()
 	var resolved_profile_id := profile_id.strip_edges()
 	if resolved_profile_id.is_empty():
-		return
+		return false
 	var synced_by_profile := _get_synced_account_deck_ids_by_profile()
 	var synced_bucket = synced_by_profile.get(resolved_profile_id, {})
 	var bucket: Dictionary = {}
@@ -445,7 +454,7 @@ func mark_account_decks_synced(profile_id: String, deck_ids: Array) -> void:
 		bucket[deck_id] = true
 		bucket_changed = true
 	if not bucket_changed:
-		return
+		return false
 	synced_by_profile[resolved_profile_id] = bucket
 	_data["synced_account_deck_ids_by_profile"] = synced_by_profile
 	if deleted_lookup.is_empty():
@@ -453,6 +462,13 @@ func mark_account_decks_synced(profile_id: String, deck_ids: Array) -> void:
 	else:
 		deleted_by_profile[resolved_profile_id] = deleted_lookup
 	_data["deleted_account_deck_ids_by_profile"] = deleted_by_profile
+	if not defer_save:
+		_save()
+	return true
+
+# Persists deferred mutations in one write. Use after a group of defer_save
+# calls that together form one logical store update.
+func flush() -> void:
 	_save()
 
 func get_deleted_account_deck_ids(profile_id: String) -> PackedStringArray:
@@ -504,11 +520,6 @@ func get_preferred_auth_mode() -> String:
 func get_allow_friend_observers_to_see_cards() -> bool:
 	_ensure_loaded()
 	return bool(_data.get("allow_friend_observers_to_see_cards", true))
-
-func set_allow_friend_observers_to_see_cards(allowed: bool) -> void:
-	_ensure_loaded()
-	_data["allow_friend_observers_to_see_cards"] = allowed
-	_save()
 
 func set_preferred_auth_mode(auth_mode: String) -> void:
 	_ensure_loaded()
@@ -794,10 +805,13 @@ func _ensure_loaded() -> void:
 		print("LocalProfileStore: Migrating profile data from legacy app storage.")
 		_save(true)
 
+static var _debug_save_counter: int = 0
+
 func _save(skip_backup_refresh: bool = false) -> void:
 	if not _ensure_storage_parent_exists(STORAGE_PATH):
 		return
 	_sanitize_loaded_auth_state()
+	var save_started_ms := Time.get_ticks_msec()
 	var json_string := JSON.stringify(_data, "\t")
 	if not skip_backup_refresh and FileAccess.file_exists(STORAGE_PATH):
 		if FileAccess.file_exists(STORAGE_BACKUP_PATH):
@@ -810,6 +824,12 @@ func _save(skip_backup_refresh: bool = false) -> void:
 		return
 	if not FileAccess.file_exists(STORAGE_BACKUP_PATH):
 		_copy_storage_snapshot(STORAGE_PATH, STORAGE_BACKUP_PATH)
+	_debug_save_counter += 1
+	print("[STARTUP] profile store save #%d took %dms (json=%dkB)" % [
+		_debug_save_counter,
+		Time.get_ticks_msec() - save_started_ms,
+		json_string.length() / 1024
+	])
 
 func _read_storage_snapshot(storage_path: String, label: String) -> Dictionary:
 	if not FileAccess.file_exists(storage_path):
@@ -1119,6 +1139,17 @@ func _get_profiles() -> Dictionary:
 		return (profiles as Dictionary).duplicate(true)
 	return {}
 
+# Internal read-only access to the live profiles dictionary. duplicate(true) on
+# the full profiles map (hundreds of profiles with nested data) costs seconds,
+# and read-only scans like account-profile lookup paid it several times per
+# call during startup. Only mutate through _data; never mutate the returned
+# reference as if it were a private copy.
+func _get_profiles_ref() -> Dictionary:
+	var profiles = _data.get("profiles", {})
+	if profiles is Dictionary:
+		return profiles as Dictionary
+	return {}
+
 func _get_account_profile_id_by_username() -> Dictionary:
 	var merged: Dictionary = {}
 	var email_mappings = _data.get("account_profile_id_by_email", {})
@@ -1129,7 +1160,21 @@ func _get_account_profile_id_by_username() -> Dictionary:
 		merged.merge(mappings as Dictionary, false)
 	return merged.duplicate(true)
 
-func _remember_account_profile_mapping(account_username_key: String, profile: Dictionary) -> Dictionary:
+# Non-copying single-key read used by hot lookup paths.
+func _lookup_account_profile_id_mapping(normalized_key: String) -> String:
+	if normalized_key.is_empty():
+		return ""
+	var mappings = _data.get("account_profile_id_by_username", {})
+	if mappings is Dictionary:
+		var mapped = (mappings as Dictionary).get(normalized_key, "")
+		if not str(mapped).strip_edges().is_empty():
+			return str(mapped).strip_edges()
+	var email_mappings = _data.get("account_profile_id_by_email", {})
+	if email_mappings is Dictionary:
+		return str((email_mappings as Dictionary).get(normalized_key, "")).strip_edges()
+	return ""
+
+func _remember_account_profile_mapping(account_username_key: String, profile: Dictionary, defer_save: bool = false) -> Dictionary:
 	var resolved_key := account_username_key.strip_edges().to_lower()
 	if resolved_key.is_empty():
 		return profile.duplicate(true)
@@ -1140,10 +1185,11 @@ func _remember_account_profile_mapping(account_username_key: String, profile: Di
 	mappings[resolved_key] = resolved_profile_id
 	_data["account_profile_id_by_email"] = mappings
 	_data["account_profile_id_by_username"] = mappings
-	_save()
+	if not defer_save:
+		_save()
 	return profile.duplicate(true)
 
-func _activate_claimed_legacy_profile(account_email: String, legacy_username: String, preferred_profile_id: String = "") -> Dictionary:
+func _activate_claimed_legacy_profile(account_email: String, legacy_username: String, preferred_profile_id: String = "", defer_save: bool = false) -> Dictionary:
 	var resolved_email := account_email.strip_edges().to_lower()
 	var resolved_username := legacy_username.strip_edges()
 	if resolved_email.is_empty() or resolved_username.is_empty():
@@ -1151,7 +1197,7 @@ func _activate_claimed_legacy_profile(account_email: String, legacy_username: St
 	var resolved_profile_id := _find_best_legacy_claim_profile_id(resolved_email, resolved_username, preferred_profile_id)
 	if resolved_profile_id.is_empty():
 		return {}
-	var profile := ensure_profile(resolved_profile_id, resolved_username, true)
+	var profile := ensure_profile(resolved_profile_id, resolved_username, true, defer_save)
 	var profile_id := str(profile.get("profile_id", "")).strip_edges()
 	if profile_id.is_empty():
 		return {}
@@ -1224,8 +1270,8 @@ func _find_best_account_profile_id(
 		return ""
 
 	var resolved_preferred_id := preferred_profile_id.strip_edges()
-	var mapped_profile_id := str(_get_account_profile_id_by_username().get(normalized_key, "")).strip_edges()
-	var profiles := _get_profiles()
+	var mapped_profile_id := _lookup_account_profile_id_mapping(normalized_key)
+	var profiles := _get_profiles_ref()
 	var candidate_ids: Array[String] = []
 	var seen_candidate_ids: Dictionary = {}
 
@@ -1258,19 +1304,22 @@ func _find_best_account_profile_id(
 	var best_score := -1
 	var best_last_seen := -1
 	for candidate_profile_id in candidate_ids:
-		var candidate_profile = get_profile(candidate_profile_id)
-		if candidate_profile.is_empty():
+		var candidate_profile = profiles.get(candidate_profile_id, {})
+		if not (candidate_profile is Dictionary):
+			continue
+		var candidate_dict := candidate_profile as Dictionary
+		if candidate_dict.is_empty():
 			continue
 		var score := _score_account_profile_candidate(
 			candidate_profile_id,
-			candidate_profile,
+			candidate_dict,
 			normalized_key,
 			normalized_username,
 			mapped_profile_id,
 			resolved_preferred_id,
 			prefer_preferred_profile_id
 		)
-		var last_seen := int(candidate_profile.get("last_seen_unix", 0))
+		var last_seen := int(candidate_dict.get("last_seen_unix", 0))
 		if score > best_score or (score == best_score and last_seen > best_last_seen):
 			best_score = score
 			best_last_seen = last_seen
@@ -1336,24 +1385,48 @@ func _score_account_profile_candidate(
 	return score
 
 func _get_saved_deck_count_for_profile(profile_id: String) -> int:
-	return _get_deck_bucket(profile_id.strip_edges(), false).size()
+	# Read-only size check: avoid _get_deck_bucket(), which deep-copies the
+	# entire decks_by_profile map per call.
+	var resolved_id := profile_id.strip_edges()
+	if resolved_id.is_empty():
+		return 0
+	var decks_by_profile = _data.get("decks_by_profile", {})
+	if decks_by_profile is Dictionary:
+		var bucket = (decks_by_profile as Dictionary).get(resolved_id, {})
+		if bucket is Dictionary:
+			return (bucket as Dictionary).size()
+	return 0
 
 func _get_synced_account_deck_count_for_profile(profile_id: String) -> int:
-	var synced_by_profile := _get_synced_account_deck_ids_by_profile()
-	var synced_bucket = synced_by_profile.get(profile_id.strip_edges(), {})
-	if synced_bucket is Dictionary:
-		return (synced_bucket as Dictionary).size()
+	var resolved_id := profile_id.strip_edges()
+	if resolved_id.is_empty():
+		return 0
+	var synced_by_profile = _data.get("synced_account_deck_ids_by_profile", {})
+	if synced_by_profile is Dictionary:
+		var synced_bucket = (synced_by_profile as Dictionary).get(resolved_id, {})
+		if synced_bucket is Dictionary:
+			return (synced_bucket as Dictionary).size()
 	return 0
 
 func _has_lobby_resume_for_profile(profile_id: String) -> bool:
-	var resume_by_profile := _get_lobby_resume_by_profile()
-	var resume = resume_by_profile.get(profile_id.strip_edges(), {})
-	return resume is Dictionary and not (resume as Dictionary).is_empty()
+	var resolved_id := profile_id.strip_edges()
+	if resolved_id.is_empty():
+		return false
+	var resume_by_profile = _data.get("lobby_resume_by_profile", {})
+	if resume_by_profile is Dictionary:
+		var resume = (resume_by_profile as Dictionary).get(resolved_id, {})
+		return resume is Dictionary and not (resume as Dictionary).is_empty()
+	return false
 
 func _has_active_match_for_profile(profile_id: String) -> bool:
-	var active_by_profile := _get_active_match_by_profile()
-	var active = active_by_profile.get(profile_id.strip_edges(), {})
-	return active is Dictionary and not (active as Dictionary).is_empty()
+	var resolved_id := profile_id.strip_edges()
+	if resolved_id.is_empty():
+		return false
+	var active_by_profile = _data.get("active_match_by_profile", {})
+	if active_by_profile is Dictionary:
+		var active = (active_by_profile as Dictionary).get(resolved_id, {})
+		return active is Dictionary and not (active as Dictionary).is_empty()
+	return false
 
 func _repair_account_profile_mappings() -> bool:
 	var mappings_changed := false

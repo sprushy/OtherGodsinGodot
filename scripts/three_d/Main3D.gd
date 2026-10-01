@@ -3,6 +3,8 @@ extends Node3D
 const WindowsSelfUpdaterScript = preload("res://scripts/client/WindowsSelfUpdater.gd")
 const GameCursorScript = preload("res://scripts/ui/GameCursor.gd")
 const SnowV2WeatherControllerScript = preload("res://scripts/fx/SnowV2WeatherController.gd")
+const UIFontScript = preload("res://scripts/ui/UIFont.gd")
+const LoadingBarScript = preload("res://scripts/ui/LoadingBar.gd")
 const GAME_SCENE_PATH := "res://scenes/mainfork.tscn"
 const DEFAULT_VIEWPORT_SIZE := Vector2i(2560, 1440)
 const SERVER_MODE_ARG := "server_mode"
@@ -73,8 +75,11 @@ var _locked_power_software_cursor_texture: Texture2D = null
 var _software_cursor_showing_locked_power: bool = false
 var _legacy_3d_shell_active: bool = false
 var _snow_v2_weather_controller: Node = null
+var _early_loading_screen: CanvasLayer = null
+var _early_loading_bar: Control = null
 
 func _ready() -> void:
+	print("[STARTUP] t=%dms Main3D._ready entry (engine boot + project init above this)" % Time.get_ticks_msec())
 	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 	_previous_use_accumulated_input = Input.use_accumulated_input
 	Input.use_accumulated_input = false
@@ -104,10 +109,13 @@ func _ready() -> void:
 	else:
 		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 		_build_flat_canvas()
-	# Load the embedded game scene first so the menu becomes interactive ASAP;
-	# cursor/snow are presentation-only and are built deferred (their _process
+	# Paint the early loading screen on the first frame, THEN run the blocking
+	# mainfork load a frame later -- the engine boot splash hands off to our
+	# own loading screen instead of freezing on boot art while the scene loads.
+	# Cursor/snow are presentation-only and are built deferred (their _process
 	# consumers are null-guarded).
-	_load_game_into_viewport()
+	_build_early_loading_screen()
+	_load_game_deferred()
 	GameCursorScript.ensure_registered()
 	_sync_cursor_presentation()
 	call_deferred("_build_software_cursor")
@@ -438,13 +446,140 @@ func _make_box(node_name: String, box_size: Vector3, box_position: Vector3, colo
 	mesh_instance.material_override = material
 	return mesh_instance
 
+func _build_early_loading_screen() -> void:
+	# Replica of MainMenu's startup loading overlay (same colors, fonts,
+	# layout, bar metrics) so it can paint before mainfork.tscn exists and hand
+	# off invisibly once the real overlay takes over.
+	var screen := CanvasLayer.new()
+	screen.name = "EarlyLoadingScreen"
+	screen.layer = 300
+	add_child(screen)
+
+	var background := ColorRect.new()
+	background.color = Color(0.018, 0.022, 0.038, 1.0)
+	background.mouse_filter = Control.MOUSE_FILTER_STOP
+	background.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	screen.add_child(background)
+
+	var center := CenterContainer.new()
+	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	screen.add_child(center)
+
+	var content := VBoxContainer.new()
+	content.custom_minimum_size = Vector2(420.0, 0.0)
+	content.alignment = BoxContainer.ALIGNMENT_CENTER
+	content.add_theme_constant_override("separation", 12)
+	center.add_child(content)
+
+	var title := Label.new()
+	title.text = "OTHER GODS"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 46)
+	var title_font: Font = UIFontScript.get_norse_card_name_font()
+	if title_font != null:
+		title.add_theme_font_override("font", title_font)
+	title.add_theme_color_override("font_color", Color(0.87, 0.78, 0.58))
+	content.add_child(title)
+
+	var rule := HSeparator.new()
+	rule.custom_minimum_size = Vector2(260.0, 2.0)
+	rule.modulate = Color(0.47, 0.62, 0.82, 0.7)
+	content.add_child(rule)
+
+	var loading_bar := LoadingBarScript.new()
+	loading_bar.custom_minimum_size = Vector2(620.0, 86.0)
+	content.add_child(loading_bar)
+	# The bar is driven by real scene-load progress from the threaded loader in
+	# _poll_game_scene_load(); a tween here could never advance during the load
+	# anyway -- a blocking call freezes every frame.
+
+	var status := Label.new()
+	status.text = "Loading..."
+	status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	status.custom_minimum_size = Vector2(620.0, 0.0)
+	status.add_theme_font_size_override("font_size", 18)
+	status.add_theme_color_override("font_color", Color(0.74, 0.80, 0.90))
+	content.add_child(status)
+
+	_early_loading_screen = screen
+	_early_loading_bar = loading_bar
+
+func _remove_early_loading_screen() -> void:
+	if _early_loading_screen == null or not is_instance_valid(_early_loading_screen):
+		return
+	print("[STARTUP] t=%dms early loading screen handing off to menu overlay" % Time.get_ticks_msec())
+	_early_loading_screen.queue_free()
+	_early_loading_screen = null
+	_early_loading_bar = null
+
+func _load_game_deferred() -> void:
+	await get_tree().process_frame
+	# Threaded load keeps the main thread rendering, so the early loading bar
+	# animates with real progress instead of freezing mid-fill during the load.
+	var load_started_ms := Time.get_ticks_msec()
+	var request_err := ResourceLoader.load_threaded_request(game_scene_path)
+	if request_err != OK:
+		_load_game_into_viewport()
+		return
+	var progress_values: Array = []
+	var last_applied := -1.0
+	while true:
+		var status := ResourceLoader.load_threaded_get_status(game_scene_path, progress_values)
+		if status == ResourceLoader.THREAD_LOAD_LOADED:
+			break
+		if status == ResourceLoader.THREAD_LOAD_IN_PROGRESS:
+			if _early_loading_bar != null and is_instance_valid(_early_loading_bar) \
+					and not progress_values.is_empty():
+				var reported := 0.0
+				for value in progress_values:
+					reported += float(value)
+				reported = clampf(reported / progress_values.size(), 0.0, 1.0)
+				if absf(reported - last_applied) >= 0.005:
+					last_applied = reported
+					_early_loading_bar.progress = reported * 0.85
+			await get_tree().process_frame
+			continue
+		push_error("Main3D: threaded load of %s failed (status %d)" % [game_scene_path, status])
+		_remove_early_loading_screen()
+		return
+	var scene: Resource = ResourceLoader.load_threaded_get(game_scene_path)
+	print("[STARTUP] t=%dms mainfork.tscn threaded load took %dms" % [
+		Time.get_ticks_msec(),
+		Time.get_ticks_msec() - load_started_ms
+	])
+	_instantiate_loaded_game_scene(scene)
+
 func _load_game_into_viewport() -> void:
+	var load_started_ms := Time.get_ticks_msec()
 	var scene := load(game_scene_path)
+	print("[STARTUP] t=%dms mainfork.tscn load took %dms" % [
+		Time.get_ticks_msec(),
+		Time.get_ticks_msec() - load_started_ms
+	])
+	_instantiate_loaded_game_scene(scene)
+
+func _instantiate_loaded_game_scene(scene: Resource) -> void:
 	if not (scene is PackedScene):
 		push_error("Main3D: could not load embedded game scene at %s" % game_scene_path)
 		return
+	if _early_loading_bar != null and is_instance_valid(_early_loading_bar):
+		# Instantiate + menu ready block briefly; park the bar near-full first.
+		_early_loading_bar.progress = 0.88
+	var instantiate_started_ms := Time.get_ticks_msec()
 	_game_instance = (scene as PackedScene).instantiate()
+	print("[STARTUP] t=%dms mainfork.tscn instantiate took %dms (MainMenu._ready runs when added to tree)" % [
+		Time.get_ticks_msec(),
+		Time.get_ticks_msec() - instantiate_started_ms
+	])
+	if _early_loading_bar != null and is_instance_valid(_early_loading_bar):
+		# Hand the early bar's progress to MainMenu's overlay so the fill is
+		# continuous across the swap.
+		_game_instance.set_meta("early_loading_progress", _early_loading_bar.progress)
 	_flat_canvas_layer.add_child(_game_instance)
+	print("[STARTUP] t=%dms mainfork.tscn added to tree (MainMenu._ready complete)" % Time.get_ticks_msec())
+	call_deferred("_remove_early_loading_screen")
 
 func _process(delta: float) -> void:
 	if not _legacy_3d_shell_active:
