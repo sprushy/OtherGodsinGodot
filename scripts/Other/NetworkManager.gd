@@ -19,6 +19,16 @@ const MAX_GAME_EVENT_TYPE_LENGTH := 96
 const ENET_PEER_TIMEOUT_LIMIT_MS := 4000
 const ENET_PEER_TIMEOUT_MIN_MS := 15000
 const ENET_PEER_TIMEOUT_MAX_MS := 45000
+# Transport identifiers used by the lobby fallback ladder (LobbyClient).
+const TRANSPORT_ENET := "enet"
+const TRANSPORT_WEBSOCKET := "websocket"
+# On the server, each transport is its own NetworkManager instance. ENet and
+# WebSocket both hand out random 32-bit peer ids, so no numeric offset can keep
+# the two id spaces apart. The WebSocket instance instead mints synthetic ids
+# from a range above 32 bits (GDScript ints are 64-bit) and translates them
+# back to raw transport ids on send; shared lobby logic only ever sees the
+# synthetic range, so cross-transport id collisions are impossible.
+const WS_PEER_ID_BASE := 8589934592
 const MatchCommandRegistryScript = preload("res://scripts/Other/MatchCommandRegistry.gd")
 
 signal command_received(command: Dictionary, sender_info: Dictionary)
@@ -32,7 +42,7 @@ signal match_join_requested(join_request: Dictionary, sender_info: Dictionary)
 signal match_join_approved(match_info: Dictionary)
 signal match_join_denied(reason: String)
 
-var peer: ENetMultiplayerPeer = ENetMultiplayerPeer.new()
+var peer: MultiplayerPeer = ENetMultiplayerPeer.new()
 var is_server: bool = false
 var last_client_address: String = "127.0.0.1"
 var last_client_port: int = 12345
@@ -40,6 +50,15 @@ var last_server_error: int = OK
 var trace_file_path: String = ""
 var use_current_scene_relative_path: bool = false
 var validate_match_command_types: bool = true
+## Server-side: set on the primary (ENet) instance to delegate traffic for
+## synthetic peer ids to the WebSocket transport instance.
+var websocket_transport: Node = null
+## Server-side: true on the WebSocket transport instance, which mints synthetic
+## lobby peer ids (WS_PEER_ID_BASE+) for its raw 32-bit transport peer ids.
+var is_websocket_transport: bool = false
+var _synthetic_peer_ids: Dictionary = {}
+var _raw_peer_ids_by_synthetic: Dictionary = {}
+var _next_synthetic_peer_id: int = WS_PEER_ID_BASE
 var _managed_multiplayer_api: MultiplayerAPI = null
 var _suppress_disconnect_events_until_msec: int = 0
 
@@ -65,14 +84,32 @@ func _ready() -> void:
 func _on_peer_connected(id: int) -> void:
 	_trace("peer_connected %d" % id)
 	_apply_enet_peer_timeouts(id)
-	peer_connected.emit(id)
+	peer_connected.emit(_to_lobby_peer_id(id))
 
 func _on_peer_disconnected(id: int) -> void:
 	if _should_suppress_disconnect_event():
 		_trace("ignoring stale peer_disconnected %d during transport replacement" % id)
 		return
 	_trace("peer_disconnected %d" % id)
-	peer_disconnected.emit(id)
+	var lobby_id := _to_lobby_peer_id(id)
+	if is_websocket_transport:
+		_synthetic_peer_ids.erase(id)
+		_raw_peer_ids_by_synthetic.erase(lobby_id)
+	peer_disconnected.emit(lobby_id)
+
+## Translate a raw transport peer id into the id shared lobby logic sees.
+## Identity on the primary (ENet) instance; minted synthetic on WebSocket.
+func _to_lobby_peer_id(raw_peer_id: int) -> int:
+	if not is_websocket_transport:
+		return raw_peer_id
+	if _synthetic_peer_ids.has(raw_peer_id):
+		return int(_synthetic_peer_ids[raw_peer_id])
+	var synthetic := _next_synthetic_peer_id
+	_next_synthetic_peer_id += 1
+	_synthetic_peer_ids[raw_peer_id] = synthetic
+	_raw_peer_ids_by_synthetic[synthetic] = raw_peer_id
+	_trace("minted synthetic peer id %d for websocket peer %d" % [synthetic, raw_peer_id])
+	return synthetic
 
 func _on_connected_to_server() -> void:
 	_trace("connected_to_server")
@@ -96,6 +133,7 @@ func create_server(port: int = 12345, assign_local_host_player: bool = true) -> 
 		last_server_error = ERR_UNAVAILABLE
 		_trace("create_server failed: multiplayer unavailable")
 		return ERR_UNAVAILABLE
+	peer = ENetMultiplayerPeer.new()
 	var err := (peer as ENetMultiplayerPeer).create_server(port)
 	last_server_error = err
 	if err == OK:
@@ -116,12 +154,61 @@ func create_client(address: String = "127.0.0.1", port: int = 12345) -> Error:
 	if api == null:
 		_trace("create_client failed: multiplayer unavailable")
 		return ERR_UNAVAILABLE
+	peer = ENetMultiplayerPeer.new()
 	var err := (peer as ENetMultiplayerPeer).create_client(address, port)
 	if err == OK:
 		api.multiplayer_peer = peer
 		is_server = false
 		print("Client connecting to ", address, ":", port)
 		_trace("client connecting to %s:%d path=%s" % [address, port, str(get_path())])
+	else:
+		last_server_error = err
+		_trace("client connect failed to %s:%d error=%d" % [address, port, err])
+	return err
+
+## Client-side WebSocket transport for restrictive networks. The URL must
+## include the scheme, e.g. ws://host:443 (wss:// once TLS is configured).
+func create_client_websocket(url: String) -> Error:
+	last_client_address = url
+	last_client_port = -1
+	var api := _ensure_multiplayer_api()
+	if api == null:
+		_trace("create_client_websocket failed: multiplayer unavailable")
+		return ERR_UNAVAILABLE
+	var ws_peer := WebSocketMultiplayerPeer.new()
+	var err := ws_peer.create_client(url)
+	if err == OK:
+		peer = ws_peer
+		api.multiplayer_peer = peer
+		is_server = false
+		print("Client connecting via websocket ", url)
+		_trace("client connecting via websocket %s path=%s" % [url, str(get_path())])
+	else:
+		last_server_error = err
+		_trace("websocket create_client failed for %s error=%d" % [url, err])
+	return err
+
+## Server-side WebSocket listener. Runs on its own NetworkManager instance so
+## ENet and WebSocket peers coexist; set incoming_peer_id_offset BEFORE calling.
+func create_server_websocket(port: int) -> Error:
+	var api := _ensure_multiplayer_api()
+	if api == null:
+		last_server_error = ERR_UNAVAILABLE
+		_trace("create_server_websocket failed: multiplayer unavailable")
+		return ERR_UNAVAILABLE
+	var ws_peer := WebSocketMultiplayerPeer.new()
+	var err := ws_peer.create_server(port)
+	if err == OK:
+		peer = ws_peer
+		api.multiplayer_peer = peer
+		is_server = true
+		local_player_index = -1
+		player_peer_ids.clear()
+		print("WebSocket server started on port ", port)
+		_trace("websocket server started on port %d path=%s" % [port, str(get_path())])
+	else:
+		last_server_error = err
+		_trace("websocket create_server failed on port %d error=%d" % [port, err])
 	return err
 
 func disconnect_client(suppress_disconnect_events: bool = true) -> void:
@@ -183,7 +270,7 @@ func _should_suppress_disconnect_event() -> bool:
 @rpc("any_peer", "call_remote", "reliable")
 func send_command(command: Dictionary) -> void:
 	if is_server:
-		var peer_id := multiplayer.get_remote_sender_id()
+		var peer_id := _to_lobby_peer_id(multiplayer.get_remote_sender_id())
 		_trace("received send_command from peer %d" % peer_id)
 		var rejection_reason := get_command_payload_rejection_reason(command)
 		if not rejection_reason.is_empty():
@@ -210,7 +297,7 @@ func request_action(command: Dictionary) -> void:
 func request_match_join(join_request: Dictionary) -> void:
 	if not is_server:
 		return
-	var peer_id := multiplayer.get_remote_sender_id()
+	var peer_id := _to_lobby_peer_id(multiplayer.get_remote_sender_id())
 	var rejection_reason := get_join_request_payload_rejection_reason(join_request)
 	if not rejection_reason.is_empty():
 		_reject_match_join_payload(peer_id, rejection_reason)
@@ -248,7 +335,9 @@ func broadcast_event(event_type: String, data: Dictionary) -> void:
 	game_event_received.emit(event_type, data)
 
 ## Server broadcasts the same event to every connected remote peer.
-func broadcast_event_to_all(event_type: String, data: Dictionary) -> void:
+## force_send skips the recipient-bookkeeping guard for delegated fan-out from
+## the primary transport (the WebSocket instance keeps no player bookkeeping).
+func broadcast_event_to_all(event_type: String, data: Dictionary, force_send: bool = false) -> void:
 	if not is_server:
 		return
 	var rejection_reason := get_game_event_payload_rejection_reason(event_type, data)
@@ -257,9 +346,11 @@ func broadcast_event_to_all(event_type: String, data: Dictionary) -> void:
 		return
 	if not _has_active_multiplayer_peer():
 		return
-	if not _has_remote_broadcast_recipients():
+	if not force_send and not _has_remote_broadcast_recipients():
 		return
 	rpc("broadcast_event", event_type, data)
+	if not is_websocket_transport and websocket_transport != null:
+		websocket_transport.broadcast_event_to_all(event_type, data, true)
 
 ## Server sends an event to one specific peer only (for hand privacy).
 func broadcast_event_to_peer(target_peer_id: int, event_type: String, data: Dictionary) -> void:
@@ -271,6 +362,18 @@ func broadcast_event_to_peer(target_peer_id: int, event_type: String, data: Dict
 		return
 	if target_peer_id == 1:
 		game_event_received.emit(event_type, data)
+		return
+	if is_websocket_transport:
+		var raw_peer_id := int(_raw_peer_ids_by_synthetic.get(target_peer_id, 0))
+		if raw_peer_id <= 0:
+			_trace("no websocket peer for synthetic id %d" % target_peer_id)
+			return
+		if not _has_active_multiplayer_peer():
+			return
+		rpc_id(raw_peer_id, "broadcast_event", event_type, data)
+		return
+	if websocket_transport != null and target_peer_id >= WS_PEER_ID_BASE:
+		websocket_transport.broadcast_event_to_peer(target_peer_id, event_type, data)
 		return
 	if not _has_active_multiplayer_peer():
 		return

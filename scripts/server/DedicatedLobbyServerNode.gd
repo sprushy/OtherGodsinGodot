@@ -14,6 +14,7 @@ func _ready() -> void:
 		advertised_host = "127.0.0.1"
 	var lobby_port: int = int(launch_args.get("lobby_port", DedicatedLobbyProtocolScript.PORT))
 	var match_port: int = int(launch_args.get("match_port", DedicatedLobbyProtocolScript.MATCH_PORT))
+	var ws_port: int = int(launch_args.get("ws_port", DedicatedLobbyProtocolScript.WS_PORT))
 	var ready_file_path: String = str(launch_args.get("ready_file", "")).strip_edges()
 	var trace_output_path: String = str(launch_args.get("trace_file", "")).strip_edges()
 
@@ -25,7 +26,7 @@ func _ready() -> void:
 	if get_parent() != null:
 		multiplayer_mount_path = get_parent().get_path()
 
-	var err: Error = start_server(advertised_host, lobby_port, match_port)
+	var err: Error = start_server(advertised_host, lobby_port, match_port, ws_port)
 	if err != OK:
 		push_error("DedicatedLobbyServerNode: failed to start lobby server (%s)" % error_string(err))
 		get_tree().quit(1)

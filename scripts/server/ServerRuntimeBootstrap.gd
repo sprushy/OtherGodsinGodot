@@ -3,6 +3,7 @@ extends Node2D
 const LobbyServerScript = preload("res://scripts/server/LobbyServer.gd")
 const HeadlessMatchServerScript = preload("res://scripts/server/HeadlessMatchServer.gd")
 const JsonStoreScript = preload("res://scripts/server/JsonStore.gd")
+const LobbyProtocolScript = preload("res://scripts/network/LobbyProtocol.gd")
 const DEFAULT_LOBBY_HOST_SETTING := "application/config/default_lobby_host"
 
 var _server_node: Node = null
@@ -32,6 +33,7 @@ func _boot_lobby_runtime(launch_args: Dictionary) -> void:
 		advertised_host = "127.0.0.1"
 	var lobby_port: int = int(launch_args.get("lobby_port", 22345))
 	var match_port: int = int(launch_args.get("match_port", 12345))
+	var ws_port: int = int(launch_args.get("ws_port", LobbyProtocolScript.WS_PORT))
 	var ready_file_path: String = str(launch_args.get("ready_file", "")).strip_edges()
 	var trace_file_path: String = str(launch_args.get("trace_file", "")).strip_edges()
 
@@ -49,7 +51,7 @@ func _boot_lobby_runtime(launch_args: Dictionary) -> void:
 		print("ServerRuntimeBootstrap[lobby]: %s" % message)
 	)
 
-	var err: Error = lobby_server.start_server(advertised_host, lobby_port, match_port)
+	var err: Error = lobby_server.start_server(advertised_host, lobby_port, match_port, ws_port)
 	if err != OK:
 		push_error("ServerRuntimeBootstrap: failed to start dedicated lobby server (%s)" % error_string(err))
 		get_tree().quit(1)

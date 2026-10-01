@@ -18,6 +18,13 @@ const AUTO_RECONNECT_BACKOFF_SECONDS := [1.0, 2.0, 4.0, 8.0, 12.0]
 const AUTO_RECONNECT_BACKOFF_MAX_SECONDS := 12.0
 const ALLOW_INSECURE_ACCOUNT_AUTH_ENV := "OTHERGODS_ALLOW_INSECURE_ACCOUNT_AUTH"
 const ALLOW_INSECURE_ACCOUNT_AUTH_SETTING := "application/config/allow_insecure_account_auth"
+# Transport fallback ladder for restrictive networks (campus/corporate
+# firewalls): try the default ENet port, then ENet on 443 (QUIC-trained hole),
+# then WebSocket over TCP 443. OTHERGODS_LOBBY_TRANSPORT=enet|ws pins one
+# transport for testing. The last transport that worked is remembered per
+# machine so later sessions start where they last succeeded.
+const TRANSPORT_OVERRIDE_ENV := "OTHERGODS_LOBBY_TRANSPORT"
+const TRANSPORT_PERSIST_PATH := "user://lobby_transport.cfg"
 
 signal connected_to_lobby()
 signal server_version_updated(version: String)
@@ -90,6 +97,9 @@ var _auto_reconnect_token: String = ""
 var _auto_reconnect_profile_id: String = ""
 var _last_server_address: String = ""
 var _last_server_port: int = LobbyProtocolScript.PORT
+var _transport_attempts: Array[Dictionary] = []
+var _transport_attempt_index: int = -1
+var _last_transport_failure_was_timeout: bool = false
 
 func _ready() -> void:
 	_ensure_network_manager()
@@ -155,10 +165,123 @@ func connect_to_server(
 	if network_manager == null:
 		connection_failed.emit("Could not initialize lobby network transport.")
 		return ERR_UNAVAILABLE
-	var connect_err = network_manager.create_client(connect_address, port)
-	if connect_err == OK:
-		_arm_connect_attempt_timeout()
-	return connect_err
+	_transport_attempts = _build_transport_attempts(connect_address, port)
+	_transport_attempt_index = -1
+	_last_transport_failure_was_timeout = false
+	return _start_next_transport_attempt()
+
+## Build the ordered transport attempts for reaching the lobby. An explicit
+## non-default port (local/private server) keeps the old single-ENet behavior
+## unless a transport override is set. The ws override always targets the
+## standard WebSocket port, which is where servers listen for it by default.
+func _build_transport_attempts(address: String, requested_port: int) -> Array[Dictionary]:
+	var attempts: Array[Dictionary] = []
+	var transport_override := OS.get_environment(TRANSPORT_OVERRIDE_ENV).strip_edges().to_lower()
+	if transport_override == NetworkManagerScript.TRANSPORT_ENET:
+		attempts.append({
+			"transport": NetworkManagerScript.TRANSPORT_ENET,
+			"port": requested_port,
+		})
+		return attempts
+	if transport_override == NetworkManagerScript.TRANSPORT_WEBSOCKET or transport_override == "ws":
+		attempts.append(_websocket_attempt(address))
+		return attempts
+	if requested_port != LobbyProtocolScript.PORT:
+		attempts.append({
+			"transport": NetworkManagerScript.TRANSPORT_ENET,
+			"port": requested_port,
+		})
+		return attempts
+	if _load_preferred_transport() == NetworkManagerScript.TRANSPORT_WEBSOCKET:
+		attempts.append(_websocket_attempt(address))
+	attempts.append({
+		"transport": NetworkManagerScript.TRANSPORT_ENET,
+		"port": LobbyProtocolScript.PORT,
+	})
+	attempts.append({
+		"transport": NetworkManagerScript.TRANSPORT_ENET,
+		"port": LobbyProtocolScript.FALLBACK_UDP_PORT,
+	})
+	if _load_preferred_transport() != NetworkManagerScript.TRANSPORT_WEBSOCKET:
+		attempts.append(_websocket_attempt(address))
+	return attempts
+
+func _websocket_attempt(address: String) -> Dictionary:
+	return {
+		"transport": NetworkManagerScript.TRANSPORT_WEBSOCKET,
+		"url": "ws://%s:%d" % [address, LobbyProtocolScript.WS_PORT],
+	}
+
+func _start_next_transport_attempt() -> Error:
+	_transport_attempt_index += 1
+	if _transport_attempt_index >= _transport_attempts.size():
+		return _finish_transport_ladder_failure()
+	var attempt := _transport_attempts[_transport_attempt_index]
+	var transport := str(attempt.get("transport", ""))
+	var connect_err: Error = ERR_UNAVAILABLE
+	if transport == NetworkManagerScript.TRANSPORT_WEBSOCKET:
+		var url := str(attempt.get("url", ""))
+		_trace("connect attempt %d/%d transport=websocket url=%s" % [
+			_transport_attempt_index + 1,
+			_transport_attempts.size(),
+			url,
+		])
+		connect_err = network_manager.create_client_websocket(url)
+	else:
+		var attempt_port := int(attempt.get("port", 0))
+		_trace("connect attempt %d/%d transport=enet host=%s port=%d" % [
+			_transport_attempt_index + 1,
+			_transport_attempts.size(),
+			_last_server_address,
+			attempt_port,
+		])
+		connect_err = network_manager.create_client(_last_server_address, attempt_port)
+	if connect_err != OK:
+		return _advance_transport_attempt(false)
+	_arm_connect_attempt_timeout()
+	return OK
+
+func _advance_transport_attempt(was_timeout: bool) -> Error:
+	_last_transport_failure_was_timeout = was_timeout
+	if network_manager != null:
+		network_manager.disconnect_client()
+	_transport_connected_signal_received = false
+	return _start_next_transport_attempt()
+
+func _has_more_transport_attempts() -> bool:
+	return _transport_attempt_index + 1 < _transport_attempts.size()
+
+func _finish_transport_ladder_failure() -> Error:
+	_transport_attempt_index = _transport_attempts.size()
+	if _auto_reconnect_active:
+		_transport_connected_signal_received = false
+		_continue_auto_reconnect()
+		return ERR_UNAVAILABLE
+	disconnect_from_server()
+	if _last_transport_failure_was_timeout:
+		connection_failed.emit("The lobby connection timed out.")
+	else:
+		connection_failed.emit("The lobby connection failed.")
+	return ERR_UNAVAILABLE
+
+func _load_preferred_transport() -> String:
+	var config := ConfigFile.new()
+	if config.load(TRANSPORT_PERSIST_PATH) != OK:
+		return ""
+	return str(config.get_value("lobby", "preferred_transport", "")).strip_edges()
+
+func _remember_transport_preference() -> void:
+	if _transport_attempt_index < 0 or _transport_attempt_index >= _transport_attempts.size():
+		return
+	var transport := str(_transport_attempts[_transport_attempt_index].get("transport", ""))
+	if transport.is_empty():
+		return
+	if transport == _load_preferred_transport():
+		return
+	var config := ConfigFile.new()
+	config.set_value("lobby", "preferred_transport", transport)
+	config.save(TRANSPORT_PERSIST_PATH)
+	_trace("remembered working transport: %s" % transport)
 
 func disconnect_from_server() -> void:
 	_ignore_network_events = true
@@ -484,6 +607,7 @@ func _on_connected_to_server() -> void:
 		_trace("ignoring connected_to_server after disconnect")
 		return
 	_transport_connected_signal_received = true
+	_remember_transport_preference()
 	_trace("connected to server")
 	connected_to_lobby.emit()
 	_begin_initial_auth_request()
@@ -651,6 +775,9 @@ func _on_connection_failed() -> void:
 	_is_authenticated = false
 	_set_current_server_version("")
 	_trace("connection failed")
+	if _has_more_transport_attempts():
+		_advance_transport_attempt(false)
+		return
 	if _auto_reconnect_active:
 		_continue_auto_reconnect()
 		return
@@ -866,15 +993,11 @@ func _on_connect_attempt_timer_timeout(expected_serial: int) -> void:
 func _on_connect_attempt_timeout() -> void:
 	if is_transport_connected():
 		return
-	_trace("connect attempt timed out")
-	if _auto_reconnect_active:
-		if network_manager != null:
-			network_manager.disconnect_client()
-		_transport_connected_signal_received = false
-		_continue_auto_reconnect()
-		return
-	disconnect_from_server()
-	connection_failed.emit("The lobby connection timed out.")
+	_trace("connect attempt timed out (%d/%d transports)" % [
+		_transport_attempt_index + 1,
+		_transport_attempts.size(),
+	])
+	_advance_transport_attempt(true)
 
 func _set_current_server_version(version: String) -> void:
 	var normalized_version := AppReleaseInfoScript.normalize_version(version)

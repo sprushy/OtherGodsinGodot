@@ -34,6 +34,7 @@ signal status_changed(message: String)
 var advertised_host: String = "127.0.0.1"
 var lobby_port: int = LobbyProtocolScript.PORT
 var match_port: int = LobbyProtocolScript.MATCH_PORT
+var ws_port: int = 0
 var is_listening: bool = false
 var use_dedicated_match_processes: bool = true
 var allow_in_process_match_fallback: bool = true
@@ -52,6 +53,7 @@ var room_id_by_session: Dictionary = {}
 var local_session_id: String = ""
 var match_supervisor = null
 var network_manager: Node = null
+var ws_transport: Node = null
 var profile_store = null
 var account_store = null
 var deck_store = null
@@ -87,7 +89,7 @@ func _process(delta: float) -> void:
 	_expire_abandoned_player_host_matches()
 	_ensure_server_bot_seeks()
 
-func start_server(p_advertised_host: String = "127.0.0.1", port: int = LobbyProtocolScript.PORT, p_match_port: int = LobbyProtocolScript.MATCH_PORT) -> Error:
+func start_server(p_advertised_host: String = "127.0.0.1", port: int = LobbyProtocolScript.PORT, p_match_port: int = LobbyProtocolScript.MATCH_PORT, p_ws_port: int = LobbyProtocolScript.WS_PORT) -> Error:
 	if is_listening:
 		return OK
 	allow_insecure_account_auth = _runtime_allows_insecure_account_auth()
@@ -119,19 +121,56 @@ func start_server(p_advertised_host: String = "127.0.0.1", port: int = LobbyProt
 		status_changed.emit("Failed to start lobby server on port %d." % lobby_port)
 		return err
 
+	ws_port = max(0, p_ws_port)
+	if ws_port > 0:
+		_start_websocket_transport(ws_port)
+
 	is_listening = true
 	_trace("listening on %s:%d" % [advertised_host, lobby_port])
 	status_changed.emit("Lobby server listening on %s:%d" % [advertised_host, lobby_port])
 	_ensure_server_bot_seeks()
 	return OK
 
+## Secondary transport for restrictive networks: WebSocket over TCP, so clients
+## behind firewalls that drop UDP can still reach the lobby. Runs as a second
+## NetworkManager instance whose peer ids are namespaced before they reach the
+## shared lobby logic; a ws bind failure never blocks the ENet lobby.
+func _start_websocket_transport(p_ws_port: int) -> void:
+	if ws_transport != null:
+		return
+	var ws_network_manager: Node = NetworkManagerScript.new()
+	ws_network_manager.name = "LobbyTransportWS"
+	ws_network_manager.trace_file_path = trace_file_path
+	ws_network_manager.use_current_scene_relative_path = true
+	ws_network_manager.validate_match_command_types = false
+	ws_network_manager.set("is_websocket_transport", true)
+	add_child(ws_network_manager)
+	var ws_err: Error = ws_network_manager.create_server_websocket(p_ws_port)
+	if ws_err != OK:
+		status_changed.emit("Lobby WebSocket fallback unavailable on port %d." % p_ws_port)
+		ws_network_manager.queue_free()
+		return
+	ws_transport = ws_network_manager
+	network_manager.set("websocket_transport", ws_transport)
+	if not ws_transport.command_received.is_connected(_on_network_command_received):
+		ws_transport.command_received.connect(_on_network_command_received)
+	if not ws_transport.peer_disconnected.is_connected(_on_peer_disconnected):
+		ws_transport.peer_disconnected.connect(_on_peer_disconnected)
+	status_changed.emit("Lobby WebSocket fallback listening on %s:%d" % [advertised_host, p_ws_port])
+
 func stop_server() -> void:
+	if ws_transport != null:
+		ws_transport.disconnect_client()
+		ws_transport.queue_free()
+		ws_transport = null
 	if network_manager != null:
+		network_manager.set("websocket_transport", null)
 		network_manager.disconnect_client()
 	is_listening = false
 	advertised_host = "127.0.0.1"
 	lobby_port = LobbyProtocolScript.PORT
 	match_port = LobbyProtocolScript.MATCH_PORT
+	ws_port = 0
 	_seek_timeout_check_elapsed = 0.0
 	sessions_by_id.clear()
 	session_id_by_peer.clear()

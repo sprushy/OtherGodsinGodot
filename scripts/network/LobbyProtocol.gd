@@ -2,6 +2,11 @@ extends RefCounted
 class_name LobbyProtocol
 
 const PORT: int = 22345
+# Fallback transports for restrictive networks (campus/corporate firewalls that
+# drop arbitrary UDP). Clients walk the ladder in LobbyClient: ENet on the
+# default port, ENet on 443 (QUIC-trained holes), then WebSocket on TCP 443.
+const FALLBACK_UDP_PORT: int = 443
+const WS_PORT: int = 443
 const MATCH_PORT: int = 12345
 
 const LOGIN_GUEST := "login_guest"
