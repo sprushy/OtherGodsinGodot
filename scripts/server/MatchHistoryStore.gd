@@ -83,6 +83,7 @@ func get_profile_summary(profile_id: String, recent_limit: int = 5) -> Dictionar
 
 	var total_wins: int = 0
 	var total_losses: int = 0
+	var total_draws: int = 0
 	var god_records_map: Dictionary = {}
 	var deck_records_map: Dictionary = {}
 	var recent_matches: Array[Dictionary] = []
@@ -103,6 +104,8 @@ func get_profile_summary(profile_id: String, recent_limit: int = 5) -> Dictionar
 			total_wins += 1
 		elif result == "loss":
 			total_losses += 1
+		elif result == "draw":
+			total_draws += 1
 
 		var god_name: String = str(player_entry.get("god_name", "Unknown God")).strip_edges()
 		if god_name.is_empty():
@@ -111,6 +114,7 @@ func get_profile_summary(profile_id: String, recent_limit: int = 5) -> Dictionar
 			"god_name": god_name,
 			"wins": 0,
 			"losses": 0,
+			"draws": 0,
 			"games": 0,
 		})
 		god_record["games"] = int(god_record.get("games", 0)) + 1
@@ -118,6 +122,8 @@ func get_profile_summary(profile_id: String, recent_limit: int = 5) -> Dictionar
 			god_record["wins"] = int(god_record.get("wins", 0)) + 1
 		elif result == "loss":
 			god_record["losses"] = int(god_record.get("losses", 0)) + 1
+		elif result == "draw":
+			god_record["draws"] = int(god_record.get("draws", 0)) + 1
 		god_records_map[god_name] = god_record
 
 		var deck_id: String = str(player_entry.get("deck_id", "")).strip_edges()
@@ -129,6 +135,7 @@ func get_profile_summary(profile_id: String, recent_limit: int = 5) -> Dictionar
 			"deck_name": deck_display_name,
 			"wins": 0,
 			"losses": 0,
+			"draws": 0,
 			"games": 0,
 		})
 		deck_record["games"] = int(deck_record.get("games", 0)) + 1
@@ -136,6 +143,8 @@ func get_profile_summary(profile_id: String, recent_limit: int = 5) -> Dictionar
 			deck_record["wins"] = int(deck_record.get("wins", 0)) + 1
 		elif result == "loss":
 			deck_record["losses"] = int(deck_record.get("losses", 0)) + 1
+		elif result == "draw":
+			deck_record["draws"] = int(deck_record.get("draws", 0)) + 1
 		deck_records_map[deck_record_key] = deck_record
 
 		if recent_matches.size() < remaining_recent:
@@ -166,7 +175,8 @@ func get_profile_summary(profile_id: String, recent_limit: int = 5) -> Dictionar
 		"profile_id": resolved_profile_id,
 		"total_wins": total_wins,
 		"total_losses": total_losses,
-		"total_matches": total_wins + total_losses,
+		"total_draws": total_draws,
+		"total_matches": total_wins + total_losses + total_draws,
 		"god_records": god_records,
 		"deck_records": deck_records,
 		"recent_matches": recent_matches,
@@ -257,6 +267,7 @@ func _make_empty_summary(profile_id: String) -> Dictionary:
 		"profile_id": profile_id,
 		"total_wins": 0,
 		"total_losses": 0,
+		"total_draws": 0,
 		"total_matches": 0,
 		"god_records": [],
 		"deck_records": [],

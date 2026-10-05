@@ -1047,6 +1047,8 @@ func _refresh_grid() -> void:
 		_update_count_badges()
 
 func _matches_filter(card: Card) -> bool:
+	if card.is_single_player_card:
+		return false
 	if card is ActiveGodCard:
 		if _filter != "Active Gods":
 			return false

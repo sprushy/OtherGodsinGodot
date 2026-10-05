@@ -70,6 +70,8 @@ func validate_deck(
 		if not _cards_by_name.has(resolved_key):
 			return _result(false, "Unknown card: %s." % card_name, sanitized_cards)
 		var card = _cards_by_name[resolved_key]
+		if card.is_single_player_card:
+			return _result(false, "%s is only available in single-player games." % card.card_name, sanitized_cards)
 		var max_copies := _max_copies(card)
 		if count > max_copies:
 			return _result(false, "%s exceeds the copy limit (%d)." % [card_name, max_copies], sanitized_cards)
@@ -114,6 +116,13 @@ func validate_deck(
 				{"reinforcements": sanitized_reinforcements}
 			)
 		var card = _cards_by_name[resolved_key]
+		if card.is_single_player_card:
+			return _result(
+				false,
+				"%s is only available in single-player games." % card.card_name,
+				sanitized_cards,
+				{"reinforcements": sanitized_reinforcements}
+			)
 		if bool(card.is_god):
 			return _result(
 				false,

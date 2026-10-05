@@ -18,6 +18,9 @@ const AUTO_SELECT_SPELL_PREPARE_ZONES_KEY := "auto_select_spell_prepare_zones"
 const AUTO_SELECT_HEX_PREPARE_ZONES_KEY := "auto_select_hex_prepare_zones"
 const AUTO_SELECT_CHARM_PLAY_ZONES_KEY := "auto_select_charm_play_zones"
 const AUTO_SELECT_CHARM_PREPARE_ZONES_KEY := "auto_select_charm_prepare_zones"
+const BOARD_STYLE_KEY := "board_style"
+const BOARD_STYLE_NORMAL := "normal"
+const BOARD_STYLE_SNOW := "snow"
 const USE_SPLASH_BOARD_BACKGROUND_KEY := "use_splash_board_background"
 const HOVER_SHOW_CARD_OPTIONS_KEY := "hover_show_card_options"
 const ALWAYS_SHOW_ABILITY_BADGES_KEY := "always_show_ability_badges"
@@ -80,6 +83,11 @@ static func build_general_tab(get_value: Callable, set_value: Callable, created_
 		_add_setting_slider(settings, "Effects volume", AUDIO_SETTINGS_SECTION, EFFECTS_VOLUME_KEY, 1.0, get_number_value, set_number_value)
 
 	settings.add_child(_make_section_label("Visual"))
+	if get_text_value.is_valid() and set_text_value.is_valid():
+		_add_setting_option(settings, "Board style", COMBAT_SETTINGS_SECTION, BOARD_STYLE_KEY, BOARD_STYLE_NORMAL, [
+			{"label": "Moss Stone (Normal)", "value": BOARD_STYLE_NORMAL},
+			{"label": "Snow Stone (Snow)", "value": BOARD_STYLE_SNOW},
+		], get_text_value, set_text_value)
 	_add_setting_toggle(settings, "Use splash image board background", COMBAT_SETTINGS_SECTION, USE_SPLASH_BOARD_BACKGROUND_KEY, false, get_value, set_value, created_toggles)
 	_add_setting_toggle(settings, "Hover show card options", COMBAT_SETTINGS_SECTION, HOVER_SHOW_CARD_OPTIONS_KEY, true, get_value, set_value, created_toggles)
 	_add_setting_toggle(settings, "Always show ability badges", COMBAT_SETTINGS_SECTION, ALWAYS_SHOW_ABILITY_BADGES_KEY, false, get_value, set_value, created_toggles)

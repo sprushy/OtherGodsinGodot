@@ -1596,21 +1596,30 @@ func _get_board_creatures(player: Player) -> Array[Card]:
 func _get_first_open_summon_zone(player: Player) -> Zone:
 	if player == null:
 		return null
-	for zone in player.frontline_zones:
-		if zone.cards.is_empty():
-			return zone
-	for zone in player.reserve_zones:
-		if zone.cards.is_empty():
-			return zone
-	return null
+	var frontline_zone := _get_central_open_zone(player.frontline_zones)
+	if frontline_zone != null:
+		return frontline_zone
+	return _get_central_open_zone(player.reserve_zones)
 
 func _get_first_open_reserve_zone(player: Player) -> Zone:
 	if player == null:
 		return null
-	for zone in player.reserve_zones:
-		if zone.cards.is_empty():
-			return zone
-	return null
+	return _get_central_open_zone(player.reserve_zones)
+
+func _get_central_open_zone(zones: Array[Zone]) -> Zone:
+	# Prefer the middle lane, then work outward; equal distances keep row order.
+	var center := float(zones.size() - 1) / 2.0
+	var best_zone: Zone = null
+	var best_distance := INF
+	for index in range(zones.size()):
+		var zone := zones[index]
+		if zone == null or not zone.cards.is_empty():
+			continue
+		var distance := absf(float(index) - center)
+		if distance < best_distance:
+			best_zone = zone
+			best_distance = distance
+	return best_zone
 
 func _get_player_powers() -> Array[PowerCard]:
 	var powers: Array[PowerCard] = []

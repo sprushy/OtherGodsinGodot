@@ -83,6 +83,18 @@ const BOARD_ZONE_SLAB_TEXTURE_PATHS := [
 	"res://images/board/slot_tile_8.png",
 	"res://images/board/slot_tile_9.png",
 ]
+const SNOW_BOARD_ZONE_SLAB_TEXTURE_PATHS := [
+	"res://images/board/snow_stone_zone_slab.png",
+	"res://images/board/snow_slot_tile_1.png",
+	"res://images/board/snow_slot_tile_2.png",
+	"res://images/board/snow_slot_tile_3.png",
+	"res://images/board/snow_slot_tile_4.png",
+	"res://images/board/snow_slot_tile_5.png",
+	"res://images/board/snow_slot_tile_6.png",
+	"res://images/board/snow_slot_tile_7.png",
+	"res://images/board/snow_slot_tile_8.png",
+	"res://images/board/snow_slot_tile_9.png",
+]
 const BOARD_ZONE_ROW_TILE_COUNT := 5
 const TEZ_TONAL_MASTERY_TEXTURES := [
 	preload("res://images/TezTonalMastery0.png"),
@@ -636,7 +648,9 @@ var _row_label: String = ""
 var _followers_attack_result_text: String = ""
 var _followers_attack_result_sequence: int = 0
 static var _board_zone_slab_textures: Array[Texture2D] = []
+static var _snow_board_zone_slab_textures: Array[Texture2D] = []
 static var _board_zone_slot_texture_indices: Array[int] = []
+static var _last_loaded_board_style: String = ""
 
 static func get_base_zone_extent() -> float:
 	return BASE_ZONE_EXTENT
@@ -4848,19 +4862,37 @@ static func _load_png_texture(path: String) -> Texture2D:
 		return null
 	return texture
 
+static func _get_current_board_style() -> String:
+	var config := ConfigFile.new()
+	if config.load("user://settings.cfg") == OK:
+		var style = config.get_value("combat", "board_style", "normal")
+		if style is String:
+			return str(style)
+	return "normal"
+
 static func _get_board_zone_slab_textures() -> Array[Texture2D]:
-	if _board_zone_slab_textures.is_empty():
-		for texture_path in BOARD_ZONE_SLAB_TEXTURE_PATHS:
-			var texture := _load_png_texture(texture_path)
-			if texture != null:
-				_board_zone_slab_textures.append(texture)
-	return _board_zone_slab_textures
+	if _get_current_board_style() == "snow":
+		if _snow_board_zone_slab_textures.is_empty():
+			for texture_path in SNOW_BOARD_ZONE_SLAB_TEXTURE_PATHS:
+				var texture := _load_png_texture(texture_path)
+				if texture != null:
+					_snow_board_zone_slab_textures.append(texture)
+		return _snow_board_zone_slab_textures
+	else:
+		if _board_zone_slab_textures.is_empty():
+			for texture_path in BOARD_ZONE_SLAB_TEXTURE_PATHS:
+				var texture := _load_png_texture(texture_path)
+				if texture != null:
+					_board_zone_slab_textures.append(texture)
+		return _board_zone_slab_textures
 
 static func _get_board_zone_slot_texture_indices() -> Array[int]:
+	var current_style := _get_current_board_style()
 	var slab_textures := _get_board_zone_slab_textures()
 	if slab_textures.is_empty():
 		return []
-	if _board_zone_slot_texture_indices.size() != slab_textures.size():
+	if _board_zone_slot_texture_indices.size() != slab_textures.size() or _last_loaded_board_style != current_style:
+		_last_loaded_board_style = current_style
 		_board_zone_slot_texture_indices.clear()
 		for texture_index in range(slab_textures.size()):
 			_board_zone_slot_texture_indices.append(texture_index)
@@ -4878,31 +4910,38 @@ func _get_board_zone_slab_texture() -> Texture2D:
 	if slab_textures.is_empty():
 		return null
 
-	if zone != null and zone.zone_type in [Zone.ZoneType.FRONTLINE, Zone.ZoneType.RESERVE]:
-		var slot_texture_indices := _get_board_zone_slot_texture_indices()
-		var board_slot_index := zone_index
+	var slot_texture_indices := _get_board_zone_slot_texture_indices()
+	if slot_texture_indices.is_empty():
+		return slab_textures[0]
+
+	var board_slot_index := zone_index
+	if zone != null:
 		if zone.zone_index >= 0:
 			board_slot_index = zone.zone_index
 		if zone.zone_type == Zone.ZoneType.RESERVE:
 			board_slot_index += BOARD_ZONE_ROW_TILE_COUNT
-		var texture_index := slot_texture_indices[posmod(board_slot_index, slot_texture_indices.size())]
-		return slab_textures[texture_index]
+		elif zone.zone_type == Zone.ZoneType.GOD_SLOT:
+			board_slot_index += BOARD_ZONE_ROW_TILE_COUNT * 2
+		elif zone.zone_type == Zone.ZoneType.POWER_SLOT:
+			board_slot_index += BOARD_ZONE_ROW_TILE_COUNT * 2 + 2
+		else:
+			board_slot_index += int(zone.zone_type) * 13
 
-	var variant_seed := zone_index
-	if zone != null:
-		variant_seed += int(zone.zone_type) * 13
 	if _is_enemy:
-		variant_seed += 7
-	return slab_textures[posmod(variant_seed, slab_textures.size())]
+		board_slot_index += 7
+
+	var texture_index := slot_texture_indices[posmod(board_slot_index, slot_texture_indices.size())]
+	return slab_textures[texture_index]
 
 func _get_empty_zone_slab_tint() -> Color:
+	var is_snow := BoardZoneUI._get_current_board_style() == "snow"
 	if zone == null:
-		return Color(1.0, 1.0, 1.0, 0.9)
+		return Color(1.05, 1.08, 1.15, 0.95) if is_snow else Color(1.0, 1.0, 1.0, 0.9)
 	if zone.zone_type == Zone.ZoneType.GOD_SLOT:
-		return Color(1.0, 1.0, 1.0, 0.94)
+		return Color(1.08, 1.12, 1.18, 0.96) if is_snow else Color(1.0, 1.0, 1.0, 0.94)
 	if zone.zone_type == Zone.ZoneType.POWER_SLOT:
-		return Color(0.98, 1.0, 1.0, 0.9)
-	return Color(1.0, 1.0, 1.0, 0.88)
+		return Color(1.05, 1.12, 1.18, 0.95) if is_snow else Color(0.98, 1.0, 1.0, 0.9)
+	return Color(1.02, 1.05, 1.12, 0.92) if is_snow else Color(1.0, 1.0, 1.0, 0.88)
 
 func _add_empty_zone_slab_label(parent: Control) -> void:
 	if not _should_show_empty_zone_label():
@@ -6350,6 +6389,19 @@ func _hide_ability_popup() -> void:
 	_update_hover_polling()
 
 func can_accept_card(card: Card) -> bool:
+	if card is SpellCard and card.targets and not (card is Absence) and not zone.cards.is_empty():
+		var spell := card as SpellCard
+		var valid_targets: Array = spell.get_valid_targets(game_manager)
+		var has_valid_target := false
+		for target in zone.cards:
+			if target in valid_targets:
+				has_valid_target = true
+				break
+		if not has_valid_target:
+			return false
+		if spell.is_prepared and spell.current_zone != null and spell.current_zone.is_board_zone():
+			return spell.can_activate_prepared(game_manager, spell.card_owner)
+		return game_manager.can_play_card(spell.card_owner, spell, null)
 	if card is BitMeseri:
 		if zone.cards.size() == 0:
 			return game_manager.can_play_card(game_manager.current_player, card, null)
@@ -6365,18 +6417,21 @@ func can_accept_card(card: Card) -> bool:
 			return false
 		return game_manager.can_play_card(game_manager.current_player, card, null)
 	if card is CharmCard and (card as CharmCard).targets:
-		if zone.cards.size() == 0:
-			if card.current_zone == card.card_owner.hand_zone:
-				return (card as CharmCard).can_activate_from_hand(game_manager) \
-					or game_manager.can_prepare_card(game_manager.current_player, card, zone)
-			return (card as CharmCard).can_activate_prepared(game_manager)
 		var charm := card as CharmCard
-		var target := zone.cards[0]
-		if not charm.is_valid_target(target):
-			return false
+		var source_action: CardAction = game_manager.action_stack.back() if not game_manager.action_stack.is_empty() else null
+		var valid_targets: Array = charm.get_priority_targets(game_manager, source_action) if source_action != null else charm.get_valid_targets(game_manager)
+		if not zone.cards.is_empty():
+			var has_valid_target := false
+			for target in zone.cards:
+				if target in valid_targets:
+					has_valid_target = true
+					break
+			if not has_valid_target:
+				return false
 		if card.current_zone == card.card_owner.hand_zone:
-			return charm.can_activate_from_hand(game_manager)
-		return charm.can_activate_prepared(game_manager)
+			return charm.can_activate_from_hand(game_manager, source_action) \
+				or (zone.cards.is_empty() and game_manager.can_prepare_card(game_manager.current_player, card, zone))
+		return charm.can_activate_prepared(game_manager, source_action)
 	if card is CharmCard:
 		if zone.cards.size() > 0:
 			return false

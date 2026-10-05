@@ -14,6 +14,7 @@ var strength_variation: float = 0.0
 var accumulation: float = 0.0
 var wind_direction: Vector2 = Vector2(-1.0, 0.18)
 var wind_force: float = 1.0
+@export var melt_over_entire_screen: bool = false
 
 var _base_strength: float = 0.0
 var _active: bool = false
@@ -88,6 +89,7 @@ func _build_screen_overlay() -> void:
 	_screen_overlay.paintbrush_texture = _paintbrush_texture
 	_screen_overlay.flake_atlas_texture = _flake_atlas_texture
 	_screen_overlay.wind_wisp_texture = _wind_wisp_texture
+	_screen_overlay.melt_over_entire_screen = melt_over_entire_screen
 	add_child(_screen_overlay)
 
 func _build_world_snow(world_root: Node3D) -> void:
@@ -114,8 +116,8 @@ func _build_world_snow(world_root: Node3D) -> void:
 	process_material.initial_velocity_min = 0.35
 	process_material.initial_velocity_max = 1.15
 	process_material.gravity = Vector3(wind_direction.x * 0.7, -1.45, wind_direction.y * 0.2)
-	process_material.scale_min = 0.018
-	process_material.scale_max = 0.055
+	process_material.scale_min = 0.0207
+	process_material.scale_max = 0.06325
 	process_material.angular_velocity_min = -90.0
 	process_material.angular_velocity_max = 90.0
 	process_material.color = Color(0.90, 0.96, 1.0, 0.72)
@@ -158,7 +160,7 @@ func _apply_weather() -> void:
 	if _screen_overlay != null and is_instance_valid(_screen_overlay):
 		_screen_overlay.call("set_weather", _active, current_strength, wind_direction, wind_force)
 	if _world_particles != null and is_instance_valid(_world_particles):
-		_world_particles.amount = int(round(lerpf(120.0, 480.0, current_strength)))
+		_world_particles.amount = int(round(lerpf(180.0, 720.0, current_strength)))
 		var process_material := _world_particles.process_material as ParticleProcessMaterial
 		if process_material != null:
 			process_material.gravity = Vector3(wind_direction.x * wind_force * 0.65, -1.45, wind_direction.y * wind_force * 0.18)

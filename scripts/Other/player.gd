@@ -15,6 +15,7 @@ signal defeated(player: Player)
 var player_name: String
 var mana: int = 0
 var followers: int = 100
+var followers_enabled: bool = true
 var guard: int = 0
 var is_defeated: bool = false
 var is_turn_player: bool = false
@@ -133,12 +134,16 @@ func absorb_guard_damage(amount: int) -> int:
 	return amount - absorbed
 
 func gain_followers(amount: int) -> void:
+	if not followers_enabled:
+		return
 	if is_defeated:
 		return
 	followers += amount
 	followers_changed.emit(followers)
 
 func lose_followers(amount: int) -> void:
+	if not followers_enabled:
+		return
 	if is_defeated:
 		return
 	if amount <= 0:

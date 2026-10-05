@@ -62,6 +62,9 @@ func setup_transport(
 
 	network_manager = nm_script.new()
 	network_manager.name = NETWORK_MANAGER_NODE_NAME
+	# In-process matches must not inherit the authenticated lobby's transport.
+	if not is_client and (not is_host or server_port <= 0):
+		network_manager.use_current_scene_relative_path = true
 	transport_root.add_child(network_manager)
 
 	if is_host:

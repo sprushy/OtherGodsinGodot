@@ -1,4 +1,4 @@
-extends CharmCard
+extends SpellCard
 class_name HeavySnow
 
 const CANNOT_MOVE_STATUS := "cannot_move"
@@ -11,23 +11,23 @@ func _init() -> void:
 	super._init()
 	card_name = "Heavy Snow"
 	culture = "Neutral"
-	card_types = ["Charm", "Weather", "Permanent"]
+	card_types = ["Spell", "Weather", "Permanent"]
 	level = 3
 	mana_cost = 0
-	speed = 3
+	speed = 1
 	sacrifice_cost = 0
 	flavor_text = ""
 	artist = ""
 	art_path = "res://images/card_art/charms/HeavySnowArt.jpg"
-	ability_text = "Destroy any face-up [b]Weather[/b] charms. All [b]Anguine[/b] and [b]Amphibious[/b] creatures are switched to stealth, gain [b]Sleep[/b], and cannot move while this remains face-up. Spells must be prepared for 1 turn before use."
+	ability_text = "Destroy any face-up [b]Weather[/b] spells. All [b]Anguine[/b] and [b]Amphibious[/b] creatures are switched to stealth, gain [b]Sleep[/b], and cannot move while this remains face-up. Creatures cannot attack on the turn they enter play while this remains face-up."
 
-func goes_to_graveyard_after_use() -> bool:
+func should_go_to_graveyard() -> bool:
 	return false
 
 func resolve(game_manager: GameManager, _target = null) -> void:
 	if game_manager == null:
 		return
-	_destroy_face_up_weather_charms(game_manager)
+	_destroy_face_up_weather_spells(game_manager)
 	_refresh_weather_lock(game_manager)
 	game_manager.note_player_feedback(card_name + " blankets the field in deadly winter.")
 
@@ -58,7 +58,7 @@ func on_unmuted(game_manager: GameManager) -> void:
 	if _is_active():
 		_refresh_weather_lock(game_manager)
 
-func _destroy_face_up_weather_charms(game_manager: GameManager) -> void:
+func _destroy_face_up_weather_spells(game_manager: GameManager) -> void:
 	if game_manager == null:
 		return
 	var doomed_cards: Array[Card] = []
@@ -66,7 +66,7 @@ func _destroy_face_up_weather_charms(game_manager: GameManager) -> void:
 		for card in game_manager.get_field_cards(player):
 			if card == null or card == self:
 				continue
-			if not (card is CharmCard):
+			if not (card is SpellCard):
 				continue
 			if card.is_face_down or not card.has_type("Weather"):
 				continue

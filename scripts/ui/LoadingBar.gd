@@ -6,6 +6,9 @@ const FILL_TEXTURE_PATH := "res://images/ui/loading/mythic_loading_fill.png"
 const TRACK_TEXTURE_PATH := "res://images/ui/loading/mythic_loading_track.png"
 const DEFAULT_SIZE := Vector2(620.0, 86.0)
 const FILL_RECT := Rect2(0.045, 0.29, 0.91, 0.45)
+# Visible tube bounds in the 2172 x 724 track asset. Faint alpha specks
+# outside the tube make Image.get_used_rect() include most of its padding.
+const TRACK_SOURCE_RECT := Rect2(3.0, 280.0, 2167.0, 161.0)
 
 @export_range(0.0, 1.0) var progress: float = 0.0:
 	set(value):
@@ -42,7 +45,9 @@ func _draw() -> void:
 		Vector2(bar_size.x * FILL_RECT.size.x, bar_size.y * FILL_RECT.size.y)
 	)
 	if _track_texture != null:
-		draw_texture_rect(_track_texture, fill_rect, false, Color(1.0, 1.0, 1.0, 0.26))
+		draw_texture_rect_region(
+			_track_texture, fill_rect, TRACK_SOURCE_RECT
+		)
 	else:
 		draw_rect(fill_rect, Color(0.02, 0.08, 0.13, 0.72))
 

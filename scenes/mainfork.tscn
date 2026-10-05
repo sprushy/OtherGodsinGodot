@@ -37,6 +37,10 @@ text = "Rules"
 layout_mode = 2
 text = "Tutorial"
 
+[node name="StoryButton" type="Button" parent="Control/MenuContainer"]
+layout_mode = 2
+text = "Story"
+
 [node name="CardTestButton" type="Button" parent="Control/MenuContainer" unique_id=-1294967295]
 layout_mode = 2
 text = "Card Test"

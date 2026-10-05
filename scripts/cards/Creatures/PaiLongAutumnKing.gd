@@ -14,7 +14,7 @@ func _init() -> void:
 	speed = 3
 	resilience = 25
 	strength = 36
-	ability_text = "[b]Stormcloud[/b] ([b]Impact[/b]): [b]Acquire[/b] a [b]Weather[/b] charm.\n[b]Weather King[/b] ([b]Passive[/b]): This card is immune to weather effects that do not increase its stats."
+	ability_text = "[b]Stormcloud[/b] ([b]Impact[/b]): [b]Acquire[/b] a [b]Weather[/b] spell.\n[b]Weather King[/b] ([b]Passive[/b]): This card is immune to weather effects that do not increase its stats."
 	flavor_text = ""
 	culture = "Tian"
 	artist = "David Revoy"
@@ -56,7 +56,7 @@ func resolve_stormcloud_impact(game_manager: GameManager, target: Card) -> Strin
 		return card_name + " has no controller for Stormcloud."
 	var valid_targets := get_valid_targets(game_manager)
 	if target == null or target not in valid_targets:
-		return card_name + " found no valid Weather charm to add."
+		return card_name + " found no valid Weather spell to add."
 
 	controller.move_card(target, controller.hand_zone)
 	if target.current_zone != controller.hand_zone:
@@ -73,13 +73,13 @@ func resolve_stormcloud_cancel(_game_manager: GameManager) -> String:
 	var controller := get_controller()
 	if controller != null:
 		_shuffle_deck(controller)
-	return "%s searched the deck but took no Weather charm." % card_name
+	return "%s searched the deck but took no Weather spell." % card_name
 
 func resolve_no_weather_targets() -> String:
 	var controller := get_controller()
 	if controller != null:
 		_shuffle_deck(controller)
-	return "%s searched the deck but found no Weather charms." % card_name
+	return "%s searched the deck but found no Weather spells." % card_name
 
 func blocks_weather_effect(source_card: Card, str_bonus: int = 0, res_bonus: int = 0, spd_bonus: int = 0) -> bool:
 	if not _weather_king_is_active():
@@ -111,6 +111,6 @@ func _is_valid_weather_target(card: Card, controller: Player) -> bool:
 	return card != null \
 		and controller != null \
 		and card.current_zone == controller.deck_zone \
-		and card.card_type == Card.CardType.CHARM \
+		and card.card_type == Card.CardType.SPELL \
 		and card.has_type("Weather")
 

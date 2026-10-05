@@ -20,6 +20,7 @@ signal followers_converted(from_player: Player, to_player: Player, amount: int)
 
 enum GamePhase { MULLIGAN, MAIN, COMBAT, END }
 const GAME_END_REASON_DEFEAT := "defeat"
+const GAME_END_REASON_DRAW := "draw"
 const GAME_END_REASON_FORFEIT := "forfeit"
 const GAME_END_REASON_MATCH_FORFEIT := "match_forfeit"
 const GOD_DEATH_FOLLOWER_LOSS := 7
@@ -44,7 +45,10 @@ var is_game_over: bool = false
 var winning_player: Player = null
 var losing_player: Player = null
 var game_end_reason: String = ""
+var _game_end_resolution_pending: bool = false
+var _pending_defeated_players: Array[Player] = []
 var turn_number: int = 0
+var upkeep_mana_enabled: bool = true
 var action_stack: Array[CardAction] = []
 var prepared_hexes: Dictionary = {}
 var prepared_charms: Dictionary = {}
@@ -494,6 +498,8 @@ func get_game_result_message(winner: Player = winning_player, loser: Player = lo
 			return "Match over! %s forfeited the match." % [loser.player_name]
 		if winner != null:
 			return winner.player_name + " wins the match by forfeit!"
+	if resolved_reason == GAME_END_REASON_DRAW:
+		return "Draw! Both players reached 0 followers."
 	if winner != null and loser != null:
 		return "%s wins the game! %s reached 0 followers." % [winner.player_name, loser.player_name]
 	if loser != null:
@@ -775,6 +781,8 @@ func setup_game() -> void:
 	winning_player = null
 	losing_player = null
 	game_end_reason = ""
+	_game_end_resolution_pending = false
+	_pending_defeated_players.clear()
 	for player in players:
 		player.game_manager = self
 		if not player.card_moved.is_connected(_on_player_card_moved):
@@ -1048,6 +1056,8 @@ func get_base_upkeep_mana_gain() -> int:
 	return FIRST_TURN_UPKEEP_MANA_GAIN if is_first_game_turn() else UPKEEP_MANA_GAIN
 
 func get_effective_upkeep_mana_gain(base_amount: int, player: Player = null) -> int:
+	if not upkeep_mana_enabled:
+		return 0
 	var target_player := player if player != null else current_player
 	var effective_amount := maxi(base_amount, 0)
 	if is_player_under_god_death(target_player):
@@ -1215,7 +1225,7 @@ func get_play_card_failure_reason(player: Player, card: Card, target_zone: Zone)
 	if player == current_player and not has_resolved_turn_upkeep():
 		return "Resolve upkeep before taking other actions."
 	if card.card_type == Card.CardType.SPELL and card.current_zone == player.hand_zone and spells_must_be_prepared():
-		return "Heavy Snow prevents spells from being cast from hand."
+		return "Drought prevents spells from being cast from hand."
 	var card_failure_reason := ""
 	if card.has_method("get_play_failure_reason"):
 		card_failure_reason = str(card.call("get_play_failure_reason", self, player))
@@ -1351,6 +1361,8 @@ func play_card(player: Player, card: Card, target_zone: Zone, prepared: bool = f
 				)
 		
 		card.is_prepared = prepared
+		if prepared and card is SpellCard and spells_must_be_prepared():
+			card.lock_activation_until_end_of_turn(turn_number, "Drought")
 		card.is_face_down = prepared
 		player.move_card(card, target_zone)
 
@@ -1624,13 +1636,24 @@ func spells_must_be_prepared() -> bool:
 			for card in zone.cards:
 				if card == null:
 					continue
-				if not (card is CharmCard):
+				if not (card is SpellCard):
 					continue
-				if card.card_name != "Heavy Snow":
+				if card.card_name != "Drought":
 					continue
 				if card.is_face_down or card.abilities_suppressed():
 					continue
 				return true
+	return false
+
+func is_first_turn_attack_blocked_by_weather(creature: Card) -> bool:
+	if creature == null or creature.card_type != Card.CardType.CREATURE or not creature.summoned_this_turn:
+		return false
+	for card in get_field_cards():
+		if not (card is HeavySnow) or card.is_face_down or card.abilities_suppressed():
+			continue
+		if creature.has_method("blocks_weather_effect") and creature.blocks_weather_effect(card, 0, 0, 0):
+			continue
+		return true
 	return false
 
 func get_creature_action_mana_cost(creature: Card, _action_name: String = "") -> int:
@@ -2020,6 +2043,9 @@ func creature_attack(attacker: Card, target) -> void:
 		return
 	var attacker_controller := attacker.get_controller()
 	if attacker_controller == null:
+		return
+	if is_first_turn_attack_blocked_by_weather(attacker):
+		print(attacker.card_name + " cannot attack on the turn it enters play while Heavy Snow is active.")
 		return
 	if attacker.summoned_after_first_attack_this_turn:
 		print(attacker.card_name + " cannot attack because it was summoned after the first attack resolved this turn.")
@@ -4382,4 +4408,33 @@ func _finish_game(losing_player_ref: Player, reason: String = GAME_END_REASON_DE
 	game_ended.emit(winning_player, losing_player)
 
 func _on_player_defeated(defeated_player: Player) -> void:
-	_finish_game(defeated_player, GAME_END_REASON_DEFEAT)
+	if is_game_over or defeated_player == null:
+		return
+	if not _pending_defeated_players.has(defeated_player):
+		_pending_defeated_players.append(defeated_player)
+	if _game_end_resolution_pending:
+		return
+	_game_end_resolution_pending = true
+	call_deferred("_resolve_pending_defeats")
+
+func _resolve_pending_defeats() -> void:
+	_game_end_resolution_pending = false
+	if is_game_over:
+		_pending_defeated_players.clear()
+		return
+	var defeated_players: Array[Player] = []
+	for player in players:
+		if player != null and player.followers <= 0:
+			defeated_players.append(player)
+	_pending_defeated_players.clear()
+	if defeated_players.size() >= 2:
+		winning_player = null
+		losing_player = null
+		game_end_reason = GAME_END_REASON_DRAW
+		is_game_over = true
+		_set_phase(GamePhase.END)
+		print(get_game_result_message())
+		game_ended.emit(null, null)
+		return
+	if not defeated_players.is_empty():
+		_finish_game(defeated_players[0], GAME_END_REASON_DEFEAT)

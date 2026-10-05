@@ -40,6 +40,7 @@ const STARTUP_MUSIC_TRACK_IF_THEY_HAD_HEARTS := "if_they_had_hearts"
 const STARTUP_MUSIC_TRACK_RELAXING_TIME := "relaxing_time"
 const DEFAULT_STARTUP_MUSIC_TRACK := STARTUP_MUSIC_TRACK_IF_THEY_HAD_HEARTS
 const PRACTICE_THOR_SCENE_PATH := "res://scenes/practice_thor_game.tscn"
+const STORY_STEP_ONE_SCENE_PATH := "res://scenes/story_step_one.tscn"
 const DEDICATED_LOBBY_ENTRY_SCRIPT_PATH := "res://scripts/server/DedicatedLobbyServerMain.gd"
 const DEDICATED_SERVER_EXPORT_RELATIVE_PATH := "res://.exports/server/OtherGodsServer.exe"
 const DEFAULT_LOBBY_HOST_SETTING := "application/config/default_lobby_host"
@@ -97,6 +98,7 @@ const AUTH_BUTTON_MIN_HEIGHT := MENU_PRIMARY_BUTTON_MIN_HEIGHT
 @onready var title_label = $MenuContainer/TitleLabel
 @onready var rules_button = $MenuContainer/RulesButton
 @onready var tutorial_button = $MenuContainer/TutorialButton
+@onready var story_button = $MenuContainer/StoryButton
 @onready var multiplayer_container = $MenuContainer/MultiplayerContainer
 @onready var multiplayer_button = $MenuContainer/MultiplayerButton
 @onready var multiplayer_back_button = $MenuContainer/MultiplayerContainer/MultiplayerHeaderRow/BackButton
@@ -223,6 +225,8 @@ var _selected_account_accepts_game_updates: bool = false
 var _selected_account_password: String = ""
 var _startup_autologin_pending: bool = false
 var _startup_autologin_in_progress: bool = false
+var _background_lobby_auth_error: String = ""
+var _pending_background_lobby_auth_completion: Callable = Callable()
 var _account_switch_pending: bool = false
 var _account_switch_retry_attempts: int = 0
 var _authenticated_lobby_connect_serial: int = 0
@@ -371,6 +375,8 @@ func _ready() -> void:
 		rules_btn.pressed.connect(_open_rules_overlay)
 	if tutorial_btn:
 		tutorial_btn.pressed.connect(_open_tutorial_overlay)
+	if story_button:
+		story_button.pressed.connect(_on_story_pressed)
 	if card_test_btn:
 		if OS.is_debug_build():
 			card_test_btn.pressed.connect(_on_card_test_pressed)
@@ -548,6 +554,10 @@ func _finish_startup_loading() -> void:
 		if not is_instance_valid(self):
 			return
 	_set_startup_loading_progress(1.0, 0.18)
+	# Release mouse input as soon as the local menu is ready.
+	# Fading a Control visually does not stop it intercepting clicks.
+	if _startup_loading_overlay != null and is_instance_valid(_startup_loading_overlay):
+		_startup_loading_overlay.hide()
 	_begin_startup_menu_fade()
 	if _startup_loading_overlay != null and is_instance_valid(_startup_loading_overlay):
 		var tween := create_tween()
@@ -1158,7 +1168,7 @@ func _ensure_practice_thor_game() -> Node:
 	return practice_instance
 
 func _get_embedded_game_node_names() -> Array[String]:
-	var node_names: Array[String] = ["MockGame", "CardTest"]
+	var node_names: Array[String] = ["MockGame", "CardTest", "Story"]
 	if _is_practice_thor_enabled():
 		node_names.append("PracticeThor")
 	return node_names
@@ -1611,8 +1621,15 @@ func _restore_main_menu_controls_after_multiplayer_screen() -> void:
 	_refresh_account_identity_label()
 
 func _open_multiplayer_screen() -> void:
+	_cancel_pending_authenticated_lobby_connects()
+	_startup_autologin_pending = false
+	_startup_autologin_in_progress = false
 	_hide_main_menu_controls_for_multiplayer_screen()
 	multiplayer_container.visible = true
+	if _pending_background_lobby_auth_completion.is_valid():
+		var completion := _pending_background_lobby_auth_completion
+		_pending_background_lobby_auth_completion = Callable()
+		completion.call()
 	_refresh_multiplayer_deck_options()
 	_refresh_auth_controls()
 	_fit_main_menu_container_to_contents()
@@ -1621,6 +1638,11 @@ func _open_multiplayer_screen() -> void:
 		_refresh_profile_summary_from_local_history(_local_profile_id)
 	_refresh_seek_list()
 	_refresh_multiplayer_action_state()
+	if not _background_lobby_auth_error.is_empty():
+		var auth_message := _background_lobby_auth_error
+		_background_lobby_auth_error = ""
+		_show_auth_recovery_prompt(auth_message)
+		return
 	if not _current_room_snapshot.is_empty():
 		_apply_room_snapshot(_current_room_snapshot)
 		return
@@ -1720,8 +1742,7 @@ func _on_lobby_sign_in_watchdog_timeout(watchdog_serial: int) -> void:
 	var message := "The lobby sign-in timed out. Try Switch Account and sign in again."
 	status_label.text = message
 	_refresh_account_identity_label()
-	_maybe_show_auth_onboarding(true)
-	_set_auth_onboarding_hint(message, true)
+	_show_auth_recovery_prompt(message)
 
 func _should_reuse_active_lobby_connection(target_lobby_ip: String) -> bool:
 	if _account_switch_pending:
@@ -2889,14 +2910,9 @@ func _deferred_startup_autologin_connect() -> void:
 	await get_tree().process_frame
 	if not _startup_autologin_in_progress:
 		return
-	# The auth response triggers store saves + deck refreshes that stutter the
-	# splash slide if they land mid-animation, so hold the connect until the
-	# splash has settled (or timed out).
-	await _wait_for_startup_splash_settled()
-	if not _startup_autologin_in_progress:
-		return
-	_startup_trace("_deferred_startup_autologin_connect (splash settled)")
-	_set_startup_loading_status("Connecting to lobby...")
+	# Transport/authentication can start immediately; expensive follow-up work
+	# waits for Multiplayer instead of competing with local UI interaction.
+	_startup_trace("_deferred_startup_autologin_connect (background)")
 	_queue_authenticated_lobby_connect("Signing in with saved account...")
 
 func _wait_for_startup_splash_settled() -> void:
@@ -5731,6 +5747,11 @@ func _has_pending_account_sign_in_attempt() -> bool:
 		and not _selected_account_password.is_empty()
 
 func _show_auth_recovery_prompt(message: String) -> void:
+	if not _is_multiplayer_screen_active() and not _account_switch_pending \
+			and (_auth_onboarding_overlay == null or not is_instance_valid(_auth_onboarding_overlay)):
+		# Keep background server failures from taking over local play.
+		_background_lobby_auth_error = message
+		return
 	var recovery_auth_mode := AUTH_MODE_LOGIN
 	if _get_selected_auth_mode() == AUTH_MODE_CLAIM_LEGACY \
 			or _auth_onboarding_selected_mode == AUTH_MODE_CLAIM_LEGACY:
@@ -5902,6 +5923,30 @@ func _on_deck_builder_pressed() -> void:
 
 func _open_rules_overlay() -> void:
 	_open_document_overlay("Rules", "Rules and tutorial reference.", RULES_DOC_PATH, "RulesOverlay", rules_button)
+
+func _on_story_pressed() -> void:
+	if game_container.get_node_or_null("Story") != null:
+		return
+	_build_startup_loading_overlay()
+	_set_startup_loading_status("Loading story...")
+	# Paint the loading screen before loading the story scene and its assets.
+	await RenderingServer.frame_post_draw
+	var story_scene := load(STORY_STEP_ONE_SCENE_PATH) as PackedScene
+	if story_scene == null:
+		_remove_startup_loading_overlay()
+		return
+	_match_launch_queued = false
+	_hide_embedded_games()
+	var story_game := story_scene.instantiate()
+	story_game.name = "Story"
+	game_container.add_child(story_game)
+	_bind_game_signals()
+	_show_embedded_game("Story")
+	show_game()
+	_set_startup_loading_status("Preparing board...")
+	await story_game.story_board_ready
+	_set_startup_loading_progress(1.0)
+	_remove_startup_loading_overlay()
 
 func _open_tutorial_overlay() -> void:
 	if _rules_overlay != null and is_instance_valid(_rules_overlay):
@@ -6487,7 +6532,6 @@ func _start_practice_tutorial_lesson(lesson: Dictionary) -> void:
 	_refresh_multiplayer_deck_options()
 	var selected_practice_deck := _get_selected_multiplayer_deck()
 	_match_launch_queued = false
-	_cleanup_lobby(true)
 	_close_tutorial_coach_overlay()
 	var practice_game = _show_embedded_game("PracticeThor")
 	show_game()
@@ -7114,7 +7158,6 @@ func _format_rules_text(markdown: String) -> String:
 
 func _on_card_test_pressed() -> void:
 	_match_launch_queued = false
-	_cleanup_lobby(true)
 	_show_embedded_game("CardTest")
 	show_game()
 	var card_test: CardTestGame = get_node("GameContainer/CardTest")
@@ -7126,7 +7169,6 @@ func _on_practice_thor_pressed() -> void:
 	_refresh_multiplayer_deck_options()
 	var selected_practice_deck := _get_selected_multiplayer_deck()
 	_match_launch_queued = false
-	_cleanup_lobby(true)
 	var practice_game = _show_embedded_game("PracticeThor")
 	show_game()
 	if practice_game != null:
@@ -7337,9 +7379,6 @@ func _bind_lobby_client_signals() -> void:
 func _on_lobby_connected() -> void:
 	_write_smoke_trace("lobby_connected")
 	status_label.text = "Connected to lobby. Signing in..."
-	if _startup_autologin_in_progress:
-		_set_startup_loading_status("Signing in with saved account...")
-		_set_startup_loading_progress(0.90, 0.3)
 
 func _on_server_version_updated(version: String) -> void:
 	_set_connected_server_version(version)
@@ -7353,6 +7392,10 @@ func _on_match_host_viability_requested() -> void:
 ## host a player-hosted (listen-server) unranked match. No-op when not logged
 ## into a remote lobby (local in-process lobby hosts never need to report).
 func _report_local_host_viability() -> void:
+	# UPnP discovery is synchronous; call_deferred still runs on the UI thread.
+	# Wait for Multiplayer before doing this optional hosting probe.
+	if not _is_multiplayer_screen_active() and (_startup_autologin_in_progress or _pending_background_lobby_auth_completion.is_valid()):
+		return
 	if lobby_client == null or not lobby_client.is_authenticated():
 		return
 	if _is_local_lobby_host:
@@ -7376,6 +7419,20 @@ func _release_player_host_port_mapping() -> void:
 	HostReachabilityProbeScript.remove_mapping(port_to_release)
 
 func _on_lobby_login_succeeded(session_id: String, reconnect_token: String, player_name: String) -> void:
+	if _startup_autologin_in_progress and not _is_multiplayer_screen_active() and _smoke_config.is_empty():
+		_cancel_lobby_sign_in_watchdog()
+		_startup_autologin_in_progress = false
+		_background_lobby_auth_error = ""
+		_lobby_session_id = session_id
+		_lobby_reconnect_token = reconnect_token
+		_pending_background_lobby_auth_completion = Callable(self, "_on_lobby_login_succeeded").bind(session_id, reconnect_token, player_name)
+		# Authentication is already complete: update the small identity UI now.
+		# Keep profile persistence, deck sync and rejoin handling deferred.
+		_refresh_account_identity_label()
+		_refresh_auth_controls()
+		player_name_line_edit.text = _get_effective_identity_name(player_name)
+		return
+	_background_lobby_auth_error = ""
 	_lobby_auto_reconnect_was_active = false
 	_write_smoke_trace("lobby_login_succeeded session=%s player=%s host=%s" % [session_id, player_name, str(_is_local_lobby_host)])
 	if _retry_account_switch_if_identity_mismatch(player_name):
@@ -7461,7 +7518,21 @@ func _on_lobby_reconnect_succeeded(
 	room: Dictionary,
 	active_match_info: Dictionary
 ) -> void:
+	if _startup_autologin_in_progress and not _is_multiplayer_screen_active() and _smoke_config.is_empty():
+		_cancel_lobby_sign_in_watchdog()
+		_startup_autologin_in_progress = false
+		_background_lobby_auth_error = ""
+		_lobby_session_id = session_id
+		_lobby_reconnect_token = reconnect_token
+		_pending_background_lobby_auth_completion = Callable(self, "_on_lobby_reconnect_succeeded").bind(session_id, reconnect_token, player_name, room.duplicate(true), active_match_info.duplicate(true))
+		# Authentication is already complete: update the small identity UI now.
+		# Keep profile persistence, deck sync and rejoin handling deferred.
+		_refresh_account_identity_label()
+		_refresh_auth_controls()
+		player_name_line_edit.text = _get_effective_identity_name(player_name)
+		return
 	_write_smoke_trace("lobby_reconnect_succeeded session=%s player=%s" % [session_id, player_name])
+	_background_lobby_auth_error = ""
 	_lobby_auto_reconnect_was_active = false
 	if _retry_account_switch_if_identity_mismatch(player_name):
 		return
@@ -8070,8 +8141,7 @@ func _on_lobby_disconnected() -> void:
 		_lobby_auto_reconnect_was_active = false
 	status_label.text = message
 	if restore_auth_prompt:
-		_maybe_show_auth_onboarding(true)
-		_set_auth_onboarding_hint(message, true)
+		_show_auth_recovery_prompt(message)
 	_maybe_check_for_update_after_lobby_failure(message)
 	if _should_ignore_lobby_failure_for_smoke():
 		return
@@ -8205,18 +8275,29 @@ func _return_to_menu() -> void:
 	multiplayer_container.visible = false
 	show_menu()
 	_match_launch_queued = false
-	_cleanup_lobby(true)
 	_pending_leave_room_id = room_to_leave
+	_clear_pending_new_seek_actions()
 	for node_name in _get_embedded_game_node_names():
 		var game = get_node_or_null("GameContainer/" + node_name)
 		if game and game.has_method("cleanup"):
 			game.cleanup()
+		if game != null and node_name == "Story":
+			game_container.remove_child(game)
+			game.queue_free()
+	_clear_saved_match_resume()
 	var db := game_container.get_node_or_null("DeckBuilder")
 	if db:
 		db.queue_free()
 	_refresh_server_version_overlay_visibility()
 	multiplayer_container.visible = false
-	_maybe_connect_authenticated_lobby("Reconnecting to lobby...")
+	# Local modes keep the live lobby; online matches restore the saved session.
+	if lobby_client != null and lobby_client.is_authenticated():
+		if not _pending_leave_room_id.is_empty():
+			_maybe_leave_pending_room(lobby_client.current_room_snapshot, lobby_client.current_active_match_info)
+	elif lobby_client == null or (not lobby_client.is_transport_connected() and not lobby_client.is_auto_reconnecting()):
+		if lobby_client != null:
+			_cleanup_lobby(false)
+		_maybe_connect_authenticated_lobby("Restoring lobby session...")
 
 func _suppress_active_match_auto_resume_from_embedded_games() -> void:
 	for node_name in _get_embedded_game_node_names():
@@ -8369,6 +8450,7 @@ func _cleanup_lobby(clear_session: bool) -> void:
 	_refresh_multiplayer_action_state()
 
 func _cleanup_lobby_client() -> void:
+	_pending_background_lobby_auth_completion = Callable()
 	_cancel_lobby_sign_in_watchdog()
 	if lobby_client == null:
 		return

@@ -2,6 +2,7 @@ extends EquipmentCard
 class_name RunicShortsword
 
 const ART_PATH := "res://images/card_art/equipment/NorseShortswordEdit.png"
+const ALT_ART_PATH := "res://images/card_art/equipment/NorseShortswordAlt.png"
 
 func _init() -> void:
 	super._init()
@@ -15,3 +16,4 @@ func _init() -> void:
 	flavor_text = ""
 	artist = "Lorinda Tomko"
 	art_path = ART_PATH
+	art_variants = [ART_PATH, ALT_ART_PATH]

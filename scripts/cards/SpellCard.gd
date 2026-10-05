@@ -58,6 +58,8 @@ func can_activate_prepared(game_manager: GameManager, player: Player) -> bool:
 		return false
 	if not is_prepared:
 		return false
+	if is_activation_locked(game_manager):
+		return false
 	if current_zone == null or not current_zone.is_board_zone():
 		return false
 	return can_be_played(game_manager, player)

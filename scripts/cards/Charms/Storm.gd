@@ -1,4 +1,4 @@
-extends CharmCard
+extends SpellCard
 class_name Storm
 
 const STORM_AERIAL_STATUS := "storm_aerial_loss"
@@ -7,23 +7,23 @@ func _init() -> void:
 	super._init()
 	card_name = "Storm"
 	culture = "Neutral"
-	card_types = ["Charm", "Weather", "Permanent"]
+	card_types = ["Spell", "Weather", "Permanent"]
 	level = 2
 	mana_cost = 0
-	speed = 3
+	speed = 1
 	sacrifice_cost = 0
 	flavor_text = ""
 	artist = "CC0"
 	art_path = "res://images/card_art/charms/StormEdit.png"
-	ability_text = "Destroy any face-up [b]Weather[/b] charms. All [b]Aerial[/b] creatures lose that classification and get -7 STR and -2 SPD. All non-passive creature abilities are silenced while this remains face-up."
+	ability_text = "Destroy any face-up [b]Weather[/b] spells. All [b]Aerial[/b] creatures lose that classification and get -7 STR and -2 SPD. All non-passive creature abilities are silenced while this remains face-up."
 
-func goes_to_graveyard_after_use() -> bool:
+func should_go_to_graveyard() -> bool:
 	return false
 
 func resolve(game_manager: GameManager, _target = null) -> void:
 	if game_manager == null:
 		return
-	_destroy_face_up_weather_charms(game_manager)
+	_destroy_face_up_weather_spells(game_manager)
 	_refresh_storm_field(game_manager)
 	game_manager.note_player_feedback(card_name + " lashes the battlefield with violent winds.")
 
@@ -54,7 +54,7 @@ func on_unmuted(game_manager: GameManager) -> void:
 	if _is_active():
 		_refresh_storm_field(game_manager)
 
-func _destroy_face_up_weather_charms(game_manager: GameManager) -> void:
+func _destroy_face_up_weather_spells(game_manager: GameManager) -> void:
 	if game_manager == null:
 		return
 	var doomed_cards: Array[Card] = []
@@ -62,7 +62,7 @@ func _destroy_face_up_weather_charms(game_manager: GameManager) -> void:
 		for card in game_manager.get_field_cards(player):
 			if card == null or card == self:
 				continue
-			if not (card is CharmCard):
+			if not (card is SpellCard):
 				continue
 			if card.is_face_down or not card.has_type("Weather"):
 				continue

@@ -260,7 +260,9 @@ func _validate_config(config: Dictionary) -> String:
 func _on_game_ended(_winner: Player, _loser: Player) -> void:
 	var winner_index := game_manager.players.find(_winner) if game_manager != null else -1
 	var result_message := _get_current_game_result_message()
-	var series_snapshot: Dictionary = match_session.record_series_game_win(winner_index) if match_session != null else {}
+	var series_snapshot: Dictionary = {}
+	if match_session != null:
+		series_snapshot = match_session.record_series_game_win(winner_index) if winner_index >= 0 else match_session.get_series_snapshot()
 	if match_session != null \
 			and game_manager != null \
 			and game_manager.game_end_reason == GameManager.GAME_END_REASON_MATCH_FORFEIT \
@@ -501,14 +503,12 @@ func _shutdown_abandoned_match(reason: String) -> void:
 	shutdown_timer.timeout.connect(Callable(tree, "quit"))
 
 func _record_match_result(winner: Player, loser: Player) -> void:
-	if match_session == null or game_manager == null or winner == null or loser == null:
+	if match_session == null or game_manager == null:
 		return
 	if not match_session.is_ranked:
 		return
 	var winner_index: int = game_manager.players.find(winner)
 	var loser_index: int = game_manager.players.find(loser)
-	if winner_index < 0 or loser_index < 0:
-		return
 	var record_result: Dictionary = _match_history_store.record_completed_match(
 		match_session,
 		winner_index,

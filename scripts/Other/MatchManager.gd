@@ -2839,7 +2839,7 @@ func _assign_stack_display_zone(action: CardAction, preferred_zone: Zone = null)
 		return
 	action.display_zone = _find_available_stack_display_zone(action.source_player)
 
-func _place_persistent_charm_on_board(charm: CharmCard, display_zone: Zone = null) -> void:
+func _place_persistent_magic_on_board(charm: Card, display_zone: Zone = null) -> void:
 	if charm == null or charm.card_owner == null:
 		return
 	if charm.goes_to_graveyard_after_use():
@@ -3685,6 +3685,7 @@ func can_attack(card: Card) -> bool:
 		card.card_type == Card.CardType.CREATURE
 		and card.get_controller() == game_manager.current_player
 		and not card.summoned_after_first_attack_this_turn
+		and not game_manager.is_first_turn_attack_blocked_by_weather(card)
 		and card.can_take_major_creature_action()
 		and not card.is_sleeping
 		and not card.has_status_effect("cannot_attack")
@@ -3704,6 +3705,8 @@ func get_attack_invalid_reason(card: Card) -> String:
 		return "Choose a target for %s before attacking." % get_targeting_name()
 	if _has_unresolved_stack_action_window():
 		return "Resolve the pending stack action before attacking."
+	if game_manager.is_first_turn_attack_blocked_by_weather(card):
+		return card.card_name + " cannot attack on the turn it enters play while Heavy Snow is active."
 	if card.summoned_after_first_attack_this_turn:
 		return card.card_name + " cannot attack because it was summoned after the first attack resolved this turn."
 	if not card.can_take_major_creature_action():
@@ -4586,6 +4589,25 @@ func _process_command_impl(command: Dictionary) -> bool:
 			if card == null or equipment == null:
 				move_failed.emit("equip_action: invalid card or equipment")
 				return false
+			var equipment_interceptor_uid := str(command.get("interceptor_uid", ""))
+			if not equipment_interceptor_uid.is_empty():
+				var equipment_interceptor := game_manager.get_card_by_uid(equipment_interceptor_uid)
+				if action not in ["steal", "destroy"] \
+						or equipment_interceptor == null \
+						or equipment_interceptor not in _get_possible_interceptors(card, equipment):
+					move_failed.emit("equip_action: invalid interceptor")
+					return false
+				equipment_interceptor.spend_major_creature_action()
+				game_manager.record_interception(equipment_interceptor)
+				var intercepted_action := CardAction.new()
+				intercepted_action.type = CardAction.Type.ATTACK
+				intercepted_action.source_player = card.get_controller()
+				intercepted_action.attacker = card
+				intercepted_action.target = equipment
+				intercepted_action.interceptor = equipment_interceptor
+				_resolve_attack(intercepted_action)
+				move_validated.emit(command)
+				return true
 			if not game_manager.resolve_creature_equipment_action(card, equipment, action):
 				move_failed.emit("equip_action failed")
 				return false
@@ -4855,6 +4877,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 			var spell_command_display_zone := _resolve_command_display_zone(command, player)
 			var preferred_display_zone: Zone = spell.current_zone if prepared_spell else spell_command_display_zone
 			var spell_resolve := func() -> void:
+				_place_persistent_magic_on_board(spell, preferred_display_zone)
 				game_manager.notify_spell_played(player, spell)
 				(spell as SpellCard).resolve_from_command(game_manager, command)
 				if (spell as SpellCard).should_go_to_graveyard() and spell.current_zone != player.graveyard_zone:
@@ -5116,7 +5139,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 			var charm_command_display_zone := _resolve_command_display_zone(command, charm_card.card_owner)
 			var preferred_display_zone: Zone = charm_card.current_zone if charm_prepared else charm_command_display_zone
 			var charm_resolve := func() -> void:
-				_place_persistent_charm_on_board(charm_card, preferred_display_zone)
+				_place_persistent_magic_on_board(charm_card, preferred_display_zone)
 				charm_card.resolve(game_manager, charm_target)
 				if charm_card.goes_to_graveyard_after_use() \
 						and charm_card.current_zone != null \
@@ -5988,7 +6011,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 				return true
 			var target := game_manager.get_card_by_uid(target_uid)
 			if target == null or target not in valid_targets:
-				move_failed.emit("pai_long_autumn_king_choice: invalid Weather charm target")
+				move_failed.emit("pai_long_autumn_king_choice: invalid Weather spell target")
 				return false
 			game_manager.note_player_feedback(card.resolve_stormcloud_impact(game_manager, target))
 			move_validated.emit(command)
@@ -6492,7 +6515,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 			pcr_action.target = pcr_target
 			pcr_action.response_to = pcr_source
 			pcr_action.resolve_callback = func() -> void:
-				_place_persistent_charm_on_board(pcr_charm_card, pcr_action.display_zone)
+				_place_persistent_magic_on_board(pcr_charm_card, pcr_action.display_zone)
 				pcr_charm_card.resolve(game_manager, pcr_target)
 				if pcr_charm_card.goes_to_graveyard_after_use() \
 						and pcr_charm_card.current_zone != null \

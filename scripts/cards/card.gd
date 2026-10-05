@@ -13,6 +13,7 @@ enum CreatureMode { AGGRESSIVE, DEFENSIVE }
 @export var is_god: bool = false
 @export var is_power: bool = false
 @export var is_token: bool = false
+@export var is_single_player_card: bool = false
 @export var can_be_used_for_creature_sacrifice: bool = true
 
 # Card types (warrior, mage, etc.) - can have multiple

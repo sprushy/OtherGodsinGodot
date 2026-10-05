@@ -1,8 +1,8 @@
 class_name SnowV2ScreenOverlay
 extends Control
 
-const MAX_FLAKES := 320
-const MIN_FLAKES := 55
+const MAX_FLAKES := 640
+const MIN_FLAKES := 90
 const FLAKE_ATLAS_COLUMNS := 11
 const FLAKE_ATLAS_ROWS := 10
 
@@ -10,12 +10,14 @@ var snowflake_texture: Texture2D = null
 var paintbrush_texture: Texture2D = null
 var flake_atlas_texture: Texture2D = null
 var wind_wisp_texture: Texture2D = null
+var melt_over_entire_screen: bool = false
 
 var _active: bool = false
 var _strength: float = 0.0
 var _wind_direction: Vector2 = Vector2(-1.0, 0.18)
 var _wind_force: float = 1.0
 var _flakes: Array[Dictionary] = []
+var _landed_flakes: Array[Dictionary] = []
 var _rng := RandomNumberGenerator.new()
 var _time: float = 0.0
 
@@ -25,14 +27,15 @@ func _init() -> void:
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
-	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	size = get_viewport_rect().size
+	set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
+	_sync_viewport_bounds()
+	get_viewport().size_changed.connect(_sync_viewport_bounds)
 	_rng.seed = 47027
 	set_process(false)
 	visible = false
 
 func set_weather(active: bool, strength: float, wind_direction: Vector2, wind_force: float) -> void:
-	size = get_viewport_rect().size
+	_sync_viewport_bounds()
 	_active = active
 	_strength = clampf(strength, 0.0, 1.0)
 	if wind_direction.length_squared() > 0.001:
@@ -42,6 +45,15 @@ func set_weather(active: bool, strength: float, wind_direction: Vector2, wind_fo
 	set_process(visible)
 	if visible and _flakes.is_empty():
 		_seed_flakes()
+	if not visible:
+		_flakes.clear()
+		_landed_flakes.clear()
+	queue_redraw()
+
+func _sync_viewport_bounds() -> void:
+	position = Vector2.ZERO
+	size = get_viewport_rect().size
+	clip_contents = false
 	queue_redraw()
 
 func _process(delta: float) -> void:
@@ -59,6 +71,10 @@ func _process(delta: float) -> void:
 		_flakes.append(_make_flake(rect_size, false))
 	while _flakes.size() > target_count:
 		_flakes.pop_back()
+	if melt_over_entire_screen:
+		_advance_surface_flakes(delta, rect_size)
+		queue_redraw()
+		return
 
 	var wind_sign := 1.0
 	if _wind_direction.x < 0.0:
@@ -69,7 +85,7 @@ func _process(delta: float) -> void:
 		var drift := absf(float(flake.get("drift", 0.0))) * wind_sign
 		var fall_speed := float(flake.get("fall", 60.0))
 		var wind_velocity := Vector2(
-			_wind_direction.x * _wind_force * 155.0 + drift,
+			_wind_direction.x * _wind_force * 195.0 + drift,
 			maxf(0.15, 1.0 + _wind_direction.y * 0.25) * fall_speed
 		)
 		pos += wind_velocity * delta
@@ -87,16 +103,58 @@ func _draw() -> void:
 	if rect_size.x <= 4.0 or rect_size.y <= 4.0:
 		return
 
-	var veil_alpha := 0.018 + _strength * 0.052
+	var veil_alpha := 0.025 + _strength * 0.075
 	draw_rect(Rect2(Vector2.ZERO, rect_size), Color(0.82, 0.90, 1.0, veil_alpha), true)
 	_draw_wind_wisps(rect_size)
 	_draw_soft_accumulation(rect_size)
+	_draw_surface_melt()
 	_draw_flakes()
+
+func _advance_surface_flakes(delta: float, rect_size: Vector2) -> void:
+	for i in range(_landed_flakes.size() - 1, -1, -1):
+		var landed := _landed_flakes[i]
+		landed["age"] = float(landed.get("age", 0.0)) + delta
+		if float(landed["age"]) >= float(landed["lifetime"]):
+			_landed_flakes.remove_at(i)
+	for i in range(_flakes.size()):
+		var flake := _flakes[i]
+		var remaining := maxf(0.0, float(flake["remaining"]) - delta)
+		var duration := float(flake["flight_time"])
+		var landing: Vector2 = flake["landing"]
+		var velocity: Vector2 = flake["velocity"]
+		flake["remaining"] = remaining
+		flake["pos"] = landing - velocity * remaining
+		flake["alpha"] = float(flake["surface_alpha"]) * minf(1.0, (duration - remaining) / 0.2)
+		if remaining <= 0.0:
+			var landed := flake.duplicate()
+			landed["age"] = 0.0
+			landed["lifetime"] = _rng.randf_range(1.4, 3.4)
+			_landed_flakes.append(landed)
+			while _landed_flakes.size() > MAX_FLAKES:
+				_landed_flakes.pop_front()
+			flake = _make_flake(rect_size, true)
+		_flakes[i] = flake
+
+func _draw_surface_melt() -> void:
+	for flake in _landed_flakes:
+		var progress := clampf(float(flake["age"]) / float(flake["lifetime"]), 0.0, 1.0)
+		var pos: Vector2 = flake["landing"]
+		var flake_size := float(flake["size"]) * 0.85 * lerpf(1.0, 0.35, progress)
+		var alpha := float(flake["surface_alpha"]) * (1.0 - progress)
+		var rect := Rect2(pos - Vector2.ONE * flake_size * 0.5, Vector2.ONE * flake_size)
+		var tint := Color(0.96, 0.99, 1.0, alpha)
+		if flake_atlas_texture != null:
+			draw_texture_rect_region(flake_atlas_texture, rect, _get_flake_atlas_region(flake), tint)
+		elif snowflake_texture != null:
+			draw_texture_rect(snowflake_texture, rect, false, tint)
+		if paintbrush_texture != null:
+			var patch_size := Vector2(flake_size * 1.8, flake_size * 0.7)
+			draw_texture_rect(paintbrush_texture, Rect2(pos - patch_size * 0.5, patch_size), false, Color(0.88, 0.95, 1.0, alpha * 0.24))
 
 func _draw_flakes() -> void:
 	for flake in _flakes:
 		var pos: Vector2 = flake.get("pos", Vector2.ZERO)
-		var flake_size := float(flake.get("size", 4.0))
+		var flake_size := float(flake.get("size", 4.0)) * 1.15
 		var alpha := float(flake.get("alpha", 0.55)) * (0.45 + _strength * 0.65)
 		var rect := Rect2(pos - Vector2(flake_size, flake_size) * 0.5, Vector2(flake_size, flake_size))
 		var tint := Color(0.90, 0.96, 1.0, clampf(alpha, 0.0, 0.95))
@@ -113,7 +171,7 @@ func _draw_wind_wisps(rect_size: Vector2) -> void:
 	var texture_size := wind_wisp_texture.get_size()
 	if texture_size.x <= 1.0 or texture_size.y <= 1.0:
 		return
-	var alpha := 0.045 + _strength * 0.075
+	var alpha := 0.06 + _strength * 0.10
 	var offset := fmod(_time * (18.0 + 38.0 * _wind_force), rect_size.x)
 	for i in range(2):
 		var y := rect_size.y * (0.22 + float(i) * 0.34)
@@ -163,14 +221,26 @@ func _make_flake(rect_size: Vector2, start_above: bool) -> Dictionary:
 	var y := _rng.randf_range(-rect_size.y, rect_size.y)
 	if start_above:
 		y = _rng.randf_range(-40.0, -6.0)
-	return {
+	var flake: Dictionary = {
 		"pos": Vector2(_rng.randf_range(-32.0, rect_size.x + 32.0), y),
 		"size": _rng.randf_range(2.2, 8.5 + _strength * 7.0),
 		"alpha": _rng.randf_range(0.30, 0.78),
-		"fall": _rng.randf_range(42.0, 140.0 + _strength * 90.0),
+		"fall": _rng.randf_range(42.0, 175.0 + _strength * 120.0),
 		"drift": _rng.randf_range(4.0, 32.0),
 		"sway_rate": _rng.randf_range(0.7, 1.8),
 		"phase": _rng.randf_range(0.0, TAU),
 		"atlas_col": _rng.randi_range(0, FLAKE_ATLAS_COLUMNS - 1),
 		"atlas_row": _rng.randi_range(2, FLAKE_ATLAS_ROWS - 3),
 	}
+	if melt_over_entire_screen:
+		var duration := _rng.randf_range(0.7, 2.1)
+		var landing := Vector2(_rng.randf_range(0.0, rect_size.x), _rng.randf_range(0.0, rect_size.y))
+		var velocity := Vector2(_wind_direction.x * _wind_force * 105.0, float(flake["fall"]))
+		var remaining := duration if start_above else _rng.randf_range(0.0, duration)
+		flake["landing"] = landing
+		flake["velocity"] = velocity
+		flake["flight_time"] = duration
+		flake["remaining"] = remaining
+		flake["surface_alpha"] = float(flake["alpha"])
+		flake["pos"] = landing - velocity * remaining
+	return flake
