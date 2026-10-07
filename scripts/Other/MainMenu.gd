@@ -732,7 +732,8 @@ func _layout_startup_splash_background(force_entry_offsets: bool = false) -> voi
 func _get_startup_splash_draw_rect(texture_size: Vector2, available_size: Vector2) -> Rect2:
 	if texture_size.x <= 0.0 or texture_size.y <= 0.0 or available_size.x <= 0.0 or available_size.y <= 0.0:
 		return Rect2(Vector2.ZERO, available_size)
-	var fit_scale := maxf(available_size.x / texture_size.x, available_size.y / texture_size.y)
+	# Fit the whole splash on every aspect ratio; the background fill covers spare space.
+	var fit_scale := minf(available_size.x / texture_size.x, available_size.y / texture_size.y)
 	var scaled_size := texture_size * fit_scale
 	return Rect2((available_size - scaled_size) * 0.5, scaled_size)
 

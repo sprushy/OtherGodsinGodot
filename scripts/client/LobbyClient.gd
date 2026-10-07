@@ -4,6 +4,7 @@ class_name LobbyClient
 const LobbyProtocolScript = preload("res://scripts/network/LobbyProtocol.gd")
 const AppReleaseInfoScript = preload("res://scripts/client/AppReleaseInfo.gd")
 const NetworkManagerScript = preload("res://scripts/Other/NetworkManager.gd")
+const WebSocketEndpointsScript = preload("res://scripts/network/WebSocketEndpoints.gd")
 const LOBBY_EVENT_TYPE := "__lobby_event__"
 const CONNECT_ATTEMPT_TIMEOUT_SECONDS := 5.0
 const INITIAL_AUTH_RETRY_INTERVAL_SECONDS := 0.1
@@ -18,11 +19,8 @@ const AUTO_RECONNECT_BACKOFF_SECONDS := [1.0, 2.0, 4.0, 8.0, 12.0]
 const AUTO_RECONNECT_BACKOFF_MAX_SECONDS := 12.0
 const ALLOW_INSECURE_ACCOUNT_AUTH_ENV := "OTHERGODS_ALLOW_INSECURE_ACCOUNT_AUTH"
 const ALLOW_INSECURE_ACCOUNT_AUTH_SETTING := "application/config/allow_insecure_account_auth"
-# Transport fallback ladder for restrictive networks (campus/corporate
-# firewalls): try the default ENet port, then ENet on 443 (QUIC-trained hole),
-# then WebSocket over TCP 443. OTHERGODS_LOBBY_TRANSPORT=enet|ws pins one
-# transport for testing. The last transport that worked is remembered per
-# machine so later sessions start where they last succeeded.
+# OTHERGODS_LOBBY_TRANSPORT=enet|ws pins a transport for testing.
+# A configured TLS endpoint is preferred over UDP on restrictive networks.
 const TRANSPORT_OVERRIDE_ENV := "OTHERGODS_LOBBY_TRANSPORT"
 const TRANSPORT_PERSIST_PATH := "user://lobby_transport.cfg"
 
@@ -157,9 +155,6 @@ func connect_to_server(
 	_last_server_address = connect_address
 	_last_server_port = port
 	_password_auth_allowed_for_current_connection = _can_send_password_auth_to_address(connect_address)
-	if _password_auth_would_be_sent_immediately() and not _password_auth_allowed_for_current_connection:
-		connection_failed.emit(_insecure_account_auth_message())
-		return ERR_UNAUTHORIZED
 
 	_ensure_network_manager()
 	if network_manager == null:
@@ -172,11 +167,13 @@ func connect_to_server(
 
 ## Build the ordered transport attempts for reaching the lobby. An explicit
 ## non-default port (local/private server) keeps the old single-ENet behavior
-## unless a transport override is set. The ws override always targets the
-## standard WebSocket port, which is where servers listen for it by default.
+## unless a transport override or explicit WebSocket URL is supplied.
 func _build_transport_attempts(address: String, requested_port: int) -> Array[Dictionary]:
 	var attempts: Array[Dictionary] = []
 	var transport_override := OS.get_environment(TRANSPORT_OVERRIDE_ENV).strip_edges().to_lower()
+	if WebSocketEndpointsScript.is_websocket_url(address):
+		attempts.append(_websocket_attempt(address))
+		return attempts
 	if transport_override == NetworkManagerScript.TRANSPORT_ENET:
 		attempts.append({
 			"transport": NetworkManagerScript.TRANSPORT_ENET,
@@ -192,24 +189,24 @@ func _build_transport_attempts(address: String, requested_port: int) -> Array[Di
 			"port": requested_port,
 		})
 		return attempts
-	if _load_preferred_transport() == NetworkManagerScript.TRANSPORT_WEBSOCKET:
+	var prefer_websocket := _load_preferred_transport() == NetworkManagerScript.TRANSPORT_WEBSOCKET \
+		or not WebSocketEndpointsScript.public_base_url().is_empty() \
+		or not _can_send_password_auth_to_address(address)
+	if prefer_websocket:
 		attempts.append(_websocket_attempt(address))
-	attempts.append({
-		"transport": NetworkManagerScript.TRANSPORT_ENET,
-		"port": LobbyProtocolScript.PORT,
-	})
-	attempts.append({
-		"transport": NetworkManagerScript.TRANSPORT_ENET,
-		"port": LobbyProtocolScript.FALLBACK_UDP_PORT,
-	})
-	if _load_preferred_transport() != NetworkManagerScript.TRANSPORT_WEBSOCKET:
+	if _can_send_password_auth_to_address(address):
+		attempts.append({
+			"transport": NetworkManagerScript.TRANSPORT_ENET,
+			"port": LobbyProtocolScript.PORT,
+		})
+	if not prefer_websocket:
 		attempts.append(_websocket_attempt(address))
 	return attempts
 
 func _websocket_attempt(address: String) -> Dictionary:
 	return {
 		"transport": NetworkManagerScript.TRANSPORT_WEBSOCKET,
-		"url": "ws://%s:%d" % [address, LobbyProtocolScript.WS_PORT],
+		"url": WebSocketEndpointsScript.lobby_url(address),
 	}
 
 func _start_next_transport_attempt() -> Error:
@@ -221,6 +218,10 @@ func _start_next_transport_attempt() -> Error:
 	var connect_err: Error = ERR_UNAVAILABLE
 	if transport == NetworkManagerScript.TRANSPORT_WEBSOCKET:
 		var url := str(attempt.get("url", ""))
+		_password_auth_allowed_for_current_connection = url.begins_with("wss://") \
+			or _can_send_password_auth_to_address(_last_server_address)
+		if _password_auth_would_be_sent_immediately() and not _password_auth_allowed_for_current_connection:
+			return _advance_transport_attempt(false)
 		_trace("connect attempt %d/%d transport=websocket url=%s" % [
 			_transport_attempt_index + 1,
 			_transport_attempts.size(),
@@ -228,6 +229,9 @@ func _start_next_transport_attempt() -> Error:
 		])
 		connect_err = network_manager.create_client_websocket(url)
 	else:
+		_password_auth_allowed_for_current_connection = _can_send_password_auth_to_address(_last_server_address)
+		if _password_auth_would_be_sent_immediately() and not _password_auth_allowed_for_current_connection:
+			return _advance_transport_attempt(false)
 		var attempt_port := int(attempt.get("port", 0))
 		_trace("connect attempt %d/%d transport=enet host=%s port=%d" % [
 			_transport_attempt_index + 1,
@@ -522,7 +526,7 @@ func lobby_event(message: Dictionary) -> void:
 			var hello_room = payload.get("room", {})
 			current_room_snapshot = hello_room.duplicate(true) if hello_room is Dictionary else {}
 			var hello_active_match = payload.get("active_match_info", {})
-			current_active_match_info = hello_active_match.duplicate(true) if hello_active_match is Dictionary else {}
+			current_active_match_info = _prepare_match_info(hello_active_match)
 			current_preferred_account_deck_id = ""
 			login_succeeded.emit(current_session_id, current_reconnect_token, current_player_name)
 		LobbyProtocolScript.LOBBY_RECONNECT_OK:
@@ -544,7 +548,7 @@ func lobby_event(message: Dictionary) -> void:
 			var room = payload.get("room", {})
 			current_room_snapshot = room.duplicate(true) if room is Dictionary else {}
 			var active_match = payload.get("active_match_info", {})
-			current_active_match_info = active_match.duplicate(true) if active_match is Dictionary else {}
+			current_active_match_info = _prepare_match_info(active_match)
 			current_preferred_account_deck_id = ""
 			reconnect_succeeded.emit(
 				current_session_id,
@@ -578,8 +582,8 @@ func lobby_event(message: Dictionary) -> void:
 				return
 			room_error.emit(error_message)
 		LobbyProtocolScript.MATCH_ASSIGNED:
-			current_active_match_info = payload.duplicate(true)
-			match_assigned.emit(payload)
+			current_active_match_info = _prepare_match_info(payload)
+			match_assigned.emit(current_active_match_info)
 		LobbyProtocolScript.ACCOUNT_DECK_LIST:
 			current_preferred_account_deck_id = str(payload.get("preferred_deck_id", current_preferred_account_deck_id)).strip_edges()
 			account_deck_list_received.emit(payload.get("decks", []), current_preferred_account_deck_id)
@@ -600,6 +604,13 @@ func lobby_event(message: Dictionary) -> void:
 				account_settings_updated.emit((account as Dictionary).duplicate(true))
 		LobbyProtocolScript.MATCH_HOST_VIABILITY_REQUEST:
 			match_host_viability_requested.emit()
+
+func _prepare_match_info(value) -> Dictionary:
+	if not (value is Dictionary) or value.is_empty():
+		return {}
+	var info: Dictionary = value.duplicate(true)
+	info["prefer_websocket"] = network_manager != null and network_manager.peer is WebSocketMultiplayerPeer
+	return info
 
 func _on_connected_to_server() -> void:
 	_cancel_connect_attempt_timeout()

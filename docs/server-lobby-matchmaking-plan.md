@@ -53,7 +53,7 @@ Recommended later deployment:
 
 ### Account auth transport guard
 
-Password login/register currently uses the Godot ENet lobby transport, which is not encrypted in this high-level `ENetMultiplayerPeer` path. Release clients and dedicated lobbies normally refuse raw password auth for non-local lobbies. The current public alpha build explicitly sets `application/config/allow_insecure_account_auth=true` so account migration, decks, and friends remain usable on the trusted/private lobby while this system is being tested. Set `OTHERGODS_ALLOW_INSECURE_ACCOUNT_AUTH=1` or keep the project setting enabled only for trusted/private deployments; before a broader public launch, move the lobby auth path to DTLS, HTTPS, or another encrypted transport.
+The lobby and dedicated matches support verified TLS WebSocket endpoints on public TCP 443 alongside ENet. See [restrictive network setup](restrictive-network-websocket.md) for the domain, proxy, and client configuration. ENet itself is not encrypted in this high-level `ENetMultiplayerPeer` path. The current public alpha build sets `application/config/allow_insecure_account_auth=true` for legacy UDP password auth; verified WSS password auth works without that flag. Disable it after deploying the TLS endpoint if password auth should require encryption.
 
 ### Client flow
 

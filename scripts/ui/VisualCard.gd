@@ -1105,6 +1105,10 @@ func _input(event: InputEvent) -> void:
 			return
 		if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
 			if not _dragging:
+				# Small finger movements should still count as a hand-card tap on iOS.
+				if _hand_mode and OS.has_feature("ios") \
+						and (get_global_mouse_position() - global_position - _drag_offset).length() < 12.0:
+					return
 				_start_drag()
 			_update_ghost_position()
 	elif event is InputEventMouseButton:

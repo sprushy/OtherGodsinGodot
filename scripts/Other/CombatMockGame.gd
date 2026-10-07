@@ -6030,7 +6030,7 @@ func start_game(
 	headless_match_host.attach(game_manager, match_manager, prompt_router)
 	if server_match_session != null:
 		headless_match_host.configure_match_session(server_match_session)
-	network_manager = headless_match_host.setup_transport(self, is_host, is_client, server_ip, server_port)
+	network_manager = headless_match_host.setup_transport(self, is_host, is_client, server_ip, server_port, true, match_info)
 	match_client = MatchClientScript.new(
 		match_manager,
 		network_manager,
@@ -10609,7 +10609,8 @@ func _update_hand_context_menu_dismissal() -> void:
 	if _is_hand_context_menu_stale(hand_player):
 		_close_context_menu()
 		return
-	if not _is_hand_context_menu_keepalive_point(get_global_mouse_position()):
+	# Touch menus stay open between taps; there is no persistent hover on iOS.
+	if not OS.has_feature("ios") and not _is_hand_context_menu_keepalive_point(get_global_mouse_position()):
 		_close_context_menu()
 
 func _extract_card_keywords(card: Card) -> Array[String]:
@@ -15903,6 +15904,12 @@ func _on_hand_card_pressed(card: Card) -> void:
 	if game_manager != null and game_manager.current_player != null and card.current_zone != game_manager.current_player.hand_zone:
 		_set_action_label_text(card.card_name + " is not playable from this hand right now.")
 		update_ui()
+		return
+	# Keep prompt/priority handling above; ordinary iOS hand taps open play options.
+	if OS.has_feature("ios") and (card.card_type == Card.CardType.SPELL \
+			or card.card_type == Card.CardType.HEX or card is CharmCard \
+			or (card.card_type == Card.CardType.CREATURE and not card.is_god)):
+		_on_hand_card_right_clicked(card)
 		return
 	if card is PermanentHexCard:
 		_select_hand_card(card)
@@ -21348,6 +21355,15 @@ func _input(event: InputEvent) -> void:
 	if _is_visual_linger_active():
 		get_viewport().set_input_as_handled()
 		return
+	# Dismiss before GUI dispatch so the same outside tap can select another card.
+	if OS.has_feature("ios") and _is_hand_context_menu_active() \
+			and event is InputEventMouseButton and event.pressed \
+			and event.button_index == MOUSE_BUTTON_LEFT:
+		var tap_position := get_global_mouse_position()
+		var source_vc := _get_hand_context_menu_source_vc()
+		if not _control_global_rect_has_point(_context_menu, tap_position) \
+				and not (source_vc != null and source_vc.contains_global_point(tap_position)):
+			_close_context_menu()
 	_note_priority_prompt_input_activity(event)
 	if _try_handle_escape_key(event):
 		return

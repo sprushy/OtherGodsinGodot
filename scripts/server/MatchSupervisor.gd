@@ -4,6 +4,7 @@ class_name MatchSupervisor
 const MatchSessionScript = preload("res://scripts/server/MatchSession.gd")
 const ServerPathsScript = preload("res://scripts/server/ServerPaths.gd")
 const JsonStoreScript = preload("res://scripts/server/JsonStore.gd")
+const WebSocketEndpointsScript = preload("res://scripts/network/WebSocketEndpoints.gd")
 const HEADLESS_ENTRY_SCRIPT_PATH := "res://scripts/server/HeadlessMatchServerMain.gd"
 const DEDICATED_SERVER_EXPORT_RELATIVE_PATH := "res://.exports/server/OtherGodsServer.exe"
 const MATCH_STATUS_FILE_STALE_SECONDS := 20
@@ -14,6 +15,7 @@ signal match_closed(match_id: String, room_id: String, final_status: String)
 
 var server_ip: String = "127.0.0.1"
 var default_match_port: int = 12345
+var public_websocket_url: String = ""
 var use_dedicated_headless: bool = true
 var godot_executable_path: String = ""
 var project_path: String = ""
@@ -69,6 +71,9 @@ func create_match(
 		match_id = _generate_match_id()
 
 	var match_port := _allocate_match_port()
+	if match_port <= 0:
+		last_create_match_error = "All dedicated match ports are in use. Try again shortly."
+		return null
 
 	var session := MatchSessionScript.new(
 		match_id,
@@ -83,6 +88,8 @@ func create_match(
 	session.is_ranked = is_ranked
 	session.configure_series_format(best_of)
 	session.mark_active()
+	if player_host_session_id.is_empty():
+		session.match_websocket_url = WebSocketEndpointsScript.match_url(public_websocket_url, match_port)
 	# Player-hosted (listen-server) match: one player runs the authoritative
 	# GameManager in their own process. No dedicated subprocess, no supervisor-
 	# allocated port bound here (the host binds its own). The supervisor does not
@@ -95,11 +102,12 @@ func create_match(
 		session.host_bind_port = int(player_host_bind_port) if player_host_bind_port > 0 else int(player_host_reachable_port)
 	elif use_dedicated_headless and _launch_dedicated_match(session):
 		session.server_mode = MatchSessionScript.SERVER_MODE_DEDICATED_HEADLESS
-	elif use_dedicated_headless and not allow_in_process_fallback:
+	elif use_dedicated_headless and (not allow_in_process_fallback or not public_websocket_url.is_empty()):
 		last_create_match_error = session.process_launch_error
 		return null
 	else:
 		session.server_mode = MatchSessionScript.SERVER_MODE_IN_PROCESS_HOST
+		session.match_websocket_url = ""
 	active_matches[match_id] = session
 	match_created.emit(session)
 	return session
@@ -203,6 +211,10 @@ func _allocate_match_port() -> int:
 		used_ports[int(session.match_port)] = true
 	while used_ports.has(allocated_port):
 		allocated_port += 1
+		if not public_websocket_url.is_empty() and allocated_port >= default_match_port + WebSocketEndpointsScript.MATCH_PORT_COUNT:
+			return -1
+	if allocated_port > 65535:
+		return -1
 	return allocated_port
 
 func _launch_dedicated_match(session) -> bool:

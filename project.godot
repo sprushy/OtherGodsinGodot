@@ -22,6 +22,7 @@ boot_splash/bg_color=Color(0.018, 0.022, 0.038, 1)
 boot_splash/show_image=false
 config/icon="res://images/export_icons/nergal_lion_export_256.png"
 config/default_lobby_host="63.33.96.156"
+config/public_websocket_url=""
 config/allow_insecure_account_auth=true
 
 [autoload]

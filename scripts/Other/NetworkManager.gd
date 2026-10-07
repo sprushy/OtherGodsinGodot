@@ -49,6 +49,7 @@ var last_client_port: int = 12345
 var last_server_error: int = OK
 var trace_file_path: String = ""
 var use_current_scene_relative_path: bool = false
+var managed_multiplayer_root_path: NodePath = NodePath("")
 var validate_match_command_types: bool = true
 ## Server-side: set on the primary (ENet) instance to delegate traffic for
 ## synthetic peer ids to the WebSocket transport instance.
@@ -61,6 +62,8 @@ var _raw_peer_ids_by_synthetic: Dictionary = {}
 var _next_synthetic_peer_id: int = WS_PEER_ID_BASE
 var _managed_multiplayer_api: MultiplayerAPI = null
 var _suppress_disconnect_events_until_msec: int = 0
+var _client_websocket_url: String = ""
+var _websocket_mount: Node = null
 
 ## Maps player_index (0/1) to their ENet peer_id.
 ## Player 0 = host (peer_id 1), Player 1 = first remote client.
@@ -148,6 +151,7 @@ func create_server(port: int = 12345, assign_local_host_player: bool = true) -> 
 	return err
 
 func create_client(address: String = "127.0.0.1", port: int = 12345) -> Error:
+	_client_websocket_url = ""
 	last_client_address = address
 	last_client_port = port
 	var api := _ensure_multiplayer_api()
@@ -167,8 +171,9 @@ func create_client(address: String = "127.0.0.1", port: int = 12345) -> Error:
 	return err
 
 ## Client-side WebSocket transport for restrictive networks. The URL must
-## include the scheme, e.g. ws://host:443 (wss:// once TLS is configured).
+## include the scheme. wss:// uses the engine's certificate verification.
 func create_client_websocket(url: String) -> Error:
+	_client_websocket_url = url
 	last_client_address = url
 	last_client_port = -1
 	var api := _ensure_multiplayer_api()
@@ -176,6 +181,8 @@ func create_client_websocket(url: String) -> Error:
 		_trace("create_client_websocket failed: multiplayer unavailable")
 		return ERR_UNAVAILABLE
 	var ws_peer := WebSocketMultiplayerPeer.new()
+	ws_peer.inbound_buffer_size = MAX_GAME_EVENT_PAYLOAD_BYTES * 2
+	ws_peer.outbound_buffer_size = MAX_GAME_EVENT_PAYLOAD_BYTES * 2
 	var err := ws_peer.create_client(url)
 	if err == OK:
 		peer = ws_peer
@@ -189,15 +196,17 @@ func create_client_websocket(url: String) -> Error:
 	return err
 
 ## Server-side WebSocket listener. Runs on its own NetworkManager instance so
-## ENet and WebSocket peers coexist; set incoming_peer_id_offset BEFORE calling.
-func create_server_websocket(port: int) -> Error:
+## ENet and WebSocket peers coexist, with synthetic ids on the secondary peer.
+func create_server_websocket(port: int, bind_address: String = "127.0.0.1") -> Error:
 	var api := _ensure_multiplayer_api()
 	if api == null:
 		last_server_error = ERR_UNAVAILABLE
 		_trace("create_server_websocket failed: multiplayer unavailable")
 		return ERR_UNAVAILABLE
 	var ws_peer := WebSocketMultiplayerPeer.new()
-	var err := ws_peer.create_server(port)
+	ws_peer.inbound_buffer_size = MAX_GAME_EVENT_PAYLOAD_BYTES * 2
+	ws_peer.outbound_buffer_size = MAX_GAME_EVENT_PAYLOAD_BYTES * 2
+	var err := ws_peer.create_server(port, bind_address)
 	if err == OK:
 		peer = ws_peer
 		api.multiplayer_peer = peer
@@ -211,9 +220,56 @@ func create_server_websocket(port: int) -> Error:
 		_trace("websocket create_server failed on port %d error=%d" % [port, err])
 	return err
 
+func create_match_client(address: String, port: int, websocket_url: String = "", prefer_websocket: bool = false) -> Error:
+	if prefer_websocket and not websocket_url.is_empty():
+		return create_client_websocket(websocket_url)
+	var err := create_client(address, port)
+	_client_websocket_url = websocket_url
+	return err
+
+func start_match_websocket_server(port: int) -> Error:
+	if websocket_transport != null:
+		return ERR_ALREADY_IN_USE
+	# Match RPCs retain the same relative node path as the existing UDP client.
+	_websocket_mount = Node.new()
+	_websocket_mount.name = "MatchWebSocketRoot"
+	get_tree().root.add_child(_websocket_mount)
+	var secondary := get_script().new() as Node
+	secondary.name = name
+	secondary.use_current_scene_relative_path = true
+	secondary.managed_multiplayer_root_path = _websocket_mount.get_path()
+	secondary.is_websocket_transport = true
+	secondary.trace_file_path = trace_file_path
+	_websocket_mount.add_child(secondary)
+	var err: Error = secondary.create_server_websocket(port)
+	if err != OK:
+		_websocket_mount.queue_free()
+		_websocket_mount = null
+		return err
+	websocket_transport = secondary
+	secondary.command_received.connect(func(command: Dictionary, sender: Dictionary) -> void:
+		command_received.emit(command, _build_sender_info(int(sender.get("peer_id", 0))))
+	)
+	secondary.match_join_requested.connect(func(request: Dictionary, sender: Dictionary) -> void:
+		match_join_requested.emit(request, _build_sender_info(int(sender.get("peer_id", 0))))
+	)
+	secondary.peer_connected.connect(func(id: int) -> void: peer_connected.emit(id))
+	secondary.peer_disconnected.connect(func(id: int) -> void: peer_disconnected.emit(id))
+	return OK
+
+func _exit_tree() -> void:
+	if is_instance_valid(_websocket_mount):
+		_websocket_mount.queue_free()
+
 func disconnect_client(suppress_disconnect_events: bool = true) -> void:
 	if suppress_disconnect_events:
 		_suppress_disconnect_events_until_msec = Time.get_ticks_msec() + 1000
+	if is_instance_valid(_websocket_mount):
+		if is_instance_valid(websocket_transport):
+			websocket_transport.disconnect_client(suppress_disconnect_events)
+		_websocket_mount.queue_free()
+		_websocket_mount = null
+		websocket_transport = null
 	var api := _ensure_multiplayer_api()
 	if api != null and api.multiplayer_peer != null:
 		api.multiplayer_peer = null
@@ -232,7 +288,10 @@ func reconnect_client(address: String = "", port: int = -1) -> Error:
 	if connect_address.is_empty():
 		connect_address = last_client_address
 	var connect_port := port if port > 0 else last_client_port
+	var websocket_url := connect_address if connect_address.begins_with("wss://") or connect_address.begins_with("ws://") else _client_websocket_url
 	disconnect_client()
+	if not websocket_url.is_empty():
+		return create_client_websocket(websocket_url)
 	return create_client(connect_address, connect_port)
 
 ## Apply loss-tolerant ENet timeouts to one connected peer. Per-side only, so
@@ -393,7 +452,7 @@ func assign_peer_to_player(target_peer_id: int, player_index: int) -> void:
 	if not is_server:
 		return
 	player_peer_ids[player_index] = target_peer_id
-	rpc_id(target_peer_id, "set_local_player_index", player_index)
+	_rpc_to_peer(target_peer_id, "set_local_player_index", [player_index])
 
 func approve_match_join(target_peer_id: int, player_index: int, match_info: Dictionary = {}) -> void:
 	if not is_server:
@@ -401,15 +460,23 @@ func approve_match_join(target_peer_id: int, player_index: int, match_info: Dict
 	unassign_peer(target_peer_id)
 	if player_index >= 0:
 		player_peer_ids[player_index] = target_peer_id
-		rpc_id(target_peer_id, "set_local_player_index", player_index)
+		_rpc_to_peer(target_peer_id, "set_local_player_index", [player_index])
 	else:
 		register_spectator_peer(target_peer_id)
-	rpc_id(target_peer_id, "notify_match_join_approved", match_info)
+	_rpc_to_peer(target_peer_id, "notify_match_join_approved", [match_info])
 
 func deny_match_join(target_peer_id: int, reason: String) -> void:
 	if not is_server or target_peer_id <= 0:
 		return
-	rpc_id(target_peer_id, "notify_match_join_denied", reason)
+	_rpc_to_peer(target_peer_id, "notify_match_join_denied", [reason])
+
+func _rpc_to_peer(target_peer_id: int, method: String, arguments: Array) -> void:
+	if not is_websocket_transport and websocket_transport != null and target_peer_id >= WS_PEER_ID_BASE:
+		websocket_transport._rpc_to_peer(target_peer_id, method, arguments)
+		return
+	var raw_peer_id := int(_raw_peer_ids_by_synthetic.get(target_peer_id, 0)) if is_websocket_transport else target_peer_id
+	if raw_peer_id > 0 and _has_active_multiplayer_peer():
+		callv("rpc_id", [raw_peer_id, method] + arguments)
 
 func reject_command(peer_id: int, reason: String) -> void:
 	_reject_command_payload(peer_id, reason)
@@ -504,6 +571,8 @@ func _ensure_multiplayer_api() -> MultiplayerAPI:
 		return null
 	var fallback_api := MultiplayerAPI.create_default_interface()
 	var target_path: NodePath = get_path()
+	if managed_multiplayer_root_path != NodePath(""):
+		target_path = managed_multiplayer_root_path
 	get_tree().set_multiplayer(fallback_api, target_path)
 	if use_current_scene_relative_path:
 		_managed_multiplayer_api = fallback_api
@@ -530,7 +599,7 @@ func _reject_command_payload(peer_id: int, reason: String) -> void:
 func _reject_match_join_payload(peer_id: int, reason: String) -> void:
 	_trace("rejected match join payload from peer %d: %s" % [peer_id, reason])
 	if is_server and peer_id > 1:
-		rpc_id(peer_id, "notify_match_join_denied", reason)
+		_rpc_to_peer(peer_id, "notify_match_join_denied", [reason])
 	else:
 		match_join_denied.emit(reason)
 

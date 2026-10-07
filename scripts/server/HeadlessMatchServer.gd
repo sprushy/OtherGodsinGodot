@@ -97,7 +97,7 @@ func start_from_config(config: Dictionary) -> Error:
 
 	var transport_err: Error = network_manager.get("last_server_error") as Error
 	if transport_err != OK:
-		startup_failed.emit("Dedicated match transport failed to bind port %d." % match_session.match_port)
+		startup_failed.emit("Dedicated match transport failed to bind UDP/WebSocket port %d." % match_session.match_port)
 		return transport_err
 
 	if not game_manager.game_ended.is_connected(_on_game_ended):

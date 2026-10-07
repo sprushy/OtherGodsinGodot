@@ -42,7 +42,8 @@ func setup_transport(
 	is_client: bool = false,
 	server_ip: String = "127.0.0.1",
 	server_port: int = 12345,
-	assign_local_host_player: bool = true
+	assign_local_host_player: bool = true,
+	client_match_info: Dictionary = {}
 ) -> Node:
 	_is_host = is_host
 	_is_client = is_client
@@ -72,8 +73,16 @@ func setup_transport(
 			_configure_in_process_authority(assign_local_host_player)
 		else:
 			network_manager.create_server(server_port, assign_local_host_player)
+			if network_manager.last_server_error == OK and match_session != null and not match_session.match_websocket_url.is_empty():
+				var ws_err: Error = network_manager.start_match_websocket_server(server_port)
+				if ws_err != OK:
+					network_manager.last_server_error = ws_err
 	elif is_client:
-		network_manager.create_client(server_ip, server_port)
+		network_manager.create_match_client(
+			server_ip, server_port,
+			str(client_match_info.get("match_websocket_url", "")),
+			bool(client_match_info.get("prefer_websocket", false))
+		)
 	else:
 		network_manager.is_server = true
 		network_manager.local_player_index = 0

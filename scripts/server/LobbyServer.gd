@@ -7,6 +7,7 @@ const LobbyRoomScript = preload("res://scripts/server/LobbyRoom.gd")
 const MatchSupervisorScript = preload("res://scripts/server/MatchSupervisor.gd")
 const MatchSessionScript = preload("res://scripts/server/MatchSession.gd")
 const NetworkManagerScript = preload("res://scripts/Other/NetworkManager.gd")
+const WebSocketEndpointsScript = preload("res://scripts/network/WebSocketEndpoints.gd")
 const ProfileStoreScript = preload("res://scripts/server/ProfileStore.gd")
 const AccountStoreScript = preload("res://scripts/server/AccountStore.gd")
 const DeckStoreScript = preload("res://scripts/server/DeckStore.gd")
@@ -92,6 +93,10 @@ func _process(delta: float) -> void:
 func start_server(p_advertised_host: String = "127.0.0.1", port: int = LobbyProtocolScript.PORT, p_match_port: int = LobbyProtocolScript.MATCH_PORT, p_ws_port: int = LobbyProtocolScript.WS_PORT) -> Error:
 	if is_listening:
 		return OK
+	var public_ws_url := WebSocketEndpointsScript.public_base_url()
+	if not public_ws_url.is_empty() and (not WebSocketEndpointsScript.is_valid_base_url(public_ws_url) or p_ws_port <= 0):
+		status_changed.emit("Public WebSocket URL must be a wss:// origin with an enabled backend listener.")
+		return ERR_INVALID_PARAMETER
 	allow_insecure_account_auth = _runtime_allows_insecure_account_auth()
 
 	advertised_host = p_advertised_host.strip_edges()
@@ -102,6 +107,7 @@ func start_server(p_advertised_host: String = "127.0.0.1", port: int = LobbyProt
 	match_port = p_match_port
 	_ensure_match_supervisor()
 	if match_supervisor != null:
+		match_supervisor.public_websocket_url = public_ws_url
 		match_supervisor.configure(
 			advertised_host,
 			match_port,
@@ -123,7 +129,10 @@ func start_server(p_advertised_host: String = "127.0.0.1", port: int = LobbyProt
 
 	ws_port = max(0, p_ws_port)
 	if ws_port > 0:
-		_start_websocket_transport(ws_port)
+		var ws_err := _start_websocket_transport(ws_port)
+		if ws_err != OK and not public_ws_url.is_empty():
+			stop_server()
+			return ws_err
 
 	is_listening = true
 	_trace("listening on %s:%d" % [advertised_host, lobby_port])
@@ -135,9 +144,9 @@ func start_server(p_advertised_host: String = "127.0.0.1", port: int = LobbyProt
 ## behind firewalls that drop UDP can still reach the lobby. Runs as a second
 ## NetworkManager instance whose peer ids are namespaced before they reach the
 ## shared lobby logic; a ws bind failure never blocks the ENet lobby.
-func _start_websocket_transport(p_ws_port: int) -> void:
+func _start_websocket_transport(p_ws_port: int) -> Error:
 	if ws_transport != null:
-		return
+		return OK
 	var ws_network_manager: Node = NetworkManagerScript.new()
 	ws_network_manager.name = "LobbyTransportWS"
 	ws_network_manager.trace_file_path = trace_file_path
@@ -149,7 +158,7 @@ func _start_websocket_transport(p_ws_port: int) -> void:
 	if ws_err != OK:
 		status_changed.emit("Lobby WebSocket fallback unavailable on port %d." % p_ws_port)
 		ws_network_manager.queue_free()
-		return
+		return ws_err
 	ws_transport = ws_network_manager
 	network_manager.set("websocket_transport", ws_transport)
 	if not ws_transport.command_received.is_connected(_on_network_command_received):
@@ -157,6 +166,7 @@ func _start_websocket_transport(p_ws_port: int) -> void:
 	if not ws_transport.peer_disconnected.is_connected(_on_peer_disconnected):
 		ws_transport.peer_disconnected.connect(_on_peer_disconnected)
 	status_changed.emit("Lobby WebSocket fallback listening on %s:%d" % [advertised_host, p_ws_port])
+	return OK
 
 func stop_server() -> void:
 	if ws_transport != null:
@@ -508,6 +518,10 @@ func _handle_update_account_settings(peer_id: int, payload: Dictionary) -> void:
 
 func _can_accept_password_account_auth(peer_id: int) -> bool:
 	if peer_id == 1:
+		return true
+	# The WebSocket backend is loopback-only and reached through the TLS proxy.
+	if ws_transport != null and peer_id >= NetworkManagerScript.WS_PEER_ID_BASE \
+			and WebSocketEndpointsScript.public_base_url().begins_with("wss://"):
 		return true
 	return allow_insecure_account_auth
 
@@ -1546,6 +1560,9 @@ const PLAYER_HOST_FALLBACK_MESSAGE := "Hosted match unavailable — using dedica
 ## connected, and has reported a viable UPnP endpoint. Bots never host.
 func _should_try_player_host(room: LobbyRoom) -> bool:
 	if room == null:
+		return false
+	# Public TLS routing targets dedicated matches, not a player's UDP listener.
+	if match_supervisor != null and not match_supervisor.public_websocket_url.is_empty():
 		return false
 	if room.is_ranked:
 		return false

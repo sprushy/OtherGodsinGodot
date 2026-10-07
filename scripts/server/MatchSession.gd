@@ -14,6 +14,7 @@ var match_id: String = ""
 var room_id: String = ""
 var server_ip: String = "127.0.0.1"
 var match_port: int = 12345
+var match_websocket_url: String = ""
 var player_session_ids: Array[String] = []
 var status: String = STATUS_STARTING
 var server_mode: String = SERVER_MODE_IN_PROCESS_HOST
@@ -349,6 +350,7 @@ func to_match_info(session_id: String = "") -> Dictionary:
 		"room_id": room_id,
 		"server_ip": server_ip,
 		"match_port": match_port,
+		"match_websocket_url": match_websocket_url,
 		"player_index": get_player_index(session_id) if not session_id.is_empty() else -1,
 		"player_names": get_public_player_names(),
 		"status": status,
@@ -431,6 +433,7 @@ func to_launch_config() -> Dictionary:
 		"room_id": room_id,
 		"server_ip": server_ip,
 		"match_port": match_port,
+		"match_websocket_url": match_websocket_url,
 		"player_session_ids": player_session_ids.duplicate(),
 		"status": status,
 		"server_mode": server_mode,
@@ -477,6 +480,7 @@ static func from_launch_config(config: Dictionary) -> MatchSession:
 		_to_dictionary(config.get("player_identity_by_session", {}))
 	)
 	session.status = str(config.get("status", STATUS_STARTING))
+	session.match_websocket_url = str(config.get("match_websocket_url", "")).strip_edges()
 	session.server_mode = str(config.get("server_mode", SERVER_MODE_IN_PROCESS_HOST))
 	session.is_ranked = bool(config.get("is_ranked", true))
 	session.reconnect_window_seconds = int(config.get("reconnect_window_seconds", 90))
