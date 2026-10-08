@@ -334,6 +334,7 @@ var _all_sound_muted: bool = false
 var _startup_menu_fade_started: bool = false
 var _startup_splash_animation_started: bool = false
 var _startup_splash_animation_finished: bool = false
+var _environment_test: CanvasLayer = null
 
 func _ready() -> void:
 	if _is_server_runtime_launch():
@@ -380,6 +381,12 @@ func _ready() -> void:
 	if card_test_btn:
 		if OS.is_debug_build():
 			card_test_btn.pressed.connect(_on_card_test_pressed)
+			var environment_test_btn := Button.new()
+			environment_test_btn.name = "EnvironmentTestButton"
+			environment_test_btn.text = "Environment Test"
+			environment_test_btn.pressed.connect(_on_environment_test_pressed)
+			menu_container.add_child(environment_test_btn)
+			menu_container.move_child(environment_test_btn, card_test_btn.get_index() + 1)
 		else:
 			card_test_btn.visible = false
 	if multiplayer_button:
@@ -1387,7 +1394,24 @@ func _refresh_windows_curl_download_progress() -> void:
 			) % [version_text, float(downloaded) / BYTES_PER_MIB]
 		)
 
+func _on_environment_test_pressed() -> void:
+	if not OS.is_debug_build() or is_instance_valid(_environment_test):
+		return
+	_set_snowstorm_visible(false)
+	var test_script := load("res://scripts/ui/EnvironmentTest.gd") as Script
+	_environment_test = test_script.new() as CanvasLayer
+	_environment_test.connect("closed", _on_environment_test_closed)
+	add_child(_environment_test)
+
+func _on_environment_test_closed() -> void:
+	_environment_test = null
+
 func _input(event: InputEvent) -> void:
+	if is_instance_valid(_environment_test):
+		if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_ESCAPE:
+			_environment_test.call("request_close")
+			get_viewport().set_input_as_handled()
+		return
 	if event is InputEventKey:
 		var key_event := event as InputEventKey
 		if key_event.pressed and key_event.keycode == KEY_ESCAPE:

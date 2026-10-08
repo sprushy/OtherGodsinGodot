@@ -171,17 +171,26 @@ func _draw_wind_wisps(rect_size: Vector2) -> void:
 	var texture_size := wind_wisp_texture.get_size()
 	if texture_size.x <= 1.0 or texture_size.y <= 1.0:
 		return
-	var alpha := 0.06 + _strength * 0.10
-	var offset := fmod(_time * (18.0 + 38.0 * _wind_force), rect_size.x)
-	for i in range(2):
-		var y := rect_size.y * (0.22 + float(i) * 0.34)
-		var x := -rect_size.x * 0.35 + offset * (0.55 + float(i) * 0.22)
-		draw_texture_rect(
-			wind_wisp_texture,
-			Rect2(Vector2(x, y), Vector2(rect_size.x * 0.92, rect_size.y * 0.42)),
-			false,
-			Color(0.78, 0.90, 1.0, alpha)
-		)
+	if rect_size.x <= 1.0 or rect_size.y <= 1.0:
+		return
+	var alpha := 0.05 + _strength * 0.08
+	var patch_size := Vector2(rect_size.x * 0.92, rect_size.y * 0.42)
+	var horizontal_step := rect_size.x * 0.64
+	var wind_sign := -1.0 if _wind_direction.x < 0.0 else 1.0
+	# Overlap the transparent edges and wrap by patch spacing, so scrolling
+	# never exposes an empty strip or resets the entire wind layer at once.
+	for row in range(4):
+		var speed := (18.0 + 38.0 * _wind_force) * (0.55 + float(row) * 0.22)
+		var offset := fposmod(_time * speed * wind_sign + float(row) * horizontal_step * 0.37, horizontal_step)
+		var y := rect_size.y * (-0.15 + float(row) * 0.30)
+		for column in range(-2, 2):
+			var x := float(column) * horizontal_step + offset
+			draw_texture_rect(
+				wind_wisp_texture,
+				Rect2(Vector2(x, y), patch_size),
+				false,
+				Color(0.78, 0.90, 1.0, alpha)
+			)
 
 func _get_flake_atlas_region(flake: Dictionary) -> Rect2:
 	var atlas_size := flake_atlas_texture.get_size()

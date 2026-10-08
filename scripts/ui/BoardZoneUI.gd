@@ -560,6 +560,8 @@ signal creature_right_clicked(card: Card)
 signal god_right_clicked(card: Card)
 
 var zone: Zone
+var board_style_override: String = ""
+var show_god_deck_count: bool = true
 var game_manager: GameManager
 var owning_player: Player
 var zone_index: int
@@ -4872,8 +4874,12 @@ static func _get_current_board_style() -> String:
 			return str(style)
 	return "normal"
 
-static func _get_board_zone_slab_textures() -> Array[Texture2D]:
-	if _get_current_board_style() == "snow":
+func _get_zone_board_style() -> String:
+	return board_style_override if board_style_override != "" else _get_current_board_style()
+
+static func _get_board_zone_slab_textures(board_style: String = "") -> Array[Texture2D]:
+	var current_style := board_style if board_style != "" else _get_current_board_style()
+	if current_style == "snow":
 		if _snow_board_zone_slab_textures.is_empty():
 			for texture_path in SNOW_BOARD_ZONE_SLAB_TEXTURE_PATHS:
 				var texture := _load_png_texture(texture_path)
@@ -4888,9 +4894,9 @@ static func _get_board_zone_slab_textures() -> Array[Texture2D]:
 					_board_zone_slab_textures.append(texture)
 		return _board_zone_slab_textures
 
-static func _get_board_zone_slot_texture_indices() -> Array[int]:
-	var current_style := _get_current_board_style()
-	var slab_textures := _get_board_zone_slab_textures()
+static func _get_board_zone_slot_texture_indices(board_style: String = "") -> Array[int]:
+	var current_style := board_style if board_style != "" else _get_current_board_style()
+	var slab_textures := _get_board_zone_slab_textures(current_style)
 	if slab_textures.is_empty():
 		return []
 	if _board_zone_slot_texture_indices.size() != slab_textures.size() or _last_loaded_board_style != current_style:
@@ -4908,11 +4914,12 @@ static func _get_board_zone_slot_texture_indices() -> Array[int]:
 	return _board_zone_slot_texture_indices
 
 func _get_board_zone_slab_texture() -> Texture2D:
-	var slab_textures := _get_board_zone_slab_textures()
+	var board_style := _get_zone_board_style()
+	var slab_textures := _get_board_zone_slab_textures(board_style)
 	if slab_textures.is_empty():
 		return null
 
-	var slot_texture_indices := _get_board_zone_slot_texture_indices()
+	var slot_texture_indices := _get_board_zone_slot_texture_indices(board_style)
 	if slot_texture_indices.is_empty():
 		return slab_textures[0]
 
@@ -4936,7 +4943,7 @@ func _get_board_zone_slab_texture() -> Texture2D:
 	return slab_textures[texture_index]
 
 func _get_empty_zone_slab_tint() -> Color:
-	var is_snow := BoardZoneUI._get_current_board_style() == "snow"
+	var is_snow := _get_zone_board_style() == "snow"
 	if zone == null:
 		return Color(1.05, 1.08, 1.15, 0.95) if is_snow else Color(1.0, 1.0, 1.0, 0.9)
 	if zone.zone_type == Zone.ZoneType.GOD_SLOT:
@@ -5371,17 +5378,18 @@ func _refresh_display() -> void:
 					bottom_name_spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 					name_vbox.add_child(bottom_name_spacer)
 
-				var deck_lbl := Label.new()
-				deck_lbl.text = "Deck: %d" % owning_player.deck_zone.cards.size()
-				deck_lbl.add_theme_font_size_override("font_size", 10)
-				deck_lbl.add_theme_color_override("font_color", Color(0.9, 0.95, 1.0))
-				deck_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
-				deck_lbl.vertical_alignment = VERTICAL_ALIGNMENT_TOP
-				deck_lbl.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
-				deck_lbl.offset_left = 6
-				deck_lbl.offset_top = 4
-				deck_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-				god_overlay.add_child(deck_lbl)
+				if show_god_deck_count:
+					var deck_lbl := Label.new()
+					deck_lbl.text = "Deck: %d" % owning_player.deck_zone.cards.size()
+					deck_lbl.add_theme_font_size_override("font_size", 10)
+					deck_lbl.add_theme_color_override("font_color", Color(0.9, 0.95, 1.0))
+					deck_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+					deck_lbl.vertical_alignment = VERTICAL_ALIGNMENT_TOP
+					deck_lbl.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
+					deck_lbl.offset_left = 6
+					deck_lbl.offset_top = 4
+					deck_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+					god_overlay.add_child(deck_lbl)
 				_add_level_badge(god_overlay, card, Control.PRESET_TOP_LEFT, 6, 24, 54, 42)
 
 				var _effect_lines: Array[String] = []

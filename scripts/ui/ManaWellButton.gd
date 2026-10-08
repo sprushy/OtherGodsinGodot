@@ -43,3 +43,7 @@ func _sync_visual_state() -> void:
 func set_available(available: bool) -> void:
 	_available = available
 	_sync_visual_state()
+
+func set_board_style(style: String) -> void:
+	if _well != null:
+		_well.snow_style = style == "snow"

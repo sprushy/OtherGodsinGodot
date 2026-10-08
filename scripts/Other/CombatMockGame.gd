@@ -86,6 +86,9 @@ const ReinforcementCardTileScript = preload("res://scripts/ui/ReinforcementCardT
 const ReinforcementDropAreaScript = preload("res://scripts/ui/ReinforcementDropArea.gd")
 const UITextureCacheScript = preload("res://scripts/ui/UITextureCache.gd")
 const AbyssGatewayIconScript = preload("res://scripts/ui/AbyssGatewayIcon.gd")
+const GravesiteTexture = preload("res://images/ui/zones/grave_tumulus_base.png")
+const SnowGravesiteTexture = preload("res://images/ui/zones/grave_tumulus_snow_base.png")
+const GravesiteVisualScript = preload("res://scripts/ui/GravesiteVisual.gd")
 const GameSettingsTabsScript = preload("res://scripts/ui/GameSettingsTabs.gd")
 const AudioSettingsScript = preload("res://scripts/core/AudioSettings.gd")
 const UIHoverSfxScript = preload("res://scripts/core/UIHoverSfx.gd")
@@ -303,6 +306,10 @@ var _board_floor_texture: Texture2D = null
 var _snow_board_floor_texture: Texture2D = null
 var _board_splash_texture: Texture2D = null
 var _board_style: String = BOARD_STYLE_NORMAL
+var _grave_shovel_shifted: Dictionary = {}
+const MATCH_GRAVE_RIGHT_OFFSET := 72.0
+var _match_player_grave: PanelContainer = null
+var _match_opponent_grave: PanelContainer = null
 var _turn_choice_gap: Control = null
 const _HAND_CONTEXT_MENU_KEEPALIVE_MARGIN := 10.0
 
@@ -4182,6 +4189,7 @@ func _sync_local_scheduled_callbacks() -> void:
 func _process(delta: float) -> void:
 	if not is_visible_in_tree():
 		return
+	_layout_match_grave_turn_label()
 	_sync_turn_start_props()
 	_layout_turn_start_props()
 	_sync_priority_control_turn_boundary()
@@ -6487,6 +6495,8 @@ func _turn_start_props_are_ready() -> bool:
 		and _get_display_player() != null and _get_display_opponent() != null
 
 func _sync_turn_start_props() -> void:
+	if mana_button != null:
+		mana_button.set_board_style(_get_mana_well_board_style())
 	if _opponent_draw_deck == null:
 		return
 	var props_ready := _turn_start_props_are_ready()
@@ -6515,19 +6525,21 @@ func _sync_turn_start_props() -> void:
 		and game_manager.is_player_in_upkeep_window(opponent) \
 		and game_manager.action_stack.is_empty())
 
+func _get_mana_well_board_style() -> String:
+	return _board_style
+
 func _get_turn_start_prop_scale() -> float:
 	return 1.0
 
 func _get_turn_start_prop_horizontal_blend() -> float:
 	# Regular matches keep the props close to their original side-column position.
-	return 0.10
+	return 0.04
 
 func _layout_turn_start_props() -> void:
 	if _opponent_draw_deck == null or not _turn_start_props_are_ready() or board_separator == null:
 		return
 	var to_local := get_global_transform().affine_inverse()
-	# Keep the props together while using a restrained shift toward the board.
-	# The full separator-center move was too far right; retain 35% of it.
+	# Keep the props together; each mode chooses its shift toward the board.
 	var original_center: Vector2 = left_panel.get_global_rect().get_center()
 	var board_center: Vector2 = board_separator.get_global_rect().get_center()
 	var display_center: Vector2 = original_center.lerp(board_center, _get_turn_start_prop_horizontal_blend())
@@ -7076,6 +7088,7 @@ func _update_board_zone_extent() -> void:
 	call_deferred("_update_center_action_panel_layout")
 
 func _on_board_layout_resized() -> void:
+	call_deferred("_layout_match_grave_turn_label")
 	if _fan_container != null and is_instance_valid(_fan_container):
 		call_deferred("_layout_fan")
 	if _enemy_hand_overlay != null and is_instance_valid(_enemy_hand_overlay):
@@ -11215,8 +11228,75 @@ func _make_deck_panel(zone: Zone) -> Control:
 	outer.tooltip_text = "Deck: " + str(zone.cards.size()) + " cards"
 	return outer
 
+func _make_match_grave_slot(zone: Zone, is_opponent: bool) -> Control:
+	_style_match_end_turn_button()
+	call_deferred("_layout_match_grave_turn_label")
+	var slot := Control.new()
+	slot.custom_minimum_size = Vector2.ONE * ZONE_INFO_ICON_SIZE
+	slot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	slot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var grave := _make_zone_info_icon("Grave", "GY", zone, Color(0.3, 0.5, 0.3))
+	slot.add_child(grave)
+	grave.size = Vector2.ONE * ZONE_INFO_ICON_SIZE
+	grave.position = Vector2(MATCH_GRAVE_RIGHT_OFFSET, 0.0)
+	if is_opponent:
+		_match_opponent_grave = grave
+	else:
+		_match_player_grave = grave
+	return slot
+
+func _layout_match_grave_turn_label() -> void:
+	if not is_instance_valid(_match_player_grave) or not is_instance_valid(_match_opponent_grave) or turn_label == null:
+		return
+	if turn_label.get_parent() != self:
+		turn_label.reparent(self, false)
+		turn_label.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
+		turn_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var grave_midpoint := (_match_player_grave.get_global_rect().get_center() + _match_opponent_grave.get_global_rect().get_center()) * 0.5
+	var local_midpoint: Vector2 = get_global_transform().affine_inverse() * grave_midpoint
+	if end_turn_button != null:
+		if end_turn_button.get_parent() != self:
+			end_turn_button.reparent(self, false)
+			end_turn_button.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
+		end_turn_button.size = end_turn_button.get_combined_minimum_size()
+		end_turn_button.position = local_midpoint - end_turn_button.size * 0.5
+	turn_label.size.x = maxf(180.0, right_panel.custom_minimum_size.x - 4.0)
+	turn_label.size.y = turn_label.get_combined_minimum_size().y
+	turn_label.position = local_midpoint - turn_label.size * 0.5
+	if end_turn_button != null:
+		turn_label.position.y = end_turn_button.position.y - turn_label.size.y - 12.0
+
+func _style_match_end_turn_button() -> void:
+	if end_turn_button == null:
+		return
+	end_turn_button.custom_minimum_size = Vector2(200.0, 64.0)
+	end_turn_button.add_theme_font_size_override("font_size", 26)
+	for font_color in ["font_color", "font_hover_color", "font_pressed_color"]:
+		end_turn_button.add_theme_color_override(font_color, Color.WHITE)
+	end_turn_button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	end_turn_button.z_index = 10
+	for button_state in ["normal", "hover", "pressed", "focus"]:
+		var style := StyleBoxFlat.new()
+		style.bg_color = Color(0.06, 0.22, 0.32, 1.0)
+		if button_state == "hover":
+			style.bg_color = Color(0.10, 0.36, 0.48, 1.0)
+		elif button_state == "pressed":
+			style.bg_color = Color(0.04, 0.15, 0.23, 1.0)
+		elif button_state == "focus":
+			style.bg_color = Color.TRANSPARENT
+		style.border_color = Color(1.0, 0.85, 0.42, 1.0)
+		style.set_border_width_all(3)
+		style.set_corner_radius_all(10)
+		style.shadow_color = Color(0.0, 0.0, 0.0, 0.65)
+		style.shadow_size = 6
+		end_turn_button.add_theme_stylebox_override(button_state, style)
+
+func _get_gravesite_texture() -> Texture2D:
+	return SnowGravesiteTexture if _board_style == BOARD_STYLE_SNOW else GravesiteTexture
+
 func _make_zone_info_icon(label_text: String, short_label: String, zone: Zone, color: Color) -> PanelContainer:
 	var is_abyss_icon := label_text == "Abyss"
+	var is_grave_icon := label_text == "Grave"
 	var panel := PanelContainer.new()
 	panel.name = "ZoneInfoIcon"
 	panel.custom_minimum_size = Vector2(ZONE_INFO_ICON_SIZE, ZONE_INFO_ICON_SIZE)
@@ -11228,7 +11308,7 @@ func _make_zone_info_icon(label_text: String, short_label: String, zone: Zone, c
 	style.corner_radius_bottom_right = 8
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
 		style.set_border_width(side as Side, 2)
-	if is_abyss_icon:
+	if is_abyss_icon or is_grave_icon:
 		style.bg_color = Color(0.0, 0.0, 0.0, 0.0)
 		style.border_color = Color(0.0, 0.0, 0.0, 0.0)
 		for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
@@ -11242,7 +11322,7 @@ func _make_zone_info_icon(label_text: String, short_label: String, zone: Zone, c
 	panel.tooltip_text = label_text + ": " + str(zone.cards.size()) + " cards"
 
 	var vbox: Control
-	if is_abyss_icon:
+	if is_abyss_icon or is_grave_icon:
 		vbox = Control.new()
 		vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		vbox.custom_minimum_size = Vector2(ZONE_INFO_ICON_SIZE, ZONE_INFO_ICON_SIZE)
@@ -11257,13 +11337,32 @@ func _make_zone_info_icon(label_text: String, short_label: String, zone: Zone, c
 	name_lbl.text = short_label
 	name_lbl.add_theme_font_size_override("font_size", 12)
 	name_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	var gravesite_icon: GravesiteVisualScript = null
+	var abyss_icon: AbyssGatewayIcon = null
 	if is_abyss_icon:
 		var gateway_icon := AbyssGatewayIconScript.new()
+		abyss_icon = gateway_icon
 		gateway_icon.name = "ZoneAbyssGatewayIcon"
 		gateway_icon.position = Vector2(0.0, 0.0)
 		gateway_icon.size = Vector2(50.0, 48.0)
 		gateway_icon.portal_clicked.connect(_show_zone_contents.bind("Abyss", zone))
 		vbox.add_child(gateway_icon)
+	elif is_grave_icon:
+		var grave_art := GravesiteVisualScript.new()
+		grave_art.name = "ZoneGravesiteArt"
+		grave_art.texture = _get_gravesite_texture()
+		grave_art.mouse_filter = Control.MOUSE_FILTER_STOP
+		grave_art.tooltip_text = panel.tooltip_text
+		grave_art.set_shifted(bool(_grave_shovel_shifted.get(zone, false)))
+		gravesite_icon = grave_art
+		vbox.add_child(grave_art)
+		grave_art.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		var grave_padding := ZONE_INFO_ICON_SIZE * (GravesiteVisualScript.VISUAL_SCALE - 1.0) * 0.5
+		grave_art.offset_left = -grave_padding
+		grave_art.offset_top = -grave_padding
+		grave_art.offset_right = grave_padding
+		grave_art.offset_bottom = grave_padding
+		grave_art.gui_input.connect(_on_zone_info_icon_gui_input.bind(label_text, CardAction._zone_to_dict(zone, game_manager), grave_art))
 	else:
 		vbox.add_child(name_lbl)
 	var count_lbl := Label.new()
@@ -11278,16 +11377,29 @@ func _make_zone_info_icon(label_text: String, short_label: String, zone: Zone, c
 		count_lbl.add_theme_constant_override("shadow_offset_x", 1)
 		count_lbl.add_theme_constant_override("shadow_offset_y", 1)
 		count_lbl.visible = false
-		count_lbl.position = Vector2(63.0, 150.0)
+		var gateway_pivot := AbyssGatewayIcon.ART_OVERSCAN.get_center() + abyss_icon.size * 0.5
+		count_lbl.position = gateway_pivot + (Vector2(63.0, 150.0) - gateway_pivot) * AbyssGatewayIcon.VISUAL_SCALE
 		count_lbl.size = Vector2(40.0, 22.0)
 	vbox.add_child(count_lbl)
+	if is_grave_icon:
+		count_lbl.visible = false
+		gravesite_icon.count_label = count_lbl
+		count_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		count_lbl.add_theme_color_override("font_color", Color(1.0, 0.95, 0.6))
+		count_lbl.add_theme_color_override("font_shadow_color", Color.BLACK)
+		count_lbl.add_theme_constant_override("shadow_offset_x", 1)
+		count_lbl.add_theme_constant_override("shadow_offset_y", 1)
+		count_lbl.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
+		var grave_padding := ZONE_INFO_ICON_SIZE * (GravesiteVisualScript.VISUAL_SCALE - 1.0) * 0.5
+		count_lbl.offset_top = grave_padding - 24.0
+		count_lbl.offset_bottom = grave_padding
 
 	panel.mouse_filter = Control.MOUSE_FILTER_STOP
 	panel.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	if is_abyss_icon:
 		panel.mouse_entered.connect(_set_zone_info_count_visible.bind(count_lbl, true))
 		panel.mouse_exited.connect(_set_zone_info_count_visible.bind(count_lbl, false))
-	panel.gui_input.connect(_on_zone_info_icon_gui_input.bind(label_text, CardAction._zone_to_dict(zone, game_manager)))
+	panel.gui_input.connect(_on_zone_info_icon_gui_input.bind(label_text, CardAction._zone_to_dict(zone, game_manager), gravesite_icon))
 
 	return panel
 
@@ -11295,13 +11407,17 @@ func _set_zone_info_count_visible(count_lbl: Label, visible: bool) -> void:
 	if count_lbl != null and is_instance_valid(count_lbl):
 		count_lbl.visible = visible
 
-func _on_zone_info_icon_gui_input(event: InputEvent, label_text: String, zone_dict: Dictionary) -> void:
+func _on_zone_info_icon_gui_input(event: InputEvent, label_text: String, zone_dict: Dictionary, gravesite_icon: GravesiteVisualScript = null) -> void:
 	if not (event is InputEventMouseButton):
 		return
 	if event.button_index != MOUSE_BUTTON_LEFT or not event.pressed:
 		return
 	var zone := CardAction._dict_to_zone(zone_dict, game_manager)
 	if zone != null:
+		if label_text == "Grave" and is_instance_valid(gravesite_icon):
+			var shifted := not bool(_grave_shovel_shifted.get(zone, false))
+			_grave_shovel_shifted[zone] = shifted
+			gravesite_icon.set_shifted(shifted, true)
 		_show_zone_contents(label_text, zone)
 
 func _pulse_abyss_gateway_activity(abyss_zone: Zone) -> void:
@@ -11325,8 +11441,14 @@ func _refresh_zone_info_icons() -> void:
 			continue
 		var label_text := str(panel.get_meta("zone_label_text", "Zone"))
 		panel.tooltip_text = label_text + ": " + str(zone.cards.size()) + " cards"
+		var grave_art := panel.get_node_or_null("ZoneInfoVBox/ZoneGravesiteArt") as GravesiteVisualScript
+		if grave_art != null:
+			grave_art.texture = _get_gravesite_texture()
+			grave_art.tooltip_text = panel.tooltip_text
 		var count_lbl := panel.get_node_or_null("ZoneInfoVBox/ZoneCountLabel") as Label
-		if count_lbl != null:
+		if grave_art != null:
+			grave_art.set_grave_count(zone.cards.size())
+		elif count_lbl != null:
 			count_lbl.text = str(zone.cards.size())
 
 func _get_board_row_width() -> float:
@@ -11379,7 +11501,7 @@ func _refresh_stats_panel(panel: PanelContainer, player: Player, show_mana: bool
 		guard_lbl.text = "Guard: " + str(player.guard)
 	var followers_lbl := panel.get_node_or_null("StatsVBox/FollowersLabel") as Label
 	if followers_lbl != null:
-		followers_lbl.text = "Followers:\n" + str(player.followers)
+		followers_lbl.text = "Followers: " + str(player.followers)
 	var deck_lbl := panel.get_node_or_null("StatsVBox/DeckLabel") as Label
 	if deck_lbl != null:
 		deck_lbl.text = "Deck: " + str(player.deck_zone.get_card_count())
@@ -11434,7 +11556,7 @@ func _refresh_visible_stat_panels() -> void:
 func _make_stats_panel(player: Player, show_mana: bool = true) -> PanelContainer:
 	var panel := PanelContainer.new()
 	panel.name = "StatsPanel"
-	panel.visible = SHOW_MATCH_INFO_PANELS
+	panel.visible = true
 	panel.custom_minimum_size = Vector2(118, 128)
 	panel.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	var style := StyleBoxFlat.new()
@@ -11453,11 +11575,13 @@ func _make_stats_panel(player: Player, show_mana: bool = true) -> PanelContainer
 	panel.add_child(vbox)
 	var name_lbl := Label.new()
 	name_lbl.name = "NameLabel"
+	name_lbl.visible = false
 	name_lbl.add_theme_font_size_override("font_size", 12)
 	name_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	vbox.add_child(name_lbl)
 	var hand_lbl := Label.new()
 	hand_lbl.name = "HandLabel"
+	hand_lbl.visible = false
 	hand_lbl.add_theme_font_size_override("font_size", 13)
 	vbox.add_child(hand_lbl)
 	if show_mana:
@@ -11476,10 +11600,12 @@ func _make_stats_panel(player: Player, show_mana: bool = true) -> PanelContainer
 	vbox.add_child(fol_lbl)
 	var deck_lbl := Label.new()
 	deck_lbl.name = "DeckLabel"
+	deck_lbl.visible = false
 	deck_lbl.add_theme_font_size_override("font_size", 13)
 	vbox.add_child(deck_lbl)
 	var clock_lbl := Label.new()
 	clock_lbl.name = "TurnClockLabel"
+	clock_lbl.visible = false
 	clock_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	clock_lbl.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
 	clock_lbl.add_theme_font_size_override("font_size", 24)
@@ -11503,6 +11629,7 @@ func _make_god_cluster(zone: Zone, player: Player, is_enemy: bool) -> Control:
 	cluster.add_child(god_wrapper)
 
 	var god_zone_ui := BoardZoneUI.new()
+	god_zone_ui.show_god_deck_count = false
 	god_zone_ui.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	god_wrapper.add_child(god_zone_ui)
 	god_zone_ui.setup(zone, game_manager, player, -1, _on_card_dropped_to_zone, is_enemy, "God")
@@ -15977,7 +16104,7 @@ func draw_board() -> void:
 		zu.creature_right_clicked.connect(_on_creature_right_clicked)
 		_board_zone_uis.append(zu)
 
-	board_row.add_child(_make_zone_info_icon("Grave", "GY", display_player.graveyard_zone, Color(0.3, 0.5, 0.3)))
+	board_row.add_child(_make_match_grave_slot(display_player.graveyard_zone, false))
 
 	var reserve_row := HBoxContainer.new()
 	reserve_row.add_theme_constant_override("separation", int(BOARD_ZONE_COLUMN_GAP))
@@ -16081,7 +16208,7 @@ func draw_enemy_board() -> void:
 		zu.equipment_target_action_clicked.connect(_on_equipment_target_action_clicked)
 		_enemy_zone_uis.append(zu)
 
-	enemy_row.add_child(_make_zone_info_icon("Grave", "GY", enemy_player.graveyard_zone, Color(0.3, 0.5, 0.3)))
+	enemy_row.add_child(_make_match_grave_slot(enemy_player.graveyard_zone, true))
 
 func _try_activate_graveyard_hand_proxy(card: Card) -> bool:
 	if not _is_graveyard_hand_proxy(card):

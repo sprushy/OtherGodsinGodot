@@ -5,6 +5,8 @@ signal story_board_ready
 
 const STORY_ZONE_SCALE := 1.25
 const STORY_DRAW_DECK_SCALE := 1.15
+const STORY_GRAVE_RIGHT_OFFSET := 40.0
+const STORY_GRAVE_VERTICAL_OFFSET := 32.0
 const STORY_WOLF_DECK_SIZE := 35
 const StoryWolfBotScript = preload("res://scripts/story/StoryWolfBot.gd")
 const StoryBotInputScript = preload("res://scripts/bots/BotGameInput.gd")
@@ -21,6 +23,13 @@ func _apply_board_art_background_texture() -> void:
 	# Story owns its forest texture and terrain material independently of board settings.
 	if _board_art_background != null:
 		_board_art_background.visible = true
+
+func _get_gravesite_texture() -> Texture2D:
+	# Story's snow terrain is independent of the saved board style.
+	return SnowGravesiteTexture
+
+func _get_mana_well_board_style() -> String:
+	return BOARD_STYLE_SNOW
 
 func _ready() -> void:
 	get_node("MainHBox").modulate.a = 0.0
@@ -298,11 +307,21 @@ func _on_enemy_followers_changed(_new_followers: int) -> void:
 	_clear_follower_casualty_overlay()
 
 func _draw_story_row(container: VBoxContainer, player: Player, is_opponent: bool) -> void:
+	var zone_uis: Array = _enemy_zone_uis if is_opponent else _board_zone_uis
+	var previous_player := _last_enemy_player if is_opponent else _last_board_player
+	# Keep the grave and its shovel animation alive during ordinary UI refreshes.
+	if player != null and player == previous_player and not zone_uis.is_empty():
+		for zone_ui in zone_uis:
+			if is_instance_valid(zone_ui):
+				zone_ui._refresh_display()
+		return
 	# Drag release and targeting use these same zone lists in normal matches.
 	if is_opponent:
 		_enemy_zone_uis.clear()
+		_last_enemy_player = player
 	else:
 		_board_zone_uis.clear()
+		_last_board_player = player
 	_detach_container_children(container)
 	if player == null:
 		return
@@ -311,9 +330,16 @@ func _draw_story_row(container: VBoxContainer, player: Player, is_opponent: bool
 	row.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	row.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	container.add_child(row)
+	# Balance the grave's footprint so the five frontline lanes stay centered.
+	var grave_padding := ceili(ZONE_INFO_ICON_SIZE * (GravesiteVisualScript.VISUAL_SCALE - 1.0) * 0.5)
+	var grave_spacer := Control.new()
+	grave_spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	grave_spacer.custom_minimum_size.x = ZONE_INFO_ICON_SIZE + grave_padding * 2
+	row.add_child(grave_spacer)
 	for lane_index in range(player.frontline_zones.size()):
 		var zone: Zone = player.frontline_zones[lane_index]
 		var zone_ui := BoardZoneUI.new()
+		zone_ui.board_style_override = BOARD_STYLE_SNOW
 		row.add_child(zone_ui)
 		zone_ui.setup(zone, game_manager, player, lane_index, _on_card_dropped_to_zone, is_opponent, "front line")
 		if is_opponent:
@@ -332,6 +358,20 @@ func _draw_story_row(container: VBoxContainer, player: Player, is_opponent: bool
 			zone_ui.equipment_target_action_clicked.connect(_on_equipment_target_action_clicked)
 			zone_ui.creature_drag_started.connect(_on_creature_drag_started)
 			zone_ui.creature_right_clicked.connect(_on_creature_right_clicked)
+	var grave_margin := MarginContainer.new()
+	grave_margin.add_theme_constant_override("margin_left", grave_padding)
+	grave_margin.add_theme_constant_override("margin_right", grave_padding)
+	grave_margin.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	row.add_child(grave_margin)
+	# Offset the complete grave inside a stable slot so containers leave it in place.
+	var grave_slot := Control.new()
+	grave_slot.custom_minimum_size = Vector2.ONE * ZONE_INFO_ICON_SIZE
+	grave_slot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	grave_margin.add_child(grave_slot)
+	var grave_icon := _make_zone_info_icon("Grave", "GY", player.graveyard_zone, Color(0.3, 0.5, 0.3))
+	grave_slot.add_child(grave_icon)
+	grave_icon.size = Vector2.ONE * ZONE_INFO_ICON_SIZE
+	grave_icon.position = Vector2(STORY_GRAVE_RIGHT_OFFSET, -STORY_GRAVE_VERTICAL_OFFSET if is_opponent else STORY_GRAVE_VERTICAL_OFFSET)
 
 func _on_forfeit_button_pressed() -> void:
 	_shutdown_thor_bot()

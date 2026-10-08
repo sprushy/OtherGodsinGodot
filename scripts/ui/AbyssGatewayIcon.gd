@@ -22,6 +22,7 @@ const VOID_ACTIVITY_LINGER_SECONDS := 2.5
 # Kept off the art's far left/top arcs so it does not steal clicks from the
 # neighbouring reserve zone and grave icon.
 const PORTAL_HIT_RECT := Rect2(0.0, -55.0, 140.0, 115.0)
+const VISUAL_SCALE := 0.67
 
 var _void_art: TextureRect = null
 var _void_frames: Array[Texture2D] = []
@@ -35,6 +36,9 @@ var _click_catcher: Control = null
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	custom_minimum_size = Vector2(50, 48)
+	# Scale every layer and its hit box together around the existing art centre.
+	pivot_offset = ART_OVERSCAN.get_center() + size * 0.5
+	scale = Vector2.ONE * VISUAL_SCALE
 	_build_void_frames()
 
 	add_child(_make_gateway_texture("AbyssGatewayBack", GATEWAY_TEXTURE))
