@@ -1,9 +1,11 @@
-[gd_scene load_steps=5 format=3]
+[gd_scene load_steps=7 format=3]
 
 [ext_resource type="Script" path="res://scripts/story/StoryGame.gd" id="1_story"]
 [ext_resource type="Script" path="res://scripts/fx/SnowV2WeatherController.gd" id="2_snow"]
 [ext_resource type="Texture2D" path="res://images/story/snow_forest/albedo.png" id="3_map_albedo"]
 [ext_resource type="Script" path="res://scripts/story/StorySnowMap.gd" id="4_map"]
+[ext_resource type="Script" uid="uid://dnmbsa6uaibgw" path="res://scripts/ui/DrawDeckButton.gd" id="5_draw_deck"]
+[ext_resource type="Script" path="res://scripts/ui/ManaWellButton.gd" id="6_mana_well"]
 
 [node name="StoryGame" type="Control"]
 layout_mode = 3
@@ -54,10 +56,13 @@ text = "Choose one:"
 [node name="DrawButton" type="Button" parent="MainHBox/LeftPanel/ChoiceContainer"]
 layout_mode = 2
 text = "Gain 1 Mana + Card"
+script = ExtResource("5_draw_deck")
 
 [node name="ManaButton" type="Button" parent="MainHBox/LeftPanel/ChoiceContainer"]
 layout_mode = 2
 text = "Gain 5 Mana"
+disabled = true
+script = ExtResource("6_mana_well")
 
 [node name="PlacementContainer" type="VBoxContainer" parent="MainHBox/LeftPanel"]
 layout_mode = 2

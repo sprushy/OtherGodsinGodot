@@ -4,6 +4,7 @@ class_name StoryGame
 signal story_board_ready
 
 const STORY_ZONE_SCALE := 1.25
+const STORY_DRAW_DECK_SCALE := 1.15
 const STORY_WOLF_DECK_SIZE := 35
 const StoryWolfBotScript = preload("res://scripts/story/StoryWolfBot.gd")
 const StoryBotInputScript = preload("res://scripts/bots/BotGameInput.gd")
@@ -33,12 +34,8 @@ func _ready() -> void:
 	stats_container.visible = false
 	forfeit_button.text = "Main Menu"
 	choice_container.modulate.a = 0.0
-	choice_container.reparent(self, false)
 	end_turn_button.modulate.a = 0.0
 	end_turn_button.reparent(self, false)
-	draw_button.custom_minimum_size = Vector2(180.0, 60.0)
-	draw_button.add_theme_font_size_override("font_size", 24)
-	draw_button.add_theme_color_override("font_color", Color.WHITE)
 	end_turn_button.custom_minimum_size = Vector2(180.0, 60.0)
 	end_turn_button.add_theme_font_size_override("font_size", 24)
 	end_turn_button.add_theme_color_override("font_color", Color.WHITE)
@@ -49,7 +46,6 @@ func _ready() -> void:
 		style.set_border_width_all(2)
 		style.set_corner_radius_all(8)
 		end_turn_button.add_theme_stylebox_override(button_state, style)
-		draw_button.add_theme_stylebox_override(button_state, style.duplicate())
 	# Use the standard match side panel and the same 24px clock as match stats.
 	_story_turn_clock = Label.new()
 	_story_turn_clock.name = "StoryTurnClock"
@@ -81,9 +77,10 @@ func _reveal_story_board() -> void:
 	_apply_board_horizontal_offset()
 	if board_separator != null:
 		var midpoint_y: float = board_separator.get_global_rect().get_center().y
-		_center_story_control(choice_container, left_panel, midpoint_y)
 		_center_story_control(end_turn_button, right_panel, midpoint_y)
 	_story_board_ready = true
+	_sync_story_draw_deck()
+	_layout_turn_start_props()
 	get_node("MainHBox").modulate.a = 1.0
 	end_turn_button.modulate.a = 1.0
 	_reveal_story_turn_choice()
@@ -96,7 +93,7 @@ func _build_initial_match_players(_default_match_setup, _server_match_session = 
 	var wolves := Player.new()
 	wolves.player_name = "Wolves"
 	game_manager.players.assign([human, wolves])
-	game_manager.upkeep_mana_enabled = false
+	game_manager.upkeep_mana_enabled = true
 	game_manager.setup_game()
 	for player in [human, wolves]:
 		player.spend_mana(player.mana)
@@ -137,9 +134,8 @@ func _show_practice_intro() -> void:
 func _refresh_turn_choice_options() -> void:
 	super._refresh_turn_choice_options()
 	choice_intro_label.visible = false
-	draw_button.text = "Draw a Card"
-	mana_button.visible = false
-	mana_button.disabled = true
+	draw_button.text = "Draw"
+	_sync_story_draw_deck()
 
 func show_turn_choice() -> void:
 	left_panel.modulate.a = 1.0
@@ -154,13 +150,25 @@ func _reveal_story_turn_choice() -> void:
 		return
 	if not is_inside_tree() or choice_container == null or not choice_container.visible:
 		return
-	if board_separator != null:
-		_center_story_control(choice_container, left_panel, board_separator.get_global_rect().get_center().y)
+	_layout_turn_start_props()
 	choice_container.modulate.a = 1.0
 
 func hide_turn_choice() -> void:
 	left_panel.modulate.a = 0.0
 	super.hide_turn_choice()
+	_sync_story_draw_deck()
+
+func _sync_story_draw_deck() -> void:
+	_sync_turn_start_props()
+
+func _turn_start_props_are_ready() -> bool:
+	return _story_board_ready and super._turn_start_props_are_ready()
+
+func _get_turn_start_prop_scale() -> float:
+	return STORY_DRAW_DECK_SCALE
+
+func _get_turn_start_prop_horizontal_blend() -> float:
+	return 0.35
 
 func _sync_turn_choice_vertical_order() -> void:
 	# The story choice floats over the reserved left panel space.
@@ -168,11 +176,10 @@ func _sync_turn_choice_vertical_order() -> void:
 
 func _process(delta: float) -> void:
 	super._process(delta)
+	_sync_story_draw_deck()
 	if board_separator == null:
 		return
 	var midpoint_y: float = board_separator.get_global_rect().get_center().y
-	if choice_container != null and choice_container.visible:
-		_center_story_control(choice_container, left_panel, midpoint_y)
 	if end_turn_button != null and end_turn_button.visible:
 		_center_story_control(end_turn_button, right_panel, midpoint_y)
 	# Keep the turn text and timer above the centered button.
@@ -185,7 +192,7 @@ func _center_story_control(control: Control, panel: Control, midpoint_y: float) 
 	var control_size: Vector2 = control.get_combined_minimum_size()
 	control.size = control_size
 	var center := Vector2(panel.get_global_rect().get_center().x, midpoint_y)
-	control.position = get_global_transform().affine_inverse() * center - control_size * 0.5
+	control.position = get_global_transform().affine_inverse() * center - control_size * control.scale * 0.5
 
 func _sync_network_turn_controls() -> void:
 	# Clear stale choice visibility once the player or bot has resolved upkeep.
@@ -193,6 +200,7 @@ func _sync_network_turn_controls() -> void:
 			and choice_container.visible and not _game_finished:
 		hide_turn_choice()
 	super._sync_network_turn_controls()
+	_sync_story_draw_deck()
 
 func _update_match_side_panel_layout() -> void:
 	super._update_match_side_panel_layout()
@@ -208,8 +216,6 @@ func _update_match_side_panel_layout() -> void:
 			var control := child as Control
 			if control != null:
 				control.custom_minimum_size.x = 180.0
-	if draw_button != null:
-		draw_button.custom_minimum_size = Vector2(180.0, 60.0)
 
 func _refresh_turn_label() -> void:
 	super._refresh_turn_label()

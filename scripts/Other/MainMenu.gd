@@ -1763,9 +1763,10 @@ func _should_reuse_active_lobby_connection(target_lobby_ip: String) -> bool:
 		return false
 	var desired_email := _get_preferred_account_username().strip_edges().to_lower()
 	var connected_email := _get_connected_account_email().strip_edges().to_lower()
+	var connected_username := _get_connected_account_username().strip_edges().to_lower()
 	return not desired_email.is_empty() \
 		and connected_auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY] \
-		and connected_email == desired_email
+		and (connected_email == desired_email or connected_username == desired_email)
 
 func _build_menu_card_template_cache_backgrounded() -> void:
 	if _menu_card_templates_built:
@@ -5481,7 +5482,7 @@ func _show_auth_onboarding() -> void:
 	inner.add_child(_auth_onboarding_public_username_edit)
 
 	_auth_onboarding_username_edit = LineEdit.new()
-	_auth_onboarding_username_edit.placeholder_text = "Email address"
+	_auth_onboarding_username_edit.placeholder_text = "Email or username"
 	_auth_onboarding_username_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_auth_onboarding_username_edit.visible = false
 	_apply_line_edit_text_sizing(_auth_onboarding_username_edit, AUTH_CONTROL_FONT_SIZE, AUTH_FIELD_MIN_HEIGHT)
@@ -5588,6 +5589,7 @@ func _begin_auth_onboarding_account_flow(auth_mode: String) -> void:
 			_auth_onboarding_public_username_edit.text = _selected_account_public_username
 	if _auth_onboarding_username_edit != null:
 		_auth_onboarding_username_edit.visible = true
+		_auth_onboarding_username_edit.placeholder_text = "Email or username" if auth_mode == AUTH_MODE_LOGIN else "Email address"
 		if _auth_onboarding_username_edit.text.strip_edges().is_empty():
 			var saved_username := ""
 			if auth_mode == AUTH_MODE_CLAIM_LEGACY:
@@ -5660,7 +5662,7 @@ func _submit_auth_onboarding() -> bool:
 			_auth_onboarding_public_username_edit.grab_focus()
 		return false
 	if email.is_empty():
-		_set_auth_onboarding_hint("Enter your email address to continue.", true)
+		_set_auth_onboarding_hint("Enter your email or username to continue." if auth_mode == AUTH_MODE_LOGIN else "Enter your email address to continue.", true)
 		if _auth_onboarding_username_edit != null:
 			_auth_onboarding_username_edit.grab_focus()
 		return false
@@ -5704,8 +5706,9 @@ func _prepare_submitted_account_auth(email: String) -> void:
 	_cancel_pending_authenticated_lobby_connects()
 	var requested_key := requested_email.to_lower()
 	var connected_key := _get_connected_account_email().strip_edges().to_lower()
+	var connected_username_key := _get_connected_account_username().strip_edges().to_lower()
 	var auth_mode := _auth_onboarding_selected_mode
-	if connected_key == requested_key and auth_mode != AUTH_MODE_CLAIM_LEGACY:
+	if (connected_key == requested_key or connected_username_key == requested_key) and auth_mode != AUTH_MODE_CLAIM_LEGACY:
 		return
 	_account_switch_pending = true
 	_account_switch_retry_attempts = 0
@@ -5789,7 +5792,8 @@ func _refresh_auth_onboarding_form_state() -> void:
 	var email := _auth_onboarding_username_edit.text.strip_edges().to_lower() if _auth_onboarding_username_edit != null else ""
 	var public_username := _auth_onboarding_public_username_edit.text.strip_edges() if _auth_onboarding_public_username_edit != null else ""
 	var password := _auth_onboarding_password_edit.text if _auth_onboarding_password_edit != null else ""
-	var can_submit := _is_valid_account_email(email) and not password.is_empty()
+	var valid_identifier := _is_valid_account_login_identifier(email) if auth_mode == AUTH_MODE_LOGIN else _is_valid_account_email(email)
+	var can_submit := valid_identifier and not password.is_empty()
 	if auth_mode in [AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]:
 		can_submit = can_submit and _is_valid_account_public_username(public_username)
 	if auth_mode == AUTH_MODE_REGISTER:
@@ -5810,7 +5814,9 @@ func _validate_account_auth_details(
 	password: String,
 	public_username: String = ""
 ) -> String:
-	if not _is_valid_account_email(email):
+	if auth_mode == AUTH_MODE_LOGIN and not _is_valid_account_login_identifier(email):
+		return "Enter a valid email address or username."
+	if auth_mode != AUTH_MODE_LOGIN and not _is_valid_account_email(email):
 		return "Enter a valid email address."
 	if auth_mode in [AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]:
 		if not _is_valid_account_public_username(public_username):
@@ -5821,6 +5827,9 @@ func _validate_account_auth_details(
 	if password.strip_edges().length() < min_password_length:
 		return "Passwords for new accounts must be at least %d characters." % min_password_length
 	return ""
+
+func _is_valid_account_login_identifier(identifier: String) -> bool:
+	return _is_valid_account_email(identifier) if identifier.contains("@") else _is_valid_account_public_username(identifier)
 
 func _is_valid_account_public_username(username: String) -> bool:
 	var normalized_username := username.strip_edges()
@@ -12280,7 +12289,7 @@ func _refresh_switch_account_button() -> void:
 func _refresh_auth_controls() -> void:
 	var signed_in_account := _is_account_logged_in()
 	if player_name_line_edit != null:
-		player_name_line_edit.placeholder_text = "Email address"
+		player_name_line_edit.placeholder_text = "Email or username"
 		player_name_line_edit.editable = not signed_in_account
 		player_name_line_edit.visible = false
 	if _password_line_edit != null:
@@ -12298,9 +12307,7 @@ func _validate_auth_inputs() -> String:
 		return "Make an account to play online and save decks across instances."
 	var email: String = _get_preferred_account_username()
 	if email.is_empty():
-		return "Enter your account email first."
-	if not _is_valid_account_email(email):
-		return "Enter a valid email address."
+		return "Enter your account email or username first." if auth_mode == AUTH_MODE_LOGIN else "Enter your account email first."
 	var public_username := _get_selected_account_public_username()
 	if auth_mode in [AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY] and not _is_valid_account_public_username(public_username):
 		return "Enter a username using 3-24 letters, numbers, or underscores."

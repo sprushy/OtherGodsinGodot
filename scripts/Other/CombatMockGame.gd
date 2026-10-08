@@ -49,6 +49,9 @@ const SEVENTH_SAGE_CURSOR_IMAGE_PATH := "res://images/ui/cursors/SeventhSageCurs
 const GEOPHAGIA_CURSOR_IMAGE_PATH := "res://images/ui/cursors/GeophagiaCursor.png"
 const ENTROPY_CURSOR_IMAGE_PATH := "res://images/ui/cursors/EntropyCursor.png"
 const CardBackTexture = preload("res://images/cardbackAI.png")
+const CardDrawAnimationScript = preload("res://scripts/ui/CardDrawAnimation.gd")
+const CardShelveAnimationScript = preload("res://scripts/ui/CardShelveAnimation.gd")
+const DrawDeckButtonScript = preload("res://scripts/ui/DrawDeckButton.gd")
 const PreparedMagicalCardCoverTexture = preload("res://images/PreparedMagicalCardCoverDimRuntime.png")
 const FOLLOWER_CASUALTY_ALIVE_TEXTURE := preload("res://images/ui/followers/god_follower_alive.png")
 const FOLLOWER_CASUALTY_WALK_SIDE_TEXTURE := preload("res://images/ui/followers/god_follower_walk_sheet.png")
@@ -334,6 +337,7 @@ const MATCH_REPLAY_MULTI_DESTROY_THRESHOLD := 2
 @onready var choice_intro_label = $MainHBox/LeftPanel/ChoiceContainer/ChoiceIntroLabel
 @onready var draw_button = $MainHBox/LeftPanel/ChoiceContainer/DrawButton
 @onready var mana_button = $MainHBox/LeftPanel/ChoiceContainer/ManaButton
+var _opponent_draw_deck = null
 var _sun_hunt_button: Button = null
 var _matriarch_rule_button: Button = null
 @onready var left_panel = $MainHBox/LeftPanel
@@ -365,6 +369,12 @@ var match_manager: MatchManager
 # Visual UI state
 var _hand_visual_cards: Array = []   # Array[VisualCard]
 var _hand_render_signature: String = ""
+var _hand_animation_player_index: int = -1
+var _hand_animation_uids: Dictionary = {}
+var _pending_hand_arrivals: Dictionary = {}
+var _draw_arrival_uids: Dictionary = {}
+var _card_draw_animations: Dictionary = {}
+var _card_shelve_animations: Dictionary = {}
 var _board_zone_uis: Array = []      # Array[BoardZoneUI]
 var _enemy_zone_uis: Array = []      # Array[BoardZoneUI]
 var _enemy_god_zone_ui: BoardZoneUI = null
@@ -654,6 +664,9 @@ var _match_replay_autoplay_active: bool = false
 var _match_replay_step_index: int = -1
 var _match_replay_next_snapshot_id: int = 1
 var _match_replay_initial_snapshot_requested: bool = false
+var _match_replay_capture_ids: Array[int] = []
+var _match_replay_capture_pending: bool = false
+var _match_replay_capture_generation: int = 0
 var _last_logged_action_text: String = ""
 var _action_label_log_suppressed: bool = false
 var _suppress_next_generic_prepare_log: bool = false
@@ -887,6 +900,7 @@ const REINFORCEMENT_OVERLAY_Z_INDEX := TRANSIENT_UI_Z_INDEX + 220
 const REINFORCEMENT_HOVER_Z_INDEX := REINFORCEMENT_OVERLAY_Z_INDEX + 20
 const REINFORCEMENT_DRAG_Z_INDEX := REINFORCEMENT_OVERLAY_Z_INDEX + 30
 const LEFT_PANEL_MIN_WIDTH := 196.0
+const SHOW_MATCH_INFO_PANELS := false
 const BOARD_RIGHT_NUDGE := 0.0
 const BOARD_HORIZONTAL_OFFSET := -12.0
 const ENEMY_BOARD_STRETCH_RATIO := 0.82
@@ -2626,6 +2640,8 @@ func _ready() -> void:
 	_restore_default_selection_cursor()
 
 func _exit_tree() -> void:
+	_clear_card_draw_animation()
+	_clear_card_shelve_animations()
 	_hide_devour_cancel_prompt()
 	_clear_match_move_indicators()
 	_clear_board_drag_followers_highlight()
@@ -4166,6 +4182,8 @@ func _sync_local_scheduled_callbacks() -> void:
 func _process(delta: float) -> void:
 	if not is_visible_in_tree():
 		return
+	_sync_turn_start_props()
+	_layout_turn_start_props()
 	_sync_priority_control_turn_boundary()
 	_sync_turn_activity_timers()
 	_sync_local_scheduled_callbacks()
@@ -4653,6 +4671,7 @@ func _setup_action_log() -> void:
 
 	var log_shell := MarginContainer.new()
 	log_shell.name = "ActionLogShell"
+	log_shell.visible = SHOW_MATCH_INFO_PANELS
 	log_shell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	log_shell.size_flags_vertical = 0
 	log_shell.custom_minimum_size.x = ACTION_LOG_MIN_WIDTH + ACTION_LOG_LEFT_INSET
@@ -4701,6 +4720,13 @@ func _update_side_panel_layout() -> void:
 func _update_left_action_log_spacers(log_shell_height: float = 0.0) -> void:
 	if left_top_spacer == null or left_bottom_spacer == null or left_panel == null:
 		return
+	if _action_log_shell != null and not _action_log_shell.visible:
+		# Center the deck/well options without reserving space for the hidden log.
+		left_top_spacer.custom_minimum_size.y = 0.0
+		left_bottom_spacer.custom_minimum_size.y = 0.0
+		left_top_spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		left_bottom_spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		return
 	var resolved_log_height: float = log_shell_height
 	if resolved_log_height <= 0.0 and _action_log_shell != null and is_instance_valid(_action_log_shell):
 		resolved_log_height = maxf(_action_log_shell.size.y, _action_log_shell.get_combined_minimum_size().y)
@@ -4709,6 +4735,15 @@ func _update_left_action_log_spacers(log_shell_height: float = 0.0) -> void:
 		target_center_y = center_panel.global_position.y + center_panel.size.y * 0.5
 	var panel_top_y: float = left_panel.global_position.y
 	var top_spacer_height: float = maxf(0.0, target_center_y - panel_top_y - resolved_log_height * 0.5 + LEFT_LOG_VERTICAL_BIAS)
+	# Leave room above the log for the deck choice and the permanent mana well.
+	var controls_above_log_height := 0.0
+	for child in left_panel.get_children():
+		if child == _action_log_shell:
+			break
+		var control := child as Control
+		if control != null and control != left_top_spacer and control.visible:
+			controls_above_log_height += control.get_combined_minimum_size().y + float(left_panel.get_theme_constant("separation"))
+	top_spacer_height = maxf(0.0, top_spacer_height - controls_above_log_height)
 	left_top_spacer.custom_minimum_size.y = top_spacer_height
 	left_bottom_spacer.custom_minimum_size.y = 0.0
 	left_top_spacer.size_flags_vertical = 0
@@ -4752,6 +4787,8 @@ func _get_action_log_shell_height(log_box: Control, log_height: float) -> float:
 
 func _sync_turn_choice_vertical_order() -> void:
 	if left_panel == null or action_label == null or choice_container == null:
+		return
+	if choice_container.get_parent() != left_panel:
 		return
 	if _action_log_shell == null or _turn_choice_gap == null:
 		return
@@ -4994,6 +5031,9 @@ func _refresh_match_replay_button() -> void:
 
 func _clear_match_replay_history() -> void:
 	_set_match_replay_autoplay(false)
+	_match_replay_capture_generation += 1
+	_match_replay_capture_ids.clear()
+	_match_replay_capture_pending = false
 	_match_replay_entries.clear()
 	_match_replay_step_index = -1
 	_match_replay_next_snapshot_id = 1
@@ -5103,16 +5143,51 @@ func _get_match_replay_entry_markers(turn_number: int, followers: Array[int], de
 	return markers
 
 func _capture_match_replay_snapshot_deferred(snapshot_id: int) -> void:
+	_match_replay_capture_ids.append(snapshot_id)
+	if _match_replay_capture_pending:
+		return
+	_match_replay_capture_pending = true
+	var capture_generation := _match_replay_capture_generation
 	await RenderingServer.frame_post_draw
-	var entry_index := _find_match_replay_entry_index(snapshot_id)
-	if entry_index >= 0:
-		var hidden_overlays := _hide_match_replay_capture_overlays()
-		if not hidden_overlays.is_empty():
-			await RenderingServer.frame_post_draw
-		_match_replay_entries[entry_index]["snapshot"] = _capture_match_replay_snapshot_now()
+	if capture_generation != _match_replay_capture_generation or not is_inside_tree():
+		return
+	# GPU screenshot readback also blocks the game thread. Capture the settled
+	# board after card travel, including the final slide beneath the deck.
+	while _has_active_replay_capture_card_animation():
+		await RenderingServer.frame_post_draw
+		if capture_generation != _match_replay_capture_generation or not is_inside_tree():
+			return
+	var hidden_overlays := _hide_match_replay_capture_overlays()
+	if not hidden_overlays.is_empty():
+		await RenderingServer.frame_post_draw
+	if capture_generation != _match_replay_capture_generation or not is_inside_tree():
 		_restore_match_replay_capture_overlays(hidden_overlays)
-		if _is_match_replay_open() and _match_replay_step_index == entry_index:
-			_refresh_match_replay_overlay_step()
+		return
+	var entry_indices: Array[int] = []
+	for pending_id in _match_replay_capture_ids:
+		var entry_index := _find_match_replay_entry_index(pending_id)
+		if entry_index >= 0:
+			entry_indices.append(entry_index)
+	_match_replay_capture_ids.clear()
+	_match_replay_capture_pending = false
+	# Messages logged before the same rendered frame see the same board.
+	# Share one screenshot instead of repeating GPU readback and image resizing.
+	if not entry_indices.is_empty():
+		var snapshot := _capture_match_replay_snapshot_now()
+		for entry_index in entry_indices:
+			_match_replay_entries[entry_index]["snapshot"] = snapshot
+	_restore_match_replay_capture_overlays(hidden_overlays)
+	if _is_match_replay_open() and _match_replay_step_index in entry_indices:
+		_refresh_match_replay_overlay_step()
+
+func _has_active_replay_capture_card_animation() -> bool:
+	if not _card_draw_animations.is_empty() or not _card_shelve_animations.is_empty():
+		return true
+	if draw_button != null and is_instance_valid(draw_button):
+		for child in draw_button.get_children():
+			if child.has_meta("shelve_insertion") and not child.is_queued_for_deletion():
+				return true
+	return false
 
 func _find_match_replay_entry_index(snapshot_id: int) -> int:
 	for i in range(_match_replay_entries.size()):
@@ -5132,7 +5207,9 @@ func _capture_match_replay_snapshot_now() -> Texture2D:
 		return null
 	if image.get_width() > MATCH_REPLAY_MAX_SNAPSHOT_WIDTH:
 		var scaled_height := maxi(1, int(round(float(image.get_height()) * float(MATCH_REPLAY_MAX_SNAPSHOT_WIDTH) / float(image.get_width()))))
-		image.resize(MATCH_REPLAY_MAX_SNAPSHOT_WIDTH, scaled_height, Image.INTERPOLATE_LANCZOS)
+		# Lanczos resizing blocked the game thread for over a second at high
+		# resolutions. Bilinear keeps replay images readable without that stall.
+		image.resize(MATCH_REPLAY_MAX_SNAPSHOT_WIDTH, scaled_height, Image.INTERPOLATE_BILINEAR)
 	return ImageTexture.create_from_image(image)
 
 func _hide_match_replay_capture_overlays() -> Array[Control]:
@@ -6136,6 +6213,8 @@ func _build_initial_match_players(default_match_setup, server_match_session = nu
 	return match_players
 
 func _prepare_for_match_launch(status_message: String = "Connecting to match...") -> void:
+	_clear_card_draw_animation()
+	_clear_card_shelve_animations()
 	_set_match_reconnect_wait(false)
 	_clear_match_move_indicators()
 	_awaiting_initial_full_state = false
@@ -6284,6 +6363,10 @@ func hide_turn_choice() -> void:
 		return
 	_clear_locked_power_cursor_hover()
 	choice_container.visible = false
+	draw_button.disabled = true
+	mana_button.disabled = true
+	draw_button.set_draw_available(false)
+	mana_button.set_available(false)
 	end_turn_button.visible = true
 	_hide_sun_hunt_button()
 	_hide_matriarch_rule_button()
@@ -6295,6 +6378,26 @@ func hide_turn_choice() -> void:
 func _setup_turn_choice_buttons() -> void:
 	if choice_container == null:
 		return
+	# These table props outlive the choice prompt, including during the other turn.
+	draw_button.reparent(self, false)
+	mana_button.reparent(self, false)
+	for prop in [draw_button, mana_button]:
+		prop.visible = false
+		prop.disabled = true
+		prop.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	draw_button.set_card_protector_enabled(true)
+	_opponent_draw_deck = DrawDeckButtonScript.new()
+	_opponent_draw_deck.name = "OpponentDrawDeck"
+	_opponent_draw_deck.disabled = true
+	_opponent_draw_deck.visible = false
+	add_child(_opponent_draw_deck)
+	_opponent_draw_deck.set_opponent_view(true)
+	_opponent_draw_deck.set_card_protector_enabled(true)
+	choice_container.reparent(self, false)
+	choice_container.z_index = 1
+	choice_intro_label.visible = false
+	choice_container.visibility_changed.connect(_sync_turn_start_props)
+	placement_container.z_index = 1
 	if _sun_hunt_button == null:
 		_sun_hunt_button = Button.new()
 		_sun_hunt_button.name = "SunHuntButton"
@@ -6348,9 +6451,13 @@ func _refresh_turn_choice_options() -> void:
 		draw_mana_gain = game_manager.get_effective_upkeep_mana_gain(draw_mana_gain, game_manager.current_player)
 		mana_gain = game_manager.get_effective_upkeep_mana_gain(mana_gain, game_manager.current_player)
 	draw_button.text = "Draw a Card" if draw_mana_gain <= 0 else "Gain %d Mana + Card" % draw_mana_gain
+	if game_manager != null and game_manager.current_player != null:
+		draw_button.set_deck_count(game_manager.current_player.deck_zone.get_card_count())
 	mana_button.text = "Gain %d Mana" % mana_gain
 	draw_button.disabled = false
 	mana_button.disabled = false
+	draw_button.set_draw_available(true)
+	mana_button.set_available(true)
 	var available_skolls := _get_available_skoll_upkeep_cards()
 	var available_tiamat_cards := _get_available_tiamat_upkeep_cards()
 	if _sun_hunt_button != null:
@@ -6363,12 +6470,95 @@ func _refresh_turn_choice_options() -> void:
 		_matriarch_rule_button.disabled = available_tiamat_cards.is_empty()
 	if _is_network_breidablik_return_pending():
 		_set_turn_choice_controls_disabled(true)
+	_sync_turn_start_props()
+
+func _can_choose_turn_start_option() -> bool:
+	if _game_finished or _is_observer_mode or game_manager == null or game_manager.current_player == null:
+		return false
+	return choice_container.visible and _has_authoritative_local_player_view() \
+		and game_manager.players.find(game_manager.current_player) == _get_authoritative_turn_local_player_index() \
+		and game_manager.is_player_in_upkeep_window(game_manager.current_player) \
+		and game_manager.action_stack.is_empty() \
+		and not _is_network_breidablik_return_pending() \
+		and _skoll_prompt_panel == null and _pending_skoll_summon == null
+
+func _turn_start_props_are_ready() -> bool:
+	return game_manager != null and not _awaiting_initial_full_state \
+		and _get_display_player() != null and _get_display_opponent() != null
+
+func _sync_turn_start_props() -> void:
+	if _opponent_draw_deck == null:
+		return
+	var props_ready := _turn_start_props_are_ready()
+	draw_button.visible = props_ready
+	mana_button.visible = props_ready
+	_opponent_draw_deck.visible = props_ready
+	# Explicit prompts enable the choices; polling only closes them to preserve locks.
+	if not _can_choose_turn_start_option():
+		draw_button.disabled = false
+		mana_button.disabled = false
+		draw_button.set_draw_available(false)
+		mana_button.set_available(false)
+	else:
+		draw_button.disabled = false
+		mana_button.disabled = false
+		draw_button.set_draw_available(true)
+		mana_button.set_available(true)
+	if not props_ready:
+		return
+	var display_player := _get_display_player()
+	var opponent := _get_display_opponent()
+	draw_button.set_deck_count(display_player.deck_zone.get_card_count())
+	_opponent_draw_deck.set_deck_count(opponent.deck_zone.get_card_count())
+	_opponent_draw_deck.set_opponent_draw_available(not _game_finished \
+		and game_manager.current_player == opponent \
+		and game_manager.is_player_in_upkeep_window(opponent) \
+		and game_manager.action_stack.is_empty())
+
+func _get_turn_start_prop_scale() -> float:
+	return 1.0
+
+func _get_turn_start_prop_horizontal_blend() -> float:
+	# Regular matches keep the props close to their original side-column position.
+	return 0.10
+
+func _layout_turn_start_props() -> void:
+	if _opponent_draw_deck == null or not _turn_start_props_are_ready() or board_separator == null:
+		return
+	var to_local := get_global_transform().affine_inverse()
+	# Keep the props together while using a restrained shift toward the board.
+	# The full separator-center move was too far right; retain 35% of it.
+	var original_center: Vector2 = left_panel.get_global_rect().get_center()
+	var board_center: Vector2 = board_separator.get_global_rect().get_center()
+	var display_center: Vector2 = original_center.lerp(board_center, _get_turn_start_prop_horizontal_blend())
+	var midpoint: Vector2 = to_local * display_center
+	var prop_size := Vector2(196.0, 216.0)
+	for prop in [draw_button, mana_button, _opponent_draw_deck]:
+		prop_size = prop_size.max(prop.get_combined_minimum_size())
+	var gap := 12.0
+	# Fit both decks around the actual board midpoint, above the corner actions.
+	var half_space := maxf(0.0, minf(midpoint.y - 8.0, size.y - 44.0 - midpoint.y))
+	var prop_scale := minf(_get_turn_start_prop_scale(), maxf(0.1, (half_space - gap) / (prop_size.y * 1.5)))
+	var deck_distance := prop_size.y * prop_scale + gap
+	_position_turn_start_prop(_opponent_draw_deck, midpoint - Vector2(0.0, deck_distance), prop_size, prop_scale)
+	_position_turn_start_prop(mana_button, midpoint, prop_size, prop_scale)
+	_position_turn_start_prop(draw_button, midpoint + Vector2(0.0, deck_distance), prop_size, prop_scale)
+	# Optional card-specific upkeep choices float beside the well instead of hiding it.
+	choice_container.size = choice_container.get_combined_minimum_size()
+	choice_container.position = midpoint + Vector2(prop_size.x * prop_scale * 0.5 + 8.0, -choice_container.size.y * 0.5)
+
+func _position_turn_start_prop(prop: Control, center: Vector2, prop_size: Vector2, prop_scale: float) -> void:
+	prop.size = prop_size
+	prop.scale = Vector2.ONE * prop_scale
+	prop.position = center - prop_size * prop_scale * 0.5
 
 func _set_turn_choice_controls_disabled(disabled: bool) -> void:
 	if draw_button != null:
-		draw_button.disabled = disabled
+		draw_button.disabled = false
+		draw_button.set_draw_available(not disabled)
 	if mana_button != null:
-		mana_button.disabled = disabled
+		mana_button.disabled = false
+		mana_button.set_available(not disabled)
 	if _sun_hunt_button != null and _sun_hunt_button.visible:
 		_sun_hunt_button.disabled = disabled
 	if _matriarch_rule_button != null and _matriarch_rule_button.visible:
@@ -6427,8 +6617,7 @@ func _reject_pending_network_breidablik_return_choice() -> void:
 
 func _lock_turn_choice_for_sun_hunt() -> void:
 	choice_intro_label.text = "Choose one:"
-	draw_button.disabled = true
-	mana_button.disabled = true
+	_set_turn_choice_controls_disabled(true)
 	if _sun_hunt_button != null:
 		_sun_hunt_button.visible = true
 		_sun_hunt_button.disabled = true
@@ -7258,8 +7447,6 @@ func _update_match_side_panel_layout() -> void:
 		action_label.custom_minimum_size.x = left_log_width
 	_set_left_control_width(choice_container, left_width)
 	_set_left_control_width(choice_intro_label, left_width)
-	_set_left_control_width(draw_button, left_width)
-	_set_left_control_width(mana_button, left_width)
 	_set_left_control_width(_sun_hunt_button, left_width)
 	_set_left_control_width(_matriarch_rule_button, left_width)
 	_set_left_control_width(placement_container, left_width)
@@ -10191,6 +10378,7 @@ func draw_hand() -> void:
 	if _is_hand_context_menu_stale(hand_player):
 		_close_context_menu()
 	if hand_player == null:
+		_clear_card_draw_animation()
 		_hide_hand_hover_preview()
 		if _fan_container != null and is_instance_valid(_fan_container):
 			if _fan_container.get_parent() == self:
@@ -10209,6 +10397,7 @@ func draw_hand() -> void:
 	if _can_refresh_hand_in_place(signature, entries):
 		_refresh_hand_visual_states(entries, freyja_power_targeting)
 		_layout_fan()
+		_sync_card_draw_animation(hand_player)
 		return
 
 	_hide_hand_hover_preview()
@@ -10262,6 +10451,7 @@ func draw_hand() -> void:
 	_hand_visual_cards = next_visual_cards
 	_hand_render_signature = signature
 	if _hand_visual_cards.is_empty():
+		_sync_card_draw_animation(hand_player)
 		next_fan.free()
 		_fan_container = null
 		if previous_fan != null and is_instance_valid(previous_fan):
@@ -10278,6 +10468,238 @@ func draw_hand() -> void:
 		if previous_fan.get_parent() == self:
 			remove_child(previous_fan)
 		previous_fan.free()
+
+	_sync_card_draw_animation(hand_player)
+
+func _get_hand_arrival_source(from_zone: Zone) -> Dictionary:
+	if from_zone != null and from_zone.zone_type == Zone.ZoneType.DECK and draw_button != null:
+		var source_rect: Rect2 = draw_button.get_top_card_rect()
+		var to_local: Transform2D = get_global_transform().affine_inverse() * draw_button.get_global_transform()
+		return {
+			"center": to_local * source_rect.get_center(),
+			"size": source_rect.size * to_local.get_scale().abs(),
+			"rotation": draw_button.get_top_card_rotation() + to_local.get_rotation(),
+			"reveal_from_back": true,
+		}
+	var visual: Control = _get_zone_ui_for_zone(from_zone)
+	if visual == null and from_zone != null:
+		for icon in find_children("ZoneInfoIcon", "PanelContainer", true, false):
+			if icon.get_meta("zone_ref", null) == from_zone:
+				visual = icon as Control
+				break
+	if visual != null and visual.is_visible_in_tree():
+		var to_local: Transform2D = get_global_transform().affine_inverse() * visual.get_global_transform()
+		var center := to_local * (visual.size * 0.5)
+		if visual is BoardZoneUI:
+			center = get_global_transform().affine_inverse() * (visual as BoardZoneUI).get_visual_anchor_global()
+		return {
+			"center": center,
+			"size": Vector2(90.0, 126.0),
+			"rotation": to_local.get_rotation(),
+			"reveal_from_back": false,
+		}
+	# Created cards and sources without a visible zone emerge above the hand.
+	return {
+		"center": Vector2(size.x * 0.5, size.y * 0.55),
+		"size": Vector2(90.0, 126.0),
+		"rotation": 0.0,
+		"reveal_from_back": false,
+	}
+
+func _capture_hand_arrival_sources() -> Dictionary:
+	var sources: Dictionary = {}
+	var hand_player := _get_visible_hand_player()
+	if hand_player == null or _awaiting_initial_full_state or _is_observer_mode:
+		return sources
+	for player in game_manager.players:
+		for zone in _get_all_player_zones(player):
+			if zone == hand_player.hand_zone or zone.cards.is_empty():
+				continue
+			var source := _get_hand_arrival_source(zone)
+			for card in zone.cards:
+				if card != null:
+					sources[card.uid] = source
+	return sources
+
+func _sync_card_draw_animation(hand_player: Player) -> void:
+	var player_index := game_manager.players.find(hand_player)
+	var initialize := _hand_animation_player_index != player_index or _awaiting_initial_full_state
+	if initialize:
+		_clear_card_draw_animation()
+		_hand_animation_player_index = player_index
+	var current_uids: Dictionary = {}
+	var arrivals: Array[Card] = []
+	for card in hand_player.hand_zone.cards:
+		if card == null:
+			continue
+		current_uids[card.uid] = true
+		if not initialize and not _game_finished and not _is_observer_mode \
+				and not _hand_animation_uids.has(card.uid) and not _card_draw_animations.has(card.uid):
+			arrivals.append(card)
+	_hand_animation_uids = current_uids
+	for uid in _card_draw_animations.keys():
+		if not current_uids.has(uid):
+			var animation := _card_draw_animations[uid] as Control
+			_card_draw_animations.erase(uid)
+			_draw_arrival_uids.erase(uid)
+			if is_instance_valid(animation):
+				animation.cancel()
+	for i in range(arrivals.size()):
+		var card := arrivals[i]
+		var source: Dictionary = _pending_hand_arrivals.get(card.uid, _get_hand_arrival_source(null))
+		_start_card_draw_animation(card, source, float(i) * 0.16)
+	_pending_hand_arrivals.clear()
+	# Full-state updates can rebuild the hand while the card is in flight.
+	# Reserve its real slot without exposing a second copy before arrival.
+	if not _draw_arrival_uids.is_empty():
+		for vc in _hand_visual_cards:
+			if vc.card_data != null and _draw_arrival_uids.has(vc.card_data.uid):
+				vc.modulate.a = 0.0
+				vc.set_disabled(true, false)
+
+func _start_card_draw_animation(card: Card, source: Dictionary, delay: float = 0.0) -> void:
+	_draw_arrival_uids[card.uid] = true
+	var animation := CardDrawAnimationScript.new()
+	animation.name = "CardDrawAnimation"
+	add_child(animation)
+	_promote_transient_ui(animation, HAND_OVERLAY_Z_INDEX + 10)
+	_card_draw_animations[card.uid] = animation
+	animation.landed.connect(_on_draw_card_landed.bind(card.uid))
+	animation.tree_exited.connect(_release_card_draw_animation.bind(card.uid, animation), CONNECT_ONE_SHOT)
+	animation.play(
+		card,
+		source["center"],
+		source["size"],
+		float(source["rotation"]),
+		_get_draw_arrival_geometry.bind(card.uid),
+		_get_hand_card_display_mana_cost(card),
+		_get_hand_card_cost_adjustment_lines(card),
+		bool(source.get("reveal_from_back", true)),
+		delay
+	)
+
+func _get_draw_arrival_geometry(card_uid: String) -> Dictionary:
+	for vc in _hand_visual_cards:
+		if is_instance_valid(vc) and vc.card_data != null and vc.card_data.uid == card_uid:
+			var transform: Transform2D = get_global_transform().affine_inverse() * vc.get_global_transform()
+			return {
+				"center": transform * (vc.size * 0.5),
+				"size": vc.size * transform.get_scale().abs(),
+				"rotation": transform.get_rotation(),
+			}
+	return {}
+
+func _restore_draw_arrival_slot(arriving_uid: String) -> void:
+	_draw_arrival_uids.erase(arriving_uid)
+	for vc in _hand_visual_cards:
+		if is_instance_valid(vc) and vc.card_data != null and vc.card_data.uid == arriving_uid:
+			vc.modulate = Color.WHITE
+
+func _on_draw_card_landed(card_uid: String) -> void:
+	_restore_draw_arrival_slot(card_uid)
+	update_ui()
+
+func _release_card_draw_animation(card_uid: String, animation: Control) -> void:
+	if _card_draw_animations.get(card_uid, null) == animation:
+		_card_draw_animations.erase(card_uid)
+		_restore_draw_arrival_slot(card_uid)
+
+func _clear_card_draw_animation() -> void:
+	_pending_hand_arrivals.clear()
+	_hand_animation_uids.clear()
+	_hand_animation_player_index = -1
+	for animation in _card_draw_animations.values():
+		if is_instance_valid(animation):
+			animation.cancel()
+	_card_draw_animations.clear()
+	for uid in _draw_arrival_uids.keys():
+		_restore_draw_arrival_slot(uid)
+
+func _get_shelve_source(card: Card, from_zone: Zone) -> Dictionary:
+	if card == null or card.card_owner != _get_display_player() \
+			or draw_button == null or not draw_button.is_visible_in_tree():
+		return {}
+	var visual: Control = null
+	for vc in _hand_visual_cards:
+		if is_instance_valid(vc) and vc.card_data != null and vc.card_data.uid == card.uid:
+			visual = vc
+			break
+	if visual == null and from_zone != null and from_zone.is_board_zone():
+		visual = _get_zone_ui_for_zone(from_zone)
+	if visual == null or not visual.is_visible_in_tree() or visual.modulate.a <= 0.0:
+		return {}
+	var to_local: Transform2D = get_global_transform().affine_inverse() * visual.get_global_transform()
+	var center := to_local * (visual.size * 0.5)
+	if visual is BoardZoneUI:
+		center = get_global_transform().affine_inverse() * (visual as BoardZoneUI).get_visual_anchor_global()
+	return {
+		"card_uid": card.uid,
+		"visual": visual,
+		"center": center,
+		"size": visual.size * to_local.get_scale().abs(),
+		"rotation": to_local.get_rotation(),
+	}
+
+func _get_shelve_insert_geometry(card_uid: String) -> Dictionary:
+	if draw_button == null or not draw_button.is_visible_in_tree():
+		return {}
+	var card := game_manager.get_card_by_uid(card_uid)
+	if card == null or card.card_owner != _get_display_player() \
+			or card.current_zone != card.card_owner.deck_zone:
+		return {}
+	var rect: Rect2 = draw_button.get_shelve_insert_rect()
+	var to_local: Transform2D = get_global_transform().affine_inverse() * draw_button.get_global_transform()
+	return {
+		"center": to_local * rect.get_center(),
+		"size": rect.size * to_local.get_scale().abs(),
+		"rotation": draw_button.get_bottom_card_rotation() + to_local.get_rotation(),
+	}
+
+func _start_card_shelve_animation(card: Card, source: Dictionary) -> void:
+	if source.is_empty() or _card_shelve_animations.has(card.uid) \
+			or _game_finished or card.card_owner != _get_display_player() \
+			or card.current_zone != card.card_owner.deck_zone:
+		return
+	draw_button.set_deck_count(card.card_owner.deck_zone.get_card_count())
+	var visual := source.get("visual", null) as Control
+	if visual != null and is_instance_valid(visual):
+		visual.modulate.a = 0.0
+	var animation := CardShelveAnimationScript.new()
+	animation.name = "CardShelveAnimation"
+	add_child(animation)
+	_promote_transient_ui(animation, HAND_OVERLAY_Z_INDEX + 10)
+	_card_shelve_animations[card.uid] = animation
+	animation.tree_exited.connect(_release_card_shelve_animation.bind(card.uid, animation), CONNECT_ONE_SHOT)
+	animation.play_shelve(card, source, _get_shelve_insert_geometry.bind(card.uid), draw_button.insert_shelved_card)
+	update_ui()
+
+func _release_card_shelve_animation(card_uid: String, animation: Control) -> void:
+	if _card_shelve_animations.get(card_uid, null) == animation:
+		_card_shelve_animations.erase(card_uid)
+
+func _clear_card_shelve_animations() -> void:
+	for animation in _card_shelve_animations.values():
+		if is_instance_valid(animation):
+			animation.cancel()
+	_card_shelve_animations.clear()
+	if draw_button != null and is_instance_valid(draw_button):
+		draw_button.clear_shelve_insertions()
+
+func _capture_visible_shelve_sources() -> Array[Dictionary]:
+	var sources: Array[Dictionary] = []
+	for vc in _hand_visual_cards:
+		if is_instance_valid(vc) and vc.card_data != null:
+			var source := _get_shelve_source(vc.card_data, vc.card_data.current_zone)
+			if not source.is_empty():
+				sources.append(source)
+	for zone_ui in _board_zone_uis + _enemy_zone_uis + [_player_god_zone_ui, _enemy_god_zone_ui]:
+		if not is_instance_valid(zone_ui) or zone_ui.zone == null:
+			continue
+		for card in zone_ui.zone.cards:
+			var source := _get_shelve_source(card, zone_ui.zone)
+			if not source.is_empty():
+				sources.append(source)
+	return sources
 
 func _layout_fan() -> void:
 	if not _fan_container or not is_instance_valid(_fan_container):
@@ -10329,6 +10751,8 @@ func _layout_fan() -> void:
 	call_deferred("_sync_follower_casualty_overlay")
 
 func _on_hand_card_hover_started(vc: VisualCard) -> void:
+	if vc != null and vc.card_data != null and _draw_arrival_uids.has(vc.card_data.uid):
+		return
 	if _is_match_replay_open():
 		_hide_hand_hover_preview()
 		return
@@ -10365,6 +10789,8 @@ func _get_live_hand_hover_source_side(vc: VisualCard) -> int:
 	return 0
 
 func _show_hand_hover_preview(vc: VisualCard) -> void:
+	if vc != null and vc.card_data != null and _draw_arrival_uids.has(vc.card_data.uid):
+		return
 	if _is_match_replay_open():
 		_hide_hand_hover_preview()
 		return
@@ -11008,6 +11434,7 @@ func _refresh_visible_stat_panels() -> void:
 func _make_stats_panel(player: Player, show_mana: bool = true) -> PanelContainer:
 	var panel := PanelContainer.new()
 	panel.name = "StatsPanel"
+	panel.visible = SHOW_MATCH_INFO_PANELS
 	panel.custom_minimum_size = Vector2(118, 128)
 	panel.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	var style := StyleBoxFlat.new()
@@ -15232,8 +15659,18 @@ func _clear_interaction_refs_for_moved_card(card: Card, from_zone: Zone, to_zone
 	return interaction_refs_changed
 
 func _on_local_player_card_moved(card: Card, from_zone: Zone, to_zone: Zone) -> void:
-	if card == null or from_zone == null:
+	if card == null:
 		return
+	var hand_player := _get_visible_hand_player()
+	if not _is_networked_client and hand_player != null and to_zone == hand_player.hand_zone \
+			and from_zone != to_zone and card.current_zone == to_zone:
+		_pending_hand_arrivals[card.uid] = _get_hand_arrival_source(from_zone)
+		_schedule_local_ui_refresh()
+	if from_zone == null:
+		return
+	if not _is_networked_client and to_zone != null \
+			and to_zone.zone_type == Zone.ZoneType.DECK and from_zone != to_zone:
+		_start_card_shelve_animation(card, _get_shelve_source(card, from_zone))
 	_invalidate_cached_board_layouts()
 	var cleared_interaction_refs := _clear_interaction_refs_for_moved_card(card, from_zone, to_zone)
 	if from_zone.is_board_zone() or (to_zone != null and to_zone.is_board_zone()) or cleared_interaction_refs:
@@ -15839,6 +16276,8 @@ func _select_hand_creature_for_placement(card: Card, mode: String) -> void:
 	update_ui()
 
 func _on_hand_card_pressed(card: Card) -> void:
+	if card != null and _draw_arrival_uids.has(card.uid):
+		return
 	if _game_finished:
 		return
 	if _pending_freyja_active_prompt != null:
@@ -15984,6 +16423,8 @@ func _add_hand_creature_summon_option(vbox: VBoxContainer, label: String, mode: 
 	vbox.add_child(row)
 
 func _on_hand_card_right_clicked(card: Card) -> void:
+	if card != null and _draw_arrival_uids.has(card.uid):
+		return
 	if _game_finished:
 		return
 	if _pending_freyja_active_prompt != null:
@@ -20983,7 +21424,7 @@ func _on_creature_right_clicked(card: Card) -> void:
 		var equip: Card = entry["equipment"]
 		var is_enemy: bool = entry["is_enemy"]
 		var in_range: bool = entry["in_range"]
-		var can_pick_up_this_entry := bool(entry.get("allow_pick_up", true)) and _can_pick_up_equipment_entry(card, is_enemy)
+		var can_pick_up_this_entry := bool(entry.get("allow_pick_up", true)) and _can_pick_up_equipment_entry(card, is_enemy, equip)
 		var can_break_this_entry := bool(entry.get("allow_destroy", true)) and _can_destroy_equipment_entry(card, is_enemy)
 		var pick_up_label := str(entry.get("pick_up_label", "Pick Up"))
 		var pick_up_success := str(entry.get("pick_up_success", "picks up"))
@@ -22182,14 +22623,25 @@ func _creature_can_use_equipment_action(card: Card) -> bool:
 		return card.can_use_equipment_action(game_manager)
 	return (
 		card.card_type == Card.CardType.CREATURE
-		and (card.can_take_major_creature_action() or card.can_take_minor_creature_action())
 		and not card.is_sleeping
 		and not card.is_stealth
 		and game_manager.turn_number > 0
 		and card.get_controller() == game_manager.current_player
 		and card.current_zone != null
 		and card.current_zone.is_board_zone()
+		and (card.can_take_major_creature_action() or card.can_take_minor_creature_action() or _has_free_equipment_pickup(card))
 	)
+
+func _has_free_equipment_pickup(card: Card) -> bool:
+	if not card.can_receive_equipment():
+		return false
+	for entry in _get_reachable_equipment(card):
+		var equipment: Card = entry["equipment"]
+		if bool(entry.get("allow_pick_up", true)) \
+				and equipment.can_equip_to(card) \
+				and game_manager.get_equipment_pickup_action_cost_kind(card, equipment, bool(entry["is_enemy"])) == Card.ACTION_COST_NONE:
+			return true
+	return false
 
 # Returns array of {equipment, is_enemy, in_range} for all equipment the creature can interact with
 func _get_reachable_equipment(creature: Card) -> Array[Dictionary]:
@@ -22261,12 +22713,17 @@ func _resolve_equipment_action(actor: Card, target: Card, action: String) -> boo
 		return false
 	return game_input.submit_action({type = "equip_action", card_uid = actor.uid, equipment_uid = target.uid, action = action})
 
-func _can_pick_up_equipment_entry(card: Card, is_enemy: bool) -> bool:
+func _can_pick_up_equipment_entry(card: Card, is_enemy: bool, equipment: Card) -> bool:
 	if card == null:
 		return false
 	if card.has_method("can_pick_up_equipment_action"):
 		return card.can_pick_up_equipment_action(game_manager, is_enemy)
-	return card.can_take_major_creature_action() if is_enemy else card.can_take_minor_creature_action()
+	var action_cost_kind := game_manager.get_equipment_pickup_action_cost_kind(card, equipment, is_enemy)
+	if action_cost_kind == Card.ACTION_COST_NONE:
+		return card.can_receive_equipment()
+	if action_cost_kind == Card.ACTION_COST_MINOR:
+		return card.can_take_minor_creature_action()
+	return card.can_take_major_creature_action()
 
 func _can_destroy_equipment_entry(card: Card, is_enemy: bool) -> bool:
 	if card == null:
@@ -27724,7 +28181,8 @@ func _is_attacker_on_board(attacker: Card, owning_player: Player) -> bool:
 	return attacker.current_zone != null and attacker.current_zone.zone_type == Zone.ZoneType.FRONTLINE
 
 func _on_draw_button_pressed() -> void:
-	if _game_finished:
+	if not _can_choose_turn_start_option():
+		_set_action_label_text("Not Yet")
 		return
 	if _is_priority_prompt_visible():
 		_hide_priority_prompt()
@@ -27739,6 +28197,7 @@ func _on_draw_button_pressed() -> void:
 	if _skoll_prompt_panel != null or _pending_skoll_summon != null:
 		_set_action_label_text("Finish resolving Sun Hunt or cancel it before choosing another upkeep option.")
 		return
+	_set_turn_choice_controls_disabled(true)
 	if not game_input.submit_action({type = "upkeep_choice", choice = "draw"}):
 		_set_action_label_text("Could not submit upkeep choice. Please try again.")
 		_refresh_turn_choice_options()
@@ -27749,7 +28208,8 @@ func _on_draw_button_pressed() -> void:
 	hide_turn_choice()
 
 func _on_mana_button_pressed() -> void:
-	if _game_finished:
+	if not _can_choose_turn_start_option():
+		_set_action_label_text("Not Yet")
 		return
 	if _is_priority_prompt_visible():
 		_hide_priority_prompt()
@@ -27764,6 +28224,7 @@ func _on_mana_button_pressed() -> void:
 	if _skoll_prompt_panel != null or _pending_skoll_summon != null:
 		_set_action_label_text("Finish resolving Sun Hunt or cancel it before choosing another upkeep option.")
 		return
+	_set_turn_choice_controls_disabled(true)
 	if not game_input.submit_action({type = "upkeep_choice", choice = "mana"}):
 		_set_action_label_text("Could not submit upkeep choice. Please try again.")
 		_refresh_turn_choice_options()
@@ -29023,6 +29484,8 @@ func _has_recent_action_log_equivalent(message: String) -> bool:
 	return false
 
 func _finalize_game_result_ui(result_message: String, winner = null, loser = null, auto_return: bool = false) -> void:
+	_clear_card_draw_animation()
+	_clear_card_shelve_animations()
 	var resolved_message := _resolve_game_result_message(result_message, winner, loser)
 	var should_present_result := not _game_result_presented
 	_hide_reinforcement_overlay()
@@ -29926,8 +30389,27 @@ func _apply_full_state(data: Dictionary) -> void:
 	var previous_turn_number := game_manager.turn_number if game_manager != null else -1
 	if _is_networked_client:
 		# Client: clear stale card refs and rebuild ghost game_manager from server state
+		if _awaiting_initial_full_state:
+			_clear_card_draw_animation()
+		var shelve_sources := _capture_visible_shelve_sources()
+		var hand_sources := _capture_hand_arrival_sources()
+		var previous_hand_uids: Dictionary = {}
+		var previous_hand_player := _get_visible_hand_player()
+		if previous_hand_player != null:
+			for card in previous_hand_player.hand_zone.cards:
+				if card != null:
+					previous_hand_uids[card.uid] = true
 		_clear_network_selection_state()
 		GameState.apply_to_manager(state, game_manager)
+		var hand_player := _get_visible_hand_player()
+		if hand_player != null and not _awaiting_initial_full_state and not _is_observer_mode:
+			for card in hand_player.hand_zone.cards:
+				if card != null and not previous_hand_uids.has(card.uid):
+					_pending_hand_arrivals[card.uid] = hand_sources.get(card.uid, _get_hand_arrival_source(null))
+		for source in shelve_sources:
+			var shelved_card := game_manager.get_card_by_uid(str(source["card_uid"]))
+			if shelved_card != null:
+				_start_card_shelve_animation(shelved_card, source)
 		if match_manager != null and match_manager.has_method("set_remote_authoritative_stack_window_locked"):
 			match_manager.call(
 				"set_remote_authoritative_stack_window_locked",

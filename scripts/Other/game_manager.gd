@@ -1835,6 +1835,16 @@ func get_reachable_board_zones(creature: Card) -> Array[Zone]:
 					reachable.append(opponent.frontline_zones[ti])
 	return reachable
 
+func get_equipment_pickup_action_cost_kind(creature: Card, equipment: Card, is_enemy: bool) -> String:
+	if equipment != null \
+			and not equipment.abilities_suppressed() \
+			and equipment.has_method("can_pick_up_as_free_action") \
+			and equipment.can_pick_up_as_free_action(creature, turn_number):
+		return Card.ACTION_COST_NONE
+	if not is_enemy:
+		return Card.ACTION_COST_MINOR
+	return Card.ACTION_COST_MAJOR
+
 # Creature picks up (equips) an unequipped equipment card from an adjacent/diagonal zone.
 # Own equipment: no intercept. Enemy equipment: subject to intercept.
 # Returns false if the action is blocked or invalid.
@@ -1856,10 +1866,11 @@ func creature_pick_up_equipment(creature: Card, equipment: Card) -> bool:
 		return false
 	var is_enemy := equip_zone.zone_owner != controller
 	var in_range := equip_zone in reachable
-	if is_enemy:
+	var action_cost_kind := get_equipment_pickup_action_cost_kind(creature, equipment, is_enemy)
+	if action_cost_kind == Card.ACTION_COST_MAJOR:
 		if not creature.can_take_major_creature_action():
 			return false
-	elif not creature.can_take_minor_creature_action():
+	elif action_cost_kind == Card.ACTION_COST_MINOR and not creature.can_take_minor_creature_action():
 		return false
 	if not can_pay_creature_action_mana_cost(creature, "pick up equipment"):
 		return false
@@ -1868,14 +1879,17 @@ func creature_pick_up_equipment(creature: Card, equipment: Card) -> bool:
 		return false
 	if not pay_creature_action_mana_cost(creature, "pick up equipment"):
 		return false
-	if is_enemy:
-		creature.spend_major_creature_action()
-	else:
+	if action_cost_kind == Card.ACTION_COST_MINOR:
 		creature.spend_minor_creature_action()
+	elif action_cost_kind == Card.ACTION_COST_MAJOR:
+		creature.spend_major_creature_action()
 	if is_enemy and equipment.has_method("request_self_steal_replacement_choice") and not equipment.abilities_suppressed():
 		if equipment.request_self_steal_replacement_choice(self, creature):
 			return true
-	return _complete_creature_pick_up_equipment(creature, equipment)
+	var picked_up := _complete_creature_pick_up_equipment(creature, equipment)
+	if picked_up and action_cost_kind == Card.ACTION_COST_NONE and equipment.has_method("record_free_pickup"):
+		equipment.record_free_pickup(turn_number)
+	return picked_up
 
 func creature_use_steed(creature: Card, steed: Card) -> bool:
 	if is_game_over:
@@ -1973,13 +1987,15 @@ func get_equipment_action_failure_text(creature: Card, equipment: Card, action: 
 				return creature.card_name + " has no controller."
 			var is_enemy := equip_zone.zone_owner != controller
 			var in_range := equip_zone in reachable
+			var action_cost_kind := get_equipment_pickup_action_cost_kind(creature, equipment, is_enemy)
+			if action_cost_kind == Card.ACTION_COST_MINOR:
+				if not creature.can_take_minor_creature_action():
+					return creature.card_name + " cannot spend a minor action to pick up equipment."
+			elif action_cost_kind == Card.ACTION_COST_MAJOR and not creature.can_take_major_creature_action():
+				return creature.card_name + " cannot spend a major action to steal equipment."
 			if is_enemy:
-				if not creature.can_take_major_creature_action():
-					return creature.card_name + " cannot spend a major action to steal equipment."
 				if not in_range and creature.current_zone.zone_type != Zone.ZoneType.FRONTLINE:
 					return creature.card_name + " must be on the frontline to steal that equipment from range."
-			elif not creature.can_take_minor_creature_action():
-				return creature.card_name + " cannot spend a minor action to pick up equipment."
 			return creature.card_name + " failed to " + ("steal " if action == "steal" else "pick up ") + equipment.card_name + "."
 		"destroy":
 			if not creature.can_take_major_creature_action():

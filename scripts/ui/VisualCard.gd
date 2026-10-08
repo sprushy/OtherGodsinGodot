@@ -65,6 +65,7 @@ var _ghostly_hand_proxy: bool = false
 var _click_only: bool = false
 var _dim_when_disabled: bool = true
 var _hand_mode: bool = false
+var _show_rules_text: bool = true
 var _hand_hover_hit_rect: Rect2 = Rect2()
 var _mouse_hovered: bool = false
 var _locked_power_cursor_active: bool = false
@@ -128,7 +129,7 @@ func _compute_natural_height() -> float:
 			h += _card_width * float(tex.get_height()) / float(tex.get_width())
 	if not card_data.is_god:
 		h += 22.0  # stats / speed / resilience row
-	if card_data.ability_text != "":
+	if _show_rules_text and card_data.ability_text != "":
 		var raw := card_data.ability_text.replace("[b]", "").replace("[/b]", "")
 		var content_width := maxf(96.0, float(_card_width) - 10.0)
 		var chars_per_line = max(12, int(floor(content_width / 7.2)))
@@ -614,7 +615,7 @@ func _populate_vbox(vbox: VBoxContainer) -> void:
 			_stats_label = spd_lbl
 			vbox.add_child(spd_lbl)
 
-	if card_data.ability_text != "":
+	if _show_rules_text and card_data.ability_text != "":
 		var ability_lbl := RichTextLabel.new()
 		ability_lbl.bbcode_enabled = true
 		ability_lbl.text = BaseCard.apply_keyword_hints(BaseCard.apply_action_cost_symbols(card_data.ability_text, card_data))
@@ -845,6 +846,14 @@ func set_hover_viewer(viewer: Player) -> void:
 func set_hover_use_board_popup(value: bool, game_manager = null) -> void:
 	_hover_use_board_popup = value
 	_hover_game_manager = game_manager
+
+func set_show_rules_text(enabled: bool) -> void:
+	if _show_rules_text == enabled:
+		return
+	_show_rules_text = enabled
+	if card_data != null:
+		_sync_minimum_height()
+		_build_content()
 
 func set_hand_mode(enabled: bool) -> void:
 	if _hand_mode == enabled:

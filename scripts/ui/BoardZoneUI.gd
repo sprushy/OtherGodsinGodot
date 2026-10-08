@@ -3150,7 +3150,9 @@ func _get_equipment_target_action_icon_entry(card: Card) -> Dictionary:
 	if equipment_entry.is_empty():
 		return {}
 	var is_enemy := bool(equipment_entry.get("is_enemy", false))
-	var action_cost_kind := Card.ACTION_COST_MAJOR if is_enemy else _get_minor_action_cost_kind_for_card(actor)
+	var action_cost_kind := game_manager.get_equipment_pickup_action_cost_kind(actor, card, is_enemy)
+	if action_cost_kind == Card.ACTION_COST_MINOR:
+		action_cost_kind = _get_minor_action_cost_kind_for_card(actor)
 	var pick_up_label := str(equipment_entry.get("pick_up_label", "Pick Up"))
 	var action_name := "pick up equipment"
 	if not is_enemy and pick_up_label == "Mount":
@@ -3187,7 +3189,7 @@ func _get_reachable_equipment_entry(scene_root: Node, actor: Card, equipment: Ca
 			return {}
 		if scene_root.has_method("_can_pick_up_equipment_entry"):
 			var is_enemy := bool(dict.get("is_enemy", false))
-			if not bool(scene_root.call("_can_pick_up_equipment_entry", actor, is_enemy)):
+			if not bool(scene_root.call("_can_pick_up_equipment_entry", actor, is_enemy, equipment)):
 				return {}
 		return dict
 	return {}

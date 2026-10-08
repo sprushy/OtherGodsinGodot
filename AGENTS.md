@@ -51,6 +51,8 @@ Read this first on a fresh thread, then inspect the files relevant to the user's
 
 ## Verification
 
+Do not run visual testing, launch previews for visual QA, or automate the UI to inspect appearance unless the user explicitly asks. This applies to UI and animation changes too; use relevant nonvisual checks when needed.
+
 Prefer existing smoke runs only when they are already maintained and clearly relevant. Do not create new ad hoc Godot probe scripts for gameplay debugging unless the user explicitly asks; the user prefers to test these interactions manually because local probes have been inconsistent.
 
 The helper script resolves `godot.exe`, sets portable Godot appdata under `.godot_portable`, and disables the MCP plugin:

@@ -158,14 +158,21 @@ func claim_legacy_account(
 		extra["merged_account_id"] = displaced_account_id
 	return _result(true, "", _sanitize_account(account), extra)
 
-func login_account(email: String, password: String) -> Dictionary:
+func login_account(identifier: String, password: String) -> Dictionary:
 	_ensure_loaded()
-	var normalized_email := _normalize_email(email)
-	var email_error := _validate_email(normalized_email)
-	if not email_error.is_empty():
-		return _result(false, email_error)
+	var normalized_email := identifier.strip_edges().to_lower()
+	var is_email := normalized_email.contains("@")
+	var identifier_error := _validate_email(normalized_email) if is_email else _validate_username(normalized_email)
+	if not identifier_error.is_empty():
+		return _result(false, identifier_error)
 	var email_key := _email_key(normalized_email)
-	var matching_account_ids := _get_account_ids_by_email(email_key)
+	var matching_account_ids: Array[String] = []
+	if is_email:
+		matching_account_ids = _get_account_ids_by_email(email_key)
+	else:
+		var username_account_id := str(_account_id_by_username.get(_username_key(normalized_email), ""))
+		if not username_account_id.is_empty():
+			matching_account_ids.append(username_account_id)
 	if matching_account_ids.is_empty():
 		print(
 			"AccountStore: login failed, email not found email=%s key=%s total_accounts=%d" % [
