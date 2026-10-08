@@ -1,7 +1,10 @@
 # iPad / iOS Release Flow
 
-The Desktop Release workflow publishes an **unsigned iOS IPA**
-(`OtherGods-ios-unsigned.ipa`) on every tag release. iPadOS refuses to run
+The Desktop Release workflow builds iPad/iOS assets only when explicitly
+requested. Tag releases build Windows and macOS by default. To include an
+**unsigned iOS IPA** (`OtherGods-ios-unsigned.ipa`), manually dispatch the
+workflow on the desired release tag with `include_ios` set to `true`.
+Leaving this option unchecked skips the iOS job. iPadOS refuses to run
 unsigned apps, so the final signing happens on a Windows PC with a free Apple
 ID via Sideloadly (or AltStore). No Mac and no paid Apple Developer account is
 needed anywhere in this flow.

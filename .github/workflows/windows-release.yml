@@ -2,6 +2,12 @@ name: Desktop Release
 
 on:
   workflow_dispatch:
+    inputs:
+      include_ios:
+        description: "Build iPad/iOS assets (only when explicitly requested)"
+        type: boolean
+        required: false
+        default: false
   push:
     tags:
       - "v*"
@@ -382,6 +388,7 @@ jobs:
           path: dist/macos/*
 
   export-ios:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.include_ios == true }}
     runs-on: macos-latest
 
     steps:
@@ -542,7 +549,7 @@ jobs:
           path: dist/ios
 
       - name: Report missing iOS assets
-        if: ${{ needs.export-ios.result != 'success' }}
+        if: ${{ needs.export-ios.result == 'failure' || needs.export-ios.result == 'cancelled' }}
         run: |
           echo "::warning::Publishing without iOS assets because export-ios finished with '${{ needs.export-ios.result }}'."
           echo "## iOS assets were not published" >> "$GITHUB_STEP_SUMMARY"
