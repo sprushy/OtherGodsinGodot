@@ -1,6 +1,8 @@
 extends RefCounted
 class_name BotCardPromptPolicy
 
+const Strategy = preload("res://scripts/bots/BotCardStrategy.gd")
+
 # Commands for card selectors shared by local, server, and network bots.
 # Keep choices inside the offered UID lists, including cards absent from a
 # client's masked deck. The authoritative MatchManager validates every answer.
@@ -54,15 +56,42 @@ static func build_command(bot, type: String, data: Dictionary) -> Dictionary:
 			var options: Array = data.get("options", [])
 			if options.is_empty():
 				return {}
-			command.merge({"type": "byggvir_reveal_choice", "choice": options[0]})
+			var best_option: Dictionary = options[0]
+			var best_score := Strategy.BAD
+			for option in options:
+				var power: PowerCard = bot.game_manager.get_card_by_uid(str(option.get("power_uid", ""))) as PowerCard
+				var target: Card = bot.game_manager.get_card_by_uid(str(option.get("target_uid", "")))
+				var returned: Card = bot.game_manager.get_card_by_uid(str(option.get("card_uid", "")))
+				var score := Strategy.BAD
+				match str(option.get("kind", "")):
+					"return": score = Strategy.value(bot, returned)
+					"flip": score = Strategy.unlock_score(bot, power) + Strategy.mana_penalty(bot, power.get_unlock_mana_cost(bot.game_manager)) if power != null else Strategy.BAD
+					"activate", "activate_targeted": score = Strategy.power_score(bot, power, target) if power != null else Strategy.BAD
+				if score > best_score:
+					best_score = score
+					best_option = option
+			command.merge({"type": "byggvir_reveal_choice", "choice": best_option})
 		"gawain_healing_hands":
 			var statuses: Array = data.get("statuses", [])
 			if statuses.is_empty():
 				return {}
+			var target: Card = bot.game_manager.get_card_by_uid(str(data.get("target_uid", "")))
+			var best_index := int(statuses[0].get("index", 0))
+			var best_score := -1
+			if source is Gawain and target != null:
+				var removable: Array = source.get_removable_statuses(target)
+				for offered in statuses:
+					var index := int(offered.get("index", -1))
+					if index < 0 or index >= removable.size():
+						continue
+					var score := Strategy.healing_score(bot, target, removable[index])
+					if score > best_score:
+						best_score = score
+						best_index = index
 			command.merge({
 				"type": "gawain_healing_hands_choice",
 				"target_uid": str(data.get("target_uid", "")),
-				"status_index": int(statuses[0].get("index", 0)),
+				"status_index": best_index,
 			})
 		"foolish_optimism":
 			command.merge({
@@ -70,6 +99,21 @@ static func build_command(bot, type: String, data: Dictionary) -> Dictionary:
 				"attacker_uid": _best_uid(bot, data, "attacker_uids", true),
 				"defender_uid": _best_uid(bot, data, "defender_uids", false),
 			})
+			if source is FoolishOptimism:
+				var attackers: Array = []
+				var defenders: Array = []
+				for uid in data.get("attacker_uids", []):
+					var card: Card = bot.game_manager.get_card_by_uid(str(uid))
+					if card != null:
+						attackers.append(card)
+				for uid in data.get("defender_uids", []):
+					var card: Card = bot.game_manager.get_card_by_uid(str(uid))
+					if card != null:
+						defenders.append(card)
+				var choice := Strategy.forced_combat_choice(bot, source, attackers, defenders)
+				if int(choice.get("score", Strategy.BAD)) > Strategy.BAD:
+					command["attacker_uid"] = choice["attacker_uid"]
+					command["defender_uid"] = choice["defender_uid"]
 		"mummu_entropy":
 			var victim_uid := str(data.get("victim_uid", ""))
 			var victim: Card = bot.game_manager.get_card_by_uid(victim_uid)
@@ -106,15 +150,7 @@ static func build_command(bot, type: String, data: Dictionary) -> Dictionary:
 			if not (source is TezcatlipocaActive):
 				return {}
 			var budget: int = source.get_titlacauan_level_budget()
-			var selected: Array[String] = []
-			for target_uid in _ranked_uids(bot, data, "target_uids", true):
-				var target: Card = bot.game_manager.get_card_by_uid(target_uid)
-				if target == null or target.get_effective_level() > budget:
-					continue
-				selected.append(target_uid)
-				budget -= target.get_effective_level()
-				if selected.size() >= TezcatlipocaActive.MAX_TITLACAUAN_TARGETS:
-					break
+			var selected := Strategy.budget_choices(bot, data.get("target_uids", []), budget, TezcatlipocaActive.MAX_TITLACAUAN_TARGETS, true)
 			command.merge({"type": "tezcatlipoca_active_titlacauan_choice", "target_uids": selected, "skip": selected.is_empty()})
 		"hunting_tactics":
 			command.merge({
@@ -125,20 +161,12 @@ static func build_command(bot, type: String, data: Dictionary) -> Dictionary:
 		"blot_sacrifice":
 			if not (source is BlotSacrifice):
 				return {}
-			var selected: Array[String] = []
 			var budget := BlotSacrifice.MAX_SUMMON_LEVELS
 			var zones: Array = source.get_available_summon_zones()
 			var candidates := {"target_uids": []}
 			for target in source.get_valid_hand_creatures():
 				candidates["target_uids"].append(target.uid)
-			for target_uid in _ranked_uids(bot, candidates, "target_uids", false):
-				if selected.size() >= zones.size():
-					break
-				var target: Card = bot.game_manager.get_card_by_uid(target_uid)
-				if target == null or target.get_effective_level() > budget:
-					continue
-				selected.append(target_uid)
-				budget -= target.get_effective_level()
+			var selected := Strategy.budget_choices(bot, candidates["target_uids"], budget, zones.size())
 			command.merge({"type": "blot_sacrifice_choice", "choices": selected})
 		"return_to_hand_choice":
 			var card_uid := str(data.get("card_uid", ""))
@@ -163,7 +191,7 @@ static func build_command(bot, type: String, data: Dictionary) -> Dictionary:
 				"card_uid": card_uid, "send_to_abyss": card != null and card.card_owner != bot.bot_player,
 			}
 		"wheel_of_fire_turn_start":
-			var pay_cost: bool = source is WheelOfFire and source.attached_target != null and source.attached_target.get_controller() != bot.bot_player and source.can_offer_turn_start_advance(bot.game_manager)
+			var pay_cost: bool = source is WheelOfFire and bot._should_pay_wheel_of_fire_upkeep(source as WheelOfFire)
 			command.merge({"type": "wheel_of_fire_turn_start_choice", "pay_cost": pay_cost})
 		"breidablik_turn_start":
 			var target_uid := _best_uid(bot, data, "target_uids", false)
@@ -223,7 +251,7 @@ static func _ranked_uids(bot, data: Dictionary, key: String, harmful: bool, lowe
 		var card: Card = bot.game_manager.get_card_by_uid(target_uid)
 		var score := 0
 		if card != null:
-			score = bot._get_card_economic_value(card)
+			score = Strategy.value(bot, card)
 			if harmful and card.get_controller() == bot.bot_player:
 				score = -score
 			elif not harmful and card.get_controller() != bot.bot_player:

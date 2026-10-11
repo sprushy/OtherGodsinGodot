@@ -19,18 +19,18 @@ runtime validation or optimal bot strategy.
 | Apollyon's Demiurge | `apollyons_demiurge` | Choose an offered target; retain the summoned card identifier |
 | Askelladen | `combat_retreat` | Compare retreat and combat outcomes; accept live or serialized actions |
 | Blessed Knights | `blessed_knights_ward` | Choose the creature-ability ward |
-| Blot Sacrifice | `blot_sacrifice` | Choose hand creatures within the seven-level budget and open zones |
+| Blot Sacrifice | `blot_sacrifice` | Maximize the combined creature value within the seven-level budget and open zones |
 | Breidablik | `breidablik_turn_start` | Return an offered priest when possible |
-| Byggvir | `byggvir_reveal` | Submit an offered option dictionary |
+| Byggvir | `byggvir_reveal` | Compare a free unlock, useful activation, and returning a Mead card; submit the offered dictionary |
 | Doorway graveyard replacements | `doorway_choice` | Banish an enemy card; decline for an owned card |
 | Durinn Secondborn | `durinn_secondborn_impact` | Choose an offered target |
 | Fenrir | `fenrir_devour_impact` | Choose an offered devour target |
 | First Sage Adapa | `first_sage_adapa_impact` | Choose an offered target |
-| Foolish Optimism | `foolish_optimism` | Choose both an offered attacker and defender |
+| Foolish Optimism | `foolish_optimism` | Compare legal offered attacker/defender pairs using combat outcomes and halved follower damage |
 | Fourth Sage Enmegalamma | `fourth_sage_enmegalamma_impact` | Choose an offered target |
 | Freyja, active | `freyja_active_open_sessrumnir` | Choose creatures up to the current summon limit, or skip |
 | Gala-Tura | `gala_tura_destroyed` | Choose up to three offered cards |
-| Gawain | `gawain_healing_hands` | Submit the offered status index and target |
+| Gawain | `gawain_healing_hands` | Prioritize harmful removable statuses and submit the corresponding offered index |
 | Giant Master Architect | `giant_master_architect_impact` | Choose an offered target |
 | Gugalanna Bull of Heaven | `gugalanna_celestial_charge` | Choose an offered target |
 | Harii Jarl | `harii_jarl_impact` | Choose a summon the bot can pay for |
@@ -54,11 +54,11 @@ runtime validation or optimal bot strategy.
 | Sixth Sage An-Enlilda | `sixth_sage_an_enlilda_impact` | Choose an offered target |
 | Tatzelwurm | `tatzelwurm_dragon_heart` | Choose an offered target |
 | Terror | `terror_impact` | Choose an offered target |
-| Tezcatlipoca, active | `tezcatlipoca_active_titlacauan` | Choose up to two targets within the stored level budget, or skip |
+| Tezcatlipoca, active | `tezcatlipoca_active_titlacauan` | Maximize the combined enemy value within the stored level budget and two-target limit, or skip |
 | Third Sage Enmedugga | `third_sage_enmedugga_impact` | Choose an offered target |
 | Tiamat, active | `tiamat_active_summon` | Choose an offered summon target |
 | Tonal Extraction | `tonal_extraction` | Choose an offered target |
-| Wheel of Fire | `wheel_of_fire_turn_start` | Pay an eligible advance against an enemy attachment |
+| Wheel of Fire | `wheel_of_fire_turn_start` | Weigh enemy displacement, removal, or Void against mana and a lost summon opportunity |
 | Wolf Cub, Wolf Adolescent | `wolf_adolescent_maturation` | Choose an offered evolution target |
 
 Target selectors preserve offered UIDs even when a remote client's masked state
@@ -68,6 +68,65 @@ Optional multi-card answers respect the card's count, level, and space limits.
 
 ## Other paths
 
+`BotCardStrategy.gd` supplies explicit effect scoring to ThorPracticeBot and its
+inheriting practice/server/story bots. It compares card investment, mana, the
+cost of losing an affordable normal summon, visible board value, immediate
+combat outcomes, and follower pressure. Commands still pass through GameInput
+and MatchManager; card methods supply legal targets and timing. These are
+heuristics, not a search over future game states.
+
+| Effect family | Cards with additional decision logic |
+| --- | --- |
+| Targeted removal | Divine Lightning, Bit Meseri, Runic Spellbreaker |
+| Combat modifiers | Snowball, Sap Strength, Vision of Tartarus, Fifa the Magical Arrow, Berserker Mead |
+| Persistent bindings | Dromi, Gleipnir, plus the existing Wheel of Fire strategy |
+| Automatic responses | Banishment, Spell Demolition, Sap, Sep Lemutti, Smite, Void Shield, Gungnir |
+| Mass effects | Earthquake, Fires of Judgment, Famine, Occult Singularity, Fall of the Mighty, Bane of the Svartalfar, The Inferno, The Deluge |
+| Protection and recovery | Exorcism, Namburbi Apotropaeon, Heroic Stand, Hringhorni, Tablet of Life, Book of Life, Circle of Rebirth |
+| Control and information | Siren's Song, Absence, Light of Morning's Doors, Foolish Optimism |
+| Board abilities | Alu, Lindwyrm, Lamashatu, Clay-Eaters, Ancient Pyre, Watchtower, Gawain |
+| Equipment placement | Bearded Axe, Runic Shortsword, Reed Bow, Sharur, Draupnir |
+| Structure placement | Ancient Pyre, Watchtower, Warding Stone |
+| Active powers | Accelerated Fate, Oracle's Sight, Berserker Mead, Mech Factory, Palisade, Mana Guard; existing Call of the Valkyrie logic retained |
+| Passive unlocks | Ancient Wisdom, Giant's Disdain, Summoned Sap, Terror, Rally the Troops, Norse Bloodlust, Hunting Tactics, Altar of Dreams, Myrkwood, Kurnugia, Ferocious Defence, Advanced Building Techniques, Feast of Ambrosia and Nectar |
+
+Removal responses account for the combat that would happen without spending
+the response. Mass effects subtract friendly losses and respect visible
+immunities. Conditional wipes do not inspect hidden enemy identities; Fall of
+the Mighty is held when hidden field cards make its strongest-card result
+uncertain. Temporary control/resurrection is discounted. Exorcism counts lost
+outside buffs, and Book of Life discounts silencing known utility creatures.
+
+Automatic-response hexes honor `requires_priority_target_selection()` instead
+of requiring an irrelevant target UID for counterspells. Passive powers are
+never generically activated. Mana Guard submits an explicit amount based on
+visible frontline pressure and existing Guard; Oracle's Sight and Mana Guard
+are limited to one planned activation per bot turn. Duplicate bindings,
+pending Clay-Eaters targets, and existing Lamashatu/Berserker Mead buffs are
+avoided. Supported spells may be prepared when Drought requires it.
+
+Complex random, weather, movement-plan, alternate-form, and multi-cost effects
+retain their existing prompt handling rather than receiving speculative casts.
+Generic power unlocks requiring a discard or sacrifice are skipped because the
+current unlock command cannot specify that payment. Blot and Tezcatlipoca's
+budget selectors are improved, but this does not add automatic initiation of
+their sacrifice/alternate-form abilities. Passive unlock scoring uses relevant
+pieces as a conservative estimate of future value, not a full trigger forecast.
+
+Verification: Godot 4.7 headless script checks and maintained interception,
+Divine Lightning, Byggvir, and single-game practice fuzz smoke runs (seeds 1337
+and 4242) passed during this
+change. The maintained fuzz deck's non-creature pool is intentionally small;
+these runs are regression checks, not individual gameplay coverage for all
+cards in the table. No new probe scripts or visual QA were added.
+
+- Wheel of Fire is prepared when a worthwhile enemy target exists. Priority
+  responses rank legal targets by immediate removal, frontline displacement,
+  action tax, discounted future removal, clearing interceptors, and preventing a
+  losing attack. The bot avoids friendly, protected, already bound, and
+  immovable targets, preserves
+  profitable combat, and compares Wheel with Vision of Odin. Hidden creatures
+  use a generic value rather than their concealed stats.
 - Afanc and Pictish Beast emit `reveal_effect` with a resolver method. MatchManager
   executes these through priority events; neither requires a card-choice answer.
 - Priority and intercept retain their bot command paths. Practice bots use the

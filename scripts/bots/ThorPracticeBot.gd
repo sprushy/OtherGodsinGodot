@@ -2,6 +2,7 @@ extends RefCounted
 class_name ThorPracticeBot
 
 const CardPromptPolicy = preload("res://scripts/bots/BotCardPromptPolicy.gd")
+const CardStrategy = preload("res://scripts/bots/BotCardStrategy.gd")
 
 var game_manager: GameManager = null
 var match_manager: MatchManager = null
@@ -30,6 +31,7 @@ var _retry_poll_queued: bool = false
 var _answered_prompt_ids: Dictionary = {}
 var _current_card_prompt_id: int = -1
 var _last_submitted_prompt_id: int = -1
+var _strategy_power_turns: Dictionary = {}
 
 func attach(
 	p_game_manager: GameManager,
@@ -61,6 +63,7 @@ func detach() -> void:
 	_step_queued = false
 	_retry_poll_queued = false
 	_answered_prompt_ids.clear()
+	_strategy_power_turns.clear()
 	_current_card_prompt_id = -1
 	_last_submitted_prompt_id = -1
 
@@ -285,15 +288,26 @@ func _choose_priority_response() -> Card:
 			if response_card is MeadOfPoetry and _target_includes_card(top_action.target, response_card):
 				return response_card
 		var best_vision := _find_best_priority_vision_response(responses, top_action)
-		if not best_vision.is_empty():
-			return best_vision.get("card", null)
+		var best_wheel := _find_best_priority_wheel_response(responses, top_action)
+		var best_card: Card = best_vision.get("card", null)
+		var best_score := int(best_vision.get("score", 0))
+		if int(best_wheel.get("score", 0)) > best_score:
+			best_card = best_wheel.get("card", null)
+			best_score = int(best_wheel.get("score", 0))
+		for response_card in responses:
+			if not CardStrategy.supported(response_card):
+				continue
+			var target := CardStrategy.best_target(self, response_card, CardStrategy.targets(self, response_card, top_action), top_action)
+			var score := CardStrategy.effect_score(self, response_card, target, top_action)
+			if score > best_score:
+				best_card = response_card
+				best_score = score
+		if best_card != null:
+			return best_card
 	if _should_activate_prepared_mead_for_enki():
 		for response_card in responses:
 			if response_card is MeadOfPoetry:
 				return response_card
-	for response_card in responses:
-		if response_card is VoidShield:
-			return response_card
 	return null
 
 func _target_includes_card(target_value, card: Card) -> bool:
@@ -319,9 +333,18 @@ func _submit_priority_response(card: Card) -> bool:
 		if card is VisionOfOdin:
 			var chosen_target := _choose_best_priority_vision_target(card as VisionOfOdin, top_action, targets)
 			target_uid = chosen_target.uid if chosen_target != null else ""
+		elif card is WheelOfFire:
+			var chosen_target := _choose_best_wheel_of_fire_target(card as WheelOfFire, targets, top_action)
+			target_uid = chosen_target.uid if chosen_target != null else ""
+		elif CardStrategy.supported(card):
+			var chosen_target := CardStrategy.best_target(self, card, targets, top_action)
+			target_uid = chosen_target.uid if chosen_target != null else ""
 		else:
 			target_uid = _choose_target_uid_for_source(card, targets)
-		if bool(card.get("targets")) and target_uid.is_empty():
+		var needs_target := bool(card.get("targets"))
+		if card.has_method("requires_priority_target_selection"):
+			needs_target = card.requires_priority_target_selection()
+		if needs_target and target_uid.is_empty():
 			return false
 		return _submit_action({
 			"type": "play_hex_response",
@@ -334,6 +357,9 @@ func _submit_priority_response(card: Card) -> bool:
 		if charm.targets:
 			targets = charm.get_priority_targets(game_manager, top_action)
 		var target_uid := _choose_target_uid_for_source(card, targets)
+		if CardStrategy.supported(card):
+			var target := CardStrategy.best_target(self, card, targets, top_action)
+			target_uid = target.uid if target != null else ""
 		if charm.targets and target_uid.is_empty():
 			return false
 		return _submit_action({
@@ -365,19 +391,21 @@ func _take_main_phase_action() -> bool:
 		return true
 	if _try_summon_askelladen_answer():
 		return true
+	if _try_card_strategy_action():
+		return true
 	if _try_unlock_best_power():
 		return true
 	if _try_activate_best_power():
 		return true
 	if _try_summon_best_creature():
 		return true
-	if _try_cast_divine_lightning():
+	if _try_play_strategy_support():
 		return true
-	if _try_cast_fall_of_the_mighty():
+	if _try_prepare_wheel_of_fire():
 		return true
 	if _try_prepare_vision_of_odin():
 		return true
-	if _try_prepare_void_shield():
+	if _try_prepare_strategy_card():
 		return true
 	if _try_prepare_mead_of_poetry():
 		return true
@@ -514,6 +542,113 @@ func _try_cast_divine_lightning() -> bool:
 		return false
 	return _submit_cast_charm(divine_lightning, target, false)
 
+func _try_card_strategy_action() -> bool:
+	var best_command: Dictionary = {}
+	var best_score := 0
+	var cards: Array = bot_player.hand_zone.cards.duplicate()
+	cards.append_array(game_manager.get_field_cards(bot_player))
+	for card in cards:
+		if CardStrategy.supported(card) and (card is SpellCard or card is CharmCard):
+			if card.discard_cost > 0 or card.sacrifice_cost > 0:
+				continue
+			if card is SpellCard:
+				if card.is_prepared:
+					if not card.can_activate_prepared(game_manager, bot_player):
+						continue
+				elif not game_manager.can_play_card(bot_player, card, null):
+					continue
+			else:
+				if card.is_prepared:
+					if not card.can_activate_prepared(game_manager):
+						continue
+				elif not card.can_activate_from_hand(game_manager):
+					continue
+			var target := CardStrategy.best_target(self, card, CardStrategy.targets(self, card))
+			if card.targets and target == null:
+				continue
+			if not game_manager.get_turn_destruction_ward_activation_block_reason(card, target).is_empty():
+				continue
+			var score := CardStrategy.effect_score(self, card, target)
+			if score > best_score:
+				best_score = score
+				best_command = {"type": "cast_spell" if card is SpellCard else "cast_charm", "target_uid": target.uid if target != null else ""}
+				best_command["spell_uid" if card is SpellCard else "charm_uid"] = card.uid
+				best_command["prepared"] = card.is_prepared
+		elif CardStrategy.key(card) in CardStrategy.BOARD_ABILITIES and card.current_zone != bot_player.hand_zone:
+			if card.is_face_down or card.is_prepared or card.abilities_suppressed() or card.is_activation_locked(game_manager) or not card.can_activate(game_manager):
+				continue
+			var target := CardStrategy.best_target(self, card, CardStrategy.targets(self, card))
+			var score := CardStrategy.target_score(self, card, target)
+			var cost := 1 if CardStrategy.key(card) == "ClayEaters" else 2 if CardStrategy.key(card) in ["AncientPyre", "Gawain"] else 0
+			score -= CardStrategy.mana_penalty(self, cost)
+			if card is CreatureCard:
+				var action_tax := game_manager.get_creature_action_mana_cost(card, "activate")
+				if bot_player.mana < cost + action_tax:
+					continue
+				score -= action_tax * ECON_MANA_VALUE
+			if CardStrategy.key(card) in ["Alu", "Lindwyrm"]:
+				score -= _score_follower_loss(opponent, card.get_effective_strength())
+			if score > best_score:
+				best_score = score
+				best_command = {"type": "activate_card_ability", "source_uid": card.uid, "target_uid": target.uid}
+			if CardStrategy.key(card) == "AncientPyre":
+				var conversion_score := _score_follower_loss(opponent, 5) + CardStrategy.follower_gain(bot_player, 5) - CardStrategy.mana_penalty(self, 2)
+				if conversion_score > best_score:
+					best_score = conversion_score
+					best_command = {"type": "activate_card_ability", "source_uid": card.uid, "option": {"mode": "convert"}}
+	return _submit_action(best_command) if not best_command.is_empty() else false
+
+func _try_prepare_strategy_card() -> bool:
+	var zone := _get_first_open_reserve_zone(bot_player)
+	if zone == null:
+		return false
+	var prepared_types: Array[String] = []
+	for card in game_manager.get_field_cards(bot_player):
+		if card.is_prepared:
+			prepared_types.append(CardStrategy.key(card))
+	var best_card: Card = null
+	var best_score := 0
+	for card in bot_player.hand_zone.cards:
+		if not CardStrategy.supported(card) or not (card is HexCard or card is CharmCard or (card is SpellCard and game_manager.spells_must_be_prepared())) or CardStrategy.key(card) in prepared_types:
+			continue
+		if not game_manager.can_prepare_card(bot_player, card, zone):
+			continue
+		var score := CardStrategy.preparation_score(self, card) - CardStrategy.mana_penalty(self, _get_play_cost(card, true))
+		if card is SpellCard:
+			var target := CardStrategy.best_target(self, card, CardStrategy.targets(self, card))
+			score = CardStrategy.effect_score(self, card, target) - CardStrategy.mana_penalty(self, _get_play_cost(card, true))
+		if score > best_score:
+			best_card = card
+			best_score = score
+	return _submit_prepare_card(best_card, zone) if best_card != null else false
+
+func _try_play_strategy_support() -> bool:
+	var best_card: Card = null
+	var best_zone: Zone = null
+	var best_score := 0
+	for card in bot_player.hand_zone.cards:
+		if card.discard_cost > 0 or card.sacrifice_cost > 0:
+			continue
+		if card is EquipmentCard:
+			for bearer in _get_board_creatures(bot_player):
+				if not card.can_equip_to(bearer) or not game_manager.can_play_card(bot_player, card, bearer.current_zone):
+					continue
+				var score := CardStrategy.equipment_score(self, card, bearer)
+				if score > best_score:
+					best_card = card
+					best_zone = bearer.current_zone
+					best_score = score
+		elif card is StructureCard:
+			var zone := _get_first_open_reserve_zone(bot_player)
+			if zone == null or not game_manager.can_play_card(bot_player, card, zone):
+				continue
+			var score := CardStrategy.structure_score(self, card)
+			if score > best_score:
+				best_card = card
+				best_zone = zone
+				best_score = score
+	return _submit_action({"type": "play_card", "card_uid": best_card.uid, "player_index": player_index, "zone_type": best_zone.zone_type, "zone_index": best_zone.zone_index}) if best_card != null else false
+
 func _try_cast_fall_of_the_mighty() -> bool:
 	var fall := _find_hand_fall_of_the_mighty()
 	if fall == null or not _opponent_controls_strictly_strongest_creature():
@@ -525,6 +660,26 @@ func _try_cast_fall_of_the_mighty() -> bool:
 		"spell_uid": fall.uid,
 		"target_uid": "",
 	})
+
+func _try_prepare_wheel_of_fire() -> bool:
+	var zone := _get_first_open_reserve_zone(bot_player)
+	if zone == null:
+		return false
+	# One unbound Wheel is enough until it finds a target. Keep reserve space
+	# available for creatures and other prepared responses.
+	for board_zone in bot_player.frontline_zones + bot_player.reserve_zones:
+		for card in board_zone.cards:
+			if card is WheelOfFire and card.is_prepared:
+				return false
+	for card in bot_player.hand_zone.cards:
+		var wheel := card as WheelOfFire
+		if wheel == null:
+			continue
+		# The hand card cannot attach yet, so inspect potential enemy targets;
+		# the actual response uses the authority's legal target list later.
+		if _choose_best_wheel_of_fire_target(wheel, _get_board_creatures(opponent)) != null:
+			return _submit_prepare_card(wheel, zone)
+	return false
 
 func _try_prepare_void_shield() -> bool:
 	var void_shield := _find_hand_void_shield()
@@ -559,7 +714,11 @@ func _try_unlock_best_power() -> bool:
 	for power in _get_player_powers():
 		if power == null or not power.is_face_down or not power.can_unlock(game_manager):
 			continue
-		if not _can_use_generic_power_command(power):
+		# Unlock commands currently cannot carry a selected discard payment.
+		# Do not surrender an arbitrary hand card for a generic unlock.
+		if power.discard_cost > 0 or power.sacrifice_cost > 0:
+			continue
+		if power is Breidablik or power is DivineCaprice:
 			continue
 		var score := _score_power_unlock(power)
 		if score > best_score:
@@ -581,6 +740,8 @@ func _try_activate_best_power() -> bool:
 			continue
 		if not _can_use_generic_power_command(power):
 			continue
+		if int(_strategy_power_turns.get(power.uid, -1)) == game_manager.turn_number:
+			continue
 		var chosen_target: Card = null
 		if power.has_method("get_valid_targets"):
 			chosen_target = _choose_best_target_for_source(power, power.get_valid_targets(game_manager))
@@ -597,7 +758,12 @@ func _try_activate_best_power() -> bool:
 	}
 	if best_target != null:
 		command["target_uid"] = best_target.uid
-	return _submit_action(command)
+	if CardStrategy.key(best_power) == "ManaGuard":
+		command["mana_amount"] = CardStrategy.guard_mana(self)
+	var submitted := _submit_action(command)
+	if submitted and CardStrategy.key(best_power) in ["OraclesSight", "ManaGuard"]:
+		_strategy_power_turns[best_power.uid] = game_manager.turn_number
+	return submitted
 
 func _try_switch_to_aggressive_mode() -> bool:
 	var creature := _get_best_mode_switch_candidate()
@@ -686,6 +852,8 @@ func _get_hand_value(card: Card) -> int:
 		return 90
 	if card is VisionOfOdin:
 		return 85
+	if card is WheelOfFire:
+		return 82
 	if card is DivineLightning:
 		return 80
 	if card is Askelladen:
@@ -702,7 +870,9 @@ func _get_hand_value(card: Card) -> int:
 		return 50
 	if card is BrownBear:
 		return 40
-	return 0
+	if card is CreatureCard:
+		return 35 + mini(40, maxi(0, card.strength) + maxi(0, card.resilience) / 3)
+	return 65 if CardStrategy.supported(card) else 30
 
 func _handle_combat_retreat_prompt(data: Dictionary) -> void:
 	var askelladen := game_manager.get_card_by_uid(str(data.get("askelladen_uid", ""))) as Askelladen
@@ -1691,7 +1861,7 @@ func _get_player_powers() -> Array[PowerCard]:
 	return powers
 
 func _can_use_generic_power_command(power: PowerCard) -> bool:
-	return power != null and not (power is Breidablik) and not (power is DivineCaprice)
+	return power is CallOfTheValkyrie or CardStrategy.key(power) in CardStrategy.ACTIVE_POWERS
 
 func _score_power_unlock(power: PowerCard) -> int:
 	if power == null:
@@ -1701,17 +1871,7 @@ func _score_power_unlock(power: PowerCard) -> int:
 		if target == null or not _should_use_call_of_the_valkyrie():
 			return -1000000
 		return 1800 + _score_call_of_the_valkyrie_target(target) - power.get_unlock_mana_cost(game_manager) * 140
-	var score := -power.get_unlock_mana_cost(game_manager) * 140
-	var best_target: Card = null
-	if power.has_method("get_valid_targets"):
-		best_target = _choose_best_target_for_source(power, power.get_valid_targets(game_manager))
-	if best_target != null:
-		score += 1200 + int(float(_score_activation_target(power, best_target)) / 10.0)
-	if _get_best_affordable_hand_creature(0) == null:
-		score += 500
-	if bot_player != null and bot_player.hand_zone != null and bot_player.hand_zone.cards.size() <= 2:
-		score += 250
-	return score
+	return CardStrategy.unlock_score(self, power)
 
 func _score_power_activation(power: PowerCard, target: Card = null) -> int:
 	if power == null:
@@ -1720,13 +1880,7 @@ func _score_power_activation(power: PowerCard, target: Card = null) -> int:
 		if target == null or not _should_use_call_of_the_valkyrie():
 			return -1000000
 		return 2200 + _score_call_of_the_valkyrie_target(target)
-	if power.targets:
-		if target == null:
-			return -1000000
-		return 1000 + _score_activation_target(power, target)
-	if _should_activate_untargeted_power(power):
-		return 1400
-	return -1000000
+	return CardStrategy.power_score(self, power, target)
 
 func _should_activate_untargeted_power(power: PowerCard) -> bool:
 	if power == null:
@@ -1844,6 +1998,140 @@ func _count_other_friendly_warriors() -> int:
 			count += 1
 	return count
 
+func _find_best_priority_wheel_response(responses: Array, top_action: CardAction) -> Dictionary:
+	var best: Dictionary = {}
+	for response_card in responses:
+		var wheel := response_card as WheelOfFire
+		if wheel == null:
+			continue
+		var targets := game_manager.get_priority_hex_targets(wheel, top_action)
+		var target := _choose_best_wheel_of_fire_target(wheel, targets, top_action)
+		if target == null:
+			continue
+		var score := _score_wheel_of_fire_target(wheel, target, top_action)
+		if score > int(best.get("score", 0)):
+			best = {"card": wheel, "target": target, "score": score}
+	return best
+
+func _choose_best_wheel_of_fire_target(wheel: WheelOfFire, targets: Array, action: CardAction = null) -> Card:
+	var best_target: Card = null
+	var best_score := 0
+	for raw_target in targets:
+		var target := raw_target as Card
+		var score := _score_wheel_of_fire_target(wheel, target, action)
+		if score > best_score:
+			best_target = target
+			best_score = score
+	return best_target
+
+func _score_wheel_of_fire_target(wheel: WheelOfFire, target: Card, action: CardAction = null) -> int:
+	if wheel == null or target == null or target.get_controller() != opponent:
+		return -1000000
+	if not wheel.can_attach_to_target(game_manager, target) or not target.current_zone.is_board_zone():
+		return -1000000
+	if game_manager.is_guardian_protected(target, wheel) or game_manager._is_hex_immune(target, wheel):
+		return -1000000
+	if not target.current_zone.get_equipment().is_empty():
+		return -1000000
+	for player in game_manager.players:
+		for zone in player.frontline_zones + player.reserve_zones:
+			for card in zone.cards:
+				if card is WheelOfFire and card.attached_target == target and card._is_active():
+					return -1000000
+	var score := _score_wheel_of_fire_movement(wheel, target)
+	if score <= 0:
+		return -1000000
+	if target.current_zone.zone_type == Zone.ZoneType.FRONTLINE:
+		# Discount future removal by a turn and its upkeep payment. The creature
+		# may move forward again, so this is worth less than removal now.
+		score += maxi(0, _get_wheel_of_fire_target_value(target) / 3 - WheelOfFire.ADVANCE_COST * ECON_MANA_VALUE)
+	var defender := _get_attack_defender_card(action)
+	var combatants_visible := action != null and action.attacker != null \
+		and not action.attacker.is_face_down and not action.attacker.is_stealth \
+		and (defender == null or (not defender.is_face_down and not defender.is_stealth))
+	if combatants_visible and action.type == CardAction.Type.ATTACK and action.united_front_partner == null:
+		var before := _estimate_attack_economy(action, null, 0, 0)
+		var combat_score := _score_attack_economy(before)
+		if target == action.attacker:
+			# Moving the sole attacker off frontline cancels its declared attack.
+			# Let an attack that already benefits us resolve instead.
+			if combat_score > 0:
+				return -1000000
+			score += maxi(0, -combat_score)
+		elif target == _get_attack_defender_card(action):
+			if combat_score > 0 and int(before.get("opponent_cards_lost", 0)) > 0:
+				return -1000000
+			# Only removing a reserve defender cancels combat; a frontline
+			# defender pushed to reserve can still be attacked.
+			if target.current_zone.zone_type == Zone.ZoneType.RESERVE:
+				score += maxi(0, -combat_score)
+	var mana_cost := game_manager.get_prepared_card_activation_mana_cost(bot_player, wheel)
+	return score - ECON_CARD_VALUE - mana_cost * ECON_MANA_VALUE - _get_wheel_of_fire_mana_opportunity_cost(mana_cost)
+
+func _get_wheel_of_fire_target_value(target: Card) -> int:
+	# Hidden enemy creatures have no known stats or identity. Do not use the
+	# authoritative in-process state to give the bot information it cannot see.
+	if target.is_face_down or target.is_stealth:
+		return ECON_CARD_VALUE
+	return _get_card_economic_value(target)
+
+func _score_wheel_of_fire_movement(wheel: WheelOfFire, target: Card) -> int:
+	if target == null or target.get_controller() != opponent or target.current_zone == null:
+		return -1000000
+	# Reuse the card's exact destination rules, including a full reserve line.
+	if wheel._get_next_zone_for_target(target) == null:
+		return -1000000
+	var value := _get_wheel_of_fire_target_value(target)
+	match target.current_zone.zone_type:
+		Zone.ZoneType.RESERVE:
+			return value + _score_wheel_of_fire_interceptor_removal(target)
+		Zone.ZoneType.GRAVEYARD:
+			# Void denies reuse, but removing a live threat is worth more.
+			return value / 3
+		Zone.ZoneType.FRONTLINE:
+			var score := value * 3 / 5 + WheelOfFire.ACTION_TAX_AMOUNT * ECON_MANA_VALUE
+			if not target.is_face_down and not target.is_stealth:
+				if target.creature_mode == Card.CreatureMode.AGGRESSIVE and not target.is_sleeping:
+					score += _score_follower_loss(bot_player, target.get_effective_strength()) / 2
+				if target.has_type("Guardian"):
+					score += ECON_MANA_VALUE
+			return score
+	return -1000000
+
+func _score_wheel_of_fire_interceptor_removal(target: Card) -> int:
+	if match_manager == null or target.is_face_down or target.is_stealth:
+		return 0
+	var best_score := 0
+	for attacker in _get_attack_ready_creatures():
+		if game_manager.is_followers_attack_blocked_by_active_structure(attacker, opponent, []):
+			continue
+		var interceptors := match_manager._get_possible_interceptors(attacker, opponent)
+		if target in interceptors:
+			# Clearing the last interceptor can open a winning follower attack.
+			# Several remaining blockers make this a less immediate benefit.
+			var damage := attacker.get_effective_strength()
+			if attacker.halves_follower_damage_inflicted():
+				damage /= 2
+			best_score = maxi(best_score, _score_follower_loss(opponent, damage) / interceptors.size())
+	return best_score
+
+func _get_wheel_of_fire_mana_opportunity_cost(mana_cost: int) -> int:
+	if mana_cost <= 0 or bot_player.has_summoned_this_turn:
+		return 0
+	var best_now := _get_best_affordable_hand_creature(0)
+	if best_now == null:
+		return 0
+	var best_after := _get_best_affordable_hand_creature(-mana_cost)
+	return maxi(0, _get_card_economic_value(best_now) - _get_card_economic_value(best_after))
+
+func _should_pay_wheel_of_fire_upkeep(wheel: WheelOfFire) -> bool:
+	if wheel == null or not wheel.can_offer_turn_start_advance(game_manager):
+		return false
+	var score := _score_wheel_of_fire_movement(wheel, wheel.attached_target)
+	score -= WheelOfFire.ADVANCE_COST * ECON_MANA_VALUE
+	score -= _get_wheel_of_fire_mana_opportunity_cost(WheelOfFire.ADVANCE_COST)
+	return score > 0
+
 func _find_best_priority_vision_response(responses: Array, top_action: CardAction) -> Dictionary:
 	if top_action == null or top_action.type != CardAction.Type.ATTACK:
 		return {}
@@ -1941,7 +2229,23 @@ func _score_vision_economic_swing(vision: VisionOfOdin, action: CardAction, targ
 		score -= game_manager.get_prepared_card_activation_mana_cost(bot_player, vision) * ECON_MANA_VALUE
 	return score
 
-func _estimate_attack_economy(action: CardAction, modified_card: Card, str_delta: int, _speed_delta: int) -> Dictionary:
+func _estimate_attack_economy(action: CardAction, modified_card: Card, str_delta: int, _speed_delta: int, res_delta: int = 0) -> Dictionary:
+	var result := _estimate_raw_attack_economy(action, modified_card, str_delta, res_delta)
+	for player in [bot_player, opponent]:
+		if player == null:
+			continue
+		var loss_key := "bot_followers_lost" if player == bot_player else "opponent_followers_lost"
+		var amount := int(result[loss_key])
+		if action != null and action.halve_follower_damage:
+			amount = GameManager.round_down_divide(amount, 2)
+		if game_manager.has_turn_follower_loss_prevention(player):
+			amount = 0
+		amount = mini(player.followers, maxi(0, amount - player.guard))
+		result[loss_key] = amount
+		result["opponent_wins" if player == bot_player else "bot_wins"] = amount >= player.followers and amount > 0
+	return result
+
+func _estimate_raw_attack_economy(action: CardAction, modified_card: Card, str_delta: int, res_delta: int) -> Dictionary:
 	var result := {
 		"bot_cards_lost": 0,
 		"opponent_cards_lost": 0,
@@ -1962,7 +2266,7 @@ func _estimate_attack_economy(action: CardAction, modified_card: Card, str_delta
 		_add_follower_loss_to_economy(result, defender.get_controller(), attacker_strength)
 		return result
 	if defender.is_petrified() or defender.card_type == Card.CardType.STRUCTURE:
-		if _get_vision_adjusted_strength_vs_defense(attacker, modified_card, str_delta) > defender.get_effective_resilience():
+		if _get_vision_adjusted_strength_vs_defense(attacker, modified_card, str_delta) > defender.get_effective_resilience() + (res_delta if defender == modified_card else 0):
 			_add_destroyed_card_to_economy(result, defender)
 		return result
 	if defender.card_type != Card.CardType.CREATURE:
@@ -1981,7 +2285,7 @@ func _estimate_attack_economy(action: CardAction, modified_card: Card, str_delta
 		return result
 
 	var attack_strength_vs_defense := _get_vision_adjusted_strength_vs_defense(attacker, modified_card, str_delta)
-	var defender_resilience := defender.get_effective_resilience()
+	var defender_resilience := maxi(0, defender.get_effective_resilience() + (res_delta if defender == modified_card else 0))
 	if attack_strength_vs_defense > defender_resilience:
 		_add_destroyed_card_to_economy(result, defender)
 	elif attack_strength_vs_defense < defender_resilience:
@@ -2014,7 +2318,7 @@ func _add_destroyed_card_to_economy(result: Dictionary, card: Card) -> void:
 func _add_follower_loss_to_economy(result: Dictionary, player: Player, amount: int) -> void:
 	if player == null or amount <= 0:
 		return
-	var actual_loss := mini(amount, player.followers)
+	var actual_loss := amount
 	if player == bot_player:
 		result["bot_followers_lost"] = int(result.get("bot_followers_lost", 0)) + actual_loss
 		if actual_loss >= player.followers:
@@ -2229,6 +2533,8 @@ func _choose_target_uid_for_source(source: Card, targets: Array) -> String:
 func _score_activation_target(source: Card, target: Card) -> int:
 	if target == null:
 		return -1000000
+	if CardStrategy.supported(source) or CardStrategy.key(source) in CardStrategy.ACTIVE_POWERS or CardStrategy.key(source) in CardStrategy.BOARD_ABILITIES:
+		return CardStrategy.target_score(self, source, target)
 	if target.card_owner == bot_player and target.current_zone == bot_player.graveyard_zone:
 		return 45000 + _score_graveyard_target(target)
 	if target.card_owner == opponent:
