@@ -61,6 +61,7 @@ var _synthetic_peer_ids: Dictionary = {}
 var _raw_peer_ids_by_synthetic: Dictionary = {}
 var _next_synthetic_peer_id: int = WS_PEER_ID_BASE
 var _managed_multiplayer_api: MultiplayerAPI = null
+var _registered_multiplayer_root_path: NodePath = NodePath("")
 var _suppress_disconnect_events_until_msec: int = 0
 var _client_websocket_url: String = ""
 var _websocket_mount: Node = null
@@ -258,6 +259,14 @@ func start_match_websocket_server(port: int) -> Error:
 	return OK
 
 func _exit_tree() -> void:
+	# SceneTree keeps custom multiplayer scopes after their nodes are removed.
+	# Release ours before a later online match reuses the same node path.
+	var tree := get_tree()
+	if tree != null and _managed_multiplayer_api != null and _registered_multiplayer_root_path != NodePath(""):
+		if tree.get_multiplayer(_registered_multiplayer_root_path) == _managed_multiplayer_api:
+			tree.set_multiplayer(null, _registered_multiplayer_root_path)
+	_managed_multiplayer_api = null
+	_registered_multiplayer_root_path = NodePath("")
 	if is_instance_valid(_websocket_mount):
 		_websocket_mount.queue_free()
 
@@ -576,6 +585,7 @@ func _ensure_multiplayer_api() -> MultiplayerAPI:
 	get_tree().set_multiplayer(fallback_api, target_path)
 	if use_current_scene_relative_path:
 		_managed_multiplayer_api = fallback_api
+		_registered_multiplayer_root_path = target_path
 		return _managed_multiplayer_api
 	return multiplayer if multiplayer != null else fallback_api
 

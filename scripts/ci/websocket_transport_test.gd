@@ -21,6 +21,10 @@ func _initialize() -> void:
 	call_deferred("_run")
 
 func _run() -> void:
+	_check_local_match_transport_cleanup()
+	if not _failures.is_empty():
+		_finish()
+		return
 	_check(EndpointsScript.match_url("wss://game.example.com", 12345) == "wss://game.example.com/match/12345", "match URL")
 	_check(not EndpointsScript.is_valid_base_url("wss://game.example.com/lobby"), "reject base URL path")
 	_check(not EndpointsScript.is_valid_base_url("ws://game.example.com"), "reject plaintext public origin")
@@ -113,6 +117,30 @@ func _run() -> void:
 	await _wait_for(func() -> bool: return _approvals.has(1))
 	_check(_approvals.has(1) and _clients[1].peer is WebSocketMultiplayerPeer, "reconnect retains WebSocket")
 	_finish()
+
+func _check_local_match_transport_cleanup() -> void:
+	var parent := Node.new()
+	parent.name = "LocalMatchTransition"
+	root.add_child(parent)
+	var local_host = MatchHostScript.new()
+	var local_transport: Node = local_host.setup_transport(parent)
+	var local_api: MultiplayerAPI = local_transport.multiplayer
+	var transport_path := local_transport.get_path()
+	_check(local_api != get_multiplayer(), "local match has an isolated transport")
+	root.remove_child(local_transport)
+	local_transport.queue_free()
+	_check(get_multiplayer(transport_path) != local_api, "leaving local match removes its multiplayer scope")
+	# Online matches reuse this node name after Story or Practice ends.
+	var online_transport = NetworkScript.new()
+	online_transport.name = "MatchNetworkManager"
+	root.add_child(online_transport)
+	_check(online_transport.multiplayer == get_multiplayer(), "online match does not inherit local multiplayer scope")
+	var rpc_root: Node = root.get_node(online_transport.multiplayer.root_path)
+	var rpc_path := rpc_root.get_path_to(online_transport)
+	_check(rpc_path == NodePath("MatchNetworkManager"), "online RPCs address MatchNetworkManager instead of scene root")
+	root.remove_child(online_transport)
+	online_transport.queue_free()
+	parent.queue_free()
 
 func _network_node(mount_name: String) -> Node:
 	if mount_name == "TransportClient0":
