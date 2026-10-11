@@ -5,6 +5,7 @@ class_name Player
 const MAX_HAND_SIZE := 7
 const BOARD_LANE_COUNT := 5
 const DeckValidatorScript = preload("res://scripts/server/DeckValidator.gd")
+const ManaSoundPlayerScript = preload("res://scripts/audio/ManaSoundPlayer.gd")
 
 signal mana_changed(new_mana: int)
 signal followers_changed(new_followers: int)
@@ -101,11 +102,17 @@ func gain_mana(amount: int) -> void:
 		game_manager.note_player_feedback("Laws of Civilization prevents gaining mana outside upkeep.")
 		return
 	mana += amount
+	if amount > 0 and game_manager != null:
+		ManaSoundPlayerScript.play_gain(amount)
+		game_manager.note_ui_sound_cue("mana_gain:%d" % amount)
 	mana_changed.emit(mana)
 
 func spend_mana(amount: int) -> bool:
 	if mana >= amount:
 		mana -= amount
+		if amount > 0 and game_manager != null:
+			ManaSoundPlayerScript.play_spend()
+			game_manager.note_ui_sound_cue("mana_spend")
 		mana_changed.emit(mana)
 		return true
 	return false

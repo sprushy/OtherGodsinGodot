@@ -1946,6 +1946,7 @@ func pay_costs_with_mana_cost(player: Player, mana_required: int, game_manager: 
 				var chosen_sacrifice := _pending_chosen_sacrifices[i]
 				if _is_valid_pending_sacrifice_choice(chosen_sacrifice, player):
 					if game_manager != null:
+						game_manager.note_creature_sacrifice(chosen_sacrifice)
 						game_manager._send_to_graveyard_with_hook(chosen_sacrifice, false, false)
 					else:
 						player.move_card(chosen_sacrifice, player.graveyard_zone)
@@ -1959,6 +1960,7 @@ func pay_costs_with_mana_cost(player: Player, mana_required: int, game_manager: 
 				for card in zone.cards:
 					if card.is_creature_card() and card.can_be_used_for_creature_sacrifice:
 						if game_manager != null:
+							game_manager.note_creature_sacrifice(card)
 							game_manager._send_to_graveyard_with_hook(card, false, false)
 						else:
 							player.move_card(card, player.graveyard_zone)

@@ -101,6 +101,7 @@ func resolve_moon_hunt_summon(
 
 	if game_manager != null:
 		game_manager._send_to_graveyard_with_hook(sacrificed_card, false, false)
+		game_manager.note_creature_sacrifice(sacrificed_card)
 	else:
 		card_owner.move_card(sacrificed_card, card_owner.graveyard_zone)
 	if sacrificed_card.has_method("on_sacrificed_for_summon") and not sacrificed_card.post_field_abilities_suppressed():

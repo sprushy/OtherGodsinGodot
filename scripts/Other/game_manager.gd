@@ -27,6 +27,10 @@ const GOD_DEATH_FOLLOWER_LOSS := 7
 const UPKEEP_AUTOMATIC_MANA_GAIN := 1
 const UPKEEP_DRAW_MANA_GAIN := 0
 const UPKEEP_MANA_GAIN := 4
+const StructureBuildSoundPlayerScript = preload("res://scripts/audio/StructureBuildSoundPlayer.gd")
+const AttackSoundPlayerScript = preload("res://scripts/audio/AttackSoundPlayer.gd")
+const CreatureSacrificeSoundPlayerScript = preload("res://scripts/audio/CreatureSacrificeSoundPlayer.gd")
+const CreatureDeathSoundPlayerScript = preload("res://scripts/audio/CreatureDeathSoundPlayer.gd")
 
 static func round_down_divide(amount: int, divisor: int) -> int:
 	if divisor == 0:
@@ -477,6 +481,18 @@ func consume_ui_sound_cues() -> Array[String]:
 	var cues := _pending_ui_sound_cues.duplicate()
 	_pending_ui_sound_cues.clear()
 	return cues
+
+func note_creature_sacrifice(card: Card) -> void:
+	if card == null or not card.is_creature_card():
+		return
+	CreatureSacrificeSoundPlayerScript.play_sound()
+	note_ui_sound_cue("creature_sacrifice")
+
+func note_creature_death(card: Card) -> void:
+	if card == null or not card.is_creature_card() or card.has_meta("creature_sacrifice_in_progress"):
+		return
+	CreatureDeathSoundPlayerScript.play_sound()
+	note_ui_sound_cue("creature_death")
 
 func get_game_result_message(winner: Player = winning_player, loser: Player = losing_player, reason: String = "") -> String:
 	var resolved_reason := reason.strip_edges()
@@ -1590,6 +1606,9 @@ func _trigger_board_summon(
 ) -> void:
 	if card == null or player == null or target_zone == null:
 		return
+	if card.card_type == Card.CardType.STRUCTURE and not face_down and not stealth and not card.is_face_down:
+		StructureBuildSoundPlayerScript.play_sound()
+		note_ui_sound_cue("structure_build")
 	if card.has_method("on_summon"):
 		card.on_summon(self)
 	var should_trigger_impact := not face_down \
@@ -2173,6 +2192,9 @@ func _notify_attack_declared(attacker: Card, target: Card = null) -> void:
 		return
 	if attacker.has_method("on_attack") and not attacker.abilities_suppressed():
 		attacker.on_attack(self, target)
+	var strong_attack := attacker.get_effective_strength() > 25
+	AttackSoundPlayerScript.play_sound(strong_attack)
+	note_ui_sound_cue("attack_strong" if strong_attack else "attack_quick")
 
 func _notify_opponent_attacks_followers(attacker: Card, defending_player: Player) -> void:
 	if attacker == null or defending_player == null:
@@ -2783,6 +2805,7 @@ func _combat_kill_routed_deferred(
 		for equip in victim.equipment.duplicate():
 			_send_to_abyss_with_hook(equip)
 		victim.card_owner.move_card(victim, victim.card_owner.abyss_zone)
+		note_creature_death(victim)
 		finish.call()
 		return true
 	return request_send_to_graveyard(victim, finish, true, true, bypass_combat_survival)
@@ -3279,6 +3302,7 @@ func _combat_kill_routed(killer: Card, victim: Card, do_void: bool, suppress_all
 		for equip in victim.equipment.duplicate():
 			_send_to_abyss_with_hook(equip)
 		victim.card_owner.move_card(victim, victim.card_owner.abyss_zone)
+		note_creature_death(victim)
 		finish.call()
 		return
 	request_send_to_graveyard(victim, finish, true, true, bypass_combat_survival)
@@ -3603,6 +3627,8 @@ func _send_to_graveyard_with_hook_resolved(
 		card.card_owner.move_card(card, card.card_owner.abyss_zone)
 	else:
 		card.card_owner.move_card(card, card.card_owner.graveyard_zone)
+	if combat_death or destruction:
+		note_creature_death(card)
 	if continue_callback.is_valid():
 		continue_callback.call()
 	return true

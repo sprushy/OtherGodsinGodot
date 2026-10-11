@@ -79,6 +79,11 @@ const MatchSessionScript = preload("res://scripts/server/MatchSession.gd")
 const DeckValidatorScript = preload("res://scripts/server/DeckValidator.gd")
 const PowerUnlockSoundPlayerScript = preload("res://scripts/audio/PowerUnlockSoundPlayer.gd")
 const LocustSwarmSoundPlayerScript = preload("res://scripts/audio/LocustSwarmSoundPlayer.gd")
+const StructureBuildSoundPlayerScript = preload("res://scripts/audio/StructureBuildSoundPlayer.gd")
+const ManaSoundPlayerScript = preload("res://scripts/audio/ManaSoundPlayer.gd")
+const AttackSoundPlayerScript = preload("res://scripts/audio/AttackSoundPlayer.gd")
+const CreatureSacrificeSoundPlayerScript = preload("res://scripts/audio/CreatureSacrificeSoundPlayer.gd")
+const CreatureDeathSoundPlayerScript = preload("res://scripts/audio/CreatureDeathSoundPlayer.gd")
 const TiamatScript = preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
 const UIArtScalerScript = preload("res://scripts/ui/UIArtScaler.gd")
 const GameCursorScript = preload("res://scripts/ui/GameCursor.gd")
@@ -30969,11 +30974,29 @@ func _play_network_ui_sound_cues(raw_cues: Variant) -> void:
 	if not (raw_cues is Array):
 		return
 	for raw_cue in raw_cues:
-		match str(raw_cue):
+		var cue := str(raw_cue)
+		if cue.begins_with("mana_gain:"):
+			var amount_text := cue.get_slice(":", 1)
+			if amount_text.is_valid_int():
+				ManaSoundPlayerScript.play_gain(int(amount_text))
+			continue
+		match cue:
 			"power_unlock":
 				PowerUnlockSoundPlayerScript.play_sequence()
 			"locust_swarm":
 				LocustSwarmSoundPlayerScript.play_sound()
+			"structure_build":
+				StructureBuildSoundPlayerScript.play_sound()
+			"mana_spend":
+				ManaSoundPlayerScript.play_spend()
+			"attack_quick":
+				AttackSoundPlayerScript.play_sound(false)
+			"attack_strong":
+				AttackSoundPlayerScript.play_sound(true)
+			"creature_sacrifice":
+				CreatureSacrificeSoundPlayerScript.play_sound()
+			"creature_death":
+				CreatureDeathSoundPlayerScript.play_sound()
 
 func _restore_network_attack_preview_from_state(preview_data: Dictionary) -> void:
 	if not _is_networked_client or match_manager == null or game_manager == null:

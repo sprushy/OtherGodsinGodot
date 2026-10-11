@@ -119,6 +119,7 @@ func begin_blood_magic_activation(game_manager: GameManager, target: Card, sacri
 		sacrifice_name,
 		target_name
 	)
+	sacrifice.set_meta("creature_sacrifice_in_progress", true)
 	game_manager.request_send_to_graveyard(sacrifice, continue_callback, false, true)
 	return ""
 
@@ -133,6 +134,8 @@ func _continue_blood_magic_after_sacrifice(
 		return
 
 	var paid := sacrifice == null or game_manager.reached_public_destroyed_destination(sacrifice)
+	if sacrifice != null:
+		sacrifice.remove_meta("creature_sacrifice_in_progress")
 	if not paid:
 		if sacrifice == self:
 			game_manager.note_player_feedback("%s could not sacrifice itself for Blood Magic." % card_name)
@@ -140,6 +143,7 @@ func _continue_blood_magic_after_sacrifice(
 			game_manager.note_player_feedback("%s could not sacrifice %s for Blood Magic." % [card_name, sacrifice_name])
 		return
 	if sacrifice != null:
+		game_manager.note_creature_sacrifice(sacrifice)
 		sacrifice_name = game_manager.get_resolved_destruction_log_name(
 			sacrifice,
 			game_manager.get_feedback_viewer(),

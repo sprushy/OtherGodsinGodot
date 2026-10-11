@@ -185,6 +185,7 @@ func resolve_necoc_yaotl_sacrifice(game_manager: GameManager, target: Card) -> S
 	if target.card_owner != null and from_zone != null:
 		target.card_owner.card_moved.emit(target, from_zone, null)
 	necoc_yaotl_sacrifices.append(target)
+	game_manager.note_creature_sacrifice(target)
 	_emit_visual_state_changed()
 	notify_power_activated(game_manager, target)
 
