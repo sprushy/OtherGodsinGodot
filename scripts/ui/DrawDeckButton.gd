@@ -7,8 +7,12 @@ const OPPONENT_PROTECTOR_SCALE := 0.94
 const CARD_PROTECTOR_SCALE := 1.25
 const GOLD := Color(0.91, 0.74, 0.40)
 const CARD_SIZE := Vector2(104.0, 157.0)
-const CARD_LAYER_OFFSET := Vector2(0.32, 0.65)
-const DECK_ROTATION_DEGREES := -2.0
+const CARD_LAYER_OFFSET := Vector2(0.3, 0.55)
+const MAX_VISIBLE_STACK_LAYERS := 40
+const PAPER_SEAM_WIDTH := 0.35
+const PAPER_EDGE := Color(0.82, 0.79, 0.72)
+const PAPER_SEAM := Color(0.51, 0.48, 0.41)
+const PAPER_SIDE_SEAM := Color(0.60, 0.56, 0.48)
 const COUNT_CHANGE_DISPLAY_MSEC := 2500
 const SHELVE_INSERT_OFFSET := Vector2(28.0, 38.0)
 const MINIMUM_HEIGHT := 216.0
@@ -21,6 +25,7 @@ var _opponent_view: bool = false
 var _opponent_draw_available: bool = false
 var _protector_side_amount: float = 0.0
 var _stack_card_style: StyleBoxFlat
+var _stack_shadow_style: StyleBoxFlat
 var _count_visible_until_msec: int = 0
 var choice_highlight_amount: float = 0.0:
 	set(value):
@@ -44,10 +49,13 @@ func _ready() -> void:
 	for state in ["font_color", "font_hover_color", "font_pressed_color", "font_disabled_color", "font_focus_color", "font_outline_color"]:
 		add_theme_color_override(state, Color.TRANSPARENT)
 	_stack_card_style = StyleBoxFlat.new()
-	_stack_card_style.bg_color = Color(0.73, 0.71, 0.64)
-	_stack_card_style.border_color = Color(0.32, 0.30, 0.25)
-	_stack_card_style.set_border_width_all(1)
+	_stack_card_style.bg_color = PAPER_EDGE
 	_stack_card_style.set_corner_radius_all(6)
+	_stack_shadow_style = _stack_card_style.duplicate() as StyleBoxFlat
+	_stack_shadow_style.bg_color = Color(0.16, 0.14, 0.10)
+	_stack_shadow_style.shadow_color = Color(0.0, 0.0, 0.0, 0.4)
+	_stack_shadow_style.shadow_size = 4
+	_stack_shadow_style.shadow_offset = Vector2(2.0, 3.0)
 	resized.connect(queue_redraw)
 
 func set_deck_count(count: int) -> void:
@@ -102,14 +110,17 @@ func get_top_card_rect() -> Rect2:
 	return Rect2(Vector2(card_x, 12.0 - _hover_amount * 6.0), CARD_SIZE)
 
 func _get_stack_offset() -> Vector2:
-	return CARD_LAYER_OFFSET * float(maxi(0, _deck_count - 1))
+	return CARD_LAYER_OFFSET * float(_get_visible_stack_layers())
+
+func _get_visible_stack_layers() -> int:
+	return mini(MAX_VISIBLE_STACK_LAYERS, maxi(0, _deck_count - 1))
 
 func get_shelve_insert_rect() -> Rect2:
 	var top := get_top_card_rect()
 	return Rect2(top.position + _get_stack_offset() + SHELVE_INSERT_OFFSET, CARD_SIZE)
 
 func get_bottom_card_rotation() -> float:
-	return deg_to_rad(DECK_ROTATION_DEGREES)
+	return 0.0
 
 func insert_shelved_card() -> void:
 	# State may already have updated the count before the flight arrived.
@@ -139,7 +150,7 @@ func clear_shelve_insertions() -> void:
 			child.queue_free()
 
 func get_top_card_rotation() -> float:
-	return deg_to_rad(DECK_ROTATION_DEGREES - _hover_amount) + (PI if _opponent_view else 0.0)
+	return PI if _opponent_view else 0.0
 
 func _process(delta: float) -> void:
 	if not is_visible_in_tree():
@@ -154,11 +165,18 @@ func _draw() -> void:
 	var top := get_top_card_rect()
 	var center := top.get_center()
 	if _deck_count > 0:
-		# One aligned paper edge per actual card beneath the top card. Each
-		# draw removes exactly one layer; a single remaining card is flat.
-		for i in range(_deck_count - 1, 0, -1):
-			draw_set_transform(center + CARD_LAYER_OFFSET * float(i), deg_to_rad(DECK_ROTATION_DEGREES))
-			draw_style_box(_stack_card_style, Rect2(-CARD_SIZE * 0.5, CARD_SIZE))
+		# Ground the whole stack; a shadow on the top card hides the paper seams.
+		draw_style_box(_stack_shadow_style, Rect2(top.position + _get_stack_offset(), CARD_SIZE))
+		# Cap visible thickness for large decks. Smaller stacks lose one layer
+		# per draw, and a single remaining card is flat.
+		for i in range(_get_visible_stack_layers(), 0, -1):
+			var layer := Rect2(top.position + CARD_LAYER_OFFSET * float(i), CARD_SIZE)
+			draw_style_box(_stack_card_style, layer)
+			# Thin seams leave a bright paper band between cards, with a darker
+			# right edge to distinguish the two exposed sides of the stack.
+			draw_line(Vector2(layer.position.x + 6.0, layer.end.y), Vector2(layer.end.x - 6.0, layer.end.y), PAPER_SEAM, PAPER_SEAM_WIDTH, true)
+			draw_line(Vector2(layer.end.x, layer.position.y + 6.0), Vector2(layer.end.x, layer.end.y - 6.0), PAPER_SIDE_SEAM, PAPER_SEAM_WIDTH, true)
+			draw_arc(layer.end - Vector2(6.0, 6.0), 6.0, 0.0, PI * 0.5, 8, PAPER_SEAM, PAPER_SEAM_WIDTH, true)
 		draw_set_transform(Vector2.ZERO)
 		var tint := Color.WHITE if _is_draw_available() else Color(0.64, 0.62, 0.57)
 		_draw_card_back(center, get_top_card_rotation(), tint)
@@ -236,9 +254,6 @@ func _draw_card_back(center: Vector2, angle: float, tint: Color) -> void:
 	edge.border_color = Color(GOLD, 0.8)
 	edge.set_border_width_all(1)
 	edge.set_corner_radius_all(6)
-	edge.shadow_color = Color(0.0, 0.0, 0.0, 0.4)
-	edge.shadow_size = 4
-	edge.shadow_offset = Vector2(2.0, 3.0)
 	draw_style_box(edge, rect.grow(1.0))
 	draw_texture_rect(CARD_BACK, rect, false, tint)
 	draw_set_transform(Vector2.ZERO)
