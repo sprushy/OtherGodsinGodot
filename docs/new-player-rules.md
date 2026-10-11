@@ -160,6 +160,8 @@ At the start of upkeep, you normally gain 1 automatic mana immediately, before c
 
 The very first turn of the game has no automatic mana. God Death also removes the automatic mana. Neither changes the resource options: you still choose 4 mana or 1 card.
 
+God Death applies only after you have had a God in play during the match and no longer control a face-up, awake God on the field. Starting without a God, as in some story encounters, does not trigger God Death.
+
 Choose mana when you have several cards you can play. Choose draw when your hand is weak, empty, or missing threats.
 
 ## 10. Spend Mana

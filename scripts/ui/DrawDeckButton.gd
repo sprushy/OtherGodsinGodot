@@ -22,6 +22,10 @@ var _opponent_draw_available: bool = false
 var _protector_side_amount: float = 0.0
 var _stack_card_style: StyleBoxFlat
 var _count_visible_until_msec: int = 0
+var choice_highlight_amount: float = 0.0:
+	set(value):
+		choice_highlight_amount = value
+		queue_redraw()
 
 func _get_minimum_size() -> Vector2:
 	# Keep even unusually large decks inside the clickable area.
@@ -218,6 +222,15 @@ func _draw_card_protector(deck_center: Vector2) -> void:
 func _draw_card_back(center: Vector2, angle: float, tint: Color) -> void:
 	draw_set_transform(center, angle)
 	var rect := Rect2(-CARD_SIZE * 0.5, CARD_SIZE)
+	if choice_highlight_amount > 0.0 and _draw_available and not disabled and not _opponent_view:
+		# Layer soft shadows behind the card for a green halo with no hard border.
+		for spread in [22, 14, 7]:
+			var aura := StyleBoxFlat.new()
+			aura.bg_color = Color.TRANSPARENT
+			aura.set_corner_radius_all(7)
+			aura.shadow_color = Color(0.25, 1.0, 0.48, 0.32 * choice_highlight_amount)
+			aura.shadow_size = spread
+			draw_style_box(aura, rect.grow(2.0))
 	var edge := StyleBoxFlat.new()
 	edge.bg_color = Color(0.12, 0.10, 0.065)
 	edge.border_color = Color(GOLD, 0.8)

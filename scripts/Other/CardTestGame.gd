@@ -236,25 +236,22 @@ func load_featured_card_test_scenario() -> void:
 	_add_test_god(player1, Odin.new())
 	_add_test_god(player2, Thor.new())
 
-	# Default Card Test is a clean stealth visual sandbox.
-	# P1 stealth creatures show their hazed art; P2 stealth creatures show card backs.
-	_place_test_hidden_creature(player1, player1.frontline_zones[1], PictishBeast.new())
-	_place_test_hidden_creature(player1, player1.frontline_zones[2], BrownBear.new())
-	_place_test_hidden_creature(player1, player1.frontline_zones[3], Pegasus.new())
-	_place_test_hidden_creature(player1, player1.reserve_zones[1], Nimue.new())
-	_place_test_hidden_creature(player1, player1.reserve_zones[3], Nagual.new())
-	_place_test_prepared_card(player1, player1.frontline_zones[0], OccultSingularity.new())
-	_place_test_prepared_card(player1, player1.reserve_zones[4], Absence.new())
-	_add_weather_visual_test_hand_cards(player1)
+	# Void visual sandbox: BitMeseri can target either side of the field.
+	# Empty Abyss piles make each arrival easy to verify at its owner's gate.
+	_place_test_board_card(player1, player1.frontline_zones[1], BrownBear.new())
+	_place_test_board_card(player1, player1.frontline_zones[3], PictishBeast.new())
+	_place_test_board_card(player1, player1.reserve_zones[2], Pegasus.new())
+	_place_test_board_card(player2, player2.frontline_zones[1], MinotaurFootsoldier.new())
+	_place_test_board_card(player2, player2.frontline_zones[3], Berserker.new())
+	_place_test_board_card(player2, player2.reserve_zones[2], BrownBear.new())
+	for player in [player1, player2]:
+		for _copy in range(3):
+			_add_test_hand_card(player, BitMeseri.new())
 
-	_place_test_hidden_creature(player2, player2.frontline_zones[1], Alu.new())
-	_place_test_hidden_creature(player2, player2.frontline_zones[2], MinotaurFootsoldier.new())
-	_place_test_hidden_creature(player2, player2.frontline_zones[3], Berserker.new())
-	_place_test_hidden_creature(player2, player2.reserve_zones[1], TheWhiteSerpent.new())
-	_place_test_hidden_creature(player2, player2.reserve_zones[3], GududPriest.new())
-	_place_test_prepared_card(player2, player2.frontline_zones[0], Famine.new())
-	_place_test_prepared_card(player2, player2.reserve_zones[4], FoolishOptimism.new())
-	_add_weather_visual_test_hand_cards(player2)
+	# An unlocked power also exercises voiding from the deck's position.
+	_add_test_power(player1, 0, WalkOfTheSage.new(), true)
+	_add_test_deck_card(player1, Nimue.new())
+	_add_test_deck_card(player1, Lailoken.new())
 
 	# Keep draw/upkeep choices stable if the sandbox runs longer.
 	_add_test_deck_card(player1, BrownBear.new())
@@ -266,9 +263,9 @@ func load_featured_card_test_scenario() -> void:
 	_add_test_deck_card(player2, TheWhiteSerpent.new())
 
 	player1.spend_mana(player1.mana)
-	player1.gain_mana(12)
+	player1.gain_mana(20)
 	player2.spend_mana(player2.mana)
-	player2.gain_mana(10)
+	player2.gain_mana(20)
 	player1.followers = 100
 	player2.followers = 100
 	player1.followers_changed.emit(player1.followers)
@@ -290,11 +287,10 @@ func load_featured_card_test_scenario() -> void:
 	game_manager.start_turn()
 	_open_upkeep_choice_window()
 	action_label.text = (
-		"Stealth and Prepared Magic Visual Test. The board starts with stealth-mode creatures "
-		+ "and prepared spells in the outer slots. "
-		+ "Friendly stealth cards use visible hazed art; opposing stealth cards use hidden card backs. "
-		+ "Prepared spells use the sun-and-moon cover and brighten when moused over. "
-		+ "Both players have Heavy Snow and Divine Lightning in hand; play Heavy Snow to start the snow visuals, then destroy it with Divine Lightning to clear them."
+		"Void Whorl Test. Choose Mana for upkeep, then cast BitMeseri from hand and target a creature on either side. "
+		+ "Pass priority to resolve it: the purple whorl should appear at the creature's former position and in its owner's Abyss gate. "
+		+ "Both players have three BitMeseri and 20 starting mana for repeated tests. "
+		+ "P1 also has unlocked Walk of the Sage: pay 2 mana to void Nimue or Lailoken from the deck and check the deck-position whorl."
 	)
 	update_ui()
 

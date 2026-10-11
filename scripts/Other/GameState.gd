@@ -77,6 +77,7 @@ static func serialize(gm: GameManager, viewer_player_index: int = -1, visible_pl
 			deck         = deck_cards,
 			has_summoned_this_turn = player.has_summoned_this_turn,
 			has_summoned_structure_this_turn = player.has_summoned_structure_this_turn,
+			has_had_god_in_play = player.has_had_god_in_play,
 			hand         = _serialize_zone_cards(player.hand_zone, viewer, hide_hand, reveal_private_cards),
 			god_zone     = _serialize_zone_cards(player.god_zone, viewer, false, reveal_private_cards),
 			power_zones  = [] as Array,
@@ -472,6 +473,7 @@ static func apply_to_manager(data: Dictionary, gm: GameManager) -> void:
 		player.guard = pdata.get("guard", 0)
 		player.has_summoned_this_turn = pdata.get("has_summoned_this_turn", false)
 		player.has_summoned_structure_this_turn = pdata.get("has_summoned_structure_this_turn", false)
+		player.has_had_god_in_play = pdata.get("has_had_god_in_play", false)
 
 		var dk_cards: Array = pdata.get("deck", [])
 		var dk_count: int = pdata.get("deck_count", -1)
@@ -529,8 +531,7 @@ static func _apply_zone_cards(zone: Zone, cards_data: Array) -> void:
 		var card := _deserialize_card(cdata)
 		if card != null:
 			card.card_owner = zone.zone_owner
-			card.current_zone = zone
-			zone.cards.append(card)
+			zone.add_card(card)
 	# Second pass: restore equipment → creature links using stored meta
 	_link_equipment_in_zone(zone)
 

@@ -17,20 +17,42 @@ const VOID_FRAME_RATE := 12.0
 const VOID_ACTIVE_ALPHA := 0.82
 const VOID_FADE_DURATION := 0.25
 const VOID_ACTIVITY_LINGER_SECONDS := 2.5
-# Hover + click hit box matching the drawn gateway art, which spills well past
-# the 50x48 control rect (and past the 74x74 zone-info panel it lives in).
-# Kept off the art's far left/top arcs so it does not steal clicks from the
-# neighbouring reserve zone and grave icon.
+# Include the doorway opening even where the gateway texture is transparent.
+# The surrounding artwork uses its alpha mask for hover and click detection.
 const PORTAL_HIT_RECT := Rect2(0.0, -55.0, 140.0, 115.0)
 const VISUAL_SCALE := 0.67
 
+class GatewayHitArea extends Control:
+	var click_mask: BitMap
+	var opening_rect: Rect2
+
+	func contains_point(point: Vector2) -> bool:
+		if opening_rect.has_point(point):
+			return true
+		if click_mask == null or size.x <= 0.0 or size.y <= 0.0:
+			return false
+		# Match the artwork's KEEP_ASPECT_CENTERED texture placement.
+		var texture_size := Vector2(click_mask.get_size())
+		var texture_scale := minf(size.x / texture_size.x, size.y / texture_size.y)
+		var drawn_size := texture_size * texture_scale
+		var drawn_origin := (size - drawn_size) * 0.5
+		if not Rect2(drawn_origin, drawn_size).has_point(point):
+			return false
+		return click_mask.get_bitv(Vector2i((point - drawn_origin) / texture_scale))
+
+	func _has_point(point: Vector2) -> bool:
+		return contains_point(point)
+
+static var _gateway_click_mask: BitMap = null
+
+var count_label: Label = null
 var _void_art: TextureRect = null
 var _void_frames: Array[Texture2D] = []
 var _void_frame_index := 0
 var _void_frame_time := 0.0
 var _void_hovered := false
 var _void_activity_seconds_remaining := 0.0
-var _click_catcher: Control = null
+var _click_catcher: GatewayHitArea = null
 
 
 func _ready() -> void:
@@ -62,12 +84,20 @@ func _ready() -> void:
 
 	add_child(_make_gateway_texture("AbyssGatewayForeground", GATEWAY_FOREGROUND_TEXTURE))
 
-	_click_catcher = Control.new()
+	if _gateway_click_mask == null:
+		_gateway_click_mask = BitMap.new()
+		_gateway_click_mask.create_from_image_alpha(GATEWAY_TEXTURE.get_image(), 0.05)
+	_click_catcher = GatewayHitArea.new()
+	_click_catcher.click_mask = _gateway_click_mask
+	_click_catcher.opening_rect = Rect2(PORTAL_HIT_RECT.position - ART_OVERSCAN.position, PORTAL_HIT_RECT.size)
 	_click_catcher.name = "AbyssGatewayClickCatcher"
 	_click_catcher.mouse_filter = Control.MOUSE_FILTER_STOP
 	_click_catcher.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-	_click_catcher.position = PORTAL_HIT_RECT.position
-	_click_catcher.size = PORTAL_HIT_RECT.size
+	_click_catcher.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_click_catcher.offset_left = ART_OVERSCAN.position.x
+	_click_catcher.offset_top = ART_OVERSCAN.position.y
+	_click_catcher.offset_right = ART_OVERSCAN.position.x + ART_OVERSCAN.size.x
+	_click_catcher.offset_bottom = ART_OVERSCAN.position.y + ART_OVERSCAN.size.y
 	_click_catcher.gui_input.connect(_on_click_catcher_gui_input)
 	add_child(_click_catcher)
 
@@ -110,12 +140,17 @@ func _update_hover_from_mouse() -> void:
 	if viewport == null:
 		_void_hovered = false
 		return
-	var local_mouse := get_global_transform().affine_inverse() * viewport.get_mouse_position()
-	_void_hovered = PORTAL_HIT_RECT.has_point(local_mouse)
+	if _click_catcher == null:
+		_void_hovered = false
+		return
+	var local_mouse := _click_catcher.get_global_transform().affine_inverse() * viewport.get_mouse_position()
+	_void_hovered = _click_catcher.contains_point(local_mouse)
 
 
 func _process(delta: float) -> void:
 	_update_hover_from_mouse()
+	if is_instance_valid(count_label):
+		count_label.visible = _void_hovered
 	if _void_art == null or _void_frames.is_empty():
 		return
 	_void_activity_seconds_remaining = maxf(0.0, _void_activity_seconds_remaining - delta)
@@ -136,7 +171,11 @@ func _process(delta: float) -> void:
 
 
 func _build_void_frames() -> void:
-	_void_frames.clear()
+	_void_frames = create_void_frames()
+
+
+static func create_void_frames() -> Array[Texture2D]:
+	var frames: Array[Texture2D] = []
 	var frame_size := Vector2(
 		float(VOID_SHEET_TEXTURE.get_width()) / float(VOID_FRAME_COLUMNS),
 		float(VOID_SHEET_TEXTURE.get_height()) / float(VOID_FRAME_ROWS)
@@ -147,4 +186,5 @@ func _build_void_frames() -> void:
 		var frame := AtlasTexture.new()
 		frame.atlas = VOID_SHEET_TEXTURE
 		frame.region = Rect2(Vector2(float(column), float(row)) * frame_size, frame_size)
-		_void_frames.append(frame)
+		frames.append(frame)
+	return frames

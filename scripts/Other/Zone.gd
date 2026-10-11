@@ -21,6 +21,9 @@ var zone_owner: Player
 func add_card(card: Card) -> void:
 	cards.append(card)
 	card.current_zone = self
+	if zone_owner != null and is_in_play_zone() \
+			and (card.is_god or card.has_type("Active God")):
+		zone_owner.has_had_god_in_play = true
 
 func remove_card(card: Card) -> void:
 	cards.erase(card)

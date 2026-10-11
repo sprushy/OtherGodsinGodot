@@ -4,6 +4,8 @@ extends RefCounted
 const AUDIO_SETTINGS_SECTION := "audio"
 const COMBAT_SETTINGS_SECTION := "combat"
 const GOD_SPECIFIC_SETTINGS_SECTION := "god_specific"
+const UPKEEP_HINT_SECTION := "onboarding"
+const UPKEEP_HINT_MODE_KEY := "resource_choice_hint"
 
 const MUSIC_MUTED_KEY := "music_muted"
 const ALL_SOUND_MUTED_KEY := "all_sound_muted"
@@ -84,6 +86,11 @@ static func build_general_tab(get_value: Callable, set_value: Callable, created_
 
 	settings.add_child(_make_section_label("Visual"))
 	if get_text_value.is_valid() and set_text_value.is_valid():
+		_add_setting_option(settings, "Resource choice glow", UPKEEP_HINT_SECTION, UPKEEP_HINT_MODE_KEY, "always", [
+			{"label": "Always", "value": "always"},
+			{"label": "Automatic (always in Story)", "value": "automatic"},
+			{"label": "Off", "value": "off"},
+		], get_text_value, set_text_value)
 		_add_setting_option(settings, "Board style", COMBAT_SETTINGS_SECTION, BOARD_STYLE_KEY, BOARD_STYLE_NORMAL, [
 			{"label": "Moss Stone (Normal)", "value": BOARD_STYLE_NORMAL},
 			{"label": "Snow Stone (Snow)", "value": BOARD_STYLE_SNOW},

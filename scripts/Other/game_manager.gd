@@ -4271,12 +4271,12 @@ func player_has_face_up_awake_active_god(player: Player) -> bool:
 func can_player_use_powers(player: Player) -> bool:
 	if player == null:
 		return false
-	return player_has_normal_god(player) or player_has_face_up_awake_active_god(player)
+	return not is_player_under_god_death(player)
 
 func is_player_under_god_death(player: Player) -> bool:
-	if player == null:
+	if player == null or not player.has_had_god_in_play:
 		return false
-	return not can_player_use_powers(player)
+	return not (player_has_normal_god(player) or player_has_face_up_awake_active_god(player))
 
 func has_active_laws_of_civilization() -> bool:
 	for power in _get_active_powers():

@@ -21,6 +21,7 @@ var is_defeated: bool = false
 var is_turn_player: bool = false
 var has_summoned_this_turn: bool = false
 var has_summoned_structure_this_turn: bool = false
+var has_had_god_in_play: bool = false
 var attack_restriction_turns: int = 0
 
 var card_collection: Array[Card] = []

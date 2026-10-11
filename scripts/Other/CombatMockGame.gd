@@ -51,6 +51,9 @@ const ENTROPY_CURSOR_IMAGE_PATH := "res://images/ui/cursors/EntropyCursor.png"
 const CardBackTexture = preload("res://images/cardbackAI.png")
 const CardDrawAnimationScript = preload("res://scripts/ui/CardDrawAnimation.gd")
 const CardShelveAnimationScript = preload("res://scripts/ui/CardShelveAnimation.gd")
+const CardGraveAnimationScript = preload("res://scripts/ui/CardGraveAnimation.gd")
+const CardVoidEffectScript = preload("res://scripts/ui/CardVoidEffect.gd")
+const VOID_GATEWAY_DELAY_SECONDS := 0.2
 const DrawDeckButtonScript = preload("res://scripts/ui/DrawDeckButton.gd")
 const PreparedMagicalCardCoverTexture = preload("res://images/PreparedMagicalCardCoverDimRuntime.png")
 const FOLLOWER_CASUALTY_ALIVE_TEXTURE := preload("res://images/ui/followers/god_follower_alive.png")
@@ -97,6 +100,7 @@ const MAJOR_ACTION_SYMBOL_TEXTURE = preload("res://images/ui/MajorActionSymbol.p
 const USER_SETTINGS_PATH := "user://settings.cfg"
 const UPKEEP_HINT_SECTION := "onboarding"
 const UPKEEP_HINT_CHOICES_KEY := "completed_resource_choices"
+const UPKEEP_HINT_MODE_KEY := "resource_choice_hint"
 const UPKEEP_HINT_CHOICE_LIMIT := 3
 const AUDIO_SETTINGS_SECTION := "audio"
 const COMBAT_SETTINGS_SECTION := "combat"
@@ -349,6 +353,8 @@ const MATCH_REPLAY_MULTI_DESTROY_THRESHOLD := 2
 @onready var mana_button = $MainHBox/LeftPanel/ChoiceContainer/ManaButton
 var _opponent_draw_deck = null
 var _upkeep_hint_completed_choices: int = 0
+# Retain the saved hint preference as the glow mode; text teaches automatically.
+var _upkeep_hint_mode: String = "always"
 var _upkeep_hint_pending_turn: int = -1
 var _upkeep_hint_pending_player_index: int = -1
 var _upkeep_hint_pulse_turn: int = -1
@@ -391,6 +397,9 @@ var _pending_hand_arrivals: Dictionary = {}
 var _draw_arrival_uids: Dictionary = {}
 var _card_draw_animations: Dictionary = {}
 var _card_shelve_animations: Dictionary = {}
+var _card_grave_animations: Dictionary = {}
+var _abyss_activity_deadlines: Dictionary = {}
+var _void_effect_generation: int = 0
 var _board_zone_uis: Array = []      # Array[BoardZoneUI]
 var _enemy_zone_uis: Array = []      # Array[BoardZoneUI]
 var _enemy_god_zone_ui: BoardZoneUI = null
@@ -1125,6 +1134,7 @@ func _load_user_settings() -> void:
 	var completed_choices = config.get_value(UPKEEP_HINT_SECTION, UPKEEP_HINT_CHOICES_KEY, 0)
 	if completed_choices is int:
 		_upkeep_hint_completed_choices = clampi(completed_choices, 0, UPKEEP_HINT_CHOICE_LIMIT)
+	_upkeep_hint_mode = str(config.get_value(UPKEEP_HINT_SECTION, UPKEEP_HINT_MODE_KEY, "always"))
 	priority_stops["start"] = false
 	priority_stops["main"] = false
 	priority_stops["combat"] = false
@@ -1600,6 +1610,8 @@ func _set_settings_menu_value(section: String, key: String, value: bool) -> void
 			_save_bool_setting(section, key, value)
 
 func _get_settings_menu_text_value(section: String, key: String, default_value: String) -> String:
+	if section == UPKEEP_HINT_SECTION and key == UPKEEP_HINT_MODE_KEY:
+		return _upkeep_hint_mode
 	if section == COMBAT_SETTINGS_SECTION and key == BOARD_STYLE_KEY:
 		return _board_style
 	if section == AUDIO_SETTINGS_SECTION and key == STARTUP_MUSIC_TRACK_KEY:
@@ -1609,6 +1621,15 @@ func _get_settings_menu_text_value(section: String, key: String, default_value: 
 	return _get_saved_string_setting(section, key, default_value)
 
 func _set_settings_menu_text_value(section: String, key: String, value: String) -> void:
+	if section == UPKEEP_HINT_SECTION and key == UPKEEP_HINT_MODE_KEY:
+		if value not in ["automatic", "always", "off"]:
+			return
+		_upkeep_hint_mode = value
+		_save_string_setting(section, key, value)
+		if value == "always":
+			_upkeep_hint_pulse_turn = -1
+		_sync_turn_start_props()
+		return
 	if section == COMBAT_SETTINGS_SECTION and key == BOARD_STYLE_KEY:
 		_set_board_style(value)
 		return
@@ -2665,6 +2686,8 @@ func _ready() -> void:
 func _exit_tree() -> void:
 	_clear_card_draw_animation()
 	_clear_card_shelve_animations()
+	_clear_card_grave_animations()
+	_clear_card_void_effects()
 	_hide_devour_cancel_prompt()
 	_clear_match_move_indicators()
 	_clear_board_drag_followers_highlight()
@@ -5205,7 +5228,7 @@ func _capture_match_replay_snapshot_deferred(snapshot_id: int) -> void:
 		_refresh_match_replay_overlay_step()
 
 func _has_active_replay_capture_card_animation() -> bool:
-	if not _card_draw_animations.is_empty() or not _card_shelve_animations.is_empty():
+	if not _card_draw_animations.is_empty() or not _card_shelve_animations.is_empty() or not _card_grave_animations.is_empty():
 		return true
 	if draw_button != null and is_instance_valid(draw_button):
 		for child in draw_button.get_children():
@@ -6106,6 +6129,7 @@ func start_game(
 	server_match_session = null
 ) -> void:
 	print("=== STARTING COMBAT MOCK GAME ===")
+	_upkeep_hint_mode = _get_saved_string_setting(UPKEEP_HINT_SECTION, UPKEEP_HINT_MODE_KEY, "always")
 	_upkeep_hint_pending_turn = -1
 	_upkeep_hint_pulse_turn = -1
 	_prepare_for_match_launch("")
@@ -6241,6 +6265,8 @@ func _build_initial_match_players(default_match_setup, server_match_session = nu
 func _prepare_for_match_launch(status_message: String = "Connecting to match...") -> void:
 	_clear_card_draw_animation()
 	_clear_card_shelve_animations()
+	_clear_card_grave_animations()
+	_clear_card_void_effects()
 	_set_match_reconnect_wait(false)
 	_clear_match_move_indicators()
 	_awaiting_initial_full_state = false
@@ -6571,27 +6597,43 @@ func _sync_upkeep_choice_learning() -> void:
 	if error != OK:
 		push_warning("Could not save upkeep hint progress: %s" % str(error))
 
+func _should_show_upkeep_choice_hint() -> bool:
+	return _upkeep_hint_completed_choices < UPKEEP_HINT_CHOICE_LIMIT
+
+func _should_show_upkeep_choice_glow() -> bool:
+	if _upkeep_hint_mode == "off":
+		return false
+	return _upkeep_hint_mode == "always" or _should_show_upkeep_choice_hint()
+
 func _sync_upkeep_choice_hint(available: bool) -> void:
-	var show_hint := available and _upkeep_hint_completed_choices < UPKEEP_HINT_CHOICE_LIMIT
-	choice_intro_label.visible = show_hint
-	if not show_hint:
+	choice_intro_label.visible = available and _should_show_upkeep_choice_hint()
+	var show_glow := available and _should_show_upkeep_choice_glow()
+	if not show_glow:
 		if _upkeep_hint_tween != null:
 			_upkeep_hint_tween.kill()
 			_upkeep_hint_tween = null
 			draw_button.modulate = Color.WHITE
 			mana_button.modulate = Color.WHITE
+		draw_button.choice_highlight_amount = 0.0
+		mana_button.choice_highlight_amount = 0.0
 		return
 	var player_index: int = game_manager.players.find(game_manager.current_player)
-	if _upkeep_hint_pulse_turn == game_manager.turn_number and _upkeep_hint_pulse_player_index == player_index:
+	if _upkeep_hint_pulse_turn == game_manager.turn_number and _upkeep_hint_pulse_player_index == player_index \
+			and _upkeep_hint_tween != null and _upkeep_hint_tween.is_running():
 		return
 	_upkeep_hint_pulse_turn = game_manager.turn_number
 	_upkeep_hint_pulse_player_index = player_index
-	# One shared, gentle pulse; state refreshes and reopened prompts do not repeat it.
-	_upkeep_hint_tween = create_tween().set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	# Pulse together every 2.7 seconds, keeping the baseline glow between pulses.
+	if _upkeep_hint_tween != null:
+		_upkeep_hint_tween.kill()
+	draw_button.choice_highlight_amount = 0.9
+	mana_button.choice_highlight_amount = 0.9
+	_upkeep_hint_tween = create_tween().set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT).set_loops()
 	_upkeep_hint_tween.set_parallel(true)
 	for prop in [draw_button, mana_button]:
-		_upkeep_hint_tween.tween_property(prop, "modulate", Color(1.12, 1.12, 1.12), 0.4)
-		_upkeep_hint_tween.tween_property(prop, "modulate", Color.WHITE, 0.6).set_delay(0.4)
+		_upkeep_hint_tween.tween_property(prop, "choice_highlight_amount", 2.0, 0.35)
+		_upkeep_hint_tween.tween_property(prop, "choice_highlight_amount", 0.9, 0.9).set_delay(0.35)
+	_upkeep_hint_tween.chain().tween_interval(1.45)
 
 func _get_mana_well_board_style() -> String:
 	return _board_style
@@ -7701,6 +7743,7 @@ func _get_visual_stack_origin(action_count: int) -> Vector2:
 func _make_visual_stack_action_card(action: CardAction, index: int, action_count: int, is_top: bool) -> Control:
 	var holder := PanelContainer.new()
 	holder.name = "VisualStackAction"
+	holder.set_meta("card_uid", _get_visual_stack_card(action).uid)
 	holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	holder.z_index = index
 	var card_width := VISUAL_STACK_TOP_CARD_WIDTH if is_top else VISUAL_STACK_CARD_WIDTH
@@ -8304,7 +8347,9 @@ func draw_enemy_hand_overlay() -> void:
 	next_overlay.z_index = TRANSIENT_UI_Z_INDEX - 20
 	for display_card in display_cards:
 		var hand_card := display_card as Card
-		next_overlay.add_child(_make_enemy_hand_overlay_card(hand_card))
+		var hand_visual := _make_enemy_hand_overlay_card(hand_card)
+		hand_visual.set_meta("card_uid", hand_card.uid)
+		next_overlay.add_child(hand_visual)
 	_enemy_hand_overlay = next_overlay
 	_pending_mopsus_flip_uid = ""
 	_enemy_hand_render_signature = _get_enemy_hand_render_signature(enemy_player, display_cards)
@@ -10556,13 +10601,16 @@ func draw_hand() -> void:
 	_sync_card_draw_animation(hand_player)
 
 func _get_hand_arrival_source(from_zone: Zone) -> Dictionary:
-	if from_zone != null and from_zone.zone_type == Zone.ZoneType.DECK and draw_button != null:
-		var source_rect: Rect2 = draw_button.get_top_card_rect()
-		var to_local: Transform2D = get_global_transform().affine_inverse() * draw_button.get_global_transform()
+	var source_deck = draw_button
+	if from_zone != null and from_zone.zone_owner != _get_display_player():
+		source_deck = _opponent_draw_deck
+	if from_zone != null and from_zone.zone_type == Zone.ZoneType.DECK and is_instance_valid(source_deck):
+		var source_rect: Rect2 = source_deck.get_top_card_rect()
+		var to_local: Transform2D = get_global_transform().affine_inverse() * source_deck.get_global_transform()
 		return {
 			"center": to_local * source_rect.get_center(),
 			"size": source_rect.size * to_local.get_scale().abs(),
-			"rotation": draw_button.get_top_card_rotation() + to_local.get_rotation(),
+			"rotation": source_deck.get_top_card_rotation() + to_local.get_rotation(),
 			"reveal_from_back": true,
 		}
 	var visual: Control = _get_zone_ui_for_zone(from_zone)
@@ -10783,6 +10831,117 @@ func _capture_visible_shelve_sources() -> Array[Dictionary]:
 			var source := _get_shelve_source(card, zone_ui.zone)
 			if not source.is_empty():
 				sources.append(source)
+	return sources
+
+func _get_grave_card_source(card: Card, from_zone: Zone) -> Dictionary:
+	# Prefer the stack face for resolving spells, then the hand or field.
+	var visual: Control = null
+	for holder in _visual_stack_cards:
+		if is_instance_valid(holder) and str(holder.get_meta("card_uid", "")) == card.uid:
+			visual = holder
+			break
+	if visual == null:
+		for zone_ui in _board_zone_uis + _enemy_zone_uis:
+			if is_instance_valid(zone_ui) and zone_ui._preview_card != null and zone_ui._preview_card.uid == card.uid:
+				visual = zone_ui
+				break
+	if visual == null:
+		for vc in _hand_visual_cards + _enemy_hand_visual_cards:
+			if is_instance_valid(vc) and vc.card_data != null and vc.card_data.uid == card.uid:
+				visual = vc
+				break
+	if visual == null:
+		if is_instance_valid(_enemy_hand_overlay):
+			for child in _enemy_hand_overlay.get_children():
+				if str(child.get_meta("card_uid", "")) == card.uid:
+					visual = child as Control
+					break
+	if visual == null:
+		visual = _get_zone_ui_for_zone(from_zone)
+	if visual != null and visual.is_visible_in_tree() and visual.modulate.a > 0.0:
+		var to_local: Transform2D = get_global_transform().affine_inverse() * visual.get_global_transform()
+		var center := to_local * (visual.size * 0.5)
+		if visual is BoardZoneUI:
+			center = get_global_transform().affine_inverse() * (visual as BoardZoneUI).get_visual_anchor_global()
+		return {
+			"visual": visual,
+			"center": center,
+			"size": visual.size * to_local.get_scale().abs(),
+			"rotation": to_local.get_rotation(),
+		}
+	return _get_hand_arrival_source(from_zone)
+
+func _get_grave_arrival_geometry(owner_index: int) -> Dictionary:
+	if game_manager == null or owner_index < 0 or owner_index >= game_manager.players.size():
+		return {}
+	var owner_player: Player = game_manager.players[owner_index]
+	var grave := _match_player_grave if owner_player == _get_display_player() else _match_opponent_grave
+	if not is_instance_valid(grave) or not grave.is_visible_in_tree():
+		return {}
+	var to_local: Transform2D = get_global_transform().affine_inverse() * grave.get_global_transform()
+	return {
+		"center": to_local * (grave.size * 0.5),
+		"size": Vector2(20.0, 28.0) * to_local.get_scale().abs(),
+		"rotation": to_local.get_rotation(),
+	}
+
+func _start_card_grave_animation(card: Card, source: Dictionary) -> void:
+	if card == null or card.current_zone == null or source.is_empty() \
+			or card.current_zone.zone_type != Zone.ZoneType.GRAVEYARD \
+			or _card_grave_animations.has(card.uid) or _game_finished:
+		return
+	var owner_index := game_manager.players.find(card.current_zone.zone_owner)
+	if _get_grave_arrival_geometry(owner_index).is_empty():
+		return
+	var visual := source.get("visual", null) as Control
+	# Field zones also contain the slab and other cards; let the normal refresh
+	# remove their departed card rather than hiding the entire slot.
+	if is_instance_valid(visual) and not visual is BoardZoneUI:
+		visual.modulate.a = 0.0
+	var animation := CardGraveAnimationScript.new()
+	animation.name = "CardGraveAnimation"
+	add_child(animation)
+	_promote_transient_ui(animation, HAND_OVERLAY_Z_INDEX + 10)
+	_card_grave_animations[card.uid] = animation
+	animation.tree_exited.connect(_release_card_grave_animation.bind(card.uid, animation), CONNECT_ONE_SHOT)
+	animation.play_grave(card, source, _get_grave_arrival_geometry.bind(owner_index))
+
+func _release_card_grave_animation(card_uid: String, animation: Control) -> void:
+	if _card_grave_animations.get(card_uid, null) == animation:
+		_card_grave_animations.erase(card_uid)
+
+func _clear_card_grave_animations() -> void:
+	for animation in _card_grave_animations.values():
+		if is_instance_valid(animation):
+			animation.cancel()
+	_card_grave_animations.clear()
+
+func _capture_grave_transition_sources(state: Dictionary) -> Dictionary:
+	var sources: Dictionary = {}
+	if game_manager == null or _awaiting_initial_full_state:
+		return sources
+	var players_data: Array = state.get("players", [])
+	for i in mini(players_data.size(), game_manager.players.size()):
+		var player: Player = game_manager.players[i]
+		var previous_grave_uids: Dictionary = {}
+		for card in player.graveyard_zone.cards:
+			if card != null:
+				previous_grave_uids[card.uid] = true
+		for card_data in players_data[i].get("graveyard", []):
+			var uid := str(card_data.get("uid", ""))
+			if uid.is_empty() or previous_grave_uids.has(uid):
+				continue
+			var card := game_manager.get_card_by_uid(uid)
+			if card == null:
+				for action in game_manager.action_stack:
+					if action != null and action.card != null and action.card.uid == uid:
+						card = action.card
+						break
+			if card != null:
+				sources[uid] = _get_grave_card_source(card, card.current_zone)
+			else:
+				# A hidden deck has no public card UIDs until a card leaves it.
+				sources[uid] = _get_hand_arrival_source(player.deck_zone)
 	return sources
 
 func _layout_fan() -> void:
@@ -11443,14 +11602,21 @@ func _make_zone_info_icon(label_text: String, short_label: String, zone: Zone, c
 	count_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	count_lbl.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	if is_abyss_icon:
-		count_lbl.add_theme_color_override("font_color", Color(0.93, 0.74, 1.0))
+		count_lbl.add_theme_font_size_override("font_size", 30)
+		count_lbl.add_theme_color_override("font_color", Color(0.82, 0.52, 1.0))
+		count_lbl.add_theme_color_override("font_outline_color", Color.BLACK)
+		count_lbl.add_theme_constant_override("outline_size", 3)
 		count_lbl.add_theme_color_override("font_shadow_color", Color(0.0, 0.0, 0.0, 1.0))
-		count_lbl.add_theme_constant_override("shadow_offset_x", 1)
-		count_lbl.add_theme_constant_override("shadow_offset_y", 1)
+		count_lbl.add_theme_constant_override("shadow_offset_x", 2)
+		count_lbl.add_theme_constant_override("shadow_offset_y", 2)
+		count_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		count_lbl.z_index = 1
 		count_lbl.visible = false
+		abyss_icon.count_label = count_lbl
 		var gateway_pivot := AbyssGatewayIcon.ART_OVERSCAN.get_center() + abyss_icon.size * 0.5
-		count_lbl.position = gateway_pivot + (Vector2(63.0, 150.0) - gateway_pivot) * AbyssGatewayIcon.VISUAL_SCALE
-		count_lbl.size = Vector2(40.0, 22.0)
+		count_lbl.size = Vector2(60.0, 40.0)
+		var count_center := gateway_pivot + (Vector2(gateway_pivot.x, 120.0) - gateway_pivot) * AbyssGatewayIcon.VISUAL_SCALE
+		count_lbl.position = count_center - count_lbl.size * 0.5
 	vbox.add_child(count_lbl)
 	if is_grave_icon:
 		count_lbl.visible = false
@@ -11467,16 +11633,9 @@ func _make_zone_info_icon(label_text: String, short_label: String, zone: Zone, c
 
 	panel.mouse_filter = Control.MOUSE_FILTER_STOP
 	panel.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-	if is_abyss_icon:
-		panel.mouse_entered.connect(_set_zone_info_count_visible.bind(count_lbl, true))
-		panel.mouse_exited.connect(_set_zone_info_count_visible.bind(count_lbl, false))
 	panel.gui_input.connect(_on_zone_info_icon_gui_input.bind(label_text, CardAction._zone_to_dict(zone, game_manager), gravesite_icon))
 
 	return panel
-
-func _set_zone_info_count_visible(count_lbl: Label, visible: bool) -> void:
-	if count_lbl != null and is_instance_valid(count_lbl):
-		count_lbl.visible = visible
 
 func _on_zone_info_icon_gui_input(event: InputEvent, label_text: String, zone_dict: Dictionary, gravesite_icon: GravesiteVisualScript = null) -> void:
 	if not (event is InputEventMouseButton):
@@ -11492,6 +11651,11 @@ func _on_zone_info_icon_gui_input(event: InputEvent, label_text: String, zone_di
 		_show_zone_contents(label_text, zone)
 
 func _pulse_abyss_gateway_activity(abyss_zone: Zone) -> void:
+	var effect_generation := _void_effect_generation
+	await get_tree().create_timer(VOID_GATEWAY_DELAY_SECONDS, false).timeout
+	if effect_generation != _void_effect_generation:
+		return
+	_abyss_activity_deadlines[abyss_zone] = Time.get_ticks_msec() + int(AbyssGatewayIcon.VOID_ACTIVITY_LINGER_SECONDS * 1000.0)
 	for icon in find_children("ZoneAbyssGatewayIcon", "Control", true, false):
 		var gateway_icon := icon as AbyssGatewayIcon
 		if gateway_icon == null:
@@ -11502,7 +11666,68 @@ func _pulse_abyss_gateway_activity(abyss_zone: Zone) -> void:
 		if (panel.get_meta("zone_ref") as Zone) == abyss_zone:
 			gateway_icon.pulse_void_activity()
 
+func _get_card_void_source(card: Card, from_zone: Zone) -> Dictionary:
+	if card == null or from_zone == null:
+		return {}
+	var visual: Control = null
+	for vc in _hand_visual_cards:
+		if is_instance_valid(vc) and vc.card_data != null and vc.card_data.uid == card.uid \
+				and vc.is_visible_in_tree() and vc.modulate.a > 0.0:
+			visual = vc
+			break
+	if visual == null:
+		visual = _get_zone_ui_for_zone(from_zone)
+	if visual == null:
+		# Piles have no individual card control; use their visible zone icon.
+		var display_player := _get_display_player()
+		if display_player != null and from_zone == display_player.deck_zone and draw_button != null:
+			return _get_hand_arrival_source(from_zone)
+		for icon in find_children("ZoneInfoIcon", "PanelContainer", true, false):
+			if icon.get_meta("zone_ref", null) == from_zone:
+				visual = icon as Control
+				break
+	if visual == null or not visual.is_visible_in_tree():
+		return {}
+	var to_local: Transform2D = get_global_transform().affine_inverse() * visual.get_global_transform()
+	var center := to_local * (visual.size * 0.5)
+	if visual is BoardZoneUI:
+		center = get_global_transform().affine_inverse() * (visual as BoardZoneUI).get_visual_anchor_global()
+	return {"center": center, "size": visual.size * to_local.get_scale().abs()}
+
+func _play_card_void_effect(source: Dictionary) -> void:
+	if source.is_empty():
+		return
+	var effect := CardVoidEffectScript.new()
+	effect.name = "CardVoidEffect"
+	add_child(effect)
+	effect.z_as_relative = false
+	effect.z_index = HAND_OVERLAY_Z_INDEX + 10
+	effect.play(source["center"], source["size"])
+
+func _capture_card_void_sources() -> Dictionary:
+	var sources: Dictionary = {}
+	if game_manager == null or _awaiting_initial_full_state:
+		return sources
+	for player in game_manager.players:
+		for zone in _get_all_player_zones(player):
+			if zone.zone_type == Zone.ZoneType.ABYSS:
+				continue
+			for card in zone.cards:
+				if card != null:
+					sources[card.uid] = _get_card_void_source(card, zone)
+	return sources
+
+func _clear_card_void_effects() -> void:
+	_void_effect_generation += 1
+	_abyss_activity_deadlines.clear()
+	for effect in get_children():
+		if effect.get_script() == CardVoidEffectScript:
+			effect.queue_free()
+
 func _refresh_zone_info_icons() -> void:
+	for abyss_zone in _abyss_activity_deadlines.keys():
+		if int(_abyss_activity_deadlines[abyss_zone]) <= Time.get_ticks_msec():
+			_abyss_activity_deadlines.erase(abyss_zone)
 	for child in find_children("ZoneInfoIcon", "PanelContainer", true, false):
 		var panel := child as PanelContainer
 		if panel == null or not panel.has_meta("zone_ref"):
@@ -11511,6 +11736,11 @@ func _refresh_zone_info_icons() -> void:
 		if zone == null:
 			continue
 		var label_text := str(panel.get_meta("zone_label_text", "Zone"))
+		if _abyss_activity_deadlines.has(zone):
+			var gateway_icon := panel.get_node_or_null("ZoneInfoVBox/ZoneAbyssGatewayIcon") as AbyssGatewayIcon
+			if gateway_icon != null:
+				var remaining := float(int(_abyss_activity_deadlines[zone]) - Time.get_ticks_msec()) / 1000.0
+				gateway_icon.pulse_void_activity(maxf(0.0, remaining))
 		panel.tooltip_text = label_text + ": " + str(zone.cards.size()) + " cards"
 		var grave_art := panel.get_node_or_null("ZoneInfoVBox/ZoneGravesiteArt") as GravesiteVisualScript
 		if grave_art != null:
@@ -15859,6 +16089,14 @@ func _clear_interaction_refs_for_moved_card(card: Card, from_zone: Zone, to_zone
 func _on_local_player_card_moved(card: Card, from_zone: Zone, to_zone: Zone) -> void:
 	if card == null:
 		return
+	if not _is_networked_client and to_zone != null and from_zone != to_zone \
+			and to_zone.zone_type == Zone.ZoneType.GRAVEYARD:
+		_start_card_grave_animation(card, _get_grave_card_source(card, from_zone))
+		_schedule_local_ui_refresh()
+	if not _is_networked_client and from_zone != to_zone \
+			and to_zone != null and to_zone.zone_type == Zone.ZoneType.ABYSS:
+		_play_card_void_effect(_get_card_void_source(card, from_zone))
+		_pulse_abyss_gateway_activity(to_zone)
 	var hand_player := _get_visible_hand_player()
 	if not _is_networked_client and hand_player != null and to_zone == hand_player.hand_zone \
 			and from_zone != to_zone and card.current_zone == to_zone:
@@ -15873,8 +16111,6 @@ func _on_local_player_card_moved(card: Card, from_zone: Zone, to_zone: Zone) -> 
 	var cleared_interaction_refs := _clear_interaction_refs_for_moved_card(card, from_zone, to_zone)
 	if from_zone.is_board_zone() or (to_zone != null and to_zone.is_board_zone()) or cleared_interaction_refs:
 		_schedule_local_ui_refresh()
-	if to_zone != null and to_zone.zone_type == Zone.ZoneType.ABYSS:
-		_pulse_abyss_gateway_activity(to_zone)
 	if not _is_networked_client \
 			and to_zone != null \
 			and to_zone.zone_type == Zone.ZoneType.FRONTLINE \
@@ -29701,6 +29937,7 @@ func _has_recent_action_log_equivalent(message: String) -> bool:
 func _finalize_game_result_ui(result_message: String, winner = null, loser = null, auto_return: bool = false) -> void:
 	_clear_card_draw_animation()
 	_clear_card_shelve_animations()
+	_clear_card_grave_animations()
 	var resolved_message := _resolve_game_result_message(result_message, winner, loser)
 	var should_present_result := not _game_result_presented
 	_hide_reinforcement_overlay()
@@ -30607,7 +30844,15 @@ func _apply_full_state(data: Dictionary) -> void:
 		# Client: clear stale card refs and rebuild ghost game_manager from server state
 		if _awaiting_initial_full_state:
 			_clear_card_draw_animation()
+			_clear_card_grave_animations()
+		var grave_sources := _capture_grave_transition_sources(state)
 		var shelve_sources := _capture_visible_shelve_sources()
+		var void_sources := _capture_card_void_sources()
+		var previous_abyss_uids: Dictionary = {}
+		for player in game_manager.players:
+			for card in player.abyss_zone.cards:
+				if card != null:
+					previous_abyss_uids[card.uid] = true
 		var hand_sources := _capture_hand_arrival_sources()
 		var previous_hand_uids: Dictionary = {}
 		var previous_hand_player := _get_visible_hand_player()
@@ -30617,6 +30862,15 @@ func _apply_full_state(data: Dictionary) -> void:
 					previous_hand_uids[card.uid] = true
 		_clear_network_selection_state()
 		GameState.apply_to_manager(state, game_manager)
+		for uid in grave_sources:
+			var grave_card := game_manager.get_card_by_uid(str(uid))
+			_start_card_grave_animation(grave_card, grave_sources[uid])
+		if not _awaiting_initial_full_state:
+			for player in game_manager.players:
+				for card in player.abyss_zone.cards:
+					if card != null and not previous_abyss_uids.has(card.uid):
+						_play_card_void_effect(void_sources.get(card.uid, {}))
+						_pulse_abyss_gateway_activity(player.abyss_zone)
 		var hand_player := _get_visible_hand_player()
 		if hand_player != null and not _awaiting_initial_full_state and not _is_observer_mode:
 			for card in hand_player.hand_zone.cards:

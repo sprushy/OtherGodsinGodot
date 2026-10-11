@@ -142,9 +142,11 @@ func _show_practice_intro() -> void:
 
 func _refresh_turn_choice_options() -> void:
 	super._refresh_turn_choice_options()
-	choice_intro_label.visible = false
-	draw_button.text = "Draw"
 	_sync_story_draw_deck()
+
+func _should_show_upkeep_choice_hint() -> bool:
+	# Story teaches the choice even when regular-match hints have already retired.
+	return true
 
 func show_turn_choice() -> void:
 	left_panel.modulate.a = 1.0
