@@ -165,6 +165,7 @@ func _resolve_tree_of_life() -> void:
 			gm.decision_requested.emit(card_owner, "kur_jara_tree_of_life", {
 				source_uid = uid,
 				target_uids = target_uids,
+				required_count = level_diff,
 			})
 			return
 

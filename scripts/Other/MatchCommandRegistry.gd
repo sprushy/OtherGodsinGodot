@@ -276,6 +276,8 @@ static func get_ui_interaction_type(command_type: String) -> String:
 			return "ragnarok_discard"
 		"return_to_hand_choice":
 			return "return_to_hand_choice"
+		"doorway_choice":
+			return "doorway_choice"
 		"resurrection_choice":
 			return "resurrection"
 		"nusku_well_of_fire_choice":

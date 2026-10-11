@@ -84,12 +84,15 @@ func _submit_hunting_tactics_choice(data: Dictionary) -> void:
 	hunting_tactics_answered = true
 	if game_manager != null:
 		hunting_tactics_answer_turn = game_manager.turn_number
+	var previous_prompt_id := _current_card_prompt_id
+	_current_card_prompt_id = int(data.get("_prompt_id", -1))
 	_submit_action({
 		"type": "hunting_tactics_choice",
 		"source_uid": source_uid,
 		"attacker_uid": attacker_uid,
 		"chosen_uids": chosen_uids,
 	})
+	_current_card_prompt_id = previous_prompt_id
 
 func _record_raven_prime_message(message: String) -> void:
 	if message.find("Huginn primes") >= 0 or message.find("Huginn perished and primed") >= 0:

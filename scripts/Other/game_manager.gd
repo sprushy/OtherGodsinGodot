@@ -24,11 +24,9 @@ const GAME_END_REASON_DRAW := "draw"
 const GAME_END_REASON_FORFEIT := "forfeit"
 const GAME_END_REASON_MATCH_FORFEIT := "match_forfeit"
 const GOD_DEATH_FOLLOWER_LOSS := 7
-const GOD_DEATH_UPKEEP_MANA_PENALTY := 1
-const UPKEEP_DRAW_MANA_GAIN := 1
-const UPKEEP_MANA_GAIN := 5
-const FIRST_TURN_UPKEEP_DRAW_MANA_GAIN := 0
-const FIRST_TURN_UPKEEP_MANA_GAIN := 4
+const UPKEEP_AUTOMATIC_MANA_GAIN := 1
+const UPKEEP_DRAW_MANA_GAIN := 0
+const UPKEEP_MANA_GAIN := 4
 
 static func round_down_divide(amount: int, divisor: int) -> int:
 	if divisor == 0:
@@ -845,13 +843,16 @@ func _begin_turn_upkeep() -> void:
 	if is_player_under_god_death(current_player):
 		current_player.lose_followers(GOD_DEATH_FOLLOWER_LOSS)
 		note_player_feedback(
-			"[b]God Death[/b]: %s loses %d followers and gains 1 less upkeep mana." % [
+			"[b]God Death[/b]: %s loses %d followers and gains no automatic upkeep mana." % [
 				current_player.player_name,
 				GOD_DEATH_FOLLOWER_LOSS
 			]
 		)
 		if is_game_over:
 			return
+	var automatic_mana := get_automatic_upkeep_mana_gain(current_player)
+	if automatic_mana > 0:
+		current_player.gain_mana(automatic_mana)
 	for card in _get_sorted_upkeep_cards_for_player(current_player, "on_turn_upkeep"):
 		card.on_turn_upkeep(self)
 		if is_game_over:
@@ -1013,7 +1014,6 @@ func player_chooses_draw() -> void:
 	if not is_player_in_upkeep_window(current_player):
 		return
 	_begin_turn_upkeep()
-	_gain_upkeep_choice_mana(get_base_upkeep_draw_mana_gain())
 	current_player.draw_card()
 	_resolve_turn_upkeep()
 
@@ -1037,8 +1037,7 @@ func _gain_upkeep_choice_mana(amount: int) -> void:
 func get_upkeep_choice_feedback(choice: String) -> String:
 	match choice:
 		"draw":
-			var draw_mana := get_effective_upkeep_mana_gain(get_base_upkeep_draw_mana_gain(), current_player)
-			return "Drew a card." if draw_mana <= 0 else "Gained %d mana and drew a card." % draw_mana
+			return "Drew a card."
 		"mana":
 			var mana_gain := get_effective_upkeep_mana_gain(get_base_upkeep_mana_gain(), current_player)
 			return "No upkeep mana gained." if mana_gain <= 0 else "Gained %d mana." % mana_gain
@@ -1050,19 +1049,25 @@ func is_first_game_turn() -> bool:
 	return turn_number == 1
 
 func get_base_upkeep_draw_mana_gain() -> int:
-	return FIRST_TURN_UPKEEP_DRAW_MANA_GAIN if is_first_game_turn() else UPKEEP_DRAW_MANA_GAIN
+	return UPKEEP_DRAW_MANA_GAIN
 
 func get_base_upkeep_mana_gain() -> int:
-	return FIRST_TURN_UPKEEP_MANA_GAIN if is_first_game_turn() else UPKEEP_MANA_GAIN
+	return UPKEEP_MANA_GAIN
 
-func get_effective_upkeep_mana_gain(base_amount: int, player: Player = null) -> int:
+func get_automatic_upkeep_mana_gain(player: Player = null, turn: int = -1) -> int:
 	if not upkeep_mana_enabled:
 		return 0
 	var target_player := player if player != null else current_player
-	var effective_amount := maxi(base_amount, 0)
-	if is_player_under_god_death(target_player):
-		effective_amount = maxi(0, effective_amount - GOD_DEATH_UPKEEP_MANA_PENALTY)
-	return effective_amount
+	var target_turn := turn_number if turn < 0 else turn
+	if target_turn == 1 or is_player_under_god_death(target_player):
+		return 0
+	return UPKEEP_AUTOMATIC_MANA_GAIN
+
+func get_effective_upkeep_mana_gain(base_amount: int, _player: Player = null) -> int:
+	# Automatic mana is already granted at upkeep entry. Choices have no God Death penalty.
+	if not upkeep_mana_enabled:
+		return 0
+	return maxi(base_amount, 0)
 
 func player_chooses_upkeep_only() -> void:
 	if is_game_over:

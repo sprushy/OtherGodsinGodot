@@ -563,6 +563,11 @@ func lobby_event(message: Dictionary) -> void:
 		LobbyProtocolScript.ROOM_SNAPSHOT:
 			_set_current_server_version(str(payload.get("server_version", current_server_version)))
 			current_room_snapshot = payload.duplicate(true)
+			# The live lobby now receives room transitions while the match is open.
+			# Drop the old assignment when that room returns to matchmaking.
+			if str(payload.get("room_id", "")) == str(current_active_match_info.get("room_id", "")) \
+					and str(payload.get("status", "")) != "in_match":
+				current_active_match_info.clear()
 			room_snapshot_updated.emit(payload)
 		LobbyProtocolScript.ROOM_ERROR:
 			var error_message := str(payload.get("message", "Unknown lobby error."))

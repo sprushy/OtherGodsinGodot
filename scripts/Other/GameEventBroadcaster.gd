@@ -36,7 +36,6 @@ func _connect_signals() -> void:
 	game_manager.turn_started.connect(_on_turn_started)
 	game_manager.game_ended.connect(_on_game_ended)
 	match_manager.request_ui_interaction.connect(_on_ui_interaction_requested)
-	game_manager.doorway_choice_requested.connect(_on_doorway_choice_requested)
 
 # ---------------------------------------------------------------------------
 # Signal handlers — each triggers a full broadcast
@@ -238,23 +237,10 @@ func shutdown() -> void:
 			game_manager.turn_started.disconnect(_on_turn_started)
 		if game_manager.game_ended.is_connected(_on_game_ended):
 			game_manager.game_ended.disconnect(_on_game_ended)
-		if game_manager.doorway_choice_requested.is_connected(_on_doorway_choice_requested):
-			game_manager.doorway_choice_requested.disconnect(_on_doorway_choice_requested)
 
 func _on_ui_interaction_requested(player_index: int, type: String, data: Dictionary) -> void:
 	_sync_remote_prompt_player_state(player_index)
 	_broadcast_ui_interaction(player_index, type, data)
-
-func _on_doorway_choice_requested(structure: Card, card: Card, combat_death: bool, destruction: bool) -> void:
-	var player := structure.card_owner if structure != null else game_manager.current_player
-	var player_idx := game_manager.players.find(player)
-	var data := {
-		"structure_uid": structure.uid if structure != null else "",
-		"card_uid": card.uid if card != null else "",
-		"combat_death": combat_death,
-		"destruction": destruction
-	}
-	_broadcast_ui_interaction(player_idx, "doorway_choice", data)
 
 func _broadcast_ui_interaction(player_index: int, type: String, data: Dictionary) -> void:
 	if network_manager == null:

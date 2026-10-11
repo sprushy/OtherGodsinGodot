@@ -8,7 +8,7 @@ class_name NetworkClientSmokeBot
 # ONLY via match_client.game_event_received. It:
 #   - submits commands through the client's real game_input (a NetworkedGameInput,
 #     so commands travel over ENet to the authoritative host), and
-#   - answers hunting_tactics / intercept / priority prompts from incoming events.
+#   - answers card decisions / intercept / priority prompts from incoming events.
 #
 # Main-phase behaviour is intentionally minimal: as player 2 it mostly draws on
 # upkeep and ends its turn so the host (player 1) can mount the Hunting Tactics
@@ -29,6 +29,7 @@ var _active: bool = false
 var _step_queued: bool = false
 var _retry_queued: bool = false
 var _answered_prompt_ids: Dictionary = {}
+var _last_answered_prompt_id: int = -1
 
 func attach(
 	p_game_manager: GameManager,
@@ -63,6 +64,7 @@ func detach() -> void:
 	player_index = -1
 	bot_player = null
 	_answered_prompt_ids.clear()
+	_last_answered_prompt_id = -1
 	_active = false
 	_step_queued = false
 	_retry_queued = false
@@ -107,6 +109,7 @@ func _on_match_progressed(_value = null) -> void:
 	_queue_step()
 
 func _on_match_failed(_reason: String) -> void:
+	_answered_prompt_ids.erase(str(_last_answered_prompt_id))
 	_queue_retry()
 
 func _on_game_ended(_winner: Player, _loser: Player) -> void:
@@ -116,6 +119,15 @@ func _on_game_ended(_winner: Player, _loser: Player) -> void:
 func _on_game_event(event_type: String, data: Dictionary) -> void:
 	if not _active:
 		return
+	if event_type == "command_rejected":
+		_answered_prompt_ids.erase(str(_last_answered_prompt_id))
+		_queue_retry()
+		return
+	if event_type == "full_state":
+		if game_manager != null and player_index >= 0 and player_index < game_manager.players.size():
+			bot_player = game_manager.players[player_index]
+		_queue_step()
+		return
 	if event_type != "ui_interaction":
 		return
 	var type: String = data.get("type", "")
@@ -124,46 +136,29 @@ func _on_game_event(event_type: String, data: Dictionary) -> void:
 	if prompt_player_index != player_index:
 		return
 	match type:
-		"hunting_tactics":
-			_answer_hunting_tactics(payload)
-		"huginn_perish_prime":
-			_answer_first_target_choice("huginn_perish_prime_choice", payload)
-		"muninn_perish_prime":
-			_answer_first_target_choice("muninn_perish_prime_choice", payload)
 		"intercept":
 			if _mark_prompt_answered(payload):
-				_submit_action({"type": "intercept_decision", "interceptor_uid": ""})
+				_submit_action({"type": "intercept_decision", "interceptor_uid": "", "_prompt_id": int(payload.get("_prompt_id", -1))})
 		"priority":
 			_answer_priority(payload)
 		_:
-			_queue_step()
+			_answer_card_prompt(type, payload)
 
-func _answer_hunting_tactics(payload: Dictionary) -> void:
-	if not _mark_prompt_answered(payload):
+func _answer_card_prompt(type: String, payload: Dictionary) -> void:
+	if game_manager == null or bot_player == null or not _mark_prompt_answered(payload):
 		return
-	var source_uid := str(payload.get("source_uid", "")).strip_edges()
-	var attacker_uid := str(payload.get("attacker_uid", "")).strip_edges()
-	var chosen_uids: Array[String] = []
-	for raw_uid in payload.get("target_uids", []):
-		var uid := str(raw_uid).strip_edges()
-		if not uid.is_empty():
-			chosen_uids.append(uid)
-			break
-	_submit_action({
-		"type": "hunting_tactics_choice",
-		"source_uid": source_uid,
-		"attacker_uid": attacker_uid,
-		"chosen_uids": chosen_uids,
-	})
-
-func _answer_first_target_choice(command_type: String, payload: Dictionary) -> void:
-	if not _mark_prompt_answered(payload):
-		return
-	_submit_action({
-		"type": command_type,
-		"source_uid": str(payload.get("source_uid", "")),
-		"target_uid": _first_uid_from_prompt(payload, "target_uids"),
-	})
+	# Share card decisions while keeping this smoke bot's minimal turn loop.
+	var decision_bot := ThorPracticeBot.new()
+	decision_bot.game_manager = game_manager
+	decision_bot.match_manager = match_manager
+	decision_bot.player_index = player_index
+	decision_bot.bot_player = bot_player
+	decision_bot.opponent = game_manager.get_opponent(bot_player)
+	decision_bot.game_input = game_input
+	decision_bot._on_match_ui_interaction(player_index, type, payload)
+	var prompt_key := str(payload.get("_prompt_id", -1))
+	if not decision_bot._answered_prompt_ids.has(prompt_key):
+		_answered_prompt_ids.erase(prompt_key)
 
 func _answer_priority(payload: Dictionary) -> void:
 	if game_manager != null:
@@ -173,7 +168,7 @@ func _answer_priority(payload: Dictionary) -> void:
 			return
 	if not _mark_prompt_answered(payload):
 		return
-	_submit_action({"type": "priority_pass"})
+	_submit_action({"type": "priority_pass", "_prompt_id": int(payload.get("_prompt_id", -1))})
 
 func _mark_prompt_answered(payload: Dictionary) -> bool:
 	var prompt_id := int(payload.get("_prompt_id", -1))
@@ -183,6 +178,7 @@ func _mark_prompt_answered(payload: Dictionary) -> bool:
 	if _answered_prompt_ids.has(key):
 		return false
 	_answered_prompt_ids[key] = true
+	_last_answered_prompt_id = prompt_id
 	return true
 
 func _queue_step() -> void:
@@ -204,13 +200,6 @@ func _queue_retry() -> void:
 		call_deferred("_run_retry")
 		return
 	tree.create_timer(RETRY_DELAY_SECONDS).timeout.connect(_run_retry, CONNECT_ONE_SHOT)
-
-func _first_uid_from_prompt(payload: Dictionary, key: String) -> String:
-	for raw_uid in payload.get(key, []):
-		var uid := str(raw_uid).strip_edges()
-		if not uid.is_empty():
-			return uid
-	return ""
 
 func _run_retry() -> void:
 	_retry_queued = false
@@ -248,4 +237,7 @@ func _get_tree() -> SceneTree:
 func _submit_action(command: Dictionary) -> bool:
 	if game_input == null:
 		return false
-	return game_input.submit_action(command)
+	var submitted := game_input.submit_action(command)
+	if not submitted:
+		_answered_prompt_ids.erase(str(command.get("_prompt_id", -1)))
+	return submitted

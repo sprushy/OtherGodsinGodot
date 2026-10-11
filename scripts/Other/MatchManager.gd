@@ -112,6 +112,8 @@ func _init(p_game_manager: GameManager) -> void:
 		game_manager.decision_requested.connect(_on_game_manager_decision_requested)
 	if game_manager != null and not game_manager.card_summoned.is_connected(_on_game_manager_card_summoned):
 		game_manager.card_summoned.connect(_on_game_manager_card_summoned)
+	if game_manager != null and not game_manager.doorway_choice_requested.is_connected(_on_doorway_choice_requested):
+		game_manager.doorway_choice_requested.connect(_on_doorway_choice_requested)
 
 func reset_runtime_state() -> void:
 	_clear_targeting_state()
@@ -347,6 +349,14 @@ const HANDLER_COMPLETES_DEFERRED_PRIORITY_CHOICE_COMMANDS := [
 	"fenrir_devour_choice",
 	"gugalanna_celestial_charge_choice",
 ]
+
+func _on_doorway_choice_requested(structure: StructureCard, card: Card, combat_death: bool, destruction: bool) -> void:
+	if structure == null or card == null:
+		return
+	_emit_ui_interaction_for_player(structure.card_owner, "doorway_choice", {
+		"structure_uid": structure.uid, "card_uid": card.uid,
+		"combat_death": combat_death, "destruction": destruction,
+	})
 
 func _on_game_manager_decision_requested(player: Player, type: String, data: Dictionary) -> void:
 	if game_manager == null or player == null:
@@ -4164,6 +4174,11 @@ func _validate_turn_action_window(command: Dictionary, sender_info: Dictionary) 
 	var actor := _get_command_actor(sender_info)
 	if actor == null:
 		return ""
+	# A card can request a decision during turn-start upkeep. Answering the
+	# matching authority prompt must be possible before upkeep finishes.
+	var interaction_type := _get_ui_interaction_type_for_command(command_type)
+	if interaction_type != "" and _find_pending_ui_interaction_index(command, interaction_type) >= 0:
+		return ""
 	if _requires_resolved_upkeep(command) and actor == game_manager.current_player and not game_manager.has_resolved_turn_upkeep():
 		return "Resolve upkeep before taking other actions."
 	return ""
@@ -6711,7 +6726,12 @@ func _process_command_impl(command: Dictionary) -> bool:
 			if pending_card.uid != card_uid:
 				move_failed.emit("doorway_choice: pending card does not match")
 				return false
-			if not game_manager.resolve_pending_doorway_choice(bool(command.get("send_to_abyss", false))):
+			var doorway_resolved := game_manager.resolve_pending_doorway_choice(bool(command.get("send_to_abyss", false)))
+			# Declining one gateway can offer the next gateway for the same death.
+			# The first decision completed even though the graveyard send waits.
+			var offered_next_doorway := game_manager.has_pending_doorway_choice() \
+				and game_manager.get_pending_doorway_structure() != pending_structure
+			if not doorway_resolved and not offered_next_doorway:
 				move_failed.emit("doorway_choice: failed to resolve")
 				return false
 			move_validated.emit(command)

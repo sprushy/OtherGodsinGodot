@@ -95,6 +95,9 @@ const UIHoverSfxScript = preload("res://scripts/core/UIHoverSfx.gd")
 const MINOR_ACTION_SYMBOL_TEXTURE = preload("res://images/ui/MinorActionSymbol.png")
 const MAJOR_ACTION_SYMBOL_TEXTURE = preload("res://images/ui/MajorActionSymbol.png")
 const USER_SETTINGS_PATH := "user://settings.cfg"
+const UPKEEP_HINT_SECTION := "onboarding"
+const UPKEEP_HINT_CHOICES_KEY := "completed_resource_choices"
+const UPKEEP_HINT_CHOICE_LIMIT := 3
 const AUDIO_SETTINGS_SECTION := "audio"
 const COMBAT_SETTINGS_SECTION := "combat"
 const GOD_SPECIFIC_SETTINGS_SECTION := "god_specific"
@@ -345,6 +348,12 @@ const MATCH_REPLAY_MULTI_DESTROY_THRESHOLD := 2
 @onready var draw_button = $MainHBox/LeftPanel/ChoiceContainer/DrawButton
 @onready var mana_button = $MainHBox/LeftPanel/ChoiceContainer/ManaButton
 var _opponent_draw_deck = null
+var _upkeep_hint_completed_choices: int = 0
+var _upkeep_hint_pending_turn: int = -1
+var _upkeep_hint_pending_player_index: int = -1
+var _upkeep_hint_pulse_turn: int = -1
+var _upkeep_hint_pulse_player_index: int = -1
+var _upkeep_hint_tween: Tween
 var _sun_hunt_button: Button = null
 var _matriarch_rule_button: Button = null
 @onready var left_panel = $MainHBox/LeftPanel
@@ -1113,6 +1122,9 @@ func _load_user_settings() -> void:
 	var config := ConfigFile.new()
 	if config.load(USER_SETTINGS_PATH) != OK:
 		return
+	var completed_choices = config.get_value(UPKEEP_HINT_SECTION, UPKEEP_HINT_CHOICES_KEY, 0)
+	if completed_choices is int:
+		_upkeep_hint_completed_choices = clampi(completed_choices, 0, UPKEEP_HINT_CHOICE_LIMIT)
 	priority_stops["start"] = false
 	priority_stops["main"] = false
 	priority_stops["combat"] = false
@@ -2463,6 +2475,10 @@ func _resolve_sharur_escape_prompt(pay_cost: bool) -> void:
 	update_ui()
 
 func _on_doorway_choice_requested(structure: DoorwayToTheVoid, card: Card, combat_death: bool, destruction: bool) -> void:
+	# MatchManager queues this decision for humans and bots through the same
+	# prompt channel. Retain the direct signal only for the legacy UI fallback.
+	if match_manager != null:
+		return
 	var target_player := structure.card_owner if structure != null else game_manager.current_player
 
 	if network_manager != null and network_manager.is_server:
@@ -6090,6 +6106,8 @@ func start_game(
 	server_match_session = null
 ) -> void:
 	print("=== STARTING COMBAT MOCK GAME ===")
+	_upkeep_hint_pending_turn = -1
+	_upkeep_hint_pulse_turn = -1
 	_prepare_for_match_launch("")
 	_game_finished = false
 	_game_result_presented = false
@@ -6375,13 +6393,13 @@ func hide_turn_choice() -> void:
 	mana_button.disabled = true
 	draw_button.set_draw_available(false)
 	mana_button.set_available(false)
-	end_turn_button.visible = true
 	_hide_sun_hunt_button()
 	_hide_matriarch_rule_button()
 	_update_match_side_panel_layout()
 
 	for vc in _hand_visual_cards:
 		vc.set_disabled(false)
+	_sync_network_turn_controls()
 
 func _setup_turn_choice_buttons() -> void:
 	if choice_container == null:
@@ -6403,6 +6421,15 @@ func _setup_turn_choice_buttons() -> void:
 	_opponent_draw_deck.set_card_protector_enabled(true)
 	choice_container.reparent(self, false)
 	choice_container.z_index = 1
+	# Reuse the existing hint as an overlay between the table props.
+	choice_intro_label.reparent(self, false)
+	choice_intro_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	choice_intro_label.z_index = 2
+	choice_intro_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	choice_intro_label.add_theme_font_size_override("font_size", 18)
+	choice_intro_label.add_theme_color_override("font_color", Color(0.97, 0.89, 0.70))
+	choice_intro_label.add_theme_color_override("font_outline_color", Color(0.0, 0.0, 0.0, 0.95))
+	choice_intro_label.add_theme_constant_override("outline_size", 4)
 	choice_intro_label.visible = false
 	choice_container.visibility_changed.connect(_sync_turn_start_props)
 	placement_container.z_index = 1
@@ -6450,18 +6477,16 @@ func _get_available_tiamat_upkeep_cards() -> Array[Card]:
 	return TiamatScript.get_available_matriarch_rule_cards(game_manager.current_player)
 
 func _refresh_turn_choice_options() -> void:
-	choice_intro_label.text = "Choose one:"
-	var draw_mana_gain := GameManager.UPKEEP_DRAW_MANA_GAIN
+	choice_intro_label.text = "Choose one"
 	var mana_gain := GameManager.UPKEEP_MANA_GAIN
 	if game_manager != null:
-		draw_mana_gain = game_manager.get_base_upkeep_draw_mana_gain()
 		mana_gain = game_manager.get_base_upkeep_mana_gain()
-		draw_mana_gain = game_manager.get_effective_upkeep_mana_gain(draw_mana_gain, game_manager.current_player)
 		mana_gain = game_manager.get_effective_upkeep_mana_gain(mana_gain, game_manager.current_player)
-	draw_button.text = "Draw a Card" if draw_mana_gain <= 0 else "Gain %d Mana + Card" % draw_mana_gain
+	draw_button.text = "+1 card"
 	if game_manager != null and game_manager.current_player != null:
 		draw_button.set_deck_count(game_manager.current_player.deck_zone.get_card_count())
-	mana_button.text = "Gain %d Mana" % mana_gain
+	# Automatic mana has already been granted before opening this choice.
+	mana_button.text = "+%d mana" % mana_gain
 	draw_button.disabled = false
 	mana_button.disabled = false
 	draw_button.set_draw_available(true)
@@ -6503,6 +6528,8 @@ func _sync_turn_start_props() -> void:
 	draw_button.visible = props_ready
 	mana_button.visible = props_ready
 	_opponent_draw_deck.visible = props_ready
+	_sync_upkeep_choice_learning()
+	_sync_upkeep_choice_hint(props_ready and _can_choose_turn_start_option())
 	# Explicit prompts enable the choices; polling only closes them to preserve locks.
 	if not _can_choose_turn_start_option():
 		draw_button.disabled = false
@@ -6524,6 +6551,47 @@ func _sync_turn_start_props() -> void:
 		and game_manager.current_player == opponent \
 		and game_manager.is_player_in_upkeep_window(opponent) \
 		and game_manager.action_stack.is_empty())
+
+func _sync_upkeep_choice_learning() -> void:
+	if _upkeep_hint_pending_turn < 0 or game_manager == null:
+		return
+	if game_manager.turn_number != _upkeep_hint_pending_turn:
+		_upkeep_hint_pending_turn = -1
+		return
+	if game_manager.players.find(game_manager.current_player) != _upkeep_hint_pending_player_index \
+			or not game_manager.has_resolved_turn_upkeep():
+		return
+	# Wait for authoritative resolution, including network snapshots, before learning.
+	_upkeep_hint_pending_turn = -1
+	_upkeep_hint_completed_choices = mini(UPKEEP_HINT_CHOICE_LIMIT, _upkeep_hint_completed_choices + 1)
+	var config := ConfigFile.new()
+	config.load(USER_SETTINGS_PATH)
+	config.set_value(UPKEEP_HINT_SECTION, UPKEEP_HINT_CHOICES_KEY, _upkeep_hint_completed_choices)
+	var error := config.save(USER_SETTINGS_PATH)
+	if error != OK:
+		push_warning("Could not save upkeep hint progress: %s" % str(error))
+
+func _sync_upkeep_choice_hint(available: bool) -> void:
+	var show_hint := available and _upkeep_hint_completed_choices < UPKEEP_HINT_CHOICE_LIMIT
+	choice_intro_label.visible = show_hint
+	if not show_hint:
+		if _upkeep_hint_tween != null:
+			_upkeep_hint_tween.kill()
+			_upkeep_hint_tween = null
+			draw_button.modulate = Color.WHITE
+			mana_button.modulate = Color.WHITE
+		return
+	var player_index: int = game_manager.players.find(game_manager.current_player)
+	if _upkeep_hint_pulse_turn == game_manager.turn_number and _upkeep_hint_pulse_player_index == player_index:
+		return
+	_upkeep_hint_pulse_turn = game_manager.turn_number
+	_upkeep_hint_pulse_player_index = player_index
+	# One shared, gentle pulse; state refreshes and reopened prompts do not repeat it.
+	_upkeep_hint_tween = create_tween().set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	_upkeep_hint_tween.set_parallel(true)
+	for prop in [draw_button, mana_button]:
+		_upkeep_hint_tween.tween_property(prop, "modulate", Color(1.12, 1.12, 1.12), 0.4)
+		_upkeep_hint_tween.tween_property(prop, "modulate", Color.WHITE, 0.6).set_delay(0.4)
 
 func _get_mana_well_board_style() -> String:
 	return _board_style
@@ -6555,6 +6623,10 @@ func _layout_turn_start_props() -> void:
 	_position_turn_start_prop(_opponent_draw_deck, midpoint - Vector2(0.0, deck_distance), prop_size, prop_scale)
 	_position_turn_start_prop(mana_button, midpoint, prop_size, prop_scale)
 	_position_turn_start_prop(draw_button, midpoint + Vector2(0.0, deck_distance), prop_size, prop_scale)
+	choice_intro_label.custom_minimum_size = Vector2.ZERO
+	choice_intro_label.size = choice_intro_label.get_combined_minimum_size()
+	choice_intro_label.scale = Vector2.ONE * prop_scale
+	choice_intro_label.position = midpoint + Vector2(0.0, deck_distance * 0.5) - choice_intro_label.size * prop_scale * 0.5
 	# Optional card-specific upkeep choices float beside the well instead of hiding it.
 	choice_container.size = choice_container.get_combined_minimum_size()
 	choice_container.position = midpoint + Vector2(prop_size.x * prop_scale * 0.5 + 8.0, -choice_container.size.y * 0.5)
@@ -6628,7 +6700,7 @@ func _reject_pending_network_breidablik_return_choice() -> void:
 	update_ui()
 
 func _lock_turn_choice_for_sun_hunt() -> void:
-	choice_intro_label.text = "Choose one:"
+	choice_intro_label.text = "Choose one"
 	_set_turn_choice_controls_disabled(true)
 	if _sun_hunt_button != null:
 		_sun_hunt_button.visible = true
@@ -7459,7 +7531,6 @@ func _update_match_side_panel_layout() -> void:
 	if action_label != null:
 		action_label.custom_minimum_size.x = left_log_width
 	_set_left_control_width(choice_container, left_width)
-	_set_left_control_width(choice_intro_label, left_width)
 	_set_left_control_width(_sun_hunt_button, left_width)
 	_set_left_control_width(_matriarch_rule_button, left_width)
 	_set_left_control_width(placement_container, left_width)
@@ -27899,6 +27970,7 @@ func _on_match_move_failed(reason: String) -> void:
 	update_ui()
 
 func _on_game_input_submission_rejected(reason: String) -> void:
+	_upkeep_hint_pending_turn = -1
 	_clear_pending_priority_response_target_selection()
 	_clear_pending_priority_response_submission()
 	_clear_paid_hand_card_preview()
@@ -27920,6 +27992,12 @@ func _on_match_ui_interaction(player_index: int, type: String, data: Dictionary)
 		return
 		
 	match type:
+		"doorway_choice":
+			_show_doorway_choice_prompt(
+				game_manager.get_card_by_uid(str(data.get("structure_uid", ""))) as DoorwayToTheVoid,
+				game_manager.get_card_by_uid(str(data.get("card_uid", ""))),
+				bool(data.get("combat_death", false)), bool(data.get("destruction", false))
+			)
 		"priority":
 			_apply_priority_prompt_for_player(player_index, data)
 		"advanced_building_techniques":
@@ -28325,7 +28403,11 @@ func _on_draw_button_pressed() -> void:
 		_set_action_label_text("Finish resolving Sun Hunt or cancel it before choosing another upkeep option.")
 		return
 	_set_turn_choice_controls_disabled(true)
+	if _upkeep_hint_completed_choices < UPKEEP_HINT_CHOICE_LIMIT:
+		_upkeep_hint_pending_turn = game_manager.turn_number
+		_upkeep_hint_pending_player_index = game_manager.players.find(game_manager.current_player)
 	if not game_input.submit_action({type = "upkeep_choice", choice = "draw"}):
+		_upkeep_hint_pending_turn = -1
 		_set_action_label_text("Could not submit upkeep choice. Please try again.")
 		_refresh_turn_choice_options()
 		update_ui()
@@ -28352,7 +28434,11 @@ func _on_mana_button_pressed() -> void:
 		_set_action_label_text("Finish resolving Sun Hunt or cancel it before choosing another upkeep option.")
 		return
 	_set_turn_choice_controls_disabled(true)
+	if _upkeep_hint_completed_choices < UPKEEP_HINT_CHOICE_LIMIT:
+		_upkeep_hint_pending_turn = game_manager.turn_number
+		_upkeep_hint_pending_player_index = game_manager.players.find(game_manager.current_player)
 	if not game_input.submit_action({type = "upkeep_choice", choice = "mana"}):
+		_upkeep_hint_pending_turn = -1
 		_set_action_label_text("Could not submit upkeep choice. Please try again.")
 		_refresh_turn_choice_options()
 		update_ui()
@@ -29529,6 +29615,8 @@ func _submit_reinforcement_changes() -> void:
 		_reinforcement_status_label.text = "Validating and locking your deck..."
 
 func _begin_next_series_game(data: Dictionary) -> void:
+	_upkeep_hint_pending_turn = -1
+	_upkeep_hint_pulse_turn = -1
 	_series_snapshot = (data.get("series", {}) as Dictionary).duplicate(true)
 	_current_match_info["series"] = _series_snapshot.duplicate(true)
 	_series_between_games_active = false
@@ -29951,6 +30039,7 @@ func _apply_network_event(event_type: String, data: Dictionary) -> void:
 		"intercept_offered":
 			_apply_intercept_offered(data)
 		"command_rejected":
+			_upkeep_hint_pending_turn = -1
 			if _pending_forfeit_return_to_menu:
 				_pending_forfeit_return_to_menu = false
 				if not _game_finished:
@@ -30755,7 +30844,11 @@ func _sync_network_turn_controls() -> void:
 	var local_idx := _get_authoritative_turn_local_player_index()
 	var current_idx: int = game_manager.players.find(game_manager.current_player)
 	var is_local_turn: bool = current_idx == local_idx
-	var stack_locked: bool = not game_manager.action_stack.is_empty()
+	# An attack can leave the stack before its resolution and visual linger finish.
+	var stack_locked: bool = _has_unresolved_priority_state() \
+		or not game_manager.resolving_stack_actions.is_empty() \
+		or _is_visual_linger_active() \
+		or (match_manager != null and match_manager.has_unresolved_stack_action_window())
 	if is_local_turn and not stack_locked and not game_manager.has_resolved_turn_upkeep():
 		if _is_priority_prompt_visible():
 			_hide_priority_prompt()

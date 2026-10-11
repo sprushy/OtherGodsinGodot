@@ -1,6 +1,8 @@
 extends RefCounted
 class_name ThorPracticeBot
 
+const CardPromptPolicy = preload("res://scripts/bots/BotCardPromptPolicy.gd")
+
 var game_manager: GameManager = null
 var match_manager: MatchManager = null
 var game_input: GameInput = null
@@ -25,6 +27,9 @@ const ASKELLADEN_RETREAT_SCORE_MARGIN := 400
 var _active: bool = false
 var _step_queued: bool = false
 var _retry_poll_queued: bool = false
+var _answered_prompt_ids: Dictionary = {}
+var _current_card_prompt_id: int = -1
+var _last_submitted_prompt_id: int = -1
 
 func attach(
 	p_game_manager: GameManager,
@@ -55,6 +60,9 @@ func detach() -> void:
 	_active = false
 	_step_queued = false
 	_retry_poll_queued = false
+	_answered_prompt_ids.clear()
+	_current_card_prompt_id = -1
+	_last_submitted_prompt_id = -1
 
 func poll() -> void:
 	_queue_step()
@@ -113,9 +121,22 @@ func _on_match_ui_refresh_requested() -> void:
 func _on_match_ui_interaction(prompt_player_index: int, type: String, data: Dictionary) -> void:
 	if prompt_player_index != player_index:
 		return
+	if type == "priority":
+		_queue_step()
+		return
+	if not _mark_prompt_answered(data):
+		return
+	var previous_prompt_id := _current_card_prompt_id
+	_current_card_prompt_id = int(data.get("_prompt_id", -1))
+	_answer_card_prompt(type, data)
+	_current_card_prompt_id = previous_prompt_id
+
+func _answer_card_prompt(type: String, data: Dictionary) -> void:
+	var command := CardPromptPolicy.build_command(self, type, data)
+	if not command.is_empty():
+		_submit_action(command)
+		return
 	match type:
-		"priority":
-			_queue_step()
 		"intercept":
 			_submit_intercept_decision("")
 		"harii_jarl_impact":
@@ -124,12 +145,26 @@ func _on_match_ui_interaction(prompt_player_index: int, type: String, data: Dict
 			_handle_combat_retreat_prompt(data)
 		"nusku_well_of_fire":
 			_handle_nusku_well_of_fire_prompt(data)
-		"resurrection":
-			_submit_resurrection_choice(data, false)
 		"ragnarok_discard":
 			_submit_ragnarok_discard(data)
 		_:
-			_queue_step()
+			_answered_prompt_ids.erase(str(_current_card_prompt_id))
+			push_warning("Bot has no valid answer for card prompt: %s" % type)
+
+func _mark_prompt_answered(data: Dictionary) -> bool:
+	var prompt_id := int(data.get("_prompt_id", -1))
+	if prompt_id < 0:
+		return true
+	var key := str(prompt_id)
+	if _answered_prompt_ids.has(key):
+		return false
+	_answered_prompt_ids[key] = true
+	return true
+
+func _forget_rejected_prompt() -> void:
+	if _last_submitted_prompt_id >= 0:
+		_answered_prompt_ids.erase(str(_last_submitted_prompt_id))
+	_last_submitted_prompt_id = -1
 
 func _queue_step() -> void:
 	if _step_queued:
@@ -219,6 +254,8 @@ func _choose_upkeep_option() -> String:
 	if game_manager != null:
 		draw_mana_gain = game_manager.get_base_upkeep_draw_mana_gain()
 		mana_gain = game_manager.get_base_upkeep_mana_gain()
+		draw_mana_gain = game_manager.get_effective_upkeep_mana_gain(draw_mana_gain, bot_player)
+		mana_gain = game_manager.get_effective_upkeep_mana_gain(mana_gain, bot_player)
 	var best_now := _get_best_affordable_hand_creature(draw_mana_gain)
 	var best_with_bonus := _get_best_affordable_hand_creature(mana_gain)
 	if best_with_bonus != null and _is_projected_creature_better(best_with_bonus, best_now):
@@ -245,7 +282,7 @@ func _choose_priority_response() -> Card:
 	var top_action: CardAction = game_manager.action_stack.back() if not game_manager.action_stack.is_empty() else null
 	if top_action != null:
 		for response_card in responses:
-			if response_card is MeadOfPoetry and top_action.target == response_card:
+			if response_card is MeadOfPoetry and _target_includes_card(top_action.target, response_card):
 				return response_card
 		var best_vision := _find_best_priority_vision_response(responses, top_action)
 		if not best_vision.is_empty():
@@ -258,6 +295,19 @@ func _choose_priority_response() -> Card:
 		if response_card is VoidShield:
 			return response_card
 	return null
+
+func _target_includes_card(target_value, card: Card) -> bool:
+	if target_value is Card:
+		return target_value == card
+	if target_value is Array:
+		for entry in target_value:
+			if _target_includes_card(entry, card):
+				return true
+	elif target_value is Dictionary:
+		for entry in target_value.values():
+			if _target_includes_card(entry, card):
+				return true
+	return false
 
 func _submit_priority_response(card: Card) -> bool:
 	if card == null or game_manager.action_stack.is_empty():
@@ -656,11 +706,23 @@ func _get_hand_value(card: Card) -> int:
 
 func _handle_combat_retreat_prompt(data: Dictionary) -> void:
 	var askelladen := game_manager.get_card_by_uid(str(data.get("askelladen_uid", ""))) as Askelladen
-	var action := data.get("action", null) as CardAction
-	var target = data.get("target", null)
+	var action: CardAction = null
+	var action_data = data.get("action", null)
+	if action_data is CardAction:
+		action = action_data
+	elif action_data is Dictionary:
+		action = CardAction.from_dict(action_data, game_manager)
+	var target: Card = null
+	var target_data = data.get("target", null)
+	if target_data is Card:
+		target = target_data
+	else:
+		target = game_manager.get_card_by_uid(str(data.get("target_uid", "")))
+	if target == null and action != null:
+		target = _get_attack_defender_card(action)
 	var other_card: Card = null
 	if askelladen != null and action != null and target != null:
-		other_card = action.attacker if action.attacker != askelladen else (target as Card)
+		other_card = action.attacker if action.attacker != askelladen else target
 	var use_retreat := _should_use_askelladen_retreat(askelladen, other_card, action)
 	_submit_action({
 		"type": "combat_retreat_decision",
@@ -703,16 +765,6 @@ func _handle_nusku_well_of_fire_prompt(data: Dictionary) -> void:
 		"source_uid": nusku.uid,
 		"target_uid": chosen_card.uid if chosen_card != null else "",
 		"mill_count": int(data.get("mill_count", NuskuFirebearer.MILL_COUNT)),
-	})
-
-func _submit_resurrection_choice(data: Dictionary, confirm: bool) -> void:
-	var card_uid := str(data.get("card_uid", "")).strip_edges()
-	if card_uid.is_empty():
-		return
-	_submit_action({
-		"type": "resurrection_choice",
-		"card_uid": card_uid,
-		"confirm": confirm,
 	})
 
 func _submit_ragnarok_discard(data: Dictionary) -> void:
@@ -797,7 +849,13 @@ func _submit_attack(attacker: Card, target) -> bool:
 func _submit_action(command: Dictionary) -> bool:
 	if game_input == null:
 		return false
-	return game_input.submit_action(command)
+	if _current_card_prompt_id >= 0:
+		command["_prompt_id"] = _current_card_prompt_id
+		_last_submitted_prompt_id = _current_card_prompt_id
+	var submitted := game_input.submit_action(command)
+	if not submitted:
+		_forget_rejected_prompt()
+	return submitted
 
 func _first_target_uid(targets: Array) -> String:
 	for target in targets:
@@ -1456,7 +1514,7 @@ func _get_call_of_the_valkyrie_projected_draw_mana(valkyrie_call: CallOfTheValky
 	if valkyrie_call.is_face_down:
 		projected_mana -= valkyrie_call.get_unlock_mana_cost(game_manager)
 	projected_mana -= valkyrie_call.get_activation_mana_cost(CallOfTheValkyrie.ACTIVATION_COST, game_manager)
-	projected_mana += game_manager.get_effective_upkeep_mana_gain(game_manager.get_base_upkeep_draw_mana_gain(), bot_player)
+	projected_mana += game_manager.get_automatic_upkeep_mana_gain(bot_player, game_manager.turn_number + 1)
 	return projected_mana
 
 func _can_pay_projected_additional_costs(card: Card) -> bool:

@@ -3,7 +3,6 @@ class_name PracticeFuzzPlayerBot
 
 var match_client = null
 var _awaiting_network_state_after_submit: bool = false
-var _answered_prompt_ids: Dictionary = {}
 
 func attach(
 	p_game_manager: GameManager,
@@ -69,6 +68,7 @@ func _on_network_game_event(event_type: String, data: Dictionary) -> void:
 			poll()
 		"command_rejected":
 			_awaiting_network_state_after_submit = false
+			_forget_rejected_prompt()
 			_queue_retry_poll()
 		"server_disconnected", "match_reconnect_started":
 			_awaiting_network_state_after_submit = false
@@ -89,27 +89,7 @@ func _handle_network_ui_interaction(event_data: Dictionary) -> void:
 	var raw_payload = event_data.get("data", {})
 	if raw_payload is Dictionary:
 		payload = (raw_payload as Dictionary).duplicate(true)
-	_on_match_ui_interaction(prompt_player_index, type, _normalize_network_prompt_payload(type, payload))
-
-func _normalize_network_prompt_payload(type: String, payload: Dictionary) -> Dictionary:
-	var normalized := payload.duplicate(true)
-	match type:
-		"combat_retreat":
-			var action_data = normalized.get("action", {})
-			if action_data is Dictionary:
-				var action_dictionary := action_data as Dictionary
-				normalized["action"] = CardAction.from_dict(action_dictionary, game_manager)
-			var target = null
-			var target_uid := str(normalized.get("target_uid", "")).strip_edges()
-			if not target_uid.is_empty() and game_manager != null:
-				target = game_manager.get_card_by_uid(target_uid)
-			if target == null and game_manager != null:
-				var target_player_index := int(normalized.get("target_player_index", -1))
-				if target_player_index >= 0 and target_player_index < game_manager.players.size():
-					target = game_manager.players[target_player_index]
-			if target != null:
-				normalized["target"] = target
-	return normalized
+	_on_match_ui_interaction(prompt_player_index, type, payload)
 
 func _should_queue_step() -> bool:
 	if _awaiting_network_state_after_submit:
@@ -130,45 +110,7 @@ func _on_match_ui_interaction(prompt_player_index: int, type: String, data: Dict
 		return
 	match type:
 		"priority":
-			_submit_priority_pass_from_prompt(data)
-		"wheel_of_fire_turn_start":
-			_submit_action({
-				"type": "wheel_of_fire_turn_start_choice",
-				"source_uid": str(data.get("source_uid", "")),
-				"pay_cost": false,
-			})
-		"first_sage_adapa_impact":
-			_submit_first_target_choice("first_sage_adapa_choice", data)
-		"third_sage_enmedugga_impact":
-			_submit_first_target_choice("third_sage_enmedugga_choice", data)
-		"fourth_sage_enmegalamma_impact":
-			_submit_first_target_choice("fourth_sage_enmegalamma_choice", data)
-		"sixth_sage_an_enlilda_impact":
-			_submit_first_target_choice("sixth_sage_an_enlilda_choice", data)
-		"hunting_tactics":
-			_submit_hunting_tactics_choice(data)
-		"huginn_perish_prime":
-			_submit_first_target_choice("huginn_perish_prime_choice", data)
-		"muninn_perish_prime":
-			_submit_first_target_choice("muninn_perish_prime_choice", data)
-		"return_to_hand_choice":
-			_submit_action({
-				"type": "return_to_hand_choice",
-				"source_uid": str(data.get("source_uid", "")),
-				"target_uid": _first_uid_from_prompt(data, "target_uids"),
-			})
-		"humbaba_augury":
-			_submit_first_target_choice("humbaba_augury_choice", data)
-		"wolf_adolescent_maturation":
-			_submit_first_target_choice("wolf_adolescent_maturation_choice", data)
-		"breidablik_turn_start":
-			if not _mark_prompt_answered(data):
-				return
-			_submit_action({
-				"type": "breidablik_turn_start_choice",
-				"source_uid": str(data.get("source_uid", "")),
-				"return_priest": false,
-			})
+			_submit_priority_response_from_prompt(data)
 		_:
 			super._on_match_ui_interaction(prompt_player_index, type, data)
 
@@ -179,10 +121,12 @@ func _try_attack() -> bool:
 
 func _on_match_move_failed(_reason: String) -> void:
 	_awaiting_network_state_after_submit = false
+	_forget_rejected_prompt()
 	_queue_retry_poll()
 
 func _on_submission_rejected(_reason: String) -> void:
 	_awaiting_network_state_after_submit = false
+	_forget_rejected_prompt()
 	_queue_retry_poll()
 
 func _submit_action(command: Dictionary) -> bool:
@@ -196,17 +140,7 @@ func _is_networked_bot_client() -> bool:
 		return false
 	return bool(match_client.call("is_networked_client"))
 
-func _mark_prompt_answered(data: Dictionary) -> bool:
-	var prompt_id := int(data.get("_prompt_id", -1))
-	if prompt_id < 0:
-		return true
-	var key := str(prompt_id)
-	if _answered_prompt_ids.has(key):
-		return false
-	_answered_prompt_ids[key] = true
-	return true
-
-func _submit_priority_pass_from_prompt(data: Dictionary) -> void:
+func _submit_priority_response_from_prompt(data: Dictionary) -> void:
 	if game_manager != null:
 		if game_manager.action_stack.is_empty():
 			return
@@ -214,38 +148,7 @@ func _submit_priority_pass_from_prompt(data: Dictionary) -> void:
 			return
 	if not _mark_prompt_answered(data):
 		return
-	_submit_action({"type": "priority_pass"})
-
-func _submit_first_target_choice(command_type: String, data: Dictionary) -> void:
-	if not _mark_prompt_answered(data):
-		return
-	_submit_action({
-		"type": command_type,
-		"source_uid": str(data.get("source_uid", "")),
-		"target_uid": _first_uid_from_prompt(data, "target_uids"),
-	})
-
-func _submit_hunting_tactics_choice(data: Dictionary) -> void:
-	if not _mark_prompt_answered(data):
-		return
-	var source_uid := str(data.get("source_uid", "")).strip_edges()
-	var attacker_uid := str(data.get("attacker_uid", "")).strip_edges()
-	var chosen_uids: Array[String] = []
-	for raw_uid in data.get("target_uids", []):
-		var uid := str(raw_uid).strip_edges()
-		if not uid.is_empty():
-			chosen_uids.append(uid)
-			break
-	_submit_action({
-		"type": "hunting_tactics_choice",
-		"source_uid": source_uid,
-		"attacker_uid": attacker_uid,
-		"chosen_uids": chosen_uids,
-	})
-
-func _first_uid_from_prompt(data: Dictionary, key: String) -> String:
-	for raw_uid in data.get(key, []):
-		var uid := str(raw_uid).strip_edges()
-		if not uid.is_empty():
-			return uid
-	return ""
+	var previous_prompt_id := _current_card_prompt_id
+	_current_card_prompt_id = int(data.get("_prompt_id", -1))
+	_handle_priority()
+	_current_card_prompt_id = previous_prompt_id

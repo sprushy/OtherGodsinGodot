@@ -6339,7 +6339,7 @@ func _get_tutorial_lessons() -> Array[Dictionary]:
 				},
 				{
 					"title": "Choose Upkeep Resources",
-					"body": "At the start of your turn, upkeep offers resource choices. Usually you choose gain 5 mana or gain 1 mana and draw 1 card. On the very first turn, the basic choices are gain 4 mana or draw 1 card.",
+					"body": "At the start of upkeep, you gain 1 automatic mana before choosing +4 mana or +1 card. The first game turn has no automatic mana, and God Death removes only the automatic mana. The resource choices stay the same.",
 					"try": "Choose mana when you can spend it now; choose draw when your hand needs help.",
 					"action": "practice"
 				},
@@ -7500,6 +7500,9 @@ func _on_lobby_login_succeeded(session_id: String, reconnect_token: String, play
 	if finish_startup_loading_after_auth:
 		_set_startup_loading_status("Signed in as %s." % resolved_identity_name)
 		_finish_startup_loading()
+	# A lobby recovery during a match must not offer or launch the same match again.
+	if _match_launch_queued:
+		return
 	var active_match_info: Dictionary = {}
 	var restored_room: Dictionary = {}
 	if lobby_client != null:
@@ -7599,6 +7602,9 @@ func _on_lobby_reconnect_succeeded(
 	if finish_startup_loading_after_auth:
 		_set_startup_loading_status("Lobby session restored.")
 		_finish_startup_loading()
+	# A lobby recovery during a match must not offer or launch the same match again.
+	if _match_launch_queued:
+		return
 	if _maybe_leave_pending_room(room, active_match_info):
 		return
 	if not active_match_info.is_empty():
@@ -7827,7 +7833,6 @@ func _on_remote_match_assigned(match_info: Dictionary) -> void:
 		else "Match found. Connecting to %s..." % match_ip
 	)
 	_write_smoke_result("MATCH_ASSIGNED_CLIENT:%s" % str(match_info))
-	_cleanup_lobby(false)
 	call_deferred("_launch_assigned_match", false, match_ip, match_port, match_info)
 
 func _launch_assigned_match(
@@ -8052,7 +8057,6 @@ func _launch_host_match_after_lobby_handoff(match_info: Dictionary) -> void:
 		match_session = MatchSessionScript.from_match_info(match_info)
 		_player_host_external_port = int(match_info.get("host_reachable_port", 0))
 	await get_tree().create_timer(0.75).timeout
-	_cleanup_lobby(false)
 	_launch_assigned_match(
 		true,
 		str(match_info.get("server_ip", _current_lobby_ip)),
@@ -8242,7 +8246,6 @@ func _restore_lobby_after_match_connection_lost(reason: String) -> void:
 	# Unlike _return_to_menu, deliberately do NOT set _pending_leave_room_id or
 	# suppress active-match auto-resume: the server still holds the player's
 	# match seat, and the lobby reconnect flow should offer to rejoin it.
-	_cleanup_lobby(false)
 	for node_name in _get_embedded_game_node_names():
 		var game = get_node_or_null("GameContainer/" + node_name)
 		if game and game.has_method("cleanup"):
@@ -8255,8 +8258,18 @@ func _restore_lobby_after_match_connection_lost(reason: String) -> void:
 	var clean_reason := reason.strip_edges()
 	if clean_reason.is_empty():
 		clean_reason = "The match connection was lost."
-	status_label.text = "%s Restoring your lobby session..." % clean_reason
-	_maybe_connect_authenticated_lobby("Reconnecting to lobby after the match connection was lost...")
+	status_label.text = clean_reason
+	if lobby_client != null and lobby_client.is_authenticated():
+		# Reuse the existing rejoin flow with the live lobby's latest state.
+		_on_lobby_reconnect_succeeded(
+			lobby_client.current_session_id,
+			lobby_client.current_reconnect_token,
+			lobby_client.current_player_name,
+			lobby_client.current_room_snapshot.duplicate(true),
+			lobby_client.current_active_match_info.duplicate(true)
+		)
+	elif not _is_lobby_auto_reconnecting():
+		_maybe_connect_authenticated_lobby("Restoring lobby session after the match connection was lost...")
 
 func _on_game_rematch_requested() -> void:
 	_pending_leave_room_id = ""
@@ -8289,7 +8302,6 @@ func _return_to_lobby_for_rematch() -> void:
 	multiplayer_container.visible = true
 	show_menu()
 	_match_launch_queued = false
-	_cleanup_lobby(false)
 	for node_name in _get_embedded_game_node_names():
 		var game = get_node_or_null("GameContainer/" + node_name)
 		if game and game.has_method("cleanup"):
@@ -8297,8 +8309,11 @@ func _return_to_lobby_for_rematch() -> void:
 	_clear_saved_match_resume()
 	_refresh_server_version_overlay_visibility()
 	multiplayer_container.visible = true
-	status_label.text = "Reconnecting to lobby for rematch..."
-	_maybe_connect_authenticated_lobby("Reconnecting to lobby for rematch...")
+	if lobby_client != null and lobby_client.is_authenticated():
+		status_label.text = "Waiting for the finished match to close so the rematch can start..."
+		_apply_room_snapshot(lobby_client.current_room_snapshot)
+	elif not _is_lobby_auto_reconnecting():
+		_maybe_connect_authenticated_lobby("Restoring lobby session for rematch...")
 
 func _return_to_menu() -> void:
 	var room_to_leave := _get_active_match_room_id()
@@ -8324,7 +8339,7 @@ func _return_to_menu() -> void:
 		db.queue_free()
 	_refresh_server_version_overlay_visibility()
 	multiplayer_container.visible = false
-	# Local modes keep the live lobby; online matches restore the saved session.
+	# Keep the authenticated lobby alive across local and multiplayer matches.
 	if lobby_client != null and lobby_client.is_authenticated():
 		if not _pending_leave_room_id.is_empty():
 			_maybe_leave_pending_room(lobby_client.current_room_snapshot, lobby_client.current_active_match_info)
@@ -10305,7 +10320,6 @@ func _resume_active_match_from_lobby(match_info: Dictionary) -> void:
 		return
 	_manual_rejoin_room_id = ""
 	_match_launch_queued = true
-	_cleanup_lobby(false)
 	call_deferred(
 		"_launch_assigned_match",
 		false,
@@ -10610,6 +10624,7 @@ func _run_practice_thor_smoke() -> void:
 		_complete_practice_thor_smoke(false, setup_error)
 		return
 
+	var player_one_mana_before_draw: int = practice_game.player1.mana
 	if not practice_game.game_input.submit_action({type = "upkeep_choice", choice = "draw"}):
 		_complete_practice_thor_smoke(false, "practice_thor_upkeep_choice_failed")
 		return
@@ -10623,6 +10638,10 @@ func _run_practice_thor_smoke() -> void:
 		_complete_practice_thor_smoke(false, "practice_thor_player_one_upkeep_timeout")
 		return
 
+	if practice_game.player1.mana != player_one_mana_before_draw:
+		_complete_practice_thor_smoke(false, "practice_thor_draw_choice_must_not_add_mana")
+		return
+	var player_one_mana_before_next_upkeep: int = practice_game.player1.mana
 	if not practice_game.game_input.submit_action({type = "end_turn", discard_uids = []}):
 		_complete_practice_thor_smoke(false, "practice_thor_end_turn_failed")
 		return
@@ -10639,6 +10658,18 @@ func _run_practice_thor_smoke() -> void:
 	var bot_board_count := _count_cards_in_zones(practice_game.player2.frontline_zones + practice_game.player2.reserve_zones)
 	if bot_board_count <= 0 and practice_game.player1.followers >= 100:
 		_complete_practice_thor_smoke(false, "practice_thor_no_bot_progress")
+		return
+
+	if practice_game.game_manager.has_resolved_turn_upkeep() \
+			or practice_game.player1.mana != player_one_mana_before_next_upkeep + 1:
+		_complete_practice_thor_smoke(false, "practice_thor_automatic_mana_not_granted_before_choice")
+		return
+	var player_one_mana_before_choice: int = practice_game.player1.mana
+	if not practice_game.game_input.submit_action({type = "upkeep_choice", choice = "mana"}):
+		_complete_practice_thor_smoke(false, "practice_thor_turn3_mana_choice_failed")
+		return
+	if practice_game.player1.mana != player_one_mana_before_choice + 4:
+		_complete_practice_thor_smoke(false, "practice_thor_mana_choice_must_add_only_four")
 		return
 
 	_complete_practice_thor_smoke(true, "practice_thor")

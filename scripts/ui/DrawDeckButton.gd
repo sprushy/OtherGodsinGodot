@@ -48,15 +48,22 @@ func _ready() -> void:
 
 func set_deck_count(count: int) -> void:
 	var next_count := maxi(0, count)
-	var next_tooltip := "%d cards remaining in the opponent's deck" % next_count if _opponent_view else "%d cards remaining in your deck" % next_count
-	if _deck_count == next_count and tooltip_text == next_tooltip:
+	if _deck_count == next_count:
+		_update_tooltip()
 		return
 	if _deck_count != next_count:
 		show_deck_count_temporarily()
 	_deck_count = next_count
-	tooltip_text = next_tooltip
+	_update_tooltip()
 	update_minimum_size()
 	queue_redraw()
+
+func _update_tooltip() -> void:
+	if _opponent_view:
+		tooltip_text = "%d cards remaining in the opponent's deck" % _deck_count
+	else:
+		var choice_text := "Choose +1 card instead of extra mana." if _draw_available else "Choose +1 card at the start of your turn."
+		tooltip_text = "%s\n%d cards remaining in your deck" % [choice_text, _deck_count]
 
 func show_deck_count_temporarily() -> void:
 	_count_visible_until_msec = Time.get_ticks_msec() + COUNT_CHANGE_DISPLAY_MSEC
@@ -69,6 +76,7 @@ func set_card_protector_enabled(enabled: bool) -> void:
 
 func set_draw_available(available: bool) -> void:
 	_draw_available = available
+	_update_tooltip()
 	queue_redraw()
 
 func set_opponent_view(enabled: bool) -> void:
@@ -182,7 +190,7 @@ func _draw_deck_count(deck_center: Vector2, alpha: float) -> void:
 
 func _draw_draw_caption(deck_center: Vector2) -> void:
 	var font := ThemeDB.fallback_font
-	var caption := "Draw"
+	var caption := "Draw" if _opponent_view else "+1 card"
 	var font_size := 22
 	var width := font.get_string_size(caption, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x
 	draw_set_transform(deck_center)

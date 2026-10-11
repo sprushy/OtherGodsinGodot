@@ -151,15 +151,14 @@ The most important beginner habit is to use Main Phase to build a board before m
 
 ## 9. Choose Upkeep Resources
 
-During the Upkeep window, you usually choose one of these:
-
-- Gain 5 mana.
-- Gain 1 mana and draw 1 card.
-
-On the very first turn of the game, the basic options are different:
+During the Upkeep window, you usually choose one of these resource options:
 
 - Gain 4 mana.
 - Draw 1 card.
+
+At the start of upkeep, you normally gain 1 automatic mana immediately, before choosing a resource option. Choosing mana then adds 4 more mana; choosing a card adds no further mana.
+
+The very first turn of the game has no automatic mana. God Death also removes the automatic mana. Neither changes the resource options: you still choose 4 mana or 1 card.
 
 Choose mana when you have several cards you can play. Choose draw when your hand is weak, empty, or missing threats.
 
