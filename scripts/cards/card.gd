@@ -1563,6 +1563,9 @@ func can_be_engaged_by(source: Card) -> bool:
 			return false
 		if not (source.has_type("Aerial") or source.has_type("Archer")):
 			return false
+	return can_be_engaged_by_incorporeal_rules(source)
+
+func can_be_engaged_by_incorporeal_rules(source: Card) -> bool:
 	if not incorporeal:
 		return true
 	if source == null or not source.is_creature_card():
@@ -1573,6 +1576,9 @@ func can_be_engaged_by(source: Card) -> bool:
 
 # Returns false when this card is incorporeal and `target` is not a permitted engage target.
 func can_engage(target: Card) -> bool:
+	return can_engage_by_incorporeal_rules(target)
+
+func can_engage_by_incorporeal_rules(target: Card) -> bool:
 	if not incorporeal:
 		return true
 	if target == null or not target.is_creature_card():

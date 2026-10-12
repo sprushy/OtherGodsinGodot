@@ -251,6 +251,7 @@ var _update_support_button: Button = null
 var _update_button_row: HBoxContainer = null
 var _update_download_status_label: Label = null
 var _is_auto_updating: bool = false
+var _deferred_required_update: Dictionary = {}
 var _automatic_update_required: bool = false
 var _update_uses_startup_loading_bar: bool = false
 var _macos_sparkle_bridge: Object = null
@@ -1287,6 +1288,18 @@ func _refresh_server_version_overlay_visibility() -> void:
 	)
 
 func _process(delta: float) -> void:
+	if not _deferred_required_update.is_empty() and not _should_defer_required_update():
+		var pending_update := _deferred_required_update
+		_deferred_required_update = {}
+		_begin_required_update(
+			pending_update.latest_version,
+			pending_update.release_url,
+			pending_update.download_url,
+			pending_update.download_size,
+			pending_update.download_sha256,
+			pending_update.macos_appcast_available,
+			pending_update.download_sha256_url
+		)
 	if _is_auto_updating and _update_download_request != null and is_instance_valid(_update_download_request):
 		_refresh_update_download_progress()
 	elif _is_auto_updating and _update_curl_process_id > 0:
@@ -3187,6 +3200,11 @@ func _should_prompt_for_update(latest_version: String) -> bool:
 			_local_profile_store.remember_dismissed_release_version("")
 	return true
 
+func _should_defer_required_update() -> bool:
+	return _match_launch_queued or (
+		game_container != null and game_container.visible and _get_active_embedded_game() != null
+	)
+
 func _begin_required_update(
 	latest_version: String,
 	release_url: String,
@@ -3198,6 +3216,20 @@ func _begin_required_update(
 ) -> void:
 	if not _release_updates_enabled():
 		_complete_startup_prompts()
+		return
+	# Lobby recovery can discover a new build while the current game is still
+	# running. Keep its release metadata and wait until the player leaves it.
+	if _should_defer_required_update():
+		_deferred_required_update = {
+			"latest_version": latest_version,
+			"release_url": release_url,
+			"download_url": download_url,
+			"download_size": download_size,
+			"download_sha256": download_sha256,
+			"macos_appcast_available": macos_appcast_available,
+			"download_sha256_url": download_sha256_url,
+		}
+		_write_update_log("update_deferred_until_menu latest=%s" % latest_version)
 		return
 	_write_update_log(
 		"update_required current=%s latest=%s download_bytes=%d"

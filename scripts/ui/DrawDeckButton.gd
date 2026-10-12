@@ -16,6 +16,10 @@ const PAPER_SIDE_SEAM := Color(0.60, 0.56, 0.48)
 const COUNT_CHANGE_DISPLAY_MSEC := 2500
 const SHELVE_INSERT_OFFSET := Vector2(28.0, 38.0)
 const MINIMUM_HEIGHT := 216.0
+const PEEL_SEGMENTS := 32
+const PEEL_SLIDE := 56.0
+const PEEL_BEND_START := 0.65
+const PEEL_BEND_ANGLE := 1.15
 
 var _deck_count: int = 0
 var _hover_amount: float = 0.0
@@ -26,6 +30,8 @@ var _opponent_draw_available: bool = false
 var _protector_side_amount: float = 0.0
 var _stack_card_style: StyleBoxFlat
 var _stack_shadow_style: StyleBoxFlat
+# Canvas drawing is deferred, so the textured mesh must outlive _draw().
+var _peeled_card_mesh := ArrayMesh.new()
 var _count_visible_until_msec: int = 0
 var choice_highlight_amount: float = 0.0:
 	set(value):
@@ -107,7 +113,7 @@ func _is_draw_available() -> bool:
 
 func get_top_card_rect() -> Rect2:
 	var card_x := 12.0 if _card_protector_enabled else (size.x - CARD_SIZE.x - _get_stack_offset().x) * 0.5
-	return Rect2(Vector2(card_x, 12.0 - _hover_amount * 6.0), CARD_SIZE)
+	return Rect2(Vector2(card_x, 12.0), CARD_SIZE)
 
 func _get_stack_offset() -> Vector2:
 	return CARD_LAYER_OFFSET * float(_get_visible_stack_layers())
@@ -155,8 +161,9 @@ func get_top_card_rotation() -> float:
 func _process(delta: float) -> void:
 	if not is_visible_in_tree():
 		return
-	var hover_target := 1.0 if _is_draw_available() and (is_hovered() or has_focus()) else 0.0
-	_hover_amount = move_toward(_hover_amount, hover_target, delta * 7.0)
+	var can_peel := _deck_count > 0 and _is_draw_available() and (not disabled or _opponent_view)
+	var hover_target := 1.0 if can_peel and (is_hovered() or has_focus()) else 0.0
+	_hover_amount = move_toward(_hover_amount, hover_target, delta * (3.6 if hover_target > 0.0 else 4.5))
 	if _card_protector_enabled:
 		_protector_side_amount = move_toward(_protector_side_amount, 1.0 if _is_draw_available() else 0.0, delta * 4.0)
 	queue_redraw()
@@ -249,6 +256,12 @@ func _draw_card_back(center: Vector2, angle: float, tint: Color) -> void:
 			aura.shadow_color = Color(0.25, 1.0, 0.48, 0.32 * choice_highlight_amount)
 			aura.shadow_size = spread
 			draw_style_box(aura, rect.grow(2.0))
+	# A second card stays on the deck while only the top sheet bends away.
+	# A lone remaining card has no duplicate underneath it.
+	if _hover_amount > 0.0 and _deck_count == 1:
+		_draw_peeled_card(tint)
+		draw_set_transform(Vector2.ZERO)
+		return
 	var edge := StyleBoxFlat.new()
 	edge.bg_color = Color(0.12, 0.10, 0.065)
 	edge.border_color = Color(GOLD, 0.8)
@@ -256,7 +269,81 @@ func _draw_card_back(center: Vector2, angle: float, tint: Color) -> void:
 	edge.set_corner_radius_all(6)
 	draw_style_box(edge, rect.grow(1.0))
 	draw_texture_rect(CARD_BACK, rect, false, tint)
+	if _hover_amount > 0.0:
+		_draw_peeled_card(tint)
 	draw_set_transform(Vector2.ZERO)
+
+func _draw_peeled_card(tint: Color) -> void:
+	var peel := smoothstep(0.0, 1.0, _hover_amount)
+	var slide := PEEL_SLIDE * smoothstep(0.0, 0.9, _hover_amount)
+	var bend_angle := PEEL_BEND_ANGLE * smoothstep(0.15, 1.0, _hover_amount)
+	var bend_length := CARD_SIZE.y * (1.0 - PEEL_BEND_START)
+	var vertices := PackedVector2Array()
+	var uvs := PackedVector2Array()
+	var colors := PackedColorArray()
+	var indices := PackedInt32Array()
+	var left_edge := PackedVector2Array()
+	var right_edge := PackedVector2Array()
+	var shadow_left := PackedVector2Array()
+	var shadow_right := PackedVector2Array()
+	for row in range(PEEL_SEGMENTS + 1):
+		var v := float(row) / float(PEEL_SEGMENTS)
+		var surface_y := (v - 0.5) * CARD_SIZE.y + slide
+		var height := 0.0
+		var local_angle := 0.0
+		if v > PEEL_BEND_START and bend_angle > 0.001:
+			# Roll only the lower third into a cylindrical curve. Project its
+			# height upward while preserving the length of the paper along the arc.
+			var radius := bend_length / bend_angle
+			local_angle = bend_angle * (v - PEEL_BEND_START) / (1.0 - PEEL_BEND_START)
+			height = radius * (1.0 - cos(local_angle))
+			surface_y = (PEEL_BEND_START - 0.5) * CARD_SIZE.y + slide + radius * sin(local_angle) - height * 0.38
+		# Rounded paper corners follow the bend instead of stretching square.
+		var corner_distance := minf(v, 1.0 - v) * CARD_SIZE.y
+		var inset := 0.0
+		if corner_distance < 6.0:
+			inset = 6.0 - sqrt(36.0 - pow(6.0 - corner_distance, 2.0))
+		var row_light := 1.0 - 0.24 * (1.0 - cos(local_angle))
+		for side in range(2):
+			var u := (inset / CARD_SIZE.x) if side == 0 else (1.0 - inset / CARD_SIZE.x)
+			# Both corners rise together: the card pulls straight down without twisting.
+			var point := Vector2((u - 0.5) * CARD_SIZE.x, surface_y)
+			vertices.append(point)
+			uvs.append(Vector2(u, v))
+			colors.append(Color(row_light, row_light, row_light, 1.0))
+			# Project the lifted portion's shadow back down onto the deck/table.
+			var shadow_point := point + Vector2(2.0 * peel, 2.0 * peel + height * 0.65)
+			if side == 0:
+				left_edge.append(point)
+				shadow_left.append(shadow_point)
+			else:
+				right_edge.append(point)
+				shadow_right.append(shadow_point)
+		if row < PEEL_SEGMENTS:
+			var i := row * 2
+			indices.append_array(PackedInt32Array([i, i + 1, i + 2, i + 1, i + 3, i + 2]))
+	var outline := left_edge.duplicate()
+	var shadow_outline := shadow_left.duplicate()
+	for row in range(PEEL_SEGMENTS, -1, -1):
+		outline.append(right_edge[row])
+		shadow_outline.append(shadow_right[row])
+	draw_colored_polygon(shadow_outline, Color(0.0, 0.0, 0.0, 0.17 * peel))
+	shadow_outline.append(shadow_outline[0])
+	for width in [10.0, 6.0, 3.0]:
+		draw_polyline(shadow_outline, Color(0.0, 0.0, 0.0, 0.035 * peel), width, true)
+	# A single textured mesh keeps the artwork continuous across the curve.
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = vertices
+	arrays[Mesh.ARRAY_TEX_UV] = uvs
+	arrays[Mesh.ARRAY_COLOR] = colors
+	arrays[Mesh.ARRAY_INDEX] = indices
+	_peeled_card_mesh.clear_surfaces()
+	_peeled_card_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays, [], {}, Mesh.ARRAY_FLAG_USE_2D_VERTICES)
+	draw_mesh(_peeled_card_mesh, CARD_BACK, Transform2D.IDENTITY, tint)
+	outline.append(outline[0])
+	draw_polyline(outline, Color(PAPER_EDGE, 0.7 * peel), 1.4, true)
+	draw_polyline(outline, Color(0.12, 0.10, 0.065, 0.8), 0.6, true)
 
 func _draw_centered_text(value: String, baseline: float, font_size: int, color: Color) -> void:
 	var font := get_theme_font("font")

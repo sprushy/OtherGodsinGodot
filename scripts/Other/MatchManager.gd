@@ -3798,7 +3798,8 @@ func request_attack(attacker, target) -> bool:
 	# Check if target is valid for engagement
 	if target_obj is Card:
 		if not game_manager.can_cards_engage_each_other(attacker_card, target_obj):
-			move_failed.emit(attacker_card.card_name + " cannot engage " + target_obj.card_name + ".")
+			var feedback := game_manager.get_incorporeal_attack_block_feedback(attacker_card, target_obj)
+			move_failed.emit(str(feedback.get("message", attacker_card.card_name + " cannot engage " + target_obj.card_name + ".")))
 			return false
 	elif target_obj is Player:
 		var allied_attackers := []

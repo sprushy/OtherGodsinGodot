@@ -137,6 +137,25 @@ static func build_visual_hover_body(card: Card, viewer: Player, config: Dictiona
 
 	return scroll
 
+static func wrap_hover_body(content: Control, max_height: float) -> ScrollContainer:
+	var scroll := ScrollContainer.new()
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	scroll.mouse_filter = Control.MOUSE_FILTER_STOP
+	apply_deckbuilder_scrollbar_style(scroll)
+	# Reserve scrollbar space even before overflow, so wrapping has a stable width.
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_right", 22)
+	margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	margin.add_child(content)
+	scroll.add_child(margin)
+	var update_height := func() -> void:
+		var content_size := content.get_combined_minimum_size()
+		scroll.custom_minimum_size = Vector2(content_size.x + 22.0, minf(content_size.y, max_height))
+	content.minimum_size_changed.connect(update_height)
+	update_height.call()
+	return scroll
+
 static func apply_deckbuilder_scrollbar_style(scroll: ScrollContainer, force_visible: bool = false) -> void:
 	if scroll == null:
 		return
@@ -1068,6 +1087,7 @@ static func _make_stored_card_preview(card: Card, _viewer: Player, width: float)
 static func _make_vbox(width: float, separation: int) -> VBoxContainer:
 	var vbox := VBoxContainer.new()
 	vbox.custom_minimum_size = Vector2(width, 0.0)
+	vbox.size.x = width
 	vbox.add_theme_constant_override("separation", separation)
 	vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return vbox
@@ -1107,6 +1127,8 @@ static func _make_label(
 	label.add_theme_font_size_override("font_size", font_size)
 	label.add_theme_color_override("font_color", font_color)
 	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART if enable_wrap else TextServer.AUTOWRAP_OFF
+	if enable_wrap:
+		label.size.x = _BOARD_POPUP_WIDTH
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return label
 
@@ -1114,11 +1136,16 @@ static func _make_rich_text(
 	text: String,
 	font_size: int,
 	font_color: Color,
-	min_width: float = 0.0
+	min_width: float = _BOARD_POPUP_WIDTH
 ) -> RichTextLabel:
 	var rtl := RichTextLabel.new()
 	rtl.bbcode_enabled = true
-	rtl.text = text
+	# Establish a wrap width before fit_content measures the text. Measuring at
+	# zero width can leave the enclosing popup with a huge cached minimum height.
+	rtl.size.x = maxf(min_width, _BOARD_POPUP_WIDTH)
+	rtl.custom_maximum_size = Vector2(maxf(min_width, _BOARD_POPUP_WIDTH), 0.0)
+	if min_width > 0.0:
+		rtl.custom_minimum_size = Vector2(min_width, 0.0)
 	rtl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	rtl.scroll_active = false
 	rtl.fit_content = true
@@ -1127,8 +1154,7 @@ static func _make_rich_text(
 	rtl.add_theme_color_override("default_color", font_color)
 	# Keyword hints in BBCode need mouse interaction so hover tooltips can appear.
 	rtl.mouse_filter = Control.MOUSE_FILTER_STOP if text.contains("[hint=") else Control.MOUSE_FILTER_IGNORE
-	if min_width > 0.0:
-		rtl.custom_minimum_size = Vector2(min_width, 0.0)
+	rtl.text = text
 	return rtl
 
 static func _make_separator(color: Color) -> HSeparator:

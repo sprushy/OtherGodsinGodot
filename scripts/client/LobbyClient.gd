@@ -574,13 +574,15 @@ func lobby_event(message: Dictionary) -> void:
 			if not _is_authenticated:
 				_cancel_initial_auth_request()
 				_cancel_auth_response_timeout()
+				# A server restart loses its in-memory sessions. Try account
+				# sign-in before emitting a terminal reconnect failure.
+				if _try_fallback_to_password_login():
+					return
 				if _auto_reconnect_active:
 					# The server rejected our reconnect credentials; retrying the
 					# same token can never succeed, so stop the retry series.
 					_trace("auto-reconnect rejected by server: %s" % error_message)
 					_emit_auto_reconnect_failure()
-				if _try_fallback_to_password_login():
-					return
 				_trace("auth failed: %s" % error_message)
 				disconnect_from_server()
 				connection_failed.emit(error_message)
@@ -896,18 +898,20 @@ func _perform_auto_reconnect(expected_serial: int) -> void:
 	network_manager.disconnect_client()
 	var connect_err := connect_to_server(
 		_last_server_address,
-		"",
+		_pending_account_email,
 		_auto_reconnect_session_id,
 		_auto_reconnect_token,
 		_last_server_port,
 		_auto_reconnect_profile_id,
 		"login",
-		"",
-		"",
-		false
+		_pending_password,
+		_pending_account_username,
+		_pending_accepts_game_updates
 	)
 	if connect_err != OK:
-		_continue_auto_reconnect()
+		# Exhausting the transport ladder already schedules the next attempt.
+		if _auto_reconnect_active and expected_serial == _auto_reconnect_serial:
+			_continue_auto_reconnect()
 		return
 	# connect_to_server clears the in-session fields; the stashed copies keep
 	# the series alive across attempts.

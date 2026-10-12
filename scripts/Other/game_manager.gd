@@ -576,6 +576,21 @@ func _find_card_by_uid_recursive(card: Card, uid: String) -> Card:
 			return found_card
 	return null
 
+func get_incorporeal_attack_block_feedback(attacker: Card, defender: Card) -> Dictionary:
+	if attacker == null or defender == null or attacker.can_ignore_attack_targeting_restrictions(defender):
+		return {}
+	if defender.incorporeal and not defender.can_be_engaged_by_incorporeal_rules(attacker):
+		return {
+			"card": defender,
+			"message": "This card is Incorporeal and cannot be attacked by %s." % attacker.card_name,
+		}
+	if attacker.incorporeal and not attacker.can_engage_by_incorporeal_rules(defender):
+		return {
+			"card": attacker,
+			"message": "This card is Incorporeal and cannot attack %s." % defender.card_name,
+		}
+	return {}
+
 func can_cards_engage_each_other(attacker: Card, defender: Card) -> bool:
 	if attacker == null or defender == null:
 		return false

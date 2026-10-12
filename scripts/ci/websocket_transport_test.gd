@@ -7,6 +7,27 @@ const LobbyClientScript = preload("res://scripts/client/LobbyClient.gd")
 const MatchHostScript = preload("res://scripts/server/HeadlessMatchHost.gd")
 const MatchSupervisorScript = preload("res://scripts/server/MatchSupervisor.gd")
 const LobbyServerScript = preload("res://scripts/server/LobbyServer.gd")
+const MainMenuScript = preload("res://scripts/Other/MainMenu.gd")
+const LobbyProtocolScript = preload("res://scripts/network/LobbyProtocol.gd")
+
+class RecoveryLobbyClient extends LobbyClientScript:
+	var requests: Array[Dictionary] = []
+	var transport_fails := false
+
+	func _start_next_transport_attempt() -> Error:
+		if transport_fails:
+			return _finish_transport_ladder_failure()
+		return OK
+
+	func _send_request(message_type: String, payload: Dictionary = {}) -> void:
+		requests.append({"type": message_type, "payload": payload.duplicate(true)})
+
+class DeferredUpdateMenu extends MainMenuScript:
+	func _release_updates_enabled() -> bool:
+		return true
+
+	func _write_update_log(_message: String) -> void:
+		pass
 
 var _failures: PackedStringArray = []
 var _clients: Array[Node] = []
@@ -22,6 +43,8 @@ func _initialize() -> void:
 
 func _run() -> void:
 	_check_local_match_transport_cleanup()
+	_check_lobby_restart_recovery()
+	_check_update_deferral()
 	if not _failures.is_empty():
 		_finish()
 		return
@@ -117,6 +140,58 @@ func _run() -> void:
 	await _wait_for(func() -> bool: return _approvals.has(1))
 	_check(_approvals.has(1) and _clients[1].peer is WebSocketMultiplayerPeer, "reconnect retains WebSocket")
 	_finish()
+
+func _check_lobby_restart_recovery() -> void:
+	var lobby := RecoveryLobbyClient.new()
+	lobby.name = "RecoveryLobby"
+	root.add_child(lobby)
+	var failures: Array[String] = []
+	lobby.disconnected_from_lobby.connect(func() -> void: failures.append("disconnected"))
+	lobby.lobby_auto_reconnect_failed.connect(func() -> void: failures.append("reconnect failed"))
+	lobby._last_server_address = "wss://game.example.com/lobby"
+	lobby._pending_account_email = "restart@example.com"
+	lobby._pending_password = "test-password"
+	lobby._pending_account_username = "RestartTester"
+	lobby.current_session_id = "old-session"
+	lobby.current_reconnect_token = "old-token"
+	lobby.current_profile_id = "profile"
+	_check(lobby._try_auto_reconnect(), "authenticated lobby drop starts recovery")
+	lobby._perform_auto_reconnect(lobby._auto_reconnect_serial)
+	lobby._transport_connected_signal_received = true
+	_check(lobby._pending_password == "test-password" and lobby._pending_account_email == "restart@example.com", "automatic reconnect retains sign-in credentials")
+	lobby._send_initial_auth_request()
+	_check(lobby.requests[-1].type == LobbyProtocolScript.REQUEST_RECONNECT_LOBBY, "recovery tries the session token first")
+	lobby._password_auth_allowed_for_current_connection = true
+	lobby.lobby_event(LobbyProtocolScript.make_message(LobbyProtocolScript.ROOM_ERROR, {"message": "Lobby session not found."}))
+	_check(failures.is_empty() and lobby.is_auto_reconnecting(), "expired session falls back without a terminal disconnect")
+	_check(lobby.requests[-1].type == LobbyProtocolScript.LOGIN_ACCOUNT and lobby.requests[-1].payload.email == "restart@example.com" and lobby.requests[-1].payload.password == "test-password", "restart falls back to account sign-in")
+	lobby.lobby_event(LobbyProtocolScript.make_message(LobbyProtocolScript.HELLO_OK, {"session_id": "new-session", "reconnect_token": "new-token"}))
+	_check(lobby.is_authenticated() and not lobby.is_auto_reconnecting() and lobby.current_session_id == "new-session", "account sign-in completes restart recovery")
+	lobby._on_server_disconnected()
+	lobby.transport_fails = true
+	var attempts_before := lobby._auto_reconnect_attempt
+	lobby._perform_auto_reconnect(lobby._auto_reconnect_serial)
+	_check(lobby._auto_reconnect_attempt == attempts_before + 1, "one transport failure schedules only one retry")
+	lobby.disconnect_from_server()
+	lobby.free()
+
+func _check_update_deferral() -> void:
+	var menu := DeferredUpdateMenu.new()
+	var games := Control.new()
+	games.name = "GameContainer"
+	menu.add_child(games)
+	menu.game_container = games
+	var game := Control.new()
+	game.name = "MockGame"
+	games.add_child(game)
+	menu._begin_required_update("v0.2.999", "https://example.com/release", "https://example.com/game.zip", 1024, "hash", false, "https://example.com/game.zip.sha256")
+	_check(not menu._deferred_required_update.is_empty() and not menu._is_auto_updating, "new release waits while a game is visible")
+	_check(str(menu._deferred_required_update.get("download_sha256_url", "")) == "https://example.com/game.zip.sha256", "deferred release retains verification metadata")
+	games.visible = false
+	_check(not menu._should_defer_required_update(), "returning to menu permits the deferred update")
+	menu._match_launch_queued = true
+	_check(menu._should_defer_required_update(), "match handoff defers updates before the game is visible")
+	menu.free()
 
 func _check_local_match_transport_cleanup() -> void:
 	var parent := Node.new()

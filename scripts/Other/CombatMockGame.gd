@@ -486,6 +486,8 @@ var _pending_wolf_master_summon: Card = null
 var _pending_wolf_master_mode: String = ""
 var _pending_champions_call_god: GodCard = null
 var _pending_champions_call_shelves: Array[Card] = []
+var _champions_call_hand_proxy: Card = null
+var _champions_call_hand_proxy_god_uid: String = ""
 var _pending_hati_prompts: Array[Hati] = []
 var _declined_hati_prompts: Array[Hati] = []
 var _active_hati_prompt: Hati = null
@@ -2621,6 +2623,10 @@ func _ready() -> void:
 	left_bottom_spacer.visible = true
 	right_panel.custom_minimum_size.x = RIGHT_PANEL_MIN_WIDTH
 	right_panel.add_theme_constant_override("separation", RIGHT_PANEL_CONTROL_GAP)
+	# Graves extend into this sidebar; its empty layout controls must not catch clicks.
+	right_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	right_top_spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	right_bottom_spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_forfeit_button_default_text = forfeit_button.text
 	forfeit_button.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
 	forfeit_button.offset_left = CORNER_ACTION_MARGIN + SOUND_MUTE_BUTTON_WIDTH + CORNER_ACTION_GAP
@@ -7086,6 +7092,9 @@ func _do_update_ui(expected_generation: int = -1) -> void:
 	_refresh_observer_perspective_button()
 	_restore_active_raven_prime_prompt_overlay()
 	_sync_heavy_snow_weather_visuals()
+	# Hand redraws append new controls; the shelving dialog must keep input priority.
+	if is_instance_valid(_zone_overlay) and _zone_overlay.name == "ChampionsCallOverlay":
+		_promote_transient_ui(_zone_overlay, CONTEXT_MENU_Z_INDEX + 1)
 
 func _update_ui_immediately() -> void:
 	_ui_update_generation += 1
@@ -7139,7 +7148,7 @@ func _is_active_heavy_snow_card(card: Card) -> bool:
 		and not card.abilities_suppressed()
 
 func _sanitize_transient_card_references() -> void:
-	if selected_card != null and selected_card.current_zone == null:
+	if selected_card != null and selected_card.current_zone == null and not _is_champions_call_hand_proxy(selected_card):
 		selected_card = null
 	if selected_card != null:
 		_indicated_move_card = null
@@ -8211,6 +8220,9 @@ func _is_hand_context_menu_stale(hand_player: Player) -> bool:
 		return false
 	if hand_player == null or hand_player.hand_zone == null:
 		return true
+	var champion_proxy := _get_champions_call_hand_proxy(hand_player)
+	if champion_proxy != null and champion_proxy.uid == source_uid:
+		return false
 	for hand_card in hand_player.hand_zone.cards:
 		var card := hand_card as Card
 		if card != null and card.uid == source_uid:
@@ -10324,11 +10336,16 @@ func _get_hand_card_display_mana_cost(card: Card) -> int:
 	var hand_player := _get_visible_hand_player()
 	if hand_player == null:
 		return card.mana_cost
+	if _is_champions_call_hand_proxy(card):
+		var god := game_manager.get_card_by_uid(_champions_call_hand_proxy_god_uid)
+		return game_manager.get_creature_summon_mana_cost(hand_player, card, god, false)
 	return game_manager.get_card_play_mana_cost(hand_player, card)
 
 func _get_hand_card_cost_adjustment_lines(card: Card) -> Array[String]:
 	var lines: Array[String] = []
 	if card == null or game_manager == null:
+		return lines
+	if _is_champions_call_hand_proxy(card):
 		return lines
 	var hand_player := _get_visible_hand_player()
 	if hand_player == null:
@@ -10433,6 +10450,19 @@ func _get_hand_render_entries(
 			"display_mana_cost": _get_graveyard_hand_proxy_display_mana_cost(card),
 			"cost_adjustment_lines": [],
 			"highlighted": _is_freyja_active_selected_card(card),
+			"blot_summonable": false,
+			"blot_selected": false,
+		})
+	var champion_proxy := _get_champions_call_hand_proxy(hand_player)
+	if champion_proxy != null:
+		# Like Freyja's graveyard choices, this is a hand entry for an effect summon.
+		entries = entries.filter(func(entry: Dictionary) -> bool: return entry.get("card") != champion_proxy)
+		entries.append({
+			"card": champion_proxy,
+			"is_proxy": true,
+			"display_mana_cost": _get_hand_card_display_mana_cost(champion_proxy),
+			"cost_adjustment_lines": [],
+			"highlighted": selected_card == champion_proxy,
 			"blot_summonable": false,
 			"blot_selected": false,
 		})
@@ -10561,7 +10591,7 @@ func draw_hand() -> void:
 		)
 		vc.set_hover_viewer(game_manager.get_feedback_viewer())
 		if bool(entry.get("is_proxy", false)):
-			vc.set_hand_proxy_visual(true, true)
+			vc.set_hand_proxy_visual(true, not _is_champions_call_hand_proxy(card))
 			if bool(entry.get("highlighted", false)):
 				highlighted_proxy_cards.append(vc)
 		else:
@@ -10799,7 +10829,9 @@ func _start_card_shelve_animation(card: Card, source: Dictionary) -> void:
 		return
 	draw_button.set_deck_count(card.card_owner.deck_zone.get_card_count())
 	var visual := source.get("visual", null) as Control
-	if visual != null and is_instance_valid(visual):
+	# Field zones are reused for the slab and future cards; the refresh removes
+	# the shelved card without hiding the entire slot.
+	if is_instance_valid(visual) and not visual is BoardZoneUI:
 		visual.modulate.a = 0.0
 	var animation := CardShelveAnimationScript.new()
 	animation.name = "CardShelveAnimation"
@@ -11037,6 +11069,9 @@ func _get_live_hand_hover_source_side(vc: VisualCard) -> int:
 	return 0
 
 func _show_hand_hover_preview(vc: VisualCard) -> void:
+	if _has_active_modal_prompt():
+		_hide_hand_hover_preview()
+		return
 	if vc != null and vc.card_data != null and _draw_arrival_uids.has(vc.card_data.uid):
 		return
 	if _is_match_replay_open():
@@ -11219,6 +11254,9 @@ func _any_hand_card_list_interacting(cards: Array) -> bool:
 	return false
 
 func _find_hand_hover_card_at(global_pos: Vector2) -> VisualCard:
+	# Cards behind a modal must not create a preview that intercepts its buttons.
+	if _has_active_modal_prompt():
+		return null
 	var hovered_vc := _find_hand_hover_card_in_list(_enemy_hand_visual_cards, global_pos)
 	if hovered_vc != null:
 		return hovered_vc
@@ -12044,6 +12082,7 @@ func _show_power_hover_popup(source: Control, text: String, bbcode_text: String 
 	label.scroll_active = false
 	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	label.custom_minimum_size = Vector2(POWER_HOVER_WIDTH, 0.0)
+	label.custom_maximum_size = Vector2(POWER_HOVER_WIDTH, 0.0)
 	label.add_theme_font_size_override("normal_font_size", 12)
 	label.add_theme_font_size_override("bold_font_size", 12)
 	label.add_theme_color_override("default_color", Color(1.0, 0.95, 0.98))
@@ -14708,7 +14747,7 @@ func _resolve_zone_replay_data(data: Dictionary) -> Zone:
 	return null
 
 func _retry_hand_card_pressed(card_uid: String) -> void:
-	var card := game_manager.get_card_by_uid(card_uid) if game_manager != null else null
+	var card := _get_hand_interaction_card_by_uid(card_uid)
 	if card != null:
 		_on_hand_card_pressed(card)
 
@@ -14727,7 +14766,7 @@ func _retry_empty_zone_pressed(
 	var zone := _resolve_zone_replay_data(zone_data)
 	if zone != null:
 		if not selected_card_uid.is_empty():
-			selected_card = game_manager.get_card_by_uid(selected_card_uid)
+			selected_card = _get_hand_interaction_card_by_uid(selected_card_uid)
 			placement_mode = replay_placement_mode
 			if placement_container != null:
 				placement_container.visible = false
@@ -14738,12 +14777,12 @@ func _retry_empty_zone_pressed(
 		_on_empty_zone_pressed(zone)
 
 func _retry_card_drag_released(card_uid: String, drop_pos: Vector2, card_rotated: bool, card_stealth: bool) -> void:
-	var card := game_manager.get_card_by_uid(card_uid) if game_manager != null else null
+	var card := _get_hand_interaction_card_by_uid(card_uid)
 	if card != null:
 		_on_card_drag_released(card, drop_pos, card_rotated, card_stealth)
 
 func _retry_card_dropped_to_zone(card_uid: String, zone_data: Dictionary, is_rotated: bool, is_stealth: bool) -> void:
-	var card := game_manager.get_card_by_uid(card_uid) if game_manager != null else null
+	var card := _get_hand_interaction_card_by_uid(card_uid)
 	var zone := _resolve_zone_replay_data(zone_data)
 	if card != null and zone != null:
 		_on_card_dropped_to_zone(card, zone, is_rotated, is_stealth)
@@ -15512,8 +15551,9 @@ func _prompt_champions_call_shelving(god: GodCard, on_complete: Callable, on_can
 	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
 	overlay.z_index = 300
 	add_child(overlay)
-	_promote_transient_ui(overlay)
+	_promote_transient_ui(overlay, CONTEXT_MENU_Z_INDEX + 1)
 	_zone_overlay = overlay
+	_hide_hand_hover_preview()
 
 	var bg := ColorRect.new()
 	bg.color = Color(0.02, 0.02, 0.04, 0.74)
@@ -15631,9 +15671,10 @@ func _prompt_champions_call_shelving(god: GodCard, on_complete: Callable, on_can
 	if has_shelve_choices:
 		var scroll := ScrollContainer.new()
 		scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
-		scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+		# Full card previews can be taller than the dialog; keep the action row reachable.
+		scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 		scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		scroll.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+		scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 		scroll.custom_minimum_size = Vector2(0, VisualCard.CARD_HEIGHT + 28)
 		scroll.mouse_filter = Control.MOUSE_FILTER_STOP
 		vbox.add_child(scroll)
@@ -15692,6 +15733,9 @@ func _prompt_champions_call_shelving(god: GodCard, on_complete: Callable, on_can
 
 func _show_champions_call_prompt(god: GodCard) -> void:
 	_hide_champions_call_prompt()
+	if god is Thor:
+		_begin_champions_call_activation(god)
+		return
 	if god == null or game_manager == null:
 		return
 	if not god.can_use_champions_call(game_manager):
@@ -15790,15 +15834,15 @@ func _should_start_champions_call_activation(god: GodCard) -> bool:
 		return true
 	return god.get_valid_targets(game_manager).is_empty()
 
-func _queue_champions_call_activation(god: GodCard, chosen_shelves: Array[Card] = [], zone: Zone = null, mode: String = "aggressive") -> void:
-	if god == null:
-		return
+func _queue_champions_call_activation(god: GodCard, chosen_shelves: Array[Card] = [], zone: Zone = null, mode: String = "aggressive") -> bool:
+	if god == null or game_input == null:
+		return false
 	var shelve_uids: Array[String] = []
 	for card in chosen_shelves:
 		if card != null and "uid" in card:
 			shelve_uids.append(card.uid)
 	var god_uid: String = god.get("uid") if "uid" in god else ""
-	game_input.submit_action({
+	return game_input.submit_action({
 		type = "god_ability",
 		god_uid = god_uid,
 		shelve_uids = shelve_uids,
@@ -15810,24 +15854,120 @@ func _queue_champions_call_activation(god: GodCard, chosen_shelves: Array[Card] 
 func _begin_champions_call_activation(god: GodCard) -> void:
 	if god == null:
 		return
+	if god is Thor:
+		if not god.can_use_champions_call(game_manager):
+			_set_action_label_text(god.get_champions_call_failure_reason(game_manager))
+			return
+		_hide_champions_call_prompt()
+		_close_context_menu()
+		if _champions_call_hand_proxy_god_uid != god.uid or _champions_call_hand_proxy == null:
+			_champions_call_hand_proxy = god.get_champions_call_candidate(true)
+		_champions_call_hand_proxy_god_uid = god.uid
+		_set_action_label_text("Thor, Active God is ready in your hand. Drag him onto an empty friendly square, or right-click for stance options.")
+		update_ui()
+		return
 	var on_confirm_shelving := func(chosen_shelves: Array[Card]) -> void:
 		_begin_champions_call_placement(god, chosen_shelves)
 	var on_cancel_shelving := func() -> void:
 		_cancel_champions_call_flow("Cancelled " + god.card_name + ".")
 	_prompt_champions_call_shelving(god, on_confirm_shelving, on_cancel_shelving)
 
-func _begin_champions_call_placement(god: GodCard, chosen_shelves: Array[Card]) -> void:
-	if god == null:
+func _is_champions_call_hand_proxy(card: Card) -> bool:
+	return card != null and card == _champions_call_hand_proxy and not _champions_call_hand_proxy_god_uid.is_empty()
+
+func _get_champions_call_hand_proxy(hand_player: Player) -> Card:
+	if _champions_call_hand_proxy_god_uid.is_empty() or game_manager == null:
+		return null
+	var god := game_manager.get_card_by_uid(_champions_call_hand_proxy_god_uid) as GodCard
+	if god == null or god.card_owner == null or god.current_zone != god.card_owner.god_zone \
+			or god.card_owner != game_manager.current_player or game_manager.is_game_over:
+		_clear_champions_call_hand_proxy()
+		return null
+	if god.card_owner != hand_player:
+		return null
+	return _champions_call_hand_proxy
+
+func _clear_champions_call_hand_proxy() -> void:
+	if _champions_call_hand_proxy != null and selected_card == _champions_call_hand_proxy:
+		selected_card = null
+		placement_mode = ""
+	_champions_call_hand_proxy = null
+	_champions_call_hand_proxy_god_uid = ""
+
+func _get_hand_interaction_card_by_uid(card_uid: String) -> Card:
+	var proxy := _get_champions_call_hand_proxy(_get_visible_hand_player())
+	if proxy != null and proxy.uid == card_uid:
+		return proxy
+	return game_manager.get_card_by_uid(card_uid) if game_manager != null else null
+
+func _summon_champions_call_hand_proxy(card: Card, zone: Zone, mode: String) -> void:
+	if not _is_champions_call_hand_proxy(card) or game_manager == null:
 		return
+	var god := game_manager.get_card_by_uid(_champions_call_hand_proxy_god_uid) as GodCard
+	if god == null or not god.can_use_champions_call(game_manager):
+		_set_action_label_text("Champion's Call is no longer available.")
+		update_ui()
+		return
+	if mode not in ["aggressive", "defensive"]:
+		_set_action_label_text("Champion's Call summons face-up. Choose aggressive or defensive stance.")
+		return
+	if zone == null or zone not in god.get_champions_call_open_zones():
+		_set_action_label_text("Drop Thor onto an empty friendly frontline or reserve square.")
+		return
+	var god_uid := god.uid
+	var destination := _get_zone_replay_data(zone)
+	var confirm_shelving := func(chosen_shelves: Array[Card]) -> void:
+		var live_god := game_manager.get_card_by_uid(god_uid) as GodCard
+		var live_zone := _resolve_zone_replay_data(destination)
+		if live_god == null or live_zone == null or live_zone not in live_god.get_champions_call_open_zones():
+			_set_action_label_text("Champion's Call cancelled: its destination is no longer available.")
+			update_ui()
+			return
+		if _queue_champions_call_activation(live_god, chosen_shelves, live_zone, mode):
+			_clear_champions_call_hand_proxy()
+		update_ui()
+	var cancel_shelving := func() -> void:
+		_set_action_label_text("Champion's Call cancelled. Thor remains available in your hand.")
+		update_ui()
+	if god.get_champions_call_max_shelve_count(game_manager) == 0:
+		confirm_shelving.call([])
+	else:
+		_prompt_champions_call_shelving(god, confirm_shelving, cancel_shelving)
+
+func _begin_champions_call_placement(god: GodCard, chosen_shelves: Array[Card], chosen_mode: String = "") -> void:
+	if god == null or game_manager == null:
+		return
+	# Full-state snapshots replace card instances, including during shelving.
+	var live_god := game_manager.get_card_by_uid(god.uid) as GodCard
+	if live_god == null or not live_god.can_use_champions_call(game_manager):
+		_cancel_champions_call_flow("Champion's Call is no longer available.")
+		return
+	var live_shelves: Array[Card] = []
+	var available_choices := live_god.get_champions_call_shelvable_hand_cards()
+	for chosen_card in chosen_shelves:
+		var live_card := game_manager.get_card_by_uid(chosen_card.uid) if chosen_card != null else null
+		if live_card == null or live_card not in available_choices or live_card in live_shelves:
+			_cancel_champions_call_flow("Champion's Call cancelled: the selected hand cards changed.")
+			return
+		live_shelves.append(live_card)
+	if live_shelves.size() < live_god.get_champions_call_required_shelve_count(game_manager) \
+			or live_shelves.size() > live_god.get_champions_call_max_shelve_count(game_manager):
+		_cancel_champions_call_flow("Champion's Call cancelled: its shelving cost changed.")
+		return
+	god = live_god
 	_pending_champions_call_god = god
-	_pending_champions_call_shelves = chosen_shelves.duplicate()
+	_pending_champions_call_shelves = live_shelves
 	selected_card = null
-	placement_mode = ""
+	_pending_drop_zone = null
+	placement_mode = chosen_mode
 	if placement_container != null:
 		placement_container.visible = true
 	if stealth_mode_btn != null:
 		stealth_mode_btn.visible = false
-	_set_action_label_text(god.card_name + ": choose aggressive or defensive stance, then click an empty friendly zone for its Active God.")
+	if placement_mode in ["aggressive", "defensive"]:
+		_set_action_label_text("Champion's Call: %s stance selected. Click an empty friendly zone." % placement_mode)
+	else:
+		_set_action_label_text(god.card_name + ": choose aggressive or defensive stance, then click an empty friendly zone for its Active God.")
 	update_ui()
 
 func _clear_champions_call_placement() -> void:
@@ -16779,7 +16919,8 @@ func _on_hand_card_pressed(card: Card) -> void:
 	_indicated_move_card = null
 	if _try_activate_graveyard_hand_proxy(card):
 		return
-	if game_manager != null and game_manager.current_player != null and card.current_zone != game_manager.current_player.hand_zone:
+	if game_manager != null and game_manager.current_player != null \
+			and card.current_zone != game_manager.current_player.hand_zone and not _is_champions_call_hand_proxy(card):
 		_set_action_label_text(card.card_name + " is not playable from this hand right now.")
 		update_ui()
 		return
@@ -16841,7 +16982,7 @@ func _make_context_action_symbol(action_kind: String, icon_size: float = 18.0) -
 	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return icon
 
-func _add_hand_creature_summon_option(vbox: VBoxContainer, label: String, mode: String, pressed_callback: Callable) -> void:
+func _add_hand_creature_summon_option(vbox: VBoxContainer, label: String, mode: String, pressed_callback: Callable, show_action_costs: bool = true) -> void:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 4)
 	row.mouse_filter = Control.MOUSE_FILTER_PASS
@@ -16850,6 +16991,7 @@ func _add_hand_creature_summon_option(vbox: VBoxContainer, label: String, mode: 
 	icon_row.add_theme_constant_override("separation", 1)
 	icon_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	icon_row.custom_minimum_size = Vector2(38.0, 0.0)
+	icon_row.visible = show_action_costs
 	for action_kind in Card.get_creature_summon_action_cost_kinds(mode == "stealth"):
 		icon_row.add_child(_make_context_action_symbol(action_kind, 18.0))
 	row.add_child(icon_row)
@@ -16967,10 +17109,12 @@ func _on_hand_card_right_clicked(card: Card) -> void:
 
 	for entry in [["Play in Aggressive Stance", "aggressive"], ["Play in Defensive Stance", "defensive"], ["Play in Stealth Mode (face-down)", "stealth"]]:
 		var mode: String = entry[1]
-		_add_hand_creature_summon_option(vbox, str(entry[0]), mode, func():
+		if _is_champions_call_hand_proxy(card) and mode == "stealth":
+			continue
+		var choose_stance := func() -> void:
 			_close_context_menu()
 			_select_hand_creature_for_placement(card, mode)
-		)
+		_add_hand_creature_summon_option(vbox, str(entry[0]), mode, choose_stance, not _is_champions_call_hand_proxy(card))
 
 	if card is Fenrir and (card as Fenrir).can_use_hand_ability(game_manager):
 		for entry in [["Wolf Master in Aggressive Stance", "aggressive"], ["Wolf Master in Defensive Stance", "defensive"], ["Wolf Master in Stealth Mode", "stealth"]]:
@@ -18227,6 +18371,9 @@ func _try_handle_sacrifice_opened_lane_click(card: Card) -> bool:
 
 func _try_play_selected_creature_to_zone(zone: Zone) -> void:
 	if selected_card == null or selected_card.card_type != Card.CardType.CREATURE or placement_mode == "":
+		return
+	if _is_champions_call_hand_proxy(selected_card):
+		_summon_champions_call_hand_proxy(selected_card, zone, placement_mode)
 		return
 	if not _can_play_card_for_turn_action(game_manager.current_player, selected_card, zone):
 		_set_action_label_text(_get_play_card_unavailable_text(selected_card, zone))
@@ -21590,6 +21737,8 @@ func _on_enemy_card_pressed(target_card: Card) -> void:
 		
 		if attack_target != null:
 			_indicated_move_card = null
+			if _show_incorporeal_attack_block_feedback(selected_attacker, attack_target):
+				return
 			if not _submit_attack_request(selected_attacker, attack_target):
 				_set_action_label_text("Could not submit that attack.")
 				return
@@ -21684,6 +21833,19 @@ func _is_direct_attack_target_card(card: Card) -> bool:
 	if card.card_type == Card.CardType.CREATURE or card.card_type == Card.CardType.STRUCTURE:
 		return true
 	return card.card_type == Card.CardType.EQUIPMENT and card.equipped_on == null
+
+func _show_incorporeal_attack_block_feedback(attacker: Card, target) -> bool:
+	if game_manager == null or not target is Card:
+		return false
+	var feedback := game_manager.get_incorporeal_attack_block_feedback(attacker, target as Card)
+	if feedback.is_empty():
+		return false
+	_set_action_label_text(str(feedback["message"]))
+	var fading_card := feedback["card"] as Card
+	var zone_ui := _get_zone_ui_for_zone(fading_card.current_zone)
+	if is_instance_valid(zone_ui):
+		zone_ui.play_incorporeal_attack_fade(fading_card)
+	return true
 
 func _submit_attack_request(attacker: Card, target) -> bool:
 	if attacker == null:
@@ -22751,6 +22913,8 @@ func _bdrag_finish(drop_pos: Vector2) -> void:
 			_set_action_label_text(attack_block)
 			return
 		if not game_manager.can_cards_engage_each_other(card, target_card):
+			if _show_incorporeal_attack_block_feedback(card, target_card):
+				return
 			_set_action_label_text(_get_card_name_safe(card, "That card") + " cannot engage " + _get_card_name_safe(target_card, "that target") + ".")
 			return
 		if not _submit_attack_request(card, target_card):
@@ -22933,6 +23097,9 @@ func _sync_pending_board_drag_attack_after_reveal() -> void:
 	var attack_target = _resolve_board_drag_attack_after_reveal_target()
 	var cancel_reason := _get_board_drag_attack_after_reveal_cancel_reason(attacker, attack_target)
 	if cancel_reason.strip_edges() != "":
+		if _show_incorporeal_attack_block_feedback(attacker, attack_target):
+			_clear_pending_board_drag_attack_after_reveal()
+			return
 		_cancel_pending_board_drag_attack_after_reveal(cancel_reason)
 		return
 	_clear_pending_board_drag_attack_after_reveal()
@@ -22971,6 +23138,8 @@ func _try_auto_switch_defensive_drag_attack(card: Card, attack_target) -> bool:
 	if attack_target is Card:
 		var target_card := attack_target as Card
 		if not game_manager.can_cards_engage_each_other(card, target_card):
+			if _show_incorporeal_attack_block_feedback(card, target_card):
+				return true
 			_set_action_label_text(_get_card_name_safe(card, "That card") + " cannot engage " + _get_card_name_safe(target_card, "that target") + ".")
 			return true
 	elif attack_target is Player:
@@ -27594,6 +27763,7 @@ func _on_blot_sacrifice_cancel_pressed() -> void:
 	update_ui()
 
 func _dismiss_transient_prompts(clear_required_prompts: bool = true) -> void:
+	_clear_champions_call_hand_proxy()
 	var preserve_raven_prime_prompts := not clear_required_prompts and _has_raven_prime_prompt_state()
 	_hide_pause_menu()
 	_hide_devour_cancel_prompt()
@@ -30838,6 +31008,8 @@ func _debug_log_full_state(context: String, data: Dictionary, state: Dictionary)
 
 func _apply_full_state(data: Dictionary) -> void:
 	_pending_priority_auto_pass_signature.clear()
+	var champions_call_mode := placement_mode
+	var champions_call_hand_selected := _is_champions_call_hand_proxy(selected_card)
 	var state: Dictionary = data.get("state", {})
 	_debug_log_full_state("receive", data, state)
 	var pending_priority_prompt: Dictionary = {}
@@ -30949,6 +31121,13 @@ func _apply_full_state(data: Dictionary) -> void:
 		if _post_game_board_refresh_locked:
 			return
 		_sync_priority_preferences_to_match()
+		var champion_proxy := _get_champions_call_hand_proxy(_get_visible_hand_player())
+		if champions_call_hand_selected and champion_proxy != null:
+			_select_hand_card(champion_proxy)
+			placement_mode = champions_call_mode
+		# Keep an unfinished Champion's Call usable after the generic selection reset.
+		if _pending_champions_call_god != null:
+			_begin_champions_call_placement(_pending_champions_call_god, _pending_champions_call_shelves, champions_call_mode)
 
 	update_ui()
 	var restored_reveal_prompt := _ensure_pending_reveal_click_selection()
@@ -32377,6 +32556,9 @@ func _on_card_dropped_to_zone(card: Card, zone: Zone, is_rotated: bool = false, 
 		return
 	var priority_drop_allowed := game_manager != null and game_manager.can_card_respond_to_priority(card, game_manager.priority_player)
 	if not priority_drop_allowed and _reject_non_priority_action_if_blocked(Callable(self, "_retry_card_dropped_to_zone").bind(card.uid, _get_zone_replay_data(zone), is_rotated, is_stealth), "drop " + card.card_name):
+		return
+	if _is_champions_call_hand_proxy(card):
+		_summon_champions_call_hand_proxy(card, zone, "stealth" if is_stealth else ("defensive" if is_rotated else "aggressive"))
 		return
 	_pending_spell_display_zone = _get_drop_play_display_zone(card, zone)
 	var prepare_on_drop := _should_prepare_magical_card_on_drop(card, is_stealth)

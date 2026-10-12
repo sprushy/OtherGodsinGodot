@@ -588,6 +588,9 @@ var _prepared_magical_cover_overlay: Control = null
 var _prepared_magical_hover_tween: Tween = null
 var _visual_state_card: Card = null
 var _visual_state_refresh_queued: bool = false
+var _incorporeal_fade_tween: Tween = null
+var _incorporeal_fade_card_uid: String = ""
+var _incorporeal_fade_base_alpha: float = 1.0
 var _badge_hover_popup: Control = null
 var _stealth_fog_overlay: Control = null
 
@@ -2740,6 +2743,8 @@ func _show_badge_hover_popup(anchor: Control, text: String, preview_card: Card =
 	if text.strip_edges() != "":
 		var label := RichTextLabel.new()
 		label.bbcode_enabled = true
+		label.size.x = 240.0
+		label.custom_maximum_size = Vector2(240.0, 0.0)
 		label.text = text
 		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		label.scroll_active = false
@@ -4847,6 +4852,27 @@ func show_followers_attack_result(new_followers: int, duration_seconds: float = 
 		CONNECT_ONE_SHOT
 	)
 
+func play_incorporeal_attack_fade(card: Card) -> void:
+	if card == null or zone == null or not zone.cards.has(card) or not is_inside_tree():
+		return
+	if _incorporeal_fade_tween == null:
+		_incorporeal_fade_base_alpha = modulate.a
+	else:
+		_incorporeal_fade_tween.kill()
+	_incorporeal_fade_card_uid = str(card.uid)
+	_incorporeal_fade_tween = create_tween().set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	_incorporeal_fade_tween.tween_property(self, "modulate:a", 0.0, 0.22)
+	_incorporeal_fade_tween.tween_interval(0.1)
+	_incorporeal_fade_tween.tween_property(self, "modulate:a", _incorporeal_fade_base_alpha, 0.35)
+	_incorporeal_fade_tween.tween_callback(_clear_incorporeal_attack_fade)
+
+func _clear_incorporeal_attack_fade() -> void:
+	if _incorporeal_fade_tween != null:
+		_incorporeal_fade_tween.kill()
+	_incorporeal_fade_tween = null
+	_incorporeal_fade_card_uid = ""
+	modulate.a = _incorporeal_fade_base_alpha
+
 func get_visual_anchor_global() -> Vector2:
 	var anchor_control: Control = _raised_overlay
 	if anchor_control == null or not is_instance_valid(anchor_control):
@@ -5117,6 +5143,9 @@ func _refresh_display() -> void:
 	if not is_inside_tree() or is_queued_for_deletion():
 		return
 	var card: Card = _preview_card if _preview_card != null else (zone.cards[0] if zone.cards.size() > 0 else null)
+	# Keep the fade through redraws, but never transfer it to another card or an empty slot.
+	if _incorporeal_fade_tween != null and (card == null or str(card.uid) != _incorporeal_fade_card_uid):
+		_clear_incorporeal_attack_fade()
 	var preserved_stealth_fog_overlay := _take_stealth_fog_overlay_for_refresh(card)
 	_hide_ability_popup()
 	_hide_badge_hover_popup()
@@ -6141,6 +6170,8 @@ func _input(event: InputEvent) -> void:
 	if not _pinned:
 		return
 	if event is InputEventMouseButton and event.pressed:
+		if event.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:
+			return
 		# Any click anywhere unpins
 		_pinned = false
 		_hide_ability_popup()
@@ -6203,6 +6234,7 @@ func _show_ability_popup() -> void:
 	popup_root.top_level = true
 	popup_root.z_as_relative = false
 	popup_root.z_index = POPUP_Z_INDEX
+	popup_root.visible = false
 
 	var popup := PanelContainer.new()
 	var pstyle := StyleBoxFlat.new()
@@ -6263,7 +6295,7 @@ func _show_ability_popup() -> void:
 		elif card.is_prepared and card.is_magical_card():
 			cost_lines_shared = _get_prepared_magical_hover_cost_lines(card)
 
-	popup.add_child(CardDetailContentBuilderScript.build_board_popup_body(
+	var hover_body := CardDetailContentBuilderScript.build_board_popup_body(
 		card,
 		popup_viewer_shared,
 		{
@@ -6276,7 +6308,9 @@ func _show_ability_popup() -> void:
 			"power_cost_lines": power_cost_lines_shared,
 			"game_manager": game_manager
 		}
-	))
+	)
+	var hover_max_height := minf(520.0, maxf(80.0, get_viewport_rect().size.y - 32.0))
+	popup.add_child(CardDetailContentBuilderScript.wrap_hover_body(hover_body, hover_max_height))
 
 	popup_root.add_child(popup)
 
@@ -6292,6 +6326,8 @@ func _show_ability_popup() -> void:
 	floating_parent.add_child(popup_root)
 	popup_root.move_to_front()
 
+	await get_tree().process_frame
+	# Nested active-god previews need another container layout pass before sizing.
 	await get_tree().process_frame
 	if not is_instance_valid(popup_root) or not is_instance_valid(popup):
 		return
@@ -6334,6 +6370,7 @@ func _show_ability_popup() -> void:
 		scaled_popup_root_size,
 		popup_vp_size_shared
 	)
+	popup_root.visible = true
 
 func _get_card_hover_popup_position(
 	anchor_rect: Rect2,

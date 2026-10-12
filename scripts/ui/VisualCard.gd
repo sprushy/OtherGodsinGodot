@@ -1428,12 +1428,16 @@ func _show_hover_panel() -> void:
 	style.content_margin_bottom = 8
 	panel.add_theme_stylebox_override("panel", style)
 	var hover_body: Control = null
+	var vp_size := get_viewport().get_visible_rect().size
 	if _hover_use_board_popup:
 		hover_body = CardDetailContentBuilderScript.build_board_popup_body_from_game_state(
 			card_data,
 			_hover_viewer,
 			_hover_game_manager,
 			{"show_listed_costs": true}
+		)
+		hover_body = CardDetailContentBuilderScript.wrap_hover_body(
+			hover_body, minf(_HOVER_PANEL_MAX_HEIGHT, maxf(80.0, vp_size.y - 24.0))
 		)
 	else:
 		hover_body = CardDetailContentBuilderScript.build_visual_hover_body(
@@ -1448,12 +1452,16 @@ func _show_hover_panel() -> void:
 	panel.add_child(hover_body)
 
 	floating_parent.add_child(panel)
-	if hover_body is ScrollContainer:
+	if hover_body is ScrollContainer and not _hover_use_board_popup:
 		var hover_scroll := hover_body as ScrollContainer
 		CardDetailContentBuilderScript.apply_deckbuilder_scrollbar_style(hover_scroll, true)
 		hover_scroll.ready.connect(Callable(self, "_apply_hover_scrollbar_style").bind(hover_scroll), CONNECT_ONE_SHOT)
 	panel.move_to_front()
-	var vp_size := get_viewport().get_visible_rect().size
+	_hover_panel = panel
+	await get_tree().process_frame
+	await get_tree().process_frame
+	if not is_instance_valid(panel) or panel.is_queued_for_deletion():
+		return
 	if _hover_use_board_popup:
 		panel.size = panel.get_combined_minimum_size()
 	else:
@@ -1467,8 +1475,6 @@ func _show_hover_panel() -> void:
 	var py := clampf(global_position.y, 4.0, max(4.0, vp_size.y - panel_size.y - 4.0))
 	panel.global_position = Vector2(px, py)
 	panel.visible = true
-
-	_hover_panel = panel
 
 func _apply_hover_scrollbar_style(scroll: ScrollContainer) -> void:
 	if scroll == null or not is_instance_valid(scroll):
