@@ -103,6 +103,14 @@ jobs:
         run: |
           echo "::warning::Windows signing secrets are not configured. Unsigned builds are more likely to be blocked by SmartScreen and antivirus."
 
+      - name: Check server runtime packaging
+        shell: pwsh
+        run: ./scripts/ci/server_runtime_package_test.ps1
+
+      - name: Stage server startup and WebSocket configuration
+        shell: pwsh
+        run: ./scripts/server/lightsail/Stage-ServerRuntimeFiles.ps1 -OutputDirectory .exports/server
+
       - name: Package release zips
         run: |
           cd .exports/windows

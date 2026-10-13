@@ -91,6 +91,9 @@ func _on_peer_connected(id: int) -> void:
 	peer_connected.emit(_to_lobby_peer_id(id))
 
 func _on_peer_disconnected(id: int) -> void:
+	if not is_server:
+		_defer_client_disconnect_signal(&"peer_disconnected", [id])
+		return
 	if _should_suppress_disconnect_event():
 		_trace("ignoring stale peer_disconnected %d during transport replacement" % id)
 		return
@@ -122,14 +125,25 @@ func _on_connected_to_server() -> void:
 
 func _on_connection_failed() -> void:
 	_trace("connection_failed")
-	connection_failed.emit()
+	_defer_client_disconnect_signal(&"connection_failed")
 
 func _on_server_disconnected() -> void:
-	if _should_suppress_disconnect_event():
-		_trace("ignoring stale server_disconnected during transport replacement")
-		return
 	_trace("server_disconnected")
-	server_disconnected.emit()
+	_defer_client_disconnect_signal(&"server_disconnected")
+
+func _defer_client_disconnect_signal(signal_name: StringName, arguments: Array = []) -> void:
+	# These callbacks run inside MultiplayerAPI.poll(). Listeners may replace
+	# the peer or remove this node's multiplayer scope. Let the engine finish
+	# polling before releasing either object; otherwise Godot can crash.
+	call_deferred("_emit_client_disconnect_signal", peer, signal_name, arguments)
+
+func _emit_client_disconnect_signal(expected_peer: MultiplayerPeer, signal_name: StringName, arguments: Array) -> void:
+	# A canceled attempt must not tear down a new connection on the same node.
+	if not is_inside_tree() or peer != expected_peer or is_server:
+		return
+	var signal_arguments: Array = [signal_name]
+	signal_arguments.append_array(arguments)
+	callv("emit_signal", signal_arguments)
 
 func create_server(port: int = 12345, assign_local_host_player: bool = true) -> Error:
 	var api := _ensure_multiplayer_api()

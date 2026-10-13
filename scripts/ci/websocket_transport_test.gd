@@ -42,6 +42,10 @@ func _initialize() -> void:
 	call_deferred("_run")
 
 func _run() -> void:
+	_check_lobby_endpoint_configuration()
+	await _check_stale_client_disconnect_events()
+	await _check_failed_lobby_transport_cleanup()
+	await _check_lobby_auth_rejection_cleanup()
 	_check_local_match_transport_cleanup()
 	_check_lobby_restart_recovery()
 	_check_update_deferral()
@@ -140,6 +144,99 @@ func _run() -> void:
 	await _wait_for(func() -> bool: return _approvals.has(1))
 	_check(_approvals.has(1) and _clients[1].peer is WebSocketMultiplayerPeer, "reconnect retains WebSocket")
 	_finish()
+
+func _check_lobby_endpoint_configuration() -> void:
+	var previous_url: Variant = ProjectSettings.get_setting(EndpointsScript.PUBLIC_URL_SETTING, "")
+	var previous_url_env := OS.get_environment(EndpointsScript.PUBLIC_URL_ENV)
+	var previous_transport_env := OS.get_environment(LobbyClientScript.TRANSPORT_OVERRIDE_ENV)
+	OS.set_environment(EndpointsScript.PUBLIC_URL_ENV, "")
+	OS.set_environment(LobbyClientScript.TRANSPORT_OVERRIDE_ENV, "")
+	ProjectSettings.set_setting(EndpointsScript.PUBLIC_URL_SETTING, "")
+	var lobby := LobbyClientScript.new()
+	var host := str(ProjectSettings.get_setting("application/config/default_lobby_host", ""))
+	_check(EndpointsScript.lobby_url(host).is_empty(), "UDP host does not invent a TLS endpoint")
+	var attempts: Array = lobby._build_transport_attempts(host, LobbyProtocolScript.PORT)
+	for attempt in attempts:
+		_check(attempt.transport != NetworkScript.TRANSPORT_WEBSOCKET, "unconfigured WebSocket is not attempted")
+	var failures: Array[String] = []
+	lobby.connection_failed.connect(func(message: String) -> void: failures.append(message))
+	lobby._last_server_address = host
+	lobby._last_transport_failure_was_timeout = true
+	lobby._finish_transport_ladder_failure()
+	_check(failures.size() == 1 and failures[0].contains("no secure WebSocket endpoint"), "restricted-network failure explains missing endpoint")
+	ProjectSettings.set_setting(EndpointsScript.PUBLIC_URL_SETTING, "wss://game.example.com")
+	attempts = lobby._build_transport_attempts(host, LobbyProtocolScript.PORT)
+	_check(not attempts.is_empty() and attempts[0].get("url", "") == "wss://game.example.com/lobby", "configured TLS endpoint is preferred")
+	ProjectSettings.set_setting(EndpointsScript.PUBLIC_URL_SETTING, previous_url)
+	OS.set_environment(EndpointsScript.PUBLIC_URL_ENV, previous_url_env)
+	OS.set_environment(LobbyClientScript.TRANSPORT_OVERRIDE_ENV, previous_transport_env)
+	lobby.free()
+
+func _check_stale_client_disconnect_events() -> void:
+	var network := _network_node("CanceledTransport")
+	var failures: Array[String] = []
+	network.connection_failed.connect(func() -> void: failures.append("failed"))
+	network.server_disconnected.connect(func() -> void: failures.append("disconnected"))
+	network.peer_disconnected.connect(func(_id: int) -> void: failures.append("peer disconnected"))
+	_check(network.create_client("127.0.0.1", 9) == OK, "start canceled UDP attempt")
+	network._on_connection_failed()
+	network._on_server_disconnected()
+	network._on_peer_disconnected(1)
+	_check(failures.is_empty(), "client disconnect notifications wait until polling completes")
+	network.disconnect_client()
+	_check(network.create_client("127.0.0.1", 9) == OK, "replace canceled UDP attempt")
+	await process_frame
+	_check(failures.is_empty(), "old disconnect notifications cannot fail a replacement transport")
+	network.disconnect_client()
+	network.get_parent().queue_free()
+	await process_frame
+
+func _check_failed_lobby_transport_cleanup() -> void:
+	# Exercise the menu's cleanup from a real refused WebSocket connection.
+	# Removing the custom multiplayer scope inside poll() used to crash Godot.
+	var port_probe := TCPServer.new()
+	if port_probe.listen(0, "127.0.0.1") != OK:
+		_check(false, "allocate refused lobby port")
+		return
+	var port := port_probe.get_local_port()
+	port_probe.stop()
+	var lobby := LobbyClientScript.new()
+	lobby.name = "FailedLobby"
+	root.add_child(lobby)
+	var failures: Array[String] = []
+	lobby.connection_failed.connect(func(message: String) -> void:
+		failures.append(message)
+		lobby.disconnect_from_server()
+		root.remove_child(lobby)
+		lobby.queue_free()
+	)
+	_check(lobby.connect_to_server("ws://127.0.0.1:%d/lobby" % port) == OK, "start refused lobby connection")
+	await _wait_for(func() -> bool: return not failures.is_empty())
+	_check(failures.size() == 1, "refused lobby connection reports one failure without crashing")
+	if is_instance_valid(lobby) and not lobby.is_queued_for_deletion():
+		lobby.disconnect_from_server()
+		lobby.queue_free()
+	await process_frame
+
+func _check_lobby_auth_rejection_cleanup() -> void:
+	var lobby := LobbyClientScript.new()
+	lobby.name = "RejectedAuthLobby"
+	root.add_child(lobby)
+	var failures: Array[String] = []
+	lobby.connection_failed.connect(func(message: String) -> void:
+		failures.append(message)
+		root.remove_child(lobby)
+		lobby.queue_free()
+	)
+	lobby.network_manager.game_event_received.emit(LobbyClientScript.LOBBY_EVENT_TYPE, LobbyProtocolScript.make_message(
+		LobbyProtocolScript.ROOM_ERROR, {"message": "Invalid account credentials."}
+	))
+	_check(failures.is_empty(), "authentication rejection cannot tear down the lobby inside RPC polling")
+	await process_frame
+	_check(failures.size() == 1 and failures[0] == "Invalid account credentials.", "deferred authentication rejection reports its error")
+	if is_instance_valid(lobby) and not lobby.is_queued_for_deletion():
+		lobby.queue_free()
+	await process_frame
 
 func _check_lobby_restart_recovery() -> void:
 	var lobby := RecoveryLobbyClient.new()
