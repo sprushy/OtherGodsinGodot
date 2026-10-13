@@ -31,9 +31,9 @@ static func lobby_url(address: String) -> String:
 	var default_host := str(ProjectSettings.get_setting("application/config/default_lobby_host", ""))
 	if not configured.is_empty() and (address == default_host or not OS.get_environment(PUBLIC_URL_ENV).is_empty()):
 		return configured + "/lobby"
-	if address.contains(":"):
-		return "wss://[%s]/lobby" % address
-	return "wss://%s/lobby" % address
+	# A UDP address does not imply a deployed TLS proxy or valid certificate.
+	# Only attempt WebSocket when its endpoint is explicitly configured.
+	return ""
 
 static func match_url(base_url: String, port: int) -> String:
 	if not is_valid_base_url(base_url.trim_suffix("/")) or port <= 0 or port > 65535:

@@ -181,7 +181,8 @@ func _build_transport_attempts(address: String, requested_port: int) -> Array[Di
 		})
 		return attempts
 	if transport_override == NetworkManagerScript.TRANSPORT_WEBSOCKET or transport_override == "ws":
-		attempts.append(_websocket_attempt(address))
+		if not WebSocketEndpointsScript.lobby_url(address).is_empty():
+			attempts.append(_websocket_attempt(address))
 		return attempts
 	if requested_port != LobbyProtocolScript.PORT:
 		attempts.append({
@@ -189,9 +190,12 @@ func _build_transport_attempts(address: String, requested_port: int) -> Array[Di
 			"port": requested_port,
 		})
 		return attempts
-	var prefer_websocket := _load_preferred_transport() == NetworkManagerScript.TRANSPORT_WEBSOCKET \
-		or not WebSocketEndpointsScript.public_base_url().is_empty() \
+	var has_websocket_endpoint := not WebSocketEndpointsScript.lobby_url(address).is_empty()
+	var prefer_websocket := has_websocket_endpoint and (
+		_load_preferred_transport() == NetworkManagerScript.TRANSPORT_WEBSOCKET
+		or not WebSocketEndpointsScript.public_base_url().is_empty()
 		or not _can_send_password_auth_to_address(address)
+	)
 	if prefer_websocket:
 		attempts.append(_websocket_attempt(address))
 	if _can_send_password_auth_to_address(address):
@@ -199,7 +203,7 @@ func _build_transport_attempts(address: String, requested_port: int) -> Array[Di
 			"transport": NetworkManagerScript.TRANSPORT_ENET,
 			"port": LobbyProtocolScript.PORT,
 		})
-	if not prefer_websocket:
+	if has_websocket_endpoint and not prefer_websocket:
 		attempts.append(_websocket_attempt(address))
 	return attempts
 
@@ -262,10 +266,12 @@ func _finish_transport_ladder_failure() -> Error:
 		_continue_auto_reconnect()
 		return ERR_UNAVAILABLE
 	disconnect_from_server()
-	if _last_transport_failure_was_timeout:
-		connection_failed.emit("The lobby connection timed out.")
-	else:
-		connection_failed.emit("The lobby connection failed.")
+	var message := "The lobby connection timed out." if _last_transport_failure_was_timeout else "The lobby connection failed."
+	if _last_server_port == LobbyProtocolScript.PORT \
+			and WebSocketEndpointsScript.lobby_url(_last_server_address).is_empty() \
+			and OS.get_environment(TRANSPORT_OVERRIDE_ENV).strip_edges().to_lower() != NetworkManagerScript.TRANSPORT_ENET:
+		message += " This build has no secure WebSocket endpoint configured for restricted networks."
+	connection_failed.emit(message)
 	return ERR_UNAVAILABLE
 
 func _load_preferred_transport() -> String:
@@ -796,12 +802,8 @@ func _on_connection_failed() -> void:
 	if _has_more_transport_attempts():
 		_advance_transport_attempt(false)
 		return
-	if _auto_reconnect_active:
-		_continue_auto_reconnect()
-		return
-	_clear_session_fields()
-	_trace("connection failed (final)")
-	connection_failed.emit("The lobby connection failed.")
+	_last_transport_failure_was_timeout = false
+	_finish_transport_ladder_failure()
 
 func _on_server_disconnected() -> void:
 	_cancel_connect_attempt_timeout()
@@ -984,7 +986,9 @@ func _ensure_network_manager() -> void:
 	if not network_manager.server_disconnected.is_connected(_on_server_disconnected):
 		network_manager.server_disconnected.connect(_on_server_disconnected)
 	if not network_manager.game_event_received.is_connected(_on_network_game_event_received):
-		network_manager.game_event_received.connect(_on_network_game_event_received)
+		# An authentication rejection may remove the lobby's multiplayer scope.
+		# Deliver RPC events after polling, just like transport failure signals.
+		network_manager.game_event_received.connect(_on_network_game_event_received, CONNECT_DEFERRED)
 
 func _on_network_game_event_received(event_type: String, data: Dictionary) -> void:
 	if _ignore_network_events:

@@ -16,20 +16,25 @@ $ExeCandidates = @(
 )
 $Log = Join-Path $Root "updater.log"
 $LogDir = Join-Path $Root "logs"
+$ProxySetupScript = Join-Path $Root 'Initialize-WebSocketProxy.ps1'
 $LobbyHost = "63.33.96.156"
 $LobbyPort = 22345
 $MatchPort = 12345
 $WebSocketPort = 24443
 $NetworkConfigPath = Join-Path $Root "network.json"
-if (Test-Path -LiteralPath $NetworkConfigPath) {
+
+function Load-NetworkConfig {
+    if (-not (Test-Path -LiteralPath $NetworkConfigPath)) {
+        return
+    }
     $networkConfig = Get-Content -LiteralPath $NetworkConfigPath -Raw | ConvertFrom-Json
     $publicWebSocketUrl = [string]$networkConfig.public_websocket_url
     if ($publicWebSocketUrl -notmatch '^wss://[^/@?#\s]+/?$') {
         throw 'network.json requires a wss:// origin in public_websocket_url.'
     }
     $env:OTHERGODS_PUBLIC_WEBSOCKET_URL = $publicWebSocketUrl.TrimEnd('/')
-    $WebSocketPort = [int]$networkConfig.lobby_websocket_port
-    $MatchPort = [int]$networkConfig.match_port
+    $script:WebSocketPort = [int]$networkConfig.lobby_websocket_port
+    $script:MatchPort = [int]$networkConfig.match_port
     if ($WebSocketPort -lt 1024 -or $WebSocketPort -gt 65535 -or $MatchPort -lt 1024 -or $MatchPort -gt 65472) {
         throw 'network.json contains an invalid backend port.'
     }
@@ -109,6 +114,16 @@ if (-not $SkipMutex) {
 }
 
 try {
+    if (Test-Path -LiteralPath $ProxySetupScript) {
+        try {
+            & $ProxySetupScript -Root $Root
+        } catch {
+            # Keep the lobby available over UDP if Caddy is absent or cannot
+            # start yet. The watchdog retries proxy setup on its next run.
+            Write-Log "WebSocket proxy setup failed: $($_.Exception.Message)"
+        }
+    }
+    Load-NetworkConfig
     $launchPath = Resolve-LaunchPath
 
     if (-not (Test-Path -LiteralPath $launchPath)) {
