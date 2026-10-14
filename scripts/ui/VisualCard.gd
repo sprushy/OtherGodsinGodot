@@ -235,7 +235,7 @@ func _refresh_level_tag_tooltip() -> void:
 	if level_breakdown != "":
 		tooltip_lines.append("LVL:\n" + level_breakdown)
 	_level_tag.tooltip_text = "\n".join(tooltip_lines)
-	_level_tag.mouse_filter = Control.MOUSE_FILTER_STOP
+	_level_tag.mouse_filter = Control.MOUSE_FILTER_PASS
 
 func _apply_level_badge_state(level_tag: PanelContainer) -> void:
 	if level_tag == null or card_data == null:
@@ -284,7 +284,7 @@ func _make_level_label(track_instance: bool = true) -> Control:
 	var effective_level := card_data.get_effective_level()
 	var tag := PanelContainer.new()
 	tag.name = _LEVEL_TAG_NAME
-	tag.mouse_filter = Control.MOUSE_FILTER_STOP
+	tag.mouse_filter = Control.MOUSE_FILTER_PASS
 	tag.custom_minimum_size = Vector2(_LEVEL_SYMBOL_SIZE * float(effective_level) + 10.0, _LEVEL_SYMBOL_SIZE + 8.0)
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color(0.06, 0.08, 0.14, 0.94)
@@ -456,17 +456,17 @@ func _apply_stats_label_state(target_label: Label, preview_rotated: bool, previe
 				if breakdown != "":
 					creature_tooltips.append(stat_info[0] + ":\n" + breakdown)
 			target_label.tooltip_text = "\n\n".join(creature_tooltips)
-			target_label.mouse_filter = Control.MOUSE_FILTER_STOP if not creature_tooltips.is_empty() else Control.MOUSE_FILTER_IGNORE
+			target_label.mouse_filter = Control.MOUSE_FILTER_PASS if not creature_tooltips.is_empty() else Control.MOUSE_FILTER_IGNORE
 		Card.CardType.STRUCTURE:
 			target_label.text = "RES:%d" % card_data.get_effective_resilience()
 			var structure_breakdown := card_data.get_full_stat_breakdown("res")
 			target_label.tooltip_text = "RES:\n" + structure_breakdown if structure_breakdown != "" else ""
-			target_label.mouse_filter = Control.MOUSE_FILTER_STOP if structure_breakdown != "" else Control.MOUSE_FILTER_IGNORE
+			target_label.mouse_filter = Control.MOUSE_FILTER_PASS if structure_breakdown != "" else Control.MOUSE_FILTER_IGNORE
 		Card.CardType.SPELL, Card.CardType.HEX, Card.CardType.CHARM:
 			target_label.text = "SPD:%d" % card_data.get_effective_speed()
 			var speed_breakdown := card_data.get_full_stat_breakdown("spd")
 			target_label.tooltip_text = "SPD:\n" + speed_breakdown if speed_breakdown != "" else ""
-			target_label.mouse_filter = Control.MOUSE_FILTER_STOP if speed_breakdown != "" else Control.MOUSE_FILTER_IGNORE
+			target_label.mouse_filter = Control.MOUSE_FILTER_PASS if speed_breakdown != "" else Control.MOUSE_FILTER_IGNORE
 		_:
 			target_label.tooltip_text = ""
 			target_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -1461,6 +1461,8 @@ func _show_hover_panel() -> void:
 			}
 		)
 	panel.add_child(hover_body)
+	if _hover_use_board_popup:
+		CardDetailContentBuilderScript.set_hover_mouse_passthrough(panel)
 
 	floating_parent.add_child(panel)
 	if hover_body is ScrollContainer and not _hover_use_board_popup:
@@ -1494,6 +1496,7 @@ func _apply_hover_scrollbar_style(scroll: ScrollContainer) -> void:
 
 func _hide_hover_panel() -> void:
 	if _hover_panel and is_instance_valid(_hover_panel):
+		_hover_panel.hide()
 		_hover_panel.queue_free()
 	_hover_panel = null
 

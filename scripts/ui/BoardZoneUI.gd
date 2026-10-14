@@ -800,6 +800,14 @@ func _connect_badge_click_action(badge_control: Control, action_name: String, ca
 func _on_badge_gui_input(event: InputEvent) -> void:
 	if not (event is InputEventMouseButton) or event.button_index != MOUSE_BUTTON_LEFT or not event.pressed:
 		return
+	var scene_root := _get_targeting_scene_root()
+	if scene_root != null and scene_root.has_method("_has_pending_target_selection") \
+			and bool(scene_root.call("_has_pending_target_selection")) \
+			and zone != null and not zone.cards.is_empty():
+		# While choosing a target, clicking its action badge selects the card too.
+		accept_event()
+		card_clicked.emit(zone.cards[0])
+		return
 	var hovered_control := get_viewport().gui_get_hovered_control()
 	var badge_control := hovered_control
 	while badge_control != null and not badge_control.has_meta("badge_click_action"):
@@ -1426,7 +1434,7 @@ func _add_hover_reach_badge(overlay: Control, card: Card) -> bool:
 	badge.offset_bottom = -6
 	badge.name = "BoardReachBadge"
 	badge.tooltip_text = str(reach_data.get("tooltip", ""))
-	badge.mouse_filter = Control.MOUSE_FILTER_STOP
+	badge.mouse_filter = Control.MOUSE_FILTER_PASS
 	overlay.add_child(badge)
 	return true
 
@@ -1494,7 +1502,7 @@ func _add_level_badge(
 		tooltip_lines.append("LVL:\n" + breakdown)
 	if badge != null:
 		badge.tooltip_text = "\n".join(tooltip_lines)
-		badge.mouse_filter = Control.MOUSE_FILTER_STOP
+		badge.mouse_filter = Control.MOUSE_FILTER_PASS
 	return badge
 
 func _add_token_badge(
@@ -1520,7 +1528,7 @@ func _add_token_badge(
 	)
 	if badge != null:
 		badge.tooltip_text = "Token Creature"
-		badge.mouse_filter = Control.MOUSE_FILTER_STOP
+		badge.mouse_filter = Control.MOUSE_FILTER_PASS
 	return badge
 
 func _add_turn_countdown_badge(overlay: Control, card: Card) -> void:
@@ -1545,7 +1553,7 @@ func _add_turn_countdown_badge(overlay: Control, card: Card) -> void:
 	if card.has_method("get_turn_countdown_badge_hover_text"):
 		hover_text = str(card.call("get_turn_countdown_badge_hover_text", game_manager)).strip_edges()
 	if hover_text != "":
-		badge.mouse_filter = Control.MOUSE_FILTER_STOP
+		badge.mouse_filter = Control.MOUSE_FILTER_PASS
 		_connect_badge_hover(badge, hover_text)
 
 func _get_power_status_cost_text(card: Card) -> String:
@@ -1875,7 +1883,7 @@ func _build_ability_badge(
 	var badge := Control.new()
 	badge.name = badge_name
 	if mouse_filter_mode == -1:
-		badge.mouse_filter = Control.MOUSE_FILTER_STOP if hover_text.strip_edges() != "" else Control.MOUSE_FILTER_IGNORE
+		badge.mouse_filter = Control.MOUSE_FILTER_PASS if hover_text.strip_edges() != "" else Control.MOUSE_FILTER_IGNORE
 	else:
 		badge.mouse_filter = mouse_filter_mode
 	badge.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND if clickable else Control.CURSOR_ARROW
@@ -2701,10 +2709,6 @@ func _is_mouse_in_affordance_hover_area() -> bool:
 	var hover_rect := get_global_rect().grow(ABILITY_BADGE_SIZE + 18.0)
 	return hover_rect.has_point(get_global_mouse_position())
 
-func _on_popup_mouse_exited() -> void:
-	if not _pinned:
-		_schedule_hide()
-
 func _show_badge_hover_popup(anchor: Control, text: String, preview_card: Card = null) -> void:
 	_hide_badge_hover_popup()
 	if anchor == null or (text.strip_edges() == "" and preview_card == null) or not is_inside_tree() or is_queued_for_deletion():
@@ -2767,6 +2771,7 @@ func _show_badge_hover_popup(anchor: Control, text: String, preview_card: Card =
 			game_manager
 		))
 
+	CardDetailContentBuilderScript.set_hover_mouse_passthrough(popup_root)
 	_badge_hover_popup = popup_root
 	floating_parent.add_child(popup_root)
 	popup_root.move_to_front()
@@ -3704,7 +3709,7 @@ func _add_boon_affordances(overlay: Control, card: Card) -> void:
 			preview = label
 
 		var badge := PanelContainer.new()
-		badge.mouse_filter = Control.MOUSE_FILTER_STOP
+		badge.mouse_filter = Control.MOUSE_FILTER_PASS
 		badge.tooltip_text = str(entry.get("tooltip", "Good Fortune"))
 		badge.set_anchors_preset(Control.PRESET_TOP_LEFT)
 		badge.offset_left = badge_left
@@ -5646,7 +5651,9 @@ func _refresh_display() -> void:
 			var left_breakdown := card.get_full_stat_breakdown(left_stat)
 			if left_badge != null and left_breakdown != "":
 				left_badge.tooltip_text = left_breakdown
-				left_badge.mouse_filter = Control.MOUSE_FILTER_STOP
+				# Equipment and buffs add tooltips, but the badge must still let
+				# the creature receive clicks and start drags.
+				left_badge.mouse_filter = Control.MOUSE_FILTER_PASS
 
 			var right_font_color := Color(0.92, 0.97, 1.0)
 			if eff_spd > card.speed:
@@ -5666,7 +5673,7 @@ func _refresh_display() -> void:
 			var spd_breakdown := card.get_full_stat_breakdown("spd")
 			if right_badge != null and spd_breakdown != "":
 				right_badge.tooltip_text = spd_breakdown
-				right_badge.mouse_filter = Control.MOUSE_FILTER_STOP
+				right_badge.mouse_filter = Control.MOUSE_FILTER_PASS
 
 		elif card.card_type == Card.CardType.STRUCTURE:
 			var eff_res_s := card.get_effective_resilience()
@@ -5688,7 +5695,7 @@ func _refresh_display() -> void:
 			)
 			if res_badge != null and breakdown != "":
 				res_badge.tooltip_text = "RES:\n" + breakdown
-				res_badge.mouse_filter = Control.MOUSE_FILTER_STOP
+				res_badge.mouse_filter = Control.MOUSE_FILTER_PASS
 
 		if card.is_power and card.is_muted and card.mute_turns_remaining > 0:
 			var muted_badge := PanelContainer.new()
@@ -5778,7 +5785,7 @@ func _add_creature_action_symbols(overlay: Control, card: Card) -> void:
 		if used:
 			continue
 		var slot := PanelContainer.new()
-		slot.mouse_filter = Control.MOUSE_FILTER_STOP
+		slot.mouse_filter = Control.MOUSE_FILTER_PASS
 		slot.custom_minimum_size = Vector2(icon_size, icon_size)
 		slot.set_anchors_preset(Control.PRESET_TOP_LEFT)
 		slot.offset_left = left
@@ -5949,15 +5956,14 @@ func _gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:
 		_push_stealth_fog_cursor_from_motion(event as InputEventMouseMotion)
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+		# Dispatch can rebuild the board, so consume the event while this control is live.
+		accept_event()
 		if _is_draggable_creature():
 			creature_drag_started.emit(zone.cards[0], zone)
-			accept_event()
 		elif zone.cards.size() > 0:
 			card_clicked.emit(zone.cards[0])
-			accept_event()
 		else:
 			zone_clicked.emit(zone)
-			accept_event()
 	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_RIGHT and event.pressed:
 		if zone.cards.size() > 0:
 			var card := zone.cards[0]
@@ -6256,8 +6262,7 @@ func _show_ability_popup() -> void:
 		pstyle.set_border_width(side, 1)
 	pstyle.border_color = Color(0.5, 0.5, 0.75)
 	popup.add_theme_stylebox_override("panel", pstyle)
-	popup.mouse_filter = Control.MOUSE_FILTER_STOP
-	popup.mouse_exited.connect(Callable(self, "_on_popup_mouse_exited"))
+	popup.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 	var popup_viewer_shared := _get_viewer_player()
 	var is_hidden_card_shared := (card.is_stealth or card.is_prepared or (card.is_face_down and not _is_public_power(card))) \
@@ -6331,6 +6336,7 @@ func _show_ability_popup() -> void:
 			keywords_panel = CardDetailContentBuilderScript.build_keywords_panel(keywords, card, keyword_config)
 			popup_root.add_child(keywords_panel)
 
+	CardDetailContentBuilderScript.set_hover_mouse_passthrough(popup_root)
 	_popup = popup_root
 	floating_parent.add_child(popup_root)
 	popup_root.move_to_front()
@@ -6339,6 +6345,8 @@ func _show_ability_popup() -> void:
 	# Nested active-god previews need another container layout pass before sizing.
 	await get_tree().process_frame
 	if not is_instance_valid(popup_root) or not is_instance_valid(popup):
+		return
+	if popup_root.is_queued_for_deletion() or _popup != popup_root:
 		return
 	var popup_vp_size_shared := get_viewport_rect().size
 	var popup_size := popup.get_combined_minimum_size()
@@ -6440,6 +6448,7 @@ func _get_rect_overlap_area(a: Rect2, b: Rect2) -> float:
 
 func _hide_ability_popup() -> void:
 	if _popup and is_instance_valid(_popup):
+		_popup.hide()
 		_popup.queue_free()
 	_popup = null
 	_update_hover_polling()

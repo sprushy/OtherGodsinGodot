@@ -609,6 +609,7 @@ var _visual_linger_input_blocker: Control = null
 var _bdrag_card: Card = null
 var _bdrag_from_zone: Zone = null
 var _bdrag_active: bool = false
+var _bdrag_waiting_for_summon_resolution: bool = false
 var _bdrag_visual: BoardZoneUI = null
 var _bdrag_source_zone_ui: BoardZoneUI = null
 var _bdrag_preview_defensive: bool = false
@@ -14086,7 +14087,10 @@ func _show_zone_contents(zone_name: String, zone: Zone) -> void:
 		vc.size_flags_vertical = Control.SIZE_EXPAND_FILL
 		fan.add_card(vc)
 
-	# Clicking anywhere on the overlay closes it.
+	# The transparent panel and scroll area also cover empty space beside cards.
+	# Their STOP filters prevent those clicks from reaching the backdrop.
+	panel.gui_input.connect(_on_zone_overlay_background_gui_input)
+	scroll.gui_input.connect(_on_zone_overlay_background_gui_input)
 	overlay.gui_input.connect(_on_zone_overlay_background_gui_input)
 
 func _show_card_selection_overlay(
@@ -19400,11 +19404,13 @@ func _queue_nergal_lion_impact_prompt(card: NergalLion, prompt_targets: Array = 
 		elif current_card.get_valid_immolate_zones().is_empty():
 			feedback = current_card.card_name + " has no open field zone for Immolate."
 		else:
-			game_input.submit_action({
+			if _submit_prompt_choice_command({
 				"type": "nergal_lion_choice",
 				"source_uid": current_card.uid,
 				"target_uid": current_target.uid,
-			})
+			}):
+				return
+			_set_action_label_text("Could not submit the match decision. Please try again.")
 			update_ui()
 			return
 		if _stack_resolution_paused:
@@ -22419,6 +22425,26 @@ func _on_creature_drag_started(card: Card, from_zone: Zone) -> void:
 	_bdrag_preview_defensive = card.creature_mode == Card.CreatureMode.DEFENSIVE
 	_bdrag_preview_stealth = false
 
+func _try_start_summoned_creature_drag_during_linger(event: InputEvent) -> bool:
+	if not (event is InputEventMouseButton) or event.button_index != MOUSE_BUTTON_LEFT or not event.pressed:
+		return false
+	if _game_finished or game_manager == null or not _is_player_local(game_manager.current_player):
+		return false
+	if _is_turn_choice_pending() or _has_pending_target_selection() or _has_pending_click_selection():
+		return false
+	for zone_ui in _board_zone_uis:
+		if not is_instance_valid(zone_ui) or not zone_ui.is_visible_in_tree():
+			continue
+		if not zone_ui.get_global_rect().has_point(get_global_mouse_position()) or not zone_ui._is_draggable_creature():
+			continue
+		var card: Card = zone_ui.zone.cards[0]
+		if not card.summoned_this_turn:
+			continue
+		_on_creature_drag_started(card, zone_ui.zone)
+		_bdrag_waiting_for_summon_resolution = _bdrag_active
+		return _bdrag_active
+	return false
+
 func _handle_priority_full_control_shortcut(event: InputEvent) -> bool:
 	if not (event is InputEventKey):
 		return false
@@ -22480,7 +22506,12 @@ func _input(event: InputEvent) -> void:
 	if _handle_priority_full_control_shortcut(event):
 		get_viewport().set_input_as_handled()
 		return
-	if _is_visual_linger_active():
+	if _is_visual_linger_active() and not (_bdrag_active and _bdrag_waiting_for_summon_resolution):
+		# Capture the first press on a new summon while its resolution is finishing.
+		# The drop is held until the normal attack validation can run.
+		if _try_start_summoned_creature_drag_during_linger(event):
+			get_viewport().set_input_as_handled()
+			return
 		# Let GUI releases clear mouse focus even while attack resolution blocks input.
 		if event is InputEventMouseButton and not event.pressed:
 			if event.button_index == MOUSE_BUTTON_LEFT and _bdrag_active:
@@ -22930,8 +22961,6 @@ func _get_floating_drag_parent() -> Node:
 func _bdrag_finish(drop_pos: Vector2) -> void:
 	var card := _bdrag_card
 	var from_zone := _bdrag_from_zone
-	if _reject_non_priority_action_if_blocked():
-		return
 	var target_zu: BoardZoneUI = null
 	for zu in _board_zone_uis:
 		if is_instance_valid(zu) and zu.get_global_rect().has_point(drop_pos):
@@ -22955,6 +22984,15 @@ func _bdrag_finish(drop_pos: Vector2) -> void:
 		drag_attack_target = overlap_attack_target
 	if drag_attack_target == null and followers_target_player != null:
 		drag_attack_target = followers_target_player
+
+	if _bdrag_waiting_for_summon_resolution and drag_attack_target != null \
+			and (_is_visual_linger_active() or _is_pending_board_drag_attack_resume_blocked()):
+		if _remember_pending_board_drag_attack_after_reveal(card, drag_attack_target):
+			_pending_board_drag_attack_after_reveal["wait_for_reveal"] = false
+			_set_action_label_text("Queued attack after summon resolution.")
+		return
+	if _reject_non_priority_action_if_blocked():
+		return
 
 	# Move: own empty adjacent zone
 	if target_zu != null and not target_zu._is_enemy and target_zone.cards.size() == 0:
@@ -23087,6 +23125,8 @@ func _resolve_board_drag_attack_after_reveal_target():
 	return null
 
 func _is_pending_board_drag_attack_waiting_for_network_reveal(attacker: Card) -> bool:
+	if not bool(_pending_board_drag_attack_after_reveal.get("wait_for_reveal", true)):
+		return false
 	if not _is_networked_client or attacker == null:
 		return false
 	if attacker.creature_mode == Card.CreatureMode.AGGRESSIVE and not attacker.is_stealth:
@@ -23096,6 +23136,8 @@ func _is_pending_board_drag_attack_waiting_for_network_reveal(attacker: Card) ->
 
 func _is_pending_board_drag_attack_resume_blocked() -> bool:
 	if game_manager == null or match_manager == null:
+		return true
+	if _is_visual_linger_active():
 		return true
 	if _is_turn_choice_pending() or _has_active_modal_prompt():
 		return true
@@ -23266,6 +23308,7 @@ func _bdrag_cleanup() -> void:
 	_set_bdrag_attack_target_preview(null)
 	_set_bdrag_followers_target_preview(false)
 	_bdrag_active = false
+	_bdrag_waiting_for_summon_resolution = false
 	_bdrag_card = null
 	_bdrag_from_zone = null
 	if _bdrag_source_zone_ui != null and is_instance_valid(_bdrag_source_zone_ui):

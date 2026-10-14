@@ -141,6 +141,13 @@ static func build_visual_hover_body(card: Card, viewer: Player, config: Dictiona
 
 	return scroll
 
+static func set_hover_mouse_passthrough(node: Node) -> void:
+	# Ignoring only the popup root leaves labels, margins and scrollbars hit-testable.
+	if node is Control:
+		(node as Control).mouse_filter = Control.MOUSE_FILTER_IGNORE
+	for child in node.get_children():
+		set_hover_mouse_passthrough(child)
+
 static func wrap_hover_body(content: Control, max_height: float) -> ScrollContainer:
 	var scroll := ScrollContainer.new()
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
