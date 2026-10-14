@@ -15,6 +15,13 @@ The lobby supports a Gmail sender through authenticated SMTP with verified TLS.
 It connects only to `smtp.gmail.com:465`; it does not use the normal Google
 account password or bypass certificate verification.
 
+Gmail TLS explicitly uses `certificates/google_roots.pem`, Google's published
+trust-root bundle. This is included in each export. Godot 4.7 otherwise prefers
+the Windows system root store over its builtin roots, and a sparse Windows Server
+root store can fail Gmail verification with `-0x2700` / `-9984`. These errors occur
+before Google authenticates the app password. Also verify the server UTC clock
+with `[DateTime]::UtcNow.ToString('yyyy-MM-dd HH:mm:ss')` when troubleshooting TLS.
+
 1. Sign into `OtherGodsGame@gmail.com`. Change any account password that has
    been shared publicly or in a chat.
 2. Enable 2-Step Verification in [Google Account Security](https://myaccount.google.com/security).
@@ -108,6 +115,12 @@ $recoveryGodot = Resolve-GodotExecutable -PreferConsole
 $null = Set-GodotPortableEnvironment -ProjectRoot (Get-GodotProjectRoot)
 & $recoveryGodot --headless --path . --script scripts/tests/account_password_recovery_test.gd
 & $recoveryGodot --headless --path . --script scripts/tests/gmail_recovery_delivery_test.gd
+```
+
+Optional real Gmail TLS handshake check (does not authenticate or send email):
+
+```powershell
+& $recoveryGodot --headless --path . --script scripts/tests/gmail_recovery_delivery_test.gd -- --gmail-tls-check
 ```
 
 For manual delivery QA, use a test account you own: request a code, confirm its

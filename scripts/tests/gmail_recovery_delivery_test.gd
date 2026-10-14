@@ -37,6 +37,18 @@ func _check(condition: bool, description: String) -> void:
 		push_error(description)
 
 func _run() -> void:
+	if "--gmail-tls-check" in OS.get_cmdline_user_args():
+		var connected: bool = await _check_gmail_tls()
+		quit(0 if connected else 1)
+		return
+	var tls_options := DeliveryScript.create_tls_options()
+	_check(tls_options != null and not tls_options.is_unsafe_client(), "Gmail TLS configuration enforces verification")
+	_check(tls_options != null and tls_options.get_trusted_ca_chain() != null, "Published Google CA bundle loads successfully")
+	var export_config := ConfigFile.new()
+	_check(export_config.load("res://export_presets.cfg") == OK, "Export presets load for certificate packaging check")
+	for section in export_config.get_sections():
+		if export_config.has_section_key(section, "include_filter"):
+			_check(str(export_config.get_value(section, "include_filter")).contains("certificates/*.pem"), "Export includes the Gmail CA bundle: " + section)
 	_check(DeliveryScript.valid_mailbox("player+test@example.com"), "Normal mailbox accepted")
 	_check(not DeliveryScript.valid_mailbox("player@example.com\r\nBcc: victim@example.com"), "Header injection rejected")
 	_check(not DeliveryScript.valid_mailbox("player@example.com><victim@example.com"), "SMTP envelope injection rejected")
@@ -113,3 +125,39 @@ func _run() -> void:
 	mailer.free()
 	print("Gmail recovery checks: %s (%d checks)" % ["PASS" if _failures == 0 else "FAIL (%d)" % _failures, _checks])
 	quit(0 if _failures == 0 else 1)
+
+func _check_gmail_tls() -> bool:
+	# Optional integration check: no login, email, or account credentials.
+	var options := DeliveryScript.create_tls_options()
+	if options == null:
+		return false
+	var tcp := StreamPeerTCP.new()
+	if tcp.connect_to_host(DeliveryScript.HOST, DeliveryScript.PORT) != OK:
+		return false
+	var deadline := Time.get_ticks_msec() + 20000
+	while Time.get_ticks_msec() < deadline:
+		tcp.poll()
+		if tcp.get_status() == StreamPeerTCP.STATUS_CONNECTED:
+			break
+		if tcp.get_status() == StreamPeerTCP.STATUS_ERROR:
+			tcp.disconnect_from_host()
+			return false
+		await process_frame
+	var tls := StreamPeerTLS.new()
+	if tcp.get_status() != StreamPeerTCP.STATUS_CONNECTED or tls.connect_to_stream(tcp, DeliveryScript.HOST, options) != OK:
+		tcp.disconnect_from_host()
+		return false
+	var verified := false
+	while Time.get_ticks_msec() < deadline:
+		tcp.poll()
+		tls.poll()
+		if tls.get_status() == StreamPeerTLS.STATUS_CONNECTED:
+			verified = true
+			break
+		if tls.get_status() != StreamPeerTLS.STATUS_HANDSHAKING:
+			break
+		await process_frame
+	tls.disconnect_from_stream()
+	tcp.disconnect_from_host()
+	print("Gmail verified TLS check: %s (no authentication or email sent)" % ("PASS" if verified else "FAIL"))
+	return verified

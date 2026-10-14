@@ -6,6 +6,7 @@ const HOST := "smtp.gmail.com"
 const PORT := 465
 const TIMEOUT_SECONDS := 20.0
 const MAX_REPLY_BYTES := 16384
+const TRUSTED_CERTIFICATES_PATH := "res://certificates/google_roots.pem"
 enum Stage { TCP, TLS, GREETING, EHLO, AUTH, USERNAME, PASSWORD, MAIL, RECIPIENT, DATA, ACCEPTED, DONE }
 
 signal finished(sent: bool)
@@ -66,6 +67,15 @@ func begin(sender: String, app_password: String, recipient: String, text: String
 	set_process(true)
 	return OK
 
+static func create_tls_options() -> TLSOptions:
+	# Windows Server can have a sparse root store. Godot 4.7 prefers that store
+	# over its builtin roots, so supply Google's published CA bundle explicitly.
+	var certificates := X509Certificate.new()
+	if certificates.load(TRUSTED_CERTIFICATES_PATH) != OK:
+		push_warning("Gmail recovery CA bundle is missing or invalid.")
+		return null
+	return TLSOptions.client(certificates)
+
 func _process(delta: float) -> void:
 	if _stage == Stage.DONE:
 		return
@@ -79,7 +89,8 @@ func _process(delta: float) -> void:
 		return
 	if _stage == Stage.TCP:
 		if _tcp.get_status() == StreamPeerTCP.STATUS_CONNECTED:
-			if _tls.connect_to_stream(_tcp, HOST, TLSOptions.client()) != OK:
+			var options := create_tls_options()
+			if options == null or _tls.connect_to_stream(_tcp, HOST, options) != OK:
 				_finish(false)
 				return
 			_stage = Stage.TLS
@@ -89,6 +100,7 @@ func _process(delta: float) -> void:
 	if status == StreamPeerTLS.STATUS_HANDSHAKING:
 		return
 	if status != StreamPeerTLS.STATUS_CONNECTED:
+		push_warning("Gmail TLS failed (status=%d). Check the server UTC clock and trusted CA bundle." % status)
 		_finish(false)
 		return
 	if _stage == Stage.TLS:
