@@ -12,7 +12,7 @@ func _init() -> void:
 	sacrifice_cost = 0
 	artist = "User provided"
 	art_path = "res://images/card_art/spells/drought.png"
-	ability_text = "Destroy any face-up [b]Weather[/b] spells. Spells must be prepared for 1 turn before use while this remains face-up."
+	ability_text = "Destroy any face-up [b]Weather[/b] spells. Spells must be prepared."
 
 func should_go_to_graveyard() -> bool:
 	return false

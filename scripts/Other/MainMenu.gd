@@ -982,6 +982,8 @@ func _set_settings_menu_value(section: String, key: String, value: bool) -> void
 			set_all_sound_muted(value)
 			return
 	_save_bool_setting(section, key, value)
+	if section == GameSettingsTabsScript.COMBAT_SETTINGS_SECTION and key == GameSettingsTabsScript.SHOW_FOLLOWERS_KEY:
+		get_tree().call_group("combat_mock_game", "_apply_show_followers", value)
 
 func _get_settings_menu_text_value(section: String, key: String, default_value: String) -> String:
 	if section == AUDIO_SETTINGS_SECTION and key == STARTUP_MUSIC_TRACK_KEY:
@@ -1675,6 +1677,7 @@ func show_game() -> void:
 	_set_startup_splash_background_visible(false)
 	menu_container.visible = false
 	game_container.visible = true
+	get_tree().call_group("combat_mock_game", "_sync_drought_weather_visuals")
 	_hide_multiplayer_deck_popup()
 	_refresh_server_version_overlay_visibility()
 	_refresh_sound_mute_button()
@@ -1688,6 +1691,8 @@ func _set_snowstorm_visible(active: bool) -> void:
 	if tree == null:
 		return
 	tree.call_group(SNOWSTORM_CONTROL_GROUP, "set_snowstorm_active", active)
+	if not active:
+		tree.call_group("other_gods_drought_control", "set_drought_active", false)
 
 func _apply_multiplayer_screen_default_font() -> void:
 	# The multiplayer screen uses the engine default font instead of the

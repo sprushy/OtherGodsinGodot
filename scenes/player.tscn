@@ -1,5 +1,5 @@
 [gd_scene load_steps=2 format=3 uid="uid://bwkpffulj58xv"]
 
-[ext_resource type="Script" uid="uid://do0gioh3kpxr" path="res://scripts/Other/player.gd" id="1_3vyb7"]
+[ext_resource type="Script" uid="uid://cfrqqawchauxs" path="res://scripts/Other/player.gd" id="1_3vyb7"]
 
 [node name="Player" type="Node2D"]

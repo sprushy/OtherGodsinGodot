@@ -19,7 +19,7 @@ Read this first on a fresh thread, then inspect the files relevant to the user's
 - `scripts/Other/GameEventBroadcaster.gd` listens to authoritative signals and sends personalized `full_state` and prompt events.
 - `scripts/Other/NetworkManager.gd` wraps ENet RPC, player peer IDs, spectators, command submission, match join, and game-event broadcasts.
 - `scripts/Other/GameInput.gd`, `InProcessGameInput.gd`, `NetworkedGameInput.gd`, and `scripts/bots/BotGameInput.gd` are the input boundary. Every implementation submits commands to `MatchManager`; prefer this boundary instead of reaching into UI methods.
-- `scripts/Other/Player.gd` defines player zones: hand, deck, graveyard, abyss, god slot, 3 power slots, 5 frontline lanes, and 5 reserve lanes.
+- `scripts/Other/player.gd` defines player zones: hand, deck, graveyard, abyss, god slot, 3 power slots, 5 frontline lanes, and 5 reserve lanes. Keep this path lowercase; opening it as `Player.gd` can make Godot load a duplicate global class on Windows.
 - `scripts/Other/CardAction.gd` is the stack/action envelope for spells, abilities, attacks, charms, and event-style triggers.
 
 ## Cards And Catalog

@@ -883,7 +883,7 @@ func _begin_turn_upkeep() -> void:
 			return
 	var automatic_mana := get_automatic_upkeep_mana_gain(current_player)
 	if automatic_mana > 0:
-		current_player.gain_mana(automatic_mana)
+		current_player.gain_mana(automatic_mana, false)
 	for card in _get_sorted_upkeep_cards_for_player(current_player, "on_turn_upkeep"):
 		card.on_turn_upkeep(self)
 		if is_game_over:

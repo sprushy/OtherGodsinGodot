@@ -24,6 +24,7 @@ const BOARD_STYLE_KEY := "board_style"
 const BOARD_STYLE_NORMAL := "normal"
 const BOARD_STYLE_SNOW := "snow"
 const USE_SPLASH_BOARD_BACKGROUND_KEY := "use_splash_board_background"
+const SHOW_FOLLOWERS_KEY := "show_followers"
 const HOVER_SHOW_CARD_OPTIONS_KEY := "hover_show_card_options"
 const ALWAYS_SHOW_ABILITY_BADGES_KEY := "always_show_ability_badges"
 const HIDE_UNALTERED_REACH_TAG_KEY := "hide_unaltered_reach_tag"
@@ -96,6 +97,7 @@ static func build_general_tab(get_value: Callable, set_value: Callable, created_
 			{"label": "Snow Stone (Snow)", "value": BOARD_STYLE_SNOW},
 		], get_text_value, set_text_value)
 	_add_setting_toggle(settings, "Use splash image board background", COMBAT_SETTINGS_SECTION, USE_SPLASH_BOARD_BACKGROUND_KEY, false, get_value, set_value, created_toggles)
+	_add_setting_toggle(settings, "Show followers", COMBAT_SETTINGS_SECTION, SHOW_FOLLOWERS_KEY, true, get_value, set_value, created_toggles)
 	_add_setting_toggle(settings, "Hover show card options", COMBAT_SETTINGS_SECTION, HOVER_SHOW_CARD_OPTIONS_KEY, true, get_value, set_value, created_toggles)
 	_add_setting_toggle(settings, "Always show ability badges", COMBAT_SETTINGS_SECTION, ALWAYS_SHOW_ABILITY_BADGES_KEY, false, get_value, set_value, created_toggles)
 	_add_setting_toggle(settings, "Hide Reach tag unless altered", COMBAT_SETTINGS_SECTION, HIDE_UNALTERED_REACH_TAG_KEY, false, get_value, set_value, created_toggles)

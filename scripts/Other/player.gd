@@ -97,12 +97,12 @@ func get_deck_validation(deck: Array[Card], special_setup: Dictionary = {}) -> D
 	var validator = DeckValidatorScript.new()
 	return validator.validate_card_array(deck, special_setup)
 
-func gain_mana(amount: int) -> void:
+func gain_mana(amount: int, play_sound: bool = true) -> void:
 	if amount > 0 and game_manager != null and not game_manager.can_player_gain_mana_now(self):
 		game_manager.note_player_feedback("Laws of Civilization prevents gaining mana outside upkeep.")
 		return
 	mana += amount
-	if amount > 0 and game_manager != null:
+	if amount > 0 and game_manager != null and play_sound:
 		ManaSoundPlayerScript.play_gain(amount)
 		game_manager.note_ui_sound_cue("mana_gain:%d" % amount)
 	mana_changed.emit(mana)

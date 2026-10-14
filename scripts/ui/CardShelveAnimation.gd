@@ -1,9 +1,11 @@
 extends "res://scripts/ui/CardDrawAnimation.gd"
 
 var _insert_card: Callable
+var _on_top: bool = false
 
-func play_shelve(card: Card, source: Dictionary, target_geometry: Callable, insert_card: Callable) -> void:
+func play_shelve(card: Card, source: Dictionary, target_geometry: Callable, insert_card: Callable, on_top: bool = false) -> void:
 	_insert_card = insert_card
+	_on_top = on_top
 	super.play(card, source["center"], source["size"], float(source["rotation"]), target_geometry)
 
 func _sync_flight_size() -> void:
@@ -36,7 +38,9 @@ func _set_progress(value: float) -> void:
 	var bend := Vector2((_source_center.x + destination.x) * 0.5, minf(_source_center.y, destination.y) - 65.0)
 	var center := _source_center.lerp(bend, travel).lerp(bend.lerp(destination, travel), travel)
 	var card_scale := (_source_size / _face_size).lerp(destination_size / _face_size, travel)
-	var turn := smoothstep(0.18, 0.34, value)
+	# Keep a primed card's identity visible through most of its journey,
+	# then turn it face down as it settles onto the top of the deck.
+	var turn := smoothstep(0.55, 0.78, value) if _on_top else smoothstep(0.18, 0.34, value)
 	_face.visible = turn < 1.0
 	_face.modulate.a = 1.0 - turn
 	_back.visible = turn > 0.0

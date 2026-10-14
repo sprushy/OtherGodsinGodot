@@ -10,6 +10,7 @@ const _KEYWORD_PANEL_WIDTH := 210.0
 const _DECKBUILDER_SCROLLBAR_CONTENT_CLEARANCE := 32.0
 const _DROMI_BINDING_NAME := "Dromi"
 const _DROMI_BINDING_HOVER_TEXT := "Cannot attack. Losing 7 followers on opponent's turn start - Dromi"
+const PUBLICLY_IDENTIFIED_HOVER_TEXT := "opponent can see this card"
 
 static func build_visual_hover_body(card: Card, viewer: Player, config: Dictionary = {}) -> Control:
 	var content_width := float(config.get("content_width", 300.0))
@@ -39,6 +40,9 @@ static func build_visual_hover_body(card: Card, viewer: Player, config: Dictiona
 	)
 	UIFontScript.apply_norse_card_name_font(name_lbl, card)
 	vbox.add_child(name_lbl)
+
+	if card.is_publicly_identified(game_manager):
+		vbox.add_child(_make_label(PUBLICLY_IDENTIFIED_HOVER_TEXT, 14, Color(1.0, 0.72, 0.72), true))
 
 	if card.card_types.size() > 0:
 		var type_lbl := _make_label(
@@ -462,6 +466,9 @@ static func build_board_popup_body(card: Card, viewer: Player, config: Dictionar
 
 	if is_hidden_card:
 		return vbox
+
+	if card.is_publicly_identified(game_manager):
+		vbox.add_child(_make_label(PUBLICLY_IDENTIFIED_HOVER_TEXT, 13, Color(1.0, 0.72, 0.72), true))
 
 	if not is_hidden_card and card.culture != "":
 		var culture_lbl := _make_label(card.culture, 13, Color(0.96, 0.88, 0.62))
@@ -1143,7 +1150,8 @@ static func _make_rich_text(
 	# Establish a wrap width before fit_content measures the text. Measuring at
 	# zero width can leave the enclosing popup with a huge cached minimum height.
 	rtl.size.x = maxf(min_width, _BOARD_POPUP_WIDTH)
-	rtl.custom_maximum_size = Vector2(maxf(min_width, _BOARD_POPUP_WIDTH), 0.0)
+	# A negative maximum leaves height unlimited so fit_content can show all rules.
+	rtl.custom_maximum_size = Vector2(maxf(min_width, _BOARD_POPUP_WIDTH), -1.0)
 	if min_width > 0.0:
 		rtl.custom_minimum_size = Vector2(min_width, 0.0)
 	rtl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART

@@ -712,6 +712,8 @@ func _refresh_publicly_identified_badge() -> void:
 	preview.offset_bottom = -2.0
 
 	var badge := DebuffBadgeScript.create(preview)
+	badge.tooltip_text = CardDetailContentBuilderScript.PUBLICLY_IDENTIFIED_HOVER_TEXT
+	badge.mouse_filter = Control.MOUSE_FILTER_PASS
 	badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
 	badge.offset_left = -6.0 - DEBUFF_BADGE_SIZE
 	badge.offset_top = 32.0

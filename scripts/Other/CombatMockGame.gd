@@ -127,6 +127,7 @@ const AUTO_SELECT_CHARM_PLAY_ZONES_KEY := "auto_select_charm_play_zones"
 const AUTO_SELECT_CHARM_PREPARE_ZONES_KEY := "auto_select_charm_prepare_zones"
 const GENERIC_PREPARED_FACE_DOWN_LOG := "A card was prepared face-down."
 const USE_SPLASH_BOARD_BACKGROUND_KEY := "use_splash_board_background"
+const SHOW_FOLLOWERS_KEY := "show_followers"
 const HOVER_SHOW_CARD_OPTIONS_KEY := "hover_show_card_options"
 const ALWAYS_SHOW_ABILITY_BADGES_KEY := "always_show_ability_badges"
 const HIDE_UNALTERED_REACH_TAG_KEY := "hide_unaltered_reach_tag"
@@ -136,6 +137,7 @@ const HERMES_AUTO_PASS_UPKEEP_PRIORITY_KEY := "hermes_auto_pass_upkeep_priority"
 const HERMES_ADD_PRIORITY_TOGGLE_KEY := "hermes_add_priority_toggle_to_card"
 const HERMES_OFFER_PRIORITY_KEY := "hermes_offer_priority"
 const SNOWSTORM_CONTROL_GROUP := "other_gods_snowstorm_control"
+const DROUGHT_CONTROL_GROUP := "other_gods_drought_control"
 const DEBUG_CLIENT_STATE_LOGS := false
 const DEBUG_END_TURN_LOGS := false
 
@@ -403,6 +405,7 @@ var _pending_hand_arrivals: Dictionary = {}
 var _draw_arrival_uids: Dictionary = {}
 var _card_draw_animations: Dictionary = {}
 var _card_shelve_animations: Dictionary = {}
+var _selection_card_move_sources: Dictionary = {}
 var _card_grave_animations: Dictionary = {}
 var _abyss_activity_deadlines: Dictionary = {}
 var _void_effect_generation: int = 0
@@ -732,6 +735,7 @@ var _auto_select_hex_prepare_zones: bool = true
 var _auto_select_charm_play_zones: bool = true
 var _auto_select_charm_prepare_zones: bool = true
 var _use_splash_board_background: bool = false
+var _show_followers: bool = true
 var _hover_show_card_options: bool = true
 var _always_show_ability_badges: bool = false
 var _hide_unaltered_reach_tag: bool = false
@@ -1154,6 +1158,7 @@ func _load_user_settings() -> void:
 	_auto_select_charm_play_zones = _read_config_bool(config, COMBAT_SETTINGS_SECTION, AUTO_SELECT_CHARM_PLAY_ZONES_KEY, _auto_select_charm_play_zones)
 	_auto_select_charm_prepare_zones = _read_config_bool(config, COMBAT_SETTINGS_SECTION, AUTO_SELECT_CHARM_PREPARE_ZONES_KEY, _auto_select_charm_prepare_zones)
 	_use_splash_board_background = _read_config_bool(config, COMBAT_SETTINGS_SECTION, USE_SPLASH_BOARD_BACKGROUND_KEY, _use_splash_board_background)
+	_show_followers = _read_config_bool(config, COMBAT_SETTINGS_SECTION, SHOW_FOLLOWERS_KEY, true)
 	_board_style = _get_saved_string_setting(COMBAT_SETTINGS_SECTION, BOARD_STYLE_KEY, BOARD_STYLE_NORMAL)
 	_hover_show_card_options = _read_config_bool(config, COMBAT_SETTINGS_SECTION, HOVER_SHOW_CARD_OPTIONS_KEY, _hover_show_card_options)
 	_always_show_ability_badges = _read_config_bool(config, COMBAT_SETTINGS_SECTION, ALWAYS_SHOW_ABILITY_BADGES_KEY, _always_show_ability_badges)
@@ -1223,6 +1228,14 @@ func _set_use_splash_board_background(pressed: bool) -> void:
 	_use_splash_board_background = pressed
 	_save_combat_bool_setting(USE_SPLASH_BOARD_BACKGROUND_KEY, pressed)
 	_apply_board_art_background_texture()
+
+func _set_show_followers(pressed: bool) -> void:
+	_save_combat_bool_setting(SHOW_FOLLOWERS_KEY, pressed)
+	get_tree().call_group("combat_mock_game", "_apply_show_followers", pressed)
+
+func _apply_show_followers(pressed: bool) -> void:
+	_show_followers = pressed
+	_sync_follower_casualty_overlay()
 
 func _set_hover_show_card_options(pressed: bool) -> void:
 	_hover_show_card_options = pressed
@@ -1567,6 +1580,8 @@ func _get_settings_menu_value(section: String, key: String, default_value: bool)
 			return _auto_select_charm_prepare_zones
 		[COMBAT_SETTINGS_SECTION, USE_SPLASH_BOARD_BACKGROUND_KEY]:
 			return _use_splash_board_background
+		[COMBAT_SETTINGS_SECTION, SHOW_FOLLOWERS_KEY]:
+			return _show_followers
 		[COMBAT_SETTINGS_SECTION, HOVER_SHOW_CARD_OPTIONS_KEY]:
 			return _hover_show_card_options
 		[COMBAT_SETTINGS_SECTION, ALWAYS_SHOW_ABILITY_BADGES_KEY]:
@@ -1601,6 +1616,8 @@ func _set_settings_menu_value(section: String, key: String, value: bool) -> void
 			_set_auto_select_charm_prepare_zones(value)
 		[COMBAT_SETTINGS_SECTION, USE_SPLASH_BOARD_BACKGROUND_KEY]:
 			_set_use_splash_board_background(value)
+		[COMBAT_SETTINGS_SECTION, SHOW_FOLLOWERS_KEY]:
+			_set_show_followers(value)
 		[COMBAT_SETTINGS_SECTION, HOVER_SHOW_CARD_OPTIONS_KEY]:
 			_set_hover_show_card_options(value)
 		[COMBAT_SETTINGS_SECTION, ALWAYS_SHOW_ABILITY_BADGES_KEY]:
@@ -2697,6 +2714,7 @@ func _ready() -> void:
 	_restore_default_selection_cursor()
 
 func _exit_tree() -> void:
+	get_tree().call_group(DROUGHT_CONTROL_GROUP, "set_drought_active", false)
 	_clear_card_draw_animation()
 	_clear_card_shelve_animations()
 	_clear_card_grave_animations()
@@ -7096,6 +7114,7 @@ func _do_update_ui(expected_generation: int = -1) -> void:
 	_refresh_observer_perspective_button()
 	_restore_active_raven_prime_prompt_overlay()
 	_sync_heavy_snow_weather_visuals()
+	_sync_drought_weather_visuals()
 	# Hand redraws append new controls; the shelving dialog must keep input priority.
 	if is_instance_valid(_zone_overlay) and _zone_overlay.name == "ChampionsCallOverlay":
 		_promote_transient_ui(_zone_overlay, CONTEXT_MENU_Z_INDEX + 1)
@@ -7139,6 +7158,12 @@ func _sync_heavy_snow_weather_visuals(force: bool = false) -> void:
 		)
 	else:
 		tree.call_group(SNOWSTORM_CONTROL_GROUP, "set_snowstorm_active", false)
+
+func _sync_drought_weather_visuals() -> void:
+	var active := is_visible_in_tree() and game_manager != null and game_manager.spells_must_be_prepared()
+	var tree := get_tree()
+	if tree != null:
+		tree.call_group(DROUGHT_CONTROL_GROUP, "set_drought_active", active)
 
 func _has_active_heavy_snow_weather() -> bool:
 	if game_manager == null:
@@ -9983,7 +10008,7 @@ func _can_board_drag_attack_target(attack_target) -> bool:
 		return false
 	return game_manager.can_cards_engage_each_other(_bdrag_card, target_card)
 
-func _get_board_drag_attack_target_at(global_pos: Vector2):
+func _get_board_drag_attack_target_at(global_pos: Vector2, require_legal_attack: bool = true):
 	if not _bdrag_active or _bdrag_card == null:
 		return null
 	var target_zones: Array = []
@@ -9999,7 +10024,7 @@ func _get_board_drag_attack_target_at(global_pos: Vector2):
 		if zu == null or not is_instance_valid(zu) or zu.zone == null:
 			continue
 		var attack_target = _get_board_drag_attack_target(zu, zu.zone)
-		if attack_target == null or not _can_board_drag_attack_target(attack_target):
+		if attack_target == null or (require_legal_attack and not _can_board_drag_attack_target(attack_target)):
 			continue
 		var zone_rect := zu.get_global_rect()
 		if not _is_bdrag_over_target_rect(zone_rect, drag_rect, global_pos):
@@ -10012,7 +10037,7 @@ func _get_board_drag_attack_target_at(global_pos: Vector2):
 		return best_target
 
 	var followers_target_player := _get_board_drag_followers_target_player_at(global_pos)
-	if followers_target_player != null and _can_board_drag_attack_followers(followers_target_player):
+	if followers_target_player != null and (not require_legal_attack or _can_board_drag_attack_followers(followers_target_player)):
 		return followers_target_player
 	return null
 
@@ -10265,6 +10290,12 @@ func _layout_opponent_follower_casualty_sprites(records: Array) -> void:
 		_layout_follower_speech_bubble(bubble, record, state, age_seconds, sprite.position, OPPONENT_FOLLOWER_HEIGHT_SCALE)
 
 func _sync_follower_casualty_overlay() -> void:
+	if not _show_followers:
+		if _follower_casualty_overlay != null and is_instance_valid(_follower_casualty_overlay):
+			_follower_casualty_overlay.visible = false
+		if _opponent_follower_casualty_overlay != null and is_instance_valid(_opponent_follower_casualty_overlay):
+			_opponent_follower_casualty_overlay.visible = false
+		return
 	if _post_game_board_refresh_locked:
 		return
 	if game_manager == null:
@@ -10794,6 +10825,9 @@ func _get_shelve_source(card: Card, from_zone: Zone) -> Dictionary:
 	if card == null or card.card_owner != _get_display_player() \
 			or draw_button == null or not draw_button.is_visible_in_tree():
 		return {}
+	var selection_source: Dictionary = _selection_card_move_sources.get(card.uid, {})
+	if not selection_source.is_empty() and selection_source.get("from_zone") == from_zone:
+		return selection_source
 	var visual: Control = null
 	for vc in _hand_visual_cards:
 		if is_instance_valid(vc) and vc.card_data != null and vc.card_data.uid == card.uid:
@@ -10802,6 +10836,10 @@ func _get_shelve_source(card: Card, from_zone: Zone) -> Dictionary:
 	if visual == null and from_zone != null and from_zone.is_board_zone():
 		visual = _get_zone_ui_for_zone(from_zone)
 	if visual == null or not visual.is_visible_in_tree() or visual.modulate.a <= 0.0:
+		if from_zone != null and from_zone.zone_type in [Zone.ZoneType.GRAVEYARD, Zone.ZoneType.ABYSS]:
+			var source := _get_hand_arrival_source(from_zone)
+			source["card_uid"] = card.uid
+			return source
 		return {}
 	var to_local: Transform2D = get_global_transform().affine_inverse() * visual.get_global_transform()
 	var center := to_local * (visual.size * 0.5)
@@ -10815,23 +10853,23 @@ func _get_shelve_source(card: Card, from_zone: Zone) -> Dictionary:
 		"rotation": to_local.get_rotation(),
 	}
 
-func _get_shelve_insert_geometry(card_uid: String) -> Dictionary:
+func _get_shelve_insert_geometry(card_uid: String, on_top: bool = false) -> Dictionary:
 	if draw_button == null or not draw_button.is_visible_in_tree():
 		return {}
 	var card := game_manager.get_card_by_uid(card_uid)
 	if card == null or card.card_owner != _get_display_player() \
 			or card.current_zone != card.card_owner.deck_zone:
 		return {}
-	var rect: Rect2 = draw_button.get_shelve_insert_rect()
+	var rect: Rect2 = draw_button.get_top_card_rect() if on_top else draw_button.get_shelve_insert_rect()
 	var to_local: Transform2D = get_global_transform().affine_inverse() * draw_button.get_global_transform()
 	return {
 		"center": to_local * rect.get_center(),
 		"size": rect.size * to_local.get_scale().abs(),
-		"rotation": draw_button.get_bottom_card_rotation() + to_local.get_rotation(),
+		"rotation": (draw_button.get_top_card_rotation() if on_top else draw_button.get_bottom_card_rotation()) + to_local.get_rotation(),
 	}
 
 func _start_card_shelve_animation(card: Card, source: Dictionary) -> void:
-	if source.is_empty() or _card_shelve_animations.has(card.uid) \
+	if card == null or source.is_empty() or _card_shelve_animations.has(card.uid) \
 			or _game_finished or card.card_owner != _get_display_player() \
 			or card.current_zone != card.card_owner.deck_zone:
 		return
@@ -10847,7 +10885,9 @@ func _start_card_shelve_animation(card: Card, source: Dictionary) -> void:
 	_promote_transient_ui(animation, HAND_OVERLAY_Z_INDEX + 10)
 	_card_shelve_animations[card.uid] = animation
 	animation.tree_exited.connect(_release_card_shelve_animation.bind(card.uid, animation), CONNECT_ONE_SHOT)
-	animation.play_shelve(card, source, _get_shelve_insert_geometry.bind(card.uid), draw_button.insert_shelved_card)
+	var on_top: bool = not card.card_owner.deck_zone.cards.is_empty() and card.card_owner.deck_zone.cards.front() == card
+	var on_insert: Callable = draw_button.show_deck_count_temporarily if on_top else draw_button.insert_shelved_card
+	animation.play_shelve(card, source, _get_shelve_insert_geometry.bind(card.uid, on_top), on_insert, on_top)
 	update_ui()
 
 func _release_card_shelve_animation(card_uid: String, animation: Control) -> void:
@@ -10855,6 +10895,7 @@ func _release_card_shelve_animation(card_uid: String, animation: Control) -> voi
 		_card_shelve_animations.erase(card_uid)
 
 func _clear_card_shelve_animations() -> void:
+	_selection_card_move_sources.clear()
 	for animation in _card_shelve_animations.values():
 		if is_instance_valid(animation):
 			animation.cancel()
@@ -10864,6 +10905,13 @@ func _clear_card_shelve_animations() -> void:
 
 func _capture_visible_shelve_sources() -> Array[Dictionary]:
 	var sources: Array[Dictionary] = []
+	var player := _get_display_player()
+	if player != null:
+		for zone in [player.graveyard_zone, player.abyss_zone]:
+			for card in zone.cards:
+				var source := _get_shelve_source(card, zone)
+				if not source.is_empty():
+					sources.append(source)
 	for vc in _hand_visual_cards:
 		if is_instance_valid(vc) and vc.card_data != null:
 			var source := _get_shelve_source(vc.card_data, vc.card_data.current_zone)
@@ -12090,7 +12138,7 @@ func _show_power_hover_popup(source: Control, text: String, bbcode_text: String 
 	label.scroll_active = false
 	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	label.custom_minimum_size = Vector2(POWER_HOVER_WIDTH, 0.0)
-	label.custom_maximum_size = Vector2(POWER_HOVER_WIDTH, 0.0)
+	label.custom_maximum_size = Vector2(POWER_HOVER_WIDTH, -1.0)
 	label.add_theme_font_size_override("normal_font_size", 12)
 	label.add_theme_font_size_override("bold_font_size", 12)
 	label.add_theme_color_override("default_color", Color(1.0, 0.95, 0.98))
@@ -14150,7 +14198,8 @@ func _show_card_selection_overlay(
 		card_vbox.add_theme_constant_override("separation", 2)
 		wrapper.add_child(card_vbox)
 
-		card_vbox.add_child(_build_selection_overlay_card_preview(card, reveal_hidden_cards))
+		var preview := _build_selection_overlay_card_preview(card, reveal_hidden_cards)
+		card_vbox.add_child(preview)
 
 		var zone_label_text := _get_card_zone_label(card)
 		if zone_label_text != "":
@@ -14163,7 +14212,7 @@ func _show_card_selection_overlay(
 			zone_lbl.custom_minimum_size = Vector2(VisualCard.CARD_WIDTH, 0)
 			card_vbox.add_child(zone_lbl)
 
-		wrapper.gui_input.connect(_on_card_selection_overlay_card_gui_input.bind(card))
+		wrapper.gui_input.connect(_on_card_selection_overlay_card_gui_input.bind(card, preview))
 		card_wrappers.append({
 			"card": card,
 			"wrapper": wrapper,
@@ -14265,9 +14314,20 @@ func _on_card_selection_overlay_background_gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 		_on_card_selection_overlay_cancel_pressed()
 
-func _on_card_selection_overlay_card_gui_input(event: InputEvent, overlay_card: Card) -> void:
+func _on_card_selection_overlay_card_gui_input(event: InputEvent, overlay_card: Card, preview: Control) -> void:
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 		accept_event()
+		# Keep the selected face's geometry after the array closes, including
+		# while a network command or stack action waits to resolve.
+		if is_instance_valid(preview) and overlay_card != null:
+			var to_local: Transform2D = get_global_transform().affine_inverse() * preview.get_global_transform()
+			_selection_card_move_sources[overlay_card.uid] = {
+				"card_uid": overlay_card.uid,
+				"from_zone": overlay_card.current_zone,
+				"center": to_local * (preview.size * 0.5),
+				"size": preview.size * to_local.get_scale().abs(),
+				"rotation": to_local.get_rotation(),
+			}
 		var callback := _overlay_card_selected
 		_overlay_card_dismissed = Callable()
 		_dismiss_zone_overlay()
@@ -16259,7 +16319,11 @@ func _on_local_player_card_moved(card: Card, from_zone: Zone, to_zone: Zone) -> 
 		return
 	if not _is_networked_client and to_zone != null \
 			and to_zone.zone_type == Zone.ZoneType.DECK and from_zone != to_zone:
-		_start_card_shelve_animation(card, _get_shelve_source(card, from_zone))
+		# Prime effects put the card on top after move_card emits its signal.
+		# Read the final deck order once the effect has finished resolving.
+		_start_card_shelve_animation.call_deferred(card, _get_shelve_source(card, from_zone))
+	if not _is_networked_client and from_zone != to_zone:
+		_selection_card_move_sources.erase(card.uid)
 	_invalidate_cached_board_layouts()
 	var cleared_interaction_refs := _clear_interaction_refs_for_moved_card(card, from_zone, to_zone)
 	if from_zone.is_board_zone() or (to_zone != null and to_zone.is_board_zone()) or cleared_interaction_refs:
@@ -21511,7 +21575,12 @@ func _on_board_card_pressed(card: Card) -> void:
 	else:
 		_indicated_move_card = null
 	
-	if match_manager.selected_attacker == card:
+	if not match_manager.can_attack(card):
+		var attack_reason := match_manager.get_attack_invalid_reason(card)
+		if can_show_move_arrows:
+			attack_reason += " Click an indicated adjacent empty zone to move."
+		_set_action_label_text(attack_reason)
+	elif match_manager.selected_attacker == card:
 		_set_action_label_text("Selected attacker: " + _get_attack_card_label(card, "A creature") + " - Click enemy target or followers")
 	elif can_show_move_arrows:
 		_set_action_label_text(card.card_name + " - click an indicated adjacent empty zone to move.")
@@ -21817,7 +21886,7 @@ func _on_all_attack_followers_pressed() -> void:
 		_set_action_label_text("Cannot attack on the first turn!")
 		return
 	if game_manager.attack_restrictions.has(game_manager.current_player):
-		_set_action_label_text("Cannot attack! Attack restricted this turn.")
+		_set_action_label_text(match_manager.get_player_attack_restriction_reason(game_manager.current_player))
 		return
 
 	var attackers: Array[Card] = []
@@ -21929,7 +21998,7 @@ func _on_creature_right_clicked(card: Card) -> void:
 		equip_entries = _get_reachable_equipment(card)
 
 	if not can_attack and not can_stance and not can_move and not can_activate_creature and equipped_ability_cards.is_empty() and equip_entries.is_empty():
-		_set_action_label_text(card.card_name + " has no available actions this turn.")
+		_set_action_label_text(match_manager.get_attack_invalid_reason(card))
 		return
 
 	var panel := PanelContainer.new()
@@ -21953,11 +22022,11 @@ func _on_creature_right_clicked(card: Card) -> void:
 	title.modulate = Color(0.9, 0.9, 0.6)
 	vbox.add_child(title)
 
-	if can_attack:
-		var btn := Button.new()
-		btn.text = "Attack"
-		btn.pressed.connect(Callable(self, "_on_context_attack_pressed").bind(card.uid))
-		vbox.add_child(btn)
+	var attack_btn := Button.new()
+	attack_btn.text = "Attack" if can_attack else "Attack (unavailable)"
+	attack_btn.tooltip_text = "" if can_attack else match_manager.get_attack_invalid_reason(card)
+	attack_btn.pressed.connect(Callable(self, "_on_context_attack_pressed").bind(card.uid))
+	vbox.add_child(attack_btn)
 
 	if can_stupefy:
 		var btn := Button.new()
@@ -22101,6 +22170,9 @@ func _on_context_attack_pressed(card_uid: String) -> void:
 	var card := _get_context_card_by_uid(card_uid)
 	if card == null:
 		update_ui()
+		return
+	if not match_manager.can_attack(card):
+		_set_action_label_text(match_manager.get_attack_invalid_reason(card))
 		return
 	selected_attacker = card
 	_set_action_label_text(card.card_name + " ready to attack - click an enemy creature or zone")
@@ -22867,7 +22939,7 @@ func _bdrag_finish(drop_pos: Vector2) -> void:
 			target_zu = _enemy_god_zone_ui
 
 	var followers_target_player := _get_board_drag_followers_target_player_at(drop_pos)
-	var overlap_attack_target = _get_board_drag_attack_target_at(drop_pos)
+	var overlap_attack_target = _get_board_drag_attack_target_at(drop_pos, false)
 	if target_zu == null and followers_target_player == null and overlap_attack_target == null:
 		return
 
@@ -31071,6 +31143,10 @@ func _apply_full_state(data: Dictionary) -> void:
 			var shelved_card := game_manager.get_card_by_uid(str(source["card_uid"]))
 			if shelved_card != null:
 				_start_card_shelve_animation(shelved_card, source)
+		for uid in _selection_card_move_sources.keys():
+			var moved_card := game_manager.get_card_by_uid(str(uid))
+			if moved_card == null or moved_card.current_zone != _selection_card_move_sources[uid].get("from_zone"):
+				_selection_card_move_sources.erase(uid)
 		if match_manager != null and match_manager.has_method("set_remote_authoritative_stack_window_locked"):
 			match_manager.call(
 				"set_remote_authoritative_stack_window_locked",

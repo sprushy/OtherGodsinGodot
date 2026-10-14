@@ -3706,15 +3706,31 @@ func can_attack(card: Card) -> bool:
 		and not game_manager.attack_restrictions.has(card.get_controller())
 	)
 
+func get_player_attack_restriction_reason(player: Player) -> String:
+	if game_manager == null or player == null or not game_manager.attack_restrictions.has(player):
+		return ""
+	var restriction: Dictionary = game_manager.attack_restrictions[player]
+	var turns_remaining := int(restriction.get("turns", 0))
+	var source: Card = restriction.get("source", null)
+	var source_name := source.card_name if source != null else "an active effect"
+	return "Cannot attack because of %s (%d turn%s remaining)." % [
+		source_name, turns_remaining, "" if turns_remaining == 1 else "s",
+	]
+
 func get_attack_invalid_reason(card: Card) -> String:
 	if card == null:
 		return "No card selected."
+	if game_manager == null:
+		return "The match is not ready for attacks."
 	if card.card_type != Card.CardType.CREATURE:
 		return "Only creatures can attack."
 	if is_targeting_active() or _has_pending_reveal_target_ui_interaction():
 		return "Choose a target for %s before attacking." % get_targeting_name()
 	if _has_unresolved_stack_action_window():
 		return "Resolve the pending stack action before attacking."
+	var restriction_reason := get_player_attack_restriction_reason(card.get_controller())
+	if restriction_reason != "":
+		return restriction_reason
 	if game_manager.is_first_turn_attack_blocked_by_weather(card):
 		return card.card_name + " cannot attack on the turn it enters play while Heavy Snow is active."
 	if card.summoned_after_first_attack_this_turn:
@@ -3737,9 +3753,6 @@ func get_attack_invalid_reason(card: Card) -> String:
 		return card.card_name + " is in defensive stance and cannot attack."
 	if card.current_zone == null or card.current_zone.zone_type != Zone.ZoneType.FRONTLINE:
 		return card.card_name + " cannot attack from the back row."
-	if game_manager.attack_restrictions.has(card.get_controller()):
-		var turns = game_manager.attack_restrictions[card.get_controller()]
-		return "Attacks restricted for " + str(turns) + " more turns."
 	
 	return ""
 

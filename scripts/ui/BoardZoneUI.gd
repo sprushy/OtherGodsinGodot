@@ -2720,6 +2720,9 @@ func _show_badge_hover_popup(anchor: Control, text: String, preview_card: Card =
 	popup_root.top_level = true
 	popup_root.z_as_relative = false
 	popup_root.z_index = POPUP_Z_INDEX + 1
+	# Hidden containers skip child layout. Keep the popup offscreen until its
+	# text and optional preview have been measured, avoiding the thin border.
+	popup_root.position = Vector2(-10000.0, -10000.0)
 
 	var popup := PanelContainer.new()
 	popup.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -2744,7 +2747,8 @@ func _show_badge_hover_popup(anchor: Control, text: String, preview_card: Card =
 		var label := RichTextLabel.new()
 		label.bbcode_enabled = true
 		label.size.x = 240.0
-		label.custom_maximum_size = Vector2(240.0, 0.0)
+		label.custom_minimum_size = Vector2(240.0, 0.0)
+		label.custom_maximum_size = Vector2(240.0, -1.0)
 		label.text = text
 		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		label.scroll_active = false
@@ -2753,8 +2757,6 @@ func _show_badge_hover_popup(anchor: Control, text: String, preview_card: Card =
 		label.add_theme_font_size_override("bold_font_size", 14)
 		label.add_theme_color_override("default_color", Color(1.0, 0.95, 0.75))
 		label.mouse_filter = Control.MOUSE_FILTER_STOP if text.contains("[hint=") else Control.MOUSE_FILTER_IGNORE
-		if text.length() >= 80 or text.contains("\n"):
-			label.custom_minimum_size = Vector2(240.0, 0.0)
 		content.add_child(label)
 
 	if preview_card != null:
@@ -2770,7 +2772,11 @@ func _show_badge_hover_popup(anchor: Control, text: String, preview_card: Card =
 	popup_root.move_to_front()
 
 	await get_tree().process_frame
+	# The nested containers and optional card preview need a second layout pass.
+	await get_tree().process_frame
 	if not is_instance_valid(popup_root) or not is_instance_valid(popup) or not is_instance_valid(anchor):
+		return
+	if popup_root.is_queued_for_deletion() or anchor.is_queued_for_deletion() or _badge_hover_popup != popup_root:
 		return
 	var popup_size := popup.get_combined_minimum_size()
 	popup.size = popup_size
@@ -2806,6 +2812,7 @@ func _show_badge_hover_popup(anchor: Control, text: String, preview_card: Card =
 
 func _hide_badge_hover_popup() -> void:
 	if _badge_hover_popup != null and is_instance_valid(_badge_hover_popup):
+		_badge_hover_popup.hide()
 		_badge_hover_popup.queue_free()
 	_badge_hover_popup = null
 	_update_hover_polling()
@@ -3665,6 +3672,8 @@ func _add_publicly_identified_card_affordance(overlay: Control, card: Card) -> v
 		badge_right -= float(debuff_entries.size()) * (DEBUFF_BADGE_SIZE + DEBUFF_AFFORDANCE_GAP)
 	var badge_top := 32.0 if _is_card_targeted_on_stack(card) else _get_badge_row_top()
 	var badge := DebuffBadgeScript.create(preview)
+	badge.mouse_filter = Control.MOUSE_FILTER_PASS
+	_connect_badge_hover(badge, CardDetailContentBuilderScript.PUBLICLY_IDENTIFIED_HOVER_TEXT)
 	badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
 	badge.offset_left = badge_right - DEBUFF_BADGE_SIZE
 	badge.offset_top = badge_top

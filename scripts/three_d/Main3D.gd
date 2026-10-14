@@ -3,6 +3,7 @@ extends Node3D
 const WindowsSelfUpdaterScript = preload("res://scripts/client/WindowsSelfUpdater.gd")
 const GameCursorScript = preload("res://scripts/ui/GameCursor.gd")
 const SnowV2WeatherControllerScript = preload("res://scripts/fx/SnowV2WeatherController.gd")
+const DroughtWeatherControllerScript = preload("res://scripts/fx/DroughtWeatherController.gd")
 const UIFontScript = preload("res://scripts/ui/UIFont.gd")
 const LoadingBarScript = preload("res://scripts/ui/LoadingBar.gd")
 const GAME_SCENE_PATH := "res://scenes/mainfork.tscn"
@@ -120,6 +121,7 @@ func _ready() -> void:
 	_sync_cursor_presentation()
 	call_deferred("_build_software_cursor")
 	call_deferred("_build_snow_v2_weather")
+	call_deferred("_build_drought_weather")
 	call_deferred("_refresh_display_mode")
 
 func _build_3d_shell() -> void:
@@ -150,6 +152,11 @@ func _build_snow_v2_weather() -> void:
 	_snow_v2_weather_controller = controller
 	if _three_d_world != null and controller.has_method("attach_3d_world"):
 		controller.call("attach_3d_world", _three_d_world)
+
+func _build_drought_weather() -> void:
+	var controller := DroughtWeatherControllerScript.new()
+	controller.name = "DroughtWeatherController"
+	add_child(controller)
 
 func _exit_tree() -> void:
 	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
