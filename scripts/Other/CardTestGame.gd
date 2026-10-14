@@ -232,6 +232,55 @@ func _setup_test_board() -> void:
 	load_featured_card_test_scenario()
 
 func load_featured_card_test_scenario() -> void:
+	load_card_selection_test_scenario()
+
+func load_card_selection_test_scenario() -> void:
+	_reset_test_match_state()
+	_add_test_god(player1, Odin.new())
+	_add_test_god(player2, Thor.new())
+	for player in [player1, player2]:
+		_add_test_power(player, 0, CallOfTheValkyrie.new(), true)
+		# Eighteen legal targets exercise both a crowded fan and scrolling.
+		for _copy in range(3):
+			_add_test_graveyard_card(player, Berserker.new())
+			_add_test_graveyard_card(player, HariiWarrior.new())
+			_add_test_graveyard_card(player, HariiFransiscan.new())
+			_add_test_graveyard_card(player, HariiJarl.new())
+			_add_test_graveyard_card(player, ValkyrieWarrior.new())
+			_add_test_graveyard_card(player, Askelladen.new())
+		# These remain visible in the pile viewer but must not be selectable
+		# by Call of the Valkyrie (wrong type/culture).
+		_add_test_graveyard_card(player, BrownBear.new())
+		_add_test_graveyard_card(player, DivineLightning.new())
+		_add_test_deck_card(player, BrownBear.new())
+		_add_test_deck_card(player, Berserker.new())
+		_add_test_deck_card(player, HeroicStand.new())
+		_add_test_hand_card(player, HeroicStand.new())
+		player.spend_mana(player.mana)
+		player.gain_mana(40)
+		player.followers = 100
+		player.followers_changed.emit(player.followers)
+		player.has_summoned_this_turn = false
+
+	game_manager.current_player = player1
+	game_manager.other_player = player2
+	game_manager.feedback_viewer = player1
+	player1.is_turn_player = true
+	player2.is_turn_player = false
+	_test_turn_owner = player1
+	_test_turn_opponent = player2
+	game_manager.turn_number = 1
+	game_manager.start_turn()
+	_open_upkeep_choice_window()
+	action_label.text = (
+		"Card Selection Fan Test. Choose Mana for upkeep, then activate the unlocked Call of the Valkyrie. "
+		+ "Each player has 18 Norse Warrior targets in their graveyard and 40 starting mana. "
+		+ "Choose a card and pass priority to prime it; reopen the power to test smaller fans as targets leave. "
+		+ "Open the graveyard to compare the pile viewer, including the two ineligible cards."
+	)
+	update_ui()
+
+func load_void_whorl_test_scenario() -> void:
 	_reset_test_match_state()
 	_add_test_god(player1, Odin.new())
 	_add_test_god(player2, Thor.new())

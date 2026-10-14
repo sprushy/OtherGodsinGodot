@@ -62,6 +62,7 @@ var _hover_preview_when_disabled: bool = false
 var _display_mana_cost: int = -1
 var _display_cost_adjustment_lines: Array[String] = []
 var _ghostly_hand_proxy: bool = false
+var _selection_glow: bool = false
 var _click_only: bool = false
 var _dim_when_disabled: bool = true
 var _hand_mode: bool = false
@@ -775,6 +776,10 @@ func _make_card_style() -> StyleBoxFlat:
 		style.border_color = Color(0.82, 0.96, 1.0, 0.92)
 		style.shadow_color = Color(0.62, 0.88, 1.0, 0.32)
 		style.shadow_size = max(style.shadow_size, 12)
+	if _selection_glow:
+		style.border_color = Color(1.0, 0.84, 0.42, 0.85)
+		style.shadow_color = Color(1.0, 0.76, 0.25, 0.32)
+		style.shadow_size = 10
 	return style
 
 func _apply_card_style() -> void:
@@ -929,6 +934,10 @@ func set_waiting_on_priority(value: bool) -> void:
 
 func set_priority_response_available(value: bool) -> void:
 	_priority_response_available = value
+	_apply_card_style()
+
+func set_selection_glow(value: bool) -> void:
+	_selection_glow = value
 	_apply_card_style()
 
 func set_blot_summon_state(is_summonable: bool, is_selected: bool = false) -> void:

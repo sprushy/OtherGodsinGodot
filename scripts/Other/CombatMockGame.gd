@@ -55,6 +55,7 @@ const CardGraveAnimationScript = preload("res://scripts/ui/CardGraveAnimation.gd
 const CardVoidEffectScript = preload("res://scripts/ui/CardVoidEffect.gd")
 const VOID_GATEWAY_DELAY_SECONDS := 0.2
 const DrawDeckButtonScript = preload("res://scripts/ui/DrawDeckButton.gd")
+const CardOverlayFanScript = preload("res://scripts/ui/CardOverlayFan.gd")
 const PreparedMagicalCardCoverTexture = preload("res://images/PreparedMagicalCardCoverDimRuntime.png")
 const FOLLOWER_CASUALTY_ALIVE_TEXTURE := preload("res://images/ui/followers/god_follower_alive.png")
 const FOLLOWER_CASUALTY_WALK_SIDE_TEXTURE := preload("res://images/ui/followers/god_follower_walk_sheet.png")
@@ -13991,7 +13992,7 @@ func _prompt_absence_target_selection() -> void:
 
 var _zone_overlay: Control = null
 
-func _create_centered_overlay_panel(overlay: Control, width_ratio: float = 0.90, height_ratio: float = 0.42) -> PanelContainer:
+func _create_centered_overlay_panel(overlay: Control, width_ratio: float = 0.90, height_ratio: float = 0.42, card_display: bool = false) -> PanelContainer:
 	var panel := PanelContainer.new()
 	var pstyle := StyleBoxFlat.new()
 	pstyle.bg_color = Color(0.08, 0.08, 0.14, 0.97)
@@ -14003,6 +14004,8 @@ func _create_centered_overlay_panel(overlay: Control, width_ratio: float = 0.90,
 		pstyle.set_border_width(side as Side, 2)
 	pstyle.border_color = Color(0.5, 0.5, 0.75)
 	panel.add_theme_stylebox_override("panel", pstyle)
+	if card_display:
+		panel.add_theme_stylebox_override("panel", StyleBoxEmpty.new())
 	panel.mouse_filter = Control.MOUSE_FILTER_STOP
 	panel.anchor_left = 0.5
 	panel.anchor_right = 0.5
@@ -14043,7 +14046,7 @@ func _show_zone_contents(zone_name: String, zone: Zone) -> void:
 	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	overlay.add_child(bg)
 
-	var panel := _create_centered_overlay_panel(overlay)
+	var panel := _create_centered_overlay_panel(overlay, 0.90, 0.62, true)
 
 	var vbox := VBoxContainer.new()
 	vbox.add_theme_constant_override("separation", 8)
@@ -14059,7 +14062,7 @@ func _show_zone_contents(zone_name: String, zone: Zone) -> void:
 	title.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vbox.add_child(title)
 
-	# Scrollable row of cards
+	# Centered, gently fanned cards; large piles retain scrolling.
 	var scroll := ScrollContainer.new()
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
@@ -14069,10 +14072,8 @@ func _show_zone_contents(zone_name: String, zone: Zone) -> void:
 	scroll.mouse_filter = Control.MOUSE_FILTER_STOP
 	vbox.add_child(scroll)
 
-	var hbox := HBoxContainer.new()
-	hbox.add_theme_constant_override("separation", 6)
-	hbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	scroll.add_child(hbox)
+	var fan := CardOverlayFanScript.new()
+	scroll.add_child(fan)
 
 	for card in zone.cards:
 		var vc := VisualCard.new()
@@ -14081,7 +14082,9 @@ func _show_zone_contents(zone_name: String, zone: Zone) -> void:
 		vc.set_hover_use_board_popup(true, game_manager)
 		vc.set_hover_preview_when_disabled(true)
 		vc.set_disabled(true, false)
-		hbox.add_child(vc)
+		vc.set_selection_glow(true)
+		vc.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		fan.add_card(vc)
 
 	# Clicking anywhere on the overlay closes it.
 	overlay.gui_input.connect(_on_zone_overlay_background_gui_input)
@@ -14124,7 +14127,7 @@ func _show_card_selection_overlay(
 	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	overlay.add_child(bg)
 
-	var panel := _create_centered_overlay_panel(overlay)
+	var panel := _create_centered_overlay_panel(overlay, 0.90, 0.62, true)
 
 	var vbox := VBoxContainer.new()
 	vbox.add_theme_constant_override("separation", 8)
@@ -14177,22 +14180,15 @@ func _show_card_selection_overlay(
 	scroll.mouse_filter = Control.MOUSE_FILTER_STOP
 	vbox.add_child(scroll)
 
-	var hbox := HBoxContainer.new()
-	hbox.add_theme_constant_override("separation", 6)
-	hbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	scroll.add_child(hbox)
+	var fan := CardOverlayFanScript.new()
+	scroll.add_child(fan)
 
 	var card_wrappers: Array[Dictionary] = []
 	for card: Card in cards:
 		var wrapper := PanelContainer.new()
 		wrapper.mouse_filter = Control.MOUSE_FILTER_STOP
-		var wstyle := StyleBoxFlat.new()
-		wstyle.bg_color = Color(0.0, 0.0, 0.0, 0.0)
-		wstyle.border_color = Color(0.7, 0.8, 1.0, 0.65)
-		for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-			wstyle.set_border_width(side as Side, 1)
-		wrapper.add_theme_stylebox_override("panel", wstyle)
-		hbox.add_child(wrapper)
+		wrapper.add_theme_stylebox_override("panel", StyleBoxEmpty.new())
+		fan.add_card(wrapper)
 
 		var card_vbox := VBoxContainer.new()
 		card_vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -14235,6 +14231,7 @@ func _show_card_selection_overlay(
 			title.text = title_text + " (%d)" % cards.size()
 		else:
 			title.text = title_text + " (%d/%d)" % [visible_count, cards.size()]
+		fan.refresh_layout()
 
 	if search_edit != null:
 		search_edit.text_changed.connect(func(new_text: String) -> void:
@@ -14341,7 +14338,13 @@ func _build_selection_overlay_card_preview(card: Card, reveal_hidden_card: bool 
 	var vc := VisualCard.new()
 	vc.setup(card)
 	vc.set_hover_viewer(game_manager.get_feedback_viewer())
+	vc.set_hover_use_board_popup(true, game_manager)
+	vc.set_hover_preview_when_disabled(true)
 	vc.set_disabled(true, false)
+	vc.set_selection_glow(true)
+	vc.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	# Hover details stay available while clicks bubble to the selection wrapper.
+	vc.mouse_filter = Control.MOUSE_FILTER_PASS
 	return vc
 
 func _should_hide_card_in_selection_overlay(card: Card) -> bool:
@@ -14357,7 +14360,9 @@ func _make_hidden_selection_preview(card: Card) -> Control:
 
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color(0.08, 0.08, 0.12, 1.0)
-	style.border_color = Color(0.72, 0.76, 0.9, 0.9)
+	style.border_color = Color(1.0, 0.84, 0.42, 0.85)
+	style.shadow_color = Color(1.0, 0.76, 0.25, 0.32)
+	style.shadow_size = 10
 	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
 		style.set_border_width(side as Side, 2)
 	style.corner_radius_top_left = 5

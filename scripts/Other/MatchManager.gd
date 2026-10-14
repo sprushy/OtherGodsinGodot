@@ -2705,6 +2705,15 @@ func _stack_action_should_linger_for_visibility(action: CardAction) -> bool:
 	return action.card != null and action.card.has_method("is_magical_card") and action.card.is_magical_card()
 
 func _should_linger_authoritative_stack_resolution(action: CardAction = null) -> bool:
+	# Pile choices already showed the chosen card in the selection UI. Once
+	# priority is settled, resolve immediately so its move animation can begin.
+	if action != null and action.type in [CardAction.Type.SPELL, CardAction.Type.ABILITY, CardAction.Type.CHARM] \
+			and action.target is Card:
+		var target_card := action.target as Card
+		if target_card.current_zone != null and target_card.current_zone.zone_type in [
+			Zone.ZoneType.HAND, Zone.ZoneType.DECK, Zone.ZoneType.GRAVEYARD, Zone.ZoneType.ABYSS
+		]:
+			return false
 	if _stack_action_should_linger_for_visibility(action):
 		return true
 	# Events such as "summon" have no resolving card visual. Lingering them on
