@@ -147,6 +147,9 @@ var _lobby_auto_reconnect_was_active: bool = false
 ## if any. Tracked so the mapping can be removed when the host match ends. 0 when
 ## not hosting or when UPnP was not used.
 var _player_host_external_port: int = 0
+var _host_viability_probe_thread: Thread = null
+var _host_viability_probe_client_id: int = 0
+var _host_viability_probe_session_id: String = ""
 var _pending_host_room_creation: bool = false
 var _pending_room_is_ranked: bool = true
 var _pending_room_best_of: int = 1
@@ -328,6 +331,10 @@ var _startup_loading_status_label: Label = null
 var _startup_loading_bar: LoadingBar = null
 var _startup_loading_progress_tween: Tween = null
 var _startup_loading_finished: bool = false
+var _match_loading_overlay: Control = null
+var _match_loading_status_label: Label = null
+var _match_loading_bar: LoadingBar = null
+var _match_loading_lobby_button: Button = null
 var _startup_music_player: AudioStreamPlayer = null
 var _sound_mute_button: Button = null
 var _music_muted: bool = false
@@ -351,6 +358,7 @@ func _ready() -> void:
 	_startup_trace("_ready: audio prefs loaded")
 	_ensure_startup_splash_background()
 	_build_startup_loading_overlay()
+	_build_match_loading_overlay()
 	_ensure_startup_music()
 	_prepare_startup_menu_fade()
 	_fit_to_viewport()
@@ -530,6 +538,63 @@ func _build_startup_loading_overlay() -> void:
 	fill_tween.tween_property(_startup_loading_bar, "progress", 0.97, 6.0) \
 		.set_trans(Tween.TRANS_LINEAR)
 	_startup_loading_progress_tween = fill_tween
+
+func _build_match_loading_overlay() -> void:
+	if _match_loading_overlay != null:
+		return
+	var overlay := ColorRect.new()
+	overlay.name = "MatchLoadingOverlay"
+	overlay.color = Color(0.018, 0.022, 0.038, 1.0)
+	overlay.z_index = 2200
+	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	overlay.hide()
+	add_child(overlay)
+	var center := CenterContainer.new()
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	overlay.add_child(center)
+	var content := VBoxContainer.new()
+	content.add_theme_constant_override("separation", 16)
+	center.add_child(content)
+	var title := Label.new()
+	title.text = "Preparing your match"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 36)
+	title.add_theme_color_override("font_color", Color(0.87, 0.78, 0.58))
+	content.add_child(title)
+	var bar := LoadingBarScript.new()
+	bar.custom_minimum_size = Vector2(620.0, 86.0)
+	content.add_child(bar)
+	var status := Label.new()
+	status.custom_minimum_size = Vector2(620.0, 0.0)
+	status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	status.add_theme_font_size_override("font_size", 20)
+	status.add_theme_color_override("font_color", Color(0.74, 0.80, 0.90))
+	content.add_child(status)
+	var lobby_button := Button.new()
+	lobby_button.text = "Show lobby"
+	lobby_button.pressed.connect(_finish_match_loading)
+	content.add_child(lobby_button)
+	_match_loading_overlay = overlay
+	_match_loading_status_label = status
+	_match_loading_bar = bar
+	_match_loading_lobby_button = lobby_button
+
+func _begin_match_loading(message: String) -> void:
+	_build_match_loading_overlay()
+	_match_loading_status_label.text = message
+	_match_loading_bar.indeterminate = true
+	_match_loading_lobby_button.visible = not _match_launch_queued
+	if not _match_launch_queued:
+		status_label.text = message
+	_match_loading_overlay.show()
+
+func _finish_match_loading() -> void:
+	if _match_loading_overlay == null:
+		return
+	_match_loading_overlay.hide()
+	_match_loading_bar.indeterminate = false
 
 func _begin_startup_sequence() -> void:
 	await get_tree().process_frame
@@ -1133,6 +1198,10 @@ func _bind_game_signals() -> void:
 			var clear_callback := Callable(self, "_on_match_session_cleared")
 			if not game.match_session_cleared.is_connected(clear_callback):
 				game.match_session_cleared.connect(clear_callback)
+		if game != null and game.has_signal("match_loading_finished"):
+			var loading_callback := Callable(self, "_finish_match_loading")
+			if not game.match_loading_finished.is_connected(loading_callback):
+				game.match_loading_finished.connect(loading_callback)
 
 func _ensure_practice_thor_entry() -> void:
 	if game_container == null or menu_container == null:
@@ -1288,6 +1357,19 @@ func _refresh_server_version_overlay_visibility() -> void:
 	)
 
 func _process(delta: float) -> void:
+	_poll_host_viability_probe()
+	if _match_loading_overlay != null and _match_loading_overlay.visible:
+		if not _match_launch_queued:
+			_match_loading_status_label.text = status_label.text
+		else:
+			var game := get_node_or_null("GameContainer/MockGame")
+			if game != null and bool(game.get("_match_launch_loading")):
+				var action_label = game.get("action_label")
+				var manager = game.get("game_manager")
+				if manager != null and manager.turn_number == 0 and not bool(game.get("_awaiting_initial_full_state")):
+					_match_loading_status_label.text = "Waiting for the other player to connect..."
+				elif action_label != null and not str(action_label.text).strip_edges().is_empty():
+					_match_loading_status_label.text = action_label.text
 	if not _deferred_required_update.is_empty() and not _should_defer_required_update():
 		var pending_update := _deferred_required_update
 		_deferred_required_update = {}
@@ -1313,6 +1395,12 @@ func _process(delta: float) -> void:
 		return
 	_seek_auto_refresh_elapsed = 0.0
 	_queue_room_list_refresh(false)
+
+func _exit_tree() -> void:
+	# Join before releasing the Thread, including when quitting during discovery.
+	if _host_viability_probe_thread != null:
+		_host_viability_probe_thread.wait_to_finish()
+		_host_viability_probe_thread = null
 
 func _refresh_update_download_progress() -> void:
 	if not _has_update_download_status_target():
@@ -1568,6 +1656,7 @@ func _close_program() -> void:
 	get_tree().quit()
 
 func show_menu() -> void:
+	_finish_match_loading()
 	_set_snowstorm_visible(false)
 	_close_tutorial_coach_overlay()
 	game_container.visible = false
@@ -2669,11 +2758,17 @@ func _on_join_seek_requested(room_id: String) -> void:
 	if not auth_error.is_empty():
 		status_label.text = auth_error
 		return
+	_begin_match_loading("Joining seek...")
+	# Paint feedback before deck validation and lobby work begin.
+	await get_tree().process_frame
+	await get_tree().process_frame
 	if _get_selected_multiplayer_deck().is_empty():
+		_finish_match_loading()
 		status_label.text = "Choose a saved legal deck before joining a seek."
 		return
 	var current_room_status := str(_current_room_snapshot.get("status", "")).strip_edges().to_lower()
 	if not _current_room_snapshot.is_empty() and current_room_status == LobbyRoomScript.STATUS_IN_MATCH:
+		_finish_match_loading()
 		status_label.text = "Finish or forfeit your active match before joining another seek."
 		return
 	var normalized_room_id := room_id.strip_edges().to_upper()
@@ -7458,21 +7553,48 @@ func _on_match_host_viability_requested() -> void:
 ## host a player-hosted (listen-server) unranked match. No-op when not logged
 ## into a remote lobby (local in-process lobby hosts never need to report).
 func _report_local_host_viability() -> void:
-	# UPnP discovery is synchronous; call_deferred still runs on the UI thread.
-	# Wait for Multiplayer before doing this optional hosting probe.
+	# Wait for Multiplayer before doing this optional hosting probe. Discovery
+	# and router requests are synchronous, so run them on a worker, not in the
+	# deferred callback on the UI thread.
 	if not _is_multiplayer_screen_active() and (_startup_autologin_in_progress or _pending_background_lobby_auth_completion.is_valid()):
 		return
 	if lobby_client == null or not lobby_client.is_authenticated():
 		return
 	if _is_local_lobby_host:
 		return
+	# Login and the server's viability request can arrive together.
+	if _host_viability_probe_thread != null:
+		return
 	var bind_port := _get_configured_match_port()
-	var result: Dictionary = HostReachabilityProbeScript.probe(bind_port)
+	_host_viability_probe_client_id = lobby_client.get_instance_id()
+	_host_viability_probe_session_id = lobby_client.current_session_id
+	_host_viability_probe_thread = Thread.new()
+	# Only pass the port to the static probe; it never accesses scene nodes.
+	var start_error := _host_viability_probe_thread.start(HostReachabilityProbeScript.probe.bind(bind_port))
+	if start_error != OK:
+		_host_viability_probe_thread = null
+		lobby_client.report_host_viability(false, "", 0, bind_port)
+
+func _poll_host_viability_probe() -> void:
+	if _host_viability_probe_thread == null or _host_viability_probe_thread.is_alive():
+		return
+	# Join only after completion so this never waits for router discovery.
+	var result: Dictionary = _host_viability_probe_thread.wait_to_finish()
+	_host_viability_probe_thread = null
+	if lobby_client == null or not lobby_client.is_authenticated():
+		return
+	if lobby_client.get_instance_id() != _host_viability_probe_client_id \
+			or lobby_client.current_session_id != _host_viability_probe_session_id:
+		# A different login needs its own report; discard the old session's result.
+		_report_local_host_viability()
+		return
+	if _is_local_lobby_host:
+		return
 	lobby_client.report_host_viability(
 		bool(result.get("viable", false)),
 		str(result.get("reachable_ip", "")),
 		int(result.get("reachable_port", 0)),
-		int(result.get("bind_port", bind_port))
+		int(result.get("bind_port", 0))
 	)
 
 ## Remove the UPnP port mapping created for a player-hosted match, if any.
@@ -7874,9 +7996,10 @@ func _launch_assigned_match(
 	match_info: Dictionary = {},
 	server_match_session = null
 ) -> void:
-	var mock_game = _show_embedded_game("MockGame")
-	if mock_game != null and mock_game.has_method("_prepare_for_match_launch"):
-		mock_game._prepare_for_match_launch("Connecting to match...")
+	_begin_match_loading("Preparing the board..." if is_host else "Connecting to the match server...")
+	await get_tree().process_frame
+	await get_tree().process_frame
+	_show_embedded_game("MockGame")
 	show_game()
 	if is_host:
 		await get_node("GameContainer/MockGame").start_game(true, false, server_ip, match_port, match_info, server_match_session)
@@ -7886,7 +8009,11 @@ func _launch_assigned_match(
 			return
 		_finish_smoke_if_enabled("PASS:host_launched_match")
 		return
-	if not _uses_dedicated_match_server(match_info):
+	# The lobby verifies player-host listeners before assigning the opponent;
+	# dedicated matches are likewise assigned only after the server is ready.
+	# Keep the short grace period only for the unverified in-process handoff.
+	if not _uses_dedicated_match_server(match_info) \
+			and str(match_info.get("server_mode", "")) != MatchSessionScript.SERVER_MODE_PLAYER_HOST:
 		await get_tree().create_timer(0.4).timeout
 	await get_node("GameContainer/MockGame").start_game(false, true, server_ip, match_port, match_info)
 	show_game()
@@ -8088,7 +8215,6 @@ func _launch_host_match_after_lobby_handoff(match_info: Dictionary) -> void:
 	if match_session == null and bool(match_info.get("is_match_host", false)):
 		match_session = MatchSessionScript.from_match_info(match_info)
 		_player_host_external_port = int(match_info.get("host_reachable_port", 0))
-	await get_tree().create_timer(0.75).timeout
 	_launch_assigned_match(
 		true,
 		str(match_info.get("server_ip", _current_lobby_ip)),
@@ -8101,6 +8227,7 @@ func _uses_dedicated_match_server(match_info: Dictionary) -> bool:
 	return str(match_info.get("server_mode", "")) == MatchSessionScript.SERVER_MODE_DEDICATED_HEADLESS
 
 func _on_lobby_room_error(message: String) -> void:
+	_finish_match_loading()
 	_write_smoke_trace("lobby_room_error %s" % message)
 	if _maybe_handle_legacy_seek_switch_error(message):
 		return
@@ -8158,6 +8285,7 @@ func _on_lobby_status_changed(message: String) -> void:
 	status_label.text = message
 
 func _on_lobby_connection_failed(message: String) -> void:
+	_finish_match_loading()
 	_write_smoke_trace("lobby_connection_failed %s" % message)
 	_cancel_lobby_sign_in_watchdog()
 	var restore_auth_prompt := _startup_autologin_in_progress
@@ -8189,6 +8317,7 @@ func _on_lobby_connection_failed(message: String) -> void:
 	_fail_smoke_if_enabled("CONNECTION_FAILED:%s" % message)
 
 func _on_lobby_disconnected() -> void:
+	_finish_match_loading()
 	_write_smoke_trace("lobby_disconnected")
 	_cancel_lobby_sign_in_watchdog()
 	var restore_auth_prompt := _startup_autologin_in_progress
@@ -10361,6 +10490,7 @@ func _resume_active_match_from_lobby(match_info: Dictionary) -> void:
 	)
 
 func _on_match_session_cleared() -> void:
+	_finish_match_loading()
 	var saved_match := _get_saved_active_match()
 	var resume_profile_id := _get_resume_profile_id()
 	_clear_saved_match_resume()

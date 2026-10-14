@@ -18,6 +18,12 @@ const TRACK_SOURCE_RECT := Rect2(3.0, 280.0, 2167.0, 161.0)
 		return _progress
 
 var _progress: float = 0.0
+var indeterminate: bool = false:
+	set(value):
+		indeterminate = value
+		set_process(value)
+		queue_redraw()
+var _animation_seconds: float = 0.0
 var _frame_texture: Texture2D = null
 var _fill_texture: Texture2D = null
 var _track_texture: Texture2D = null
@@ -29,6 +35,13 @@ func _ready() -> void:
 	_frame_texture = _load_texture(FRAME_TEXTURE_PATH)
 	_fill_texture = _load_texture(FILL_TEXTURE_PATH)
 	_track_texture = _load_texture(TRACK_TEXTURE_PATH)
+	set_process(indeterminate)
+	queue_redraw()
+
+func _process(delta: float) -> void:
+	if not is_visible_in_tree():
+		return
+	_animation_seconds += delta
 	queue_redraw()
 
 func _notification(what: int) -> void:
@@ -51,14 +64,20 @@ func _draw() -> void:
 	else:
 		draw_rect(fill_rect, Color(0.02, 0.08, 0.13, 0.72))
 
-	var filled_width := fill_rect.size.x * _progress
+	var fill_fraction := 0.22 if indeterminate else _progress
+	var filled_width := fill_rect.size.x * fill_fraction
+	var filled_position := fill_rect.position
+	if indeterminate:
+		filled_position.x += (fill_rect.size.x - filled_width) * (0.5 - 0.5 * cos(_animation_seconds * 3.0))
 	if _fill_texture != null and filled_width > 0.5:
-		var source_width := _fill_texture.get_width() * _progress
+		var source_width := _fill_texture.get_width() * fill_fraction
 		draw_texture_rect_region(
 			_fill_texture,
-			Rect2(fill_rect.position, Vector2(filled_width, fill_rect.size.y)),
+			Rect2(filled_position, Vector2(filled_width, fill_rect.size.y)),
 			Rect2(Vector2.ZERO, Vector2(source_width, _fill_texture.get_height()))
 		)
+	elif indeterminate:
+		draw_rect(Rect2(filled_position, Vector2(filled_width, fill_rect.size.y)), Color(0.47, 0.62, 0.82))
 
 	if _frame_texture != null:
 		draw_texture_rect(_frame_texture, Rect2(Vector2.ZERO, bar_size), false)

@@ -91,7 +91,7 @@ func _ready() -> void:
 		updater.start(launch_args)
 		return
 	if _should_boot_server_runtime(launch_args):
-		_load_original_scene_directly()
+		_boot_server_runtime()
 		return
 
 	_previous_vsync_mode = DisplayServer.window_get_vsync_mode()
@@ -1518,13 +1518,21 @@ func _get_embedded_menu_control() -> Control:
 		return null
 	return _game_instance.get_node_or_null("Control") as Control
 
-func _load_original_scene_directly() -> void:
-	var scene := load(game_scene_path)
-	if not (scene is PackedScene):
-		push_error("Main3D: could not load server bootstrap scene at %s" % game_scene_path)
+func _boot_server_runtime() -> void:
+	# Each dedicated match starts a fresh process. Loading mainfork also loads
+	# and initializes the menu, board, practice scenes and their presentation
+	# resources before the match port can open. Only the bootstrap is needed.
+	var bootstrap_script := load("res://scripts/server/ServerRuntimeBootstrap.gd") as Script
+	if bootstrap_script == null:
+		push_error("Main3D: could not load server runtime bootstrap")
 		get_tree().quit(1)
 		return
-	add_child((scene as PackedScene).instantiate())
+	var bootstrap := bootstrap_script.new() as Node
+	# Preserve the existing mount for lobby RPCs and match runtime children.
+	bootstrap.name = "Main"
+	add_child(bootstrap)
+	set_process(false)
+	set_process_input(false)
 
 func _input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:

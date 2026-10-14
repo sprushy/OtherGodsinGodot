@@ -144,6 +144,7 @@ signal return_to_menu_requested
 signal leave_match_requested
 signal rematch_requested
 signal match_session_cleared
+signal match_loading_finished
 ## Emitted when the match connection is unrecoverable from inside the game
 ## (join retries or the server's reconnect window ran out). MainMenu uses this
 ## to restore the lobby session and offer the rejoin flow while the seat lasts.
@@ -834,6 +835,7 @@ var _post_game_board_refresh_locked: bool = false
 var _match_reconnect_waiting: bool = false
 var _match_reconnect_wait_message: String = "Waiting for opponent to reconnect..."
 var _awaiting_initial_full_state: bool = false
+var _match_launch_loading: bool = false
 var _current_match_info: Dictionary = {}
 var _network_upkeep_prompt_turn: int = -1
 var _network_upkeep_prompt_player_index: int = -1
@@ -6144,6 +6146,7 @@ func start_game(
 	_upkeep_hint_pending_turn = -1
 	_upkeep_hint_pulse_turn = -1
 	_prepare_for_match_launch("")
+	_match_launch_loading = true
 	_game_finished = false
 	_game_result_presented = false
 	_pending_forfeit_return_to_menu = false
@@ -6274,6 +6277,7 @@ func _build_initial_match_players(default_match_setup, server_match_session = nu
 	return match_players
 
 func _prepare_for_match_launch(status_message: String = "Connecting to match...") -> void:
+	_match_launch_loading = false
 	_clear_card_draw_animation()
 	_clear_card_shelve_animations()
 	_clear_card_grave_animations()
@@ -7095,6 +7099,10 @@ func _do_update_ui(expected_generation: int = -1) -> void:
 	# Hand redraws append new controls; the shelving dialog must keep input priority.
 	if is_instance_valid(_zone_overlay) and _zone_overlay.name == "ChampionsCallOverlay":
 		_promote_transient_ui(_zone_overlay, CONTEXT_MENU_Z_INDEX + 1)
+	if _match_launch_loading and not _awaiting_initial_full_state \
+			and (game_manager.turn_number > 0 or game_manager.is_game_over):
+		_match_launch_loading = false
+		match_loading_finished.emit()
 
 func _update_ui_immediately() -> void:
 	_ui_update_generation += 1
