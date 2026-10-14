@@ -10,6 +10,7 @@ const NetworkManagerScript = preload("res://scripts/Other/NetworkManager.gd")
 const WebSocketEndpointsScript = preload("res://scripts/network/WebSocketEndpoints.gd")
 const ProfileStoreScript = preload("res://scripts/server/ProfileStore.gd")
 const AccountStoreScript = preload("res://scripts/server/AccountStore.gd")
+const PasswordRecoveryMailerScript = preload("res://scripts/server/PasswordRecoveryMailer.gd")
 const DeckStoreScript = preload("res://scripts/server/DeckStore.gd")
 const FriendStoreScript = preload("res://scripts/server/FriendStore.gd")
 const DeckValidatorScript = preload("res://scripts/server/DeckValidator.gd")
@@ -57,6 +58,8 @@ var network_manager: Node = null
 var ws_transport: Node = null
 var profile_store = null
 var account_store = null
+var recovery_mailer = null
+var _recovery_request_times: Array[int] = []
 var deck_store = null
 var friend_store = null
 var deck_validator = null
@@ -243,6 +246,10 @@ func _handle_request(peer_id: int, message: Dictionary) -> void:
 	var payload: Dictionary = LobbyProtocolScript.get_payload(message)
 
 	match message_type:
+		LobbyProtocolScript.REQUEST_PASSWORD_RESET:
+			_handle_password_recovery(peer_id, payload, false)
+		LobbyProtocolScript.RESET_PASSWORD:
+			_handle_password_recovery(peer_id, payload, true)
 		LobbyProtocolScript.LOGIN_GUEST:
 			_send_error_to_peer(peer_id, "Guest sign-in is no longer supported.")
 		LobbyProtocolScript.LOGIN_ACCOUNT:
@@ -335,6 +342,82 @@ func _handle_request(peer_id: int, message: Dictionary) -> void:
 			_handle_reconnect_request(peer_id, payload)
 		LobbyProtocolScript.REPORT_HOST_VIABILITY:
 			_handle_report_host_viability(peer_id, payload)
+
+func _can_accept_password_recovery(peer_id: int) -> bool:
+	if peer_id == 1:
+		return true
+	if ws_transport != null and peer_id >= NetworkManagerScript.WS_PEER_ID_BASE:
+		return WebSocketEndpointsScript.public_base_url().begins_with("wss://")
+	if network_manager != null and network_manager.peer is ENetMultiplayerPeer:
+		var packet_peer: ENetPacketPeer = network_manager.peer.get_peer(peer_id)
+		if packet_peer != null:
+			var address := packet_peer.get_remote_address()
+			return address.begins_with("127.") or address == "::1"
+	return false
+
+func _handle_password_recovery(peer_id: int, payload: Dictionary, completing: bool) -> void:
+	if not _can_accept_password_recovery(peer_id):
+		_send_error_to_peer(peer_id, "Password recovery requires a secure WSS lobby connection.")
+		return
+	# A bounded server-wide budget also covers unknown emails and fresh peers.
+	var now := int(Time.get_unix_time_from_system())
+	while not _recovery_request_times.is_empty() and _recovery_request_times[0] <= now - 60:
+		_recovery_request_times.pop_front()
+	if _recovery_request_times.size() >= 30:
+		_send_error_to_peer(peer_id, "Too many recovery attempts. Please try again in a minute.")
+		return
+	_recovery_request_times.append(now)
+	_ensure_account_store()
+	if completing:
+		var result: Dictionary = account_store.reset_password(
+			str(payload.get("email", "")), str(payload.get("token", "")), str(payload.get("new_password", "")))
+		if bool(result.get("success", false)):
+			_revoke_recovered_account_sessions(str(result.get("account", {}).get("account_id", "")))
+		_send_to_peer(peer_id, LobbyProtocolScript.PASSWORD_RESET_RESULT, {
+			"completed": true, "success": bool(result.get("success", false)), "message": str(result.get("message", "")),
+		})
+		return
+	if recovery_mailer == null:
+		recovery_mailer = PasswordRecoveryMailerScript.new()
+		add_child(recovery_mailer)
+	if not recovery_mailer.is_configured():
+		_send_error_to_peer(peer_id, "Email recovery is not configured on this server. Contact the server administrator.")
+		return
+	var email := str(payload.get("email", "")).strip_edges().to_lower()
+	if email.length() > 254 or account_store._validate_email(email) != "":
+		_send_error_to_peer(peer_id, "Enter a valid account email address.")
+		return
+	var recovery: Dictionary = account_store.create_password_reset(email)
+	if not recovery.is_empty():
+		var account_id := str(recovery.get("account_id", ""))
+		var token := str(recovery.get("token", ""))
+		var queued: bool = recovery_mailer.send_recovery_email(str(recovery.get("email", "")), token, func(sent: bool) -> void:
+			if not sent:
+				account_store.cancel_password_reset(account_id, token)
+		)
+		if not queued:
+			account_store.cancel_password_reset(account_id, token)
+			push_warning("Password recovery email could not be queued.")
+	# Respond immediately and identically regardless of account existence or delivery.
+	_send_to_peer(peer_id, LobbyProtocolScript.PASSWORD_RESET_RESULT, {
+		"completed": false, "success": true,
+		"message": "If this email belongs to an account, a recovery code will arrive shortly. Check your spam folder. Codes expire after 15 minutes. You can request another email after one minute.",
+	})
+
+func _revoke_recovered_account_sessions(account_id: String) -> void:
+	for session_id in sessions_by_id.keys():
+		var session: Dictionary = sessions_by_id[session_id]
+		if str(session.get("account_id", "")) != account_id:
+			continue
+		# Retain match bookkeeping, but invalidate reconnect and command access.
+		session["reconnect_token"] = ""
+		var peer_id := int(session.get("peer_id", 0))
+		if peer_id > 0:
+			_send_error_to_peer(peer_id, "Your password was reset. Sign in again.")
+			_on_peer_disconnected(peer_id)
+		session["connected"] = false
+		session["peer_id"] = 0
+		sessions_by_id[session_id] = session
 
 func _handle_login_guest(peer_id: int, payload: Dictionary) -> void:
 	var requested_player_name := str(payload.get("player_name", "Guest"))
@@ -628,7 +711,7 @@ func _handle_reconnect_request(peer_id: int, payload: Dictionary) -> void:
 	if session.is_empty():
 		_send_error_to_peer(peer_id, "Lobby session not found.")
 		return
-	if str(session.get("reconnect_token", "")) != reconnect_token:
+	if str(session.get("reconnect_token", "")).is_empty() or str(session.get("reconnect_token", "")) != reconnect_token:
 		_send_error_to_peer(peer_id, "Reconnect token did not match.")
 		return
 

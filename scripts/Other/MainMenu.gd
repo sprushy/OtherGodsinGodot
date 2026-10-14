@@ -226,6 +226,15 @@ var _selected_account_username: String = ""
 var _selected_account_public_username: String = ""
 var _selected_account_accepts_game_updates: bool = false
 var _selected_account_password: String = ""
+var _password_recovery_dialog: AcceptDialog = null
+var _password_recovery_email: LineEdit = null
+var _password_recovery_token: LineEdit = null
+var _password_recovery_password: LineEdit = null
+var _password_recovery_confirm: LineEdit = null
+var _password_recovery_status: Label = null
+var _password_recovery_send: Button = null
+var _password_recovery_submit: Button = null
+var _password_recovery_busy: bool = false
 var _startup_autologin_pending: bool = false
 var _startup_autologin_in_progress: bool = false
 var _background_lobby_auth_error: String = ""
@@ -5663,6 +5672,11 @@ func _show_auth_onboarding() -> void:
 		_submit_auth_onboarding()
 	)
 	inner.add_child(_auth_onboarding_password_edit)
+	var forgot_password_button := Button.new()
+	forgot_password_button.text = "Forgot password?"
+	_apply_button_text_sizing(forgot_password_button, AUTH_CONTROL_FONT_SIZE, AUTH_FIELD_MIN_HEIGHT)
+	forgot_password_button.pressed.connect(_show_password_recovery)
+	inner.add_child(forgot_password_button)
 
 	_auth_onboarding_auto_login_toggle = CheckButton.new()
 	_auth_onboarding_auto_login_toggle.text = "Auto login on this device"
@@ -5702,6 +5716,146 @@ func _show_auth_onboarding() -> void:
 	var launch_auth_mode := _get_launch_auth_mode()
 	_begin_auth_onboarding_account_flow(launch_auth_mode)
 	_refresh_auth_onboarding_form_state()
+
+func _show_password_recovery() -> void:
+	if _password_recovery_dialog != null:
+		_password_recovery_dialog.popup_centered()
+		return
+	_cancel_pending_authenticated_lobby_connects()
+	_password_recovery_dialog = AcceptDialog.new()
+	_password_recovery_dialog.title = "Recover your account"
+	_password_recovery_dialog.ok_button_text = "Close"
+	_password_recovery_dialog.min_size = Vector2i(520, 430)
+	add_child(_password_recovery_dialog)
+	_password_recovery_dialog.confirmed.connect(_close_password_recovery)
+	_password_recovery_dialog.canceled.connect(_close_password_recovery)
+	var content := VBoxContainer.new()
+	content.add_theme_constant_override("separation", 10)
+	_password_recovery_dialog.add_child(content)
+	_password_recovery_status = Label.new()
+	_password_recovery_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_password_recovery_status.text = "Enter your account email to receive a recovery code. Paste the code below and choose a new password."
+	content.add_child(_password_recovery_status)
+	_password_recovery_email = LineEdit.new()
+	_password_recovery_email.placeholder_text = "Account email address"
+	_password_recovery_email.max_length = 254
+	_password_recovery_email.text = _auth_onboarding_username_edit.text if _auth_onboarding_username_edit != null else ""
+	content.add_child(_password_recovery_email)
+	_password_recovery_send = Button.new()
+	_password_recovery_send.text = "Email recovery code"
+	_password_recovery_send.pressed.connect(func() -> void: _submit_password_recovery(false))
+	content.add_child(_password_recovery_send)
+	_password_recovery_token = LineEdit.new()
+	_password_recovery_token.placeholder_text = "Recovery code from email"
+	_password_recovery_token.max_length = 64
+	content.add_child(_password_recovery_token)
+	_password_recovery_password = LineEdit.new()
+	_password_recovery_password.placeholder_text = "New password (at least %d characters)" % _get_account_min_password_length()
+	_password_recovery_password.secret = true
+	_password_recovery_password.max_length = 1024
+	content.add_child(_password_recovery_password)
+	_password_recovery_confirm = LineEdit.new()
+	_password_recovery_confirm.placeholder_text = "Confirm new password"
+	_password_recovery_confirm.secret = true
+	_password_recovery_confirm.max_length = 1024
+	content.add_child(_password_recovery_confirm)
+	_password_recovery_submit = Button.new()
+	_password_recovery_submit.text = "Reset password"
+	_password_recovery_submit.pressed.connect(func() -> void: _submit_password_recovery(true))
+	content.add_child(_password_recovery_submit)
+	for control in content.get_children():
+		if control is LineEdit:
+			_apply_line_edit_text_sizing(control, AUTH_CONTROL_FONT_SIZE, AUTH_FIELD_MIN_HEIGHT)
+		elif control is Button:
+			_apply_button_text_sizing(control, AUTH_CONTROL_FONT_SIZE, AUTH_FIELD_MIN_HEIGHT)
+	_password_recovery_dialog.popup_centered()
+	_password_recovery_email.grab_focus()
+
+func _set_password_recovery_busy(busy: bool) -> void:
+	_password_recovery_busy = busy
+	_password_recovery_send.disabled = busy
+	_password_recovery_submit.disabled = busy
+	for edit in [_password_recovery_email, _password_recovery_token, _password_recovery_password, _password_recovery_confirm]:
+		edit.editable = not busy
+
+func _submit_password_recovery(completing: bool) -> void:
+	if _password_recovery_busy:
+		return
+	var email := _password_recovery_email.text.strip_edges().to_lower()
+	var token := _password_recovery_token.text.strip_edges().to_lower()
+	var password := _password_recovery_password.text
+	if not _is_valid_account_email(email):
+		_password_recovery_status.text = "Enter your account email address."
+		return
+	if completing:
+		if token.length() != 64:
+			_password_recovery_status.text = "Paste the full recovery code from your email."
+			return
+		if password.length() < _get_account_min_password_length():
+			_password_recovery_status.text = "Choose a password of at least %d characters." % _get_account_min_password_length()
+			return
+		if password != _password_recovery_confirm.text:
+			_password_recovery_status.text = "The new passwords do not match."
+			return
+	_set_password_recovery_busy(true)
+	_password_recovery_status.text = "Resetting password..." if completing else "Requesting recovery email..."
+	_cleanup_lobby_client()
+	lobby_client = LobbyClientScript.new()
+	lobby_client.name = "LobbyPeer"
+	lobby_client.use_default_multiplayer = true
+	_attach_lobby_client(lobby_client)
+	lobby_client.password_reset_result.connect(_on_password_recovery_result)
+	lobby_client.connection_failed.connect(_on_password_recovery_error)
+	lobby_client.disconnected_from_lobby.connect(func() -> void: _on_password_recovery_error("The lobby disconnected. Please try again."))
+	var error := lobby_client.connect_to_server(_get_lobby_ip(), email, "", "", _get_configured_lobby_port(), "",
+		"reset_password" if completing else "request_password_reset", password if completing else "", "", false, token if completing else "")
+	if error != OK and _password_recovery_busy:
+		_on_password_recovery_error("Could not connect to the lobby for password recovery.")
+
+func _on_password_recovery_error(message: String) -> void:
+	if _password_recovery_dialog == null:
+		return
+	_cleanup_lobby_client()
+	_set_password_recovery_busy(false)
+	_password_recovery_status.text = message
+
+func _on_password_recovery_result(completed: bool, success: bool, message: String) -> void:
+	if _password_recovery_dialog == null:
+		return
+	_cleanup_lobby_client()
+	_set_password_recovery_busy(false)
+	_password_recovery_status.text = message
+	if completed and success:
+		_set_selected_account_username(_password_recovery_email.text.strip_edges().to_lower())
+		_set_selected_account_password("")
+		_clear_saved_lobby_resume()
+		_clear_saved_match_resume()
+		_lobby_session_id = ""
+		_lobby_reconnect_token = ""
+		if _local_profile_store != null:
+			_local_profile_store.clear_account_password()
+		if _auth_onboarding_username_edit != null:
+			_auth_onboarding_username_edit.text = _password_recovery_email.text.strip_edges().to_lower()
+		if _auth_onboarding_password_edit != null:
+			_auth_onboarding_password_edit.text = ""
+		_password_recovery_token.text = ""
+		_password_recovery_password.text = ""
+		_password_recovery_confirm.text = ""
+		_begin_auth_onboarding_account_flow(AUTH_MODE_LOGIN)
+		_set_auth_onboarding_hint(message)
+
+func _close_password_recovery() -> void:
+	_cleanup_lobby_client()
+	_password_recovery_busy = false
+	_password_recovery_dialog.queue_free()
+	_password_recovery_dialog = null
+	_password_recovery_email = null
+	_password_recovery_token = null
+	_password_recovery_password = null
+	_password_recovery_confirm = null
+	_password_recovery_status = null
+	_password_recovery_send = null
+	_password_recovery_submit = null
 
 func _refresh_auth_onboarding_action_buttons() -> void:
 	var auth_mode := _auth_onboarding_selected_mode

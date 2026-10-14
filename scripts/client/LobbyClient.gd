@@ -44,6 +44,7 @@ signal account_deck_deleted(deck_id: String)
 signal profile_summary_received(summary: Dictionary)
 signal friends_state_received(state: Dictionary)
 signal account_settings_updated(account: Dictionary)
+signal password_reset_result(completed: bool, success: bool, message: String)
 signal connection_failed(message: String)
 signal disconnected_from_lobby()
 signal match_host_viability_requested()
@@ -80,6 +81,7 @@ var _pending_reconnect_token: String = ""
 var _pending_profile_id: String = ""
 var _pending_auth_mode: String = "login"
 var _pending_password: String = ""
+var _pending_recovery_token: String = ""
 var _connect_attempt_serial: int = 0
 var _initial_auth_attempt_serial: int = 0
 var _auth_response_serial: int = 0
@@ -112,7 +114,8 @@ func connect_to_server(
 	auth_mode: String = "login",
 	password: String = "",
 	account_username: String = "",
-	accepts_game_updates: bool = false
+	accepts_game_updates: bool = false,
+	recovery_token: String = ""
 ) -> Error:
 	_cancel_initial_auth_request()
 	_cancel_auth_response_timeout()
@@ -142,12 +145,13 @@ func connect_to_server(
 	_pending_reconnect_token = reconnect_token.strip_edges()
 	_pending_profile_id = profile_id.strip_edges()
 	_pending_auth_mode = auth_mode.strip_edges().to_lower()
-	if not _pending_auth_mode in ["login", "register", "claim_legacy_account"]:
+	if not _pending_auth_mode in ["login", "register", "claim_legacy_account", "request_password_reset", "reset_password"]:
 		_pending_auth_mode = "login"
 	_pending_player_name = _pending_account_username
 	if _pending_player_name.is_empty():
 		_pending_player_name = "Player" if _pending_auth_mode == "login" else _display_name_from_email(_pending_account_email)
 	_pending_password = password
+	_pending_recovery_token = recovery_token.strip_edges().to_lower()
 
 	var connect_address: String = address.strip_edges()
 	if connect_address.is_empty():
@@ -161,6 +165,15 @@ func connect_to_server(
 		connection_failed.emit("Could not initialize lobby network transport.")
 		return ERR_UNAVAILABLE
 	_transport_attempts = _build_transport_attempts(connect_address, port)
+	if _pending_auth_mode in ["request_password_reset", "reset_password"]:
+		var secure_attempts: Array[Dictionary] = []
+		for attempt in _transport_attempts:
+			if str(attempt.get("url", "")).begins_with("wss://") or _is_loopback_address(connect_address):
+				secure_attempts.append(attempt)
+		_transport_attempts = secure_attempts
+		if _transport_attempts.is_empty():
+			connection_failed.emit("Password recovery requires a secure WSS lobby connection.")
+			return ERR_UNAVAILABLE
 	_transport_attempt_index = -1
 	_last_transport_failure_was_timeout = false
 	return _start_next_transport_attempt()
@@ -322,6 +335,7 @@ func disconnect_from_server() -> void:
 	_pending_profile_id = ""
 	_pending_auth_mode = "login"
 	_pending_password = ""
+	_pending_recovery_token = ""
 	_reconnect_fallback_attempted = false
 	_set_current_server_version("")
 	if network_manager != null:
@@ -513,6 +527,12 @@ func lobby_event(message: Dictionary) -> void:
 		_trace("received %s" % message_type)
 
 	match message_type:
+		LobbyProtocolScript.PASSWORD_RESET_RESULT:
+			_cancel_initial_auth_request()
+			_cancel_auth_response_timeout()
+			_pending_password = ""
+			_pending_recovery_token = ""
+			password_reset_result.emit(bool(payload.get("completed", false)), bool(payload.get("success", false)), str(payload.get("message", "")))
 		LobbyProtocolScript.HELLO_OK:
 			_cancel_initial_auth_request()
 			_cancel_auth_response_timeout()
@@ -695,6 +715,15 @@ func _try_send_initial_auth_request(expected_serial: int, attempt: int) -> void:
 	_send_initial_auth_request()
 
 func _send_initial_auth_request() -> void:
+	if _pending_auth_mode in ["request_password_reset", "reset_password"]:
+		var completing := _pending_auth_mode == "reset_password"
+		var payload := {"email": _pending_account_email}
+		if completing:
+			payload["token"] = _pending_recovery_token
+			payload["new_password"] = _pending_password
+		_send_request(LobbyProtocolScript.RESET_PASSWORD if completing else LobbyProtocolScript.REQUEST_PASSWORD_RESET, payload)
+		_arm_auth_response_timeout()
+		return
 	if _should_attempt_pending_lobby_reconnect():
 		_send_request(LobbyProtocolScript.REQUEST_RECONNECT_LOBBY, {
 			"session_id": _pending_session_id,

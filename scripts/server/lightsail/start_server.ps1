@@ -39,6 +39,17 @@ function Load-NetworkConfig {
         throw 'network.json contains an invalid backend port.'
     }
 }
+
+function Load-RecoveryEmailEnvironment {
+    # Scheduled tasks may inherit an old environment from Task Scheduler.
+    # Read current Machine values on each launch; no Windows reboot is needed.
+    foreach ($name in @('OTHERGODS_GMAIL_ADDRESS', 'OTHERGODS_GMAIL_APP_PASSWORD', 'OTHERGODS_RESEND_API_KEY', 'OTHERGODS_RECOVERY_EMAIL_FROM')) {
+        $value = [Environment]::GetEnvironmentVariable($name, 'Machine')
+        if ($null -ne $value) {
+            [Environment]::SetEnvironmentVariable($name, $value, 'Process')
+        }
+    }
+}
 $LifecycleMutexName = "Global\OtherGodsServerLifecycle"
 $RetainedLogFilesPerPattern = 20
 
@@ -124,6 +135,7 @@ try {
         }
     }
     Load-NetworkConfig
+    Load-RecoveryEmailEnvironment
     $launchPath = Resolve-LaunchPath
 
     if (-not (Test-Path -LiteralPath $launchPath)) {

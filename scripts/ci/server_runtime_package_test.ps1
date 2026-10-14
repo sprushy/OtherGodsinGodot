@@ -73,7 +73,7 @@ try {
     & (Join-Path $runtimeSource 'Stage-ServerRuntimeFiles.ps1') -OutputDirectory $releaseRoot -ProjectFile $projectFixture
 
     Assert-Condition ((Get-Content -LiteralPath (Join-Path $releaseRoot 'OtherGodsServer.exe') -Raw).Trim() -eq 'export fixture') 'Staging must preserve the exported server binary.'
-    foreach ($fileName in @('start_server.ps1', 'update_server.ps1', 'Initialize-WebSocketProxy.ps1', 'New-WebSocketProxyConfig.ps1', 'install_lightsail_tasks.ps1')) {
+    foreach ($fileName in @('start_server.ps1', 'update_server.ps1', 'Initialize-WebSocketProxy.ps1', 'New-WebSocketProxyConfig.ps1', 'install_lightsail_tasks.ps1', 'Set-RecoveryEmail.ps1')) {
         Assert-Condition (Test-Path -LiteralPath (Join-Path $releaseRoot $fileName)) "Missing packaged runtime script $fileName."
     }
     Assert-Condition (-not (Test-Path -LiteralPath (Join-Path $releaseRoot 'network.json'))) 'Release defaults must not overwrite installed network.json during extraction.'
@@ -83,6 +83,20 @@ try {
     Compress-Archive -Path (Join-Path $releaseRoot '*') -DestinationPath $archivePath
     # This is the extraction behavior used by the already-deployed updater.
     Expand-Archive -LiteralPath $archivePath -DestinationPath $installRoot -Force
+    # The setup helper ships without credentials. Preview must not prompt or
+    # mutate the real machine, including when CI runs on Linux.
+    $recoveryNames = @('OTHERGODS_GMAIL_ADDRESS', 'OTHERGODS_GMAIL_APP_PASSWORD')
+    $previousRecoveryValues = @{}
+    foreach ($name in $recoveryNames) {
+        $previousRecoveryValues[$name] = [Environment]::GetEnvironmentVariable($name, 'Machine')
+    }
+    & (Join-Path $installRoot 'Set-RecoveryEmail.ps1') -Address 'test@gmail.com' -WhatIf
+    foreach ($name in $recoveryNames) {
+        Assert-Condition ([Environment]::GetEnvironmentVariable($name, 'Machine') -ceq $previousRecoveryValues[$name]) 'Recovery setup preview must not change System credentials.'
+    }
+    $recoverySetupContent = Get-Content -LiteralPath (Join-Path $installRoot 'Set-RecoveryEmail.ps1') -Raw
+    Assert-Condition ($recoverySetupContent.Contains('-AsSecureString')) 'Recovery setup must prompt with hidden input.'
+    Assert-Condition (-not $recoverySetupContent.Contains('[string]$AppPassword')) 'Recovery setup must not accept credentials in command arguments.'
     & (Join-Path $installRoot 'Initialize-WebSocketProxy.ps1') -Root $installRoot
     $networkConfig = Get-Content -LiteralPath (Join-Path $installRoot 'network.json') -Raw | ConvertFrom-Json
     Assert-Condition ($networkConfig.public_websocket_url -eq 'wss://othergods-server.duckdns.org') 'Installed origin must match the client origin.'

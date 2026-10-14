@@ -17,6 +17,7 @@ foreach ($fileName in @(
     'start_server.ps1',
     'update_server.ps1',
     'install_lightsail_tasks.ps1',
+    'Set-RecoveryEmail.ps1',
     'Initialize-WebSocketProxy.ps1',
     'New-WebSocketProxyConfig.ps1'
 )) {

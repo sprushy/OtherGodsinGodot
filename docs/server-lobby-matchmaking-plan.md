@@ -55,6 +55,8 @@ Recommended later deployment:
 
 The lobby and dedicated matches support verified TLS WebSocket endpoints on public TCP 443 alongside ENet. See [restrictive network setup](restrictive-network-websocket.md) for the domain, proxy, and client configuration. ENet itself is not encrypted in this high-level `ENetMultiplayerPeer` path. The current public alpha build sets `application/config/allow_insecure_account_auth=true` for legacy UDP password auth; verified WSS password auth works without that flag. Disable it after deploying the TLS endpoint if password auth should require encryption.
 
+Account email recovery is available from the login screen's **Forgot password?** button. Public recovery requires WSS and server-side email provider configuration; see [password recovery setup and checks](password-recovery.md).
+
 ### Client flow
 
 1. Client connects to the lobby server.

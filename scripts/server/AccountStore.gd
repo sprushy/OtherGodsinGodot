@@ -13,6 +13,8 @@ const PASSWORD_HASH_BYTES := 32
 const PASSWORD_SALT_BYTES := 32
 const LEGACY_PASSWORD_HASH_ROUNDS := 4096
 const SHA256_BLOCK_BYTES := 64
+const PASSWORD_RESET_TTL_SECONDS := 15 * 60
+const PASSWORD_RESET_COOLDOWN_SECONDS := 60
 
 var _accounts_by_id: Dictionary = {}
 var _account_id_by_email: Dictionary = {}
@@ -312,6 +314,8 @@ func update_account_settings(
 			if password_record.is_empty():
 				return _result(false, "Could not secure account password.")
 			account.merge(password_record, true)
+	if changing_email or changing_password:
+		_clear_password_reset(account)
 	if update_game_updates:
 		account["accepts_game_updates"] = accepts_game_updates
 	account["last_seen_unix"] = int(Time.get_unix_time_from_system())
@@ -322,6 +326,79 @@ func update_account_settings(
 		_rebuild_account_indexes()
 		return _result(false, "Could not update account settings.")
 	return _result(true, "", _sanitize_account(account))
+
+func create_password_reset(email: String) -> Dictionary:
+	_ensure_loaded()
+	var normalized_email := _normalize_email(email)
+	if not _validate_email(normalized_email).is_empty():
+		return {}
+	# Ambiguous legacy email records must be repaired before recovery is allowed.
+	var account_ids := _get_account_ids_by_email(_email_key(normalized_email))
+	if account_ids.size() != 1:
+		return {}
+	var account_id: String = account_ids[0]
+	var account: Dictionary = (_accounts_by_id[account_id] as Dictionary).duplicate(true)
+	var now := int(Time.get_unix_time_from_system())
+	if now - int(account.get("password_reset_requested_unix", 0)) < PASSWORD_RESET_COOLDOWN_SECONDS:
+		return {}
+	# Recovery credentials must fail closed if the OS entropy source fails.
+	var random_bytes := Crypto.new().generate_random_bytes(32)
+	if random_bytes.size() != 32:
+		return {}
+	var token := random_bytes.hex_encode()
+	var previous_account := account.duplicate(true)
+	account["password_reset_hash"] = token.sha256_text()
+	account["password_reset_expires_unix"] = now + PASSWORD_RESET_TTL_SECONDS
+	account["password_reset_requested_unix"] = now
+	_accounts_by_id[account_id] = account
+	if not _save():
+		_accounts_by_id[account_id] = previous_account
+		return {}
+	# Server-internal only: never send this dictionary over the lobby connection.
+	return {"account_id": account_id, "email": str(account.get("email", "")), "token": token}
+
+func cancel_password_reset(account_id: String, token: String) -> void:
+	_ensure_loaded()
+	var account: Dictionary = (_accounts_by_id.get(account_id, {}) as Dictionary).duplicate(true)
+	if not _constant_time_equals(str(account.get("password_reset_hash", "")), token.sha256_text()):
+		return
+	var previous_account := account.duplicate(true)
+	_clear_password_reset(account)
+	_accounts_by_id[account_id] = account
+	if not _save():
+		_accounts_by_id[account_id] = previous_account
+
+func reset_password(email: String, token: String, new_password: String) -> Dictionary:
+	_ensure_loaded()
+	var invalid_message := "Recovery code is invalid or expired. Request a new email."
+	var account_ids := _get_account_ids_by_email(_email_key(_normalize_email(email)))
+	if account_ids.size() != 1 or token.length() != 64:
+		return _result(false, invalid_message)
+	var account_id: String = account_ids[0]
+	var account: Dictionary = (_accounts_by_id[account_id] as Dictionary).duplicate(true)
+	var expected_hash := str(account.get("password_reset_hash", ""))
+	if expected_hash.is_empty() or not _constant_time_equals(expected_hash, token.sha256_text()) \
+			or int(account.get("password_reset_expires_unix", 0)) <= int(Time.get_unix_time_from_system()):
+		return _result(false, invalid_message)
+	var password_error := _validate_password(new_password)
+	if not password_error.is_empty():
+		return _result(false, password_error)
+	var password_record := _build_password_record(new_password)
+	if password_record.is_empty():
+		return _result(false, "Could not secure account password.")
+	var previous_account := account.duplicate(true)
+	account.merge(password_record, true)
+	_clear_password_reset(account)
+	_accounts_by_id[account_id] = account
+	if not _save():
+		_accounts_by_id[account_id] = previous_account
+		return _result(false, "Could not save the new password. Please try again.")
+	return _result(true, "Password reset. Sign in with your new password.", _sanitize_account(account))
+
+func _clear_password_reset(account: Dictionary) -> void:
+	account.erase("password_reset_hash")
+	account.erase("password_reset_expires_unix")
+	# Keep the last request timestamp to prevent bypassing the email cooldown.
 
 func get_account(account_id: String) -> Dictionary:
 	_ensure_loaded()

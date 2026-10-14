@@ -11,6 +11,8 @@ const LOGIN_ACCOUNT := "login_account"
 const REGISTER_ACCOUNT := "register_account"
 const CLAIM_LEGACY_ACCOUNT := "claim_legacy_account"
 const UPDATE_ACCOUNT_SETTINGS := "update_account_settings"
+const REQUEST_PASSWORD_RESET := "request_password_reset"
+const RESET_PASSWORD := "reset_password"
 const CREATE_ROOM := "create_room"
 const LIST_ROOMS := "list_rooms"
 const JOIN_ROOM := "join_room"
@@ -45,6 +47,7 @@ const ACCOUNT_DECK_DELETED := "account_deck_deleted"
 const PROFILE_SUMMARY := "profile_summary"
 const FRIENDS_STATE := "friends_state"
 const ACCOUNT_SETTINGS_UPDATED := "account_settings_updated"
+const PASSWORD_RESET_RESULT := "password_reset_result"
 const MATCH_HOST_VIABILITY_REQUEST := "match_host_viability_request"
 
 static func make_message(message_type: String, payload: Dictionary = {}) -> Dictionary:
@@ -70,6 +73,16 @@ static func validate_request(message: Dictionary) -> String:
 		return "Missing lobby message type."
 
 	match message_type:
+		REQUEST_PASSWORD_RESET, RESET_PASSWORD:
+			var email := str(payload.get("email", "")).strip_edges()
+			if email.is_empty() or email.length() > 254:
+				return "Enter a valid account email address."
+			if message_type == RESET_PASSWORD:
+				if str(payload.get("token", "")).length() != 64:
+					return "Enter the recovery code from your email."
+				var password := str(payload.get("new_password", ""))
+				if password.is_empty() or password.length() > 1024:
+					return "Enter a new password (at most 1024 characters)."
 		LOGIN_GUEST:
 			return "Guest sign-in is no longer supported."
 		LOGIN_ACCOUNT, REGISTER_ACCOUNT:
