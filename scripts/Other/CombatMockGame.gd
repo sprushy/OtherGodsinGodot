@@ -22403,6 +22403,11 @@ func _input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 		return
 	if _is_visual_linger_active():
+		# Let GUI releases clear mouse focus even while attack resolution blocks input.
+		if event is InputEventMouseButton and not event.pressed:
+			if event.button_index == MOUSE_BUTTON_LEFT and _bdrag_active:
+				_bdrag_cancel()
+			return
 		get_viewport().set_input_as_handled()
 		return
 	# Dismiss before GUI dispatch so the same outside tap can select another card.
@@ -22482,7 +22487,8 @@ func _input(event: InputEvent) -> void:
 			if _bdrag_card != null:
 				_on_board_card_pressed(_bdrag_card)
 		_bdrag_cleanup()
-		get_viewport().set_input_as_handled()
+		# The GUI must receive this release to clear the source card's mouse focus
+		# and resume hover/drag input for the next creature without an extra click.
 
 func _try_handle_hand_creature_drag_preview_modifier(event: InputEvent) -> bool:
 	var apply_defensive := false
