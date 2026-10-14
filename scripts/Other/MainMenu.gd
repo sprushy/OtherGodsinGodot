@@ -7619,8 +7619,10 @@ func _on_lobby_login_succeeded(session_id: String, reconnect_token: String, play
 		_lobby_session_id = session_id
 		_lobby_reconnect_token = reconnect_token
 		_pending_background_lobby_auth_completion = Callable(self, "_on_lobby_login_succeeded").bind(session_id, reconnect_token, player_name)
-		# Authentication is already complete: update the small identity UI now.
-		# Keep profile persistence, deck sync and rejoin handling deferred.
+		# The main-menu deck picker needs the authenticated profile and deck list
+		# now; only the remaining lobby/rejoin handling waits for Multiplayer.
+		_capture_logged_in_profile(player_name)
+		_maybe_request_account_decks()
 		_refresh_account_identity_label()
 		_refresh_auth_controls()
 		player_name_line_edit.text = _get_effective_identity_name(player_name)
@@ -7721,8 +7723,9 @@ func _on_lobby_reconnect_succeeded(
 		_lobby_session_id = session_id
 		_lobby_reconnect_token = reconnect_token
 		_pending_background_lobby_auth_completion = Callable(self, "_on_lobby_reconnect_succeeded").bind(session_id, reconnect_token, player_name, room.duplicate(true), active_match_info.duplicate(true))
-		# Authentication is already complete: update the small identity UI now.
-		# Keep profile persistence, deck sync and rejoin handling deferred.
+		# Restore decks on the main menu too, without waiting for Multiplayer.
+		_capture_logged_in_profile(player_name)
+		_maybe_request_account_decks()
 		_refresh_account_identity_label()
 		_refresh_auth_controls()
 		player_name_line_edit.text = _get_effective_identity_name(player_name)

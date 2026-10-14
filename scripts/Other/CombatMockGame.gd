@@ -4267,6 +4267,7 @@ func _process(delta: float) -> void:
 	_sync_local_scheduled_callbacks()
 	_sync_local_priority_recovery()
 	_sync_deferred_turn_action_after_opponent_priority()
+	_update_waiting_overlay()
 	_sync_pending_board_drag_attack_after_reveal()
 	_sync_sacrifice_cursor()
 	_sync_entropy_cursor_overlay(delta)
@@ -31417,7 +31418,7 @@ func _update_waiting_status(is_waiting: bool, message: String = "Waiting for Opp
 		is_waiting = false
 	var panel = get_node_or_null("WaitingOverlay")
 	if not is_waiting:
-		if panel: panel.queue_free()
+		if panel: panel.hide()
 		return
 	
 	if panel == null:
@@ -31447,18 +31448,19 @@ func _update_waiting_status(is_waiting: bool, message: String = "Waiting for Opp
 	
 	var lbl = panel.get_node("WaitingLabel")
 	lbl.text = normalized_message
+	panel.show()
 
 func _update_waiting_overlay() -> void:
 	if _match_reconnect_waiting:
 		_update_waiting_status(true, _match_reconnect_wait_message)
 		return
-	if not _is_networked_client:
+	if game_manager == null or _is_observer_mode or (not _is_networked_client and not _is_real_network_host()):
 		_update_waiting_status(false)
 		return
 	if _game_finished:
 		_update_waiting_status(false)
 		return
-	if _awaiting_initial_full_state:
+	if _is_networked_client and _awaiting_initial_full_state:
 		_update_waiting_status(true, "Waiting for authoritative match state...")
 		return
 	if _has_pending_click_selection() or _is_priority_prompt_visible() or _is_intercept_prompt_visible():
@@ -31469,10 +31471,10 @@ func _update_waiting_overlay() -> void:
 	var current_priority_player := game_manager.priority_player
 	var priority_idx := game_manager.players.find(current_priority_player)
 	
-	# Only show this after the server has offered the opponent a real prompt.
+	# Only show this after authority has offered the opponent a real prompt.
 	# Transient priority players may be auto-passed without seeing one.
 	if _should_show_opponent_priority_waiting(current_priority_player, priority_idx, local_idx):
-		_update_waiting_status(true, "Opponent has priority...")
+		_update_waiting_status(true, "Waiting for opponent to respond or pass priority...")
 		return
 		
 	# If we are in combat and waiting for intercept

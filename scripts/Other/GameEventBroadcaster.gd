@@ -240,6 +240,20 @@ func shutdown() -> void:
 
 func _on_ui_interaction_requested(player_index: int, type: String, data: Dictionary) -> void:
 	_sync_remote_prompt_player_state(player_index)
+	if type == "priority" and network_manager != null:
+		# Priority may advance after the last move snapshot. Both players need
+		# the offered-window marker so the other client can show its wait status.
+		# Keep the prompted player's existing delivery order: a host can auto-
+		# pass during a state update before its prompt has been delivered.
+		for waiting_player_index in network_manager.player_peer_ids:
+			if int(waiting_player_index) == player_index:
+				continue
+			var peer_id: int = network_manager.player_peer_ids[waiting_player_index]
+			var event_data := _build_full_state_event_data(int(waiting_player_index), "")
+			if peer_id == 1:
+				network_manager.game_event_received.emit("full_state", event_data)
+			elif peer_id > 1:
+				network_manager.broadcast_event_to_peer(peer_id, "full_state", event_data)
 	_broadcast_ui_interaction(player_index, type, data)
 
 func _broadcast_ui_interaction(player_index: int, type: String, data: Dictionary) -> void:
