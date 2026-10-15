@@ -5,6 +5,7 @@ const LobbyServerScript = preload("res://scripts/server/LobbyServer.gd")
 const AccountStoreScript = preload("res://scripts/server/AccountStore.gd")
 const LobbyClientScript = preload("res://scripts/client/LobbyClient.gd")
 const AppReleaseInfoScript = preload("res://scripts/client/AppReleaseInfo.gd")
+const MacOSSelfUpdaterScript = preload("res://scripts/client/MacOSSelfUpdater.gd")
 const DeckCatalogUtilsScript = preload("res://scripts/core/DeckCatalogUtils.gd")
 const LocalProfileStoreScript = preload("res://scripts/core/LocalProfileStore.gd")
 const CardCatalogScript = preload("res://scripts/cards/CardCatalog.gd")
@@ -73,7 +74,6 @@ const UPDATE_CLEANUP_MAX_ATTEMPTS := 10
 const UPDATE_LOG_PATH := "user://update.log"
 const UPDATE_FAILURE_MARKER_PATH := "user://update_failure.txt"
 const WINDOWS_NATIVE_UPDATER_HANDSHAKE_SECONDS := 10.0
-const MACOS_SPARKLE_EXTENSION_PATH := "res://addons/macos_sparkle/macos_sparkle.gdextension"
 const BYTES_PER_MIB := 1048576.0
 const MENU_PRIMARY_BUTTON_FONT_SIZE := 32
 const MENU_PRIMARY_BUTTON_MIN_WIDTH := 420.0
@@ -266,7 +266,6 @@ var _is_auto_updating: bool = false
 var _deferred_required_update: Dictionary = {}
 var _automatic_update_required: bool = false
 var _update_uses_startup_loading_bar: bool = false
-var _macos_sparkle_bridge: Object = null
 var _server_version_update_check_requested: bool = false
 var _lobby_failure_update_check_requested: bool = false
 var _update_check_in_flight: bool = false
@@ -1340,7 +1339,7 @@ func _refresh_server_version_label() -> void:
 			server_text = "Server: not connected"
 	else:
 		server_text = "Server: %s" % _connected_server_version
-	var client_version := AppReleaseInfoScript.get_current_version()
+	var client_version := AppReleaseInfoScript.get_display_version()
 	_server_version_label.text = "%s\nClient: %s" % [server_text, client_version]
 
 func _is_deck_builder_open() -> bool:
@@ -1880,7 +1879,7 @@ func _on_lobby_sign_in_watchdog_timeout(watchdog_serial: int) -> void:
 	_logged_in_account_username = ""
 	_cleanup_lobby_client()
 	_set_connected_server_version("")
-	var message := "The lobby sign-in timed out. Try Switch Account and sign in again."
+	var message := "The lobby sign-in timed out. Try Login and sign in again."
 	status_label.text = message
 	_refresh_account_identity_label()
 	_show_auth_recovery_prompt(message)
@@ -3034,7 +3033,6 @@ func _is_server_runtime_launch() -> bool:
 
 func _begin_startup_prompts() -> void:
 	_startup_prompt_gate_open = true
-	_ensure_macos_sparkle_bridge()
 	if _should_check_for_updates():
 		# Run the update check alongside sign-in instead of in front of it;
 		# its completion handlers still funnel through _complete_startup_prompts.
@@ -3112,20 +3110,20 @@ func _maybe_check_for_server_required_update(server_version: String) -> void:
 	_server_version_update_check_requested = true
 	if status_label != null:
 		status_label.text = "Server is running %s. Checking for update..." % server_version
-	if OS.get_name() == "Windows":
+	if OS.get_name() in ["Windows", "macOS"]:
 		_begin_required_update(
 			server_version,
 			AppReleaseInfoScript.get_release_page_url_for_version(server_version),
 			AppReleaseInfoScript.get_download_url_for_version(
 				server_version,
-				AppReleaseInfoScript.WINDOWS_ASSET_NAME
+				str(AppReleaseInfoScript.get_asset_names_for_platform(OS.get_name())[0])
 			),
 			0,
 			"",
 			false,
 			AppReleaseInfoScript.get_download_url_for_version(
 				server_version,
-				"%s.sha256" % AppReleaseInfoScript.WINDOWS_ASSET_NAME
+				"%s.sha256" % str(AppReleaseInfoScript.get_asset_names_for_platform(OS.get_name())[0])
 			)
 		)
 		return
@@ -3344,8 +3342,8 @@ func _begin_required_update(
 		"update_required current=%s latest=%s download_bytes=%d"
 		% [AppReleaseInfoScript.get_current_version(), latest_version, download_size]
 	)
-	if not download_url.is_empty() and OS.get_name() == "Windows":
-		if _consume_pending_windows_update_failure(latest_version, release_url):
+	if not download_url.is_empty() and OS.get_name() in ["Windows", "macOS"]:
+		if _consume_pending_update_failure(latest_version, release_url, download_url, download_size, download_sha256, download_sha256_url):
 			_complete_startup_prompts()
 			return
 		_show_update_prompt(
@@ -3355,63 +3353,21 @@ func _begin_required_update(
 			true,
 			download_size,
 			download_sha256,
-			download_sha256_url
+			download_sha256_url,
+			OS.get_name() != "macOS"
 		)
 		call_deferred("_on_update_prompt_auto_update_pressed")
 		return
 	if OS.get_name() == "macOS":
-		if macos_appcast_available and _start_macos_sparkle_update(latest_version):
-			_complete_startup_prompts()
-			return
-		if not macos_appcast_available:
-			_write_update_log("sparkle_appcast_missing latest=%s" % latest_version)
+		_show_update_prompt(latest_version, release_url, "", true, 0, "", "", false)
+		_present_macos_update_failure("This release is missing its macOS download. Try again when the release is complete.")
+		return
 	var open_error := OS.shell_open(release_url)
 	if open_error == OK:
 		status_label.text = "Opened the latest release page for %s." % latest_version
 	else:
 		status_label.text = "Update %s is available, but the release page could not be opened automatically." % latest_version
 	_complete_startup_prompts()
-
-func _start_macos_sparkle_update(latest_version: String) -> bool:
-	if not _ensure_macos_sparkle_bridge():
-		_write_update_log("sparkle_unavailable latest=%s" % latest_version)
-		return false
-	if _macos_sparkle_bridge == null or not _macos_sparkle_bridge.has_method("check_for_updates"):
-		_write_update_log("sparkle_bridge_invalid latest=%s" % latest_version)
-		return false
-	_write_update_log("sparkle_check_started latest=%s" % latest_version)
-	if status_label != null:
-		status_label.text = "Opening the macOS updater for %s..." % latest_version
-	_macos_sparkle_bridge.call("check_for_updates")
-	return true
-
-func _ensure_macos_sparkle_bridge() -> bool:
-	if OS.get_name() != "macOS" or not _release_updates_enabled():
-		return false
-	if not _ensure_macos_sparkle_extension_loaded():
-		return false
-	if _macos_sparkle_bridge != null:
-		return true
-	if not ClassDB.class_exists("MacSparkleBridge"):
-		return false
-	_macos_sparkle_bridge = ClassDB.instantiate("MacSparkleBridge")
-	return _macos_sparkle_bridge != null
-
-func _ensure_macos_sparkle_extension_loaded() -> bool:
-	var extension_path := MACOS_SPARKLE_EXTENSION_PATH
-	if GDExtensionManager.is_extension_loaded(extension_path):
-		return true
-	var load_status := GDExtensionManager.load_extension(extension_path)
-	if load_status in [
-		GDExtensionManager.LOAD_STATUS_OK,
-		GDExtensionManager.LOAD_STATUS_ALREADY_LOADED,
-	]:
-		return true
-	_write_update_log(
-		"sparkle_extension_load_failed status=%s path=%s global_path=%s"
-		% [str(load_status), extension_path, ProjectSettings.globalize_path(extension_path)]
-	)
-	return false
 
 func _show_update_prompt(
 	latest_version: String,
@@ -3420,7 +3376,8 @@ func _show_update_prompt(
 	auto_update: bool = false,
 	download_size: int = 0,
 	download_sha256: String = "",
-	download_sha256_url: String = ""
+	download_sha256_url: String = "",
+	use_startup_loading_bar: bool = true
 ) -> void:
 	if _update_prompt_overlay != null and is_instance_valid(_update_prompt_overlay):
 		return
@@ -3431,7 +3388,7 @@ func _show_update_prompt(
 	_pending_update_download_sha256 = download_sha256
 	_pending_update_download_sha256_url = download_sha256_url
 	_automatic_update_required = auto_update
-	_update_uses_startup_loading_bar = auto_update \
+	_update_uses_startup_loading_bar = auto_update and use_startup_loading_bar \
 		and _startup_loading_overlay != null \
 		and is_instance_valid(_startup_loading_overlay) \
 		and _startup_loading_bar != null \
@@ -3541,10 +3498,10 @@ func _show_update_prompt(
 	button_row.add_child(support_button)
 	_update_support_button = support_button
 
-	if (not download_url.is_empty() and OS.get_name() == "Windows") or auto_update:
-		if not auto_update and not download_url.is_empty():
+	if (not download_url.is_empty() and OS.get_name() in ["Windows", "macOS"]) or auto_update:
+		if not download_url.is_empty():
 			var auto_button := Button.new()
-			auto_button.text = "Update Now"
+			auto_button.text = "Retry Update" if auto_update else "Update Now"
 			auto_button.custom_minimum_size = Vector2(130, 38)
 			auto_button.pressed.connect(_on_update_prompt_auto_update_pressed)
 			button_row.add_child(auto_button)
@@ -3612,6 +3569,8 @@ func _on_update_prompt_open_pressed() -> void:
 		status_label.text = "Opened the latest release page in your browser."
 	else:
 		status_label.text = "Couldn't open the latest release page automatically."
+	if OS.get_name() == "macOS" and _automatic_update_required:
+		return
 	_dismiss_update_prompt()
 	_complete_startup_prompts()
 
@@ -3639,6 +3598,8 @@ func _on_update_prompt_auto_update_pressed() -> void:
 	_last_logged_update_percent = -10
 	if _update_now_button != null and is_instance_valid(_update_now_button):
 		_update_now_button.disabled = true
+	if OS.get_name() == "macOS" and _update_button_row != null:
+		_update_button_row.visible = false
 	var size_message := ""
 	if _pending_update_download_size > 0:
 		size_message = " (%.1f MB)" % (
@@ -3753,7 +3714,7 @@ func _check_update_download_preflight() -> String:
 		_write_update_log("download_preflight_failed reason=user_data_not_writable path=%s" % user_data_dir)
 		return (
 			"Other Gods cannot write the update download folder. "
-			+ "Windows security, antivirus, or folder permissions may be blocking it."
+			+ "Security software or folder permissions may be blocking it."
 		)
 	write_test.store_string("ok")
 	write_test.close()
@@ -4086,13 +4047,21 @@ func _apply_update_and_restart(zip_path: String) -> void:
 	_set_update_download_progress(1.0)
 	_set_update_download_status(
 		"Download complete. Verifying and unpacking the update...\n"
-		+ "Keep Other Gods open; an updater window will take over before the game reopens."
+		+ ("Keep Other Gods open; it will restart automatically." if OS.get_name() == "macOS"
+			else "Keep Other Gods open; an updater window will take over before the game reopens.")
 	)
 	await get_tree().process_frame
 	_write_update_log(
 		"apply_started version=%s archive=%s"
 		% [_pending_update_release_version, zip_path]
 	)
+	if OS.get_name() == "macOS":
+		var install_error: String = await MacOSSelfUpdaterScript.install(
+			get_tree(), zip_path, _pending_update_release_version, _set_update_download_status
+		)
+		if not install_error.is_empty():
+			_on_auto_update_failed(install_error)
+		return
 
 	var current_exe := OS.get_executable_path()
 	if current_exe.is_empty():
@@ -4449,8 +4418,11 @@ func _run_windows_updater_preflight(powershell_path: String, runner_dir: String)
 		+ "Install manually from the release page or allow Other Gods and PowerShell to run the updater."
 	) % detail
 
-func _consume_pending_windows_update_failure(latest_version: String, release_url: String) -> bool:
-	if OS.get_name() != "Windows" or not FileAccess.file_exists(UPDATE_FAILURE_MARKER_PATH):
+func _consume_pending_update_failure(
+	latest_version: String, release_url: String, download_url: String,
+	download_size: int, sha256: String, sha256_url: String
+) -> bool:
+	if OS.get_name() not in ["Windows", "macOS"] or not FileAccess.file_exists(UPDATE_FAILURE_MARKER_PATH):
 		return false
 	var file := FileAccess.open(UPDATE_FAILURE_MARKER_PATH, FileAccess.READ)
 	var message := ""
@@ -4463,9 +4435,29 @@ func _consume_pending_windows_update_failure(latest_version: String, release_url
 	_write_update_log(
 		"previous_update_failure latest=%s message=%s" % [latest_version, message]
 	)
-	_show_update_prompt(latest_version, release_url, "", true, 0)
-	_present_windows_update_fallback(message)
+	_show_update_prompt(latest_version, release_url, download_url, true, download_size, sha256, sha256_url)
+	if OS.get_name() == "macOS":
+		_present_macos_update_failure(message)
+	else:
+		_present_windows_update_fallback(message)
 	return true
+
+func _present_macos_update_failure(message: String) -> void:
+	var version := _pending_update_release_version
+	var release_url := _pending_update_release_url
+	var download_url := _pending_update_download_url
+	var download_size := _pending_update_download_size
+	var sha256 := _pending_update_download_sha256
+	var sha256_url := _pending_update_download_sha256_url
+	_dismiss_update_prompt()
+	_finish_startup_loading()
+	_show_update_prompt(version, release_url, download_url, true, download_size, sha256, sha256_url, false)
+	_update_button_row.visible = true
+	_update_support_button.visible = true
+	_set_update_download_status("Automatic update could not finish.\n%s\nRetry the update or use Open Download Page to install it manually." % message)
+	if status_label != null:
+		status_label.text = "Update %s is required. %s" % [version, message]
+	_complete_startup_prompts()
 
 func _present_windows_update_fallback(message: String) -> void:
 	var fallback_message := (
@@ -4534,6 +4526,11 @@ func _on_auto_update_failed(message: String) -> void:
 		% [_pending_update_release_version, message]
 	)
 	if _automatic_update_required:
+		# Keep the reason visible in the app. Opening a browser silently leaves
+		# players on the old build with no explanation of what went wrong.
+		if OS.get_name() == "macOS":
+			_present_macos_update_failure(message)
+			return
 		_automatic_update_required = false
 		_present_windows_update_fallback(message)
 		return
@@ -5734,7 +5731,7 @@ func _show_password_recovery() -> void:
 	_password_recovery_dialog.add_child(content)
 	_password_recovery_status = Label.new()
 	_password_recovery_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_password_recovery_status.text = "Enter your account email to receive a recovery code. Paste the code below and choose a new password."
+	_password_recovery_status.text = "Enter your account email to receive a 6-digit recovery code. Enter the code below and choose a new password."
 	content.add_child(_password_recovery_status)
 	_password_recovery_email = LineEdit.new()
 	_password_recovery_email.placeholder_text = "Account email address"
@@ -5746,8 +5743,9 @@ func _show_password_recovery() -> void:
 	_password_recovery_send.pressed.connect(func() -> void: _submit_password_recovery(false))
 	content.add_child(_password_recovery_send)
 	_password_recovery_token = LineEdit.new()
-	_password_recovery_token.placeholder_text = "Recovery code from email"
-	_password_recovery_token.max_length = 64
+	_password_recovery_token.placeholder_text = "6-digit recovery code"
+	_password_recovery_token.max_length = LobbyProtocolScript.PASSWORD_RESET_CODE_LENGTH
+	_password_recovery_token.virtual_keyboard_type = LineEdit.KEYBOARD_TYPE_NUMBER
 	content.add_child(_password_recovery_token)
 	_password_recovery_password = LineEdit.new()
 	_password_recovery_password.placeholder_text = "New password (at least %d characters)" % _get_account_min_password_length()
@@ -5788,8 +5786,8 @@ func _submit_password_recovery(completing: bool) -> void:
 		_password_recovery_status.text = "Enter your account email address."
 		return
 	if completing:
-		if token.length() != 64:
-			_password_recovery_status.text = "Paste the full recovery code from your email."
+		if not LobbyProtocolScript.is_valid_password_reset_code(token):
+			_password_recovery_status.text = "Enter the 6-digit recovery code from your email."
 			return
 		if password.length() < _get_account_min_password_length():
 			_password_recovery_status.text = "Choose a password of at least %d characters." % _get_account_min_password_length()
@@ -12568,7 +12566,7 @@ func _build_auth_controls() -> void:
 	if _switch_account_button == null:
 		_switch_account_button = Button.new()
 		_switch_account_button.name = "SwitchAccountButton"
-		_switch_account_button.text = "Switch Account"
+		_switch_account_button.text = "Login"
 		_switch_account_button.visible = false
 		_switch_account_button.pressed.connect(_on_switch_account_pressed)
 		menu_container.add_child(_switch_account_button)
@@ -12655,14 +12653,12 @@ func _refresh_switch_account_button() -> void:
 		return
 	if not _is_multiplayer_screen_active():
 		_switch_account_button.visible = true
+	_switch_account_button.text = "Login"
 	if _is_guest_session_active():
-		_switch_account_button.text = "Make Account"
 		_switch_account_button.tooltip_text = GUEST_ACCOUNT_PROMPT
 	elif _is_account_logged_in():
-		_switch_account_button.text = "Switch Account"
 		_switch_account_button.tooltip_text = "Use a different account on this device."
 	else:
-		_switch_account_button.text = "Sign In"
 		_switch_account_button.tooltip_text = "Sign in or create an account."
 
 func _refresh_auth_controls() -> void:

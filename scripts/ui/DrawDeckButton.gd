@@ -235,7 +235,11 @@ func _draw_card_protector(deck_center: Vector2) -> void:
 	var statue_height := lerpf(82.0, 62.0, travel) * protector_scale
 	var texture_aspect := float(protector_texture.get_width()) / float(protector_texture.get_height())
 	var statue_size := Vector2(statue_height * texture_aspect, statue_height)
-	var base := (deck_center + Vector2(0.0, 36.0)).lerp(Vector2(size.x - 26.0, 177.0), travel)
+	# Mirror the parked positions on the deck edges nearest the mana well.
+	var top_card := get_top_card_rect()
+	var parked_y := top_card.end.y if _opponent_view else top_card.position.y + statue_size.y
+	var parked_base := Vector2(size.x - 26.0, parked_y)
+	var base := (deck_center + Vector2(0.0, 36.0)).lerp(parked_base, travel)
 	base.y -= sin(travel * PI) * 18.0
 	var rect := Rect2(base - Vector2(statue_size.x * 0.5, statue_size.y), statue_size)
 	# The overhead round plinth casts its shadow beneath the full silhouette.

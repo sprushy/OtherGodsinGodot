@@ -78,4 +78,4 @@ func _send_gmail(email: String, token: String, completion: Callable) -> bool:
 	return true
 
 func _recovery_text(token: String) -> String:
-	return "A password reset was requested for your Other Gods account.\n\nOpen Other Gods, choose Forgot password?, and paste this recovery code:\n\n%s\n\nThe code expires in 15 minutes and can be used once. Choose a new password in the game. If you did not request this, you can ignore this email; your password has not changed.\n" % token
+	return "A password reset was requested for your Other Gods account.\n\nYour 6-digit recovery code is:\n\n%s\n\nOpen Other Gods, choose Forgot password?, and enter this code to choose a new password.\n\nThe code expires in 15 minutes and can be used once. After 5 incorrect attempts, request a new code. If you did not request this, you can ignore this email; your password has not changed.\n" % token

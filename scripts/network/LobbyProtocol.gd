@@ -5,6 +5,7 @@ const PORT: int = 22345
 # Plain WebSocket backend, reached through a TLS reverse proxy on public 443.
 const WS_PORT: int = 24443
 const MATCH_PORT: int = 12345
+const PASSWORD_RESET_CODE_LENGTH := 6
 
 const LOGIN_GUEST := "login_guest"
 const LOGIN_ACCOUNT := "login_account"
@@ -78,8 +79,8 @@ static func validate_request(message: Dictionary) -> String:
 			if email.is_empty() or email.length() > 254:
 				return "Enter a valid account email address."
 			if message_type == RESET_PASSWORD:
-				if str(payload.get("token", "")).length() != 64:
-					return "Enter the recovery code from your email."
+				if not is_valid_password_reset_code(str(payload.get("token", ""))):
+					return "Enter the 6-digit recovery code from your email."
 				var password := str(payload.get("new_password", ""))
 				if password.is_empty() or password.length() > 1024:
 					return "Enter a new password (at most 1024 characters)."
@@ -179,3 +180,12 @@ static func validate_request(message: Dictionary) -> String:
 			return "Unknown lobby message type: %s" % message_type
 
 	return ""
+
+static func is_valid_password_reset_code(code: String) -> bool:
+	if code.length() != PASSWORD_RESET_CODE_LENGTH:
+		return false
+	for index in range(code.length()):
+		var digit := code.unicode_at(index)
+		if digit < 48 or digit > 57:
+			return false
+	return true

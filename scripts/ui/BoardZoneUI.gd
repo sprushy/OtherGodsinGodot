@@ -11,6 +11,7 @@ const LevelSymbolRowScript = preload("res://scripts/ui/LevelSymbolRow.gd")
 const DebuffBadgeScript = preload("res://scripts/ui/DebuffBadge.gd")
 const UITextureCacheScript = preload("res://scripts/ui/UITextureCache.gd")
 const UIFontScript = preload("res://scripts/ui/UIFont.gd")
+const FollowerCountBadgeScript = preload("res://scripts/ui/FollowerCountBadge.gd")
 const SnowV2CardMeltOverlayScript = preload("res://scripts/fx/SnowV2CardMeltOverlay.gd")
 const SNOW_V2_SNOWFLAKE_TEXTURE := preload("res://images/fx/snow_v2/snowflake.png")
 const SNOW_V2_PAINTBRUSH_TEXTURE := preload("res://images/fx/snow_v2/snow_paintbrush.png")
@@ -3096,6 +3097,24 @@ func _get_stealth_fog_overlay_seed(card: Card) -> int:
 		seed_parts.append(str(get_instance_id()))
 	return posmod("|".join(seed_parts).hash(), 1000000)
 
+func _add_follower_count_badge(overlay: Control) -> void:
+	if owning_player == null or zone == null or zone.zone_type != Zone.ZoneType.GOD_SLOT:
+		return
+	var badge := FollowerCountBadgeScript.new()
+	badge.name = "FollowerCountBadge"
+	badge.set_followers(owning_player.followers)
+	owning_player.followers_changed.connect(badge.set_followers)
+	# Keep aligned with the mana globe, near the top of the God card.
+	badge.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	badge.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	badge.offset_left = -54.3
+	badge.offset_right = 21.7
+	badge.offset_top = 30
+	badge.offset_bottom = 62
+	badge.z_index = 21
+	overlay.add_child(badge)
+	_connect_badge_hover(badge, badge.tooltip_text)
+
 func _add_followers_attack_result_label(overlay: Control) -> void:
 	if overlay == null or _followers_attack_result_text == "":
 		return
@@ -5196,6 +5215,7 @@ func _refresh_display() -> void:
 			add_child(tiamat_overlay)
 			_add_tiamat_brood_slot_art(tiamat_overlay)
 			_add_snow_v2_card_weather_overlay(tiamat_overlay, card, card.is_god or card.card_type == Card.CardType.CREATURE)
+			_add_follower_count_badge(tiamat_overlay)
 			_add_followers_attack_result_label(tiamat_overlay)
 			return
 
@@ -5507,6 +5527,7 @@ func _refresh_display() -> void:
 					god_overlay.add_child(muted_badge)
 				_add_creature_action_symbols(god_overlay, card)
 				_add_stance_switch_symbol(god_overlay, card)
+				_add_follower_count_badge(god_overlay)
 				_add_followers_attack_result_label(god_overlay)
 			return
 
@@ -5729,6 +5750,7 @@ func _refresh_display() -> void:
 		_add_intercept_preview_badge(card_overlay, card)
 		_add_creature_action_symbols(card_overlay, card)
 		_add_stance_switch_symbol(card_overlay, card)
+		_add_follower_count_badge(card_overlay)
 		_defense_overlay = card_overlay if shows_defense_shield else null
 		_raised_overlay  = card_overlay if card.is_stealth else null
 		z_index = _get_resting_z_index()

@@ -98,6 +98,8 @@ const AbyssGatewayIconScript = preload("res://scripts/ui/AbyssGatewayIcon.gd")
 const GravesiteTexture = preload("res://images/ui/zones/grave_tumulus_base.png")
 const SnowGravesiteTexture = preload("res://images/ui/zones/grave_tumulus_snow_base.png")
 const GravesiteVisualScript = preload("res://scripts/ui/GravesiteVisual.gd")
+const ManaGlobeScript = preload("res://scripts/ui/ManaGlobe.gd")
+const FollowerCountBadgeScript = preload("res://scripts/ui/FollowerCountBadge.gd")
 const GameSettingsTabsScript = preload("res://scripts/ui/GameSettingsTabs.gd")
 const AudioSettingsScript = preload("res://scripts/core/AudioSettings.gd")
 const UIHoverSfxScript = preload("res://scripts/core/UIHoverSfx.gd")
@@ -295,6 +297,7 @@ var _pending_board_drag_attack_after_reveal: Dictionary = {}
 var _running_pending_board_drag_attack_after_reveal: bool = false
 var _fan_container: Control = null
 var _follower_casualty_overlay: Control = null
+var _follower_count_hover: FollowerCountBadgeScript = null
 var _follower_casualty_sprites: Array = []
 var _follower_casualty_bubbles: Array = []
 var _opponent_follower_casualty_overlay: Control = null
@@ -4281,6 +4284,7 @@ func _process(delta: float) -> void:
 	_sync_tez_titlacauan_cursor_overlay()
 	if not _game_finished:
 		_sync_follower_casualty_overlay()
+	_update_follower_count_hover()
 
 func _sync_board_creature_drag_preview_from_input_state() -> void:
 	if not _bdrag_active:
@@ -4474,7 +4478,7 @@ func _grant_local_move_timer_bonus(bonus_msec: int, now_msec: int = -1) -> void:
 	if remaining_seconds != _move_timer_last_display_seconds:
 		_move_timer_last_display_seconds = remaining_seconds
 		_refresh_turn_label()
-		_refresh_visible_stat_panels()
+		_refresh_visible_mana_globes()
 
 func _is_card_play_move_type(move_type: String) -> bool:
 	return move_type in [
@@ -4552,7 +4556,7 @@ func _sync_turn_activity_timers() -> void:
 			_move_timer_timeout_pending = false
 			_move_timer_last_display_seconds = -1
 			_refresh_turn_label()
-			_refresh_visible_stat_panels()
+			_refresh_visible_mana_globes()
 		return
 	_continue_pending_ranked_timeout_turn_pass()
 	var turn_number := int(context.get("turn_number", -1))
@@ -4576,7 +4580,7 @@ func _sync_turn_activity_timers() -> void:
 	if remaining_seconds != _move_timer_last_display_seconds:
 		_move_timer_last_display_seconds = remaining_seconds
 		_refresh_turn_label()
-		_refresh_visible_stat_panels()
+		_refresh_visible_mana_globes()
 	if _move_timer_running and remaining_msec <= 0 and not _move_timer_timeout_pending:
 		_move_timer_timeout_pending = true
 		_pause_move_timer(now_msec)
@@ -6701,6 +6705,9 @@ func _layout_turn_start_props() -> void:
 	_position_turn_start_prop(_opponent_draw_deck, midpoint - Vector2(0.0, deck_distance), prop_size, prop_scale)
 	_position_turn_start_prop(mana_button, midpoint, prop_size, prop_scale)
 	_position_turn_start_prop(draw_button, midpoint + Vector2(0.0, deck_distance), prop_size, prop_scale)
+	# Align the card faces with the well; deck art is inset inside its button.
+	for deck in [draw_button, _opponent_draw_deck]:
+		deck.position.x += (prop_size.x * 0.5 - deck.get_top_card_rect().get_center().x) * prop_scale
 	choice_intro_label.custom_minimum_size = Vector2.ZERO
 	choice_intro_label.size = choice_intro_label.get_combined_minimum_size()
 	choice_intro_label.scale = Vector2.ONE * prop_scale
@@ -7107,7 +7114,7 @@ func _do_update_ui(expected_generation: int = -1) -> void:
 	draw_enemy_hand_overlay()
 	_sync_follower_casualty_overlay()
 	_sync_board_drag_followers_highlight()
-	_refresh_visible_stat_panels()
+	_refresh_visible_mana_globes()
 	_refresh_zone_info_icons()
 	_sync_network_turn_controls()
 	_sync_stack_zone_previews()
@@ -7868,7 +7875,7 @@ func _get_visual_stack_anchor_for_value(value) -> Vector2:
 		if zone_ui != null and is_instance_valid(zone_ui):
 			return zone_ui.get_global_rect().get_center()
 	if value is Player:
-		var panel := _get_visual_stack_player_panel(value as Player)
+		var panel := _get_visual_stack_player_control(value as Player)
 		if panel != null and is_instance_valid(panel):
 			return panel.get_global_rect().get_center()
 	if value is Array:
@@ -7885,15 +7892,15 @@ func _get_visual_stack_anchor_for_value(value) -> Vector2:
 				return anchor
 	return Vector2.INF
 
-func _get_visual_stack_player_panel(player: Player) -> PanelContainer:
+func _get_visual_stack_player_control(player: Player) -> Control:
 	if player == null:
 		return null
 	var display_player := _get_display_player()
 	var display_opponent := _get_display_opponent()
 	if player == display_player:
-		return _get_stats_panel_for_zone_ui(_player_god_zone_ui)
+		return _player_god_zone_ui
 	if player == display_opponent:
-		return _get_stats_panel_for_zone_ui(_enemy_god_zone_ui)
+		return _enemy_god_zone_ui
 	return null
 
 func _draw_visual_stack_layer() -> void:
@@ -9233,6 +9240,9 @@ func _sync_follower_casualties_for_player(player: Player, new_followers: int, _p
 	_follower_casualty_records_by_player_key[player_key] = records
 
 func _clear_follower_casualty_overlay() -> void:
+	if _follower_count_hover != null and is_instance_valid(_follower_count_hover):
+		_follower_count_hover.free()
+	_follower_count_hover = null
 	if _follower_casualty_overlay != null and is_instance_valid(_follower_casualty_overlay):
 		if _follower_casualty_overlay.get_parent() == self:
 			remove_child(_follower_casualty_overlay)
@@ -9247,6 +9257,44 @@ func _clear_follower_casualty_overlay() -> void:
 	_opponent_follower_casualty_overlay = null
 	_opponent_follower_casualty_sprites.clear()
 	_opponent_follower_casualty_bubbles.clear()
+
+func _is_mouse_over_follower_sprites(sprites: Array) -> bool:
+	for value in sprites:
+		var sprite := value as Sprite2D
+		if sprite == null or not is_instance_valid(sprite) or not sprite.is_visible_in_tree():
+			continue
+		if sprite.get_rect().has_point(sprite.get_local_mouse_position()):
+			return true
+	return false
+
+func _update_follower_count_hover() -> void:
+	if _follower_count_hover != null and is_instance_valid(_follower_count_hover):
+		_follower_count_hover.visible = false
+	if not _show_followers or game_manager == null or _game_finished or _has_active_modal_prompt() or _bdrag_active:
+		return
+	var player: Player = null
+	if _is_mouse_over_follower_sprites(_follower_casualty_sprites):
+		player = _get_visible_hand_player()
+	elif _is_mouse_over_follower_sprites(_opponent_follower_casualty_sprites):
+		player = _get_display_opponent()
+	if player == null:
+		return
+	if _follower_count_hover == null or not is_instance_valid(_follower_count_hover):
+		_follower_count_hover = FollowerCountBadgeScript.new()
+		_follower_count_hover.name = "FollowerCountHover"
+		_follower_count_hover.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_follower_count_hover.z_as_relative = false
+		_follower_count_hover.z_index = HOVER_PREVIEW_Z_INDEX + 6
+		add_child(_follower_count_hover)
+	_follower_count_hover.set_followers(player.followers, true)
+	_follower_count_hover.reset_size()
+	var hover_size := _follower_count_hover.get_combined_minimum_size()
+	var mouse_pos := get_local_mouse_position()
+	_follower_count_hover.position = Vector2(
+		clampf(mouse_pos.x + 18.0, 8.0, maxf(8.0, size.x - hover_size.x - 8.0)),
+		clampf(mouse_pos.y - hover_size.y - 12.0, 8.0, maxf(8.0, size.y - hover_size.y - 8.0))
+	)
+	_follower_count_hover.visible = true
 
 func _ensure_follower_casualty_overlay() -> void:
 	if _follower_casualty_overlay != null and is_instance_valid(_follower_casualty_overlay):
@@ -11860,82 +11908,7 @@ func _get_board_row_width() -> float:
 func _get_separator_line_width() -> float:
 	return BoardZoneUI.get_zone_extent() * BOARD_MAIN_COLUMN_COUNT + BOARD_ZONE_COLUMN_GAP * (BOARD_MAIN_COLUMN_COUNT - 1.0)
 
-func _ensure_stats_panel_guard_label(panel: PanelContainer) -> Label:
-	if panel == null:
-		return null
-	var vbox := panel.get_node_or_null("StatsVBox") as VBoxContainer
-	if vbox == null:
-		return null
-	var guard_lbl := vbox.get_node_or_null("GuardLabel") as Label
-	if guard_lbl == null:
-		guard_lbl = Label.new()
-		guard_lbl.name = "GuardLabel"
-		guard_lbl.add_theme_font_size_override("font_size", 13)
-		vbox.add_child(guard_lbl)
-	var followers_lbl := vbox.get_node_or_null("FollowersLabel") as Label
-	if followers_lbl != null:
-		var followers_index := followers_lbl.get_index()
-		if guard_lbl.get_index() != followers_index - 1:
-			vbox.move_child(guard_lbl, followers_index)
-	return guard_lbl
-
-func _refresh_stats_panel(panel: PanelContainer, player: Player, show_mana: bool = true) -> void:
-	if panel == null or player == null:
-		return
-	var clock_lbl := panel.get_node_or_null("StatsVBox/TurnClockLabel") as Label
-	if clock_lbl != null:
-		var clock_data := _get_stats_panel_turn_clock_data(player)
-		clock_lbl.text = str(clock_data.get("text", "--:--"))
-		clock_lbl.modulate = clock_data.get("color", Color(0.72, 0.74, 0.78, 0.92))
-	var name_lbl := panel.get_node_or_null("StatsVBox/NameLabel") as Label
-	if name_lbl != null:
-		name_lbl.text = player.player_name
-	var hand_lbl := panel.get_node_or_null("StatsVBox/HandLabel") as Label
-	if hand_lbl != null:
-		hand_lbl.text = "Hand: " + str(player.hand_zone.get_card_count())
-	var mana_lbl := panel.get_node_or_null("StatsVBox/ManaLabel") as Label
-	if mana_lbl != null:
-		mana_lbl.visible = show_mana
-		if show_mana:
-			mana_lbl.text = "Mana: " + str(player.mana)
-	var guard_lbl := _ensure_stats_panel_guard_label(panel)
-	if guard_lbl != null:
-		guard_lbl.visible = player.guard > 0
-		guard_lbl.text = "Guard: " + str(player.guard)
-	var followers_lbl := panel.get_node_or_null("StatsVBox/FollowersLabel") as Label
-	if followers_lbl != null:
-		followers_lbl.text = "Followers: " + str(player.followers)
-	var deck_lbl := panel.get_node_or_null("StatsVBox/DeckLabel") as Label
-	if deck_lbl != null:
-		deck_lbl.text = "Deck: " + str(player.deck_zone.get_card_count())
-
-func _get_stats_panel_turn_clock_data(player: Player) -> Dictionary:
-	var inactive := {
-		"text": "--:--",
-		"color": Color(0.72, 0.74, 0.78, 0.92),
-	}
-	if player == null or game_manager == null or _game_finished:
-		return inactive
-	var timer_context := _get_local_move_timer_context()
-	if timer_context.is_empty():
-		return inactive
-	var current_player := game_manager.current_player
-	if current_player == null or player != current_player:
-		return inactive
-	var remaining_msec := _get_move_timer_remaining_msec()
-	if remaining_msec < 0:
-		return inactive
-	var color := Color(0.84, 0.92, 1.0, 0.98)
-	if remaining_msec <= MOVE_TIMEOUT_CRITICAL_WARNING_MSEC:
-		color = Color(1.0, 0.45, 0.45, 1.0)
-	elif remaining_msec <= MOVE_TIMEOUT_WARNING_MSEC:
-		color = Color(1.0, 0.82, 0.36, 1.0)
-	return {
-		"text": _format_move_timer_clock(remaining_msec),
-		"color": color,
-	}
-
-func _get_stats_panel_for_zone_ui(zone_ui: BoardZoneUI) -> PanelContainer:
+func _get_mana_globe_for_zone_ui(zone_ui: BoardZoneUI) -> ManaGlobeScript:
 	if zone_ui == null or not is_instance_valid(zone_ui):
 		return null
 	var wrapper := zone_ui.get_parent()
@@ -11944,79 +11917,17 @@ func _get_stats_panel_for_zone_ui(zone_ui: BoardZoneUI) -> PanelContainer:
 	var cluster := wrapper.get_parent()
 	if cluster == null:
 		return null
-	return cluster.get_node_or_null("StatsPanel") as PanelContainer
+	return cluster.get_node_or_null("ManaGlobe") as ManaGlobeScript
 
-func _refresh_visible_stat_panels() -> void:
+func _refresh_visible_mana_globes() -> void:
 	var display_player := _get_display_player()
 	var display_opponent := _get_display_opponent()
-	var player_panel := _get_stats_panel_for_zone_ui(_player_god_zone_ui)
-	if player_panel != null and display_player != null:
-		_refresh_stats_panel(player_panel, display_player, true)
-	var enemy_panel := _get_stats_panel_for_zone_ui(_enemy_god_zone_ui)
-	if enemy_panel != null and display_opponent != null:
-		_refresh_stats_panel(enemy_panel, display_opponent, true)
-
-func _make_stats_panel(player: Player, show_mana: bool = true) -> PanelContainer:
-	var panel := PanelContainer.new()
-	panel.name = "StatsPanel"
-	panel.visible = true
-	panel.custom_minimum_size = Vector2(118, 128)
-	panel.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.1, 0.1, 0.1, 0.7)
-	style.border_color = Color(0.4, 0.4, 0.4)
-	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		style.set_border_width(side as Side, 1)
-	style.corner_radius_top_left = 4
-	style.corner_radius_top_right = 4
-	style.corner_radius_bottom_left = 4
-	style.corner_radius_bottom_right = 4
-	panel.add_theme_stylebox_override("panel", style)
-	var vbox := VBoxContainer.new()
-	vbox.name = "StatsVBox"
-	vbox.add_theme_constant_override("separation", 4)
-	panel.add_child(vbox)
-	var name_lbl := Label.new()
-	name_lbl.name = "NameLabel"
-	name_lbl.visible = false
-	name_lbl.add_theme_font_size_override("font_size", 12)
-	name_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	vbox.add_child(name_lbl)
-	var hand_lbl := Label.new()
-	hand_lbl.name = "HandLabel"
-	hand_lbl.visible = false
-	hand_lbl.add_theme_font_size_override("font_size", 13)
-	vbox.add_child(hand_lbl)
-	if show_mana:
-		var mana_lbl := Label.new()
-		mana_lbl.name = "ManaLabel"
-		mana_lbl.add_theme_font_size_override("font_size", 13)
-		vbox.add_child(mana_lbl)
-	var guard_lbl := Label.new()
-	guard_lbl.name = "GuardLabel"
-	guard_lbl.add_theme_font_size_override("font_size", 13)
-	guard_lbl.visible = false
-	vbox.add_child(guard_lbl)
-	var fol_lbl := Label.new()
-	fol_lbl.name = "FollowersLabel"
-	fol_lbl.add_theme_font_size_override("font_size", 13)
-	vbox.add_child(fol_lbl)
-	var deck_lbl := Label.new()
-	deck_lbl.name = "DeckLabel"
-	deck_lbl.visible = false
-	deck_lbl.add_theme_font_size_override("font_size", 13)
-	vbox.add_child(deck_lbl)
-	var clock_lbl := Label.new()
-	clock_lbl.name = "TurnClockLabel"
-	clock_lbl.visible = false
-	clock_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	clock_lbl.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
-	clock_lbl.add_theme_font_size_override("font_size", 24)
-	clock_lbl.add_theme_color_override("font_color", Color(0.84, 0.92, 1.0, 0.98))
-	clock_lbl.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	vbox.add_child(clock_lbl)
-	_refresh_stats_panel(panel, player, show_mana)
-	return panel
+	var player_globe := _get_mana_globe_for_zone_ui(_player_god_zone_ui)
+	if player_globe != null and display_player != null:
+		player_globe.set_mana(display_player.mana)
+	var enemy_globe := _get_mana_globe_for_zone_ui(_enemy_god_zone_ui)
+	if enemy_globe != null and display_opponent != null:
+		enemy_globe.set_mana(display_opponent.mana)
 
 func _make_god_cluster(zone: Zone, player: Player, is_enemy: bool) -> Control:
 	var zone_size := BoardZoneUI.get_zone_size()
@@ -12037,10 +11948,16 @@ func _make_god_cluster(zone: Zone, player: Player, is_enemy: bool) -> Control:
 	god_wrapper.add_child(god_zone_ui)
 	god_zone_ui.setup(zone, game_manager, player, -1, _on_card_dropped_to_zone, is_enemy, "God")
 
-	var stats_panel := _make_stats_panel(player, true)
-	stats_panel.custom_minimum_size = Vector2(118, BoardZoneUI.get_zone_extent())
-	stats_panel.position = Vector2(-122, 0)
-	cluster.add_child(stats_panel)
+	var mana_globe := ManaGlobeScript.new()
+	mana_globe.name = "ManaGlobe"
+	mana_globe.size = ManaGlobeScript.DISPLAY_SIZE
+	# Keep the corner overlap fixed when changing the globe's size.
+	mana_globe.position = Vector2(26.0 - mana_globe.size.x, zone_size.y - 88.5)
+	# God cards rise to the hover layer; keep the globe above their art there too.
+	mana_globe.z_as_relative = false
+	mana_globe.z_index = BoardZoneUI.HOVER_BOARD_Z_INDEX + 1
+	mana_globe.set_mana(player.mana)
+	cluster.add_child(mana_globe)
 
 	if is_enemy:
 		_enemy_god_zone_ui = god_zone_ui
@@ -31460,7 +31377,7 @@ func _sync_network_turn_controls() -> void:
 		selected_attacker = null
 		pending_attack_target = null
 
-func _update_waiting_status(is_waiting: bool, message: String = "Waiting for Opponent...") -> void:
+func _update_waiting_status(is_waiting: bool, message: String = "Waiting for Opponent..") -> void:
 	var normalized_message := str(message).strip_edges()
 	if is_waiting and normalized_message.is_empty():
 		is_waiting = false
@@ -31522,7 +31439,7 @@ func _update_waiting_overlay() -> void:
 	# Only show this after authority has offered the opponent a real prompt.
 	# Transient priority players may be auto-passed without seeing one.
 	if _should_show_opponent_priority_waiting(current_priority_player, priority_idx, local_idx):
-		_update_waiting_status(true, "Waiting for opponent to respond or pass priority...")
+		_update_waiting_status(true, "Waiting for Opponent..")
 		return
 		
 	# If we are in combat and waiting for intercept
@@ -32373,7 +32290,7 @@ func _on_allow_ai_attack() -> void:
 
 func _on_player_mana_changed(_new_mana: int) -> void:
 	_invalidate_cached_board_layouts()
-	_refresh_visible_stat_panels()
+	_refresh_visible_mana_globes()
 	_request_ui_refresh()
 
 func _is_followers_attack_resolving_against(player: Player) -> bool:
@@ -32401,7 +32318,7 @@ func _on_player_followers_changed(_new_followers: int) -> void:
 	_sync_follower_casualty_overlay()
 	_show_followers_attack_result_on_god(player1, _new_followers)
 	_invalidate_cached_board_layouts()
-	_refresh_visible_stat_panels()
+	_refresh_visible_mana_globes()
 	_request_ui_refresh()
 
 func _on_enemy_followers_changed(_new_followers: int) -> void:
@@ -32409,17 +32326,17 @@ func _on_enemy_followers_changed(_new_followers: int) -> void:
 	_sync_follower_casualty_overlay()
 	_show_followers_attack_result_on_god(player2, _new_followers)
 	_invalidate_cached_board_layouts()
-	_refresh_visible_stat_panels()
+	_refresh_visible_mana_globes()
 	_request_ui_refresh()
 
 func _on_player_guard_changed(_new_guard: int) -> void:
 	_invalidate_cached_board_layouts()
-	_refresh_visible_stat_panels()
+	_refresh_visible_mana_globes()
 	_request_ui_refresh()
 
 func _on_enemy_guard_changed(_new_guard: int) -> void:
 	_invalidate_cached_board_layouts()
-	_refresh_visible_stat_panels()
+	_refresh_visible_mana_globes()
 	_request_ui_refresh()
 
 func _record_local_host_match_result(winner: Player, loser: Player) -> void:

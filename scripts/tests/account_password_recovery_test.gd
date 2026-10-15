@@ -68,13 +68,17 @@ func _run() -> void:
 	_check(store.create_password_reset("missing@example.com").is_empty(), "Unknown email cannot obtain a token")
 	var first := store.create_password_reset(" RECOVERY@example.com ")
 	var token := str(first.get("token", ""))
-	_check(token.length() == 64, "Generate a full cryptographic recovery code")
+	_check(LobbyProtocolScript.is_valid_password_reset_code(token), "Generate a six-digit cryptographic recovery code")
+	_check(LobbyProtocolScript.is_valid_password_reset_code("012345"), "Six-digit codes preserve leading zeros")
+	for invalid_code in ["12345", "1234567", "+12345", "12a345", "１２３４５６", "123 45", "a".repeat(64)]:
+		_check(not LobbyProtocolScript.is_valid_password_reset_code(invalid_code), "Reject malformed recovery code")
 	_check(store.create_password_reset("recovery@example.com").is_empty(), "Email request cooldown is enforced")
 	var persisted_text := FileAccess.get_file_as_string(store.storage_path)
-	_check(not persisted_text.contains(token), "Storage contains no plaintext recovery token")
+	_check(not persisted_text.contains('"%s"' % token), "Storage contains no plaintext recovery token")
 	_check(not str(store.get_account(account_id)).contains("password_reset"), "Public account payload has no recovery metadata")
 	_check(not bool(store.reset_password("missing@example.com", token, "new-password").get("success")), "A token cannot reset a different email")
-	_check(not bool(store.reset_password("recovery@example.com", "0".repeat(64), "new-password").get("success")), "Incorrect token is rejected")
+	var incorrect_code := "000000" if token != "000000" else "000001"
+	_check(not bool(store.reset_password("recovery@example.com", incorrect_code, "new-password").get("success")), "Incorrect token is rejected")
 	_check(not bool(store.reset_password("recovery@example.com", token, "short").get("success")), "Weak password rejected without consuming code")
 	store.fail_save = true
 	_check(not bool(store.reset_password("recovery@example.com", token, "new-password").get("success")), "Save failure does not report reset success")
@@ -82,6 +86,8 @@ func _run() -> void:
 	store.fail_save = false
 	var reloaded := TestStore.new()
 	reloaded.storage_path = store.storage_path
+	reloaded._ensure_loaded()
+	_check(int(reloaded._accounts_by_id[account_id].get("password_reset_attempts", 0)) == 1, "Failed attempt count survives restart")
 	_check(bool(reloaded.reset_password("recovery@example.com", token, "new-password").get("success")), "Pending recovery survives restart")
 	_check(not bool(reloaded.reset_password("recovery@example.com", token, "second-password").get("success")), "Recovery code cannot be replayed")
 	_check(not bool(reloaded.login_account("recovery@example.com", "original-password").get("success")), "Old password fails after reset")
@@ -139,19 +145,35 @@ func _run() -> void:
 	var after_reset := TestStore.new()
 	after_reset.storage_path = store.storage_path
 	_check(not bool(after_reset.reset_password("changed@example.com", str(mailer.deliveries.back()["token"]), "replay-password").get("success")), "Consumed code remains invalid after restart")
+	store._accounts_by_id[account_id]["password_reset_requested_unix"] = 0
+	var limited := store.create_password_reset("changed@example.com")
+	var limited_code := str(limited.get("token", ""))
+	var wrong_code := "000000" if limited_code != "000000" else "000001"
+	for attempt in range(AccountStoreScript.PASSWORD_RESET_MAX_ATTEMPTS):
+		_check(not bool(store.reset_password("changed@example.com", wrong_code, "unused-password").get("success")), "Incorrect recovery attempt is rejected")
+	_check(not bool(store.reset_password("changed@example.com", limited_code, "unused-password").get("success")), "Fifth incorrect attempt invalidates even the correct code")
+	var limited_reload := TestStore.new()
+	limited_reload.storage_path = store.storage_path
+	_check(not bool(limited_reload.reset_password("changed@example.com", limited_code, "unused-password").get("success")), "Exhausted recovery code stays invalid after restart")
+	store._accounts_by_id[account_id]["password_reset_requested_unix"] = 0
+	var refreshed := store.create_password_reset("changed@example.com")
+	_check(not refreshed.is_empty() and int(store._accounts_by_id[account_id].get("password_reset_attempts", -1)) == 0, "New recovery code resets the attempt budget")
+	store._accounts_by_id[account_id]["password_reset_hash"] = "012345".sha256_text()
+	_check(bool(store.reset_password("changed@example.com", "012345", "leading-zero-password").get("success")), "Leading-zero code can reset the password")
 	for index in range(30):
 		server._handle_password_recovery(1, {"email": "absent@example.com"}, false)
 	_check(server.responses.back()["type"] == LobbyProtocolScript.ROOM_ERROR, "Recovery budget applies across all emails")
 	_check(not LobbyProtocolScript.validate_request(LobbyProtocolScript.make_message(LobbyProtocolScript.RESET_PASSWORD, {"email": "changed@example.com", "token": token, "new_password": "x".repeat(1025)})).is_empty(), "Protocol rejects oversized reset password")
+	_check(LobbyProtocolScript.validate_request(LobbyProtocolScript.make_message(LobbyProtocolScript.RESET_PASSWORD, {"email": "changed@example.com", "token": "012345", "new_password": "new-password"})).is_empty(), "Protocol accepts six-digit code with leading zero")
 	var client := TestClient.new()
 	client.network_manager = Node.new()
 	_check(client.connect_to_server("ws://remote.example", "changed@example.com", "", "", 22345, "", "request_password_reset") == ERR_UNAVAILABLE, "Client refuses unencrypted public recovery")
 	_check(client.connect_to_server("wss://remote.example", "changed@example.com", "", "", 22345, "", "request_password_reset") == OK, "Client accepts secure public recovery")
 	client._send_initial_auth_request()
 	_check(client.requests.back()["type"] == LobbyProtocolScript.REQUEST_PASSWORD_RESET and not client.requests.back()["payload"].has("password"), "Recovery request requires no old password")
-	client.connect_to_server("wss://remote.example", "changed@example.com", "", "", 22345, "", "reset_password", "new-password", "", false, token)
+	client.connect_to_server("wss://remote.example", "changed@example.com", "", "", 22345, "", "reset_password", "new-password", "", false, "012345")
 	client._send_initial_auth_request()
-	_check(client.requests.back()["type"] == LobbyProtocolScript.RESET_PASSWORD and client.requests.back()["payload"]["token"] == token, "Client submits email code and new password through recovery protocol")
+	_check(client.requests.back()["type"] == LobbyProtocolScript.RESET_PASSWORD and client.requests.back()["payload"]["token"] == "012345", "Client preserves leading zero when submitting recovery code")
 	client.lobby_event(LobbyProtocolScript.make_message(LobbyProtocolScript.PASSWORD_RESET_RESULT, {"completed": true, "success": true, "message": "Done"}))
 	_check(client._pending_password.is_empty() and client._pending_recovery_token.is_empty(), "Recovery result clears in-memory client credentials")
 	client.network_manager.free()

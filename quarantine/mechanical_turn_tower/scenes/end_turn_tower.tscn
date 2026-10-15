@@ -1,0 +1,9 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://quarantine/mechanical_turn_tower/scripts/EndTurnTower.gd" id="1_tower"]
+
+[node name="EndTurnTower" type="Control"]
+custom_minimum_size = Vector2(188, 248)
+offset_right = 188.0
+offset_bottom = 248.0
+script = ExtResource("1_tower")

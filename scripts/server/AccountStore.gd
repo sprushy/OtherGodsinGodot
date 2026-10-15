@@ -3,6 +3,7 @@ class_name AccountStore
 
 const ServerPathsScript = preload("res://scripts/server/ServerPaths.gd")
 const JsonStoreScript = preload("res://scripts/server/JsonStore.gd")
+const LobbyProtocolScript = preload("res://scripts/network/LobbyProtocol.gd")
 
 const MIN_USERNAME_LENGTH := 3
 const MAX_USERNAME_LENGTH := 24
@@ -15,6 +16,7 @@ const LEGACY_PASSWORD_HASH_ROUNDS := 4096
 const SHA256_BLOCK_BYTES := 64
 const PASSWORD_RESET_TTL_SECONDS := 15 * 60
 const PASSWORD_RESET_COOLDOWN_SECONDS := 60
+const PASSWORD_RESET_MAX_ATTEMPTS := 5
 
 var _accounts_by_id: Dictionary = {}
 var _account_id_by_email: Dictionary = {}
@@ -341,21 +343,44 @@ func create_password_reset(email: String) -> Dictionary:
 	var now := int(Time.get_unix_time_from_system())
 	if now - int(account.get("password_reset_requested_unix", 0)) < PASSWORD_RESET_COOLDOWN_SECONDS:
 		return {}
-	# Recovery credentials must fail closed if the OS entropy source fails.
-	var random_bytes := Crypto.new().generate_random_bytes(32)
-	if random_bytes.size() != 32:
+	var token := ""
+	for code_attempt in range(4):
+		token = _generate_password_reset_code()
+		if token.is_empty():
+			return {}
+		if token.sha256_text() != str(account.get("password_reset_hash", "")):
+			break
+		token = ""
+	if token.is_empty():
 		return {}
-	var token := random_bytes.hex_encode()
 	var previous_account := account.duplicate(true)
 	account["password_reset_hash"] = token.sha256_text()
 	account["password_reset_expires_unix"] = now + PASSWORD_RESET_TTL_SECONDS
 	account["password_reset_requested_unix"] = now
+	account["password_reset_attempts"] = 0
 	_accounts_by_id[account_id] = account
 	if not _save():
 		_accounts_by_id[account_id] = previous_account
 		return {}
 	# Server-internal only: never send this dictionary over the lobby connection.
 	return {"account_id": account_id, "email": str(account.get("email", "")), "token": token}
+
+func _generate_password_reset_code() -> String:
+	# Recovery credentials must fail closed if the OS entropy source fails.
+	var random_bytes := Crypto.new().generate_random_bytes(32)
+	if random_bytes.size() != 32:
+		return ""
+	var token := ""
+	for random_byte in random_bytes:
+		# Reject the incomplete final group to keep each decimal digit uniform.
+		if random_byte >= 250:
+			continue
+		token += str(int(random_byte) % 10)
+		if token.length() == LobbyProtocolScript.PASSWORD_RESET_CODE_LENGTH:
+			break
+	if token.length() != LobbyProtocolScript.PASSWORD_RESET_CODE_LENGTH:
+		return ""
+	return token
 
 func cancel_password_reset(account_id: String, token: String) -> void:
 	_ensure_loaded()
@@ -372,13 +397,23 @@ func reset_password(email: String, token: String, new_password: String) -> Dicti
 	_ensure_loaded()
 	var invalid_message := "Recovery code is invalid or expired. Request a new email."
 	var account_ids := _get_account_ids_by_email(_email_key(_normalize_email(email)))
-	if account_ids.size() != 1 or token.length() != 64:
+	if account_ids.size() != 1 or not LobbyProtocolScript.is_valid_password_reset_code(token):
 		return _result(false, invalid_message)
 	var account_id: String = account_ids[0]
 	var account: Dictionary = (_accounts_by_id[account_id] as Dictionary).duplicate(true)
 	var expected_hash := str(account.get("password_reset_hash", ""))
-	if expected_hash.is_empty() or not _constant_time_equals(expected_hash, token.sha256_text()) \
-			or int(account.get("password_reset_expires_unix", 0)) <= int(Time.get_unix_time_from_system()):
+	if expected_hash.is_empty() \
+			or int(account.get("password_reset_expires_unix", 0)) <= int(Time.get_unix_time_from_system()) \
+			or int(account.get("password_reset_attempts", 0)) >= PASSWORD_RESET_MAX_ATTEMPTS:
+		return _result(false, invalid_message)
+	if not _constant_time_equals(expected_hash, token.sha256_text()):
+		account["password_reset_attempts"] = int(account.get("password_reset_attempts", 0)) + 1
+		if int(account["password_reset_attempts"]) >= PASSWORD_RESET_MAX_ATTEMPTS:
+			_clear_password_reset(account)
+		_accounts_by_id[account_id] = account
+		# Retain the reduced budget in memory even if persistence fails. A password
+		# reset also requires a successful save before it can change credentials.
+		_save()
 		return _result(false, invalid_message)
 	var password_error := _validate_password(new_password)
 	if not password_error.is_empty():
@@ -398,6 +433,7 @@ func reset_password(email: String, token: String, new_password: String) -> Dicti
 func _clear_password_reset(account: Dictionary) -> void:
 	account.erase("password_reset_hash")
 	account.erase("password_reset_expires_unix")
+	account.erase("password_reset_attempts")
 	# Keep the last request timestamp to prevent bypassing the email cooldown.
 
 func get_account(account_id: String) -> Dictionary:

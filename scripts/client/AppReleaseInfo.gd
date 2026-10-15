@@ -20,8 +20,28 @@ const MACOS_ASSET_NAMES = [
 ]
 const PREFERRED_WINDOWS_EXECUTABLE_NAME := "OtherGods.exe"
 
+static var _editor_version: String = ""
+
 static func get_current_version() -> String:
+	# Release exports are stamped by CI. Editor runs use the release tag on
+	# their own checkout rather than the last project.godot version sync.
+	if OS.has_feature("editor"):
+		if _editor_version.is_empty():
+			var output: Array = []
+			var result := OS.execute("git", PackedStringArray([
+				"-C", ProjectSettings.globalize_path("res://"), "describe",
+				"--tags", "--match", "v[0-9]*", "--abbrev=0",
+			]), output, false, false)
+			if result == 0 and not output.is_empty():
+				_editor_version = normalize_version(str(output[0]))
+			if not is_release_version(_editor_version):
+				_editor_version = normalize_version(str(ProjectSettings.get_setting(VERSION_PROJECT_SETTING, UNKNOWN_VERSION)))
+		return _editor_version
 	return normalize_version(str(ProjectSettings.get_setting(VERSION_PROJECT_SETTING, UNKNOWN_VERSION)))
+
+static func get_display_version() -> String:
+	var version := get_current_version()
+	return "%s (debug)" % version if OS.is_debug_build() else version
 
 static func normalize_version(value: String) -> String:
 	var normalized := value.strip_edges()

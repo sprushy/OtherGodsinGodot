@@ -1,7 +1,7 @@
 # Account password recovery
 
 The login screen has a **Forgot password?** button. Enter the account email,
-choose **Email recovery code**, and paste the emailed code into the dialog.
+choose **Email recovery code**, and enter the emailed 6-digit code into the dialog.
 Enter and confirm a new password, then choose **Reset password** and sign in.
 The email goes only to the email stored on the account. Recovery emails are
 transactional and do not depend on the optional game-update email preference.
@@ -92,9 +92,11 @@ provider response bodies, recipient addresses, passwords, or recovery codes.
 
 ## Security and checks
 
-Codes contain 256 bits from Godot's cryptographic random generator, expire in
-15 minutes, and are stored only as SHA-256 hashes in `accounts.json`. A new code
-replaces the previous one. Accounts allow one email request per minute; the lobby
+Codes contain six decimal digits generated using Godot's cryptographic random
+generator, including leading zeros, and expire in 15 minutes. They are stored
+only as SHA-256 hashes in `accounts.json`. Five incorrect attempts invalidate a
+code; the attempt budget is persisted across lobby restarts. A new code replaces
+the previous one and starts a fresh attempt budget. Accounts allow one email request per minute; the lobby
 also allows at most 30 recovery requests/attempts per minute across connections,
 and at most four email requests in flight. Failed delivery invalidates that code.
 Pending codes survive lobby restarts and are invalidated by an email/password

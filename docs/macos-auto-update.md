@@ -1,15 +1,32 @@
 # macOS Auto-Update
 
-macOS release builds can use Sparkle 2 through the `MacSparkleBridge`
-GDExtension. When Sparkle is bundled, the bridge starts Sparkle when a release
-build opens and explicitly presents Sparkle when the shared GitHub release check
-finds a newer version.
+macOS release builds use the built-in bundle updater. When the shared GitHub
+release check or connected server reports a newer version, the app downloads
+`OtherGods-macos.zip`, verifies its SHA-256 checksum, stages the complete `.app`
+with `ditto`, and checks its identifier, version, executable, and macOS signature.
+Only then does the game close. A separate helper replaces the bundle in its
+existing location and reopens it. If replacement or reopening fails, the helper
+restores the previous app and records the reason in `update.log` and
+`update_failure.txt` in the Godot user data folder.
+
+This update path needs no Sparkle secrets. The release workflow publishes
+`OtherGods-macos.zip.sha256` and checks the bundle version against the release
+tag. Failed updates display the reason in the game, with retry, download-page,
+and log-folder buttons. They do not silently open a browser or dismiss the
+required update. Apps running from App Translocation or a read-only location
+must first be moved to a writable Applications folder and reopened.
+
+`python3 scripts/tests/macos_self_update_test.py` checks replacement, version and
+signature rejection, waiting for game exit, and rollback without opening an app.
+CI runs it on macOS using the native extraction and signature tools. Other hosts
+substitute those tools to test the shell transaction.
 
 ## Optional Release Secrets
 
-Tagged macOS releases can publish `OtherGods-macos.zip` without signing or
-Sparkle secrets. Configure these GitHub Actions secrets to notarize the app and
-enable Sparkle auto-updates:
+Tagged macOS releases can publish automatic updates without Developer ID or
+Sparkle secrets; the bundle is ad-hoc signed in that case. Configure these GitHub
+Actions secrets for Developer ID signing/notarization and the optional legacy
+Sparkle feed:
 
 - `MACOS_CERTIFICATE_P12_BASE64`
 - `MACOS_CERTIFICATE_PASSWORD`
@@ -35,10 +52,10 @@ workflow:
 5. Publishes the archive, `appcast.xml`, and generated Sparkle assets as GitHub release assets.
 
 Tagged releases always include `OtherGods-macos.zip`. Sparkle-enabled releases
-also include `appcast.xml`; otherwise the workflow still publishes the macOS zip
-and the app falls back to opening the release page for manual updates.
+also include `appcast.xml` for older Sparkle-enabled clients. Current clients use
+the built-in updater, including when no appcast is published.
 
-The app reads its feed from:
+Older Sparkle-enabled clients read their feed from:
 
 `https://github.com/sprushy/OtherGodsinGodot/releases/latest/download/appcast.xml`
 
@@ -48,6 +65,14 @@ matching `libmacos_sparkle.macos.universal.dylib`.
 
 ## Bootstrap Limitation
 
-Clients released before Sparkle was embedded cannot install the first
-Sparkle-enabled build automatically. Those users must install that build once
-from the GitHub release page. Later releases can update themselves.
+Clients that only open a release page (including the affected v0.2.318 clients)
+must install a build containing the built-in updater once from the release page.
+Changing the server or release assets cannot add an installer to those existing
+clients. Subsequent builds update automatically.
+
+## Editor Version Display
+
+Exported builds read the version stamped by CI. Editor runs resolve the nearest
+release tag on their own Git checkout and display a `(debug)` suffix, falling
+back to the project setting when Git or tags are unavailable. They never run
+the release updater.
