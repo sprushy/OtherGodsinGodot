@@ -127,6 +127,20 @@ cards in the table. No new probe scripts or visual QA were added.
   immovable targets, preserves
   profitable combat, and compares Wheel with Vision of Odin. Hidden creatures
   use a generic value rather than their concealed stats.
+- Stat effects share explicit strength, resilience, and speed projections for
+  buff selection, priority responses, and one-response attack planning. Tactical
+  Retreat is forecast only when projected speed, immunity, suppression, and
+  Guardian checks allow it; fighting and shelving remain separate choices.
+  Vision of Odin, Hermes, existing supported stat effects, and stat equipment
+  (including Seven-League Boots) use these projections. Speed forecasts retain
+  equipment overrides, shapeshifter forms, and the normal 1–7 cap.
+- Before declaring attacks, projected follower damage checks legal interceptors,
+  special intercept hooks, Guard, follower-loss prevention, and combined lethal
+  from available attackers. Earlier legal response windows can be used to buff
+  an upcoming attacker past an equal-speed interceptor. An interception already
+  chosen is preserved; a later attack response cannot retroactively evade it.
+  The planner skips hidden defenders and does not forecast multi-response combos
+  or United Front attacks.
 - Afanc and Pictish Beast emit `reveal_effect` with a resolver method. MatchManager
   executes these through priority events; neither requires a card-choice answer.
 - Priority and intercept retain their bot command paths. Practice bots use the

@@ -189,8 +189,8 @@ func _sync_form_presentation() -> void:
 	card_types = _get_jaguar_form_types() if in_jaguar_form else _get_divine_form_types()
 	art_path = JAGUAR_FORM_ART_PATH if in_jaguar_form else DIVINE_FORM_ART_PATH
 
-func get_effective_speed() -> int:
-	var total := super.get_effective_speed()
+func get_effective_speed(speed_delta: int = 0) -> int:
+	var total := super.get_effective_speed(speed_delta)
 	if in_jaguar_form:
 		total += JAGUAR_FORM_SPEED_BONUS
 	return clampi(total, 1, 7)

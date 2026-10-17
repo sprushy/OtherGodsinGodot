@@ -677,12 +677,17 @@ func is_targeting_source(card: Card) -> bool:
 	return card != null and (card.targets or card.has_type("Targeting"))
 
 func can_card_respond_to_priority(card: Card, player: Player = null) -> bool:
-	if card == null or not is_instance_valid(card) or action_stack.is_empty():
+	if action_stack.is_empty():
+		return false
+	return can_card_respond_to_action(card, action_stack.back(), player)
+
+# Also used for read-only planning before an action is placed on the stack.
+func can_card_respond_to_action(card: Card, top: CardAction, player: Player = null) -> bool:
+	if card == null or not is_instance_valid(card) or top == null:
 		return false
 	var responding_player := player if player != null else priority_player
 	if responding_player == null or card.card_owner != responding_player:
 		return false
-	var top: CardAction = action_stack.back()
 	if not _can_hand_card_respond_to_priority(card, top):
 		return false
 	if (card.is_power or card.is_god) and not can_player_use_powers(card.card_owner):
@@ -2284,11 +2289,12 @@ func _can_interceptor_engage_attacker(interceptor: Card, attacker: Card) -> bool
 func get_interceptor_speed_against_attacker(
 	interceptor: Card,
 	attacker: Card,
-	protected_target = null
+	protected_target = null,
+	speed_delta: int = 0
 ) -> int:
 	if interceptor == null:
 		return 0
-	var interceptor_speed := interceptor.get_effective_speed()
+	var interceptor_speed := interceptor.get_effective_speed(speed_delta)
 	interceptor_speed += interceptor.get_intercept_speed_bonus_against_attacker(self, attacker, protected_target)
 	if attacker != null \
 			and interceptor.has_type("Giant") \
@@ -2812,6 +2818,7 @@ func _combat_kill_routed_deferred(
 	continue_callback: Callable = Callable(),
 	suppress_ally_kill_sources: Array = []
 ) -> bool:
+	_expect_match_destruction(victim, killer, true)
 	var killer_controller := killer.get_controller() if killer != null else null
 	var victim_controller := victim.get_controller()
 	var bypass_combat_survival := killer != null and killer.can_destroy_combat_protected_creatures(victim)
@@ -3348,6 +3355,7 @@ func _should_class_rend(killer: Card, victim: Card) -> bool:
 
 # Executes a combat kill with a pre-determined void flag (avoids mid-sequence zone-state drift).
 func _combat_kill_routed(killer: Card, victim: Card, do_void: bool, suppress_ally_kill_sources: Array = []) -> void:
+	_expect_match_destruction(victim, killer, true)
 	var killer_controller := killer.get_controller() if killer != null else null
 	var victim_controller := victim.get_controller()
 	var bypass_combat_survival := killer != null and killer.can_destroy_combat_protected_creatures(victim)
@@ -3523,7 +3531,20 @@ func _find_enslave_destination(player: Player, zone_type: int, zone_index: int) 
 func _combat_kill(killer: Card, victim: Card) -> void:
 	_combat_kill_routed(killer, victim, _should_class_rend(killer, victim))
 
-func _send_to_graveyard_with_hook(card: Card, combat_death: bool = false, destruction: bool = false) -> bool:
+func _expect_match_destruction(victim: Card, source: Card, replace: bool = false) -> void:
+	var revealed_source := false
+	for action in resolving_stack_actions:
+		if action != null and action.card == source and action.type in [CardAction.Type.SPELL, CardAction.Type.CHARM, CardAction.Type.ABILITY]:
+			revealed_source = true
+			break
+	# Cast spells can still occupy the hand while resolving their public action.
+	match_statistics.expect_destruction(victim, source, players, replace, revealed_source)
+
+func _send_to_graveyard_with_hook(card: Card, combat_death: bool = false, destruction: bool = false, source_card: Card = null) -> bool:
+	if combat_death or destruction:
+		_expect_match_destruction(card, source_card if source_card != null else get_effect_source_card(), source_card != null)
+	else:
+		match_statistics.cancel_destruction(card)
 	return _send_to_graveyard_with_hook_resolved(card, false, combat_death, destruction)
 
 func request_send_to_graveyard(
@@ -3531,13 +3552,18 @@ func request_send_to_graveyard(
 	continue_callback: Callable = Callable(),
 	combat_death: bool = false,
 	destruction: bool = false,
-	ignore_self_combat_replacement: bool = false
+	ignore_self_combat_replacement: bool = false,
+	source_card: Card = null
 ) -> bool:
 	if card == null:
 		if continue_callback.is_valid():
 			continue_callback.call()
 		return true
 	var graveyard_replacements := _get_graveyard_replacement_sources(card)
+	if combat_death or destruction:
+		_expect_match_destruction(card, source_card if source_card != null else get_effect_source_card(), source_card != null)
+	else:
+		match_statistics.cancel_destruction(card)
 	if not graveyard_replacements.is_empty():
 		_pending_doorway_structures = graveyard_replacements
 		_pending_doorway_structure = _pending_doorway_structures.pop_front()
@@ -3577,6 +3603,9 @@ func request_send_cards_to_graveyard(
 				continue
 			seen_card_ids[queued_card_id] = true
 			working_queue.append(queued_card)
+			if combat_death or destruction:
+				# Capture the wipe's source before replacement prompts suspend it.
+				_expect_match_destruction(queued_card, get_effect_source_card())
 	else:
 		working_queue = cards.duplicate()
 	if working_queue.is_empty():
@@ -3660,6 +3689,7 @@ func _send_to_graveyard_with_hook_resolved(
 	ignore_self_combat_replacement: bool = false
 ) -> bool:
 	if destruction and not combat_death and _is_turn_destruction_ward_protected(card):
+		match_statistics.cancel_destruction(card)
 		print(card.card_name + " resists destruction from " + get_effect_source_card().card_name + " this turn.")
 		if continue_callback.is_valid():
 			continue_callback.call()
@@ -3669,6 +3699,7 @@ func _send_to_graveyard_with_hook_resolved(
 		or card.has_status_effect("berserker_mead_guard")
 		or card.has_status_effect("en_hedu_anna_exaltation_guard")
 	):
+		match_statistics.cancel_destruction(card)
 		print(card.card_name + " resists destruction this turn.")
 		if continue_callback.is_valid():
 			continue_callback.call()
@@ -3927,6 +3958,8 @@ func send_to_deck_bottom_with_hook(card: Card) -> void:
 func _on_player_card_moved(card: Card, from_zone: Zone, to_zone: Zone) -> void:
 	if card == null:
 		return
+	if not is_game_over:
+		match_statistics.record_card_move(card, to_zone)
 	card.remove_status_effects_with_flag("clear_on_card_move")
 	if from_zone != null and from_zone.is_board_zone() and (to_zone == null or not to_zone.is_board_zone()):
 		card.board_entry_order = -1
@@ -4066,12 +4099,13 @@ func _resolve_destroy_at_turn_end_statuses() -> void:
 			continue
 		var viewer := get_feedback_viewer()
 		var card_name_for_feedback := card.get_target_log_display_name(viewer)
+		var destruction_source := card.get_status_effect("destroy_at_turn_end").get("source_card", null) as Card
 		card.remove_status_effects_by_name("destroy_at_turn_end")
 		var on_destroy_complete := func() -> void:
 			if reached_public_destroyed_destination(card):
 				var destroyed_name := get_resolved_destruction_log_name(card, viewer, card_name_for_feedback)
 				note_player_feedback("%s is destroyed at turn's end." % destroyed_name)
-		request_send_to_graveyard(card, on_destroy_complete, false, true)
+		request_send_to_graveyard(card, on_destroy_complete, false, true, false, destruction_source)
 
 func notify_card_revealed_by_effect(revealed_card: Card, source_card: Card) -> void:
 	if revealed_card == null or source_card == null:

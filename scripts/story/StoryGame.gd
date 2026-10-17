@@ -232,10 +232,19 @@ func _refresh_turn_label() -> void:
 	super._refresh_turn_label()
 	if _story_turn_clock == null:
 		return
-	var active_player: Player = game_manager.current_player if game_manager != null else null
-	var clock_data := _get_stats_panel_turn_clock_data(active_player)
-	_story_turn_clock.text = str(clock_data.get("text", "--:--"))
-	_story_turn_clock.modulate = clock_data.get("color", Color(0.72, 0.74, 0.78, 0.92))
+	_story_turn_clock.text = "--:--"
+	_story_turn_clock.modulate = Color(0.72, 0.74, 0.78, 0.92)
+	if _get_local_move_timer_context().is_empty():
+		return
+	var remaining_msec := _get_move_timer_remaining_msec()
+	if remaining_msec < 0:
+		return
+	_story_turn_clock.text = _format_move_timer_clock(remaining_msec)
+	_story_turn_clock.modulate = Color(0.84, 0.92, 1.0, 0.98)
+	if remaining_msec <= MOVE_TIMEOUT_CRITICAL_WARNING_MSEC:
+		_story_turn_clock.modulate = Color(1.0, 0.45, 0.45, 1.0)
+	elif remaining_msec <= MOVE_TIMEOUT_WARNING_MSEC:
+		_story_turn_clock.modulate = Color(1.0, 0.82, 0.36, 1.0)
 
 func _get_display_player() -> Player:
 	return player1

@@ -81,8 +81,8 @@ func apply_serialized_state(state: Dictionary) -> void:
 		in_animal_form = bool(state.get("in_animal_form", false))
 	card_types = _get_animal_form_types() if in_animal_form else _get_giant_form_types()
 
-func get_effective_speed() -> int:
-	var total := super.get_effective_speed()
+func get_effective_speed(speed_delta: int = 0) -> int:
+	var total := super.get_effective_speed(speed_delta)
 	if in_animal_form:
 		total += ANIMAL_FORM_SPEED_BONUS
 	return clampi(total, 1, 7)

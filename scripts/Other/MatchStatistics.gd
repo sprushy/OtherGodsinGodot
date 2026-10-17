@@ -6,6 +6,8 @@ var card_totals: Dictionary = {}
 var lethal_hits: Dictionary = {}
 var biggest_hit: Dictionary = {}
 var damage_sources: Array[Card] = []
+var destruction_totals: Dictionary = {}
+var pending_destructions: Dictionary = {}
 var _started_msec: int = Time.get_ticks_msec()
 var _finished_msec: int = -1
 
@@ -21,11 +23,49 @@ func record_gain(index: int, amount: int) -> void:
 	if amount > 0:
 		_totals(index)["restored"] += amount
 
-func _portrait(card: Card, players: Array[Player]) -> Dictionary:
+func expect_destruction(victim: Card, source: Card, players: Array[Player], replace: bool = false, revealed_source: bool = false) -> void:
+	if victim == null:
+		return
+	var victim_id := victim.get_instance_id()
+	if pending_destructions.has(victim_id) and not replace:
+		return
+	pending_destructions.erase(victim_id)
+	if source == null or source == victim:
+		return
+	var portrait := _portrait(source, players, revealed_source)
+	if portrait.is_empty():
+		return
+	pending_destructions[victim_id] = {
+		"key": "%d:%d" % [source.get_instance_id(), int(portrait["player_index"])],
+		"portrait": portrait,
+	}
+
+func cancel_destruction(card: Card) -> void:
+	if card != null:
+		pending_destructions.erase(card.get_instance_id())
+
+func record_card_move(card: Card, destination: Zone) -> void:
+	var victim_id := card.get_instance_id()
+	var pending: Dictionary = pending_destructions.get(victim_id, {})
+	pending_destructions.erase(victim_id)
+	if pending.is_empty():
+		return
+	var destroyed := destination != null and destination.zone_type in [Zone.ZoneType.GRAVEYARD, Zone.ZoneType.ABYSS]
+	if not destroyed and not (card.is_token and destination == null):
+		return
+	var key := str(pending["key"])
+	if not destruction_totals.has(key):
+		destruction_totals[key] = (pending["portrait"] as Dictionary).duplicate(true)
+		destruction_totals[key]["destroyed"] = 0
+	destruction_totals[key]["destroyed"] += 1
+
+func _portrait(card: Card, players: Array[Player], revealed_source: bool = false) -> Dictionary:
 	# Hidden sources may contribute to totals, but never reveal their identity.
-	if card == null or card.is_face_down or card.is_stealth or card.is_prepared:
+	if card == null:
 		return {}
-	if card.card_owner != null and card.current_zone != null \
+	if not revealed_source and (card.is_face_down or card.is_stealth or card.is_prepared):
+		return {}
+	if not revealed_source and card.card_owner != null and card.current_zone != null \
 			and card.current_zone in [card.card_owner.hand_zone, card.card_owner.deck_zone]:
 		return {}
 	return {"name": card.get_display_name(), "art_path": card.art_path,
@@ -90,6 +130,10 @@ func finish() -> void:
 
 func summary(players: Array[Player], turn_number: int, loser: Player, reason: String) -> Dictionary:
 	var mvp: Dictionary = {}
+	var cataclysmic: Dictionary = {}
+	for entry: Dictionary in destruction_totals.values():
+		if int(entry["destroyed"]) > int(cataclysmic.get("destroyed", 0)):
+			cataclysmic = entry.duplicate(true)
 	for entry: Dictionary in card_totals.values():
 		if int(entry["damage"]) > int(mvp.get("damage", 0)):
 			mvp = entry.duplicate(true)
@@ -101,5 +145,5 @@ func summary(players: Array[Player], turn_number: int, loser: Player, reason: St
 		totals.append(total)
 	var end_msec := _finished_msec if _finished_msec >= 0 else Time.get_ticks_msec()
 	return {"turns": turn_number, "duration_seconds": maxi(0, int((end_msec - _started_msec) / 1000.0)),
-		"players": totals, "mvp": mvp, "biggest_hit": biggest_hit.duplicate(true),
+		"players": totals, "mvp": mvp, "biggest_hit": biggest_hit.duplicate(true), "cataclysmic": cataclysmic,
 		"killing_blow": lethal_hits.get(players.find(loser), {}).duplicate(true) if reason == "defeat" else {}}

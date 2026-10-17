@@ -85,6 +85,7 @@ const ManaSoundPlayerScript = preload("res://scripts/audio/ManaSoundPlayer.gd")
 const AttackSoundPlayerScript = preload("res://scripts/audio/AttackSoundPlayer.gd")
 const CreatureSacrificeSoundPlayerScript = preload("res://scripts/audio/CreatureSacrificeSoundPlayer.gd")
 const CreatureDeathSoundPlayerScript = preload("res://scripts/audio/CreatureDeathSoundPlayer.gd")
+const MatchStartSoundPlayerScript = preload("res://scripts/audio/MatchStartSoundPlayer.gd")
 const TiamatScript = preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
 const UIArtScalerScript = preload("res://scripts/ui/UIArtScaler.gd")
 const GameCursorScript = preload("res://scripts/ui/GameCursor.gd")
@@ -659,6 +660,7 @@ var _game_result_presented: bool = false
 var _pending_forfeit_return_to_menu: bool = false
 var _pending_post_game_return_to_menu: bool = false
 var _game_result_overlay: Control = null
+var _game_result_layer: CanvasLayer = null
 var _reinforcement_layer: CanvasLayer = null
 var _reinforcement_overlay: Control = null
 var _reinforcement_main_cards: Dictionary = {}
@@ -947,6 +949,7 @@ const VISUAL_STACK_CARD_SPACING := 42.0
 const VISUAL_STACK_MAX_VISIBLE := 5
 const CANVAS_ITEM_Z_MAX := 4096
 const REINFORCEMENT_MODAL_LAYER := 10000
+const GAME_RESULT_MODAL_LAYER := 11000
 const REINFORCEMENT_OVERLAY_Z_INDEX := TRANSIENT_UI_Z_INDEX + 220
 const REINFORCEMENT_HOVER_Z_INDEX := REINFORCEMENT_OVERLAY_Z_INDEX + 20
 const REINFORCEMENT_DRAG_Z_INDEX := REINFORCEMENT_OVERLAY_Z_INDEX + 30
@@ -1091,7 +1094,8 @@ func _reject_pre_turn_action() -> void:
 	_set_action_label_text("Finish resolving upkeep before taking other actions.")
 
 func _has_active_modal_prompt() -> bool:
-	return (_zone_overlay != null and is_instance_valid(_zone_overlay)) \
+	return _is_game_result_overlay_open() \
+		or (_zone_overlay != null and is_instance_valid(_zone_overlay)) \
 		or (_retreat_prompt_panel != null and is_instance_valid(_retreat_prompt_panel)) \
 		or (_resurrection_panel != null and is_instance_valid(_resurrection_panel)) \
 		or (_champions_call_prompt_panel != null and is_instance_valid(_champions_call_prompt_panel)) \
@@ -5342,8 +5346,11 @@ func _open_match_replay_overlay() -> void:
 	overlay.color = Color(0.01, 0.02, 0.04, 0.88)
 	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
-	add_child(overlay)
 	# Replays opened from the result screen must sit above the recap.
+	if _game_result_layer != null and is_instance_valid(_game_result_layer):
+		_game_result_layer.add_child(overlay)
+	else:
+		add_child(overlay)
 	_promote_transient_ui(overlay, TRANSIENT_UI_Z_INDEX + 125)
 	_match_replay_overlay = overlay
 
@@ -7144,6 +7151,8 @@ func _do_update_ui(expected_generation: int = -1) -> void:
 			and (game_manager.turn_number > 0 or game_manager.is_game_over):
 		_match_launch_loading = false
 		match_loading_finished.emit()
+		if not game_manager.is_game_over:
+			MatchStartSoundPlayerScript.play_sound()
 
 func _update_ui_immediately() -> void:
 	_ui_update_generation += 1
@@ -11184,6 +11193,7 @@ func _on_hand_card_hover_ended(_vc: VisualCard) -> void:
 
 func _hide_hand_hover_preview() -> void:
 	if _hand_hover_preview != null and is_instance_valid(_hand_hover_preview):
+		_hand_hover_preview.hide()
 		_hand_hover_preview.queue_free()
 	_hand_hover_preview = null
 	_hand_hover_vc = null
@@ -25622,6 +25632,10 @@ func _normalize_dictionary_prompt_options(raw_options: Array) -> Array[Dictionar
 func _hide_byggvir_reveal_prompt() -> void:
 	var panel := get_node_or_null("ByggvirPromptPanel")
 	if panel:
+		# Release the name immediately: a prompt refresh can replace this panel
+		# before queue_free() runs, and an auto-renamed replacement evades cleanup.
+		panel.hide()
+		remove_child(panel)
 		panel.queue_free()
 	_pending_byggvir = null
 	_pending_byggvir_options.clear()
@@ -29492,10 +29506,19 @@ func _should_defer_game_result_for_series() -> bool:
 		return true
 	return not _is_known_series_complete()
 
+func _is_game_result_overlay_open() -> bool:
+	return _game_result_overlay != null and is_instance_valid(_game_result_overlay) \
+		and not _game_result_overlay.is_queued_for_deletion()
+
 func _hide_game_result_overlay() -> void:
 	if _game_result_overlay != null and is_instance_valid(_game_result_overlay):
+		_game_result_overlay.hide()
 		_game_result_overlay.queue_free()
 	_game_result_overlay = null
+	if _game_result_layer != null and is_instance_valid(_game_result_layer):
+		_game_result_layer.hide()
+		_game_result_layer.queue_free()
+	_game_result_layer = null
 
 func _hide_reinforcement_overlay() -> void:
 	_cleanup_reinforcement_drag_ghost()
@@ -30183,6 +30206,7 @@ func _begin_next_series_game(data: Dictionary) -> void:
 	_pending_forfeit_return_to_menu = false
 	_restore_corner_action_button()
 	_set_action_label_text("Next game starting...")
+	MatchStartSoundPlayerScript.play_sound()
 	update_ui()
 
 func _get_result_viewer():
@@ -30323,8 +30347,15 @@ func _show_game_result_overlay(result_message: String, winner = null, loser = nu
 	_hide_pause_menu()
 	_close_match_replay_overlay()
 	_hide_game_result_overlay()
+	_hide_hand_hover_preview()
+	_close_context_menu()
+	_hide_power_hover_popup()
+	_game_result_layer = CanvasLayer.new()
+	_game_result_layer.name = "GameResultLayer"
+	_game_result_layer.layer = GAME_RESULT_MODAL_LAYER
+	add_child(_game_result_layer)
 	var overlay := MatchResultScreenScript.new()
-	add_child(overlay)
+	_game_result_layer.add_child(overlay)
 	_promote_transient_ui(overlay, TRANSIENT_UI_Z_INDEX + 120)
 	_game_result_overlay = overlay
 	overlay.review_requested.connect(_on_game_result_stay_here_pressed)
@@ -30337,6 +30368,8 @@ func _show_game_result_overlay(result_message: String, winner = null, loser = nu
 		game_manager.game_end_reason if game_manager != null else "",
 		_can_offer_lobby_rematch(), not _match_replay_entries.is_empty(), auto_return
 	)
+	if winner != null and winner == _get_result_viewer() and not _is_observer_mode:
+		overlay.play_victory_sound()
 
 func _can_offer_lobby_rematch() -> bool:
 	if _is_observer_mode:

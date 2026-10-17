@@ -2662,6 +2662,34 @@ func _get_hover_summoned_active_god(card: Card) -> Card:
 	var active_gods := card.get_hover_summoned_active_gods(_get_viewer_player())
 	return active_gods[0] if not active_gods.is_empty() else null
 
+func _get_locked_take_the_field_preview(card: Card) -> Card:
+	if not _hovered or not (card is TakeTheField) or not card.is_face_down:
+		return null
+	var viewer := _get_viewer_player()
+	if viewer == null or card.card_owner == null or card.get_controller() != viewer:
+		return null
+	return _get_hover_summoned_active_god(card)
+
+func _add_take_the_field_preview_badges(overlay: Control, active_god: Card) -> void:
+	_add_level_badge(overlay, active_god, Control.PRESET_TOP_LEFT, 6, LEVEL_BADGE_TOP, 54, LEVEL_BADGE_BOTTOM)
+	var name_badge := _add_overlay_stat_badge(
+		overlay, active_god.get_display_name_for_control(),
+		Control.PRESET_TOP_WIDE, 6, 16, -6, 38, Color(1.0, 0.95, 0.6)
+	)
+	if name_badge != null:
+		var name_label := name_badge.get_child(0) as Label
+		name_label.clip_text = true
+		name_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		UIFontScript.apply_norse_card_name_font(name_label, active_god)
+	_add_overlay_stat_badge(
+		overlay, "STR:%d RES:%d SPD:%d" % [
+			active_god.get_effective_strength(),
+			active_god.get_effective_resilience(),
+			active_god.get_effective_speed()
+		],
+		Control.PRESET_BOTTOM_WIDE, 6, -32, -6, -6
+	)
+
 func _on_badge_mouse_entered() -> void:
 	_badge_hovered = true
 	_hovered = true
@@ -5285,8 +5313,11 @@ func _refresh_display() -> void:
 				and card.get_controller() != face_down_viewer \
 				and not revealed_face_down_card
 			var show_revealed_card_art := revealed_face_down_card and card.art_path != ""
+			var active_god_preview := _get_locked_take_the_field_preview(card)
 			var tex: Texture2D = null
-			if use_prepared_magical_cover:
+			if active_god_preview != null:
+				tex = UITextureCacheScript.get_texture(active_god_preview.art_path)
+			elif use_prepared_magical_cover:
 				tex = (
 					PREPARED_MAGICAL_CARD_COVER_HOVER_TEXTURE
 					if _hovered
@@ -5348,7 +5379,7 @@ func _refresh_display() -> void:
 					mute_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 					mute_badge.add_child(mute_lbl)
 					fd_overlay.add_child(mute_badge)
-			elif is_own_hidden_card and not use_prepared_magical_cover:
+			elif is_own_hidden_card and not use_prepared_magical_cover and active_god_preview == null:
 				var haze := ColorRect.new()
 				haze.color = Color(0.05, 0.05, 0.2, 0.38)
 				haze.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -5356,6 +5387,8 @@ func _refresh_display() -> void:
 				fd_overlay.add_child(haze)
 			_add_stealth_fog_overlay(fd_overlay, card, preserved_stealth_fog_overlay)
 			_add_power_lock_overlay(fd_overlay, card)
+			if active_god_preview != null:
+				_add_take_the_field_preview_badges(fd_overlay, active_god_preview)
 			_add_publicly_identified_card_affordance(fd_overlay, card)
 			if card.get_controller() == face_down_viewer and card.is_prepared and card.is_magical_card():
 				_add_speed_badge(fd_overlay, card)
@@ -6298,6 +6331,11 @@ func _show_ability_popup() -> void:
 	if not is_inside_tree() or is_queued_for_deletion():
 		return
 	var card := zone.cards[0]
+	# Show the manifestation's regular details instead of nesting a second full
+	# card below Take the Field. The board still uses the locked power for input.
+	var active_god_preview := _get_locked_take_the_field_preview(card)
+	if active_god_preview != null:
+		card = active_god_preview
 	var floating_parent := _get_floating_popup_parent()
 	if floating_parent == null:
 		return
@@ -6437,16 +6475,33 @@ func _show_ability_popup() -> void:
 			maxf(0.35, (popup_vp_size_shared.y - POPUP_VIEWPORT_MARGIN * 2.0) / maxf(popup_root_size.y, 1.0))
 		)
 	)
+	var card_rect := get_global_rect()
+	var preview_side_gap := 8.0
+	var preview_on_right := true
+	var preview_side_space := 0.0
+	if active_god_preview != null:
+		# Reserve the whole card's width before fitting the details and keywords.
+		# Clamping a viewport-sized popup can otherwise push it back over the art.
+		var right_space := maxf(0.0, popup_vp_size_shared.x - card_rect.end.x - preview_side_gap - POPUP_VIEWPORT_MARGIN)
+		var left_space := maxf(0.0, card_rect.position.x - preview_side_gap - POPUP_VIEWPORT_MARGIN)
+		preview_on_right = right_space >= left_space
+		preview_side_space = maxf(right_space, left_space)
+		if preview_side_space > 0.0:
+			popup_root_scale = minf(popup_root_scale, preview_side_space / maxf(popup_root_size.x, 1.0))
 	popup_root.scale = Vector2(popup_root_scale, popup_root_scale)
 	var scaled_popup_root_size := popup_root_size * popup_root_scale
 
 	var desired_x := global_position.x - ((keyword_size.x + KEYWORD_PANEL_GAP) * popup_root_scale if keywords_on_left else 0.0)
 	popup_root.global_position = _get_card_hover_popup_position(
-		get_global_rect(),
+		card_rect,
 		Vector2(desired_x, global_position.y),
 		scaled_popup_root_size,
 		popup_vp_size_shared
 	)
+	if active_god_preview != null and preview_side_space > 0.0:
+		var preview_x := card_rect.end.x + preview_side_gap if preview_on_right else card_rect.position.x - scaled_popup_root_size.x - preview_side_gap
+		var preview_y := card_rect.position.y + (card_rect.size.y - scaled_popup_root_size.y) * 0.5
+		popup_root.global_position = _clamp_hover_popup_position(Vector2(preview_x, preview_y), scaled_popup_root_size, popup_vp_size_shared)
 	popup_root.visible = true
 
 func _get_card_hover_popup_position(

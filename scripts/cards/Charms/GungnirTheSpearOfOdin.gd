@@ -61,7 +61,7 @@ func resolve(game_manager: GameManager, _target = null) -> void:
 	game_manager.note_player_feedback(
 		"%s destroys %s." % [card_name, combat_target.card_name]
 	)
-	game_manager.request_send_to_graveyard(combat_target, Callable(), false, true)
+	game_manager.request_send_to_graveyard(combat_target, Callable(), false, true, false, self)
 
 func _is_norse_warrior(card: Card) -> bool:
 	if card == null or card.card_type != Card.CardType.CREATURE:

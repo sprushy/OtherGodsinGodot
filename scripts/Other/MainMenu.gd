@@ -11597,6 +11597,8 @@ func _run_practice_thor_byggvir_smoke() -> void:
 	]
 
 	practice_game._show_byggvir_reveal_prompt(byggvir, raw_options)
+	# State/prompt refreshes can replace the panel before deferred deletion runs.
+	practice_game._show_byggvir_reveal_prompt(byggvir, raw_options)
 	await get_tree().process_frame
 
 	var panel: Control = practice_game.get_node_or_null("ByggvirPromptPanel") as Control
@@ -11608,6 +11610,37 @@ func _run_practice_thor_byggvir_smoke() -> void:
 		_fail_smoke_if_enabled("practice_thor_byggvir_options_missing")
 		return
 	_write_smoke_trace("practice_thor_byggvir:prompt_visible options=%d" % (pending_options as Array).size())
+
+	# Resolve a real Brewing choice through the command boundary, then verify
+	# that no renamed replacement panel or pending choice survives completion.
+	practice_game._hide_byggvir_reveal_prompt()
+	practice_game.player1.hand_zone.add_card(byggvir)
+	var mead := BerserkerMead.new()
+	mead.card_owner = practice_game.player1
+	practice_game.player1.graveyard_zone.add_card(mead)
+	var return_option := byggvir.serialize_brewing_option({"kind": "return", "card": mead})
+	practice_game.match_manager.emit_ui_interaction_for_player(practice_game.player1, "byggvir_reveal", {
+		"source_uid": byggvir.uid,
+		"options": [return_option],
+	})
+	practice_game._show_byggvir_reveal_prompt(byggvir, [return_option])
+	practice_game._resolve_byggvir_reveal_option(return_option)
+	if mead.current_zone != practice_game.player1.hand_zone:
+		_fail_smoke_if_enabled("practice_thor_byggvir_choice_not_resolved")
+		return
+	await get_tree().process_frame
+	for child in practice_game.get_children():
+		if child is PanelContainer:
+			for label in child.find_children("*", "Label", true, false):
+				if label.text == "Choose a Brewing effect to resolve on reveal.":
+					_fail_smoke_if_enabled("practice_thor_byggvir_panel_survived_resolution")
+					return
+	if practice_game.get("_pending_byggvir") != null \
+			or not (practice_game.get("_pending_byggvir_options") as Array).is_empty() \
+			or _count_pending_smoke_prompts_of_type(practice_game.match_manager, "byggvir_reveal") != 0:
+		_fail_smoke_if_enabled("practice_thor_byggvir_choice_survived_resolution")
+		return
+	_write_smoke_trace("practice_thor_byggvir:choice_resolved prompt_cleared")
 
 	_finish_smoke_if_enabled("PASS:practice_thor_byggvir")
 

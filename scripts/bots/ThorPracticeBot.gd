@@ -287,13 +287,9 @@ func _choose_priority_response() -> Card:
 		for response_card in responses:
 			if response_card is MeadOfPoetry and _target_includes_card(top_action.target, response_card):
 				return response_card
-		var best_vision := _find_best_priority_vision_response(responses, top_action)
 		var best_wheel := _find_best_priority_wheel_response(responses, top_action)
-		var best_card: Card = best_vision.get("card", null)
-		var best_score := int(best_vision.get("score", 0))
-		if int(best_wheel.get("score", 0)) > best_score:
-			best_card = best_wheel.get("card", null)
-			best_score = int(best_wheel.get("score", 0))
+		var best_card: Card = best_wheel.get("card", null)
+		var best_score := int(best_wheel.get("score", 0))
 		for response_card in responses:
 			if not CardStrategy.supported(response_card):
 				continue
@@ -330,10 +326,7 @@ func _submit_priority_response(card: Card) -> bool:
 	if card is HexCard:
 		var targets := game_manager.get_priority_hex_targets(card as HexCard, top_action)
 		var target_uid := ""
-		if card is VisionOfOdin:
-			var chosen_target := _choose_best_priority_vision_target(card as VisionOfOdin, top_action, targets)
-			target_uid = chosen_target.uid if chosen_target != null else ""
-		elif card is WheelOfFire:
+		if card is WheelOfFire:
 			var chosen_target := _choose_best_wheel_of_fire_target(card as WheelOfFire, targets, top_action)
 			target_uid = chosen_target.uid if chosen_target != null else ""
 		elif CardStrategy.supported(card):
@@ -375,6 +368,9 @@ func _submit_priority_response(card: Card) -> bool:
 		elif card.has_method("get_valid_targets"):
 			targets = card.get_valid_targets(game_manager)
 		var target_uid := _choose_target_uid_for_source(card, targets)
+		if CardStrategy.supported(card):
+			var target := CardStrategy.best_target(self, card, targets, top_action)
+			target_uid = target.uid if target != null else ""
 		if bool(card.get("targets")) and target_uid.is_empty():
 			return false
 		return _submit_action({
@@ -449,8 +445,8 @@ func _try_activate_best_god_ability() -> bool:
 			})
 	if god is Hermes:
 		var hermes := god as Hermes
-		var speed_target := _choose_best_friendly_board_target_for_source(hermes, hermes.get_valid_targets(game_manager))
-		if speed_target != null and _score_friendly_target(speed_target) >= 2400:
+		var speed_target := CardStrategy.best_target(self, hermes, hermes.get_valid_targets(game_manager))
+		if speed_target != null and CardStrategy.effect_score(self, hermes, speed_target) > 0:
 			return _submit_action({
 				"type": "god_ability",
 				"god_uid": hermes.uid,
@@ -796,6 +792,9 @@ func _try_attack() -> bool:
 	var askelladen_attack := _get_best_askelladen_attack(attackers, opposing_creatures)
 	if not askelladen_attack.is_empty():
 		return _submit_attack(askelladen_attack.get("attacker", null), askelladen_attack.get("target", null))
+	var supported_attack := _get_best_supported_attack(attackers, opposing_creatures)
+	if not supported_attack.is_empty():
+		return _submit_attack(supported_attack.get("attacker", null), supported_attack.get("target", null))
 	var standard_attack := _get_best_standard_attack(attackers, opposing_creatures)
 	if not standard_attack.is_empty():
 		return _submit_attack(standard_attack.get("attacker", null), standard_attack.get("target", null))
@@ -1148,6 +1147,8 @@ func _get_best_askelladen_target_for(askelladen: Askelladen, opposing_creatures:
 	for creature in opposing_creatures:
 		if not _can_attack_creature(askelladen, creature):
 			continue
+		if not _can_askelladen_retreat(askelladen, creature):
+			continue
 		var score := _score_askelladen_bounce_target(creature)
 		if _can_clear_creature_without_askelladen(creature):
 			score -= 1800
@@ -1175,6 +1176,43 @@ func _get_best_standard_attack(attackers: Array[Card], opposing_creatures: Array
 				best_attack = {"attacker": attacker, "target": target, "score": attack_score}
 	if not best_attack.is_empty():
 		best_attack.erase("score")
+	return best_attack
+
+# Look one legal response ahead, using the same effect scores as priority play.
+# This covers strength/resilience tricks as well as speed-enabled abilities.
+func _get_best_supported_attack(attackers: Array[Card], opposing_creatures: Array[Card]) -> Dictionary:
+	var best_attack := {}
+	var best_score := 0
+	var support_cards: Array = game_manager.get_field_cards(bot_player)
+	support_cards.append_array(bot_player.hand_zone.cards)
+	for attacker in attackers:
+		if match_manager._get_declared_attack_partner(attacker) != null:
+			continue
+		for defender in opposing_creatures:
+			if not CardStrategy.visible(self, defender) or not _can_attack_creature(attacker, defender):
+				continue
+			if not _is_attack_safe_from_interceptors(attacker, defender):
+				continue
+			var action := CardAction.new()
+			action.type = CardAction.Type.ATTACK
+			action.source_player = bot_player
+			action.attacker = attacker
+			action.target = defender
+			var before := _score_attack_economy(_estimate_attack_economy(action, null, 0, 0))
+			for support in support_cards:
+				if not CardStrategy.supported(support) or not game_manager.can_card_respond_to_action(support, action, bot_player):
+					continue
+				var attack_cost := game_manager.get_creature_action_mana_cost(attacker, "attack")
+				if bot_player.mana < attack_cost + CardStrategy.activation_cost(self, support):
+					continue
+				for target in CardStrategy.targets(self, support, action):
+					if target not in [attacker, defender] or CardStrategy.stat_changes(self, support, target).is_empty():
+						continue
+					var gain := CardStrategy.effect_score(self, support, target, action)
+					var score := before + gain
+					if gain > 0 and score > maxi(0, before) and score > best_score:
+						best_score = score
+						best_attack = {"attacker": attacker, "target": defender}
 	return best_attack
 
 func _is_attack_plan_better(candidate_attacker: Card, candidate_target: Card, current_attacker: Card, current_target: Card) -> bool:
@@ -1376,6 +1414,37 @@ func _can_attack_followers_safely(attacker: Card) -> bool:
 	if game_manager.is_followers_attack_blocked_by_active_structure(attacker, opponent, []):
 		return false
 	return match_manager._get_possible_interceptors(attacker, opponent).is_empty()
+
+func _has_committed_attack(creature: Card) -> bool:
+	for action in game_manager.action_stack:
+		if action.type == CardAction.Type.ATTACK and creature in [action.attacker, action.united_front_partner]:
+			return true
+	return false
+
+func _can_attack_followers_after_modifier(attacker: Card, modified_card: Card, speed_delta: int) -> bool:
+	if game_manager.is_followers_attack_blocked_by_active_structure(attacker, opponent, []):
+		return false
+	# Unknown defenders may have special intercept hooks. Do not use their hidden
+	# identities or assume a speed change can evade them.
+	for interceptor in _get_board_creatures(opponent):
+		if not CardStrategy.visible(self, interceptor):
+			return false
+		if match_manager._can_intercept(interceptor, attacker, opponent, modified_card, speed_delta):
+			return false
+	return true
+
+func _can_win_followers_after_modifier(modified_card: Card, str_delta: int, speed_delta: int) -> bool:
+	if game_manager.has_turn_follower_loss_prevention(opponent):
+		return false
+	var total_damage := 0
+	for attacker in _get_attack_ready_creatures():
+		if _has_committed_attack(attacker) or not _can_attack_followers_after_modifier(attacker, modified_card, speed_delta):
+			continue
+		var damage := _get_combat_strength(attacker, null, str_delta if attacker == modified_card else 0)
+		if GameManager.combat_halves_follower_damage(attacker):
+			damage = GameManager.round_down_divide(damage, 2)
+		total_damage += damage
+	return total_damage >= opponent.followers + opponent.guard
 
 func _score_followers_attack(attacker: Card) -> int:
 	if attacker == null or opponent == null:
@@ -1799,14 +1868,14 @@ func _score_askelladen_fight_result(action: CardAction, ask_card: Askelladen, ot
 		return -1000000
 	if defender != ask_card and defender != other_card:
 		return -1000000
-	return _score_attack_economy(_estimate_attack_economy(action, null, 0, 0))
+	return _score_attack_economy(_estimate_attack_economy(action, null, 0, 0, 0, false))
 
 func _score_askelladen_retreat_result(ask_card: Askelladen, other_card: Card) -> int:
 	if ask_card == null or other_card == null:
 		return -1000000
 	return _get_card_economic_value(other_card) - _get_card_economic_value(ask_card)
 
-func _can_askelladen_retreat(ask_card: Askelladen, other_card: Card) -> bool:
+func _can_askelladen_retreat(ask_card: Askelladen, other_card: Card, modified_card: Card = null, speed_delta: int = 0) -> bool:
 	if ask_card == null or other_card == null:
 		return false
 	if ask_card.is_face_down or ask_card.abilities_suppressed():
@@ -1815,7 +1884,7 @@ func _can_askelladen_retreat(ask_card: Askelladen, other_card: Card) -> bool:
 		return false
 	if game_manager.is_immune_to_source(other_card, ask_card):
 		return false
-	if other_card.get_effective_speed() > ask_card.get_effective_speed():
+	if other_card.get_effective_speed(speed_delta if other_card == modified_card else 0) > ask_card.get_effective_speed(speed_delta if ask_card == modified_card else 0):
 		return false
 	if game_manager.is_guardian_protected(other_card, ask_card):
 		return false
@@ -2163,104 +2232,7 @@ func _should_pay_wheel_of_fire_upkeep(wheel: WheelOfFire) -> bool:
 	score -= _get_wheel_of_fire_mana_opportunity_cost(WheelOfFire.ADVANCE_COST)
 	return score > 0
 
-func _find_best_priority_vision_response(responses: Array, top_action: CardAction) -> Dictionary:
-	if top_action == null or top_action.type != CardAction.Type.ATTACK:
-		return {}
-	var best_card: VisionOfOdin = null
-	var best_target: Card = null
-	var best_score := 0
-	for response_card in responses:
-		var vision := response_card as VisionOfOdin
-		if vision == null:
-			continue
-		var targets := game_manager.get_priority_hex_targets(vision, top_action)
-		var target := _choose_best_priority_vision_target(vision, top_action, targets)
-		if target == null:
-			continue
-		var score := _score_vision_of_odin_priority_target(vision, top_action, target)
-		if best_card == null or score > best_score:
-			best_card = vision
-			best_target = target
-			best_score = score
-	if best_card == null:
-		return {}
-	return {"card": best_card, "target": best_target, "score": best_score}
-
-func _choose_best_priority_vision_target(vision: VisionOfOdin, top_action: CardAction, targets: Array) -> Card:
-	var best_target: Card = null
-	var best_score := -1000000
-	for raw_target in targets:
-		var target := raw_target as Card
-		if target == null:
-			continue
-		var score := _score_vision_of_odin_priority_target(vision, top_action, target)
-		if score <= -1000000:
-			continue
-		if best_target == null or score > best_score:
-			best_target = target
-			best_score = score
-	return best_target
-
-func _score_vision_of_odin_priority_target(_vision: VisionOfOdin, top_action: CardAction, target: Card) -> int:
-	if top_action == null or top_action.type != CardAction.Type.ATTACK or target == null:
-		return -1000000
-	var attacker := top_action.attacker
-	var defender := _get_attack_defender_card(top_action)
-	var target_is_friendly_norse := target.card_owner == bot_player and _is_norse_creature(target)
-	var target_is_enemy_non_norse := target.card_owner == opponent and not _is_norse_creature(target)
-	if not target_is_friendly_norse and not target_is_enemy_non_norse:
-		return -1000000
-	if target != attacker and target != defender:
-		return -1000000
-	var score := _score_vision_economic_swing(_vision, top_action, target, target_is_friendly_norse)
-	if defender == null:
-		if target == attacker and target_is_enemy_non_norse and attacker.get_controller() == opponent:
-			score += 800 + VisionOfOdin.STR_SWING * 140
-			if bot_player != null and bot_player.followers <= attacker.get_effective_strength() and bot_player.followers > attacker.get_effective_strength() - VisionOfOdin.STR_SWING:
-				score += 3200
-		elif target == attacker and target_is_friendly_norse and attacker.get_controller() == bot_player:
-			score += 500 + VisionOfOdin.STR_SWING * 120
-			if opponent != null and opponent.followers > attacker.get_effective_strength() and opponent.followers <= attacker.get_effective_strength() + VisionOfOdin.STR_SWING:
-				score += 2600
-		return score if score > 0 else -1000000
-	if target == attacker:
-		if attacker.get_controller() == bot_player and target_is_friendly_norse:
-			if attacker.get_effective_strength() < defender.get_effective_resilience() and attacker.get_effective_strength() + VisionOfOdin.STR_SWING >= defender.get_effective_resilience():
-				score += 3600
-			if defender is Askelladen and attacker.get_effective_speed() <= defender.get_effective_speed() and attacker.get_effective_speed() + VisionOfOdin.SPEED_SWING > defender.get_effective_speed():
-				score += 2600
-		elif attacker.get_controller() == opponent and target_is_enemy_non_norse:
-			if attacker.get_effective_strength() >= defender.get_effective_resilience() and attacker.get_effective_strength() - VisionOfOdin.STR_SWING < defender.get_effective_resilience():
-				score += 3600
-			if attacker is Askelladen and defender.get_effective_speed() <= attacker.get_effective_speed() and defender.get_effective_speed() > attacker.get_effective_speed() - VisionOfOdin.SPEED_SWING:
-				score += 2600
-	if target == defender:
-		if defender.get_controller() == bot_player and target_is_friendly_norse:
-			if defender.get_effective_strength() < attacker.get_effective_resilience() and defender.get_effective_strength() + VisionOfOdin.STR_SWING >= attacker.get_effective_resilience():
-				score += 3600
-			if defender is Askelladen and attacker.get_effective_speed() > defender.get_effective_speed() and attacker.get_effective_speed() <= defender.get_effective_speed() + VisionOfOdin.SPEED_SWING:
-				score += 2600
-		elif defender.get_controller() == opponent and target_is_enemy_non_norse:
-			if defender.get_effective_strength() >= attacker.get_effective_resilience() and defender.get_effective_strength() - VisionOfOdin.STR_SWING < attacker.get_effective_resilience():
-				score += 3600
-			if defender is Askelladen and attacker.get_effective_speed() <= defender.get_effective_speed() and attacker.get_effective_speed() > defender.get_effective_speed() - VisionOfOdin.SPEED_SWING:
-				score += 2600
-	return score if score > 0 else -1000000
-
-func _score_vision_economic_swing(vision: VisionOfOdin, action: CardAction, target: Card, target_is_buffed: bool) -> int:
-	if action == null or target == null:
-		return -1000000
-	var str_delta := VisionOfOdin.STR_SWING if target_is_buffed else -VisionOfOdin.STR_SWING
-	var speed_delta := VisionOfOdin.SPEED_SWING if target_is_buffed else -VisionOfOdin.SPEED_SWING
-	var before := _estimate_attack_economy(action, null, 0, 0)
-	var after := _estimate_attack_economy(action, target, str_delta, speed_delta)
-	var score := _score_attack_economy(after) - _score_attack_economy(before)
-	score -= ECON_CARD_VALUE
-	if vision != null and game_manager != null and bot_player != null:
-		score -= game_manager.get_prepared_card_activation_mana_cost(bot_player, vision) * ECON_MANA_VALUE
-	return score
-
-func _estimate_attack_economy(action: CardAction, modified_card: Card, str_delta: int, _speed_delta: int, res_delta: int = 0) -> Dictionary:
+func _estimate_attack_economy(action: CardAction, modified_card: Card, str_delta: int, speed_delta: int, res_delta: int = 0, include_retreat: bool = true) -> Dictionary:
 	var result := _estimate_raw_attack_economy(action, modified_card, str_delta, res_delta)
 	var halve_follower_damage := false
 	if action != null:
@@ -2282,6 +2254,36 @@ func _estimate_attack_economy(action: CardAction, modified_card: Card, str_delta
 		amount = mini(player.followers, maxi(0, amount - player.guard))
 		result[loss_key] = amount
 		result["opponent_wins" if player == bot_player else "bot_wins"] = amount >= player.followers and amount > 0
+	if include_retreat:
+		result = _estimate_retreat_economy(action, result, modified_card, speed_delta)
+	return result
+
+func _estimate_retreat_economy(action: CardAction, fight: Dictionary, modified_card: Card, speed_delta: int) -> Dictionary:
+	if action == null or action.type != CardAction.Type.ATTACK or action.united_front_partner != null:
+		return fight
+	var defender := _get_attack_defender_card(action)
+	if not CardStrategy.visible(self, action.attacker) or not CardStrategy.visible(self, defender):
+		return fight
+	var result := fight
+	for card in [action.attacker, defender]:
+		if not card is Askelladen:
+			continue
+		var other: Card = defender if card == action.attacker else action.attacker
+		if not _can_askelladen_retreat(card, other, modified_card, speed_delta):
+			continue
+		# Shelving removes both bodies and prevents all battle follower damage.
+		var retreat := {
+			"bot_cards_lost": 0, "opponent_cards_lost": 0,
+			"bot_followers_lost": 0, "opponent_followers_lost": 0,
+			"bot_wins": false, "opponent_wins": false,
+		}
+		_add_destroyed_card_to_economy(retreat, action.attacker)
+		_add_destroyed_card_to_economy(retreat, defender)
+		var improvement := _score_attack_economy(retreat) - _score_attack_economy(result)
+		if card.get_controller() == bot_player and improvement > ASKELLADEN_RETREAT_SCORE_MARGIN:
+			result = retreat
+		elif card.get_controller() == opponent and improvement < -ASKELLADEN_RETREAT_SCORE_MARGIN:
+			result = retreat
 	return result
 
 func _estimate_raw_attack_economy(action: CardAction, modified_card: Card, str_delta: int, res_delta: int) -> Dictionary:

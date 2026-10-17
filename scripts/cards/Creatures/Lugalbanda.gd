@@ -103,7 +103,7 @@ func resolve_equipment_action(game_manager: GameManager, equipment_card: Card, a
 			equipment_card.equip_to(self)
 			return true
 		"destroy":
-			game_manager._send_to_graveyard_with_hook(equipment_card, false, true)
+			game_manager._send_to_graveyard_with_hook(equipment_card, false, true, self)
 			return true
 	return false
 

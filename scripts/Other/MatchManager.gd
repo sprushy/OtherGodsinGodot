@@ -2982,7 +2982,7 @@ func _get_declared_attack_speed(attacker: Card) -> int:
 		return attacker.get_united_front_attack_speed(game_manager)
 	return attacker.get_effective_speed()
 
-func _can_intercept(defender: Card, attacker: Card, protected_target) -> bool:
+func _can_intercept(defender: Card, attacker: Card, protected_target, modified_card: Card = null, speed_delta: int = 0) -> bool:
 	if attacker == null or protected_target == null:
 		return false
 	if protected_target is Card and defender == protected_target:
@@ -2993,8 +2993,11 @@ func _can_intercept(defender: Card, attacker: Card, protected_target) -> bool:
 		return false
 	if defender.can_special_intercept(game_manager, attacker, protected_target):
 		return game_manager.can_interceptor_engage_attacker(defender, attacker)
-	var interceptor_speed := game_manager.get_interceptor_speed_against_attacker(defender, attacker, protected_target)
-	if interceptor_speed < _get_declared_attack_speed(attacker):
+	var interceptor_speed := game_manager.get_interceptor_speed_against_attacker(defender, attacker, protected_target, speed_delta if defender == modified_card else 0)
+	var attack_speed := _get_declared_attack_speed(attacker)
+	if attacker == modified_card and _get_declared_attack_partner(attacker) == null:
+		attack_speed = attacker.get_effective_speed(speed_delta)
+	if interceptor_speed < attack_speed:
 		return false
 	if not game_manager.can_interceptor_engage_attacker(defender, attacker):
 		return false

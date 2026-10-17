@@ -1427,9 +1427,9 @@ func _show_hover_panel() -> void:
 	var ancestor: CanvasItem = self
 	while ancestor != null:
 		card_z_index += ancestor.z_index
-		if not ancestor.z_as_relative:
+		if not ancestor.z_as_relative or ancestor.top_level:
 			break
-		ancestor = ancestor.get_parent_item()
+		ancestor = ancestor.get_parent() as CanvasItem
 	panel.z_as_relative = false
 	panel.z_index = mini(RenderingServer.CANVAS_ITEM_Z_MAX, maxi(_HOVER_PANEL_Z_INDEX, card_z_index + 1))
 	panel.visible = false

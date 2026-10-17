@@ -95,7 +95,7 @@ func on_turn_end(game_manager: GameManager) -> void:
 			game_manager.note_player_feedback("%s survives Geophagia because it is immune to creature abilities." % target.card_name)
 			continue
 		game_manager.note_player_feedback("%s devoured %s at end of turn." % [card_name, target.card_name])
-		game_manager._send_to_graveyard_with_hook(target, false, true)
+		game_manager._send_to_graveyard_with_hook(target, false, true, self)
 
 func on_removed(_game_manager: GameManager) -> void:
 	pending_geophagia_targets.clear()

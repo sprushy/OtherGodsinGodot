@@ -42,7 +42,7 @@ func on_turn_end(game_manager: GameManager) -> void:
 	if _resolved_attack_this_turn:
 		return
 	game_manager.note_player_feedback("%s is destroyed by %s." % [card_name, FRESH_BLOOD_ABILITY])
-	game_manager.request_send_to_graveyard(self, Callable(), false, true)
+	game_manager.request_send_to_graveyard(self, Callable(), false, true, false, self)
 
 func on_removed(_game_manager: GameManager) -> void:
 	_resolved_attack_this_turn = false

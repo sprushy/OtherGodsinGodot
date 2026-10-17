@@ -120,7 +120,7 @@ func begin_blood_magic_activation(game_manager: GameManager, target: Card, sacri
 		target_name
 	)
 	sacrifice.set_meta("creature_sacrifice_in_progress", true)
-	game_manager.request_send_to_graveyard(sacrifice, continue_callback, false, true)
+	game_manager.request_send_to_graveyard(sacrifice, continue_callback, false, true, false, self)
 	return ""
 
 func _continue_blood_magic_after_sacrifice(
@@ -178,7 +178,7 @@ func _continue_blood_magic_after_sacrifice(
 		sacrifice_name,
 		target_name
 	)
-	game_manager.request_send_to_graveyard(target, finish_callback, false, true)
+	game_manager.request_send_to_graveyard(target, finish_callback, false, true, false, self)
 
 func _finish_blood_magic_after_destroy(
 	game_manager: GameManager,

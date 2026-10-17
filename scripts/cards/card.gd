@@ -748,7 +748,7 @@ func counts_as_on_field(game_manager: GameManager = null) -> bool:
 		resolved_game_manager = card_owner.game_manager
 	return resolved_game_manager != null and resolved_game_manager.is_card_on_field(self)
 
-func get_effective_speed() -> int:
+func get_effective_speed(speed_delta: int = 0) -> int:
 	var base_speed = speed
 	var speed_override: Variant = null
 	var equipment_speed_bonus := 0
@@ -765,7 +765,7 @@ func get_effective_speed() -> int:
 	base_speed += equipment_speed_bonus
 	for buff in _get_effective_buffs():
 		base_speed += buff.get("spd", 0)
-	return clampi(base_speed, 1, 7)
+	return clampi(base_speed + speed_delta, 1, 7)
 
 func get_effective_level() -> int:
 	var total := level

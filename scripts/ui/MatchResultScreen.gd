@@ -8,6 +8,7 @@ signal menu_requested
 
 const TextureCache = preload("res://scripts/ui/UITextureCache.gd")
 const TITLE_FONT = preload("res://fonts/custom_ui/Norsebold.otf")
+const VICTORY_SOUND: AudioStream = preload("res://audio/victory_at_last.mp3")
 const GOLD := Color("eac67d")
 const INK := Color("101725")
 const MUTED := Color("a7b3c8")
@@ -16,14 +17,31 @@ const WHITE := Color("f4efe4")
 var _panel: PanelContainer
 var _awards: GridContainer
 var _spark_time := 0.0
+var _is_defeat := false
+var _accent := GOLD
+var _surface := INK
+var _muted := MUTED
+var _tile_background := Color("172132")
+var _button_background := Color("1c293d")
+var _primary_hover := Color("f7da9f")
+var _primary_pressed := Color("c2a268")
 
 func build(result_title: String, message: String, stats: Dictionary, reason: String, can_rematch: bool, can_replay: bool, auto_return: bool, animate: bool = true) -> void:
 	name = "GameResultOverlay"
-	color = Color(0.025, 0.035, 0.065, 0.97)
+	_is_defeat = result_title == "Defeat"
+	if _is_defeat:
+		_accent = Color("ec8585")
+		_surface = Color("211217")
+		_muted = Color("bda4aa")
+		_tile_background = Color("301b23")
+		_button_background = Color("3b232b")
+		_primary_hover = Color("ffaaaa")
+		_primary_pressed = Color("b95160")
+	color = Color(0.065, 0.02, 0.03, 0.97) if _is_defeat else Color(0.025, 0.035, 0.065, 0.97)
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	_panel = PanelContainer.new()
-	_panel.add_theme_stylebox_override("panel", _style(INK, Color("796344"), 24, 24))
+	_panel.add_theme_stylebox_override("panel", _style(_surface, Color(_accent, 0.55), 24, 24))
 	add_child(_panel)
 	var scroll := ScrollContainer.new()
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -32,41 +50,41 @@ func build(result_title: String, message: String, stats: Dictionary, reason: Str
 	body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	body.add_theme_constant_override("separation", 10)
 	scroll.add_child(body)
-	_label(body, "O T H E R   G O D S   /   M A T C H   C O M P L E T E", 13, GOLD)
-	var title := _label(body, result_title.to_upper(), 66, GOLD if result_title != "Defeat" else Color("da9c96"))
+	_label(body, "O T H E R   G O D S   /   M A T C H   C O M P L E T E", 13, _accent)
+	var title := _label(body, result_title.to_upper(), 66, _accent)
 	title.add_theme_font_override("font", TITLE_FONT)
-	title.add_theme_color_override("font_shadow_color", Color(0.8, 0.5, 0.12, 0.25))
+	title.add_theme_color_override("font_shadow_color", Color(_accent, 0.25))
 	title.add_theme_constant_override("shadow_offset_y", 4)
-	_label(body, "A legend written. A pantheon remembered.", 16, MUTED)
 	_label(body, message, 16, WHITE)
 	var turns := int(stats.get("turns", 0))
 	var seconds := int(stats.get("duration_seconds", 0))
-	_label(body, "%d TURNS   /   %d:%02d   /   THE FINAL CHRONICLE" % [turns, seconds / 60, seconds % 60], 13, GOLD)
+	_label(body, "%d TURNS   /   %d:%02d   /   THE FINAL CHRONICLE" % [turns, seconds / 60, seconds % 60], 13, _accent)
 	_rule(body)
-	_label(body, "HALL OF LEGENDS", 18, GOLD)
-	_label(body, "Awards across both pantheons · damage counts actual enemy followers lost", 13, MUTED)
+	_label(body, "HALL OF LEGENDS", 18, _accent)
+	_label(body, "Awards across both pantheons · damage counts actual enemy followers lost", 13, _muted)
 	_awards = GridContainer.new()
 	_awards.columns = 3
 	_awards.add_theme_constant_override("h_separation", 14)
 	_awards.add_theme_constant_override("v_separation", 14)
 	body.add_child(_awards)
-	_award("01   /   MVP", "The heaviest hitter", stats.get("mvp", {}), stats, "total damage", "No damage dealt", GOLD)
+	_award("01   /   MVP", "The heaviest hitter", stats.get("mvp", {}), stats, "total damage", "No damage dealt", _accent)
 	var finisher_empty := "No card finisher"
 	if reason in ["forfeit", "match_forfeit"]:
 		finisher_empty = "Won by forfeit"
 	elif reason == "draw":
 		finisher_empty = "A shared fate"
-	_award("02   /   KILLING BLOW", "The final word", stats.get("killing_blow", {}), stats, "final damage", finisher_empty, Color("e5a095"))
-	_award("03   /   BIGGEST HIT", "One unforgettable strike", stats.get("biggest_hit", {}), stats, "damage in one hit", "No damage dealt", Color("91cfcd"))
+	_award("02   /   KILLING BLOW", "The final word", stats.get("killing_blow", {}), stats, "final damage", finisher_empty, Color("f2a3a3") if _is_defeat else Color("e5a095"))
+	_award("03   /   BIGGEST HIT", "One unforgettable strike", stats.get("biggest_hit", {}), stats, "damage in one hit", "No damage dealt", Color("e99b88") if _is_defeat else Color("91cfcd"))
+	_award("04   /   CATACLYSMIC", "Leave nothing standing", stats.get("cataclysmic", {}), stats, "other cards destroyed", "No cards destroyed", Color("da869c") if _is_defeat else Color("c4a4ed"), "destroyed")
 	if not stats.is_empty():
 		_rule(body)
-		_label(body, "THE MATCH IN NUMBERS", 16, GOLD)
+		_label(body, "THE MATCH IN NUMBERS", 16, _accent)
 		_scoreboard(body, stats)
 	else:
-		_label(body, "Detailed statistics are unavailable for this match.", 14, MUTED)
+		_label(body, "Detailed statistics are unavailable for this match.", 14, _muted)
 	_rule(body)
 	if auto_return:
-		_label(body, "Returning to menu…", 16, MUTED)
+		_label(body, "Returning to menu…", 16, _muted)
 	else:
 		var buttons := HFlowContainer.new()
 		buttons.alignment = FlowContainer.ALIGNMENT_CENTER
@@ -114,15 +132,15 @@ func _label(parent: Node, text: String, font_size: int, tint: Color, centered: b
 func _rule(parent: Node) -> void:
 	var rule := HSeparator.new()
 	var style := StyleBoxLine.new()
-	style.color = Color(0.8, 0.66, 0.4, 0.22)
+	style.color = Color(_accent, 0.22)
 	style.thickness = 1
 	rule.add_theme_stylebox_override("separator", style)
 	parent.add_child(rule)
 
-func _award(title: String, subtitle: String, entry: Dictionary, stats: Dictionary, unit: String, empty_text: String, accent: Color) -> void:
+func _award(title: String, subtitle: String, entry: Dictionary, stats: Dictionary, unit: String, empty_text: String, accent: Color, metric: String = "damage") -> void:
 	var tile := PanelContainer.new()
 	tile.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	tile.add_theme_stylebox_override("panel", _style(Color("172132"), Color(accent, 0.45), 14, 14))
+	tile.add_theme_stylebox_override("panel", _style(_tile_background, Color(accent, 0.45), 14, 14))
 	_awards.add_child(tile)
 	var column := VBoxContainer.new()
 	column.add_theme_constant_override("separation", 5)
@@ -165,9 +183,9 @@ func _award(title: String, subtitle: String, entry: Dictionary, stats: Dictionar
 	var index := int(entry.get("player_index", -1))
 	if index >= 0 and index < players.size():
 		owner = str(players[index].get("name", ""))
-	_label(column, owner, 13, MUTED)
-	_label(column, str(entry.get("damage", "—")), 34, accent)
-	_label(column, unit if not entry.is_empty() else "No eligible card", 13, MUTED)
+	_label(column, owner, 13, _muted)
+	_label(column, str(entry.get(metric, "—")), 34, accent)
+	_label(column, unit if not entry.is_empty() else "No eligible card", 13, _muted)
 	_label(column, subtitle, 13, accent)
 
 func _scoreboard(parent: Node, stats: Dictionary) -> void:
@@ -177,15 +195,14 @@ func _scoreboard(parent: Node, stats: Dictionary) -> void:
 	grid.add_theme_constant_override("v_separation", 10)
 	parent.add_child(grid)
 	for heading in ["PANTHEON", "DAMAGE", "RESTORED", "SUMMONS", "FOLLOWERS"]:
-		var label := _label(grid, heading, 12, MUTED, heading != "PANTHEON")
+		var label := _label(grid, heading, 12, _muted, heading != "PANTHEON")
 		label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	for player: Dictionary in stats.get("players", []):
 		var name_label := _label(grid, str(player.get("name", "Player")), 15, WHITE, false)
 		name_label.custom_minimum_size.x = 80
 		name_label.tooltip_text = name_label.text
 		for key in ["damage", "restored", "summoned", "followers"]:
-			_label(grid, str(player.get(key, 0)), 20, GOLD)
-	_label(parent, "Restored includes converted followers. United Front damage is shared by strength; joint finishers are named together.", 12, MUTED)
+			_label(grid, str(player.get(key, 0)), 20, _accent)
 
 func _button(parent: Node, text: String, callback: Callable, primary: bool = false) -> Button:
 	var button := Button.new()
@@ -193,12 +210,12 @@ func _button(parent: Node, text: String, callback: Callable, primary: bool = fal
 	button.custom_minimum_size = Vector2(148, 44)
 	button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	button.add_theme_font_size_override("font_size", 15)
-	button.add_theme_color_override("font_color", INK if primary else WHITE)
-	button.add_theme_color_override("font_hover_color", INK if primary else WHITE)
-	button.add_theme_color_override("font_focus_color", INK if primary else WHITE)
-	button.add_theme_stylebox_override("normal", _style(GOLD if primary else Color("1c293d"), GOLD if primary else Color("4a586f"), 8, 12))
-	button.add_theme_stylebox_override("hover", _style(Color("f7da9f") if primary else Color("2b3c55"), GOLD, 8, 12))
-	button.add_theme_stylebox_override("pressed", _style(Color("c2a268") if primary else Color("101725"), GOLD, 8, 12))
+	button.add_theme_color_override("font_color", _surface if primary else WHITE)
+	button.add_theme_color_override("font_hover_color", _surface if primary else WHITE)
+	button.add_theme_color_override("font_focus_color", _surface if primary else WHITE)
+	button.add_theme_stylebox_override("normal", _style(_accent if primary else _button_background, _accent if primary else Color(_muted, 0.45), 8, 12))
+	button.add_theme_stylebox_override("hover", _style(_primary_hover if primary else _button_background.lightened(0.15), _accent, 8, 12))
+	button.add_theme_stylebox_override("pressed", _style(_primary_pressed if primary else _surface, _accent, 8, 12))
 	var focus := _style(Color.TRANSPARENT, WHITE, 8, 0)
 	focus.set_border_width_all(2)
 	button.add_theme_stylebox_override("focus", focus)
@@ -212,8 +229,19 @@ func _layout() -> void:
 	var extent := Vector2(minf(1140, maxf(260, size.x - 48)), minf(940, maxf(240, size.y - 48)))
 	_panel.size = extent
 	_panel.position = (size - extent) * 0.5
-	_awards.columns = 1 if extent.x < 730 else 3
+	_awards.columns = 4 if extent.x >= 1040 else (2 if extent.x >= 650 else 1)
 	queue_redraw()
+
+func play_victory_sound() -> void:
+	if _is_defeat or DisplayServer.get_name() == "headless":
+		return
+	var player := AudioStreamPlayer.new()
+	player.name = "VictorySound"
+	player.stream = VICTORY_SOUND
+	player.bus = "SFX"
+	add_child(player)
+	player.finished.connect(player.queue_free)
+	player.play()
 
 func _process(delta: float) -> void:
 	_spark_time += delta
@@ -222,9 +250,9 @@ func _process(delta: float) -> void:
 func _draw() -> void:
 	var center := size * Vector2(0.5, 0.44)
 	for radius in [360.0, 430.0, 500.0]:
-		draw_arc(center, radius, 0, TAU, 100, Color(0.85, 0.68, 0.36, 0.08), 1.0, true)
+		draw_arc(center, radius, 0, TAU, 100, Color(_accent, 0.08), 1.0, true)
 	for i in 38:
 		var x := fmod(float(i * 157 + 31), maxf(1, size.x))
 		var y := fposmod(float(i * 97) - _spark_time * (8 + i % 4), maxf(1, size.y))
 		var alpha := 0.16 + 0.14 * sin(float(i) + _spark_time)
-		draw_circle(Vector2(x, y), 1.2 + float(i % 3) * 0.4, Color(GOLD, alpha), true, -1, true)
+		draw_circle(Vector2(x, y), 1.2 + float(i % 3) * 0.4, Color(_accent, alpha), true, -1, true)

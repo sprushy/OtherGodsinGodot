@@ -12,7 +12,7 @@ const TACTICAL_CARDS := [
 	"LightOfMorningsDoors", "FoolishOptimism", "DivineLightning", "FifaTheMagicalArrow", "Exorcism",
 	"GungnirTheSpearOfOdin", "NamburbiApotropaeon", "HeroicStand", "Hringhorni",
 	"Banishment", "SpellDemolition", "Sap", "SepLemutti", "Smite", "VoidShield",
-	"TheInferno", "TheDeluge", "Dromi", "Gleipnir", "SapStrength", "VisionOfTartarus",
+	"TheInferno", "TheDeluge", "Dromi", "Gleipnir", "SapStrength", "VisionOfTartarus", "VisionOfOdin", "Hermes",
 ]
 const ACTIVE_POWERS := ["AcceleratedFate", "OraclesSight", "BerserkerMead", "MechFactory", "Palisade", "ManaGuard"]
 const BOARD_ABILITIES := ["Alu", "Lindwyrm", "Lamashatu", "ClayEaters", "AncientPyre", "Watchtower", "Gawain"]
@@ -136,7 +136,41 @@ static func removal_score(bot, source: Card, target: Card, action: CardAction = 
 static func destruction_guard(target: Card) -> bool:
 	return target.has_status_effect("berserker_mead_guard") or target.has_status_effect("berserker_rage_guard") or target.has_status_effect("en_hedu_anna_exaltation_guard")
 
-static func combat_gain(bot, target: Card, str_delta: int, res_delta: int = 0, action: CardAction = null) -> int:
+# Explicit effect data feeds the same projection for main-phase buffs, responses,
+# and attacks that only become worthwhile after a response. Never mutate cards
+# or infer effects from their display text while planning.
+static func stat_changes(bot, card: Card, target: Card) -> Dictionary:
+	match key(card):
+		"VisionOfOdin":
+			var sign := 1 if target.culture == "Norse" else -1
+			return {"str": sign * VisionOfOdin.STR_SWING, "res": 0, "spd": sign * VisionOfOdin.SPEED_SWING}
+		"Hermes": return {"str": 0, "res": 0, "spd": Hermes.SPEED_BONUS}
+		"Snowball": return {"str": -2, "res": 0, "spd": 0}
+		"SapStrength": return {"str": -10, "res": 0, "spd": 0}
+		"VisionOfTartarus":
+			var reduction: int = -3 * card._count_void_creatures(bot.game_manager)
+			return {"str": reduction, "res": reduction, "spd": 0}
+		"FifaTheMagicalArrow": return {"str": FifaTheMagicalArrow.STR_BONUS, "res": 0, "spd": 0}
+		"BerserkerMead": return {"str": BerserkerMead.STR_BONUS, "res": 0, "spd": 0}
+		"Lamashatu": return {"str": 5, "res": 5, "spd": 0}
+		"SevenLeagueBoots":
+			var old_base: int = target.speed - (1 if target.is_stealth else 0)
+			for equipment in target.equipment:
+				if equipment.has_method("get_speed_override_for_equipped_creature"):
+					var override_speed = equipment.get_speed_override_for_equipped_creature(target)
+					if override_speed != null:
+						old_base = int(override_speed)
+			return {"str": 0, "res": 0, "spd": SevenLeagueBoots.SPEED_OVERRIDE - old_base}
+	if card is EquipmentCard:
+		return {"str": card.strength_modifier, "res": card.resilience_modifier, "spd": card.speed_modifier}
+	return {}
+
+static func stat_gain(bot, card: Card, target: Card, action: CardAction = null) -> int:
+	var changes := stat_changes(bot, card, target)
+	var combat_action := action if action != null and action.type == CardAction.Type.ATTACK else null
+	return combat_gain(bot, target, int(changes.get("str", 0)), int(changes.get("res", 0)), combat_action, int(changes.get("spd", 0)))
+
+static func combat_gain(bot, target: Card, str_delta: int, res_delta: int = 0, action: CardAction = null, speed_delta: int = 0) -> int:
 	if not visible(bot, target):
 		return 0
 	if action != null:
@@ -145,16 +179,24 @@ static func combat_gain(bot, target: Card, str_delta: int, res_delta: int = 0, a
 		var defender: Card = bot._get_attack_defender_card(action)
 		if defender != null and not visible(bot, defender):
 			return 0
-		return bot._score_attack_economy(bot._estimate_attack_economy(action, target, str_delta, 0, res_delta)) - bot._score_attack_economy(bot._estimate_attack_economy(action, null, 0, 0))
+		return bot._score_attack_economy(bot._estimate_attack_economy(action, target, str_delta, speed_delta, res_delta)) - bot._score_attack_economy(bot._estimate_attack_economy(action, null, 0, 0))
+	# These forecasts concern attacks later this turn, not next-turn value from
+	# temporary buffs that expire during the opponent's turn.
+	if bot.game_manager.current_player != bot.bot_player:
+		return 0
 	var best := 0
 	for attacker in bot._get_attack_ready_creatures():
+		if bot._has_committed_attack(attacker):
+			continue
+		if target.get_controller() == bot.bot_player and target != attacker:
+			continue
 		var defenders: Array = bot._get_board_creatures(bot.opponent) if target == attacker else [target]
 		if target == attacker:
 			defenders.append(bot.opponent)
 		for defender in defenders:
 			if defender is Card and (not visible(bot, defender) or not bot._can_attack_creature(attacker, defender)):
 				continue
-			if defender is Player and not bot._get_board_creatures(bot.opponent).is_empty():
+			if defender is Player and not bot._can_attack_followers_after_modifier(attacker, target, speed_delta):
 				continue
 			var planned := CardAction.new()
 			planned.type = CardAction.Type.ATTACK
@@ -162,10 +204,14 @@ static func combat_gain(bot, target: Card, str_delta: int, res_delta: int = 0, a
 			planned.target = defender
 			planned.halve_follower_damage = attacker.halves_follower_damage_inflicted()
 			var before: int = bot._score_attack_economy(bot._estimate_attack_economy(planned, null, 0, 0))
-			var after: int = bot._score_attack_economy(bot._estimate_attack_economy(planned, target, str_delta, 0, res_delta))
+			if defender is Player and not bot._can_attack_followers_safely(attacker):
+				before = 0
+			var after: int = bot._score_attack_economy(bot._estimate_attack_economy(planned, target, str_delta, speed_delta, res_delta))
 			# A buff must create an attack the bot would actually want to take.
 			if after > 0:
 				best = maxi(best, after - maxi(0, before))
+	if bot._can_win_followers_after_modifier(target, str_delta, speed_delta) and not bot._can_win_followers_after_modifier(null, 0, 0):
+		best = maxi(best, CARD_VALUE * 20)
 	return best
 
 static func target_score(bot, card: Card, target: Card, action: CardAction = null) -> int:
@@ -176,6 +222,12 @@ static func target_score(bot, card: Card, target: Card, action: CardAction = nul
 	if visible(bot, target) and (bot.game_manager.is_immune_to_source(target, card) or bot.game_manager.is_guardian_protected(target, card)):
 		return BAD
 	match key(card):
+		"VisionOfOdin":
+			if not visible(bot, target) or not ((own and target.culture == "Norse") or (enemy and target.culture != "Norse")):
+				return BAD
+			return stat_gain(bot, card, target, action)
+		"Hermes":
+			return stat_gain(bot, card, target, action) if visible(bot, target) else BAD
 		"DivineLightning", "RunicSpellbreaker", "Lindwyrm":
 			return removal_score(bot, card, target, action)
 		"BitMeseri":
@@ -198,12 +250,7 @@ static func target_score(bot, card: Card, target: Card, action: CardAction = nul
 		"Snowball", "SapStrength", "VisionOfTartarus":
 			if not enemy:
 				return BAD
-			var reduction := -2 if key(card) == "Snowball" else -10
-			var res_delta := 0
-			if key(card) == "VisionOfTartarus":
-				reduction = -3 * card._count_void_creatures(bot.game_manager)
-				res_delta = reduction
-			return combat_gain(bot, target, reduction, res_delta, action)
+			return stat_gain(bot, card, target, action)
 		"FifaTheMagicalArrow", "BerserkerMead", "Lamashatu":
 			if not own:
 				return BAD
@@ -213,8 +260,7 @@ static func target_score(bot, card: Card, target: Card, action: CardAction = nul
 				for buff in target.active_buffs:
 					if buff.get("source_card") == card and buff.get("effect_type") == "suckle":
 						return BAD
-			var strength_gain := 7 if key(card) == "BerserkerMead" else 5
-			var score := combat_gain(bot, target, strength_gain, 5 if key(card) == "Lamashatu" else 0, action)
+			var score := stat_gain(bot, card, target, action)
 			if key(card) == "Lamashatu":
 				score += 1800 # Persistent growth, even without an immediate attack.
 			if key(card) == "BerserkerMead":
@@ -381,6 +427,8 @@ static func effect_score(bot, card: Card, target: Card = null, action: CardActio
 			gain = card._get_hidden_opponent_cards(bot.game_manager).size() * 1500
 	if gain <= BAD:
 		return BAD
+	if id == "Hermes":
+		return gain - mana_penalty(bot, Hermes.ACTIVATION_COST)
 	return gain - CARD_VALUE - mana_penalty(bot, activation_cost(bot, card))
 
 static func equipment_score(bot, equipment: Card, bearer: Card) -> int:
@@ -389,9 +437,9 @@ static func equipment_score(bot, equipment: Card, bearer: Card) -> int:
 	if key(equipment) == "DraupnirTheMultiplying":
 		# Three end-turn payments are more likely on a protected reserve bearer.
 		return (6500 if bearer.current_zone in bot.bot_player.reserve_zones else 5500) - CARD_VALUE
-	if key(equipment) not in ["BeardedAxe", "RunicShortsword", "ReedBow", "SharurTheFlyingMace"]:
+	if key(equipment) not in ["BeardedAxe", "RunicShortsword", "ReedBow", "SharurTheFlyingMace", "SevenLeagueBoots"]:
 		return BAD
-	var gain := combat_gain(bot, bearer, equipment.strength_modifier, equipment.resilience_modifier)
+	var gain := stat_gain(bot, equipment, bearer)
 	if key(equipment) == "BeardedAxe" and bearer.culture == "Norse" and bearer.has_type("Warrior"):
 		# Score the conditional axe bonus only against defensive creatures.
 		for defender in bot._get_board_creatures(bot.opponent):

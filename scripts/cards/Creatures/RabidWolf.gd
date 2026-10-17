@@ -64,7 +64,7 @@ func on_after_combat(game_manager: GameManager, opposing_card: Card) -> void:
 			if game_manager.reached_public_destroyed_destination(opposing_card):
 				var destroyed_name := game_manager.get_resolved_destruction_log_name(opposing_card, viewer, target_name)
 				game_manager.note_player_feedback("%s is destroyed by %s." % [destroyed_name, DISEASE_SOURCE])
-		, false, true)
+		, false, true, false, self)
 
 func _get_uncapped_strength(card: Card) -> int:
 	if card == null:
